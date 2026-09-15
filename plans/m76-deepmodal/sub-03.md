@@ -37,7 +37,7 @@ tests\            test_fem / test_modal / test_compact / test_layout / test_cont
 
 ## 受け入れ条件 (このサブ)
 spec §5 の 6, 7, 8。
-1. `pytest` 全緑: test_fem (Ke 対称・半正定、剛体 6 モードで `K·r ≈ 0`、集中質量総和 = ρh³) / test_modal (2×2×2 で E×4 → ω×2、ρ×4 → ω/2、h×2 → ω/2、1e-6。先頭 6 固有値 ≈ 0) / test_compact (単調・端点・Σ|a|・空帯域補間・mask) / test_layout (.mvox 64 B、C++ cube で 27000。`@pytest.mark.editor`、Editor.exe 無ければ skip) / test_contact (cell を変えると励起ベクトルが変わる)
+1. `pytest` 全緑: test_fem (Ke 対称・半正定、剛体 6 モードで `K·r ≈ 0`、集中質量総和 = ρh³) / test_modal (2×2×2 で E×4 → ω×2、ρ×4 → ω/2、h×2 → ω/2、1e-6。先頭 6 固有値 ≈ 0) / test_compact (単調・端点・Σ|a|・空帯域補間・mask) / test_layout (.mvox ヘッダ 72 B = 全体 32840 B、C++ cube で 24389 = 29³。`@pytest.mark.editor`、Editor.exe 無ければ skip) / test_contact (cell を変えると励起ベクトルが変わる)
 2. `python dataset.py --stage primitives --out data\stage0` → npz ≥ 20 本 + builtin 6 本 + stats.json (メッシュごとの eigsh 秒 / 帯域占有率 / モード数)。満杯立方体 < 600 s、primitive 中央値 < 60 s
 3. `check_rules.ps1` 緑。`layout.py` の `VOXEL_N` を一時的に 31 にすると規則 9 が赤くなる (戻す)
 

@@ -106,7 +106,7 @@ SolidContact (今 tick、TickRunner.cpp:608 の !ts.resim ブロック内)
 - **焼き (ModalSoundLibrary)**: `Request(mesh)` は非ブロッキング (未着手なら positions/indices をコピーしてジョブ投入 → Baking)。
   ボクセル化は常にワーカー。推論はバックエンドの `RunsOnWorkerThread()` が true ならワーカー、false なら `Pump()` (メインスレッド、1 フレーム 1 ジョブ)。
   `.msfm` の読み書きはメインスレッド。失敗は `Failed` + WARN 1 回。モデル無しは `NoModel`。
-- **ボクセル化**: `L = max(aabb extent)`、`h = L/29`、`origin = center − 16h` (AABB は voxel 座標 1.5..30.5 = 軸平行面がボクセル中心を通る。単位立方体 = 30³ = 27000)。
+- **ボクセル化**: `L = max(aabb extent)`、`h = L/28`、`origin = center − 16.5h` (AABB は voxel 座標 2.5..30.5 = 軸平行面がボクセル中心を通り境界に乗らない、**かつ AABB 中心が voxel 16 の中心 (16.5) に乗る** = 中心対称な薄い特徴が 2 行に割れない。単位立方体 = 29³ = 24389。★`L/29` + `center − 16h` だと AABB 中心が voxel 15/16 の境界に乗り、厚さ ≪ h の板が必ず 2 行になる — sub-02 round 1 で判明。奇数個に割ると中心は必ず境界なので、偶数 28 に割る)。
   index `x + 32(y + 32z)`。表面 = Akenine-Möller SAT (箱半径 `h/2 + 1e-6h`)、内部 = pad リングから 6 近傍 flood-fill で外部を塗った残り。
   非 watertight は殻だけ (論文「薄いものは 1 voxel 厚」と同じ扱い)。明示スタック、固定順、同入力 → 同出力。
 
@@ -125,7 +125,7 @@ SolidContact (今 tick、TickRunner.cpp:608 の !ts.resim ブロック内)
 ### 4.2 データ・保存形式・互換性
 
 - ディスクに書く POD は **struct を memcpy しない** (Material の暗黙パディングの罠)。フィールド単位、固定長ヘッダ、版番号。
-- **`.mvox`**: 64 B ヘッダ (magic 'MVOX' / version 1 / n=32 / pad / origin[3] / voxelSize / aabbMin[3] / aabbMax[3] / longestEdge / surfaceCount / interiorCount / reserved) + 32768 B 占有。
+- **`.mvox`**: **72 B** ヘッダ (18 フィールド × 4 B、フィールド単位で書く: magic 'MVOX' / version 1 / n=32 / pad / origin[3] / voxelSize / aabbMin[3] / aabbMax[3] / longestEdge / surfaceCount / interiorCount / reserved) + 32768 B 占有 = 32840 B。(策定時の「64 B」は planner の計算違い。sub-02 round 1 で訂正)
 - **`.msfm`** (cooked cache、`.mcvx` と同型): `vector<pair<meshName, ModalFeatureMap>>` key 昇順、1 モデルファイル 1 表、遅延で書き足す。
   `ModalFeatureMap { version; uint64 modelHash; VoxelFrame frame; validCount; uint16 cellSlot[4096]; vector<uint16> feat /* validCount×192 fp16 */ }` (有効 cell だけ、典型 200–500 KB)。
   内部版 `kMsfmVersion = 1` を持つので `kCookVersion` (= 3) は据え置き。`modelHash ≠ 現在の .dmnet の weightsHash` はミス扱いで焼き直す。
@@ -167,9 +167,9 @@ SolidContact (今 tick、TickRunner.cpp:608 の !ts.resim ブロック内)
 | 1 | `ModalSynthRender`: 1 モード (f=440, c=5, a=0.5) の零交差周波数が ±1%、`RmsIn` 比 [0.1,0.2]/[0.6,0.7] が e^{−2.5} ±5%、a×2 → ピーク×2、同入力 2 回 memcmp 一致、長さ規則 (0.05 / 2.0 の両端) | `Editor.exe --selftest` (ModalSynthSelfTest) |
 | 2 | `BuildModes`: E×4 → f×2、ρ×4 → f/2 & a/2、L×2 → f/2 & a/2^1.5 (相対 1e-4)、mask 閾値で帯域が落ちる、k=0 → count 0、過減衰・ナイキスト超えが落ちる、`MelBandCenters` が double 期待値と 1e-2 Hz | 同上 |
 | 3 | PhysMat 4 フィールド (E / ν / α / β): JSON 往復、Sanitize 範囲、キー無し旧 JSON → 既定 (E/α/β = 0、ν = 0.3)。11 本の JSON に初期値。`BuildModes` の署名に ν が無い。replay_verify 全ペア不変 | `--selftest` (PhysMatSelfTest) + `tools\replay_verify.bat` |
-| 4 | Voxelizer: 単位立方体 → surface+interior == 27000、中心 1、隅 0、pad リング全 0 / 厚さ 0.001 の板 → y 占有 index 1 種 / 蓋なし箱 → interior 0 / 2:1:0.5 AABB → 最長辺 29 voxel / +X 面中心 → cell (15, 7\|8, 7\|8) / cellSlot: 有効は自身、無効は独立総当たりと一致 / `.mvox` 往復 memcmp / OFF/OBJ リーダ / 同入力 2 回 memcmp | `--selftest` (ModalSelfTest) |
+| 4 | Voxelizer: 単位立方体 → surface+interior == 24389 (29³)、中心 1、隅 0、pad リング全 0 / 厚さ 0.001 の板 → y 占有 index **ちょうど 1 種** / 蓋なし箱 → interior 0 / 2:1:0.5 AABB → 最長辺の占有 voxel 数 29 (h = L/28) / +X 面中心 → cell **(15, 8, 8)** / cellSlot: 有効は自身、無効は独立総当たりと一致 / `.mvox` 往復 memcmp / OFF/OBJ リーダ / 同入力 2 回 memcmp | `--selftest` (ModalSelfTest) |
 | 5 | `Editor.exe --modal-voxelize --list tests\deepmodal\list_builtin.txt --out DIR` → 6 ファイル、exit 0。存在しない入力 → exit 1 | 手動 cmd (`cmd /c` 経由) |
-| 6 | pytest 全緑: test_fem (Ke 対称・半正定、剛体 6 モードで K·r ≈ 0、集中質量総和 = ρh³) / test_modal (2×2×2 で E×4 → ω×2、ρ×4 → ω/2、h×2 → ω/2、1e-6。先頭 6 固有値 ≈ 0) / test_compact (単調・端点・Σ\|a\|・空帯域補間・mask) / test_layout (.mvox 64 B、C++ cube で 27000 — Editor.exe 無ければ skip) / test_contact (cell を変えると励起が変わる) | `cd tools\deepmodal && pytest` |
+| 6 | pytest 全緑: test_fem (Ke 対称・半正定、剛体 6 モードで K·r ≈ 0、集中質量総和 = ρh³) / test_modal (2×2×2 で E×4 → ω×2、ρ×4 → ω/2、h×2 → ω/2、1e-6。先頭 6 固有値 ≈ 0) / test_compact (単調・端点・Σ\|a\|・空帯域補間・mask) / test_layout (.mvox ヘッダ 72 B = 全体 32840 B、C++ cube で 24389 — Editor.exe 無ければ skip) / test_contact (cell を変えると励起が変わる) | `cd tools\deepmodal && pytest` |
 | 7 | `dataset.py --stage primitives` が npz ≥ 20 本 + builtin 6 本と `stats.json` (メッシュごとの eigsh 秒、帯域占有率、モード数分布) を出す。満杯 30³ 立方体の eigsh < 600 s、primitive 中央値 < 60 s。L_ref / fMax の確定値を `layout.py` と spec §8 に記録 | 実行ログ + stats.json |
 | 8 | `check_rules.ps1` 全規則緑 (constGroups の C++ ⇄ Python 4 組を含む。片方を変えると赤くなることを 1 回確認) | `pwsh -File tools\check_rules.ps1` |
 | 9 | **門**: `train.py --overfit 16 --epochs 300` (stage0 + stage1 の 16 形状) → amp MSE < 1e-3 かつ mask acc > 99%。ログをコミットメッセージ本文に残す | 実行ログ |
@@ -223,3 +223,5 @@ SolidContact (今 tick、TickRunner.cpp:608 の !ts.resim ブロック内)
 
 - 2026-09-16 (ユーザー回答、司会経由): `poissonRatio` を PhysMat に**保持フィールドとして追加** (planner 裁定「足さない」を却下)。理由: FEM / 教師データ生成と reference material metadata 用、将来 ν を考慮するモデルへ拡張可能な形で持つ。ランタイムの `BuildModes` は読まない。反映: §2 #4 / §3 / §4.2 / §4.3 / §5 #3・#18 / §6 sub-01 件名 / sub-01・sub-07。
 - 2026-09-16 (ユーザー回答): M76h の範囲は「stage1 で .dmnet コミットまで」で確定 (planner 裁定どおり)。計画全体を確定。
+- 2026-09-16 (coder SELF_EVAL sub-02 round 1、不安・質問 #1): ボクセル正規化を `h = L/29, origin = center − 16h` → **`h = L/28, origin = center − 16.5h`** に変更。理由: 旧式は AABB 中心が voxel 15/16 の境界に乗る構造 (奇数個に割ると必ずそうなる) で、厚さ ≪ h の中心対称な板が必ず 2 行になり、受け入れ条件 4 の「1 種」と「+X 面中心 → cell (15, 7|8, 7|8)」の不定が消せなかった。新式は面がボクセル中心 (2.5 / 30.5) を通り、中心もボクセル中心 (16.5) に乗る。数値の変更: 単位立方体 27000 → 24389、最長辺 29 voxel (占有数、h は L/28)、+X 面中心 → (15, 8, 8) に一意。データセット生成前 (sub-03 未着手) なので影響はテスト値だけ。反映: §4.1 / §5 #4 / sub-02。
+- 2026-09-16 (coder SELF_EVAL sub-02 round 1、不安・質問 #2): `.mvox` ヘッダは 64 B ではなく **72 B** (18 フィールド × 4 B。planner の計算違い)。反映: §4.2 / §5 #6 / sub-03。

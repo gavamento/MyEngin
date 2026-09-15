@@ -19,7 +19,7 @@
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
 | sub-01 | OK | 1 | a3a536d | M76a モーダル合成器 + PhysMat 音響材質 4 フィールド (依存なし) |
-| sub-02 | 実装中 | 0 | | M76b ボクセライザ (.mvox) + OFF/OBJ + --modal-voxelize (依存なし) |
+| sub-02 | 実装中 | 1 | | M76b ボクセライザ (.mvox) + OFF/OBJ + --modal-voxelize (依存なし) |
 | sub-03 | 未着手 | 0 | | M76c Python データセット生成 + pytest + constGroups (依存 sub-02) |
 | sub-04 | 未着手 | 0 | | M76d モデル / 学習 / export、overfit の門 (依存 sub-03) |
 | sub-05 | 未着手 | 0 | | M76e .dmnet ローダ + CPU バックエンド + .msfm + ModalSoundLibrary (依存 sub-02, sub-04) |

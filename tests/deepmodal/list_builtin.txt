@@ -1,0 +1,6 @@
+builtin://cube
+builtin://sphere
+builtin://plane
+builtin://quad
+builtin://cylinder
+builtin://capsule
