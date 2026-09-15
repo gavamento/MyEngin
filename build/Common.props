@@ -39,10 +39,18 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
   </ItemDefinitionGroup>
+  <!--
+    CRT は静的リンク (Release = /MT、Debug = /MTd)。2026-09-14、三校の課題の提出条件
+    「ランタイムライブラリをスタティックリンク」。VC++ 再頒布パッケージの無い PC でも Runtime.exe が起動する。
+    ★exe と GameLogic.dll はそれぞれ別の CRT ヒープを持つ。DLL 境界は C ABI + POD のみ (EngineAPI.h) なので
+      片側で確保してもう片側で解放する経路は無いが、境界を越える STL や所有権の受け渡しを足すとここで壊れる。
+    ★nethost.dll は UCRT (api-ms-win-crt、Windows 10 以降は OS 同梱) にしか依存しないので、そのままでよい。
+    ★Debug も /MTd にそろえる = ヒープが分かれることによる不具合を Debug でも同じ形で踏めるようにする。
+  -->
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
@@ -50,7 +58,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
