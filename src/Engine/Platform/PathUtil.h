@@ -29,4 +29,8 @@ std::wstring Utf8ToWide(std::string_view s);
 // AssetID のキーやホットリロードの照合は必ずこの結果を使う
 std::wstring NormalizePathKey(const std::wstring& path);
 
+// path へ bytes を書き、**書き切れたときだけ**既存ファイルと置き換える (テンポラリ → rename)。
+// 失敗したら false で、既存ファイルには 1 バイトも触らない。親ディレクトリは呼び出し側が作る
+bool WriteFileReplacing(const std::wstring& path, std::string_view bytes);
+
 } // namespace mye

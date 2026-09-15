@@ -83,42 +83,68 @@ bool ReplayRecorder::Finish()
 
 bool ReplayPlayer::Load(const std::wstring& path)
 {
+    active_ = false;
+    std::error_code ec;
+    const uint64_t fileSize = std::filesystem::file_size(std::filesystem::path(path), ec);
     std::ifstream f(std::filesystem::path(path), std::ios::binary);
-    if (!f) {
+    if (!f || ec) {
         MYE_LOG_ERROR("[replay] cannot open %s", WideToUtf8(path).c_str());
         return false;
     }
-    f.read(reinterpret_cast<char*>(&header_), sizeof(header_));
-    if (!f || header_.magic != kReplayMagic) {
+    // ★ヘッダも中身もまず手元の変数へ読み、全部そろってから差し替える (途中で失敗しても前の内容を壊さない)
+    MyeReplayHeader header;
+    f.read(reinterpret_cast<char*>(&header), sizeof(header));
+    if (!f || header.magic != kReplayMagic) {
         MYE_LOG_ERROR("[replay] bad file magic");
         return false;
     }
-    if (header_.version != kReplayVersion || header_.inputSize != sizeof(InputSnapshot)) {
+    if (header.version != kReplayVersion || header.inputSize != sizeof(InputSnapshot)) {
         MYE_LOG_ERROR("[replay] incompatible version/layout (v%u, input %u bytes)",
-                      header_.version, header_.inputSize);
+                      header.version, header.inputSize);
         return false;
     }
-    if (header_.playerCount == 0) {
-        MYE_LOG_ERROR("[replay] playerCount = 0");
+    if (header.playerCount == 0 || header.playerCount > kMaxPlayers) {
+        MYE_LOG_ERROR("[replay] playerCount = %u (supported: 1..%u)", header.playerCount, kMaxPlayers);
         return false;
     }
-    snapshot_.resize(static_cast<size_t>(header_.snapshotSize));
-    if (!snapshot_.empty()) {
-        f.read(reinterpret_cast<char*>(snapshot_.data()),
-               static_cast<std::streamsize>(snapshot_.size()));
+    // ★件数は確保の**前**に実ファイル長と突き合わせる。壊れたヘッダの tickCount / snapshotSize を
+    //   そのまま resize すると、数バイトのファイルで何 GB も確保しにいく (tickCount x playerCount の
+    //   桁あふれもここで起きなくなる: 1 tick の長さで割ってから比べるので掛け算をしない)
+    const uint64_t body = fileSize - sizeof(header); // magic を読めた = ヘッダ長はある
+    if (header.snapshotSize > body) {
+        MYE_LOG_ERROR("[replay] truncated file (snapshot %llu bytes, %llu bytes after the header)",
+                      static_cast<unsigned long long>(header.snapshotSize),
+                      static_cast<unsigned long long>(body));
+        return false;
     }
-    const size_t perTick = header_.playerCount;
-    inputs_.resize(static_cast<size_t>(header_.tickCount) * perTick);
-    hashes_.resize(static_cast<size_t>(header_.tickCount));
-    for (size_t t = 0; t < hashes_.size(); ++t) {
-        f.read(reinterpret_cast<char*>(&inputs_[t * perTick]),
+    const uint64_t perTickBytes =
+        static_cast<uint64_t>(header.playerCount) * sizeof(InputSnapshot) + sizeof(uint64_t);
+    if (header.tickCount > (body - header.snapshotSize) / perTickBytes) {
+        MYE_LOG_ERROR("[replay] truncated file (%llu ticks declared, room for %llu)",
+                      static_cast<unsigned long long>(header.tickCount),
+                      static_cast<unsigned long long>((body - header.snapshotSize) / perTickBytes));
+        return false;
+    }
+    std::vector<std::byte> snapshot(static_cast<size_t>(header.snapshotSize));
+    if (!snapshot.empty()) {
+        f.read(reinterpret_cast<char*>(snapshot.data()), static_cast<std::streamsize>(snapshot.size()));
+    }
+    const size_t perTick = header.playerCount;
+    std::vector<InputSnapshot> inputs(static_cast<size_t>(header.tickCount) * perTick);
+    std::vector<uint64_t> hashes(static_cast<size_t>(header.tickCount));
+    for (size_t t = 0; t < hashes.size(); ++t) {
+        f.read(reinterpret_cast<char*>(&inputs[t * perTick]),
                static_cast<std::streamsize>(perTick * sizeof(InputSnapshot)));
-        f.read(reinterpret_cast<char*>(&hashes_[t]), sizeof(uint64_t));
+        f.read(reinterpret_cast<char*>(&hashes[t]), sizeof(uint64_t));
     }
     if (!f) {
         MYE_LOG_ERROR("[replay] truncated file");
         return false;
     }
+    header_ = header;
+    snapshot_ = std::move(snapshot);
+    inputs_ = std::move(inputs);
+    hashes_ = std::move(hashes);
     active_ = true;
     MYE_LOG_INFO("[replay] loaded %llu ticks from %s (players %u, snapshot %zu bytes)",
                  static_cast<unsigned long long>(hashes_.size()), WideToUtf8(path).c_str(),

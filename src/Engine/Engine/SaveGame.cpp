@@ -99,14 +99,8 @@ bool Write(const std::wstring& path, const std::wstring& scenePath, const Persis
 
     std::error_code ec;
     std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
-    std::ofstream f(std::filesystem::path(path), std::ios::binary);
-    if (!f) {
-        MYE_LOG_WARN("[save] cannot open for write: %s", WideToUtf8(path).c_str());
-        return false;
-    }
-    const std::string text = root.dump(2);
-    f.write(text.data(), static_cast<std::streamsize>(text.size()));
-    if (!f) {
+    // ★直接上書きすると、書き込みが途中で失敗したときに前のセーブまで失う
+    if (!WriteFileReplacing(path, root.dump(2))) {
         MYE_LOG_WARN("[save] write failed: %s", WideToUtf8(path).c_str());
         return false;
     }

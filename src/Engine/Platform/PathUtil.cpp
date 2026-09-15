@@ -1,6 +1,7 @@
 #include "Engine/Platform/PathUtil.h"
 
 #include <filesystem>
+#include <fstream>
 
 #include <Windows.h>
 
@@ -96,6 +97,34 @@ std::wstring Utf8ToWide(std::string_view s)
     std::wstring out(static_cast<size_t>(len), L'\0');
     MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), out.data(), len);
     return out;
+}
+
+// ★ofstream で直接開くと、その時点で既存の中身が切り詰められる — 容量不足などで書き込みが途中で
+//   失敗すると、前の内容も新しい内容も残らない。
+// ★テンポラリ名には PID を混ぜる (CookedCache と同じ理由: 並列の検証プロセスが同じファイルへ書き得る)。
+//   rename はアトミックなので、読み手には「前の完全な内容」か「新しい完全な内容」しか見えない
+bool WriteFileReplacing(const std::wstring& path, std::string_view bytes)
+{
+    const std::wstring tmpPath = path + L"." + std::to_wstring(GetCurrentProcessId()) + L".tmp";
+    std::error_code ec;
+    {
+        std::ofstream f(std::filesystem::path(tmpPath), std::ios::binary | std::ios::trunc);
+        if (!f) {
+            return false;
+        }
+        f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        f.close(); // 書き出しの失敗は close (flush) で初めて出ることがあるので、閉じてから見る
+        if (f.fail()) {
+            std::filesystem::remove(tmpPath, ec);
+            return false;
+        }
+    }
+    std::filesystem::rename(tmpPath, path, ec);
+    if (ec) {
+        std::filesystem::remove(tmpPath, ec);
+        return false;
+    }
+    return true;
 }
 
 } // namespace mye

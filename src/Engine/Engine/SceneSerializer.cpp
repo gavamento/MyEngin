@@ -1,10 +1,13 @@
 #include "Engine/Engine/SceneSerializer.h"
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "Engine/Core/Components.h"
@@ -319,6 +322,87 @@ void CollectHierarchyOrdered(World& world, std::vector<EntityID>& out, std::vect
     }
 }
 
+bool IsFileIdValue(const json& v)
+{
+    return v.is_number_unsigned() || (v.is_number_integer() && v.get<int64_t>() >= 0);
+}
+
+// シーン文書の事前検査。LoadFromJson / ApplyDiff は**シーンに触る前**にここを通す。
+// ★Clear の後で json の型不一致 (value / get の例外) が出ると、不正なファイルを開こうとしただけで
+//   編集中のシーンが消える。見るのは読み出し側が value / get で型を仮定しているキーだけ —
+//   読み出しにキーを足したらここにも足すこと。フィールド値は FieldFromJson が自前で例外を捕まえる
+bool ValidateDocument(const json& root, std::string& why)
+{
+    const auto fail = [&why](std::string message) {
+        why = std::move(message);
+        return false;
+    };
+    if (!root.is_object()) {
+        return fail("the root is not an object");
+    }
+    if (!root.contains("entities") || !root["entities"].is_array()) {
+        return fail("'entities' is not an array");
+    }
+    if (root.contains("sceneName") && !root["sceneName"].is_string()) {
+        return fail("'sceneName' is not a string");
+    }
+    if (root.contains("nextFileId") && !IsFileIdValue(root["nextFileId"])) {
+        return fail("'nextFileId' is not a non-negative integer");
+    }
+    if (root.contains("version") && !root["version"].is_number_integer()) {
+        return fail("'version' is not an integer");
+    }
+    std::unordered_set<uint64_t> fileIds;
+    size_t index = 0;
+    for (const json& item : root["entities"]) {
+        const std::string at = "entities[" + std::to_string(index++) + "]";
+        if (!item.is_object()) {
+            return fail(at + " is not an object");
+        }
+        if (item.contains("fileId")) {
+            if (!IsFileIdValue(item["fileId"])) {
+                return fail(at + ".fileId is not a non-negative integer");
+            }
+            // 重複すると fileId → EntityID の対応表が後勝ちになり、親と参照が別の実体を指す
+            const uint64_t fid = item["fileId"].get<uint64_t>();
+            if (fid != 0 && !fileIds.insert(fid).second) {
+                return fail(at + ".fileId " + std::to_string(fid) + " is used twice");
+            }
+        }
+        if (item.contains("name") && !item["name"].is_string()) {
+            return fail(at + ".name is not a string");
+        }
+        if (item.contains("parent") && !IsFileIdValue(item["parent"])) {
+            return fail(at + ".parent is not a non-negative integer");
+        }
+        if (item.contains("childIndex") && !item["childIndex"].is_number_integer()) {
+            return fail(at + ".childIndex is not an integer");
+        }
+        if (!item.contains("components")) {
+            continue;
+        }
+        const json& comps = item["components"];
+        if (!comps.is_object()) {
+            return fail(at + ".components is not an object");
+        }
+        for (const auto& [compName, fields] : comps.items()) {
+            if (!fields.is_object()) {
+                return fail(at + ".components." + compName + " is not an object");
+            }
+        }
+        // M75a: 旧形式の UIElement 配置は ReadEntityComponents が value で直接読む
+        if (comps.contains("UIElement") && comps["UIElement"].contains("anchor")) {
+            const json& ui = comps["UIElement"];
+            for (const char* key : { "anchor", "x", "y", "w", "h", "space" }) {
+                if (ui.contains(key) && !ui[key].is_number()) {
+                    return fail(at + ".components.UIElement." + key + " is not a number");
+                }
+            }
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 json SaveToJson(Scene& scene)
@@ -365,8 +449,10 @@ json SaveToJson(Scene& scene)
 
 bool LoadFromJson(Scene& scene, const json& root)
 {
-    if (!root.is_object() || !root.contains("entities")) {
-        MYE_LOG_ERROR("scene load: invalid json");
+    // ★Clear より前に検査する。不正な文書ならシーンに 1 バイトも触らずに false を返す
+    std::string why;
+    if (!ValidateDocument(root, why)) {
+        MYE_LOG_ERROR("scene load: invalid json (%s)", why.c_str());
         return false;
     }
     World& world = scene.GetWorld();
@@ -449,7 +535,10 @@ bool LoadFromJson(Scene& scene, const json& root)
 
 bool ApplyDiff(Scene& scene, const json& root)
 {
-    if (!root.is_object() || !root.contains("entities")) {
+    // 外部エディタで壊れた文書は触る前に弾く (途中で例外になると差分が半分だけ当たる)
+    std::string why;
+    if (!ValidateDocument(root, why)) {
+        MYE_LOG_ERROR("[reload] scene diff rejected: %s", why.c_str());
         return false;
     }
     World& world = scene.GetWorld();
@@ -469,19 +558,24 @@ bool ApplyDiff(Scene& scene, const json& root)
         });
     }
 
-    const json& items = root["entities"];
-    std::unordered_map<uint64_t, const json*> incoming;
-    for (const json& item : items) {
+    // ★以降は**ファイルの配列順** (= DFS 兄弟順) で回す。unordered_map の反復順で生成すると、
+    //   新規エンティティの生成順 (ルートの兄弟順 / EntityID の払い出し) が通常ロードと食い違う。
+    //   fileId の重複は ValidateDocument が弾いている
+    std::vector<const json*> ordered;
+    std::unordered_set<uint64_t> incoming;
+    for (const json& item : root["entities"]) {
         const uint64_t fid = item.value("fileId", 0ull);
         if (fid != 0) {
-            incoming[fid] = &item;
+            ordered.push_back(&item);
+            incoming.insert(fid);
         }
     }
 
     int created = 0, updated = 0, destroyed = 0;
 
     // 1) 新規生成
-    for (const auto& [fid, item] : incoming) {
+    for (const json* item : ordered) {
+        const uint64_t fid = item->value("fileId", 0ull);
         if (!existing.contains(fid)) {
             GameObject obj = scene.CreateGameObject(item->value("name", std::string("entity")));
             obj.AddComponent<FileIdComponent>()->value = fid;
@@ -499,8 +593,9 @@ bool ApplyDiff(Scene& scene, const json& root)
     };
 
     // 2) 更新 (名前 / コンポーネント追加・更新・除去。EntityRef は fileId で解決)
-    for (const auto& [fid, itemPtr] : incoming) {
+    for (const json* itemPtr : ordered) {
         const json& item = *itemPtr;
+        const uint64_t fid = item.value("fileId", 0ull);
         const EntityID e = existing[fid];
         if (!world.IsAlive(e)) {
             continue;
@@ -511,22 +606,29 @@ bool ApplyDiff(Scene& scene, const json& root)
         ++updated;
     }
 
-    // 3) ファイルから消えたものは破棄
+    // 3) ファイルから消えたものは破棄。★fileId 昇順 — 破棄の順番が空きスロットの再利用順になる
+    std::vector<uint64_t> gone;
     for (const auto& [fid, e] : existing) {
         if (!incoming.contains(fid)) {
-            world.DestroyEntity(e);
-            ++destroyed;
+            gone.push_back(fid);
         }
     }
+    std::sort(gone.begin(), gone.end());
+    for (uint64_t fid : gone) {
+        world.DestroyEntity(existing[fid]);
+        ++destroyed;
+    }
 
-    // 4) 親子関係
-    for (const auto& [fid, itemPtr] : incoming) {
-        const EntityID child = existing[fid];
-        const uint64_t parentFid = itemPtr->value("parent", 0ull);
-        const EntityID parent = toEntity(parentFid);
+    // 4) 親子関係 + 兄弟位置。★親が変わらない子にも childIndex を当てる — 同じ親の中で並べ替えただけの
+    //    変更はここでしか反映されない。配列順 = 兄弟の中では childIndex 昇順なので、
+    //    前から順に差し込めば並びが揃う (ApplyPartial と同じ)
+    for (const json* itemPtr : ordered) {
+        const EntityID child = existing[itemPtr->value("fileId", 0ull)];
+        const EntityID parent = toEntity(itemPtr->value("parent", 0ull));
         if (world.GetParent(child) != parent) {
             world.SetParent(child, parent);
         }
+        world.SetSiblingIndex(child, itemPtr->value("childIndex", 0xFFFFFFFFu));
     }
 
     world.ApplyStructuralChanges();
@@ -727,13 +829,13 @@ std::vector<uint64_t> CloneSubtree(Scene& scene, const json& subtree)
 bool SaveToFile(Scene& scene, const std::wstring& path)
 {
     const json root = SaveToJson(scene);
-    std::ofstream f(std::filesystem::path(path), std::ios::binary);
-    if (!f) {
-        MYE_LOG_ERROR("scene save: cannot open %s", WideToUtf8(path).c_str());
+    const std::string text = root.dump(2);
+    // ★直接開くと既存の中身がその場で切り詰められ、書き込みが途中で失敗すると前の保存も失う。
+    //   false を返せば、エディタは保存済みの基準を更新せず dirty のまま残す
+    if (!WriteFileReplacing(path, text)) {
+        MYE_LOG_ERROR("scene save: cannot write %s", WideToUtf8(path).c_str());
         return false;
     }
-    const std::string text = root.dump(2);
-    f.write(text.data(), static_cast<std::streamsize>(text.size()));
     scene.SetSourcePath(path); // M51g: SaveGame の「現シーンパス」記録用
     MYE_LOG_INFO("scene saved: %s (%zu entities)", WideToUtf8(path).c_str(), root["entities"].size());
     return true;
@@ -753,7 +855,14 @@ bool LoadFromFile(Scene& scene, const std::wstring& path)
         MYE_LOG_ERROR("scene parse failed: %s (%s)", WideToUtf8(path).c_str(), ex.what());
         return false;
     }
-    const bool ok = LoadFromJson(scene, root);
+    bool ok = false;
+    try {
+        ok = LoadFromJson(scene, root);
+    } catch (const json::exception& ex) {
+        // 事前検査をすり抜けた型不一致。落とさずに「開けなかった」として返す
+        MYE_LOG_ERROR("scene apply failed: %s (%s)", WideToUtf8(path).c_str(), ex.what());
+        return false;
+    }
     if (ok) {
         scene.SetSourcePath(path); // M51g: SaveGame の「現シーンパス」記録用
         MYE_LOG_INFO("scene loaded: %s (%u entities)", WideToUtf8(path).c_str(),

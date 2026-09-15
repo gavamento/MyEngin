@@ -1784,14 +1784,16 @@ bool EditorApp::OpenScene(EngineContext& ctx)
 // ファイルダイアログを経ない共通ロード経路 (OpenScene と AssetBrowser ダブルクリックが使う)
 bool EditorApp::LoadSceneFromPath(EngineContext& ctx, const std::wstring& path)
 {
-    selection_.Clear();
-    undo_.ClearAll();
+    // ★選択と Undo はロードに成功してから捨てる。不正なファイルなら LoadFromFile はシーンに触らずに
+    //   false を返すので、失敗したときは今の編集をそのまま続けられる
     if (!SceneSerializer::LoadFromFile(*ctx.scene, path)) {
         toasts_.Notify(LogLevel::Error,
                        "シーンを開けませんでした: "
                            + WideToUtf8(std::filesystem::path(path).filename().wstring()));
         return false;
     }
+    selection_.Clear();
+    undo_.ClearAll();
     Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs); // ロード直後 1 回 (M48e)
     scenePath_ = path;
     ctx.reloadHub->SetActiveScenePath(scenePath_);
