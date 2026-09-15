@@ -272,6 +272,12 @@ void AgentSystem::Update(World& world, AcousticField& field, uint64_t tick, floa
             a.eye->nearestStrength = 0.0f;
             const float r2 = a.eye->attractRadius * a.eye->attractRadius;
             for (const LightSample& s : lights) {
+                // safeRadius を持つ光はビーコン / 開始地点の安全地帯。航法から除外して
+                // 敵を追い出す対象であり、誘引にも使うと外周で
+                // chase -> search -> return -> chase を永久に繰り返してしまう。
+                if (s.safeRadius > 0.0f) {
+                    continue;
+                }
                 if (s.intensity < a.eye->minIntensity) {
                     continue;
                 }

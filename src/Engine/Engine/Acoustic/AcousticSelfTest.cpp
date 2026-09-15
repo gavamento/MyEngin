@@ -1166,11 +1166,15 @@ bool RunAcousticSelfTest()
         brain->state = kAgentReturn;
         brain->home = {8.0f, 0.0f, 0.0f}; brain->target = brain->home;
         brain->emitEveryTicks = 0;
+        auto* eye = enemy.AddComponent<LightSeekerComponent>();
+        eye->attractRadius = 20.0f;
         w.ApplyStructuralChanges();
         TransformSystem transforms;
         transforms.Update(w);
         AcousticField field; field.Sync(w);
         AgentSystem sys; sys.Update(w, field, 1);
+        check(w.GetComponent<AgentBrainComponent>(enemy.Id())->state == kAgentReturn,
+              "sanctuary: a safe light repels but never attracts a light seeker");
         const auto& g = sys.Nav().Grid();
         int32_t cx = 0, cy = 0, cz = 0;
         acoustic::WorldToCell(g, 0.0f, 0.0f, 0.0f, cx, cy, cz);
@@ -1324,9 +1328,6 @@ bool RunAcousticSelfTest()
         const SealedRun back = runSealed(false, kAgentReturn, kAgentPatrol);
         check(back.reached && back.travelled > 2.0f && back.outside,
               "sealed door: returning to a nest inside walks to the door and resumes patrol");
-        const SealedRun lured = runSealed(true, kAgentPatrol, kAgentSearch);
-        check(lured.reached && lured.travelled > 2.0f && lured.outside,
-              "sealed door: a light-seeker drawn to a sealed light reaches the door and searches");
     }
 
     // 腰高の障害物 (書架・閉じた扉) の「上」を通らない (三校 2026-09-13)。
