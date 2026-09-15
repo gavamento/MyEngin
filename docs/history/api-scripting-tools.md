@@ -17,6 +17,7 @@
 - (v15 / M64a) マウスルック 2 本。GameEngin_Demo のドッグフーディングで「一人称の視点をマウスで回せない」ことが分かって足した穴埋め。InputSnapshot は絶対座標しか持たず、カーソルを画面内へ留める手段も無かったので、窓の端で視点が止まっていた。GetMouseDelta (決定論レーン = InputSnapshot 由来) と SetCursorMode (出力レーン = SetPadVibration と同格) を対で開通し、この非対称に意味を持たせた: デルタは .rep に載る sim 入力、カーソルの掴みは載せてはいけない機種依存の副作用で、後者を sim から読み返す口は作らない。
 - (v16 / M70c) UI の対話 (UIButtonState / UIGetFocused / UISetFocused / MouseCanvasPos / GetUIRect) + LoadPersist。版履歴のコメントにはこの版の行が抜けていた。
 - (v17 / M71a) GetSceneName 1 本。シーン遷移 (v3 LoadScene) は M19.4 から動いていたが、スクリプトが「今どのシーンに居るか」を知る口が無く、遷移先を決める材料が常にスクリプト側の外部知識だった (三校のステージ進行で詰まった)。返すのをパスではなく sceneName にしたのは、SourcePath() が assets ルート込みの絶対パスでチェックアウト先ごとに変わるため。これに伴い Scene::name_ が sim の分岐に使う状態へ昇格したので、SimSnapshot v15 で撮る対象に加えた (載せないとタイムトラベルと .rep 埋め込みスナップショットで名前だけ古いまま復元される)。
+- (v18 / 2026-09-15) IsDevelopmentRun 1 本。三校で、全体照明 (F3 / パッド Back) や視点の切り替えといったデバッグ操作が、書き出した exe でもそのまま効いていた。GameLogic.dll はエディタと配布物で同じ 1 本で、`#ifdef _DEBUG` でのロジック分岐は決定論の規則で禁止なので、実行時の値にした。判定は他の二経路と同じ projectRoot の有無 (Runtime だけが引数を読み終えてから決める。Editor は常に 1)。プロセスの定数で sim 状態ではないので .rep / SimSnapshot には載せていない。載せる案は .rep の版上げを伴うので見送り、配布物で記録した .rep は配布物の Runtime (--project 無し) で検証する、と注記した。M75 の計画が v18 を予約していたが M75h は未着手だったので、そちらを v19 へ繰り下げた。
 
 ## src/Shared/EngineAPI.h / ScriptAPI.h / src/GameLogic/Scripts/UIButtonDemo.cpp — UI の対話をエンジンへ寄せた (M70c)
 - M70b までは「押されたか」がエンジン内 (UIRenderer のハイライト計算) にしか無く、ゲーム側は UIElement と同じ矩形をスクリプトに手書きして自前でヒットテストしていた。UIButtonDemo も btnX/btnY/btnW/btnH の 4 フィールドで矩形を二重に持っていた。

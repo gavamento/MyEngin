@@ -29,7 +29,8 @@
 // v15 (M64a): マウスルック GetMouseDelta / SetCursorMode
 // v16 (M70c): UI の対話 UIButtonState / UIGetFocused / UISetFocused / MouseCanvasPos / GetUIRect + LoadPersist
 // v17 (M71a): GetSceneName
-#define MYE_API_VERSION 17u
+// v18: IsDevelopmentRun (デバッグ機能を配布物で閉じる)
+#define MYE_API_VERSION 18u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -549,6 +550,16 @@ struct MyeEngineApi {
     //   ★名前は sim 状態 (SimSnapshot v15 で往復する) なので、記録/検証・タイムトラベル・
     //     ロールバックのいずれでも同じ tick で同じ値が返る = 登録フィールドへ書き戻してよい
     int32_t (*GetSceneName)(void* engine, char* buf, int32_t cap);
+
+    // ---- v18: 開発中の実行か ----
+    // IsDevelopmentRun: エディタ / --project 付きの Runtime なら 1、配布物 (--project 無しの Runtime) なら 0。
+    //   ゲームがデバッグ操作 (照明の切り替え・検証用の自動操作など) を配布物で閉じるための口。
+    //   ★ビルド構成のマクロで分けないのは、GameLogic.dll がエディタと配布物で同じ 1 本で、
+    //     構成マクロでのロジック分岐は決定論の規則 1 で禁止されているため
+    //   ★値はプロセスの起動方法で決まる定数で、**sim 状態ではない** (.rep にも SimSnapshot にも載らない)。
+    //     記録と検証は同じ起動方法で走らせること — 配布物で記録した .rep (crash.rep など) を --project 付きで
+    //     検証すると、配布物では無視されたデバッグ入力が効いてその tick で割れる
+    int32_t (*IsDevelopmentRun)(void* engine);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

@@ -712,6 +712,14 @@ inline int32_t MyeGetSceneName(const MyeUpdateContext& ctx, char* buf, int32_t c
     return ctx.api->GetSceneName(ctx.api->engine, buf, cap);
 }
 
+// ---- v18: 開発中の実行か ----
+// エディタ / --project 付きの Runtime で true、配布物 (--project 無しの Runtime) で false。
+// ★デバッグ操作を配布物で閉じるための口。記録と検証は同じ起動方法で走らせる (EngineAPI.h の v18 の注記)
+inline bool MyeIsDevelopmentRun(const MyeUpdateContext& ctx)
+{
+    return ctx.api->IsDevelopmentRun(ctx.api->engine) != 0;
+}
+
 // ---- v12 (M51h): 入力アクション / UI 拡張 / ゲームフロー / パッド振動 ----
 
 inline int32_t MyeGetMouseWheel(const MyeUpdateContext& ctx)

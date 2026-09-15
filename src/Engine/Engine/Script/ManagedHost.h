@@ -3,6 +3,7 @@
 #include <deque>
 #include <set>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "Engine/Core/EntityID.h"
@@ -83,13 +84,21 @@ public:
         apiCtx_.cursorLock = cursorLock; // v15 (M64a)。null = 該当スロットが no-op
     }
 
+    // v18: 開発中の実行か (ScriptHost と同じ規約)
+    void SetDevelopmentRun(bool on) { apiCtx_.developmentRun = on ? 1 : 0; }
+
     // v14 (M59k): 今 tick の接触列を繋ぐ / 外す (ScriptHost と同じ規約)
     void SetTickContacts(const std::vector<SolidContact>* contacts) { apiCtx_.contacts = contacts; }
 
-    // シーン遷移 (M19.4): C# インスタンス handle をリセットして新シーンで再生成させる (非ハッシュ)
+    // シーン遷移 (M19.4): C# インスタンスを managed 側の辞書ごと捨て、handle を 0 にして新シーンで再生成させる (非ハッシュ)。
+    // ★ResetInstances を呼ばないと、旧シーンのインスタンスが辞書に残り続ける。
+    //   ホットリロード (CompileScripts) はここを通らない — managed の Compile がフィールドを退避してから辞書を空にする
     void OnSceneReloaded()
     {
         if (ready_) {
+            if (vt_.ResetInstances != nullptr) {
+                vt_.ResetInstances();
+            }
             ResetHandles();
         }
     }
@@ -127,6 +136,9 @@ private:
     void RunPhase(Phase phase);
     void RegisterTypes(); // Compile 後に呼ぶ
     void ResetHandles();  // 全 C# コンポーネントの handle を 0 に (リロード後の再生成用)
+    // どの C# コンポーネントからも参照されなくなったインスタンスを managed 側から消す
+    // (コンポーネント除去 / エンティティ破棄の後始末)。フェーズ 3 の頭で呼ぶ
+    void ReleaseOrphanInstances();
 
     struct CsType {
         std::string name; // C# 型の FullName (エンジン側コピー)
@@ -146,6 +158,9 @@ private:
     MyeManagedVTable vt_ = {};
     std::deque<CsType> types_;              // deque: name の c_str() 安定性のため
     std::set<ScriptStartedKey> started_;    // Start 済みインスタンス (エンティティ + スクリプト型)
+    // native が CreateInstance で作り、まだ DestroyInstance していない handle。
+    // ★カラムに残っていてもここに無い handle は破棄済み (スナップショット復元で戻った値など) = 作り直す
+    std::unordered_set<int32_t> liveHandles_;
     InputSnapshot input_ = {};
     uint64_t tickIndex_ = 0;
     float dt_ = 1.0f / 60.0f;

@@ -120,6 +120,9 @@ struct ScriptApiContext {
     //   tick 番号の比較ではなく**ポインタの有無**で表すのは、
     //   「巻き戻し先の tick 番号がたまたま一致する」経路を構造的に消すため
     const std::vector<SolidContact>* contacts = nullptr;
+    // v18: 開発中の実行か (EngineConfig::developmentRun を起動時に 1 回写す)。1 = エディタ / --project 付きの
+    // Runtime、0 = 配布物。既定 1 = selftest が組むテーブルは開発中として振る舞う
+    int32_t developmentRun = 1;
 };
 
 // out に MyeEngineApi (engine = ctx) を構築する。ctx の生存は呼び出し側が管理する。

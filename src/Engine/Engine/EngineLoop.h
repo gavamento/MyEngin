@@ -208,6 +208,12 @@ struct EngineConfig {
     // 非空 = <projectRoot>\assets をアセットルートにする (--project で注入)
     std::wstring projectRoot;
 
+    // ---- 開発中の実行か (ABI v18 IsDevelopmentRun) ----
+    // true = エディタ / --project 付きの Runtime、false = 配布物 (--project 無しの Runtime)。
+    // Editor は既定の true のまま。Runtime は引数を読み終えてから projectRoot の有無で上書きする
+    // (判定を他の二経路と同じ projectRoot に揃える)
+    bool developmentRun = true;
+
     // ---- リプレイ一貫性検証 (engine_spec.md 11.3) ----
     std::wstring replayRecordPath; // 空でなければ記録モード (replayTicks 分記録して終了)
     std::wstring replayVerifyPath; // 空でなければ検証モード (全 tick 照合、exit code 0/1)

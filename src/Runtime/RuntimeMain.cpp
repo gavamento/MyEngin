@@ -153,6 +153,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         }
         LocalFree(argv);
     }
+    // ABI v18 IsDevelopmentRun: --project 付き = 開発中 (verify.bat のヘッドレス検証もここ)、無し = 配布物。
+    // 引数を全部読んでから決める (--project の位置に依らない)
+    config.developmentRun = !config.projectRoot.empty();
 
     // --crash-test の綴り違いを黙って無視しない (M52f)。
     // 「落とすつもりで走らせたのに何も起きない」を 1 時間追いかける事故を潰す

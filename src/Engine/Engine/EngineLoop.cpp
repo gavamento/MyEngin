@@ -406,6 +406,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                                   &audioHandleSeq, &inputActions, &pendingSaveSlot,
                                   &pendingLoadSlot, &padVibration, &netInfo, &cursorLock,
                                   &pendingLoadPersistSlot);
+    // v18: 開発中の実行か。プロセスの定数なので起動時に 1 回だけ渡す (sim 状態ではない = .rep に載らない)
+    scriptHost.SetDevelopmentRun(config.developmentRun);
+    managedHost.SetDevelopmentRun(config.developmentRun);
 
     clock.Init();
 
@@ -451,6 +454,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // M25: ジョブシステム起動 (min(16, cores-2) ワーカー)。--no-jobs で直列化。
     jobs::System().Init();
+    // ★以降の early return (.rep の読み込み・復元の失敗など) でもワーカーを必ず join する。
+    //   join しないまま抜けると、プロセス終了で std::thread のデストラクタが std::terminate を呼び、
+    //   「.rep が読めない」だけの失敗が異常終了になる。通常の終了経路は下の Shutdown 群が先に呼ぶので、
+    //   ここは 2 回目 = 何もしない (Shutdown は冪等)
+    struct JobSystemScope {
+        ~JobSystemScope() { jobs::System().Shutdown(); }
+    } jobSystemScope;
     jobs::System().SetEnabled(config.useJobs);
     MYE_LOG_INFO("[jobs] %s (%d workers)", config.useJobs ? "enabled" : "disabled (serial)",
                  jobs::System().WorkerCount());

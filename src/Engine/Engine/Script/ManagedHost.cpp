@@ -1,6 +1,7 @@
 #include "Engine/Engine/Script/ManagedHost.h"
 
 #include <filesystem>
+#include <optional>
 
 #include <Windows.h>
 
@@ -25,8 +26,9 @@ hostfxr_initialize_for_runtime_config_fn g_init = nullptr;
 hostfxr_get_runtime_delegate_fn g_getDelegate = nullptr;
 hostfxr_close_fn g_close = nullptr;
 
-// MyeFieldType (managed から届く int) → エンジンの FieldType
-FieldType ToFieldType(int32_t t)
+// MyeFieldType (managed から届く int) → エンジンの FieldType。公開していない番号は nullopt
+// (黙って Float に落とすと、Inspector がそのフィールドを 4 バイトの float として読み書きする)
+std::optional<FieldType> ToFieldType(int32_t t)
 {
     switch (t) {
     case 0: return FieldType::Float;
@@ -40,8 +42,12 @@ FieldType ToFieldType(int32_t t)
     case 8: return FieldType::Quat;
     case 9: return FieldType::Color;
     case 10: return FieldType::EntityRef;
+    case 11: return FieldType::AssetRef;
+    case 12: return FieldType::String64;
+    case 13: return FieldType::Float4x4;
+    case 14: return FieldType::String256;
     }
-    return FieldType::Float;
+    return std::nullopt;
 }
 
 // native → managed の起動引数 (Interop.cs の BootstrapArgs と一致)
@@ -194,25 +200,41 @@ void ManagedHost::RegisterTypes()
         }
 
         CsType* type = FindType(name);
-        const bool isNew = (type == nullptr);
-        if (isNew) {
+        if (type == nullptr) {
             types_.push_back({});
             type = &types_.back();
             type->name = name; // deque → c_str 安定
         }
-        type->managedIndex = i;
 
         // フィールドメタデータをキャッシュ (Inspector 用)
         type->fields.clear();
         const int32_t fc = vt_.GetFieldCount(i);
+        bool fieldsSupported = true;
         for (int32_t f = 0; f < fc; ++f) {
             char fname[128] = {};
             int32_t ftype = 0;
             vt_.GetFieldInfo(i, f, fname, sizeof(fname), &ftype);
-            type->fields.push_back({ std::string(fname), ToFieldType(ftype) });
+            const std::optional<FieldType> ft = ToFieldType(ftype);
+            if (!ft) {
+                MYE_LOG_ERROR("[csharp] script '%s' field '%s' has unsupported type %d - script disabled",
+                              type->name.c_str(), fname, static_cast<int>(ftype));
+                fieldsSupported = false;
+                break;
+            }
+            type->fields.push_back({ std::string(fname), *ft });
         }
+        if (!fieldsSupported) {
+            // ★型ごと使わない。フィールドの添字は managed 側の並びそのままなので、
+            //   1 本だけ飛ばすと以降の GetFieldValue が隣のフィールドを読む
+            type->fields.clear();
+            type->managedIndex = -1;
+            continue;
+        }
+        type->managedIndex = i;
 
-        if (isNew) {
+        // ★「新しい型か」ではなく「コンポーネント未登録か」で見る — 型が不正で見送った回の
+        //   次のコンパイルで直っていたら、ここで初めて登録する
+        if (type->componentId == kInvalidComponentType) {
             // ECS カラムは handle (int32) のみ。実フィールドは managed オブジェクトが保持。
             ComponentDesc cd;
             cd.name = type->name.c_str();
@@ -247,6 +269,41 @@ void ManagedHost::ResetHandles()
         });
     }
     started_.clear();
+    liveHandles_.clear(); // handle が全部 0 = native が参照するインスタンスは 1 つも無い
+}
+
+// ★コンポーネント除去 / エンティティ破棄に World からの通知は無いので、カラムの handle を数えて突き合わせる。
+//   C# レーンはハッシュ対象外なので、破棄の順序 (unordered_set の走査順) が結果を変えることは無い
+void ManagedHost::ReleaseOrphanInstances()
+{
+    if (liveHandles_.empty() || vt_.DestroyInstance == nullptr) {
+        return;
+    }
+    World& world = scene_->GetWorld();
+    std::unordered_set<int32_t> referenced;
+    for (CsType& type : types_) {
+        if (type.componentId == kInvalidComponentType) {
+            continue;
+        }
+        const ComponentTypeId req[] = { type.componentId };
+        world.ForEachArchetype(req, [&](Archetype& arch) {
+            const int ci = arch.FindTypeIndex(type.componentId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const int32_t handle = *static_cast<int32_t*>(arch.GetPtr(ci, row));
+                if (handle != 0) {
+                    referenced.insert(handle);
+                }
+            }
+        });
+    }
+    for (auto it = liveHandles_.begin(); it != liveHandles_.end();) {
+        if (referenced.contains(*it)) {
+            ++it;
+            continue;
+        }
+        vt_.DestroyInstance(*it);
+        it = liveHandles_.erase(it);
+    }
 }
 
 bool ManagedHost::CompileScripts(const std::wstring& scriptsDir)
@@ -281,6 +338,9 @@ void ManagedHost::RunPhase(Phase phase)
         return;
     }
     World& world = scene_->GetWorld();
+    if (phase == Phase::StartAndUpdate) {
+        ReleaseOrphanInstances(); // 前 tick までに外れた / 消えたコンポーネントの分
+    }
     for (CsType& type : types_) { // 登録順 (安定順序)
         if (type.componentId == kInvalidComponentType || type.managedIndex < 0) {
             continue;
@@ -295,12 +355,14 @@ void ManagedHost::RunPhase(Phase phase)
                     continue;
                 }
                 int32_t* handle = static_cast<int32_t*>(arch.GetPtr(ci, row));
-                if (*handle == 0) {
-                    // Add Component / シーンロードで付いた分をここでインスタンス化
+                if (*handle == 0 || !liveHandles_.contains(*handle)) {
+                    // Add Component / シーンロードで付いた分をここでインスタンス化。
+                    // ★破棄済みの handle (スナップショット復元でカラムに戻った値) も作り直す
                     *handle = vt_.CreateInstance(type.managedIndex, ToShared(e));
                     if (*handle == 0) {
                         continue;
                     }
+                    liveHandles_.insert(*handle);
                 }
                 if (phase == Phase::StartAndUpdate) {
                     const ScriptStartedKey key = MakeScriptStartedKey(e, type.componentId);
@@ -383,7 +445,7 @@ int32_t ManagedHost::EnsureInstance(ComponentTypeId t, EntityID e, void* payload
         return 0;
     }
     int32_t* h = static_cast<int32_t*>(payload);
-    if (*h != 0) {
+    if (*h != 0 && liveHandles_.contains(*h)) {
         return *h;
     }
     const CsType* c = FindByComponent(t);
@@ -391,6 +453,9 @@ int32_t ManagedHost::EnsureInstance(ComponentTypeId t, EntityID e, void* payload
         return 0;
     }
     *h = vt_.CreateInstance(c->managedIndex, ToShared(e));
+    if (*h != 0) {
+        liveHandles_.insert(*h);
+    }
     return *h;
 }
 

@@ -43,7 +43,7 @@ uint32_t Archetype::AddRow(EntityID e)
     for (size_t i = 0; i < types_.size(); ++i) {
         columns_[i].resize(columns_[i].size() + sizes_[i]);
         void* dst = columns_[i].data() + static_cast<size_t>(row) * sizes_[i];
-        reg.Desc(types_[i]).construct(dst);
+        ConstructComponent(reg.Desc(types_[i]), dst);
     }
     return row;
 }

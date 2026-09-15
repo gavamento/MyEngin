@@ -88,8 +88,28 @@ void* World::AddComponentRaw(EntityID e, ComponentTypeId t)
         MYE_LOG_WARN("AddComponent on dead entity (%u:%u)", e.index, e.generation);
         return nullptr;
     }
-    if (void* existing = GetComponentRaw(e, t)) {
-        return existing; // 既に所持
+    // イテレーション中は未適用のコマンドまで含めた「tick 末の姿」で判断する。
+    // ★実体だけを見ると、同じ tick の Remove → Add で「まだ付いている」と既存を返して Add を積まず、
+    //   tick 末に Remove だけが適用されて外れたまま終わる。Add → Add は最初の Add の初期値を返す
+    //   (2 つ積むと、後の Add の既定値が先に書いた値を上書きする)
+    const Command* pending = nullptr;
+    if (IsIterating()) {
+        for (auto it = commands_.rbegin(); it != commands_.rend(); ++it) {
+            if (it->entity == e && it->component == t
+                && (it->type == CmdType::AddComponent || it->type == CmdType::RemoveComponent)) {
+                pending = &*it;
+                break;
+            }
+        }
+    }
+    if (pending != nullptr && pending->type == CmdType::AddComponent
+        && pending->payloadIndex < cmdPayloads_.size()) {
+        return cmdPayloads_[pending->payloadIndex].get();
+    }
+    if (pending == nullptr) {
+        if (void* existing = GetComponentRaw(e, t)) {
+            return existing; // 既に所持
+        }
     }
     if (!IsIterating()) {
         return AddComponentImmediate(e, t);
@@ -97,7 +117,7 @@ void* World::AddComponentRaw(EntityID e, ComponentTypeId t)
     // イテレーション中: scratch にデフォルト値を作って返し、tick 末に実体へコピー
     const ComponentDesc& desc = ComponentRegistry::Get().Desc(t);
     auto payload = std::make_unique<std::byte[]>(desc.size);
-    desc.construct(payload.get());
+    ConstructComponent(desc, payload.get());
     void* scratch = payload.get();
 
     Command c = {};
@@ -523,7 +543,7 @@ void World::ReplaceComponentStorage(ComponentTypeId t, ComponentDesc newDesc)
         std::vector<std::byte> fresh(static_cast<size_t>(count) * newDesc.size);
         for (uint32_t row = 0; row < count; ++row) {
             std::byte* dst = fresh.data() + static_cast<size_t>(row) * newDesc.size;
-            newDesc.construct(dst);
+            ConstructComponent(newDesc, dst);
             const auto* src = static_cast<const std::byte*>(arch->GetPtr(ti, row));
             // 名前と型が一致するフィールドのみ引き継ぐ (spec 8.4 の状態保存規則)
             for (const FieldDesc& nf : newDesc.fields) {

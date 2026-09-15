@@ -174,8 +174,8 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 17u,
-              "abi: the table reports v17");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 18u,
+              "abi: the table reports v18");
         check(api.FindPart != nullptr && api.FindPartsByTag != nullptr,
               "abi: the v9 part slots are filled in");
         check(api.RaycastParts != nullptr, "abi: the v10 RaycastParts slot is filled in");
@@ -257,6 +257,14 @@ bool RunPartSelfTest()
                   "abi: GetSceneName measures without writing when there is no room");
             scene.SetName("Untitled"); // 後続の試験に名前を持ち越さない
         }
+        // v18: 開発中の実行か。既定 (エディタ / --project 付き) は 1、配布物の配線で 0。
+        // 値はテーブル構築時に焼かず、呼ぶたびにコンテキストから読むこと (起動後に SetDevelopmentRun が写すため)
+        check(api.IsDevelopmentRun != nullptr && api.IsDevelopmentRun(api.engine) == 1,
+              "abi: IsDevelopmentRun defaults to 1 (editor / --project)");
+        apiCtx.developmentRun = 0;
+        check(api.IsDevelopmentRun(api.engine) == 0,
+              "abi: IsDevelopmentRun reports 0 once the host is wired as a packaged run");
+        apiCtx.developmentRun = 1;
         check(api.GetMouseWheel != nullptr && api.SetUIRect != nullptr
                   && api.SetUILayout != nullptr && api.SetUITexture != nullptr
                   && api.UIHitTest != nullptr && api.GetActionState != nullptr

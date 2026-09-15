@@ -78,8 +78,9 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
 - Dropdown の展開リストは**常設の子** (`list`)。`expanded==0` のとき Renderer/HitTest/FocusNav が純規則 `IsUiHidden(e)` で飛ばす (tick 内 Spawn/Destroy 不要)。展開中は描画/ヒットのキーに `+10000` の order バンプ (両側同じ規則)。
 - InputField: `text` は WorldHasher が 256B 全部畳むので**エンジン側の編集でも `ZeroStringTail` 規約** (`InspectorWindow.cpp:265-272` の罠)。表示は `textGraphic` の `UIElement.text` へ毎 tick ミラー (focused ミラーと同型。スクリプトが SetUIText で書いても次 tick で戻る、と spec に書く)。Backspace/Delete/←/→/Home/End は keys のエッジ、リピートは `repeatTicks` (30 tick 待ち → 3 tick 刻み)。キャレット位置は D の Measure で決める。
 
-### G. ABI v18 (M75h、1 回)
-- 12 スロット追加 (111 → 123、`check_rules.ps1` の `$apiVersionSlots` に `18 = 123`): `SetRectTransform(id, const MyeRectTransform*)` / `SetToggle` / `GetToggle` (-1 = 非所持) / `SetSlider` / `GetSlider` / `SetScroll` / `GetScroll` / `SetDropdown` / `GetDropdown` / `SetInputText` / `GetInputText(id, buf, cap)` (GetSceneName 規約) / `SetInteractable`。`UIButtonState` に bit4 `kDragging` / bit5 `kValueChanged` (スロット不変)。
+### G. ABI v19 (M75h、1 回)
+- (2026-09-15: v18 は M75 の外で IsDevelopmentRun 1 本が使ったので、ここは v19 へ繰り下げ)
+- 12 スロット追加 (112 → 124、`check_rules.ps1` の `$apiVersionSlots` に `19 = 124`): `SetRectTransform(id, const MyeRectTransform*)` / `SetToggle` / `GetToggle` (-1 = 非所持) / `SetSlider` / `GetSlider` / `SetScroll` / `GetScroll` / `SetDropdown` / `GetDropdown` / `SetInputText` / `GetInputText(id, buf, cap)` (GetSceneName 規約) / `SetInteractable`。`UIButtonState` に bit4 `kDragging` / bit5 `kValueChanged` (スロット不変)。
 - 線引き: ハッシュ対象のウィジェット状態は**読める** (Get 5 本は C# へも公開)。UIElement/RectTransform/Selectable の見た目は write-only のまま (GetRectTransform は作らない)。**C# からは Set* を全部閉じる** (`MyeScript.cs:83-93` の SetUIRect と同じ理由)。`Interop.cs` は位置ミラーなので 12 本並べる。外部プロジェクト (HAL Collector) は Rebuild Scripts が要る。
 
 ### H. Rect Tool (M75i)
@@ -98,7 +99,7 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
 | **M75e** | Layout Group / LayoutElement / ContentSizeFitter + `LayoutScratch` | — | `ui_widgets` 更新 |
 | **M75f** | Selectable + Toggle + Slider + バブリング + `changed` + replay 8 ペア目 `--ui-demo` (決定論の入力台本) | — | `ui_widgets` 更新 |
 | **M75g** | ScrollRect + Dropdown + `IsUiHidden` | — | `ui_widgets` 更新 |
-| **M75h** | InputField + ABI v18 (12 本) + C# ミラー + `UiWidgetsDemo.cpp` | ABI 17→18 | `ui_widgets` 更新 |
+| **M75h** | InputField + ABI v19 (12 本) + C# ミラー + `UiWidgetsDemo.cpp` | ABI 18→19 | `ui_widgets` 更新 |
 | **M75i** | Rect Tool + GameView → サーフェス換算 (**M75a 以降なら並列 worktree 可**) | — | 不変 |
 | **M75j** | `--ui-demo` 最終形 (`ui_widgets` / `ui_widgets_16x10`) / engine_spec §6.11-6.15 / ADR-020 / README / CLAUDE.md / dogfooding.md | — | 確定 |
 
@@ -120,7 +121,7 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
 `Editor/Windows/GameViewWindow.h/.cpp` (Rect Tool トグル、`gameSurface` 書き込み、ハンドル描画/操作) / `Engine/EngineLoop.h` (`EngineContext.gameSurface`) / `UI/UILayout.h/.cpp` (`SurfaceToCanvas/CanvasToSurface`、`RectToTransform`) / `LocalizationTable.inl` / `EditorSettings`。テスト: 往復 (全アンカー種別 × pivot)。エディタ操作は一時プローブ + `--screenshot` で絵を撮って確認 (ImGui は backbuffer に載る)。
 
 ### M75j — 文書
-`engine_spec.md` (§6.11 追記: サーフェス記録・3 モード・project_settings・複数キャンバス / §6.12 追記: バブリング・drag・changed・Cancel / §6.13 RectTransform と自動レイアウト / §6.14 ウィジェットと InputField / §6.15 Rect Tool / §11.3 .rep v8 / ABI 表 v18 / §12.3 の UI スケール項を消す) / `docs/adr/ADR-020-ui-layout-determinism.md` (純関数+メモ vs 駆動、計測表アセット + 固定 fallback、y 下向き、サーフェス記録、ConstantPixelSize 非採用、兄弟順キー、状態の別コンポーネント化、C# の閉じ方) / `README.md` / `CLAUDE.md` (末尾 TypeId 61、Cloth/SoftBody 62/63、CLI 一覧に `--cook-font-metrics` (M75d)、「フォントを差し替えたら計測表を cook してコミット」、検証表の枚数・ペア数、ABI v18=123、「UI コンポーネントを足す」チェックリスト = UiAux) / `docs/dogfooding.md` (HAL Collector: 初回ロードで v4 化、Rebuild Scripts、fontmetrics の cook)。
+`engine_spec.md` (§6.11 追記: サーフェス記録・3 モード・project_settings・複数キャンバス / §6.12 追記: バブリング・drag・changed・Cancel / §6.13 RectTransform と自動レイアウト / §6.14 ウィジェットと InputField / §6.15 Rect Tool / §11.3 .rep v8 / ABI 表 v19 / §12.3 の UI スケール項を消す) / `docs/adr/ADR-020-ui-layout-determinism.md` (純関数+メモ vs 駆動、計測表アセット + 固定 fallback、y 下向き、サーフェス記録、ConstantPixelSize 非採用、兄弟順キー、状態の別コンポーネント化、C# の閉じ方) / `README.md` / `CLAUDE.md` (末尾 TypeId 61、Cloth/SoftBody 62/63、CLI 一覧に `--cook-font-metrics` (M75d)、「フォントを差し替えたら計測表を cook してコミット」、検証表の枚数・ペア数、ABI v19=124、「UI コンポーネントを足す」チェックリスト = UiAux) / `docs/dogfooding.md` (HAL Collector: 初回ロードで v4 化、Rebuild Scripts、fontmetrics の cook)。
 
 ## 申し送り (計画外の事実)
 
@@ -155,7 +156,7 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
   1 フレームで 2 tick 回ると 2 回効く (M64a からの潜在。M75b では触っていない)。**ScrollRect (M75g) が
   ホイールを読む前に直すか決めること** (直すと入力の意味が変わるので replay の録り直しだけで済むが、版は不要)。
 - **UIInteractionState に `dragging` を計画外で追加** (計画は changed / pressSurf / prevSurf だけ)。
-  ABI v18 の `kDragging` は「掴んでから閾値を超えて動いた・離すまで保持」で距離から毎 tick 導けない =
+  ABI v19 の `kDragging` は「掴んでから閾値を超えて動いた・離すまで保持」で距離から毎 tick 導けない =
   状態が要る。後から足すと snap の版がもう一度動くので M75b に入れた。閾値は Unity の
   `pixelDragThreshold` と同じ 10 面 px (`uiinteract::kDragThresholdSurfPx`、2 乗距離で比較)。
   - `prevSurfX/Y` は Evaluate の**最後**で毎 tick 進む (押していなくても)。ドラッグ量 = 今 - prevSurf を読む

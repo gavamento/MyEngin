@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <optional>
 #include <unordered_set>
 #include <vector>
 
@@ -18,7 +19,10 @@
 namespace mye {
 namespace {
 
-FieldType ToFieldTypeImpl(int32_t t)
+// MyeFieldType → FieldType。公開していない番号は nullopt。
+// ★以前は EntityRef までしか無く、AssetRef / String64 / Float4x4 / String256 が Float に化けていた —
+//   保存・Inspector・状態移行がそのフィールドを 4 バイトの float として扱う
+std::optional<FieldType> ToFieldTypeImpl(int32_t t)
 {
     switch (t) {
     case MYE_FIELD_FLOAT:    return FieldType::Float;
@@ -32,8 +36,12 @@ FieldType ToFieldTypeImpl(int32_t t)
     case MYE_FIELD_QUAT:     return FieldType::Quat;
     case MYE_FIELD_COLOR:    return FieldType::Color;
     case MYE_FIELD_ENTITYREF: return FieldType::EntityRef;
+    case MYE_FIELD_ASSETREF:  return FieldType::AssetRef;
+    case MYE_FIELD_STRING64:  return FieldType::String64;
+    case MYE_FIELD_FLOAT4X4:  return FieldType::Float4x4;
+    case MYE_FIELD_STRING256: return FieldType::String256;
     }
-    return FieldType::Float;
+    return std::nullopt;
 }
 
 } // namespace
@@ -48,7 +56,7 @@ FieldDesc FieldDescFromScriptField(const MyeScriptField& sf)
 {
     FieldDesc fd;
     fd.name = _strdup(sf.name);
-    fd.type = ToFieldTypeImpl(sf.type);
+    fd.type = ToFieldTypeImpl(sf.type).value_or(FieldType::Float); // 未知の番号は LoadModule が先に拒否する
     fd.offset = sf.offset;
     fd.flags = kFieldNone;
     fd.minVal = sf.rangeMin;
@@ -180,6 +188,19 @@ bool ScriptHost::LoadModule(const std::wstring& dllPath)
         return strcmp(a->name, b->name) < 0;
     });
 
+    // 公開していない型番号のフィールドを持つ DLL はロードごと拒否する。
+    // ★登録を 1 つでも始める前に見る — 途中で止めると新旧の型が混ざる
+    for (const MyeScriptDesc* sdp : sorted) {
+        for (uint32_t f = 0; f < sdp->fieldCount; ++f) {
+            if (!ToFieldTypeImpl(sdp->fields[f].type)) {
+                MYE_LOG_ERROR("[dll] script '%s' field '%s' has unsupported type %d - rebuild GameLogic",
+                              sdp->name, sdp->fields[f].name, static_cast<int>(sdp->fields[f].type));
+                FreeLibrary(fresh);
+                return false;
+            }
+        }
+    }
+
     // 新 DLL に存在する型を反映
     std::unordered_set<std::string> present;
     for (const MyeScriptDesc* sdp : sorted) {
@@ -249,6 +270,16 @@ bool ScriptHost::LoadModule(const std::wstring& dllPath)
             t.onCollisionEnter = nullptr;
             t.onCollisionStay = nullptr;
             t.onCollisionExit = nullptr;
+            // ★construct も外す。registry に旧 DLL の関数が残ったまま下で旧 DLL を解放すると、
+            //   この型が残るエンティティに別のコンポーネントを足す (アーキタイプ移動の AddRow) だけで
+            //   解放済みのコードを呼ぶ。null の型は ConstructComponent がゼロで埋める
+            //   (ロジックが無いので既定値に意味は無い。型が戻れば上のループが construct も戻す)
+            const ComponentDesc& desc = ComponentRegistry::Get().Desc(t.componentId);
+            if (desc.construct != nullptr) {
+                ComponentDesc detached = desc;
+                detached.construct = nullptr;
+                ComponentRegistry::Get().UpdateDesc(t.componentId, std::move(detached));
+            }
         }
     }
 

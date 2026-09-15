@@ -233,6 +233,9 @@ namespace MyeScripting
         //   同じ理由で、C# レーンは record/verify 中に走らないため、C# が読んだシーン名を
         //   sim が読み返すとリプレイが壊れる
         public delegate* unmanaged<void*, byte*, int, int> GetSceneName;
+        // ---- v18: 開発中の実行か ----
+        // ★ラッパ (static class Engine) は足さない — C# 側に使い手がまだ無い。位置ミラーのために並べるだけ
+        public delegate* unmanaged<void*, int> IsDevelopmentRun;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。

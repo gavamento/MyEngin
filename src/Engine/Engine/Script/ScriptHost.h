@@ -65,6 +65,9 @@ public:
         apiCtx_.cursorLock = cursorLock; // v15 (M64a)。null = 該当スロットが no-op
     }
 
+    // v18: 開発中の実行か (EngineConfig::developmentRun)。プロセスの定数なので起動時に 1 回だけ呼ぶ
+    void SetDevelopmentRun(bool on) { apiCtx_.developmentRun = on ? 1 : 0; }
+
     // v14 (M59k): 今 tick の接触列を繋ぐ / 外す。**毎 tick 呼ぶ** —
     // TickRunner が tick 頭で nullptr、物理 Update の直後に実体を渡す。
     // これで GetContactInfo が読めるのは「今 tick の物理が書いた列」だけになる

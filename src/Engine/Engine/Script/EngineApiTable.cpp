@@ -755,7 +755,7 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
             if (!rt) { rt = world.AddComponent<RectTransformComponent>(e); }
             if (!rt) { return 0; }
             if (anchor >= 0) {
-                // 9-grid プリセット = 一致アンカー (ストレッチは SetRectTransform (v18 予定) で)
+                // 9-grid プリセット = 一致アンカー (ストレッチは SetRectTransform (v19 予定) で)
                 float ax = 0.0f, ay = 0.0f;
                 uilayout::AnchorPreset(anchor > 8 ? 8 : anchor, ax, ay);
                 rt->anchorMin = { ax, ay };
@@ -1095,6 +1095,10 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         }
         return len;
     };
+
+    // ---- v18: 開発中の実行か ----
+    // 値の意味と「sim 状態ではない = 記録と検証を同じ起動方法で走らせる」は EngineAPI.h の v18 の注記が正本
+    out.IsDevelopmentRun = [](void* engine) -> int32_t { return Ctx(engine)->developmentRun; };
 }
 
 } // namespace mye

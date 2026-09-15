@@ -902,6 +902,19 @@ the script would branch on a scene it is no longer in. `FlowTitleDriver` / `Flow
 the name hash into a registered field, so the flow replay pair - the only one that crosses scenes -
 covers it. As with `UISetFocused` and `LoadPersist`, the C# lane is deliberately left unwrapped.
 
+**ABI v18 (112 slots).** `IsDevelopmentRun`. A game carries debug toggles (a fullbright switch, a
+test sound source, auto-input hooks for headless probes) that must keep working in the editor and in
+`Runtime --project` verification runs but must not reach players. `GameLogic.dll` is one binary
+shared by the editor and the packaged build, and `#ifdef _DEBUG` may not branch logic, so the split
+is a runtime value: `EngineConfig::developmentRun`, true by default and overwritten by `Runtime.exe`
+after argument parsing with "was `--project` given" - the same `projectRoot` test every other
+two-path branch uses. It is a per-process constant and **not sim state**: neither `.rep` nor
+`SimSnapshot` carries it. Record and verify must therefore start the same way. A `.rep` recorded by a
+packaged build (a crash bundle, say) replays under the packaged `Runtime.exe` without `--project`;
+verifying it with `--project` re-enables the debug inputs the packaged build ignored and diverges at
+the first one. Carrying the flag in the `.rep` header was rejected for now because it costs a `.rep`
+version bump. The C# lane gets the slot but no wrapper, since nothing there uses it yet.
+
 **What was closed.** `MyeScript.cs` no longer exposes `SetUIRect` / `SetUILayout` /
 `SetUIFocused`. All three move UI geometry or focus, which now feeds hashed state, and the C# lane
 is suspended during rollback and time-travel re-simulation and is outside replay coverage - so a

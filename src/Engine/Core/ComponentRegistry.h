@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <cstring>
 #include <string_view>
 #include <type_traits>
 #include <vector>
@@ -33,6 +34,17 @@ struct ComponentDesc {
     void (*construct)(void* dst) = nullptr; // デフォルト値の書き込み (placement new)
     std::vector<FieldDesc> fields;
 };
+
+// 既定値を dst へ書く。construct が null の型 (新しい GameLogic.dll から消えたスクリプト型。
+// ScriptHost::LoadModule が外す) はゼロで埋める — 旧 DLL の関数を指したまま呼ぶと解放済みのコードへ飛ぶ
+inline void ConstructComponent(const ComponentDesc& desc, void* dst)
+{
+    if (desc.construct != nullptr) {
+        desc.construct(dst);
+    } else {
+        std::memset(dst, 0, desc.size);
+    }
+}
 
 // コンポーネント型の一覧。TypeId は登録順 (0 始まり)。
 // 決定論のため、組み込み型の登録は static 初期化子ではなく
