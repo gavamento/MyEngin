@@ -18,5 +18,12 @@ namespace modaltools {
 // 続行し、1 件でもあれば戻り値は 1 (exit code に使う想定)。list 自体が読めなければ 1
 int RunModalVoxelizeCli(const std::wstring& listPath, const std::wstring& outDir);
 
+// --modal-bake [--project DIR] (M76e) の本体。プロジェクト (または裸のエンジンリポジトリ) の
+// assets 以下をヘッドレス登録し、登録された全メッシュを ModalSoundLibrary::BakeSync で
+// 焼いて `.msfm` へ書く。ウィンドウも D3D も作らない。1 行/メッシュ (`name state ms validCells`)
+// + 合計 (`bakes= bakeMsAvg=`) を標準出力へ。
+// exit 0 = 成功 (0 件でも成功) / 1 = assets root が見つからない / 2 = .dmnet が無い・ロード失敗
+int RunModalBakeCli(const std::wstring& projectDir);
+
 } // namespace modaltools
 } // namespace mye

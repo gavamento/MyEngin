@@ -1,7 +1,7 @@
 # sub-04 (M76d): Python — モデル / 学習 / export / fixture (大規模生成の門)
 
 - 依存: sub-03
-- 状態: 未着手
+- 状態: OK (commit 4239ce3)
 - 往復: 0
 
 ## やること

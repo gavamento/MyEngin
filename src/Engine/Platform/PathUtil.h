@@ -22,6 +22,12 @@ std::wstring FindEngineRepoRoot();
 // 配布済み Runtime など、リポジトリが見つからない環境では空
 std::wstring FindEngineShaderDir();
 
+// エンジン組込みの Deep-Modal 資産 (<engineRepo>\assets\deepmodal) の絶対パス。
+// FindEngineShaderDir と同型 (単ルートを返すだけ)。呼び出し側 (ModalSoundLibrary の
+// 起動配線) が「プロジェクト assets\deepmodal → ここ」の 2 ルートにする。
+// 配布済み Runtime など、リポジトリが見つからない環境では空
+std::wstring FindEngineDeepModalDir();
+
 std::string WideToUtf8(std::wstring_view w);
 std::wstring Utf8ToWide(std::string_view s);
 

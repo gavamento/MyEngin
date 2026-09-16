@@ -282,7 +282,19 @@
     <ClCompile Include="..\src\Engine\Engine\LightSelection.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Modal\CpuModalBackend.cpp">
+      <Filter>Engine\Modal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Modal\DmNet.cpp">
+      <Filter>Engine\Modal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Modal\ModalFeatureMap.cpp">
+      <Filter>Engine\Modal</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Modal\ModalSelfTest.cpp">
+      <Filter>Engine\Modal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Modal\ModalSoundLibrary.cpp">
       <Filter>Engine\Modal</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Modal\TriangleSoup.cpp">
@@ -915,7 +927,22 @@
     <ClInclude Include="..\src\Engine\Engine\LightSelection.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Modal\CpuModalBackend.h">
+      <Filter>Engine\Modal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Modal\DmNet.h">
+      <Filter>Engine\Modal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Modal\ModalFeatureMap.h">
+      <Filter>Engine\Modal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Modal\ModalInferenceBackend.h">
+      <Filter>Engine\Modal</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Modal\ModalSelfTest.h">
+      <Filter>Engine\Modal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Modal\ModalSoundLibrary.h">
       <Filter>Engine\Modal</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Modal\ModalTypes.h">

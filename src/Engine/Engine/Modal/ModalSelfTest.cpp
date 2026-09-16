@@ -8,12 +8,25 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <set>
 #include <vector>
 
+#include <DirectXPackedVector.h>
+
+#include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/Modal/CpuModalBackend.h"
+#include "Engine/Engine/Modal/DmNet.h"
+#include "Engine/Engine/Modal/ModalFeatureMap.h"
+#include "Engine/Engine/Modal/ModalSoundLibrary.h"
 #include "Engine/Engine/Modal/TriangleSoup.h"
 #include "Engine/Engine/Modal/Voxelizer.h"
+#include "Engine/Engine/Physics/ConvexColliderLibrary.h"
+#include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/GpuResources.h"
 
 using namespace DirectX;
 
@@ -115,6 +128,135 @@ void BruteForceCellSlot(const modal::VoxelGrid& grid, uint16_t out[4096])
         }
         out[cell] = static_cast<uint16_t>(best);
     }
+}
+
+// ---- sub-05: CpuModalBackend の低レベル畳み込みを独立に照合する「素朴な参照実装」 ----
+// 決定的だが sim の乱数契約とは無関係のテストデータ生成 (黄金比刻み。PCG32 を持ち出すほどの
+// ものではない — 生成される値そのものに意味は無く、単に非対称で再現可能な数列であればよい)
+float DeterministicFill(size_t i)
+{
+    return std::fmod(static_cast<float>(i) * 0.6180339887f, 1.0f) * 2.0f - 1.0f;
+}
+
+// PyTorch の F.conv3d と同じ定義そのままの 6 重ループ (CpuModalBackend.cpp の im2col+GEMM 実装とは
+// 独立のコード)。weight は [cout,cin,k,k,k]、src/dst は [C,D,H,W] (W 最内)
+void NaiveConv3d(const std::vector<float>& src, int cin, int d, int h, int w,
+                 const std::vector<float>& weight, const std::vector<float>& bias, int cout, int k,
+                 int stride, int pad, std::vector<float>& dst, int outD, int outH, int outW)
+{
+    dst.assign(static_cast<size_t>(cout) * outD * outH * outW, 0.0f);
+    for (int co = 0; co < cout; ++co) {
+        for (int od = 0; od < outD; ++od) {
+            for (int oh = 0; oh < outH; ++oh) {
+                for (int ow = 0; ow < outW; ++ow) {
+                    float acc = bias[co];
+                    for (int ci = 0; ci < cin; ++ci) {
+                        for (int kd = 0; kd < k; ++kd) {
+                            const int id = od * stride - pad + kd;
+                            if (id < 0 || id >= d) {
+                                continue;
+                            }
+                            for (int kh = 0; kh < k; ++kh) {
+                                const int ih = oh * stride - pad + kh;
+                                if (ih < 0 || ih >= h) {
+                                    continue;
+                                }
+                                for (int kw = 0; kw < k; ++kw) {
+                                    const int iw = ow * stride - pad + kw;
+                                    if (iw < 0 || iw >= w) {
+                                        continue;
+                                    }
+                                    const float wv = weight[((((static_cast<size_t>(co) * cin + ci)
+                                                              * k + kd) * k + kh) * k) + kw];
+                                    const float sv =
+                                        src[(((static_cast<size_t>(ci) * d + id) * h + ih) * w) + iw];
+                                    acc += wv * sv;
+                                }
+                            }
+                        }
+                    }
+                    dst[(((static_cast<size_t>(co) * outD + od) * outH + oh) * outW) + ow] = acc;
+                }
+            }
+        }
+    }
+}
+
+// PyTorch の F.conv_transpose3d の定義そのまま (出力位置から id=(od+pad-kd)/stride の整除性を
+// 直接判定する)。CpuModalBackend.cpp の「dilate + pad + 反転カーネル」実装とは別経路の照合になる。
+// weight は [cin,cout,k,k,k] (ConvTranspose3d の PyTorch テンソル形状そのまま)
+void NaiveConvTranspose3d(const std::vector<float>& src, int cin, int d, int h, int w,
+                          const std::vector<float>& weight, const std::vector<float>& bias,
+                          int cout, int k, int stride, int pad, int outPad, std::vector<float>& dst,
+                          int outD, int outH, int outW)
+{
+    (void)outPad; // 出力サイズは呼び出し側が式から求めて渡す (ここでは判定に使わない)
+    dst.assign(static_cast<size_t>(cout) * outD * outH * outW, 0.0f);
+    for (int co = 0; co < cout; ++co) {
+        for (int od = 0; od < outD; ++od) {
+            for (int oh = 0; oh < outH; ++oh) {
+                for (int ow = 0; ow < outW; ++ow) {
+                    float acc = bias[co];
+                    for (int ci = 0; ci < cin; ++ci) {
+                        for (int kd = 0; kd < k; ++kd) {
+                            const int td = od + pad - kd;
+                            if (td < 0 || td % stride != 0) {
+                                continue;
+                            }
+                            const int id = td / stride;
+                            if (id < 0 || id >= d) {
+                                continue;
+                            }
+                            for (int kh = 0; kh < k; ++kh) {
+                                const int th = oh + pad - kh;
+                                if (th < 0 || th % stride != 0) {
+                                    continue;
+                                }
+                                const int ih = th / stride;
+                                if (ih < 0 || ih >= h) {
+                                    continue;
+                                }
+                                for (int kw = 0; kw < k; ++kw) {
+                                    const int tw = ow + pad - kw;
+                                    if (tw < 0 || tw % stride != 0) {
+                                        continue;
+                                    }
+                                    const int iw = tw / stride;
+                                    if (iw < 0 || iw >= w) {
+                                        continue;
+                                    }
+                                    const float wv = weight[((((static_cast<size_t>(ci) * cout + co)
+                                                              * k + kd) * k + kh) * k) + kw];
+                                    const float sv =
+                                        src[(((static_cast<size_t>(ci) * d + id) * h + ih) * w) + iw];
+                                    acc += wv * sv;
+                                }
+                            }
+                        }
+                    }
+                    dst[(((static_cast<size_t>(co) * outD + od) * outH + oh) * outW) + ow] = acc;
+                }
+            }
+        }
+    }
+}
+
+float MaxAbsDiff(const std::vector<float>& a, const std::vector<float>& b)
+{
+    float m = 0.0f;
+    for (size_t i = 0; i < a.size() && i < b.size(); ++i) {
+        m = (std::max)(m, std::fabs(a[i] - b[i]));
+    }
+    return m;
+}
+
+std::vector<uint8_t> ReadFileBytes(const std::wstring& path)
+{
+    std::ifstream f(path, std::ios::binary);
+    if (!f) {
+        return {};
+    }
+    return std::vector<uint8_t>((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
 
 } // namespace
@@ -338,6 +480,279 @@ bool RunModalSelfTest()
         modal::SerializeVox(gridA, bytesA);
         modal::SerializeVox(gridB, bytesB);
         check(bytesA == bytesB, "voxelizing the same mesh twice is byte-identical");
+    }
+
+    // ---- (10) CpuModalBackend の Conv3dRaw を素朴な参照実装 (6 重ループ) と 1e-6 で照合 ----
+    // odd kernel / stride 1 と 2 / pad あり、の組を確認する (spec §5 受け入れ条件 11)
+    {
+        struct Case {
+            const char* name;
+            int cin, d, h, w, cout, k, stride, pad;
+        };
+        const Case cases[] = {
+            { "3x3x3 same conv (k=3,stride=1,pad=1)", 2, 5, 5, 5, 3, 3, 1, 1 },
+            { "3x3x3 downsample (k=3,stride=2,pad=1)", 2, 5, 5, 5, 3, 3, 2, 1 },
+            { "1x1x1 pointwise (k=1,stride=1,pad=0)", 4, 3, 3, 3, 2, 1, 1, 0 },
+        };
+        for (const Case& c : cases) {
+            int outD = 0, outH = 0, outW = 0;
+            Conv3dOutSize(c.d, c.h, c.w, c.k, c.stride, c.pad, outD, outH, outW);
+            std::vector<float> src(static_cast<size_t>(c.cin) * c.d * c.h * c.w);
+            std::vector<float> weight(static_cast<size_t>(c.cout) * c.cin * c.k * c.k * c.k);
+            std::vector<float> bias(static_cast<size_t>(c.cout));
+            for (size_t i = 0; i < src.size(); ++i) {
+                src[i] = DeterministicFill(i + 1);
+            }
+            for (size_t i = 0; i < weight.size(); ++i) {
+                weight[i] = DeterministicFill(i * 7 + 3);
+            }
+            for (size_t i = 0; i < bias.size(); ++i) {
+                bias[i] = DeterministicFill(i * 11 + 5) * 0.1f;
+            }
+            std::vector<float> got(static_cast<size_t>(c.cout) * outD * outH * outW);
+            Conv3dRaw(src.data(), c.cin, c.d, c.h, c.w, weight.data(), bias.data(), c.cout, c.k,
+                     c.stride, c.pad, got.data(), outD, outH, outW);
+            std::vector<float> expected;
+            NaiveConv3d(src, c.cin, c.d, c.h, c.w, weight, bias, c.cout, c.k, c.stride, c.pad,
+                       expected, outD, outH, outW);
+            const float maxDiff = MaxAbsDiff(got, expected);
+            char what[192];
+            std::snprintf(what, sizeof(what), "Conv3dRaw matches naive 6-loop reference: %s (max|d|=%g)",
+                         c.name, static_cast<double>(maxDiff));
+            check(maxDiff < 1.0e-6f, what);
+        }
+    }
+
+    // ---- (11) ConvTranspose3dRaw を素朴な参照実装 (出力位置の整除判定) と 1e-6 で照合 ----
+    // k=4/stride=2/pad=1/outPad=0 (実ネットの up1/up2 と同じ形) と、
+    // k=3/stride=2/pad=1/outPad=1 (奇数 k + outPad あり) の両方を確認する
+    {
+        struct Case {
+            const char* name;
+            int cin, d, h, w, cout, k, stride, pad, outPad;
+        };
+        const Case cases[] = {
+            { "k=4,stride=2,pad=1,outPad=0 (up1/up2 と同型)", 3, 4, 4, 4, 2, 4, 2, 1, 0 },
+            { "k=3,stride=2,pad=1,outPad=1 (奇数 k + outPad)", 2, 3, 3, 3, 3, 3, 2, 1, 1 },
+        };
+        for (const Case& c : cases) {
+            int outD = 0, outH = 0, outW = 0;
+            ConvTranspose3dOutSize(c.d, c.h, c.w, c.k, c.stride, c.pad, c.outPad, outD, outH, outW);
+            std::vector<float> src(static_cast<size_t>(c.cin) * c.d * c.h * c.w);
+            std::vector<float> weight(static_cast<size_t>(c.cin) * c.cout * c.k * c.k * c.k);
+            std::vector<float> bias(static_cast<size_t>(c.cout));
+            for (size_t i = 0; i < src.size(); ++i) {
+                src[i] = DeterministicFill(i + 2);
+            }
+            for (size_t i = 0; i < weight.size(); ++i) {
+                weight[i] = DeterministicFill(i * 13 + 1);
+            }
+            for (size_t i = 0; i < bias.size(); ++i) {
+                bias[i] = DeterministicFill(i * 17 + 9) * 0.1f;
+            }
+            std::vector<float> got(static_cast<size_t>(c.cout) * outD * outH * outW);
+            ConvTranspose3dRaw(src.data(), c.cin, c.d, c.h, c.w, weight.data(), bias.data(), c.cout,
+                              c.k, c.stride, c.pad, c.outPad, got.data(), outD, outH, outW);
+            std::vector<float> expected;
+            NaiveConvTranspose3d(src, c.cin, c.d, c.h, c.w, weight, bias, c.cout, c.k, c.stride,
+                                c.pad, c.outPad, expected, outD, outH, outW);
+            const float maxDiff = MaxAbsDiff(got, expected);
+            char what[192];
+            std::snprintf(what, sizeof(what),
+                         "ConvTranspose3dRaw matches naive reference: %s (max|d|=%g)", c.name,
+                         static_cast<double>(maxDiff));
+            check(maxDiff < 1.0e-6f, what);
+        }
+    }
+
+    // ---- (12) fixture.dmnet + fixture_in.mvox → 64 cell x 192 が fixture_out.bin と
+    //          max|delta| < 1e-3 で一致する (spec §5 受け入れ条件 11、「インストール済み
+    //          バックエンドに対して回す」= バックエンドを引数に取る形にして、将来の
+    //          D3d11ModalBackend も同じ関数で検査できるようにしてある) ----
+    {
+        const std::wstring repoRoot = FindEngineRepoRoot();
+        const std::wstring fixtureDir = repoRoot + L"\\tests\\deepmodal\\";
+        DmNet net;
+        std::string err;
+        const bool loaded = LoadDmNet(fixtureDir + L"fixture.dmnet", net, &err);
+        check(loaded, ("fixture.dmnet loads and passes the weightsHash check (" + err + ")").c_str());
+        if (loaded) {
+            modal::VoxelGrid grid;
+            const std::vector<uint8_t> mvoxBytes = ReadFileBytes(fixtureDir + L"fixture_in.mvox");
+            const bool gridOk = modal::DeserializeVox(mvoxBytes, grid);
+            check(gridOk, "fixture_in.mvox deserializes");
+
+            const std::vector<uint8_t> expectedBytes = ReadFileBytes(fixtureDir + L"fixture_out.bin");
+            check(expectedBytes.size() == 64 * (4 + static_cast<size_t>(kModalChannels) * 4),
+                  "fixture_out.bin has the expected size (64 cells x (index + 192 float32))");
+
+            // インストール済みバックエンド (このサブでは CpuModalBackend) に対して回す。
+            // 将来 D3d11ModalBackend を差し込んでもこの関数をもう一度呼べば同じ検査になる
+            auto runFixture = [&](ModalInferenceBackend& backend, const char* label) {
+                std::string prepErr;
+                const bool prepared = backend.Prepare(net, &prepErr);
+                check(prepared, (std::string(label) + ": Prepare() succeeds").c_str());
+                if (!prepared || !gridOk || expectedBytes.size() < 64 * (4 + 192 * 4)) {
+                    return;
+                }
+                std::vector<float> out;
+                std::string inferErr;
+                const bool inferred = backend.Infer(grid, out, &inferErr);
+                check(inferred, (std::string(label) + ": Infer() succeeds").c_str());
+                if (!inferred) {
+                    return;
+                }
+                float worst = 0.0f;
+                for (int i = 0; i < 64; ++i) {
+                    const size_t off = static_cast<size_t>(i) * (4 + kModalChannels * 4);
+                    int32_t flatIndex = 0;
+                    std::memcpy(&flatIndex, expectedBytes.data() + off, sizeof(flatIndex));
+                    for (int c = 0; c < kModalChannels; ++c) {
+                        float expectedV = 0.0f;
+                        std::memcpy(&expectedV, expectedBytes.data() + off + 4 + c * 4, sizeof(float));
+                        const float gotV = out[static_cast<size_t>(c) * 4096 + static_cast<size_t>(flatIndex)];
+                        worst = (std::max)(worst, std::fabs(gotV - expectedV));
+                    }
+                }
+                char what[128];
+                std::snprintf(what, sizeof(what), "%s: fixture inference matches fixture_out.bin (max|d|=%g)",
+                             label, static_cast<double>(worst));
+                check(worst < 1.0e-3f, what);
+            };
+
+            CpuModalBackend cpuBackend;
+            runFixture(cpuBackend, "CpuModalBackend");
+        }
+    }
+
+    // ---- (13) .msfm 表の往復: memcmp 一致 (ConvexColliderLibrary の .mcvx 表と同型) ----
+    {
+        ModalFeatureMap mapA;
+        mapA.version = kMsfmVersion;
+        mapA.modelHash = 0x1122334455667788ULL;
+        mapA.frame.origin[0] = 1.0f;
+        mapA.frame.origin[1] = 2.0f;
+        mapA.frame.origin[2] = 3.0f;
+        mapA.frame.voxelSize = 0.125f;
+        mapA.frame.longestEdge = 4.0f;
+        mapA.validCount = 2;
+        mapA.cellSlot[0] = 0;
+        mapA.cellSlot[1] = 1;
+        for (int c = 2; c < 4096; ++c) {
+            mapA.cellSlot[c] = 0; // 全部 cell 0 へ丸める (テストなので意味は問わない)
+        }
+        mapA.feat.assign(static_cast<size_t>(2) * kModalChannels, 0);
+        for (size_t i = 0; i < mapA.feat.size(); ++i) {
+            mapA.feat[i] = static_cast<uint16_t>(i * 37 + 5);
+        }
+        std::vector<std::pair<std::string, ModalFeatureMap>> table;
+        table.emplace_back("guid://0000000000000001#mesh0#prim0", mapA);
+        table.emplace_back("guid://0000000000000002#mesh1#prim0", mapA);
+
+        std::vector<uint8_t> bytesA;
+        SerializeModalTable(table, bytesA);
+        std::vector<std::pair<std::string, ModalFeatureMap>> roundTrip;
+        const bool ok = DeserializeModalTable(bytesA, roundTrip);
+        check(ok, ".msfm table deserializes successfully");
+        std::vector<uint8_t> bytesB;
+        SerializeModalTable(roundTrip, bytesB);
+        check(bytesA == bytesB, ".msfm table serialize -> deserialize -> serialize is byte-identical");
+        check(roundTrip.size() == 2 && roundTrip[0].second.validCount == 2,
+              ".msfm table round-trip preserves entry count and fields");
+
+        // RowOf/CellFeature: cellSlot 経由で有効 cell へ丸め、feat の格納順 (cell index 昇順) での
+        // 行を返す (無効 cell はすべて 0 へ丸めてあるので row 0 に落ちる)
+        check(mapA.RowOf(0) == 0 && mapA.RowOf(1) == 1 && mapA.RowOf(500) == 0,
+              "ModalFeatureMap::RowOf resolves raw cells to their packed row");
+        ModalCellFeature feature;
+        const bool gotFeature = mapA.CellFeature(1, feature);
+        check(gotFeature
+                  && std::fabs(feature.v[0]
+                               - DirectX::PackedVector::XMConvertHalfToFloat(mapA.feat[kModalChannels]))
+                      < 1.0e-6f,
+              "ModalFeatureMap::CellFeature decompresses the fp16 row it points at");
+
+        // 壊れた blob (version 違い) は false + out.clear()
+        std::vector<uint8_t> corrupt = bytesA;
+        corrupt[0] = 0xFF;
+        std::vector<std::pair<std::string, ModalFeatureMap>> corruptOut;
+        check(!DeserializeModalTable(corrupt, corruptOut) && corruptOut.empty(),
+              "a corrupt .msfm table (bad version) is rejected");
+    }
+
+    // ---- (14) ModalSoundLibrary: Register->Get / NoModel / BakeSync (fixture + cube) ----
+    {
+        RenderResources resources;
+        const AssetID cubeId = resources.meshes.Cube();
+
+        ModalSoundLibrary lib;
+        lib.Init(&resources);
+        check(lib.Request(cubeId) == ModalState::NoModel,
+              "Request() with no model loaded returns NoModel (does not crash)");
+
+        ModalFeatureMap manual;
+        manual.validCount = 1;
+        manual.feat.assign(kModalChannels, 0);
+        lib.Register(cubeId, manual);
+        check(lib.Get(cubeId) != nullptr && lib.Get(cubeId)->validCount == 1,
+              "Register() then Get() returns what was registered");
+        lib.Clear();
+        check(lib.Get(cubeId) == nullptr, "Clear() forgets registered entries");
+
+        check(lib.SetBackendByName("cpu"), "SetBackendByName(\"cpu\") succeeds");
+        const std::wstring repoRoot = FindEngineRepoRoot();
+        const bool modelLoaded = lib.LoadModel(repoRoot + L"\\tests\\deepmodal\\fixture.dmnet");
+        check(modelLoaded, "ModalSoundLibrary::LoadModel loads the fixture .dmnet");
+        if (modelLoaded) {
+            check(lib.BakeSync(cubeId), "BakeSync(builtin cube) succeeds with the fixture model");
+            const ModalFeatureMap* map = lib.Get(cubeId);
+            check(map != nullptr && lib.Request(cubeId) == ModalState::Ready,
+                  "after BakeSync the cube is Ready");
+            if (map != nullptr) {
+                // validCount を Voxelizer から独立に (BuildCellSlotTable 経由で) 数え直して照合する
+                Mesh* mesh = resources.meshes.Get(cubeId);
+                modal::VoxelGrid grid;
+                modal::VoxelizeMesh(mesh->positions.data(), mesh->positions.size(),
+                                    mesh->indices.data(), mesh->indices.size(), grid);
+                uint16_t independentSlot[4096];
+                modal::BuildCellSlotTable(grid, independentSlot);
+                uint32_t independentValid = 0;
+                for (int c = 0; c < 4096; ++c) {
+                    if (independentSlot[c] == c) {
+                        ++independentValid;
+                    }
+                }
+                check(map->validCount == independentValid,
+                      "BakeSync validCount matches an independently counted valid-cell count");
+            }
+        }
+
+        // BakeSync は未登録メッシュに対して false を返す (mesh が無い AssetID)
+        const AssetID bogus{ 0xDEADBEEFULL };
+        check(!lib.BakeSync(bogus), "BakeSync on an unregistered mesh fails cleanly");
+    }
+
+    // ---- (15) SourcePathForSubAssetKey: builtin:// は空、guid:// キーは
+    //           ConvexCookSourcePath と同じ経路 (M76e で 1 本化) ----
+    {
+        check(assetkey::SourcePathForSubAssetKey("builtin://cube").empty(),
+              "SourcePathForSubAssetKey(\"builtin://cube\") is empty (not a cookable source)");
+        // resolver 未設定の selftest では guid:// も未解決 = 空 (Convex 側と同じ結果になること自体が
+        // 検査したい契約 — どちらも ParseSubAssetKey + assetguid::ResolvePath の 1 本を通る)
+        const std::string key = "guid://0000000000000042#mesh0#prim0";
+        check(assetkey::SourcePathForSubAssetKey(key) == ConvexCookSourcePath(key),
+              "SourcePathForSubAssetKey and (delegating) ConvexCookSourcePath agree");
+    }
+
+    // ---- (16) バックエンド名の解決: cpu はそのまま、d3d11cs は WARN + cpu へ縮退、
+    //           綴り違いは false ----
+    {
+        ModalSoundLibrary lib;
+        check(lib.SetBackendByName("cpu") && std::string(lib.BackendName()) == "cpu",
+              "SetBackendByName(\"cpu\") installs the cpu backend");
+        check(lib.SetBackendByName("d3d11cs") && std::string(lib.BackendName()) == "cpu",
+              "SetBackendByName(\"d3d11cs\") falls back to cpu (Name() == \"cpu\")");
+        check(!lib.SetBackendByName("foo"), "SetBackendByName(\"foo\") is rejected");
     }
 
     if (failCount == 0) {

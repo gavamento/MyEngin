@@ -296,6 +296,20 @@ const CliFlag kEngineCliFlags[] = {
       } },
     // CPU/GPU を横に並べて描く (spec 7.4)
     { L"--particle-compare", CliValue::None, [](CliArgs& a) { a.c.particleCompareOverride = 1; return true; } },
+
+    // ---- Deep-Modal (M76e) ----
+    // 推論バックエンドを固定する。"d3d11cs" は綴りとしては受け付けるが未実装 —
+    // 実際に cpu へ縮退させて WARN を出すのは ModalSoundLibrary::SetBackendByName の役目
+    { L"--modal-backend", CliValue::One,
+      [](CliArgs& a) {
+          const std::wstring backend = a.v1;
+          if (backend == L"cpu" || backend == L"d3d11cs") {
+              a.c.modalBackendName = backend;
+              return true;
+          }
+          std::fwprintf(stderr, L"unknown --modal-backend value (expected cpu|d3d11cs)\n");
+          return false;
+      } },
 };
 
 } // namespace

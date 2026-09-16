@@ -190,6 +190,12 @@ struct EngineConfig {
     // 同上、永続化しない
     int particleCompareOverride = -1;
 
+    // ---- Deep-Modal 推論バックエンド (M76e、--modal-backend <cpu|d3d11cs>) ----
+    // "d3d11cs" は未実装なので ModalSoundLibrary::SetBackendByName が WARN + cpu へ縮退させる
+    // (CLI 側は綴りだけ検査する。particleBackendOverride と違って永続化の概念自体が無い —
+    // Deep-Modal はプロジェクト設定を持たないため)
+    std::wstring modalBackendName = L"cpu";
+
     // ---- グラフィックスドライバ (M52b) ----
     // true (--warp) で D3D_DRIVER_TYPE_WARP (ソフトウェアラスタライザ) を直接使う。
     // false でも HARDWARE の生成に失敗すれば WARP へ自動フォールバックするので、

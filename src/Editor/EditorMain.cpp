@@ -144,6 +144,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool modalVoxelize = false;           // --modal-voxelize (M76b: Deep-Modal のボクセル化 CLI)
     std::wstring modalVoxelizeList;       // --list F
     std::wstring modalVoxelizeOut;        // --out DIR
+    bool modalBake = false;               // --modal-bake (M76e: .dmnet → .msfm のヘッドレス CLI)
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -180,6 +181,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             }
             if (modalVoxelize && arg == L"--out" && i + 1 < argc) {
                 modalVoxelizeOut = argv[++i];
+                continue;
+            }
+            // --modal-bake [--project DIR] (M76e): --project は既存の連鎖 (下) で projectDir へ
+            // 入るので、ここでは自身のフラグだけ拾う (--modal-voxelize と同じ「連鎖の手前」の置き方)
+            if (arg == L"--modal-bake") {
+                modalBake = true;
                 continue;
             }
             if (arg == L"--selftest") {
@@ -418,6 +425,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     // exit 0 = 全部成功 / 1 = 1 件以上失敗 (list が読めない・入力が無い・未対応拡張子等)
     if (modalVoxelize) {
         return mye::modaltools::RunModalVoxelizeCli(modalVoxelizeList, modalVoxelizeOut);
+    }
+
+    // --modal-bake [--project DIR] (M76e): .dmnet を読み、プロジェクト (または裸のエンジン
+    // リポジトリ) の全メッシュを .msfm へ焼いて終了する。ウィンドウも D3D も作らない
+    if (modalBake) {
+        return mye::modaltools::RunModalBakeCli(projectDir);
     }
 
     if (selftest) {

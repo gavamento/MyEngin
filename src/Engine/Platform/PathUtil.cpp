@@ -60,6 +60,17 @@ std::wstring FindEngineShaderDir()
     return std::filesystem::is_directory(p, ec) ? p.wstring() : std::wstring{};
 }
 
+std::wstring FindEngineDeepModalDir()
+{
+    const std::wstring repo = FindEngineRepoRoot();
+    if (repo.empty()) {
+        return {};
+    }
+    const std::filesystem::path p = std::filesystem::path(repo) / L"assets" / L"deepmodal";
+    std::error_code ec;
+    return std::filesystem::is_directory(p, ec) ? p.wstring() : std::wstring{};
+}
+
 std::wstring NormalizePathKey(const std::wstring& path)
 {
     std::error_code ec;

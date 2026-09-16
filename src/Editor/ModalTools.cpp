@@ -15,7 +15,12 @@
 #include <system_error>
 #include <unordered_set>
 
+#include <chrono>
+
+#include "Engine/Engine/Asset/CookedCache.h"
+#include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/FbxLoader.h"
+#include "Engine/Engine/Modal/ModalSoundLibrary.h"
 #include "Engine/Engine/Modal/TriangleSoup.h"
 #include "Engine/Engine/Modal/Voxelizer.h"
 #include "Engine/Engine/ModelLoader.h"
@@ -164,6 +169,31 @@ bool VoxelizeAndWrite(const std::wstring& outDir, const std::string& outName,
     return true;
 }
 
+// ---- --modal-bake (M76e) ----
+
+bool EndsWithLower(const std::wstring& lowerPath, const wchar_t* suffix)
+{
+    const size_t n = wcslen(suffix);
+    return lowerPath.size() >= n && lowerPath.compare(lowerPath.size() - n, n, suffix) == 0;
+}
+
+const char* ModalStateName(ModalState s)
+{
+    switch (s) {
+    case ModalState::Missing:
+        return "Missing";
+    case ModalState::Baking:
+        return "Baking";
+    case ModalState::Ready:
+        return "Ready";
+    case ModalState::Failed:
+        return "Failed";
+    case ModalState::NoModel:
+        return "NoModel";
+    }
+    return "Unknown";
+}
+
 } // namespace
 
 int RunModalVoxelizeCli(const std::wstring& listPath, const std::wstring& outDir)
@@ -306,6 +336,90 @@ int RunModalVoxelizeCli(const std::wstring& listPath, const std::wstring& outDir
 
     std::printf("[modal-voxelize] wrote %d file(s)%s\n", written, anyError ? " (with errors)" : "");
     return anyError ? 1 : 0;
+}
+
+int RunModalBakeCli(const std::wstring& projectDir)
+{
+    std::error_code ec;
+    const std::wstring assetsRoot = projectDir.empty()
+        ? FindAssetsRoot()
+        : (fs::absolute(projectDir, ec) / L"assets").wstring();
+    if (!fs::is_directory(assetsRoot, ec)) {
+        std::fprintf(stderr, "[modal-bake] ERROR: assets root not found: %s\n",
+                     WideToUtf8(assetsRoot).c_str());
+        return 1;
+    }
+
+    // .msfm の読み書きに使うクックキャッシュ。二経路は EngineLoop.cpp の起動配線と同じ規則
+    // (分岐は必ず projectDir の有無で判定) — これが無いと BakeSync が Ready にはなっても
+    // 2 回目の起動で 1 バイトも再利用されない
+    const std::wstring cookedDir =
+        (projectDir.empty() ? GetExecutableDir() : fs::absolute(projectDir, ec).wstring())
+        + L"\\cache\\cooked";
+    CookedCache::Configure(cookedDir, true);
+
+    // guid:// サブアセットキーが SourcePathForSubAssetKey で解決できるように、
+    // AssetDatabase を走査して resolver として注入する (SubAssetMigration.cpp の
+    // RunMigration と同じ手順)
+    AssetDatabase db;
+    db.ScanAndSync(assetsRoot);
+    db.InstallAsKeyResolver();
+
+    const std::wstring dmnetPath = ResolveDeepModalPath(assetsRoot);
+    RenderResources resources;
+    ShaderManager shaders;
+    ModalSoundLibrary lib;
+    lib.Init(&resources);
+    lib.SetBackendByName("cpu");
+    if (dmnetPath.empty() || !lib.LoadModel(dmnetPath)) {
+        std::fprintf(stderr, "[modal-bake] ERROR: no usable .dmnet found (project or engine "
+                             "assets\\deepmodal\\deepmodal.dmnet)\n");
+        AssetDatabase::UninstallKeyResolver();
+        return 2;
+    }
+
+    // モデルのヘッドレス登録 (SubAssetMigration.cpp の RunMigration と同じ走査)。
+    // GraphicsDevice が無いので GPU バッファは作られず、CPU 側 (positions/indices) だけが揃う
+    size_t modelsRegistered = 0;
+    for (const auto& e : fs::recursive_directory_iterator(assetsRoot, ec)) {
+        if (!e.is_regular_file()) {
+            continue;
+        }
+        const std::wstring p = e.path().wstring();
+        std::wstring lower = p;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](wchar_t c) { return static_cast<wchar_t>(::towlower(c)); });
+        if (EndsWithLower(lower, L".fbx")) {
+            modelsRegistered += FbxLoader::RegisterAssets(resources, shaders, p, true) ? 1 : 0;
+        } else if (EndsWithLower(lower, L".glb") || EndsWithLower(lower, L".gltf")) {
+            modelsRegistered += ModelLoader::RegisterAssets(resources, shaders, p, true) ? 1 : 0;
+        }
+    }
+
+    std::vector<AssetEntry> meshes = resources.meshes.Enumerate(); // 名前昇順 (決定的な出力順)
+    int bakes = 0;
+    double totalMs = 0.0;
+    for (const AssetEntry& entry : meshes) {
+        Mesh* m = resources.meshes.Get(entry.id);
+        if (!m || m->positions.empty()) {
+            continue;
+        }
+        const auto t0 = std::chrono::steady_clock::now();
+        const bool ok = lib.BakeSync(entry.id);
+        const auto t1 = std::chrono::steady_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        const ModalFeatureMap* map = ok ? lib.Get(entry.id) : nullptr;
+        std::printf("[modal-bake] %s %s %.2f %u\n", entry.name.c_str(),
+                    ModalStateName(ok ? ModalState::Ready : ModalState::Failed), ms,
+                    map ? map->validCount : 0u);
+        ++bakes;
+        totalMs += ms;
+    }
+    std::printf("[modal-bake] models=%zu bakes=%d bakeMsAvg=%.2f\n", modelsRegistered, bakes,
+                bakes > 0 ? totalMs / bakes : 0.0);
+
+    AssetDatabase::UninstallKeyResolver();
+    return 0;
 }
 
 } // namespace modaltools

@@ -25,6 +25,7 @@
 #include "Engine/Engine/Audio/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
+#include "Engine/Engine/Modal/ModalSoundLibrary.h" // M76e: .dmnet モデル + メッシュ毎の特徴マップの焼き
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Physics/ConvexColliderLibrary.h"
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
@@ -124,6 +125,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     PhysicsSystem physicsSystem; // 剛体積分 + 衝突解決 (M20、ステートレス)
     MeshColliderLibrary meshColliders; // 静的メッシュコライダーの BVH キャッシュ (M41)
     ConvexColliderLibrary convexColliders;   // 凸包コライダー + .mcvx クック (M60f)
+    ModalSoundLibrary modalSounds; // Deep-Modal 推論 + .msfm クック (M76e)。sim には触れない
     PhysMatLibrary physMatLibrary;     // .physmat.json (M59a1)。sim の消費は M59a2 から
     TerrainColliderLibrary terrainColliders; // 地形コライダー (M59i)。**描画側とは別キャッシュ**
     // XPBD 変形体の粒子池 (M60'b)。ECS 外 sim 状態の 2 例目 — ハッシュ節 (SimSources) と
@@ -266,6 +268,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // クック (.mcvx) が乗るので CookedCache::Configure より後で使われること (Get は lazy)
     convexColliders.Init(&resources);
     convexcol::Install(&convexColliders);
+    // M76e: Deep-Modal 推論。CLI (--modal-backend) は綴りだけ検査済みで、未実装名
+    // ("d3d11cs") への縮退はここ (SetBackendByName) が WARN 付きでやる。
+    // .dmnet が無い (M76h 未実装/未生成) 環境では LoadModel が false を返すだけで、
+    // 以後 Request() は常に NoModel = 既存の音経路 (WaveSound 等) に一切影響しない
+    modalSounds.Init(&resources);
+    modalSounds.SetBackendByName(WideToUtf8(config.modalBackendName));
+    modalsound::Install(&modalSounds);
+    modalSounds.LoadModel(ResolveDeepModalPath(assetsRoot));
     // M59a1: 物理マテリアル (.physmat.json)。起動走査 (RegisterAssetLibraries) と ReloadHub が
     // physmat::Library() 経由で読み込むので、走査より前に注入しておくこと
     physmat::Install(&physMatLibrary);
@@ -2252,6 +2262,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         //   なる — M45e のドップラーは tick 差分で速度を取る前提でここに置いている。
         //   M45e: AudioSource/AudioListener を先に処理して定位を確定させ、その後に
         //   voice 回収を回す (回収でスロットが空くのは次フレームからで良い)
+        // M76e: Deep-Modal の非同期焼き結果の取り込み (+ GPU バックエンドなら 1 フレーム 1 ジョブの
+        // 推論もここで回す)。**audioSources.Update より前**に置くこと — 同 tick の接触が
+        // Request() した状態 (Ready/Baking) を、鳴らす側 (sub-06) が同じフレームで読めるようにする
+        modalSounds.Pump();
         // M73a: ホールド / スクラブ中は sim を止めている扱いで渡す (ctx.simulateScripts は直前 tick
         // の値のまま残るので、そのまま渡すと playOnAwake の source が止まった世界で鳴り出す)
         audioSources.Update(scene.GetWorld(), audioSystem, soundLibrary, ctx.tickIndex,
@@ -2528,6 +2542,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.acousticField = nullptr;
     meshcol::Install(nullptr); // M41 (meshColliders 破棄前に必ず外す)
     convexcol::Install(nullptr); // M60f (convexColliders 破棄前に必ず外す)
+    modalsound::Install(nullptr); // M76e (modalSounds 破棄前に必ず外す)
+    modalSounds.Shutdown(); // ワーカー join (TextureLibrary::AsyncWorker と同じ流儀)
     physmat::Install(nullptr); // M59a1 (physMatLibrary 破棄前に必ず外す)
     terraincol::Install(nullptr); // M59i (terrainColliders 破棄前に必ず外す)
     AssetDatabase::UninstallKeyResolver(); // M30c (assetDatabase 破棄前に必ず外す)
