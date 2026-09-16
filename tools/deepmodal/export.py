@@ -37,10 +37,10 @@ RANDOM_FULL_SEED = 20260917
 
 # fixture/random-full はデータセット統計を持たないので、非退化なプレースホルダを書く
 # (実運用の値は --checkpoint 経路が train.py の統計から埋める)。
-# ★ampScale の本来の意味 (J=1 N·s の中央値ピークが -12dBFS になる値) は
-# ModalSynthRender (C++、sub-05 未着手) を実際に鳴らして較正する必要があり、
-# Python 単体では計算できない。1.0 は「未較正」のプレースホルダで、耳確認
-# (spec §2 #12、M76f/g) で確定させる — [追加]、SELF_EVAL 参照
+# ★ampScale の本来の意味 (「J = kImpactRefImpulse (6.0 N・s) の中央値ピークが -12dBFS
+# になる値」、M76i で J=1 から改訂 — J=1 には物理的根拠が無く、線形則前提の値だった) は
+# ModalSynthRender (C++) を実際に鳴らして較正する必要があり、Python 単体では計算できない。
+# 1.0 は「未較正」のプレースホルダ。較正手順は README.md の「音量較正 (M76i)」節を参照
 _PLACEHOLDER_LOG_AMP_MIN = -20.0
 _PLACEHOLDER_LOG_AMP_MAX = 0.0
 _PLACEHOLDER_AMP_SCALE = 1.0
@@ -180,10 +180,11 @@ def ops_from_header(header: dict, ops_raw: list):
 def export_checkpoint(checkpoint_path: Path, out_path: Path, amp_scale: float = None,
                        mask_threshold: float = None):
     """`amp_scale`/`mask_threshold` を省略すると未較正のプレースホルダのまま書く。
-    ★`ampScale` の本来の意味 (J=1 N·s の中央値ピークが -12dBFS になる値) は
-    `ModalSynthRender` を実際に鳴らして較正するしかない (Python 単体では計算できない、
-    上のモジュール docstring 参照) ため、耳確認 (M76h) は `--amp-scale` で明示的に
-    書き込んだ値を検証する。この関数を 2 回目以降呼ぶたびに新しい .dmnet が born-again
+    ★`ampScale` の本来の意味 (「J = kImpactRefImpulse (6.0) の中央値ピークが -12dBFS」、
+    M76i で改訂) は `ModalSynthRender` を実際に鳴らして較正するしかない (Python 単体では
+    計算できない、上のモジュール docstring 参照) ため、較正 (M76i、README.md 参照) は
+    `--amp-scale` で明示的に書き込んだ値を検証する。この関数を 2 回目以降呼ぶたびに
+    新しい .dmnet が born-again
     で書かれる (既存ファイルへの部分書き換えは行わない — ヘッダ以外にも weightsHash が
     絡むため、常に全体を書き直すのが安全)。"""
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
@@ -331,7 +332,7 @@ def main():
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--amp-scale", type=float, default=None,
                      help="--checkpoint 専用。省略時は未較正のプレースホルダ (1.0)。"
-                          "耳確認 (M76h) で ModalSynthRender を実際に鳴らして決める")
+                          "較正手順 (M76i) は README.md の「音量較正」節を参照")
     ap.add_argument("--mask-threshold", type=float, default=None,
                      help="--checkpoint 専用。省略時は既定 0.5")
     args = ap.parse_args()

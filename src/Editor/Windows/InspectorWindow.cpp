@@ -104,6 +104,31 @@ const char* ModalStateLabel(ModalState s)
     return "?";
 }
 
+// sub-10 H (reviewer round 1 指摘 2): 面ボタンの直近の結果を UI に出すためのラベル。
+// Played を含む全ケースを網羅する (実際に Inspector 経由で起き得るのは Played/BelowMin
+// だけだが、MakeModalShotPlay の契約を先取りして固定しておく — 将来ここへ分岐を足しても
+// 黙って "?" にならない)
+const char* ModalShotResultLabel(ModalShotResult r)
+{
+    switch (r) {
+    case ModalShotResult::Played:
+        return Tr(StrId::Insp_ModalResultPlayed);
+    case ModalShotResult::NotReady:
+        return Tr(StrId::Insp_ModalResultNotReady);
+    case ModalShotResult::NoModel:
+        return Tr(StrId::Insp_ModalResultNoModel);
+    case ModalShotResult::Cooldown:
+        return Tr(StrId::Insp_ModalResultCooldown);
+    case ModalShotResult::BelowMin:
+        return Tr(StrId::Insp_ModalResultBelowMin);
+    case ModalShotResult::PoolFull:
+        return Tr(StrId::Insp_ModalResultPoolFull);
+    case ModalShotResult::PlayFailed:
+        return Tr(StrId::Insp_ModalResultPlayFailed);
+    }
+    return "?";
+}
+
 // 6 面ボタンのラベルとファイル名スラグ (spec §4.3 の並び: +X -X +Y -Y +Z -Z)
 struct ModalFaceInfo {
     StrId label;
@@ -953,6 +978,12 @@ void InspectorWindow::DrawModalSoundNotes(EngineContext& ctx, const InspectorTar
     }
     ImGui::EndDisabled();
 
+    // sub-10 H (reviewer round 1 指摘 2): 「押しても何も起きない」と「まだ押していない」を
+    // 区別できるように、直近の結果を常に出す (Played も含めて明示する。黙って return しない)
+    if (modalPreview_.everFired) {
+        ImGui::Text(Tr(StrId::Insp_ModalResultHeading), ModalShotResultLabel(modalPreview_.lastResult));
+    }
+
     // Export は「直近のプレビュー clip」を書き出すだけなので、面ボタンの ready 状態とは
     // 無関係 — 別のエンティティを見ていても直近に鳴らした音は書き出せる (spec §4.3)
     ImGui::BeginDisabled(!modalPreview_.valid);
@@ -989,7 +1020,10 @@ void InspectorWindow::FireModalPreviewFace(EngineContext& ctx, const InspectorTa
         impact.localPoint[a] = (a == axis) ? (positive ? fm.frame.aabbMax[a] : fm.frame.aabbMin[a])
                                             : 0.5f * (fm.frame.aabbMin[a] + fm.frame.aabbMax[a]);
     }
-    impact.k[axis] = (positive ? -1.0f : 1.0f) * modalPreview_.impulse; // 内向き法線 × 力積
+    // 内向き法線 × 圧縮済み力積 (sub-10 A。CollectModalImpacts (ランタイム) と
+    // 同じ ModalImpulseCurve を通す — 2 本目の規則を書くと較正の前提が崩れる)。
+    // excessImpulse は生の力積のまま (ログ/UI 表示用)
+    impact.k[axis] = (positive ? -1.0f : 1.0f) * ModalImpulseCurve(modalPreview_.impulse);
     impact.excessImpulse = modalPreview_.impulse;
     impact.tick = ctx.tickIndex;
 
@@ -1010,8 +1044,13 @@ void InspectorWindow::FireModalPreviewFace(EngineContext& ctx, const InspectorTa
     AudioSpatial spatial;
     const ModalShotResult result =
         MakeModalShotPlay(fm, hdr, impact, comp, mat, scale, clip, spatial, nullptr);
+    // sub-10 H: 結果は Played 以外も含めて必ず記録する (DrawModalSoundNotes が表示する)。
+    // 「押しても何も起きない」を UI から見えるようにするのが目的なので、ここで黙って
+    // return する前に必ず書くこと
+    modalPreview_.everFired = true;
+    modalPreview_.lastResult = result;
     if (result != ModalShotResult::Played) {
-        return; // BelowMin 等。直前の有効なプレビューはそのまま残す (何も鳴らなかった扱い)
+        return; // BelowMin 等。直前の有効なプレビュー clip はそのまま残す (何も鳴らなかった扱い)
     }
 
     modalPreview_.clip = clip; // Export WAV 用に保持 (SoundGenWindow::Preview と同じ二重利用)

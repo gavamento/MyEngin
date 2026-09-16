@@ -5,6 +5,8 @@
 //====================================================================================
 #include "Engine/Engine/Modal/ModalFeatureMap.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #include <DirectXPackedVector.h>
@@ -240,6 +242,31 @@ void SerializeModalTable(const std::vector<std::pair<std::string, ModalFeatureMa
         out.insert(out.end(), key.begin(), key.end());
         SerializeOne(map, out);
     }
+}
+
+bool ModalFeatureMapAllMaskOff(const ModalFeatureMap& map, float maskThreshold)
+{
+    if (map.validCount == 0) {
+        return true; // 有効 cell が無ければどのみち鳴らない
+    }
+    // ModalSynth.cpp の BuildModes 手順 3 と同じ式 (0/1 ちょうどは ln の特異点なのでわずかに
+    // 内側へ寄せる)
+    const float tc = std::clamp(maskThreshold, 1.0e-6f, 1.0f - 1.0e-6f);
+    const float logitThreshold = std::log(tc / (1.0f - tc));
+    const size_t rows = map.feat.size() / static_cast<size_t>(kModalChannels);
+    for (size_t row = 0; row < rows; ++row) {
+        const auto* half = reinterpret_cast<const DirectX::PackedVector::HALF*>(
+            map.feat.data() + row * static_cast<size_t>(kModalChannels));
+        for (int j = 0; j < 3; ++j) {
+            for (int i = 0; i < kModalBands; ++i) {
+                const float logit = DirectX::PackedVector::XMConvertHalfToFloat(half[MaskCh(j, i)]);
+                if (logit > logitThreshold) {
+                    return false; // どこか 1 箇所でも mask on なら「常時無音」ではない
+                }
+            }
+        }
+    }
+    return true;
 }
 
 bool DeserializeModalTable(const std::vector<uint8_t>& in,

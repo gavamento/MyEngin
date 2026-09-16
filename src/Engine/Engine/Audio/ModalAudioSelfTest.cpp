@@ -5,6 +5,7 @@
 //====================================================================================
 #include "Engine/Engine/Audio/ModalAudioSelfTest.h"
 
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -109,10 +110,12 @@ bool RunModalAudioSelfTest()
                   "(1) excessImpulse == impulse - RestingImpulse");
             // 回転前 (identity): ワールド (1,0,0) はローカルでも X 軸に乗る。
             // ★符号は E が ea (小 index) か eb (大 index) かで反転する (spec §4.1「法線」の
-            //   nE = n / -n)。ここではどちらの割当でも通るよう絶対値で見る
-            check(std::fabs(std::fabs(impacts[0].k[0]) - impacts[0].excessImpulse) < 1.0e-2f
+            //   nE = n / -n)。ここではどちらの割当でも通るよう絶対値で見る。
+            // ★k は生の excessImpulse ではなく圧縮カーブ C(J) を通した値 (spec sub-10 A)
+            const float compressed = ModalImpulseCurve(impacts[0].excessImpulse);
+            check(std::fabs(std::fabs(impacts[0].k[0]) - compressed) < 1.0e-2f
                       && std::fabs(impacts[0].k[2]) < 1.0e-2f,
-                  "(1) unrotated box: k lands on local X (matches world X)");
+                  "(1) unrotated box: k lands on local X (matches world X, compressed by C(J))");
         }
 
         // Y 90 度回転 -> ワールド X 方向の法線はローカル Z (符号は問わない) へ乗り移る
@@ -122,9 +125,10 @@ bool RunModalAudioSelfTest()
         CollectModalImpacts(world, contacts, kDt, 42, impacts2);
         check(impacts2.size() == 1, "(1) rotating the box doesn't change the impact count");
         if (impacts2.size() == 1) {
+            const float compressed2 = ModalImpulseCurve(impacts2[0].excessImpulse);
             check(std::fabs(impacts2[0].k[0]) < 5.0e-2f
-                      && std::fabs(std::fabs(impacts2[0].k[2]) - impacts2[0].excessImpulse) < 5.0e-2f,
-                  "(1) after a 90 deg yaw, k follows the box's local axis (X -> Z)");
+                      && std::fabs(std::fabs(impacts2[0].k[2]) - compressed2) < 5.0e-2f,
+                  "(1) after a 90 deg yaw, k follows the box's local axis (X -> Z, compressed)");
         }
     }
 
@@ -321,6 +325,35 @@ bool RunModalAudioSelfTest()
         sources.Update(scene.GetWorld(), audio, sounds, 1, 1.0f / 60.0f, true);
         check(sources.PendingModalImpactCount() == 0,
               "(8) Update empties the queue before the IsReady/suspended early-out");
+    }
+
+    // ---- (9) ModalImpulseCurve: C(ref)=ref、単調増加、C(0)=0、式そのものと一致 (spec sub-10 A) ----
+    {
+        check(ModalImpulseCurve(0.0f) == 0.0f && ModalImpulseCurve(-1.0f) == 0.0f,
+              "(9) C(J<=0) == 0 (defensive against a domain that never occurs in practice)");
+        check(std::fabs(ModalImpulseCurve(acoustic::kImpactRefImpulse) - acoustic::kImpactRefImpulse)
+                  < 1.0e-3f,
+              "(9) C(kImpactRefImpulse) == kImpactRefImpulse (the curve is anchored at the reference)");
+
+        // Checkpoint J (spec §5 #24): kImpactMinImpulse 直上から --modal-demo の桁まで単調増加
+        const float checkpoints[] = { 0.36f, 1.0f, 3.0f, 6.0f, 30.0f, 100.0f, 10000.0f, 100000.0f };
+        bool monotonic = true;
+        float prev = -1.0f;
+        for (float j : checkpoints) {
+            const float c = ModalImpulseCurve(j);
+            monotonic = monotonic && c > prev;
+            prev = c;
+        }
+        check(monotonic, "(9) C(J) is strictly increasing across the Checkpoint J range");
+
+        // 式そのもの (別経路の double 計算) と 1e-4 相対で一致 (ドリフト検知)
+        const double refD = static_cast<double>(acoustic::kImpactRefImpulse);
+        const double j = 42.0;
+        const double expected =
+            refD * std::pow(j / refD, static_cast<double>(kModalImpulseExponent));
+        const double got = static_cast<double>(ModalImpulseCurve(static_cast<float>(j)));
+        check(std::fabs(got - expected) / expected < 1.0e-4,
+              "(9) ModalImpulseCurve matches an independently written double reference");
     }
 
     if (failCount == 0) {

@@ -18,12 +18,15 @@ namespace modaltools {
 // 続行し、1 件でもあれば戻り値は 1 (exit code に使う想定)。list 自体が読めなければ 1
 int RunModalVoxelizeCli(const std::wstring& listPath, const std::wstring& outDir);
 
-// --modal-bake [--project DIR] (M76e) の本体。プロジェクト (または裸のエンジンリポジトリ) の
-// assets 以下をヘッドレス登録し、登録された全メッシュを ModalSoundLibrary::BakeSync で
-// 焼いて `.msfm` へ書く。ウィンドウも D3D も作らない。1 行/メッシュ (`name state ms validCells`)
-// + 合計 (`bakes= bakeMsAvg=`) を標準出力へ。
+// --modal-bake [--project DIR] [--modal-backend cpu|d3d11cs] (M76e) の本体。プロジェクト
+// (または裸のエンジンリポジトリ) の assets 以下をヘッドレス登録し、登録された全メッシュを
+// ModalSoundLibrary::BakeSync で焼いて `.msfm` へ書く。ウィンドウも D3D も作らない。
+// 1 行/メッシュ (`name state ms validCells`) + 合計
+// (`bakes= bakeMsAvg= silent=`。silent は全 cell・全帯域で mask が落ちているメッシュ数 —
+// どんな力積でも鳴らない「常時無音」の可視化、spec sub-10 C) を標準出力へ。
+// backendName は空なら "cpu" (--modal-backend 未指定時の既定と同じ)。
 // exit 0 = 成功 (0 件でも成功) / 1 = assets root が見つからない / 2 = .dmnet が無い・ロード失敗
-int RunModalBakeCli(const std::wstring& projectDir);
+int RunModalBakeCli(const std::wstring& projectDir, const std::wstring& backendName = L"cpu");
 
 } // namespace modaltools
 } // namespace mye

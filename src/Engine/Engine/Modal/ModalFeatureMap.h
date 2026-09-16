@@ -55,4 +55,11 @@ void SerializeModalTable(const std::vector<std::pair<std::string, ModalFeatureMa
 bool DeserializeModalTable(const std::vector<uint8_t>& in,
                            std::vector<std::pair<std::string, ModalFeatureMap>>& out);
 
+// 全 cell・全チャンネルで mask が閾値以下 (= BuildModes がどんな力積でも必ず BelowMin になる)
+// かどうかを判定する (spec sub-10 C、--modal-bake の「常時無音」レポート専用の診断)。
+// validCount==0 (有効 cell が無い) も無音として扱う。閾値ロジットの式は ModalSynth.cpp の
+// BuildModes 冒頭と同じ (**正本は BuildModes 側** — ここは診断用の複製なので、BuildModes の
+// 閾値の作り方を変えたら必ずこちらも合わせること)
+bool ModalFeatureMapAllMaskOff(const ModalFeatureMap& map, float maskThreshold);
+
 } // namespace mye

@@ -266,6 +266,7 @@ void ModalSoundLibrary::Register(AssetID id, ModalFeatureMap map)
 
 void ModalSoundLibrary::Clear()
 {
+    FlushDirtyTables(); // dirty なまま tables_ を捨てると焼いた結果が静かに消える
     cache_.clear();
     warnedFailed_.clear();
     tables_.clear();
@@ -273,6 +274,7 @@ void ModalSoundLibrary::Clear()
 
 void ModalSoundLibrary::Shutdown()
 {
+    FlushDirtyTables(); // ライブラリ破棄時の明示 flush (reviewer round 1 指摘 3、spec sub-10)
     if (workerStarted_) {
         {
             std::lock_guard<std::mutex> lk(mutex_);
@@ -386,7 +388,22 @@ void ModalSoundLibrary::UpdateTableEntry(const std::wstring& srcPath, const std:
     } else {
         table.emplace(hit, meshName, map);
     }
-    SaveTable(srcPath, table);
+    // ここでは保存しない (reviewer round 1 指摘 3)。1 モデルが N 個のサブメッシュを持つとき
+    // 焼くたびに SaveTable すると表全体 (N 枚ぶん) を N 回書き直す = O(N^2) のディスク I/O
+    // になる (実測: 最終 15.1 MB の表に対し累積 約 1.09 GB)。dirty だけ立てて、
+    // バッチの終わり (--modal-bake) かライブラリ破棄時 (Shutdown) にまとめて 1 回書く
+    dirtyTables_.insert(srcPath);
+}
+
+void ModalSoundLibrary::FlushDirtyTables()
+{
+    for (const std::wstring& srcPath : dirtyTables_) {
+        const auto it = tables_.find(srcPath);
+        if (it != tables_.end()) {
+            SaveTable(srcPath, it->second);
+        }
+    }
+    dirtyTables_.clear();
 }
 
 namespace modalsound {

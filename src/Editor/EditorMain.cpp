@@ -428,10 +428,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return mye::modaltools::RunModalVoxelizeCli(modalVoxelizeList, modalVoxelizeOut);
     }
 
-    // --modal-bake [--project DIR] (M76e): .dmnet を読み、プロジェクト (または裸のエンジン
-    // リポジトリ) の全メッシュを .msfm へ焼いて終了する。ウィンドウも D3D も作らない
+    // --modal-bake [--project DIR] [--modal-backend cpu|d3d11cs] (M76e): .dmnet を読み、
+    // プロジェクト (または裸のエンジンリポジトリ) の全メッシュを .msfm へ焼いて終了する。
+    // ウィンドウも D3D も作らない。config.modalBackendName は共有 CLI (EngineCli.cpp) が
+    // --modal-backend を検証済み (reviewer round 1 指摘 5: 以前は黙って cpu 固定だった)
     if (modalBake) {
-        return mye::modaltools::RunModalBakeCli(projectDir);
+        return mye::modaltools::RunModalBakeCli(projectDir, config.modalBackendName);
     }
 
     if (selftest) {

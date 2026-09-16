@@ -285,8 +285,9 @@ mask acc > 99% かつ R² ≥ 0.90 を満たした証拠 (ログ) が既にあ�
    `pooled: ... R²=` 行を確認すること** — サンプル数が 2 桁増えるので、正で頭打ちに
    ならなければ `--epochs` を増やして学習曲線を報告すること。round 2 の must #1 参照) →
    `export.py --checkpoint runs\modelnet10_full.pt --out
-   ..\..\assets\deepmodal\deepmodal.dmnet --amp-scale <耳確認で決めた値>` →
-   `Editor.exe --modal-bake` → 耳確認 → コミット。
+   ..\..\assets\deepmodal\deepmodal.dmnet --amp-scale <下の「音量較正」の手順で決めた値>` →
+   `Editor.exe --modal-bake` → 較正の再確認 (モデルが変わると係数も変わるので、
+   M76i の値をそのまま使い回さない) → コミット。
 
 ## モデル / 学習 / export (M76d)
 
@@ -377,10 +378,11 @@ BN を畳み込みへ畳み (`model.ConvBN3d.fold()`)、**重みだけ fp16 へ�
 ボクセル占有さえ分かれば十分という想定、[追加]) のうち `layout.cell_order()`
 順で先頭 64 個を選ぶ。
 
-`ampScale` (spec §4.1 手順 4、「J=1 N·s の中央値ピークが -12dBFS になる値」) は
-`ModalSynthRender` (C++、sub-05 未着手) を実際に鳴らして較正する必要があり、
-Python 単体では計算できない。fixture/random-full/checkpoint いずれも **1.0 の
-プレースホルダ**で書いている ([追加])。耳確認 (spec §2 #12、M76f/g) で確定させる。
+`ampScale` (「`J = kImpactRefImpulse` (6.0 N·s) の中央値ピークが -12dBFS になる値」。
+旧文言の「J=1 N·s」は M76i で撤回 — 較正手順は下の「音量較正 (M76i)」節を参照) は
+`ModalSynthRender` (C++) を実際に鳴らして較正する必要があり、Python 単体では計算
+できない。fixture/random-full/checkpoint いずれも省略時は **1.0 のプレースホルダ**
+で書いている。耳確認 (M76f/g) の値は下の節で確定させた。
 
 ## overfit の門 — 実測とハイパーパラメータ探索 (sub-04 round 1、2026-09-16)
 
@@ -525,3 +527,75 @@ epoch 1500 で **R²=0.6277** (mask_acc=99.82%) まで単調に伸びた (var_ta
 
 学習ログ全文・書き出しサイズ・耳確認の結果は `plans\m76-deepmodal\sub-08.md` の実装メモ
 (SELF_EVAL round 2) に記録した。
+
+## 音量較正 (M76i)
+
+M76h 時点の `ampScale=1.0` (プレースホルダ) のまま出荷すると、振幅が力積に線形なので
+現実的な軽い衝突 (1kg を 0.5m 落下、J≈3 N·s) が全サンプル 0 になる (reviewer round 1 の
+実測。詳細は `engine_spec.md §10.7.2` と `docs\adr\ADR-020-deep-modal.md` 決定 10)。
+`ModalAudio.h` の `ModalImpulseCurve()`
+(`C(J) = kImpactRefImpulse·(J/kImpactRefImpulse)^kModalImpulseExponent`) が
+`CollectModalImpacts` で力積を圧縮してから振幅へ渡す。**較正が動かすのは `ampScale`
+(`.dmnet` ヘッダの float 1 個) と `kModalImpulseExponent` (`ModalAudio.h` の C++ 定数)
+の 2 つだけ** — どちらもネットの重みではないので、**モデルを再学習しなくてよい**
+(`kModalImpulseExponent` を変えたときだけ C++ の再ビルドが要る。`ampScale` は
+`export.py --amp-scale` で書き直すだけで済む)。
+
+### 手順
+
+1. `export.py --checkpoint <ckpt> --amp-scale <値> --out assets\deepmodal\deepmodal.dmnet`
+   で `.dmnet` を書き直す (既存の `.msfm` は無効化されない — 下記「なぜ再焼きが要らないか」参照)。
+2. `Editor.exe --modal-bake` (2 回目がキャッシュヒットすることを確認 — `bakeMsAvg` が
+   数百 ms から 1ms 未満に落ちれば OK。落ちなければ `weightsHash` が変わっている =
+   `--checkpoint` を変えていないか確認)。
+3. `MYE_MODAL_PROBE_IMPULSE=<J>` (CLI フラグではなく**計測用の環境変数** — CpuModalBackend の
+   `MYE_MODAL_THREADS`/`MYE_MODAL_FORCE_SCALAR` (`CLAUDE.md` 参照) と同じ扱い。未設定なら
+   `--modal-face-probe` は既定の `kModalPreviewDefaultImpulse` (15 N・s) のまま動く = 挙動不変)
+   を設定して
+   `Runtime.exe --modal-demo --modal-sync-bake --modal-audio-log 300 --synth-input
+   --modal-face-probe --modal-wav-dump <DIR> --screenshot tmp.png --frames 300`
+   を J を振りながら (0.35 / 1 / 3 / 6 / 30 / 100 など) 何回か回し、`<DIR>\probe_*.wav`
+   6 枚 (メッシュの 6 面) の peak を測る (`wave` モジュールで int16 の絶対値最大を読むだけ)。
+   ★ログの `peakDb`/`--modal-audio-log` の表示値は**無音を -80dBFS へ丸める**ため
+   較正には使わない — 必ず `--modal-wav-dump` の実 PCM を測ること。
+4. `J = kImpactRefImpulse (6.0)` での 6 面の中央値ピークが **-12dBFS ± 3dB** になるよう
+   `ampScale` を調整する (アンカーは `kModalImpulseExponent` の値に依らない —
+   `C(kImpactRefImpulse) = kImpactRefImpulse` は指数によらない恒等式なので、
+   `ampScale` だけで合わせてから `kModalImpulseExponent` を別途詰められる)。
+5. `--modal-demo` 本体 (`--modal-wav-dump` を付けて実バウンドを録る。何発になるかは
+   質量・反発係数で決まるので固定しない) を回し、
+   同一エンティティの減衰系列 (bounce ごとに J が下がっていく) が **peak dBFS も単調に
+   下がる**こと、かつ**全弾がフルスケール近辺に張り付いていない**ことを確認する。
+   張り付く場合は `kModalImpulseExponent` を下げる (下げても手順 4 のアンカーは
+   動かないので、往復せずに 1 回で詰められる)。
+
+### なぜ再焼きが要らないか
+
+`.msfm` の再利用は `modelHash == weightsHash` で決まり (`ModalSoundLibrary.cpp`)、
+`weightsHash` は **重み+バイアス blob だけ** (`export.py::build_dmnet_bytes` の
+`fnv1a64(weight_blob + bias_blob)`、ヘッダを組み立てる前に計算) の FNV-1a なので、
+`ampScale` (ヘッダの 1 フィールド) を書き換えても値は変わらない。M76i で
+較正前後の `.dmnet` の `weightsHash` が完全一致することと、`--modal-bake` の 2 回目が
+全件キャッシュヒットすることの両方を実測で確認した。
+
+### M76i で確定した値 (stage1 の `.dmnet`、ModelNet10 後は要再較正)
+
+`ampScale=11478.0`、`kModalImpulseExponent=0.5` (= 出発値そのもの)。
+
+★**`p` は `--modal-demo` に決めさせない** — 最初は「p=0.5 だと demo の実 J 域が
+フルスケールに張り付く」ことを根拠に p=0.18 まで下げたが、これは診断が逆だった
+(demo の箱が `useDensity=true` の 1 m³ 剛体で、金属なら 7,850 kg という非現実的な質量
+だったのが原因)。正しい基準は**エンジンが既に「現実的」として扱っている力積域**
+(`kImpactMinImpulse=0.35` 〜 「本気の一撃」100 N・s) での聴感差で、既存の波レーン
+(`acoustic::ImpactGain`) が J=0.35→6 に 24.7 dB を割り当てていることに合わせて
+p=0.5 (0.35→100 で 24.6 dB 相当、実測 24.0 dB) を確定値とした。アンカー
+(`C(kImpactRefImpulse)=kImpactRefImpulse` が p に依らない恒等式) は動かないので
+**`ampScale` は 11478.0 のまま変更不要** (p=0.18 のときと同じ値で J=6 の中央値ピークが
+実測でも同じ -12.0dBFS になることを確認済み)。demo 側は `BuildModalShowcaseScene`
+の 4 物体を `useDensity` から直接 `mass` 指定 (小道具サイズ、数 kg) へ直し、
+実バウンドの J を 0.438〜52.058 (旧 161〜102164) へ落とした。詳細と実測表は
+ADR-020 決定 10。
+
+**モデルが変わると mask/amp の分布も変わるので、ModelNet10 で再学習したら
+`ampScale` を上の手順でもう一度実測すること** (使い回さない。`kModalImpulseExponent`
+は「現実的な力積域」という物理的な基準で決めた値なのでモデルが変わっても据え置いてよい)。

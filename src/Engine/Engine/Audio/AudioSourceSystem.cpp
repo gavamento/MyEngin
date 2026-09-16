@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #include <DirectXMath.h>
 
@@ -831,11 +832,24 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
                                 if (modalFaceProbe_ && !modalFaceProbeDone_
                                     && !modalWavDumpDir_.empty()) {
                                     modalFaceProbeDone_ = true;
-                                    // round 2 で本学習を Adam 1500 epoch へ直した後、4.0 N・s では
-                                    // WoodBox の 6 面すべてが BelowMin になった (再学習でネットの
-                                    // 応答曲線が変わったため)。Inspector のスライダ上限 (20 N・s)
-                                    // に寄せて閾値の余裕を確保する
-                                    static constexpr float kProbeImpulse = 15.0f;
+                                    // Inspector の面打ちプレビューと同じ既定衝撃力を使う
+                                    // (kModalPreviewDefaultImpulse、ModalAudio.h。旧 kProbeImpulse
+                                    // はここだけの独自定数だったため sub-10 H で一本化した —
+                                    // reviewer round 1 指摘 2: 「4.0 では 6 面すべて BelowMin」の
+                                    // 是正がヘッドレス側だけ先に直り、Inspector 側が据え置かれていた)。
+                                    // ★[追加] `MYE_MODAL_PROBE_IMPULSE` (計測用の環境変数、
+                                    // `MYE_MODAL_THREADS` と同型) で上書きできる — sub-10 の
+                                    // dBFS×J 較正表は実際の物理バウンドだけでは J の低い側
+                                    // (0.35〜100 N・s) を作れないため、この経路で任意の J を
+                                    // 実際の推論結果に対して振れるようにした (CLI フラグにしない
+                                    // 理由は engine_spec の CLI 表を増やすほどの恒久機能ではないため)
+                                    float probeImpulse = kModalPreviewDefaultImpulse;
+                                    if (const char* env = std::getenv("MYE_MODAL_PROBE_IMPULSE")) {
+                                        const float v = static_cast<float>(std::atof(env));
+                                        if (v > 0.0f) {
+                                            probeImpulse = v;
+                                        }
+                                    }
                                     static const wchar_t* kFaceNames[6] = { L"px", L"nx", L"py",
                                                                             L"ny", L"pz", L"nz" };
                                     for (int face = 0; face < 6; ++face) {
@@ -851,9 +865,10 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
                                                               + fm->frame.aabbMax[a]);
                                         }
                                         probeImpact.k[0] = probeImpact.k[1] = probeImpact.k[2] = 0.0f;
+                                        // sub-10 A: CollectModalImpacts と同じ圧縮カーブを通す
                                         probeImpact.k[axis] =
-                                            (positive ? -1.0f : 1.0f) * kProbeImpulse;
-                                        probeImpact.excessImpulse = kProbeImpulse;
+                                            (positive ? -1.0f : 1.0f) * ModalImpulseCurve(probeImpulse);
+                                        probeImpact.excessImpulse = probeImpulse;
                                         AudioClip probeClip;
                                         AudioSpatial probeSpatial;
                                         ModalShotInfo probeInfo;

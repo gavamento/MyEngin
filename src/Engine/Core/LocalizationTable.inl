@@ -1153,6 +1153,18 @@ MYE_STR(Insp_ModalFaceNY,      "-Y", "-Y")
 MYE_STR(Insp_ModalFacePZ,      "+Z", "+Z")
 MYE_STR(Insp_ModalFaceNZ,      "-Z", "-Z")
 MYE_STR(Insp_ModalExportWav,   "Export WAV",            "WAV を書き出し")
+// sub-10 H (reviewer round 1 指摘 2): 面ボタンを押しても Played 以外なら黙って return
+// していたため「押しても何も起きない」と「まだ押していない」が UI から区別できなかった。
+// 直近の結果を常に出す (Played も含む — 「鳴った」ことも明示する)
+MYE_STR(Insp_ModalResultHeading,    "Last shot: %s",                  "直前の結果: %s")
+MYE_STR(Insp_ModalResultPlayed,     "played",                          "再生された")
+MYE_STR(Insp_ModalResultNotReady,   "mesh not baked yet",              "メッシュが未焼き")
+MYE_STR(Insp_ModalResultNoModel,    "no .dmnet loaded",                ".dmnet 未ロード")
+MYE_STR(Insp_ModalResultCooldown,   "cooldown",                        "クールダウン中")
+MYE_STR(Insp_ModalResultBelowMin,   "below audible minimum (raise Impulse)",
+                                     "可聴下限未満 (力積を上げてください)")
+MYE_STR(Insp_ModalResultPoolFull,   "voice pool full",                 "再生プール枯渇")
+MYE_STR(Insp_ModalResultPlayFailed, "play failed",                     "再生に失敗")
 
 // ---- Source Control (M66b) ----
 // "###" の右辺は両言語一致 + テーブル内で一意 (規則 10)。窓名の ID は

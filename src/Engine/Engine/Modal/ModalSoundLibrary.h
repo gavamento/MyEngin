@@ -87,6 +87,14 @@ public:
     // 成功で Ready、失敗で Failed (どちらも cache_ に反映してから返す)
     bool BakeSync(AssetID mesh);
 
+    // dirty (未保存) な .msfm 表をまとめて書き出す (reviewer round 1 指摘 3 の是正)。
+    // UpdateTableEntry は保存を毎回はしない (dirtyTables_ へ積むだけ) ので、これを呼ぶまで
+    // ディスクには反映されない。Shutdown() が破棄時に呼ぶほか、--modal-bake がバッチの
+    // 終わりに明示的に呼ぶ (モデル単位で表ごと書き直す O(n^2) の I/O を、モデル数ぶんの
+    // O(n) へ落とす — 表は「サブメッシュを 1 枚焼くたび全体を書き直す」形式なので、
+    // 焼くたびに保存すると 1 モデルの累積書き込みが枚数の 2 乗で増える)
+    void FlushDirtyTables();
+
 private:
     struct Entry {
         ModalState state = ModalState::Missing;
@@ -131,6 +139,7 @@ private:
     std::unordered_map<uint64_t, Entry> cache_;
     std::unordered_set<uint64_t> warnedFailed_; // WARN は 1 回だけ
     std::unordered_map<std::wstring, CookTable> tables_;
+    std::unordered_set<std::wstring> dirtyTables_; // FlushDirtyTables() で保存する srcPath の集合
 
     std::thread worker_;
     std::mutex mutex_;

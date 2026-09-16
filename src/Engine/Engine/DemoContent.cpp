@@ -3753,6 +3753,8 @@ void RegisterModalShowcaseContent(EngineContext& ctx)
     makeMat("mdemo_wood", 0.62f, 0.46f, 0.28f);
     makeMat("mdemo_metal", 0.70f, 0.72f, 0.76f);
     makeMat("mdemo_glass", 0.75f, 0.88f, 0.92f);
+    makeMat("mdemo_tile", 0.80f, 0.78f, 0.74f); // sub-10 E: 形状差 (sphere) を見せる 4 個目
+    res.meshes.Sphere();
 }
 
 void BuildModalShowcaseScene(EngineContext& ctx)
@@ -3820,7 +3822,13 @@ void BuildModalShowcaseScene(EngineContext& ctx)
         col->halfExtents = { 0.5f, 0.5f, 0.5f };
         col->physMaterial = matWood;
         auto* rb = box.AddComponent<RigidbodyComponent>();
-        rb->useDensity = true;
+        // ★[修正、reviewer round 1 must #1] 旧 `useDensity=true` は 1 m³ の**中実**剛体
+        // (wood.physmat.json の density=700 → 700 kg) を作っていた — 「衝突音のショーケース」
+        // としては非現実的な質量で、この力積 (J=161〜102164) に合わせて圧縮カーブの指数を
+        // 選ぶと現実的な衝突の表現力が犠牲になる (ModalAudio.h の kModalImpulseExponent
+        // コメント参照)。小道具サイズの質量を直接指定する — 見た目のサイズは変えない
+        // (SetLocalScale はそのまま) が、物理的な重さだけ現実的な範囲へ落とす
+        rb->mass = 2.0f; // kg (木箱サイズの小道具相当)
         box.AddComponent<ModalSoundComponent>(); // mesh は空 = MeshRenderer.mesh (Cube) を使う
     }
 
@@ -3837,7 +3845,10 @@ void BuildModalShowcaseScene(EngineContext& ctx)
         col->halfExtents = { 0.5f, 0.5f, 0.5f };
         col->physMaterial = matMetal;
         auto* rb = box.AddComponent<RigidbodyComponent>();
-        rb->useDensity = true;
+        // ★[修正、reviewer round 1 must #1] 旧 `useDensity=true` は 1 m³ 中実 (metal
+        // density=7850 → 7,850 kg = 8 トン級) を作っていた。WoodBox と同じ理由で
+        // 現実的な質量へ直す (見た目のサイズは不変)
+        rb->mass = 4.0f; // kg (金属塊サイズの小道具相当。木より少し重い程度)
         box.AddComponent<ModalSoundComponent>();
     }
 
@@ -3854,8 +3865,36 @@ void BuildModalShowcaseScene(EngineContext& ctx)
         col->halfExtents = { 0.5f, 0.5f, 0.5f };
         col->physMaterial = matGlass;
         auto* rb = box.AddComponent<RigidbodyComponent>();
-        rb->useDensity = true;
+        // ★[修正、reviewer round 1 must #1] 旧 `useDensity=true` は 0.8³ m³ 中実
+        // (glass density=2500 → 約 1,280 kg) を作っていた。ガラスは中身が詰まっていない
+        // (置物/瓶サイズ) 想定で軽くする — MetalBox より軽いぶんは、落下高さの差
+        // (y=4 → y=10) がもたらす速度差で埋め合わせ、なお「強く落とすと大きい」対になる
+        rb->mass = 1.0f; // kg (ガラス製の小物相当)
         box.AddComponent<ModalSoundComponent>();
+    }
+
+    // ---- タイルの球: 金属の床へ落ちる (spec sub-10 E、reviewer round 1 指摘 7)。
+    //     ★生成順の**末尾**に置く (このリポジトリの流儀: 末尾へ足せば既存の replay/golden に
+    //     影響しない)。WoodBox/MetalBox/GlassBox は 3 個とも Cube = 同一メッシュだったため、
+    //     「形状で音が変わる」の機構自体は .msfm の解析で確認できても、デモでは見せられなかった ----
+    {
+        const AssetID sphere = res.meshes.Sphere();
+        GameObject ball = s.CreateGameObject("TileSphere");
+        ball.SetLocalPosition(-1.0f, 6.0f, 3.0f);
+        ball.SetLocalScale(1.0f, 1.0f, 1.0f);
+        auto* mr = ball.AddComponent<MeshRendererComponent>();
+        mr->mesh = sphere;
+        mr->material = AssetID{ HashStr("mdemo_tile") };
+        auto* col = ball.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kSphere;
+        col->radius = 0.5f;
+        col->physMaterial = FindPhysMat("tile");
+        auto* rb = ball.AddComponent<RigidbodyComponent>();
+        // ★[修正、reviewer round 1 must #1] 半径 0.5m の中実球 (tile density=2400 相当) は
+        // useDensity だと約 1,257 kg になる。小道具サイズの質量へ直す (他 3 個と同じ理由)
+        rb->mass = 1.5f; // kg (タイル玉サイズの小道具相当)
+        auto* modal = ball.AddComponent<ModalSoundComponent>();
+        modal->mesh = sphere; // MeshRenderer.mesh と同じだが、球であることを明示しておく
     }
 }
 

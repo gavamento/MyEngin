@@ -41,6 +41,15 @@ const char* ModalShotResultName(ModalShotResult r)
     return "Unknown";
 }
 
+float ModalImpulseCurve(float excessImpulse)
+{
+    if (excessImpulse <= 0.0f) {
+        return 0.0f;
+    }
+    return acoustic::kImpactRefImpulse
+        * std::pow(excessImpulse / acoustic::kImpactRefImpulse, kModalImpulseExponent);
+}
+
 AssetID ResolveModalMesh(World& world, EntityID e, const ModalSoundComponent& comp)
 {
     if (!comp.mesh.IsNull()) {
@@ -84,6 +93,20 @@ void CollectModalImpacts(World& world, const std::vector<SolidContact>& contacts
     out.clear();
     if (contacts.empty()) {
         return;
+    }
+
+    // ModalSoundComponent を 1 つも持たないシーンでは、索引表の構築・sort を丸ごと省く
+    // (reviewer round 1 指摘 6。opt-in 機能の費用を opt-out できるようにする —
+    // AcousticField::DrainImpacts が同 tick に同型の索引表を作るので、ここを削っても
+    // 衝突そのもののコストは変わらない)。ForEachArchetype はクエリキャッシュ経由なので
+    // この判定自体は軽い
+    {
+        bool anyModalSound = false;
+        const ComponentTypeId modalReq[] = { ModalSoundComponent::sTypeId };
+        world.ForEachArchetype(modalReq, [&](Archetype&) { anyModalSound = true; });
+        if (!anyModalSound) {
+            return;
+        }
     }
 
     // index → EntityID の表。AcousticField::DrainImpacts と全く同じ作り方
@@ -158,9 +181,13 @@ void CollectModalImpacts(World& world, const std::vector<SolidContact>& contacts
         impact.localPoint[0] = pLocalF.x;
         impact.localPoint[1] = pLocalF.y;
         impact.localPoint[2] = pLocalF.z;
-        impact.k[0] = excess * nLocalF.x;
-        impact.k[1] = excess * nLocalF.y;
-        impact.k[2] = excess * nLocalF.z;
+        // spec sub-10 A: k は生の力積ではなく圧縮カーブ C(J) を通した値 (BuildModes は
+        // k をそのまま振幅へ使うので、ここで圧縮しておかないと較正 (ampScale) の前提が崩れる)。
+        // excessImpulse は生の J のまま (ログ/UI/dBFS×J 表は圧縮前の値で読む)
+        const float compressed = ModalImpulseCurve(excess);
+        impact.k[0] = compressed * nLocalF.x;
+        impact.k[1] = compressed * nLocalF.y;
+        impact.k[2] = compressed * nLocalF.z;
         impact.excessImpulse = excess;
         impact.tick = tick;
         impact.key = c.key;

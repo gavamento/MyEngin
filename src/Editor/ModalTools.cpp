@@ -338,7 +338,7 @@ int RunModalVoxelizeCli(const std::wstring& listPath, const std::wstring& outDir
     return anyError ? 1 : 0;
 }
 
-int RunModalBakeCli(const std::wstring& projectDir)
+int RunModalBakeCli(const std::wstring& projectDir, const std::wstring& backendName)
 {
     std::error_code ec;
     const std::wstring assetsRoot = projectDir.empty()
@@ -370,7 +370,16 @@ int RunModalBakeCli(const std::wstring& projectDir)
     ShaderManager shaders;
     ModalSoundLibrary lib;
     lib.Init(&resources);
-    lib.SetBackendByName("cpu");
+    // reviewer round 1 指摘 5: --modal-backend を黙って無視していた (常に "cpu" 固定)。
+    // README / engine_spec の CLI 表がこの組み合わせを有効なものとして書いているので、
+    // 渡された名前をそのまま通す (空文字は既定の "cpu")
+    const std::string backend = backendName.empty() ? "cpu" : WideToUtf8(backendName);
+    if (!lib.SetBackendByName(backend)) {
+        std::fprintf(stderr, "[modal-bake] ERROR: unknown --modal-backend value: %s\n",
+                     backend.c_str());
+        AssetDatabase::UninstallKeyResolver();
+        return 1;
+    }
     if (dmnetPath.empty() || !lib.LoadModel(dmnetPath)) {
         std::fprintf(stderr, "[modal-bake] ERROR: no usable .dmnet found (project or engine "
                              "assets\\deepmodal\\deepmodal.dmnet)\n");
@@ -396,8 +405,14 @@ int RunModalBakeCli(const std::wstring& projectDir)
         }
     }
 
+    // spec sub-10 C: 全 cell・全帯域で mask が落ちているメッシュ (どんな力積でも鳴らない)
+    // を数える。しきい値はモデル全体の既定 (ModalSound 側の override は --modal-bake には
+    // 存在しないので使わない) — BuildModes が実際に使う既定値と同じ
+    const float maskThreshold = lib.Header() ? lib.Header()->maskThreshold : 0.5f;
+
     std::vector<AssetEntry> meshes = resources.meshes.Enumerate(); // 名前昇順 (決定的な出力順)
     int bakes = 0;
+    int silent = 0;
     double totalMs = 0.0;
     for (const AssetEntry& entry : meshes) {
         Mesh* m = resources.meshes.Get(entry.id);
@@ -409,14 +424,22 @@ int RunModalBakeCli(const std::wstring& projectDir)
         const auto t1 = std::chrono::steady_clock::now();
         const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
         const ModalFeatureMap* map = ok ? lib.Get(entry.id) : nullptr;
-        std::printf("[modal-bake] %s %s %.2f %u\n", entry.name.c_str(),
+        const bool allMaskOff = map != nullptr && ModalFeatureMapAllMaskOff(*map, maskThreshold);
+        if (allMaskOff) {
+            ++silent;
+        }
+        std::printf("[modal-bake] %s %s %.2f %u%s\n", entry.name.c_str(),
                     ModalStateName(ok ? ModalState::Ready : ModalState::Failed), ms,
-                    map ? map->validCount : 0u);
+                    map ? map->validCount : 0u, allMaskOff ? " silent" : "");
         ++bakes;
         totalMs += ms;
     }
-    std::printf("[modal-bake] models=%zu bakes=%d bakeMsAvg=%.2f\n", modelsRegistered, bakes,
-                bakes > 0 ? totalMs / bakes : 0.0);
+    std::printf("[modal-bake] models=%zu bakes=%d bakeMsAvg=%.2f silent=%d\n", modelsRegistered,
+                bakes, bakes > 0 ? totalMs / bakes : 0.0, silent);
+
+    // バッチの終わりに 1 回だけ dirty な .msfm 表を書く (reviewer round 1 指摘 3。
+    // UpdateTableEntry はもう保存しないので、ここを忘れると 1 バイトもディスクに残らない)
+    lib.FlushDirtyTables();
 
     AssetDatabase::UninstallKeyResolver();
     return 0;

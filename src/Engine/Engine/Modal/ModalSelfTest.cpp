@@ -577,6 +577,24 @@ bool RunModalSelfTest()
         const bool loaded = LoadDmNet(fixtureDir + L"fixture.dmnet", net, &err);
         check(loaded, ("fixture.dmnet loads and passes the weightsHash check (" + err + ")").c_str());
         if (loaded) {
+            // reviewer round 1 指摘 4: 帯域中心の「ドリフト検知」テスト (ModalSynthSelfTest.cpp) が
+            // MelBandCenters() と同じ式を同じファイルに書き写して比較するだけで、本来守るべき
+            // C++ ⇄ Python の食い違いを検出できていなかった。ここは Python (compact.py/export.py)
+            // が実際に焼いた .dmnet の bandCenterHz[32] と C++ の MelBandCenters() を照合する —
+            // fixture はロードしていたのに一度もこの値を見ていなかった
+            float centers[kModalBands];
+            MelBandCenters(centers);
+            float maxDiff = 0.0f;
+            for (int i = 0; i < kModalBands; ++i) {
+                maxDiff = (std::max)(maxDiff, std::fabs(net.header.bandCenterHz[i] - centers[i]));
+            }
+            char what[160];
+            std::snprintf(what, sizeof(what),
+                         "fixture.dmnet's bandCenterHz[32] (written by Python) matches "
+                         "MelBandCenters() (C++) within 1e-2 Hz (max|d|=%g)",
+                         static_cast<double>(maxDiff));
+            check(maxDiff < 1.0e-2f, what);
+
             modal::VoxelGrid grid;
             const std::vector<uint8_t> mvoxBytes = ReadFileBytes(fixtureDir + L"fixture_in.mvox");
             const bool gridOk = modal::DeserializeVox(mvoxBytes, grid);

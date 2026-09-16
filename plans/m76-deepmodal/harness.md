@@ -2,7 +2,7 @@
 
 - 依頼原文: "C:\HAL\MyEngin\plans\DeepModal" これを参考にDeepmodalを使った音作成をエンジンに実装する計画を立てて
 - 開始: 2026-09-16 / 基点コミット: 99803eb
-- フェーズ: レビュー (round 1 FAIL → sub-10 を新設。**ユーザー指示で司会はここで停止中**)
+- フェーズ: レビュー (round 1 FAIL → sub-10 を実装中)
 
 ## ユーザー判断 (策定前に確定済み)
 - 再生方式: 衝突ごとに ≤2 s のクリップを合成し回転プールへ RegisterClip → 既存の Play / 3D / 遮蔽 / リバーブ経路 (ストリーミングの新レーンは作らない)
@@ -31,7 +31,7 @@
 | sub-06 | OK | 1 | eac3800 | M76f ModalSound (61) + 接触→合成 + wave 口封じ + CLI (依存 sub-01, sub-05, sub-09) |
 | sub-07 | OK | 1 | 34bf95f | M76g Inspector プレビュー + PhysMat 欄 (依存 sub-06) |
 | sub-08 | OK | 2 | 5807308 | M76h stage1 学習 + .dmnet + 文書 (依存 sub-06, sub-07) |
-| sub-10 | 未着手 | 0 | | M76i 音量カーブの較正と圧縮 + engine 文書 (依存 sub-08、レビュー round 1 の major 1) |
+| sub-10 | 実装中 | 1 | | M76i 音量カーブの較正と圧縮 + engine 文書 (依存 sub-08、レビュー round 1 の major 1) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |

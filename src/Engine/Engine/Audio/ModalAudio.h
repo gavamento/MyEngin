@@ -23,6 +23,50 @@ struct SolidContact;    // Engine/Engine/Physics/PhysicsSystem.h
 struct ModalSoundComponent; // Engine/Core/Components.h
 struct PhysMat;          // Engine/Engine/Physics/PhysMatLibrary.h
 
+// ---- 衝撃力 → 圧縮された力積 (spec sub-10 A、reviewer round 1 指摘 1 の是正) ----
+// 振幅は力積に線形 (reviewer 実測: peak/J が材質ごとに一定) なので、現実的な軽い衝突
+// (1kg を 0.5m 落下、J≈3) を聞こえる音量にする線形スケールは、重い衝突
+// (--modal-demo の箱、J≈10^4〜10^5) を約 1000 倍のクリップへ叩き込む。逆に重い衝突が
+// 歪まない線形スケールでは軽い衝突が無音になる — 両立しないので圧縮カーブ
+//   C(J) = kImpactRefImpulse * (J / kImpactRefImpulse) ^ kModalImpulseExponent
+// を挟む (p<1 は「小さい J ほど相対的に持ち上げ、大きい J ほど相対的に抑える」効果)。
+// ★基準は新設せず acoustic::kImpactRefImpulse (= 6.0、「倍率 1.0 に達する力積」として
+//   既に文書化済み、AcousticGrid.h) をそのまま使う — 基準を 2 つ作らない (planner 裁定)。
+// ★p は **demo に決めさせない** (spec sub-10 round 2、planner round 1 指摘の是正)。
+// round 1 では「p=0.5 だと --modal-demo (J=161〜102164) が全弾ほぼ 0dBFS に張り付く」を
+// 根拠に p=0.18 まで下げたが、これは診断が逆だった — 張り付きの原因は demo 側の
+// `useDensity=true` な 1 m³ 剛体 (金属で 7,850 kg 相当) が非現実的な力積 (J=161〜102164)
+// を作っていたことで、圧縮カーブの問題ではない。demo の物体を現実的な質量へ直した
+// (`DemoContent.cpp`) うえで、**現実的な力積域 (`kImpactMinImpulse`=0.35 〜 100 N・s) の
+// 音量差** を基準に p を選び直す。
+// ★根拠: エンジンの既存の波レーン (`acoustic::ImpactGain = min(1, J/kImpactRefImpulse)`、
+// AcousticGrid.h) は J=0.35→6 というモーダルより**狭い**範囲に **24.7 dB** を割り当てている。
+// モーダルレーンだけ桁違いに平坦だと、同じ衝突なのに「強く当てた」感が波レーンと食い違う
+// (spec §1 の Checkpoint J が実質不成立になる)。0.35→100 の音量差は
+// `C(J)` が J=kImpactRefImpulse で p に依らない恒等式であることから
+// `20·p·log10(100/0.35) = 49.12·p` [dB] — **p=0.5 で 24.6 dB** (波レーンの 24.7 dB とほぼ同値)、
+// p=0.4 で 19.6 dB (spec の下限 ≥20dB を僅かに割る)、p=0.18 (round 1 の値) では 8.8 dB しか
+// 出ない。よって **p=0.5** (spec の出発値そのもの) を確定値とする — アンカー
+// (`C(kImpactRefImpulse)=kImpactRefImpulse` が p に依らない恒等式) は動かないので
+// `ampScale` は変更不要、実測でも J=6 が変わらず −12.0dBFS のままであることを確認済み
+// (SELF_EVAL round 2/3 参照)。demo の質量を現実的な値 (数 kg) へ直した結果、実バウンドは
+// J=0.438〜52.058・peak -33.4〜-5.5dBFS に収まり、フルスケールへ張り付く発は 0 になった —
+// これは意図した副作用 (質量修正が現実的な力積を作った結果) であって、p の選定基準では
+// ない。仮に将来もっと重い物体を demo に足して softclip の入口 (|x|>0.8、約 -1.9dBFS) を
+// 踏んでも、それ自体は禁止しない — 禁止したいのは「demo が歪まないように p を選ぶ」
+// という順序だけ
+constexpr float kModalImpulseExponent = 0.5f;
+
+// C(J)。呼び出し側は既に kImpactMinImpulse で下限を切っている前提だが、単体テストや
+// 将来の呼び出しが 0 以下を渡しても std::pow の定義域外にしないための防御で 0 を返す
+float ModalImpulseCurve(float excessImpulse);
+
+// Inspector 面打ちプレビュー (InspectorWindow.cpp) と --modal-face-probe
+// (AudioSourceSystem.cpp) の既定衝撃力 [N・s]。「4 N・s では 6 面すべて BelowMin になった」
+// (M76h round 2 の実測) を踏まえた値 — 2 箇所に定数を置くと片方だけ動く事故が起きる
+// (reviewer round 1 指摘 2 の再発防止、spec sub-10 H)
+constexpr float kModalPreviewDefaultImpulse = 15.0f;
+
 // TickRunner の !ts.resim ブロックが今 tick の接触から積む 1 件 (spec §4.1「経路 (ランタイム)」)。
 // ★接触点は**ワールド**と**発音元ローカル**の両方を持つ。ワールドは AudioSpatial.position に、
 //   ローカルは cell 選択 (modal::LocalPointToCell) に使う。ワールド行列の逆変換は
@@ -32,8 +76,10 @@ struct PendingModalImpact {
     AssetID mesh = {};             // 解決済み (ModalSound.mesh か同 entity の MeshRenderer.mesh)
     float worldPoint[3] = {};      // 接触点 (ワールド)
     float localPoint[3] = {};      // 接触点 (発音元ローカル。cell 選択に使う)
-    float k[3] = {};               // J_excess * nE_local (ローカル軸の力ベクトル、符号付き)
-    float excessImpulse = 0.0f;    // J_excess = impulse - RestingImpulse
+    float k[3] = {};               // C(J_excess) * nE_local (ローカル軸の力ベクトル、符号付き。
+                                    // C() = ModalImpulseCurve、spec sub-10 A の圧縮カーブ)
+    float excessImpulse = 0.0f;    // J_excess = impulse - RestingImpulse (**生の値**。ログ/UI
+                                    // 表示用で、圧縮前。k との対応は ModalImpulseCurve() を通すこと)
     uint64_t tick = 0;
     uint64_t key = 0;              // SolidContact.key (デバッグ / 順序確認用)
 };

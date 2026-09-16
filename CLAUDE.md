@@ -329,10 +329,12 @@ Editor → GameLogic → Engine → Renderer → Core → Platform   (上位は�
   この 1 ファイルだけ)。学習/データ生成は `tools\deepmodal\` (sln の外、`tools\collab` と同じ
   流儀)、C++ の唯一の実装は `Voxelizer.h` (Python は `Editor.exe --modal-voxelize` を呼ぶだけ)。
   詳細は `engine_spec.md` §10.7 と [ADR-020](docs/adr/ADR-020-deep-modal.md)。
-  計測用の環境変数 2 種 (CLI フラグではない): `MYE_MODAL_THREADS` (CpuModalBackend のスレッド数を
-  強制) / `MYE_MODAL_FORCE_SCALAR=1` (AVX2 を使わずスカラー経路を強制。両方とも
+  計測用の環境変数 3 種 (CLI フラグではない): `MYE_MODAL_THREADS` (CpuModalBackend のスレッド数を
+  強制) / `MYE_MODAL_FORCE_SCALAR=1` (AVX2 を使わずスカラー経路を強制。どちらも
   `.msfm` のバイト一致を崩さないことが受け入れ条件 — スレッド数を変えても結果が変わらない
-  設計を検証する道具)。
+  設計を検証する道具) / `MYE_MODAL_PROBE_IMPULSE=<J>` (M76i。`--modal-face-probe` が使う
+  力積を上書きし、`kModalPreviewDefaultImpulse` (既定 15 N・s) 固定では作れない任意の J で
+  dBFS×J 較正表を実測する道具。未設定なら既定値のまま = 挙動不変)。
 
 ## 規約
 

@@ -2052,8 +2052,11 @@ On a real collision (`TickRunner.cpp`'s `!ts.resim` block, the same tick-local w
 emission uses), `CollectModalImpacts` turns each `SolidContact` touching a `ModalSound` entity into
 a `PendingModalImpact`: the excess impulse over what static support alone would produce
 (`RestingImpulse`, the *identical* function §10.6's `DrainImpacts` calls — one rule shared by wave
-and modal impacts, not a rule and its lookalike) projected onto the entity's local axes. Below
-`kImpactMinImpulse=0.35` the touch is treated as a scrape and produces no sound. `BuildModes`
+and modal impacts, not a rule and its lookalike), run through the compression curve `C(J)`
+(M76i, §10.7.2 below) and projected onto the entity's local axes. Below `kImpactMinImpulse=0.35`
+the touch is treated as a scrape and produces no sound (this gate runs on the *raw*, uncompressed
+impulse — `excessImpulse` on `PendingModalImpact` always carries the raw value, for logging and
+for this threshold; `k[]` carries `C(J)` times the local normal). `BuildModes`
 turns one cell's 192 raw channels plus the three per-axis impulse components into a small list of
 (frequency, amplitude, decay) triples, in a fixed order: unpack fp16 → invert the log-amp
 normalisation → threshold each band's mask logit → sum `|k_j| · mask · amp` **across axes** (a
@@ -2067,7 +2070,9 @@ resonators (double precision state, zero phase, a 1 ms linear attack, no randomn
 slowest-decaying mode takes to reach `kModalTailAmp = 1/32768`, clamped to `[0.05, 2.0]` s. Volume
 is **absolute** — a hard departure from the usual "normalise then let the user turn it up",
 because "a harder hit is louder" is exactly the property the source paper's Checkpoint J calls out
-as the point of the whole exercise, and normalising erases it.
+as the point of the whole exercise, and normalising erases it. That property survives compression
+because `C(J)` is monotonic: it reshapes *how much* louder a harder hit sounds, not *whether* it
+does.
 
 Clips are registered round-robin into `kModalClipSlots=32` id slots
 (`HashStr("modal://slot#k")`), refusing to steal a slot that is still audibly playing rather than
@@ -2089,6 +2094,101 @@ but **`BuildModes` never reads it** — a live decision, not an oversight, rever
 "don't add it" call once it became clear the field earns its keep as reference-material metadata
 for a future Poisson-aware model even though nothing consumes it today.
 
+**10.7.2 Volume calibration and a known coverage gap (M76i).** Amplitude inside `BuildModes` is
+exactly linear in the force magnitude it is handed (`a += |k_j|·mask·amp`, per axis, per band) —
+which is exactly the problem a first cut (`ampScale=1.0`, `k = J_excess · n̂`) ran into: the linear
+scale that keeps `--modal-demo`'s heaviest hit (a 7.85 t metal box, `J≈10⁵`) inside the tanh
+softclip makes a light, realistic hit (a 1 kg object dropped 0.5 m, `J≈3`) round to **all-zero
+PCM** — int16's one LSB needs `J≈11–27` at that scale, depending on material. `CollectModalImpacts`
+now runs the raw excess impulse through
+`C(J) = kImpactRefImpulse · (J / kImpactRefImpulse)^kModalImpulseExponent`
+(`ModalAudio.h`; `kImpactRefImpulse=6.0` is the existing "a solid hit" constant from §10.6, reused
+rather than duplicated) before building `k[]` — `C(J)` is a fixed point at `J=kImpactRefImpulse`
+for *any* exponent, which is what makes the anchor below independent of how hard the curve bends
+elsewhere. `MakeModalShotPlay`'s two other callers (the Inspector's face-tap preview and
+`--modal-face-probe`) apply the identical `ModalImpulseCurve()` before constructing their own
+synthetic `PendingModalImpact` — a compressed-but-forked curve in one of the three would silently
+put the Inspector's preview and the runtime out of step with each other.
+
+The calibration anchor is **`ampScale` such that `J = kImpactRefImpulse` (6.0 N·s) produces a
+median peak of −12 dBFS ± 3 dB**, measured across a mesh's six AABB faces via
+`--modal-face-probe` (a face varies which cell and which mask/amplitude pair gets read, so a
+single face is not representative). The shipped exponent is **`kModalImpulseExponent = 0.5`**.
+An earlier pass picked `p=0.18` after observing that `p=0.5` made `--modal-demo`'s own bounce
+range sit within a fraction of a dB of full scale for every impact — but that demo range was
+itself the bug: the demo's boxes used `RigidbodyComponent::useDensity` on a 1 m³ collider, so a
+"box" was actually 700–7,850 kg of solid material (`J≈161`–`102164`), nothing like a real prop.
+**The demo's mass is not allowed to decide the exponent.** The right basis is the impulse range
+the engine already treats as "realistic": `kImpactMinImpulse=0.35` up to a "hard, deliberate hit"
+around `100` N·s. The engine's existing *wave* lane (`acoustic::ImpactGain = min(1, J/6)`,
+§10.6) assigns **24.7 dB** of gain range to the *narrower* span `J=0.35→6`; if the modal lane were
+flatter than that over a *wider* span, the same collision would read as "hard" on the wave side
+and indistinguishable on the modal side, which is Checkpoint J failing in practice even though the
+code technically satisfies it. Because `C(kImpactRefImpulse)` is `p`-independent (`C(R) =
+R·(R/R)^p = R` for any `p`), the −12 dBFS anchor and `ampScale=11478` do not move when `p`
+changes — only the slope away from the anchor does. The dB span from `kImpactMinImpulse` (0.35) to
+100 is `20·p·log10(100/0.35) ≈ 49.1·p`: **24.6 dB at `p=0.5`** (matching the wave lane), 19.6 dB at
+`p=0.4` (just under the ≥20 dB floor), 8.8 dB at the rejected `p=0.18`. `p=0.5` is therefore the
+smallest exponent that keeps the modal lane's "harder hit is louder" as legible as the wave lane's,
+and it is also the value this project started with — measured on the shipped `.dmnet`
+(`ampScale=11478`, unchanged; `--modal-wav-dump`, real PCM peaks, not the log's clamped `peakDb`
+which floors at −80 dBFS for exact silence):
+
+| `J` [N·s] | source | median peak |
+|---|---|---|
+| 0.35 (`kImpactMinImpulse`) | `--modal-face-probe`, six faces | −24.3 dBFS |
+| 1 | same | −19.8 dBFS |
+| 3 | same | −15.0 dBFS |
+| 6 (`kImpactRefImpulse`, the anchor) | same | **−12.0 dBFS** |
+| 30 | same | −5.0 dBFS |
+| 100 | same | −0.3 dBFS |
+
+`J=3` (a 1 kg drop from 0.5 m) is comfortably audible and nowhere near all-zero PCM; the realistic
+range (0.35–100) spans **24.0 dB** measured (24.6 dB predicted by the formula above), matching the
+wave lane. `100` N·s is deliberately the point where an undistorted hit tops out — a harder blow
+than that is exactly what the `|x|>0.8` `tanh` softclip in `ModalSynthRender` exists for, and 3D
+`RolloffGain` distance attenuation means only a very close, very hard impact ever reaches it in
+practice. Re-anchoring at `J=1` (the number this project used before M76i) was rejected: `J=1` has
+no physical grounding (it is not "one drop of anything" in particular), and combined with a linear
+law it implied clipping the *entire* usable range, which is exactly the failure mode above.
+
+**The demo's objects were fixed to have realistic mass, not to fit a chosen `p`.** `BuildModalShowcaseScene`
+(`DemoContent.cpp`) now sets each body's `RigidbodyComponent::mass` directly (wood 2 kg, metal 4 kg,
+glass 1 kg, the M76i sphere 1.5 kg) instead of deriving 700–7,850 kg from `useDensity` on a solid
+1 m³ collider — order matters: `p` was fixed first from the realistic-range argument above, *then*
+the demo was made to actually produce realistic impulses, not the reverse. The resulting 20-impact
+run (`--modal-demo --modal-wav-dump`, three decaying bounce sequences plus the sphere's single
+landing) spans `J = 0.438` to `52.058` N·s and peaks from −33.4 to −5.5 dBFS — comfortably below
+the softclip knee (`|x|>0.8`, ≈−1.9 dBFS; nothing pins to full scale) while each of the three
+per-entity bounce sequences
+is still strictly monotonic in peak dBFS as `J` decays. (The exact impact count is a fine-grained
+consequence of the bounce physics — mass, restitution, and where each bounce crosses
+`kImpactMinImpulse` — and is not itself an invariant; what the accept condition actually checks is
+that every registered impact plays, which it does: 20/20, `belowMin=0`, `playFailed=0`.)
+
+`ampScale` and `kModalImpulseExponent` are the only two knobs this calibration touches, and both
+live outside the trained weights: `ampScale` is a `.dmnet` header field written by
+`export.py --amp-scale`, and the weights-only FNV-1a hash that gates `.msfm` reuse
+(`weightsHash`, computed over the weight+bias blob *before* the header is assembled) does not
+change when only the header changes — confirmed by hash equality between the pre- and
+post-calibration `.dmnet` and by `--modal-bake` reusing every `.msfm` entry (`bakeMsAvg` drops
+from hundreds of ms to well under 1 ms on the second run) after `ampScale` moved. **No re-bake is
+required after a pure calibration change.**
+
+**Calibration cannot fix a mesh whose features never turn on.** `ampScale` is applied *after* the
+mask gate in `BuildModes` (unpack → threshold mask logit → **only then** accumulate amplitude and
+scale by `ampScale`), so a mesh whose learned feature map has every mask channel below threshold
+in every band, every axis, every cell stays silent at any `ampScale` or any impulse. On the
+shipped stage1 `.dmnet` this is not rare: **35 of 382 baked sub-meshes (9.2%)** are fully masked
+off. This is a model generalisation gap — the network saw 124 training shapes — not a calibration
+bug, and it is out of scope for M76i to fix (that is ModelNet10's job, §10.7 above). What M76i
+does do is make the gap visible instead of silent: `--modal-bake` reports `silent=N` in its
+summary line and tags each fully-masked-off mesh's per-line output with `silent`
+(`ModalFeatureMapAllMaskOff()`, `ModalFeatureMap.h`, using the same mask-logit threshold as
+`BuildModes`). `ModalSound.maskThreshold` (default from the `.dmnet` header, 0.5) is the mitigation
+knob — lowering it admits more borderline mask channels — but it is a knob, not a fix: a mesh with
+literally nothing above the raw logit floor stays silent regardless of where the threshold sits.
+
 **None of this is simulation state.** `ModalSound` is `kComponentNoHash`; baking, the clip pool
 and the cooldown table are side tables the tick never touches. `--modal-audio-log N` prints one
 line per shaped voice and one per one-shot ("shot") for `tick < N`, plus a closing summary, and two
@@ -2104,13 +2204,13 @@ are not a test. `--no-audio` costs nothing (the update returns before the librar
 | CLI | Purpose |
 |---|---|
 | `--modal-voxelize --list FILE --out DIR` | Batch-voxelize a list of `builtin://` / `.off` / `.obj` / `.fbx` / `.glb` / `.gltf` sources into `.mvox` (the tool `tools/deepmodal/voxelize.py` shells out to) |
-| `--modal-bake [--project DIR]` | Headless: register every model under `assets`, bake every mesh through the installed backend, print one line per mesh plus a `bakeMsAvg` summary |
+| `--modal-bake [--project DIR] [--modal-backend cpu\|d3d11cs]` | Headless: register every model under `assets`, bake every mesh through the installed backend, print one line per mesh (tagged `silent` if every mask channel is below threshold, §10.7.2) plus a `bakeMsAvg`/`silent=N` summary. `--modal-backend` is honoured here too (M76i; it used to be silently ignored and hard-coded to `cpu`) |
 | `--modal-backend cpu\|d3d11cs` | Force a backend; an unbuilt `d3d11cs` warns once and falls back to `cpu` rather than leaving the library silently empty |
 | `--modal-sync-bake` | Bake synchronously instead of through the worker/pump — verification runs need a deterministic "is it Ready yet" |
 | `--modal-audio-log N` | Print shaped voices and one-shots for `tick < N`, plus a summary; the only way to inspect the pipeline without ears |
-| `--modal-demo` | A scene with `ModalSound` boxes of different materials for manual and `--modal-audio-log` verification |
+| `--modal-demo` | A scene with `ModalSound` boxes of three materials plus a fourth-material sphere (M76i, so the showcase can show a shape difference too — the three boxes alone are all the same cube mesh) for manual and `--modal-audio-log` verification |
 | `--modal-wav-dump DIR` | Write every synthesised clip to `DIR\shot_*.wav` — the way to check "does it sound right" with numbers instead of ears |
-| `--modal-face-probe` | With `--modal-wav-dump`: re-synthesise the first source's six faces (a real drop only ever lands on one) into `DIR\probe_<mesh>_<face>.wav`, the only way to measure "a different face sounds different" without a GUI |
+| `--modal-face-probe` | With `--modal-wav-dump`: re-synthesise the first source's six faces (a real drop only ever lands on one) into `DIR\probe_<mesh>_<face>.wav`, the only way to measure "a different face sounds different" without a GUI. The probe impulse (`kModalPreviewDefaultImpulse`, shared with the Inspector's preview slider default) can be overridden with the `MYE_MODAL_PROBE_IMPULSE` environment variable for calibration sweeps (§10.7.2); unset, it costs nothing (only read inside the already-`--modal-face-probe`-gated branch) |
 
 ---
 
