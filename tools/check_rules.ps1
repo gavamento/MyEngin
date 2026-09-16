@@ -511,6 +511,38 @@ $constGroups = @(
             'tools\collab\src\protocol.rs'              = 'pub\s+const\s+PROTO_VERSION\s*:\s*u32\s*=\s*(\d+)'
         }
     }
+    # M76c: Deep-Modal の共有定数。学習 (Python、tools\deepmodal) とランタイム (C++、
+    # ModalTypes.h) が同じボクセル/特徴マップ形状を前提にしている — 食い違うと
+    # 「.dmnet は読めるのに BuildModes が配列の外を読む」という静かな壊れ方をする。
+    # ★このグループも照合先が .py = HLSL ではない (kCollabProtoVersion と同型)
+    @{
+        label = 'kModalVoxelN / VOXEL_N'
+        sites = @{
+            'src\Engine\Engine\Modal\ModalTypes.h' = 'constexpr\s+int\s+kModalVoxelN\s*=\s*(\d+)'
+            'tools\deepmodal\layout.py'            = 'VOXEL_N\s*=\s*(\d+)'
+        }
+    }
+    @{
+        label = 'kModalMapN / MAP_N'
+        sites = @{
+            'src\Engine\Engine\Modal\ModalTypes.h' = 'constexpr\s+int\s+kModalMapN\s*=\s*(\d+)'
+            'tools\deepmodal\layout.py'            = 'MAP_N\s*=\s*(\d+)'
+        }
+    }
+    @{
+        label = 'kModalBands / MEL_BANDS'
+        sites = @{
+            'src\Engine\Engine\Modal\ModalTypes.h' = 'constexpr\s+int\s+kModalBands\s*=\s*(\d+)'
+            'tools\deepmodal\layout.py'            = 'MEL_BANDS\s*=\s*(\d+)'
+        }
+    }
+    @{
+        label = 'kModalChannels / CHANNELS'
+        sites = @{
+            'src\Engine\Engine\Modal\ModalTypes.h' = 'constexpr\s+int\s+kModalChannels\s*=\s*(\d+)'
+            'tools\deepmodal\layout.py'            = 'CHANNELS\s*=\s*(\d+)'
+        }
+    }
 )
 foreach ($g in $constGroups) {
     $values = @{}

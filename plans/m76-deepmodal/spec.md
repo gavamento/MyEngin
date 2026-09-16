@@ -47,7 +47,7 @@
   - Python: hex8 FEM / 一般化固有値 / 接触励起 / Mel 圧縮 / データセット生成 / モデル / 学習 / export (`.dmnet` + fixture)
   - C++ 推論 (`ModalInferenceBackend` 抽象 + CPU 実装)、`.dmnet` ローダ、`.msfm` キャッシュ、`ModalSoundLibrary` (非同期焼き)、`--modal-bake`
   - ランタイム接続: `ModalSound` (TypeId 61)、接触 → impact → クリップ合成 → 回転プール → `Play`、wave の口封じ、レート制限、`--modal-audio-log` / `--modal-sync-bake` / `--modal-demo`
-  - Editor: Inspector の面打ちプレビュー + WAV 書き出し、PhysMat 3 行、カタログ、ローカライズ
+  - Editor: Inspector の面打ちプレビュー + WAV 書き出し、PhysMat 4 行、カタログ、ローカライズ
   - 本学習 (stage1 まで + ModelNet10 の手順)、文書 (engine_spec §10.7 / ADR / README / CLAUDE.md)
 - やらない (明示的に外したもの):
   - 波 (`AcousticField`) と sim 状態への変更 (唯一の例外は `RestingImpulse` の**ビット中立な抽出**)
@@ -119,6 +119,26 @@ SolidContact (今 tick、TickRunner.cpp:608 の !ts.resim ブロック内)
  → model.py (3D U-Net、≤2M params) → train.py (Adam 1e-3, batch 16, 100 epoch, 20 epoch ごと半減、MSE(amp) + BCEWithLogits(mask))
  → export.py (BN 畳み込み → fp16 → .dmnet + fixture)
 ```
+- **固有値解法の 2 経路と品質指標 (sub-03 round 1 で確定。ユーザー追加指示 2026-09-16)**: 占有 voxel 数 ≤ `MAX_OCCUPIED_EXACT` (= 9000) は shift-invert `eigsh` (完全 LU)。超過分は不完全 LU 前処理の LOBPCG へ回す — 完全 LU の fill-in が要素数の 2 乗超で増える (実測 54000 DOF で nnz 4.0M → 230M = 57 倍) ため、満杯 29³ (81000 DOF) では空き RAM を超える。
+  ★**採否は solver 名ではなく数値で決める** (ユーザー指示)。`method` はメタデータとして残すが、モードを捨てる / 重みを下げる判断に**使わない**。判断材料は次の 2 つ:
+  1. **固有対ごとの相対残差** `r_i = ‖K x̂_i − λ_i M x̂_i‖₂ / ‖λ_i M x̂_i‖₂`。`x̂` は **M-正規化** (`x̂ᵀ M x̂ = 1`) した固有ベクトル — 正規化を固定しないと値が比較できない。**剛体 6 モードを除いた後の、帯域に残るモードについてだけ**計算する (λ → 0 では分母が退化して意味を失う)。
+  2. **基準形状での直接法との突き合わせ** (下の受け入れ条件 21)。残差は「その固有対が正確か」しか言わず、**モードの取りこぼし**は検出できない (LOBPCG はブロック幅 m の都合でモードを丸ごと落としうる。落ちた分も残っている分は小さい残差を示す)。集合として完全かは直接法との比較でしか分からない。
+  - **しきい値 (暫定。基準形状の実測で確定させる)**: `RESIDUAL_ACCEPT = 1e-5` 以下 = そのまま採用 / `1e-5 < r ≤ RESIDUAL_DROP = 1e-3` = 採用するが品質フラグを立てる / `r > 1e-3` = **そのモードを Σ\|a\| から除外**する (未励起しきい値と同じ場所で落とす)。根拠 (planner が 12³ ブロック 6591 DOF で実測、2026-09-16): 直接法の残差は max 1.6e-8 / median 1.5e-9、LOBPCG は max 4.8e-6 / median 9.6e-8 で、両者の周波数は相対 1e-11 で一致した。`1e-5` は「実測した LOBPCG の最悪値の約 2 倍」= その品質のモードは直接法と一致することが確かめられている水準。
+  - **保存先は npz と stats.json の両方**:
+    - solver metadata: `method` / パラメータ (m, maxiter, drop_tol, fill_factor, k, shift) / 反復回数 / 収束フラグ
+    - convergence quality: **モードごとの残差配列** (≤256 float) と要約 (`residual_max` / `residual_median` / 除外したモード数)
+  3. **Mel-band coverage (ユーザー指示 2026-09-16)**。残差も基準形状比較も「計算したモードが正しいか」しか言わない。**計算していないモード**は別の軸が要る。ただし判定を「固定モード数を達成したか」に置かない (**`spectrum_complete` を合否条件に使わない**) — 必要なのはモードの本数ではなく、**100–10000 Hz を Mel 32 帯域でどれだけ覆えているか**。
+     - **定義 (正本)**: 帯域が「覆われている」= その cell で **3 力軸のいずれか**が mask を立てている。
+       `cell_band_mask[cell][i] = OR_j mask[j][i]`。
+       ★**OR にする理由**: ランタイムの `BuildModes` 手順 4 が `a_i = Σ_j |k_j|·H(mask_j,i)·amp_j,i` と**軸を足す**ので、1 軸でも立っていればその帯域は音になる。AND や平均にすると「実際に鳴る帯域」と指標がずれる。軸ごとの内訳は診断用に別途持つ。
+     - **記録 (メッシュ単位)**: `band_coverage[32]` = 有効 cell 全体での `cell_band_mask` の平均 (帯域ごとの占有率)。**この 32 本の分布が「高域が系統的に空か」を見せる本体**。要約として `coverage_ratio` (32 帯域の平均) と `coverage_high` (上位 8 帯域 = index 24..31 の平均) を併記する。
+     - **記録 (cell 単位)**: `cell_coverage[valid_cells]` (float32、`feat` の行と同じ順序) = その cell で覆えている帯域の割合。cell 単位の重み付け・除外を後から選べるようにする (数 KB なので保存コストは無視できる)。
+     - ★**名前を 2 つ持たない**: 既存の `band_occupancy_ratio` は上の `coverage_ratio` と同義になるので、**どちらか 1 つに寄せる** (別定義の似た名前が 2 つあると、後で静かに食い違う)。
+     - `modes_requested` / `f_top` / `spectrum_complete` / `mode_count` は**診断値として記録を続けてよい** (coverage が低いときに「予算で切れたのか、そもそもモードが無いのか」を切り分けられる)。ただし**採否・重み付けの判断には使わない**。
+     - ★参考 (round 2 実測): 予算で切れるのは LOBPCG だけではない。直接法も `k` (既定 150) で頭打ちになっていた (capsule / sphere とも帯域フィルタ後がちょうど 150 本 = 制約は帯域ではなく k)。だから指標は**両経路で同じもの**を取る。
+  - **粒度の使い分け** (ここを混ぜると死にフィールドになる): モード単位の除外は **npz を作る時点**でしか効かない (Mel 圧縮で個々のモードは消えるため)。学習時 (sub-04) に効かせられるのは**メッシュ単位の重み付け・除外**なので、そのための要約値を npz に持たせる。per-mode の残差配列は診断と再生成判断のために残す (per-channel の重みには使えない)。
+  - ★**縮退モードの罠**: 対称形状 (立方体・球 = builtin と ModelNet の多く) は固有値が縮退する (planner の実測: 立方体で 10964 Hz が 2 重、14726 Hz が 3 重)。縮退した固有空間の中では**個々の固有ベクトルは一意に決まらない** (基底の取り方は任意) ので、解法間で per-mode の `a_ij` は**両方正しくても食い違う**。基準形状の突き合わせは**周波数と帯域集計 (Σ\|a\|) で比較し、生の固有ベクトルを直接比較しない**こと。
+  - `builtin://` 6 種は受け入れ条件 7 が要求するので cap を超えても npz を書く (= LOBPCG 経路)。この非対称は意図的で、残差と metadata の記録がその可視化。しきい値と LOBPCG パラメータは M76h で実分布を見て再調整する。
 - データ段階の門: **`train.py --overfit 16 --epochs 300` が amp MSE < 1e-3 かつ mask acc > 99% を満たすまで ModelNet の生成コマンドを実行しない** (README に「実行禁止」と明記)。
 - 参照材質 (初期値、stage0 統計で確定して `layout.py` と `.dmnet` ヘッダに固定): E=7.0e10, ρ=2700, ν=0.33, α=6, β=1e-7 (アルミ相当)、L_ref = 0.3 m。
 
@@ -170,7 +190,7 @@ SolidContact (今 tick、TickRunner.cpp:608 の !ts.resim ブロック内)
 | 4 | Voxelizer: 単位立方体 → surface+interior == 24389 (29³)、中心 1、隅 0、pad リング全 0 / 厚さ 0.001 の板 → y 占有 index **ちょうど 1 種** / 蓋なし箱 → interior 0 / 2:1:0.5 AABB → 最長辺の占有 voxel 数 29 (h = L/28) / +X 面中心 → cell **(15, 8, 8)** / cellSlot: 有効は自身、無効は独立総当たりと一致 / `.mvox` 往復 memcmp / OFF/OBJ リーダ / 同入力 2 回 memcmp | `--selftest` (ModalSelfTest) |
 | 5 | `Editor.exe --modal-voxelize --list tests\deepmodal\list_builtin.txt --out DIR` → 6 ファイル、exit 0。存在しない入力 → exit 1 | 手動 cmd (`cmd /c` 経由) |
 | 6 | pytest 全緑: test_fem (Ke 対称・半正定、剛体 6 モードで K·r ≈ 0、集中質量総和 = ρh³) / test_modal (2×2×2 で E×4 → ω×2、ρ×4 → ω/2、h×2 → ω/2、1e-6。先頭 6 固有値 ≈ 0) / test_compact (単調・端点・Σ\|a\|・空帯域補間・mask) / test_layout (.mvox ヘッダ 72 B = 全体 32840 B、C++ cube で 24389 — Editor.exe 無ければ skip) / test_contact (cell を変えると励起が変わる) | `cd tools\deepmodal && pytest` |
-| 7 | `dataset.py --stage primitives` が npz ≥ 20 本 + builtin 6 本と `stats.json` (メッシュごとの eigsh 秒、帯域占有率、モード数分布) を出す。満杯 30³ 立方体の eigsh < 600 s、primitive 中央値 < 60 s。L_ref / fMax の確定値を `layout.py` と spec §8 に記録 | 実行ログ + stats.json |
+| 7 | `dataset.py --stage primitives` が npz ≥ 20 本 + builtin 6 本と `stats.json` (メッシュごとの eigsh 秒、Mel-band coverage、モード数分布、解法名) を出す。満杯立方体 (builtin cube) < 600 s、exact 経路の中央値 < 60 s。**`stats.json` は再開 (resume) 実行で統計が消えないこと** (既存 stats と併合する。M76h の ModelNet10 は再開前提なので、消えると分布が取れない)。**npz と stats.json の両方に solver metadata (method / パラメータ / 反復回数 / 収束フラグ) と convergence quality (モードごとの残差 + `residual_max` / `residual_median` / 除外モード数) が入っていること**。★**残差しきい値による除外が効いていること** (`r > 1e-3` のモードが Σ\|a\| に入らない)。★`method` を**採否の判断に使っていない**こと (使ってよいのは数値のみ)。★**Mel-band coverage** が npz と stats に入ること (§4.1 の 3 番目の指標): メッシュ単位の `band_coverage[32]` / `coverage_ratio` / `coverage_high` と、cell 単位の `cell_coverage[valid_cells]`。stats には**帯域ごとの占有率の分布** (高域が系統的に空でないかが見える形) を出す。診断値 (`modes_requested` / `f_top` / `mode_count`) は記録してよいが**合否条件にしない**。L_ref / fMax の確定値を `layout.py` と spec §8 に記録 | 実行ログ + stats.json (再開実行の後に中身が残っていることまで) + npz の中身 |
 | 8 | `check_rules.ps1` 全規則緑 (constGroups の C++ ⇄ Python 4 組を含む。片方を変えると赤くなることを 1 回確認) | `pwsh -File tools\check_rules.ps1` |
 | 9 | **門**: `train.py --overfit 16 --epochs 300` (stage0 + stage1 の 16 形状) → amp MSE < 1e-3 かつ mask acc > 99%。ログをコミットメッセージ本文に残す | 実行ログ |
 | 10 | `export.py`: fixture 4 点 (`fixture.dmnet` / `fixture_in.mvox` / `fixture_out.bin` / `list_builtin.txt`) をコミット。`paramCount ≤ 2,000,000` の assert、`weightsHash` = FNV-1a、`bandCenterHz` = compact.py の値。`--random-full` でフルサイズ乱数重みの `.dmnet` (時間計測用、コミットしない) が出る | pytest (test_export) + 手動 |
@@ -184,6 +204,7 @@ SolidContact (今 tick、TickRunner.cpp:608 の !ts.resim ブロック内)
 | 18 | Editor: Inspector の ModalSound 節 (状態 / cell 数 / 6 面ボタン + スライダ / Export WAV)、PhysMat 4 行、カタログ、en/ja。LocalizationSelfTest 緑。手動: 6 面で音が変わる、WAV が出て再生できる | `--selftest` + 手動 |
 | 19 | stage1 (小規模自前 ≤ 100) で `dataset → train → export → --modal-bake → --modal-demo` が端から端まで通り、`assets\deepmodal\deepmodal.dmnet` (≤ 4 MB) をコミット。ModelNet10 の手順 (時間見積もり・実行禁止の門・再開方法) が README にある | 実行ログ + README |
 | 20 | 文書: `engine_spec.md` §10.7、`docs\adr\ADR-0NN-deep-modal.md` (次の空き番号)、`README.md`、`CLAUDE.md` (末尾 TypeId 61 / Cloth・SoftBody 62/63 / CLI 6 本 / 検証表に `--modal-audio-log` 2 run 一致 / 「.dmnet を差し替えたら --modal-bake」/ constGroups の Python 組) | 目視 + check_rules |
+| 21 | **基準形状の校正** (sub-03、ユーザー追加指示): 直接法が回せる基準形状 (cap 直下の占有と、余裕があれば cap 超の 1 本) で `eigsh` と LOBPCG を**両方**走らせ、`calibration.json` に (a) 各解法のモードごと残差の分布 (b) **周波数の突き合わせ** (相対誤差、昇順で対応付け) (c) **取りこぼしたモード数** (直接法にあって LOBPCG に無い周波数) (d) 帯域集計 Σ\|a\| の相対差 を書く。**生の固有ベクトルは比較しない** (縮退で基底が任意のため。§4.1 の罠を参照)。この実測から `RESIDUAL_ACCEPT` / `RESIDUAL_DROP` の暫定値 (1e-5 / 1e-3) が妥当かを判断し、違っていれば planner が §8 で改訂する。加えて小メッシュ (数百 DOF、1 秒未満) の pytest 1 本で両解法の一致を回帰的に固定する。★**両解法に同じモード数を要求して比較すること** (片方に k=150、他方に m=40 の既定を渡すと、単なる予算差が「取りこぼし」に見える — round 2 で実際に起きた)。要求数が違うまま比較するなら `modes_requested` を必ず併記し、差分を「予算差」と「真の取りこぼし」に分けて報告する | `python calibrate.py` (または同等) + `calibration.json` + pytest |
 
 ## 6. サブ分割
 
@@ -192,7 +213,7 @@ SolidContact (今 tick、TickRunner.cpp:608 の !ts.resim ブロック内)
 | sub-01 (M76a) | モーダル合成器と材質パラメータ | なし | 1, 2, 3 | `M76a: モーダル合成器 (再帰共振器 / BuildModes / Mel 表) と PhysMat の音響材質 4 フィールド` |
 | sub-02 (M76b) | ボクセライザと `--modal-voxelize` | なし (sub-01 と並列可) | 4, 5 | `M76b: 32³ ボクセライザ (.mvox) と OFF/OBJ リーダ、--modal-voxelize` |
 | sub-03 (M76c) | Python: FEM / 固有値 / 接触励起 / Mel 圧縮 / データセット | sub-02 | 6, 7, 8 | `M76c: Deep-Modal データセット生成 (hex8 FEM / eigsh / 接触励起 / Mel 圧縮) と pytest` |
-| sub-04 (M76d) | Python: モデル / 学習 / export / fixture (**大規模生成の門**) | sub-03 | 9, 10 | `M76d: Deep-Modal のネット / 学習 / export (.dmnet + fixture)、overfit の門` |
+| sub-04 (M76d) | Python: モデル / 学習 / export / fixture (**大規模生成の門**) | sub-03 | 9, 10 (+ 品質フィルタは 21 の帰結) | `M76d: Deep-Modal のネット / 学習 / export (.dmnet + fixture)、overfit の門` |
 | sub-05 (M76e) | C++ 推論 / バックエンド抽象 / .msfm / ModalSoundLibrary / `--modal-bake` | sub-02, sub-04 | 11, 12, 13, 14 | `M76e: .dmnet ローダと CPU 推論バックエンド、.msfm キャッシュ、ModalSoundLibrary、--modal-bake` |
 | sub-06 (M76f) | ランタイム接続 (ModalSound / 接触 → 音 / wave 口封じ / CLI / demo) | sub-01, sub-05 | 15, 16, 17 | `M76f: ModalSound コンポーネントと衝突 → モーダル合成の接続、--modal-audio-log / --modal-demo` |
 | sub-07 (M76g) | Editor (面打ちプレビュー / WAV / PhysMat 欄 / カタログ / 文字列) | sub-06 | 18 | `M76g: Inspector の ModalSound 面打ちプレビューと WAV 書き出し、PhysMat の音響材質欄` |
@@ -209,7 +230,11 @@ SolidContact (今 tick、TickRunner.cpp:608 の !ts.resim ブロック内)
   - L_ref / fMax の確定値 (sub-03 の stats で決める。決めたら §8 に積む)
   - フルサイズ推論が 1.5 s を超えたときのネット縮小幅 (sub-05 → sub-04 差し戻し)
   - `ModalSound.mesh` (AssetID) の FieldType — `MeshRenderer.mesh` と同じ widget が使えるか
-  - eigsh の shift-invert (SuperLU fill-in) が 90k DOF で 600 s を超える場合の代替 (LOBPCG / k の削減 / 占有上限)
+  - (解決済み: eigsh の代替は sub-03 round 1 で「cap 9000 + 不完全 LU 前処理 LOBPCG + 残差による採否」に確定。§4.1 と §8 を参照)
+  - **残差しきい値 `RESIDUAL_ACCEPT = 1e-5` / `RESIDUAL_DROP = 1e-3` は暫定** (planner が 12³ ブロック 1 本で実測した値からの外挿)。受け入れ条件 21 の校正結果で確定させる。分布が重なっていたら planner が §8 で改訂する
+  - 縮退モード (対称形状) で per-mode の `a_ij` が基底依存になる件 (§4.1 の罠)。Σ\|a\| は帯域内の縮退群をまとめて足すので影響は小さいが、**厳密には基底不変ではない** (Σa² なら不変)。学習の教師データとしては許容するが、再生成のたびに値が揺れうる点は M76h の ADR に残す
+  - coverage のしきい値は **stage0/stage1 では既定 off で確定** (§8、round 3 の実測で決着)。M76h の ModelNet10 前に**適応予算**を入れるかを再検討する
+  - 実測メモ (planner、2026-09-16): 一辺 0.13 m 程度の**中実**アルミ塊は基本周波数が 10 kHz 超 = 帯域に 1 本も入らない。帯域に入るのは大きい物と薄い / 細長い物。stage1 で形状を選ぶときに効く (中実の小塊ばかり集めると教師データが空になる)
 - リスク:
   - TypeId 61 の衝突: M75h (InputField) が先に master へ入れば 62 (登録順なのでコード位置を後ろへ動かすだけ)
   - `|k|` と Σ|a| は論文からの逸脱 (§2 #5)。同帯域で打ち消し合う 2 モードが過大になる。ADR に明記
@@ -225,3 +250,9 @@ SolidContact (今 tick、TickRunner.cpp:608 の !ts.resim ブロック内)
 - 2026-09-16 (ユーザー回答): M76h の範囲は「stage1 で .dmnet コミットまで」で確定 (planner 裁定どおり)。計画全体を確定。
 - 2026-09-16 (coder SELF_EVAL sub-02 round 1、不安・質問 #1): ボクセル正規化を `h = L/29, origin = center − 16h` → **`h = L/28, origin = center − 16.5h`** に変更。理由: 旧式は AABB 中心が voxel 15/16 の境界に乗る構造 (奇数個に割ると必ずそうなる) で、厚さ ≪ h の中心対称な板が必ず 2 行になり、受け入れ条件 4 の「1 種」と「+X 面中心 → cell (15, 7|8, 7|8)」の不定が消せなかった。新式は面がボクセル中心 (2.5 / 30.5) を通り、中心もボクセル中心 (16.5) に乗る。数値の変更: 単位立方体 27000 → 24389、最長辺 29 voxel (占有数、h は L/28)、+X 面中心 → (15, 8, 8) に一意。データセット生成前 (sub-03 未着手) なので影響はテスト値だけ。反映: §4.1 / §5 #4 / sub-02。
 - 2026-09-16 (coder SELF_EVAL sub-02 round 1、不安・質問 #2): `.mvox` ヘッダは 64 B ではなく **72 B** (18 フィールド × 4 B。planner の計算違い)。反映: §4.2 / §5 #6 / sub-03。
+- 2026-09-16 (coder SELF_EVAL sub-03 round 1、不安・質問 #1): 固有値解法を **2 経路 (cap 9000 + LOBPCG)** に確定。planner 裁定: 機構は採用するが、**npz に解法名を記録する**ことを条件にする (LOBPCG の高次モード精度が未検証のまま学習へ黙って入るのを防ぐ。coder の 申し送りが挙げたリスクに sub-04 が対処できる形にする)。`[ユーザーに聞ける]` として司会へ回す。反映: §4.1 / §5 #7 / §7 / sub-03。
+- 2026-09-16 (sub-03 round 3 の実測を受けた planner 裁定): **coverage しきい値は stage0 / stage1 では既定 off** (フィルタを掛けない)。実測: `coverage_high` は exact 経路 35 本の平均 0.789 に対し **lobpcg 経路 3 本 (builtin cube / cylinder / sphere) が一律 0.000**、`f_top` 3463–4740 Hz。Mel 帯域 24 の下端が 4895 Hz なので **0.000 は指標として正しい** (独立に計算した `f_top` と整合)。ただし両群は完全に分離しているので、この段階で `--quality-min-high-coverage` を有効にすると**「lobpcg のメッシュを除く」と数値的に同義**になり、ユーザー指示「method で決めない」の趣旨に反する結果を coverage 経由で招く。原因は指標ではなく**固定モード数の予算**なので、正しい対処は「データを捨てる」ことではなく予算を直すこと。よって: (1) stage0/stage1 は既定 off のまま全 38 本を使う (基本形状 3 つを落とす損の方が大きい。overfit の門は汎化ではなく配管の検証が目的) (2) **M76h の ModelNet10 では「適応予算」を検討する** — `f_top ≥ f_max` に達するまで、または実時間上限に当たるまで m / k を上げる。大きいメッシュが増える段階ではこれが根本対処になる。しきい値を入れるならその後、分布を見て決める。
+- 2026-09-16 (**ユーザー追加指示**、sub-03 round 2 の [ユーザーに聞ける] への回答): 3 つ目の品質指標を「スペクトルの完全性 (固定モード数の達成)」から **「Mel-band coverage」** へ差し替え。「1 で固定のモード数達成を必須条件にせず、100–10000 Hz に対する Mel-band coverage を各サンプルで記録する。学習時の採否・重み付けは mode count ではなく band coverage と residual 品質で決定する」。planner の裁定 (予算を上げず測って記録し、学習側が選ぶ) の方向はそのままだが、**判定軸が本数から被覆率に変わった**。planner が定義を確定: 軸の畳み方は **OR** (ランタイムの `BuildModes` が `Σ_j |k_j|·H(mask)·amp` と軸を足すので、1 軸でも立てば鳴る = OR が唯一ランタイムと整合する)、メッシュ単位の `band_coverage[32]` を本体として高域の空きが見える形にし、`coverage_ratio` / `coverage_high` / cell 単位の `cell_coverage` を併記。`spectrum_complete` 等は診断値へ降格 (合否に使わない)。`band_occupancy_ratio` との名前の重複は 1 つに寄せる。反映: §4.1 / §5 #7 / §7 / sub-03 / sub-04。
+- 2026-09-16 (coder SELF_EVAL sub-03 round 2 + planner の再分析): (上記で coverage へ差し替わったが、原因分析は有効) **モード数の予算差**の発見。round 2 の校正で「LOBPCG が 150 本中 116 本を取りこぼす」と報告されたが、planner が `calibrate.py:83-84` を読んで**原因は解法の質ではなくモード数の予算差**と判定した — 直接法に `k=150`、LOBPCG に既定 `m=40` を渡しており、40 − 剛体 6 = 報告された 34 とちょうど一致する。capsule (16200 DOF) と sphere (45864 DOF) で件数が**完全に同一** (34 / 116) なのも、収束の失敗ではなくブロック幅で頭打ちになった証拠。さらに**直接法も `k=150` で頭打ち**だった (両形状とも帯域フィルタ後がちょうど 150 = 帯域ではなく要求数が制約)。よって truncation は LOBPCG 固有ではなく両経路の問題として扱う (この分析は上のユーザー指示の後も有効で、coverage が低いメッシュの**原因説明**として使う)。受け入れ条件 21 の「両解法に同じモード数を要求する / `modes_requested` を併記する」もそのまま有効。
+- 2026-09-16 (**ユーザー追加指示**、sub-03 の [ユーザーに聞ける] への回答): fallback の採否を **solver 名ではなく固有対の residual と基準形状での直接法比較に基づかせる**。planner の round 1 裁定 (「npz に `method` を記録して sub-04 が除外・重み下げを選ぶ」) は**判断基準が solver 名のままだった**ので、より正しい形に差し替えた: `method` はメタデータに降格し、採否は相対残差 (M-正規化、剛体除去後) で決める。モードごとの残差 + 要約 + solver metadata を npz と stats.json の両方に保存。受け入れ条件 **21 を新設** (基準形状の校正ジョブ + 小メッシュの pytest)。暫定しきい値 1e-5 / 1e-3 は planner の実測 (12³ ブロック 6591 DOF: 直接法 max 1.6e-8 / median 1.5e-9、LOBPCG max 4.8e-6 / median 9.6e-8、周波数一致 1e-11) から置いた仮値で、校正で確定させる。あわせて**縮退モードの罠** (対称形状では固有ベクトルの基底が任意 = per-mode の `a_ij` を解法間で直接比較してはいけない) を §4.1 に明記。反映: §4.1 / §5 #7・#21 / §7 / sub-03 / sub-04。
+- 2026-09-16 (coder SELF_EVAL sub-03 round 1、不安・質問 #2): **参照材質と L_ref を初期値のまま確定** (E=7.0e10 / ρ=2700 / ν=0.33 / α=6 / β=1e-7、L_ref=0.3 m、fMax=10000 Hz)。根拠: stage0 の統計で帯域占有率 平均 0.45 / モード数 中央値 30.5 と偏りが無かった (round 1 実測)。spec §4.1 が「stage0/1 の統計で確定してからヘッダに固定する」としていた項目の決着なので §8 に記録する。stage1 (sub-08) で分布が偏れば再訪してよい。

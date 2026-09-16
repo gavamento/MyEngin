@@ -12,6 +12,11 @@
   `convT k4 s2 (96→64)` + Add(enc64), res(64) @8³ → `convT (64→32)` + Add(enc32), res(32) @16³ → head `conv3(32→64)+ReLU, conv1(64→192)` (活性なし = mask は logit、amp は 0..1 回帰)。≈1.8M params。
   **構造は sub-05 の時間計測で 1.5 s を超えたら縮める** (本学習 sub-08 の前なら自由)。
 - `train.py`: Adam lr 1e-3 (`--lr` で論文 0.02)、batch 16、100 epoch、20 epoch ごと半減、loss = MSE(amp, valid cell のみ) + BCEWithLogits(mask)。
+  ★**npz の品質指標を読んで除外・重み付けできること** (spec §4.1「品質指標」、ユーザー指示)。判断軸は **(1) Mel-band coverage と (2) residual 品質の 2 つだけ**:
+  `--quality-max-residual R` (`residual_max > R` の npz を除外) / `--quality-min-coverage C` (`coverage_ratio < C` を除外) / `--quality-min-high-coverage C` (`coverage_high < C` を除外) / `--quality-weight` (`residual_max` と `coverage_ratio` に応じてサンプル重みを下げる)。**既定は全部 off** (= 全サンプル同じ重み) だが、off でも**読めている**ことが要件。しきい値の既定は stage0/stage1 の分布を見て planner が確定する (spec §7)。
+  ★**mode count と `method` で分岐しないこと** — `modes_requested` / `f_top` / `mode_count` / `method` は診断・表示用のメタデータ (ユーザー指示: 「採否・重み付けは mode count ではなく band coverage と residual 品質で決定する」)。
+  ★cell 単位の `cell_coverage` も読めるようにしておく (メッシュ単位の除外では粗すぎると分かったときに、loss のマスクへ落とせる余地を残す)。モード単位の除外は sub-03 の生成時に済んでいる (Mel 圧縮後は個々のモードが無い)。
+  ★学習ログに「除外した npz 数 / 残差の分布」を 1 行出す (門の判定が品質フィルタで変わったのかを後から切り分けられるように)。
   `--overfit N --epochs 300`: N 形状に過学習させ **amp MSE < 1e-3 かつ mask acc > 99% を assert**。checkpoint は `runs\` (gitignore)。
 - `export.py`: (1) BN を conv に畳む (2) fp16 に丸めて**から** fp32 で fixture 期待値を計算 (C++ と同じ重み、差は加算順だけ) (3) `paramCount ≤ 2,000,000` assert (4) `weightsHash` = FNV-1a (5) `bandCenterHz` は compact.py の値そのもの (6) ヘッダの `logAmpMin/Max` / `ampScale` (J=1 N·s の中央値ピークが −12 dBFS になる値) / 参照材質 / L_ref をデータセット統計から書く。
   `--fixture`: 幅 4/8/8/8 の小ネット (乱数重み、seed 固定) → `tests\deepmodal\fixture.dmnet` (≈50 KB) + `fixture_in.mvox` (builtin cube を sub-02 の CLI で作ったもの) + `fixture_out.bin` (有効 cell のうち固定 64 cell の index 表 + 64×192 float32)。

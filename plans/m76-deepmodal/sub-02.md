@@ -1,7 +1,7 @@
 # sub-02 (M76b): ボクセライザと --modal-voxelize
 
 - 依存: なし (sub-01 と並列可。`ModalTypes.h` の定数を両方が足す場合は先に入った方に合わせる)
-- 状態: OK (commit: 次行の M76b コミット。台帳参照)
+- 状態: OK (commit ae77b20)
 - 往復: 0
 
 ## やること

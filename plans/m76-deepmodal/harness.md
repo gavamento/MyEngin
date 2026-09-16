@@ -14,13 +14,17 @@
   - poissonRatio: 「FEM / 教師データ生成と reference material metadata 用。現行 Deep-Modal の runtime material scaling には使用しない。将来 Poisson 比を考慮するモデルへ拡張可能な形で保持する」 (planner 裁定「PhysMat に足さない」とは異なる → planner へ補足送付、spec / sub-01 / sub-07 を修正)
   - M76h (sub-08) の範囲: stage1 で .dmnet コミットまで (planner 裁定どおり)。ModelNet10 は README の手順でユーザーが回す
   - 計画の確定: 確定 (受け入れ条件 20 件 / サブ 8 本)
+- **2026-09-16 sub-03 の [ユーザーに聞ける] 回答**: 固有値解法の cap + LOBPCG フォールバック (`MAX_OCCUPIED_EXACT=9000`、m=40 / maxiter=60 / spilu fill_factor=8) は「採用 + 解法を記録」= planner 裁定どおり。npz に `method` を記録して LOBPCG 由来を可視化し、sub-04 が除外・重み下げを選べる形にする。しきい値と LOBPCG パラメータの再調整は M76h で実分布を見てから
+  - **追加指示 (同日)**: 「fallback の採否は solver 名ではなく固有対の residual と、基準形状での shift-invert との比較結果に基づく。各結果に solver metadata と convergence quality を保存し、学習時に除外/重み付け可能にする。」= 採否の判断材料は method 名ではなく**数値の収束品質** (residual ‖Kx − λMx‖/‖λMx‖ 等) と基準形状での直接法との照合。npz / stats.json に solver metadata + convergence quality を保存する
+- **2026-09-16 sub-03 round 2 の [ユーザーに聞ける] 回答 (モード数の予算)**: 「1 で固定のモード数達成を必須条件にせず、100–10000 Hz に対する **Mel-band coverage** を各サンプルで記録する。学習時の採否・重み付けは **mode count ではなく band coverage と residual 品質**で決定する。」
+  - 前提の訂正 (planner 再分析): 校正の「LOBPCG が 77% 取りこぼし」は**測定のバグ** — 直接法に 150 本、反復法に 40 本 (剛体除去後 34) を要求していた予算差。規模の違う 2 形状で 34/116 が同一、周波数一致は相対誤差 1e-12 級。両解法とも要求数で頭打ちだった (直接法も k=150 で切れていた)
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
 | sub-01 | OK | 1 | a3a536d | M76a モーダル合成器 + PhysMat 音響材質 4 フィールド (依存なし) |
-| sub-02 | 実装中 | 1 | | M76b ボクセライザ (.mvox) + OFF/OBJ + --modal-voxelize (依存なし) |
-| sub-03 | 未着手 | 0 | | M76c Python データセット生成 + pytest + constGroups (依存 sub-02) |
+| sub-02 | OK | 2 | ae77b20 | M76b ボクセライザ (.mvox) + OFF/OBJ + --modal-voxelize (依存なし) |
+| sub-03 | 実装中 | 2 | | M76c Python データセット生成 + pytest + constGroups (依存 sub-02) |
 | sub-04 | 未着手 | 0 | | M76d モデル / 学習 / export、overfit の門 (依存 sub-03) |
 | sub-05 | 未着手 | 0 | | M76e .dmnet ローダ + CPU バックエンド + .msfm + ModalSoundLibrary (依存 sub-02, sub-04) |
 | sub-06 | 未着手 | 0 | | M76f ModalSound (61) + 接触→合成 + wave 口封じ + CLI (依存 sub-01, sub-05) |
