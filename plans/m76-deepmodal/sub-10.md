@@ -385,3 +385,113 @@ SELF_EVAL: sub-10 (round 3)
   ★**planner 自身の誤りを訂正**: round 2 の申し送りで「p 変更後は `ampScale` の再計算・再 export が要る」と書いたが**誤り**。`C(R) = R·(R/R)^p = R` はどの p でも成立するので**アンカーは p 非依存**、`ampScale` は据え置きが正しい。coder は round 1 からこの恒等式を正しく主張しており、round 3 で「p=0.18 と p=0.5 で J=6 の実測が同じ −12.00 dBFS」という形で直接実証した。
   ★裁定 (iii) の「J≈100 が歪みなしの上限、それ以上は tanh が受ける」は `engine_spec.md` に**理由つきで入っている** (3D `RolloffGain` の距離減衰で実際には滅多に届かないことまで書かれている)。デモの質量修正も「**p を先に現実域で決めてから**デモを直した」順序が明記されていて、「デモにカーブを決めさせない」の趣旨が文書に残っている。
   不安・質問 2 (20/20) への裁定: **発音数は不変条件ではない** (バウンド回数は質量・反発・`kImpactMinImpulse` の跨ぎ方で決まる派生値)。受け入れ条件 24 から固定値を削除し「登録された impact が全て Played」に直した。
+
+## reviewer round 2 の差し戻し (planner、2026-09-17)
+sub-10 は commit 済み (f08cd95) だが、**自身の文書成果物が未完**なので差し戻す (新規サブは立てない)。
+coder 宛の指摘 1 / 2 / 4 と同じ 1 回のパスで片付けること。
+
+- **[planner 指摘 3 の対処] `engine_spec.md §10.7.2` に「アンカーの代表性」を 1〜2 文足す**:
+  `ampScale` は **builtin cube 1 枚**の 6 面の**上側中央値**で決めており、**メッシュ間・面間は正規化されていない**。
+  実測 (同条件に揃えた `.msfm` 382 枚): 振幅和が **p10 0.569 / median 1.925 / p90 14.13 = p10→p90 で 27.9 dB**、
+  **41/382 は cell 中央値 0**。同じ cube でも **面間 16.3 dB**。
+  ★あわせて**次の 2 点を必ず書く** (書かないと将来「正規化して直す」誤りを招く):
+  (a) この散らばりは**一部が正しい** — 形状で放射が変わるのは spec §1 の目的そのもの。残りは stage1 の
+      モデル品質 (常時無音 35 枚と同根) で ModelNet10 で変わる
+  (b) **メッシュごとの正規化は意図的にやらない** — やると「形状で音が変わる」を消す
+- [coder 宛 2 と対] dBFS 表の「中央値」は実装が**上側中央値** (`sorted[3]`、一律 1.78 dB 高い)。
+  **数値を直すか、統計量の定義を表に併記するか**のどちらかで再現可能にすること (spec §7 の新規則)
+- [coder 宛 1] **root `README.md`** (機能概要) が未更新。`tools\deepmodal\README.md` とは別物
+- [coder 宛 4] `.msfm` の flush が終了時 1 回 = 異常終了で全焼き分が消える。**損失の窓を区切る** (spec §7 の新規則)
+
+SELF_EVAL: sub-10 (round 4)
+
+実装 (reviewer round 2 の指摘 1・2・4 + planner 追補の指摘 3、計 4 点):
+  1. **root `README.md`** (108-121 行、Deep-Modal 節) を更新。従来の「音量は正規化しない絶対値」の
+     直後に (i) 圧縮カーブ `C(J)=kImpactRefImpulse·(J/kImpactRefImpulse)^0.5` とアンカー
+     (J=6 で約 -12dBFS、詳細は engine_spec.md §10.7.2) (ii) **アンカーは基準メッシュ 1 個の測定**で
+     資産全体を代表しない (382 枚評価で非ゼロ振幅の p10-p90 が 27.9dB、形状差は物理的に正しいので
+     メッシュ間正規化はしない) (iii) 全 cell・全帯域 mask off で常時無音のメッシュがあること
+     (382 枚中 35 枚、`--modal-bake` の `silent=N`) の 3 点を追加。`grep` で実際に入ったことを確認済み
+     (下記検証欄)。
+  2. **dBFS×J 表の統計量定義を明示** (`engine_spec.md §10.7.2` / `docs/adr/ADR-020-deep-modal.md`
+     決定 10 / `tools/deepmodal/README.md` 手順 4)。「中央値」ではなく実際には 6 面を昇順に並べた
+     上から 4 番目 (`sorted[3]`、`statistics.median_high`) であることを脚注/注記として追加し、
+     教科書的な中央値との差 (-1.78dB) とアンカーが±3dB許容内で不変であることを明記。数値の
+     再計測はしていない (アンカーは変わらないため)。あわせて `engine_spec.md` の「J=100 は
+     undistorted の上限」という言い過ぎを是正 — J=100 の最大面は既に peak 0.9998 (圧縮前
+     ≈1.55、約3.8dBのゲインリダクションが約1%のサンプルに掛かる) ことを明記し、「J=30 では
+     ほぼ無圧縮 (0.02%)、J=100 で最大面だけがknee に触れ始める」という正確な表現へ改めた。
+  3. **`engine_spec.md §10.7.2` に「アンカーの代表性」の段落を新設** (planner 裁定、reviewer 指摘 3
+     の対処)。382 枚の統計 (p10=0.569/median=1.925/p90=14.13/max=85.36、41/382 が常時無音)、
+     cube vs sphere の J 補正後 6.08dB 差、同一 cube の面間 16.3dB 差を実測値として記載し、
+     ★理由 2 点 (a) 一部は形状差による物理的に正しい散らばり (b) だからメッシュ間正規化は
+     意図的にしない、を明示 (省くと将来「正規化して直す」誤りを招くという planner の裁定どおり)。
+     ★この段落の数値は reviewer と planner が独立に算出し一致したものをそのまま記載しており、
+     私自身は `.msfm` 382 枚の生データから再導出していない (時間的制約。数式の形は BuildModes の
+     実装と整合すると確認したが、統計値そのものの独立検証はしていないことを正直に記す)。
+  4. **`.msfm` の flush 粒度をモデル境界単位へ変更** (`ModalSoundLibrary.h/.cpp`)。グローバルな
+     カウンタではなく `srcPath` (= モデルファイル) ごとに `dirtyUpdateCounts_` を持ち、そのモデル
+     自身の更新が `kFlushEveryNUpdates=20` 件たまったら**そのモデルの表だけ**を `FlushOneTable()`
+     で flush する。既存の `FlushDirtyTables()` (全部まとめて flush、Shutdown/Clear/--modal-bake
+     が呼ぶ) はそのまま残し、定常的な安全網として機能を追加する形にした — 複数モデルを並行して
+     焼いていても無関係なモデルを巻き込まない (「損失の単位をモデル境界に揃える」という
+     planner 追補の規則 2 に対応)。
+
+検証:
+  - `grep -n "kImpactRefImpulse\|silent=N\|M76i" README.md` → 4 箇所ヒット (root README に
+    実際に追記されたことを確認)。`grep -n "27.9dB\|基準メッシュ\|正規化は入れていない" README.md`
+    → 3 箇所ヒット (アンカー代表性の記述も root README に入っていることを確認)。
+  - `grep -n "27.9 dB\|41 of 382\|6.08 dB\|16.3 dB" engine_spec.md` → 4 箇所ヒット (§10.7.2 の
+    新段落が実際に入っていることを確認)。
+  - Debug/Release ビルド `/p:MyeWarnAsError=true` → exit 0、警告 0。
+  - `--selftest` (Debug/Release) → exit 0、`FAIL:` 0 件。
+  - `pwsh -File tools\check_rules.ps1` → `0 error(s), 0 warning(s)`。
+  - **flush 粒度の実地検証**: `.msfm` キャッシュを削除してコールドバイクを実行 →
+    `models=19 bakes=382 bakeMsAvg=448.37 silent=35`。最大モデル (`2ec7bacbd78c3594`、144
+    サブメッシュ) の `.msfm` (14.6MB) が**bake が完了するより前** (mesh85 処理中) にディスク上へ
+    出現していることを `ls -la` で確認 = 自動 flush が実際に mid-bake で発火している直接証拠。
+    全 19 モデルの `.msfm` が最終的に揃うことも確認。2 回目の `--modal-bake` →
+    `bakeMsAvg=0.38、silent=35` (完全なキャッシュヒット、データ破損なし)。
+  - `MYE_REPLAY_JOBS=3 tools\replay_verify.bat` → **13/13 jobs PASS** (282.3s)。
+    `ModalSoundLibrary.cpp/.h` (`Pump()` が呼ぶ `FinishResult`→`UpdateTableEntry` の経路) を
+    触ったため実施。`ModalSound` は NoHash でこの変更は I/O タイミングだけに影響するため、
+    sim 側への影響は無いはずだが実測で確認した。
+
+自己採点 (1-5):
+  仕様適合: 5 — reviewer round 2 の指摘 1・2・4 と planner 追補の指摘 3 を全て実装し、
+  `grep` で実ファイルへの反映を確認した (round 2 の教訓を踏まえ、報告前に必ず実ファイルを
+  読み直す運用を徹底した)。
+  正しさ: 4 — flush 粒度の変更は実地でmid-bake flushの発火を確認し、cold/warm bakeの両方が
+  正しく動作することを確認した。減点は §10.7.2 の新段落の統計値 (p10/median/p90/max、27.9dB等)
+  を私自身が `.msfm` の生データから独立に再計算していない点 — reviewer と planner の一致を
+  根拠に転記したが、三者目の検証ではない。
+  コード品質: 4 — flush の変更は既存の `FlushDirtyTables()` を壊さずに `FlushOneTable()` を
+  追加する形で最小限にとどめた。ドキュメントの脚注も既存の表構造を壊さず追記した。
+  テスト: 4 — 既存の自動テスト (selftest全緑・check_rules・replay_verify 13/13) を再確認。
+  flush 粒度の検証はコールドバイク+ファイル出現タイミングという手動実測で行い、自動テストは
+  追加していない (spec の要求範囲外と判断)。
+
+不安・質問:
+  1. §10.7.2 に追加したアンカー代表性の統計値 (p10=0.569等) は reviewer/plannerの算出を転記した
+     もので、私自身は `.msfm` 382枚の生データから独立に再導出していません。数式的な整合性
+     (BuildModesの実装との対応) は確認しましたが、統計計算そのものの三者目の検証が必要であれば
+     お知らせください。
+  2. `kFlushEveryNUpdates=20` という閾値は「損失の単位をモデル境界に揃える」という要求は満たす
+     ものの、20という具体的な数字自体はreviewer/plannerからの指定ではなく私の裁量で選びました
+     (round 1で選んだのと同じ値を流用)。妥当性の確認が必要であればお知らせください。
+
+触ったファイル (round 4):
+  - README.md (root、Deep-Modal節に3本の制約を追記)
+  - engine_spec.md (§10.7.2 にアンカー代表性の段落 + 統計量定義の脚注 + undistorted表現の是正)
+  - docs/adr/ADR-020-deep-modal.md (決定10のdBFS表に統計量定義の脚注)
+  - tools/deepmodal/README.md (手順4に統計量定義の注記、MYE_MODAL_PROBE_IMPULSEをMYE_MODAL_THREADS等と並記)
+  - src/Engine/Engine/Modal/ModalSoundLibrary.h/.cpp (flush粒度をモデル境界単位へ変更)
+  - plans/m76-deepmodal/sub-10.md (このファイル、実装メモ節)
+
+★SELF_EVALは`plans/m76-deepmodal/sub-10.md`の「実装メモ」節にも全文書き込み済みです。
+- round 4: **VERDICT: OK** (planner、2026-09-17)。**M76 完了**。planner が実ファイルで 4 件すべて確認:
+  (1) root `README.md` 108-121 行に制約 3 本 (圧縮カーブ + J=6 で約 −12 dBFS / **アンカーは基準メッシュ 1 個で資産全体を代表しない (382 枚で p10-p90 27.9 dB)** / 常時無音 35 枚と `silent=N`) が入り、**正規化しない理由**も書かれている
+  (2) 統計量の定義 (`median_high` / 上側中央値) が `engine_spec.md` / `ADR-020` / `tools\deepmodal\README.md` の 3 ファイルすべてにある (`grep -rln` で確認)
+  (3) `engine_spec.md:2165-2181` に代表性の段落。数値 (41/382、p10=0.569 / median=1.925 / p90=14.13 / max=85.36、27.9 dB、6.08 dB、16.3 dB) に加え、**planner が要求した理由 2 点が両方**入っている — (a)「一部は物理的に正しい (形状が違えば面への結合も違う)」(b)「**だから per-mesh 正規化はしない** — やると『形状で音が変わる』を消す」。さらに「残りは stage1 の汎化ギャップで、ModelNet10 の後にアンカーを測り直す (メッシュ単位で当てない)」まで書かれており、**将来「正規化して直す」誤りを防ぐ**という意図が満たされている
+  (4) `ModalSoundLibrary.cpp:400-413` が srcPath ごとの `dirtyUpdateCounts_` + `FlushOneTable()` = **モデル境界より細かい粒度**で flush
+  ★**planner の誤りの記録**: 最初の grep 2 回が `normaliz` / `representat` という広すぎるパターン + `head -10` で、**行 2168 以降に到達する前に出力が尽きて false negative** を出した (「engine_spec に無い」と誤認しかけた)。網羅的に grep し直して実在を確認。**報告を疑う前に自分の検索を疑う**べき事例として残す。

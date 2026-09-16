@@ -388,11 +388,29 @@ void ModalSoundLibrary::UpdateTableEntry(const std::wstring& srcPath, const std:
     } else {
         table.emplace(hit, meshName, map);
     }
-    // ここでは保存しない (reviewer round 1 指摘 3)。1 モデルが N 個のサブメッシュを持つとき
+    // 毎回は保存しない (reviewer round 1 指摘 3)。1 モデルが N 個のサブメッシュを持つとき
     // 焼くたびに SaveTable すると表全体 (N 枚ぶん) を N 回書き直す = O(N^2) のディスク I/O
-    // になる (実測: 最終 15.1 MB の表に対し累積 約 1.09 GB)。dirty だけ立てて、
-    // バッチの終わり (--modal-bake) かライブラリ破棄時 (Shutdown) にまとめて 1 回書く
+    // になる (実測: 最終 15.1 MB の表に対し累積 約 1.09 GB)。dirty だけ立てて、まとめて書く。
     dirtyTables_.insert(srcPath);
+    // reviewer round 2 指摘 4 + planner round 2 追補の規則 2「flush は損失の窓を区切る」:
+    // Shutdown()/Clear()/--modal-bake の 3 箇所だけが flush 点だと、長時間の Editor
+    // セッション中の異常終了で溜まった焼き結果が全部消える。かといって「N 件たまったら
+    // 全ての dirty テーブルを flush」にすると、複数モデルを並行して焼いているときに
+    // 無関係なモデルまで巻き込んで書き直す — 損失の単位を**モデル境界 (srcPath)** に揃え、
+    // この srcPath 自身の更新が kFlushEveryNUpdates 件たまったらこの表**だけ**を flush する
+    if (++dirtyUpdateCounts_[srcPath] >= kFlushEveryNUpdates) {
+        FlushOneTable(srcPath);
+    }
+}
+
+void ModalSoundLibrary::FlushOneTable(const std::wstring& srcPath)
+{
+    const auto it = tables_.find(srcPath);
+    if (it != tables_.end()) {
+        SaveTable(srcPath, it->second);
+    }
+    dirtyTables_.erase(srcPath);
+    dirtyUpdateCounts_.erase(srcPath);
 }
 
 void ModalSoundLibrary::FlushDirtyTables()
@@ -404,6 +422,7 @@ void ModalSoundLibrary::FlushDirtyTables()
         }
     }
     dirtyTables_.clear();
+    dirtyUpdateCounts_.clear();
 }
 
 namespace modalsound {

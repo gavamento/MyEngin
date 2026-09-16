@@ -87,12 +87,16 @@ public:
     // 成功で Ready、失敗で Failed (どちらも cache_ に反映してから返す)
     bool BakeSync(AssetID mesh);
 
-    // dirty (未保存) な .msfm 表をまとめて書き出す (reviewer round 1 指摘 3 の是正)。
+    // dirty (未保存) な .msfm 表を**全部まとめて**書き出す (reviewer round 1 指摘 3 の是正)。
     // UpdateTableEntry は保存を毎回はしない (dirtyTables_ へ積むだけ) ので、これを呼ぶまで
     // ディスクには反映されない。Shutdown() が破棄時に呼ぶほか、--modal-bake がバッチの
     // 終わりに明示的に呼ぶ (モデル単位で表ごと書き直す O(n^2) の I/O を、モデル数ぶんの
     // O(n) へ落とす — 表は「サブメッシュを 1 枚焼くたび全体を書き直す」形式なので、
-    // 焼くたびに保存すると 1 モデルの累積書き込みが枚数の 2 乗で増える)
+    // 焼くたびに保存すると 1 モデルの累積書き込みが枚数の 2 乗で増える)。
+    // ★この「全部まとめて」だけが flush 点だと、長時間セッション中の異常終了で焼き結果が
+    // 全部消える (reviewer round 2 指摘 4) — 定常的な安全網は `UpdateTableEntry` が
+    // srcPath ごとに自動で呼ぶ `FlushOneTable` (kFlushEveryNUpdates 件ごと) が受け持つ。
+    // こちらは「今すぐ確実に全部書き切りたい」ときの明示操作
     void FlushDirtyTables();
 
 private:
@@ -130,6 +134,9 @@ private:
     void SaveTable(const std::wstring& srcPath, const CookTable& table);
     void UpdateTableEntry(const std::wstring& srcPath, const std::string& meshName,
                           const ModalFeatureMap& map);
+    // srcPath 1 本だけを flush し、dirty フラグとカウンタを両方リセットする
+    // (FlushDirtyTables() の単一テーブル版。自動 flush のトリガから呼ぶ)
+    void FlushOneTable(const std::wstring& srcPath);
 
     RenderResources* resources_ = nullptr;
     std::unique_ptr<ModalInferenceBackend> backend_;
@@ -140,6 +147,16 @@ private:
     std::unordered_set<uint64_t> warnedFailed_; // WARN は 1 回だけ
     std::unordered_map<std::wstring, CookTable> tables_;
     std::unordered_set<std::wstring> dirtyTables_; // FlushDirtyTables() で保存する srcPath の集合
+    // reviewer round 2 指摘 4 + planner round 2 追補 (規則 2「flush は損失の窓を区切る」):
+    // Shutdown()/Clear()/--modal-bake の 3 箇所でしか flush しないと、長時間の Editor
+    // セッション中の異常終了で溜まった焼き結果が全部消える。かといって
+    // 「N 件たまったら**全部の** dirty テーブルを flush」だと、複数モデルを同時に
+    // 焼いているときに無関係なモデルまで巻き込んで書き直す (元の O(n^2) の縮小再生産)。
+    // ★**srcPath (= モデルファイル) ごと**にカウンタを持ち、そのモデル自身の更新が
+    // kFlushEveryNUpdates 件たまったらそのモデルの表**だけ**を flush する —
+    // 「落ちても失うのは 1 モデルにつき高々 N-1 件」という損失の単位をモデル境界に揃える
+    std::unordered_map<std::wstring, int> dirtyUpdateCounts_;
+    static constexpr int kFlushEveryNUpdates = 20;
 
     std::thread worker_;
     std::mutex mutex_;

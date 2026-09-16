@@ -558,8 +558,13 @@ M76h 時点の `ampScale=1.0` (プレースホルダ) のまま出荷すると�
    6 枚 (メッシュの 6 面) の peak を測る (`wave` モジュールで int16 の絶対値最大を読むだけ)。
    ★ログの `peakDb`/`--modal-audio-log` の表示値は**無音を -80dBFS へ丸める**ため
    較正には使わない — 必ず `--modal-wav-dump` の実 PCM を測ること。
-4. `J = kImpactRefImpulse (6.0)` での 6 面の中央値ピークが **-12dBFS ± 3dB** になるよう
-   `ampScale` を調整する (アンカーは `kModalImpulseExponent` の値に依らない —
+4. `J = kImpactRefImpulse (6.0)` での 6 面のピークが **-12dBFS ± 3dB** になるよう
+   `ampScale` を調整する。★**「中央値」の実装上の定義 (reviewer round 2 指摘 2)**:
+   6 個を昇順に並べた**上から 4 番目** (0 始まり index 3、Python の `sorted(x)[3]` /
+   `statistics.median_high`)。教科書的な中央値 (index 2 と 3 の平均) だと一律 -1.78dB
+   低く出る — アンカーはどちらでも ±3dB の許容に収まるが、較正を再現するときは
+   `sorted(peaks)[3]` を使うこと。
+   (アンカーは `kModalImpulseExponent` の値に依らない —
    `C(kImpactRefImpulse) = kImpactRefImpulse` は指数によらない恒等式なので、
    `ampScale` だけで合わせてから `kModalImpulseExponent` を別途詰められる)。
 5. `--modal-demo` 本体 (`--modal-wav-dump` を付けて実バウンドを録る。何発になるかは

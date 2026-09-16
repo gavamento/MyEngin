@@ -2134,7 +2134,7 @@ and it is also the value this project started with — measured on the shipped `
 (`ampScale=11478`, unchanged; `--modal-wav-dump`, real PCM peaks, not the log's clamped `peakDb`
 which floors at −80 dBFS for exact silence):
 
-| `J` [N·s] | source | median peak |
+| `J` [N·s] | source | peak¹ |
 |---|---|---|
 | 0.35 (`kImpactMinImpulse`) | `--modal-face-probe`, six faces | −24.3 dBFS |
 | 1 | same | −19.8 dBFS |
@@ -2143,14 +2143,43 @@ which floors at −80 dBFS for exact silence):
 | 30 | same | −5.0 dBFS |
 | 100 | same | −0.3 dBFS |
 
+¹ The 4th-loudest of the 6 faces sorted ascending (Python's `statistics.median_high`, index 3 of
+0..5) — not the textbook median (average of indices 2 and 3), which measures about 1.8 dB lower at
+every row (e.g. −13.8 dBFS at the anchor instead of −12.0). The anchor is unaffected either way (it
+sits within the ±3 dB tolerance under both definitions); this is a reporting/reproducibility note,
+not a calibration correction.
+
 `J=3` (a 1 kg drop from 0.5 m) is comfortably audible and nowhere near all-zero PCM; the realistic
 range (0.35–100) spans **24.0 dB** measured (24.6 dB predicted by the formula above), matching the
-wave lane. `100` N·s is deliberately the point where an undistorted hit tops out — a harder blow
-than that is exactly what the `|x|>0.8` `tanh` softclip in `ModalSynthRender` exists for, and 3D
-`RolloffGain` distance attenuation means only a very close, very hard impact ever reaches it in
-practice. Re-anchoring at `J=1` (the number this project used before M76i) was rejected: `J=1` has
+wave lane. `100` N·s is roughly where a hit starts to reach the softclip knee, not a hard ceiling
+below it: at `J=30` essentially nothing is compressed (~0.02% of a face's samples), and at `J=100`
+the loudest face's peak (0.9998) implies a pre-clip amplitude of ≈1.55 — about 3.8 dB of gain
+reduction on roughly 1% of that face's samples. Genuinely undistorted playback lives below that;
+what `100` N·s buys is that only the loudest face of the hardest realistic hit brushes the knee, not
+that nothing does. A harder blow than that is exactly what the `|x|>0.8` `tanh` softclip in
+`ModalSynthRender` exists for, and 3D `RolloffGain` distance attenuation means only a very close,
+very hard impact ever reaches it in practice. Re-anchoring at `J=1` (the number this project used before M76i) was rejected: `J=1` has
 no physical grounding (it is not "one drop of anything" in particular), and combined with a linear
 law it implied clipping the *entire* usable range, which is exactly the failure mode above.
+
+**The anchor is measured on one mesh, not the asset population — and that gap is deliberately not
+normalised away.** The −12 dBFS anchor above comes from a single mesh (the builtin cube) across its
+six faces. Evaluating all 382 baked `.msfm` entries under the same conditions (reference material,
+1 m real size, `k = C(kImpactRefImpulse)`) shows how far that one number generalises: **41 of 382
+are silent at every band** (the same 41 `--modal-bake` already reports as `silent=`), and among the
+rest the summed amplitude spans p10=0.569, median=1.925, p90=14.13, max=85.36 — a **27.9 dB**
+p10-to-p90 spread. Direct probes agree: the cube (wood, `J=21.86`, −9.97 dBFS) and the M76i sphere
+(tile, `J=15.21`, −5.47 dBFS) differ by **6.08 dB** once `C(J)` is divided out, and the *same* cube's
+own six faces already span **16.3 dB** at `J=6`. Two things are true about this spread and both
+matter: (a) part of it is physically correct — a different shape genuinely projects energy
+differently toward a given face, which is the entire reason this feature map is conditioned on the
+mesh in the first place, so a mesh that legitimately couples harder into a probed face *should* read
+louder than one that does not; (b) **that is exactly why there is no per-mesh amplitude
+normalisation** — flattening every mesh to the anchor's loudness would erase "the shape changes the
+sound," which is the property §10.7 exists to produce. The rest of the spread, and especially the
+41-mesh silent tail, is the same stage1 generalisation gap described two paragraphs above, not a
+calibration defect to chase mesh-by-mesh; it is expected to shrink with ModelNet10, at which point
+the anchor should be re-measured (README, "音量較正") rather than patched per mesh now.
 
 **The demo's objects were fixed to have realistic mass, not to fit a chosen `p`.** `BuildModalShowcaseScene`
 (`DemoContent.cpp`) now sets each body's `RigidbodyComponent::mass` directly (wood 2 kg, metal 4 kg,
