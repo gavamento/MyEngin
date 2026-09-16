@@ -31,12 +31,13 @@
 | sub-06 | OK | 1 | eac3800 | M76f ModalSound (61) + 接触→合成 + wave 口封じ + CLI (依存 sub-01, sub-05, sub-09) |
 | sub-07 | OK | 1 | 34bf95f | M76g Inspector プレビュー + PhysMat 欄 (依存 sub-06) |
 | sub-08 | OK | 2 | 5807308 | M76h stage1 学習 + .dmnet + 文書 (依存 sub-06, sub-07) |
-| sub-10 | OK | 3 | f08cd95 | M76i 音量カーブの較正と圧縮 + engine 文書 (依存 sub-08、レビュー round 1 の major 1) |
+| sub-10 | OK | 4 | f08cd95 + 7fc5aa0 | M76i 音量カーブの較正と圧縮 + engine 文書 (依存 sub-08、レビュー round 1 の major 1) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
 | 1 | FAIL | 3 / 4 / 4 / 4 | major 2 (ampScale 未校正 = 実用域で無音 + engine 文書に記録なし / Inspector プレビューが既定値で無反応・無通知)、minor 8 |
+| 2 | FAIL | 4 / 4 / **5** / 4 | round 1 の指摘 1〜10 は全て解消。残 major 1 (root README 未更新)、minor 3 (統計量の定義 / アンカーの代表性 / flush の損失窓) |
 
 - **2026-09-16 レビュー round 1 後の [ユーザーに聞ける] 回答 (音量校正)**: 「**今校正する**」。**先の『将来に回す』判断を、レビューの新しい実測に基づいて撤回**した — 判断時の情報は「peak −28〜−76 dB、無音や常時歪みは無い」だったが、reviewer の実測では**振幅が力積に線形で、1 kg を 0.5 m 落とす (J ≈ 3 N·s) と PCM が全サンプル 0**、面打ちプローブ (15 N·s) でも −84.3 dBFS = 2 LSB、焼いた 382 枚中 35 枚 (9.2%) はどんな力でも無音。`ampScale` はヘッダの float 1 つで `export.py --amp-scale` も既にあるため**再学習は不要**。「重い衝突がソフトクリップに張り付くか」= 上限圧縮の判断とセットで行う (spec §2 #12 が予見していた通り)
 
