@@ -1,7 +1,7 @@
 # sub-05 (M76e): C++ 推論 / バックエンド抽象 / .msfm / ModalSoundLibrary / --modal-bake
 
 - 依存: sub-02 (Voxelizer)、sub-04 (fixture)
-- 状態: 未着手
+- 状態: OK (commit 82f5363)
 - 往復: 0
 
 ## やること

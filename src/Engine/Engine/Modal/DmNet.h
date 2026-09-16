@@ -28,10 +28,9 @@ constexpr size_t kDmNetHeaderBytes = 256;
 constexpr size_t kDmNetOpBytes = 48;
 
 // export.py (tools/deepmodal/model.py の MAX_PARAM_COUNT) と同値の予算。
-// ★check_rules.ps1 の $constGroups には乗せていない (spec §4.2 が登録を求める 4 組
-//   (kModalVoxelN/kModalMapN/kModalBands/kModalChannels) にこの定数は入っていない) —
-//   両側で書き換えたら手で揃えること。ドリフトすれば LoadDmNet が黒っぽく拒否するだけ
-//   (安全側に壊れる) なので影響は限定的
+// sub-09 (M76e2) で check_rules.ps1 の $constGroups に登録した (kModalVoxelN 等と同型)。
+// 食い違うと「Python が通した .dmnet を C++ が拒否する」型の静かな破綻になるため、
+// two-language 定数の重複は機械照合するのがこのリポジトリの流儀 (sub-05 の「不安・質問」より)
 constexpr uint32_t kDmNetMaxParamCount = 2'000'000u;
 
 // .dmnet の op 表 1 エントリ (spec §4.2)。weightOffset/biasOffset は

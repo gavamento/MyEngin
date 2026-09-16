@@ -587,20 +587,21 @@ bool RunModalSelfTest()
                   "fixture_out.bin has the expected size (64 cells x (index + 192 float32))");
 
             // インストール済みバックエンド (このサブでは CpuModalBackend) に対して回す。
-            // 将来 D3d11ModalBackend を差し込んでもこの関数をもう一度呼べば同じ検査になる
-            auto runFixture = [&](ModalInferenceBackend& backend, const char* label) {
+            // 将来 D3d11ModalBackend を差し込んでもこの関数をもう一度呼べば同じ検査になる。
+            // 戻り値は max|Δ| (呼び出し側が両経路の実測値を比較するのに使う、sub-09)
+            auto runFixture = [&](ModalInferenceBackend& backend, const char* label) -> float {
                 std::string prepErr;
                 const bool prepared = backend.Prepare(net, &prepErr);
                 check(prepared, (std::string(label) + ": Prepare() succeeds").c_str());
                 if (!prepared || !gridOk || expectedBytes.size() < 64 * (4 + 192 * 4)) {
-                    return;
+                    return -1.0f;
                 }
                 std::vector<float> out;
                 std::string inferErr;
                 const bool inferred = backend.Infer(grid, out, &inferErr);
                 check(inferred, (std::string(label) + ": Infer() succeeds").c_str());
                 if (!inferred) {
-                    return;
+                    return -1.0f;
                 }
                 float worst = 0.0f;
                 for (int i = 0; i < 64; ++i) {
@@ -618,10 +619,67 @@ bool RunModalSelfTest()
                 std::snprintf(what, sizeof(what), "%s: fixture inference matches fixture_out.bin (max|d|=%g)",
                              label, static_cast<double>(worst));
                 check(worst < 1.0e-3f, what);
+                return worst;
             };
 
-            CpuModalBackend cpuBackend;
-            runFixture(cpuBackend, "CpuModalBackend");
+            // ---- sub-09 (M76e2): AVX2 経路とスカラー経路の両方を通す ----
+            // AVX2 対応機でも SetForceScalar(true) でスカラーへ強制できることを selftest から
+            // 確かめる (spec §5 受け入れ条件 23「両経路が腐らない」)。ハードウェアが AVX2 非対応の
+            // 機種では runFixture 呼び出し 2 本とも自動的にスカラー経路を通る (UsingAvx2() が
+            // false を返すため) — その場合でも「腐っていないか」を通す目的は達成される
+            CpuModalBackend cpuAuto;
+            const float diffAuto = runFixture(cpuAuto, "CpuModalBackend (auto)");
+            check(diffAuto >= 0.0f, "CpuModalBackend (auto): fixture inference produced a result");
+            MYE_LOG_INFO("  [sub-09] auto path avx2=%d threads=%d max|d|=%g", cpuAuto.UsingAvx2() ? 1 : 0,
+                        cpuAuto.EffectiveThreadCount(), static_cast<double>(diffAuto));
+
+            CpuModalBackend cpuScalar;
+            cpuScalar.SetForceScalar(true);
+            const float diffScalar = runFixture(cpuScalar, "CpuModalBackend (forced scalar)");
+            check(diffScalar >= 0.0f, "CpuModalBackend (forced scalar): fixture inference produced a result");
+            check(!cpuScalar.UsingAvx2(), "SetForceScalar(true) makes UsingAvx2() return false");
+            MYE_LOG_INFO("  [sub-09] forced-scalar path avx2=%d threads=%d max|d|=%g",
+                        cpuScalar.UsingAvx2() ? 1 : 0, cpuScalar.EffectiveThreadCount(),
+                        static_cast<double>(diffScalar));
+
+            // ---- sub-09 round 2: スレッド数を変えても結果がビット一致する (受け入れ条件 23) ----
+            // GEMM のリダクション (K 次元) をスレッドで割らないだけでは不十分だった (round 1 の
+            // 見逃し、CpuModalBackend.cpp の ParallelSpan コメント参照) — AVX2 の 8 列ブロック
+            // (FMA = 1 回丸め) とスカラー端数 (乗算+加算 = 2 回丸め) は丸めが違うので、
+            // チャンク境界がスレッド数で動くと「どの列が AVX2 でどの列が端数か」が変わって
+            // 結果が変わりうる。**SIMD 幅 (8) で割り切れないスレッド数 (3 / 5) を含めないと
+            // 検出できない** (2 冪だけならチャンク境界が常に 8 に揃ってしまい、原理的に
+            // バグを踏まない — round 1 で実際にこれで見逃した)。CLI レベル
+            // (--modal-bake を MYE_MODAL_THREADS=1/3/4/5 で焼いて .msfm を比較) は手動検証で
+            // 別途確認済みだが、ここでは Infer() の戻り値そのものを memcmp する
+            if (gridOk) {
+                std::vector<float> baseline;
+                std::string baseErr;
+                CpuModalBackend cpuBase;
+                cpuBase.SetThreadCountOverride(1);
+                const bool baseOk = cpuBase.Prepare(net, &baseErr) && cpuBase.Infer(grid, baseline, &baseErr);
+                check(baseOk, "CpuModalBackend: thread-count baseline (T=1) Infer() succeeds");
+
+                const int threadCounts[] = { 2, 3, 4, 5, 8 }; // 3 / 5 が SIMD 幅で割り切れない本数
+                for (const int tcount : threadCounts) {
+                    CpuModalBackend cpuT;
+                    cpuT.SetThreadCountOverride(tcount);
+                    std::string errT;
+                    std::vector<float> outT;
+                    const bool okT = cpuT.Prepare(net, &errT) && cpuT.Infer(grid, outT, &errT);
+
+                    char label[96];
+                    std::snprintf(label, sizeof(label), "CpuModalBackend: T=%d Infer() succeeds", tcount);
+                    check(okT, label);
+
+                    const bool sameSize = baseOk && okT && baseline.size() == outT.size();
+                    const bool bitIdentical = sameSize
+                        && std::memcmp(baseline.data(), outT.data(), baseline.size() * sizeof(float)) == 0;
+                    std::snprintf(label, sizeof(label),
+                                 "CpuModalBackend: Infer() output is bit-identical T=1 vs T=%d", tcount);
+                    check(bitIdentical, label);
+                }
+            }
         }
     }
 

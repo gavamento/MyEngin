@@ -543,6 +543,17 @@ $constGroups = @(
             'tools\deepmodal\layout.py'            = 'CHANNELS\s*=\s*(\d+)'
         }
     }
+    # M76e2 (sub-09) 持ち越し: export.py の `paramCount <= MAX_PARAM_COUNT` assert と
+    # LoadDmNet の予算検査が「同じ約束」を C++/Python の 2 箇所に持っている。食い違うと
+    # 「Python が通した .dmnet を C++ が拒否する」型の静かな破綻になる (DmNet.h のコメント参照)。
+    # ★桁区切り (C++ の `'`、Python の `_`) を含むので、下の値抽出で取り除いてから int 化する
+    @{
+        label = 'kDmNetMaxParamCount / MAX_PARAM_COUNT'
+        sites = @{
+            'src\Engine\Engine\Modal\DmNet.h' = "constexpr\s+uint32_t\s+kDmNetMaxParamCount\s*=\s*([\d']+)u?"
+            'tools\deepmodal\model.py'        = 'MAX_PARAM_COUNT\s*=\s*([\d_]+)'
+        }
+    }
 )
 foreach ($g in $constGroups) {
     $values = @{}
@@ -559,7 +570,10 @@ foreach ($g in $constGroups) {
             $errors++
             continue
         }
-        $values[$rel] = [int]$hit.Matches[0].Groups[1].Value
+        # 桁区切り (C++ の `'1000` / Python の `1_000`) を取り除いてから整数化する
+        # (このグループ以外は元々数字だけを拾う正規表現なので no-op)
+        $raw = $hit.Matches[0].Groups[1].Value -replace "['_]", ''
+        $values[$rel] = [int]$raw
     }
     if ($values.Count -eq $g.sites.Count -and ($values.Values | Select-Object -Unique).Count -ne 1) {
         foreach ($rel in $values.Keys) { Write-Host "ERROR [rule 9] ${rel}: $($values[$rel])" }
