@@ -1,7 +1,7 @@
 # sub-06 (M76f): ランタイム接続 — ModalSound / 接触 → 音 / wave 口封じ / CLI / demo
 
 - 依存: sub-01 (合成器)、sub-05 (ライブラリ)
-- 状態: 未着手
+- 状態: OK (commit eac3800)
 - 往復: 0
 
 ## やること

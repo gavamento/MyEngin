@@ -68,6 +68,8 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         // Audio
         { "AudioSource", { ICON_FA_VOLUME_HIGH, "Audio", "オーディオソース" } },
         { "AudioListener", { ICON_FA_HEADPHONES, "Audio", "オーディオリスナー" } },
+        // M76f/g: Deep-Modal 衝突音 (接触 → モーダル合成)
+        { "ModalSound", { ICON_FA_DRUM, "Audio", "モーダルサウンド" } },
         // Environment
         { "Skybox", { ICON_FA_CLOUD, "Environment", "スカイボックス" } },
         { "Fog", { ICON_FA_SMOG, "Environment", "フォグ" } },

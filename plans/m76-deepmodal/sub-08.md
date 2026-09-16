@@ -9,6 +9,7 @@ spec §2 #14 の裁定どおり、**stage1 (小規模自前 ≤ 100 形状) で�
 
 - データ: stage1 = `assets\models` + 三校 / HAL Collector のモデル (合計 ≤ 100)。`dataset.py --stage small --list <一覧>`。
 - 学習: `train.py --epochs 100` (stage0 + stage1) → `export.py --out assets\deepmodal\deepmodal.dmnet` (≤ 4 MB) → `Editor.exe --modal-bake` → `--modal-demo` で `ampScale` / physmat の α, β を耳で詰める (値の変更は physmat JSON と export の統計。コードは触らない)。
+  ★**α / β の調整は `assets\physmats\*.physmat.json` を手で編集すること。Inspector の Save ボタンを押さない** — 押すとその 1 本だけ「キー順アルファベット化 / float の倍精度往復表記 / 末尾改行の消失 / 既定フィールドの追加」で再整形され、M76 のコミットに無関係な差分が混ざる (spec §7 の既知の挙動)。
 - README: ModelNet10 の手順 (`dataset.py --stage modelnet10 <dir> --jobs 12` ≈ 4.5 h 見込み / 再開方法 / 門を越えた証拠 (sub-04 のログ) が無ければ実行禁止 / ModelNet40 は同手順)。
 - 文書:
   - `engine_spec.md` §10.7 (経路図 / `.mvox` `.msfm` `.dmnet` の版と配置 / 後処理順 / レート制限 / バックエンド / CLI 6 本)

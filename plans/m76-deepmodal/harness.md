@@ -28,8 +28,8 @@
 | sub-04 | OK | 2 | 4239ce3 | M76d モデル / 学習 / export、overfit の門 (依存 sub-03) |
 | sub-05 | OK | 1 | 82f5363 | M76e .dmnet ローダ + CPU バックエンド + .msfm + ModalSoundLibrary (依存 sub-02, sub-04) |
 | sub-09 | OK | 2 | bc68463 | M76e2 CPU 推論の AVX2 / マルチスレッド最適化 (依存 sub-05、sub-06 の前) |
-| sub-06 | 実装中 | 0 | | M76f ModalSound (61) + 接触→合成 + wave 口封じ + CLI (依存 sub-01, sub-05, sub-09) |
-| sub-07 | 未着手 | 0 | | M76g Inspector プレビュー + PhysMat 欄 (依存 sub-06) |
+| sub-06 | OK | 1 | eac3800 | M76f ModalSound (61) + 接触→合成 + wave 口封じ + CLI (依存 sub-01, sub-05, sub-09) |
+| sub-07 | 実装中 | 0 | | M76g Inspector プレビュー + PhysMat 欄 (依存 sub-06) |
 | sub-08 | 未着手 | 0 | | M76h stage1 学習 + .dmnet + 文書 (依存 sub-06, sub-07) |
 
 ## レビュー
@@ -43,6 +43,8 @@
 - **sub-04 round 1 で発見した実バグ**: `dataset.py` が FEM の要素寸法にメッシュ実寸を渡していた。ボクセル化は最長辺で正規化するので入力はスケール不変 = 同じ入力に異なる教師値が生まれていた (同一ボクセル列の 3 本で feat が最大 7.0 食い違う実測)。加えてランタイムの `BuildModes` が σ3 をもう一度掛けるので**二重スケール**になる (論文 §5.1 は学習時にサイズ固定・後処理で σ3 が正しい)。修正は `h_ref = L_REF/28` を全メッシュ共通で渡す
 - **2026-09-16 sub-05 の [ユーザーに聞ける] 回答 (初回の裏焼き時間)**: 「**今すぐ最適化する**」= planner 裁定 (許容してネットは縮めない) とは異なり、**先に CPU 推論の最適化を入れてから sub-06 へ進む**。sub-06 は起動直後に停止させた。ネットは縮めない (門の測り直しを招く) / 正しさの安全網は fixture (許容 1e-3 が加算順の差を吸収する) / 実効 0.4 GMAC/s に対し SIMD + マルチスレッドで 10-50 倍の余地、が前提
 - sub-09 nit (申し送り): `ReluRange` の NaN 時の振る舞いだけ SIMD (MAXPS は NaN なら第 2 オペランドを返す) とスカラー (`std::max(0.0f, NaN)` は 0) で違う = 理屈の上では同型の欠陥。実害なし (NaN が出る時点でモデルが壊れており fixture 照合が先に落ちる) だがコメントを 1 行残すこと / 速度の追加最適化 (cols・padded バッファの永続化、AVX2 の M ブロック幅拡大) は未実装 / `MYE_MODAL_THREADS` と `MYE_MODAL_FORCE_SCALAR` は CLI フラグではないので、M76h の文書化で「計測用の環境変数」として 1 行足す
+- **sub-06 → sub-08 へ移管**: 耳確認 (面で音が変わる / 材質で減衰が変わる / 強く当てると大きい) と「絶対音量に上限圧縮を足すか」の判断。実モデル (`assets/deepmodal/deepmodal.dmnet`) が無い段階では乱数重みの fixture の音しか出ず、聴感評価が原理的に成立しないため。sub-08 の受け入れ条件 0 に入れた
+- sub-06 nit (次に触るとき): `CollectModalImpacts` の index→EntityID 表が `AcousticField::DrainImpacts` の複製 (include の向きは崩れないので `acoustic::` へ寄せられる) / `AudioSourceSystem::Update` の drain ブロックのネストが深い
 - **sub-04 の未決 (M76h 前に決める)**: L_REF (0.3 m) / fMax (10000 Hz) の再検討。サイズ漏れ修正で全メッシュを参照サイズで解くようになり帯域内モードが減った (mode_count 中央値 30.5 → 14、coverage 0.45 → 0.336)。旧根拠はバグ入りデータの統計なので失効。L_ref はランタイムの σ3 が吸収する自由なパラメータなので「教師データが最も豊かになる値」を選んでよい。変更時は `.dmnet` の refSizeL と stage0 再生成がセット
 - sub-04 nit (次に tools/deepmodal を触るとき): lobpcg の seed が solver_params に記録されていない / データセット内の distinct seed が 1 つであることの機械チェックが無い / R² は N をまたいで比較できない (var が標本ごとに違う) 旨を README に / README の実行例を forward slash に統一 (Bash がバックスラッシュを潰す)
 - **sub-03 の未決 (M76h 前に決める)**: モード数の予算が足りず大きいメッシュの高域が系統的に欠ける。stage0/stage1 は coverage フィルタ既定 off で全 38 本を使う。ModelNet10 の前に「適応予算」(f_top が f_max に届くまで m/k を上げる) を入れるか決める。今フィルタを有効にすると「lobpcg のメッシュを除く」と数値的に同義になり、method で決めないという指示の趣旨に反する
