@@ -2,7 +2,7 @@
 
 - 依存: sub-08 (実モデル `.dmnet`)
 - 実行順: M76 のレビュー指摘への対応。sub-08 の後
-- 状態: 未着手
+- 状態: OK (commit f08cd95)
 - 往復: 0
 
 ★design-draft が「M76i」として例示した `D3d11ModalBackend` は **spec §3 で範囲外と確定済み**なので、この番号を使う。

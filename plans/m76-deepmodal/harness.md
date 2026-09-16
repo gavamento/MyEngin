@@ -31,7 +31,7 @@
 | sub-06 | OK | 1 | eac3800 | M76f ModalSound (61) + 接触→合成 + wave 口封じ + CLI (依存 sub-01, sub-05, sub-09) |
 | sub-07 | OK | 1 | 34bf95f | M76g Inspector プレビュー + PhysMat 欄 (依存 sub-06) |
 | sub-08 | OK | 2 | 5807308 | M76h stage1 学習 + .dmnet + 文書 (依存 sub-06, sub-07) |
-| sub-10 | 実装中 | 1 | | M76i 音量カーブの較正と圧縮 + engine 文書 (依存 sub-08、レビュー round 1 の major 1) |
+| sub-10 | OK | 3 | f08cd95 | M76i 音量カーブの較正と圧縮 + engine 文書 (依存 sub-08、レビュー round 1 の major 1) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
