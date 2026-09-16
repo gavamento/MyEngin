@@ -44,17 +44,9 @@ MAX_OCCUPIED_EXACT = 9000
 DEFAULT_K = 150
 
 
-def _cell_order():
-    """16^3 cell を C++ の CellIndexOf と同じ順 (cx が最内) で列挙する。"""
-    order = []
-    for cz in range(layout.MAP_N):
-        for cy in range(layout.MAP_N):
-            for cx in range(layout.MAP_N):
-                order.append((cx, cy, cz))
-    return order
-
-
-_CELL_ORDER = _cell_order()
+# cell 列挙順は layout.cell_order() が唯一の正本 (sub-04 で train.py の dense 復元と
+# 共有するために layout.py へ引き上げた。2 本目を書くと必ずずれるため)
+_CELL_ORDER = layout.cell_order()
 
 
 def process_mesh(mvox_path: str, out_path: str, allow_exceed_cap: bool = False,
@@ -88,8 +80,17 @@ def process_mesh(mvox_path: str, out_path: str, allow_exceed_cap: bool = False,
 
     t0 = time.time()
     try:
+        # ★ここに `grid.voxel_size` (メッシュ実寸) を渡してはいけない (sub-04 round 1
+        # で確定した欠陥、spec §4.1「FEM は参照サイズで組む」)。ボクセル化は AABB の
+        # 最長辺で正規化する = 入力 (占有ボクセル列) はスケール不変なので、FEM も
+        # 全メッシュ共通の `layout.H_REF` (= L_REF/28) で組んで教師値をスケール不変に
+        # 保つ。実際のサイズ依存性はランタイムの後処理 σ3 (BuildModes 手順 6) が
+        # 単独で担当する設計 (論文 §5.1「学習時は同じスケール」)。実寸を渡すと
+        # 同じ占有ボクセル列に違う教師値が付き、かつランタイムが σ3 を二重適用する
+        # 欠陥になる (実測: cylinder_0/3/5 が占有 1305 でボクセル列一致なのに
+        # feat が最大 7.0 食い違っていた)
         K, M, node_coords, dofs, voxels = fem.assemble_from_occupancy(
-            grid.occ, grid.voxel_size, layout.REF_YOUNG, layout.REF_DENSITY,
+            grid.occ, layout.H_REF, layout.REF_YOUNG, layout.REF_DENSITY,
             layout.REF_POISSON)
     except Exception as exc:  # noqa: BLE001
         result.update(status="error", error=f"assemble: {exc}")

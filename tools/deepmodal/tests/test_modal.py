@@ -75,6 +75,25 @@ def test_exact_residuals_are_tiny():
     assert np.max(result.residuals) < modal.RESIDUAL_ACCEPT
 
 
+def test_solve_modes_is_deterministic_for_symmetric_mesh():
+    """sub-04 round 2 で判明した欠陥の回帰テスト: `eigsh` は `v0` (Krylov 部分空間の
+    初期ベクトル) を指定しないと ARPACK が乱数ベクトルを使う。対称形状 (この
+    4x4x4 の立方体のような) は固有値が縮退するため、初期ベクトルが変わると
+    縮退部分空間内の基底が変わり、同じ K/M でも固有ベクトルが実行のたびに
+    変わってしまう (実測: dataset.py が生成する npz の `feat` がボクセル列
+    バイト一致の重複入力間で最大 6.9 食い違っていた)。`solve_modes()` に
+    `seed` 引数で固定 `v0` を渡すようにした修正が効いていることを、
+    同一 K/M への 2 回の呼び出しがビット一致することで確認する。"""
+    occ = np.ones((4, 4, 4), dtype=np.uint8)
+    K, M, *_ = fem.assemble_from_occupancy(occ, 0.1, 7.0e10, 2700.0, 0.33)
+
+    r1 = modal.solve_modes(K, M, k=30, f_min=0.0, f_max=1.0e12)
+    r2 = modal.solve_modes(K, M, k=30, f_min=0.0, f_max=1.0e12)
+
+    assert np.array_equal(r1.freq, r2.freq)
+    assert np.array_equal(r1.vecs, r2.vecs)
+
+
 def test_lobpcg_matches_exact_on_small_mesh():
     """小メッシュ (4x4x4、375 DOF、1 秒未満) で solve_modes と solve_modes_lobpcg の
     低次モードが周波数・残差ともに一致することを回帰的に固定する

@@ -1,7 +1,7 @@
 # sub-03 (M76c): Python — FEM / 固有値 / 接触励起 / Mel 圧縮 / データセット
 
 - 依存: sub-02 (`Editor.exe --modal-voxelize` と `.mvox`)
-- 状態: 未着手
+- 状態: OK (commit 81b5a39)
 - 往復: 0
 
 ## やること

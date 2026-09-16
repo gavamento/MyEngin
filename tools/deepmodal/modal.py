@@ -130,22 +130,34 @@ def diagnostics(result: SolveResult) -> dict:
 
 
 def solve_modes(K, M, k: int = 256, f_min: float = 100.0, f_max: float = 10000.0,
-                 rigid_modes: int = 6, shift: float = None) -> SolveResult:
+                 rigid_modes: int = 6, shift: float = None, seed: int = 0) -> SolveResult:
     """shift-invert eigsh (完全 LU)。占有 voxel 数が少ないメッシュ用 (正確、`MAX_OCCUPIED_EXACT`
-    以下を想定)。"""
+    以下を想定)。
+
+    ★決定論のための `v0` 固定 (sub-04 round 2 で判明した欠陥修正): `eigsh` は
+    `v0` を省略すると ARPACK が乱数の初期ベクトルを使う。対称形状 (円柱・球・立方体等)
+    は固有値が縮退するため、初期ベクトルが変わると**縮退部分空間内の基底が変わり**、
+    同じ K/M (= 同じ占有ボクセル) でも `vecs` (ひいては `contact.py` が読む
+    per-node 振幅、npz の `feat`) が実行のたびに変わってしまう (実測:
+    `cylinder_0/3/5` はボクセル列がバイト一致するのに `feat` が最大 6.9 食い違った
+    — round 1 で「実寸を FEM に渡していたせい」と誤診断していたが、実寸を
+    参照サイズに直した後も同じ食い違いが残ったため、**別の独立したバグ**と判明した)。
+    `solve_modes_lobpcg` は既に `seed` 引数で `v0` を固定しているので、対称性を
+    合わせてここにも固定 `v0` を渡す。"""
     ndof = K.shape[0]
     M_sparse = diags(M) if M.ndim == 1 else M
     k_eff = min(k + rigid_modes, ndof - 1)
-    params = {"k": k, "shift": None, "rigid_modes": rigid_modes, "k_eff": k_eff}
+    params = {"k": k, "shift": None, "rigid_modes": rigid_modes, "k_eff": k_eff, "seed": seed}
     if k_eff < 1:
         return SolveResult(np.zeros(0), np.zeros((ndof, 0)), np.zeros(0), np.zeros(0),
                             "exact", params, iterations=0, converged=True)
     sigma = shift if shift is not None else pick_shift(K, M)
     params["shift"] = sigma
+    v0 = np.random.default_rng(seed).standard_normal(ndof)
 
     converged = True
     try:
-        vals, vecs = eigsh(K, k=k_eff, M=M_sparse, sigma=sigma, which='LM')
+        vals, vecs = eigsh(K, k=k_eff, M=M_sparse, sigma=sigma, which='LM', v0=v0)
     except ArpackNoConvergence as exc:
         # 収束しなかった分は捨て、収束した固有対だけを使う (fixture 生成等の
         # 極小メッシュで k_eff が DOF に対して大きすぎるときに起こりうる)

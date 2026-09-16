@@ -34,6 +34,14 @@ L_REF = 0.3            # m (基準サイズ。sub-03.md の表記に合わせて
 REF_ALPHA = 6.0        # 1/s (Rayleigh 減衰、質量項)
 REF_BETA = 1.0e-7      # s (Rayleigh 減衰、剛性項)
 
+# ボクセル化の分割数 (spec §4.1「L = max(aabb extent)、h = L/28」)。FEM は**必ず
+# この分割数を参照サイズに適用した h_ref で組む** (sub-04 round 1 で確定した欠陥修正
+# — メッシュ実寸の voxel_size を渡すと、スケール不変な入力ボクセルに対して
+# スケール依存の教師値が付き、かつランタイムの σ3 と二重にサイズを掛けることになる。
+# spec §4.1「FEM は参照サイズで組む」/ dataset.py 参照)
+VOXEL_DIVISIONS = 28
+H_REF = L_REF / VOXEL_DIVISIONS  # m (FEM の要素寸法。全メッシュ共通)
+
 
 def mask_ch(j: int, i: int) -> int:
     """チャンネル配置 (spec §4.1 BuildModes 手順 1)。j=力軸(0..2)、i=帯域(0..31)。
@@ -92,3 +100,70 @@ MVOX_FIELDS = (
     "longest_edge",
     "surface_count", "interior_count", "reserved",
 )
+
+
+def cell_order():
+    """16^3 cell を C++ の CellIndexOf と同じ順 (cx が最内) で列挙する。
+    dataset.py (feat 行の書き込み順) と train.py (dense 復元) の両方がこの 1 本を
+    使う (同じ規則の 2 本目を書くと必ずずれる、というこのリポジトリ全体の原則)。"""
+    order = []
+    for cz in range(MAP_N):
+        for cy in range(MAP_N):
+            for cx in range(MAP_N):
+                order.append((cx, cy, cz))
+    return order
+
+
+# ---- .dmnet ヘッダ / op 表 (spec §4.2。sub-05 の C++ ローダ (DmNet.h、未着手) が
+#      読む側の正本コードを持つ予定だが、書式そのものの正本はここ (export.py が書き、
+#      sub-05 はこれに合わせて読む。2 本目の書式定義を作らないこと) ----
+#
+# ★spec §4.2 は「256 B ヘッダ」と書いているが、列挙されているフィールドをそのまま
+#   4 B 単位で足すと 224 B にしかならない (magic/version/opCount/bufferCount 4x4 +
+#   inN/outN/bands/channels 4x4 + fMinHz..maskThreshold 4x6 + refYoung..refBeta 4x6 +
+#   bandCenterHz[32] 4x32 + weightsHash 8 + paramCount 4 + reserved(単数) 4 = 224)。
+#   `.mvox` が「64 B」→ sub-02 round 1 で「72 B」に訂正された前例 (フィールド数え間違い)
+#   とは違い、こちらは 256 という丸い数自体が意図的 (将来ヘッダを増やす伸び代) と判断し、
+#   **coder 判断で reserved を 32 B 分の余白 (9 x uint32) に広げて 256 B ちょうどへ揃えた**
+#   ([追加]。sub-05 実装時に planner/coder が確定させること — SELF_EVAL 参照)
+DMNET_MAGIC = 0x544E4D44  # リトルエンディアンで読むと "DMNT" (ModalTypes.h の DmNetHeader::magic と同値)
+DMNET_VERSION = 1
+DMNET_HEADER_BYTES = 256
+
+# フィールド単位で書く (Material の暗黙パディングの罠と同じ理由で struct をそのまま
+# cast しない)。4I: magic,version,opCount,bufferCount / 4i: inN,outN,bands,channels /
+# 6f: fMinHz,fMaxHz,logAmpMin,logAmpMax,ampScale,maskThreshold /
+# 6f: refYoung,refDensity,refPoisson,refSizeL,refAlpha,refBeta /
+# 32f: bandCenterHz / Q: weightsHash / I: paramCount / 9I: reserved (伸び代)
+DMNET_HEADER_FMT = "<4I4i6f6f32fQI9I"
+DMNET_HEADER_FIELDS = (
+    ("magic", "version", "op_count", "buffer_count",
+     "in_n", "out_n", "bands", "channels",
+     "f_min_hz", "f_max_hz", "log_amp_min", "log_amp_max", "amp_scale", "mask_threshold",
+     "ref_young", "ref_density", "ref_poisson", "ref_size_l", "ref_alpha", "ref_beta")
+    + tuple(f"band_center_{i}" for i in range(MEL_BANDS))
+    + ("weights_hash", "param_count")
+    + tuple(f"reserved_{i}" for i in range(9))
+)
+
+# op 表 1 エントリ = 12 x 4B = 48 B (spec §4.2)。type/in0/in1/out/cin/cout/k/stride/
+# pad/outPad は符号付き (in1=-1 は「未使用」のセンチネル、Add 以外は全部これ)。
+# weightOffset/biasOffset は **ファイル先頭からの絶対バイトオフセット** (blob 境界を
+# reader 側で cin/cout/k から逆算させない設計判断)。重み (fp16、Conv3d は
+# (cout,cin,k,k,k)、ConvTranspose3d は (cin,cout,k,k,k) の素の並び) とバイアス
+# (fp32) は、ヘッダ+op 表の直後に「重み blob 全部 → バイアス blob 全部」の順で
+# 連続配置する。Conv3d/ConvTranspose3d 以外 (ReLU/Add) は両方 DMNET_OFFSET_NONE
+# (offset=0 は先頭の重みの正当な位置なので「無し」に使えない)
+DMNET_OP_BYTES = 48
+DMNET_OP_FMT = "<10i2I"
+DMNET_OP_FIELDS = (
+    "type", "in0", "in1", "out", "cin", "cout", "k", "stride", "pad", "out_pad",
+    "weight_offset", "bias_offset",
+)
+DMNET_OFFSET_NONE = 0xFFFFFFFF
+
+# op 種別 (spec §4.2 / ModalTypes.h の想定と同じ値)
+OP_CONV3D = 0
+OP_CONVTRANSPOSE3D = 1
+OP_RELU = 2
+OP_ADD = 3
