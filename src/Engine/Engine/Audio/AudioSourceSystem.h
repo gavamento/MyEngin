@@ -105,6 +105,12 @@ public:
     // --modal-sync-bake: Request() が Ready を返さないメッシュを BakeSync() で同期的に焼く
     // (--modal-demo の byte 一致検証用。既定は非同期ワーカー任せ)
     void SetModalSyncBake(bool sync) { modalSyncBake_ = sync; }
+    // --modal-wav-dump DIR: 合成した実クリップを 1 発ごとに .wav へ書く (M76h の耳確認用
+    // 調査ツール。空文字列 = off、BelowMin は書かない)
+    void SetModalWavDump(std::wstring dir) { modalWavDumpDir_ = std::move(dir); }
+    // --modal-face-probe: 最初に鳴った発音元の 6 面ぶんも合成して書く (M76h の耳確認用。
+    // --modal-wav-dump と併用が前提、単体では無効)
+    void SetModalFaceProbe(bool enable) { modalFaceProbe_ = enable; }
     const ModalAudioStats& ModalStats() const { return modalStats_; }
     // 1 フレームに溜めておける衝突インパクトの上限。超過は**捨てて数える**
     // (kMaxPendingShots と同じ理由 — 検証明けの一斉再生を防ぐ)
@@ -174,6 +180,10 @@ private:
     ModalSoundLibrary* modalLibrary_ = nullptr;
     int modalLogTicks_ = 0;
     bool modalSyncBake_ = false;
+    std::wstring modalWavDumpDir_;
+    int modalWavDumpCounter_ = 0; // ファイル名の連番 (同じ tick/src で複数発 = cell が違う衝突)
+    bool modalFaceProbe_ = false;
+    bool modalFaceProbeDone_ = false; // 最初の発音元 1 体だけ (何度も焼き直さない)
     ModalAudioStats modalStats_;
     std::vector<PendingModalImpact> pendingModalImpacts_;
     std::vector<ModalEntityState> modalStates_; // EntityID 昇順 (sorted vector)

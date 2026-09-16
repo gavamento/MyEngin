@@ -355,6 +355,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     audioSources.SetModalLibrary(&modalSounds);
     audioSources.SetModalAudioLog(config.modalAudioLogTicks);
     audioSources.SetModalSyncBake(config.modalSyncBake);
+    audioSources.SetModalWavDump(config.modalWavDumpDir);
+    audioSources.SetModalFaceProbe(config.modalFaceProbe);
     renderSystem.postFxSettings.tonemap = config.postFxTonemap;
     renderSystem.postFxSettings.exposure = config.postFxExposure;
     renderSystem.postFxSettings.bloom = config.postFxBloom;

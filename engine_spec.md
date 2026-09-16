@@ -1956,6 +1956,162 @@ closing summary, and two runs of the same command under `--synth-input` produce 
 lines. With `--no-audio` the lane costs nothing at all: the update returns on `IsReady()` before
 the probe is even considered, which is why a GPU-less, sound-less CI runner never pays for it.
 
+### 10.7 Deep-Modal impact synthesis (M76)
+
+A learned 3D-CNN replaces recorded impact SE with a sound synthesised from the actual colliding
+shapes: a modal model (a small set of damped sinusoids) baked once per mesh and rendered fresh for
+every collision from the real contact point, force and material. This touches only the *ear*
+side of audio — the wave field of §10.6 (what the AI hears) and sim state are untouched by
+construction; a mesh with no `ModalSound` component behaves exactly as before.
+
+**Two pipelines share one voxelizer and nothing else.** Offline (Python, `tools/deepmodal/`,
+outside the `.sln` like `tools/collab`) turns meshes into training data and a trained network;
+online (C++) turns a trained network into cell features once per mesh and a contact into a clip
+every collision. The single point of contact between them is the voxelizer itself
+(`Voxelizer.h`): a 32³ grid, `h = L/28` with `L` the mesh's longest AABB extent, surface cells by
+Akenine-Möller SAT and interior cells by a 6-neighbour flood-fill from a padded ring. Python has
+no voxelizer of its own — `tools/deepmodal/voxelize.py` shells out to
+`Editor.exe --modal-voxelize` (a GUI-subsystem exe, so always through `cmd /c`) precisely so that
+training data and runtime baking can never disagree about what a given mesh's grid looks like.
+
+**Offline: mesh → `.mvox` → hex8 FEM → eigenmodes → Mel-compressed feature map → `.dmnet`.** For
+every voxel grid, `tools/deepmodal/fem.py` assembles a hex8 stiffness/mass pair at a **reference
+size**, not the mesh's real size — `h_ref = L_ref / 28` for every mesh, aluminium-equivalent
+material (`E=7.0e10, ρ=2700, ν=0.33`). This is not a simplification, it is load-bearing: the
+voxelization step already normalises by the longest edge, so the *input* grid is scale-invariant,
+and a network trained on scale-invariant inputs must see scale-invariant targets or it cannot
+converge — an earlier revision fed the mesh's true size into the FEM assembly and produced three
+byte-identical voxel grids (`cylinder_0/3/5`, occupancy 1305) with feature vectors differing by up
+to 7.0, an un-learnable contradiction. The real size re-enters purely as a runtime rescale
+(`BuildModes` step 6 below), exactly as the source paper's §5.1 prescribes. `modal.py` solves the
+generalised eigenproblem `Kx=λMx` with shift-invert `eigsh` up to `MAX_OCCUPIED_EXACT=9000`
+occupied voxels and falls back to an incomplete-LU-preconditioned LOBPCG above that (complete LU
+fill-in grows faster than quadratically — 6.2× at 1305 occupied voxels, 57× at 15979). Which
+solver ran is recorded as metadata only; **acceptance is decided by the per-mode relative residual**
+`‖Kx̂−λMx̂‖/‖λMx̂‖` (M-normalised), not by solver name — modes above `RESIDUAL_DROP=1e-3` are
+dropped from the amplitude sum, `RESIDUAL_ACCEPT=1e-5` and below pass untagged, and a calibration
+job (`calibrate.py`) cross-checks LOBPCG against the direct solver on a shared mode budget to
+confirm the threshold separates good modes from bad ones rather than one solver from the other.
+`contact.py` picks, per 16³ cell, the occupied node nearest the cell centre and reads off each
+mode's response to a unit force there; `compact.py` folds the mode list into 32 Mel bands (100 Hz
+– 10 kHz) × 3 force axes, records a boolean mask per band and takes the log of the summed
+amplitude, filling empty bands from the nearest non-empty one (a trick from the source paper that
+keeps interpolation well-defined at the mesh edges of feature space). The resulting per-cell
+192-channel target — plus solver metadata, per-mode residuals and **Mel-band coverage**
+(`coverage_ratio` / `coverage_high` for the top eight bands / a per-cell breakdown) — is what
+`model.py`'s U-Net (Conv3d / ConvTranspose3d / ReLU / Add only, so the same graph interpreter
+trains it and re-executes it in `export.py`'s fp16 pass) is trained against. Training and export
+share one op list on purpose: a second hand-written inference path is exactly the kind of
+"the same rule written twice" this codebase treats as a defect waiting to happen.
+
+**The overfit gate is the one thing that has to pass before any real data generation starts.**
+`train.py --overfit N --epochs 300` (LBFGS, not Adam — an empirical choice, Adam plateaus an order
+of magnitude higher) must clear **mask accuracy > 99% and amplitude R² ≥ 0.90** before `dataset.py`
+is allowed to touch ModelNet-scale data; two data bugs (the size leak above, and an unseeded
+`eigsh` initial vector that made degenerate eigenvectors non-reproducible run to run) held the
+gate at R²≈0.85 until both were fixed, so the gate is deliberately positioned to catch a repeat of
+either. Data grows in four stages — primitives (procedural shapes, `dataset.py --stage
+primitives`), a small hand-picked set of real meshes (`--stage small --list FILE`, this project's
+own `assets/models`), then ModelNet10 and ModelNet40 (same `--stage small` path, pointed at a
+generated file list — one mechanism for "any curated set of real meshes", not a fourth code path)
+— and each later stage requires the previous stage's gate evidence to exist before it may run
+(documented, not machine-enforced: the door is a paragraph in `tools/deepmodal/README.md`, not a
+CLI flag that can be argued with).
+
+**`refSizeL` is a free training knob, not a physical constant, and picking it well matters.** It
+only ever appears as a ratio (`σ3 = L_obj / refSizeL` below), so any positive value is
+"physically correct" — but a value that puts most training shapes' modes above 10 kHz produces
+degenerate training data. Measured directly on two representative primitives at `refSizeL ∈
+{0.3, 0.6, 1.0}` m: coverage-ratio at 0.3 m was 0.28 for both, rising to 0.56 / 0.47 at 0.6 m and
+0.66 / 0.66 at 1.0 m, and top-band coverage saturated at 1.0 already at 0.6 m. M76h moved the
+reference size from the original guess of 0.3 m to **0.6 m** on this evidence (`layout.py` and the
+`.dmnet` header's `refSizeL` are the two places this value lives; they must move together, which
+means a `refSizeL` change is always paired with a full stage regeneration since every mesh's
+supervised target was solved at the old reference size).
+
+**Runtime: cell features are baked once, a clip is synthesised on every collision.**
+`ModalSoundLibrary` bakes a mesh asynchronously the first time a `ModalSound` (TypeId 61, appended
+after M75's UIToggleGroup; Cloth/SoftBody's reservation moves to 62/63) references it: voxelize on
+the worker thread always, run inference on the worker thread if the backend reports
+`RunsOnWorkerThread()` (the CPU backend does) or one job per frame on the main thread otherwise
+(the pump exists so a future GPU backend, which must own the render thread, has somewhere to live
+without blocking `Update`), then cache the 192-channel feature map to `.msfm` keyed by
+`weightsHash` so a mismatched network forces a re-bake instead of silently serving stale features.
+`ModalInferenceBackend` is the seam: `CpuModalBackend` runs AVX2 GEMM with a runtime CPUID check
+and a scalar fallback, threaded by splitting the **output** dimension only — the reduction (input
+channels) is never split across threads, and SIMD/scalar chunk boundaries are quantised to the
+SIMD width regardless of thread count, both specifically so `.msfm` is byte-identical whether it
+was baked on 1, 3, 4, 5 or 8 threads (measured: SIMD (FMA, one rounding) and scalar (multiply then
+add, two roundings) disagree in their last bit, so a thread count that moves the SIMD/scalar
+boundary moves the file). A `D3d11ModalBackend` is deliberately not built — only the seam and its
+fixture test are — because the CPU path already lands the full-size network at 580 ms/mesh average
+against a 600 ms target, once per mesh, on a worker thread, before the first frame such a mesh is
+ever heard.
+
+On a real collision (`TickRunner.cpp`'s `!ts.resim` block, the same tick-local window §10.6's wave
+emission uses), `CollectModalImpacts` turns each `SolidContact` touching a `ModalSound` entity into
+a `PendingModalImpact`: the excess impulse over what static support alone would produce
+(`RestingImpulse`, the *identical* function §10.6's `DrainImpacts` calls — one rule shared by wave
+and modal impacts, not a rule and its lookalike) projected onto the entity's local axes. Below
+`kImpactMinImpulse=0.35` the touch is treated as a scrape and produces no sound. `BuildModes`
+turns one cell's 192 raw channels plus the three per-axis impulse components into a small list of
+(frequency, amplitude, decay) triples, in a fixed order: unpack fp16 → invert the log-amp
+normalisation → threshold each band's mask logit → sum `|k_j| · mask · amp` **across axes** (a
+deliberate departure from the source paper's signed sum, §10.7.1) → convert each surviving band's
+centre frequency to an undamped eigenvalue against the reference material's own Rayleigh damping →
+rescale by material and size (`σ1 = E/E_ref`, `σ2 = ρ/ρ_ref`, `σ3 = L_obj/refSizeL`; `λ *=
+σ1/(σ2·σ3²)`, `a *= σ2^-½·σ3^-3/2`) → apply the *target* material's own damping and drop anything
+over-damped or past 0.45× the sample rate. `ModalSynthRender` sums up to 32 second-order recursive
+resonators (double precision state, zero phase, a 1 ms linear attack, no randomness) into a mono
+44.1 kHz buffer, `tanh`-soft-clipped only past `|x|>0.8`, for a length derived from how long the
+slowest-decaying mode takes to reach `kModalTailAmp = 1/32768`, clamped to `[0.05, 2.0]` s. Volume
+is **absolute** — a hard departure from the usual "normalise then let the user turn it up",
+because "a harder hit is louder" is exactly the property the source paper's Checkpoint J calls out
+as the point of the whole exercise, and normalising erases it.
+
+Clips are registered round-robin into `kModalClipSlots=32` id slots
+(`HashStr("modal://slot#k")`), refusing to steal a slot that is still audibly playing rather than
+clip live sound, rate-limited to `kMaxModalShotsPerTick=4` and a per-entity `cooldownTicks`
+(default 3) so a fast rattle cannot flood the mixer. `ResolveWaveShotSound` mutes the legacy wave
+one-shot for any entity whose mesh is already `Ready` (`ModalSound.muteWave`, default on) — a
+staged rollout, not a hard cutover: a mesh that has not finished baking yet keeps making its old
+sound so a level never falls briefly silent while the worker catches up.
+
+**10.7.1 Where this deliberately disagrees with the source paper.** The paper (Jin et al., ACM MM
+2020) sums *signed* per-mode coefficients before taking a magnitude; this project sums
+*magnitudes* directly (`Σ|k_j|·mask·amp`, not `|Σ k_j·mask·amp|`), because the Mel compression
+step folds many modes into one band and a signed sum lets modes cancel across a threshold the
+mask/amplitude split was never designed to represent — the visible cost is that two opposed modes
+in the same band read louder than either alone, which is judged to matter far less than a band
+silently vanishing depending on force direction. Volume is absolute rather than peak-normalised
+(above). `poissonRatio` is carried on `PhysMat` end to end (FEM input, `.dmnet` header metadata)
+but **`BuildModes` never reads it** — a live decision, not an oversight, reversing an earlier
+"don't add it" call once it became clear the field earns its keep as reference-material metadata
+for a future Poisson-aware model even though nothing consumes it today.
+
+**None of this is simulation state.** `ModalSound` is `kComponentNoHash`; baking, the clip pool
+and the cooldown table are side tables the tick never touches. `--modal-audio-log N` prints one
+line per shaped voice and one per one-shot ("shot") for `tick < N`, plus a closing summary, and two
+`--synth-input` runs produce byte-identical `[modal] t=` lines — the ordinary evidence, since ears
+are not a test. `--no-audio` costs nothing (the update returns before the library is even asked).
+
+| Format | Layout | Notes |
+|---|---|---|
+| `.mvox` | 72 B field-by-field header (magic/version/n/pad, origin/voxelSize/aabbMin/aabbMax/longestEdge, surfaceCount/interiorCount/reserved) + 32768 B occupancy | Written only by the C++ voxelizer; Python only ever reads it (`meshio.py`) |
+| `.msfm` | Cooked-cache-style `vector<pair<meshName, ModalFeatureMap>>`, key order; `validCount` + `cellSlot[4096]` (nearest-valid-cell routing) + `feat` (fp16, valid cells only) | `kCookVersion` stays at 3 — this is an internal cache version bump, not a cooked-blob layout change |
+| `.dmnet` | 256 B field-by-field header (dims, Mel range, log-amp/mask/ampScale calibration, reference material incl. `refSizeL`, 32 band centres, `weightsHash`, `paramCount`) + op table (Conv3d/ConvTranspose3d/ReLU/Add, 48 B/entry) + fp16 weights + fp32 biases | `assets/deepmodal/deepmodal.dmnet`, ≤ 4 MB, committed; resolved project-then-engine like shaders (`FindEngineDeepModalDir`) |
+
+| CLI | Purpose |
+|---|---|
+| `--modal-voxelize --list FILE --out DIR` | Batch-voxelize a list of `builtin://` / `.off` / `.obj` / `.fbx` / `.glb` / `.gltf` sources into `.mvox` (the tool `tools/deepmodal/voxelize.py` shells out to) |
+| `--modal-bake [--project DIR]` | Headless: register every model under `assets`, bake every mesh through the installed backend, print one line per mesh plus a `bakeMsAvg` summary |
+| `--modal-backend cpu\|d3d11cs` | Force a backend; an unbuilt `d3d11cs` warns once and falls back to `cpu` rather than leaving the library silently empty |
+| `--modal-sync-bake` | Bake synchronously instead of through the worker/pump — verification runs need a deterministic "is it Ready yet" |
+| `--modal-audio-log N` | Print shaped voices and one-shots for `tick < N`, plus a summary; the only way to inspect the pipeline without ears |
+| `--modal-demo` | A scene with `ModalSound` boxes of different materials for manual and `--modal-audio-log` verification |
+| `--modal-wav-dump DIR` | Write every synthesised clip to `DIR\shot_*.wav` — the way to check "does it sound right" with numbers instead of ears |
+| `--modal-face-probe` | With `--modal-wav-dump`: re-synthesise the first source's six faces (a real drop only ever lands on one) into `DIR\probe_<mesh>_<face>.wav`, the only way to measure "a different face sounds different" without a GUI |
+
 ---
 
 ## 11. Debug/Release Consistency Policy

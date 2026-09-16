@@ -204,6 +204,16 @@ struct EngineConfig {
     // Request() が Ready を返さないメッシュをその場で BakeSync() する (非同期ワーカーの
     // 完了タイミングに依らず [modal] ログを決定的にする。--modal-demo の 2 run 一致検証が使う)
     bool modalSyncBake = false;
+    // 合成した実クリップを 1 発ごとに .wav へ書き出す (空 = off、M76h の耳確認用調査ツール。
+    // `--acoustic-dump` / `--froxel-dump` と同じ「耳を使わずに検査する」系列の 1 本。
+    // BelowMin (励起なし) は書かない。ファイル名は `<dir>\shot_<tick>_<src>.wav`)
+    std::wstring modalWavDumpDir;
+    // --modal-wav-dump と併用: 実衝突を待たず、最初に鳴った発音元の 6 面ぶんを
+    // 合成し直して `<dir>\probe_<mesh>_<face>.wav` にも書く (M76h の耳確認用。
+    // 「面で音が変わる」を物理の落下待ちに頼らず確認するための調査ツール。
+    // 実際の物理落下は常に同じ面 (重力方向) にしか当たらないため、この経路が無いと
+    // 面の違いを実測できない)
+    bool modalFaceProbe = false;
 
     // ---- グラフィックスドライバ (M52b) ----
     // true (--warp) で D3D_DRIVER_TYPE_WARP (ソフトウェアラスタライザ) を直接使う。

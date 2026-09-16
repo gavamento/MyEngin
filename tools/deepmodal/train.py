@@ -347,6 +347,39 @@ def run_overfit_lbfgs(net, samples: List[Sample], epochs: int, lbfgs_max_iter: i
     return mse, var_target, r2, float(bce), float(acc)
 
 
+def evaluate_pooled(net, samples: List[Sample], device, chunk: int = 16) -> tuple:
+    """データセット全体をプールした (サンプル毎正規化を経由しない素朴な) mse/var/R²/mask_acc を
+    返す (spec §5 #19、round 2 の must #1)。`compute_batch_losses` はサンプルごとに有効 cell 数で
+    正規化してから重み平均するので、大きい/小さい形状の寄与を均等にする学習損失としては正しいが、
+    「データセット全体の分散をどれだけ説明できたか」を読む指標としては別物 — この関数は
+    `compute_r2` と同じプール定義を**データセット全体**に対して計算する (1 サンプルだけの
+    `compute_r2` 呼び出しと同じ式を、全サンプルを 1 つの大きなバッチとして扱って適用するだけ。
+    2 本目の式は書いていない)。GPU メモリを避けるため forward は `chunk` 件ずつに分けるが、
+    集計は全チャンクの予測/目標を連結してから行う (チャンクごとの平均の平均ではない —
+    チャンクごとにサンプル数が違うと歪むため)。"""
+    net.eval()
+    preds, targets, valids = [], [], []
+    with torch.no_grad():
+        for start in range(0, len(samples), chunk):
+            group = samples[start:start + chunk]
+            vox = torch.cat([s.vox for s in group]).to(device)
+            pred = net(vox)
+            preds.append(pred.cpu())
+            targets.append(torch.cat([s.target for s in group]))
+            valids.append(torch.cat([s.valid for s in group]))
+    pred_all = torch.cat(preds)
+    target_all = torch.cat(targets)
+    valid_all = torch.cat(valids)
+    mse, var, r2 = compute_r2(pred_all, target_all, valid_all)
+    valid96 = valid_all.expand(-1, 96, -1, -1, -1).bool()
+    mask_pred = pred_all[:, MASK_CHANNELS]
+    mask_target = target_all[:, MASK_CHANNELS]
+    pred_bin = (torch.sigmoid(mask_pred) > 0.5).float()
+    target_bin = (mask_target > 0.5).float()
+    acc = float(((pred_bin == target_bin).float())[valid96].mean())
+    return mse, var, r2, acc
+
+
 def run_epoch(net, samples: List[Sample], batch_size: int, opt, device, train: bool) -> tuple:
     n = len(samples)
     order = np.random.permutation(n) if train else np.arange(n)
@@ -379,10 +412,22 @@ def run_epoch(net, samples: List[Sample], batch_size: int, opt, device, train: b
 def main():
     ap = argparse.ArgumentParser(description="Deep-Modal 学習ドライバ")
     ap.add_argument("--data", nargs="+", default=["data/stage0"])
-    ap.add_argument("--epochs", type=int, default=100)
+    # ★round 2 の must #1: 旧既定 (epochs=100, lr_halve_every=20, 下限なし) は
+    # 124 サンプル/batch16 = 8 step/epoch だと 800 step にしかならず、しかも 100 epoch 時点で
+    # lr=3.1e-5 まで落ちて Adam が実質止まっていた (pooled R²=-0.25、定数モデルより悪い)。
+    # epochs=1500 / lr_halve_every=150 / lr_min=5e-5 で実測 pooled R²=0.63 まで伸びることを
+    # 確認したので、これを既定にする (stage0+stage1、124 サンプルでの実測。ModelNet10 は
+    # サンプル数が 2 桁大きいので epoch あたりの step 数が増える — 既定のまま回してよいが、
+    # `--eval-every` の pooled R² ログを必ず見て、正で頭打ちになっているかを確認すること。
+    # 増やしても伸びなければ学習曲線を添えて報告する、閾値は固定しない)
+    ap.add_argument("--epochs", type=int, default=1500)
     ap.add_argument("--lr", type=float, default=1e-3, help="既定 1e-3。論文値 0.02 は --lr 0.02")
-    ap.add_argument("--lr-halve-every", type=int, default=20)
+    ap.add_argument("--lr-halve-every", type=int, default=150)
+    ap.add_argument("--lr-min", type=float, default=5e-5,
+                     help="半減の下限 (round 2 の must #1: 旧既定は下限が無く underfit していた)")
     ap.add_argument("--batch-size", type=int, default=16)
+    ap.add_argument("--eval-every", type=int, default=50,
+                     help="pooled R² (spec §5 #19) を測って学習曲線へ足す間隔 (epoch)")
     ap.add_argument("--overfit", type=int, default=None,
                      help="N 形状へ過学習させ、amp MSE<1e-3 & mask acc>99% を assert する (大規模生成の門)")
     ap.add_argument("--seed", type=int, default=0)
@@ -430,16 +475,27 @@ def main():
         mse, var_target, r2, bce, acc = run_overfit_lbfgs(
             net, samples, args.epochs, args.lbfgs_max_iter, device)
     else:
+        # ★round 2 の must #1: 124 サンプル/batch16 = 8 step/epoch だと 100 epoch でも
+        # 800 step にしかならず、旧既定 (20 epoch ごと半減、下限なし) は終盤 lr=3.1e-5 まで
+        # 落ちて Adam が実質止まっていた (= underfit)。`--lr-min` で下限を設け、
+        # `--eval-every` で pooled R² (spec §5 #19、compute_r2 と同じプール定義を
+        # データセット全体へ適用したもの、evaluate_pooled) を学習曲線に足して
+        # 「サンプル毎正規化の amp_mse が下がっていても pooled R² が伸びているとは限らない」
+        # という round 1 の見落としを再発させない
         opt = torch.optim.Adam(net.parameters(), lr=args.lr)
         for epoch in range(1, args.epochs + 1):
             if epoch > 1 and (epoch - 1) % args.lr_halve_every == 0:
                 for g in opt.param_groups:
-                    g["lr"] *= 0.5
+                    g["lr"] = max(g["lr"] * 0.5, args.lr_min)
             mse, bce, acc = run_epoch(net, samples, args.batch_size, opt, device, train=True)
             if epoch % 20 == 0 or epoch in (1, args.epochs):
                 lr_now = opt.param_groups[0]["lr"]
                 print(f"[train] epoch {epoch}/{args.epochs} lr={lr_now:.2e} "
                       f"amp_mse={mse:.6f} mask_bce={bce:.6f} mask_acc={acc * 100:.3f}%")
+            if epoch % args.eval_every == 0 or epoch == args.epochs:
+                p_mse, p_var, p_r2, p_acc = evaluate_pooled(net, samples, device)
+                print(f"[train] epoch {epoch}/{args.epochs} pooled: amp_mse={p_mse:.6f} "
+                      f"var_target={p_var:.6f} R²={p_r2:.4f} mask_acc={p_acc * 100:.3f}%")
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -466,6 +522,21 @@ def main():
             sys.exit(1)
         print("[train] mask acc 条件 (>99%) は満たした。amp R² は閾値未確定のため "
               "report only (planner が §8 で確定するまで自己判定しない)")
+    else:
+        # spec §5 #19 (round 2 の must #1): 本学習でも pooled R² を必ず報告する。
+        # `run_epoch` が返す amp_mse はサンプル毎正規化 + 重み平均 (compute_batch_losses) で、
+        # 「データセット全体の分散をどれだけ説明できたか」を読む指標ではない —
+        # ここは必ず `evaluate_pooled` (compute_r2 と同じプール定義) を使う
+        p_mse, p_var, p_r2, p_acc = evaluate_pooled(net, samples, device)
+        print(f"[train] final report: pooled amp_mse={p_mse:.6f} var_target={p_var:.6f} "
+              f"R²={p_r2:.4f} mask_acc={p_acc * 100:.3f}% (epochs={args.epochs}, "
+              f"lr={args.lr}, lr_halve_every={args.lr_halve_every}, lr_min={args.lr_min}, "
+              f"batch_size={args.batch_size}, n_samples={len(samples)})")
+        if p_r2 <= 0.0:
+            print(f"[train] WARNING: pooled R²={p_r2:.4f} <= 0 -- この .dmnet は「平均を返すだけの"
+                  "定数モデル」より悪い。エンジン既定の資産としてコミットしないこと "
+                  "(spec §5 #19)。学習曲線 (上の pooled ログ) を添えて報告し、"
+                  "planner の裁定を仰ぐこと", file=sys.stderr)
 
 
 if __name__ == "__main__":

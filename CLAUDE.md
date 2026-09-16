@@ -46,6 +46,7 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 | `tools\collab_verify.bat [--update]` | Source Control の回帰 9 シナリオ (一時リポ + 期待 NDJSON。**エディタも D3D も要らない**。先に `build_collab.bat`。実機目視は `tools\collab_fixture.ps1 <dir>` → `Editor.exe --project <dir>`) |
 | `tools\crash_verify.bat [Debug\|Release]` | 5 経路で実際に落として crash バンドル → .rep が再生・再現すること (**CI 対象外**) |
 | `tools\net_verify.bat [ticks]` | host/join 2 プロセスの .rep が一致 + ローカル 2P 参照とも一致 + ロールバック 3 帯 + desync 注入の検出 (**CI 対象外**) |
+| `--modal-audio-log N` の 2 run 一致 (M76、bat 化していない手動検証) | `Runtime.exe --modal-demo --modal-sync-bake --modal-audio-log N --synth-input --screenshot tmp.png --frames N` を 2 回実行して `[modal] t=` 行がバイト一致すること (Deep-Modal の合成が耳を使わず決定的なことの唯一の検査口。`--screenshot` 必須 — 無いと dt が実時間依存で tick 数が run ごとに揺れる) |
 
 - **CI (`.github\workflows\ci.yml`) はこの bat をそのまま呼ぶ。CI 専用の検証ロジックを書かない。**
   CI 固有の事情は環境変数 4 種だけで注入する: `MYE_EXTRA_ARGS` (`--warp --no-audio`)、
@@ -120,6 +121,22 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
   可視レイはタップループの中でしか撃たないので単体では no-op) /
   `--rt-class-override N` (M67f: 全インスタンスの ReflectionClass を N に強制、-1 = off。
   ReSTIR とは独立でデバッグ 13 にも効く) /
+  `--modal-voxelize --list F --out DIR` (M76b: `builtin://` / .off / .obj / .fbx / .glb / .gltf
+  を `.mvox` へ。Python の `tools\deepmodal` はこれを `cmd /c` 越しに呼ぶだけで自前のボクセライザを
+  持たない) / `--modal-bake [--project DIR]` (M76e: assets 配下のモデルを全登録して焼く。
+  1 行/メッシュ + `bakeMsAvg` 集計。**`.dmnet` を差し替えたら必ずこれを 1 回回す** — `.msfm` は
+  `weightsHash` が食い違えば自動で焼き直すが、手元で確認したいときの唯一の口) /
+  `--modal-backend cpu|d3d11cs` (M76e: `d3d11cs` は未実装で WARN + cpu 縮退、綴り違いは exit 1) /
+  `--modal-sync-bake` (M76f: 焼きを同期化。検証 run で「焼けたかどうか」を決定的にする) /
+  `--modal-audio-log N` (M76f: tick < N の間、モーダル合成の一発再生を 1 行/発 + 終了時 summary。
+  `--synth-input` と併せた 2 run は `[modal] t=` 行がバイト一致する) /
+  `--modal-demo` (M76f: 材質違いの `ModalSound` 箱のショーケース。手動確認と
+  `--modal-audio-log` 検証の両方が使う) /
+  `--modal-wav-dump DIR` (M76h: 合成した実クリップを 1 発ごとに `DIR\shot_*.wav` へ。
+  耳確認を「聞く」ではなく peak/rms/長さ/スペクトルの数値で検査するための調査専用ツール) /
+  `--modal-face-probe` (M76h: `--modal-wav-dump` と併用。実衝突は常に重力方向 = 同じ面にしか
+  当たらないため、最初に鳴った発音元の 6 面ぶんを合成し直して `DIR\probe_<mesh>_<face>.wav` にも
+  書く — 「面で音が変わる」を物理の落下待ちに頼らず実測するための唯一の口) /
   `--package DIR` / `--img-diff A B [--tol N]`。
 
 ## 決定論の契約
@@ -169,8 +186,11 @@ MyEngine — C++20 / DirectX 11 の自作ゲームエンジン (VS2022 / x64 / W
 
 **コンポーネントを足す** — `Components.h` に POD で定義 → `RegisterBuiltinComponents()` の
 **末尾に append** (TypeId は登録順で決まる。途中挿入は既存シーンと .rep を壊す。
-現行の末尾は **50 = AcousticAudio** — M65a が 45〜49、M68a が 50 を取り、M60′ の
-Cloth/SoftBody 予約は 51/52 へ繰り下げてある) →
+現行の末尾は **61 = ModalSound** (M76f) — 50 = AcousticAudio (M68a) の後、
+51 = WaveSound / 52 = RectTransform / 53 = UICanvas / 54 = UILayoutGroup /
+55 = UILayoutElement / 56 = UIContentSizeFitter (M75a〜M75f) / 57 = UISelectable /
+58 = UIToggle / 59 = UISlider / 60 = UIToggleGroup (M75g) と続き、M60′ の
+Cloth/SoftBody 予約は **62/63** へ繰り下げてある) →
 `FieldDesc` 表を書く (`MYE_JP("表示名", MYE_FIELD(...))`) → ハッシュ対象になるか確認 →
 影響するなら `SceneSerializer` の版と `.rep` の版を検討。
 
@@ -192,6 +212,16 @@ Cloth/SoftBody 予約は 51/52 へ繰り下げてある) →
 
 **C++ と HLSL で定数を共有する** — 追加したら `check_rules.ps1` の `$constGroups` にも登録する
 (食い違いは定数バッファ不一致として静かに壊れるので、機械照合が唯一の防波堤)。
+**C++ と Python (`tools\deepmodal`) でも同じ規則** (M76c) — `$constGroups` に
+`kModalVoxelN ⇄ VOXEL_N` / `kModalMapN ⇄ MAP_N` / `kModalBands ⇄ MEL_BANDS` /
+`kModalChannels ⇄ CHANNELS` の 4 組が乗っている。Python 側も「1 行 1 整数」の形
+(`NAME = 数値`) を崩さないこと (check_rules.ps1 の正規表現照合は C++/Python 共通)。
+
+**`.dmnet` を差し替えたら `--modal-bake`** (M76e) — `assets\deepmodal\deepmodal.dmnet` は
+プロジェクト assets → エンジンリポジトリ assets の 2 ルート解決 (シェーダと同型)。
+`.msfm` は `weightsHash` が一致しなければ自動で焼き直すが、手元で焼けたかを確認したいときは
+`--modal-bake` を明示的に 1 回回す (1 行/メッシュ + `bakeMsAvg` 集計)。焼き直しは
+ワーカースレッド + メッシュごと 1 回なので、フレームは止めない。
 
 **`Material` にフィールドを足す** (`GpuResources.h`) — **末尾に append** したうえで
 `ParseMaterialJson` / Inspector のロード・保存・widget / `CreateMaterialAsset` の雛形 /
@@ -292,6 +322,17 @@ Editor → GameLogic → Engine → Renderer → Core → Platform   (上位は�
   旧 ID が残ったシーンは `Editor.exe --migrate-subasset-ids [--project DIR] --legacy-root <旧 clone 先>`
   で書き換える。コード正本のショーケース (`cache\parts_showcase.scene.json` 等) は今もコードから
   毎回組み直す — ID の都合ではなく、生成物をコミットしない既存の流儀としてそのまま。
+- **Deep-Modal (`src\Engine\Engine\Modal\`、M76)** — include の向きは
+  `Engine/Audio → Engine/Modal → (Core / Renderer/GpuResources / Asset)` の一方向。
+  `Modal/` は Audio / Acoustic / World を include しない (`Audio/ModalAudio.cpp` が
+  Acoustic (`RestingImpulse`) と Modal の両方を include するのは許容 — 合流点は出力レーンの
+  この 1 ファイルだけ)。学習/データ生成は `tools\deepmodal\` (sln の外、`tools\collab` と同じ
+  流儀)、C++ の唯一の実装は `Voxelizer.h` (Python は `Editor.exe --modal-voxelize` を呼ぶだけ)。
+  詳細は `engine_spec.md` §10.7 と [ADR-020](docs/adr/ADR-020-deep-modal.md)。
+  計測用の環境変数 2 種 (CLI フラグではない): `MYE_MODAL_THREADS` (CpuModalBackend のスレッド数を
+  強制) / `MYE_MODAL_FORCE_SCALAR=1` (AVX2 を使わずスカラー経路を強制。両方とも
+  `.msfm` のバイト一致を崩さないことが受け入れ条件 — スレッド数を変えても結果が変わらない
+  設計を検証する道具)。
 
 ## 規約
 

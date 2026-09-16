@@ -325,6 +325,19 @@ const CliFlag kEngineCliFlags[] = {
           a.c.modalSyncBake = true;
           return true;
       } },
+    // 合成した実クリップを 1 発ごとに .wav へ書く (M76h の耳確認用。空文字列 = off、
+    // ディレクトリは呼び出し側が事前に作っておくこと)
+    { L"--modal-wav-dump", CliValue::One,
+      [](CliArgs& a) {
+          a.c.modalWavDumpDir = a.v1;
+          return true;
+      } },
+    // --modal-wav-dump と併用: 最初の発音元の 6 面ぶんも合成して書く (M76h の耳確認用)
+    { L"--modal-face-probe", CliValue::None,
+      [](CliArgs& a) {
+          a.c.modalFaceProbe = true;
+          return true;
+      } },
 };
 
 } // namespace

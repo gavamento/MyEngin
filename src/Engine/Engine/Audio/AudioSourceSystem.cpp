@@ -13,6 +13,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
+#include "Engine/Engine/Audio/SynthCore.h" // WriteWavToFile (--modal-wav-dump、M76h の耳確認用)
 #include "Engine/Engine/Modal/ModalSoundLibrary.h"
 #include "Engine/Engine/Physics/PhysMatLibrary.h"
 
@@ -804,6 +805,76 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
                             if (result == ModalShotResult::BelowMin) {
                                 ++modalStats_.belowMin;
                             } else {
+                                // --modal-wav-dump (M76h の耳確認用調査ツール): クリップ池 /
+                                // Play() の成否に関わらず、実際に合成できた PCM をそのまま書く
+                                // (プール満杯や再生失敗も「音は作れていた」ことの証拠として残す)。
+                                // 後段の std::move(clip) より前で書くこと — 移動後は空になる
+                                if (!modalWavDumpDir_.empty()) {
+                                    wchar_t wavPath[512];
+                                    std::swprintf(wavPath, 512, L"%ls\\shot_%04d_%llu_%u.wav",
+                                                  modalWavDumpDir_.c_str(), modalWavDumpCounter_++,
+                                                  static_cast<unsigned long long>(impact.tick),
+                                                  impact.source.index);
+                                    if (!WriteWavToFile(clip, wavPath)) {
+                                        MYE_LOG_WARN("[modal] --modal-wav-dump: failed to write %ls",
+                                                     wavPath);
+                                    }
+                                }
+                                // --modal-face-probe (M76h の耳確認用調査ツール): 実衝突は常に
+                                // 重力方向 (同じ面) にしか当たらないため、「面で音が変わる」を
+                                // 実測するにはこの合成し直しが要る。Inspector の
+                                // FireModalPreviewFace (InspectorWindow.cpp) と同じ式 (ローカル
+                                // AABB 面中心 + 内向き法線 × 力積) をヘッドレスで 6 面ぶん回す —
+                                // 幾何の式だけの小さな複製 (BuildModes/MakeModalShotPlay 自体は
+                                // 呼び直すだけで 2 本目を書いていない)。実際の再生・クリップ池には
+                                // 一切触れない (書き出し専用)
+                                if (modalFaceProbe_ && !modalFaceProbeDone_
+                                    && !modalWavDumpDir_.empty()) {
+                                    modalFaceProbeDone_ = true;
+                                    // round 2 で本学習を Adam 1500 epoch へ直した後、4.0 N・s では
+                                    // WoodBox の 6 面すべてが BelowMin になった (再学習でネットの
+                                    // 応答曲線が変わったため)。Inspector のスライダ上限 (20 N・s)
+                                    // に寄せて閾値の余裕を確保する
+                                    static constexpr float kProbeImpulse = 15.0f;
+                                    static const wchar_t* kFaceNames[6] = { L"px", L"nx", L"py",
+                                                                            L"ny", L"pz", L"nz" };
+                                    for (int face = 0; face < 6; ++face) {
+                                        const int axis = face / 2;
+                                        const bool positive = (face % 2) == 0;
+                                        PendingModalImpact probeImpact = impact;
+                                        for (int a = 0; a < 3; ++a) {
+                                            probeImpact.localPoint[a] =
+                                                (a == axis)
+                                                    ? (positive ? fm->frame.aabbMax[a]
+                                                                : fm->frame.aabbMin[a])
+                                                    : 0.5f * (fm->frame.aabbMin[a]
+                                                              + fm->frame.aabbMax[a]);
+                                        }
+                                        probeImpact.k[0] = probeImpact.k[1] = probeImpact.k[2] = 0.0f;
+                                        probeImpact.k[axis] =
+                                            (positive ? -1.0f : 1.0f) * kProbeImpulse;
+                                        probeImpact.excessImpulse = kProbeImpulse;
+                                        AudioClip probeClip;
+                                        AudioSpatial probeSpatial;
+                                        ModalShotInfo probeInfo;
+                                        const ModalShotResult probeResult = MakeModalShotPlay(
+                                            *fm, *hdr, probeImpact, *comp, mat, scale, probeClip,
+                                            probeSpatial, &probeInfo);
+                                        if (probeResult != ModalShotResult::BelowMin) {
+                                            wchar_t probePath[512];
+                                            std::swprintf(
+                                                probePath, 512, L"%ls\\probe_%016llx_%ls.wav",
+                                                modalWavDumpDir_.c_str(),
+                                                static_cast<unsigned long long>(impact.mesh.value),
+                                                kFaceNames[face]);
+                                            if (!WriteWavToFile(probeClip, probePath)) {
+                                                MYE_LOG_WARN("[modal] --modal-face-probe: failed "
+                                                             "to write %ls",
+                                                             probePath);
+                                            }
+                                        }
+                                    }
+                                }
                                 // クリップ池: ラウンドロビンで次のスロットを 1 つ取る。
                                 // まだ鳴っている予定 (endTick > now) なら切らずに諦める
                                 slot = nextModalSlot_;

@@ -1,0 +1,34 @@
+# stage1 (M76h, spec §2 #14「小規模自前 ≤ 100 形状」) の入力一覧。
+# `assets\models` (このリポジトリにコミット済みのモデル) から選んだ。1 行 1 ソース
+# (builtin:// / .off / .obj / .fbx / .glb / .gltf)、# はコメント、cwd は tools\deepmodal 想定
+# (`cd tools\deepmodal && python dataset.py --stage small --list small.txt --out data\stage1`)。
+#
+# 選定方針 (coder 判断、[追加]。planner の見立て「assets\models + 三校/HAL Collector」から
+# 変更した): 三校プロジェクト (C:\HAL\三校) の assets 配下に .fbx/.glb/.gltf/.obj は
+# 1 本も無かった (実測、find で 0 件) — 未検証の外部リポジトリへ探索範囲を広げるより
+# 確実な自前アセットを使う。エンジン本体の assets\models は 19 ファイル・382 サブメッシュ
+# あり、1 ファイルが複数メッシュを含む場合は --modal-voxelize が全メッシュぶんの .mvox を
+# 書く (ファイル単位でしか選べない、per-submesh 選択の CLI は無い) ため、以下の基準で
+# ファイル単位に絞った:
+#   - BoxTextured.glb / cubes_pivot.fbx の mesh1-3 は box.fbx と occupancy が完全一致する
+#     (= 同じ立方体の重複、sub-04 round 2 の「重複入力は害は無いが計算が無駄」と同型) ので
+#     box.fbx 1 本だけを残し、cubes_pivot.fbx ごと除外した (4 本のうち 3 本が重複 = 割に合わない)。
+#   - ResearchWing_Stage01*.fbx (144 / 12 / 134 サブメッシュ) はこれ単体で ≤100 の予算を
+#     超える。per-submesh 選択の仕組みを新設するのは本サブの範囲外 (--modal-voxelize の
+#     CLI 拡張は sub-08 の「やること」に無い) なので、3 ファイルとも除外した。
+# 結果: 14 ファイル / 87 サブメッシュ (box.fbx は occupancy 24389 で cap 超 = 既定で
+# skipped_occupancy_cap になる。stage0 の builtin cube と同じ満杯立方体の重複なので実害無し)。
+../../assets/models/Avocado.glb
+../../assets/models/CesiumMan.glb
+../../assets/models/box.fbx
+../../assets/models/skinned_beam.fbx
+../../assets/models/player_fp_v01/Player_Researcher_FP.fbx
+../../assets/models/underground_lab_v01/Lab_Bench.fbx
+../../assets/models/underground_lab_v01/Lab_Corridor.fbx
+../../assets/models/underground_lab_v01/Lab_Door.fbx
+../../assets/models/underground_lab_v01/Lab_GlassShards.fbx
+../../assets/models/underground_lab_v01/Lab_MetalFloorPlate.fbx
+../../assets/models/underground_lab_v01/Lab_Room.fbx
+../../assets/models/underground_lab_v01/Lab_Sink.fbx
+../../assets/models/underground_lab_v01/Lab_StorageShelf.fbx
+../../assets/models/underground_lab_v01/Lab_WaterPuddle.fbx

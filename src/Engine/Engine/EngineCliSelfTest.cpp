@@ -241,6 +241,13 @@ bool RunEngineCliSelfTest()
     r = RunParse({ L"--modal-sync-bake" });
     check(r.consumed == 1 && r.config.modalSyncBake, "--modal-sync-bake sets the flag");
     check(!def.modalSyncBake, "--modal-sync-bake defaults to off");
+    // M76h: 耳確認の調査ツール (--acoustic-dump / --froxel-dump と同じ系列)
+    r = RunParse({ L"--modal-wav-dump", L"out_dir" });
+    check(r.consumed == 1 && r.config.modalWavDumpDir == L"out_dir", "--modal-wav-dump DIR");
+    check(def.modalWavDumpDir.empty(), "--modal-wav-dump defaults to off (empty)");
+    r = RunParse({ L"--modal-face-probe" });
+    check(r.consumed == 1 && r.config.modalFaceProbe, "--modal-face-probe sets the flag");
+    check(!def.modalFaceProbe, "--modal-face-probe defaults to off");
 
     // ---- 値を 2 つ取るフラグ ----
     r = RunParse({ L"--rep-diff", L"a.rep", L"b.rep" });

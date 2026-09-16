@@ -25,11 +25,35 @@ pip install torch --index-url https://download.pytorch.org/whl/cu128
 
 ## データ段階の門 (spec §4.1、ユーザー決定)
 
-データ段階は Primitive → 小規模自前 → ModelNet10 → ModelNet40 の順で拡張する。
-**`train.py --overfit 16 --epochs 300` が amp MSE < 1e-3 かつ mask acc > 99% を
-満たすまで、ModelNet の生成コマンド (M76h) を実行してはならない。**
-このディレクトリ (`tools\deepmodal`) には ModelNet 用のダウンロード/変換スクリプトを
-まだ置いていない (sub-04/sub-08 の担当)。
+データ段階は Primitive → 小規模自前 (stage1) → ModelNet10 → ModelNet40 の順で拡張する。
+**門は `train.py --overfit 16 --epochs 300` の mask acc > 99% かつ amp の説明率
+R² ≥ 0.90 (spec §5 #9、旧「amp MSE < 1e-3」は根拠不足で撤回済み)。この門を超える証拠
+(`runs\overfit_gate_v2.log` 相当のログ) が無いまま次の段階のデータ生成コマンドを
+実行してはならない。** 門は sub-04 round 2 で R²=0.9237 を実測して確定済み。
+
+- **stage0 (primitives)**: `dataset.py --stage primitives --out data\stage0`。
+- **stage1 (小規模自前、M76h で通過)**: `dataset.py --stage small --list small.txt
+  --out data\stage1`。`small.txt` はこのリポジトリの `assets\models` から選んだ
+  87 サブメッシュ (詳細は `small.txt` 冒頭のコメント)。
+- **ModelNet10 / ModelNet40**: 下の「ModelNet10 / ModelNet40 の実行手順」参照。
+  **専用の `--stage modelnet10` は無い** — `--stage small --list FILE` がそのまま
+  「builtin でも primitives でも ModelNet でも、list に列挙した実在メッシュを処理する」
+  という 1 本の経路なので、ModelNet 用の list ファイルを作るだけで同じコマンドが動く
+  ([逸脱]。sub-08.md 本文は `dataset.py --stage modelnet10 <dir>` という専用モードの
+  想定コマンド例を書いていたが、実装では専用モードを新設せず `--stage small` に
+  一本化した — 理由は下記「なぜ専用モードを作らなかったか」)。
+
+### なぜ専用モードを作らなかったか
+
+`--stage small` は list に列挙した「builtin:// / .off / .obj / .fbx / .glb / .gltf の
+どれか」を Editor.exe --modal-voxelize → FEM → npz という同じパイプラインに流すだけで、
+list の中身が primitives.py の生成物か、このリポジトリの `assets\models` か、
+ModelNet の `.off` かを一切問わない。専用の `--stage modelnet10` を新設すると
+「同じ処理を list ベースでやる経路」と「ModelNet 専用の経路」の 2 本ができ、
+どちらかだけ直された変更が黙って食い違うリスクを持ち込む。ModelNet 側に必要なのは
+「`.off` ファイルを再帰的に列挙して 1 行 1 パスの list を作る」ことだけなので、
+1 行の `dir /s /b` (または後述の Python one-liner) で作れる list ファイルを
+`--stage small --list` に渡せば、コードを 1 行も足さずに動く。
 
 ## ファイル
 
@@ -197,15 +221,72 @@ python calibrate.py --out data\calibration.json --full
 (= 現状 builtin 3 種) が一律に弾かれる/重み減衰することになる — これが意図どおりか
 は判断が要る (下記「不安・質問」)。
 
-## 参照材質・L_ref (spec §4.1)
+## 参照材質・L_ref (spec §4.1、M76h で L_ref を改訂)
 
-初期値 (E=7.0e10, ρ=2700, ν=0.33, α=6, β=1e-7, L_ref=0.3、アルミ相当) は **確定**
-(spec §8 に記録済み)。`layout.py` の `REF_*` / `L_REF` 相当の定数がそれ。
-stage0 の `stats.json` (`mode_count` / `coverage.mean_ratio`) を見た結果、
-初期値のまま据え置いている (round 1: 帯域占有率平均 0.45 / モード数中央値 30.5、
-round 3 (`coverage_ratio` 定義に切り替え後) に再生成しても平均 0.456 / モード数
-中央値 30.5 とほぼ同じ — 残差フィルタや coverage 指標の追加は分布の代表値を
-動かすほどではない)。
+参照材質 (E=7.0e10, ρ=2700, ν=0.33, α=6, β=1e-7、アルミ相当) は据え置き。
+`L_ref` (基準サイズ) は **0.3 → 0.6 m へ改訂した** (M76h、`layout.py` の `L_REF`)。
+
+旧値 0.3 は round 1/round 3 時点の統計で「据え置き」と判断していたが、その統計は
+**サイズ漏れバグ (FEM にメッシュ実寸を渡していた) が混ざったデータ**によるものだった。
+sub-04 round 2 でバグを直し、全メッシュを実際に参照サイズ (0.3m) で解くようになると、
+`mode_count` 中央値が 30.5 → 14、`coverage_ratio` (旧 `band_occupancy_ratio`) が
+0.45 → 0.336 まで下がった (spec §7 の申し送り) — 旧統計は失効している。
+
+L_ref はランタイムの σ3 (`BuildModes` 手順 6) が吸収する自由パラメータで、
+固有振動数は ω ∝ 1/L_ref という厳密なスケール則に従う (`fem.py` の Ke/Me が h に対して
+線形/3 乗であることの帰結)。`box_0` / `lshape_0` で `L_ref ∈ {0.3, 0.6, 1.0}` を実測:
+
+| L_ref | box_0 coverage_ratio | box_0 coverage_high | lshape_0 coverage_ratio | lshape_0 coverage_high |
+|---|---|---|---|---|
+| 0.3 | 0.281 | 0.625 | 0.281 | 0.625 |
+| 0.6 | 0.562 | 1.000 | 0.469 | 0.750 |
+| 1.0 | 0.656 | 1.000 | 0.656 | 1.000 |
+
+0.6 で選んだ理由: coverage_high (上位 8 帯域) が両サンプルとも実質飽和しつつ、
+1.0 側へまだ伸ばせる余地 (coverage_ratio / coverage_low) を残す中間点。
+stage0 (全 48 メッシュ) を `L_ref=0.6` で再生成した結果、`mode_count` 中央値
+14 → **39.5**、`coverage.mean_ratio` 0.336 → **0.520**、`coverage.mean_high`
+→ **0.829** まで改善した (`data\stage0\stats.json` 実測、2026-09-16)。
+詳細と却下案は [ADR-020](../../docs/adr/ADR-020-deep-modal.md) 決定 7。
+
+**`L_ref` を変えるときは `.dmnet` ヘッダの `refSizeL` (export.py が `layout.L_REF` から
+書く) と stage0/stage1 の npz 再生成 (`*.npz` を消して `dataset.py` を再実行、`.mvox` は
+ボクセル占有が変わらないので再利用できる) を必ずセットで行うこと** — 片方だけ変えると
+「学習データはある L_ref で解いたのに、ランタイムは違う L_ref を基準に σ3 を掛ける」
+という二重スケールの欠陥になる (sub-04 round 1 で見つかったサイズ漏れバグと同型)。
+
+## ModelNet10 / ModelNet40 の実行手順 (M76h、ユーザーが実行する)
+
+★**実行前に必ず確認すること**: `train.py --overfit 16 --epochs 300` が
+mask acc > 99% かつ R² ≥ 0.90 を満たした証拠 (ログ) が既にあること。無ければ実行禁止
+(上の「データ段階の門」参照)。stage1 (小規模自前) はこの証拠を M76h で確認済み。
+
+1. ModelNet10 (もしくは ModelNet40) を任意のディレクトリへ展開する
+   (`http://modelnet.cs.princeton.edu/` 配布の `.off` 形式一式)。
+2. `.off` を再帰的に列挙して list ファイルを作る (forward slash 推奨、Bash がバック
+   スラッシュを潰すため):
+   ```
+   python -c "import sys,glob; [print(p.replace(chr(92),'/')) for p in glob.glob(sys.argv[1] + '/**/*.off', recursive=True)]" C:/path/to/ModelNet10 > modelnet10_list.txt
+   ```
+3. `dataset.py --stage small --list modelnet10_list.txt --out data\modelnet10 --jobs 12`
+   を実行する。**見込み時間 ≈ 4.5 時間** (ModelNet10 の学習用 `.off` は数千本規模、
+   `--jobs 12` で並列。この見積もりは stage1 (87 サブメッシュ、`--jobs 11`) の eigsh
+   中央値 7.5 秒からの**外挿であって実測ではない** — 実際に回した時間で更新すること。
+   本数はダウンロードしたアーカイブの `find`/`glob` の結果件数で確認できる)。
+   ModelNet40 も同じコマンドで (対象ディレクトリと `--out` を変えるだけ)、本数が
+   約 3 倍なので見込み時間も比例して伸びる。
+4. **再開方法**: 上のコマンドをそのまま再実行するだけでよい。`--stage small` は
+   既存の `.npz` があるメッシュを再計算しない (`dataset._process_mvox_dir` が npz の
+   有無で判定する)。ボクセル化 (`.mvox`) も既に書いた分は上書きされるだけで安全
+   (決定的な出力、同じメッシュなら同じバイト列になる)。プロセスが落ちても、
+   同じコマンドをもう一度叩けば残りだけが処理される。
+5. `train.py --data data\stage0 data\stage1 data\modelnet10 --out runs\modelnet10_full.pt`
+   (`--epochs`/`--lr-halve-every`/`--lr-min` は既定のままでよい。**必ず学習ログの
+   `pooled: ... R²=` 行を確認すること** — サンプル数が 2 桁増えるので、正で頭打ちに
+   ならなければ `--epochs` を増やして学習曲線を報告すること。round 2 の must #1 参照) →
+   `export.py --checkpoint runs\modelnet10_full.pt --out
+   ..\..\assets\deepmodal\deepmodal.dmnet --amp-scale <耳確認で決めた値>` →
+   `Editor.exe --modal-bake` → 耳確認 → コミット。
 
 ## モデル / 学習 / export (M76d)
 
@@ -246,7 +327,7 @@ ReLU/Add は重みを持たないので両オフセットとも `DMNET_OFFSET_NO
 
 ```
 python train.py --overfit 16 --epochs 300 --data data\stage0 data\stage1
-python train.py --data data\stage0 --epochs 100          # 一般学習 (Adam)
+python train.py --data data\stage0 data\stage1           # 一般学習 (Adam、既定 1500 epoch)
 ```
 
 - npz を読み、`layout.cell_order()` で `valid`/`feat` を dense (16,16,16,192) へ
@@ -260,7 +341,20 @@ python train.py --data data\stage0 --epochs 100          # 一般学習 (Adam)
 - **`--overfit` は Adam ではなく LBFGS で学習する** (coder 判断、[逸脱] —
   下記「overfit の実測」参照)。`--epochs` は LBFGS の外側ステップ数
   (1 ステップ = 内部で最大 `--lbfgs-max-iter` (既定 20) 回の line-search 付き反復)。
-  一般学習 (`--overfit` 無し) は Adam + 20 epoch ごと半減のまま。
+- **一般学習 (`--overfit` 無し) は Adam + `--lr-halve-every` epoch ごとに半減、
+  下限は `--lr-min`** (round 2 の must #1 で追加。旧既定 (epochs=100、20 epoch ごと半減、
+  下限なし) は 124 サンプル/batch16=8 step/epoch だと 800 step にしかならず、100 epoch
+  時点で lr が 3.1e-5 まで落ちて Adam が実質止まっていた = **pooled R²=-0.25**
+  (「平均を返すだけの定数モデル」より悪い)。既定を `epochs=1500` /
+  `lr-halve-every=150` / `lr-min=5e-5` に変更し、stage0+stage1 (124 サンプル) で
+  **pooled R²=0.63** まで伸びることを実測した (下記「本学習の pooled R²」参照)。
+  `--eval-every N` (既定 50) ごとに pooled R² (`compute_r2` と同じプール定義を
+  データセット全体へ適用、`run_epoch` のサンプル毎正規化 MSE とは別物) を学習曲線へ足す —
+  **サンプル毎正規化の amp_mse が下がっていても pooled R² が伸びているとは限らない**、
+  という round 1 の見落としを再発させないための必須ログ。ModelNet10 はサンプル数が
+  2 桁大きく epoch あたりの step 数が増えるので、既定のまま回してよいが**必ず pooled R²
+  のログを確認する** — 増やしても正で頭打ちにならなければ学習曲線を添えて報告する
+  (閾値は固定しない)。
 
 ### `export.py`
 
@@ -398,3 +492,36 @@ box_0/hollowbox_1/perfplate_2/sphere、N=16 はより多様な形状を含む) �
 
 (ログ全文: `tools\deepmodal\runs\overfit1_v2.log` / `overfit4_v2.log` /
 `overfit_gate_v2.log` — いずれも gitignore 対象)
+
+## stage1 (M76h、小規模自前データセットで端から端まで通す)
+
+`small.txt` (このディレクトリ直下) は、このリポジトリの `assets\models` から選んだ
+14 ファイル / 87 サブメッシュの一覧 (選定理由は `small.txt` 冒頭のコメントに書いた —
+完全な重複形状の除去と、単体で ≤100 の予算を超える巨大ファイルの除外)。
+
+```
+python dataset.py --stage small --list small.txt --out data\stage1 --jobs 11
+```
+
+実測 (2026-09-16、`L_ref=0.6` へ改訂した後の値。`data\stage1\stats.json`):
+`count_ok=86` (`count_skipped_cap=1` = `box.fbx`、満杯立方体で stage0 の builtin cube と
+重複するため占有 cap 超過をそのまま許容している。`count_error=0`)。`mode_count` 中央値
+30.0、`coverage.mean_ratio` 0.440、`coverage.mean_high` 0.703。
+
+```
+python train.py --data data\stage0 data\stage1 --out runs\stage1_full.pt
+python export.py --checkpoint runs\stage1_full.pt --out ..\..\assets\deepmodal\deepmodal.dmnet
+```
+
+**本学習の pooled R² (round 2、must #1 の修正後)**: 上のコマンド (既定 `epochs=1500`,
+`lr_halve_every=150`, `lr_min=5e-5`) で 124 npz (stage0+stage1) を学習した結果、
+学習曲線 (`pooled: ...` 行) は epoch 150 で R²=0.04、epoch 450 で 0.51、epoch 900 で 0.61、
+epoch 1500 で **R²=0.6277** (mask_acc=99.82%) まで単調に伸びた (var_target=0.008031 は
+学習曲線全体を通じて一定 — データセットの分散なので epoch に依らない)。旧既定
+(epochs=100, 20 epoch ごと半減, 下限なし) では同じデータで **pooled R²=-0.2536**
+(定数モデルより悪い) だったので、この修正が must #1 の是正そのもの。
+`amp_mse` (サンプル毎正規化、`run_epoch` の表示値) だけを見て判断すると
+この失敗を見落とす — 必ず `evaluate_pooled`/`compute_r2` の pooled 値を見ること。
+
+学習ログ全文・書き出しサイズ・耳確認の結果は `plans\m76-deepmodal\sub-08.md` の実装メモ
+(SELF_EVAL round 2) に記録した。

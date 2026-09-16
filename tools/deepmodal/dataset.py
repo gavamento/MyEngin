@@ -267,9 +267,78 @@ def _npz_stats_entry(name: str, npz_path: Path) -> dict:
         return {"name": name, "status": "cached_unreadable", "error": str(exc)}
 
 
+def _voxelize_missing(all_lines, vox_dir: Path, work_dir: Path, known_single_output: bool):
+    """入力行 (builtin:// / .off / .obj / .fbx / .glb / .gltf) を Editor.exe --modal-voxelize
+    (voxelize.voxelize_batch) で .mvox 化する。
+
+    `known_single_output=True` (primitives.py の生成物、1 ソース = 1 メッシュ = 1 出力が
+    保証されている) のときだけ「既に `<stem>#mesh0#prim0.mvox` がある行」を再ボクセル化から
+    除外する (再開可能性)。**実在メッシュ (fbx/glb) は 1 ファイルが複数メッシュを持ちうる**
+    (ModalTools.cpp の `RegisterAssets` 差分検出。出力本数は事前に分からない) ため、
+    その場合は毎回全行を渡す — ボクセル化自体は FEM ほど重くない (SAT + flood-fill のみ)
+    ので、これは実害の無い再計算 (npz 側の再開はここでは行わない、下の `_process_mvox_dir` の
+    「既存 npz はスキップ」が実質的な再開ポイント)。"""
+    if known_single_output:
+        def stem_of(line: str) -> str:
+            if line.startswith("builtin://"):
+                return line[len("builtin://"):]
+            return Path(line).stem
+
+        lines = [line for line in all_lines
+                 if not (vox_dir / f"{stem_of(line)}#mesh0#prim0.mvox").exists()]
+    else:
+        lines = list(all_lines)
+
+    if not lines:
+        return
+    import voxelize
+    rc = voxelize.voxelize_batch(lines, vox_dir, work_dir=work_dir)
+    if rc != 0:
+        print("[dataset] WARNING: voxelize_batch reported errors (see above)")
+
+
+def _process_mvox_dir(vox_dir: Path, npz_dir: Path, jobs: int, builtin_stems=frozenset(),
+                       k: int = DEFAULT_K):
+    """vox_dir 内の全 `*.mvox` を FEM → 固有値 → 接触励起 → Mel 圧縮 → npz へ処理する。
+    再開可能 (既存 npz は npz 自身から stats を読み戻す。round 1 のバグ修正 — 上の
+    `process_mesh` の docstring 参照)。`primitives` / `small` (M76h) の両ステージが
+    ここを共有する (npz 生成規則の 2 本目を書かない)。"""
+    mvox_files = sorted(vox_dir.glob("*.mvox"))
+    tasks = []
+    cached_results = []
+    for mvox_path in mvox_files:
+        stem = mvox_path.stem
+        out_path = npz_dir / f"{stem}.npz"
+        if out_path.exists():
+            # ★round 1 の bug: ここで {"status":"cached"} だけを積むと npz に既に
+            # 書いてある統計が stats.json から消える。npz を読み戻して復元する
+            cached_results.append(_npz_stats_entry(stem, out_path))
+            continue
+        # builtin 6 種は受け入れ条件 7 が「npz ≥ 20 本 + builtin 6 本」を要求している
+        # ため、occupancy cap を超えても LOBPCG 経路 (modal.solve_modes_lobpcg) へ
+        # 回して npz を書く (cube は満杯 29^3 立方体 = 実測できる最大占有、これが
+        # 「満杯 30^3 立方体の eigsh < 600 s」の実地プローブになる)。small ステージは
+        # 既定で cap 超をスキップする (builtin のような npz 必須要求が無いため —
+        # 実測でも stage1 の唯一の cap 超過は box.fbx で、これは stage0 の builtin
+        # cube と同じ満杯立方体形状の重複なので、スキップしても情報は失われない)
+        allow = stem in builtin_stems
+        tasks.append((str(mvox_path), str(out_path), allow, k))
+
+    results = list(cached_results)
+    if tasks:
+        os.environ.setdefault("OMP_NUM_THREADS", "1")
+        os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+        os.environ.setdefault("MKL_NUM_THREADS", "1")
+        if jobs <= 1:
+            results.extend(_worker(t) for t in tasks)
+        else:
+            with multiprocessing.Pool(processes=jobs) as pool:
+                results.extend(pool.map(_worker, tasks))
+    return results
+
+
 def run_primitives_stage(out_dir: Path, jobs: int, seed: int, variants: int):
     import primitives
-    import voxelize
 
     out_dir = Path(out_dir)
     obj_dir = out_dir / "raw"
@@ -289,55 +358,51 @@ def run_primitives_stage(out_dir: Path, jobs: int, seed: int, variants: int):
     obj_lines = [str((obj_dir / f"{name}.obj").resolve()) for name, _, _ in shapes]
     all_lines = builtin_lines + obj_lines
 
-    # 既に .mvox がある入力は再ボクセル化しない (再開可能性。stem#mesh0#prim0 の規則は
-    # ModalTools.cpp と同じ)
-    def stem_of(line: str) -> str:
-        if line.startswith("builtin://"):
-            return line[len("builtin://"):]
-        return Path(line).stem
+    _voxelize_missing(all_lines, vox_dir, out_dir / "work", known_single_output=True)
 
-    missing = [line for line in all_lines
-               if not (vox_dir / f"{stem_of(line)}#mesh0#prim0.mvox").exists()]
-    if missing:
-        rc = voxelize.voxelize_batch(missing, vox_dir, work_dir=out_dir / "work")
-        if rc != 0:
-            print("[dataset] WARNING: voxelize_batch reported errors (see above)")
-
-    builtin_stems = {stem_of(line) + "#mesh0#prim0" for line in builtin_lines}
-
-    mvox_files = sorted(vox_dir.glob("*.mvox"))
-    tasks = []
-    cached_results = []
-    for mvox_path in mvox_files:
-        stem = mvox_path.stem
-        out_path = npz_dir / f"{stem}.npz"
-        if out_path.exists():
-            # ★round 1 の bug: ここで {"status":"cached"} だけを積むと npz に既に
-            # 書いてある統計が stats.json から消える。npz を読み戻して復元する
-            cached_results.append(_npz_stats_entry(stem, out_path))
-            continue
-        # builtin 6 種は受け入れ条件 7 が「npz ≥ 20 本 + builtin 6 本」を要求している
-        # ため、occupancy cap を超えても LOBPCG 経路 (modal.solve_modes_lobpcg) へ
-        # 回して npz を書く (cube は満杯 29^3 立方体 = 実測できる最大占有、これが
-        # 「満杯 30^3 立方体の eigsh < 600 s」の実地プローブになる)
-        allow = stem in builtin_stems
-        tasks.append((str(mvox_path), str(out_path), allow, DEFAULT_K))
-
-    results = list(cached_results)
-    if tasks:
-        os.environ.setdefault("OMP_NUM_THREADS", "1")
-        os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-        os.environ.setdefault("MKL_NUM_THREADS", "1")
-        if jobs <= 1:
-            results.extend(_worker(t) for t in tasks)
-        else:
-            with multiprocessing.Pool(processes=jobs) as pool:
-                results.extend(pool.map(_worker, tasks))
+    builtin_stems = {line[len("builtin://"):] + "#mesh0#prim0" for line in builtin_lines}
+    results = _process_mvox_dir(vox_dir, npz_dir, jobs, builtin_stems=builtin_stems)
 
     write_stats(out_dir / "stats.json", results)
     ok_count = sum(1 for r in results if r.get("status") == "ok")
-    print(f"[dataset] processed {len(results)} mesh(es), {ok_count} npz ready "
-          f"({len(cached_results)} restored from cache), out={out_dir}")
+    print(f"[dataset] processed {len(results)} mesh(es), {ok_count} npz ready, out={out_dir}")
+    return results
+
+
+def run_small_stage(list_path: Path, out_dir: Path, jobs: int):
+    """stage1 (spec §2 #14「小規模自前 ≤ 100 形状」)。primitives.py のような自動生成は
+    行わず、`--list` にそのまま列挙した実在メッシュ (builtin:// / .off / .obj / .fbx /
+    .glb / .gltf。1 行 1 ソース、list_builtin.txt と同じ書式) を処理する。
+
+    ★ModelNet10/40 (M76h の README 手順) もこの同じステージを使う — `--list` に
+    列挙したパスが builtin か primitives 生成物かモデルデータセットかを、この関数は
+    問わない (「同じ list を渡せば同じ経路を通る」という原則。専用の `--stage modelnet10`
+    は作らない、[逸脱]。理由は README 参照)。
+    """
+    out_dir = Path(out_dir)
+    vox_dir = out_dir / "vox"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    raw_lines = [line.strip() for line in Path(list_path).read_text(encoding="utf-8").splitlines()
+                 if line.strip() and not line.strip().startswith("#")]
+
+    def resolve(line: str) -> str:
+        if line.startswith("builtin://"):
+            return line
+        return str(Path(line).resolve())
+
+    lines = [resolve(line) for line in raw_lines]
+
+    # 1 ファイルが複数メッシュを持ちうる (fbx/glb) ので「既存 mvox から再ボクセル化を
+    # 省く」は行わない (known_single_output=False) — npz 側の既存チェックが実質的な
+    # 再開ポイントになる
+    _voxelize_missing(lines, vox_dir, out_dir / "work", known_single_output=False)
+
+    results = _process_mvox_dir(vox_dir, out_dir, jobs)
+
+    write_stats(out_dir / "stats.json", results)
+    ok_count = sum(1 for r in results if r.get("status") == "ok")
+    print(f"[dataset] processed {len(results)} mesh(es), {ok_count} npz ready, out={out_dir}")
     return results
 
 
@@ -421,17 +486,25 @@ def write_stats(path: Path, results):
 
 def main():
     ap = argparse.ArgumentParser(description="Deep-Modal データセット生成")
-    ap.add_argument("--stage", required=True, choices=["primitives"],
-                     help="modelnet10/40 は sub-08 の門を越えるまで実装しない (README 参照)")
+    ap.add_argument("--stage", required=True, choices=["primitives", "small"],
+                     help="small = 実在メッシュの list ベース処理 (stage1 も ModelNet10/40 も"
+                          "同じ経路。README の「ModelNet10 の手順」参照)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) - 1))
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--variants", type=int, default=6)
+    ap.add_argument("--list", default=None,
+                     help="--stage small で必須。1 行 1 ソース (builtin:// / .off / .obj / "
+                          ".fbx / .glb / .gltf、# はコメント) の一覧ファイル")
     args = ap.parse_args()
 
     if args.stage == "primitives":
         run_primitives_stage(Path(args.out), jobs=args.jobs, seed=args.seed,
                               variants=args.variants)
+    elif args.stage == "small":
+        if not args.list:
+            ap.error("--stage small には --list が必須です")
+        run_small_stage(Path(args.list), Path(args.out), jobs=args.jobs)
 
 
 if __name__ == "__main__":

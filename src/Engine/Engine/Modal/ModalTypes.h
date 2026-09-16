@@ -60,11 +60,16 @@ struct DmNetHeader {
                              // 実データは export.py が統計から決めた非退化値を書く)
     float ampScale = 1.0f;
     float maskThreshold = 0.5f; // ModalSound.maskThreshold ≤ 0 のときに使う既定しきい値
-    // ---- 参照材質 (spec §4.1「参照材質」。アルミ相当、stage0 統計で確定) ----
+    // ---- 参照材質 (spec §4.1「参照材質」。アルミ相当)。この構造体の既定値は
+    // .dmnet を読む前の in-memory 初期値に過ぎず、実行時は必ずロード済みヘッダの値
+    // (DmNet.cpp の DmNetHeader::Load) で上書きされる。値そのものの正本は
+    // tools/deepmodal/layout.py (REF_YOUNG 等) — refSizeL は M76h (sub-08) で
+    // 0.3->0.6 へ改訂した (layout.py のコメント参照。帯域内モードが増える方向の
+    // 実測込みの判断) ----
     float refYoung = 7.0e10f;
     float refDensity = 2700.0f;
     float refPoisson = 0.33f; // FEM 参照用メタデータ。BuildModes は読まない (spec §2 #4)
-    float refSizeL = 0.3f;
+    float refSizeL = 0.6f;
     float refAlpha = 6.0f;
     float refBeta = 1.0e-7f;
     float bandCenterHz[kModalBands] = {}; // MelBandCenters() で埋める (32 帯域の中心 Hz)

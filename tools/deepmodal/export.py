@@ -177,7 +177,15 @@ def ops_from_header(header: dict, ops_raw: list):
                           o["k"], o["stride"], o["pad"], o["out_pad"], None) for o in ops_raw]
 
 
-def export_checkpoint(checkpoint_path: Path, out_path: Path):
+def export_checkpoint(checkpoint_path: Path, out_path: Path, amp_scale: float = None,
+                       mask_threshold: float = None):
+    """`amp_scale`/`mask_threshold` を省略すると未較正のプレースホルダのまま書く。
+    ★`ampScale` の本来の意味 (J=1 N·s の中央値ピークが -12dBFS になる値) は
+    `ModalSynthRender` を実際に鳴らして較正するしかない (Python 単体では計算できない、
+    上のモジュール docstring 参照) ため、耳確認 (M76h) は `--amp-scale` で明示的に
+    書き込んだ値を検証する。この関数を 2 回目以降呼ぶたびに新しい .dmnet が born-again
+    で書かれる (既存ファイルへの部分書き換えは行わない — ヘッダ以外にも weightsHash が
+    絡むため、常に全体を書き直すのが安全)。"""
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     widths = tuple(ckpt["widths"])
     net = model.ModalUNet(widths=widths)
@@ -185,7 +193,8 @@ def export_checkpoint(checkpoint_path: Path, out_path: Path):
     net.eval()
     data = build_dmnet_bytes(
         net, log_amp_min=ckpt["log_amp_min"], log_amp_max=ckpt["log_amp_max"],
-        amp_scale=_PLACEHOLDER_AMP_SCALE, mask_threshold=_PLACEHOLDER_MASK_THRESHOLD)
+        amp_scale=amp_scale if amp_scale is not None else _PLACEHOLDER_AMP_SCALE,
+        mask_threshold=mask_threshold if mask_threshold is not None else _PLACEHOLDER_MASK_THRESHOLD)
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_bytes(data)
@@ -320,6 +329,11 @@ def main():
     ap.add_argument("--random-full", action="store_true")
     ap.add_argument("--out", required=True)
     ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--amp-scale", type=float, default=None,
+                     help="--checkpoint 専用。省略時は未較正のプレースホルダ (1.0)。"
+                          "耳確認 (M76h) で ModalSynthRender を実際に鳴らして決める")
+    ap.add_argument("--mask-threshold", type=float, default=None,
+                     help="--checkpoint 専用。省略時は既定 0.5")
     args = ap.parse_args()
 
     modes = sum([bool(args.checkpoint), args.fixture, args.random_full])
@@ -333,7 +347,8 @@ def main():
     elif args.random_full:
         export_random_full(Path(args.out), seed=args.seed if args.seed is not None else RANDOM_FULL_SEED)
     else:
-        export_checkpoint(Path(args.checkpoint), Path(args.out))
+        export_checkpoint(Path(args.checkpoint), Path(args.out),
+                           amp_scale=args.amp_scale, mask_threshold=args.mask_threshold)
 
 
 if __name__ == "__main__":

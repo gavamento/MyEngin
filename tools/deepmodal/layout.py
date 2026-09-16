@@ -25,12 +25,24 @@ VOXEL_PAD = 1   # flood-fill 用の外周パディング層数 (kModalVoxelPad)
 F_MIN = 100.0
 F_MAX = 10000.0
 
-# ---- 参照材質 (spec §4.1「参照材質」。アルミ相当。ModalTypes.h の DmNetHeader 既定と同値。
-#      stage0 の統計で確定させ、確定したらここと spec §8 の両方を更新する) ----
+# ---- 参照材質 (spec §4.1「参照材質」。アルミ相当。ModalTypes.h の DmNetHeader 既定と同値) ----
 REF_YOUNG = 7.0e10     # Pa
 REF_DENSITY = 2700.0   # kg/m^3
 REF_POISSON = 0.33     # 無次元 (FEM 専用。ランタイムの BuildModes は読まない)
-L_REF = 0.3            # m (基準サイズ。sub-03.md の表記に合わせて L_REF)
+# L_REF (基準サイズ) は M76h (sub-08) で 0.3 -> 0.6 へ改訂 (spec §7 の未決事項、
+# sub-04 round 2 からの申し送り)。根拠: サイズ漏れバグ修正後は全メッシュを 0.3m で
+# 解くようになり帯域内モードが減っていた (mode_count 中央値 30.5->14、coverage_ratio
+# 0.45->0.336)。L_ref はランタイムの σ3 (BuildModes 手順 6) が吸収する自由パラメータ
+# なので、周波数 ∝ 1/L_ref という厳密なスケール則 (fem.py のモジュール docstring
+# 「Ke=h*E*..., Me=ρ*h^3*...」より ω ∝ sqrt(E/ρ)/h = sqrt(E/ρ)*28/L) を使い、
+# stage0 の box_0/lshape_0 で L_ref={0.3,0.6,1.0} を実測して確認した:
+#   box_0    : coverage_ratio 0.281->0.562->0.656、coverage_high 0.625->1.000->1.000
+#   lshape_0 : coverage_ratio 0.281->0.469->0.656、coverage_high 0.625->0.750->1.000
+# 0.6 は高域 (coverage_high) が両サンプルとも既に飽和 (1.0) しつつ、低域 (coverage_low)
+# を伸ばす余地を 1.0 側に残す中間点として選んだ ([追加]、coder 判断。spec §7 は
+# 「教師データが最も豊かになる値を選んでよい」としており、変更/据え置きいずれも
+# 許容されている)。変更は stage0/stage1 の再生成とセット (このサブで実施済み)。
+L_REF = 0.6            # m (基準サイズ。sub-03.md の表記に合わせて L_REF)
 REF_ALPHA = 6.0        # 1/s (Rayleigh 減衰、質量項)
 REF_BETA = 1.0e-7      # s (Rayleigh 減衰、剛性項)
 
