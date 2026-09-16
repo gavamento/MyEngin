@@ -234,6 +234,13 @@ bool RunEngineCliSelfTest()
     r = RunParse({ L"--modal-backend", L"foo" });
     check(r.errors == 1 && r.config.modalBackendName == def.modalBackendName,
           "--modal-backend with an unknown value is an error and changes nothing");
+    // M76f: 衝突音のログ + 同期焼き (--modal-demo の byte 一致検証が使う 2 本)
+    r = RunParse({ L"--modal-audio-log", L"300" });
+    check(r.consumed == 1 && r.config.modalAudioLogTicks == 300, "--modal-audio-log N");
+    check(def.modalAudioLogTicks == 0, "--modal-audio-log defaults to 0 (no lines)");
+    r = RunParse({ L"--modal-sync-bake" });
+    check(r.consumed == 1 && r.config.modalSyncBake, "--modal-sync-bake sets the flag");
+    check(!def.modalSyncBake, "--modal-sync-bake defaults to off");
 
     // ---- 値を 2 つ取るフラグ ----
     r = RunParse({ L"--rep-diff", L"a.rep", L"b.rep" });

@@ -3,14 +3,18 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 
 #include <DirectXMath.h>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
+#include "Engine/Engine/Modal/ModalSoundLibrary.h"
+#include "Engine/Engine/Physics/PhysMatLibrary.h"
 
 using namespace DirectX;
 
@@ -254,6 +258,11 @@ void AudioSourceSystem::Reset(AudioSystem& audio)
     for (bool& w : unknownToneWarned_) {
         w = false; // 新しいシーンでは設定ミスをもう一度知らせる (PartFollowSystem と同じ流儀)
     }
+    // M76f: 積んだままの衝突インパクトと cooldown 側テーブルも捨てる (前のシーンの
+    // 発音元 EntityID はこのシーンでは意味が変わる)。クリップ池 (modalSlots_) は
+    // 「鳴っている音を切らない」ための予約に過ぎないので触らない (自然に期限切れになる)
+    pendingModalImpacts_.clear();
+    modalStates_.clear();
     audio.ClearReverbOverride();
 }
 
@@ -264,6 +273,15 @@ void AudioSourceSystem::PushWaveShot(const PendingWaveShot& shot)
         return;
     }
     pendingShots_.push_back(shot);
+}
+
+void AudioSourceSystem::PushModalImpact(const PendingModalImpact& impact)
+{
+    if (static_cast<int>(pendingModalImpacts_.size()) >= kMaxPendingModalImpacts) {
+        ++modalStats_.dropped;
+        return;
+    }
+    pendingModalImpacts_.push_back(impact);
 }
 
 AudioSourceSystem::SourceState& AudioSourceSystem::StateFor(EntityID e)
@@ -278,6 +296,27 @@ AudioSourceSystem::SourceState& AudioSourceSystem::StateFor(EntityID e)
     states_.push_back(SourceState{});
     states_.back().entity = e;
     return states_.back();
+}
+
+AudioSourceSystem::ModalEntityState& AudioSourceSystem::ModalStateFor(EntityID e)
+{
+    // EntityID 昇順の sorted vector + 二分探索 (index を優先、同値なら generation)。
+    // index だけで比較すると、破棄されたエンティティのスロットを別世代が再利用したとき
+    // 別物の cooldown を引き継いでしまう
+    const auto less = [](const ModalEntityState& a, EntityID b) {
+        if (a.entity.index != b.index) {
+            return a.entity.index < b.index;
+        }
+        return a.entity.generation < b.generation;
+    };
+    auto it = std::lower_bound(modalStates_.begin(), modalStates_.end(), e, less);
+    if (it != modalStates_.end() && it->entity == e) {
+        return *it;
+    }
+    ModalEntityState st;
+    st.entity = e;
+    it = modalStates_.insert(it, st);
+    return *it;
 }
 
 void AudioSourceSystem::Sweep(AudioSystem& audio)
@@ -391,6 +430,10 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
     //   「鳴らなかった音」は決定論レーンに何の影響も無い
     std::vector<PendingWaveShot> shots;
     shots.swap(pendingShots_);
+    // M76f: モーダル衝突音のキューも同じ理由で同じ場所で空にする (受け入れ条件 8:
+    // suspend 中の Update でキューが空になること)
+    std::vector<PendingModalImpact> modalImpacts;
+    modalImpacts.swap(pendingModalImpacts_);
 
     // ★決定論契約 2: 記録/検証中は 3D 計算も playOnAwake も一切走らせない。
     //   検証中は 1 フレームで最大 64 tick 回るので、ここを開けると計算量も発音も暴れる。
@@ -672,6 +715,157 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
             //   1 音も鳴っていない」が緑のまま通る
             if (!audio.Play(desc).Valid()) {
                 ++acStats_.shotsPlayFailed;
+            }
+        }
+    }
+
+    // ---- Deep-Modal 衝突音 (M76f) ----
+    // ★wave shot と違い **acOn を要求しない** — ModalSound は AcousticAudio の有無と
+    //   無関係に鳴る (置いてあるのが「衝突音」であって「聴覚シム」ではないため)。
+    //   acOn のときだけ ShapeAcousticSpatial で遮蔽・回折を足す
+    {
+        const bool modalLog =
+            modalLogTicks_ > 0 && tickIndex < static_cast<uint64_t>(modalLogTicks_);
+        int32_t shotsThisTick = 0;
+        for (const PendingModalImpact& impact : modalImpacts) {
+            if (shotsThisTick >= kMaxModalShotsPerTick) {
+                break; // 残りは次フレームへ持ち越さず捨てる (AcousticField::DrainImpacts と同じ規律)
+            }
+            ++modalStats_.impacts;
+
+            ModalShotResult result = ModalShotResult::NotReady; // 全分岐で書き換わる (規則 3: 宣言時初期化)
+            ModalShotInfo info{};
+            AcousticShapeInfo shapeInfo{}; // 既定 = Bypass/gain=1 (acOn=false ならそのままログに出る)
+            int32_t slot = -1;
+
+            const ModalSoundComponent* comp =
+                world.IsAlive(impact.source) ? world.GetComponent<ModalSoundComponent>(impact.source)
+                                             : nullptr;
+            if (comp == nullptr) {
+                // 発音元 / コンポーネントが push の後に消えた (drain は tick の後なので稀に起きる)。
+                // 専用の結果値は無いので NotReady 側へ畳む (notReady バケットと同じ意味 —
+                // 「今回は鳴らせなかった」)
+                result = ModalShotResult::NotReady;
+                ++modalStats_.notReady;
+            } else {
+                ModalEntityState& est = ModalStateFor(impact.source);
+                if (ModalOnCooldown(est.everShot, est.lastShotTick, comp->cooldownTicks, impact.tick)) {
+                    result = ModalShotResult::Cooldown;
+                    ++modalStats_.cooldown;
+                } else if (modalLibrary_ == nullptr) {
+                    result = ModalShotResult::NoModel;
+                    ++modalStats_.notReady;
+                } else {
+                    ModalState state = modalLibrary_->Request(impact.mesh);
+                    // NoModel (.dmnet 未ロード) は BakeSync を呼んでも同じ理由で失敗するだけなので
+                    // 焼き直さない。呼ぶと state が Failed に上書きされ、r= のログが
+                    // 「NotReady」と「NoModel」を取り違える (集計バケットは同じでも診断行の意味が変わる)
+                    if (state != ModalState::Ready && state != ModalState::NoModel && modalSyncBake_) {
+                        const auto t0 = std::chrono::steady_clock::now();
+                        const bool ok = modalLibrary_->BakeSync(impact.mesh);
+                        const float ms = static_cast<float>(
+                            std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - t0)
+                                .count());
+                        ++modalStats_.bakes;
+                        modalStats_.bakeMsTotal += ms;
+                        state = ok ? ModalState::Ready : ModalState::Failed;
+                    }
+                    if (state != ModalState::Ready) {
+                        result = (state == ModalState::NoModel) ? ModalShotResult::NoModel
+                                                                : ModalShotResult::NotReady;
+                        ++modalStats_.notReady; // NoModel も同じバケットへ畳む (summary に専用欄が無い)
+                        if (!modalNotReadyWarned_) {
+                            modalNotReadyWarned_ = true;
+                            MYE_LOG_WARN(
+                                "[modal] mesh 0x%016llx is not baked yet (the wave shot plays "
+                                "instead) -- run --modal-bake once, or wait for the async worker",
+                                static_cast<unsigned long long>(impact.mesh.value));
+                        }
+                    } else {
+                        const ModalFeatureMap* fm = modalLibrary_->Get(impact.mesh);
+                        const DmNetHeader* hdr = modalLibrary_->Header();
+                        if (fm == nullptr || hdr == nullptr) {
+                            result = ModalShotResult::NoModel;
+                            ++modalStats_.notReady;
+                        } else {
+                            const auto* col = world.GetComponent<ColliderComponent>(impact.source);
+                            const PhysMat* mat =
+                                col != nullptr ? physmat::Resolve(col->physMaterial) : nullptr;
+                            float scale = 1.0f;
+                            if (const auto* wm =
+                                    world.GetComponent<WorldMatrixComponent>(impact.source)) {
+                                scale = ModalWorldScaleOfLongestAxis(fm->frame, wm->value);
+                            }
+                            AudioClip clip;
+                            AudioSpatial spatial;
+                            result = MakeModalShotPlay(*fm, *hdr, impact, *comp, mat, scale, clip,
+                                                       spatial, &info);
+                            if (result == ModalShotResult::BelowMin) {
+                                ++modalStats_.belowMin;
+                            } else {
+                                // クリップ池: ラウンドロビンで次のスロットを 1 つ取る。
+                                // まだ鳴っている予定 (endTick > now) なら切らずに諦める
+                                slot = nextModalSlot_;
+                                nextModalSlot_ = (nextModalSlot_ + 1) % kModalClipSlots;
+                                if (modalSlots_[slot].endTick > tickIndex) {
+                                    result = ModalShotResult::PoolFull;
+                                    ++modalStats_.poolFull;
+                                } else {
+                                    const uint64_t lenTicks = static_cast<uint64_t>(std::ceil(
+                                        static_cast<double>(info.lenSec)
+                                        / static_cast<double>(fixedDt)));
+                                    modalSlots_[slot].endTick =
+                                        tickIndex + (std::max<uint64_t>)(lenTicks, 1);
+                                    char nameBuf[32];
+                                    std::snprintf(nameBuf, sizeof(nameBuf), "modal://slot#%d", slot);
+                                    const AssetID clipId{ HashStr(nameBuf) };
+                                    audio.RegisterClip(clipId, std::move(clip), nameBuf);
+                                    PlayDesc desc;
+                                    desc.clip = clipId;
+                                    desc.bus = AudioSystem::kBusSe;
+                                    desc.volume = 1.0f;
+                                    desc.priority = 128;
+                                    spatial.reverbSend = acOn ? acComp->waveReverbSend : 0.0f;
+                                    if (acOn) {
+                                        float gain = 1.0f;
+                                        ShapeAcousticSpatial(*acousticField_, acProbe_, *acComp,
+                                                             listener.position, spatial.position,
+                                                             spatial, gain, nullptr, 1.0f,
+                                                             &shapeInfo);
+                                        desc.volume = std::clamp(desc.volume * gain, 0.0f, 1.0f);
+                                    }
+                                    desc.spatial = &spatial;
+                                    if (!audio.Play(desc).Valid()) {
+                                        result = ModalShotResult::PlayFailed;
+                                        ++modalStats_.playFailed;
+                                    } else {
+                                        result = ModalShotResult::Played;
+                                        ++modalStats_.played;
+                                        est.lastShotTick = impact.tick;
+                                        est.everShot = true;
+                                        ++shotsThisTick;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (modalLog) {
+                MYE_LOG_INFO(
+                    "[modal] t=%llu src=%u mesh=%016llx cell=%d,%d,%d slot=%d k=%.3f,%.3f,%.3f "
+                    "J=%.3f modes=%d f0=%.1f f1=%.1f peak=%.2f len=%.3f class=%s gain=%.3f r=%s",
+                    static_cast<unsigned long long>(impact.tick), impact.source.index,
+                    static_cast<unsigned long long>(impact.mesh.value), info.cellX, info.cellY,
+                    info.cellZ, slot, static_cast<double>(impact.k[0]),
+                    static_cast<double>(impact.k[1]), static_cast<double>(impact.k[2]),
+                    static_cast<double>(impact.excessImpulse), info.modeCount,
+                    static_cast<double>(info.f0Hz), static_cast<double>(info.f1Hz),
+                    static_cast<double>(info.peakDb), static_cast<double>(info.lenSec),
+                    AcousticPathClassName(shapeInfo.cls), static_cast<double>(shapeInfo.gain),
+                    ModalShotResultName(result));
             }
         }
     }

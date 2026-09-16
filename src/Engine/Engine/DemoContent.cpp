@@ -3732,4 +3732,131 @@ void UiDemoScriptInput(uint64_t tick, InputSnapshot& lane0)
     }
 }
 
+// M76f: Deep-Modal 衝突音のショーケース (--modal-demo)。参照: RegisterPhysicsShowcaseContent /
+// BuildPhysicsShowcaseScene (同じ builtin キューブ + 名前引き physmat の作法)
+void RegisterModalShowcaseContent(EngineContext& ctx)
+{
+    RenderResources& res = *ctx.resources;
+    const AssetID white = res.textures.White();
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    res.meshes.Cube();
+
+    auto makeMat = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = shader;
+        m.texture = white;
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    makeMat("mdemo_floor_wood", 0.55f, 0.40f, 0.25f);
+    makeMat("mdemo_floor_metal", 0.55f, 0.57f, 0.60f);
+    makeMat("mdemo_wood", 0.62f, 0.46f, 0.28f);
+    makeMat("mdemo_metal", 0.70f, 0.72f, 0.76f);
+    makeMat("mdemo_glass", 0.75f, 0.88f, 0.92f);
+}
+
+void BuildModalShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+    s.SetName("modal_showcase");
+    const AssetID cube = res.meshes.Cube();
+    const AssetID matWood = FindPhysMat("wood");
+    const AssetID matMetal = FindPhysMat("metal");
+    const AssetID matGlass = FindPhysMat("glass");
+
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    camera.SetLocalPosition(0.0f, 6.0f, -14.0f);
+    camera.SetLocalRotationEuler(18.0f, 0.0f, 0.0f);
+
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(50.0f, -30.0f, 0.0f);
+
+    // ---- 物理環境 (シーンに 1 個) ----
+    {
+        GameObject envGo = s.CreateGameObject("Environment");
+        auto* env = envGo.AddComponent<PhysicsEnvironmentComponent>();
+        env->gravity = { 0.0f, -9.81f, 0.0f };
+    }
+
+    // ---- 床: 左半分 = 木 / 右半分 = 金属。**AcousticAudio を置かない** (Bypass 経路も踏む) ----
+    {
+        GameObject floor = s.CreateGameObject("FloorWood");
+        floor.SetLocalPosition(-4.0f, -0.5f, 0.0f);
+        floor.SetLocalScale(8.0f, 1.0f, 8.0f);
+        auto* mr = floor.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("mdemo_floor_wood") };
+        auto* col = floor.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kBox;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        col->physMaterial = matWood;
+    }
+    {
+        GameObject floor = s.CreateGameObject("FloorMetal");
+        floor.SetLocalPosition(4.0f, -0.5f, 0.0f);
+        floor.SetLocalScale(8.0f, 1.0f, 8.0f);
+        auto* mr = floor.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("mdemo_floor_metal") };
+        auto* col = floor.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kBox;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        col->physMaterial = matMetal;
+    }
+
+    // ---- 木の箱: 木の床へ低い高さから落ちる (基準の当たり方) ----
+    {
+        GameObject box = s.CreateGameObject("WoodBox");
+        box.SetLocalPosition(-4.0f, 4.0f, 0.0f);
+        box.SetLocalScale(1.0f, 1.0f, 1.0f);
+        auto* mr = box.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("mdemo_wood") };
+        auto* col = box.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kBox;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        col->physMaterial = matWood;
+        auto* rb = box.AddComponent<RigidbodyComponent>();
+        rb->useDensity = true;
+        box.AddComponent<ModalSoundComponent>(); // mesh は空 = MeshRenderer.mesh (Cube) を使う
+    }
+
+    // ---- 金属の箱: 金属の床へ低い高さから落ちる (WoodBox と「面で音が変わる」対) ----
+    {
+        GameObject box = s.CreateGameObject("MetalBox");
+        box.SetLocalPosition(3.0f, 4.0f, 0.0f);
+        box.SetLocalScale(1.0f, 1.0f, 1.0f);
+        auto* mr = box.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("mdemo_metal") };
+        auto* col = box.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kBox;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        col->physMaterial = matMetal;
+        auto* rb = box.AddComponent<RigidbodyComponent>();
+        rb->useDensity = true;
+        box.AddComponent<ModalSoundComponent>();
+    }
+
+    // ---- ガラスの箱: 金属の床へ高い所から強く落ちる (MetalBox と「強く落とすと大きい」対) ----
+    {
+        GameObject box = s.CreateGameObject("GlassBox");
+        box.SetLocalPosition(5.0f, 10.0f, 0.0f);
+        box.SetLocalScale(0.8f, 0.8f, 0.8f);
+        auto* mr = box.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("mdemo_glass") };
+        auto* col = box.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kBox;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        col->physMaterial = matGlass;
+        auto* rb = box.AddComponent<RigidbodyComponent>();
+        rb->useDensity = true;
+        box.AddComponent<ModalSoundComponent>();
+    }
+}
+
 } // namespace mye

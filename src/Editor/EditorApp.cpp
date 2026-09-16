@@ -149,6 +149,7 @@ void EditorApp::OnStart(EngineContext& ctx)
     RegisterFogShowcaseContent(ctx);     // M57追補 (fdemo_* 材質。同上)
     RegisterParticleShowcaseContent(ctx); // M63a (vdemo_* 材質 + 手続きテクスチャ。同上)
     RegisterAcousticShowcaseContent(ctx); // M65b (adem_* 材質。同上)
+    RegisterModalShowcaseContent(ctx);    // M76f (mdemo_* 材質。同上)
     if (showcase != nullptr && showcase->prepare != nullptr) {
         // シーンファイルを先に確保してから普通のロード経路で開く (--flow-demo の 2 シーン)。
         // ここで組む = GameLogic.dll / C# コンパイル済み (EngineLoop が OnStart 前に実施)

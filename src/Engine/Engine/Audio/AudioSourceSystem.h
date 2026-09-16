@@ -6,6 +6,7 @@
 #include "Engine/Core/Random.h"
 #include "Engine/Engine/Audio/AcousticAudio.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
+#include "Engine/Engine/Audio/ModalAudio.h"
 
 namespace mye {
 
@@ -16,6 +17,9 @@ class SoundLibrary;
 class AcousticField;
 struct SoundAsset;
 struct AudioSourceComponent;
+// M76f: モデルの実体は Engine/Modal 側。ここもポインタしか持たないので前方宣言で足りる
+// (include の向き Engine/Audio → Engine/Modal は許容、ModalAudio.h 冒頭コメント参照)
+class ModalSoundLibrary;
 
 // アセット既定 (.sound.json) に AudioSource コンポーネントの上書きを載せる **純関数**。
 // XAudio2 にも ECS にも触れないので selftest がデバイス無しで規則を検証できる。
@@ -92,6 +96,23 @@ public:
     //   シーンを捨てるときに一緒に降ろさないと「前のシーンの部屋の響き」が残る
     void Reset(AudioSystem& audio);
 
+    // ---- Deep-Modal 衝突音 (M76f) ----
+    // 配線点は EngineLoop の 1 箇所だけ (SetAcousticField と同じ流儀)。null なら
+    // CollectModalImpacts で積まれたキューはここで捨てられる (常に NoModel 扱い)
+    void SetModalLibrary(ModalSoundLibrary* lib) { modalLibrary_ = lib; }
+    // --modal-audio-log N: tick < N のあいだ 1 impact = 1 行を標準出力へ + 終了時に summary
+    void SetModalAudioLog(int ticks) { modalLogTicks_ = ticks; }
+    // --modal-sync-bake: Request() が Ready を返さないメッシュを BakeSync() で同期的に焼く
+    // (--modal-demo の byte 一致検証用。既定は非同期ワーカー任せ)
+    void SetModalSyncBake(bool sync) { modalSyncBake_ = sync; }
+    const ModalAudioStats& ModalStats() const { return modalStats_; }
+    // 1 フレームに溜めておける衝突インパクトの上限。超過は**捨てて数える**
+    // (kMaxPendingShots と同じ理由 — 検証明けの一斉再生を防ぐ)
+    static constexpr int kMaxPendingModalImpacts = 64;
+    // TickRunner の !resim ブロックからだけ呼ぶ (PushWaveShot と同じ契約)
+    void PushModalImpact(const PendingModalImpact& impact);
+    size_t PendingModalImpactCount() const { return pendingModalImpacts_.size(); }
+
 private:
     // 音源 1 つぶんの非決定論レーン状態。**コンポーネントには持たせない** —
     // シリアライズ対象になったり Undo/コピペで壊れたりするのを構造的に防ぐため
@@ -109,7 +130,17 @@ private:
         AcousticShapeState shape;
     };
 
+    // M76f: 発音元 1 体ぶんの「最後に鳴らした tick」(cooldown 判定用)。
+    // ★EntityID 昇順の**sorted vector** (二分探索) — 音源の states_ と違い、
+    //   接触音は同時に居る発音元の数が読めないため探索コストを抑えておく
+    struct ModalEntityState {
+        EntityID entity = kNullEntity;
+        uint64_t lastShotTick = 0;
+        bool everShot = false; // false の間は cooldown を判定しない (初回は必ず通す)
+    };
+
     SourceState& StateFor(EntityID e);
+    ModalEntityState& ModalStateFor(EntityID e);
     void Sweep(AudioSystem& audio);
     // 音源 1 つを実際に鳴らす。**playOnAwake とスクリプト PlayEntity が共有する唯一の経路**。
     // 戻り値 = voice が立ち上がったか (false かつ variationIndex >= 0 は「クリップ未ロード」
@@ -138,6 +169,24 @@ private:
     bool roomApplied_ = false;   // 一度も適用していないうちは |Δt| を見ずに撃つ
     // tone ごとの「鍵が引けない」警告の抑制 (毎歩ログを埋めない)
     bool unknownToneWarned_[4] = {};
+
+    // ---- Deep-Modal 衝突音 (M76f)。**全部 ECS の外**の側テーブル (SourceState と同型) ----
+    ModalSoundLibrary* modalLibrary_ = nullptr;
+    int modalLogTicks_ = 0;
+    bool modalSyncBake_ = false;
+    ModalAudioStats modalStats_;
+    std::vector<PendingModalImpact> pendingModalImpacts_;
+    std::vector<ModalEntityState> modalStates_; // EntityID 昇順 (sorted vector)
+    static constexpr int kMaxModalShotsPerTick = 4;
+    static constexpr int kModalClipSlots = 32;
+    // 回転プールの 1 スロット分。endTick は「自前で見積もった終了予定 tick」—
+    // 実際に再生が終わったかは問わない (鳴っている音を切らないための保守的な予約)
+    struct ModalClipSlotState {
+        uint64_t endTick = 0;
+    };
+    ModalClipSlotState modalSlots_[kModalClipSlots];
+    int32_t nextModalSlot_ = 0;
+    bool modalNotReadyWarned_ = false; // 「--modal-bake を促す」WARN は 1 回だけ
 };
 
 } // namespace mye

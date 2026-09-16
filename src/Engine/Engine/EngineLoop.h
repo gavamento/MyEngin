@@ -196,6 +196,15 @@ struct EngineConfig {
     // Deep-Modal はプロジェクト設定を持たないため)
     std::wstring modalBackendName = L"cpu";
 
+    // ---- Deep-Modal 衝突音 (M76f、--modal-audio-log N / --modal-sync-bake) ----
+    // tick < N のあいだ 1 impact = 1 行を標準出力へ出し、終了時に summary を 1 行足す
+    // (0 = 何も出さない)。--no-audio では 1 行も出ない (AudioSourceSystem::Update が
+    // IsReady() で return する = ヘッドレスはゼロコスト、--acoustic-audio-log と同じ設計)
+    int modalAudioLogTicks = 0;
+    // Request() が Ready を返さないメッシュをその場で BakeSync() する (非同期ワーカーの
+    // 完了タイミングに依らず [modal] ログを決定的にする。--modal-demo の 2 run 一致検証が使う)
+    bool modalSyncBake = false;
+
     // ---- グラフィックスドライバ (M52b) ----
     // true (--warp) で D3D_DRIVER_TYPE_WARP (ソフトウェアラスタライザ) を直接使う。
     // false でも HARDWARE の生成に失敗すれば WARP へ自動フォールバックするので、

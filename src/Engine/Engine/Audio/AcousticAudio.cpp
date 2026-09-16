@@ -14,7 +14,9 @@
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Audio/ModalAudio.h" // M76f: ResolveModalMesh (口封じの mesh 解決)
 #include "Engine/Engine/Audio/SoundAsset.h"
+#include "Engine/Engine/Modal/ModalSoundLibrary.h" // modalsound::IsReady
 #include "Engine/Engine/Physics/PhysMatLibrary.h"
 
 namespace mye {
@@ -516,6 +518,20 @@ void ResolveWaveShotSound(World& world, EntityID source, uint64_t materialHint,
 {
     shot.soundKey = 0;
     shot.mute = 0;
+    // (0) M76f: Deep-Modal が焼き上がっていれば波の耳出しは無音化 (モーダル側が代わりに鳴らす)。
+    //     焼けるまでは従来どおり下の (1)/(2) が鳴る = 段階移行。muteWave==0 なら両方鳴らしてよい
+    //     (デバッグ比較用の明示オプトアウト)
+    if (!source.IsNull() && world.IsAlive(source)) {
+        if (const auto* modal = world.GetComponent<ModalSoundComponent>(source)) {
+            if (modal->muteWave != 0) {
+                const AssetID mesh = ResolveModalMesh(world, source, *modal);
+                if (!mesh.IsNull() && modalsound::IsReady(mesh)) {
+                    shot.mute = 1;
+                    return;
+                }
+            }
+        }
+    }
     // (1) 発音元の WaveSound。★IsAlive を先に見る — drain は tick の後なので、鳴らした主体が
     //     既に破棄されていることがある (AudioSourceSystem の log の注記と同じ)
     if (!source.IsNull() && world.IsAlive(source)) {

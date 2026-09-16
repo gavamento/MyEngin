@@ -351,6 +351,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // AssetPreviewCache が持つ別インスタンスは誰も埋めないので、試聴音が遮蔽されない)
     audioSources.SetAcousticField(&acoustic);
     audioSources.SetAcousticAudioLog(config.acousticAudioLogTicks);
+    // M76f: 衝突音のモーダル合成。**ここが唯一の配線点** (残光 / 音響の 1 行上と同じ理由)
+    audioSources.SetModalLibrary(&modalSounds);
+    audioSources.SetModalAudioLog(config.modalAudioLogTicks);
+    audioSources.SetModalSyncBake(config.modalSyncBake);
     renderSystem.postFxSettings.tonemap = config.postFxTonemap;
     renderSystem.postFxSettings.exposure = config.postFxExposure;
     renderSystem.postFxSettings.bloom = config.postFxBloom;
@@ -2600,6 +2604,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                      acs.classCount[1], acs.classCount[2], acs.classCount[3], acs.shots,
                      acs.shotsSkipped, acs.shotsUnknownKey, acs.shotsDropped,
                      static_cast<double>(acs.roomT), acs.shotsPlayFailed);
+    }
+    // M76f: Deep-Modal 衝突音の run 総括。**bakeMsAvg だけは run-to-run 比較から除く**
+    // (実時間なので機種と負荷で動く)。--no-audio では impacts も 0 のまま = 1 行も出ない
+    if (config.modalAudioLogTicks > 0 && audioSources.ModalStats().impacts > 0) {
+        const ModalAudioStats& ms = audioSources.ModalStats();
+        MYE_LOG_INFO("[modal] summary impacts=%d played=%d notReady=%d cooldown=%d belowMin=%d "
+                     "dropped=%d poolFull=%d playFailed=%d bakes=%d bakeMsAvg=%.3f",
+                     ms.impacts, ms.played, ms.notReady, ms.cooldown, ms.belowMin, ms.dropped,
+                     ms.poolFull, ms.playFailed, ms.bakes, static_cast<double>(ms.BakeMsAvg()));
     }
     if (config.rtDebugMode != rtdebug::kOff || config.rtGi || config.rtShadow || config.rtRefl) {
         // M46b: BVH の規模とソフトウェアトラバーサルの実測値 (性能ゲートの一次データ)。

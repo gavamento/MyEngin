@@ -310,6 +310,21 @@ const CliFlag kEngineCliFlags[] = {
           std::fwprintf(stderr, L"unknown --modal-backend value (expected cpu|d3d11cs)\n");
           return false;
       } },
+    // ---- Deep-Modal 衝突音 (M76f) ----
+    // tick < N のあいだ 1 impact = 1 行を標準出力へ + 終了時に summary。
+    // ★--no-audio と併用すると 1 行も出ない (AudioSourceSystem::Update が IsReady() で return する)
+    { L"--modal-audio-log", CliValue::One,
+      [](CliArgs& a) {
+          a.c.modalAudioLogTicks = _wtoi(a.v1);
+          return true;
+      } },
+    // Request() が Ready を返さないメッシュを BakeSync() で同期的に焼く (async ワーカーの
+    // 完了タイミングに揺れる --modal-audio-log の byte 一致検証、および --modal-demo 用)
+    { L"--modal-sync-bake", CliValue::None,
+      [](CliArgs& a) {
+          a.c.modalSyncBake = true;
+          return true;
+      } },
 };
 
 } // namespace

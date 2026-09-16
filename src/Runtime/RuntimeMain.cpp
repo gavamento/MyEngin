@@ -80,6 +80,7 @@ public:
         mye::RegisterFogShowcaseContent(ctx);     // M57追補: fdemo_* 材質 (同上)
         mye::RegisterParticleShowcaseContent(ctx); // M63a: vdemo_* 材質 + 手続きテクスチャ (同上)
         mye::RegisterAcousticShowcaseContent(ctx); // M65b: adem_* 材質 (同上)
+        mye::RegisterModalShowcaseContent(ctx);    // M76f: mdemo_* 材質 (同上)
         if (std::filesystem::exists(scenePath)) {
             mye::SceneSerializer::LoadFromFile(*ctx.scene, scenePath);
             // Editor と同じ「ロード直後 1 回」(M48e)。ここを揃えないと Editor で録った .rep と

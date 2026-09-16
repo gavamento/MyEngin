@@ -74,6 +74,8 @@
     <ClCompile Include="..\src\Engine\Engine\Audio\ImpactSoundAsset.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\ImpactSynth.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\ImpactSynthSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Audio\ModalAudio.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Audio\ModalAudioSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\ModalSynth.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\ModalSynthSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\MusicStream.cpp" />
@@ -284,6 +286,8 @@
     <ClInclude Include="..\src\Engine\Engine\Audio\ImpactSoundAsset.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\ImpactSynth.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\ImpactSynthSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Audio\ModalAudio.h" />
+    <ClInclude Include="..\src\Engine\Engine\Audio\ModalAudioSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\ModalSynth.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\ModalSynthSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\MusicMath.h" />

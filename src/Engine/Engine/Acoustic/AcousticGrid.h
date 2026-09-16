@@ -7,7 +7,11 @@
 #include <cmath>
 #include <cstdint>
 
+#include "Engine/Core/EntityID.h"
+
 namespace mye {
+
+class World; // 前方宣言のみ (定義が要るのは AcousticField.cpp の RestingImpulse だけ)
 
 // 音響ボクセルグリッドの寸法と原点 (M65a、計画 hushed-rippling-beacon)。
 //
@@ -130,6 +134,12 @@ inline float ImpactGain(float excessImpulse)
     const float g = excessImpulse / kImpactRefImpulse;
     return (g < 1.0f) ? g : 1.0f;
 }
+
+// 接触ペア (ea, eb) が「載っているだけ」で支えている力積 (M76f、AcousticField.cpp:984-985 だった式を
+// 抽出したもの)。DrainImpacts と ModalSound の J_excess の両方がここを通る (**規則は 1 本**)。
+// ★**評価順を 1 文字も変えない** — replay_verify の acoustic ペアが唯一の証人。
+//   浮動小数の加算・乗算順が 1 つでも動くと最終ビットが変わりうる
+float RestingImpulse(World& world, EntityID ea, EntityID eb, float gMag, float dt);
 
 // ---- 残光の符号化 (M65d) ----
 //

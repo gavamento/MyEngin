@@ -27,7 +27,10 @@ ModelNet10 / 40 の実走 (ユーザーが回す。`[ユーザーに聞ける]`)
 - `engine_spec.md` (§10.6 の後、1703 以降)、`docs\adr\`、`README.md`、`CLAUDE.md`、`plans\m76-deepmodal.md`
 
 ## 受け入れ条件 (このサブ)
-spec §5 の 19, 20, 17。
+spec §5 の 19, 20, 17 + **耳確認 (sub-06 round 1 で繰り延べ)**。
+0. **耳確認** (sub-06 の受け入れ条件 4 から移管。実モデルが揃うのはこのサブなので、聴感評価が成立するのはここが最初):
+   `--modal-demo` を実機で鳴らし、(a) **面で音が変わる** (b) **強く落とすと大きい** (c) **physmat を metal ↔ wood に変えると減衰が変わる** を耳で確認して SELF_EVAL に文章で書く。
+   ★「軽い接触が聞こえない / 重い衝突がソフトクリップに張り付く」なら「不安・質問」に書くこと — **絶対音量に上限圧縮 `min(1, J/kImpactRefImpulse)` を足すかの判断** (spec §2 #12) がここに紐づいている。planner が裁定する
 1. stage1 で `dataset → train → export → --modal-bake (exit 0) → --modal-demo (played > 0)` が通り、`.dmnet` がコミットされている。学習ログの最終 loss を SELF_EVAL に
 2. README に ModelNet10 の手順 / 時間見積もり / 実行禁止の門 / 再開方法
 3. 文書 4 点 + CLAUDE.md の更新。`check_rules.ps1` 緑

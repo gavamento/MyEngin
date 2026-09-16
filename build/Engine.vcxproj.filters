@@ -216,6 +216,12 @@
     <ClCompile Include="..\src\Engine\Engine\Audio\ImpactSynthSelfTest.cpp">
       <Filter>Engine\Audio</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\ModalAudio.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\ModalAudioSelfTest.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Audio\ModalSynth.cpp">
       <Filter>Engine\Audio</Filter>
     </ClCompile>
@@ -844,6 +850,12 @@
       <Filter>Engine\Audio</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Audio\ImpactSynthSelfTest.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\ModalAudio.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\ModalAudioSelfTest.h">
       <Filter>Engine\Audio</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Audio\ModalSynth.h">

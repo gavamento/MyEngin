@@ -1608,6 +1608,22 @@ struct WaveSoundComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// Deep-Modal 衝突音 (M76f、TypeId=61)。**kComponentNoHash** — WaveSoundComponent と同じ音レーンで、
+// sim には 1 バイトも影響しない。付けた発音元は接触のたびに CollectModalImpacts /
+// AudioSourceSystem がモーダル合成 (学習済み 3D-CNN → 再帰共振器) で鳴らす。
+// メッシュがまだ焼けていない (Baking/Failed/未登録) 間は WaveSound / 床材 / tone の従来経路が
+// そのまま鳴る (段階移行、AcousticAudio.cpp の ResolveWaveShotSound 冒頭が焼き上がりを見て黙らせる)。
+struct ModalSoundComponent {
+    AssetID mesh = {};          // 空 = 同 entity の MeshRenderer.mesh (ResolveModalMesh が解決)
+    float gain = 1.0f;
+    float maskThreshold = 0.0f; // ≤0 は .dmnet ヘッダの既定 (DmNetHeader.maskThreshold) を使う
+    int32_t cooldownTicks = 3;  // この tick 数だけ同じ発音元の再発音を止める (Played 成立時に起点を更新)
+    float sizeScale = 1.0f;     // σ3 の L_obj (spec §4.1 手順 6) に追加で掛ける倍率
+    float maxDistance = 30.0f;  // AudioSpatial.maxDistance (これ以遠は無音)
+    int32_t muteWave = 1;       // 非 0: 焼き上がったら WaveSound 側の耳出しを黙らせる
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==0 なら無効。
