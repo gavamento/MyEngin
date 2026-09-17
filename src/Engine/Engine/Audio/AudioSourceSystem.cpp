@@ -758,13 +758,18 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
                     result = ModalShotResult::NoModel;
                     ++modalStats_.notReady;
                 } else {
-                    ModalState state = modalLibrary_->Request(impact.mesh);
+                    // M76j: 合成メッシュはパーツ列が要るので発音元から引き直す (impact は POD のまま)。
+                    // push から drain までに構成が変わって ID が食い違ったら、今回は鳴らさない
+                    const ModalMeshRef ref = ResolveModalMesh(world, impact.source, *comp);
+                    ModalState state = (ref.id == impact.mesh) ? modalLibrary_->Request(ref)
+                                                               : ModalState::Missing;
                     // NoModel (.dmnet 未ロード) は BakeSync を呼んでも同じ理由で失敗するだけなので
                     // 焼き直さない。呼ぶと state が Failed に上書きされ、r= のログが
                     // 「NotReady」と「NoModel」を取り違える (集計バケットは同じでも診断行の意味が変わる)
-                    if (state != ModalState::Ready && state != ModalState::NoModel && modalSyncBake_) {
+                    if (state != ModalState::Ready && state != ModalState::NoModel && modalSyncBake_
+                        && ref.id == impact.mesh) {
                         const auto t0 = std::chrono::steady_clock::now();
-                        const bool ok = modalLibrary_->BakeSync(impact.mesh);
+                        const bool ok = modalLibrary_->BakeSync(ref);
                         const float ms = static_cast<float>(
                             std::chrono::duration<double, std::milli>(
                                 std::chrono::steady_clock::now() - t0)
@@ -781,7 +786,9 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
                             modalNotReadyWarned_ = true;
                             MYE_LOG_WARN(
                                 "[modal] mesh 0x%016llx is not baked yet (the wave shot plays "
-                                "instead) -- run --modal-bake once, or wait for the async worker",
+                                "instead) -- run --modal-bake once (composite meshes of model "
+                                "hierarchies are baked at runtime only; --modal-sync-bake makes it "
+                                "synchronous), or wait for the async worker",
                                 static_cast<unsigned long long>(impact.mesh.value));
                         }
                     } else {

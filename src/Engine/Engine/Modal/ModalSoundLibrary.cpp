@@ -6,6 +6,7 @@
 #include "Engine/Engine/Modal/ModalSoundLibrary.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 
 #include "Engine/Core/AssetKeyResolver.h"
@@ -145,55 +146,120 @@ void ModalSoundLibrary::WorkerLoop()
     }
 }
 
-ModalState ModalSoundLibrary::Request(AssetID mesh)
+bool ModalSoundLibrary::GatherGeometry(const ModalMeshRef& ref,
+                                       std::vector<DirectX::XMFLOAT3>& positions,
+                                       std::vector<uint32_t>& indices, std::string& nameOut) const
 {
-    if (mesh.IsNull()) {
+    positions.clear();
+    indices.clear();
+    nameOut.clear();
+    if (resources_ == nullptr || ref.parts.empty()) {
+        return false;
+    }
+    // 先に全パーツの揃いを確かめる — 途中まで連結してから欠けに気付くと、欠けた形で
+    // 焼いた結果を表へ残しかねない (後から登録されたときに焼き直されない)
+    size_t vertTotal = 0;
+    size_t idxTotal = 0;
+    for (const ModalMeshPart& part : ref.parts) {
+        Mesh* m = resources_->meshes.Get(part.mesh);
+        if (!m || m->positions.empty()) {
+            return false; // 未登録 / CPU 頂点なし。キャッシュしない (後から登録され得る)
+        }
+        vertTotal += m->positions.size();
+        idxTotal += m->indices.size();
+    }
+    const std::string* firstName = resources_->meshes.NameOf(ref.parts[0].mesh);
+    if (!ref.IsComposite()) {
+        nameOut = firstName ? *firstName : std::string{};
+    } else {
+        // 合成は先頭パーツ (整列済み) のモデルの .msfm 表へ相乗りさせる: "guid://<16hex>" の接頭辞を
+        // 流用すれば SourcePathForSubAssetKey がそのモデルファイルへ引ける (表の形式は不変)。
+        // GUID を持たない (builtin 等) なら別スキーム = ディスクに持たない (builtin 単体と同じ扱い)
+        char suffix[40];
+        std::snprintf(suffix, sizeof(suffix), "%016llx",
+                      static_cast<unsigned long long>(ref.id.value));
+        uint64_t guid = 0;
+        if (firstName && assetkey::ParseSubAssetKey(*firstName, guid)) {
+            nameOut = firstName->substr(0, firstName->find('#')) + "#modal#" + suffix;
+        } else {
+            nameOut = std::string("modal-composite://") + suffix;
+        }
+    }
+
+    positions.reserve(vertTotal);
+    indices.reserve(idxTotal);
+    for (const ModalMeshPart& part : ref.parts) {
+        const Mesh* m = resources_->meshes.Get(part.mesh);
+        const uint32_t base = static_cast<uint32_t>(positions.size());
+        if (part.identity) {
+            positions.insert(positions.end(), m->positions.begin(), m->positions.end());
+        } else {
+            const DirectX::XMMATRIX xf = DirectX::XMLoadFloat4x4(&part.toSource);
+            for (const DirectX::XMFLOAT3& p : m->positions) {
+                DirectX::XMFLOAT3 q;
+                DirectX::XMStoreFloat3(&q,
+                                       DirectX::XMVector3TransformCoord(DirectX::XMLoadFloat3(&p), xf));
+                positions.push_back(q);
+            }
+        }
+        for (const uint32_t i : m->indices) {
+            indices.push_back(base + i);
+        }
+    }
+    return true;
+}
+
+bool ModalSoundLibrary::TryLoadFromTable(uint64_t id, const std::string& name)
+{
+    const std::wstring srcPath =
+        name.empty() ? std::wstring{} : assetkey::SourcePathForSubAssetKey(name);
+    if (srcPath.empty()) {
+        return false; // builtin / 合成でも GUID が無い = ディスクに持たない
+    }
+    CookTable& table = LoadTable(srcPath);
+    const auto hit = std::lower_bound(
+        table.begin(), table.end(), name,
+        [](const std::pair<std::string, ModalFeatureMap>& e, const std::string& k) {
+            return e.first < k;
+        });
+    if (hit != table.end() && hit->first == name
+        && hit->second.modelHash == net_->header.weightsHash) {
+        cache_[id] = { ModalState::Ready, hit->second };
+        return true;
+    }
+    return false;
+}
+
+ModalState ModalSoundLibrary::Request(const ModalMeshRef& ref)
+{
+    if (ref.IsNull()) {
         return ModalState::Missing;
     }
     if (!net_ || !backend_) {
         return ModalState::NoModel;
     }
-    const auto it = cache_.find(mesh.value);
+    const auto it = cache_.find(ref.id.value);
     if (it != cache_.end()) {
         return it->second.state;
     }
-    if (resources_ == nullptr) {
+
+    Job job;
+    if (!GatherGeometry(ref, job.positions, job.indices, job.meshName)) {
         return ModalState::Missing;
     }
-    Mesh* m = resources_->meshes.Get(mesh);
-    if (!m || m->positions.empty()) {
-        return ModalState::Missing; // 未登録 / CPU 頂点なし。キャッシュしない (後から登録され得る)
-    }
-    const std::string* name = resources_->meshes.NameOf(mesh);
-    const std::wstring srcPath =
-        name ? assetkey::SourcePathForSubAssetKey(*name) : std::wstring{};
-
-    if (!srcPath.empty()) {
-        CookTable& table = LoadTable(srcPath);
-        const auto hit = std::lower_bound(
-            table.begin(), table.end(), *name,
-            [](const std::pair<std::string, ModalFeatureMap>& e, const std::string& k) {
-                return e.first < k;
-            });
-        if (hit != table.end() && hit->first == *name && hit->second.modelHash == net_->header.weightsHash) {
-            cache_[mesh.value] = { ModalState::Ready, hit->second };
-            return ModalState::Ready;
-        }
+    if (TryLoadFromTable(ref.id.value, job.meshName)) {
+        return ModalState::Ready;
     }
 
     EnsureWorker();
-    Job job;
-    job.meshId = mesh.value;
-    job.meshName = name ? *name : std::string{};
-    job.positions = m->positions;
-    job.indices = m->indices;
+    job.meshId = ref.id.value;
     job.net = net_;
     {
         std::lock_guard<std::mutex> lk(mutex_);
         jobQueue_.push_back(std::move(job));
     }
     cv_.notify_one();
-    cache_[mesh.value] = { ModalState::Baking, {} };
+    cache_[ref.id.value] = { ModalState::Baking, {} };
     return ModalState::Baking;
 }
 
@@ -289,59 +355,52 @@ void ModalSoundLibrary::Shutdown()
     }
 }
 
-bool ModalSoundLibrary::BakeSync(AssetID mesh)
+bool ModalSoundLibrary::BakeSync(const ModalMeshRef& ref)
 {
-    if (mesh.IsNull() || !net_ || !backend_ || resources_ == nullptr) {
+    if (ref.IsNull() || !net_ || !backend_ || resources_ == nullptr) {
         return false;
     }
+    const uint64_t id = ref.id.value;
     // 既に Ready ならそのまま (プロセス内キャッシュ命中。2 回目の Request/BakeSync が
     // 無駄に焼き直さないようにする)
-    const auto cached = cache_.find(mesh.value);
+    const auto cached = cache_.find(id);
     if (cached != cache_.end() && cached->second.state == ModalState::Ready) {
         return true;
     }
-    Mesh* m = resources_->meshes.Get(mesh);
-    if (!m || m->positions.empty()) {
+    std::vector<DirectX::XMFLOAT3> positions;
+    std::vector<uint32_t> indices;
+    std::string name;
+    if (!GatherGeometry(ref, positions, indices, name)) {
         return false;
     }
-    const std::string* name = resources_->meshes.NameOf(mesh);
-    const std::wstring srcPath = name ? assetkey::SourcePathForSubAssetKey(*name) : std::wstring{};
     // `.msfm` の表 (ディスクの cook キャッシュ) 命中を先に見る — Request() の非同期経路と
-    // 全く同じ判定 (2 本目を書くと必ずずれるので、判定式は一致させてある)。
+    // 同じ TryLoadFromTable を通す (2 本目を書くと必ずずれる)。
     // ★これが無いと `--modal-bake` の「2 回目は全部 cached」が成立しない
     //   (焼き直しの時間が毎回かかる = 実測で発覚した欠陥、コミット前に確認)
-    if (!srcPath.empty()) {
-        CookTable& table = LoadTable(srcPath);
-        const auto hit = std::lower_bound(
-            table.begin(), table.end(), *name,
-            [](const std::pair<std::string, ModalFeatureMap>& e, const std::string& k) {
-                return e.first < k;
-            });
-        if (hit != table.end() && hit->first == *name
-            && hit->second.modelHash == net_->header.weightsHash) {
-            cache_[mesh.value] = { ModalState::Ready, hit->second };
-            return true;
-        }
+    if (TryLoadFromTable(id, name)) {
+        return true;
     }
     modal::VoxelGrid grid;
-    if (!modal::VoxelizeMesh(m->positions.data(), m->positions.size(), m->indices.data(),
-                             m->indices.size(), grid)) {
-        cache_[mesh.value] = { ModalState::Failed, {} };
+    if (!modal::VoxelizeMesh(positions.data(), positions.size(), indices.data(), indices.size(),
+                             grid)) {
+        cache_[id] = { ModalState::Failed, {} };
         return false;
     }
     ModalFeatureMap map;
     std::string err;
     if (!BuildFeatureMap(*backend_, *net_, grid, map, &err)) {
-        cache_[mesh.value] = { ModalState::Failed, {} };
-        if (warnedFailed_.insert(mesh.value).second) {
+        cache_[id] = { ModalState::Failed, {} };
+        if (warnedFailed_.insert(id).second) {
             MYE_LOG_WARN("[modal] BakeSync failed: %s", err.c_str());
         }
         return false;
     }
-    cache_[mesh.value] = { ModalState::Ready, map };
+    cache_[id] = { ModalState::Ready, map };
 
+    const std::wstring srcPath =
+        name.empty() ? std::wstring{} : assetkey::SourcePathForSubAssetKey(name);
     if (!srcPath.empty()) {
-        UpdateTableEntry(srcPath, *name, map);
+        UpdateTableEntry(srcPath, name, map);
     }
     return true;
 }

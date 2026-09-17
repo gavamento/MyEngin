@@ -944,13 +944,13 @@ void InspectorWindow::DrawModalSoundNotes(EngineContext& ctx, const InspectorTar
     if (comp == nullptr) {
         return;
     }
-    const AssetID mesh = ResolveModalMesh(world, e, *comp);
+    const ModalMeshRef mesh = ResolveModalMesh(world, e, *comp);
 
     ModalSoundLibrary* lib = modalsound::Library();
     // Request は未着手なら非ブロッキングで焼きジョブを積む — Inspector を開くだけで
     // 裏の焼成が始まる (AudioSourceSystem::Update と同じ入口を共有する、規則は 1 本)
     const ModalState state = (lib != nullptr) ? lib->Request(mesh) : ModalState::NoModel;
-    const ModalFeatureMap* fm = (lib != nullptr) ? lib->Get(mesh) : nullptr;
+    const ModalFeatureMap* fm = (lib != nullptr) ? lib->Get(mesh.id) : nullptr;
     const DmNetHeader* hdr = (lib != nullptr) ? lib->Header() : nullptr;
     const bool ready = (state == ModalState::Ready) && fm != nullptr && hdr != nullptr;
 
@@ -958,6 +958,13 @@ void InspectorWindow::DrawModalSoundNotes(EngineContext& ctx, const InspectorTar
     ImGui::Text(Tr(StrId::Insp_ModalState), ModalStateLabel(state),
                lib != nullptr ? lib->BackendName() : "none");
     ImGui::Text(Tr(StrId::Insp_ModalCells), fm != nullptr ? fm->validCount : 0u);
+    if (mesh.IsNull()) {
+        ImGui::TextUnformatted(Tr(StrId::Insp_ModalMeshNone));
+    } else if (mesh.IsComposite()) {
+        ImGui::Text(Tr(StrId::Insp_ModalMeshComposite), static_cast<int>(mesh.parts.size()));
+    } else {
+        ImGui::TextUnformatted(Tr(StrId::Insp_ModalMeshSingle));
+    }
 
     ImGui::SetNextItemWidth(160.0f);
     ImGui::SliderFloat(Tr(StrId::Insp_ModalImpulse), &modalPreview_.impulse, 0.1f, 20.0f, "%.2f");
@@ -1015,7 +1022,7 @@ void InspectorWindow::FireModalPreviewFace(EngineContext& ctx, const InspectorTa
 
     PendingModalImpact impact;
     impact.source = e;
-    impact.mesh = ResolveModalMesh(world, e, comp);
+    impact.mesh = ResolveModalMesh(world, e, comp).id;
     for (int a = 0; a < 3; ++a) {
         impact.localPoint[a] = (a == axis) ? (positive ? fm.frame.aabbMax[a] : fm.frame.aabbMin[a])
                                             : 0.5f * (fm.frame.aabbMin[a] + fm.frame.aabbMax[a]);

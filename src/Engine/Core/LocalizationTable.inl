@@ -1143,6 +1143,13 @@ MYE_STR(Insp_ModalStateReady,   "Ready",                "準備完了")
 MYE_STR(Insp_ModalStateFailed,  "Failed",               "失敗")
 MYE_STR(Insp_ModalStateNoModel, "No Model",             "モデル無し")
 MYE_STR(Insp_ModalCells,       "Cells: %u",             "セル数: %u")
+// M76j: 焼く形の出どころ。FBX / glTF のルートに付けた ModalSound が「無言で未登録」だった反省から、
+// 何を焼いているか (単体 / 子孫との合成 / 何も無い) を必ず 1 行出す
+MYE_STR(Insp_ModalMeshSingle,    "Shape: single mesh",    "形: メッシュ単体")
+MYE_STR(Insp_ModalMeshComposite, "Shape: %d meshes combined (self + children)",
+                                 "形: %d 個のメッシュを合成 (自分 + 子孫)")
+MYE_STR(Insp_ModalMeshNone,      "No mesh: neither this object nor its children have a MeshRenderer",
+                                 "メッシュが見つかりません (自分にも子孫にも MeshRenderer がありません)")
 MYE_STR(Insp_ModalImpulse,     "Impulse (N*s)",         "力積 (N・s)")
 MYE_STR(Insp_ModalTapHeading,  "Tap a face to preview the impact sound:",
                                 "面を押すと衝突音を試聴できます:")

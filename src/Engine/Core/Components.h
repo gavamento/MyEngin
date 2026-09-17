@@ -1614,7 +1614,7 @@ struct WaveSoundComponent {
 // メッシュがまだ焼けていない (Baking/Failed/未登録) 間は WaveSound / 床材 / tone の従来経路が
 // そのまま鳴る (段階移行、AcousticAudio.cpp の ResolveWaveShotSound 冒頭が焼き上がりを見て黙らせる)。
 struct ModalSoundComponent {
-    AssetID mesh = {};          // 空 = 同 entity の MeshRenderer.mesh (ResolveModalMesh が解決)
+    AssetID mesh = {};          // 空 = 自分 + 子孫の MeshRenderer から解決 (規則は ResolveModalMesh、M76j)
     float gain = 1.0f;
     float maskThreshold = 0.0f; // ≤0 は .dmnet ヘッダの既定 (DmNetHeader.maskThreshold) を使う
     int32_t cooldownTicks = 3;  // この tick 数だけ同じ発音元の再発音を止める (Played 成立時に起点を更新)

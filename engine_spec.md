@@ -2048,6 +2048,31 @@ fixture test are — because the CPU path already lands the full-size network at
 against a 600 ms target, once per mesh, on a worker thread, before the first frame such a mesh is
 ever heard.
 
+**What gets baked is resolved by one rule, and it follows the model hierarchy (M76j).**
+`ResolveModalMesh` (`Audio/ModalAudio.cpp`) is the only place that decides which geometry an entity
+sounds like, and the collision path, the audio drain, the wave-muting check (§10.6) and the
+Inspector preview all call it: (1) a non-empty `ModalSound.mesh` is baked as-is; (2) if no
+descendant has a `MeshRenderer`, the entity's own `MeshRenderer.mesh` is baked as-is — this is the
+pre-M76j behaviour and its asset ID, cache key and `[modal] t=` log lines are byte-identical to it;
+(3) otherwise the entity's own mesh and every descendant `MeshRenderer` are **merged into one
+triangle soup in the entity's local space** and that is voxelized. Case (3) exists because FBX and
+glTF models are instantiated as `root (no MeshRenderer) → node → partN`, and the root is where a
+Rigidbody, a Collider and a `ModalSound` naturally go — before M76j that combination resolved to an
+empty mesh and every contact was dropped without a log line. Subtrees that carry their own
+`ModalSound` (another sound source), their own `Rigidbody` (an independently moving body) or
+`Active.enabled == 0` are left out. Each part's placement is composed from the **LocalTransform
+chain** up to (not including) the entity, never from inverted world matrices: the merged shape's
+key is a hash of the sorted `(mesh id, matrix bits)` list, and world-matrix round-off would change
+that key frame to frame and re-bake forever. Because the merged shape lives in the entity's local
+space, the contact point (already brought into that space by the entity's inverse world matrix) and
+`σ3`'s `L_obj` (longest local edge × the entity's world scale) need no further correction — a
+measured check dropped a 0.5-scale builtin cube as a single entity and as a scale-1 root with a
+0.5-scale child, and both chose the same cell and the same modes. The merged map is stored in the
+first part's model `.msfm` under `guid://<16hex>#modal#<hash>` (no format change); a merge whose
+parts have no GUID (builtin meshes) is baked per run and never written. `--modal-bake` does not
+pre-bake merges — they depend on scene placement, not on an asset — so the first contact bakes one
+asynchronously (or synchronously with `--modal-sync-bake`). Skinned parts are merged in bind pose.
+
 On a real collision (`TickRunner.cpp`'s `!ts.resim` block, the same tick-local window §10.6's wave
 emission uses), `CollectModalImpacts` turns each `SolidContact` touching a `ModalSound` entity into
 a `PendingModalImpact`: the excess impulse over what static support alone would produce

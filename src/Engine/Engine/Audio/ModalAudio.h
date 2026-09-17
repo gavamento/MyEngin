@@ -13,6 +13,7 @@
 #include "Engine/Engine/Audio/AudioClip.h"
 #include "Engine/Engine/Audio/AudioSystem.h" // AudioSpatial
 #include "Engine/Engine/Modal/ModalFeatureMap.h"
+#include "Engine/Engine/Modal/ModalSoundLibrary.h" // ModalMeshRef (M76j)
 #include "Engine/Engine/Modal/ModalTypes.h"
 #include "Engine/Engine/Modal/Voxelizer.h" // modal::VoxelFrame
 
@@ -73,7 +74,7 @@ constexpr float kModalPreviewDefaultImpulse = 15.0f;
 //   CollectModalImpacts (今 tick の WorldMatrix が手に入る場所) で 1 回だけ行う。
 struct PendingModalImpact {
     EntityID source = kNullEntity; // ModalSound を持つ側 (発音元)
-    AssetID mesh = {};             // 解決済み (ModalSound.mesh か同 entity の MeshRenderer.mesh)
+    AssetID mesh = {};             // 解決済みの ModalMeshRef::id (単体ならメッシュ、合成ならパーツ列のハッシュ)
     float worldPoint[3] = {};      // 接触点 (ワールド)
     float localPoint[3] = {};      // 接触点 (発音元ローカル。cell 選択に使う)
     float k[3] = {};               // C(J_excess) * nE_local (ローカル軸の力ベクトル、符号付き。
@@ -142,10 +143,21 @@ struct ModalShotInfo {
     float lenSec = 0.0f; // ModalClipSeconds と同値
 };
 
-// ModalSound.mesh (空なら同 entity の MeshRenderer.mesh) を解決する **唯一の規則**。
-// CollectModalImpacts / ResolveWaveShotSound (口封じ) / Inspector プレビュー (sub-07) が共有する
-// (MakeSourcePlay の「規則は 1 本」と同じ思想 — 2 本目を書くと必ずずれる)
-AssetID ResolveModalMesh(World& world, EntityID e, const ModalSoundComponent& comp);
+// 発音元の「焼く形」を解決する **唯一の規則**。
+// CollectModalImpacts / AudioSourceSystem の drain / ResolveWaveShotSound (口封じ) /
+// Inspector プレビュー (sub-07) が共有する
+// (MakeSourcePlay の「規則は 1 本」と同じ思想 — 2 本目を書くと必ずずれる)。
+//   1. ModalSound.mesh が非空 → そのメッシュ単体
+//   2. 子孫に MeshRenderer が無い → 自分の MeshRenderer.mesh 単体 (M76i 以前と ID までバイト一致)
+//   3. 子孫に MeshRenderer がある → 自分 + 子孫のメッシュを**発音元ローカル空間**へ変換して合成 (M76j)。
+//      FBX / glTF は「ルート (MeshRenderer 無し) → ノード → part」で置かれるので、ルートに付けた
+//      ModalSound は 1〜2 だと空になり、接触が無言で捨てられていた。
+//      除外する部分木: 自前の ModalSound を持つ子孫 (別の発音元) / Rigidbody を持つ子孫
+//      (独立に動く物体) / ActiveComponent.enabled==0 の子孫 (非表示の部品を形に混ぜない)。
+//      相対行列は WorldMatrix の逆行列ではなく **LocalTransform の連鎖**から組む — 浮動小数の
+//      揺れでキー (= 合成 ID) が毎フレーム変わると焼き直しが暴れるため。
+//      スキン付きメッシュはバインド姿勢のまま入る (アニメーション姿勢は反映しない)
+ModalMeshRef ResolveModalMesh(World& world, EntityID e, const ModalSoundComponent& comp);
 
 // 発音元のローカル軸のうち、メッシュのローカル AABB で最長の軸に対応するワールドスケールを返す
 // (spec §4.1「σ3 の L_obj = ローカル最長辺 × その軸のワールドスケール × sizeScale」)。

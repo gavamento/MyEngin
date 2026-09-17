@@ -26,6 +26,45 @@ namespace mye {
 
 struct RenderResources;
 
+// 焼く形の指定 (M76j)。1 メッシュそのまま (parts 1 件・identity) か、複数メッシュを
+// 発音元ローカル空間へ変換して合体した形か。解決規則は Audio/ModalAudio.cpp の
+// ResolveModalMesh が唯一の出どころ — FBX / glTF は「ルート (MeshRenderer 無し) → ノード → part」
+// の階層で置かれるので、ルートに付けた ModalSound は子孫のメッシュを合体しないと形が無い。
+// ★Modal/ は World を知らない層なので、ここは値だけを持つ (階層を辿るのは Audio 側)
+struct ModalMeshPart {
+    AssetID mesh = {};
+    DirectX::XMFLOAT4X4 toSource = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }; // メッシュローカル → 発音元ローカル
+    bool identity = true; // true なら toSource を掛けない (単体経路の頂点をビット単位で保つ)
+};
+
+struct ModalMeshRef {
+    // キャッシュのキー。単体なら mesh そのもの、合成ならパーツ列 (mesh + toSource の生ビット) の
+    // ハッシュ。★合成の .msfm 表での登録名は GatherGeometry が先頭パーツの GUID 接頭辞から作る
+    // ("guid://<16hex>#modal#<id 16hex>") — Audio 層はメッシュの登録名を知らないため
+    AssetID id = {};
+    bool composite = false;
+    std::vector<ModalMeshPart> parts; // 合成の連結順 (呼び出し側で決定論的に整列済み)
+
+    bool IsNull() const
+    {
+        return id.IsNull();
+    }
+    bool IsComposite() const
+    {
+        return composite;
+    }
+    // 1 メッシュそのまま (従来の経路。ID もキーも M76i 以前とバイト一致)
+    static ModalMeshRef Single(AssetID mesh)
+    {
+        ModalMeshRef r;
+        r.id = mesh;
+        if (!mesh.IsNull()) {
+            r.parts.push_back(ModalMeshPart{ mesh });
+        }
+        return r;
+    }
+};
+
 enum class ModalState : uint8_t {
     Missing, // mesh 未登録 / CPU 頂点なし (キャッシュしない。後から登録され得る)
     Baking,  // ジョブ投入済み、結果待ち
@@ -69,7 +108,12 @@ public:
     // (ReloadHub がホットリロードから呼ぶ)。モデル未ロードなら false
     bool ReloadModel();
 
-    ModalState Request(AssetID mesh);
+    // AssetID 版は ModalMeshRef::Single への委譲 (selftest / --modal-bake はメッシュ単位)
+    ModalState Request(AssetID mesh)
+    {
+        return Request(ModalMeshRef::Single(mesh));
+    }
+    ModalState Request(const ModalMeshRef& ref);
     const ModalFeatureMap* Get(AssetID mesh) const;
     const DmNetHeader* Header() const
     {
@@ -85,7 +129,11 @@ public:
 
     // 同期焼き (selftest / --modal-bake 用)。ボクセル化 + 推論をこのスレッドで即座に行う。
     // 成功で Ready、失敗で Failed (どちらも cache_ に反映してから返す)
-    bool BakeSync(AssetID mesh);
+    bool BakeSync(AssetID mesh)
+    {
+        return BakeSync(ModalMeshRef::Single(mesh));
+    }
+    bool BakeSync(const ModalMeshRef& ref);
 
     // dirty (未保存) な .msfm 表を**全部まとめて**書き出す (reviewer round 1 指摘 3 の是正)。
     // UpdateTableEntry は保存を毎回はしない (dirtyTables_ へ積むだけ) ので、これを呼ぶまで
@@ -124,6 +172,14 @@ private:
         bool needsMainInfer = false;
         modal::VoxelGrid grid;
     };
+
+    // ref の全パーツの CPU 頂点を集め、toSource を掛けて 1 本の三角形列へ連結する
+    // (Request / BakeSync が共有する唯一の手順)。1 パーツでも未登録 / CPU 頂点なしなら false
+    // (= Missing。キャッシュしない)。nameOut は .msfm 表のキー (単体はメッシュの登録名)
+    bool GatherGeometry(const ModalMeshRef& ref, std::vector<DirectX::XMFLOAT3>& positions,
+                        std::vector<uint32_t>& indices, std::string& nameOut) const;
+    // .msfm 表に今の .dmnet で焼いた結果があれば cache_ へ載せて true (Request / BakeSync 共通)
+    bool TryLoadFromTable(uint64_t id, const std::string& name);
 
     void EnsureWorker();
     void WorkerLoop();

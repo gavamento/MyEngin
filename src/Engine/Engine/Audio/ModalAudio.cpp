@@ -7,8 +7,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Hash.h"
+#include "Engine/Core/HierarchyWalk.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Acoustic/AcousticField.h" // acoustic::RestingImpulse / kImpactMinImpulse
 #include "Engine/Engine/Audio/ModalSynth.h"
@@ -50,15 +53,85 @@ float ModalImpulseCurve(float excessImpulse)
         * std::pow(excessImpulse / acoustic::kImpactRefImpulse, kModalImpulseExponent);
 }
 
-AssetID ResolveModalMesh(World& world, EntityID e, const ModalSoundComponent& comp)
+namespace {
+
+// e のローカル → 発音元 source のローカル。e から source の直下までの LocalTransform を
+// TransformSystem::ComputeWorldFrom と同じ式 (XMMatrixAffineTransformation、行ベクトルなので
+// 子 → 親の順に右へ掛ける) で積む。source 自身の変換は含めない
+// (接触点は source の WorldMatrix の逆で source ローカルへ落としている = CollectModalImpacts)
+XMMATRIX ModalRelativeToSource(World& world, EntityID source, EntityID e)
+{
+    XMMATRIX m = XMMatrixIdentity();
+    for (EntityID cur = e; !cur.IsNull() && cur != source; cur = world.GetParent(cur)) {
+        if (const auto* lt = world.GetComponent<LocalTransform>(cur)) {
+            const XMMATRIX local = XMMatrixAffineTransformation(
+                XMLoadFloat3(&lt->scale), XMVectorZero(), XMLoadFloat4(&lt->rotation),
+                XMLoadFloat3(&lt->position));
+            m = XMMatrixMultiply(m, local);
+        }
+    }
+    return m;
+}
+
+} // namespace
+
+ModalMeshRef ResolveModalMesh(World& world, EntityID e, const ModalSoundComponent& comp)
 {
     if (!comp.mesh.IsNull()) {
-        return comp.mesh;
+        return ModalMeshRef::Single(comp.mesh);
     }
-    if (const auto* mr = world.GetComponent<MeshRendererComponent>(e)) {
-        return mr->mesh;
+    const auto* ownMr = world.GetComponent<MeshRendererComponent>(e);
+    const AssetID ownMesh = (ownMr != nullptr) ? ownMr->mesh : AssetID{};
+
+    std::vector<ModalMeshPart> parts;
+    ForEachInSubtree(world, e, [&](EntityID cur, uint32_t) {
+        if (cur == e) {
+            return WalkStep::Continue;
+        }
+        if (world.GetComponent<ModalSoundComponent>(cur) != nullptr
+            || world.GetComponent<RigidbodyComponent>(cur) != nullptr) {
+            return WalkStep::SkipChildren; // 別の発音元 / 独立に動く物体
+        }
+        if (const auto* active = world.GetComponent<ActiveComponent>(cur)) {
+            if (active->enabled == 0) {
+                return WalkStep::SkipChildren;
+            }
+        }
+        if (const auto* mr = world.GetComponent<MeshRendererComponent>(cur)) {
+            if (!mr->mesh.IsNull()) {
+                ModalMeshPart part;
+                part.mesh = mr->mesh;
+                part.identity = false;
+                XMStoreFloat4x4(&part.toSource, ModalRelativeToSource(world, e, cur));
+                parts.push_back(part);
+            }
+        }
+        return WalkStep::Continue;
+    });
+    if (parts.empty()) {
+        return ModalMeshRef::Single(ownMesh); // 規則 2 (従来経路。ownMesh が空なら空のまま)
     }
-    return AssetID{};
+    if (!ownMesh.IsNull()) {
+        parts.push_back(ModalMeshPart{ ownMesh }); // 自分のメッシュは恒等で入る
+    }
+
+    // 階層の兄弟順に依存させない: (mesh, 行列の生ビット) で整列してから連結・ハッシュする
+    std::sort(parts.begin(), parts.end(), [](const ModalMeshPart& a, const ModalMeshPart& b) {
+        if (a.mesh.value != b.mesh.value) {
+            return a.mesh.value < b.mesh.value;
+        }
+        return std::memcmp(&a.toSource, &b.toSource, sizeof(a.toSource)) < 0;
+    });
+    ModalMeshRef ref;
+    ref.composite = true;
+    uint64_t h = HashStr("modal-composite");
+    for (const ModalMeshPart& part : parts) {
+        h = HashBytes(&part.mesh.value, sizeof(part.mesh.value), h);
+        h = HashBytes(&part.toSource, sizeof(part.toSource), h);
+    }
+    ref.id = AssetID{ h };
+    ref.parts = std::move(parts);
+    return ref;
 }
 
 float ModalWorldScaleOfLongestAxis(const modal::VoxelFrame& frame, const XMFLOAT4X4& worldMatrix)
@@ -144,14 +217,16 @@ void CollectModalImpacts(World& world, const std::vector<SolidContact>& contacts
         if (comp == nullptr) {
             return; // ModalSound を持たない側は従来経路のまま (opt-in)
         }
-        const AssetID mesh = ResolveModalMesh(world, src, *comp);
-        if (mesh.IsNull()) {
-            return; // 焼く対象のメッシュが無い
-        }
         const float rest = acoustic::RestingImpulse(world, ea, eb, gMag, dt);
         const float excess = c.impulse - rest;
         if (excess <= acoustic::kImpactMinImpulse) {
             return; // 擦り扱い (spec §4.1)
+        }
+        // M76j: 解決は子孫の走査を伴うので擦り判定の後に置く (載っているだけの接触は毎 tick 来る)。
+        // 順序を入れ替えても push される impact は同じ (どちらも return するだけの独立な早期脱出)
+        const AssetID mesh = ResolveModalMesh(world, src, *comp).id;
+        if (mesh.IsNull()) {
+            return; // 焼く対象のメッシュが無い (自分にも子孫にも MeshRenderer が無い)
         }
         const auto* wm = world.GetComponent<WorldMatrixComponent>(src);
         if (wm == nullptr) {
