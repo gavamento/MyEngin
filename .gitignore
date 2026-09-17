@@ -38,3 +38,4 @@ tools/deepmodal/data/
 tools/deepmodal/**/__pycache__/
 tools/deepmodal/.pytest_cache/
 tools/deepmodal/runs/
+/CLAUDE.md
