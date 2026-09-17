@@ -230,4 +230,14 @@ void UiDemoScriptInput(uint64_t tick, InputSnapshot& lane0);
 // 対象の拡張子は実装 (DemoContent.cpp の RegisterAssetLibraries) の分岐が正本 — ここには列挙しない
 void RegisterAssetLibraries(EngineContext& ctx);
 
+// M76f: Deep-Modal 衝突音のショーケース (--modal-demo)。木 / 金属 / ガラスの箱 3 個が
+// 金属板と木の床 (床は左半分=木・右半分=金属) に落ちるだけの小シーン。
+// ★builtin メッシュ + physmat + ModalSound だけで、**AcousticAudio を置かない**
+//   (AudioSourceSystem::Update の acOn=false 経路 = Bypass クラスもここで踏む)。
+// golden / replay ペアは足さない (spec §3「やらない」— 出力レーンのみで主張が無いため)。
+void BuildModalShowcaseScene(EngineContext& ctx);
+
+// 上のショーケースが参照するマテリアルの実体登録 (mdemo_ 接頭辞)
+void RegisterModalShowcaseContent(EngineContext& ctx);
+
 } // namespace mye

@@ -25,6 +25,7 @@
 #include "Engine/Engine/Audio/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
+#include "Engine/Engine/Modal/ModalSoundLibrary.h" // M76e: .dmnet モデル + メッシュ毎の特徴マップの焼き
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Physics/ConvexColliderLibrary.h"
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
@@ -124,6 +125,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     PhysicsSystem physicsSystem; // 剛体積分 + 衝突解決 (M20、ステートレス)
     MeshColliderLibrary meshColliders; // 静的メッシュコライダーの BVH キャッシュ (M41)
     ConvexColliderLibrary convexColliders;   // 凸包コライダー + .mcvx クック (M60f)
+    ModalSoundLibrary modalSounds; // Deep-Modal 推論 + .msfm クック (M76e)。sim には触れない
     PhysMatLibrary physMatLibrary;     // .physmat.json (M59a1)。sim の消費は M59a2 から
     TerrainColliderLibrary terrainColliders; // 地形コライダー (M59i)。**描画側とは別キャッシュ**
     // XPBD 変形体の粒子池 (M60'b)。ECS 外 sim 状態の 2 例目 — ハッシュ節 (SimSources) と
@@ -266,6 +268,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // クック (.mcvx) が乗るので CookedCache::Configure より後で使われること (Get は lazy)
     convexColliders.Init(&resources);
     convexcol::Install(&convexColliders);
+    // M76e: Deep-Modal 推論。CLI (--modal-backend) は綴りだけ検査済みで、未実装名
+    // ("d3d11cs") への縮退はここ (SetBackendByName) が WARN 付きでやる。
+    // .dmnet が無い (M76h 未実装/未生成) 環境では LoadModel が false を返すだけで、
+    // 以後 Request() は常に NoModel = 既存の音経路 (WaveSound 等) に一切影響しない
+    modalSounds.Init(&resources);
+    modalSounds.SetBackendByName(WideToUtf8(config.modalBackendName));
+    modalsound::Install(&modalSounds);
+    modalSounds.LoadModel(ResolveDeepModalPath(assetsRoot));
     // M59a1: 物理マテリアル (.physmat.json)。起動走査 (RegisterAssetLibraries) と ReloadHub が
     // physmat::Library() 経由で読み込むので、走査より前に注入しておくこと
     physmat::Install(&physMatLibrary);
@@ -341,6 +351,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // AssetPreviewCache が持つ別インスタンスは誰も埋めないので、試聴音が遮蔽されない)
     audioSources.SetAcousticField(&acoustic);
     audioSources.SetAcousticAudioLog(config.acousticAudioLogTicks);
+    // M76f: 衝突音のモーダル合成。**ここが唯一の配線点** (残光 / 音響の 1 行上と同じ理由)
+    audioSources.SetModalLibrary(&modalSounds);
+    audioSources.SetModalAudioLog(config.modalAudioLogTicks);
+    audioSources.SetModalSyncBake(config.modalSyncBake);
+    audioSources.SetModalWavDump(config.modalWavDumpDir);
+    audioSources.SetModalFaceProbe(config.modalFaceProbe);
     renderSystem.postFxSettings.tonemap = config.postFxTonemap;
     renderSystem.postFxSettings.exposure = config.postFxExposure;
     renderSystem.postFxSettings.bloom = config.postFxBloom;
@@ -781,6 +797,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // ---- メインループ (フェーズ構成は engine_spec.md 5.3 / ADR-005) ----
     double accumulator = 0.0;
+    // 生マウスデルタとホイールの持ち越し (2026-09-15)。tick の回らないフレームで動かした分を
+    // 次に回る tick へ渡し、1 フレームで複数本回っても最初の 1 本にだけ渡す (Input.h の解説)
+    PointerDeltaCarry pointerCarry;
     bool running = !netFailed; // 接続失敗時は 1 フレームも回さずに通常の後始末へ落ちる
     // M36b 描画補間: 前 tick 末のワールド行列 (tick 頭に採取)。record/verify 中は不使用
     PrevWorldStore prevWorld;
@@ -1445,6 +1464,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             for (uint32_t p = 0; p < captureLanes; ++p) {
                 ctx.inputs[p] = input.CaptureSnapshot(p, surface);
             }
+            // 前のフレームで tick が回らず読まれなかったマウス量を足す (PointerDeltaCarry)。
+            // ★画面外のホイールを捨てる下の Mask より前 = 持ち越した分にも同じ規則が効く
+            pointerCarry.AddTo(ctx.inputs[0]);
             // ---- ゲームの画面の外のクリックを捨てる (2026-09-14) ----
             // エディタのマウス座標はエディタ全体のクライアント px なので、そのままだと停止ボタンや
             // インスペクタのクリックがゲームの「画面クリック」になる (Esc で放したカーソルを
@@ -1697,6 +1719,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     c = 0;
                 }
                 netLiveInput.charCount = 0;
+                // マウス量も同じ (PointerDeltaCarry)。次の target へ同じ量を送ると相手側で 2 回回る
+                PointerDeltaCarry::ClearAfterTick(netLiveInput);
             }
             // ★クラッシュ .rep へは tick に**入る前**に入力を載せる (M52f)。
             //   落ちるのは RunOneTick の中なので、tick 末に載せる作りだと
@@ -1803,6 +1827,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 c = 0;
             }
             ctx.inputs[0].charCount = 0;
+            // マウス量も 1 tick ぶんだけ (PointerDeltaCarry)。消さないと同じフレームの次の tick が
+            // 同じ量をもう一度足し、fps が 60 を割ったフレームで視点が跳ねる
+            PointerDeltaCarry::ClearAfterTick(ctx.inputs[0]);
             if (liveCharsPending > 0) {
                 input.ConsumeChars(liveCharsPending);
                 liveCharsPending = 0;
@@ -1815,6 +1842,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 break;
             }
         }
+        // 回らなかったフレームのマウス量を次へ持ち越す (回ったフレームは 0 が残る)。
+        // ★スクラブ中とフォーカス喪失中は捨てる — 再開した 1 tick で視点が飛ぶ
+        pointerCarry.EndFrame(ctx.inputs[0], timeTravel.Scrubbing() || !window.HasFocus());
         if (!verifying && !fastRecording && ticks == kMaxTicksPerFrame && accumulator > kFixedDt) {
             // 追いつけない分は捨てる (スローモーション化を許容し、tick 爆発を防ぐ)
             accumulator = kFixedDt;
@@ -2238,6 +2268,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         //   なる — M45e のドップラーは tick 差分で速度を取る前提でここに置いている。
         //   M45e: AudioSource/AudioListener を先に処理して定位を確定させ、その後に
         //   voice 回収を回す (回収でスロットが空くのは次フレームからで良い)
+        // M76e: Deep-Modal の非同期焼き結果の取り込み (+ GPU バックエンドなら 1 フレーム 1 ジョブの
+        // 推論もここで回す)。**audioSources.Update より前**に置くこと — 同 tick の接触が
+        // Request() した状態 (Ready/Baking) を、鳴らす側 (sub-06) が同じフレームで読めるようにする
+        modalSounds.Pump();
         // M73a: ホールド / スクラブ中は sim を止めている扱いで渡す (ctx.simulateScripts は直前 tick
         // の値のまま残るので、そのまま渡すと playOnAwake の source が止まった世界で鳴り出す)
         audioSources.Update(scene.GetWorld(), audioSystem, soundLibrary, ctx.tickIndex,
@@ -2514,6 +2548,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.acousticField = nullptr;
     meshcol::Install(nullptr); // M41 (meshColliders 破棄前に必ず外す)
     convexcol::Install(nullptr); // M60f (convexColliders 破棄前に必ず外す)
+    modalsound::Install(nullptr); // M76e (modalSounds 破棄前に必ず外す)
+    modalSounds.Shutdown(); // ワーカー join (TextureLibrary::AsyncWorker と同じ流儀)
     physmat::Install(nullptr); // M59a1 (physMatLibrary 破棄前に必ず外す)
     terraincol::Install(nullptr); // M59i (terrainColliders 破棄前に必ず外す)
     AssetDatabase::UninstallKeyResolver(); // M30c (assetDatabase 破棄前に必ず外す)
@@ -2570,6 +2606,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                      acs.classCount[1], acs.classCount[2], acs.classCount[3], acs.shots,
                      acs.shotsSkipped, acs.shotsUnknownKey, acs.shotsDropped,
                      static_cast<double>(acs.roomT), acs.shotsPlayFailed);
+    }
+    // M76f: Deep-Modal 衝突音の run 総括。**bakeMsAvg だけは run-to-run 比較から除く**
+    // (実時間なので機種と負荷で動く)。--no-audio では impacts も 0 のまま = 1 行も出ない
+    if (config.modalAudioLogTicks > 0 && audioSources.ModalStats().impacts > 0) {
+        const ModalAudioStats& ms = audioSources.ModalStats();
+        MYE_LOG_INFO("[modal] summary impacts=%d played=%d notReady=%d cooldown=%d belowMin=%d "
+                     "dropped=%d poolFull=%d playFailed=%d bakes=%d bakeMsAvg=%.3f",
+                     ms.impacts, ms.played, ms.notReady, ms.cooldown, ms.belowMin, ms.dropped,
+                     ms.poolFull, ms.playFailed, ms.bakes, static_cast<double>(ms.BakeMsAvg()));
     }
     if (config.rtDebugMode != rtdebug::kOff || config.rtGi || config.rtShadow || config.rtRefl) {
         // M46b: BVH の規模とソフトウェアトラバーサルの実測値 (性能ゲートの一次データ)。

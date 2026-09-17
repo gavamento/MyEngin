@@ -11,5 +11,9 @@
   "adhesion": 0.0,
   "acousticLoudness": 0.4,
   "acousticRadiusM": 12.0,
-  "acousticTone": 0
+  "acousticTone": 0,
+  "youngsModulus": 7.4e10,
+  "poissonRatio": 0.19,
+  "rayleighAlpha": 6.0,
+  "rayleighBeta": 1.0e-7
 }

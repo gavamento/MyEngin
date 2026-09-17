@@ -67,6 +67,7 @@ enum class ReloadKind : uint8_t {
     PhysMat,     // .physmat.json
     Compose,     // .actor.json / .prefab.json
     Scene,       // .scene.json と、それ以外の .json (開いているシーンなら拡張子を問わない)
+    ModalNet,    // .dmnet (M76e: Deep-Modal の学習済みネット)
 };
 
 // 正規化済みパス (NormalizePathKey) の種類と、一括適用の順位 (小さいほど先)。
@@ -125,6 +126,7 @@ private:
     ReloadResult ReloadImpactSound(const std::wstring& path);
     ReloadResult ReloadMixer(const std::wstring& path);
     ReloadResult ReloadPhysMat(const std::wstring& path);
+    ReloadResult ReloadModalNet(const std::wstring& path);
     ReloadResult ReloadCompose(const std::wstring& path);
     ReloadResult ReloadActiveScene(const std::wstring& path);
     // リトライ列へ積む (同じパスが積まれていれば何もしない)

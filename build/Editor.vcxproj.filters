@@ -33,6 +33,7 @@
     <ClCompile Include="..\src\Editor\HzbSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\LayoutManager.cpp" />
     <ClCompile Include="..\src\Editor\LightSelectionSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\ModalTools.cpp" />
     <ClCompile Include="..\src\Editor\PartSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\PartTagNames.cpp" />
     <ClCompile Include="..\src\Editor\PhysicsLayerNames.cpp" />
@@ -148,6 +149,7 @@
     <ClInclude Include="..\src\Editor\HzbSelfTest.h" />
     <ClInclude Include="..\src\Editor\LayoutManager.h" />
     <ClInclude Include="..\src\Editor\LightSelectionSelfTest.h" />
+    <ClInclude Include="..\src\Editor\ModalTools.h" />
     <ClInclude Include="..\src\Editor\PartSelfTest.h" />
     <ClInclude Include="..\src\Editor\PartTagNames.h" />
     <ClInclude Include="..\src\Editor\PhysicsLayerNames.h" />

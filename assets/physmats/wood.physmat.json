@@ -10,5 +10,9 @@
   "dragCoefficient": 0.47,
   "acousticLoudness": 0.3,
   "acousticRadiusM": 7.0,
-  "acousticTone": 1
+  "acousticTone": 1,
+  "youngsModulus": 1.1e10,
+  "poissonRatio": 0.35,
+  "rayleighAlpha": 10.0,
+  "rayleighBeta": 2.0e-6
 }

@@ -1,0 +1,10 @@
+# Deep-Modal データセット生成 / 学習ツールの依存 (tools/collab が Rust で「sln の外」に
+# あるのと同じ流儀 — このディレクトリも MyEngine.sln の外)。
+#
+# torch はここには書かない。CUDA (cu128) ビルドを使う前提なので、この requirements.txt を
+# 素朴に `pip install -r` すると pip が CPU 版へ差し替えてしまう危険がある。
+# 既に cu128 の torch が入っている前提で、torch が未導入の環境では README の手順どおり
+# 別途 `--index-url https://download.pytorch.org/whl/cu128` を明示してから入れること。
+numpy
+scipy
+pytest

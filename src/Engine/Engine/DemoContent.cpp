@@ -3732,4 +3732,170 @@ void UiDemoScriptInput(uint64_t tick, InputSnapshot& lane0)
     }
 }
 
+// M76f: Deep-Modal 衝突音のショーケース (--modal-demo)。参照: RegisterPhysicsShowcaseContent /
+// BuildPhysicsShowcaseScene (同じ builtin キューブ + 名前引き physmat の作法)
+void RegisterModalShowcaseContent(EngineContext& ctx)
+{
+    RenderResources& res = *ctx.resources;
+    const AssetID white = res.textures.White();
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    res.meshes.Cube();
+
+    auto makeMat = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = shader;
+        m.texture = white;
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    makeMat("mdemo_floor_wood", 0.55f, 0.40f, 0.25f);
+    makeMat("mdemo_floor_metal", 0.55f, 0.57f, 0.60f);
+    makeMat("mdemo_wood", 0.62f, 0.46f, 0.28f);
+    makeMat("mdemo_metal", 0.70f, 0.72f, 0.76f);
+    makeMat("mdemo_glass", 0.75f, 0.88f, 0.92f);
+    makeMat("mdemo_tile", 0.80f, 0.78f, 0.74f); // sub-10 E: 形状差 (sphere) を見せる 4 個目
+    res.meshes.Sphere();
+}
+
+void BuildModalShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+    s.SetName("modal_showcase");
+    const AssetID cube = res.meshes.Cube();
+    const AssetID matWood = FindPhysMat("wood");
+    const AssetID matMetal = FindPhysMat("metal");
+    const AssetID matGlass = FindPhysMat("glass");
+
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    camera.SetLocalPosition(0.0f, 6.0f, -14.0f);
+    camera.SetLocalRotationEuler(18.0f, 0.0f, 0.0f);
+
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(50.0f, -30.0f, 0.0f);
+
+    // ---- 物理環境 (シーンに 1 個) ----
+    {
+        GameObject envGo = s.CreateGameObject("Environment");
+        auto* env = envGo.AddComponent<PhysicsEnvironmentComponent>();
+        env->gravity = { 0.0f, -9.81f, 0.0f };
+    }
+
+    // ---- 床: 左半分 = 木 / 右半分 = 金属。**AcousticAudio を置かない** (Bypass 経路も踏む) ----
+    {
+        GameObject floor = s.CreateGameObject("FloorWood");
+        floor.SetLocalPosition(-4.0f, -0.5f, 0.0f);
+        floor.SetLocalScale(8.0f, 1.0f, 8.0f);
+        auto* mr = floor.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("mdemo_floor_wood") };
+        auto* col = floor.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kBox;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        col->physMaterial = matWood;
+    }
+    {
+        GameObject floor = s.CreateGameObject("FloorMetal");
+        floor.SetLocalPosition(4.0f, -0.5f, 0.0f);
+        floor.SetLocalScale(8.0f, 1.0f, 8.0f);
+        auto* mr = floor.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("mdemo_floor_metal") };
+        auto* col = floor.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kBox;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        col->physMaterial = matMetal;
+    }
+
+    // ---- 木の箱: 木の床へ低い高さから落ちる (基準の当たり方) ----
+    {
+        GameObject box = s.CreateGameObject("WoodBox");
+        box.SetLocalPosition(-4.0f, 4.0f, 0.0f);
+        box.SetLocalScale(1.0f, 1.0f, 1.0f);
+        auto* mr = box.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("mdemo_wood") };
+        auto* col = box.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kBox;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        col->physMaterial = matWood;
+        auto* rb = box.AddComponent<RigidbodyComponent>();
+        // ★[修正、reviewer round 1 must #1] 旧 `useDensity=true` は 1 m³ の**中実**剛体
+        // (wood.physmat.json の density=700 → 700 kg) を作っていた — 「衝突音のショーケース」
+        // としては非現実的な質量で、この力積 (J=161〜102164) に合わせて圧縮カーブの指数を
+        // 選ぶと現実的な衝突の表現力が犠牲になる (ModalAudio.h の kModalImpulseExponent
+        // コメント参照)。小道具サイズの質量を直接指定する — 見た目のサイズは変えない
+        // (SetLocalScale はそのまま) が、物理的な重さだけ現実的な範囲へ落とす
+        rb->mass = 2.0f; // kg (木箱サイズの小道具相当)
+        box.AddComponent<ModalSoundComponent>(); // mesh は空 = MeshRenderer.mesh (Cube) を使う
+    }
+
+    // ---- 金属の箱: 金属の床へ低い高さから落ちる (WoodBox と「面で音が変わる」対) ----
+    {
+        GameObject box = s.CreateGameObject("MetalBox");
+        box.SetLocalPosition(3.0f, 4.0f, 0.0f);
+        box.SetLocalScale(1.0f, 1.0f, 1.0f);
+        auto* mr = box.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("mdemo_metal") };
+        auto* col = box.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kBox;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        col->physMaterial = matMetal;
+        auto* rb = box.AddComponent<RigidbodyComponent>();
+        // ★[修正、reviewer round 1 must #1] 旧 `useDensity=true` は 1 m³ 中実 (metal
+        // density=7850 → 7,850 kg = 8 トン級) を作っていた。WoodBox と同じ理由で
+        // 現実的な質量へ直す (見た目のサイズは不変)
+        rb->mass = 4.0f; // kg (金属塊サイズの小道具相当。木より少し重い程度)
+        box.AddComponent<ModalSoundComponent>();
+    }
+
+    // ---- ガラスの箱: 金属の床へ高い所から強く落ちる (MetalBox と「強く落とすと大きい」対) ----
+    {
+        GameObject box = s.CreateGameObject("GlassBox");
+        box.SetLocalPosition(5.0f, 10.0f, 0.0f);
+        box.SetLocalScale(0.8f, 0.8f, 0.8f);
+        auto* mr = box.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("mdemo_glass") };
+        auto* col = box.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kBox;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        col->physMaterial = matGlass;
+        auto* rb = box.AddComponent<RigidbodyComponent>();
+        // ★[修正、reviewer round 1 must #1] 旧 `useDensity=true` は 0.8³ m³ 中実
+        // (glass density=2500 → 約 1,280 kg) を作っていた。ガラスは中身が詰まっていない
+        // (置物/瓶サイズ) 想定で軽くする — MetalBox より軽いぶんは、落下高さの差
+        // (y=4 → y=10) がもたらす速度差で埋め合わせ、なお「強く落とすと大きい」対になる
+        rb->mass = 1.0f; // kg (ガラス製の小物相当)
+        box.AddComponent<ModalSoundComponent>();
+    }
+
+    // ---- タイルの球: 金属の床へ落ちる (spec sub-10 E、reviewer round 1 指摘 7)。
+    //     ★生成順の**末尾**に置く (このリポジトリの流儀: 末尾へ足せば既存の replay/golden に
+    //     影響しない)。WoodBox/MetalBox/GlassBox は 3 個とも Cube = 同一メッシュだったため、
+    //     「形状で音が変わる」の機構自体は .msfm の解析で確認できても、デモでは見せられなかった ----
+    {
+        const AssetID sphere = res.meshes.Sphere();
+        GameObject ball = s.CreateGameObject("TileSphere");
+        ball.SetLocalPosition(-1.0f, 6.0f, 3.0f);
+        ball.SetLocalScale(1.0f, 1.0f, 1.0f);
+        auto* mr = ball.AddComponent<MeshRendererComponent>();
+        mr->mesh = sphere;
+        mr->material = AssetID{ HashStr("mdemo_tile") };
+        auto* col = ball.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kSphere;
+        col->radius = 0.5f;
+        col->physMaterial = FindPhysMat("tile");
+        auto* rb = ball.AddComponent<RigidbodyComponent>();
+        // ★[修正、reviewer round 1 must #1] 半径 0.5m の中実球 (tile density=2400 相当) は
+        // useDensity だと約 1,257 kg になる。小道具サイズの質量へ直す (他 3 個と同じ理由)
+        rb->mass = 1.5f; // kg (タイル玉サイズの小道具相当)
+        auto* modal = ball.AddComponent<ModalSoundComponent>();
+        modal->mesh = sphere; // MeshRenderer.mesh と同じだが、球であることを明示しておく
+    }
+}
+
 } // namespace mye

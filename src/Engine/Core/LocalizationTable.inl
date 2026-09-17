@@ -1104,6 +1104,13 @@ MYE_STR(Insp_PmRestitution,   "Restitution",         "反発係数")
 MYE_STR(Insp_PmRollingResistance, "Rolling Resistance", "転がり抵抗")
 MYE_STR(Insp_PmDragCoefficient, "Drag Coefficient (Cd)", "抗力係数 (Cd)")
 MYE_STR(Insp_PmAdhesion,      "Adhesion (N)",        "粘着力 (N)")
+// M76g: Deep-Modal の音響材質 4 フィールド (spec §4.2)。ν はランタイム未使用 (保持のみ)
+MYE_STR(Insp_PmYoungsModulus, "Young's Modulus (Pa)", "ヤング率 (Pa)")
+MYE_STR(Insp_PmPoissonRatio,  "Poisson's Ratio",     "ポアソン比")
+MYE_STR(Insp_PmPoissonRatioTip, "Not used by the current runtime (FEM / reference material metadata only)",
+                                "現行ランタイムは未使用 (FEM / 参照材質メタデータ用)")
+MYE_STR(Insp_PmRayleighAlpha, "Rayleigh Alpha (mass, 1/s)", "レイリー減衰 α (質量項, 1/s)")
+MYE_STR(Insp_PmRayleighBeta,  "Rayleigh Beta (stiffness, s)", "レイリー減衰 β (剛性項, s)")
 MYE_STR(Insp_PhysMatNote,     "Applied when assigned to a collider.",
                               "コライダーに割り当てると適用されます。")
 MYE_STR(Insp_PmOvFriction,    "Override Friction",   "摩擦を上書き")
@@ -1124,6 +1131,40 @@ MYE_STR(Insp_UIDrivenFitter,      "Size is set by the Content Size Fitter",
 MYE_STR(Insp_UIDrivenSlider,      "Anchors are set by the parent Slider",
                                   "アンカーは親の Slider が決めています")
 MYE_STR(Insp_PmOvRestitution, "Override Restitution", "反発を上書き")
+
+// ---- Deep-Modal インスペクタプレビュー (M76g) ----
+// ModalSound 節の末尾 (状態 / セル数 / 6 面ボタン / Export WAV)。sub-06 の
+// MakeModalShotPlay をそのまま呼ぶ (spec §4.3)。状態名・面ラベルは可変引数の後ろに
+// 渡すだけなので Tr() は printf の唯一の引数にならない (規則 10a)
+MYE_STR(Insp_ModalState,       "State: %s (%s)",        "状態: %s (%s)")
+MYE_STR(Insp_ModalStateMissing, "Missing",              "未登録")
+MYE_STR(Insp_ModalStateBaking,  "Baking...",            "焼成中…")
+MYE_STR(Insp_ModalStateReady,   "Ready",                "準備完了")
+MYE_STR(Insp_ModalStateFailed,  "Failed",               "失敗")
+MYE_STR(Insp_ModalStateNoModel, "No Model",             "モデル無し")
+MYE_STR(Insp_ModalCells,       "Cells: %u",             "セル数: %u")
+MYE_STR(Insp_ModalImpulse,     "Impulse (N*s)",         "力積 (N・s)")
+MYE_STR(Insp_ModalTapHeading,  "Tap a face to preview the impact sound:",
+                                "面を押すと衝突音を試聴できます:")
+MYE_STR(Insp_ModalFacePX,      "+X", "+X")
+MYE_STR(Insp_ModalFaceNX,      "-X", "-X")
+MYE_STR(Insp_ModalFacePY,      "+Y", "+Y")
+MYE_STR(Insp_ModalFaceNY,      "-Y", "-Y")
+MYE_STR(Insp_ModalFacePZ,      "+Z", "+Z")
+MYE_STR(Insp_ModalFaceNZ,      "-Z", "-Z")
+MYE_STR(Insp_ModalExportWav,   "Export WAV",            "WAV を書き出し")
+// sub-10 H (reviewer round 1 指摘 2): 面ボタンを押しても Played 以外なら黙って return
+// していたため「押しても何も起きない」と「まだ押していない」が UI から区別できなかった。
+// 直近の結果を常に出す (Played も含む — 「鳴った」ことも明示する)
+MYE_STR(Insp_ModalResultHeading,    "Last shot: %s",                  "直前の結果: %s")
+MYE_STR(Insp_ModalResultPlayed,     "played",                          "再生された")
+MYE_STR(Insp_ModalResultNotReady,   "mesh not baked yet",              "メッシュが未焼き")
+MYE_STR(Insp_ModalResultNoModel,    "no .dmnet loaded",                ".dmnet 未ロード")
+MYE_STR(Insp_ModalResultCooldown,   "cooldown",                        "クールダウン中")
+MYE_STR(Insp_ModalResultBelowMin,   "below audible minimum (raise Impulse)",
+                                     "可聴下限未満 (力積を上げてください)")
+MYE_STR(Insp_ModalResultPoolFull,   "voice pool full",                 "再生プール枯渇")
+MYE_STR(Insp_ModalResultPlayFailed, "play failed",                     "再生に失敗")
 
 // ---- Source Control (M66b) ----
 // "###" の右辺は両言語一致 + テーブル内で一意 (規則 10)。窓名の ID は

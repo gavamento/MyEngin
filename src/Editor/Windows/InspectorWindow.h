@@ -8,6 +8,8 @@
 #include "Editor/Selection.h"
 #include "Engine/Core/EntityID.h"
 #include "Engine/Core/ImportMetaResolver.h"
+#include "Engine/Engine/Audio/AudioClip.h" // Deep-Modal プレビューの直近クリップ (M76g)
+#include "Engine/Engine/Audio/ModalAudio.h" // ModalShotResult / kModalPreviewDefaultImpulse (sub-10 H)
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/Physics/PhysMatLibrary.h"
@@ -17,6 +19,10 @@ namespace mye {
 struct FieldDesc;
 struct ComponentDesc;
 class UndoStack;
+// Deep-Modal (M76g)。ModalFeatureMap/DmNetHeader の定義は ModalAudio.h 経由で既に見えている
+// (Engine/Engine/Modal/ModalTypes.h / ModalFeatureMap.h) — ModalSoundComponent だけは
+// ModalAudio.h も前方宣言止まりなのでここでも前方宣言を要る
+struct ModalSoundComponent;
 
 // Inspector に出すエンティティの集合 (M40a)。[0] = primary。表示値は primary、編集は全対象へバッチ適用
 struct InspectorTargets {
@@ -66,6 +72,15 @@ private:
     void DrawComponentFields(EngineContext& ctx, Selection& selection, UndoStack& undo,
                              const InspectorTargets& tg, const InspectorComponentRow& row, void* comp);
     void DrawComponentNotes(EngineContext& ctx, const InspectorTargets& tg, const InspectorComponentRow& row);
+    // M76g: ModalSound 節の末尾 (状態 / セル数 / 6 面ボタン / Export WAV)。
+    // DrawComponentNotes から desc.name == "ModalSound" のときだけ呼ばれる
+    void DrawModalSoundNotes(EngineContext& ctx, const InspectorTargets& tg, const InspectorComponentRow& row);
+    // 6 面ボタン 1 個ぶんの本体。sub-06 と同じ MakeModalShotPlay を呼ぶ (2 本目の規則を書かない)
+    void FireModalPreviewFace(EngineContext& ctx, const InspectorTargets& tg,
+                              const ModalSoundComponent& comp, const ModalFeatureMap& fm,
+                              const DmNetHeader& hdr, int face);
+    // 直近のプレビュー clip (modalPreview_) を .wav へ書き出す
+    void ExportModalPreviewWav(EngineContext& ctx);
     void DrawRemovedPrefabComponents(EngineContext& ctx, Selection& selection, UndoStack& undo,
                                      const InspectorTargets& tg);
     void DrawUnknownComponents(EngineContext& ctx, const InspectorTargets& tg);
@@ -154,6 +169,25 @@ private:
 
     // 名前欄の編集開始時の値 (確定時に同一なら改名しない — Esc の revert 対策、M48b)
     std::string nameOriginal_;
+
+    // Deep-Modal 面打ちプレビュー (M76g)。エディタ UI 状態のみ — シリアライズ/ハッシュ非対象。
+    // Export WAV は「直近にここへ書いた clip」を使う (SoundGenWindow::Save と同じ設計。
+    // どのエンティティの Inspector を開いているかに関係なく、直近に鳴らした音を書き出せる)
+    struct ModalPreviewState {
+        // N・s。スライダの現在値 (0.1..20)。既定はヘッドレス --modal-face-probe の
+        // kProbeImpulse と同じ共有定数 (sub-10 H、reviewer round 1 指摘 2 の是正 —
+        // 「4.0 では 6 面すべて BelowMin」だった旧既定と、片方だけ直った定数の再発防止)
+        float impulse = kModalPreviewDefaultImpulse;
+        AudioClip clip;         // 直近のプレビュー (MakeModalShotPlay の出力)
+        bool valid = false;     // clip が実際に鳴ったか (BelowMin 等では false のまま)
+        int face = -1;          // 直近に押した面 (0=+X,1=-X,2=+Y,3=-Y,4=+Z,5=-Z)。ファイル名に使う
+        uint64_t entityFid = 0; // clip を作ったエンティティの fileId (ファイル名に使う)
+        // sub-10 H: 「押しても何も起きない」と「まだ押していない」を UI から区別できるように
+        // する (reviewer round 1 指摘 2)。everFired==false の間は lastResult は無意味
+        bool everFired = false;
+        ModalShotResult lastResult = ModalShotResult::Played;
+    };
+    ModalPreviewState modalPreview_;
 };
 
 } // namespace mye

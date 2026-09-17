@@ -19,6 +19,9 @@
     <Filter Include="Engine\HotReload">
       <UniqueIdentifier>{45E1E3BD-577C-EB21-9437-FCBCEC610D8C}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Modal">
+      <UniqueIdentifier>{33C3F477-C681-6F8B-16E5-7CDE5CC1123C}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Net">
       <UniqueIdentifier>{ED389294-AB46-D963-50F2-AF0CEB244C3C}</UniqueIdentifier>
     </Filter>
@@ -213,6 +216,18 @@
     <ClCompile Include="..\src\Engine\Engine\Audio\ImpactSynthSelfTest.cpp">
       <Filter>Engine\Audio</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\ModalAudio.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\ModalAudioSelfTest.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\ModalSynth.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Audio\ModalSynthSelfTest.cpp">
+      <Filter>Engine\Audio</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Audio\MusicStream.cpp">
       <Filter>Engine\Audio</Filter>
     </ClCompile>
@@ -272,6 +287,27 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\LightSelection.cpp">
       <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Modal\CpuModalBackend.cpp">
+      <Filter>Engine\Modal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Modal\DmNet.cpp">
+      <Filter>Engine\Modal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Modal\ModalFeatureMap.cpp">
+      <Filter>Engine\Modal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Modal\ModalSelfTest.cpp">
+      <Filter>Engine\Modal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Modal\ModalSoundLibrary.cpp">
+      <Filter>Engine\Modal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Modal\TriangleSoup.cpp">
+      <Filter>Engine\Modal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Modal\Voxelizer.cpp">
+      <Filter>Engine\Modal</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\ModelLoader.cpp">
       <Filter>Engine</Filter>
@@ -816,6 +852,18 @@
     <ClInclude Include="..\src\Engine\Engine\Audio\ImpactSynthSelfTest.h">
       <Filter>Engine\Audio</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\ModalAudio.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\ModalAudioSelfTest.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\ModalSynth.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Audio\ModalSynthSelfTest.h">
+      <Filter>Engine\Audio</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Audio\MusicMath.h">
       <Filter>Engine\Audio</Filter>
     </ClInclude>
@@ -890,6 +938,33 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\LightSelection.h">
       <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Modal\CpuModalBackend.h">
+      <Filter>Engine\Modal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Modal\DmNet.h">
+      <Filter>Engine\Modal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Modal\ModalFeatureMap.h">
+      <Filter>Engine\Modal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Modal\ModalInferenceBackend.h">
+      <Filter>Engine\Modal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Modal\ModalSelfTest.h">
+      <Filter>Engine\Modal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Modal\ModalSoundLibrary.h">
+      <Filter>Engine\Modal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Modal\ModalTypes.h">
+      <Filter>Engine\Modal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Modal\TriangleSoup.h">
+      <Filter>Engine\Modal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Modal\Voxelizer.h">
+      <Filter>Engine\Modal</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\ModelLoader.h">
       <Filter>Engine</Filter>

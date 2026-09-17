@@ -23,6 +23,9 @@ namespace mye {
 // ★Deep-Modal / FEM / ニューラル / リアルタイム FFT はやらない (計画 §27)。
 //   Transient (短いノイズ) + Resonator Bank (減衰正弦 6 モード) + Shard Events
 //   (破片の短い減衰正弦) の 3 要素だけで、物理精度より聴感を優先して値を詰める。
+//   ★モーダル経路 (形状 → 学習済み 3D-CNN → 材質スケール則 → 再帰共振器) は
+//   ModalSynth.h が別に持つ (M76a、engine_spec §10.7)。ModalSound を持つ物はそちらへ差し替わり、
+//   ここは「ModalSound の無い物 / 焼き上がるまでの段階移行」を引き続き担当する。
 
 enum class ImpactSoundKind : int32_t {
     Footstep = 0,   // 足音。materialB = 地面の材質が主成分

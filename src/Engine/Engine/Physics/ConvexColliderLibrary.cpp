@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstring>
 
-#include "Engine/Core/AssetGuidResolver.h"
 #include "Engine/Core/AssetKeyResolver.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/Asset/CookedCache.h"
@@ -30,14 +29,10 @@ void AppendPod32(std::vector<uint8_t>& buf, uint32_t v)
 
 std::wstring ConvexCookSourcePath(const std::string& meshName)
 {
-    // M74a: モデル由来の登録名は "guid://<16hex>#mesh0#prim0"。接頭辞はもうパスではないので、
-    // GUID → 現在パスを AssetDatabase に引く。resolver 未設定 (selftest) と未知 GUID は空 =
-    // その場生成だけになる (M60f の「手続き生成メッシュ」と同じ扱いで、正しさは変わらない)
-    uint64_t guid = 0;
-    if (!assetkey::ParseSubAssetKey(meshName, guid)) {
-        return {}; // "builtin://cube" など = クック対象外
-    }
-    return assetguid::ResolvePath(guid);
+    // M76e: .msfm (Deep-Modal) も全く同じ規則を必要としたので assetkey::SourcePathForSubAssetKey
+    // へ 1 本化した (ParseSubAssetKey + assetguid::ResolvePath の中身はそちらに移した)。
+    // ビット中立 (委譲するだけで判定は変えていない)
+    return assetkey::SourcePathForSubAssetKey(meshName);
 }
 
 void SerializeConvexTable(const std::vector<std::pair<std::string, ConvexHullData>>& table,

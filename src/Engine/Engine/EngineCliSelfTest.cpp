@@ -225,6 +225,29 @@ bool RunEngineCliSelfTest()
     r = RunParse({ L"--particle-backend", L"metal" });
     check(r.errors == 1 && r.config.particleBackendOverride == -1,
           "--particle-backend with an unknown value is an error and changes nothing");
+    r = RunParse({ L"--modal-backend", L"d3d11cs" });
+    check(r.consumed == 1 && r.config.modalBackendName == L"d3d11cs",
+          "--modal-backend d3d11cs (spelling accepted; the runtime fallback lives in "
+          "ModalSoundLibrary::SetBackendByName)");
+    r = RunParse({ L"--modal-backend", L"cpu" });
+    check(r.consumed == 1 && r.config.modalBackendName == L"cpu", "--modal-backend cpu");
+    r = RunParse({ L"--modal-backend", L"foo" });
+    check(r.errors == 1 && r.config.modalBackendName == def.modalBackendName,
+          "--modal-backend with an unknown value is an error and changes nothing");
+    // M76f: 衝突音のログ + 同期焼き (--modal-demo の byte 一致検証が使う 2 本)
+    r = RunParse({ L"--modal-audio-log", L"300" });
+    check(r.consumed == 1 && r.config.modalAudioLogTicks == 300, "--modal-audio-log N");
+    check(def.modalAudioLogTicks == 0, "--modal-audio-log defaults to 0 (no lines)");
+    r = RunParse({ L"--modal-sync-bake" });
+    check(r.consumed == 1 && r.config.modalSyncBake, "--modal-sync-bake sets the flag");
+    check(!def.modalSyncBake, "--modal-sync-bake defaults to off");
+    // M76h: 耳確認の調査ツール (--acoustic-dump / --froxel-dump と同じ系列)
+    r = RunParse({ L"--modal-wav-dump", L"out_dir" });
+    check(r.consumed == 1 && r.config.modalWavDumpDir == L"out_dir", "--modal-wav-dump DIR");
+    check(def.modalWavDumpDir.empty(), "--modal-wav-dump defaults to off (empty)");
+    r = RunParse({ L"--modal-face-probe" });
+    check(r.consumed == 1 && r.config.modalFaceProbe, "--modal-face-probe sets the flag");
+    check(!def.modalFaceProbe, "--modal-face-probe defaults to off");
 
     // ---- 値を 2 つ取るフラグ ----
     r = RunParse({ L"--rep-diff", L"a.rep", L"b.rep" });
@@ -262,6 +285,8 @@ bool RunEngineCliSelfTest()
           "a two-value flag with one value is left to the Main");
     r = RunParse({ L"--particle-backend" });
     check(r.errors == 0 && r.notMine == 1, "--particle-backend without a value is not an error");
+    r = RunParse({ L"--modal-backend" });
+    check(r.errors == 0 && r.notMine == 1, "--modal-backend without a value is not an error");
     r = RunParse({ L"--selftest", L"--scene", L"x.scene.json", L"--deferred", L"--ui-demo" });
     check(r.consumed == 0 && r.notMine == 5, "app-only flags (and their values) are not shared flags");
 

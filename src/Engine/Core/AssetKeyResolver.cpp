@@ -2,6 +2,7 @@
 
 #include <cstdio>
 
+#include "Engine/Core/AssetGuidResolver.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Platform/PathUtil.h"
 
@@ -59,6 +60,18 @@ bool ParseSubAssetKey(std::string_view key, uint64_t& guidOut)
     }
     guidOut = v;
     return true;
+}
+
+std::wstring SourcePathForSubAssetKey(const std::string& meshName)
+{
+    // M74a: モデル由来の登録名は "guid://<16hex>#mesh0#prim0"。接頭辞はもうパスではないので、
+    // GUID → 現在パスを AssetDatabase (Install 済みなら) に引く。resolver 未設定 (selftest) と
+    // 未知 GUID は空 = その場生成/毎起動焼き直しの扱いになる (M60f の ConvexCookSourcePath と同じ)
+    uint64_t guid = 0;
+    if (!ParseSubAssetKey(meshName, guid)) {
+        return {}; // "builtin://cube" など = クック対象外
+    }
+    return assetguid::ResolvePath(guid);
 }
 
 } // namespace assetkey

@@ -1158,6 +1158,22 @@ void RegisterBuiltinComponents()
         MYE_JP("すべてオフを許可", MYE_FIELD_TIP(UIToggleGroupComponent, allowSwitchOff, Int32,
                                                  "clicking the only toggle that is on may turn it off")),
     }, kComponentNoHash | kComponentUiAux);
+
+    // M76f: Deep-Modal 衝突音 (TypeId=61、**末尾 append**)。ModalSound を持つ物だけ接触音が
+    // モーダル合成に差し替わる (無ければ従来の WaveSound / 床材 / tone のまま)。
+    // kComponentNoHash — sim 状態はゼロ (WaveSoundComponent と同じ音レーン)
+    RegisterComponent<ModalSoundComponent>("ModalSound", {
+        MYE_JP("メッシュ", MYE_FIELD_TIP(ModalSoundComponent, mesh, AssetRef,
+                                         "empty = this entity's MeshRenderer.mesh")),
+        MYE_JP("音量", MYE_FIELD(ModalSoundComponent, gain, Float)),
+        MYE_JP("マスク閾値", MYE_FIELD_TIP(ModalSoundComponent, maskThreshold, Float,
+                                           "<= 0 uses the .dmnet header default")),
+        MYE_JP("クールダウン (tick)", MYE_FIELD(ModalSoundComponent, cooldownTicks, Int32)),
+        MYE_JP("サイズ倍率", MYE_FIELD(ModalSoundComponent, sizeScale, Float)),
+        MYE_JP("最大距離", MYE_FIELD(ModalSoundComponent, maxDistance, Float)),
+        MYE_JP("波の耳出しを消す", MYE_FIELD_TIP(ModalSoundComponent, muteWave, Int32,
+                                                 "non-zero: mute the WaveSound playback once baked")),
+    }, kComponentNoHash);
 }
 
 } // namespace mye

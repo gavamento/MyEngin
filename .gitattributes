@@ -3,6 +3,20 @@
 # 「ピクセル回帰テストが理由不明で赤い」という最悪の形で出るので明示する。
 *.png binary
 
+# Deep-Modal (M76) のボクセルキャッシュ。フィールド単位で書く POD だが改行変換で
+# 中身が壊れると「.mvox が読めない」が理由不明で出るので明示する (golden PNG と同じ理由)
+*.mvox binary
+
+# Deep-Modal (M76d) の学習済みネット (.dmnet) と fixture のバイナリ期待値。
+# 改行変換で 1 バイトでも動くと「fixture が理由不明で不一致」になる (.mvox と同じ理由)
+*.dmnet binary
+tests/deepmodal/*.bin binary
+
+# ModalSoundLibrary のクックキャッシュ (.msfm、.mcvx と同型)。cache\ (gitignore) にしか
+# 生まれず今日の版管理対象は無いが、spec §4.2 の宣言どおり明示しておく (sub-10 F。
+# 将来 prebaked cache を配布する等で状況が変わったときに、改行変換で静かに壊れるのを防ぐ)
+*.msfm binary
+
 # bat は cmd.exe の都合で**ディスク上 CRLF が必須** (LF だと行を途中で切られ、CP932 では
 # 日本語 rem コメントの断片がコマンド実行される — net_verify で実際に踏んだ)。
 # blob は LF のまま、checkout 時の変換だけを強制する。autocrlf の個人設定に依存させない。

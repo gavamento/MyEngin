@@ -911,6 +911,25 @@ void AcousticField::DrainEmitters(World& world, float dt, uint64_t tick)
     }
 }
 
+namespace acoustic {
+
+// AcousticField.cpp:984-985 だった式をそのまま関数へ抽出しただけ (M76f)。
+// **1 文字も変えていない** — dynamicMass のラムダも含め DrainImpacts の元コードと同一
+float RestingImpulse(World& world, EntityID ea, EntityID eb, float gMag, float dt)
+{
+    // その接触が支えている**動的な質量**の合計 (kinematic / 静的は 0)
+    const auto dynamicMass = [&world](EntityID e) {
+        const auto* rb = world.GetComponent<RigidbodyComponent>(e);
+        if (rb == nullptr || rb->isKinematic != 0) {
+            return 0.0f;
+        }
+        return EffectiveMassWorld(world, e, *rb);
+    };
+    return (dynamicMass(ea) + dynamicMass(eb)) * gMag * dt * kImpactRestingMargin;
+}
+
+} // namespace acoustic
+
 void AcousticField::DrainImpacts(World& world, const std::vector<SolidContact>& contacts, float dt,
                                  uint64_t tick)
 {
@@ -947,15 +966,6 @@ void AcousticField::DrainImpacts(World& world, const std::vector<SolidContact>& 
     const float gz = (env != nullptr) ? env->gravity.z : 0.0f;
     const float gMag = std::sqrt(gx * gx + gy * gy + gz * gz);
 
-    // その接触が支えている**動的な質量**の合計 (kinematic / 静的は 0)
-    const auto dynamicMass = [&world](EntityID e) {
-        const auto* rb = world.GetComponent<RigidbodyComponent>(e);
-        if (rb == nullptr || rb->isKinematic != 0) {
-            return 0.0f;
-        }
-        return EffectiveMassWorld(world, e, *rb);
-    };
-
     uint32_t emitted = 0;
     for (const SolidContact& c : contacts) { // ★key 昇順 (PhysicsSystem の出力規約)
         if (emitted >= kMaxImpactsPerTick) {
@@ -981,8 +991,7 @@ void AcousticField::DrainImpacts(World& world, const std::vector<SolidContact>& 
         if (loud <= 0.0f) {
             continue; // 材料未割当 = 無音 (存在ゲート)
         }
-        const float rest = (dynamicMass(ea) + dynamicMass(eb)) * gMag * dt
-                           * acoustic::kImpactRestingMargin;
+        const float rest = acoustic::RestingImpulse(world, ea, eb, gMag, dt);
         const float gain = acoustic::ImpactGain(c.impulse - rest);
         if (gain <= 0.0f) {
             continue;

@@ -7,5 +7,9 @@
   "dynamicFriction": 0.03,
   "restitution": 0.05,
   "rollingResistance": 0.002,
-  "dragCoefficient": 0.47
+  "dragCoefficient": 0.47,
+  "youngsModulus": 9.0e9,
+  "poissonRatio": 0.33,
+  "rayleighAlpha": 8.0,
+  "rayleighBeta": 5.0e-7
 }

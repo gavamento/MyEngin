@@ -48,6 +48,8 @@ const ShowcaseDef kShowcases[] = {
       &BuildPlain<&BuildAcousticShowcaseScene>, false }, // M65b
     { L"--ui-demo", false, L"cache\\ui_showcase.scene.json", nullptr, &BuildPlain<&BuildUiShowcaseScene>,
       false }, // M75c
+    { L"--modal-demo", false, L"cache\\modal_showcase.scene.json", nullptr,
+      &BuildPlain<&BuildModalShowcaseScene>, false }, // M76f
 };
 
 } // namespace

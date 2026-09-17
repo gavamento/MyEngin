@@ -512,6 +512,49 @@ $constGroups = @(
             'tools\collab\src\protocol.rs'              = 'pub\s+const\s+PROTO_VERSION\s*:\s*u32\s*=\s*(\d+)'
         }
     }
+    # M76c: Deep-Modal の共有定数。学習 (Python、tools\deepmodal) とランタイム (C++、
+    # ModalTypes.h) が同じボクセル/特徴マップ形状を前提にしている — 食い違うと
+    # 「.dmnet は読めるのに BuildModes が配列の外を読む」という静かな壊れ方をする。
+    # ★このグループも照合先が .py = HLSL ではない (kCollabProtoVersion と同型)
+    @{
+        label = 'kModalVoxelN / VOXEL_N'
+        sites = @{
+            'src\Engine\Engine\Modal\ModalTypes.h' = 'constexpr\s+int\s+kModalVoxelN\s*=\s*(\d+)'
+            'tools\deepmodal\layout.py'            = 'VOXEL_N\s*=\s*(\d+)'
+        }
+    }
+    @{
+        label = 'kModalMapN / MAP_N'
+        sites = @{
+            'src\Engine\Engine\Modal\ModalTypes.h' = 'constexpr\s+int\s+kModalMapN\s*=\s*(\d+)'
+            'tools\deepmodal\layout.py'            = 'MAP_N\s*=\s*(\d+)'
+        }
+    }
+    @{
+        label = 'kModalBands / MEL_BANDS'
+        sites = @{
+            'src\Engine\Engine\Modal\ModalTypes.h' = 'constexpr\s+int\s+kModalBands\s*=\s*(\d+)'
+            'tools\deepmodal\layout.py'            = 'MEL_BANDS\s*=\s*(\d+)'
+        }
+    }
+    @{
+        label = 'kModalChannels / CHANNELS'
+        sites = @{
+            'src\Engine\Engine\Modal\ModalTypes.h' = 'constexpr\s+int\s+kModalChannels\s*=\s*(\d+)'
+            'tools\deepmodal\layout.py'            = 'CHANNELS\s*=\s*(\d+)'
+        }
+    }
+    # M76e2 (sub-09) 持ち越し: export.py の `paramCount <= MAX_PARAM_COUNT` assert と
+    # LoadDmNet の予算検査が「同じ約束」を C++/Python の 2 箇所に持っている。食い違うと
+    # 「Python が通した .dmnet を C++ が拒否する」型の静かな破綻になる (DmNet.h のコメント参照)。
+    # ★桁区切り (C++ の `'`、Python の `_`) を含むので、下の値抽出で取り除いてから int 化する
+    @{
+        label = 'kDmNetMaxParamCount / MAX_PARAM_COUNT'
+        sites = @{
+            'src\Engine\Engine\Modal\DmNet.h' = "constexpr\s+uint32_t\s+kDmNetMaxParamCount\s*=\s*([\d']+)u?"
+            'tools\deepmodal\model.py'        = 'MAX_PARAM_COUNT\s*=\s*([\d_]+)'
+        }
+    }
 )
 foreach ($g in $constGroups) {
     $values = @{}
@@ -528,7 +571,10 @@ foreach ($g in $constGroups) {
             $errors++
             continue
         }
-        $values[$rel] = [int]$hit.Matches[0].Groups[1].Value
+        # 桁区切り (C++ の `'1000` / Python の `1_000`) を取り除いてから整数化する
+        # (このグループ以外は元々数字だけを拾う正規表現なので no-op)
+        $raw = $hit.Matches[0].Groups[1].Value -replace "['_]", ''
+        $values[$rel] = [int]$raw
     }
     if ($values.Count -eq $g.sites.Count -and ($values.Values | Select-Object -Unique).Count -ne 1) {
         foreach ($rel in $values.Keys) { Write-Host "ERROR [rule 9] ${rel}: $($values[$rel])" }

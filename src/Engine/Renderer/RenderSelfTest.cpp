@@ -82,6 +82,12 @@ void TestFrustumCulling()
     TEST_CHECK(AabbInFrustum(f, MakeWorld(0, 0, 5, 1000.0f), unitMin, unitMax) == true);
     // 近平面を跨ぐ (中心は手前だが箱が near を越える) → 落とさない
     TEST_CHECK(AabbInFrustum(f, MakeWorld(0, 0, 0.05f), unitMin, unitMax) == true);
+
+    // スキンメッシュはバインドポーズ AABB の外へ変形し得る。静的メッシュなら落ちる
+    // 位置でも、アニメ中の手や指を誤って消さないため描画候補に残す。
+    const XMFLOAT4X4 outside = MakeWorld(100, 0, 5);
+    TEST_CHECK(RenderableInFrustum(f, outside, unitMin, unitMax, false) == false);
+    TEST_CHECK(RenderableInFrustum(f, outside, unitMin, unitMax, true) == true);
 }
 
 // 視錐台の 8 隅 (SceneView のカメラワイヤ)。

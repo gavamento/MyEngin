@@ -32,8 +32,11 @@
 #include "Engine/Engine/Animation.h"
 #include "Engine/Engine/AnimatorController.h"
 #include "Engine/Engine/AssetDatabase.h"
+#include "Engine/Engine/Audio/ModalAudio.h" // Deep-Modal 面打ちプレビュー (M76g、sub-06 と同じ関数)
+#include "Engine/Engine/Audio/SynthCore.h"  // WriteWavToFile (Export WAV)
 #include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Modal/ModalSoundLibrary.h" // 状態 (Missing/Baking/Ready/Failed/NoModel)
 #include "Engine/Engine/Parts.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
@@ -78,6 +81,64 @@ bool ContainsIgnoreCase(const char* haystack, const char* needle)
     }
     return false;
 }
+
+// M76g: Deep-Modal のプレビュー専用 AssetID。sub-06 の回転プール (modal://slot#k) とは
+// 別キー — 共有すると衝突再生中のプレビューがプールの奪い合いに巻き込まれる
+// (SoundGenWindow::kPreviewClipId と同じ考え方)
+constexpr AssetID kModalPreviewClipId{ HashStr("modal://preview") };
+
+const char* ModalStateLabel(ModalState s)
+{
+    switch (s) {
+    case ModalState::Missing:
+        return Tr(StrId::Insp_ModalStateMissing);
+    case ModalState::Baking:
+        return Tr(StrId::Insp_ModalStateBaking);
+    case ModalState::Ready:
+        return Tr(StrId::Insp_ModalStateReady);
+    case ModalState::Failed:
+        return Tr(StrId::Insp_ModalStateFailed);
+    case ModalState::NoModel:
+        return Tr(StrId::Insp_ModalStateNoModel);
+    }
+    return "?";
+}
+
+// sub-10 H (reviewer round 1 指摘 2): 面ボタンの直近の結果を UI に出すためのラベル。
+// Played を含む全ケースを網羅する (実際に Inspector 経由で起き得るのは Played/BelowMin
+// だけだが、MakeModalShotPlay の契約を先取りして固定しておく — 将来ここへ分岐を足しても
+// 黙って "?" にならない)
+const char* ModalShotResultLabel(ModalShotResult r)
+{
+    switch (r) {
+    case ModalShotResult::Played:
+        return Tr(StrId::Insp_ModalResultPlayed);
+    case ModalShotResult::NotReady:
+        return Tr(StrId::Insp_ModalResultNotReady);
+    case ModalShotResult::NoModel:
+        return Tr(StrId::Insp_ModalResultNoModel);
+    case ModalShotResult::Cooldown:
+        return Tr(StrId::Insp_ModalResultCooldown);
+    case ModalShotResult::BelowMin:
+        return Tr(StrId::Insp_ModalResultBelowMin);
+    case ModalShotResult::PoolFull:
+        return Tr(StrId::Insp_ModalResultPoolFull);
+    case ModalShotResult::PlayFailed:
+        return Tr(StrId::Insp_ModalResultPlayFailed);
+    }
+    return "?";
+}
+
+// 6 面ボタンのラベルとファイル名スラグ (spec §4.3 の並び: +X -X +Y -Y +Z -Z)
+struct ModalFaceInfo {
+    StrId label;
+    const char* slug;
+};
+const ModalFaceInfo kModalFaces[6] = {
+    { StrId::Insp_ModalFacePX, "px" }, { StrId::Insp_ModalFaceNX, "nx" },
+    { StrId::Insp_ModalFacePY, "py" }, { StrId::Insp_ModalFaceNY, "ny" },
+    { StrId::Insp_ModalFacePZ, "pz" }, { StrId::Insp_ModalFaceNZ, "nz" },
+};
 
 // 直前に描画した widget の編集開始/確定を検出して Undo エントリにまとめる。
 // activate (ドラッグ開始) で before を、deactivate-after-edit で after を記録 —
@@ -863,6 +924,180 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, const InspectorTarg
         ImGui::SameLine();
         ImGui::TextDisabled("%s", Tr(StrId::Insp_PilotHint));
     }
+    // M76g: Deep-Modal 面打ちプレビュー。焼き状態は entity ごとに違いうるので
+    // マルチ選択では出さない (Camera 操縦と同じ理由)
+    if (std::strcmp(desc.name, "ModalSound") == 0 && !tg.multi) {
+        DrawModalSoundNotes(ctx, tg, row);
+    }
+}
+
+// M76g: ModalSound 節の末尾 (状態 / セル数 / 6 面ボタン / Export WAV)。
+// 6 面ボタンは **sub-06 と同じ MakeModalShotPlay を呼ぶ** (spec §4.3「2 本目を書かない」)。
+// ワールド行列・材質解決も AudioSourceSystem::Update (ランタイム経路) と同じ手順を踏む
+void InspectorWindow::DrawModalSoundNotes(EngineContext& ctx, const InspectorTargets& tg,
+                                          const InspectorComponentRow& row)
+{
+    (void)row; // 実体は他の分岐と同じく world 経由で取り直す (row.comps は空になり得るため)
+    World& world = ctx.scene->GetWorld();
+    const EntityID e = tg.e;
+    const auto* comp = world.GetComponent<ModalSoundComponent>(e);
+    if (comp == nullptr) {
+        return;
+    }
+    const AssetID mesh = ResolveModalMesh(world, e, *comp);
+
+    ModalSoundLibrary* lib = modalsound::Library();
+    // Request は未着手なら非ブロッキングで焼きジョブを積む — Inspector を開くだけで
+    // 裏の焼成が始まる (AudioSourceSystem::Update と同じ入口を共有する、規則は 1 本)
+    const ModalState state = (lib != nullptr) ? lib->Request(mesh) : ModalState::NoModel;
+    const ModalFeatureMap* fm = (lib != nullptr) ? lib->Get(mesh) : nullptr;
+    const DmNetHeader* hdr = (lib != nullptr) ? lib->Header() : nullptr;
+    const bool ready = (state == ModalState::Ready) && fm != nullptr && hdr != nullptr;
+
+    ImGui::Separator();
+    ImGui::Text(Tr(StrId::Insp_ModalState), ModalStateLabel(state),
+               lib != nullptr ? lib->BackendName() : "none");
+    ImGui::Text(Tr(StrId::Insp_ModalCells), fm != nullptr ? fm->validCount : 0u);
+
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::SliderFloat(Tr(StrId::Insp_ModalImpulse), &modalPreview_.impulse, 0.1f, 20.0f, "%.2f");
+
+    ImGui::TextUnformatted(Tr(StrId::Insp_ModalTapHeading));
+    // Baking / Missing / Failed / NoModel はどれも焼けた特徴が無いので、面ボタンは
+    // まとめて disabled にする (spec §4.3「Baking 中はボタン disabled」)
+    ImGui::BeginDisabled(!ready);
+    for (int face = 0; face < 6; ++face) {
+        if (face != 0) {
+            ImGui::SameLine();
+        }
+        ImGui::PushID(face);
+        if (ImGui::Button(Tr(kModalFaces[face].label))) {
+            FireModalPreviewFace(ctx, tg, *comp, *fm, *hdr, face);
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndDisabled();
+
+    // sub-10 H (reviewer round 1 指摘 2): 「押しても何も起きない」と「まだ押していない」を
+    // 区別できるように、直近の結果を常に出す (Played も含めて明示する。黙って return しない)
+    if (modalPreview_.everFired) {
+        ImGui::Text(Tr(StrId::Insp_ModalResultHeading), ModalShotResultLabel(modalPreview_.lastResult));
+    }
+
+    // Export は「直近のプレビュー clip」を書き出すだけなので、面ボタンの ready 状態とは
+    // 無関係 — 別のエンティティを見ていても直近に鳴らした音は書き出せる (spec §4.3)
+    ImGui::BeginDisabled(!modalPreview_.valid);
+    if (ImGui::Button(Tr(StrId::Insp_ModalExportWav))) {
+        ExportModalPreviewWav(ctx);
+    }
+    ImGui::EndDisabled();
+}
+
+// 6 面ボタン 1 個ぶんの本体。localPoint = ローカル AABB 面中心、k = 内向き法線 × スライダ [N・s]。
+// CollectModalImpacts (ランタイム) と同じ形の PendingModalImpact を組み立てて
+// MakeModalShotPlay へそのまま渡す — テストが見ている規則と実際に鳴る規則を分けない
+void InspectorWindow::FireModalPreviewFace(EngineContext& ctx, const InspectorTargets& tg,
+                                          const ModalSoundComponent& comp, const ModalFeatureMap& fm,
+                                          const DmNetHeader& hdr, int face)
+{
+    if (ctx.audio == nullptr || !ctx.audio->IsReady()) {
+        return;
+    }
+    World& world = ctx.scene->GetWorld();
+    const EntityID e = tg.e;
+    const auto* wm = world.GetComponent<WorldMatrixComponent>(e);
+    if (wm == nullptr) {
+        return; // ワールド行列が無いと局所化できない (通常は起きない)
+    }
+
+    const int axis = face / 2;
+    const bool positive = (face % 2) == 0; // 偶数 index = +軸側の面 (+X -X +Y -Y +Z -Z の並び)
+
+    PendingModalImpact impact;
+    impact.source = e;
+    impact.mesh = ResolveModalMesh(world, e, comp);
+    for (int a = 0; a < 3; ++a) {
+        impact.localPoint[a] = (a == axis) ? (positive ? fm.frame.aabbMax[a] : fm.frame.aabbMin[a])
+                                            : 0.5f * (fm.frame.aabbMin[a] + fm.frame.aabbMax[a]);
+    }
+    // 内向き法線 × 圧縮済み力積 (sub-10 A。CollectModalImpacts (ランタイム) と
+    // 同じ ModalImpulseCurve を通す — 2 本目の規則を書くと較正の前提が崩れる)。
+    // excessImpulse は生の力積のまま (ログ/UI 表示用)
+    impact.k[axis] = (positive ? -1.0f : 1.0f) * ModalImpulseCurve(modalPreview_.impulse);
+    impact.excessImpulse = modalPreview_.impulse;
+    impact.tick = ctx.tickIndex;
+
+    const XMMATRIX world_ = XMLoadFloat4x4(&wm->value);
+    const XMVECTOR pLocal =
+        XMVectorSet(impact.localPoint[0], impact.localPoint[1], impact.localPoint[2], 1.0f);
+    XMFLOAT3 pWorld;
+    XMStoreFloat3(&pWorld, XMVector3TransformCoord(pLocal, world_));
+    impact.worldPoint[0] = pWorld.x;
+    impact.worldPoint[1] = pWorld.y;
+    impact.worldPoint[2] = pWorld.z;
+
+    const auto* col = world.GetComponent<ColliderComponent>(e);
+    const PhysMat* mat = (col != nullptr) ? physmat::Resolve(col->physMaterial) : nullptr;
+    const float scale = ModalWorldScaleOfLongestAxis(fm.frame, wm->value);
+
+    AudioClip clip;
+    AudioSpatial spatial;
+    const ModalShotResult result =
+        MakeModalShotPlay(fm, hdr, impact, comp, mat, scale, clip, spatial, nullptr);
+    // sub-10 H: 結果は Played 以外も含めて必ず記録する (DrawModalSoundNotes が表示する)。
+    // 「押しても何も起きない」を UI から見えるようにするのが目的なので、ここで黙って
+    // return する前に必ず書くこと
+    modalPreview_.everFired = true;
+    modalPreview_.lastResult = result;
+    if (result != ModalShotResult::Played) {
+        return; // BelowMin 等。直前の有効なプレビュー clip はそのまま残す (何も鳴らなかった扱い)
+    }
+
+    modalPreview_.clip = clip; // Export WAV 用に保持 (SoundGenWindow::Preview と同じ二重利用)
+    modalPreview_.valid = true;
+    modalPreview_.face = face;
+    modalPreview_.entityFid = tg.fid;
+
+    // RegisterClip は差し替え前に同 id の voice を止める (SoundGenWindow::Preview と同型) —
+    // 前回のプレビューはここで自動的に切れる
+    ctx.audio->RegisterClip(kModalPreviewClipId, std::move(clip), "(deep-modal preview)");
+    PlayDesc desc;
+    desc.clip = kModalPreviewClipId;
+    desc.bus = AudioSystem::kBusUi; // エディタ操作音なので UI バス
+    desc.volume = 1.0f;
+    desc.priority = 255; // 明示操作の試聴は他の音に負けない
+    ctx.audio->Play(desc);
+}
+
+// Export WAV: 直近のプレビュー clip を書き出す。重複名は " (N)" 連番
+// (SoundGenWindow::Save 204-234 と同じ規約)
+void InspectorWindow::ExportModalPreviewWav(EngineContext& ctx)
+{
+    if (!modalPreview_.valid || modalPreview_.clip.Empty()) {
+        return;
+    }
+    namespace fs = std::filesystem;
+    const std::wstring dir = ctx.assetsRoot + L"\\audio";
+    std::error_code ec;
+    fs::create_directories(fs::path{ dir }, ec);
+
+    const char* faceSlug = (modalPreview_.face >= 0 && modalPreview_.face < 6)
+        ? kModalFaces[modalPreview_.face].slug
+        : "face";
+    const std::string stem =
+        "modal_" + std::to_string(modalPreview_.entityFid) + "_" + faceSlug;
+    std::wstring path = dir + L"\\" + Utf8ToWide(stem) + L".wav";
+    for (int n = 1; n < 1000 && fs::exists(path); ++n) {
+        path = dir + L"\\" + Utf8ToWide(stem) + L" (" + std::to_wstring(n) + L").wav";
+    }
+    if (!WriteWavToFile(modalPreview_.clip, path)) {
+        MYE_LOG_ERROR("could not write modal preview wav: %s", WideToUtf8(path).c_str());
+        return;
+    }
+    if (ctx.audio != nullptr) {
+        ctx.audio->LoadClipFile(path); // 生成直後に登録 → Asset Browser から再生できる
+    }
+    MYE_LOG_INFO("modal preview wav saved: %s", WideToUtf8(path).c_str());
 }
 
 // 削除されたプレハブコンポーネント (M50c)。
@@ -2076,6 +2311,25 @@ void InspectorWindow::DrawPhysMatInspector(const std::wstring& path)
     ImGui::SetNextItemWidth(160.0f);
     ImGui::DragFloat(Tr(StrId::Insp_PmAdhesion), &physMatEdit_.adhesion, 0.5f, 0.0f, 1.0e6f,
                      "%.2f");
+    // M76g: Deep-Modal の音響材質 4 フィールド (spec §4.2)。Sanitize と同じ檻
+    // (E [0,1e13] / ν [0,0.49] / α [0,1e4] / β [0,1e-2])。E=0 は「参照材質のまま」(σ1=1) の意味を持つ
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragFloat(Tr(StrId::Insp_PmYoungsModulus), &physMatEdit_.youngsModulus, 1.0e8f, 0.0f,
+                     1.0e13f, "%.3e");
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragFloat(Tr(StrId::Insp_PmPoissonRatio), &physMatEdit_.poissonRatio, 0.005f, 0.0f,
+                     0.49f, "%.3f");
+    // ★ν は BuildModes が読まない (spec §2 #4)。編集自体は許すが、効かないことを
+    //   その場で伝えないと「変えたのに音が変わらない」で不具合報告になる
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", Tr(StrId::Insp_PmPoissonRatioTip));
+    }
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragFloat(Tr(StrId::Insp_PmRayleighAlpha), &physMatEdit_.rayleighAlpha, 0.05f, 0.0f,
+                     1.0e4f, "%.3f");
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragFloat(Tr(StrId::Insp_PmRayleighBeta), &physMatEdit_.rayleighBeta, 1.0e-5f, 0.0f,
+                     1.0e-2f, "%.3e");
     ImGui::TextDisabled("%s", Tr(StrId::Insp_PhysMatNote));
 
     ImGui::Separator();

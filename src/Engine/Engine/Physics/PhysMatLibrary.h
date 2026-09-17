@@ -64,6 +64,16 @@ struct PhysMat {
     // 空 = AcousticAudio の tone マップ (toneSound0..3) に従う。tone は 4 段階しかないので
     // 「tile と carpet で違う足音」はここでしか表現できない。★音レーン専用 — sim は読まない
     std::string acousticSound;
+    // ---- Deep-Modal 追加 (M76a、末尾 append。旧ファイルは contains 無し = 参照材質のまま) ----
+    // BuildModes (ModalSynth.h) の材質スケール則 (spec §4.1 手順 6) が読む値。
+    // ★poissonRatio だけは**保持のみ** — FEM / 教師データ生成と参照材質メタデータ用の値で、
+    //   現行の BuildModes (ランタイムの材質スケーリング) は読まない (ユーザー判断 spec §2 #4。
+    //   将来ポアソン比を考慮するモデルへ拡張する余地として持ってある。読み始めるときは
+    //   ADR を改訂すること — 「保持だけ」という契約が本体になっている)
+    float youngsModulus = 0.0f; // Pa。0 = 参照材質のまま (BuildModes の σ1 = 1)
+    float poissonRatio = 0.3f;  // 無次元。FEM / 参照材質メタデータ用 (ランタイムは未使用)
+    float rayleighAlpha = 0.0f; // Rayleigh 減衰の質量項 [1/s]
+    float rayleighBeta = 0.0f;  // Rayleigh 減衰の剛性項 [s]
 };
 
 // 列挙 1 件 (AssetRef ピッカー / Asset Browser 用。SoundEntry 範型)

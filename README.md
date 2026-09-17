@@ -105,6 +105,26 @@ sln の外にもう 2 本ある。どちらも無い状態でエディタは起�
   耳を使わずに配管を検査する口が `--acoustic-audio-log N` (整形した voice と一発再生を 1 行ずつ +
   summary)、ショーケースが `--acoustic-demo`。詳細は
   [ADR-017](docs/adr/ADR-017-acoustic-audio.md)
+- **Deep-Modal — 学習済み 3D-CNN による衝突音のモーダル合成 (M76)** — 録音済み SE を使わず、
+  「形状・接触位置・力の向きと強さ・材質・サイズで音が変わる」衝突音を物理衝突から自動で鳴らす。
+  メッシュを 32³ ボクセル化 → hex8 FEM で一般化固有値問題を解き → 16³ セルごとの接触励起を
+  Mel 32 帯域 × 力軸 3 本へ圧縮した特徴マップを学習 (`tools\deepmodal\`、torch、CPU 側は
+  ≤2M パラメータの 3D U-Net) → 自前実装の CPU 推論バックエンド (AVX2 + マルチスレッド、
+  スレッド数を変えても結果はバイト一致) がメッシュごとに 1 回だけ焼いて `.msfm` へキャッシュする。
+  衝突が起きるたびに、接触点・力の向きと大きさ・`PhysMat` (ヤング率・密度・Rayleigh 減衰) と
+  実寸から**その場でモード列を再構成**し、減衰正弦の和を合成して既存の 3D 再生経路 (定位/遮蔽/
+  リバーブ) にそのまま乗せる。音量は正規化しない絶対値 — 弱い衝突は小さく、強い衝突は大きい
+  (力積 `J` を `C(J) = kImpactRefImpulse・(J/kImpactRefImpulse)^0.5` で圧縮してから振幅へ渡す
+  較正済みカーブで、`J = kImpactRefImpulse` (6 N・s、「本気の一撃」の基準) の中央値ピークが
+  約 −12 dBFS になるよう合わせてある。M76i、詳細は `engine_spec.md` §10.7.2)。ただしこの
+  −12 dBFS は**基準メッシュ 1 個の測定**で、資産全体を代表する値ではない — 同条件で
+  382 枚を評価すると非ゼロ振幅だけでも p10-p90 で 27.9dB のばらつきがある (形状が変われば
+  放射も変わるという物理的に正しい差なので、メッシュ間で音量を均す正規化は入れていない —
+  それをやると「形状で音が変わる」という目的そのものを消してしまう)。学習データの
+  汎化不足で全 cell・全帯域の mask が落ちたまま常時無音になるメッシュもある (現行モデルで
+  382 枚中 35 枚。`--modal-bake` の `silent=N` で数えられる)。
+  `ModalSound` を持つ物だけが対象 (opt-in)、波 (§ 音響伝播) と sim 状態には 1 バイトも触れない。
+  詳細は `engine_spec.md` §10.7 と [ADR-020](docs/adr/ADR-020-deep-modal.md)
 - **スクリプトから触れる面を埋める (M70d)** — 外部プロジェクトで実際にゲームを作って
   溜めた穴 (`docs/dogfooding.md`) のうち、**新しい ABI スロットを 1 本も足さずに直せる 10 件**を
   まとめて回収した。スクリプトの調整フィールドに**日本語表示名とスライダ範囲**が付き
@@ -251,6 +271,18 @@ Editor.exe --acoustic-demo --acoustic-audio-log 300 --synth-input
                                           # 耳を使わずに音響 x オーディオの配管を検査する。
                                           #   整形した voice と波の一発再生を 1 行ずつ +
                                           #   終了時 summary。--no-audio と併用すると 0 行
+Editor.exe --modal-voxelize --list list.txt --out DIR
+                                          # メッシュ (builtin:// / .off / .obj / .fbx / .glb /
+                                          #   .gltf) を .mvox へ (M76b)。tools\deepmodal の
+                                          #   学習データ生成が呼ぶのと同じ経路
+Editor.exe --modal-bake [--modal-backend cpu|d3d11cs]
+                                          # assets 配下のモデルを全登録して .msfm へ焼く (M76e)。
+                                          #   .dmnet を差し替えたら 1 回回す。1 行/メッシュ +
+                                          #   bakeMsAvg 集計
+Runtime.exe --modal-demo --modal-sync-bake --modal-audio-log 300 --synth-input
+                                          # 材質違いの ModalSound 箱のショーケース (M76f)。
+                                          #   耳を使わず衝突→合成の配管を検査する。
+                                          #   2 run の [modal] t= 行がバイト一致する
 Editor.exe --terrain-demo [--terrain-lod N] [--terrain-skirt N]
                                           # 地形ショーケース (M58c) = スクショ 8 枚目
 Editor.exe --flow-demo                    # タイトル/ゲームのシーン遷移 + セーブ/ロード統合デモ

@@ -30,5 +30,12 @@ std::string SubAssetKeyPrefix(const std::wstring& modelPath); // 正規化は内
 // 登録名が SubAssetKeyPrefix 形式なら GUID を取り出す (builtin:// や旧形式の絶対パスは false)
 bool ParseSubAssetKey(std::string_view key, uint64_t& guidOut);
 
+// サブアセットの登録名 ("guid://<16hex>#mesh0#prim0") からクック元ファイルの現在パスを引く。
+// M60f の `ConvexCookSourcePath` (.mcvx 用) と M76e の `.msfm` 用が全く同じ規則
+// (ParseSubAssetKey + assetguid::ResolvePath) を必要としたため、ここへ 1 本化した
+// (ConvexCookSourcePath は本関数へ委譲するだけになった)。
+// 接頭辞が無い (builtin:// など手続き生成) / GUID が解決できない (resolver 未設定・未知) は空
+std::wstring SourcePathForSubAssetKey(const std::string& meshName);
+
 } // namespace assetkey
 } // namespace mye

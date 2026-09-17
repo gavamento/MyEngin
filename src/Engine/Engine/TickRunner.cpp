@@ -20,6 +20,7 @@
 #include "Engine/Engine/Audio/AcousticAudio.h" // ResolveWaveShotSound (鳴る波の音の選択)
 #include "Engine/Engine/Audio/AudioMixer.h"
 #include "Engine/Engine/Audio/AudioSourceSystem.h"
+#include "Engine/Engine/Audio/ModalAudio.h" // M76f: CollectModalImpacts
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/CollisionSystem.h"
@@ -640,6 +641,18 @@ void RunOneTick(TickServices& ts)
                 ResolveWaveShotSound(scene.GetWorld(), wv.source, ts.acoustic->WaveSoundHint(slot),
                                      shot);
                 audioSources.PushWaveShot(shot);
+            }
+        }
+        // ---- M76f: 今 tick の接触からモーダル衝突音の候補を集める ----
+        // ★波 (ts.acoustic) と違い AcousticField の有無に依存しない — ModalSound は
+        //   場が無いシーンでも鳴る。門は wave shot の push と同じ
+        //   (audioSystem.IsReady() && !IsSuspended())
+        if (audioSystem.IsReady() && !audioSystem.IsSuspended()) {
+            std::vector<PendingModalImpact> modalImpacts;
+            CollectModalImpacts(scene.GetWorld(), solidContacts, ctx.fixedDt, ctx.tickIndex,
+                                modalImpacts);
+            for (const PendingModalImpact& impact : modalImpacts) {
+                audioSources.PushModalImpact(impact);
             }
         }
     }

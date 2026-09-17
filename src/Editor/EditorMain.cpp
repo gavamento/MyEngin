@@ -21,6 +21,7 @@
 #include "Editor/ProjectRegistry.h"
 #include "Editor/ProjectTemplates.h"
 #include "Editor/LightSelectionSelfTest.h"
+#include "Editor/ModalTools.h" // M76b: --modal-voxelize
 #include "Editor/UndoSelfTest.h"
 #include "Engine/Core/EcsSelfTest.h"
 #include "Engine/Core/JobSystemSelfTest.h"
@@ -52,6 +53,9 @@
 #include "Engine/Engine/Acoustic/AcousticSelfTest.h"
 #include "Engine/Engine/Audio/AcousticAudioSelfTest.h"
 #include "Engine/Engine/Audio/ImpactSynthSelfTest.h"
+#include "Engine/Engine/Audio/ModalAudioSelfTest.h"
+#include "Engine/Engine/Audio/ModalSynthSelfTest.h"
+#include "Engine/Engine/Modal/ModalSelfTest.h"
 #include "Engine/Engine/Replay/SimSnapshotSelfTest.h"
 #include "Engine/Engine/Replay/TimeTravelSelfTest.h"
 #include "Engine/Engine/Replay/WorldHasherSelfTest.h"
@@ -138,6 +142,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     std::vector<std::wstring> legacyRoots; // --legacy-root DIR (繰り返し可。旧 clone 先)
     bool migrateDryRun = false;           // --dry-run (数えるだけで書かない)
     bool cookFontMetrics = false;         // --cook-font-metrics (M75d: フォント計測表を作る)
+    bool modalVoxelize = false;           // --modal-voxelize (M76b: Deep-Modal のボクセル化 CLI)
+    std::wstring modalVoxelizeList;       // --list F
+    std::wstring modalVoxelizeOut;        // --out DIR
+    bool modalBake = false;               // --modal-bake (M76e: .dmnet → .msfm のヘッドレス CLI)
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -159,6 +167,27 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                     autoPlay = true;
                     openTimeline = true;
                 }
+                continue;
+            }
+            // --modal-voxelize --list F --out DIR (M76b): 連鎖 (この下) は MSVC の入れ子上限
+            // (C1061) に達しているので、--cook-font-metrics と同じく連鎖の**手前**で拾って
+            // continue する (else-if を増やさない)
+            if (arg == L"--modal-voxelize") {
+                modalVoxelize = true;
+                continue;
+            }
+            if (modalVoxelize && arg == L"--list" && i + 1 < argc) {
+                modalVoxelizeList = argv[++i];
+                continue;
+            }
+            if (modalVoxelize && arg == L"--out" && i + 1 < argc) {
+                modalVoxelizeOut = argv[++i];
+                continue;
+            }
+            // --modal-bake [--project DIR] (M76e): --project は既存の連鎖 (下) で projectDir へ
+            // 入るので、ここでは自身のフラグだけ拾う (--modal-voxelize と同じ「連鎖の手前」の置き方)
+            if (arg == L"--modal-bake") {
+                modalBake = true;
                 continue;
             }
             if (arg == L"--selftest") {
@@ -390,6 +419,23 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return mye::subasset::RunMigration(assetsRoot, legacyRoots, migrateDryRun);
     }
 
+    // --modal-voxelize --list F --out DIR (M76b): builtin/.off/.obj/.gltf/.fbx を 32^3
+    // ボクセルへ焼いて .mvox を書いて終了する。ウィンドウも D3D も作らない。
+    // 学習パイプライン (tools\deepmodal) が cmd /c 経由でこれを subprocess として呼ぶ
+    // (Editor.exe は GUI サブシステムなので直接は待てない — CLAUDE.md 環境の罠)。
+    // exit 0 = 全部成功 / 1 = 1 件以上失敗 (list が読めない・入力が無い・未対応拡張子等)
+    if (modalVoxelize) {
+        return mye::modaltools::RunModalVoxelizeCli(modalVoxelizeList, modalVoxelizeOut);
+    }
+
+    // --modal-bake [--project DIR] [--modal-backend cpu|d3d11cs] (M76e): .dmnet を読み、
+    // プロジェクト (または裸のエンジンリポジトリ) の全メッシュを .msfm へ焼いて終了する。
+    // ウィンドウも D3D も作らない。config.modalBackendName は共有 CLI (EngineCli.cpp) が
+    // --modal-backend を検証済み (reviewer round 1 指摘 5: 以前は黙って cpu 固定だった)
+    if (modalBake) {
+        return mye::modaltools::RunModalBakeCli(projectDir, config.modalBackendName);
+    }
+
     if (selftest) {
         // ウィンドウ/D3D 不要のヘッドレス回帰テスト
         const bool ok = mye::RunEcsSelfTest() && mye::RunSceneSerializerSelfTest()
@@ -426,6 +472,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunSubAssetKeySelfTest()    // M74a / M74b
             && mye::RunImpactSynthSelfTest()    // ImpactSynth (計画 ImpactSoundDesign)
             && mye::RunReloadHubSelfTest()      // ホットリロードの資産の種類表
+            && mye::RunModalSynthSelfTest()     // M76a: Deep-Modal のモード合成器
+            && mye::RunModalSelfTest()          // M76b: Deep-Modal のボクセライザ
+            && mye::RunModalAudioSelfTest()     // M76f: 衝突 -> モーダル一発再生の橋渡し
             && mye::RunEngineCliSelfTest();     // 両 Main 共通の CLI フラグ表
         return ok ? 0 : 1;
     }

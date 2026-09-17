@@ -31,3 +31,10 @@ dist/
 /tools/lab_assets_v01/__pycache__
 /tools/player_fp_v01
 /tools/stage01
+
+# Deep-Modal (M76c) のデータセット生成物・キャッシュ。voxel/npz/学習成果物は
+# 何度でも作り直せる (README の手順で再現可能) ので版管理しない
+tools/deepmodal/data/
+tools/deepmodal/**/__pycache__/
+tools/deepmodal/.pytest_cache/
+tools/deepmodal/runs/
