@@ -37,6 +37,7 @@ bool ShadowPass::Init(GraphicsDevice& device, ShaderManager& shaders, int resolu
     ID3D11Device* dev = device.Device();
 
     depthShader_ = shaders.Load("shadow_depth");
+    depthSkinnedShader_ = shaders.Load("shadow_depth_skinned");
     depthInstancedShader_ = shaders.Load("shadow_depth_instanced"); // M38f
 
     // 深度テクスチャ: TYPELESS の Texture2DArray (M38d カスケード) で作り、
@@ -79,6 +80,11 @@ bool ShadowPass::Init(GraphicsDevice& device, ShaderManager& shaders, int resolu
     bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     if (FAILED(dev->CreateBuffer(&bd, nullptr, objectCB_.GetAddressOf()))) {
+        return false;
+    }
+    // ボーンパレット (b3)。本描画 (ForwardPath / DeferredPath) と同じ大きさ・同じ中身を使う
+    bd.ByteWidth = sizeof(XMFLOAT4X4) * kMaxBones;
+    if (FAILED(dev->CreateBuffer(&bd, nullptr, boneCB_.GetAddressOf()))) {
         return false;
     }
 
@@ -126,6 +132,7 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
     // ソートキー由来の境界をそのまま使う (保守的だが正しく、run 構築関数を共有できる)
     runs_.clear();
     worlds_.clear();
+    ShaderProgram* skinnedProg = shaders.Get(depthSkinnedShader_);
     ShaderProgram* instProg = shaders.Get(depthInstancedShader_);
     if (instancing && instProg && instProg->valid) {
         canInstance_.resize(queue.opaque.size());
@@ -204,15 +211,34 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
                 idx += run.count - 1; // for の ++idx と合わせて run 全体を飛ばす
                 continue;
             }
-            if (depthShader_.value != boundShader) {
-                dc->IASetInputLayout(prog->inputLayout.Get());
-                dc->VSSetShader(prog->vs.Get(), nullptr, 0);
-                boundShader = depthShader_.value;
+            // スキンメッシュは専用 VS + ボーンパレットへ差し替える (判定は本描画と同じ)。
+            // 差し替えずに描くとバインドポーズの生ジオメトリがそのまま焼かれる
+            const bool skinned = (item.bones != nullptr && item.boneCount > 0);
+            if (skinned && (!skinnedProg || !skinnedProg->valid)) {
+                continue; // 影を落とさない方が、巨大な塊を焼くより症状が分かりやすい
+            }
+            ShaderProgram* itemProg = skinned ? skinnedProg : prog;
+            const uint64_t itemShader = skinned ? depthSkinnedShader_.value : depthShader_.value;
+            if (itemShader != boundShader) {
+                dc->IASetInputLayout(itemProg->inputLayout.Get());
+                dc->VSSetShader(itemProg->vs.Get(), nullptr, 0);
+                boundShader = itemShader;
             }
             ShadowObjectCB cb = {};
             XMStoreFloat4x4(&cb.mvp,
                             XMMatrixTranspose(XMMatrixMultiply(XMLoadFloat4x4(&item.world), lvp)));
             UploadCB(dc, objectCB_.Get(), cb);
+            if (skinned) {
+                // パレットは RenderSystem が kMaxBones へ切り詰め済み (ForwardPath と同じ前提)
+                D3D11_MAPPED_SUBRESOURCE bm = {};
+                if (SUCCEEDED(dc->Map(boneCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &bm))) {
+                    memcpy(bm.pData, item.bones,
+                           sizeof(XMFLOAT4X4) * static_cast<size_t>(item.boneCount));
+                    dc->Unmap(boneCB_.Get(), 0);
+                }
+                ID3D11Buffer* bcb = boneCB_.Get();
+                dc->VSSetConstantBuffers(3, 1, &bcb);
+            }
             if (item.mesh.value != boundMesh) {
                 const UINT stride = sizeof(MeshVertex);
                 const UINT offset = 0;

@@ -80,6 +80,7 @@ $constGroups = @(
             'src\Engine\Renderer\RenderTypes.h'            = 'constexpr\s+int\s+kMaxBones\s*=\s*(\d+)'
             'assets\shaders\forward_skinned.hlsl'          = '#\s*define\s+MYE_MAX_BONES\s+(\d+)'
             'assets\shaders\deferred_gbuffer_skinned.hlsl' = '#\s*define\s+MYE_MAX_BONES\s+(\d+)'
+            'assets\shaders\shadow_depth_skinned.hlsl'     = '#\s*define\s+MYE_MAX_BONES\s+(\d+)'
         }
     },
     @{

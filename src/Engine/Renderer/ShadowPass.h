@@ -44,6 +44,9 @@ private:
     bool ready_ = false;
     int resolution_ = 0;
     AssetID depthShader_ = {};
+    // スキンメッシュ用。掛けないとバインドポーズの生ジオメトリが影に焼かれる
+    // (shadow_depth_skinned.hlsl 冒頭に症状)
+    AssetID depthSkinnedShader_ = {};
     // ---- インスタンシング (M38f)。run はカスケード間で共通 (充填は 1 回) ----
     AssetID depthInstancedShader_ = {};
     MeshInstanceBuffer instanceBuf_;
@@ -55,6 +58,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11DepthStencilView> dsv_[kCascades]; // スライス毎
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> objectCB_; // 1 オブジェクトあたり transpose(world*lightVP)
+    Microsoft::WRL::ComPtr<ID3D11Buffer> boneCB_;   // b3: ボーンパレット (本描画と同じ中身)
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthState_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer_; // 深度バイアス付き
     GpuTimer timer_;                                           // M54d

@@ -24,8 +24,9 @@ struct RenderResources;
 //   ・サンプル側の SRV が 1 本で済む。統合契約 (plans/radiant-shimmering-lumen.md 付録
 //     予約 2) が M54 に許した SRV スロットは Deferred t12 / Forward t6 の 1 本きり。
 //
-// 描画自体は ShadowPass と同じ最小 VS (shadow_depth / shadow_depth_instanced) を使う —
-// あれは pos しか読まないので、正射影の lightVP を透視の lightVP に差し替えるだけで通る。
+// 描画自体は ShadowPass と同じ VS 一式 (shadow_depth / _instanced / _skinned) を使う —
+// pos (とスキン版のボーンパレット) しか読まないので、正射影の lightVP を透視の lightVP に
+// 差し替えるだけで通る。
 //
 // ★ShadowPass と決定的に違うのは**深度バイアス**。ShadowPass の DepthBias=800 /
 //   SlopeScaled=2.5 は正射影 (深度がビュー z に線形) 用に調整された値で、透視の非線形深度に
@@ -76,6 +77,7 @@ private:
     int tilesPerRow_ = 0;
     int capacity_ = 0;
     AssetID depthShader_ = {};
+    AssetID depthSkinnedShader_ = {}; // 無いとバインドポーズの生ジオメトリが焼かれる
     AssetID depthInstancedShader_ = {};
     // インスタンシング (M38f と同じ流儀)。run はタイル間で共通なので充填は 1 回だけ
     MeshInstanceBuffer instanceBuf_;
@@ -100,6 +102,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11DepthStencilView> dsv_;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> objectCB_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> boneCB_; // b3: ボーンパレット (本描画と同じ中身)
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthState_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer_;
 };

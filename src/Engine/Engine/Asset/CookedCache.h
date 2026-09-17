@@ -28,7 +28,11 @@ namespace mye::CookedCache {
 // blob はキー文字列を**そのまま**持ち (mesh / material / skin / 埋め込みテクスチャ) Replay が
 // 再登録するので、bump しないと旧形式のキーが再生されて新形式のシーン参照が全部空振りする。
 // ヘッダの検証はキーの中身を見ない = 版でしか弾けない。.mcvx (凸包表のキーも登録名) も同じ版で落ちる
-inline constexpr uint32_t kCookVersion = 3;
+// 4 = FBX の継承モード補正 (MakeOpts の inherit_mode_handling = COMPENSATE)。ボーンの
+// ローカル TRS が変わるので、AddSkin が焼いた旧 blob は「Spine 以下が原点へ潰れた」骨を
+// 持ったままになる。ヘッダ検証は blob の中身を見ない = 版でしか弾けず、bump しないと
+// 再パースされずに壊れた姿勢が再生され続ける (スキン付き FBX のみ影響)
+inline constexpr uint32_t kCookVersion = 4;
 
 // M51j: 封印マーカー。cooked ディレクトリにこの名前のファイルがあると「配布ビルドの
 // 封印キャッシュ」として扱い、ReadValidated が srcPathKey / stat / 内容ハッシュ / deps の

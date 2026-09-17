@@ -156,6 +156,22 @@ ufbx_load_opts MakeOpts()
     opts.geometry_transform_handling = UFBX_GEOMETRY_TRANSFORM_HANDLING_HELPER_NODES;
     opts.geometry_transform_helper_name.data = kGeoHelperName;
     opts.geometry_transform_helper_name.length = sizeof(kGeoHelperName) - 1;
+    // 非標準の継承モード (FBX の InheritType) は ufbx 側に補正させる。既定の PRESERVE は
+    // node->inherit_mode に値を残すだけで、素朴な親チェーン積 — Skeleton.cpp の
+    // JointGlobalFromLocals は UFBX_INHERIT_MODE_NORMAL 前提の local[j]*local[parent]*… —
+    // では再現できない。
+    // ★Mixamo のリグは Hips 以下が全て eInheritRrs (IGNORE_PARENT_SCALE = 親のスケールを
+    //   継承しない) で、かつ cm 単位なので ufbx が cm→m 変換を**ジオメトリではなくノード鎖**
+    //   へ入れる (geometry_scale=1.0 / root_scale=0.01 = 全ボーンが scale 0.01)。補正しないと
+    //   階層 1 段ごとに 0.01 が累乗され、Spine より下が原点へ潰れて塊になる。
+    //   実測: バインドポーズが ufbx の正解 (cluster->geometry_to_world) と maxdiff 1.11、
+    //   スキニング後 AABB が 3.03m の T ポーズ → 0.66m の塊。COMPENSATE で maxdiff 0.0。
+    // ★親のスケールが 1 なら COMPENSATE は恒等 = 既存の静的 FBX の結果は変わらない。
+    //   これがスケール 1 で作った P4 のテストアセットで見つからなかった理由でもある。
+    // ★スケールが非一様 / アニメする場合だけ ufbx はスケールヘルパーノードを挿入する。
+    //   ヘルパーは実ノードなので LoadSkin の祖先閉包が自動で拾うが、その分ジョイントが
+    //   増えて kMaxBones=128 を圧迫する (一様スケールなら 1 本も増えない)
+    opts.inherit_mode_handling = UFBX_INHERIT_MODE_HANDLING_COMPENSATE;
     return opts;
 }
 
