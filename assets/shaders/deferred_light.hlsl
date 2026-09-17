@@ -147,8 +147,14 @@ float4 PSMain(VSOut i) : SV_Target
     const float3 posW = gPosition.Load(pixel).xyz;
     const float4 matG = gMaterial.Load(pixel);
     const float2 mr = matG.rg; // metallic, roughness
+    // 汎用タグ: この面が RT を受けるか (GBuffer material.a)。受けない面は RT の 3 項すべてを
+    // ラスタ (CSM / IBL) へ戻す。既定は全面 1 = RT が有効ならこれまでと同じ分岐を通る
+    const int rtRecv = (matG.a >= 0.5f) ? 1 : 0;
+    const int rtShadowOn = gRtShadowEnabled * rtRecv;
+    const int rtGiOn = gRtGiEnabled * rtRecv;
+    const int rtReflOn = gRtReflEnabled * rtRecv;
     float dirShadow = 1.0f;
-    if (gRtShadowEnabled != 0) {
+    if (rtShadowOn != 0) {
         // M46g: レイトレの可視率で置き換える (フル解像度なので Load でぴったり一致)。
         // カスケード選択も深度バイアスも無いので継ぎ目・アクネ・ピーターパンが出ない
         dirShadow = gRtShadow.Load(pixel).r;
@@ -166,22 +172,24 @@ float4 PSMain(VSOut i) : SV_Target
     ResolveLocalShadows(gShadowAtlas, gShadowSampler, gShadowTiles, gLights, gLightCount,
                         gShadowAtlasEnabled, posW, gShadowAtlasTexel, localShadow);
     float3 color;
-    if (gRtGiEnabled != 0 || gRtReflEnabled != 0) {
+    if (rtGiOn != 0 || rtReflOn != 0) {
         // M46f/M46h: GI と反射は内部解像度 (rtResolutionScale) なので
         // s0 = LINEAR/CLAMP で引き上げる。off 側の項は 0 のまま渡す (合成側が見ない)
+        // ★線形補間は受けない面 (値 0) との境界で最大 1 テクセル分だけ暗い値を拾う。
+        //   内部解像度 0.5 なら 2 画素幅 — 気になるなら解像度 100% で消える
         const float2 rtUv = i.pos.xy / gScreenSize;
         float3 gi = float3(0.0f, 0.0f, 0.0f);
-        if (gRtGiEnabled != 0) {
+        if (rtGiOn != 0) {
             gi = gRtGi.SampleLevel(gIblSampler, rtUv, 0).rgb;
         }
         float3 refl = float3(0.0f, 0.0f, 0.0f);
-        if (gRtReflEnabled != 0) {
+        if (rtReflOn != 0) {
             refl = gRtRefl.SampleLevel(gIblSampler, rtUv, 0).rgb;
         }
         color = ApplyLightingHybrid(albedo.rgb, n, posW, gCameraPos, mr.x, mr.y, gAmbient,
                                     gLights, gLightCount, dirShadow, localShadow, gIblEnabled,
                                     gIblSpecMips, gIblIrradiance, gIblPrefiltered, gIblBrdfLut,
-                                    gIblSampler, ao, gi, gRtGiEnabled, refl, gRtReflEnabled,
+                                    gIblSampler, ao, gi, rtGiOn, refl, rtReflOn,
                                     gRtReflFadeStart, gRtReflMaxRough);
     } else {
         color = ApplyLighting(albedo.rgb, n, posW, gCameraPos, mr.x, mr.y, gAmbient,
@@ -211,7 +219,7 @@ float4 PSMain(VSOut i) : SV_Target
                 iblSpec = gIblPrefiltered.SampleLevel(gIblSampler, R, mr.y * gIblSpecMips).rgb;
             }
             const float wRt =
-                (gRtReflEnabled != 0) ? RtReflWeight(mr.y, gRtReflFadeStart, gRtReflMaxRough) : 0.0f;
+                (rtReflOn != 0) ? RtReflWeight(mr.y, gRtReflFadeStart, gRtReflMaxRough) : 0.0f;
             const float ndv = saturate(dot(n, V));
             const float3 F0 = lerp(float3(0.04f, 0.04f, 0.04f), albedo.rgb, mr.x);
             const float2 brdf = gIblBrdfLut.SampleLevel(gIblSampler, float2(ndv, mr.y), 0).rg;

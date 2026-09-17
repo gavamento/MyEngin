@@ -5,6 +5,7 @@
 #include <cwchar>
 
 #include "Engine/Engine/EngineLoop.h"
+#include "Engine/Engine/TagNames.h" // --rt-receiver-tags / --rt-scene-tags の解析
 
 namespace mye {
 namespace {
@@ -185,6 +186,7 @@ const CliFlag kEngineCliFlags[] = {
     { L"--no-jobs", CliValue::None, [](CliArgs& a) { a.c.useJobs = false; return true; } },
     { L"--no-sim-cache", CliValue::None, [](CliArgs& a) { a.c.useSimCache = false; return true; } },
     { L"--no-cook-cache", CliValue::None, [](CliArgs& a) { a.c.useCookCache = false; return true; } },
+    { L"--no-shader-cache", CliValue::None, [](CliArgs& a) { a.c.useShaderCache = false; return true; } },
     // M46b / M55c / M56c: デバッグ表示 (Deferred のみ)
     { L"--rt-debug", CliValue::One, [](CliArgs& a) { a.c.rtDebugMode = _wtoi(a.v1); return true; } },
     { L"--velocity-debug", CliValue::None, [](CliArgs& a) { a.c.velocityDebug = 1; return true; } },
@@ -218,6 +220,26 @@ const CliFlag kEngineCliFlags[] = {
     { L"--rt-gi", CliValue::None, [](CliArgs& a) { a.c.rtGi = true; return true; } },
     { L"--rt-shadow", CliValue::None, [](CliArgs& a) { a.c.rtShadow = true; return true; } },
     { L"--rt-refl", CliValue::None, [](CliArgs& a) { a.c.rtRefl = true; return true; } },
+    // 汎用タグ: RT を受ける面 / BVH に入る物をタグ番号のカンマ区切りで限定する (空 = 制限なし)。
+    // project_settings.json の "rayTracingTags" より優先し、書き戻さない
+    { L"--rt-receiver-tags", CliValue::One,
+      [](CliArgs& a) {
+          if (!ParseTagIndexList(a.v1, a.c.rtReceiverTagMask)) {
+              std::fwprintf(stderr, L"invalid --rt-receiver-tags (expected tag numbers 0-63, e.g. 0,3)\n");
+              return false;
+          }
+          a.c.rtReceiverTagsSet = true;
+          return true;
+      } },
+    { L"--rt-scene-tags", CliValue::One,
+      [](CliArgs& a) {
+          if (!ParseTagIndexList(a.v1, a.c.rtSceneTagMask)) {
+              std::fwprintf(stderr, L"invalid --rt-scene-tags (expected tag numbers 0-63, e.g. 0,3)\n");
+              return false;
+          }
+          a.c.rtSceneTagsSet = true;
+          return true;
+      } },
     // M67d: 反射のサンプルを reservoir で時空間再利用する (--rt-refl と併用)
     { L"--rt-restir", CliValue::None, [](CliArgs& a) { a.c.rtRestir = true; return true; } },
     // M67f: 空間再利用の on / 明示 off。どちらも本体 (--rt-restir) を一緒に立てる

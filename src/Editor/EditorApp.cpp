@@ -32,6 +32,7 @@
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Project.h"
 #include "Engine/Engine/Script/ScriptHost.h"
+#include "Engine/Engine/TagNames.h" // 汎用タグ: RT メニューの適用範囲
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
 #include "Engine/Engine/Replay/TimeTravel.h"
@@ -1060,6 +1061,56 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             ImGui::MenuItem(Tr(StrId::Menu_RtShadow), nullptr, &ctx.renderSystem->enableRtShadow);
             // M46h: 滑らかな面のスペキュラ環境項をレイトレ反射で置換 (画面外も映る)
             ImGui::MenuItem(Tr(StrId::Menu_RtReflection), nullptr, &ctx.renderSystem->enableRtRefl);
+            // 汎用タグ: RT を受ける面 / BVH に入る物をタグで限定する。
+            // ★RT のトグルと違い**プロジェクトへ保存する** (project_settings.json の rayTracingTags) —
+            //   「このゲームでは主役と床だけ RT」はプロジェクトの決めごとで、起動のたびに選び直す物ではない
+            {
+                auto tagMaskMenu = [&](const char* menuLabel, const char* hint, uint64_t& mask) {
+                    if (!ImGui::BeginMenu(menuLabel)) {
+                        return;
+                    }
+                    TagNames& tn = TagNames::Get();
+                    tn.Load(ctx.assetsRoot);
+                    bool changed = false;
+                    if (ImGui::MenuItem(Tr(StrId::Menu_RtTagsAll), nullptr, mask == 0)) {
+                        mask = 0;
+                        changed = true;
+                    }
+                    ImGui::Separator();
+                    bool anyNamed = false;
+                    for (int i = 0; i < kMaxTags; ++i) {
+                        const bool on = ((mask >> i) & 1ull) != 0;
+                        // 名前の無い番号は出さない。ただし立っているビットは出す (外せなくなるのを防ぐ)
+                        if (tn.Name(i)[0] == '\0' && !on) {
+                            continue;
+                        }
+                        anyNamed = true;
+                        ImGui::PushID(i);
+                        if (ImGui::MenuItem(tn.Display(i), nullptr, on)) {
+                            mask ^= 1ull << i;
+                            changed = true;
+                        }
+                        ImGui::PopID();
+                    }
+                    if (!anyNamed) {
+                        ImGui::TextDisabled("%s", Tr(StrId::Menu_RtTagsNoNames));
+                    }
+                    ImGui::Separator();
+                    ImGui::TextDisabled("%s", hint);
+                    ImGui::EndMenu();
+                    if (changed) {
+                        const RtTagSettings saved{ ctx.renderSystem->rtReceiverTagMask,
+                                                   ctx.renderSystem->rtSceneTagMask };
+                        if (SaveRtTagSettings(ctx.assetsRoot, saved)) {
+                            scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json");
+                        }
+                    }
+                };
+                tagMaskMenu(Tr(StrId::Menu_RtReceiverTags), Tr(StrId::Menu_RtReceiverHint),
+                            ctx.renderSystem->rtReceiverTagMask);
+                tagMaskMenu(Tr(StrId::Menu_RtSceneTags), Tr(StrId::Menu_RtSceneHint),
+                            ctx.renderSystem->rtSceneTagMask);
+            }
             // M55c: GBuffer RT4 (velocity) の可視化。bool ではなく int なので MenuItem の
             // 選択状態で表し、クリックでトグルする (rtDebugMode の 0/N と同じ流儀)
             {

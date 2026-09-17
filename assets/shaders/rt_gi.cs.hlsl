@@ -18,6 +18,7 @@ cbuffer RtGiCB : register(b2)
 Texture2D gGiNormal : register(t7);   // GBuffer 法線 (*0.5+0.5 のワールド法線)
 Texture2D gGiPosition : register(t8); // GBuffer ワールド座標
 Texture2D gGiMark : register(t9);     // GBuffer アルベド (a = ジオメトリ有りマーク)
+Texture2D gGiMaterial : register(t10); // GBuffer マテリアル (a = RT を受ける面か。汎用タグ)
 
 RWTexture2D<float4> gGiOut : register(u0);
 
@@ -30,8 +31,11 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     // 内部解像度のピクセル中心を G-Buffer の座標へ写す
     const float2 uv = (float2(tid.xy) + 0.5f) / gGiOutSize;
     const int3 gp = int3(int2(uv * gGiGbSize), 0);
-    if (gGiMark.Load(gp).a < 0.5f) {
-        gGiOut[tid.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f); // ジオメトリ無し (空)
+    // ジオメトリ無し (空) と、RT を受けない面 (タグのフィルタ外) はレイを撃たない。
+    // 受けない面はライトパスが IBL へ戻すので値は使われない — 「空」と同じ 0 を書いておくと
+    // 後段の蓄積が履歴ごと無効化し、A-Trous もその画素をタップしない (境界でにじまない)
+    if (gGiMark.Load(gp).a < 0.5f || gGiMaterial.Load(gp).a < 0.5f) {
+        gGiOut[tid.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }
     const float3 N = normalize(gGiNormal.Load(gp).xyz * 2.0f - 1.0f);

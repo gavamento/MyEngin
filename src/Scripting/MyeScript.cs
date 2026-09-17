@@ -460,6 +460,26 @@ namespace MyeScripting
             return result;
         }
 
+        // ---- 汎用タグ (v20) ----
+        // 名前はプロジェクト設定の "tags"。未登録の名前は常に false / 空配列になる
+        protected static bool HasTag(MyeEntity e, string tagName)
+            => Engine.HasTag(e.Id, Engine.TagIndex(tagName));
+        protected bool HasTag(string tagName) => Engine.HasTag(SelfId, Engine.TagIndex(tagName));
+        protected static bool SetTag(MyeEntity e, string tagName, bool on)
+            => Engine.SetTag(e.Id, Engine.TagIndex(tagName), on);
+
+        // そのタグを持つエンティティを index 昇順で集める (max 件で打ち切り)
+        protected static MyeEntity[] FindEntitiesWithTag(string tagName, int max = 64)
+        {
+            if (max <= 0) return System.Array.Empty<MyeEntity>();
+            var buf = new MyeEntityId[max];
+            int total = Engine.FindEntitiesWithTag(Engine.TagIndex(tagName), buf);
+            int n = total < max ? total : max; // 戻り値は切り捨て前の総数
+            var result = new MyeEntity[n];
+            for (int i = 0; i < n; ++i) result[i] = new MyeEntity(buf[i]);
+            return result;
+        }
+
         // 自分を root の部位へ取り付ける。部位が見つからなければ false
         protected bool AttachToPart(MyeEntity root, string path)
         {

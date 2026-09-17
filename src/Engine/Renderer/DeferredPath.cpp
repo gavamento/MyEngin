@@ -922,6 +922,7 @@ void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view
             po.world = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }; // 未使用
             po.baseColor = SrgbToLinear(mat->baseColor);
             po.instanceBase = static_cast<int32_t>(run.base);
+            po.rtReceiver = item.rtReceiver; // run 内は同値 (BuildInstanceRuns が保証)
             UploadCB(dc, perObjectCB_.Get(), po);
             UploadCB(dc, materialCB_.Get(), MakeMaterialCB(*mat));
             dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
@@ -955,6 +956,7 @@ void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view
         PerObjectCB po = {};
         XMStoreFloat4x4(&po.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
         po.baseColor = SrgbToLinear(mat->baseColor); // M38a: authored 色をリニアへ
+        po.rtReceiver = item.rtReceiver;
         UploadCB(dc, perObjectCB_.Get(), po);
         // M55c: この描画の「前フレームに実際に描いた world」。b4 の他のフィールドは
         // フレーム頭で埋めた値をそのまま持ち回る

@@ -19,6 +19,7 @@
 #include "Editor/EditorComponentCatalog.h"
 #include "Editor/PartTagNames.h"
 #include "Editor/PhysicsLayerNames.h"
+#include "Engine/Engine/TagNames.h" // 汎用タグの名前表 (Tag コンポーネントのチェックリスト)
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/ComponentRegistry.h"
@@ -823,6 +824,8 @@ void InspectorWindow::DrawComponentFields(EngineContext& ctx, Selection& selecti
             || f.type == FieldType::EntityRef
             || (std::strcmp(desc.name, "Collider") == 0
                 && std::strcmp(f.name, "mask") == 0)
+            // 汎用タグのチェックリストもクリック即確定 = 自前 Undo
+            || (std::strcmp(desc.name, "Tag") == 0 && std::strcmp(f.name, "mask") == 0)
             // M59a2: 材料上書きチェックボックスもクリック即確定 = 自前 Undo
             || (std::strcmp(desc.name, "Collider") == 0
                 && std::strcmp(f.name, "materialOverrideBits") == 0);
@@ -1445,6 +1448,62 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
                 ImGui::Separator();
                 ImGui::TextDisabled("%s", Tr(StrId::Insp_PartTagHint));
                 ImGui::EndCombo();
+            }
+        } else if (componentName && std::strcmp(componentName, "Tag") == 0
+                   && std::strcmp(field.name, "mask") == 0) {
+            // 汎用タグ: 名前表のチェックリスト (Collider の衝突マスクと同じ自前 Undo 方式 —
+            // 呼び出し側の HandleEditUndoMulti からは除外されている)。
+            // ★名前の無い番号は出さない (64 行並べても選べない)。ただし既に立っているビットは
+            //   名前が無くても出す — 黙って外せなくなる / 見えないまま残るのを防ぐ
+            uint64_t& m = *static_cast<uint64_t*>(p);
+            TagNames& tn = TagNames::Get();
+            tn.Load(ctx.assetsRoot);
+            int count = 0;
+            for (int i = 0; i < kMaxTags; ++i) {
+                count += ((m >> i) & 1ull) ? 1 : 0;
+            }
+            char summary[48];
+            if (m == 0ull) {
+                std::snprintf(summary, sizeof(summary), "%s", Tr(StrId::Insp_TagNone));
+            } else {
+                std::snprintf(summary, sizeof(summary), Tr(StrId::Insp_TagCount), count);
+            }
+            if (ImGui::Button(summary)) {
+                ImGui::OpenPopup("##tag_mask");
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted(labelText);
+            if (ImGui::BeginPopup("##tag_mask")) {
+                auto applyMask = [&](uint64_t next) {
+                    undo.Record("Modify Tags", *ctx.scene, selection, fids,
+                                UndoStack::StructuralChanges::None, [&] {
+                        for (void* c : comps) {
+                            *reinterpret_cast<uint64_t*>(static_cast<uint8_t*>(c) + field.offset) = next;
+                        }
+                    });
+                    changed = true;
+                };
+                if (ImGui::SmallButton(Tr(StrId::Insp_TagClear))) {
+                    applyMask(0ull);
+                }
+                ImGui::Separator();
+                for (int i = 0; i < kMaxTags; ++i) {
+                    const bool named = tn.Name(i)[0] != '\0';
+                    bool on = ((m >> i) & 1ull) != 0;
+                    if (!named && !on) {
+                        continue;
+                    }
+                    ImGui::PushID(i);
+                    char row[64];
+                    std::snprintf(row, sizeof(row), "%2d  %s", i, tn.Display(i));
+                    if (ImGui::Checkbox(row, &on)) {
+                        applyMask(m ^ (1ull << i));
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::Separator();
+                ImGui::TextDisabled("%s", Tr(StrId::Insp_TagHint));
+                ImGui::EndPopup();
             }
         } else {
             changed = ImGui::InputScalar(label, ImGuiDataType_U64, p);

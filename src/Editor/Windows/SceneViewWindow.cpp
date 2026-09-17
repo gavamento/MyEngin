@@ -183,7 +183,9 @@ void SceneViewWindow::OnRenderViews(EngineContext& ctx, Selection& selection)
     camTargetFid_ = ResolveCameraFid(ctx, selection);
     previewValid_ = false; // 下の RenderCameraPreview が描けたときだけ立てる
 
-    if (desiredW_ <= 0 || desiredH_ <= 0) {
+    // 見えていないビュー (閉じた / タブの裏) は描かない。プレビュー窓もこのビューの中に
+    // 重ねて出すものなので一緒に止まる。再び見えた最初のフレームだけ前の絵が残る
+    if (!shownLastFrame_ || desiredW_ <= 0 || desiredH_ <= 0) {
         return;
     }
     rt_.Resize(*ctx.device, desiredW_, desiredH_);
@@ -1525,6 +1527,7 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     // 記録が開いたままだと以降の編集が全部そのエントリに巻き込まれる
     ClosePilotRecord(ctx, selection, undo);
 
+    shownLastFrame_ = false; // 下で Begin が「見えている」を返したときだけ立てる
     if (!open) {
         return;
     }
@@ -1535,6 +1538,7 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         ImGui::End();
         return;
     }
+    shownLastFrame_ = true;
 
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     desiredW_ = static_cast<int>(std::max(avail.x, 16.0f));

@@ -102,6 +102,10 @@ private:
     float camPitch_ = 18.0f;
     int desiredW_ = 0;
     int desiredH_ = 0;
+    // 直近の OnImGui でビューが実際に見えていたか (閉じた / タブの裏 = false)。
+    // ★OnRenderViews は OnImGui より**前**に走るので「前フレームの可視性」で判定する。
+    //   これが無いと、見えていないビューも毎フレーム GBuffer + RT の全パスを描いていた
+    bool shownLastFrame_ = false;
 
     // 描画に使った view/proj (ギズモがピクセル一致するよう OnRenderViews で保存)
     DirectX::XMFLOAT4X4 lastView_ = {};

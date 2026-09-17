@@ -8,6 +8,7 @@
 #include "Editor/SourceControl/ScmHint.h" // M66i: 保存直後に status を取り直させる
 #include "Editor/EditorSettings.h"
 #include "Editor/PartTagNames.h"
+#include "Engine/Engine/TagNames.h" // 汎用タグの名前表
 #include "Editor/PhysicsLayerNames.h"
 #include "Editor/ShortcutHub.h"
 #include "Engine/Core/Hash.h"
@@ -235,6 +236,40 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
             if (pt.Save(ctx.assetsRoot)) {
                 pt.Load(ctx.assetsRoot, true); // 空欄が落ちた結果を読み直す
                 scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json"); // M66i
+            }
+        }
+    }
+
+    // ---- 汎用タグ名 (assets\project_settings.json の tags) ----
+    // 物理レイヤーと同じく **番号が実体**。64 行を全部出すと長いので、名前の付いた最後の行 + 余白
+    // だけ出し、「行を増やす」で広げる (空欄の番号はシーン側から見ても未使用なだけで害は無い)
+    if (ImGui::CollapsingHeader(Tr(StrId::PrjSet_Tags))) {
+        TagNames& tn = TagNames::Get();
+        tn.Load(ctx.assetsRoot);
+        ImGui::TextWrapped("%s", Tr(StrId::PrjSet_TagHint));
+        int last = -1;
+        for (int i = 0; i < TagNames::kCount; ++i) {
+            if (tn.Name(i)[0] != '\0') {
+                last = i;
+            }
+        }
+        const int shown = std::min(TagNames::kCount, std::max({ last + 2, 8, tagRowsShown_ }));
+        for (int i = 0; i < shown; ++i) {
+            ImGui::PushID(i);
+            ImGui::SetNextItemWidth(200.0f);
+            char label[16];
+            std::snprintf(label, sizeof(label), "%2d", i);
+            ImGui::InputText(label, tn.EditBuffer(i), TagNames::kNameCapacity);
+            ImGui::PopID();
+        }
+        if (shown < TagNames::kCount && ImGui::Button(Tr(StrId::PrjSet_MoreTags))) {
+            tagRowsShown_ = std::min(TagNames::kCount, shown + 8);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(Tr(StrId::PrjSet_SaveTags))) {
+            if (tn.Save(ctx.assetsRoot)) {
+                tn.Load(ctx.assetsRoot, true);
+                scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json");
             }
         }
     }
@@ -529,7 +564,8 @@ bool InputActionsDifferFromDisk(const std::wstring& assetsRoot, const InputActio
 
 bool ProjectSettingsWindow::HasUnsavedChanges() const
 {
-    if (PhysicsLayerNames::Get().DiffersFromDisk() || PartTagNames::Get().DiffersFromDisk()) {
+    if (PhysicsLayerNames::Get().DiffersFromDisk() || PartTagNames::Get().DiffersFromDisk()
+        || TagNames::Get().DiffersFromDisk()) {
         return true;
     }
     if (uiLoaded_ && uiEdit_ != uiDisk_) {

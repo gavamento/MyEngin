@@ -31,7 +31,8 @@
 // v17 (M71a): GetSceneName
 // v18: IsDevelopmentRun (デバッグ機能を配布物で閉じる)
 // v19: SetWindowMode / GetWindowMode (ウィンドウ / ボーダーレスの切り替え)
-#define MYE_API_VERSION 19u
+// v20: 汎用タグ TagIndex / HasTag / SetTag / FindEntitiesWithTag
+#define MYE_API_VERSION 20u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -580,6 +581,24 @@ struct MyeEngineApi {
     //   ★**起動方法と前回の選択で決まる値で、sim 状態ではない** — 設定画面の表示にだけ使い、
     //     登録フィールドへ書き戻さない (書くと前回の選択が違うだけで記録と検証のワールドハッシュが割れる)
     int32_t (*GetWindowMode)(void* engine);
+
+    // ---- v20: 汎用タグ (TagComponent) ----
+    // タグは番号 0..63 のビット集合で、名前はプロジェクト設定 (project_settings.json の "tags")。
+    // 判定の規則は Engine/Engine/Tags.h の 1 本きり (エディタ・描画と同じ関数を見る)。
+    // TagIndex: 名前 → 番号。空文字列 / 未登録は -1。大文字小文字は区別する。
+    //   ★名前の表はプロジェクトの資産なので、同じ資産で走る記録と検証では同じ番号が返る。
+    //     毎フレーム引かずに Start で番号へ解決して持つのが安い
+    int32_t (*TagIndex)(void* engine, const char* name);
+    // HasTag: id が**自分で**そのタグを持つなら 1 (祖先のタグは見ない — Unity の Tag と同じ)。
+    //   無効な id / 範囲外の番号は 0。★SetTag で付けた直後に Tag コンポーネントが新しく
+    //   足された場合は AddComponentByName と同じく tick 末に適用される = 同じ tick では 0
+    int (*HasTag)(void* engine, MyeEntityId id, int32_t tagIndex);
+    // SetTag: on != 0 で付ける / 0 で外す。Tag コンポーネントが無ければ付けるときだけ足す
+    //   (外すときに足しはしない)。成功 (id が有効かつ番号が範囲内) で 1
+    int (*SetTag)(void* engine, MyeEntityId id, int32_t tagIndex, int on);
+    // FindEntitiesWithTag: そのタグを自分で持つ生存エンティティを **EntityID の index 昇順** で out へ。
+    //   戻り値は切り捨て前の総数 (FindPartsByTag と同じ規約。out=null / cap<=0 は数えるだけ)
+    int32_t (*FindEntitiesWithTag)(void* engine, int32_t tagIndex, MyeEntityId* out, int32_t cap);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

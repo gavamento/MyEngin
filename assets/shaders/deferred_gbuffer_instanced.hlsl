@@ -16,7 +16,8 @@ cbuffer PerObject : register(b1)
     float4   gBaseColor;
     // ---- インスタンシング (M38f、末尾 append) ----
     int      gInstanceBase; // gInstances 内の run 開始位置
-    float3   _instPad;
+    float    gRtReceiver;   // 汎用タグ: RT を受けるか (run 内は同値。BuildInstanceRuns が保証)
+    float2   _instPad;
 };
 
 cbuffer MaterialParams : register(b2)
@@ -106,7 +107,7 @@ PSOut PSMain(VSOut i)
     o.albedo = float4(albedo.rgb, 1.0f);
     o.normal = float4(n * 0.5f + 0.5f, 1.0f);
     o.position = float4(i.posW, 1.0f);
-    o.material = float4(gMetallic, gRoughness, EncodeEmissive(gEmissive), 1.0f);
+    o.material = float4(gMetallic, gRoughness, EncodeEmissive(gEmissive), gRtReceiver);
     o.velocity = (gVelocityValid != 0) ? ComputeVelocityUv(i.curClip, i.prevClip, gJitterNdc)
                                        : float2(0.0f, 0.0f);
     return o;

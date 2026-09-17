@@ -498,6 +498,15 @@
     <ClCompile Include="..\src\Engine\Engine\SkinningSystem.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\TagNames.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Tags.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\TagSelfTest.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\TerrainSystem.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
@@ -646,6 +655,9 @@
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\RenderTexture.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ShaderCache.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\ShaderManager.cpp">
@@ -1167,6 +1179,15 @@
     <ClInclude Include="..\src\Engine\Engine\SkinningSystem.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\TagNames.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Tags.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\TagSelfTest.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\TerrainSystem.h">
       <Filter>Engine</Filter>
     </ClInclude>
@@ -1351,6 +1372,9 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\RenderTypes.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ShaderCache.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ShaderManager.h">

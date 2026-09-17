@@ -15,6 +15,8 @@
 #include "Engine/Engine/Parts.h" // v9 部位クエリ (M48h)
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/TagNames.h" // v20 TagIndex (名前 → 番号)
+#include "Engine/Engine/Tags.h"     // v20 タグ判定の唯一の実装
 #include "Engine/Engine/Script/ScriptKeys.h" // ToShared
 #include "Engine/Engine/UI/UIInteraction.h" // v16 (M70c): ヒットテスト/ナビの唯一の実装
 #include "Engine/Engine/UI/UILayout.h" // M51e: 矩形解決を描画と共有 (キャンバス座標のナビ矩形)
@@ -1112,6 +1114,46 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     out.GetWindowMode = [](void* engine) -> int32_t {
         const WindowModeState* w = Ctx(engine)->windowMode;
         return (w != nullptr) ? w->mode : MYE_WINDOW_MODE_WINDOWED;
+    };
+
+    // ---- v20: 汎用タグ ----
+    // 規則の実体は Engine/Engine/Tags.{h,cpp} (描画とエディタも同じ関数を見る)
+    out.TagIndex = [](void* /*engine*/, const char* name) -> int32_t {
+        if (!name) { return -1; }
+        // 表は EngineLoop が tick より前に読んである (エディタでの編集は保存時に読み直す)。
+        // ★ここで Load しない — tick 中に表を書き換える経路を作らないため
+        return TagNames::Get().IndexOf(name);
+    };
+    out.HasTag = [](void* engine, MyeEntityId id, int32_t tagIndex) -> int {
+        const uint64_t bit = Tags::BitOf(tagIndex);
+        if (bit == 0) { return 0; }
+        return (Tags::OwnMask(Sc(engine)->GetWorld(), ToEngine(id)) & bit) != 0 ? 1 : 0;
+    };
+    out.SetTag = [](void* engine, MyeEntityId id, int32_t tagIndex, int on) -> int {
+        const uint64_t bit = Tags::BitOf(tagIndex);
+        World& world = Sc(engine)->GetWorld();
+        const EntityID e = ToEngine(id);
+        if (bit == 0 || !world.IsAlive(e)) { return 0; }
+        if (on != 0) {
+            // 無ければ足す。tick 中は scratch が返り、tick 末に実体へ入る (AddComponentRaw の規約)
+            auto* t = static_cast<TagComponent*>(world.AddComponentRaw(e, TagComponent::sTypeId));
+            if (!t) { return 0; }
+            t->mask |= bit;
+        } else if (auto* t = world.GetComponent<TagComponent>(e)) {
+            t->mask &= ~bit; // 外すだけで Tag コンポーネント自体は残す (構造変更を起こさない)
+        }
+        return 1;
+    };
+    out.FindEntitiesWithTag = [](void* engine, int32_t tagIndex, MyeEntityId* outIds,
+                                 int32_t cap) -> int32_t {
+        std::vector<EntityID> hits;
+        Tags::FindEntitiesWithTag(Sc(engine)->GetWorld(), tagIndex, hits);
+        const int32_t total = static_cast<int32_t>(hits.size());
+        const int32_t written = (outIds && cap > 0) ? ((total < cap) ? total : cap) : 0;
+        for (int32_t i = 0; i < written; ++i) {
+            outIds[i] = ToShared(hits[static_cast<size_t>(i)]);
+        }
+        return total;
     };
 }
 

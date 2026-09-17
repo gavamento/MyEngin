@@ -175,8 +175,8 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 19u,
-              "abi: the table reports v19");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 20u,
+              "abi: the table reports v20");
         check(api.FindPart != nullptr && api.FindPartsByTag != nullptr,
               "abi: the v9 part slots are filled in");
         check(api.RaycastParts != nullptr, "abi: the v10 RaycastParts slot is filled in");

@@ -18,7 +18,11 @@ struct PerObjectCB {
     DirectX::XMFLOAT4 baseColor;
     // ---- インスタンシング (M38f、末尾 append)。インスタンス版シェーダのみ参照 ----
     int32_t instanceBase;
-    float instPad[3];
+    // 汎用タグ: RT を受ける面か (1/0)。GBuffer 系シェーダ 3 本だけが読み、material.a へ書く。
+    // ★PerObjectCB は `po = {}` で作られるので既定は 0 — GBuffer へ描く 3 か所は必ず
+    //   RenderItem::rtReceiver を明示的に入れること (入れ忘れると RT が全部の面で消える)
+    float rtReceiver;
+    float instPad[2];
 };
 
 // forward_lit.hlsl / deferred_gbuffer.hlsl の MaterialParams (b2) と一致 (16 バイト)

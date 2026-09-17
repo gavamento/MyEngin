@@ -17,6 +17,8 @@ cbuffer PerObject : register(b1)
 {
     float4x4 gWorld;
     float4   gBaseColor;
+    int      gInstanceBase; // 未使用 (レイアウト互換のための宣言)
+    float    gRtReceiver;   // 汎用タグ: RT を受けるか (deferred_gbuffer.hlsl と同じ)
 };
 
 cbuffer MaterialParams : register(b2)
@@ -122,7 +124,7 @@ PSOut PSMain(VSOut i)
     o.albedo = float4(albedo.rgb, 1.0f);
     o.normal = float4(n * 0.5f + 0.5f, 1.0f);
     o.position = float4(i.posW, 1.0f);
-    o.material = float4(gMetallic, gRoughness, EncodeEmissive(gEmissive), 1.0f);
+    o.material = float4(gMetallic, gRoughness, EncodeEmissive(gEmissive), gRtReceiver);
     o.velocity = (gVelocityValid != 0) ? ComputeVelocityUv(i.curClip, i.prevClip, gJitterNdc)
                                        : float2(0.0f, 0.0f);
     return o;

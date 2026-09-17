@@ -203,16 +203,10 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
     }
     ID3D11Device* dev = device.Device();
 
-    debugCS_ = shaders.LoadCompute("rt_debug.cs");
-    giCS_ = shaders.LoadCompute("rt_gi.cs");
-    temporalCS_ = shaders.LoadCompute("rt_temporal.cs");
-    varianceCS_ = shaders.LoadCompute("rt_variance.cs");
-    atrousCS_ = shaders.LoadCompute("rt_atrous.cs");
-    shadowCS_ = shaders.LoadCompute("rt_shadow.cs");
-    shadowFilterCS_ = shaders.LoadCompute("rt_shadow_filter.cs");
-    reflCS_ = shaders.LoadCompute("rt_refl.cs");
-    restirCS_ = shaders.LoadCompute("rt_refl_restir_spatial.cs"); // M67d
-    blitShader_ = shaders.Load("rt_blit");
+    // ★シェーダはここでは読まない。各パスが初めて走ったときに Program() が読む —
+    //   ここで 10 本まとめて読むと、影だけ on にしても GI / 反射 / ReSTIR / デバッグの
+    //   コンパイル (fxc 実測で計 6.6 秒) を払っていた
+    (void)shaders;
 
     if (!CreateConstant(dev, sizeof(RtSceneCB), sceneCB_)
         || !CreateConstant(dev, sizeof(RtEnvCB), envCB_)
@@ -337,6 +331,16 @@ void RtPasses::Shutdown()
     inited_ = false;
 }
 
+ShaderProgram* RtPasses::Program(ShaderManager& shaders, AssetID& id, const char* name)
+{
+    if (id.IsNull()) {
+        // LoadCompute は同名を 2 度コンパイルしない (ID が既にあれば返すだけ) ので、
+        // 失敗したシェーダも毎フレーム再試行にはならない = 壊れた .hlsl でフレームが止まらない
+        id = shaders.LoadCompute(name);
+    }
+    return shaders.Get(id);
+}
+
 void RtPasses::BindCommon(GraphicsDevice& device, const RenderView& view, const RtFrameInputs& in)
 {
     ID3D11DeviceContext* dc = device.Context();
@@ -390,11 +394,12 @@ RtGiResult RtPasses::RenderGi(GraphicsDevice& device, ShaderManager& shaders,
                               const RenderView& view, const RtFrameInputs& in)
 {
     RtGiResult result;
+    // gbMaterial は必須 (a = RT を受ける面か。null を張ると Load が 0 = 全画素「受けない」になる)
     if (!inited_ || !in.scene || !in.scene->IsValid() || !in.gbNormal || !in.gbPosition
-        || !in.gbAlbedo || view.width <= 0 || view.height <= 0) {
+        || !in.gbAlbedo || !in.gbMaterial || view.width <= 0 || view.height <= 0) {
         return result;
     }
-    ShaderProgram* cs = shaders.Get(giCS_);
+    ShaderProgram* cs = Program(shaders, giCS_, "rt_gi.cs");
     if (!cs || !cs->valid || !cs->cs) {
         return result; // コンパイル失敗時は GI 無しで進む
     }
@@ -424,8 +429,8 @@ RtGiResult RtPasses::RenderGi(GraphicsDevice& device, ShaderManager& shaders,
     ID3D11Buffer* giCbs[1] = { giCB_.Get() };
     dc->CSSetConstantBuffers(2, 1, giCbs);
 
-    ID3D11ShaderResourceView* gbuf[3] = { in.gbNormal, in.gbPosition, in.gbAlbedo };
-    dc->CSSetShaderResources(7, 3, gbuf);
+    ID3D11ShaderResourceView* gbuf[4] = { in.gbNormal, in.gbPosition, in.gbAlbedo, in.gbMaterial };
+    dc->CSSetShaderResources(7, 4, gbuf);
     ID3D11UnorderedAccessView* uavs[1] = { giRt_.UAV() };
     dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
     dc->CSSetShader(cs->cs.Get(), nullptr, 0);
@@ -469,7 +474,7 @@ RtPasses::AccumResult RtPasses::Accumulate(GraphicsDevice& device, ShaderManager
                                            float maxHistory, GpuTimer& timer)
 {
     AccumResult out;
-    ShaderProgram* cs = shaders.Get(temporalCS_);
+    ShaderProgram* cs = Program(shaders, temporalCS_, "rt_temporal.cs");
     if (!cs || !cs->valid || !cs->cs || src == nullptr) {
         return out; // コンパイル失敗時は 1spp のまま (絵は荒れるが壊れない)
     }
@@ -523,15 +528,16 @@ RtPasses::AccumResult RtPasses::Accumulate(GraphicsDevice& device, ShaderManager
     ID3D11Buffer* cbs[1] = { temporalCB_.Get() };
     dc->CSSetConstantBuffers(2, 1, cbs);
 
-    ID3D11ShaderResourceView* srvs[8] = { src,
+    ID3D11ShaderResourceView* srvs[9] = { src,
                                           h.color[rd].SRV(),
                                           h.geom[rd].SRV(),
                                           in.gbNormal,
                                           in.gbPosition,
                                           in.gbAlbedo,
                                           h.moments[rd].SRV(),
-                                          in.gbVelocity }; // M55f: t7
-    dc->CSSetShaderResources(0, 8, srvs);
+                                          in.gbVelocity,   // M55f: t7
+                                          in.gbMaterial }; // 汎用タグ: t8 (a = RT を受ける面か)
+    dc->CSSetShaderResources(0, 9, srvs);
     ID3D11UnorderedAccessView* uavs[3] = { h.color[wr].UAV(), h.geom[wr].UAV(),
                                            h.moments[wr].UAV() };
     dc->CSSetUnorderedAccessViews(0, 3, uavs, nullptr);
@@ -558,8 +564,8 @@ ID3D11ShaderResourceView* RtPasses::Denoise(GraphicsDevice& device, ShaderManage
                                             int gh, RenderTexture (&pp)[2], int iterations,
                                             float sigmaLuma, GpuTimer& timer)
 {
-    ShaderProgram* varCs = shaders.Get(varianceCS_);
-    ShaderProgram* atrousCs = shaders.Get(atrousCS_);
+    ShaderProgram* varCs = Program(shaders, varianceCS_, "rt_variance.cs");
+    ShaderProgram* atrousCs = Program(shaders, atrousCS_, "rt_atrous.cs");
     if (!varCs || !varCs->valid || !varCs->cs || !atrousCs || !atrousCs->valid || !atrousCs->cs) {
         return nullptr; // コンパイル失敗時は蓄積結果のまま (ノイズは残るが壊れない)
     }
@@ -631,10 +637,10 @@ ID3D11ShaderResourceView* RtPasses::RenderShadow(GraphicsDevice& device, ShaderM
                                                  const RenderView& view, const RtFrameInputs& in)
 {
     if (!inited_ || !in.scene || !in.scene->IsValid() || !in.gbNormal || !in.gbPosition
-        || !in.gbAlbedo || view.width <= 0 || view.height <= 0) {
-        return nullptr;
+        || !in.gbAlbedo || !in.gbMaterial || view.width <= 0 || view.height <= 0) {
+        return nullptr; // gbMaterial は必須 (RenderGi と同じ理由)
     }
-    ShaderProgram* cs = shaders.Get(shadowCS_);
+    ShaderProgram* cs = Program(shaders, shadowCS_, "rt_shadow.cs");
     if (!cs || !cs->valid || !cs->cs) {
         return nullptr; // コンパイル失敗時は影なしで進む (ライトパスは CSM のまま)
     }
@@ -664,8 +670,8 @@ ID3D11ShaderResourceView* RtPasses::RenderShadow(GraphicsDevice& device, ShaderM
     UploadCB(dc, shadowCB_.Get(), sc);
     ID3D11Buffer* shCbs[1] = { shadowCB_.Get() };
     dc->CSSetConstantBuffers(2, 1, shCbs);
-    ID3D11ShaderResourceView* gbuf[3] = { in.gbNormal, in.gbPosition, in.gbAlbedo };
-    dc->CSSetShaderResources(7, 3, gbuf);
+    ID3D11ShaderResourceView* gbuf[4] = { in.gbNormal, in.gbPosition, in.gbAlbedo, in.gbMaterial };
+    dc->CSSetShaderResources(7, 4, gbuf);
     ID3D11UnorderedAccessView* uavs[1] = { shadowRt_[0].UAV() };
     dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
     dc->CSSetShader(cs->cs.Get(), nullptr, 0);
@@ -676,7 +682,7 @@ ID3D11ShaderResourceView* RtPasses::RenderShadow(GraphicsDevice& device, ShaderM
 
     // ---- 2) 空間フィルタ (分離型: 水平 → 垂直 で 1 反復。刻み幅を倍化しながら ping-pong) ----
     int src = 0;
-    ShaderProgram* filterCs = shaders.Get(shadowFilterCS_);
+    ShaderProgram* filterCs = Program(shaders, shadowFilterCS_, "rt_shadow_filter.cs");
     if (filterCs && filterCs->valid && filterCs->cs) {
         shadowFilterTimer_.Begin(device);
         for (int i = 0; i < kRtShadowFilterIterations * 2; ++i) {
@@ -693,9 +699,9 @@ ID3D11ShaderResourceView* RtPasses::RenderShadow(GraphicsDevice& device, ShaderM
             UploadCB(dc, shadowFilterCB_.Get(), fc);
             ID3D11Buffer* fCbs[1] = { shadowFilterCB_.Get() };
             dc->CSSetConstantBuffers(2, 1, fCbs);
-            ID3D11ShaderResourceView* fSrvs[3] = { shadowRt_[src].SRV(), in.gbNormal,
-                                                   in.gbPosition };
-            dc->CSSetShaderResources(0, 3, fSrvs);
+            ID3D11ShaderResourceView* fSrvs[4] = { shadowRt_[src].SRV(), in.gbNormal,
+                                                   in.gbPosition, in.gbMaterial };
+            dc->CSSetShaderResources(0, 4, fSrvs);
             ID3D11UnorderedAccessView* fUavs[1] = { shadowRt_[dst].UAV() };
             dc->CSSetUnorderedAccessViews(0, 1, fUavs, nullptr);
             dc->CSSetShader(filterCs->cs.Get(), nullptr, 0);
@@ -719,7 +725,7 @@ RtReflResult RtPasses::RenderReflection(GraphicsDevice& device, ShaderManager& s
         || !in.gbAlbedo || !in.gbMaterial || view.width <= 0 || view.height <= 0) {
         return result;
     }
-    ShaderProgram* cs = shaders.Get(reflCS_);
+    ShaderProgram* cs = Program(shaders, reflCS_, "rt_refl.cs");
     if (!cs || !cs->valid || !cs->cs) {
         return result; // コンパイル失敗時は反射無しで進む (合成側は IBL のまま)
     }
@@ -736,7 +742,10 @@ RtReflResult RtPasses::RenderReflection(GraphicsDevice& device, ShaderManager& s
     // M67d: ReSTIR。**ここを通らない限り reservoir は 1 バイトも確保しない**。
     // シェーダのコンパイルに失敗したら現行経路へ黙って縮退する (絵は ReSTIR off と同じ)
     RtReservoirSlot& slot = reservoirs_[HistorySlot(view.rtViewKey, kHistorySlots)];
-    ShaderProgram* restirCs = shaders.Get(restirCS_);
+    // ReSTIR が off なら spatial のシェーダは読みもしない (遅延ロードの効き目がここで出る)
+    ShaderProgram* restirCs = (view.rtReflRestir != 0)
+        ? Program(shaders, restirCS_, "rt_refl_restir_spatial.cs")
+        : nullptr;
     const bool restirOn = view.rtReflRestir != 0 && restirCs != nullptr && restirCs->valid
         && restirCs->cs && EnsureReservoirs(device, slot, gw, gh);
     if (!restirOn) {
@@ -930,7 +939,7 @@ bool RtPasses::RenderRestirSpatial(GraphicsDevice& device, ShaderManager& shader
                                    const RenderView& view, const RtFrameInputs& in,
                                    RtReservoirSlot& slot, int gw, int gh)
 {
-    ShaderProgram* cs = shaders.Get(restirCS_);
+    ShaderProgram* cs = Program(shaders, restirCS_, "rt_refl_restir_spatial.cs");
     if (!cs || !cs->valid || !cs->cs) {
         return false;
     }
@@ -966,6 +975,9 @@ bool RtPasses::RenderRestirSpatial(GraphicsDevice& device, ShaderManager& shader
 bool RtPasses::Blit(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
                     ID3D11ShaderResourceView* src, int mode, float param)
 {
+    if (blitShader_.IsNull()) {
+        blitShader_ = shaders.Load("rt_blit"); // VS+PS なので Program() ではなくこちら
+    }
     ShaderProgram* blit = shaders.Get(blitShader_);
     if (!blit || !blit->valid || src == nullptr) {
         return false;
@@ -1045,7 +1057,7 @@ bool RtPasses::RenderDebug(GraphicsDevice& device, ShaderManager& shaders, const
         break;
     }
 
-    ShaderProgram* cs = shaders.Get(debugCS_);
+    ShaderProgram* cs = Program(shaders, debugCS_, "rt_debug.cs");
     if (!cs || !cs->valid || !cs->cs) {
         return false;
     }

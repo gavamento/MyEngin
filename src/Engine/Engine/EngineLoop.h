@@ -85,6 +85,11 @@ struct EngineConfig {
     // 登録される内容はクック有無でビット同一 (CookedCacheSelfTest + replay_verify が保証)
     bool useCookCache = true;
 
+    // ---- シェーダのバイトコードキャッシュ ----
+    // false で cache\shaders\ を読み書きせず毎回 D3DCompile (障害切り分け / A-B 計測用)。
+    // バイトコードはコンパイル結果そのものなので、描画結果はキャッシュ有無でビット同一
+    bool useShaderCache = true;
+
     // ---- レイトレのデバッグ表示 (M46b、--rt-debug N) ----
     // 0=off 1=BVH ヒートマップ 2=ヒット法線 3=インスタンス ID
     // 4=生 GI (1spp) 5=蓄積 GI 6=履歴長 (M46c/M46d) 7=SVGF 後 8=推定分散 (M46e)。
@@ -130,6 +135,13 @@ struct EngineConfig {
     // M46f: レイトレ GI を最終画像へ合成する (--rt-gi)。Deferred パスのみ。
     // off なら BVH の構築も転送も走らないので既定の描画経路は一切変わらない
     bool rtGi = false;
+    // 汎用タグによる RT の適用範囲の CLI 上書き (--rt-receiver-tags / --rt-scene-tags "0,3")。
+    // *Set が false なら project_settings.json の "rayTracingTags" を使う。
+    // **書き戻さない** (--particle-backend と同じ「その実行だけ」の上書き)
+    bool rtReceiverTagsSet = false;
+    uint64_t rtReceiverTagMask = 0;
+    bool rtSceneTagsSet = false;
+    uint64_t rtSceneTagMask = 0;
     // M46g: 平行光の影をレイトレで作る (--rt-shadow)。Deferred パスのみ。同上
     bool rtShadow = false;
     // M46h: スペキュラ環境項をレイトレ反射で置き換える (--rt-refl)。Deferred パスのみ。同上

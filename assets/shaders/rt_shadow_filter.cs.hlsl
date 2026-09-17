@@ -27,6 +27,7 @@ cbuffer RtShadowFilterCB : register(b2)
 Texture2D gShFIn : register(t0);       // r = 可視率
 Texture2D gShFNormal : register(t1);   // GBuffer 法線
 Texture2D gShFPosition : register(t2); // GBuffer ワールド座標 (w = ジオメトリ有りマーク)
+Texture2D gShFMaterial : register(t3); // GBuffer マテリアル (a = RT を受ける面か。汎用タグ)
 
 RWTexture2D<float> gShFOut : register(u0);
 
@@ -58,8 +59,8 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     const int2 c = int2(tid.xy);
     const float center = gShFIn.Load(int3(c, 0)).r;
     const float4 pc = gShFPosition.Load(int3(c, 0));
-    if (pc.w <= 0.0f) {
-        gShFOut[tid.xy] = center; // ジオメトリ無し (空) は素通し
+    if (pc.w <= 0.0f || gShFMaterial.Load(int3(c, 0)).a < 0.5f) {
+        gShFOut[tid.xy] = center; // ジオメトリ無し (空) / RT を受けない面は素通し
         return;
     }
     const float3 nc = normalize(gShFNormal.Load(int3(c, 0)).xyz * 2.0f - 1.0f);
@@ -74,8 +75,8 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
             continue;
         }
         const float4 pq = gShFPosition.Load(int3(p, 0));
-        if (pq.w <= 0.0f) {
-            continue; // 空 = 別の面
+        if (pq.w <= 0.0f || gShFMaterial.Load(int3(p, 0)).a < 0.5f) {
+            continue; // 空 / RT を受けない面 (影レイを撃っていない = 値が無い)
         }
         const float3 nq = normalize(gShFNormal.Load(int3(p, 0)).xyz * 2.0f - 1.0f);
         const float zq = length(pq.xyz - gShFCameraPos);

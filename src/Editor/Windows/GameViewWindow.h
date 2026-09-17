@@ -22,6 +22,8 @@ private:
     RenderTexture rt_;
     int desiredW_ = 0;
     int desiredH_ = 0;
+    // 直近の OnImGui でビューが実際に見えていたか。理由は SceneViewWindow::shownLastFrame_ と同じ
+    bool shownLastFrame_ = false;
     bool hasCamera_ = false;
     // OnRenderViews で採ったワールド追従 UI の射影 (OnImGui のアウトラインが同フレームで読む)
     uilayout::UIWorldContext uiWc_;

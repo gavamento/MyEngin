@@ -1014,7 +1014,7 @@ void RegisterBuiltinComponents()
 
     // M75a: RectTransform (=52)。UI 要素の配置 (UIElement から分離)。描画専用の NoHash +
     // UI 専用判定に載せる UiAux。旧シーンの UIElement.anchor/x/y/w/h/space はロード時に
-    // ここへ変換される (SceneSerializer)。**M60′ の Cloth/SoftBody は 62/63 の見込み**
+    // ここへ変換される (SceneSerializer)。**M60′ の Cloth/SoftBody は 63/64 の見込み** (62 = Tag)
     // (M75 の UI コンポーネント群 52〜61 が先に埋める)
     RegisterComponent<RectTransformComponent>("RectTransform", {
         MYE_JP("アンカー (min)", MYE_FIELD_TIP(RectTransformComponent, anchorMin, Float2,
@@ -1174,6 +1174,15 @@ void RegisterBuiltinComponents()
         MYE_JP("波の耳出しを消す", MYE_FIELD_TIP(ModalSoundComponent, muteWave, Int32,
                                                  "non-zero: mute the WaveSound playback once baked")),
     }, kComponentNoHash);
+
+    // 汎用タグ (TypeId=62、**末尾 append**)。M60′ の Cloth/SoftBody の見込みはこれで 63/64 へ下がる。
+    // hash 対象 — スクリプトが HasTag / FindEntitiesWithTag で分岐できる sim 入力だから。
+    // opt-in の型なので既存シーンのハッシュは変わらない (この関数の頭の規約)。
+    // Inspector はビット集合をタグ名のチェックリストで出す (InspectorWindow の "Tag"/"mask" 特例)
+    RegisterComponent<TagComponent>("Tag", {
+        MYE_JP("タグ", MYE_FIELD_TIP(TagComponent, mask, UInt64,
+                                     "set of tag numbers (names live in Project Settings > Tags)")),
+    });
 }
 
 } // namespace mye

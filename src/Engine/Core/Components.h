@@ -1624,6 +1624,21 @@ struct ModalSoundComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 汎用タグ (TypeId=62) ----
+// エンティティに付ける「印」の集合。**タグ番号 (0..63) のビット集合**を 1 本持つ。
+// 名前はプロジェクト設定 (project_settings.json の "tags") にあり、sim が見るのは番号だけ —
+// 物理レイヤーと同じ規約 (名前を変えても既存シーンの参照は切れない)。
+// Unity の Tag (1 物 1 個) ではなく複数持てる形にしたのは、「RT の対象」と
+// 「ゲーム用の分類 (敵 / 拾える物)」を同じ物に同時に付けたいから。
+// ★hash 対象 (スクリプトが HasTag / FindEntitiesWithTag で分岐する sim 入力)
+// ★判定の規則は Tags.h の 1 本きり。描画 (RT のフィルタ) は祖先のタグも継承して見るが、
+//   スクリプトの HasTag は自分のタグだけを見る — 理由は Tags.h の EffectiveTagMask
+inline constexpr int kMaxTags = 64;
+struct TagComponent {
+    uint64_t mask = 0; // bit i = タグ i を持つ
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==0 なら無効。

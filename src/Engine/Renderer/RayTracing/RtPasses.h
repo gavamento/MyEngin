@@ -12,6 +12,7 @@ namespace mye {
 
 class GraphicsDevice;
 class ShaderManager;
+struct ShaderProgram;
 
 // RtScene (Engine 層) が用意した GPU バッファ一式。
 // これを介することで Renderer 層は ECS / メッシュライブラリを知らずに済む
@@ -172,6 +173,9 @@ private:
         ID3D11ShaderResourceView* moments = nullptr;
     };
 
+    // コンピュートシェーダを初回使用時に読む (id が空ならロードして埋める)。
+    // 使わないパスのコンパイルを払わないための入口 — 各パスは shaders.Get ではなくこれを通す
+    ShaderProgram* Program(ShaderManager& shaders, AssetID& id, const char* name);
     // t0-t6 / b0-b1 / s0 (シーン + 環境) をコンピュートステージへバインドする
     void BindCommon(GraphicsDevice& device, const RenderView& view, const RtFrameInputs& in);
     void UnbindCompute(GraphicsDevice& device);

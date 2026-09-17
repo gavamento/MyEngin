@@ -32,7 +32,7 @@ Texture2D gTerrainNormal[MYE_TERRAIN_LAYERS] : register(t25);
 cbuffer TerrainObject : register(b4)
 {
     float4x4 gTerrainWorld;
-    float4   gTerrainSurface;                        // x=metallic y=roughness zw=予約
+    float4   gTerrainSurface;                        // x=metallic y=roughness z=RT を受けるか (Deferred のみ) w=予約
     float4   gTerrainTint[MYE_TERRAIN_LAYERS];       // rgb=リニア色 a=レイヤ有効フラグ
     float4   gTerrainTiling[MYE_TERRAIN_LAYERS];     // xy=繰り返し回数 zw=予約
 };

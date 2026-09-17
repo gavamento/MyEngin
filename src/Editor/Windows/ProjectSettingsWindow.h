@@ -55,6 +55,8 @@ private:
     bool particleSaved_ = false;
     // UI の基準解像度 (M75c)。UI 節を初めて開いたときにディスクから読む。uiDisk_ は最後に
     // 読んだ/保存した値 = 未保存判定の相手
+    // 汎用タグの名前表で出す行数 (「行を増やす」で伸ばす。名前の付いた最後の行 + 1 より少なくはしない)
+    int tagRowsShown_ = 8;
     bool uiLoaded_ = false;
     bool uiSaved_ = false;
     uilayout::ProjectUiSettings uiEdit_;

@@ -21,7 +21,8 @@ namespace mye {
 
 void GameViewWindow::OnRenderViews(EngineContext& ctx)
 {
-    if (desiredW_ <= 0 || desiredH_ <= 0) {
+    // 見えていない (閉じた / タブの裏) なら描かない。SceneView と同じ規則
+    if (!shownLastFrame_ || desiredW_ <= 0 || desiredH_ <= 0) {
         return;
     }
     rt_.Resize(*ctx.device, desiredW_, desiredH_);
@@ -57,6 +58,7 @@ void GameViewWindow::OnRenderViews(EngineContext& ctx)
 void GameViewWindow::OnImGui(EngineContext& ctx, const Selection& selection)
 {
     gameArea_ = {}; // 画像を描けたフレームだけ下で埋める (早期 return = 見えていない)
+    shownLastFrame_ = false;
     if (!open) {
         return;
     }
@@ -67,6 +69,7 @@ void GameViewWindow::OnImGui(EngineContext& ctx, const Selection& selection)
         ImGui::End();
         return;
     }
+    shownLastFrame_ = true;
 
     // ---- ツールバー (アスペクト比 / 統計オーバーレイ) ----
     static const char* kAspects[] = { "Free", "16:9", "4:3", "1:1" };

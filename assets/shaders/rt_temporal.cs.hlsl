@@ -58,6 +58,8 @@ Texture2D gTempHistMoments : register(t6); // 前フレームの輝度モーメ�
 // M55f: GBuffer RT4 = 画面速度 (今 UV − 前 UV、フル解像度)。gTempUseVelocity==0 のときは
 // null が張られる (Load は 0 を返すが、そもそも読まない)
 Texture2D<float2> gTempGbVelocity : register(t7);
+// 汎用タグ: GBuffer マテリアル (a = RT を受ける面か)。受けない面は「空」と同じく履歴を無効化する
+Texture2D gTempGbMaterial : register(t8);
 
 RWTexture2D<float4> gTempOutColor : register(u0);
 RWTexture2D<float4> gTempOutGeom : register(u1);
@@ -73,8 +75,10 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
     // 内部解像度のピクセル中心を G-Buffer の座標へ写す (rt_gi.cs.hlsl と同じ写像)
     const float2 uv = (float2(tid.xy) + 0.5f) / gTempOutSize;
     const int3 gp = int3(int2(uv * gTempGbSize), 0);
-    if (gTempGbMark.Load(gp).a < 0.5f) {
-        // ジオメトリ無し (空) — 履歴も無効化しておく (深度 0 = 未記録)
+    if (gTempGbMark.Load(gp).a < 0.5f || gTempGbMaterial.Load(gp).a < 0.5f) {
+        // ジオメトリ無し (空) / RT を受けない面 — 履歴も無効化しておく (深度 0 = 未記録)。
+        // geom.w = 0 は分散推定・A-Trous・ReSTIR の近傍タップが「別の面」として弾く値なので、
+        // 受ける面と受けない面の境界で値がにじまない
         gTempOutColor[tid.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         gTempOutGeom[tid.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         gTempOutMoments[tid.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);

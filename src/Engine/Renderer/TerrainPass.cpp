@@ -18,7 +18,7 @@ using namespace gpubuf;
 // **末尾 append + 16 バイト境界**を守ること (増やすときは HLSL 側にも同じ順で足す)
 struct TerrainObjectCB {
     XMFLOAT4X4 world;      // transpose 済み (HLSL は column_major 既定)
-    XMFLOAT4 surfaceParams; // x=metallic y=roughness zw=予約
+    XMFLOAT4 surfaceParams; // x=metallic y=roughness z=RT を受けるか (汎用タグ) w=予約
     // レイヤ表 (M58d)。rgb = リニア tint / a = 有効フラグ、xy = tiling / zw = 予約。
     // float4 に詰めているのは HLSL の配列が 16 バイト刻みでしか置けないため
     // (float2 の配列にすると 1 要素ごとに 8 バイトのパディングが入って C++ 側とずれる)
@@ -114,7 +114,8 @@ void TerrainPass::Draw(GraphicsDevice& device, ShaderProgram* prog, const Render
 
         TerrainObjectCB oc = {};
         XMStoreFloat4x4(&oc.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
-        oc.surfaceParams = { item.surface.metallic, item.surface.roughness, 0.0f, 0.0f };
+        // z = RT を受けるか (GBuffer material.a へ書く。deferred_terrain.hlsl)
+        oc.surfaceParams = { item.surface.metallic, item.surface.roughness, item.rtReceiver, 0.0f };
         for (uint32_t l = 0; l < kTerrainLayerCount; ++l) {
             const TerrainLayerBinding& lb = item.surface.layers[l];
             oc.layerTint[l] = lb.tint; // TerrainSystem がリニアへ変換済み (a = 有効フラグ)

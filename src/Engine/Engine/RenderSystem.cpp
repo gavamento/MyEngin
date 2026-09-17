@@ -14,6 +14,7 @@
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Ragdoll.h" // M60g1: 剛体が骨を駆動しているときのパレット
 #include "Engine/Engine/SkinningSystem.h" // M18 追補: クロスフェード込みのポーズ評価
+#include "Engine/Engine/Tags.h"           // 汎用タグ: RT の適用範囲
 #include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Renderer/FrustumCull.h"
 #include "Engine/Renderer/GpuResources.h"
@@ -862,6 +863,12 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             it.world = t.world;
             it.viewZ = t.viewZ;
             it.surface = t.surface; // M58d: スプラット + 4 レイヤの bind
+            // 汎用タグ: 地形も RT を受ける面の判定はメッシュと同じ規則 (祖先のタグを継承)
+            it.rtReceiver = (rtReceiverTagMask == 0
+                             || Tags::PassesFilter(Tags::EffectiveMask(world, t.entity),
+                                                   rtReceiverTagMask))
+                ? 1.0f
+                : 0.0f;
             terrainList_.items.push_back(it);
         }
         // 近い順 (early-z が効く順)。比較規則の正本は TerrainPass.h の
@@ -996,11 +1003,16 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     const bool collectRt =
         rtDebugMode != rtdebug::kOff || enableRtGi || enableRtShadow || enableRtRefl; // M46b/f/g/h
     rtInstances_.clear();
+    // 汎用タグのフィルタがどちらも 0 なら祖先を辿らない (既定の経路はタグを 1 回も引かない)
+    const bool rtTagFilter = rtReceiverTagMask != 0 || rtSceneTagMask != 0;
     for (const CullCand& c : cullCands) {
+        const uint64_t rtTags = rtTagFilter ? Tags::EffectiveMask(world, c.e) : 0ull;
         // M46b: レイトレ用の収集はフラスタムカリングしない (画面外の物体も
         // 反射や GI には効くため)。v1 制限: スキンメッシュ (CPU 頂点がバインドポーズ
-        // のままなので姿勢が反映できない) と半透明は BVH に入れない
-        if (collectRt && world.GetComponent<SkinnedMeshComponent>(c.e) == nullptr) {
+        // のままなので姿勢が反映できない) と半透明は BVH に入れない。
+        // 汎用タグ: rtSceneTagMask を持たない物も入れない (= 反射に映らず影も落とさない)
+        if (collectRt && Tags::PassesFilter(rtTags, rtSceneTagMask)
+            && world.GetComponent<SkinnedMeshComponent>(c.e) == nullptr) {
             const Material* rtMat = resources.materials.Get(c.material);
             if (!rtMat || rtMat->transparent == 0) {
                 rtInstances_.push_back({ c.mesh, c.material, c.world });
@@ -1016,6 +1028,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         item.entity = c.e;
         item.world = c.world;
         item.viewZ = c.viewZ;
+        item.rtReceiver = Tags::PassesFilter(rtTags, rtReceiverTagMask) ? 1.0f : 0.0f;
         // M55c: velocity 用に「前フレームに実際に描いた行列」を載せる。履歴が無い
         // (初回 / リサイズ / 前フレームは視錐台の外だった / 生成直後) ときは現在値と
         // 同値を入れる = 画面速度が厳密に 0 = カメラ再投影のみへ縮退する。

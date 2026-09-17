@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <future>
 #include <string>
 #include <string_view>
@@ -57,8 +58,27 @@ public:
 
     const std::vector<std::wstring>& ShaderDirs() const { return dirs_; }
 
+    // ---- バイトコードキャッシュ ----
+    // dir にコンパイル済みバイトコードを置き、次回は中身のハッシュが一致すれば D3DCompile を
+    // 飛ばす (RT の CS 9 本で起動が 6.6 秒止まっていたため)。enabled=false または dir 空で
+    // 無効 = 毎回コンパイル (--no-shader-cache)。**バイトコードはコンパイル結果そのもの**なので
+    // キャッシュの有無で描画結果は変わらない。Load/LoadCompute より前に呼ぶこと
+    void SetCacheDir(std::wstring dir, bool enabled);
+    int CacheHits() const { return cacheHits_.load(); }
+    int CacheMisses() const { return cacheMisses_.load(); }
+
 private:
     bool CompileProgram(const std::wstring& path, ShaderProgram& out); // out.isCompute を見て分岐
+    // キャッシュから読めたら out を完成させて true。鮮度が合わない / 無い / 壊れていれば false
+    bool TryLoadCached(const std::wstring& path, const std::vector<char>& source,
+                       ShaderProgram& out);
+    // バイトコード (CS 1 本 or VS+PS 2 本) から D3D オブジェクトを作る。キャッシュと
+    // コンパイル直後で同じ関数を通す = 「キャッシュ経由だけ入力レイアウトが違う」を作らない
+    bool Instantiate(const std::string& pathUtf8,
+                     const std::vector<std::vector<uint8_t>>& blobs, ShaderProgram& out);
+    // #include "name" を優先度順のルートで解決する (IncludeRecorder と同じ規則)。
+    // 見つからなければ空文字列
+    std::wstring ResolveInclude(const char* name, std::vector<char>* outData) const;
     // "<name>.hlsl" を各ルートで探す。見つからなければ最優先ルート上のパスを返す
     // (ホットリロード監視の照合キーになるので必ず非空を返す)
     std::wstring ResolvePath(std::string_view name) const;
@@ -73,6 +93,10 @@ private:
         std::future<ShaderProgram> future;
     };
     std::vector<AsyncCompile> async_;
+    std::wstring cacheDir_; // 空 = キャッシュ無効
+    // ホットリロードの非同期コンパイルからも数えるので atomic
+    std::atomic<int> cacheHits_{ 0 };
+    std::atomic<int> cacheMisses_{ 0 };
 };
 
 } // namespace mye

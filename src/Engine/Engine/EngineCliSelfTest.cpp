@@ -106,6 +106,8 @@ bool RunEngineCliSelfTest()
     check(r.consumed == 1 && !r.config.useSimCache, "--no-sim-cache");
     r = RunParse({ L"--no-cook-cache" });
     check(r.consumed == 1 && !r.config.useCookCache, "--no-cook-cache");
+    r = RunParse({ L"--no-shader-cache" });
+    check(r.consumed == 1 && !r.config.useShaderCache, "--no-shader-cache");
     r = RunParse({ L"--velocity-debug" });
     check(r.consumed == 1 && r.config.velocityDebug == 1, "--velocity-debug");
     r = RunParse({ L"--ssr" });
@@ -126,6 +128,14 @@ bool RunEngineCliSelfTest()
     check(r.consumed == 1 && r.config.rtShadow, "--rt-shadow");
     r = RunParse({ L"--rt-refl" });
     check(r.consumed == 1 && r.config.rtRefl, "--rt-refl");
+    r = RunParse({ L"--rt-receiver-tags", L"0,3" });
+    check(r.consumed == 1 && r.config.rtReceiverTagsSet && r.config.rtReceiverTagMask == 0x9ull,
+          "--rt-receiver-tags 0,3");
+    r = RunParse({ L"--rt-scene-tags", L"63" });
+    check(r.consumed == 1 && r.config.rtSceneTagsSet && r.config.rtSceneTagMask == (1ull << 63),
+          "--rt-scene-tags 63");
+    r = RunParse({ L"--rt-scene-tags", L"64" });
+    check(r.errors == 1, "--rt-scene-tags 64 is out of range");
     r = RunParse({ L"--rt-restir" });
     check(r.consumed == 1 && r.config.rtRestir && !r.config.rtRestirSpatial, "--rt-restir");
     r = RunParse({ L"--rt-restir-spatial" });

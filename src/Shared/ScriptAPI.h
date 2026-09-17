@@ -735,6 +735,37 @@ inline int32_t MyeGetWindowMode(const MyeUpdateContext& ctx)
     return ctx.api->GetWindowMode(ctx.api->engine);
 }
 
+// ---- v20: 汎用タグ ----
+// 名前 → 番号 (未登録は -1)。★毎 tick 引かず、Start で番号へ解決してフィールドに持つと安い
+inline int32_t MyeTagIndex(const MyeUpdateContext& ctx, const char* name)
+{
+    return ctx.api->TagIndex(ctx.api->engine, name);
+}
+
+// id が**自分で**タグを持つか (祖先のタグは見ない)
+inline bool MyeHasTag(const MyeUpdateContext& ctx, MyeEntityId id, int32_t tagIndex)
+{
+    return ctx.api->HasTag(ctx.api->engine, id, tagIndex) != 0;
+}
+
+// 名前で引く省略形 (毎回名前を解決するので、頻繁に呼ぶなら番号版を使う)
+inline bool MyeHasTagNamed(const MyeUpdateContext& ctx, MyeEntityId id, const char* name)
+{
+    return MyeHasTag(ctx, id, MyeTagIndex(ctx, name));
+}
+
+inline bool MyeSetTag(const MyeUpdateContext& ctx, MyeEntityId id, int32_t tagIndex, bool on)
+{
+    return ctx.api->SetTag(ctx.api->engine, id, tagIndex, on ? 1 : 0) != 0;
+}
+
+// そのタグを自分で持つエンティティを index 昇順で out へ。戻り値は **切り捨て前の総数**
+inline int32_t MyeFindEntitiesWithTag(const MyeUpdateContext& ctx, int32_t tagIndex, MyeEntityId* out,
+                                      int32_t cap)
+{
+    return ctx.api->FindEntitiesWithTag(ctx.api->engine, tagIndex, out, cap);
+}
+
 // ---- v12 (M51h): 入力アクション / UI 拡張 / ゲームフロー / パッド振動 ----
 
 inline int32_t MyeGetMouseWheel(const MyeUpdateContext& ctx)

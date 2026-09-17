@@ -12,6 +12,7 @@
 #include "Editor/GameFlowSelfTest.h"
 #include "Editor/PartSelfTest.h"
 #include "Editor/RagdollBuildSelfTest.h"
+#include "Engine/Engine/TagSelfTest.h"
 #include "Engine/Engine/Asset/CookedCacheSelfTest.h"
 #include "Engine/Engine/Asset/SubAssetKeySelfTest.h"
 #include "Engine/Engine/Asset/SubAssetMigration.h"
@@ -475,6 +476,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunModalSynthSelfTest()     // M76a: Deep-Modal のモード合成器
             && mye::RunModalSelfTest()          // M76b: Deep-Modal のボクセライザ
             && mye::RunModalAudioSelfTest()     // M76f: 衝突 -> モーダル一発再生の橋渡し
+            && mye::RunTagSelfTest()            // 汎用タグ / RT のタグフィルタ / シェーダキャッシュ
             && mye::RunEngineCliSelfTest();     // 両 Main 共通の CLI フラグ表
         return ok ? 0 : 1;
     }

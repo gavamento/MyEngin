@@ -168,6 +168,9 @@
     <ClCompile Include="..\src\Engine\Engine\ShowcaseScenes.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SkeletonSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\SkinningSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\TagNames.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Tags.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\TagSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\TerrainSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\TickRunner.cpp" />
     <ClCompile Include="..\src\Engine\Engine\TransformSystem.cpp" />
@@ -218,6 +221,7 @@
     <ClCompile Include="..\src\Engine\Renderer\RenderQueue.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\RenderSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\RenderTexture.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\ShaderCache.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ShaderManager.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ShadowAtlas.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ShadowPass.cpp" />
@@ -391,6 +395,9 @@
     <ClInclude Include="..\src\Engine\Engine\ShowcaseScenes.h" />
     <ClInclude Include="..\src\Engine\Engine\SkeletonSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\SkinningSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\TagNames.h" />
+    <ClInclude Include="..\src\Engine\Engine\Tags.h" />
+    <ClInclude Include="..\src\Engine\Engine\TagSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\TerrainSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\TickRunner.h" />
     <ClInclude Include="..\src\Engine\Engine\TransformSystem.h" />
@@ -453,6 +460,7 @@
     <ClInclude Include="..\src\Engine\Renderer\RenderSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\RenderTexture.h" />
     <ClInclude Include="..\src\Engine\Renderer\RenderTypes.h" />
+    <ClInclude Include="..\src\Engine\Renderer\ShaderCache.h" />
     <ClInclude Include="..\src\Engine\Renderer\ShaderManager.h" />
     <ClInclude Include="..\src\Engine\Renderer\ShadowAtlas.h" />
     <ClInclude Include="..\src\Engine\Renderer\ShadowPass.h" />

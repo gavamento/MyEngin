@@ -100,8 +100,10 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
         }
         return;
     }
-    const float roughness = gRfMaterial.Load(gp).g;
-    if (roughness > gRfMaxRoughness) {
+    const float4 matG = gRfMaterial.Load(gp);
+    const float roughness = matG.g;
+    // roughness 超過と、RT を受けない面 (a = 0。汎用タグのフィルタ外) はレイを撃たない
+    if (roughness > gRfMaxRoughness || matG.a < 0.5f) {
         gRfOut[tid.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f); // 合成側で IBL へフォールバック
         if (gRsOn != 0) {
             RtRestirWriteEmpty(tid.xy);

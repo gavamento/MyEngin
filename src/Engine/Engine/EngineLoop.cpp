@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "Engine/Core/AssetGuidResolver.h" // v8 PlayMusic の生クリップ経路 (GUID → 実パス)
+#include "Engine/Engine/TagNames.h" // 汎用タグ: 名前の表と RT の適用範囲
 #include "Engine/Core/Check.h"
 #include "Engine/Core/JobSystem.h"
 #include "Engine/Core/Log.h"
@@ -258,6 +259,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             shaderDirs.push_back(engineShaders);
         }
         shaderManager.Init(device, std::move(shaderDirs));
+        // バイトコードキャッシュ。置き場所の二経路は cache\cooked と同じ規則 (分岐は projectRoot)。
+        // ★Init の直後 = 最初の Load より前に設定する。後だと起動時のシェーダが全部素通りする
+        const std::wstring shaderCacheDir =
+            (config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot)
+            + L"\\cache\\shaders";
+        shaderManager.SetCacheDir(shaderCacheDir, config.useShaderCache);
+        MYE_LOG_INFO("[shadercache] %s (%s)",
+                     config.useShaderCache ? "enabled" : "disabled (compile every launch)",
+                     WideToUtf8(shaderCacheDir).c_str());
     }
     resources.Init(device);
     // M41: 静的メッシュコライダー (Collider.shape=3)。pose 構築サイトが meshcol::Resolve で
@@ -331,6 +341,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.rtFreezeSeed = config.rtFreezeSeed;
     renderSystem.rtSvgf = config.rtSvgf;   // M46e (--rt-no-svgf)
     renderSystem.enableRtGi = config.rtGi;             // M46f (--rt-gi、Deferred のみ)
+    // 汎用タグ: 名前の表を tick より前に読んでおく (スクリプトの TagIndex が tick 中に表を
+    // 書き換えないように)。RT の適用範囲はプロジェクト設定 → CLI の順で上書き
+    TagNames::Get().Load(assetsRoot);
+    {
+        const RtTagSettings rtTags = LoadRtTagSettings(assetsRoot);
+        renderSystem.rtReceiverTagMask =
+            config.rtReceiverTagsSet ? config.rtReceiverTagMask : rtTags.receiverMask;
+        renderSystem.rtSceneTagMask = config.rtSceneTagsSet ? config.rtSceneTagMask : rtTags.sceneMask;
+    }
     renderSystem.enableRtShadow = config.rtShadow;     // M46g (--rt-shadow、Deferred のみ)
     renderSystem.enableRtRefl = config.rtRefl;         // M46h (--rt-refl、Deferred のみ)
     renderSystem.rtReflRestir = config.rtRestir;       // M67d (--rt-restir、RT 反射が前提)

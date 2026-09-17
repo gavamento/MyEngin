@@ -167,6 +167,16 @@ MYE_STR(Menu_RtTemporal,      "Temporal Accumulation", "テンポラル蓄積")
 MYE_STR(Menu_RtSvgf,          "SVGF Spatial Filter",   "SVGF 空間フィルタ")
 // M67d: ReSTIR (反射サンプルの時空間再利用)。RT 反射が前提で、off なら再利用なしの RT 反射
 MYE_STR(Menu_RtRestir,        "ReSTIR Reflection",     "ReSTIR 反射")
+// 汎用タグによる RT の適用範囲 (project_settings.json の rayTracingTags に保存)
+MYE_STR(Menu_RtReceiverTags,  "RT Receiver Tags",      "RT を受けるタグ")
+MYE_STR(Menu_RtSceneTags,     "RT Scene Tags",         "RT に映るタグ")
+MYE_STR(Menu_RtTagsAll,       "All (no filter)",       "すべて (制限なし)")
+MYE_STR(Menu_RtTagsNoNames,   "No tag names yet (Project Settings > Tags)",
+                              "タグ名が未登録です (プロジェクト設定 > タグ)")
+MYE_STR(Menu_RtReceiverHint,  "Surfaces with none of these tags keep raster shadows / IBL (tags of parents count)",
+                              "どのタグも持たない面はラスタの影 / IBL のまま (親のタグも含めて判定)")
+MYE_STR(Menu_RtSceneHint,     "Objects with none of these tags are left out of the BVH: not reflected, cast no RT shadow",
+                              "どのタグも持たない物は BVH に入らず、反射に映らず RT の影も落としません")
 // M67f: ReSTIR のチューニング (非永続。既定の出所は RtTypes.h の定数表)。
 // ★"###" の右辺は両言語で一致・テーブル内で一意。クラス表の 3 本は 5 行で
 //   同じラベルを使い回すので、呼ぶ側が PushID(cls) で ID を分ける
@@ -397,6 +407,14 @@ MYE_STR(PrjSet_PartTagHint,   "The tag ID is the hash of its NAME — renaming a
                               "(unlike physics layers, where the number is the identity)",
                               "タグ ID は**名前のハッシュ**です — 名前を変えると、既にそのタグを使っているシーンの参照が切れます "
                               "(番号が実体の物理レイヤーとは性質が違います)")
+// ---- 汎用タグ (TagComponent) ----
+MYE_STR(PrjSet_Tags,          "Tags",                "タグ")
+MYE_STR(PrjSet_SaveTags,      "Save Tags",           "タグを保存")
+MYE_STR(PrjSet_MoreTags,      "More Rows",           "行を増やす")
+MYE_STR(PrjSet_TagHint,       "A tag is a number 0-63; the name is only a label, so renaming keeps scenes intact. "
+                              "Scripts look names up with TagIndex.",
+                              "タグの実体は番号 0〜63 で、名前はラベルです (名前を変えてもシーンの参照は切れません)。"
+                              "スクリプトは TagIndex で名前から番号を引きます。")
 // ---- 入力アクション (M51d) ----
 MYE_STR(PrjSet_Input,         "Input Actions",       "入力アクション")
 MYE_STR(PrjSet_InputHint,     "Action map (assets/input/actions.json). Evaluated every tick; Save applies immediately. "
@@ -513,6 +531,12 @@ MYE_STR(Insp_UnknownCompsHint, "The type is not registered - the values are kept
 MYE_STR(Insp_Everything,      "Everything###mask_all",      "すべて###mask_all")
 MYE_STR(Insp_Nothing,         "Nothing###mask_none",        "なし###mask_none")
 MYE_STR(Insp_MaskMixed,       "Mixed (0x%08X)###mask_mixed", "一部 (0x%08X)###mask_mixed")
+// Tag コンポーネントのタグ集合 (チェックリストのポップアップ)
+MYE_STR(Insp_TagNone,         "None###tag_none",            "なし###tag_none")
+MYE_STR(Insp_TagCount,        "%d tag(s)###tag_count",      "%d 個###tag_count")
+MYE_STR(Insp_TagClear,        "Clear",                      "すべて外す")
+MYE_STR(Insp_TagHint,         "Unnamed numbers are hidden. Name tags in Project Settings > Tags",
+                              "名前の無い番号は出しません。タグ名はプロジェクト設定 > タグで付けます")
 // サイズの比率固定チェック (ツールチップ)
 MYE_STR(Insp_ScaleLink,       "Constrain proportions",      "比率を固定")
 // カメラ操縦モードの入口 (Camera コンポーネント固有のボタン)

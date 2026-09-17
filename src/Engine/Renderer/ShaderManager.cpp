@@ -6,6 +6,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+
+#include <process.h>
 
 #include <d3dcompiler.h>
 
@@ -13,6 +16,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GraphicsDevice.h"
+#include "Engine/Renderer/ShaderCache.h"
 
 namespace mye {
 namespace {
@@ -34,30 +38,25 @@ bool ReadFileBytes(const std::wstring& path, std::vector<char>& out)
 
 // #include をシェーダルート群 (優先度順) で解決し、開いたファイルを記録する
 // (M3 の依存グラフ用)。プロジェクトが common.hlsli だけ差し替える、といった
-// 部分上書きもここで成立する
+// 部分上書きもここで成立する。解決は ShaderManager::ResolveInclude の 1 本に寄せる
+// (キャッシュの鮮度判定が同じ規則で解決し直すため。2 本あると判定だけずれる)
 class IncludeRecorder : public ID3DInclude {
 public:
-    IncludeRecorder(const std::vector<std::wstring>& baseDirs,
-                    std::vector<std::wstring>& outIncludes)
-        : baseDirs_(baseDirs), includes_(outIncludes) {}
+    using ResolveFn = std::function<std::wstring(const char*, std::vector<char>*)>;
+    IncludeRecorder(ResolveFn resolve, std::vector<std::wstring>& outIncludes,
+                    std::vector<ShaderCacheEntry::Dependency>& outDeps)
+        : resolve_(std::move(resolve)), includes_(outIncludes), deps_(outDeps) {}
 
     HRESULT __stdcall Open(D3D_INCLUDE_TYPE, LPCSTR pFileName, LPCVOID,
                            LPCVOID* ppData, UINT* pBytes) override
     {
-        std::wstring path;
         std::vector<char> data;
-        bool found = false;
-        for (const std::wstring& base : baseDirs_) {
-            path = NormalizePathKey(base + L"\\" + Utf8ToWide(pFileName));
-            if (ReadFileBytes(path, data)) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
+        const std::wstring path = resolve_(pFileName, &data);
+        if (path.empty()) {
             return E_FAIL;
         }
         includes_.push_back(path);
+        deps_.push_back({ pFileName, WideToUtf8(path), HashBytes(data.data(), data.size()) });
         char* buf = static_cast<char*>(malloc(data.size()));
         if (!buf) {
             return E_OUTOFMEMORY;
@@ -75,16 +74,17 @@ public:
     }
 
 private:
-    const std::vector<std::wstring>& baseDirs_;
+    ResolveFn resolve_;
     std::vector<std::wstring>& includes_;
+    std::vector<ShaderCacheEntry::Dependency>& deps_;
 };
 
 // 入力レイアウトを VS リフレクションから構築 (float 成分の semantic を想定)
-bool BuildInputLayout(ID3D11Device* device, ID3DBlob* vsBytecode,
+bool BuildInputLayout(ID3D11Device* device, const std::vector<uint8_t>& vsBytecode,
                       ComPtr<ID3D11InputLayout>& out)
 {
     ComPtr<ID3D11ShaderReflection> reflection;
-    if (FAILED(D3DReflect(vsBytecode->GetBufferPointer(), vsBytecode->GetBufferSize(),
+    if (FAILED(D3DReflect(vsBytecode.data(), vsBytecode.size(),
                           IID_PPV_ARGS(reflection.GetAddressOf())))) {
         return false;
     }
@@ -123,8 +123,8 @@ bool BuildInputLayout(ID3D11Device* device, ID3DBlob* vsBytecode,
         return true;
     }
     return SUCCEEDED(device->CreateInputLayout(elems.data(), static_cast<UINT>(elems.size()),
-                                               vsBytecode->GetBufferPointer(),
-                                               vsBytecode->GetBufferSize(), out.GetAddressOf()));
+                                               vsBytecode.data(), vsBytecode.size(),
+                                               out.GetAddressOf()));
 }
 
 } // namespace
@@ -322,6 +322,99 @@ void ShaderManager::PollAsyncCompiles()
     }
 }
 
+// フラグは全構成で同一にする (Debug/Release で描画結果に差を作らない)
+static constexpr UINT kCompileFlags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3;
+
+void ShaderManager::SetCacheDir(std::wstring dir, bool enabled)
+{
+    cacheDir_ = enabled ? std::move(dir) : std::wstring{};
+    if (!cacheDir_.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(cacheDir_, ec);
+    }
+}
+
+std::wstring ShaderManager::ResolveInclude(const char* name, std::vector<char>* outData) const
+{
+    std::vector<char> scratch;
+    std::vector<char>& data = outData ? *outData : scratch;
+    for (const std::wstring& base : dirs_) {
+        const std::wstring path = NormalizePathKey(base + L"\\" + Utf8ToWide(name));
+        if (ReadFileBytes(path, data)) {
+            return path;
+        }
+    }
+    return {};
+}
+
+bool ShaderManager::TryLoadCached(const std::wstring& path, const std::vector<char>& source,
+                                  ShaderProgram& out)
+{
+    if (cacheDir_.empty()) {
+        return false;
+    }
+    std::vector<char> raw;
+    if (!ReadFileBytes(cacheDir_ + L"\\" + ShaderCacheFileName(path, out.isCompute), raw)) {
+        return false;
+    }
+    ShaderCacheEntry entry;
+    if (!DecodeShaderCacheEntry(std::vector<uint8_t>(raw.begin(), raw.end()), entry)
+        || entry.isCompute != out.isCompute
+        || entry.configKey != ShaderCacheConfigKey(out.isCompute, kCompileFlags)
+        || entry.sourceHash != HashBytes(source.data(), source.size())) {
+        return false;
+    }
+    // include は 1 本ずつ「今解決したら同じファイルか」「中身は同じか」を確かめる。
+    // ★本体が変わっていなくても、共通 .hlsli (rt_common 等) だけ直した場合はここで落ちる
+    std::vector<std::wstring> includes;
+    for (const ShaderCacheEntry::Dependency& d : entry.deps) {
+        std::vector<char> data;
+        const std::wstring now = ResolveInclude(d.requestedName.c_str(), &data);
+        if (now.empty() || WideToUtf8(now) != d.resolvedPath
+            || HashBytes(data.data(), data.size()) != d.contentHash) {
+            return false;
+        }
+        includes.push_back(now);
+    }
+    if (!Instantiate(WideToUtf8(path), entry.blobs, out)) {
+        return false;
+    }
+    out.includes = std::move(includes);
+    return true;
+}
+
+bool ShaderManager::Instantiate(const std::string& pathUtf8,
+                                const std::vector<std::vector<uint8_t>>& blobs, ShaderProgram& out)
+{
+    ID3D11Device* dev = device_->Device();
+    out.cs.Reset();
+    out.vs.Reset();
+    out.ps.Reset();
+    out.inputLayout.Reset();
+    if (out.isCompute) {
+        if (blobs.size() != 1
+            || FAILED(dev->CreateComputeShader(blobs[0].data(), blobs[0].size(), nullptr,
+                                               out.cs.GetAddressOf()))) {
+            MYE_LOG_ERROR("compute shader creation failed: %s", pathUtf8.c_str());
+            return false;
+        }
+        return true;
+    }
+    if (blobs.size() != 2
+        || FAILED(dev->CreateVertexShader(blobs[0].data(), blobs[0].size(), nullptr,
+                                          out.vs.GetAddressOf()))
+        || FAILED(dev->CreatePixelShader(blobs[1].data(), blobs[1].size(), nullptr,
+                                         out.ps.GetAddressOf()))) {
+        MYE_LOG_ERROR("shader object creation failed: %s", pathUtf8.c_str());
+        return false;
+    }
+    if (!BuildInputLayout(dev, blobs[0], out.inputLayout)) {
+        MYE_LOG_ERROR("input layout creation failed: %s", pathUtf8.c_str());
+        return false;
+    }
+    return true;
+}
+
 bool ShaderManager::CompileProgram(const std::wstring& path, ShaderProgram& out)
 {
     std::vector<char> source;
@@ -329,66 +422,105 @@ bool ShaderManager::CompileProgram(const std::wstring& path, ShaderProgram& out)
         MYE_LOG_ERROR("shader file not found: %s", WideToUtf8(path).c_str());
         return false;
     }
-
-    // フラグは全構成で同一にする (Debug/Release で描画結果に差を作らない)
-    const UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3;
     const std::string pathUtf8 = WideToUtf8(path);
 
-    out.includes.clear();
-    IncludeRecorder includer(dirs_, out.includes);
+    if (TryLoadCached(path, source, out)) {
+        out.valid = true;
+        ++cacheHits_;
+        MYE_LOG_INFO("shader loaded from cache: %s", pathUtf8.c_str());
+        return true;
+    }
 
-    auto compile = [&](const char* entry, const char* target, ComPtr<ID3DBlob>& bytecode) {
+    out.includes.clear();
+    ShaderCacheEntry entry;
+    IncludeRecorder includer(
+        [this](const char* name, std::vector<char>* data) { return ResolveInclude(name, data); },
+        out.includes, entry.deps);
+
+    auto compile = [&](const char* entryPoint, const char* target, std::vector<uint8_t>& bytecode) {
+        ComPtr<ID3DBlob> code;
         ComPtr<ID3DBlob> errors;
         const HRESULT hr = D3DCompile(source.data(), source.size(), pathUtf8.c_str(), nullptr,
-                                      &includer, entry, target, flags, 0,
-                                      bytecode.GetAddressOf(), errors.GetAddressOf());
+                                      &includer, entryPoint, target, kCompileFlags, 0,
+                                      code.GetAddressOf(), errors.GetAddressOf());
         if (FAILED(hr)) {
             const char* msg = errors ? static_cast<const char*>(errors->GetBufferPointer())
                                      : "(no error output)";
-            MYE_LOG_ERROR("HLSL %s (%s):\n%s", entry, pathUtf8.c_str(), msg);
+            MYE_LOG_ERROR("HLSL %s (%s):\n%s", entryPoint, pathUtf8.c_str(), msg);
             return false;
         }
         if (errors && errors->GetBufferSize() > 1) {
-            MYE_LOG_WARN("HLSL %s (%s):\n%s", entry, pathUtf8.c_str(),
+            MYE_LOG_WARN("HLSL %s (%s):\n%s", entryPoint, pathUtf8.c_str(),
                          static_cast<const char*>(errors->GetBufferPointer()));
         }
+        const auto* p = static_cast<const uint8_t*>(code->GetBufferPointer());
+        bytecode.assign(p, p + code->GetBufferSize());
         return true;
     };
 
-    ID3D11Device* dev = device_->Device();
-
     if (out.isCompute) {
-        ComPtr<ID3DBlob> csCode;
-        if (!compile("CSMain", "cs_5_0", csCode)) {
+        entry.blobs.resize(1);
+        if (!compile("CSMain", "cs_5_0", entry.blobs[0])) {
             return false;
         }
-        if (FAILED(dev->CreateComputeShader(csCode->GetBufferPointer(), csCode->GetBufferSize(),
-                                            nullptr, out.cs.GetAddressOf()))) {
-            MYE_LOG_ERROR("compute shader creation failed: %s", pathUtf8.c_str());
+    } else {
+        entry.blobs.resize(2);
+        if (!compile("VSMain", "vs_5_0", entry.blobs[0])
+            || !compile("PSMain", "ps_5_0", entry.blobs[1])) {
             return false;
         }
-        out.valid = true;
-        MYE_LOG_INFO("shader compiled: %s", pathUtf8.c_str());
-        return true;
     }
-
-    ComPtr<ID3DBlob> vsCode, psCode;
-    if (!compile("VSMain", "vs_5_0", vsCode) || !compile("PSMain", "ps_5_0", psCode)) {
-        return false;
+    // VS と PS の 2 回のコンパイルが同じ include を 2 度記録するので、依存は重複を落とす
+    // (落とさなくても正しいが、鮮度判定で同じファイルを 2 回読むだけになる)
+    {
+        std::vector<ShaderCacheEntry::Dependency> unique;
+        for (const ShaderCacheEntry::Dependency& d : entry.deps) {
+            bool seen = false;
+            for (const ShaderCacheEntry::Dependency& u : unique) {
+                seen = seen
+                    || (u.requestedName == d.requestedName && u.resolvedPath == d.resolvedPath);
+            }
+            if (!seen) {
+                unique.push_back(d);
+            }
+        }
+        entry.deps = std::move(unique);
     }
-    if (FAILED(dev->CreateVertexShader(vsCode->GetBufferPointer(), vsCode->GetBufferSize(),
-                                       nullptr, out.vs.GetAddressOf()))
-        || FAILED(dev->CreatePixelShader(psCode->GetBufferPointer(), psCode->GetBufferSize(),
-                                         nullptr, out.ps.GetAddressOf()))) {
-        MYE_LOG_ERROR("shader object creation failed: %s", pathUtf8.c_str());
-        return false;
-    }
-    if (!BuildInputLayout(dev, vsCode.Get(), out.inputLayout)) {
-        MYE_LOG_ERROR("input layout creation failed: %s", pathUtf8.c_str());
+    if (!Instantiate(pathUtf8, entry.blobs, out)) {
         return false;
     }
     out.valid = true;
+    ++cacheMisses_;
     MYE_LOG_INFO("shader compiled: %s", pathUtf8.c_str());
+
+    if (!cacheDir_.empty()) {
+        entry.configKey = ShaderCacheConfigKey(out.isCompute, kCompileFlags);
+        entry.isCompute = out.isCompute;
+        entry.sourceHash = HashBytes(source.data(), source.size());
+        const std::vector<uint8_t> bytes = EncodeShaderCacheEntry(entry);
+        const std::wstring finalPath =
+            cacheDir_ + L"\\" + ShaderCacheFileName(path, out.isCompute);
+        // ★テンポラリ → rename (CookedCache と同じ理由)。replay_verify は複数プロセスを並列に
+        //   起動するので、同じシェーダを同時に書きうる。PID を混ぜた名前なら混線せず、
+        //   rename に勝った側の「完全な内容」だけが残る。書けなくても描画には影響しない
+        const std::wstring tmpPath = finalPath + L"." + std::to_wstring(_getpid()) + L".tmp";
+        bool written = false;
+        {
+            std::ofstream f(std::filesystem::path(tmpPath), std::ios::binary | std::ios::trunc);
+            if (f) {
+                f.write(reinterpret_cast<const char*>(bytes.data()),
+                        static_cast<std::streamsize>(bytes.size()));
+                written = f.good();
+            }
+        }
+        std::error_code ec;
+        if (written) {
+            std::filesystem::rename(tmpPath, finalPath, ec);
+        }
+        if (!written || ec) {
+            std::filesystem::remove(tmpPath, ec);
+        }
+    }
     return true;
 }
 

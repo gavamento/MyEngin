@@ -82,6 +82,8 @@ struct TerrainRenderItem {
     //   index の付け替えが要る。1 件 ~200 バイト x 可視チャンク数 (既定デモで 16) は
     //   毎フレーム作り直しても無視できる
     TerrainSurface surface;
+    // RT を受ける面か (RenderItem::rtReceiver と同じ規約。地形エンティティのタグで決まる)
+    float rtReceiver = 1.0f;
 };
 
 // 地形チャンクの描画順 (近い順 = early-z が効く順)。

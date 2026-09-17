@@ -240,6 +240,11 @@ namespace MyeScripting
         // ★ラッパは足さない — C# 側に使い手がまだ無い。位置ミラーのために並べるだけ
         public delegate* unmanaged<void*, int, void> SetWindowMode;
         public delegate* unmanaged<void*, int> GetWindowMode;
+        // ---- v20: 汎用タグ ----
+        public delegate* unmanaged<void*, byte*, int> TagIndex;
+        public delegate* unmanaged<void*, MyeEntityId, int, int> HasTag;
+        public delegate* unmanaged<void*, MyeEntityId, int, int, int> SetTag;
+        public delegate* unmanaged<void*, int, MyeEntityId*, int, int> FindEntitiesWithTag;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -606,6 +611,32 @@ namespace MyeScripting
             {
                 return _api->FindPartsByTag(_api->Engine, root, PartTag(tagName), p,
                                             outParts?.Length ?? 0);
+            }
+        }
+
+        // ---- 汎用タグ (v20) ----
+        // 名前 → 番号 (未登録は -1)。毎フレーム引かず Start で解決して持つと安い
+        public static int TagIndex(string name)
+        {
+            if (_api == null) return -1;
+            var b = Utf8(name ?? "");
+            fixed (byte* p = b) { return _api->TagIndex(_api->Engine, p); }
+        }
+
+        // 自分で持つタグだけを見る (祖先は見ない)
+        public static bool HasTag(MyeEntityId id, int tagIndex)
+            => _api != null && _api->HasTag(_api->Engine, id, tagIndex) != 0;
+
+        public static bool SetTag(MyeEntityId id, int tagIndex, bool on)
+            => _api != null && _api->SetTag(_api->Engine, id, tagIndex, on ? 1 : 0) != 0;
+
+        // index 昇順で outIds へ書く。戻り値は **切り捨て前の総数**
+        public static int FindEntitiesWithTag(int tagIndex, MyeEntityId[] outIds)
+        {
+            if (_api == null) return 0;
+            fixed (MyeEntityId* p = outIds)
+            {
+                return _api->FindEntitiesWithTag(_api->Engine, tagIndex, p, outIds?.Length ?? 0);
             }
         }
 

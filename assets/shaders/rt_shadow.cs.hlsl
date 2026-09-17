@@ -22,6 +22,7 @@ cbuffer RtShadowCB : register(b2)
 Texture2D gShNormal : register(t7);   // GBuffer 法線 (*0.5+0.5 のワールド法線)
 Texture2D gShPosition : register(t8); // GBuffer ワールド座標
 Texture2D gShMark : register(t9);     // GBuffer アルベド (a = ジオメトリ有りマーク)
+Texture2D gShMaterial : register(t10); // GBuffer マテリアル (a = RT を受ける面か。汎用タグ)
 
 RWTexture2D<float> gShOut : register(u0);
 
@@ -32,8 +33,10 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
         return;
     }
     const int3 gp = int3(int2(tid.xy), 0);
-    if (gShMark.Load(gp).a < 0.5f) {
-        gShOut[tid.xy] = 1.0f; // ジオメトリ無し (空) — ライトパスはこの画素を読まない
+    // ジオメトリ無し (空) / RT を受けない面 — ライトパスはこの画素の値を読まない
+    // (受けない面は CSM へ戻る)。フィルタ側もこの画素をタップしない
+    if (gShMark.Load(gp).a < 0.5f || gShMaterial.Load(gp).a < 0.5f) {
+        gShOut[tid.xy] = 1.0f;
         return;
     }
     // 影を落とすのは最初の平行光だけ (ラスタ CSM と同じ規約。common.hlsli::ApplyLighting は

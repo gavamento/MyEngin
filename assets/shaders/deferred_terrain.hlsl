@@ -87,7 +87,8 @@ PSOut PSMain(VSOut i)
     o.albedo = float4(surf.albedo, 1.0f);
     o.normal = float4(n * 0.5f + 0.5f, 1.0f);
     o.position = float4(i.posW, 1.0f);
-    o.material = float4(gTerrainSurface.x, gTerrainSurface.y, EncodeEmissive(0.0f), 1.0f);
+    // a = RT を受けるか (TerrainPass が surfaceParams.z に入れる。汎用タグ)
+    o.material = float4(gTerrainSurface.x, gTerrainSurface.y, EncodeEmissive(0.0f), gTerrainSurface.z);
     o.velocity = float2(0.0f, 0.0f); // M55c: 静的地形の画面速度は 0
     return o;
 }

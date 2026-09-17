@@ -160,6 +160,13 @@ public:
     // roughness が kRtReflMaxRoughness を超える面は従来どおり IBL プリフィルタのまま
     // (ローブが広すぎて 1spp が成立せず、かつ IBL との差も縮むため)
     bool enableRtRefl = false;
+    // 汎用タグによる RT の適用範囲 (TagNames.h の RtTagSettings と同じ意味。0 = 制限なし)。
+    //   rtReceiverTagMask = RT を受ける面 (祖先のタグも継承して判定)
+    //   rtSceneTagMask    = BVH に入る物 (反射に映る / 影を落とす)
+    // 出所は project_settings.json の "rayTracingTags" (EngineLoop が起動時に読む) と
+    // CLI の --rt-receiver-tags / --rt-scene-tags、エディタの RT メニュー
+    uint64_t rtReceiverTagMask = 0;
+    uint64_t rtSceneTagMask = 0;
     // M67d: ReSTIR 反射 (--rt-restir / View > RT デバッグのトグル)。RT 反射が前提。
     // false なら反射シェーダの uniform 分岐が M67d 以前の経路を走る = 絵はビット一致。
     // ★rtdebug::NeedsRestir のモードでは RenderSystem が強制的に立てる (影の kShadowVisibility と同じ流儀)

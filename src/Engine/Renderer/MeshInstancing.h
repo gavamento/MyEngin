@@ -47,7 +47,10 @@ inline void BuildInstanceRuns(const std::vector<RenderItem>& items,
         size_t j = i + 1;
         while (j < items.size() && canInstance[j]
                && items[j].material.value == items[i].material.value
-               && items[j].mesh.value == items[i].mesh.value) {
+               && items[j].mesh.value == items[i].mesh.value
+               // RT を受けるかは run 単位で 1 値 (PerObjectCB で渡す) なので、違えば run を切る。
+               // 既定は全部 1 = 従来と同じ run になる
+               && items[j].rtReceiver == items[i].rtReceiver) {
             ++j;
         }
         if (j - i >= 2) {

@@ -15,6 +15,8 @@ cbuffer PerObject : register(b1)
 {
     float4x4 gWorld;
     float4   gBaseColor;
+    int      gInstanceBase; // インスタンス版だけが読む (レイアウト互換のための宣言)
+    float    gRtReceiver;   // 汎用タグ: 1 = RT を受ける面 / 0 = ラスタのまま (MeshBind.h の PerObjectCB)
 };
 
 cbuffer MaterialParams : register(b2)
@@ -78,7 +80,7 @@ struct PSOut
     float4 albedo   : SV_Target0; // rgb = albedo, a = 1 (ジオメトリ有り)
     float4 normal   : SV_Target1; // ワールド法線 *0.5+0.5 (R10G10B10A2)
     float4 position : SV_Target2; // ワールド座標 (R16G16B16A16_FLOAT)
-    float4 material : SV_Target3; // r=metallic g=roughness b=emissive/MYE_EMISSIVE_MAX
+    float4 material : SV_Target3; // r=metallic g=roughness b=emissive/MYE_EMISSIVE_MAX a=RT を受けるか
     float2 velocity : SV_Target4; // M55c: 画面速度 UV (R16G16_FLOAT)
 };
 
@@ -94,7 +96,7 @@ PSOut PSMain(VSOut i)
     o.albedo = float4(albedo.rgb, 1.0f);
     o.normal = float4(n * 0.5f + 0.5f, 1.0f);
     o.position = float4(i.posW, 1.0f);
-    o.material = float4(gMetallic, gRoughness, EncodeEmissive(gEmissive), 1.0f);
+    o.material = float4(gMetallic, gRoughness, EncodeEmissive(gEmissive), gRtReceiver);
     o.velocity = (gVelocityValid != 0) ? ComputeVelocityUv(i.curClip, i.prevClip, gJitterNdc)
                                        : float2(0.0f, 0.0f);
     return o;
