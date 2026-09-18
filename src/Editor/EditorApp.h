@@ -172,6 +172,10 @@ private:
     //   ビルド中に checkout が通る (bin\ と cache\ を書いている最中に入れ替わる)
     void* scriptBuildProc_ = nullptr;
     std::wstring scriptBuildLog_;
+    // 2026-09-18: 上の scriptBuildProc_ が「起動時の自動焼き直し」で立ったものか。
+    // 完了トーストの文言を手押しと分けるためだけに持つ (自動経路の失敗は
+    // 「C++ スクリプトが 1 本もロードされていない」= 手押しとは重さの違う事実)
+    bool scriptBuildAuto_ = false;
     // M66m: 初回自動ビルド (scm_.Start が NoService で終わったときだけ立つ)。
     // scriptBuildProc_ と同じ理由でハンドルを持ち続ける必要は無い —
     // MyeCollab.dll が無い間は scm_.State() != None が既に GateBlocker::ServiceUnavailable

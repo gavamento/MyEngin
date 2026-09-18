@@ -1425,6 +1425,14 @@ MYE_STR(Scm_CollabBuildDone,   "Source control finished building - ready to use"
 //   あり、片方はログのパスを持たない。詳細 (パスと exit code) はログへ出す
 MYE_STR(Scm_ScriptBuildFailed, "Script build failed - see the console log.",
                                "スクリプトのビルドが失敗しました。コンソールのログを見てください。")
+// 2026-09-18: 起動時の自動焼き直し (初回ロードに失敗したときだけ 1 回)。
+// ★失敗の文言を手押しと分けている — 自動経路が失敗したときは「古いスクリプトのまま動いて
+//   いる」のではなく「1 本もロードされていない」= ワールドが別物、という重い事実を伝える
+MYE_STR(Scm_ScriptAutoRebuild, "GameLogic.dll could not be loaded - rebuilding the C++ scripts",
+                               "GameLogic.dll をロードできませんでした。C++ スクリプトを焼き直しています")
+MYE_STR(Scm_ScriptAutoRebuildFailed,
+                               "Script build failed - NO C++ scripts are loaded. See the console log.",
+                               "スクリプトのビルドが失敗しました。C++ スクリプトは 1 本もロードされていません。コンソールのログを見てください。")
 // ---- M66f: fetch / pull / push + 背景 fetch の設定 ----
 MYE_STR(Scm_Fetch,             "Fetch###ScmFetch", "取得###ScmFetch")
 MYE_STR(Scm_Pull,              "Pull###ScmPull",   "取り込み###ScmPull")

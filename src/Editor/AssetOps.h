@@ -136,6 +136,27 @@ void CompileCSharpScripts(EngineContext& ctx); // assets\scripts\*.cs をエン�
 //   ゲートを閉じる** (bin\ と cache\ を書き換えている最中に checkout が通らないように)
 void* StartGameLogicBuild(EngineContext& ctx, std::wstring& logPathOut);
 
+// 起動時の C++ スクリプト自動焼き直し (2026-09-18) を撃つかどうかの判定。**純関数** (I/O 無し)。
+// 引数はすべて呼び出し側が観測した事実:
+//   hasProject    … --project 起動か。裸起動では撃たない — replay / shot / CI は全部裸起動
+//                   (tools\collab_fixture.ps1 冒頭) なので、検証の最中に MSBuild が走って
+//                   DLL が入れ替わる事故を仕組みとして起こさない
+//   packaging     … --package 実行中か。BuildSettings のパイプラインが自分で焼くので、
+//                   同じ vcxproj / obj を 2 プロセスが同時に叩かないよう撃たない
+//   scriptsLoaded … 初回ロードが成功したか (DllReloader::Version() != 0)。
+//                   ★判定を「DLL が古いか」ではなく「ロードできたか」に置いている =
+//                     mtime を推測しないので誤爆がゼロ。代わりに「ソースの方が新しいのに
+//                     ロードは通る」古い DLL は拾えない (それは別の段の話)
+//   scriptCount   … <project>\src\GameLogic\Scripts の .cpp 本数。0 本なら DLL が無いのが
+//                   正常なので撃たない
+bool ShouldAutoRebuildScripts(bool hasProject, bool packaging, bool scriptsLoaded,
+                              size_t scriptCount);
+
+// <project>\src\GameLogic\Scripts 直下の .cpp を数える (再帰しない。無ければ 0)。
+// ★列挙条件は PrepareProjectScriptsBat と同じに保つこと — 「撃つと決めた根拠」と
+//   「実際にコンパイルされる一覧」がずれると、中身 0 本の DLL を焼いて成功扱いになる
+size_t CountProjectScriptSources(const std::wstring& projectRoot);
+
 // MyeCollab.dll (Rust) の初回自動ビルド (M66m)。EditorApp が起動直後、DLL が見つからず
 // Unavailable::NoService になったときだけ呼ぶ。cargo が PATH にも rustup の既定
 // インストール先にも見つからなければ**何もせず nullptr** (ログもしない) — rustup 未導入は

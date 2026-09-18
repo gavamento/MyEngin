@@ -231,6 +231,32 @@ void EditorApp::OnStart(EngineContext& ctx)
     if (scm_.State() == Unavailable::NoService) {
         collabBuildProc_ = StartCollabBuild(collabBuildLog_);
     }
+    // ---- C++ スクリプトの自動焼き直し (2026-09-18) ----
+    // プロジェクトの cache\GameLogic.dll は **sln の外**なので、エンジンを再ビルドしても
+    // 追従しない。MYE_API_VERSION を bump した後に開くと ScriptHost が版違いで拒否し、
+    // 「C++ スクリプトが 1 本も無い世界」で始まる = 動くけれど別物 (M70e で三校が踏んだ)。
+    // 初回ロードが失敗したときだけ、[Rebuild Scripts] と同じ経路を 1 回だけ撃つ。
+    // ★自動で撃ち直さない — ここが失敗するのは大抵「ABI が変わってスクリプト側が
+    //   コンパイルを通らない」場面で、繰り返しても同じ失敗を積むだけになる (直すのは人間)。
+    //   DllReloader が失敗した mtime へ再挑戦しないのと同じ理由 (M70e)
+    {
+        const bool hasProject = !ctx.projectRoot.empty();
+        const bool scriptsLoaded = ctx.dllReloader != nullptr && ctx.dllReloader->Version() != 0;
+        // 数えるのはプロジェクト起動でロードに失敗したときだけ (裸起動で余計な列挙をしない)
+        const size_t scriptCount =
+            (hasProject && !scriptsLoaded) ? CountProjectScriptSources(ctx.projectRoot) : 0;
+        if (ShouldAutoRebuildScripts(hasProject, !packageDir.empty(), scriptsLoaded,
+                                     scriptCount)) {
+            scriptBuildProc_ = StartGameLogicBuild(ctx, scriptBuildLog_);
+            if (scriptBuildProc_ != nullptr) {
+                scriptBuildAuto_ = true;
+                toasts_.Notify(LogLevel::Info, Tr(StrId::Scm_ScriptAutoRebuild));
+            }
+            // 起動そのものに失敗したときはトーストを出さない — 理由は
+            // PrepareProjectScriptsBat が既にログへ出しており、EngineLoop も
+            // 「NO C++ scripts are registered」を ERROR で出している
+        }
+    }
     // 保存ヒントの受け口 (M66i)。AssetOps の自由関数や各 Save 窓は
     // SourceControlSession を知らないので、中継はここ 1 箇所で張る。
     // ★Unavailable / リポジトリ外の判定は HintSaved の中にある = 呼び出し側は
@@ -1621,6 +1647,8 @@ void EditorApp::PollScriptBuild()
     }
     CloseChildProcess(scriptBuildProc_);
     scriptBuildProc_ = nullptr;
+    const bool wasAuto = scriptBuildAuto_; // 起動時の自動焼き直し (2026-09-18)
+    scriptBuildAuto_ = false;
     if (code == 0) {
         // DLL の差し替えは DllReloader が拾う (~0.5s)。ここは「終わった」だけ知らせる
         toasts_.Notify(LogLevel::Info, Tr(StrId::Scm_ScriptBuildDone));
@@ -1629,7 +1657,10 @@ void EditorApp::PollScriptBuild()
                       WideToUtf8(scriptBuildLog_).c_str());
         // ★ビルドは窓なしで走るので、コンパイルエラーは Console へ流す (M66h)
         ReportScriptBuildErrors();
-        toasts_.Notify(LogLevel::Error, Tr(StrId::Scm_ScriptBuildFailed));
+        // 自動経路の失敗は「古いスクリプトのまま動いている」ではなく「1 本もロード
+        // されていない」= ワールドが別物なので、文言を分けて重さを伝える
+        toasts_.Notify(LogLevel::Error, Tr(wasAuto ? StrId::Scm_ScriptAutoRebuildFailed
+                                                   : StrId::Scm_ScriptBuildFailed));
     }
 }
 

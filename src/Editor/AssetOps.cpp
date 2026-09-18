@@ -1490,6 +1490,30 @@ std::vector<BuildErrorLine> ParseBuildErrorLines(const std::string& logUtf8)
     return out;
 }
 
+bool ShouldAutoRebuildScripts(bool hasProject, bool packaging, bool scriptsLoaded,
+                              size_t scriptCount)
+{
+    return hasProject && !packaging && !scriptsLoaded && scriptCount > 0;
+}
+
+size_t CountProjectScriptSources(const std::wstring& projectRoot)
+{
+    if (projectRoot.empty()) {
+        return 0;
+    }
+    // 走査条件は PrepareProjectScriptsBat と同じ (直下 / .cpp のみ)。ディレクトリが
+    // 無い場合は error_code 版の directory_iterator が end を返す = 0 本
+    std::error_code ec;
+    size_t n = 0;
+    const std::wstring scriptsDir = projectRoot + L"\\src\\GameLogic\\Scripts";
+    for (const auto& e : fs::directory_iterator(scriptsDir, ec)) {
+        if (e.is_regular_file(ec) && e.path().extension() == L".cpp") {
+            ++n;
+        }
+    }
+    return n;
+}
+
 void* StartGameLogicBuild(EngineContext& ctx, std::wstring& logPathOut)
 {
     // 起動は StartChildProcess (ログ・stdin の扱いは ChildProcess.h)。返したハンドルを

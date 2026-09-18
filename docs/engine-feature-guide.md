@@ -76,6 +76,7 @@ LocalTransform が位置・回転・スケールを持ち、Hierarchy から Wor
 |---|---|
 | C++ スクリプト | Start / Update / LateUpdate、衝突イベントなどでゲームを記述 |
 | DLL ホットリロード | GameLogic.dll と PDB をコピーして差し替え。登録済み状態は名前・型の一致で移行 |
+| 起動時の自動焼き直し | `--project` で開いたとき GameLogic.dll がロードできなければ (不在 / ABI 版違い)、エディタが起動直後に 1 回だけビルドしてホットリロード。Runtime は焼かない |
 | C# スクリプト | .NET ホストからゲーム API を利用。制作時の別の記述手段 |
 | 汎用フィールドアクセス | コンポーネント名・フィールド名をキーに、登録フィールドを読み書き |
 | 空間・物理 API | Raycast、Overlap、SphereCast、力・速度操作、接触情報、CC 操作 |

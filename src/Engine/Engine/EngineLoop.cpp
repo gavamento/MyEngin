@@ -407,9 +407,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     //     build\GameLogic.vcxproj が作るもので、replay_verify / selftest はこちらを使う
     //   プロジェクト起動 = <project>\cache\GameLogic.dll。
     //     エディタの Rebuild Scripts が cache\GameLogic.vcxproj を生成して MSBuild で焼く
-    //     (AssetOps.cpp の PrepareProjectScriptsBat)。★sln の外なので、MYE_API_VERSION を
-    //     bump したらプロジェクト側でも Rebuild Scripts を押し直す (M70e: 三校の v15 DLL が
-    //     v16 のエディタに拒否され、当時の DllReloader は 500ms ごとに再試行して棚を積んだ)
+    //     (AssetOps.cpp の PrepareProjectScriptsBat)。★sln の外なので、エンジンを
+    //     ビルドしても追従しない = MYE_API_VERSION を bump すると次に開いたとき拒否される
+    //     (M70e: 三校の v15 DLL が v16 のエディタに拒否され、当時の DllReloader は
+    //     500ms ごとに再試行して棚を積んだ)。2026-09-18 以降、**エディタ**はこの初回ロード
+    //     失敗を見て起動直後に 1 回だけ自動で焼き直す (EditorApp::OnStart の
+    //     ShouldAutoRebuildScripts)。Runtime は焼かない — 開始ワールドを固定したまま
+    //     走るのが仕事で、途中で DLL が入れ替わるとリプレイ照合もネットの開始ハッシュ
+    //     照合も壊れる。Runtime で版違いを踏んだらエディタで開き直すか手で MSBuild する
     // 分岐は assetsRoot ではなく projectRoot の有無で行う — assetsRoot 由来にすると
     // レガシー時に <repo>\cache\GameLogic.dll を見に行って既存の検証経路が壊れる
     scriptHost.Init(&scene);

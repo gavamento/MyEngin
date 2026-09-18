@@ -447,6 +447,36 @@ bool RunAssetOpsSelfTest()
               "build log: a successful log produces nothing");
     }
 
+    // ---- (2026-09-18) 起動時にスクリプトを自動で焼き直す条件 ----
+    // ★裸起動で撃たないことがいちばん大事 — replay / shot / CI は全部裸起動で、
+    //   検証の最中に MSBuild が走って DLL が入れ替わると再現性そのものが消える
+    {
+        check(ShouldAutoRebuildScripts(true, false, false, 3),
+              "auto rebuild: fires when a project's GameLogic.dll failed to load");
+        check(!ShouldAutoRebuildScripts(false, false, false, 3),
+              "auto rebuild: never fires on a bare launch (replay / shot / CI)");
+        check(!ShouldAutoRebuildScripts(true, true, false, 3),
+              "auto rebuild: never fires during --package (the pipeline builds scripts itself)");
+        check(!ShouldAutoRebuildScripts(true, false, true, 3),
+              "auto rebuild: stays quiet when the dll loaded (staleness is never guessed)");
+        check(!ShouldAutoRebuildScripts(true, false, false, 0),
+              "auto rebuild: stays quiet for a project with no C++ scripts");
+
+        // 本数の数え方は PrepareProjectScriptsBat と同じ (直下の .cpp のみ)
+        const fs::path proj = root / L"autobuild_proj";
+        const fs::path scripts = proj / L"src" / L"GameLogic" / L"Scripts";
+        fs::create_directories(scripts / L"sub", ec);
+        WriteDummy(scripts / L"Rotator.cpp");
+        WriteDummy(scripts / L"Player.cpp");
+        WriteDummy(scripts / L"SkCommon.h");           // ヘッダは数えない
+        WriteDummy(scripts / L"sub" / L"Nested.cpp");  // 再帰しない (vcxproj にも載らない)
+        check(CountProjectScriptSources(proj.wstring()) == 2,
+              "auto rebuild: counts only *.cpp directly under src\\GameLogic\\Scripts");
+        check(CountProjectScriptSources((root / L"no_such_project").wstring()) == 0
+                  && CountProjectScriptSources(L"") == 0,
+              "auto rebuild: a project without a Scripts folder counts zero (no build fires)");
+    }
+
     // ---- Content Browser のタイルラベル (AssetTileLabel)。種類の判定は AssetDatabase::ClassifyPath 1 本 ----
     // 大文字を含むサフィックスも ClassifyPath に合わせて小文字と同じラベルになる
     {
