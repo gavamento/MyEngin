@@ -19,6 +19,7 @@
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
+#include "Engine/Engine/Tags.h" // 汎用タグ: 直下キー "tagMask" の上書き追跡 (M76k)
 #include "Engine/Platform/PathUtil.h"
 
 namespace fs = std::filesystem;
@@ -264,6 +265,9 @@ std::string GetNameStr(World& w, EntityID e)
 
 // override リストのキー。名前だけは特別扱いで "name" (コンポーネントではないため)
 constexpr const char* kNameOverrideKey = "name";
+// 汎用タグも同じ枠 (M76k)。実体は TagComponent だが NoSerialize = ECS のコンポーネントとしては
+// 保存されず、エンティティ直下キー "tagMask" として出るので、値キー "Tag.mask" ではなくこちら
+constexpr const char* kTagMaskOverrideKey = "tagMask";
 
 std::string OverrideKey(const std::string& compName, const char* fieldName)
 {
@@ -304,6 +308,9 @@ std::set<std::string> OverridesAgainstBase(World& w, EntityID e, const json& bas
     std::set<std::string> keys;
     if (GetNameStr(w, e) != base.value("name", std::string())) {
         keys.insert(kNameOverrideKey);
+    }
+    if (Tags::OwnMask(w, e) != base.value("tagMask", 0ull)) {
+        keys.insert(kTagMaskOverrideKey);
     }
     const ComponentRegistry& reg = ComponentRegistry::Get();
     const json empty = json::object();
@@ -931,6 +938,33 @@ bool IsNameOverridden(Scene& scene, const PrefabLibrary& lib, EntityID e)
     return GetNameStr(w, e) != base->value("name", std::string());
 }
 
+// 汎用タグ (直下キー "tagMask") の上書き判定。IsNameOverridden と同型
+bool IsTagMaskOverridden(Scene& scene, const PrefabLibrary& lib, EntityID e)
+{
+    World& w = scene.GetWorld();
+    const json* base = ResolveBase(w, lib, e);
+    if (!base) {
+        return false;
+    }
+    if (const Scene::OverrideSet* rec = scene.GetOverrides(FidOf(w, e))) {
+        return rec->count(kTagMaskOverrideKey) != 0;
+    }
+    return Tags::OwnMask(w, e) != base->value("tagMask", 0ull);
+}
+
+// タグだけをベース値へ戻す (Inspector のタグ行の右クリック)。RevertField と同じく
+// 実体を書き戻してからレコードのキーを落とす
+void RevertTagMask(Scene& scene, const PrefabLibrary& lib, EntityID e)
+{
+    World& w = scene.GetWorld();
+    const json* base = ResolveBase(w, lib, e);
+    if (!base) {
+        return;
+    }
+    Tags::SetOwnMask(w, e, base->value("tagMask", 0ull));
+    scene.UnmarkOverride(FidOf(w, e), kTagMaskOverrideKey);
+}
+
 void RevertField(Scene& scene, const PrefabLibrary& lib, EntityID e, const char* compName,
                  const FieldDesc& field)
 {
@@ -1080,6 +1114,7 @@ void RevertInstance(Scene& scene, const PrefabLibrary& lib, uint64_t rootFileId)
             continue;
         }
         SetEntityName(w, m, base->value("name", std::string()));
+        Tags::SetOwnMask(w, m, base->value("tagMask", 0ull)); // 直下キー = 名前と同じ扱い (M76k)
         // ベース値へ戻し切るので上書きは 0 件になる (M48e)。
         // 構造も戻すため "+C"/"-C" キーも含めて空集合で正しい (M50c)
         scene.SetOverrides(FidOf(w, m), {});
@@ -1177,6 +1212,14 @@ void PropagateBaseChange(Scene& scene, const json& oldBase, const json& newBase,
                 const std::string newName = nb->value("name", std::string());
                 if (oldName != newName && GetNameStr(w, m) == oldName) {
                     SetEntityName(w, m, newName);
+                }
+            }
+            // 汎用タグ (非オーバーライドのみ伝播。名前と同じ「旧ベース値と一致していれば追随」)
+            {
+                const uint64_t oldMask = ob ? ob->value("tagMask", 0ull) : 0ull;
+                const uint64_t newMask = nb->value("tagMask", 0ull);
+                if (oldMask != newMask && Tags::OwnMask(w, m) == oldMask) {
+                    Tags::SetOwnMask(w, m, newMask);
                 }
             }
             const json nbComps = nb->contains("components") ? (*nb)["components"] : json::object();
@@ -1419,6 +1462,9 @@ void RefreshNonOverridden(Scene& scene, const PrefabLibrary& lib)
                 // ★MakeUniqueSiblingName は通さない — ロード経路で名前を変えると
                 //   WorldHash が変わり既存シーンの決定論が壊れる (EntityNaming.h の規約)
                 SetEntityName(w, m, base->value("name", std::string()));
+            }
+            if (keys.count(kTagMaskOverrideKey) == 0) {
+                Tags::SetOwnMask(w, m, base->value("tagMask", 0ull)); // キー不在 = ベース追随
             }
             if (!base->contains("components")) {
                 continue;

@@ -28,6 +28,13 @@ constexpr uint64_t BitOf(int32_t tagIndex)
 // 自分のタグ集合 (TagComponent が無ければ 0)
 uint64_t OwnMask(World& world, EntityID e);
 
+// 自分のタグ集合を差し替える。**0 なら TagComponent 自体を外す**。
+// ★「mask=0 のコンポーネント」と「コンポーネント無し」を 1 状態に寄せるための 1 本。保存側は
+//   非ゼロのときだけ "tagMask" を書き (SceneSerializer)、ハッシュも非ゼロのときだけ畳む
+//   (WorldHasher) ので、実体だけが 2 状態を持つと「タグを付けて外しただけ」でアーキタイプが
+//   食い違う。エディタ / シリアライザ / プレハブの復元がここを通ることで 3 者が揃う
+void SetOwnMask(World& world, EntityID e, uint64_t mask);
+
 // 自分 + 祖先すべてのタグ集合の OR。
 // ★描画 (RT のフィルタ) はこちらを使う — FBX / glTF のモデルはメッシュが子孫エンティティに
 //   分かれているので、ルートに付けたタグが子のメッシュに効かないと「モデルに付けたのに

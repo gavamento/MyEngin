@@ -63,6 +63,11 @@ private:
 
     // ---- エンティティ選択時の OnImGui の部品 (上から描く順) ----
     void DrawNameRow(EngineContext& ctx, Selection& selection, UndoStack& undo, const InspectorTargets& tg);
+    // M76k: 名前欄の直下のタグ欄。TagComponent は「オブジェクト固有の印」= 名前と同じ枠で、
+    // コンポーネント一覧には出ない (Hidden)。ここが唯一の編集口
+    void DrawTagRow(EngineContext& ctx, Selection& selection, UndoStack& undo, const InspectorTargets& tg);
+    // 対象の説明 1 行 (件数 / Entity index:generation)。名前 → タグ → ここ の順
+    void DrawTargetInfoRow(const InspectorTargets& tg);
     void DrawPrefabBar(EngineContext& ctx, Selection& selection, UndoStack& undo, const InspectorTargets& tg);
     // コンポーネント 1 型ぶん。表示判定・見出し・PushID / PopID を持ち、中身は下の 3 つに任せる
     void DrawComponent(EngineContext& ctx, Selection& selection, UndoStack& undo, const InspectorTargets& tg,
@@ -104,6 +109,10 @@ private:
 
     // Add Component ポップアップの検索フィルタ (開くたびにクリア)
     char addComponentFilter_[64] = {};
+
+    // タグ欄の「タグを追加...」のインライン入力 (M76k)。開いた行だけが入力欄を出す
+    char tagAddBuffer_[32] = {};
+    bool tagAddOpen_ = false;
 
     // アセットインスペクタの編集キャッシュ (M40c)。選択パスが変わったら .meta から再読込
     std::wstring assetEditPath_;

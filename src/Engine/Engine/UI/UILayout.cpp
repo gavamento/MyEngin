@@ -109,7 +109,10 @@ bool IsUiOnlyEntity(World& world, EntityID e)
         if (t == NameComponent::sTypeId || t == LocalTransform::sTypeId
             || t == WorldMatrixComponent::sTypeId || t == HierarchyComponent::sTypeId
             || t == FileIdComponent::sTypeId || t == ActiveComponent::sTypeId
-            || t == PrefabInstanceComponent::sTypeId || t == PrefabLinkComponent::sTypeId) {
+            || t == PrefabInstanceComponent::sTypeId || t == PrefabLinkComponent::sTypeId
+            // M76k: 汎用タグは「名前」と同じくオブジェクト固有の印であって実体ではない。
+            // ここに足さないと、UI 要素にタグを 1 個付けただけで screen UI がワールド追従へ落ちる
+            || t == TagComponent::sTypeId) {
             continue;
         }
         if (t < reg.Count()

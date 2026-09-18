@@ -1176,13 +1176,21 @@ void RegisterBuiltinComponents()
     }, kComponentNoHash);
 
     // 汎用タグ (TypeId=62、**末尾 append**)。M60′ の Cloth/SoftBody の見込みはこれで 63/64 へ下がる。
-    // hash 対象 — スクリプトが HasTag / FindEntitiesWithTag で分岐できる sim 入力だから。
-    // opt-in の型なので既存シーンのハッシュは変わらない (この関数の頭の規約)。
-    // Inspector はビット集合をタグ名のチェックリストで出す (InspectorWindow の "Tag"/"mask" 特例)
+    // ★NoSerialize + Hidden = 「ECS のコンポーネントとしては保存も表示もしない」。FileId /
+    //   Hierarchy と同じく**シリアライザが特別扱いする**型で、エンティティ直下キー "tagMask" と
+    //   して読み書きする (SceneSerializer の WriteEntity / ApplyTagMask)。この扱いにしないと
+    //   「mask=0 のコンポーネント」と「コンポーネント無し」が別物になり (JSON に空箱が残り、
+    //   存在自体が #nameHash として畳まれる)、Inspector の常時表示のタグ欄を触って戻しただけで
+    //   シーンとハッシュに差分が出る。
+    // ★hash 対象であることは変わらない — スクリプトが HasTag / FindEntitiesWithTag で分岐する
+    //   sim 入力なので、WorldHasher がエンティティ単位で明示的に畳む (mask != 0 のときだけ)。
+    //   汎用ループ任せにできないぶん、TagSelfTest の「タグ変更でハッシュが変わる」検査が砦。
+    // ★Inspector は名前欄の直下のタグ欄で出す (InspectorWindow::DrawTagRow) — コンポーネント
+    //   一覧と Add Component からは Hidden で自動的に外れる
     RegisterComponent<TagComponent>("Tag", {
         MYE_JP("タグ", MYE_FIELD_TIP(TagComponent, mask, UInt64,
                                      "set of tag numbers (names live in Project Settings > Tags)")),
-    });
+    }, kComponentNoSerialize | kComponentHidden);
 }
 
 } // namespace mye

@@ -19,7 +19,9 @@
 #include "Editor/EditorComponentCatalog.h"
 #include "Editor/PartTagNames.h"
 #include "Editor/PhysicsLayerNames.h"
-#include "Engine/Engine/TagNames.h" // 汎用タグの名前表 (Tag コンポーネントのチェックリスト)
+#include "Editor/SourceControl/ScmHint.h" // M66i: タグ名の保存直後に status を取り直させる
+#include "Engine/Engine/TagNames.h" // 汎用タグの名前表 (タグ欄のドロップダウン)
+#include "Engine/Engine/Tags.h" // 汎用タグの読み書き (Tags::OwnMask / SetOwnMask)
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/ComponentRegistry.h"
@@ -554,6 +556,8 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
 
     const InspectorTargets tg = CollectInspectorTargets(ctx, selection, fid, e);
     DrawNameRow(ctx, selection, undo, tg);
+    DrawTagRow(ctx, selection, undo, tg);
+    DrawTargetInfoRow(tg);
     DrawPrefabBar(ctx, selection, undo, tg);
     ImGui::Separator();
 
@@ -576,7 +580,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     ImGui::End();
 }
 
-// 名前欄と、対象の説明 1 行 (マルチ選択の件数 / Entity index:generation)
+// 名前欄 (対象の説明 1 行は DrawTagRow の後 = DrawTargetInfoRow)
 void InspectorWindow::DrawNameRow(EngineContext& ctx, Selection& selection, UndoStack& undo,
                                   const InspectorTargets& tg)
 {
@@ -609,12 +613,153 @@ void InspectorWindow::DrawNameRow(EngineContext& ctx, Selection& selection, Undo
             ImGui::TextColored(themeColor::Prefab, "*"); // Prefab 色 = 「プレハブ由来」(名前は歴史的経緯)
         }
     }
+}
+
+// 対象の説明 1 行 (マルチ選択の件数 / Entity index:generation)。
+// ★名前 → タグ → ここ、の順に描く — タグは「その物が何であるか」の印なので名前の直下に
+//   置く (Unity の Tag と同じ位置)。デバッグ用の識別子はその下で足りる
+void InspectorWindow::DrawTargetInfoRow(const InspectorTargets& tg)
+{
     if (tg.multi) {
         ImGui::TextDisabled("%zu entities selected — edits apply to all (gizmo: primary only)",
                             tg.fids.size());
     } else {
-        ImGui::TextDisabled("Entity %u:%u  (fileId %llu)", e.index, e.generation,
+        ImGui::TextDisabled("Entity %u:%u  (fileId %llu)", tg.e.index, tg.e.generation,
                             static_cast<unsigned long long>(tg.fid));
+    }
+}
+
+// 汎用タグの欄 (M76k)。名前の直下に置くのは、タグが「付け外しする機能」= コンポーネントでは
+// なく「その物が何であるか」の印 = オブジェクト固有の属性だから (Unity の Tag と同じ位置)。
+// TagComponent は Hidden なのでコンポーネント一覧には出ず、**ここが唯一の編集口**。
+// ★実体の付け外しは Tags::SetOwnMask の 1 本に通す (mask=0 ⇔ コンポーネント無し)。保存側が
+//   非ゼロのときだけ "tagMask" を書くので、付けて外した跡はシーンにもハッシュにも残らない
+void InspectorWindow::DrawTagRow(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                 const InspectorTargets& tg)
+{
+    World& world = ctx.scene->GetWorld();
+    TagNames& tn = TagNames::Get();
+    tn.Load(ctx.assetsRoot);
+    const uint64_t mask = Tags::OwnMask(world, tg.e); // 表示は primary の値 (M40a の流儀)
+
+    // クリック即確定 = 自前 Undo。マルチ選択は全対象へ同じ集合を適用する
+    auto applyMask = [&](uint64_t next) {
+        undo.Record("Modify Tags", *ctx.scene, selection, tg.fids,
+                    UndoStack::StructuralChanges::Apply, [&] {
+            for (EntityID te : tg.ents) {
+                Tags::SetOwnMask(world, te, next);
+            }
+        });
+    };
+
+    // プレビュー: 付いているタグ名を並べる。名前の無い番号しか無ければ件数で出す
+    int count = 0;
+    for (int i = 0; i < kMaxTags; ++i) {
+        count += ((mask >> i) & 1ull) ? 1 : 0;
+    }
+    std::string preview;
+    int shown = 0;
+    for (int i = 0; i < kMaxTags && preview.size() < 48; ++i) {
+        if (((mask >> i) & 1ull) == 0 || tn.Name(i)[0] == '\0') {
+            continue;
+        }
+        preview += (shown++ == 0) ? "" : ", ";
+        preview += tn.Name(i);
+    }
+    char tail[32];
+    if (mask == 0) {
+        preview = Tr(StrId::Insp_TagNone);
+    } else if (shown == 0) {
+        std::snprintf(tail, sizeof(tail), Tr(StrId::Insp_TagCount), count);
+        preview = tail;
+    } else if (shown < count) {
+        std::snprintf(tail, sizeof(tail), Tr(StrId::Insp_TagMore), count - shown);
+        preview += " ";
+        preview += tail;
+    }
+
+    ImGui::TextUnformatted(Tr(StrId::Insp_TagLabel));
+    const bool overridden =
+        tg.isPrefabMember && Prefab::IsTagMaskOverridden(*ctx.scene, *ctx.prefabs, tg.e);
+    if (overridden) {
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::TextColored(themeColor::Prefab, "*"); // 名前欄と同じ「プレハブと違う」印
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::BeginCombo("##tag", preview.c_str())) {
+        // 「なし」= タグを持たない状態。押すと TagComponent 自体が外れる
+        if (ImGui::Selectable(Tr(StrId::Insp_TagNone), mask == 0)) {
+            applyMask(0ull);
+        }
+        // ★名前の無い番号は出さない (64 行並べても選べない)。ただし既に立っているビットは
+        //   名前が無くても出す — 黙って外せなくなる / 見えないまま残るのを防ぐ
+        for (int i = 0; i < kMaxTags; ++i) {
+            const bool on = ((mask >> i) & 1ull) != 0;
+            if (tn.Name(i)[0] == '\0' && !on) {
+                continue;
+            }
+            ImGui::PushID(i);
+            char row[64];
+            std::snprintf(row, sizeof(row), "%2d  %s", i, tn.Display(i));
+            // 複数持てるので、選んでもポップアップは閉じない (Unity の単一 Tag との違い)
+            if (ImGui::Selectable(row, on, ImGuiSelectableFlags_NoAutoClosePopups)) {
+                applyMask(mask ^ (1ull << i));
+            }
+            ImGui::PopID();
+        }
+        ImGui::Separator();
+        // 「タグを追加...」: 名前表 (project_settings.json) へその場で足して即保存する。
+        // プロジェクト設定へ往復させないための近道で、足した番号はそのまま付ける
+        // (このドロップダウンを開いている = この物に付けたい、という文脈なので)。
+        // ★Undo 対象外 — シーンではなくプロジェクト設定の変更 (物理レイヤー名と同じ扱い)
+        int freeSlot = -1;
+        for (int i = 0; i < kMaxTags; ++i) {
+            if (tn.Name(i)[0] == '\0') {
+                freeSlot = i;
+                break;
+            }
+        }
+        if (freeSlot < 0) {
+            ImGui::TextDisabled("%s", Tr(StrId::Insp_TagAddFull));
+        } else if (!tagAddOpen_) {
+            if (ImGui::Selectable(Tr(StrId::Insp_TagAdd), false,
+                                  ImGuiSelectableFlags_NoAutoClosePopups)) {
+                tagAddOpen_ = true;
+                tagAddBuffer_[0] = '\0';
+                ImGui::SetKeyboardFocusHere(); // 次フレームの InputText が焦点を取る
+            }
+        } else {
+            ImGui::SetNextItemWidth(160.0f);
+            const bool enter = ImGui::InputText("##tag_add_name", tagAddBuffer_,
+                                                sizeof(tagAddBuffer_),
+                                                ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            if ((ImGui::SmallButton(Tr(StrId::Insp_TagAddApply)) || enter)
+                && tagAddBuffer_[0] != '\0') {
+                std::snprintf(tn.EditBuffer(freeSlot), TagNames::kNameCapacity, "%s", tagAddBuffer_);
+                if (tn.Save(ctx.assetsRoot)) {
+                    tn.Load(ctx.assetsRoot, true);
+                    scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json"); // M66i
+                }
+                applyMask(mask | (1ull << freeSlot));
+                tagAddBuffer_[0] = '\0';
+                tagAddOpen_ = false;
+            }
+        }
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_TagHint));
+        ImGui::EndCombo();
+    }
+    // ベース値へ戻す (プレハブメンバのときだけ)。コンポーネント一覧に Tag が出ない以上、
+    // 「削除された/追加された」の節では戻せないので、戻し口はこの行に集約する
+    if (tg.isPrefabMember && ImGui::BeginPopupContextItem("tag_ctx")) {
+        if (ImGui::MenuItem(Tr(StrId::Insp_RevertToPrefab), nullptr, false, overridden)) {
+            undo.Record("Revert Tags", *ctx.scene, selection, tg.fid,
+                        UndoStack::StructuralChanges::Apply, [&] {
+                Prefab::RevertTagMask(*ctx.scene, *ctx.prefabs, tg.e);
+            });
+        }
+        ImGui::EndPopup();
     }
 }
 
@@ -824,8 +969,6 @@ void InspectorWindow::DrawComponentFields(EngineContext& ctx, Selection& selecti
             || f.type == FieldType::EntityRef
             || (std::strcmp(desc.name, "Collider") == 0
                 && std::strcmp(f.name, "mask") == 0)
-            // 汎用タグのチェックリストもクリック即確定 = 自前 Undo
-            || (std::strcmp(desc.name, "Tag") == 0 && std::strcmp(f.name, "mask") == 0)
             // M59a2: 材料上書きチェックボックスもクリック即確定 = 自前 Undo
             || (std::strcmp(desc.name, "Collider") == 0
                 && std::strcmp(f.name, "materialOverrideBits") == 0);
@@ -1448,62 +1591,6 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
                 ImGui::Separator();
                 ImGui::TextDisabled("%s", Tr(StrId::Insp_PartTagHint));
                 ImGui::EndCombo();
-            }
-        } else if (componentName && std::strcmp(componentName, "Tag") == 0
-                   && std::strcmp(field.name, "mask") == 0) {
-            // 汎用タグ: 名前表のチェックリスト (Collider の衝突マスクと同じ自前 Undo 方式 —
-            // 呼び出し側の HandleEditUndoMulti からは除外されている)。
-            // ★名前の無い番号は出さない (64 行並べても選べない)。ただし既に立っているビットは
-            //   名前が無くても出す — 黙って外せなくなる / 見えないまま残るのを防ぐ
-            uint64_t& m = *static_cast<uint64_t*>(p);
-            TagNames& tn = TagNames::Get();
-            tn.Load(ctx.assetsRoot);
-            int count = 0;
-            for (int i = 0; i < kMaxTags; ++i) {
-                count += ((m >> i) & 1ull) ? 1 : 0;
-            }
-            char summary[48];
-            if (m == 0ull) {
-                std::snprintf(summary, sizeof(summary), "%s", Tr(StrId::Insp_TagNone));
-            } else {
-                std::snprintf(summary, sizeof(summary), Tr(StrId::Insp_TagCount), count);
-            }
-            if (ImGui::Button(summary)) {
-                ImGui::OpenPopup("##tag_mask");
-            }
-            ImGui::SameLine();
-            ImGui::TextUnformatted(labelText);
-            if (ImGui::BeginPopup("##tag_mask")) {
-                auto applyMask = [&](uint64_t next) {
-                    undo.Record("Modify Tags", *ctx.scene, selection, fids,
-                                UndoStack::StructuralChanges::None, [&] {
-                        for (void* c : comps) {
-                            *reinterpret_cast<uint64_t*>(static_cast<uint8_t*>(c) + field.offset) = next;
-                        }
-                    });
-                    changed = true;
-                };
-                if (ImGui::SmallButton(Tr(StrId::Insp_TagClear))) {
-                    applyMask(0ull);
-                }
-                ImGui::Separator();
-                for (int i = 0; i < kMaxTags; ++i) {
-                    const bool named = tn.Name(i)[0] != '\0';
-                    bool on = ((m >> i) & 1ull) != 0;
-                    if (!named && !on) {
-                        continue;
-                    }
-                    ImGui::PushID(i);
-                    char row[64];
-                    std::snprintf(row, sizeof(row), "%2d  %s", i, tn.Display(i));
-                    if (ImGui::Checkbox(row, &on)) {
-                        applyMask(m ^ (1ull << i));
-                    }
-                    ImGui::PopID();
-                }
-                ImGui::Separator();
-                ImGui::TextDisabled("%s", Tr(StrId::Insp_TagHint));
-                ImGui::EndPopup();
             }
         } else {
             changed = ImGui::InputScalar(label, ImGuiDataType_U64, p);

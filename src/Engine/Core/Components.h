@@ -1630,7 +1630,10 @@ struct ModalSoundComponent {
 // 物理レイヤーと同じ規約 (名前を変えても既存シーンの参照は切れない)。
 // Unity の Tag (1 物 1 個) ではなく複数持てる形にしたのは、「RT の対象」と
 // 「ゲーム用の分類 (敵 / 拾える物)」を同じ物に同時に付けたいから。
-// ★hash 対象 (スクリプトが HasTag / FindEntitiesWithTag で分岐する sim 入力)
+// ★hash 対象 (スクリプトが HasTag / FindEntitiesWithTag で分岐する sim 入力)。ただし
+//   NoSerialize なので汎用ループには乗らず、WorldHasher が mask != 0 のときだけ明示的に畳む
+// ★保存はエンティティ直下キー "tagMask" (非ゼロのときだけ) — mask=0 とコンポーネント無しを
+//   同値に保つため。実体の付け外しは Tags::SetOwnMask の 1 本に通すこと
 // ★判定の規則は Tags.h の 1 本きり。描画 (RT のフィルタ) は祖先のタグも継承して見るが、
 //   スクリプトの HasTag は自分のタグだけを見る — 理由は Tags.h の EffectiveTagMask
 inline constexpr int kMaxTags = 64;

@@ -11,6 +11,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameFlow.h"
+#include "Engine/Engine/Tags.h" // 汎用タグ (NoSerialize = 汎用ループ外なので明示的に畳む)
 #include "Engine/Engine/UI/UIInteraction.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
@@ -200,6 +201,15 @@ uint64_t HashEntity(World& world, EntityID e, DumpCtx* d)
     const EntityID parent = world.GetParent(e);
     FoldU64(h, d, "-", "parentIndex", parent.index);
     FoldU64(h, d, "-", "parentGeneration", parent.generation);
+
+    // 汎用タグ。TagComponent は NoSerialize = 下の汎用ループから外れているので、**ここが唯一の
+    // 折り込み点**。★内容ゲート (mask == 0 なら 1 単位も畳まない) — コンポーネントの存在を
+    // 畳む汎用ループと違い、「タグを付けて外した」がハッシュに残らない。タグを持つエンティティが
+    // 居ないシーンのハッシュは 1 バイトも動かないので、既存の .rep は検証可能なまま
+    // (xpbd / acoustic の節と同じ理屈 — WorldHasher.h)
+    if (const uint64_t tagMask = Tags::OwnMask(world, e); tagMask != 0) {
+        FoldU64(h, d, "-", "tagMask", tagMask);
+    }
 
     const Archetype* arch = world.GetArchetype(e);
     if (!arch) {

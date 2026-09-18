@@ -19,6 +19,7 @@
 #include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/Script/ManagedHost.h"
+#include "Engine/Engine/Tags.h" // 汎用タグ: 直下キー "tagMask" の読み書き (Tags::OwnMask/SetOwnMask)
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye::SceneSerializer {
@@ -101,6 +102,12 @@ json WriteEntity(Scene& scene, EntityID e, uint32_t childIndex)
         item["parent"] = FidOf(world, parent);
     }
     item["childIndex"] = childIndex;
+    // 汎用タグ (TypeId=62) は NoSerialize = 下の comps ループには出ない。**非ゼロのときだけ**
+    // この直下キーに出すことで「mask=0 のコンポーネント」と「コンポーネント無し」がファイル上で
+    // 同値になる (WorldHasher の内容ゲートと対)。名前と違い既定値では書かない
+    if (const uint64_t tagMask = Tags::OwnMask(world, e); tagMask != 0) {
+        item["tagMask"] = tagMask;
+    }
 
     json comps = json::object();
     const Archetype* arch = world.GetArchetype(e);
@@ -327,6 +334,29 @@ bool IsFileIdValue(const json& v)
     return v.is_number_unsigned() || (v.is_number_integer() && v.get<int64_t>() >= 0);
 }
 
+// エンティティ直下キー "tagMask" → TagComponent。**ReadEntityComponents を呼ぶ経路すべてで
+// 呼ぶこと** — LoadFromJson / ApplyDiff / ApplyPartial の 3 本 (name と同じ扱い)。
+// JSON が唯一の正解なので、キーが無ければタグも消す — Undo の復元 (ApplyPartial) がこれで成立する。
+// ★ApplyPartial は ValidateDocument を通らないので、型の確認はここでも行う
+// ★旧形式 (fa37257 の components.Tag.mask) も拾う。書き出しは新形式だけなので、開いて保存すれば
+//   自然に移行する
+void ApplyTagMask(World& world, EntityID e, const json& item)
+{
+    uint64_t mask = 0;
+    if (item.contains("tagMask") && IsFileIdValue(item["tagMask"])) {
+        mask = item["tagMask"].get<uint64_t>();
+    } else if (item.contains("components") && item["components"].is_object()) {
+        const json& comps = item["components"];
+        if (comps.contains("Tag") && comps["Tag"].is_object()) {
+            const json& tag = comps["Tag"];
+            if (tag.contains("mask") && IsFileIdValue(tag["mask"])) {
+                mask = tag["mask"].get<uint64_t>();
+            }
+        }
+    }
+    Tags::SetOwnMask(world, e, mask);
+}
+
 // シーン文書の事前検査。LoadFromJson / ApplyDiff は**シーンに触る前**にここを通す。
 // ★Clear の後で json の型不一致 (value / get の例外) が出ると、不正なファイルを開こうとしただけで
 //   編集中のシーンが消える。見るのは読み出し側が value / get で型を仮定しているキーだけ —
@@ -371,6 +401,9 @@ bool ValidateDocument(const json& root, std::string& why)
         }
         if (item.contains("name") && !item["name"].is_string()) {
             return fail(at + ".name is not a string");
+        }
+        if (item.contains("tagMask") && !IsFileIdValue(item["tagMask"])) {
+            return fail(at + ".tagMask is not a non-negative integer");
         }
         if (item.contains("parent") && !IsFileIdValue(item["parent"])) {
             return fail(at + ".parent is not a non-negative integer");
@@ -493,6 +526,7 @@ bool LoadFromJson(Scene& scene, const json& root)
         if (e.IsNull()) {
             continue;
         }
+        ApplyTagMask(world, e, item); // 直下キー "tagMask" (name と同じ扱い)
         unknownTotal += ReadEntityComponents(scene, fileId, e, item, toEntity,
                                              /*removeMissing*/ false, false, &migratedRects);
         ReadEntityOverrides(scene, fileId, item); // M48e
@@ -601,6 +635,7 @@ bool ApplyDiff(Scene& scene, const json& root)
             continue;
         }
         SetEntityName(world, e, item.value("name", std::string()));
+        ApplyTagMask(world, e, item); // 直下キー "tagMask" (name と同じ扱い)
         ReadEntityComponents(scene, fid, e, item, toEntity, /*removeMissing*/ true);
         ReadEntityOverrides(scene, fid, item); // M48e
         ++updated;
@@ -723,6 +758,7 @@ bool ApplyPartial(Scene& scene, const json& entities, bool removeHiddenMissing)
             continue;
         }
         SetEntityName(world, e, item.value("name", std::string()));
+        ApplyTagMask(world, e, item); // 直下キー "tagMask" (name と同じ扱い)
         ReadEntityComponents(scene, fid, e, item, toEntity, /*removeMissing*/ true,
                              removeHiddenMissing);
         ReadEntityOverrides(scene, fid, item); // M48e

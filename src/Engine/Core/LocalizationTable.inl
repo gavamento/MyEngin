@@ -531,10 +531,15 @@ MYE_STR(Insp_UnknownCompsHint, "The type is not registered - the values are kept
 MYE_STR(Insp_Everything,      "Everything###mask_all",      "すべて###mask_all")
 MYE_STR(Insp_Nothing,         "Nothing###mask_none",        "なし###mask_none")
 MYE_STR(Insp_MaskMixed,       "Mixed (0x%08X)###mask_mixed", "一部 (0x%08X)###mask_mixed")
-// Tag コンポーネントのタグ集合 (チェックリストのポップアップ)
+// 汎用タグ (名前欄の直下のタグ欄。M76k)
+MYE_STR(Insp_TagLabel,        "Tag",                        "タグ")
 MYE_STR(Insp_TagNone,         "None###tag_none",            "なし###tag_none")
 MYE_STR(Insp_TagCount,        "%d tag(s)###tag_count",      "%d 個###tag_count")
-MYE_STR(Insp_TagClear,        "Clear",                      "すべて外す")
+MYE_STR(Insp_TagMore,         "+%d",                        "+%d")
+MYE_STR(Insp_TagAdd,          "Add Tag...###tag_add",       "タグを追加...###tag_add")
+MYE_STR(Insp_TagAddApply,     "Add###tag_add_ok",           "追加###tag_add_ok")
+MYE_STR(Insp_TagAddFull,      "All 64 tag numbers are in use",
+                              "64 個のタグ番号をすべて使用中です")
 MYE_STR(Insp_TagHint,         "Unnamed numbers are hidden. Name tags in Project Settings > Tags",
                               "名前の無い番号は出しません。タグ名はプロジェクト設定 > タグで付けます")
 // サイズの比率固定チェック (ツールチップ)

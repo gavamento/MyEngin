@@ -166,10 +166,14 @@ bool UnpackInstance(Scene& scene, uint64_t rootFileId);
 bool IsFieldOverridden(Scene& scene, const PrefabLibrary& lib, EntityID e, const char* compName,
                        const FieldDesc& field);
 bool IsNameOverridden(Scene& scene, const PrefabLibrary& lib, EntityID e);
+// 汎用タグ (エンティティ直下キー "tagMask") の上書き判定。名前と同じ枠 (M76k)
+bool IsTagMaskOverridden(Scene& scene, const PrefabLibrary& lib, EntityID e);
 
 // e の 1 フィールドをプレハブベース値へ戻す
 void RevertField(Scene& scene, const PrefabLibrary& lib, EntityID e, const char* compName,
                  const FieldDesc& field);
+// タグだけをベース値へ戻す (Inspector のタグ行の右クリック)
+void RevertTagMask(Scene& scene, const PrefabLibrary& lib, EntityID e);
 
 // ---- 構造上書き (M50c) ----
 

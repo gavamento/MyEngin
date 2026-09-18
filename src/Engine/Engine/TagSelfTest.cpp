@@ -15,8 +15,10 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/UI/UILayout.h"
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Engine/Script/EngineApiTable.h"
 #include "Engine/Engine/TagNames.h"
@@ -106,6 +108,113 @@ bool RunTagSelfTest()
         const auto* t2 = child2 ? w2.GetComponent<TagComponent>(child2.Id()) : nullptr;
         check(t2 != nullptr && t2->mask == Tags::BitOf(5), "serialize: Tag survives a round trip");
         check(HashWorld(w2) == before, "serialize: the round trip is hash-identical");
+
+        // M76k: 保存形式は**エンティティ直下キー "tagMask"**。TagComponent は NoSerialize なので
+        // components には出ない (名前 / fileId と同じ「オブジェクト固有の属性」の枠)
+        nlohmann::json childItem = nlohmann::json::object();
+        nlohmann::json plainItem = nlohmann::json::object();
+        for (const nlohmann::json& it : saved["entities"]) {
+            if (it.value("name", std::string()) == "Child") {
+                childItem = it;
+            } else if (it.value("name", std::string()) == "Plain") {
+                plainItem = it;
+            }
+        }
+        check(childItem.value("tagMask", 0ull) == Tags::BitOf(5),
+              "serialize: tags are written as the entity-level 'tagMask' key");
+        check(childItem.contains("components") && !childItem["components"].contains("Tag"),
+              "serialize: no 'Tag' entry inside components");
+        check(!plainItem.contains("tagMask"),
+              "serialize: an untagged entity has no 'tagMask' key at all");
+
+        // ★同値性 (この設計の核心): 「タグを付けて外した」跡がシーンにもハッシュにも残らない。
+        //   mask=0 のコンポーネントを残す設計だと、ここの 2 つが両方とも不一致になる
+        const std::string beforeDump = SceneSerializer::SaveToJson(scene).dump();
+        const uint64_t beforeHash = HashWorld(w);
+        Tags::SetOwnMask(w, plain.Id(), Tags::BitOf(11));
+        w.ApplyStructuralChanges();
+        check(HashWorld(w) != beforeHash, "no-trace: tagging an entity changes the world hash");
+        Tags::SetOwnMask(w, plain.Id(), 0ull);
+        w.ApplyStructuralChanges();
+        check(HashWorld(w) == beforeHash, "no-trace: clearing every tag restores the hash");
+        check(SceneSerializer::SaveToJson(scene).dump() == beforeDump,
+              "no-trace: clearing every tag restores the scene json byte for byte");
+
+        // 旧形式 (fa37257 の components.Tag.mask) も読む — 開いて保存すれば新形式へ移る
+        nlohmann::json legacy = saved;
+        for (nlohmann::json& it : legacy["entities"]) {
+            if (it.value("name", std::string()) == "Child") {
+                it.erase("tagMask");
+                it["components"]["Tag"]["mask"] = Tags::BitOf(5);
+            }
+        }
+        Scene s3;
+        SceneSerializer::LoadFromJson(s3, legacy);
+        const GameObject child3 = s3.Find("Child");
+        check(child3 && Tags::OwnMask(s3.GetWorld(), child3.Id()) == Tags::BitOf(5),
+              "serialize: the legacy components.Tag.mask form is still read");
+    }
+
+    // ---- プレハブ: タグは直下キー "tagMask" として名前と同じ枠で上書き追跡される (M76k) ----
+    {
+        PrefabLibrary lib;
+        uint64_t baseHash = 0;
+        {
+            Scene sb;
+            GameObject enemy = sb.CreateGameObjectTracked("Enemy");
+            sb.GetWorld().ApplyStructuralChanges();
+            Tags::SetOwnMask(sb.GetWorld(), enemy.Id(), Tags::BitOf(3));
+            sb.GetWorld().ApplyStructuralChanges();
+            baseHash = lib.Register(L"mye_selftest_tag.prefab.json", "tag_base",
+                                    Prefab::ExtractLocal(sb, enemy.Id()));
+        }
+        Scene si;
+        const uint64_t rootFid = Prefab::Instantiate(si, lib, baseHash, 0);
+        si.GetWorld().ApplyStructuralChanges();
+        World& wi = si.GetWorld();
+        const GameObject inst = si.FindByFileId(rootFid);
+        check(inst && Tags::OwnMask(wi, inst.Id()) == Tags::BitOf(3),
+              "prefab: the base's tags reach the instance");
+        check(inst && !Prefab::IsTagMaskOverridden(si, lib, inst.Id()),
+              "prefab: an untouched instance reports no tag override");
+
+        if (inst) {
+            Tags::SetOwnMask(wi, inst.Id(), Tags::BitOf(3) | Tags::BitOf(8));
+            wi.ApplyStructuralChanges();
+            Prefab::RecordOverridesSubtree(si, lib, inst.Id()); // エディタ編集直後と同じフック
+            const Scene::OverrideSet* rec = si.GetOverrides(rootFid);
+            check(rec != nullptr && rec->count("tagMask") != 0,
+                  "prefab: an instance tag edit is recorded under the 'tagMask' key");
+            check(Prefab::IsTagMaskOverridden(si, lib, inst.Id()),
+                  "prefab: the tag override is reported (Inspector's '*')");
+            check(rec != nullptr && rec->count("Tag.mask") == 0 && rec->count("+Tag") == 0,
+                  "prefab: no component-shaped keys ('Tag.mask' / '+Tag') are produced");
+
+            Prefab::RevertTagMask(si, lib, inst.Id());
+            wi.ApplyStructuralChanges();
+            check(Tags::OwnMask(wi, inst.Id()) == Tags::BitOf(3),
+                  "prefab: RevertTagMask restores the base tags");
+            check(!Prefab::IsTagMaskOverridden(si, lib, inst.Id()),
+                  "prefab: the override is gone after the revert");
+        }
+    }
+
+    // ---- UI 専用判定: タグは実体コンポーネントではない (M76k) ----
+    {
+        Scene su;
+        GameObject panel = su.CreateGameObjectTracked("Panel");
+        su.GetWorld().ApplyStructuralChanges();
+        panel.AddComponent<RectTransformComponent>();
+        su.GetWorld().ApplyStructuralChanges();
+        check(uilayout::IsUiOnlyEntity(su.GetWorld(), panel.Id()), "ui: a bare UI entity is UI-only");
+        Tags::SetOwnMask(su.GetWorld(), panel.Id(), Tags::BitOf(1));
+        su.GetWorld().ApplyStructuralChanges();
+        check(uilayout::IsUiOnlyEntity(su.GetWorld(), panel.Id()),
+              "ui: tagging a UI entity keeps it UI-only (screen UI must not fall to world-follow)");
+        panel.AddComponent<MeshRendererComponent>();
+        su.GetWorld().ApplyStructuralChanges();
+        check(!uilayout::IsUiOnlyEntity(su.GetWorld(), panel.Id()),
+              "ui: a real component still makes it a 3D object");
     }
 
     // ---- ABI v20 の実配線 ----
