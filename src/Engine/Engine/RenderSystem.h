@@ -20,6 +20,7 @@
 #include "Engine/Renderer/ShadowAtlas.h"
 #include "Engine/Renderer/ShadowPass.h"
 #include "Engine/Renderer/TerrainPass.h"
+#include "Engine/Renderer/WaterPass.h"
 
 namespace mye {
 
@@ -393,6 +394,9 @@ private:
     // M56a: デカール。ECS から集めて Renderer 層の純データへ写すだけなので、
     // 地形と違いキャッシュもチャンク分割も要らない = 専用システムを持たない
     DecalDrawList decalList_; // view.decals が指す実体
+    // 水面 (view.water が指す実体)
+    WaterDrawData waterData_;
+    float waterAnimTime_ = 0.0f;
 };
 
 } // namespace mye

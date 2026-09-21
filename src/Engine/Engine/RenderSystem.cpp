@@ -935,6 +935,69 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     }
     view.decals = &decalList_;
 
+    // ---- 水面 (M69): メッシュとは別レーンで収集 (地形/デカールと同じ流儀) ----
+    // シーン内で entity.index 最小かつ active/enabled な WaterWaveComponent を解決 (PhysicsSystem と同一規則)
+    view.water = nullptr;
+    waterData_.active = false;
+    {
+        const ComponentTypeId req[] = { WaterWaveComponent::sTypeId };
+        uint32_t bestIndex = UINT32_MAX;
+        const WaterWaveComponent* bestWave = nullptr;
+        EntityID bestEntity = kNullEntity;
+
+        world.ForEachArchetype(req, [&](Archetype& arch) {
+            const int wi = arch.FindTypeIndex(WaterWaveComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                if (e.index >= bestIndex) {
+                    continue;
+                }
+                if (!IsEntityActive(world, e)) {
+                    continue;
+                }
+                const auto* wave = static_cast<const WaterWaveComponent*>(arch.GetPtr(wi, row));
+                if (wave->enabled == 0) {
+                    continue;
+                }
+                bestIndex = e.index;
+                bestWave = wave;
+                bestEntity = e;
+            }
+        });
+
+        if (bestWave != nullptr) {
+            waterData_.active = true;
+            // 決定論的通番に基づくアニメーション時間 (60fps 基準、毎フレーム 1/60s ずつ前進)
+            const float t = static_cast<float>(view.viewFrameIndex) * (1.0f / 60.0f) * bestWave->timeScale;
+
+            // ワールド行列の取得 (WorldMatrixComponent があればそれを使う)
+            if (const auto* wm = world.GetComponent<WorldMatrixComponent>(bestEntity)) {
+                waterData_.world = wm->value;
+            } else if (const auto* lt = world.GetComponent<LocalTransform>(bestEntity)) {
+                XMVECTOR pos = XMLoadFloat3(&lt->position);
+                XMVECTOR rot = XMLoadFloat4(&lt->rotation);
+                XMVECTOR scl = XMLoadFloat3(&lt->scale);
+                XMMATRIX m = XMMatrixAffineTransformation(scl, XMVectorZero(), rot, pos);
+                XMStoreFloat4x4(&waterData_.world, m);
+            } else {
+                waterData_.world = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
+            }
+
+            // WaterMaterialCB への詰め込み (authored 色は sRGB -> Linear 変換)
+            waterData_.material.deepColor = SrgbToLinear(bestWave->deepColor);
+            waterData_.material.shallowColor = SrgbToLinear(bestWave->shallowColor);
+            waterData_.material.waveParams0 = { bestWave->wave0Amplitude, bestWave->wave0Wavelength, bestWave->wave0Speed, bestWave->wave0DirAngle };
+            waterData_.material.waveParams1 = { bestWave->wave1Amplitude, bestWave->wave1Wavelength, bestWave->wave1Speed, bestWave->wave1DirAngle };
+            waterData_.material.waveParams2 = { bestWave->wave2Amplitude, bestWave->wave2Wavelength, bestWave->wave2Speed, bestWave->wave2DirAngle };
+            waterData_.material.waveParams3 = { bestWave->wave3Amplitude, bestWave->wave3Wavelength, bestWave->wave3Speed, bestWave->wave3DirAngle };
+            waterData_.material.waveSteepness = { bestWave->wave0Steepness, bestWave->wave1Steepness, bestWave->wave2Steepness, bestWave->wave3Steepness };
+            waterData_.material.waterSettings = { bestWave->baseHeight, bestWave->overallScale, t, bestWave->foamStrength };
+            waterData_.material.waterOptics = { bestWave->fresnelPower, bestWave->smoothness, 0.0f, 0.0f };
+
+            view.water = &waterData_;
+        }
+    }
+
     int culledCount = 0;
     // 不透明キャスターの world AABB を集約 → シャドウ範囲のフィットに使う (M17)
     sceneMin = { FLT_MAX, FLT_MAX, FLT_MAX };

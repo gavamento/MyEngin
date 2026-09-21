@@ -6,6 +6,7 @@
 #include "Engine/Renderer/RenderPath.h"
 #include "Engine/Renderer/SkyboxPass.h"
 #include "Engine/Renderer/TerrainPass.h"
+#include "Engine/Renderer/WaterPass.h"
 
 namespace mye {
 
@@ -54,6 +55,8 @@ private:
     SkyboxPass skybox_; // 不透明後・透明前に空を塗る (M29d)
     // 地形 (M58c)。不透明メッシュの直後・スカイボックスの前に描く (深度を書くため)
     TerrainPass terrain_;
+    // 水面 (スカイボックス後・透明メッシュ前)
+    WaterPass water_;
 };
 
 } // namespace mye

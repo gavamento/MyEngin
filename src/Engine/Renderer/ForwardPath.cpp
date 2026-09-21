@@ -183,6 +183,8 @@ bool ForwardPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     skybox_.Init(device, shaders);
     // 地形 (M58c)。失敗しても続行 (地形が描かれないだけ = 従来の絵)
     terrain_.Init(device, shaders);
+    // 水面。失敗しても続行 (水面が描かれないだけ = 従来の絵)
+    water_.Init(device, shaders);
     return true;
 }
 
@@ -198,6 +200,7 @@ void ForwardPath::Shutdown()
     blendAlpha_.Reset();
     instanceBuf_.Reset();
     terrain_.Shutdown(); // M58c
+    water_.Shutdown();
 }
 
 void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
@@ -352,6 +355,9 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     if (!wire) {
         skybox_.Render(device, shaders, view);
     }
+
+    // 水面 (スカイボックス後・透明メッシュ前)
+    water_.Render(device, shaders, view, resources, perFrameCB_.Get());
 
     // 半透明 (インスタンシング対象外)
     if (!queue.transparent.empty()) {

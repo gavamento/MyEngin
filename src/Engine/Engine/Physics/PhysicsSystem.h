@@ -12,6 +12,7 @@ struct ColliderComponent;
 struct RigidbodyComponent;
 struct PhysMat;
 struct PhysicsEnvironmentComponent;
+struct WaterWaveComponent;
 struct ShapePose;
 
 // ソリッド接触ペア (M28c)。PhysicsSystem が tick 毎に全サブステップの接触制約から集めたペア (和集合) を
@@ -71,9 +72,16 @@ public:
     void Update(World& world, float dt, std::vector<SolidContact>* outContacts = nullptr,
                 XpbdBackend* xpbd = nullptr);
 
+    void ResetTime() { time_ = 0.0f; }
+    void SetTime(float t) { time_ = t; }
+    float Time() const { return time_; }
+
     // 等価性テスト用 (PhysicsSelfTest): true でブロードフェーズを総当たり候補に切替。
     // 挙動はビット同一のはず — selftest がハッシュ比較で常時検証する
     static inline bool sDisableBroadphaseForTest = false;
+
+private:
+    float time_ = 0.0f;
 };
 
 // ---- 物理マテリアル解決 (M59a2)。全て純関数 — ソルバ収集と ABI が共有する ----
@@ -132,6 +140,10 @@ inline constexpr float kDefaultWaterPlaneY = 0.0f;       // 水面のワール�
 // RenderSystem::CollectEnvironment が前例)。無ければ nullptr = 従来の定数重力へ落ちる。
 // 戻り値はアーキタイプ記憶域を指す — 構造変更を挟むと無効になるので tick 内で使い切ること
 const PhysicsEnvironmentComponent* ResolvePhysicsEnvironment(World& world);
+
+// シーンの水面波 = **entity.index 最小の active かつ enabled な 1 個**。
+// 無ければ nullptr = 従来の固定水面へ落ちる。
+const WaterWaveComponent* ResolveActiveWaterWave(World& world);
 
 // 等方空力の基準面積 [m^2] = **Cauchy の平均投影面積 (凸形状の表面積 / 4)**。
 // 「向きに依らない代表面積」の物理的に正しい唯一の選び方で、球で pi*r^2、

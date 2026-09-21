@@ -391,7 +391,7 @@ void RegisterBuiltinComponents()
         MYE_JP("上の色", MYE_FIELD(SkyboxComponent, topColor, Color)),
         MYE_JP("地平線の色", MYE_FIELD(SkyboxComponent, horizonColor, Color)),
         MYE_JP("下の色", MYE_FIELD(SkyboxComponent, bottomColor, Color)),
-        MYE_JP("キューブマップ", MYE_FIELD(SkyboxComponent, cubemapTexture, AssetRef)),
+        MYE_JP("テクスチャ", MYE_FIELD(SkyboxComponent, cubemapTexture, AssetRef)),
         // 2026-09-14: 星空と環境光の切り離し (末尾 append。欠けた古いシーンは既定値 = 星なし + 空の色で環境光)
         MYE_JP("星の密度", MYE_FIELD_RANGE(SkyboxComponent, starDensity, Float, 0.0f, 1.0f)),
         MYE_JP("星の明るさ", MYE_FIELD_RANGE(SkyboxComponent, starBrightness, Float, 0.0f, 20.0f)),
@@ -1182,6 +1182,47 @@ void RegisterBuiltinComponents()
     RegisterComponent<TagComponent>("Tag", {
         MYE_JP("タグ", MYE_FIELD_TIP(TagComponent, mask, UInt64,
                                      "set of tag numbers (names live in Project Settings > Tags)")),
+    });
+
+    // 水面波 (TypeId=63、末尾 append)。
+    // 三角関数 (Gerstner 波) によるリアルな水面シミュレーションと浮力連動。
+    RegisterComponent<WaterWaveComponent>("WaterWave", {
+        MYE_JP("有効", MYE_FIELD(WaterWaveComponent, enabled, Int32)),
+        MYE_JP("基準高さ", MYE_FIELD(WaterWaveComponent, baseHeight, Float)),
+        MYE_JP("波高倍率", MYE_FIELD_RANGE(WaterWaveComponent, overallScale, Float, 0.0f, 10.0f)),
+        MYE_JP("時間倍率", MYE_FIELD_RANGE(WaterWaveComponent, timeScale, Float, 0.0f, 10.0f)),
+        MYE_JP("有効波本数", MYE_FIELD_RANGE(WaterWaveComponent, waveCount, Int32, 1.0f, 4.0f)),
+        MYE_JP("浮力連動", MYE_FIELD(WaterWaveComponent, affectBuoyancy, Int32)),
+
+        MYE_JP("波0 振幅", MYE_FIELD_RANGE(WaterWaveComponent, wave0Amplitude, Float, 0.0f, 10.0f)),
+        MYE_JP("波0 波長", MYE_FIELD_RANGE(WaterWaveComponent, wave0Wavelength, Float, 0.1f, 200.0f)),
+        MYE_JP("波0 速度", MYE_FIELD(WaterWaveComponent, wave0Speed, Float)),
+        MYE_JP("波0 方向角 (度)", MYE_FIELD_RANGE(WaterWaveComponent, wave0DirAngle, Float, -180.0f, 180.0f)),
+        MYE_JP("波0 急峻度", MYE_FIELD_RANGE(WaterWaveComponent, wave0Steepness, Float, 0.0f, 1.0f)),
+
+        MYE_JP("波1 振幅", MYE_FIELD_RANGE(WaterWaveComponent, wave1Amplitude, Float, 0.0f, 10.0f)),
+        MYE_JP("波1 波長", MYE_FIELD_RANGE(WaterWaveComponent, wave1Wavelength, Float, 0.1f, 200.0f)),
+        MYE_JP("波1 速度", MYE_FIELD(WaterWaveComponent, wave1Speed, Float)),
+        MYE_JP("波1 方向角 (度)", MYE_FIELD_RANGE(WaterWaveComponent, wave1DirAngle, Float, -180.0f, 180.0f)),
+        MYE_JP("波1 急峻度", MYE_FIELD_RANGE(WaterWaveComponent, wave1Steepness, Float, 0.0f, 1.0f)),
+
+        MYE_JP("波2 振幅", MYE_FIELD_RANGE(WaterWaveComponent, wave2Amplitude, Float, 0.0f, 10.0f)),
+        MYE_JP("波2 波長", MYE_FIELD_RANGE(WaterWaveComponent, wave2Wavelength, Float, 0.1f, 200.0f)),
+        MYE_JP("波2 速度", MYE_FIELD(WaterWaveComponent, wave2Speed, Float)),
+        MYE_JP("波2 方向角 (度)", MYE_FIELD_RANGE(WaterWaveComponent, wave2DirAngle, Float, -180.0f, 180.0f)),
+        MYE_JP("波2 急峻度", MYE_FIELD_RANGE(WaterWaveComponent, wave2Steepness, Float, 0.0f, 1.0f)),
+
+        MYE_JP("波3 振幅", MYE_FIELD_RANGE(WaterWaveComponent, wave3Amplitude, Float, 0.0f, 10.0f)),
+        MYE_JP("波3 波長", MYE_FIELD_RANGE(WaterWaveComponent, wave3Wavelength, Float, 0.1f, 200.0f)),
+        MYE_JP("波3 速度", MYE_FIELD(WaterWaveComponent, wave3Speed, Float)),
+        MYE_JP("波3 方向角 (度)", MYE_FIELD_RANGE(WaterWaveComponent, wave3DirAngle, Float, -180.0f, 180.0f)),
+        MYE_JP("波3 急峻度", MYE_FIELD_RANGE(WaterWaveComponent, wave3Steepness, Float, 0.0f, 1.0f)),
+
+        MYE_JP("深水色", MYE_FIELD(WaterWaveComponent, deepColor, Color)),
+        MYE_JP("浅水色", MYE_FIELD(WaterWaveComponent, shallowColor, Color)),
+        MYE_JP("白波強度", MYE_FIELD_RANGE(WaterWaveComponent, foamStrength, Float, 0.0f, 2.0f)),
+        MYE_JP("フレネル指数", MYE_FIELD_RANGE(WaterWaveComponent, fresnelPower, Float, 1.0f, 10.0f)),
+        MYE_JP("滑らかさ", MYE_FIELD_RANGE(WaterWaveComponent, smoothness, Float, 0.0f, 1.0f)),
     });
 }
 

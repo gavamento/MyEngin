@@ -9,6 +9,7 @@
 #include "Engine/Renderer/SkyboxPass.h"
 #include "Engine/Renderer/SsrPass.h"
 #include "Engine/Renderer/TerrainPass.h"
+#include "Engine/Renderer/WaterPass.h"
 
 namespace mye {
 
@@ -138,6 +139,8 @@ private:
     // 地形 (M58c)。GBuffer へ専用シェーダで書く — 不透明パスは material->shader を
     // 見ないのでマテリアル経由では通せない (TerrainPass.h の頭のコメント参照)
     TerrainPass terrain_;
+    // 水面 (SSR 後・透明後段前)
+    WaterPass water_;
 
     // ---- SSAO (M38e、半解像度) ----
     RenderTexture ssaoRaw_;

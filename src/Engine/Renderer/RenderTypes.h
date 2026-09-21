@@ -447,6 +447,8 @@ struct RenderView {
     //     **非永続** — チューニング UI (M67f) が実行中に書き換えるだけ
     int32_t rtReflRestir = 0;
     RtReflRestirParams rtReflRestirParams;
+    // ---- 水面描画データ (末尾 append。null = 水面なし = 従来とビット完全一致) ----
+    const struct WaterDrawData* water = nullptr;
 };
 
 // ---- デカール (M56a) ----

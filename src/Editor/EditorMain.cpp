@@ -65,6 +65,7 @@
 #include "Engine/Engine/FontSelfTest.h"
 #include "Engine/Engine/UI/UISelfTest.h"
 #include "Engine/Engine/VfxSelfTest.h"
+#include "Engine/Engine/WaterWaveSelfTest.h"
 #include "Engine/Engine/Net/NetSelfTest.h"
 #include "Engine/Engine/HotReload/DllReloaderSelfTest.h"
 #include "Engine/Engine/HotReload/ReloadHubSelfTest.h"
@@ -477,6 +478,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunModalSelfTest()          // M76b: Deep-Modal のボクセライザ
             && mye::RunModalAudioSelfTest()     // M76f: 衝突 -> モーダル一発再生の橋渡し
             && mye::RunTagSelfTest()            // 汎用タグ / RT のタグフィルタ / シェーダキャッシュ
+            && mye::RunWaterWaveSelfTest()      // 三角関数 (Gerstner波) による水面波
             && mye::RunEngineCliSelfTest();     // 両 Main 共通の CLI フラグ表
         return ok ? 0 : 1;
     }

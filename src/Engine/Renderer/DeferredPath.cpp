@@ -228,6 +228,8 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     skybox_.Init(device, shaders);
     // 地形 (M58c)。失敗しても続行 (地形が描かれないだけ = 従来の絵)
     terrain_.Init(device, shaders);
+    // 水面。失敗しても続行 (水面が描かれないだけ = 従来の絵)
+    water_.Init(device, shaders);
 
     // M55c: velocity の可視化 (デバッグ表示。既定 off なので失敗しても描画は続く)
     velocityDebugShader_ = shaders.Load("debug_velocity");
@@ -477,6 +479,7 @@ void DeferredPath::Shutdown()
     hzbDebugCB_.Reset();
     ssr_.Shutdown(); // M56d
     terrain_.Shutdown(); // M58c
+    water_.Shutdown();
 }
 
 // M56b: 受け面の法線 (RT1) を読みながら RT1 へ書くための読み取り用コピー。
@@ -728,6 +731,8 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     RenderLighting(view, f);                                // 2)
     RenderSky(device, view, shaders, f);                    // 2.5)
     RenderSsr(device, view, shaders, f);                    // 2.6)
+    water_.Render(device, shaders, view, resources, perFrameCB_.Get(),
+                  f.rtReflBound ? f.rtRefl.filtered : nullptr); // 2.7) 水面 (perFrameCB と RT反射テクスチャを渡す)
     RenderTransparent(view, queue, resources, shaders, f);  // 3)
     RenderDebugViews(device, view, shaders, f);             // 4) - 6)
 

@@ -455,6 +455,49 @@ AssetID MeshLibrary::Capsule()
     return capsule_;
 }
 
+AssetID MeshLibrary::WaterPlane(int resolution, float size)
+{
+    if (!waterPlane_.IsNull()) {
+        return waterPlane_;
+    }
+    const int res = (resolution > 1) ? resolution : 64;
+    const float s = (size > 0.0f) ? size : 50.0f;
+    const float halfS = s * 0.5f;
+    const float step = s / static_cast<float>(res);
+    const float uvStep = 1.0f / static_cast<float>(res);
+
+    std::vector<MeshVertex> verts;
+    verts.reserve(static_cast<size_t>((res + 1) * (res + 1)));
+    for (int iz = 0; iz <= res; ++iz) {
+        const float z = -halfS + static_cast<float>(iz) * step;
+        const float v = static_cast<float>(iz) * uvStep;
+        for (int ix = 0; ix <= res; ++ix) {
+            const float x = -halfS + static_cast<float>(ix) * step;
+            const float u = static_cast<float>(ix) * uvStep;
+            MeshVertex vert;
+            vert.position = { x, 0.0f, z };
+            vert.normal = { 0.0f, 1.0f, 0.0f };
+            vert.uv = { u, v };
+            verts.push_back(vert);
+        }
+    }
+
+    std::vector<uint32_t> idx;
+    idx.reserve(static_cast<size_t>(res * res * 6));
+    const uint32_t rowStride = static_cast<uint32_t>(res + 1);
+    for (int iz = 0; iz < res; ++iz) {
+        for (int ix = 0; ix < res; ++ix) {
+            const uint32_t a = static_cast<uint32_t>(iz) * rowStride + ix;
+            const uint32_t b = a + 1;
+            const uint32_t c = (static_cast<uint32_t>(iz) + 1) * rowStride + ix;
+            const uint32_t d = c + 1;
+            idx.insert(idx.end(), { a, c, b, b, c, d });
+        }
+    }
+    waterPlane_ = Register("builtin://water_plane", verts, idx);
+    return waterPlane_;
+}
+
 // ---------------------------------------------------------------- TextureLibrary
 
 bool TextureLibrary::CreateFromPixels(Texture& out, const uint8_t* rgba, int w, int h, bool srgb,

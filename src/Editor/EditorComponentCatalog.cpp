@@ -39,6 +39,8 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "Decal", { ICON_FA_STAMP, "Rendering", "デカール" } },
         // M56f: ローカル反射プローブ。焼いた cubemap を環境スペキュラへ差し込む描画レーン
         { "ReflectionProbe", { ICON_FA_GLOBE, "Rendering", "反射プローブ" } },
+        // 水面波 (Gerstner 波)
+        { "WaterWave", { ICON_FA_WATER, "Rendering", "水面波" } },
         // Physics
         { "Collider", { ICON_FA_VECTOR_SQUARE, "Physics", "コライダー" } },
         { "Rigidbody", { ICON_FA_CIRCLE_DOT, "Physics", "リジッドボディ" } },

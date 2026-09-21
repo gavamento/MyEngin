@@ -3,6 +3,7 @@
 
 #include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/EntityID.h"
+#include "Engine/Core/WaveMath.h"
 
 namespace mye {
 
@@ -1638,6 +1639,68 @@ inline constexpr int kMaxTags = 64;
 struct TagComponent {
     uint64_t mask = 0; // bit i = タグ i を持つ
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- 水面波 (TypeId=63) ----
+// 三角関数 (Gerstner 波) によるリアルな水面波パラメータ。
+// 頂点シェーダーでの水面変位と法線計算、および物理浮力 (Buoyancy) との動的波高連動を担当する。
+struct WaterWaveComponent {
+    static constexpr int kMaxWaves = 4;
+
+    int32_t enabled = 1;
+    float baseHeight = 0.0f;     // 基準水面 Y [m]
+    float overallScale = 1.0f;   // 全体波高スケール
+    float timeScale = 1.0f;      // 時間倍率
+    int32_t waveCount = 4;       // 有効な波の本数 (1〜4)
+    int32_t affectBuoyancy = 1;  // 浮力 (Buoyancy) と連動するか (0/1)
+
+    // 波 0 (主うねり: ゆったりとした大きなうねり)
+    float wave0Amplitude = 0.18f;
+    float wave0Wavelength = 24.0f;
+    float wave0Speed = 0.8f;
+    float wave0DirAngle = 20.0f;
+    float wave0Steepness = 0.20f;
+
+    // 波 1 (風波: なだらかな中波)
+    float wave1Amplitude = 0.10f;
+    float wave1Wavelength = 14.0f;
+    float wave1Speed = 1.0f;
+    float wave1DirAngle = 55.0f;
+    float wave1Steepness = 0.18f;
+
+    // 波 2 (細波: 穏やかな補助波)
+    float wave2Amplitude = 0.05f;
+    float wave2Wavelength = 8.0f;
+    float wave2Speed = 1.2f;
+    float wave2DirAngle = -35.0f;
+    float wave2Steepness = 0.15f;
+
+    // 波 3 (小波: ごくわずかな水面の揺らぎ)
+    float wave3Amplitude = 0.02f;
+    float wave3Wavelength = 4.0f;
+    float wave3Speed = 1.4f;
+    float wave3DirAngle = 110.0f;
+    float wave3Steepness = 0.12f;
+
+    // 水面レンダリング用マテリアル・光学設定
+    DirectX::XMFLOAT4 deepColor = { 0.02f, 0.08f, 0.18f, 0.85f };    // 深水色
+    DirectX::XMFLOAT4 shallowColor = { 0.10f, 0.35f, 0.45f, 0.60f }; // 浅水色
+    float foamStrength = 0.15f;  // 波頭の白波強度 (穏やかな水面)
+    float fresnelPower = 4.0f;   // フレネル反射係数
+    float smoothness = 0.95f;    // 滑らかさ (スペキュラ)
+    float pad = 0.0f;
+
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+
+    // GerstnerWave 配列への展開ヘルパー
+    void ExtractWaves(GerstnerWave* outWaves, int maxOut) const
+    {
+        if (!outWaves || maxOut <= 0) return;
+        if (maxOut >= 1) outWaves[0] = { wave0Amplitude, wave0Wavelength, wave0Speed, wave0DirAngle, wave0Steepness };
+        if (maxOut >= 2) outWaves[1] = { wave1Amplitude, wave1Wavelength, wave1Speed, wave1DirAngle, wave1Steepness };
+        if (maxOut >= 3) outWaves[2] = { wave2Amplitude, wave2Wavelength, wave2Speed, wave2DirAngle, wave2Steepness };
+        if (maxOut >= 4) outWaves[3] = { wave3Amplitude, wave3Wavelength, wave3Speed, wave3DirAngle, wave3Steepness };
+    }
 };
 
 class World;

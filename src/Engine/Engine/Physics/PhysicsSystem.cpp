@@ -1260,6 +1260,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     if (outContacts) {
         outContacts->clear();
     }
+    time_ += dt;
     // M60'b: 変形体の池をコンポーネントの有無と同期する。
     // ★剛体の存在ゲートより前に置く — 布だけのシーン (剛体ゼロ) でも池は同期される必要がある
     if (xpbd) {
@@ -2670,6 +2671,11 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         // ---- 浮力 (M59b2): 水面より下の排除体積ぶんの上向き力 + 水中抗力。空力の直後に
         //      置くのは、浮力 (陽的な復元力) で付いた速度をその tick のうちに水中抗力が
         //      減衰させるため。**非所持ボディはルックアップのみで fp 演算ゼロ** ----
+        const WaterWaveComponent* activeWave = ResolveActiveWaterWave(world);
+        GerstnerWave activeWaveParams[WaterWaveComponent::kMaxWaves];
+        if (activeWave) {
+            activeWave->ExtractWaves(activeWaveParams, activeWave->waveCount);
+        }
         for (Body& b : bodies) {
             if (!b.rb || b.invMass == 0.0f) {
                 continue;
@@ -2678,7 +2684,6 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             if (!buoy || buoy->volumeScale <= 0.0f) {
                 continue;
             }
-            const float planeY = env ? env->waterPlaneY : kDefaultWaterPlaneY;
             const float rhoW = env ? env->waterDensity : kDefaultWaterDensity;
             if (rhoW <= 0.0f) {
                 continue;
@@ -2693,6 +2698,13 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 bp.shape = collidershape::kSphere;
                 bp.radius = 0.5f; // 慣性・空力と同じ「半径 0.5 の球」既定
                 bp.identityRot = 1;
+            }
+            float planeY = env ? env->waterPlaneY : kDefaultWaterPlaneY;
+            if (activeWave && activeWave->affectBuoyancy != 0) {
+                planeY = wave::EvaluateWaveHeight(activeWaveParams, activeWave->waveCount,
+                                                  bp.px, bp.pz, time_,
+                                                  activeWave->baseHeight, activeWave->overallScale,
+                                                  activeWave->timeScale);
             }
             float centroidY = bp.py;
             const float frac = SubmergedFractionWorld(bp, planeY, centroidY);
@@ -4696,6 +4708,28 @@ const PhysicsEnvironmentComponent* ResolvePhysicsEnvironment(World& world)
             }
             bestIndex = e.index;
             best = static_cast<const PhysicsEnvironmentComponent*>(arch.GetPtr(ei, row));
+        }
+    });
+    return best;
+}
+
+const WaterWaveComponent* ResolveActiveWaterWave(World& world)
+{
+    const WaterWaveComponent* best = nullptr;
+    uint32_t bestIndex = 0xFFFFFFFFu;
+    const ComponentTypeId req[] = { WaterWaveComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int wi = arch.FindTypeIndex(WaterWaveComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (e.index >= bestIndex || !IsEntityActive(world, e)) {
+                continue;
+            }
+            const auto* wave = static_cast<const WaterWaveComponent*>(arch.GetPtr(wi, row));
+            if (wave && wave->enabled != 0) {
+                bestIndex = e.index;
+                best = wave;
+            }
         }
     });
     return best;

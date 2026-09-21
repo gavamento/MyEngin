@@ -555,6 +555,9 @@
     <ClCompile Include="..\src\Engine\Engine\VfxSelfTest.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\WaterWaveSelfTest.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Platform\Clock.cpp">
       <Filter>Platform</Filter>
     </ClCompile>
@@ -699,6 +702,9 @@
     <ClCompile Include="..\src\Engine\Renderer\VolumeTexture.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\WaterPass.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClInclude Include="..\src\Engine\Core\Archetype.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -775,6 +781,9 @@
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Utf8.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\WaveMath.h">
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\World.h">
@@ -1245,6 +1254,9 @@
     <ClInclude Include="..\src\Engine\Engine\VfxSelfTest.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\WaterWaveSelfTest.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\Clock.h">
       <Filter>Platform</Filter>
     </ClInclude>
@@ -1411,6 +1423,9 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\VolumeTexture.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\WaterPass.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Shared\EngineAPI.h">

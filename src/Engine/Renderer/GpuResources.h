@@ -79,6 +79,7 @@ public:
         Quad();
         Cylinder();
         Capsule();
+        WaterPlane();
     }
     AssetID Register(std::string_view name, std::span<const MeshVertex> vertices,
                      std::span<const uint32_t> indices);
@@ -94,6 +95,7 @@ public:
     AssetID Quad();     // XY 平面 (1x1, 法線 **-Z** = +Z を向く既定カメラから正面が見える)
     AssetID Cylinder(); // 円柱 (半径 0.5, 高さ 1)
     AssetID Capsule();  // カプセル (半径 0.5, 全高 2)
+    AssetID WaterPlane(int resolution = 64, float size = 50.0f); // 分割 XZ 水面グリッド
 
     // 登録済みメッシュを名前順で列挙 (エディタ UI 用)
     std::vector<AssetEntry> Enumerate() const;
@@ -108,6 +110,7 @@ private:
     AssetID quad_ = {};
     AssetID cylinder_ = {};
     AssetID capsule_ = {};
+    AssetID waterPlane_ = {};
 };
 
 // ---- テクスチャ ----
