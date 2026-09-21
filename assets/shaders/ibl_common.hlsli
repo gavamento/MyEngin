@@ -37,7 +37,7 @@ float3 ImportanceSampleGGX(float2 xi, float3 N, float rough)
 cbuffer BakeCB : register(b0)
 {
     float3 gFaceForward; float gRoughness;
-    float3 gFaceRight;   int   gSrcMode; // 0=cubemap (t0) / 1=gradient (解析)
+    float3 gFaceRight;   int   gSrcMode; // 0=cubemap (t0) / 1=gradient (解析) / 2=panoramic (t1)
     float3 gFaceUp;      float _bakePad0;
     float3 gGradTop;     float _bakePad1;
     float3 gGradHorizon; float _bakePad2;
@@ -45,6 +45,7 @@ cbuffer BakeCB : register(b0)
 };
 
 TextureCube  gSrcCube : register(t0);
+Texture2D    gSrcPanoramic : register(t1);
 SamplerState gSampler : register(s0);
 
 // 環境放射輝度 (方向 d)。gradient は skybox.hlsl と同じ補間式 (色はリニア変換済みで届く)。
@@ -54,6 +55,11 @@ float3 SampleEnv(float3 d)
     float3 c;
     if (gSrcMode == 0) {
         c = gSrcCube.SampleLevel(gSampler, d, 0).rgb;
+    } else if (gSrcMode == 2) {
+        float2 uv;
+        uv.x = 0.5f + atan2(d.z, d.x) / (2.0f * IBL_PI);
+        uv.y = 0.5f - asin(clamp(d.y, -1.0f, 1.0f)) / IBL_PI;
+        c = gSrcPanoramic.SampleLevel(gSampler, uv, 0).rgb;
     } else {
         const float t = d.y;
         c = (t >= 0.0f) ? lerp(gGradHorizon, gGradTop, saturate(t * 1.4f))

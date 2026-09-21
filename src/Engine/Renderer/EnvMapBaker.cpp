@@ -92,7 +92,8 @@ bool EnvMapBaker::EnsureCommon(GraphicsDevice& device, ShaderManager& shaders)
     }
     D3D11_SAMPLER_DESC smp = {};
     smp.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-    smp.AddressU = smp.AddressV = smp.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    smp.AddressU = D3D11_TEXTURE_ADDRESS_WRAP; // パノラマサンプリングの U (経度) ループ用 (Cube には無害)
+    smp.AddressV = smp.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
     smp.MaxLOD = D3D11_FLOAT32_MAX;
     if (FAILED(dev->CreateSamplerState(&smp, sampler_.GetAddressOf()))) {
         return false;
@@ -144,7 +145,8 @@ bool EnvMapBaker::EnsureCommon(GraphicsDevice& device, ShaderManager& shaders)
 }
 
 bool EnvMapBaker::Bake(GraphicsDevice& device, ShaderManager& shaders,
-                       ID3D11ShaderResourceView* src, const GradientColors& grad, BakedEnv& out)
+                       ID3D11ShaderResourceView* src, const GradientColors& grad, BakedEnv& out,
+                       bool isPanoramic)
 {
     if (!EnsureCommon(device, shaders)) {
         return false;
@@ -171,8 +173,17 @@ bool EnvMapBaker::Bake(GraphicsDevice& device, ShaderManager& shaders,
     dc->PSSetConstantBuffers(0, 1, cbs);
     ID3D11SamplerState* samps[1] = { sampler_.Get() };
     dc->PSSetSamplers(0, 1, samps);
-    ID3D11ShaderResourceView* srcSrvs[1] = { src };
-    dc->PSSetShaderResources(0, 1, srcSrvs);
+    if (src) {
+        if (isPanoramic) {
+            // t0=null, t1=src (ibl_common.hlsli: gSrcPanoramic: register(t1))
+            ID3D11ShaderResourceView* srcSrvs[2] = { nullptr, src };
+            dc->PSSetShaderResources(0, 2, srcSrvs);
+        } else {
+            // t0=src (ibl_common.hlsli: gSrcCube: register(t0))
+            ID3D11ShaderResourceView* srcSrvs[1] = { src };
+            dc->PSSetShaderResources(0, 1, srcSrvs);
+        }
+    }
     dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
     dc->OMSetDepthStencilState(nullptr, 0);
 
@@ -205,7 +216,7 @@ bool EnvMapBaker::Bake(GraphicsDevice& device, ShaderManager& shaders,
                 cb.roughness = (mips > 1)
                     ? roughnessScale * static_cast<float>(m) / static_cast<float>(mips - 1)
                     : 0.0f;
-                cb.srcMode = (src != nullptr) ? 0 : 1;
+                cb.srcMode = (src != nullptr) ? (isPanoramic ? 2 : 0) : 1;
                 cb.gradTop = grad.top;
                 cb.gradHorizon = grad.horizon;
                 cb.gradBottom = grad.bottom;
@@ -227,7 +238,8 @@ bool EnvMapBaker::Bake(GraphicsDevice& device, ShaderManager& shaders,
 
     ID3D11RenderTargetView* nullRtv[1] = { nullptr };
     dc->OMSetRenderTargets(1, nullRtv, nullptr);
-    dc->PSSetShaderResources(0, 1, nullSrvs);
+    ID3D11ShaderResourceView* nullSrcs[2] = { nullptr, nullptr };
+    dc->PSSetShaderResources(0, 2, nullSrcs);
     return ok;
 }
 
@@ -242,7 +254,7 @@ EnvMaps EnvMapBaker::MapsFor(const BakedEnv& b) const
 }
 
 EnvMaps EnvMapBaker::GetForCubemap(GraphicsDevice& device, ShaderManager& shaders, AssetID id,
-                                   ID3D11ShaderResourceView* src)
+                                   ID3D11ShaderResourceView* src, bool isPanoramic)
 {
     if (id.IsNull() || src == nullptr) {
         return {};
@@ -254,10 +266,11 @@ EnvMaps EnvMapBaker::GetForCubemap(GraphicsDevice& device, ShaderManager& shader
         cache_.clear(); // 再ベイクは安いので単純化 (LRU 不要)
     }
     BakedEnv b;
-    if (!Bake(device, shaders, src, {}, b)) {
+    if (!Bake(device, shaders, src, {}, b, isPanoramic)) {
         return {};
     }
-    MYE_LOG_INFO("[ibl] env maps baked for cubemap %016llx",
+    MYE_LOG_INFO("[ibl] env maps baked for %s %016llx",
+                 isPanoramic ? "panoramic" : "cubemap",
                  static_cast<unsigned long long>(id.value));
     return MapsFor(cache_.emplace(id.value, std::move(b)).first->second);
 }
@@ -289,12 +302,12 @@ EnvMaps EnvMapBaker::GetForGradient(GraphicsDevice& device, ShaderManager& shade
 // 実描画した cubemap」へ変わるだけで、prefilter / irradiance の式は一切変わらない —
 // 反射プローブが独自のプリフィルタを持たないための入口
 bool EnvMapBaker::BakeFrom(GraphicsDevice& device, ShaderManager& shaders,
-                           ID3D11ShaderResourceView* src, BakedEnv& out)
+                           ID3D11ShaderResourceView* src, BakedEnv& out, bool isPanoramic)
 {
     if (src == nullptr) {
         return false;
     }
-    return Bake(device, shaders, src, {}, out);
+    return Bake(device, shaders, src, {}, out, isPanoramic);
 }
 
 // M46h: BRDF LUT だけを確保する。EnsureCommon の中でグローバル 1 枚として

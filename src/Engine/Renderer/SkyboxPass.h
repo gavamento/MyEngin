@@ -25,10 +25,12 @@ private:
     bool ready_ = false;
     AssetID shader_ = {};     // gradient (skybox.hlsl)
     AssetID shaderCube_ = {}; // cubemap (skybox_cubemap.hlsl、M38b)
+    AssetID shaderPano_ = {}; // panoramic (skybox_panoramic.hlsl)
     Microsoft::WRL::ComPtr<ID3D11Buffer> cb_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthReadOnly_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendOpaque_;
-    Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_; // cubemap 用 LINEAR
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_;     // cubemap 用 LINEAR/CLAMP
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> samplerPano_; // panoramic 用 LINEAR/WRAP(U)+CLAMP(V)
 };
 
 } // namespace mye

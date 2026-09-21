@@ -719,15 +719,16 @@ struct TextMeshComponent {
 // 背景の空。シーン内の **最初の active な 1 個** (entity.index 最小) を使用 (isPrimary カメラ前例)。
 // **無ければ clearColor 背景** (opt-in)。描画専用 = **kComponentNoHash**。
 struct SkyboxComponent {
-    // 0=Gradient 1=Cubemap (M38b。SkyboxPass の専用シェーダ skybox_cubemap + GpuResources の
-    // DDS cubemap ローダ + RtPasses の環境サンプル)。SRV が解決できないときだけ Gradient へフォールバックする
+    // 0=Gradient 1=Cubemap 2=Panoramic (M38b / M76: SkyboxPass の skybox_cubemap / skybox_panoramic +
+    // DDS cubemap / 2D パノラマ画像 + RtPasses/EnvMapBaker の環境サンプル)。
+    // テクスチャ形式 (Cube or 2D) は自動判別され適切に描画される。SRV が解決できないときだけ Gradient へフォールバックする
     int32_t mode = 0;
     DirectX::XMFLOAT4 topColor = { 0.24f, 0.42f, 0.83f, 1.0f };     // 天頂
     DirectX::XMFLOAT4 horizonColor = { 0.74f, 0.81f, 0.90f, 1.0f }; // 地平線
     DirectX::XMFLOAT4 bottomColor = { 0.28f, 0.25f, 0.22f, 1.0f };  // 地面方向
-    AssetID cubemapTexture = {}; // mode=1 用の DDS cubemap (面順 +X,-X,+Y,-Y,+Z,-Z)
+    AssetID cubemapTexture = {}; // mode=1,2 用のテクスチャ (DDS cubemap または PNG/JPG/DDS 2D パノラマ)
     // ---- 2026-09-14: 手続きの星空 + 環境光の切り離し (末尾 append。既定 = 星なし + 空で環境光) ----
-    // 星は gradient モードだけに描く (cubemap は絵そのものが空なので足さない)。
+    // 星は gradient モードだけに描く (テクスチャは絵そのものが空なので足さない)。
     // starDensity が 0 ならシェーダは星の分岐に入らない
     float starDensity = 0.0f;    // 星のあるセルの割合 (0..1)
     float starBrightness = 1.0f; // 星の明るさ (リニア HDR。1 を超えるとブルームで滲む)

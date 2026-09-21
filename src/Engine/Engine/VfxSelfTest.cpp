@@ -234,6 +234,27 @@ bool RunVfxSelfTest()
               "environment: stars are off and sky lighting is on by default (old scenes unchanged)");
         check(view3.fogHeightFalloff == 0.0f && view3.fogInscatterIntensity == 0.0f,
               "environment: M43a fields default to identity (bit-identical legacy fog)");
+
+        // mode=1 (cubemap) / mode=2 (panoramic) の伝達検証
+        {
+            Scene sMode;
+            GameObject skyCube = sMode.CreateGameObjectTracked("SkyCube");
+            auto* sbCube = skyCube.AddComponent<SkyboxComponent>();
+            sbCube->mode = 1;
+            sbCube->cubemapTexture = AssetID{ 0x12345678ull };
+            sMode.GetWorld().ApplyStructuralChanges();
+            RenderView vCube;
+            CollectEnvironment(sMode.GetWorld(), vCube);
+            check(vCube.skyMode == 1 && vCube.skyCubemapId == AssetID{ 0x12345678ull },
+                  "environment: cubemap mode and texture ID propagate to view");
+
+            sbCube->mode = 2;
+            sbCube->cubemapTexture = AssetID{ 0x87654321ull };
+            RenderView vPano;
+            CollectEnvironment(sMode.GetWorld(), vPano);
+            check(vPano.skyMode == 2 && vPano.skyCubemapId == AssetID{ 0x87654321ull },
+                  "environment: panoramic mode and texture ID propagate to view");
+        }
     }
 
     // ---- (3.7) BuildVfxFogParams (M57追補): VFX がメッシュと同じ霧を読んでいるか ----

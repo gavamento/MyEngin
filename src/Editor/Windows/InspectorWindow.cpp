@@ -259,7 +259,7 @@ constexpr const char* kUIAnchorLabels[] = { "TopLeft",    "TopCenter",    "TopRi
                                             "BottomLeft", "BottomCenter", "BottomRight" };
 constexpr const char* kForceSpaceLabels[] = { "World", "Local" };
 constexpr const char* kBillboardLabels[] = { "Billboard", "BillboardY", "World" };
-constexpr const char* kSkyboxModeLabels[] = { "Gradient", "Cubemap" };
+constexpr const char* kSkyboxModeLabels[] = { "Gradient", "Cubemap", "Panoramic" };
 constexpr const char* kFogModeLabels[] = { "Linear", "Exp", "Exp2" };
 constexpr const char* kTonemapLabels[] = { "Passthrough", "ACES", "Reinhard" };
 constexpr const char* kOffOnLabels[] = { "Off", "On" };
@@ -287,7 +287,7 @@ constexpr const char* kUIAnchorJa[] = { "左上", "上中央", "右上", "左中
                                         "右中央", "左下", "下中央", "右下" };
 constexpr const char* kForceSpaceJa[] = { "ワールド", "ローカル" };
 constexpr const char* kBillboardJa[] = { "ビルボード", "ビルボード (Y 軸)", "ワールド" };
-constexpr const char* kSkyboxModeJa[] = { "グラデーション", "キューブマップ" };
+constexpr const char* kSkyboxModeJa[] = { "グラデーション", "キューブマップ", "パノラマ (2D)" };
 constexpr const char* kFogModeJa[] = { "線形", "Exp", "Exp2" };
 constexpr const char* kTonemapJa[] = { "そのまま", "ACES", "Reinhard" };
 constexpr const char* kOffOnJa[] = { "オフ", "オン" };
@@ -374,7 +374,7 @@ constexpr EnumFieldLabels kEnumFields[] = {
     { "ConstantForce", "relative", kForceSpaceLabels, 2, kForceSpaceJa },
     { "SpriteRenderer", "billboardMode", kBillboardLabels, 3, kBillboardJa },
     { "TextMesh", "billboardMode", kBillboardLabels, 3, kBillboardJa },
-    { "Skybox", "mode", kSkyboxModeLabels, 2, kSkyboxModeJa },
+    { "Skybox", "mode", kSkyboxModeLabels, 3, kSkyboxModeJa },
     { "Fog", "mode", kFogModeLabels, 3, kFogModeJa },
     { "CameraPostFx", "tonemapMode", kTonemapLabels, 3, kTonemapJa },
     { "CameraPostFx", "bloomOn", kOffOnLabels, 2, kOffOnJa },
@@ -2460,6 +2460,24 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         entries = ctx.resources->materials.Enumerate();
     } else if (fname.find("tex") != std::string::npos) {
         entries = ctx.resources->textures.Enumerate();
+        // ディスク上の未ロードテクスチャも一覧へ (MaterialInspector と同じ走査)
+        std::error_code ec;
+        for (const auto& e : std::filesystem::recursive_directory_iterator(ctx.assetsRoot, ec)) {
+            if (ec || !e.is_regular_file(ec)) {
+                continue;
+            }
+            const std::wstring diskPath = e.path().wstring();
+            if (AssetDatabase::IsMetaPath(diskPath) || AssetDatabase::ClassifyPath(diskPath) != AssetType::Texture) {
+                continue;
+            }
+            const uint64_t guid = AssetDatabase::EnsureMeta(diskPath);
+            const std::string rel =
+                WideToUtf8(std::filesystem::relative(e.path(), ctx.assetsRoot, ec).wstring());
+            if (std::none_of(entries.begin(), entries.end(),
+                             [&](const AssetEntry& ae) { return ae.id.value == guid; })) {
+                entries.push_back({ AssetID{ guid }, rel });
+            }
+        }
     } else if (fname.find("sound") != std::string::npos) {
         // M45c: .sound.json (AudioSource.sound 等)。**"clip"/"anim" より先に見る**
         if (ctx.sounds) {
@@ -2494,12 +2512,39 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         entries.insert(entries.end(), texs.begin(), texs.end());
     }
 
+    std::string resolvedName;
     const char* cur = Tr(StrId::Insp_NoneItem);
     for (const AssetEntry& e : entries) {
         if (e.id == *id) {
             cur = e.name.c_str();
         }
     }
+    if (std::strcmp(cur, Tr(StrId::Insp_NoneItem)) == 0 && !id->IsNull()) {
+        const std::wstring resPath = assetguid::ResolvePath(id->value);
+        if (!resPath.empty()) {
+            std::error_code ec;
+            resolvedName = WideToUtf8(std::filesystem::relative(resPath, ctx.assetsRoot, ec).wstring());
+            cur = resolvedName.c_str();
+        }
+    }
+
+    auto assign = [&](AssetID v) {
+        if (!v.IsNull() && fname.find("tex") != std::string::npos) {
+            if (!ctx.resources->textures.Get(v)) {
+                const std::wstring loadPath = assetguid::ResolvePath(v.value);
+                if (!loadPath.empty()) {
+                    ctx.resources->textures.RequestLoadFileAsync(loadPath);
+                }
+            }
+        }
+        // マルチ選択は全対象へバッチ適用 (1 Undo エントリ、M40a)
+        undo.Record("Assign asset", *ctx.scene, selection, fids,
+                    UndoStack::StructuralChanges::None, [&] {
+            for (void* c : comps) {
+                *reinterpret_cast<AssetID*>(static_cast<uint8_t*>(c) + fieldOffset) = v;
+            }
+        });
+    };
 
     char labelBuf[192];
     ImGui::PushID(MakeFieldLabel(field, labelBuf, sizeof(labelBuf)));
@@ -2508,16 +2553,18 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
     if (ImGui::Button(cur, ImVec2(-1, 0))) {
         ImGui::OpenPopup("##assetpick");
     }
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* pa = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
+            const std::string utf8 = static_cast<const char*>(pa->Data);
+            const std::wstring dropPath = Utf8ToWide(utf8);
+            if (fname.find("tex") != std::string::npos && AssetDatabase::ClassifyPath(dropPath) == AssetType::Texture) {
+                const AssetID aid = ctx.resources->textures.RequestLoadFileAsync(dropPath);
+                assign(aid);
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
     if (ImGui::BeginPopup("##assetpick")) {
-        auto assign = [&](AssetID v) {
-            // マルチ選択は全対象へバッチ適用 (1 Undo エントリ、M40a)
-            undo.Record("Assign asset", *ctx.scene, selection, fids,
-                        UndoStack::StructuralChanges::None, [&] {
-                for (void* c : comps) {
-                    *reinterpret_cast<AssetID*>(static_cast<uint8_t*>(c) + fieldOffset) = v;
-                }
-            });
-        };
         if (ImGui::Selectable(Tr(StrId::Insp_NoneItem))) {
             assign(AssetID{});
         }

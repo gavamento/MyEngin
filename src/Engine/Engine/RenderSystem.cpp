@@ -463,8 +463,8 @@ void CollectEnvironment(World& world, RenderView& view)
             }
             bestSky = e.index;
             const auto* sb = static_cast<const SkyboxComponent*>(arch.GetPtr(si, row));
-            // M38b: cubemap 実装 — SRV 解決は RenderSystem 側 (この関数は純データのまま)
-            view.skyMode = (sb->mode == 1) ? 1 : 0;
+            // M38b / M76: cubemap / panoramic 実装 — SRV 解決は RenderSystem 側 (この関数は純データのまま)
+            view.skyMode = sb->mode;
             view.skyCubemapId = sb->cubemapTexture;
             view.skyTop = { sb->topColor.x, sb->topColor.y, sb->topColor.z };
             view.skyHorizon = { sb->horizonColor.x, sb->horizonColor.y, sb->horizonColor.z };
@@ -1294,14 +1294,27 @@ void RenderSystem::PrepareEnvironment(World& world, GraphicsDevice& device, Shad
             view.fogInscatterIntensity = 0.0f;
         }
     }
-    // M38b: cubemap スカイの SRV 解決 (未ロード/不正なら gradient にフォールバック)
-    if (view.skyMode == 1) {
-        Texture* cube = resources.textures.Get(view.skyCubemapId);
-        if (cube && cube->srv) {
-            view.skyCubemap = cube->srv.Get();
+    // M38b / M76: cubemap / panoramic スカイの SRV 解決 (未ロードなら遅延ロード、不正なら gradient にフォールバック)
+    if (view.skyMode != 0 && !view.skyCubemapId.IsNull()) {
+        Texture* tex = resources.textures.Get(view.skyCubemapId);
+        if (!tex) {
+            const std::wstring texPath = assetguid::ResolvePath(view.skyCubemapId.value);
+            if (!texPath.empty()) {
+                resources.textures.LoadFile(texPath, /*srgb=*/true);
+                tex = resources.textures.Get(view.skyCubemapId);
+            }
+        }
+        if (tex && tex->srv && tex->tex) {
+            view.skyCubemap = tex->srv.Get();
+            D3D11_TEXTURE2D_DESC td = {};
+            tex->tex->GetDesc(&td);
+            const bool isCube = (td.MiscFlags & D3D11_RESOURCE_MISC_TEXTURECUBE) != 0 || td.ArraySize == 6;
+            view.skyMode = isCube ? 1 : 2; // Cubemap または Panoramic を自動判別
         } else {
             view.skyMode = 0;
         }
+    } else {
+        view.skyMode = 0;
     }
     // M38c: スカイがあるなら IBL 環境マップを取得 (初回のみ GPU ベイク、以後キャッシュ)。
     // gradient も同じベイクに通す — シェーダ側は「IBL on/off」の 2 択で済む。
@@ -1309,9 +1322,10 @@ void RenderSystem::PrepareEnvironment(World& world, GraphicsDevice& device, Shad
     // 2026-09-14: Skybox.lighting = 0 なら焼かない = IBL の SRV が null のまま = 各パスは定数アンビエントへ
     //   落ちる (ForwardPath / DeferredPath / SsrPass の判定はどれも「3 枚そろったら IBL」の 1 本)
     const bool skyLights = (view.skyLighting != 0);
-    if (view.skyMode == 1 && view.skyCubemap != nullptr && skyLights) {
+    if ((view.skyMode == 1 || view.skyMode == 2) && view.skyCubemap != nullptr && skyLights) {
+        const bool isPano = (view.skyMode == 2);
         const EnvMaps em =
-            envBaker_.GetForCubemap(device, shaders, view.skyCubemapId, view.skyCubemap);
+            envBaker_.GetForCubemap(device, shaders, view.skyCubemapId, view.skyCubemap, isPano);
         view.iblIrradiance = em.irradiance;
         view.iblPrefiltered = em.prefiltered;
         view.iblBrdfLut = em.brdfLut;

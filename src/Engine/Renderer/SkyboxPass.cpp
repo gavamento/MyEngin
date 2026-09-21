@@ -34,12 +34,22 @@ bool SkyboxPass::Init(GraphicsDevice& device, ShaderManager& shaders)
     ID3D11Device* dev = device.Device();
     shader_ = shaders.Load("skybox");
     shaderCube_ = shaders.Load("skybox_cubemap"); // M38b
+    shaderPano_ = shaders.Load("skybox_panoramic");
 
     D3D11_SAMPLER_DESC smp = {};
     smp.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
     smp.AddressU = smp.AddressV = smp.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
     smp.MaxLOD = D3D11_FLOAT32_MAX;
     if (FAILED(dev->CreateSamplerState(&smp, sampler_.GetAddressOf()))) {
+        return false;
+    }
+
+    D3D11_SAMPLER_DESC smpPano = {};
+    smpPano.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    smpPano.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+    smpPano.AddressV = smpPano.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    smpPano.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(dev->CreateSamplerState(&smpPano, samplerPano_.GetAddressOf()))) {
         return false;
     }
 
@@ -76,9 +86,16 @@ void SkyboxPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
     if (!ready_ || view.skyMode < 0 || !view.rtv || !view.dsv) {
         return;
     }
-    // M38b: cubemap モード (SRV が揃っている時のみ。無ければ gradient にフォールバック)
+    // M38b: cubemap / panoramic モード (SRV が揃っている時のみ。無ければ gradient にフォールバック)
     const bool useCube = (view.skyMode == 1) && (view.skyCubemap != nullptr);
-    ShaderProgram* prog = shaders.Get(useCube ? shaderCube_ : shader_);
+    const bool usePano = (view.skyMode == 2) && (view.skyCubemap != nullptr);
+    AssetID activeShader = shader_;
+    if (useCube) {
+        activeShader = shaderCube_;
+    } else if (usePano) {
+        activeShader = shaderPano_;
+    }
+    ShaderProgram* prog = shaders.Get(activeShader);
     if (!prog || !prog->valid) {
         return;
     }
@@ -101,11 +118,12 @@ void SkyboxPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
     cb.froxel = { froxelBound ? 1.0f : 0.0f, static_cast<float>(view.froxelSlices), 0.0f, 0.0f };
     cb.froxelScreen = { static_cast<float>(view.width), static_cast<float>(view.height), 0.0f,
                         0.0f };
-    // 2026-09-14: 星空。cubemap の絵には足さない (skybox_cubemap.hlsl は gStars を宣言していない)。
+    // 2026-09-14: 星空。テクスチャ (cubemap / panoramic) の絵には足さない。
     // ★分割数は 1..1024 に丸める — シェーダがセル番号を 1024 進で詰めて uint のハッシュ鍵にしている
     const int32_t starCells =
         (view.skyStarCells < 1) ? 1 : ((view.skyStarCells > 1024) ? 1024 : view.skyStarCells);
-    const float starDensity = (useCube || view.skyStarDensity < 0.0f) ? 0.0f : view.skyStarDensity;
+    const float starDensity =
+        (useCube || usePano || view.skyStarDensity < 0.0f) ? 0.0f : view.skyStarDensity;
     const float starTwinkle = (view.skyStarTwinkle < 0.0f)
                                   ? 0.0f
                                   : ((view.skyStarTwinkle > 1.0f) ? 1.0f : view.skyStarTwinkle);
@@ -128,10 +146,10 @@ void SkyboxPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
     dc->PSSetShader(prog->ps.Get(), nullptr, 0);
     ID3D11Buffer* cbs[1] = { cb_.Get() };
     dc->PSSetConstantBuffers(3, 1, cbs); // b3 (b0-b2 はメッシュ描画が使用中)
-    if (useCube) {
+    if (useCube || usePano) {
         ID3D11ShaderResourceView* srvs[1] = { view.skyCubemap };
         dc->PSSetShaderResources(0, 1, srvs);
-        ID3D11SamplerState* samps[1] = { sampler_.Get() };
+        ID3D11SamplerState* samps[1] = { usePano ? samplerPano_.Get() : sampler_.Get() };
         dc->PSSetSamplers(0, 1, samps);
     }
     dc->OMSetDepthStencilState(depthReadOnly_.Get(), 0);
@@ -139,8 +157,8 @@ void SkyboxPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
     // ラスタライザは呼び出し元のメッシュ用設定を継承する (deferred_light と同じ流儀。
     // フルスクリーン三角形は既存設定で front-facing になる頂点列)
     dc->Draw(3, 0);
-    if (useCube) {
-        // TextureCube を t0 に残さない (後段は Texture2D を bind する — デバッグレイヤ警告回避)
+    if (useCube || usePano) {
+        // TextureCube / Texture2D を t0 に残さない (後段は別テクスチャを bind する — デバッグレイヤ警告回避)
         ID3D11ShaderResourceView* nullSrv[1] = { nullptr };
         dc->PSSetShaderResources(0, 1, nullSrv);
     }
