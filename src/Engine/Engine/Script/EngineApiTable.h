@@ -12,6 +12,10 @@ namespace mye {
 
 class Scene;
 class InputActions;
+class ComputeAbiRunner; // v21 (M78e)
+class GraphicsDevice;   // v21
+class ShaderManager;    // v21
+class TextureLibrary;   // v21
 
 // パッド振動の目標値 (v12、M51h)。スロットはここへ書くだけで、実際の XInputSetState は
 // EngineLoop がフレーム末 (出力レーン) に適用する — record/verify 中とフォーカス喪失中は
@@ -131,6 +135,11 @@ struct ScriptApiContext {
     // v18: 開発中の実行か (EngineConfig::developmentRun を起動時に 1 回写す)。1 = エディタ / --project 付きの
     // Runtime、0 = 配布物。既定 1 = selftest が組むテーブルは開発中として振る舞う
     int32_t developmentRun = 1;
+    // v21 (M78e): Compute ABI。null 時は各スロットが 0 / no-op を返す
+    ComputeAbiRunner* computeAbi     = nullptr;
+    GraphicsDevice*   graphicsDevice = nullptr;
+    ShaderManager*    shaderManager  = nullptr;
+    TextureLibrary*   textureLibrary = nullptr;
 };
 
 // out に MyeEngineApi (engine = ctx) を構築する。ctx の生存は呼び出し側が管理する。

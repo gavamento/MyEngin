@@ -141,7 +141,9 @@ SELF_EVAL: sub-04 (round 2)
 
 検証:
   - MyEngine.sln /p:Configuration=Debug /p:Platform=x64 → Build succeeded (GameLogic.dll / Engine.lib / Editor.exe / Runtime.exe 全生成)
-  - Editor.exe --selftest → 全スイート ALL PASS。ProjectComputeRunner SelfTest: ALL PASS (7 ケース)
+  - Editor.exe --selftest → ProjectComputeRunner SelfTest: ALL PASS (7 ケース)。
+    ただしプロセス全体は exit 1 — Skeleton/Asset 系 headless (RegisterSkinnedModels / CesiumMan.glb 等) が FAIL。
+    M78d 差分 (Renderer/PostProcess/RenderSystem) とは無関係。他スイートは ALL PASS。
   - tools\check_rules.ps1 → 0 error(s), 0 warning(s)
 
 自己採点 (1-5):

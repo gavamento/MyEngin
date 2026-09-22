@@ -32,11 +32,17 @@
 // v18: IsDevelopmentRun (デバッグ機能を配布物で閉じる)
 // v19: SetWindowMode / GetWindowMode (ウィンドウ / ボーダーレスの切り替え)
 // v20: 汎用タグ TagIndex / HasTag / SetTag / FindEntitiesWithTag
-#define MYE_API_VERSION 20u
+// v21 (M78e): Compute ABI — CreateComputeBuffer / ReleaseComputeBuffer / SetComputeBuffer /
+//             SetComputeFloat / SetComputeFloat4 / SetComputeTextureFromAsset / DispatchCompute
+#define MYE_API_VERSION 21u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
 #define MYE_PERSIST_MAX_BLOB 65536
+
+// v21 (M78e) Compute バッファの usageFlags (CreateComputeBuffer の第 3 引数)
+#define MYE_COMPUTE_BUFFER_STRUCTURED 0x01u // 構造化バッファ (最低フラグ)
+#define MYE_COMPUTE_BUFFER_UAV        0x02u // UAV ビューも作成する (書き込み可)
 
 // MYE_LOG レベル (Engine/Core/Log.h の LogLevel と同値)
 enum MyeLogLevel {
@@ -599,6 +605,45 @@ struct MyeEngineApi {
     // FindEntitiesWithTag: そのタグを自分で持つ生存エンティティを **EntityID の index 昇順** で out へ。
     //   戻り値は切り捨て前の総数 (FindPartsByTag と同じ規約。out=null / cap<=0 は数えるだけ)
     int32_t (*FindEntitiesWithTag)(void* engine, int32_t tagIndex, MyeEntityId* out, int32_t cap);
+
+    // ---- v21 (M78e): Compute ABI ----
+    // C ABI 経由で GPU コンピュートバッファを確保・Dispatch する。
+    // 生 D3D 型は Shared に出さない。メモリ解放はエンジン側 (ReleaseComputeBuffer / Shutdown)。
+    // ★C# レーンは record/verify 中に走らないため、Compute 結果を ECS/WorldHash に書き戻す
+    //   用法は禁止 (spec §4.1)。視覚効果・スクリプト内の一時利用に留めること。
+
+    // CreateComputeBuffer: 構造化バッファを確保して不透明ハンドルを返す。
+    //   count * stride バイトの GPU バッファ。flags: MYE_COMPUTE_BUFFER_* の論理和。
+    //   失敗 (デバイス未接続 / 上限超過) は 0
+    uint64_t (*CreateComputeBuffer)(void* engine, uint32_t count, uint32_t stride, uint32_t flags);
+
+    // ReleaseComputeBuffer: バッファを解放する。無効 ID・二重解放は no-op で落ちない
+    void (*ReleaseComputeBuffer)(void* engine, uint64_t bufferId);
+
+    // SetComputeBuffer: shaderUtf8 の CS に bufferNameUtf8 の名前で bufferId をバインド予約する。
+    //   無効なバッファ ID は 0 戻り。シェーダの読込・バインドは DispatchCompute まで遅延
+    int (*SetComputeBuffer)(void* engine, const char* shaderUtf8,
+                            const char* bufferNameUtf8, uint64_t bufferId);
+
+    // SetComputeFloat / SetComputeFloat4: Properties／cbuffer の変数に値を設定する。
+    //   シェーダを読んで名前を照合し、未知の変数名は 0 (落ちない)
+    int (*SetComputeFloat)(void* engine, const char* shaderUtf8,
+                           const char* propNameUtf8, float value);
+    int (*SetComputeFloat4)(void* engine, const char* shaderUtf8,
+                            const char* propNameUtf8,
+                            float x, float y, float z, float w);
+
+    // SetComputeTextureFromAsset: テクスチャを名前でバインド予約する。
+    //   assetId は AssetID.value、または組み込み名キー HashStr("white") / HashStr("builtin://white")。
+    //   assetId == 0・未解決・シェーダに無い名前は 0 (落ちない)
+    int (*SetComputeTextureFromAsset)(void* engine, const char* shaderUtf8,
+                                      const char* textureNameUtf8, uint64_t assetId);
+
+    // DispatchCompute: shaderUtf8 を (必要なら) LoadCompute し、
+    //   バインド済み状態を適用してから (gx, gy, gz) グループで Dispatch する。
+    //   シェーダ無効・デバイス未接続は 0 (クラッシュしない)
+    int (*DispatchCompute)(void* engine, const char* shaderUtf8,
+                           uint32_t gx, uint32_t gy, uint32_t gz);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

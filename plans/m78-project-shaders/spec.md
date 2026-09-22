@@ -283,3 +283,4 @@ _Direction ("Direction", Vector) = (0, 1, 0, 0)
 - 2026-09-22: sub-02 VERDICT REWORK。`--selftest` の `&&` 短絡で先行失敗時に末尾 M78 が未実行になる問題。未到達を PASS としない。集約を `ok &=` 方式へ直し全テスト実行＋総合判定とする裁定 (EditorMain の末尾 append 契約は維持)。
 - 2026-09-22: sub-03 VERDICT REWORK。Inspector はスキーマ駆動＋ Tex2D (値/UI/バインド) を must。save-on-apply プレビューは受理 (保存前厳密プレビューは任意)。
 - 2026-09-22: sub-04 VERDICT REWORK。BeforeTonemap は仕様どおり Godray 後 (sub-02 の前倒し配置を修正)。AfterTonemap CS の nullptr 禁止。コンピュート出力→ポスト参照は must。
+- 2026-09-22: sub-05 VERDICT OK。スクリプト所有バッファは `ComputeAbiRunner` に分離してよいと確定 (fxstack Runner と寿命分離)。`kEngineVersion` 製品文字列は ABI bump と独立で据え置き可。

@@ -68,6 +68,7 @@
 #include "Engine/Platform/InputActions.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
+#include "Engine/Renderer/ComputeAbiRunner.h" // v21
 #include "Engine/Renderer/DeferredPath.h"
 #include "Engine/Renderer/ForwardPath.h"
 #include "Engine/Renderer/GpuResources.h"
@@ -121,6 +122,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ScriptHost scriptHost;
     DllReloader dllReloader;
     ManagedHost managedHost;
+    ComputeAbiRunner computeAbi; // v21: スクリプト所有の構造化バッファ
     ParticleSystem particleSystem;
     CollisionSystem collisionSystem;
     PhysicsSystem physicsSystem; // 剛体積分 + 衝突解決 (M20、ステートレス)
@@ -460,6 +462,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // v18: 開発中の実行か。プロセスの定数なので起動時に 1 回だけ渡す (sim 状態ではない = .rep に載らない)
     scriptHost.SetDevelopmentRun(config.developmentRun);
     managedHost.SetDevelopmentRun(config.developmentRun);
+    scriptHost.SetComputeAbi(&computeAbi, &device, &shaderManager, &resources.textures);
+    managedHost.SetComputeAbi(&computeAbi, &device, &shaderManager, &resources.textures);
 
     clock.Init();
 
@@ -845,6 +849,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.prevTickInput = prevTickInput;
     tickServices.scriptHost = &scriptHost;
     tickServices.managedHost = &managedHost;
+    tickServices.computeAbi = &computeAbi;
     tickServices.animationSystem = &animationSystem;
     tickServices.animLibrary = &animLibrary;
     tickServices.controllerSystem = &controllerSystem;
@@ -2579,6 +2584,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     particleSystem.Shutdown();
     scriptHost.Shutdown();
     managedHost.Shutdown();
+    computeAbi.Shutdown(); // D3D リソースは device.Shutdown より前に手放す
     reloadHub.Shutdown();
     deferredPath.Shutdown();
     forwardPath.Shutdown();

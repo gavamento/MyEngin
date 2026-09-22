@@ -4,36 +4,30 @@
 - 開始: 2026-09-22 / 基点コミット: bbd11543770d2830552957ecf4122b0a55e5521d
 - フェーズ: 実装
 
-## 事前資料 (planner は必ず読むこと)
-- `plans/m78-project-shaders/design-draft.md`
-- `plans/m78-project-shaders/reference-unity-ue.md`
-
 ## ユーザー判断
-| 論点 | 決定 | 日付 |
-|---|---|---|
-| 対象範囲 | ポスト + コンピュート (サーフェス外) | 2026-09-22 |
-| 形式 | 生 HLSL + Properties | 2026-09-22 |
-| 失敗時 | マゼンタ／エラー表示 | 2026-09-22 |
-| 挿入点 | BeforeTonemap + AfterTonemap | 2026-09-22 |
-| 保存 | *.fxstack.json + カメラ AssetRef | 2026-09-22 |
-| コンピュート | シーン駆動 + ABI v21 (Texture 必須) | 2026-09-22 |
-| dirty ツリー | 明示ステージのみで続行 | 2026-09-22 |
+| 論点 | 決定 |
+|---|---|
+| 対象 | ポスト + コンピュート (サーフェス外) |
+| 形式 | 生 HLSL + Properties |
+| 失敗 | マゼンタ／エラー |
+| 挿入点 | BeforeTonemap + AfterTonemap |
+| 保存 | *.fxstack.json + カメラ AssetRef |
+| ABI | v21 + SetComputeTextureFromAsset 必須 |
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 Properties DSL | OK | 1 | 27758be | nit: errno |
-| sub-02 ポスト挿入 | OK | 2 | 92f372e | nit: Collect/RunPasses 二重 |
-| sub-03 fxstack+Inspector | 実装中 | 0 | | |
-| sub-04 CS シーン駆動 | 未着手 | 0 | | |
-| sub-05 Compute ABI v21 | 未着手 | 0 | | |
+| sub-01 Properties DSL | OK | 1 | 27758be | |
+| sub-02 ポスト挿入 | OK | 2 | 92f372e | selftest ok&= |
+| sub-03 fxstack+Inspector | OK | 2 | 1758116 | Tex2D must |
+| sub-04 CS シーン駆動 | OK | 2 | 062cd01 | Godray後・GetOutputSRV |
+| sub-05 Compute ABI v21 | 実装中 | 0 | | coder 背景実行中 |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
 
-## 申し送り (セッション跨ぎ)
+## 申し送り
 - 無関係未追跡は触らない。`git add -A` 禁止。
-- PackProperties: cbSizeBytes==0 なら空成功 → Runner は CB 省略可
-- Header-only: `name.empty() && cbOffset==-1`
-- planner: 818bdf1a… / coder sub-01: c500e245…
+- planner: 818bdf1a… / sub-05 coder: 1e33f9cc…
+- _st_clean.err/.out は selftest 残骸。コミットしない。

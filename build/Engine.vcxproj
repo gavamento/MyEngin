@@ -219,6 +219,8 @@
     <ClCompile Include="..\src\Engine\Renderer\PostProcess.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\FxStackAsset.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\FxStackSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\ComputeAbiRunner.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\ComputeAbiSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ProjectComputeRunner.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ProjectComputeRunnerSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ProjectEffectRunner.cpp" />
@@ -466,6 +468,8 @@
     <ClInclude Include="..\src\Engine\Renderer\PostProcess.h" />
     <ClInclude Include="..\src\Engine\Renderer\FxStackAsset.h" />
     <ClInclude Include="..\src\Engine\Renderer\FxStackSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Renderer\ComputeAbiRunner.h" />
+    <ClInclude Include="..\src\Engine\Renderer\ComputeAbiSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\ProjectComputeRunner.h" />
     <ClInclude Include="..\src\Engine\Renderer\ProjectComputeRunnerSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\ProjectEffectRunner.h" />

@@ -175,8 +175,8 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 20u,
-              "abi: the table reports v20");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 21u,
+              "abi: the table reports v21");
         check(api.FindPart != nullptr && api.FindPartsByTag != nullptr,
               "abi: the v9 part slots are filled in");
         check(api.RaycastParts != nullptr, "abi: the v10 RaycastParts slot is filled in");
@@ -463,6 +463,40 @@ bool RunPartSelfTest()
 
         w.DestroyEntity(charm.Id());
         w.ApplyStructuralChanges();
+
+        // v21 (M78e): Compute ABI — ヘッドレス環境でのスロット充填・null 安全契約
+        // D3D デバイスが無い (null) ので GPU 処理は走らない。
+        // 「デバイス未接続でも落ちない & 戻り値が仕様通り」の契約を見る。
+        check(api.CreateComputeBuffer != nullptr && api.ReleaseComputeBuffer != nullptr
+                  && api.SetComputeBuffer != nullptr && api.SetComputeFloat != nullptr
+                  && api.SetComputeFloat4 != nullptr
+                  && api.SetComputeTextureFromAsset != nullptr && api.DispatchCompute != nullptr,
+              "abi: all 7 v21 compute slots are filled in");
+        {
+            // デバイスなし → CreateComputeBuffer は 0 (ハンドルなし) を返す
+            const uint64_t h = api.CreateComputeBuffer(api.engine, 64, 16, MYE_COMPUTE_BUFFER_STRUCTURED);
+            check(h == 0u, "abi: CreateComputeBuffer returns 0 without a D3D device");
+
+            // 無効ハンドルへの ReleaseComputeBuffer は no-op (クラッシュしない)
+            api.ReleaseComputeBuffer(api.engine, 0u);
+            api.ReleaseComputeBuffer(api.engine, 0xDEADBEEFull);
+            check(true, "abi: ReleaseComputeBuffer with invalid handles is a no-op");
+
+            // null シェーダ名は Set* / Dispatch すべて 0 戻りで落ちない
+            check(api.SetComputeBuffer(api.engine, nullptr, "buf", 0u) == 0
+                      && api.SetComputeFloat(api.engine, nullptr, "k", 1.0f) == 0
+                      && api.SetComputeFloat4(api.engine, nullptr, "v", 0,0,0,0) == 0
+                      && api.SetComputeTextureFromAsset(api.engine, nullptr, "t", 0u) == 0,
+                  "abi: Set* with null shaderUtf8 returns 0 without crashing");
+            // assetId == 0 は SetComputeTextureFromAsset が 0 を返す (無効な識別子)
+            check(api.SetComputeTextureFromAsset(api.engine, "dummy.hlsl", "t", 0u) == 0,
+                  "abi: SetComputeTextureFromAsset with assetId=0 returns 0");
+            // D3D なし → DispatchCompute も 0 戻りで落ちない
+            check(api.DispatchCompute(api.engine, "dummy.hlsl", 1, 1, 1) == 0,
+                  "abi: DispatchCompute returns 0 without a D3D device");
+            check(api.DispatchCompute(api.engine, nullptr, 1, 1, 1) == 0,
+                  "abi: DispatchCompute with null shader name returns 0 without crashing");
+        }
     }
 
     // ---- シリアライズ往復 + ハッシュ被覆 ----

@@ -24,6 +24,8 @@
 #include "Engine/Engine/UI/UIWidgets.h" // M75f: ウィジェットの根もボタン状態 / フォーカスの相手になる
 #include "Engine/Platform/InputActions.h" // v12 GetActionState/GetAxisValue (M51h)
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/ComputeAbiRunner.h" // v21 (M78e)
+#include "Engine/Renderer/GraphicsDevice.h"    // v21 (M78e): Device() の完全型
 
 namespace mye {
 namespace {
@@ -1154,6 +1156,50 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
             outIds[i] = ToShared(hits[static_cast<size_t>(i)]);
         }
         return total;
+    };
+
+    // ---- v21 (M78e): Compute ABI ----
+    out.CreateComputeBuffer = [](void* engine, uint32_t count, uint32_t stride,
+                                 uint32_t flags) -> uint64_t {
+        ScriptApiContext* c = Ctx(engine);
+        if (!c->computeAbi || !c->graphicsDevice) { return 0; }
+        return c->computeAbi->CreateBuffer(c->graphicsDevice->Device(), count, stride, flags);
+    };
+    out.ReleaseComputeBuffer = [](void* engine, uint64_t bufferId) {
+        ScriptApiContext* c = Ctx(engine);
+        if (c->computeAbi) { c->computeAbi->ReleaseBuffer(bufferId); }
+    };
+    out.SetComputeBuffer = [](void* engine, const char* shader, const char* name,
+                              uint64_t bufferId) -> int {
+        ScriptApiContext* c = Ctx(engine);
+        if (!c->computeAbi || !c->shaderManager) { return 0; }
+        return c->computeAbi->SetBuffer(*c->shaderManager, shader, name, bufferId);
+    };
+    out.SetComputeFloat = [](void* engine, const char* shader, const char* name,
+                             float value) -> int {
+        ScriptApiContext* c = Ctx(engine);
+        if (!c->computeAbi || !c->shaderManager) { return 0; }
+        return c->computeAbi->SetFloat(*c->shaderManager, shader, name, value);
+    };
+    out.SetComputeFloat4 = [](void* engine, const char* shader, const char* name,
+                              float x, float y, float z, float w) -> int {
+        ScriptApiContext* c = Ctx(engine);
+        if (!c->computeAbi || !c->shaderManager) { return 0; }
+        return c->computeAbi->SetFloat4(*c->shaderManager, shader, name, x, y, z, w);
+    };
+    out.SetComputeTextureFromAsset = [](void* engine, const char* shader, const char* texName,
+                                        uint64_t assetId) -> int {
+        ScriptApiContext* c = Ctx(engine);
+        if (!c->computeAbi || !c->shaderManager) { return 0; }
+        return c->computeAbi->SetTextureFromAsset(*c->shaderManager, c->textureLibrary,
+                                                  shader, texName, assetId);
+    };
+    out.DispatchCompute = [](void* engine, const char* shader,
+                             uint32_t gx, uint32_t gy, uint32_t gz) -> int {
+        ScriptApiContext* c = Ctx(engine);
+        if (!c->computeAbi || !c->graphicsDevice || !c->shaderManager) { return 0; }
+        return c->computeAbi->Dispatch(*c->graphicsDevice, *c->shaderManager,
+                                       c->textureLibrary, shader, gx, gy, gz);
     };
 }
 

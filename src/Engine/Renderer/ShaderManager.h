@@ -23,6 +23,8 @@ struct ShaderProgram {
     Microsoft::WRL::ComPtr<ID3D11InputLayout> inputLayout;
     std::wstring path;                  // フルパス (正規化済み)
     std::vector<std::wstring> includes; // 依存 .hlsli (M3 のリロード依存グラフ用)
+    // v21 (M78e): CS バイトコード保持 — ComputeAbiRunner の D3DReflect ベース名前バインドに使用
+    std::vector<uint8_t> csBytecode;
     bool isCompute = false;
     bool valid = false;
 };

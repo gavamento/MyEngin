@@ -245,6 +245,14 @@ namespace MyeScripting
         public delegate* unmanaged<void*, MyeEntityId, int, int> HasTag;
         public delegate* unmanaged<void*, MyeEntityId, int, int, int> SetTag;
         public delegate* unmanaged<void*, int, MyeEntityId*, int, int> FindEntitiesWithTag;
+        // ---- v21 (M78e): Compute ABI ----
+        public delegate* unmanaged<void*, uint, uint, uint, ulong> CreateComputeBuffer;
+        public delegate* unmanaged<void*, ulong, void> ReleaseComputeBuffer;
+        public delegate* unmanaged<void*, byte*, byte*, ulong, int> SetComputeBuffer;
+        public delegate* unmanaged<void*, byte*, byte*, float, int> SetComputeFloat;
+        public delegate* unmanaged<void*, byte*, byte*, float, float, float, float, int> SetComputeFloat4;
+        public delegate* unmanaged<void*, byte*, byte*, ulong, int> SetComputeTextureFromAsset;
+        public delegate* unmanaged<void*, byte*, uint, uint, uint, int> DispatchCompute;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -1002,6 +1010,83 @@ namespace MyeScripting
         public static void SetCursorMode(int mode)
         {
             if (_api != null) _api->SetCursorMode(_api->Engine, mode);
+        }
+
+        // ---- v21 (M78e): Compute ABI ----
+        // ★C# レーンは record/verify 中に走らないため、Compute 結果を ECS/WorldHash へ
+        //   書き戻す用法は禁止 (spec §4.1)。視覚効果・スクリプト内の一時利用に留めること。
+
+        // 構造化バッファを確保し不透明ハンドルを返す。失敗は 0
+        // flags は MYE_COMPUTE_BUFFER_STRUCTURED (0x01) | MYE_COMPUTE_BUFFER_UAV (0x02)
+        public static ulong CreateComputeBuffer(uint count, uint stride, uint flags = 1u)
+        {
+            if (_api == null) return 0;
+            return _api->CreateComputeBuffer(_api->Engine, count, stride, flags);
+        }
+
+        // バッファ解放。無効ハンドル・二重解放は no-op で落ちない
+        public static void ReleaseComputeBuffer(ulong bufferId)
+        {
+            if (_api != null) _api->ReleaseComputeBuffer(_api->Engine, bufferId);
+        }
+
+        // バッファを名前でシェーダにバインド予約する
+        public static bool SetComputeBuffer(string shader, string bufName, ulong bufferId)
+        {
+            if (_api == null) return false;
+            var sb = Utf8(shader ?? "");
+            var nb = Utf8(bufName ?? "");
+            fixed (byte* sp = sb) fixed (byte* np = nb)
+            {
+                return _api->SetComputeBuffer(_api->Engine, sp, np, bufferId) != 0;
+            }
+        }
+
+        // float / float4 を名前でシェーダの cbuffer にバインド予約する
+        public static bool SetComputeFloat(string shader, string propName, float value)
+        {
+            if (_api == null) return false;
+            var sb = Utf8(shader ?? "");
+            var nb = Utf8(propName ?? "");
+            fixed (byte* sp = sb) fixed (byte* np = nb)
+            {
+                return _api->SetComputeFloat(_api->Engine, sp, np, value) != 0;
+            }
+        }
+        public static bool SetComputeFloat4(string shader, string propName,
+                                             float x, float y, float z, float w)
+        {
+            if (_api == null) return false;
+            var sb = Utf8(shader ?? "");
+            var nb = Utf8(propName ?? "");
+            fixed (byte* sp = sb) fixed (byte* np = nb)
+            {
+                return _api->SetComputeFloat4(_api->Engine, sp, np, x, y, z, w) != 0;
+            }
+        }
+
+        // テクスチャを名前でシェーダにバインド予約する (assetId == 0 で失敗)
+        // assetId: AssetID の value, または HashStr("white") 等の組み込みキー
+        public static bool SetComputeTextureFromAsset(string shader, string texName, ulong assetId)
+        {
+            if (_api == null) return false;
+            var sb = Utf8(shader ?? "");
+            var nb = Utf8(texName ?? "");
+            fixed (byte* sp = sb) fixed (byte* np = nb)
+            {
+                return _api->SetComputeTextureFromAsset(_api->Engine, sp, np, assetId) != 0;
+            }
+        }
+
+        // シェーダをロードし、バインド済み状態を適用して (gx,gy,gz) グループで Dispatch する
+        public static bool DispatchCompute(string shader, uint gx, uint gy, uint gz)
+        {
+            if (_api == null) return false;
+            var sb = Utf8(shader ?? "");
+            fixed (byte* sp = sb)
+            {
+                return _api->DispatchCompute(_api->Engine, sp, gx, gy, gz) != 0;
+            }
         }
     }
 }

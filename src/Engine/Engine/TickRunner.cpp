@@ -33,6 +33,7 @@
 #include "Engine/Engine/Physics/PhysicsSystem.h"
 #include "Engine/Engine/Physics/XpbdBackend.h" // M60'b: シーン遷移時の Reset 用
 #include "Engine/Engine/Prefab.h"
+#include "Engine/Renderer/ComputeAbiRunner.h" // v21: シーン遷移で ABI バッファを回収
 #include "Engine/Engine/RenderSystem.h"
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/SimSnapshot.h" // SimSourcesOf
@@ -766,6 +767,9 @@ void RunOneTick(TickServices& ts)
             partFollowSystem.Reset(); // M48g: 旧シーンの warn 抑制を捨てる
             scriptHost.ClearStarted();
             managedHost.OnSceneReloaded();
+            if (ts.computeAbi) {
+                ts.computeAbi->Shutdown(); // 旧シーンのスクリプトが握った GPU バッファを回収
+            }
             // M45: 旧シーンの SE を断ち、ハンドル採番も 0 から振り直す。
             // 採番列は「スクリプトの呼出順」だけで決まる必要があるので、
             // 記録/検証の別なく **必ず** リセットする (サスペンド中でも進む値のため)。

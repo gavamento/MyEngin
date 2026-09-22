@@ -11,6 +11,7 @@ class Scene;
 class InputActions;
 class ScriptHost;
 class ManagedHost;
+class ComputeAbiRunner;
 class AnimationSystem;
 class AnimationLibrary;
 class AnimatorControllerSystem;
@@ -66,6 +67,8 @@ struct TickServices {
     // スクリプト層
     ScriptHost* scriptHost = nullptr;
     ManagedHost* managedHost = nullptr;
+    // v21: シーン遷移でスクリプトが握った GPU バッファを回収する。null なら何もしない
+    ComputeAbiRunner* computeAbi = nullptr;
 
     // システム層
     AnimationSystem* animationSystem = nullptr;

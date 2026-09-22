@@ -651,6 +651,12 @@
     <ClCompile Include="..\src\Engine\Renderer\FxStackSelfTest.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ComputeAbiRunner.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ComputeAbiSelfTest.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\ProjectComputeRunner.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -1390,6 +1396,12 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\FxStackSelfTest.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ComputeAbiRunner.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ComputeAbiSelfTest.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ProjectComputeRunner.h">

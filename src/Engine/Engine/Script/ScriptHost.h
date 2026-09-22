@@ -67,6 +67,16 @@ public:
         apiCtx_.cursorLock = cursorLock; // v15 (M64a)。null = 該当スロットが no-op
     }
 
+    // v21: コンピュート ABI の実体。null のスロットは 0 / no-op。起動時に 1 回
+    void SetComputeAbi(ComputeAbiRunner* runner, GraphicsDevice* device, ShaderManager* shaders,
+                       TextureLibrary* textures)
+    {
+        apiCtx_.computeAbi = runner;
+        apiCtx_.graphicsDevice = device;
+        apiCtx_.shaderManager = shaders;
+        apiCtx_.textureLibrary = textures;
+    }
+
     // v18: 開発中の実行か (EngineConfig::developmentRun)。プロセスの定数なので起動時に 1 回だけ呼ぶ
     void SetDevelopmentRun(bool on) { apiCtx_.developmentRun = on ? 1 : 0; }
 

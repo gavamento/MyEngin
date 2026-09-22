@@ -500,6 +500,25 @@ namespace MyeScripting
                                            string tagName = null)
             => Engine.RaycastParts(root.Id, tagName, origin, dir, maxDist, out hit);
 
+        // ---- コンピュート (v21)。結果を ECS へ書き戻さない ----
+        // flags: 1 = 構造化, 2 = UAV も作る。失敗は 0 / false で、落ちない
+        protected static ulong CreateComputeBuffer(uint count, uint stride, uint flags = 1)
+            => Engine.CreateComputeBuffer(count, stride, flags);
+        protected static void ReleaseComputeBuffer(ulong bufferId)
+            => Engine.ReleaseComputeBuffer(bufferId);
+        protected static bool SetComputeBuffer(string shader, string bufName, ulong bufferId)
+            => Engine.SetComputeBuffer(shader, bufName, bufferId);
+        protected static bool SetComputeFloat(string shader, string propName, float value)
+            => Engine.SetComputeFloat(shader, propName, value);
+        protected static bool SetComputeFloat4(string shader, string propName,
+                                               float x, float y, float z, float w)
+            => Engine.SetComputeFloat4(shader, propName, x, y, z, w);
+        // assetId は AssetID、または NameHash("white") / NameHash("builtin://white")
+        protected static bool SetComputeTextureFromAsset(string shader, string texName, ulong assetId)
+            => Engine.SetComputeTextureFromAsset(shader, texName, assetId);
+        protected static bool DispatchCompute(string shader, uint gx, uint gy, uint gz)
+            => Engine.DispatchCompute(shader, gx, gy, gz);
+
         // ---- ライフサイクル (すべて任意オーバーライド) ----
         public virtual void Start() { }
         public virtual void Update(float dt) { }

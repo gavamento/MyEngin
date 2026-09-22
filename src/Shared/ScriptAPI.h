@@ -1032,3 +1032,53 @@ inline bool MyeIsSleeping(const MyeUpdateContext& ctx, MyeEntityId id)
 {
     return ctx.api->IsSleeping(ctx.api->engine, id) != 0;
 }
+
+// ---- v21 (M78e): Compute ABI ラッパー ----
+// 構造化バッファを確保し不透明ハンドルを返す。flags は MYE_COMPUTE_BUFFER_* の組み合わせ
+inline uint64_t MyeCreateComputeBuffer(const MyeUpdateContext& ctx,
+                                       uint32_t count, uint32_t stride, uint32_t flags)
+{
+    return ctx.api->CreateComputeBuffer(ctx.api->engine, count, stride, flags);
+}
+
+// バッファを解放する（無効ハンドルは no-op）
+inline void MyeReleaseComputeBuffer(const MyeUpdateContext& ctx, uint64_t bufferId)
+{
+    ctx.api->ReleaseComputeBuffer(ctx.api->engine, bufferId);
+}
+
+// シェーダにバッファを名前で予約バインドする（戻り値 0 は失敗）
+inline int MyeSetComputeBuffer(const MyeUpdateContext& ctx,
+                               const char* shader, const char* bufName, uint64_t bufferId)
+{
+    return ctx.api->SetComputeBuffer(ctx.api->engine, shader, bufName, bufferId);
+}
+
+// cbuffer 変数に float 値を名前で予約する
+inline int MyeSetComputeFloat(const MyeUpdateContext& ctx,
+                              const char* shader, const char* propName, float value)
+{
+    return ctx.api->SetComputeFloat(ctx.api->engine, shader, propName, value);
+}
+
+// cbuffer 変数に float4 値を名前で予約する
+inline int MyeSetComputeFloat4(const MyeUpdateContext& ctx,
+                               const char* shader, const char* propName,
+                               float x, float y, float z, float w)
+{
+    return ctx.api->SetComputeFloat4(ctx.api->engine, shader, propName, x, y, z, w);
+}
+
+// テクスチャを名前でシェーダに予約バインドする（assetId 0 は失敗）
+inline int MyeSetComputeTextureFromAsset(const MyeUpdateContext& ctx,
+                                         const char* shader, const char* texName, uint64_t assetId)
+{
+    return ctx.api->SetComputeTextureFromAsset(ctx.api->engine, shader, texName, assetId);
+}
+
+// シェーダを Dispatch し、予約済みバインドを適用する
+inline int MyeDispatchCompute(const MyeUpdateContext& ctx,
+                              const char* shader, uint32_t gx, uint32_t gy, uint32_t gz)
+{
+    return ctx.api->DispatchCompute(ctx.api->engine, shader, gx, gy, gz);
+}

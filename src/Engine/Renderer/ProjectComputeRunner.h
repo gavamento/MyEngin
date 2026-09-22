@@ -48,7 +48,7 @@ ComputeDispatchPoint DispatchPointFromString(const std::string& s); // 未知は
 
 // プロジェクトコンピュートパスのランタイム管理・実行クラス (M78d)。
 // PostProcess::Resolve および RenderSystem から 3 つの dispatchPoint で呼ばれる。
-// GameLogic ABI (sub-05) はこのクラスの内部入口を薄いラッパで呼ぶ予定。
+// スクリプト所有バッファの ABI は ComputeAbiRunner (寿命とバインド単位が別)。
 class ProjectComputeRunner
 {
 public:

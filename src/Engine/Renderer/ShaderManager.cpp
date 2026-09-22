@@ -398,6 +398,8 @@ bool ShaderManager::Instantiate(const std::string& pathUtf8,
             MYE_LOG_ERROR("compute shader creation failed: %s", pathUtf8.c_str());
             return false;
         }
+        // v21 (M78e): バイトコードを保持して ComputeAbiRunner の D3DReflect 名前バインドを可能にする
+        out.csBytecode = blobs[0];
         return true;
     }
     if (blobs.size() != 2
