@@ -317,11 +317,12 @@ void TestTex2DRoundTrip()
 }
 
 // ---------------------------------------------------------------------------
-// テスト 8: CameraOverride 時は fxstack 注入しない (M78 §4.1 / review-1 #1)
+// テスト 8: CameraOverride 時は fxstack (Post+Compute) を Resolve/Dispatch へ渡さない
+// (M78 §4.1 / review-1 #1。RenderSystem は ShouldInjectProjectFxStack で両 Runner をガード)
 // ---------------------------------------------------------------------------
 void TestProjectFxStackInjectionPolicy()
 {
-    MYE_LOG_INFO("[selftest] FxStack: CameraOverride injection policy");
+    MYE_LOG_INFO("[selftest] FxStack: CameraOverride Post+Compute injection policy");
 
     FX_CHECK(ShouldInjectProjectFxStack(false));
     FX_CHECK(!ShouldInjectProjectFxStack(true));

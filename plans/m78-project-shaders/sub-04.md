@@ -1,8 +1,8 @@
 # sub-04: プロジェクトコンピュート (シーン／スタック駆動)
 
 - 依存: sub-01, sub-03
-- 状態: 判定待ち (round 2 VERDICT OK — コミット待ち)
-- 往復: 2
+- 状態: 判定待ち (round 3 VERDICT OK — コミット待ち)
+- 往復: 3
 
 ## やること
 
@@ -108,6 +108,8 @@ SELF_EVAL: sub-04 (round 1)
 ## フィードバック履歴
 - round 1: VERDICT REWORK — (1) BeforeTonemap を Godray 後へ (ポスト＋コンピュート、§4.1)。(2) AfterTonemap CS は LDR 中間必須・nullptr 禁止。(3) GetOutputSRV→ポスト TextureResolver 接続は受け入れ 1 の must。group=8 固定は受理。
 - round 2: VERDICT OK — 3 must 消込確認 (Godray 後配置・needLdrIntermediate+blit・GetOutputSRV 接続)。手動手順メモ済み。nit: group=8 固定のみ。
+- review-1 #1: 差し戻し — CameraOverride 時 BeforePost Dispatch / Resolve への computeRunner 注入を止め、スタale パスが Scene View に残らないこと (sub-03 の ClearPasses と整合)
+- round 3: VERDICT OK — sub-03 の ClearPasses + ShouldInjectProjectFxStack で Compute 側も充足を確認。SelfTest 委譲コメント一本化のみ。追加コード不要は妥当
 
 ---
 
@@ -160,4 +162,43 @@ SELF_EVAL: sub-04 (round 2)
   - src/Engine/Renderer/PostProcess.h
   - src/Engine/Renderer/PostProcess.cpp
   - src/Engine/Engine/RenderSystem.cpp
+
+---
+
+SELF_EVAL: sub-04 (round 3)
+実装:
+  #1 (review-1 #1 / Compute 側): 追加コードなし — sub-03 で入った RenderSystem 経路を確認。
+      ResolvePost: cameraOverride 時 projectComputeRunner_.ClearPasses() (1737–1739)。
+      ShouldInjectProjectFxStack(false) のときのみ injectComputeFx=&projectComputeRunner_ (1860–1865)。
+      BeforePost RunDispatch は injectComputeFx!=nullptr ガード (1868–1875)。
+      postFx_.Resolve の第 2 ユーザ Runner 引数も injectComputeFx (Scene View では nullptr)。
+      他参照箇所は RenderSystem のみ (grep 確認)。
+  - テスト／メモ一本化: ProjectComputeRunnerSelfTest.h に CameraOverride 検証は
+      FxStackSelfTest::TestProjectFxStackInjectionPolicy へ委譲する旨を追記。
+      FxStackSelfTest テスト 8 のコメント／ログを Post+Compute 明示に更新 (二重テストは追加しない)。
+
+仕様との差分:
+  - なし (追加実装不要)
+
+検証:
+  - Editor.exe --selftest → exit 0 (FxStack テスト 8 Post+Compute policy / ProjectComputeRunner 7 件 ALL PASS)
+  - tools\check_rules.ps1 → 0 error(s), 0 warning(s)
+
+自己採点 (1-5):
+  仕様適合: 5 — review-1 #1 の Compute 要件 (ClearPasses + BeforePost/Resolve 非注入) が既存 RenderSystem で充足
+  正しさ: 4 — コード読解 + セルフテスト通過。Scene View 手動 (Play 停止後 stale CS) は未実施
+  コード品質: 5 — 変更はコメント／テスト委譲メモのみ
+  テスト: 4 — ポリシーは FxStackSelfTest 1 本に集約。Runner 単体に重複ケースは置かない
+
+不安・質問:
+  なし
+
+触ったファイル:
+  - src/Engine/Renderer/ProjectComputeRunnerSelfTest.h
+  - src/Engine/Renderer/FxStackSelfTest.cpp
+  - plans/m78-project-shaders/sub-04.md (実装メモのみ)
+
+申し送り:
+  - reviewer: Scene View 手動は「Play→fxstack 付きカメラ→停止→Scene View に CS/ポスト残存なし」で #1 消込可能
+  - sub-03/sub-04 の CameraOverride 記述は本 round で Compute 側テスト委譲先を明示済み
 
