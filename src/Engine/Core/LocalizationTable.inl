@@ -624,6 +624,18 @@ MYE_STR(Insp_ComposeMultiRoot, "Multiple roots are wrapped in a group on instant
 MYE_STR(Insp_ComposeInvalid,  "could not be loaded (needs \"actor\":1 or \"prefab\":1)",
                               "読み込めません (\"actor\":1 または \"prefab\":1 が必要です)")
 
+// ---- fxstack アセット (M78c) ----
+MYE_STR(Insp_FxStackFailed,   "(fxstack parse failed)",    "(fxstack の読み込みに失敗)")
+MYE_STR(Insp_FxStackPasses,   "Passes",                    "パス一覧")
+MYE_STR(Insp_FxStackKindPost, "Post",                      "ポスト")
+MYE_STR(Insp_FxStackKindCs,   "Compute",                   "コンピュート")
+MYE_STR(Insp_FxStackInsertion,"Insertion",                  "挿入点")
+MYE_STR(Insp_FxStackPriority, "Priority",                  "優先度")
+MYE_STR(Insp_FxStackProperties,"Properties",               "プロパティ")
+MYE_STR(Insp_FxStackSave,     "Save",                      "保存")
+MYE_STR(Insp_FxStackSaveOk,   "Saved.",                    "保存しました。")
+MYE_STR(Insp_FxStackSaveFail, "Save failed.",              "保存に失敗しました。")
+
 // ---- アセットブラウザ (M47b) ----
 MYE_STR(Asset_Create,         "Create",              "作成")
 MYE_STR(Asset_Folder,         "Folder",              "フォルダ")

@@ -461,6 +461,8 @@ void RegisterBuiltinComponents()
         MYE_JP("ボリュメトリック霧", MYE_FIELD(CameraPostFxComponent, froxelOn, Bool)),
         MYE_JP("霧の密度", MYE_FIELD_RANGE(CameraPostFxComponent, froxelDensity, Float, 0.0f, 0.5f)),
         MYE_JP("霧の異方性", MYE_FIELD_RANGE(CameraPostFxComponent, froxelAnisotropy, Float, -0.9f, 0.9f)),
+        // M78c: プロジェクトポスト／コンピュートスタック (末尾 append)
+        MYE_JP("エフェクトスタック", MYE_FIELD(CameraPostFxComponent, fxStack, AssetRef)),
     }, kComponentNoHash);
 
     // M32e: 合成エフェクトのライフサイクル。DestroyEntity + 子エミッタ playing を駆動 = hash 対象。

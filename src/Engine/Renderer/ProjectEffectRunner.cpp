@@ -36,6 +36,43 @@ void ProjectEffectRunner::ClearPasses()
     passes_.clear();
 }
 
+void ProjectEffectRunner::SetPasses(std::vector<ProjectPostPassDesc> newDescs)
+{
+    // 同名・同挿入点のパスのキャッシュを再利用しながら一覧を置き換える (M78c)。
+    // 新規パスはキャッシュ空で追加; 既存パスは propertyValues だけ更新して CB 等を維持。
+    std::vector<CachedPass> next;
+    next.reserve(newDescs.size());
+
+    for (auto& nd : newDescs)
+    {
+        // 同名・同挿入点の既存パスを探す
+        bool found = false;
+        for (auto& cp : passes_)
+        {
+            if (cp.desc.shaderName == nd.shaderName &&
+                cp.desc.insertion  == nd.insertion)
+            {
+                // プロパティ値と priority/enabled だけ更新してキャッシュを維持
+                cp.desc.propertyValues = std::move(nd.propertyValues);
+                cp.desc.priority       = nd.priority;
+                cp.desc.enabled        = nd.enabled;
+                next.push_back(std::move(cp));
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+        {
+            // 新規: キャッシュなし (EnsureCached が次回 RunPasses で作る)
+            CachedPass cp;
+            cp.desc = std::move(nd);
+            next.push_back(std::move(cp));
+        }
+    }
+
+    passes_ = std::move(next);
+}
+
 bool ProjectEffectRunner::HasPasses(PostInsertionPoint insertion) const
 {
     for (const auto& cp : passes_)
@@ -175,7 +212,8 @@ void ProjectEffectRunner::DrawFullscreen(
     ID3D11DepthStencilState*  depthDisabled,
     ID3D11BlendState*         blendOff,
     ID3D11RasterizerState*    rasterizer,
-    ID3D11SamplerState*       linearClamp)
+    ID3D11SamplerState*       linearClamp,
+    const std::vector<ID3D11ShaderResourceView*>& userTexSRVs)
 {
     // SRV バインド中の RTV を外す (同じテクスチャの SRV/RTV 同時バインド防止)
     dc->OMSetRenderTargets(0, nullptr, nullptr);
@@ -202,6 +240,13 @@ void ProjectEffectRunner::DrawFullscreen(
     ID3D11ShaderResourceView* srvs[2] = { sceneSRV, depthSRV };
     dc->PSSetShaderResources(0, 2, srvs);
 
+    // ユーザー Tex2D: t2, t3, ... (スキーマ宣言順)
+    if (!userTexSRVs.empty())
+    {
+        dc->PSSetShaderResources(2, static_cast<UINT>(userTexSRVs.size()),
+                                 userTexSRVs.data());
+    }
+
     // サンプラ: s0 = linearClamp
     dc->PSSetSamplers(0, 1, &linearClamp);
 
@@ -214,6 +259,12 @@ void ProjectEffectRunner::DrawFullscreen(
     // バインド解除 (深度 SRV は DSV bind 対策のため必ず外す)
     ID3D11ShaderResourceView* nullSrv[2] = { nullptr, nullptr };
     dc->PSSetShaderResources(0, 2, nullSrv);
+    // ユーザー Tex2D スロットも解除
+    if (!userTexSRVs.empty())
+    {
+        std::vector<ID3D11ShaderResourceView*> nullTex(userTexSRVs.size(), nullptr);
+        dc->PSSetShaderResources(2, static_cast<UINT>(nullTex.size()), nullTex.data());
+    }
     dc->OMSetRenderTargets(0, nullptr, nullptr);
 }
 
@@ -331,11 +382,35 @@ ID3D11ShaderResourceView* ProjectEffectRunner::RunPasses(
                 gpubuf::UploadCB(dc, cp.engineCB.Get(), ecb);
             }
 
+            // Tex2D SRV を収集する (スキーマ宣言順 → t2, t3, ...)
+            std::vector<ID3D11ShaderResourceView*> texSRVs;
+            if (texResolver_ && cp.schema.ok)
+            {
+                for (const auto& prop : cp.schema.properties)
+                {
+                    if (prop.type != PropType::Tex2D) {
+                        continue;
+                    }
+                    // JSON 値があれば使い、なければスキーマの既定値
+                    std::string name = prop.defaultTex.empty() ? "white" : prop.defaultTex;
+                    auto it = cp.desc.propertyValues.find(prop.name);
+                    if (it != cp.desc.propertyValues.end())
+                    {
+                        if (const std::string* sp = std::get_if<std::string>(&it->second)) {
+                            name = *sp;
+                        }
+                    }
+                    ID3D11ShaderResourceView* srv = texResolver_(name);
+                    texSRVs.push_back(srv); // null もそのまま (スロット飛ばし不可)
+                }
+            }
+
             DrawFullscreen(dc, prog->vs.Get(), prog->ps.Get(),
                            curSRV, depthSRV,
                            cp.engineCB.Get(), cp.userCB.Get(),
                            dstRTV, width, height,
-                           depthDisabled, blendOff, rasterizer, linearClamp);
+                           depthDisabled, blendOff, rasterizer, linearClamp,
+                           texSRVs);
         }
 
         // 次パスの入力を更新 (AfterTonemap の最終パスで finalDstRTV に書いた場合は curSRV 不要)

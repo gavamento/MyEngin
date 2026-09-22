@@ -80,6 +80,7 @@
 #include "Engine/Renderer/ImageDiffSelfTest.h"
 #include "Engine/Renderer/ProjectShaderPropertiesSelfTest.h"  // M78a
 #include "Engine/Renderer/ProjectEffectRunnerSelfTest.h"      // M78b
+#include "Engine/Renderer/FxStackSelfTest.h"                  // M78c
 #include "Engine/Renderer/RenderSelfTest.h"
 #include "Engine/Renderer/TextureCookSelfTest.h"
 #include "Engine/Renderer/VolumeTexture.h"
@@ -503,6 +504,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunEngineCliSelfTest();         // 両 Main 共通の CLI フラグ表
         ok &= mye::RunProjectShaderPropertiesSelfTest();  // M78a: Properties DSL パース/パック
         ok &= mye::RunProjectEffectRunnerSelfTest();      // M78b: ポスト挿入点・ソート
+        ok &= mye::RunFxStackSelfTest();                  // M78c: fxstack ロード/保存
         return ok ? 0 : 1;
     }
 

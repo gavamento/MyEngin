@@ -2,6 +2,7 @@
 #include <DirectXMath.h>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "Editor/AssetPreviewCache.h"
@@ -13,6 +14,8 @@
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/Physics/PhysMatLibrary.h"
+#include "Engine/Renderer/FxStackAsset.h"     // M78c: fxstack アセット編集状態
+#include "Engine/Renderer/ProjectShaderProperties.h"  // M78c r2: スキーマ駆動 Inspector
 
 namespace mye {
 
@@ -152,6 +155,21 @@ private:
     bool physMatEditValid_ = false;
     void LoadPhysMatEdit(const std::wstring& path);
     void DrawPhysMatInspector(const std::wstring& path);
+
+    // fxstack インスペクタの編集キャッシュ (M78c)。*.fxstack.json のパス別インメモリ編集。
+    // アセット編集は UndoStack 対象外 (マテリアル / サウンドと同じ規約)
+    struct FxStackEditState {
+        bool        valid        = false;
+        int         selectedPass = 0;     // 選択中パス (Inspector で展開表示する)
+        std::string saveStatus;           // 最後の保存結果メッセージ (表示後クリア)
+        // M78c round 2: シェーダ名 → ParseProperties 結果のキャッシュ
+        // (スキーマ駆動 Inspector の毎フレームパースを避ける)
+        std::unordered_map<std::string, PropertyParseResult> schemaCache;
+    };
+    mye::FxStackAsset fxstackEdit_;
+    FxStackEditState  fxstackEditState_;
+    void LoadFxStackEdit(const std::wstring& path);
+    void DrawFxStackInspector(EngineContext& ctx, const std::wstring& path);
 
     // 回転編集中のオイラー角キャッシュ (quat→euler→quat の往復ドリフト防止)
     DirectX::XMFLOAT3 eulerCache_ = { 0, 0, 0 };

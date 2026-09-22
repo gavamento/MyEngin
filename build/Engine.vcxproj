@@ -217,6 +217,8 @@
     <ClCompile Include="..\src\Engine\Renderer\MeshInstancing.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\PickingPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\PostProcess.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\FxStackAsset.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\FxStackSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ProjectEffectRunner.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ProjectEffectRunnerSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ProjectShaderProperties.cpp" />
@@ -460,6 +462,8 @@
     <ClInclude Include="..\src\Engine\Renderer\PickingPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\PostFxMath.h" />
     <ClInclude Include="..\src\Engine\Renderer\PostProcess.h" />
+    <ClInclude Include="..\src\Engine\Renderer\FxStackAsset.h" />
+    <ClInclude Include="..\src\Engine\Renderer\FxStackSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\ProjectEffectRunner.h" />
     <ClInclude Include="..\src\Engine\Renderer\ProjectEffectRunnerSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\ProjectShaderProperties.h" />

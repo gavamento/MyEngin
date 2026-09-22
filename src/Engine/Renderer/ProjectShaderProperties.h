@@ -74,7 +74,9 @@ PropertyParseResult ParseProperties(std::string_view hlslSource);
 // パース済みスキーマと名前→値辞書から定数バッファのバイト列を生成。
 // values に無いプロパティは既定値を使う。Tex2D はスキップ。
 // parsed.ok が false の場合は何もせず false を返す。
-using PropValue = std::variant<float, std::array<float, 4>>;
+// PropValue: float = スカラー, array<float,4> = Color/Vector,
+//            string = Tex2D のアセットパス/ビルトイン名 (CB 対象外)
+using PropValue = std::variant<float, std::array<float, 4>, std::string>;
 bool PackProperties(
     const PropertyParseResult&                         parsed,
     const std::unordered_map<std::string, PropValue>&  values,

@@ -818,6 +818,10 @@ struct CameraPostFxComponent {
     bool froxelOn = false;
     float froxelDensity = 0.02f;   // 基準の消散係数 σ_t [1/m] (高度スケール前)
     float froxelAnisotropy = 0.3f; // HG 位相関数の g (>0 = 前方散乱 = 光源側が明るい)
+    // ---- M78c: プロジェクトポスト／コンピュートスタック (末尾 append) ----
+    // *.fxstack.json の AssetRef。null = ユーザーパスなし (既存シーン互換)。
+    // 描画専用 (kComponentNoHash と同じコンポーネント内) なので WorldHash は変わらない
+    AssetID fxStack = {};
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

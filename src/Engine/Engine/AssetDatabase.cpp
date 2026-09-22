@@ -81,6 +81,9 @@ AssetType AssetDatabase::ClassifyPath(const std::wstring& path)
     if (EndsWith(s, ".physmat.json")) {
         return AssetType::PhysMat;
     }
+    if (EndsWith(s, ".fxstack.json")) {
+        return AssetType::FxStack;
+    }
     if (EndsWith(s, ".mat.json")) {
         return AssetType::Material;
     }
@@ -137,6 +140,7 @@ const char* AssetDatabase::TypeName(AssetType t)
     case AssetType::Schema: return "schema";
     case AssetType::Terrain: return "terrain";
     case AssetType::PhysMat: return "physmat";
+    case AssetType::FxStack: return "fxstack";
     case AssetType::Unknown:
     default: return "unknown";
     }
@@ -160,6 +164,7 @@ AssetType AssetDatabase::ParseTypeName(const std::string& s)
     if (s == "schema") return AssetType::Schema;
     if (s == "terrain") return AssetType::Terrain;
     if (s == "physmat") return AssetType::PhysMat;
+    if (s == "fxstack") return AssetType::FxStack;
     return AssetType::Unknown;
 }
 

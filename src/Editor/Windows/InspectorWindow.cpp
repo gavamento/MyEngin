@@ -45,6 +45,9 @@
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/ImGuiTheme.h"  // 見出しフォント (テーマ第 3 世代)
+#include "Engine/Renderer/FxStackAsset.h"  // M78c: fxstack アセット
+#include "Engine/Renderer/ProjectShaderProperties.h"  // M78c r2: スキーマ駆動 Inspector
+#include "Engine/Renderer/ShaderManager.h"             // M78c r2: ShaderDirs() 呼び出し
 #include "Engine/Renderer/RayTracing/RtTypes.h" // kRtReflClassCount (M67)
 #include "Engine/Renderer/ReflectionClassJson.h" // reflectionClass の受理規則 (M67h)
 #include "Engine/Renderer/RenderTypes.h" // kEmissiveMaxIntensity (M46i)
@@ -1779,6 +1782,9 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
         if (type == AssetType::PhysMat) {
             LoadPhysMatEdit(path); // M59a1
         }
+        if (type == AssetType::FxStack) {
+            LoadFxStackEdit(path); // M78c
+        }
         if ((type == AssetType::Actor || type == AssetType::Prefab) && ctx.prefabs) {
             // 選択が変わったときだけ登録を試す (エディタ起動後に外から置かれたファイルを拾う)。
             // 毎フレーム LoadFromFile すると不正ファイルで警告ログを撒き続ける
@@ -1822,6 +1828,11 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
 
     if (type == AssetType::PhysMat) {
         DrawPhysMatInspector(path); // M59a1
+        return;
+    }
+
+    if (type == AssetType::FxStack) {
+            DrawFxStackInspector(ctx, path); // M78c
         return;
     }
 
@@ -2411,6 +2422,338 @@ void InspectorWindow::DrawPhysMatInspector(const std::wstring& path)
     }
 }
 
+// ---------------------------------------------------------------------------
+// M78c: fxstack アセットインスペクタ
+// ---------------------------------------------------------------------------
+
+void InspectorWindow::LoadFxStackEdit(const std::wstring& path)
+{
+    fxstackEdit_       = FxStackAsset{};
+    fxstackEditState_  = FxStackEditState{};
+    std::string err;
+    fxstackEditState_.valid = LoadFxStack(path, fxstackEdit_, &err);
+    if (!fxstackEditState_.valid) {
+        MYE_LOG_WARN("InspectorWindow: fxstack ロード失敗 (%s): %s",
+                      WideToUtf8(path).c_str(), err.c_str());
+    }
+}
+
+void InspectorWindow::DrawFxStackInspector(EngineContext& ctx, const std::wstring& path)
+{
+    namespace fs = std::filesystem;
+
+    if (!fxstackEditState_.valid) {
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_FxStackFailed));
+        ImGui::Separator();
+        if (ImGui::Button(Tr(StrId::Insp_Revert), ImVec2(90, 0))) {
+            LoadFxStackEdit(path);
+        }
+        return;
+    }
+
+    // ---- パス一覧 ----
+    ImGui::SeparatorText(Tr(StrId::Insp_FxStackPasses));
+
+    const int n = static_cast<int>(fxstackEdit_.passes.size());
+
+    // 選択インデックスの範囲クランプ
+    if (fxstackEditState_.selectedPass >= n) {
+        fxstackEditState_.selectedPass = n > 0 ? n - 1 : 0;
+    }
+
+    if (n == 0) {
+        ImGui::TextDisabled("(no passes)");
+    } else {
+        for (int i = 0; i < n; ++i) {
+            FxStackEntry& entry = fxstackEdit_.passes[i];
+
+            ImGui::PushID(i);
+            // 選択ハイライト
+            const bool selected = (i == fxstackEditState_.selectedPass);
+            if (ImGui::Selectable("##sel", selected,
+                                  ImGuiSelectableFlags_SpanAllColumns,
+                                  ImVec2(0, 0))) {
+                fxstackEditState_.selectedPass = i;
+            }
+            ImGui::SameLine();
+
+            // enabled チェックボックス
+            bool en = entry.enabled;
+            if (ImGui::Checkbox("##en", &en)) {
+                entry.enabled = en;
+            }
+            ImGui::SameLine();
+
+            // 種別ラベル
+            const char* kindLabel = (entry.kind == FxStackKind::Compute)
+                ? Tr(StrId::Insp_FxStackKindCs)
+                : Tr(StrId::Insp_FxStackKindPost);
+            ImGui::TextDisabled("[%s]", kindLabel);
+            ImGui::SameLine();
+
+            // シェーダ名
+            ImGui::TextUnformatted(entry.shader.c_str());
+            ImGui::SameLine();
+
+            // 挿入点 / dispatchPoint
+            if (entry.kind == FxStackKind::Post) {
+                ImGui::TextDisabled("%s  p=%d",
+                    InsertionToString(entry.insertion), entry.priority);
+            } else {
+                ImGui::TextDisabled("%s  p=%d",
+                    entry.dispatchPoint.c_str(), entry.priority);
+            }
+
+            ImGui::PopID();
+        }
+    }
+
+    // ---- 選択パスの Properties 編集 (スキーマ駆動 M78c round 2) ----
+    if (n > 0 && fxstackEditState_.selectedPass < n) {
+        ImGui::Spacing();
+        ImGui::SeparatorText(Tr(StrId::Insp_FxStackProperties));
+
+        FxStackEntry& sel = fxstackEdit_.passes[fxstackEditState_.selectedPass];
+
+        // シェーダスキーマをキャッシュから取得 (なければ HLSL を読んでパース)
+        const PropertyParseResult* schema = nullptr;
+        if (!sel.shader.empty() && ctx.shaders) {
+            auto cit = fxstackEditState_.schemaCache.find(sel.shader);
+            if (cit == fxstackEditState_.schemaCache.end()) {
+                // シェーダファイルを ShaderDirs から探してパース
+                std::string hlslSrc;
+                for (const auto& dir : ctx.shaders->ShaderDirs()) {
+                    std::wstring wpath = dir + L"\\" +
+                        std::wstring(sel.shader.begin(), sel.shader.end()) + L".hlsl";
+                    std::ifstream f(wpath, std::ios::binary);
+                    if (f) {
+                        hlslSrc.assign(std::istreambuf_iterator<char>(f), {});
+                        break;
+                    }
+                }
+                PropertyParseResult pr = ParseProperties(hlslSrc);
+                auto res = fxstackEditState_.schemaCache.emplace(sel.shader, std::move(pr));
+                schema = &res.first->second;
+            } else {
+                schema = &cit->second;
+            }
+        }
+
+        const bool hasSchema = schema && schema->ok && !schema->properties.empty();
+
+        if (hasSchema) {
+            // スキーマ順にウィジェット描画
+            for (const auto& prop : schema->properties) {
+                // [HideInInspector] はスキップ
+                if (prop.attr.hideInInspector) {
+                    continue;
+                }
+                // [Header(name)] 行: name.empty() && cbOffset == -1
+                if (prop.name.empty() && prop.cbOffset == -1) {
+                    if (!prop.attr.header.empty()) {
+                        ImGui::SeparatorText(prop.attr.header.c_str());
+                    }
+                    continue;
+                }
+
+                ImGui::PushID(prop.name.c_str());
+                const char* label = prop.displayName.empty()
+                    ? prop.name.c_str()
+                    : prop.displayName.c_str();
+
+                switch (prop.type)
+                {
+                case PropType::Float:
+                {
+                    float v = prop.defaultFloat;
+                    auto it = sel.properties.find(prop.name);
+                    if (it != sel.properties.end()) {
+                        if (const float* fp = std::get_if<float>(&it->second)) {
+                            v = *fp;
+                        }
+                    }
+                    ImGui::SetNextItemWidth(160.0f);
+                    if (ImGui::DragFloat(label, &v, 0.01f)) {
+                        sel.properties[prop.name] = v;
+                    }
+                    break;
+                }
+                case PropType::Range:
+                {
+                    float v = prop.defaultFloat;
+                    auto it = sel.properties.find(prop.name);
+                    if (it != sel.properties.end()) {
+                        if (const float* fp = std::get_if<float>(&it->second)) {
+                            v = *fp;
+                        }
+                    }
+                    ImGui::SetNextItemWidth(160.0f);
+                    if (ImGui::SliderFloat(label, &v,
+                                          prop.attr.rangeMin, prop.attr.rangeMax)) {
+                        sel.properties[prop.name] = v;
+                    }
+                    break;
+                }
+                case PropType::Color:
+                {
+                    using Vec4 = std::array<float, 4>;
+                    Vec4 v = prop.defaultVec4;
+                    auto it = sel.properties.find(prop.name);
+                    if (it != sel.properties.end()) {
+                        if (const Vec4* vp = std::get_if<Vec4>(&it->second)) {
+                            v = *vp;
+                        }
+                    }
+                    ImGuiColorEditFlags flags =
+                        ImGuiColorEditFlags_Float | ImGuiColorEditFlags_DisplayRGB;
+                    if (prop.attr.isHDR) {
+                        flags |= ImGuiColorEditFlags_HDR;
+                    }
+                    if (ImGui::ColorEdit4(label, v.data(), flags)) {
+                        sel.properties[prop.name] = v;
+                    }
+                    break;
+                }
+                case PropType::Vector:
+                {
+                    using Vec4 = std::array<float, 4>;
+                    Vec4 v = prop.defaultVec4;
+                    auto it = sel.properties.find(prop.name);
+                    if (it != sel.properties.end()) {
+                        if (const Vec4* vp = std::get_if<Vec4>(&it->second)) {
+                            v = *vp;
+                        }
+                    }
+                    ImGui::SetNextItemWidth(220.0f);
+                    if (ImGui::DragFloat4(label, v.data(), 0.01f)) {
+                        sel.properties[prop.name] = v;
+                    }
+                    break;
+                }
+                case PropType::Tex2D:
+                {
+                    // 現在値 (string: ビルトイン名 or GUID hex)
+                    std::string cur = prop.defaultTex.empty() ? "white" : prop.defaultTex;
+                    auto it = sel.properties.find(prop.name);
+                    if (it != sel.properties.end()) {
+                        if (const std::string* sp = std::get_if<std::string>(&it->second)) {
+                            cur = *sp;
+                        }
+                    }
+
+                    // ラベル + ピッカーボタン (mat の texPicker 流儀)
+                    ImGui::TextUnformatted(label);
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.35f);
+                    const std::string popId = std::string("##fxtex_") + prop.name;
+                    if (ImGui::Button(cur.c_str(), ImVec2(-1, 0))) {
+                        ImGui::OpenPopup(popId.c_str());
+                    }
+                    if (ImGui::BeginPopup(popId.c_str())) {
+                        // ビルトイン名
+                        for (const char* bn : { "white", "black", "gray", "bump" }) {
+                            if (ImGui::Selectable(bn)) {
+                                sel.properties[prop.name] = std::string(bn);
+                            }
+                        }
+                        ImGui::Separator();
+                        // プロジェクト assets からテクスチャを列挙
+                        if (!ctx.assetsRoot.empty()) {
+                            std::error_code ec2;
+                            for (const auto& e :
+                                 fs::recursive_directory_iterator(ctx.assetsRoot, ec2)) {
+                                if (!e.is_regular_file(ec2)) {
+                                    continue;
+                                }
+                                const std::wstring wp = e.path().wstring();
+                                if (AssetDatabase::IsMetaPath(wp) ||
+                                    AssetDatabase::ClassifyPath(wp) != AssetType::Texture) {
+                                    continue;
+                                }
+                                ImGui::PushID(WideToUtf8(wp).c_str());
+                                const std::string rel = WideToUtf8(
+                                    fs::relative(e.path(), ctx.assetsRoot, ec2).wstring());
+                                if (ImGui::Selectable(rel.c_str())) {
+                                    const uint64_t guid = AssetDatabase::EnsureMeta(wp);
+                                    char hex[20];
+                                    std::snprintf(hex, sizeof(hex), "%016llx",
+                                                  static_cast<unsigned long long>(guid));
+                                    sel.properties[prop.name] = std::string(hex);
+                                }
+                                ImGui::PopID();
+                            }
+                        }
+                        ImGui::EndPopup();
+                    }
+                    break;
+                }
+                } // switch
+
+                ImGui::PopID();
+            }
+        } else if (!sel.properties.empty()) {
+            // スキーマ未取得の場合はフォールバック: JSON キー列挙
+            // (シェーダファイルが存在しない / パース失敗)
+            std::vector<std::string> keys;
+            keys.reserve(sel.properties.size());
+            for (const auto& kv : sel.properties) {
+                keys.push_back(kv.first);
+            }
+            std::sort(keys.begin(), keys.end());
+            for (const std::string& key : keys) {
+                PropValue& val = sel.properties[key];
+                ImGui::PushID(key.c_str());
+                if (std::holds_alternative<float>(val)) {
+                    float v = std::get<float>(val);
+                    ImGui::SetNextItemWidth(160.0f);
+                    if (ImGui::DragFloat(key.c_str(), &v, 0.01f)) {
+                        val = v;
+                    }
+                } else if (std::holds_alternative<std::array<float, 4>>(val)) {
+                    auto& arr = std::get<std::array<float, 4>>(val);
+                    ImGui::SetNextItemWidth(200.0f);
+                    if (ImGui::ColorEdit4(key.c_str(), arr.data(),
+                                         ImGuiColorEditFlags_Float |
+                                         ImGuiColorEditFlags_DisplayRGB)) {
+                    }
+                } else if (std::holds_alternative<std::string>(val)) {
+                    std::string sv = std::get<std::string>(val);
+                    ImGui::TextUnformatted(key.c_str());
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("[tex] %s", sv.c_str());
+                }
+                ImGui::PopID();
+            }
+        } else {
+            ImGui::TextDisabled("(no properties)");
+        }
+    }
+
+    // ---- 保存ステータス表示 ----
+    if (!fxstackEditState_.saveStatus.empty()) {
+        ImGui::TextDisabled("%s", fxstackEditState_.saveStatus.c_str());
+    }
+
+    // ---- 保存 / 再読み込みボタン ----
+    ImGui::Separator();
+    if (ImGui::Button(Tr(StrId::Insp_FxStackSave), ImVec2(90, 0))) {
+        std::string errSave;
+        if (SaveFxStack(path, fxstackEdit_, &errSave)) {
+            fxstackEditState_.saveStatus = Tr(StrId::Insp_FxStackSaveOk);
+            MYE_LOG_INFO("fxstack saved: %s", WideToUtf8(path).c_str());
+        } else {
+            fxstackEditState_.saveStatus = std::string(Tr(StrId::Insp_FxStackSaveFail))
+                                           + " " + errSave;
+            MYE_LOG_ERROR("fxstack save failed: %s - %s",
+                           WideToUtf8(path).c_str(), errSave.c_str());
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(Tr(StrId::Insp_Revert), ImVec2(90, 0))) {
+        LoadFxStackEdit(path);
+        fxstackEditState_.saveStatus.clear();
+    }
+}
+
 void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, void* p,
                                    Selection& selection, UndoStack& undo,
                                    const std::vector<uint64_t>& fids,
@@ -2432,6 +2775,21 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
             for (const PhysMatEntry& e : pm->Enumerate()) {
                 entries.push_back({ AssetID{ e.hash }, e.name });
             }
+        }
+    } else if (fname == "fxstack") {
+        // M78c: プロジェクトポスト/コンピュートスタック (*.fxstack.json の一覧)
+        std::error_code ec2;
+        for (const auto& e2 : std::filesystem::recursive_directory_iterator(ctx.assetsRoot, ec2)) {
+            if (ec2 || !e2.is_regular_file(ec2)) {
+                continue;
+            }
+            const std::wstring diskPath2 = e2.path().wstring();
+            if (AssetDatabase::ClassifyPath(diskPath2) != AssetType::FxStack) {
+                continue;
+            }
+            const uint64_t guid2 = AssetDatabase::EnsureMeta(diskPath2);
+            const std::string stem2 = WideToUtf8(e2.path().stem().stem().wstring()); // foo.fxstack
+            entries.push_back({ AssetID{ guid2 }, stem2 });
         }
     } else if (fname.find("model") != std::string::npos) {
         // M18: SkinnedMesh.model。★"model" は "mesh" を含まないので、この分岐が無いと

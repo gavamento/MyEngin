@@ -22,9 +22,9 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 Properties DSL | OK | 1 | 27758be | nit: errno (申し送り) |
-| sub-02 ポスト挿入 | 実装中 | 0 | | |
-| sub-03 fxstack+Inspector | 未着手 | 0 | | |
+| sub-01 Properties DSL | OK | 1 | 27758be | nit: errno |
+| sub-02 ポスト挿入 | OK | 2 | 92f372e | nit: Collect/RunPasses 二重 |
+| sub-03 fxstack+Inspector | 実装中 | 0 | | |
 | sub-04 CS シーン駆動 | 未着手 | 0 | | |
 | sub-05 Compute ABI v21 | 未着手 | 0 | | |
 

@@ -8,6 +8,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/JobSystem.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Renderer/FxStackAsset.h"  // M78c: fxstack ロード
 #include "Engine/Core/Profiler.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Acoustic/AcousticField.h" // M65d: 残光ボリュームの転送元
@@ -1729,8 +1730,92 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
                 effective.lutSRV = lut->srv.Get();
             }
         }
+        // M78c: fxStack から ProjectEffectRunner を更新する。
+        // シーンカメラ (CameraOverride=null) にのみ適用 (エディタ視界は不変)。
+        // AssetID が変わった場合だけ JSON を再ロードしてキャッシュを更新する
+        // (同一 ID の場合は propertyValues だけ SetPasses で上書きする仕組みのため、
+        //  実際にはフレーム毎再ロードでも効率的に動作する)。
+        if (!cameraOverride && !camEntity.IsNull()) {
+            // Tex2D リゾルバをフレームごとに設定 (resources の参照は ResolvePost が生きている間有効)
+            projectEffectRunner_.SetTextureResolver(
+                [&resources](const std::string& name) -> ID3D11ShaderResourceView*
+                {
+                    // ビルトイン名またはフォールバック → white
+                    auto getWhite = [&]() -> ID3D11ShaderResourceView* {
+                        Texture* t = resources.textures.Get(resources.textures.White());
+                        return t ? t->srv.Get() : nullptr;
+                    };
+                    if (name.empty() || name == "white" || name == "gray") {
+                        return getWhite();
+                    }
+                    if (name == "black" || name == "bump") {
+                        // TODO: 専用テクスチャが無い場合は white でフォールバック
+                        return getWhite();
+                    }
+                    // GUID hex 文字列として解決
+                    char* endp = nullptr;
+                    const unsigned long long val = strtoull(name.c_str(), &endp, 16);
+                    if (val != 0 && endp && *endp == '\0') {
+                        Texture* t = resources.textures.Get(AssetID{ static_cast<uint64_t>(val) });
+                        if (t && t->srv) {
+                            return t->srv.Get();
+                        }
+                        // 未ロードなら非同期ロードをキック
+                        const std::wstring texPath = assetguid::ResolvePath(static_cast<uint64_t>(val));
+                        if (!texPath.empty()) {
+                            resources.textures.RequestLoadFileAsync(texPath);
+                        }
+                    }
+                    return getWhite();
+                });
+
+            if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
+                const AssetID fxId = pfx->fxStack;
+                if (fxId.IsNull()) {
+                    // fxStack 未設定 → パスをクリア (恒等経路)
+                    if (!lastFxStackId_.IsNull()) {
+                        projectEffectRunner_.ClearPasses();
+                        lastFxStackId_ = {};
+                    }
+                } else {
+                    // fxStack が変わったか、初回: JSON を再ロード
+                    // ※ SetPasses のキャッシュ維持ロジックが propertyValues 変化を吸収するため
+                    //   毎フレームの再ロード＆SetPasses 呼び出しはコスト的に許容範囲
+                    const std::wstring fxPath = assetguid::ResolvePath(fxId.value);
+                    if (!fxPath.empty()) {
+                        FxStackAsset fx;
+                        std::string errMsg;
+                        if (LoadFxStack(fxPath, fx, &errMsg)) {
+                            // Post パスのみを ProjectEffectRunner へ流す (Compute は sub-04)
+                            std::vector<ProjectPostPassDesc> descs;
+                            descs.reserve(fx.passes.size());
+                            for (const auto& entry : fx.passes) {
+                                if (entry.kind != FxStackKind::Post) {
+                                    continue;
+                                }
+                                ProjectPostPassDesc d;
+                                d.shaderName     = entry.shader;
+                                d.insertion      = entry.insertion;
+                                d.priority       = entry.priority;
+                                d.enabled        = entry.enabled;
+                                d.propertyValues = entry.properties;
+                                descs.push_back(std::move(d));
+                            }
+                            projectEffectRunner_.SetPasses(std::move(descs));
+                        } else {
+                            MYE_LOG_WARN("RenderSystem: fxstack ロード失敗 (%s): %s",
+                                         fxPath.c_str(), errMsg.c_str());
+                            projectEffectRunner_.ClearPasses();
+                        }
+                        lastFxStackId_ = fxId;
+                    }
+                }
+            }
+        }
+
         postFx_.Resolve(device, shaders, *hdr, target.rtv, target.width, target.height,
-                        effective, view, distortionActive); // M43b: view = 深度/太陽の供給口
+                        effective, view, distortionActive,
+                        &projectEffectRunner_); // M78c: ユーザーポストを注入
     }
     // M44d: 次フレームのモーションブラー用に viewProj を保存 (viewKey=0 = AssetPreview は対象外)。
     // M46d: カメラ位置と描画通番も同じ場所で更新する (再投影とテンポラル履歴の連続性判定)。

@@ -15,6 +15,7 @@
 #include "Engine/Renderer/EnvMapBaker.h"
 #include "Engine/Renderer/FroxelPass.h"
 #include "Engine/Renderer/PostProcess.h"
+#include "Engine/Renderer/ProjectEffectRunner.h" // M78c: fxstack 駆動ユーザーポスト
 #include "Engine/Renderer/RayTracing/RtPasses.h"
 #include "Engine/Renderer/RenderTypes.h"
 #include "Engine/Renderer/ShadowAtlas.h"
@@ -397,6 +398,10 @@ private:
     // 水面 (view.water が指す実体)
     WaterDrawData waterData_;
     float waterAnimTime_ = 0.0f;
+    // M78c: シーンカメラの fxStack から生成するユーザーポストランナー
+    // CameraOverride (エディタ視界) には適用しない (CameraPostFx と同じ規則)
+    ProjectEffectRunner projectEffectRunner_;
+    AssetID             lastFxStackId_; // 直近に読んだ fxStack ID (変化検知用)
 };
 
 } // namespace mye

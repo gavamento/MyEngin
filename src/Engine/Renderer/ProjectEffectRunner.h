@@ -4,6 +4,7 @@
 ----*/
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -44,10 +45,24 @@ struct ProjectPostPassDesc
 class ProjectEffectRunner
 {
 public:
+    // テクスチャリゾルバを設定する (M78c round 2)。
+    // RunPasses で Tex2D プロパティの SRV を名前で解決するためのコールバック。
+    // name: ビルトイン名 ("white"/"black"/"gray"/"bump") または GUID hex 文字列。
+    // 未解決なら nullptr を返してよい (内部で white SRV にフォールバック)。
+    // ★呼び出しは RunPasses のスタックフレーム内のみなので、参照キャプチャの lambda も安全
+    using TextureResolver = std::function<ID3D11ShaderResourceView*(const std::string&)>;
+    void SetTextureResolver(TextureResolver fn) { texResolver_ = std::move(fn); }
+
     // デバッグ登録: C++ から直接パスを追加する (fxstack は sub-03)
     void AddPass(ProjectPostPassDesc desc);
     // 全パスをクリアする
     void ClearPasses();
+
+    // パス一覧を一括更新する (M78c)。
+    // 同名 (shaderName + insertion) のパスが既にキャッシュ済みなら
+    // propertyValues だけ上書きしてシェーダ / CB キャッシュを維持する。
+    // 増減・入れ替えがあった場合は該当パスのキャッシュを再構築する。
+    void SetPasses(std::vector<ProjectPostPassDesc> newDescs);
 
     // 指定挿入点に enabled なパスが 1 件以上あるか (Resolve の事前判定用)
     bool HasPasses(PostInsertionPoint insertion) const;
@@ -112,6 +127,7 @@ private:
     };
 
     // 1 フルスクリーンパスを描画する
+    // userTexSRVs: Tex2D スロット t2, t3, ... に順にバインドするユーザーテクスチャ SRV 配列
     void DrawFullscreen(
         ID3D11DeviceContext*      dc,
         ID3D11VertexShader*       vs,
@@ -126,12 +142,14 @@ private:
         ID3D11DepthStencilState*  depthDisabled,
         ID3D11BlendState*         blendOff,
         ID3D11RasterizerState*    rasterizer,
-        ID3D11SamplerState*       linearClamp);
+        ID3D11SamplerState*       linearClamp,
+        const std::vector<ID3D11ShaderResourceView*>& userTexSRVs = {});
 
     // pass の schema / CB を最新化する。schemaReady でなければ Load してパース
     void EnsureCached(CachedPass& cp, GraphicsDevice& device, ShaderManager& shaders);
 
     std::vector<CachedPass> passes_;
+    TextureResolver         texResolver_; // Tex2D 名 → SRV (null 可)
 };
 
 } // namespace mye
