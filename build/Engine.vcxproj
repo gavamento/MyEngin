@@ -217,6 +217,8 @@
     <ClCompile Include="..\src\Engine\Renderer\MeshInstancing.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\PickingPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\PostProcess.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\ProjectShaderProperties.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\ProjectShaderPropertiesSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\RayTracing\RtPasses.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ReflectionClassJson.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\RenderQueue.cpp" />
@@ -456,6 +458,8 @@
     <ClInclude Include="..\src\Engine\Renderer\PickingPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\PostFxMath.h" />
     <ClInclude Include="..\src\Engine\Renderer\PostProcess.h" />
+    <ClInclude Include="..\src\Engine\Renderer\ProjectShaderProperties.h" />
+    <ClInclude Include="..\src\Engine\Renderer\ProjectShaderPropertiesSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtMath.h" />
     <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtPasses.h" />
     <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtTypes.h" />

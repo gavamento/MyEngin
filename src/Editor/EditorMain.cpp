@@ -78,6 +78,7 @@
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/ImageDiff.h"
 #include "Engine/Renderer/ImageDiffSelfTest.h"
+#include "Engine/Renderer/ProjectShaderPropertiesSelfTest.h" // M78a
 #include "Engine/Renderer/RenderSelfTest.h"
 #include "Engine/Renderer/TextureCookSelfTest.h"
 #include "Engine/Renderer/VolumeTexture.h"
@@ -479,7 +480,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             && mye::RunModalAudioSelfTest()     // M76f: 衝突 -> モーダル一発再生の橋渡し
             && mye::RunTagSelfTest()            // 汎用タグ / RT のタグフィルタ / シェーダキャッシュ
             && mye::RunWaterWaveSelfTest()      // 三角関数 (Gerstner波) による水面波
-            && mye::RunEngineCliSelfTest();     // 両 Main 共通の CLI フラグ表
+            && mye::RunEngineCliSelfTest()          // 両 Main 共通の CLI フラグ表
+            && mye::RunProjectShaderPropertiesSelfTest(); // M78a: Properties DSL パース/パック
         return ok ? 0 : 1;
     }
 

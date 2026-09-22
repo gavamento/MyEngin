@@ -645,6 +645,12 @@
     <ClCompile Include="..\src\Engine\Renderer\PostProcess.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ProjectShaderProperties.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ProjectShaderPropertiesSelfTest.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\RayTracing\RtPasses.cpp">
       <Filter>Renderer\RayTracing</Filter>
     </ClCompile>
@@ -1360,6 +1366,12 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\PostProcess.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ProjectShaderProperties.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ProjectShaderPropertiesSelfTest.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtMath.h">
