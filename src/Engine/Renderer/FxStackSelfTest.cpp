@@ -13,6 +13,7 @@
 
 #include "Engine/Core/Log.h"
 #include "Engine/Renderer/FxStackAsset.h"
+#include "Engine/Renderer/ProjectFxStackPolicy.h"
 
 namespace mye {
 namespace {
@@ -315,6 +316,17 @@ void TestTex2DRoundTrip()
     { std::error_code ec_; fs::remove(tmp, ec_); }
 }
 
+// ---------------------------------------------------------------------------
+// テスト 8: CameraOverride 時は fxstack 注入しない (M78 §4.1 / review-1 #1)
+// ---------------------------------------------------------------------------
+void TestProjectFxStackInjectionPolicy()
+{
+    MYE_LOG_INFO("[selftest] FxStack: CameraOverride injection policy");
+
+    FX_CHECK(ShouldInjectProjectFxStack(false));
+    FX_CHECK(!ShouldInjectProjectFxStack(true));
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -332,6 +344,7 @@ bool RunFxStackSelfTest()
     TestBrokenJson();
     TestMixedPasses();
     TestTex2DRoundTrip();
+    TestProjectFxStackInjectionPolicy();
 
     if (g_failCount == 0) {
         MYE_LOG_INFO("=== FxStack SelfTest: ALL PASS ===");

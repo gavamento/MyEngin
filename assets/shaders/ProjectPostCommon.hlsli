@@ -2,6 +2,8 @@
 // ユーザーが作る *.post.hlsl は先頭でこのファイルを include すれば
 // SceneColor / Depth / サンプラ等にアクセスできる。
 // エンジン予約スロットをここで宣言し、ユーザー宣言と名前空間を分ける。
+//
+// Properties の 2D 既定名 (white/gray/black/bump): docs/project-shaders-tex2d-defaults.md
 
 // ---- エンジン共通 CB (b0) ----
 cbuffer MyEnginePostFrame : register(b0)

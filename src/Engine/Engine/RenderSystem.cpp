@@ -10,6 +10,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Renderer/FxStackAsset.h"  // M78c: fxstack ロード
 #include "Engine/Renderer/ProjectComputeRunner.h" // M78d: DispatchPointFromString
+#include "Engine/Renderer/ProjectFxStackPolicy.h" // M78 §4.1 CameraOverride
 #include "Engine/Core/Profiler.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Acoustic/AcousticField.h" // M65d: 残光ボリュームの転送元
@@ -1731,11 +1732,15 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
                 effective.lutSRV = lut->srv.Get();
             }
         }
+        // M78 §4.1: Scene View (CameraOverride) ではユーザーポスト／fxstack CS を走らせない。
+        // Play 停止後に Runner に残ったパスが Scene View で描かれないよう毎フレームクリアする。
+        if (cameraOverride) {
+            projectEffectRunner_.ClearPasses();
+            projectComputeRunner_.ClearPasses();
+        }
+
         // M78c: fxStack から ProjectEffectRunner を更新する。
         // シーンカメラ (CameraOverride=null) にのみ適用 (エディタ視界は不変)。
-        // AssetID が変わった場合だけ JSON を再ロードしてキャッシュを更新する
-        // (同一 ID の場合は propertyValues だけ SetPasses で上書きする仕組みのため、
-        //  実際にはフレーム毎再ロードでも効率的に動作する)。
         if (!cameraOverride && !camEntity.IsNull()) {
             // Tex2D リゾルバをフレームごとに設定 (resources の参照は ResolvePost が生きている間有効)
             projectEffectRunner_.SetTextureResolver(
@@ -1754,11 +1759,27 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
                         Texture* t = resources.textures.Get(resources.textures.White());
                         return t ? t->srv.Get() : nullptr;
                     };
-                    if (name.empty() || name == "white" || name == "gray") {
+                    if (name.empty() || name == "white") {
                         return getWhite();
                     }
-                    if (name == "black" || name == "bump") {
-                        // TODO: 専用テクスチャが無い場合は white でフォールバック
+                    if (name == "gray" || name == "black" || name == "bump") {
+                        // spec §4.1: 専用 SRV 未整備時は white ＋ WARN (docs/project-shaders-tex2d-defaults.md)
+                        static bool warnedGray = false;
+                        static bool warnedBlack = false;
+                        static bool warnedBump = false;
+                        if (name == "gray" && !warnedGray) {
+                            warnedGray = true;
+                            MYE_LOG_WARN(
+                                "RenderSystem: Tex2D 既定 'gray' は専用 SRV 未整備のため white にフォールバックします");
+                        } else if (name == "black" && !warnedBlack) {
+                            warnedBlack = true;
+                            MYE_LOG_WARN(
+                                "RenderSystem: Tex2D 既定 'black' は専用 SRV 未整備のため white にフォールバックします");
+                        } else if (name == "bump" && !warnedBump) {
+                            warnedBump = true;
+                            MYE_LOG_WARN(
+                                "RenderSystem: Tex2D 既定 'bump' は専用 SRV 未整備のため white にフォールバックします");
+                        }
                         return getWhite();
                     }
                     // GUID hex 文字列として解決
@@ -1836,8 +1857,16 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
             }
         }
 
+        ProjectEffectRunner*  injectPostFx = nullptr;
+        ProjectComputeRunner* injectComputeFx = nullptr;
+        if (ShouldInjectProjectFxStack(cameraOverride != nullptr)) {
+            injectPostFx     = &projectEffectRunner_;
+            injectComputeFx  = &projectComputeRunner_;
+        }
+
         // M78d: BeforePost コンピュートを Resolve 前に実行する (HDR 描画完了直後)
-        if (projectComputeRunner_.HasPasses(ComputeDispatchPoint::BeforePost))
+        if (injectComputeFx != nullptr
+            && projectComputeRunner_.HasPasses(ComputeDispatchPoint::BeforePost))
         {
             projectComputeRunner_.RunDispatch(ComputeDispatchPoint::BeforePost,
                                               device, shaders,
@@ -1847,8 +1876,8 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
 
         postFx_.Resolve(device, shaders, *hdr, target.rtv, target.width, target.height,
                         effective, view, distortionActive,
-                        &projectEffectRunner_,   // M78c: ユーザーポストを注入
-                        &projectComputeRunner_); // M78d: ユーザーコンピュートを注入
+                        injectPostFx,     // M78c: ユーザーポスト (Scene View は nullptr)
+                        injectComputeFx); // M78d: ユーザーコンピュート (Scene View は nullptr)
     }
     // M44d: 次フレームのモーションブラー用に viewProj を保存 (viewKey=0 = AssetPreview は対象外)。
     // M46d: カメラ位置と描画通番も同じ場所で更新する (再投影とテンポラル履歴の連続性判定)。

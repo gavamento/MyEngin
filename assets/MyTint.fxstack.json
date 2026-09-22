@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "passes": [
+    {
+      "kind": "post",
+      "shader": "MyTint.post",
+      "enabled": true,
+      "insertion": "BeforeTonemap",
+      "priority": 100,
+      "properties": {
+        "_Intensity": 0.5,
+        "_Tint": [1.0, 0.9, 0.8, 1.0]
+      }
+    }
+  ]
+}

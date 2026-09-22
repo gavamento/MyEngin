@@ -1,8 +1,8 @@
 # sub-03: fxstack アセット＋Inspector Properties UI
 
 - 依存: sub-01, sub-02
-- 状態: 判定待ち (round 2 VERDICT OK — コミット待ち)
-- 往復: 2
+- 状態: 判定待ち (round 3 VERDICT OK — コミット待ち)
+- 往復: 3
 
 ## やること
 
@@ -51,6 +51,49 @@ tools\check_rules.ps1
 手動: サンプル fxstack + Tint ポストで Inspector 操作。
 
 ## 実装メモ (coder が追記)
+
+---
+
+SELF_EVAL: sub-03 (round 3)
+実装:
+  - #1: src/Engine/Engine/RenderSystem.cpp:ResolvePost — CameraOverride 時に projectEffectRunner_/projectComputeRunner_ を ClearPasses; BeforePost Dispatch と postFx_.Resolve へは nullptr (ShouldInjectProjectFxStack)
+  - #1: src/Engine/Renderer/ProjectFxStackPolicy.h — ShouldInjectProjectFxStack(bool cameraOverrideActive)
+  - #1: src/Engine/Renderer/FxStackSelfTest.cpp — TestProjectFxStackInjectionPolicy (テスト 8)
+  - #3: RenderSystem Tex2D リゾルバ — gray/black/bump を white フォールバック＋初回 MYE_LOG_WARN; docs/project-shaders-tex2d-defaults.md; ProjectPostCommon.hlsli コメント
+  - #5: assets/shaders/MyTint.post.hlsl + .meta, assets/MyTint.fxstack.json + .meta (手動 Tint 手順と spec 例に一致)
+
+仕様との差分:
+  - [追加] CameraOverride 時の Compute ClearPasses/nullptr は sub-04 本丸だが、Scene View で stale CS が走らないよう本サブで BeforePost もガード (sub-04 と役割重複を申し送り)
+  - [追加] black/bump/gray 専用 SRV は未実装 (planner/review 裁定どおり WARN＋docs のみ)
+
+検証:
+  - MSBuild Engine+Editor (Debug|x64, VS18 MSBuild) → 成功 (exit 0)
+  - Editor.exe --selftest → exit 0 (FxStack テスト 8 CameraOverride policy PASS 含む)
+  - tools\check_rules.ps1 → 0 errors, 0 warnings
+
+自己採点 (1-5):
+  仕様適合: 5 — review-1 #1/#3/#5 と spec §4.1 CameraOverride=Runner 無効を反映
+  正しさ: 4 — ポリシー SelfTest PASS。Scene View 実画面／Play→停止の GUI 再現は未実施
+  コード品質: 4 — 既存 CameraPostFx と同規則の分岐。Policy を Renderer ヘッダに分離
+  テスト: 4 — 注入ポリシー 2 アサーション。RenderSystem 統合のヘッドレステストは無し
+
+不安・質問: なし
+
+触ったファイル:
+  - src/Engine/Engine/RenderSystem.cpp
+  - src/Engine/Renderer/ProjectFxStackPolicy.h
+  - src/Engine/Renderer/FxStackSelfTest.cpp
+  - assets/shaders/MyTint.post.hlsl
+  - assets/shaders/MyTint.post.hlsl.meta
+  - assets/MyTint.fxstack.json
+  - assets/MyTint.fxstack.json.meta
+  - assets/shaders/ProjectPostCommon.hlsli
+  - docs/project-shaders-tex2d-defaults.md
+
+申し送り:
+  - sub-04: CameraOverride 時の projectComputeRunner_ 更新停止は本修正で ClearPasses＋Dispatch ガード済み。sub-04 で Compute 側の仕様テスト・ドキュメントを一本化すると二重記述を減らせる
+  - review-1 #2 (ポスト本数上限) は sub-02/round2 で ProjectEffectRunner::kMaxPostPasses 実装済み — reviewer 再確認用
+  - 手動: Play で MyTint.fxstack 割当→停止→Scene View でユーザーポストが消えることを目視 (sub-03 手動手順 1–6)
 
 ---
 
@@ -178,3 +221,5 @@ SELF_EVAL: sub-03 (round 2)
 ## フィードバック履歴
 - round 1: VERDICT REWORK — (1) Properties UI は JSON キー列挙ではなく sub-01 スキーマ駆動必須。(2) Tex2D の値・Inspector・Runner バインドが未達で受け入れ 2 / やること未充足。(3) save-on-apply プレビューは仕様「厳密でなくてよい」により受理。手動 Tint 手順をメモに残す (should)。
 - round 2: VERDICT OK — スキーマ駆動 UI・Tex2D 往復／バインド・SelfTest・手動手順を確認。should: 未知 Tex2D 文字列の WARN、black/bump 専用 SRV は後続で可。
+- review-1 #1/#3/#5: 差し戻し — (1) CameraOverride 時は両 Runner を ClearPasses するか Resolve/BeforePost に渡さない (SelfTest または再現手順)。(3) black/bump/gray 未実装は white フォールバック＋WARN＋コメント/docs 同期で可。(5) 手動用サンプル `*.post.hlsl` + `*.fxstack.json` を assets に 1 セット追加
+- round 3: VERDICT OK — Override ClearPasses+nullptr 注入・policy SelfTest・Tex2D WARN+docs・MyTint サンプルを確認。Compute ClearPasses も同コミットで対応済み (sub-04 #1 と重複分は sub-04 で確認)
