@@ -78,7 +78,8 @@
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/ImageDiff.h"
 #include "Engine/Renderer/ImageDiffSelfTest.h"
-#include "Engine/Renderer/ProjectShaderPropertiesSelfTest.h" // M78a
+#include "Engine/Renderer/ProjectShaderPropertiesSelfTest.h"  // M78a
+#include "Engine/Renderer/ProjectEffectRunnerSelfTest.h"      // M78b
 #include "Engine/Renderer/RenderSelfTest.h"
 #include "Engine/Renderer/TextureCookSelfTest.h"
 #include "Engine/Renderer/VolumeTexture.h"
@@ -440,48 +441,68 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     }
 
     if (selftest) {
-        // ウィンドウ/D3D 不要のヘッドレス回帰テスト
-        const bool ok = mye::RunEcsSelfTest() && mye::RunSceneSerializerSelfTest()
-            && mye::RunUndoSelfTest() && mye::RunRenderSelfTest() && mye::RunPhysicsSelfTest()
-            && mye::RunUISelfTest() && mye::RunAnimatorControllerSelfTest()
-            && mye::RunAssetDatabaseSelfTest() && mye::RunTextureCookSelfTest()
-            && mye::RunJobSystemSelfTest() && mye::RunVfxSelfTest()
-            && mye::RunParticleSelfTest() && mye::RunAssetOpsSelfTest()
-            && mye::RunFontSelfTest() && mye::RunAudioSelfTest() && mye::RunRtSelfTest()
-            && mye::RunLocalizationSelfTest() && mye::RunSkeletonSelfTest()
-            && mye::RunPartSelfTest() && mye::RunSchemaSelfTest()
-            && mye::RunCookedCacheSelfTest() && mye::RunInputActionsSelfTest()
-            && mye::RunGameFlowSelfTest() && mye::RunWorldHasherSelfTest()
-            && mye::RunSimSnapshotSelfTest() && mye::RunTimeTravelSelfTest()
-            && mye::RunCrashRingSelfTest() && mye::RunImageDiffSelfTest()
-            && mye::RunNetSelfTest()
-            // 連鎖の**末尾**に append する (統合契約の予約 7)。短絡なので位置がそのまま実行順
-            && mye::RunLightSelectionSelfTest() // M54b
-            && mye::RunTerrainSelfTest()        // M58b
-            && mye::RunDecalSelfTest()          // M56a
-            && mye::RunHzbSelfTest()            // M56c
-            && mye::RunSsrSelfTest()            // M56d
-            && mye::RunProbeBakerSelfTest()     // M56e
-            && mye::RunPhysMatSelfTest()        // M59a1
-            && mye::RunConvexSelfTest()         // M60f
-            && mye::RunRagdollSelfTest()        // M60g1
-            && mye::RunRagdollBuildSelfTest()   // M60g2
-            && mye::RunCameraPilotSelfTest()    // カメラ操縦 (視錐台 UI 追補)
-            && mye::RunDllReloaderSelfTest()    // DLL 書き込み完了プローブ (M52h 追補)
-            && mye::RunXpbdSelfTest()           // M60'b
-            && mye::RunAcousticSelfTest()       // M65a
-            && mye::RunSourceControlSelfTest()  // M66a
-            && mye::RunAcousticAudioSelfTest()  // M68a
-            && mye::RunSubAssetKeySelfTest()    // M74a / M74b
-            && mye::RunImpactSynthSelfTest()    // ImpactSynth (計画 ImpactSoundDesign)
-            && mye::RunReloadHubSelfTest()      // ホットリロードの資産の種類表
-            && mye::RunModalSynthSelfTest()     // M76a: Deep-Modal のモード合成器
-            && mye::RunModalSelfTest()          // M76b: Deep-Modal のボクセライザ
-            && mye::RunModalAudioSelfTest()     // M76f: 衝突 -> モーダル一発再生の橋渡し
-            && mye::RunTagSelfTest()            // 汎用タグ / RT のタグフィルタ / シェーダキャッシュ
-            && mye::RunWaterWaveSelfTest()      // 三角関数 (Gerstner波) による水面波
-            && mye::RunEngineCliSelfTest()          // 両 Main 共通の CLI フラグ表
-            && mye::RunProjectShaderPropertiesSelfTest(); // M78a: Properties DSL パース/パック
+        // ウィンドウ/D3D 不要のヘッドレス回帰テスト。
+        // ok &= を使い先行失敗があっても全テストを必ず実行する
+        // (末尾 append された M78a/b が && 短絡で到達しない問題への対処)。
+        // 末尾への append 規約 (統合契約の予約 7) は維持する。
+        bool ok = true;
+        ok &= mye::RunEcsSelfTest();
+        ok &= mye::RunSceneSerializerSelfTest();
+        ok &= mye::RunUndoSelfTest();
+        ok &= mye::RunRenderSelfTest();
+        ok &= mye::RunPhysicsSelfTest();
+        ok &= mye::RunUISelfTest();
+        ok &= mye::RunAnimatorControllerSelfTest();
+        ok &= mye::RunAssetDatabaseSelfTest();
+        ok &= mye::RunTextureCookSelfTest();
+        ok &= mye::RunJobSystemSelfTest();
+        ok &= mye::RunVfxSelfTest();
+        ok &= mye::RunParticleSelfTest();
+        ok &= mye::RunAssetOpsSelfTest();
+        ok &= mye::RunFontSelfTest();
+        ok &= mye::RunAudioSelfTest();
+        ok &= mye::RunRtSelfTest();
+        ok &= mye::RunLocalizationSelfTest();
+        ok &= mye::RunSkeletonSelfTest();
+        ok &= mye::RunPartSelfTest();
+        ok &= mye::RunSchemaSelfTest();
+        ok &= mye::RunCookedCacheSelfTest();
+        ok &= mye::RunInputActionsSelfTest();
+        ok &= mye::RunGameFlowSelfTest();
+        ok &= mye::RunWorldHasherSelfTest();
+        ok &= mye::RunSimSnapshotSelfTest();
+        ok &= mye::RunTimeTravelSelfTest();
+        ok &= mye::RunCrashRingSelfTest();
+        ok &= mye::RunImageDiffSelfTest();
+        ok &= mye::RunNetSelfTest();
+        // ---- 末尾 append (統合契約の予約 7) ----
+        ok &= mye::RunLightSelectionSelfTest();    // M54b
+        ok &= mye::RunTerrainSelfTest();           // M58b
+        ok &= mye::RunDecalSelfTest();             // M56a
+        ok &= mye::RunHzbSelfTest();               // M56c
+        ok &= mye::RunSsrSelfTest();               // M56d
+        ok &= mye::RunProbeBakerSelfTest();        // M56e
+        ok &= mye::RunPhysMatSelfTest();           // M59a1
+        ok &= mye::RunConvexSelfTest();            // M60f
+        ok &= mye::RunRagdollSelfTest();           // M60g1
+        ok &= mye::RunRagdollBuildSelfTest();      // M60g2
+        ok &= mye::RunCameraPilotSelfTest();       // カメラ操縦 (視錐台 UI 追補)
+        ok &= mye::RunDllReloaderSelfTest();       // DLL 書き込み完了プローブ (M52h 追補)
+        ok &= mye::RunXpbdSelfTest();              // M60'b
+        ok &= mye::RunAcousticSelfTest();          // M65a
+        ok &= mye::RunSourceControlSelfTest();     // M66a
+        ok &= mye::RunAcousticAudioSelfTest();     // M68a
+        ok &= mye::RunSubAssetKeySelfTest();       // M74a / M74b
+        ok &= mye::RunImpactSynthSelfTest();       // ImpactSynth (計画 ImpactSoundDesign)
+        ok &= mye::RunReloadHubSelfTest();         // ホットリロードの資産の種類表
+        ok &= mye::RunModalSynthSelfTest();        // M76a: Deep-Modal のモード合成器
+        ok &= mye::RunModalSelfTest();             // M76b: Deep-Modal のボクセライザ
+        ok &= mye::RunModalAudioSelfTest();        // M76f: 衝突 -> モーダル一発再生の橋渡し
+        ok &= mye::RunTagSelfTest();               // 汎用タグ / RT のタグフィルタ / シェーダキャッシュ
+        ok &= mye::RunWaterWaveSelfTest();         // 三角関数 (Gerstner波) による水面波
+        ok &= mye::RunEngineCliSelfTest();         // 両 Main 共通の CLI フラグ表
+        ok &= mye::RunProjectShaderPropertiesSelfTest();  // M78a: Properties DSL パース/パック
+        ok &= mye::RunProjectEffectRunnerSelfTest();      // M78b: ポスト挿入点・ソート
         return ok ? 0 : 1;
     }
 

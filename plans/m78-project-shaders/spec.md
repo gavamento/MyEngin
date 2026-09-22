@@ -280,3 +280,4 @@ _Direction ("Direction", Vector) = (0, 1, 0, 0)
 - 2026-09-22: ユーザー回答 1B/2A/3A/4A 反映。ABI v21 をスコープに復帰 (planner 反対意見を §2 に残す)。受け入れ条件 9・§4.5 検証手順追加。sub-05 新設。sub-04 をシーン駆動に限定。
 - 2026-09-22: SetComputeTextureFromAsset を v21 最小の**必須**スロットに確定 (ユーザー B)。§4.5・受け入れ 9・sub-05 を更新。planner「6 本まで削可」裁定は覆された。
 - 2026-09-22: sub-01 VERDICT OK。Header を `name.empty()` スキーマ、CB をパース順パックに確定 (§4.2)。Reflection オフセットは本マイル不採用。
+- 2026-09-22: sub-02 VERDICT REWORK。`--selftest` の `&&` 短絡で先行失敗時に末尾 M78 が未実行になる問題。未到達を PASS としない。集約を `ok &=` 方式へ直し全テスト実行＋総合判定とする裁定 (EditorMain の末尾 append 契約は維持)。

@@ -645,6 +645,12 @@
     <ClCompile Include="..\src\Engine\Renderer\PostProcess.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ProjectEffectRunner.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ProjectEffectRunnerSelfTest.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\ProjectShaderProperties.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -1366,6 +1372,12 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\PostProcess.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ProjectEffectRunner.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ProjectEffectRunnerSelfTest.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ProjectShaderProperties.h">

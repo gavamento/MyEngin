@@ -9,6 +9,7 @@
 
 #include "Engine/Core/EntityID.h"
 #include "Engine/Renderer/GpuTimer.h"
+#include "Engine/Renderer/ProjectEffectRunner.h" // M78b: ユーザーポスト実行
 #include "Engine/Renderer/RenderTexture.h"
 #include "Engine/Renderer/TaaPass.h" // M55d: チェーン先頭の TAA (履歴は viewKey 別に持つ)
 
@@ -86,6 +87,12 @@ public:
         RenderTexture sceneB;  // M44c: DoF (/M44d MB) の書き先 — 実行後は bloom/tonemap がこちらを読む
         RenderTexture dofA;    // M44c: プリフィルタ結果 (半解像度、rgb=色 a=符号付き CoC)
         RenderTexture dofB;    // M44c: ギャザー結果 (半解像度)
+        // ---- M78b: ユーザーポスト ping-pong バッファ ----
+        // BeforeTonemap 用 HDR ping-pong (spec §4.1 挿入点)
+        RenderTexture userPostA; // R16G16B16A16_FLOAT (フル解像度)
+        RenderTexture userPostB; // R16G16B16A16_FLOAT (フル解像度)
+        // AfterTonemap 用 LDR 中間バッファ (最終 dst への出力前に使う)
+        RenderTexture userPostLdr; // R8G8B8A8_UNORM (フル解像度)
         // ---- M44b: 自動露出 (ヒストグラム 256 bin + 露出倍率 1 要素、GPU 常駐) ----
         // exposureBuf[0] はフレームを跨いで持ち越す適応状態 (初期値 1.0、リサイズで再生成 = リセット)
         Microsoft::WRL::ComPtr<ID3D11Buffer> histBuf;
@@ -106,9 +113,11 @@ public:
     // view (M43b): depthSRV/太陽/view/proj の供給口 (M44 の DoF/モーションブラーもここから取る)。
     // distortionActive (M42d): このフレーム歪みパーティクルが t.distort に描かれたとき true
     // -> トーンマップのシーンサンプル UV に t.distort をオフセット加算する
+    // runner (M78b): ユーザーポスト (BeforeTonemap/AfterTonemap)。nullptr で従来挙動と同一
     void Resolve(GraphicsDevice& device, ShaderManager& shaders, Target& t,
                  ID3D11RenderTargetView* dst, int width, int height, const Settings& s,
-                 const RenderView& view, bool distortionActive = false);
+                 const RenderView& view, bool distortionActive = false,
+                 ProjectEffectRunner* runner = nullptr);
 
     // M44d: 直近の Resolve の GPU 時間 (ms)。ProfilerWindow の "postfx" 行が表示する。
     // 複数ビュー解決時は最後に完了した計測値
@@ -147,6 +156,7 @@ private:
     AssetID brightShader_ = {};
     AssetID blurShader_ = {};
     AssetID fxaaShader_ = {};
+    AssetID magentaShader_ = {}; // M78b: ユーザーポスト失敗時の代替
     AssetID godrayMaskShader_ = {}; // M43b
     AssetID godrayBlurShader_ = {};
     AssetID histCS_ = {}; // M44b

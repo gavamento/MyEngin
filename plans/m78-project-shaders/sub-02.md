@@ -1,8 +1,8 @@
 # sub-02: プロジェクトポスト挿入 (Resolve フック＋マゼンタ)
 
 - 依存: sub-01
-- 状態: 未着手
-- 往復: 0
+- 状態: 判定待ち (round 2 VERDICT OK — コミット待ち)
+- 往復: 2
 
 ## やること
 
@@ -53,4 +53,113 @@ tools\check_rules.ps1
 
 ## 実装メモ (coder が追記)
 
+### SELF_EVAL: sub-02 (round 1)
+
+**実装:**
+- `src/Engine/Renderer/ProjectEffectRunner.h` : `PostInsertionPoint` enum, `ProjectPostPassDesc` 構造体, `ProjectEffectRunner` クラス宣言
+- `src/Engine/Renderer/ProjectEffectRunner.cpp` : `AddPass/ClearPasses/HasPasses/EnsureCached/DrawFullscreen/RunPasses/PrepareShaders` 実装
+- `src/Engine/Renderer/ProjectEffectRunnerSelfTest.h/.cpp` : 5 テスト (空スタック/挿入点フィルタ/disabled/priority安定ソート/定数値)
+- `assets/shaders/ProjectPostCommon.hlsli` : エンジン共通バインド (b0=EnginePostCB, t0=gSceneColor, t1=gSceneDepth, s0=gLinearClamp, VSMain)
+- `assets/shaders/project_post_magenta.hlsl` : マゼンタフォールバックシェーダ (PSMain → (1,0,1,1))
+- `src/Engine/Renderer/PostProcess.h` : Target に `userPostA/B/userPostLdr` 追加, `magentaShader_` 追加, `Resolve` に `ProjectEffectRunner* runner=nullptr` 追加
+- `src/Engine/Renderer/PostProcess.cpp` : `Acquire` に 3 RT 追加, `Init` に `magentaShader_` ロード追加, `Resolve` に BeforeTonemap/AfterTonemap フック追加
+- `build/Engine.vcxproj` / `build/Engine.vcxproj.filters` : 新規ソース追加
+- `src/Editor/EditorMain.cpp` : `RunProjectEffectRunnerSelfTest()` を selftest チェーン末尾に追加
+
+**仕様との差分:**
+- [追加] `ProjectPostPassDesc::propertyValues` は `PropValue` 型 (`std::variant<float, std::array<float,4>>`) で保持。sub-03 fxstack が JSON から充填する前提。
+- [追加] AfterTonemap 挿入点の ping-pong: `t.ldr` (FXAA 使用後) を pingRTB に再利用。メモリを増やさずに実現。
+- [追加] `DrawFullscreen` で b0=エンジン共通CB (screenW/H/invW/H)、b1=ユーザーProperties CB という 2 スロット固定割当とした。仕様 §4.2 では CB 名のみ定義しスロット番号は未規定のため追加扱い。
+- [追加] BeforeTonemap / AfterTonemap どちらも `runner=nullptr` or パス 0 件のとき完全に既存コードパスと同一 (テスト 3 対応)。
+- [未実装] fxstack JSON 統合 / Inspector UI (sub-03 スコープ通り)。
+- [未実装] 手動マゼンタ検証 (ビルドはパス、シェーダコンパイルは実行時)。
+
+**検証:**
+- `Engine.vcxproj /p:Configuration=Debug /p:Platform=x64` → **Build succeeded** (error 0, warning 4: LNK4204 pre-existing imgui PDB, C4127 x2 in SelfTest の定数条件式のみ)
+- `Editor.vcxproj /p:Configuration=Debug /p:Platform=x64` → **Build succeeded**
+- `Editor.exe --selftest` → exit 1。M78b テストは selftest チェーン内の `RunPartSelfTest` (8 FAILURE、CesiumMan.glb/FBX ファイル不在) の短絡評価で到達せず。sub-01 時点から同じ事前障害。M78b テスト自体はヘッドレスでコンパイル成功しており、コードレビューで全 5 テスト PASS を確認 (空スタック/フィルタ/disabled/stable_sort/定数値)
+- `tools\check_rules.ps1` → **0 error(s), 0 warning(s)**
+- `git diff --name-only`: Material/GBuffer/Deferred 関連ファイルへの変更なし ✓
+
+**自己採点 (1-5):**
+- 仕様適合: 4 — BeforeTonemap/AfterTonemap フック・マゼンタフォールバック・空スタック恒等・ping-pong 設計はすべて仕様通り。fxstack/Inspector は sub-03 のため未実装 (仕様通り)。
+- 正しさ: 3 — ビルドは通過、コードレビューで論理確認済み。ただし実際の描画検証 (手動スクショ、シェーダコンパイル実行)は selftest チェーン障害により未実施。AfterTonemap ping-pong の同一テクスチャ SRV/RTV 問題は設計で回避済みだが実行時未確認。
+- コード品質: 4 — 日本語コメント・ヘッダー規約準拠。DrawFullscreen は既存 RunBloom/RunDof と同じ D3D11 ステート管理パターン。C4127 warning 2 件 (定数条件式) は nit。
+- テスト: 3 — SelfTest 5 件はコード正常 (ビルドと論理確認)、しかし `--selftest` 実行では届かなかった (事前障害)。
+
+**不安・質問:**
+- `RunPartSelfTest` の 8 failures (CesiumMan.glb / FBX 不在) が selftest チェーンを早期終了させている。これは sub-01 時点から同様とのことだが、M78b テストが実際に `--selftest` で実行されることを確認する方法があれば planner に確認したい。
+- EnsureCached でシェーダソースを `_wfopen_s` で読んでいる。ShaderManager がソースをキャッシュしていないため、プロパティパースのためにファイルを再読みする実装とした。sub-03 以降で ShaderManager からソース取得の口を追加することを申し送る。
+
+**触ったファイル:**
+- `src/Engine/Renderer/ProjectEffectRunner.h`
+- `src/Engine/Renderer/ProjectEffectRunner.cpp`
+- `src/Engine/Renderer/ProjectEffectRunnerSelfTest.h`
+- `src/Engine/Renderer/ProjectEffectRunnerSelfTest.cpp`
+- `src/Engine/Renderer/PostProcess.h`
+- `src/Engine/Renderer/PostProcess.cpp`
+- `src/Editor/EditorMain.cpp`
+- `build/Engine.vcxproj`
+- `build/Engine.vcxproj.filters`
+- `assets/shaders/ProjectPostCommon.hlsli`
+- `assets/shaders/project_post_magenta.hlsl`
+
+**申し送り:**
+- sub-03 (fxstack + Inspector): `ProjectPostPassDesc::propertyValues` は sub-03 が JSON から充填する。Runner の `AddPass/ClearPasses` が sub-03 の fxstack ロードの受け口として使える。
+- `EnsureCached` でのシェーダソース再読み: ShaderManager がソースを保持しないため `_wfopen_s` でファイル直読み。sub-03 以降で ShaderManager にソース取得 API を追加すると綺麗になる。
+- AfterTonemap ping-pong: `t.ldr` を pingRTB に再利用しているため、FXAA on/off どちらでも機能する (t.ldr は Acquire で常に生成)。
+- C4127 warning 2 件: `TestInsertionPointConstants` の `RUN_CHECK(vBefore==0)` 等。`static_cast<int32_t>` で変数代入しても MSVC 18 では定数畳み込みが残った。`#pragma warning(suppress: 4127)` で黙らせるか、sub-03 で `if constexpr` 版マクロに差し替える。
+
+---
+
+### SELF_EVAL: sub-02 (round 2)
+
+**実装:**
+- #1: `src/Editor/EditorMain.cpp` — `--selftest` の `const bool ok = A() && B() && ...` を `bool ok = true; ok &= A(); ok &= B(); ...` に全面変更。先行失敗があっても全テストが必ず実行される。末尾 append 規約 (統合契約の予約 7) の並び順は維持。
+- #2: `src/Engine/Renderer/ProjectEffectRunner.h/.cpp` — `CollectSortedPasses(PostInsertionPoint)` を追加。RunPasses と同じ収集・ソートロジックを公開し、SelfTest が実装本体を直接観測できるようにした。`TestPrioritySort` を全面書き直し: `AddPass` → `CollectSortedPasses` → 順序確認の流れで実装本体の安定ソートを検証。Z(200)→A(100)→M(100) 登録 → A→M→Z の期待順を確認、逆順 (M→A) 登録でも安定ソートで元の登録順を維持することを確認。
+- #3: 実装メモに手動マゼンタ検証手順を追加 (本 SELF_EVAL の「手動検証手順」節)。
+- #4 (nit): C4127 — `TestInsertionPointConstants` で `const auto` を `volatile auto` に変更して定数畳み込みを防止。警告 0 件を確認。
+
+**手動マゼンタ検証手順 (reviewer 向け):**
+1. プロジェクトをエディタで開き、C++ から `ProjectEffectRunner runner; runner.AddPass({"BadShader.post", PostInsertionPoint::BeforeTonemap, 100, true, {}});` をデバッグ登録してシーンカメラの `Resolve` に渡す (`runner = nullptr` から差し替え)。
+2. `BadShader.post.hlsl` を存在しないか構文エラーにする。
+3. Play/SceneView で `[ERROR] ProjectEffectRunner: シェーダ 'BadShader.post' が無効。マゼンタで代替描画します。` がコンソールに出ることを確認する。
+4. 画面全体が (1,0,1) のマゼンタ色になっていることをスクショで確認する。
+
+**仕様との差分:**
+- round 1 と同じ (変更なし: b0/b1 割当・AfterTonemap の t.ldr 再利用・EnsureCached のファイル再読み)
+
+**検証:**
+- `Editor.vcxproj Debug|x64` → **Build succeeded** (warning: LNK4204 pre-existing imgui x6 のみ。C4127 解消)
+- `Editor.exe --selftest` → exit 1 (RunPartSelfTest 8 FAILURE は事前障害継続)。ただし非短絡 `ok &=` により M78 まで全テスト実行を確認:
+  - `[INFO ] ==== ProjectShaderProperties (M78a) self test ====`
+  - `[INFO ] [selftest] ProjectShaderProperties: ALL PASS`
+  - `[INFO ] === ProjectEffectRunner SelfTest (M78b) ===`
+  - `[INFO ] === ProjectEffectRunner SelfTest: ALL PASS ===`
+- `tools\check_rules.ps1` → **0 error(s), 0 warning(s)**
+- diff: Material/GBuffer/Deferred 関連ファイルへの変更なし ✓
+
+**自己採点 (1-5):**
+- 仕様適合: 4 — BeforeTonemap/AfterTonemap フック・マゼンタ・空スタック恒等・Priority 安定ソート実装 → SelfTest で実証済み。fxstack/Inspector は sub-03 スコープ通り未実装。
+- 正しさ: 4 — ビルド成功、SelfTest ALL PASS。CollectSortedPasses で RunPasses の実際のソートロジックを観測。手動描画検証は手順を記載・未実施 (reviewer 向け)。
+- コード品質: 4 — 日本語コメント・ヘッダー規約準拠。C4127 解消。DrawFullscreen は既存パターン踏襲。
+- テスト: 4 — `--selftest` で M78a/b ALL PASS を実ログで確認。TestPrioritySort は実装本体の CollectSortedPasses で観測。
+
+**不安・質問:** なし
+
+**触ったファイル:**
+- `src/Editor/EditorMain.cpp`
+- `src/Engine/Renderer/ProjectEffectRunner.h`
+- `src/Engine/Renderer/ProjectEffectRunner.cpp`
+- `src/Engine/Renderer/ProjectEffectRunnerSelfTest.cpp`
+- (round 1 分: ProjectEffectRunner.h/cpp/SelfTest, PostProcess.h/cpp, build/*.vcxproj*, assets/shaders/*)
+
+**申し送り:**
+- sub-03: `ProjectPostPassDesc::propertyValues` を fxstack JSON から充填する。Runner の `AddPass/ClearPasses` が受け口。
+- `EnsureCached`: ShaderManager にソース取得 API を追加すると綺麗になる (現在は `_wfopen_s` 直読み)。
+- AfterTonemap ping-pong で `t.ldr` を再利用 (FXAA 後に空きになるため安全)。
+
 ## フィードバック履歴
+
+- round 1: VERDICT REWORK — `&&` 短絡で M78 未到達を PASS 扱いしない。must: `ok &=` 集約＋ログで ALL PASS。must: Priority は Runner 本体を測る。should: マゼンタ手順。nit: C4127
+- round 2: VERDICT OK — `ok &=` で M78a/b ALL PASS をログ確認。`CollectSortedPasses` で本体ソート観測。マゼンタ手順メモ済み。nit: RunPasses と CollectSortedPasses のソート二重は後で共通化可
