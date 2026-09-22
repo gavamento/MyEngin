@@ -651,6 +651,12 @@
     <ClCompile Include="..\src\Engine\Renderer\FxStackSelfTest.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ProjectComputeRunner.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ProjectComputeRunnerSelfTest.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\ProjectEffectRunner.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -1384,6 +1390,12 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\FxStackSelfTest.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ProjectComputeRunner.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ProjectComputeRunnerSelfTest.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ProjectEffectRunner.h">

@@ -16,6 +16,7 @@
 #include "Engine/Renderer/FroxelPass.h"
 #include "Engine/Renderer/PostProcess.h"
 #include "Engine/Renderer/ProjectEffectRunner.h" // M78c: fxstack 駆動ユーザーポスト
+#include "Engine/Renderer/ProjectComputeRunner.h" // M78d: fxstack 駆動ユーザーコンピュート
 #include "Engine/Renderer/RayTracing/RtPasses.h"
 #include "Engine/Renderer/RenderTypes.h"
 #include "Engine/Renderer/ShadowAtlas.h"
@@ -402,6 +403,8 @@ private:
     // CameraOverride (エディタ視界) には適用しない (CameraPostFx と同じ規則)
     ProjectEffectRunner projectEffectRunner_;
     AssetID             lastFxStackId_; // 直近に読んだ fxStack ID (変化検知用)
+    // M78d: シーンカメラの fxStack から生成するユーザーコンピュートランナー
+    ProjectComputeRunner projectComputeRunner_;
 };
 
 } // namespace mye

@@ -9,6 +9,7 @@
 #include "Engine/Core/JobSystem.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Renderer/FxStackAsset.h"  // M78c: fxstack ロード
+#include "Engine/Renderer/ProjectComputeRunner.h" // M78d: DispatchPointFromString
 #include "Engine/Core/Profiler.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Acoustic/AcousticField.h" // M65d: 残光ボリュームの転送元
@@ -1738,8 +1739,16 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
         if (!cameraOverride && !camEntity.IsNull()) {
             // Tex2D リゾルバをフレームごとに設定 (resources の参照は ResolvePost が生きている間有効)
             projectEffectRunner_.SetTextureResolver(
-                [&resources](const std::string& name) -> ID3D11ShaderResourceView*
+                [&resources, this](const std::string& name) -> ID3D11ShaderResourceView*
                 {
+                    // M78d: コンピュートパス出力 SRV を shader 名で先引き (§3 GetOutputSRV 接続)
+                    // 例: fxstack.json で _Mask = "MySim.cs" と書いた場合、MySim.cs の出力 UAV が
+                    // そのまま SRV としてポストの t2 以降に渡る (fill CS → ポスト表示の手動手順参照)。
+                    if (!name.empty())
+                    {
+                        if (ID3D11ShaderResourceView* srv = projectComputeRunner_.GetOutputSRV(name))
+                            return srv;
+                    }
                     // ビルトイン名またはフォールバック → white
                     auto getWhite = [&]() -> ID3D11ShaderResourceView* {
                         Texture* t = resources.textures.Get(resources.textures.White());
@@ -1775,6 +1784,7 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
                     // fxStack 未設定 → パスをクリア (恒等経路)
                     if (!lastFxStackId_.IsNull()) {
                         projectEffectRunner_.ClearPasses();
+                        projectComputeRunner_.ClearPasses();
                         lastFxStackId_ = {};
                     }
                 } else {
@@ -1786,26 +1796,39 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
                         FxStackAsset fx;
                         std::string errMsg;
                         if (LoadFxStack(fxPath, fx, &errMsg)) {
-                            // Post パスのみを ProjectEffectRunner へ流す (Compute は sub-04)
-                            std::vector<ProjectPostPassDesc> descs;
-                            descs.reserve(fx.passes.size());
+                            // M78c: Post パスを ProjectEffectRunner へ流す
+                            std::vector<ProjectPostPassDesc> postDescs;
+                            postDescs.reserve(fx.passes.size());
+                            // M78d: Compute パスを ProjectComputeRunner へ流す
+                            std::vector<ProjectComputePassDesc> compDescs;
+                            compDescs.reserve(fx.passes.size());
+
                             for (const auto& entry : fx.passes) {
-                                if (entry.kind != FxStackKind::Post) {
-                                    continue;
+                                if (entry.kind == FxStackKind::Post) {
+                                    ProjectPostPassDesc d;
+                                    d.shaderName     = entry.shader;
+                                    d.insertion      = entry.insertion;
+                                    d.priority       = entry.priority;
+                                    d.enabled        = entry.enabled;
+                                    d.propertyValues = entry.properties;
+                                    postDescs.push_back(std::move(d));
+                                } else if (entry.kind == FxStackKind::Compute) {
+                                    ProjectComputePassDesc d;
+                                    d.shader        = entry.shader;
+                                    d.dispatchPoint = DispatchPointFromString(entry.dispatchPoint);
+                                    d.priority      = entry.priority;
+                                    d.enabled       = entry.enabled;
+                                    d.propertyValues = entry.properties;
+                                    compDescs.push_back(std::move(d));
                                 }
-                                ProjectPostPassDesc d;
-                                d.shaderName     = entry.shader;
-                                d.insertion      = entry.insertion;
-                                d.priority       = entry.priority;
-                                d.enabled        = entry.enabled;
-                                d.propertyValues = entry.properties;
-                                descs.push_back(std::move(d));
                             }
-                            projectEffectRunner_.SetPasses(std::move(descs));
+                            projectEffectRunner_.SetPasses(std::move(postDescs));
+                            projectComputeRunner_.SetPasses(std::move(compDescs));
                         } else {
                             MYE_LOG_WARN("RenderSystem: fxstack ロード失敗 (%s): %s",
                                          fxPath.c_str(), errMsg.c_str());
                             projectEffectRunner_.ClearPasses();
+                            projectComputeRunner_.ClearPasses();
                         }
                         lastFxStackId_ = fxId;
                     }
@@ -1813,9 +1836,19 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
             }
         }
 
+        // M78d: BeforePost コンピュートを Resolve 前に実行する (HDR 描画完了直後)
+        if (projectComputeRunner_.HasPasses(ComputeDispatchPoint::BeforePost))
+        {
+            projectComputeRunner_.RunDispatch(ComputeDispatchPoint::BeforePost,
+                                              device, shaders,
+                                              hdr->scene.SRV(), view.depthSRV,
+                                              target.width, target.height);
+        }
+
         postFx_.Resolve(device, shaders, *hdr, target.rtv, target.width, target.height,
                         effective, view, distortionActive,
-                        &projectEffectRunner_); // M78c: ユーザーポストを注入
+                        &projectEffectRunner_,   // M78c: ユーザーポストを注入
+                        &projectComputeRunner_); // M78d: ユーザーコンピュートを注入
     }
     // M44d: 次フレームのモーションブラー用に viewProj を保存 (viewKey=0 = AssetPreview は対象外)。
     // M46d: カメラ位置と描画通番も同じ場所で更新する (再投影とテンポラル履歴の連続性判定)。

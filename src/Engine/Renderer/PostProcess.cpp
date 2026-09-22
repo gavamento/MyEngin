@@ -161,6 +161,7 @@ bool PostProcess::Init(GraphicsDevice& device, ShaderManager& shaders)
     blurShader_ = shaders.Load("postfx_blur");
     fxaaShader_ = shaders.Load("postfx_fxaa");
     magentaShader_ = shaders.Load("project_post_magenta"); // M78b: ユーザーポスト失敗時代替
+    blitShader_    = shaders.Load("project_post_blit");    // M78d: AfterTonemap LDR コピー
     godrayMaskShader_ = shaders.Load("postfx_godray_mask"); // M43b
     godrayBlurShader_ = shaders.Load("postfx_godray_blur");
     histCS_ = shaders.LoadCompute("postfx_hist.cs"); // M44b
@@ -681,7 +682,8 @@ bool PostProcess::RunAutoExposure(GraphicsDevice& device, ShaderManager& shaders
 void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target& t,
                           ID3D11RenderTargetView* dst, int width, int height, const Settings& s,
                           const RenderView& view, bool distortionActive,
-                          ProjectEffectRunner* runner)
+                          ProjectEffectRunner* runner,
+                          ProjectComputeRunner* computeRunner)
 {
     ID3D11DeviceContext* dc = device.Context();
     ShaderProgram* prog = shaders.Get(tonemapShader_);
@@ -715,26 +717,6 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
         sceneSRV = mbDst->SRV();
     }
 
-    // M78b: BeforeTonemap ユーザーポスト
-    // TAA/DoF/MB の後、Bloom/AE より前に挿入 (HDR で受け取り HDR で返す)
-    // runner が null またはパス 0 件のとき sceneSRV は変化しない (恒等経路)
-    if (runner && runner->HasPasses(PostInsertionPoint::BeforeTonemap))
-    {
-        if (ID3D11ShaderResourceView* postOut =
-                runner->RunPasses(PostInsertionPoint::BeforeTonemap,
-                                  device, shaders, sceneSRV,
-                                  t.userPostA, t.userPostB,
-                                  nullptr, // BeforeTonemap は finalDstRTV=nullptr (ping-pong 戻り値)
-                                  view.depthSRV,
-                                  width, height,
-                                  depthDisabled_.Get(), blendOff_.Get(),
-                                  rasterizer_.Get(), linearClamp_.Get(),
-                                  magentaShader_))
-        {
-            sceneSRV = postOut;
-        }
-    }
-
     // M44b: 自動露出 (結果 = t.exposureBuf[0])。off/不成立時は t5 に null = 従来とビット同一。
     // bright-pass がしきい値判定で今フレームの露出を読むため、必ず RunBloom より前に回す
     // (後だと 1 フレーム遅れの露出を掴む)
@@ -755,17 +737,45 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     // M43b: ゴッドレイ (結果 = t.godA)。off/不成立時は t3 に null = 従来とビット同一
     const bool godrayActive = RunGodray(device, shaders, t, s, view);
 
+    // M78d/M78b: BeforeTonemap コンピュートとポスト (spec §4.1: AE/Bloom/Godray 後・Tonemap 前)
+    // コンピュートを先に実行し UAV を確保してから、ポストが SRV として参照できる状態にする。
+    // runner/computeRunner が null またはパス 0 件のとき sceneSRV は変化しない (恒等経路)
+    if (computeRunner && computeRunner->HasPasses(ComputeDispatchPoint::BeforeTonemap))
+    {
+        computeRunner->RunDispatch(ComputeDispatchPoint::BeforeTonemap,
+                                   device, shaders, sceneSRV, view.depthSRV, width, height);
+    }
+    if (runner && runner->HasPasses(PostInsertionPoint::BeforeTonemap))
+    {
+        if (ID3D11ShaderResourceView* postOut =
+                runner->RunPasses(PostInsertionPoint::BeforeTonemap,
+                                  device, shaders, sceneSRV,
+                                  t.userPostA, t.userPostB,
+                                  nullptr, // BeforeTonemap は finalDstRTV=nullptr (ping-pong 戻り値)
+                                  view.depthSRV,
+                                  width, height,
+                                  depthDisabled_.Get(), blendOff_.Get(),
+                                  rasterizer_.Get(), linearClamp_.Get(),
+                                  magentaShader_))
+        {
+            sceneSRV = postOut;
+        }
+    }
+
     // FXAA 有効時はトーンマップを LDR 中間 (t.ldr) に描き、その後 FXAA で dst へ。
     ShaderProgram* fxaa = shaders.Get(fxaaShader_);
     const bool useFxaa = s.fxaa && fxaa && fxaa->valid && t.ldr.IsValid();
 
-    // M78b: AfterTonemap パスが存在するとき、トーンマップ/FXAA の最終出力先を
-    // t.userPostLdr に変更する (t.ldr は引き続き FXAA 中間に使う)。
-    // パスが 0 件のときは chainFinalDst = dst で従来と同一経路 (受け入れ条件 3)。
-    const bool hasAfterTonemap =
-        runner && runner->HasPasses(PostInsertionPoint::AfterTonemap);
+    // M78b: AfterTonemap ポストの有無
+    // M78d: AfterTonemap CS の有無
+    // どちらか一方でも存在するときはトーンマップ/FXAA の出力先を t.userPostLdr に変更し、
+    // その SRV を CS/ポストへ供給する (直接 dst への書き込みを防ぐ)。
+    // 両方 0 件のときは chainFinalDst = dst で従来と同一経路 (受け入れ条件 3)。
+    const bool hasAfterTonemapPost = runner && runner->HasPasses(PostInsertionPoint::AfterTonemap);
+    const bool hasAfterTonemapCs   = computeRunner && computeRunner->HasPasses(ComputeDispatchPoint::AfterTonemap);
+    const bool needLdrIntermediate = hasAfterTonemapPost || hasAfterTonemapCs;
     ID3D11RenderTargetView* chainFinalDst =
-        hasAfterTonemap ? t.userPostLdr.RTV() : dst;
+        needLdrIntermediate ? t.userPostLdr.RTV() : dst;
     ID3D11RenderTargetView* tonemapDst = useFxaa ? t.ldr.RTV() : chainFinalDst;
 
     D3D11_VIEWPORT vp = {};
@@ -839,9 +849,19 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     }
 
     // M78b: AfterTonemap ユーザーポスト
-    // トーンマップ/FXAA 後 (LDR 空間) に挿入する。パス 0 件のとき t.userPostLdr は
-    // chainFinalDst == dst なので何もしない (恒等経路、受け入れ条件 3)。
-    if (hasAfterTonemap)
+    // トーンマップ/FXAA 後 (LDR 空間) に挿入する。
+    // M78d: AfterTonemap コンピュートを同点で先に走らせる。
+    // needLdrIntermediate が true なので t.userPostLdr には常に LDR が書き込まれている。
+    // ldrSRV を nullptr にすることはない (指摘 #2 対応)。
+    if (hasAfterTonemapCs)
+    {
+        // t.userPostLdr.SRV() = トーンマップ/FXAA 済み LDR シーンカラー
+        // (needLdrIntermediate==true のため必ず chainFinalDst = t.userPostLdr.RTV() に書かれている)
+        computeRunner->RunDispatch(ComputeDispatchPoint::AfterTonemap,
+                                   device, shaders,
+                                   t.userPostLdr.SRV(), view.depthSRV, width, height);
+    }
+    if (hasAfterTonemapPost)
     {
         // t.userPostLdr が入力。pingRTA=t.ldr, pingRTB=t.userPostLdr の順にすることで
         // 最初のパスが t.ldr に書く (inputSRV と同じ t.userPostLdr への同時 SRV/RTV バインドを防ぐ)
@@ -854,6 +874,30 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
                           depthDisabled_.Get(), blendOff_.Get(),
                           rasterizer_.Get(), linearClamp_.Get(),
                           magentaShader_);
+    }
+    else if (hasAfterTonemapCs)
+    {
+        // CS はあったがポスト 0 件 → t.userPostLdr → dst を blit (最終表示を成立させる)
+        ShaderProgram* blit = shaders.Get(blitShader_);
+        if (blit && blit->valid)
+        {
+            dc->OMSetRenderTargets(1, &dst, nullptr);
+            dc->RSSetViewports(1, &vp);
+            ID3D11ShaderResourceView* bsrv[1] = { t.userPostLdr.SRV() };
+            dc->PSSetShaderResources(0, 1, bsrv);
+            ID3D11SamplerState* bsamps[1] = { linearClamp_.Get() };
+            dc->PSSetSamplers(0, 1, bsamps);
+            dc->IASetInputLayout(nullptr);
+            dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            dc->VSSetShader(blit->vs.Get(), nullptr, 0);
+            dc->PSSetShader(blit->ps.Get(), nullptr, 0);
+            dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
+            dc->OMSetBlendState(blendOff_.Get(), nullptr, 0xFFFFFFFFu);
+            dc->Draw(3, 0);
+            ID3D11ShaderResourceView* bnull[1] = { nullptr };
+            dc->PSSetShaderResources(0, 1, bnull);
+            dc->OMSetRenderTargets(0, nullptr, nullptr);
+        }
     }
 
     dc->OMSetDepthStencilState(nullptr, 0);

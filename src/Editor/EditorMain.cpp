@@ -81,6 +81,7 @@
 #include "Engine/Renderer/ProjectShaderPropertiesSelfTest.h"  // M78a
 #include "Engine/Renderer/ProjectEffectRunnerSelfTest.h"      // M78b
 #include "Engine/Renderer/FxStackSelfTest.h"                  // M78c
+#include "Engine/Renderer/ProjectComputeRunnerSelfTest.h"     // M78d
 #include "Engine/Renderer/RenderSelfTest.h"
 #include "Engine/Renderer/TextureCookSelfTest.h"
 #include "Engine/Renderer/VolumeTexture.h"
@@ -505,6 +506,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunProjectShaderPropertiesSelfTest();  // M78a: Properties DSL パース/パック
         ok &= mye::RunProjectEffectRunnerSelfTest();      // M78b: ポスト挿入点・ソート
         ok &= mye::RunFxStackSelfTest();                  // M78c: fxstack ロード/保存
+        ok &= mye::RunProjectComputeRunnerSelfTest();     // M78d: CS dispatch 基盤
         return ok ? 0 : 1;
     }
 

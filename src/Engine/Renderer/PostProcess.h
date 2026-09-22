@@ -9,7 +9,8 @@
 
 #include "Engine/Core/EntityID.h"
 #include "Engine/Renderer/GpuTimer.h"
-#include "Engine/Renderer/ProjectEffectRunner.h" // M78b: ユーザーポスト実行
+#include "Engine/Renderer/ProjectEffectRunner.h"  // M78b: ユーザーポスト実行
+#include "Engine/Renderer/ProjectComputeRunner.h" // M78d: ユーザーコンピュート実行
 #include "Engine/Renderer/RenderTexture.h"
 #include "Engine/Renderer/TaaPass.h" // M55d: チェーン先頭の TAA (履歴は viewKey 別に持つ)
 
@@ -114,10 +115,12 @@ public:
     // distortionActive (M42d): このフレーム歪みパーティクルが t.distort に描かれたとき true
     // -> トーンマップのシーンサンプル UV に t.distort をオフセット加算する
     // runner (M78b): ユーザーポスト (BeforeTonemap/AfterTonemap)。nullptr で従来挙動と同一
+    // computeRunner (M78d): ユーザーコンピュート (BeforeTonemap/AfterTonemap)。nullptr で従来挙動と同一
     void Resolve(GraphicsDevice& device, ShaderManager& shaders, Target& t,
                  ID3D11RenderTargetView* dst, int width, int height, const Settings& s,
                  const RenderView& view, bool distortionActive = false,
-                 ProjectEffectRunner* runner = nullptr);
+                 ProjectEffectRunner* runner = nullptr,
+                 ProjectComputeRunner* computeRunner = nullptr);
 
     // M44d: 直近の Resolve の GPU 時間 (ms)。ProfilerWindow の "postfx" 行が表示する。
     // 複数ビュー解決時は最後に完了した計測値
@@ -157,6 +160,7 @@ private:
     AssetID blurShader_ = {};
     AssetID fxaaShader_ = {};
     AssetID magentaShader_ = {}; // M78b: ユーザーポスト失敗時の代替
+    AssetID blitShader_    = {}; // M78d: AfterTonemap CS+ポスト 0 件時の LDR→dst コピー
     AssetID godrayMaskShader_ = {}; // M43b
     AssetID godrayBlurShader_ = {};
     AssetID histCS_ = {}; // M44b
