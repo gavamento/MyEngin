@@ -38,6 +38,14 @@ void ProjectEffectRunner::ClearPasses()
 
 void ProjectEffectRunner::SetPasses(std::vector<ProjectPostPassDesc> newDescs)
 {
+    // 上限超過は警告して切り捨てる (spec §4.4)
+    if (static_cast<int>(newDescs.size()) > kMaxPostPasses)
+    {
+        MYE_LOG_WARN("ProjectEffectRunner: ポストパス数 %d が上限 %d を超えています。超過分を切り捨てます。",
+                     static_cast<int>(newDescs.size()), kMaxPostPasses);
+        newDescs.resize(static_cast<size_t>(kMaxPostPasses));
+    }
+
     // 同名・同挿入点のパスのキャッシュを再利用しながら一覧を置き換える (M78c)。
     // 新規パスはキャッシュ空で追加; 既存パスは propertyValues だけ更新して CB 等を維持。
     std::vector<CachedPass> next;

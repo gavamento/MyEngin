@@ -45,6 +45,9 @@ struct ProjectPostPassDesc
 class ProjectEffectRunner
 {
 public:
+    // プロジェクトポストのハード上限 (spec §4.4)
+    static constexpr int kMaxPostPasses = 8;
+
     // テクスチャリゾルバを設定する (M78c round 2)。
     // RunPasses で Tex2D プロパティの SRV を名前で解決するためのコールバック。
     // name: ビルトイン名 ("white"/"black"/"gray"/"bump") または GUID hex 文字列。

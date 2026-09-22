@@ -1,8 +1,8 @@
 # sub-02: プロジェクトポスト挿入 (Resolve フック＋マゼンタ)
 
 - 依存: sub-01
-- 状態: 判定待ち (round 2 VERDICT OK — コミット待ち)
-- 往復: 2
+- 状態: 判定待ち (round 3 VERDICT OK — コミット待ち)
+- 往復: 3
 
 ## やること
 
@@ -159,7 +159,42 @@ tools\check_rules.ps1
 - `EnsureCached`: ShaderManager にソース取得 API を追加すると綺麗になる (現在は `_wfopen_s` 直読み)。
 - AfterTonemap ping-pong で `t.ldr` を再利用 (FXAA 後に空きになるため安全)。
 
+---
+
+### SELF_EVAL: sub-02 (round 3)
+
+**実装:**
+- #2: `ProjectEffectRunner.h` — `static constexpr int kMaxPostPasses = 8` (spec §4.4、`ProjectComputeRunner::kMaxComputePasses` と対称)
+- #2: `ProjectEffectRunner.cpp` — `SetPasses` 先頭で超過時 `MYE_LOG_WARN`＋`newDescs.resize(kMaxPostPasses)` (`ProjectComputeRunner::SetPasses` と同パターン)
+- #2: `ProjectEffectRunnerSelfTest.cpp` — `TestHardLimit` 追加 (10 件 SetPasses → `CollectSortedPasses` が 8 件・末尾 2 件不在)
+
+**仕様との差分:**
+- [追加] `AddPass` は上限未適用 (review #2 は `SetPasses` のみ。fxstack 一括更新経路が主。デバッグ `AddPass` 単体は SelfTest 既存ケースが 3 件以下のため影響なし)
+
+**検証:**
+- `Editor.vcxproj Debug|x64` (MSBuild 18) → **Build succeeded** (LNK4204 imgui PDB 既知のみ)
+- `Editor.exe --selftest` → exit 1 (RunPartSelfTest 8 FAILURE 等の事前障害継続)。ログ: `[WARN] ProjectEffectRunner: ポストパス数 10 が上限 8 を超えています` → `=== ProjectEffectRunner SelfTest: ALL PASS ===`
+- `tools\check_rules.ps1` → **0 error(s), 0 warning(s)**
+
+**自己採点 (1-5):**
+- 仕様適合: 5 — §4.4 ポスト 8 本上限を `ProjectEffectRunner` に定数化・WARN・切り捨て・SelfTest で `ProjectComputeRunner` と揃えた。
+- 正しさ: 5 — ビルド成功、`TestHardLimit` で WARN と 8 件切り捨てを `--selftest` ログで確認。
+- コード品質: 5 — コンピュート側と同一パターン。差分最小。
+- テスト: 5 — `TestHardLimit` を SelfTest チェーンに追加し ALL PASS。
+
+**不安・質問:** なし
+
+**触ったファイル:**
+- `src/Engine/Renderer/ProjectEffectRunner.h`
+- `src/Engine/Renderer/ProjectEffectRunner.cpp`
+- `src/Engine/Renderer/ProjectEffectRunnerSelfTest.cpp`
+
+**申し送り:**
+- `AddPass` も上限をかけるなら planner 裁定後 (現状は `SetPasses` のみ)。
+
 ## フィードバック履歴
 
 - round 1: VERDICT REWORK — `&&` 短絡で M78 未到達を PASS 扱いしない。must: `ok &=` 集約＋ログで ALL PASS。must: Priority は Runner 本体を測る。should: マゼンタ手順。nit: C4127
 - round 2: VERDICT OK — `ok &=` で M78a/b ALL PASS をログ確認。`CollectSortedPasses` で本体ソート観測。マゼンタ手順メモ済み。nit: RunPasses と CollectSortedPasses のソート二重は後で共通化可
+- review-1 #2: 差し戻し — `ProjectEffectRunner::SetPasses` にポスト本数ハード上限 8 (定数・WARN・切り捨て・SelfTest)。spec §4.4 確定
+- round 3: VERDICT OK — kMaxPostPasses=8・SetPasses WARN/切り捨て・TestHardLimit を確認。AddPass 上限は nit（本番経路は SetPasses）

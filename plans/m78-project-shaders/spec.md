@@ -80,7 +80,8 @@
 1. `<project>/assets/shaders/<Name>.post.hlsl` を作成 (命名: `*.post.hlsl` = ポスト、`*.cs.hlsl` は既存どおりコンピュート。プロジェクト新規コンピュートも `*.cs.hlsl`＋Properties ブロック)
 2. 先頭に Properties ブロック、本体は `PSMain` (ポスト) / `CSMain` (コンピュート)。VS はエンジン供給のフルスクリーン三角形／クアッドを使う (作者は PS のみ書いてよい。必要なら VS も同ファイル可だが既定は共通 VS)
 3. `*.fxstack.json` にパスを追加し、カメラ (またはメインカメラ想定エンティティ) に Stack の AssetRef を付ける
-4. Play／SceneView で挿入点どおり実行。Inspector で Properties をいじるとライブ反映 (ホットリロード既存経路を利用)
+4. **Play 中のシーンカメラ**で挿入点どおり実行する。Inspector の Properties 変更は **save-on-apply** (Save でディスクへ書き、次フレーム以降の再ロードで反映)。未保存のライブプレビューは必須としない (sub-03 で確定)
+5. **エディタ Scene View (`CameraOverride`)** ではプロジェクト Runner (ユーザーポスト／スタック駆動コンピュート) を走らせない。組込みポストのみ (「エディタ視界は不変」)。Override 時は毎フレーム `ClearPasses` するか Resolve/Dispatch に Runner を渡さない
 
 #### 挿入と順序
 既存 Resolve 順は維持:
@@ -116,7 +117,7 @@
 #### エッジケース
 - Properties にあるが HLSL に同名変数が無い → 警告、値は無視
 - HLSL にあって Properties に無いユーザー定数 → バインド対象外 (エンジン予約・共通 include は除く)
-- テクスチャ未割当 → Unity 同様 `"white"/"black"/"gray"/"bump"` 既定をエンジン組込みから供給
+- テクスチャ未割当 → Unity 同様 `"white"/"black"/"gray"/"bump"` 既定をエンジン組込みから供給。専用 SRV が無い名前は **white にフォールバックし WARN** (docs／コメントと同期)
 - 解像度変更 → 一時 RT／UAV をリサイズ。露出履歴等の組込み状態は既存どおり
 - ABI: 無効バッファ ID・未知シェーダ名・解放済み ID → 失敗戻り値、落ちない
 - ABI: 二重 Release／未 Release 放置 → エンジンがシャットダウン時に回収＋WARN (リークを黙殺しない)
@@ -186,7 +187,7 @@ _Direction ("Direction", Vector) = (0, 1, 0, 0)
 - **決定論**: カスタムポスト／スタック駆動コンピュートはワールドハッシュ非関与。ABI コンピュートも **hash に載せない**。`--replay-verify` 対象シーンでスタック未使用かつ ABI 未使用なら従来一致
 - **golden**: エンジン既定ゴールデンはスタック空想定。組込み Resolve 順・シェーダを不用意に変えない
 - **層**: 生 D3D 型は Renderer 内。Shared には POD／不透明 ID／関数ポインタのみ (AGENTS.md DLL 境界)
-- **性能**: パス数に比例するフルスクリーン。初版のハード上限 (例: ポスト 8＋スタックコンピュート 8)。ABI バッファ数にも上限 (実装で定数化、SelfTest)
+- **性能**: パス数に比例するフルスクリーン。初版のハード上限は **ポスト 8＋スタックコンピュート 8** (定数化・超過は WARN＋切り捨て・SelfTest)。ABI バッファ数にも上限 (実装で定数化、SelfTest)
 - **ホットリロード**: 既存依存グラフ＋キャッシュを流用。Properties 変更時はスキーマ再パース＋ UI 更新
 
 ### 4.5 Compute ABI v21 (契約)
@@ -273,6 +274,7 @@ _Direction ("Direction", Vector) = (0, 1, 0, 0)
 - リスク: ABI バッファ寿命とフレーム跨ぎ — スクリプトが持ったままシーン遷移したときの回収を sub-05 で明示
 - リスク: C# レーンが replay 被覆外 — temp プローブを sub-05 受け入れから外さない
 - 挿入点・保存形式・マイル確定・Texture スロット必須はユーザー 2A/3A/4A／B で解消済み
+- reviewer round 1: CameraOverride 残存パス (#1)・ポスト上限 (#2)・builtin WARN (#3)・サンプル (#5) は実装差し戻し。#4 は仕様反映済み
 
 ## 8. 変更履歴
 
@@ -284,3 +286,4 @@ _Direction ("Direction", Vector) = (0, 1, 0, 0)
 - 2026-09-22: sub-03 VERDICT REWORK。Inspector はスキーマ駆動＋ Tex2D (値/UI/バインド) を must。save-on-apply プレビューは受理 (保存前厳密プレビューは任意)。
 - 2026-09-22: sub-04 VERDICT REWORK。BeforeTonemap は仕様どおり Godray 後 (sub-02 の前倒し配置を修正)。AfterTonemap CS の nullptr 禁止。コンピュート出力→ポスト参照は must。
 - 2026-09-22: sub-05 VERDICT OK。スクリプト所有バッファは `ComputeAbiRunner` に分離してよいと確定 (fxstack Runner と寿命分離)。`kEngineVersion` 製品文字列は ABI bump と独立で据え置き可。
+- 2026-09-22: reviewer round 1 #4 — §4.1 を save-on-apply と CameraOverride＝Runner 無効に明文化。#1–3・#5 は実装差し戻し (下記サブ)。

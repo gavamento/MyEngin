@@ -171,7 +171,40 @@ void TestPrioritySort()
 }
 
 // ---------------------------------------------------------------------------
-// テスト 5: AfterTonemap の挿入点定数値
+// テスト 5: ハード上限 (8 件超は切り捨て)
+// ---------------------------------------------------------------------------
+void TestHardLimit()
+{
+    MYE_LOG_INFO("[selftest] ProjectEffectRunner: ハード上限 %d",
+                 ProjectEffectRunner::kMaxPostPasses);
+
+    ProjectEffectRunner runner;
+
+    const int over = ProjectEffectRunner::kMaxPostPasses + 2;
+    std::vector<ProjectPostPassDesc> descs;
+    descs.reserve(static_cast<size_t>(over));
+    for (int i = 0; i < over; ++i)
+    {
+        ProjectPostPassDesc d;
+        d.shaderName = "Shader" + std::to_string(i) + ".post";
+        d.insertion  = PostInsertionPoint::BeforeTonemap;
+        d.enabled    = true;
+        descs.push_back(std::move(d));
+    }
+
+    runner.SetPasses(descs);
+
+    auto sorted = runner.CollectSortedPasses(PostInsertionPoint::BeforeTonemap);
+    RUN_CHECK(sorted.size() == static_cast<size_t>(ProjectEffectRunner::kMaxPostPasses));
+
+    const std::string overflowName = "Shader" + std::to_string(over - 1) + ".post";
+    const bool hasOverflow = std::any_of(sorted.begin(), sorted.end(),
+        [&](const ProjectPostPassDesc* p) { return p->shaderName == overflowName; });
+    RUN_CHECK(!hasOverflow);
+}
+
+// ---------------------------------------------------------------------------
+// テスト 6: AfterTonemap の挿入点定数値
 // ---------------------------------------------------------------------------
 void TestInsertionPointConstants()
 {
@@ -200,6 +233,7 @@ bool RunProjectEffectRunnerSelfTest()
     TestInsertionFilter();
     TestDisabledPass();
     TestPrioritySort();
+    TestHardLimit();
     TestInsertionPointConstants();
 
     if (g_failCount == 0)
