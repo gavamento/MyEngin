@@ -625,12 +625,12 @@ void RenderSystem::ResolveCamera(World& world, const CameraOverride* cameraOverr
             const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
             for (uint32_t row = 0; row < arch.Count(); ++row) {
                 const auto* c = static_cast<const CameraComponent*>(arch.GetPtr(ci, row));
-                if (!cameraFound || c->isPrimary != 0) {
+                if (!cameraFound || c->isPrimary) {
                     cam = *c;
                     camWorld = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
                     camEntity = arch.EntityAt(row); // M29e: CameraPostFx 参照用
                     cameraFound = true;
-                    if (c->isPrimary != 0) {
+                    if (c->isPrimary) {
                         return;
                     }
                 }
@@ -696,7 +696,7 @@ void RenderSystem::DecideTaaAndFroxel(World& world, IRenderPath& path, const Fra
         bool taaOn = postFxSettings.taaOn != 0;
         if (!cameraOverride && !camEntity.IsNull()) {
             if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
-                taaOn = pfx->taaOn != 0;
+                taaOn = pfx->taaOn;
             }
         }
         view.taaEnabled = (taaOn && cameraFound && hdr != nullptr && path.WritesVelocity()
@@ -713,7 +713,7 @@ void RenderSystem::DecideTaaAndFroxel(World& world, IRenderPath& path, const Fra
     effectiveFroxel = froxelSettings;
     if (!cameraOverride && !camEntity.IsNull()) {
         if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
-            froxelOn = pfx->froxelOn != 0;
+            froxelOn = pfx->froxelOn;
             effectiveFroxel.density = pfx->froxelDensity;
             effectiveFroxel.anisotropy = pfx->froxelAnisotropy;
         }
@@ -956,7 +956,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                     continue;
                 }
                 const auto* wave = static_cast<const WaterWaveComponent*>(arch.GetPtr(wi, row));
-                if (wave->enabled == 0) {
+                if (!wave->enabled) {
                     continue;
                 }
                 bestIndex = e.index;

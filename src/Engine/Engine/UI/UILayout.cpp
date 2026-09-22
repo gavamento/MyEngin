@@ -524,11 +524,11 @@ bool BuildSimWorldContext(World& world, int screenW, int screenH, UIWorldContext
         const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
         for (uint32_t row = 0; row < arch.Count(); ++row) {
             const auto* c = static_cast<const CameraComponent*>(arch.GetPtr(ci, row));
-            if (!found || c->isPrimary != 0) {
+            if (!found || c->isPrimary) {
                 cam = *c;
                 cw = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
                 found = true;
-                if (c->isPrimary != 0) {
+                if (c->isPrimary) {
                     return;
                 }
             }
@@ -601,7 +601,7 @@ UIRect ResolveClipRect(World& world, EntityID e, int screenW, int screenH,
     EntityID p = FindUIParent(world, e);
     for (int guard = 0; guard < kMaxDepth && p != kNullEntity; ++guard) {
         const auto* el = world.GetComponent<UIElementComponent>(p);
-        if (el && el->clipChildren != 0) {
+        if (el && el->clipChildren) {
             clip = Intersect(clip, ResolveRect(world, p, screenW, screenH, wc, scratch));
         }
         if (world.GetComponent<UICanvasComponent>(p) != nullptr) {

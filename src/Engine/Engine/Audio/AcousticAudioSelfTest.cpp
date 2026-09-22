@@ -126,7 +126,8 @@ bool RunAcousticAudioSelfTest()
         // NoHash = WorldHasher が丸ごと飛ばす = **AcousticAudio を足しても snapshot の版は動かない**。
         // ★この検査が守っているのは「AcousticAudio のせいで版が動いていないこと」で、
         //   他の理由で版を上げたときは値を追随させる (>= にすると主張が消えるので値で書く)
-        check(kSimSnapshotVersion == 21, "T1: kSimSnapshotVersion is not bumped by AcousticAudio");
+        check(kSimSnapshotVersion == 22,
+              "T1: snapshot version matches engine (AcousticAudio is NoHash)");
     }
 
     // ---- (T2) 同一原点なら波の場と probe が**ビット一致**する ----

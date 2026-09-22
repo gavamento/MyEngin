@@ -477,7 +477,7 @@ void GpuParticleBackend::Update(World& world, float dt)
         // ★em.prewarmed を立てるのは RunEmitterTick(tick, true) の**前**でなければならない。
         //   CPU 側は Update のループ本体末尾で立てるが、ここで同じ位置に置くと直下の
         //   「空 Dispatch 回避で continue」に食われ、idle tick のたびに先回しが再発火する
-        if (em.prewarmed == 0 && desc->prewarmTime > 0.0f && desc->playing != 0) {
+        if (em.prewarmed == 0 && desc->prewarmTime > 0.0f && desc->playing) {
             const int prewarmTicks = std::min(600, static_cast<int>(desc->prewarmTime / dt));
             for (int step = 0; step < prewarmTicks; ++step) {
                 RunEmitterTick(tick, false);
@@ -535,7 +535,7 @@ bool GpuParticleBackend::RunEmitterTick(EmitterTickCtx& t, bool allowIdleSkip)
 
     // M61b: 形状サンプリングは CPU バックエンドと共有 (SampleParticleShape)。
     // M61c: 速度継承とサブフレーム補間も CPU 側 EmitParticles と同式のミラー。
-    const bool subframe = (desc->subframeEmission != 0);
+    const bool subframe = (desc->subframeEmission);
     // M63a: per-particle 不変属性のゲート。**CPU バックエンドと同じ 1 本**を呼ぶ
     // (片方だけ条件を書き換えると 2 バックエンドの RNG が別の進み方をして粒子が別物になる)
     const bool spawnAttribs = ParticleUsesSpawnAttribs(*desc);
@@ -651,7 +651,7 @@ bool GpuParticleBackend::RunEmitterTick(EmitterTickCtx& t, bool allowIdleSkip)
     // M61g: ローカル空間 (simulationSpace=1) では無効 — 衝突判定はワールド座標前提
     // (粒子位置を深度バッファへ投影する) で、ローカル座標をそのまま投影すると無関係な
     // 面と衝突する。sim CS へ渡す collParams.enabled を 0 に落とす (spec 7.5 例外の並び)
-    const bool collide = (desc->depthCollision != 0) && !ParticleIsLocalSpace(*desc)
+    const bool collide = (desc->depthCollision) && !ParticleIsLocalSpace(*desc)
                          && collValid_ && collDepthSRV_;
     cb.collViewProj = collViewProj_;
     cb.collInvViewProj = collInvViewProj_;
@@ -660,7 +660,7 @@ bool GpuParticleBackend::RunEmitterTick(EmitterTickCtx& t, bool allowIdleSkip)
     // ので、「床だけ塞ぐ」が単独で成立する使い方になる。
     // ★ローカル空間 (simulationSpace=1) では床も無効。粒子位置がローカル座標な以上、
     //   ワールドの床面 Y と比べても意味がない (深度衝突を切るのと同じ理由)
-    const bool floorCollide = (desc->collisionFloor != 0) && !ParticleIsLocalSpace(*desc);
+    const bool floorCollide = (desc->collisionFloor) && !ParticleIsLocalSpace(*desc);
     cb.collParams = { collide ? 1.0f : 0.0f, desc->collisionBounce,
                       desc->collisionThickness, desc->collisionFriction };
     cb.collScreen = { collScreen_[0], collScreen_[1], collScreen_[2], collScreen_[3] };
@@ -1041,7 +1041,7 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             const bool useFlip = ParticleUsesFlipbook(em.descCache);
             simCb.params6 = { useFlip ? 1.0f : 0.0f, em.descCache.flipFps,
                               (useFlip && em.descCache.flipRandomStart != 0) ? 1.0f : 0.0f,
-                              (useFlip && em.descCache.flipBlend != 0) ? 1.0f : 0.0f };
+                              (useFlip && em.descCache.flipBlend) ? 1.0f : 0.0f };
         }
         // M63d: ライティング。判定は CPU バックエンドと同じ共有ゲート
         // (ParticleCurves.h::ParticleLightingMode)。

@@ -422,7 +422,7 @@ void LoadNode(LoadContext& lc, const cgltf_data* data, const cgltf_node* node, G
                 sm->model = skinModelId;
                 sm->clip = 0;
                 sm->timeTicks = 0;
-                sm->playing = 1;
+                sm->playing = true;
             }
         }
     }

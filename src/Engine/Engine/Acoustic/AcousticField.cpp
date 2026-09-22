@@ -865,7 +865,7 @@ void AcousticField::DrainEmitters(World& world, float dt, uint64_t tick)
         // ★接地していないあいだは**溜めない**。空中で歩幅が溜まると、着地の瞬間に
         //   足音と衝撃音が二重に鳴る (着地音は DrainImpacts の担当)
         if (em.autoFootstep && em.stepDistanceM > 0.0f && p.cc != nullptr) {
-            if (p.cc->isGrounded == 0) {
+            if (!p.cc->isGrounded) {
                 em.travelAccum = 0.0f;
             } else {
                 const float vx = p.cc->velocity.x;
@@ -920,7 +920,7 @@ float RestingImpulse(World& world, EntityID ea, EntityID eb, float gMag, float d
     // その接触が支えている**動的な質量**の合計 (kinematic / 静的は 0)
     const auto dynamicMass = [&world](EntityID e) {
         const auto* rb = world.GetComponent<RigidbodyComponent>(e);
-        if (rb == nullptr || rb->isKinematic != 0) {
+        if (rb == nullptr || rb->isKinematic) {
             return 0.0f;
         }
         return EffectiveMassWorld(world, e, *rb);

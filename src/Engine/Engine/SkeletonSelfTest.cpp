@@ -427,7 +427,7 @@ bool RunSkeletonSelfTest()
             // 初めて見る clip は切り替えではない (シーンに保存された timeTicks を潰さない)
             sm->clip = 0;
             sm->timeTicks = 5;
-            sm->playing = 1;
+            sm->playing = true;
             sm->loop = 1;
             sm->fadeTicks = 8;
             skinning.Update(w, resources);
@@ -469,7 +469,7 @@ bool RunSkeletonSelfTest()
                   "skinning: fadeTicks = 0 switches instantly from the head of the clip");
 
             // 止めたまま切り替えても、再開の tick に古い時刻を持ち越さない
-            sm->playing = 0;
+            sm->playing = false;
             sm->timeTicks = 20;
             sm->clip = -1;
             skinning.Update(w, resources);

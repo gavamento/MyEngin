@@ -523,7 +523,7 @@ void ResolveWaveShotSound(World& world, EntityID source, uint64_t materialHint,
     //     (デバッグ比較用の明示オプトアウト)
     if (!source.IsNull() && world.IsAlive(source)) {
         if (const auto* modal = world.GetComponent<ModalSoundComponent>(source)) {
-            if (modal->muteWave != 0) {
+            if (modal->muteWave) {
                 const AssetID mesh = ResolveModalMesh(world, source, *modal).id;
                 if (!mesh.IsNull() && modalsound::IsReady(mesh)) {
                     shot.mute = 1;

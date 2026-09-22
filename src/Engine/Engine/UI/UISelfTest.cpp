@@ -1739,7 +1739,7 @@ bool RunUISelfTest()
             const EntityID b = box(w, "b", g, 0.0f, 0.0f, 10.0f, 20.0f);
             const EntityID c = box(w, "c", g, 7.0f, 8.0f, 10.0f, 40.0f);
             const EntityID d = box(w, "d", g, 0.0f, 0.0f, 10.0f, 10.0f);
-            w.AddComponent<ActiveComponent>(b)->enabled = 0;
+            w.AddComponent<ActiveComponent>(b)->enabled = false;
             w.AddComponent<UILayoutElementComponent>(c)->ignoreLayout = 1;
             w.ApplyStructuralChanges();
             check(rectNear(rr(w, a), 0.0f, 0.0f, 100.0f, 30.0f) && rectNear(rr(w, d), 0.0f, 35.0f, 100.0f, 10.0f)
@@ -2093,20 +2093,20 @@ bool RunUISelfTest()
             tick(w, d, 900.0f, 540.0f, false, 0);
             check(d.st.hovered == root, "widgets: hovering a child hovers the widget root");
             tick(w, d, 900.0f, 540.0f, true, 0);
-            check(d.st.pressed == root && d.st.focused == root && isOn() == 1,
+            check(d.st.pressed == root && d.st.focused == root && isOn(),
                   "widgets: pressing a toggle captures and focuses the root without flipping it yet");
             tick(w, d, 900.0f, 540.0f, false, 0);
-            check(d.st.clicked == root && d.st.changed == root && isOn() == 0,
+            check(d.st.clicked == root && d.st.changed == root && !isOn(),
                   "widgets: releasing over the toggle flips isOn and raises changed");
             tick(w, d, 900.0f, 540.0f, false, 0);
-            check(d.st.changed == kNullEntity && d.st.clicked == kNullEntity && isOn() == 0,
+            check(d.st.changed == kNullEntity && d.st.clicked == kNullEntity && !isOn(),
                   "widgets: changed lasts exactly one tick");
             std::vector<uiwidgets::VisualOverride> ov;
             uiwidgets::CollectVisualOverrides(w, &d.st, ov);
             check((uiwidgets::MergedOverrideFor(ov, mark).flags & uiwidgets::kVisHidden) != 0,
                   "widgets: the check mark is not drawn while the toggle is off");
             click(w, d, 1000.0f, 540.0f);
-            check(isOn() == 1 && d.st.changed == root,
+            check(isOn() && d.st.changed == root,
                   "widgets: clicking the label turns the toggle back on");
             uiwidgets::CollectVisualOverrides(w, &d.st, ov);
             {
@@ -2118,7 +2118,7 @@ bool RunUISelfTest()
                       "widgets: the target graphic is tinted with the selected colour while focused");
             }
             tick(w, d, 1000.0f, 540.0f, false, kVkEnter);
-            check(isOn() == 0 && d.st.changed == root,
+            check(!isOn() && d.st.changed == root,
                   "widgets: Submit on the focused toggle flips it like a click");
             tick(w, d, 1000.0f, 540.0f, false, 0);
             {
@@ -2132,7 +2132,7 @@ bool RunUISelfTest()
                 releaseIn.mouseButtons = 0;
                 uiinteract::Evaluate(w, pressIn, d.in, nullptr, st2);
                 uiinteract::Evaluate(w, releaseIn, pressIn, nullptr, st2);
-                check(st2.clicked == root && isOn() == 0,
+                check(st2.clicked == root && !isOn(),
                       "widgets: without uiwidgets::Update (editing, not playing) a click leaves the value alone");
             }
             w.GetComponent<UISelectableComponent>(root)->interactable = 0;
@@ -2142,7 +2142,7 @@ bool RunUISelfTest()
             tick(w, d, 900.0f, 540.0f, true, 0);
             check(d.st.pressed == kNullEntity, "widgets: pressing a non-interactable widget captures nothing");
             tick(w, d, 900.0f, 540.0f, false, 0);
-            check(d.st.clicked == kNullEntity && d.st.changed == kNullEntity && isOn() == 0,
+            check(d.st.clicked == kNullEntity && d.st.changed == kNullEntity && !isOn(),
                   "widgets: a non-interactable toggle neither clicks nor changes");
             uiwidgets::CollectVisualOverrides(w, &d.st, ov);
             check(uiwidgets::SelectionStateOf(w, d.st, root) == uiwidgets::kStateDisabled
@@ -2203,7 +2203,7 @@ bool RunUISelfTest()
             w.GetComponent<RectTransformComponent>(b)->anchoredPosition = { 0.0f, 100.0f };
             w.GetComponent<UIToggleComponent>(a)->group = group.Id();
             w.GetComponent<UIToggleComponent>(b)->group = group.Id();
-            w.GetComponent<UIToggleComponent>(b)->isOn = 0;
+            w.GetComponent<UIToggleComponent>(b)->isOn = false;
             w.ApplyStructuralChanges();
             const auto on = [&](EntityID e) { return w.GetComponent<UIToggleComponent>(e)->isOn; };
             Driver d;
@@ -2364,7 +2364,7 @@ bool RunUISelfTest()
             GameObject group = sc.CreateGameObjectTracked("SavedGroup");
             group.AddComponent<UIToggleGroupComponent>()->allowSwitchOff = 1;
             World& w1 = sc.GetWorld();
-            w1.GetComponent<UIToggleComponent>(t)->isOn = 0;
+            w1.GetComponent<UIToggleComponent>(t)->isOn = false;
             w1.GetComponent<UIToggleComponent>(t)->group = group.Id();
             w1.ApplyStructuralChanges();
             const nlohmann::json saved = SceneSerializer::SaveToJson(sc);
@@ -2377,7 +2377,7 @@ bool RunUISelfTest()
                 const auto* tg = w2.GetComponent<UIToggleComponent>(t2.Id());
                 const auto* sl = w2.GetComponent<UISelectableComponent>(t2.Id());
                 const auto* gr = w2.GetComponent<UIToggleGroupComponent>(again.Find("SavedGroup").Id());
-                ok = tg && sl && gr && tg->isOn == 0 && gr->allowSwitchOff == 1
+                ok = tg && sl && gr && !tg->isOn && gr->allowSwitchOff
                     && tg->graphic == again.Find("Checkmark").Id()
                     && tg->group == again.Find("SavedGroup").Id()
                     && sl->targetGraphic == again.Find("Background").Id()
@@ -2448,7 +2448,7 @@ bool RunUISelfTest()
             const uint64_t h0 = HashWorld(w);
             w.GetComponent<UISelectableComponent>(t)->normalColor = { 0.5f, 0.5f, 0.5f, 1.0f };
             const uint64_t h1 = HashWorld(w);
-            w.GetComponent<UIToggleComponent>(t)->isOn = 0;
+            w.GetComponent<UIToggleComponent>(t)->isOn = false;
             const uint64_t h2 = HashWorld(w);
             check(h0 == h1 && h1 != h2, "widgets: the toggle value is in the world hash, the selectable's look is not");
         }

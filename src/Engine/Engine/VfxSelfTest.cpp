@@ -217,7 +217,7 @@ bool RunVfxSelfTest()
                   && view.skyLighting == 0,
               "environment: star field / sky lighting fields propagate to view");
 
-        sky1.AddComponent<ActiveComponent>()->enabled = 0;
+        sky1.AddComponent<ActiveComponent>()->enabled = false;
         s.GetWorld().ApplyStructuralChanges();
         RenderView view2;
         CollectEnvironment(s.GetWorld(), view2);
@@ -255,6 +255,7 @@ bool RunVfxSelfTest()
             check(vPano.skyMode == 2 && vPano.skyCubemapId == AssetID{ 0x87654321ull },
                   "environment: panoramic mode and texture ID propagate to view");
         }
+
     }
 
     // ---- (3.7) BuildVfxFogParams (M57追補): VFX がメッシュと同じ霧を読んでいるか ----
@@ -327,10 +328,10 @@ bool RunVfxSelfTest()
         CameraPostFxComponent comp;
         comp.exposure = 3.0f;
         comp.tonemapMode = 2;
-        comp.bloomOn = 0;
+        comp.bloomOn = false;
         comp.bloomThreshold = 0.5f;
         comp.bloomIntensity = 0.9f;
-        comp.fxaaOn = 0;
+        comp.fxaaOn = false;
         const PostProcess::Settings m = MergeCameraPostFx(base, comp);
         check(m.exposure == 3.0f && m.tonemap == 2 && !m.bloom && m.bloomThreshold == 0.5f
                   && m.bloomIntensity == 0.9f && !m.fxaa && m.applyGamma,
@@ -424,7 +425,7 @@ bool RunVfxSelfTest()
                  && sp->billboardMode == 1 && tr && tr->width == 0.33f && tm
                  && std::strcmp(tm->text, "RT") == 0 && tm->fontScale == 2.0f && sb
                  && sb->topColor.y == 0.6f && sb->starDensity == 0.375f && sb->starCells == 777
-                 && sb->lighting == 0 && fg && fg->density == 0.125f && px
+                 && !sb->lighting && fg && fg->density == 0.125f && px
                  && px->exposure == 4.0f;
         }
         check(ok, "roundtrip: all 9 M29 components survive scene JSON save/load");

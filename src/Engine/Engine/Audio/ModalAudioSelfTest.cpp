@@ -172,7 +172,7 @@ bool RunModalAudioSelfTest()
 
         const auto dynamicMassRef = [&world](EntityID e) {
             const auto* rb = world.GetComponent<RigidbodyComponent>(e);
-            if (rb == nullptr || rb->isKinematic != 0) {
+            if (rb == nullptr || rb->isKinematic) {
                 return 0.0f;
             }
             return EffectiveMassWorld(world, e, *rb);

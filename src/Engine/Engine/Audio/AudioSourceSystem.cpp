@@ -92,7 +92,7 @@ bool FindListener(World& world, AudioListenerState& out, EntityID& outEntity)
         const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
         for (uint32_t row = 0; row < arch.Count(); ++row) {
             const auto* l = static_cast<const AudioListenerComponent*>(arch.GetPtr(li, row));
-            if (l->enabled == 0) {
+            if (!l->enabled) {
                 continue;
             }
             const EntityID e = arch.EntityAt(row);
@@ -122,7 +122,7 @@ bool FindListener(World& world, AudioListenerState& out, EntityID& outEntity)
                 }
                 const auto* c = static_cast<const CameraComponent*>(arch.GetPtr(ci, row));
                 const EntityID e = arch.EntityAt(row);
-                if (!best.IsNull() && c->isPrimary == 0) {
+                if (!best.IsNull() && !c->isPrimary) {
                     continue;
                 }
                 if (!IsEntityActive(world, e)) {
@@ -130,7 +130,7 @@ bool FindListener(World& world, AudioListenerState& out, EntityID& outEntity)
                 }
                 best = e;
                 bestWorld = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                primaryFound = c->isPrimary != 0;
+                primaryFound = c->isPrimary;
             }
         });
     }
@@ -380,7 +380,7 @@ bool AudioSourceSystem::PlayEntity(World& world, AudioSystem& audio, const Sound
 
     if (asset->stream) {
         SoundAsset a = *asset; // コンポーネント側の音量上書きだけ載せる (Update と同じ規則)
-        const float vol = src->mute != 0 ? 0.0f : std::clamp(src->volume, 0.0f, 1.0f);
+        const float vol = src->mute ? 0.0f : std::clamp(src->volume, 0.0f, 1.0f);
         a.volume = std::clamp(a.volume * vol, 0.0f, 1.0f);
         return PlayMusicSound(audio, a, kMusicDefaultFadeSeconds);
     }
@@ -584,8 +584,8 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
             // 定位も減衰もドップラーも掛からない (BGM は 2D)。**レーンは 1 本**なので、
             // stream の AudioSource を 2 つ置くと後勝ちでクロスフェードする
             if (asset->stream) {
-                if (simulateScripts && src->playOnAwake != 0 && !st.started) {
-                    const float vol = src->mute != 0 ? 0.0f : std::clamp(src->volume, 0.0f, 1.0f);
+                if (simulateScripts && src->playOnAwake && !st.started) {
+                    const float vol = src->mute ? 0.0f : std::clamp(src->volume, 0.0f, 1.0f);
                     SoundAsset a = *asset; // コンポーネント側の音量上書きだけ載せる
                     a.volume = std::clamp(a.volume * vol, 0.0f, 1.0f);
                     // 失敗 (ファイル未解決) なら started を立てずに次フレーム再挑戦する
@@ -597,7 +597,7 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
             }
 
             // ---- 再生開始 (playOnAwake)。経路は PlayEntity と共有の StartSource 1 本 ----
-            if (simulateScripts && src->playOnAwake != 0 && !st.started && !st.voice.Valid()) {
+            if (simulateScripts && src->playOnAwake && !st.started && !st.voice.Valid()) {
                 // クリップが未ロードの間は失敗する → started を立てずに次フレーム再挑戦する。
                 // ただしバリエーションが 1 つも無いアセットは打ち切る (毎フレーム試さない)
                 st.started = StartSource(audio, *asset, *src, st, pos) || st.variationIndex < 0;

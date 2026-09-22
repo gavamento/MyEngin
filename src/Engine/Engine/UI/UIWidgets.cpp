@@ -62,13 +62,13 @@ void SetSliderValue(UISliderComponent& slider, EntityID e, float value, UIIntera
 void ClickToggle(World& world, EntityID t, UIInteractionState& state)
 {
     auto* toggle = world.GetComponent<UIToggleComponent>(t);
-    const bool wasOn = toggle->isOn != 0;
+    const bool wasOn = toggle->isOn;
     bool on = !wasOn;
     const EntityID group = toggle->group;
     const UIToggleGroupComponent* g = RefAlive(world, group)
         ? world.GetComponent<UIToggleGroupComponent>(group) : nullptr;
     if (g != nullptr && IsEntityActive(world, group)) {
-        const bool allowSwitchOff = g->allowSwitchOff != 0;
+        const bool allowSwitchOff = g->allowSwitchOff;
         const ComponentTypeId req[] = { UIToggleComponent::sTypeId };
         if (!on && !allowSwitchOff) {
             // 自分を off にした後に群のどれも on でなければ、on のまま (Unity: m_IsOn || !AnyTogglesOn())
@@ -78,7 +78,7 @@ void ClickToggle(World& world, EntityID t, UIInteractionState& state)
                 for (uint32_t row = 0; row < arch.Count(); ++row) {
                     const EntityID u = arch.EntityAt(row);
                     const auto* other = static_cast<const UIToggleComponent*>(arch.GetPtr(ti, row));
-                    if (u != t && other->group == group && other->isOn != 0
+                    if (u != t && other->group == group && other->isOn
                         && IsEntityActive(world, u)) {
                         anyOtherOn = true;
                     }
@@ -96,14 +96,14 @@ void ClickToggle(World& world, EntityID t, UIInteractionState& state)
                     const EntityID u = arch.EntityAt(row);
                     auto* other = static_cast<UIToggleComponent*>(arch.GetPtr(ti, row));
                     if (u != t && other->group == group && IsEntityActive(world, u)) {
-                        other->isOn = 0;
+                        other->isOn = false;
                     }
                 }
             });
         }
     }
     if (on != wasOn) {
-        toggle->isOn = on ? 1 : 0;
+        toggle->isOn = on;
         state.changed = t;
     }
 }
@@ -191,7 +191,7 @@ void StepSlider(World& world, EntityID s, int dir, UIInteractionState& state)
     auto* slider = world.GetComponent<UISliderComponent>(s);
     const bool towardRightOrDown = (dir == uinav::kNavRight || dir == uinav::kNavDown);
     const float step =
-        (slider->wholeNumbers != 0) ? 1.0f : (slider->maxValue - slider->minValue) * 0.1f;
+        (slider->wholeNumbers) ? 1.0f : (slider->maxValue - slider->minValue) * 0.1f;
     const float delta = (towardRightOrDown != SliderIsReversed(*slider)) ? step : -step;
     SetSliderValue(*slider, s, slider->value + delta, state);
 }
@@ -231,7 +231,7 @@ bool IsFocusCandidate(World& world, EntityID e)
         return sel.interactable != 0 && sel.navigationMode != kNavNone;
     }
     const auto* el = world.GetComponent<UIElementComponent>(e);
-    return el != nullptr && el->focusable != 0;
+    return el != nullptr && el->focusable;
 }
 
 EntityID BubbleTarget(World& world, EntityID leaf)
@@ -290,7 +290,7 @@ float SliderClampValue(const UISliderComponent& slider, float value)
         v = lo; // NaN は最小値へ (比較が全部偽になって素通りするのを塞ぐ)
     }
     v = (v < lo) ? lo : ((v > hi) ? hi : v);
-    if (slider.wholeNumbers != 0) {
+    if (slider.wholeNumbers) {
         v = RoundHalfEven(v);
     }
     return v;
@@ -450,7 +450,7 @@ void CollectVisualOverrides(World& world, const UIInteractionState* ui,
             const int ti = arch.FindTypeIndex(UIToggleComponent::sTypeId);
             for (uint32_t row = 0; row < arch.Count(); ++row) {
                 const auto* toggle = static_cast<const UIToggleComponent*>(arch.GetPtr(ti, row));
-                if (toggle->isOn != 0 || !RefAlive(world, toggle->graphic)
+                if (toggle->isOn || !RefAlive(world, toggle->graphic)
                     || !IsEntityActive(world, arch.EntityAt(row))) {
                     continue;
                 }

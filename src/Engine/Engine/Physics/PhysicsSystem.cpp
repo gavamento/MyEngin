@@ -1216,7 +1216,7 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
         c.cc->velocity.x = (pose.px - c.px) * invDt;
         c.cc->velocity.y = vy;
         c.cc->velocity.z = (pose.pz - c.pz) * invDt;
-        c.cc->isGrounded = grounded ? 1 : 0;
+        c.cc->isGrounded = grounded;
         if (c.frame.identity) {
             c.lt->position = { pose.px, pose.py, pose.pz };
         } else {
@@ -2077,7 +2077,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             if (!wlt) {
                 // 行き先が無い車輪 = 何もしないが、**出力は倒しておく**。前 tick の
                 // 「接地していた」が残ると、車体を消しただけで isGrounded が凍る
-                l.wc->isGrounded = 0;
+                l.wc->isGrounded = false;
                 l.wc->compression = 0.0f;
                 continue;
             }
@@ -2098,7 +2098,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             // そのまま沈み込みの誤差になる
             const float dl2 = l.ldx * l.ldx + l.ldy * l.ldy + l.ldz * l.ldz;
             if (dl2 < 1e-12f) {
-                l.wc->isGrounded = 0;
+                l.wc->isGrounded = false;
                 l.wc->compression = 0.0f;
                 continue; // 向きが定義できない (決定論的分岐)
             }
@@ -2108,7 +2108,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             l.ldz *= dinv;
             // 出力の初期値は**前 tick の値**。車体が眠っているあいだサスは何も測らないので、
             // そのまま書き戻すことで「眠った瞬間の接地状態」が凍る (下の invMass 分岐)
-            l.grounded = (l.wc->isGrounded != 0);
+            l.grounded = l.wc->isGrounded;
             l.compression = l.wc->compression;
             // ---- タイヤ (M60h2): **車体に Vehicle が付いているときだけ** ----
             // ★探すのは「力を入れる剛体と同じエンティティ」1 箇所だけ。祖先を辿らないのは、
@@ -2700,7 +2700,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 bp.identityRot = 1;
             }
             float planeY = env ? env->waterPlaneY : kDefaultWaterPlaneY;
-            if (activeWave && activeWave->affectBuoyancy != 0) {
+            if (activeWave && activeWave->affectBuoyancy) {
                 planeY = wave::EvaluateWaveHeight(activeWaveParams, activeWave->waveCount,
                                                   bp.px, bp.pz, time_,
                                                   activeWave->baseHeight, activeWave->overallScale,
@@ -4442,7 +4442,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     //   (M60d の破断フラグと同じ棚)。読み手 (スクリプト / Inspector / h2 のタイヤ) から
     //   見ても「その tick の最終状態」で揃う。
     for (const WheelLink& l : wheelLinks) {
-        l.wc->isGrounded = l.grounded ? 1 : 0;
+        l.wc->isGrounded = l.grounded;
         l.wc->compression = l.compression;
         if (l.veh) {
             l.wc->steerAngle = l.steerAngle;
@@ -4726,7 +4726,7 @@ const WaterWaveComponent* ResolveActiveWaterWave(World& world)
                 continue;
             }
             const auto* wave = static_cast<const WaterWaveComponent*>(arch.GetPtr(wi, row));
-            if (wave && wave->enabled != 0) {
+            if (wave && wave->enabled) {
                 bestIndex = e.index;
                 best = wave;
             }

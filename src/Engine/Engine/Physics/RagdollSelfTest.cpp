@@ -83,7 +83,7 @@ Rig BuildRig(Scene& s, AssetID model, bool withRagdoll, bool active, bool withBo
     sm->model = model;
     sm->clip = clip;
     sm->timeTicks = timeTicks; // SkinningSystem は回さない (試験が時刻を明示的に置く)
-    sm->playing = 0;
+    sm->playing = false;
     if (withRagdoll) {
         r.skin.AddComponent<RagdollComponent>()->active = active;
     }

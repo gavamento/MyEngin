@@ -19,7 +19,7 @@ PostProcess::Settings MergeCameraPostFx(const PostProcess::Settings& base,
     PostProcess::Settings s = base; // applyGamma は base を維持
     s.exposure = (comp.exposure >= 0.0f) ? comp.exposure : 0.0f;
     s.tonemap = (comp.tonemapMode >= 0 && comp.tonemapMode <= 2) ? comp.tonemapMode : 1;
-    s.bloom = comp.bloomOn != 0;
+    s.bloom = comp.bloomOn;
     s.bloomThreshold = comp.bloomThreshold;
     s.chromAberration = comp.chromAberration; // M32d
     s.vignetteIntensity = comp.vignetteIntensity;

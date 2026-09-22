@@ -36,7 +36,7 @@ void RestartSubtreeAnimators(World& world, EntityID root)
     ForEachInSubtree(world, root, [&](EntityID e, uint32_t) {
         if (auto* an = world.GetComponent<AnimatorComponent>(e)) {
             an->timeTicks = 0;
-            an->playing = 1;
+            an->playing = true;
         }
         return WalkStep::Continue;
     });
@@ -48,7 +48,7 @@ void EffectSystem::RestartEffect(World& world, EntityID root)
 {
     if (auto* fx = world.GetComponent<EffectComponent>(root)) {
         fx->elapsedTicks = 0;
-        fx->playing = 1;
+        fx->playing = true;
     }
     SetSubtreeEmission(world, root, true);
     RestartSubtreeAnimators(world, root);

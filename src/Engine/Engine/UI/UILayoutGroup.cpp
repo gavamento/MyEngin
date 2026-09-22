@@ -702,7 +702,7 @@ bool IsLayoutChild(World& world, EntityID group, EntityID child)
         return false;
     }
     if (const auto* le = world.GetComponent<UILayoutElementComponent>(child);
-        le != nullptr && le->ignoreLayout != 0) {
+        le != nullptr && le->ignoreLayout) {
         return false;
     }
     return IsEntityActive(world, child);
@@ -799,10 +799,10 @@ uint32_t LayoutDrivenBits(World& world, EntityID e)
     if (!parent.IsNull() && IsLayoutChild(world, parent, e)) {
         const auto* g = world.GetComponent<UILayoutGroupComponent>(parent);
         bits |= kDrivenByGroup;
-        if (g->kind == kLayoutGrid || g->controlChildWidth != 0) {
+        if (g->kind == kLayoutGrid || g->controlChildWidth) {
             bits |= kDrivenWidth;
         }
-        if (g->kind == kLayoutGrid || g->controlChildHeight != 0) {
+        if (g->kind == kLayoutGrid || g->controlChildHeight) {
             bits |= kDrivenHeight;
         }
     }

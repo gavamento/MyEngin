@@ -18,7 +18,7 @@ bool IsEntityActive(World& world, EntityID e)
 {
     for (EntityID cur = e; !cur.IsNull(); cur = world.GetParent(cur)) {
         const auto* a = world.GetComponent<ActiveComponent>(cur);
-        if (a != nullptr && a->enabled == 0) {
+        if (a != nullptr && !a->enabled) {
             return false;
         }
     }
@@ -70,7 +70,7 @@ void RegisterBuiltinComponents()
         MYE_JP("視野角 (度)", MYE_FIELD(CameraComponent, fovYDeg, Float)),
         MYE_JP("ニアクリップ", MYE_FIELD(CameraComponent, nearZ, Float)),
         MYE_JP("ファークリップ", MYE_FIELD(CameraComponent, farZ, Float)),
-        MYE_JP("メインカメラ", MYE_FIELD(CameraComponent, isPrimary, Int32)),
+        MYE_JP("メインカメラ", MYE_FIELD(CameraComponent, isPrimary, Bool)),
     });
 
     RegisterComponent<LightComponent>("Light", {
@@ -81,7 +81,7 @@ void RegisterBuiltinComponents()
         MYE_JP("範囲", MYE_FIELD(LightComponent, range, Float)),
         MYE_JP("スポット内角 (度)", MYE_FIELD(LightComponent, spotInnerDeg, Float)),
         MYE_JP("スポット外角 (度)", MYE_FIELD(LightComponent, spotOuterDeg, Float)),
-        MYE_JP("影を落とす", MYE_FIELD(LightComponent, castShadow, Int32)), // M54b (点/スポット用)
+        MYE_JP("影を落とす", MYE_FIELD(LightComponent, castShadow, Bool)), // M54b (点/スポット用)
         MYE_JP("安全半径", MYE_FIELD(LightComponent, safeRadius, Float)),
     });
 
@@ -112,9 +112,9 @@ void RegisterBuiltinComponents()
         MYE_JP("最大数", MYE_FIELD(ParticleEmitterComponent, maxParticles, Int32)),
         // M32a: ライフサイクル + 多点グラデーション + テクスチャ/フリップブック + ソフトパーティクル。
         // 末尾 append なので既存シーンは既定値ロードで挙動不変 (ハッシュは変わる → golden 再記録)。
-        MYE_JP("再生中", MYE_FIELD(ParticleEmitterComponent, playing, Int32)),
+        MYE_JP("再生中", MYE_FIELD(ParticleEmitterComponent, playing, Bool)),
         MYE_JP("長さ (tick)", MYE_FIELD(ParticleEmitterComponent, durationTicks, Int32)),
-        MYE_JP("ループ", MYE_FIELD(ParticleEmitterComponent, looping, Int32)),
+        MYE_JP("ループ", MYE_FIELD(ParticleEmitterComponent, looping, Bool)),
         MYE_JP("バースト数", MYE_FIELD(ParticleEmitterComponent, burstCount, Int32)),
         MYE_JP("中間色 1", MYE_FIELD(ParticleEmitterComponent, colorMid1, Color)),
         MYE_JP("中間色 1 の t", MYE_FIELD(ParticleEmitterComponent, colorMidT1, Float)),
@@ -128,13 +128,13 @@ void RegisterBuiltinComponents()
         MYE_JP("フリップ周回数", MYE_FIELD(ParticleEmitterComponent, flipCycles, Float)),
         MYE_JP("ソフトフェード距離", MYE_FIELD(ParticleEmitterComponent, softFadeDistance, Float)),
         // M42e: GPU 深度衝突 (末尾 append)
-        MYE_JP("深度バッファ衝突", MYE_FIELD(ParticleEmitterComponent, depthCollision, Int32)),
+        MYE_JP("深度バッファ衝突", MYE_FIELD(ParticleEmitterComponent, depthCollision, Bool)),
         MYE_JP("衝突時の反発", MYE_FIELD_RANGE(ParticleEmitterComponent, collisionBounce, Float, 0.0f, 1.0f)),
         // M61a: A群拡張 (末尾 append)。既定値では拡張を使わない経路とビット同一
         MYE_JP("速度の継承", MYE_FIELD(ParticleEmitterComponent, velocityInheritance, Float)),
         MYE_JP("シミュレーション空間", MYE_FIELD(ParticleEmitterComponent, simulationSpace, Int32)),
         MYE_JP("プリウォーム (秒)", MYE_FIELD(ParticleEmitterComponent, prewarmTime, Float)),
-        MYE_JP("サブフレーム放出", MYE_FIELD(ParticleEmitterComponent, subframeEmission, Int32)),
+        MYE_JP("サブフレーム放出", MYE_FIELD(ParticleEmitterComponent, subframeEmission, Bool)),
         MYE_JP("乱流モード", MYE_FIELD(ParticleEmitterComponent, turbulenceMode, Int32)),
         MYE_JP("ノイズ周波数", MYE_FIELD(ParticleEmitterComponent, noiseFrequency, Float)),
         MYE_JP("ノイズ速度", MYE_FIELD(ParticleEmitterComponent, noiseSpeed, Float)),
@@ -147,16 +147,16 @@ void RegisterBuiltinComponents()
         MYE_JP("速度ストレッチ", MYE_FIELD(ParticleEmitterComponent, stretchScale, Float)),
         MYE_JP("ストレッチ上限", MYE_FIELD(ParticleEmitterComponent, stretchMax, Float)),
         MYE_JP("フリップ FPS", MYE_FIELD(ParticleEmitterComponent, flipFps, Float)),
-        MYE_JP("フリップ補間", MYE_FIELD(ParticleEmitterComponent, flipBlend, Int32)),
-        MYE_JP("フリップ開始をランダム化", MYE_FIELD(ParticleEmitterComponent, flipRandomStart, Int32)),
+        MYE_JP("フリップ補間", MYE_FIELD(ParticleEmitterComponent, flipBlend, Bool)),
+        MYE_JP("フリップ開始をランダム化", MYE_FIELD(ParticleEmitterComponent, flipRandomStart, Bool)),
         MYE_JP("ライティング", MYE_FIELD(ParticleEmitterComponent, lightingMode, Int32)),
         MYE_JP("ラップ拡散", MYE_FIELD_RANGE(ParticleEmitterComponent, lightWrap, Float, 0.0f, 1.0f)),
         MYE_JP("受光の強さ", MYE_FIELD(ParticleEmitterComponent, lightIntensity, Float)),
-        MYE_JP("影を受ける", MYE_FIELD(ParticleEmitterComponent, lightReceiveShadow, Int32)),
+        MYE_JP("影を受ける", MYE_FIELD(ParticleEmitterComponent, lightReceiveShadow, Bool)),
         MYE_JP("衝突の厚み", MYE_FIELD(ParticleEmitterComponent, collisionThickness, Float)),
         MYE_JP("衝突時の摩擦", MYE_FIELD_RANGE(ParticleEmitterComponent, collisionFriction, Float, 0.0f, 1.0f)),
         MYE_JP("衝突時の寿命損失", MYE_FIELD_RANGE(ParticleEmitterComponent, collisionLifeLoss, Float, 0.0f, 1.0f)),
-        MYE_JP("解析床と衝突", MYE_FIELD(ParticleEmitterComponent, collisionFloor, Int32)),
+        MYE_JP("解析床と衝突", MYE_FIELD(ParticleEmitterComponent, collisionFloor, Bool)),
         MYE_JP("解析床の高さ", MYE_FIELD(ParticleEmitterComponent, collisionFloorY, Float)),
     });
 
@@ -181,7 +181,7 @@ void RegisterBuiltinComponents()
 
     // M10: 無ければ有効扱い
     RegisterComponent<ActiveComponent>("Active", {
-        MYE_JP("有効", MYE_FIELD(ActiveComponent, enabled, Int32)),
+        MYE_JP("有効", MYE_FIELD(ActiveComponent, enabled, Bool)),
     });
 
     // M13: プレハブタグ。純データ (どのシステムにも参加しない = sim 非影響)。
@@ -201,8 +201,8 @@ void RegisterBuiltinComponents()
         MYE_JP("クリップ", MYE_FIELD(AnimatorComponent, clip, AssetRef)),
         MYE_JP("再生位置 (tick)", MYE_FIELD_FLAGS(AnimatorComponent, timeTicks, Int32, kFieldReadOnly)),
         MYE_JP("速度", MYE_FIELD(AnimatorComponent, speed, Int32)),
-        MYE_JP("ループ", MYE_FIELD(AnimatorComponent, loop, Int32)),
-        MYE_JP("再生中", MYE_FIELD(AnimatorComponent, playing, Int32)),
+        MYE_JP("ループ", MYE_FIELD(AnimatorComponent, loop, Bool)),
+        MYE_JP("再生中", MYE_FIELD(AnimatorComponent, playing, Bool)),
     });
 
     // M18: スケルタルスキニング。ポーズは描画専用なので **kComponentNoHash**。
@@ -214,8 +214,8 @@ void RegisterBuiltinComponents()
         MYE_JP("モデル", MYE_FIELD(SkinnedMeshComponent, model, AssetRef)),
         MYE_JP("クリップ", MYE_FIELD(SkinnedMeshComponent, clip, Int32)),
         MYE_JP("再生位置 (tick)", MYE_FIELD_FLAGS(SkinnedMeshComponent, timeTicks, Int32, kFieldReadOnly)),
-        MYE_JP("再生中", MYE_FIELD(SkinnedMeshComponent, playing, Int32)),
-        MYE_JP("ループ", MYE_FIELD(SkinnedMeshComponent, loop, Int32)),
+        MYE_JP("再生中", MYE_FIELD(SkinnedMeshComponent, playing, Bool)),
+        MYE_JP("ループ", MYE_FIELD(SkinnedMeshComponent, loop, Bool)),
         MYE_JP("クロスフェード (tick)", MYE_FIELD(SkinnedMeshComponent, fadeTicks, Int32)),
         MYE_JP("観測したクリップ", MYE_FIELD_FLAGS(SkinnedMeshComponent, observedClip, Int32, kFieldReadOnly | kFieldNoSerialize)),
         MYE_JP("フェード元クリップ", MYE_FIELD_FLAGS(SkinnedMeshComponent, fromClip, Int32, kFieldReadOnly | kFieldNoSerialize)),
@@ -233,7 +233,7 @@ void RegisterBuiltinComponents()
         MYE_JP("移動の減衰", MYE_FIELD(RigidbodyComponent, linearDamping, Float)),
         MYE_JP("反発", MYE_FIELD(RigidbodyComponent, restitution, Float)),
         MYE_JP("重力スケール", MYE_FIELD(RigidbodyComponent, gravityScale, Float)),
-        MYE_JP("キネマティック", MYE_FIELD(RigidbodyComponent, isKinematic, Int32)),
+        MYE_JP("キネマティック", MYE_FIELD(RigidbodyComponent, isKinematic, Bool)),
         MYE_JP("角速度", MYE_FIELD(RigidbodyComponent, angularVelocity, Float3)),
         MYE_JP("回転の減衰", MYE_FIELD(RigidbodyComponent, angularDamping, Float)),
         MYE_JP("回転を固定", MYE_FIELD(RigidbodyComponent, freezeRotation, Bool)),
@@ -285,11 +285,11 @@ void RegisterBuiltinComponents()
         MYE_JP("フィル量", MYE_FIELD_RANGE(UIElementComponent, fillAmount, Float, 0.0f, 1.0f)),
         MYE_JP("フィル方向", MYE_FIELD_TIP(UIElementComponent, fillMode, Int32, "0=off 1=horizontal 2=vertical")),
         MYE_JP("スライス境界", MYE_FIELD_TIP(UIElementComponent, sliceBorder, Float4, "9-slice border px (l,t,r,b)")),
-        MYE_JP("9 スライス", MYE_FIELD(UIElementComponent, sliced, Int32)),
-        MYE_JP("フォーカス可", MYE_FIELD(UIElementComponent, focusable, Int32)),
-        MYE_JP("フォーカス中", MYE_FIELD(UIElementComponent, focused, Int32)),
+        MYE_JP("9 スライス", MYE_FIELD(UIElementComponent, sliced, Bool)),
+        MYE_JP("フォーカス可", MYE_FIELD(UIElementComponent, focusable, Bool)),
+        MYE_JP("フォーカス中", MYE_FIELD(UIElementComponent, focused, Bool)),
         // M51e 拡張 (末尾 append)
-        MYE_JP("子をクリップ", MYE_FIELD(UIElementComponent, clipChildren, Int32)),
+        MYE_JP("子をクリップ", MYE_FIELD(UIElementComponent, clipChildren, Bool)),
         MYE_JP("文字整列", MYE_FIELD_TIP(UIElementComponent, align, Int32, "9-grid 0..8 (text only)")),
         MYE_JP("折返し", MYE_FIELD_TIP(UIElementComponent, wrap, Int32, "0=off 1=char wrap at width")),
         // ワールド追従 UI (末尾 append、NoHash)。追従は自動判定 — これらは追従要素の見た目調整
@@ -356,7 +356,7 @@ void RegisterBuiltinComponents()
         MYE_JP("移動入力", MYE_FIELD(CharacterControllerComponent, moveInput, Float3)),
         MYE_JP("速度", MYE_FIELD_FLAGS(CharacterControllerComponent, velocity, Float3, kFieldReadOnly)),
         MYE_JP("ジャンプ速度", MYE_FIELD_FLAGS(CharacterControllerComponent, jumpSpeed, Float, kFieldHidden)),
-        MYE_JP("接地している", MYE_FIELD_FLAGS(CharacterControllerComponent, isGrounded, Int32, kFieldReadOnly)),
+        MYE_JP("接地している", MYE_FIELD_FLAGS(CharacterControllerComponent, isGrounded, Bool, kFieldReadOnly)),
     });
 
     // M29c: スプライト/トレイル/3D テキスト。描画専用なので **kComponentNoHash**。
@@ -374,7 +374,7 @@ void RegisterBuiltinComponents()
         MYE_JP("開始色", MYE_FIELD(TrailRendererComponent, colorBegin, Color)),
         MYE_JP("終了色", MYE_FIELD(TrailRendererComponent, colorEnd, Color)),
         MYE_JP("頂点の最小間隔", MYE_FIELD_RANGE(TrailRendererComponent, minVertexDistance, Float, 0.001f, 10.0f)),
-        MYE_JP("放出中", MYE_FIELD(TrailRendererComponent, emitting, Int32)),
+        MYE_JP("放出中", MYE_FIELD(TrailRendererComponent, emitting, Bool)),
     }, kComponentNoHash);
 
     RegisterComponent<TextMeshComponent>("TextMesh", {
@@ -397,7 +397,7 @@ void RegisterBuiltinComponents()
         MYE_JP("星の明るさ", MYE_FIELD_RANGE(SkyboxComponent, starBrightness, Float, 0.0f, 20.0f)),
         MYE_JP("星の瞬き", MYE_FIELD_RANGE(SkyboxComponent, starTwinkle, Float, 0.0f, 1.0f)),
         MYE_JP("星の細かさ", MYE_FIELD_RANGE(SkyboxComponent, starCells, Int32, 1.0f, 1024.0f)),
-        MYE_JP("環境光に使う", MYE_FIELD_RANGE(SkyboxComponent, lighting, Int32, 0.0f, 1.0f)),
+        MYE_JP("環境光に使う", MYE_FIELD(SkyboxComponent, lighting, Bool)),
     }, kComponentNoHash);
 
     RegisterComponent<FogComponent>("Fog", {
@@ -418,10 +418,10 @@ void RegisterBuiltinComponents()
     RegisterComponent<CameraPostFxComponent>("CameraPostFx", {
         MYE_JP("露出", MYE_FIELD_RANGE(CameraPostFxComponent, exposure, Float, 0.0f, 16.0f)),
         MYE_JP("トーンマップ", MYE_FIELD(CameraPostFxComponent, tonemapMode, Int32)),
-        MYE_JP("ブルーム", MYE_FIELD(CameraPostFxComponent, bloomOn, Int32)),
+        MYE_JP("ブルーム", MYE_FIELD(CameraPostFxComponent, bloomOn, Bool)),
         MYE_JP("ブルームしきい値", MYE_FIELD(CameraPostFxComponent, bloomThreshold, Float)),
         MYE_JP("ブルーム強度", MYE_FIELD(CameraPostFxComponent, bloomIntensity, Float)),
-        MYE_JP("FXAA", MYE_FIELD(CameraPostFxComponent, fxaaOn, Int32)),
+        MYE_JP("FXAA", MYE_FIELD(CameraPostFxComponent, fxaaOn, Bool)),
         // M32d: 色収差 / ビネット / カラーグレーディング (末尾 append)
         MYE_JP("色収差", MYE_FIELD_RANGE(CameraPostFxComponent, chromAberration, Float, 0.0f, 0.05f)),
         MYE_JP("ビネット強度", MYE_FIELD_RANGE(CameraPostFxComponent, vignetteIntensity, Float, 0.0f, 1.0f)),
@@ -439,7 +439,7 @@ void RegisterBuiltinComponents()
         MYE_JP("LUT テクスチャ", MYE_FIELD(CameraPostFxComponent, lutTexture, AssetRef)),
         MYE_JP("LUT 強度", MYE_FIELD_RANGE(CameraPostFxComponent, lutIntensity, Float, 0.0f, 1.0f)),
         // M44b: 自動露出 (末尾 append)
-        MYE_JP("自動露出", MYE_FIELD(CameraPostFxComponent, autoExposure, Int32)),
+        MYE_JP("自動露出", MYE_FIELD(CameraPostFxComponent, autoExposure, Bool)),
         MYE_JP("自動露出の追従速度", MYE_FIELD_RANGE(CameraPostFxComponent, aeSpeed, Float, 0.1f, 20.0f)),
         MYE_JP("自動露出の下限", MYE_FIELD_RANGE(CameraPostFxComponent, aeMin, Float, 0.01f, 1.0f)),
         MYE_JP("自動露出の上限", MYE_FIELD_RANGE(CameraPostFxComponent, aeMax, Float, 1.0f, 16.0f)),
@@ -451,14 +451,14 @@ void RegisterBuiltinComponents()
         MYE_JP("モーションブラー強度", MYE_FIELD_RANGE(CameraPostFxComponent, motionBlurIntensity, Float, 0.0f, 1.0f)),
         MYE_JP("モーションブラー最大画素", MYE_FIELD_RANGE(CameraPostFxComponent, mbMaxPixels, Float, 1.0f, 64.0f)),
         // M55d: TAA (末尾 append)。Deferred のみ効く
-        MYE_JP("TAA", MYE_FIELD(CameraPostFxComponent, taaOn, Int32)),
+        MYE_JP("TAA", MYE_FIELD(CameraPostFxComponent, taaOn, Bool)),
         MYE_JP("TAA 履歴の残し率", MYE_FIELD_RANGE(CameraPostFxComponent, taaFeedback, Float, 0.0f, 0.95f)),
         // M56d: SSR (末尾 append)。Deferred のみ効く
-        MYE_JP("SSR", MYE_FIELD(CameraPostFxComponent, ssrOn, Int32)),
+        MYE_JP("SSR", MYE_FIELD(CameraPostFxComponent, ssrOn, Bool)),
         MYE_JP("SSR 最大粗さ", MYE_FIELD_RANGE(CameraPostFxComponent, ssrMaxRoughness, Float, 0.0f, 1.0f)),
         MYE_JP("SSR 強度", MYE_FIELD_RANGE(CameraPostFxComponent, ssrIntensity, Float, 0.0f, 2.0f)),
         // M57c: フロクセル・ボリュメトリック (末尾 append)
-        MYE_JP("ボリュメトリック霧", MYE_FIELD(CameraPostFxComponent, froxelOn, Int32)),
+        MYE_JP("ボリュメトリック霧", MYE_FIELD(CameraPostFxComponent, froxelOn, Bool)),
         MYE_JP("霧の密度", MYE_FIELD_RANGE(CameraPostFxComponent, froxelDensity, Float, 0.0f, 0.5f)),
         MYE_JP("霧の異方性", MYE_FIELD_RANGE(CameraPostFxComponent, froxelAnisotropy, Float, -0.9f, 0.9f)),
     }, kComponentNoHash);
@@ -468,27 +468,27 @@ void RegisterBuiltinComponents()
         MYE_JP("長さ (tick)", MYE_FIELD(EffectComponent, durationTicks, Int32)),
         MYE_JP("余韻 (tick)", MYE_FIELD(EffectComponent, lingerTicks, Int32)),
         MYE_JP("経過 (tick)", MYE_FIELD_FLAGS(EffectComponent, elapsedTicks, Int32, kFieldReadOnly)),
-        MYE_JP("再生中", MYE_FIELD(EffectComponent, playing, Int32)),
-        MYE_JP("ループ", MYE_FIELD(EffectComponent, looping, Int32)),
-        MYE_JP("再生後に破棄", MYE_FIELD(EffectComponent, autoDestroy, Int32)),
+        MYE_JP("再生中", MYE_FIELD(EffectComponent, playing, Bool)),
+        MYE_JP("ループ", MYE_FIELD(EffectComponent, looping, Bool)),
+        MYE_JP("再生後に破棄", MYE_FIELD(EffectComponent, autoDestroy, Bool)),
     });
 
     // M45e: 3D オーディオ。**出力 sink であり決定論レーン外なので kComponentNoHash**
     // (WorldHasher.cpp が NoHash を丸ごとスキップする)。
     RegisterComponent<AudioListenerComponent>("AudioListener", {
-        MYE_JP("有効", MYE_FIELD(AudioListenerComponent, enabled, Int32)),
+        MYE_JP("有効", MYE_FIELD(AudioListenerComponent, enabled, Bool)),
     }, kComponentNoHash);
 
     RegisterComponent<AudioSourceComponent>("AudioSource", {
         MYE_JP("サウンド", MYE_FIELD(AudioSourceComponent, sound, AssetRef)),
-        MYE_JP("起動時に再生", MYE_FIELD(AudioSourceComponent, playOnAwake, Int32)),
+        MYE_JP("起動時に再生", MYE_FIELD(AudioSourceComponent, playOnAwake, Bool)),
         MYE_JP("ループ", MYE_FIELD(AudioSourceComponent, loop, Int32)),
         MYE_JP("音量", MYE_FIELD_RANGE(AudioSourceComponent, volume, Float, 0.0f, 1.0f)),
         MYE_JP("ピッチ", MYE_FIELD_RANGE(AudioSourceComponent, pitch, Float, 0.25f, 4.0f)),
-        MYE_JP("ミュート", MYE_FIELD(AudioSourceComponent, mute, Int32)),
+        MYE_JP("ミュート", MYE_FIELD(AudioSourceComponent, mute, Bool)),
         MYE_JP("優先度", MYE_FIELD(AudioSourceComponent, priority, Int32)),
         MYE_JP("バス", MYE_FIELD(AudioSourceComponent, bus, String64)),
-        MYE_JP("減衰を上書き", MYE_FIELD(AudioSourceComponent, overrideAttenuation, Int32)),
+        MYE_JP("減衰を上書き", MYE_FIELD(AudioSourceComponent, overrideAttenuation, Bool)),
         MYE_JP("spatial blend", MYE_FIELD_RANGE(AudioSourceComponent, spatialBlend, Float, 0.0f, 1.0f)),
         MYE_JP("最小距離", MYE_FIELD_RANGE(AudioSourceComponent, minDistance, Float, 0.01f, 1000.0f)),
         MYE_JP("最大距離", MYE_FIELD_RANGE(AudioSourceComponent, maxDistance, Float, 0.02f, 10000.0f)),
@@ -758,7 +758,7 @@ void RegisterBuiltinComponents()
                                          "bottoming out, in metres. 0 or below leaves the "
                                          "travel unlimited")),
         MYE_JP("接地している",
-               MYE_FIELD_FLAGS(WheelComponent, isGrounded, Int32, kFieldReadOnly)),
+               MYE_FIELD_FLAGS(WheelComponent, isGrounded, Bool, kFieldReadOnly)),
         MYE_JP("圧縮量", MYE_FIELD_FLAGS(WheelComponent, compression, Float, kFieldReadOnly)),
         // M60h2: タイヤ (末尾 append)。効くのは車体に Vehicle があるときだけ
         MYE_JP("ステア追従率", MYE_FIELD_TIP(WheelComponent, steerFactor, Float,
@@ -1059,15 +1059,15 @@ void RegisterBuiltinComponents()
                                      "gap between children; horizontal uses x, vertical y, grid both")),
         MYE_JP("子の整列", MYE_FIELD_TIP(UILayoutGroupComponent, childAlignment, Int32,
                                          "9-grid 0..8 (0 = upper left)")),
-        MYE_JP("子の幅を制御", MYE_FIELD_TIP(UILayoutGroupComponent, controlChildWidth, Int32,
+        MYE_JP("子の幅を制御", MYE_FIELD_TIP(UILayoutGroupComponent, controlChildWidth, Bool,
                                              "horizontal/vertical: the group sets child widths")),
-        MYE_JP("子の高さを制御", MYE_FIELD_TIP(UILayoutGroupComponent, controlChildHeight, Int32,
+        MYE_JP("子の高さを制御", MYE_FIELD_TIP(UILayoutGroupComponent, controlChildHeight, Bool,
                                                "horizontal/vertical: the group sets child heights")),
-        MYE_JP("幅を広げる", MYE_FIELD_TIP(UILayoutGroupComponent, forceExpandWidth, Int32,
+        MYE_JP("幅を広げる", MYE_FIELD_TIP(UILayoutGroupComponent, forceExpandWidth, Bool,
                                            "horizontal/vertical: hand spare width to every child")),
-        MYE_JP("高さを広げる", MYE_FIELD_TIP(UILayoutGroupComponent, forceExpandHeight, Int32,
+        MYE_JP("高さを広げる", MYE_FIELD_TIP(UILayoutGroupComponent, forceExpandHeight, Bool,
                                              "horizontal/vertical: hand spare height to every child")),
-        MYE_JP("逆順に並べる", MYE_FIELD_TIP(UILayoutGroupComponent, reverseArrangement, Int32,
+        MYE_JP("逆順に並べる", MYE_FIELD_TIP(UILayoutGroupComponent, reverseArrangement, Bool,
                                              "horizontal/vertical: last sibling first")),
         MYE_JP("セルの大きさ", MYE_FIELD_TIP(UILayoutGroupComponent, cellSize, Float2,
                                              "grid: every child's size")),
@@ -1082,7 +1082,7 @@ void RegisterBuiltinComponents()
     }, kComponentNoHash | kComponentUiAux);
 
     RegisterComponent<UILayoutElementComponent>("UILayoutElement", {
-        MYE_JP("レイアウトを無視", MYE_FIELD_TIP(UILayoutElementComponent, ignoreLayout, Int32,
+        MYE_JP("レイアウトを無視", MYE_FIELD_TIP(UILayoutElementComponent, ignoreLayout, Bool,
                                                  "not arranged by the parent layout group")),
         MYE_JP("最小の幅", MYE_FIELD_TIP(UILayoutElementComponent, minWidth, Float, "negative = unset")),
         MYE_JP("最小の高さ", MYE_FIELD_TIP(UILayoutElementComponent, minHeight, Float, "negative = unset")),
@@ -1108,7 +1108,7 @@ void RegisterBuiltinComponents()
     // Toggle と Slider は **sim が値を書く状態なのでハッシュ対象** (UiAux だけ) — ここを NoHash にすると
     // ウィジェットの配線が壊れても replay_verify が緑のままになる
     RegisterComponent<UISelectableComponent>("UISelectable", {
-        MYE_JP("操作可能", MYE_FIELD_TIP(UISelectableComponent, interactable, Int32,
+        MYE_JP("操作可能", MYE_FIELD_TIP(UISelectableComponent, interactable, Bool,
                                          "0 = swallows the pointer but never presses, clicks or takes focus")),
         MYE_JP("遷移", MYE_FIELD_TIP(UISelectableComponent, transition, Int32,
                                      "0 = none 1 = color tint 2 = sprite swap")),
@@ -1133,7 +1133,7 @@ void RegisterBuiltinComponents()
     }, kComponentNoHash | kComponentUiAux);
 
     RegisterComponent<UIToggleComponent>("UIToggle", {
-        MYE_JP("オン", MYE_FIELD(UIToggleComponent, isOn, Int32)),
+        MYE_JP("オン", MYE_FIELD(UIToggleComponent, isOn, Bool)),
         MYE_JP("グラフィック", MYE_FIELD_TIP(UIToggleComponent, graphic, EntityRef,
                                              "drawn only while on (the check mark)")),
         MYE_JP("グループ", MYE_FIELD_TIP(UIToggleComponent, group, EntityRef,
@@ -1149,13 +1149,13 @@ void RegisterBuiltinComponents()
                                      "0 = left to right 1 = right to left 2 = bottom to top 3 = top to bottom")),
         MYE_JP("最小値", MYE_FIELD(UISliderComponent, minValue, Float)),
         MYE_JP("最大値", MYE_FIELD(UISliderComponent, maxValue, Float)),
-        MYE_JP("整数のみ", MYE_FIELD(UISliderComponent, wholeNumbers, Int32)),
+        MYE_JP("整数のみ", MYE_FIELD(UISliderComponent, wholeNumbers, Bool)),
         MYE_JP("値", MYE_FIELD(UISliderComponent, value, Float)),
         MYE_JP("掴んだ位置", MYE_FIELD_FLAGS(UISliderComponent, dragOffset, Float2, kFieldHidden)),
     }, kComponentUiAux);
 
     RegisterComponent<UIToggleGroupComponent>("UIToggleGroup", {
-        MYE_JP("すべてオフを許可", MYE_FIELD_TIP(UIToggleGroupComponent, allowSwitchOff, Int32,
+        MYE_JP("すべてオフを許可", MYE_FIELD_TIP(UIToggleGroupComponent, allowSwitchOff, Bool,
                                                  "clicking the only toggle that is on may turn it off")),
     }, kComponentNoHash | kComponentUiAux);
 
@@ -1171,7 +1171,7 @@ void RegisterBuiltinComponents()
         MYE_JP("クールダウン (tick)", MYE_FIELD(ModalSoundComponent, cooldownTicks, Int32)),
         MYE_JP("サイズ倍率", MYE_FIELD(ModalSoundComponent, sizeScale, Float)),
         MYE_JP("最大距離", MYE_FIELD(ModalSoundComponent, maxDistance, Float)),
-        MYE_JP("波の耳出しを消す", MYE_FIELD_TIP(ModalSoundComponent, muteWave, Int32,
+        MYE_JP("波の耳出しを消す", MYE_FIELD_TIP(ModalSoundComponent, muteWave, Bool,
                                                  "non-zero: mute the WaveSound playback once baked")),
     }, kComponentNoHash);
 
@@ -1187,12 +1187,12 @@ void RegisterBuiltinComponents()
     // 水面波 (TypeId=63、末尾 append)。
     // 三角関数 (Gerstner 波) によるリアルな水面シミュレーションと浮力連動。
     RegisterComponent<WaterWaveComponent>("WaterWave", {
-        MYE_JP("有効", MYE_FIELD(WaterWaveComponent, enabled, Int32)),
+        MYE_JP("有効", MYE_FIELD(WaterWaveComponent, enabled, Bool)),
         MYE_JP("基準高さ", MYE_FIELD(WaterWaveComponent, baseHeight, Float)),
         MYE_JP("波高倍率", MYE_FIELD_RANGE(WaterWaveComponent, overallScale, Float, 0.0f, 10.0f)),
         MYE_JP("時間倍率", MYE_FIELD_RANGE(WaterWaveComponent, timeScale, Float, 0.0f, 10.0f)),
         MYE_JP("有効波本数", MYE_FIELD_RANGE(WaterWaveComponent, waveCount, Int32, 1.0f, 4.0f)),
-        MYE_JP("浮力連動", MYE_FIELD(WaterWaveComponent, affectBuoyancy, Int32)),
+        MYE_JP("浮力連動", MYE_FIELD(WaterWaveComponent, affectBuoyancy, Bool)),
 
         MYE_JP("波0 振幅", MYE_FIELD_RANGE(WaterWaveComponent, wave0Amplitude, Float, 0.0f, 10.0f)),
         MYE_JP("波0 波長", MYE_FIELD_RANGE(WaterWaveComponent, wave0Wavelength, Float, 0.1f, 200.0f)),

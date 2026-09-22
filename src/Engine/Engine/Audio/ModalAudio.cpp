@@ -93,7 +93,7 @@ ModalMeshRef ResolveModalMesh(World& world, EntityID e, const ModalSoundComponen
             return WalkStep::SkipChildren; // 別の発音元 / 独立に動く物体
         }
         if (const auto* active = world.GetComponent<ActiveComponent>(cur)) {
-            if (active->enabled == 0) {
+            if (!active->enabled) {
                 return WalkStep::SkipChildren;
             }
         }

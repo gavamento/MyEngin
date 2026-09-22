@@ -56,14 +56,14 @@ void AdvanceTime(AnimatorComponent* a, int32_t length)
             a->timeTicks %= length;
         } else {
             a->timeTicks = length;
-            a->playing = 0;
+            a->playing = false;
         }
     } else if (a->timeTicks < 0) {
         if (a->loop) {
             a->timeTicks = ((a->timeTicks % length) + length) % length;
         } else {
             a->timeTicks = 0;
-            a->playing = 0;
+            a->playing = false;
         }
     }
 }

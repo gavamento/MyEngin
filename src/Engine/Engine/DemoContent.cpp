@@ -3146,7 +3146,7 @@ void BuildAcousticShowcaseScene(EngineContext& ctx)
         // ★GUID を直書きしない。名前キーで引くのでチェックアウト先にも .meta の作り直しにも
         //   依存しない (M74a 以前のモデル由来サブアセット ID が踏んだ罠と同じ種類を避ける)
         src->sound = AssetID{ ctx.sounds != nullptr ? ctx.sounds->ResolveKey(HashStr("hum")) : 0 };
-        src->playOnAwake = 1;
+        src->playOnAwake = true;
     }
 }
 

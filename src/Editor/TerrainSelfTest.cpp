@@ -459,10 +459,10 @@ bool RunTerrainSelfTest()
               "terrain: a second Collect reuses the cached chunk meshes");
 
         // 無効エンティティは収集しない
-        world.AddComponent<ActiveComponent>(e)->enabled = 0;
+        world.AddComponent<ActiveComponent>(e)->enabled = false;
         terrain.Collect(world, meshes, textures, root.wstring(), wide, view, items);
         check(items.empty(), "terrain: an inactive entity contributes no chunks");
-        world.GetComponent<ActiveComponent>(e)->enabled = 1;
+        world.GetComponent<ActiveComponent>(e)->enabled = true;
 
         // 空パス / 存在しないパスは黙って 0 件 (毎フレーム開き直さないよう失敗もキャッシュ)
         tc = world.GetComponent<TerrainComponent>(e);

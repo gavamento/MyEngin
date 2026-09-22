@@ -250,7 +250,7 @@ constexpr const char* kPtclSimSpaceLabels[] = { "World", "Local" };
 constexpr const char* kPtclTurbModeLabels[] = { "Vortex", "Noise" };
 constexpr const char* kPtclEmitFromLabels[] = { "Default", "Volume", "Surface" };
 // M63a: B群の enum は lightingMode の 1 種だけ。flipBlend / flipRandomStart /
-// lightReceiveShadow / collisionFloor は 0/1 の素の DragInt のままにする
+// lightReceiveShadow / collisionFloor は Bool 登録 (Checkbox) へ移行済み
 // (kOffOnLabels へ寄せると「オン/オフ」以上の意味を持つ日が来たとき値域を広げられない)
 constexpr const char* kPtclLightModeLabels[] = { "Unlit", "Per Particle", "Per Pixel" };
 constexpr const char* kUIKindLabels[] = { "Panel", "Text", "Button" };
@@ -350,26 +350,15 @@ constexpr EnumFieldLabels kEnumFields[] = {
     // M75e: 自動レイアウト
     { "UILayoutGroup", "kind", kUILayoutKindLabels, 3, kUILayoutKindJa },
     { "UILayoutGroup", "childAlignment", kUIAnchorLabels, 9, kUIAnchorJa },
-    { "UILayoutGroup", "controlChildWidth", kOffOnLabels, 2, kOffOnJa },
-    { "UILayoutGroup", "controlChildHeight", kOffOnLabels, 2, kOffOnJa },
-    { "UILayoutGroup", "forceExpandWidth", kOffOnLabels, 2, kOffOnJa },
-    { "UILayoutGroup", "forceExpandHeight", kOffOnLabels, 2, kOffOnJa },
-    { "UILayoutGroup", "reverseArrangement", kOffOnLabels, 2, kOffOnJa },
     { "UILayoutGroup", "startCorner", kUIGridCornerLabels, 4, kUIGridCornerJa },
     { "UILayoutGroup", "startAxis", kUIGridAxisLabels, 2, kUIGridAxisJa },
     { "UILayoutGroup", "constraint", kUIGridConstraintLabels, 3, kUIGridConstraintJa },
-    { "UILayoutElement", "ignoreLayout", kOffOnLabels, 2, kOffOnJa },
     { "UIContentSizeFitter", "horizontalFit", kUIFitModeLabels, 3, kUIFitModeJa },
     { "UIContentSizeFitter", "verticalFit", kUIFitModeLabels, 3, kUIFitModeJa },
     // M75f: ウィジェット
-    { "UISelectable", "interactable", kOffOnLabels, 2, kOffOnJa },
     { "UISelectable", "transition", kUITransitionLabels, 3, kUITransitionJa },
     { "UISelectable", "navigationMode", kUINavModeLabels, 5, kUINavModeJa },
-    { "UIToggle", "isOn", kOffOnLabels, 2, kOffOnJa },
-    { "UIToggleGroup", "allowSwitchOff", kOffOnLabels, 2, kOffOnJa },
     { "UISlider", "direction", kUISliderDirLabels, 4, kUISliderDirJa },
-    { "UISlider", "wholeNumbers", kOffOnLabels, 2, kOffOnJa },
-    { "UIElement", "clipChildren", kOffOnLabels, 2, kOffOnJa },
     { "UIElement", "wrap", kOffOnLabels, 2, kOffOnJa },
     { "ConstantForce", "relative", kForceSpaceLabels, 2, kForceSpaceJa },
     { "SpriteRenderer", "billboardMode", kBillboardLabels, 3, kBillboardJa },
@@ -377,8 +366,6 @@ constexpr EnumFieldLabels kEnumFields[] = {
     { "Skybox", "mode", kSkyboxModeLabels, 3, kSkyboxModeJa },
     { "Fog", "mode", kFogModeLabels, 3, kFogModeJa },
     { "CameraPostFx", "tonemapMode", kTonemapLabels, 3, kTonemapJa },
-    { "CameraPostFx", "bloomOn", kOffOnLabels, 2, kOffOnJa },
-    { "CameraPostFx", "fxaaOn", kOffOnLabels, 2, kOffOnJa },
     { "PartBounds", "shape", kPartBoundsShapeLabels, 2, kPartBoundsShapeJa },
 };
 

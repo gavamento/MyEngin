@@ -818,7 +818,7 @@ bool RunPartSelfTest()
         f.SetLocalPosition(0.8f, 0.0f, 0.0f);
         f.AddComponent<PartBoundsComponent>()->halfExtents = { 0.4f, 0.4f, 0.4f };
         setup(e, 1.0f, 0, 0.25f, kWeak);
-        e.AddComponent<ActiveComponent>()->enabled = 0;
+        e.AddComponent<ActiveComponent>()->enabled = false;
         setup(z, 1.2f, 0, 0.0f, kWeak);
         setup(a, 2.0f, 0, 0.5f, kWeak);
         setup(sb, 5.0f, 1, 0.5f, kCore);

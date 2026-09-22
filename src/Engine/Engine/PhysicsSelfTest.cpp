@@ -865,7 +865,7 @@ bool RunPhysicsSelfTest()
         for (int i = 0; i < 120; ++i) {
             phys.Update(s.GetWorld(), kDt);
         }
-        check(std::fabs(lt->position.y - 0.9f) < 0.02f && cc->isGrounded == 1,
+        check(std::fabs(lt->position.y - 0.9f) < 0.02f && cc->isGrounded,
               "character: lands on flat ground at capsule half height");
         cc->moveInput.x = 1.0f;
         for (int i = 0; i < 60; ++i) {
@@ -906,7 +906,7 @@ bool RunPhysicsSelfTest()
         for (int i = 0; i < 120; ++i) {
             phys.Update(s.GetWorld(), kDt);
         }
-        check(lt->position.x - x0 > 1.0f && lt->position.y - y0 > 0.4f && cc->isGrounded == 1,
+        check(lt->position.x - x0 > 1.0f && lt->position.y - y0 > 0.4f && cc->isGrounded,
               "character: climbs 30 deg slope (slopeLimit 45)");
     }
     {
@@ -959,7 +959,7 @@ bool RunPhysicsSelfTest()
                 maxY = lt->position.y;
             }
             if (i == 30) { // 滞空中 (vy ≈ 0.1) に空中ジャンプを試みる
-                if (cc->isGrounded != 0) {
+                if (cc->isGrounded) {
                     airJumpBlocked = false; // 想定外に接地している = テスト前提が崩れている
                 }
                 prevVy = cc->velocity.y;
@@ -1582,7 +1582,7 @@ bool RunPhysicsSelfTest()
                 GameObject e1 = s.CreateGameObjectTracked("Env1");
                 e1.AddComponent<PhysicsEnvironmentComponent>()->gravity = { -7.0f, 0.0f, 0.0f };
                 if (disableFirst) {
-                    e0.AddComponent<ActiveComponent>()->enabled = 0;
+                    e0.AddComponent<ActiveComponent>()->enabled = false;
                 }
                 GameObject ball = MakeSphereBody(s, "Ball", 0, 0, 0, 0.5f);
                 s.GetWorld().ApplyStructuralChanges();

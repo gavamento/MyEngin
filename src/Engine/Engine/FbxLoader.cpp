@@ -783,7 +783,7 @@ void LoadMeshInto(LoadContext& lc, const ufbx_node* node, GameObject owner)
             sm->model = skinModelId;
             sm->clip = 0;
             sm->timeTicks = 0;
-            sm->playing = 1;
+            sm->playing = true;
         }
     }
 }

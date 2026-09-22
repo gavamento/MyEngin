@@ -52,7 +52,7 @@ struct CameraComponent {
     float fovYDeg = 60.0f;
     float nearZ = 0.1f;
     float farZ = 1000.0f;
-    int32_t isPrimary = 1;
+    bool isPrimary = true;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -74,10 +74,9 @@ struct LightComponent {
     float range = 15.0f;        // Point/Spot: 減衰半径
     float spotInnerDeg = 25.0f; // Spot: フル強度の内角 (度)
     float spotOuterDeg = 35.0f; // Spot: 減衰端の外角 (度)
-    // M54b: 影を落とすか (0/1)。
+    // M54b: 影を落とすか。
     // 対象は**局所ライト (点/スポット)** — 平行光の影は既存の CSM が常に担当する。
-    // bool ではなく int32_t なのはパディングの 4 バイトを潰さないため
-    int32_t castShadow = 0;
+    bool castShadow = false;
     // 完成したゲーム用光の水平安全半径。0 は通常照明 (敵に影響しない)。
     float safeRadius = 0.0f;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
@@ -123,9 +122,9 @@ struct ParticleEmitterComponent {
     uint32_t seed = 12345; // エミッタ別 RNG ストリームのシード (spec 7.3)
     int32_t maxParticles = 100000;
     // ---- ライフサイクル (M32a: 末尾 append。既定 = 従来挙動と同一) ----
-    int32_t playing = 1;       // 0=放出停止 (生存粒子は生きる)。age/emitAccum 凍結
+    bool playing = true;       // false=放出停止 (生存粒子は生きる)。age/emitAccum 凍結
     int32_t durationTicks = 0; // 放出ウィンドウ長 (tick)。0=無限
-    int32_t looping = 1;       // durationTicks>0 のとき 1=ウィンドウ末で巻き戻し再放出
+    bool looping = true;       // durationTicks>0 のときウィンドウ末で巻き戻し再放出
     int32_t burstCount = 0;    // ウィンドウ先頭 (age==0) の単発放出数
     // ---- 多点グラデーション (M32a: begin/end + opt-in 中間キー。T∈(0,1) で有効、0=無効) ----
     DirectX::XMFLOAT4 colorMid1 = { 1.0f, 1.0f, 1.0f, 1.0f };
@@ -144,7 +143,7 @@ struct ParticleEmitterComponent {
     // ---- 深度バッファ衝突 (M42e: 末尾 append。hash 対象フィールド追加 = golden 再記録済) ----
     // GPU バックエンド限定の見た目効果 (spec 7.5 の等価規約に例外明記)。CPU は素通し。
     // 深度は前フレームの描画結果 = 1 フレーム遅延 / 画面外・空ピクセルとは衝突しない
-    int32_t depthCollision = 0;   // 1 で GPU sim がシーン深度と衝突
+    bool depthCollision = false;   // true で GPU sim がシーン深度と衝突
     float collisionBounce = 0.4f; // 反発係数 (0..1)
     // ---- M61a: A群拡張の共有フィールド (末尾 append。既定 = 従来挙動とビット同一) ----
     // hash 対象フィールドの追加 = 既存 .rep のハッシュ値は変わる (毎回録り直しなので bump 無し、
@@ -152,7 +151,7 @@ struct ParticleEmitterComponent {
     float velocityInheritance = 0.0f; // ③ エミッタ移動速度を初速へ加算する係数 (0=off)
     int32_t simulationSpace = 0;      // ④ 0=ワールド 1=ローカル (実装は M61g)
     float prewarmTime = 0.0f;         // ⑤ >0 で開始時に事前シムする秒数 (M42追補 で GPU も先回しする)
-    int32_t subframeEmission = 0;     // ② 1=放出を tick 内で等分散 (0=従来: tick 先頭一括)
+    bool subframeEmission = false;     // ② true=放出を tick 内で等分散 (false=従来: tick 先頭一括)
     int32_t turbulenceMode = 0;       // ⑧ 0=渦 (従来) 1=カールノイズ (実装は M61d)
     float noiseFrequency = 1.0f;      // ⑧ ノイズ空間周波数 (turbulenceMode=1 のみ)
     float noiseSpeed = 0.5f;          // ⑧ ノイズ時間スクロール (turbulenceMode=1 のみ)
@@ -168,16 +167,16 @@ struct ParticleEmitterComponent {
     float stretchScale = 0.0f;        // C2 0=off。速度 1 あたり長軸を何倍伸ばすか (実装は M63b)
     float stretchMax = 4.0f;          // C2 長軸倍率の上限 (カリング拡張量もこれで決まる)
     float flipFps = 0.0f;             // C3 0=従来の flipCycles 送り / >0 で寿命に依らない固定 fps
-    int32_t flipBlend = 0;            // C3 1=隣り合うコマを frac で補間 (PS のサンプルが 2 回になる)
-    int32_t flipRandomStart = 0;      // C3 1=粒子ごとに開始コマをずらす (同 tick 湧きの同コマ解消)
+    bool flipBlend = false;            // C3 true=隣り合うコマを frac で補間 (PS のサンプルが 2 回になる)
+    bool flipRandomStart = false;      // C3 true=粒子ごとに開始コマをずらす (同 tick 湧きの同コマ解消)
     int32_t lightingMode = 0;         // C4 0=unlit (従来) 1=粒子単位 2=画素単位 (球面法線)
     float lightWrap = 0.5f;           // C4 ラップ拡散の回り込み量。0 で素の Lambert へ縮退
     float lightIntensity = 1.0f;      // C4 受光の倍率 (煙を白飛びさせずに馴染ませる調整代)
-    int32_t lightReceiveShadow = 1;   // C4 1=太陽の CSM 影を受ける (lightingMode=0 なら無視)
+    bool lightReceiveShadow = true;   // C4 true=太陽の CSM 影を受ける (lightingMode=0 なら無視)
     float collisionThickness = 0.0f;  // C5 深度サーフェスの想定厚み。貫通判定 pen < size0 + これ
     float collisionFriction = 0.0f;   // C5 接線成分の減衰 (0=従来のビット同一な純反射)
     float collisionLifeLoss = 0.0f;   // C5 1 回の衝突で失う寿命の割合。1.0 = kill-on-collide
-    int32_t collisionFloor = 0;       // C5 1=解析床とも衝突する (画面外でも効く proxy。任意形状は不可)
+    bool collisionFloor = false;       // C5 true=解析床とも衝突する (画面外でも効く proxy。任意形状は不可)
     float collisionFloorY = 0.0f;     // C5 解析床の高さ
     // ---- 実行時 (非登録=非ハッシュ・非シリアライズ。スクリプト/エディタが即時バーストを積む) ----
     int32_t pendingBurst = 0; // 次の Update で消費され 0 に戻る (常に tick 末ハッシュ前に 0)
@@ -240,11 +239,11 @@ struct ColliderComponent {
 };
 
 // 有効/無効フラグ (M10)。**このコンポーネントが無ければ有効**。
-// enabled==0 で自身**と子孫すべて**を sim (スクリプト/衝突/物理/パーティクル) と描画から外す。
+// enabled==false で自身**と子孫すべて**を sim (スクリプト/衝突/物理/パーティクル) と描画から外す。
 // ★**階層に伝播する** (M64b)。判定の実体と、自エンティティだけを見てはいけない理由は
 //   IsEntityActive (Components.cpp)。
 struct ActiveComponent {
-    int32_t enabled = 1;
+    bool enabled = true;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -282,8 +281,8 @@ struct AnimatorComponent {
     AssetID clip = {};       // AnimationClip アセット (AnimationLibrary のキー = パスハッシュ)
     int32_t timeTicks = 0;   // 現在の再生位置 (clip 内 tick)
     int32_t speed = 1;       // 1 update あたりに進める tick 数 (負で逆再生)
-    int32_t loop = 1;        // 0=一度きり(末尾停止) 1=ループ
-    int32_t playing = 1;     // 0=停止
+    bool loop = true;        // false=一度きり(末尾停止) true=ループ
+    bool playing = true;     // false=停止
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -300,8 +299,8 @@ struct SkinnedMeshComponent {
     AssetID model = {};    // SkinnedModelLibrary のキー (glTF skin 由来)
     int32_t clip = 0;      // 再生クリップ index
     int32_t timeTicks = 0; // 再生位置 (tick、60Hz 前提でサンプル秒 = timeTicks/60)
-    int32_t playing = 1;   // 0=停止
-    int32_t loop = 1;      // 0=一度きり (末尾のコマで止める) 1=ループ (M18 の挙動)
+    bool playing = true;   // false=停止
+    bool loop = true;      // false=一度きり (末尾のコマで止める) true=ループ (M18 の挙動)
     int32_t fadeTicks = 0; // clip 切り替え時のクロスフェード長 (tick)。0=即時
     // ---- 以下は SkinningSystem の再生状態 (シーンに保存しない) ----
     // 前 tick までに観測した clip。clip と違えば切り替え。kClipUnobserved = まだ見ていない
@@ -326,7 +325,7 @@ struct RigidbodyComponent {
     float linearDamping = 0.0f;    // 毎 tick の速度減衰率 (0=無、0.02≈2%/tick)
     float restitution = 0.0f;      // 反発係数 0..1 (接触ペアは min を採用)
     float gravityScale = 1.0f;     // 重力倍率 (0=無重力)
-    int32_t isKinematic = 0;       // 1=物理で動かさない (スクリプト制御。他はブロックする)
+    bool isKinematic = false;       // true=物理で動かさない (スクリプト制御。他はブロックする)
     // ---- M28b 追加 (末尾 append = シーン互換維持)。回転剛体 ----
     DirectX::XMFLOAT3 angularVelocity = { 0.0f, 0.0f, 0.0f }; // rad/s (ワールド)。sim 状態 = hash 対象
     float angularDamping = 0.05f;  // 毎 tick の角速度減衰率 (スタック静止安定の柱の 1 つ)
@@ -406,11 +405,11 @@ struct UIElementComponent {
     float fillAmount = 1.0f; // kind0 の塗り率 0..1 (HP バー。fillMode!=0 で有効)
     int32_t fillMode = 0;    // 0=off 1=水平(左→右) 2=垂直(下→上)
     DirectX::XMFLOAT4 sliceBorder = { 0, 0, 0, 0 }; // 9-slice 境界 px (l,t,r,b)。sliced!=0 で有効
-    int32_t sliced = 0;      // kind0 + texture 有りで 9-slice 描画
-    int32_t focusable = 0;   // パッドナビ候補 (状態はスクリプト側 — UINav.h 参照)
-    int32_t focused = 0;     // フォーカス枠の表示 (表示専用。スクリプトが書く)
+    bool sliced = false;      // kind0 + texture 有りで 9-slice 描画
+    bool focusable = false;   // パッドナビ候補 (状態はスクリプト側 — UINav.h 参照)
+    bool focused = false;     // フォーカス枠の表示 (表示専用。スクリプトが書く)
     // ---- M51e 拡張 (末尾 append、NoHash なので旧シーンは既定値ロードで互換) ----
-    int32_t clipChildren = 0; // !=0 で子孫要素を自矩形へシザークリップ (自分自身は切らない)
+    bool clipChildren = false; // true で子孫要素を自矩形へシザークリップ (自分自身は切らない)
     int32_t align = 0;        // kind1(text) の矩形内整列 (9-grid 0..8)。ボタンラベルは中央固定
     int32_t wrap = 0;         // kind1(text) の文字単位折返し (幅 w で折る、日本語前提)。0=off
     // ---- ワールド追従 UI 拡張 (末尾 append、NoHash = 旧シーン互換・リプレイ不変) ----
@@ -489,11 +488,11 @@ struct UILayoutGroupComponent {
     int32_t childAlignment = 0; // 9-grid 0..8 (0 = 左上。Unity の TextAnchor と同じ並び)
     // ---- 水平 / 垂直 ----
     // 既定は Unity で Add Component したときと同じ (Control Child Size は off、Force Expand は on)
-    int32_t controlChildWidth = 0;  // 子の幅を Group が決める (0 = 子の sizeDelta のまま)
-    int32_t controlChildHeight = 0;
-    int32_t forceExpandWidth = 1;   // 余りを子へ配る (子の flexible を最低 1 にする)
-    int32_t forceExpandHeight = 1;
-    int32_t reverseArrangement = 0; // 兄弟順の逆に並べる
+    bool controlChildWidth = false;  // 子の幅を Group が決める (false = 子の sizeDelta のまま)
+    bool controlChildHeight = false;
+    bool forceExpandWidth = true;   // 余りを子へ配る (子の flexible を最低 1 にする)
+    bool forceExpandHeight = true;
+    bool reverseArrangement = false; // 兄弟順の逆に並べる
     // ---- グリッド ----
     DirectX::XMFLOAT2 cellSize = { 100.0f, 100.0f };
     int32_t startCorner = 0;     // 0 = 左上 / 1 = 右上 / 2 = 左下 / 3 = 右下
@@ -508,7 +507,7 @@ struct UILayoutGroupComponent {
 // **負の値 = 未指定** (テキストの計測値や Group の集計に任せる)。提供者 (テキスト / Group は優先度 0、
 // これは layoutPriority) のうち最高優先度が勝ち、同じ優先度なら大きい値
 struct UILayoutElementComponent {
-    int32_t ignoreLayout = 0; // 親の Layout Group に並べられない (自分の RectTransform で置く)
+    bool ignoreLayout = false; // 親の Layout Group に並べられない (自分の RectTransform で置く)
     float minWidth = -1.0f;
     float minHeight = -1.0f;
     float preferredWidth = -1.0f;
@@ -540,7 +539,7 @@ struct UIContentSizeFitterComponent {
 // 描画 / ヒット / ナビの入力なので NoHash + UiAux (UIElement / RectTransform と同じ「authored な NoHash 入力」
 // のクラス)。壊れれば hovered / focused と Toggle / Slider の値 (ハッシュ対象) で表面化する
 struct UISelectableComponent {
-    int32_t interactable = 1; // 0 = 押下を吸うが pressed / clicked / フォーカスを立てない (disabledColor で描く)
+    bool interactable = true; // false = 押下を吸うが pressed / clicked / フォーカスを立てない (disabledColor で描く)
     int32_t transition = 1;   // 0 = なし / 1 = 色 (Color Tint) / 2 = 画像の差し替え (Sprite Swap)
     // Unity の ColorBlock.defaultColorBlock と同じ既定値 (245 / 200 / 128 を 255 で割った値)
     DirectX::XMFLOAT4 normalColor = { 1.0f, 1.0f, 1.0f, 1.0f };
@@ -573,7 +572,7 @@ struct UISelectableComponent {
 // ★**ハッシュ対象** (NoHash を付けない) — isOn は sim が書く状態。値が変わった tick は
 //   UIInteractionState.changed に自分が立つ
 struct UIToggleComponent {
-    int32_t isOn = 1;
+    bool isOn = true;
     EntityID graphic = kNullEntity; // isOn の間だけ描く UIElement (チェックマーク)
     EntityID group = kNullEntity;   // UIToggleGroup を持つエンティティ (null = 単独)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
@@ -591,7 +590,7 @@ struct UISliderComponent {
     int32_t direction = 0; // 0 = 左→右 / 1 = 右→左 / 2 = 下→上 / 3 = 上→下 (Unity と同じ並び)
     float minValue = 0.0f;
     float maxValue = 1.0f;
-    int32_t wholeNumbers = 0; // 値を整数に丸める (偶数丸め = Unity の Mathf.Round と同じ)
+    bool wholeNumbers = false; // 値を整数に丸める (偶数丸め = Unity の Mathf.Round と同じ)
     float value = 0.0f;
     // ハンドルを掴んだ点とハンドルの pivot の差 (キャンバス単位。Unity の m_Offset)。押下の tick に書き、
     // ドラッグ中はこの分だけずらして値を解く = 掴んだ瞬間にハンドルが飛ばない。Inspector には出さない
@@ -606,7 +605,7 @@ struct UISliderComponent {
 //   正規化するとエディタで作者が書いた値を勝手に書き換えるため。整えるのはクリックされたときだけ。
 // 群の規則の入力なので NoHash + UiAux (結果の isOn はハッシュ対象)
 struct UIToggleGroupComponent {
-    int32_t allowSwitchOff = 0;
+    bool allowSwitchOff = false;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -674,7 +673,7 @@ struct CharacterControllerComponent {
     DirectX::XMFLOAT3 moveInput = { 0.0f, 0.0f, 0.0f }; // 水平移動速度 m/s (y 無視)。保持される
     DirectX::XMFLOAT3 velocity = { 0.0f, 0.0f, 0.0f };  // y=重力積分状態、x/z=前 tick の実効速度
     float jumpSpeed = 0.0f; // >0 なら次 tick 接地時に vy=jumpSpeed (接地可否に関わらず消費)
-    int32_t isGrounded = 0; // 前 tick の接地判定 (読み取り専用)
+    bool isGrounded = false; // 前 tick の接地判定 (読み取り専用)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -700,7 +699,7 @@ struct TrailRendererComponent {
     DirectX::XMFLOAT4 colorBegin = { 1.0f, 1.0f, 1.0f, 1.0f }; // 新しい端
     DirectX::XMFLOAT4 colorEnd = { 1.0f, 1.0f, 1.0f, 0.0f };   // 古い端
     float minVertexDistance = 0.05f; // この距離以上動いたら点を追加
-    int32_t emitting = 1;            // 0 = 新規点の追加停止 (既存点は寿命で消える)
+    bool emitting = true;            // false = 新規点の追加停止 (既存点は寿命で消える)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -735,10 +734,10 @@ struct SkyboxComponent {
     float starBrightness = 1.0f; // 星の明るさ (リニア HDR。1 を超えるとブルームで滲む)
     float starTwinkle = 0.0f;    // 瞬きの深さ (0 = 静止 / 1 = 暗い瞬間に 0 まで落ちる)
     int32_t starCells = 180;     // キューブ 1 面あたりの分割数 (多いほど星が小さく細かい。1..1024 に丸める)
-    // 1 = 空の色から IBL を焼いて環境光に使う (既定、M38c)。
-    // 0 = 背景に描くだけで、ライトの ambient (定数アンビエント) を残す。
-    // ★暗いゲームでほぼ黒の空を置くと、1 のままでは環境光まで黒い空に置き換わって世界の下地が消える
-    int32_t lighting = 1;
+    // true = 空の色から IBL を焼いて環境光に使う (既定、M38c)。
+    // false = 背景に描くだけで、ライトの ambient (定数アンビエント) を残す。
+    // ★暗いゲームでほぼ黒の空を置くと、true のままでは環境光まで黒い空に置き換わって世界の下地が消える
+    bool lighting = true;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -770,10 +769,10 @@ struct FogComponent {
 struct CameraPostFxComponent {
     float exposure = 1.0f;       // トーンマップ前の露出倍率
     int32_t tonemapMode = 1;     // 0=Passthrough 1=ACES 2=Reinhard
-    int32_t bloomOn = 1;         // 0=Off 1=On
+    bool bloomOn = true;
     float bloomThreshold = 1.0f; // bright-pass しきい値 (輝度)
     float bloomIntensity = 0.6f; // 合成強度
-    int32_t fxaaOn = 1;          // 0=Off 1=On
+    bool fxaaOn = true;
     // ---- M32d: 追加ポスト効果 (末尾 append。既定 = 無効) ----
     float chromAberration = 0.0f;   // 色収差 (UV スケール、0=off)
     float vignetteIntensity = 0.0f; // 周辺減光 (0=off)
@@ -791,7 +790,7 @@ struct CameraPostFxComponent {
     AssetID lutTexture = {};   // 256x16 ストリップ (sRGB off でロードされる)
     float lutIntensity = 0.0f; // 0=off / 1=LUT 全適用
     // ---- M44b: 自動露出 (末尾 append) ----
-    int32_t autoExposure = 0; // 0=off 1=on (輝度ヒストグラム → 露出適応)
+    bool autoExposure = false; // 輝度ヒストグラム → 露出適応
     float aeSpeed = 3.0f;     // 適応速度 (1/s)
     float aeMin = 0.25f;      // 露出倍率の下限
     float aeMax = 4.0f;       // 上限
@@ -805,18 +804,18 @@ struct CameraPostFxComponent {
     // ---- M55d: TAA (末尾 append) ----
     // **Deferred 専用** — 画面速度が GBuffer RT4 にしか無いため。Forward では
     // カメラジッタごと無効化する (TAA 無しでジッタだけ載ると画面が揺れるだけになる)
-    int32_t taaOn = 0;        // 0=off 1=on
+    bool taaOn = false;
     float taaFeedback = 0.9f; // 履歴の残し率 [0,0.95]。大きいほど滑らかで残像も増える
     // ---- M56d: SSR (末尾 append) ----
     // **Deferred 専用** — GBuffer と HZB (min-Z ピラミッド) が前提。
     // ssrMaxRoughness 以上の粗さの面には厳密に 0 を足す (= その面は IBL のまま)
-    int32_t ssrOn = 0;            // 0=off 1=on
+    bool ssrOn = false;
     float ssrMaxRoughness = 0.6f; // これを超える粗さの面は反射しない (RT 反射と同じ既定値)
     float ssrIntensity = 1.0f;    // 1 = IBL スペキュラをちょうど反射で置き換える
     // ---- M57c: フロクセル・ボリュメトリック (末尾 append) ----
     // ★既定 0 = 恒等。1 にすると不透明 / 透明 / 地形 / スカイ / パーティクルの全部に
     //   合成され、同時に **ゴッドレイが自動 off** になる (フォグの三重計上の解消。M57d)
-    int32_t froxelOn = 0;          // 0=off 1=on
+    bool froxelOn = false;
     float froxelDensity = 0.02f;   // 基準の消散係数 σ_t [1/m] (高度スケール前)
     float froxelAnisotropy = 0.3f; // HG 位相関数の g (>0 = 前方散乱 = 光源側が明るい)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
@@ -832,9 +831,9 @@ struct EffectComponent {
     int32_t durationTicks = 120; // 放出フェーズ長 (tick)。0=手動制御 (自動停止しない)
     int32_t lingerTicks = 120;   // 放出停止後、残粒子の消滅を待つ猶予 (autoDestroy 用)
     int32_t elapsedTicks = 0;    // 経過 tick (ReadOnly、sim 状態)
-    int32_t playing = 1;         // 0=停止 (elapsed 凍結)
-    int32_t looping = 0;         // 1=duration 毎に elapsed 巻き戻し + 子エミッタ再開 (autoDestroy 無効)
-    int32_t autoDestroy = 1;     // 1=duration+linger 経過で自エンティティ (子孫ごと) 破棄
+    bool playing = true;         // false=停止 (elapsed 凍結)
+    bool looping = false;         // true=duration 毎に elapsed 巻き戻し + 子エミッタ再開 (autoDestroy 無効)
+    bool autoDestroy = true;     // duration+linger 経過で自エンティティ (子孫ごと) 破棄
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -844,7 +843,7 @@ struct EffectComponent {
 // 位置と向きは WorldMatrix から取る (+Z = 前、+Y = 上。X3DAudio もエンジンも左手系)。
 // **オーディオは決定論レーン外の出力 sink なので kComponentNoHash** = 既存シーンのハッシュ不変。
 struct AudioListenerComponent {
-    int32_t enabled = 1; // 0 = このリスナーを無視 (複数置いて切り替える用)
+    bool enabled = true; // false = このリスナーを無視 (複数置いて切り替える用)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -862,14 +861,14 @@ struct AudioSourceComponent {
     // ★フィールド名は `sound` にすること。`clip` は AnimatorComponent.clip =
     //   アニメーションクリップの既存規約で、被せると Inspector の AssetRef ピッカーが壊れる
     AssetID sound = {};        // .sound.json の GUID
-    int32_t playOnAwake = 1;   // Play 開始時 (と生成時) に自動再生する
+    bool playOnAwake = true;   // Play 開始時 (と生成時) に自動再生する
     int32_t loop = -1;         // -1 = アセット既定 / 0 = 単発 / 1 = ループ
     float volume = 1.0f;       // アセット volume への乗算
     float pitch = 1.0f;        // アセット pitch への乗算
-    int32_t mute = 0;          // 1 = 無音 (再生自体は続く)
+    bool mute = false;          // true = 無音 (再生自体は続く)
     int32_t priority = -1;     // -1 = アセット既定。大きいほど重要 (VoicePolicy と同じ規約)
     char bus[64] = {};         // 空 = アセット既定
-    int32_t overrideAttenuation = 0; // 1 = 以下の 3D 値でアセットを上書きする
+    bool overrideAttenuation = false; // true = 以下の 3D 値でアセットを上書きする
     float spatialBlend = 1.0f; // 0 = 2D (定位も減衰もドップラーも無し) / 1 = フル 3D
     float minDistance = 1.0f;  // これより近ければ減衰なし
     float maxDistance = 50.0f; // これ以遠は無音 (SpatialMath.h の規約)
@@ -1328,7 +1327,7 @@ struct WheelComponent {
     float maxCompression = 0.3f;
     // ---- 出力 (kFieldReadOnly。ソルバが毎 tick 書く = **sim 状態**) ----
     // 範型は CharacterController の moveInput(入力) / isGrounded(出力) の書き分け
-    int32_t isGrounded = 0;   // レイが車輪の接地面まで届いたか
+    bool isGrounded = false;   // レイが車輪の接地面まで届いたか
     float compression = 0.0f; // 今の圧縮量 [m] (maxCompression でクランプ済み)
     // ---- M60h2 追加: タイヤ (末尾 append) ----
     // ★**タイヤの摩擦が効くのは車体に `Vehicle` が付いているときだけ**。Wheel 単体は
@@ -1622,7 +1621,7 @@ struct ModalSoundComponent {
     int32_t cooldownTicks = 3;  // この tick 数だけ同じ発音元の再発音を止める (Played 成立時に起点を更新)
     float sizeScale = 1.0f;     // σ3 の L_obj (spec §4.1 手順 6) に追加で掛ける倍率
     float maxDistance = 30.0f;  // AudioSpatial.maxDistance (これ以遠は無音)
-    int32_t muteWave = 1;       // 非 0: 焼き上がったら WaveSound 側の耳出しを黙らせる
+    bool muteWave = true;       // true: 焼き上がったら WaveSound 側の耳出しを黙らせる
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -1647,12 +1646,12 @@ struct TagComponent {
 struct WaterWaveComponent {
     static constexpr int kMaxWaves = 4;
 
-    int32_t enabled = 1;
+    bool enabled = true;
     float baseHeight = 0.0f;     // 基準水面 Y [m]
     float overallScale = 1.0f;   // 全体波高スケール
     float timeScale = 1.0f;      // 時間倍率
     int32_t waveCount = 4;       // 有効な波の本数 (1〜4)
-    int32_t affectBuoyancy = 1;  // 浮力 (Buoyancy) と連動するか (0/1)
+    bool affectBuoyancy = true;  // 浮力 (Buoyancy) と連動するか
 
     // 波 0 (主うねり: ゆったりとした大きなうねり)
     float wave0Amplitude = 0.18f;
@@ -1705,7 +1704,7 @@ struct WaterWaveComponent {
 
 class World;
 
-// エンティティが有効か。ActiveComponent が無ければ有効 / enabled==0 なら無効。
+// エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。
 // **自分と祖先すべてを見る** (M64b) — 親が無効なら子も無効
 bool IsEntityActive(World& world, EntityID e);
 

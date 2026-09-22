@@ -84,7 +84,7 @@ LightSelection SelectLights(const LightCandidate* cands, int count, const Frustu
         s.sortKey = c.sortKey;
         // 平行光の影は CSM (ShadowPass) が担当する。アトラス (M54c) は局所ライト専用。
         // 枠はソート後の順に前詰め = 同じシーンなら frame をまたいでも同じ枠に落ちる
-        if (c.castShadow != 0 && c.light.type != lighttype::kDirectional && out.shadowCount < maxShadowLights) {
+        if (c.castShadow && c.light.type != lighttype::kDirectional && out.shadowCount < maxShadowLights) {
             s.shadowSlot = out.shadowCount++;
         }
     }

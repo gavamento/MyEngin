@@ -106,7 +106,7 @@ GameObject MakeSkin(Scene& s, AssetID model, int clip, int timeTicks)
     sm->model = model;
     sm->clip = clip;
     sm->timeTicks = timeTicks;
-    sm->playing = 0; // SkinningSystem は回さない (試験が時刻を明示的に置く)
+    sm->playing = false; // SkinningSystem は回さない (試験が時刻を明示的に置く)
     s.GetWorld().ApplyStructuralChanges();
     return skin;
 }

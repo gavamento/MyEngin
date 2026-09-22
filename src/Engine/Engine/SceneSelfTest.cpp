@@ -399,12 +399,12 @@ bool RunSceneSerializerSelfTest()
         s5.GetWorld().ApplyStructuralChanges();
         check(IsEntityActive(s5.GetWorld(), g.Id()), "no ActiveComponent = active");
         auto* act = g.AddComponent<ActiveComponent>();
-        act->enabled = 0;
+        act->enabled = false;
         check(!IsEntityActive(s5.GetWorld(), g.Id()), "enabled=0 = inactive");
-        act->enabled = 1;
+        act->enabled = true;
         check(IsEntityActive(s5.GetWorld(), g.Id()), "enabled=1 = active");
 
-        act->enabled = 0;
+        act->enabled = false;
         const nlohmann::json j = SceneSerializer::SaveToJson(s5);
         SceneSerializer::LoadFromJson(s5, j);
         GameObject g2 = s5.Find("ActiveTest");
@@ -1883,7 +1883,7 @@ bool RunSceneSerializerSelfTest()
             an->timeTicks = 0;
             an->speed = 1;
             an->loop = 1;
-            an->playing = 1;
+            an->playing = true;
             s.GetWorld().ApplyStructuralChanges();
         };
         Scene sx;
@@ -1918,7 +1918,7 @@ bool RunSceneSerializerSelfTest()
                 auto* an = animChild.AddComponent<AnimatorComponent>();
                 an->clip = AssetID{ chash };
                 an->loop = 0;
-                an->playing = 1;
+                an->playing = true;
             }
             World& wz = sz.GetWorld();
             wz.SetParent(animChild.Id(), fxRoot.Id());
@@ -1929,11 +1929,11 @@ bool RunSceneSerializerSelfTest()
             }
             auto* an = wz.GetComponent<AnimatorComponent>(animChild.Id());
             auto* animLt = wz.GetComponent<LocalTransform>(animChild.Id());
-            check(an && an->playing == 0, "non-loop animator stops at clip end");
+            check(an && !an->playing, "non-loop animator stops at clip end");
             check(animLt->position.x != 0.0f, "pose frozen at stop is non-zero");
 
             EffectSystem::RestartEffect(wz, fxRoot.Id());
-            check(an->playing == 1 && an->timeTicks == 0,
+            check(an->playing && an->timeTicks == 0,
                   "RestartEffect resumes finished animator");
             sys.Update(wz, lib); // 1 tick 目: t=0 のポーズを適用 → 先頭へ戻る
             check(animLt->position.x == 0.0f, "restarted animator re-applies pose from t=0");

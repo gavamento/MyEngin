@@ -310,7 +310,7 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     out.CharacterIsGrounded = [](void* engine, MyeEntityId id) -> int {
         auto* cc =
             Sc(engine)->GetWorld().GetComponent<CharacterControllerComponent>(ToEngine(id));
-        return (cc && cc->isGrounded != 0) ? 1 : 0;
+        return (cc && cc->isGrounded) ? 1 : 0;
     };
     out.CharacterGetVelocity = [](void* engine, MyeEntityId id, MyeVec3* o) -> int {
         auto* cc =

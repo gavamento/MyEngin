@@ -95,7 +95,8 @@ struct SimRefs {
 // v19 (M65i): AcousticVolumeComponent へ glowAlbedoMix
 // v20 (2026-09-13): AcousticVolumeComponent へ glowDecayEveryTicks
 // v21 (2026-09-14): AcousticField::kMaxWaves 16 -> 32 (古い blob は ReadAcoustic が本数不一致で拒む)
-inline constexpr uint32_t kSimSnapshotVersion = 21;
+// v22: 組込みコンポーネントの 0/1 int32 フィールドを bool 化 (World 節の生カラムサイズ変更)
+inline constexpr uint32_t kSimSnapshotVersion = 22;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

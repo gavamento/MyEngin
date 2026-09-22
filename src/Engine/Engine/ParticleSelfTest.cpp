@@ -110,7 +110,7 @@ bool RunParticleSelfTest()
         ParticleEmitterComponent du;
         du.rate = 600.0f;
         du.durationTicks = 3;
-        du.looping = 0;
+        du.looping = false;
         int32_t dage = 0;
         float dacc = 0.0f;
         int inWindow = 0, afterWindow = 0;
@@ -124,7 +124,7 @@ bool RunParticleSelfTest()
         ParticleEmitterComponent lo;
         lo.rate = 0.0f;
         lo.durationTicks = 3;
-        lo.looping = 1;
+        lo.looping = true;
         lo.burstCount = 10;
         int32_t lage = 0;
         float lacc = 0.0f;
@@ -137,7 +137,7 @@ bool RunParticleSelfTest()
         // playing=0: 連続放出停止 + age/accum 凍結。ただし pendingBurst は通す
         ParticleEmitterComponent pa;
         pa.rate = 600.0f;
-        pa.playing = 0;
+        pa.playing = false;
         pa.pendingBurst = 5;
         int32_t page = 7;
         float pacc = 0.9f;
@@ -323,7 +323,7 @@ bool RunParticleSelfTest()
             em->rate = 200.0f;
             em->seed = 7u;
             em->durationTicks = 30;
-            em->looping = 1;
+            em->looping = true;
             em->burstCount = 40;
             s.GetWorld().ApplyStructuralChanges();
             return go.Id();
@@ -350,8 +350,8 @@ bool RunParticleSelfTest()
         auto* fx = root.AddComponent<EffectComponent>();
         fx->durationTicks = 5;
         fx->lingerTicks = 3;
-        fx->autoDestroy = 1;
-        fx->looping = 0;
+        fx->autoDestroy = true;
+        fx->looping = false;
         GameObject child = s.CreateGameObjectTracked("Emitter");
         child.AddComponent<ParticleEmitterComponent>();
         World& w = s.GetWorld();
@@ -364,7 +364,7 @@ bool RunParticleSelfTest()
             w.ApplyStructuralChanges();
         }
         auto* em = w.GetComponent<ParticleEmitterComponent>(child.Id());
-        check(em && em->playing == 0, "effect: child emitter stops at duration");
+        check(em && !em->playing, "effect: child emitter stops at duration");
         check(w.IsAlive(root.Id()), "effect: root alive during linger");
 
         for (int t = 0; t < 3; ++t) { // linger=3 で duration+linger=8 到達 → 破棄
@@ -381,8 +381,8 @@ bool RunParticleSelfTest()
         GameObject root = s.CreateGameObjectTracked("FXLoop");
         auto* fx = root.AddComponent<EffectComponent>();
         fx->durationTicks = 4;
-        fx->looping = 1;
-        fx->autoDestroy = 1;
+        fx->looping = true;
+        fx->autoDestroy = true;
         GameObject child = s.CreateGameObjectTracked("Emitter");
         child.AddComponent<ParticleEmitterComponent>();
         // 非ループ Animator の子: ループ 1 周中に自然終了した状態を作っておく
@@ -391,7 +391,7 @@ bool RunParticleSelfTest()
         {
             auto* an = anim.AddComponent<AnimatorComponent>();
             an->loop = 0;
-            an->playing = 0; // = Animation.cpp AdvanceTime が末尾で止めた状態
+            an->playing = false; // = Animation.cpp AdvanceTime が末尾で止めた状態
             an->timeTicks = 7;
         }
         World& w = s.GetWorld();
@@ -408,8 +408,8 @@ bool RunParticleSelfTest()
         auto* em = w.GetComponent<ParticleEmitterComponent>(child.Id());
         auto* an = w.GetComponent<AnimatorComponent>(anim.Id());
         check(efx && efx->elapsedTicks == 0, "effect: looping rewinds elapsed");
-        check(em && em->playing == 1, "effect: looping keeps child emitting");
-        check(an && an->timeTicks == 0 && an->playing == 1,
+        check(em && em->playing, "effect: looping keeps child emitting");
+        check(an && an->timeTicks == 0 && an->playing,
               "effect: looping restarts finished non-loop animator");
         check(w.IsAlive(root.Id()), "effect: looping never auto-destroys");
     }
@@ -420,8 +420,8 @@ bool RunParticleSelfTest()
         GameObject root = s.CreateGameObjectTracked("FXRestart");
         auto* fx = root.AddComponent<EffectComponent>();
         fx->durationTicks = 3;
-        fx->looping = 0;
-        fx->autoDestroy = 0;
+        fx->looping = false;
+        fx->autoDestroy = false;
         GameObject child = s.CreateGameObjectTracked("Emitter");
         child.AddComponent<ParticleEmitterComponent>();
         World& w = s.GetWorld();
@@ -433,13 +433,13 @@ bool RunParticleSelfTest()
             fxsys.Update(w);
             w.ApplyStructuralChanges();
         }
-        check(w.GetComponent<ParticleEmitterComponent>(child.Id())->playing == 0,
+        check(!w.GetComponent<ParticleEmitterComponent>(child.Id())->playing,
               "effect: child stopped before restart");
 
         EffectSystem::RestartEffect(w, root.Id());
         auto* efx = w.GetComponent<EffectComponent>(root.Id());
         auto* em = w.GetComponent<ParticleEmitterComponent>(child.Id());
-        check(efx->elapsedTicks == 0 && efx->playing == 1 && em->playing == 1,
+        check(efx->elapsedTicks == 0 && efx->playing && em->playing,
               "effect: RestartEffect rewinds + re-enables child emission");
     }
 
@@ -451,13 +451,13 @@ bool RunParticleSelfTest()
         GameObject root = s.CreateGameObjectTracked("FXAnim");
         auto* fx = root.AddComponent<EffectComponent>();
         fx->durationTicks = 3;
-        fx->looping = 0;
-        fx->autoDestroy = 0;
+        fx->looping = false;
+        fx->autoDestroy = false;
         GameObject anim = s.CreateGameObjectTracked("Anim");
         {
             auto* an = anim.AddComponent<AnimatorComponent>();
             an->loop = 0;
-            an->playing = 0; // = Animation.cpp AdvanceTime が末尾で止めた状態
+            an->playing = false; // = Animation.cpp AdvanceTime が末尾で止めた状態
             an->timeTicks = 7;
         }
         World& w = s.GetWorld();
@@ -466,7 +466,7 @@ bool RunParticleSelfTest()
 
         EffectSystem::RestartEffect(w, root.Id());
         auto* an = w.GetComponent<AnimatorComponent>(anim.Id());
-        check(an && an->timeTicks == 0 && an->playing == 1,
+        check(an && an->timeTicks == 0 && an->playing,
               "effect: RestartEffect restarts finished non-loop animator");
     }
 
@@ -540,7 +540,7 @@ bool RunParticleSelfTest()
         }
 
         // 放出停止 + 寿命切れで空になったら invalid (= カリングしない側へ倒れる)
-        w.GetComponent<ParticleEmitterComponent>(go.Id())->playing = 0;
+        w.GetComponent<ParticleEmitterComponent>(go.Id())->playing = false;
         for (int t = 0; t < 240; ++t) { // lifetimeMax 2.2s = 132 tick を掃き切る
             cpu.Update(w, kDt);
         }
@@ -712,7 +712,7 @@ bool RunParticleSelfTest()
                   && rp.prevOriginValid == 1 && rp.prewarmed == 1,
               "snapshot: M61a pool fields survive the round trip bit-exact");
         check(rp.descCache.velocityInheritance == 0.5f && rp.descCache.simulationSpace == 1
-                  && rp.descCache.prewarmTime == 0.75f && rp.descCache.subframeEmission == 1
+                  && rp.descCache.prewarmTime == 0.75f && rp.descCache.subframeEmission
                   && rp.descCache.turbulenceMode == 1 && rp.descCache.noiseFrequency == 2.0f
                   && rp.descCache.noiseSpeed == 0.25f && rp.descCache.emitFrom == 2,
               "snapshot: descCache A-group fields survive the round trip");
@@ -1389,7 +1389,7 @@ bool RunParticleSelfTest()
         GameObject gOff = s1.CreateGameObjectTracked("BornInactive");
         gOff.AddComponent<ParticleEmitterComponent>();
         auto* aOff = gOff.AddComponent<ActiveComponent>();
-        aOff->enabled = 0;
+        aOff->enabled = false;
         s1.GetWorld().ApplyStructuralChanges();
         World& w1 = s1.GetWorld();
         SetWorldPos(w1, g1.Id(), 1.0f, 0.0f, 0.0f);
@@ -1418,7 +1418,7 @@ bool RunParticleSelfTest()
         check(aliveBefore > 0, "freeze: emitter produced particles before deactivation");
 
         // 凍結: 10 tick の間プールが破棄されず、1 ビットも動かない
-        w1.GetComponent<ActiveComponent>(g1.Id())->enabled = 0;
+        w1.GetComponent<ActiveComponent>(g1.Id())->enabled = false;
         bool still = true;
         for (int t = 0; t < 10; ++t) {
             frozenSide.Update(w1, kDt);
@@ -1432,7 +1432,7 @@ bool RunParticleSelfTest()
         check(frozenSide.Pools()[0].renderSkip, "freeze: frozen pool raises renderSkip");
 
         // 解凍: 続きから放出 (再シード・リセット無し)。renderSkip も降りる
-        w1.GetComponent<ActiveComponent>(g1.Id())->enabled = 1;
+        w1.GetComponent<ActiveComponent>(g1.Id())->enabled = true;
         for (int t = 0; t < 5; ++t) {
             frozenSide.Update(w1, kDt);
         }
@@ -1495,7 +1495,7 @@ bool RunParticleSelfTest()
         GameObject gp = sp.CreateGameObjectTracked("Paused");
         auto* emp = gp.AddComponent<ParticleEmitterComponent>();
         emp->prewarmTime = 1.0f;
-        emp->playing = 0;
+        emp->playing = false;
         sp.GetWorld().ApplyStructuralChanges();
         SetWorldPos(sp.GetWorld(), gp.Id(), 0.0f, 0.0f, 0.0f);
         CpuParticleBackend paused;
@@ -2151,7 +2151,7 @@ bool RunParticleSelfTest()
         Scene s;
         GameObject go = s.CreateGameObjectTracked("Recycler");
         auto* e = go.AddComponent<ParticleEmitterComponent>();
-        e->playing = 0;              // 放出を止める (生存粒子だけが動く)
+        e->playing = false;              // 放出を止める (生存粒子だけが動く)
         e->gravity = { 0.0f, 0.0f, 0.0f }; // 位置を動かさない (寿命だけを見たい)
         e->turbulence = 0.0f;
         s.GetWorld().ApplyStructuralChanges();

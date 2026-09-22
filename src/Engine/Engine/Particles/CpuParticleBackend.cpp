@@ -271,7 +271,7 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
     // 消費するのは速度継承 (velocityInheritance != 0) とサブフレーム補間だけ —
     // 既定 (係数 0 / subframe 0) では値を読みもしないため従来とビット同一。
     // ローカル空間では prevOrigin も origin も (0,0,0) なので定常的に 0 になる
-    const bool subframe = (desc.subframeEmission != 0);
+    const bool subframe = (desc.subframeEmission);
     // M63a: per-particle の不変属性 (初期回転角 / 角速度 / フリップ開始位相) を引くか。
     // ★false のとき **1 draw も引かない**。ここで無条件に 3 draw すると、以降の全粒子の
     //   方向/位置/速度/寿命/サイズが後ろへずれて既存 golden 15 枚が全部動く。
@@ -573,7 +573,7 @@ void CpuParticleBackend::Update(World& world, float dt)
         // (10 秒 @60Hz) は誤設定の巨大値が 1 tick を丸ごと食い潰す暴走ガード。snapshot 復元後は
         // prewarmed==1 ごと復元されるため再トリガしない (selftest M61e 節で確認)。
         // GPU 側 (RunEmitterTick) も同じ上限・同じ順序で先回しする
-        if (pool.prewarmed == 0 && desc->prewarmTime > 0.0f && desc->playing != 0) {
+        if (pool.prewarmed == 0 && desc->prewarmTime > 0.0f && desc->playing) {
             const int prewarmTicks = std::min(600, static_cast<int>(desc->prewarmTime / dt));
             for (int step = 0; step < prewarmTicks; ++step) {
                 EmitParticles(pool, *desc, origin, basis, dt);
