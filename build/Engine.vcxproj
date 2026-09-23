@@ -241,6 +241,7 @@
     <ClCompile Include="..\src\Engine\Renderer\SkyboxPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\SsrPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\StbImpl.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\SurfaceDeferredSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\SurfaceMaterialSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\SurfaceShaderSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\SwapChain.cpp" />
@@ -496,6 +497,7 @@
     <ClInclude Include="..\src\Engine\Renderer\Skeleton.h" />
     <ClInclude Include="..\src\Engine\Renderer\SkyboxPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\SsrPass.h" />
+    <ClInclude Include="..\src\Engine\Renderer\SurfaceDeferredSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\SurfaceDrawBind.h" />
     <ClInclude Include="..\src\Engine\Renderer\SurfaceMaterialSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\SurfaceProgram.h" />

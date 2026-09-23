@@ -106,7 +106,7 @@
 - **PS 側の static**: VS と PS は別プログラムなので、VS エントリで代入した static は PS に届かない (PS では未代入 = 0)。**全 PS エントリ (色・速度) は `PSMain` を呼ぶ前に 4 つの static へ「今フレーム」の値を代入する**。PS から見える `gViewProj` / `gWorld` / `gTime` / `gWaterTime` は常に今フレーム (速度エントリでも前の値は PS に出ない) (sub-02 VERDICT round 1 で明文化)
 - 色: `gViewProj` = 今フレーム (ジッタ込み) の VP、`gWorld` = 今の World、`gTime` = 今の時刻を代入して `VSMain` → 作者 `PSMain`
 - 速度 (Deferred 不透明のみ): 前 (非ジッタ前 VP・`prevWorld`・前時刻) で `VSMain` を 1 回、今で 1 回評価し、今の結果を `PSMain` へ、両クリップ座標から `ComputeVelocityUv` (common.hlsli) で velocity を SV_Target1 へ。前履歴が無いフレームは velocity 0 (既存 GBuffer と同じ規則)
-- 影 (CSM): `gViewProj` = カスケードのライト VP で `VSMain` を評価、PS なし (深度のみ)。深度バイアス等のステートは既存 ShadowPass と同じ
+- 影 (CSM): `gViewProj` = カスケードのライト VP で `VSMain` を評価、PS なし (深度のみ)。深度バイアス等のステートは既存 ShadowPass と同じ。**影エントリでは `MyEnginePerFrame` は 0 埋め** (ShadowPass が環境の確定より前に走るため)。`MyEngineSurfaceFrame` の時刻・`MyEnginePerObject`・`MyEnginePerMaterial`・作者テクスチャ・`MyEngineWater` は張られる。→ 作者規約: VSMain の変位に `MyEnginePerFrame` の値 (`gCameraPos` 等) を使うと影だけ形が違う (sub-03 VERDICT round 1 で確定。docs とテンプレートのコメントに書く)
 
 #### パスへの組み込み
 | パス | 不透明サーフェス | 透明サーフェス (`transparent: true`) |
@@ -180,7 +180,7 @@
 - **決定論**: サーフェス描画はワールドハッシュ非関与。`gTime` は描画通番由来で sim へ入らない。`tools\replay_verify.bat` が従来どおり一致
 - **既定の絵**: サーフェスマテリアルを持たないシーンは Forward / Deferred とも従来と 1 ビットも変わらない (フォワード段・影エントリ・横テーブル参照が 0 件時に何も張らない)。既存 SelfTest / golden 系が無変更で通る
 - **層**: 生 D3D 型は Renderer 内。Editor は ShaderManager / MaterialLibrary の公開 API 越しにスキーマとエラー文を得る
-- **性能**: 速度エントリは VS を 2 回評価する (頂点数比例)。初版は計測のみ (Water の WaterPlane で GPU 時間を実装メモへ記録)。最適化はしない
+- **性能**: 速度エントリは VS を 2 回評価する (頂点数比例)。初版は計測しない・最適化もしない (WARP では有意な値が取れないため、実 GPU での計測は後回し。sub-03 VERDICT round 1 で変更)
 - **Debug / Release**: 生成エントリ・コンパイルフラグは構成で同一 (既存 ShaderManager 規則)
 - **バイトコードキャッシュ**: 生成エントリを含むソース全体をキーにする (作者ファイルか include が変われば再コンパイル)
 
@@ -249,3 +249,5 @@
 - 2026-09-24: sub-01 VERDICT OK (coder SELF_EVAL round 1)。(1) `MyEnginePerFrame` は既存 PerFrame から先頭 `viewProj` を除いた内容・別バッファと確定 (§4.1)。(2) サーフェスのホットリロードとバイトコードキャッシュ配線は sub-02 へ。(3) `MyeApplyFog` のフロクセル合成は sub-02 の should。(4) coder が見つけた `.cs.hlsl` 索引の off-by-one (M78 の既存不具合、実コードで確認) を §3 やるに追加し sub-04 で直す。
 - 2026-09-24: sub-02 VERDICT REWORK (round 1)。§4.1 に「PS エントリも static へ今フレーム値を代入」を明文化 (spec の穴。sub-01 の生成エントリが PS 側を未代入だった)。§4.2 Tex2D 符号化を「数値 GUID と文字列の両受理、書き出しは GUID 数値 / 組込み名」、読み込みは sRGB 固定と確定。
 - 2026-09-24: sub-02 VERDICT OK (round 2)。仕様変更なし。
+- 2026-09-24: sub-03 VERDICT REWORK (round 1)。§4.1 影エントリの `MyEnginePerFrame` 0 埋めを受理し作者規約として明記。§4.4 GPU 時間計測を後回しへ (WARP で測れない)。sub-03 に自動 SelfTest を must で追加 (AGENTS.md §7「レンダラー変更は回帰テストを追加」— sub-03.md に書き漏らした planner の穴)。
+- 2026-09-24: sub-03 VERDICT OK (round 2)。仕様変更なし。

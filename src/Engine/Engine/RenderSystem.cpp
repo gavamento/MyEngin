@@ -1197,7 +1197,7 @@ void RenderSystem::RenderCascadeShadows(GraphicsDevice& device, ShaderManager& s
                               shadowPass_.Resolution(), lightVPs, splits,
                               ShadowPass::kCascades);
             shadowPass_.Render(device, shaders, queue_, resources, lightVPs,
-                               ShadowPass::kCascades, enableInstancing);
+                               ShadowPass::kCascades, view.viewFrameIndex, enableInstancing);
             for (int c = 0; c < ShadowPass::kCascades; ++c) {
                 XMStoreFloat4x4(&view.lightViewProj[c],
                                 XMMatrixTranspose(XMLoadFloat4x4(&lightVPs[c])));

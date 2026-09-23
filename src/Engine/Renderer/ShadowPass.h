@@ -29,10 +29,11 @@ public:
 
     // 不透明キューを各カスケードの lightViewProj (非転置、行ベクトル規約 world*view*proj) で
     // シャドウ深度 (スライス c) へ描く。count は kCascades 以下。
+    // viewFrameIndex = M79 sub-03: サーフェスの影エントリが読む gTime (viewFrameIndex/60) の出所。
     // instancing = 非スキン連続 run の一括描画を併用 (M38f)
     void Render(GraphicsDevice& device, ShaderManager& shaders, const RenderQueue& queue,
                 RenderResources& resources, const DirectX::XMFLOAT4X4* lightViewProjs, int count,
-                bool instancing = true);
+                uint32_t viewFrameIndex, bool instancing = true);
 
     ID3D11ShaderResourceView* SRV() const { return srv_.Get(); } // Texture2DArray (R32_FLOAT)
     int Resolution() const { return resolution_; }
@@ -59,6 +60,14 @@ private:
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> objectCB_; // 1 オブジェクトあたり transpose(world*lightVP)
     Microsoft::WRL::ComPtr<ID3D11Buffer> boneCB_;   // b3: ボーンパレット (本描画と同じ中身)
+    // ---- M79 sub-03: サーフェスの影エントリ用予約 CB。MyEnginePerFrame は全 0 固定で運用する
+    //      (ShadowPass::Render は RenderSystem::PrepareEnvironment より前に呼ばれるため、光/霧/IBL
+    //      はまだ view に埋まっていない。影エントリは PSMain を呼ばず、位置に効くのは
+    //      static (gViewProj/gWorld/gTime/gWaterTime) だけという規約 (spec §4.1) に従う) ----
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfacePerFrameCB_;  // MyEnginePerFrame (常に全 0)
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfaceFrameCB_;     // MyEngineSurfaceFrame (shadowViewProj/gTime)
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfacePerObjectCB_; // MyEnginePerObject
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfaceWaterCB_;     // MyEngineWater (sub-05 まで 0 埋め)
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthState_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer_; // 深度バイアス付き
     GpuTimer timer_;                                           // M54d

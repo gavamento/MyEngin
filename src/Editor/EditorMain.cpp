@@ -86,6 +86,7 @@
 #include "Engine/Renderer/ComputeAbiSelfTest.h"              // M78e
 #include "Engine/Renderer/SurfaceShaderSelfTest.h"           // M79a
 #include "Engine/Renderer/SurfaceMaterialSelfTest.h"          // M79b
+#include "Engine/Renderer/SurfaceDeferredSelfTest.h"          // M79c
 #include "Engine/Renderer/RenderSelfTest.h"
 #include "Engine/Renderer/TextureCookSelfTest.h"
 #include "Engine/Renderer/VolumeTexture.h"
@@ -515,6 +516,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunComputeAbiSelfTest();               // M78e: Compute ABI v21
         ok &= mye::RunSurfaceShaderSelfTest();             // M79a: サーフェス規約・生成エントリ
         ok &= mye::RunSurfaceMaterialSelfTest();           // M79b: Forward 描画とマテリアル Properties
+        ok &= mye::RunSurfaceDeferredSelfTest();           // M79c: Deferred サーフェス段・CSM 影
         return ok ? 0 : 1;
     }
 

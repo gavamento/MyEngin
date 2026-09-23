@@ -1,4 +1,5 @@
 #pragma once
+#include <unordered_set>
 #include <vector>
 #include <wrl/client.h>
 
@@ -12,6 +13,10 @@
 #include "Engine/Renderer/WaterPass.h"
 
 namespace mye {
+
+struct Material;             // GpuResources.h
+struct Mesh;                 // GpuResources.h
+struct SurfaceMaterialState; // GpuResources.h (M79 sub-03)
 
 // Deferred レンダリング (engine_spec.md 6.1 Option B / M6.5)。
 //   1. ジオメトリパス: opaque → GBuffer (albedo RGBA8 + 法線 R10G10B10A2 + 共有深度)
@@ -62,6 +67,12 @@ private:
     void RenderLighting(const RenderView& view, DeferredFrame& f);                                              // 2)
     void RenderSky(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders, DeferredFrame& f);  // 2.5)
     void RenderSsr(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders, DeferredFrame& f);  // 2.6)
+    // 2.65) M79 sub-03: 不透明サーフェスの「フォワード段」。SSR の後・水面 (2.7) の前。
+    // GBuffer から除外したサーフェスアイテム (f.surfaceOpaqueIdx、RenderGeometry が集める) を
+    // 速度エントリ (前後 2 回評価) で HDR シーン (view.rtv) + 画面速度 (gbVelocity_) + 深度 (view.dsv)
+    // へ描く。アイテムが 0 件なら RT / ステート / SRV を一切触らない (既定シーンのビット一致)
+    void RenderSurfaceForward(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
+                              RenderResources& resources, ShaderManager& shaders, DeferredFrame& f);
     void RenderTransparent(const RenderView& view, const RenderQueue& queue, RenderResources& resources,
                            ShaderManager& shaders, DeferredFrame& f); // 3)
     void RenderDebugViews(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
@@ -141,6 +152,15 @@ private:
     TerrainPass terrain_;
     // 水面 (SSR 後・透明後段前)
     WaterPass water_;
+
+    // ---- M79 sub-03: サーフェスシェーダーの予約 CB (GBuffer の perFrameCB_ とは別バッファ。
+    //      ForwardPath と同じ内容を Deferred のフォワード段用に持つ) ----
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfacePerFrameCB_;   // MyEnginePerFrame
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfaceFrameCB_;      // MyEngineSurfaceFrame
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfacePerObjectCB_;  // MyEnginePerObject
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfaceWaterCB_;      // MyEngineWater (sub-05 まで 0 埋め)
+    AssetID surfaceErrorId_ = {}; // "surface_error" (失敗時のマゼンタ代替)
+    std::unordered_set<uint64_t> skinnedSurfaceWarned_; // スキン+サーフェスの WARN はマテリアル毎に 1 回
 
     // ---- SSAO (M38e、半解像度) ----
     RenderTexture ssaoRaw_;

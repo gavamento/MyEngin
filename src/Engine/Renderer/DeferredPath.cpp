@@ -12,6 +12,9 @@
 #include "Engine/Renderer/RayTracing/RtPasses.h" // M46b: RT デバッグ表示
 #include "Engine/Renderer/RayTracing/RtTypes.h"  // M46h: 反射の roughness しきい値
 #include "Engine/Renderer/ShaderManager.h"
+#include "Engine/Renderer/SurfaceDrawBind.h" // M79 sub-03
+#include "Engine/Renderer/SurfaceProgram.h"
+#include "Engine/Renderer/SurfaceShaderTypes.h"
 
 using namespace DirectX;
 
@@ -241,6 +244,8 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     hzbDebugShader_ = shaders.Load("debug_hzb");
     // M56d: SSR。同じく既定 off なので失敗しても続行 (SsrPass::Render が false を返すだけ)
     ssr_.Init(device, shaders);
+    // M79 sub-03: サーフェス失敗時のマゼンタ代替。ForwardPath と同じ LoadSurface 経路
+    surfaceErrorId_ = shaders.LoadSurface("surface_error");
 
     if (!CreateConstant(dev, sizeof(PerFrameCB), perFrameCB_)
         || !CreateConstant(dev, sizeof(PerObjectCB), perObjectCB_)
@@ -250,7 +255,12 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
         || !CreateConstant(dev, sizeof(VelocityDebugCB), velocityDebugCB_) // M55c
         || !CreateConstant(dev, sizeof(DecalCB), decalCB_)                 // M56a
         || !CreateConstant(dev, sizeof(HzbDebugCB), hzbDebugCB_)           // M56c
-        || !CreateConstant(dev, sizeof(XMFLOAT4X4) * kMaxBones, boneCB_)) {
+        || !CreateConstant(dev, sizeof(XMFLOAT4X4) * kMaxBones, boneCB_)
+        // M79 sub-03: サーフェスシェーダーの予約 CB (GBuffer の perFrameCB_ とは別バッファ)
+        || !CreateConstant(dev, sizeof(MyEnginePerFrameCB), surfacePerFrameCB_)
+        || !CreateConstant(dev, sizeof(MyEngineSurfaceFrameCB), surfaceFrameCB_)
+        || !CreateConstant(dev, sizeof(MyEnginePerObjectCB), surfacePerObjectCB_)
+        || !CreateConstant(dev, sizeof(MyEngineWaterCB), surfaceWaterCB_)) {
         return false;
     }
 
@@ -480,6 +490,12 @@ void DeferredPath::Shutdown()
     ssr_.Shutdown(); // M56d
     terrain_.Shutdown(); // M58c
     water_.Shutdown();
+    // M79 sub-03
+    surfacePerFrameCB_.Reset();
+    surfaceFrameCB_.Reset();
+    surfacePerObjectCB_.Reset();
+    surfaceWaterCB_.Reset();
+    skinnedSurfaceWarned_.clear();
 }
 
 // M56b: 受け面の法線 (RT1) を読みながら RT1 へ書くための読み取り用コピー。
@@ -666,6 +682,9 @@ struct DeferredPath::DeferredFrame {
     VelocityCB vel = {};                    // b4 (M55c)
     bool froxelBound = false;               // M57e: 光パスと透明後段で**同じ変数**を使う
     bool acousticBound = false;             // M65e: 同上
+    // M79 sub-03: GBuffer から除外した不透明サーフェスの queue.opaque 添字。
+    // RenderGeometry が集め、RenderSurfaceForward (2.65) がここから読んで描く
+    std::vector<size_t> surfaceOpaqueIdx;
     // ---- 1.5) - 1.7) で決まる ----
     bool ssaoOn = false;
     bool ssrWanted = false;
@@ -731,6 +750,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     RenderLighting(view, f);                                // 2)
     RenderSky(device, view, shaders, f);                    // 2.5)
     RenderSsr(device, view, shaders, f);                    // 2.6)
+    RenderSurfaceForward(device, view, queue, resources, shaders, f); // 2.65) M79 sub-03
     water_.Render(device, shaders, view, resources, perFrameCB_.Get(),
                   f.rtReflBound ? f.rtRefl.filtered : nullptr); // 2.7) 水面 (perFrameCB と RT反射テクスチャを渡す)
     RenderTransparent(view, queue, resources, shaders, f);  // 3)
@@ -881,6 +901,15 @@ void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view
                                && resources.meshes.Get(it.mesh))
                 ? 1
                 : 0;
+            // M79 sub-03: サーフェスマテリアルは GBuffer 不参加 (下のループで除外) なので
+            // インスタンス run にも入れない
+            if (canInstance_[i]) {
+                SurfaceMaterialState* s = resources.materials.GetOrBuildSurfaceState(
+                    it.material, shaders, resources.textures, device);
+                if (s && s->isSurfaceShader) {
+                    canInstance_[i] = 0;
+                }
+            }
         }
         BuildInstanceRuns(queue.opaque, canInstance_, runs_, worlds_);
         // M55c: 前フレーム world を worlds_ と同じ並びで積む。BuildInstanceRuns は
@@ -910,6 +939,24 @@ void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view
         Mesh* mesh = resources.meshes.Get(item.mesh);
         if (!mat || !mesh) {
             continue;
+        }
+        // M79 sub-03: shader が "*.surface" のマテリアルは GBuffer に描かず、
+        // 光パス後の専用段 (RenderSurfaceForward) が速度エントリで深度・色・velocity を描く。
+        // スキン+サーフェスは初版未対応 (spec §2) — WARN 1 回だけ出し、下の通常スキン経路へ落ちる
+        {
+            SurfaceMaterialState* surf = resources.materials.GetOrBuildSurfaceState(
+                item.material, shaders, resources.textures, device);
+            const bool isSurfaceSkinned =
+                surf && surf->isSurfaceShader && item.bones != nullptr && item.boneCount > 0;
+            if (surf && surf->isSurfaceShader && !isSurfaceSkinned) {
+                f.surfaceOpaqueIdx.push_back(idx);
+                continue;
+            }
+            if (isSurfaceSkinned && skinnedSurfaceWarned_.insert(item.material.value).second) {
+                MYE_LOG_WARN("surface material on skinned mesh is not supported yet - using "
+                             "skinned GBuffer shader (material=0x%llx)",
+                             static_cast<unsigned long long>(item.material.value));
+            }
         }
         // インスタンス run の先頭なら一括描画 (M38f)
         if (nextRun < runs_.size() && runs_[nextRun].first == idx) {
@@ -1344,6 +1391,157 @@ void DeferredPath::RenderSsr(GraphicsDevice& device, const RenderView& view, Sha
         dc->OMSetDepthStencilState(nullptr, 0);
         dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
     }
+}
+
+// 2.65) M79 sub-03: 不透明サーフェスの「フォワード段」(HDRP の forward-only マテリアルと同じ位置付け)。
+// SSR の後・水面の前に置く — RenderGeometry が GBuffer 不参加として集めたサーフェスアイテムを、
+// サーフェスプログラムの**速度エントリ**(前後 2 回評価) で描く: 色は SV_Target0 (HDR シーン,
+// view.rtv) へ、速度は SV_Target1 (gbVelocity_、GBuffer と同じ RT を使い回す) へ、深度は
+// view.dsv へ (色の描画そのもので書く。プリパスは足さない、spec §4.1)。
+// f.surfaceOpaqueIdx が空ならこの段は RT / ステート / SRV を一切触らない —
+// これが「サーフェスマテリアルを持たないシーンは絵が不変」の根拠 (spec §4.4)
+void DeferredPath::RenderSurfaceForward(GraphicsDevice& device, const RenderView& view,
+                                        const RenderQueue& queue, RenderResources& resources,
+                                        ShaderManager& shaders, DeferredFrame& f)
+{
+    if (f.surfaceOpaqueIdx.empty()) {
+        return;
+    }
+    ID3D11DeviceContext* dc = f.dc;
+
+    // ---- 予約 CB (1 フレームに 1 回)。内容は ForwardPath::Render の spf/sf/water と同じ式 ----
+    MyEnginePerFrameCB spf = {};
+    spf.cameraPos = f.pf.cameraPos;
+    spf.lightCount = f.pf.lightCount;
+    spf.ambient = f.pf.ambient;
+    memcpy(spf.lights, f.pf.lights, sizeof(spf.lights));
+    spf.shadowVP = f.pf.shadowVP;
+    spf.shadowTexel = f.pf.shadowTexel;
+    spf.shadowEnabled = f.pf.shadowEnabled;
+    spf.fogColor = f.pf.fogColor;
+    spf.fogMode = f.pf.fogMode;
+    spf.fogDensity = f.pf.fogDensity;
+    spf.fogStart = f.pf.fogStart;
+    spf.fogEnd = f.pf.fogEnd;
+    spf.iblEnabled = f.pf.iblEnabled;
+    spf.iblSpecMips = f.pf.iblSpecMips;
+    spf.shadowVP12[0] = f.pf.shadowVP12[0];
+    spf.shadowVP12[1] = f.pf.shadowVP12[1];
+    memcpy(spf.cascadeInfo, f.pf.cascadeInfo, sizeof(spf.cascadeInfo));
+    spf.fogHeightFalloff = f.pf.fogHeightFalloff;
+    spf.fogBaseHeight = f.pf.fogBaseHeight;
+    spf.fogInscatterIntensity = f.pf.fogInscatterIntensity;
+    spf.fogInscatterPower = f.pf.fogInscatterPower;
+    spf.sunDirection = f.pf.sunDirection;
+    spf.sunColor = f.pf.sunColor;
+    spf.shadowAtlasEnabled = f.pf.shadowAtlasEnabled;
+    spf.shadowAtlasTexel = f.pf.shadowAtlasTexel;
+    memcpy(spf.shadowTiles, f.pf.shadowTiles, sizeof(spf.shadowTiles));
+    spf.froxel = f.pf.froxel;
+    spf.acoustic = f.pf.acoustic;
+    UploadCB(dc, surfacePerFrameCB_.Get(), spf);
+
+    // MyEngineSurfaceFrame: 今/前の ViewProj は RenderGeometry が既に組んだ f.pf.viewProj / f.vel と
+    // **同じ値**を使う (velocity の CB (b4) と二重に式を書かない — 食い違うと GBuffer の velocity
+    // と このフォワード段の velocity が別の前フレームを見る事故になる)
+    MyEngineSurfaceFrameCB sf = {};
+    sf.curViewProj = f.pf.viewProj;
+    sf.prevViewProj = f.vel.prevViewProj;
+    sf.shadowViewProj = f.pf.shadowVP; // 色/速度エントリは未使用 (影は ShadowPass 側の別 CB)
+    sf.curTime = static_cast<float>(view.viewFrameIndex) * (1.0f / 60.0f); // spec §2 の時計
+    sf.prevTime = (view.viewFrameIndex > 0)
+        ? static_cast<float>(view.viewFrameIndex - 1) * (1.0f / 60.0f)
+        : 0.0f;
+    sf.curWaterTime = 0.0f; // sub-05 まで水面時刻は供給しない (無効 = 0、spec §4.1)
+    sf.prevWaterTime = 0.0f;
+    sf.jitterNdc = { view.jitterNdc[0], view.jitterNdc[1] };
+    sf.screenSize = { static_cast<float>(view.width), static_cast<float>(view.height) };
+    sf.historyValid = f.vel.valid;
+    UploadCB(dc, surfaceFrameCB_.Get(), sf);
+
+    const MyEngineWaterCB water = {}; // sub-05 まで常に無効
+    UploadCB(dc, surfaceWaterCB_.Get(), water);
+
+    // ---- RT: HDR シーン (RT0) + 画面速度 (RT1、GBuffer と同じ gbVelocity_ を使い回す)。
+    //      IndependentBlendEnable=FALSE の blendOpaque_ は RT0 の設定が RT1 にもそのまま
+    //      適用される (ブレンド無効・全チャンネル書込) ので専用のブレンドステートは要らない ----
+    ID3D11RenderTargetView* rtvs[2] = { view.rtv, gbVelocity_.RTV() };
+    dc->OMSetRenderTargets(2, rtvs, view.dsv);
+    dc->RSSetViewports(1, &f.vp);
+    dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    dc->OMSetDepthStencilState(depthOpaque_.Get(), 0); // テスト+書き込み (深度はこの描画そのもので書く)
+    dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
+    dc->RSSetState(f.wire ? rasterizerWire_.Get() : rasterizer_.Get());
+
+    const bool froxelBound = f.froxelBound;
+    uint64_t boundProgram = 0;
+    for (const size_t idx : f.surfaceOpaqueIdx) {
+        const RenderItem& item = queue.opaque[idx];
+        Material* mat = resources.materials.Get(item.material);
+        Mesh* mesh = resources.meshes.Get(item.mesh);
+        if (!mat || !mesh) {
+            continue;
+        }
+        SurfaceMaterialState* surf = resources.materials.GetOrBuildSurfaceState(
+            item.material, shaders, resources.textures, device);
+        if (!surf) {
+            continue; // RenderGeometry が拾った時点から対象外になった (通常は起きない)
+        }
+        const AssetID programId = surf->useErrorFallback ? surfaceErrorId_ : surf->surfaceProgramId;
+        SurfaceProgram* prog = shaders.GetSurface(programId);
+        if (!prog || !prog->valid) {
+            continue; // surface_error 自体が壊れている異常系。描画せず諦める (クラッシュしない)
+        }
+
+        if (programId.value != boundProgram) {
+            dc->IASetInputLayout(prog->velocityInputLayout.Get());
+            dc->VSSetShader(prog->velocityVS.Get(), nullptr, 0);
+            dc->PSSetShader(prog->velocityPS.Get(), nullptr, 0);
+            boundProgram = programId.value;
+        }
+        const SurfaceEntryReflection& vsRefl = prog->velocityVSReflect;
+        const SurfaceEntryReflection& psRefl = prog->velocityPSReflect;
+
+        BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kPerFrameCB, surfacePerFrameCB_.Get());
+        BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kSurfaceFrameCB, surfaceFrameCB_.Get());
+        BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kWaterCB, surfaceWaterCB_.Get());
+        BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kPerMaterialCB, surf->perMaterialGpuCB.Get());
+
+        MyEnginePerObjectCB po = {};
+        XMStoreFloat4x4(&po.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
+        XMStoreFloat4x4(&po.prevWorld, XMMatrixTranspose(XMLoadFloat4x4(&item.prevWorld)));
+        po.baseColor = SrgbToLinear(mat->baseColor);
+        UploadCB(dc, surfacePerObjectCB_.Get(), po);
+        BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kPerObjectCB, surfacePerObjectCB_.Get());
+
+        // 予約テクスチャ / サンプラ (Forward の DrawSurfaceItem と同じ SRV を名前で引く)
+        BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gShadowMap", view.shadowSRV);
+        BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gIblIrradiance", view.iblIrradiance);
+        BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gIblPrefiltered", view.iblPrefiltered);
+        BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gIblBrdfLut", view.iblBrdfLut);
+        BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gFroxelVolume", froxelBound ? view.froxelSRV : nullptr);
+        BindSurfaceNamedSampler(dc, vsRefl, psRefl, "gSampler", sampler_.Get());
+        BindSurfaceNamedSampler(dc, vsRefl, psRefl, "gShadowSampler", shadowSampler_.Get());
+        BindSurfaceNamedSampler(dc, vsRefl, psRefl, "gIblSampler", iblSampler_.Get());
+
+        // 作者 Texture2D プロパティ (失敗時は surf->textures が空なので何もバインドしない)
+        for (const auto& [texName, texId] : surf->textures) {
+            Texture* tex = resources.textures.Get(texId);
+            ID3D11ShaderResourceView* srv = tex ? tex->srv.Get() : nullptr;
+            BindSurfaceNamedSRV(dc, vsRefl, psRefl, texName.c_str(), srv);
+        }
+
+        const UINT stride = sizeof(MeshVertex);
+        const UINT offset = 0;
+        ID3D11Buffer* vb = mesh->vb.Get();
+        dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+        dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
+        dc->DrawIndexed(mesh->indexCount, 0, 0);
+        prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
+    }
+
+    // 続く水面 (2.7) / 透明後段 (3) は単一 RT (view.rtv) + view.dsv を前提にしている
+    dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
 }
 
 // 3) 透明後段 (Forward — マテリアルのシェーダで上描き)。無ければパーティクル後段のために RTV + DSV だけ戻す

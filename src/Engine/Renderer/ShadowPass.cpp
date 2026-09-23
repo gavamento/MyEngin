@@ -5,6 +5,9 @@
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/RenderTypes.h"
 #include "Engine/Renderer/ShaderManager.h"
+#include "Engine/Renderer/SurfaceDrawBind.h" // M79 sub-03
+#include "Engine/Renderer/SurfaceProgram.h"
+#include "Engine/Renderer/SurfaceShaderTypes.h"
 
 using namespace DirectX;
 
@@ -28,6 +31,10 @@ void UploadCB(ID3D11DeviceContext* dc, ID3D11Buffer* cb, const T& data)
         dc->Unmap(cb, 0);
     }
 }
+
+// M79 sub-03: 影エントリは VS のみ (PS を持たない)。BindSurfaceNamedCB/SRV は VS/PS 両方の
+// リフレクション表を引数に取るので、PS 側には空表を渡す (何にも一致せず何も bind しない)
+const SurfaceEntryReflection kNoPsReflect;
 
 } // namespace
 
@@ -87,6 +94,23 @@ bool ShadowPass::Init(GraphicsDevice& device, ShaderManager& shaders, int resolu
     if (FAILED(dev->CreateBuffer(&bd, nullptr, boneCB_.GetAddressOf()))) {
         return false;
     }
+    // M79 sub-03: サーフェスの影エントリ用予約 CB
+    bd.ByteWidth = sizeof(MyEnginePerFrameCB);
+    if (FAILED(dev->CreateBuffer(&bd, nullptr, surfacePerFrameCB_.GetAddressOf()))) {
+        return false;
+    }
+    bd.ByteWidth = sizeof(MyEngineSurfaceFrameCB);
+    if (FAILED(dev->CreateBuffer(&bd, nullptr, surfaceFrameCB_.GetAddressOf()))) {
+        return false;
+    }
+    bd.ByteWidth = sizeof(MyEnginePerObjectCB);
+    if (FAILED(dev->CreateBuffer(&bd, nullptr, surfacePerObjectCB_.GetAddressOf()))) {
+        return false;
+    }
+    bd.ByteWidth = sizeof(MyEngineWaterCB);
+    if (FAILED(dev->CreateBuffer(&bd, nullptr, surfaceWaterCB_.GetAddressOf()))) {
+        return false;
+    }
 
     D3D11_DEPTH_STENCIL_DESC dd = {};
     dd.DepthEnable = TRUE;
@@ -116,7 +140,7 @@ bool ShadowPass::Init(GraphicsDevice& device, ShaderManager& shaders, int resolu
 
 void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const RenderQueue& queue,
                         RenderResources& resources, const XMFLOAT4X4* lightViewProjs, int count,
-                        bool instancing)
+                        uint32_t viewFrameIndex, bool instancing)
 {
     ShaderProgram* prog = shaders.Get(depthShader_);
     if (!ready_ || !prog || !prog->valid || lightViewProjs == nullptr || count <= 0) {
@@ -139,12 +163,30 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
         for (size_t i = 0; i < queue.opaque.size(); ++i) {
             const RenderItem& it = queue.opaque[i];
             canInstance_[i] = (it.bones == nullptr && resources.meshes.Get(it.mesh)) ? 1 : 0;
+            // M79 sub-03: サーフェスマテリアルは影エントリ (下のループ) で個別に描くので、
+            // 深度専用シェーダのインスタンス run には混ぜない
+            if (canInstance_[i]) {
+                SurfaceMaterialState* s = resources.materials.GetOrBuildSurfaceState(
+                    it.material, shaders, resources.textures, device);
+                if (s && s->isSurfaceShader) {
+                    canInstance_[i] = 0;
+                }
+            }
         }
         BuildInstanceRuns(queue.opaque, canInstance_, runs_, worlds_);
         if (worlds_.empty() || !instanceBuf_.Upload(device, worlds_)) {
             runs_.clear();
         }
     }
+
+    // M79 sub-03: サーフェスの影エントリ用予約 CB (カスケード間で共通。理由はヘッダのコメント参照)
+    {
+        const MyEnginePerFrameCB spf = {}; // 全 0 (影エントリは PSMain を呼ばず光/霧/IBL を使わない)
+        UploadCB(dc, surfacePerFrameCB_.Get(), spf);
+        const MyEngineWaterCB water = {}; // sub-05 まで常に無効
+        UploadCB(dc, surfaceWaterCB_.Get(), water);
+    }
+    const float surfaceCurTime = static_cast<float>(viewFrameIndex) * (1.0f / 60.0f); // spec §2 の時計
 
     timer_.Begin(device); // M54d
 
@@ -178,6 +220,16 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
         dc->OMSetRenderTargets(1, noRtv, dsv_[c].Get());
         dc->ClearDepthStencilView(dsv_[c].Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
         const XMMATRIX lvp = XMLoadFloat4x4(&lightViewProjs[c]);
+        // M79 sub-03: このカスケードのライト VP (影エントリの gMyeShadowViewProj)。
+        // world は色/速度エントリと同じく gWorld (MyEnginePerObject) 側で別に掛ける規約なので、
+        // ここに積むのは lvp 単体 (world を含まない)
+        {
+            MyEngineSurfaceFrameCB sf = {};
+            XMStoreFloat4x4(&sf.shadowViewProj, XMMatrixTranspose(lvp));
+            sf.curTime = surfaceCurTime;
+            sf.prevTime = surfaceCurTime; // 影エントリは前フレームを使わない (未使用フィールド)
+            UploadCB(dc, surfaceFrameCB_.Get(), sf);
+        }
         uint64_t boundMesh = 0;
         size_t nextRun = 0;
         for (size_t idx = 0; idx < queue.opaque.size(); ++idx) {
@@ -185,6 +237,54 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
             Mesh* mesh = resources.meshes.Get(item.mesh);
             if (!mesh) {
                 continue;
+            }
+            // M79 sub-03: サーフェスの不透明アイテムは影エントリ (ライト VP を gViewProj に入れて
+            // VSMain、PS なし) で描く。スキン+サーフェスは対象外 (従来のスキン深度経路のまま)。
+            // 失敗時 (surf->ready==false) は従来の shadow_depth (変位なし) へフォールスルーする
+            {
+                SurfaceMaterialState* surf = resources.materials.GetOrBuildSurfaceState(
+                    item.material, shaders, resources.textures, device);
+                const bool skinnedItem = item.bones != nullptr && item.boneCount > 0;
+                if (surf && surf->isSurfaceShader && surf->ready && !skinnedItem) {
+                    SurfaceProgram* sprog = shaders.GetSurface(surf->surfaceProgramId);
+                    if (sprog && sprog->valid) {
+                        if (surf->surfaceProgramId.value != boundShader) {
+                            dc->IASetInputLayout(sprog->shadowInputLayout.Get());
+                            dc->VSSetShader(sprog->shadowVS.Get(), nullptr, 0);
+                            boundShader = surf->surfaceProgramId.value;
+                        }
+                        const SurfaceEntryReflection& vsRefl = sprog->shadowVSReflect;
+                        BindSurfaceNamedCB(dc, vsRefl, kNoPsReflect, surface::kPerFrameCB,
+                                          surfacePerFrameCB_.Get());
+                        BindSurfaceNamedCB(dc, vsRefl, kNoPsReflect, surface::kSurfaceFrameCB,
+                                          surfaceFrameCB_.Get());
+                        BindSurfaceNamedCB(dc, vsRefl, kNoPsReflect, surface::kWaterCB,
+                                          surfaceWaterCB_.Get());
+                        BindSurfaceNamedCB(dc, vsRefl, kNoPsReflect, surface::kPerMaterialCB,
+                                          surf->perMaterialGpuCB.Get());
+                        MyEnginePerObjectCB po = {};
+                        XMStoreFloat4x4(&po.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
+                        UploadCB(dc, surfacePerObjectCB_.Get(), po);
+                        BindSurfaceNamedCB(dc, vsRefl, kNoPsReflect, surface::kPerObjectCB,
+                                          surfacePerObjectCB_.Get());
+                        for (const auto& [texName, texId] : surf->textures) {
+                            Texture* tex = resources.textures.Get(texId);
+                            ID3D11ShaderResourceView* srv = tex ? tex->srv.Get() : nullptr;
+                            BindSurfaceNamedSRV(dc, vsRefl, kNoPsReflect, texName.c_str(), srv);
+                        }
+                        if (item.mesh.value != boundMesh) {
+                            const UINT stride = sizeof(MeshVertex);
+                            const UINT offset = 0;
+                            ID3D11Buffer* vb = mesh->vb.Get();
+                            dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+                            dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
+                            boundMesh = item.mesh.value;
+                        }
+                        dc->DrawIndexed(mesh->indexCount, 0, 0);
+                        continue;
+                    }
+                    // sprog が壊れている異常系 (ready==true なら通常起きない) → 下へフォールスルー
+                }
             }
             // インスタンス run の先頭なら一括描画 (M38f)
             if (nextRun < runs_.size() && runs_[nextRun].first == idx) {

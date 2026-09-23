@@ -11,6 +11,12 @@
 // **位置に効く値は static のみを使うこと**。予約 CB のフィールドを直接読むと、
 // 影・速度パスでは代入前の値 (今フレームの色パス用の値) のままになり、
 // 変位が影・TAA に反映されない (spec §4.1 作者規約「位置に効く値」)。
+//
+// ★影エントリ (CSM) では MyEnginePerFrame は全 0 で渡る (ShadowPass が光/霧/IBL の
+//   確定より前に走るため)。VSMain の頂点変位に gCameraPos 等 MyEnginePerFrame の値を
+//   使うと、影エントリだけ他パス (色・速度) と違う (常に 0 の) 値を見て変位の形が食い違う
+//   (spec §4.1、M79 sub-03 round 2 で確定)。変位に使ってよいのは static (gTime/gWaterTime 等)・
+//   MyEngineSurfaceFrame・MyEnginePerObject・MyEnginePerMaterial・作者 Texture2D のみ。
 
 #include "common.hlsli"
 #include "froxel_common.hlsli"
