@@ -1,6 +1,7 @@
 #include "Engine/Renderer/ShaderManager.h"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -15,6 +16,7 @@
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderCache.h"
 
@@ -127,12 +129,136 @@ bool BuildInputLayout(ID3D11Device* device, const std::vector<uint8_t>& vsByteco
                                                out.GetAddressOf()));
 }
 
+// ---- M79: サーフェスシェーダー (SurfaceProgram) 用の補助 ----
+
+// 頂点シェーダの入力レイアウトを MeshVertex の固定オフセットから作る。
+// BuildInputLayout (APPEND_ALIGNED、上) とは別系統: 作者の VSIn は POSITION/NORMAL/TEXCOORD0 の
+// 任意の部分集合・任意の順でよく、詰めて並べる (APPEND_ALIGNED) と欠けた要素の分だけ
+// 後続のオフセットがずれる — 常に同じ 52 バイトの VB (MeshVertex) を指すので、
+// オフセットは semantic 名から固定表で引く
+bool BuildSurfaceInputLayout(ID3D11Device* device, const std::vector<uint8_t>& vsBytecode,
+                             ComPtr<ID3D11InputLayout>& out, std::string& errorOut)
+{
+    ComPtr<ID3D11ShaderReflection> reflection;
+    if (FAILED(D3DReflect(vsBytecode.data(), vsBytecode.size(),
+                          IID_PPV_ARGS(reflection.GetAddressOf())))) {
+        errorOut = "入力レイアウト: D3DReflect に失敗";
+        return false;
+    }
+    D3D11_SHADER_DESC sd = {};
+    reflection->GetDesc(&sd);
+
+    struct FixedElem {
+        const char* semantic;
+        UINT offset;
+        DXGI_FORMAT format;
+    };
+    static const FixedElem kFixed[] = {
+        { "POSITION", offsetof(MeshVertex, position), DXGI_FORMAT_R32G32B32_FLOAT },
+        { "NORMAL", offsetof(MeshVertex, normal), DXGI_FORMAT_R32G32B32_FLOAT },
+        { "TEXCOORD", offsetof(MeshVertex, uv), DXGI_FORMAT_R32G32_FLOAT },
+    };
+
+    std::vector<D3D11_INPUT_ELEMENT_DESC> elems;
+    for (UINT i = 0; i < sd.InputParameters; ++i) {
+        D3D11_SIGNATURE_PARAMETER_DESC pd = {};
+        reflection->GetInputParameterDesc(i, &pd);
+        if (pd.SystemValueType != D3D_NAME_UNDEFINED) {
+            continue;
+        }
+        const FixedElem* match = nullptr;
+        if (pd.SemanticIndex == 0) {
+            for (const FixedElem& fe : kFixed) {
+                if (std::strcmp(pd.SemanticName, fe.semantic) == 0) {
+                    match = &fe;
+                    break;
+                }
+            }
+        }
+        if (!match) {
+            errorOut = std::string("入力レイアウト: 未対応の VSIn semantic ") + pd.SemanticName
+                + " (POSITION/NORMAL/TEXCOORD0 の部分集合のみ)";
+            return false;
+        }
+        D3D11_INPUT_ELEMENT_DESC e = {};
+        e.SemanticName = match->semantic;
+        e.SemanticIndex = 0;
+        e.Format = match->format;
+        e.InputSlot = 0;
+        e.AlignedByteOffset = match->offset; // MeshVertex 固定オフセット (APPEND_ALIGNED は使わない)
+        e.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
+        elems.push_back(e);
+    }
+    if (elems.empty()) {
+        out.Reset();
+        return true;
+    }
+    if (FAILED(device->CreateInputLayout(elems.data(), static_cast<UINT>(elems.size()),
+                                         vsBytecode.data(), vsBytecode.size(),
+                                         out.GetAddressOf()))) {
+        errorOut = "入力レイアウト: CreateInputLayout に失敗";
+        return false;
+    }
+    return true;
+}
+
+// バイトコードから予約 CB / 予約テクスチャ・サンプラ / 作者資源を名前で引ける表を作る。
+// ComputeAbiRunner::ReflectBytecode (M78e) と同じ D3DReflect の使い方だが、
+// **D3D_SVF_USED では絞らない** — 予約 CB のレイアウト検証 (SelfTest) は宣言された
+// 全フィールドのオフセットを見る必要があり、使われているかどうかは関係ない
+bool ReflectSurfaceBytecode(const std::vector<uint8_t>& bytecode, SurfaceEntryReflection& out)
+{
+    if (bytecode.empty()) {
+        return false;
+    }
+    ComPtr<ID3D11ShaderReflection> reflection;
+    if (FAILED(D3DReflect(bytecode.data(), bytecode.size(),
+                          IID_PPV_ARGS(reflection.GetAddressOf())))) {
+        return false;
+    }
+    D3D11_SHADER_DESC sd = {};
+    reflection->GetDesc(&sd);
+
+    for (UINT i = 0; i < sd.BoundResources; ++i) {
+        D3D11_SHADER_INPUT_BIND_DESC bd = {};
+        reflection->GetResourceBindingDesc(i, &bd);
+        SurfaceReflectedResource rr;
+        rr.bindSlot = bd.BindPoint;
+        rr.type = bd.Type;
+        out.resources[bd.Name] = rr;
+    }
+    for (UINT i = 0; i < sd.ConstantBuffers; ++i) {
+        ID3D11ShaderReflectionConstantBuffer* cb = reflection->GetConstantBufferByIndex(i);
+        D3D11_SHADER_BUFFER_DESC cbDesc = {};
+        cb->GetDesc(&cbDesc);
+        uint32_t cbSlot = 0;
+        if (const auto it = out.resources.find(cbDesc.Name); it != out.resources.end()) {
+            cbSlot = it->second.bindSlot;
+        }
+        for (UINT j = 0; j < cbDesc.Variables; ++j) {
+            ID3D11ShaderReflectionVariable* var = cb->GetVariableByIndex(j);
+            D3D11_SHADER_VARIABLE_DESC varDesc = {};
+            var->GetDesc(&varDesc);
+            SurfaceReflectedVar rv;
+            rv.cbufBindSlot = cbSlot;
+            rv.cbufSize = cbDesc.Size;
+            rv.offset = varDesc.StartOffset;
+            rv.size = varDesc.Size;
+            out.vars[varDesc.Name] = rv;
+        }
+    }
+    return true;
+}
+
 bool IsProjectIndexedShaderFile(const std::wstring& filename)
 {
     return (filename.size() >= 11
             && filename.compare(filename.size() - 10, 10, L".post.hlsl") == 0)
         || (filename.size() >= 10
-            && filename.compare(filename.size() - 9, 9, L".cs.hlsl") == 0);
+            && filename.compare(filename.size() - 9, 9, L".cs.hlsl") == 0)
+        // M79: *.surface.hlsl も assets 全域索引に加える (短名 "Foo.surface")
+        || (filename.size() >= 14
+            && filename.compare(filename.size() - 13, 13, L".surface.hlsl") == 0);
 }
 
 // MyTint.post.hlsl → "MyTint.post" (Load 名)
@@ -327,6 +453,28 @@ ShaderProgram* ShaderManager::Get(AssetID id)
 {
     auto it = programs_.find(id.value);
     return (it != programs_.end()) ? &it->second : nullptr;
+}
+
+AssetID ShaderManager::LoadSurface(std::string_view name)
+{
+    const AssetID id{ HashStr(name) };
+    if (surfacePrograms_.contains(id.value)) {
+        return id;
+    }
+    SurfaceProgram prog;
+    prog.path = ResolvePath(name);
+    if (device_ && !CompileSurfaceProgram(prog.path, prog)) { // Init 前は ID 予約のみ
+        MYE_LOG_ERROR("surface shader compile failed: %.*s", static_cast<int>(name.size()),
+                      name.data());
+    }
+    surfacePrograms_.emplace(id.value, std::move(prog));
+    return id;
+}
+
+SurfaceProgram* ShaderManager::GetSurface(AssetID id)
+{
+    auto it = surfacePrograms_.find(id.value);
+    return (it != surfacePrograms_.end()) ? &it->second : nullptr;
 }
 
 bool ShaderManager::Recompile(AssetID id)
@@ -605,6 +753,110 @@ bool ShaderManager::CompileProgram(const std::wstring& path, ShaderProgram& out)
             std::filesystem::remove(tmpPath, ec);
         }
     }
+    return true;
+}
+
+// M79: 作者ソース + MyEngineSurfaceEntries.hlsli (生成エントリ) を 1 つの翻訳単位として
+// 5 エントリ (色 VS/PS・影 VS・速度 VS/PS) を個別コンパイルする。バイトコードキャッシュは
+// 対象外 (sub-01 では方式の成立確認を優先。キャッシュ対応は後続サブで検討)
+bool ShaderManager::CompileSurfaceProgram(const std::wstring& path, SurfaceProgram& out)
+{
+    std::vector<char> authorSource;
+    if (!ReadFileBytes(path, authorSource)) {
+        out.errorMessage = "shader file not found: " + WideToUtf8(path);
+        MYE_LOG_ERROR("%s", out.errorMessage.c_str());
+        return false;
+    }
+    const std::string pathUtf8 = WideToUtf8(path);
+
+    // 作者ソースの直後に生成エントリの include を足す。#include なので IncludeRecorder の
+    // 依存グラフに自然に乗り、MyEngineSurfaceEntries.hlsli の編集もホットリロード対象になる
+    static constexpr char kEntriesInclude[] = "\n#include \"MyEngineSurfaceEntries.hlsli\"\n";
+    std::vector<char> combined(authorSource);
+    combined.insert(combined.end(), kEntriesInclude,
+                    kEntriesInclude + (sizeof(kEntriesInclude) - 1));
+
+    out.includes.clear();
+    std::vector<ShaderCacheEntry::Dependency> depsUnused; // サーフェスはキャッシュ未対応 (sub-01)
+    IncludeRecorder includer(
+        [this](const char* name, std::vector<char>* data) { return ResolveInclude(name, data); },
+        out.includes, depsUnused);
+
+    auto compile = [&](const char* entryPoint, const char* target,
+                       std::vector<uint8_t>& bytecode, std::string& errOut) {
+        ComPtr<ID3DBlob> code;
+        ComPtr<ID3DBlob> errors;
+        const HRESULT hr = D3DCompile(combined.data(), combined.size(), pathUtf8.c_str(), nullptr,
+                                      &includer, entryPoint, target, kCompileFlags, 0,
+                                      code.GetAddressOf(), errors.GetAddressOf());
+        if (FAILED(hr)) {
+            errOut = errors ? static_cast<const char*>(errors->GetBufferPointer())
+                            : "(no error output)";
+            return false;
+        }
+        if (errors && errors->GetBufferSize() > 1) {
+            MYE_LOG_WARN("HLSL %s (%s):\n%s", entryPoint, pathUtf8.c_str(),
+                         static_cast<const char*>(errors->GetBufferPointer()));
+        }
+        const auto* p = static_cast<const uint8_t*>(code->GetBufferPointer());
+        bytecode.assign(p, p + code->GetBufferSize());
+        return true;
+    };
+
+    std::vector<uint8_t> colorVsBytecode;
+    std::vector<uint8_t> colorPsBytecode;
+    std::vector<uint8_t> shadowVsBytecode;
+    std::vector<uint8_t> velVsBytecode;
+    std::vector<uint8_t> velPsBytecode;
+    std::string err;
+
+    const bool ok = compile("MyeVSColor", "vs_5_0", colorVsBytecode, err)
+        && compile("MyePSColor", "ps_5_0", colorPsBytecode, err)
+        && compile("MyeVSShadow", "vs_5_0", shadowVsBytecode, err)
+        && compile("MyeVSVelocity", "vs_5_0", velVsBytecode, err)
+        && compile("MyePSVelocity", "ps_5_0", velPsBytecode, err);
+
+    if (!ok) {
+        out.errorMessage =
+            "サーフェス規約: VSOut VSMain(VSIn v) / float4 PSMain(VSOut i) : SV_Target / "
+            "VSOut.pos : SV_Position\n" + err;
+        MYE_LOG_ERROR("HLSL surface (%s):\n%s", pathUtf8.c_str(), out.errorMessage.c_str());
+        return false;
+    }
+
+    ID3D11Device* dev = device_->Device();
+    if (FAILED(dev->CreateVertexShader(colorVsBytecode.data(), colorVsBytecode.size(), nullptr,
+                                       out.colorVS.GetAddressOf()))
+        || FAILED(dev->CreatePixelShader(colorPsBytecode.data(), colorPsBytecode.size(), nullptr,
+                                         out.colorPS.GetAddressOf()))
+        || FAILED(dev->CreateVertexShader(shadowVsBytecode.data(), shadowVsBytecode.size(),
+                                          nullptr, out.shadowVS.GetAddressOf()))
+        || FAILED(dev->CreateVertexShader(velVsBytecode.data(), velVsBytecode.size(), nullptr,
+                                          out.velocityVS.GetAddressOf()))
+        || FAILED(dev->CreatePixelShader(velPsBytecode.data(), velPsBytecode.size(), nullptr,
+                                         out.velocityPS.GetAddressOf()))) {
+        out.errorMessage = "サーフェス規約: シェーダオブジェクト作成に失敗 (" + pathUtf8 + ")";
+        MYE_LOG_ERROR("%s", out.errorMessage.c_str());
+        return false;
+    }
+
+    std::string layoutErr;
+    if (!BuildSurfaceInputLayout(dev, colorVsBytecode, out.colorInputLayout, layoutErr)
+        || !BuildSurfaceInputLayout(dev, shadowVsBytecode, out.shadowInputLayout, layoutErr)
+        || !BuildSurfaceInputLayout(dev, velVsBytecode, out.velocityInputLayout, layoutErr)) {
+        out.errorMessage = "サーフェス規約: " + layoutErr;
+        MYE_LOG_ERROR("%s (%s)", out.errorMessage.c_str(), pathUtf8.c_str());
+        return false;
+    }
+
+    ReflectSurfaceBytecode(colorVsBytecode, out.colorVSReflect);
+    ReflectSurfaceBytecode(colorPsBytecode, out.colorPSReflect);
+    ReflectSurfaceBytecode(shadowVsBytecode, out.shadowVSReflect);
+    ReflectSurfaceBytecode(velVsBytecode, out.velocityVSReflect);
+    ReflectSurfaceBytecode(velPsBytecode, out.velocityPSReflect);
+
+    out.valid = true;
+    MYE_LOG_INFO("surface shader compiled: %s", pathUtf8.c_str());
     return true;
 }
 

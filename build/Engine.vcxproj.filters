@@ -585,6 +585,12 @@
     <ClCompile Include="..\src\Engine\Renderer\AcousticVolumePass.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ComputeAbiRunner.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ComputeAbiSelfTest.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\DeferredPath.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -604,6 +610,12 @@
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\FroxelPass.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\FxStackAsset.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\FxStackSelfTest.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\GhostMeshPass.cpp">
@@ -645,25 +657,10 @@
     <ClCompile Include="..\src\Engine\Renderer\PostProcess.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\FxStackAsset.cpp">
-      <Filter>Renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\FxStackSelfTest.cpp">
-      <Filter>Renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ComputeAbiRunner.cpp">
-      <Filter>Renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ComputeAbiSelfTest.cpp">
-      <Filter>Renderer</Filter>
-    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\ProjectComputeRunner.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\ProjectComputeRunnerSelfTest.cpp">
-      <Filter>Renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ShaderManagerProjectIndexSelfTest.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\ProjectEffectRunner.cpp">
@@ -699,6 +696,9 @@
     <ClCompile Include="..\src\Engine\Renderer\ShaderManager.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ShaderManagerProjectIndexSelfTest.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\ShadowAtlas.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -715,6 +715,9 @@
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\StbImpl.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\SurfaceShaderSelfTest.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\SwapChain.cpp">
@@ -1320,6 +1323,12 @@
     <ClInclude Include="..\src\Engine\Renderer\AcousticVolumePass.h">
       <Filter>Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ComputeAbiRunner.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ComputeAbiSelfTest.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\DeferredPath.h">
       <Filter>Renderer</Filter>
     </ClInclude>
@@ -1345,6 +1354,12 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\FrustumCull.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\FxStackAsset.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\FxStackSelfTest.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\GhostMeshPass.h">
@@ -1395,31 +1410,19 @@
     <ClInclude Include="..\src\Engine\Renderer\PostProcess.h">
       <Filter>Renderer</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\FxStackAsset.h">
-      <Filter>Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\FxStackSelfTest.h">
-      <Filter>Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ComputeAbiRunner.h">
-      <Filter>Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ComputeAbiSelfTest.h">
-      <Filter>Renderer</Filter>
-    </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ProjectComputeRunner.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ProjectComputeRunnerSelfTest.h">
       <Filter>Renderer</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ShaderManagerProjectIndexSelfTest.h">
-      <Filter>Renderer</Filter>
-    </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ProjectEffectRunner.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ProjectEffectRunnerSelfTest.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ProjectFxStackPolicy.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ProjectShaderProperties.h">
@@ -1458,6 +1461,9 @@
     <ClInclude Include="..\src\Engine\Renderer\ShaderManager.h">
       <Filter>Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ShaderManagerProjectIndexSelfTest.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ShadowAtlas.h">
       <Filter>Renderer</Filter>
     </ClInclude>
@@ -1471,6 +1477,15 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\SsrPass.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\SurfaceProgram.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\SurfaceShaderSelfTest.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\SurfaceShaderTypes.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\SwapChain.h">

@@ -11,6 +11,7 @@
 #include <wrl/client.h>
 
 #include "Engine/Core/EntityID.h"
+#include "Engine/Renderer/SurfaceProgram.h"
 
 namespace mye {
 
@@ -49,6 +50,12 @@ public:
     AssetID LoadCompute(std::string_view name);
     ShaderProgram* Get(AssetID id);
 
+    // M79: "Foo.surface" → Foo.surface.hlsl。作者の VSMain/PSMain と
+    // MyEngineSurfaceEntries.hlsli の生成エントリ (色/速度/影) を束ねてコンパイルする。
+    // Init 前 (ヘッドレス) は ID だけ予約する (Load/LoadCompute と同じ規則)
+    AssetID LoadSurface(std::string_view name);
+    SurfaceProgram* GetSurface(AssetID id);
+
     // 同期再コンパイル。成功時のみ差し替え、失敗時は旧プログラム維持 + エラーログ
     bool Recompile(AssetID id);
 
@@ -78,6 +85,9 @@ public:
 
 private:
     bool CompileProgram(const std::wstring& path, ShaderProgram& out); // out.isCompute を見て分岐
+    // M79: 作者ソース + 生成エントリ (MyEngineSurfaceEntries.hlsli) を 5 エントリ
+    // (色 VS/PS・影 VS・速度 VS/PS) 個別コンパイルし、リフレクション表と入力レイアウトまで作る
+    bool CompileSurfaceProgram(const std::wstring& path, SurfaceProgram& out);
     // キャッシュから読めたら out を完成させて true。鮮度が合わない / 無い / 壊れていれば false
     bool TryLoadCached(const std::wstring& path, const std::vector<char>& source,
                        ShaderProgram& out);
@@ -99,6 +109,7 @@ private:
     std::wstring assetsRoot_;
     std::unordered_map<std::string, std::wstring> projectShaders_; // 短名 → 正規化パス
     std::unordered_map<uint64_t, ShaderProgram> programs_; // AssetID.value → program
+    std::unordered_map<uint64_t, SurfaceProgram> surfacePrograms_; // M79: AssetID.value → program
     struct AsyncCompile {
         uint64_t id;
         std::future<ShaderProgram> future;

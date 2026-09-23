@@ -84,6 +84,7 @@
 #include "Engine/Renderer/ProjectComputeRunnerSelfTest.h"     // M78d
 #include "Engine/Renderer/ShaderManagerProjectIndexSelfTest.h"
 #include "Engine/Renderer/ComputeAbiSelfTest.h"              // M78e
+#include "Engine/Renderer/SurfaceShaderSelfTest.h"           // M79a
 #include "Engine/Renderer/RenderSelfTest.h"
 #include "Engine/Renderer/TextureCookSelfTest.h"
 #include "Engine/Renderer/VolumeTexture.h"
@@ -511,6 +512,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunProjectComputeRunnerSelfTest();     // M78d: CS dispatch 基盤
         ok &= mye::RunShaderManagerProjectIndexSelfTest(); // M78: assets 全域索引
         ok &= mye::RunComputeAbiSelfTest();               // M78e: Compute ABI v21
+        ok &= mye::RunSurfaceShaderSelfTest();             // M79a: サーフェス規約・生成エントリ
         return ok ? 0 : 1;
     }
 

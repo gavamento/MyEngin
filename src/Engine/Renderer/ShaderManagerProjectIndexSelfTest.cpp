@@ -34,6 +34,7 @@ bool RunShaderManagerProjectIndexSelfTest()
     fs::create_directories(root / L"a", ec);
     fs::create_directories(root / L"b", ec);
     fs::create_directories(root / L"fx", ec);
+    fs::create_directories(root / L"surf", ec);
 
     auto writeHlsl = [&](const fs::path& p) {
         std::ofstream f(p, std::ios::binary);
@@ -44,6 +45,12 @@ bool RunShaderManagerProjectIndexSelfTest()
     writeHlsl(uniquePath);
     writeHlsl(root / L"a" / L"Dup.post.hlsl");
     writeHlsl(root / L"b" / L"Dup.post.hlsl");
+
+    // M79: *.surface.hlsl も同じ索引に乗る (短名 "Foo.surface")
+    const fs::path uniqueSurfacePath = root / L"surf" / L"Only.surface.hlsl";
+    writeHlsl(uniqueSurfacePath);
+    writeHlsl(root / L"a" / L"Dup.surface.hlsl");
+    writeHlsl(root / L"b" / L"Dup.surface.hlsl");
 
     ShaderManager sm;
     sm.SetAssetsRoot(root.wstring());
@@ -58,6 +65,17 @@ bool RunShaderManagerProjectIndexSelfTest()
               && NormalizePathKey(dupResolved)
                      != NormalizePathKey((root / L"b" / L"Dup.post.hlsl").wstring()),
           "duplicate short names are not indexed (no silent pick)");
+
+    check(NormalizePathKey(sm.ResolveShaderPath("Only.surface"))
+              == NormalizePathKey(uniqueSurfacePath.wstring()),
+          "unique project surface shader resolves to its path under assets");
+
+    const std::wstring dupSurfaceResolved = sm.ResolveShaderPath("Dup.surface");
+    check(NormalizePathKey(dupSurfaceResolved)
+                  != NormalizePathKey((root / L"a" / L"Dup.surface.hlsl").wstring())
+              && NormalizePathKey(dupSurfaceResolved)
+                     != NormalizePathKey((root / L"b" / L"Dup.surface.hlsl").wstring()),
+          "duplicate surface shader short names are not indexed (no silent pick)");
 
     if (failCount == 0) {
         MYE_LOG_INFO("==== ShaderManager project index self test: ALL PASS ====");
