@@ -507,4 +507,75 @@ bool PackProperties(
     return true;
 }
 
+bool PackPropertiesReflected(
+    const PropertyParseResult&                              parsed,
+    const std::unordered_map<std::string, PropValue>&       values,
+    const std::unordered_map<std::string, ReflectedVarSlot>& reflectionVars,
+    uint32_t                                                 cbSizeBytes,
+    std::vector<uint8_t>&                                    cbData,
+    std::vector<std::string>*                                missingOut)
+{
+    if (!parsed.ok) return false;
+
+    if (cbSizeBytes == 0)
+    {
+        cbData.clear();
+        return true;
+    }
+    cbData.assign(static_cast<size_t>(cbSizeBytes), 0);
+
+    for (const auto& p : parsed.properties)
+    {
+        // Header 行 (name 空) と Tex2D (CB 対象外) はここで詰めない
+        if (p.name.empty() || p.type == PropType::Tex2D) continue;
+
+        const auto rit = reflectionVars.find(p.name);
+        if (rit == reflectionVars.end())
+        {
+            if (missingOut) missingOut->push_back(p.name);
+            continue;
+        }
+        const uint32_t offset = rit->second.offset;
+        const uint32_t size   = rit->second.size;
+        const size_t   need   = (p.type == PropType::Color || p.type == PropType::Vector)
+                                   ? 4 * sizeof(float)
+                                   : sizeof(float);
+        if (size < need || offset + need > cbData.size())
+        {
+            if (missingOut) missingOut->push_back(p.name);
+            continue;
+        }
+
+        auto it = values.find(p.name);
+        switch (p.type)
+        {
+        case PropType::Float:
+        case PropType::Range:
+        {
+            float val = p.defaultFloat;
+            if (it != values.end() && std::holds_alternative<float>(it->second))
+                val = std::get<float>(it->second);
+            std::memcpy(cbData.data() + offset, &val, sizeof(float));
+            break;
+        }
+        case PropType::Color:
+        case PropType::Vector:
+        {
+            auto val = p.defaultVec4;
+            if (it != values.end() &&
+                std::holds_alternative<std::array<float, 4>>(it->second))
+            {
+                val = std::get<std::array<float, 4>>(it->second);
+            }
+            std::memcpy(cbData.data() + offset, val.data(), 4 * sizeof(float));
+            break;
+        }
+        case PropType::Tex2D:
+            break;
+        }
+    }
+
+    return true;
+}
+
 } // namespace mye

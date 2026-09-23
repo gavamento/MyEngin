@@ -61,9 +61,12 @@ public:
 
     // ---- ホットリロード (engine_spec.md 8.1) ----
     // 変更ファイル (正規化パス) に依存する全プログラムの再コンパイルを
-    // バックグラウンドで開始する。include 依存グラフ (ShaderProgram::includes) を辿る
+    // バックグラウンドで開始する。include 依存グラフ (ShaderProgram::includes) を辿る。
+    // M79 sub-02: SurfaceProgram (作者ファイル・MyEngineSurface.hlsli・
+    // MyEngineSurfaceEntries.hlsli への依存) も同じ依存グラフで対象になる
     void RequestRecompileForFile(const std::wstring& normalizedPath);
-    // フェーズ 2 で呼ぶ: 完了した非同期コンパイルを取り込み、成功分のみ差し替える
+    // フェーズ 2 で呼ぶ: 完了した非同期コンパイルを取り込み、成功分のみ差し替える。
+    // 失敗した SurfaceProgram は旧プログラムを維持したまま (generation も据え置き)
     void PollAsyncCompiles();
 
     const std::vector<std::wstring>& ShaderDirs() const { return dirs_; }
@@ -86,15 +89,22 @@ public:
 private:
     bool CompileProgram(const std::wstring& path, ShaderProgram& out); // out.isCompute を見て分岐
     // M79: 作者ソース + 生成エントリ (MyEngineSurfaceEntries.hlsli) を 5 エントリ
-    // (色 VS/PS・影 VS・速度 VS/PS) 個別コンパイルし、リフレクション表と入力レイアウトまで作る
-    bool CompileSurfaceProgram(const std::wstring& path, SurfaceProgram& out);
+    // (色 VS/PS・影 VS・速度 VS/PS) 個別コンパイルし、リフレクション表と入力レイアウトまで作る。
+    // previousGeneration: ホットリロード成功時に +1 して out.generation にする (0 = 初回)
+    bool CompileSurfaceProgram(const std::wstring& path, SurfaceProgram& out,
+                              uint64_t previousGeneration = 0);
     // キャッシュから読めたら out を完成させて true。鮮度が合わない / 無い / 壊れていれば false
     bool TryLoadCached(const std::wstring& path, const std::vector<char>& source,
                        ShaderProgram& out);
+    // M79 sub-02: サーフェス版 (5 blob)。combined = 作者ソース + 生成エントリ include 文
+    bool TryLoadCachedSurface(const std::wstring& path, const std::vector<char>& combined,
+                              SurfaceProgram& out);
     // バイトコード (CS 1 本 or VS+PS 2 本) から D3D オブジェクトを作る。キャッシュと
     // コンパイル直後で同じ関数を通す = 「キャッシュ経由だけ入力レイアウトが違う」を作らない
     bool Instantiate(const std::string& pathUtf8,
                      const std::vector<std::vector<uint8_t>>& blobs, ShaderProgram& out);
+    // M79 sub-02: サーフェス版 (5 blob: 色VS,色PS,影VS,速度VS,速度PS の順)
+    bool InstantiateSurface(const std::vector<std::vector<uint8_t>>& blobs, SurfaceProgram& out);
     // #include "name" を優先度順のルートで解決する (IncludeRecorder と同じ規則)。
     // 見つからなければ空文字列
     std::wstring ResolveInclude(const char* name, std::vector<char>* outData) const;
@@ -115,6 +125,11 @@ private:
         std::future<ShaderProgram> future;
     };
     std::vector<AsyncCompile> async_;
+    struct AsyncSurfaceCompile {
+        uint64_t id;
+        std::future<SurfaceProgram> future;
+    };
+    std::vector<AsyncSurfaceCompile> asyncSurface_; // M79 sub-02: サーフェスのホットリロード
     std::wstring cacheDir_; // 空 = キャッシュ無効
     // ホットリロードの非同期コンパイルからも数えるので atomic
     std::atomic<int> cacheHits_{ 0 };

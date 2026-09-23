@@ -14,8 +14,8 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 | OK | 1 | (本コミット) | 方式成立を WARP 実描画で確認。hot reload/cache・フロクセル霧は sub-02 へ、.cs.hlsl off-by-one 修正は sub-04 へ移管 |
-| sub-02 | 未着手 | 0 | | Forward 描画とマテリアル |
+| sub-01 | OK | 1 | e492a85 | 方式成立を WARP 実描画で確認。hot reload/cache・フロクセル霧は sub-02 へ、.cs.hlsl off-by-one 修正は sub-04 へ移管 |
+| sub-02 | OK | 2 | (本コミット) | round1 REWORK: PS static 未代入・実経路未検証 → round2 で解消 (反証テスト + Runtime.exe スクショ) |
 | sub-03 | 未着手 | 0 | | Deferred のサーフェス段・速度・CSM 影 |
 | sub-04 | 未着手 | 0 | | マテリアル Inspector と作成メニュー |
 | sub-05 | 未着手 | 0 | | WaterWave surfaceMaterial |
@@ -30,4 +30,4 @@
 - (planner 2026-09-24) spec 確定。AskUserQuestion が使えなかったので spec §7 に `[ユーザーに聞ける]` 5 件 (Deferred でも描く / VSMain 再評価 / WaterWave 差し替え / 時計 / PerMaterial オフセット)。逆を選ばれたら planner を REVIEW_RESPONSE か PLAN で呼び直す
 - (planner) sub-01 は方式の成否判定を兼ねる。static 代入の再評価が成立しなければ sub-02 へ進まず planner へ差し戻すこと
 - (planner) TAA は Deferred のみ (TaaPass.h:20-22)。M79 の速度・TAA 検証は必ず `--deferred` を付ける
-- (司会) sub-01 coder の一時生成物 `wstrtest.obj` がリポジトリ直下に未追跡で残る。コミットしない (削除はユーザー承認待ち)
+- (司会) sub-01 coder の一時生成物 `wstrtest.obj` がリポジトリ直下に未追跡で残る。コミットしない → ユーザー承認を得て削除済み (2026-09-24)

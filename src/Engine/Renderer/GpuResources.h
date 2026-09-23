@@ -232,6 +232,24 @@ struct Material {
     int32_t pad0 = 0;
 };
 
+// M79 sub-02: .mat.json の shader が "*.surface" 短名のときの遅延解決状態。
+// ForwardPath (将来 DeferredPath も) が描画直前に MaterialLibrary::GetOrBuildSurfaceState で
+// 取得する。isSurfaceShader=false ならこのマテリアルは対象外 (forward_lit 等、従来経路)
+struct SurfaceMaterialState {
+    bool isSurfaceShader = false;  // shader 名が "*.surface" 短名か
+    bool ready = false;            // 色エントリ (colorVS/colorPS) が有効 = 描画してよい
+    bool useErrorFallback = false; // ready=false のとき、surface_error で代替描画すべきか
+    std::string errorMessage;      // 失敗理由 (Inspector バナー用、sub-04)
+    AssetID surfaceProgramId = {}; // shaders.GetSurface() に渡す ID (ready 時のみ意味を持つ)
+    std::vector<uint8_t> perMaterialCB;                    // MyEnginePerMaterial パック済みバイト
+    Microsoft::WRL::ComPtr<ID3D11Buffer> perMaterialGpuCB; // ↑を書いた GPU 側 CB
+    std::unordered_map<std::string, AssetID> textures;     // 作者 Texture2D 名 → 解決済みテクスチャ
+
+    // ---- 内部用 (再パック要否の判定。MaterialLibrary::GetOrBuildSurfaceState だけが読み書きする) ----
+    uint64_t builtFromRevision = 0;
+    uint64_t builtFromGeneration = 0;
+};
+
 class MaterialLibrary {
 public:
     AssetID Register(std::string_view name, const Material& mat);
@@ -259,10 +277,31 @@ public:
     // 登録済みマテリアルを名前順で列挙 (エディタ UI 用)
     std::vector<AssetEntry> Enumerate() const;
 
+    // M79 sub-02: shader が "*.surface" 短名のマテリアルの遅延解決 (Load・Properties パック・
+    // Tex2D 解決)。対象外 (forward_lit 等) のマテリアルは nullptr を返す — 呼び出し側は
+    // 従来どおり mat->shader を ShaderManager::Get() へ渡す経路を使うこと。
+    // 変化 (JSON 再読込・シェーダの世代) が無ければ再パックせず前回の結果を返す
+    SurfaceMaterialState* GetOrBuildSurfaceState(AssetID materialId, ShaderManager& shaders,
+                                                 TextureLibrary& textures, GraphicsDevice& device);
+
 private:
     std::unordered_map<uint64_t, Material> materials_;
     std::unordered_map<uint64_t, std::string> names_;
     AssetID default_ = {};
+
+    // ---- M79 sub-02: サーフェスマテリアルの横テーブル ----
+    // .mat.json の生テキスト由来 (ShaderManager 不要で作れる部分)。LoadFromFile のたびに
+    // shaderName が "*.surface" なら更新し、そうでなければ消す (シェーダを forward_lit へ
+    // 戻した場合に古い側テーブルが残らないように)
+    struct SurfaceMaterialSource {
+        std::string shaderName;
+        std::string propertiesJson; // "properties" オブジェクトの JSON テキスト ("{}" = 無し)
+        std::wstring assetsRoot;
+        uint64_t revision = 0; // LoadFromFile のたびに増分 (JSON 内容の変化の検出に使う)
+    };
+    std::unordered_map<uint64_t, SurfaceMaterialSource> surfaceSources_;
+    std::unordered_map<uint64_t, SurfaceMaterialState> surfaceStates_;
+    uint64_t nextSurfaceRevision_ = 1;
 };
 
 // Renderer リソース一式 (Engine 層へはこの束で渡す)

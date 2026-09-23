@@ -82,4 +82,25 @@ bool PackProperties(
     const std::unordered_map<std::string, PropValue>&  values,
     std::vector<uint8_t>&                              cbData);
 
+// M79: サーフェスマテリアル用。パース順オフセット (AssignCbOffsets) ではなく、
+// 作者の cbuffer を実際にコンパイルした D3DReflect のオフセットで詰める
+// (作者の MyEnginePerMaterial 宣言順が Properties ブロックと一致しなくてよい契約のため)。
+// PackProperties (パース順) の意味は変えず、別関数として追加する。
+struct ReflectedVarSlot
+{
+    uint32_t offset = 0;
+    uint32_t size   = 0;
+};
+// reflectionVars: MyEnginePerMaterial の変数名 → cbuffer 内オフセット/サイズ (D3DReflect 由来)。
+// cbSizeBytes   : 確保する CB 全体のバイト数 (D3DReflect の cbuffer サイズ。0 ならバッファ無し)。
+// スキーマにあって reflectionVars に無い名前・サイズが合わない名前は missingOut に積む
+// (ログはここでは出さない — 呼び出し側が MYE_LOG_WARN する)
+bool PackPropertiesReflected(
+    const PropertyParseResult&                              parsed,
+    const std::unordered_map<std::string, PropValue>&       values,
+    const std::unordered_map<std::string, ReflectedVarSlot>& reflectionVars,
+    uint32_t                                                 cbSizeBytes,
+    std::vector<uint8_t>&                                    cbData,
+    std::vector<std::string>*                                missingOut = nullptr);
+
 } // namespace mye

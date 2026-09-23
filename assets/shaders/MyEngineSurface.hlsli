@@ -140,10 +140,36 @@ float MyeSunShadow(float3 posW)
                            (int)gCascadeInfo.w, posW, gShadowTexel);
 }
 
-// 距離フォグ (解析式のみ。フロクセルは後回し)
+// 距離フォグ + フロクセル (M79 sub-02)。受け持ちの分け方は forward_lit.hlsl / deferred_light.hlsl
+// (M57d/e) と同一: グリッドの中はフロクセル、グリッドの奥は解析フォグ (起点を押し出して残り区間だけ)。
+// gFroxelEnabled==0 なら下の 1 行 (ApplyFog のみ) に落ちる = フロクセル無しシーンとビット恒等。
+// ★screenPos は SV_Position を引数で渡さず、posW を gViewProj で再投影して求める —
+//   作者規約の関数シグネチャ (color, posW) を変えないための代償。全 PS エントリ (色・速度) は
+//   PSMain を呼ぶ前に gViewProj へ今フレームの値を代入し直す (MyeEngineSurfaceEntries.hlsli の
+//   MyePSColor/MyePSVelocity) ので、ここで読む gViewProj は常に今フレームの VP になる
 float3 MyeApplyFog(float3 color, float3 posW)
 {
-    return ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd, gCameraPos, posW,
-                    gFogHeightFalloff, gFogBaseHeight, gSunDirection, gSunColor,
-                    gFogInscatterIntensity, gFogInscatterPower);
+    // clip.w <= 0 (カメラ背面/近平面付近) は解析フォグのみへ縮退する (ComputeVelocityUv /
+    // SampleShadowCSM と同じ「w を割る前に符号を見る」規約。0 除算 / NaN を作らない)。
+    // ★if の分岐それぞれで return せず 1 つの result に代入してから最後に 1 回だけ return する
+    //   (fxc の初期化解析が早期 return の形だと誤検知の警告を出すため、形だけ変えて回避)
+    const float4 clip = mul(float4(posW, 1.0f), gViewProj);
+    float3 result;
+    if (gFroxelEnabled == 0 || clip.w <= 1e-5f) {
+        result = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd, gCameraPos,
+                          posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection, gSunColor,
+                          gFogInscatterIntensity, gFogInscatterPower);
+    } else {
+        const float fviewZ = dot(float4(posW, 1.0f), gFroxelViewZRow);
+        const float2 ndc = clip.xy / max(clip.w, 1e-5f);
+        const float2 screenPos =
+            float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f) * gFroxelScreenSize;
+        const float3 c = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
+                                  FroxelFogOrigin(gCameraPos, posW, fviewZ, gFroxelFarZ), posW,
+                                  gFogHeightFalloff, gFogBaseHeight, gSunDirection, gSunColor,
+                                  gFogInscatterIntensity, gFogInscatterPower);
+        result = FroxelComposite(gFroxelVolume, gIblSampler, screenPos, gFroxelScreenSize, fviewZ,
+                                 gFroxelSlices, gFroxelNearZ, gFroxelFarZ, c);
+    }
+    return result;
 }

@@ -103,6 +103,7 @@
 - **ヘルパ**: 太陽の方向・色、`MyeSunShadow(posW)` (CSM の減衰 0..1)、`MyeApplyFog(color, posW)`、環境光。既存 `common.hlsli` の関数を包む
 
 #### エンジン生成エントリ (作者には見えない)
+- **PS 側の static**: VS と PS は別プログラムなので、VS エントリで代入した static は PS に届かない (PS では未代入 = 0)。**全 PS エントリ (色・速度) は `PSMain` を呼ぶ前に 4 つの static へ「今フレーム」の値を代入する**。PS から見える `gViewProj` / `gWorld` / `gTime` / `gWaterTime` は常に今フレーム (速度エントリでも前の値は PS に出ない) (sub-02 VERDICT round 1 で明文化)
 - 色: `gViewProj` = 今フレーム (ジッタ込み) の VP、`gWorld` = 今の World、`gTime` = 今の時刻を代入して `VSMain` → 作者 `PSMain`
 - 速度 (Deferred 不透明のみ): 前 (非ジッタ前 VP・`prevWorld`・前時刻) で `VSMain` を 1 回、今で 1 回評価し、今の結果を `PSMain` へ、両クリップ座標から `ComputeVelocityUv` (common.hlsli) で velocity を SV_Target1 へ。前履歴が無いフレームは velocity 0 (既存 GBuffer と同じ規則)
 - 影 (CSM): `gViewProj` = カスケードのライト VP で `VSMain` を評価、PS なし (深度のみ)。深度バイアス等のステートは既存 ShadowPass と同じ
@@ -149,7 +150,7 @@
   }
 }
 ```
-- `properties` の値の符号化は fxstack (`FxStackAsset.cpp:19` の `ParseProperties(json)`) と同じ: 数値 = Float/Range、4 要素配列 = Color/Vector、文字列 or GUID 数値 = Tex2D
+- `properties` の値の符号化は fxstack (`FxStackAsset.cpp:19` の `ParseProperties(json)`) と同じ: 数値 = Float/Range、4 要素配列 = Color/Vector、Tex2D は**数値 GUID と文字列の両方を受理** (文字列 = 組込み名 `white` 等・16 進 GUID・assets 相対パス)。書き出し (Inspector) は、アセットのテクスチャは数値 GUID (Material 本体の `texture` / `normalMap` と同じ規約)、組込み既定は名前文字列。初版のテクスチャ読み込みは常に sRGB (DSL に色空間指定が無いため。マスク / ノイズ等のリニア指定は後回し) (sub-02 VERDICT round 1 で確定)
 - 既存フィールド (metallic / roughness / emissive / texture / normalMap / reflectionClass) は従来どおり読み書きする (サーフェスでも RT の BVH ヒット等が使う)。Inspector 保存で `properties` を落とさない
 - `properties` 欠損 = 全部既定値。`shader` 欠損 = `forward_lit` (従来)
 - `Material` POD (`GpuResources.h:204`) のサイズ・並びは変えない (cooked キャッシュ互換)
@@ -246,3 +247,5 @@
 - 2026-09-24: 初版確定 (PLAN)。AskUserQuestion 不可のため §2 を planner 裁定で埋め、§7 に `[ユーザーに聞ける]` 5 件。依頼の前提「water_surface.hlsl は未使用」を訂正 (組込みを上書きして使用中)。「フォワードのみ」を「シェーディング方式」と解釈し Deferred でも描く裁定。
 - 2026-09-24: ユーザーが §7 の 5 件を全件裁定どおりで確定 (司会経由)。
 - 2026-09-24: sub-01 VERDICT OK (coder SELF_EVAL round 1)。(1) `MyEnginePerFrame` は既存 PerFrame から先頭 `viewProj` を除いた内容・別バッファと確定 (§4.1)。(2) サーフェスのホットリロードとバイトコードキャッシュ配線は sub-02 へ。(3) `MyeApplyFog` のフロクセル合成は sub-02 の should。(4) coder が見つけた `.cs.hlsl` 索引の off-by-one (M78 の既存不具合、実コードで確認) を §3 やるに追加し sub-04 で直す。
+- 2026-09-24: sub-02 VERDICT REWORK (round 1)。§4.1 に「PS エントリも static へ今フレーム値を代入」を明文化 (spec の穴。sub-01 の生成エントリが PS 側を未代入だった)。§4.2 Tex2D 符号化を「数値 GUID と文字列の両受理、書き出しは GUID 数値 / 組込み名」、読み込みは sRGB 固定と確定。
+- 2026-09-24: sub-02 VERDICT OK (round 2)。仕様変更なし。

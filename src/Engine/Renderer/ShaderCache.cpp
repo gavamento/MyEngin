@@ -18,7 +18,8 @@ namespace {
 
 constexpr uint32_t kMagic = 0x4353594Du; // "MYSC"
 // ★形式を変えたら上げる。古い版のファイルは Decode が弾き、次のコンパイルで上書きされる
-constexpr uint32_t kVersion = 1;
+// v2 (M79 sub-02): isSurface フィールドを追加 (5 blob のサーフェスプログラムに対応)
+constexpr uint32_t kVersion = 2;
 // 1 項目あたりの上限 (壊れた長さフィールドで巨大確保しないための保険)
 constexpr uint32_t kMaxBlobBytes = 64u * 1024u * 1024u;
 constexpr uint32_t kMaxDeps = 4096;
@@ -98,12 +99,30 @@ uint64_t ShaderCacheConfigKey(bool isCompute, uint32_t compileFlags)
     return h;
 }
 
+uint64_t SurfaceShaderCacheConfigKey(uint32_t compileFlags)
+{
+    uint64_t h = HashStr(
+        "MyeVSColor|vs_5_0|MyePSColor|ps_5_0|MyeVSShadow|vs_5_0|MyeVSVelocity|vs_5_0|MyePSVelocity|ps_5_0");
+    h = HashCombine(h, compileFlags);
+    h = HashCombine(h, static_cast<uint64_t>(D3D_COMPILER_VERSION));
+    h = HashCombine(h, kVersion);
+    return h;
+}
+
 std::wstring ShaderCacheFileName(const std::wstring& normalizedShaderPath, bool isCompute)
 {
     // ★パスをそのままファイル名にしない — ルートが 2 つあるので同名シェーダが衝突し、
     //   しかも区切り文字がファイル名に使えない。正規化パスのハッシュで一意にする
     const uint64_t h =
         HashStr(isCompute ? "|cs" : "|vsps", HashStr(WideToUtf8(normalizedShaderPath)));
+    wchar_t name[40];
+    swprintf_s(name, L"%016llx.shc", static_cast<unsigned long long>(h));
+    return name;
+}
+
+std::wstring SurfaceShaderCacheFileName(const std::wstring& normalizedShaderPath)
+{
+    const uint64_t h = HashStr("|surface", HashStr(WideToUtf8(normalizedShaderPath)));
     wchar_t name[40];
     swprintf_s(name, L"%016llx.shc", static_cast<unsigned long long>(h));
     return name;
@@ -116,6 +135,7 @@ std::vector<uint8_t> EncodeShaderCacheEntry(const ShaderCacheEntry& entry)
     AppendPod(buf, kVersion);
     AppendPod(buf, entry.configKey);
     AppendPod(buf, static_cast<uint32_t>(entry.isCompute ? 1 : 0));
+    AppendPod(buf, static_cast<uint32_t>(entry.isSurface ? 1 : 0));
     AppendPod(buf, entry.sourceHash);
     AppendPod(buf, static_cast<uint32_t>(entry.deps.size()));
     for (const ShaderCacheEntry::Dependency& d : entry.deps) {
@@ -151,13 +171,15 @@ bool DecodeShaderCacheEntry(const std::vector<uint8_t>& bytes, ShaderCacheEntry&
     uint32_t magic = 0;
     uint32_t version = 0;
     uint32_t isCompute = 0;
+    uint32_t isSurface = 0;
     uint32_t depCount = 0;
     if (!r.Pod(magic) || magic != kMagic || !r.Pod(version) || version != kVersion
-        || !r.Pod(out.configKey) || !r.Pod(isCompute) || !r.Pod(out.sourceHash)
+        || !r.Pod(out.configKey) || !r.Pod(isCompute) || !r.Pod(isSurface) || !r.Pod(out.sourceHash)
         || !r.Pod(depCount) || depCount > kMaxDeps) {
         return false;
     }
     out.isCompute = (isCompute != 0);
+    out.isSurface = (isSurface != 0);
     out.deps.resize(depCount);
     for (ShaderCacheEntry::Dependency& d : out.deps) {
         if (!r.String(d.requestedName) || !r.String(d.resolvedPath) || !r.Pod(d.contentHash)) {
@@ -165,8 +187,9 @@ bool DecodeShaderCacheEntry(const std::vector<uint8_t>& bytes, ShaderCacheEntry&
         }
     }
     uint32_t blobCount = 0;
-    // CS = 1 本 / VS+PS = 2 本 以外は形式違反
-    if (!r.Pod(blobCount) || blobCount != (out.isCompute ? 1u : 2u)) {
+    // CS = 1 本 / VS+PS = 2 本 / サーフェス = 5 本 以外は形式違反
+    const uint32_t expectedBlobs = out.isSurface ? 5u : (out.isCompute ? 1u : 2u);
+    if (!r.Pod(blobCount) || blobCount != expectedBlobs) {
         return false;
     }
     out.blobs.resize(blobCount);

@@ -1,5 +1,6 @@
 #include "Engine/Renderer/ShaderManager.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
@@ -532,6 +533,43 @@ void ShaderManager::RequestRecompileForFile(const std::wstring& normalizedPath)
                                return fresh;
                            }) });
     }
+
+    // M79 sub-02: SurfaceProgram も同じ依存グラフ規則で対象にする
+    // (作者ファイル・MyEngineSurface.hlsli・MyEngineSurfaceEntries.hlsli のいずれか)
+    for (auto& [id, prog] : surfacePrograms_) {
+        bool affected = (prog.path == normalizedPath);
+        if (!affected) {
+            for (const std::wstring& inc : prog.includes) {
+                if (inc == normalizedPath) {
+                    affected = true;
+                    break;
+                }
+            }
+        }
+        if (!affected) {
+            continue;
+        }
+        bool alreadyPending = false;
+        for (const AsyncSurfaceCompile& ac : asyncSurface_) {
+            if (ac.id == id) {
+                alreadyPending = true;
+                break;
+            }
+        }
+        if (alreadyPending) {
+            continue;
+        }
+        MYE_LOG_INFO("[reload] surface shader recompiling: %s", WideToUtf8(prog.path).c_str());
+        const std::wstring path = prog.path;
+        const uint64_t previousGeneration = prog.generation;
+        asyncSurface_.push_back(
+            { id, std::async(std::launch::async, [this, path, previousGeneration] {
+                 SurfaceProgram fresh;
+                 fresh.path = path;
+                 CompileSurfaceProgram(path, fresh, previousGeneration);
+                 return fresh;
+             }) });
+    }
 }
 
 void ShaderManager::PollAsyncCompiles()
@@ -549,6 +587,22 @@ void ShaderManager::PollAsyncCompiles()
             MYE_LOG_WARN("[reload] shader compile failed - keeping previous shader");
         }
         async_.erase(async_.begin() + static_cast<ptrdiff_t>(i));
+    }
+
+    for (size_t i = 0; i < asyncSurface_.size();) {
+        if (asyncSurface_[i].future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            ++i;
+            continue;
+        }
+        SurfaceProgram fresh = asyncSurface_[i].future.get();
+        if (fresh.valid) {
+            surfacePrograms_[asyncSurface_[i].id] = std::move(fresh);
+            MYE_LOG_INFO("[reload] surface shader swapped");
+        } else {
+            MYE_LOG_WARN("[reload] surface shader compile failed - keeping previous shader: %s",
+                         fresh.errorMessage.c_str());
+        }
+        asyncSurface_.erase(asyncSurface_.begin() + static_cast<ptrdiff_t>(i));
     }
 }
 
@@ -756,10 +810,101 @@ bool ShaderManager::CompileProgram(const std::wstring& path, ShaderProgram& out)
     return true;
 }
 
+bool ShaderManager::InstantiateSurface(const std::vector<std::vector<uint8_t>>& blobs,
+                                       SurfaceProgram& out)
+{
+    if (blobs.size() != 5) {
+        out.errorMessage = "サーフェス規約: キャッシュ形式が不正 (blob 数不一致)";
+        return false;
+    }
+    const std::vector<uint8_t>& colorVsBytecode = blobs[0];
+    const std::vector<uint8_t>& colorPsBytecode = blobs[1];
+    const std::vector<uint8_t>& shadowVsBytecode = blobs[2];
+    const std::vector<uint8_t>& velVsBytecode = blobs[3];
+    const std::vector<uint8_t>& velPsBytecode = blobs[4];
+
+    ID3D11Device* dev = device_->Device();
+    out.colorVS.Reset();
+    out.colorPS.Reset();
+    out.colorInputLayout.Reset();
+    out.shadowVS.Reset();
+    out.shadowInputLayout.Reset();
+    out.velocityVS.Reset();
+    out.velocityPS.Reset();
+    out.velocityInputLayout.Reset();
+
+    if (FAILED(dev->CreateVertexShader(colorVsBytecode.data(), colorVsBytecode.size(), nullptr,
+                                       out.colorVS.GetAddressOf()))
+        || FAILED(dev->CreatePixelShader(colorPsBytecode.data(), colorPsBytecode.size(), nullptr,
+                                         out.colorPS.GetAddressOf()))
+        || FAILED(dev->CreateVertexShader(shadowVsBytecode.data(), shadowVsBytecode.size(),
+                                          nullptr, out.shadowVS.GetAddressOf()))
+        || FAILED(dev->CreateVertexShader(velVsBytecode.data(), velVsBytecode.size(), nullptr,
+                                          out.velocityVS.GetAddressOf()))
+        || FAILED(dev->CreatePixelShader(velPsBytecode.data(), velPsBytecode.size(), nullptr,
+                                         out.velocityPS.GetAddressOf()))) {
+        out.errorMessage = "サーフェス規約: シェーダオブジェクト作成に失敗";
+        MYE_LOG_ERROR("%s", out.errorMessage.c_str());
+        return false;
+    }
+
+    std::string layoutErr;
+    if (!BuildSurfaceInputLayout(dev, colorVsBytecode, out.colorInputLayout, layoutErr)
+        || !BuildSurfaceInputLayout(dev, shadowVsBytecode, out.shadowInputLayout, layoutErr)
+        || !BuildSurfaceInputLayout(dev, velVsBytecode, out.velocityInputLayout, layoutErr)) {
+        out.errorMessage = "サーフェス規約: " + layoutErr;
+        MYE_LOG_ERROR("%s", out.errorMessage.c_str());
+        return false;
+    }
+
+    ReflectSurfaceBytecode(colorVsBytecode, out.colorVSReflect);
+    ReflectSurfaceBytecode(colorPsBytecode, out.colorPSReflect);
+    ReflectSurfaceBytecode(shadowVsBytecode, out.shadowVSReflect);
+    ReflectSurfaceBytecode(velVsBytecode, out.velocityVSReflect);
+    ReflectSurfaceBytecode(velPsBytecode, out.velocityPSReflect);
+    return true;
+}
+
+bool ShaderManager::TryLoadCachedSurface(const std::wstring& path, const std::vector<char>& combined,
+                                         SurfaceProgram& out)
+{
+    if (cacheDir_.empty()) {
+        return false;
+    }
+    std::vector<char> raw;
+    if (!ReadFileBytes(cacheDir_ + L"\\" + SurfaceShaderCacheFileName(path), raw)) {
+        return false;
+    }
+    ShaderCacheEntry entry;
+    if (!DecodeShaderCacheEntry(std::vector<uint8_t>(raw.begin(), raw.end()), entry)
+        || !entry.isSurface
+        || entry.configKey != SurfaceShaderCacheConfigKey(kCompileFlags)
+        || entry.sourceHash != HashBytes(combined.data(), combined.size())) {
+        return false;
+    }
+    std::vector<std::wstring> includes;
+    for (const ShaderCacheEntry::Dependency& d : entry.deps) {
+        std::vector<char> data;
+        const std::wstring now = ResolveInclude(d.requestedName.c_str(), &data);
+        if (now.empty() || WideToUtf8(now) != d.resolvedPath
+            || HashBytes(data.data(), data.size()) != d.contentHash) {
+            return false;
+        }
+        includes.push_back(now);
+    }
+    if (!InstantiateSurface(entry.blobs, out)) {
+        return false;
+    }
+    out.includes = std::move(includes);
+    return true;
+}
+
 // M79: 作者ソース + MyEngineSurfaceEntries.hlsli (生成エントリ) を 1 つの翻訳単位として
-// 5 エントリ (色 VS/PS・影 VS・速度 VS/PS) を個別コンパイルする。バイトコードキャッシュは
-// 対象外 (sub-01 では方式の成立確認を優先。キャッシュ対応は後続サブで検討)
-bool ShaderManager::CompileSurfaceProgram(const std::wstring& path, SurfaceProgram& out)
+// 5 エントリ (色 VS/PS・影 VS・速度 VS/PS) を個別コンパイルする。
+// バイトコードキャッシュのキーは「生成エントリ込みのソース全体」(combined) のハッシュ
+// + 依存 include の中身ハッシュ (spec §4.4)。previousGeneration+1 を成功時の世代番号にする
+bool ShaderManager::CompileSurfaceProgram(const std::wstring& path, SurfaceProgram& out,
+                                          uint64_t previousGeneration)
 {
     std::vector<char> authorSource;
     if (!ReadFileBytes(path, authorSource)) {
@@ -769,6 +914,15 @@ bool ShaderManager::CompileSurfaceProgram(const std::wstring& path, SurfaceProgr
     }
     const std::string pathUtf8 = WideToUtf8(path);
 
+    // Properties ブロックのパース (M79 sub-02)。失敗 = シェーダ全体を無効 (spec §4.1 失敗時表)
+    out.propertiesSchema =
+        ParseProperties(std::string_view(authorSource.data(), authorSource.size()));
+    if (!out.propertiesSchema.ok) {
+        out.errorMessage = "Properties パース失敗: " + out.propertiesSchema.errorMessage;
+        MYE_LOG_ERROR("HLSL surface (%s): %s", pathUtf8.c_str(), out.errorMessage.c_str());
+        return false;
+    }
+
     // 作者ソースの直後に生成エントリの include を足す。#include なので IncludeRecorder の
     // 依存グラフに自然に乗り、MyEngineSurfaceEntries.hlsli の編集もホットリロード対象になる
     static constexpr char kEntriesInclude[] = "\n#include \"MyEngineSurfaceEntries.hlsli\"\n";
@@ -776,11 +930,19 @@ bool ShaderManager::CompileSurfaceProgram(const std::wstring& path, SurfaceProgr
     combined.insert(combined.end(), kEntriesInclude,
                     kEntriesInclude + (sizeof(kEntriesInclude) - 1));
 
+    if (TryLoadCachedSurface(path, combined, out)) {
+        out.valid = true;
+        out.generation = previousGeneration + 1;
+        ++cacheHits_;
+        MYE_LOG_INFO("surface shader loaded from cache: %s", pathUtf8.c_str());
+        return true;
+    }
+
     out.includes.clear();
-    std::vector<ShaderCacheEntry::Dependency> depsUnused; // サーフェスはキャッシュ未対応 (sub-01)
+    ShaderCacheEntry entry; // deps 収集 + (キャッシュ有効時) 書き出しに使う
     IncludeRecorder includer(
         [this](const char* name, std::vector<char>* data) { return ResolveInclude(name, data); },
-        out.includes, depsUnused);
+        out.includes, entry.deps);
 
     auto compile = [&](const char* entryPoint, const char* target,
                        std::vector<uint8_t>& bytecode, std::string& errOut) {
@@ -824,39 +986,70 @@ bool ShaderManager::CompileSurfaceProgram(const std::wstring& path, SurfaceProgr
         return false;
     }
 
-    ID3D11Device* dev = device_->Device();
-    if (FAILED(dev->CreateVertexShader(colorVsBytecode.data(), colorVsBytecode.size(), nullptr,
-                                       out.colorVS.GetAddressOf()))
-        || FAILED(dev->CreatePixelShader(colorPsBytecode.data(), colorPsBytecode.size(), nullptr,
-                                         out.colorPS.GetAddressOf()))
-        || FAILED(dev->CreateVertexShader(shadowVsBytecode.data(), shadowVsBytecode.size(),
-                                          nullptr, out.shadowVS.GetAddressOf()))
-        || FAILED(dev->CreateVertexShader(velVsBytecode.data(), velVsBytecode.size(), nullptr,
-                                          out.velocityVS.GetAddressOf()))
-        || FAILED(dev->CreatePixelShader(velPsBytecode.data(), velPsBytecode.size(), nullptr,
-                                         out.velocityPS.GetAddressOf()))) {
-        out.errorMessage = "サーフェス規約: シェーダオブジェクト作成に失敗 (" + pathUtf8 + ")";
-        MYE_LOG_ERROR("%s", out.errorMessage.c_str());
-        return false;
+    // VS/PS 5 回のコンパイルが同じ include を何度も記録するので重複を落とす
+    // (落とさなくても正しいが、鮮度判定・キャッシュ書き出しが同じファイルを何度も読むだけになる)
+    {
+        std::vector<ShaderCacheEntry::Dependency> uniqueDeps;
+        for (const ShaderCacheEntry::Dependency& d : entry.deps) {
+            bool seen = false;
+            for (const ShaderCacheEntry::Dependency& u : uniqueDeps) {
+                seen = seen
+                    || (u.requestedName == d.requestedName && u.resolvedPath == d.resolvedPath);
+            }
+            if (!seen) {
+                uniqueDeps.push_back(d);
+            }
+        }
+        entry.deps = std::move(uniqueDeps);
+        std::vector<std::wstring> uniqueIncludes;
+        for (const std::wstring& inc : out.includes) {
+            if (std::find(uniqueIncludes.begin(), uniqueIncludes.end(), inc)
+                == uniqueIncludes.end()) {
+                uniqueIncludes.push_back(inc);
+            }
+        }
+        out.includes = std::move(uniqueIncludes);
     }
 
-    std::string layoutErr;
-    if (!BuildSurfaceInputLayout(dev, colorVsBytecode, out.colorInputLayout, layoutErr)
-        || !BuildSurfaceInputLayout(dev, shadowVsBytecode, out.shadowInputLayout, layoutErr)
-        || !BuildSurfaceInputLayout(dev, velVsBytecode, out.velocityInputLayout, layoutErr)) {
-        out.errorMessage = "サーフェス規約: " + layoutErr;
-        MYE_LOG_ERROR("%s (%s)", out.errorMessage.c_str(), pathUtf8.c_str());
+    if (!InstantiateSurface({ colorVsBytecode, colorPsBytecode, shadowVsBytecode, velVsBytecode,
+                             velPsBytecode },
+                           out)) {
         return false;
     }
-
-    ReflectSurfaceBytecode(colorVsBytecode, out.colorVSReflect);
-    ReflectSurfaceBytecode(colorPsBytecode, out.colorPSReflect);
-    ReflectSurfaceBytecode(shadowVsBytecode, out.shadowVSReflect);
-    ReflectSurfaceBytecode(velVsBytecode, out.velocityVSReflect);
-    ReflectSurfaceBytecode(velPsBytecode, out.velocityPSReflect);
 
     out.valid = true;
+    out.generation = previousGeneration + 1;
+    ++cacheMisses_;
     MYE_LOG_INFO("surface shader compiled: %s", pathUtf8.c_str());
+
+    if (!cacheDir_.empty()) {
+        entry.configKey = SurfaceShaderCacheConfigKey(kCompileFlags);
+        entry.isCompute = false;
+        entry.isSurface = true;
+        entry.sourceHash = HashBytes(combined.data(), combined.size());
+        entry.blobs = { colorVsBytecode, colorPsBytecode, shadowVsBytecode, velVsBytecode,
+                       velPsBytecode };
+        const std::vector<uint8_t> bytes = EncodeShaderCacheEntry(entry);
+        const std::wstring finalPath = cacheDir_ + L"\\" + SurfaceShaderCacheFileName(path);
+        // ★テンポラリ → rename (CompileProgram と同じ理由。replay_verify の並列起動対策)
+        const std::wstring tmpPath = finalPath + L"." + std::to_wstring(_getpid()) + L".tmp";
+        bool written = false;
+        {
+            std::ofstream f(std::filesystem::path(tmpPath), std::ios::binary | std::ios::trunc);
+            if (f) {
+                f.write(reinterpret_cast<const char*>(bytes.data()),
+                        static_cast<std::streamsize>(bytes.size()));
+                written = f.good();
+            }
+        }
+        std::error_code ec;
+        if (written) {
+            std::filesystem::rename(tmpPath, finalPath, ec);
+        }
+        if (!written || ec) {
+            std::filesystem::remove(tmpPath, ec);
+        }
+    }
     return true;
 }
 

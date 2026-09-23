@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -19,7 +20,10 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GraphicsDevice.h"
+#include "Engine/Renderer/ProjectShaderProperties.h" // M79 sub-02: PackPropertiesReflected
 #include "Engine/Renderer/ReflectionClassJson.h" // .mat.json の reflectionClass 受理規則 (M67h)
+#include "Engine/Renderer/ShaderManager.h"       // M79 sub-02: サーフェスマテリアルの遅延 Load
+#include "Engine/Renderer/SurfaceProgram.h"
 
 #include "stb/stb_image.h"
 
@@ -1041,11 +1045,24 @@ AssetID MaterialLibrary::HashForPath(const std::wstring& path)
 }
 
 // JSON オブジェクト → Material。ファイル読み (LoadFromFile) と Inspector のプレビュー
-// (MaterialFromJsonText) の**唯一の本体**。フィールドを足すときはここだけ触ること (M53)
+// (MaterialFromJsonText) の**唯一の本体**。フィールドを足すときはここだけ触ること (M53)。
+// shaderNameOut/propertiesJsonOut は M79 sub-02 用 (呼び出し側がサーフェス横テーブルを作るために
+// 生の shader 名・properties JSON テキストが要る。null 可 = 従来どおり)
 static void ParseMaterialJson(const nlohmann::json& root, TextureLibrary& textures,
-                              const std::wstring& assetsRoot, Material& m)
+                              const std::wstring& assetsRoot, Material& m,
+                              std::string* shaderNameOut = nullptr,
+                              std::string* propertiesJsonOut = nullptr)
 {
-    m.shader = AssetID{ HashStr(root.value("shader", std::string("forward_lit"))) };
+    const std::string shaderName = root.value("shader", std::string("forward_lit"));
+    m.shader = AssetID{ HashStr(shaderName) };
+    if (shaderNameOut) {
+        *shaderNameOut = shaderName;
+    }
+    if (propertiesJsonOut) {
+        *propertiesJsonOut = (root.contains("properties") && root["properties"].is_object())
+            ? root["properties"].dump()
+            : std::string("{}");
+    }
     if (root.contains("baseColor") && root["baseColor"].is_array()) {
         const nlohmann::json& c = root["baseColor"];
         float* dst = &m.baseColor.x;
@@ -1134,10 +1151,31 @@ AssetID MaterialLibrary::LoadFromFile(const std::wstring& path, TextureLibrary& 
     }
 
     Material m;
-    ParseMaterialJson(root, textures, assetsRoot, m);
+    std::string shaderName;
+    std::string propertiesJson;
+    ParseMaterialJson(root, textures, assetsRoot, m, &shaderName, &propertiesJson);
 
     const AssetID id = HashForPath(path);
     materials_[id.value] = m;
+
+    // M79 sub-02: shader が "*.surface" 短名なら横テーブルを更新する。そうでなければ
+    // (以前は surface だったが .mat.json のホットリロードで forward_lit 等へ戻された場合)
+    // 古いテーブルを消す — 残すと GetOrBuildSurfaceState が消えたはずのサーフェス扱いを続ける
+    static constexpr std::string_view kSurfaceSuffix = ".surface";
+    const bool isSurface = shaderName.size() >= kSurfaceSuffix.size()
+        && shaderName.compare(shaderName.size() - kSurfaceSuffix.size(), kSurfaceSuffix.size(),
+                              kSurfaceSuffix)
+            == 0;
+    if (isSurface) {
+        SurfaceMaterialSource& src = surfaceSources_[id.value];
+        src.shaderName = std::move(shaderName);
+        src.propertiesJson = std::move(propertiesJson);
+        src.assetsRoot = assetsRoot;
+        src.revision = ++nextSurfaceRevision_;
+    } else {
+        surfaceSources_.erase(id.value);
+        surfaceStates_.erase(id.value);
+    }
 
     std::string name = root.value("name", std::string());
     if (name.empty()) {
@@ -1150,6 +1188,218 @@ AssetID MaterialLibrary::LoadFromFile(const std::wstring& path, TextureLibrary& 
     }
     names_[id.value] = name;
     return id;
+}
+
+namespace {
+
+// M79 sub-02: Properties の Tex2D 値をビルトイン名として解決する。
+// "white" 以外は専用 SRV 未整備 (M78 と同じ既定) なので white へ WARN 付きで落とす
+AssetID ResolveSurfaceBuiltinTex(const std::string& name, TextureLibrary& textures)
+{
+    if (name.empty() || name == "white") {
+        return textures.White();
+    }
+    if (name == "gray" || name == "black" || name == "bump") {
+        MYE_LOG_WARN(
+            "surface material: Tex2D 既定 '%s' は専用 SRV 未整備のため white にフォールバックします",
+            name.c_str());
+    } else {
+        MYE_LOG_WARN("surface material: 未知の Tex2D ビルトイン名 '%s' (white にフォールバック)",
+                     name.c_str());
+    }
+    return textures.White();
+}
+
+// Properties の Tex2D 値 (JSON) をテクスチャの AssetID へ解決する。
+// 数値 = GUID (Material の texture/normalMap フィールドと同じ規約)、
+// 文字列 = ビルトイン名 / 16 進 GUID (fxstack の Tex2D と同じ規約) / assetsRoot 相対パス。
+// どれにも解決できなければ null (呼び出し側がスキーマの既定テクスチャへフォールバックする)
+AssetID ResolveSurfaceTexProperty(const nlohmann::json& v, TextureLibrary& textures,
+                                  const std::wstring& assetsRoot)
+{
+    if (v.is_number_unsigned() || v.is_number_integer()) {
+        const uint64_t guid = v.get<uint64_t>();
+        if (guid == 0) {
+            return {};
+        }
+        const std::wstring full = assetguid::ResolvePath(guid);
+        if (full.empty()) {
+            MYE_LOG_WARN("surface material texture guid %llu unresolved",
+                         static_cast<unsigned long long>(guid));
+            return {};
+        }
+        return textures.LoadFile(full, /*srgb=*/true);
+    }
+    if (v.is_string()) {
+        const std::string s = v.get<std::string>();
+        if (s.empty()) {
+            return {};
+        }
+        if (s == "white" || s == "gray" || s == "black" || s == "bump") {
+            return ResolveSurfaceBuiltinTex(s, textures);
+        }
+        char* endp = nullptr;
+        const unsigned long long hexVal = std::strtoull(s.c_str(), &endp, 16);
+        if (hexVal != 0 && endp != nullptr && *endp == '\0') {
+            const std::wstring full = assetguid::ResolvePath(static_cast<uint64_t>(hexVal));
+            if (!full.empty()) {
+                return textures.LoadFile(full, /*srgb=*/true);
+            }
+        }
+        if (!assetsRoot.empty()) {
+            return textures.LoadFile(assetsRoot + L"\\" + Utf8ToWide(s), /*srgb=*/true);
+        }
+    }
+    return {};
+}
+
+} // namespace
+
+SurfaceMaterialState* MaterialLibrary::GetOrBuildSurfaceState(AssetID materialId,
+                                                              ShaderManager& shaders,
+                                                              TextureLibrary& textures,
+                                                              GraphicsDevice& device)
+{
+    const auto srcIt = surfaceSources_.find(materialId.value);
+    if (srcIt == surfaceSources_.end()) {
+        surfaceStates_.erase(materialId.value); // 掃除 (surface でなくなった場合)
+        return nullptr;
+    }
+    const SurfaceMaterialSource& src = srcIt->second;
+
+    const AssetID progId = shaders.LoadSurface(src.shaderName);
+    SurfaceProgram* prog = shaders.GetSurface(progId);
+    const bool progOk = (prog != nullptr) && prog->valid;
+    const uint64_t gen = progOk ? prog->generation : 0;
+
+    SurfaceMaterialState& st = surfaceStates_[materialId.value];
+    st.isSurfaceShader = true;
+    st.surfaceProgramId = progId;
+
+    // 変化なし (同じ .mat.json 内容 × 同じシェーダ世代) なら再パックしない —
+    // これが無いと毎フレーム JSON 再パース + D3DReflect 走査になる
+    if (st.ready && progOk && st.builtFromRevision == src.revision
+        && st.builtFromGeneration == gen) {
+        return &st;
+    }
+
+    if (!progOk) {
+        const std::string msg =
+            prog ? prog->errorMessage : ("surface shader not found: " + src.shaderName);
+        if (!st.useErrorFallback || st.errorMessage != msg) {
+            MYE_LOG_ERROR("surface material '%s': %s", src.shaderName.c_str(), msg.c_str());
+        }
+        st.ready = false;
+        st.useErrorFallback = true;
+        st.errorMessage = msg;
+        st.perMaterialCB.clear();
+        st.perMaterialGpuCB.Reset();
+        st.textures.clear();
+        st.builtFromRevision = src.revision;
+        st.builtFromGeneration = gen;
+        return &st;
+    }
+
+    // ---- Properties (作者の /*@MyEngineProperties@*/ スキーマ) に沿って .mat.json の
+    //      "properties" を読む。スキーマに無いキーはここで無視する — 元の JSON テキストは
+    //      src.propertiesJson にそのまま残るので「値を保持する」契約は自然に満たされる ----
+    nlohmann::json propsRoot = nlohmann::json::object();
+    if (!src.propertiesJson.empty()) {
+        try {
+            propsRoot = nlohmann::json::parse(src.propertiesJson);
+        } catch (const nlohmann::json::exception&) {
+            propsRoot = nlohmann::json::object();
+        }
+    }
+
+    std::unordered_map<std::string, PropValue> values;
+    st.textures.clear();
+    for (const PropertySchema& p : prog->propertiesSchema.properties) {
+        if (p.name.empty()) {
+            continue; // Header 行
+        }
+        if (p.type == PropType::Tex2D) {
+            AssetID texId;
+            if (propsRoot.is_object() && propsRoot.contains(p.name)) {
+                texId = ResolveSurfaceTexProperty(propsRoot[p.name], textures, src.assetsRoot);
+            }
+            if (texId.IsNull()) {
+                texId = ResolveSurfaceBuiltinTex(p.defaultTex.empty() ? "white" : p.defaultTex,
+                                                textures);
+            }
+            st.textures[p.name] = texId;
+            continue;
+        }
+        if (!propsRoot.is_object() || !propsRoot.contains(p.name)) {
+            continue; // 既定値のまま (PackPropertiesReflected が defaultFloat/defaultVec4 を使う)
+        }
+        const nlohmann::json& v = propsRoot[p.name];
+        if (v.is_number()) {
+            values[p.name] = v.get<float>();
+        } else if (v.is_array() && v.size() == 4) {
+            std::array<float, 4> arr{};
+            for (size_t i = 0; i < 4; ++i) {
+                arr[i] = v[i].is_number() ? v[i].get<float>() : 0.0f;
+            }
+            values[p.name] = arr;
+        }
+    }
+
+    std::unordered_map<std::string, ReflectedVarSlot> reflectionVars;
+    uint32_t cbSize = 0;
+    auto collect = [&](const SurfaceEntryReflection& refl) {
+        for (const auto& [varName, var] : refl.vars) {
+            reflectionVars[varName] = { var.offset, var.size };
+            cbSize = (std::max)(cbSize, var.cbufSize);
+        }
+    };
+    collect(prog->colorVSReflect);
+    collect(prog->colorPSReflect);
+
+    std::vector<std::string> missing;
+    PackPropertiesReflected(prog->propertiesSchema, values, reflectionVars, cbSize,
+                           st.perMaterialCB, &missing);
+    for (const std::string& missingName : missing) {
+        MYE_LOG_WARN("surface material '%s': property '%s' not found in MyEnginePerMaterial "
+                     "(or size mismatch)",
+                     src.shaderName.c_str(), missingName.c_str());
+    }
+
+    // ---- GPU 側 CB (サイズが変わったときだけ作り直す。中身は毎回書き直す) ----
+    if (!st.perMaterialCB.empty()) {
+        bool needCreate = (st.perMaterialGpuCB.Get() == nullptr);
+        if (!needCreate) {
+            D3D11_BUFFER_DESC desc = {};
+            st.perMaterialGpuCB->GetDesc(&desc);
+            needCreate = desc.ByteWidth != static_cast<UINT>(st.perMaterialCB.size());
+        }
+        if (needCreate) {
+            D3D11_BUFFER_DESC bd = {};
+            bd.ByteWidth = static_cast<UINT>(st.perMaterialCB.size());
+            bd.Usage = D3D11_USAGE_DYNAMIC;
+            bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+            bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            st.perMaterialGpuCB.Reset();
+            device.Device()->CreateBuffer(&bd, nullptr, st.perMaterialGpuCB.GetAddressOf());
+        }
+        if (st.perMaterialGpuCB.Get() != nullptr) {
+            D3D11_MAPPED_SUBRESOURCE mapped = {};
+            if (SUCCEEDED(device.Context()->Map(st.perMaterialGpuCB.Get(), 0,
+                                               D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+                std::memcpy(mapped.pData, st.perMaterialCB.data(), st.perMaterialCB.size());
+                device.Context()->Unmap(st.perMaterialGpuCB.Get(), 0);
+            }
+        }
+    } else {
+        st.perMaterialGpuCB.Reset();
+    }
+
+    st.ready = true;
+    st.useErrorFallback = false;
+    st.errorMessage.clear();
+    st.builtFromRevision = src.revision;
+    st.builtFromGeneration = gen;
+    return &st;
 }
 
 } // namespace mye

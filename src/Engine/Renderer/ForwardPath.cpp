@@ -6,6 +6,9 @@
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/MeshBind.h"
 #include "Engine/Renderer/ShaderManager.h"
+#include "Engine/Renderer/SurfaceDrawBind.h" // M79 sub-02
+#include "Engine/Renderer/SurfaceProgram.h"
+#include "Engine/Renderer/SurfaceShaderTypes.h"
 
 using namespace DirectX;
 
@@ -96,7 +99,12 @@ bool ForwardPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     if (!CreateConstantBuffer(dev, sizeof(PerFrameCB), perFrameCB_)
         || !CreateConstantBuffer(dev, sizeof(PerObjectCB), perObjectCB_)
         || !CreateConstantBuffer(dev, sizeof(MaterialCB), materialCB_)
-        || !CreateConstantBuffer(dev, sizeof(XMFLOAT4X4) * kMaxBones, boneCB_)) {
+        || !CreateConstantBuffer(dev, sizeof(XMFLOAT4X4) * kMaxBones, boneCB_)
+        // M79 sub-02: サーフェスシェーダーの予約 CB (forward_lit の b0-b2 とは別バッファ)
+        || !CreateConstantBuffer(dev, sizeof(MyEnginePerFrameCB), surfacePerFrameCB_)
+        || !CreateConstantBuffer(dev, sizeof(MyEngineSurfaceFrameCB), surfaceFrameCB_)
+        || !CreateConstantBuffer(dev, sizeof(MyEnginePerObjectCB), surfacePerObjectCB_)
+        || !CreateConstantBuffer(dev, sizeof(MyEngineWaterCB), surfaceWaterCB_)) {
         MYE_LOG_ERROR("ForwardPath: constant buffer creation failed");
         return false;
     }
@@ -174,6 +182,8 @@ bool ForwardPath::Init(GraphicsDevice& device, ShaderManager& shaders)
         return false;
     }
 
+    // M79 sub-02: サーフェス失敗時のマゼンタ代替。他の *.surface.hlsl と同じ LoadSurface 経路
+    surfaceErrorId_ = shaders.LoadSurface("surface_error");
     // スキンメッシュ用のシェーダをプリロード (BLENDINDICES 入力レイアウトもここで構築される)
     skinnedShader_ = shaders.Load("forward_skinned");
     // インスタンシング (M38f)。litShader_ は run 判定用 (これ以外のシェーダは差し替え不可)
@@ -281,6 +291,67 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     const bool acousticBound = AcousticIsBound(view);
     pf.acoustic = MakeAcousticCB(view, acousticBound);
     UploadCB(dc, perFrameCB_.Get(), pf);
+
+    // ---- M79 sub-02: サーフェスシェーダーの予約 CB (forward_lit の b0-b2 とは別バッファ)。
+    //      内容は pf/view から詰め、シェーダごとの実バインドは DrawSurfaceItem が
+    //      D3DReflect の名前解決で行う (register 位置は作者ソースごとに変わりうる) ----
+    MyEnginePerFrameCB spf = {};
+    spf.cameraPos = pf.cameraPos;
+    spf.lightCount = pf.lightCount;
+    spf.ambient = pf.ambient;
+    memcpy(spf.lights, pf.lights, sizeof(spf.lights));
+    spf.shadowVP = pf.shadowVP;
+    spf.shadowTexel = pf.shadowTexel;
+    spf.shadowEnabled = pf.shadowEnabled;
+    spf.fogColor = pf.fogColor;
+    spf.fogMode = pf.fogMode;
+    spf.fogDensity = pf.fogDensity;
+    spf.fogStart = pf.fogStart;
+    spf.fogEnd = pf.fogEnd;
+    spf.iblEnabled = pf.iblEnabled;
+    spf.iblSpecMips = pf.iblSpecMips;
+    spf.shadowVP12[0] = pf.shadowVP12[0];
+    spf.shadowVP12[1] = pf.shadowVP12[1];
+    memcpy(spf.cascadeInfo, pf.cascadeInfo, sizeof(spf.cascadeInfo));
+    spf.fogHeightFalloff = pf.fogHeightFalloff;
+    spf.fogBaseHeight = pf.fogBaseHeight;
+    spf.fogInscatterIntensity = pf.fogInscatterIntensity;
+    spf.fogInscatterPower = pf.fogInscatterPower;
+    spf.sunDirection = pf.sunDirection;
+    spf.sunColor = pf.sunColor;
+    spf.shadowAtlasEnabled = pf.shadowAtlasEnabled;
+    spf.shadowAtlasTexel = pf.shadowAtlasTexel;
+    memcpy(spf.shadowTiles, pf.shadowTiles, sizeof(spf.shadowTiles));
+    spf.froxel = pf.froxel;
+    spf.acoustic = pf.acoustic;
+    UploadCB(dc, surfacePerFrameCB_.Get(), spf);
+
+    // MyEngineSurfaceFrame: 今/前の ViewProj・時刻。速度/影エントリは Deferred (sub-03) 専用だが、
+    // 予約 CB は 1 本を全パスで共有するので Forward でも正しい値を詰めておく
+    MyEngineSurfaceFrameCB sf = {};
+    XMStoreFloat4x4(&sf.curViewProj, XMMatrixTranspose(XMMatrixMultiply(v, p)));
+    if (view.prevViewProjValid != 0) {
+        XMStoreFloat4x4(&sf.prevViewProj, XMMatrixTranspose(XMLoadFloat4x4(&view.prevViewProj)));
+        sf.historyValid = 1;
+    } else {
+        const XMMATRIX nj = XMMatrixMultiply(v, XMLoadFloat4x4(&view.projNoJitter));
+        XMStoreFloat4x4(&sf.prevViewProj, XMMatrixTranspose(nj));
+        sf.historyValid = 0;
+    }
+    sf.shadowViewProj = view.lightViewProj[0]; // 色エントリは未使用 (影エントリは sub-03)
+    sf.curTime = static_cast<float>(view.viewFrameIndex) * (1.0f / 60.0f); // spec §2: 時計
+    sf.prevTime = (view.viewFrameIndex > 0)
+        ? static_cast<float>(view.viewFrameIndex - 1) * (1.0f / 60.0f)
+        : 0.0f;
+    sf.curWaterTime = 0.0f; // sub-05 まで水面時刻は供給しない (無効 = 0、spec §4.1)
+    sf.prevWaterTime = 0.0f;
+    sf.jitterNdc = { view.jitterNdc[0], view.jitterNdc[1] };
+    sf.screenSize = { static_cast<float>(view.width), static_cast<float>(view.height) };
+    UploadCB(dc, surfaceFrameCB_.Get(), sf);
+
+    // MyEngineWater: sub-05 まで常に無効 (全 0 + enabled=0、spec §4.1)
+    const MyEngineWaterCB water = {};
+    UploadCB(dc, surfaceWaterCB_.Get(), water);
 
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
     dc->VSSetConstantBuffers(0, 2, cbs);
@@ -390,12 +461,37 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
                             const RenderView& view, RenderResources& resources,
                             ShaderManager& shaders, const std::vector<MeshInstanceRun>* runs)
 {
-    (void)view;
     ID3D11DeviceContext* dc = device.Context();
 
     uint64_t boundShader = 0;
     MeshBindState bound;
     size_t nextRun = 0;
+
+    // M79 sub-02: DrawSurfaceItem は forward_lit の固定スロット (b0-b2 / t0-t9 / s0-s2) を
+    // 名前解決で自由に張り替えるので、直後にこの一式へ戻す。「次のアイテムが forward_lit の
+    // ときにバインド前提を壊さない」(sub-02.md 受け入れ条件 5) を、サーフェス→通常のどの
+    // 境目でも成立させるための唯一の復元経路
+    auto restoreForwardLitBindings = [&]() {
+        ID3D11Buffer* cbs2[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
+        dc->VSSetConstantBuffers(0, 2, cbs2);
+        dc->PSSetConstantBuffers(0, 2, cbs2);
+        ID3D11Buffer* matCbs[1] = { materialCB_.Get() };
+        dc->PSSetConstantBuffers(2, 1, matCbs);
+        ID3D11SamplerState* samplers[3] = { sampler_.Get(), shadowSampler_.Get(), iblSampler_.Get() };
+        dc->PSSetSamplers(0, 3, samplers);
+        const bool froxelBound = FroxelIsBound(view);
+        const bool acousticBound = AcousticIsBound(view);
+        ID3D11ShaderResourceView* frameSrvs[9] = { view.shadowSRV,      nullptr,
+                                                   view.iblIrradiance,  view.iblPrefiltered,
+                                                   view.iblBrdfLut,     view.shadowAtlasSRV,
+                                                   froxelBound ? view.froxelSRV : nullptr,
+                                                   acousticBound ? view.acousticSRV : nullptr,
+                                                   acousticBound ? view.acousticFrontSRV : nullptr };
+        dc->PSSetShaderResources(1, 9, frameSrvs);
+        dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        boundShader = 0; // 次の通常アイテムに VS/PS/InputLayout を再バインドさせる
+        bound = MeshBindState{}; // t0/normal/メッシュ VB・IB も再バインドさせる
+    };
 
     for (size_t idx = 0; idx < items.size(); ++idx) {
         const RenderItem& item = items[idx];
@@ -438,6 +534,27 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
         }
         // スキンメッシュはマテリアルのシェーダではなくスキニング版に差し替える (M18)
         const bool skinned = (item.bones != nullptr && item.boneCount > 0);
+
+        // M79 sub-02: shader が "*.surface" のマテリアルはサーフェスプログラムの色エントリで描く。
+        // スキン+サーフェスは初版未対応 (spec §2) — WARN 1 回だけ出して下の従来経路へ落ちる
+        // (skinnedShader_ が使われ、mat->shader は無視される。既存の分岐と同じ)
+        SurfaceMaterialState* surf =
+            resources.materials.GetOrBuildSurfaceState(item.material, shaders, resources.textures, device);
+        if (surf && surf->isSurfaceShader) {
+            if (skinned) {
+                if (skinnedSurfaceWarned_.insert(item.material.value).second) {
+                    MYE_LOG_WARN(
+                        "surface material on skinned mesh is not supported yet - using skinned shader (material=0x%llx)",
+                        static_cast<unsigned long long>(item.material.value));
+                }
+                // 従来のスキン経路へフォールスルー (下の shaderId 解決へ)
+            } else {
+                DrawSurfaceItem(device, item, *mat, *mesh, *surf, shaders, resources, view);
+                restoreForwardLitBindings();
+                continue;
+            }
+        }
+
         const AssetID shaderId = skinned ? skinnedShader_ : mat->shader;
         ShaderProgram* prog = shaders.Get(shaderId);
         if (!prog || !prog->valid) {
@@ -473,6 +590,69 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
         dc->DrawIndexed(mesh->indexCount, 0, 0);
         prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
     }
+}
+
+// M79 sub-02: shader が "*.surface" のアイテムをサーフェスプログラムの色エントリで描く。
+// 予約 CB / 予約テクスチャ・サンプラ / MyEnginePerMaterial / 作者 Texture2D は
+// すべて D3DReflect の名前解決でバインドする (register 位置は作者ソースごとに変わりうる)。
+// surf->ready が false のときは surface_error (マゼンタ、変位なし) を代わりに使う
+void ForwardPath::DrawSurfaceItem(GraphicsDevice& device, const RenderItem& item,
+                                  const Material& mat, const Mesh& mesh, SurfaceMaterialState& surf,
+                                  ShaderManager& shaders, RenderResources& resources,
+                                  const RenderView& view)
+{
+    ID3D11DeviceContext* dc = device.Context();
+    const AssetID programId = surf.useErrorFallback ? surfaceErrorId_ : surf.surfaceProgramId;
+    SurfaceProgram* prog = shaders.GetSurface(programId);
+    if (!prog || !prog->valid) {
+        return; // surface_error 自体が壊れている異常系。描画せず諦める (クラッシュしない)
+    }
+
+    dc->IASetInputLayout(prog->colorInputLayout.Get());
+    dc->VSSetShader(prog->colorVS.Get(), nullptr, 0);
+    dc->PSSetShader(prog->colorPS.Get(), nullptr, 0);
+
+    const SurfaceEntryReflection& vsRefl = prog->colorVSReflect;
+    const SurfaceEntryReflection& psRefl = prog->colorPSReflect;
+
+    BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kPerFrameCB, surfacePerFrameCB_.Get());
+    BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kSurfaceFrameCB, surfaceFrameCB_.Get());
+    BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kWaterCB, surfaceWaterCB_.Get());
+    BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kPerMaterialCB, surf.perMaterialGpuCB.Get());
+
+    MyEnginePerObjectCB po = {};
+    XMStoreFloat4x4(&po.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
+    XMStoreFloat4x4(&po.prevWorld, XMMatrixTranspose(XMLoadFloat4x4(&item.prevWorld)));
+    po.baseColor = SrgbToLinear(mat.baseColor);
+    UploadCB(dc, surfacePerObjectCB_.Get(), po);
+    BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kPerObjectCB, surfacePerObjectCB_.Get());
+
+    // 予約テクスチャ / サンプラ (Forward の既存スロット構成と同じ SRV を名前で引く)
+    const bool froxelBound = FroxelIsBound(view);
+    BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gShadowMap", view.shadowSRV);
+    BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gIblIrradiance", view.iblIrradiance);
+    BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gIblPrefiltered", view.iblPrefiltered);
+    BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gIblBrdfLut", view.iblBrdfLut);
+    BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gFroxelVolume", froxelBound ? view.froxelSRV : nullptr);
+    BindSurfaceNamedSampler(dc, vsRefl, psRefl, "gSampler", sampler_.Get());
+    BindSurfaceNamedSampler(dc, vsRefl, psRefl, "gShadowSampler", shadowSampler_.Get());
+    BindSurfaceNamedSampler(dc, vsRefl, psRefl, "gIblSampler", iblSampler_.Get());
+
+    // 作者 Texture2D プロパティ (失敗時は surf.textures が空なので何もバインドしない)
+    for (const auto& [texName, texId] : surf.textures) {
+        Texture* tex = resources.textures.Get(texId);
+        ID3D11ShaderResourceView* srv = tex ? tex->srv.Get() : nullptr;
+        BindSurfaceNamedSRV(dc, vsRefl, psRefl, texName.c_str(), srv);
+    }
+
+    const UINT stride = sizeof(MeshVertex);
+    const UINT offset = 0;
+    ID3D11Buffer* vb = mesh.vb.Get();
+    dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+    dc->IASetIndexBuffer(mesh.ib.Get(), DXGI_FORMAT_R32_UINT, 0);
+
+    dc->DrawIndexed(mesh.indexCount, 0, 0);
+    prof::AddDraw(static_cast<int>(mesh.indexCount / 3));
 }
 
 } // namespace mye

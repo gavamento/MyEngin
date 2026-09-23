@@ -123,7 +123,10 @@ float4 PSMain(VSOut i) : SV_Target
 // 実描画プローブ: VSIn を意図的に「TEXCOORD0 が先・POSITION が後・NORMAL 省略」の
 // 部分集合・順不同にし、MeshVertex 固定オフセットの入力レイアウトを実描画で検証する。
 // 頂点変位 (0.1f*sin(gTime)) を static gTime に乗せ、速度エントリの前後 2 回評価で
-// 別の値 (gWorld と gTime の両方) を使うことを read-back で確認する
+// 別の値 (gWorld と gTime の両方) を使うことを read-back で確認する。
+// PSMain は gTime を R チャンネルへそのまま出す — VS と PS は別プログラムなので、
+// MyePSVelocity が PSMain を呼ぶ前に static へ「今フレーム」の値を代入し忘れると
+// ここが常に 0 になる (sub-02 round 1 で見つかった規約漏れの回帰確認)
 const char* kVelocityProbeHlsl = R"HLSL(
 #include "MyEngineSurface.hlsli"
 
@@ -150,7 +153,7 @@ VSOut VSMain(VSIn v)
 
 float4 PSMain(VSOut i) : SV_Target
 {
-    return float4(1.0f, 1.0f, 1.0f, 1.0f);
+    return float4(gTime, 0.0f, 0.0f, 1.0f);
 }
 )HLSL";
 
@@ -341,6 +344,7 @@ bool RunSurfaceShaderSelfTest()
         ComPtr<ID3D11Texture2D> velocityTex;
         ComPtr<ID3D11RenderTargetView> velocityRtv;
         ComPtr<ID3D11Texture2D> velocityStaging;
+        ComPtr<ID3D11Texture2D> colorStaging; // PS 側 gTime (R チャンネル) の read-back 用
 
         D3D11_TEXTURE2D_DESC td = {};
         td.Width = 1;
@@ -354,6 +358,13 @@ bool RunSurfaceShaderSelfTest()
         td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         bool ok = SUCCEEDED(dev->CreateTexture2D(&td, nullptr, colorTex.GetAddressOf()));
         ok = ok && SUCCEEDED(dev->CreateRenderTargetView(colorTex.Get(), nullptr, colorRtv.GetAddressOf()));
+        {
+            D3D11_TEXTURE2D_DESC csd = td; // R8G8B8A8_UNORM のまま (colorTex と同一フォーマット)
+            csd.Usage = D3D11_USAGE_STAGING;
+            csd.BindFlags = 0;
+            csd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            ok = ok && SUCCEEDED(dev->CreateTexture2D(&csd, nullptr, colorStaging.GetAddressOf()));
+        }
 
         td.Format = DXGI_FORMAT_R32G32_FLOAT;
         ok = ok && SUCCEEDED(dev->CreateTexture2D(&td, nullptr, velocityTex.GetAddressOf()));
@@ -411,9 +422,10 @@ bool RunSurfaceShaderSelfTest()
         Check(frameSlotVs >= 0 && objectSlotVs >= 0 && frameSlotPs >= 0,
               "velocity probe reserved CB slots resolved by name");
 
-        // 描画 1 回ぶんの手順 (CB を差し替えて MyeVSVelocity/MyePSVelocity を 1 回 Draw する)
+        // 描画 1 回ぶんの手順 (CB を差し替えて MyeVSVelocity/MyePSVelocity を 1 回 Draw する)。
+        // outColorR は PSMain が出した gTime (R チャンネル、0..1) の read-back
         auto drawAndReadback = [&](const MyEngineSurfaceFrameCB& frame, const MyEnginePerObjectCB& obj,
-                                   XMFLOAT2& outVelocity) {
+                                   XMFLOAT2& outVelocity, float& outColorR) {
             UploadCB(dc, frameCb.Get(), frame);
             UploadCB(dc, objectCb.Get(), obj);
 
@@ -455,6 +467,15 @@ bool RunSurfaceShaderSelfTest()
                 dc->Unmap(velocityStaging.Get(), 0);
             }
 
+            dc->CopyResource(colorStaging.Get(), colorTex.Get());
+            D3D11_MAPPED_SUBRESOURCE colorMapped = {};
+            outColorR = -1.0f; // 番兵 (read-back 失敗を検出可能にする)
+            if (SUCCEEDED(dc->Map(colorStaging.Get(), 0, D3D11_MAP_READ, 0, &colorMapped))) {
+                const uint8_t* px = static_cast<const uint8_t*>(colorMapped.pData);
+                outColorR = static_cast<float>(px[0]) / 255.0f;
+                dc->Unmap(colorStaging.Get(), 0);
+            }
+
             ID3D11RenderTargetView* nullRtvs[2] = { nullptr, nullptr };
             dc->OMSetRenderTargets(2, nullRtvs, nullptr);
         };
@@ -477,11 +498,20 @@ bool RunSurfaceShaderSelfTest()
             XMStoreFloat4x4(&objA.prevWorld, XMMatrixTranspose(XMMatrixTranslation(0.4f, 0.0f, 0.0f)));
 
             XMFLOAT2 velocityA = {};
-            drawAndReadback(frameA, objA, velocityA);
+            float colorRA = 0.0f;
+            drawAndReadback(frameA, objA, velocityA, colorRA);
             Check(std::fabs(velocityA.x - (-0.2f)) < 0.01f && std::fabs(velocityA.y - 0.0f) < 0.01f,
                   "velocity entry: World の前後差が正しく速度になる (2 回評価が別の gWorld を使う)");
             if (!(std::fabs(velocityA.x - (-0.2f)) < 0.01f && std::fabs(velocityA.y - 0.0f) < 0.01f)) {
                 MYE_LOG_ERROR("    velocityA=(%f,%f) / expected=(-0.2,0)", velocityA.x, velocityA.y);
+            }
+            // 回帰確認 (sub-02 round 1 の指摘): MyePSVelocity が PSMain を呼ぶ前に
+            // static へ「今フレーム」の値を代入していないと、PS から見た gTime は常に 0 になる。
+            // frameA.curTime=0.7 なので、代入が効いていれば R チャンネルは 0 ではなく ≈0.7 になる
+            Check(colorRA >= 0.0f && std::fabs(colorRA - frameA.curTime) < 0.02f,
+                  "velocity entry の PSMain は gTime に今フレームの値 (0.7) を見る (0 のままではない)");
+            if (!(colorRA >= 0.0f && std::fabs(colorRA - frameA.curTime) < 0.02f)) {
+                MYE_LOG_ERROR("    colorRA=%f / expected=%f", colorRA, frameA.curTime);
             }
 
             // ---- draw B: World は cur==prev (恒等) のまま、gTime だけ差し替える ----
@@ -496,11 +526,20 @@ bool RunSurfaceShaderSelfTest()
             XMStoreFloat4x4(&objB.prevWorld, XMMatrixTranspose(XMMatrixIdentity()));
 
             XMFLOAT2 velocityB = {};
-            drawAndReadback(frameB, objB, velocityB);
+            float colorRB = 0.0f;
+            drawAndReadback(frameB, objB, velocityB, colorRB);
             Check(std::fabs(velocityB.x - 0.0f) < 0.01f && std::fabs(velocityB.y - 0.05f) < 0.01f,
                   "velocity entry: gTime の前後差が正しく速度になる (2 回評価が別の gTime を使う)");
             if (!(std::fabs(velocityB.x - 0.0f) < 0.01f && std::fabs(velocityB.y - 0.05f) < 0.01f)) {
                 MYE_LOG_ERROR("    velocityB=(%f,%f) / expected=(0,0.05)", velocityB.x, velocityB.y);
+            }
+            // frameB.curTime=0.0 なので単独では bug (未代入=0) と区別できないが、
+            // read-back 自体が機能していること (番兵 -1 のままではない) の確認として残す。
+            // 未代入と区別できる主判定は上の draw A (curTime=0.7) 側
+            Check(colorRB >= 0.0f && std::fabs(colorRB - frameB.curTime) < 0.02f,
+                  "velocity entry の PSMain の read-back が機能している (gTime=0.0 を観測)");
+            if (!(colorRB >= 0.0f && std::fabs(colorRB - frameB.curTime) < 0.02f)) {
+                MYE_LOG_ERROR("    colorRB=%f / expected=%f", colorRB, frameB.curTime);
             }
         }
     }

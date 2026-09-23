@@ -8,6 +8,11 @@
 // MyEngineSurfaceFrame/MyEnginePerObject の値を代入してから VSMain を呼ぶ。
 // 速度エントリだけ前後 2 回評価し、2 つの VSOut から求めた clip 座標の差を velocity にする
 // (spec §4.1「エンジン生成エントリ」)。
+//
+// ★VS と PS は別プログラムとしてコンパイルされる (別々の D3DCompile 呼び出し) ので、
+//   VS エントリで代入した static は PS には届かない (PS 側では未代入 = 0 のまま)。
+//   全 PS エントリ (色・速度) は PSMain を呼ぶ前に 4 つの static へ「今フレーム」の値を
+//   もう一度代入すること (spec §4.1「PS 側の static」、sub-02 round 1 で見つかった規約漏れ)。
 
 // ---- 色: Forward 不透明・透明、Deferred フォワード段の共通 ----
 VSOut MyeVSColor(VSIn v)
@@ -21,6 +26,11 @@ VSOut MyeVSColor(VSIn v)
 
 float4 MyePSColor(VSOut i) : SV_Target
 {
+    // PS は VS と別プログラム — 今フレームの値をここでも代入する (上の注記参照)
+    gViewProj = gMyeCurViewProj;
+    gWorld = gMyeWorld;
+    gTime = gMyeCurTime;
+    gWaterTime = gMyeCurWaterTime;
     return PSMain(i);
 }
 
@@ -68,6 +78,13 @@ MyeVelocityOut MyeVSVelocity(VSIn v)
 void MyePSVelocity(MyeVelocityOut i, out float4 myeColorOut : SV_Target0,
                    out float2 myeVelocityOut : SV_Target1)
 {
+    // PS は VS と別プログラム — 今フレームの値をここでも代入する (ファイル冒頭の注記参照)。
+    // VS 側は前後 2 回評価したが、色 (SV_Target0) は常に今フレームの見た目を出すので
+    // ここも「前」ではなく「今」を代入する
+    gViewProj = gMyeCurViewProj;
+    gWorld = gMyeWorld;
+    gTime = gMyeCurTime;
+    gWaterTime = gMyeCurWaterTime;
     myeColorOut = PSMain(i.myeInner);
     myeVelocityOut = (gMyeHistoryValid != 0)
         ? ComputeVelocityUv(i.myeCurClip, i.myePrevClip, gMyeJitterNdc)

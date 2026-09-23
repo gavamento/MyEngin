@@ -1,4 +1,5 @@
 #pragma once
+#include <unordered_set>
 #include <vector>
 #include <wrl/client.h>
 
@@ -9,6 +10,10 @@
 #include "Engine/Renderer/WaterPass.h"
 
 namespace mye {
+
+struct Material;             // GpuResources.h
+struct Mesh;                 // GpuResources.h
+struct SurfaceMaterialState; // GpuResources.h (M79 sub-02)
 
 // Forward レンダリング (engine_spec.md 6.1 Option A)。
 // opaque を手前順 → transparent を奥順で 1 パス描画する
@@ -30,6 +35,13 @@ private:
     void DrawItems(GraphicsDevice& device, const std::vector<RenderItem>& items,
                    const RenderView& view, RenderResources& resources, ShaderManager& shaders,
                    const std::vector<MeshInstanceRun>* runs);
+    // M79 sub-02: shader が "*.surface" のアイテムを 1 個描く (色エントリのみ。
+    // 深度書き込み/ブレンドは呼び出し元が既に設定済みの opaque/transparent ステートに従う)。
+    // 描画後に IA/VS/PS/CB/SRV/サンプラの一部が forward_lit の前提と食い違うので、
+    // 呼び出し側 (DrawItems) が続けて RestoreFixedBindings 相当を行うこと
+    void DrawSurfaceItem(GraphicsDevice& device, const RenderItem& item, const Material& mat,
+                         const Mesh& mesh, SurfaceMaterialState& surf, ShaderManager& shaders,
+                         RenderResources& resources, const RenderView& view);
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> perFrameCB_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> perObjectCB_;
@@ -52,6 +64,13 @@ private:
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthTransparent_; // 書き込みなし
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendOpaque_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendAlpha_;
+    // ---- M79 sub-02: サーフェスシェーダーの予約 CB (forward_lit の b0-b2 とは別バッファ) ----
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfacePerFrameCB_;   // MyEnginePerFrame
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfaceFrameCB_;      // MyEngineSurfaceFrame
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfacePerObjectCB_;  // MyEnginePerObject
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfaceWaterCB_;      // MyEngineWater (sub-05 まで 0 埋め)
+    AssetID surfaceErrorId_ = {}; // "surface_error" (失敗時のマゼンタ代替)
+    std::unordered_set<uint64_t> skinnedSurfaceWarned_; // スキン+サーフェスの WARN はマテリアル毎に 1 回
     SkyboxPass skybox_; // 不透明後・透明前に空を塗る (M29d)
     // 地形 (M58c)。不透明メッシュの直後・スカイボックスの前に描く (深度を書くため)
     TerrainPass terrain_;

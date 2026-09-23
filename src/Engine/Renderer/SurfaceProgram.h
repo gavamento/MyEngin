@@ -13,6 +13,8 @@
 #include <d3dcommon.h>
 #include <wrl/client.h>
 
+#include "Engine/Renderer/ProjectShaderProperties.h"
+
 namespace mye {
 
 // D3DReflect で引いたリソース (cbuffer / Texture / Sampler) 1 件の位置
@@ -65,6 +67,15 @@ struct SurfaceProgram {
     std::vector<std::wstring> includes; // #include 依存 (ホットリロード用)
     std::string errorMessage;           // 失敗時のエラー文 ("サーフェス規約: ..." を含む)
     bool valid = false;
+
+    // M79 sub-02: 作者ソース先頭の /*@MyEngineProperties ... @*/ をパースした結果。
+    // MyEnginePerMaterial のパック (PackPropertiesReflected) と Tex2D プロパティの
+    // 解決に使う。Properties ブロックが無ければ空スキーマで ok=true
+    PropertyParseResult propertiesSchema;
+    // 世代番号 (1 始まり)。ホットリロードで成功するたびに +1 される。
+    // MaterialLibrary はこの値の変化を見て PerMaterial の再パックが要るかを判定する
+    // (同じ内容でも「再コンパイルした」という事実だけで offset がずれる可能性があるため)
+    uint64_t generation = 0;
 };
 
 } // namespace mye
