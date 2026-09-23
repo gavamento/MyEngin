@@ -76,6 +76,14 @@ public:
     void RebuildProjectShaderIndex();
     // Load 解決と同じ規則 (索引 → shaderDirs)。SelfTest / 診断用
     std::wstring ResolveShaderPath(std::string_view name) const;
+    // M79 sub-04: 索引済み短名を昇順で列挙する (マテリアル Inspector のシェーダ選択コンボ用)。
+    // suffixFilter 例: ".surface" (末尾一致。空なら全件)
+    std::vector<std::string> ProjectShaderNames(std::string_view suffixFilter = {}) const;
+    // M79 sub-04: 短名の HLSL を ResolveShaderPath (M78f 索引) 経由で探して Properties を
+    // パースする。fxstack / マテリアル Inspector の Properties スキーマ取得を共通化するため —
+    // 旧 fxstack 実装は ShaderDirs() 直下しか見ておらず assets/fx 等の Properties が出なかった
+    // (spec §2 Inspector 行)。見つからなければ空プロパティで ok=true (ParseProperties と同じ)
+    PropertyParseResult FetchPropertySchema(std::string_view name) const;
 
     // ---- バイトコードキャッシュ ----
     // dir にコンパイル済みバイトコードを置き、次回は中身のハッシュが一致すれば D3DCompile を

@@ -1,6 +1,7 @@
 #pragma once
 #include <DirectXMath.h>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -126,14 +127,35 @@ private:
         bool transparent = false;
         uint64_t textureGuid = 0; // 0 = なし (保存は GUID 数値、M39a)
         uint64_t normalGuid = 0;
+        // M79 sub-04: shader が "*.surface" のときの Properties 値 (fxstack と同じ PropValue map)
+        std::unordered_map<std::string, PropValue> properties;
     };
     MaterialEditState matEdit_;
+    // shader 名 → Properties スキーマのキャッシュ (M79 sub-04。fxstack と同じ仕組みだが
+    // 対象アセットが違うので別キャッシュに分けてある)
+    std::unordered_map<std::string, PropertyParseResult> matSchemaCache_;
     void LoadMaterialEdit(EngineContext& ctx, const std::wstring& path);
     void DrawMaterialInspector(EngineContext& ctx, const std::wstring& path,
                                AssetPreviewCache& preview);
     // 保存する .mat.json 本文。Save とプレビューの**両方**がこれを使うので、
     // 「プレビューで見た絵」と「保存した結果」が構造的にずれない (M53)
     std::string MaterialEditToJson(const std::wstring& path) const;
+
+    // M79 sub-04: Properties スキーマ取得 (キャッシュ付き) と自動 UI 描画の共通化。
+    // fxstack (DrawFxStackInspector) とマテリアル (DrawMaterialInspector) の両方から呼ぶ —
+    // 取得は ShaderManager::FetchPropertySchema (M78f の assets 全域索引) 経由にしてあり、
+    // 旧 fxstack 実装が ShaderDirs() 直下しか見ていなかった不具合も合わせて直る (spec §2)
+    const PropertyParseResult& GetOrFetchPropertySchema(
+        EngineContext& ctx, const std::string& shaderName,
+        std::unordered_map<std::string, PropertyParseResult>& cache);
+    // Properties スキーマに沿ったウィジェット一式を描画し、変更を values へ書き戻す。
+    // texAssetEncode: Tex2D でアセットを選んだときに values へ書く文字列を作る
+    // (fxstack は 16 進 GUID 文字列、マテリアルは Material.texture 等と同じ 10 進 GUID 文字列。
+    // 規約が違うので呼び出し側が注入する。spec §4.2)
+    void DrawPropertiesEditor(EngineContext& ctx, const PropertyParseResult& schema,
+                              std::unordered_map<std::string, PropValue>& values,
+                              const char* idScope,
+                              const std::function<std::string(uint64_t)>& texAssetEncode);
 
     // マテリアルのライブプレビュー (M53)。エディタ UI 状態 — シリアライズもハッシュもしない。
     // matEdit_ から組んだ Material は JSON 本文のハッシュが変わったときだけ作り直す

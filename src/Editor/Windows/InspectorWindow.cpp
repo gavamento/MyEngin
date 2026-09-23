@@ -1955,6 +1955,16 @@ void InspectorWindow::LoadMaterialEdit(EngineContext& ctx, const std::wstring& p
     };
     matEdit_.textureGuid = readRef("texture");
     matEdit_.normalGuid = readRef("normalMap");
+    // M79 sub-04: shader が "*.surface" のときの Properties。型ごとの復号にスキーマが要るので
+    // 先に matEdit_.shader (直前で読んだ) のスキーマを引く (spec §4.2、Tex2D の数値 GUID)
+    {
+        const PropertyParseResult& schema =
+            GetOrFetchPropertySchema(ctx, matEdit_.shader, matSchemaCache_);
+        const std::string propsText = (root.contains("properties") && root["properties"].is_object())
+            ? root["properties"].dump()
+            : std::string("{}");
+        DecodeMaterialProperties(propsText, &schema, matEdit_.properties);
+    }
     matEdit_.valid = true;
 }
 
@@ -1985,6 +1995,15 @@ std::string InspectorWindow::MaterialEditToJson(const std::wstring& path) const
         root["normalMap"] = "";
     }
     root["transparent"] = matEdit_.transparent;
+    // M79 sub-04: shader が "*.surface" のときの Properties。既知キー・未知キーとも
+    // matEdit_.properties に入っている値をそのまま書き戻す (§4.1 「スキーマに無いキーも保持」)。
+    // 空なら書かない (forward_lit 等の既存 .mat.json へ空の "properties":{} を増やさないため)
+    if (!matEdit_.properties.empty()) {
+        try {
+            root["properties"] = nlohmann::json::parse(EncodeMaterialProperties(matEdit_.properties));
+        } catch (const nlohmann::json::exception&) {
+        }
+    }
     return root.dump(2);
 }
 
@@ -2006,6 +2025,14 @@ void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstri
         Material built;
         if (MaterialLibrary::MaterialFromJsonText(matJson, ctx.resources->textures, ctx.assetsRoot,
                                                   built)) {
+            // M79 sub-04: プレビューは RegisterAnonymous 経由で登録され MaterialLibrary の
+            // サーフェス横テーブル (surfaceSources_、LoadFromFile 専用) には乗らない。
+            // このまま渡すと ForwardPath が「サーフェスでない」と判定して mat->shader の
+            // 通常プログラム解決に落ち、"*.surface" は Load() されていないため無描画になる。
+            // spec §4.3 の許容どおり forward_lit 表示へ固定する (マゼンタにはしない)
+            if (matEdit_.shader != "forward_lit") {
+                built.shader = AssetID{ HashStr("forward_lit") };
+            }
             matPreviewMat_ = built;
             matPreviewHash_ = jsonHash;
         }
@@ -2036,7 +2063,60 @@ void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstri
     }
 
     ImGui::SeparatorText(Tr(StrId::Insp_Material));
-    ImGui::TextDisabled("shader: %s", matEdit_.shader.c_str());
+
+    // ---- シェーダ選択 (M79 sub-04): forward_lit + 索引済み *.surface 短名 (昇順) ----
+    {
+        std::vector<std::string> items = { "forward_lit" };
+        if (ctx.shaders) {
+            const std::vector<std::string> surfaces = ctx.shaders->ProjectShaderNames(".surface");
+            items.insert(items.end(), surfaces.begin(), surfaces.end());
+        }
+        int curIndex = -1;
+        for (size_t i = 0; i < items.size(); ++i) {
+            if (items[i] == matEdit_.shader) {
+                curIndex = static_cast<int>(i);
+                break;
+            }
+        }
+        // 索引に無い値 (削除済み / リネーム済みシェーダを指す古い .mat.json) は
+        // 先頭に読み取り専用のまま差し込む — 黙って別の値へ挿げ替えない
+        if (curIndex < 0 && !matEdit_.shader.empty()) {
+            items.insert(items.begin(), matEdit_.shader);
+            curIndex = 0;
+        }
+        std::vector<const char*> itemPtrs;
+        itemPtrs.reserve(items.size());
+        for (const std::string& s : items) {
+            itemPtrs.push_back(s.c_str());
+        }
+        ImGui::SetNextItemWidth(220.0f);
+        if (ImGui::Combo(Tr(StrId::Insp_MatShader), &curIndex, itemPtrs.data(),
+                        static_cast<int>(itemPtrs.size()))
+            && curIndex >= 0 && curIndex < static_cast<int>(items.size())
+            && items[curIndex] != matEdit_.shader) {
+            // シェーダを切り替えても Properties は保持する (spec §4.1「シェーダを戻したとき
+            // 値が残る」契約)。型が合わないキーは DrawPropertiesEditor の std::get_if が
+            // 表示時に既定値へ安全に逃がす (round 1 の properties.clear() は仕様違反として却下)
+            ApplyMaterialShaderSelection(matEdit_.shader, items[curIndex]);
+        }
+
+        // ---- 失敗バナー (sub-01 の ShaderManager::LoadSurface/GetSurface から取得) ----
+        if (ctx.shaders && matEdit_.shader != "forward_lit") {
+            const AssetID progId = ctx.shaders->LoadSurface(matEdit_.shader);
+            const SurfaceProgram* prog = ctx.shaders->GetSurface(progId);
+            if (!prog || !prog->valid) {
+                const std::string errFirstLine =
+                    prog && !prog->errorMessage.empty()
+                        ? prog->errorMessage.substr(0, prog->errorMessage.find('\n'))
+                        : std::string("shader not found");
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+                ImGui::TextWrapped(Tr(StrId::Insp_MatShaderFailed), matEdit_.shader.c_str(),
+                                   errFirstLine.c_str());
+                ImGui::PopStyleColor();
+            }
+        }
+    }
+
     ImGui::ColorEdit4("baseColor", matEdit_.baseColor);
     ImGui::SliderFloat(Tr(StrId::Mat_Metallic), &matEdit_.metallic, 0.0f, 1.0f);
     ImGui::SliderFloat(Tr(StrId::Mat_Roughness), &matEdit_.roughness, 0.0f, 1.0f);
@@ -2119,6 +2199,18 @@ void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstri
     };
     texPicker("texture", matEdit_.textureGuid);
     texPicker("normalMap", matEdit_.normalGuid);
+
+    // ---- Properties (M79 sub-04): サーフェスシェーダ選択時のみ ----
+    if (matEdit_.shader != "forward_lit") {
+        ImGui::Spacing();
+        ImGui::SeparatorText(Tr(StrId::Insp_MatProperties));
+        const PropertyParseResult& schema =
+            GetOrFetchPropertySchema(ctx, matEdit_.shader, matSchemaCache_);
+        // マテリアルの Tex2D は Material.texture/normalMap と同じ 10 進 GUID 文字列 (spec §4.2)
+        DrawPropertiesEditor(ctx, schema, matEdit_.properties, "mat", [](uint64_t guid) {
+            return std::to_string(guid);
+        });
+    }
 
     if (ImGui::Button(Tr(StrId::Common_Save), ImVec2(90, 0))) {
         std::ofstream out(std::filesystem::path(path), std::ios::binary);
@@ -2423,6 +2515,207 @@ void InspectorWindow::DrawPhysMatInspector(const std::wstring& path)
 }
 
 // ---------------------------------------------------------------------------
+// M79 sub-04: Properties スキーマ取得・ウィジェット描画の共通化 (fxstack / マテリアル)
+// ---------------------------------------------------------------------------
+
+const PropertyParseResult& InspectorWindow::GetOrFetchPropertySchema(
+    EngineContext& ctx, const std::string& shaderName,
+    std::unordered_map<std::string, PropertyParseResult>& cache)
+{
+    auto it = cache.find(shaderName);
+    if (it != cache.end()) {
+        return it->second;
+    }
+    PropertyParseResult pr =
+        (ctx.shaders && !shaderName.empty()) ? ctx.shaders->FetchPropertySchema(shaderName)
+                                             : ParseProperties(std::string_view{});
+    return cache.emplace(shaderName, std::move(pr)).first->second;
+}
+
+void InspectorWindow::DrawPropertiesEditor(
+    EngineContext& ctx, const PropertyParseResult& schema,
+    std::unordered_map<std::string, PropValue>& values, const char* idScope,
+    const std::function<std::string(uint64_t)>& texAssetEncode)
+{
+    namespace fs = std::filesystem;
+    ImGui::PushID(idScope);
+    const bool hasSchema = schema.ok && !schema.properties.empty();
+
+    if (hasSchema) {
+        // スキーマ順にウィジェット描画
+        for (const auto& prop : schema.properties) {
+            // [HideInInspector] はスキップ
+            if (prop.attr.hideInInspector) {
+                continue;
+            }
+            // [Header(name)] 行: name.empty() && cbOffset == -1
+            if (prop.name.empty() && prop.cbOffset == -1) {
+                if (!prop.attr.header.empty()) {
+                    ImGui::SeparatorText(prop.attr.header.c_str());
+                }
+                continue;
+            }
+
+            ImGui::PushID(prop.name.c_str());
+            const char* label =
+                prop.displayName.empty() ? prop.name.c_str() : prop.displayName.c_str();
+
+            switch (prop.type) {
+            case PropType::Float: {
+                float v = prop.defaultFloat;
+                auto it = values.find(prop.name);
+                if (it != values.end()) {
+                    if (const float* fp = std::get_if<float>(&it->second)) {
+                        v = *fp;
+                    }
+                }
+                ImGui::SetNextItemWidth(160.0f);
+                if (ImGui::DragFloat(label, &v, 0.01f)) {
+                    values[prop.name] = v;
+                }
+                break;
+            }
+            case PropType::Range: {
+                float v = prop.defaultFloat;
+                auto it = values.find(prop.name);
+                if (it != values.end()) {
+                    if (const float* fp = std::get_if<float>(&it->second)) {
+                        v = *fp;
+                    }
+                }
+                ImGui::SetNextItemWidth(160.0f);
+                if (ImGui::SliderFloat(label, &v, prop.attr.rangeMin, prop.attr.rangeMax)) {
+                    values[prop.name] = v;
+                }
+                break;
+            }
+            case PropType::Color: {
+                using Vec4 = std::array<float, 4>;
+                Vec4 v = prop.defaultVec4;
+                auto it = values.find(prop.name);
+                if (it != values.end()) {
+                    if (const Vec4* vp = std::get_if<Vec4>(&it->second)) {
+                        v = *vp;
+                    }
+                }
+                ImGuiColorEditFlags flags =
+                    ImGuiColorEditFlags_Float | ImGuiColorEditFlags_DisplayRGB;
+                if (prop.attr.isHDR) {
+                    flags |= ImGuiColorEditFlags_HDR;
+                }
+                if (ImGui::ColorEdit4(label, v.data(), flags)) {
+                    values[prop.name] = v;
+                }
+                break;
+            }
+            case PropType::Vector: {
+                using Vec4 = std::array<float, 4>;
+                Vec4 v = prop.defaultVec4;
+                auto it = values.find(prop.name);
+                if (it != values.end()) {
+                    if (const Vec4* vp = std::get_if<Vec4>(&it->second)) {
+                        v = *vp;
+                    }
+                }
+                ImGui::SetNextItemWidth(220.0f);
+                if (ImGui::DragFloat4(label, v.data(), 0.01f)) {
+                    values[prop.name] = v;
+                }
+                break;
+            }
+            case PropType::Tex2D: {
+                // 現在値 (string: ビルトイン名 / GUID の文字列表現)
+                std::string cur = prop.defaultTex.empty() ? "white" : prop.defaultTex;
+                auto it = values.find(prop.name);
+                if (it != values.end()) {
+                    if (const std::string* sp = std::get_if<std::string>(&it->second)) {
+                        cur = *sp;
+                    }
+                }
+
+                // ラベル + ピッカーボタン (mat の texPicker 流儀)
+                ImGui::TextUnformatted(label);
+                ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.35f);
+                const std::string popId = std::string("##tex_") + prop.name;
+                if (ImGui::Button(cur.c_str(), ImVec2(-1, 0))) {
+                    ImGui::OpenPopup(popId.c_str());
+                }
+                if (ImGui::BeginPopup(popId.c_str())) {
+                    // ビルトイン名
+                    for (const char* bn : { "white", "black", "gray", "bump" }) {
+                        if (ImGui::Selectable(bn)) {
+                            values[prop.name] = std::string(bn);
+                        }
+                    }
+                    ImGui::Separator();
+                    // プロジェクト assets からテクスチャを列挙
+                    if (!ctx.assetsRoot.empty()) {
+                        std::error_code ec2;
+                        for (const auto& e :
+                             fs::recursive_directory_iterator(ctx.assetsRoot, ec2)) {
+                            if (!e.is_regular_file(ec2)) {
+                                continue;
+                            }
+                            const std::wstring wp = e.path().wstring();
+                            if (AssetDatabase::IsMetaPath(wp)
+                                || AssetDatabase::ClassifyPath(wp) != AssetType::Texture) {
+                                continue;
+                            }
+                            ImGui::PushID(WideToUtf8(wp).c_str());
+                            const std::string rel =
+                                WideToUtf8(fs::relative(e.path(), ctx.assetsRoot, ec2).wstring());
+                            if (ImGui::Selectable(rel.c_str())) {
+                                const uint64_t guid = AssetDatabase::EnsureMeta(wp);
+                                values[prop.name] = texAssetEncode(guid);
+                            }
+                            ImGui::PopID();
+                        }
+                    }
+                    ImGui::EndPopup();
+                }
+                break;
+            }
+            } // switch
+
+            ImGui::PopID();
+        }
+    } else if (!values.empty()) {
+        // スキーマ未取得の場合はフォールバック: JSON キー列挙 (シェーダ不在・パース失敗)
+        std::vector<std::string> keys;
+        keys.reserve(values.size());
+        for (const auto& kv : values) {
+            keys.push_back(kv.first);
+        }
+        std::sort(keys.begin(), keys.end());
+        for (const std::string& key : keys) {
+            PropValue& val = values[key];
+            ImGui::PushID(key.c_str());
+            if (std::holds_alternative<float>(val)) {
+                float v = std::get<float>(val);
+                ImGui::SetNextItemWidth(160.0f);
+                if (ImGui::DragFloat(key.c_str(), &v, 0.01f)) {
+                    val = v;
+                }
+            } else if (std::holds_alternative<std::array<float, 4>>(val)) {
+                auto& arr = std::get<std::array<float, 4>>(val);
+                ImGui::SetNextItemWidth(200.0f);
+                ImGui::ColorEdit4(key.c_str(), arr.data(),
+                                 ImGuiColorEditFlags_Float | ImGuiColorEditFlags_DisplayRGB);
+            } else if (std::holds_alternative<std::string>(val)) {
+                std::string sv = std::get<std::string>(val);
+                ImGui::TextUnformatted(key.c_str());
+                ImGui::SameLine();
+                ImGui::TextDisabled("[tex] %s", sv.c_str());
+            }
+            ImGui::PopID();
+        }
+    } else {
+        ImGui::TextDisabled("(no properties)");
+    }
+    ImGui::PopID();
+}
+
+// ---------------------------------------------------------------------------
 // M78c: fxstack アセットインスペクタ
 // ---------------------------------------------------------------------------
 
@@ -2508,224 +2801,20 @@ void InspectorWindow::DrawFxStackInspector(EngineContext& ctx, const std::wstrin
         }
     }
 
-    // ---- 選択パスの Properties 編集 (スキーマ駆動 M78c round 2) ----
+    // ---- 選択パスの Properties 編集 (スキーマ駆動 M78c round 2、共通化は M79 sub-04) ----
     if (n > 0 && fxstackEditState_.selectedPass < n) {
         ImGui::Spacing();
         ImGui::SeparatorText(Tr(StrId::Insp_FxStackProperties));
 
         FxStackEntry& sel = fxstackEdit_.passes[fxstackEditState_.selectedPass];
-
-        // シェーダスキーマをキャッシュから取得 (なければ HLSL を読んでパース)
-        const PropertyParseResult* schema = nullptr;
-        if (!sel.shader.empty() && ctx.shaders) {
-            auto cit = fxstackEditState_.schemaCache.find(sel.shader);
-            if (cit == fxstackEditState_.schemaCache.end()) {
-                // シェーダファイルを ShaderDirs から探してパース
-                std::string hlslSrc;
-                for (const auto& dir : ctx.shaders->ShaderDirs()) {
-                    std::wstring wpath = dir + L"\\" +
-                        std::wstring(sel.shader.begin(), sel.shader.end()) + L".hlsl";
-                    std::ifstream f(wpath, std::ios::binary);
-                    if (f) {
-                        hlslSrc.assign(std::istreambuf_iterator<char>(f), {});
-                        break;
-                    }
-                }
-                PropertyParseResult pr = ParseProperties(hlslSrc);
-                auto res = fxstackEditState_.schemaCache.emplace(sel.shader, std::move(pr));
-                schema = &res.first->second;
-            } else {
-                schema = &cit->second;
-            }
-        }
-
-        const bool hasSchema = schema && schema->ok && !schema->properties.empty();
-
-        if (hasSchema) {
-            // スキーマ順にウィジェット描画
-            for (const auto& prop : schema->properties) {
-                // [HideInInspector] はスキップ
-                if (prop.attr.hideInInspector) {
-                    continue;
-                }
-                // [Header(name)] 行: name.empty() && cbOffset == -1
-                if (prop.name.empty() && prop.cbOffset == -1) {
-                    if (!prop.attr.header.empty()) {
-                        ImGui::SeparatorText(prop.attr.header.c_str());
-                    }
-                    continue;
-                }
-
-                ImGui::PushID(prop.name.c_str());
-                const char* label = prop.displayName.empty()
-                    ? prop.name.c_str()
-                    : prop.displayName.c_str();
-
-                switch (prop.type)
-                {
-                case PropType::Float:
-                {
-                    float v = prop.defaultFloat;
-                    auto it = sel.properties.find(prop.name);
-                    if (it != sel.properties.end()) {
-                        if (const float* fp = std::get_if<float>(&it->second)) {
-                            v = *fp;
-                        }
-                    }
-                    ImGui::SetNextItemWidth(160.0f);
-                    if (ImGui::DragFloat(label, &v, 0.01f)) {
-                        sel.properties[prop.name] = v;
-                    }
-                    break;
-                }
-                case PropType::Range:
-                {
-                    float v = prop.defaultFloat;
-                    auto it = sel.properties.find(prop.name);
-                    if (it != sel.properties.end()) {
-                        if (const float* fp = std::get_if<float>(&it->second)) {
-                            v = *fp;
-                        }
-                    }
-                    ImGui::SetNextItemWidth(160.0f);
-                    if (ImGui::SliderFloat(label, &v,
-                                          prop.attr.rangeMin, prop.attr.rangeMax)) {
-                        sel.properties[prop.name] = v;
-                    }
-                    break;
-                }
-                case PropType::Color:
-                {
-                    using Vec4 = std::array<float, 4>;
-                    Vec4 v = prop.defaultVec4;
-                    auto it = sel.properties.find(prop.name);
-                    if (it != sel.properties.end()) {
-                        if (const Vec4* vp = std::get_if<Vec4>(&it->second)) {
-                            v = *vp;
-                        }
-                    }
-                    ImGuiColorEditFlags flags =
-                        ImGuiColorEditFlags_Float | ImGuiColorEditFlags_DisplayRGB;
-                    if (prop.attr.isHDR) {
-                        flags |= ImGuiColorEditFlags_HDR;
-                    }
-                    if (ImGui::ColorEdit4(label, v.data(), flags)) {
-                        sel.properties[prop.name] = v;
-                    }
-                    break;
-                }
-                case PropType::Vector:
-                {
-                    using Vec4 = std::array<float, 4>;
-                    Vec4 v = prop.defaultVec4;
-                    auto it = sel.properties.find(prop.name);
-                    if (it != sel.properties.end()) {
-                        if (const Vec4* vp = std::get_if<Vec4>(&it->second)) {
-                            v = *vp;
-                        }
-                    }
-                    ImGui::SetNextItemWidth(220.0f);
-                    if (ImGui::DragFloat4(label, v.data(), 0.01f)) {
-                        sel.properties[prop.name] = v;
-                    }
-                    break;
-                }
-                case PropType::Tex2D:
-                {
-                    // 現在値 (string: ビルトイン名 or GUID hex)
-                    std::string cur = prop.defaultTex.empty() ? "white" : prop.defaultTex;
-                    auto it = sel.properties.find(prop.name);
-                    if (it != sel.properties.end()) {
-                        if (const std::string* sp = std::get_if<std::string>(&it->second)) {
-                            cur = *sp;
-                        }
-                    }
-
-                    // ラベル + ピッカーボタン (mat の texPicker 流儀)
-                    ImGui::TextUnformatted(label);
-                    ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.35f);
-                    const std::string popId = std::string("##fxtex_") + prop.name;
-                    if (ImGui::Button(cur.c_str(), ImVec2(-1, 0))) {
-                        ImGui::OpenPopup(popId.c_str());
-                    }
-                    if (ImGui::BeginPopup(popId.c_str())) {
-                        // ビルトイン名
-                        for (const char* bn : { "white", "black", "gray", "bump" }) {
-                            if (ImGui::Selectable(bn)) {
-                                sel.properties[prop.name] = std::string(bn);
-                            }
-                        }
-                        ImGui::Separator();
-                        // プロジェクト assets からテクスチャを列挙
-                        if (!ctx.assetsRoot.empty()) {
-                            std::error_code ec2;
-                            for (const auto& e :
-                                 fs::recursive_directory_iterator(ctx.assetsRoot, ec2)) {
-                                if (!e.is_regular_file(ec2)) {
-                                    continue;
-                                }
-                                const std::wstring wp = e.path().wstring();
-                                if (AssetDatabase::IsMetaPath(wp) ||
-                                    AssetDatabase::ClassifyPath(wp) != AssetType::Texture) {
-                                    continue;
-                                }
-                                ImGui::PushID(WideToUtf8(wp).c_str());
-                                const std::string rel = WideToUtf8(
-                                    fs::relative(e.path(), ctx.assetsRoot, ec2).wstring());
-                                if (ImGui::Selectable(rel.c_str())) {
-                                    const uint64_t guid = AssetDatabase::EnsureMeta(wp);
-                                    char hex[20];
-                                    std::snprintf(hex, sizeof(hex), "%016llx",
-                                                  static_cast<unsigned long long>(guid));
-                                    sel.properties[prop.name] = std::string(hex);
-                                }
-                                ImGui::PopID();
-                            }
-                        }
-                        ImGui::EndPopup();
-                    }
-                    break;
-                }
-                } // switch
-
-                ImGui::PopID();
-            }
-        } else if (!sel.properties.empty()) {
-            // スキーマ未取得の場合はフォールバック: JSON キー列挙
-            // (シェーダファイルが存在しない / パース失敗)
-            std::vector<std::string> keys;
-            keys.reserve(sel.properties.size());
-            for (const auto& kv : sel.properties) {
-                keys.push_back(kv.first);
-            }
-            std::sort(keys.begin(), keys.end());
-            for (const std::string& key : keys) {
-                PropValue& val = sel.properties[key];
-                ImGui::PushID(key.c_str());
-                if (std::holds_alternative<float>(val)) {
-                    float v = std::get<float>(val);
-                    ImGui::SetNextItemWidth(160.0f);
-                    if (ImGui::DragFloat(key.c_str(), &v, 0.01f)) {
-                        val = v;
-                    }
-                } else if (std::holds_alternative<std::array<float, 4>>(val)) {
-                    auto& arr = std::get<std::array<float, 4>>(val);
-                    ImGui::SetNextItemWidth(200.0f);
-                    if (ImGui::ColorEdit4(key.c_str(), arr.data(),
-                                         ImGuiColorEditFlags_Float |
-                                         ImGuiColorEditFlags_DisplayRGB)) {
-                    }
-                } else if (std::holds_alternative<std::string>(val)) {
-                    std::string sv = std::get<std::string>(val);
-                    ImGui::TextUnformatted(key.c_str());
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("[tex] %s", sv.c_str());
-                }
-                ImGui::PopID();
-            }
-        } else {
-            ImGui::TextDisabled("(no properties)");
-        }
+        const PropertyParseResult& schema =
+            GetOrFetchPropertySchema(ctx, sel.shader, fxstackEditState_.schemaCache);
+        // fxstack の Tex2D は 16 進 GUID 文字列で書く (旧来の規約。マテリアルの 10 進とは別)
+        DrawPropertiesEditor(ctx, schema, sel.properties, "fx", [](uint64_t guid) {
+            char hex[20];
+            std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(guid));
+            return std::string(hex);
+        });
     }
 
     // ---- 保存ステータス表示 ----

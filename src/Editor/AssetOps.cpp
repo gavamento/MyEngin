@@ -462,8 +462,12 @@ bool IsProjectIndexedShaderFilename(const std::wstring& filename)
 {
     return (filename.size() >= 11
             && filename.compare(filename.size() - 10, 10, L".post.hlsl") == 0)
-        || (filename.size() >= 10
-            && filename.compare(filename.size() - 9, 9, L".cs.hlsl") == 0);
+        // M79 sub-04: ".cs.hlsl" は 8 文字 (旧コードは 9 文字比較の off-by-one で常に不一致だった)
+        || (filename.size() >= 9
+            && filename.compare(filename.size() - 8, 8, L".cs.hlsl") == 0)
+        // M79: *.surface.hlsl も同じ短名衝突チェックに乗せる (ShaderManager::IsProjectIndexedShaderFile と同じ規則)
+        || (filename.size() >= 14
+            && filename.compare(filename.size() - 13, 13, L".surface.hlsl") == 0);
 }
 
 std::string ProjectShaderShortNameFromFilename(const std::wstring& filename)
@@ -565,6 +569,58 @@ std::string ComputeShaderTemplate(const std::string& safeName)
            "}\n";
 }
 
+// M79 sub-04: Properties 2 件・共通 include・PerMaterial・VSMain (gWorld/gViewProj を使う変位)・
+// PSMain (太陽光＋影＋霧のヘルパ使用例) を含み、そのままコンパイルが通ること (spec §4.3)
+std::string SurfaceShaderTemplate(const std::string& safeName)
+{
+    return "// " + safeName + ".surface.hlsl  project surface shader (VSMain/PSMain)\n"
+           "/*@MyEngineProperties\n"
+           "_Tint (\"Tint\", Color) = (1, 1, 1, 1)\n"
+           "[Range(0.0, 1.0)] _RimPower (\"Rim Power\", Range(0.0, 1.0)) = 0.5\n"
+           "@*/\n"
+           "#include \"MyEngineSurface.hlsli\"\n"
+           "\n"
+           "cbuffer MyEnginePerMaterial\n"
+           "{\n"
+           "    float4 _Tint;\n"
+           "    float  _RimPower;\n"
+           "};\n"
+           "\n"
+           "struct VSIn\n"
+           "{\n"
+           "    float3 pos : POSITION;\n"
+           "    float3 normal : NORMAL;\n"
+           "};\n"
+           "\n"
+           "struct VSOut\n"
+           "{\n"
+           "    float4 pos : SV_Position;\n"
+           "    float3 posW : TEXCOORD0;\n"
+           "    float3 normalW : TEXCOORD1;\n"
+           "};\n"
+           "\n"
+           "// 位置に効く値は gWorld / gViewProj (static) を使うこと。MyEnginePerFrame の値は\n"
+           "// 影エントリ (CSM) では全 0 で渡るため、頂点変位に使うと影だけ形が変わる\n"
+           "VSOut VSMain(VSIn v)\n"
+           "{\n"
+           "    VSOut o;\n"
+           "    const float4 worldPos = mul(float4(v.pos, 1.0f), gWorld);\n"
+           "    o.pos = mul(worldPos, gViewProj);\n"
+           "    o.posW = worldPos.xyz;\n"
+           "    o.normalW = normalize(mul(v.normal, (float3x3)gWorld));\n"
+           "    return o;\n"
+           "}\n"
+           "\n"
+           "float4 PSMain(VSOut i) : SV_Target\n"
+           "{\n"
+           "    const float3 viewDir = normalize(gCameraPos - i.posW);\n"
+           "    const float rim = pow(saturate(1.0f - dot(viewDir, i.normalW)), max(_RimPower, 0.001f));\n"
+           "    const float shadow = MyeSunShadow(i.posW);\n"
+           "    const float3 lit = MyeApplyFog(_Tint.rgb * (shadow + rim), i.posW);\n"
+           "    return float4(lit, _Tint.a);\n"
+           "}\n";
+}
+
 bool BuildDefaultFxStack(const std::string& safeName, FxStackAsset& out)
 {
     out = {};
@@ -628,6 +684,30 @@ std::wstring CreateComputeShaderAsset(EngineContext& ctx, const std::wstring& di
         return {};
     }
     MYE_LOG_INFO(Tr(StrId::Log_CreatedComputeShader), WideToUtf8(path).c_str());
+    return path;
+}
+
+std::wstring CreateSurfaceShaderAsset(EngineContext& ctx, const std::wstring& dir,
+                                      const std::string& name)
+{
+    const std::string safe = SanitizeFileName(name, "New Surface");
+    const std::string loadName = safe + ".surface";
+    if (ProjectShaderShortNameInUse(ctx.assetsRoot, loadName)) {
+        MYE_LOG_ERROR(Tr(StrId::Log_ShaderStemConflict), loadName.c_str());
+        return {};
+    }
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".surface.hlsl";
+    if (fs::exists(path, ec)) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteSurfaceShaderFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    if (!WriteBinaryFile(path, SurfaceShaderTemplate(safe))) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteSurfaceShaderFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedSurfaceShader), WideToUtf8(path).c_str());
     return path;
 }
 

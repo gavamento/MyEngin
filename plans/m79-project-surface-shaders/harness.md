@@ -16,8 +16,8 @@
 |---|---|---|---|---|
 | sub-01 | OK | 1 | e492a85 | 方式成立を WARP 実描画で確認。hot reload/cache・フロクセル霧は sub-02 へ、.cs.hlsl off-by-one 修正は sub-04 へ移管 |
 | sub-02 | OK | 2 | 2ed28d9 | round1 REWORK: PS static 未代入・実経路未検証 → round2 で解消 (反証テスト + Runtime.exe スクショ) |
-| sub-03 | OK | 2 | (本コミット) | round1 REWORK: 前後関係未検証・SelfTest なし → round2 で解消 (Release/replay_verify PASS) |
-| sub-04 | 未着手 | 0 | | マテリアル Inspector と作成メニュー |
+| sub-03 | OK | 2 | 4f7cbad | round1 REWORK: 前後関係未検証・SelfTest なし → round2 で解消 (Release/replay_verify PASS) |
+| sub-04 | OK | 2 | (本コミット) | round1 REWORK: 切替で properties clear → round2 で解消。Create メニューのクリック確定は合成入力で未確認 (手動確認へ) |
 | sub-05 | 未着手 | 0 | | WaterWave surfaceMaterial |
 
 ## レビュー
@@ -33,3 +33,4 @@
 - (司会) sub-01 coder の一時生成物 `wstrtest.obj` がリポジトリ直下に未追跡で残る。コミットしない → ユーザー承認を得て削除済み (2026-09-24)
 - (sub-03 coder) 一時検証シーンの罠: `.mat.json.meta` の GUID は手で決めず、Runtime.exe を一度走らせて自動生成された値を読んでシーンに書く。Runtime 単体で登録済みのメッシュは `builtin://cube` のみ (quad/plane は未登録)。sub-05 でも同じ手順
 - (sub-03) テスト作成の罠: 真上からの正射影ライトで Quad を使うと影の footprint が潰れる (Cube を使う)。変位量が大きいと read-back 画素がメッシュのスクリーン範囲からはみ出して誤検出する
+- (sub-04, reviewer 向け) 切替の回帰テストは ApplyMaterialShaderSelection が名前代入のみのため実質自明。Inspector に clear を書き戻しても落ちない。Create メニュー「サーフェスシェーダ」の実クリック確定は未確認 (ユーザー/reviewer の手動確認)

@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 
 #include <process.h>
 
@@ -255,8 +256,9 @@ bool IsProjectIndexedShaderFile(const std::wstring& filename)
 {
     return (filename.size() >= 11
             && filename.compare(filename.size() - 10, 10, L".post.hlsl") == 0)
-        || (filename.size() >= 10
-            && filename.compare(filename.size() - 9, 9, L".cs.hlsl") == 0)
+        // M79 sub-04: ".cs.hlsl" は 8 文字 (旧コードは 9 文字比較の off-by-one で常に不一致だった)
+        || (filename.size() >= 9
+            && filename.compare(filename.size() - 8, 8, L".cs.hlsl") == 0)
         // M79: *.surface.hlsl も assets 全域索引に加える (短名 "Foo.surface")
         || (filename.size() >= 14
             && filename.compare(filename.size() - 13, 13, L".surface.hlsl") == 0);
@@ -331,6 +333,38 @@ void ShaderManager::RebuildProjectShaderIndex()
 std::wstring ShaderManager::ResolveShaderPath(std::string_view name) const
 {
     return ResolvePath(name);
+}
+
+std::vector<std::string> ShaderManager::ProjectShaderNames(std::string_view suffixFilter) const
+{
+    std::vector<std::string> out;
+    for (const auto& [name, path] : projectShaders_) {
+        (void)path;
+        if (!suffixFilter.empty()
+            && (name.size() < suffixFilter.size()
+                || name.compare(name.size() - suffixFilter.size(), suffixFilter.size(),
+                               suffixFilter)
+                       != 0)) {
+            continue;
+        }
+        out.push_back(name);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+PropertyParseResult ShaderManager::FetchPropertySchema(std::string_view name) const
+{
+    if (name.empty()) {
+        return ParseProperties(std::string_view{});
+    }
+    std::string hlslSrc;
+    const std::wstring path = ResolvePath(name);
+    std::ifstream f(path, std::ios::binary);
+    if (f) {
+        hlslSrc.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
+    return ParseProperties(hlslSrc);
 }
 
 bool ShaderManager::Init(GraphicsDevice& device, std::vector<std::wstring> shaderDirs)

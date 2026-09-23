@@ -103,4 +103,28 @@ bool PackPropertiesReflected(
     std::vector<uint8_t>&                                    cbData,
     std::vector<std::string>*                                missingOut = nullptr);
 
+// M79 sub-04: マテリアル Inspector の ".mat.json" 内 "properties" ⇄ PropValue map の変換
+// (JSON テキスト直渡し。ImGui に依存しないので AssetOpsSelfTest からヘッドレスに呼べる)。
+//
+// schema が非 null なら型ごとに復号する: Float/Range は常に float、Color/Vector は 4 要素配列、
+// Tex2D は JSON 数値なら Material.texture/normalMap と同じ decimal 文字列 (std::to_string) へ、
+// JSON 文字列ならそのまま保持する (組込み名 / 16 進 GUID / 相対パスを区別せず素通しする —
+// 読み側の ResolveSurfaceTexProperty が同じ規則で解決する)。
+// schema に無いキー / schema が null の場合は型を推測して復号する (旧 fxstack と同じ規則)。
+void DecodeMaterialProperties(std::string_view propertiesJsonText, const PropertyParseResult* schema,
+                              std::unordered_map<std::string, PropValue>& out);
+
+// PropValue map → "properties" オブジェクトの JSON テキスト。
+// **罠**: 文字列値が 1 桁以上の ASCII 数字だけで構成されるときは Tex2D の数値 GUID とみなし
+// JSON 数値で書く (読み側は文字列を 16 進として読むため、10 進の GUID を文字列のまま書くと
+// 次回ロードで別の値に化ける)。数字以外を含む文字列 (組込み名・16 進 GUID・相対パス) はそのまま
+std::string EncodeMaterialProperties(const std::unordered_map<std::string, PropValue>& props);
+
+// M79 sub-04 round 2: マテリアル Inspector でシェーダをコンボで切り替えるときの契約そのもの。
+// スキーマ (= 型) が変わっても Properties の値は破棄しない (spec §4.1「シェーダを戻したとき
+// 値が残る」契約)。表示時の型不一致は DrawPropertiesEditor の std::get_if が既定値へ安全に
+// 逃がすので、ここでは名前を差し替えるだけでよい。InspectorWindow はこの関数を経由して
+// シェーダ名を変えること — properties を直接 clear() する近道を作らないためのガード
+void ApplyMaterialShaderSelection(std::string& shaderName, const std::string& newShaderName);
+
 } // namespace mye

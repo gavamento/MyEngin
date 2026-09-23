@@ -1153,6 +1153,15 @@ MYE_STR(Log_CreatedPostEffectSet, "created post effect set: %s (shader + stack)"
                                   "ポストエフェクトセットを作成しました: %s (シェーダ + スタック)")
 MYE_STR(Log_ShaderStemConflict, "shader name '%s' already exists under assets (short names must be unique)",
                                   "シェーダ名 '%s' は assets 内に既にあります (短名は一意である必要があります)")
+// ---- M79 サーフェスシェーダー (プロジェクト側) ----
+MYE_STR(Asset_SurfaceShader,      "Surface Shader",      "サーフェスシェーダ")
+MYE_STR(Log_WriteSurfaceShaderFail, "could not write surface shader: %s",
+                                     "サーフェスシェーダを書き出せません: %s")
+MYE_STR(Log_CreatedSurfaceShader,   "created surface shader: %s",
+                                     "サーフェスシェーダを作成しました: %s")
+MYE_STR(Insp_MatShader,           "shader",              "シェーダ")
+MYE_STR(Insp_MatShaderFailed,     "shader error (%s): %s", "シェーダーエラー (%s): %s")
+MYE_STR(Insp_MatProperties,       "Properties",          "プロパティ")
 MYE_STR(Insp_PhysMatFailed,   "(physics material parse failed)",
                               "(物理マテリアルの読み込みに失敗)")
 MYE_STR(Insp_PmDensity,       "Density (kg/m^3)",    "密度 (kg/m^3)")

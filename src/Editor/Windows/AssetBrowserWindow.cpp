@@ -58,6 +58,7 @@ enum CreateKind {
     kCreatePhysMat, // M59a1
     kCreatePostShader,
     kCreateComputeShader,
+    kCreateSurfaceShader, // M79 sub-04
     kCreateFxStack,
     kCreatePostEffectSet
 };
@@ -791,6 +792,9 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                 if (ImGui::MenuItem(Tr(StrId::Asset_ComputeShader))) {
                     beginCreate(kCreateComputeShader, "New Compute");
                 }
+                if (ImGui::MenuItem(Tr(StrId::Asset_SurfaceShader))) {
+                    beginCreate(kCreateSurfaceShader, "New Surface");
+                }
                 ImGui::EndMenu();
             }
             if (ImGui::MenuItem(Tr(StrId::Asset_FxStack))) { beginCreate(kCreateFxStack, "New Effect Stack"); }
@@ -1011,6 +1015,13 @@ void AssetBrowserWindow::DoCreate(EngineContext& ctx, UndoStack& undo,
         break;
     case kCreateComputeShader:
         created = CreateComputeShaderAsset(ctx, current_, name);
+        RecordAssetCreated(undo, created);
+        if (!created.empty() && ctx.shaders) {
+            ctx.shaders->RebuildProjectShaderIndex();
+        }
+        break;
+    case kCreateSurfaceShader: // M79 sub-04
+        created = CreateSurfaceShaderAsset(ctx, current_, name);
         RecordAssetCreated(undo, created);
         if (!created.empty() && ctx.shaders) {
             ctx.shaders->RebuildProjectShaderIndex();

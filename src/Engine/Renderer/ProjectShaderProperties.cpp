@@ -7,8 +7,12 @@
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <sstream>
+
+#include "nlohmann/json.hpp"
 
 namespace mye {
 namespace {
@@ -576,6 +580,98 @@ bool PackPropertiesReflected(
     }
 
     return true;
+}
+
+namespace {
+
+// name がスキーマ上 Tex2D として宣言されていれば true (schema 無し/未知の名前は false)
+bool IsTex2DInSchema(const PropertyParseResult* schema, const std::string& name)
+{
+    if (!schema) {
+        return false;
+    }
+    for (const PropertySchema& p : schema->properties) {
+        if (p.name == name) {
+            return p.type == PropType::Tex2D;
+        }
+    }
+    return false;
+}
+
+bool IsAsciiDigitsOnly(const std::string& s)
+{
+    if (s.empty()) {
+        return false;
+    }
+    return std::all_of(s.begin(), s.end(),
+                       [](unsigned char c) { return c >= '0' && c <= '9'; });
+}
+
+} // namespace
+
+void DecodeMaterialProperties(std::string_view propertiesJsonText, const PropertyParseResult* schema,
+                              std::unordered_map<std::string, PropValue>& out)
+{
+    out.clear();
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::parse(propertiesJsonText);
+    } catch (const nlohmann::json::exception&) {
+        return;
+    }
+    if (!j.is_object()) {
+        return;
+    }
+    for (auto it = j.begin(); it != j.end(); ++it) {
+        const std::string& key = it.key();
+        const nlohmann::json& val = it.value();
+
+        if (val.is_number()) {
+            if (IsTex2DInSchema(schema, key)) {
+                // Material.texture/normalMap と同じ 10 進 GUID 規約 (spec §4.2)。文字列化するのは
+                // 描画側 (ResolveSurfaceTexProperty) が「文字列 = 16 進」で読むため
+                out[key] = std::to_string(val.get<uint64_t>());
+            } else {
+                out[key] = val.get<float>();
+            }
+        } else if (val.is_array() && val.size() == 4) {
+            std::array<float, 4> v = {};
+            for (size_t i = 0; i < 4; ++i) {
+                v[i] = val[i].is_number() ? val[i].get<float>() : 0.0f;
+            }
+            out[key] = v;
+        } else if (val.is_string()) {
+            out[key] = val.get<std::string>();
+        }
+        // それ以外 (bool/null/object) は無視 (旧形式との互換、fxstack と同じ規則)
+    }
+}
+
+std::string EncodeMaterialProperties(const std::unordered_map<std::string, PropValue>& props)
+{
+    nlohmann::json j = nlohmann::json::object();
+    for (const auto& [key, val] : props) {
+        if (std::holds_alternative<float>(val)) {
+            j[key] = std::get<float>(val);
+        } else if (std::holds_alternative<std::array<float, 4>>(val)) {
+            const auto& arr = std::get<std::array<float, 4>>(val);
+            j[key] = nlohmann::json::array({ arr[0], arr[1], arr[2], arr[3] });
+        } else if (std::holds_alternative<std::string>(val)) {
+            const std::string& s = std::get<std::string>(val);
+            if (IsAsciiDigitsOnly(s)) {
+                j[key] = std::strtoull(s.c_str(), nullptr, 10);
+            } else {
+                j[key] = s;
+            }
+        }
+    }
+    return j.dump();
+}
+
+void ApplyMaterialShaderSelection(std::string& shaderName, const std::string& newShaderName)
+{
+    shaderName = newShaderName;
+    // properties には意図的に触れない (この関数の契約そのもの。spec §4.1)
 }
 
 } // namespace mye

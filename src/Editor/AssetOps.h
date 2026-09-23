@@ -43,6 +43,9 @@ std::wstring CreatePostShaderAsset(EngineContext& ctx, const std::wstring& dir,
                                  const std::string& name);   // *.post.hlsl (dir = Browser カレント)
 std::wstring CreateComputeShaderAsset(EngineContext& ctx, const std::wstring& dir,
                                       const std::string& name); // *.cs.hlsl
+// M79 sub-04: プロジェクトサーフェスシェーダー (VSMain/PSMain + Properties)
+std::wstring CreateSurfaceShaderAsset(EngineContext& ctx, const std::wstring& dir,
+                                      const std::string& name); // *.surface.hlsl
 std::wstring CreateFxStackAsset(EngineContext& ctx, const std::wstring& dir,
                                 const std::string& name);                          // *.fxstack.json
 // post + fxstack を同じ stem で生成。戻り値は fxstack パス (失敗は空)

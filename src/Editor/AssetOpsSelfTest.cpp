@@ -20,7 +20,10 @@
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/GraphicsDevice.h"     // M79 sub-04: サーフェステンプレートの実コンパイル確認
+#include "Engine/Renderer/ProjectShaderProperties.h" // M79 sub-04: properties の JSON 往復確認
 #include "Engine/Renderer/RayTracing/RtTypes.h" // kRtReflClass* (M67)
+#include "Engine/Renderer/ShaderManager.h"
 
 namespace fs = std::filesystem;
 
@@ -136,6 +139,11 @@ bool RunAssetOpsSelfTest()
 
         check(CreatePostShaderAsset(ctx, (root / L"other").wstring(), "M78 Post").empty(),
               "duplicate post short name under assets is rejected");
+        // M79 sub-04: .cs.hlsl 判定の off-by-one 回帰 (修正前は IsProjectIndexedShaderFilename が
+        // 常に false を返すので ProjectShaderShortNameInUse が既存の "M78 Fill.cs.hlsl" を
+        // 見つけられず、この重複作成が誤って成功してしまう
+        check(CreateComputeShaderAsset(ctx, (root / L"other").wstring(), "M78 Fill").empty(),
+              "duplicate compute short name under assets is rejected (.cs.hlsl off-by-one)");
 
         const std::wstring stack = CreateFxStackAsset(ctx, stacks.wstring(), "M78 Stack");
         check(stack == (stacks / L"M78 Stack.fxstack.json").wstring(), "fxstack path");
@@ -159,6 +167,120 @@ bool RunAssetOpsSelfTest()
         check(setStack == (stacks / L"M78 Set.fxstack.json").wstring(), "post effect set stack path");
         check(fs::exists(stacks / L"M78 Set.post.hlsl", ec),
               "post effect set writes post shader beside the stack");
+    }
+
+    // ---- M79 sub-04: サーフェスシェーダーの作成メニュー + テンプレートの実コンパイル確認 ----
+    {
+        const fs::path vfx2 = root / L"vfx2";
+        fs::create_directories(vfx2, ec);
+        const std::wstring surf = CreateSurfaceShaderAsset(ctx, vfx2.wstring(), "M79 Surface");
+        check(surf == (vfx2 / L"M79 Surface.surface.hlsl").wstring(),
+              "surface shader is written to the chosen browser folder");
+        check(fs::exists(surf, ec), "surface shader file exists");
+        check(CreateSurfaceShaderAsset(ctx, (root / L"other2").wstring(), "M79 Surface").empty(),
+              "duplicate surface short name under assets is rejected");
+
+        // テンプレートがそのままコンパイル成功すること (spec §4.3、受け入れ条件 9)。
+        // WARP デバイスでの実コンパイルなので他の M79 SelfTest (SurfaceShaderSelfTest 等) と同じ手法
+        GraphicsDevice device;
+        const bool deviceOk = device.Init(true);
+        check(deviceOk, "WARP device init (surface template compile check)");
+        if (deviceOk) {
+            std::vector<std::wstring> dirs = { vfx2.wstring() };
+            const std::wstring engineShaderDir = FindEngineShaderDir();
+            check(!engineShaderDir.empty(),
+                  "engine shader dir found (needed for MyEngineSurface.hlsli)");
+            if (!engineShaderDir.empty()) {
+                dirs.push_back(engineShaderDir);
+            }
+            ShaderManager sm;
+            const bool smOk = sm.Init(device, dirs);
+            check(smOk, "shader manager init (surface template)");
+            if (smOk) {
+                const AssetID id = sm.LoadSurface("M79 Surface.surface");
+                const SurfaceProgram* prog = sm.GetSurface(id);
+                check(prog != nullptr && prog->valid,
+                      "Create > Shader > Surface Shader のテンプレートがそのままコンパイル成功する");
+                if (prog && !prog->valid) {
+                    MYE_LOG_ERROR("  template compile error: %s", prog->errorMessage.c_str());
+                }
+            }
+        }
+    }
+
+    // ---- M79 sub-04: マテリアル Properties の JSON 往復 (schema 型ごとの復号・エンコード) ----
+    {
+        const char* hlsl = "/*@MyEngineProperties\n"
+                          "_Tint (\"Tint\", Color) = (1,1,1,1)\n"
+                          "_Amp (\"Amp\", Range(0,1)) = 0.2\n"
+                          "_MainTex (\"Main Tex\", 2D) = \"white\" {}\n"
+                          "@*/\n";
+        const PropertyParseResult schema = ParseProperties(hlsl);
+        check(schema.ok && schema.properties.size() == 3, "test schema parses (Color/Range/Tex2D)");
+
+        // 数値 GUID (Tex2D) + 通常の数値 (Range) + 配列 (Color) + スキーマに無いキー (保持)
+        const std::string propsJson =
+            R"({"_Tint":[0.1,0.2,0.3,0.4],"_Amp":0.75,"_MainTex":1234567890123,"_Unknown":"legacy"})";
+        std::unordered_map<std::string, PropValue> decoded;
+        DecodeMaterialProperties(propsJson, &schema, decoded);
+        check(decoded.count("_MainTex") == 1
+                  && std::holds_alternative<std::string>(decoded["_MainTex"])
+                  && std::get<std::string>(decoded["_MainTex"]) == "1234567890123",
+              "Tex2D の JSON 数値は 10 進文字列 (Material.texture と同じ内部表現) で復号される");
+        check(decoded.count("_Amp") == 1 && std::holds_alternative<float>(decoded["_Amp"])
+                  && std::get<float>(decoded["_Amp"]) == 0.75f,
+              "Range は float で復号される");
+        check(decoded.count("_Unknown") == 1
+                  && std::holds_alternative<std::string>(decoded["_Unknown"])
+                  && std::get<std::string>(decoded["_Unknown"]) == "legacy",
+              "スキーマに無いキーも保持される");
+
+        const std::string encoded = EncodeMaterialProperties(decoded);
+        const nlohmann::json encodedJson = nlohmann::json::parse(encoded);
+        check(encodedJson["_MainTex"].is_number_unsigned()
+                  && encodedJson["_MainTex"].get<uint64_t>() == 1234567890123ull,
+              "10 進文字列で保持した Tex2D の GUID は JSON 数値として書き出される "
+              "(文字列のままだと次回ロードで 16 進として誤読される)");
+        check(encodedJson["_Unknown"].is_string() && encodedJson["_Unknown"] == "legacy",
+              "スキーマに無いキーは文字列のまま書き出される");
+        check(encodedJson["_Amp"].is_number() && encodedJson["_Amp"].get<float>() == 0.75f,
+              "Range はそのまま数値で書き出される");
+
+        // 組込み名の Tex2D はそのまま文字列で往復する (数字だけの文字列と誤認しない)
+        std::unordered_map<std::string, PropValue> builtin;
+        DecodeMaterialProperties(R"({"_MainTex":"white"})", &schema, builtin);
+        check(std::holds_alternative<std::string>(builtin["_MainTex"])
+                  && std::get<std::string>(builtin["_MainTex"]) == "white",
+              "組込み名の Tex2D はそのまま文字列");
+        const nlohmann::json builtinEncoded =
+            nlohmann::json::parse(EncodeMaterialProperties(builtin));
+        check(builtinEncoded["_MainTex"].is_string() && builtinEncoded["_MainTex"] == "white",
+              "組込み名は JSON 文字列のまま書き出される (数値化されない)");
+    }
+
+    // ---- M79 sub-04 round 2: シェーダを A→B→A と切り替えても Properties が保持される ----
+    // (round 1 は combo 切替のたびに matEdit_.properties.clear() していて、コンボを触って
+    // 戻すだけで調整値が消える静かなデータ損失だった = spec §4.1 の失敗時表「スキーマに無い
+    // キーは保持 (シェーダを戻したとき値が残る)」に反していた。修正は
+    // ApplyMaterialShaderSelection を経由させ、properties には一切触れないようにすること)
+    {
+        const char* hlslA = "/*@MyEngineProperties\n_Tint (\"Tint\", Color) = (1,1,1,1)\n@*/\n";
+        const PropertyParseResult schemaA = ParseProperties(hlslA);
+        std::unordered_map<std::string, PropValue> properties;
+        DecodeMaterialProperties(R"({"_Tint":[0.8,0.2,0.2,1.0]})", &schemaA, properties);
+
+        std::string shader = "A.surface";
+        ApplyMaterialShaderSelection(shader, "B.surface"); // A -> B
+        check(shader == "B.surface" && properties.size() == 1,
+              "シェーダ切替 (A->B) はシェーダ名だけを変え、properties には触れない");
+        ApplyMaterialShaderSelection(shader, "A.surface"); // B -> A (戻す)
+        check(shader == "A.surface", "シェーダ切替 (B->A) で元のシェーダ名に戻せる");
+
+        const nlohmann::json roundTrip = nlohmann::json::parse(EncodeMaterialProperties(properties));
+        check(roundTrip.contains("_Tint") && roundTrip["_Tint"][0].get<float>() == 0.8f
+                  && roundTrip["_Tint"][1].get<float>() == 0.2f,
+              "A->B->A と切り替えて戻しても _Tint の値は保持される (round 1 の "
+              "properties.clear() 回帰)");
     }
 
     // ---- (1e) M50b: 緩いサニタイズ (日本語を通す) + Create の同名連番 ----

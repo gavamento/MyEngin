@@ -35,6 +35,7 @@ bool RunShaderManagerProjectIndexSelfTest()
     fs::create_directories(root / L"b", ec);
     fs::create_directories(root / L"fx", ec);
     fs::create_directories(root / L"surf", ec);
+    fs::create_directories(root / L"cs", ec);
 
     auto writeHlsl = [&](const fs::path& p) {
         std::ofstream f(p, std::ios::binary);
@@ -51,6 +52,13 @@ bool RunShaderManagerProjectIndexSelfTest()
     writeHlsl(uniqueSurfacePath);
     writeHlsl(root / L"a" / L"Dup.surface.hlsl");
     writeHlsl(root / L"b" / L"Dup.surface.hlsl");
+
+    // M79 sub-04: M78 の既存不具合の回帰確認。".cs.hlsl" (8 文字) を 9 文字 compare していた
+    // off-by-one で *.cs.hlsl が索引に一切乗らなかった (修正前はここが FAIL する)
+    const fs::path uniqueComputePath = root / L"cs" / L"Only.cs.hlsl";
+    writeHlsl(uniqueComputePath);
+    writeHlsl(root / L"a" / L"Dup.cs.hlsl");
+    writeHlsl(root / L"b" / L"Dup.cs.hlsl");
 
     ShaderManager sm;
     sm.SetAssetsRoot(root.wstring());
@@ -76,6 +84,18 @@ bool RunShaderManagerProjectIndexSelfTest()
               && NormalizePathKey(dupSurfaceResolved)
                      != NormalizePathKey((root / L"b" / L"Dup.surface.hlsl").wstring()),
           "duplicate surface shader short names are not indexed (no silent pick)");
+
+    // M79 sub-04: off-by-one 回帰 (*.cs.hlsl が索引に乗ること)
+    check(NormalizePathKey(sm.ResolveShaderPath("Only.cs"))
+              == NormalizePathKey(uniqueComputePath.wstring()),
+          "unique project compute shader resolves to its path under assets (.cs.hlsl off-by-one)");
+
+    const std::wstring dupComputeResolved = sm.ResolveShaderPath("Dup.cs");
+    check(NormalizePathKey(dupComputeResolved)
+                  != NormalizePathKey((root / L"a" / L"Dup.cs.hlsl").wstring())
+              && NormalizePathKey(dupComputeResolved)
+                     != NormalizePathKey((root / L"b" / L"Dup.cs.hlsl").wstring()),
+          "duplicate compute shader short names are not indexed (no silent pick)");
 
     if (failCount == 0) {
         MYE_LOG_INFO("==== ShaderManager project index self test: ALL PASS ====");

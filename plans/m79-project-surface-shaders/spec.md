@@ -251,3 +251,5 @@
 - 2026-09-24: sub-02 VERDICT OK (round 2)。仕様変更なし。
 - 2026-09-24: sub-03 VERDICT REWORK (round 1)。§4.1 影エントリの `MyEnginePerFrame` 0 埋めを受理し作者規約として明記。§4.4 GPU 時間計測を後回しへ (WARP で測れない)。sub-03 に自動 SelfTest を must で追加 (AGENTS.md §7「レンダラー変更は回帰テストを追加」— sub-03.md に書き漏らした planner の穴)。
 - 2026-09-24: sub-03 VERDICT OK (round 2)。仕様変更なし。
+- 2026-09-24: sub-04 VERDICT REWORK (round 1)。仕様変更なし (シェーダ切替でも properties を保持する契約は §4.1 のとおり。coder の再解釈を却下)。
+- 2026-09-24: sub-04 VERDICT OK (round 2)。仕様変更なし。
