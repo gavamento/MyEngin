@@ -38,6 +38,16 @@ std::wstring CreateMixerAsset(EngineContext& ctx, const std::wstring& dir,
                               const std::string& name);                            // .mixer.json
 std::wstring CreatePhysMatAsset(EngineContext& ctx, const std::wstring& dir,
                                 const std::string& name);                          // .physmat.json (M59a1)
+// M78: プロジェクトポスト／コンピュート／fxstack (HLSL は assetsRoot\shaders 固定)
+std::wstring CreatePostShaderAsset(EngineContext& ctx, const std::wstring& dir,
+                                 const std::string& name);   // *.post.hlsl (dir = Browser カレント)
+std::wstring CreateComputeShaderAsset(EngineContext& ctx, const std::wstring& dir,
+                                      const std::string& name); // *.cs.hlsl
+std::wstring CreateFxStackAsset(EngineContext& ctx, const std::wstring& dir,
+                                const std::string& name);                          // *.fxstack.json
+// post + fxstack を同じ stem で生成。戻り値は fxstack パス (失敗は空)
+std::wstring CreatePostEffectSet(EngineContext& ctx, const std::wstring& dir,
+                                 const std::string& name);
 // .actor.json (M48d)。ルート 1 個だけの最小構成アセット。**新規作成は常に .actor.json** —
 // 既存 .prefab.json は読み書きとも据え置き (強制移行しない)
 std::wstring CreateActorAsset(EngineContext& ctx, const std::wstring& dir,

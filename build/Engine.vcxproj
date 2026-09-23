@@ -223,6 +223,7 @@
     <ClCompile Include="..\src\Engine\Renderer\ComputeAbiSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ProjectComputeRunner.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ProjectComputeRunnerSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\ShaderManagerProjectIndexSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ProjectEffectRunner.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ProjectEffectRunnerSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ProjectShaderProperties.cpp" />
@@ -472,6 +473,7 @@
     <ClInclude Include="..\src\Engine\Renderer\ComputeAbiSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\ProjectComputeRunner.h" />
     <ClInclude Include="..\src\Engine\Renderer\ProjectComputeRunnerSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Renderer\ShaderManagerProjectIndexSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\ProjectEffectRunner.h" />
     <ClInclude Include="..\src\Engine\Renderer\ProjectEffectRunnerSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\ProjectShaderProperties.h" />

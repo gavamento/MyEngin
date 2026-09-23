@@ -647,6 +647,11 @@ MYE_STR(Asset_Sound,          "Sound",               "サウンド")
 MYE_STR(Asset_Mixer,          "Mixer",               "ミキサー")
 MYE_STR(Asset_CppScript,      "C++ Script",          "C++ スクリプト")
 MYE_STR(Asset_CsScript,       "C# Script",           "C# スクリプト")
+MYE_STR(Asset_ShaderMenu,     "Shader",              "シェーダー")
+MYE_STR(Asset_PostShader,     "Post Shader",         "ポストシェーダ")
+MYE_STR(Asset_ComputeShader,  "Compute Shader",      "コンピュートシェーダ")
+MYE_STR(Asset_FxStack,        "Effect Stack",        "エフェクトスタック")
+MYE_STR(Asset_PostEffectSet,  "Post Effect Set",     "ポストエフェクトセット")
 MYE_STR(Asset_ShowInExplorer, "Show in Explorer",    "エクスプローラーで表示")
 MYE_STR(Asset_RenameItem,     "Rename",              "名前を変更")
 MYE_STR(Asset_ImportSettings, "Import Settings...",  "インポート設定...")
@@ -675,6 +680,7 @@ MYE_STR(Type_Controller,      "Animator Controller", "アニメーターコン�
 MYE_STR(Type_Audio,           "Audio File (wav/ogg)", "音声ファイル (wav/ogg)")
 MYE_STR(Type_Script,          "Script",              "スクリプト")
 MYE_STR(Type_Shader,          "Shader",              "シェーダー")
+MYE_STR(Type_FxStack,         "Effect Stack",        "エフェクトスタック")
 MYE_STR(Type_Schema,          "Component Schema",    "コンポーネントスキーマ")
 
 // ---- プロジェクトマネージャ / Hub (M47b) ----
@@ -1131,6 +1137,22 @@ MYE_STR(Log_WritePhysMatFail, "could not write physics material: %s",
                               "物理マテリアルを書き出せません: %s")
 MYE_STR(Log_CreatedPhysMat,   "created physics material: %s",
                               "物理マテリアルを作成しました: %s")
+MYE_STR(Log_WritePostShaderFail, "could not write post shader: %s",
+                                  "ポストシェーダを書き出せません: %s")
+MYE_STR(Log_CreatedPostShader,   "created post shader: %s",
+                                  "ポストシェーダを作成しました: %s")
+MYE_STR(Log_WriteComputeShaderFail, "could not write compute shader: %s",
+                                     "コンピュートシェーダを書き出せません: %s")
+MYE_STR(Log_CreatedComputeShader,   "created compute shader: %s",
+                                     "コンピュートシェーダを作成しました: %s")
+MYE_STR(Log_WriteFxStackFail,  "could not write effect stack: %s",
+                               "エフェクトスタックを書き出せません: %s")
+MYE_STR(Log_CreatedFxStack,    "created effect stack: %s",
+                               "エフェクトスタックを作成しました: %s")
+MYE_STR(Log_CreatedPostEffectSet, "created post effect set: %s (shader + stack)",
+                                  "ポストエフェクトセットを作成しました: %s (シェーダ + スタック)")
+MYE_STR(Log_ShaderStemConflict, "shader name '%s' already exists under assets (short names must be unique)",
+                                  "シェーダ名 '%s' は assets 内に既にあります (短名は一意である必要があります)")
 MYE_STR(Insp_PhysMatFailed,   "(physics material parse failed)",
                               "(物理マテリアルの読み込みに失敗)")
 MYE_STR(Insp_PmDensity,       "Density (kg/m^3)",    "密度 (kg/m^3)")

@@ -23,6 +23,7 @@
 #include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/Prefab.h"
+#include "Engine/Renderer/ShaderManager.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/GpuResources.h"
@@ -54,7 +55,11 @@ enum CreateKind {
     kCreateSound,
     kCreateMixer,
     kCreateActor,
-    kCreatePhysMat // M59a1
+    kCreatePhysMat, // M59a1
+    kCreatePostShader,
+    kCreateComputeShader,
+    kCreateFxStack,
+    kCreatePostEffectSet
 };
 
 // 型フィルタのコンボ内容 (M51i)。先頭 = フィルタなし (Unknown を「すべて」に転用)
@@ -80,6 +85,7 @@ constexpr TypeFilterEntry kTypeFilters[] = {
     { AssetType::Schema, StrId::Type_Schema },
     { AssetType::Terrain, StrId::Terrain_AssetType },
     { AssetType::PhysMat, StrId::Asset_PhysMat }, // M59a1
+    { AssetType::FxStack, StrId::Type_FxStack },
 };
 
 const char* IconFor(const std::wstring& ext)
@@ -778,6 +784,19 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             if (ImGui::MenuItem(Tr(StrId::Asset_Sound))) { beginCreate(kCreateSound, "New Sound"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_Mixer))) { beginCreate(kCreateMixer, "New Mixer"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_PhysMat))) { beginCreate(kCreatePhysMat, "New PhysMat"); }
+            if (ImGui::BeginMenu(Tr(StrId::Asset_ShaderMenu))) {
+                if (ImGui::MenuItem(Tr(StrId::Asset_PostShader))) {
+                    beginCreate(kCreatePostShader, "New Post");
+                }
+                if (ImGui::MenuItem(Tr(StrId::Asset_ComputeShader))) {
+                    beginCreate(kCreateComputeShader, "New Compute");
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem(Tr(StrId::Asset_FxStack))) { beginCreate(kCreateFxStack, "New Effect Stack"); }
+            if (ImGui::MenuItem(Tr(StrId::Asset_PostEffectSet))) {
+                beginCreate(kCreatePostEffectSet, "New Post Effect");
+            }
             ImGui::EndMenu();
         }
         ImGui::Separator();
@@ -983,6 +1002,43 @@ void AssetBrowserWindow::DoCreate(EngineContext& ctx, UndoStack& undo,
         created = CreatePhysMatAsset(ctx, current_, name);
         RecordAssetCreated(undo, created);
         break;
+    case kCreatePostShader:
+        created = CreatePostShaderAsset(ctx, current_, name);
+        RecordAssetCreated(undo, created);
+        if (!created.empty() && ctx.shaders) {
+            ctx.shaders->RebuildProjectShaderIndex();
+        }
+        break;
+    case kCreateComputeShader:
+        created = CreateComputeShaderAsset(ctx, current_, name);
+        RecordAssetCreated(undo, created);
+        if (!created.empty() && ctx.shaders) {
+            ctx.shaders->RebuildProjectShaderIndex();
+        }
+        break;
+    case kCreateFxStack:
+        created = CreateFxStackAsset(ctx, current_, name);
+        RecordAssetCreated(undo, created);
+        break;
+    case kCreatePostEffectSet: {
+        const std::wstring postPath = CreatePostShaderAsset(ctx, current_, name);
+        if (postPath.empty()) {
+            break;
+        }
+        const std::wstring stackPath = CreateFxStackAsset(ctx, current_, name);
+        if (stackPath.empty()) {
+            std::error_code ec;
+            fs::remove(postPath, ec);
+            break;
+        }
+        RecordAssetCreated(undo, postPath);
+        RecordAssetCreated(undo, stackPath);
+        created = stackPath;
+        if (ctx.shaders) {
+            ctx.shaders->RebuildProjectShaderIndex();
+        }
+        break;
+    }
     case kCreateScript: {
         // スクリプトは Create Undo 対象外 — 既存ファイルなら「開くだけ」で返る経路と
         // 区別できず、Undo が既存ソースをごみ箱送りにしてしまう

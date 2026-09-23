@@ -311,6 +311,7 @@ void ReloadHub::QueueRetry(const std::wstring& path, int attempts)
 // ★リトライしない — 再コンパイルの要求を積むだけで、コンパイルは Update 冒頭の PollAsyncCompiles が進める
 ReloadHub::ReloadResult ReloadHub::ReloadShader(const std::wstring& path)
 {
+    shaders_->RebuildProjectShaderIndex();
     shaders_->RequestRecompileForFile(path);
     return ReloadResult::Reloaded;
 }

@@ -4,6 +4,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <d3d11.h>
@@ -29,7 +30,7 @@ struct ShaderProgram {
     bool valid = false;
 };
 
-// assets/shaders/ からの実行時コンパイル (engine_spec.md 8.1 / 10 章)。
+// assets/shaders/ および assets 全域の *.post.hlsl / *.cs.hlsl からの実行時コンパイル (engine_spec.md 8.1 / 10 章)。
 // コンパイルフラグは Debug/Release で同一 (描画結果の構成差を作らない)。
 //
 // シェーダルートは優先度順の複数持ちにする: [<project>\assets\shaders,
@@ -60,6 +61,12 @@ public:
 
     const std::vector<std::wstring>& ShaderDirs() const { return dirs_; }
 
+    // プロジェクト assets 内の *.post.hlsl / *.cs.hlsl 索引 (M78: 短名は assets 内で一意)
+    void SetAssetsRoot(std::wstring root);
+    void RebuildProjectShaderIndex();
+    // Load 解決と同じ規則 (索引 → shaderDirs)。SelfTest / 診断用
+    std::wstring ResolveShaderPath(std::string_view name) const;
+
     // ---- バイトコードキャッシュ ----
     // dir にコンパイル済みバイトコードを置き、次回は中身のハッシュが一致すれば D3DCompile を
     // 飛ばす (RT の CS 9 本で起動が 6.6 秒止まっていたため)。enabled=false または dir 空で
@@ -89,6 +96,8 @@ private:
 
     GraphicsDevice* device_ = nullptr;
     std::vector<std::wstring> dirs_;
+    std::wstring assetsRoot_;
+    std::unordered_map<std::string, std::wstring> projectShaders_; // 短名 → 正規化パス
     std::unordered_map<uint64_t, ShaderProgram> programs_; // AssetID.value → program
     struct AsyncCompile {
         uint64_t id;

@@ -77,7 +77,7 @@
 ### 4.1 振る舞い
 
 #### 作者ワークフロー (ポスト)
-1. `<project>/assets/shaders/<Name>.post.hlsl` を作成 (命名: `*.post.hlsl` = ポスト、`*.cs.hlsl` は既存どおりコンピュート。プロジェクト新規コンピュートも `*.cs.hlsl`＋Properties ブロック)
+1. `<project>/assets` 配下の任意フォルダに `<Name>.post.hlsl` を作成してよい（**推奨**は `assets/shaders/`）。`ShaderManager` は `*.post.hlsl` / `*.cs.hlsl` を assets 全域から索引し、Load 名（例: `MyTint.post`）で解決する。**短名は assets 内でフォルダを跨いでも一意** — 同名が 2 本ある場合はどちらも索引対象外＋ ERROR。命名: `*.post.hlsl` = ポスト、`*.cs.hlsl` = コンピュート（Properties ブロック付き）
 2. 先頭に Properties ブロック、本体は `PSMain` (ポスト) / `CSMain` (コンピュート)。VS はエンジン供給のフルスクリーン三角形／クアッドを使う (作者は PS のみ書いてよい。必要なら VS も同ファイル可だが既定は共通 VS)
 3. `*.fxstack.json` にパスを追加し、カメラ (またはメインカメラ想定エンティティ) に Stack の AssetRef を付ける
 4. **Play 中のシーンカメラ**で挿入点どおり実行する。Inspector の Properties 変更は **save-on-apply** (Save でディスクへ書き、次フレーム以降の再ロードで反映)。未保存のライブプレビューは必須としない (sub-03 で確定)

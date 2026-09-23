@@ -7,6 +7,8 @@
 #include <string>
 #include <system_error>
 
+#include "nlohmann/json.hpp"
+
 #include "Editor/AssetOps.h"
 #include "Editor/AssetPreviewCache.h"
 #include "Editor/Selection.h"
@@ -114,6 +116,50 @@ bool RunAssetOpsSelfTest()
               "the created actor instantiates to one entity named after the asset");
     }
     check(AssetDatabase::ClassifyPath(L"a.ogg") == AssetType::Audio, "classify .ogg as Audio");
+
+    // ---- M78: Asset Browser Create (post / compute / fxstack / set) ----
+    {
+        ctx.assetsRoot = root.wstring();
+        const fs::path stacks = root / L"fx";
+        const fs::path vfx = root / L"vfx";
+        fs::create_directories(stacks, ec);
+        fs::create_directories(vfx, ec);
+        const std::wstring post = CreatePostShaderAsset(ctx, vfx.wstring(), "M78 Post");
+        check(post == (vfx / L"M78 Post.post.hlsl").wstring(),
+              "post shader is written to the chosen browser folder");
+        check(fs::exists(post, ec), "post shader file exists");
+
+        const std::wstring cs = CreateComputeShaderAsset(ctx, vfx.wstring(), "M78 Fill");
+        check(cs == (vfx / L"M78 Fill.cs.hlsl").wstring(),
+              "compute shader is written to the chosen browser folder");
+        check(fs::exists(cs, ec), "compute shader file exists");
+
+        check(CreatePostShaderAsset(ctx, (root / L"other").wstring(), "M78 Post").empty(),
+              "duplicate post short name under assets is rejected");
+
+        const std::wstring stack = CreateFxStackAsset(ctx, stacks.wstring(), "M78 Stack");
+        check(stack == (stacks / L"M78 Stack.fxstack.json").wstring(), "fxstack path");
+        check(AssetDatabase::ClassifyPath(stack) == AssetType::FxStack, "classify fxstack");
+        std::ifstream stackIn(stack);
+        const nlohmann::json stackJson =
+            nlohmann::json::parse(std::istreambuf_iterator<char>(stackIn),
+                                  std::istreambuf_iterator<char>());
+        check(stackJson.contains("passes") && stackJson["passes"].is_array()
+                  && stackJson["passes"].size() == 1
+                  && stackJson["passes"][0].value("shader", "") == "M78 Stack.post",
+              "fxstack references the matching .post shader name");
+
+        const fs::path fxstackRename = root / L"demo.fxstack.json";
+        WriteDummy(fxstackRename);
+        check(RenameAsset(ctx, fxstackRename.wstring(), "other")
+                  == (root / L"other.fxstack.json").wstring(),
+              "rename keeps compound suffix (.fxstack.json)");
+
+        const std::wstring setStack = CreatePostEffectSet(ctx, stacks.wstring(), "M78 Set");
+        check(setStack == (stacks / L"M78 Set.fxstack.json").wstring(), "post effect set stack path");
+        check(fs::exists(stacks / L"M78 Set.post.hlsl", ec),
+              "post effect set writes post shader beside the stack");
+    }
 
     // ---- (1e) M50b: 緩いサニタイズ (日本語を通す) + Create の同名連番 ----
     // Create Prefab (Hierarchy) と Create > Actor が共有する経路。上書きは

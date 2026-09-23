@@ -261,6 +261,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             shaderDirs.push_back(engineShaders);
         }
         shaderManager.Init(device, std::move(shaderDirs));
+        shaderManager.SetAssetsRoot(assetsRoot);
+        shaderManager.RebuildProjectShaderIndex();
         // バイトコードキャッシュ。置き場所の二経路は cache\cooked と同じ規則 (分岐は projectRoot)。
         // ★Init の直後 = 最初の Load より前に設定する。後だと起動時のシェーダが全部素通りする
         const std::wstring shaderCacheDir =

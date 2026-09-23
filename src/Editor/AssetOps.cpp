@@ -45,6 +45,7 @@
 #include "Engine/Engine/SchemaCodegen.h"
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/FxStackAsset.h"
 #include "Engine/Renderer/GpuResources.h"
 
 namespace fs = std::filesystem;
@@ -138,9 +139,10 @@ bool RunningRelease()
 // 素朴な extension() 分割だと連番付与で "x.prefab (1).json" になり種別判定が壊れる
 void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstring& suffix)
 {
-    static const std::wstring kCompound[] = {L".scene.json", L".prefab.json", L".actor.json",
-                                             L".anim.json",  L".mat.json",   L".controller.json",
-                                             L".sound.json", L".mixer.json", L".physmat.json"};
+    static const std::wstring kCompound[] = {L".scene.json",  L".prefab.json", L".actor.json",
+                                             L".anim.json",   L".mat.json",    L".controller.json",
+                                             L".sound.json",  L".mixer.json",  L".physmat.json",
+                                             L".fxstack.json", L".post.hlsl",  L".cs.hlsl"};
     for (const std::wstring& c : kCompound) {
         if (filename.size() > c.size() &&
             filename.compare(filename.size() - c.size(), c.size(), c) == 0) {
@@ -452,6 +454,213 @@ std::wstring CreatePhysMatAsset(EngineContext& ctx, const std::wstring& dir, con
     }
     MYE_LOG_INFO(Tr(StrId::Log_CreatedPhysMat), WideToUtf8(path).c_str());
     return path;
+}
+
+namespace {
+
+bool IsProjectIndexedShaderFilename(const std::wstring& filename)
+{
+    return (filename.size() >= 11
+            && filename.compare(filename.size() - 10, 10, L".post.hlsl") == 0)
+        || (filename.size() >= 10
+            && filename.compare(filename.size() - 9, 9, L".cs.hlsl") == 0);
+}
+
+std::string ProjectShaderShortNameFromFilename(const std::wstring& filename)
+{
+    if (filename.size() <= 5 || filename.compare(filename.size() - 5, 5, L".hlsl") != 0) {
+        return {};
+    }
+    return WideToUtf8(filename.substr(0, filename.size() - 5));
+}
+
+bool ProjectShaderShortNameInUse(const std::wstring& assetsRoot, const std::string& shortName)
+{
+    if (assetsRoot.empty() || shortName.empty()) {
+        return false;
+    }
+    std::error_code ec;
+    if (!fs::is_directory(assetsRoot, ec)) {
+        return false;
+    }
+    for (const auto& entry : fs::recursive_directory_iterator(assetsRoot, ec)) {
+        if (ec || !entry.is_regular_file(ec)) {
+            continue;
+        }
+        const std::wstring fn = entry.path().filename().wstring();
+        if (!IsProjectIndexedShaderFilename(fn)) {
+            continue;
+        }
+        if (ProjectShaderShortNameFromFilename(fn) == shortName) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool WriteBinaryFile(const std::wstring& path, const std::string& content)
+{
+    std::ofstream f{ fs::path(path), std::ios::binary };
+    if (!f) {
+        return false;
+    }
+    f << content;
+    return f.good();
+}
+
+std::string PostShaderTemplate(const std::string& safeName)
+{
+    return "// " + safeName + ".post.hlsl  project post effect\n"
+           "/*@MyEngineProperties\n"
+           "[Range(0.0, 1.0)] _Intensity (\"Intensity\", Float) = 1.0\n"
+           "_Tint (\"Tint\", Color) = (1, 1, 1, 1)\n"
+           "@*/\n"
+           "#include \"ProjectPostCommon.hlsli\"\n"
+           "\n"
+           "cbuffer MyEnginePerEffect : register(b1)\n"
+           "{\n"
+           "    float  _Intensity;\n"
+           "    float4 _Tint;\n"
+           "};\n"
+           "\n"
+           "float4 PSMain(ProjectPostVSOut i) : SV_Target\n"
+           "{\n"
+           "    float4 c = SampleSceneColor(i.uv);\n"
+           "    return c * _Tint * _Intensity;\n"
+           "}\n";
+}
+
+std::string ComputeShaderTemplate(const std::string& safeName)
+{
+    return "// " + safeName + ".cs.hlsl  project compute pass (UAV fill)\n"
+           "/*@MyEngineProperties\n"
+           "[Range(0.0, 1.0)] _Fill (\"Fill\", Float) = 1.0\n"
+           "_Color (\"Color\", Color) = (0.2, 0.4, 0.8, 1)\n"
+           "@*/\n"
+           "\n"
+           "cbuffer MyEngineComputeFrame : register(b0)\n"
+           "{\n"
+           "    float gScreenW;\n"
+           "    float gScreenH;\n"
+           "    float gInvScreenW;\n"
+           "    float gInvScreenH;\n"
+           "};\n"
+           "\n"
+           "cbuffer MyEnginePerEffect : register(b1)\n"
+           "{\n"
+           "    float  _Fill;\n"
+           "    float4 _Color;\n"
+           "};\n"
+           "\n"
+           "Texture2D gSceneColor : register(t0);\n"
+           "Texture2D gSceneDepth : register(t1);\n"
+           "RWTexture2D<float4> gOutput : register(u0);\n"
+           "\n"
+           "[numthreads(8, 8, 1)]\n"
+           "void CSMain(uint3 id : SV_DispatchThreadID)\n"
+           "{\n"
+           "    if (id.x >= (uint)gScreenW || id.y >= (uint)gScreenH)\n"
+           "        return;\n"
+           "    gOutput[id.xy] = _Color * _Fill;\n"
+           "}\n";
+}
+
+bool BuildDefaultFxStack(const std::string& safeName, FxStackAsset& out)
+{
+    out = {};
+    out.version = 1;
+    FxStackEntry entry;
+    entry.kind = FxStackKind::Post;
+    entry.shader = safeName + ".post";
+    entry.enabled = true;
+    entry.insertion = PostInsertionPoint::BeforeTonemap;
+    entry.priority = 100;
+    entry.properties["_Intensity"] = 1.0f;
+    entry.properties["_Tint"] = std::array<float, 4>{ 1.0f, 1.0f, 1.0f, 1.0f };
+    out.passes.push_back(std::move(entry));
+    return true;
+}
+
+} // namespace
+
+std::wstring CreatePostShaderAsset(EngineContext& ctx, const std::wstring& dir,
+                                   const std::string& name)
+{
+    const std::string safe = SanitizeFileName(name, "New Post");
+    const std::string loadName = safe + ".post";
+    if (ProjectShaderShortNameInUse(ctx.assetsRoot, loadName)) {
+        MYE_LOG_ERROR(Tr(StrId::Log_ShaderStemConflict), loadName.c_str());
+        return {};
+    }
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".post.hlsl";
+    if (fs::exists(path, ec)) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WritePostShaderFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    if (!WriteBinaryFile(path, PostShaderTemplate(safe))) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WritePostShaderFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedPostShader), WideToUtf8(path).c_str());
+    return path;
+}
+
+std::wstring CreateComputeShaderAsset(EngineContext& ctx, const std::wstring& dir,
+                                      const std::string& name)
+{
+    const std::string safe = SanitizeFileName(name, "New Compute");
+    const std::string loadName = safe + ".cs";
+    if (ProjectShaderShortNameInUse(ctx.assetsRoot, loadName)) {
+        MYE_LOG_ERROR(Tr(StrId::Log_ShaderStemConflict), loadName.c_str());
+        return {};
+    }
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".cs.hlsl";
+    if (fs::exists(path, ec)) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteComputeShaderFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    if (!WriteBinaryFile(path, ComputeShaderTemplate(safe))) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteComputeShaderFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedComputeShader), WideToUtf8(path).c_str());
+    return path;
+}
+
+std::wstring CreateFxStackAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
+{
+    (void)ctx;
+    const std::string safe = SanitizeFileName(name, "New Effect Stack");
+    const std::wstring path =
+        MakeUniqueAssetPath(dir, Utf8ToWide(safe) + L".fxstack.json");
+    FxStackAsset asset;
+    BuildDefaultFxStack(safe, asset);
+    if (!SaveFxStack(path, asset)) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteFxStackFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedFxStack), WideToUtf8(path).c_str());
+    return path;
+}
+
+std::wstring CreatePostEffectSet(EngineContext& ctx, const std::wstring& dir, const std::string& name)
+{
+    const std::wstring postPath = CreatePostShaderAsset(ctx, dir, name);
+    if (postPath.empty()) {
+        return {};
+    }
+    const std::wstring stackPath = CreateFxStackAsset(ctx, dir, name);
+    if (stackPath.empty()) {
+        std::error_code ec;
+        fs::remove(postPath, ec);
+        return {};
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedPostEffectSet), WideToUtf8(stackPath).c_str());
+    return stackPath;
 }
 
 std::wstring CreateCppScript(EngineContext& ctx, const std::string& rawName)

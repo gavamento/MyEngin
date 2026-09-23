@@ -663,6 +663,9 @@
     <ClCompile Include="..\src\Engine\Renderer\ProjectComputeRunnerSelfTest.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\ShaderManagerProjectIndexSelfTest.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\ProjectEffectRunner.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
@@ -1408,6 +1411,9 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ProjectComputeRunnerSelfTest.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\ShaderManagerProjectIndexSelfTest.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\ProjectEffectRunner.h">

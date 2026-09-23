@@ -127,7 +127,84 @@ bool BuildInputLayout(ID3D11Device* device, const std::vector<uint8_t>& vsByteco
                                                out.GetAddressOf()));
 }
 
+bool IsProjectIndexedShaderFile(const std::wstring& filename)
+{
+    return (filename.size() >= 11
+            && filename.compare(filename.size() - 10, 10, L".post.hlsl") == 0)
+        || (filename.size() >= 10
+            && filename.compare(filename.size() - 9, 9, L".cs.hlsl") == 0);
+}
+
+// MyTint.post.hlsl → "MyTint.post" (Load 名)
+std::string ProjectShaderShortName(const std::wstring& filename)
+{
+    if (filename.size() <= 5 || filename.compare(filename.size() - 5, 5, L".hlsl") != 0) {
+        return {};
+    }
+    return WideToUtf8(filename.substr(0, filename.size() - 5));
+}
+
 } // namespace
+
+void ShaderManager::SetAssetsRoot(std::wstring root)
+{
+    assetsRoot_ = std::move(root);
+}
+
+void ShaderManager::RebuildProjectShaderIndex()
+{
+    projectShaders_.clear();
+    if (assetsRoot_.empty()) {
+        return;
+    }
+    std::error_code ec;
+    if (!std::filesystem::is_directory(assetsRoot_, ec)) {
+        return;
+    }
+
+    std::unordered_map<std::string, std::wstring> first;
+    std::unordered_set<std::string> banned;
+
+    for (const auto& entry :
+         std::filesystem::recursive_directory_iterator(assetsRoot_, ec)) {
+        if (ec || !entry.is_regular_file(ec)) {
+            continue;
+        }
+        const std::wstring filename = entry.path().filename().wstring();
+        if (!IsProjectIndexedShaderFile(filename)) {
+            continue;
+        }
+        const std::string key = ProjectShaderShortName(filename);
+        if (key.empty()) {
+            continue;
+        }
+        const std::wstring norm = NormalizePathKey(entry.path().wstring());
+        if (banned.contains(key)) {
+            continue;
+        }
+        const auto it = first.find(key);
+        if (it != first.end()) {
+            banned.insert(key);
+            MYE_LOG_ERROR(
+                "project shader name conflict (both disabled): '%s' at\n  %s\n  %s",
+                key.c_str(), WideToUtf8(it->second).c_str(), WideToUtf8(norm).c_str());
+            first.erase(it);
+            continue;
+        }
+        first.emplace(key, norm);
+    }
+
+    for (const auto& [k, p] : first) {
+        if (!banned.contains(k)) {
+            projectShaders_.emplace(k, p);
+        }
+    }
+}
+
+std::wstring ShaderManager::ResolveShaderPath(std::string_view name) const
+{
+    return ResolvePath(name);
+}
 
 bool ShaderManager::Init(GraphicsDevice& device, std::vector<std::wstring> shaderDirs)
 {
@@ -194,6 +271,11 @@ void ShaderManager::ReportShadowedBuiltins() const
 
 std::wstring ShaderManager::ResolvePath(std::string_view name) const
 {
+    const std::string key(name);
+    const auto indexed = projectShaders_.find(key);
+    if (indexed != projectShaders_.end()) {
+        return indexed->second;
+    }
     const std::wstring file = Utf8ToWide(name) + L".hlsl";
     std::error_code ec;
     for (const std::wstring& d : dirs_) {
