@@ -28,6 +28,7 @@
 #include "Engine/Renderer/ProjectShaderProperties.h"
 #include "Engine/Renderer/ShaderManager.h"
 #include "Engine/Renderer/SurfaceProgram.h"
+#include "Engine/Renderer/SurfaceShaderTypes.h" // M79b-fix (review-1 #4): MyEnginePerFrameCB のサイズ比較用
 
 using namespace DirectX;
 using Microsoft::WRL::ComPtr;
@@ -340,6 +341,13 @@ float4 PSMain(VSOut i) : SV_Target
             Check(std::fabs(ReadFloatAt(st->perMaterialCB, ampOffset) - 0.7f) < 1e-5f,
                   "_Amp が .mat.json の properties 値でパックされる (リフレクションのオフセット)");
         }
+        // review-1 #4: MyEnginePerMaterial (_Tint float4 + _Amp float → 32 バイト) だけの
+        // サイズか。旧実装は全 cbuffer から cbSize = max(var.cbufSize) を取っており、
+        // 同じ翻訳単位の MyEnginePerFrame (最大の cbuffer) のサイズまで膨らんでいた
+        Check(st->perMaterialCB.size() == 32,
+              "review-1 #4: MyEnginePerMaterial の CB サイズは自身の宣言 (32 バイト) どおり");
+        Check(st->perMaterialCB.size() != sizeof(MyEnginePerFrameCB),
+              "review-1 #4: MyEnginePerFrame (予約 CB) のサイズまで膨らんでいない");
         Check(st->textures.contains("_Tex"), "_Tex (Tex2D プロパティ) が解決される");
         if (st->textures.contains("_Tex")) {
             Check(st->textures.at("_Tex").value == resources.textures.White().value,
@@ -492,6 +500,36 @@ float4 PSMain(VSOut i) : SV_Target
     WriteFile(dir / L"PsStaticsProbe.surface.hlsl", kPsStaticsProbeSurface);
     writeMat(L"PsStatics.mat.json", "PsStaticsProbe.surface", { 1.0, 1.0, 1.0, 1.0 });
 
+    // review-1 #2 の再現用: VSMain が Texture2D を読む (t0 を明示指定 = forward_lit_instanced.hlsl の
+    // StructuredBuffer<MeshInstance> と同じスロット)。restoreForwardLitBindings が VS t0 を
+    // 戻さないと、この直後に描く instanced forward_lit run が「BUFFER のはずが TEXTURE2D」で消える
+    const char* kVTexSurface = R"HLSL(
+/*@MyEngineProperties
+_HeightTex ("Height", 2D) = "white" {}
+@*/
+#include "MyEngineSurface.hlsli"
+Texture2D _HeightTex : register(t0);
+struct VSIn { float3 pos : POSITION; float2 uv : TEXCOORD0; };
+struct VSOut { float4 pos : SV_Position; };
+VSOut VSMain(VSIn v)
+{
+    VSOut o;
+    // 変位量は無視できるほど小さくし (見た目はほぼ不変位)、_HeightTex の参照だけを
+    // コンパイラの dead code elimination で消させない
+    float h = _HeightTex.SampleLevel(gSampler, v.uv, 0).r;
+    float3 p = v.pos;
+    p.y += h * 0.0001f;
+    o.pos = mul(mul(float4(p, 1.0f), gWorld), gViewProj);
+    return o;
+}
+float4 PSMain(VSOut i) : SV_Target
+{
+    return float4(0.9f, 0.6f, 0.1f, 1.0f);
+}
+)HLSL";
+    WriteFile(dir / L"VTex.surface.hlsl", kVTexSurface);
+    writeMat(L"VTex.mat.json", "VTex.surface", { 1.0, 1.0, 1.0, 1.0 });
+
     std::vector<std::wstring> dirs = { dir.wstring(), engineShaderDir };
     ShaderManager shaders;
     Check(shaders.Init(device, dirs), "shader manager init (draw test)");
@@ -514,9 +552,12 @@ float4 PSMain(VSOut i) : SV_Target
         (dir / L"PropsB.mat.json").wstring(), resources.textures, dir.wstring());
     const AssetID psStaticsMatId = resources.materials.LoadFromFile(
         (dir / L"PsStatics.mat.json").wstring(), resources.textures, dir.wstring());
+    const AssetID vtexMatId = resources.materials.LoadFromFile(
+        (dir / L"VTex.mat.json").wstring(), resources.textures, dir.wstring());
     Check(!surfaceMatId.IsNull() && !litMatId.IsNull() && !missingMatId.IsNull()
-              && !propsAMatId.IsNull() && !propsBMatId.IsNull() && !psStaticsMatId.IsNull(),
-          "6 本の .mat.json が読み込める");
+              && !propsAMatId.IsNull() && !propsBMatId.IsNull() && !psStaticsMatId.IsNull()
+              && !vtexMatId.IsNull(),
+          "7 本の .mat.json が読み込める");
 
     const AssetID quad = resources.meshes.Quad();
 
@@ -666,6 +707,57 @@ float4 PSMain(VSOut i) : SV_Target
     if (!(closeTo(psStaticsPixel[0], 127) && closeTo(psStaticsPixel[1], 42))) {
         MYE_LOG_ERROR("    psStaticsPixel=(%d,%d,%d,%d) / expected R=127,G=42",
                      psStaticsPixel[0], psStaticsPixel[1], psStaticsPixel[2], psStaticsPixel[3]);
+    }
+
+    // ---- review-1 #2 (受け入れ条件 13): VS テクスチャを読むサーフェス → instanced forward_lit。
+    //      「サーフェス → forward_lit」の順で instanced run を消さないこと (逆順も確認) ----
+    {
+        RenderView instView = view;
+        instView.instancingEnabled = 1;
+        instView.viewFrameIndex = 0;
+
+        // 順序A: サーフェス (VTex, x=-2) → forward_lit 2 個 (x=0, x=2。同一マテリアル+メッシュが
+        // 連続するので BuildInstanceRuns が 1 run (count=2) にまとめる)
+        RenderQueue queueSurfaceThenInstanced;
+        queueSurfaceThenInstanced.opaque = { makeItem(vtexMatId, -2.0f), makeItem(litMatId, 0.0f),
+                                             makeItem(litMatId, 2.0f) };
+        fp.Render(device, instView, queueSurfaceThenInstanced, lights, resources, shaders);
+        const std::array<uint8_t, 4> instAfterSurfaceMid = readPixel(48, 16);
+        const std::array<uint8_t, 4> instAfterSurfaceRight = readPixel(80, 16);
+        Check(!(instAfterSurfaceMid[0] == 0 && instAfterSurfaceMid[1] == 0 && instAfterSurfaceMid[2] == 0)
+                  && !(instAfterSurfaceRight[0] == 0 && instAfterSurfaceRight[1] == 0
+                       && instAfterSurfaceRight[2] == 0),
+              "review-1 #2: VS テクスチャ付きサーフェスの直後でも instanced forward_lit run が消えない"
+              " (VS t0 の instance SRV が restoreForwardLitBindings で戻る)");
+        if ((instAfterSurfaceMid[0] == 0 && instAfterSurfaceMid[1] == 0 && instAfterSurfaceMid[2] == 0)
+            || (instAfterSurfaceRight[0] == 0 && instAfterSurfaceRight[1] == 0
+                && instAfterSurfaceRight[2] == 0)) {
+            MYE_LOG_ERROR("    instAfterSurfaceMid=(%d,%d,%d) instAfterSurfaceRight=(%d,%d,%d)"
+                         " (0,0,0 に近ければ instanced run が消えている)",
+                         instAfterSurfaceMid[0], instAfterSurfaceMid[1], instAfterSurfaceMid[2],
+                         instAfterSurfaceRight[0], instAfterSurfaceRight[1], instAfterSurfaceRight[2]);
+        }
+
+        // 順序を入れ替えても結果が変わらないこと (spec 受け入れ条件 13「描画順に依らない」)。
+        // forward_lit 2 個を先に描き、VS テクスチャ付きサーフェスを最後に置く
+        RenderQueue queueInstancedThenSurface;
+        queueInstancedThenSurface.opaque = { makeItem(litMatId, -2.0f), makeItem(litMatId, 0.0f),
+                                             makeItem(vtexMatId, 2.0f) };
+        fp.Render(device, instView, queueInstancedThenSurface, lights, resources, shaders);
+        const std::array<uint8_t, 4> instBeforeSurfaceLeft = readPixel(16, 16);
+        const std::array<uint8_t, 4> instBeforeSurfaceMid = readPixel(48, 16);
+        Check(!(instBeforeSurfaceLeft[0] == 0 && instBeforeSurfaceLeft[1] == 0
+                && instBeforeSurfaceLeft[2] == 0)
+                  && !(instBeforeSurfaceMid[0] == 0 && instBeforeSurfaceMid[1] == 0
+                       && instBeforeSurfaceMid[2] == 0),
+              "review-1 #2: 描画順を入れ替えて (instanced run → サーフェス) も instanced run は消えない");
+
+        // 同じ instanced run 2 個の色は、直前にサーフェスを挟んだかどうかで変わらない
+        // (spec 受け入れ条件 13「描画順に依らず絵が変わらない」の直接確認)
+        Check(closeTo(instAfterSurfaceMid[0], instBeforeSurfaceLeft[0])
+                  && closeTo(instAfterSurfaceMid[1], instBeforeSurfaceLeft[1])
+                  && closeTo(instAfterSurfaceMid[2], instBeforeSurfaceLeft[2]),
+              "review-1 #2: instanced run の絵はサーフェスとの描画順に依らず同じ");
     }
 
     fp.Shutdown();

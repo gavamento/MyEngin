@@ -10,6 +10,7 @@
 - エンジン変更は「プロジェクト側でシェーダーを作れるようにする (Unity/UE のように)」方向なら可
 - 開始前の未コミット変更は M78f `3b55f4a` としてコミット済み (ユーザー選択)
 - (2026-09-24) spec §7 の [ユーザーに聞ける] 5 件はすべて planner 裁定どおりで確定: ①Forward と Deferred の両方で描く ②VSMain 再評価 (生成エントリ) ③WaterWave の surfaceMaterial を含める (sub-05) ④gTime = 描画フレーム番号/60 ⑤PerMaterial は D3DReflect の名前で詰める
+- (2026-09-24, review-1 後) spec §7 #6 #7 も planner 裁定どおり確定: 変位はみ出しは `.mat.json` の boundsPadding (m、既定 0) でカリング/CSM AABB を広げる / 両面描画 doubleSided を M79 に含める (sub-06)
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
@@ -18,11 +19,17 @@
 | sub-02 | OK | 2 | 2ed28d9 | round1 REWORK: PS static 未代入・実経路未検証 → round2 で解消 (反証テスト + Runtime.exe スクショ) |
 | sub-03 | OK | 2 | 4f7cbad | round1 REWORK: 前後関係未検証・SelfTest なし → round2 で解消 (Release/replay_verify PASS) |
 | sub-04 | OK | 2 | 99654de | round1 REWORK: 切替で properties clear → round2 で解消。Create メニューのクリック確定は合成入力で未確認 (手動確認へ) |
-| sub-05 | OK | 2 | (本コミット) | round1 REWORK: Deferred 透明段の実装漏れ・影スクショ・Inspector → round2 で解消 |
+| sub-02 | OK (review-1 分) | 1 | (本コミット) | 固定スロット復元 (VS t0 等) / PerMaterial の範囲 |
+| sub-03 | 差し戻し (review-1 #1) | 0 | | ShadowPass 影エントリ後の固定スロット復元 |
+| sub-04 | 差し戻し (review-1 #5) | 0 | | Properties スキーマキャッシュ無効化 |
+| sub-05 | 差し戻し (review-1 #6) | 0 | | WaterGerstner に環境光 |
+| sub-06 | 新規 | 0 | | boundsPadding / doubleSided (review-1 #3 #7) |
+| sub-05 | OK | 2 | a08d8d4 | round1 REWORK: Deferred 透明段の実装漏れ・影スクショ・Inspector → round2 で解消 |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
+| 1 | FAIL | 2/2/3/3 | blocker2 (ShadowPass/ForwardPath の固定スロット未復元で混在時に影・instanced が消える) / major1 (変位前 AABB でカリング) / minor5 (review-1.md) |
 
 ## 申し送り (セッション跨ぎ)
 - 作業ツリーに M79 無関係の未コミット変更が残る (AGENTS.md / README.md / assets/deepmodal/deepmodal.dmnet / tools/deepmodal/train.py と多数の未追跡)。**触らない・git add -A 禁止**
@@ -37,3 +44,5 @@
 - (sub-05) 自動化の罠: Editor.exe `--project` には `project.mye.json` が必須 (無いと MessageBoxW で停止)。`--screenshot` の撮影フレーム既定は 60、`--frames` がそれ未満だとエラーなしで PNG が出ない
 - (reviewer 向け) sub-03 の空時早期 return を固定するテストなし / sub-04 の切替回帰テストは範囲が狭く Create メニュー実クリック未確認 / sub-05 の影スクショは影と N·L 陰影を区別できない (水面に物体の影を落とす配置で撮ると確認できる)
 - (後続候補) 極端な座標 (1000,1000,1000) で CSM 描画異常の観測。ComputeCascadeVPs の頑健性調査 (未調査)
+- (review-1 #8) shot_verify の golden 23 枚が M79 以前から陳腐化 (空が黒い)。M79 の回帰ではない。撮り直しは別件
+- (sub-02 fix) ProbeBaker は Forward/Deferred を問わず forwardPath で IBL を焼く (EngineLoop.cpp:2463/2509)。reviewer の rv1 vtexA_def.err の D3D エラーはこれが原因で、sub-02 fix で解消。影 (#1) とは無関係

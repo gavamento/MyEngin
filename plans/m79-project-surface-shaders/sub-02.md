@@ -1,8 +1,8 @@
 # sub-02: Forward 描画とマテリアル (遅延 Load・横テーブル・properties・マゼンタ)
 
 - 依存: sub-01
-- 状態: OK (コミット待ち)
-- 往復: 2
+- 状態: OK (review-1 差し戻し分、コミット待ち)
+- 往復: 3
 
 ## やること
 
@@ -51,6 +51,13 @@ Runtime.exe --project <一時プロジェクト or Water のコピー> --scene <
 ```
 
 一時シーン・一時アセットはコミットに残さない (Water プロジェクトの本物のファイルは書き換えない。必要ならコピーで検証)。スクショの取り方はメモリ `screenshot-probe-recipes.md` (シーン撮りは Runtime.exe)。
+
+## 差し戻し (review-1 #2 #4)
+
+- **#2 [blocker]** `ForwardPath` の `restoreForwardLitBindings` が VS の t0 (instance バッファ SRV、`ForwardPath.cpp:404` で 1 回だけ張る) を戻さない。VSMain で Texture2D を読むサーフェスの後、instanced forward_lit が全部消える (D3D エラー「SRV dimension BUFFER does not match TEXTURE2D bound to slot 0 of the Vertex Shader」、reviewer rv1texA.png)。期待: サーフェス描画後に VS t0 を戻す。**VS/PS の全固定スロット (CB・SRV・サンプラ・IL/VS/PS) を洗い出し**、サーフェスが名前解決で上書きしうるものを全部戻す (spec §4.1「固定スロットの復元」)。Deferred の透明段 (`DrawSurfaceTransparentItem` 後の `bindForwardLitFixed`) も同じ観点で点検
+- **#4 [minor]** PerMaterial のパックが全 cbuffer の変数を集め、cbSize が最大の cbuffer (MyEnginePerFrame) になる。予約名と Properties 名が衝突すると別 cbuffer のオフセットで書く (`GpuResources.cpp:1350-1357`)。期待: `MyEnginePerMaterial` に属する変数だけを集め、サイズもその cbuffer のもの
+- 受け入れ条件 (追加): spec 5. の 13 (Forward 側)。SelfTest: Forward で「VS テクスチャを読むサーフェス → instanced forward_lit」と逆順を read-back 比較し、instanced が消えないこと。#4 は予約名と同名の Property を持つフィクスチャでパック結果のサイズ・オフセットを検査
+- コミット件名候補: `M79b-fix: サーフェス描画後の固定スロット復元と PerMaterial の範囲`
 
 ## 実装メモ (coder が追記)
 
@@ -185,6 +192,50 @@ SELF_EVAL: sub-02 (round 2)
   - 一時検証プロジェクト (`%TEMP%\claude\C--HAL-MyEngin\8864d946-863a-46b5-9312-6ffea53e1a0b\scratchpad\mye_m79_sub02_verify\`) はコミットしていない (指示どおりリポジトリ外)。再現したい場合は本ラウンドの「検証」節の手順 (`.mat.json` + 自作 `.meta` (固定 GUID) + `MeshRenderer.material` にその GUID の 10 進値、mesh は `builtin://quad` の FNV-1a ハッシュ `96799893311522987`) で再構築できる
   - sub-03 (Deferred/速度) は、修正後の `MyePSVelocity` (PS は常に「今」を見る) を前提にしてよい。round 1 で示唆した「速度エントリの PSMain 内で前側になる」問題はもう存在しない
 
+SELF_EVAL: sub-02 (round 3)
+実装:
+  - `src/Engine/Renderer/ForwardPath.cpp` — `DrawItems` の `restoreForwardLitBindings` に VS t0 (`forward_lit_instanced.hlsl` の `StructuredBuffer<MeshInstance> gInstances : register(t0)`) の復元を追加 (#2)。`runs` (呼び出し元がこのフレーム instancing を使うか) が非 null のときだけ `instanceBuf_.SRV()` を戻し、null (透明段など、そもそも VS t0 を張っていない呼び出し) のときは null に戻す。他の VS/PS の CB・SRV・サンプラ・IL/VS/PS・ラスタライザは既存の `restoreForwardLitBindings`/`bindForwardLitFixed` (Deferred 透明段) で洗い出し済みであることをコード読解で確認し (forward_lit / forward_lit_instanced が VS 側で使うリソースは PerFrame(b0)/PerObject(b1)/MaterialParams(b2)/インスタンス SRV(VS t0) のみ、DrawSurfaceItem は RSSetState を一切呼ばない)、追加の復元は不要と判断した
+  - `src/Engine/Renderer/SurfaceProgram.h` — `SurfaceReflectedVar` に `cbufferName` (所属 cbuffer 名) を追加
+  - `src/Engine/Renderer/ShaderManager.cpp` — `ReflectSurfaceBytecode` が `cbufferName` を埋めるようにした
+  - `src/Engine/Renderer/GpuResources.cpp` — `GetOrBuildSurfaceState` の `collect` ラムダを `var.cbufferName == surface::kPerMaterialCB` でフィルタし、`MyEnginePerMaterial` 以外の cbuffer (予約 CB) の変数・サイズを取り込まないようにした (#4)。`#include "Engine/Renderer/SurfaceShaderTypes.h"` を追加
+  - `src/Engine/Renderer/SurfaceMaterialSelfTest.cpp` — 回帰テスト 2 件を追加。(a) `TestMaterialLibrarySurfaceState` に、`_Tint(float4)+_Amp(float)`=32 バイトの `MyEnginePerMaterial` を持つ既存フィクスチャで `perMaterialCB.size() == 32` かつ `!= sizeof(MyEnginePerFrameCB)` を検査 (#4)。(b) `TestForwardPathDrawsSurfaceItems` に、VS で `Texture2D _HeightTex : register(t0)` を読む `VTex.surface` フィクスチャを追加し、「サーフェス→instanced forward_lit (2 個)」と逆順「instanced forward_lit→サーフェス」の両方を実 WARP 描画し、instanced run が消えないこと・描画順で絵が変わらないことを read-back で検査 (#2、spec 受け入れ条件 13)
+
+仕様との差分: なし (review-1 #2 #4 の指摘どおりに直した。解釈で埋めた箇所はない)
+
+検証:
+  - MSBuild (`MyEngine.sln`, Debug|x64, `/m`) → 成功、エラー 0、新規警告 0
+  - MSBuild (`MyEngine.sln`, Release|x64, `/m`) → 成功、エラー 0、新規警告 0
+  - `bin\x64\Debug\Editor.exe --selftest` → 全 PASS (exit 0)、`FAIL:` 0 件。新設 2 チェックとも `PASS:` を確認
+  - `bin\x64\Release\Editor.exe --selftest` → 全 PASS (exit 0)、`FAIL:` 0 件
+  - **反証テスト (敵対的自己レビュー)**: #2 の VS t0 復元行と #4 の cbuffer 名フィルタ行をそれぞれ一時的にコメントアウトして `--selftest` を実行 → 新設した 3 件のチェック (#4 のサイズ 2 件、#2 の「サーフェス→instanced」1 件と「絵が変わらない」1 件、計 3 FAILURE) が実際に FAIL することを確認。ログに reviewer と同じ D3D エラー文言「SRV dimension BUFFER does not match... bound to slot 0 of the Vertex Shader」が実際に出ることも確認。「instanced→サーフェス」の順 (バグを踏まない順) は復元前でも PASS のままであることも確認し、テストの独立性を裏付けた。その後両方を復元し `--selftest` が全 PASS (exit 0) に戻ることを確認
+  - `tools\check_rules.ps1` → `0 error(s), 0 warning(s)`
+  - `tools\replay_verify.bat` → `[PASS]`、13 ジョブ全通過 (161.9s)。デフォルトシーン群 (サーフェス未使用) が Debug/Release でビット一致 (受け入れ条件 11 の根拠、無回帰)
+  - **reviewer の rv1 シーンを流用した実経路再現 (Runtime.exe、WARP)**: reviewer の検証物 `...\scratchpad\rv1\`(review-1 #2 の再現に使った `VTex.surface.hlsl`/`vtexA.scene.json` を含む、リポジトリ外・書き換えていない) をそのまま `--project` に指定して実行
+    - `Runtime.exe --project rv1 --scene assets/scenes/vtexA.scene.json --warp --no-audio --frames 12 --shot-frame 10 --screenshot vtexA_fixed.png` → reviewer の修正前ログ (`rv1\vtexA.err`、`DrawIndexedInstanced` の SRV dimension mismatch が約 50 行) に対し、修正後は同条件で **D3D エラー 0 件**。スクショは reviewer の `rv1\vtexA.png` (床とキューブが消え、緑色の 1 個だけが浮いて見える) に対し、修正後の `vtexA_fixed.png` は床と全ての色つきキューブ (instanced forward_lit) が正しく描画されることを目視確認
+    - `--deferred` を付けた同シーンも実行 (`vtexA_def_fixed.png`) → こちらも D3D エラー 0 件、床とキューブが正しく描画。**調査した副次的事実**: reviewer の `rv1\vtexA_def.err` も同じ SRV mismatch を含んでいたが、シーンの `Light.castShadow=true` にも関わらずログは両方とも `shadow casters 0` (ShadowPass は何も描いていない) だったため、review-1 #1 (ShadowPass) の不具合とは無関係と判断。`EngineLoop.cpp:2463/2509` の `ProbeBaker::Bake(All)` が **Forward/Deferred どちらの実行時でも常に `forwardPath` を使って IBL 環境マップを焼く**ため、`--deferred` 実行でも `ForwardPath::DrawItems` (今回の修正箇所) を通ることが原因と特定した。DeferredPath 自体 (`RenderGeometry` の GBuffer ループ) はサーフェスアイテムを `continue` で完全に読み飛ばすだけで VS/PS バインドに一切触れないため、独立のバグは無いことをコード読解で確認済み (このサブでは DeferredPath.cpp を変更していない)
+    - 撮影物は全てリポジトリ外 (`%TEMP%\claude\C--HAL-MyEngin\8864d946-863a-46b5-9312-6ffea53e1a0b\scratchpad\vtexA_fixed.*` / `vtexA_def_fixed.*`)、未コミット
+
+自己採点 (1-5):
+  仕様適合: 5 — review-1 #2・#4 の指摘どおりに直した。差し戻しで期待された「他の VS スロットも洗い出す」もコード読解で完了 (追加の復元が不要な理由を明記)
+  正しさ: 5 — 反証テスト (壊すと落ちる/直すと通る) に加え、reviewer 自身の再現シーン (`rv1\vtexA.scene.json`) を実際に Runtime.exe (WARP) で実行し、reviewer が報告した D3D エラーと消えた絵が、この修正で解消することを実地確認した (Forward・Deferred 両方)。Deferred 側の同一症状が実は ProbeBaker 経由の ForwardPath 呼び出しであり DeferredPath 自体には別バグが無いことも確認済み
+  コード品質: 5 — 修正は最小 (ForwardPath 4 行、GpuResources/ShaderManager/SurfaceProgram.h は cbuffer 名を通すための素直な拡張)。復元ロジックのコメントに理由を明記
+  テスト: 5 — 単体 (SurfaceMaterialSelfTest 3 件) と実地 (reviewer 再現シーンの Runtime.exe 実行) の両方で確認。反証テストで両修正が「壊すと落ちる」ことも実証済み
+
+不安・質問: なし
+
+触ったファイル (round 3 で変更した分):
+  - `src/Engine/Renderer/ForwardPath.cpp`
+  - `src/Engine/Renderer/SurfaceProgram.h`
+  - `src/Engine/Renderer/ShaderManager.cpp`
+  - `src/Engine/Renderer/GpuResources.cpp`
+  - `src/Engine/Renderer/SurfaceMaterialSelfTest.cpp`
+
+申し送り:
+  - review-1 #1 (ShadowPass、sub-03 差し戻し分) は本サブの範囲外のため触っていない
+  - reviewer の `rv1\vtexA_def.err` の D3D エラーは ShadowPass (#1) とは無関係で、`EngineLoop.cpp` の `ProbeBaker` が Forward/Deferred 問わず `forwardPath` で IBL 環境マップを焼くために発生していたもの (本サブの #2 修正で解消済み)。sub-03 の coder が同じログを見て別バグと誤認しないよう記録しておく
+  - `build/Engine.vcxproj`・`.filters` の再生成は不要 (新規ファイルを追加していない)
+
 ## フィードバック履歴
 - round 1: VERDICT REWORK (planner)。must 2 件: (1) PS エントリが static を未代入 (`MyePSColor` / `MyePSVelocity`)。spec §4.1 に明文化、PS で今フレーム値を代入＋read-back テスト (2) 受け入れ条件 1/2/3/5 の実経路スクショ (Runtime.exe、透明込み) 未実施。Tex2D 符号化は両受理で確定 (spec §4.2)。
 - round 2: VERDICT OK (planner)。PS エントリの static 代入を実コードで確認 (反証テストで壊すと落ちることも coder が実施)。Runtime.exe 実経路スクショ gallery.png / failures.png を planner が目視 (5 クワッド: 不透明・透明・forward_lit 混在・Properties 違い、失敗 4 種マゼンタ)。
+- round 3 (review-1 #2 #4): VERDICT OK (planner)。restoreForwardLitBindings (ForwardPath.cpp:476-501) を読み、VS t0 の復元・MeshBindState / boundShader のリセットで PS t0 のキャッシュ不整合も起きないことを確認。PerMaterial は cbuffer 名で絞り込み。反証テストと reviewer の rv1 vtexA の再実行 (D3D エラー 0) で確認済み。

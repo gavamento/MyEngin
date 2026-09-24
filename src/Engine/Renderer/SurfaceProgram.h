@@ -25,6 +25,7 @@ struct SurfaceReflectedResource {
 
 // cbuffer 内の変数 1 件 (MyEnginePerMaterial の各プロパティ、予約 CB の各フィールド)
 struct SurfaceReflectedVar {
+    std::string cbufferName; // 所属 cbuffer 名 (例: "MyEnginePerMaterial")。同名変数を cbuffer ごとに区別する
     uint32_t cbufBindSlot = 0;
     uint32_t cbufSize = 0;
     uint32_t offset = 0;

@@ -469,7 +469,7 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
     MeshBindState bound;
     size_t nextRun = 0;
 
-    // M79 sub-02: DrawSurfaceItem は forward_lit の固定スロット (b0-b2 / t0-t9 / s0-s2) を
+    // M79 sub-02: DrawSurfaceItem は forward_lit の固定スロット (b0-b2 / VS t0 / PS t0-t9 / s0-s2) を
     // 名前解決で自由に張り替えるので、直後にこの一式へ戻す。「次のアイテムが forward_lit の
     // ときにバインド前提を壊さない」(sub-02.md 受け入れ条件 5) を、サーフェス→通常のどの
     // 境目でも成立させるための唯一の復元経路
@@ -490,6 +490,11 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
                                                    acousticBound ? view.acousticSRV : nullptr,
                                                    acousticBound ? view.acousticFrontSRV : nullptr };
         dc->PSSetShaderResources(1, 9, frameSrvs);
+        // forward_lit_instanced.hlsl は VS 側 t0 に StructuredBuffer<MeshInstance> を持つ
+        // (PS の t0 = アルベドとは独立のスロット空間)。サーフェスの VS が名前解決で VS t0 に
+        // Texture2D 等を張ると、次の instanced run が型不一致で丸ごと消える (review-1 #2)
+        ID3D11ShaderResourceView* instSrv = runs ? instanceBuf_.SRV() : nullptr;
+        dc->VSSetShaderResources(0, 1, &instSrv);
         dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         boundShader = 0; // 次の通常アイテムに VS/PS/InputLayout を再バインドさせる
         bound = MeshBindState{}; // t0/normal/メッシュ VB・IB も再バインドさせる

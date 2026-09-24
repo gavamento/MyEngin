@@ -55,6 +55,10 @@
 - WaterWave の `surfaceMaterial` と予約 CB `MyEngineWater`
 - SelfTest (索引・生成エントリのコンパイル・予約 CB のレイアウト照合・マテリアル Properties パック・既定シーン不変)
 
+- (review-1 #3 で追加) `.mat.json` の `boundsPadding` (変位で AABB の外へ出る形を視錐台カリング・CSM フィットで包む余白)
+- (review-1 #7 で追加) `.mat.json` の `doubleSided` (両面描画。Cull None)
+- (review-1 #1 #2 で明文化) サーフェスとサーフェスでないアイテムが混在しても、後続の非サーフェス描画 (forward_lit・instanced・影の深度・失敗時フォールバック) の固定スロット前提を壊さない
+
 ### やらない (明示)
 - GBuffer に書く作者規約 (Deferred の照明を作者シェーダで受ける)
 - 作者向けキーワード / バリアント
@@ -68,7 +72,8 @@
 - Deferred の GBuffer 作者規約、SSAO / SSR / デカール / RT 受光をサーフェスに効かせること
 - スキンメッシュ＋サーフェス、インスタンシング＋サーフェス
 - シャドウアトラス (スポット/ポイント) の変位込み影、アルファクリップ影
-- 作者宣言のレンダーステート、`Cull Off` 等
+- 作者宣言のレンダーステート (HLSL 側の Cull / Blend / ZWrite 宣言)。両面だけは `.mat.json` の `doubleSided` で初版から扱う (review-1 #7)
+- 両面描画時の裏面判定 (`SV_IsFrontFace`) を作者へ渡すこと (規約のシグネチャ `float4 PSMain(VSOut)` では受け取れない。裏面は法線と視線の内積で作者が判定する)
 - レンダパス (Forward/Deferred) のプロジェクト設定への保存 (現在はセッション切替 / `--deferred`)
 - スクリプトからのマテリアル値 ABI
 
@@ -116,6 +121,9 @@
 | CSM 影 | 影エントリで描く (インスタンス run から除外) | 影を落とさない (既存どおり透明は影対象外) |
 | シャドウアトラス | 従来シェーダ (変位なし) | 同上 |
 
+- **カリングと境界 (review-1 #3)**: 視錐台カリング (`RenderSystem.cpp` のステージ 2) と CSM のキャスター AABB は、サーフェスマテリアルのアイテムについて **メッシュの AABB をワールド空間で各軸 `boundsPadding` [m] だけ広げた箱**で判定する。既定 0 = 従来と同じ (変位で外へ出る形は作者が余白を付ける。UE の Bounds Scale / Unity の Renderer bounds と同じ考え方)。WaterWave の水面アイテムは従来どおりカリングしない
+- **両面 (review-1 #7)**: `doubleSided: true` のサーフェスは色・速度・影の全エントリを Cull None で描く。既定 false = Cull Back (従来)
+- **固定スロットの復元 (review-1 #1 #2)**: サーフェスの描画は名前解決で CB / SRV / サンプラ / シェーダ / 入力レイアウトを張り替える。各パス (Forward の不透明・透明、Deferred のサーフェス段・透明段、ShadowPass) は、サーフェスを描いた直後に**そのパスの非サーフェス描画が前提とする固定バインド (VS/PS の CB・SRV・サンプラ、IL/VS/PS、instance バッファ SRV) を全部戻す**。混在の順序 (サーフェスが先 / 後) に依らず、forward_lit・instanced・スキン・失敗時フォールバックの絵と影が変わらないこと
 - Deferred のフォワード段は、サーフェスのアイテムが 0 件なら RT / ステートを一切触らない (既定シーンのビット一致)
 - Deferred のサーフェス画素は GBuffer に居ないので SSAO / SSR / デカール / RT 受光が掛からない (後回し。docs に明記)
 - ピッキング・RT の BVH は従来どおり変位なしのメッシュ形 (docs に明記)
@@ -151,6 +159,7 @@
 }
 ```
 - `properties` の値の符号化は fxstack (`FxStackAsset.cpp:19` の `ParseProperties(json)`) と同じ: 数値 = Float/Range、4 要素配列 = Color/Vector、Tex2D は**数値 GUID と文字列の両方を受理** (文字列 = 組込み名 `white` 等・16 進 GUID・assets 相対パス)。書き出し (Inspector) は、アセットのテクスチャは数値 GUID (Material 本体の `texture` / `normalMap` と同じ規約)、組込み既定は名前文字列。初版のテクスチャ読み込みは常に sRGB (DSL に色空間指定が無いため。マスク / ノイズ等のリニア指定は後回し) (sub-02 VERDICT round 1 で確定)
+- `boundsPadding` (float [m]、欠損 = 0、負値は 0 に丸めて WARN) と `doubleSided` (bool、欠損 = false) を追加 (review-1)。サーフェスでないマテリアルでは読み込むが効かない (横テーブル側に持ち `Material` POD は変えない)
 - 既存フィールド (metallic / roughness / emissive / texture / normalMap / reflectionClass) は従来どおり読み書きする (サーフェスでも RT の BVH ヒット等が使う)。Inspector 保存で `properties` を落とさない
 - `properties` 欠損 = 全部既定値。`shader` 欠損 = `forward_lit` (従来)
 - `Material` POD (`GpuResources.h:204`) のサイズ・並びは変えない (cooked キャッシュ互換)
@@ -170,6 +179,7 @@
 
 ### 4.3 UI / ビジュアル
 - マテリアル Inspector: `shader:` のグレー表示をコンボに置き換える (項目 = `forward_lit` ＋ 索引済み `*.surface` の短名。昇順)。サーフェス選択時は既存欄の下に「Properties」セクション (fxstack と同じウィジェット: Float=Drag / Range=Slider / Color=ColorEdit(HDR 属性) / Vector=Drag4 / 2D=テクスチャ参照 / Header / HideInInspector)
+- サーフェス選択時は `boundsPadding` (DragFloat、0 以上) と `doubleSided` (チェックボックス) も出す。ツールチップで「頂点変位で形がメッシュの外へ出るなら余白を付ける (付けないとカメラの外判定で消える)」を明示 (review-1)
 - シェーダが失敗状態ならマテリアル Inspector の上部に赤字バナー (シェーダ名＋エラー先頭行)
 - マテリアルプレビュー (M53) はサーフェスでもそのシェーダで描く (Forward パスを通るので自然に効く想定。効かない場合は理由を実装メモに書き、プレビューはマゼンタにしない = 既存の forward_lit 表示のまま、でよい)
 - Asset Browser の作成メニューに「サーフェスシェーダ」。テンプレートは Properties 2 件・include・PerMaterial・VSMain (`gWorld`/`gViewProj` を使う例)・PSMain (太陽光＋影＋霧のヘルパ使用例) を含み、そのままコンパイルが通ること
@@ -210,6 +220,12 @@
     — 検証: 各コマンドの結果
 12. 新規 UI 文字列が日英両方で `LocalizationTable.inl` に入っている
     — 検証: `tools\check_rules.ps1` (ローカライズ規則)、diff
+13. (review-1 #1 #2) サーフェスと forward_lit / instanced / 失敗時フォールバックが混在しても、描画順 (サーフェスが先・後) に依らず非サーフェス側の色・影・instanced ジオメトリが変わらない。VS で Texture2D を読むサーフェスの後でも instanced が消えない。D3D デバッグレイヤにスロット不一致エラーが出ない
+    — 検証: `--selftest` (Forward / Deferred / ShadowPass で混在順序を入れ替えた read-back 比較)、reviewer の rv1 シーン (shadowA/shadowB/vtexA 相当) の再撮影
+14. (review-1 #3) `boundsPadding` を付けたサーフェスは、変位で元の AABB の外へ出てもカメラに写り影も落とす。0 のときは従来どおり (カリングされうる)
+    — 検証: `--selftest` (カリング判定の単体)、rv1 の liftA 相当の再撮影 (余白あり/なし)
+15. (review-1 #7) `doubleSided: true` のサーフェスは裏面も描かれ、影も両面で落ちる。false は従来どおり
+    — 検証: `--selftest` または一時シーンのスクショ (薄板の裏側から)
 
 ## 6. サブ分割
 
@@ -220,6 +236,9 @@
 | sub-03 | Deferred フォワード段・速度・CSM 影 | sub-02 | 6, 7, 11 | `M79c: Deferred のサーフェス段と変位込みの速度・影` |
 | sub-04 | マテリアル Inspector (シェーダ選択・Properties 共通化・バナー) と作成メニュー | sub-02 | 8, 9, 12 | `M79d: マテリアル Inspector のシェーダ選択と Properties` |
 | sub-05 | WaterWave の surfaceMaterial と MyEngineWater | sub-03 | 10, 11 | `M79e: WaterWave の水面をサーフェスシェーダで描く` |
+| sub-06 | サーフェスの境界余白と両面 (boundsPadding / doubleSided) | sub-03 (差し戻し分), sub-04 (差し戻し分) | 14, 15, 12 | `M79f: サーフェスの境界余白と両面描画` |
+
+- review-1 の差し戻し: sub-02 (#2 #4)・sub-03 (#1)・sub-04 (#5)・sub-05 (#6)。#1 と #2 は同じ根 (名前解決で張ったスロットを固定スロット前提の後続へ戻していない) なので、受け入れ条件 13 は sub-02 と sub-03 の両方で満たす。修正コミットは `M79b-fix:` 等の既存慣例
 
 - sub-03 と sub-04 は互いに依存しない (並列可)。sub-05 は sub-03 の速度・影経路を使う
 - sub-01 は「static 代入による再評価」「register なし自動割当と名前解決」「MeshVertex 固定オフセット」の 3 つの未知を最初に潰す。**成立しない場合は sub-02 以降に進まず planner へ差し戻す** (方式を「任意の追加エントリ」へ切り替える判断になるため)
@@ -233,6 +252,9 @@
 4. `[ユーザーに聞ける]` `gTime` は描画通番 / 60 (水面と同じ時計)。— 逆 (tick 時間) なら描画 FPS に依存しなくなるが Edit モードでアニメが止まり、水面 (WaterWave) と時計が別になる。変更箇所は sub-01 の時刻供給 1 か所
 5. `[ユーザーに聞ける]` PerMaterial はリフレクションのオフセットで詰める (M78 のパース順と違う)。— 逆 (M78 と同じパース順) なら作者の cbuffer の並びを Properties と揃える義務が残る。変更箇所は sub-02 のパック 1 か所
 
+6. `[ユーザーに聞ける]` (review-1 #3) 変位で AABB の外へ出る形は `.mat.json` の `boundsPadding` で作者が包む (既定 0)。— 逆 (サーフェスはカリングしない = スキンと同じ保守策) なら余白を付け忘れて消える事故は無くなるが、CSM フィットは変位前の箱のままで大波の影が端で切れうる / サーフェス数に比例して描画コストが増える。sub-06 の中身が「カリング除外＋CSM フィット対象外」に変わるだけで本数は同じ
+7. `[ユーザーに聞ける]` (review-1 #7) 両面描画 `doubleSided` を M79 に含める (Water の breaking_wave.hlsl:130-134 が裏面を描く前提のため)。— 逆 (後回し) なら sub-06 は boundsPadding だけになり、大波の裏面は描かれない (メッシュが両面を持っていれば影響なし。未確認)
+
 **実装で判明する見込みのリスク (coder が「不安・質問」で拾う)**
 - fxc の自動 register 割当が include の明示 register と衝突しないか (名前解決なので衝突しても動くはずだが、未使用で消えた予約資源と作者資源が同じスロットに乗る場合の扱い) — sub-01
 - static グローバル代入を含む生成エントリで fxc が警告 / 最適化上の問題を出さないか — sub-01
@@ -241,6 +263,7 @@
 - 描画通番時計は撮影モード外で FPS 比例に速く見える (既存水面と同じ)。動画は決定的撮影で撮る前提
 - レンダパスはセッション切替で保存されない。TAA 付きの確認・撮影は `--deferred` を毎回付ける (後回し項目)
 - WaterWave の新フィールドが WorldHash に入らないことの確認方法 — sub-05 で `kFieldNoHash` 新設により解決
+- (別件・M79 の回帰ではない) `shot_verify.bat` が 23 枚 FAIL する — golden が M79 より前から陳腐化 (golden の空が黒い)。reviewer が 3b55f4a と HEAD の既定シーン (Forward/Deferred) のビット一致を確認済み。golden の撮り直しは別件として申し送る (review-1 #8)
 - (後続マイル候補・未調査) オブジェクトを極端な座標 (1000,1000,1000) に置くと CSM のシーン AABB 由来とみられる描画異常 (sub-05 検証中に coder が観測。M79 の変更とは無関係の推測)。`ComputeCascadeVPs` の頑健性調査
 
 ## 8. 変更履歴
@@ -256,3 +279,5 @@
 - 2026-09-24: sub-04 VERDICT OK (round 2)。仕様変更なし。
 - 2026-09-24: sub-05 VERDICT REWORK (round 1)。Deferred 透明段のサーフェス未対応 (coder 発見) は spec §4.1 表の実装漏れ (sub-03 の VERDICT で planner が見落とし) と判定し、M79 内 (sub-05) で直す。WaterWave の `surfaceMaterial` は保存するがハッシュしない新フラグ `kFieldNoHash` で登録することを受理 (§4.2 の「ハッシュ非関与」の実現手段)。水面 RenderItem は CSM フィット AABB に含めない (従来 WaterPass と同じ)。
 - 2026-09-24: sub-05 VERDICT OK (round 2)。Deferred 透明段のサーフェス描画を回収 (§4.1 表どおり)。仕様変更なし。§7 に CSM の極端座標の観測を後続候補として記録。
+- 2026-09-24: reviewer round 1 (review-1.md) への応答。#3 を仕様の穴として認め、`boundsPadding` (カリング・CSM フィットの余白、既定 0) を §3/§4.1/§4.2/§4.3 に追加、受け入れ条件 14。#7 を認め最小の両面指定 `doubleSided` を追加 (受け入れ条件 15、裏面判定の SV_IsFrontFace は後回し)。#1 #2 の根にある「名前解決で張ったスロットを戻す」契約を §4.1 に明文化し受け入れ条件 13 (混在順序) を追加 — spec が混在を Forward 色だけでしか条件化していなかった穴。#8 は M79 の回帰ではなく別件 (§7 に記録)。新サブ sub-06、差し戻し sub-02/03/04/05。
+- 2026-09-24: sub-02 VERDICT OK (round 3、review-1 #2 #4)。仕様変更なし。

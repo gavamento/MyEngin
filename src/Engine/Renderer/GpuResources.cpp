@@ -24,6 +24,7 @@
 #include "Engine/Renderer/ReflectionClassJson.h" // .mat.json の reflectionClass 受理規則 (M67h)
 #include "Engine/Renderer/ShaderManager.h"       // M79 sub-02: サーフェスマテリアルの遅延 Load
 #include "Engine/Renderer/SurfaceProgram.h"
+#include "Engine/Renderer/SurfaceShaderTypes.h"  // M79b-fix: surface::kPerMaterialCB
 
 #include "stb/stb_image.h"
 
@@ -1345,10 +1346,15 @@ SurfaceMaterialState* MaterialLibrary::GetOrBuildSurfaceState(AssetID materialId
         }
     }
 
+    // cbuffer 名で MyEnginePerMaterial だけに絞る。絞らないと cbSize が「見た cbuffer の
+    // 最大サイズ」になり、MyEnginePerFrame 等の大きい方に引きずられる (review-1 #4)
     std::unordered_map<std::string, ReflectedVarSlot> reflectionVars;
     uint32_t cbSize = 0;
     auto collect = [&](const SurfaceEntryReflection& refl) {
         for (const auto& [varName, var] : refl.vars) {
+            if (var.cbufferName != surface::kPerMaterialCB) {
+                continue;
+            }
             reflectionVars[varName] = { var.offset, var.size };
             cbSize = (std::max)(cbSize, var.cbufSize);
         }

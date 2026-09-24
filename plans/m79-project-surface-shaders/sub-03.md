@@ -1,7 +1,7 @@
 # sub-03: Deferred フォワード段・速度・CSM 影
 
 - 依存: sub-02
-- 状態: OK (コミット待ち)
+- 状態: 差し戻し (review-1 #1)
 - 往復: 2
 
 ## やること
@@ -56,6 +56,12 @@ Runtime.exe --project <一時> --scene <一時> --deferred --taa --screenshot <p
 ```
 
 `replay_verify` が割れたらメモリ `replay-verify-triage.md` の手順で切り分けてから報告すること。画質系スクショはメモリ `rt-screenshot-freeze-seed-trap.md` の freeze-seed に注意。
+
+## 差し戻し (review-1 #1)
+
+- **#1 [blocker]** `ShadowPass` で、サーフェスの影エントリが名前解決で張った CB / SRV を戻さない。b0 (`objectCB_`) / t0 (instance SRV) はループ前に 1 回だけ張る (`ShadowPass.cpp:215`/`:218`) のに、`:254-:291` で上書きしたまま continue する。後続の非サーフェス (forward_lit・失敗時の `shadow_depth` フォールバック・instanced) が壊れた b0/t0 を読んで影を落とさない (reviewer rv1\shadowA.png / 順序を入れ替えた shadowB.png では出る / Deferred でも shadowA_def.png)。期待: サーフェス描画後に深度 VS / IL・b0・instance SRV (t0) を戻す (spec §4.1「固定スロットの復元」)。sub-02 の修正と同じ根なので、復元の考え方は揃える
+- 受け入れ条件 (追加): spec 5. の 13 (影と Deferred 側)。SelfTest: ShadowPass で「サーフェス → 非サーフェス (通常・instanced)」と逆順のシャドウマップ深度を read-back 比較し、非サーフェスの深度が順序に依らず一致すること。Deferred のサーフェス段の後の水面・透明にも同じ観点の確認を 1 本
+- コミット件名候補: `M79c-fix: 影エントリ後の固定スロット復元`
 
 ## 実装メモ (coder が追記)
 

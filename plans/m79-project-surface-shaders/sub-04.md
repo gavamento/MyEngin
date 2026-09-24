@@ -1,7 +1,7 @@
 # sub-04: マテリアル Inspector (シェーダ選択・Properties 共通化・バナー) と作成メニュー
 
 - 依存: sub-02 (sub-03 とは独立 = 並列可)
-- 状態: OK (コミット待ち)
+- 状態: 差し戻し (review-1 #5)
 - 注記 (sub-02 VERDICT round 1): Properties の 2D ピッカーは spec §4.2 の Tex2D 符号化に従う — 書き出しはアセットなら数値 GUID、組込み既定なら名前文字列。読み込みは数値 / 文字列の両方
 - 往復: 2
 
@@ -47,6 +47,12 @@ bin\x64\Debug\Editor.exe --selftest
 tools\check_rules.ps1
 Editor.exe --project <一時> --screenshot <png>   (一時プローブ。メモリ screenshot-probe-recipes.md)
 ```
+
+## 差し戻し (review-1 #5)
+
+- **#5 [minor]** `matSchemaCache_` が無効化されず、HLSL に Properties を足してもエディタ再起動まで Inspector が古いまま (`InspectorWindow.h:136`、clear は `InspectorWindow.cpp:1962`/`:2208` のみ)。fxstack のスキーマキャッシュ (M78) も同じ。期待: `SurfaceProgram::generation` (sub-02 で追加済み) か、ファイル更新時刻 / ShaderManager の再コンパイル通知でキャッシュを捨てる。マテリアルと fxstack の両方
+- 受け入れ条件 (追加): Editor 起動中に `*.surface.hlsl` へ Property を 1 行足して保存 → Inspector に新しい欄が出る (手動＋スクショ、またはキャッシュ無効化判定の SelfTest)
+- コミット件名候補: `M79d-fix: Properties スキーマキャッシュの無効化`
 
 ## 実装メモ (coder が追記)
 

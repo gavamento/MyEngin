@@ -242,6 +242,7 @@ bool ReflectSurfaceBytecode(const std::vector<uint8_t>& bytecode, SurfaceEntryRe
             D3D11_SHADER_VARIABLE_DESC varDesc = {};
             var->GetDesc(&varDesc);
             SurfaceReflectedVar rv;
+            rv.cbufferName = cbDesc.Name; // M79b-fix (review-1 #4): cbuffer ごとに区別するため
             rv.cbufBindSlot = cbSlot;
             rv.cbufSize = cbDesc.Size;
             rv.offset = varDesc.StartOffset;

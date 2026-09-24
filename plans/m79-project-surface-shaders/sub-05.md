@@ -1,7 +1,7 @@
 # sub-05: WaterWave の surfaceMaterial と MyEngineWater
 
 - 依存: sub-03
-- 状態: OK (コミット待ち)
+- 状態: 差し戻し (review-1 #6)
 - 往復: 2
 
 ## やること
@@ -48,6 +48,12 @@ tools\check_rules.ps1
 tools\replay_verify.bat
 Runtime.exe --project <Water のコピー> --scene <main のコピー> --deferred --velocity-debug --screenshot <png>
 ```
+
+## 差し戻し (review-1 #6)
+
+- **#6 [minor]** `assets/shaders/WaterGerstner.surface.hlsl:80` が `gAmbient` を使わず、Water main のように太陽が弱い / 低いシーンで水面が真っ黒になる (エンジン側の値は届いている、reviewer rvw\dbg_def.png)。期待: 環境光の項を足す (サンプルとして「そのまま置いて見える」こと)。`ToonFlat.surface.hlsl` とテンプレートも同じ観点で確認
+- 受け入れ条件 (追加): Water main のコピー (reviewer の rvw 相当) で水面が黒く潰れない — Runtime.exe スクショ
+- コミット件名候補: `M79e-fix: WaterGerstner サンプルに環境光`
 
 ## 実装メモ (coder が追記)
 
