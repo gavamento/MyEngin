@@ -406,12 +406,14 @@ private:
     // 水面の時刻は tick 補間なのでフレームごとの進みは一定でなく、前 tick の値では代用できない
     float prevWaterTime_[4] = {};
     bool prevWaterTimeValid_[4] = {};
-    // M78c: シーンカメラの fxStack から生成するユーザーポストランナー
+    // M78c/d: シーンカメラの fxStack から生成するユーザーポスト／コンピュートのランナー。
+    // viewKey 毎に持つ (TaaPass の履歴・prevVP_ と同じ流儀)。1 つを共有すると Scene View と
+    // Game View を同時に開いたときに毎フレーム作り直しになり、フレームをまたいで積む CS の結果が消える。
     // CameraOverride (エディタ視界) には適用しない (CameraPostFx と同じ規則)
-    ProjectEffectRunner projectEffectRunner_;
-    AssetID             lastFxStackId_; // 直近に読んだ fxStack ID (変化検知用)
-    // M78d: シーンカメラの fxStack から生成するユーザーコンピュートランナー
-    ProjectComputeRunner projectComputeRunner_;
+    ProjectEffectRunner  projectEffectRunner_[4];
+    ProjectComputeRunner projectComputeRunner_[4];
+    AssetID              loadedFxStackId_[4];       // 直前に読んだ fxStack ID
+    int64_t              loadedFxStackStamp_[4] = {}; // 直前に読んだ fxstack.json の更新時刻 (再読込の判定用)
 };
 
 } // namespace mye

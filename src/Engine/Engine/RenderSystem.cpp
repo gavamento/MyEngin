@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <filesystem>
+#include <system_error>
 
 #include "Engine/Core/AssetGuidResolver.h"
 #include "Engine/Core/Components.h"
@@ -19,6 +21,7 @@
 #include "Engine/Engine/SkinningSystem.h" // M18 追補: クロスフェード込みのポーズ評価
 #include "Engine/Engine/Tags.h"           // 汎用タグ: RT の適用範囲
 #include "Engine/Engine/Vfx/VfxRenderer.h"
+#include "Engine/Platform/PathUtil.h" // WideToUtf8 (fxstack のパスをログへ)
 #include "Engine/Renderer/FrustumCull.h"
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
@@ -1803,26 +1806,37 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
                 effective.lutSRV = lut->srv.Get();
             }
         }
-        // M78 §4.1: Scene View (CameraOverride) ではユーザーポスト／fxstack CS を走らせない。
-        // Play 停止後に Runner に残ったパスが Scene View で描かれないよう毎フレームクリアする。
-        if (cameraOverride) {
-            projectEffectRunner_.ClearPasses();
-            projectComputeRunner_.ClearPasses();
-        }
-
-        // M78c: fxStack から ProjectEffectRunner を更新する。
-        // シーンカメラ (CameraOverride=null) にのみ適用 (エディタ視界は不変)。
-        if (!cameraOverride && !camEntity.IsNull()) {
+        // M78c/d: fxStack からこのビューのユーザーポスト／コンピュートを更新する。
+        // ランナーは viewKey 毎 (Scene View と Game View が互いのパスを消し合わない)。
+        // 実効 fxStack が null (Scene View / fxStack を持たないカメラ / 解決不能) ならパスを消す
+        const uint32_t fxKey = (target.viewKey < 4) ? target.viewKey : 0u;
+        ProjectEffectRunner&  effectRunner  = projectEffectRunner_[fxKey];
+        ProjectComputeRunner& computeRunner = projectComputeRunner_[fxKey];
+        const CameraPostFxComponent* camPostFx =
+            camEntity.IsNull() ? nullptr : world.GetComponent<CameraPostFxComponent>(camEntity);
+        const AssetID requestedFx = camPostFx ? camPostFx->fxStack : AssetID{};
+        const std::wstring fxPath =
+            requestedFx.IsNull() ? std::wstring() : assetguid::ResolvePath(requestedFx.value);
+        const AssetID fxId = EffectiveFxStack(cameraOverride != nullptr, camPostFx != nullptr,
+                                              requestedFx, !fxPath.empty());
+        if (fxId.IsNull()) {
+            if (!loadedFxStackId_[fxKey].IsNull()) {
+                effectRunner.ClearPasses();
+                computeRunner.ClearPasses();
+                loadedFxStackId_[fxKey]    = {};
+                loadedFxStackStamp_[fxKey] = 0;
+            }
+        } else {
             // Tex2D リゾルバをフレームごとに設定 (resources の参照は ResolvePost が生きている間有効)
-            projectEffectRunner_.SetTextureResolver(
-                [&resources, this](const std::string& name) -> ID3D11ShaderResourceView*
+            effectRunner.SetTextureResolver(
+                [&resources, &computeRunner](const std::string& name) -> ID3D11ShaderResourceView*
                 {
                     // M78d: コンピュートパス出力 SRV を shader 名で先引き (§3 GetOutputSRV 接続)
                     // 例: fxstack.json で _Mask = "MySim.cs" と書いた場合、MySim.cs の出力 UAV が
                     // そのまま SRV としてポストの t2 以降に渡る (fill CS → ポスト表示の手動手順参照)。
                     if (!name.empty())
                     {
-                        if (ID3D11ShaderResourceView* srv = projectComputeRunner_.GetOutputSRV(name))
+                        if (ID3D11ShaderResourceView* srv = computeRunner.GetOutputSRV(name))
                             return srv;
                     }
                     // ビルトイン名またはフォールバック → white
@@ -1870,79 +1884,70 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
                     return getWhite();
                 });
 
-            if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
-                const AssetID fxId = pfx->fxStack;
-                if (fxId.IsNull()) {
-                    // fxStack 未設定 → パスをクリア (恒等経路)
-                    if (!lastFxStackId_.IsNull()) {
-                        projectEffectRunner_.ClearPasses();
-                        projectComputeRunner_.ClearPasses();
-                        lastFxStackId_ = {};
-                    }
-                } else {
-                    // fxStack が変わったか、初回: JSON を再ロード
-                    // ※ SetPasses のキャッシュ維持ロジックが propertyValues 変化を吸収するため
-                    //   毎フレームの再ロード＆SetPasses 呼び出しはコスト的に許容範囲
-                    const std::wstring fxPath = assetguid::ResolvePath(fxId.value);
-                    if (!fxPath.empty()) {
-                        FxStackAsset fx;
-                        std::string errMsg;
-                        if (LoadFxStack(fxPath, fx, &errMsg)) {
-                            // M78c: Post パスを ProjectEffectRunner へ流す
-                            std::vector<ProjectPostPassDesc> postDescs;
-                            postDescs.reserve(fx.passes.size());
-                            // M78d: Compute パスを ProjectComputeRunner へ流す
-                            std::vector<ProjectComputePassDesc> compDescs;
-                            compDescs.reserve(fx.passes.size());
+            // fxstack.json は ID が変わったかファイルが書き換わったときだけ読む
+            // (エディタで保存した値は更新時刻の変化で拾う。同期読み込みを毎フレーム走らせない)
+            std::error_code stampEc;
+            const auto writeTime = std::filesystem::last_write_time(fxPath, stampEc);
+            const int64_t stamp = stampEc ? 0 : static_cast<int64_t>(writeTime.time_since_epoch().count());
+            if (NeedsFxStackReload(loadedFxStackId_[fxKey], loadedFxStackStamp_[fxKey], fxId, stamp)) {
+                FxStackAsset fx;
+                std::string errMsg;
+                if (LoadFxStack(fxPath, fx, &errMsg)) {
+                    // M78c: Post パスを ProjectEffectRunner へ流す
+                    std::vector<ProjectPostPassDesc> postDescs;
+                    postDescs.reserve(fx.passes.size());
+                    // M78d: Compute パスを ProjectComputeRunner へ流す
+                    std::vector<ProjectComputePassDesc> compDescs;
+                    compDescs.reserve(fx.passes.size());
 
-                            for (const auto& entry : fx.passes) {
-                                if (entry.kind == FxStackKind::Post) {
-                                    ProjectPostPassDesc d;
-                                    d.shaderName     = entry.shader;
-                                    d.insertion      = entry.insertion;
-                                    d.priority       = entry.priority;
-                                    d.enabled        = entry.enabled;
-                                    d.propertyValues = entry.properties;
-                                    postDescs.push_back(std::move(d));
-                                } else if (entry.kind == FxStackKind::Compute) {
-                                    ProjectComputePassDesc d;
-                                    d.shader        = entry.shader;
-                                    d.dispatchPoint = DispatchPointFromString(entry.dispatchPoint);
-                                    d.priority      = entry.priority;
-                                    d.enabled       = entry.enabled;
-                                    d.propertyValues = entry.properties;
-                                    compDescs.push_back(std::move(d));
-                                }
-                            }
-                            projectEffectRunner_.SetPasses(std::move(postDescs));
-                            projectComputeRunner_.SetPasses(std::move(compDescs));
-                        } else {
-                            MYE_LOG_WARN("RenderSystem: fxstack ロード失敗 (%s): %s",
-                                         fxPath.c_str(), errMsg.c_str());
-                            projectEffectRunner_.ClearPasses();
-                            projectComputeRunner_.ClearPasses();
+                    for (const auto& entry : fx.passes) {
+                        if (entry.kind == FxStackKind::Post) {
+                            ProjectPostPassDesc d;
+                            d.shaderName     = entry.shader;
+                            d.insertion      = entry.insertion;
+                            d.priority       = entry.priority;
+                            d.enabled        = entry.enabled;
+                            d.propertyValues = entry.properties;
+                            postDescs.push_back(std::move(d));
+                        } else if (entry.kind == FxStackKind::Compute) {
+                            ProjectComputePassDesc d;
+                            d.shader        = entry.shader;
+                            d.dispatchPoint = DispatchPointFromString(entry.dispatchPoint);
+                            d.priority      = entry.priority;
+                            d.enabled       = entry.enabled;
+                            d.propertyValues = entry.properties;
+                            compDescs.push_back(std::move(d));
                         }
-                        lastFxStackId_ = fxId;
                     }
+                    // SetPasses は同名・同挿入点のキャッシュを保つので、値だけの変更では CB も UAV も作り直さない
+                    effectRunner.SetPasses(std::move(postDescs));
+                    computeRunner.SetPasses(std::move(compDescs));
+                } else {
+                    MYE_LOG_WARN("RenderSystem: fxstack ロード失敗 (%s): %s",
+                                 WideToUtf8(fxPath).c_str(), errMsg.c_str());
+                    effectRunner.ClearPasses();
+                    computeRunner.ClearPasses();
                 }
+                loadedFxStackId_[fxKey]    = fxId;
+                loadedFxStackStamp_[fxKey] = stamp;
             }
         }
 
         ProjectEffectRunner*  injectPostFx = nullptr;
         ProjectComputeRunner* injectComputeFx = nullptr;
         if (ShouldInjectProjectFxStack(cameraOverride != nullptr)) {
-            injectPostFx     = &projectEffectRunner_;
-            injectComputeFx  = &projectComputeRunner_;
+            injectPostFx     = &effectRunner;
+            injectComputeFx  = &computeRunner;
         }
 
         // M78d: BeforePost コンピュートを Resolve 前に実行する (HDR 描画完了直後)
         if (injectComputeFx != nullptr
-            && projectComputeRunner_.HasPasses(ComputeDispatchPoint::BeforePost))
+            && computeRunner.HasPasses(ComputeDispatchPoint::BeforePost))
         {
-            projectComputeRunner_.RunDispatch(ComputeDispatchPoint::BeforePost,
-                                              device, shaders,
-                                              hdr->scene.SRV(), view.depthSRV,
-                                              target.width, target.height);
+            computeRunner.RunDispatch(ComputeDispatchPoint::BeforePost,
+                                      device, shaders,
+                                      hdr->scene.SRV(), view.depthSRV,
+                                      target.width, target.height);
         }
 
         postFx_.Resolve(device, shaders, *hdr, target.rtv, target.width, target.height,

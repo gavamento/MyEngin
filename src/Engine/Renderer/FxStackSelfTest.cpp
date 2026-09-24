@@ -328,6 +328,49 @@ void TestProjectFxStackInjectionPolicy()
     FX_CHECK(!ShouldInjectProjectFxStack(true));
 }
 
+// ---------------------------------------------------------------------------
+// テスト 9: 実効 fxStack の決め方 (レビュー #7)。fxStack を持たないカメラへ切り替えたら null = パスを消す
+// ---------------------------------------------------------------------------
+void TestEffectiveFxStack()
+{
+    MYE_LOG_INFO("[selftest] FxStack: EffectiveFxStack");
+
+    const AssetID fx{ 0x1234 };
+    // 通常: Game View のカメラが解決できる fxStack を持つ
+    FX_CHECK(EffectiveFxStack(false, true, fx, true) == fx);
+    // Scene View (CameraOverride) は常に null
+    FX_CHECK(EffectiveFxStack(true, true, fx, true).IsNull());
+    // CameraPostFx の無いカメラ (カメラ無しも同じ扱い)
+    FX_CHECK(EffectiveFxStack(false, false, fx, true).IsNull());
+    // fxStack 未設定
+    FX_CHECK(EffectiveFxStack(false, true, AssetID{}, false).IsNull());
+    // GUID がパスに解決できない (アセット削除後など)
+    FX_CHECK(EffectiveFxStack(false, true, fx, false).IsNull());
+}
+
+// ---------------------------------------------------------------------------
+// テスト 10: fxstack.json を読み直す条件 (レビュー #6)。ID の切替かファイルの更新時だけ
+// ---------------------------------------------------------------------------
+void TestFxStackReloadDecision()
+{
+    MYE_LOG_INFO("[selftest] FxStack: NeedsFxStackReload");
+
+    const AssetID a{ 0xA };
+    const AssetID b{ 0xB };
+    // 初回 (何も読んでいない)
+    FX_CHECK(NeedsFxStackReload(AssetID{}, 0, a, 100));
+    // 同じ ID・同じ更新時刻 → 読まない (毎フレームの同期読み込みをしない)
+    FX_CHECK(!NeedsFxStackReload(a, 100, a, 100));
+    // ファイルが書き換わった
+    FX_CHECK(NeedsFxStackReload(a, 100, a, 101));
+    // 別の fxStack に切り替わった
+    FX_CHECK(NeedsFxStackReload(a, 100, b, 100));
+    // 更新時刻が取れないファイルも、同じ状態のままなら読み直さない (失敗の WARN を毎フレーム出さない)
+    FX_CHECK(!NeedsFxStackReload(a, 0, a, 0));
+    // 実効 fxStack が null のときは読まない (パスを消す側の処理)
+    FX_CHECK(!NeedsFxStackReload(a, 100, AssetID{}, 0));
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -346,6 +389,8 @@ bool RunFxStackSelfTest()
     TestMixedPasses();
     TestTex2DRoundTrip();
     TestProjectFxStackInjectionPolicy();
+    TestEffectiveFxStack();      // レビュー #7
+    TestFxStackReloadDecision(); // レビュー #6
 
     if (g_failCount == 0) {
         MYE_LOG_INFO("=== FxStack SelfTest: ALL PASS ===");
