@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include <DirectXMath.h>
 #include <d3d11.h>
@@ -24,6 +25,7 @@
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
 #include "Engine/Renderer/ShadowPass.h"
+#include "Engine/Renderer/SurfaceShaderTypes.h"
 #include "Engine/Renderer/WaterPass.h"
 
 using namespace DirectX;
@@ -503,6 +505,156 @@ void TestWaterPassSkipsWhenSurfaceRouteActive(GraphicsDevice& device, const std:
     wp.Shutdown();
 }
 
+
+// ---- (d) 再レビュー #2: 組込み WaterPass も waveCount で波を打ち切る (浮力とサーフェス水面と同じ規則)。
+//      「waveCount=1 で 4 本とも振幅あり」と「waveCount=4 で 2〜4 本目の振幅 0」が同じ絵になることを
+//      色の read-back で比べる。本数を無視して常に 4 本足すと前者だけ 2〜4 本目の波が乗って絵が変わる ----
+void TestWaterPassHonorsWaveCount(GraphicsDevice& device, const std::wstring& engineShaderDir)
+{
+    MYE_LOG_INFO("-- WaterPass::Render: waveCount を超える波を足さない --");
+    ShaderManager shaders;
+    Check(shaders.Init(device, { engineShaderDir }), "shader manager init (water wave count)");
+
+    RenderResources resources;
+    resources.Init(device);
+
+    WaterPass wp;
+    Check(wp.Init(device, shaders), "WaterPass::Init (water wave count)");
+
+    constexpr UINT kSize = 32;
+    ID3D11Device* dev = device.Device();
+    ID3D11DeviceContext* dc = device.Context();
+
+    D3D11_TEXTURE2D_DESC ctd = {};
+    ctd.Width = kSize;
+    ctd.Height = kSize;
+    ctd.MipLevels = 1;
+    ctd.ArraySize = 1;
+    ctd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    ctd.SampleDesc = { 1, 0 };
+    ctd.Usage = D3D11_USAGE_DEFAULT;
+    ctd.BindFlags = D3D11_BIND_RENDER_TARGET;
+    ComPtr<ID3D11Texture2D> colorTex;
+    ComPtr<ID3D11RenderTargetView> colorRtv;
+    bool ok = SUCCEEDED(dev->CreateTexture2D(&ctd, nullptr, colorTex.GetAddressOf()));
+    ok = ok && SUCCEEDED(dev->CreateRenderTargetView(colorTex.Get(), nullptr, colorRtv.GetAddressOf()));
+    D3D11_TEXTURE2D_DESC stagedDesc = ctd;
+    stagedDesc.Usage = D3D11_USAGE_STAGING;
+    stagedDesc.BindFlags = 0;
+    stagedDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ComPtr<ID3D11Texture2D> staging;
+    ok = ok && SUCCEEDED(dev->CreateTexture2D(&stagedDesc, nullptr, staging.GetAddressOf()));
+
+    D3D11_TEXTURE2D_DESC dtd = {};
+    dtd.Width = kSize;
+    dtd.Height = kSize;
+    dtd.MipLevels = 1;
+    dtd.ArraySize = 1;
+    dtd.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    dtd.SampleDesc = { 1, 0 };
+    dtd.Usage = D3D11_USAGE_DEFAULT;
+    dtd.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+    ComPtr<ID3D11Texture2D> depthTex;
+    ComPtr<ID3D11DepthStencilView> dsv;
+    ok = ok && SUCCEEDED(dev->CreateTexture2D(&dtd, nullptr, depthTex.GetAddressOf()));
+    ok = ok && SUCCEEDED(dev->CreateDepthStencilView(depthTex.Get(), nullptr, dsv.GetAddressOf()));
+    Check(ok, "RTV/DSV/staging を作成できる (water wave count)");
+    if (!ok) {
+        return;
+    }
+
+    // 真上から見下ろす正射影 (水面メッシュは y=0 の XZ グリッド)。斜めの光で法線の違いが色に出る
+    RenderView view;
+    XMStoreFloat4x4(&view.view, XMMatrixLookAtLH(XMVectorSet(0, 10, 0, 1), XMVectorSet(0, 0, 0, 1),
+                                                 XMVectorSet(0, 0, 1, 0)));
+    XMStoreFloat4x4(&view.proj, XMMatrixOrthographicLH(8.0f, 8.0f, 0.1f, 100.0f));
+    view.width = static_cast<int>(kSize);
+    view.height = static_cast<int>(kSize);
+    view.rtv = colorRtv.Get();
+    view.dsv = dsv.Get();
+
+    // b0 (PerFrame): 先頭の gViewProj の後ろは MyEnginePerFrameCB と同じ並び (SurfaceShaderTypes.h)。
+    // カメラと環境光だけ詰め、ライト 0 本・影/IBL/霧なし。水面の色は法線 (= 波) で変わる反射と
+    // フレネルで決まるので、これで波の本数の違いが色に出る
+    std::vector<uint8_t> perFrame(sizeof(XMFLOAT4X4) + sizeof(MyEnginePerFrameCB), 0);
+    {
+        XMFLOAT4X4 vpT;
+        XMStoreFloat4x4(&vpT, XMMatrixTranspose(XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.proj)));
+        std::memcpy(perFrame.data(), &vpT, sizeof(vpT));
+        MyEnginePerFrameCB rest = {};
+        rest.cameraPos = { 0.0f, 10.0f, 0.0f };
+        rest.ambient = { 0.5f, 0.5f, 0.5f };
+        std::memcpy(perFrame.data() + sizeof(vpT), &rest, sizeof(rest));
+    }
+    D3D11_BUFFER_DESC pfd = {};
+    pfd.ByteWidth = static_cast<UINT>(perFrame.size());
+    pfd.Usage = D3D11_USAGE_DEFAULT;
+    pfd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    D3D11_SUBRESOURCE_DATA pfInit = {};
+    pfInit.pSysMem = perFrame.data();
+    ComPtr<ID3D11Buffer> perFrameCB;
+    Check(SUCCEEDED(dev->CreateBuffer(&pfd, &pfInit, perFrameCB.GetAddressOf())),
+          "PerFrame CB を作成できる (water wave count)");
+
+    auto render = [&](const WaterMaterialCB& mat) {
+        WaterDrawData water;
+        water.active = true;
+        water.material = mat;
+        view.water = &water;
+        const float clear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+        dc->ClearRenderTargetView(colorRtv.Get(), clear);
+        dc->ClearDepthStencilView(dsv.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+        wp.Render(device, shaders, view, resources, perFrameCB.Get(), nullptr);
+        view.water = nullptr;
+        dc->CopyResource(staging.Get(), colorTex.Get());
+        std::vector<uint8_t> pixels(static_cast<size_t>(kSize) * kSize * 4, 0);
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        if (SUCCEEDED(dc->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+            for (UINT y = 0; y < kSize; ++y) {
+                std::memcpy(pixels.data() + static_cast<size_t>(y) * kSize * 4,
+                            static_cast<const uint8_t*>(mapped.pData) + static_cast<size_t>(y) * mapped.RowPitch,
+                            static_cast<size_t>(kSize) * 4);
+            }
+            dc->Unmap(staging.Get(), 0);
+        }
+        return pixels;
+    };
+
+    // 1 本目だけの水面を 2 通りで作る。波は画面 (8m 四方) に数周期入るよう短く、急峻にする
+    WaterMaterialCB oneByCount;
+    oneByCount.waveParams0 = { 0.4f, 3.0f, 1.0f, 20.0f };
+    oneByCount.waveParams1 = { 0.4f, 2.0f, 1.0f, 75.0f };
+    oneByCount.waveParams2 = { 0.4f, 2.5f, 1.0f, -40.0f };
+    oneByCount.waveParams3 = { 0.4f, 1.7f, 1.0f, 130.0f };
+    oneByCount.waveSteepness = { 0.5f, 0.5f, 0.5f, 0.5f };
+    oneByCount.waterSettings = { 0.0f, 1.0f, 0.37f, 0.0f };
+    oneByCount.waveCount = { 1, 0, 0, 0 };
+
+    WaterMaterialCB oneByAmplitude = oneByCount;
+    oneByAmplitude.waveParams1.x = 0.0f;
+    oneByAmplitude.waveParams2.x = 0.0f;
+    oneByAmplitude.waveParams3.x = 0.0f;
+    oneByAmplitude.waveCount = { 4, 0, 0, 0 };
+
+    WaterMaterialCB allFour = oneByCount;
+    allFour.waveCount = { 4, 0, 0, 0 };
+
+    const std::vector<uint8_t> a = render(oneByCount);
+    const std::vector<uint8_t> b = render(oneByAmplitude);
+    const std::vector<uint8_t> c = render(allFour);
+    int diffAB = 0;
+    int diffAC = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        diffAB += (a[i] != b[i]) ? 1 : 0;
+        diffAC += (a[i] != c[i]) ? 1 : 0;
+    }
+    MYE_LOG_INFO("    differing bytes: count1 vs amp0 = %d, count1 vs count4 = %d", diffAB, diffAC);
+    Check(diffAC > 0, "前提: 2〜4 本目の波は絵を変えるだけの振幅がある");
+    Check(diffAB == 0, "waveCount=1 は 2〜4 本目の振幅を 0 にした水面と同じ絵になる (本数を超える波を足さない)");
+
+    wp.Shutdown();
+}
+
 } // namespace
 
 bool RunWaterSurfaceSelfTest()
@@ -524,6 +676,7 @@ bool RunWaterSurfaceSelfTest()
     TestDeferredForwardStageReadsWaterCb(device, engineShaderDir);
     TestShadowPassDepthReflectsWaterTime(device, engineShaderDir);
     TestWaterPassSkipsWhenSurfaceRouteActive(device, engineShaderDir);
+    TestWaterPassHonorsWaveCount(device, engineShaderDir); // 再レビュー #2
 
     MYE_LOG_INFO("==== M79 water surface self test: %s ====", (g_fails == 0) ? "ALL PASS" : "FAILED");
     return g_fails == 0;

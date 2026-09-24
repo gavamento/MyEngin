@@ -13,7 +13,7 @@ class GraphicsDevice;
 class ShaderManager;
 struct RenderResources;
 
-// water_surface.hlsl の WaterMaterialParams (b2) と完全一致 (144 バイト = 16バイトアライメント)
+// water_surface.hlsl の WaterMaterialParams (b2) と完全一致 (160 バイト = 16バイトアライメント)
 struct alignas(16) WaterMaterialCB {
     DirectX::XMFLOAT4 deepColor = { 0.02f, 0.08f, 0.18f, 0.85f };
     DirectX::XMFLOAT4 shallowColor = { 0.10f, 0.35f, 0.45f, 0.60f };
@@ -23,8 +23,12 @@ struct alignas(16) WaterMaterialCB {
     DirectX::XMFLOAT4 waveParams3 = { 0.02f,  4.0f, 1.4f, 110.0f };
     DirectX::XMFLOAT4 waveSteepness = { 0.20f, 0.18f, 0.15f, 0.12f };
     DirectX::XMFLOAT4 waterSettings = { 0.0f, 1.0f, 0.0f, 0.15f }; // baseHeight, overallScale, time, foamStrength
-    DirectX::XMFLOAT4 waterOptics = { 4.0f, 0.95f, 0.0f, 0.0f };   // fresnelPower, smoothness, pad, pad
+    // fresnelPower, smoothness, RT 反射フラグ, skyMode (z/w は WaterPass::Render が毎回上書きする)
+    DirectX::XMFLOAT4 waterOptics = { 4.0f, 0.95f, 0.0f, 0.0f };
+    // x = 足す波の本数 (WaterWaveComponent::ClampedWaveCount、浮力とサーフェス水面と同じ規則)。yzw は未使用
+    DirectX::XMINT4 waveCount = { 4, 0, 0, 0 };
 };
+static_assert(sizeof(WaterMaterialCB) == 160, "water_surface.hlsl の WaterMaterialParams と一致させること");
 
 // RenderView::water が指す純描画データ (Renderer 層の純データ)
 struct WaterDrawData {

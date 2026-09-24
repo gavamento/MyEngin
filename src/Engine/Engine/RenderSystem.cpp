@@ -1017,6 +1017,8 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             waterData_.material.waveSteepness = { bestWave->wave0Steepness, bestWave->wave1Steepness, bestWave->wave2Steepness, bestWave->wave3Steepness };
             waterData_.material.waterSettings = { bestWave->baseHeight, bestWave->overallScale, t, bestWave->foamStrength };
             waterData_.material.waterOptics = { bestWave->fresnelPower, bestWave->smoothness, 0.0f, 0.0f };
+            // 浮力 (PhysicsSystem) とサーフェス水面 (下の surfaceCb) と同じ本数で波を打ち切る
+            waterData_.material.waveCount = { bestWave->ClampedWaveCount(), 0, 0, 0 };
 
             // ---- M79 sub-05: MyEngineWater CB (予約 CB。全サーフェスシェーダへ名前で張る) ----
             // 水面自身の描画経路 (surfaceMaterial の有無) に関係なく埋める — 他メッシュの

@@ -75,7 +75,8 @@ cbuffer WaterMaterialParams : register(b2)
     float4 gWaveParams3;       // x=amp, y=wavelength, z=speed, w=dirAngleDeg
     float4 gWaveSteepness;     // x=s0, y=s1, z=s2, w=s3
     float4 gWaterSettings;     // x=baseHeight, y=overallScale, z=time, w=foamStrength
-    float4 gWaterOptics;       // x=fresnelPower, y=smoothness, z=pad, w=pad
+    float4 gWaterOptics;       // x=fresnelPower, y=smoothness, z=RT 反射フラグ, w=skyMode
+    int4   gWaterWaveCount;    // x=足す波の本数 (CPU 側で 1..4 に丸め済み。浮力・サーフェス水面と同じ規則)
 };
 
 Texture2D                gSkyPanoramic  : register(t0);
@@ -158,10 +159,20 @@ VSOut VSMain(VSIn v)
     float3 disp = float3(0.0f, 0.0f, 0.0f);
     float3 nDiff = float3(0.0f, 1.0f, 0.0f);
 
-    AccumulateGerstnerWave(gWaveParams0, gWaveSteepness.x, overallScale, time, basePosW.x, basePosW.z, disp, nDiff);
-    AccumulateGerstnerWave(gWaveParams1, gWaveSteepness.y, overallScale, time, basePosW.x, basePosW.z, disp, nDiff);
-    AccumulateGerstnerWave(gWaveParams2, gWaveSteepness.z, overallScale, time, basePosW.x, basePosW.z, disp, nDiff);
-    AccumulateGerstnerWave(gWaveParams3, gWaveSteepness.w, overallScale, time, basePosW.x, basePosW.z, disp, nDiff);
+    // waveCount を超える波は足さない (足すと見えている水面と浮力の水位が食い違う)
+    const int waveCount = gWaterWaveCount.x;
+    if (waveCount > 0) {
+        AccumulateGerstnerWave(gWaveParams0, gWaveSteepness.x, overallScale, time, basePosW.x, basePosW.z, disp, nDiff);
+    }
+    if (waveCount > 1) {
+        AccumulateGerstnerWave(gWaveParams1, gWaveSteepness.y, overallScale, time, basePosW.x, basePosW.z, disp, nDiff);
+    }
+    if (waveCount > 2) {
+        AccumulateGerstnerWave(gWaveParams2, gWaveSteepness.z, overallScale, time, basePosW.x, basePosW.z, disp, nDiff);
+    }
+    if (waveCount > 3) {
+        AccumulateGerstnerWave(gWaveParams3, gWaveSteepness.w, overallScale, time, basePosW.x, basePosW.z, disp, nDiff);
+    }
 
     float3 posW = basePosW.xyz + disp;
     posW.y += baseHeight;
