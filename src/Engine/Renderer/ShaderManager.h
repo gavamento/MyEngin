@@ -29,6 +29,10 @@ struct ShaderProgram {
     std::vector<uint8_t> csBytecode;
     bool isCompute = false;
     bool valid = false;
+    // 再コンパイルが成功して差し替わるたびに +1 (失敗時は旧プログラムと旧世代のまま)。
+    // 使う側 (ProjectEffectRunner / ProjectComputeRunner) が「スキーマと CB を作ったのはどの世代か」を
+    // 覚えておき、違えば作り直す (SurfaceProgram::generation と同じ流儀)
+    uint64_t generation = 0;
 };
 
 // assets/shaders/ および assets 全域の *.post.hlsl / *.cs.hlsl からの実行時コンパイル (engine_spec.md 8.1 / 10 章)。

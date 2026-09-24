@@ -100,6 +100,7 @@ private:
         AssetID                              shaderID    = {};
         PropertyParseResult                  schema;
         bool                                 schemaReady = false;
+        uint64_t                             builtFromGeneration = 0; // スキーマを取った ShaderProgram の世代
         // ユーザー Properties の定数バッファ (cbSizeBytes==0 なら null; spec §4.2 CB 省略)
         Microsoft::WRL::ComPtr<ID3D11Buffer> userCB;
         // エンジン共通定数バッファ (b0: screenW/H など)

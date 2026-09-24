@@ -5,11 +5,22 @@
 #include "Engine/Renderer/ProjectEffectRunnerSelfTest.h"
 
 #include <algorithm>
+#include <array>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
+#include <d3d11.h>
+#include <wrl/client.h>
+
 #include "Engine/Core/Log.h"
+#include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ProjectEffectRunner.h"
+#include "Engine/Renderer/RenderTexture.h"
+#include "Engine/Renderer/ShaderManager.h"
 
 namespace mye {
 namespace {
@@ -219,6 +230,125 @@ void TestInsertionPointConstants()
     RUN_CHECK(vAfter  == 1);
 }
 
+// ---------------------------------------------------------------------------
+// テスト 7 (レビュー #4、WARP 実描画): assets 内の任意フォルダに置いたポストの Properties が
+// 実行時に効くこと、ホットリロード (再コンパイル) でスキーマと CB が作り直されること。
+// 修正前はソースを ShaderDirs 直下からしか探さず空スキーマ → b1 未バインドで真っ黒、
+// 再コンパイル後も古いスキーマのまま だった
+// ---------------------------------------------------------------------------
+void TestNestedPostSchemaAndHotReload()
+{
+    MYE_LOG_INFO("[selftest] ProjectEffectRunner: assets 内の入れ子フォルダのポストとホットリロード");
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path root = fs::temp_directory_path(ec) / L"mye_post_runner_selftest";
+    fs::remove_all(root, ec);
+    fs::create_directories(root / L"shaders", ec);
+    fs::create_directories(root / L"fx" / L"deep", ec);
+    const fs::path postPath = root / L"fx" / L"deep" / L"RunnerTint.post.hlsl";
+    auto writePost = [&](const char* tint) {
+        std::ofstream f(postPath, std::ios::binary | std::ios::trunc);
+        f << "/*@MyEngineProperties\n_Tint (\"Tint\", Color) = " << tint << "\n@*/\n"
+          << "#include \"ProjectPostCommon.hlsli\"\n"
+          << "cbuffer MyEnginePerEffect : register(b1) { float4 _Tint; };\n"
+          << "float4 PSMain(ProjectPostVSOut i) : SV_Target { return _Tint; }\n";
+    };
+    writePost("(0, 1, 0, 1)");
+
+    GraphicsDevice device;
+    const std::wstring engineShaderDir = FindEngineShaderDir();
+    RUN_CHECK(!engineShaderDir.empty() && device.Init(true));
+    if (engineShaderDir.empty()) {
+        return;
+    }
+    ShaderManager shaders;
+    RUN_CHECK(shaders.Init(device, { (root / L"shaders").wstring(), engineShaderDir }));
+    shaders.SetAssetsRoot(root.wstring());
+    shaders.RebuildProjectShaderIndex();
+
+    constexpr int kSize = 4;
+    RenderTexture pingA;
+    RenderTexture pingB;
+    RenderTexture dst;
+    const bool rtOk = pingA.Create(device, kSize, kSize, DXGI_FORMAT_R8G8B8A8_UNORM, false)
+        && pingB.Create(device, kSize, kSize, DXGI_FORMAT_R8G8B8A8_UNORM, false)
+        && dst.Create(device, kSize, kSize, DXGI_FORMAT_R8G8B8A8_UNORM, false);
+    RUN_CHECK(rtOk);
+    ID3D11Device* dev = device.Device();
+    ID3D11DeviceContext* dc = device.Context();
+    D3D11_DEPTH_STENCIL_DESC dsd = {};
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthOff;
+    D3D11_BLEND_DESC bd = {};
+    bd.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> blendOff;
+    D3D11_RASTERIZER_DESC rd = {};
+    rd.FillMode = D3D11_FILL_SOLID;
+    rd.CullMode = D3D11_CULL_NONE;
+    rd.DepthClipEnable = TRUE;
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> raster;
+    D3D11_SAMPLER_DESC sd = {};
+    sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.MaxLOD = D3D11_FLOAT32_MAX;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> linearClamp;
+    const bool stOk = SUCCEEDED(dev->CreateDepthStencilState(&dsd, depthOff.GetAddressOf()))
+        && SUCCEEDED(dev->CreateBlendState(&bd, blendOff.GetAddressOf()))
+        && SUCCEEDED(dev->CreateRasterizerState(&rd, raster.GetAddressOf()))
+        && SUCCEEDED(dev->CreateSamplerState(&sd, linearClamp.GetAddressOf()));
+    RUN_CHECK(stOk);
+    if (!rtOk || !stOk) {
+        return;
+    }
+    D3D11_TEXTURE2D_DESC td = {};
+    td.Width = kSize;
+    td.Height = kSize;
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    td.SampleDesc = { 1, 0 };
+    td.Usage = D3D11_USAGE_STAGING;
+    td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
+    RUN_CHECK(SUCCEEDED(dev->CreateTexture2D(&td, nullptr, staging.GetAddressOf())));
+
+    ProjectEffectRunner runner;
+    ProjectPostPassDesc d;
+    d.shaderName = "RunnerTint.post";
+    d.insertion = PostInsertionPoint::AfterTonemap;
+    runner.SetPasses({ d });
+    const AssetID magenta = shaders.Load("project_post_magenta");
+
+    auto runAndRead = [&]() {
+        runner.RunPasses(PostInsertionPoint::AfterTonemap, device, shaders, pingA.SRV(), pingA, pingB,
+                         dst.RTV(), nullptr, kSize, kSize, depthOff.Get(), blendOff.Get(), raster.Get(),
+                         linearClamp.Get(), magenta);
+        Microsoft::WRL::ComPtr<ID3D11Resource> res;
+        dst.RTV()->GetResource(res.GetAddressOf());
+        dc->CopyResource(staging.Get(), res.Get());
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        std::array<uint8_t, 4> px = { 0, 0, 0, 0 };
+        if (SUCCEEDED(dc->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+            std::memcpy(px.data(), mapped.pData, 4);
+            dc->Unmap(staging.Get(), 0);
+        }
+        return px;
+    };
+
+    const std::array<uint8_t, 4> first = runAndRead();
+    MYE_LOG_INFO("    first pass pixel = (%d,%d,%d,%d)", first[0], first[1], first[2], first[3]);
+    RUN_CHECK(first[0] < 8 && first[1] > 247 && first[2] < 8); // Properties 既定の緑が b1 から読めている
+
+    // ファイルを書き換えて再コンパイル (エディタのホットリロードと同じ差し替え)
+    writePost("(1, 0, 0, 1)");
+    const AssetID tintId = shaders.Load("RunnerTint.post");
+    RUN_CHECK(shaders.Recompile(tintId));
+    const std::array<uint8_t, 4> reloaded = runAndRead();
+    MYE_LOG_INFO("    reloaded pass pixel = (%d,%d,%d,%d)", reloaded[0], reloaded[1], reloaded[2], reloaded[3]);
+    RUN_CHECK(reloaded[0] > 247 && reloaded[1] < 8 && reloaded[2] < 8); // 新しい既定 (赤) に作り直された
+
+    fs::remove_all(root, ec);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -235,6 +365,7 @@ bool RunProjectEffectRunnerSelfTest()
     TestPrioritySort();
     TestHardLimit();
     TestInsertionPointConstants();
+    TestNestedPostSchemaAndHotReload(); // レビュー #4
 
     if (g_failCount == 0)
     {

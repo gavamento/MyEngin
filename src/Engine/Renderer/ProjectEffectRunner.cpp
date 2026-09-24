@@ -106,52 +106,41 @@ void ProjectEffectRunner::EnsureCached(CachedPass& cp, GraphicsDevice& device, S
         cp.schemaReady  = false;
     }
 
+    // ホットリロードで差し替わったら (世代が変わったら) スキーマと CB を作り直す。
+    // 失敗したリロードは旧プログラム・旧世代のままなので、動いているバイトコードとスキーマが必ず揃う
+    ShaderProgram* prog = shaders.Get(cp.shaderID);
+    if (cp.schemaReady && prog && prog->valid && prog->generation != cp.builtFromGeneration)
+    {
+        cp.schemaReady = false;
+    }
+
     // スキーマ未取得 → シェーダのソースからパース
     if (!cp.schemaReady)
     {
-        ShaderProgram* prog = shaders.Get(cp.shaderID);
         if (prog && prog->valid)
         {
-            // ShaderManager はソースを保持しないため、シェーダファイルを直接読む
-            // ルートを順に試して最初に見つかったファイルを使う
-            const std::string nameStem = cp.desc.shaderName;
-            std::string hlslSrc;
-            for (const auto& dir : shaders.ShaderDirs())
-            {
-                std::wstring wpath = dir + L"\\" +
-                    std::wstring(nameStem.begin(), nameStem.end()) + L".hlsl";
-                FILE* f = nullptr;
-                if (_wfopen_s(&f, wpath.c_str(), L"rb") == 0 && f)
-                {
-                    fseek(f, 0, SEEK_END);
-                    const long sz = ftell(f);
-                    fseek(f, 0, SEEK_SET);
-                    if (sz > 0)
-                    {
-                        hlslSrc.resize(static_cast<size_t>(sz));
-                        fread(hlslSrc.data(), 1, static_cast<size_t>(sz), f);
-                    }
-                    fclose(f);
-                    break;
-                }
-            }
-            cp.schema      = ParseProperties(hlslSrc);
-            cp.schemaReady = true;
+            // ソースは ShaderManager と同じ解決規則 (assets 全域の索引 → シェーダルート) で読む。
+            // ShaderDirs 直下だけを見ると、assets 内の任意フォルダに置いたポストは空スキーマになり
+            // b1 が張られない (Inspector には Properties が出るのに実行時は真っ黒)
+            cp.schema             = shaders.FetchPropertySchema(cp.desc.shaderName);
+            cp.schemaReady        = true;
+            cp.builtFromGeneration = prog->generation;
 
             if (!cp.schema.ok)
             {
                 MYE_LOG_ERROR("ProjectEffectRunner: %s の Properties パース失敗: %s",
                               cp.desc.shaderName.c_str(), cp.schema.errorMessage.c_str());
             }
-        }
 
-        // ユーザー CB の生成 / 再生成
-        cp.userCB.Reset();
-        if (cp.schema.ok && cp.schema.cbSizeBytes > 0)
-        {
-            gpubuf::CreateConstant(device.Device(),
-                                   AlignCb(static_cast<UINT>(cp.schema.cbSizeBytes)),
-                                   cp.userCB);
+            // ユーザー CB の生成 / 再生成 (スキーマを取り直したときだけ。シェーダが無効な間に
+            // 毎フレーム作り直さない)
+            cp.userCB.Reset();
+            if (cp.schema.ok && cp.schema.cbSizeBytes > 0)
+            {
+                gpubuf::CreateConstant(device.Device(),
+                                       AlignCb(static_cast<UINT>(cp.schema.cbSizeBytes)),
+                                       cp.userCB);
+            }
         }
 
         // エンジン共通 CB の生成 (b0)

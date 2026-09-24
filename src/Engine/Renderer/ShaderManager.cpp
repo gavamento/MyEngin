@@ -526,6 +526,7 @@ bool ShaderManager::Recompile(AssetID id)
     if (!CompileProgram(fresh.path, fresh)) {
         return false;
     }
+    fresh.generation = it->second.generation + 1;
     it->second = std::move(fresh);
     return true;
 }
@@ -616,7 +617,9 @@ void ShaderManager::PollAsyncCompiles()
         }
         ShaderProgram fresh = async_[i].future.get();
         if (fresh.valid) {
-            programs_[async_[i].id] = std::move(fresh); // セーフポイントでの差し替え (フェーズ 2)
+            ShaderProgram& slot = programs_[async_[i].id];
+            fresh.generation = slot.generation + 1;
+            slot = std::move(fresh); // セーフポイントでの差し替え (フェーズ 2)
             MYE_LOG_INFO("[reload] shader swapped");
         } else {
             MYE_LOG_WARN("[reload] shader compile failed - keeping previous shader");

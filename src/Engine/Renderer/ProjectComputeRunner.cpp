@@ -125,51 +125,39 @@ void ProjectComputeRunner::EnsureCached(CachedComputePass& cp, GraphicsDevice& d
         cp.schemaReady = false;
     }
 
+    // ホットリロードで差し替わったら (世代が変わったら) スキーマと CB を作り直す
+    // (ProjectEffectRunner::EnsureCached と同じ規則)
+    ShaderProgram* prog = shaders.Get(cp.shaderID);
+    if (cp.schemaReady && prog && prog->valid && prog->generation != cp.builtFromGeneration)
+    {
+        cp.schemaReady = false;
+    }
+
     // スキーマ未取得 → HLSL ソースからパース
     if (!cp.schemaReady)
     {
-        ShaderProgram* prog = shaders.Get(cp.shaderID);
         if (prog && prog->valid)
         {
-            // ShaderManager のルートディレクトリを順に試してソースを読む
-            // (ProjectEffectRunner::EnsureCached と同じ手順)
-            std::string hlslSrc;
-            for (const auto& dir : shaders.ShaderDirs())
-            {
-                std::wstring wpath = dir + L"\\" +
-                    std::wstring(cp.desc.shader.begin(), cp.desc.shader.end()) + L".hlsl";
-                FILE* f = nullptr;
-                if (_wfopen_s(&f, wpath.c_str(), L"rb") == 0 && f)
-                {
-                    fseek(f, 0, SEEK_END);
-                    const long sz = ftell(f);
-                    fseek(f, 0, SEEK_SET);
-                    if (sz > 0)
-                    {
-                        hlslSrc.resize(static_cast<size_t>(sz));
-                        fread(hlslSrc.data(), 1, static_cast<size_t>(sz), f);
-                    }
-                    fclose(f);
-                    break;
-                }
-            }
-            cp.schema      = ParseProperties(hlslSrc);
-            cp.schemaReady = true;
+            // ソースは ShaderManager と同じ解決規則 (assets 全域の索引 → シェーダルート) で読む
+            cp.schema              = shaders.FetchPropertySchema(cp.desc.shader);
+            cp.schemaReady         = true;
+            cp.builtFromGeneration = prog->generation;
 
             if (!cp.schema.ok)
             {
                 MYE_LOG_ERROR("ProjectComputeRunner: %s の Properties パース失敗: %s",
                               cp.desc.shader.c_str(), cp.schema.errorMessage.c_str());
             }
-        }
 
-        // ユーザー CB の生成 (cbSizeBytes > 0 のときのみ; spec §4.2 CB 省略)
-        cp.userCB.Reset();
-        if (cp.schema.ok && cp.schema.cbSizeBytes > 0)
-        {
-            gpubuf::CreateConstant(device.Device(),
-                                   AlignCb(static_cast<UINT>(cp.schema.cbSizeBytes)),
-                                   cp.userCB);
+            // ユーザー CB の生成 (cbSizeBytes > 0 のときのみ; spec §4.2 CB 省略)。
+            // スキーマを取り直したときだけ作る (シェーダが無効な間に毎フレーム作り直さない)
+            cp.userCB.Reset();
+            if (cp.schema.ok && cp.schema.cbSizeBytes > 0)
+            {
+                gpubuf::CreateConstant(device.Device(),
+                                       AlignCb(static_cast<UINT>(cp.schema.cbSizeBytes)),
+                                       cp.userCB);
+            }
         }
 
         // エンジン共通 CB の生成 (b0: 画面サイズ)
