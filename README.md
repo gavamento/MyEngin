@@ -2,425 +2,408 @@
 
 [![CI](https://github.com/gavamento/MyEngin/actions/workflows/ci.yml/badge.svg)](https://github.com/gavamento/MyEngin/actions/workflows/ci.yml)
 
-C++20 / DirectX 11 製の自作ゲームエンジン。**Unity 風の使いやすさ × ECS の性能 × 壊れない開発体験** をコンセプトに、就職活動用ポートフォリオとして開発。仕様は [engine_spec.md](engine_spec.md)、設計判断の記録は [docs/adr/](docs/adr/) を参照。
+Windows 向けの **C++20 / DirectX 11 製自作 3D ゲームエンジン**です。ImGui エディタでシーン・アセットを編集し、C++ / C# のスクリプトでゲームを作り、エディタ UI を持たない Runtime として配布できます。
 
-## ビルドと実行
+中心にあるのは、**ゲームを動かし、その内部状態を理解し、同じ条件から結果を再現できること**です。固定 Tick のシミュレーションと状態の記録・復元を共通基盤にして、リプレイ、タイムトラベル、未来の分岐比較、ネット対戦のロールバック、クラッシュ直前の再現へつなげています。描画、物理、音響伝播、制作ツールを含め、就職活動用ポートフォリオとして開発しています。
 
-1. Visual Studio 2022 以降 (C++ デスクトップ開発ワークロード + Windows 10/11 SDK)
-2. `MyEngine.sln` を開く → 構成 `Debug|x64` → F5
+本 README は **2026-09-22 時点のソースツリー**に合わせた入口です。機能説明は実装の存在・接続を示すもので、全機能の実機試験や最新 CI の合格を保証するものではありません。仕様は [engine_spec.md](engine_spec.md)、作業規則は [AGENTS.md](AGENTS.md) を参照してください。
 
-外部ライブラリはすべて `external/` にソースごとコミット済み (クローン → F5 で動く)。
+## 目次
 
-| プロジェクト | 種類 | 内容 |
-|---|---|---|
-| Engine | 静的ライブラリ | Platform / Core / Renderer / Engine の 4 レイヤ |
-| Editor | exe | ImGui エディタ (開発時のホストプロセス) |
-| Runtime | exe | エディタ UI 無しの配布用ランタイム (エンジンは Editor と完全共有) |
-| GameLogic | DLL | ユーザースクリプト。**ホットリロード対象** |
+- [ビルドと起動](#ビルドと起動)
+- [プロジェクトを作ってゲームを動かす](#プロジェクトを作ってゲームを動かす)
+- [主要機能](#主要機能)
+- [プロジェクト専用シェーダーとポストエフェクト](#プロジェクト専用シェーダーとポストエフェクト)
+- [エディタ操作](#エディタ操作)
+- [ショーケースと CLI](#ショーケースと-cli)
+- [配布パッケージ](#配布パッケージ)
+- [検証と CI](#検証と-ci)
+- [現在の制限](#現在の制限)
+- [構成と設計方針](#構成と設計方針)
+- [ドキュメント](#ドキュメント)
 
-sln の外にもう 2 本ある。どちらも無い状態でエディタは起動し、該当機能だけが OFF になる:
+## ビルドと起動
 
-- **C# スクリプトホスト** — `tools\build_managed.bat Debug` / `Release` (.NET SDK が要る)。
-  出力は `bin\x64\<Config>\MyeScripting.dll`。両構成とも起動時に読むので両方作る
-- **Source Control のサービス** — `tools\build_collab.bat` (**rustup の stable ツールチェーン**が要る)。
-  Rust の cdylib `MyeCollab.dll` + `MyeCollabCli.exe` を 1 回のビルドで作り、両構成の `bin\x64\` へ置く。
-  無ければ Source Control 窓が「利用不可 (サービスがありません)」になるだけで他は無傷
+### 必要な環境
 
-## エンジンで作ったもの
+| 対象 | 必要なもの |
+|---|---|
+| ネイティブ本体 | Windows 10 / 11、Visual Studio 2022 の「C++ によるデスクトップ開発」、MSVC v143、Windows SDK、x64 構成 |
+| 描画 | DirectX 11 Feature Level 11_0。検証用に WARP も指定可能 |
+| C# スクリプト（任意） | .NET 8 対応 SDK。ホストのターゲットは `net8.0` |
+| エディタ内 Git（任意） | Git、rustup の stable ツールチェーン（サービスのビルド時） |
+| 検証スクリプト | PowerShell 7（`pwsh`）。Replay の並列実行でも使用 |
 
-エンジンのショーケース (`--physics-demo` / `--joint-demo` / `--acoustic-demo` 等) は
-リポジトリ内の C++ (`DemoContent.cpp`) から組まれている。**それとは別に、`--project` で開く
-外部プロジェクトとしてゲームを作り**、「プロジェクトを開く → スクリプトを書く → アセットを
-置く → ゲームにする」という経路そのものを検証している。
+C++ の外部依存ソースは [external/](external/) に同梱しています。依存一覧とライセンスは [external/VERSIONS.md](external/VERSIONS.md) を参照してください。C# の NuGet パッケージ、Rust の依存クレート、Deep-Modal の学習環境は別途取得が必要です。
 
-- **仮ゲーム「HAL Collector」** — シーン 7 枚 (`main` は 39 エンティティ)、タイトル → ゲーム →
-  リザルトの一周。歩く / 視点切替 / 拾う / 撃つ / 敵 / 車 / ポーズ / ハイスコアまで。
-  ここで踏んだ穴が M64a (生マウスデルタ + カーソルロック + ABI v15) と
-  M64b (`Active` の階層伝播 / 2 つ目以降の `Start()`) のエンジン修正になった
-- **三校プロトタイプ** — 企画「暗闇 × 音のステルス」の縦切り。音の波が壁を照らすところまで。
-  エンジン側の対応が M65 (音響伝播) と M68 (その波を耳へ出す)
+### Visual Studio
 
-**ドッグフーディングの記録は [docs/dogfooding.md](docs/dogfooding.md)** —
-作者視点で踏んだ 20 件を「何をしようとした / 何が無かった / どう回避した / エンジンをどう
-直すべきか」の形で残してある。**4 件は修正済み、16 件は未解決**で、その台帳も同じ文書にある
-(最上位は「スキーマ未登録のコンポーネントがエディタ保存で黙って消える」= データ消失)。
-エンジン単体の回帰テストでは絶対に出てこない種類の穴が並んでいる。
+1. [MyEngine.sln](MyEngine.sln) を開きます。
+2. `Debug | x64` を選択し、`Editor` をスタートアッププロジェクトにします。
+3. ビルドして F5 で起動します。通常起動ではプロジェクト管理画面から作成・選択できます。
+
+新しい Visual Studio を使う場合も、プロジェクトが指定する **v143** ツールセットをインストールしてください。共通設定は [build/Common.props](build/Common.props) にあり、C++20、`/utf-8`、`/fp:precise` を使用します。CRT は Debug が `/MTd`、Release が `/MT` です。
+
+### コマンドライン
+
+以降の例は、特記がなければ **リポジトリルートを作業ディレクトリとした PowerShell** で実行します。MSBuild の例には Visual Studio の Developer PowerShell を使用してください。
+
+```powershell
+MSBuild.exe MyEngine.sln /p:Configuration=Debug /p:Platform=x64 /m /v:minimal /nologo
+.\bin\x64\Debug\Editor.exe
+
+# 配布・性能確認用
+MSBuild.exe MyEngine.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal /nologo
+```
+
+| 成果物 | 役割 |
+|---|---|
+| `Engine.lib` | Platform / Core / Renderer / Engine の共通機能 |
+| `Editor.exe` | シーンとアセットの制作環境 |
+| `Runtime.exe` | エディタ UI を持たない実行ホスト |
+| `GameLogic.dll` | ホットリロード対象の C++ ゲームコード |
+
+出力先は `bin/x64/Debug/` または `bin/x64/Release/`、中間生成物は `obj/` です。
+
+### 任意機能の追加ビルド
+
+C# ホストと Git サービスは `MyEngine.sln` の外にあります。未導入でもエディタ本体は起動し、該当機能が利用不可になります。
+
+```powershell
+# C# ホストと Roslyn。使用する構成ごとにビルド
+.\tools\build_managed.bat Debug
+.\tools\build_managed.bat Release
+
+# Rust 製 Git サービス。1 回のビルドで Debug / Release 両方へ配置
+.\tools\build_collab.bat
+```
+
+C# は `MyeScripting.dll` とその依存ファイル、Git は `MyeCollab.dll` / `MyeCollabCli.exe` が本体の隣に出力されます。Git 連携は Git 管理された外部プロジェクトを `--project` で開いて使用します。リモート認証は事前にターミナル側で済ませてください。バックグラウンド取得は認証ダイアログを表示しません。
+
+## プロジェクトを作ってゲームを動かす
+
+エンジン本体と制作するゲームを分けて管理できます。CLI で作る場合は、未作成または空のディレクトリを指定します。
+
+```powershell
+# パスは自分の制作先へ置き換える
+.\bin\x64\Debug\Editor.exe --create-project "C:\MyGames\FirstGame" --template demo
+.\bin\x64\Debug\Editor.exe --project "C:\MyGames\FirstGame"
+```
+
+`--template` は `empty` / `demo` に対応し、省略時は `empty` です。プロジェクトには `project.mye.json`、`assets/`、ローカル設定用の `.mye/` などが作成されます。テンプレート生成だけでは Git リポジトリは初期化しません。
+
+基本の制作手順は次のとおりです。
+
+1. Hierarchy でオブジェクトを配置し、Inspector からコンポーネントを追加・調整します。
+2. `assets/` にモデル、テクスチャ、音、スクリプトなどを配置します。参照を保つため、アセット本体と `.meta` は一緒に管理します。
+3. C++ / C# スクリプトをコンポーネントとして割り当てます。C++ は Rebuild Scripts でビルドし、登録済みフィールドを Inspector から編集します。
+4. シーンを保存し、Play で動作を確認します。Play 中の編集は Stop 時に開始前の状態へ戻ります。
+5. Runtime でも同じプロジェクトを起動し、ゲーム画面・入力・音・シーン遷移を確認します。
+
+```powershell
+.\bin\x64\Debug\Runtime.exe --project "C:\MyGames\FirstGame"
+```
+
+外部プロジェクトの C++ DLL はプロジェクトの `cache/GameLogic.dll` に置かれます。エンジンの `bin/` にある DLL と取り違えないでください。`Runtime --project` は開発実行として扱われ、配布先では生成したパッケージの `Runtime.exe` を起動します。
+
+既存の制作例・課題は [ドッグフーディング記録](docs/dogfooding.md)、音のステルスゲームに向けた対応は [三校実装状況](docs/sanko-implementation-status.md) にまとめています。これらの記録は記載時点のもので、同じゲームの完成版や配布物が本リポジトリに含まれることを意味しません。
 
 ## 主要機能
 
-- **ハイブリッド ECS** — 外部 API は `GameObject` / `GetComponent<T>()`、内部はアーキタイプ別 SoA。
-  世代付き EntityID で破棄後のハンドルを検出。構造変更はコマンドバッファで tick 末一括適用
-- **リフレクション基盤** — 1 つのフィールド表を Inspector 自動生成 / JSON シリアライズ /
-  DLL リロード時の状態移行 / ワールドハッシュの 4 者で共用
-- **ホットリロード** — シェーダ (include 依存グラフ + 失敗時は旧維持) / テクスチャ / glTF /
-  シーン JSON (fileId 差分適用) / **C++ コード (GameLogic.dll)**。DLL は PDB ごとコピー +
-  `/PDBALTPATH` でデバッガのブレークポイントを維持し、フィールドは名前+型一致で移行
-- **パーティクル二重実装** — CPU (SoA + SSE、スカラー参照実装つき) と GPU (Compute、
-  dead/alive リスト + DrawInstancedIndirect、リードバックなし)。実行時切替 + 並走比較モード。
-  乱数は両者ともエンジンの決定論 RNG (GPU では乱数を生成しない)
-- **レンダリングパス切替** — Forward / Deferred を実行時切替 (View > Render Path)。
-  ライティング関数は common.hlsli を共用し見た目が一致。透明物とパーティクルは共通の Forward 後段
-- **ハイブリッド・リアルタイムパストレーシング** — 一次光線はラスタのまま、**二次光線
-  (拡散 GI / 平行光の影 / スペキュラ反射) を自前の BVH トラバーサルで置換**。
-  Feature Level 11_0 縛りで DXR が使えないため `cs_5_0` のコンピュートシェーダで実装し、
-  SVGF (テンポラル蓄積 → 分散推定 → A-Trous) でデノイズする。発光マテリアルはそのまま
-  GI の面光源になる。詳細は [ADR-009](docs/adr/ADR-009-hybrid-path-tracing.md)
-- **ReSTIR 反射 + ReflectionClass (既定 off)** — 反射レーンは 1spp なので、分散を隠す
-  A-Trous が反射像のディテールごと溶かしてしまう。`--rt-restir` は**レイ数を増やさずに**
-  時空間のサンプル再利用 (ReSTIR) で実効サンプル数を上げる。reservoir が持つのは方向ではなく
-  **ヒット点そのもの**なので、借りた側は自分の視線・法線・粗さで重みを評価し直せるうえ、
-  **そこに刺さっているオブジェクトのクラスが分かる** — これが `ReflectionClass` の土台。
-  クラスは「反射する床」ではなく**反射に映る物体**の属性 (`Material` の 5 段: 主役 / 人型 /
-  乗り物 / 小物 / 既定) で、主役ほど再利用を絞り (にじませない・ゴーストさせない)、
-  小物ほど積極的に借りる。G-Buffer には 1 ビットも触れていない。
-  **off の絵は現行とビット一致**で、それを golden 3 枚 (`demo_render_rtrefl` /
-  `_rtgi` / `_rtrefl_restir`) が機械証明する。詳細は
-  [ADR-016](docs/adr/ADR-016-restir-reflection.md)
-- **剛体物理 (自作ソルバ)** — 蓄積インパルス + サブステップの接触ソルバに、空力 (等方抗力 /
-  翼面 / マグヌス) / 浮力 / ジャイロ項 / 静動摩擦 / 転がり抵抗 / 材料資産 (`.physmat.json`) /
-  スリープとアイランド / CCD / 地形ハイトフィールドを積んである。その上に**関節と機構**が
-  重なる: ボール / ヒンジ / 固定 / スライダ / コーンの 5 種を単一 `Joint` の `type` で選び、
-  角度・変位リミット / モータ / 破断 (breakForce・breakTorque) / 粘着 / 複合コライダー /
-  凸包 (クック時生成) / **ラグドール** (スケルトンから自動生成 + 剛体 → 骨の逆駆動) /
-  **車両** (レイキャストサス + タイヤ力) まで、Inspector でコンポーネントを足すだけで組める。
-  **既存シーンは 1 ビットも変わらない** — 全部が「そのコンポーネントが在るときだけ効く」
-  存在ゲートの内側にあり、`--physics-demo` / `--joint-demo` の 2 ペアが Debug ⇔ Release の
-  ハッシュ一致でそれを守っている
-- **XPBD 変形体 (M60′、途中まで)** — 剛体ソルバとは別の池に粒子と拘束を持つ変形体レーン。
-  現在あるのは **ロープ** (`RopeComponent`、TypeId 44) だけで、`XpbdSolver` / `XpbdBackend` の
-  核と、剛体との双方向アタッチまでが動く。粒子数がオーサリング依存で可変なので状態は
-  ECS カラムではなく池に住み、`SimSources` 経由で `WorldHasher` と `SimSnapshot` (v6) の
-  両方に載せてある。**布とソフトボディは未実装** (a〜d 完了 / e〜n 中断) で、粒子と世界の
-  衝突もまだ無い。replay と golden の被覆はセルフテストのみ
-- **音響伝播と、その波が実際に鳴ること (M65 + M68)** — 整数チャンファ距離 (26 近傍の
-  `<11,16,19>`) の波面を **1 tick 1 リング**で広げ、**1 枚の場が 4 つの役**を持つ:
-  残光ボリュームの描画 / 敵 AI の聴覚 (到来方向つき) / 同じ重みで引いたナビゲーション /
-  **プレイヤーの耳に届く音** (M68)。オーディオ側はリスナーから 3 本目の Dial を一気に走らせ、
-  経路長で遮蔽と回折を整形する — 角を回る音は**戸口の位置へ音源ごと移して**回折ローパスを掛け
-  (パンナーは壁を知らないまま正しい方向へ鳴る)、局所の開放度から **2 つの I3DL2 プリセットを
-  連続補間**して廊下 → 部屋の残響が段差なく変わり、発生した波そのものが足音・衝撃音として鳴る
-  (**鳴る範囲 = 波の到達範囲**。`RolloffGain` が到達上限で厳密に 0 になることが根拠)。
-  **sim 状態は波スロット表だけ** — 場も残光もリスナー場も派生値でハッシュに載らないので、
-  リプレイ 7 ペアと golden 22 枚は M68 を通して 1 ビットも動いていない。
-  耳を使わずに配管を検査する口が `--acoustic-audio-log N` (整形した voice と一発再生を 1 行ずつ +
-  summary)、ショーケースが `--acoustic-demo`。詳細は
-  [ADR-017](docs/adr/ADR-017-acoustic-audio.md)
-- **Deep-Modal — 学習済み 3D-CNN による衝突音のモーダル合成 (M76)** — 録音済み SE を使わず、
-  「形状・接触位置・力の向きと強さ・材質・サイズで音が変わる」衝突音を物理衝突から自動で鳴らす。
-  メッシュを 32³ ボクセル化 → hex8 FEM で一般化固有値問題を解き → 16³ セルごとの接触励起を
-  Mel 32 帯域 × 力軸 3 本へ圧縮した特徴マップを学習 (`tools\deepmodal\`、torch、CPU 側は
-  ≤2M パラメータの 3D U-Net) → 自前実装の CPU 推論バックエンド (AVX2 + マルチスレッド、
-  スレッド数を変えても結果はバイト一致) がメッシュごとに 1 回だけ焼いて `.msfm` へキャッシュする。
-  衝突が起きるたびに、接触点・力の向きと大きさ・`PhysMat` (ヤング率・密度・Rayleigh 減衰) と
-  実寸から**その場でモード列を再構成**し、減衰正弦の和を合成して既存の 3D 再生経路 (定位/遮蔽/
-  リバーブ) にそのまま乗せる。音量は正規化しない絶対値 — 弱い衝突は小さく、強い衝突は大きい
-  (力積 `J` を `C(J) = kImpactRefImpulse・(J/kImpactRefImpulse)^0.5` で圧縮してから振幅へ渡す
-  較正済みカーブで、`J = kImpactRefImpulse` (6 N・s、「本気の一撃」の基準) の中央値ピークが
-  約 −12 dBFS になるよう合わせてある。M76i、詳細は `engine_spec.md` §10.7.2)。ただしこの
-  −12 dBFS は**基準メッシュ 1 個の測定**で、資産全体を代表する値ではない — 同条件で
-  382 枚を評価すると非ゼロ振幅だけでも p10-p90 で 27.9dB のばらつきがある (形状が変われば
-  放射も変わるという物理的に正しい差なので、メッシュ間で音量を均す正規化は入れていない —
-  それをやると「形状で音が変わる」という目的そのものを消してしまう)。学習データの
-  汎化不足で全 cell・全帯域の mask が落ちたまま常時無音になるメッシュもある (現行モデルで
-  382 枚中 35 枚。`--modal-bake` の `silent=N` で数えられる)。
-  `ModalSound` を持つ物だけが対象 (opt-in)、波 (§ 音響伝播) と sim 状態には 1 バイトも触れない。
-  詳細は `engine_spec.md` §10.7 と [ADR-020](docs/adr/ADR-020-deep-modal.md)
-- **スクリプトから触れる面を埋める (M70d)** — 外部プロジェクトで実際にゲームを作って
-  溜めた穴 (`docs/dogfooding.md`) のうち、**新しい ABI スロットを 1 本も足さずに直せる 10 件**を
-  まとめて回収した。スクリプトの調整フィールドに**日本語表示名とスライダ範囲**が付き
-  (`MYE_F_JP` / `MYE_F_RANGE`。上限も 16 → 32 フィールド)、`SetComponentField` が
-  **非ハッシュのコンポーネントにも書けるようになった** (読みは恒久的に閉じたまま —
-  書きは決定論レーンの副作用でスナップショットにも載るが、読むと C# が書いた値が
-  sim へ漏れる)。これで Fog / CameraPostFx / Decal / Terrain などの描画専用パラメータが
-  スロット 0 本で実行時に動かせる。あわせて回転・スケール・**ワールド位置**の取得、
-  CRT に依存しない角度ヘルパ (`MyeQuatFromEuler` / `MyeForwardOf`)、組込みメッシュ 6 種の
-  起動時登録、C# レーンへの生成 / 空間クエリ / CC / デバッグ描画 / `Tick` の公開。
-  ★実バグ 2 件も同じ回で消えた: `MyePlaySoundHere` が v8 以来**ローカル位置をワールド位置
-  として**鳴らしていたもの (親を持つ物で鳴る場所がずれる) と、`Instantiate` の親判定が
-  「実在する最初のエンティティ」を親なしと誤判定していたもの
-- **UI の押下判定をエンジンが持つ (M70c)** — hovered / pressed / clicked / focused を
-  `Scene` の sim 状態として持ち、**スクリプト層より前**に毎 tick 確定させる。
-  それまで押下判定は UIRenderer の中にだけ在って**ハイライト表示に使って捨てられており**、
-  ゲーム側で動く経路は「UIElement と同じ矩形をスクリプトに手書きしてマウスと比べる」
-  しか無かった (矩形の二重管理 = レイアウトを変えた瞬間に絵と当たり判定が食い違う)。
-  click は「掴んだ要素の上で離した」(Unity 意味論)、**フォーカス中の要素で決定を押した
-  tick も同じ clicked に合流する**ので、ゲーム側でマウスとパッドの分岐を書かなくてよい。
-  フォーカスは `UINavUp/Down/Left/Right` のアクションで動き、シーンが書いた
-  `focused=1` は起動直後に 1 度だけ拾う (Unity の EventSystem "First Selected" 相当)。
-  ★状態は**ワールドハッシュ対象** — UIElement 自体は非ハッシュなので、ここに載せないと
-  「配線が壊れても replay_verify が緑」になる。合成入力の D-Pad + A がタイトル画面の
-  2 ボタンを実際に操作し、フォーカス移動 → 決定 → スクリプトの登録フィールドまで
-  リプレイの照合対象に乗る (実測: tick 528 で focus が START → CLEAR BEST へ動き、
-  同 tick の決定でクリックが成立)。ABI は v16 = 110 スロット。詳細は `engine_spec.md` §6.12
-- **解像度に依らないゲーム内 UI (M70b)** — UI の数値は基準 1920x1080 の**キャンバス単位**で、
-  実 px へは `s = min(w/1920, h/1080)` の**一様スケール**だけを掛ける (Unity の Canvas Scaler
-  = Expand / UE5 の UMG DPI スケーリングと同じモデル)。キャンバス矩形は画面のアスペクトへ
-  伸びるので**レターボックスは出ず**、端アンカーの UI は必ず本当の画面端に付く。
-  それまで描画は実 px、ヒットテストとフォーカスナビは 1920x1080 固定で、
-  1920x1080 で走る構成がリポジトリに 1 つも無いため (既定 1600x900 / 撮影 960x540)
-  **`anchor=0` 以外は「見えている場所」と「押せる場所」が常にズレていた**。
-  ★キャンバス寸法とキャンバス座標のマウスは `InputSnapshot` に載せて `.rep` に記録する —
-  UIElement は非ハッシュなので、記録せずに実解像度を渡すと「窓の大きさで当たり判定が変わるのに
-  リプレイは緑」になる。ネット対戦はハンドシェイクでキャンバスを照合し、
-  アスペクトの違う 2 台は接続を拒否する (16:9 同士は解像度が違っても通る)。
-  被覆は golden の 23/24 枚目 (1280x720 = スケール経路 / 960x600 = 可変キャンバス経路)。
-  詳細は `engine_spec.md` §6.11
-- **エディタの日本語化** — UI 言語は**日本語が既定**で、View > 言語 から実行時に英語へ切替。
-  文字列は X マクロ 1 ファイルに集約し、訳の書き忘れを**コンパイルエラー**にする。
-  ウィンドウ名は `"表示名###英語ID"` 形式なので、切り替えても ImGui の ID —
-  つまり `imgui.ini` とドッキング配置 — は 1 バイトも変わらない。
-  Inspector の表示名は `FieldDesc::displayName` に持ち、シリアライズキー兼ハッシュ入力である
-  英語の `name` には触れない。詳細は [ADR-010](docs/adr/ADR-010-editor-localization.md)
-- **エディタ内 Git 連携 (Source Control)** — 変更一覧 → stage → commit → push、fetch → pull、
-  ブランチの作成と切替、競合の abort / ours / theirs までを**エディタを閉じずに**通す。
-  設計の中心は「`pull` や `checkout` が走っているエディタの足元でファイルを書き換える」瞬間:
-  書き込み系は**全文書が保存済みかつ何も実行中でないとき**だけ押せて (阻害要因 13 種を全部並べて出す)、
-  実際に変わったファイルの集合から **A (その場でホットリロード) / B (シーンを開き直す) /
-  C (再起動)** を決める。`.meta` や `.terrain.edit` は本体と一体で扱い、
-  Content Browser のバッジにも同じ状態が出る。実体は Rust の cdylib `MyeCollab.dll` で、
-  会話は **UTF-8 の JSON 1 本 + C ABI 6 関数**だけ (`cargo test` と
-  `tools\collab_verify.bat` がエディタ抜きで回帰を取る)。**sim には 1 バイトも触れない** —
-  Engine / Runtime / GameLogic / Shared からの include を静的検査 (規則 12) が禁じている。
-  前提は git 2.11 以上と rustup。clone 先はそろえなくてよい — モデル由来のサブアセット ID は
-  M74a から `.meta` の GUID 由来で、絶対パスに依存しない ([ADR-019](docs/adr/ADR-019-guid-subasset-keys.md))。
-  `project.mye.json` の `canonicalRoot` は作成時のパスを記録し、食い違いを知らせるだけの情報になった。
-  **初回の認証だけはターミナルで一度 `git push` して済ませておく** — 背景 fetch は
-  資格情報のダイアログを意図的に抑止している。詳細は [engine_spec.md §14](engine_spec.md) と
-  [ADR-015](docs/adr/ADR-015-in-process-rust-collab.md)。v1 でやらないこと: PR / レビュー / LFS /
-  sparse checkout / シーンの 3-way マージ / `git init` / 認証 UI
-- **Debug/Release 一貫性** — 固定 60Hz tick、`/fp:precise`、PCG32、明示ソートキー。
-  リプレイ (.rep) の tick 毎ワールドハッシュ比較で機械検証:
-  `tools\replay_verify.bat` が両構成ビルド → Debug 記録 → Debug/Release 照合 → 静的規則検査。
-  **被覆は 7 シーン**: 既定デモ (物理 / パーティクル / スクリプト) / 部位ショーケース
-  (スキンメッシュのボーン追従 = 骨駆動 LocalTransform の構成間ビット一致) /
-  ゲームフロー統合デモ (シーン遷移・ポーズ・セーブ・アクションマップ) /
-  ローカル 2P デモ (プレイヤー別入力レーンの配線) /
-  物理ショーケース (空力・浮力・マグヌス・ジャイロ・材料・CCD) /
-  関節ショーケース (拘束ソルバ・リミット・モータ・破断・複合・凸包・ラグドール・車両) /
-  音響ショーケース (波スロット表 + 敵 FSM + プレイヤー操作。**記録側だけ `--synth-input`** —
-  視点角は生マウスデルタの積分なので、無入力だと恒常ゼロで検査にならない)。
-  割れた tick は**どのエンティティのどのフィールドが**割れたかまで自動で出る (`--hash-diff`)
-- **What-if リプレイ (タイムトラベルの分岐)** — Play 中に過去 tick へ戻り、**入力 / 調整値 / シーンの状態**
-  を変えてから再開すると、離れた未来は捨てられず**分岐レーン**として残る。SceneView には元の未来が
-  **同じ tick の半透明メッシュ + トレイル (ゴースト)** で重なり、Timeline が「最初に乖離した tick」と、その tick で
-  **どのエンティティのどのフィールドが**違うか (hex の値まで) を表で出す。分岐は切り替えて行き来できる。
-  ゴーストは第 2 の世界を回すのではなく、分岐した瞬間に**通常 tick と同じ `RunOneTick`** で 1 回だけ
-  再シムして採取する (Release 100 tick = 25 ms)。同じ入力で同じ未来をなぞった分岐は自動で畳まれる =
-  決定論そのものが絵になる。`Editor.exe --whatif-selftest` が Debug/Release で機械検証。
-  Timeline (M73) は⏸/▶/step のトランスポートを持ち、**一時停止は tick 番号ごと止まる** (ホールド。
-  ポーズ中にリングへ空の tick が溜まらない)。帯はクリック / ドラッグ / ホイールでシークでき、
-  fork 点・乖離 tick・スナップショット・入力が押されていた区間・上書き区間が絵に出る。
-  詳細は [ADR-018](docs/adr/ADR-018-whatif-branches.md)
-- **クラッシュしたら「再現可能なバグ報告」が自動で残る** — 例外 (スタックオーバーフロー含む) /
-  `std::terminate` / 純粋仮想呼び出し / CRT 不正パラメータを捕まえ、`crash\<日時>\` に
-  minidump + `crash.txt` (障害モジュール + RVA + ビルドの git ハッシュ + 起動コマンドライン) +
-  **`crash.rep`** を吐く。`crash.rep` は開始スナップショットを埋め込んだリプレイなので、
-  受け取った側が `Runtime.exe --replay-verify crash.rep` するだけで
-  **起動シーンに依らず落ちる直前の tick までハッシュ一致で再現**する
-  (Debug の Editor で出た報告を Release の Runtime で再生できることを実測)。
-  ハンドラ内では一切ヒープを触らないよう、.rep のバイト列は平常時から組み上げて持っている
-- **決定論を転用したネットコード (2 人 P2P)** — UDP + 遅延ロックステップ + **予測ロールバック**。
-  未着の相手入力を「直近の確定値の繰り返し」で予測して先へ進み、外れたら最大 8 tick 巻き戻して
-  **通常 tick と同じ `RunOneTick`** で再シムする。ネット層は sim 状態を 1 バイトも書かない —
-  「いつ tick が回るか」は実時間依存でよいが「tick が何を消費するか」は確定入力だけで決まる、
-  という分離がすべて。`tools\net_verify.bat` は 2 プロセスを実際に起動して
-  **2 台の .rep がバイト一致**し、さらに**ローカル 2P 実行の .rep とも一致**することを確かめる
-  (遅延 1 tick + ロス 30% で 21 回巻き戻しても一致を実測)。接続時は API 版 / .rep 版 /
-  起動オプション / **開始ワールドハッシュ**を照合して不一致は拒否。走行中も 8 tick ごとに
-  確定ハッシュを交換し、割れたら `crash\desync_<tick>_p<lane>\` に再現可能なバンドルを吐いて停止する。
-  詳細は [ADR-013](docs/adr/ADR-013-predictive-rollback-netcode.md)
-- **CI (GitHub Actions)** — push ごとに 8 ビルド (4 プロジェクト × Debug/Release、警告 0 を強制) +
-  リプレイ照合 7 ペア + 静的規則検査 + セルフテスト両構成 + 配布パッケージのスモークが回る。
-  **GPU の無い runner でも回る**のは sim が CPU 専用だから — 描画は WARP
-  (ソフトウェアラスタライザ) へ自動フォールバックし、ワールドハッシュはドライバに依らず一致する
-  (WARP で録った .rep が RTX 3060 でそのまま照合できることを実測)
+### オブジェクト・スクリプト・アセット
+
+| 機能 | 内容 |
+|---|---|
+| ハイブリッド ECS | 利用側は GameObject / コンポーネント、内部はアーキタイプ別 SoA。世代付き EntityID と構造変更バッファを使用 |
+| 階層・有効状態 | LocalTransform から WorldMatrix を計算。親の Active を子へ伝播 |
+| リフレクション | 登録フィールドを Inspector、JSON、DLL 状態移行、ワールドハッシュで利用 |
+| C++ ホットリロード | GameLogic.dll と PDB をコピーして差し替え、名前と型が一致する登録フィールドを移行 |
+| C# スクリプト | .NET ホストと Roslyn による別の記述経路。決定論検証とは分離 |
+| データスキーマ | `.component.schema.json` からコンポーネントを定義し、C++ / C# 向けアクセスコードを生成 |
+| シーン・構成アセット | `.scene.json`、`.actor.json` / `.prefab.json`、インスタンス化、Apply / Revert、フィールド・コンポーネントの上書き |
+| 部位・ソケット | Part の名前・タグ検索、骨への追従、部位の箱・球による判定 |
+| アセット管理 | GUID と `.meta`、モデルの GUID 由来サブアセット ID、クック済みキャッシュ、変更監視 |
+| ゲーム基盤 | 入力アクション、ゲームパッド、シーン遷移、セーブ、ローカル複数プレイヤー |
+
+主なアセット形式は glTF / GLB / FBX / OBJ、PNG / JPEG / TGA / BMP / DDS、WAV / OGG です。マテリアル、アニメーション、音設定、物理材料、地形などには専用 JSON 資産を使います。
+
+**未登録コンポーネントの JSON は保持して再保存する実装になっています。** 型が未登録のまま実行できるわけではありませんが、旧 README にあった「未登録なら保存で消える」という説明は現状には当てはまりません。
+
+スクリプト API の正本は [src/Shared/EngineAPI.h](src/Shared/EngineAPI.h) と [src/Shared/ScriptAPI.h](src/Shared/ScriptAPI.h) です。現行の `MYE_API_VERSION` は **21**。ABI を更新した場合は本体、ゲーム DLL、言語間ミラーの整合が必要です。
+
+### 描画・演出
+
+- **Forward / Deferred** を実行時に切替。PBR、IBL、平行光・点光源・スポット光、影、透明描画に対応。
+- **DirectX 11 Compute Shader による二次光線追跡**。自前 BVH で拡散 GI・平行光の影・反射を計算し、SVGF でデノイズ。DXR は使用しません。
+- **ReSTIR 反射**。時空間のサンプル再利用と、映る物体の `ReflectionClass` に応じた再利用制御。既定無効。
+- **SSR、反射プローブ、デカール、TAA、Bloom、トーンマップ、フォグ**。SSR・TAA などには Deferred の条件があります。
+- **ボリュメトリックフォグ**。フロクセルに光と密度を格納し、メッシュ・地形・空・パーティクル・VFX へ合成。
+- **地形・アニメーション**。ハイトフィールド、編集、LOD / スカート、スケルタルアニメーション、ブレンド、Animator Controller。
+- **CPU / GPU パーティクル**。CPU は SoA + SSE、GPU は Compute + indirect draw。切替・比較モードを持ちます。
+- **Sprite / Trail / TextMesh / Effect** による演出と、プロジェクト専用のポスト・Compute 処理。
+- **水面波**。`WaterWaveComponent` の Gerstner 波による描画と、動的波高に連動した浮力。
+
+光線追跡の構成・過去の計測条件は [ADR-009](docs/adr/ADR-009-hybrid-path-tracing.md)、反射の再利用は [ADR-016](docs/adr/ADR-016-restir-reflection.md) を参照してください。過去の GPU 時間を、現在のシーンや別 GPU の性能保証として扱わないでください。
+
+### 物理・音響・AI
+
+| 分野 | 内容 |
+|---|---|
+| 自作剛体ソルバ | 接触の蓄積インパルス、サブステップ、静動摩擦、転がり抵抗、スリープ、アイランド、CCD |
+| 形状・クエリ | 単純形状、メッシュ、凸包、複合コライダー、地形、Raycast / SphereCast / Overlap |
+| 力と機構 | 空力、翼面、マグヌス、浮力、ばね、関節、リミット、モータ、破断、ラグドール、車両 |
+| XPBD | ロープと剛体への双方向アタッチ。変形体全体としては部分実装 |
+| 3D 音声 | 音源定位、遮蔽、回折、ミキサー、残響 |
+| 音響伝播 | 整数距離場による波面を、可視化・敵の聴覚・経路探索・プレイヤーに届く音へ利用 |
+| 敵 AI | 音・光のセンサー、状態機械、グリッド上の経路探索 |
+| Deep-Modal | 形状・材質・接触位置・衝突の強さに応じたモーダル衝突音の合成 |
+
+Deep-Modal は、学習済み `.dmnet` からメッシュ単位の特徴を `.msfm` に焼き、`ModalSound` を持つ物体の衝突から音を合成します。録音 SE の一律再生とは異なり、形状や励起条件が音色・音量へ影響します。モデルの汎化やマスクによって無音になるメッシュがあり、資産ごとの確認が必要です。学習環境と操作は [tools/deepmodal/README.md](tools/deepmodal/README.md)、設計は [ADR-020](docs/adr/ADR-020-deep-modal.md) を参照してください。
+
+### ゲーム内 UI
+
+基準 1920×1080 のキャンバス単位でレイアウトし、画面に応じて一様に拡縮します。アンカー、描画と共通のヒット判定、マウス・ゲームパッドのフォーカス操作に対応します。
+
+ボタンに加えて Toggle / Slider などのウィジェットを持ち、クリックやフォーカスなどの入力状態を Tick 内で確定してスクリプトへ渡します。UI 操作を含む Replay デモは `--ui-demo --ui-demo-input` です。
+
+### 再現・比較・障害解析
+
+- **Replay** — 入力と Tick ごとのワールドハッシュを記録し、Debug / Release 間で比較。差異をエンティティ・フィールド単位へ掘り下げます。
+- **スナップショット / タイムトラベル** — 過去の状態を復元し、通常実行と共通の `RunOneTick` で再シミュレーション。
+- **What-if 分岐** — 過去へ戻って入力や状態を変え、元の未来を別レーンとして保持。Timeline の差分と SceneView のゴーストで比較。
+- **クラッシュ記録** — minidump、`crash.txt`、記録可能な範囲の `crash.rep` を出力し、障害直前のシミュレーション状態の再現に利用。
+- **2 人 P2P** — UDP、遅延ロックステップ、予測ロールバック。接続条件を照合し、状態不一致時は診断用バンドルを出力。
+
+対象は明示的に管理・記録されたシミュレーション状態です。GPU 出力、C# の任意状態、外部 I/O、クラッシュの原因そのものまで自動的に再現する仕組みではありません。
+
+## プロジェクト専用シェーダーとポストエフェクト
+
+現行では、エンジン組込みシェーダーの上書きに加え、ゲーム側で専用ポストと Compute Shader を追加できます。
+
+| 入口 | 用途 |
+|---|---|
+| `assets/shaders/` | 同名のエンジン組込みシェーダーを上書き。指定がなければエンジン側を使用 |
+| `*.post.hlsl` | プロジェクトの `assets/` 配下に置くポストエフェクト |
+| `*.cs.hlsl` | プロジェクトの `assets/` 配下に置く Compute Shader |
+| `*.fxstack.json` | ポスト / Compute の実行列とプロパティ設定 |
+| `CameraPostFx.fxStack` | カメラに使用するスタックを割り当てる AssetRef |
+
+Asset Browser に作成用の入口があり、シェーダー変更は include 依存を含めて監視します。コンパイル失敗時には最後に有効だったプログラムを維持します。プロジェクトシェーダーは短名で索引されるため、`assets/` 内で名前が重複しないようにします。
+
+**専用スタックの見た目は Game ビュー / Runtime で確認します。** Scene ビューのカメラ上書き経路ではユーザーポストとスタック内 Compute を実行しません。
+
+Tex2D の既定名には制限があります。現在 `white` は白テクスチャ、`gray` / `black` / `bump` は警告付きで白へフォールバックします。[既定テクスチャの説明](docs/project-shaders-tex2d-defaults.md) と、実装の [ShaderManager](src/Engine/Renderer/ShaderManager.h)、[FxStackAsset](src/Engine/Renderer/FxStackAsset.h)、[ComputeAbiRunner](src/Engine/Renderer/ComputeAbiRunner.h) を参照してください。
 
 ## エディタ操作
 
-- **Scene ビュー**: 右ドラッグ + WASDQE (Shift で加速) — エディタカメラ
-- **Play / Pause / Step**: メニューバー中央。Play 中の編集は Stop で破棄 (Unity 方式)
-- **Game ビュー**: シーン内カメラ視点。Play 中は矢印キーで BoxTextured (プレイヤー) が移動、
-  黄色い Spawned キューブに触れると回収 (GameLogic.dll の `OnTriggerEnter`)
-- **Inspector**: リフレクションから widget を自動生成。スクリプトのフィールドもここに出る
-  (M70d 以降は `MYE_F_JP` / `MYE_F_RANGE` を付ければ日本語表示名とスライダ範囲も付く)
-- **Particle Settings**: CPU/GPU 切替・比較モード・SIMD トグル・更新時間表示
+| 画面・操作 | 役割 |
+|---|---|
+| Hierarchy / Inspector | 親子構造、選択、コンポーネント追加、登録フィールドの編集 |
+| Scene ビュー | 右ドラッグ + WASDQE でカメラ移動、Shift で加速。配置・ギズモ・デバッグ表示 |
+| Game ビュー | シーンのカメラから描画。ゲーム操作は割り当てたスクリプトと入力設定に従う |
+| Play / Pause / Step | 実行、一時停止、Tick 単位の進行。Stop で Play 開始前へ復元 |
+| Asset Browser | アセットの検索、作成、インポート、移動、参照管理 |
+| Search | エンティティ・アセットの検索と、選択対象への参照確認 |
+| Timeline | シーク、分岐切替、分岐点・乖離 Tick・入力区間の表示 |
+| Animation / Animator Controller | クリップと状態遷移の編集 |
+| Particle Settings / Audio Mixer / SoundGen | 粒子、音量系統、音生成の調整 |
+| Profiler / Console | 処理時間、ログ、エラーの確認 |
+| Project Settings / Build Settings | プロジェクト設定と配布ビルド |
+| Source Control | 変更一覧、stage / commit / push、fetch / pull、ブランチ、競合への対応 |
 
-## CLI (検証/CI 用)
+基本ショートカットは `Ctrl+S`（保存）、`Ctrl+Z` / `Ctrl+Y`（Undo / Redo）、`Ctrl+D`（複製）、`F`（選択へフォーカス）、`F2`（名前変更）、`Ctrl+C/X/V`（コピー / 切り取り / 貼り付け）、`Delete`（削除）です。操作対象や編集中の状態によって有効範囲が変わります。
 
-```
-Editor.exe --selftest                     # ECS + シリアライザ回帰テスト
-Editor.exe --replay-record out.rep --replay-ticks 600
-Editor.exe --replay-verify out.rep        # exit code 0/1
-Editor.exe --autoplay --deferred --frames 600 --screenshot shot.png
-Runtime.exe --deferred --rt-demo --rt-gi --rt-shadow --rt-refl --rt-anim-seed
-                                          # レイトレのショーケース (コーネル箱)
-Runtime.exe --render-demo --deferred --rt-refl --rt-restir
-                                          # ReSTIR 反射 (M67) = スクショ 22 枚目。
-                                          #   既定は temporal のみ。--rt-restir-spatial で
-                                          #   空間再利用も on (既定 off = 目標帯の計測結果)、
-                                          #   --rt-restir-no-spatial は明示 off、
-                                          #   --rt-restir-visray は候補ごとに可視レイを撃つ
-                                          #   (spatial を含意)。--rt-class-override N で
-                                          #   全インスタンスの ReflectionClass を強制 (-1 = off)
-Editor.exe --parts-demo                   # 部位 (ソケット) のボーン追従シーン
-Editor.exe --acoustic-demo                # 音響ショーケース (L 字廊下 + 2 部屋 + 床材 6 枚 +
-                                          #   敵 2 種 + プレイヤー) = replay 7 ペア目 +
-                                          #   スクショ 18/19 枚目。波は SceneView の「音響」
-                                          #   トグルでしか見えない
-Editor.exe --acoustic-demo --acoustic-audio-log 300 --synth-input
-                                          # 耳を使わずに音響 x オーディオの配管を検査する。
-                                          #   整形した voice と波の一発再生を 1 行ずつ +
-                                          #   終了時 summary。--no-audio と併用すると 0 行
-Editor.exe --modal-voxelize --list list.txt --out DIR
-                                          # メッシュ (builtin:// / .off / .obj / .fbx / .glb /
-                                          #   .gltf) を .mvox へ (M76b)。tools\deepmodal の
-                                          #   学習データ生成が呼ぶのと同じ経路
-Editor.exe --modal-bake [--modal-backend cpu|d3d11cs]
-                                          # assets 配下のモデルを全登録して .msfm へ焼く (M76e)。
-                                          #   .dmnet を差し替えたら 1 回回す。1 行/メッシュ +
-                                          #   bakeMsAvg 集計
-Runtime.exe --modal-demo --modal-sync-bake --modal-audio-log 300 --synth-input
-                                          # 材質違いの ModalSound 箱のショーケース (M76f)。
-                                          #   耳を使わず衝突→合成の配管を検査する。
-                                          #   2 run の [modal] t= 行がバイト一致する
-Editor.exe --terrain-demo [--terrain-lod N] [--terrain-skirt N]
-                                          # 地形ショーケース (M58c) = スクショ 8 枚目
-Editor.exe --flow-demo                    # タイトル/ゲームのシーン遷移 + セーブ/ロード統合デモ
-Editor.exe --local-demo --local-players 2 # ローカル 2P (レーン n は XInput スロット n)
-Editor.exe --particle-demo                # 粒子表現のショーケース (M63a) = スクショ 16/17 枚目
-                                          #   (CPU/GPU の突き合わせ)
-Editor.exe --scene assets\scenes\x.scene.json
-                                          # 任意のシーンを開く (相対パス可)
-Editor.exe --physics-demo                 # 物理ショーケース (空力/浮力/マグヌス/材料/CCD)
-                                          #   = replay 5 ペア目 + スクショ 13 枚目
-Editor.exe --joint-demo                   # 関節ショーケース (関節/機構/ラグドール/車)
-                                          #   = replay ペアの 6 本目 + スクショ 14 枚目
-Runtime.exe --render-demo [--deferred]    # 描画ショーケース (スポット/点光源/反射床/フォグ/遠景)
-                                          #   = スクショ回帰 6/7 枚目の被写体
-Runtime.exe --render-demo --deferred --froxel
-                                          # ボリュメトリック霧 (フロクセル)。on にすると
-                                          #   距離フォグはグリッドの外側だけを持ち、
-                                          #   ゴッドレイは自動 off になる (三重計上の解消)。
-                                          #   Forward / Deferred どちらでも効き、不透明・半透明・
-                                          #   地形・空・パーティクル (CPU/GPU 両方)・
-                                          #   VFX (Sprite/Trail/TextMesh) に載る。
-                                          #   UI は表示 > レンダリング > ボリュメトリックフォグ
-Runtime.exe --fog-demo --froxel --particle-backend gpu
-                                          # 霧のショーケース (M57追補) = スクショ 15 枚目。
-                                          #   GPU パーティクルと Sprite/Trail/TextMesh の
-                                          #   唯一のピクセル被覆 (それまでどちらも golden に
-                                          #   1 枚も写っていなかった)。柱を 10/25/45/70m に
-                                          #   並べてグリッド端 (64m) の受け持ち交代を絵に出し、
-                                          #   画面上で同じ大きさの板 2 枚で霧の量だけを比べる
-Runtime.exe --particle-compare            # CPU/GPU を横に並べて描く (設定は書き戻さない)
-Runtime.exe --render-demo --deferred --taa
-                                          # TAA (M55d、Deferred のみ)。--ssr で SSR、
-                                          #   --hzb-debug N で Hi-Z ピラミッド、
-                                          #   --velocity-debug で速度バッファを可視化
-Runtime.exe --render-demo --deferred --froxel --froxel-dump 3
-                                          # フロクセルを読み戻して CPU と照合 (調査専用)。
-                                          #   --froxel-no-temporal でテンポラル再投影を外す。
-                                          #   音響側の同型は --acoustic-dump N
-Runtime.exe --render-demo --deferred --rt-refl --rt-debug 12
-                                          # RT のデバッグ表示 (12 = reservoir の M /
-                                          #   13 = 一次ヒットのクラス / 14 = 反射像側のクラス)。
-                                          #   --rt-no-temporal / --rt-no-svgf でデノイザの段を
-                                          #   外す A/B、--rt-freeze-seed で乱数を止める
-                                          #   (撮影時は自動 freeze。画質を測るなら --rt-anim-seed)
-Editor.exe --snapshot-stress 600          # スナップショットの撮影/復元を往復させ続ける
-Editor.exe --timetravel-selftest [N]      # タイムトラベルのシーク結果と記録ハッシュを照合
-Editor.exe --whatif-selftest [N]          # 分岐 (What-if): 戻って再開しても元の未来が分岐として
-                                          #   残り、編集は分岐点の乖離になり、元の分岐へ戻れる
-Editor.exe --replay-record out.rep --replay-fast
-                                          # 記録を早回し (描画を待たない)。replay_verify が使う
-Editor.exe --img-diff a.png b.png --tol 3 # PNG 差分 (exit code で成否)
-Editor.exe --font-embedded                # 内蔵フォント固定 (スクショの機種差を殺す)
-Editor.exe --screenshot shot.png --shot-frame 120 --frames 200
-                                          # 決定的撮影。frame 番号 == tick 番号になり、
-                                          #   生マウスデルタは 0 に固定される (M68c)。
-                                          #   --shot-every N で連写 (この場合は決定的にならない)
-Runtime.exe --no-crash-handler            # クラッシュハンドラを外して素で落とす
-Runtime.exe --net-demo --net-join HOST:PORT --net-loss 5 --net-no-halt-on-desync
-                                          # パケットロス注入 / desync でも止めずに継続
-Editor.exe --create-project DIR --template demo
-                                          # プロジェクトを CLI で作る (--template は empty|demo、既定 empty)
-Editor.exe --lang en --width 1600 --height 900
-                                          # 起動言語とウィンドウサイズ
-Editor.exe --package dist --package-dds --package-zip
-                                          # DDS 一括クックと zip 圧縮まで含めてパッケージ
-Editor.exe --warp                         # WARP (ソフトウェアラスタライザ) 固定で起動
-Editor.exe --package dist                 # 配布パッケージを CLI で作成 (exit code で成否)
-Runtime.exe --crash-test av --crash-at-tick 60
-                                          # 意図的に落としてクラッシュバンドルを作る
-Runtime.exe --net-demo --net-host 7777    # 2 人対戦デモ (ホスト)
-Runtime.exe --net-demo --net-join 127.0.0.1:7777 --net-delay 3
-                                          # 同 (参加側)。--net-no-rollback で素のロックステップ
-Runtime.exe --net-poke-tick 60            # 片側だけ壊して desync 検出と診断チェーンを試す
-Runtime.exe --rep-diff a.rep b.rep        # 2 本の .rep がどの tick で割れたか
-tools\replay_verify.bat                   # 一貫性検証一式 (7 シーン被覆)
-tools\shot_verify.bat [--update]          # 決定的スクショ 24 枚を tests\golden と比較
-tools\crash_verify.bat                    # 5 経路で実際に落として .rep の再現性を検証
-tools\net_verify.bat                      # 2 プロセスのネット対戦 + desync 検出の実地検証
-tools\check_rules.ps1                     # コーディング規則の静的検査
-tools\gen_project_files.ps1               # ソース一覧を vcxproj に反映
-tools\collab_verify.bat [--update]        # Source Control の回帰検証。一時リポジトリへ
-                                          #   NDJSON のシナリオを流し、期待出力と比較する
-                                          #   (エディタも D3D も要らない。先に build_collab.bat)
-pwsh -File tools\collab_fixture.ps1 <dir> # git 管理下の最小プロジェクトを作る。実機目視は
-                                          #   Editor.exe --project <dir> (Source Control は
-                                          #   --project 起動でしか動かない)
+UI は日本語・英語に対応し、メニューから切り替えられます。CLI で固定する場合は `--lang ja` / `--lang en` を指定します。
+
+## ショーケースと CLI
+
+### まず試す
+
+```powershell
+# 描画ショーケース
+.\bin\x64\Release\Runtime.exe --render-demo --deferred
+
+# 物理と関節・機構
+.\bin\x64\Debug\Editor.exe --physics-demo --autoplay
+.\bin\x64\Debug\Editor.exe --joint-demo --autoplay
+
+# 音響 / UI
+.\bin\x64\Debug\Editor.exe --acoustic-demo --autoplay
+.\bin\x64\Debug\Editor.exe --ui-demo --autoplay
 ```
 
-上は**作者が使う口**だけ。ほかに調整・調査専用のフラグが 24 本ある
-(`--bloom-threshold` / `--exposure` / `--postfx-mode` / `--no-jobs` / `--no-cook-cache` /
-`--hash-dump` / `--pick-test` / `--probe-bake*` / `--manager-shot` など)。
-実在する全 113 本は `src\Editor\EditorMain.cpp` と `src\Runtime\RuntimeMain.cpp` の
-引数解析が正本。
+| フラグ | 内容 |
+|---|---|
+| `--render-demo` | 光源、反射床、フォグなど |
+| `--rt-demo` | コーネル箱。GI・影・反射は下記のフラグで指定 |
+| `--terrain-demo` | 地形。`--terrain-lod N` / `--terrain-skirt N` で調整 |
+| `--physics-demo` / `--joint-demo` | 物理、関節、ラグドール、車両 |
+| `--fog-demo` / `--particle-demo` | フォグ、CPU / GPU 粒子 |
+| `--acoustic-demo` | 波面と聴覚・AI。波の可視化は Scene ビューの音響表示で確認 |
+| `--modal-demo` | 材質の異なる物体の合成衝突音 |
+| `--ui-demo` | UI ウィジェット |
+| `--local-demo` / `--net-demo` | ローカル複数プレイヤー / ネット対戦 |
+| `--parts-demo` / `--flow-demo` | 部位追従 / シーン遷移・セーブ。Editor 専用 |
 
-CI (`.github\workflows\ci.yml`) は**この bat をそのまま呼ぶ** — CI 専用の検証ロジックは
-書かない。CI 固有の事情は環境変数 4 種だけで注入する:
+```powershell
+# Compute Shader による GI・影・反射
+.\bin\x64\Release\Runtime.exe --rt-demo --deferred --rt-gi --rt-shadow --rt-refl --rt-anim-seed
 
-| 変数 | CI での値 | 用途 |
-|---|---|---|
-| `MYE_EXTRA_ARGS` | `--warp --no-audio` | 全 `Editor.exe` 実行へ後置 (GPU / 音源の無い runner 用) |
-| `MYE_MSBUILD_ARGS` | `/p:MyeWarnAsError=true` | 警告 0 を強制 (既定 off。ローカル開発は止めない) |
-| `MYE_DOTNET_ARGS` | `/p:TreatWarningsAsErrors=true` | 同上 (C# 側。綴りが違う) |
-| `MYE_SHOT_SKIP_FXAA` / `_TAA` / `_SSR` / `_FROXEL` / `_FOG` / `_PARTICLE` / `_RT` | `1` | 機種差が増幅する 10 枚をランナーでは撮らない (tol=0 のローカル限定枠) |
+# ReSTIR 反射 / ボリュメトリックフォグ
+.\bin\x64\Release\Runtime.exe --render-demo --deferred --rt-refl --rt-restir
+.\bin\x64\Release\Runtime.exe --fog-demo --froxel --particle-backend gpu
 
-## 計測 (RTX 3060 / 1600x900 / Release)
+# 明示したシーンを開く（実在するパスへ置き換える）
+.\bin\x64\Debug\Editor.exe --scene "assets\scenes\main.scene.json"
 
-レイトレ 3 レーンを全部 on にしたときの GPU 時間。GI と反射は内部 1/2 解像度、影はフル解像度。
-`[rt]` ログの GpuTimer は最終フレーム 1 サンプルなので、同一条件 5 回の**最小値**を載せている。
-
-| パス | 既定デモ (522 インスタンス) | コーネル箱 (11 インスタンス / 780 三角形) |
-|---|---|---|
-| BVH 構築 (CPU) | 0.20 ms | 0.02 ms |
-| 拡散 GI (1spp) | 0.48 ms | 1.50 ms |
-| テンポラル + SVGF | 0.35 ms | 0.55 ms |
-| RT 影 (トレース + フィルタ) | 0.49 ms | 0.49 ms |
-| RT 反射 (トレース + デノイズ) | 0.74 ms | 0.49 ms |
-| **合計** | **約 2.1 ms** | **約 3.0 ms** |
-
-インスタンス数が 1/50 でも閉じた箱の方が GI が 3 倍重い — **全レイがジオメトリに当たり
-2 バウンス目と影レイまで必ず走る**ため。コストを決めるのは三角形数ではなくレイの平均行程。
-
-## アーキテクチャ
-
-```
-Editor      ImGui エディタ (Hierarchy / Inspector / SceneView / Profiler ...)
-GameLogic   ユーザースクリプト DLL — C ABI (src/Shared) だけを介してエンジンと通信
-Engine      シーン / GameObject / ホットリロード制御 / パーティクル / リプレイ
-Renderer    DX11 抽象 / IRenderPath (Forward・Deferred) / シェーダ管理
-Core        ECS / リフレクション / RNG / ログ / FileWatcher / JSON
-Platform    Win32 / 入力 / 時間 / DLL ロード
+# 指定 Tick の画像を取得
+.\bin\x64\Release\Runtime.exe --render-demo --screenshot "cache\render.png" --shot-frame 120 --frames 121
 ```
 
-上位レイヤは下位レイヤのみに依存。生の D3D 型は Renderer 層より上に出さない。
-DLL 境界 (`src/Shared/`) は C ABI + POD のみ (STL / vtable / 例外は越えない)。
+### 診断用の例
+
+```powershell
+# 音響経路 / モーダル合成のログ。聴感確認は別途必要
+.\bin\x64\Debug\Editor.exe --acoustic-demo --acoustic-audio-log 300 --synth-input
+.\bin\x64\Release\Runtime.exe --modal-demo --modal-sync-bake --modal-audio-log 300 --synth-input
+
+# モデルを .msfm へベイク
+.\bin\x64\Release\Editor.exe --modal-bake --project "C:\MyGames\FirstGame" --modal-backend cpu
+
+# 2 人対戦（ホストと参加側を別プロセスで起動）
+.\bin\x64\Release\Runtime.exe --net-demo --net-host 7777
+.\bin\x64\Release\Runtime.exe --net-demo --net-join 127.0.0.1:7777 --net-delay 3
+```
+
+`--warp` はソフトウェア描画を指定します。`--no-audio` は音声初期化を無効にするため、音の確認には使用しません。
+
+CLI の正本は [EngineCli.cpp](src/Engine/Engine/EngineCli.cpp)（共通フラグ）、[EditorMain.cpp](src/Editor/EditorMain.cpp)、[RuntimeMain.cpp](src/Runtime/RuntimeMain.cpp)、[ShowcaseScenes.cpp](src/Engine/Engine/ShowcaseScenes.cpp)（デモ一覧）です。デモや検証は `cache/` やシーンなどの生成物を書き出す場合があります。
+
+## 配布パッケージ
+
+Release の本体をビルドし、外部プロジェクトのスクリプトをビルド・保存した後、Build Settings または CLI から生成します。出力先には新しい専用フォルダを指定してください。
+
+```powershell
+.\bin\x64\Release\Editor.exe --project "C:\MyGames\FirstGame" --package "C:\MyGames\FirstGame\dist\release-01" --package-boot main.scene.json --package-dds --package-zip
+```
+
+`--package-boot` は `assets/scenes/` 内のシーン名です。`--package-dds` はテクスチャの DDS クック、`--package-zip` は ZIP 作成を追加します。実行元 Editor と同じ出力ディレクトリの Runtime を使うため、配布用は Release の Editor で実行してください。
+
+パイプラインはスクリプトビルド、アセットのクック、コピーなどを処理します。プロジェクトの `cache/GameLogic.dll`、アセット、エンジン組込みシェーダーを集め、選んだ起動シーンを配布先の `assets/scenes/main.scene.json` に配置します。C# を使う場合はホストと .NET 実行依存も確認します。Git サービスや `.git` は配布対象に含めません。
+
+生成後は **出力先の `Runtime.exe`** を起動して、起動シーン・入力・音・フォント・シーン遷移を確認してください。パッケージ生成成功と、配布先でゲームを遊び通せることは別の確認です。処理の正本は [BuildSettingsWindow.cpp](src/Editor/Windows/BuildSettingsWindow.cpp) です。
+
+## 検証と CI
+
+### 基本確認
+
+```powershell
+pwsh -NoProfile -File .\tools\check_rules.ps1
+.\bin\x64\Debug\Editor.exe --selftest
+.\bin\x64\Release\Editor.exe --selftest
+```
+
+SelfTest は ECS、シリアライズ、物理、アセット、スクリプト API、エディタ機能などの回帰テストを集めた入口です。テストデータの相対パスを解決できるよう、リポジトリルートから実行してください。任意サービスに依存する項目のスキップは、合格とは区別します。
+
+### Replay と個別診断
+
+```powershell
+# 両構成のビルドを含む検証一式
+.\tools\replay_verify.bat
+
+# 個別の記録 / 照合
+.\bin\x64\Debug\Editor.exe --replay-record "cache\sample.rep" --replay-ticks 600
+.\bin\x64\Release\Editor.exe --replay-verify "cache\sample.rep"
+
+# 復元 / 分岐の検証
+.\bin\x64\Debug\Editor.exe --timetravel-selftest 400
+.\bin\x64\Debug\Editor.exe --whatif-selftest 400
+```
+
+現行の `replay_verify.bat` は、既定デモ・部位・ゲームフロー・ローカル 2P・物理・関節・音響・UI の **8 シーン**を検証します。Debug 記録、Debug / Release 照合、スナップショット往復、タイムトラベル、What-if、静的規則検査を含みます。ログは `cache/replay_logs/` に出力します。
+
+このスクリプトはクック済みキャッシュや過去の検証ログを消して再生成します。保存したい生成物がある場合は実行前に退避してください。
+
+| コマンド | 確認する内容 |
+|---|---|
+| `tools\shot_verify.bat` | Release Runtime で撮影し、`tests/golden/` とピクセル比較。差分は `tests/actual/` |
+| `tools\crash_verify.bat` | 意図的なクラッシュを起こし、バンドルと Replay の再現性を検査 |
+| `tools\net_verify.bat` | 複数プロセスでネット対戦、記録の一致、desync 検出を検査 |
+| `tools\collab_verify.bat` | Rust サービスに Git 操作シナリオを流し、期待出力と比較 |
+| `tools\gen_project_files.ps1` | ソース追加・移動後に `.vcxproj` / `.filters` の一覧を更新 |
+
+画像検証は先に Release をビルドします。`shot_verify.bat --update` は比較基準そのものを更新する操作です。通常の検証では付けず、意図した見た目の変更を確認してから使います。
+
+### CI の範囲
+
+[.github/workflows/ci.yml](.github/workflows/ci.yml) は push / pull request / 手動実行を入口に、Windows runner で C#・Rust のビルド、Rust テスト、Git 連携検証、Replay、両構成の SelfTest、画像回帰、パッケージ作成と内容検査を呼びます。
+
+| 環境変数 | CI での用途 |
+|---|---|
+| `MYE_EXTRA_ARGS` | `--warp --no-audio` を検証実行へ渡す |
+| `MYE_MSBUILD_ARGS` | `/p:MyeWarnAsError=true` で C++ の警告をエラーにする |
+| `MYE_DOTNET_ARGS` | `/p:TreatWarningsAsErrors=true` で C# の警告をエラーにする |
+| `MYE_SHOT_SKIP_*` | 機種差・描画経路の条件に応じて一部の画像検証を除外 |
+| `MYE_COLLAB_REQUIRED` | Git サービス不足による SelfTest のスキップを失敗扱いにする |
+
+検証件数や除外対象は各スクリプトが正本です。CI の画像検査は実 GPU・実音声・実ゲームパッド・日本語フォント・ゲーム全編の操作試験の代替にはなりません。
+
+## 現在の制限
+
+- **C# は Replay 記録・検証、ネット対戦、再シミュレーションの実行対象外**です。決定性が必要なゲーム状態は C++ 側の対応範囲で管理します。
+- **XPBD はロープまでの部分実装**です。布、ソフトボディ、粒子と世界の衝突は未実装。破砕や汎用の熱・流体なども計画と実装を区別してください。
+- **CharacterController と Rigidbody の相互作用には制限**があります。ジャンプの接地判定は呼び出し側で行います。
+- **GPU 描画・GPU 粒子・音声出力はワールドハッシュ一致だけでは検証できません**。必要な経路を実機で確認します。
+- **Actor / Prefab の構造上書きは子エンティティ自体の追加・削除を追跡する範囲ではありません**。
+- **Source Control は Editor 専用**です。PR、レビュー、LFS、sparse checkout、シーンの 3-way マージ、認証 UI は v1 の対象外です。
+- **プロジェクトポストの Tex2D 既定色、Deep-Modal の資産ごとの発音**には前述の制限があります。
+
+詳細な仕様と残作業は [engine_spec.md](engine_spec.md) と各設計資料へ分けて記録しています。過去の課題台帳の件数を、現在の未解決件数として読み替えないでください。
+
+## 構成と設計方針
+
+```text
+MyEngine.sln
+build/           Visual Studio プロジェクトと共通設定
+src/
+  Editor/        ImGui エディタ、制作・配布・Git ツール
+  Runtime/       配布用の実行ホスト
+  GameLogic/     ホットリロード対象の C++ DLL
+  Shared/        C ABI と POD による DLL 境界
+  Scripting/     .NET / C# スクリプトホスト
+  Engine/
+    Platform/    Win32、入力、時刻、DLL、通信
+    Core/        ECS、リフレクション、RNG、ジョブ、ログ
+    Renderer/    DirectX 11、描画パス、シェーダー、GPU リソース
+    Engine/      シーン、Tick、物理、音、AI、Replay、アセット
+assets/          シェーダー、デモ・テスト用アセット
+external/        同梱する外部ライブラリ
+tools/           ビルド、検証、データ生成、Git サービス
+tests/           画像回帰の基準・出力など
+docs/            機能説明、ADR、検証資料、履歴
+plans/           個別機能の計画・作業記録
+```
+
+設計上の必須条件は、上位層から下位層への依存、Renderer 外へ生の D3D 型を露出させないこと、`src/Shared/` を C ABI + POD に限定することです。ソース管理機能は Editor に置き、Engine / Runtime / GameLogic / Shared から依存させません。
+
+シミュレーションは固定 **60 Hz Tick**、描画は Frame として分けます。PCG32 の seed、処理順序、構造変更の適用点、状態の所有権を管理し、Debug / Release で状態を変える条件分岐を避けます。通常 Tick・巻き戻し・ネットの再実行は [TickRunner.cpp](src/Engine/Engine/TickRunner.cpp) の共通経路を使います。
+
+開発時の判断・コーディング規約・変更に応じた検証は [AGENTS.md](AGENTS.md) に集約しています。設計方針を、すべての既存コードが既に満たしているという監査結果と混同しないでください。
 
 ## ドキュメント
 
-- [docs/adr/](docs/adr/) — Architecture Decision Records (設計判断とトレードオフ)
-- [docs/dogfooding.md](docs/dogfooding.md) — 外部プロジェクトの作者視点で踏んだ 20 件 (4 件修正済み / 16 件未解決)
-- [docs/demo_script.md](docs/demo_script.md) — デモ動画の台本
-- [docs/test_checklists.md](docs/test_checklists.md) — 手動テスト手順 (ホットリロード)
+| 資料 | 読む目的 |
+|---|---|
+| [engine_spec.md](engine_spec.md) | 機能仕様、技術制約、詳細な検証方針 |
+| [AGENTS.md](AGENTS.md) | 共通作業規則、実装・検証・報告の基準 |
+| [全機能ガイド](docs/engine-feature-guide.md) | 制作者向けの機能説明と実装の入口（記載時点の調査） |
+| [ADR 一覧](docs/adr/) | 設計判断とトレードオフ |
+| [ドッグフーディング記録](docs/dogfooding.md) | 外部プロジェクトで遭遇した課題と当時の対応 |
+| [三校実装状況](docs/sanko-implementation-status.md) | 音のステルスゲームに向けた対応と検証記録 |
+| [手動テスト項目](docs/test_checklists.md) | 実操作による確認手順 |
+| [デモ台本](docs/demo_script.md) | 紹介時の操作・説明の参考 |
+| [プロジェクトポストの既定テクスチャ](docs/project-shaders-tex2d-defaults.md) | Tex2D の現行フォールバック |
+| [Deep-Modal](tools/deepmodal/README.md) | データ生成、学習、モデル配置、音の評価 |
+| [実装履歴](docs/history/README.md) | 分野別の変更経緯 |
+| [plans/](plans/) | 個別機能の計画。実装済みの証拠とは分けて参照 |
+| [外部依存とライセンス](external/VERSIONS.md) | 同梱ライブラリの版と権利表示 |

@@ -1,29 +1,179 @@
-# Repository Guidelines
+# AGENTS.md — MyEngine 共通作業規則
 
-## Project Structure & Module Organization
+この文書は、このリポジトリで作業するAIの共通規則をまとめる。
+設計思想は判断指針、技術制約と明示された禁止事項は必須条件として扱う。
+共通規則の変更はこの文書へ集約し、案件別の仕様・制作記録は第9章の参照資料で管理する。
 
-MyEngine is a Visual Studio 2022 C++20 / DirectX 11 game engine. The solution file is `MyEngine.sln`, with project files under `build/`. Runtime code lives in `src/`: `Editor/` hosts the ImGui editor, `Runtime/` is the UI-free executable, `GameLogic/` is the hot-reloaded user DLL, `Shared/` defines the C ABI boundary, and `Engine/` contains Platform, Core, Renderer, and Engine layers. Assets and shaders are in `assets/`; design notes and ADRs are in `docs/`; helper scripts are in `tools/`.
+## 1. AIの作業規則
 
-## Build, Test, and Development Commands
+- 回答、質問、作業報告は必ず日本語で行う。
+- ファイルや外部情報へアクセスする際は、対象のリンクと絶対ファイルパス、またはURLを提示する。リポジトリ内の対象も相対パスだけで済ませない。
+- ファイルを削除する前に、対象の絶対パスとリンク、ファイルの用途、削除理由、影響範囲を提示し、明示的な許可を得る。既に具体的な対象・操作について承認を得ている場合は、その範囲で実施する。
+- 作業開始時にGit状態を確認する。既存の未コミット変更や手修正した成果物を保護し、無断で取り消し・上書きしない。
+- 調査・レビュー・融合案の依頼では、依頼に含まれない実装変更を行わない。変更を依頼された場合は、承認済みの範囲で実装と必要な検証まで進める。
+- 自分で調べられる事実は調べる。既存の合意を尊重し、仕様・好み・作業範囲を変える選択はユーザーへ確認する。影響の小さい実装判断は根拠を持って進める。
+- 関連コードの設計、命名、責務、依存関係を確認してから変更する。依頼と無関係な改善や大規模なリファクタリングへ拡大しない。
+- 思想・仕様・既存実装が衝突する場合は、その差と影響を明示する。実装が存在するだけで仕様上正しいとは判断せず、無断で大規模に作り直さない。
 
-- Open `MyEngine.sln` in Visual Studio 2022, select `Debug|x64`, then press F5 to build and run the editor.
-- `tools\gen_project_files.ps1`: refreshes `.vcxproj` source lists after adding or moving files.
-- `tools\check_rules.ps1`: runs static coding-rule checks for deterministic behavior, localization safety, and C++/HLSL constant agreement.
-- `tools\replay_verify.bat`: builds Debug/Release and verifies replay determinism across covered scenes.
-- `Editor.exe --selftest`: runs engine/editor self-tests from a built output directory.
+## 2. プロジェクト概要と構成
 
-## Coding Style & Naming Conventions
+MyEngineはVisual Studio 2022、C++20、DirectX 11を使用するゲームエンジン。
+ソリューションは `MyEngine.sln`、プロジェクトファイルは `build/` に置く。
 
-Follow the existing C++ style in `src/`: 4-space indentation, braces on their own line for functions, `PascalCase` types and functions, `camelCase` locals, and `kCamelCase` constants. Keep dependencies layered: higher layers may depend only on lower layers, and raw D3D types must not escape Renderer. The `src/Shared/` DLL boundary must stay C ABI + POD only; do not pass STL types, vtables, or exceptions across it.
+| パス | 役割 |
+|---|---|
+| `src/Editor/` | ImGuiエディタ、編集用ツール |
+| `src/Runtime/` | エディタUIを持たない実行ファイル |
+| `src/GameLogic/` | ホットリロード対象のユーザーDLL |
+| `src/Shared/` | DLL間のC ABI境界 |
+| `src/Engine/` | Platform、Core、Renderer、Engine各層 |
+| `assets/` | アセットとシェーダー |
+| `docs/` | 設計資料、ADR、検証資料 |
+| `tools/` | 生成・ビルド・検証などの補助スクリプト |
 
-## Testing Guidelines
+## 3. 設計思想と判断基準
 
-Place focused regression tests beside the feature using the existing `*SelfTest.cpp` / `*SelfTest.h` pattern. Add tests when touching ECS, serialization, replay, assets, localization, renderer constants, or hot reload behavior. Run `Editor.exe --selftest`, `tools\check_rules.ps1`, and `tools\replay_verify.bat` before submitting broad engine changes.
+### 3.1 目指すエンジン
 
-## Commit & Pull Request Guidelines
+ゲームを動かすことに加え、内部状態を理解でき、同じ条件から同じ結果を再現でき、問題の原因まで遡れるエンジンを目指す。
+機能数や短期的な実装速度より、挙動の予測可能性、再現性、観測可能性、保守性、拡張性を重視する。
+将来の拡張を考慮しつつ、存在しない要求のために不要な複雑さを導入しない。
 
-Recent commits use milestone-prefixed Japanese subjects such as `M50c: ...` and mention ABI changes explicitly when relevant. Keep commits scoped, describe behavior changes, and include updated ADRs or docs for architectural decisions. Pull requests should summarize intent, list verification commands, link issues or ADRs, and include screenshots or captures for visible editor/runtime changes.
+### 3.2 決定性・観測可能性・明示的な挙動
 
-## Agent-Specific Instructions
+- 同一の初期状態と入力から同一の結果を得る。乱数、時間、並列処理、浮動小数点、外部I/O、実行順序、非同期処理を意識的に管理する。
+- 入力 → 状態 → シミュレーション → 判断 → 結果を追跡できるようにする。どの処理が何を変え、なぜその結果になったかを確認できる構造にする。
+- 状態履歴、リプレイ、分岐実行、ログ、可視化、状態検査、実行経路の追跡は、エンジンの設計要素として扱う。長期的な開発効率が改善する設計コストは許容する。
+- 状態変更、依存関係、所有権、更新順序、寿命、高コスト処理、同期を明示する。隠れた副作用や暗黙的な登録で挙動を予測しにくくしない。
 
-Do not delete files without first listing the absolute path, purpose, and impact, then receiving explicit approval. When reporting repository access, include the accessed link target and absolute file path.
+### 3.3 一貫した構造と必要十分な拡張性
+
+- 局所的な便利さのために既存アーキテクチャを壊さない。
+- 新機能では、所属レイヤー、所有者、更新主体、依存方向、拡張方法、交換・除去の方法、障害の影響範囲を考える。
+- 拡張性は抽象化の数ではなく、明確な責務境界、疎結合、実装の交換可能性によって確保する。
+- 要件を満たす単純な設計を優先する。複雑さを追加する場合は、具体的な必要性と利益を説明できること。
+
+### 3.4 障害の局所化・復旧・応答性
+
+- 一部の失敗で正常な機能まで使用不能にしない。アセット読み込み失敗時の代替リソース、異常機能だけの停止、通信失敗時のローカル機能継続などを検討する。
+- データ破壊や未定義動作につながる状態では、無理に処理を継続しない。
+- 可能ならモジュールやリソース単位で、再初期化、再読み込み、再接続、再試行、再生成、状態復元を行えるようにする。
+- ロード、コンパイル、通信などの重い処理で、理由が分からない無応答状態を作らない。進捗、キャンセル、タイムアウト、フォールバックを検討する。
+- 処理分割、時間予算、部分更新、Job化、非同期化を必要に応じて選ぶ。決定性、状態管理、デバッグ性、エラー処理を悪化させる非同期化は再検討する。
+
+### 3.5 計測に基づく性能改善
+
+- 処理量、計算量、メモリアクセス、キャッシュ、確保、GPU/CPU同期、スレッド待機、I/O、フレーム時間を理解してから最適化する。
+- 推測による最適化を避ける。可読性を大きく犠牲にする場合は測定可能な効果を示す。決定性の必須制約は維持する。
+- 正確性と再現性を維持できる場合は、過去状態、差分、キャッシュ、履歴、部分更新、計算結果の再利用を検討する。
+
+### 3.6 判断の優先順位
+
+原則として、正しさ → 決定性 → 再現性 → デバッグ可能性 → 設計の一貫性 → 拡張性 → 保守性 → 可読性 → 復旧可能性 → 応答性 → パフォーマンス → 実装速度 → コード量の少なさ、の順で判断する。
+順位は機械的に適用しない。実行性能や応答性に重大な問題があれば、計測結果と全体への影響を根拠に調整する。ただし、第4章の必須制約を独断で緩めない。
+
+## 4. 守るべき技術制約
+
+### 4.1 レイヤーとABI
+
+- 上位層から下位層への依存だけを許可し、逆依存を作らない。生のD3D型をRendererの外へ露出させない。
+- `src/Shared/` のDLL境界はC ABIとPODのみとする。STL、vtable、例外を境界越しに渡さない。
+- ABI変更時は共有定義、言語間のミラー、APIテーブルの設定を同時に確認する。スロット変更ではABIバージョンとスロット数を整合させる。
+- ソース管理機能はEditor層に置く。Engine、Runtime、GameLogic、Sharedから `Editor/SourceControl/` へ依存しない。
+
+### 4.2 固定Tickと決定性
+
+- シミュレーションは固定60 HzのTick、描画はFrameとして区別する。描画FPSによってゲーム速度やシミュレーション結果を変えない。
+- 固定Tick数による時間管理と、描画フレーム数への依存を混同しない。実時間や描画フレーム数を決定性が必要な状態更新へ直接持ち込まない。
+- 非同期処理の完了順序でシミュレーション結果を変えない。結果を状態へ反映するタイミングと順序を明示する。
+- ポインターアドレス、ハッシュコンテナの走査順などをゲームロジックの順序決定に使わず、明示的で決定的なキーを使う。
+- 乱数はseedを管理したエンジン提供の決定論的RNGを使用する。`rand()` や `std::random_device` を直接使用しない。
+
+### 4.3 Debug／Release・共有定義・翻訳
+
+- `_DEBUG` や `NDEBUG` でシミュレーション状態を変える分岐を作らない。状態に影響しないログや可視化は許可する。
+- `assert` 内に副作用のある式を入れない。変数は宣言時に初期化する。
+- 未規定の評価順序、無効化済みイテレーター、未定義動作へ依存しない。
+- 浮動小数点設定は全構成で `/fp:precise` を使用し、`/fp:fast` を使用しない。
+- C++とHLSLで共有する定数の値と、対応するレイアウトを一致させる。
+- UI文字列は既存の `LocalizationTable.inl` と `Tr()` を使用する。翻訳の両言語を埋め、`###` 後の識別子と書式指定子の順序を一致させる。
+- `Tr()` の結果をprintf系関数の書式文字列として直接渡さない。文字列引数として安全に渡す。
+
+## 5. 実装・コメント規約
+
+- 既存のC++スタイルに合わせる。インデントは4スペース、関数の波括弧は独立行、型・関数は `PascalCase`、ローカル変数は `camelCase`、定数は `kCamelCase` とする。
+- クラス、関数、モジュールの責務を明確にし、多目的な巨大Managerを安易に作らない。他システムの内部実装への不要な依存を追加しない。
+- オブジェクト、リソース、メモリの生成者・所有者・参照者・破棄者を明確にし、寿命を偶然の実行順序に依存させない。
+- 入力・出力・状態変更を明確にする。グローバル状態への暗黙的な書き込みを避け、関数名や引数から予想できない副作用や重い処理を隠さない。
+- 不正な状態を作りにくいAPI・型を検討する。状態の組み合わせに制約がある場合は、可能な範囲でコード構造に表現する。
+- 行数の短さより理解しやすさを優先する。意味のない省略や曖昧な命名を避け、短い名前はスコープと意味が明らかな場合に限る。
+- 意味のある数値は名前付き定数、設定値、enum、constexprなどで表す。文脈上明らかな0や1まで機械的に定数化しない。
+- Interface、Template、Factory、Manager、Wrapper、Layer、Event Systemを目的なく増やさない。未使用変数、無意味な分岐・代入・呼び出し、将来使うかもしれないだけのコードを追加しない。
+- コメントには、実装理由、制約の理由、代替案を採用しなかった理由、外部仕様との関係など、将来の読者に価値がある情報を書く。
+- コードを読めば分かる処理の反復説明や、コメントによる複雑な設計の正当化を避ける。変更対象の範囲で構造改善を検討し、無関係なリファクタリングへ広げない。
+- コメントを人やAIへの一時的な申し送りに使わない。タスク、議論、作業経緯はIssue、設計文書、コミット、PRなどへ残し、コメントアウトした古いコードを履歴代わりに保持しない。
+- 申し送りにはdocsを使うこと。
+
+## 6. 調査と実装の進め方
+
+複雑な実装・デバッグ・設計・調査では以下を適用する。単純な編集では、必要な確認だけに絞る。
+
+1. **未知と完了条件を列挙する。** 記憶上の理解と確認済みの事実を分け、成果物ごとに観測可能な完了条件・検証手段を定める。
+2. **計画を左右する不確実性から解消する。** 間違っていれば後続作業が無駄になる判断を、最小の調査・試作で先に確かめる。成果物の見た目の順だけで作業を分けない。
+3. **不具合の再現条件を確認する。** 入力、状態、実行経路、再現手順を調べ、推測だけで修正しない。再現できない場合は根拠と限界を明示する。
+4. **最小の入力から出力までを通す。** レイヤー単位で作り込む前に、必要最小限の経路で統合上の問題を確かめる。
+5. **期待結果を定めて実行する。** 結果が予測と違えば、観測に合わせて理解・仮説を修正する。予想外の成功も調査対象とする。
+6. **自分の結論を反証する。** 正常系に加え、関係する空・1件・大量・境界値・同時実行・不正入力・Unicode・時刻の条件を検討する。修正は元の故障条件で確認する。
+7. **実際の経路で確認する。** テスト成功と、実際のアプリ操作で機能することを区別する。可能なら本物の入力・データ・実行環境で観測する。
+8. **証拠で完了を判断する。** 確認した事実、推論、仮定、失敗、未実施を分け、何が未検証かを残す。
+
+各段階では、答えによって次の行動が最も変わる問いを選ぶ。情報の価値と取得コストを比較し、行動が変わらない調査は打ち切る。
+類似したエラーの経験は仮説として扱い、今回の証拠を確認する。複雑な説明より、誤記・キャッシュ・設定・バージョンの違いなど簡単な原因から調べる。
+長い作業では決定済み・未解決・却下した案と理由を区別し、同じ判断を蒸し返さない。同じ失敗を3回繰り返したら、単純な再試行を続けず前提と方法を見直す。
+可逆な操作と不可逆な操作を区別する。第1章の削除承認やユーザーが指定した作業範囲を、この手順を理由に省略しない。
+
+## 7. ビルドと検証
+
+コマンドは原則としてリポジトリルートから実行する。ビルド構成、実行ファイル、対象シーン、必要な引数を確認する。
+
+| 操作 | コマンド・手順 |
+|---|---|
+| エディタのビルドと起動 | Visual Studio 2022で `MyEngine.sln` を開き、`Debug\|x64` を選びF5 |
+| ソース一覧の更新 | ファイル追加・移動後に `tools\gen_project_files.ps1` |
+| 静的ルール検証 | `tools\check_rules.ps1` |
+| エンジン・エディタの自己テスト | ビルド済みの `bin\x64\Debug\Editor.exe --selftest` または `bin\x64\Release\Editor.exe --selftest` |
+| Replayの決定性検証 | `tools\replay_verify.bat`（Debug／Releaseをビルドし、対象シーンを照合） |
+
+- 回帰テストは既存の `*SelfTest.cpp` / `*SelfTest.h` パターンに従い、対象機能の近くに置く。
+- ECS、シリアライズ、Replay、アセット、ローカライズ、レンダラー定数、ホットリロードの挙動を変更する場合は、関連する回帰テストを追加する。
+- 広範なエンジン変更を提出する前に、`Editor.exe --selftest`、`tools\check_rules.ps1`、`tools\replay_verify.bat` を実行する。
+- 小さな変更は影響に対応した検証を行う。文書のみの変更では、参照先・内容の整合性・差分を確認し、エンジンのビルドは原則不要とする。
+- ビルド成功、静的チェック成功、SelfTest成功、Replay一致、画面・実操作確認は、それぞれ確認できる範囲が異なる。代用した検証だけで未確認の挙動まで保証しない。
+- 実行できなかった必須チェックは、その理由と残るリスクを報告する。未実行を成功扱いにしない。
+
+## 8. 完了報告・コミット・PR
+
+- 完了報告には、何を変更したか、なぜ変更したか、影響範囲、検証結果、未検証事項を含める。対象ファイルは絶対パスへのリンクで示す。
+- 不具合修正は元の問題が解消した証拠を示す。設計・実装済み・テスト済み・実機確認済みを区別する。
+- 削除を行った場合は、削除対象と復元可能性を報告する。
+- コミットは変更範囲を絞る。既存慣例に合わせ、`M50c: ...` のようなマイルストーン接頭辞付きの日本語件名を使い、ABI変更があれば明記する。
+- アーキテクチャ上の判断を変更する場合は、関連ADRや設計文書を更新する。
+- PRには目的、結果として変わる挙動、検証コマンド・結果、関連Issue・ADRを記載する。エディタやRuntimeの見た目が変わる場合は、スクリーンショットやキャプチャを添付する。
+
+## 9. 関連資料と読む条件
+
+リンクはこのファイルを基準とした相対パス。ユーザーへアクセスを報告するときは、第1章に従い実際の絶対パスも提示する。
+
+| 資料 | 読む条件・扱い |
+|---|---|
+| [engine_spec.md](engine_spec.md) | エンジンの仕様・機能・制約を調べるとき。関連章を読み、現在の実装と照合する |
+| [docs/adr/](docs/adr/) | 既存設計の理由を確認するとき、アーキテクチャを変更するとき |
+| [docs/test_checklists.md](docs/test_checklists.md) | 機能別の検証や手動確認の項目を選ぶとき |
+| [ASSET_HANDOVER.md](ASSET_HANDOVER.md) | 三校企画のアセット制作・引き継ぎを行うとき。記録日時と実ファイルを照合する |
+| [三校企画.md](三校企画.md) | 三校のゲーム仕様や制作範囲を判断するとき |
+| [docs/sanko-implementation-status.md](docs/sanko-implementation-status.md) | 三校の実装状況・未実装範囲を調べるとき。現状を再確認する |
+| [Git管理.md](Git管理.md) | エンジン内Git・コラボレーション機能の設計を調べるとき |
+| [plans/](plans/) | 対象機能の計画・作業記録を確認するとき。計画を実装済みの証拠としない |
+
+案件別文書の許可・制限・制作方針は、その対象と現在のユーザー指示を確認して適用する。特定の制作依頼に対する「エンジンを変更しない」などの制限を、全開発共通の禁止へ拡大しない。
+`CLAUDE.md` はこの文書への参照を維持する。既存の `SKILL.md` と `.agents/skills/deep-reasoning/SKILL.md` の思考・検証手順は第6章へ統合済みであり、このリポジトリの共通作業手順の更新先は本書とする。
