@@ -31,6 +31,11 @@ public:
     bool AppliesFroxel() const override { return true; }
 
 private:
+    // forward_lit が前提にする固定バインド一式 (VS/PS b0-b2・PS t1-t9・s0-s2・VS t0・トポロジ・
+    // ラスタライザ) を張り直す。他のパスや名前解決のサーフェスがスロットを張り替えた直後に呼ぶ
+    // (水面の後・サーフェスアイテムの後)。instSrv = VS t0 に張るインスタンスバッファ (無ければ null)
+    void BindForwardLitFixed(ID3D11DeviceContext* dc, const RenderView& view,
+                             ID3D11ShaderResourceView* instSrv);
     // runs 非 null = opaque のインスタンス run 一括描画を併用 (M38f)。transparent は nullptr
     void DrawItems(GraphicsDevice& device, const std::vector<RenderItem>& items,
                    const RenderView& view, RenderResources& resources, ShaderManager& shaders,

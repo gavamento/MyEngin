@@ -1589,9 +1589,9 @@ void DeferredPath::RenderTransparent(GraphicsDevice& device, const RenderView& v
     ID3D11Buffer* matCbs[1] = { materialCB_.Get() };
     if (!queue.transparent.empty()) {
         dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
-        if (wire) {
-            dc->RSSetState(rasterizerWire_.Get()); // M40b: 透明メッシュもワイヤ表示
-        }
+        // 直前の水面 (WaterPass) が Cull None を残すので、ワイヤ表示でなくても必ず張り直す
+        // (M40b: 透明メッシュもワイヤ表示)
+        dc->RSSetState(wire ? rasterizerWire_.Get() : rasterizer_.Get());
         // forward_lit はシャドウ t1 / IBL t3-5 / 局所シャドウアトラス t6 /
         // フロクセル積分結果 t7 / 音響の残光 t8 / 見通しビット t9 を参照 (M38c + M54e + M57e + M65e)。
         // s0 は光パスで IBL 用に差し替えたのでマテリアル用 (異方性) に戻す。
@@ -1613,8 +1613,9 @@ void DeferredPath::RenderTransparent(GraphicsDevice& device, const RenderView& v
         // restoreForwardLitBindings と同じ役目
         auto bindForwardLitFixed = [&]() {
             dc->PSSetShaderResources(1, 9, fwdSrvs);
-            ID3D11SamplerState* matSampler[1] = { sampler_.Get() };
-            dc->PSSetSamplers(0, 1, matSampler);
+            // s1/s2 も戻す: 水面 (WaterPass) が同じスロットに自前のサンプラを張る
+            ID3D11SamplerState* matSamplers[3] = { sampler_.Get(), shadowSampler_.Get(), iblSampler_.Get() };
+            dc->PSSetSamplers(0, 3, matSamplers);
             dc->VSSetConstantBuffers(0, 2, cbs);
             dc->PSSetConstantBuffers(0, 2, cbs);
             dc->PSSetConstantBuffers(2, 1, matCbs); // forward_lit の MaterialParams

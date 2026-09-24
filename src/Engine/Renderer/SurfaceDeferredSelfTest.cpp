@@ -21,6 +21,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/DeferredPath.h"
+#include "Engine/Renderer/ForwardPath.h" // レビュー #2: 水面後の透明メッシュ
 #include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
@@ -1033,6 +1034,143 @@ void TestDeferredWaterAndTransparentUnaffectedBySurfaceForwardStep(GraphicsDevic
     fs::remove_all(dir, ec);
 }
 
+// ---- レビュー #2: 組込み WaterPass は VS/PS の b1/b2 を自前の CB に張り替え、PS t0-t8 を null にし、
+//      Cull None のラスタライザを残す。直後の透明メッシュがそれを読むと水面の world 行列で描かれ、
+//      影/IBL も失う。水面を画面外 (x=1000) に置いたときの透明キューブの画素が、水面なしと
+//      完全一致すること (= 水面がステートを漏らしていない) を Forward / Deferred の両方で見る ----
+void TestWaterDoesNotLeakIntoTransparent(GraphicsDevice& device, const std::wstring& engineShaderDir)
+{
+    MYE_LOG_INFO("-- Forward/Deferred: 組込み水面の後の透明メッシュが水面のステートを読まないか --");
+    ShaderManager shaders;
+    Check(shaders.Init(device, { engineShaderDir }), "shader manager init (water leak)");
+    const AssetID litShaderId = shaders.Load("forward_lit");
+
+    RenderResources resources;
+    resources.Init(device);
+    Material transMat;
+    transMat.shader = litShaderId;
+    transMat.texture = resources.textures.White();
+    transMat.baseColor = { 0.9f, 0.3f, 0.1f, 0.5f };
+    transMat.transparent = 1;
+    const AssetID transMatId = resources.materials.Register("water_leak_transparent", transMat);
+
+    ForwardPath fp;
+    DeferredPath dp;
+    Check(fp.Init(device, shaders) && dp.Init(device, shaders), "Forward/DeferredPath::Init (water leak)");
+
+    constexpr UINT kWidth = 64;
+    constexpr UINT kHeight = 64;
+    ID3D11Device* dev = device.Device();
+    ID3D11DeviceContext* dc = device.Context();
+    D3D11_TEXTURE2D_DESC ctd = {};
+    ctd.Width = kWidth;
+    ctd.Height = kHeight;
+    ctd.MipLevels = 1;
+    ctd.ArraySize = 1;
+    ctd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    ctd.SampleDesc = { 1, 0 };
+    ctd.Usage = D3D11_USAGE_DEFAULT;
+    ctd.BindFlags = D3D11_BIND_RENDER_TARGET;
+    ComPtr<ID3D11Texture2D> colorTex;
+    ComPtr<ID3D11RenderTargetView> colorRtv;
+    bool ok = SUCCEEDED(dev->CreateTexture2D(&ctd, nullptr, colorTex.GetAddressOf()));
+    ok = ok && SUCCEEDED(dev->CreateRenderTargetView(colorTex.Get(), nullptr, colorRtv.GetAddressOf()));
+    D3D11_TEXTURE2D_DESC staged = ctd;
+    staged.Usage = D3D11_USAGE_STAGING;
+    staged.BindFlags = 0;
+    staged.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ComPtr<ID3D11Texture2D> colorStaging;
+    ok = ok && SUCCEEDED(dev->CreateTexture2D(&staged, nullptr, colorStaging.GetAddressOf()));
+    D3D11_TEXTURE2D_DESC dtd = ctd;
+    dtd.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    dtd.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+    ComPtr<ID3D11Texture2D> depthTex;
+    ComPtr<ID3D11DepthStencilView> dsv;
+    ok = ok && SUCCEEDED(dev->CreateTexture2D(&dtd, nullptr, depthTex.GetAddressOf()));
+    ok = ok && SUCCEEDED(dev->CreateDepthStencilView(depthTex.Get(), nullptr, dsv.GetAddressOf()));
+    Check(ok, "RTV/DSV/staging を作成できる (water leak)");
+    if (!ok) {
+        return;
+    }
+
+    // 斜め上から見下ろす透視カメラ (半透明キューブの裏面が Cull None で漏れると色が変わる向き)
+    RenderView view;
+    XMStoreFloat4x4(&view.view, XMMatrixLookAtLH(XMVectorSet(3, 4, -5, 1), XMVectorSet(0, 0.5f, 0, 1),
+                                                 XMVectorSet(0, 1, 0, 0)));
+    XMStoreFloat4x4(&view.proj, XMMatrixPerspectiveFovLH(0.8f, 1.0f, 0.1f, 100.0f));
+    XMStoreFloat4x4(&view.projNoJitter, XMLoadFloat4x4(&view.proj));
+    view.width = static_cast<int>(kWidth);
+    view.height = static_cast<int>(kHeight);
+    view.rtv = colorRtv.Get();
+    view.dsv = dsv.Get();
+    view.instancingEnabled = 0;
+    XMStoreFloat4x4(&view.prevViewProj,
+                    XMMatrixMultiply(XMLoadFloat4x4(&view.view), XMLoadFloat4x4(&view.projNoJitter)));
+    view.prevViewProjValid = 1;
+
+    SceneLightData lights;
+    lights.ambient = { 0.5f, 0.5f, 0.5f };
+    lights.count = 0;
+
+    RenderQueue queue;
+    RenderItem item;
+    item.mesh = resources.meshes.Cube();
+    item.material = transMatId;
+    XMStoreFloat4x4(&item.world, XMMatrixTranslation(0.0f, 0.5f, 0.0f));
+    item.prevWorld = item.world;
+    queue.transparent = { item };
+
+    WaterDrawData farWater;
+    farWater.active = true;
+    XMStoreFloat4x4(&farWater.world, XMMatrixTranslation(1000.0f, 0.0f, 1000.0f)); // 画面に映らない
+
+    auto readCenter = [&]() {
+        dc->CopyResource(colorStaging.Get(), colorTex.Get());
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        std::array<uint8_t, 4> out = { 0, 0, 0, 0 };
+        if (SUCCEEDED(dc->Map(colorStaging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+            const uint8_t* row = static_cast<const uint8_t*>(mapped.pData)
+                + static_cast<size_t>(kHeight / 2) * mapped.RowPitch;
+            std::memcpy(out.data(), row + static_cast<size_t>(kWidth / 2) * 4, 4);
+            dc->Unmap(colorStaging.Get(), 0);
+        }
+        return out;
+    };
+    auto logPair = [](const char* tag, const std::array<uint8_t, 4>& a, const std::array<uint8_t, 4>& b) {
+        MYE_LOG_ERROR("    %s noWater=(%d,%d,%d,%d) farWater=(%d,%d,%d,%d)", tag, a[0], a[1], a[2], a[3], b[0],
+                     b[1], b[2], b[3]);
+    };
+
+    view.water = nullptr;
+    fp.Render(device, view, queue, lights, resources, shaders);
+    const std::array<uint8_t, 4> fwdNoWater = readCenter();
+    view.water = &farWater;
+    fp.Render(device, view, queue, lights, resources, shaders);
+    const std::array<uint8_t, 4> fwdFarWater = readCenter();
+    Check(fwdNoWater[0] > 20, "Forward: 透明キューブが画面中央に描かれている (基準値)");
+    Check(fwdNoWater == fwdFarWater,
+          "(レビュー #2) Forward: 画面外の水面があっても透明キューブの画素が変わらない");
+    if (fwdNoWater != fwdFarWater) {
+        logPair("forward", fwdNoWater, fwdFarWater);
+    }
+
+    view.water = nullptr;
+    dp.Render(device, view, queue, lights, resources, shaders);
+    const std::array<uint8_t, 4> defNoWater = readCenter();
+    view.water = &farWater;
+    dp.Render(device, view, queue, lights, resources, shaders);
+    const std::array<uint8_t, 4> defFarWater = readCenter();
+    Check(defNoWater[0] > 20, "Deferred: 透明キューブが画面中央に描かれている (基準値)");
+    Check(defNoWater == defFarWater,
+          "(レビュー #2) Deferred: 画面外の水面があっても透明キューブの画素が変わらない (Cull None が漏れない)");
+    if (defNoWater != defFarWater) {
+        logPair("deferred", defNoWater, defFarWater);
+    }
+
+    fp.Shutdown();
+    dp.Shutdown();
+}
+
 // ---- (e): M79 sub-05 round 2 — Deferred の透明段がサーフェスマテリアルの色エントリを描くこと。
 //      未修正時は `shaders.Get(mat->shader)` が `*.surface` 短名を解決できず `continue` で
 //      黙って消えていた (round 1 VERDICT の指摘)。ここでは
@@ -1209,6 +1347,7 @@ bool RunSurfaceDeferredSelfTest()
     TestDeferredTransparentDrawsSurfaceColorEntry(device, engineShaderDir); // M79 sub-05 round 2
     TestShadowPassDoubleSidedCastsBackFaceShadow(device, engineShaderDir); // M79 sub-06
     TestShadowPassSurfaceSamplerIsWrap(device, engineShaderDir);          // review-2 #9
+    TestWaterDoesNotLeakIntoTransparent(device, engineShaderDir);         // レビュー #2
 
     // (d) サーフェス 0 件のときフォワード段が何も張らないことは、この自己テストの範囲では
     // 「既存 golden (--selftest 全体 / tools\replay_verify.bat の既定シーン群、いずれもサーフェス

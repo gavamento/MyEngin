@@ -440,12 +440,10 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
 
     // 半透明 (インスタンシング対象外)
     if (!queue.transparent.empty()) {
-        // M57e: スカイボックスの cubemap 経路が s0 を LINEAR/CLAMP へ差し替えたままなので
-        // マテリアル用 (異方性 WRAP) へ戻す。フロクセルの有無とは関係なく要る
-        // (Deferred の透明後段も同じことをしている)
-        ID3D11SamplerState* samplers2[3] = { sampler_.Get(), shadowSampler_.Get(),
-                                             iblSampler_.Get() };
-        dc->PSSetSamplers(0, 3, samplers2);
+        // 水面 (WaterPass) は VS/PS b1/b2 を自前の CB に替え、PS t0-t8 を null にし、Cull None を
+        // 残す。スカイボックスの cubemap 経路も s0 を LINEAR/CLAMP へ差し替えたまま (M57e)。
+        // 透明メッシュが水面の world 行列で描かれないよう、forward_lit の固定バインドを丸ごと戻す
+        BindForwardLitFixed(dc, view, nullptr);
         dc->OMSetDepthStencilState(depthTransparent_.Get(), 0);
         dc->OMSetBlendState(blendAlpha_.Get(), nullptr, 0xFFFFFFFFu);
         DrawItems(device, queue.transparent, view, resources, shaders, nullptr);
@@ -465,6 +463,36 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     dc->PSSetShaderResources(1, 8, fwdNull);
 }
 
+void ForwardPath::BindForwardLitFixed(ID3D11DeviceContext* dc, const RenderView& view,
+                                      ID3D11ShaderResourceView* instSrv)
+{
+    ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
+    dc->VSSetConstantBuffers(0, 2, cbs);
+    dc->PSSetConstantBuffers(0, 2, cbs);
+    ID3D11Buffer* matCbs[1] = { materialCB_.Get() };
+    dc->PSSetConstantBuffers(2, 1, matCbs);
+    ID3D11SamplerState* samplers[3] = { sampler_.Get(), shadowSampler_.Get(), iblSampler_.Get() };
+    dc->PSSetSamplers(0, 3, samplers);
+    const bool froxelBound = FroxelIsBound(view);
+    const bool acousticBound = AcousticIsBound(view);
+    ID3D11ShaderResourceView* frameSrvs[9] = { view.shadowSRV,      nullptr,
+                                               view.iblIrradiance,  view.iblPrefiltered,
+                                               view.iblBrdfLut,     view.shadowAtlasSRV,
+                                               froxelBound ? view.froxelSRV : nullptr,
+                                               acousticBound ? view.acousticSRV : nullptr,
+                                               acousticBound ? view.acousticFrontSRV : nullptr };
+    dc->PSSetShaderResources(1, 9, frameSrvs);
+    // forward_lit_instanced.hlsl は VS 側 t0 に StructuredBuffer<MeshInstance> を持つ
+    // (PS の t0 = アルベドとは独立のスロット空間)。サーフェスの VS が名前解決で VS t0 に
+    // Texture2D 等を張ると、次の instanced run が型不一致で丸ごと消える (review-1 #2)
+    dc->VSSetShaderResources(0, 1, &instSrv);
+    dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    // doubleSided (Cull None) のサーフェスや水面 (Cull None) の後でも、通常描画の前提
+    // (rasterizer_/rasterizerWire_) へ必ず戻す
+    const bool wire = view.debugViewMode == 2;
+    dc->RSSetState(wire ? rasterizerWire_.Get() : rasterizer_.Get());
+}
+
 void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem>& items,
                             const RenderView& view, RenderResources& resources,
                             ShaderManager& shaders, const std::vector<MeshInstanceRun>* runs)
@@ -480,32 +508,7 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
     // ときにバインド前提を壊さない」(sub-02.md 受け入れ条件 5) を、サーフェス→通常のどの
     // 境目でも成立させるための唯一の復元経路
     auto restoreForwardLitBindings = [&]() {
-        ID3D11Buffer* cbs2[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
-        dc->VSSetConstantBuffers(0, 2, cbs2);
-        dc->PSSetConstantBuffers(0, 2, cbs2);
-        ID3D11Buffer* matCbs[1] = { materialCB_.Get() };
-        dc->PSSetConstantBuffers(2, 1, matCbs);
-        ID3D11SamplerState* samplers[3] = { sampler_.Get(), shadowSampler_.Get(), iblSampler_.Get() };
-        dc->PSSetSamplers(0, 3, samplers);
-        const bool froxelBound = FroxelIsBound(view);
-        const bool acousticBound = AcousticIsBound(view);
-        ID3D11ShaderResourceView* frameSrvs[9] = { view.shadowSRV,      nullptr,
-                                                   view.iblIrradiance,  view.iblPrefiltered,
-                                                   view.iblBrdfLut,     view.shadowAtlasSRV,
-                                                   froxelBound ? view.froxelSRV : nullptr,
-                                                   acousticBound ? view.acousticSRV : nullptr,
-                                                   acousticBound ? view.acousticFrontSRV : nullptr };
-        dc->PSSetShaderResources(1, 9, frameSrvs);
-        // forward_lit_instanced.hlsl は VS 側 t0 に StructuredBuffer<MeshInstance> を持つ
-        // (PS の t0 = アルベドとは独立のスロット空間)。サーフェスの VS が名前解決で VS t0 に
-        // Texture2D 等を張ると、次の instanced run が型不一致で丸ごと消える (review-1 #2)
-        ID3D11ShaderResourceView* instSrv = runs ? instanceBuf_.SRV() : nullptr;
-        dc->VSSetShaderResources(0, 1, &instSrv);
-        dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        // M79 sub-06: doubleSided (Cull None) はサーフェス描画のときだけ張るので、
-        // 通常描画の前提 (rasterizer_/rasterizerWire_) へ必ず戻す
-        const bool wire = view.debugViewMode == 2;
-        dc->RSSetState(wire ? rasterizerWire_.Get() : rasterizer_.Get());
+        BindForwardLitFixed(dc, view, runs ? instanceBuf_.SRV() : nullptr);
         boundShader = 0; // 次の通常アイテムに VS/PS/InputLayout を再バインドさせる
         bound = MeshBindState{}; // t0/normal/メッシュ VB・IB も再バインドさせる
     };
