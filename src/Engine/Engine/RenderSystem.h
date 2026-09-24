@@ -120,6 +120,10 @@ public:
     // 対象はカメラ + メッシュ収集のワールド行列 (パーティクル/スプライト/UI は対象外)
     float interpAlpha = 1.0f;
     const PrevWorldStore* prevWorld = nullptr;
+    // 水面のエディタプレビュー [秒]。Edit 中はシミュレーションが進まず水面の時計 (WaterWave.timeTicks)
+    // も止まるので、エディタの「水面プレビュー」がオンの間だけここに経過秒を足して水面を動かす。
+    // 描画専用 (ワールドの状態にもシーン保存にも触れない)。Runtime と Play 中は常に 0
+    float waterPreviewSeconds = 0.0f;
 
     // ワールド追従 UI (uilayout): 直近の Render() が解決したカメラの view×projNoJitter。
     // 補間済み・ジッタ無し = 3D パスと同じ絵の位置に UI が乗る。呼び出し側 (EngineLoop /
@@ -398,7 +402,10 @@ private:
     DecalDrawList decalList_; // view.decals が指す実体
     // 水面 (view.water が指す実体)
     WaterDrawData waterData_;
-    float waterAnimTime_ = 0.0f;
+    // viewKey 毎の「前フレームに描いた水面の時刻」(サーフェス水面の速度エントリ = TAA の出所)。
+    // 水面の時刻は tick 補間なのでフレームごとの進みは一定でなく、前 tick の値では代用できない
+    float prevWaterTime_[4] = {};
+    bool prevWaterTimeValid_[4] = {};
     // M78c: シーンカメラの fxStack から生成するユーザーポストランナー
     // CameraOverride (エディタ視界) には適用しない (CameraPostFx と同じ規則)
     ProjectEffectRunner projectEffectRunner_;

@@ -72,16 +72,9 @@ public:
     void Update(World& world, float dt, std::vector<SolidContact>* outContacts = nullptr,
                 XpbdBackend* xpbd = nullptr);
 
-    void ResetTime() { time_ = 0.0f; }
-    void SetTime(float t) { time_ = t; }
-    float Time() const { return time_; }
-
     // 等価性テスト用 (PhysicsSelfTest): true でブロードフェーズを総当たり候補に切替。
     // 挙動はビット同一のはず — selftest がハッシュ比較で常時検証する
     static inline bool sDisableBroadphaseForTest = false;
-
-private:
-    float time_ = 0.0f;
 };
 
 // ---- 物理マテリアル解決 (M59a2)。全て純関数 — ソルバ収集と ABI が共有する ----

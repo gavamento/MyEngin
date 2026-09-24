@@ -371,6 +371,15 @@ bool EditorApp::GameMouseArea(InputRect& out)
 
 void EditorApp::OnRenderViews(EngineContext& ctx)
 {
+    // 水面プレビュー: Edit 中かつオンの間だけ、描画専用の経過秒を進める。Play 中・オフでは 0 に戻す
+    // (水面の時計は WaterWave.timeTicks = シミュレーション tick。Play 中はそちらだけで動かす)
+    if (ctx.renderSystem) {
+        if (EditorWaterPreviewOn() && playMode_.State() == PlayState::Editing) {
+            ctx.renderSystem->waterPreviewSeconds += ImGui::GetIO().DeltaTime;
+        } else {
+            ctx.renderSystem->waterPreviewSeconds = 0.0f;
+        }
+    }
     if (actorEdit_) {
         // ミニシーン編集モード (M48k): SceneView だけアセットのミニシーンを描く。
         // **ミニシーンはエンジンの tick に載っていない** ので、WorldMatrix はここで自前に

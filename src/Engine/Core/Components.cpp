@@ -1229,6 +1229,9 @@ void RegisterBuiltinComponents()
         // (シーンへの保存/復元は従来どおり行う)。設定すると水面をサーフェスシェーダで描く
         MYE_JP("描画マテリアル (サーフェス)",
                MYE_FIELD_FLAGS(WaterWaveComponent, surfaceMaterial, AssetRef, kFieldNoHash)),
+        // 波の時計 (シミュレーション tick 数)。浮力も水面の描画もこれを秒へ直して使う。
+        // WorldHash / スナップショットに入るので、2 回目の Play・巻き戻し・分岐実行で位相が揃う
+        MYE_JP("波の時刻 (tick)", MYE_FIELD_FLAGS(WaterWaveComponent, timeTicks, Int32, kFieldReadOnly)),
     });
 }
 

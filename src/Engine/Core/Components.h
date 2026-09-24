@@ -1698,7 +1698,16 @@ struct WaterWaveComponent {
     // (kFieldNoHash、Components.cpp)。null = 従来どおり組込み WaterPass (water_surface.hlsl) で描く
     AssetID surfaceMaterial = {};
 
+    // 波の時計 = 物理が進めたシミュレーション tick 数 (60Hz 固定、PhysicsSystem が tick ごとに +1)。
+    // 浮力も水面の描画も「timeTicks / 60 秒」を使う (描画フレーム数や実時間では進めない)。
+    // コンポーネントに置くので WorldHash・SimSnapshot・シーン JSON に載り、Play 開始 (JSON 読み直し)・
+    // 巻き戻し・分岐実行で位相が自動で揃う (プロセス内の累積時刻だった頃はリプレイが割れた)
+    int32_t timeTicks = 0;
+
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
+
+    // 波の時刻 [秒] (timeScale を掛ける前)。浮力の評価時刻
+    float TimeSeconds() const { return static_cast<float>(timeTicks) * (1.0f / 60.0f); }
 
     // 実際に使う波の本数 (1〜kMaxWaves)。範囲の制限は Inspector の UI にしか無く、シーン JSON や
     // スクリプトから範囲外が入りうるので、読む側は必ずこれを通す (物理と描画で同じ規則にする。

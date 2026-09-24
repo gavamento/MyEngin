@@ -891,11 +891,28 @@ void InspectorWindow::DrawComponentFields(EngineContext& ctx, Selection& selecti
 }
 
 // 型ごとの付記 (フィールド行の下)。PartBounds の警告と、カメラの操縦ボタン
+bool& EditorWaterPreviewOn()
+{
+    static bool on = false;
+    return on;
+}
+
 void InspectorWindow::DrawComponentNotes(EngineContext& ctx, const InspectorTargets& tg,
                                          const InspectorComponentRow& row)
 {
     const ComponentDesc& desc = *row.desc;
     World& world = ctx.scene->GetWorld();
+    // 水面プレビュー: 水面の時計はシミュレーション tick なので Edit 中は止まる。
+    // オンの間だけ描画専用の経過秒を足して水面を動かす (ワールドの状態には触れない)
+    if (std::strcmp(desc.name, "WaterWave") == 0) {
+        bool& on = EditorWaterPreviewOn();
+        if (ToolbarToggle(Tr(on ? StrId::Insp_WaterPreviewStop : StrId::Insp_WaterPreviewStart), on,
+                          nullptr, /*mode=*/true)) {
+            on = !on;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_WaterPreviewHint));
+    }
     // M50a: PartBounds 単独 (Part 無し) は RaycastParts の収集
     // ({Part, PartBounds, WorldMatrix} の同居アーキタイプ) から黙って外れるため警告
     if (std::strcmp(desc.name, "PartBounds") == 0

@@ -28,6 +28,10 @@ class UndoStack;
 // ModalAudio.h も前方宣言止まりなのでここでも前方宣言を要る
 struct ModalSoundComponent;
 
+// 水面プレビュー (Edit 中だけ水面を動かす) のオン/オフ。Inspector の WaterWave 欄のボタンが書き、
+// EditorApp::OnRenderViews が読んで RenderSystem::waterPreviewSeconds を進める (描画専用)
+bool& EditorWaterPreviewOn();
+
 // Inspector に出すエンティティの集合 (M40a)。[0] = primary。表示値は primary、編集は全対象へバッチ適用
 struct InspectorTargets {
     uint64_t fid = 0;            // primary の fileId

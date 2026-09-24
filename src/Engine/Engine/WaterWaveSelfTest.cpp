@@ -253,6 +253,73 @@ bool RunWaterWaveSelfTest()
         check(c.ClampedWaveCount() == 1, "waveCount clamp: 0 -> 1");
     }
 
+    // 9. 波の時計 (レビュー #3): 浮力の時刻は WaterWave.timeTicks (シミュレーション tick 数)。
+    //    PhysicsSystem 内の累積時刻だった頃は、同じ PhysicsSystem で 2 回目の Play をすると
+    //    前回の時刻から始まり、新しいプロセスのリプレイと結果が割れた
+    {
+        auto buildScene = [](Scene& s) {
+            GameObject waterGo = s.CreateGameObjectTracked("Water");
+            auto* wave = waterGo.AddComponent<WaterWaveComponent>();
+            wave->enabled = true;
+            wave->affectBuoyancy = true;
+            wave->wave0Amplitude = 0.8f;
+            GameObject ball = s.CreateGameObjectTracked("Buoy");
+            ball.SetLocalPosition(0.4f, 0.0f, 0.2f);
+            auto* col = ball.AddComponent<ColliderComponent>();
+            col->shape = 0;
+            col->radius = 0.5f;
+            auto* rb = ball.AddComponent<RigidbodyComponent>();
+            rb->mass = 1000.0f * (4.0f / 3.0f) * 3.14159265f * 0.125f * 0.5f;
+            ball.AddComponent<BuoyancyComponent>();
+            s.GetWorld().ApplyStructuralChanges();
+            return ball;
+        };
+        auto run = [](Scene& s, PhysicsSystem& phys, int ticks) {
+            for (int i = 0; i < ticks; ++i) {
+                phys.Update(s.GetWorld(), 1.0f / 60.0f);
+            }
+        };
+
+        // 1 回目の「Play」: 新品の PhysicsSystem で 90 tick
+        Scene first;
+        GameObject firstBall = buildScene(first);
+        PhysicsSystem fresh;
+        run(first, fresh, 90);
+        const XMFLOAT3 pFresh = firstBall.GetComponent<LocalTransform>()->position;
+
+        // 2 回目の「Play」: 別のシーンで 200 tick 回した後の同じ PhysicsSystem で、同じシーンを 90 tick
+        PhysicsSystem reused;
+        {
+            Scene warmup;
+            buildScene(warmup);
+            run(warmup, reused, 200);
+        }
+        Scene second;
+        GameObject secondBall = buildScene(second);
+        run(second, reused, 90);
+        const XMFLOAT3 pReused = secondBall.GetComponent<LocalTransform>()->position;
+        check(pFresh.x == pReused.x && pFresh.y == pReused.y && pFresh.z == pReused.z,
+              "wave clock: a reused PhysicsSystem gives bit-identical buoyancy (second Play == new process)");
+
+        const auto* waveAfter = first.Find("Water").GetComponent<WaterWaveComponent>();
+        check(waveAfter->timeTicks == 90, "wave clock: timeTicks advances by one per physics tick");
+
+        // ハッシュに入る = 位相の食い違いがリプレイ検証で検出される
+        auto* waveMut = first.Find("Water").GetComponent<WaterWaveComponent>();
+        const uint64_t h0 = HashWorld(first.GetWorld());
+        waveMut->timeTicks += 1;
+        const uint64_t h1 = HashWorld(first.GetWorld());
+        check(h0 != h1, "wave clock: timeTicks is part of the WorldHash");
+
+        // シーン JSON を往復する (Play 開始の保存→読み直しで位相が保たれる)
+        const nlohmann::json saved = SceneSerializer::SaveToJson(first);
+        Scene reloaded;
+        check(SceneSerializer::LoadFromJson(reloaded, saved), "wave clock: scene JSON reload succeeds");
+        const auto* waveReloaded = reloaded.Find("Water").GetComponent<WaterWaveComponent>();
+        check(waveReloaded != nullptr && waveReloaded->timeTicks == waveMut->timeTicks,
+              "wave clock: timeTicks round-trips through scene JSON");
+    }
+
     MYE_LOG_INFO("==== WaterWave self test: %s (fail count: %d) ====",
                  (failCount == 0 ? "ALL PASS" : "FAILED"), failCount);
     return failCount == 0;

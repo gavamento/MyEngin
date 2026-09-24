@@ -1260,7 +1260,20 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     if (outContacts) {
         outContacts->clear();
     }
-    time_ += dt;
+    // 波の時計を 1 tick 進める (浮力はこの tick の時刻 = 進めた後の timeTicks / 60 で評価する。
+    // 旧実装の「time += dt してから評価」と同じ位置関係)。全 WaterWave を同じ規則で進める —
+    // どれが有効かは描画・浮力とも ResolveActiveWaterWave が決めるので、切り替えても位相が飛ばない。
+    // ★時計を PhysicsSystem 内に持たないこと: プロセス内の累積値はスナップショットにもハッシュにも
+    //   入らず、2 回目の Play や巻き戻しでリプレイが割れた (レビュー #3)
+    {
+        const ComponentTypeId waveReq[] = { WaterWaveComponent::sTypeId };
+        world.ForEachArchetype(waveReq, [&](Archetype& arch) {
+            const int wi = arch.FindTypeIndex(WaterWaveComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                static_cast<WaterWaveComponent*>(arch.GetPtr(wi, row))->timeTicks += 1;
+            }
+        });
+    }
     // M60'b: 変形体の池をコンポーネントの有無と同期する。
     // ★剛体の存在ゲートより前に置く — 布だけのシーン (剛体ゼロ) でも池は同期される必要がある
     if (xpbd) {
@@ -2703,7 +2716,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             float planeY = env ? env->waterPlaneY : kDefaultWaterPlaneY;
             if (activeWave && activeWave->affectBuoyancy) {
                 planeY = wave::EvaluateWaveHeight(activeWaveParams, activeWaveCount,
-                                                  bp.px, bp.pz, time_,
+                                                  bp.px, bp.pz, activeWave->TimeSeconds(),
                                                   activeWave->baseHeight, activeWave->overallScale,
                                                   activeWave->timeScale);
             }

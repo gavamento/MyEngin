@@ -976,12 +976,20 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
 
         if (bestWave != nullptr) {
             waterData_.active = true;
-            // 決定論的通番に基づくアニメーション時間 (60fps 基準、毎フレーム 1/60s ずつ前進)
-            const float t = static_cast<float>(view.viewFrameIndex) * (1.0f / 60.0f) * bestWave->timeScale;
-            // M79 sub-05: MyEngineWater (速度エントリの「前」) と同じ通番則の 1 tick 前
-            const float tPrev = (view.viewFrameIndex > 0)
-                ? static_cast<float>(view.viewFrameIndex - 1) * (1.0f / 60.0f) * bestWave->timeScale
-                : 0.0f;
+            // 水面の時刻 = 浮力と同じ tick の時計 (WaterWave.timeTicks)。描画フレーム数では進めない
+            // (60 FPS 以外で見た目の波と浮き物の水位がずれ、SceneView と GameView でも別の位相になった)。
+            // timeTicks は「直近の tick の状態」の時刻なので、メッシュと同じく前 tick → 直近 tick を
+            // interpAlpha で補間する (Edit 中 / 決定的撮影は alpha=1 = 直近 tick そのもの)。
+            // Edit 中はエディタの水面プレビューの経過秒だけを足す (waterPreviewSeconds、描画専用)
+            const float ticks = static_cast<float>(bestWave->timeTicks - 1) + interpAlpha;
+            const float t = (ticks * (1.0f / 60.0f) + waterPreviewSeconds) * bestWave->timeScale;
+            // 速度エントリの「前」= このビューが前フレームに描いた時刻 (履歴が無いビューは今と同じ = 速度 0)
+            const uint32_t waterVk = (target.viewKey > 0 && target.viewKey < 4) ? target.viewKey : 0u;
+            const float tPrev = (waterVk != 0 && prevWaterTimeValid_[waterVk]) ? prevWaterTime_[waterVk] : t;
+            if (waterVk != 0) {
+                prevWaterTime_[waterVk] = t;
+                prevWaterTimeValid_[waterVk] = true;
+            }
 
             // ワールド行列の取得 (WorldMatrixComponent があればそれを使う)
             if (const auto* wm = world.GetComponent<WorldMatrixComponent>(bestEntity)) {

@@ -546,6 +546,12 @@ MYE_STR(Insp_PilotCamera,     "Pilot###insp_pilot_go",      "このカメラを�
 MYE_STR(Insp_PilotStop,       "Stop###insp_pilot_stop",     "操縦を停止###insp_pilot_stop")
 MYE_STR(Insp_PilotHint,       "(scene view camera controls move this camera)",
                               "(シーンビューのカメラ操作でこのカメラが動きます)")
+MYE_STR(Insp_WaterPreviewStart, "Preview Waves###insp_water_preview_go",
+                                "水面プレビュー###insp_water_preview_go")
+MYE_STR(Insp_WaterPreviewStop,  "Stop Preview###insp_water_preview_stop",
+                                "プレビュー停止###insp_water_preview_stop")
+MYE_STR(Insp_WaterPreviewHint,  "(waves follow simulation ticks; this animates them while editing only)",
+                                "(波の時計はシミュレーション tick。編集中だけ見た目を動かします)")
 // ミニシーン編集モード (M48k)
 MYE_STR(Tool_TipExitActorEdit, "Back to the scene",   "シーンへ戻る")
 MYE_STR(Tool_TipSaveActor,    "Save this asset",      "このアセットを保存")

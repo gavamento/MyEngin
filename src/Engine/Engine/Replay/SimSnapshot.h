@@ -96,7 +96,8 @@ struct SimRefs {
 // v20 (2026-09-13): AcousticVolumeComponent へ glowDecayEveryTicks
 // v21 (2026-09-14): AcousticField::kMaxWaves 16 -> 32 (古い blob は ReadAcoustic が本数不一致で拒む)
 // v22: 組込みコンポーネントの 0/1 int32 フィールドを bool 化 (World 節の生カラムサイズ変更)
-inline constexpr uint32_t kSimSnapshotVersion = 22;
+// v23: WaterWaveComponent へ surfaceMaterial (M79e) と timeTicks (浮力と水面の時計) を末尾追加
+inline constexpr uint32_t kSimSnapshotVersion = 23;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ
