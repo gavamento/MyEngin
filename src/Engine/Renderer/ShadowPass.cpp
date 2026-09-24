@@ -218,6 +218,18 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
         dc->VSSetShaderResources(0, 1, &isrv);
     }
 
+    // M79c-fix (review-1 #1): サーフェスの影エントリは名前解決で任意スロットへ CB/SRV を
+    // 張るため、直後に描く非サーフェス (通常 / スキン / instanced / 失敗フォールバック) が
+    // 期待する固定スロット (VS b0 = objectCB_、VS t0 = instance SRV) を戻す。
+    // VS/IL は boundShader の不一致チェックで次アイテムが自然に張り直すので対象外
+    // (ForwardPath::restoreForwardLitBindings と同じ考え方。ここは b0/t0 のみで足りる)
+    auto restoreFixedShadowSlots = [&]() {
+        ID3D11Buffer* restoreCb[1] = { objectCB_.Get() };
+        dc->VSSetConstantBuffers(0, 1, restoreCb);
+        ID3D11ShaderResourceView* restoreSrv = runs_.empty() ? nullptr : instanceBuf_.SRV();
+        dc->VSSetShaderResources(0, 1, &restoreSrv);
+    };
+
     // M38d: カスケード毎にスライス DSV へ全不透明キャスターを描く
     uint64_t boundShader = depthShader_.value; // 上で prog を bind 済み
     for (int c = 0; c < count; ++c) {
@@ -287,6 +299,7 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
                             boundMesh = item.mesh.value;
                         }
                         dc->DrawIndexed(mesh->indexCount, 0, 0);
+                        restoreFixedShadowSlots(); // review-1 #1: 次の非サーフェスへ b0/t0 を戻す
                         continue;
                     }
                     // sprog が壊れている異常系 (ready==true なら通常起きない) → 下へフォールスルー

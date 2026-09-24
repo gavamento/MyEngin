@@ -17,6 +17,7 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
+#include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/DeferredPath.h"
@@ -24,6 +25,7 @@
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/ShaderManager.h"
 #include "Engine/Renderer/ShadowPass.h"
+#include "Engine/Renderer/WaterPass.h" // review-1 #1 補強: WaterDrawData (水面が絡む確認用)
 
 using namespace DirectX;
 using Microsoft::WRL::ComPtr;
@@ -137,6 +139,33 @@ VSOut VSMain(VSIn v)
 float4 PSMain(VSOut i) : SV_Target
 {
     return float4(0.0f, 0.8f, 0.0f, 0.5f);
+}
+)HLSL";
+
+// review-1 #1 の再現用: VS で Texture2D (_HeightTex) を読む。名前解決で VS の SRV スロットへ
+// 張られるため、後続の instanced run が期待する t0 (インスタンス行列バッファ) と衝突しうる
+// (rv1\vtexA_def.png の再現)。Properties の既定テクスチャ ("white") で足りるので .mat.json 側は
+// properties を書かなくてよい
+const char* kVTexSurface = R"HLSL(
+/*@MyEngineProperties
+_HeightTex ("Height", 2D) = "white" {}
+@*/
+#include "MyEngineSurface.hlsli"
+Texture2D _HeightTex;
+struct VSIn { float3 pos : POSITION; };
+struct VSOut { float4 pos : SV_Position; };
+VSOut VSMain(VSIn v)
+{
+    VSOut o;
+    float3 p = v.pos;
+    p.y += _HeightTex.SampleLevel(gSampler, float2(0.5f, 0.5f), 0.0f).r * 0.01f;
+    float4 worldPos = mul(float4(p, 1.0f), gWorld);
+    o.pos = mul(worldPos, gViewProj);
+    return o;
+}
+float4 PSMain(VSOut i) : SV_Target
+{
+    return float4(1.0f, 0.0f, 1.0f, 1.0f);
 }
 )HLSL";
 
@@ -452,6 +481,304 @@ void TestShadowPassDepthReflectsDisplacement(GraphicsDevice& device, const std::
     fs::remove_all(dir, ec);
 }
 
+// ---- review-1 #1 (M79c-fix): ShadowPass の混在順序回帰。サーフェスの影エントリは名前解決で
+//      VS の CB/SRV を任意スロットへ張るため、直後に描く非サーフェス (通常 + instanced run) が
+//      期待する固定スロット (VS b0 = objectCB_、VS t0 = instance SRV) を戻さないと、その非サーフェス
+//      アイテムが壊れた行列/SRV を読んで影を落とせなくなる (再現: rv1\shadowA.png / vtexA_def.png)。
+//      「サーフェス→非サーフェス」「非サーフェス→サーフェス」の 2 順序で、非サーフェス側
+//      (instanced run) の深度が完全一致することを確認する ----
+void TestShadowPassFixedSlotsSurviveSurfaceEntry(GraphicsDevice& device, const std::wstring& engineShaderDir)
+{
+    MYE_LOG_INFO("-- ShadowPass: サーフェス描画後も VS b0(objectCB_)/t0(instance SRV) が非サーフェスへ戻るか --");
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir = fs::temp_directory_path(ec) / L"mye_surface_shadow_order_selftest";
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    WriteFile(dir / L"VTexProbe.surface.hlsl", kVTexSurface);
+    WriteFile(dir / L"VTexProbe.mat.json", "{\"shader\":\"VTexProbe.surface\"}");
+
+    ShaderManager shaders;
+    Check(shaders.Init(device, { dir.wstring(), engineShaderDir }), "shader manager init (shadow order)");
+
+    RenderResources resources;
+    resources.Init(device);
+    const AssetID surfMatId = resources.materials.LoadFromFile(
+        (dir / L"VTexProbe.mat.json").wstring(), resources.textures, dir.wstring());
+    Check(!surfMatId.IsNull(), "VTexProbe.mat.json が読み込める");
+
+    // 非サーフェスの通常マテリアル。ShadowPass はマテリアルの中身を読まないので実体は不要
+    // (SurfaceMaterialSelfTest の「forward_lit マテリアルは対象外」と同じ組み方)
+    Material plain;
+    plain.shader = AssetID{ HashStr("forward_lit") };
+    const AssetID plainMatId = resources.materials.Register("shadow_order_plain", plain);
+
+    ShadowPass sp;
+    constexpr int kRes = 128;
+    Check(sp.Init(device, shaders, kRes), "ShadowPass::Init (order)");
+
+    const AssetID cube = resources.meshes.Cube();
+    auto makeItem = [&](AssetID mat, float x) {
+        RenderItem item;
+        item.mesh = cube;
+        item.material = mat;
+        XMStoreFloat4x4(&item.world, XMMatrixTranslation(x, 0.0f, 0.0f));
+        item.prevWorld = item.world;
+        return item;
+    };
+
+    // 真上 (y=10) から見下ろす正射影ライト (TestShadowPassDepthReflectsDisplacement と同じ組み方)
+    const XMMATRIX lightView =
+        XMMatrixLookToLH(XMVectorSet(0, 10, 0, 1), XMVectorSet(0, -1, 0, 0), XMVectorSet(0, 0, 1, 0));
+    const XMMATRIX lightProj = XMMatrixOrthographicLH(8.0f, 8.0f, 0.1f, 20.0f);
+    XMFLOAT4X4 lightViewProj;
+    XMStoreFloat4x4(&lightViewProj, XMMatrixMultiply(lightView, lightProj));
+
+    auto readDepthAt = [&](float worldX) -> float {
+        ID3D11ShaderResourceView* shadowSrv = sp.SRV();
+        if (!shadowSrv) {
+            return -1.0f;
+        }
+        ComPtr<ID3D11Resource> shadowRes;
+        shadowSrv->GetResource(shadowRes.GetAddressOf());
+        ComPtr<ID3D11Texture2D> shadowTex;
+        if (FAILED(shadowRes.As(&shadowTex))) {
+            return -1.0f;
+        }
+        D3D11_TEXTURE2D_DESC td = {};
+        shadowTex->GetDesc(&td);
+        D3D11_TEXTURE2D_DESC staged = td;
+        staged.Format = DXGI_FORMAT_R32_FLOAT; // シャドウテクスチャは TYPELESS
+        staged.Usage = D3D11_USAGE_STAGING;
+        staged.BindFlags = 0;
+        staged.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        ComPtr<ID3D11Texture2D> staging;
+        if (FAILED(device.Device()->CreateTexture2D(&staged, nullptr, staging.GetAddressOf()))) {
+            return -1.0f;
+        }
+        ID3D11DeviceContext* dc = device.Context();
+        dc->CopyResource(staging.Get(), shadowTex.Get());
+        // ortho width=8 中心 0 → u = worldX/width + 0.5 (TestShadowPassDepthReflectsDisplacement と同じ式)
+        const int px = static_cast<int>((worldX / 8.0f + 0.5f) * kRes);
+        const int py = kRes / 2;
+        float v = -1.0f;
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        if (SUCCEEDED(dc->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+            const uint8_t* row =
+                static_cast<const uint8_t*>(mapped.pData) + static_cast<size_t>(py) * mapped.RowPitch;
+            std::memcpy(&v, row + static_cast<size_t>(px) * 4, 4);
+            dc->Unmap(staging.Get(), 0);
+        }
+        return v;
+    };
+
+    constexpr float kClearDepth = 1.0f; // ShadowPass::Render の ClearDepthStencilView と同じ既定値
+
+    // 順序 A: サーフェス → 非サーフェス instanced run 2 個 (rv1\shadowA.png の再現方向)
+    RenderQueue queueA;
+    queueA.opaque = { makeItem(surfMatId, -3.0f), makeItem(plainMatId, 0.0f), makeItem(plainMatId, 3.0f) };
+    sp.Render(device, shaders, queueA, resources, &lightViewProj, /*count=*/1, /*viewFrameIndex=*/30,
+              /*instancing=*/true);
+    const float depthAfterA0 = readDepthAt(0.0f);
+    const float depthAfterA3 = readDepthAt(3.0f);
+
+    // 順序 B: 非サーフェス instanced run 2 個 → サーフェス (rv1\shadowB.png の再現方向、基準値)
+    RenderQueue queueB;
+    queueB.opaque = { makeItem(plainMatId, 0.0f), makeItem(plainMatId, 3.0f), makeItem(surfMatId, -3.0f) };
+    sp.Render(device, shaders, queueB, resources, &lightViewProj, /*count=*/1, /*viewFrameIndex=*/30,
+              /*instancing=*/true);
+    const float depthBeforeB0 = readDepthAt(0.0f);
+    const float depthBeforeB3 = readDepthAt(3.0f);
+
+    Check(std::fabs(depthBeforeB0 - kClearDepth) > 1e-4f && std::fabs(depthBeforeB3 - kClearDepth) > 1e-4f,
+          "順序 B (サーフェスが後) では非サーフェス instanced run の影が正しく落ちる (基準値)");
+    Check(std::fabs(depthAfterA0 - kClearDepth) > 1e-4f && std::fabs(depthAfterA3 - kClearDepth) > 1e-4f,
+          "(review-1 #1) 順序 A (サーフェスが先) でも非サーフェス instanced run の影が消えない");
+    Check(std::fabs(depthAfterA0 - depthBeforeB0) < 1e-6f && std::fabs(depthAfterA3 - depthBeforeB3) < 1e-6f,
+          "(review-1 #1) 順序 A と順序 B で非サーフェス instanced run の深度が完全一致する"
+          " (b0/objectCB_・t0/instance SRV がサーフェス描画後に復元されている)");
+    if (!(std::fabs(depthAfterA0 - depthBeforeB0) < 1e-6f && std::fabs(depthAfterA3 - depthBeforeB3) < 1e-6f)) {
+        MYE_LOG_ERROR("    depthAfterA0=%f depthBeforeB0=%f depthAfterA3=%f depthBeforeB3=%f", depthAfterA0,
+                     depthBeforeB0, depthAfterA3, depthBeforeB3);
+    }
+
+    fs::remove_all(dir, ec);
+}
+
+// ---- review-1 #1 の補強: DeferredPath のサーフェス段 (2.65 RenderSurfaceForward) の後に続く
+//      水面 (2.7 water_.Render) / 透明後段 (3 RenderTransparent) は、どちらも自分の描画に要る
+//      固定スロットを呼び出しの都度自分で張り直す設計 (WaterPass.cpp の perFrameCB 再バインド、
+//      DeferredPath.cpp の bindForwardLitFixed) だが、それを「サーフェス段の有無で水面・透明の
+//      絵が変わらない」という観測可能な形で固定する。画面上の別々の位置に
+//      distractor サーフェス (VS テクスチャ付き) / 透明アイテム / 水面のみの読み取り点を置き、
+//      distractor の有無で後 2 者の画素が完全一致することを確認する (絶対色は問わない) ----
+void TestDeferredWaterAndTransparentUnaffectedBySurfaceForwardStep(GraphicsDevice& device,
+                                                                   const std::wstring& engineShaderDir)
+{
+    MYE_LOG_INFO("-- DeferredPath: サーフェス段 (2.65) の後でも水面 (2.7) / 透明後段 (3) の絵が変わらないか --");
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir = fs::temp_directory_path(ec) / L"mye_surface_deferred_water_selftest";
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    WriteFile(dir / L"VTexProbe.surface.hlsl", kVTexSurface);
+    WriteFile(dir / L"VTexProbe.mat.json", "{\"shader\":\"VTexProbe.surface\"}");
+
+    ShaderManager shaders;
+    Check(shaders.Init(device, { dir.wstring(), engineShaderDir }), "shader manager init (water order)");
+    const AssetID litShaderId = shaders.Load("forward_lit");
+    Check(shaders.Get(litShaderId) != nullptr && shaders.Get(litShaderId)->valid, "forward_lit がロードできる");
+
+    RenderResources resources;
+    resources.Init(device);
+    const AssetID surfMatId = resources.materials.LoadFromFile(
+        (dir / L"VTexProbe.mat.json").wstring(), resources.textures, dir.wstring());
+    Check(!surfMatId.IsNull(), "VTexProbe.mat.json が読み込める (water order)");
+
+    Material transMat;
+    transMat.shader = litShaderId;
+    transMat.texture = resources.textures.White();
+    transMat.baseColor = { 0.1f, 0.2f, 0.9f, 0.5f };
+    const AssetID transMatId = resources.materials.Register("water_order_transparent", transMat);
+
+    DeferredPath dp;
+    Check(dp.Init(device, shaders), "DeferredPath::Init (water order)");
+
+    const AssetID cube = resources.meshes.Cube();
+
+    constexpr UINT kWidth = 128;
+    constexpr UINT kHeight = 128;
+    ID3D11Device* dev = device.Device();
+    ID3D11DeviceContext* dc = device.Context();
+
+    D3D11_TEXTURE2D_DESC ctd = {};
+    ctd.Width = kWidth;
+    ctd.Height = kHeight;
+    ctd.MipLevels = 1;
+    ctd.ArraySize = 1;
+    ctd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    ctd.SampleDesc = { 1, 0 };
+    ctd.Usage = D3D11_USAGE_DEFAULT;
+    ctd.BindFlags = D3D11_BIND_RENDER_TARGET;
+    ComPtr<ID3D11Texture2D> colorTex;
+    ComPtr<ID3D11RenderTargetView> colorRtv;
+    bool ok = SUCCEEDED(dev->CreateTexture2D(&ctd, nullptr, colorTex.GetAddressOf()));
+    ok = ok && SUCCEEDED(dev->CreateRenderTargetView(colorTex.Get(), nullptr, colorRtv.GetAddressOf()));
+    D3D11_TEXTURE2D_DESC staged = ctd;
+    staged.Usage = D3D11_USAGE_STAGING;
+    staged.BindFlags = 0;
+    staged.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ComPtr<ID3D11Texture2D> colorStaging;
+    ok = ok && SUCCEEDED(dev->CreateTexture2D(&staged, nullptr, colorStaging.GetAddressOf()));
+
+    D3D11_TEXTURE2D_DESC dtd = {};
+    dtd.Width = kWidth;
+    dtd.Height = kHeight;
+    dtd.MipLevels = 1;
+    dtd.ArraySize = 1;
+    dtd.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    dtd.SampleDesc = { 1, 0 };
+    dtd.Usage = D3D11_USAGE_DEFAULT;
+    dtd.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+    ComPtr<ID3D11Texture2D> depthTex;
+    ComPtr<ID3D11DepthStencilView> dsv;
+    ok = ok && SUCCEEDED(dev->CreateTexture2D(&dtd, nullptr, depthTex.GetAddressOf()));
+    ok = ok && SUCCEEDED(dev->CreateDepthStencilView(depthTex.Get(), nullptr, dsv.GetAddressOf()));
+    Check(ok, "RTV/DSV/staging を作成できる (water order)");
+    if (!ok) {
+        fs::remove_all(dir, ec);
+        return;
+    }
+
+    // 真上 (y=8) から見下ろす正射影カメラ。x=-4 に distractor サーフェス、x=0 に透明キューブ、
+    // x=+4 は何も置かず水面だけを読む (TestShadowPassFixedSlotsSurviveSurfaceEntry と同じ発想)
+    RenderView view;
+    XMStoreFloat4x4(&view.view,
+                    XMMatrixLookToLH(XMVectorSet(0, 8, 0, 1), XMVectorSet(0, -1, 0, 0), XMVectorSet(0, 0, 1, 0)));
+    XMStoreFloat4x4(&view.proj, XMMatrixOrthographicLH(12.0f, 12.0f, 0.1f, 50.0f));
+    XMStoreFloat4x4(&view.projNoJitter, XMLoadFloat4x4(&view.proj));
+    view.width = static_cast<int>(kWidth);
+    view.height = static_cast<int>(kHeight);
+    view.rtv = colorRtv.Get();
+    view.dsv = dsv.Get();
+    view.instancingEnabled = 0;
+    view.viewFrameIndex = 30;
+    XMStoreFloat4x4(&view.prevViewProj,
+                    XMMatrixMultiply(XMLoadFloat4x4(&view.view), XMLoadFloat4x4(&view.projNoJitter)));
+    view.prevViewProjValid = 1;
+
+    SceneLightData lights;
+    lights.ambient = { 0.3f, 0.3f, 0.3f };
+    lights.count = 0;
+
+    WaterDrawData water;
+    water.active = true;
+    water.useSurfaceRoute = false;
+    water.curWaterTime = 0.5f;
+    water.prevWaterTime = 0.4f;
+    view.water = &water;
+
+    auto makeCubeItem = [&](AssetID mat, float x) {
+        RenderItem item;
+        item.mesh = cube;
+        item.material = mat;
+        XMStoreFloat4x4(&item.world, XMMatrixTranslation(x, 0.5f, 0.0f));
+        item.prevWorld = item.world;
+        return item;
+    };
+
+    auto readColor = [&](int px, int py) {
+        dc->CopyResource(colorStaging.Get(), colorTex.Get());
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        std::array<uint8_t, 4> out = { 0, 0, 0, 0 };
+        if (SUCCEEDED(dc->Map(colorStaging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+            const uint8_t* row =
+                static_cast<const uint8_t*>(mapped.pData) + static_cast<size_t>(py) * mapped.RowPitch;
+            std::memcpy(out.data(), row + static_cast<size_t>(px) * 4, 4);
+            dc->Unmap(colorStaging.Get(), 0);
+        }
+        return out;
+    };
+    // u = worldX/width + 0.5 (TestShadowPassFixedSlotsSurviveSurfaceEntry と同じ式、width=12)
+    const int pxTransparent = static_cast<int>((0.0f / 12.0f + 0.5f) * kWidth);
+    const int pxWaterOnly = static_cast<int>((4.0f / 12.0f + 0.5f) * kWidth);
+    const int py = static_cast<int>(kHeight) / 2;
+
+    // 順序 A (基準値): distractor サーフェスなし — 透明キューブ + 水面のみ
+    RenderQueue queueBase;
+    queueBase.transparent = { makeCubeItem(transMatId, 0.0f) };
+    dp.Render(device, view, queueBase, lights, resources, shaders);
+    const std::array<uint8_t, 4> transparentBase = readColor(pxTransparent, py);
+    const std::array<uint8_t, 4> waterBase = readColor(pxWaterOnly, py);
+
+    // 順序 B: 同じシーンに distractor サーフェス (x=-4、画面上の別位置) を追加
+    RenderQueue queueWith;
+    queueWith.opaque = { makeCubeItem(surfMatId, -4.0f) };
+    queueWith.transparent = { makeCubeItem(transMatId, 0.0f) };
+    dp.Render(device, view, queueWith, lights, resources, shaders);
+    const std::array<uint8_t, 4> transparentWith = readColor(pxTransparent, py);
+    const std::array<uint8_t, 4> waterWith = readColor(pxWaterOnly, py);
+
+    Check(waterBase[0] != 0 || waterBase[1] != 0 || waterBase[2] != 0,
+          "水面のみの画素が黒でない (WaterPass::Render が実際に描いている)");
+    Check(transparentBase != waterBase,
+          "透明キューブの画素は水面のみの画素と異なる (透明キューブが実際に描かれている)");
+    Check(transparentWith == transparentBase,
+          "(review-1 #1 補強) distractor サーフェスの有無で透明後段の画素が変わらない");
+    Check(waterWith == waterBase,
+          "(review-1 #1 補強) distractor サーフェスの有無で水面の画素が変わらない");
+    if (transparentWith != transparentBase || waterWith != waterBase) {
+        MYE_LOG_ERROR("    transparentBase=(%d,%d,%d,%d) transparentWith=(%d,%d,%d,%d)", transparentBase[0],
+                     transparentBase[1], transparentBase[2], transparentBase[3], transparentWith[0],
+                     transparentWith[1], transparentWith[2], transparentWith[3]);
+        MYE_LOG_ERROR("    waterBase=(%d,%d,%d,%d) waterWith=(%d,%d,%d,%d)", waterBase[0], waterBase[1],
+                     waterBase[2], waterBase[3], waterWith[0], waterWith[1], waterWith[2], waterWith[3]);
+    }
+
+    dp.Shutdown();
+    fs::remove_all(dir, ec);
+}
+
 // ---- (e): M79 sub-05 round 2 — Deferred の透明段がサーフェスマテリアルの色エントリを描くこと。
 //      未修正時は `shaders.Get(mat->shader)` が `*.surface` 短名を解決できず `continue` で
 //      黙って消えていた (round 1 VERDICT の指摘)。ここでは
@@ -623,6 +950,8 @@ bool RunSurfaceDeferredSelfTest()
 
     TestDeferredForwardStepVelocityAndBypass(device, engineShaderDir);
     TestShadowPassDepthReflectsDisplacement(device, engineShaderDir);
+    TestShadowPassFixedSlotsSurviveSurfaceEntry(device, engineShaderDir); // review-1 #1 (M79c-fix)
+    TestDeferredWaterAndTransparentUnaffectedBySurfaceForwardStep(device, engineShaderDir); // review-1 #1 補強
     TestDeferredTransparentDrawsSurfaceColorEntry(device, engineShaderDir); // M79 sub-05 round 2
 
     // (d) サーフェス 0 件のときフォワード段が何も張らないことは、この自己テストの範囲では

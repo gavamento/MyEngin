@@ -1,8 +1,8 @@
 # sub-03: Deferred フォワード段・速度・CSM 影
 
 - 依存: sub-02
-- 状態: 差し戻し (review-1 #1)
-- 往復: 2
+- 状態: OK (review-1 差し戻し分、コミット待ち)
+- 往復: 3
 
 ## やること
 
@@ -172,3 +172,47 @@ SELF_EVAL: sub-03 (round 2)
   - `SurfaceDeferredSelfTest.cpp` の Shadow テストは **Quad ではなく Cube** を使っている。真上から見下ろす正射影ライトで Z 面 (Quad) を使うと、footprint が世界の Z 方向に厚み 0 の直線に潰れて shadow map にほぼ乗らない (実際に踏んだ)。真上から見下ろす系の検証を今後追加するときはこの注意点を踏襲すること
   - DeferredPath テストの変位量は `gTime * 0.15` (小さめ) にしてある。変位が大きすぎると (最初 `gTime` そのままにしていた) メッシュ自身のスクリーン footprint から read-back 対象のピクセルがはみ出し、"変位したら急に何も描かれなくなる" ように見える誤検出を起こす (実際に踏んだ)。同種のテストを増やすときは変位量とメッシュサイズ・read-back 座標の関係に注意すること
 - round 2: VERDICT OK (planner)。条件 1 は d8_final_full.png を planner が目視 (サーフェス立方体・水面交差・手前透明の混色・パーティクル)＋奥透明の全画素一致比較。条件 6 は SurfaceDeferredSelfTest (a)(b)(c)＋反証、(d) は既存 golden＋replay_verify を根拠に受理。
+
+SELF_EVAL: sub-03 (round 3)
+実装:
+  - #1 (review-1 blocker, ShadowPass の固定スロット未復元) — `src/Engine/Renderer/ShadowPass.cpp:221-231` に `restoreFixedShadowSlots` ラムダを追加し、`:302` のサーフェス影エントリ `DrawIndexed` 直後 (`continue` の前) で呼ぶ。内容は VS b0 (`objectCB_`) の再バインドと、VS t0 (instance SRV。`runs_` が空なら null) の再バインドのみ。VS/IL の復元コードは足していない — `boundShader` が既に「直前に張った VS/IL の実体」を追跡しており、サーフェスの `surfaceProgramId` は `depthShader_`/`depthSkinnedShader_`/`depthInstancedShader_` のいずれとも値が一致しないため、次の非サーフェスアイテムの `if (itemShader != boundShader)` / `if (depthInstancedShader_.value != boundShader)` が既存コードのまま自然に真になり、VS/IL は次アイテムの描画時に確実に張り直る (コードを読んで確認、後述のテストでも実証)。sub-02 の `ForwardPath::restoreForwardLitBindings` (`boundShader=0` で強制フルリバインド) とは違う経路だが、同じ帰結を狭い変更で得ている
+  - 受け入れ条件 (追加分・混在順序 SelfTest) — `src/Engine/Renderer/SurfaceDeferredSelfTest.cpp` に `TestShadowPassFixedSlotsSurviveSurfaceEntry` を新規追加。VS で `Texture2D _HeightTex` を読む `kVTexSurface` フィクスチャ (Properties `_HeightTex ("Height", 2D) = "white" {}` で既定テクスチャ自動解決) を使い、「サーフェス→非サーフェス instanced run 2 個」(順序 A) と「非サーフェス instanced run 2 個→サーフェス」(順序 B、基準値) の 2 順序で `ShadowPass::Render` を実駆動し、`ShadowPass::SRV()` を read-back。順序 B を基準に、順序 A でも (a) 影が消えない (深度が clear 値 1.0 のままでない)、(b) 順序 A/B の深度が完全一致することを確認
+  - 受け入れ条件 (追加分・Deferred の水面/透明の確認) — 同ファイルに `TestDeferredWaterAndTransparentUnaffectedBySurfaceForwardStep` を新規追加。`DeferredPath::Render` をフル駆動し、画面上の別位置に distractor サーフェス (VS テクスチャ付き、x=-4) / 透明キューブ (forward_lit、x=0) / 水面のみの読み取り点 (x=+4) を配置。distractor の有無 (2 回描画) で透明キューブの画素・水面のみの画素がどちらも完全一致することを確認。読む前にコードを読み、`DeferredPath::RenderTransparent` が自身の呼び出し冒頭で `bindForwardLitFixed()` を無条件に呼び (`DeferredPath.cpp:1600`)、`WaterPass::Render` も呼び出しの都度 VS/PS の CB・サンプラ・SRV・シェーダ・頂点/インデックスバッファを全部自分で張り直す (`WaterPass.cpp:159-226`) ことを確認済み — この 2 つは元から ShadowPass と違う設計 (毎回フルリバインド) で、review-1 #1 と同じクラスの不具合を作っていないことをコードで確認したうえで、それを崩れないよう固定する回帰テストとして追加した (新しいバグを見つけたわけではない)
+  - `docs/surface-shaders-deferred-limits.md` は round 1/2 の内容のまま変更なし (review-1 #1 は「作者が読む規約」ではなく実装の内部バグだったため、docs への追記は不要と判断)
+
+仕様との差分:
+  - [追加] spec 5-13 の「混在順序の影深度 SelfTest」に加え、sub-03.md 差し戻し節が明示的に求めた「Deferred のサーフェス段の後の水面・透明にも同じ観点の確認を1本」も実装した。この 2 本目はバグ修正ではなく回帰ガード (根拠は上記実装欄) — reviewer/planner が「実際にバグがあった」と誤解しないよう明記する
+
+検証:
+  - `MSBuild MyEngine.sln /p:Configuration=Debug /p:Platform=x64` → 成功、エラー 0、警告 0
+  - `MSBuild MyEngine.sln /p:Configuration=Release /p:Platform=x64` → 成功、エラー 0、警告 0
+  - `bin\x64\Debug\Editor.exe --selftest` → 全 PASS (exit 0)、`FAIL:` 0 件。新設 2 テストとも全チェック PASS
+  - `bin\x64\Release\Editor.exe --selftest` → 全 PASS (exit 0)、`FAIL:` 0 件 (1 度だけ `[assets] relocate failed: ... Access is denied` で 2 件 FAIL が出たが、自分が直前に残した Runtime.exe プロセス・一時ディレクトリの競合が原因と特定し、プロセス停止＋一時ディレクトリ削除後に再実行して解消。ShadowPass/SurfaceDeferredSelfTest とは無関係)
+  - `tools\check_rules.ps1` → `0 error(s), 0 warning(s)`
+  - `tools\replay_verify.bat` → `[PASS]`、13 ジョブ全通過 (148.8s)
+  - **反証 (敵対的自己レビュー) #1**: `ShadowPass.cpp` の `restoreFixedShadowSlots();` 呼び出しを一時的にコメントアウトして Debug ビルド・`--selftest` を実行 → 新設 `TestShadowPassFixedSlotsSurviveSurfaceEntry` の「順序 A でも影が消えない」「順序 A/B の深度が完全一致する」の 2 件が FAIL (`depthAfterA0=1.000000 depthBeforeB0=0.472386` 等、影が完全に消えている数値を確認)。復元後 `git diff` が空であることを確認し、全 PASS に戻ることを再確認
+  - **反証 #2**: `DeferredPath.cpp` の `RenderTransparent` 冒頭の `bindForwardLitFixed();` (review-1 #1 とは別に元から存在するコード) を一時的にコメントアウトして実行 → 新設 `TestDeferredWaterAndTransparentUnaffectedBySurfaceForwardStep` が「透明キューブの画素は水面のみの画素と異なる」で FAIL (透明キューブが背景の水面と見分けが付かなくなる = 描画が壊れる) することを確認し、この経路が実際にテストされていることを実証。復元後 `git diff` が空であることを確認し、全 PASS に戻ることを再確認
+  - **実プロジェクト・実経路 (Runtime.exe, WARP)**: reviewer の round 1 検証物 (`%TEMP%\claude\...\scratchpad\rv1\`) をそのまま流用し、修正前の repro シーンを再撮影
+    - `shadowA.scene.json` (Forward): reviewer の `rv1\shadowA.png` (LitMid/LitRight の影が消えている) に対し、修正後の再撮影 `shadowA_postfix.png` は 3 個とも影が出ることを画像で確認
+    - `shadowA.scene.json --deferred`: reviewer の `rv1\shadowA_def.png` (同じく影欠落) に対し、修正後 `shadowA_def_postfix.png` は 3 個とも影が出ることを画像で確認
+    - `shadowB.scene.json` (Forward、順序を入れ替えた対照): 修正後 `shadowB_postfix.png` も 3 個とも影が出て `shadowA_postfix.png` と一致 (受け入れ条件 13 の「描画順を入れ替えても結果が変わらない」を実地確認)
+    - `vtexA.scene.json --deferred`: reviewer の `rv1\vtexA_def.err` (D3D デバッグレイヤの `DrawIndexedInstanced: ... BUFFER ... does not match ... TEXTURE2D` エラーが 43 行) に対し、修正後の再実行ログでこのエラー文言の出現回数が **0 件**になったことを `grep -c` で確認。同時に撮影した `vtexA_def_postfix.png` では、中央の green VT キューブに隠れていた 2 個を含む Lit キューブ 6 個全部の影が出ていることを画像で確認 (reviewer の `rv1\vtexA_def.png` では中央 2 個が green キューブに隠れて影の有無が確認できていなかった点を補完)
+    - 一時レンダリング結果はすべて `%TEMP%\claude\...\scratchpad\sub03fix\` (リポジトリ外、未コミット)。reviewer の repro シーン自体は書き換えていない
+
+自己採点 (1-5):
+  仕様適合: 5 — review-1 #1 の期待 (b0/instance SRV の復元、混在順序 SelfTest) を実装し、sub-03.md 差し戻し節が追加で求めた「水面・透明の確認」も実装した
+  正しさ: 5 — 自動 SelfTest (Debug/Release) に加え、reviewer 自身の repro シーン (rv1) を実際に再実行し、修正前の画像・D3D エラーログと直接比較して「影が出るようになった」「D3D エラーが 0 件になった」ことを実証した。2 本の反証 (修正を外すと FAIL する) も実施し、テストが空振りでないことを確認した
+  コード品質: 5 — ShadowPass の修正は 13 行の最小差分で、既存の `boundShader` 追跡機構を活かして VS/IL の復元コードを増やさずに済ませた (根拠をコメントとコードの再確認で明記)。水面/透明のテストは「バグを直した」のではなく「既に安全な設計であることをコードで確認し、回帰ガードとして固定した」ことを実装メモで区別して開示した
+  テスト: 5 — 新設 2 テストとも Debug/Release で PASS、かつそれぞれ独立した反証で「壊すと落ちる」ことを実証済み。実プロジェクトの実描画 (WARP) でも reviewer の repro が解消したことを画像・ログ両方で確認した
+
+不安・質問: なし
+
+触ったファイル (round 3 分、round 1/2 分は上記と同一):
+  - `src/Engine/Renderer/ShadowPass.cpp` (review-1 #1 の修正: `restoreFixedShadowSlots` 追加・呼び出し)
+  - `src/Engine/Renderer/SurfaceDeferredSelfTest.cpp` (新規テスト 2 本追加: `TestShadowPassFixedSlotsSurviveSurfaceEntry` / `TestDeferredWaterAndTransparentUnaffectedBySurfaceForwardStep`、`kVTexSurface` フィクスチャ追加、`#include "Engine/Core/Hash.h"` / `#include "Engine/Renderer/WaterPass.h"` 追加)
+
+申し送り:
+  - `DeferredPath.cpp`/`.h` および `ShadowPass.h` は本ラウンドで一切変更していない (`git diff` で確認済み)。review-1 #1 は ShadowPass 単体のバグで、DeferredPath 側の `RenderSurfaceForward`→水面/透明の経路は元から安全 (`bindForwardLitFixed` / `WaterPass::Render` のフルリバインド) だった
+  - Runtime.exe は `--screenshot` 撮影後も自動終了せずプロセスが残り続ける (今回複数回踏んだ)。次に一時検証で Runtime.exe を使うときは、撮影後に明示的に `Stop-Process` するか、次のビルドの前に必ずプロセス残留を確認すること (でないと `LINK : fatal error LNK1168` でビルドが失敗する)
+  - reviewer の rv1 検証物はコード変更なしで再利用できた (シーン・マテリアル・シェーダの書き換え一切不要)。次にこの種の回帰を検証するときも rv1 をそのまま使ってよい
+- round 3 (review-1 #1): VERDICT OK (planner)。ShadowPass.cpp:221-231 の restoreFixedShadowSlots (VS b0 / t0) を確認、VS/IL は boundShader 不一致で次アイテムが張り直す。sub03fix\shadowA_postfix.png を目視 (3 個とも影あり)。混在順序の影深度テストと Deferred 水面・透明の回帰テストに反証込み。受け入れ条件 13 (影・Deferred 側) 充足。
