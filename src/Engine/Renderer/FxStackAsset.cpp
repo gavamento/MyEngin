@@ -8,6 +8,7 @@
 #include <fstream>
 #include <string>
 
+#include "Engine/Core/Log.h"
 #include "nlohmann/json.hpp"
 
 using nlohmann::json;
@@ -109,45 +110,69 @@ bool LoadFxStack(const std::wstring& path, FxStackAsset& out, std::string* error
         return false;
     }
 
-    out = FxStackAsset{};
-    out.version = j.value("version", 1);
-
-    const json& passes = j.value("passes", json::array());
-    if (!passes.is_array()) {
-        // passes がなければ空スタック扱い (ok=true)
-        return true;
+    if (!j.is_object()) {
+        if (errorMsg) {
+            *errorMsg = "ルートが JSON オブジェクトではありません";
+        }
+        return false;
     }
 
-    for (const json& ep : passes) {
-        FxStackEntry entry;
+    // 型の崩れた値 (数値欄に文字列など) は json::value / get が type_error を投げる。
+    // RenderSystem は描画中に読むので、例外を漏らさずロード失敗として返す
+    // (ProjectShaderProperties の DecodeMaterialProperties と同じ作法)
+    FxStackAsset parsed;
+    try {
+        parsed.version = j.value("version", 1);
 
-        // kind
-        const std::string kind = ep.value("kind", "post");
-        if (kind == "compute") {
-            entry.kind = FxStackKind::Compute;
-        } else {
-            entry.kind = FxStackKind::Post;
+        const json passes = j.value("passes", json::array());
+        if (!passes.is_array()) {
+            // passes がなければ空スタック扱い (ok=true)
+            out = std::move(parsed);
+            return true;
         }
 
-        entry.shader  = ep.value("shader", "");
-        entry.enabled = ep.value("enabled", true);
+        for (const json& ep : passes) {
+            if (!ep.is_object()) {
+                // 要素 1 件の破損でスタック全体を捨てない。その要素だけ飛ばす
+                MYE_LOG_WARN("fxstack: passes の要素がオブジェクトではないため飛ばします");
+                continue;
+            }
+            FxStackEntry entry;
 
-        if (entry.kind == FxStackKind::Post) {
-            entry.insertion = InsertionFromString(ep.value("insertion", "BeforeTonemap"));
-            entry.priority  = ep.value("priority", 100);
-        } else {
-            entry.dispatchPoint = ep.value("dispatchPoint", "BeforePost");
-            entry.priority      = ep.value("priority", 50);
+            // kind
+            const std::string kind = ep.value("kind", "post");
+            if (kind == "compute") {
+                entry.kind = FxStackKind::Compute;
+            } else {
+                entry.kind = FxStackKind::Post;
+            }
+
+            entry.shader  = ep.value("shader", "");
+            entry.enabled = ep.value("enabled", true);
+
+            if (entry.kind == FxStackKind::Post) {
+                entry.insertion = InsertionFromString(ep.value("insertion", "BeforeTonemap"));
+                entry.priority  = ep.value("priority", 100);
+            } else {
+                entry.dispatchPoint = ep.value("dispatchPoint", "BeforePost");
+                entry.priority      = ep.value("priority", 50);
+            }
+
+            // プロパティ値
+            if (ep.contains("properties") && ep["properties"].is_object()) {
+                ParseProperties(ep["properties"], entry.properties);
+            }
+
+            parsed.passes.push_back(std::move(entry));
         }
-
-        // プロパティ値
-        if (ep.contains("properties") && ep["properties"].is_object()) {
-            ParseProperties(ep["properties"], entry.properties);
+    } catch (const json::exception& e) {
+        if (errorMsg) {
+            *errorMsg = std::string("fxstack の型が不正: ") + e.what();
         }
-
-        out.passes.push_back(std::move(entry));
+        return false;
     }
 
+    out = std::move(parsed);
     return true;
 }
 

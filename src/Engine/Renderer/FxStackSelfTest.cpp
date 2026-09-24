@@ -202,6 +202,51 @@ void TestBrokenJson()
 }
 
 // ---------------------------------------------------------------------------
+// テスト 5b: JSON としては正しいが型が崩れた fxstack で例外を漏らさない (レビュー #8)。
+// RenderSystem は毎フレームの描画中に読むので、例外が漏れるとエンジンごと落ちる
+// ---------------------------------------------------------------------------
+void TestTypeMismatchJson()
+{
+    MYE_LOG_INFO("[selftest] FxStack: type-mismatched JSON does not throw");
+
+    namespace fs = std::filesystem;
+    const std::wstring tmp = fs::temp_directory_path().wstring()
+                             + L"\\mye_fxstack_test_mismatch.fxstack.json";
+
+    struct Case { const char* text; bool expectOk; size_t expectPasses; };
+    const Case cases[] = {
+        { "[1,2]",                                        false, 0 }, // ルートが配列
+        { "{\"passes\":[42]}",                            true,  0 }, // 要素がオブジェクトでない → 飛ばす
+        { "{\"passes\":[{\"priority\":\"abc\"}]}",        false, 0 }, // 数値欄に文字列
+        { "{\"version\":\"x\"}",                          false, 0 }, // version の型違い
+        { "{\"passes\":[42,{\"shader\":\"A.post\"}]}",    true,  1 }, // 壊れた要素だけ飛ばす
+    };
+    for (const Case& c : cases) {
+        {
+            std::ofstream f(tmp);
+            f << c.text;
+        }
+        FxStackAsset loaded;
+        std::string err;
+        bool threw = false;
+        bool ok = false;
+        try {
+            ok = LoadFxStack(tmp, loaded, &err);
+        } catch (...) {
+            threw = true;
+        }
+        MYE_LOG_INFO("    case %s -> ok=%d threw=%d passes=%d err=%s", c.text, ok ? 1 : 0, threw ? 1 : 0,
+                     static_cast<int>(loaded.passes.size()), err.c_str());
+        FX_CHECK(!threw);
+        FX_CHECK(ok == c.expectOk);
+        FX_CHECK(!ok || loaded.passes.size() == c.expectPasses);
+        FX_CHECK(ok || !err.empty());
+    }
+
+    { std::error_code ec_; fs::remove(tmp, ec_); }
+}
+
+// ---------------------------------------------------------------------------
 // テスト 6: 複数パス (Post + Compute 混在)
 // ---------------------------------------------------------------------------
 void TestMixedPasses()
@@ -386,6 +431,7 @@ bool RunFxStackSelfTest()
     TestComputeEntry();
     TestInsertionStringConversion();
     TestBrokenJson();
+    TestTypeMismatchJson(); // レビュー #8
     TestMixedPasses();
     TestTex2DRoundTrip();
     TestProjectFxStackInjectionPolicy();
