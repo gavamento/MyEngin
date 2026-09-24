@@ -1647,11 +1647,14 @@ struct TagComponent {
 // ---- 水面波 (TypeId=63) ----
 // 三角関数 (Gerstner 波) によるリアルな水面波パラメータ。
 // 頂点シェーダーでの水面変位と法線計算、および物理浮力 (Buoyancy) との動的波高連動を担当する。
+// 水面の高さ = 持ち主エンティティのワールド y + baseHeight + 波 (描画と浮力で共通)。
+// 波はワールド xz で評価するので、エンティティの x/z 移動と Y 軸回転は平面の置き場所だけに効く。
+// X/Z 軸回りに傾けた水面は非対応 (描画は傾くが、浮力は水平面・+Y 向きのまま)
 struct WaterWaveComponent {
     static constexpr int kMaxWaves = 4;
 
     bool enabled = true;
-    float baseHeight = 0.0f;     // 基準水面 Y [m]
+    float baseHeight = 0.0f;     // エンティティのワールド y からの基準水面の高さ [m]
     float overallScale = 1.0f;   // 全体波高スケール
     float timeScale = 1.0f;      // 時間倍率
     int32_t waveCount = 4;       // 有効な波の本数 (1〜4)

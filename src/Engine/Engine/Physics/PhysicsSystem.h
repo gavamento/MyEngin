@@ -135,8 +135,8 @@ inline constexpr float kDefaultWaterPlaneY = 0.0f;       // 水面のワール�
 const PhysicsEnvironmentComponent* ResolvePhysicsEnvironment(World& world);
 
 // シーンの水面波 = **entity.index 最小の active かつ enabled な 1 個**。
-// 無ければ nullptr = 従来の固定水面へ落ちる。
-const WaterWaveComponent* ResolveActiveWaterWave(World& world);
+// 無ければ nullptr = 従来の固定水面へ落ちる。outEntity を渡すとその持ち主を返す (無ければ kNullEntity)
+const WaterWaveComponent* ResolveActiveWaterWave(World& world, EntityID* outEntity = nullptr);
 
 // 等方空力の基準面積 [m^2] = **Cauchy の平均投影面積 (凸形状の表面積 / 4)**。
 // 「向きに依らない代表面積」の物理的に正しい唯一の選び方で、球で pi*r^2、

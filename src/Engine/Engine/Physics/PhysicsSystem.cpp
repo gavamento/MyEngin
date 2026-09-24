@@ -2684,11 +2684,19 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         // ---- 浮力 (M59b2): 水面より下の排除体積ぶんの上向き力 + 水中抗力。空力の直後に
         //      置くのは、浮力 (陽的な復元力) で付いた速度をその tick のうちに水中抗力が
         //      減衰させるため。**非所持ボディはルックアップのみで fp 演算ゼロ** ----
-        const WaterWaveComponent* activeWave = ResolveActiveWaterWave(world);
+        EntityID activeWaveEntity = kNullEntity;
+        const WaterWaveComponent* activeWave = ResolveActiveWaterWave(world, &activeWaveEntity);
         GerstnerWave activeWaveParams[WaterWaveComponent::kMaxWaves];
         const int32_t activeWaveCount = activeWave ? activeWave->ClampedWaveCount() : 0;
+        // 水面の平面の高さ = 水面エンティティのワールド y。描画は world 行列で平面を置いてから
+        // baseHeight と波を足すので、浮力も同じ基準で測る (y=2 に置いた水面で 2m 下に浮かない)。
+        // WorldMatrix は物理の時点で 1 tick 古いので、剛体収集と同じ親合成 (ComposeEntityWorldPose) で取る。
+        // 波はワールド xz で評価するので x/z はずらさない (描画と同じ)。傾けた水面は非対応
+        float activeWavePlaneY = 0.0f;
         if (activeWave) {
             activeWave->ExtractWaves(activeWaveParams, activeWaveCount);
+            float wx = 0.0f, wz = 0.0f, qx = 0.0f, qy = 0.0f, qz = 0.0f, qw = 1.0f;
+            ComposeEntityWorldPose(world, activeWaveEntity, wx, activeWavePlaneY, wz, qx, qy, qz, qw);
         }
         for (Body& b : bodies) {
             if (!b.rb || b.invMass == 0.0f) {
@@ -2715,10 +2723,11 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             }
             float planeY = env ? env->waterPlaneY : kDefaultWaterPlaneY;
             if (activeWave && activeWave->affectBuoyancy) {
-                planeY = wave::EvaluateWaveHeight(activeWaveParams, activeWaveCount,
-                                                  bp.px, bp.pz, activeWave->TimeSeconds(),
-                                                  activeWave->baseHeight, activeWave->overallScale,
-                                                  activeWave->timeScale);
+                planeY = activeWavePlaneY
+                         + wave::EvaluateWaveHeight(activeWaveParams, activeWaveCount,
+                                                    bp.px, bp.pz, activeWave->TimeSeconds(),
+                                                    activeWave->baseHeight, activeWave->overallScale,
+                                                    activeWave->timeScale);
             }
             float centroidY = bp.py;
             const float frac = SubmergedFractionWorld(bp, planeY, centroidY);
@@ -4727,9 +4736,10 @@ const PhysicsEnvironmentComponent* ResolvePhysicsEnvironment(World& world)
     return best;
 }
 
-const WaterWaveComponent* ResolveActiveWaterWave(World& world)
+const WaterWaveComponent* ResolveActiveWaterWave(World& world, EntityID* outEntity)
 {
     const WaterWaveComponent* best = nullptr;
+    EntityID bestEntity = kNullEntity;
     uint32_t bestIndex = 0xFFFFFFFFu;
     const ComponentTypeId req[] = { WaterWaveComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
@@ -4743,9 +4753,13 @@ const WaterWaveComponent* ResolveActiveWaterWave(World& world)
             if (wave && wave->enabled) {
                 bestIndex = e.index;
                 best = wave;
+                bestEntity = e;
             }
         }
     });
+    if (outEntity) {
+        *outEntity = bestEntity;
+    }
     return best;
 }
 

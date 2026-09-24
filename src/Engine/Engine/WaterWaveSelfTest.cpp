@@ -253,6 +253,43 @@ bool RunWaterWaveSelfTest()
         check(c.ClampedWaveCount() == 1, "waveCount clamp: 0 -> 1");
     }
 
+    // 8b. 水位の基準 (再レビュー #3): 描画は水面エンティティのワールド行列で平面を置き、その上に
+    //     baseHeight と波を足す。浮力も同じく「水面エンティティのワールド y + baseHeight + 波」で評価する。
+    //     エンティティを y=2 に置いた水面と、原点に置いて baseHeight を +2 した水面で浮き方がビット一致する
+    {
+        auto simulate = [](float waterEntityY, float baseHeight) {
+            Scene s;
+            GameObject waterGo = s.CreateGameObjectTracked("Water");
+            waterGo.SetLocalPosition(0.0f, waterEntityY, 0.0f);
+            auto* wave = waterGo.AddComponent<WaterWaveComponent>();
+            wave->enabled = true;
+            wave->affectBuoyancy = true;
+            wave->baseHeight = baseHeight;
+            wave->overallScale = 1.0f;
+            wave->wave0Amplitude = 0.3f;
+            GameObject ball = s.CreateGameObjectTracked("Buoy");
+            ball.SetLocalPosition(0.4f, 2.0f, -0.3f);
+            auto* col = ball.AddComponent<ColliderComponent>();
+            col->shape = 0;
+            col->radius = 0.5f;
+            auto* rb = ball.AddComponent<RigidbodyComponent>();
+            rb->mass = 1000.0f * (4.0f / 3.0f) * 3.14159265f * 0.125f * 0.5f; // 水の半分の密度
+            ball.AddComponent<BuoyancyComponent>();
+            s.GetWorld().ApplyStructuralChanges();
+            PhysicsSystem phys;
+            for (int i = 0; i < 180; ++i) {
+                phys.Update(s.GetWorld(), 1.0f / 60.0f);
+            }
+            return ball.GetComponent<LocalTransform>()->position;
+        };
+        const XMFLOAT3 byEntity = simulate(2.0f, 0.0f);
+        const XMFLOAT3 byBase = simulate(0.0f, 2.0f);
+        MYE_LOG_INFO("  water level: entity y=2 -> ball y=%.4f, baseHeight 2 -> ball y=%.4f", byEntity.y, byBase.y);
+        check(byEntity.x == byBase.x && byEntity.y == byBase.y && byEntity.z == byBase.z,
+              "water level: entity world y is added like the renderer (bit-identical to baseHeight +2)");
+        check(byBase.y > 1.0f, "water level: the ball actually floats near y=2 (the test can see the level)");
+    }
+
     // 9. 波の時計 (レビュー #3): 浮力の時刻は WaterWave.timeTicks (シミュレーション tick 数)。
     //    PhysicsSystem 内の累積時刻だった頃は、同じ PhysicsSystem で 2 回目の Play をすると
     //    前回の時刻から始まり、新しいプロセスのリプレイと結果が割れた
