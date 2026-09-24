@@ -2,7 +2,7 @@
 
 - 依頼原文: M79: プロジェクト側サーフェスシェーダー。M78 (プロジェクト側ポスト/コンピュート, plans/m78-project-shaders/) と同じ作法で、プロジェクト assets に `*.surface.hlsl` (生 HLSL, VSMain/PSMain を作者が書く) を置き、先頭 `/*@MyEngineProperties ... @*/` で Inspector にマテリアル単位のパラメータが出る。`.mat.json` の `shader` で参照 (Inspector で選択可)。エンジンは PerFrame(カメラ/光/影/霧)・PerObject を名前付き CB＋共通 include で供給し作者は register を書かない。失敗時はマゼンタ＋エラー表示。バリアントなし。初版はフォワードのみ (ディファード後回し)、ABI 追加なし想定。論点: 頂点変位を深度/影/速度(TAA)パスへどう反映するか (VSMain 使い回し vs 任意の VSShadow 等の追加エントリ)。動機: Water プロジェクト (C:\Users\akita\Documents\MyEngineProjects\Water) の main シーンで浮世絵風の動画を作るため (トゥーン/平塗りライティング、Gerstner 頂点変位の水面、作り直す大波の巻き込みアニメ)。既存参考: plans/m78-project-shaders/reference-unity-ue.md §1 サーフェス、Water の assets/shaders/water_surface.hlsl・ukiyoe_flat.hlsl (現状 cbuffer 40 行を手写し・未使用)。
 - 開始: 2026-09-24 / 基点コミット: 3b55f4a
-- フェーズ: レビュー
+- フェーズ: 完了
 
 ## ユーザー判断
 - 作者形式は「M78 のコンピュートと同じ感じ」(生 HLSL + Properties ブロック + 名前バインド)。司会が当初出した「表面関数/ライティング関数/頂点変位関数だけ書く抽象化」案はユーザーにより却下
@@ -29,6 +29,7 @@
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
+| 2 | PASS | 4/4/4/4 | minor 1 (#9 ShadowPass 影エントリが予約サンプラを張らない) |
 | 1 | FAIL | 2/2/3/3 | blocker2 (ShadowPass/ForwardPath の固定スロット未復元で混在時に影・instanced が消える) / major1 (変位前 AABB でカリング) / minor5 (review-1.md) |
 
 ## 申し送り (セッション跨ぎ)
@@ -51,3 +52,11 @@
 - (Water 絵作りへ) WaterGerstner サンプルは斜め視点で Fresnel≈1 になり環境光色が一面を覆う (砂地っぽい)。deepColor/shallowColor 側へ lerp が候補
 - (reviewer 向け) 同じマシンで別のセッション (動画再生等) が動いているときは SetForegroundWindow 系のフォーカス奪取操作を避ける。Inspector の Properties 欄追加の実地確認は `%TEMP%\mye_sub04_probe` の手順 (sub-04.md 実装メモ) で
 - (司会 通し検証 2026-09-24, HEAD bfe8581) Debug/Release ビルド exit 0、Editor.exe --selftest Debug/Release exit 0・FAIL 行 0、check_rules 0/0、replay_verify 13/13 PASS (136.6s)
+- (完了時の残り minor / 未決)
+  - review-2 #9: ShadowPass の影エントリが予約サンプラ (gSampler 等) を張らない。VS でテクスチャを読むサーフェスの影だけ CLAMP で評価され、タイル状ノイズ変位で影の形が食い違う。ForwardPath::DrawSurfaceItem と同じ 3 本を名前で張れば直る
+  - Inspector の実 GUI 確認 (sub-04 のスキーマ更新・sub-06 の boundsPadding/doubleSided 欄) は未実施。Editor の --select はエンティティのみでアセットを選べず CLI 撮影で代替できない。手動確認が必要
+  - Create メニュー「サーフェスシェーダ」の実クリック確定も未確認
+  - doubleSided の影が両面で落ちることは画像未確認 (コードと SelfTest のみ)
+  - sub-03 の空時早期 return を固定するテストなし (base と HEAD のビット一致で実地担保)
+  - shot_verify の golden 23 枚が M79 以前から陳腐化 (別件)
+  - 極端な座標での CSM 描画異常 (ComputeCascadeVPs の頑健性、未調査)
