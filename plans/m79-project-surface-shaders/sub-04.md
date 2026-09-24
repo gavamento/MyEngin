@@ -1,9 +1,9 @@
 # sub-04: マテリアル Inspector (シェーダ選択・Properties 共通化・バナー) と作成メニュー
 
 - 依存: sub-02 (sub-03 とは独立 = 並列可)
-- 状態: 差し戻し (review-1 #5)
+- 状態: OK (review-1 差し戻し分、コミット待ち)
 - 注記 (sub-02 VERDICT round 1): Properties の 2D ピッカーは spec §4.2 の Tex2D 符号化に従う — 書き出しはアセットなら数値 GUID、組込み既定なら名前文字列。読み込みは数値 / 文字列の両方
-- 往復: 2
+- 往復: 3
 
 ## やること
 
@@ -155,6 +155,45 @@ SELF_EVAL: sub-04 (round 2)
 申し送り:
   - nit #2 について: Create メニューの「サーフェスシェーダ」項目そのものの手動クリック確定は未達成のまま。もし reviewer が実地で試す場合、命名モーダルの「作成」ボタンは通常のマウス操作 (実際の人間の手) では問題なく動くはずで、今回できなかったのは合成入力 (SetCursorPos/mouse_event) 特有の制約とみている
 
+SELF_EVAL: sub-04 (round 3)
+実装:
+  - `src/Engine/Renderer/ProjectShaderProperties.h`:`.cpp` — `PropertySchemaCache` を追加。`shaderName` をキーに `{更新時刻, ok フラグ, スキーマ}` を持ち、`GetOrFetch(shaderName, resolvedPath, fetch)` は `resolvedPath` の `std::filesystem::last_write_time` を前回取得時と比較し、変わっていれば (またはどちらか一方でも取得できなければ) `fetch()` で取り直す。ImGui 非依存で `AssetOpsSelfTest.cpp` から直接叩ける
+  - `src/Editor/Windows/InspectorWindow.h` — `matSchemaCache_` と `FxStackEditState::schemaCache` の型を `std::unordered_map<std::string, PropertyParseResult>` から `PropertySchemaCache` に変更。`GetOrFetchPropertySchema` のシグネチャも合わせて変更
+  - `src/Editor/Windows/InspectorWindow.cpp`:`GetOrFetchPropertySchema` — `ctx.shaders->ResolveShaderPath(shaderName)` で解決したパスを鍵にして `PropertySchemaCache::GetOrFetch` を呼ぶだけに変更 (素朴な `find`/`emplace` を撤去)。`shaderName` 空 / `ctx.shaders` 無しの経路は従来どおりキャッシュに触れず空スキーマを返す
+  - `src/Editor/AssetOpsSelfTest.cpp` — `PropertySchemaCache` の回帰テストを追加 (詳細は検証欄)
+
+仕様との差分:
+  - なし。review-1 #5 の期待どおり「ファイル更新時刻でキャッシュを捨てる」を実装した。`SurfaceProgram::generation` ではなく更新時刻を選んだ理由: fxstack (ポスト/コンピュート) の `ShaderProgram` には `generation` が無く、両方のキャッシュ (`matSchemaCache_`/`schemaCache`) を同じ機構で直すには generation に依存しない手段が要ったため。この判断は差分ではなく指摘の「期待」欄に明記された two 案 (generation か更新時刻) のうち後者を採った選択
+
+検証:
+  - 実行して再現を確認 (修正前): `AssetOpsSelfTest.cpp` に一時ブロックを追加し、`InspectorWindow.cpp` の旧 `GetOrFetchPropertySchema` と同じ形 (shaderName だけをキーにした `unordered_map` の `find`/`emplace`) をその場で再現。実ファイルに 1 プロパティを書いて初回取得 → ファイルへ 2 プロパティ目を書き足して再取得 → 実行結果は「1 プロパティのまま」(古いスキーマが返り続ける) を `bin\x64\Debug\Editor.exe --selftest` で実測して確認 (ログ: `PASS: review-1 #5 再現 (修正前): ファイルを書き換えても shaderName キーだけのキャッシュがヒットし続け、古い1プロパティのままになる`)。reviewer の「実行では未確認」を実行で解消してから修正に入った
+  - 修正後、上の一時ブロックを撤去し、`PropertySchemaCache` 本体を直接検証する恒久回帰テストに置き換えた (`AssetOpsSelfTest.cpp`、7 チェック): (1) 初回取得は 1 プロパティ (2) 未変更なら 2 回目はキャッシュを使い再パースしない (fetch 回数で検証) (3) 更新時刻を進めて Properties を 1 つ追記 → 再パースされ 2 プロパティに増える (review-1 #5 本体) (4) ファイル削除後は空スキーマを返すが失敗状態を凍結せず毎回取り直す (5) 削除されていたファイルが復活したら新しい内容を反映する (6) 別名 (別シェーダ) は独立したキャッシュエントリを持つ (7) 反証: 別シェーダを選んでいる間に元シェーダのファイルが変わっても、選び直した時点 (`GetOrFetch` を呼んだ時点) で最新化される (「選ばれていない間は判定しない」抜け道が無いことの確認。round 2 の A→B→A 切替とホットリロードの組み合わせで壊れないかを狙った反証)
+  - `bin\x64\Debug\Editor.exe --selftest` → 上記 7 件すべて PASS、全体 FAIL 件数 0 (既存 M79 sub-01〜05 分・AssetOps 全体・その他全 SelfTest を含め回帰なし。ビルドは 2 回行い、1 回目は一時repro込み、2 回目 (最終) は恒久テスト+反証込みで再確認)
+  - `tools\check_rules.ps1` → `0 error(s), 0 warning(s)`
+  - Editor 実機での GUI 確認 (Inspector で実際に Properties 欄が増えるところをスクショで見る) は着手したが打ち切った: 一時プロジェクト `%TEMP%\mye_sub04_probe` で `Editor.exe --project` を起動しプロセス自体は正常に起動・応答していたが、この環境はユーザーの実機デスクトップで別モニタに動画が再生中であり、`GetWindowRect`/`SetForegroundWindow` で得たウィンドウ矩形をキャプチャしても目的のウィンドウが前面化されず (Windows のフォーカス奪取制限とみられる)、無関係な画面内容を撮ってしまう状態になった。ユーザーの実行中セッションへ干渉するリスク (フォーカス操作・全画面キャプチャによる無関係コンテンツの露出) を優先し、起動した Editor.exe (PID 50384) は直後に終了してこの経路を打ち切った。`PropertySchemaCache` 自体は上記の実行確認 (修正前の実測 FAIL 相当の再現 + 修正後の 7 件 PASS) で実コードパスとして検証済みだが、Inspector の実 GUI 上での見た目確認は未実施
+  - `pwsh -File tools\gen_project_files.ps1` は不要 (新規ファイルなし)
+
+自己採点 (1-5):
+  仕様適合: 5 — 指摘の期待 (generation かファイル更新時刻でキャッシュを捨てる) どおり、ファイル更新時刻方式で実装し、マテリアル・fxstack 両方のキャッシュに適用した
+  正しさ: 4 — 修正前の挙動を実行で再現してから直し (grep のみだった reviewer の指摘を実測で裏付け)、修正後は 7 件の回帰テスト (反証込み) で PASS。既存 SelfTest 全数の非回帰も確認。ただし Inspector の実 GUI 上での確認 (Properties 欄が実際に増える画) は環境上の制約で未達のため 5 にはしない
+  コード品質: 5 — キャッシュ判定ロジックを `PropertySchemaCache` として ImGui 非依存の独立クラスに切り出し (指摘が求めた「キャッシュ判定を関数に切り出して」に対応)、マテリアルと fxstack の両方が同じ実装を共有する。InspectorWindow 側の変更は型宣言とラッパー呼び出しのみで最小
+  テスト: 5 — 正常系・キャッシュヒット・無効化・削除・復活・別名分離・反証 (選択が外れている間の更新) まで 7 件を自動化。実行して修正前の FAIL 相当も確認済み
+
+不安・質問:
+  - なし
+
+触ったファイル (round 3、round 1/2 分に追加):
+  - `src/Editor/AssetOpsSelfTest.cpp`
+  - `src/Editor/Windows/InspectorWindow.cpp`
+  - `src/Editor/Windows/InspectorWindow.h`
+  - `src/Engine/Renderer/ProjectShaderProperties.cpp`
+  - `src/Engine/Renderer/ProjectShaderProperties.h`
+  - (新規ファイルなし。`gen_project_files.ps1` 不要。`assets/shaders/WaterGerstner.surface.hlsl` は sub-05 の並行作業中につき未触。一時プロジェクト `%TEMP%\mye_sub04_probe` は起動確認のみで内容変更なし)
+
+申し送り:
+  - GUI 上での Properties 欄の実見た目確認 (Inspector に新しい欄が増えるスクショ) は上記の理由で未実施。reviewer が実地で確認する場合、一時プロジェクト `%TEMP%\mye_sub04_probe`(`assets/shaders/GoodTest.surface.hlsl` に Properties 行を 1 つ足して保存 → Inspector で GoodMat を選択中のまま新しい欄が出ること) がそのまま使える。同一マシンで動画再生等の別セッションが動いている場合は、フォーカス奪取系の自動操作 (`SetForegroundWindow` 等) を避けること
+
 ## フィードバック履歴
 - round 1: VERDICT REWORK (planner)。must 1 件: シェーダ切替で `matEdit_.properties.clear()` (InspectorWindow.cpp:2101) は spec §4.1 失敗時表「スキーマに無いキーは保持 (シェーダを戻したとき値が残る)」に反する = 切替を戻すと値が消える静かなデータ損失。プレビュー forward_lit 固定 (spec §4.3 の許容内)、Tex2D の数字文字列→GUID 数値書き出し (spec §4.2 に合致)、バナーの LoadSurface 直接使用は受理。
 - round 2: VERDICT OK (planner)。clear 削除を実コードで確認 (InspectorWindow.cpp:2100)。型不一致は DrawPropertiesEditor の get_if で既定表示・触るまで不変。回帰テストはほぼ自明な関数を叩く形で守りは弱い (nit)。Create メニュー項目のクリック確定は合成入力の制約で未達 (nit、表示とコード同型は確認)。
+- round 3 (review-1 #5): VERDICT OK (planner)。更新時刻キーの PropertySchemaCache でマテリアル / fxstack 両方を無効化。修正前の再現を実測し、7 チェックの回帰テスト (未変更で再パースしない / 追記で増える / 削除・復活 / 別名独立) で担保。受け入れ条件は「手動＋スクショ、またはキャッシュ無効化判定の SelfTest」なので後者で充足。GUI の実見た目はユーザーの実行中セッションへの干渉を避けて打ち切り (妥当)。

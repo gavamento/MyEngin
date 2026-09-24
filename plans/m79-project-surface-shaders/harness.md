@@ -21,8 +21,8 @@
 | sub-04 | OK | 2 | 99654de | round1 REWORK: 切替で properties clear → round2 で解消。Create メニューのクリック確定は合成入力で未確認 (手動確認へ) |
 | sub-02 | OK (review-1 分) | 1 | 169ba2f | 固定スロット復元 (VS t0 等) / PerMaterial の範囲 |
 | sub-03 | OK (review-1 分) | 1 | e3e1b80 | ShadowPass 影エントリ後の固定スロット復元 |
-| sub-04 | 差し戻し (review-1 #5) | 0 | | Properties スキーマキャッシュ無効化 |
-| sub-05 | OK (review-1 分) | 1 | (本コミット) | WaterGerstner に環境光 (Fresnel 加算)。テンプレートの黒潰れは sub-06 へ移管 |
+| sub-04 | OK (review-1 分) | 1 | (本コミット) | Properties スキーマキャッシュ無効化 (更新時刻)。GUI 見た目は未確認 |
+| sub-05 | OK (review-1 分) | 1 | 290543d | WaterGerstner に環境光 (Fresnel 加算)。テンプレートの黒潰れは sub-06 へ移管 |
 | sub-06 | 新規 | 0 | | boundsPadding / doubleSided (review-1 #3 #7) |
 | sub-05 | OK | 2 | a08d8d4 | round1 REWORK: Deferred 透明段の実装漏れ・影スクショ・Inspector → round2 で解消 |
 
@@ -49,3 +49,4 @@
 - (自動化) Runtime.exe の撮影は `--frames` を併用し、撮り終えたら残ったプロセスを止める (残るとビルドが LNK1168 で落ちる)
 - (planner 指示) review-1 差し戻しと sub-06 がすべて OK になったら、reviewer round 2 の前に司会が通しで Debug/Release ビルド・selftest (Debug/Release)・check_rules・replay_verify を実行し台帳に記録する
 - (Water 絵作りへ) WaterGerstner サンプルは斜め視点で Fresnel≈1 になり環境光色が一面を覆う (砂地っぽい)。deepColor/shallowColor 側へ lerp が候補
+- (reviewer 向け) 同じマシンで別のセッション (動画再生等) が動いているときは SetForegroundWindow 系のフォーカス奪取操作を避ける。Inspector の Properties 欄追加の実地確認は `%TEMP%\mye_sub04_probe` の手順 (sub-04.md 実装メモ) で

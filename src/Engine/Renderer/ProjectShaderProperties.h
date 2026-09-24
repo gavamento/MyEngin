@@ -4,6 +4,8 @@
 ----*/
 #pragma once
 #include <array>
+#include <filesystem>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -126,5 +128,32 @@ std::string EncodeMaterialProperties(const std::unordered_map<std::string, PropV
 // 逃がすので、ここでは名前を差し替えるだけでよい。InspectorWindow はこの関数を経由して
 // シェーダ名を変えること — properties を直接 clear() する近道を作らないためのガード
 void ApplyMaterialShaderSelection(std::string& shaderName, const std::string& newShaderName);
+
+// M79d-fix (review-1 #5): shader 名 → Properties スキーマのキャッシュ。マテリアル Inspector
+// (matSchemaCache_) と fxstack Inspector (FxStackEditState::schemaCache) の両方が使う。
+// shader 名だけをキーにした素朴な map だと、ホットリロードで HLSL に Properties を足しても
+// エディタ再起動まで古いスキーマを返し続ける (キャッシュを捨てる箇所が無かった)。
+// ここではファイルの更新時刻を鍵にして、変わっていれば fetch() で取り直す
+class PropertySchemaCache
+{
+public:
+    // resolvedPath の更新時刻を前回取得時と比較し、変わっていれば fetch() で再取得して
+    // キャッシュを差し替える。パスの更新時刻が取得できない (未検出・削除済み等) 場合は
+    // 「取得できない」という状態自体をキャッシュせず、都度 fetch() し直す
+    // (一度だけ失敗して以後ずっと空スキーマに固定される事故を避ける)。
+    // ImGui に依存しないので SelfTest からヘッドレスに呼べる
+    const PropertyParseResult& GetOrFetch(
+        const std::string& shaderName, const std::filesystem::path& resolvedPath,
+        const std::function<PropertyParseResult()>& fetch);
+
+private:
+    struct Entry
+    {
+        std::filesystem::file_time_type mtime{};
+        bool                             mtimeValid = false;
+        PropertyParseResult              schema;
+    };
+    std::unordered_map<std::string, Entry> entries_;
+};
 
 } // namespace mye

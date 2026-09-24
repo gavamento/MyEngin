@@ -1,5 +1,6 @@
 #include "Editor/AssetOpsSelfTest.h"
 
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -281,6 +282,84 @@ bool RunAssetOpsSelfTest()
                   && roundTrip["_Tint"][1].get<float>() == 0.2f,
               "A->B->A と切り替えて戻しても _Tint の値は保持される (round 1 の "
               "properties.clear() 回帰)");
+    }
+
+    // ---- M79 sub-04-fix (review-1 #5): Properties スキーマキャッシュの無効化 ----
+    // matSchemaCache_ / fxstackEditState_.schemaCache が使う PropertySchemaCache の契約を検証する。
+    // 修正前は shaderName だけをキーにした素朴な map で、実行して確かめたところファイルを
+    // 書き換えても古いスキーマを返し続けていた (Editor 再起動まで直らない)
+    {
+        const fs::path cacheProbe = root / L"CacheProbe.surface.hlsl";
+        std::ofstream(cacheProbe, std::ios::binary)
+            << "/*@MyEngineProperties\n_A (\"A\", Float) = 0\n@*/\n";
+
+        PropertySchemaCache cache;
+        int fetchCount = 0;
+        const auto fetch = [&]() -> PropertyParseResult {
+            ++fetchCount;
+            std::ifstream f(cacheProbe, std::ios::binary);
+            std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            return ParseProperties(src);
+        };
+
+        const PropertyParseResult& first = cache.GetOrFetch("CacheProbe.surface", cacheProbe, fetch);
+        check(first.ok && first.properties.size() == 1 && fetchCount == 1,
+              "初回取得はファイルを読んで 1 プロパティのスキーマを返す");
+
+        const PropertyParseResult& second = cache.GetOrFetch("CacheProbe.surface", cacheProbe, fetch);
+        check(second.properties.size() == 1 && fetchCount == 1,
+              "ファイル未変更なら 2 回目はキャッシュを返し再パースしない (毎フレーム I/O を避ける)");
+
+        // ホットリロードで Properties を追記した状況を模す。mtime の解像度に依存しないよう
+        // 明示的に未来の時刻へ進める
+        std::ofstream(cacheProbe, std::ios::binary)
+            << "/*@MyEngineProperties\n_A (\"A\", Float) = 0\n_B (\"B\", Float) = 1\n@*/\n";
+        const auto bumped = fs::last_write_time(cacheProbe, ec) + std::chrono::seconds(5);
+        fs::last_write_time(cacheProbe, bumped, ec);
+
+        const PropertyParseResult& third = cache.GetOrFetch("CacheProbe.surface", cacheProbe, fetch);
+        check(third.ok && third.properties.size() == 2 && fetchCount == 2,
+              "review-1 #5: 更新時刻が変わったら再パースし、新しい Properties (_B) を返す "
+              "(修正前は Editor 再起動までスキーマが古いままだった)");
+
+        // ファイルが消えたときはキャッシュに固定せず毎回取り直す (取得失敗を凍結しない)
+        fs::remove(cacheProbe, ec);
+        const PropertyParseResult& fourth = cache.GetOrFetch("CacheProbe.surface", cacheProbe, fetch);
+        check(fourth.properties.empty() && fetchCount == 3,
+              "ファイルが見つからないときはキャッシュに固定せず毎回取り直す");
+
+        // 消えていたファイルが復活したとき (未検出→検出) も新しい内容を反映する
+        std::ofstream(cacheProbe, std::ios::binary)
+            << "/*@MyEngineProperties\n_A (\"A\", Float) = 0\n@*/\n";
+        const PropertyParseResult& fifth = cache.GetOrFetch("CacheProbe.surface", cacheProbe, fetch);
+        check(fifth.ok && fifth.properties.size() == 1 && fetchCount == 4,
+              "消えていたファイルが復活したときも新しい内容を反映する");
+
+        // 反証: 「選択中のシェーダを別のシェーダへ切り替えている間 (round 2 の A→B→A) に、
+        // 元のシェーダのファイルがホットリロードで変わっていたら」選び直した時点で最新化されるか。
+        // shaderName ごとに独立したエントリを持つ設計なので、B を挟んでも A の鮮度判定は A 自身の
+        // 更新時刻だけで決まる (「選ばれていない間は判定しない」という抜け道を作らない)
+        const fs::path otherProbe = root / L"OtherProbe.surface.hlsl";
+        std::ofstream(otherProbe, std::ios::binary)
+            << "/*@MyEngineProperties\n_X (\"X\", Float) = 0\n@*/\n";
+        const PropertyParseResult& other = cache.GetOrFetch(
+            "OtherProbe.surface", otherProbe, [&]() -> PropertyParseResult {
+                std::ifstream f(otherProbe, std::ios::binary);
+                std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+                return ParseProperties(src);
+            });
+        check(other.ok && other.properties.size() == 1, "別名のキーは独立したエントリを持つ");
+
+        std::ofstream(cacheProbe, std::ios::binary)
+            << "/*@MyEngineProperties\n_A (\"A\", Float) = 0\n_C (\"C\", Float) = 2\n@*/\n";
+        const auto bumped2 = fs::last_write_time(cacheProbe, ec) + std::chrono::seconds(10);
+        fs::last_write_time(cacheProbe, bumped2, ec);
+
+        const PropertyParseResult& returned = cache.GetOrFetch("CacheProbe.surface", cacheProbe, fetch);
+        check(returned.ok && returned.properties.size() == 2,
+              "反証: 別シェーダを選んでいる間に元のシェーダのファイルが変わっても、"
+              "選び直した時点で最新のスキーマになる (選択が外れている間は判定しない、"
+              "という抜け道が無い)");
     }
 
     // ---- (1e) M50b: 緩いサニタイズ (日本語を通す) + Create の同名連番 ----

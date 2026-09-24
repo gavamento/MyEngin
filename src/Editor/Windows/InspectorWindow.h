@@ -132,8 +132,9 @@ private:
     };
     MaterialEditState matEdit_;
     // shader 名 → Properties スキーマのキャッシュ (M79 sub-04。fxstack と同じ仕組みだが
-    // 対象アセットが違うので別キャッシュに分けてある)
-    std::unordered_map<std::string, PropertyParseResult> matSchemaCache_;
+    // 対象アセットが違うので別キャッシュに分けてある)。
+    // M79d-fix (review-1 #5): ファイル更新時刻で無効化する PropertySchemaCache に変更
+    PropertySchemaCache matSchemaCache_;
     void LoadMaterialEdit(EngineContext& ctx, const std::wstring& path);
     void DrawMaterialInspector(EngineContext& ctx, const std::wstring& path,
                                AssetPreviewCache& preview);
@@ -144,10 +145,10 @@ private:
     // M79 sub-04: Properties スキーマ取得 (キャッシュ付き) と自動 UI 描画の共通化。
     // fxstack (DrawFxStackInspector) とマテリアル (DrawMaterialInspector) の両方から呼ぶ —
     // 取得は ShaderManager::FetchPropertySchema (M78f の assets 全域索引) 経由にしてあり、
-    // 旧 fxstack 実装が ShaderDirs() 直下しか見ていなかった不具合も合わせて直る (spec §2)
+    // 旧 fxstack 実装が ShaderDirs() 直下しか見ていなかった不具合も合わせて直る (spec §2)。
+    // M79d-fix (review-1 #5): cache は PropertySchemaCache (ファイル更新時刻で無効化)
     const PropertyParseResult& GetOrFetchPropertySchema(
-        EngineContext& ctx, const std::string& shaderName,
-        std::unordered_map<std::string, PropertyParseResult>& cache);
+        EngineContext& ctx, const std::string& shaderName, PropertySchemaCache& cache);
     // Properties スキーマに沿ったウィジェット一式を描画し、変更を values へ書き戻す。
     // texAssetEncode: Tex2D でアセットを選んだときに values へ書く文字列を作る
     // (fxstack は 16 進 GUID 文字列、マテリアルは Material.texture 等と同じ 10 進 GUID 文字列。
@@ -185,8 +186,9 @@ private:
         int         selectedPass = 0;     // 選択中パス (Inspector で展開表示する)
         std::string saveStatus;           // 最後の保存結果メッセージ (表示後クリア)
         // M78c round 2: シェーダ名 → ParseProperties 結果のキャッシュ
-        // (スキーマ駆動 Inspector の毎フレームパースを避ける)
-        std::unordered_map<std::string, PropertyParseResult> schemaCache;
+        // (スキーマ駆動 Inspector の毎フレームパースを避ける)。
+        // M79d-fix (review-1 #5): ファイル更新時刻で無効化する PropertySchemaCache に変更
+        PropertySchemaCache schemaCache;
     };
     mye::FxStackAsset fxstackEdit_;
     FxStackEditState  fxstackEditState_;

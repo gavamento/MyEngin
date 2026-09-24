@@ -674,4 +674,25 @@ void ApplyMaterialShaderSelection(std::string& shaderName, const std::string& ne
     // properties には意図的に触れない (この関数の契約そのもの。spec §4.1)
 }
 
+const PropertyParseResult& PropertySchemaCache::GetOrFetch(
+    const std::string& shaderName, const std::filesystem::path& resolvedPath,
+    const std::function<PropertyParseResult()>& fetch)
+{
+    std::error_code ec;
+    const auto mtime = std::filesystem::last_write_time(resolvedPath, ec);
+    const bool mtimeValid = !ec;
+
+    auto it = entries_.find(shaderName);
+    if (it != entries_.end() && mtimeValid && it->second.mtimeValid
+        && it->second.mtime == mtime) {
+        return it->second.schema;
+    }
+
+    Entry entry;
+    entry.mtime = mtime;
+    entry.mtimeValid = mtimeValid;
+    entry.schema = fetch();
+    return (entries_[shaderName] = std::move(entry)).schema;
+}
+
 } // namespace mye

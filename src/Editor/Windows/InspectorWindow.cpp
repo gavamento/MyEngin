@@ -2519,17 +2519,18 @@ void InspectorWindow::DrawPhysMatInspector(const std::wstring& path)
 // ---------------------------------------------------------------------------
 
 const PropertyParseResult& InspectorWindow::GetOrFetchPropertySchema(
-    EngineContext& ctx, const std::string& shaderName,
-    std::unordered_map<std::string, PropertyParseResult>& cache)
+    EngineContext& ctx, const std::string& shaderName, PropertySchemaCache& cache)
 {
-    auto it = cache.find(shaderName);
-    if (it != cache.end()) {
-        return it->second;
+    // shaders 未設定 / シェーダ未選択はキャッシュせず毎回空スキーマ (元々パースを伴わない)
+    static const PropertyParseResult kEmpty = ParseProperties(std::string_view{});
+    if (!ctx.shaders || shaderName.empty()) {
+        return kEmpty;
     }
-    PropertyParseResult pr =
-        (ctx.shaders && !shaderName.empty()) ? ctx.shaders->FetchPropertySchema(shaderName)
-                                             : ParseProperties(std::string_view{});
-    return cache.emplace(shaderName, std::move(pr)).first->second;
+    // M79d-fix (review-1 #5): shaderName だけでなく解決先ファイルの更新時刻もキャッシュ鍵にする。
+    // ホットリロードで HLSL の Properties ブロックが変わっても、エディタ再起動まで
+    // 古いスキーマを返し続けていた (PropertySchemaCache 側で無効化を担う)
+    return cache.GetOrFetch(shaderName, ctx.shaders->ResolveShaderPath(shaderName),
+                            [&]() { return ctx.shaders->FetchPropertySchema(shaderName); });
 }
 
 void InspectorWindow::DrawPropertiesEditor(
