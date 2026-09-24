@@ -43,6 +43,7 @@
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/ParticleSelfTest.h"
 #include "Engine/Engine/Physics/ConvexSelfTest.h"
+#include "Engine/Engine/Physics/FractureSelfTest.h"
 #include "Engine/Engine/Physics/RagdollSelfTest.h"
 #include "Engine/Engine/Physics/XpbdSelfTest.h"
 #include "Engine/Engine/Physics/PhysMatSelfTest.h"
@@ -519,6 +520,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunSurfaceMaterialSelfTest();           // M79b: Forward 描画とマテリアル Properties
         ok &= mye::RunSurfaceDeferredSelfTest();           // M79c: Deferred サーフェス段・CSM 影
         ok &= mye::RunWaterSurfaceSelfTest();              // M79e: 水面サーフェス経路・MyEngineWater
+        ok &= mye::RunFractureSelfTest();                  // M80a: 破壊分割コア (閉じ判定・平面切断)
         return ok ? 0 : 1;
     }
 
