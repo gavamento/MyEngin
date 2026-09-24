@@ -574,6 +574,8 @@ std::string ComputeShaderTemplate(const std::string& safeName)
 std::string SurfaceShaderTemplate(const std::string& safeName)
 {
     return "// " + safeName + ".surface.hlsl  project surface shader (VSMain/PSMain)\n"
+           "// 頂点変位でメッシュの外へ出るなら .mat.json の boundsPadding を、両面描画には "
+           "doubleSided を使う (裏面判定は SV_IsFrontFace ではなく法線とカメラ方向の内積で行う)\n"
            "/*@MyEngineProperties\n"
            "_Tint (\"Tint\", Color) = (1, 1, 1, 1)\n"
            "[Range(0.0, 1.0)] _RimPower (\"Rim Power\", Range(0.0, 1.0)) = 0.5\n"
@@ -616,7 +618,8 @@ std::string SurfaceShaderTemplate(const std::string& safeName)
            "    const float3 viewDir = normalize(gCameraPos - i.posW);\n"
            "    const float rim = pow(saturate(1.0f - dot(viewDir, i.normalW)), max(_RimPower, 0.001f));\n"
            "    const float shadow = MyeSunShadow(i.posW);\n"
-           "    const float3 lit = MyeApplyFog(_Tint.rgb * (shadow + rim), i.posW);\n"
+           "    // 影の中 (shadow=0) かつ rim が小さいと真っ黒になるため、環境光 (gAmbient) で底上げする\n"
+           "    const float3 lit = MyeApplyFog(_Tint.rgb * (gAmbient + shadow + rim), i.posW);\n"
            "    return float4(lit, _Tint.a);\n"
            "}\n";
 }

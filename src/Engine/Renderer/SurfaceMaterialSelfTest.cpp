@@ -284,6 +284,9 @@ float4 PSMain(VSOut i) : SV_Target
     matJson["material"] = 1;
     matJson["shader"] = "Toon.surface";
     matJson["baseColor"] = nlohmann::json::array({ 1.0, 1.0, 1.0, 1.0 });
+    // M79 sub-06: boundsPadding / doubleSided もこの本体マテリアルで検証する
+    matJson["boundsPadding"] = 1.5;
+    matJson["doubleSided"] = true;
     {
         nlohmann::json props = nlohmann::json::object();
         props["_Amp"] = 0.7;
@@ -307,6 +310,11 @@ float4 PSMain(VSOut i) : SV_Target
 
     const AssetID matId = resources.materials.LoadFromFile(matPath.wstring(), resources.textures, dir.wstring());
     Check(!matId.IsNull(), ".mat.json (surface) loads");
+
+    // M79 sub-06: boundsPadding / doubleSided が横テーブルへ読み込まれる
+    Check(std::fabs(resources.materials.GetSurfaceBoundsPadding(matId) - 1.5f) < 1e-5f,
+          "boundsPadding が .mat.json の値 (1.5) で読み込まれる");
+    Check(resources.materials.GetSurfaceDoubleSided(matId), "doubleSided が .mat.json の値 (true) で読み込まれる");
 
     SurfaceMaterialState* st =
         resources.materials.GetOrBuildSurfaceState(matId, shaders, resources.textures, device);
@@ -388,6 +396,36 @@ float4 PSMain(VSOut i) : SV_Target
     SurfaceMaterialState* plainSt =
         resources.materials.GetOrBuildSurfaceState(plainId, shaders, resources.textures, device);
     Check(plainSt == nullptr, "forward_lit マテリアルは GetOrBuildSurfaceState が nullptr を返す (対象外)");
+
+    // M79 sub-06: 負値の boundsPadding は 0 に丸められる (WARN、spec §4.2)
+    {
+        nlohmann::json negJson;
+        negJson["shader"] = "Toon.surface";
+        negJson["boundsPadding"] = -3.0;
+        const fs::path negPath = dir / L"NegPadding.mat.json";
+        WriteFile(negPath, negJson.dump(2));
+        const AssetID negId =
+            resources.materials.LoadFromFile(negPath.wstring(), resources.textures, dir.wstring());
+        Check(std::fabs(resources.materials.GetSurfaceBoundsPadding(negId) - 0.0f) < 1e-5f,
+              "負の boundsPadding (-3.0) は 0 に丸められる");
+    }
+
+    // M79 sub-06: forward_lit (サーフェスでない) に boundsPadding/doubleSided を書いても効かない
+    // (横テーブルへ登録されない。spec §4.2「サーフェスでないマテリアルでは読み込むが効かない」)
+    {
+        nlohmann::json nonSurfaceJson;
+        nonSurfaceJson["shader"] = "forward_lit";
+        nonSurfaceJson["boundsPadding"] = 5.0;
+        nonSurfaceJson["doubleSided"] = true;
+        const fs::path nonSurfacePath = dir / L"NonSurfacePadding.mat.json";
+        WriteFile(nonSurfacePath, nonSurfaceJson.dump(2));
+        const AssetID nonSurfaceId = resources.materials.LoadFromFile(
+            nonSurfacePath.wstring(), resources.textures, dir.wstring());
+        Check(std::fabs(resources.materials.GetSurfaceBoundsPadding(nonSurfaceId) - 0.0f) < 1e-5f,
+              "forward_lit の boundsPadding は横テーブルに乗らず 0 を返す (非サーフェスに効かない)");
+        Check(!resources.materials.GetSurfaceDoubleSided(nonSurfaceId),
+              "forward_lit の doubleSided も同様に効かない");
+    }
 
     fs::remove_all(dir, ec);
 }
@@ -787,6 +825,172 @@ void TestSampleToonFlatCompiles(GraphicsDevice& device, const std::wstring& engi
     }
 }
 
+// ---- 6. M79 sub-06: doubleSided (Cull None) と、描画後のラスタライザ復元。
+//         Quad を Y 軸回りに 180° 回して裏面をカメラへ向け、既定 (Cull Back) では消え、
+//         doubleSided:true では描かれることを確認する。さらに直後の forward_lit (同じく
+//         裏面) が消えたままであることで、Cull None が forward_lit へ漏れていないことも見る ----
+void TestForwardPathDoubleSidedCullingAndRestore(GraphicsDevice& device, const std::wstring& engineShaderDir)
+{
+    MYE_LOG_INFO("-- ForwardPath: doubleSided (Cull None) と描画後のラスタライザ復元 --");
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir = fs::temp_directory_path(ec) / L"mye_surface_doublesided_selftest";
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+
+    const char* kFixedColorSurface = R"HLSL(
+#include "MyEngineSurface.hlsli"
+struct VSIn { float3 pos : POSITION; };
+struct VSOut { float4 pos : SV_Position; };
+VSOut VSMain(VSIn v)
+{
+    VSOut o;
+    o.pos = mul(mul(float4(v.pos, 1.0f), gWorld), gViewProj);
+    return o;
+}
+float4 PSMain(VSOut i) : SV_Target
+{
+    return float4(0.9f, 0.5f, 0.1f, 1.0f);
+}
+)HLSL";
+    WriteFile(dir / L"FixedColor.surface.hlsl", kFixedColorSurface);
+    WriteFile(dir / L"SingleSided.mat.json", "{\"shader\":\"FixedColor.surface\"}");
+    WriteFile(dir / L"DoubleSided.mat.json", "{\"shader\":\"FixedColor.surface\",\"doubleSided\":true}");
+
+    ShaderManager shaders;
+    Check(shaders.Init(device, { dir.wstring(), engineShaderDir }), "shader manager init (doubleSided)");
+
+    RenderResources resources;
+    resources.Init(device);
+    const AssetID singleSidedMatId = resources.materials.LoadFromFile(
+        (dir / L"SingleSided.mat.json").wstring(), resources.textures, dir.wstring());
+    const AssetID doubleSidedMatId = resources.materials.LoadFromFile(
+        (dir / L"DoubleSided.mat.json").wstring(), resources.textures, dir.wstring());
+    Check(!singleSidedMatId.IsNull() && !doubleSidedMatId.IsNull(),
+          "2 本の .mat.json が読み込める (doubleSided)");
+
+    Material litRotated;
+    litRotated.shader = AssetID{ HashStr("forward_lit") };
+    litRotated.texture = resources.textures.White();
+    litRotated.baseColor = { 0.2f, 0.6f, 0.9f, 1.0f };
+    const AssetID litRotatedMatId = resources.materials.Register("doublesided_lit_rotated", litRotated);
+
+    ForwardPath fp;
+    Check(fp.Init(device, shaders), "ForwardPath::Init (doubleSided)");
+
+    const AssetID quad = resources.meshes.Quad();
+
+    constexpr UINT kWidth = 96;
+    constexpr UINT kHeight = 32;
+    ID3D11Device* dev = device.Device();
+    ID3D11DeviceContext* dc = device.Context();
+
+    D3D11_TEXTURE2D_DESC td = {};
+    td.Width = kWidth;
+    td.Height = kHeight;
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    td.SampleDesc = { 1, 0 };
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_RENDER_TARGET;
+    ComPtr<ID3D11Texture2D> colorTex;
+    ComPtr<ID3D11RenderTargetView> colorRtv;
+    bool ok = SUCCEEDED(dev->CreateTexture2D(&td, nullptr, colorTex.GetAddressOf()));
+    ok = ok && SUCCEEDED(dev->CreateRenderTargetView(colorTex.Get(), nullptr, colorRtv.GetAddressOf()));
+    D3D11_TEXTURE2D_DESC sd = td;
+    sd.Usage = D3D11_USAGE_STAGING;
+    sd.BindFlags = 0;
+    sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ComPtr<ID3D11Texture2D> staging;
+    ok = ok && SUCCEEDED(dev->CreateTexture2D(&sd, nullptr, staging.GetAddressOf()));
+    Check(ok, "描画確認用の RTV/staging を作成できる (doubleSided)");
+    if (!ok) {
+        fs::remove_all(dir, ec);
+        return;
+    }
+
+    RenderView view;
+    XMStoreFloat4x4(&view.view,
+                    XMMatrixLookAtLH(XMVectorSet(0, 0, 0, 1), XMVectorSet(0, 0, 1, 1),
+                                     XMVectorSet(0, 1, 0, 0)));
+    XMStoreFloat4x4(&view.proj, XMMatrixOrthographicLH(6.0f, 3.0f, 0.1f, 100.0f));
+    XMStoreFloat4x4(&view.projNoJitter, XMLoadFloat4x4(&view.proj));
+    view.width = static_cast<int>(kWidth);
+    view.height = static_cast<int>(kHeight);
+    view.rtv = colorRtv.Get();
+    view.dsv = nullptr;
+    view.clearColor[0] = view.clearColor[1] = view.clearColor[2] = 0.0f;
+    view.clearColor[3] = 1.0f;
+    view.instancingEnabled = 0;
+
+    SceneLightData lights;
+    lights.ambient = { 1.0f, 1.0f, 1.0f };
+    lights.count = 0;
+
+    // 3 枚とも Y 軸回りに 180° 回して裏面をカメラへ向ける (Quad のローカル法線は -Z、
+    // 180° 回転で +Z = カメラから見て裏面になる。既定の CULL_BACK なら消える)
+    auto makeRotatedItem = [&](AssetID mat, float x) {
+        RenderItem item;
+        item.mesh = quad;
+        item.material = mat;
+        const XMMATRIX w = XMMatrixRotationY(XM_PI) * XMMatrixTranslation(x, 0.0f, 5.0f);
+        XMStoreFloat4x4(&item.world, w);
+        item.prevWorld = item.world;
+        return item;
+    };
+
+    auto readPixel = [&](int px, int py) {
+        dc->CopyResource(staging.Get(), colorTex.Get());
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        std::array<uint8_t, 4> out = { 0, 0, 0, 0 };
+        if (SUCCEEDED(dc->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+            const uint8_t* row =
+                static_cast<const uint8_t*>(mapped.pData) + static_cast<size_t>(py) * mapped.RowPitch;
+            std::memcpy(out.data(), row + static_cast<size_t>(px) * 4, 4);
+            dc->Unmap(staging.Get(), 0);
+        }
+        return out;
+    };
+    auto isBackground = [](const std::array<uint8_t, 4>& p) {
+        return p[0] <= 3 && p[1] <= 3 && p[2] <= 3;
+    };
+
+    // 描画順: 裏面の single-sided → 裏面の double-sided → 裏面の forward_lit。
+    // 3 番目が消えたままなら、doubleSided の Cull None が forward_lit へ漏れていない証拠になる
+    RenderQueue queue;
+    queue.opaque = { makeRotatedItem(singleSidedMatId, -2.0f), makeRotatedItem(doubleSidedMatId, 0.0f),
+                     makeRotatedItem(litRotatedMatId, 2.0f) };
+    fp.Render(device, view, queue, lights, resources, shaders);
+
+    const std::array<uint8_t, 4> singleSidedPixel = readPixel(16, 16);
+    const std::array<uint8_t, 4> doubleSidedPixel = readPixel(48, 16);
+    const std::array<uint8_t, 4> litRotatedPixel = readPixel(80, 16);
+
+    Check(isBackground(singleSidedPixel), "doubleSided=false (既定) の裏面は従来どおり Cull Back で消える");
+    if (!isBackground(singleSidedPixel)) {
+        MYE_LOG_ERROR("    singleSidedPixel=(%d,%d,%d,%d)", singleSidedPixel[0], singleSidedPixel[1],
+                     singleSidedPixel[2], singleSidedPixel[3]);
+    }
+    Check(!isBackground(doubleSidedPixel),
+          "doubleSided=true の裏面は Cull None で描かれる (固定色 0.9,0.5,0.1 が見える)");
+    if (isBackground(doubleSidedPixel)) {
+        MYE_LOG_ERROR("    doubleSidedPixel=(%d,%d,%d,%d)", doubleSidedPixel[0], doubleSidedPixel[1],
+                     doubleSidedPixel[2], doubleSidedPixel[3]);
+    }
+    Check(isBackground(litRotatedPixel),
+          "doubleSided サーフェスの直後でも forward_lit の Cull Back は元に戻っている"
+          " (裏面の forward_lit は消えたまま)");
+    if (!isBackground(litRotatedPixel)) {
+        MYE_LOG_ERROR("    litRotatedPixel=(%d,%d,%d,%d) (0 に近くなければラスタライザが"
+                     " Cull None のまま漏れている)",
+                     litRotatedPixel[0], litRotatedPixel[1], litRotatedPixel[2], litRotatedPixel[3]);
+    }
+
+    fp.Shutdown();
+    fs::remove_all(dir, ec);
+}
+
 } // namespace
 
 bool RunSurfaceMaterialSelfTest()
@@ -808,6 +1012,7 @@ bool RunSurfaceMaterialSelfTest()
         TestShaderManagerReloadAndCache(device, engineShaderDir);
         TestMaterialLibrarySurfaceState(device, engineShaderDir);
         TestForwardPathDrawsSurfaceItems(device, engineShaderDir);
+        TestForwardPathDoubleSidedCullingAndRestore(device, engineShaderDir); // M79 sub-06
         TestSampleToonFlatCompiles(device, engineShaderDir);
     }
 

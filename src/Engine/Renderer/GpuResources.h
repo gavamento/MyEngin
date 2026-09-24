@@ -284,6 +284,13 @@ public:
     SurfaceMaterialState* GetOrBuildSurfaceState(AssetID materialId, ShaderManager& shaders,
                                                  TextureLibrary& textures, GraphicsDevice& device);
 
+    // M79 sub-06: 視錐台カリング / CSM キャスター AABB 集約の余白 [m]。サーフェスでない
+    // マテリアル (横テーブルに未登録) は 0 を返す — padding は非サーフェスに効かない (spec §4.1)。
+    // ジョブ並列のカリングステージの中で呼ばないこと (直列のステージ 1 で解決してキャッシュする)
+    float GetSurfaceBoundsPadding(AssetID materialId) const;
+    // 両面描画 (Cull None) か。サーフェスでなければ false
+    bool GetSurfaceDoubleSided(AssetID materialId) const;
+
 private:
     std::unordered_map<uint64_t, Material> materials_;
     std::unordered_map<uint64_t, std::string> names_;
@@ -298,6 +305,10 @@ private:
         std::string propertiesJson; // "properties" オブジェクトの JSON テキスト ("{}" = 無し)
         std::wstring assetsRoot;
         uint64_t revision = 0; // LoadFromFile のたびに増分 (JSON 内容の変化の検出に使う)
+        // M79 sub-06: 視錐台カリング / CSM キャスター AABB の余白 [m] (.mat.json boundsPadding、
+        // 欠損 0・負値は 0 に丸め)。両面描画 (Cull None、.mat.json doubleSided、欠損 false)
+        float boundsPadding = 0.0f;
+        bool doubleSided = false;
     };
     std::unordered_map<uint64_t, SurfaceMaterialSource> surfaceSources_;
     std::unordered_map<uint64_t, SurfaceMaterialState> surfaceStates_;

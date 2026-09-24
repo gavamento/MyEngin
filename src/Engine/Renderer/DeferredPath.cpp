@@ -349,6 +349,11 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     if (FAILED(dev->CreateRasterizerState(&rd, rasterizer_.GetAddressOf()))) {
         return false;
     }
+    // M79 sub-06: doubleSided なサーフェス用 (Solid のまま Cull だけ外す)
+    rd.CullMode = D3D11_CULL_NONE;
+    if (FAILED(dev->CreateRasterizerState(&rd, rasterizerCullNone_.GetAddressOf()))) {
+        return false;
+    }
     // SceneView Wireframe (M40b)。CULL_NONE = 裏面の線も見せる (GBuffer パスのみ使用 —
     // フルスクリーン解決系は常に solid)
     rd.FillMode = D3D11_FILL_WIREFRAME;
@@ -455,6 +460,7 @@ void DeferredPath::Shutdown()
     lightCB_.Reset();
     sampler_.Reset();
     rasterizer_.Reset();
+    rasterizerCullNone_.Reset();
     depthOpaque_.Reset();
     depthDisabled_.Reset();
     depthTransparent_.Reset();
@@ -1544,7 +1550,13 @@ void DeferredPath::RenderSurfaceForward(GraphicsDevice& device, const RenderView
         ID3D11Buffer* vb = mesh->vb.Get();
         dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
         dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
+        // M79 sub-06: doubleSided は速度エントリも Cull None で描く。次のアイテム (このループも
+        // 含め、続く水面/透明後段) のために毎回既定ラスタライザへ戻す
+        if (resources.materials.GetSurfaceDoubleSided(item.material)) {
+            dc->RSSetState(rasterizerCullNone_.Get());
+        }
         dc->DrawIndexed(mesh->indexCount, 0, 0);
+        dc->RSSetState(f.wire ? rasterizerWire_.Get() : rasterizer_.Get());
         prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
     }
 
@@ -1615,6 +1627,8 @@ void DeferredPath::RenderTransparent(GraphicsDevice& device, const RenderView& v
                 item.material, shaders, resources.textures, device);
             if (surf && surf->isSurfaceShader) {
                 DrawSurfaceTransparentItem(device, item, *mat, *mesh, *surf, shaders, resources, view);
+                // M79 sub-06: doubleSided (Cull None) は描画直後に既定ラスタライザへ戻す
+                dc->RSSetState(wire ? rasterizerWire_.Get() : rasterizer_.Get());
                 bindForwardLitFixed(); // 次の forward_lit 透明アイテムのためにバインドを戻す
                 boundShader = 0;       // 次のアイテムで確実に IA/VS/PS を再バインドさせる
                 bound = MeshBindState{};
@@ -1675,6 +1689,10 @@ void DeferredPath::DrawSurfaceTransparentItem(GraphicsDevice& device, const Rend
     dc->IASetInputLayout(prog->colorInputLayout.Get());
     dc->VSSetShader(prog->colorVS.Get(), nullptr, 0);
     dc->PSSetShader(prog->colorPS.Get(), nullptr, 0);
+    // M79 sub-06: doubleSided は色エントリを Cull None で描く (呼び出し側が描画直後に戻す)
+    if (resources.materials.GetSurfaceDoubleSided(item.material)) {
+        dc->RSSetState(rasterizerCullNone_.Get());
+    }
 
     const SurfaceEntryReflection& vsRefl = prog->colorVSReflect;
     const SurfaceEntryReflection& psRefl = prog->colorPSReflect;

@@ -50,3 +50,26 @@ spec §4.1 のとおり **速度は書かない** — この段は単一 RT (`vi
 `gbVelocity_` を張らないため、自然に速度なしが成立する。失敗時は `surface_error`
 (マゼンタ、alpha=1) にフォールバックし黙って消えない。`SurfaceDeferredSelfTest.cpp` の
 `TestDeferredTransparentDrawsSurfaceColorEntry` が read-back で検証する。
+
+## カリング余白 (`boundsPadding`) と両面描画 (`doubleSided`) — M79 sub-06
+
+視錐台カリング (`RenderSystem::CollectDrawables` ステージ 2) と CSM のキャスター AABB 集約は、
+メッシュのローカル AABB を `.mat.json` の `boundsPadding` [m] だけワールド空間で広げた箱で
+判定する (`FrustumCull.h` の `AabbInFrustum`/`RenderableInFrustum`/`WorldAabb` の
+`worldPaddingM` 引数)。既定 0 = 従来と同じ判定。サーフェスでないマテリアルには効かない
+(`MaterialLibrary::GetSurfaceBoundsPadding` は横テーブル未登録なら 0 を返す)。
+
+余白の解決はステージ 1 (直列の収集) で行い `CullCand::boundsPadding` へキャッシュする —
+ステージ 2 はジョブ並列の純関数なので、その中で `MaterialLibrary` を引くと要素独立の前提が
+崩れる。頂点変位で大きく形が動くメッシュ (大波の巻き込み等) は、変位の最大量以上の余白を
+作者が見積もって設定すること (自動推定はしない)。
+
+`doubleSided: true` のサーフェスは、色・速度・影の全エントリを Cull None のラスタライザで
+描く (`ForwardPath`/`DeferredPath`/`ShadowPass` それぞれが専用の `rasterizerCullNone_` を持つ)。
+描画直後に必ずそのパスの既定ラスタライザ (`rasterizer_`/`rasterizerWire_`、ShadowPass は
+深度バイアス付きの `rasterizer_`) へ戻す — 固定スロットの復元 (review-1 #1 #2) と同じ理由で、
+戻し忘れると次の非サーフェスアイテムの Cull 設定が壊れたままになる。
+
+裏面か表面かの判定 (`SV_IsFrontFace`) は作者へ渡さない (§4 の作者規約 `float4
+PSMain(VSOut)` を変えないため)。裏面用の見た目が要る場合は、作者が法線とカメラ方向の
+内積で判定すること (`dot(normalize(gCameraPos - posW), normalW) < 0` が裏面)。

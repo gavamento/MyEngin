@@ -129,6 +129,10 @@ private:
         uint64_t normalGuid = 0;
         // M79 sub-04: shader が "*.surface" のときの Properties 値 (fxstack と同じ PropValue map)
         std::unordered_map<std::string, PropValue> properties;
+        // M79 sub-06: サーフェスの視錐台余白 [m] / 両面描画 (spec §4.2)。サーフェスでなくても
+        // 保持する (JSON 往復で値を落とさない) が、効くのはサーフェス選択時だけ
+        float boundsPadding = 0.0f;
+        bool doubleSided = false;
     };
     MaterialEditState matEdit_;
     // shader 名 → Properties スキーマのキャッシュ (M79 sub-04。fxstack と同じ仕組みだが

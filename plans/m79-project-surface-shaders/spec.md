@@ -284,3 +284,4 @@
 - 2026-09-24: sub-03 VERDICT OK (round 3、review-1 #1)。受け入れ条件 13 は sub-02 と合わせて充足。仕様変更なし。
 - 2026-09-24: sub-05 VERDICT OK (round 3、review-1 #6)。テンプレート (AssetOps.cpp) の黒潰れは sub-06 へ移管 (sub-04 並行作業とのファイル衝突回避)。
 - 2026-09-24: sub-04 VERDICT OK (round 3、review-1 #5)。仕様変更なし。
+- 2026-09-24: sub-06 VERDICT OK (round 1)。§4.2 補足: Inspector は `boundsPadding` / `doubleSided` を forward_lit のマテリアルでも常に書き出す (既存スカラと同じ規約。サーフェスでないマテリアルでは読み込むが効かない)。

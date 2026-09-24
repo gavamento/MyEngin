@@ -1048,11 +1048,14 @@ AssetID MaterialLibrary::HashForPath(const std::wstring& path)
 // JSON オブジェクト → Material。ファイル読み (LoadFromFile) と Inspector のプレビュー
 // (MaterialFromJsonText) の**唯一の本体**。フィールドを足すときはここだけ触ること (M53)。
 // shaderNameOut/propertiesJsonOut は M79 sub-02 用 (呼び出し側がサーフェス横テーブルを作るために
-// 生の shader 名・properties JSON テキストが要る。null 可 = 従来どおり)
+// 生の shader 名・properties JSON テキストが要る。null 可 = 従来どおり)。
+// boundsPaddingOut/doubleSidedOut は M79 sub-06 用。shader が "*.surface" でなくても読む
+// (横テーブル側で保持するかどうかは呼び出し側 (LoadFromFile) が isSurface で決める)
 static void ParseMaterialJson(const nlohmann::json& root, TextureLibrary& textures,
                               const std::wstring& assetsRoot, Material& m,
                               std::string* shaderNameOut = nullptr,
-                              std::string* propertiesJsonOut = nullptr)
+                              std::string* propertiesJsonOut = nullptr,
+                              float* boundsPaddingOut = nullptr, bool* doubleSidedOut = nullptr)
 {
     const std::string shaderName = root.value("shader", std::string("forward_lit"));
     m.shader = AssetID{ HashStr(shaderName) };
@@ -1063,6 +1066,17 @@ static void ParseMaterialJson(const nlohmann::json& root, TextureLibrary& textur
         *propertiesJsonOut = (root.contains("properties") && root["properties"].is_object())
             ? root["properties"].dump()
             : std::string("{}");
+    }
+    if (boundsPaddingOut) {
+        float padding = root.value("boundsPadding", 0.0f);
+        if (padding < 0.0f) {
+            MYE_LOG_WARN("material boundsPadding %.3f is negative, clamped to 0", padding);
+            padding = 0.0f;
+        }
+        *boundsPaddingOut = padding;
+    }
+    if (doubleSidedOut) {
+        *doubleSidedOut = root.value("doubleSided", false);
     }
     if (root.contains("baseColor") && root["baseColor"].is_array()) {
         const nlohmann::json& c = root["baseColor"];
@@ -1154,7 +1168,10 @@ AssetID MaterialLibrary::LoadFromFile(const std::wstring& path, TextureLibrary& 
     Material m;
     std::string shaderName;
     std::string propertiesJson;
-    ParseMaterialJson(root, textures, assetsRoot, m, &shaderName, &propertiesJson);
+    float boundsPadding = 0.0f;
+    bool doubleSided = false;
+    ParseMaterialJson(root, textures, assetsRoot, m, &shaderName, &propertiesJson, &boundsPadding,
+                      &doubleSided);
 
     const AssetID id = HashForPath(path);
     materials_[id.value] = m;
@@ -1172,6 +1189,10 @@ AssetID MaterialLibrary::LoadFromFile(const std::wstring& path, TextureLibrary& 
         src.shaderName = std::move(shaderName);
         src.propertiesJson = std::move(propertiesJson);
         src.assetsRoot = assetsRoot;
+        // M79 sub-06: boundsPadding / doubleSided はサーフェスでなければ効かないので、
+        // 横テーブルに乗せるのも isSurface のときだけでよい (spec §4.2)
+        src.boundsPadding = boundsPadding;
+        src.doubleSided = doubleSided;
         src.revision = ++nextSurfaceRevision_;
     } else {
         surfaceSources_.erase(id.value);
@@ -1406,6 +1427,18 @@ SurfaceMaterialState* MaterialLibrary::GetOrBuildSurfaceState(AssetID materialId
     st.builtFromRevision = src.revision;
     st.builtFromGeneration = gen;
     return &st;
+}
+
+float MaterialLibrary::GetSurfaceBoundsPadding(AssetID materialId) const
+{
+    const auto it = surfaceSources_.find(materialId.value);
+    return it != surfaceSources_.end() ? it->second.boundsPadding : 0.0f;
+}
+
+bool MaterialLibrary::GetSurfaceDoubleSided(AssetID materialId) const
+{
+    const auto it = surfaceSources_.find(materialId.value);
+    return it != surfaceSources_.end() && it->second.doubleSided;
 }
 
 } // namespace mye

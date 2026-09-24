@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cfloat> // M79 sub-06: DragFloat の上限に FLT_MAX を渡す
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -1955,6 +1956,10 @@ void InspectorWindow::LoadMaterialEdit(EngineContext& ctx, const std::wstring& p
     };
     matEdit_.textureGuid = readRef("texture");
     matEdit_.normalGuid = readRef("normalMap");
+    // M79 sub-06: 視錐台余白 / 両面描画。負値は 0 に丸める (MaterialLibrary::ParseMaterialJson と
+    // 同じ規則。ここで丸めないと Inspector に負値が残ったまま保存できてしまう)
+    matEdit_.boundsPadding = (std::max)(0.0f, root.value("boundsPadding", 0.0f));
+    matEdit_.doubleSided = root.value("doubleSided", false);
     // M79 sub-04: shader が "*.surface" のときの Properties。型ごとの復号にスキーマが要るので
     // 先に matEdit_.shader (直前で読んだ) のスキーマを引く (spec §4.2、Tex2D の数値 GUID)
     {
@@ -1995,6 +2000,11 @@ std::string InspectorWindow::MaterialEditToJson(const std::wstring& path) const
         root["normalMap"] = "";
     }
     root["transparent"] = matEdit_.transparent;
+    // M79 sub-06: サーフェスでなくても書く (シェーダを戻したときに値を失わない、spec §4.2)。
+    // 既定値 (0 / false) のときも明示して書く — 従来の .mat.json に無かったキーが増えるが、
+    // 「欠損 = 既定」の読み側規則があるので既存互換は壊れない
+    root["boundsPadding"] = matEdit_.boundsPadding;
+    root["doubleSided"] = matEdit_.doubleSided;
     // M79 sub-04: shader が "*.surface" のときの Properties。既知キー・未知キーとも
     // matEdit_.properties に入っている値をそのまま書き戻す (§4.1 「スキーマに無いキーも保持」)。
     // 空なら書かない (forward_lit 等の既存 .mat.json へ空の "properties":{} を増やさないため)
@@ -2199,6 +2209,19 @@ void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstri
     };
     texPicker("texture", matEdit_.textureGuid);
     texPicker("normalMap", matEdit_.normalGuid);
+
+    // ---- 境界余白 / 両面描画 (M79 sub-06): サーフェスシェーダ選択時のみ (spec §4.3) ----
+    if (matEdit_.shader != "forward_lit") {
+        ImGui::DragFloat(Tr(StrId::Insp_MatBoundsPadding), &matEdit_.boundsPadding, 0.05f, 0.0f,
+                         FLT_MAX, "%.2f");
+        if (matEdit_.boundsPadding < 0.0f) {
+            matEdit_.boundsPadding = 0.0f;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", Tr(StrId::Insp_TipBoundsPadding));
+        }
+        ImGui::Checkbox(Tr(StrId::Insp_MatDoubleSided), &matEdit_.doubleSided);
+    }
 
     // ---- Properties (M79 sub-04): サーフェスシェーダ選択時のみ ----
     if (matEdit_.shader != "forward_lit") {

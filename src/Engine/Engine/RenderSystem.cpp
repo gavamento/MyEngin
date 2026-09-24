@@ -40,6 +40,10 @@ struct CullCand {
     float viewZ;
     uint8_t visible;
     uint8_t skinned;
+    // M79 sub-06: サーフェスマテリアルの視錐台余白 [m] (.mat.json boundsPadding、非サーフェスは 0)。
+    // MaterialLibrary の横テーブル参照はステージ 1 (直列) で解決しておく — ステージ 2 は
+    // ジョブ並列の純関数なので、その中でテーブルを引くと並列化の前提 (要素独立) が崩れる
+    float boundsPadding = 0.0f;
 };
 
 constexpr size_t kCullGrain = 256; // これ未満は直列 (スレッド起動コスト回避)
@@ -1089,10 +1093,13 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                 worldMat = ApplyWheelVisual(
                     worldMat, *static_cast<const WheelComponent*>(arch.GetPtr(whi, row)));
             }
+            // M79 sub-06: 余白はここ (直列ステージ) で MaterialLibrary の横テーブルから解決する。
+            // 非サーフェスマテリアルは 0 を返すので既存の判定と 1 ビットも変わらない
             cullCands.push_back({ e, mr->mesh, mr->material, worldMat,
                                    resources.meshes.Get(mr->mesh), 0.0f, 1,
                                    world.GetComponent<SkinnedMeshComponent>(e) != nullptr ? uint8_t{ 1 }
-                                                                                         : uint8_t{ 0 } });
+                                                                                         : uint8_t{ 0 },
+                                   resources.materials.GetSurfaceBoundsPadding(mr->material) });
         }
     });
 
@@ -1105,7 +1112,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             // アニメ中だけ消える。全クリップを包む bounds を持つまでは保守的に描画する。
             if (cullEnabled && c.meshPtr
                 && !RenderableInFrustum(frustum, c.world, c.meshPtr->aabbMin, c.meshPtr->aabbMax,
-                                        c.skinned != 0)) {
+                                        c.skinned != 0, c.boundsPadding)) {
                 c.visible = 0;
                 continue;
             }
@@ -1205,7 +1212,10 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             queue_.opaque.push_back(item);
             if (c.meshPtr) {
                 XMFLOAT3 wmin, wmax;
-                WorldAabb(c.world, c.meshPtr->aabbMin, c.meshPtr->aabbMax, wmin, wmax);
+                // M79 sub-06: 影のキャスターはこのカリング済みキューから取るので、
+                // CSM のフィット AABB もカリングと同じ余白で広げる。0 のときは従来と同じ AABB
+                WorldAabb(c.world, c.meshPtr->aabbMin, c.meshPtr->aabbMax, wmin, wmax,
+                         c.boundsPadding);
                 sceneMin = { std::min(sceneMin.x, wmin.x), std::min(sceneMin.y, wmin.y),
                              std::min(sceneMin.z, wmin.z) };
                 sceneMax = { std::max(sceneMax.x, wmax.x), std::max(sceneMax.y, wmax.y),

@@ -132,6 +132,11 @@ bool ShadowPass::Init(GraphicsDevice& device, ShaderManager& shaders, int resolu
     if (FAILED(dev->CreateRasterizerState(&rd, rasterizer_.GetAddressOf()))) {
         return false;
     }
+    // M79 sub-06: doubleSided なサーフェスの影も両面で落とす (深度バイアスは同じ値を使う)
+    rd.CullMode = D3D11_CULL_NONE;
+    if (FAILED(dev->CreateRasterizerState(&rd, rasterizerCullNone_.GetAddressOf()))) {
+        return false;
+    }
 
     timer_.Init(device); // M54d: 失敗しても計測が 0 になるだけなので戻り値は見ない
 
@@ -228,6 +233,9 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
         dc->VSSetConstantBuffers(0, 1, restoreCb);
         ID3D11ShaderResourceView* restoreSrv = runs_.empty() ? nullptr : instanceBuf_.SRV();
         dc->VSSetShaderResources(0, 1, &restoreSrv);
+        // M79 sub-06: doubleSided (Cull None) はサーフェスの影エントリのときだけ張るので、
+        // 次の非サーフェス (深度バイアス付き CULL_BACK 前提) へ必ず戻す
+        dc->RSSetState(rasterizer_.Get());
     };
 
     // M38d: カスケード毎にスライス DSV へ全不透明キャスターを描く
@@ -297,6 +305,10 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
                             dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
                             dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
                             boundMesh = item.mesh.value;
+                        }
+                        // M79 sub-06: doubleSided は影も両面で落とす
+                        if (resources.materials.GetSurfaceDoubleSided(item.material)) {
+                            dc->RSSetState(rasterizerCullNone_.Get());
                         }
                         dc->DrawIndexed(mesh->indexCount, 0, 0);
                         restoreFixedShadowSlots(); // review-1 #1: 次の非サーフェスへ b0/t0 を戻す

@@ -88,6 +88,19 @@ void TestFrustumCulling()
     const XMFLOAT4X4 outside = MakeWorld(100, 0, 5);
     TEST_CHECK(RenderableInFrustum(f, outside, unitMin, unitMax, false) == false);
     TEST_CHECK(RenderableInFrustum(f, outside, unitMin, unitMax, true) == true);
+
+    // M79 sub-06: boundsPadding (worldPaddingM)。頂点変位でメッシュが元の AABB の外へ出ても、
+    // 余白を付ければカメラに写り続ける。z=5・中心 x=6・半径 0.5 の箱は
+    // p-vertex の保守判定 (どの頂点の組み合わせでも) 視錐台の外。余白 2.0 で箱が大きくなると
+    // 視錐台と交差するようになる
+    const XMFLOAT4X4 justOutside = MakeWorld(6.0f, 0, 5);
+    TEST_CHECK(AabbInFrustum(f, justOutside, unitMin, unitMax, 0.0f) == false);
+    TEST_CHECK(AabbInFrustum(f, justOutside, unitMin, unitMax, 2.0f) == true);
+
+    // WorldAabb 側にも同じ余白引数がある (CSM キャスター AABB 集約が使う)
+    XMFLOAT3 wmin, wmax;
+    WorldAabb(MakeWorld(0, 0, 0), unitMin, unitMax, wmin, wmax, 2.0f);
+    TEST_CHECK(std::fabs(wmin.x - (-2.5f)) < 1e-4f && std::fabs(wmax.x - 2.5f) < 1e-4f);
 }
 
 // 視錐台の 8 隅 (SceneView のカメラワイヤ)。

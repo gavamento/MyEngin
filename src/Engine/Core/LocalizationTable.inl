@@ -1162,6 +1162,14 @@ MYE_STR(Log_CreatedSurfaceShader,   "created surface shader: %s",
 MYE_STR(Insp_MatShader,           "shader",              "シェーダ")
 MYE_STR(Insp_MatShaderFailed,     "shader error (%s): %s", "シェーダーエラー (%s): %s")
 MYE_STR(Insp_MatProperties,       "Properties",          "プロパティ")
+// M79 sub-06: サーフェスの視錐台余白 / 両面描画
+MYE_STR(Insp_MatBoundsPadding,    "bounds padding (m)",  "境界の余白 (m)")
+MYE_STR(Insp_MatDoubleSided,      "double sided",        "両面描画")
+MYE_STR(Insp_TipBoundsPadding,
+        "If vertex displacement pushes the shape outside the mesh bounds, add padding here "
+        "(otherwise it disappears once the original bounds leave the camera frustum)",
+        "頂点変位で形がメッシュの外へ出るなら余白を付ける "
+        "(付けないと元の境界がカメラの外判定に触れた瞬間に消える)")
 MYE_STR(Insp_PhysMatFailed,   "(physics material parse failed)",
                               "(物理マテリアルの読み込みに失敗)")
 MYE_STR(Insp_PmDensity,       "Density (kg/m^3)",    "密度 (kg/m^3)")

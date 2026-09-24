@@ -146,6 +146,11 @@ bool ForwardPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     if (FAILED(dev->CreateRasterizerState(&rd, rasterizer_.GetAddressOf()))) {
         return false;
     }
+    // M79 sub-06: doubleSided なサーフェス用 (Solid のまま Cull だけ外す)
+    rd.CullMode = D3D11_CULL_NONE;
+    if (FAILED(dev->CreateRasterizerState(&rd, rasterizerCullNone_.GetAddressOf()))) {
+        return false;
+    }
     // SceneView Wireframe (M40b)。CULL_NONE = 裏面の線も見せる
     rd.FillMode = D3D11_FILL_WIREFRAME;
     rd.CullMode = D3D11_CULL_NONE;
@@ -204,6 +209,7 @@ void ForwardPath::Shutdown()
     perObjectCB_.Reset();
     sampler_.Reset();
     rasterizer_.Reset();
+    rasterizerCullNone_.Reset();
     depthOpaque_.Reset();
     depthTransparent_.Reset();
     blendOpaque_.Reset();
@@ -496,6 +502,10 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
         ID3D11ShaderResourceView* instSrv = runs ? instanceBuf_.SRV() : nullptr;
         dc->VSSetShaderResources(0, 1, &instSrv);
         dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        // M79 sub-06: doubleSided (Cull None) はサーフェス描画のときだけ張るので、
+        // 通常描画の前提 (rasterizer_/rasterizerWire_) へ必ず戻す
+        const bool wire = view.debugViewMode == 2;
+        dc->RSSetState(wire ? rasterizerWire_.Get() : rasterizer_.Get());
         boundShader = 0; // 次の通常アイテムに VS/PS/InputLayout を再バインドさせる
         bound = MeshBindState{}; // t0/normal/メッシュ VB・IB も再バインドさせる
     };
@@ -618,6 +628,11 @@ void ForwardPath::DrawSurfaceItem(GraphicsDevice& device, const RenderItem& item
     dc->IASetInputLayout(prog->colorInputLayout.Get());
     dc->VSSetShader(prog->colorVS.Get(), nullptr, 0);
     dc->PSSetShader(prog->colorPS.Get(), nullptr, 0);
+    // M79 sub-06: doubleSided (.mat.json) は色・速度・影の全エントリを Cull None で描く。
+    // 呼び出し側 (DrawItems::restoreForwardLitBindings) が描画直後に既定のラスタライザへ戻す
+    if (resources.materials.GetSurfaceDoubleSided(item.material)) {
+        dc->RSSetState(rasterizerCullNone_.Get());
+    }
 
     const SurfaceEntryReflection& vsRefl = prog->colorVSReflect;
     const SurfaceEntryReflection& psRefl = prog->colorPSReflect;

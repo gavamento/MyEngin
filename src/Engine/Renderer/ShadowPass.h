@@ -73,6 +73,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Buffer> surfaceWaterCB_;     // MyEngineWater (sub-05 まで 0 埋め)
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthState_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer_; // 深度バイアス付き
+    // M79 sub-06: doubleSided なサーフェスの影エントリ用 (同じ深度バイアスで Cull だけ外す)
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerCullNone_;
     GpuTimer timer_;                                           // M54d
 };
 

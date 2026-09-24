@@ -481,6 +481,125 @@ void TestShadowPassDepthReflectsDisplacement(GraphicsDevice& device, const std::
     fs::remove_all(dir, ec);
 }
 
+// ---- M79 sub-06: doubleSided は影エントリも Cull None で描く (spec §4.1「色・速度・影の
+//      全エントリを Cull None で描く」)。Quad (ローカル法線 -Z) を X 軸回りに ±90° 回して
+//      水平にし、真上 (y=10) から見下ろす光に対して法線を上 (前面) / 下 (背面) へ向ける。
+//      背面向きは既定 (doubleSided=false) では影エントリが Cull Back で消え影を落とさない。
+//      doubleSided=true にすると同じ背面向きでも影を落とすことを深度の読み戻しで確認する ----
+void TestShadowPassDoubleSidedCastsBackFaceShadow(GraphicsDevice& device, const std::wstring& engineShaderDir)
+{
+    MYE_LOG_INFO("-- ShadowPass: doubleSided は裏面 (光から見て背面) でも影を落とす --");
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir = fs::temp_directory_path(ec) / L"mye_surface_shadow_doublesided_selftest";
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    WriteFile(dir / L"RigidProbe.surface.hlsl", kRigidSurface);
+    WriteFile(dir / L"BackSingle.mat.json", "{\"shader\":\"RigidProbe.surface\"}");
+    WriteFile(dir / L"BackDouble.mat.json", "{\"shader\":\"RigidProbe.surface\",\"doubleSided\":true}");
+
+    ShaderManager shaders;
+    Check(shaders.Init(device, { dir.wstring(), engineShaderDir }), "shader manager init (shadow doubleSided)");
+
+    RenderResources resources;
+    resources.Init(device);
+    const AssetID backSingleMatId = resources.materials.LoadFromFile(
+        (dir / L"BackSingle.mat.json").wstring(), resources.textures, dir.wstring());
+    const AssetID backDoubleMatId = resources.materials.LoadFromFile(
+        (dir / L"BackDouble.mat.json").wstring(), resources.textures, dir.wstring());
+    Check(!backSingleMatId.IsNull() && !backDoubleMatId.IsNull(),
+          "2 本の .mat.json が読み込める (shadow doubleSided)");
+
+    ShadowPass sp;
+    constexpr int kRes = 128;
+    Check(sp.Init(device, shaders, kRes), "ShadowPass::Init (doubleSided)");
+
+    const AssetID quad = resources.meshes.Quad();
+    // 真上 (y=10) から -Y を見下ろす正射影ライト (TestShadowPassDepthReflectsDisplacement と同じ組み方)
+    const XMMATRIX lightView =
+        XMMatrixLookToLH(XMVectorSet(0, 10, 0, 1), XMVectorSet(0, -1, 0, 0), XMVectorSet(0, 0, 1, 0));
+    const XMMATRIX lightProj = XMMatrixOrthographicLH(6.0f, 6.0f, 0.1f, 20.0f);
+    XMFLOAT4X4 lightViewProj;
+    XMStoreFloat4x4(&lightViewProj, XMMatrixMultiply(lightView, lightProj));
+
+    // Quad のローカル法線 (0,0,-1) を X 軸回りに ±90° 回すと (0,0,-1)*RotX(θ):
+    // +90° -> (0,+1,0) (光へ向く = 前面) / -90° -> (0,-1,0) (光から見て背面)
+    auto makeItem = [&](AssetID mat, float x, float rotXDeg) {
+        RenderItem item;
+        item.mesh = quad;
+        item.material = mat;
+        const XMMATRIX w =
+            XMMatrixRotationX(XMConvertToRadians(rotXDeg)) * XMMatrixTranslation(x, 0.0f, 0.0f);
+        XMStoreFloat4x4(&item.world, w);
+        item.prevWorld = item.world;
+        return item;
+    };
+    RenderQueue queue;
+    queue.opaque = { makeItem(backSingleMatId, -1.5f, -90.0f), makeItem(backDoubleMatId, 1.5f, -90.0f) };
+
+    sp.Render(device, shaders, queue, resources, &lightViewProj, /*count=*/1, /*viewFrameIndex=*/0,
+              /*instancing=*/false);
+
+    ID3D11ShaderResourceView* shadowSrv = sp.SRV();
+    Check(shadowSrv != nullptr, "ShadowPass::SRV が取得できる (doubleSided)");
+    if (!shadowSrv) {
+        fs::remove_all(dir, ec);
+        return;
+    }
+    ComPtr<ID3D11Resource> shadowRes;
+    shadowSrv->GetResource(shadowRes.GetAddressOf());
+    ComPtr<ID3D11Texture2D> shadowTex;
+    bool ok = SUCCEEDED(shadowRes.As(&shadowTex));
+    D3D11_TEXTURE2D_DESC td = {};
+    if (ok) {
+        shadowTex->GetDesc(&td);
+    }
+    D3D11_TEXTURE2D_DESC staged = td;
+    staged.Format = DXGI_FORMAT_R32_FLOAT; // シャドウテクスチャは TYPELESS
+    staged.Usage = D3D11_USAGE_STAGING;
+    staged.BindFlags = 0;
+    staged.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ComPtr<ID3D11Texture2D> staging;
+    ok = ok && SUCCEEDED(device.Device()->CreateTexture2D(&staged, nullptr, staging.GetAddressOf()));
+    Check(ok, "シャドウマップの staging を作成できる (doubleSided)");
+    if (!ok) {
+        fs::remove_all(dir, ec);
+        return;
+    }
+    ID3D11DeviceContext* dc = device.Context();
+    dc->CopyResource(staging.Get(), shadowTex.Get());
+    // ortho width=6 中心 0 -> u = worldX/6 + 0.5 (他の ShadowPass テストと同じ式)
+    auto readDepth = [&](float worldX) {
+        const int px = static_cast<int>((worldX / 6.0f + 0.5f) * kRes);
+        const int py = kRes / 2;
+        float v = 0.0f;
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        if (SUCCEEDED(dc->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+            const uint8_t* row =
+                static_cast<const uint8_t*>(mapped.pData) + static_cast<size_t>(py) * mapped.RowPitch;
+            std::memcpy(&v, row + static_cast<size_t>(px) * 4, 4);
+            dc->Unmap(staging.Get(), 0);
+        }
+        return v;
+    };
+    constexpr float kClearDepth = 1.0f; // ShadowPass::Render の ClearDepthStencilView と同じ既定値
+    const float depthBackSingle = readDepth(-1.5f);
+    const float depthBackDouble = readDepth(1.5f);
+    Check(std::fabs(depthBackSingle - kClearDepth) < 1e-5f,
+          "doubleSided=false (既定) の背面向き Quad は影エントリが Cull Back で消え影を落とさない"
+          " (深度が既定のクリア値 1.0 のまま)");
+    if (!(std::fabs(depthBackSingle - kClearDepth) < 1e-5f)) {
+        MYE_LOG_ERROR("    depthBackSingle=%f (期待 1.0)", depthBackSingle);
+    }
+    Check(std::fabs(depthBackDouble - kClearDepth) > 1e-4f,
+          "doubleSided=true は同じ背面向きでも影エントリが Cull None で描かれ影を落とす");
+    if (!(std::fabs(depthBackDouble - kClearDepth) > 1e-4f)) {
+        MYE_LOG_ERROR("    depthBackDouble=%f (期待: 1.0 から有意に離れる)", depthBackDouble);
+    }
+
+    fs::remove_all(dir, ec);
+}
+
 // ---- review-1 #1 (M79c-fix): ShadowPass の混在順序回帰。サーフェスの影エントリは名前解決で
 //      VS の CB/SRV を任意スロットへ張るため、直後に描く非サーフェス (通常 + instanced run) が
 //      期待する固定スロット (VS b0 = objectCB_、VS t0 = instance SRV) を戻さないと、その非サーフェス
@@ -953,6 +1072,7 @@ bool RunSurfaceDeferredSelfTest()
     TestShadowPassFixedSlotsSurviveSurfaceEntry(device, engineShaderDir); // review-1 #1 (M79c-fix)
     TestDeferredWaterAndTransparentUnaffectedBySurfaceForwardStep(device, engineShaderDir); // review-1 #1 補強
     TestDeferredTransparentDrawsSurfaceColorEntry(device, engineShaderDir); // M79 sub-05 round 2
+    TestShadowPassDoubleSidedCastsBackFaceShadow(device, engineShaderDir); // M79 sub-06
 
     // (d) サーフェス 0 件のときフォワード段が何も張らないことは、この自己テストの範囲では
     // 「既存 golden (--selftest 全体 / tools\replay_verify.bat の既定シーン群、いずれもサーフェス

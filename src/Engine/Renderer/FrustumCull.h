@@ -54,8 +54,11 @@ inline Frustum BuildFrustum(const DirectX::XMFLOAT4X4& m)
 
 // ローカル AABB をワールド行列で変換した AABB が視錐台と交差するか (p-vertex 保守テスト)。
 // 完全に外側のときのみ false。跨ぐ / 内側は true を返し、可視物を決して落とさない。
+// worldPaddingM: M79 sub-06。頂点変位でメッシュが元の AABB の外へ出るサーフェスマテリアル用に、
+// ワールド空間の各軸へ均一に広げる余白 [m] (.mat.json の boundsPadding、既定 0 = 従来と同じ判定)
 inline bool AabbInFrustum(const Frustum& f, const DirectX::XMFLOAT4X4& m,
-                          const DirectX::XMFLOAT3& lmin, const DirectX::XMFLOAT3& lmax)
+                          const DirectX::XMFLOAT3& lmin, const DirectX::XMFLOAT3& lmax,
+                          float worldPaddingM = 0.0f)
 {
     using DirectX::XMFLOAT3;
     using DirectX::XMFLOAT4;
@@ -70,9 +73,9 @@ inline bool AabbInFrustum(const Frustum& f, const DirectX::XMFLOAT4X4& m,
         lc.x * m._13 + lc.y * m._23 + lc.z * m._33 + m._43,
     };
     const XMFLOAT3 we = {
-        std::fabs(m._11) * le.x + std::fabs(m._21) * le.y + std::fabs(m._31) * le.z,
-        std::fabs(m._12) * le.x + std::fabs(m._22) * le.y + std::fabs(m._32) * le.z,
-        std::fabs(m._13) * le.x + std::fabs(m._23) * le.y + std::fabs(m._33) * le.z,
+        std::fabs(m._11) * le.x + std::fabs(m._21) * le.y + std::fabs(m._31) * le.z + worldPaddingM,
+        std::fabs(m._12) * le.x + std::fabs(m._22) * le.y + std::fabs(m._32) * le.z + worldPaddingM,
+        std::fabs(m._13) * le.x + std::fabs(m._23) * le.y + std::fabs(m._33) * le.z + worldPaddingM,
     };
     for (int i = 0; i < 6; ++i) {
         const XMFLOAT4& p = f.planes[i];
@@ -91,9 +94,9 @@ inline bool AabbInFrustum(const Frustum& f, const DirectX::XMFLOAT4X4& m,
 // 包む保証がない。現在姿勢の bounds を持つまでは、誤って部位を消さないことを優先する。
 inline bool RenderableInFrustum(const Frustum& f, const DirectX::XMFLOAT4X4& m,
                                 const DirectX::XMFLOAT3& lmin, const DirectX::XMFLOAT3& lmax,
-                                bool skinned)
+                                bool skinned, float worldPaddingM = 0.0f)
 {
-    return skinned || AabbInFrustum(f, m, lmin, lmax);
+    return skinned || AabbInFrustum(f, m, lmin, lmax, worldPaddingM);
 }
 
 // 既に world 空間へ落ちている AABB が視錐台と交差するか (M54d)。
@@ -152,9 +155,11 @@ inline void ComputeFrustumCorners(const DirectX::XMFLOAT4X4& world, float fovYDe
 }
 
 // ローカル AABB をワールド行列で変換した world AABB (絶対値 3x3 法) を out に返す (M17 シャドウ範囲用)。
+// worldPaddingM: M79 sub-06。CSM のキャスター AABB 集約でも視錐台カリングと同じ余白を使う
+// (サーフェスの boundsPadding。既定 0 = 従来と同じ AABB)
 inline void WorldAabb(const DirectX::XMFLOAT4X4& m, const DirectX::XMFLOAT3& lmin,
                       const DirectX::XMFLOAT3& lmax, DirectX::XMFLOAT3& outMin,
-                      DirectX::XMFLOAT3& outMax)
+                      DirectX::XMFLOAT3& outMax, float worldPaddingM = 0.0f)
 {
     using DirectX::XMFLOAT3;
     const XMFLOAT3 lc = { (lmin.x + lmax.x) * 0.5f, (lmin.y + lmax.y) * 0.5f,
@@ -167,9 +172,9 @@ inline void WorldAabb(const DirectX::XMFLOAT4X4& m, const DirectX::XMFLOAT3& lmi
         lc.x * m._13 + lc.y * m._23 + lc.z * m._33 + m._43,
     };
     const XMFLOAT3 we = {
-        std::fabs(m._11) * le.x + std::fabs(m._21) * le.y + std::fabs(m._31) * le.z,
-        std::fabs(m._12) * le.x + std::fabs(m._22) * le.y + std::fabs(m._32) * le.z,
-        std::fabs(m._13) * le.x + std::fabs(m._23) * le.y + std::fabs(m._33) * le.z,
+        std::fabs(m._11) * le.x + std::fabs(m._21) * le.y + std::fabs(m._31) * le.z + worldPaddingM,
+        std::fabs(m._12) * le.x + std::fabs(m._22) * le.y + std::fabs(m._32) * le.z + worldPaddingM,
+        std::fabs(m._13) * le.x + std::fabs(m._23) * le.y + std::fabs(m._33) * le.z + worldPaddingM,
     };
     outMin = { wc.x - we.x, wc.y - we.y, wc.z - we.z };
     outMax = { wc.x + we.x, wc.y + we.y, wc.z + we.z };

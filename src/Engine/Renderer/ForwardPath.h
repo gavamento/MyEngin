@@ -60,6 +60,9 @@ private:
     Microsoft::WRL::ComPtr<ID3D11SamplerState> iblSampler_;    // LINEAR/CLAMP (s2、M38c)
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerWire_; // SceneView Wireframe (M40b)
+    // M79 sub-06: doubleSided なサーフェス用 (Cull None、Solid)。DrawSurfaceItem が描画直前に
+    // 張り、直後に restoreForwardLitBindings が rasterizer_/rasterizerWire_ へ戻す
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerCullNone_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthOpaque_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthTransparent_; // 書き込みなし
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendOpaque_;
