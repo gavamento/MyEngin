@@ -355,8 +355,9 @@ void RtPasses::BindCommon(GraphicsDevice& device, const RenderView& view, const 
         env.lightCount = (std::min)(in.lights->count, static_cast<int32_t>(kMaxLights));
         std::memcpy(env.lights, in.lights->lights, sizeof(env.lights));
     }
-    // キューブマップが無いのに skyMode==1 のままだと真っ黒になるので gradient へ落とす
-    env.skyMode = (view.skyMode == 1 && in.skyCube == nullptr) ? 0 : view.skyMode;
+    // 空の扱いは呼び出し側が ResolveRtSky で決める (パノラマは焼いた IBL キューブで代用、
+    // キューブが無いのに 1 のままだと真っ黒になるので gradient へ落とす、等)
+    env.skyMode = in.skyMode;
     env.skyTop = view.skyTop; // RenderSystem がリニアへ変換済み
     env.skyHorizon = view.skyHorizon;
     env.skyBottom = view.skyBottom;

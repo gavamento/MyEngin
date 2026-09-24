@@ -1485,6 +1485,9 @@
     <ClInclude Include="..\src\Engine\Renderer\SkyboxPass.h">
       <Filter>Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\SkyResolve.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\SsrPass.h">
       <Filter>Renderer</Filter>
     </ClInclude>

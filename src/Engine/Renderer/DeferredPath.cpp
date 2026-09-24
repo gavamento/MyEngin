@@ -11,6 +11,7 @@
 #include "Engine/Renderer/MeshBind.h"
 #include "Engine/Renderer/RayTracing/RtPasses.h" // M46b: RT デバッグ表示
 #include "Engine/Renderer/RayTracing/RtTypes.h"  // M46h: 反射の roughness しきい値
+#include "Engine/Renderer/SkyResolve.h"          // RT の空入力 (パノラマは IBL キューブで代用)
 #include "Engine/Renderer/ShaderManager.h"
 #include "Engine/Renderer/SurfaceDrawBind.h" // M79 sub-03
 #include "Engine/Renderer/SurfaceProgram.h"
@@ -1166,7 +1167,16 @@ void DeferredPath::RenderRayTracing(GraphicsDevice& device, const RenderView& vi
         // フレーム (vel.valid==0 = 履歴なし) は渡さない — 全画素 0 の RT4 を「動いていない」と
         // 読むと、カメラが動いた初回フレームの履歴を取り違える
         rtIn.gbVelocity = (f.vel.valid != 0) ? gbVelocity_.SRV() : nullptr;
-        rtIn.skyCube = view.skyCubemap;
+        // RT シェーダの空は TextureCube (t6) だけ。パノラマの 2D SRV を張ると次元不一致になるので、
+        // パノラマから焼いた IBL の prefiltered キューブで代用する (ResolveRtSky)
+        {
+            const RtSkyChoice sky = ResolveRtSky(view.skyMode, view.skyCubemap != nullptr,
+                                                 view.iblPrefiltered != nullptr);
+            rtIn.skyCube = (sky.source == RtSkySource::SkyCubemap)   ? view.skyCubemap
+                           : (sky.source == RtSkySource::IblCubemap) ? view.iblPrefiltered
+                                                                     : nullptr;
+            rtIn.skyMode = sky.envSkyMode;
+        }
         // デバッグ表示がそのパスの結果を映すなら、合成が off でも撃つ
         const bool needGi = rtGiOn || rtdebug::NeedsGi(view.rtDebugMode);
         const bool needShadow = rtShadowOn || rtdebug::NeedsShadow(view.rtDebugMode);

@@ -24,6 +24,7 @@
 #include "Engine/Renderer/GraphicsDevice.h"
 #include "Engine/Renderer/PostFxMath.h" // M55b: camerajitter
 #include "Engine/Renderer/RenderPath.h"
+#include "Engine/Renderer/SkyResolve.h"
 
 using namespace DirectX;
 
@@ -1421,26 +1422,29 @@ void RenderSystem::PrepareEnvironment(World& world, GraphicsDevice& device, Shad
         }
     }
     // M38b / M76: cubemap / panoramic スカイの SRV 解決 (未ロードなら遅延ロード、不正なら gradient にフォールバック)
-    if (view.skyMode != 0 && !view.skyCubemapId.IsNull()) {
-        Texture* tex = resources.textures.Get(view.skyCubemapId);
-        if (!tex) {
-            const std::wstring texPath = assetguid::ResolvePath(view.skyCubemapId.value);
-            if (!texPath.empty()) {
-                resources.textures.LoadFile(texPath, /*srgb=*/true);
-                tex = resources.textures.Get(view.skyCubemapId);
+    // ★Skybox 無し (-1) は -1 のまま (ResolveSkyMode)。-1 まで 0 に落とすと、Skybox を置いていない
+    //   シーンにグラデーション空と IBL が出て背景とライティングが変わる
+    {
+        bool hasTexture = false;
+        bool isCube = false;
+        if (view.skyMode > 0 && !view.skyCubemapId.IsNull()) {
+            Texture* tex = resources.textures.Get(view.skyCubemapId);
+            if (!tex) {
+                const std::wstring texPath = assetguid::ResolvePath(view.skyCubemapId.value);
+                if (!texPath.empty()) {
+                    resources.textures.LoadFile(texPath, /*srgb=*/true);
+                    tex = resources.textures.Get(view.skyCubemapId);
+                }
+            }
+            if (tex && tex->srv && tex->tex) {
+                view.skyCubemap = tex->srv.Get();
+                D3D11_TEXTURE2D_DESC td = {};
+                tex->tex->GetDesc(&td);
+                hasTexture = true;
+                isCube = (td.MiscFlags & D3D11_RESOURCE_MISC_TEXTURECUBE) != 0 || td.ArraySize == 6;
             }
         }
-        if (tex && tex->srv && tex->tex) {
-            view.skyCubemap = tex->srv.Get();
-            D3D11_TEXTURE2D_DESC td = {};
-            tex->tex->GetDesc(&td);
-            const bool isCube = (td.MiscFlags & D3D11_RESOURCE_MISC_TEXTURECUBE) != 0 || td.ArraySize == 6;
-            view.skyMode = isCube ? 1 : 2; // Cubemap または Panoramic を自動判別
-        } else {
-            view.skyMode = 0;
-        }
-    } else {
-        view.skyMode = 0;
+        view.skyMode = ResolveSkyMode(view.skyMode, hasTexture, isCube);
     }
     // M38c: スカイがあるなら IBL 環境マップを取得 (初回のみ GPU ベイク、以後キャッシュ)。
     // gradient も同じベイクに通す — シェーダ側は「IBL on/off」の 2 択で済む。

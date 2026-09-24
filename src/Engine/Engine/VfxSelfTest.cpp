@@ -13,6 +13,7 @@
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Renderer/PostProcess.h"
+#include "Engine/Renderer/SkyResolve.h"
 
 using namespace DirectX;
 
@@ -256,6 +257,36 @@ bool RunVfxSelfTest()
                   "environment: panoramic mode and texture ID propagate to view");
         }
 
+        // スカイモードの解決 (RenderSystem::PrepareEnvironment)。Skybox 無し (-1) を 0 に落とすと
+        // Skybox を置いていない全シーンにグラデーション空と IBL が出る (M77a の回帰)
+        {
+            check(ResolveSkyMode(-1, false, false) == -1,
+                  "sky resolve: no skybox (-1) stays -1 (no gradient sky / no IBL)");
+            check(ResolveSkyMode(0, false, false) == 0, "sky resolve: gradient stays gradient");
+            check(ResolveSkyMode(1, false, false) == 0 && ResolveSkyMode(2, false, false) == 0,
+                  "sky resolve: unresolved cubemap/panoramic texture falls back to gradient");
+            check(ResolveSkyMode(1, true, true) == 1 && ResolveSkyMode(2, true, true) == 1,
+                  "sky resolve: a cube texture resolves to cubemap");
+            check(ResolveSkyMode(1, true, false) == 2 && ResolveSkyMode(2, true, false) == 2,
+                  "sky resolve: a 2D texture resolves to panoramic");
+
+            // RT の空入力: TextureCube スロットに 2D を張らない
+            const RtSkyChoice rtNone = ResolveRtSky(-1, false, false);
+            check(rtNone.source == RtSkySource::None && rtNone.envSkyMode == -1,
+                  "rt sky: no skybox -> ambient, nothing bound");
+            const RtSkyChoice rtGrad = ResolveRtSky(0, false, true);
+            check(rtGrad.source == RtSkySource::None && rtGrad.envSkyMode == 0,
+                  "rt sky: gradient -> analytic gradient, nothing bound");
+            const RtSkyChoice rtCube = ResolveRtSky(1, true, true);
+            check(rtCube.source == RtSkySource::SkyCubemap && rtCube.envSkyMode == 1,
+                  "rt sky: cubemap -> sky cubemap bound");
+            const RtSkyChoice rtPano = ResolveRtSky(2, true, true);
+            check(rtPano.source == RtSkySource::IblCubemap && rtPano.envSkyMode == 1,
+                  "rt sky: panoramic -> baked IBL cube bound (never the 2D SRV)");
+            const RtSkyChoice rtPanoNoIbl = ResolveRtSky(2, true, false);
+            check(rtPanoNoIbl.source == RtSkySource::None && rtPanoNoIbl.envSkyMode == -1,
+                  "rt sky: panoramic without baked IBL (lighting=0) -> ambient, nothing bound");
+        }
     }
 
     // ---- (3.7) BuildVfxFogParams (M57追補): VFX がメッシュと同じ霧を読んでいるか ----

@@ -39,7 +39,8 @@ struct RtFrameInputs {
     ID3D11ShaderResourceView* gbPosition = nullptr; // ワールド座標
     ID3D11ShaderResourceView* gbAlbedo = nullptr;   // a = ジオメトリ有りマーク
     ID3D11ShaderResourceView* gbMaterial = nullptr; // M46h: r=metallic g=roughness
-    ID3D11ShaderResourceView* skyCube = nullptr;    // skyMode==1 のときのみ
+    ID3D11ShaderResourceView* skyCube = nullptr;    // TextureCube のみ (ResolveRtSky が選ぶ。2D は張らない)
+    int32_t skyMode = -1;                           // RtEnvCB.skyMode に入れる値 (ResolveRtSky の envSkyMode)
     // M55f: 画面速度 (RT4)。テンポラル蓄積の履歴 UV に使う。null = 前フレーム VP への
     // 射影 (M46d) へ縮退する
     ID3D11ShaderResourceView* gbVelocity = nullptr;
