@@ -18,6 +18,23 @@ uint64_t OwnMask(World& world, EntityID e)
     return (t != nullptr) ? t->mask : 0ull;
 }
 
+void SetOwnMask(World& world, EntityID e, uint64_t mask)
+{
+    if (!world.IsAlive(e)) {
+        return;
+    }
+    if (mask == 0) {
+        if (world.GetComponent<TagComponent>(e) != nullptr) {
+            world.RemoveComponent<TagComponent>(e); // 0 = 「タグ無し」= コンポーネント無し
+        }
+        return;
+    }
+    // AddComponentRaw は既存があればそれを返す (World.cpp の規約)
+    if (auto* t = static_cast<TagComponent*>(world.AddComponentRaw(e, TagComponent::sTypeId))) {
+        t->mask = mask;
+    }
+}
+
 uint64_t EffectiveMask(World& world, EntityID e)
 {
     uint64_t mask = 0;
