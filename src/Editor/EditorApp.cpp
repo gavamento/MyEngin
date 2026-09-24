@@ -1855,6 +1855,10 @@ bool EditorApp::LoadSceneFromPath(EngineContext& ctx, const std::wstring& path)
     }
     selection_.Clear();
     undo_.ClearAll();
+    if (playMode_.InPlayMode()) {
+        // Play 中の切替: 旧シーンのスクリプトが握っていた音とコンピュートバッファを回収する
+        ReleasePlaySessionEngineState(ctx.audio, ctx.computeAbi);
+    }
     Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs); // ロード直後 1 回 (M48e)
     scenePath_ = path;
     ctx.reloadHub->SetActiveScenePath(scenePath_);
@@ -1882,6 +1886,9 @@ void EditorApp::ExecuteAction(EngineContext& ctx, PendingAction action)
         selection_.Clear();
         undo_.ClearAll();
         ctx.scene->Clear();
+        if (playMode_.InPlayMode()) {
+            ReleasePlaySessionEngineState(ctx.audio, ctx.computeAbi); // LoadSceneFromPath と同じ
+        }
         savedStateSerial_ = undo_.StateSerial(); // 空シーン = clean
         break;
     case PendingAction::OpenScene:

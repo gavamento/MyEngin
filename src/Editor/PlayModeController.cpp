@@ -1,9 +1,11 @@
 #include "Editor/PlayModeController.h"
 
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/Replay/TimeTravel.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
+#include "Engine/Renderer/ComputeAbiRunner.h"
 
 namespace mye {
 
@@ -88,6 +90,21 @@ void PlayModeController::Step()
     // ConsumeSimulateTick だけで進む
     if (tt_ != nullptr && tt_->Scrubbing()) {
         tt_->RequestStep(1);
+    }
+}
+
+void ReleasePlaySessionEngineState(AudioSystem* audio, ComputeAbiRunner* computeAbi)
+{
+    // M45: 鳴っている voice はエンジン側の状態なので戻らない。ループ音や BGM が Stop 後も
+    // 鳴り続けるのを防ぐ。BGM は別レーンなので StopMusic も要る (M45f)
+    if (audio != nullptr) {
+        audio->StopAll();
+        audio->StopMusic(kMusicStopFadeSeconds);
+    }
+    // スクリプトが作って解放しなかったバッファとシェーダ別のバインドを回収する。
+    // 残すと Play を繰り返すうちに上限 (kMaxAbiBuffers) に達し、CreateComputeBuffer が 0 を返す
+    if (computeAbi != nullptr) {
+        computeAbi->Shutdown();
     }
 }
 

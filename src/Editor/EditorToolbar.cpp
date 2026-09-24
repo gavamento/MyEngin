@@ -10,7 +10,6 @@
 #include "Editor/Undo/UndoStack.h"
 #include "Editor/Windows/SceneViewWindow.h"
 #include "Engine/Core/Localization.h"
-#include "Engine/Engine/Audio/AudioSystem.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/Replay/TimeTravel.h"
 #include "Engine/Renderer/ImGuiTheme.h"
@@ -114,13 +113,8 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
                 selection.Clear();
                 playMode.Stop(*ctx.scene);
                 undo.EndPlaySession(); // Play 中に積まれた Undo エントリを破棄
-                // M45: Stop でシーンはスナップショットから戻るが、鳴っている voice は
-                // エンジン側の状態なので戻らない。ループ音や BGM が Stop 後も鳴り続けるのを防ぐ。
-                // BGM は別レーンなので StopMusic も要る (M45f)
-                if (ctx.audio != nullptr) {
-                    ctx.audio->StopAll();
-                    ctx.audio->StopMusic(kMusicStopFadeSeconds);
-                }
+                // シーンはスナップショットから戻るが、音とコンピュートバッファはエンジン側に残る
+                ReleasePlaySessionEngineState(ctx.audio, ctx.computeAbi);
             }
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) {

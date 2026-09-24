@@ -487,6 +487,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.dllReloader = &dllReloader;
     ctx.managedHost = &managedHost;
     ctx.particles = &particleSystem;
+    ctx.computeAbi = &computeAbi;
     ctx.prefabs = &prefabLibrary;
     ctx.anims = &animLibrary;
     ctx.controllers = &controllerLibrary;

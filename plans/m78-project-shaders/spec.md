@@ -273,6 +273,11 @@ _Direction ("Direction", Vector) = (0, 1, 0, 0)
 - リスク: 一時 RT 増えすぎ — 上限と ping-pong 再利用を sub-02/04 で設計
 - リスク: ABI バッファ寿命とフレーム跨ぎ — スクリプトが持ったままシーン遷移したときの回収を sub-05 で明示
 - リスク: C# レーンが replay 被覆外 — temp プローブを sub-05 受け入れから外さない
+- 未解決 (2026-09-24 再レビュー #1 の申し送り): タイムトラベル / What-if の巻き戻し (`SeekTo` / `NetResimFrom`) は
+  `ComputeAbiRunner` に触れない。捨てた未来で作られたバッファはどのハンドルからも参照されずに残り、
+  再シムで作り直すと世代が進んで別の値のハンドルがコンポーネントに入る (ハンドルがハッシュ対象なら
+  HASH MISMATCH になりうる。未検証)。バッファを sim 状態として扱うか (スナップショットに入れる) /
+  巻き戻しで全回収して再生成させるかの設計判断が要るので、M78-fix では Stop と Play 中のシーン切替の回収だけ入れた
 - 挿入点・保存形式・マイル確定・Texture スロット必須はユーザー 2A/3A/4A／B で解消済み
 - reviewer round 1: CameraOverride 残存パス (#1)・ポスト上限 (#2)・builtin WARN (#3)・サンプル (#5) は実装差し戻し。#4 は仕様反映済み
 
@@ -287,3 +292,4 @@ _Direction ("Direction", Vector) = (0, 1, 0, 0)
 - 2026-09-22: sub-04 VERDICT REWORK。BeforeTonemap は仕様どおり Godray 後 (sub-02 の前倒し配置を修正)。AfterTonemap CS の nullptr 禁止。コンピュート出力→ポスト参照は must。
 - 2026-09-22: sub-05 VERDICT OK。スクリプト所有バッファは `ComputeAbiRunner` に分離してよいと確定 (fxstack Runner と寿命分離)。`kEngineVersion` 製品文字列は ABI bump と独立で据え置き可。
 - 2026-09-22: reviewer round 1 #4 — §4.1 を save-on-apply と CameraOverride＝Runner 無効に明文化。#1–3・#5 は実装差し戻し (下記サブ)。
+- 2026-09-24: 再レビュー #1。エディタの Stop / Play 中のシーン切替でスクリプト所有バッファを回収 (`ReleasePlaySessionEngineState`)。巻き戻し時の扱いは §7 に未解決として記録。

@@ -13,6 +13,9 @@
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/SaveGame.h"
 #include "Engine/Engine/Scene.h"
+#include "Engine/Renderer/ComputeAbiRunner.h"
+#include "Engine/Renderer/GraphicsDevice.h"
+#include "Shared/EngineAPI.h"
 
 namespace mye {
 
@@ -257,6 +260,50 @@ bool RunGameFlowSelfTest()
               "bound: Resume releases the hold");
         pmc.Stop(scene);
         pmc.BindTimeTravel(nullptr);
+    }
+
+    // ---- Play の終了でスクリプト所有のコンピュートバッファを回収する (再レビュー #1) ----
+    // Play 中に上限までバッファを作って解放しないスクリプトがあっても、Stop の後始末を通れば
+    // 次の Play でまた作れる。回収しないと 2 周目の CreateBuffer が 0 を返す (WARP で実物を作る)
+    {
+        GraphicsDevice device;
+        if (!device.Init(true)) {
+            check(false, "compute cleanup: WARP device init");
+        } else {
+            Scene scene;
+            PlayModeController pmc;
+            ComputeAbiRunner computeAbi;
+            auto fillToCap = [&](uint64_t& first) {
+                int created = 0;
+                for (int i = 0; i < ComputeAbiRunner::kMaxAbiBuffers; ++i) {
+                    const uint64_t id = computeAbi.CreateBuffer(device.Device(), 4, 16,
+                                                               MYE_COMPUTE_BUFFER_STRUCTURED);
+                    if (id != 0) {
+                        if (created == 0) {
+                            first = id;
+                        }
+                        ++created;
+                    }
+                }
+                return created;
+            };
+            uint64_t firstSession1 = 0;
+            pmc.Play(scene);
+            check(fillToCap(firstSession1) == ComputeAbiRunner::kMaxAbiBuffers,
+                  "compute cleanup: 1st play session reaches the buffer cap");
+            pmc.Stop(scene);
+            ReleasePlaySessionEngineState(nullptr, &computeAbi); // ツールバーの Stop と同じ後始末
+
+            uint64_t firstSession2 = 0;
+            pmc.Play(scene);
+            check(fillToCap(firstSession2) == ComputeAbiRunner::kMaxAbiBuffers,
+                  "compute cleanup: 2nd play session can create buffers again after Stop");
+            check(firstSession2 != 0 && firstSession2 != firstSession1,
+                  "compute cleanup: handles from the previous session are not reissued");
+            pmc.Stop(scene);
+            ReleasePlaySessionEngineState(nullptr, &computeAbi);
+            device.Shutdown();
+        }
     }
 
     if (failCount == 0) {
