@@ -1,0 +1,5 @@
+C:/HAL/MyEngin/tools/deepmodal/data/raw/ModelNet40/airplane/test/airplane_0627.off
+C:/HAL/MyEngin/tools/deepmodal/data/raw/ModelNet40/airplane/test/airplane_0628.off
+C:/HAL/MyEngin/tools/deepmodal/data/raw/ModelNet40/airplane/test/airplane_0629.off
+C:/HAL/MyEngin/tools/deepmodal/data/raw/ModelNet40/airplane/test/airplane_0630.off
+C:/HAL/MyEngin/tools/deepmodal/data/raw/ModelNet40/airplane/test/airplane_0631.off
