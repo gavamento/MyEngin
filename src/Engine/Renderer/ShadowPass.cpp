@@ -8,6 +8,7 @@
 #include "Engine/Renderer/SurfaceDrawBind.h" // M79 sub-03
 #include "Engine/Renderer/SurfaceProgram.h"
 #include "Engine/Renderer/SurfaceShaderTypes.h"
+#include "Engine/Renderer/WaterPass.h" // M79 sub-05: WaterDrawData (MyEngineWater の出所)
 
 using namespace DirectX;
 
@@ -140,7 +141,7 @@ bool ShadowPass::Init(GraphicsDevice& device, ShaderManager& shaders, int resolu
 
 void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const RenderQueue& queue,
                         RenderResources& resources, const XMFLOAT4X4* lightViewProjs, int count,
-                        uint32_t viewFrameIndex, bool instancing)
+                        uint32_t viewFrameIndex, bool instancing, const WaterDrawData* water)
 {
     ShaderProgram* prog = shaders.Get(depthShader_);
     if (!ready_ || !prog || !prog->valid || lightViewProjs == nullptr || count <= 0) {
@@ -179,14 +180,17 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
         }
     }
 
-    // M79 sub-03: サーフェスの影エントリ用予約 CB (カスケード間で共通。理由はヘッダのコメント参照)
+    // M79 sub-03/sub-05: サーフェスの影エントリ用予約 CB (カスケード間で共通。理由はヘッダのコメント参照)
+    const bool waterActive = water != nullptr && water->active;
     {
         const MyEnginePerFrameCB spf = {}; // 全 0 (影エントリは PSMain を呼ばず光/霧/IBL を使わない)
         UploadCB(dc, surfacePerFrameCB_.Get(), spf);
-        const MyEngineWaterCB water = {}; // sub-05 まで常に無効
-        UploadCB(dc, surfaceWaterCB_.Get(), water);
+        const MyEngineWaterCB waterCb = waterActive ? water->surfaceCb : MyEngineWaterCB{};
+        UploadCB(dc, surfaceWaterCB_.Get(), waterCb);
     }
     const float surfaceCurTime = static_cast<float>(viewFrameIndex) * (1.0f / 60.0f); // spec §2 の時計
+    // 影エントリは前フレームを使わない (VSMain には gMyeCurWaterTime だけを渡す規約)
+    const float surfaceCurWaterTime = waterActive ? water->curWaterTime : 0.0f;
 
     timer_.Begin(device); // M54d
 
@@ -228,6 +232,8 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
             XMStoreFloat4x4(&sf.shadowViewProj, XMMatrixTranspose(lvp));
             sf.curTime = surfaceCurTime;
             sf.prevTime = surfaceCurTime; // 影エントリは前フレームを使わない (未使用フィールド)
+            sf.curWaterTime = surfaceCurWaterTime;
+            sf.prevWaterTime = surfaceCurWaterTime; // 同上 (MyeVSShadow は gMyeCurWaterTime だけ読む)
             UploadCB(dc, surfaceFrameCB_.Get(), sf);
         }
         uint64_t boundMesh = 0;

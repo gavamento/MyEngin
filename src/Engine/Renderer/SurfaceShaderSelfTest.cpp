@@ -157,6 +157,34 @@ float4 PSMain(VSOut i) : SV_Target
 }
 )HLSL";
 
+// M79 sub-05: MyEngineWater の全フィールドを参照する最小フィクスチャ。
+// kRegGoodHlsl は水面に関与しないため MyEngineWater cbuffer 自体が最適化で消え、
+// オフセット照合の対象にできない (CB フィールド位置を変える場合はここも更新すること)
+const char* kWaterCbProbeHlsl = R"HLSL(
+#include "MyEngineSurface.hlsli"
+
+struct VSIn { float3 pos : POSITION; };
+struct VSOut { float4 pos : SV_Position; };
+
+VSOut VSMain(VSIn v)
+{
+    VSOut o;
+    float3 p = v.pos;
+    p.y += gMyeWaterBaseHeight * gMyeWaterOverallScale;
+    if (gMyeWaterWaveCount > 0) {
+        p.y += gMyeWaterWaves[0].amplitude;
+    }
+    float4 worldPos = mul(float4(p, 1.0f), gWorld);
+    o.pos = mul(worldPos, gViewProj);
+    return o;
+}
+
+float4 PSMain(VSOut i) : SV_Target
+{
+    return (gMyeWaterEnabled != 0) ? gMyeWaterDeepColor : gMyeWaterShallowColor;
+}
+)HLSL";
+
 void WriteFile(const std::filesystem::path& path, const char* content)
 {
     std::ofstream f(path, std::ios::binary);
@@ -232,6 +260,7 @@ bool RunSurfaceShaderSelfTest()
     WriteFile(dir / L"RegGood.surface.hlsl", kRegGoodHlsl);
     WriteFile(dir / L"RegBad.surface.hlsl", kRegBadHlsl);
     WriteFile(dir / L"VelocityProbe.surface.hlsl", kVelocityProbeHlsl);
+    WriteFile(dir / L"WaterCbProbe.surface.hlsl", kWaterCbProbeHlsl);
 
     std::vector<std::wstring> dirs = { dir.wstring() };
     const std::wstring engineShaderDir = FindEngineShaderDir();
@@ -317,6 +346,31 @@ bool RunSurfaceShaderSelfTest()
                        128, "MyEnginePerFrame.gShadowVP12 (中間)");
         CheckVarOffset(good->colorPSReflect, "gSunColor", offsetof(MyEnginePerFrameCB, sunColor), 12,
                        "MyEnginePerFrame.gSunColor (末尾寄り)");
+    }
+
+    // ---- M79 sub-05: MyEngineWater の全フィールドのオフセット照合 ----
+    const AssetID waterCbId = shaders.LoadSurface("WaterCbProbe.surface");
+    SurfaceProgram* waterCbProg = shaders.GetSurface(waterCbId);
+    Check(waterCbProg != nullptr && waterCbProg->valid,
+          "WaterCbProbe.surface compiles (MyEngineWater fields referenced)");
+    if (waterCbProg && waterCbProg->valid) {
+        const SurfaceEntryReflection& vsr2 = waterCbProg->colorVSReflect;
+        CheckVarOffset(vsr2, "gMyeWaterBaseHeight", offsetof(MyEngineWaterCB, baseHeight), 4,
+                       "MyEngineWater.gMyeWaterBaseHeight");
+        CheckVarOffset(vsr2, "gMyeWaterOverallScale", offsetof(MyEngineWaterCB, overallScale), 4,
+                       "MyEngineWater.gMyeWaterOverallScale");
+        CheckVarOffset(vsr2, "gMyeWaterWaveCount", offsetof(MyEngineWaterCB, waveCount), 4,
+                       "MyEngineWater.gMyeWaterWaveCount");
+        CheckVarOffset(vsr2, "gMyeWaterWaves", offsetof(MyEngineWaterCB, waves),
+                       4 * sizeof(GerstnerWave), "MyEngineWater.gMyeWaterWaves (4 本まとめて)");
+
+        const SurfaceEntryReflection& psr2 = waterCbProg->colorPSReflect;
+        CheckVarOffset(psr2, "gMyeWaterEnabled", offsetof(MyEngineWaterCB, enabled), 4,
+                       "MyEngineWater.gMyeWaterEnabled");
+        CheckVarOffset(psr2, "gMyeWaterDeepColor", offsetof(MyEngineWaterCB, deepColor), 16,
+                       "MyEngineWater.gMyeWaterDeepColor");
+        CheckVarOffset(psr2, "gMyeWaterShallowColor", offsetof(MyEngineWaterCB, shallowColor), 16,
+                       "MyEngineWater.gMyeWaterShallowColor");
     }
 
     // ---- 3. 規約違反フィクスチャは「サーフェス規約」付きで失敗し、落ちない ----

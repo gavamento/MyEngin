@@ -1225,6 +1225,10 @@ void RegisterBuiltinComponents()
         MYE_JP("白波強度", MYE_FIELD_RANGE(WaterWaveComponent, foamStrength, Float, 0.0f, 2.0f)),
         MYE_JP("フレネル指数", MYE_FIELD_RANGE(WaterWaveComponent, fresnelPower, Float, 1.0f, 10.0f)),
         MYE_JP("滑らかさ", MYE_FIELD_RANGE(WaterWaveComponent, smoothness, Float, 0.0f, 1.0f)),
+        // M79 sub-05: 描画専用の差し替え口。kFieldNoHash = WorldHash / リプレイに入らない
+        // (シーンへの保存/復元は従来どおり行う)。設定すると水面をサーフェスシェーダで描く
+        MYE_JP("描画マテリアル (サーフェス)",
+               MYE_FIELD_FLAGS(WaterWaveComponent, surfaceMaterial, AssetRef, kFieldNoHash)),
     });
 }
 

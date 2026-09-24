@@ -121,6 +121,25 @@ float4 PSMain(VSOut i) : SV_Target
 }
 )HLSL";
 
+// M79 sub-05 round 2: Deferred の透明段が色エントリを描けることを確認する最小フィクスチャ。
+// 半透明 (alpha=0.5) の固定色を返すだけ — 変位・予約 CB の値は問わない
+const char* kTransparentColorSurface = R"HLSL(
+#include "MyEngineSurface.hlsli"
+struct VSIn { float3 pos : POSITION; };
+struct VSOut { float4 pos : SV_Position; };
+VSOut VSMain(VSIn v)
+{
+    VSOut o;
+    float4 worldPos = mul(float4(v.pos, 1.0f), gWorld);
+    o.pos = mul(worldPos, gViewProj);
+    return o;
+}
+float4 PSMain(VSOut i) : SV_Target
+{
+    return float4(0.0f, 0.8f, 0.0f, 0.5f);
+}
+)HLSL";
+
 // ---- (a)(b): DeferredPath のフォワード段。gTime 変位アイテムは gbVelocity が非 0、
 //      剛体アイテムは 0。どちらも GBuffer/光パスを経由せず HDR シーンへ固定色がそのまま出る ----
 void TestDeferredForwardStepVelocityAndBypass(GraphicsDevice& device, const std::wstring& engineShaderDir)
@@ -433,6 +452,157 @@ void TestShadowPassDepthReflectsDisplacement(GraphicsDevice& device, const std::
     fs::remove_all(dir, ec);
 }
 
+// ---- (e): M79 sub-05 round 2 — Deferred の透明段がサーフェスマテリアルの色エントリを描くこと。
+//      未修正時は `shaders.Get(mat->shader)` が `*.surface` 短名を解決できず `continue` で
+//      黙って消えていた (round 1 VERDICT の指摘)。ここでは
+//      (1) 正常なサーフェス透明マテリアルの色が背景と正しくアルファブレンドされること
+//      (2) 存在しないシェーダを参照する透明マテリアルは surface_error (マゼンタ、alpha=1) に
+//          フォールバックし、黙って消えないこと
+//      を read-back で確認する ----
+void TestDeferredTransparentDrawsSurfaceColorEntry(GraphicsDevice& device, const std::wstring& engineShaderDir)
+{
+    MYE_LOG_INFO("-- DeferredPath: 透明段がサーフェスの色エントリを描く (M79 sub-05 round 2) --");
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir = fs::temp_directory_path(ec) / L"mye_surface_deferred_transparent_selftest";
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    WriteFile(dir / L"TransparentGood.surface.hlsl", kTransparentColorSurface);
+    WriteFile(dir / L"TransparentGood.mat.json", "{\"shader\":\"TransparentGood.surface\",\"transparent\":true}");
+    // 対応する .hlsl を置かない = LoadSurface が失敗し surface_error へフォールバックするはずの材質
+    WriteFile(dir / L"TransparentBroken.mat.json",
+             "{\"shader\":\"NoSuchShader.surface\",\"transparent\":true}");
+
+    ShaderManager shaders;
+    Check(shaders.Init(device, { dir.wstring(), engineShaderDir }), "shader manager init (transparent)");
+
+    RenderResources resources;
+    resources.Init(device);
+    const AssetID goodMatId = resources.materials.LoadFromFile(
+        (dir / L"TransparentGood.mat.json").wstring(), resources.textures, dir.wstring());
+    const AssetID brokenMatId = resources.materials.LoadFromFile(
+        (dir / L"TransparentBroken.mat.json").wstring(), resources.textures, dir.wstring());
+    Check(!goodMatId.IsNull() && !brokenMatId.IsNull(), "2 本の透明 .mat.json が読み込める");
+
+    DeferredPath dp;
+    Check(dp.Init(device, shaders), "DeferredPath::Init (transparent)");
+
+    const AssetID quad = resources.meshes.Quad();
+
+    constexpr UINT kWidth = 96;
+    constexpr UINT kHeight = 32;
+    ID3D11Device* dev = device.Device();
+    ID3D11DeviceContext* dc = device.Context();
+
+    D3D11_TEXTURE2D_DESC ctd = {};
+    ctd.Width = kWidth;
+    ctd.Height = kHeight;
+    ctd.MipLevels = 1;
+    ctd.ArraySize = 1;
+    ctd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    ctd.SampleDesc = { 1, 0 };
+    ctd.Usage = D3D11_USAGE_DEFAULT;
+    ctd.BindFlags = D3D11_BIND_RENDER_TARGET;
+    ComPtr<ID3D11Texture2D> colorTex;
+    ComPtr<ID3D11RenderTargetView> colorRtv;
+    bool ok = SUCCEEDED(dev->CreateTexture2D(&ctd, nullptr, colorTex.GetAddressOf()));
+    ok = ok && SUCCEEDED(dev->CreateRenderTargetView(colorTex.Get(), nullptr, colorRtv.GetAddressOf()));
+    D3D11_TEXTURE2D_DESC staged = ctd;
+    staged.Usage = D3D11_USAGE_STAGING;
+    staged.BindFlags = 0;
+    staged.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ComPtr<ID3D11Texture2D> colorStaging;
+    ok = ok && SUCCEEDED(dev->CreateTexture2D(&staged, nullptr, colorStaging.GetAddressOf()));
+
+    D3D11_TEXTURE2D_DESC dtd = {};
+    dtd.Width = kWidth;
+    dtd.Height = kHeight;
+    dtd.MipLevels = 1;
+    dtd.ArraySize = 1;
+    dtd.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    dtd.SampleDesc = { 1, 0 };
+    dtd.Usage = D3D11_USAGE_DEFAULT;
+    dtd.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+    ComPtr<ID3D11Texture2D> depthTex;
+    ComPtr<ID3D11DepthStencilView> dsv;
+    ok = ok && SUCCEEDED(dev->CreateTexture2D(&dtd, nullptr, depthTex.GetAddressOf()));
+    ok = ok && SUCCEEDED(dev->CreateDepthStencilView(depthTex.Get(), nullptr, dsv.GetAddressOf()));
+    Check(ok, "RTV/DSV/staging を作成できる (transparent)");
+    if (!ok) {
+        fs::remove_all(dir, ec);
+        return;
+    }
+
+    RenderView view;
+    XMStoreFloat4x4(&view.view, XMMatrixLookAtLH(XMVectorSet(0, 0, 0, 1), XMVectorSet(0, 0, 1, 1),
+                                                 XMVectorSet(0, 1, 0, 0)));
+    XMStoreFloat4x4(&view.proj, XMMatrixOrthographicLH(6.0f, 3.0f, 0.1f, 100.0f));
+    XMStoreFloat4x4(&view.projNoJitter, XMLoadFloat4x4(&view.proj));
+    view.width = static_cast<int>(kWidth);
+    view.height = static_cast<int>(kHeight);
+    view.rtv = colorRtv.Get();
+    view.dsv = dsv.Get();
+    view.instancingEnabled = 0;
+
+    SceneLightData lights;
+    lights.ambient = { 0.0f, 0.0f, 0.0f };
+    lights.count = 0;
+
+    auto makeItem = [&](AssetID mat, float x) {
+        RenderItem item;
+        item.mesh = quad;
+        item.material = mat;
+        XMStoreFloat4x4(&item.world, XMMatrixTranslation(x, 0.0f, 5.0f));
+        item.prevWorld = item.world;
+        return item;
+    };
+
+    RenderQueue queue;
+    queue.transparent = { makeItem(goodMatId, -2.0f), makeItem(brokenMatId, 2.0f) };
+    dp.Render(device, view, queue, lights, resources, shaders);
+
+    auto readColor = [&](int px, int py) {
+        dc->CopyResource(colorStaging.Get(), colorTex.Get());
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        std::array<uint8_t, 4> out = { 0, 0, 0, 0 };
+        if (SUCCEEDED(dc->Map(colorStaging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+            const uint8_t* row =
+                static_cast<const uint8_t*>(mapped.pData) + static_cast<size_t>(py) * mapped.RowPitch;
+            std::memcpy(out.data(), row + static_cast<size_t>(px) * 4, 4);
+            dc->Unmap(colorStaging.Get(), 0);
+        }
+        return out;
+    };
+    auto closeTo = [](int a, int b) { return std::abs(a - b) <= 4; };
+
+    const std::array<uint8_t, 4> backgroundPixel = readColor(48, 16); // 2 アイテムの中間 (どちらにも覆われない)
+    const std::array<uint8_t, 4> goodPixel = readColor(16, 16);
+    const std::array<uint8_t, 4> brokenPixel = readColor(80, 16);
+
+    // 期待値 = src*srcA + dst*(1-srcA) (blendAlpha_ の SRC_ALPHA/INV_SRC_ALPHA、DeferredPath.cpp Init 参照)。
+    // 背景の実測値を dst として使うので、背景色そのもの (スカイ/ambient の式) には依存しない
+    const float srcA = 0.5f;
+    const int expectedR = static_cast<int>(0.0f * 255.0f * srcA + backgroundPixel[0] * (1.0f - srcA));
+    const int expectedG = static_cast<int>(0.8f * 255.0f * srcA + backgroundPixel[1] * (1.0f - srcA));
+    const int expectedB = static_cast<int>(0.0f * 255.0f * srcA + backgroundPixel[2] * (1.0f - srcA));
+    Check(closeTo(goodPixel[0], expectedR) && closeTo(goodPixel[1], expectedG) && closeTo(goodPixel[2], expectedB),
+          "(1) 透明サーフェスの色エントリが背景と正しくアルファブレンドされる (黙って消えない)");
+    if (!(closeTo(goodPixel[0], expectedR) && closeTo(goodPixel[1], expectedG) && closeTo(goodPixel[2], expectedB))) {
+        MYE_LOG_ERROR("    goodPixel=(%d,%d,%d) expected=(%d,%d,%d) background=(%d,%d,%d)", goodPixel[0],
+                     goodPixel[1], goodPixel[2], expectedR, expectedG, expectedB, backgroundPixel[0],
+                     backgroundPixel[1], backgroundPixel[2]);
+    }
+
+    Check(closeTo(brokenPixel[0], 255) && brokenPixel[1] <= 4 && closeTo(brokenPixel[2], 255),
+          "(2) 存在しないシェーダを参照する透明サーフェスは surface_error (マゼンタ、alpha=1) になる");
+    if (!(closeTo(brokenPixel[0], 255) && brokenPixel[1] <= 4 && closeTo(brokenPixel[2], 255))) {
+        MYE_LOG_ERROR("    brokenPixel=(%d,%d,%d)", brokenPixel[0], brokenPixel[1], brokenPixel[2]);
+    }
+
+    dp.Shutdown();
+    fs::remove_all(dir, ec);
+}
+
 } // namespace
 
 bool RunSurfaceDeferredSelfTest()
@@ -453,6 +623,7 @@ bool RunSurfaceDeferredSelfTest()
 
     TestDeferredForwardStepVelocityAndBypass(device, engineShaderDir);
     TestShadowPassDepthReflectsDisplacement(device, engineShaderDir);
+    TestDeferredTransparentDrawsSurfaceColorEntry(device, engineShaderDir); // M79 sub-05 round 2
 
     // (d) サーフェス 0 件のときフォワード段が何も張らないことは、この自己テストの範囲では
     // 「既存 golden (--selftest 全体 / tools\replay_verify.bat の既定シーン群、いずれもサーフェス

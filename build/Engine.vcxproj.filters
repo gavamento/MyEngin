@@ -747,6 +747,9 @@
     <ClCompile Include="..\src\Engine\Renderer\WaterPass.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\WaterSurfaceSelfTest.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClInclude Include="..\src\Engine\Core\Archetype.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -1522,6 +1525,9 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\WaterPass.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\WaterSurfaceSelfTest.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Shared\EngineAPI.h">

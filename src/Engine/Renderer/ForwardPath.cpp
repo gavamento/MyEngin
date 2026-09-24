@@ -343,14 +343,16 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     sf.prevTime = (view.viewFrameIndex > 0)
         ? static_cast<float>(view.viewFrameIndex - 1) * (1.0f / 60.0f)
         : 0.0f;
-    sf.curWaterTime = 0.0f; // sub-05 まで水面時刻は供給しない (無効 = 0、spec §4.1)
-    sf.prevWaterTime = 0.0f;
+    // M79 sub-05: 水面が有効なフレームだけ実値を渡す (無効 = 0、spec §4.1)
+    const bool waterActive = view.water != nullptr && view.water->active;
+    sf.curWaterTime = waterActive ? view.water->curWaterTime : 0.0f;
+    sf.prevWaterTime = waterActive ? view.water->prevWaterTime : 0.0f;
     sf.jitterNdc = { view.jitterNdc[0], view.jitterNdc[1] };
     sf.screenSize = { static_cast<float>(view.width), static_cast<float>(view.height) };
     UploadCB(dc, surfaceFrameCB_.Get(), sf);
 
-    // MyEngineWater: sub-05 まで常に無効 (全 0 + enabled=0、spec §4.1)
-    const MyEngineWaterCB water = {};
+    // MyEngineWater: 水面が有効なフレームだけ波パラメータを渡す (無効 = 全 0 + enabled=0)
+    const MyEngineWaterCB water = waterActive ? view.water->surfaceCb : MyEngineWaterCB{};
     UploadCB(dc, surfaceWaterCB_.Get(), water);
 
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };

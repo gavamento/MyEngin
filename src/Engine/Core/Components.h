@@ -1693,6 +1693,11 @@ struct WaterWaveComponent {
     float smoothness = 0.95f;    // 滑らかさ (スペキュラ)
     float pad = 0.0f;
 
+    // M79 sub-05: 水面をサーフェスシェーダ (*.surface.hlsl の .mat.json) で描く差し替え口。
+    // 描画専用 — 浮力 (Buoyancy) の式・時計には一切関与せず、WorldHash にも畳まない
+    // (kFieldNoHash、Components.cpp)。null = 従来どおり組込み WaterPass (water_surface.hlsl) で描く
+    AssetID surfaceMaterial = {};
+
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 
     // GerstnerWave 配列への展開ヘルパー

@@ -35,8 +35,12 @@ uint32_t FieldTypeSize(FieldType t);
 enum FieldFlags : uint32_t {
     kFieldNone = 0,
     kFieldReadOnly = 1u << 0,    // Inspector で編集不可
-    kFieldNoSerialize = 1u << 1, // シーン保存対象外 (派生値・内部状態)
+    kFieldNoSerialize = 1u << 1, // シーン保存対象外 (派生値・内部状態。ハッシュ対象からも外れる)
     kFieldHidden = 1u << 2,      // Inspector 非表示
+    // M79 sub-05: シーンには保存するがワールドハッシュ (WorldHasher) には畳み込まない。
+    // kFieldNoSerialize と違い保存/復元は従来どおり行う — 「描画専用の設定値だが
+    // 再読み込みでは保持したい」フィールド (例: WaterWaveComponent.surfaceMaterial) 用
+    kFieldNoHash = 1u << 3,
 };
 
 struct FieldDesc {

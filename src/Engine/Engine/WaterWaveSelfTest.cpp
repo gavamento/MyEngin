@@ -1,13 +1,19 @@
 #include "Engine/Engine/WaterWaveSelfTest.h"
 
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/WaveMath.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
+#include "Engine/Engine/Replay/WorldHasher.h"
+#include "Engine/Engine/Scene.h"
+#include "Engine/Engine/SceneSerializer.h"
 
 using namespace DirectX;
 
@@ -157,6 +163,47 @@ bool RunWaterWaveSelfTest()
         best = ResolveActiveWaterWave(world);
         check(best != nullptr && best->baseHeight == 3.0f,
               "resolve water wave: skips disabled component and selects next active one");
+    }
+
+    // 7. surfaceMaterial (M79 sub-05): 描画専用の差し替え口。
+    //    保存/復元は従来どおり行うが、WorldHash / リプレイには一切畳み込まれないこと
+    {
+        const ComponentDesc& desc = ComponentRegistry::Get().Desc(WaterWaveComponent::sTypeId);
+        const FieldDesc* smField = nullptr;
+        for (const FieldDesc& f : desc.fields) {
+            if (std::strcmp(f.name, "surfaceMaterial") == 0) {
+                smField = &f;
+                break;
+            }
+        }
+        check(smField != nullptr, "surfaceMaterial: field is registered");
+        if (smField != nullptr) {
+            check((smField->flags & kFieldNoHash) != 0, "surfaceMaterial: kFieldNoHash flag is set");
+            check((smField->flags & kFieldNoSerialize) == 0,
+                  "surfaceMaterial: kFieldNoSerialize is NOT set (still saved to scene JSON)");
+        }
+
+        Scene sceneA;
+        GameObject waterGo = sceneA.CreateGameObject("Water");
+        auto* waveA = waterGo.AddComponent<WaterWaveComponent>();
+        waveA->enabled = true;
+        waveA->baseHeight = 0.5f;
+        waveA->wave0Amplitude = 0.33f;
+        sceneA.GetWorld().ApplyStructuralChanges();
+
+        const uint64_t hashWithout = HashWorld(sceneA.GetWorld());
+        waveA->surfaceMaterial = AssetID{ 0x0123456789ABCDEFull };
+        const uint64_t hashWith = HashWorld(sceneA.GetWorld());
+        check(hashWithout == hashWith,
+              "surfaceMaterial: WorldHash is identical whether the field is set or not");
+
+        const nlohmann::json saved = SceneSerializer::SaveToJson(sceneA);
+        Scene sceneB;
+        check(SceneSerializer::LoadFromJson(sceneB, saved), "surfaceMaterial: scene JSON reload succeeds");
+        GameObject waterGoB = sceneB.Find("Water");
+        auto* waveB = static_cast<bool>(waterGoB) ? waterGoB.GetComponent<WaterWaveComponent>() : nullptr;
+        check(waveB != nullptr && waveB->surfaceMaterial == waveA->surfaceMaterial,
+              "surfaceMaterial: round-trips through scene JSON save/load");
     }
 
     MYE_LOG_INFO("==== WaterWave self test: %s (fail count: %d) ====",

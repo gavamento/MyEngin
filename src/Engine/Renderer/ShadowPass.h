@@ -14,6 +14,7 @@ class GraphicsDevice;
 class ShaderManager;
 class RenderQueue;
 struct RenderResources;
+struct WaterDrawData; // WaterPass.h (M79 sub-05: MyEngineWater を影エントリへ渡す)
 
 // 平行光シャドウマップ (M17 単一 → M38d CSM 3 カスケード)。ライト視点から不透明
 // ジオメトリの深度のみを Texture2DArray の各スライスへ描き、SRV として本描画の
@@ -30,10 +31,12 @@ public:
     // 不透明キューを各カスケードの lightViewProj (非転置、行ベクトル規約 world*view*proj) で
     // シャドウ深度 (スライス c) へ描く。count は kCascades 以下。
     // viewFrameIndex = M79 sub-03: サーフェスの影エントリが読む gTime (viewFrameIndex/60) の出所。
-    // instancing = 非スキン連続 run の一括描画を併用 (M38f)
+    // instancing = 非スキン連続 run の一括描画を併用 (M38f)。
+    // water = M79 sub-05: MyEngineWater (影エントリ専用 static gWaterTime の代入元)。
+    // null / !active = 従来どおり全 0 (水面が無いシーンは 1 ビットも変わらない)
     void Render(GraphicsDevice& device, ShaderManager& shaders, const RenderQueue& queue,
                 RenderResources& resources, const DirectX::XMFLOAT4X4* lightViewProjs, int count,
-                uint32_t viewFrameIndex, bool instancing = true);
+                uint32_t viewFrameIndex, bool instancing = true, const WaterDrawData* water = nullptr);
 
     ID3D11ShaderResourceView* SRV() const { return srv_.Get(); } // Texture2DArray (R32_FLOAT)
     int Resolution() const { return resolution_; }

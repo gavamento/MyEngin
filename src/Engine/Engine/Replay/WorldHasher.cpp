@@ -216,7 +216,8 @@ uint64_t HashEntity(World& world, EntityID e, DumpCtx* d)
         }
         FoldU64(h, d, desc.name, "#nameHash", desc.nameHash);
         for (const FieldDesc& f : desc.fields) {
-            if (f.flags & kFieldNoSerialize) {
+            // kFieldNoHash (M79 sub-05): 保存はするがハッシュには畳まない (描画専用の設定値)
+            if (f.flags & (kFieldNoSerialize | kFieldNoHash)) {
                 continue;
             }
             // ビットパターンをそのままハッシュ (float 演算で比較しない — spec 11.3)

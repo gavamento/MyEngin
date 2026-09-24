@@ -240,7 +240,8 @@
 - Deferred のフォワード段をどこに挟むか (SSR の合成が既にシーンへ乗った後であること) の実コード確認 — sub-03
 - 描画通番時計は撮影モード外で FPS 比例に速く見える (既存水面と同じ)。動画は決定的撮影で撮る前提
 - レンダパスはセッション切替で保存されない。TAA 付きの確認・撮影は `--deferred` を毎回付ける (後回し項目)
-- WaterWave の新フィールドが WorldHash に入らないことの確認方法 (Reflection のハッシュ除外フラグの有無) — sub-05
+- WaterWave の新フィールドが WorldHash に入らないことの確認方法 — sub-05 で `kFieldNoHash` 新設により解決
+- (後続マイル候補・未調査) オブジェクトを極端な座標 (1000,1000,1000) に置くと CSM のシーン AABB 由来とみられる描画異常 (sub-05 検証中に coder が観測。M79 の変更とは無関係の推測)。`ComputeCascadeVPs` の頑健性調査
 
 ## 8. 変更履歴
 
@@ -253,3 +254,5 @@
 - 2026-09-24: sub-03 VERDICT OK (round 2)。仕様変更なし。
 - 2026-09-24: sub-04 VERDICT REWORK (round 1)。仕様変更なし (シェーダ切替でも properties を保持する契約は §4.1 のとおり。coder の再解釈を却下)。
 - 2026-09-24: sub-04 VERDICT OK (round 2)。仕様変更なし。
+- 2026-09-24: sub-05 VERDICT REWORK (round 1)。Deferred 透明段のサーフェス未対応 (coder 発見) は spec §4.1 表の実装漏れ (sub-03 の VERDICT で planner が見落とし) と判定し、M79 内 (sub-05) で直す。WaterWave の `surfaceMaterial` は保存するがハッシュしない新フラグ `kFieldNoHash` で登録することを受理 (§4.2 の「ハッシュ非関与」の実現手段)。水面 RenderItem は CSM フィット AABB に含めない (従来 WaterPass と同じ)。
+- 2026-09-24: sub-05 VERDICT OK (round 2)。Deferred 透明段のサーフェス描画を回収 (§4.1 表どおり)。仕様変更なし。§7 に CSM の極端座標の観測を後続候補として記録。

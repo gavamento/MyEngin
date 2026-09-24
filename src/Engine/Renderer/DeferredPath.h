@@ -73,8 +73,18 @@ private:
     // へ描く。アイテムが 0 件なら RT / ステート / SRV を一切触らない (既定シーンのビット一致)
     void RenderSurfaceForward(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
                               RenderResources& resources, ShaderManager& shaders, DeferredFrame& f);
-    void RenderTransparent(const RenderView& view, const RenderQueue& queue, RenderResources& resources,
-                           ShaderManager& shaders, DeferredFrame& f); // 3)
+    // M79 sub-05 round 2: device を追加 (透明サーフェスの色エントリが GetOrBuildSurfaceState を
+    // 呼ぶために必要)。呼び出し元は Render 1 箇所のみ
+    void RenderTransparent(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
+                           RenderResources& resources, ShaderManager& shaders, DeferredFrame& f); // 3)
+    // M79 sub-05 round 2: shader が "*.surface" の透明アイテムを 1 個描く (色エントリのみ。
+    // 速度は書かない = spec §4.1 Deferred 透明列。予約 CB は RenderSurfaceForward が同じフレームで
+    // 既に埋めた surfacePerFrameCB_/surfaceFrameCB_/surfaceWaterCB_ をそのまま使う)。
+    // 描画後に IA/VS/PS/CB/SRV/サンプラが forward_lit の前提と食い違うので、
+    // 呼び出し側 (RenderTransparent) が続けてバインドを戻すこと (ForwardPath::DrawItems と同じ流儀)
+    void DrawSurfaceTransparentItem(GraphicsDevice& device, const RenderItem& item, const Material& mat,
+                                    const Mesh& mesh, SurfaceMaterialState& surf, ShaderManager& shaders,
+                                    RenderResources& resources, const RenderView& view);
     void RenderDebugViews(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
                           DeferredFrame& f); // 4) - 6)
 

@@ -3,8 +3,9 @@
 #include <wrl/client.h>
 #include <DirectXMath.h>
 
-#include "Engine/Renderer/RenderTypes.h"
 #include "Engine/Renderer/MeshBind.h"
+#include "Engine/Renderer/RenderTypes.h"
+#include "Engine/Renderer/SurfaceShaderTypes.h" // M79 sub-05: MyEngineWaterCB (全サーフェスシェーダへ配る値)
 
 namespace mye {
 
@@ -29,7 +30,18 @@ struct alignas(16) WaterMaterialCB {
 struct WaterDrawData {
     DirectX::XMFLOAT4X4 world = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
     WaterMaterialCB material = {};
-    bool active = false;
+    bool active = false; // WaterWaveComponent が有効 (surfaceMaterial の有無とは無関係)
+    // ---- M79 sub-05 ----
+    // true = surfaceMaterial が解決できたため、水面は RenderItem として通常のサーフェス/
+    // 従来メッシュ経路 (Forward 不透明・透明 / Deferred サーフェス段・透明段 / CSM 影) で
+    // 描かれる。WaterPass::Render はこのフレームは何も描かない (二重描画を避ける)
+    bool useSurfaceRoute = false;
+    // MyEngineWater CB の中身 (active なフレームのみ意味を持つ)。**水面自体の描画経路に
+    // 関係なく**、シーン内の全サーフェスシェーダへ名前で張られる (spec §4.1)
+    MyEngineWaterCB surfaceCb = {};
+    // 予約 static gWaterTime に代入する今/前の時刻 (WaterWave の timeScale 込み、水面と同じ時計)
+    float curWaterTime = 0.0f;
+    float prevWaterTime = 0.0f;
 };
 
 class WaterPass {

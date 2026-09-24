@@ -753,7 +753,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     RenderSurfaceForward(device, view, queue, resources, shaders, f); // 2.65) M79 sub-03
     water_.Render(device, shaders, view, resources, perFrameCB_.Get(),
                   f.rtReflBound ? f.rtRefl.filtered : nullptr); // 2.7) 水面 (perFrameCB と RT反射テクスチャを渡す)
-    RenderTransparent(view, queue, resources, shaders, f);  // 3)
+    RenderTransparent(device, view, queue, resources, shaders, f);  // 3)
     RenderDebugViews(device, view, shaders, f);             // 4) - 6)
 
     // ---- M57e: t1-t8 を剥がす。**t7 (フロクセル積分結果) を残してはいけない** ----
@@ -1398,15 +1398,16 @@ void DeferredPath::RenderSsr(GraphicsDevice& device, const RenderView& view, Sha
 // サーフェスプログラムの**速度エントリ**(前後 2 回評価) で描く: 色は SV_Target0 (HDR シーン,
 // view.rtv) へ、速度は SV_Target1 (gbVelocity_、GBuffer と同じ RT を使い回す) へ、深度は
 // view.dsv へ (色の描画そのもので書く。プリパスは足さない、spec §4.1)。
-// f.surfaceOpaqueIdx が空ならこの段は RT / ステート / SRV を一切触らない —
-// これが「サーフェスマテリアルを持たないシーンは絵が不変」の根拠 (spec §4.4)
+// f.surfaceOpaqueIdx が空でも RT / ステートには一切触れない —
+// これが「サーフェスマテリアルを持たないシーンは絵が不変」の根拠 (spec §4.4)。
+// ただし予約 CB (surfacePerFrameCB_/surfaceFrameCB_/surfaceWaterCB_) だけは
+// **アイテムが 0 件でも毎フレーム埋める** — 透明後段 (RenderTransparent) の
+// サーフェス色エントリが同じバッファを読むため (M79 sub-05 round 2)。CB の再アップロードは
+// 何にも読まれなければ無害 (ForwardPath も既に無条件で毎フレームアップロードしている)
 void DeferredPath::RenderSurfaceForward(GraphicsDevice& device, const RenderView& view,
                                         const RenderQueue& queue, RenderResources& resources,
                                         ShaderManager& shaders, DeferredFrame& f)
 {
-    if (f.surfaceOpaqueIdx.empty()) {
-        return;
-    }
     ID3D11DeviceContext* dc = f.dc;
 
     // ---- 予約 CB (1 フレームに 1 回)。内容は ForwardPath::Render の spf/sf/water と同じ式 ----
@@ -1452,15 +1453,22 @@ void DeferredPath::RenderSurfaceForward(GraphicsDevice& device, const RenderView
     sf.prevTime = (view.viewFrameIndex > 0)
         ? static_cast<float>(view.viewFrameIndex - 1) * (1.0f / 60.0f)
         : 0.0f;
-    sf.curWaterTime = 0.0f; // sub-05 まで水面時刻は供給しない (無効 = 0、spec §4.1)
-    sf.prevWaterTime = 0.0f;
+    // M79 sub-05: 水面が有効なフレームだけ実値を渡す (無効 = 0、spec §4.1)
+    const bool waterActive = view.water != nullptr && view.water->active;
+    sf.curWaterTime = waterActive ? view.water->curWaterTime : 0.0f;
+    sf.prevWaterTime = waterActive ? view.water->prevWaterTime : 0.0f;
     sf.jitterNdc = { view.jitterNdc[0], view.jitterNdc[1] };
     sf.screenSize = { static_cast<float>(view.width), static_cast<float>(view.height) };
     sf.historyValid = f.vel.valid;
     UploadCB(dc, surfaceFrameCB_.Get(), sf);
 
-    const MyEngineWaterCB water = {}; // sub-05 まで常に無効
+    // MyEngineWater: 水面が有効なフレームだけ波パラメータを渡す (無効 = 全 0 + enabled=0)
+    const MyEngineWaterCB water = waterActive ? view.water->surfaceCb : MyEngineWaterCB{};
     UploadCB(dc, surfaceWaterCB_.Get(), water);
+
+    if (f.surfaceOpaqueIdx.empty()) {
+        return; // 不透明サーフェスは 0 件 — ここから先の RT/ステート/SRV には一切触れない
+    }
 
     // ---- RT: HDR シーン (RT0) + 画面速度 (RT1、GBuffer と同じ gbVelocity_ を使い回す)。
     //      IndependentBlendEnable=FALSE の blendOpaque_ は RT0 の設定が RT1 にもそのまま
@@ -1544,9 +1552,12 @@ void DeferredPath::RenderSurfaceForward(GraphicsDevice& device, const RenderView
     dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
 }
 
-// 3) 透明後段 (Forward — マテリアルのシェーダで上描き)。無ければパーティクル後段のために RTV + DSV だけ戻す
-void DeferredPath::RenderTransparent(const RenderView& view, const RenderQueue& queue, RenderResources& resources,
-                                     ShaderManager& shaders, DeferredFrame& f)
+// 3) 透明後段 (Forward — マテリアルのシェーダで上描き)。無ければパーティクル後段のために RTV + DSV だけ戻す。
+// M79 sub-05 round 2: shader が "*.surface" の透明アイテムはサーフェスの色エントリで描く
+// (速度は書かない — この段は単一 RT (view.rtv) のみで gbVelocity_ を束ねていないので、
+// 自然に「速度を書かない」が成立する。spec §4.1 Deferred 透明列)
+void DeferredPath::RenderTransparent(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
+                                     RenderResources& resources, ShaderManager& shaders, DeferredFrame& f)
 {
     ID3D11DeviceContext* dc = f.dc;
     const bool wire = f.wire;
@@ -1575,12 +1586,18 @@ void DeferredPath::RenderTransparent(const RenderView& view, const RenderQueue& 
         static_assert(froxel::kForwardSrvSlot == 7, "froxel の Forward SRV は統合契約 予約 2 の t7");
         static_assert(acoustic::kGlowForwardSrvSlot == 8, "音響の Forward SRV は t8 (M65e で 7->8)");
         static_assert(acoustic::kFrontForwardSrvSlot == 9, "解析的な波面の Forward SRV は t9 (8->9)");
-        dc->PSSetShaderResources(1, 9, fwdSrvs);
-        ID3D11SamplerState* matSampler[1] = { sampler_.Get() };
-        dc->PSSetSamplers(0, 1, matSampler);
-        dc->VSSetConstantBuffers(0, 2, cbs);
-        dc->PSSetConstantBuffers(0, 2, cbs);
-        dc->PSSetConstantBuffers(2, 1, matCbs); // forward_lit の MaterialParams
+        // M79 sub-05 round 2: サーフェス色エントリの描画後、次の forward_lit 透明アイテムのために
+        // このバインド一式 (b0-b2 / t1-t9 / s0) を戻す。ForwardPath::DrawItems の
+        // restoreForwardLitBindings と同じ役目
+        auto bindForwardLitFixed = [&]() {
+            dc->PSSetShaderResources(1, 9, fwdSrvs);
+            ID3D11SamplerState* matSampler[1] = { sampler_.Get() };
+            dc->PSSetSamplers(0, 1, matSampler);
+            dc->VSSetConstantBuffers(0, 2, cbs);
+            dc->PSSetConstantBuffers(0, 2, cbs);
+            dc->PSSetConstantBuffers(2, 1, matCbs); // forward_lit の MaterialParams
+        };
+        bindForwardLitFixed();
         dc->OMSetDepthStencilState(depthTransparent_.Get(), 0);
         dc->OMSetBlendState(blendAlpha_.Get(), nullptr, 0xFFFFFFFFu);
 
@@ -1592,6 +1609,18 @@ void DeferredPath::RenderTransparent(const RenderView& view, const RenderQueue& 
             if (!mat || !mesh) {
                 continue;
             }
+
+            // shader が "*.surface" の透明アイテムはサーフェスの色エントリで描く (M79 sub-05 round 2)
+            SurfaceMaterialState* surf = resources.materials.GetOrBuildSurfaceState(
+                item.material, shaders, resources.textures, device);
+            if (surf && surf->isSurfaceShader) {
+                DrawSurfaceTransparentItem(device, item, *mat, *mesh, *surf, shaders, resources, view);
+                bindForwardLitFixed(); // 次の forward_lit 透明アイテムのためにバインドを戻す
+                boundShader = 0;       // 次のアイテムで確実に IA/VS/PS を再バインドさせる
+                bound = MeshBindState{};
+                continue;
+            }
+
             ShaderProgram* prog = shaders.Get(mat->shader);
             if (!prog || !prog->valid) {
                 continue;
@@ -1624,6 +1653,70 @@ void DeferredPath::RenderTransparent(const RenderView& view, const RenderQueue& 
     if (wire) {
         dc->RSSetState(rasterizer_.Get());
     }
+}
+
+// M79 sub-05 round 2: shader が "*.surface" の透明アイテムを 1 個描く (色エントリのみ)。
+// 予約 CB (surfacePerFrameCB_/surfaceFrameCB_/surfaceWaterCB_) は RenderSurfaceForward が
+// 同じ Render() 呼び出しの中で既に埋めている (M79 sub-05 round 2 でアイテム 0 件でも埋めるよう
+// 変更済み) ので、ここでは MyEnginePerObject だけを詰め直せばよい。
+// ForwardPath::DrawSurfaceItem と同じ名前解決バインドをそのまま使う (速度エントリは使わない)
+void DeferredPath::DrawSurfaceTransparentItem(GraphicsDevice& device, const RenderItem& item,
+                                              const Material& mat, const Mesh& mesh,
+                                              SurfaceMaterialState& surf, ShaderManager& shaders,
+                                              RenderResources& resources, const RenderView& view)
+{
+    ID3D11DeviceContext* dc = device.Context();
+    const AssetID programId = surf.useErrorFallback ? surfaceErrorId_ : surf.surfaceProgramId;
+    SurfaceProgram* prog = shaders.GetSurface(programId);
+    if (!prog || !prog->valid) {
+        return; // surface_error 自体が壊れている異常系。描画せず諦める (クラッシュしない)
+    }
+
+    dc->IASetInputLayout(prog->colorInputLayout.Get());
+    dc->VSSetShader(prog->colorVS.Get(), nullptr, 0);
+    dc->PSSetShader(prog->colorPS.Get(), nullptr, 0);
+
+    const SurfaceEntryReflection& vsRefl = prog->colorVSReflect;
+    const SurfaceEntryReflection& psRefl = prog->colorPSReflect;
+
+    BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kPerFrameCB, surfacePerFrameCB_.Get());
+    BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kSurfaceFrameCB, surfaceFrameCB_.Get());
+    BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kWaterCB, surfaceWaterCB_.Get());
+    BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kPerMaterialCB, surf.perMaterialGpuCB.Get());
+
+    MyEnginePerObjectCB po = {};
+    XMStoreFloat4x4(&po.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
+    XMStoreFloat4x4(&po.prevWorld, XMMatrixTranspose(XMLoadFloat4x4(&item.prevWorld)));
+    po.baseColor = SrgbToLinear(mat.baseColor);
+    UploadCB(dc, surfacePerObjectCB_.Get(), po);
+    BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kPerObjectCB, surfacePerObjectCB_.Get());
+
+    // 予約テクスチャ / サンプラ (ForwardPath::DrawSurfaceItem と同じ SRV を名前で引く)
+    const bool froxelBound = FroxelIsBound(view);
+    BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gShadowMap", view.shadowSRV);
+    BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gIblIrradiance", view.iblIrradiance);
+    BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gIblPrefiltered", view.iblPrefiltered);
+    BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gIblBrdfLut", view.iblBrdfLut);
+    BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gFroxelVolume", froxelBound ? view.froxelSRV : nullptr);
+    BindSurfaceNamedSampler(dc, vsRefl, psRefl, "gSampler", sampler_.Get());
+    BindSurfaceNamedSampler(dc, vsRefl, psRefl, "gShadowSampler", shadowSampler_.Get());
+    BindSurfaceNamedSampler(dc, vsRefl, psRefl, "gIblSampler", iblSampler_.Get());
+
+    // 作者 Texture2D プロパティ (失敗時は surf.textures が空なので何もバインドしない)
+    for (const auto& [texName, texId] : surf.textures) {
+        Texture* tex = resources.textures.Get(texId);
+        ID3D11ShaderResourceView* srv = tex ? tex->srv.Get() : nullptr;
+        BindSurfaceNamedSRV(dc, vsRefl, psRefl, texName.c_str(), srv);
+    }
+
+    const UINT stride = sizeof(MeshVertex);
+    const UINT offset = 0;
+    ID3D11Buffer* vb = mesh.vb.Get();
+    dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+    dc->IASetIndexBuffer(mesh.ib.Get(), DXGI_FORMAT_R32_UINT, 0);
+
+    dc->DrawIndexed(mesh.indexCount, 0, 0);
+    prof::AddDraw(static_cast<int>(mesh.indexCount / 3));
 }
 
 // 4) - 6) デバッグ表示 (RT / velocity / HZB)。既定ではどれも 1 命令も走らない

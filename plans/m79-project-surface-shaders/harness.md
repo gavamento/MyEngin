@@ -2,7 +2,7 @@
 
 - 依頼原文: M79: プロジェクト側サーフェスシェーダー。M78 (プロジェクト側ポスト/コンピュート, plans/m78-project-shaders/) と同じ作法で、プロジェクト assets に `*.surface.hlsl` (生 HLSL, VSMain/PSMain を作者が書く) を置き、先頭 `/*@MyEngineProperties ... @*/` で Inspector にマテリアル単位のパラメータが出る。`.mat.json` の `shader` で参照 (Inspector で選択可)。エンジンは PerFrame(カメラ/光/影/霧)・PerObject を名前付き CB＋共通 include で供給し作者は register を書かない。失敗時はマゼンタ＋エラー表示。バリアントなし。初版はフォワードのみ (ディファード後回し)、ABI 追加なし想定。論点: 頂点変位を深度/影/速度(TAA)パスへどう反映するか (VSMain 使い回し vs 任意の VSShadow 等の追加エントリ)。動機: Water プロジェクト (C:\Users\akita\Documents\MyEngineProjects\Water) の main シーンで浮世絵風の動画を作るため (トゥーン/平塗りライティング、Gerstner 頂点変位の水面、作り直す大波の巻き込みアニメ)。既存参考: plans/m78-project-shaders/reference-unity-ue.md §1 サーフェス、Water の assets/shaders/water_surface.hlsl・ukiyoe_flat.hlsl (現状 cbuffer 40 行を手写し・未使用)。
 - 開始: 2026-09-24 / 基点コミット: 3b55f4a
-- フェーズ: 実装
+- フェーズ: レビュー
 
 ## ユーザー判断
 - 作者形式は「M78 のコンピュートと同じ感じ」(生 HLSL + Properties ブロック + 名前バインド)。司会が当初出した「表面関数/ライティング関数/頂点変位関数だけ書く抽象化」案はユーザーにより却下
@@ -17,8 +17,8 @@
 | sub-01 | OK | 1 | e492a85 | 方式成立を WARP 実描画で確認。hot reload/cache・フロクセル霧は sub-02 へ、.cs.hlsl off-by-one 修正は sub-04 へ移管 |
 | sub-02 | OK | 2 | 2ed28d9 | round1 REWORK: PS static 未代入・実経路未検証 → round2 で解消 (反証テスト + Runtime.exe スクショ) |
 | sub-03 | OK | 2 | 4f7cbad | round1 REWORK: 前後関係未検証・SelfTest なし → round2 で解消 (Release/replay_verify PASS) |
-| sub-04 | OK | 2 | (本コミット) | round1 REWORK: 切替で properties clear → round2 で解消。Create メニューのクリック確定は合成入力で未確認 (手動確認へ) |
-| sub-05 | 未着手 | 0 | | WaterWave surfaceMaterial |
+| sub-04 | OK | 2 | 99654de | round1 REWORK: 切替で properties clear → round2 で解消。Create メニューのクリック確定は合成入力で未確認 (手動確認へ) |
+| sub-05 | OK | 2 | (本コミット) | round1 REWORK: Deferred 透明段の実装漏れ・影スクショ・Inspector → round2 で解消 |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -34,3 +34,6 @@
 - (sub-03 coder) 一時検証シーンの罠: `.mat.json.meta` の GUID は手で決めず、Runtime.exe を一度走らせて自動生成された値を読んでシーンに書く。Runtime 単体で登録済みのメッシュは `builtin://cube` のみ (quad/plane は未登録)。sub-05 でも同じ手順
 - (sub-03) テスト作成の罠: 真上からの正射影ライトで Quad を使うと影の footprint が潰れる (Cube を使う)。変位量が大きいと read-back 画素がメッシュのスクリーン範囲からはみ出して誤検出する
 - (sub-04, reviewer 向け) 切替の回帰テストは ApplyMaterialShaderSelection が名前代入のみのため実質自明。Inspector に clear を書き戻しても落ちない。Create メニュー「サーフェスシェーダ」の実クリック確定は未確認 (ユーザー/reviewer の手動確認)
+- (sub-05) 自動化の罠: Editor.exe `--project` には `project.mye.json` が必須 (無いと MessageBoxW で停止)。`--screenshot` の撮影フレーム既定は 60、`--frames` がそれ未満だとエラーなしで PNG が出ない
+- (reviewer 向け) sub-03 の空時早期 return を固定するテストなし / sub-04 の切替回帰テストは範囲が狭く Create メニュー実クリック未確認 / sub-05 の影スクショは影と N·L 陰影を区別できない (水面に物体の影を落とす配置で撮ると確認できる)
+- (後続候補) 極端な座標 (1000,1000,1000) で CSM 描画異常の観測。ComputeCascadeVPs の頑健性調査 (未調査)

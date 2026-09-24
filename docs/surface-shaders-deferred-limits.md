@@ -33,3 +33,20 @@
 - `MyEngineSurfaceFrame` / `MyEnginePerObject` / `MyEnginePerMaterial` / 作者 `Texture2D`
 
 (spec §4.1、M79 sub-03 round 2 で確定。`assets/shaders/MyEngineSurface.hlsli` のコメントにも同内容を記載)
+
+## Deferred の透明段のサーフェスマテリアル対応 (M79 sub-05 round 2 で修正)
+
+`DeferredPath::RenderTransparent` は当初 `mat->shader` を直接 `ShaderManager::Get` へ渡して
+描いており (`GetOrBuildSurfaceState` を経由しない)、`*.surface` 短名のマテリアルは解決できず
+`transparent: true` なサーフェスマテリアルのアイテムが黙って描かれない不具合があった
+(sub-03 の「やること」に記載があったが実装が漏れていた。M79 sub-05 round 1 レビューで発見)。
+
+sub-05 round 2 で修正: `RenderTransparent` はアイテムごとに `GetOrBuildSurfaceState` を呼び、
+サーフェス材質なら **色エントリ** (`ForwardPath::DrawSurfaceItem` と同じ名前解決バインド) で
+描く。予約 CB (`MyEnginePerFrame`/`MyEngineSurfaceFrame`/`MyEngineWater`) は同じ `Render()`
+呼び出し内で `RenderSurfaceForward` (2.65 段) が既に埋めているものをそのまま使う
+(`RenderSurfaceForward` は不透明サーフェスが 0 件でも CB だけは埋めるよう変更した)。
+spec §4.1 のとおり **速度は書かない** — この段は単一 RT (`view.rtv`) のみを束ねており
+`gbVelocity_` を張らないため、自然に速度なしが成立する。失敗時は `surface_error`
+(マゼンタ、alpha=1) にフォールバックし黙って消えない。`SurfaceDeferredSelfTest.cpp` の
+`TestDeferredTransparentDrawsSurfaceColorEntry` が read-back で検証する。

@@ -251,6 +251,7 @@
     <ClCompile Include="..\src\Engine\Renderer\TextureCookSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\VolumeTexture.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\WaterPass.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\WaterSurfaceSelfTest.cpp" />
     <ClInclude Include="..\src\Engine\Core\Archetype.h" />
     <ClInclude Include="..\src\Engine\Core\AssetGuidResolver.h" />
     <ClInclude Include="..\src\Engine\Core\AssetKeyResolver.h" />
@@ -510,6 +511,7 @@
     <ClInclude Include="..\src\Engine\Renderer\TextureCookSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\VolumeTexture.h" />
     <ClInclude Include="..\src\Engine\Renderer\WaterPass.h" />
+    <ClInclude Include="..\src\Engine\Renderer\WaterSurfaceSelfTest.h" />
     <ClInclude Include="..\src\Shared\EngineAPI.h" />
     <ClInclude Include="..\src\Shared\MathPod.h" />
     <ClInclude Include="..\src\Shared\ScriptAPI.h" />

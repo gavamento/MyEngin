@@ -112,8 +112,10 @@ void WaterPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Ren
                        ID3D11ShaderResourceView* rtReflSRV)
 {
     // 水面情報がない、または非アクティブなシーンは何も触らず即座に早期 return
-    // (従来シーンとのビット完全一致の担保)
-    if (!ready_ || view.water == nullptr || !view.water->active) {
+    // (従来シーンとのビット完全一致の担保)。
+    // M79 sub-05: surfaceMaterial が解決済み (useSurfaceRoute) なら、水面は既に通常の
+    // RenderItem 経路 (サーフェス/従来メッシュ) で描かれている — ここで重ねて描くと二重になる
+    if (!ready_ || view.water == nullptr || !view.water->active || view.water->useSurfaceRoute) {
         return;
     }
 

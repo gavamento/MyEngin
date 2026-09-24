@@ -942,6 +942,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     // シーン内で entity.index 最小かつ active/enabled な WaterWaveComponent を解決 (PhysicsSystem と同一規則)
     view.water = nullptr;
     waterData_.active = false;
+    waterData_.useSurfaceRoute = false;
     {
         const ComponentTypeId req[] = { WaterWaveComponent::sTypeId };
         uint32_t bestIndex = UINT32_MAX;
@@ -972,6 +973,10 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             waterData_.active = true;
             // 決定論的通番に基づくアニメーション時間 (60fps 基準、毎フレーム 1/60s ずつ前進)
             const float t = static_cast<float>(view.viewFrameIndex) * (1.0f / 60.0f) * bestWave->timeScale;
+            // M79 sub-05: MyEngineWater (速度エントリの「前」) と同じ通番則の 1 tick 前
+            const float tPrev = (view.viewFrameIndex > 0)
+                ? static_cast<float>(view.viewFrameIndex - 1) * (1.0f / 60.0f) * bestWave->timeScale
+                : 0.0f;
 
             // ワールド行列の取得 (WorldMatrixComponent があればそれを使う)
             if (const auto* wm = world.GetComponent<WorldMatrixComponent>(bestEntity)) {
@@ -997,7 +1002,51 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             waterData_.material.waterSettings = { bestWave->baseHeight, bestWave->overallScale, t, bestWave->foamStrength };
             waterData_.material.waterOptics = { bestWave->fresnelPower, bestWave->smoothness, 0.0f, 0.0f };
 
+            // ---- M79 sub-05: MyEngineWater CB (予約 CB。全サーフェスシェーダへ名前で張る) ----
+            // 水面自身の描画経路 (surfaceMaterial の有無) に関係なく埋める — 他メッシュの
+            // サーフェスシェーダ (例: 船体) が水面レベルを読めるようにするため (spec §4.1)
+            waterData_.curWaterTime = t;
+            waterData_.prevWaterTime = tPrev;
+            waterData_.surfaceCb.enabled = 1;
+            waterData_.surfaceCb.baseHeight = bestWave->baseHeight;
+            waterData_.surfaceCb.overallScale = bestWave->overallScale;
+            waterData_.surfaceCb.waveCount = std::clamp<int32_t>(
+                bestWave->waveCount, 1, static_cast<int32_t>(WaterWaveComponent::kMaxWaves));
+            bestWave->ExtractWaves(waterData_.surfaceCb.waves, WaterWaveComponent::kMaxWaves);
+            waterData_.surfaceCb.deepColor = waterData_.material.deepColor;
+            waterData_.surfaceCb.shallowColor = waterData_.material.shallowColor;
+
             view.water = &waterData_;
+
+            // ---- M79 sub-05: surfaceMaterial が解決できれば、水面を 1 個の RenderItem として
+            //      通常のメッシュ経路 (Forward 不透明/透明、Deferred サーフェス段/透明段、CSM 影) に
+            //      乗せる。WaterPass::Render はこのフレーム何も描かない (useSurfaceRoute)。
+            //      未設定 / GUID が解決できない場合は従来どおり WaterPass が描く ----
+            if (!bestWave->surfaceMaterial.IsNull()) {
+                const Material* smat = resources.materials.Get(bestWave->surfaceMaterial);
+                if (smat != nullptr) {
+                    waterData_.useSurfaceRoute = true;
+                    RenderItem item;
+                    item.mesh = resources.meshes.WaterPlane();
+                    item.material = bestWave->surfaceMaterial;
+                    item.entity = bestEntity;
+                    item.world = waterData_.world;
+                    // 水面プレートは動かない前提 (sub-05.md) — velocity はシェーダの gWaterTime
+                    // 変位 (前後 2 回評価の差) だけに由来させる
+                    item.prevWorld = waterData_.world;
+                    const XMVECTOR posWS = XMVectorSet(waterData_.world._41, waterData_.world._42,
+                                                       waterData_.world._43, 1);
+                    item.viewZ = XMVectorGetZ(XMVector3TransformCoord(posWS, v));
+                    // ★sceneMin/sceneMax (CSM のカスケードフィットに使う AABB) には加えない —
+                    //   巨大な水面プレートを混ぜるとカスケードが不必要に広がり、陸上の影の
+                    //   解像度が落ちる (従来の WaterPass も一貫してシャドウフィットの対象外)
+                    if (smat->transparent != 0) {
+                        queue_.transparent.push_back(item);
+                    } else {
+                        queue_.opaque.push_back(item);
+                    }
+                }
+            }
         }
     }
 
@@ -1197,7 +1246,8 @@ void RenderSystem::RenderCascadeShadows(GraphicsDevice& device, ShaderManager& s
                               shadowPass_.Resolution(), lightVPs, splits,
                               ShadowPass::kCascades);
             shadowPass_.Render(device, shaders, queue_, resources, lightVPs,
-                               ShadowPass::kCascades, view.viewFrameIndex, enableInstancing);
+                               ShadowPass::kCascades, view.viewFrameIndex, enableInstancing,
+                               view.water); // M79 sub-05: MyEngineWater (影エントリ用)
             for (int c = 0; c < ShadowPass::kCascades; ++c) {
                 XMStoreFloat4x4(&view.lightViewProj[c],
                                 XMMatrixTranspose(XMLoadFloat4x4(&lightVPs[c])));
