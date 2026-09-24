@@ -1,5 +1,6 @@
 #pragma once
-// スカイの描画モード解決 (RenderSystem::PrepareEnvironment と DeferredPath の RT 入力が使う純関数)。
+// スカイの描画モード解決 (RenderSystem::PrepareEnvironment と DeferredPath の RT 入力が使う純関数)と、
+// 描画中に同期ロードするテクスチャ (スカイ / LUT) の再試行判定。
 // GPU に触らないので SelfTest から直接検証できる。
 //   skyMode: -1 = スカイ無し (clearColor 背景、IBL も焼かない) / 0 = グラデーション /
 //            1 = キューブマップ / 2 = パノラマ (正距円筒 2D)
@@ -57,6 +58,21 @@ inline RtSkyChoice ResolveRtSky(int32_t skyMode, bool hasSkyCubemap, bool hasIbl
         c.envSkyMode = skyMode; // -1 / 0
     }
     return c;
+}
+
+// 前回の同期読み込みで読めなかったテクスチャ (GUID と、そのときのファイル更新時刻。取れなければ 0)。
+// スカイと LUT は描画中に同期で遅延ロードするので、失敗を覚えないと壊れた画像を毎フレーム・
+// ビューごとにデコードし直し、エラーログを出し続ける
+struct FailedTextureLoad {
+    uint64_t id = 0;
+    int64_t stamp = 0;
+};
+
+// もう一度読みにいくか。同じ GUID・同じ更新時刻で失敗済みなら読まない。
+// GUID が変わった (別の画像を指した) か、ファイルが書き換わったら読み直す (直したら自動で拾う)
+inline bool ShouldRetryTextureLoad(const FailedTextureLoad& failed, uint64_t id, int64_t stamp)
+{
+    return failed.id == 0 || failed.id != id || failed.stamp != stamp;
 }
 
 } // namespace mye

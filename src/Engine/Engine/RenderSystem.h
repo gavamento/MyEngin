@@ -21,6 +21,7 @@
 #include "Engine/Renderer/RenderTypes.h"
 #include "Engine/Renderer/ShadowAtlas.h"
 #include "Engine/Renderer/ShadowPass.h"
+#include "Engine/Renderer/SkyResolve.h" // FailedTextureLoad
 #include "Engine/Renderer/TerrainPass.h"
 #include "Engine/Renderer/WaterPass.h"
 
@@ -34,6 +35,14 @@ class AcousticField;
 class ParticleSystem;
 class VfxRenderer;
 struct RenderResources;
+struct Texture;
+class TextureLibrary;
+
+// 描画中の同期遅延ロード (スカイ / LUT)。ロード済みならそれを返す。未ロードなら path を読むが、
+// 同じ GUID・同じファイル更新時刻で前回失敗していれば読まずに null を返す (failed に失敗を記録する)。
+// id は path の GUID (LoadFile が登録するキー)。ヘッドレス selftest 対象
+Texture* LoadTextureRememberingFailure(TextureLibrary& textures, AssetID id, const std::wstring& path,
+                                       bool srgb, FailedTextureLoad& failed);
 
 // このフレームの描画先
 struct FrameTarget {
@@ -412,6 +421,9 @@ private:
     // CameraOverride (エディタ視界) には適用しない (CameraPostFx と同じ規則)
     ProjectEffectRunner  projectEffectRunner_[4];
     ProjectComputeRunner projectComputeRunner_[4];
+    // 同期遅延ロードに失敗したスカイ / LUT (壊れた画像を毎フレーム読み直さない)
+    FailedTextureLoad    skyLoadFailed_;
+    FailedTextureLoad    lutLoadFailed_;
     AssetID              loadedFxStackId_[4];       // 直前に読んだ fxStack ID
     int64_t              loadedFxStackStamp_[4] = {}; // 直前に読んだ fxstack.json の更新時刻 (再読込の判定用)
 };

@@ -460,6 +460,24 @@ void ComputeCascadeVPs(const XMFLOAT3& lightDir, const XMFLOAT3& sceneMin,
 
 } // namespace
 
+Texture* LoadTextureRememberingFailure(TextureLibrary& textures, AssetID id, const std::wstring& path,
+                                       bool srgb, FailedTextureLoad& failed)
+{
+    if (Texture* loaded = textures.Get(id)) {
+        return loaded;
+    }
+    std::error_code stampEc;
+    const auto writeTime = std::filesystem::last_write_time(path, stampEc);
+    const int64_t stamp = stampEc ? 0 : static_cast<int64_t>(writeTime.time_since_epoch().count());
+    if (!ShouldRetryTextureLoad(failed, id.value, stamp)) {
+        return nullptr; // 前回と同じ中身で失敗済み (エラーログは初回の 1 回だけ)
+    }
+    textures.LoadFile(path, srgb);
+    Texture* tex = textures.Get(id);
+    failed = tex ? FailedTextureLoad{} : FailedTextureLoad{ id.value, stamp };
+    return tex;
+}
+
 void CollectEnvironment(World& world, RenderView& view)
 {
     // 最初 (entity.index 最小) の active な Skybox
@@ -1444,8 +1462,8 @@ void RenderSystem::PrepareEnvironment(World& world, GraphicsDevice& device, Shad
             if (!tex) {
                 const std::wstring texPath = assetguid::ResolvePath(view.skyCubemapId.value);
                 if (!texPath.empty()) {
-                    resources.textures.LoadFile(texPath, /*srgb=*/true);
-                    tex = resources.textures.Get(view.skyCubemapId);
+                    tex = LoadTextureRememberingFailure(resources.textures, view.skyCubemapId, texPath,
+                                                        /*srgb=*/true, skyLoadFailed_);
                 }
             }
             if (tex && tex->srv && tex->tex) {
@@ -1800,8 +1818,8 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
             if (!lut) {
                 const std::wstring lutPath = assetguid::ResolvePath(effective.lutTexture.value);
                 if (!lutPath.empty()) {
-                    resources.textures.LoadFile(lutPath, /*srgb=*/false);
-                    lut = resources.textures.Get(effective.lutTexture);
+                    lut = LoadTextureRememberingFailure(resources.textures, effective.lutTexture, lutPath,
+                                                        /*srgb=*/false, lutLoadFailed_);
                 }
             }
             if (lut && lut->srv) {

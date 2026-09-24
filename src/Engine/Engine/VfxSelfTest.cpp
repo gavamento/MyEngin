@@ -1,7 +1,10 @@
 #include "Engine/Engine/VfxSelfTest.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <vector>
 
 #include "Engine/Core/Components.h"
@@ -12,6 +15,7 @@
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Engine/Vfx/VfxRenderer.h"
+#include "Engine/Renderer/GpuResources.h"
 #include "Engine/Renderer/PostProcess.h"
 #include "Engine/Renderer/SkyResolve.h"
 
@@ -286,6 +290,44 @@ bool RunVfxSelfTest()
             const RtSkyChoice rtPanoNoIbl = ResolveRtSky(2, true, false);
             check(rtPanoNoIbl.source == RtSkySource::None && rtPanoNoIbl.envSkyMode == -1,
                   "rt sky: panoramic without baked IBL (lighting=0) -> ambient, nothing bound");
+        }
+
+        // 同期遅延ロードの再試行判定 (再レビュー #5): 壊れた画像を毎フレーム読み直さない
+        {
+            const FailedTextureLoad none;
+            const FailedTextureLoad failedA{ 0xA, 100 };
+            check(ShouldRetryTextureLoad(none, 0xA, 100), "texture retry: never failed -> load");
+            check(!ShouldRetryTextureLoad(failedA, 0xA, 100),
+                  "texture retry: same GUID and same file time as the failure -> skip");
+            check(ShouldRetryTextureLoad(failedA, 0xA, 101), "texture retry: file rewritten -> load again");
+            check(ShouldRetryTextureLoad(failedA, 0xB, 100), "texture retry: another texture -> load");
+        }
+
+        // LoadTextureRememberingFailure: 読めない画像は失敗を記録し、ファイルが書き換わるまで読まない
+        {
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            const fs::path broken = fs::temp_directory_path(ec) / L"mye_vfx_selftest_broken_sky.png";
+            {
+                std::ofstream f(broken, std::ios::binary | std::ios::trunc);
+                f << "not a png";
+            }
+            TextureLibrary textures; // Init しない = ヘッドレス。LoadFile は必ず失敗する
+            const AssetID id{ 0x5EED };
+            FailedTextureLoad failed;
+            check(LoadTextureRememberingFailure(textures, id, broken.wstring(), true, failed) == nullptr
+                      && failed.id == id.value,
+                  "texture retry: a failed load is remembered");
+            const FailedTextureLoad afterFirst = failed;
+            check(LoadTextureRememberingFailure(textures, id, broken.wstring(), true, failed) == nullptr
+                      && failed.id == afterFirst.id && failed.stamp == afterFirst.stamp,
+                  "texture retry: the second frame keeps the same failure record");
+            fs::last_write_time(broken, fs::last_write_time(broken, ec) + std::chrono::seconds(5), ec);
+            const int64_t newStamp =
+                static_cast<int64_t>(fs::last_write_time(broken, ec).time_since_epoch().count());
+            check(ShouldRetryTextureLoad(failed, id.value, newStamp),
+                  "texture retry: rewriting the file makes it load again");
+            fs::remove(broken, ec);
         }
     }
 
