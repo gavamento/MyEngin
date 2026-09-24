@@ -53,7 +53,7 @@
 - (reviewer 向け) 同じマシンで別のセッション (動画再生等) が動いているときは SetForegroundWindow 系のフォーカス奪取操作を避ける。Inspector の Properties 欄追加の実地確認は `%TEMP%\mye_sub04_probe` の手順 (sub-04.md 実装メモ) で
 - (司会 通し検証 2026-09-24, HEAD bfe8581) Debug/Release ビルド exit 0、Editor.exe --selftest Debug/Release exit 0・FAIL 行 0、check_rules 0/0、replay_verify 13/13 PASS (136.6s)
 - (完了時の残り minor / 未決)
-  - review-2 #9: ShadowPass の影エントリが予約サンプラ (gSampler 等) を張らない。VS でテクスチャを読むサーフェスの影だけ CLAMP で評価され、タイル状ノイズ変位で影の形が食い違う。ForwardPath::DrawSurfaceItem と同じ 3 本を名前で張れば直る
+  - ~~review-2 #9~~ (M79-fix で解消、ユーザー判断で先に修正): ShadowPass の影エントリが予約サンプラ (gSampler 等) を張らない。VS でテクスチャを読むサーフェスの影だけ CLAMP で評価され、タイル状ノイズ変位で影の形が食い違う。ForwardPath::DrawSurfaceItem と同じ 3 本を名前で張れば直る
   - Inspector の実 GUI 確認 (sub-04 のスキーマ更新・sub-06 の boundsPadding/doubleSided 欄) は未実施。Editor の --select はエンティティのみでアセットを選べず CLI 撮影で代替できない。手動確認が必要
   - Create メニュー「サーフェスシェーダ」の実クリック確定も未確認
   - doubleSided の影が両面で落ちることは画像未確認 (コードと SelfTest のみ)

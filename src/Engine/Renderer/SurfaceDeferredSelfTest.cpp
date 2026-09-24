@@ -724,6 +724,141 @@ void TestShadowPassFixedSlotsSurviveSurfaceEntry(GraphicsDevice& device, const s
     fs::remove_all(dir, ec);
 }
 
+// ---- review-2 #9: 影エントリの VSMain が読む gSampler が色・速度エントリと同じ WRAP で張られるか ----
+// 2x1 テクスチャ (左 texel = 黒、右 texel = 白) を u=1.25 で読む。WRAP なら u=0.25 = 左 texel の中心 = 0
+// で変位なし、未バインド (D3D 既定の CLAMP) なら右端の白 = 1 で +1m 持ち上がる。
+// 変位なしの非サーフェス立方体と影深度が一致すれば WRAP で評価されている
+const char* kWrapProbeSurface = R"HLSL(
+/*@MyEngineProperties
+_RampTex ("Ramp", 2D) = "white" {}
+@*/
+#include "MyEngineSurface.hlsli"
+Texture2D _RampTex;
+struct VSIn { float3 pos : POSITION; };
+struct VSOut { float4 pos : SV_Position; };
+VSOut VSMain(VSIn v)
+{
+    VSOut o;
+    float3 p = v.pos;
+    p.y += _RampTex.SampleLevel(gSampler, float2(1.25f, 0.5f), 0.0f).r;
+    float4 worldPos = mul(float4(p, 1.0f), gWorld);
+    o.pos = mul(worldPos, gViewProj);
+    return o;
+}
+float4 PSMain(VSOut i) : SV_Target
+{
+    return float4(1.0f, 1.0f, 1.0f, 1.0f);
+}
+)HLSL";
+
+// 無圧縮 32bit TGA (左上原点)。stb_image が読める最小形式
+void WriteRampTga(const std::filesystem::path& path)
+{
+    const uint8_t header[18] = { 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 32, 0x28 };
+    const uint8_t pixels[8] = { 0, 0, 0, 255, 255, 255, 255, 255 }; // BGRA: 黒, 白
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    f.write(reinterpret_cast<const char*>(header), sizeof(header));
+    f.write(reinterpret_cast<const char*>(pixels), sizeof(pixels));
+}
+
+void TestShadowPassSurfaceSamplerIsWrap(GraphicsDevice& device, const std::wstring& engineShaderDir)
+{
+    MYE_LOG_INFO("-- ShadowPass: 影エントリの gSampler が WRAP で張られるか (review-2 #9) --");
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir = fs::temp_directory_path(ec) / L"mye_surface_shadow_sampler_selftest";
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    WriteFile(dir / L"WrapProbe.surface.hlsl", kWrapProbeSurface);
+    WriteRampTga(dir / L"ramp.tga");
+    WriteFile(dir / L"WrapProbe.mat.json",
+              "{\"shader\":\"WrapProbe.surface\",\"properties\":{\"_RampTex\":\"ramp.tga\"}}");
+
+    ShaderManager shaders;
+    Check(shaders.Init(device, { dir.wstring(), engineShaderDir }), "shader manager init (shadow sampler)");
+
+    RenderResources resources;
+    resources.Init(device);
+    const AssetID surfMatId = resources.materials.LoadFromFile(
+        (dir / L"WrapProbe.mat.json").wstring(), resources.textures, dir.wstring());
+    Check(!surfMatId.IsNull(), "WrapProbe.mat.json が読み込める");
+    Material plain;
+    plain.shader = AssetID{ HashStr("forward_lit") };
+    const AssetID plainMatId = resources.materials.Register("shadow_sampler_plain", plain);
+
+    ShadowPass sp;
+    constexpr int kRes = 128;
+    Check(sp.Init(device, shaders, kRes), "ShadowPass::Init (sampler)");
+
+    const AssetID cube = resources.meshes.Cube();
+    auto makeItem = [&](AssetID mat, float x) {
+        RenderItem item;
+        item.mesh = cube;
+        item.material = mat;
+        XMStoreFloat4x4(&item.world, XMMatrixTranslation(x, 0.0f, 0.0f));
+        item.prevWorld = item.world;
+        return item;
+    };
+    const XMMATRIX lightView =
+        XMMatrixLookToLH(XMVectorSet(0, 10, 0, 1), XMVectorSet(0, -1, 0, 0), XMVectorSet(0, 0, 1, 0));
+    const XMMATRIX lightProj = XMMatrixOrthographicLH(8.0f, 8.0f, 0.1f, 20.0f);
+    XMFLOAT4X4 lightViewProj;
+    XMStoreFloat4x4(&lightViewProj, XMMatrixMultiply(lightView, lightProj));
+
+    // 同じデバイスで先に走った色・速度エントリのテストが VS のサンプラを張ったまま残すので
+    // (コンテキストが参照を保持する)、空にしてから描く。残っていると ShadowPass が張らなくても
+    // WRAP で読めてしまい、この検査が素通りする
+    ID3D11SamplerState* noSamplers[D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT] = {};
+    device.Context()->VSSetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, noSamplers);
+
+    RenderQueue queue;
+    queue.opaque = { makeItem(surfMatId, -2.0f), makeItem(plainMatId, 2.0f) };
+    sp.Render(device, shaders, queue, resources, &lightViewProj, /*count=*/1, /*viewFrameIndex=*/0,
+              /*instancing=*/false);
+
+    auto readDepthAt = [&](float worldX) -> float {
+        ComPtr<ID3D11Resource> shadowRes;
+        sp.SRV()->GetResource(shadowRes.GetAddressOf());
+        ComPtr<ID3D11Texture2D> shadowTex;
+        if (FAILED(shadowRes.As(&shadowTex))) {
+            return -1.0f;
+        }
+        D3D11_TEXTURE2D_DESC staged = {};
+        shadowTex->GetDesc(&staged);
+        staged.Format = DXGI_FORMAT_R32_FLOAT;
+        staged.Usage = D3D11_USAGE_STAGING;
+        staged.BindFlags = 0;
+        staged.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        ComPtr<ID3D11Texture2D> staging;
+        if (FAILED(device.Device()->CreateTexture2D(&staged, nullptr, staging.GetAddressOf()))) {
+            return -1.0f;
+        }
+        ID3D11DeviceContext* dc = device.Context();
+        dc->CopyResource(staging.Get(), shadowTex.Get());
+        const int px = static_cast<int>((worldX / 8.0f + 0.5f) * kRes);
+        const int py = kRes / 2;
+        float v = -1.0f;
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        if (SUCCEEDED(dc->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+            const uint8_t* row =
+                static_cast<const uint8_t*>(mapped.pData) + static_cast<size_t>(py) * mapped.RowPitch;
+            std::memcpy(&v, row + static_cast<size_t>(px) * 4, 4);
+            dc->Unmap(staging.Get(), 0);
+        }
+        return v;
+    };
+    const float surfDepth = readDepthAt(-2.0f);
+    const float plainDepth = readDepthAt(2.0f);
+    Check(plainDepth > 0.0f && plainDepth < 1.0f, "非サーフェス立方体の影が落ちる (基準値)");
+    Check(std::fabs(surfDepth - plainDepth) < 1e-5f,
+          "(review-2 #9) 影エントリの gSampler が WRAP: u=1.25 が左 texel (黒) を読み、変位なしの立方体と同じ深度");
+    if (!(std::fabs(surfDepth - plainDepth) < 1e-5f)) {
+        MYE_LOG_ERROR("    surfDepth=%f plainDepth=%f", surfDepth, plainDepth);
+    }
+
+    fs::remove_all(dir, ec);
+}
+
 // ---- review-1 #1 の補強: DeferredPath のサーフェス段 (2.65 RenderSurfaceForward) の後に続く
 //      水面 (2.7 water_.Render) / 透明後段 (3 RenderTransparent) は、どちらも自分の描画に要る
 //      固定スロットを呼び出しの都度自分で張り直す設計 (WaterPass.cpp の perFrameCB 再バインド、
@@ -1073,6 +1208,7 @@ bool RunSurfaceDeferredSelfTest()
     TestDeferredWaterAndTransparentUnaffectedBySurfaceForwardStep(device, engineShaderDir); // review-1 #1 補強
     TestDeferredTransparentDrawsSurfaceColorEntry(device, engineShaderDir); // M79 sub-05 round 2
     TestShadowPassDoubleSidedCastsBackFaceShadow(device, engineShaderDir); // M79 sub-06
+    TestShadowPassSurfaceSamplerIsWrap(device, engineShaderDir);          // review-2 #9
 
     // (d) サーフェス 0 件のときフォワード段が何も張らないことは、この自己テストの範囲では
     // 「既存 golden (--selftest 全体 / tools\replay_verify.bat の既定シーン群、いずれもサーフェス

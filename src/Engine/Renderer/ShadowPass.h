@@ -75,7 +75,12 @@ private:
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer_; // 深度バイアス付き
     // M79 sub-06: doubleSided なサーフェスの影エントリ用 (同じ深度バイアスで Cull だけ外す)
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerCullNone_;
-    GpuTimer timer_;                                           // M54d
+    // review-2 #9: 影エントリの VSMain が読む予約サンプラ。色・速度エントリ (ForwardPath /
+    // DeferredPath) と同じ設定で作る — 違うと VS でテクスチャを読む変位の形が影だけ食い違う
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> surfaceSampler_;       // gSampler (WRAP)
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> surfaceShadowSampler_; // gShadowSampler (比較)
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> surfaceIblSampler_;    // gIblSampler (CLAMP)
+    GpuTimer timer_;                                          // M54d
 };
 
 } // namespace mye

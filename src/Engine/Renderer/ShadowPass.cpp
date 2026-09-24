@@ -138,6 +138,34 @@ bool ShadowPass::Init(GraphicsDevice& device, ShaderManager& shaders, int resolu
         return false;
     }
 
+    // review-2 #9: 影エントリ用の予約サンプラ。ForwardPath::Init の sampler_ / shadowSampler_ /
+    // iblSampler_ と同じ設定にする (未バインドだと D3D 既定の CLAMP で評価され、WRAP 前提の
+    // タイル状ノイズ変位で影の形だけが色・速度とずれる)
+    D3D11_SAMPLER_DESC sd = {};
+    sd.Filter = D3D11_FILTER_ANISOTROPIC;
+    sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+    sd.MaxAnisotropy = 4;
+    sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
+    sd.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(dev->CreateSamplerState(&sd, surfaceSampler_.GetAddressOf()))) {
+        return false;
+    }
+    D3D11_SAMPLER_DESC cs = {};
+    cs.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+    cs.AddressU = cs.AddressV = cs.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    cs.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+    cs.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(dev->CreateSamplerState(&cs, surfaceShadowSampler_.GetAddressOf()))) {
+        return false;
+    }
+    D3D11_SAMPLER_DESC is = {};
+    is.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    is.AddressU = is.AddressV = is.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    is.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(dev->CreateSamplerState(&is, surfaceIblSampler_.GetAddressOf()))) {
+        return false;
+    }
+
     timer_.Init(device); // M54d: 失敗しても計測が 0 になるだけなので戻り値は見ない
 
     ready_ = true;
@@ -298,6 +326,12 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
                             ID3D11ShaderResourceView* srv = tex ? tex->srv.Get() : nullptr;
                             BindSurfaceNamedSRV(dc, vsRefl, kNoPsReflect, texName.c_str(), srv);
                         }
+                        // review-2 #9: 非サーフェスの深度 VS はサンプラを使わないので復元は不要
+                        BindSurfaceNamedSampler(dc, vsRefl, kNoPsReflect, "gSampler", surfaceSampler_.Get());
+                        BindSurfaceNamedSampler(dc, vsRefl, kNoPsReflect, "gShadowSampler",
+                                                surfaceShadowSampler_.Get());
+                        BindSurfaceNamedSampler(dc, vsRefl, kNoPsReflect, "gIblSampler",
+                                                surfaceIblSampler_.Get());
                         if (item.mesh.value != boundMesh) {
                             const UINT stride = sizeof(MeshVertex);
                             const UINT offset = 0;
