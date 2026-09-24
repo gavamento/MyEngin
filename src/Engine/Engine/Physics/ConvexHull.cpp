@@ -296,7 +296,11 @@ bool BuildTriHull(const std::vector<PointRef>& pts, float eps, float areaEps,
             newTris.push_back(t);
         }
         if (!ok) {
-            continue; // pick は既に outside から外れている
+            // 縮退した新面が出た pick は outside から取り除いてから次周回へ進む。取り除かないと
+            // tris も outside も変わらないまま同じ pick が選ばれ続けて無限ループになる
+            // (この分岐に一度でも入って完走していた既存入力は無い = 修正で既存の結果は変わらない)
+            outside.erase(std::remove(outside.begin(), outside.end(), pick), outside.end());
+            continue;
         }
         for (int32_t vi : visible) {
             tris[static_cast<size_t>(vi)].alive = false;

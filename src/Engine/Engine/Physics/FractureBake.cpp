@@ -84,7 +84,7 @@ bool PositionLess(const XMFLOAT3& a, const XMFLOAT3& b)
     return a.z < b.z;
 }
 
-// 位置がビット一致する点をまとめる (round-2 裁定 5、任意の重複除去)。パイプラインの各段階
+// 位置がビット一致する点をまとめる (任意の重複除去)。パイプラインの各段階
 // (外側面クリップ・断面クリップ) は三角形ごとに独立した頂点レコードを作るので、同じ位置が
 // 何度も重複して残る。`BuildConvexHull` (このファイルの外、変更しない) は入力点数に対して
 // 重い処理を含むため、幾何を変えずに (完全一致だけをまとめる、ε ではない) 入力点数を
@@ -296,7 +296,7 @@ bool Bisector(const XMFLOAT3& a, const XMFLOAT3& b, Plane& out)
 // 116 三角形/312 頂点まで膨れ、46 角形の蓋で耳が見つからず失敗した)。ここはセル自体が
 // 「凸」だと分かっている特別な場合なので、Sutherland-Hodgman による面ごとのクリップ +
 // 新しい面を「平面上の角度でソートする」凸順序付けに置き換える。三角形分割が要らないぶん
-// 頑健で、このセル計算にしか使わない (実際のソースメッシュの切断は引き続き sub-01 の
+// 頑健で、このセル計算にしか使わない (実際のソースメッシュの切断は引き続き
 // CutMeshByPlane を使う — 頂点/法線/UV を運ぶ必要があるのはそちら側だけ)
 struct PolyFace {
     std::vector<XMFLOAT3> pts; // 外向き法線側から見て CCW
@@ -475,11 +475,11 @@ FractureVertex CrossFractureVertex(const FractureVertex& curr, float sCurr, cons
 
 // 三角形単位の平面クリップ (Sutherland-Hodgman、負側 n・x<=d を残す)。
 // 凸多角形を半空間で切った結果は必ず凸多角形になるので、EarClip のような耳探しが要らず
-// 頑健 — CutMeshByPlane をソースメッシュへ何度も連続適用すると (M80b round 1 で実測) 断面が
+// 頑健 — CutMeshByPlane をソースメッシュへ何度も連続適用すると (実測で確認済み) 断面が
 // 数百頂点まで膨れて耳切りが破綻することがあった。外側面はこの関数で元メッシュの三角形を
-// 自分の候補面だけで直接クリップする。蓋は「対ごとに sub-01 の CutMeshByPlane で 1 回だけ
+// 自分の候補面だけで直接クリップする。蓋は「対ごとに CutMeshByPlane で 1 回だけ
 // 切った断面」を、この関数でさらに他の候補面すべてにかけて絞り込む
-// (`TriangleClipMesh`/`ProcessAdjacentPair`、round 1 の裁定)
+// (`TriangleClipMesh`/`ProcessAdjacentPair`)
 std::vector<FractureVertex> ClipTriKeepNegative(const std::vector<FractureVertex>& poly, const XMFLOAT3& n,
                                                 float d)
 {
@@ -538,11 +538,11 @@ void ClipTrianglesAndAppend(const FractureMesh& src, const std::vector<Candidate
             triTag.push_back(tag);
         }
     }
-    // 三角形数を変える処理のたびに triTag の本数がずれていないか確認する (should #3)
+    // 三角形数を変える処理のたびに triTag の本数がずれていないか確認する
     MYE_CHECK(triTag.size() == static_cast<size_t>(outMesh.TriCount()));
 }
 
-// planner round-1 裁定の平面ペア表現 (neighborSeed は持たない、外側面クリップの
+// 平面ペア表現 (neighborSeed は持たない、外側面クリップの
 // 「他の候補面すべて」用の軽量な (n,d) だけの平面)
 struct Plane2 {
     XMFLOAT3 normal{ 0, 1, 0 };
@@ -583,8 +583,8 @@ FractureMesh TriangleClipMesh(const FractureMesh& mesh, const std::vector<Plane2
 
 // 三角形の巻きを反転し (index 1,2 を入れ替え)、法線を反転したコピーを返す。
 // 対 (i,j) の断面は i 側で 1 回だけ作り、j 側はこの反転コピーをそのまま使う
-// (planner round-1 裁定 — 両側でジオメトリが完全に同じ入力から作られるので、
-// 位置は常にビット同一。丸めの違いは仕上げの ε 溶接で吸収する)
+// (両側でジオメトリが完全に同じ入力から作られるので、位置は常にビット同一。
+// 丸めの違いは仕上げの ε 溶接で吸収する)
 FractureMesh ReverseWindingNegateNormal(const FractureMesh& mesh)
 {
     FractureMesh out = mesh;
@@ -605,13 +605,13 @@ void AppendTagged(FractureMesh& dst, std::vector<int32_t>& dstTag, const Fractur
         dst.indices.push_back(idx + base);
     }
     dstTag.insert(dstTag.end(), static_cast<size_t>(src.TriCount()), tag);
-    // 三角形数を変える処理のたびに triTag の本数がずれていないか確認する (should #3)
+    // 三角形数を変える処理のたびに triTag の本数がずれていないか確認する
     MYE_CHECK(dstTag.size() == static_cast<size_t>(dst.TriCount()));
 }
 
 // 対 (iSide, jSide) の断面を 1 回だけ作り、両側の破片メッシュへタグ付きで追加する。
 // P (n,d) は iSide が常に負側になるよう計算済みの二等分面 (Bisector(seeds[iSide],seeds[jSide]))。
-// 元メッシュは閉じていて外向きなので CutMeshByPlane の前提を満たす (sub-01 で検証済みの経路)。
+// 元メッシュは閉じていて外向きなので CutMeshByPlane の前提を満たす (検証済みの経路)。
 // 得た断面を「iSide と jSide の他の候補面の和集合」で三角形単位クリップして
 // F_ij = P ∩ セルiSide ∩ セルjSide まで絞り込む
 void ProcessAdjacentPair(int32_t iSide, int32_t jSide, const XMFLOAT3& n, float d,
@@ -651,7 +651,7 @@ void ProcessAdjacentPair(int32_t iSide, int32_t jSide, const XMFLOAT3& n, float 
                 iSide);
 }
 
-// ---- 連結成分分離 (round-2 裁定: 位相的な閉じを求めず、頂点の近さでつなぐ) ----
+// ---- 連結成分分離 (位相的な閉じを求めず、頂点の近さでつなぐ) ----
 // 破片は外側面と蓋を別々に作るので、継ぎ目の頂点は位置がビット一致しない (数 ulp ずれる)。
 // ε = 元メッシュの AABB 対角 × kProximityEpsRelative の近さで頂点をまとめ、同じ組を持つ
 // 三角形どうしを連結とみなす (辺の完全一致は求めない)
@@ -758,7 +758,7 @@ std::vector<Component> SplitConnectedComponents(const FractureMesh& mesh, const 
     return result;
 }
 
-// 破片の合否判定 (round-2 裁定): 位相的な閉じは求めず、(a) 体積 > 0、(b) ベクトル面積の和
+// 破片の合否判定: 位相的な閉じは求めず、(a) 体積 > 0、(b) ベクトル面積の和
 // |Σ(b-a)×(c-a)/2| が表面積 Σ|(b-a)×(c-a)|/2 の 1e-4 以下 (蓋が欠けていないこと) で判定する。
 // 閉じたメッシュならベクトル面積は正確に 0 (各面の寄与が打ち消し合う)。面が欠けていると
 // 打ち消し損ねた分だけ非零になるので、表面積に対する相対値で「欠けの大きさ」を測れる
@@ -792,7 +792,7 @@ void ComputeVolumeCentroid(const FractureMesh& mesh, double& volumeOut, XMFLOAT3
     }
 }
 
-// 破片の合否判定 (round-2 裁定): 位相的な閉じは求めず、(a) 体積 > 0、(b) ベクトル面積の和
+// 破片の合否判定: 位相的な閉じは求めず、(a) 体積 > 0、(b) ベクトル面積の和
 // |Σ(b-a)×(c-a)/2| が表面積 Σ|(b-a)×(c-a)|/2 の 1e-4 以下 (蓋が欠けていないこと) で判定する。
 // 閉じたメッシュならベクトル面積は正確に 0 (各面の寄与が打ち消し合う)。面が欠けていると
 // 打ち消し損ねた分だけ非零になるので、表面積に対する相対値で「欠けの大きさ」を測れる
@@ -920,8 +920,8 @@ void MergePieceInto(std::vector<RawPiece>& pieces, std::vector<AdjMap>& adj, int
         t.mesh.indices.push_back(idx + base);
     }
     t.triTag.insert(t.triTag.end(), s.triTag.begin(), s.triTag.end());
-    // 三角形数を変える処理のたびに triTag の本数がずれていないか確認する (round 2 で
-    // SplitTJunctions のタグ更新漏れが未定義動作の原因になった不具合の再発防止、should #3)
+    // 三角形数を変える処理のたびに triTag の本数がずれていないか確認する
+    // (SplitTJunctions のタグ更新漏れが未定義動作の原因になった不具合の再発防止)
     MYE_CHECK(t.triTag.size() == static_cast<size_t>(t.mesh.TriCount()));
     ComputeVolumeCentroid(t.mesh, t.volume, t.centroid);
     if (PositionLess(s.sortKeyPos, t.sortKeyPos)) {
@@ -1093,7 +1093,7 @@ bool BakeFractureCore(const FractureMesh& source, const std::vector<XMFLOAT3>& s
         }
     }
 
-    // ---- 4 非連結の分離 (頂点の近さでつなぐ、round-2 裁定) + 破片の合否判定 ----
+    // ---- 4 非連結の分離 (頂点の近さでつなぐ) + 破片の合否判定 ----
     std::vector<RawPiece> rawPieces;
     for (int32_t i = 0; i < numSeeds; ++i) {
         FractureMesh& mesh = seedMesh[static_cast<size_t>(i)];
@@ -1113,7 +1113,7 @@ bool BakeFractureCore(const FractureMesh& source, const std::vector<XMFLOAT3>& s
                                                                   ? validity.vectorAreaMag / validity.surfaceArea
                                                                   : -1.0)
                                 + ")";
-                // 回避策を積まずに入力と理由をそのまま返す (round 1/2 の裁定)
+                // 回避策を積まずに入力と理由をそのまま返す
                 return false;
             }
             RawPiece rp;

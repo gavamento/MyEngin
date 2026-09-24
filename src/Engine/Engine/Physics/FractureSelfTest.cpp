@@ -275,9 +275,9 @@ bool Near(double a, double b, double relTol, double absTol = 1e-9)
     return std::fabs(a - b) <= absTol + relTol * std::fabs(b);
 }
 
-// 破片 (outer+cap) の面が欠けていないか (M80b round-2 裁定: 位相的な閉じは求めず、
-// ベクトル面積の和が表面積に対して十分小さいことで判定する。BakeFracture 内部の
-// ValidatePieceGeometry と同じ式を、SelfTest 側でも独立に検算する)
+// 破片 (outer+cap) の面が欠けていないか (位相的な閉じは求めず、ベクトル面積の和が
+// 表面積に対して十分小さいことで判定する。BakeFracture 内部の ValidatePieceGeometry
+// と同じ式を、SelfTest 側でも独立に検算する)
 bool PieceGeometryValid(const FracturePieceBake& piece)
 {
     double vx = 0.0, vy = 0.0, vz = 0.0, surfaceArea = 0.0;
@@ -541,7 +541,7 @@ bool RunFractureSelfTest()
               "determinism: cutting the same input twice yields byte-identical output");
     }
 
-    // ---- 6. 処理時間の記録 (sub-02 の焼き時間見積もり用。合否には数えない) ----
+    // ---- 6. 処理時間の記録 (焼き時間見積もり用。合否には数えない) ----
     {
         const FractureMesh big = MakeTorus(2.0f, 0.6f, 100, 50); // 100*50*2 = 10000 三角形
         const auto t0 = std::chrono::steady_clock::now();
@@ -595,18 +595,10 @@ bool RunFractureSelfTest()
         testBake("voronoi box/8", MakeBox(1, 1, 1), 1, 8);
         testBake("voronoi box/32", MakeBox(1, 1, 1), 2, 32);
         testBake("voronoi lshape/12", MakeLShapePrism(1.0f), 3, 12);
-        // NOTE (round 2 で特定、申し送り参照): round 2 の位相フリー化で box/lshape は
-        // すべて PASS するようになった (体積・面欠け判定とも正常)。しかしトーラスは
-        // pieceCount=8 の焼き自体は準備 (候補面計算・外側面・断面ペア処理・非連結分離) まで
-        // 数百 ms で終わるにもかかわらず、特定の破片 (8 個中 8 個目、他の破片と点数は同程度)
-        // の凸包計算 (`ConvexHull.cpp` の `BuildConvexHull`。このサブでは「使うだけ・変えない」
-        // 対象) で停止することを一時計測 (コミットしない chrono) で特定した。BuildConvexHull
-        // 自体は sub-02 のスコープ外 (M60f、既存資産) のため、このサブでは修正しない。
-        // セルフテストをハングさせないため、トーラスでの検証は見送る
-        // (受け入れ条件 1・3・6 のうちトーラス分は未達のまま)
+        testBake("voronoi torus/8", MakeTorus(2.0f, 0.6f, 24, 16), 1, 8);
+        testBake("voronoi torus/32", MakeTorus(2.0f, 0.6f, 24, 16), 4, 32);
     }
     // ---- 8. 非連結の分離: L字をまたぐセルで破片数がシード数より増える ----
-    // (本来はトーラスで確認する想定だったが、上記 NOTE によりトーラスは使えない)
     // L字プリズムの断面 (0,0)-(2,0)-(2,1)-(1,1)-(1,2)-(0,2) は x=1,y=1 の角が凹んでいる
     // (x>1 かつ y>1 の正方形が欠けている)。2 点だけの明示シードなら、その 2 分割線は
     // 「垂直二等分面」1 枚だけになる (他シードが無いので候補面が 1 枚だけ)。2 点を
@@ -689,7 +681,6 @@ bool RunFractureSelfTest()
     }
 
     // ---- 11. 決定論: 同じ入力の digest が一致し、seed を変えると変わる (Debug/Release 比較用ログ) ----
-    // (トーラスは上記 NOTE により使えないため lshape で代替する)
     {
         const FractureMesh lshape = MakeLShapePrism(1.0f);
         FractureBakeInput in;
@@ -711,9 +702,27 @@ bool RunFractureSelfTest()
             MYE_LOG_INFO("  fracture bake digest (lshape seed=42 pieces=%d): 0x%016llX",
                         static_cast<int>(a.pieces.size()), static_cast<unsigned long long>(digestA));
         }
+
+        // トーラス (BuildConvexHull の無限ループ修正後に追加) の digest も
+        // Debug/Release 比較の対象にする
+        FractureBakeInput torusIn;
+        torusIn.sourceMesh = MakeTorus(2.0f, 0.6f, 24, 16);
+        torusIn.seed = 44;
+        torusIn.pieceCount = 8;
+        FractureBakeResult ta, tb;
+        const bool okTa = BakeFracture(torusIn, ta);
+        const bool okTb = BakeFracture(torusIn, tb);
+        check(okTa && okTb && ta.success && tb.success, "voronoi digest (torus): bakes succeed");
+        if (okTa && okTb && ta.success && tb.success) {
+            const uint64_t digestTa = FractureBakeDigest(ta);
+            const uint64_t digestTb = FractureBakeDigest(tb);
+            check(digestTa == digestTb, "voronoi digest (torus): same input yields the same digest");
+            MYE_LOG_INFO("  fracture bake digest (torus seed=44 pieces=%d): 0x%016llX",
+                        static_cast<int>(ta.pieces.size()), static_cast<unsigned long long>(digestTa));
+        }
     }
 
-    // ---- 12. 焼き時間の記録 (sub-11 の上限決定用。合否には数えない) ----
+    // ---- 12. 焼き時間の記録 (上限決定用。合否には数えない) ----
     {
         auto timeBake = [&](const char* label, const FractureMesh& mesh, uint32_t seed, int32_t pieceCount) {
             FractureBakeInput in;
@@ -729,12 +738,12 @@ bool RunFractureSelfTest()
                         mesh.TriCount(), pieceCount, r.seedsPlaced, ok ? static_cast<int>(r.pieces.size()) : -1,
                         ms);
         };
-        // NOTE: トーラスは上記 7 節の NOTE の通り BuildConvexHull (ConvexHull.cpp、
-        // このサブのスコープ外) で停止する破片があるため計測できない。
-        // 安全に終わる範囲だけを計測する (sub-11 で上限と最適化を扱う)
         timeBake("box / 8 pieces", MakeBox(1, 1, 1), 200, 8);
         timeBake("box / 32 pieces", MakeBox(1, 1, 1), 201, 32);
         timeBake("lshape / 12 pieces", MakeLShapePrism(1.0f), 202, 12);
+        // BuildConvexHull の無限ループ修正後に追加 (768 三角形、32 破片)
+        timeBake("torus / 8 pieces", MakeTorus(2.0f, 0.6f, 24, 16), 203, 8);
+        timeBake("torus / 32 pieces", MakeTorus(2.0f, 0.6f, 24, 16), 204, 32);
     }
 
     if (failCount == 0) {
