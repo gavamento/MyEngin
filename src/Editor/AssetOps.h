@@ -6,6 +6,7 @@
 #include <DirectXMath.h>
 
 #include "Engine/Core/EntityID.h"
+#include "Engine/Engine/AssetDatabase.h" // AssetType
 
 namespace mye {
 
@@ -112,6 +113,16 @@ void RecordAssetCreated(UndoStack& undo, const std::wstring& path);
 // 複合サフィックス (.scene.json 等) を保ったままファイル名を stem/suffix に分割する
 // (リネーム UI のプリフィル用に公開。実装は ImportExternalPaths と共用)
 void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstring& suffix);
+
+// ---- ピッカーのディスク候補 ----
+struct DiskAssetCandidate {
+    std::wstring path;   // 絶対パス
+    std::string relUtf8; // assetsRoot からの相対パス (表示用)
+};
+// assetsRoot 以下の種別 type のファイルを相対パス順に列挙する (.meta は除く)。
+// ディスクを読むだけで .meta は作らない — GUID は選ばれたときに AssetDatabase::GuidForPath で確定する。
+// 再帰走査なので、Inspector はポップアップを開いている間だけ呼ぶ (毎フレーム呼ぶと重い)
+std::vector<DiskAssetCandidate> CollectDiskAssetCandidates(const std::wstring& assetsRoot, AssetType type);
 
 // ---- アセット配置 (ドラッグ&ドロップ) ----
 // path が .prefab.json ならインスタンス化、.glb/.gltf ならモデルロード。1 Undo エントリ + 自動選択。

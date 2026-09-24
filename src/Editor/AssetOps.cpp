@@ -137,6 +137,26 @@ bool RunningRelease()
 
 // 既知の複合サフィックス (.scene.json 等) を保ったままファイル名を stem/suffix に分割する。
 // 素朴な extension() 分割だと連番付与で "x.prefab (1).json" になり種別判定が壊れる
+std::vector<DiskAssetCandidate> CollectDiskAssetCandidates(const std::wstring& assetsRoot, AssetType type)
+{
+    std::vector<DiskAssetCandidate> out;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::recursive_directory_iterator(assetsRoot, ec)) {
+        if (ec || !e.is_regular_file(ec)) {
+            continue;
+        }
+        const std::wstring p = e.path().wstring();
+        if (AssetDatabase::IsMetaPath(p) || AssetDatabase::ClassifyPath(p) != type) {
+            continue;
+        }
+        out.push_back({ p, WideToUtf8(std::filesystem::relative(e.path(), assetsRoot, ec).wstring()) });
+    }
+    // 走査順はファイルシステム依存なので、表示を安定させるため相対パスで並べる
+    std::sort(out.begin(), out.end(),
+              [](const DiskAssetCandidate& a, const DiskAssetCandidate& b) { return a.relUtf8 < b.relUtf8; });
+    return out;
+}
+
 void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstring& suffix)
 {
     static const std::wstring kCompound[] = {L".scene.json",  L".prefab.json", L".actor.json",

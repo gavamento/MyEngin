@@ -2897,6 +2897,10 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
     std::transform(fname.begin(), fname.end(), fname.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     std::vector<AssetEntry> entries;
+    // ディスク上のファイルも候補に出す種別 (Unknown = ライブラリの一覧だけ)。
+    // ディスクの走査はポップアップを開いている間だけ行う (毎フレーム assets 全体を再帰走査し、
+    // .meta の無いファイルへ .meta を書き出していた)
+    AssetType diskType = AssetType::Unknown;
     if (fname.find("physmat") != std::string::npos) {
         // M59a1: 物理マテリアル (M59a2 の Collider.physMaterial 等)。
         // ★"material" より**先に**見ること。小文字化した "physmaterial" は "material" を
@@ -2907,20 +2911,8 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
             }
         }
     } else if (fname == "fxstack") {
-        // M78c: プロジェクトポスト/コンピュートスタック (*.fxstack.json の一覧)
-        std::error_code ec2;
-        for (const auto& e2 : std::filesystem::recursive_directory_iterator(ctx.assetsRoot, ec2)) {
-            if (ec2 || !e2.is_regular_file(ec2)) {
-                continue;
-            }
-            const std::wstring diskPath2 = e2.path().wstring();
-            if (AssetDatabase::ClassifyPath(diskPath2) != AssetType::FxStack) {
-                continue;
-            }
-            const uint64_t guid2 = AssetDatabase::EnsureMeta(diskPath2);
-            const std::string stem2 = WideToUtf8(e2.path().stem().stem().wstring()); // foo.fxstack
-            entries.push_back({ AssetID{ guid2 }, stem2 });
-        }
+        // M78c: プロジェクトポスト/コンピュートスタック (*.fxstack.json はディスクにしか無い)
+        diskType = AssetType::FxStack;
     } else if (fname.find("model") != std::string::npos) {
         // M18: SkinnedMesh.model。★"model" は "mesh" を含まないので、この分岐が無いと
         //   最後の else (メッシュ + マテリアル + テクスチャの混合) に落ちる。正解の
@@ -2935,24 +2927,7 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         entries = ctx.resources->materials.Enumerate();
     } else if (fname.find("tex") != std::string::npos) {
         entries = ctx.resources->textures.Enumerate();
-        // ディスク上の未ロードテクスチャも一覧へ (MaterialInspector と同じ走査)
-        std::error_code ec;
-        for (const auto& e : std::filesystem::recursive_directory_iterator(ctx.assetsRoot, ec)) {
-            if (ec || !e.is_regular_file(ec)) {
-                continue;
-            }
-            const std::wstring diskPath = e.path().wstring();
-            if (AssetDatabase::IsMetaPath(diskPath) || AssetDatabase::ClassifyPath(diskPath) != AssetType::Texture) {
-                continue;
-            }
-            const uint64_t guid = AssetDatabase::EnsureMeta(diskPath);
-            const std::string rel =
-                WideToUtf8(std::filesystem::relative(e.path(), ctx.assetsRoot, ec).wstring());
-            if (std::none_of(entries.begin(), entries.end(),
-                             [&](const AssetEntry& ae) { return ae.id.value == guid; })) {
-                entries.push_back({ AssetID{ guid }, rel });
-            }
-        }
+        diskType = AssetType::Texture; // 未ロードのテクスチャもポップアップで出す (MaterialInspector と同じ)
     } else if (fname.find("sound") != std::string::npos) {
         // M45c: .sound.json (AudioSource.sound 等)。**"clip"/"anim" より先に見る**
         if (ctx.sounds) {
@@ -2998,7 +2973,9 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         const std::wstring resPath = assetguid::ResolvePath(id->value);
         if (!resPath.empty()) {
             std::error_code ec;
-            resolvedName = WideToUtf8(std::filesystem::relative(resPath, ctx.assetsRoot, ec).wstring());
+            resolvedName = (diskType == AssetType::FxStack)
+                ? WideToUtf8(std::filesystem::path(resPath).stem().stem().wstring()) // ポップアップの表記と揃える
+                : WideToUtf8(std::filesystem::relative(resPath, ctx.assetsRoot, ec).wstring());
             cur = resolvedName.c_str();
         }
     }
@@ -3046,6 +3023,27 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         for (const AssetEntry& e : entries) {
             if (ImGui::Selectable(e.name.c_str(), e.id == *id)) {
                 assign(e.id);
+            }
+        }
+        if (diskType != AssetType::Unknown) {
+            for (const DiskAssetCandidate& c : CollectDiskAssetCandidates(ctx.assetsRoot, diskType)) {
+                // 読むだけの解決 (.meta を作らない)。ロード済みでライブラリ側に出ている物は重ねない
+                const uint64_t known = ctx.assetDb ? ctx.assetDb->GuidForPath(c.path, false) : 0;
+                if (known != 0 && std::any_of(entries.begin(), entries.end(),
+                                              [&](const AssetEntry& ae) { return ae.id.value == known; })) {
+                    continue;
+                }
+                const std::string label = (diskType == AssetType::FxStack)
+                    ? WideToUtf8(std::filesystem::path(c.path).stem().stem().wstring()) // foo.fxstack.json → foo
+                    : c.relUtf8;
+                ImGui::PushID(c.relUtf8.c_str());
+                if (ImGui::Selectable(label.c_str(), known != 0 && known == id->value)) {
+                    // 選んだときだけ GUID を確定する (.meta 不在なら作り、表にも登録して ResolvePath で引けるように)
+                    const uint64_t guid = ctx.assetDb ? ctx.assetDb->GuidForPath(c.path, true)
+                                                      : AssetDatabase::EnsureMeta(c.path);
+                    assign(AssetID{ guid });
+                }
+                ImGui::PopID();
             }
         }
         ImGui::EndPopup();

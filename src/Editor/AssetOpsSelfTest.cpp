@@ -7,6 +7,7 @@
 #include <iterator>
 #include <string>
 #include <system_error>
+#include <vector>
 
 #include "nlohmann/json.hpp"
 
@@ -739,6 +740,28 @@ bool RunAssetOpsSelfTest()
                 "tile label " + WideToUtf8(c.path) + " -> " + c.label + " (got " + got + ")";
             check(std::strcmp(got, c.label) == 0, what.c_str());
         }
+    }
+
+    // ---- ピッカーのディスク候補 (再レビュー #4): 列挙は読むだけで .meta を作らない ----
+    // Inspector のテクスチャ / fxstack 欄は毎フレーム assets を走査し、候補ごとに EnsureMeta で .meta を
+    // 書き出していた。列挙を副作用の無い関数に切り出し、GUID は選んだときだけ確定する
+    {
+        const fs::path pick = root / L"pick";
+        fs::create_directories(pick / L"sub", ec);
+        WriteDummy(pick / L"b.png");
+        WriteDummy(pick / L"sub" / L"a.png");
+        WriteDummy(pick / L"sub" / L"a.png.meta"); // 既存の .meta は候補に出ない
+        WriteDummy(pick / L"note.txt");
+        WriteDummy(pick / L"glow.fxstack.json");
+        const std::vector<DiskAssetCandidate> texCands = CollectDiskAssetCandidates(pick.wstring(), AssetType::Texture);
+        check(texCands.size() == 2, "disk candidates: only the two textures are listed (.meta / txt excluded)");
+        check(texCands.size() == 2 && texCands[0].relUtf8 == "b.png" && texCands[1].relUtf8 == WideToUtf8((fs::path(L"sub") / L"a.png").wstring()),
+              "disk candidates: sorted by relative path");
+        check(!fs::exists(pick / L"b.png.meta", ec),
+              "disk candidates: listing does not write a .meta for a texture without one");
+        const std::vector<DiskAssetCandidate> fxCands = CollectDiskAssetCandidates(pick.wstring(), AssetType::FxStack);
+        check(fxCands.size() == 1 && !fs::exists(pick / L"glow.fxstack.json.meta", ec),
+              "disk candidates: fxstack is listed without writing a .meta");
     }
 
     if (failCount == 0) {
