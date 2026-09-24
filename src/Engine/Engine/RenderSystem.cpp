@@ -1015,8 +1015,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             waterData_.surfaceCb.enabled = 1;
             waterData_.surfaceCb.baseHeight = bestWave->baseHeight;
             waterData_.surfaceCb.overallScale = bestWave->overallScale;
-            waterData_.surfaceCb.waveCount = std::clamp<int32_t>(
-                bestWave->waveCount, 1, static_cast<int32_t>(WaterWaveComponent::kMaxWaves));
+            waterData_.surfaceCb.waveCount = bestWave->ClampedWaveCount(); // 浮力と同じ規則
             bestWave->ExtractWaves(waterData_.surfaceCb.waves, WaterWaveComponent::kMaxWaves);
             waterData_.surfaceCb.deepColor = waterData_.material.deepColor;
             waterData_.surfaceCb.shallowColor = waterData_.material.shallowColor;

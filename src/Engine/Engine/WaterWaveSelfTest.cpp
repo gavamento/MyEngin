@@ -206,6 +206,53 @@ bool RunWaterWaveSelfTest()
               "surfaceMaterial: round-trips through scene JSON save/load");
     }
 
+    // 8. waveCount の範囲外 (レビュー #5): 物理の浮力は描画と同じく 1〜4 に丸めて使う。
+    //    丸めずに 5 以上を渡すと波配列の範囲外を読み、-1 だと波が無い扱いになっていた
+    {
+        auto simulate = [](int32_t waveCount) {
+            Scene s;
+            GameObject waterGo = s.CreateGameObjectTracked("Water");
+            auto* wave = waterGo.AddComponent<WaterWaveComponent>();
+            wave->enabled = true;
+            wave->affectBuoyancy = true;
+            wave->baseHeight = 0.0f;
+            wave->overallScale = 1.0f;
+            wave->waveCount = waveCount;
+            wave->wave0Amplitude = 0.6f;
+            wave->wave1Amplitude = 0.4f;
+            wave->wave2Amplitude = 0.3f;
+            wave->wave3Amplitude = 0.2f;
+            GameObject ball = s.CreateGameObjectTracked("Buoy");
+            ball.SetLocalPosition(1.3f, 0.0f, -0.7f);
+            auto* col = ball.AddComponent<ColliderComponent>();
+            col->shape = 0;
+            col->radius = 0.5f;
+            auto* rb = ball.AddComponent<RigidbodyComponent>();
+            rb->mass = 1000.0f * (4.0f / 3.0f) * 3.14159265f * 0.125f * 0.5f; // 水の半分の密度
+            ball.AddComponent<BuoyancyComponent>();
+            s.GetWorld().ApplyStructuralChanges();
+            PhysicsSystem phys; // テストごとに新品 (内部状態をテスト間で持ち越さない)
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), 1.0f / 60.0f);
+            }
+            return ball.GetComponent<LocalTransform>()->position;
+        };
+        const XMFLOAT3 p1 = simulate(1);
+        const XMFLOAT3 pNeg = simulate(-1);
+        const XMFLOAT3 p4 = simulate(4);
+        const XMFLOAT3 p5 = simulate(5);
+        check(pNeg.x == p1.x && pNeg.y == p1.y && pNeg.z == p1.z,
+              "waveCount clamp: -1 buoyancy is bit-identical to 1 (same rule as the renderer)");
+        check(p5.x == p4.x && p5.y == p4.y && p5.z == p4.z,
+              "waveCount clamp: 5 buoyancy is bit-identical to 4 (no out-of-range wave read)");
+        check(p1.y != p4.y, "waveCount clamp: 1 and 4 waves actually differ (the test can see waves)");
+        WaterWaveComponent c;
+        c.waveCount = 7;
+        check(c.ClampedWaveCount() == 4, "waveCount clamp: 7 -> 4");
+        c.waveCount = 0;
+        check(c.ClampedWaveCount() == 1, "waveCount clamp: 0 -> 1");
+    }
+
     MYE_LOG_INFO("==== WaterWave self test: %s (fail count: %d) ====",
                  (failCount == 0 ? "ALL PASS" : "FAILED"), failCount);
     return failCount == 0;

@@ -1700,6 +1700,14 @@ struct WaterWaveComponent {
 
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 
+    // 実際に使う波の本数 (1〜kMaxWaves)。範囲の制限は Inspector の UI にしか無く、シーン JSON や
+    // スクリプトから範囲外が入りうるので、読む側は必ずこれを通す (物理と描画で同じ規則にする。
+    // 5 以上をそのまま使うと浮力が波配列の範囲外を読んで非決定になる)
+    int32_t ClampedWaveCount() const
+    {
+        return waveCount < 1 ? 1 : (waveCount > kMaxWaves ? kMaxWaves : waveCount);
+    }
+
     // GerstnerWave 配列への展開ヘルパー
     void ExtractWaves(GerstnerWave* outWaves, int maxOut) const
     {

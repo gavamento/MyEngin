@@ -2673,8 +2673,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         //      減衰させるため。**非所持ボディはルックアップのみで fp 演算ゼロ** ----
         const WaterWaveComponent* activeWave = ResolveActiveWaterWave(world);
         GerstnerWave activeWaveParams[WaterWaveComponent::kMaxWaves];
+        const int32_t activeWaveCount = activeWave ? activeWave->ClampedWaveCount() : 0;
         if (activeWave) {
-            activeWave->ExtractWaves(activeWaveParams, activeWave->waveCount);
+            activeWave->ExtractWaves(activeWaveParams, activeWaveCount);
         }
         for (Body& b : bodies) {
             if (!b.rb || b.invMass == 0.0f) {
@@ -2701,7 +2702,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             }
             float planeY = env ? env->waterPlaneY : kDefaultWaterPlaneY;
             if (activeWave && activeWave->affectBuoyancy) {
-                planeY = wave::EvaluateWaveHeight(activeWaveParams, activeWave->waveCount,
+                planeY = wave::EvaluateWaveHeight(activeWaveParams, activeWaveCount,
                                                   bp.px, bp.pz, time_,
                                                   activeWave->baseHeight, activeWave->overallScale,
                                                   activeWave->timeScale);
