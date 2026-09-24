@@ -20,9 +20,9 @@
 | sub-03 | OK | 2 | 4f7cbad | round1 REWORK: 前後関係未検証・SelfTest なし → round2 で解消 (Release/replay_verify PASS) |
 | sub-04 | OK | 2 | 99654de | round1 REWORK: 切替で properties clear → round2 で解消。Create メニューのクリック確定は合成入力で未確認 (手動確認へ) |
 | sub-02 | OK (review-1 分) | 1 | 169ba2f | 固定スロット復元 (VS t0 等) / PerMaterial の範囲 |
-| sub-03 | OK (review-1 分) | 1 | (本コミット) | ShadowPass 影エントリ後の固定スロット復元 |
+| sub-03 | OK (review-1 分) | 1 | e3e1b80 | ShadowPass 影エントリ後の固定スロット復元 |
 | sub-04 | 差し戻し (review-1 #5) | 0 | | Properties スキーマキャッシュ無効化 |
-| sub-05 | 差し戻し (review-1 #6) | 0 | | WaterGerstner に環境光 |
+| sub-05 | OK (review-1 分) | 1 | (本コミット) | WaterGerstner に環境光 (Fresnel 加算)。テンプレートの黒潰れは sub-06 へ移管 |
 | sub-06 | 新規 | 0 | | boundsPadding / doubleSided (review-1 #3 #7) |
 | sub-05 | OK | 2 | a08d8d4 | round1 REWORK: Deferred 透明段の実装漏れ・影スクショ・Inspector → round2 で解消 |
 
@@ -47,3 +47,5 @@
 - (review-1 #8) shot_verify の golden 23 枚が M79 以前から陳腐化 (空が黒い)。M79 の回帰ではない。撮り直しは別件
 - (sub-02 fix) ProbeBaker は Forward/Deferred を問わず forwardPath で IBL を焼く (EngineLoop.cpp:2463/2509)。reviewer の rv1 vtexA_def.err の D3D エラーはこれが原因で、sub-02 fix で解消。影 (#1) とは無関係
 - (自動化) Runtime.exe の撮影は `--frames` を併用し、撮り終えたら残ったプロセスを止める (残るとビルドが LNK1168 で落ちる)
+- (planner 指示) review-1 差し戻しと sub-06 がすべて OK になったら、reviewer round 2 の前に司会が通しで Debug/Release ビルド・selftest (Debug/Release)・check_rules・replay_verify を実行し台帳に記録する
+- (Water 絵作りへ) WaterGerstner サンプルは斜め視点で Fresnel≈1 になり環境光色が一面を覆う (砂地っぽい)。deepColor/shallowColor 側へ lerp が候補

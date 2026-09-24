@@ -1,8 +1,8 @@
 # sub-05: WaterWave の surfaceMaterial と MyEngineWater
 
 - 依存: sub-03
-- 状態: 差し戻し (review-1 #6)
-- 往復: 2
+- 状態: OK (review-1 差し戻し分、コミット待ち)
+- 往復: 3
 
 ## やること
 
@@ -202,6 +202,38 @@ SELF_EVAL: sub-05 (round 2)
   - Editor.exe の `--screenshot` は `--shot-frame` 省略時の既定値が **60** (`EngineConfig::screenshotFrame`)。`--frames` をそれ未満にすると撮影前に終了し、ログにエラーも出ないまま PNG が生成されない (今回実際に踏んだ)
   - `--width`/`--height` で Editor のウィンドウを縦長にすると、ドッキングレイアウトも追従して Inspector 等の縦スクロール無しの全量スクショが撮りやすくなる (Inspector の自動スクロール操作ができない制約への回避策として有効)
 
+SELF_EVAL: sub-05 (round 3)
+実装:
+  - #6 (review-1 minor): `assets/shaders/WaterGerstner.surface.hlsl` の `PSMain` を修正。まず `gAmbient` を `(0.35f + 0.65f*ndotl)` の乗算項に足す版を試したが、実スクショで前後ピクセル同一 (下記「反証」) だったため却下。`WaterWave.deepColor` (Water main の実値 `[0.008, 0.032, 0.095]`) が非常に暗いため、`gAmbient` をどれだけ足しても albedo に**乗算**する限り結果はほぼ 0 のままと判明 (物理的に妥当: 暗い物体は環境光を強くしても暗いまま)。そこで方針変更: 視線角度の Fresnel (`pow(saturate(1-dot(n,viewDir)), 4)`) で `gAmbient` を diffuse 項に**加算**する形にした (組込み `water_surface.hlsl` の `skyReflection` と同じ考え方の簡易版)。水面はグレージング角ほど空を映して明るく、真上から見下ろすほど深い水色が勝つ — 見た目も物理的に自然
+  - `ToonFlat.surface.hlsl` を review-1 #6 の指示どおり同じ観点で確認: `_ShadowColor` (既定 `(0.35,0.35,0.45,1)`) が `ndotl=0`/`shadow=0` でも床になり真っ黒にはならない設計であることをコードで確認した。修正不要と判断 (変更なし)
+  - `src/Editor/AssetOps.cpp` の `SurfaceShaderTemplate` (Create メニューの生成テンプレート) も同じ観点で読んだ。`lit = _Tint.rgb * (shadow + rim)` は `_Tint` が白のとき、影の中かつ rim がほぼ 0 (視線が法線に正対) だと同じ理由で真っ黒になりうる形だが、これは C++ 文字列リテラルであり、今回の FIX_REQUEST は「C++ ソースには触らないこと (サンプルシェーダの修正のみ)」と明示されているため**変更していない**。不安・質問へ記載
+仕様との差分:
+  - [追加] 乗算 (`waterColor.rgb * (gAmbient + 0.65*ndotl)`) ではなく加算 (`diffuse + gAmbient*fresnel`) にした。sub-05.md / review-1 #6 は「gAmbient (か空色) の項を足す」とだけ指示しており式の形までは指定していないため、実測 (下記反証) に基づき効果のある形を選んだ
+検証:
+  - `tools\check_rules.ps1` → `0 error(s), 0 warning(s)` (src/ 配下の静的検査。今回のシェーダ変更は対象外)
+  - **反証 (1回目の実装を破棄した経緯)**: `waterColor.rgb * (gAmbient + 0.65f*ndotl)` 版で `bin\x64\Debug\Runtime.exe --project <一時Waterコピー> --scene main_surf_taa.scene.json --deferred --warp --frames 65 --screenshot` を実行し、reviewer の `rvw\taa2.png` (修正前) と Python (`PIL.ImageChops.difference`) でピクセル比較 → 水面領域は両方とも厳密に `(0,0,0)` で無変化と判明 (見た目だけでなく数値でも無効な修正と確認)。原因を `WaterWave.deepColor` の実値 (`[0.008,0.032,0.095]`、Water main の本物の値) で逆算し、乗算では改善しないことを特定してから加算 (Fresnel) 版に書き直した
+  - **実プロジェクト・実シーンの Runtime.exe スクショ (WARP)**: reviewer の `rvw\` (Water main のコピー、reviewer 検証物) を書き換えず別フォルダ `%TEMP%\...\scratchpad\sub05_fix_verify\` へ複製し、シェーダキャッシュ (`cache/shaders`, `cache/hot`) を削除して強制再コンパイルさせた上で reviewer と同じ `main_surf_taa.scene.json` (taa2 相当) を撮影
+    - `shot_fixed_def2.png` (`--deferred --warp --frames 65`): 水面が `gAmbient` 由来のモカ色 (dbg_def.png のアンビエントのスウォッチと同系色) になり、波の陰影・浮遊する船のシルエットが視認できる。真っ黒ではない
+    - `shot_fixed_fwd.png` (Forward、`--warp --frames 65`、`--deferred` なし): 同じ水面がモカ色で描かれることを確認 (Forward/Deferred 両方で同じ PSMain を通る設計どおり)
+  - `bin\x64\Debug\Editor.exe --selftest` / `bin\x64\Release\Editor.exe --selftest` → 両方 exit 0、`FAIL:` 行 0 件 (grep `FAIL:` で確認。大文字小文字を区別しない `FAIL` 一致は `"...failed"` を含む既存の意図した負けテスト名を誤検出するため、コロン付きの実際の失敗プレフィックスで確認し直した)。この 2 回の selftest は**シェーダのみの変更を確認する目的**で、並行作業していた別 coder (sub-04) の C++ 編集が始まる前 (作業ツリーが `src/`/`build/` ともにクリーンな時点、git status で確認済み) に実行し、現在の HEAD (`e3e1b80`) のバイナリと一致した状態で走らせた
+  - **未実行 (意図的にスキップ、理由あり)**: `tools\replay_verify.bat` はビルド (Debug/Release 双方の MSBuild) を内包する。検証中に `tasklist` で確認したところ、並行して sub-04 の coder が `src/Editor/AssetOpsSelfTest.cpp` / `InspectorWindow.*` / `ProjectShaderProperties.*` を編集し MSBuild を実行中だったため、同じ `build/`/`bin/` 出力先へ同時に書き込む競合を避けるため実行しなかった。本変更はシェーダのテキストのみ (`.hlsl`) で C++ ビルド成果物・WorldHash・リプレイに一切関与しないため、determinism 系の受け入れ条件 (4・5) への影響は無いと判断している (round 1/2 の replay_verify PASS から変化なし)
+自己採点 (1-5):
+  仕様適合: 4 — review-1 #6 の指摘を解消し、`ToonFlat.surface.hlsl` も確認した (sub-05.md の指示どおり)。ただし「テンプレートも同じ観点で確認」で見つけた類似の潜在バグ (`AssetOps.cpp` の `SurfaceShaderTemplate`) は C++ 制約により未対応のまま残した (下記不安・質問)
+  正しさ: 5 — 1 回目の実装 (乗算) が効いていないことをピクセル差分で検出し、原因 (deepColor が非常に暗い) を数値で特定してから加算式に修正。Forward/Deferred 両方の実スクショで「真っ黒ではない」ことを直接確認した (推測や机上確認で終わらせていない)
+  コード品質: 4 — 追加した Fresnel は 3 行、コメントは「なぜ加算にしたか」を短く記載。既存のスタイル (`const` ローカル、コメント日本語) を踏襲。一方で `pow(...,4.0f)` のべき指数は水面らしい見た目になる値を実スクショで確認して選んだ経験的な値 (物理ベースの厳密な導出ではない)
+  テスト: 3 — 新規の自動テストは追加していない (このサブの受け入れ条件追加分は「Runtime.exe スクショで黒くない」ことのみを要求しており、ピクセル値を pin する SelfTest は sub-05.md に明記されていない)。反証はスクショの目視 + 手元の Python 差分計算で行ったが、リポジトリに残る自動回帰にはなっていない
+不安・質問:
+  1. `src/Editor/AssetOps.cpp` の `SurfaceShaderTemplate` (Create メニューで新規サーフェスシェーダーを作るときの雛形、574-622行) が `lit = _Tint.rgb * (shadow + rim)` で、影の中かつ rim が小さいと同じ理由で真っ黒になりうる。review-1 #6 の「テンプレートも同じ観点で確認」に該当する実物だが、今回の FIX_REQUEST が C++ 修正を明示的に禁止しているため直していない。次ラウンド (C++ 変更が許可されるサブ、または sub-04 の作業と衝突しないタイミング) で対応するか判断してほしい
+  2. Fresnel の指数 (4.0f) と `diffuse + gAmbient*fresnel` の重みは実スクショを見ながら選んだ値で、艶や反射強度の「正解」を検証する自動テストは無い。サンプルとしての見た目が今回のシーンで許容範囲かどうかは目視判断 (shot_fixed_def2.png / shot_fixed_fwd.png) に依存している。作者向けサンプルとしてこの程度の経験的パラメータで良いか (Water 本番の絵作りは別マイルストーンなので、ここでは「黒く潰れない」の解消を優先した)
+触ったファイル:
+  - `assets/shaders/WaterGerstner.surface.hlsl`
+申し送り:
+  - 検証用の一時プロジェクトは `%TEMP%\claude\C--HAL-MyEngin\8864d946-863a-46b5-9312-6ffea53e1a0b\scratchpad\sub05_fix_verify\` (reviewer の `rvw\` を複製したもの、未コミット、リポジトリ外)。`rvw\` 自体は書き換えていない
+  - シェーダキャッシュ (`cache/shaders`, `cache/hot`) はプロジェクトごとに保存される。同じプロジェクトコピーでエンジン側 `assets/shaders/*.hlsl` を編集して再検証するときは、キャッシュを消してから実行しないと古いコンパイル結果を見せられる可能性がある (今回はキャッシュ削除で確実に再コンパイルさせた)
+  - `tools\replay_verify.bat` は未実行 (並行作業中の MSBuild との競合回避)。司会が全体をまとめてコミットする前に、sub-04 の作業が一段落した時点で一度通しの `replay_verify.bat` を回すことを推奨 (本変更は非決定性に関与しないシェーダ色計算のみだが、通しの確認が望ましい)
+
 ## フィードバック履歴
 - round 1: VERDICT REWORK (planner)。must 2 件: (1) Deferred 透明段がサーフェスを解決できず黙って描かない (DeferredPath.cpp の透明ループが `shaders.Get(mat->shader)` のみ) = spec §4.1 違反。M79 内で直す (条件 6 新設) (2) 受け入れ条件 2 の CSM 影スクショ未実施。should: Inspector の surfaceMaterial 欄の実画面確認 (条件 7)。`kFieldNoHash` 新設・水面を CSM フィット AABB に入れない判断は受理。
 - round 2: VERDICT OK (planner)。条件 6: DeferredPath 透明段のサーフェス対応＋WARP テスト (反証込み)、shot_g_transparent_deferred.png を目視 (透明水面・ガラス板のブレンド、マゼンタなし)。条件 2 の影スクショ (shot_e/f) は波の陰影と影の区別が画像だけでは付かない (nit) — 影の変位は WaterSurfaceSelfTest の深度差と、同じ影エントリ経路の sub-03 目視で担保と判断。条件 7 は Inspector スクショで確認 (coder 報告)。
+- round 3 (review-1 #6 の fix): 実装は上記 SELF_EVAL (round 3) を参照。
+- round 3 (review-1 #6): VERDICT OK (planner)。乗算版が効かないことをピクセル差分で検出し加算 (Fresnel × gAmbient) に変更。shot_fixed_def2.png を目視 (黒潰れ解消。ただし斜め視点では環境光色が支配的で砂地のように見える = nit、絵作りは別マイル)。AssetOps.cpp のテンプレートの黒潰れは sub-06 へ移管。replay_verify は全差し戻し後に司会が通しで実施。

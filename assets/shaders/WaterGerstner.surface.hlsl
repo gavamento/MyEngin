@@ -77,6 +77,13 @@ float4 PSMain(VSOut i) : SV_Target
     const float shadow = MyeSunShadow(i.posW);
     const float ndotl = saturate(dot(n, -gSunDirection)) * shadow;
     const float4 waterColor = lerp(gMyeWaterDeepColor, gMyeWaterShallowColor, ndotl);
-    const float3 lit = waterColor.rgb * (0.35f + 0.65f * ndotl);
+    const float3 diffuse = waterColor.rgb * (0.35f + 0.65f * ndotl);
+
+    // 水面は空を映すので、深い水色 (waterColor) 自体が暗いと太陽が低い/影のシーンで真っ黒になる。
+    // 視線角度の Fresnel で gAmbient (空色) を足す (water_surface.hlsl の skyReflection の簡易版。
+    // waterColor に掛けると暗い深水色ではほぼ 0 のままなので、乗算ではなく加算にする)
+    const float3 viewDir = normalize(gCameraPos - i.posW);
+    const float fresnel = pow(saturate(1.0f - dot(n, viewDir)), 4.0f);
+    const float3 lit = diffuse + gAmbient * fresnel;
     return float4(MyeApplyFog(lit, i.posW), waterColor.a);
 }

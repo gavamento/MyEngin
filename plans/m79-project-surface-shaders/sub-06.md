@@ -13,6 +13,7 @@ spec §4.1「カリングと境界」「両面」、§4.2 `.mat.json` の `bound
 - `RenderSystem` の視錐台カリング (`RenderSystem.cpp` のステージ 2、`RenderableInFrustum` 呼び出し付近) と CSM のキャスター AABB 集約 (sceneMin / sceneMax) で、サーフェスマテリアルのアイテムはメッシュ AABB をワールド空間で各軸 `boundsPadding` 広げた箱を使う。0 なら従来と完全に同じ判定 (既定シーンのビット一致)。カリングはジョブ並列の純関数なので、余白の値は並列ステージの前に解決しておく (横テーブル参照を並列内でしない)
 - `doubleSided: true` のサーフェスは、Forward の不透明・透明、Deferred のサーフェス段・透明段、ShadowPass の影エントリの全部で Cull None のラスタライザ状態を使う。描いた後は各パスの既定ラスタライザへ戻す (spec §4.1「固定スロットの復元」と同じ扱い。Wireframe 表示中の状態を壊さない)
 - マテリアル Inspector: サーフェス選択時に `boundsPadding` (DragFloat、0 以上) と `doubleSided` (Checkbox) を出し、保存・JSON 往復で保持。ツールチップ (日英) で「頂点変位で形がメッシュの外へ出るなら余白を付ける (付けないとカメラ外判定で消える)」
+- **(sub-05 round 3 VERDICT から移管)** `src/Editor/AssetOps.cpp` の `SurfaceShaderTemplate` (574-622 行付近) の `lit = _Tint.rgb * (shadow + rim)` は、影の中で rim が小さいと真っ黒になる。環境光 (`gAmbient`) の項を足して、生成直後のテンプレートが影の中でも黒く潰れないようにする (review-1 #6 の「テンプレートも同じ観点」の回収。sub-04 と同じファイルを触るため、sub-04 の差し戻しが OK になってからここで行う)。AssetOpsSelfTest の「テンプレートがコンパイルできる」は維持
 - docs (`docs/surface-shaders-deferred-limits.md` かサーフェスの作者向け docs) に、カリングの余白と両面、裏面判定 (`SV_IsFrontFace` は渡らない。法線と視線の内積で作者が判定) を追記。テンプレートのコメントにも 1 行
 
 ## やらないこと (このサブでは)
