@@ -357,6 +357,9 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\ConvexSelfTest.cpp">
       <Filter>Engine\Physics</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\FractureBake.cpp">
+      <Filter>Engine\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Physics\FractureMesh.cpp">
       <Filter>Engine\Physics</Filter>
     </ClCompile>
@@ -1096,6 +1099,9 @@
       <Filter>Engine\Physics</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\ConvexSelfTest.h">
+      <Filter>Engine\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\FractureBake.h">
       <Filter>Engine\Physics</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\FractureMesh.h">

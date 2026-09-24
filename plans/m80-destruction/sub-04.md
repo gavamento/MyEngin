@@ -31,7 +31,7 @@ spec §4.1 焼き 1 の「`openMeshMode == 1`: ボクセル化を許容」の経
 
 1. 蓋のない箱・平面 (quad)・二重の壁を持つメッシュをボクセル化 → surface nets した結果が閉じ判定を通る — `--selftest`
 2. 解像度 16 と 64 で出力の三角形数が増え、元の AABB との差がセル 2 個分以内 — `--selftest`
-3. 開いた入力を `openMeshMode = 0` で渡すと理由付きで拒否、`= 1` で分割まで通り全破片が閉じる — `--selftest` (sub-02 が入っていれば)
+3. 開いた入力を `openMeshMode = 0` で渡すと理由付きで拒否、`= 1` で分割まで通り全破片が幾何的に閉じる (体積 > 0、ベクトル面積の和が表面積の 1e-4 以下。spec 変更 2026-09-25) — `--selftest` (sub-02 が入っていれば)
 4. 同じ入力で 2 回のバイト列一致 — `--selftest`
 5. 処理時間 (解像度 64 / 128 / 256) を記録 — SELF_EVAL
 6. 既存 SelfTest (特に Deep-Modal の Voxelizer 系) と `check_rules.ps1` に変化なし。WIP ファイル不変 — `--selftest`、`check_rules.ps1`、`git status`

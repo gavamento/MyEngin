@@ -15,6 +15,7 @@
 #include <DirectXMath.h>
 
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/Physics/FractureBake.h"
 #include "Engine/Engine/Physics/FractureMesh.h"
 
 using namespace DirectX;
@@ -274,6 +275,44 @@ bool Near(double a, double b, double relTol, double absTol = 1e-9)
     return std::fabs(a - b) <= absTol + relTol * std::fabs(b);
 }
 
+// 破片 (outer+cap) の面が欠けていないか (M80b round-2 裁定: 位相的な閉じは求めず、
+// ベクトル面積の和が表面積に対して十分小さいことで判定する。BakeFracture 内部の
+// ValidatePieceGeometry と同じ式を、SelfTest 側でも独立に検算する)
+bool PieceGeometryValid(const FracturePieceBake& piece)
+{
+    double vx = 0.0, vy = 0.0, vz = 0.0, surfaceArea = 0.0;
+    auto accumulate = [&](const FractureMesh& mesh) {
+        const int32_t triCount = mesh.TriCount();
+        for (int32_t t = 0; t < triCount; ++t) {
+            const XMFLOAT3& a = mesh.verts[static_cast<size_t>(mesh.indices[static_cast<size_t>(t) * 3 + 0])].position;
+            const XMFLOAT3& b = mesh.verts[static_cast<size_t>(mesh.indices[static_cast<size_t>(t) * 3 + 1])].position;
+            const XMFLOAT3& c = mesh.verts[static_cast<size_t>(mesh.indices[static_cast<size_t>(t) * 3 + 2])].position;
+            const double e1x = static_cast<double>(b.x) - a.x, e1y = static_cast<double>(b.y) - a.y,
+                        e1z = static_cast<double>(b.z) - a.z;
+            const double e2x = static_cast<double>(c.x) - a.x, e2y = static_cast<double>(c.y) - a.y,
+                        e2z = static_cast<double>(c.z) - a.z;
+            const double cx = e1y * e2z - e1z * e2y, cy = e1z * e2x - e1x * e2z, cz = e1x * e2y - e1y * e2x;
+            vx += cx * 0.5;
+            vy += cy * 0.5;
+            vz += cz * 0.5;
+            surfaceArea += 0.5 * std::sqrt(cx * cx + cy * cy + cz * cz);
+        }
+    };
+    accumulate(piece.outer);
+    accumulate(piece.cap);
+    const double vectorAreaMag = std::sqrt(vx * vx + vy * vy + vz * vz);
+    return (piece.volume > 0.0) && (vectorAreaMag <= 1e-4 * surfaceArea);
+}
+
+double TotalBakedVolume(const FractureBakeResult& r)
+{
+    double v = 0.0;
+    for (const FracturePieceBake& p : r.pieces) {
+        v += p.volume;
+    }
+    return v;
+}
+
 } // namespace
 
 bool RunFractureSelfTest()
@@ -515,6 +554,187 @@ bool RunFractureSelfTest()
         const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
         MYE_LOG_INFO("  timing: %d tri x 16 planes = %.2f ms (%.3f ms/cut)", big.TriCount(), ms,
                     ms / 16.0);
+    }
+
+    // ---- 7. Voronoi 分割: 箱・L字・トーラスの全破片が閉じ、体積和が保存され、凸包が有効 ----
+    {
+        auto testBake = [&](const char* label, const FractureMesh& mesh, uint32_t seed, int32_t pieceCount) {
+            FractureBakeInput in;
+            in.sourceMesh = mesh;
+            in.seed = seed;
+            in.pieceCount = pieceCount;
+            FractureBakeResult r;
+            const bool ok = BakeFracture(in, r);
+            char buf[256];
+            std::snprintf(buf, sizeof(buf), "%s: BakeFracture succeeds (requested=%d placed=%d)", label,
+                          pieceCount, r.seedsPlaced);
+            check(ok && r.success, buf);
+            if (!ok || !r.success) {
+                MYE_LOG_ERROR("    reason: %s", r.failReason.c_str());
+                return;
+            }
+            bool allValid = true, allHullValid = true;
+            for (const FracturePieceBake& p : r.pieces) {
+                if (!PieceGeometryValid(p)) {
+                    allValid = false;
+                }
+                if (!p.hull.Valid()) {
+                    allHullValid = false;
+                }
+            }
+            std::snprintf(buf, sizeof(buf), "%s: all %d pieces have volume>0 and no missing faces", label,
+                          static_cast<int>(r.pieces.size()));
+            check(allValid, buf);
+            std::snprintf(buf, sizeof(buf), "%s: all pieces have a valid convex hull", label);
+            check(allHullValid, buf);
+            const double total = SignedVolume(mesh);
+            const double sum = TotalBakedVolume(r);
+            std::snprintf(buf, sizeof(buf), "%s: volume conserved (%.6f vs %.6f)", label, sum, total);
+            check(Near(sum, total, 1e-4, 1e-7), buf);
+        };
+        testBake("voronoi box/8", MakeBox(1, 1, 1), 1, 8);
+        testBake("voronoi box/32", MakeBox(1, 1, 1), 2, 32);
+        testBake("voronoi lshape/12", MakeLShapePrism(1.0f), 3, 12);
+        // NOTE (round 2 で特定、申し送り参照): round 2 の位相フリー化で box/lshape は
+        // すべて PASS するようになった (体積・面欠け判定とも正常)。しかしトーラスは
+        // pieceCount=8 の焼き自体は準備 (候補面計算・外側面・断面ペア処理・非連結分離) まで
+        // 数百 ms で終わるにもかかわらず、特定の破片 (8 個中 8 個目、他の破片と点数は同程度)
+        // の凸包計算 (`ConvexHull.cpp` の `BuildConvexHull`。このサブでは「使うだけ・変えない」
+        // 対象) で停止することを一時計測 (コミットしない chrono) で特定した。BuildConvexHull
+        // 自体は sub-02 のスコープ外 (M60f、既存資産) のため、このサブでは修正しない。
+        // セルフテストをハングさせないため、トーラスでの検証は見送る
+        // (受け入れ条件 1・3・6 のうちトーラス分は未達のまま)
+    }
+    // ---- 8. 非連結の分離: L字をまたぐセルで破片数がシード数より増える ----
+    // (本来はトーラスで確認する想定だったが、上記 NOTE によりトーラスは使えない)
+    // L字プリズムの断面 (0,0)-(2,0)-(2,1)-(1,1)-(1,2)-(0,2) は x=1,y=1 の角が凹んでいる
+    // (x>1 かつ y>1 の正方形が欠けている)。2 点だけの明示シードなら、その 2 分割線は
+    // 「垂直二等分面」1 枚だけになる (他シードが無いので候補面が 1 枚だけ)。2 点を
+    // (0.25,0.25,z), (2.25,2.25,z) に置くと二等分面は x+y=2.5 になり、これは断面の
+    // 凹み (x=1..2, y=1..2 の欠けた正方形) を斜めに横切る。seed1 側 (x+y>2.5) は
+    // 「上腕の (1,2) 角付近」と「右腕の (2,1) 角付近」という、凹みで隔てられた
+    // 2 つの三角柱に分かれる — 幾何的に本当に非連結になる配置 (乱数探索ではなく設計値)
+    {
+        const FractureMesh lshape = MakeLShapePrism(1.0f);
+        const std::vector<XMFLOAT3> seeds = { { 0.25f, 0.25f, 0.5f }, { 2.25f, 2.25f, 0.5f } };
+        FractureBakeResult r;
+        const bool ok = BakeFractureWithSeeds(lshape, seeds, 0.0f, r);
+        check(ok && r.success, "voronoi lshape: disconnected-cell bake succeeds");
+        if (ok && r.success) {
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                          "voronoi lshape: disconnected seed cell yields pieces > seeds (placed=%d, pieces=%d)",
+                          r.seedsPlaced, static_cast<int>(r.pieces.size()));
+            check(static_cast<int32_t>(r.pieces.size()) > r.seedsPlaced, buf);
+        }
+    }
+
+    // ---- 9. 極小片の統合: 統合後に平均 x minVolumeRatio 未満の破片が無い ----
+    {
+        FractureBakeInput in;
+        in.sourceMesh = MakeBox(1, 1, 1);
+        in.seed = 7;
+        in.pieceCount = 24;
+        in.minVolumeRatio = 0.5f; // 大きめの比で必ず統合を起こす
+        FractureBakeResult r;
+        const bool ok = BakeFracture(in, r);
+        check(ok && r.success, "voronoi merge: BakeFracture succeeds");
+        if (ok && r.success) {
+            double avg = 0.0;
+            for (const FracturePieceBake& p : r.pieces) {
+                avg += p.volume;
+            }
+            avg /= static_cast<double>(r.pieces.size());
+            const double threshold = avg * 0.5;
+            bool allAbove = true;
+            for (const FracturePieceBake& p : r.pieces) {
+                if (p.volume < threshold - 1e-9) {
+                    allAbove = false;
+                }
+            }
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                          "voronoi merge: no piece under avg*ratio after merge (merged=%d, pieces=%d)",
+                          r.mergedCount, static_cast<int>(r.pieces.size()));
+            check(allAbove, buf);
+        }
+    }
+
+    // ---- 10. 接着グラフ: 箱を軸平行に2分割する明示シードで隣接1本・面積が断面積と一致 ----
+    {
+        const FractureMesh box = MakeBox(1, 1, 1);
+        const std::vector<XMFLOAT3> seeds = { { -0.5f, 0, 0 }, { 0.5f, 0, 0 } };
+        FractureBakeResult r;
+        const bool ok = BakeFractureWithSeeds(box, seeds, 0.1f, r);
+        check(ok && r.success && r.pieces.size() == 2, "voronoi adjacency: 2 explicit seeds yield 2 pieces");
+        if (ok && r.success && r.pieces.size() == 2) {
+            const bool eachHasOneNeighbor
+                = r.pieces[0].neighbors.size() == 1 && r.pieces[1].neighbors.size() == 1;
+            check(eachHasOneNeighbor, "voronoi adjacency: each piece has exactly 1 neighbor");
+            if (eachHasOneNeighbor) {
+                check(r.pieces[0].neighbors[0].pieceIndex == 1 && r.pieces[1].neighbors[0].pieceIndex == 0,
+                      "voronoi adjacency: symmetric (piece0 <-> piece1)");
+                const double area0 = r.pieces[0].neighbors[0].area;
+                const double area1 = r.pieces[1].neighbors[0].area;
+                char buf[256];
+                std::snprintf(buf, sizeof(buf),
+                              "voronoi adjacency: area matches cross-section (%.6f, %.6f vs 4.0)", area0, area1);
+                check(Near(area0, 4.0, 1e-4, 1e-6) && Near(area1, 4.0, 1e-4, 1e-6), buf);
+            }
+            check(r.pieces[0].neighbors.size() <= static_cast<size_t>(kMaxFractureNeighbors)
+                      && r.pieces[1].neighbors.size() <= static_cast<size_t>(kMaxFractureNeighbors)
+                      && r.pieces[0].droppedNeighbors == 0 && r.pieces[1].droppedNeighbors == 0,
+                  "voronoi adjacency: neighbor count within 32, none dropped");
+        }
+    }
+
+    // ---- 11. 決定論: 同じ入力の digest が一致し、seed を変えると変わる (Debug/Release 比較用ログ) ----
+    // (トーラスは上記 NOTE により使えないため lshape で代替する)
+    {
+        const FractureMesh lshape = MakeLShapePrism(1.0f);
+        FractureBakeInput in;
+        in.sourceMesh = lshape;
+        in.seed = 42;
+        in.pieceCount = 10;
+        FractureBakeResult a, b, c;
+        const bool okA = BakeFracture(in, a);
+        const bool okB = BakeFracture(in, b);
+        in.seed = 43;
+        const bool okC = BakeFracture(in, c);
+        check(okA && okB && okC && a.success && b.success && c.success, "voronoi digest: bakes succeed");
+        if (okA && okB && okC && a.success && b.success && c.success) {
+            const uint64_t digestA = FractureBakeDigest(a);
+            const uint64_t digestB = FractureBakeDigest(b);
+            const uint64_t digestC = FractureBakeDigest(c);
+            check(digestA == digestB, "voronoi digest: same input yields the same digest");
+            check(digestA != digestC, "voronoi digest: different seed yields a different digest");
+            MYE_LOG_INFO("  fracture bake digest (lshape seed=42 pieces=%d): 0x%016llX",
+                        static_cast<int>(a.pieces.size()), static_cast<unsigned long long>(digestA));
+        }
+    }
+
+    // ---- 12. 焼き時間の記録 (sub-11 の上限決定用。合否には数えない) ----
+    {
+        auto timeBake = [&](const char* label, const FractureMesh& mesh, uint32_t seed, int32_t pieceCount) {
+            FractureBakeInput in;
+            in.sourceMesh = mesh;
+            in.seed = seed;
+            in.pieceCount = pieceCount;
+            FractureBakeResult r;
+            const auto t0 = std::chrono::steady_clock::now();
+            const bool ok = BakeFracture(in, r);
+            const auto t1 = std::chrono::steady_clock::now();
+            const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+            MYE_LOG_INFO("  bake timing: %s (%d tri, pieceCount=%d, placed=%d, pieces=%d) = %.2f ms", label,
+                        mesh.TriCount(), pieceCount, r.seedsPlaced, ok ? static_cast<int>(r.pieces.size()) : -1,
+                        ms);
+        };
+        // NOTE: トーラスは上記 7 節の NOTE の通り BuildConvexHull (ConvexHull.cpp、
+        // このサブのスコープ外) で停止する破片があるため計測できない。
+        // 安全に終わる範囲だけを計測する (sub-11 で上限と最適化を扱う)
+        timeBake("box / 8 pieces", MakeBox(1, 1, 1), 200, 8);
+        timeBake("box / 32 pieces", MakeBox(1, 1, 1), 201, 32);
+        timeBake("lshape / 12 pieces", MakeLShapePrism(1.0f), 202, 12);
     }
 
     if (failCount == 0) {

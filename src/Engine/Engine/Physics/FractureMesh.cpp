@@ -364,6 +364,31 @@ bool PointInPoly2(const std::vector<Pt2>& poly, float u, float v)
     return inside;
 }
 
+// 多角形が (ほぼ) 凸か。しきい値は頂点ごとに隣接 2 辺の長さの積に対する相対値で決める —
+// 断面切断を何度も重ねた蓋は場所によって点の密度が大きく違い (狭い範囲に点が密集する箇所と
+// 疎な箇所が混在する)、多角形全体の面積を基準にした一律のしきい値では密集箇所で誤って
+// 「凹」と判定してしまう (実測で確認済み)
+bool IsConvexCCW(const std::vector<Pt2>& poly)
+{
+    const int32_t n = static_cast<int32_t>(poly.size());
+    if (n < 3) {
+        return false;
+    }
+    for (int32_t i = 0; i < n; ++i) {
+        const Pt2& prev = poly[static_cast<size_t>((i + n - 1) % n)];
+        const Pt2& curr = poly[static_cast<size_t>(i)];
+        const Pt2& next = poly[static_cast<size_t>((i + 1) % n)];
+        const double e1u = static_cast<double>(curr.u) - prev.u, e1v = static_cast<double>(curr.v) - prev.v;
+        const double e2u = static_cast<double>(next.u) - curr.u, e2v = static_cast<double>(next.v) - curr.v;
+        const double cr = Cross2D(e1u, e1v, e2u, e2v);
+        const double localEps = std::sqrt((e1u * e1u + e1v * e1v) * (e2u * e2u + e2v * e2v)) * 1e-4;
+        if (cr < -localEps) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // ---- 耳切り三角形分割 (単純多角形、CCW 前提) ----
 // 毎回、有効な耳のうち最も丸い (cr が最大の) ものを選んで切る (同値は index 最小、決定的)。
 // O(n^3) だが蓋の頂点数は高々数百程度 (メッシュの断面) なので実用上問題ない
@@ -430,6 +455,31 @@ bool EarClip(std::vector<Pt2> poly, double areaEps, std::vector<std::array<int32
             clipped = true;
         }
         if (!clipped) {
+            // 密に並んだ点が続く凸多角形では、"塞がれているか" の判定が丸め誤差で
+            // 偽陽性になり、本来存在するはずの耳が見つからないことがある (連続する
+            // 平面切断を重ねた蓋で実測)。残りの多角形が (数値誤差の範囲で) 凸なら、
+            // 自己交差の心配がないファン分割へ切り替える。ただし IsConvexCCW 自体が
+            // 丸め誤差で誤判定する可能性を潰すため、ファン分割後の面積が多角形本来の
+            // 面積 (シューレース公式) と一致することを検算してから採用する —
+            // 一致しなければ凸という前提自体が誤りなので安全側に倒して失敗を返す
+            if (IsConvexCCW(poly)) {
+                std::vector<std::array<int32_t, 3>> fanTris;
+                double fanArea = 0.0;
+                for (size_t k = 1; k + 1 < poly.size(); ++k) {
+                    fanTris.push_back({ poly[0].vertexIdx, poly[static_cast<size_t>(k)].vertexIdx,
+                                       poly[static_cast<size_t>(k) + 1].vertexIdx });
+                    fanArea += Cross2D(static_cast<double>(poly[k].u) - poly[0].u,
+                                       static_cast<double>(poly[k].v) - poly[0].v,
+                                       static_cast<double>(poly[k + 1].u) - poly[0].u,
+                                       static_cast<double>(poly[k + 1].v) - poly[0].v)
+                             * 0.5;
+                }
+                const double polyArea = SignedArea2(poly);
+                if (std::fabs(fanArea - polyArea) <= (std::max)(std::fabs(polyArea) * 1e-6, areaEps * 4.0)) {
+                    trisOut.insert(trisOut.end(), fanTris.begin(), fanTris.end());
+                    return true;
+                }
+            }
             return false; // 安全網: 有効な耳が見つからない (縮退・自己交差の疑い)
         }
         if (++iter > maxIter) {
@@ -574,12 +624,13 @@ bool CapLoops(const std::vector<std::vector<FractureVertex>>& loops, const XMFLO
         return true; // 全部退化 = 蓋なし (安全側)
     }
 
-    // 外周/穴の判定は面積の符号 (捻れ方向) に頼らない — 断面ループの 3D の向き (外側面自身の
-    // 境界辺から継承した、常に正しい向き) を (tangent, bitangent) の 2D へ射影したときの
-    // 符号は、capNormal と射影基底の関係で外周でも正・負のどちらにもなり得る (射影基底の
-    // 選び方に依存する、恒常的な性質であって不具合ではない)。代わりに「他の何本のループに
-    // 内包されているか」の偶奇で外周/穴を決める (偶数=外周、奇数=穴。TrueType 等のグリフ
-    // 輪郭と同じ nonzero 系の判定)。EarClip は CCW 前提なので、向きは下で強制的に揃える
+    // 外周/穴の判定は面積の符号 (捻れ方向) に頼らない — t×b = capNormal になるよう
+    // OrthonormalBasis を作ってあるので、外向きの外側面の境界辺から継承した向きは
+    // (tangent, bitangent) へ射影すると外周は常に CW・穴は常に CCW になる (符号は一定で、
+    // どちらにもなり得るわけではない)。それでも符号ではなく「他の何本のループに内包されて
+    // いるか」の偶奇で外周/穴を決める (偶数=外周、奇数=穴。TrueType 等のグリフ輪郭と同じ
+    // nonzero 系の判定。符号が一定でも、この方式なら穴のネスト構造の取り違えが起きない)。
+    // EarClip は CCW 前提なので、向きは下で強制的に揃える
     const size_t n = validIdx.size();
     std::vector<int32_t> containCount(n, 0);
     for (size_t i = 0; i < n; ++i) {
