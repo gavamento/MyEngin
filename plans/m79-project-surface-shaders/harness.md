@@ -23,7 +23,7 @@
 | sub-03 | OK (review-1 分) | 1 | e3e1b80 | ShadowPass 影エントリ後の固定スロット復元 |
 | sub-04 | OK (review-1 分) | 1 | a8dd8ef | Properties スキーマキャッシュ無効化 (更新時刻)。GUI 見た目は未確認 |
 | sub-05 | OK (review-1 分) | 1 | 290543d | WaterGerstner に環境光 (Fresnel 加算)。テンプレートの黒潰れは sub-06 へ移管 |
-| sub-06 | OK | 1 | (本コミット) | boundsPadding / doubleSided / テンプレート環境光。Inspector GUI 見た目は未確認 |
+| sub-06 | OK | 1 | bfe8581 | boundsPadding / doubleSided / テンプレート環境光。Inspector GUI 見た目は未確認 |
 | sub-05 | OK | 2 | a08d8d4 | round1 REWORK: Deferred 透明段の実装漏れ・影スクショ・Inspector → round2 で解消 |
 
 ## レビュー
@@ -50,3 +50,4 @@
 - (planner 指示) review-1 差し戻しと sub-06 がすべて OK になったら、reviewer round 2 の前に司会が通しで Debug/Release ビルド・selftest (Debug/Release)・check_rules・replay_verify を実行し台帳に記録する
 - (Water 絵作りへ) WaterGerstner サンプルは斜め視点で Fresnel≈1 になり環境光色が一面を覆う (砂地っぽい)。deepColor/shallowColor 側へ lerp が候補
 - (reviewer 向け) 同じマシンで別のセッション (動画再生等) が動いているときは SetForegroundWindow 系のフォーカス奪取操作を避ける。Inspector の Properties 欄追加の実地確認は `%TEMP%\mye_sub04_probe` の手順 (sub-04.md 実装メモ) で
+- (司会 通し検証 2026-09-24, HEAD bfe8581) Debug/Release ビルド exit 0、Editor.exe --selftest Debug/Release exit 0・FAIL 行 0、check_rules 0/0、replay_verify 13/13 PASS (136.6s)
