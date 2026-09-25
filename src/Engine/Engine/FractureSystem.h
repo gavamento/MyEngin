@@ -16,9 +16,21 @@
 namespace mye {
 
 class World;
+class ScriptHost;
+class ManagedHost;
 struct ShapeImpulse;
 struct FractureAssetHandle;
 struct DestructibleComponent;
+
+// 分かれた塊 1 つぶんの onBreak 通知 (spec §4.1 破断 8、M80l)。point/impulse はその塊で
+// 荷重最大の破片の原点 (ワールド) と荷重 [N]。非ハッシュ・決定論の観測値
+// (LastBreakEvents 用) — スクリプトへの実配信は別途 ScriptHost/ManagedHost::DispatchBreak
+struct FractureBreakEvent {
+    EntityID root;                  // Destructible のルート
+    EntityID leader;                // 分かれた塊の新リーダー (index 最小の破片)
+    DirectX::XMFLOAT3 point{ 0.0f, 0.0f, 0.0f };
+    float impulse = 0.0f;
+};
 
 // 接着の破断と塊の剛体化 (spec §4.1「破断」1〜7、M80g)。TickRunner が
 // collisionSystem::Update の後・tick 末の ApplyStructuralChanges より前に 1 回呼ぶ。
@@ -50,7 +62,11 @@ struct DestructibleComponent;
 // 始めることで、常に階層が揃った状態の塊だけを辿る。
 class FractureSystem {
 public:
-    void Update(World& world, float dt, const std::vector<ShapeImpulse>& shapeImpulses);
+    // scripts/managed が非 null なら、分かれた塊ごとに root にあるスクリプトへ onBreak を
+    // 配信する (ルート index → 新リーダー index 昇順、spec §4.1 破断 8)。どちらも省略可
+    // (--fracture-bench 等のヘッドレス計測はスクリプトを持たないため)
+    void Update(World& world, float dt, const std::vector<ShapeImpulse>& shapeImpulses,
+               ScriptHost* scripts = nullptr, ManagedHost* managed = nullptr);
 
     // シーン切替時にキャッシュを捨てる (PartFollowSystem::Reset と同じ流儀)。
     // assetCache_ は資産参照から再計算すれば同じ値に戻るだけの記録、erroredOnce_ は
@@ -61,16 +77,22 @@ public:
         erroredOnce_.clear();
     }
 
+    // 直近 Update で発行した onBreak の記録 (観測用。非ハッシュ・決定論)。
+    // SelfTest がスクリプトを経由せずに「誰が・どこで・どれだけの荷重で分かれたか」を検算する
+    const std::vector<FractureBreakEvent>& LastBreakEvents() const { return lastBreakEvents_; }
+
 private:
     struct AssetCache {
         const FractureAssetHandle* handle = nullptr; // 資産参照から一意に決まる (解決結果)
         double avgNeighborArea = 0.0;                // 資産全体の隣接面積の平均
     };
     // ForEachArchetype のコールバック内 (= 構造変更が tick 末まで遅延される状態) から呼ぶ本体
-    void UpdateImpl(World& world, float dt, const std::vector<ShapeImpulse>& shapeImpulses);
+    void UpdateImpl(World& world, float dt, const std::vector<ShapeImpulse>& shapeImpulses,
+                    ScriptHost* scripts, ManagedHost* managed);
 
     std::unordered_map<uint64_t, AssetCache> assetCache_; // root -> 解決済み資産 (解決できた分だけ)
     std::unordered_set<uint64_t> erroredOnce_;             // ERROR を 1 回だけ出すためのログ抑止 (判定には使わない)
+    std::vector<FractureBreakEvent> lastBreakEvents_;      // 直近 Update の onBreak 記録 (観測用)
 };
 
 // ワールドに DestructibleComponent が 1 つでもあるか。**存在ゲート**専用 — false なら

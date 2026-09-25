@@ -290,6 +290,19 @@ namespace MyeScripting
             }
         }
 
+        private void InvokeBreak(int handle, MyeEntityId piece, MyeVec3 point, float impulse)
+        {
+            if (!_instances.TryGetValue(handle, out var inst)) return;
+            try
+            {
+                inst.OnBreak(new MyeEntity(piece), point, impulse);
+            }
+            catch (Exception ex)
+            {
+                Engine.Log("[csharp] " + inst.GetType().Name + ".OnBreak threw: " + ex.Message, 3);
+            }
+        }
+
         private static string PhaseName(int p) => p == 0 ? "Start" : (p == 1 ? "Update" : "LateUpdate");
 
         private void ResetInstances()
@@ -512,6 +525,9 @@ namespace MyeScripting
 
         [UnmanagedCallersOnly]
         public static void NativeInvokeCollision(int handle, MyeEntityId other, int kind, MyeVec3 normal) => Inst.InvokeCollision(handle, other, kind, normal);
+
+        [UnmanagedCallersOnly]
+        public static void NativeInvokeBreak(int handle, MyeEntityId piece, MyeVec3 point, float impulse) => Inst.InvokeBreak(handle, piece, point, impulse);
 
         [UnmanagedCallersOnly]
         public static int NativeGetFieldValue(int handle, int fieldIndex, byte* buf, int bufLen)

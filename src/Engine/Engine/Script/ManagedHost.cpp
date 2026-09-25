@@ -420,6 +420,25 @@ void ManagedHost::DispatchCollision(EntityID self, EntityID other, int kind, Mye
     }
 }
 
+void ManagedHost::DispatchBreak(EntityID root, EntityID piece, MyeVec3 point, float impulse)
+{
+    if (!ready_ || types_.empty() || !vt_.InvokeBreak) {
+        return; // 旧 MyeScripting.dll (スロット未設定) は無視
+    }
+    World& world = scene_->GetWorld();
+    for (CsType& type : types_) {
+        void* payload = world.GetComponentRaw(root, type.componentId);
+        if (!payload) {
+            continue;
+        }
+        const int32_t handle = *static_cast<int32_t*>(payload);
+        if (handle == 0) {
+            continue; // まだインスタンス化されていない
+        }
+        vt_.InvokeBreak(handle, ToShared(piece), point, impulse);
+    }
+}
+
 bool ManagedHost::IsManagedComponent(ComponentTypeId t) const { return FindByComponent(t) != nullptr; }
 
 const std::vector<ManagedHost::ManagedFieldInfo>*

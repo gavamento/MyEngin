@@ -32,6 +32,7 @@ namespace MyeScripting
             vt->Deserialize = &ScriptRuntime.NativeDeserialize;
             vt->ResetInstances = &ScriptRuntime.NativeResetInstances;
             vt->InvokeCollision = &ScriptRuntime.NativeInvokeCollision;
+            vt->InvokeBreak = &ScriptRuntime.NativeInvokeBreak;
 
             Engine.Log("[csharp] managed runtime ready (.NET " + Environment.Version + ")");
             return 0;

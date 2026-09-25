@@ -20,6 +20,8 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Physics/FractureLibrary.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
+#include "Engine/Engine/Script/ManagedHost.h" // M80l: onBreak (C#)
+#include "Engine/Engine/Script/ScriptHost.h"  // M80l: onBreak (C++)
 
 using namespace DirectX;
 
@@ -204,10 +206,13 @@ void CopyOtherRigidbodyFields(const RigidbodyComponent& src, RigidbodyComponent&
 }
 
 // 1 個の Destructible を処理する: 荷重→接着の破断→塊ごとの連結成分の作り直し→分かれた
-// 成分の昇格 (spec §4.1 破断 1〜7)。myPieces は fp->root==root な現在の全破片 (順不同)
+// 成分の昇格 (spec §4.1 破断 1〜7)。myPieces は fp->root==root な現在の全破片 (順不同)。
+// 今回新しく分かれた塊の onBreak 通知は outBreakEvents の末尾へ「新リーダー index 昇順」で
+// 積む (spec §4.1 破断 8。呼び出し側がルート index 昇順に呼べば全体順序も満たされる)
 void ProcessRoot(World& world, EntityID root, DestructibleComponent& dc, const FractureAssetHandle& asset,
                  double avgNeighborArea, const std::vector<PieceEntry>& myPieces,
-                 const std::vector<ShapeImpulse>& shapeImpulses, float dt)
+                 const std::vector<ShapeImpulse>& shapeImpulses, float dt,
+                 std::vector<FractureBreakEvent>& outBreakEvents)
 {
     const int32_t n = static_cast<int32_t>(asset.pieces.size());
     if (n <= 1) {
@@ -304,6 +309,9 @@ void ProcessRoot(World& world, EntityID root, DestructibleComponent& dc, const F
 
     const EntityID rootParent = world.GetParent(root);
     int32_t newLeaders = 0;
+    // (新リーダー index, onBreak 通知) — owners の走査順は index 順とは限らないため、
+    // 全 owner を処理し終えてから index 昇順に並べ直して outBreakEvents へ積む
+    std::vector<std::pair<int32_t, FractureBreakEvent>> pendingBreaks;
 
     for (OwnerGroup& og : owners) {
         const bool isRootOwner = (og.owner == root);
@@ -455,6 +463,26 @@ void ProcessRoot(World& world, EntityID root, DestructibleComponent& dc, const F
             const double compVol = compVolume(members);
             const XMFLOAT3 newVel = velocityAt(compCenter(members));
 
+            // onBreak 用 (spec §4.1 破断 8): この塊で荷重最大の破片の原点とその荷重。
+            // members は昇順なので同値は index 最小が残る (strict >)
+            int32_t maxLoadIdx = members.front();
+            for (int32_t m : members) {
+                if (load[static_cast<size_t>(m)] > load[static_cast<size_t>(maxLoadIdx)]) {
+                    maxLoadIdx = m;
+                }
+            }
+            {
+                float mpx, mpy, mpz, mqx, mqy, mqz, mqw;
+                ComposeEntityWorldPose(world, entityOf[static_cast<size_t>(maxLoadIdx)], mpx, mpy,
+                                      mpz, mqx, mqy, mqz, mqw);
+                FractureBreakEvent ev;
+                ev.root = root;
+                ev.leader = leaderEntity;
+                ev.point = { mpx, mpy, mpz };
+                ev.impulse = load[static_cast<size_t>(maxLoadIdx)];
+                pendingBreaks.emplace_back(leaderIndex, ev);
+            }
+
             // M80j: 骨追従 (スキン破壊) をやめて剛体化する。世界姿勢は ReparentKeepWorld が
             // 今 tick の LocalTransform (PartFollowSystem が既に書き終えた値) から読むので、
             // 外す順序は結果に影響しない (どちらも tick 末のコマンドバッファへ積むだけ)
@@ -487,6 +515,14 @@ void ProcessRoot(World& world, EntityID root, DestructibleComponent& dc, const F
     if (newLeaders > 0) {
         dc.broken = true;
         dc.detachedCount += newLeaders;
+    }
+
+    // 新リーダー index 昇順で確定させる (spec §4.1 破断 8)。owners の走査順は
+    // parentOf の出現順で決まり index 順とは限らないため、ここで並べ直す
+    std::sort(pendingBreaks.begin(), pendingBreaks.end(),
+             [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (auto& pb : pendingBreaks) {
+        outBreakEvents.push_back(std::move(pb.second));
     }
 }
 
@@ -652,7 +688,8 @@ bool ShouldHideUnbrokenFracturePiece(const DestructibleComponent* rootDestructib
     return rootDestructible != nullptr && !rootDestructible->broken;
 }
 
-void FractureSystem::Update(World& world, float dt, const std::vector<ShapeImpulse>& shapeImpulses)
+void FractureSystem::Update(World& world, float dt, const std::vector<ShapeImpulse>& shapeImpulses,
+                            ScriptHost* scripts, ManagedHost* managed)
 {
     if (dt <= 0.0f) {
         return;
@@ -668,12 +705,14 @@ void FractureSystem::Update(World& world, float dt, const std::vector<ShapeImpul
             return;
         }
         ran = true;
-        UpdateImpl(world, dt, shapeImpulses);
+        UpdateImpl(world, dt, shapeImpulses, scripts, managed);
     });
 }
 
-void FractureSystem::UpdateImpl(World& world, float dt, const std::vector<ShapeImpulse>& shapeImpulses)
+void FractureSystem::UpdateImpl(World& world, float dt, const std::vector<ShapeImpulse>& shapeImpulses,
+                                ScriptHost* scripts, ManagedHost* managed)
 {
+    lastBreakEvents_.clear();
     std::unordered_map<uint64_t, std::vector<PieceEntry>> piecesByRoot;
     struct RootJob {
         EntityID root;
@@ -696,6 +735,10 @@ void FractureSystem::UpdateImpl(World& world, float dt, const std::vector<ShapeI
                 jobs.push_back({ e, static_cast<DestructibleComponent*>(arch.GetPtr(di, row)) });
             }
         });
+        // onBreak の配信順を「ルート index 昇順」にする (spec §4.1 破断 8)。ForEachArchetype の
+        // 走査順はアーキタイプ内の行順で、複数 Destructible の相対順を保証しない
+        std::sort(jobs.begin(), jobs.end(),
+                 [](const RootJob& a, const RootJob& b) { return a.root.index < b.root.index; });
     }
 
     MYE_PROFILE_SCOPE("fracture.process");
@@ -768,7 +811,22 @@ void FractureSystem::UpdateImpl(World& world, float dt, const std::vector<ShapeI
             }
         }
 
-        ProcessRoot(world, job.root, *job.dc, *handle, avgNeighborArea, myPieces, shapeImpulses, dt);
+        const size_t eventsBefore = lastBreakEvents_.size();
+        ProcessRoot(world, job.root, *job.dc, *handle, avgNeighborArea, myPieces, shapeImpulses, dt,
+                   lastBreakEvents_);
+        // 今回この root で新しく積まれた分だけ配信する (spec §4.1 破断 8: ルート index →
+        // 新リーダー index 昇順。jobs が root index 昇順、ProcessRoot 内が leader index
+        // 昇順なので、lastBreakEvents_ 全体もこの順で並ぶ)
+        for (size_t i = eventsBefore; i < lastBreakEvents_.size(); ++i) {
+            const FractureBreakEvent& ev = lastBreakEvents_[i];
+            const MyeVec3 point{ ev.point.x, ev.point.y, ev.point.z };
+            if (scripts != nullptr) {
+                scripts->DispatchBreak(ev.root, ev.leader, point, ev.impulse);
+            }
+            if (managed != nullptr) {
+                managed->DispatchBreak(ev.root, ev.leader, point, ev.impulse);
+            }
+        }
         ProcessAfterBreak(world, *job.dc, myPieces, preTickLeaders);
     }
 }

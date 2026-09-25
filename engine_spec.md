@@ -2266,6 +2266,112 @@ are not a test. `--no-audio` costs nothing (the update returns before the librar
 | `--modal-wav-dump DIR` | Write every synthesised clip to `DIR\shot_*.wav` — the way to check "does it sound right" with numbers instead of ears |
 | `--modal-face-probe` | With `--modal-wav-dump`: re-synthesise the first source's six faces (a real drop only ever lands on one) into `DIR\probe_<mesh>_<face>.wav`, the only way to measure "a different face sounds different" without a GUI. The probe impulse (`kModalPreviewDefaultImpulse`, shared with the Inspector's preview slider default) can be overridden with the `MYE_MODAL_PROBE_IMPULSE` environment variable for calibration sweeps (§10.7.2); unset, it costs nothing (only read inside the already-`--modal-face-probe`-gated branch) |
 
+### 10.8 Destructible fracture (M80)
+
+**What it does.** A designer selects a mesh, presses "Generate pieces" on `Destructible`, and gets a
+Voronoi-split mesh that renders and collides as one rigidbody until something hits it hard enough,
+at which point the struck cluster separates and falls apart as its own rigidbody. Full design
+history (rejected alternatives, load-bearing decisions, per-sub verdicts) lives in
+`plans\m80-destruction\spec.md` — this section only records the parts that are load-bearing for
+future work on the engine.
+
+**Pipeline.** Baking is a pure function (`FractureBake.h`): weld-and-check closedness → (reject, or
+voxelize with `openMeshMode=1` and re-extract a closed surface via surface nets) → place `pieceCount`
+interior seeds with the engine's `Pcg32` → cut a Voronoi cell per seed → clip the source mesh into
+outer faces per cell, cut the shared bisector plane once per seed pair for the cap (mirrored, never
+re-cut) → split disconnected shells into separate pieces → merge slivers below `minVolumeRatio` into
+their largest-shared-face neighbour → convex-hull each piece → build the adjacency graph (shared
+cap area). The result is a deterministic byte stream (`.mfrac`, assets-side with a `.meta`, `ByteWriter`/
+`ByteReader`, magic `MFRC`) registered into `MeshLibrary` and `ConvexColliderLibrary` under
+`guid://<mfracGuid>#frag<i>` / `#frag<i>#cap` / `#frag<i>#hull`. **`ConvexColliderLibrary::Clear()`
+must be paired with `FractureLibrary::ReregisterAll()`** — `Clear()` drops shape=5 registrations and
+a piece that resolves to null silently stops colliding (no error, just a piece the ball passes
+through). `--fracture-demo` skips the file and bakes straight into memory (`fracture://demo_*`);
+Debug and Release baking independently and still producing a bit-identical replay *is* the executable
+proof that the split core is construction-order-independent.
+
+**Runtime shape — root proxy.** `Destructible` (TypeId 64) lives on the source mesh's entity and
+gets a `Rigidbody(compoundColliders=true)` if it doesn't have one; its own `Collider` (if any) is
+removed. `BuildFracturePieces` creates, per baked piece, a child `Frag<i>` (`FracturePiece`, TypeId
+65, `Collider(shape=5)` against the convex hull) and a grandchild `_cap` (inner-material
+`MeshRenderer`, no collider). Before the first break `RenderSystem` draws only the root's original
+mesh (`ShouldHideUnbrokenFracturePiece`); after `Destructible.broken` flips true it draws only the
+pieces, permanently — the switch reads one hashed bool, so it costs nothing extra to check every
+frame and can't disagree between Debug and Release.
+
+**Load model and breaking (`FractureSystem`, tick order: after `CollisionSystem`, before the
+structural-change flush).** Each piece's load is `L_i = C_i + damage_i`, where `C_i` is this tick's
+summed shape-level contact impulse divided by `dt` (a per-shape breakout of the existing solid-contact
+impulse, gated so physics only computes it when a `Destructible` exists in the world) and `damage_i`
+is a permanent accumulator that only `ApplyFractureDamage` writes. An adhesion edge `(i,j)` snaps
+when `max(L_i, L_j) >= strength * clamp(area_ij / avgArea, 0.25, 4)`. Snapped edges are re-run
+through a union-find over the surviving graph; a cluster (the root, or a previously promoted leader)
+that splits into two or more components keeps its largest-volume component in place (root) or the
+component containing the existing leader (leader), and promotes the lowest-index piece of every
+other component to a fresh `Rigidbody` reparented under the root's own parent (world pose preserved).
+Mass follows `total_mass * component_volume / total_volume`; velocity follows the rigid-body field
+`v + ω × (r_new − r_old)`. A kinematic root (e.g. a wall bolted to the world) keeps whatever stays
+behind kinematic and always spawns dynamic leaders — this is how "shoot a hole in the wall, the rest
+stays standing" is represented without a separate anchor system. Jobs (one per `Destructible`) are
+processed **root-`EntityID.index` ascending** specifically so that the `onBreak` script event below
+has a deterministic cross-object order; within one root, newly promoted leaders are delivered
+**leader-piece-index ascending**.
+
+**The six after-break behaviours** (`Destructible.afterBreak`, ticked per leader via
+`FracturePiece.releaseTicks`, never applied to whatever stayed on the root): 0 keep forever; 1
+destroy after `afterBreakTicks`; 2 zero every collider's `mask` after `afterBreakTicks` then destroy
+after `fadeTicks` more (sinks through the floor, then vanishes); 3 linearly scale the leader to
+(nearly) zero over `fadeTicks` then destroy; 4 drop the `Rigidbody` once `isSleeping` (the cluster
+becomes static geometry); 5 destroy the oldest leaders (by `releaseTicks` descending, ties by index)
+once this `Destructible`'s live-leader count exceeds `maxDebris`. All of it runs on tick counts, never
+wall-clock time, so it replays identically regardless of frame rate.
+
+**Scripting (ABI v22, M80l).** `ApplyFractureDamage(entity, point, radius, amount)` accepts either
+the root or a piece; with `radius <= 0` it adds `amount` to the nearest piece's `damage`, otherwise it
+distributes `amount * (1 - d/radius)` to every piece within `radius`. It writes synchronously at
+call time, so calling it from `Update` breaks pieces that same tick and calling it from `LateUpdate`
+defers the break to the next tick's `FractureSystem::Update`. `onBreak(state, ctx, piece, point,
+impulse)` (new `MyeScriptDesc` field, both C++ `Script<T>::OnBreak` via `ScriptAPI.h`'s
+`GetBreakFn<T>` and C# `MyeScript.OnBreak`) fires once per newly-promoted leader, to every script
+component that already lives on the **root** entity; `piece` is the new leader, `point`/`impulse`
+are the origin and load of whichever piece in that cluster carried the highest load (usually, but
+not always, the one that was actually hit). Reading state (`broken`, `detachedCount`) needs no new
+slot — the existing generic `GetComponentField` already covers it (decision ledger: don't grow the
+ABI for things the generic accessor already reaches).
+
+**Determinism and existence gates.** The split core, `.mfrac` round-trip, adhesion/union-find math
+and the six after-break behaviours are all driven exclusively by hashed component fields and tick
+counts — no wall-clock time, no hash-container iteration order, no floating-point path that isn't
+`/fp:precise`. Physics only computes the per-shape impulse breakout, and `FractureSystem` only runs
+at all, when at least one `Destructible` exists in the world — a scene with none is bit-identical to
+the pre-M80 engine.
+
+**Budget (measured, `plans\m80-destruction\bench.md`).** A single `Destructible` should stay at or
+under **64 pieces** for the recommended default; the hard structural cap is **256 pieces / 32
+neighbours** (silently trimmed at bake time, count recorded in the bake result). Because the whole
+scene's destructibles share one 60 Hz tick budget, **multiple simultaneous breaks add up**: 8 objects
+breaking in the same tick at 32 pieces each measured **16.4 ms** of physics + `FractureSystem` time
+on the reference machine — comparable to the entire frame budget on its own. A gameplay system that
+can trigger many breaks at once (an explosion hitting a wall of destructibles) needs to budget for
+this the same way it would budget for any other O(pieces²) burst, e.g. by staggering triggers across
+ticks rather than firing them all in `Update` of the same frame.
+
+**Non-goals / v1 limits** (tracked in `plans\m80-destruction\spec.md` §3 "back-burner", carried
+forward here so they don't get silently assumed fixed): a concave piece is approximated by **one**
+convex hull, not a convex decomposition, so its collision volume is slightly larger than its visual
+mesh; pieces are only **geometrically** closed (volume-preserving, near-zero vector area), not
+**topologically** welded, so a fracture's seams can show a few-ULP gap under extreme close-up and
+mid-simulation re-splitting (a "B" feature) isn't supported yet; a non-uniform scale on the
+*destructible's own parent* combined with rotation is not guaranteed to separate correctly (the
+piece-local math assumes the root's own rotation/scale, not an ancestor's); a broken skinned mesh
+never regains bone-driven motion — once any piece separates, the whole model switches to rigid-body
+pieces following their last bound bone permanently, and the pre-break bone *velocity* is not
+transferred to the first tick of physical motion (v1 uses the root's velocity only); mid-tick
+punch-through is not modelled — the tick that breaks a static wall resolves the incoming collision
+against the wall's pre-break (in a kinematic case, infinite) mass, so a bullet stops or bounces on
+the same tick the wall starts to come apart, and the departing pieces start from that tick's
+rest/kinematic velocity rather than inheriting a share of the impact.
+
 ---
 
 ## 11. Debug/Release Consistency Policy
@@ -2315,7 +2421,7 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
   the field left every replay pair and golden image that predates it bit-identical (the suite is
   seven pairs and twenty-four images today)
 - The test can run in CI through a command-line invocation such as `Editor.exe --replay-verify xxx.rep`
-- `tools\replay_verify.bat` runs **seven scene pairs**, each rebuilt from code before recording:
+- `tools\replay_verify.bat` runs **nine scene pairs**, each rebuilt from code before recording:
   the default demo (scripts, physics, particles, schema fields), the parts showcase
   (`--parts-demo`: skinned bones, part following, part raycasts), the game-flow showcase
   (`--flow-demo`, M51j: **LoadScene transitions across two scenes, TimeControl pause and
@@ -2329,11 +2435,18 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
   at `substeps = 16`) and the acoustic showcase (`--acoustic-demo`, M65g: the wave slot table —
   the one part of the acoustic field that *is* simulation state — plus the enemy FSM and the
   player scripts, **recorded with `--synth-input`** so that the raw mouse deltas the look angles
-  integrate are not a constant zero). The flow pair is the aggregate proof that the M51
-  gameplay-flow features are replay-deterministic; the physics and joint pairs are the same for
-  every equation M59 and M60 added. The joint pair also covers the `.mcvx` convex-hull cook:
-  Debug and Release bake it independently into separate cooked directories and still agree bit
-  for bit
+  integrate are not a constant zero) and the UI showcase (`--ui-demo --ui-demo-input`, M75f:
+  toggles, sliders and the interaction state machine — hovered/pressed/clicked/focused/changed —
+  driven by a scripted input timeline so the pair actually exercises presses instead of recording
+  silence) and the destruction showcase (`--fracture-demo`, M80: the pre-baked Voronoi pieces
+  fall and roll as one compound rigidbody, cannon balls detach chunks from a rolling box, a
+  kinematic wall and a skinned arm (§10.8), and a GameLogic script breaks the wall early through
+  `ApplyFractureDamage` and receives `onBreak` — the pair is what proves the ABI v22 event
+  round-trips bit-identically between Debug and Release). The flow pair is the aggregate proof
+  that the M51 gameplay-flow features are replay-deterministic; the physics and joint pairs are
+  the same for every equation M59 and M60 added. The joint pair also covers the `.mcvx`
+  convex-hull cook: Debug and Release bake it independently into separate cooked directories and
+  still agree bit for bit
 
 **Field-level divergence diagnosis (M52a).** Knowing *which tick* broke is not the same as
 knowing *what* broke. `HashWorld`, `HashWorldDetailed` and `HashWorldDump` are three exits of a
@@ -2845,7 +2958,7 @@ interleave — several tracks ran in parallel and a few milestones were revisite
 | Assets and prefabs | M13, M23, M24, M30, M36, M39-M41, M48-M50 | Prefabs; asset database with `.meta` GUIDs and async loading; BCn / DDS cook and ufbx FBX import; GUID key resolution that survives renames; collision layers and masks; component copy / paste / reset; static mesh colliders with a BVH; **compose assets (`.actor.json`, prefab 2.0)** with parts, sockets and structural overrides (ADR-011 / ADR-012) |
 | Scripting, ABI and input | M19, M21, M31, M34, M35, M37, M47, M64, M70 | Gamepad, XAudio2 and `LoadScene`; in-game UI; script drag-and-drop attach; Japanese in-game text with a dynamic glyph cache; `fillAmount`, 9-slice, focus navigation; ABI bundles; editor localisation (ADR-010); raw mouse look and cursor lock, `Active` propagating down the hierarchy; a **resolution-independent UI canvas** with engine-owned hit testing and focus (§6.11 / §6.12), lossless scene loading (§8.3), and Inspector metadata plus world-space and rotation getters for script fields (§5.2) |
 | Audio | M45 | Decode, voice pool, bus graph with dB faders and mute / solo, reverb presets, streaming music, a procedural synth window |
-| Physics | M20, M28, M59, M60, M60′ | Rigid bodies and raycasts; capsules and OBBs; an accumulated-impulse substepping solver with aerodynamics, buoyancy, gyroscopic terms, friction, material assets, sleep and islands, CCD and terrain height fields; joints, motors, breakage, compound and convex colliders, ragdolls, vehicles; an XPBD lane for deformables (rope) |
+| Physics | M20, M28, M59, M60, M60′, M80 | Rigid bodies and raycasts; capsules and OBBs; an accumulated-impulse substepping solver with aerodynamics, buoyancy, gyroscopic terms, friction, material assets, sleep and islands, CCD and terrain height fields; joints, motors, breakage, compound and convex colliders, ragdolls, vehicles; an XPBD lane for deformables (rope); **Chaos-Destruction-style pre-baked fracture** (§10.8): Voronoi splitting, root-proxy rendering, adhesion breaking, six after-break behaviours and ABI v22's `ApplyFractureDamage`/`onBreak` (ADR-021) |
 | Acoustics | M65, M68 | Integer chamfer wavefront propagation in which **one field serves four roles** — the glow volume that draws the world, enemy hearing with direction of arrival, navigation drawn from the same weights, and the player's ears (ADR-017); occlusion and diffraction shaping, room reverb interpolation, waves that are actually audible |
 | Determinism and verification | M6, M51, M52 | Replay hashing across Debug / Release plus static rule checks; sim indices, game flow, pause and time scale, save / load, staged packaging; field-level hash diffing, a `git bisect` wrapper, time travel, crash bundles that replay, **two-player P2P rollback netcode** (ADR-013); CI and pixel regression (ADR-014) |
 | Project system and source control | M26, M27, M33, M66 | `--project` and the project manager; editor theme and Japanese fonts; **Git for the project repository from inside the editor**, backed by an in-process Rust cdylib behind six C entry points (§14, ADR-015) |
@@ -2863,7 +2976,7 @@ to the physics roadmap.
 | Item | State |
 |---|---|
 | M60′ e-n (XPBD deformables) | **Paused.** a-d shipped (backend, solver core, rope, two-way attachment). The remaining ten sub-milestones — particle/world collision, cloth, soft bodies, plasticity, showcase — are unstarted, and rope still has no replay or screenshot coverage |
-| M61 / M62 (physics roadmap) | **Unstarted.** Fracture, and thermal / fluid / optical / electrical. Roadmap only; see the numbering note above |
+| M61 / M62 (physics roadmap) | **Partially superseded.** The old roadmap reserved these numbers for fracture and for thermal / fluid / optical / electrical, but both numbers were later spent on the particle A-group expansion (see the numbering note above). Fracture itself shipped under its own number, M80 (§10.8); thermal / fluid / optical / electrical are still unstarted |
 | Dogfooding backlog | 5 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open (11 debug-draw log, 13 `builtin://wheel`, 17 CC ⇄ Rigidbody, 19 missing-`PhysicsEnvironment` warning, 20 script-to-script messaging). Each needs a new implementation surface; 20 needs the next ABI bump (`onMessage` on `MyeScriptDesc`) |
 
 ---
@@ -2890,7 +3003,10 @@ ADR-012 structural prefab overrides / **ADR-013 predictive rollback netcode** (�
 **ADR-014 CI and pixel regression** (§11) /
 **ADR-015 in-process Rust collab service (`MyeCollab.dll`)** (§14) /
 **ADR-016 ReSTIR reflections and `ReflectionClass`** (§6.4) /
-**ADR-017 acoustic propagation driving real audio** (§10.6).
+**ADR-017 acoustic propagation driving real audio** (§10.6) /
+ADR-018 time-travel branches (what-if replay) / ADR-019 GUID-keyed model sub-asset keys /
+ADR-020 Deep-Modal impact synthesis (§10.7) /
+**ADR-021 pre-baked destructible fracture** (§10.8).
 
 ---
 

@@ -264,11 +264,12 @@ if exist cache\ui_showcase.scene.json del /q cache\ui_showcase.scene.json
 call :chain cache\golden_ui.rep "--ui-demo --ui-demo-input" "--ui-demo"
 exit /b %ERRORLEVEL%
 
-rem ---- 破壊 (M80f)。壊れる前の縦切り: 破片の複合が 1 剛体として床へ落ちて転がる ----
-rem 資産はファイルを作らずビルド時にメモリ上で焼く (fracture://demo_*)。Debug と Release が
-rem 独立に焼いて 600 tick の replay が一致すること自体が、分割コアの構成間一致
-rem (sub-02 の契約) を実行経路で証明する。FractureSystem (破断) は sub-07 以降なので
-rem このペアでは何も割れない — 破断の被覆はそちらのサブで追加する
+rem ---- 破壊 (M80)。資産はファイルを作らずビルド時にメモリ上で焼く (fracture://demo_*)。
+rem Debug と Release が独立に焼いて replay が一致すること自体が、分割コアの構成間一致
+rem (sub-02 の契約) を実行経路で証明する。着弾で箱・壁・スキン腕が割れて塊が分離し
+rem (FractureSystem、sub-07/08/10)、固定壁は M80l の GameLogic スクリプト
+rem (FractureDamageProbe) が着弾より先に ApplyFractureDamage で割って onBreak を受け取る —
+rem ABI v22 の Debug/Release divergence もこのペアで検知する
 rem シーンはコードから毎回組み直す (parts / physics / joints と同じ流儀)
 :job_fracture
 if exist cache\fracture_showcase.scene.json del /q cache\fracture_showcase.scene.json

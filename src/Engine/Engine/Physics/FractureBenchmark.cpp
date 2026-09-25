@@ -76,6 +76,44 @@ FractureMesh MakeBenchBox(float hx, float hy, float hz)
     return m;
 }
 
+// 蓋のない箱 (+Z 面を欠く)。ボクセル化 (openMeshMode=1) の焼き時間計測用
+// (FractureSelfTest.cpp の MakeOpenBox と同じ構成。非公開ヘルパはファイルごとに複製する
+// 既存の流儀)
+FractureMesh MakeBenchOpenBox(float hx, float hy, float hz)
+{
+    FractureMesh m;
+    const int32_t p[8] = {
+        AddVert(m, -hx, -hy, -hz, 0, 0, 0), AddVert(m, hx, -hy, -hz, 0, 0, 0),
+        AddVert(m, hx, hy, -hz, 0, 0, 0),   AddVert(m, -hx, hy, -hz, 0, 0, 0),
+        AddVert(m, -hx, -hy, hz, 0, 0, 0),  AddVert(m, hx, -hy, hz, 0, 0, 0),
+        AddVert(m, hx, hy, hz, 0, 0, 0),    AddVert(m, -hx, hy, hz, 0, 0, 0),
+    };
+    auto quad = [&](int32_t a, int32_t b, int32_t c, int32_t d) {
+        Tri(m, a, b, c);
+        Tri(m, a, c, d);
+    };
+    quad(p[0], p[3], p[2], p[1]); // -Z
+    // +Z を作らない (穴)
+    quad(p[0], p[1], p[5], p[4]); // -Y
+    quad(p[3], p[7], p[6], p[2]); // +Y
+    quad(p[0], p[4], p[7], p[3]); // -X
+    quad(p[1], p[2], p[6], p[5]); // +X
+    return m;
+}
+
+// 1 枚の平面 (quad)。ボクセル化の焼き時間計測用 (FractureSelfTest.cpp の MakePlaneQuad と同じ)
+FractureMesh MakeBenchPlaneQuad(float half)
+{
+    FractureMesh m;
+    const int32_t a = AddVert(m, -half, 0, -half, 0, 1, 0);
+    const int32_t b = AddVert(m, half, 0, -half, 0, 1, 0);
+    const int32_t c = AddVert(m, half, 0, half, 0, 1, 0);
+    const int32_t d = AddVert(m, -half, 0, half, 0, 1, 0);
+    Tri(m, a, b, c);
+    Tri(m, a, c, d);
+    return m;
+}
+
 // 名前ごとの平均・最大 (ms)。prof::FrameScopes() の 1 tick 分を Record() で積む
 struct ScopeStat {
     double sumMs = 0.0;
@@ -254,6 +292,35 @@ int RunFractureBenchmark()
             RunOneBench(bake, pieceCount, objectCount);
         }
     }
+
+    // ---- ボクセル化 (開いたメッシュ) の焼き時間: 解像度 32/48/64 × 開いた箱/平面。
+    //      voxelResolution の既定値・推奨解像度を決めるための表 (sub-04/sub-14 の実測の
+    //      再現・更新用)。Debug --selftest には正しさの被覆だけを残し (pieceCount を
+    //      落として軽量化)、この表 (pieceCount=16 の実測値) は --fracture-bench (Release)
+    //      に一本化した (sub-11/sub-12)。合否判定はしない (計測専用) ----
+    {
+        auto bakeOpenMesh = [](const char* label, const FractureMesh& mesh, int32_t resolution) {
+            FractureBakeInput in;
+            in.sourceMesh = mesh;
+            in.seed = 11;
+            in.pieceCount = 16;
+            in.openMeshMode = 1;
+            in.voxelResolution = resolution;
+            FractureBakeResult r;
+            const auto t0 = std::chrono::steady_clock::now();
+            const bool ok = BakeFracture(in, r);
+            const auto t1 = std::chrono::steady_clock::now();
+            const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+            MYE_LOG_INFO("[fracture-bench] voxelize bake: %s res=%d pieceCount=16 ok=%d pieces=%d = %.2f ms",
+                        label, resolution, ok && r.success ? 1 : 0,
+                        ok && r.success ? static_cast<int>(r.pieces.size()) : -1, ms);
+        };
+        for (const int32_t res : { 32, 48, 64 }) {
+            bakeOpenMesh("open box", MakeBenchOpenBox(1.0f, 1.0f, 1.0f), res);
+            bakeOpenMesh("plane quad", MakeBenchPlaneQuad(1.0f), res);
+        }
+    }
+
     MYE_LOG_INFO("[fracture-bench] ==== done ====");
     return 0;
 }

@@ -37,6 +37,8 @@ struct MyeManagedVTable {
     void (*ResetInstances)();
     // M28c 末尾追加 (Interop.cs 側も同順で追加すること)。kind: 0=enter 1=stay 2=exit
     void (*InvokeCollision)(int32_t handle, MyeEntityId other, int32_t kind, MyeVec3 normal);
+    // v22 (M80l) 末尾追加。piece = 分かれた塊のリーダー、point/impulse は荷重最大の破片
+    void (*InvokeBreak)(int32_t handle, MyeEntityId piece, MyeVec3 point, float impulse);
 };
 
 // CoreCLR (.NET 8) をホストし、C# スクリプト (MyeScripting.dll + Roslyn) を駆動する。
@@ -122,6 +124,9 @@ public:
     void DispatchTrigger(EntityID self, EntityID other, bool enter);
     // ソリッド衝突イベント (M28c)。kind: 0=enter 1=stay 2=exit。normal は相手→自分 (ワールド)
     void DispatchCollision(EntityID self, EntityID other, int kind, MyeVec3 normal);
+    // 破壊イベント (v22、M80l)。root にあるスクリプトへ、分かれた塊のリーダー (piece)・
+    // その塊で荷重最大の破片の原点 (point)・その荷重 (impulse) を渡す
+    void DispatchBreak(EntityID root, EntityID piece, MyeVec3 point, float impulse);
 
     // ---- Inspector / シリアライズ連携 ----
     struct ManagedFieldInfo {

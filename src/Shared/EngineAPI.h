@@ -34,7 +34,8 @@
 // v20: 汎用タグ TagIndex / HasTag / SetTag / FindEntitiesWithTag
 // v21 (M78e): Compute ABI — CreateComputeBuffer / ReleaseComputeBuffer / SetComputeBuffer /
 //             SetComputeFloat / SetComputeFloat4 / SetComputeTextureFromAsset / DispatchCompute
-#define MYE_API_VERSION 21u
+// v22 (M80l): 破壊 (M80) — ApplyFractureDamage スロット + MyeScriptDesc 末尾の onBreak イベント
+#define MYE_API_VERSION 22u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -644,6 +645,15 @@ struct MyeEngineApi {
     //   シェーダ無効・デバイス未接続は 0 (クラッシュしない)
     int (*DispatchCompute)(void* engine, const char* shaderUtf8,
                            uint32_t gx, uint32_t gy, uint32_t gz);
+
+    // ---- v22 (M80l): 破壊への損傷 ----
+    // ApplyFractureDamage: entity (Destructible のルートか、その破片のどちらでもよい) の
+    //   Destructible 配下で、原点が point から radius 以内の破片へ amount*(1-d/radius) を
+    //   加算する (radius<=0 は最寄りの 1 破片へ amount をそのまま)。呼んだ瞬間に damage
+    //   フィールドへ書く (即時・同期)。対象が Destructible/FracturePiece のどちらでも
+    //   ないエンティティ・破断済みで資産が解決できない場合は何もしない
+    void (*ApplyFractureDamage)(void* engine, MyeEntityId entity, MyeVec3 point, float radius,
+                                float amount);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

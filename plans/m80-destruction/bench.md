@@ -127,6 +127,36 @@ STL イテレータチェック込みのため、既存の `FractureSelfTest.cpp
 留める。破片数が多いシーン (N=128/256 × 複数体) ではドローコール数が線形に増える設計上の
 制約として `engine_spec.md` 側に書き添えるのが適切 (sub-12 の文書化で反映)。
 
+**(sub-12 追記) `prof::GetRenderStats()` の中身と、上の「45 で変化しない」の原因**:
+`AddDraw()` は `RenderStats::drawCalls` を実際の `DrawIndexed(Instanced)` 呼び出し 1 回につき
++1 する (同一メッシュ・同一マテリアルの複数インスタンスを 1 回の `DrawIndexedInstanced` へ
+まとめる「run」なら、instance 数によらず呼び出しは 1 回)。`triangles` はその呼び出しが描く
+三角形数の合計。**フレーム単位** (`BeginFrame()` が `g_render={}` でクリア) の**全パス合算**
+(shadow map・main pass 等をまとめた値) であって、パスごとの内訳や上限による丸めは無い —
+つまり道具自体は正しく数えている。
+
+上の「45 で変化しない」という記録は、**一時プローブを `Editor.exe --frames N --screenshot` で
+撮っていたため**だった (screenshot-probe-recipes.md の「シーン撮りは Runtime.exe」の教訓と
+同じ落とし穴)。`Editor.exe` の `--frames`/`--screenshot` はエディタの Edit モードのままフレームを
+進めるだけで **Play (シミュレーション) を開始しない** — 物理も FractureSystem も一度も走らず、
+どの Destructible も `broken` が立たないまま同じ絵を出し続けるので、ドローコール数が
+変わらないのは当然だった (このサブで `Destructible.broken` の個数も同時にログして確認: 
+`Editor.exe` 経路では 130 フレーム通して `broken=0/3` のまま)。
+
+`tools\shot_verify.bat` が実際に呼んでいる **`Runtime.exe`** で同じシーンを撮り直すと、
+期待どおりの変化が見える (`broken=X/3` も同時ログ): tick 0〜5 は `draws=4`
+(床・破壊物 3 体のルート・カリングされた弾 3 個、`broken=0/3`)。M80l の
+`FractureDamageProbe` が壁をスクリプトから割る tick 5 の直後、tick 6 で `draws=26`
+(`broken=1/3`) へジャンプ。着弾で箱が割れる tick 台 (`broken=2/3`) で `draws=30`、
+スキン腕まで割れ切る tick 50 前後 (`broken=3/3`) で `draws=45` に達し、以後 (frame 120 の
+撮影ぶんを含め) その 45 のまま変化しない — **全 Destructible が一度でも割れたら、以後は
+「割れる前 1 ドロー ⇔ 割れた後 N ドロー」の差分が固定されて増減しなくなる**ため
+(既に分かれた破片がさらに細かく分かれても、破片エンティティの集合自体は増えない。
+`_cap` を含む破片メッシュの集合が変わるのは新しい塊が初めて分離する瞬間だけ)。
+**結論: root proxy の可視性ゲートはドローコール数に正しく効いている。sub-11 の「変化しない」は
+計測ツールの選び方 (Editor.exe) が原因で、破片が壊れる前から描かれていたわけではない**
+(むしろ逆で、Editor.exe 経路では一度も壊れていなかった)。
+
 ## 8. 検証コマンド
 
 ```

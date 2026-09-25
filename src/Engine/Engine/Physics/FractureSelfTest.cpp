@@ -33,6 +33,7 @@
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Renderer/GpuResources.h"
+#include "Shared/ScriptAPI.h" // M80l: onBreak (GetBreakFn<T>) のマクロ展開検査
 
 using namespace DirectX;
 
@@ -1262,15 +1263,21 @@ bool RunFractureSelfTest()
             }
         }
 
-        // ---- BakeFracture の入口: openMeshMode=1 (pieceCount=16) の解像度ごとの成否と
-        // 処理時間を記録する。解像度 32/48/64 の全部を合否として検証する (sub-14、libtess2
-        // への置き換えで解像度48/64のEarClip失敗は解消した) ----
+        // ---- BakeFracture の入口: openMeshMode=1 の解像度ごとの成否 (正しさの被覆だけ)。
+        // 解像度 32/48/64 の全部を合否として検証する (sub-14、libtess2 への置き換えで
+        // 解像度48/64のEarClip失敗は解消した)。res48/64 は pieceCount を 4 に落として
+        // 薄い壁の輪郭の接触 (sub-14 の修正対象そのもの) を踏むことだけを確かめる —
+        // 分割コアの計算量は解像度でなく pieceCount に強く効くため、被覆を落とさずに
+        // Debug の所要時間を大きく削れる。焼き時間の表 (pieceCount 16 を含む) は
+        // --fracture-bench (Release) へ移した (sub-11/sub-12)。時間は参考ログのみで
+        // 合否には数えない
         {
-            auto bakeOpenMesh = [&](const char* label, const FractureMesh& mesh, int32_t resolution) {
+            auto bakeOpenMesh = [&](const char* label, const FractureMesh& mesh, int32_t resolution,
+                                    int32_t pieceCount) {
                 FractureBakeInput in;
                 in.sourceMesh = mesh;
                 in.seed = 11;
-                in.pieceCount = 16;
+                in.pieceCount = pieceCount;
                 in.openMeshMode = 1;
                 in.voxelResolution = resolution;
                 FractureBakeResult r;
@@ -1288,36 +1295,20 @@ bool RunFractureSelfTest()
                 }
                 char buf[256];
                 std::snprintf(buf, sizeof(buf),
-                              "bake entry: %s openMeshMode=1 pieceCount=16 res=%d succeeds and all pieces close (%.2f ms, pieces=%d)",
-                              label, resolution, ms, ok && r.success ? static_cast<int>(r.pieces.size()) : -1);
+                              "bake entry: %s openMeshMode=1 pieceCount=%d res=%d succeeds and all pieces close (%.2f ms, pieces=%d)",
+                              label, pieceCount, resolution, ms,
+                              ok && r.success ? static_cast<int>(r.pieces.size()) : -1);
                 check(allValid, buf);
                 if (!allValid) {
                     MYE_LOG_ERROR("    reason: %s", r.failReason.c_str());
                 }
-                MYE_LOG_INFO("  bake timing (openMeshMode=1): %s res=%d = %.2f ms", label, resolution, ms);
             };
-            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 32);
-            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 32);
-            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 48);
-            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 48);
-            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 64);
-            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 64);
-        }
-
-        // ---- 焼き時間の記録 (解像度64/128/256、上限決定用。合否には数えない) ----
-        {
-            auto timeVoxelize = [&](const char* label, const FractureMesh& mesh, int32_t resolution) {
-                const auto t0 = std::chrono::steady_clock::now();
-                FractureVoxelizeResult r;
-                const bool ok = VoxelizeMeshForFracture(mesh, resolution, r);
-                const auto t1 = std::chrono::steady_clock::now();
-                const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-                MYE_LOG_INFO("  voxelize timing: %s (res=%d, tri=%d) = %.2f ms", label, resolution,
-                            ok ? r.mesh.TriCount() : -1, ms);
-            };
-            timeVoxelize("open box / res64", MakeOpenBox(1, 1, 1), 64);
-            timeVoxelize("open box / res128", MakeOpenBox(1, 1, 1), 128);
-            timeVoxelize("open box / res256", MakeOpenBox(1, 1, 1), 256);
+            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 32, 16);
+            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 32, 16);
+            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 48, 4);
+            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 48, 4);
+            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 64, 4);
+            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 64, 4);
         }
     }
 
@@ -2145,6 +2136,111 @@ bool RunFractureSelfTest()
                 }
                 check(allMatch, "fracture system (6b, pre-break): resuming from a pre-break snapshot with a "
                       "fresh FractureSystem instance matches an uninterrupted run byte-for-byte");
+            }
+            fracturelib::Install(nullptr);
+        }
+
+        // (16h、M80l) ScriptAPI.h の GetBreakFn<T>: GameLogic.dll を経由せず、
+        // マクロ展開だけを検査する (SchemaSelfTest.cpp の「GameLogic.dll をロードせずに
+        // マクロの展開を検査する」流儀と同じ)。MakeDesc<T> は Registrar を経由しないので
+        // グローバルなスクリプト表は汚さない
+        {
+            struct BreakProbeScript : Script<BreakProbeScript> {
+                int32_t brokenCount = 0;
+                MyeEntityId lastPiece{};
+                MyeVec3 lastPoint{};
+                float lastImpulse = 0.0f;
+                void OnBreak(MyeUpdateContext&, MyeEntityId piece, MyeVec3 point, float impulse)
+                {
+                    ++brokenCount;
+                    lastPiece = piece;
+                    lastPoint = point;
+                    lastImpulse = impulse;
+                }
+            };
+            const MyeScriptDesc desc = mye_script_detail::MakeDesc<BreakProbeScript>(
+                "BreakProbeScript", nullptr, 0);
+            check(desc.onBreak != nullptr,
+                  "ScriptAPI: GetBreakFn<T> detects OnBreak and wires MyeScriptDesc::onBreak");
+            if (desc.onBreak != nullptr) {
+                BreakProbeScript state;
+                MyeUpdateContext ctx;
+                const MyeEntityId piece{ 7u, 1u };
+                const MyeVec3 point{ 1.0f, 2.0f, 3.0f };
+                desc.onBreak(&state, &ctx, piece, point, 42.0f);
+                check(state.brokenCount == 1 && state.lastPiece.index == 7u
+                          && state.lastImpulse == 42.0f && state.lastPoint.x == 1.0f
+                          && state.lastPoint.y == 2.0f && state.lastPoint.z == 3.0f,
+                      "ScriptAPI: onBreak forwards (piece, point, impulse) to T::OnBreak unchanged");
+            }
+        }
+
+        // (16i、M80l) onBreak の通知内容: 中間の破片 (index 3) だけに強い衝撃を与えると
+        // 両側の接着が同時に切れ、{0,1,2} と {3} の 2 つの新リーダーへ分かれる (残留は
+        // {4..7} — 体積最大)。LastBreakEvents() は新リーダー index 昇順 (0 → 3) で、
+        // 荷重を受けていない側 ({0,1,2}) は同値タイで index 最小 (piece0) の原点・荷重 0、
+        // 直接衝撃を受けた側 ({3}) は piece3 の原点・荷重そのものを返す。
+        // スクリプト (ScriptHost/ManagedHost) を経由しない配信内容そのものの検算
+        // (DLL を介した配信経路自体は --fracture-demo + replay_verify が実行経路で確かめる)
+        {
+            constexpr int32_t kCount = 8;
+            FractureBakeResult rowBake = MakeRowFractureBake(kCount, 0.25f);
+
+            RenderResources resources;
+            ConvexColliderLibrary colliders;
+            colliders.Init(&resources);
+            FractureLibrary lib;
+            lib.Init(&resources, &colliders);
+            fracturelib::Install(&lib);
+            const FractureAssetHandle* handle = lib.RegisterBaked(
+                "fracture-selftest://break_event_row8", rowBake,
+                HashStr("fracture-selftest://break_event_row8_src"), 0, kCount, 0, 0);
+
+            Scene s;
+            World& w = s.GetWorld();
+            GameObject root = s.CreateGameObject("BreakEventRow8");
+            root.AddComponent<RigidbodyComponent>();
+            root.AddComponent<DestructibleComponent>();
+            auto* rootRb = root.GetComponent<RigidbodyComponent>();
+            rootRb->mass = 8.0f;
+            auto* d = root.GetComponent<DestructibleComponent>();
+            d->strength = 100.0f;
+            d->fractureAsset = AssetID{ HashStr("fracture-selftest://break_event_row8") };
+            BuildFracturePieces(w, root.Id(), *handle);
+            w.ApplyStructuralChanges();
+
+            const EntityID piece0 = FindPieceChild(w, root.Id(), 0);
+            const EntityID piece3 = FindPieceChild(w, root.Id(), 3);
+            check(!piece0.IsNull() && !piece3.IsNull(), "onBreak: row8 pieces 0/3 exist");
+
+            std::vector<ShapeImpulse> impulses = { { piece3, 1000.0f } };
+            FractureSystem fsys;
+            fsys.Update(w, 1.0f / 60.0f, impulses); // scripts/managed 省略 = 観測だけ
+            w.ApplyStructuralChanges();
+
+            check(d->broken && d->detachedCount == 2,
+                  "onBreak: a strong impact on an interior piece detaches both sides at once");
+            const auto& events = fsys.LastBreakEvents();
+            check(events.size() == 2, "onBreak: LastBreakEvents records exactly 2 new leaders");
+            if (events.size() == 2) {
+                check(events[0].root == root.Id() && events[1].root == root.Id(),
+                      "onBreak: both events carry this Destructible's root");
+                check(events[0].leader == piece0,
+                      "onBreak: event order is new-leader-index ascending (piece0 first)");
+                check(events[1].leader == piece3,
+                      "onBreak: event order is new-leader-index ascending (piece3 second)");
+                check(events[0].impulse == 0.0f,
+                      "onBreak: the untouched side reports zero load (no piece in {0,1,2} took an impulse)");
+                const float expectedImpulse = 1000.0f / (1.0f / 60.0f);
+                char buf[160];
+                std::snprintf(buf, sizeof(buf),
+                              "onBreak: the directly-hit side reports its own load (%.1f, expected %.1f)",
+                              events[1].impulse, expectedImpulse);
+                check(std::fabs(events[1].impulse - expectedImpulse) < 1.0f, buf);
+                check(std::fabs(events[1].point.x - rowBake.pieces[3].origin.x) < 1e-4f
+                          && std::fabs(events[1].point.y - rowBake.pieces[3].origin.y) < 1e-4f
+                          && std::fabs(events[1].point.z - rowBake.pieces[3].origin.z) < 1e-4f,
+                      "onBreak: point is the world origin of the max-load piece (piece3 itself)");
             }
             fracturelib::Install(nullptr);
         }

@@ -104,6 +104,9 @@ public:
     // ソリッド衝突イベント配信 (M28c)。kind: 0=enter 1=stay 2=exit。
     // normal は「相手→自分」方向 (ワールド)。enter のみ normal 付きで届く
     void DispatchCollision(EntityID self, EntityID other, int kind, MyeVec3 normal);
+    // 破壊イベント配信 (v22、M80l)。root にあるスクリプトへ、分かれた塊のリーダー (piece)・
+    // その塊で荷重最大の破片の原点 (point)・その荷重 (impulse) を渡す (FractureSystem から)
+    void DispatchBreak(EntityID root, EntityID piece, MyeVec3 point, float impulse);
 
 private:
     struct ScriptType {
@@ -119,6 +122,7 @@ private:
         void (*onCollisionEnter)(void*, MyeUpdateContext*, MyeEntityId, MyeVec3) = nullptr;
         void (*onCollisionStay)(void*, MyeUpdateContext*, MyeEntityId) = nullptr;
         void (*onCollisionExit)(void*, MyeUpdateContext*, MyeEntityId) = nullptr;
+        void (*onBreak)(void*, MyeUpdateContext*, MyeEntityId, MyeVec3, float) = nullptr;
     };
 
     enum class Phase { StartAndUpdate, LateUpdate };

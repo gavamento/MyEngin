@@ -253,6 +253,8 @@ namespace MyeScripting
         public delegate* unmanaged<void*, byte*, byte*, float, float, float, float, int> SetComputeFloat4;
         public delegate* unmanaged<void*, byte*, byte*, ulong, int> SetComputeTextureFromAsset;
         public delegate* unmanaged<void*, byte*, uint, uint, uint, int> DispatchCompute;
+        // ---- v22 (M80l): 破壊への損傷 ----
+        public delegate* unmanaged<void*, MyeEntityId, MyeVec3, float, float, void> ApplyFractureDamage;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -276,6 +278,8 @@ namespace MyeScripting
         public delegate* unmanaged<void> ResetInstances;
         // M28c 末尾追加 (ManagedHost.h の MyeManagedVTable と同順)。kind: 0=enter 1=stay 2=exit
         public delegate* unmanaged<int, MyeEntityId, int, MyeVec3, void> InvokeCollision;
+        // v22 (M80l) 末尾追加。piece = 分かれた塊のリーダー、point/impulse は荷重最大の破片
+        public delegate* unmanaged<int, MyeEntityId, MyeVec3, float, void> InvokeBreak;
     }
 
     // native → managed の起動引数 (ManagedHost.cpp の MyeBootstrapArgs と一致)
@@ -1087,6 +1091,15 @@ namespace MyeScripting
             {
                 return _api->DispatchCompute(_api->Engine, sp, gx, gy, gz) != 0;
             }
+        }
+
+        // ---- v22 (M80l): 破壊への損傷 ----
+        // entity は Destructible のルートか、その破片のどちらでもよい。radius<=0 は
+        // 最寄りの 1 破片へ amount をそのまま加算する。呼んだ瞬間に damage へ書く
+        public static void ApplyFractureDamage(MyeEntityId entity, MyeVec3 point, float radius,
+                                               float amount)
+        {
+            if (_api != null) _api->ApplyFractureDamage(_api->Engine, entity, point, radius, amount);
         }
     }
 }

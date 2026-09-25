@@ -146,6 +146,23 @@ void (*GetCollisionExitFn())(void*, MyeUpdateContext*, MyeEntityId)
     }
 }
 
+// ---- 破壊イベント (v22 予約、M80l で配信開始) ----
+// 使い方: void OnBreak(MyeUpdateContext& ctx, MyeEntityId piece, MyeVec3 point, float impulse);
+
+template <typename T>
+void (*GetBreakFn())(void*, MyeUpdateContext*, MyeEntityId, MyeVec3, float)
+{
+    if constexpr (requires(T t, MyeUpdateContext& c, MyeEntityId p, MyeVec3 pt, float i) {
+                      t.OnBreak(c, p, pt, i);
+                  }) {
+        return [](void* s, MyeUpdateContext* c, MyeEntityId p, MyeVec3 pt, float i) {
+            static_cast<T*>(s)->OnBreak(*c, p, pt, i);
+        };
+    } else {
+        return nullptr;
+    }
+}
+
 inline uint64_t LayoutHash(const MyeScriptField* fields, uint32_t count)
 {
     // FNV-1a (Engine/Core/Hash.h と同じ定数 — Shared はエンジンヘッダを include できないため再掲)
@@ -189,6 +206,7 @@ MyeScriptDesc MakeDesc(const char* name, const MyeScriptField* fields, uint32_t 
     d.onCollisionEnter = GetCollisionEnterFn<T>();
     d.onCollisionStay = GetCollisionStayFn<T>();
     d.onCollisionExit = GetCollisionExitFn<T>();
+    d.onBreak = GetBreakFn<T>();
     return d;
 }
 

@@ -64,6 +64,11 @@ struct MyeScriptDesc {
     void (*onCollisionEnter)(void* state, MyeUpdateContext* ctx, MyeEntityId other, MyeVec3 normal);
     void (*onCollisionStay)(void* state, MyeUpdateContext* ctx, MyeEntityId other);
     void (*onCollisionExit)(void* state, MyeUpdateContext* ctx, MyeEntityId other);
+    // 破壊イベント (v22、M80l、null 可)。Destructible のルートにあるスクリプトへ、
+    // 分かれた塊のリーダー (piece)・その塊で荷重最大の破片の原点 (point)・その荷重 [N]
+    // (impulse) を渡す。分かれた塊ごとに 1 回、ルート index → 新リーダー index 昇順で届く
+    void (*onBreak)(void* state, MyeUpdateContext* ctx, MyeEntityId piece, MyeVec3 point,
+                    float impulse);
 };
 
 struct MyeScriptModule {

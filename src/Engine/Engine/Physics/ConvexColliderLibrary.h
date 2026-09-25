@@ -39,6 +39,8 @@ public:
     const ConvexHullData* Get(AssetID meshAsset);
     // 任意データの直接登録 (selftest / 手続き生成メッシュ用)。同 ID は差し替え
     void Register(AssetID id, ConvexHullData data);
+    // ★本番経路で呼ぶなら fracturelib::Library()->ReregisterAll() を対で呼ぶこと (M80、ADR-021) —
+    //   さもないと破片の凸包 (shape=5) が黙って無視されすり抜ける
     void Clear();
 
 private:

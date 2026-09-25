@@ -4152,6 +4152,12 @@ void BuildFractureShowcaseScene(EngineContext& ctx)
         if (baked != nullptr) {
             BuildFracturePieces(w, wall.Id(), *baked);
         }
+        // ABI v22 probe (M80l): 着弾より先にスクリプトから割り、onBreak を受け取る
+        // (GameLogic.dll 未ロード = ヘッドレス selftest 等ではスキップ)
+        const ComponentTypeId damageProbe = ComponentRegistry::Get().FindByName("FractureDamageProbe");
+        if (damageProbe != kInvalidComponentType) {
+            w.AddComponentRaw(wall.Id(), damageProbe);
+        }
     }
 
     // ---- スキンメッシュの破壊 (M80j)。2 骨の腕を kinematic ルートとして置き、球を当てると

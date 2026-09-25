@@ -427,10 +427,12 @@ void RunOneTick(TickServices& ts)
                                    runManaged ? &managedHost : nullptr, &solidContacts);
         }
         // M80g: 接着の破断・塊の分離。物理が出した形状単位インパルス (この tick 分) を
-        // 消費するので collisionSystem の後・tick 末の ApplyStructuralChanges より前
+        // 消費するので collisionSystem の後・tick 末の ApplyStructuralChanges より前。
+        // M80l: onBreak も collisionSystem と同じ配線 (C# は runManaged のときだけ)
         if (anyDestructibles) {
             MYE_PROFILE_SCOPE("fracture");
-            fractureSystem.Update(scene.GetWorld(), ctx.fixedDt, fractureShapeImpulses);
+            fractureSystem.Update(scene.GetWorld(), ctx.fixedDt, fractureShapeImpulses, &scriptHost,
+                                  runManaged ? &managedHost : nullptr);
         }
         {
             MYE_PROFILE_SCOPE("particles");

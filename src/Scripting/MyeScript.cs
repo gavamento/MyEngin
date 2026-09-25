@@ -519,6 +519,13 @@ namespace MyeScripting
         protected static bool DispatchCompute(string shader, uint gx, uint gy, uint gz)
             => Engine.DispatchCompute(shader, gx, gy, gz);
 
+        // ---- 破壊への損傷 (v22、M80l) ----
+        // entity は Destructible のルートか、その破片のどちらでもよい。radius<=0 は
+        // 最寄りの 1 破片へ amount をそのまま加算する。呼んだ瞬間に damage へ書く (同期)
+        protected static void ApplyFractureDamage(MyeEntity entity, MyeVec3 point, float radius,
+                                                  float amount)
+            => Engine.ApplyFractureDamage(entity.Id, point, radius, amount);
+
         // ---- ライフサイクル (すべて任意オーバーライド) ----
         public virtual void Start() { }
         public virtual void Update(float dt) { }
@@ -529,5 +536,8 @@ namespace MyeScripting
         public virtual void OnCollisionEnter(MyeEntity other, MyeVec3 normal) { }
         public virtual void OnCollisionStay(MyeEntity other) { }
         public virtual void OnCollisionExit(MyeEntity other) { }
+        // 破壊イベント (v22、M80l)。piece = 分かれた塊のリーダー、point/impulse は
+        // その塊で荷重最大の破片の原点とその荷重 [N]
+        public virtual void OnBreak(MyeEntity piece, MyeVec3 point, float impulse) { }
     }
 }

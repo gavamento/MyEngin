@@ -10,6 +10,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Audio/AudioSystem.h" // HashBusName (バス名ハッシュの規則は 1 本だけ)
 #include "Engine/Engine/EffectSystem.h"
+#include "Engine/Engine/FractureSystem.h" // v22 (M80l): ApplyFractureDamage
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Net/NetRuntime.h" // v13 Net* の参照先 POD (M52i)
 #include "Engine/Engine/Parts.h" // v9 部位クエリ (M48h)
@@ -1200,6 +1201,13 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         if (!c->computeAbi || !c->graphicsDevice || !c->shaderManager) { return 0; }
         return c->computeAbi->Dispatch(*c->graphicsDevice, *c->shaderManager,
                                        c->textureLibrary, shader, gx, gy, gz);
+    };
+
+    // ---- v22 (M80l): 破壊への損傷。実装本体は FractureSystem.cpp (sub-07 の内部関数) ----
+    out.ApplyFractureDamage = [](void* engine, MyeEntityId entity, MyeVec3 point, float radius,
+                                 float amount) {
+        ApplyFractureDamage(Sc(engine)->GetWorld(), ToEngine(entity),
+                            DirectX::XMFLOAT3{ point.x, point.y, point.z }, radius, amount);
     };
 }
 
