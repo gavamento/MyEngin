@@ -26,6 +26,7 @@
 #include "Engine/Engine/CollisionSystem.h"
 #include "Engine/Engine/DebugDraw.h"
 #include "Engine/Engine/EffectSystem.h"
+#include "Engine/Engine/FractureSystem.h" // M80g: 接着の破断・塊の分離
 #include "Engine/Engine/PartFollowSystem.h"
 #include "Engine/Engine/PlayerInputSystem.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
@@ -219,12 +220,14 @@ void RunOneTick(TickServices& ts)
     PartFollowSystem& partFollowSystem = *ts.partFollowSystem;
     EffectSystem& effectSystem = *ts.effectSystem;
     PhysicsSystem& physicsSystem = *ts.physicsSystem;
+    FractureSystem& fractureSystem = *ts.fractureSystem; // M80g
     TransformSystem& transformSystem = *ts.transformSystem;
     CollisionSystem& collisionSystem = *ts.collisionSystem;
     ParticleSystem& particleSystem = *ts.particleSystem;
     VfxRenderer& vfxRenderer = *ts.vfxRenderer;
     RenderResources& resources = *ts.resources;
     std::vector<SolidContact>& solidContacts = *ts.solidContacts;
+    std::vector<ShapeImpulse>& fractureShapeImpulses = *ts.shapeImpulses; // M80g
     std::vector<EffectSpawnRequest>& effectQueue = *ts.effectQueue;
     std::vector<DebugLineCmd>& debugLines = *ts.debugLines;
     std::vector<ScriptAudioEvent>& audioQueue = *ts.audioQueue;
@@ -395,10 +398,16 @@ void RunOneTick(TickServices& ts)
     // ---- 物理 (フェーズ 3.6): スクリプト/アニメ後・Transform 前に剛体を積分 ----
     // LocalTransform.position を書き換えるので TransformSystem 前に走らせ、確定した
     // ワールド位置でコライダ判定させる。Rigidbody 非存在シーンでは完全 no-op (opt-in)
+    // M80g: 存在ゲート。Destructible が 1 つも無ければ物理へ形状単位インパルスの出力先を
+    // 渡さない (null のあいだ物理は一切計算しない) — 判定はアーキタイプ走査 1 回程度。
+    // stepSim==false (ポーズ中) は物理も破断も走らないので、その tick は判定自体をしない
+    bool anyDestructibles = false;
     if (stepSim) {
         MYE_PROFILE_SCOPE("physics");
+        anyDestructibles = AnyDestructibles(scene.GetWorld());
         // ソリッド接触ペアを受け取り CollisionSystem へ渡す (M28c OnCollision 配信)
-        physicsSystem.Update(scene.GetWorld(), ctx.fixedDt, &solidContacts, ts.xpbd);
+        physicsSystem.Update(scene.GetWorld(), ctx.fixedDt, &solidContacts, ts.xpbd,
+                             anyDestructibles ? &fractureShapeImpulses : nullptr);
         // v14 GetContactInfo (M59k): ここから先 (OnCollision* / LateUpdate) だけが読める。
         // stepSim が false の tick は繋がないまま = ポーズ中は常に「接触なし」が返る
         scriptHost.SetTickContacts(&solidContacts);
@@ -416,6 +425,12 @@ void RunOneTick(TickServices& ts)
             // C# にもトリガー配信 (別レーン: 記録/検証中は managed=null で純 C++)
             collisionSystem.Update(scene.GetWorld(), &scriptHost,
                                    runManaged ? &managedHost : nullptr, &solidContacts);
+        }
+        // M80g: 接着の破断・塊の分離。物理が出した形状単位インパルス (この tick 分) を
+        // 消費するので collisionSystem の後・tick 末の ApplyStructuralChanges より前
+        if (anyDestructibles) {
+            MYE_PROFILE_SCOPE("fracture");
+            fractureSystem.Update(scene.GetWorld(), ctx.fixedDt, fractureShapeImpulses);
         }
         {
             MYE_PROFILE_SCOPE("particles");
@@ -765,6 +780,7 @@ void RunOneTick(TickServices& ts)
             }
             vfxRenderer.Reset(); // M29c: トレイル点列も新シーンでリセット
             partFollowSystem.Reset(); // M48g: 旧シーンの warn 抑制を捨てる
+            fractureSystem.Reset(); // M80g: 旧シーンの検証キャッシュを捨てる
             scriptHost.ClearStarted();
             managedHost.OnSceneReloaded();
             if (ts.computeAbi) {

@@ -108,6 +108,12 @@ const FractureAssetHandle* FractureLibrary::Find(const std::string& namePrefix) 
     return it != handles_.end() ? &it->second : nullptr;
 }
 
+const FractureAssetHandle* FractureLibrary::FindByAssetId(AssetID id) const
+{
+    const auto it = byHash_.find(id.value);
+    return it != byHash_.end() ? Find(it->second) : nullptr;
+}
+
 const FractureAssetHandle* FractureLibrary::RegisterInternal(const std::string& prefix,
                                                               FractureAsset::FractureData data)
 {
@@ -138,6 +144,7 @@ const FractureAssetHandle* FractureLibrary::RegisterInternal(const std::string& 
         handle.pieces.push_back(std::move(ref));
     }
     handle.data = std::move(data);
+    byHash_[HashStr(prefix)] = prefix;
     return &handles_.insert_or_assign(prefix, std::move(handle)).first->second;
 }
 
@@ -157,6 +164,7 @@ void FractureLibrary::ReregisterAll()
 void FractureLibrary::Clear()
 {
     handles_.clear();
+    byHash_.clear();
     failedPaths_.clear();
 }
 

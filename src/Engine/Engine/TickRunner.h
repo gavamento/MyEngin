@@ -20,6 +20,8 @@ class SkinningSystem;
 class PartFollowSystem;
 class EffectSystem;
 class PhysicsSystem;
+class FractureSystem;
+struct ShapeImpulse;
 class XpbdBackend;
 class AcousticField;
 class AgentSystem;
@@ -79,6 +81,10 @@ struct TickServices {
     PartFollowSystem* partFollowSystem = nullptr;
     EffectSystem* effectSystem = nullptr;
     PhysicsSystem* physicsSystem = nullptr;
+    // M80g: 接着の破断・塊の分離。存在ゲート (Destructible が無いシーンは shapeImpulses も
+    // 作らせず即 return する) は RunOneTick 側と FractureSystem::Update の両方が持つ
+    FractureSystem* fractureSystem = nullptr;
+    std::vector<ShapeImpulse>* shapeImpulses = nullptr;
     XpbdBackend* xpbd = nullptr; // M60'b: 変形体の粒子池 (PhysicsSystem::Update へ渡す)
     // M65a: 音響の場 (ECS 外 sim 状態の 3 例目)。フェーズ 3.4 で Sync/Advance する。
     // null = 音響を回さない (World 単体の selftest 経路)

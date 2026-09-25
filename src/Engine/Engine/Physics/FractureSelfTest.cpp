@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 #include <DirectXMath.h>
@@ -20,6 +21,7 @@
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Asset/FractureAsset.h"
 #include "Engine/Engine/FractureBuilder.h"
+#include "Engine/Engine/FractureSystem.h"
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Physics/ConvexColliderLibrary.h"
 #include "Engine/Engine/Physics/FractureBake.h"
@@ -27,6 +29,8 @@
 #include "Engine/Engine/Physics/FractureMesh.h"
 #include "Engine/Engine/Physics/FractureVoxel.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
+#include "Engine/Engine/Replay/SimSnapshot.h"
+#include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Renderer/GpuResources.h"
 
@@ -358,6 +362,60 @@ void MeshAabbOf(const FractureMesh& m, XMFLOAT3& lo, XMFLOAT3& hi)
         hi.y = (std::max)(hi.y, v.position.y);
         hi.z = (std::max)(hi.z, v.position.z);
     }
+}
+
+// ---- M80g (接着の破断・塊の分離) のテスト用ヘルパー ----
+
+// 一辺 2*h の箱の凸包 (15c の compound_settle と同じ形)
+ConvexHullData BoxHull(float hx, float hy, float hz)
+{
+    ConvexHullData h;
+    BuildConvexHull({ { -hx, -hy, -hz }, { hx, -hy, -hz }, { hx, hy, -hz }, { -hx, hy, -hz },
+                      { -hx, -hy, hz }, { hx, -hy, hz }, { hx, hy, hz }, { -hx, hy, hz } },
+                    h);
+    return h;
+}
+
+// X 軸方向に隙間なく並んだ count 個の箱の合成 FractureBakeResult (BakeFracture を経由せず
+// FractureLibrary::RegisterBaked へ直接渡す — 隣接面積を一様値にして接着の強度計算を
+// 検算しやすくするための手組み資産。外側/断面メッシュは空のまま (物理・接着の検証に
+// 見た目は要らない。FractureLibrary は 0 頂点のメッシュを登録しない)
+FractureBakeResult MakeRowFractureBake(int32_t count, float halfExtent)
+{
+    FractureBakeResult bake;
+    bake.success = true;
+    const float step = halfExtent * 2.0f;
+    const float offset = (static_cast<float>(count) - 1.0f) * 0.5f;
+    for (int32_t i = 0; i < count; ++i) {
+        FracturePieceBake p;
+        p.origin = { (static_cast<float>(i) - offset) * step, 0.0f, 0.0f };
+        p.volume = static_cast<double>(step) * static_cast<double>(step) * static_cast<double>(step);
+        p.hull = BoxHull(halfExtent, halfExtent, halfExtent);
+        if (i > 0) {
+            p.neighbors.push_back({ i - 1, 1.0f });
+        }
+        if (i + 1 < count) {
+            p.neighbors.push_back({ i + 1, 1.0f });
+        }
+        bake.pieces.push_back(std::move(p));
+    }
+    return bake;
+}
+
+// root の直子から FracturePiece.index==index のものを探す
+EntityID FindPieceChild(World& world, EntityID root, int32_t index)
+{
+    const auto* rh = world.GetComponent<HierarchyComponent>(root);
+    for (EntityID c = rh ? rh->firstChild : kNullEntity; !c.IsNull();) {
+        if (const auto* fp = world.GetComponent<FracturePieceComponent>(c)) {
+            if (fp->index == index) {
+                return c;
+            }
+        }
+        const auto* ch = world.GetComponent<HierarchyComponent>(c);
+        c = ch ? ch->nextSibling : kNullEntity;
+    }
+    return kNullEntity;
 }
 
 } // namespace
@@ -1442,6 +1500,610 @@ bool RunFractureSelfTest()
                   "BuildFracturePieces: the compound rests at half its own height (~0.5)");
 
             convexcol::Install(nullptr);
+        }
+    }
+
+    // ---- 16. 接着の破断と塊の剛体化 (FractureSystem、M80g) ----
+    {
+        // (16a) 荷重が閾値を超えると i<j の接着が両側とも切れ、体積最大側 (root) と
+        // 孤立した破片 (新リーダー) へ分かれる。質量・運動量が保存される。
+        // shapeImpulses を直接組み立てて FractureSystem::Update だけを検算する
+        // (物理の形状単位インパルスそのものは受け入れ条件 8 で別途検算済み)
+        {
+            constexpr int32_t kRowCount = 8;
+            FractureBakeResult rowBake = MakeRowFractureBake(kRowCount, 0.25f);
+
+            RenderResources resources;
+            ConvexColliderLibrary colliders;
+            colliders.Init(&resources);
+            FractureLibrary lib;
+            lib.Init(&resources, &colliders);
+            fracturelib::Install(&lib);
+            const FractureAssetHandle* handle = lib.RegisterBaked(
+                "fracture-selftest://row8", rowBake, HashStr("fracture-selftest://row8_src"), 0, kRowCount, 0, 0);
+            check(handle != nullptr && handle->pieces.size() == static_cast<size_t>(kRowCount),
+                  "fracture system: row8 synthetic asset registers");
+
+            Scene s;
+            World& w = s.GetWorld();
+            GameObject root = s.CreateGameObject("Row8");
+            // ★AddComponent はアーキタイプ移動を起こし、以前に取ったポインタを無効化する
+            //   (spec 4.5)。両方足してから GetComponent で取り直す (Add の戻り値をまたいで
+            //   使い回さない)
+            root.AddComponent<RigidbodyComponent>();
+            root.AddComponent<DestructibleComponent>();
+            auto* rootRb = root.GetComponent<RigidbodyComponent>();
+            rootRb->mass = 8.0f;
+            rootRb->velocity = { 2.0f, 0.0f, 0.0f };
+            rootRb->angularVelocity = { 0.0f, 0.0f, 3.0f };
+            auto* d = root.GetComponent<DestructibleComponent>();
+            d->strength = 100.0f; // 低めにして単純な形状単位インパルスで確実に切れさせる
+            d->fractureAsset = AssetID{ HashStr("fracture-selftest://row8") };
+            BuildFracturePieces(w, root.Id(), *handle);
+            w.ApplyStructuralChanges();
+            // root 自身のコンポーネント構成は BuildFracturePieces 後も変わらない
+            // (既に Rigidbody 所持・Collider 無し) ので、rootRb/d はここから先も有効
+            check(ValidateFracturePieces(w, root.Id(), handle),
+                  "fracture system: row8 root matches its (synthetic) asset");
+
+            const EntityID piece0 = FindPieceChild(w, root.Id(), 0);
+            check(!piece0.IsNull(), "fracture system: row8 piece 0 exists");
+
+            const double totalMassBefore = static_cast<double>(rootRb->mass);
+            const XMFLOAT3 vBefore = rootRb->velocity;
+            const double px0 = totalMassBefore * vBefore.x;
+            const double py0 = totalMassBefore * vBefore.y;
+            const double pz0 = totalMassBefore * vBefore.z;
+
+            // 弱い衝撃では割れない
+            {
+                std::vector<ShapeImpulse> weak = { { piece0, 0.01f } };
+                FractureSystem fsys;
+                fsys.Update(w, 1.0f / 60.0f, weak);
+                w.ApplyStructuralChanges();
+                check(!d->broken, "fracture system: a weak impact does not break any bond");
+            }
+
+            // 十分な衝撃では piece0-piece1 の接着が切れる
+            std::vector<ShapeImpulse> strong = { { piece0, 1000.0f } };
+            FractureSystem fsys;
+            fsys.Update(w, 1.0f / 60.0f, strong);
+            w.ApplyStructuralChanges();
+            check(d->broken && d->detachedCount == 1,
+                  "fracture system: a strong impact breaks the bond and detaches exactly one chunk");
+
+            auto* leaderRb = w.GetComponent<RigidbodyComponent>(piece0);
+            check(leaderRb != nullptr, "fracture system: the separated piece gets its own Rigidbody");
+            if (leaderRb != nullptr) {
+                check(!leaderRb->isKinematic, "fracture system: a separated chunk is dynamic");
+                check(!leaderRb->compoundColliders,
+                      "fracture system: a lone separated piece is not a compound (1 member)");
+                check(w.GetParent(piece0) == w.GetParent(root.Id()),
+                      "fracture system: the new leader is reparented to the root's parent");
+            }
+
+            int32_t remainingChildren = 0;
+            const auto* rh2 = w.GetComponent<HierarchyComponent>(root.Id());
+            for (EntityID c = rh2 ? rh2->firstChild : kNullEntity; !c.IsNull();) {
+                if (w.GetComponent<FracturePieceComponent>(c) != nullptr) {
+                    ++remainingChildren;
+                }
+                const auto* ch = w.GetComponent<HierarchyComponent>(c);
+                c = ch ? ch->nextSibling : kNullEntity;
+            }
+            check(remainingChildren == kRowCount - 1,
+                  "fracture system: the largest component (7 pieces) stays under the root");
+
+            const double massAfter = static_cast<double>(rootRb->mass)
+                                    + (leaderRb ? static_cast<double>(leaderRb->mass) : 0.0);
+            char buf[256];
+            std::snprintf(buf, sizeof(buf), "fracture system: total mass is conserved (%.8f vs %.8f)", massAfter,
+                          totalMassBefore);
+            check(Near(massAfter, totalMassBefore, 1e-6), buf);
+
+            double pxAfter = static_cast<double>(rootRb->mass) * rootRb->velocity.x;
+            double pyAfter = static_cast<double>(rootRb->mass) * rootRb->velocity.y;
+            double pzAfter = static_cast<double>(rootRb->mass) * rootRb->velocity.z;
+            if (leaderRb != nullptr) {
+                pxAfter += static_cast<double>(leaderRb->mass) * leaderRb->velocity.x;
+                pyAfter += static_cast<double>(leaderRb->mass) * leaderRb->velocity.y;
+                pzAfter += static_cast<double>(leaderRb->mass) * leaderRb->velocity.z;
+            }
+            std::snprintf(buf, sizeof(buf),
+                          "fracture system: linear momentum is conserved (%.6f,%.6f,%.6f vs %.6f,%.6f,%.6f)",
+                          pxAfter, pyAfter, pzAfter, px0, py0, pz0);
+            check(Near(pxAfter, px0, 1e-5) && Near(pyAfter, py0, 1e-5) && Near(pzAfter, pz0, 1e-5), buf);
+
+            fracturelib::Install(nullptr);
+        }
+
+        // (16b) 統合: 実際の物理衝突で「十分な速さの球」だけが箱 8 破片を割る
+        {
+            FractureBakeInput in;
+            in.sourceMesh = MakeBox(0.5f, 0.5f, 0.5f);
+            in.seed = 300;
+            in.pieceCount = 8;
+            FractureBakeResult bake;
+            const bool baked = BakeFracture(in, bake);
+            check(baked && bake.success, "fracture system: box8 bake for the impact test succeeds");
+            if (baked && bake.success) {
+                auto runImpact = [&](float ballMass, float ballSpeed) {
+                    RenderResources resources;
+                    ConvexColliderLibrary colliders;
+                    colliders.Init(&resources);
+                    FractureLibrary lib;
+                    lib.Init(&resources, &colliders);
+                    convexcol::Install(&colliders);
+                    fracturelib::Install(&lib);
+                    const FractureAssetHandle* handle = lib.RegisterBaked(
+                        "fracture-selftest://box8_impact", bake, HashStr("fracture-selftest://box8_impact_src"),
+                        in.seed, in.pieceCount, 0, 32);
+
+                    Scene s;
+                    World& w = s.GetWorld();
+                    GameObject root = s.CreateGameObject("Box8");
+                    root.AddComponent<RigidbodyComponent>();
+                    root.AddComponent<DestructibleComponent>();
+                    auto* rb = root.GetComponent<RigidbodyComponent>();
+                    rb->mass = 8.0f;
+                    rb->gravityScale = 0.0f; // 衝突の伝わり方だけを見る (落下と混ぜない)
+                    auto* d = root.GetComponent<DestructibleComponent>();
+                    // 実物理のインパルスは複数破片に分かれて配られ得るので、既定値 (5000) では
+                    // なく低めの値で「十分な速さの球なら確実に切れる」ことを検算する
+                    d->strength = 200.0f;
+                    d->fractureAsset = AssetID{ HashStr("fracture-selftest://box8_impact") };
+                    BuildFracturePieces(w, root.Id(), *handle);
+
+                    GameObject ball = s.CreateGameObject("Ball");
+                    ball.SetLocalPosition(-2.0f, 0.0f, 0.0f);
+                    ball.AddComponent<ColliderComponent>();
+                    ball.AddComponent<RigidbodyComponent>();
+                    auto* bcol = ball.GetComponent<ColliderComponent>();
+                    bcol->shape = collidershape::kSphere;
+                    bcol->radius = 0.3f;
+                    auto* brb = ball.GetComponent<RigidbodyComponent>();
+                    brb->mass = ballMass;
+                    brb->gravityScale = 0.0f;
+                    brb->velocity = { ballSpeed, 0.0f, 0.0f };
+                    w.ApplyStructuralChanges();
+
+                    PhysicsSystem phys;
+                    FractureSystem fsys;
+                    std::vector<ShapeImpulse> impulses;
+                    constexpr float kDt = 1.0f / 60.0f;
+                    for (int i = 0; i < 120; ++i) {
+                        phys.Update(w, kDt, nullptr, nullptr, &impulses);
+                        fsys.Update(w, kDt, impulses);
+                        w.ApplyStructuralChanges();
+                    }
+                    const bool broken = d->broken;
+                    fracturelib::Install(nullptr);
+                    convexcol::Install(nullptr);
+                    return broken;
+                };
+
+                check(!runImpact(0.3f, 1.0f), "fracture system: a weak ball does not break box8");
+                // ★速すぎる球は 1 tick の移動量が箱の寸法を超えてすり抜けかねない (CCD 未使用) ので、
+                //   質量を稼いで運動量を確保しつつ、tick あたりの移動量は箱の半分以下に抑える
+                check(runImpact(50.0f, 10.0f), "fracture system: a fast ball breaks box8");
+            }
+        }
+
+        // (16c) kinematic ルートの壁 (破片 16): 撃った所だけ抜け、体積最大の塊が固定のまま
+        // 残る (ルートの姿勢が不変)
+        {
+            constexpr int32_t kWallCount = 16;
+            FractureBakeResult wallBake = MakeRowFractureBake(kWallCount, 0.25f);
+
+            RenderResources resources;
+            ConvexColliderLibrary colliders;
+            colliders.Init(&resources);
+            FractureLibrary lib;
+            lib.Init(&resources, &colliders);
+            fracturelib::Install(&lib);
+            const FractureAssetHandle* handle = lib.RegisterBaked(
+                "fracture-selftest://wall16", wallBake, HashStr("fracture-selftest://wall16_src"), 0, kWallCount, 0,
+                0);
+            check(handle != nullptr, "fracture system: wall16 synthetic asset registers");
+
+            Scene s;
+            World& w = s.GetWorld();
+            GameObject root = s.CreateGameObject("Wall16");
+            root.SetLocalPosition(5.0f, 1.0f, -2.0f);
+            root.SetLocalRotationEuler(0.0f, 30.0f, 0.0f); // 単位でない姿勢にして「不変」を厳密に見る
+            root.AddComponent<RigidbodyComponent>();
+            root.AddComponent<DestructibleComponent>();
+            auto* rootRb = root.GetComponent<RigidbodyComponent>();
+            rootRb->isKinematic = true;
+            auto* d = root.GetComponent<DestructibleComponent>();
+            d->fractureAsset = AssetID{ HashStr("fracture-selftest://wall16") };
+            BuildFracturePieces(w, root.Id(), *handle);
+            w.ApplyStructuralChanges();
+
+            const XMFLOAT3 posBefore = w.GetComponent<LocalTransform>(root.Id())->position;
+            const XMFLOAT4 rotBefore = w.GetComponent<LocalTransform>(root.Id())->rotation;
+            const EntityID piece0 = FindPieceChild(w, root.Id(), 0);
+
+            std::vector<ShapeImpulse> hit = { { piece0, 100000.0f } };
+            FractureSystem fsys;
+            fsys.Update(w, 1.0f / 60.0f, hit);
+            w.ApplyStructuralChanges();
+
+            check(d->broken && d->detachedCount == 1,
+                  "fracture system: hitting one end of a kinematic wall detaches it");
+
+            const auto* ltAfter = w.GetComponent<LocalTransform>(root.Id());
+            check(ltAfter != nullptr && ltAfter->position.x == posBefore.x && ltAfter->position.y == posBefore.y
+                      && ltAfter->position.z == posBefore.z && ltAfter->rotation.x == rotBefore.x
+                      && ltAfter->rotation.y == rotBefore.y && ltAfter->rotation.z == rotBefore.z
+                      && ltAfter->rotation.w == rotBefore.w,
+                  "fracture system: the kinematic root's own transform is unchanged");
+            check(rootRb->isKinematic, "fracture system: the kinematic root stays kinematic");
+
+            auto* leaderRb = w.GetComponent<RigidbodyComponent>(piece0);
+            check(leaderRb != nullptr && !leaderRb->isKinematic,
+                  "fracture system: the detached piece becomes dynamic even though the root is kinematic");
+
+            fracturelib::Install(nullptr);
+        }
+
+        // (16d) 決定論: 同じシーンを 2 本並べて 240 tick のハッシュ列が一致する
+        // (PhysicsSelfTest の並走比較と同じ形)
+        {
+            FractureBakeInput in;
+            in.sourceMesh = MakeBox(0.5f, 0.5f, 0.5f);
+            in.seed = 301;
+            in.pieceCount = 8;
+            FractureBakeResult bake;
+            const bool baked = BakeFracture(in, bake);
+            check(baked && bake.success, "fracture system: box8 bake for the determinism test succeeds");
+            if (baked && bake.success) {
+                auto runAndHash = [&](std::vector<uint64_t>& outHashes) {
+                    RenderResources resources;
+                    ConvexColliderLibrary colliders;
+                    colliders.Init(&resources);
+                    FractureLibrary lib;
+                    lib.Init(&resources, &colliders);
+                    convexcol::Install(&colliders);
+                    fracturelib::Install(&lib);
+                    const FractureAssetHandle* handle = lib.RegisterBaked(
+                        "fracture-selftest://box8_determinism", bake,
+                        HashStr("fracture-selftest://box8_determinism_src"), in.seed, in.pieceCount, 0, 32);
+
+                    Scene s;
+                    World& w = s.GetWorld();
+                    GameObject root = s.CreateGameObject("Box8");
+                    root.AddComponent<RigidbodyComponent>();
+                    root.AddComponent<DestructibleComponent>();
+                    auto* rb = root.GetComponent<RigidbodyComponent>();
+                    rb->mass = 8.0f;
+                    rb->gravityScale = 0.0f;
+                    auto* d = root.GetComponent<DestructibleComponent>();
+                    d->strength = 200.0f; // 確実に割れさせ、分離・付け替え経路もハッシュ被覆に含める
+                    d->fractureAsset = AssetID{ HashStr("fracture-selftest://box8_determinism") };
+                    BuildFracturePieces(w, root.Id(), *handle);
+
+                    GameObject ball = s.CreateGameObject("Ball");
+                    ball.SetLocalPosition(-2.0f, 0.0f, 0.0f);
+                    ball.AddComponent<ColliderComponent>();
+                    ball.AddComponent<RigidbodyComponent>();
+                    auto* bcol = ball.GetComponent<ColliderComponent>();
+                    bcol->shape = collidershape::kSphere;
+                    bcol->radius = 0.3f;
+                    auto* brb = ball.GetComponent<RigidbodyComponent>();
+                    brb->mass = 50.0f;
+                    brb->gravityScale = 0.0f;
+                    brb->velocity = { 10.0f, 0.0f, 0.0f }; // CCD 未使用のためすり抜けない速さに抑える
+                    w.ApplyStructuralChanges();
+
+                    PhysicsSystem phys;
+                    FractureSystem fsys;
+                    std::vector<ShapeImpulse> impulses;
+                    constexpr float kDt = 1.0f / 60.0f;
+                    outHashes.clear();
+                    for (int i = 0; i < 240; ++i) {
+                        phys.Update(w, kDt, nullptr, nullptr, &impulses);
+                        fsys.Update(w, kDt, impulses);
+                        w.ApplyStructuralChanges();
+                        outHashes.push_back(HashWorld(w));
+                    }
+                    fracturelib::Install(nullptr);
+                    convexcol::Install(nullptr);
+                };
+
+                std::vector<uint64_t> hashesA, hashesB;
+                runAndHash(hashesA);
+                runAndHash(hashesB);
+                check(hashesA.size() == 240 && hashesB.size() == 240,
+                      "fracture system: determinism run produced 240 ticks");
+                bool allMatch = hashesA.size() == hashesB.size();
+                for (size_t i = 0; allMatch && i < hashesA.size(); ++i) {
+                    if (hashesA[i] != hashesB[i]) {
+                        allMatch = false;
+                        MYE_LOG_ERROR("    (determinism mismatch at tick %zu: 0x%016llX vs 0x%016llX)", i,
+                                     static_cast<unsigned long long>(hashesA[i]),
+                                     static_cast<unsigned long long>(hashesB[i]));
+                    }
+                }
+                check(allMatch,
+                      "fracture system: two independent runs produce byte-identical hash sequences over 240 ticks");
+            }
+        }
+
+        // (16e) ApplyFractureDamage: strength 以上を 1 回、または未満を 2 回の蓄積で外れる
+        {
+            FractureBakeResult pairBake = MakeRowFractureBake(2, 0.25f);
+
+            auto makeDamageScene = [&](Scene& s, FractureLibrary& lib, ConvexColliderLibrary& colliders,
+                                       RenderResources& resources, const char* prefix) {
+                colliders.Init(&resources);
+                lib.Init(&resources, &colliders);
+                fracturelib::Install(&lib);
+                const FractureAssetHandle* handle
+                    = lib.RegisterBaked(prefix, pairBake, HashStr(std::string(prefix) + "_src"), 0, 2, 0, 0);
+                World& w = s.GetWorld();
+                GameObject root = s.CreateGameObject("Pair");
+                root.AddComponent<RigidbodyComponent>();
+                root.AddComponent<DestructibleComponent>();
+                auto* rb = root.GetComponent<RigidbodyComponent>();
+                rb->mass = 2.0f;
+                auto* d = root.GetComponent<DestructibleComponent>();
+                d->strength = 100.0f;
+                d->fractureAsset = AssetID{ HashStr(prefix) };
+                BuildFracturePieces(w, root.Id(), *handle);
+                w.ApplyStructuralChanges();
+                return root.Id();
+            };
+
+            // (e1) strength 以上を 1 回で外れる
+            {
+                Scene s;
+                RenderResources resources;
+                ConvexColliderLibrary colliders;
+                FractureLibrary lib;
+                const EntityID root = makeDamageScene(s, lib, colliders, resources, "fracture-selftest://pair_damage1");
+                World& w = s.GetWorld();
+                const EntityID piece0 = FindPieceChild(w, root, 0);
+                ApplyFractureDamage(w, root, pairBake.pieces[0].origin, 0.0f, 150.0f);
+                FractureSystem fsys;
+                std::vector<ShapeImpulse> none;
+                fsys.Update(w, 1.0f / 60.0f, none);
+                w.ApplyStructuralChanges();
+                const auto* d = w.GetComponent<DestructibleComponent>(root);
+                check(d != nullptr && d->broken,
+                      "fracture system: ApplyFractureDamage >= strength in one shot detaches the piece");
+                (void)piece0;
+                fracturelib::Install(nullptr);
+            }
+
+            // (e2) strength 未満を 2 回の蓄積で外れる
+            {
+                Scene s;
+                RenderResources resources;
+                ConvexColliderLibrary colliders;
+                FractureLibrary lib;
+                const EntityID root = makeDamageScene(s, lib, colliders, resources, "fracture-selftest://pair_damage2");
+                World& w = s.GetWorld();
+                std::vector<ShapeImpulse> none;
+
+                ApplyFractureDamage(w, root, pairBake.pieces[0].origin, 0.0f, 60.0f);
+                FractureSystem fsys1;
+                fsys1.Update(w, 1.0f / 60.0f, none);
+                w.ApplyStructuralChanges();
+                const auto* d1 = w.GetComponent<DestructibleComponent>(root);
+                check(d1 != nullptr && !d1->broken,
+                      "fracture system: a single sub-threshold ApplyFractureDamage does not break it yet");
+
+                ApplyFractureDamage(w, root, pairBake.pieces[0].origin, 0.0f, 60.0f); // 累計 120 >= 100
+                FractureSystem fsys2;
+                fsys2.Update(w, 1.0f / 60.0f, none);
+                w.ApplyStructuralChanges();
+                const auto* d2 = w.GetComponent<DestructibleComponent>(root);
+                check(d2 != nullptr && d2->broken,
+                      "fracture system: accumulated ApplyFractureDamage across two calls detaches it");
+
+                fracturelib::Install(nullptr);
+            }
+        }
+
+        // (16f) root proxy の可視規則 (RenderSystem::CollectDrawables と共有): root の
+        // Destructible が見つからない (Destroy された/参照切れ) ときは「隠す対象が無い」ので
+        // 描く側にする。逆にすると、分離後にルートを Destroy しただけで分かれた破片まで
+        // 描画から消える不具合になる
+        {
+            DestructibleComponent notBroken;
+            notBroken.broken = false;
+            DestructibleComponent broken;
+            broken.broken = true;
+            check(ShouldHideUnbrokenFracturePiece(&notBroken),
+                  "fracture system: root proxy hides an unbroken piece while its root exists");
+            check(!ShouldHideUnbrokenFracturePiece(&broken),
+                  "fracture system: root proxy draws a piece once its root has broken");
+            check(!ShouldHideUnbrokenFracturePiece(nullptr),
+                  "fracture system: root proxy draws a piece whose root Destructible cannot be found "
+                  "(root Destroy 後も破片が描画から消えない)");
+        }
+
+        // (16g、受け入れ条件 6b) 割れた後の状態から、新しい FractureSystem のインスタンス
+        // (キャッシュが空、新しいプロセスでのセーブ読み込みを模す) で再開しても、同じ状態から
+        // 途切れずに進めた実行とハッシュ列が一致することを確認する
+        {
+            constexpr int32_t kCount = 8;
+            FractureBakeResult rowBake = MakeRowFractureBake(kCount, 0.25f);
+
+            auto buildScene = [&](Scene& s, FractureLibrary& lib, ConvexColliderLibrary& colliders,
+                                  RenderResources& resources, const char* prefix) {
+                colliders.Init(&resources);
+                lib.Init(&resources, &colliders);
+                fracturelib::Install(&lib);
+                const FractureAssetHandle* handle
+                    = lib.RegisterBaked(prefix, rowBake, HashStr(std::string(prefix) + "_src"), 0, kCount, 0, 0);
+                World& w = s.GetWorld();
+                GameObject root = s.CreateGameObject("Row8_6b");
+                root.AddComponent<RigidbodyComponent>();
+                root.AddComponent<DestructibleComponent>();
+                auto* rb = root.GetComponent<RigidbodyComponent>();
+                rb->mass = 8.0f;
+                auto* d = root.GetComponent<DestructibleComponent>();
+                d->strength = 100.0f;
+                d->fractureAsset = AssetID{ HashStr(prefix) };
+                BuildFracturePieces(w, root.Id(), *handle);
+                w.ApplyStructuralChanges();
+                return root.Id();
+            };
+
+            RenderResources resourcesA;
+            ConvexColliderLibrary collidersA;
+            FractureLibrary libA;
+            Scene sceneA;
+            const EntityID rootA
+                = buildScene(sceneA, libA, collidersA, resourcesA, "fracture-selftest://snap6b");
+            World& wA = sceneA.GetWorld();
+            FractureSystem fsysA;
+            std::vector<ShapeImpulse> none;
+
+            // 1 回目の分離 (piece0 がリーダーへ昇格し、ルートの親の下 = ルート階層の外へ出る)
+            ApplyFractureDamage(wA, rootA, rowBake.pieces[0].origin, 0.0f, 150.0f);
+            fsysA.Update(wA, 1.0f / 60.0f, none);
+            wA.ApplyStructuralChanges();
+            {
+                const auto* dA = wA.GetComponent<DestructibleComponent>(rootA);
+                check(dA != nullptr && dA->broken && dA->detachedCount == 1,
+                      "fracture system (6b): the first ApplyFractureDamage detaches piece 0");
+            }
+
+            // ---- ここでスナップショットを撮る (割れた直後、= 検証が必ず「今の状態」を見る
+            // 局面に FractureSystem を初めて出会わせる) ----
+            std::vector<std::byte> blob;
+            const SimRefs refsA{ &sceneA };
+            const bool captured = CaptureSimSnapshot(refsA, blob);
+            check(captured, "fracture system (6b): snapshot capture succeeds right after the first break");
+
+            Scene sceneB; // 空のシーン = 新しいプロセスでの読み込みを模す
+            const SimRefs refsB{ &sceneB };
+            const bool restored = captured && RestoreSimSnapshot(refsB, blob.data(), blob.size());
+            check(restored, "fracture system (6b): snapshot restore succeeds");
+            World& wB = sceneB.GetWorld();
+            const EntityID rootB = rootA; // SnapshotRead は index/generation をそのまま復元する
+            FractureSystem fsysB;         // ★キャッシュが空の「新しいインスタンス」
+
+            if (restored) {
+                // 継続実行 (A) と復元後の実行 (B) の両方へ、同じ以後の刺激 (残り 7 個の 1 つへ
+                // 2 回目のダメージ) を与えて N tick 進め、ハッシュ列を比較する
+                std::vector<uint64_t> hashesA, hashesB;
+                constexpr int kN = 30;
+                for (int t = 0; t < kN; ++t) {
+                    if (t == 0) {
+                        ApplyFractureDamage(wA, rootA, rowBake.pieces[7].origin, 0.0f, 150.0f);
+                        ApplyFractureDamage(wB, rootB, rowBake.pieces[7].origin, 0.0f, 150.0f);
+                    }
+                    fsysA.Update(wA, 1.0f / 60.0f, none);
+                    wA.ApplyStructuralChanges();
+                    hashesA.push_back(HashWorld(wA));
+
+                    fsysB.Update(wB, 1.0f / 60.0f, none);
+                    wB.ApplyStructuralChanges();
+                    hashesB.push_back(HashWorld(wB));
+                }
+
+                const auto* dAfterA = wA.GetComponent<DestructibleComponent>(rootA);
+                const auto* dAfterB = wB.GetComponent<DestructibleComponent>(rootB);
+                check(dAfterA != nullptr && dAfterA->detachedCount == 2, "fracture system (6b): the "
+                      "continuous run detaches a second chunk after the snapshot point");
+                check(dAfterB != nullptr && dAfterB->detachedCount == 2, "fracture system (6b): the "
+                      "restored run (fresh FractureSystem) also detaches a second chunk");
+
+                bool allMatch = hashesA.size() == hashesB.size();
+                for (size_t i = 0; allMatch && i < hashesA.size(); ++i) {
+                    if (hashesA[i] != hashesB[i]) {
+                        allMatch = false;
+                        MYE_LOG_ERROR("    (6b mismatch at tick %zu: continuous=0x%016llX restored=0x%016llX)",
+                                     i, static_cast<unsigned long long>(hashesA[i]),
+                                     static_cast<unsigned long long>(hashesB[i]));
+                    }
+                }
+                check(allMatch, "fracture system (6b): resuming from a post-break snapshot with a fresh "
+                      "FractureSystem instance matches an uninterrupted run byte-for-byte");
+            }
+            fracturelib::Install(nullptr);
+        }
+
+        // (16h、受け入れ条件 6b) 同じ検査を「割れる前」のスナップショットでも行う (broken==false
+        // の分岐、個数一致の検査そのものが復元後も壊れていないことを確認する)
+        {
+            constexpr int32_t kCount = 8;
+            FractureBakeResult rowBake = MakeRowFractureBake(kCount, 0.25f);
+
+            RenderResources resourcesA;
+            ConvexColliderLibrary collidersA;
+            FractureLibrary libA;
+            collidersA.Init(&resourcesA);
+            libA.Init(&resourcesA, &collidersA);
+            fracturelib::Install(&libA);
+            const FractureAssetHandle* handle = libA.RegisterBaked(
+                "fracture-selftest://snap6b_prebreak", rowBake, HashStr("fracture-selftest://snap6b_prebreak_src"),
+                0, kCount, 0, 0);
+
+            Scene sceneA;
+            World& wA = sceneA.GetWorld();
+            GameObject root = sceneA.CreateGameObject("Row8_6b_pre");
+            root.AddComponent<RigidbodyComponent>();
+            root.AddComponent<DestructibleComponent>();
+            auto* rb = root.GetComponent<RigidbodyComponent>();
+            rb->mass = 8.0f;
+            auto* d = root.GetComponent<DestructibleComponent>();
+            d->strength = 100.0f;
+            d->fractureAsset = AssetID{ HashStr("fracture-selftest://snap6b_prebreak") };
+            BuildFracturePieces(wA, root.Id(), *handle);
+            wA.ApplyStructuralChanges();
+            const EntityID rootA = root.Id();
+
+            FractureSystem fsysA;
+            std::vector<ShapeImpulse> none;
+            fsysA.Update(wA, 1.0f / 60.0f, none); // まだ何も割れない tick を 1 回通す
+
+            std::vector<std::byte> blob;
+            const SimRefs refsA{ &sceneA };
+            const bool captured = CaptureSimSnapshot(refsA, blob);
+            check(captured, "fracture system (6b, pre-break): snapshot capture succeeds before any break");
+
+            Scene sceneB;
+            const SimRefs refsB{ &sceneB };
+            const bool restored = captured && RestoreSimSnapshot(refsB, blob.data(), blob.size());
+            check(restored, "fracture system (6b, pre-break): snapshot restore succeeds");
+            World& wB = sceneB.GetWorld();
+            const EntityID rootB = rootA;
+            FractureSystem fsysB;
+
+            if (restored) {
+                std::vector<uint64_t> hashesA, hashesB;
+                constexpr int kN = 20;
+                for (int t = 0; t < kN; ++t) {
+                    if (t == 0) {
+                        ApplyFractureDamage(wA, rootA, rowBake.pieces[0].origin, 0.0f, 150.0f);
+                        ApplyFractureDamage(wB, rootB, rowBake.pieces[0].origin, 0.0f, 150.0f);
+                    }
+                    fsysA.Update(wA, 1.0f / 60.0f, none);
+                    wA.ApplyStructuralChanges();
+                    hashesA.push_back(HashWorld(wA));
+                    fsysB.Update(wB, 1.0f / 60.0f, none);
+                    wB.ApplyStructuralChanges();
+                    hashesB.push_back(HashWorld(wB));
+                }
+                const auto* dAfterA = wA.GetComponent<DestructibleComponent>(rootA);
+                const auto* dAfterB = wB.GetComponent<DestructibleComponent>(rootB);
+                check(dAfterA != nullptr && dAfterA->broken && dAfterB != nullptr && dAfterB->broken,
+                      "fracture system (6b, pre-break): both runs break after the snapshot point");
+                bool allMatch = hashesA.size() == hashesB.size();
+                for (size_t i = 0; allMatch && i < hashesA.size(); ++i) {
+                    if (hashesA[i] != hashesB[i]) {
+                        allMatch = false;
+                    }
+                }
+                check(allMatch, "fracture system (6b, pre-break): resuming from a pre-break snapshot with a "
+                      "fresh FractureSystem instance matches an uninterrupted run byte-for-byte");
+            }
+            fracturelib::Install(nullptr);
         }
     }
 

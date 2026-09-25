@@ -12,8 +12,8 @@
 | sub-03 | OK | 1 | 8c9d984 | 破片資産 .mfrac と FractureLibrary |
 | sub-04 | OK | 2 | 42a8dfe | ボクセル化 + surface nets。既定解像度 32。開いた箱 48/64 は sub-14 へ移管 |
 | sub-05 | OK | 1 | dd46d99 | 複合の上限撤廃・形状単位インパルス |
-| sub-06 | OK | 1 | (本コミット) | Destructible/FracturePiece・事前生成・root proxy |
-| sub-07 | 未着手 | 0 | | 接着の破断と塊の剛体化 |
+| sub-06 | OK | 1 | 68cf2d4 | Destructible/FracturePiece・事前生成・root proxy |
+| sub-07 | OK | 2 | (本コミット) | 接着の破断と塊の剛体化 |
 | sub-08 | 未着手 | 0 | | 割れた後の 6 挙動 |
 | sub-09 | 未着手 | 0 | | Inspector・非同期焼き・Undo |
 | sub-10 | 未着手 | 0 | | スキンメッシュの破壊 |

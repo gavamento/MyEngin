@@ -3998,10 +3998,11 @@ void BuildFractureShowcaseScene(EngineContext& ctx)
         col->friction = 0.8f;
     }
 
-    // ---- 落下して転がる破壊物の箱 (動的ルート)。壊れる前は 1 剛体として動くだけを見せる
-    //      (FractureSystem は sub-07 以降。この tick では何も割れない) ----
+    // ---- 落下して転がる破壊物の箱 (動的ルート)。壊れる前は 1 剛体として動くだけを見せ、
+    //      着地した後に球をぶつけると割れる (FractureSystem、M80g) ----
     {
-        const FractureAssetHandle* baked = BakeDemoFracture(res, "fracture://demo_box", 1, 8);
+        const char* prefix = "fracture://demo_box";
+        const FractureAssetHandle* baked = BakeDemoFracture(res, prefix, 1, 8);
         GameObject box = s.CreateGameObject("FractureBox");
         box.SetLocalPosition(-2.5f, 4.0f, 0.0f);
         box.SetLocalRotationEuler(22.0f, 17.0f, 0.0f); // 転がる初期姿勢
@@ -4012,14 +4013,18 @@ void BuildFractureShowcaseScene(EngineContext& ctx)
         rb->mass = 8.0f;
         auto* d = box.AddComponent<DestructibleComponent>();
         d->innerMaterial = AssetID{ HashStr("frdemo_inner") };
+        // FractureSystem が実行時にこの Destructible の資産を再解決するための参照
+        // (メモリ登録なので guid ではなく登録名の hash と同じ値、ResolveFractureAsset 参照)
+        d->fractureAsset = AssetID{ HashStr(prefix) };
         if (baked != nullptr) {
             BuildFracturePieces(w, box.Id(), *baked);
         }
     }
 
-    // ---- 固定の壁 (kinematic ルート、sub-07 で撃つ的)。この時点では割れない ----
+    // ---- 固定の壁 (kinematic ルート)。撃った所だけ抜け、体積最大の塊が固定のまま残る ----
     {
-        const FractureAssetHandle* baked = BakeDemoFracture(res, "fracture://demo_wall", 2, 12);
+        const char* prefix = "fracture://demo_wall";
+        const FractureAssetHandle* baked = BakeDemoFracture(res, prefix, 2, 12);
         GameObject wall = s.CreateGameObject("FractureWall");
         wall.SetLocalPosition(3.0f, 0.5f, 0.0f);
         auto* mr = wall.AddComponent<MeshRendererComponent>();
@@ -4029,10 +4034,32 @@ void BuildFractureShowcaseScene(EngineContext& ctx)
         rb->isKinematic = true;
         auto* d = wall.AddComponent<DestructibleComponent>();
         d->innerMaterial = AssetID{ HashStr("frdemo_inner") };
+        d->fractureAsset = AssetID{ HashStr(prefix) };
         if (baked != nullptr) {
             BuildFracturePieces(w, wall.Id(), *baked);
         }
     }
+
+    // ---- 撃ち出す弾 (M80g)。決定的な初速の球を tick 0 から飛ばす (重力なしの直進 — 他の
+    //      デモの射出弾と同じ流儀だが、着地後の箱と kinematic な壁の両方へ確実に当てるため
+    //      重力を切って軌道を単純にした)。箱は着地 (概ね tick 50 前後) してから当たるよう
+    //      距離を離して遅らせ、壁は静止しているので早く当てる ----
+    auto makeCannonball = [&](const char* name, DirectX::XMFLOAT3 pos, DirectX::XMFLOAT3 vel) {
+        GameObject ball = s.CreateGameObject(name);
+        ball.SetLocalPosition(pos.x, pos.y, pos.z);
+        auto* mr = ball.AddComponent<MeshRendererComponent>();
+        mr->mesh = res.meshes.Sphere();
+        mr->material = AssetID{ HashStr("frdemo_wall") };
+        auto* col = ball.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kSphere;
+        col->radius = 0.5f;
+        auto* rb = ball.AddComponent<RigidbodyComponent>();
+        rb->mass = 20.0f;
+        rb->gravityScale = 0.0f;
+        rb->velocity = vel;
+    };
+    makeCannonball("FractureBallBox", { -2.5f, 0.55f, -20.0f }, { 0.0f, 0.0f, 30.0f });
+    makeCannonball("FractureBallWall", { 3.0f, 0.5f, -15.0f }, { 0.0f, 0.0f, 30.0f });
 }
 
 } // namespace mye

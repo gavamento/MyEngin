@@ -16,6 +16,7 @@
 #include "Engine/Core/Profiler.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Acoustic/AcousticField.h" // M65d: 残光ボリュームの転送元
+#include "Engine/Engine/FractureSystem.h" // M80g: root proxy の可視規則を FractureSystem と共有
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Ragdoll.h" // M60g1: 剛体が骨を駆動しているときのパレット
 #include "Engine/Engine/SkinningSystem.h" // M18 追補: クロスフェード込みのポーズ評価
@@ -1128,17 +1129,18 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                         continue;
                     }
                 } else if (fpi >= 0) {
-                    // 破片 (Frag<i>) は割れる前は描かない
+                    // 破片 (Frag<i>) は割れる前は描かない。可視規則は FractureSystem と共有
+                    // (ShouldHideUnbrokenFracturePiece)
                     const auto* fp = static_cast<const FracturePieceComponent*>(arch.GetPtr(fpi, row));
                     const auto* d = world.GetComponent<DestructibleComponent>(fp->root);
-                    if (d == nullptr || !d->broken) {
+                    if (ShouldHideUnbrokenFracturePiece(d)) {
                         continue;
                     }
                 } else if (hi >= 0) {
                     const auto* h = static_cast<const HierarchyComponent*>(arch.GetPtr(hi, row));
                     if (const auto* pfp = world.GetComponent<FracturePieceComponent>(h->parent)) {
                         const auto* d = world.GetComponent<DestructibleComponent>(pfp->root);
-                        if (d == nullptr || !d->broken) {
+                        if (ShouldHideUnbrokenFracturePiece(d)) {
                             continue;
                         }
                     }

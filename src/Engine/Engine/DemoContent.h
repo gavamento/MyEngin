@@ -240,9 +240,9 @@ void BuildModalShowcaseScene(EngineContext& ctx);
 // 上のショーケースが参照するマテリアルの実体登録 (mdemo_ 接頭辞)
 void RegisterModalShowcaseContent(EngineContext& ctx);
 
-// M80f: 破壊物のショーケース (--fracture-demo)。壊れる前の縦切り (床 / 落下して転がる
-// 破壊物の箱 [動的ルート] / 固定の壁 [kinematic ルート、sub-07 で撃つ的]) だけを見せる —
-// FractureSystem (破断) は sub-07 以降で入るので、このサブでは何も割れない。
+// M80f/M80g: 破壊物のショーケース (--fracture-demo)。床 / 落下して転がる破壊物の箱
+// (動的ルート) / 固定の壁 (kinematic ルート) を置き、tick 0 から重力なしで直進する
+// 決定的な球を 2 発飛ばして両方を割る (FractureSystem、M80g)。
 // ★資産はファイルを作らずビルド時にメモリ上で焼いて登録する (`fracture://demo_*`)。
 //   Debug と Release が独立に焼いて replay が一致すること自体が、分割コアの
 //   構成間一致 (sub-02 の契約) を実行経路で証明する

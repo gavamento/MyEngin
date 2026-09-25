@@ -1,7 +1,7 @@
 # sub-06: コンポーネント・破片エンティティ構築・root proxy 描画・`--fracture-demo` (壊れる前)
 
 - 依存: sub-03, sub-05, sub-13
-- 状態: OK (コミット待ち)
+- 状態: OK (commit 68cf2d4)
 - 往復: 1
 
 ## やること

@@ -52,6 +52,7 @@
 #include "Engine/Engine/SceneSerializer.h"
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Engine/EffectSystem.h"
+#include "Engine/Engine/FractureSystem.h" // M80g: 接着の破断・塊の分離
 #include "Engine/Engine/Script/ScriptHost.h"
 #include "Engine/Engine/SchemaCodegen.h"
 #include "Engine/Engine/SchemaComponents.h"
@@ -127,6 +128,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ParticleSystem particleSystem;
     CollisionSystem collisionSystem;
     PhysicsSystem physicsSystem; // 剛体積分 + 衝突解決 (M20、ステートレス)
+    FractureSystem fractureSystem; // 接着の破断・塊の分離 (M80g)
+    std::vector<ShapeImpulse> fractureShapeImpulses; // 物理→破断判定の tick 内受け渡し (M80g)
     MeshColliderLibrary meshColliders; // 静的メッシュコライダーの BVH キャッシュ (M41)
     ConvexColliderLibrary convexColliders;   // 凸包コライダー + .mcvx クック (M60f)
     FractureLibrary fractureAssets; // 破片資産 (.mfrac) の読み込み + メッシュ/凸包登録 (M80c)
@@ -872,6 +875,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.partFollowSystem = &partFollowSystem;
     tickServices.effectSystem = &effectSystem;
     tickServices.physicsSystem = &physicsSystem;
+    tickServices.fractureSystem = &fractureSystem; // M80g
+    tickServices.shapeImpulses = &fractureShapeImpulses; // M80g
     tickServices.xpbd = &xpbd; // M60'b
     tickServices.acoustic = &acoustic; // M65a
     tickServices.agentSystem = &agentSystem; // M65f

@@ -66,6 +66,12 @@ public:
     // 登録名 (ファイルなら "guid://<16hex>") で引く。未登録は nullptr
     const FractureAssetHandle* Find(const std::string& namePrefix) const;
 
+    // 登録名の FNV-1a ハッシュ (= DestructibleComponent.fractureAsset がそのまま持つ値) で引く。
+    // ファイル資産は LoadFromFile の prefix (SubAssetKeyPrefix) のハッシュ、メモリ登録
+    // (--fracture-demo 等) は呼び出し側が namePrefix を HashStr したものと一致させて使う
+    // (FractureSystem が実行時に Destructible.fractureAsset だけから資産を再解決するため)
+    const FractureAssetHandle* FindByAssetId(AssetID id) const;
+
     // ConvexColliderLibrary::Clear() の後に呼ぶと、読み込み済みの全凸包を登録し直す
     void ReregisterAll();
 
@@ -77,6 +83,7 @@ private:
     RenderResources* resources_ = nullptr;
     ConvexColliderLibrary* colliders_ = nullptr;
     std::unordered_map<std::string, FractureAssetHandle> handles_;
+    std::unordered_map<uint64_t, std::string> byHash_; // FindByAssetId 用の逆引き
     std::unordered_set<std::wstring> failedPaths_; // ERROR は 1 回だけ (パス単位)
 };
 
