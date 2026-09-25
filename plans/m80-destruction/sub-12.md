@@ -12,7 +12,7 @@ M80 の ABI 変更を 1 回だけ入れ、文書を締める。
 2. **スロット `ApplyFractureDamage(void* engine, MyeEntityId entity, MyeVec3 point, float radius, float amount)`**: `struct MyeEngineApi` の末尾、`EngineApiTable.cpp` で sub-07 の内部関数を呼ぶ、`Interop.cs` の位置ミラー、C# の糖衣は `MyeScript` 側 (`Engine` は internal — メモの ABI 検証レシピ)
 3. **版**: `MYE_API_VERSION 22u`、ヘッダの版履歴に 1 行、`tools\check_rules.ps1:676` の表に `22 = 126`、`docs/history/api-scripting-tools.md` に v22 の項
 4. **デモ仕上げ**: `--fracture-demo` にスクリプト (C++ の GameLogic か C# のどちらかが既存デモの流儀に合う方。可能なら両方の経路を SelfTest で) を載せ、決まった tick に `ApplyFractureDamage` で壁を割り、`onBreak` を受けて何か状態に残る変化 (カウンタのフィールド等) を起こす。replay 一致
-5. **文書**: `engine_spec.md` に破壊の節 (§10.8 想定。方式・データ・荷重モデル・6 挙動・決定論・存在ゲート・非目標・v1 の制限: 凸包 1 個の近似 / スキンの継ぎ目 / 非一様スケール / 骨の速度)、§11.3 の replay 一覧に fracture、§12 の milestone 表。**ADR-021** (`docs/adr/`): 事前分割 + 接着グラフ + root proxy、`.mfrac` を assets に置く理由、ECS 内に状態を置く理由、B (実行中の分割) への拡張点 (`BuildFracturePieces` を破断直前に呼ぶ形)、却下案。§13 の ADR 一覧
+5. **文書**: `engine_spec.md` に破壊の節 (§10.8 想定。方式・データ・荷重モデル・6 挙動・決定論・存在ゲート・非目標・v1 の制限: 凸包 1 個の近似 / スキンの継ぎ目 / 非一様スケール / 骨の速度)、§11.3 の replay 一覧に fracture、§12 の milestone 表。**ADR-021** (`docs/adr/`): 事前分割 + 接着グラフ + root proxy、`.mfrac` を assets に置く理由、ECS 内に状態を置く理由、B (実行中の分割) への拡張点 (`BuildFracturePieces` を破断直前に呼ぶ形)、「`ConvexColliderLibrary::Clear()` を本番経路で呼ぶなら `FractureLibrary::ReregisterAll()` を対で呼ぶ」契約 (sub-03 の申し送り。`ConvexColliderLibrary.h` の `Clear()` 宣言コメントにも 1 行)、却下案。§13 の ADR 一覧
 6. `[ユーザーに聞ける]` の回答 (Notion) で裁定が覆っていたら、その反映が済んでいるか確認 (司会から届く)
 
 ## やらないこと (このサブでは)

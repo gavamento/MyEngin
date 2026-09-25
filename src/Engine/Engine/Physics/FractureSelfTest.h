@@ -16,6 +16,9 @@ namespace mye {
 //   - 平面がメッシュに触れない/頂点や辺をちょうど通る/面上に乗る、といった縮退入力でも
 //     落ちずに閉じた結果か失敗を返す
 //   - 同じ入力を 2 回切ると出力のバイト列が一致する (決定論)
+//   - 破片資産 (.mfrac) は書く→読む→書くでバイト一致し、壊れた入力は落ちずに失敗を返す。
+//     読み込んだ破片は MeshLibrary/ConvexColliderLibrary へ登録され、Clear() 後も
+//     ReregisterAll() で復帰する
 bool RunFractureSelfTest();
 
 } // namespace mye

@@ -10,13 +10,18 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <vector>
 
 #include <DirectXMath.h>
 
 #include "Engine/Core/Log.h"
+#include "Engine/Engine/Asset/FractureAsset.h"
+#include "Engine/Engine/Physics/ConvexColliderLibrary.h"
 #include "Engine/Engine/Physics/FractureBake.h"
+#include "Engine/Engine/Physics/FractureLibrary.h"
 #include "Engine/Engine/Physics/FractureMesh.h"
+#include "Engine/Renderer/GpuResources.h"
 
 using namespace DirectX;
 
@@ -744,6 +749,185 @@ bool RunFractureSelfTest()
         // BuildConvexHull の無限ループ修正後に追加 (768 三角形、32 破片)
         timeBake("torus / 8 pieces", MakeTorus(2.0f, 0.6f, 24, 16), 203, 8);
         timeBake("torus / 32 pieces", MakeTorus(2.0f, 0.6f, 24, 16), 204, 32);
+    }
+
+    // ---- 13. 破片資産 (.mfrac、M80c): 書く→読む→書くのバイト一致、壊れた入力の安全な失敗、
+    //          MeshLibrary/ConvexColliderLibrary への登録と Clear() 後の再登録 ----
+    {
+        auto piecesEqual = [](const FractureAsset::PieceRecord& a, const FractureAsset::PieceRecord& b) {
+            if (a.outerVerts.size() != b.outerVerts.size() || a.outerIndices.size() != b.outerIndices.size()
+                || a.capVerts.size() != b.capVerts.size() || a.capIndices.size() != b.capIndices.size()
+                || a.neighbors.size() != b.neighbors.size() || a.hull.verts.size() != b.hull.verts.size()
+                || a.boneName != b.boneName || a.volume != b.volume || a.outerIndices != b.outerIndices
+                || a.capIndices != b.capIndices) {
+                return false;
+            }
+            if (a.origin.x != b.origin.x || a.origin.y != b.origin.y || a.origin.z != b.origin.z) {
+                return false;
+            }
+            if (!a.outerVerts.empty()
+                && std::memcmp(a.outerVerts.data(), b.outerVerts.data(), a.outerVerts.size() * sizeof(MeshVertex))
+                    != 0) {
+                return false;
+            }
+            if (!a.capVerts.empty()
+                && std::memcmp(a.capVerts.data(), b.capVerts.data(), a.capVerts.size() * sizeof(MeshVertex)) != 0) {
+                return false;
+            }
+            for (size_t i = 0; i < a.neighbors.size(); ++i) {
+                if (a.neighbors[i].pieceIndex != b.neighbors[i].pieceIndex
+                    || a.neighbors[i].area != b.neighbors[i].area) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        FractureBakeInput in;
+        in.sourceMesh = MakeLShapePrism(1.0f);
+        in.seed = 55;
+        in.pieceCount = 6;
+        FractureBakeResult bake;
+        const bool baked = BakeFracture(in, bake);
+        check(baked && bake.success, "fracture asset: source bake succeeds");
+        if (baked && bake.success) {
+            const FractureAsset::FractureData data
+                = BuildFractureAssetData(bake, 0x1234ULL, in.seed, in.pieceCount, 0, 64);
+
+            // (13a) 書く→読む→書く のバイト一致。読んだ破片メッシュ・凸包・隣接が焼き結果と一致
+            std::vector<uint8_t> bytesA, bytesB;
+            FractureAsset::Serialize(data, bytesA);
+            FractureAsset::FractureData roundTripped;
+            const bool readOk = FractureAsset::Deserialize(bytesA, roundTripped);
+            check(readOk, "fracture asset: Deserialize(Serialize(data)) succeeds");
+            if (readOk) {
+                FractureAsset::Serialize(roundTripped, bytesB);
+                check(bytesA.size() == bytesB.size()
+                          && std::memcmp(bytesA.data(), bytesB.data(), bytesA.size()) == 0,
+                      "fracture asset: write->read->write is byte-identical");
+
+                bool piecesMatch = roundTripped.pieces.size() == data.pieces.size();
+                for (size_t i = 0; piecesMatch && i < roundTripped.pieces.size(); ++i) {
+                    piecesMatch = piecesEqual(data.pieces[i], roundTripped.pieces[i]);
+                }
+                check(piecesMatch, "fracture asset: read-back pieces/hull/neighbors match the bake result");
+            }
+
+            // (13b) 壊れたファイル: 落ちずに失敗を返す
+            {
+                std::vector<uint8_t> truncated(bytesA.begin(), bytesA.begin() + bytesA.size() / 2);
+                FractureAsset::FractureData discard;
+                check(!FractureAsset::Deserialize(truncated, discard),
+                      "fracture asset: truncated blob fails safely");
+
+                std::vector<uint8_t> badMagic = bytesA;
+                badMagic[0] ^= 0xFF;
+                check(!FractureAsset::Deserialize(badMagic, discard), "fracture asset: wrong magic fails safely");
+
+                std::vector<uint8_t> badVersion = bytesA;
+                badVersion[4] ^= 0xFF; // magic(4B) の直後が version
+                check(!FractureAsset::Deserialize(badVersion, discard),
+                      "fracture asset: wrong version fails safely");
+            }
+
+            // (13c) 件数上限超え: 構造的に超過させたデータは落ちずに失敗する
+            {
+                FractureAsset::FractureData tooManyPieces;
+                tooManyPieces.pieces.resize(static_cast<size_t>(kMaxFracturePieces) + 1);
+                std::vector<uint8_t> blob;
+                FractureAsset::Serialize(tooManyPieces, blob);
+                FractureAsset::FractureData discard;
+                check(!FractureAsset::Deserialize(blob, discard),
+                      "fracture asset: piece count above the cap fails safely");
+
+                FractureAsset::FractureData tooManyNeighbors;
+                tooManyNeighbors.pieces.resize(1);
+                tooManyNeighbors.pieces[0].neighbors.resize(static_cast<size_t>(kMaxFractureNeighbors) + 1);
+                std::vector<uint8_t> blob2;
+                FractureAsset::Serialize(tooManyNeighbors, blob2);
+                check(!FractureAsset::Deserialize(blob2, discard),
+                      "fracture asset: neighbor count above the cap fails safely");
+            }
+
+            // (13d) FractureLibrary: メモリ登録 (GUID なし) → MeshLibrary/ConvexColliderLibrary へ
+            //       登録 → Clear() で凸包を失う → ReregisterAll() で復帰する
+            {
+                RenderResources resources;
+                ConvexColliderLibrary colliders;
+                colliders.Init(&resources);
+                FractureLibrary fractureLib;
+                fractureLib.Init(&resources, &colliders);
+
+                const FractureAssetHandle* handle = fractureLib.RegisterBaked(
+                    "fracture://selftest_lshape", bake, 0xABCDULL, in.seed, in.pieceCount, 0, 64);
+                check(handle != nullptr && handle->pieces.size() == bake.pieces.size(),
+                      "fracture library: RegisterBaked registers every piece (no-GUID path)");
+                if (handle != nullptr && !handle->pieces.empty()) {
+                    const AssetID hullId = handle->pieces[0].hull;
+                    check(resources.meshes.Get(handle->pieces[0].outerMesh) != nullptr,
+                          "fracture library: outer mesh registered in MeshLibrary");
+                    check(resources.meshes.Get(handle->pieces[0].capMesh) != nullptr,
+                          "fracture library: cap mesh registered in MeshLibrary");
+                    check(colliders.Get(hullId) != nullptr,
+                          "fracture library: hull registered in ConvexColliderLibrary");
+
+                    colliders.Clear();
+                    check(colliders.Get(hullId) == nullptr,
+                          "fracture library: Clear() forgets the hull (baseline for the next check)");
+
+                    fractureLib.ReregisterAll();
+                    check(colliders.Get(hullId) != nullptr,
+                          "fracture library: ReregisterAll() restores the hull after Clear()");
+                }
+            }
+
+            // (13e) 実ファイルの往復: Save/Load がバイト一致、LoadFromFile は同じパスを読み直さない
+            {
+                namespace fs = std::filesystem;
+                std::error_code ec;
+                const fs::path tempDir = fs::temp_directory_path(ec) / L"mye_fracture_selftest";
+                fs::create_directories(tempDir, ec);
+                const fs::path filePath = tempDir / L"test.mfrac";
+                fs::remove(filePath, ec);
+
+                const bool saved = FractureAsset::Save(filePath.wstring(), data);
+                check(saved, "fracture asset: Save() writes the file");
+                if (saved) {
+                    FractureAsset::FractureData loaded;
+                    check(FractureAsset::Load(filePath.wstring(), loaded), "fracture asset: Load() reads it back");
+
+                    std::vector<uint8_t> savedBytes, loadedBytes;
+                    FractureAsset::Serialize(data, savedBytes);
+                    FractureAsset::Serialize(loaded, loadedBytes);
+                    check(savedBytes.size() == loadedBytes.size()
+                              && std::memcmp(savedBytes.data(), loadedBytes.data(), savedBytes.size()) == 0,
+                          "fracture asset: file round trip is byte-identical");
+
+                    RenderResources resources2;
+                    ConvexColliderLibrary colliders2;
+                    colliders2.Init(&resources2);
+                    FractureLibrary fractureLib2;
+                    fractureLib2.Init(&resources2, &colliders2);
+                    const FractureAssetHandle* h1 = fractureLib2.LoadFromFile(filePath.wstring());
+                    const FractureAssetHandle* h2 = fractureLib2.LoadFromFile(filePath.wstring());
+                    check(h1 != nullptr && h1 == h2,
+                          "fracture library: LoadFromFile is idempotent for the same path");
+                }
+                fs::remove_all(tempDir, ec);
+            }
+        }
+
+        // (13f) 見つからないファイル: 落ちずに失敗を返す (spec §4.1 エッジケース)
+        {
+            RenderResources resources3;
+            ConvexColliderLibrary colliders3;
+            colliders3.Init(&resources3);
+            FractureLibrary fractureLib3;
+            fractureLib3.Init(&resources3, &colliders3);
+            const FractureAssetHandle* missing
+                = fractureLib3.LoadFromFile(L"C:\\definitely\\not\\a\\real\\path.mfrac");
+            check(missing == nullptr, "fracture library: missing .mfrac fails without crashing");
+        }
     }
 
     if (failCount == 0) {

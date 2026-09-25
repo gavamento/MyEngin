@@ -263,7 +263,7 @@ ByteWriter / ByteReader (`Engine/Core/ByteIo.h`) で、magic `"MFRC"`、版 1。
 - 断面の三角形分割 (穴あき・縮退・ほぼ同一平面の頂点) の頑健さ — sub-01 で最初に潰す。失敗は「その切断を諦めて破片を統合」など安全側へ倒す規則を sub-01 で決める
 - 焼き時間 (破片 256 × 高ポリ) — sub-02 で計測値を記録。遅ければ sub-09 のワーカーで吸収 (UI は固めない)
 - 複合 1 つに子 N 個の狭域判定コスト、壊れた直後のボディ急増 — sub-11
-- `ConvexColliderLibrary::Clear()` 後の再登録漏れ = 破片のすり抜け (黙った壊れ方) — sub-03 で経路を作り SelfTest で固定
+- `ConvexColliderLibrary::Clear()` 後の再登録漏れ = 破片のすり抜け (黙った壊れ方) — sub-03 で `FractureLibrary::ReregisterAll()` を作り SelfTest で固定した。2026-09-25 時点で `Clear()` を呼ぶ本番経路は 0 件 (planner が grep で確認) なので、仕組みは足さない。**`Clear()` を本番経路で呼ぶ変更をするときは `fracturelib::Library()->ReregisterAll()` を対で呼ぶ**、を ADR-021 と `ConvexColliderLibrary::Clear()` の宣言コメントに書く (sub-12)
 - 新 TypeId で実行時のスクリプト TypeId がずれる — 保存データは名前キーで安全。確認は replay_verify / shot_verify で行う
 - スキン: `.mmdl` からのウェイト読み出し経路の有無 (CPU Mesh には無い) — sub-10 の最初に確認
 

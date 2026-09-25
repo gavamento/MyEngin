@@ -29,6 +29,7 @@
 #include "Engine/Engine/Modal/ModalSoundLibrary.h" // M76e: .dmnet モデル + メッシュ毎の特徴マップの焼き
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Physics/ConvexColliderLibrary.h"
+#include "Engine/Engine/Physics/FractureLibrary.h"
 #include "Engine/Engine/Physics/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/PhysMatLibrary.h"
 #include "Engine/Engine/Physics/XpbdBackend.h" // M60'b: 変形体の粒子池
@@ -128,6 +129,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     PhysicsSystem physicsSystem; // 剛体積分 + 衝突解決 (M20、ステートレス)
     MeshColliderLibrary meshColliders; // 静的メッシュコライダーの BVH キャッシュ (M41)
     ConvexColliderLibrary convexColliders;   // 凸包コライダー + .mcvx クック (M60f)
+    FractureLibrary fractureAssets; // 破片資産 (.mfrac) の読み込み + メッシュ/凸包登録 (M80c)
     ModalSoundLibrary modalSounds; // Deep-Modal 推論 + .msfm クック (M76e)。sim には触れない
     PhysMatLibrary physMatLibrary;     // .physmat.json (M59a1)。sim の消費は M59a2 から
     TerrainColliderLibrary terrainColliders; // 地形コライダー (M59i)。**描画側とは別キャッシュ**
@@ -282,6 +284,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // クック (.mcvx) が乗るので CookedCache::Configure より後で使われること (Get は lazy)
     convexColliders.Init(&resources);
     convexcol::Install(&convexColliders);
+    // M80c: 破片資産 (.mfrac)。凸包は convexColliders へ委譲する (Clear() 後の
+    // 再登録は呼び出し側が ReregisterAll() を呼ぶ責務。現状の呼び出し元はまだ無い)
+    fractureAssets.Init(&resources, &convexColliders);
+    fracturelib::Install(&fractureAssets);
     // M76e: Deep-Modal 推論。CLI (--modal-backend) は綴りだけ検査済みで、未実装名
     // ("d3d11cs") への縮退はここ (SetBackendByName) が WARN 付きでやる。
     // .dmnet が無い (M76h 未実装/未生成) 環境では LoadModel が false を返すだけで、
@@ -2580,6 +2586,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.acousticField = nullptr;
     meshcol::Install(nullptr); // M41 (meshColliders 破棄前に必ず外す)
     convexcol::Install(nullptr); // M60f (convexColliders 破棄前に必ず外す)
+    fracturelib::Install(nullptr); // M80c (fractureAssets 破棄前に必ず外す)
     modalsound::Install(nullptr); // M76e (modalSounds 破棄前に必ず外す)
     modalSounds.Shutdown(); // ワーカー join (TextureLibrary::AsyncWorker と同じ流儀)
     physmat::Install(nullptr); // M59a1 (physMatLibrary 破棄前に必ず外す)

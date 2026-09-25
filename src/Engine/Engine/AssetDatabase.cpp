@@ -102,6 +102,9 @@ AssetType AssetDatabase::ClassifyPath(const std::wstring& path)
     if (EndsWith(s, ".terrain.json")) {
         return AssetType::Terrain;
     }
+    if (EndsWith(s, ".mfrac")) {
+        return AssetType::Fracture;
+    }
     if (EndsWith(s, ".png") || EndsWith(s, ".jpg") || EndsWith(s, ".jpeg") || EndsWith(s, ".tga")
         || EndsWith(s, ".bmp") || EndsWith(s, ".dds")) {
         return AssetType::Texture;
@@ -141,6 +144,7 @@ const char* AssetDatabase::TypeName(AssetType t)
     case AssetType::Terrain: return "terrain";
     case AssetType::PhysMat: return "physmat";
     case AssetType::FxStack: return "fxstack";
+    case AssetType::Fracture: return "fracture";
     case AssetType::Unknown:
     default: return "unknown";
     }
@@ -165,6 +169,7 @@ AssetType AssetDatabase::ParseTypeName(const std::string& s)
     if (s == "terrain") return AssetType::Terrain;
     if (s == "physmat") return AssetType::PhysMat;
     if (s == "fxstack") return AssetType::FxStack;
+    if (s == "fracture") return AssetType::Fracture;
     return AssetType::Unknown;
 }
 

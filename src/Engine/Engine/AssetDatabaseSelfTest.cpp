@@ -82,8 +82,11 @@ bool RunAssetDatabaseSelfTest()
     check(AssetDatabase::ClassifyPath(L"x\\Health.component.schema.json") == AssetType::Schema
               && AssetDatabase::ClassifyPath(L"x\\Health.json") == AssetType::Unknown,
           "component schema is a distinct asset type");
+    // M80c: .mfrac (破片資産)
+    check(AssetDatabase::ClassifyPath(L"x\\Prop.mfrac") == AssetType::Fracture,
+          ".mfrac is classified as the fracture asset type");
     for (AssetType t : { AssetType::Actor, AssetType::Prefab, AssetType::Sound, AssetType::Mixer,
-                         AssetType::Schema, AssetType::PhysMat }) {
+                         AssetType::Schema, AssetType::PhysMat, AssetType::Fracture }) {
         check(AssetDatabase::ParseTypeName(AssetDatabase::TypeName(t)) == t,
               "asset type name round-trips through .meta");
     }

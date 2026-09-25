@@ -57,6 +57,7 @@
     <ClCompile Include="..\src\Engine\Engine\AnimatorControllerSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Asset\CookedCache.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Asset\CookedCacheSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Asset\FractureAsset.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Asset\ModelCook.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Asset\SubAssetKeySelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Asset\SubAssetMigration.cpp" />
@@ -122,6 +123,7 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\ConvexHull.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\ConvexSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\FractureBake.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\FractureLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\FractureMesh.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\FractureSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\MeshColliderLibrary.cpp" />
@@ -294,6 +296,7 @@
     <ClInclude Include="..\src\Engine\Engine\AnimatorControllerSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Asset\CookedCache.h" />
     <ClInclude Include="..\src\Engine\Engine\Asset\CookedCacheSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Asset\FractureAsset.h" />
     <ClInclude Include="..\src\Engine\Engine\Asset\ModelCook.h" />
     <ClInclude Include="..\src\Engine\Engine\Asset\SubAssetKeySelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Asset\SubAssetMigration.h" />
@@ -370,6 +373,7 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\ConvexHull.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\ConvexSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\FractureBake.h" />
+    <ClInclude Include="..\src\Engine\Engine\Physics\FractureLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\FractureMesh.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\FractureSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\MeshColliderLibrary.h" />
