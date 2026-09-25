@@ -90,7 +90,10 @@ $engineSrc = Get-SourceItems @(
     @{ Path = 'src\Shared'; Prefix = 'Shared' }
 )
 Update-Vcxproj 'Engine' $engineSrc
-$engineExternal = Get-SourceItems @(@{ Path = 'external\imgui'; Prefix = 'external\imgui' })
+$engineExternal = Get-SourceItems @(
+    @{ Path = 'external\imgui'; Prefix = 'external\imgui' },
+    @{ Path = 'external\libtess2'; Prefix = 'external\libtess2' }
+)
 # external は vcxproj に手書き済み (WarningLevel 指定のため)。filters のみ反映
 Update-Filters 'Engine' ($engineSrc + $engineExternal)
 

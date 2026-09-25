@@ -33,7 +33,7 @@
       <TreatWarningAsError Condition="'$(MyeWarnAsError)'=='true'">true</TreatWarningAsError>
       <AdditionalOptions>/utf-8 /Zc:preprocessor %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>NOMINMAX;WIN32_LEAN_AND_MEAN;_CRT_SECURE_NO_WARNINGS;IMGUI_DISABLE_OBSOLETE_FUNCTIONS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(RepoRoot)src;$(RepoRoot)external;$(RepoRoot)external\imgui;$(RepoRoot)obj\generated\$(Configuration);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(RepoRoot)src;$(RepoRoot)external;$(RepoRoot)external\imgui;$(RepoRoot)external\libtess2\Include;$(RepoRoot)obj\generated\$(Configuration);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>

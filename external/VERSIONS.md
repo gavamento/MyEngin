@@ -13,5 +13,6 @@
 | DirectXMath | Windows SDK 同梱 | `<DirectXMath.h>` | MIT |
 | IconFontCppHeaders | main (IconsFontAwesome6.h) | https://github.com/juliettef/IconFontCppHeaders | Zlib |
 | Font Awesome 6 Free Solid | 6.x (fa-solid-900.ttf → fa_solid_900.h に C 配列で埋め込み) | https://github.com/FortAwesome/Font-Awesome | SIL OFL 1.1 (LICENSE.txt 同梱) |
+| libtess2 | master @ 8dbd6483e920311a58c9af10a10beb278efebc36 (2025-10-15、タグ v1.0.2 は2011年時点のものでバグ修正が反映されていないため不採用) | https://github.com/memononen/libtess2 | SGI Free Software License B 2.0 (LICENSE.txt 同梱、MIT相当) |
 
 方針: パッケージマネージャ・サブモジュールは使わず、ソースをそのままコミットする（クローン → F5 で動くことを優先）。

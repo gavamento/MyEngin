@@ -156,7 +156,7 @@
 | `pieceCount` | Int32 | 16 | 破片数の目安 (2..256) |
 | `seed` | UInt32 | 1 | 分割の seed |
 | `openMeshMode` | Int32 | 0 | 0 = 拒否 / 1 = ボクセル化を許容 |
-| `voxelResolution` | Int32 | 32 (sub-04 の計測。sub-14 の計測で上げ得る) | ボクセル化の最長辺セル数 (16..256) |
+| `voxelResolution` | Int32 | 32 (sub-04 / sub-14 の計測。48 は開いた箱・16 破片で Release 10.8 秒) | ボクセル化の最長辺セル数 (16..256) |
 | `innerMaterial` | AssetRef | null | 断面のマテリアル (null = ルートのもの) |
 | `strength` | Float | 5000 | 接着の基準強度 [N] |
 | `afterBreak` | Int32 | 0 | §4.1 の 0..5 |
@@ -283,3 +283,4 @@ ByteWriter / ByteReader (`Engine/Core/ByteIo.h`) で、magic `"MFRC"`、版 1。
 - 2026-09-25 (sub-02 VERDICT round 3、差し戻し上限): sub-02 を箱・L 字で OK とし、トーラス分を**新サブ sub-13** へ切り出した。原因は既存の `ConvexHull.cpp:219-307` にある。地平線の新面が縮退すると `continue` するが、コメントに反して pick が `outside` に残るため、同じ点を永遠に選び続ける (無限ループ)。修正前にこの経路へ入った入力は必ず止まらなかったので、修正は既存の終了する入力に対してビット一致になる。sub-06 は sub-13 に依存させた (実メッシュの焼きで止まらないことが前提のため)
 - 2026-09-25 (sub-04 VERDICT round 1): §4.1 焼き 1 の surface nets を具体化した (セルごとに 1 頂点・辺の中点の平均・曖昧な配置の事前解消)。round 1 の実装は占有境界の立方体の面をそのまま出すブロック状の抽出で、surface nets ではなかった。同じ平面上の大きな面が大量にでき、断面の輪郭が数千点の共線点の列になり、`EarClip` が失敗していた。§4.2 の `voxelResolution` の既定値を「sub-04 の計測で決める」に変更。`EarClip` の共線点の扱い (面積 0 の耳として外す) を sub-04 の範囲に加えた (sub-01 の部品だが、ボクセル化経路でしか顕在化しないため)。[ユーザーに聞ける] #10 を追加
 - 2026-09-25 (sub-04 VERDICT round 2): sub-04 を OK にした (surface nets、解像度 32 の焼き成功)。開いた箱の解像度 48 / 64 の焼き失敗と、耳切りの遅さ (O(n³)) は**新サブ sub-14** に切り出した。断面の三角形分割を libtess2 の掃引法に置き換える。理由: 耳切りの失敗が sub-01 / 02 / 04 と同じ種類で 3 回出た。単純多角形の前提は、薄い壁の断面 (輪郭の接触) で原理的に破れる。`voxelResolution` の既定値を 32 にした (sub-04 の実測: 開いた箱、pieceCount 16 で Release 5.3 秒)。sub-09 を sub-14 に依存させた (Inspector で解像度を上げた利用者が失敗しないように)。[ユーザーに聞ける] #11 を追加
+- 2026-09-25 (sub-14 VERDICT round 1): 断面の三角形分割を libtess2 (master @ 8dbd648、TESS_WINDING_ODD) に置き換えた。輪郭が縮退した入力 (新しい頂点・頂点の統合・三角形数がオイラーの公式と合わない) では、sub-01 の厳密な閉じの代わりに幾何的な閉じで判定する。既定の `voxelResolution` は 32 のまま (sub-14 の実測で 48 は Release 10.8 秒)

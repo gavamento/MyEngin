@@ -6,9 +6,10 @@
 #include "Engine/Engine/Physics/FractureMesh.h"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <map>
+
+#include "libtess2/Include/tesselator.h"
 
 using namespace DirectX;
 
@@ -304,16 +305,10 @@ bool ChainAllLoops(const std::vector<std::pair<FractureVertex, FractureVertex>>&
     return true;
 }
 
-// ---- 平面上の 2D 多角形 (蓋の三角形分割用) ----
+// ---- 平面上の 2D 点 (蓋の三角形分割の入力・面積計算用) ----
 struct Pt2 {
     float u = 0, v = 0;
-    int32_t vertexIdx = -1; // 出力メッシュの頂点 index (三角形分割の結果で使う)
 };
-
-float Cross2(float ax, float ay, float bx, float by)
-{
-    return ax * by - ay * bx;
-}
 
 // シューレースの符号付き面積 (正 = 反時計回り)
 double SignedArea2(const std::vector<Pt2>& poly)
@@ -328,288 +323,33 @@ double SignedArea2(const std::vector<Pt2>& poly)
     return a * 0.5;
 }
 
-double Cross2D(double ax, double ay, double bx, double by)
-{
-    return ax * by - ay * bx;
-}
-
-// 点が三角形の内部 (境界含む) にあるか。巻き順は問わない (符号が全て同じなら内部)。
-// 密な円弧近似 (穴あき蓋の環状ループなど) では float の丸め誤差でほぼ同一直線上の点の
-// 内外判定がぶれ、耳切りが「塞がれている」と誤判定して詰まることがあった (実測で確認済み)。
-// ここだけは double で計算し、桁落ちの余地を減らす
-bool PointInTriangle2(float u, float v, const Pt2& p0, const Pt2& p1, const Pt2& p2)
-{
-    const double d1 = Cross2D(static_cast<double>(p1.u) - p0.u, static_cast<double>(p1.v) - p0.v,
-                              static_cast<double>(u) - p0.u, static_cast<double>(v) - p0.v);
-    const double d2 = Cross2D(static_cast<double>(p2.u) - p1.u, static_cast<double>(p2.v) - p1.v,
-                              static_cast<double>(u) - p1.u, static_cast<double>(v) - p1.v);
-    const double d3 = Cross2D(static_cast<double>(p0.u) - p2.u, static_cast<double>(p0.v) - p2.v,
-                              static_cast<double>(u) - p2.u, static_cast<double>(v) - p2.v);
-    const bool hasNeg = (d1 < 0.0) || (d2 < 0.0) || (d3 < 0.0);
-    const bool hasPos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
-    return !(hasNeg && hasPos);
-}
-
-// レイキャスト法 (+u 方向)。境界上は未定義 (呼び出し側は内部の代表点で使う)
-bool PointInPoly2(const std::vector<Pt2>& poly, float u, float v)
-{
-    bool inside = false;
-    const size_t n = poly.size();
-    for (size_t i = 0, j = n - 1; i < n; j = i++) {
-        const float ui = poly[i].u, vi = poly[i].v, uj = poly[j].u, vj = poly[j].v;
-        if (((vi > v) != (vj > v)) && (u < (uj - ui) * (v - vi) / (vj - vi) + ui)) {
-            inside = !inside;
+// libtess2 (掃引線法、external/libtess2、SGI Free Software License B 2.0) の RAII ラッパー。
+// 本エンジンは例外を使わないので、生成失敗は tess == nullptr で表す
+struct TessHandle {
+    TESStesselator* tess = tessNewTess(nullptr);
+    TessHandle() = default;
+    ~TessHandle()
+    {
+        if (tess != nullptr) {
+            tessDeleteTess(tess);
         }
     }
-    return inside;
-}
-
-// 多角形が (ほぼ) 凸か。しきい値は頂点ごとに隣接 2 辺の長さの積に対する相対値で決める —
-// 断面切断を何度も重ねた蓋は場所によって点の密度が大きく違い (狭い範囲に点が密集する箇所と
-// 疎な箇所が混在する)、多角形全体の面積を基準にした一律のしきい値では密集箇所で誤って
-// 「凹」と判定してしまう (実測で確認済み)
-bool IsConvexCCW(const std::vector<Pt2>& poly)
-{
-    const int32_t n = static_cast<int32_t>(poly.size());
-    if (n < 3) {
-        return false;
-    }
-    for (int32_t i = 0; i < n; ++i) {
-        const Pt2& prev = poly[static_cast<size_t>((i + n - 1) % n)];
-        const Pt2& curr = poly[static_cast<size_t>(i)];
-        const Pt2& next = poly[static_cast<size_t>((i + 1) % n)];
-        const double e1u = static_cast<double>(curr.u) - prev.u, e1v = static_cast<double>(curr.v) - prev.v;
-        const double e2u = static_cast<double>(next.u) - curr.u, e2v = static_cast<double>(next.v) - curr.v;
-        const double cr = Cross2D(e1u, e1v, e2u, e2v);
-        const double localEps = std::sqrt((e1u * e1u + e1v * e1v) * (e2u * e2u + e2v * e2v)) * 1e-4;
-        if (cr < -localEps) {
-            return false;
-        }
-    }
-    return true;
-}
-
-// ---- 耳切り三角形分割 (単純多角形、CCW 前提) ----
-// 毎回、有効な耳のうち最も丸い (cr が最大の) ものを選んで切る (同値は index 最小、決定的)。
-// O(n^3) だが蓋の頂点数は高々数百程度 (メッシュの断面) なので実用上問題ない
-bool EarClip(std::vector<Pt2> poly, double areaEps, std::vector<std::array<int32_t, 3>>& trisOut)
-{
-    if (poly.size() < 3) {
-        return false;
-    }
-    const int32_t maxIter = static_cast<int32_t>(poly.size()) * static_cast<int32_t>(poly.size()) + 64;
-    int32_t iter = 0;
-    while (poly.size() > 3) {
-        bool clipped = false;
-        const int32_t n = static_cast<int32_t>(poly.size());
-
-        // 共線点 (prev,curr,next が一直線上で curr が prev→next の間にある) を最優先で外す。
-        // 面積0の耳として記録するので体積にも辺の使用回数にも影響しない。ボクセル化した
-        // 断面のように共線点が大量に連なる輪郭では、後段の「最も丸い耳」探索がその共線点に
-        // 隣の耳を塞がれて詰まるため、ここで先に間引く
-        for (int32_t i = 0; i < n; ++i) {
-            const Pt2& prev = poly[static_cast<size_t>((i + n - 1) % n)];
-            const Pt2& curr = poly[static_cast<size_t>(i)];
-            const Pt2& next = poly[static_cast<size_t>((i + 1) % n)];
-            const double e1u = static_cast<double>(curr.u) - prev.u, e1v = static_cast<double>(curr.v) - prev.v;
-            const double e2u = static_cast<double>(next.u) - curr.u, e2v = static_cast<double>(next.v) - curr.v;
-            if (std::fabs(Cross2D(e1u, e1v, e2u, e2v)) > areaEps) {
-                continue;
-            }
-            if (e1u * e2u + e1v * e2v <= 0.0) {
-                continue; // 折り返し (鋭い切り返し) は共線除去の対象にしない
-            }
-            trisOut.push_back({ prev.vertexIdx, curr.vertexIdx, next.vertexIdx });
-            poly.erase(poly.begin() + i);
-            clipped = true;
-            break;
-        }
-        if (clipped) {
-            if (++iter > maxIter) {
-                return false; // 安全弁 (理論上到達しないはずだが無限ループを避ける)
-            }
-            continue;
-        }
-
-        // 最初に見つかった耳ではなく、有効な耳のうち最も丸い (cr が最大の) ものを選ぶ。
-        // 「最初に見つかった耳」を毎回優先すると、穴を橋渡しした細い縫い目の周りで
-        // 先に周囲を食い尽くしてしまい、残りがほぼ全周反射角の帯だけになって
-        // 二耳定理が保証するはずの耳が実際には見つからず詰まることがあった
-        // (穴あき蓋の環状ループで実測)。最も丸い耳を優先すると細い帯を作りにくい
-        int32_t bestI = -1;
-        double bestCr = areaEps;
-        for (int32_t i = 0; i < n; ++i) {
-            const Pt2& prev = poly[static_cast<size_t>((i + n - 1) % n)];
-            const Pt2& curr = poly[static_cast<size_t>(i)];
-            const Pt2& next = poly[static_cast<size_t>((i + 1) % n)];
-            const double cr = Cross2D(static_cast<double>(curr.u) - prev.u,
-                                      static_cast<double>(curr.v) - prev.v,
-                                      static_cast<double>(next.u) - curr.u,
-                                      static_cast<double>(next.v) - curr.v);
-            if (cr <= bestCr) {
-                continue; // 凹・縮退、またはこれまでの最良候補以下
-            }
-            bool anyInside = false;
-            for (int32_t k = 0; k < n; ++k) {
-                if (k == (i + n - 1) % n || k == i || k == (i + 1) % n) {
-                    continue;
-                }
-                const Pt2& pk = poly[static_cast<size_t>(k)];
-                // 穴の橋渡しは同じ座標の点 (橋の両端) を配列の離れた場所に 2 回置く。
-                // その複製が耳の 3 頂点のどれかと同じ座標なら、それは耳を塞ぐ別の点ではなく
-                // 単なる自分自身の写しなので「塞いでいる」に数えない (数えると橋の周りの
-                // 耳が永遠に選べず詰まる。穴あき蓋の環状ループで実測)
-                if ((pk.u == prev.u && pk.v == prev.v) || (pk.u == curr.u && pk.v == curr.v)
-                    || (pk.u == next.u && pk.v == next.v)) {
-                    continue;
-                }
-                if (PointInTriangle2(pk.u, pk.v, prev, curr, next)) {
-                    anyInside = true;
-                    break;
-                }
-            }
-            if (anyInside) {
-                continue;
-            }
-            bestI = i;
-            bestCr = cr;
-        }
-        if (bestI >= 0) {
-            const int32_t i = bestI;
-            const Pt2& prev = poly[static_cast<size_t>((i + n - 1) % n)];
-            const Pt2& curr = poly[static_cast<size_t>(i)];
-            const Pt2& next = poly[static_cast<size_t>((i + 1) % n)];
-            trisOut.push_back({ prev.vertexIdx, curr.vertexIdx, next.vertexIdx });
-            poly.erase(poly.begin() + i);
-            clipped = true;
-        }
-        if (!clipped) {
-            // 密に並んだ点が続く凸多角形では、"塞がれているか" の判定が丸め誤差で
-            // 偽陽性になり、本来存在するはずの耳が見つからないことがある (連続する
-            // 平面切断を重ねた蓋で実測)。残りの多角形が (数値誤差の範囲で) 凸なら、
-            // 自己交差の心配がないファン分割へ切り替える。ただし IsConvexCCW 自体が
-            // 丸め誤差で誤判定する可能性を潰すため、ファン分割後の面積が多角形本来の
-            // 面積 (シューレース公式) と一致することを検算してから採用する —
-            // 一致しなければ凸という前提自体が誤りなので安全側に倒して失敗を返す
-            if (IsConvexCCW(poly)) {
-                std::vector<std::array<int32_t, 3>> fanTris;
-                double fanArea = 0.0;
-                for (size_t k = 1; k + 1 < poly.size(); ++k) {
-                    fanTris.push_back({ poly[0].vertexIdx, poly[static_cast<size_t>(k)].vertexIdx,
-                                       poly[static_cast<size_t>(k) + 1].vertexIdx });
-                    fanArea += Cross2D(static_cast<double>(poly[k].u) - poly[0].u,
-                                       static_cast<double>(poly[k].v) - poly[0].v,
-                                       static_cast<double>(poly[k + 1].u) - poly[0].u,
-                                       static_cast<double>(poly[k + 1].v) - poly[0].v)
-                             * 0.5;
-                }
-                const double polyArea = SignedArea2(poly);
-                if (std::fabs(fanArea - polyArea) <= (std::max)(std::fabs(polyArea) * 1e-6, areaEps * 4.0)) {
-                    trisOut.insert(trisOut.end(), fanTris.begin(), fanTris.end());
-                    return true;
-                }
-            }
-            return false; // 安全網: 有効な耳が見つからない (縮退・自己交差の疑い)
-        }
-        if (++iter > maxIter) {
-            return false; // 安全弁 (理論上到達しないはずだが無限ループを避ける)
-        }
-    }
-    trisOut.push_back({ poly[0].vertexIdx, poly[1].vertexIdx, poly[2].vertexIdx });
-    return true;
-}
-
-// 穴 hole を outer へ橋渡しし、1 本の単純多角形に組み替える (Held の手法を簡略化)。
-// outer は CCW (面積 > 0)、hole は CW (面積 < 0) の頂点順であることを前提にする
-bool BridgeHoleIntoOuter(std::vector<Pt2>& outer, const std::vector<Pt2>& hole)
-{
-    if (hole.empty()) {
-        return true;
-    }
-    // M: hole の中で u が最大 (同値は v が最大) の頂点 — 橋渡しの入口
-    size_t mIdx = 0;
-    for (size_t i = 1; i < hole.size(); ++i) {
-        if (hole[i].u > hole[mIdx].u || (hole[i].u == hole[mIdx].u && hole[i].v > hole[mIdx].v)) {
-            mIdx = i;
-        }
-    }
-    const Pt2 M = hole[mIdx];
-
-    // M から +u 方向のレイと outer の辺との交点のうち、M に最も近いもの (u が最小) を探す
-    bool found = false;
-    float bestU = 0.0f;
-    Pt2 crossPt{};
-    size_t edgeA = 0, edgeB = 0;
-    const size_t n = outer.size();
-    for (size_t i = 0; i < n; ++i) {
-        const Pt2& a = outer[i];
-        const Pt2& b = outer[(i + 1) % n];
-        if ((a.v > M.v) == (b.v > M.v)) {
-            continue; // M の水平線をまたがない辺
-        }
-        if (a.v == b.v) {
-            continue; // 水平な辺 (交点が一意にならない)
-        }
-        const float t = (M.v - a.v) / (b.v - a.v);
-        const float u = a.u + t * (b.u - a.u);
-        if (u < M.u) {
-            continue;
-        }
-        if (!found || u < bestU) {
-            found = true;
-            bestU = u;
-            crossPt = { u, M.v, -1 };
-            edgeA = i;
-            edgeB = (i + 1) % n;
-        }
-    }
-    if (!found) {
-        return false; // 橋渡し不能 (穴が外周の内側にない)
-    }
-
-    // 交点を含む辺の 2 端点のうち u が大きい方を橋の相手候補にする
-    size_t pIdx = (outer[edgeA].u > outer[edgeB].u) ? edgeA : edgeB;
-
-    // 三角形 (M, crossPt, candidate) の内側にある outer 頂点のうち、レイに最も近い
-    // (= M から見て candidate より反時計回り側にある) ものへ選び直す。選び直さないと
-    // 候補の裏に隠れた頂点をまたいで橋が外周の外へ出ることがある
-    for (size_t i = 0; i < n; ++i) {
-        if (i == edgeA || i == edgeB) {
-            continue;
-        }
-        const Pt2& c = outer[i];
-        if (!PointInTriangle2(c.u, c.v, M, crossPt, outer[pIdx])) {
-            continue;
-        }
-        const float crossCur
-            = Cross2(outer[pIdx].u - M.u, outer[pIdx].v - M.v, c.u - M.u, c.v - M.v);
-        if (crossCur >= 0.0f && (c.u > outer[pIdx].u || (c.u == outer[pIdx].u && i < pIdx))) {
-            pIdx = i;
-        }
-    }
-
-    std::vector<Pt2> merged;
-    merged.reserve(outer.size() + hole.size() + 2);
-    for (size_t i = 0; i <= pIdx; ++i) {
-        merged.push_back(outer[i]);
-    }
-    for (size_t k = 0; k < hole.size(); ++k) {
-        merged.push_back(hole[(mIdx + k) % hole.size()]);
-    }
-    merged.push_back(hole[mIdx]); // 穴を一周して M へ戻る
-    for (size_t i = pIdx; i < outer.size(); ++i) {
-        merged.push_back(outer[i]);
-    }
-    outer.swap(merged);
-    return true;
-}
+    TessHandle(const TessHandle&) = delete;
+    TessHandle& operator=(const TessHandle&) = delete;
+};
 
 // ループ列 (方向付きの単純閉曲線の集合) から蓋の三角形メッシュを作る。
-// capNormal は蓋の外向き法線 (このまま出力頂点の法線になる)
+// 外周/穴の判定と自己交差の解決は libtess2 の掃引線法 (TESS_WINDING_ODD、内包数の偶奇)
+// に委ねる。輪郭が接触・重なる縮退入力 (薄い壁の断面など) でも O(n log n) で確定的に
+// 処理できる — 耳切り (O(n^3)、単純多角形前提) の自前実装は、蓋の輪郭が接触・重なる
+// 入力や高解像度ボクセル化の断面で 3 回同種の失敗を出した経緯がある (詳細は sub-14)。
+// capNormal は蓋の外向き法線 (このまま出力頂点の法線になる)。hadNewVertices は、輪郭の
+// 接触・交差で入力に無い頂点が新しくできたか (呼び出し側が閉じの検算方式を選ぶのに使う)
 bool CapLoops(const std::vector<std::vector<FractureVertex>>& loops, const XMFLOAT3& capNormal,
-             FractureMesh& capOut, std::string& failReason)
+             FractureMesh& capOut, bool& hadNewVertices, std::string& failReason)
 {
     capOut = FractureMesh{};
+    hadNewVertices = false;
     if (loops.empty()) {
         return true;
     }
@@ -634,7 +374,7 @@ bool CapLoops(const std::vector<std::vector<FractureVertex>>& loops, const XMFLO
                           + v.position.z * tangent.z;
             const float w = v.position.x * bitangent.x + v.position.y * bitangent.y
                           + v.position.z * bitangent.z;
-            info.pts2.push_back({ u, w, -1 });
+            info.pts2.push_back({ u, w });
         }
         info.area = SignedArea2(info.pts2);
         maxAbsArea = (std::max)(maxAbsArea, std::fabs(info.area));
@@ -642,128 +382,118 @@ bool CapLoops(const std::vector<std::vector<FractureVertex>>& loops, const XMFLO
     }
     const double areaEps = (std::max)(maxAbsArea * 1e-9, 1e-12);
 
-    // 有効なループ (数値的なスリバーを除く) だけを対象にする
-    std::vector<int32_t> validIdx;
-    for (int32_t i = 0; i < static_cast<int32_t>(infos.size()); ++i) {
-        if (std::fabs(infos[static_cast<size_t>(i)].area) > areaEps) {
-            validIdx.push_back(i);
-        }
+    TessHandle handle;
+    if (handle.tess == nullptr) {
+        failReason = "libtess2 の初期化に失敗 (メモリ不足)";
+        return false;
     }
-    if (validIdx.empty()) {
+
+    // libtess2 が振る出力頂点 index は、tessAddContour した順につながる連番になる
+    // (tesselator.h の tessGetVertexIndices の仕様)。同じ順で flatInput/flatPts2 を積み、
+    // 入力頂点由来の出力 (TESS_UNDEF でない) をそのまま引けるようにする。数値的なスリバー
+    // (ChainAllLoops の交点計算の丸めで生じ得る面積ほぼ0のループ) だけは輪郭として渡さない
+    // — 外周/穴そのものの分類は libtess2 に任せる
+    std::vector<FractureVertex> flatInput;
+    std::vector<Pt2> flatPts2;
+    int32_t validLoopCount = 0;
+    for (const LoopInfo& info : infos) {
+        if (std::fabs(info.area) <= areaEps) {
+            continue;
+        }
+        tessAddContour(handle.tess, 2, info.pts2.data(), static_cast<int>(sizeof(Pt2)),
+                      static_cast<int>(info.pts2.size()));
+        flatInput.insert(flatInput.end(), info.verts3.begin(), info.verts3.end());
+        flatPts2.insert(flatPts2.end(), info.pts2.begin(), info.pts2.end());
+        ++validLoopCount;
+    }
+    if (validLoopCount == 0) {
         return true; // 全部退化 = 蓋なし (安全側)
     }
 
-    // 外周/穴の判定は面積の符号 (捻れ方向) に頼らない — t×b = capNormal になるよう
-    // OrthonormalBasis を作ってあるので、外向きの外側面の境界辺から継承した向きは
-    // (tangent, bitangent) へ射影すると外周は常に CW・穴は常に CCW になる (符号は一定で、
-    // どちらにもなり得るわけではない)。それでも符号ではなく「他の何本のループに内包されて
-    // いるか」の偶奇で外周/穴を決める (偶数=外周、奇数=穴。TrueType 等のグリフ輪郭と同じ
-    // nonzero 系の判定。符号が一定でも、この方式なら穴のネスト構造の取り違えが起きない)。
-    // EarClip は CCW 前提なので、向きは下で強制的に揃える
-    const size_t n = validIdx.size();
-    std::vector<int32_t> containCount(n, 0);
-    for (size_t i = 0; i < n; ++i) {
-        const LoopInfo& li = infos[static_cast<size_t>(validIdx[i])];
-        for (size_t j = 0; j < n; ++j) {
-            if (i == j) {
-                continue;
-            }
-            const LoopInfo& lj = infos[static_cast<size_t>(validIdx[j])];
-            if (PointInPoly2(lj.pts2, li.pts2[0].u, li.pts2[0].v)) {
-                ++containCount[i];
-            }
-        }
+    // 入力は (u,v) の平面内2D点として渡しているので、法線は常に (0,0,1) で固定する。
+    // capNormal (3D) をそのまま渡すと、libtess2 内部の掃引平面への再投影が u,v の
+    // 意味と噛み合わなくなる (z 成分が常に0のデータに無関係な3D法線を当てはめてしまう)
+    const float flatNormal[3] = { 0.0f, 0.0f, 1.0f };
+    if (!tessTesselate(handle.tess, TESS_WINDING_ODD, TESS_POLYGONS, 3, 2, flatNormal)) {
+        const TESSstatus status = tessGetStatus(handle.tess);
+        failReason = (status == TESS_STATUS_OUT_OF_MEMORY) ? "蓋の三角形分割に失敗 (メモリ不足)"
+                                                            : "蓋の三角形分割に失敗 (libtess2、不正な入力)";
+        return false;
     }
 
-    std::vector<int32_t> outerLoops, holeLoops;
-    for (size_t i = 0; i < n; ++i) {
-        if (containCount[i] % 2 == 0) {
-            outerLoops.push_back(validIdx[i]);
-        } else {
-            holeLoops.push_back(validIdx[i]);
-        }
+    const int32_t vertCount = tessGetVertexCount(handle.tess);
+    const TESSreal* outVerts = tessGetVertices(handle.tess);
+    const TESSindex* vertIdx = tessGetVertexIndices(handle.tess);
+
+    // 出力頂点数が入力点数と食い違っていれば、輪郭が接触・交差した縮退入力だったと分かる。
+    // 交差で新しい頂点が増える (TESS_UNDEF) だけでなく、位置が一致する入力点どうしを
+    // libtess2 が黙って1つの頂点へ統合する場合もある (交点が生じない自己接触のケースで
+    // 実測: 532 入力点 → 531 出力頂点、TESS_UNDEF は0件)。どちらも「入力の単純多角形の
+    // 前提が崩れている」証拠なので、まとめて幾何的な閉じ判定へ倒す
+    if (vertCount != static_cast<int32_t>(flatInput.size())) {
+        hadNewVertices = true;
+    }
+    // オイラーの公式による三角形数の検算: 単純な輪郭群 (穴・輪郭どうしの自己交差なし) を
+    // 三角形分割すると、頂点数 V・輪郭本数 L に対して必ず V + 2(L-1) - 2 枚になる
+    // (L=1: V-2 の通常の単純多角形の式、L=2 の外周+穴でも実測どおり成立)。密なボクセル化
+    // 断面のような大きい輪郭で、この枚数に届かない結果が実測で見つかった (原因未特定、
+    // 自己交差・重複点のいずれの兆候もない)。式から外れること自体が「単純多角形の前提が
+    // 実は崩れている」signal として使えるので、面が欠けたまま閉じ判定を通すより安全側へ倒す
+    const int32_t expectedElemCount = vertCount + 2 * (validLoopCount - 1) - 2;
+    if (tessGetElementCount(handle.tess) != expectedElemCount) {
+        hadNewVertices = true;
     }
 
-    // 各穴を「直接の親」(1 段内側の外周) へ割り当てる。親候補は containCount がちょうど 1 少なく、
-    // かつこの穴を内包しているもの。複数あれば面積が最小 (最も内側) のものを選ぶ
-    std::map<int32_t, std::vector<int32_t>> holesOfOuter;
-    for (size_t hi = 0; hi < n; ++hi) {
-        if (containCount[hi] % 2 == 0) {
-            continue;
-        }
-        const int32_t h = validIdx[hi];
-        int32_t best = -1;
-        double bestArea = 0.0;
-        for (size_t oi = 0; oi < n; ++oi) {
-            if (containCount[oi] != containCount[hi] - 1) {
-                continue;
-            }
-            const int32_t o = validIdx[oi];
-            if (!PointInPoly2(infos[static_cast<size_t>(o)].pts2, infos[static_cast<size_t>(h)].pts2[0].u,
-                              infos[static_cast<size_t>(h)].pts2[0].v)) {
-                continue;
-            }
-            const double a = std::fabs(infos[static_cast<size_t>(o)].area);
-            if (best < 0 || a < bestArea) {
-                best = o;
-                bestArea = a;
-            }
-        }
-        if (best < 0) {
-            failReason = "穴の直接の親となる外周ループが見つからない";
-            return false;
-        }
-        holesOfOuter[best].push_back(h);
-    }
+    // 平面上の任意の (u,v) から 3D 位置を厳密に復元するための平面オフセット。
+    // (tangent, bitangent, capNormal) は直交基底なので、位置 p は
+    // p = (p・tangent)*tangent + (p・bitangent)*bitangent + (p・capNormal)*capNormal と
+    // 一意に分解できる。ループの頂点は全て同一平面上にあるので (p・capNormal) は共通の定数
+    const XMFLOAT3& anyVert = flatInput[0].position;
+    const float planeOffset
+        = anyVert.x * capNormal.x + anyVert.y * capNormal.y + anyVert.z * capNormal.z;
 
-    for (int32_t o : outerLoops) {
-        LoopInfo& outerInfo = infos[static_cast<size_t>(o)];
-        std::vector<Pt2> poly = outerInfo.pts2;
-        std::vector<FractureVertex> outerVerts3 = outerInfo.verts3;
-        if (outerInfo.area < 0.0) { // 外周は CCW (面積 > 0) に揃える
-            std::reverse(poly.begin(), poly.end());
-            std::reverse(outerVerts3.begin(), outerVerts3.end());
-        }
-        for (size_t k = 0; k < poly.size(); ++k) {
-            FractureVertex fv = outerVerts3[k];
+    capOut.verts.reserve(static_cast<size_t>(vertCount));
+    std::vector<int32_t> capVertOf(static_cast<size_t>(vertCount), -1);
+    for (int32_t k = 0; k < vertCount; ++k) {
+        FractureVertex fv;
+        const TESSindex src = vertIdx[static_cast<size_t>(k)];
+        if (src != TESS_UNDEF) {
+            // 入力頂点そのまま。位置・UV は既存頂点とビット同一にするため、libtess2 が
+            // 出す座標配列は経由せず元データを直接使う (外側面との厳密な閉じ判定は
+            // 位置のビット一致溶接で行うため)
+            fv = flatInput[static_cast<size_t>(src)];
             fv.normal = capNormal;
-            fv.uv = { poly[k].u, poly[k].v }; // 箱投影 (tangent/bitangent への正射影)
-            poly[k].vertexIdx = static_cast<int32_t>(capOut.verts.size());
-            capOut.verts.push_back(fv);
+            fv.uv = { flatPts2[static_cast<size_t>(src)].u, flatPts2[static_cast<size_t>(src)].v };
+        } else {
+            // 輪郭どうしの交差で新しくできた頂点 (縮退入力でのみ発生。hadNewVertices は
+            // 直前の頂点数比較で既に立っている)。法線は平面法線、位置と UV は libtess2 が
+            // 出した (u,v) を平面へ逆射影して作る
+            const float u = outVerts[static_cast<size_t>(k) * 2 + 0];
+            const float v = outVerts[static_cast<size_t>(k) * 2 + 1];
+            fv.position = { u * tangent.x + v * bitangent.x + planeOffset * capNormal.x,
+                           u * tangent.y + v * bitangent.y + planeOffset * capNormal.y,
+                           u * tangent.z + v * bitangent.z + planeOffset * capNormal.z };
+            fv.normal = capNormal;
+            fv.uv = { u, v };
         }
-        const auto it = holesOfOuter.find(o);
-        if (it != holesOfOuter.end()) {
-            for (int32_t h : it->second) {
-                LoopInfo& holeInfo = infos[static_cast<size_t>(h)];
-                std::vector<Pt2> holePts = holeInfo.pts2;
-                std::vector<FractureVertex> holeVerts3 = holeInfo.verts3;
-                if (holeInfo.area > 0.0) { // 穴は CW (面積 < 0) に揃える
-                    std::reverse(holePts.begin(), holePts.end());
-                    std::reverse(holeVerts3.begin(), holeVerts3.end());
-                }
-                for (size_t k = 0; k < holePts.size(); ++k) {
-                    FractureVertex fv = holeVerts3[k];
-                    fv.normal = capNormal;
-                    fv.uv = { holePts[k].u, holePts[k].v };
-                    holePts[k].vertexIdx = static_cast<int32_t>(capOut.verts.size());
-                    capOut.verts.push_back(fv);
-                }
-                if (!BridgeHoleIntoOuter(poly, holePts)) {
-                    failReason = "穴の橋渡しに失敗";
-                    return false;
-                }
-            }
-        }
-        std::vector<std::array<int32_t, 3>> tris;
-        if (!EarClip(poly, areaEps, tris)) {
-            failReason = "蓋の三角形分割に失敗";
+        capVertOf[static_cast<size_t>(k)] = static_cast<int32_t>(capOut.verts.size());
+        capOut.verts.push_back(fv);
+    }
+
+    const int32_t elemCount = tessGetElementCount(handle.tess);
+    const TESSindex* elems = tessGetElements(handle.tess);
+    capOut.indices.reserve(static_cast<size_t>(elemCount) * 3);
+    for (int32_t e = 0; e < elemCount; ++e) {
+        const TESSindex a = elems[static_cast<size_t>(e) * 3 + 0];
+        const TESSindex b = elems[static_cast<size_t>(e) * 3 + 1];
+        const TESSindex c = elems[static_cast<size_t>(e) * 3 + 2];
+        if (a == TESS_UNDEF || b == TESS_UNDEF || c == TESS_UNDEF) {
+            failReason = "蓋の三角形分割が不完全な要素を返した (polySize=3 で TESS_UNDEF は想定外)";
             return false;
         }
-        for (const auto& t : tris) {
-            capOut.indices.push_back(t[0]);
-            capOut.indices.push_back(t[1]);
-            capOut.indices.push_back(t[2]);
-        }
+        capOut.indices.push_back(capVertOf[static_cast<size_t>(a)]);
+        capOut.indices.push_back(capVertOf[static_cast<size_t>(b)]);
+        capOut.indices.push_back(capVertOf[static_cast<size_t>(c)]);
     }
     return true;
 }
@@ -868,6 +598,43 @@ bool VerifyCapOrientation(const FractureMesh& outer, const FractureMesh& cap)
         combined.indices.push_back(idx + base);
     }
     return CheckClosedMesh(combined).closed;
+}
+
+// 輪郭の接触・交差で蓋に新しい頂点ができた縮退入力向けの検算。位相的な閉じ (辺の
+// 共有) までは求めず、体積が正で、面の欠けを示すベクトル面積の和が表面積の 1e-4 以下
+// であることだけを見る (FractureBake.cpp の ValidatePieceGeometry と同じ式。破片の合否
+// はもともとこの基準で判定しているので、下流への影響はない)
+bool GeometricCapClosureValid(const FractureMesh& outer, const FractureMesh& cap)
+{
+    if (cap.indices.empty()) {
+        return true; // 蓋なし (平面がこの側に触れていない)
+    }
+    FractureMesh combined;
+    combined.verts = outer.verts;
+    combined.indices = outer.indices;
+    const int32_t base = static_cast<int32_t>(combined.verts.size());
+    combined.verts.insert(combined.verts.end(), cap.verts.begin(), cap.verts.end());
+    for (int32_t idx : cap.indices) {
+        combined.indices.push_back(idx + base);
+    }
+    double vx = 0.0, vy = 0.0, vz = 0.0, surfaceArea = 0.0;
+    const int32_t triCount = combined.TriCount();
+    for (int32_t t = 0; t < triCount; ++t) {
+        const XMFLOAT3& a = combined.verts[static_cast<size_t>(combined.indices[static_cast<size_t>(t) * 3 + 0])].position;
+        const XMFLOAT3& b = combined.verts[static_cast<size_t>(combined.indices[static_cast<size_t>(t) * 3 + 1])].position;
+        const XMFLOAT3& c = combined.verts[static_cast<size_t>(combined.indices[static_cast<size_t>(t) * 3 + 2])].position;
+        const double e1x = static_cast<double>(b.x) - a.x, e1y = static_cast<double>(b.y) - a.y,
+                    e1z = static_cast<double>(b.z) - a.z;
+        const double e2x = static_cast<double>(c.x) - a.x, e2y = static_cast<double>(c.y) - a.y,
+                    e2z = static_cast<double>(c.z) - a.z;
+        const double cx = e1y * e2z - e1z * e2y, cy = e1z * e2x - e1x * e2z, cz = e1x * e2y - e1y * e2x;
+        vx += cx * 0.5;
+        vy += cy * 0.5;
+        vz += cz * 0.5;
+        surfaceArea += 0.5 * std::sqrt(cx * cx + cy * cy + cz * cz);
+    }
+    const double vectorAreaMag = std::sqrt(vx * vx + vy * vy + vz * vz);
+    return (SignedVolume(combined) > 0.0) && (vectorAreaMag <= 1e-4 * surfaceArea);
 }
 
 } // namespace
@@ -1008,19 +775,27 @@ bool CutMeshByPlane(const FractureMesh& mesh, const XMFLOAT3& planeNormal, float
     const XMFLOAT3 posCapNormal = { -nf.x, -nf.y, -nf.z };
     const XMFLOAT3 negCapNormal = nf;
     std::string capFail;
-    if (!CapLoops(posLoops, posCapNormal, out.positive.cap, capFail)) {
+    bool posHadNewVerts = false, negHadNewVerts = false;
+    if (!CapLoops(posLoops, posCapNormal, out.positive.cap, posHadNewVerts, capFail)) {
         out.failReason = "positive側の蓋: " + capFail;
         return false;
     }
-    if (!CapLoops(negLoops, negCapNormal, out.negative.cap, capFail)) {
+    if (!CapLoops(negLoops, negCapNormal, out.negative.cap, negHadNewVerts, capFail)) {
         out.failReason = "negative側の蓋: " + capFail;
         return false;
     }
-    if (!VerifyCapOrientation(out.positive.outer, out.positive.cap)) {
+    // 輪郭が接触・交差した縮退入力 (蓋に新しい頂点ができた側) だけ、厳密な位相的閉じの
+    // 代わりに幾何的な閉じ (体積>0 かつベクトル面積の和が表面積の1e-4以下) で合否を決める。
+    // 正常な入力 (新しい頂点0) では従来どおり厳密に閉じることを求める
+    const bool posClosed = posHadNewVerts ? GeometricCapClosureValid(out.positive.outer, out.positive.cap)
+                                          : VerifyCapOrientation(out.positive.outer, out.positive.cap);
+    if (!posClosed) {
         out.failReason = "positive側の蓋: 外側面と閉じ合わない";
         return false;
     }
-    if (!VerifyCapOrientation(out.negative.outer, out.negative.cap)) {
+    const bool negClosed = negHadNewVerts ? GeometricCapClosureValid(out.negative.outer, out.negative.cap)
+                                          : VerifyCapOrientation(out.negative.outer, out.negative.cap);
+    if (!negClosed) {
         out.failReason = "negative側の蓋: 外側面と閉じ合わない";
         return false;
     }

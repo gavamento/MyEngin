@@ -55,6 +55,15 @@
     <Filter Include="external\imgui\backends">
       <UniqueIdentifier>{8FFC8307-1183-CE9E-BB69-2B1931FEED3E}</UniqueIdentifier>
     </Filter>
+    <Filter Include="external\libtess2">
+      <UniqueIdentifier>{B32092AF-202A-4BBA-50B7-F4D025961927}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="external\libtess2\Include">
+      <UniqueIdentifier>{6C6C487E-564C-0510-9989-770C05AF940E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="external\libtess2\Source">
+      <UniqueIdentifier>{1F0BD09F-3A6C-8F8E-7768-74CDBC9E594A}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Platform">
       <UniqueIdentifier>{BD2C6E02-B1AD-784C-9836-25575071D222}</UniqueIdentifier>
     </Filter>
@@ -1602,6 +1611,27 @@
     <ClCompile Include="..\external\imgui\imgui.cpp">
       <Filter>external\imgui</Filter>
     </ClCompile>
+    <ClCompile Include="..\external\libtess2\Source\bucketalloc.c">
+      <Filter>external\libtess2\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\external\libtess2\Source\dict.c">
+      <Filter>external\libtess2\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\external\libtess2\Source\geom.c">
+      <Filter>external\libtess2\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\external\libtess2\Source\mesh.c">
+      <Filter>external\libtess2\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\external\libtess2\Source\priorityq.c">
+      <Filter>external\libtess2\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\external\libtess2\Source\sweep.c">
+      <Filter>external\libtess2\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\external\libtess2\Source\tess.c">
+      <Filter>external\libtess2\Source</Filter>
+    </ClCompile>
     <ClInclude Include="..\external\imgui\backends\imgui_impl_dx11.h">
       <Filter>external\imgui\backends</Filter>
     </ClInclude>
@@ -1625,6 +1655,30 @@
     </ClInclude>
     <ClInclude Include="..\external\imgui\imstb_truetype.h">
       <Filter>external\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\external\libtess2\Include\tesselator.h">
+      <Filter>external\libtess2\Include</Filter>
+    </ClInclude>
+    <ClInclude Include="..\external\libtess2\Source\bucketalloc.h">
+      <Filter>external\libtess2\Source</Filter>
+    </ClInclude>
+    <ClInclude Include="..\external\libtess2\Source\dict.h">
+      <Filter>external\libtess2\Source</Filter>
+    </ClInclude>
+    <ClInclude Include="..\external\libtess2\Source\geom.h">
+      <Filter>external\libtess2\Source</Filter>
+    </ClInclude>
+    <ClInclude Include="..\external\libtess2\Source\mesh.h">
+      <Filter>external\libtess2\Source</Filter>
+    </ClInclude>
+    <ClInclude Include="..\external\libtess2\Source\priorityq.h">
+      <Filter>external\libtess2\Source</Filter>
+    </ClInclude>
+    <ClInclude Include="..\external\libtess2\Source\sweep.h">
+      <Filter>external\libtess2\Source</Filter>
+    </ClInclude>
+    <ClInclude Include="..\external\libtess2\Source\tess.h">
+      <Filter>external\libtess2\Source</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

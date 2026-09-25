@@ -570,6 +570,71 @@ bool RunFractureSelfTest()
         check(r3Ok, "plane on face: succeeds with volume conserved, or fails safely");
     }
 
+    // ---- 4b. 輪郭が接触・交差する縮退入力 (sub-14、libtess2 の掃引線法への置き換え) ----
+    // 「横棒」と「縦棒」の2つの箱を十字に重ねた1メッシュを、両方の胴の途中で水平に切る。
+    // 断面は2つの矩形が十字に交差し、輪郭どうしが4点で実際に交差する。
+    // 注記 (sub-14 実装時に判明): 頂点そのものを共有する接触 (例: 2つの箱が1頂点/1辺で
+    // 触れる) は ChainAllLoops の前提 (溶接後の1位置につき出て行く辺は高々1本) に必ず抵触し、
+    // CapLoops より前で「非多様体入力の疑い」として安全に失敗する (sub-14 の変更範囲外)。
+    // この十字の重なりは面積を持つ実体交差で ChainAllLoops は通るが、2つの箱の体積が
+    // 実際に重なっており、外側面 (両箱の壁をそのまま残す) と蓋 (libtess2 が TESS_WINDING_ODD
+    // で重複領域を穴として除く) の間に前提の食い違いが生じるため、CutMeshByPlane は
+    // 安全側に倒して失敗を返す (成功はしない)。「落ちない」ことと「安全な理由付きで失敗する」
+    // ことを検算する — 密な輪郭の頑健性そのものは受け入れ条件3 (res48/64 の焼き) で検算済み
+    {
+        FractureMesh bar1 = MakeBox(2.0f, 0.5f, 0.5f); // x:[-2,2] y:[-0.5,0.5] z:[-0.5,0.5]
+        FractureMesh bar2 = MakeBox(0.5f, 2.0f, 0.5f); // x:[-0.5,0.5] y:[-2,2] z:[-0.5,0.5]
+        FractureMesh cross;
+        cross.verts = bar1.verts;
+        cross.indices = bar1.indices;
+        const int32_t base = static_cast<int32_t>(cross.verts.size());
+        cross.verts.insert(cross.verts.end(), bar2.verts.begin(), bar2.verts.end());
+        for (int32_t idx : bar2.indices) {
+            cross.indices.push_back(idx + base);
+        }
+
+        auto sideGeometricallyValid = [&](const PlaneCutSide& side) {
+            double vx = 0.0, vy = 0.0, vz = 0.0, surfaceArea = 0.0;
+            auto accumulate = [&](const FractureMesh& mesh) {
+                const int32_t triCount = mesh.TriCount();
+                for (int32_t t = 0; t < triCount; ++t) {
+                    const XMFLOAT3& a = mesh.verts[static_cast<size_t>(mesh.indices[static_cast<size_t>(t) * 3 + 0])].position;
+                    const XMFLOAT3& b = mesh.verts[static_cast<size_t>(mesh.indices[static_cast<size_t>(t) * 3 + 1])].position;
+                    const XMFLOAT3& c = mesh.verts[static_cast<size_t>(mesh.indices[static_cast<size_t>(t) * 3 + 2])].position;
+                    const double e1x = static_cast<double>(b.x) - a.x, e1y = static_cast<double>(b.y) - a.y,
+                                e1z = static_cast<double>(b.z) - a.z;
+                    const double e2x = static_cast<double>(c.x) - a.x, e2y = static_cast<double>(c.y) - a.y,
+                                e2z = static_cast<double>(c.z) - a.z;
+                    const double cx = e1y * e2z - e1z * e2y, cy = e1z * e2x - e1x * e2z,
+                                cz = e1x * e2y - e1y * e2x;
+                    vx += cx * 0.5;
+                    vy += cy * 0.5;
+                    vz += cz * 0.5;
+                    surfaceArea += 0.5 * std::sqrt(cx * cx + cy * cy + cz * cz);
+                }
+            };
+            accumulate(side.outer);
+            accumulate(side.cap);
+            const double vectorAreaMag = std::sqrt(vx * vx + vy * vy + vz * vz);
+            return SideVolume(side) > 0.0 && vectorAreaMag <= 1e-4 * surfaceArea;
+        };
+
+        // 呼び出しが完了すること自体が「落ちない」ことの検証 (クラッシュしていれば後続の
+        // チェックへ到達しない)。体積が実際に重なる縮退入力なので、成功なら結果が幾何的に
+        // 閉じていること、失敗なら理由付きで安全に失敗すること (success=false のまま
+        // 中途半端な結果を返さない) を確認する
+        PlaneCutResult r;
+        const bool ok = CutMeshByPlane(cross, { 0, 0, 1 }, 0.0f, r);
+        if (ok && r.success) {
+            check(sideGeometricallyValid(r.positive), "crossing contours: positive side is geometrically closed");
+            check(sideGeometricallyValid(r.negative), "crossing contours: negative side is geometrically closed");
+        } else {
+            check(!r.failReason.empty(),
+                  "crossing contours: fails safely with a reason instead of crashing or returning bad data");
+            MYE_LOG_INFO("    (crossing contours: 安全側に倒して失敗。reason=%s)", r.failReason.c_str());
+        }
+    }
+
     // ---- 5. 決定論: 同じ入力を2回切って出力のバイト列が一致する ----
     {
         const FractureMesh torus = MakeTorus(2.0f, 0.6f, 28, 20);
@@ -1091,13 +1156,10 @@ bool RunFractureSelfTest()
         }
 
         // ---- BakeFracture の入口: openMeshMode=1 (pieceCount=16) の解像度ごとの成否と
-        // 処理時間を記録する。解像度32は既定値の候補として合否を検証する (must)。
-        // 48/64 は候補の参考記録として結果をログするだけに留める (下の不安・質問を参照:
-        // 開いた箱では解像度48以上で CutMeshByPlane の断面三角形分割 (EarClip、sub-01/02所有)
-        // が失敗することがあり、この既知の制約を「合否」ではなく「記録」として扱う) ----
+        // 処理時間を記録する。解像度 32/48/64 の全部を合否として検証する (sub-14、libtess2
+        // への置き換えで解像度48/64のEarClip失敗は解消した) ----
         {
-            auto bakeOpenMesh = [&](const char* label, const FractureMesh& mesh, int32_t resolution,
-                                    bool mustSucceed) {
+            auto bakeOpenMesh = [&](const char* label, const FractureMesh& mesh, int32_t resolution) {
                 FractureBakeInput in;
                 in.sourceMesh = mesh;
                 in.seed = 11;
@@ -1121,25 +1183,18 @@ bool RunFractureSelfTest()
                 std::snprintf(buf, sizeof(buf),
                               "bake entry: %s openMeshMode=1 pieceCount=16 res=%d succeeds and all pieces close (%.2f ms, pieces=%d)",
                               label, resolution, ms, ok && r.success ? static_cast<int>(r.pieces.size()) : -1);
-                if (mustSucceed) {
-                    check(allValid, buf);
-                    if (!allValid) {
-                        MYE_LOG_ERROR("    reason: %s", r.failReason.c_str());
-                    }
-                } else if (allValid) {
-                    MYE_LOG_INFO("  PASS (記録のみ): %s", buf);
-                } else {
-                    MYE_LOG_WARN("  未達 (記録のみ、合否には数えない): %s / reason: %s", buf,
-                                r.failReason.c_str());
+                check(allValid, buf);
+                if (!allValid) {
+                    MYE_LOG_ERROR("    reason: %s", r.failReason.c_str());
                 }
                 MYE_LOG_INFO("  bake timing (openMeshMode=1): %s res=%d = %.2f ms", label, resolution, ms);
             };
-            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 32, true);
-            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 32, true);
-            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 48, false);
-            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 48, false);
-            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 64, false);
-            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 64, false);
+            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 32);
+            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 32);
+            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 48);
+            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 48);
+            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 64);
+            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 64);
         }
 
         // ---- 焼き時間の記録 (解像度64/128/256、上限決定用。合否には数えない) ----
