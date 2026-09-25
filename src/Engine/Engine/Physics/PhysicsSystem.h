@@ -34,6 +34,18 @@ struct SolidContact {
     float impulse = 0.0f;
 };
 
+// 形状単位の法線インパルス (M60e の複合コライダー向け、sub-05)。SolidContact が
+// ボディ対 1 件へ畳むのに対し、こちらは**当たった子形状 (エンティティ) ごと**に
+// その tick の法線インパルス合計を出す。単体ボディなら shape==entity そのもの。
+// 呼び出し側 (PhysicsSystem::Update の outShapeImpulses) が非 null のときだけ作られる
+// (存在ゲート — Destructible が無いシーンは計算そのものが走らない)。
+// 出力は entity index 昇順。1 回の接触で両側の形状に同じ量が入る (SolidContact.impulse
+// と同じ合計規約: 全反復・全サブステップの法線インパルスの総和)
+struct ShapeImpulse {
+    EntityID entity;
+    float impulse = 0.0f;
+};
+
 // M60'c: 親チェーンを LocalTransform から scalar 合成したワールド位置/回転。
 // 物理フェーズ (3.6) は WorldMatrix を読めない (1 tick 古い) ための公開口で、
 // 剛体収集の ComposeParentFrame/ApplyFrame と**同じ式**を通る。
@@ -69,8 +81,10 @@ public:
     // outContacts 非 null なら clear してソリッド接触ペアを key 昇順で書き込む (M28c)。
     // 両方不動 (静的/kinematic 同士) のペアはソルバ対象外なので出力されない。
     // xpbd (M60'b): 変形体の粒子池。先頭で Sync し、サブステップごとに xpbd::Predict / Solve を呼ぶ
+    // outShapeImpulses (sub-05): 非 null なら clear して形状単位インパルスを entity index
+    // 昇順で書き込む。null のあいだは一切計算しない (既存呼び出し元は変更不要)
     void Update(World& world, float dt, std::vector<SolidContact>* outContacts = nullptr,
-                XpbdBackend* xpbd = nullptr);
+                XpbdBackend* xpbd = nullptr, std::vector<ShapeImpulse>* outShapeImpulses = nullptr);
 
     // 等価性テスト用 (PhysicsSelfTest): true でブロードフェーズを総当たり候補に切替。
     // 挙動はビット同一のはず — selftest がハッシュ比較で常時検証する

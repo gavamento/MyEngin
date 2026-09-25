@@ -6097,6 +6097,265 @@ bool RunPhysicsSelfTest()
         convexcol::Install(nullptr);
     }
 
+    // ================= sub-05 (M80e): 複合子上限の撤廃・凸包の子の質量特性・形状単位インパルス =================
+    // 破壊 (M80) の前提となる物理側の 3 点。破壊そのものはこのサブでは触らない。
+    {
+        // -- (1) 子 20 個 (旧 kMaxCompoundShapes=16 を超える) でも全形状が質量・慣性に入る --
+        // ★1x1x1 の立方体 20 個を一列に並べた棒は、等価な単一 box (半幅 10,0.5,0.5) と
+        //   厳密に同じ質量分布 (平行軸の和は連続体の積分と数学的に一致する)
+        {
+            constexpr int kN = 20;
+            auto spinRod = [&](bool compound) {
+                Scene s;
+                GameObject go;
+                if (compound) {
+                    GameObject parent = s.CreateGameObjectTracked("Rod");
+                    parent.SetLocalPosition(0.0f, 0.0f, 0.0f);
+                    auto* rb = parent.AddComponent<RigidbodyComponent>();
+                    rb->mass = 1.0f;
+                    rb->compoundColliders = true;
+                    for (int i = 0; i < kN; ++i) {
+                        GameObject c = s.CreateGameObjectTracked("Cube");
+                        c.SetParent(parent);
+                        const float x = -0.5f * static_cast<float>(kN) + 0.5f + static_cast<float>(i);
+                        c.SetLocalPosition(x, 0.0f, 0.0f);
+                        auto* col = c.AddComponent<ColliderComponent>();
+                        col->shape = 1;
+                        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+                    }
+                    go = parent;
+                } else {
+                    go = MakeBox(s, "Single", 0.0f, 0.0f, 0.0f, 0.5f * static_cast<float>(kN), 0.5f,
+                                0.5f);
+                }
+                auto* cf = go.AddComponent<ConstantForceComponent>();
+                cf->torque = { 0.0f, 0.0f, 0.5f };
+                s.GetWorld().ApplyStructuralChanges();
+                auto* rb = go.GetComponent<RigidbodyComponent>();
+                rb->gravityScale = 0.0f;
+                rb->angularDamping = 0.0f;
+                for (int i = 0; i < 60; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                return rb->angularVelocity.z;
+            };
+            const float wc = spinRod(true);
+            const float ws = spinRod(false);
+            MYE_LOG_INFO("  [phys] compound 20-shape rod: w_z compound %.5f / single box %.5f",
+                         static_cast<double>(wc), static_cast<double>(ws));
+            check(std::fabs(wc - ws) < 1e-4f,
+                  "compound: 20 child shapes (beyond the old 16-shape cap) all contribute to "
+                  "inertia and match the equivalent single box");
+        }
+
+        // -- (2) 凸包の子: 実体積・実重心・フルテンソルが複合でも使われる --
+        {
+            ConvexColliderLibrary lib2;
+            ConvexHullData offsetCube;
+            // 頂点は [0,1]^3 の単位立方体。子のローカル原点 (0,0,0) は**角**で、
+            // 実重心は (0.5,0.5,0.5) — 形状原点 (= box/球/カプセルの前提) からずれている
+            BuildConvexHull({ { 0, 0, 0 }, { 1, 0, 0 }, { 1, 1, 0 }, { 0, 1, 0 }, { 0, 0, 1 },
+                             { 1, 0, 1 }, { 1, 1, 1 }, { 0, 1, 1 } },
+                            offsetCube);
+            const AssetID kOffsetCube{ 0x4D3630466Eull };
+            lib2.Register(kOffsetCube, offsetCube);
+            convexcol::Install(&lib2);
+
+            // -- (2a) 複合 (子 1 個、凸包) をぶら下げると、原点からずれた実重心の側が下を向く --
+            {
+                Scene s;
+                GameObject parent = s.CreateGameObjectTracked("HullParent");
+                parent.SetLocalPosition(0.0f, 0.0f, 0.0f);
+                auto* rb = parent.AddComponent<RigidbodyComponent>();
+                rb->mass = 1.0f;
+                rb->compoundColliders = true;
+                GameObject child = s.CreateGameObjectTracked("HullChild");
+                child.SetParent(parent);
+                child.SetLocalPosition(0.0f, 0.0f, 0.0f); // 子の原点は親と同じ
+                auto* col = child.AddComponent<ColliderComponent>();
+                col->shape = 5;
+                col->meshAsset = kOffsetCube;
+                auto* j = parent.AddComponent<JointComponent>();
+                j->type = 0; // 親の原点 (= 世界原点) をワールドへ吊る
+                s.GetWorld().ApplyStructuralChanges();
+                const auto* lt = parent.GetComponent<LocalTransform>();
+                for (int i = 0; i < 900; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                }
+                const float qx = lt->rotation.x, qy = lt->rotation.y, qz = lt->rotation.z,
+                            qw = lt->rotation.w;
+                // 子ローカル (1,1,1)/sqrt(3) 方向 (= 原点から見た実重心の向き) が
+                // ワールド -Y (真下) を向いているか
+                constexpr float kInv3 = 0.57735027f;
+                const DirectX::XMFLOAT3 v = { kInv3, kInv3, kInv3 };
+                const float tx = 2.0f * (qy * v.z - qz * v.y);
+                const float ty = 2.0f * (qz * v.x - qx * v.z);
+                const float tz = 2.0f * (qx * v.y - qy * v.x);
+                const float hy = v.y + qw * ty + (qz * tx - qx * tz);
+                MYE_LOG_INFO("  [phys] compound convex child com: offset dir points y = %.4f "
+                             "(-1 = down)",
+                             static_cast<double>(hy));
+                check(hy < -0.98f,
+                      "compound: a convex child shape hangs from its true (off-origin) centre of "
+                      "mass");
+            }
+
+            // -- (2b) 複合 (子 1 個、凸包) が同じ形の単体凸包ボディと同じ慣性になる --
+            {
+                auto spin = [&](bool compound) {
+                    Scene s;
+                    GameObject go;
+                    if (compound) {
+                        GameObject parent = s.CreateGameObjectTracked("HullParent");
+                        auto* rb = parent.AddComponent<RigidbodyComponent>();
+                        rb->mass = 1.0f;
+                        rb->compoundColliders = true;
+                        GameObject child = s.CreateGameObjectTracked("HullChild");
+                        child.SetParent(parent);
+                        auto* col = child.AddComponent<ColliderComponent>();
+                        col->shape = 5;
+                        col->meshAsset = kOffsetCube;
+                        go = parent;
+                    } else {
+                        go = s.CreateGameObjectTracked("HullSingle");
+                        auto* col = go.AddComponent<ColliderComponent>();
+                        col->shape = 5;
+                        col->meshAsset = kOffsetCube;
+                        auto* rb = go.AddComponent<RigidbodyComponent>();
+                        rb->mass = 1.0f;
+                    }
+                    auto* cf = go.AddComponent<ConstantForceComponent>();
+                    cf->torque = { 0.0f, 0.0f, 0.5f };
+                    s.GetWorld().ApplyStructuralChanges();
+                    auto* rb = go.GetComponent<RigidbodyComponent>();
+                    rb->gravityScale = 0.0f;
+                    rb->angularDamping = 0.0f;
+                    for (int i = 0; i < 60; ++i) {
+                        phys.Update(s.GetWorld(), kDt);
+                    }
+                    return rb->angularVelocity.z;
+                };
+                const float wc = spin(true);
+                const float ws = spin(false);
+                MYE_LOG_INFO("  [phys] compound convex child inertia: w_z compound %.5f / single "
+                             "%.5f",
+                             static_cast<double>(wc), static_cast<double>(ws));
+                check(std::fabs(wc - ws) < 1e-4f,
+                      "compound: a convex child composes the same inertia as an equivalent "
+                      "single convex body");
+            }
+            convexcol::Install(nullptr);
+        }
+
+        // -- (3) 形状単位インパルス: 複合 (子 3 個) の 1 個だけが床に触れる --
+        {
+            Scene s;
+            MakeGround(s, "G", 0.0f, -0.5f, 0.0f, 10.0f, 0.5f, 10.0f); // 上面 y=0
+            GameObject parent = s.CreateGameObjectTracked("Compound3");
+            parent.SetLocalPosition(0.0f, 0.2f, 0.0f); // 子0 の半高 0.2 でちょうど床に触れる
+            auto* rb = parent.AddComponent<RigidbodyComponent>();
+            rb->mass = 3.0f;
+            rb->compoundColliders = true;
+            GameObject child0 = s.CreateGameObjectTracked("Child0"); // 床に触れる
+            child0.SetParent(parent);
+            child0.SetLocalPosition(0.0f, 0.0f, 0.0f);
+            auto* col0 = child0.AddComponent<ColliderComponent>();
+            col0->shape = 1;
+            col0->halfExtents = { 0.2f, 0.2f, 0.2f };
+            GameObject child1 = s.CreateGameObjectTracked("Child1"); // 浮いたまま
+            child1.SetParent(parent);
+            child1.SetLocalPosition(0.0f, 1.0f, 0.0f);
+            auto* col1 = child1.AddComponent<ColliderComponent>();
+            col1->shape = 1;
+            col1->halfExtents = { 0.2f, 0.2f, 0.2f };
+            GameObject child2 = s.CreateGameObjectTracked("Child2"); // 浮いたまま
+            child2.SetParent(parent);
+            child2.SetLocalPosition(0.0f, 2.0f, 0.0f);
+            auto* col2 = child2.AddComponent<ColliderComponent>();
+            col2->shape = 1;
+            col2->halfExtents = { 0.2f, 0.2f, 0.2f };
+            s.GetWorld().ApplyStructuralChanges();
+            std::vector<SolidContact> contacts;
+            std::vector<ShapeImpulse> shapeImpulses;
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), kDt, &contacts, nullptr, &shapeImpulses);
+            }
+            check(contacts.size() == 1,
+                  "compound shape impulse: exactly one body-pair contact settles");
+            float child0Impulse = 0.0f, floorImpulse = 0.0f;
+            bool child1Seen = false, child2Seen = false;
+            for (const ShapeImpulse& si : shapeImpulses) {
+                if (si.entity == child0.Id()) {
+                    child0Impulse = si.impulse;
+                } else if (si.entity == child1.Id()) {
+                    child1Seen = true;
+                } else if (si.entity == child2.Id()) {
+                    child2Seen = true;
+                } else {
+                    floorImpulse = si.impulse; // 残りは床
+                }
+            }
+            const float total = contacts.empty() ? 0.0f : contacts[0].impulse;
+            MYE_LOG_INFO("  [phys] shape impulse: entries=%zu child0=%.6f floor=%.6f pair "
+                         "total=%.6f",
+                         shapeImpulses.size(), static_cast<double>(child0Impulse),
+                         static_cast<double>(floorImpulse), static_cast<double>(total));
+            check(shapeImpulses.size() == 2,
+                  "compound shape impulse: only the two shapes that actually touched are "
+                  "reported");
+            check(!child1Seen && !child2Seen,
+                  "compound shape impulse: the untouched child shapes get no entry");
+            check(total > 0.0f, "compound shape impulse: the resting pair carries weight");
+            check(std::fabs(child0Impulse - total) < total * 1e-6f + 1e-8f,
+                  "compound shape impulse: the touching child's impulse matches the pair's "
+                  "SolidContact.impulse");
+            check(std::fabs(floorImpulse - total) < total * 1e-6f + 1e-8f,
+                  "compound shape impulse: the floor shape gets the same impulse magnitude");
+        }
+
+        // -- (4) 出力ポインタ null のとき計算していない: 渡す/渡さないでシムが変わらない --
+        {
+            auto build = [](Scene& s) {
+                MakeGround(s, "G", 0.0f, -0.5f, 0.0f, 10.0f, 0.5f, 10.0f);
+                GameObject parent = s.CreateGameObjectTracked("Compound");
+                parent.SetLocalPosition(0.0f, 3.0f, 0.0f);
+                auto* rb = parent.AddComponent<RigidbodyComponent>();
+                rb->mass = 3.0f;
+                rb->compoundColliders = true;
+                for (int i = 0; i < 3; ++i) {
+                    GameObject c = s.CreateGameObjectTracked("Child");
+                    c.SetParent(parent);
+                    c.SetLocalPosition(0.0f, static_cast<float>(i) * 0.5f, 0.0f);
+                    auto* col = c.AddComponent<ColliderComponent>();
+                    col->shape = 1;
+                    col->halfExtents = { 0.2f, 0.2f, 0.2f };
+                }
+                s.GetWorld().ApplyStructuralChanges();
+            };
+            Scene s1, s2, s3;
+            build(s1);
+            build(s2);
+            build(s3);
+            bool same12 = true, same13 = true;
+            std::vector<ShapeImpulse> unused; // s3 だけ非 null ポインタを渡す
+            for (int i = 0; i < 180; ++i) {
+                phys.Update(s1.GetWorld(), kDt, nullptr, nullptr, nullptr);
+                phys.Update(s2.GetWorld(), kDt, nullptr, nullptr, nullptr);
+                phys.Update(s3.GetWorld(), kDt, nullptr, nullptr, &unused);
+                if (HashWorld(s1.GetWorld()) != HashWorld(s2.GetWorld())) {
+                    same12 = false;
+                }
+                if (HashWorld(s1.GetWorld()) != HashWorld(s3.GetWorld())) {
+                    same13 = false;
+                }
+            }
+            check(same12, "shape impulse: two identical null-pointer runs hash identically");
+            check(same13,
+                  "shape impulse: passing a non-null outShapeImpulses pointer does not change "
+                  "the simulation (existence gate)");
+        }
+    }
+
     // ================= M60h1: 車輪 + レイキャストサスペンション =================
     // 車輪エンティティ (車体の子) から下向きにレイを撃ち、沈み込みぶんのばね力を
     // **接地点へ**入れる。車輪は剛体でもコライダーでもないので bodies に居らず、

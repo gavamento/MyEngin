@@ -404,6 +404,49 @@ void RotateTensor(const float bx[3], const float by[3], const float bz[3], const
     }
 }
 
+// M60e の複合コライダー 1 個ぶんの質量入力 (sub-05)。固定長配列 (旧 kMaxCompoundShapes=16)
+// を廃止し、子形状の数だけ vector で扱う。cx/cy/cz は剛体ローカルでの実体の中心
+// (box/球/カプセルは形状原点、凸包は実重心)
+struct ShapeMassEntry {
+    const ColliderComponent* col = nullptr;
+    ShapePose pose;         // 剛体ローカルでの姿勢 (子は既に body-local へ畳み済み)
+    float vol = 0.0f;
+    float cx = 0.0f, cy = 0.0f, cz = 0.0f;
+    bool hullValid = false; // 凸包の実質量特性を使うか
+    float hullI[3][3] = {}; // 凸包の重心まわりフルテンソル (密度 1、子ローカル軸)
+};
+
+// 凸包 (shape=5) なら実体積・実重心・フルテンソルで e を上書きする (M60f の単体ボディ経路と
+// 同じ ConvexMassProperties を使う)。box/球/カプセル、または凸包が未生成のときは何もしない。
+// e.cx/cy/cz は呼び出し前の値 (剛体ローカルでの形状原点) へ、子の姿勢で回した重心オフセットを足す
+void FillConvexShapeMass(ShapeMassEntry& e, float sx, float sy, float sz)
+{
+    if (e.col->shape != collidershape::kConvex) {
+        return;
+    }
+    const ConvexHullData* h = static_cast<const ConvexHullData*>(e.pose.meshData);
+    if (!h || !h->Valid()) {
+        return;
+    }
+    float vol = 0.0f;
+    XMFLOAT3 com{};
+    float I[3][3];
+    ConvexMassProperties(*h, sx, sy, sz, vol, com, I);
+    if (!(vol > 1e-12f)) {
+        return;
+    }
+    e.vol = vol;
+    e.cx += com.x * e.pose.bx[0] + com.y * e.pose.by[0] + com.z * e.pose.bz[0];
+    e.cy += com.x * e.pose.bx[1] + com.y * e.pose.by[1] + com.z * e.pose.bz[1];
+    e.cz += com.x * e.pose.bx[2] + com.y * e.pose.by[2] + com.z * e.pose.bz[2];
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            e.hullI[r][c] = I[r][c];
+        }
+    }
+    e.hullValid = true;
+}
+
 // 3x3 の線形方程式 A x = b を Cramer で解く (M59f1)。除算しか増やさないので決定論的。
 // 行列式がほぼ 0 なら false を返して呼び側が「何もしない」を選べるようにする
 bool Solve3x3(const float a[3][3], const float b[3], float out[3])
@@ -1026,6 +1069,64 @@ void MergeSubstepContacts(const std::vector<SolidContact>& sub, std::vector<Soli
     acc.swap(merged);
 }
 
+// 形状単位インパルス (sub-05)。entity.index 昇順の一覧内で、同じエンティティが 2 件以上
+// 並んでいたら合算して 1 件に畳む (複数の相手と同じサブステップで当たった分)。
+// MergeSubstepShapeImpulses に渡す前提 (どちらの入力も呼ぶ前に重複が無いこと)
+void DedupeShapeImpulses(std::vector<ShapeImpulse>& v)
+{
+    if (v.size() < 2) {
+        return;
+    }
+    std::sort(v.begin(), v.end(), [](const ShapeImpulse& a, const ShapeImpulse& b) {
+        return a.entity.index < b.entity.index;
+    });
+    size_t w = 0;
+    for (size_t k = 0; k < v.size(); ++k) {
+        if (w > 0 && v[w - 1].entity.index == v[k].entity.index) {
+            v[w - 1].impulse += v[k].impulse;
+        } else {
+            v[w++] = v[k];
+        }
+    }
+    v.resize(w);
+}
+
+// MergeSubstepContacts の形状単位版。key の代わりに entity.index で線形マージする
+// (両方とも DedupeShapeImpulses 済み = 重複無しが前提)
+void MergeSubstepShapeImpulses(const std::vector<ShapeImpulse>& sub, std::vector<ShapeImpulse>& acc)
+{
+    if (sub.empty()) {
+        return;
+    }
+    if (acc.empty()) {
+        acc = sub;
+        return;
+    }
+    std::vector<ShapeImpulse> merged;
+    merged.reserve(acc.size() + sub.size());
+    size_t i = 0, j = 0;
+    while (i < acc.size() && j < sub.size()) {
+        if (acc[i].entity.index < sub[j].entity.index) {
+            merged.push_back(acc[i++]);
+        } else if (sub[j].entity.index < acc[i].entity.index) {
+            merged.push_back(sub[j++]);
+        } else {
+            ShapeImpulse s = acc[i];
+            s.impulse += sub[j].impulse;
+            merged.push_back(s);
+            ++i;
+            ++j;
+        }
+    }
+    while (i < acc.size()) {
+        merged.push_back(acc[i++]);
+    }
+    while (j < sub.size()) {
+        merged.push_back(sub[j++]);
+    }
+    acc.swap(merged);
+}
+
 // ---- CCD (M59j) ----
 
 // 移動体を掃引するときの**外接球半径**。box / capsule では真の掃引形状より大きいので
@@ -1255,10 +1356,13 @@ void ComposeEntityWorldPose(World& world, EntityID e, float& px, float& py, floa
 }
 
 void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* outContacts,
-                           XpbdBackend* xpbd)
+                           XpbdBackend* xpbd, std::vector<ShapeImpulse>* outShapeImpulses)
 {
     if (outContacts) {
         outContacts->clear();
+    }
+    if (outShapeImpulses) {
+        outShapeImpulses->clear();
     }
     // 波の時計を 1 tick 進める (浮力はこの tick の時刻 = 進めた後の timeTicks / 60 で評価する。
     // 旧実装の「time += dt してから評価」と同じ位置関係)。全 WaterWave を同じ規則で進める —
@@ -1569,6 +1673,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                       return a.child.index < b.child.index;
                   });
         size_t ci0 = 0;
+        // 質量入力の作業バッファ (sub-05)。body ごとに clear して詰め直す — while の外に
+        // 置いて確保を使い回す (固定長配列を廃止したぶんの tick ごとの確保増を避ける)
+        std::vector<ShapeMassEntry> shapeMassBuf;
         while (ci0 < compoundShapes.size()) {
             const EntityID owner = compoundShapes[ci0].owner;
             size_t ci1 = ci0;
@@ -1613,49 +1720,48 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             // ★合成すると必ず非対角が出る (L 字がその典型) ので、対角しか持てない
             //   InvInertiaWorld ではなく **3x3 フルテンソル**を局所で持ち、毎サブステップ
             //   B·I⁻¹·Bᵀ でワールドへ回す。
-            // 形状の中心は pose の原点そのもの (box / 球 / カプセルはいずれも原点対称)
-            constexpr int kMaxCompoundShapes = 16;
-            float vol[kMaxCompoundShapes];
-            float cx[kMaxCompoundShapes], cy[kMaxCompoundShapes], cz[kMaxCompoundShapes];
-            ShapePose lp[kMaxCompoundShapes];
-            const ColliderComponent* cols[kMaxCompoundShapes];
-            int nshape = 0;
+            // 形状の中心は pose の原点 (box / 球 / カプセルはいずれも原点対称)。
+            // ★凸包 (shape=5) だけは原点非対称: FillConvexShapeMass が実体積・実重心・
+            //   フルテンソルに差し替える (M60f の単体ボディ経路と同じ ConvexMassProperties)。
+            //   子形状の数に上限は無い (旧 kMaxCompoundShapes=16 の固定配列を撤廃、sub-05)
+            shapeMassBuf.clear();
             if (body->ownShape) {
-                lp[nshape] = shapes::MakePose(*body->col, { 0.0f, 0.0f, 0.0f },
-                                              { 0.0f, 0.0f, 0.0f, 1.0f }, body->scale);
-                cols[nshape] = body->col;
-                vol[nshape] =
-                    ShapeVolumeWorld(*body->col, body->scale.x, body->scale.y, body->scale.z);
-                cx[nshape] = 0.0f;
-                cy[nshape] = 0.0f;
-                cz[nshape] = 0.0f;
-                ++nshape;
+                ShapeMassEntry e;
+                e.pose = shapes::MakePose(*body->col, { 0.0f, 0.0f, 0.0f },
+                                          { 0.0f, 0.0f, 0.0f, 1.0f }, body->scale);
+                e.col = body->col;
+                e.vol = ShapeVolumeWorld(*body->col, body->scale.x, body->scale.y, body->scale.z);
+                FillConvexShapeMass(e, body->scale.x, body->scale.y, body->scale.z);
+                shapeMassBuf.push_back(e);
             }
-            for (size_t k = ci0; k < ci1 && nshape < kMaxCompoundShapes; ++k) {
+            for (size_t k = ci0; k < ci1; ++k) {
                 const CompoundShape& cs = compoundShapes[k];
-                lp[nshape] =
-                    shapes::MakePose(*cs.col, { cs.lpx, cs.lpy, cs.lpz },
-                                     { cs.lqx, cs.lqy, cs.lqz, cs.lqw }, { cs.sx, cs.sy, cs.sz });
-                cols[nshape] = cs.col;
-                vol[nshape] = ShapeVolumeWorld(*cs.col, cs.sx, cs.sy, cs.sz);
-                cx[nshape] = cs.lpx;
-                cy[nshape] = cs.lpy;
-                cz[nshape] = cs.lpz;
-                ++nshape;
+                ShapeMassEntry e;
+                e.pose = shapes::MakePose(*cs.col, { cs.lpx, cs.lpy, cs.lpz },
+                                          { cs.lqx, cs.lqy, cs.lqz, cs.lqw },
+                                          { cs.sx, cs.sy, cs.sz });
+                e.col = cs.col;
+                e.vol = ShapeVolumeWorld(*cs.col, cs.sx, cs.sy, cs.sz);
+                e.cx = cs.lpx;
+                e.cy = cs.lpy;
+                e.cz = cs.lpz;
+                FillConvexShapeMass(e, cs.sx, cs.sy, cs.sz);
+                shapeMassBuf.push_back(e);
             }
+            const int nshape = static_cast<int>(shapeMassBuf.size());
             float vtot = 0.0f;
             for (int k = 0; k < nshape; ++k) {
-                vtot += vol[k];
+                vtot += shapeMassBuf[k].vol;
             }
             if (vtot > 1e-12f && body->invMass > 0.0f && !body->freezeRot) {
                 // 体積加重の重心。**明示指定の centerOfMass があればそちらが勝つ** (既存規約)
                 if (!body->hasCom) {
                     float mx = 0.0f, my = 0.0f, mz = 0.0f;
                     for (int k = 0; k < nshape; ++k) {
-                        const float w = vol[k] / vtot;
-                        mx += cx[k] * w;
-                        my += cy[k] * w;
-                        mz += cz[k] * w;
+                        const float w = shapeMassBuf[k].vol / vtot;
+                        mx += shapeMassBuf[k].cx * w;
+                        my += shapeMassBuf[k].cy * w;
+                        mz += shapeMassBuf[k].cz * w;
                     }
                     if (mx != 0.0f || my != 0.0f || mz != 0.0f) {
                         body->comLx = mx;
@@ -1667,14 +1773,28 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 const float mass = 1.0f / body->invMass;
                 float Isum[3][3] = {};
                 for (int k = 0; k < nshape; ++k) {
-                    const float mk = mass * (vol[k] / vtot);
-                    float ix, iy, iz;
-                    LocalInertiaDiag(cols[k], lp[k], mk, ix, iy, iz);
+                    const ShapeMassEntry& s = shapeMassBuf[k];
+                    const float mk = mass * (s.vol / vtot);
                     float Ik[3][3];
-                    TensorFromDiag(lp[k].bx, lp[k].by, lp[k].bz, ix, iy, iz, Ik);
+                    if (s.hullValid) {
+                        // 凸包: 子ローカル軸のフルテンソル (密度 1) を子の姿勢で回してから
+                        // 実質量へスケール (単体ボディの ConvexMassProperties 経路と同じ式)
+                        float Irot[3][3];
+                        RotateTensor(s.pose.bx, s.pose.by, s.pose.bz, s.hullI, Irot);
+                        const float sc = mk / s.vol;
+                        for (int r = 0; r < 3; ++r) {
+                            for (int c = 0; c < 3; ++c) {
+                                Ik[r][c] = Irot[r][c] * sc;
+                            }
+                        }
+                    } else {
+                        float ix, iy, iz;
+                        LocalInertiaDiag(s.col, s.pose, mk, ix, iy, iz);
+                        TensorFromDiag(s.pose.bx, s.pose.by, s.pose.bz, ix, iy, iz, Ik);
+                    }
                     // 平行軸の定理: I += m (|d|² δ − d dᵀ)
-                    const float dv[3] = { cx[k] - body->comLx, cy[k] - body->comLy,
-                                          cz[k] - body->comLz };
+                    const float dv[3] = { s.cx - body->comLx, s.cy - body->comLy,
+                                          s.cz - body->comLz };
                     const float d2 = dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2];
                     for (int r = 0; r < 3; ++r) {
                         for (int c = 0; c < 3; ++c) {
@@ -2006,6 +2126,23 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             forEachShape(B, [&](const ShapePose& pb) { fn(pa, pb); });
         });
     };
+    // forEachShape/forEachShapePair の所有エンティティ付き版 (sub-05: 形状単位インパルス用)。
+    // ★既存の forEachShape/forEachShapePair は 3 箇所の別用途でも使われているため、
+    //   シグネチャを変えずに別関数として足す (反復順序と対象は完全に同じ)
+    auto forEachShapeEntity = [&compoundShapes](const Body& b, auto&& fn) {
+        if (b.ownShape) {
+            fn(b.pose, b.entity);
+        }
+        for (int k = 0; k < b.subCount; ++k) {
+            const CompoundShape& cs = compoundShapes[static_cast<size_t>(b.subFirst + k)];
+            fn(cs.pose, cs.child);
+        }
+    };
+    auto forEachShapePairEntity = [&forEachShapeEntity](const Body& A, const Body& B, auto&& fn) {
+        forEachShapeEntity(A, [&](const ShapePose& pa, EntityID ea) {
+            forEachShapeEntity(B, [&](const ShapePose& pb, EntityID eb) { fn(pa, ea, pb, eb); });
+        });
+    };
     std::vector<ConstraintBlock> jointBlocks; // サブステップごとに作り直す (capacity は使い回す)
     // ---- 破断の集計 (M60d): 関節 1 個につき 線形 3 + 角 3 の**力積ベクトル** ----
     // ★**tick 全体**で溜める (サブステップをまたぐ) — こうすると「その tick に関節が
@@ -2176,6 +2313,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     // サブステップを増やすほど跳ねなくなるという逆転が起きる
     const float restitutionVelThreshold = kRestitutionVelThreshold * (h / dt);
     std::vector<SolidContact> subContacts; // サブステップ 1 回ぶんの接触 (合算前)
+    std::vector<ShapeImpulse> subShapeImpulses; // sub-05: 同上の形状単位版 (outShapeImpulses 用)
     std::vector<float> xpbdLambda; // M60'c: XPBD の λ スクラッチ (sim 状態ではない)
     // ---- XPBD 終端アタッチの解決と焼き込み (M60'd) ----
     // connectedEntity → bodies の添字を tick 頭に 1 回引く (bodies は index 昇順ソート済 =
@@ -3517,6 +3655,10 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         };
         struct ContactConstraint {
             uint32_t ai = 0, bi = 0;
+            // sub-05: 実際に当たった子形状の所有エンティティ (非複合なら ai/bi の本人と同じ)。
+            // 形状単位インパルスの出力先を、ボディ対とは別に持たせるためだけの欄
+            EntityID aShape;
+            EntityID bShape;
             float nx = 0, ny = 1, nz = 0;
             float t1[3] = { 1, 0, 0 };
             float t2[3] = { 0, 0, 1 };
@@ -3594,8 +3736,12 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             }
             // M60e: **形状ペアごとに 1 本ずつ**制約を作る。法線が形状ごとに違うので
             // 1 つのマニフォールドには畳めない (出力側で 1 ボディペア 1 件へ統合する)。
-            // 非複合ではこのラムダが 1 回だけ回り、従来と完全に同じ制約が 1 本できる
-            forEachShapePair(A, B, [&](const ShapePose& pa, const ShapePose& pb) {
+            // 非複合ではこのラムダが 1 回だけ回り、従来と完全に同じ制約が 1 本できる。
+            // sub-05: forEachShapePairEntity 版を使い、当たった子形状のエンティティも拾う
+            // (幾何・反復順序は forEachShapePair と完全に同一 — 追加の引数を渡すだけ)
+            forEachShapePairEntity(A, B,
+                                   [&](const ShapePose& pa, EntityID ea, const ShapePose& pb,
+                                       EntityID eb) {
             shapes::Manifold m;
             if (!shapes::CollideManifold(pa, pb, m)) {
                 return;
@@ -3603,6 +3749,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             ContactConstraint c;
             c.ai = ai;
             c.bi = bi;
+            c.aShape = ea;
+            c.bShape = eb;
             c.nx = m.nx;
             c.ny = m.ny;
             c.nz = m.nz;
@@ -4191,6 +4339,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         // ★CCD は接触**イベント**も報告する — 反発で跳ね返った弾は貫通を作らないまま
         //   離れていくので、ここで出さないと OnCollisionEnter が一度も飛ばない
         std::vector<SolidContact> ccdContacts;
+        std::vector<ShapeImpulse> ccdShapeImpulses; // sub-05: 同上の形状単位版
         if (anyCcd) {
             for (Body& b : bodies) {
                 b.ccdClamped = false;
@@ -4320,6 +4469,12 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 sc.px = hpx; sc.py = hpy; sc.pz = hpz;
                 sc.impulse = jn;
                 ccdContacts.push_back(sc);
+                if (outShapeImpulses) {
+                    // ★CCD は**親自身の形状しか掃かない** (上のコメント) ので A/B とも
+                    //   単体ボディの本人がそのまま形状エンティティになる
+                    ccdShapeImpulses.push_back({ A.entity, jn });
+                    ccdShapeImpulses.push_back({ B.entity, jn });
+                }
             }
             // 出力は key 昇順が契約。CCD ボディ同士の正面衝突では同じペアが両側から
             // 報告されるので、ここで 1 本に畳む (インパルスは足す = MergeSubstepContacts と同規約)
@@ -4334,6 +4489,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 }
             }
             ccdContacts.resize(cw);
+            DedupeShapeImpulses(ccdShapeImpulses);
         }
 
         // ---- 接触ペアの出力 (M28c、M59e で代表点と法線インパルス、M59g2 でサブステップ合算) ----
@@ -4393,6 +4549,25 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             MergeSubstepContacts(ccdContacts, subContacts); // M59j
             MergeSubstepContacts(subContacts, *outContacts);
             subContacts.clear();
+        }
+
+        // ---- 形状単位インパルスの出力 (sub-05) ----
+        // SolidContact と違い**ボディ対へ畳まない** — ContactConstraint 1 本 (= 実際に
+        // 当たった子形状ペア 1 組) ごとに、両側の形状エンティティへ同じ量を足す。
+        // 眠りペアは impulse == 0 (sleepContacts) なので寄与しない = 足す必要が無い
+        if (outShapeImpulses) {
+            for (const ContactConstraint& c : constraints) {
+                float total = c.lambdaNc;
+                for (int k = 0; k < c.count; ++k) {
+                    total += c.pts[k].lambdaN;
+                }
+                subShapeImpulses.push_back({ c.aShape, total });
+                subShapeImpulses.push_back({ c.bShape, total });
+            }
+            DedupeShapeImpulses(subShapeImpulses);
+            MergeSubstepShapeImpulses(ccdShapeImpulses, subShapeImpulses); // M59j 相当
+            MergeSubstepShapeImpulses(subShapeImpulses, *outShapeImpulses);
+            subShapeImpulses.clear();
         }
 
         if (sub == substeps - 1) {

@@ -214,7 +214,7 @@ ByteWriter / ByteReader (`Engine/Core/ByteIo.h`) で、magic `"MFRC"`、版 1。
 7. 複合の子が 17 個以上でも全子形状が質量・慣性に入り、shape=5 の子は凸包の重心とフル慣性で合成される — `--selftest`
 8. 形状単位インパルスが、どの子形状 (エンティティ) が叩かれたかを返し、合計がボディ対の `SolidContact.impulse` と一致する — `--selftest`
 9. 物理だけを触ったサブ (sub-05) の前後で、既存 replay (default / parts / physics / joints) の旧コミットで録った rep が新ビルドの Debug と Release で一致する — `--replay-verify`
-10. 破壊物を含まないシーンは不変: `tools\replay_verify.bat` 全 job PASS、`tools\shot_verify.bat` 全枚 PASS (各サブで該当分)
+10. 破壊物を含まないシーンは不変: `tools\replay_verify.bat` 全 job PASS、`tools\shot_verify.bat` 全枚 PASS (各サブで該当分)。shot_verify は、**基点コミットを WIP 抜きの worktree でビルドして同じ結果が出る枚は除外する** (2026-09-25、sub-05 で golden 4 枚が M80 着手前からずれている疑い。作業ツリーのビルドには WIP の `WaterPass.cpp` が入るので、shot_verify は WIP 抜きの worktree で比べる)
 11. `--fracture-demo` で、壊れる前は元メッシュ 1 つ・1 剛体として動き、ぶつかった所から割れ、塊ごとに剛体化し、Debug/Release の replay が一致し `--snapshot-stress` も通る — replay_verify の `fracture` job
 12. kinematic ルート (固定された壁) は、叩いた所だけ抜け、体積最大の塊が固定のまま残る — `--selftest` + デモのスクショ
 13. 割れた後の 6 挙動がそれぞれ Tick 数どおりに動く (消える tick、沈み始めの mask、縮みの scale、静的化で Rigidbody が消える、上限で古い順) — `--selftest`
@@ -261,6 +261,7 @@ ByteWriter / ByteReader (`Engine/Core/ByteIo.h`) で、magic `"MFRC"`、版 1。
 9. ABI は `ApplyFractureDamage` 1 本 + `onBreak`、状態は汎用 GetComponentField、の裁定。逆 (専用 getter も) ならスロットが増える
 10. 「ボクセル化を許容」の見た目: surface nets の滑らかな形 (角が丸まる) の裁定。既定の解像度は焼き時間の実測で決める (Release で 10 秒以内に焼ける最大、64 か 32)。逆 (ブロック状のまま / 解像度を優先して遅くてもよい) なら、ブロック状は実装済みの形を残すだけになるが、断面の三角形分割の負荷は同じ対策が要る
 11. 断面の三角形分割に外部ライブラリ libtess2 (SGI Free Software License B 2.0 = MIT 相当) を `external/` に取り込む裁定 (耳切りの失敗が 3 回目のため)。逆 (自作を続ける / 解像度 32 で打ち止め) なら、sub-14 は自作の掃引法または CDT になって規模が倍以上になる / 高ポリの実モデルや薄い壁の断面で焼きが失敗し得るまま残る
+12. shot_verify の golden 4 枚 (parts / joints / acoustic_forward / acoustic_deferred) が M80 と無関係にずれている件 (基点の確認結果は司会が台帳に記録) / 裁定: M80 では golden を更新せず、除外して進める。更新するかどうかと原因の調査は M80 の外 / 逆 (M80 の中で更新する) を選ぶと、無関係な絵の変化 (影の有無など) を原因を調べずに正として固定することになる
 
 ### リスク
 - 断面の三角形分割 (穴あき・縮退・ほぼ同一平面の頂点) の頑健さ — sub-01 で最初に潰す。失敗は「その切断を諦めて破片を統合」など安全側へ倒す規則を sub-01 で決める
@@ -284,3 +285,4 @@ ByteWriter / ByteReader (`Engine/Core/ByteIo.h`) で、magic `"MFRC"`、版 1。
 - 2026-09-25 (sub-04 VERDICT round 1): §4.1 焼き 1 の surface nets を具体化した (セルごとに 1 頂点・辺の中点の平均・曖昧な配置の事前解消)。round 1 の実装は占有境界の立方体の面をそのまま出すブロック状の抽出で、surface nets ではなかった。同じ平面上の大きな面が大量にでき、断面の輪郭が数千点の共線点の列になり、`EarClip` が失敗していた。§4.2 の `voxelResolution` の既定値を「sub-04 の計測で決める」に変更。`EarClip` の共線点の扱い (面積 0 の耳として外す) を sub-04 の範囲に加えた (sub-01 の部品だが、ボクセル化経路でしか顕在化しないため)。[ユーザーに聞ける] #10 を追加
 - 2026-09-25 (sub-04 VERDICT round 2): sub-04 を OK にした (surface nets、解像度 32 の焼き成功)。開いた箱の解像度 48 / 64 の焼き失敗と、耳切りの遅さ (O(n³)) は**新サブ sub-14** に切り出した。断面の三角形分割を libtess2 の掃引法に置き換える。理由: 耳切りの失敗が sub-01 / 02 / 04 と同じ種類で 3 回出た。単純多角形の前提は、薄い壁の断面 (輪郭の接触) で原理的に破れる。`voxelResolution` の既定値を 32 にした (sub-04 の実測: 開いた箱、pieceCount 16 で Release 5.3 秒)。sub-09 を sub-14 に依存させた (Inspector で解像度を上げた利用者が失敗しないように)。[ユーザーに聞ける] #11 を追加
 - 2026-09-25 (sub-14 VERDICT round 1): 断面の三角形分割を libtess2 (master @ 8dbd648、TESS_WINDING_ODD) に置き換えた。輪郭が縮退した入力 (新しい頂点・頂点の統合・三角形数がオイラーの公式と合わない) では、sub-01 の厳密な閉じの代わりに幾何的な閉じで判定する。既定の `voxelResolution` は 32 のまま (sub-14 の実測で 48 は Release 10.8 秒)
+- 2026-09-25 (sub-05 VERDICT round 1): 受け入れ条件 10 の shot_verify に、「基点を WIP 抜きの worktree でビルドして同じ結果の枚は除外」を追加。[ユーザーに聞ける] #12 を追加。プロファイルスコープ (sub-05 のやること 4、任意) は sub-11 へ回す
