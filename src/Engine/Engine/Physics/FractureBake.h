@@ -16,10 +16,10 @@
 namespace mye {
 
 // ---- 破壊分割コア: Voronoi 分割 (M80b) ----
-// sub-01 (FractureMesh.h) の平面切断+蓋を使って、spec §4.1「焼き」の 2〜8 を純関数として
-// 完成させる。入力は閉じていて外向き (CheckClosedMesh 済み) なソースメッシュ、出力は
-// 「破片の列 + 接着グラフ + 焼きの記録」。ファイル形式・ライブラリ登録は sub-03、
-// 開いたメッシュのボクセル化は sub-04、スキンは sub-10 (このファイルは骨を知らない)。
+// sub-01 (FractureMesh.h) の平面切断+蓋を使って、spec §4.1「焼き」の 1〜8 を純関数として
+// 完成させる (1 の閉じ判定/ボクセル化分岐は sub-04 の FractureVoxel.h と組み合わせて
+// BakeFracture が行う)。出力は「破片の列 + 接着グラフ + 焼きの記録」。ファイル形式・
+// ライブラリ登録は sub-03、スキンは sub-10 (このファイルは骨を知らない)。
 
 inline constexpr int32_t kMaxFracturePieces = 256;
 inline constexpr int32_t kMaxFractureNeighbors = 32;
@@ -42,10 +42,15 @@ struct FracturePieceBake {
 };
 
 struct FractureBakeInput {
-    FractureMesh sourceMesh; // 呼び出し側が CheckClosedMesh で「閉じていて外向き」を保証すること
+    FractureMesh sourceMesh; // 閉じていなくてよい (openMeshMode で拒否/ボクセル化を選ぶ)
     uint32_t seed = 1;
     int32_t pieceCount = 16; // 目安。上限は kMaxFracturePieces
     float minVolumeRatio = 0.1f; // 極小片の統合しきい値 (平均体積に対する比)
+    int32_t openMeshMode = 0;    // 0 = 閉じていなければ拒否 / 1 = ボクセル化を許容 (spec §4.1 焼き1)
+    // openMeshMode==1 のときのボクセル解像度 (FractureVoxel.h が [16,256] へクランプ)。
+    // 既定 32 は sub-04 の計測に基づく (開いた箱 + pieceCount=16 で Release 10 秒以内に収まり、
+    // 48 以上では断面の三角形分割が失敗する組み合わせがあるため)
+    int32_t voxelResolution = 32;
 };
 
 struct FractureBakeResult {
@@ -57,13 +62,18 @@ struct FractureBakeResult {
     int32_t mergedCount = 0;   // 極小片統合が起きた回数
 };
 
-// spec §4.1 焼きの 2〜8 (内部シード・セル切断・非連結分離・極小片統合・凸包・接着グラフ)。
+// 焼きの入口 (spec §4.1 焼きの 1〜8)。まず CheckClosedMesh で sourceMesh を検査し、
+// 閉じていなければ openMeshMode で分岐する (0 = 理由付きで拒否、1 = FractureVoxel.h の
+// ボクセル化+surface nets で閉じたメッシュに変換してから続行)。閉じているが内向き
+// (signedVolume < 0) なら FlipMeshWinding で外向きに正規化する。そのあとの内部シード・
+// セル切断・非連結分離・極小片統合・凸包・接着グラフは同じ 1 本のパイプラインを通る。
 // 決定論: 同じ input から同じ pieces の並び・同じバイト列を返す (FractureBakeDigest で確認できる)
 bool BakeFracture(const FractureBakeInput& input, FractureBakeResult& out);
 
 // SelfTest 専用の入口: 内部シード生成 (PlaceSeeds) を経由せず、明示的な位置をそのままシードとして
 // 使う。それ以外 (セル切断・非連結分離・極小片統合・凸包・接着グラフ) は BakeFracture と同じ
-// パイプラインを通るので、隣接面積などを狙った配置で検証できる
+// パイプラインを通るので、隣接面積などを狙った配置で検証できる。sourceMesh は
+// 「閉じていて外向き」を呼び出し側が保証すること (開いたメッシュの処理は BakeFracture 側だけが持つ)
 bool BakeFractureWithSeeds(const FractureMesh& sourceMesh, const std::vector<DirectX::XMFLOAT3>& seeds,
                            float minVolumeRatio, FractureBakeResult& out);
 

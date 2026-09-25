@@ -1,7 +1,7 @@
 # sub-03: 破片資産 `.mfrac` と FractureLibrary
 
 - 依存: sub-02
-- 状態: OK (コミット待ち)
+- 状態: OK (commit 8c9d984)
 - 往復: 1
 
 ## やること

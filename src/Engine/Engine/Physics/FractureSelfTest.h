@@ -19,6 +19,11 @@ namespace mye {
 //   - 破片資産 (.mfrac) は書く→読む→書くでバイト一致し、壊れた入力は落ちずに失敗を返す。
 //     読み込んだ破片は MeshLibrary/ConvexColliderLibrary へ登録され、Clear() 後も
 //     ReregisterAll() で復帰する
+//   - 開いたメッシュは openMeshMode=1 でボクセル化+surface nets により閉じたメッシュに
+//     変換でき、解像度で細かさが変わり、同じ入力からは同じバイト列になる (FractureVoxel.h)
+//   - surface nets は占有格子の角をそのまま出すブロック抽出ではなく、対角に並ぶ曖昧な
+//     占有配置でも閉じたメッシュになる。開いたメッシュを分割まで通す既定解像度は 32
+//     (48/64 では開いた箱で断面の三角形分割が失敗する組み合わせがあるため)
 bool RunFractureSelfTest();
 
 } // namespace mye

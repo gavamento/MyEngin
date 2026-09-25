@@ -372,6 +372,9 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\FractureSelfTest.cpp">
       <Filter>Engine\Physics</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\FractureVoxel.cpp">
+      <Filter>Engine\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Physics\MeshColliderLibrary.cpp">
       <Filter>Engine\Physics</Filter>
     </ClCompile>
@@ -1120,6 +1123,9 @@
       <Filter>Engine\Physics</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\FractureSelfTest.h">
+      <Filter>Engine\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\FractureVoxel.h">
       <Filter>Engine\Physics</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\MeshColliderLibrary.h">

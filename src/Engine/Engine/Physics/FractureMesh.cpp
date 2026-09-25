@@ -402,6 +402,35 @@ bool EarClip(std::vector<Pt2> poly, double areaEps, std::vector<std::array<int32
     while (poly.size() > 3) {
         bool clipped = false;
         const int32_t n = static_cast<int32_t>(poly.size());
+
+        // 共線点 (prev,curr,next が一直線上で curr が prev→next の間にある) を最優先で外す。
+        // 面積0の耳として記録するので体積にも辺の使用回数にも影響しない。ボクセル化した
+        // 断面のように共線点が大量に連なる輪郭では、後段の「最も丸い耳」探索がその共線点に
+        // 隣の耳を塞がれて詰まるため、ここで先に間引く
+        for (int32_t i = 0; i < n; ++i) {
+            const Pt2& prev = poly[static_cast<size_t>((i + n - 1) % n)];
+            const Pt2& curr = poly[static_cast<size_t>(i)];
+            const Pt2& next = poly[static_cast<size_t>((i + 1) % n)];
+            const double e1u = static_cast<double>(curr.u) - prev.u, e1v = static_cast<double>(curr.v) - prev.v;
+            const double e2u = static_cast<double>(next.u) - curr.u, e2v = static_cast<double>(next.v) - curr.v;
+            if (std::fabs(Cross2D(e1u, e1v, e2u, e2v)) > areaEps) {
+                continue;
+            }
+            if (e1u * e2u + e1v * e2v <= 0.0) {
+                continue; // 折り返し (鋭い切り返し) は共線除去の対象にしない
+            }
+            trisOut.push_back({ prev.vertexIdx, curr.vertexIdx, next.vertexIdx });
+            poly.erase(poly.begin() + i);
+            clipped = true;
+            break;
+        }
+        if (clipped) {
+            if (++iter > maxIter) {
+                return false; // 安全弁 (理論上到達しないはずだが無限ループを避ける)
+            }
+            continue;
+        }
+
         // 最初に見つかった耳ではなく、有効な耳のうち最も丸い (cr が最大の) ものを選ぶ。
         // 「最初に見つかった耳」を毎回優先すると、穴を橋渡しした細い縫い目の周りで
         // 先に周囲を食い尽くしてしまい、残りがほぼ全周反射角の帯だけになって

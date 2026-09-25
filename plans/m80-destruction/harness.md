@@ -9,8 +9,8 @@
 |---|---|---|---|---|
 | sub-01 | OK | 2 | 54c8f1f | 閉じ判定と平面切断 + 蓋 |
 | sub-02 | OK | 3 | e2175f9 | Voronoi 分割・凸包・接着グラフ。トーラス分は sub-13 へ移管 |
-| sub-03 | OK | 1 | (本コミット) | 破片資産 .mfrac と FractureLibrary |
-| sub-04 | 未着手 | 0 | | ボクセル化 + surface nets |
+| sub-03 | OK | 1 | 8c9d984 | 破片資産 .mfrac と FractureLibrary |
+| sub-04 | OK | 2 | (本コミット) | ボクセル化 + surface nets。既定解像度 32。開いた箱 48/64 は sub-14 へ移管 |
 | sub-05 | 未着手 | 0 | | 複合の上限撤廃・形状単位インパルス |
 | sub-06 | 未着手 | 0 | | Destructible/FracturePiece・事前生成・root proxy |
 | sub-07 | 未着手 | 0 | | 接着の破断と塊の剛体化 |
@@ -19,6 +19,7 @@
 | sub-10 | 未着手 | 0 | | スキンメッシュの破壊 |
 | sub-11 | 未着手 | 0 | | 計測・ベンチ・上限 |
 | sub-12 | 未着手 | 0 | | ABI v22・デモ・spec/ADR |
+| sub-14 | 未着手 | 0 | | 断面の三角形分割を libtess2 に置き換え (依存 sub-04、sub-09 が依存) |
 | sub-13 | OK | 1 | d873eac | 凸包生成の無限ループ修正 + トーラス焼き (依存 sub-02、sub-06 が依存) |
 
 ## レビュー
@@ -38,6 +39,8 @@
 | Q-8 | 破壊物の単位 | MeshRenderer のメッシュ 1 つ | 推奨で仮決定 (Notion Q-8、回答待ち) |
 | Q-9 | ABI 範囲 | ApplyFractureDamage 1 本 + onBreak (v22 = 126) | 推奨で仮決定 (Notion Q-9、回答待ち) |
 | Q-10 | 破片の位相的な閉じ | 求めない (幾何的な閉じ = 体積保存 + ベクトル面積≈0)。B で継ぎ目の閉じを足す | 推奨で仮決定 (Notion Q-10、回答待ち。sub-02 round 2 の planner 裁定) |
+| Q-11 | ボクセル化の見た目と既定解像度 | surface nets (滑らか)、既定は Release 10 秒以内の最大 | 推奨で仮決定 (Notion Q-11、回答待ち。planner の #10) |
+| Q-12 | 外部ライブラリ libtess2 の取り込み | 取り込む (external/、SGI FSL B 2.0) | 推奨で仮決定 (Notion Q-12、回答待ち。planner の #11) |
 
 ## 申し送り (セッション跨ぎ)
 - **運用 (2026-09-25 ユーザー指示)**: ハーネス中の質問は推奨案で仮決定して進める。質問は Notion「活動記録」のページ
@@ -48,3 +51,4 @@
 - **作業ツリー**: 開始時点の未コミット WIP (deepmodal 関連、`src/Engine/Renderer/WaterPass.cpp`、`tools/deepmodal/train.py`、`assets/deepmodal/*`、ルート直下の一時ファイル群) には触らない。コミットは SELF_EVAL の「触ったファイル」だけ。WIP と同じファイルを触る必要が出たらそのサブで止めて Notion に記録。
 - coder は `model: "sonnet"` で起動する。
 - ABI の現状は v21 / 125 スロット (メモの v16/110 は古い)。
+- ルート直下の *.log (_build_round2.log 等) は 9/13〜9/23 付けで今回のハーネス以前のもの、.gitignore 済み。触らない。coder の作業ファイルはスクラッチパッドへ出す。

@@ -21,6 +21,7 @@
 #include "Engine/Engine/Physics/FractureBake.h"
 #include "Engine/Engine/Physics/FractureLibrary.h"
 #include "Engine/Engine/Physics/FractureMesh.h"
+#include "Engine/Engine/Physics/FractureVoxel.h"
 #include "Engine/Renderer/GpuResources.h"
 
 using namespace DirectX;
@@ -126,6 +127,28 @@ FractureMesh MakePlaneQuad(float half)
     const int32_t d = AddVert(m, -half, 0, half, 0, 1, 0, 0, 1);
     Tri(m, a, b, c);
     Tri(m, a, c, d);
+    return m;
+}
+
+// 平行な2枚の開いた壁 (二重壁の模擬)。互いに非連結な三角形群を1つのメッシュに持つ入力
+FractureMesh MakeDoubleWallMesh(float half, float gap)
+{
+    FractureMesh m;
+    auto addPlane = [&](float y, float ny) {
+        const int32_t a = AddVert(m, -half, y, -half, 0, ny, 0, 0, 0);
+        const int32_t b = AddVert(m, half, y, -half, 0, ny, 0, 1, 0);
+        const int32_t c = AddVert(m, half, y, half, 0, ny, 0, 1, 1);
+        const int32_t d = AddVert(m, -half, y, half, 0, ny, 0, 0, 1);
+        if (ny > 0.0f) {
+            Tri(m, a, b, c);
+            Tri(m, a, c, d);
+        } else {
+            Tri(m, a, c, b);
+            Tri(m, a, d, c);
+        }
+    };
+    addPlane(-gap * 0.5f, -1.0f);
+    addPlane(gap * 0.5f, 1.0f);
     return m;
 }
 
@@ -316,6 +339,19 @@ double TotalBakedVolume(const FractureBakeResult& r)
         v += p.volume;
     }
     return v;
+}
+
+void MeshAabbOf(const FractureMesh& m, XMFLOAT3& lo, XMFLOAT3& hi)
+{
+    lo = hi = m.verts[0].position;
+    for (const FractureVertex& v : m.verts) {
+        lo.x = (std::min)(lo.x, v.position.x);
+        lo.y = (std::min)(lo.y, v.position.y);
+        lo.z = (std::min)(lo.z, v.position.z);
+        hi.x = (std::max)(hi.x, v.position.x);
+        hi.y = (std::max)(hi.y, v.position.y);
+        hi.z = (std::max)(hi.z, v.position.z);
+    }
 }
 
 } // namespace
@@ -927,6 +963,199 @@ bool RunFractureSelfTest()
             const FractureAssetHandle* missing
                 = fractureLib3.LoadFromFile(L"C:\\definitely\\not\\a\\real\\path.mfrac");
             check(missing == nullptr, "fracture library: missing .mfrac fails without crashing");
+        }
+    }
+
+    // ---- 14. ボクセル化 + surface nets (M80d、開いたメッシュの経路) ----
+    {
+        auto voxelizeAndCheckClosed = [&](const char* label, const FractureMesh& mesh, int32_t resolution) {
+            FractureVoxelizeResult vr;
+            const bool ok = VoxelizeMeshForFracture(mesh, resolution, vr);
+            char buf[256];
+            std::snprintf(buf, sizeof(buf), "%s: VoxelizeMeshForFracture(res=%d) succeeds", label, resolution);
+            check(ok && vr.success, buf);
+            if (!ok || !vr.success) {
+                MYE_LOG_ERROR("    reason: %s", vr.failReason.c_str());
+                return vr;
+            }
+            const ClosedMeshCheck c = CheckClosedMesh(vr.mesh);
+            std::snprintf(buf, sizeof(buf), "%s: voxelized result is closed and outward (tri=%d)", label,
+                          vr.mesh.TriCount());
+            check(c.closed && c.signedVolume > 0.0, buf);
+            return vr;
+        };
+
+        voxelizeAndCheckClosed("open box", MakeOpenBox(1, 1, 1), 32);
+        voxelizeAndCheckClosed("plane quad", MakePlaneQuad(1.0f), 32);
+        voxelizeAndCheckClosed("double wall", MakeDoubleWallMesh(1.0f, 0.5f), 32);
+
+        // ---- 解像度で細かさが変わり、AABB の差が (低解像度の) セル 2 個分以内 ----
+        {
+            const FractureMesh box = MakeOpenBox(1, 1, 1);
+            FractureVoxelizeResult low, high;
+            const bool okLow = VoxelizeMeshForFracture(box, 16, low);
+            const bool okHigh = VoxelizeMeshForFracture(box, 64, high);
+            check(okLow && low.success && okHigh && high.success, "voxelize: resolution 16/64 both succeed");
+            if (okLow && low.success && okHigh && high.success) {
+                char buf[256];
+                std::snprintf(buf, sizeof(buf), "voxelize: triangle count increases with resolution (%d -> %d)",
+                              low.mesh.TriCount(), high.mesh.TriCount());
+                check(high.mesh.TriCount() > low.mesh.TriCount(), buf);
+
+                XMFLOAT3 srcLo, srcHi, outLo, outHi;
+                MeshAabbOf(box, srcLo, srcHi);
+                const float cellLow = 2.0f / 16.0f; // MakeOpenBox(1,1,1) の最長辺 = 2
+                MeshAabbOf(low.mesh, outLo, outHi);
+                const float diffLow = (std::max)({ std::fabs(outLo.x - srcLo.x), std::fabs(outLo.y - srcLo.y),
+                                                   std::fabs(outLo.z - srcLo.z), std::fabs(outHi.x - srcHi.x),
+                                                   std::fabs(outHi.y - srcHi.y), std::fabs(outHi.z - srcHi.z) });
+                std::snprintf(buf, sizeof(buf), "voxelize: res16 AABB within 2 cells of source (diff=%.4f, cell=%.4f)",
+                              diffLow, cellLow);
+                check(diffLow <= 2.0f * cellLow, buf);
+
+                const float cellHigh = 2.0f / 64.0f;
+                MeshAabbOf(high.mesh, outLo, outHi);
+                const float diffHigh = (std::max)({ std::fabs(outLo.x - srcLo.x), std::fabs(outLo.y - srcLo.y),
+                                                    std::fabs(outLo.z - srcLo.z), std::fabs(outHi.x - srcHi.x),
+                                                    std::fabs(outHi.y - srcHi.y), std::fabs(outHi.z - srcHi.z) });
+                std::snprintf(buf, sizeof(buf), "voxelize: res64 AABB within 2 cells of source (diff=%.4f, cell=%.4f)",
+                              diffHigh, cellHigh);
+                check(diffHigh <= 2.0f * cellHigh, buf);
+            }
+        }
+
+        // ---- 決定論: 同じ入力から 2 回のバイト列が一致する ----
+        {
+            FractureVoxelizeResult a, b;
+            const bool okA = VoxelizeMeshForFracture(MakeOpenBox(1, 1, 1), 24, a);
+            const bool okB = VoxelizeMeshForFracture(MakeOpenBox(1, 1, 1), 24, b);
+            check(okA && a.success && okB && b.success, "voxelize: determinism bakes succeed");
+            if (okA && a.success && okB && b.success) {
+                check(SerializeMesh(a.mesh) == SerializeMesh(b.mesh),
+                      "voxelize: same input yields a byte-identical mesh");
+            }
+        }
+
+        // ---- BakeFracture の入口: openMeshMode 0 は理由付きで拒否 ----
+        {
+            FractureBakeInput in;
+            in.sourceMesh = MakeOpenBox(1, 1, 1);
+            in.seed = 9;
+            in.pieceCount = 8;
+            in.openMeshMode = 0;
+            FractureBakeResult rejected;
+            const bool okReject = BakeFracture(in, rejected);
+            check(!okReject && !rejected.failReason.empty(),
+                  "bake entry: open mesh with openMeshMode=0 is rejected with a reason");
+        }
+
+        // ---- surface nets であること (ブロック状ではない): 単独の1セルは、ブロック抽出なら
+        // 一辺=hの立方体(体積=h^3)になるはずだが、surface netsは角が中心へ引き寄せられ
+        // 体積がそれより小さい八面体状になる (3x3x3、中心の1セルだけ占有) ----
+        {
+            RawOccupancyGrid grid;
+            grid.nx = grid.ny = grid.nz = 3;
+            grid.occ.assign(27, 0);
+            grid.occ[1 + 3 * (1 + 3 * 1)] = 1; // (1,1,1) だけ占有 (他は外周パディング)
+            FractureMesh mesh;
+            const bool built = BuildSurfaceNetsFromOccupancy(grid, 1.0f, mesh);
+            check(built, "surface nets: single-cell occupancy builds a mesh");
+            if (built) {
+                const ClosedMeshCheck c = CheckClosedMesh(mesh);
+                check(c.closed && c.signedVolume > 0.0, "surface nets: single-cell result is closed and outward");
+                char buf[256];
+                std::snprintf(buf, sizeof(buf), "surface nets: single-cell volume (%.4f) is smaller than a block cube (1.0)",
+                              c.signedVolume);
+                check(c.signedVolume < 1.0 - 1e-6, buf);
+            }
+        }
+
+        // ---- 曖昧な配置 (2x2 で対角に並ぶ2ボクセル) でも閉じる: 4x4x3 の内部2x2x1に
+        // (1,1,1)と(2,2,1)だけを占有させる (残る対角(2,1,1)/(1,2,1)は空き) ----
+        {
+            RawOccupancyGrid grid;
+            grid.nx = grid.ny = 4;
+            grid.nz = 3;
+            grid.occ.assign(static_cast<size_t>(grid.nx) * grid.ny * grid.nz, 0);
+            auto idx = [&](int32_t x, int32_t y, int32_t z) { return x + grid.nx * (y + grid.ny * z); };
+            grid.occ[static_cast<size_t>(idx(1, 1, 1))] = 1;
+            grid.occ[static_cast<size_t>(idx(2, 2, 1))] = 1;
+            FractureMesh mesh;
+            const bool built = BuildSurfaceNetsFromOccupancy(grid, 1.0f, mesh);
+            check(built, "surface nets: diagonal (ambiguous) occupancy builds a mesh");
+            if (built) {
+                const ClosedMeshCheck c = CheckClosedMesh(mesh);
+                check(c.closed && c.signedVolume > 0.0,
+                      "surface nets: diagonal (ambiguous) occupancy resolves to a closed, outward mesh");
+            }
+        }
+
+        // ---- BakeFracture の入口: openMeshMode=1 (pieceCount=16) の解像度ごとの成否と
+        // 処理時間を記録する。解像度32は既定値の候補として合否を検証する (must)。
+        // 48/64 は候補の参考記録として結果をログするだけに留める (下の不安・質問を参照:
+        // 開いた箱では解像度48以上で CutMeshByPlane の断面三角形分割 (EarClip、sub-01/02所有)
+        // が失敗することがあり、この既知の制約を「合否」ではなく「記録」として扱う) ----
+        {
+            auto bakeOpenMesh = [&](const char* label, const FractureMesh& mesh, int32_t resolution,
+                                    bool mustSucceed) {
+                FractureBakeInput in;
+                in.sourceMesh = mesh;
+                in.seed = 11;
+                in.pieceCount = 16;
+                in.openMeshMode = 1;
+                in.voxelResolution = resolution;
+                FractureBakeResult r;
+                const auto t0 = std::chrono::steady_clock::now();
+                const bool ok = BakeFracture(in, r);
+                const auto t1 = std::chrono::steady_clock::now();
+                const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+                bool allValid = ok && r.success;
+                if (allValid) {
+                    for (const FracturePieceBake& p : r.pieces) {
+                        if (!PieceGeometryValid(p)) {
+                            allValid = false;
+                        }
+                    }
+                }
+                char buf[256];
+                std::snprintf(buf, sizeof(buf),
+                              "bake entry: %s openMeshMode=1 pieceCount=16 res=%d succeeds and all pieces close (%.2f ms, pieces=%d)",
+                              label, resolution, ms, ok && r.success ? static_cast<int>(r.pieces.size()) : -1);
+                if (mustSucceed) {
+                    check(allValid, buf);
+                    if (!allValid) {
+                        MYE_LOG_ERROR("    reason: %s", r.failReason.c_str());
+                    }
+                } else if (allValid) {
+                    MYE_LOG_INFO("  PASS (記録のみ): %s", buf);
+                } else {
+                    MYE_LOG_WARN("  未達 (記録のみ、合否には数えない): %s / reason: %s", buf,
+                                r.failReason.c_str());
+                }
+                MYE_LOG_INFO("  bake timing (openMeshMode=1): %s res=%d = %.2f ms", label, resolution, ms);
+            };
+            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 32, true);
+            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 32, true);
+            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 48, false);
+            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 48, false);
+            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 64, false);
+            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 64, false);
+        }
+
+        // ---- 焼き時間の記録 (解像度64/128/256、上限決定用。合否には数えない) ----
+        {
+            auto timeVoxelize = [&](const char* label, const FractureMesh& mesh, int32_t resolution) {
+                const auto t0 = std::chrono::steady_clock::now();
+                FractureVoxelizeResult r;
+                const bool ok = VoxelizeMeshForFracture(mesh, resolution, r);
+                const auto t1 = std::chrono::steady_clock::now();
+                const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+                MYE_LOG_INFO("  voxelize timing: %s (res=%d, tri=%d) = %.2f ms", label, resolution,
+                            ok ? r.mesh.TriCount() : -1, ms);
+            };
+            timeVoxelize("open box / res64", MakeOpenBox(1, 1, 1), 64);
+            timeVoxelize("open box / res128", MakeOpenBox(1, 1, 1), 128);
+            timeVoxelize("open box / res256", MakeOpenBox(1, 1, 1), 256);
         }
     }
 

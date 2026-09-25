@@ -17,6 +17,7 @@
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Random.h"
+#include "Engine/Engine/Physics/FractureVoxel.h"
 
 using namespace DirectX;
 
@@ -1269,26 +1270,47 @@ bool BakeFracture(const FractureBakeInput& input, FractureBakeResult& out)
     out = FractureBakeResult{};
     out.seedsRequested = input.pieceCount;
 
-    const int32_t pieceCount = std::clamp(input.pieceCount, 1, kMaxFracturePieces);
-    const FractureMesh& source = input.sourceMesh;
-    if (source.verts.empty() || source.indices.empty()) {
+    if (input.sourceMesh.verts.empty() || input.sourceMesh.indices.empty()) {
         out.failReason = "ソースメッシュが空";
         return false;
     }
 
-    if (pieceCount <= 1) {
-        out.seedsPlaced = 1;
-        return BakeFractureCore(source, { XMFLOAT3{ 0, 0, 0 } }, input.minVolumeRatio, out);
+    // ---- 1. 閉じ判定 → 拒否 / ボクセル化、内向きなら正規化 ----
+    FractureMesh effectiveSource = input.sourceMesh;
+    ClosedMeshCheck check = CheckClosedMesh(effectiveSource);
+    if (!check.closed) {
+        if (input.openMeshMode == 0) {
+            out.failReason = "メッシュが閉じていない (境界辺 " + std::to_string(check.boundaryEdges)
+                            + " 本 / 非多様体辺 " + std::to_string(check.nonManifoldEdges)
+                            + " 本 / 向き不一致 " + std::to_string(check.orientationMismatches) + " 本)";
+            return false;
+        }
+        FractureVoxelizeResult voxelized;
+        if (!VoxelizeMeshForFracture(effectiveSource, input.voxelResolution, voxelized)) {
+            out.failReason = "ボクセル化に失敗: " + voxelized.failReason;
+            return false;
+        }
+        effectiveSource = std::move(voxelized.mesh);
+        check = CheckClosedMesh(effectiveSource); // signedVolume を得るための再検査 (閉じているのは保証済み)
+    }
+    if (check.signedVolume < 0.0) {
+        FlipMeshWinding(effectiveSource);
     }
 
-    // ---- 1. 内部シード ----
-    const SeedPlacement seeds = PlaceSeeds(source, input.seed, pieceCount);
+    const int32_t pieceCount = std::clamp(input.pieceCount, 1, kMaxFracturePieces);
+    if (pieceCount <= 1) {
+        out.seedsPlaced = 1;
+        return BakeFractureCore(effectiveSource, { XMFLOAT3{ 0, 0, 0 } }, input.minVolumeRatio, out);
+    }
+
+    // ---- 2. 内部シード ----
+    const SeedPlacement seeds = PlaceSeeds(effectiveSource, input.seed, pieceCount);
     out.seedsPlaced = seeds.placed;
     if (seeds.placed <= 0) {
         out.failReason = "内部シードを 1 つも置けなかった";
         return false;
     }
-    return BakeFractureCore(source, seeds.seeds, input.minVolumeRatio, out);
+    return BakeFractureCore(effectiveSource, seeds.seeds, input.minVolumeRatio, out);
 }
 
 bool BakeFractureWithSeeds(const FractureMesh& sourceMesh, const std::vector<XMFLOAT3>& seeds,
