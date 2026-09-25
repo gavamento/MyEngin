@@ -41,6 +41,18 @@ struct FracturePieceBake {
     int32_t droppedNeighbors = 0;    // 32 本を超えて切り捨てた本数
 };
 
+// 焼きの大まかな進行段階 (Editor の非同期ワーカーが「焼いています: <段階>」に使う表示専用の
+// 分類。出力バイト列にも FractureBakeDigest にも影響しない — 呼び出し側は無視してよい)
+enum class FractureBakeStage : int32_t {
+    ClosedCheck = 0, // 閉じ判定
+    Voxelize = 1,    // ボクセル化 (openMeshMode==1 かつ閉じていないときだけ通る)
+    Split = 2,       // 内部シード配置 + セル切断
+    Hull = 3,        // 破片ごとの凸包・接着グラフの仕上げ
+};
+// 非 null なら BakeFracture が各段階に入るたび同期呼び出しする (ワーカースレッド上で呼ばれる
+// 前提。呼び出し側が自分のスレッドで安全な形 — atomic 変数の書き込み等 — にすること)
+using FractureBakeProgressFn = void (*)(FractureBakeStage stage, void* userData);
+
 struct FractureBakeInput {
     FractureMesh sourceMesh; // 閉じていなくてよい (openMeshMode で拒否/ボクセル化を選ぶ)
     uint32_t seed = 1;
@@ -51,11 +63,20 @@ struct FractureBakeInput {
     // 既定 32 は sub-04 の計測に基づく (開いた箱 + pieceCount=16 で Release 10 秒以内に収まり、
     // 48 以上では断面の三角形分割が失敗する組み合わせがあるため)
     int32_t voxelResolution = 32;
+    FractureBakeProgressFn progress = nullptr; // 任意 (Editor の非同期焼き用、M80i)
+    void* progressUserData = nullptr;
 };
 
 struct FractureBakeResult {
     bool success = false;
     std::string failReason; // success == false のときだけ意味を持つ
+    // 閉じていないための拒否だったときの構造化理由 (Editor が赤字メッセージを組み立てる用、
+    // M80i)。failReason の文字列 (日本語固定) をパースしなくて済むように、CheckClosedMesh の
+    // 生の集計をそのまま残す。rejectedOpenMesh==false のときは意味を持たない
+    bool rejectedOpenMesh = false;
+    int32_t boundaryEdges = 0;
+    int32_t nonManifoldEdges = 0;
+    int32_t orientationMismatches = 0;
     std::vector<FracturePieceBake> pieces;
     int32_t seedsRequested = 0;
     int32_t seedsPlaced = 0;   // 内部シードとして実際に置けた数 (試行上限で届かないことがある)

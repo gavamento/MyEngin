@@ -9,6 +9,7 @@
 
 #include "Editor/EditorApp.h"
 #include "Editor/EditorGlobalSettings.h"
+#include "Editor/FractureEditorSelfTest.h" // M80i: 破壊物 Inspector の焼き回り
 #include "Editor/GameFlowSelfTest.h"
 #include "Editor/PartSelfTest.h"
 #include "Editor/RagdollBuildSelfTest.h"
@@ -521,6 +522,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunSurfaceDeferredSelfTest();           // M79c: Deferred サーフェス段・CSM 影
         ok &= mye::RunWaterSurfaceSelfTest();              // M79e: 水面サーフェス経路・MyEngineWater
         ok &= mye::RunFractureSelfTest();                  // M80a: 破壊分割コア (閉じ判定・平面切断)
+        ok &= mye::RunFractureEditorSelfTest();            // M80i: 破壊物 Inspector の焼き回り
         return ok ? 0 : 1;
     }
 

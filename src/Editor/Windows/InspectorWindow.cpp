@@ -16,6 +16,7 @@
 #include "Editor/CameraPilot.h"
 #include "Editor/ComponentClipboard.h"
 #include "Editor/EditorWidgets.h"
+#include "Editor/FractureBakeCommit.h" // M80i: 焼き成功結果の確定 (.mfrac 保存・登録・Undo)
 #include "Engine/Core/AssetGuidResolver.h"
 #include "Editor/EditorComponentCatalog.h"
 #include "Editor/PartTagNames.h"
@@ -39,9 +40,11 @@
 #include "Engine/Engine/Audio/ModalAudio.h" // Deep-Modal 面打ちプレビュー (M76g、sub-06 と同じ関数)
 #include "Engine/Engine/Audio/SynthCore.h"  // WriteWavToFile (Export WAV)
 #include "Engine/Engine/EntityNaming.h"
+#include "Engine/Engine/FractureBuilder.h" // M80i: BuildFracturePieces / CountFracturePieceChildren
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Modal/ModalSoundLibrary.h" // 状態 (Missing/Baking/Ready/Failed/NoModel)
 #include "Engine/Engine/Parts.h"
+#include "Engine/Engine/Physics/FractureLibrary.h" // M80i: .mfrac の登録 (FractureLibrary/fracturelib::)
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/Scene.h"
 #include "Engine/Engine/Script/ManagedHost.h"
@@ -146,6 +149,38 @@ const ModalFaceInfo kModalFaces[6] = {
     { StrId::Insp_ModalFacePY, "py" }, { StrId::Insp_ModalFaceNY, "ny" },
     { StrId::Insp_ModalFacePZ, "pz" }, { StrId::Insp_ModalFaceNZ, "nz" },
 };
+
+// M80i: 破片焼きの段階ラベル (「焼いています: <段階>」の %s に入る)
+const char* FractureStageLabel(FractureBakeStage s)
+{
+    switch (s) {
+    case FractureBakeStage::ClosedCheck:
+        return Tr(StrId::Insp_FractureStageClosedCheck);
+    case FractureBakeStage::Voxelize:
+        return Tr(StrId::Insp_FractureStageVoxelize);
+    case FractureBakeStage::Split:
+        return Tr(StrId::Insp_FractureStageSplit);
+    case FractureBakeStage::Hull:
+        return Tr(StrId::Insp_FractureStageHull);
+    }
+    return "?";
+}
+
+// resources.meshes の CPU 頂点/インデックスを分割コアの頂点形式へ詰め替える。
+// DemoContent.cpp の ToFractureMesh と同じ変換 (ファイルをまたいで公開する価値の無い
+// 小さな詰め替えなので、このファイルにも複製する — FractureBake.cpp 冒頭コメントと同じ流儀)
+FractureMesh ToFractureMeshForBake(const Mesh& mesh)
+{
+    FractureMesh out;
+    out.verts.resize(mesh.positions.size());
+    for (size_t i = 0; i < mesh.positions.size(); ++i) {
+        out.verts[i].position = mesh.positions[i];
+        out.verts[i].normal = i < mesh.normals.size() ? mesh.normals[i] : XMFLOAT3{ 0, 1, 0 };
+        out.verts[i].uv = i < mesh.uvs.size() ? mesh.uvs[i] : XMFLOAT2{ 0, 0 };
+    }
+    out.indices.assign(mesh.indices.begin(), mesh.indices.end());
+    return out;
+}
 
 // 直前に描画した widget の編集開始/確定を検出して Undo エントリにまとめる。
 // activate (ドラッグ開始) で before を、deactivate-after-edit で after を記録 —
@@ -523,6 +558,9 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     if (!open) {
         return;
     }
+    // M80i: 破片焼きの結果取り込み。選択やウィンドウの開閉に関係なく毎フレーム進める —
+    // 焼きはボタンを押したエンティティ単位で走るので、選択が外れても止めない
+    fractureBakeService_.Pump();
     if (!ImGui::Begin(Tr(StrId::Win_Inspector), &open)) {
         ImGui::End();
         return;
@@ -853,7 +891,7 @@ void InspectorWindow::DrawComponent(EngineContext& ctx, Selection& selection, Un
         if (comp) {
             DrawComponentFields(ctx, selection, undo, tg, row, comp);
         }
-        DrawComponentNotes(ctx, tg, row);
+        DrawComponentNotes(ctx, selection, undo, tg, row);
     }
     ImGui::PopID();
 }
@@ -1040,8 +1078,8 @@ bool& EditorWaterPreviewOn()
     return on;
 }
 
-void InspectorWindow::DrawComponentNotes(EngineContext& ctx, const InspectorTargets& tg,
-                                         const InspectorComponentRow& row)
+void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                         const InspectorTargets& tg, const InspectorComponentRow& row)
 {
     const ComponentDesc& desc = *row.desc;
     World& world = ctx.scene->GetWorld();
@@ -1082,6 +1120,11 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, const InspectorTarg
     // マルチ選択では出さない (Camera 操縦と同じ理由)
     if (std::strcmp(desc.name, "ModalSound") == 0 && !tg.multi) {
         DrawModalSoundNotes(ctx, tg, row);
+    }
+    // M80i: 破壊物の焼きボタン・状態表示。マルチ選択では出さない (ModalSound と同じ理由 —
+    // 焼きはメッシュ 1 つ・エンティティ 1 つに対する非同期処理)
+    if (std::strcmp(desc.name, "Destructible") == 0 && !tg.multi) {
+        DrawDestructibleNotes(ctx, selection, undo, tg, row);
     }
 }
 
@@ -1259,6 +1302,129 @@ void InspectorWindow::ExportModalPreviewWav(EngineContext& ctx)
         ctx.audio->LoadClipFile(path); // 生成直後に登録 → Asset Browser から再生できる
     }
     MYE_LOG_INFO("modal preview wav saved: %s", WideToUtf8(path).c_str());
+}
+
+// M80i: Destructible 節の末尾。焼き中の表示・完了時の確定 (CommitFractureBakeResult)・
+// 生成ボタンの可否判定・拒否/失敗理由を出す。マルチ選択では呼ばれない (呼び出し元で除外済み)
+void InspectorWindow::DrawDestructibleNotes(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                            const InspectorTargets& tg, const InspectorComponentRow& row)
+{
+    (void)row; // 実体は world 経由で取り直す (他の分岐と同じ流儀)
+    World& world = ctx.scene->GetWorld();
+    const EntityID e = tg.e;
+    auto* comp = world.GetComponent<DestructibleComponent>(e);
+    if (comp == nullptr) {
+        return;
+    }
+
+    // 前フレームまでに焼きが終わっていれば、ここで初めて確定させる (メインスレッド限定の
+    // .mfrac 書き出し・AssetDatabase/FractureLibrary 登録・BuildFracturePieces + Undo)
+    if (fractureBakeService_.GetState(tg.fid) == FractureBakeJobState::Ready) {
+        CommitFractureBakeResult(ctx, selection, undo, tg);
+    }
+
+    ImGui::Separator();
+    const FractureBakeJobState state = fractureBakeService_.GetState(tg.fid);
+    if (state == FractureBakeJobState::Baking) {
+        ImGui::TextDisabled(Tr(StrId::Insp_FractureBaking),
+                            FractureStageLabel(fractureBakeService_.GetStage(tg.fid)));
+    } else {
+        // 「生成済み」表示は焼き結果のキャッシュではなく今の世界の状態 (Destructible.fractureAsset
+        // + 直子の数) から毎フレーム導出する — シーンを読み直しても正しい表示になるように
+        if (comp->fractureAsset.IsNull()) {
+            ImGui::TextUnformatted(Tr(StrId::Insp_FractureStateNone));
+        } else {
+            FractureLibrary* lib = fracturelib::Library();
+            const FractureAssetHandle* handle = lib ? lib->FindByAssetId(comp->fractureAsset) : nullptr;
+            const int childCount = CountFracturePieceChildren(world, e);
+            if (handle == nullptr || childCount != static_cast<int>(handle->pieces.size())) {
+                ImGui::TextColored(themeColor::Error, "%s", Tr(StrId::Insp_FractureMismatch));
+            } else {
+                ImGui::Text(Tr(StrId::Insp_FractureStateReady), static_cast<int>(handle->pieces.size()),
+                           handle->data.droppedNeighborTotal, handle->data.mergedCount);
+            }
+        }
+        // 直近 (このセッション中) の焼きが拒否/失敗だったときだけ理由を添える
+        const auto outIt = fractureOutcomes_.find(tg.fid);
+        if (outIt != fractureOutcomes_.end() && !outIt->second.success) {
+            const FractureBakeOutcome& o = outIt->second;
+            if (o.rejectedOpenMesh) {
+                ImGui::TextColored(themeColor::Error, Tr(StrId::Insp_FractureOpenMeshReason),
+                                   o.boundaryEdges, o.nonManifoldEdges, o.orientationMismatches);
+                ImGui::TextColored(themeColor::Error, "%s", Tr(StrId::Insp_FractureVoxelizeHint));
+            } else {
+                ImGui::TextColored(themeColor::Error, Tr(StrId::Insp_FractureStateFailed),
+                                   o.failReason.c_str());
+            }
+        }
+    }
+
+    // 生成ボタンの可否 (spec §4.3): プレハブインスタンス / スキン未対応 / ソースメッシュ無し
+    const auto* mr = world.GetComponent<MeshRendererComponent>(e);
+    Mesh* mesh = (mr != nullptr && !mr->mesh.IsNull() && ctx.resources != nullptr)
+        ? ctx.resources->meshes.Get(mr->mesh)
+        : nullptr;
+    const char* disableReason = nullptr;
+    if (tg.isPrefabMember) {
+        disableReason = Tr(StrId::Insp_FracturePrefabDisabled);
+    } else if (world.GetComponent<SkinnedMeshComponent>(e) != nullptr) {
+        disableReason = Tr(StrId::Insp_FractureSkinUnsupported);
+    } else if (mesh == nullptr || mesh->positions.empty() || mesh->indices.empty()) {
+        disableReason = Tr(StrId::Insp_FractureNoMesh);
+    }
+    const bool canGenerate = (disableReason == nullptr) && (state != FractureBakeJobState::Baking);
+
+    ImGui::BeginDisabled(!canGenerate);
+    if (ImGui::Button(Tr(StrId::Insp_FractureGenerate))) {
+        FractureBakeRequest req;
+        req.sourceMesh = ToFractureMeshForBake(*mesh);
+        const std::string* meshName = ctx.resources->meshes.NameOf(mr->mesh);
+        req.sourceMeshHash = meshName ? HashStr(*meshName) : 0;
+        req.seed = comp->seed;
+        req.pieceCount = comp->pieceCount;
+        req.openMeshMode = comp->openMeshMode;
+        req.voxelResolution = comp->voxelResolution;
+        fractureBakeService_.Request(tg.fid, std::move(req));
+    }
+    ImGui::EndDisabled();
+    if (disableReason != nullptr) {
+        ImGui::TextDisabled("%s", disableReason);
+    }
+}
+
+// M80i: 焼き結果が Ready になった直後 (メインスレッド) に 1 回呼ぶ。失敗/拒否は
+// fractureOutcomes_ に理由を残すだけ (UI 表示は DrawDestructibleNotes 側)。成功した場合の
+// 確定処理 (.mfrac 保存・AssetDatabase/FractureLibrary 登録・Destructible.fractureAsset の
+// 書き換え・BuildFracturePieces・Undo 記録) は CommitFractureBake (FractureBakeCommit.h) が
+// 持つ — ImGui に触れない純粋なロジックなので SelfTest からも直接呼べる
+void InspectorWindow::CommitFractureBakeResult(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                               const InspectorTargets& tg)
+{
+    FractureBakeRequest req;
+    FractureBakeResult result;
+    if (!fractureBakeService_.TakeResult(tg.fid, req, result)) {
+        return;
+    }
+
+    FractureBakeOutcome outcome;
+    outcome.success = result.success;
+    outcome.rejectedOpenMesh = result.rejectedOpenMesh;
+    outcome.boundaryEdges = result.boundaryEdges;
+    outcome.nonManifoldEdges = result.nonManifoldEdges;
+    outcome.orientationMismatches = result.orientationMismatches;
+    outcome.failReason = result.failReason;
+    fractureOutcomes_[tg.fid] = outcome;
+
+    if (!result.success) {
+        World& world = ctx.scene->GetWorld();
+        MYE_LOG_ERROR("[fracture] bake failed for '%s': %s", world.GetName(tg.e),
+                     result.failReason.c_str());
+        return;
+    }
+    if (!CommitFractureBake(ctx, selection, undo, tg.e, tg.fid, req, result)) {
+        fractureOutcomes_[tg.fid].success = false;
+        fractureOutcomes_[tg.fid].failReason = "failed to write or register the .mfrac asset";
+    }
 }
 
 // 削除されたプレハブコンポーネント (M50c)。

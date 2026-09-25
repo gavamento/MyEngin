@@ -32,4 +32,10 @@ int BuildFracturePieces(World& world, EntityID root, const FractureAssetHandle& 
 // (sub-07 の破断ロジック) はこの Destructible を「無効」として扱い、破断しない
 bool ValidateFracturePieces(World& world, EntityID root, const FractureAssetHandle* asset);
 
+// root 直下の `FracturePiece.root == root` な子の数 (ログを出さない照会版、M80i)。
+// Inspector が毎フレーム「資産と子が一致しているか」を表示するために使う —
+// ValidateFracturePieces は不一致のたび ERROR を出すため、呼び出し元 (FractureSystem) 以外の
+// UI ポーリングには使えない
+int CountFracturePieceChildren(World& world, EntityID root);
+
 } // namespace mye

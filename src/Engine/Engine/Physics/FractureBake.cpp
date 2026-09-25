@@ -1022,9 +1022,11 @@ void AppendMesh(std::vector<uint8_t>& out, const FractureMesh& mesh)
 namespace {
 
 // PlaceSeeds が済んだ (または SelfTest が明示的に位置を渡した) シード列から、
-// spec §4.1 焼きの 2〜8 を最後まで行う。BakeFracture と BakeFractureWithSeeds の共通部分
+// spec §4.1 焼きの 2〜8 を最後まで行う。BakeFracture と BakeFractureWithSeeds の共通部分。
+// progress/progressUserData は M80i (Editor の非同期焼き) の段階表示専用、出力には影響しない
 bool BakeFractureCore(const FractureMesh& source, const std::vector<XMFLOAT3>& seedPositions,
-                      float minVolumeRatio, FractureBakeResult& out)
+                      float minVolumeRatio, FractureBakeResult& out,
+                      FractureBakeProgressFn progress = nullptr, void* progressUserData = nullptr)
 {
     // ---- 破片 1 個 (分割の必要なし): 焼きはそのまま 1 破片を返す ----
     if (seedPositions.size() <= 1) {
@@ -1045,6 +1047,9 @@ bool BakeFractureCore(const FractureMesh& source, const std::vector<XMFLOAT3>& s
         piece.volume = rp.volume;
         piece.outer = std::move(outerLocal);
         piece.cap = capLocal;
+        if (progress) {
+            progress(FractureBakeStage::Hull, progressUserData);
+        }
         std::vector<XMFLOAT3> hullPts;
         for (const FractureVertex& v : piece.outer.verts) {
             hullPts.push_back(v.position);
@@ -1172,6 +1177,9 @@ bool BakeFractureCore(const FractureMesh& source, const std::vector<XMFLOAT3>& s
             break;
         }
     }
+    if (progress) {
+        progress(FractureBakeStage::Hull, progressUserData);
+    }
     // ---- 7. 決定的な並び替え (originSeed 昇順 → 最小頂点位置) ----
     std::vector<int32_t> order(rawPieces.size());
     for (size_t i = 0; i < order.size(); ++i) {
@@ -1269,6 +1277,11 @@ bool BakeFracture(const FractureBakeInput& input, FractureBakeResult& out)
 {
     out = FractureBakeResult{};
     out.seedsRequested = input.pieceCount;
+    const auto Report = [&](FractureBakeStage stage) {
+        if (input.progress) {
+            input.progress(stage, input.progressUserData);
+        }
+    };
 
     if (input.sourceMesh.verts.empty() || input.sourceMesh.indices.empty()) {
         out.failReason = "ソースメッシュが空";
@@ -1276,6 +1289,7 @@ bool BakeFracture(const FractureBakeInput& input, FractureBakeResult& out)
     }
 
     // ---- 1. 閉じ判定 → 拒否 / ボクセル化、内向きなら正規化 ----
+    Report(FractureBakeStage::ClosedCheck);
     FractureMesh effectiveSource = input.sourceMesh;
     ClosedMeshCheck check = CheckClosedMesh(effectiveSource);
     if (!check.closed) {
@@ -1283,8 +1297,13 @@ bool BakeFracture(const FractureBakeInput& input, FractureBakeResult& out)
             out.failReason = "メッシュが閉じていない (境界辺 " + std::to_string(check.boundaryEdges)
                             + " 本 / 非多様体辺 " + std::to_string(check.nonManifoldEdges)
                             + " 本 / 向き不一致 " + std::to_string(check.orientationMismatches) + " 本)";
+            out.rejectedOpenMesh = true;
+            out.boundaryEdges = check.boundaryEdges;
+            out.nonManifoldEdges = check.nonManifoldEdges;
+            out.orientationMismatches = check.orientationMismatches;
             return false;
         }
+        Report(FractureBakeStage::Voxelize);
         FractureVoxelizeResult voxelized;
         if (!VoxelizeMeshForFracture(effectiveSource, input.voxelResolution, voxelized)) {
             out.failReason = "ボクセル化に失敗: " + voxelized.failReason;
@@ -1297,10 +1316,12 @@ bool BakeFracture(const FractureBakeInput& input, FractureBakeResult& out)
         FlipMeshWinding(effectiveSource);
     }
 
+    Report(FractureBakeStage::Split);
     const int32_t pieceCount = std::clamp(input.pieceCount, 1, kMaxFracturePieces);
     if (pieceCount <= 1) {
         out.seedsPlaced = 1;
-        return BakeFractureCore(effectiveSource, { XMFLOAT3{ 0, 0, 0 } }, input.minVolumeRatio, out);
+        return BakeFractureCore(effectiveSource, { XMFLOAT3{ 0, 0, 0 } }, input.minVolumeRatio, out,
+                                input.progress, input.progressUserData);
     }
 
     // ---- 2. 内部シード ----
@@ -1310,7 +1331,8 @@ bool BakeFracture(const FractureBakeInput& input, FractureBakeResult& out)
         out.failReason = "内部シードを 1 つも置けなかった";
         return false;
     }
-    return BakeFractureCore(effectiveSource, seeds.seeds, input.minVolumeRatio, out);
+    return BakeFractureCore(effectiveSource, seeds.seeds, input.minVolumeRatio, out, input.progress,
+                            input.progressUserData);
 }
 
 bool BakeFractureWithSeeds(const FractureMesh& sourceMesh, const std::vector<XMFLOAT3>& seeds,

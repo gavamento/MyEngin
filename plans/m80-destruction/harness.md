@@ -14,8 +14,8 @@
 | sub-05 | OK | 1 | dd46d99 | 複合の上限撤廃・形状単位インパルス |
 | sub-06 | OK | 1 | 68cf2d4 | Destructible/FracturePiece・事前生成・root proxy |
 | sub-07 | OK | 2 | 7b09398 | 接着の破断と塊の剛体化 |
-| sub-08 | OK | 2 | (本コミット) | 割れた後の 6 挙動 |
-| sub-09 | 未着手 | 0 | | Inspector・非同期焼き・Undo |
+| sub-08 | OK | 2 | 5e04bcd | 割れた後の 6 挙動 |
+| sub-09 | OK | 1 | (本コミット) | Inspector・非同期焼き・Undo |
 | sub-10 | 未着手 | 0 | | スキンメッシュの破壊 |
 | sub-11 | 未着手 | 0 | | 計測・ベンチ・上限 |
 | sub-12 | 未着手 | 0 | | ABI v22・デモ・spec/ADR |

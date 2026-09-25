@@ -171,4 +171,11 @@ bool ValidateFracturePieces(World& world, EntityID root, const FractureAssetHand
     return true;
 }
 
+int CountFracturePieceChildren(World& world, EntityID root)
+{
+    std::vector<EntityID> existing;
+    CollectExistingPieces(world, root, &existing);
+    return static_cast<int>(existing.size());
+}
+
 } // namespace mye

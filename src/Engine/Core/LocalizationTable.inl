@@ -1595,3 +1595,32 @@ MYE_STR(ScmConf_BothDeleted,   "both deleted it", "両方が削除")
 MYE_STR(ScmConf_AddedByUs,     "you added it", "自分が追加")
 MYE_STR(ScmConf_AddedByThem,   "they added it", "相手が追加")
 MYE_STR(ScmConf_Unmerged,      "could not be merged", "マージできませんでした")
+
+// ---- M80i: 破壊物 (Destructible) の Inspector ----
+MYE_STR(Insp_FractureGenerate,  "Generate Pieces",  "破片を生成")
+MYE_STR(Insp_FractureBaking,    "Baking: %s",        "焼いています: %s")
+MYE_STR(Insp_FractureStageClosedCheck, "checking closed",   "閉じ判定")
+MYE_STR(Insp_FractureStageVoxelize,    "voxelizing",         "ボクセル化")
+MYE_STR(Insp_FractureStageSplit,       "splitting",          "分割")
+MYE_STR(Insp_FractureStageHull,        "convex hulls",       "凸包")
+MYE_STR(Insp_FractureStateNone,  "Not generated",    "未生成")
+MYE_STR(Insp_FractureStateReady, "Generated: %d piece(s), %d neighbor(s) dropped, %d merged",
+                                 "生成済み: 破片 %d 個、隣接の切り捨て %d、統合 %d")
+MYE_STR(Insp_FractureStateFailed, "Bake failed: %s", "焼きに失敗: %s")
+MYE_STR(Insp_FractureOpenMeshReason,
+        "Not a closed mesh: %d boundary edge(s) / %d non-manifold edge(s) / %d orientation mismatch(es)",
+        "閉じていません: 境界辺 %d 本 / 非多様体辺 %d 本 / 向き不一致 %d 本")
+MYE_STR(Insp_FractureVoxelizeHint,
+        "Switch \"Open Mesh\" to allow voxelization to make this breakable.",
+        "「開いたメッシュ」をボクセル化を許容に切り替えると割れます")
+MYE_STR(Insp_FracturePrefabDisabled,
+        "Disabled on prefab instances (adding/removing children isn't recorded as an override).",
+        "プレハブインスタンスでは無効です (子の増減は上書きとして記録されません)")
+MYE_STR(Insp_FractureSkinUnsupported, "Skinned meshes aren't supported yet.",
+                                      "スキンメッシュは未対応です")
+MYE_STR(Insp_FractureNoMesh,
+        "No mesh: add a MeshRenderer with a mesh first.",
+        "メッシュがありません。メッシュ付きの MeshRenderer が必要です")
+MYE_STR(Insp_FractureMismatch,
+        "Asset/child mismatch: this Destructible won't break at runtime.",
+        "資産と子が一致していません。実行時に割れません")

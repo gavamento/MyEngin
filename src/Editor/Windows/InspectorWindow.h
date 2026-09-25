@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Editor/AssetPreviewCache.h"
+#include "Editor/FractureBakeService.h" // M80i: 破片焼きの非同期ワーカー
 #include "Editor/Selection.h"
 #include "Engine/Core/EntityID.h"
 #include "Engine/Core/ImportMetaResolver.h"
@@ -84,10 +85,20 @@ private:
                                   const InspectorTargets& tg, const InspectorComponentRow& row);
     void DrawComponentFields(EngineContext& ctx, Selection& selection, UndoStack& undo,
                              const InspectorTargets& tg, const InspectorComponentRow& row, void* comp);
-    void DrawComponentNotes(EngineContext& ctx, const InspectorTargets& tg, const InspectorComponentRow& row);
+    void DrawComponentNotes(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                            const InspectorTargets& tg, const InspectorComponentRow& row);
     // M76g: ModalSound 節の末尾 (状態 / セル数 / 6 面ボタン / Export WAV)。
     // DrawComponentNotes から desc.name == "ModalSound" のときだけ呼ばれる
     void DrawModalSoundNotes(EngineContext& ctx, const InspectorTargets& tg, const InspectorComponentRow& row);
+    // M80i: Destructible 節の末尾 (焼きボタン・非同期の状態・拒否理由・プレハブ無効化)。
+    // DrawComponentNotes から desc.name == "Destructible" のときだけ呼ばれる
+    void DrawDestructibleNotes(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                               const InspectorTargets& tg, const InspectorComponentRow& row);
+    // 焼き結果が Ready になったら呼ぶ (メインスレッド): 成功なら .mfrac を保存して
+    // AssetDatabase/FractureLibrary に登録し、Destructible.fractureAsset を書き換えて
+    // BuildFracturePieces で子を組み直す (1 Undo エントリ)。失敗/拒否は fractureOutcomes_ へ残す
+    void CommitFractureBakeResult(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                  const InspectorTargets& tg);
     // 6 面ボタン 1 個ぶんの本体。sub-06 と同じ MakeModalShotPlay を呼ぶ (2 本目の規則を書かない)
     void FireModalPreviewFace(EngineContext& ctx, const InspectorTargets& tg,
                               const ModalSoundComponent& comp, const ModalFeatureMap& fm,
@@ -247,6 +258,22 @@ private:
         ModalShotResult lastResult = ModalShotResult::Played;
     };
     ModalPreviewState modalPreview_;
+
+    // 破片焼き (M80i)。ワーカー本体はここが所有 (Inspector はアプリ生存中 1 個の長命オブジェクト、
+    // EditorApp::inspector_ と同じ寿命)。ID は Destructible を持つエンティティの fileId
+    FractureBakeService fractureBakeService_;
+    // 直近の焼き結果 (拒否理由・失敗理由の表示用)。fractureAsset に反映される「生成済み」表示は
+    // ここではなく世界の現在状態 (Destructible.fractureAsset + 子の数) から毎フレーム導出する —
+    // ここはシーンに永続しない「最後に何が起きたか」だけを覚えるエディタ UI 状態
+    struct FractureBakeOutcome {
+        bool success = false;
+        bool rejectedOpenMesh = false;
+        int32_t boundaryEdges = 0;
+        int32_t nonManifoldEdges = 0;
+        int32_t orientationMismatches = 0;
+        std::string failReason;
+    };
+    std::unordered_map<uint64_t, FractureBakeOutcome> fractureOutcomes_;
 };
 
 } // namespace mye
