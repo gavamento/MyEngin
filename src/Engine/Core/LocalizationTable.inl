@@ -1628,3 +1628,9 @@ MYE_STR(Insp_FractureNoMesh,
 MYE_STR(Insp_FractureMismatch,
         "Asset/child mismatch: this Destructible won't break at runtime.",
         "資産と子が一致していません。実行時に割れません")
+// M80k: sub-11 の実測 (bench.md) に基づく推奨上限の警告。ハード上限 256 はそのまま
+MYE_STR(Insp_FracturePieceCountHigh,
+        "%d piece(s) exceeds the recommended 64 per Destructible (Release physics+fracture "
+        "cost grows faster than linearly past that, see bench.md).",
+        "破片 %d 個は 1 Destructible あたりの推奨 64 個を超えています "
+        "(Release では物理+破壊のコストが線形より速く増える、bench.md 参照)")

@@ -1348,6 +1348,12 @@ void InspectorWindow::DrawDestructibleNotes(EngineContext& ctx, Selection& selec
             } else {
                 ImGui::Text(Tr(StrId::Insp_FractureStateReady), static_cast<int>(handle->pieces.size()),
                            handle->data.droppedNeighborTotal, handle->data.mergedCount);
+                // M80k: sub-11 の実測による推奨上限 (64、bench.md)。ハード上限 256 は変えない
+                constexpr int kRecommendedMaxPieces = 64;
+                if (static_cast<int>(handle->pieces.size()) > kRecommendedMaxPieces) {
+                    ImGui::TextColored(themeColor::Warning, Tr(StrId::Insp_FracturePieceCountHigh),
+                                       static_cast<int>(handle->pieces.size()));
+                }
             }
         }
         // 直近 (このセッション中) の焼きが拒否/失敗だったときだけ理由を添える

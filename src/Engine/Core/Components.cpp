@@ -1247,8 +1247,16 @@ void RegisterBuiltinComponents()
     RegisterComponent<DestructibleComponent>("Destructible", {
         MYE_JP("破片資産", MYE_FIELD_TIP(DestructibleComponent, fractureAsset, AssetRef,
                                          ".mfrac - the baked fracture asset actually used at runtime")),
+        // M80k: レンジとツールチップを両方付けたいので生 FieldDesc で書く (マクロは片方ずつ、
+        // PhysicsEnvironmentComponent.substeps と同じ流儀)。上限 256 は分割コアのハード上限
+        // (仕様で固定)、推奨 64 は sub-11 の実測 (plans/m80-destruction/bench.md)
         MYE_JP("破片数の目安",
-               MYE_FIELD_RANGE(DestructibleComponent, pieceCount, Int32, 2.0f, 256.0f)),
+               ::mye::FieldDesc{
+                   .name = "pieceCount", .type = ::mye::FieldType::Int32,
+                   .offset = static_cast<uint32_t>(offsetof(DestructibleComponent, pieceCount)),
+                   .minVal = 2.0f, .maxVal = 256.0f,
+                   .tooltip = "recommended <= 64: physics+fracture cost grows faster than linearly "
+                              "past that (measured in Release, see bench.md)" }),
         MYE_JP("分割 seed", MYE_FIELD(DestructibleComponent, seed, UInt32)),
         MYE_JP("開いたメッシュ",
                MYE_FIELD_TIP(DestructibleComponent, openMeshMode, Int32,

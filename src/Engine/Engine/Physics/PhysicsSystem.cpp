@@ -2,11 +2,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <vector>
 
 #include <DirectXMath.h>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/Profiler.h" // M80k: phys.collect/broad/narrow/solve/writeback スコープ
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Physics/AeroSampling.h" // M59c: 面サンプリング
 #include "Engine/Engine/Physics/Broadphase.h"
@@ -1364,6 +1366,14 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     if (outShapeImpulses) {
         outShapeImpulses->clear();
     }
+    // M80k: 内部フェーズの計測。emplace で前段の Pop → 新段の Push が起きる (std::optional の
+    // 契約) ので、この巨大な 1 関数のどこに早期 return が増えても対応が崩れない。
+    // 区分 (収集 / 広域 / 狭域 / ソルバ / 書き戻し) はサブステップの外側にある処理を
+    // 「収集」、内側の積分〜起床判定を「広域」にまとめるなど大まかな割り当てで、
+    // 車輪出力・破断判定・入眠判定・キャラクターコントローラ解決は「ソルバ」「書き戻し」の
+    // 前後に相乗りする (5 区分に収める coder 判断、意味の厳密さより計測の安全性を優先)
+    std::optional<prof::ScopeTimer> profScope;
+    profScope.emplace("phys.collect");
     // 波の時計を 1 tick 進める (浮力はこの tick の時刻 = 進めた後の timeTicks / 60 で評価する。
     // 旧実装の「time += dt してから評価」と同じ位置関係)。全 WaterWave を同じ規則で進める —
     // どれが有効かは描画・浮力とも ResolveActiveWaterWave が決めるので、切り替えても位相が飛ばない。
@@ -2361,6 +2371,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     // ごとに作り直されるが、入眠判定は tick 末の速度で行うので最後のものが正しい
     std::vector<uint64_t> islandPairs;
     for (int sub = 0; sub < substeps; ++sub) {
+        profScope.emplace("phys.broad"); // 積分・外力もここに含める (5 区分の割り当て、上のコメント参照)
         // ---- 速度積分 (動的・非 kinematic のみ)。位置はまだ動かさない ----
         // 「速度積分 → ソルバ → 位置積分」の順 (Box2D 流、M28b)。摩擦や法線インパルスで
         // 静止した速度がそのまま位置積分に使われるため、静止接触の毎 tick クリープが出ない
@@ -3493,6 +3504,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             }
         }
 
+        profScope.emplace("phys.narrow");
         // ---- 関節の拘束ブロックを組む (M60a) ----
         // **サブステップごとに作り直す** — 姿勢が変わればアンカーの腕も有効質量も変わる。
         // λ の蓄積はサブステップ内で閉じる (接触の蓄積と同じ寿命。warm starting は M59h と
@@ -3887,6 +3899,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             });
         }
 
+        profScope.emplace("phys.solve");
         // ---- 接触解決 (固定反復・生成順 = 候補ペアの (小,大) 昇順 = 決定論) ----
         // 3 段構成。各段が**蓄積量 lambda を持ちクランプする**:
         //   1. 重心での中央法線インパルス (反発込み) — 並進を全質量で 1 発。lambda >= 0
@@ -4782,6 +4795,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         }
     }
 
+    profScope.emplace("phys.writeback");
     // ---- 書き戻し (動的・非 kinematic のみ。kinematic は物理が何も変えないので
     //      スキップ = 親付きの world→local 往復変換ドリフトも出ない) ----
     for (Body& b : bodies) {

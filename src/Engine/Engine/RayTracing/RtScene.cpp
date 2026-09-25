@@ -77,6 +77,7 @@ void RtScene::RebuildBlasIfNeeded(const std::vector<InstanceDesc>& instances,
     if (meshKeyScratch_ == blasKeys_) {
         return;
     }
+    const auto tRebuildStart = std::chrono::high_resolution_clock::now(); // M80k: 焼き直し時間の計測
 
     blasSlots_.clear();
     nodeScratch_.clear();
@@ -123,6 +124,14 @@ void RtScene::RebuildBlasIfNeeded(const std::vector<InstanceDesc>& instances,
     Upload(tris_, triScratch_.data(), sizeof(RtTri), static_cast<uint32_t>(triScratch_.size()));
     Upload(attrs_, attrScratch_.data(), sizeof(RtTriAttr),
            static_cast<uint32_t>(attrScratch_.size()));
+
+    // M80k: 参照メッシュ集合が変わって連結 BLAS を全部焼き直した回だけ出す (毎フレームは
+    // 出ない — 早期 return の手前でしか通らないため)。破壊物が割れて破片メッシュが新たに
+    // 参照された瞬間のスパイクをここで観測できる。sim / ハッシュ / リプレイには関与しない
+    const auto tRebuild1 = std::chrono::high_resolution_clock::now();
+    const float rebuildMs = std::chrono::duration<float, std::milli>(tRebuild1 - tRebuildStart).count();
+    MYE_LOG_INFO("[rt] BLAS rebuild: %zu mesh(es), %zu node(s), %d tri(s), %.3f ms",
+                blasKeys_.size(), nodeScratch_.size(), triCount_, rebuildMs);
 }
 
 void RtScene::Update(const std::vector<InstanceDesc>& instances, RenderResources& resources,

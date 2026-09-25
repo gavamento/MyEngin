@@ -16,6 +16,7 @@
 #include "Engine/Core/Components.h"
 #include "Engine/Core/HierarchyWalk.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/Profiler.h" // M80k: fracture.collect/process スコープ
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Physics/FractureLibrary.h"
 #include "Engine/Engine/Physics/PhysicsSystem.h"
@@ -674,25 +675,30 @@ void FractureSystem::Update(World& world, float dt, const std::vector<ShapeImpul
 void FractureSystem::UpdateImpl(World& world, float dt, const std::vector<ShapeImpulse>& shapeImpulses)
 {
     std::unordered_map<uint64_t, std::vector<PieceEntry>> piecesByRoot;
-    CollectAllPieces(world, piecesByRoot);
-
     struct RootJob {
         EntityID root;
         DestructibleComponent* dc;
     };
     std::vector<RootJob> jobs;
-    const ComponentTypeId req[] = { DestructibleComponent::sTypeId };
-    world.ForEachArchetype(req, [&](Archetype& arch) {
-        const int di = arch.FindTypeIndex(DestructibleComponent::sTypeId);
-        for (uint32_t row = 0; row < arch.Count(); ++row) {
-            const EntityID e = arch.EntityAt(row);
-            if (!IsEntityActive(world, e)) {
-                continue;
-            }
-            jobs.push_back({ e, static_cast<DestructibleComponent*>(arch.GetPtr(di, row)) });
-        }
-    });
+    {
+        // M80k: 毎 tick 全 FracturePiece を再収集する分 (O(総破片数))。ベンチの計測対象
+        MYE_PROFILE_SCOPE("fracture.collect");
+        CollectAllPieces(world, piecesByRoot);
 
+        const ComponentTypeId req[] = { DestructibleComponent::sTypeId };
+        world.ForEachArchetype(req, [&](Archetype& arch) {
+            const int di = arch.FindTypeIndex(DestructibleComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                if (!IsEntityActive(world, e)) {
+                    continue;
+                }
+                jobs.push_back({ e, static_cast<DestructibleComponent*>(arch.GetPtr(di, row)) });
+            }
+        });
+    }
+
+    MYE_PROFILE_SCOPE("fracture.process");
     static const std::vector<PieceEntry> kNoPieces;
     for (RootJob& job : jobs) {
         const uint64_t key = EntityKey(job.root);

@@ -94,6 +94,7 @@
 #include "Engine/Renderer/RenderSelfTest.h"
 #include "Engine/Renderer/TextureCookSelfTest.h"
 #include "Engine/Renderer/VolumeTexture.h"
+#include "Engine/Engine/Physics/FractureBenchmark.h" // M80k: --fracture-bench
 
 namespace {
 
@@ -161,6 +162,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     std::wstring modalVoxelizeList;       // --list F
     std::wstring modalVoxelizeOut;        // --out DIR
     bool modalBake = false;               // --modal-bake (M76e: .dmnet → .msfm のヘッドレス CLI)
+    bool fractureBench = false;           // --fracture-bench (M80k: 破壊物理のヘッドレス性能計測)
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -203,6 +205,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             // 入るので、ここでは自身のフラグだけ拾う (--modal-voxelize と同じ「連鎖の手前」の置き方)
             if (arg == L"--modal-bake") {
                 modalBake = true;
+                continue;
+            }
+            // --fracture-bench (M80k): ウィンドウも D3D も作らないヘッドレス計測 (--modal-voxelize
+            // と同じ「連鎖の手前」の置き方)。実行は下の早期 return 群と同じ場所で行う
+            if (arg == L"--fracture-bench") {
+                fractureBench = true;
                 continue;
             }
             if (arg == L"--selftest") {
@@ -330,6 +338,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             std::fprintf(stderr, "create-project failed: %s\n", err.c_str());
         }
         return ok ? 0 : 1;
+    }
+
+    // --fracture-bench (M80k): ウィンドウも D3D も作らず World を直接操作するヘッドレス計測。
+    // 破片数 (16/32/64/128/256) と破壊物の個数 (1/8) の組み合わせを順に測って終了する
+    if (fractureBench) {
+        return mye::RunFractureBenchmark();
     }
 
     // --hash-diff A B: ワールドハッシュのフィールド単位ダンプを突き合わせて終了 (M52a)。

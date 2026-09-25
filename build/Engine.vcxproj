@@ -125,6 +125,7 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\ConvexHull.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\ConvexSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\FractureBake.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\FractureBenchmark.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\FractureLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\FractureMesh.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\FractureSelfTest.cpp" />
@@ -380,6 +381,7 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\ConvexHull.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\ConvexSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\FractureBake.h" />
+    <ClInclude Include="..\src\Engine\Engine\Physics\FractureBenchmark.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\FractureLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\FractureMesh.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\FractureSelfTest.h" />
