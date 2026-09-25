@@ -24,6 +24,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/DemoContent.h"
 #include "Engine/Engine/EntityNaming.h"
+#include "Engine/Engine/FractureSystem.h" // PreloadFractureAssets (シーンロード直後の破片資産先読み)
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/ModelLoader.h"
@@ -162,6 +163,9 @@ void EditorApp::OnStart(EngineContext& ctx)
         SceneSerializer::LoadFromFile(*ctx.scene, scenePath_);
         // ロード直後 1 回だけ: 閉じている間に更新されたプレハブへ非 override を追随させる (M48e)
         Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
+        // 最初の物理 tick より前に破片資産を先読みしておく (Autoplay/Play で即シミュレートされても
+        // 1 tick 目から凸包が登録済みになる)
+        PreloadFractureAssets(ctx.scene->GetWorld());
     } else if (showcase != nullptr && showcase->build != nullptr) {
         showcase->build(ctx, showcaseOptions);
     } else {
@@ -1891,6 +1895,7 @@ bool EditorApp::LoadSceneFromPath(EngineContext& ctx, const std::wstring& path)
         ReleasePlaySessionEngineState(ctx.audio, ctx.computeAbi);
     }
     Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs); // ロード直後 1 回 (M48e)
+    PreloadFractureAssets(ctx.scene->GetWorld()); // 最初の物理 tick より前に破片資産を先読み
     scenePath_ = path;
     ctx.reloadHub->SetActiveScenePath(scenePath_);
     settings_.lastScenePath = WideToUtf8(scenePath_);

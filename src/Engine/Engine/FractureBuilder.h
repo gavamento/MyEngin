@@ -33,9 +33,14 @@ int BuildFracturePieces(World& world, EntityID root, const FractureAssetHandle& 
 bool ValidateFracturePieces(World& world, EntityID root, const FractureAssetHandle* asset);
 
 // root 直下の `FracturePiece.root == root` な子の数 (ログを出さない照会版、M80i)。
-// Inspector が毎フレーム「資産と子が一致しているか」を表示するために使う —
-// ValidateFracturePieces は不一致のたび ERROR を出すため、呼び出し元 (FractureSystem) 以外の
-// UI ポーリングには使えない
+// Inspector が「生成済み」の表示 (焼き直後、まだ何も割れていない状態) に使う。
+// ValidateFracturePieces は不一致のたび ERROR を出すため、UI ポーリングには使えない
 int CountFracturePieceChildren(World& world, EntityID root);
+
+// root の Destructible が資産 (asset) と整合するか。**階層を辿らず** world 中の全 FracturePiece
+// から root==root なものを集めて判定する — 割れて塊がルートの親の下へ移った後 (broken==true)
+// も見失わない。判定規則は FractureSystem::Update と共有 (FracturePieceIndicesMatchAsset)
+bool DestructiblePiecesMatchAsset(World& world, EntityID root, const FractureAssetHandle& asset,
+                                  bool broken);
 
 } // namespace mye

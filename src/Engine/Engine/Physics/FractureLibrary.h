@@ -58,6 +58,12 @@ public:
     // 見つからない/読めない/版違いはパスごとに ERROR を 1 回だけ出して nullptr
     const FractureAssetHandle* LoadFromFile(const std::wstring& path);
 
+    // path が読み込み済みでもキャッシュを無視して読み直し、同じ登録名 (AssetID) のまま
+    // メッシュ・凸包を差し替える。CommitFractureBake が書き出した直後に呼ぶ — 焼き方式の版
+    // (kFractureBakeVersion) を上げ忘れて同じ保存名に別の中身を書いてしまった場合の保険。
+    // 読めなければ ERROR を出して nullptr (登録済みの古いハンドルは残る)
+    const FractureAssetHandle* ReloadFromFile(const std::wstring& path);
+
     // GUID の無いメモリ上の焼き結果を登録する (--fracture-demo 用)。
     // namePrefix の一意性は呼び出し側が保証する。同じ namePrefix は差し替え
     // boneNames (M80j): 非空なら bake.pieces と同じ並びで破片ごとの骨名を .mfrac へ書く

@@ -5,6 +5,7 @@
 //====================================================================================
 #include "Engine/Engine/Physics/FractureSelfTest.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -1056,6 +1057,79 @@ bool RunFractureSelfTest()
                 FractureAsset::Serialize(tooManyNeighbors, blob2);
                 check(!FractureAsset::Deserialize(blob2, discard),
                       "fracture asset: neighbor count above the cap fails safely");
+            }
+
+            // (13c2) 一部のバイトだけ壊れた入力: 範囲外/自己参照/非対称な index は失敗する
+            // (フォーマット自体は正しいので、値だけを壊す)
+            {
+                FractureAsset::FractureData discard;
+                auto findAdjacentPair = [&](size_t& outI, size_t& outJ) -> bool {
+                    for (size_t i = 0; i < data.pieces.size(); ++i) {
+                        if (data.pieces[i].neighbors.empty()) {
+                            continue;
+                        }
+                        outI = i;
+                        outJ = static_cast<size_t>(data.pieces[i].neighbors.front().pieceIndex);
+                        return true;
+                    }
+                    return false;
+                };
+
+                FractureAsset::FractureData badOuterIdx = data;
+                if (!badOuterIdx.pieces.empty() && !badOuterIdx.pieces[0].outerIndices.empty()) {
+                    badOuterIdx.pieces[0].outerIndices[0]
+                        = static_cast<uint32_t>(badOuterIdx.pieces[0].outerVerts.size()) + 7;
+                    std::vector<uint8_t> blob3;
+                    FractureAsset::Serialize(badOuterIdx, blob3);
+                    check(!FractureAsset::Deserialize(blob3, discard),
+                          "fracture asset: an outer index past the vertex count fails safely");
+                }
+
+                FractureAsset::FractureData badCapIdx = data;
+                if (!badCapIdx.pieces.empty() && !badCapIdx.pieces[0].capIndices.empty()) {
+                    badCapIdx.pieces[0].capIndices[0]
+                        = static_cast<uint32_t>(badCapIdx.pieces[0].capVerts.size()) + 7;
+                    std::vector<uint8_t> blob4;
+                    FractureAsset::Serialize(badCapIdx, blob4);
+                    check(!FractureAsset::Deserialize(blob4, discard),
+                          "fracture asset: a cap index past the vertex count fails safely");
+                }
+
+                FractureAsset::FractureData badNeighborRange = data;
+                if (!badNeighborRange.pieces.empty()) {
+                    badNeighborRange.pieces[0].neighbors.push_back(
+                        { static_cast<int32_t>(badNeighborRange.pieces.size()) + 3, 1.0f });
+                    std::vector<uint8_t> blob5;
+                    FractureAsset::Serialize(badNeighborRange, blob5);
+                    check(!FractureAsset::Deserialize(blob5, discard),
+                          "fracture asset: a neighbor index past the piece count fails safely");
+                }
+
+                FractureAsset::FractureData selfNeighbor = data;
+                if (!selfNeighbor.pieces.empty()) {
+                    selfNeighbor.pieces[0].neighbors.push_back({ 0, 1.0f }); // 自分自身への隣接
+                    std::vector<uint8_t> blob6;
+                    FractureAsset::Serialize(selfNeighbor, blob6);
+                    check(!FractureAsset::Deserialize(blob6, discard),
+                          "fracture asset: a self-referencing neighbor fails safely");
+                }
+
+                size_t pi = 0, pj = 0;
+                if (findAdjacentPair(pi, pj)) {
+                    FractureAsset::FractureData asymmetric = data;
+                    auto& backRefs = asymmetric.pieces[pj].neighbors;
+                    backRefs.erase(std::remove_if(backRefs.begin(), backRefs.end(),
+                                                  [pi](const FractureAsset::NeighborRecord& n) {
+                                                      return static_cast<size_t>(n.pieceIndex) == pi;
+                                                  }),
+                                  backRefs.end());
+                    std::vector<uint8_t> blob7;
+                    FractureAsset::Serialize(asymmetric, blob7);
+                    check(!FractureAsset::Deserialize(blob7, discard),
+                          "fracture asset: a one-sided (asymmetric) neighbor fails safely");
+                } else {
+                    check(false, "fracture asset: setup expected an adjacent piece pair to exist");
+                }
             }
 
             // (13d) FractureLibrary: メモリ登録 (GUID なし) → MeshLibrary/ConvexColliderLibrary へ
@@ -2242,6 +2316,60 @@ bool RunFractureSelfTest()
                           && std::fabs(events[1].point.z - rowBake.pieces[3].origin.z) < 1e-4f,
                       "onBreak: point is the world origin of the max-load piece (piece3 itself)");
             }
+            fracturelib::Install(nullptr);
+        }
+
+        // (16g) 資産キャッシュのキーは fractureAsset の値であって root ではない: 同じ
+        // FractureSystem インスタンスのまま fractureAsset を差し替えても、古い資産のハンドルを
+        // 使い回さない (Play 中に Inspector で資産を差し替える操作に相当)
+        {
+            const FractureBakeResult bakeA = MakeRowFractureBake(4, 0.25f);
+            const FractureBakeResult bakeB = MakeRowFractureBake(8, 0.25f);
+
+            RenderResources resources;
+            ConvexColliderLibrary colliders;
+            colliders.Init(&resources);
+            FractureLibrary lib;
+            lib.Init(&resources, &colliders);
+            fracturelib::Install(&lib);
+            const FractureAssetHandle* handleA = lib.RegisterBaked(
+                "fracture-selftest://cache_a", bakeA, HashStr("fracture-selftest://cache_a_src"), 0, 4, 0, 0);
+            const FractureAssetHandle* handleB = lib.RegisterBaked(
+                "fracture-selftest://cache_b", bakeB, HashStr("fracture-selftest://cache_b_src"), 0, 8, 0, 0);
+            check(handleA != nullptr && handleB != nullptr, "asset cache: both synthetic assets register");
+
+            Scene s;
+            World& w = s.GetWorld();
+            GameObject root = s.CreateGameObject("CacheSwapRoot");
+            root.AddComponent<RigidbodyComponent>();
+            root.AddComponent<DestructibleComponent>();
+            auto* rootRb = root.GetComponent<RigidbodyComponent>();
+            rootRb->gravityScale = 0.0f;
+            auto* d = root.GetComponent<DestructibleComponent>();
+            d->strength = 100.0f;
+            d->fractureAsset = AssetID{ HashStr("fracture-selftest://cache_a") };
+            BuildFracturePieces(w, root.Id(), *handleA);
+            w.ApplyStructuralChanges();
+
+            FractureSystem fsys; // 1 個の長生き FractureSystem (EngineLoop が持つのと同じ運用)
+            fsys.Update(w, 1.0f / 60.0f, {}); // 資産 A をこの root でキャッシュさせる
+            w.ApplyStructuralChanges();
+
+            // Play 中に Inspector で資産を差し替えたのと同じ操作: 資産 B へ切り替えて組み直す
+            d->fractureAsset = AssetID{ HashStr("fracture-selftest://cache_b") };
+            BuildFracturePieces(w, root.Id(), *handleB);
+            w.ApplyStructuralChanges();
+
+            const EntityID piece7 = FindPieceChild(w, root.Id(), 7); // 資産 B にしか無い index
+            check(!piece7.IsNull(), "asset cache: piece 7 exists after switching to the 8-piece asset");
+            ApplyFractureDamage(w, piece7, { 0, 0, 0 }, 0.0f, 1.0e6f);
+            for (int i = 0; i < 3; ++i) {
+                fsys.Update(w, 1.0f / 60.0f, {});
+                w.ApplyStructuralChanges();
+            }
+            check(d->broken,
+                  "asset cache: the same FractureSystem instance re-resolves after fractureAsset "
+                  "changes (a root-keyed cache would reject piece 7 as out of range)");
             fracturelib::Install(nullptr);
         }
     }

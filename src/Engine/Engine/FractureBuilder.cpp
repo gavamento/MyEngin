@@ -12,6 +12,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/EntityNaming.h"
+#include "Engine/Engine/FractureSystem.h" // FracturePieceIndicesMatchAsset (判定の共有)
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Physics/FractureLibrary.h"
 
@@ -188,6 +189,23 @@ int CountFracturePieceChildren(World& world, EntityID root)
     std::vector<EntityID> existing;
     CollectExistingPieces(world, root, &existing);
     return static_cast<int>(existing.size());
+}
+
+bool DestructiblePiecesMatchAsset(World& world, EntityID root, const FractureAssetHandle& asset,
+                                  bool broken)
+{
+    std::vector<int32_t> indices;
+    const ComponentTypeId req[] = { FracturePieceComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int fi = arch.FindTypeIndex(FracturePieceComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const auto* fp = static_cast<const FracturePieceComponent*>(arch.GetPtr(fi, row));
+            if (fp->root == root) {
+                indices.push_back(fp->index);
+            }
+        }
+    });
+    return FracturePieceIndicesMatchAsset(asset.pieces.size(), indices, broken);
 }
 
 } // namespace mye

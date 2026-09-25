@@ -5,6 +5,7 @@
 //====================================================================================
 #pragma once
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -90,7 +91,10 @@ private:
     void UpdateImpl(World& world, float dt, const std::vector<ShapeImpulse>& shapeImpulses,
                     ScriptHost* scripts, ManagedHost* managed);
 
-    std::unordered_map<uint64_t, AssetCache> assetCache_; // root -> 解決済み資産 (解決できた分だけ)
+    // fractureAsset.value -> 解決済み資産 (解決できた分だけ)。root ではなく資産参照そのものを
+    // キーにする: Play 中に Destructible.fractureAsset を書き換えても、同じ root の
+    // 古いキャッシュを誤って使い回さない
+    std::unordered_map<uint64_t, AssetCache> assetCache_;
     std::unordered_set<uint64_t> erroredOnce_;             // ERROR を 1 回だけ出すためのログ抑止 (判定には使わない)
     std::vector<FractureBreakEvent> lastBreakEvents_;      // 直近 Update の onBreak 記録 (観測用)
 };
@@ -98,6 +102,26 @@ private:
 // ワールドに DestructibleComponent が 1 つでもあるか。**存在ゲート**専用 — false なら
 // 呼び側は形状単位インパルスの出力ポインタを渡さず (null)、FractureSystem::Update も呼ばない
 bool AnyDestructibles(World& world);
+
+// Destructible.fractureAsset から資産を解決する: ファイル資産 (GUID → 現在パス →
+// FractureLibrary::LoadFromFile) を先に試し、無ければメモリ登録 (--fracture-demo 等、guid
+// スキームを持たない namePrefix を HashStr した値) を FindByAssetId で試す。FractureSystem と
+// Inspector (資産欄の表示) が同じ関数で解決することで、保存側との表現の食い違いを防ぐ
+const FractureAssetHandle* ResolveFractureAsset(AssetID assetId);
+
+// シーンロード直後・最初の物理 tick より前に呼ぶ: ワールドの Destructible が参照する
+// `.mfrac` を先読みし、MeshLibrary / ConvexColliderLibrary へ登録しておく。呼ばずに物理へ
+// 進むと、1 tick 目は凸包が未登録のまま (shape=5 が無視され、破片がすり抜ける)。
+// FractureSystem::Update 自身も同じ解決を毎 tick 行うので、ここで解決できなくても実害はない
+void PreloadFractureAssets(World& world);
+
+// 資産の破片 index 集合が pieceIndices と整合するか。broken==false は「重複なし・範囲内・
+// 個数が資産と一致」(まだ何も分かれていないので全部そろっているはず)。broken==true は
+// 「重複なし・範囲内」だけを見る (割れた後の後始末で塊が Destroy され、個数が減ってよい)。
+// FractureSystem::Update の判定と Inspector の一致表示 (DestructiblePiecesMatchAsset) が
+// この規則を共有する
+bool FracturePieceIndicesMatchAsset(size_t assetPieceCount, const std::vector<int32_t>& pieceIndices,
+                                    bool broken, std::string* outReason = nullptr);
 
 // root proxy の可視規則 (RenderSystem::CollectDrawables と共有)。rootDestructible (破片の
 // root が持つ Destructible、見つからなければ nullptr) が非 null かつ未破断のときだけ

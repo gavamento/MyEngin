@@ -783,6 +783,9 @@ void RunOneTick(TickServices& ts)
             vfxRenderer.Reset(); // M29c: トレイル点列も新シーンでリセット
             partFollowSystem.Reset(); // M48g: 旧シーンの warn 抑制を捨てる
             fractureSystem.Reset(); // M80g: 旧シーンの検証キャッシュを捨てる
+            // 次 tick の物理より前に新シーンの破片資産を先読みしておく (Editor/Runtime の
+            // 起動ロードと同じ扱い)
+            PreloadFractureAssets(scene.GetWorld());
             scriptHost.ClearStarted();
             managedHost.OnSceneReloaded();
             if (ts.computeAbi) {

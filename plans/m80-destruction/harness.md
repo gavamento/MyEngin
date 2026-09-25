@@ -2,7 +2,7 @@
 
 - 依頼原文: m80-destruction: UE の Chaos Destruction 相当の破壊物理を実装する。要件と事前調査は plans/m80-destruction/design-draft.md (要件節はユーザー確定済み)。運用: 質問は AskUserQuestion を使わず推奨で裁定し、Notion (https://app.notion.com/p/3e502024a4d481df8d01cbe69c013018) の表へ記録して先へ進む。作業ツリーの既存 WIP には触らない。
 - 開始: 2026-09-25 / 基点コミット: 73c8d76277fae380161f706b6015747f1ef68166
-- フェーズ: レビュー
+- フェーズ: 実装 (review-1 の修正)
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
@@ -20,12 +20,16 @@
 | sub-11 | OK | 1 | 5b33f5f | 計測・ベンチ・上限 |
 | sub-12 | OK | 1 | ca86f26 | ABI v22・デモ・spec/ADR |
 | sub-14 | OK | 1 | 14d8775 | 断面の三角形分割を libtess2 に置き換え (依存 sub-04、sub-09 が依存) |
-| sub-15 | OK | 1 | (本コミット) | 拡張点の確認と整理 + 位相的な閉じの再調査 (Notion 回答の反映、依存 sub-12) |
+| sub-15 | OK | 1 | d973c32 | 拡張点の確認と整理 + 位相的な閉じの再調査 (Notion 回答の反映、依存 sub-12) |
+| sub-16 | OK | 1 | (本コミット) | review-1: 資産の経路 (#1 #2 #8 #9 #12) |
+| sub-17 | 未着手 | 0 | | review-1: 実行時の正しさ (#3 #4 #11 #13) |
+| sub-18 | 未着手 | 0 | | review-1: 調整と操作性 (#5 #6 #7 #10) |
 | sub-13 | OK | 1 | d873eac | 凸包生成の無限ループ修正 + トーラス焼き (依存 sub-02、sub-06 が依存) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
+| 1 | FAIL | 2/2/3/3 | blocker 2 (セッションをまたぐと割れない / .mfrac 名の衝突と再登録) + major 5 + minor 6。全文 review-1.md |
 
 ## ユーザー判断
 | ID | 論点 | 決定 | 状態 |
@@ -43,7 +47,7 @@
 | Q-11 | ボクセル化の見た目と既定解像度 | surface nets (滑らか)、既定は Release 10 秒以内の最大 | ユーザー回答 (Notion、2026-09-25): 確定 (「これでいい」) |
 | Q-12 | 外部ライブラリ libtess2 の取り込み | 取り込む (external/、SGI FSL B 2.0) | ユーザー回答 (Notion、2026-09-25): 推奨で確定 + 「今後拡張する可能性があるから拡張性を意識して設計して」 |
 | Q-13 | shot_verify の golden 4 枚 (parts/joints/acoustic_forward/acoustic_deferred) が M80 着手前からずれている | M80 では更新せず除外。原因調査と更新は M80 の外 | 推奨で仮決定 (Notion Q-13、回答待ち。planner の #12) |
-| Q-14 | 固定の壁を撃ったときの打ち抜き | v1 は打ち抜かない (弾はその tick で止まり、破片は静止から落ちる)。打ち抜きは後回し | 推奨で仮決定 (Notion Q-14、回答待ち。planner の #13) |
+| Q-14 | 固定の壁を撃ったときの打ち抜き | v1 は打ち抜かない。デモは壁の上の縁を撃って穴を見せる (sub-18) | 推奨で仮決定 (Notion Q-14、回答待ち。review-1 #7 の画像パスを Notion に追記済み) |
 
 ## 申し送り (セッション跨ぎ)
 - **運用 (2026-09-25 ユーザー指示)**: ハーネス中の質問は推奨案で仮決定して進める。質問は Notion「活動記録」のページ
@@ -58,3 +62,4 @@
 - **shot_verify の切り分け (2026-09-25 司会)**: 4 枚 (parts / joints / acoustic_forward / acoustic_deferred) は M80 着手前 73c8d76 と 14d8775 のクリーン worktree で、数値・worst 座標・actual PNG の MD5 まで完全一致で割れる。M80 の差分と WIP (WaterPass.cpp) は無関係。以後のサブはこの 4 枚を除外して判定する (spec §5 受け入れ条件 10)。
 - **M80 外の既存問題 (ユーザーへ報告する)**: src/Engine/Engine/Asset/CookedCacheSelfTest.cpp:144-147 が固定名の一時ディレクトリ (mye_cook_selftest) を開始時に remove_all しており、Debug と Release の --selftest を同時に走らせると互いに消し合って不安定になり得る (sub-10 round 2 で同型の不安定を発見)。
 - **ユーザーへ報告する**: ABI v22 に上がったので、外部プロジェクト (三校 / HAL Collector) の GameLogic.dll はエンジン更新後に再ビルドが必要 (v21 の DLL は版検証でロード拒否)。
+- reviewer round 1 の worktree `C:\HAL\mye_rv80_r1_1454` が残っている (ソースは HEAD と同じ、Release の Editor.exe はプローブ入り)。削除はユーザー確認後。

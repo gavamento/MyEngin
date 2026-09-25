@@ -8,6 +8,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Engine/DemoContent.h"
 #include "Engine/Engine/EngineCli.h"
+#include "Engine/Engine/FractureSystem.h" // PreloadFractureAssets (シーンロード直後の破片資産先読み)
 #include "Engine/Engine/ShowcaseScenes.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/Prefab.h"
@@ -86,6 +87,8 @@ public:
             // Editor と同じ「ロード直後 1 回」(M48e)。ここを揃えないと Editor で録った .rep と
             // Runtime の verify で初期状態が食い違う
             mye::Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
+            // 最初の物理 tick より前に破片資産を先読みしておく (Editor 側と同じ)
+            mye::PreloadFractureAssets(ctx.scene->GetWorld());
         } else if (showcase != nullptr && showcase->build != nullptr) {
             showcase->build(ctx, showcaseOptions);
         } else {

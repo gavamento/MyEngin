@@ -27,13 +27,19 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Asset/FractureAsset.h"
+#include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/FractureBuilder.h"
+#include "Engine/Engine/FractureSystem.h"
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Physics/ConvexColliderLibrary.h"
 #include "Engine/Engine/Physics/FractureBake.h"
 #include "Engine/Engine/Physics/FractureLibrary.h"
 #include "Engine/Engine/Physics/FractureMesh.h"
+#include "Engine/Engine/Physics/PhysicsSystem.h" // ShapeImpulse (FractureSystem::Update の引数)
 #include "Engine/Engine/Scene.h"
+#include "Engine/Engine/SceneSerializer.h"
+#include "Engine/Renderer/GpuResources.h"
 
 using namespace DirectX;
 namespace fs = std::filesystem;
@@ -125,6 +131,21 @@ std::vector<char> ReadFileBytes(const std::wstring& path)
     std::ifstream f(path, std::ios::binary);
     return std::vector<char>((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
+
+// 1 セッション分のエンジン側資産状態。「セッションを閉じて開き直す」を模すテストが、
+// 前のセッションの登録が一切残っていない状態を作るために使う
+struct FractureSessionEnv {
+    RenderResources resources;
+    ConvexColliderLibrary colliders;
+    FractureLibrary library;
+    FractureSessionEnv()
+    {
+        colliders.Init(&resources);
+        library.Init(&resources, &colliders);
+        fracturelib::Install(&library);
+    }
+    ~FractureSessionEnv() { fracturelib::Install(nullptr); }
+};
 
 } // namespace
 
@@ -306,9 +327,15 @@ bool RunFractureEditorSelfTest()
         const int childrenAfterGenerate = CountFracturePieceChildren(s.GetWorld(), box.Id());
         check(childrenAfterGenerate == static_cast<int>(bakeResult.pieces.size()),
               "commit: BuildFracturePieces creates exactly the baked piece count as children");
-        const bool wroteFile
-            = fs::exists(root / L"Fracture" / L"EditorSelfTestBox_7_4.mfrac", ec);
-        check(wroteFile, "commit: the .mfrac lands at assets\\Fracture\\<name>_<seed>_<pieceCount>.mfrac");
+        bool wroteFile = false;
+        for (const auto& entry : fs::directory_iterator(root / L"Fracture", ec)) {
+            const std::wstring name = entry.path().filename().wstring();
+            if (name.rfind(L"EditorSelfTestBox_", 0) == 0 && entry.path().extension() == L".mfrac") {
+                wroteFile = true;
+                break;
+            }
+        }
+        check(wroteFile, "commit: the .mfrac lands at assets\\Fracture\\<name>_<input hash>.mfrac");
 
         undo.Undo(s, sel);
         s.GetWorld().ApplyStructuralChanges();
@@ -331,6 +358,200 @@ bool RunFractureEditorSelfTest()
         }
 
         fracturelib::Install(nullptr);
+    }
+
+    // ---- (6) セッションをまたぐ解決: 焼いて保存したセッションを閉じ、新しい
+    //          AssetDatabase・FractureLibrary・World で開き直しても割れる ----
+    {
+        const fs::path dir = fs::temp_directory_path(ec) / L"mye_fracture_editor_selftest_session";
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        nlohmann::json saved;
+
+        // セッション 1: 実際の AssetDatabase で焼き、シーンを保存する
+        {
+            AssetDatabase db;
+            db.ScanAndSync(dir.wstring());
+            db.InstallAsKeyResolver();
+            FractureSessionEnv env;
+
+            Scene s;
+            EngineContext ctx;
+            ctx.scene = &s;
+            ctx.assetsRoot = dir.wstring();
+            ctx.assetDb = &db;
+
+            GameObject crate = s.CreateGameObjectTracked("SessionCrate");
+            auto* destructible = crate.AddComponent<DestructibleComponent>();
+            destructible->seed = 3;
+            destructible->pieceCount = 6;
+
+            FractureBakeInput in;
+            in.sourceMesh = MakeBox(1, 1, 1);
+            in.seed = destructible->seed;
+            in.pieceCount = destructible->pieceCount;
+            FractureBakeResult bakeResult;
+            check(BakeFracture(in, bakeResult) && bakeResult.success,
+                  "session: source bake succeeds for the cross-session test");
+
+            FractureBakeRequest req;
+            req.sourceMesh = in.sourceMesh;
+            req.seed = destructible->seed;
+            req.pieceCount = destructible->pieceCount;
+
+            UndoStack undo;
+            Selection sel;
+            check(CommitFractureBake(ctx, sel, undo, crate.Id(), s.EnsureFileId(crate.Id()), req, bakeResult),
+                  "session: commit succeeds with a real AssetDatabase");
+
+            saved = SceneSerializer::SaveToJson(s);
+            AssetDatabase::UninstallKeyResolver();
+        }
+
+        // セッション 2: 新しい AssetDatabase・FractureLibrary・World で開き直す
+        {
+            AssetDatabase db;
+            db.ScanAndSync(dir.wstring());
+            db.InstallAsKeyResolver();
+            FractureSessionEnv env;
+
+            Scene s;
+            check(SceneSerializer::LoadFromJson(s, saved), "session: the saved scene loads back");
+            World& w = s.GetWorld();
+
+            // シーンロード経路が必ず行う先読み。最初の物理 tick より前に呼ぶ契約
+            PreloadFractureAssets(w);
+
+            GameObject crateGo = s.Find("SessionCrate");
+            const auto* dc = crateGo ? w.GetComponent<DestructibleComponent>(crateGo.Id()) : nullptr;
+            check(dc != nullptr && !dc->fractureAsset.IsNull(),
+                  "session: Destructible.fractureAsset survives the round trip");
+
+            GameObject frag0 = s.Find("Frag0");
+            const auto* col0 = frag0 ? w.GetComponent<ColliderComponent>(frag0.Id()) : nullptr;
+            check(col0 != nullptr && env.colliders.Get(col0->meshAsset) != nullptr,
+                  "session: the piece's convex hull is registered before the first physics tick");
+
+            const FractureAssetHandle* handle = dc ? ResolveFractureAsset(dc->fractureAsset) : nullptr;
+            check(handle != nullptr, "session: the fracture asset resolves in a brand-new session");
+            check(handle != nullptr && crateGo
+                      && DestructiblePiecesMatchAsset(w, crateGo.Id(), *handle, dc->broken),
+                  "session: the Inspector-style query reports a match right after loading");
+
+            if (frag0) {
+                ApplyFractureDamage(w, frag0.Id(), { 0, 0, 0 }, 0.0f, 1.0e6f);
+            }
+            FractureSystem fsys;
+            for (int i = 0; i < 3; ++i) {
+                fsys.Update(w, 1.0f / 60.0f, {});
+                w.ApplyStructuralChanges();
+            }
+            const auto* dcAfter = crateGo ? w.GetComponent<DestructibleComponent>(crateGo.Id()) : nullptr;
+            check(dcAfter != nullptr && dcAfter->broken,
+                  "session: the destructible breaks after loading in a brand-new session");
+            check(handle != nullptr && dcAfter != nullptr && crateGo
+                      && DestructiblePiecesMatchAsset(w, crateGo.Id(), *handle, dcAfter->broken),
+                  "session: the Inspector-style query still reports a match after breaking");
+
+            AssetDatabase::UninstallKeyResolver();
+        }
+        fs::remove_all(dir, ec);
+    }
+
+    // ---- (7) 保存名は内容から決まる: 同名の別エンティティは中身が違えば別ファイル、
+    //          同じ中身の再焼きは同じファイルを指す ----
+    {
+        const fs::path dir = fs::temp_directory_path(ec) / L"mye_fracture_editor_selftest_names";
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+
+        AssetDatabase db;
+        db.ScanAndSync(dir.wstring());
+        db.InstallAsKeyResolver();
+        FractureSessionEnv env;
+
+        Scene s;
+        EngineContext ctx;
+        ctx.scene = &s;
+        ctx.assetsRoot = dir.wstring();
+        ctx.assetDb = &db;
+        UndoStack undo;
+        Selection sel;
+
+        GameObject a = s.CreateGameObjectTracked("DupName");
+        a.AddComponent<DestructibleComponent>();
+        GameObject shelf = s.CreateGameObjectTracked("Shelf");
+        GameObject b = s.CreateGameObjectTracked("DupName");
+        s.GetWorld().SetParent(b.Id(), shelf.Id());
+        s.GetWorld().ApplyStructuralChanges();
+        b.AddComponent<DestructibleComponent>();
+
+        FractureBakeInput boxIn;
+        boxIn.sourceMesh = MakeBox(0.5f, 0.5f, 0.5f);
+        boxIn.seed = 1;
+        boxIn.pieceCount = 6;
+        FractureBakeResult boxBake;
+        check(BakeFracture(boxIn, boxBake) && boxBake.success, "duplicate names: box bakes");
+
+        FractureBakeInput plankIn;
+        plankIn.sourceMesh = MakeBox(2.0f, 0.1f, 0.1f); // 同名の別物 (細長い板)
+        plankIn.seed = 1;
+        plankIn.pieceCount = 6;
+        FractureBakeResult plankBake;
+        check(BakeFracture(plankIn, plankBake) && plankBake.success, "duplicate names: plank bakes");
+
+        FractureBakeRequest reqA;
+        reqA.sourceMesh = boxIn.sourceMesh;
+        reqA.seed = 1;
+        reqA.pieceCount = 6;
+        check(CommitFractureBake(ctx, sel, undo, a.Id(), s.EnsureFileId(a.Id()), reqA, boxBake),
+              "duplicate names: committing A (box) succeeds");
+
+        FractureBakeRequest reqB;
+        reqB.sourceMesh = plankIn.sourceMesh;
+        reqB.seed = 1;
+        reqB.pieceCount = 6;
+        check(CommitFractureBake(ctx, sel, undo, b.Id(), s.EnsureFileId(b.Id()), reqB, plankBake),
+              "duplicate names: committing B (plank, same name/seed/pieceCount) succeeds");
+
+        const auto* dcA = s.GetWorld().GetComponent<DestructibleComponent>(a.Id());
+        const auto* dcB = s.GetWorld().GetComponent<DestructibleComponent>(b.Id());
+        check(dcA != nullptr && dcB != nullptr && dcA->fractureAsset != dcB->fractureAsset,
+              "duplicate names: different content under the same entity name gets a different asset");
+
+        size_t mfracFiles = 0;
+        for (const auto& entry : fs::recursive_directory_iterator(dir, ec)) {
+            mfracFiles += entry.path().extension() == L".mfrac" ? 1 : 0;
+        }
+        check(mfracFiles == 2, "duplicate names: two separate .mfrac files are written");
+
+        const FractureAssetHandle* handleA = dcA ? ResolveFractureAsset(dcA->fractureAsset) : nullptr;
+        const FractureAssetHandle* handleB = dcB ? ResolveFractureAsset(dcB->fractureAsset) : nullptr;
+        float maxAbsXA = 0.0f, maxAbsXB = 0.0f;
+        for (const auto& p : handleA ? handleA->pieces : std::vector<FracturePieceRef>{}) {
+            maxAbsXA = (std::max)(maxAbsXA, std::fabs(p.origin.x));
+        }
+        for (const auto& p : handleB ? handleB->pieces : std::vector<FracturePieceRef>{}) {
+            maxAbsXB = (std::max)(maxAbsXB, std::fabs(p.origin.x));
+        }
+        check(handleA != nullptr && handleB != nullptr && maxAbsXB > maxAbsXA,
+              "duplicate names: each asset keeps its own geometry (the plank's pieces span farther "
+              "in x than the box's)");
+
+        // 同じ中身をもう一度焼くと同じファイル (= 同じ fractureAsset) を指す。CommitFractureBake は
+        // 構造変更を伴うため、比較対象の値は呼ぶ前に取り出しておく (dcA は再委託後に無効たり得る)
+        const AssetID assetBeforeRebake = dcA != nullptr ? dcA->fractureAsset : AssetID{};
+        FractureBakeResult boxBake2;
+        check(BakeFracture(boxIn, boxBake2) && boxBake2.success,
+              "duplicate names: re-baking the same box succeeds");
+        check(CommitFractureBake(ctx, sel, undo, a.Id(), s.EnsureFileId(a.Id()), reqA, boxBake2),
+              "duplicate names: re-committing the same input succeeds");
+        const auto* dcA2 = s.GetWorld().GetComponent<DestructibleComponent>(a.Id());
+        check(dcA2 != nullptr && dcA2->fractureAsset == assetBeforeRebake,
+              "duplicate names: re-baking identical input reuses the same .mfrac");
+
+        AssetDatabase::UninstallKeyResolver();
+        fs::remove_all(dir, ec);
     }
 
     fs::remove_all(root, ec);

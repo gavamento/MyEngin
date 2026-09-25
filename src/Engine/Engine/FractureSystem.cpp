@@ -149,26 +149,6 @@ struct UnionFind {
     }
 };
 
-// 資産の解決: ファイル資産 (guid → 現在パス → LoadFromFile) を先に試し、無ければメモリ登録
-// (--fracture-demo 等、guid 相当のハッシュだけで引く FindByAssetId) を試す
-const FractureAssetHandle* ResolveFractureAsset(AssetID assetId)
-{
-    if (assetId.IsNull()) {
-        return nullptr;
-    }
-    FractureLibrary* lib = fracturelib::Library();
-    if (lib == nullptr) {
-        return nullptr;
-    }
-    const std::wstring path = assetguid::ResolvePath(assetId.value);
-    if (!path.empty()) {
-        if (const FractureAssetHandle* h = lib->LoadFromFile(path)) {
-            return h;
-        }
-    }
-    return lib->FindByAssetId(assetId);
-}
-
 struct PieceEntry {
     EntityID entity;
     EntityID parent; // 現在の直接の親 (root かリーダー)
@@ -663,12 +643,42 @@ void ProcessAfterBreak(World& world, DestructibleComponent& dc, const std::vecto
 bool PiecesMatchAssetNow(const FractureAssetHandle& asset, const std::vector<PieceEntry>* myPieces,
                          bool broken, std::string* outReason)
 {
-    const size_t n = asset.pieces.size();
-    std::vector<bool> seen(n, false);
-    const size_t count = myPieces ? myPieces->size() : 0;
-    for (size_t i = 0; i < count; ++i) {
-        const int32_t idx = (*myPieces)[i].index;
-        if (idx < 0 || static_cast<size_t>(idx) >= n || seen[static_cast<size_t>(idx)]) {
+    std::vector<int32_t> indices;
+    if (myPieces != nullptr) {
+        indices.reserve(myPieces->size());
+        for (const PieceEntry& p : *myPieces) {
+            indices.push_back(p.index);
+        }
+    }
+    return FracturePieceIndicesMatchAsset(asset.pieces.size(), indices, broken, outReason);
+}
+
+} // namespace
+
+const FractureAssetHandle* ResolveFractureAsset(AssetID assetId)
+{
+    if (assetId.IsNull()) {
+        return nullptr;
+    }
+    FractureLibrary* lib = fracturelib::Library();
+    if (lib == nullptr) {
+        return nullptr;
+    }
+    const std::wstring path = assetguid::ResolvePath(assetId.value);
+    if (!path.empty()) {
+        if (const FractureAssetHandle* h = lib->LoadFromFile(path)) {
+            return h;
+        }
+    }
+    return lib->FindByAssetId(assetId);
+}
+
+bool FracturePieceIndicesMatchAsset(size_t assetPieceCount, const std::vector<int32_t>& pieceIndices,
+                                    bool broken, std::string* outReason)
+{
+    std::vector<bool> seen(assetPieceCount, false);
+    for (int32_t idx : pieceIndices) {
+        if (idx < 0 || static_cast<size_t>(idx) >= assetPieceCount || seen[static_cast<size_t>(idx)]) {
             if (outReason != nullptr) {
                 *outReason = "fracture piece index is out of range or duplicated";
             }
@@ -676,7 +686,7 @@ bool PiecesMatchAssetNow(const FractureAssetHandle& asset, const std::vector<Pie
         }
         seen[static_cast<size_t>(idx)] = true;
     }
-    if (!broken && count != n) {
+    if (!broken && pieceIndices.size() != assetPieceCount) {
         if (outReason != nullptr) {
             *outReason = "piece count mismatch";
         }
@@ -685,14 +695,24 @@ bool PiecesMatchAssetNow(const FractureAssetHandle& asset, const std::vector<Pie
     return true;
 }
 
-} // namespace
-
 bool AnyDestructibles(World& world)
 {
     bool any = false;
     const ComponentTypeId req[] = { DestructibleComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& a) { any = any || a.Count() != 0; });
     return any;
+}
+
+void PreloadFractureAssets(World& world)
+{
+    const ComponentTypeId req[] = { DestructibleComponent::sTypeId };
+    world.ForEachArchetype(req, [](Archetype& arch) {
+        const int di = arch.FindTypeIndex(DestructibleComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const auto* dc = static_cast<const DestructibleComponent*>(arch.GetPtr(di, row));
+            ResolveFractureAsset(dc->fractureAsset);
+        }
+    });
 }
 
 bool ShouldHideUnbrokenFracturePiece(const DestructibleComponent* rootDestructible)
@@ -757,10 +777,14 @@ void FractureSystem::UpdateImpl(World& world, float dt, const std::vector<ShapeI
     static const std::vector<PieceEntry> kNoPieces;
     for (RootJob& job : jobs) {
         const uint64_t key = EntityKey(job.root);
+        // assetCache_ は root ではなく fractureAsset の値をキーにする。root 単位だと、
+        // Play 中に Destructible.fractureAsset を差し替えても古い資産のハンドルを使い
+        // 続けてしまう (index out of range の ERROR を出しては壊れる)
+        const uint64_t assetKey = job.dc->fractureAsset.value;
 
         // ---- 資産の解決だけキャッシュする (資産参照から一意に決まる値なので安全) ----
         const FractureAssetHandle* handle = nullptr;
-        const auto assetIt = assetCache_.find(key);
+        const auto assetIt = assetCache_.find(assetKey);
         if (assetIt != assetCache_.end()) {
             handle = assetIt->second.handle;
         } else {
@@ -777,7 +801,7 @@ void FractureSystem::UpdateImpl(World& world, float dt, const std::vector<ShapeI
                     }
                 }
                 cache.avgNeighborArea = count > 0 ? sum / static_cast<double>(count) : 0.0;
-                assetCache_.emplace(key, cache);
+                assetCache_.emplace(assetKey, cache);
             }
         }
         if (handle == nullptr) {
@@ -809,7 +833,7 @@ void FractureSystem::UpdateImpl(World& world, float dt, const std::vector<ShapeI
             continue;
         }
 
-        const double avgNeighborArea = assetCache_.find(key)->second.avgNeighborArea;
+        const double avgNeighborArea = assetCache_.find(assetKey)->second.avgNeighborArea;
 
         // 割れた後の後始末 (ProcessAfterBreak) の起点値。ProcessRoot が今回新しく昇格させる
         // リーダーはこの時点でまだ releaseTicks==-1 なので含まれない (ProcessAfterBreak 内で

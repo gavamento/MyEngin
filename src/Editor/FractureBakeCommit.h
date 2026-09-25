@@ -19,7 +19,8 @@ class UndoStack;
 
 // BakeFracture が成功させた結果 (request/result とも result.success==true が前提。失敗/拒否は
 // 呼ばない — 理由表示は呼び出し側の仕事) を確定させる:
-//   1. assets\Fracture\<root の名前>_<seed>_<pieceCount>.mfrac へ書き出す (同名は上書き)
+//   1. assets\Fracture\<root の名前>_<焼きの入力の16hex>.mfrac へ書き出す
+//      (入力が同じなら同じファイルを指す。既存パスは上書きし、読み込み済みなら読み直す)
 //   2. AssetDatabase の .meta を確定させてから FractureLibrary へ登録する
 //      (先に確定させないと登録名が path-hash に落ち、ファイル移動だけで参照が壊れる)
 //   3. root の Destructible.fractureAsset を書き換え、BuildFracturePieces で子を組み直す —

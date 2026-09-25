@@ -44,6 +44,7 @@
 #include "Engine/Engine/Audio/SynthCore.h"  // WriteWavToFile (Export WAV)
 #include "Engine/Engine/EntityNaming.h"
 #include "Engine/Engine/FractureBuilder.h" // M80i: BuildFracturePieces / CountFracturePieceChildren
+#include "Engine/Engine/FractureSystem.h" // ResolveFractureAsset / FracturePieceIndicesMatchAsset の共有
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Modal/ModalSoundLibrary.h" // 状態 (Missing/Baking/Ready/Failed/NoModel)
 #include "Engine/Engine/Parts.h"
@@ -1340,10 +1341,14 @@ void InspectorWindow::DrawDestructibleNotes(EngineContext& ctx, Selection& selec
         if (comp->fractureAsset.IsNull()) {
             ImGui::TextUnformatted(Tr(StrId::Insp_FractureStateNone));
         } else {
-            FractureLibrary* lib = fracturelib::Library();
-            const FractureAssetHandle* handle = lib ? lib->FindByAssetId(comp->fractureAsset) : nullptr;
-            const int childCount = CountFracturePieceChildren(world, e);
-            if (handle == nullptr || childCount != static_cast<int>(handle->pieces.size())) {
+            // 解決は FractureSystem と共有 (FindByAssetId だけを直接呼ぶと、GUID→パス経由が
+            // 要るファイル資産を一生見つけられない)
+            const FractureAssetHandle* handle = ResolveFractureAsset(comp->fractureAsset);
+            // 判定も FractureSystem::Update と共有: broken 後は割れた塊がルートの親の下へ
+            // 移るため、直子の数だけを見ると誤って「一致していません」になる
+            const bool piecesMatch
+                = handle != nullptr && DestructiblePiecesMatchAsset(world, e, *handle, comp->broken);
+            if (!piecesMatch) {
                 ImGui::TextColored(themeColor::Error, "%s", Tr(StrId::Insp_FractureMismatch));
             } else {
                 ImGui::Text(Tr(StrId::Insp_FractureStateReady), static_cast<int>(handle->pieces.size()),

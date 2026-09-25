@@ -24,6 +24,11 @@ namespace mye {
 inline constexpr int32_t kMaxFracturePieces = 256;
 inline constexpr int32_t kMaxFractureNeighbors = 32;
 
+// 焼き方式の版。BakeFracture の出力が変わる変更 (アルゴリズム・丸め・順序) をしたら上げる。
+// `.mfrac` の保存名 (内容ハッシュ) に混ぜ込み、同じソース入力でも版が違えば別ファイルとして
+// 保存させる — 上げ忘れは FractureLibrary::ReloadFromFile が保険になる
+inline constexpr uint32_t kFractureBakeVersion = 1;
+
 // 破片 i の隣接 1 本 (相手 index、面積)
 struct FractureNeighbor {
     int32_t pieceIndex = 0;

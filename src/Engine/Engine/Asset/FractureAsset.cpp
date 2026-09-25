@@ -5,6 +5,7 @@
 //====================================================================================
 #include "Engine/Engine/Asset/FractureAsset.h"
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -135,6 +136,40 @@ bool Deserialize(const std::vector<uint8_t>& in, FractureData& out)
     }
     if (!r.Ok() || r.Remaining() != 0) {
         return false; // 余りがある = 別形式/継ぎ足し。丸ごと捨てる
+    }
+
+    // 境界検査: 一部のバイトだけ壊れたファイルが、範囲外 index のまま通ってしまわないように
+    // 外側/蓋の頂点 index、隣接先の破片 index (範囲内・自分自身でない)、隣接の対称性
+    // (i→j があれば j→i) を見る
+    for (size_t i = 0; i < out.pieces.size(); ++i) {
+        const PieceRecord& p = out.pieces[i];
+        for (uint32_t idx : p.outerIndices) {
+            if (idx >= p.outerVerts.size()) {
+                return false;
+            }
+        }
+        for (uint32_t idx : p.capIndices) {
+            if (idx >= p.capVerts.size()) {
+                return false;
+            }
+        }
+        for (const NeighborRecord& n : p.neighbors) {
+            if (n.pieceIndex < 0 || static_cast<size_t>(n.pieceIndex) >= out.pieces.size()
+                || static_cast<size_t>(n.pieceIndex) == i) {
+                return false;
+            }
+        }
+    }
+    for (size_t i = 0; i < out.pieces.size(); ++i) {
+        for (const NeighborRecord& n : out.pieces[i].neighbors) {
+            const std::vector<NeighborRecord>& back = out.pieces[static_cast<size_t>(n.pieceIndex)].neighbors;
+            const bool hasBack = std::any_of(back.begin(), back.end(), [i](const NeighborRecord& nb) {
+                return static_cast<size_t>(nb.pieceIndex) == i;
+            });
+            if (!hasBack) {
+                return false;
+            }
+        }
     }
     return true;
 }

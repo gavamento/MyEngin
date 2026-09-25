@@ -87,12 +87,19 @@ const FractureAssetHandle* FractureLibrary::LoadFromFile(const std::wstring& pat
     if (failedPaths_.count(path) != 0) {
         return nullptr; // 既に ERROR 済み (同じ壊れた資産へ毎回スパムしない)
     }
+    return ReloadFromFile(path);
+}
+
+const FractureAssetHandle* FractureLibrary::ReloadFromFile(const std::wstring& path)
+{
+    const std::string prefix = assetkey::SubAssetKeyPrefix(path);
     FractureAsset::FractureData data;
     if (!FractureAsset::Load(path, data)) {
         MYE_LOG_ERROR("[fracture] failed to load .mfrac: %s", WideToUtf8(path).c_str());
         failedPaths_.insert(path);
         return nullptr;
     }
+    failedPaths_.erase(path); // 前回失敗していても読み直せたので抑止を解く
     return RegisterInternal(prefix, std::move(data));
 }
 
