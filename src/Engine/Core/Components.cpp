@@ -1262,7 +1262,9 @@ void RegisterBuiltinComponents()
         MYE_JP("割れた後の挙動",
                MYE_FIELD_TIP(DestructibleComponent, afterBreak, Int32,
                              "0=keep 1=destroy after N ticks 2=sink then destroy "
-                             "3=shrink then destroy 4=go static once asleep 5=cap oldest debris")),
+                             "3=shrink then destroy 4=go static once asleep (no-op if sleep is "
+                             "disabled: PhysicsEnvironment.sleepDelayTicks<=0 or no environment) "
+                             "5=cap oldest debris")),
         MYE_JP("挙動開始まで (tick)",
                MYE_FIELD_TIP(DestructibleComponent, afterBreakTicks, Int32,
                              "ticks after detaching before afterBreak 1/2/3 starts")),

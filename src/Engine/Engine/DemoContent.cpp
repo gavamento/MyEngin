@@ -4013,6 +4013,10 @@ void BuildFractureShowcaseScene(EngineContext& ctx)
         rb->mass = 8.0f;
         auto* d = box.AddComponent<DestructibleComponent>();
         d->innerMaterial = AssetID{ HashStr("frdemo_inner") };
+        // 実物理のインパルスは複数の子形状 (破片) に分かれて配られるため、既定値 (5000N) では
+        // このデモの衝突では割れない (FractureSelfTest の box8 インパクト検算と同じ理屈)。
+        // 「割れる前/後」の 2 枚を確実に見せるための値
+        d->strength = 200.0f;
         // FractureSystem が実行時にこの Destructible の資産を再解決するための参照
         // (メモリ登録なので guid ではなく登録名の hash と同じ値、ResolveFractureAsset 参照)
         d->fractureAsset = AssetID{ HashStr(prefix) };
@@ -4032,8 +4036,13 @@ void BuildFractureShowcaseScene(EngineContext& ctx)
         mr->material = AssetID{ HashStr("frdemo_wall") };
         auto* rb = wall.AddComponent<RigidbodyComponent>();
         rb->isKinematic = true;
+        // 分かれた破片の質量は「ルートの全質量 × 体積比」で決まる (spec §4.1 破断 5)。既定の
+        // 1.0 のままだと 1 破片が 1kg 未満になり、衝突の運動量がそのまま速度に化けて
+        // 弾け飛んだ破片が一瞬で画面外へ消える (壁らしい重さを与えて見た目を安定させる)
+        rb->mass = 40.0f;
         auto* d = wall.AddComponent<DestructibleComponent>();
         d->innerMaterial = AssetID{ HashStr("frdemo_inner") };
+        d->strength = 200.0f; // 理由は箱と同じ (上のコメント参照)
         d->fractureAsset = AssetID{ HashStr(prefix) };
         if (baked != nullptr) {
             BuildFracturePieces(w, wall.Id(), *baked);

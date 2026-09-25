@@ -40,6 +40,14 @@ struct DestructibleComponent;
 // — 分離済みの破片はルートの親の下へ移った別エンティティの子になるため、検証は毎 tick
 // 階層を見ずに今のワールド状態から行う (spec §2/§4.4)。キャッシュしてよいのは資産
 // (fractureAsset) から一意に決まる値 (解決したハンドル、資産全体の隣接面積の平均) だけ。
+//
+// 割れた後の後始末 (M80h、spec §4.1「割れた後」): 分かれた塊のリーダー (FracturePieceComponent.
+// releaseTicks >= 0) ごとに releaseTicks を毎 tick +1 し、Destructible.afterBreak (0..5) に
+// 従って Destroy / Collider.mask クリア / scale 縮小 / Rigidbody 除去 / 上限超過削除を行う。
+// **今回新しく分かれたリーダー (releaseTicks が今 tick に 0 になったもの) は対象外** — その
+// 塊の階層 (メンバーの再親付け) はまだ tick 末のコマンドバッファに積まれただけで、
+// World::GetParent 経由の走査に反映されるのは ApplyStructuralChanges の後。判定を次 tick から
+// 始めることで、常に階層が揃った状態の塊だけを辿る。
 class FractureSystem {
 public:
     void Update(World& world, float dt, const std::vector<ShapeImpulse>& shapeImpulses);

@@ -14,6 +14,7 @@
 
 #include "Engine/Core/AssetGuidResolver.h"
 #include "Engine/Core/Components.h"
+#include "Engine/Core/HierarchyWalk.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
 #include "Engine/Engine/Physics/FractureLibrary.h"
@@ -483,6 +484,121 @@ void ProcessRoot(World& world, EntityID root, DestructibleComponent& dc, const F
     }
 }
 
+// afterBreak=3 (縮んで消える) の scale 下限。0 まで落とすと零体積・0 除算の芽になるため
+// 消える直前の tick まで正の値を保つ (spec §4.1 破断の「最終 tick の直前で最小値を下限」)
+constexpr float kMinFractureFadeScale = 1e-3f;
+
+// 割れた後の後始末 (spec §4.1「割れた後」)。myPieces はこの root の全破片 (ProcessRoot 呼び出し
+// 前後でエンティティそのものは変わらない)。preTickLeaders は ProcessRoot を呼ぶ**前**に集めた
+// 「既にリーダーだった破片とその releaseTicks」— 今回 ProcessRoot が新しく昇格させたリーダーは
+// 含まれない (その時点ではまだ releaseTicks==-1 だったため)。
+//
+// 新規リーダーの releaseTicks は ProcessRoot が既に 0 を書いているのでここでは増やさない
+// (spec 「分かれた tick は 0」)。**その新規リーダーへの afterBreak 判定も次 tick から行う** —
+// 昇格に伴う SetParent はまだ tick 末のコマンドバッファに積まれただけで、World::GetParent /
+// ForEachInSubtree が辿れる階層に反映されるのは ApplyStructuralChanges の後。今 tick のうちに
+// 塊の Collider を辿ると、まだ親付けが効いていないメンバーを取りこぼす (afterBreak=2 の mask
+// クリアが一部の破片だけに当たる、という黙った壊れ方になる)。上限判定 (5) の頭数だけは
+// 新規リーダーも含めて数える (Destroy は塊のどのメンバーがまだ親付け前でも、コマンドの
+// 適用順序 [ProcessRoot の SetParent → ここで積む Destroy] で辿り漏れなく壊せるため)
+void ProcessAfterBreak(World& world, DestructibleComponent& dc, const std::vector<PieceEntry>& myPieces,
+                       const std::vector<std::pair<EntityID, int32_t>>& preTickLeaders)
+{
+    for (const auto& entry : preTickLeaders) {
+        if (auto* fp = world.GetComponent<FracturePieceComponent>(entry.first)) {
+            fp->releaseTicks = entry.second + 1;
+        }
+    }
+
+    struct Leader {
+        EntityID entity;
+        int32_t releaseTicks;
+    };
+    std::vector<Leader> leaders;
+    for (const PieceEntry& p : myPieces) {
+        if (const auto* fp = world.GetComponent<FracturePieceComponent>(p.entity)) {
+            if (fp->releaseTicks >= 0) {
+                leaders.push_back({ p.entity, fp->releaseTicks });
+            }
+        }
+    }
+
+    for (const Leader& l : leaders) {
+        if (l.releaseTicks == 0) {
+            continue; // 今回分かれたばかり。判定は次 tick から (上のコメント参照)
+        }
+        switch (dc.afterBreak) {
+        case 1: // N tick 後に消える
+            if (l.releaseTicks >= dc.afterBreakTicks) {
+                world.DestroyEntity(l.entity);
+            }
+            break;
+        case 2: { // 沈んで消える: afterBreakTicks で mask=0 (一度だけ)、+fadeTicks で Destroy
+            auto* fp = world.GetComponent<FracturePieceComponent>(l.entity);
+            if (fp != nullptr && fp->phase == 0 && l.releaseTicks >= dc.afterBreakTicks) {
+                fp->phase = 1;
+                ForEachInSubtree(world, l.entity, [&](EntityID e, uint32_t) {
+                    if (auto* col = world.GetComponent<ColliderComponent>(e)) {
+                        col->mask = 0;
+                    }
+                    return WalkStep::Continue;
+                });
+            }
+            if (l.releaseTicks >= dc.afterBreakTicks + dc.fadeTicks) {
+                world.DestroyEntity(l.entity);
+            }
+            break;
+        }
+        case 3: { // 縮んで消える: afterBreakTicks から fadeTicks かけて scale を線形に 0 へ
+            if (l.releaseTicks >= dc.afterBreakTicks) {
+                if (auto* fp = world.GetComponent<FracturePieceComponent>(l.entity)) {
+                    fp->phase = 1;
+                }
+                if (auto* lt = world.GetComponent<LocalTransform>(l.entity)) {
+                    const int32_t fade = (std::max)(dc.fadeTicks, 0);
+                    const float t = fade > 0
+                        ? std::clamp(static_cast<float>(l.releaseTicks - dc.afterBreakTicks)
+                                         / static_cast<float>(fade), 0.0f, 1.0f)
+                        : 1.0f;
+                    const float scale = (std::max)(1.0f - t, kMinFractureFadeScale);
+                    lt->scale = { scale, scale, scale };
+                }
+            }
+            if (l.releaseTicks >= dc.afterBreakTicks + dc.fadeTicks) {
+                world.DestroyEntity(l.entity);
+            }
+            break;
+        }
+        case 4: // 静止したら静的化: リーダー自身の Rigidbody を外す (塊は静的形状として残る)
+            if (auto* rb = world.GetComponent<RigidbodyComponent>(l.entity)) {
+                if (rb->isSleeping) {
+                    world.RemoveComponent<RigidbodyComponent>(l.entity);
+                }
+            }
+            break;
+        default:
+            break;
+        }
+    }
+
+    if (dc.afterBreak == 5) {
+        // 上限超過で古い順に消す。今回分かれたばかりのリーダーも頭数には数える
+        const size_t cap = static_cast<size_t>((std::max)(dc.maxDebris, 0));
+        if (leaders.size() > cap) {
+            std::sort(leaders.begin(), leaders.end(), [](const Leader& a, const Leader& b) {
+                if (a.releaseTicks != b.releaseTicks) {
+                    return a.releaseTicks > b.releaseTicks; // 大きい (古い) 方を先に
+                }
+                return a.entity.index < b.entity.index;
+            });
+            const size_t excess = leaders.size() - cap;
+            for (size_t i = 0; i < excess; ++i) {
+                world.DestroyEntity(leaders[i].entity);
+            }
+        }
+    }
+}
+
 // 今のワールド状態 (myPieces = fp->root==root な全破片。呼び出し側が階層を見ずに集めたもの) が
 // 資産と整合するか。**階層は一切見ない** — 分離済みの破片はルートの親の下へ移った別エンティティ
 // の子になっているため、階層を辿ると割れた後の破片を見失う。
@@ -628,7 +744,21 @@ void FractureSystem::UpdateImpl(World& world, float dt, const std::vector<ShapeI
         }
 
         const double avgNeighborArea = assetCache_.find(key)->second.avgNeighborArea;
+
+        // 割れた後の後始末 (ProcessAfterBreak) の起点値。ProcessRoot が今回新しく昇格させる
+        // リーダーはこの時点でまだ releaseTicks==-1 なので含まれない (ProcessAfterBreak 内で
+        // 判定を次 tick から始める根拠)
+        std::vector<std::pair<EntityID, int32_t>> preTickLeaders;
+        for (const PieceEntry& p : myPieces) {
+            if (const auto* fp = world.GetComponent<FracturePieceComponent>(p.entity)) {
+                if (fp->releaseTicks >= 0) {
+                    preTickLeaders.emplace_back(p.entity, fp->releaseTicks);
+                }
+            }
+        }
+
         ProcessRoot(world, job.root, *job.dc, *handle, avgNeighborArea, myPieces, shapeImpulses, dt);
+        ProcessAfterBreak(world, *job.dc, myPieces, preTickLeaders);
     }
 }
 

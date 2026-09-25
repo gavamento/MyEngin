@@ -418,6 +418,49 @@ EntityID FindPieceChild(World& world, EntityID root, int32_t index)
     return kNullEntity;
 }
 
+// afterBreak の各挙動テストの共通下ごしらえ: pieceCount 個の row 資産を焼き、root の端
+// (index 0) だけを切り離してリーダーへ昇格させる (root の残り (count-1 個) の方が体積が
+// 大きいので index 0 側が新規リーダーになる、wall16 (16c) と同じ理屈)。呼び出し側は
+// 戻り値の DestructibleComponent* で afterBreak 系のフィールドを設定してから tick を進める
+struct DetachedLeaderSetup {
+    EntityID root;
+    EntityID leader; // piece index 0
+    DestructibleComponent* dc;
+};
+
+DetachedLeaderSetup SetupDetachedLeader(Scene& s, FractureLibrary& lib, ConvexColliderLibrary& colliders,
+                                        RenderResources& resources, const char* assetKey,
+                                        int32_t pieceCount)
+{
+    colliders.Init(&resources);
+    lib.Init(&resources, &colliders);
+    fracturelib::Install(&lib);
+    convexcol::Install(&colliders);
+    const FractureBakeResult rowBake = MakeRowFractureBake(pieceCount, 0.25f);
+    const FractureAssetHandle* handle = lib.RegisterBaked(
+        assetKey, rowBake, HashStr(std::string(assetKey) + "_src"), 0, pieceCount, 0, 0);
+
+    World& w = s.GetWorld();
+    GameObject root = s.CreateGameObject("Row");
+    root.AddComponent<RigidbodyComponent>();
+    root.AddComponent<DestructibleComponent>();
+    root.GetComponent<RigidbodyComponent>()->mass = static_cast<float>(pieceCount);
+    auto* d = root.GetComponent<DestructibleComponent>();
+    d->strength = 100.0f;
+    d->fractureAsset = AssetID{ HashStr(assetKey) };
+    BuildFracturePieces(w, root.Id(), *handle);
+    w.ApplyStructuralChanges();
+
+    const EntityID leader = FindPieceChild(w, root.Id(), 0);
+    FractureSystem fsys;
+    std::vector<ShapeImpulse> none;
+    ApplyFractureDamage(w, root.Id(), rowBake.pieces[0].origin, 0.0f, 150.0f);
+    fsys.Update(w, 1.0f / 60.0f, none);
+    w.ApplyStructuralChanges();
+
+    return { root.Id(), leader, d };
+}
+
 } // namespace
 
 bool RunFractureSelfTest()
@@ -2104,6 +2147,456 @@ bool RunFractureSelfTest()
                       "fresh FractureSystem instance matches an uninterrupted run byte-for-byte");
             }
             fracturelib::Install(nullptr);
+        }
+    }
+
+    // ---- 17. 割れた後の後始末 6 種 (FractureSystem、M80h) ----
+    {
+        // (17a) afterBreak=0 (残す): 何 tick 進めても消えない。releaseTicks は進み続ける
+        {
+            RenderResources resources;
+            ConvexColliderLibrary colliders;
+            FractureLibrary lib;
+            Scene s;
+            const DetachedLeaderSetup setup
+                = SetupDetachedLeader(s, lib, colliders, resources, "fracture-selftest://afterbreak0", 3);
+            setup.dc->afterBreak = 0;
+            World& w = s.GetWorld();
+            FractureSystem fsys;
+            std::vector<ShapeImpulse> none;
+            for (int i = 0; i < 500; ++i) {
+                fsys.Update(w, 1.0f / 60.0f, none);
+                w.ApplyStructuralChanges();
+            }
+            check(w.IsAlive(setup.leader), "afterBreak=0 (keep): the detached piece is never destroyed");
+            const auto* leaderFp = w.GetComponent<FracturePieceComponent>(setup.leader);
+            check(leaderFp != nullptr && leaderFp->releaseTicks == 500,
+                  "afterBreak=0 (keep): releaseTicks keeps advancing (500 ticks after detaching)");
+            fracturelib::Install(nullptr);
+            convexcol::Install(nullptr);
+        }
+
+        // (17b) afterBreak=1 (N tick 後に消える): releaseTicks が afterBreakTicks に達した
+        // tick ちょうどで Destroy される
+        {
+            RenderResources resources;
+            ConvexColliderLibrary colliders;
+            FractureLibrary lib;
+            Scene s;
+            const DetachedLeaderSetup setup
+                = SetupDetachedLeader(s, lib, colliders, resources, "fracture-selftest://afterbreak1", 3);
+            setup.dc->afterBreak = 1;
+            setup.dc->afterBreakTicks = 5;
+            World& w = s.GetWorld();
+            FractureSystem fsys;
+            std::vector<ShapeImpulse> none;
+            for (int i = 0; i < 4; ++i) {
+                fsys.Update(w, 1.0f / 60.0f, none);
+                w.ApplyStructuralChanges();
+            }
+            check(w.IsAlive(setup.leader),
+                  "afterBreak=1 (destroy after N ticks): still alive one tick before the threshold");
+            fsys.Update(w, 1.0f / 60.0f, none);
+            w.ApplyStructuralChanges();
+            check(!w.IsAlive(setup.leader),
+                  "afterBreak=1 (destroy after N ticks): destroyed exactly on the threshold tick");
+            fracturelib::Install(nullptr);
+            convexcol::Install(nullptr);
+        }
+
+        // (17c) afterBreak=2 (沈んで消える): afterBreakTicks で Collider.mask がクリアされ、
+        // 床をすり抜けて沈み、afterBreakTicks+fadeTicks で Destroy される
+        {
+            RenderResources resources;
+            ConvexColliderLibrary colliders;
+            FractureLibrary lib;
+            Scene s;
+            const DetachedLeaderSetup setup
+                = SetupDetachedLeader(s, lib, colliders, resources, "fracture-selftest://afterbreak2", 3);
+            constexpr int32_t kAfterTicks = 30;
+            constexpr int32_t kFadeTicks = 40;
+            setup.dc->afterBreak = 2;
+            setup.dc->afterBreakTicks = kAfterTicks;
+            setup.dc->fadeTicks = kFadeTicks;
+            World& w = s.GetWorld();
+
+            // leader のすぐ下 (凸包の半径ぶんだけ隙間を詰めた位置) に床を置く
+            const XMFLOAT3 leaderPos = w.GetComponent<LocalTransform>(setup.leader)->position;
+            GameObject floor = s.CreateGameObject("Floor");
+            floor.SetLocalPosition(leaderPos.x, leaderPos.y - 0.3f, leaderPos.z);
+            auto* floorCol = floor.AddComponent<ColliderComponent>();
+            floorCol->shape = collidershape::kBox;
+            floorCol->halfExtents = { 2.0f, 0.1f, 2.0f };
+            w.ApplyStructuralChanges();
+
+            PhysicsSystem phys;
+            FractureSystem fsys;
+            std::vector<ShapeImpulse> impulses;
+            constexpr float kDt = 1.0f / 60.0f;
+            float restY = leaderPos.y;
+            bool aliveBeforeThreshold = false;
+            bool maskClearedAtThreshold = false;
+            bool aliveBeforeFinalDestroy = false;
+            float fallenY = leaderPos.y;
+            bool destroyedAtFinalTick = false;
+            for (int32_t tick = 1; tick <= kAfterTicks + kFadeTicks; ++tick) {
+                phys.Update(w, kDt, nullptr, nullptr, &impulses);
+                fsys.Update(w, kDt, impulses);
+                w.ApplyStructuralChanges();
+
+                if (tick == kAfterTicks - 1) {
+                    aliveBeforeThreshold = w.IsAlive(setup.leader);
+                    restY = w.GetComponent<LocalTransform>(setup.leader)->position.y;
+                }
+                if (tick == kAfterTicks) {
+                    const auto* col = w.GetComponent<ColliderComponent>(setup.leader);
+                    maskClearedAtThreshold = (col != nullptr && col->mask == 0);
+                }
+                if (tick == kAfterTicks + kFadeTicks - 1) {
+                    aliveBeforeFinalDestroy = w.IsAlive(setup.leader);
+                    if (aliveBeforeFinalDestroy) {
+                        fallenY = w.GetComponent<LocalTransform>(setup.leader)->position.y;
+                    }
+                }
+                if (tick == kAfterTicks + kFadeTicks) {
+                    destroyedAtFinalTick = !w.IsAlive(setup.leader);
+                }
+            }
+            check(aliveBeforeThreshold, "afterBreak=2 (sink): still alive one tick before afterBreakTicks");
+            check(restY > leaderPos.y - 0.5f,
+                  "afterBreak=2 (sink): still resting on the floor just before afterBreakTicks");
+            check(maskClearedAtThreshold,
+                  "afterBreak=2 (sink): the collider mask is cleared exactly at afterBreakTicks");
+            check(aliveBeforeFinalDestroy,
+                  "afterBreak=2 (sink): still alive one tick before afterBreakTicks+fadeTicks");
+            check(fallenY < leaderPos.y - 1.0f,
+                  "afterBreak=2 (sink): once the mask is cleared, gravity sinks it well below the floor");
+            check(destroyedAtFinalTick,
+                  "afterBreak=2 (sink): destroyed exactly at afterBreakTicks+fadeTicks");
+            fracturelib::Install(nullptr);
+            convexcol::Install(nullptr);
+        }
+
+        // (17d) afterBreak=3 (縮んで消える): afterBreakTicks から fadeTicks かけて scale が
+        // 線形に下がり、afterBreakTicks+fadeTicks で Destroy される
+        {
+            RenderResources resources;
+            ConvexColliderLibrary colliders;
+            FractureLibrary lib;
+            Scene s;
+            const DetachedLeaderSetup setup
+                = SetupDetachedLeader(s, lib, colliders, resources, "fracture-selftest://afterbreak3", 3);
+            constexpr int32_t kAfterTicks = 10;
+            constexpr int32_t kFadeTicks = 10;
+            setup.dc->afterBreak = 3;
+            setup.dc->afterBreakTicks = kAfterTicks;
+            setup.dc->fadeTicks = kFadeTicks;
+            World& w = s.GetWorld();
+            FractureSystem fsys;
+            std::vector<ShapeImpulse> none;
+
+            for (int i = 0; i < kAfterTicks - 1; ++i) {
+                fsys.Update(w, 1.0f / 60.0f, none);
+                w.ApplyStructuralChanges();
+            }
+            check(w.GetComponent<LocalTransform>(setup.leader)->scale.x == 1.0f,
+                  "afterBreak=3 (shrink): scale is unchanged before afterBreakTicks");
+
+            fsys.Update(w, 1.0f / 60.0f, none); // releaseTicks == afterBreakTicks (t=0)
+            w.ApplyStructuralChanges();
+            check(w.GetComponent<LocalTransform>(setup.leader)->scale.x == 1.0f,
+                  "afterBreak=3 (shrink): scale starts at 1 exactly on afterBreakTicks");
+
+            for (int i = 0; i < kFadeTicks / 2; ++i) { // releaseTicks == afterBreakTicks + fadeTicks/2
+                fsys.Update(w, 1.0f / 60.0f, none);
+                w.ApplyStructuralChanges();
+            }
+            const float scaleHalf = w.GetComponent<LocalTransform>(setup.leader)->scale.x;
+            check(scaleHalf > 0.4f && scaleHalf < 0.6f,
+                  "afterBreak=3 (shrink): scale is roughly halfway down midway through fadeTicks");
+
+            for (int i = 0; i < kFadeTicks / 2 - 1; ++i) { // releaseTicks == afterBreakTicks+fadeTicks-1
+                fsys.Update(w, 1.0f / 60.0f, none);
+                w.ApplyStructuralChanges();
+            }
+            check(w.IsAlive(setup.leader),
+                  "afterBreak=3 (shrink): still alive one tick before afterBreakTicks+fadeTicks");
+
+            fsys.Update(w, 1.0f / 60.0f, none); // releaseTicks == afterBreakTicks + fadeTicks
+            w.ApplyStructuralChanges();
+            check(!w.IsAlive(setup.leader),
+                  "afterBreak=3 (shrink): destroyed exactly at afterBreakTicks+fadeTicks");
+            fracturelib::Install(nullptr);
+            convexcol::Install(nullptr);
+        }
+
+        // (17e) afterBreak=4 (静止したら静的化): isSleeping になった tick に Rigidbody が
+        // 外れ、Collider は残って静的形状として当たる
+        {
+            RenderResources resources;
+            ConvexColliderLibrary colliders;
+            FractureLibrary lib;
+            Scene s;
+            const DetachedLeaderSetup setup
+                = SetupDetachedLeader(s, lib, colliders, resources, "fracture-selftest://afterbreak4", 3);
+            setup.dc->afterBreak = 4;
+            World& w = s.GetWorld();
+            FractureSystem fsys;
+            std::vector<ShapeImpulse> none;
+
+            fsys.Update(w, 1.0f / 60.0f, none);
+            w.ApplyStructuralChanges();
+            check(w.GetComponent<RigidbodyComponent>(setup.leader) != nullptr,
+                  "afterBreak=4 (static once asleep): the leader still has a Rigidbody while awake");
+
+            // 実際にスリープへ落ちるまで待つ代わりに、物理が決めた isSleeping そのものを直接
+            // 立てる (FractureSystem はこのフラグを読むだけで、眠りの判定自体は関知しない)
+            w.GetComponent<RigidbodyComponent>(setup.leader)->isSleeping = true;
+            fsys.Update(w, 1.0f / 60.0f, none);
+            w.ApplyStructuralChanges();
+            check(w.GetComponent<RigidbodyComponent>(setup.leader) == nullptr,
+                  "afterBreak=4 (static once asleep): the Rigidbody is removed once isSleeping becomes true");
+            check(w.GetComponent<ColliderComponent>(setup.leader) != nullptr,
+                  "afterBreak=4 (static once asleep): the piece's Collider remains (now a static shape)");
+            fracturelib::Install(nullptr);
+            convexcol::Install(nullptr);
+        }
+
+        // (17f) afterBreak=5 (上限超過で古い順に消す): 2 つ目の塊が分かれて maxDebris を
+        // 超えたら、古い方 (releaseTicks が大きい方) が消える
+        {
+            RenderResources resources;
+            ConvexColliderLibrary colliders;
+            FractureLibrary lib;
+            colliders.Init(&resources);
+            lib.Init(&resources, &colliders);
+            fracturelib::Install(&lib);
+
+            constexpr int32_t kCount = 5;
+            const FractureBakeResult rowBake = MakeRowFractureBake(kCount, 0.25f);
+            const FractureAssetHandle* handle = lib.RegisterBaked(
+                "fracture-selftest://afterbreak5", rowBake, HashStr("fracture-selftest://afterbreak5_src"), 0,
+                kCount, 0, 0);
+
+            Scene s;
+            World& w = s.GetWorld();
+            GameObject root = s.CreateGameObject("Row5");
+            root.AddComponent<RigidbodyComponent>();
+            root.AddComponent<DestructibleComponent>();
+            root.GetComponent<RigidbodyComponent>()->mass = static_cast<float>(kCount);
+            auto* d = root.GetComponent<DestructibleComponent>();
+            d->strength = 100.0f;
+            d->afterBreak = 5;
+            d->maxDebris = 1;
+            d->fractureAsset = AssetID{ HashStr("fracture-selftest://afterbreak5") };
+            BuildFracturePieces(w, root.Id(), *handle);
+            w.ApplyStructuralChanges();
+
+            const EntityID piece0 = FindPieceChild(w, root.Id(), 0);
+            const EntityID piece4 = FindPieceChild(w, root.Id(), kCount - 1);
+
+            FractureSystem fsys;
+            std::vector<ShapeImpulse> none;
+
+            // 端 (piece 0) を先に切り離す (releaseTicks が先に進み始める = 後で「古い」側になる)
+            ApplyFractureDamage(w, root.Id(), rowBake.pieces[0].origin, 0.0f, 150.0f);
+            fsys.Update(w, 1.0f / 60.0f, none);
+            w.ApplyStructuralChanges();
+            check(w.GetComponent<RigidbodyComponent>(piece0) != nullptr,
+                  "afterBreak=5 (cap oldest debris): the first detached piece becomes a leader");
+
+            for (int i = 0; i < 5; ++i) { // releaseTicks に差をつける
+                fsys.Update(w, 1.0f / 60.0f, none);
+                w.ApplyStructuralChanges();
+            }
+            check(w.IsAlive(piece0), "afterBreak=5 (cap oldest debris): still within the cap while alone");
+
+            // 反対側の端 (piece 4) を切り離す。塊が 2 つになり maxDebris=1 を超える
+            ApplyFractureDamage(w, root.Id(), rowBake.pieces[kCount - 1].origin, 0.0f, 150.0f);
+            fsys.Update(w, 1.0f / 60.0f, none);
+            w.ApplyStructuralChanges();
+
+            check(!w.IsAlive(piece0),
+                  "afterBreak=5 (cap oldest debris): exceeding maxDebris destroys the older chunk");
+            check(w.IsAlive(piece4),
+                  "afterBreak=5 (cap oldest debris): the newly detached (younger) chunk survives");
+            fracturelib::Install(nullptr);
+        }
+
+        // (17g) 決定論: 沈む/縮む の挙動を混在させた 2 つの Destructible を同じシーンに置き、
+        // 120 tick のハッシュ列が 2 回の独立実行で一致する
+        {
+            constexpr int32_t kCount = 3;
+            const FractureBakeResult rowBake = MakeRowFractureBake(kCount, 0.25f);
+
+            auto buildScene = [&](Scene& s, FractureLibrary& lib, ConvexColliderLibrary& colliders,
+                                  RenderResources& resources, const char* prefix) {
+                colliders.Init(&resources);
+                lib.Init(&resources, &colliders);
+                fracturelib::Install(&lib);
+                convexcol::Install(&colliders);
+                const FractureAssetHandle* handle = lib.RegisterBaked(
+                    prefix, rowBake, HashStr(std::string(prefix) + "_src"), 0, kCount, 0, 0);
+
+                World& w = s.GetWorld();
+                std::vector<EntityID> roots;
+                for (int32_t k = 0; k < 2; ++k) {
+                    char name[32];
+                    std::snprintf(name, sizeof(name), "Row%d", k);
+                    GameObject root = s.CreateGameObject(name);
+                    root.SetLocalPosition(static_cast<float>(k) * 4.0f, 0.0f, 0.0f);
+                    root.AddComponent<RigidbodyComponent>();
+                    root.AddComponent<DestructibleComponent>();
+                    auto* rb = root.GetComponent<RigidbodyComponent>();
+                    rb->mass = static_cast<float>(kCount);
+                    rb->gravityScale = 0.0f; // 落下と混ぜず after-break の帳簿だけを検算する
+                    auto* d = root.GetComponent<DestructibleComponent>();
+                    d->strength = 100.0f;
+                    d->fractureAsset = AssetID{ HashStr(prefix) };
+                    d->afterBreak = (k == 0) ? 2 : 3; // 沈む / 縮む を混在させる
+                    d->afterBreakTicks = 20;
+                    d->fadeTicks = 20;
+                    BuildFracturePieces(w, root.Id(), *handle);
+                    roots.push_back(root.Id());
+                }
+                w.ApplyStructuralChanges();
+                return roots;
+            };
+
+            auto runAndHash = [&](std::vector<uint64_t>& outHashes) {
+                RenderResources resources;
+                ConvexColliderLibrary colliders;
+                FractureLibrary lib;
+                Scene s;
+                const std::vector<EntityID> roots
+                    = buildScene(s, lib, colliders, resources, "fracture-selftest://afterbreak_det");
+                World& w = s.GetWorld();
+
+                ApplyFractureDamage(w, roots[0], rowBake.pieces[0].origin, 0.0f, 150.0f);
+                XMFLOAT3 p1 = rowBake.pieces[0].origin;
+                p1.x += 4.0f; // roots[1] の world 位置ぶんを足す (ApplyFractureDamage は world 座標)
+                ApplyFractureDamage(w, roots[1], p1, 0.0f, 150.0f);
+
+                PhysicsSystem phys;
+                FractureSystem fsys;
+                std::vector<ShapeImpulse> impulses;
+                constexpr float kDt = 1.0f / 60.0f;
+                outHashes.clear();
+                for (int i = 0; i < 120; ++i) {
+                    phys.Update(w, kDt, nullptr, nullptr, &impulses);
+                    fsys.Update(w, kDt, impulses);
+                    w.ApplyStructuralChanges();
+                    outHashes.push_back(HashWorld(w));
+                }
+                fracturelib::Install(nullptr);
+                convexcol::Install(nullptr);
+            };
+
+            std::vector<uint64_t> hashesA, hashesB;
+            runAndHash(hashesA);
+            runAndHash(hashesB);
+            check(hashesA.size() == 120 && hashesB.size() == 120,
+                  "afterBreak determinism: mixed sink/shrink run produced 120 ticks");
+            bool allMatch = hashesA.size() == hashesB.size();
+            for (size_t i = 0; allMatch && i < hashesA.size(); ++i) {
+                if (hashesA[i] != hashesB[i]) {
+                    allMatch = false;
+                    MYE_LOG_ERROR("    (afterBreak determinism mismatch at tick %zu: 0x%016llX vs 0x%016llX)", i,
+                                 static_cast<unsigned long long>(hashesA[i]),
+                                 static_cast<unsigned long long>(hashesB[i]));
+                }
+            }
+            check(allMatch, "afterBreak determinism: two independent runs with mixed after-break behaviors "
+                  "produce byte-identical hash sequences over 120 ticks");
+        }
+    }
+
+    // ---- 18. kinematic ルートから分かれた破片の速さの上限 (物理的な妥当性の固定検査) ----
+    // 静止した kinematic に球がぶつかって破片が分かれるとき、反発係数が最大 1 でも破片が
+    // 受け取れる速さは衝突直前の球の速さの高々 2 倍 (静止した的が完全弾性衝突で跳ね返す上限)。
+    // これを大きく超えるなら、分離速度の計算のどこかで質量に依存しない量 (接触インパルス
+    // そのものなど) を誤って速度として使っている
+    {
+        RenderResources resources;
+        ConvexColliderLibrary colliders;
+        FractureLibrary lib;
+        colliders.Init(&resources);
+        lib.Init(&resources, &colliders);
+        fracturelib::Install(&lib);
+        convexcol::Install(&colliders);
+
+        FractureBakeInput in;
+        in.sourceMesh = MakeBox(0.5f, 0.5f, 0.5f);
+        in.seed = 2;
+        in.pieceCount = 12;
+        FractureBakeResult bake;
+        const bool baked = BakeFracture(in, bake);
+        check(baked && bake.success, "fracture system: wall12 bake for the speed-bound check succeeds");
+        if (baked && bake.success) {
+            const FractureAssetHandle* handle = lib.RegisterBaked(
+                "fracture-selftest://speedbound_wall12", bake, HashStr("fracture-selftest://speedbound_wall12_src"),
+                in.seed, in.pieceCount, 0, 32);
+
+            Scene s;
+            World& w = s.GetWorld();
+            GameObject wall = s.CreateGameObject("Wall");
+            wall.AddComponent<RigidbodyComponent>()->isKinematic = true;
+            auto* d = wall.AddComponent<DestructibleComponent>();
+            d->strength = 200.0f;
+            d->fractureAsset = AssetID{ HashStr("fracture-selftest://speedbound_wall12") };
+            BuildFracturePieces(w, wall.Id(), *handle);
+
+            constexpr float kBallSpeed = 30.0f;
+            GameObject ball = s.CreateGameObject("Ball");
+            ball.SetLocalPosition(-5.0f, 0.0f, 0.0f);
+            auto* bcol = ball.AddComponent<ColliderComponent>();
+            bcol->shape = collidershape::kSphere;
+            bcol->radius = 0.5f;
+            auto* brb = ball.AddComponent<RigidbodyComponent>();
+            brb->mass = 20.0f;
+            brb->gravityScale = 0.0f;
+            brb->velocity = { kBallSpeed, 0.0f, 0.0f };
+            w.ApplyStructuralChanges();
+            const EntityID wallId = wall.Id();
+            std::vector<EntityID> pieceOf(12, kNullEntity);
+            for (int32_t i = 0; i < 12; ++i) {
+                pieceOf[static_cast<size_t>(i)] = FindPieceChild(w, wallId, i);
+            }
+
+            PhysicsSystem phys;
+            FractureSystem fsys;
+            std::vector<ShapeImpulse> impulses;
+            constexpr float kDt = 1.0f / 60.0f;
+            float maxDetachedSpeed = 0.0f;
+            for (int32_t tick = 0; tick < 30; ++tick) {
+                phys.Update(w, kDt, nullptr, nullptr, &impulses);
+                fsys.Update(w, kDt, impulses);
+                w.ApplyStructuralChanges();
+                for (int32_t i = 0; i < 12; ++i) {
+                    const EntityID pe = pieceOf[static_cast<size_t>(i)];
+                    if (pe.IsNull() || !w.IsAlive(pe)) {
+                        continue;
+                    }
+                    if (const auto* prb = w.GetComponent<RigidbodyComponent>(pe)) {
+                        const float sp = std::sqrt(prb->velocity.x * prb->velocity.x
+                                                   + prb->velocity.y * prb->velocity.y
+                                                   + prb->velocity.z * prb->velocity.z);
+                        maxDetachedSpeed = (std::max)(maxDetachedSpeed, sp);
+                    }
+                }
+            }
+            const auto* dAfter = w.GetComponent<DestructibleComponent>(wallId);
+            check(dAfter != nullptr && dAfter->detachedCount > 0,
+                  "fracture system: the speed-bound check actually detaches a piece");
+            char buf[192];
+            std::snprintf(buf, sizeof(buf),
+                          "fracture system: a piece detached from a struck kinematic wall never exceeds 2x "
+                          "the ball's speed (%.3f <= %.3f)",
+                          static_cast<double>(maxDetachedSpeed), static_cast<double>(kBallSpeed * 2.0f * 1.05f));
+            check(maxDetachedSpeed <= kBallSpeed * 2.0f * 1.05f, buf);
+
+            fracturelib::Install(nullptr);
+            convexcol::Install(nullptr);
         }
     }
 

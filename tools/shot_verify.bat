@@ -110,7 +110,7 @@ if exist %UI_SCENE% del /q %UI_SCENE%
 set FAILED=0
 set SHOTS=0
 
-rem ---- 25 枚。うち 10 枚が tol=0 のローカル限定 (上の tol 一覧)。枚数と順番は下の call :shot が正本 ----
+rem ---- 27 枚。うち 10 枚が tol=0 のローカル限定 (上の tol 一覧)。枚数と順番は下の call :shot が正本 ----
 rem ★**--rt-demo (コーネル箱) は** WARP では重すぎるので golden にしない (ローカル任意)。
 rem   ただし **--render-demo に --rt-refl / --rt-gi を足す 20〜22 枚目は別物** で、
 rem   1 枚 11 s・同一バイナリで 2 回撮って maxDiff=0 (M67a 実測)。
@@ -400,6 +400,18 @@ rem   tol=3 の CI 判定に載せる — 23/24 枚目と
 rem   同じく不透明クアッドと内蔵フォントの貼り付けだけで、分岐で増幅する演算が無い
 call :shot ui_widgets --ui-demo
 
+rem ---- 26/27 枚目 (M80h): 破壊ショーケース。壊れる前 (frame 3、既定の撮り方) と、
+rem      割れて破片が飛び散った後 (frame 120、physics/joints/fog/particle/acoustic と同じ
+rem      理由で 2 秒ぶん進める) の 2 枚。破断の閾値判定は SSR/RT の hit/miss のような
+rem      1 ULP で反転する分岐ではなく接触インパルスの大小比較なので、tol=3 の CI 判定に載せる。
+rem ★保存済みが残っているとロード経路に落ちるので撮影前に消す (physics 等と同じ)
+set FRACTURE_SCENE=cache\fracture_showcase.scene.json
+if exist %FRACTURE_SCENE% del /q %FRACTURE_SCENE%
+call :shot fracture_before --fracture-demo
+set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 123 --shot-frame 120 --no-fxaa
+call :shot fracture_after --fracture-demo
+set SHOT=%SHOTBASE% --no-fxaa
+
 echo.
 if %UPDATE%==1 (
     echo [shot_verify] golden updated in %GOLDEN% - review the images before committing
@@ -412,9 +424,9 @@ if not %FAILED%==0 (
     exit /b 1
 )
 if defined MYE_SHOT_SKIP_FXAA (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints/fog/particle/acoustic at frame 120^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints/fog/particle/acoustic/fracture_after at frame 120^)
 ) else (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints/fog/particle/acoustic at frame 120 + rtrefl_restir at frame 40 + fxaa/taa/ssr/froxel/fog/particle/rt at tol=0^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints/fog/particle/acoustic/fracture_after at frame 120 + rtrefl_restir at frame 40 + fxaa/taa/ssr/froxel/fog/particle/rt at tol=0^)
 )
 exit /b 0
 
