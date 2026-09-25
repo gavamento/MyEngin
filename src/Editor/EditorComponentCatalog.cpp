@@ -58,6 +58,9 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "AeroSurface", { ICON_FA_PAPER_PLANE, "Physics", "翼面" } },
         // M60a: 関節。**動かしたい側 (子側) に付ける** 1 エンティティ 1 個の規約
         { "Joint", { ICON_FA_ARROWS_SPIN, "Physics", "ジョイント" } },
+        // M80f: 破壊のルート (Add Component からは直接付ける想定。破片は生成関数が作る)
+        { "Destructible", { ICON_FA_EXPLOSION, "Physics", "破壊可能" } },
+        { "FracturePiece", { ICON_FA_PUZZLE_PIECE, "Physics", "破片" } },
         // Animation
         { "Animator", { ICON_FA_FILM, "Animation", "アニメーター" } },
         { "AnimatorController", { ICON_FA_CIRCLE_NODES, "Animation", "アニメーターコントローラー" } },

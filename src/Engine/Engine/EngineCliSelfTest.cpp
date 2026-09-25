@@ -318,6 +318,11 @@ bool RunEngineCliSelfTest()
     check(flowDemo != nullptr && flowDemo->prepare != nullptr && flowDemo->build == nullptr,
           "--flow-demo prepares its scene files instead of building a scene");
     check(FindShowcase(L"--frames", true) == nullptr, "shared flags are not demos");
+    // M80f: --fracture-demo は Runtime にも提供され、cache\ 側へ保存する (physics-demo と同じ扱い)
+    const ShowcaseDef* fractureDemo = FindShowcase(L"--fracture-demo", true);
+    check(fractureDemo != nullptr && FindShowcase(L"--fracture-demo", false) == fractureDemo
+              && ShowcaseScenePath(*fractureDemo, L"c:\\p\\assets") == L"cache\\fracture_showcase.scene.json",
+          "--fracture-demo is offered to the Runtime and saves under cache");
 
     MYE_LOG_INFO("Engine CLI self test: %s (%d failure(s))", failCount == 0 ? "OK" : "FAILED", failCount);
     return failCount == 0;

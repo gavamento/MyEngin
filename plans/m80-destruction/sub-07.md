@@ -18,6 +18,8 @@ spec §4.1「破断」の 1〜7 (イベント発行の 8 は sub-12) を Fractur
 8. **デモ**: `--fracture-demo` に、決まった tick に発射される弾 (決定的な初速の球) を足し、動的な箱と kinematic の壁が割れるようにする。replay_verify の `fracture` job で一致すること
 9. 無効な Destructible (sub-06 の整合確認) と破片 1 つの Destructible は何もしない
 
+10. **(sub-06 からの申し送り)** `RenderSystem::CollectDrawables` の root proxy 規則で、`fp->root` の `DestructibleComponent` が見つからない (`d == nullptr`、ルートが Destroy された / 参照切れ) ときに破片と `_cap` を**隠している**のを、**描く**側へ変える (隠す対象が無いので proxy の意味が無い)。分離後にスクリプトやゲームがルートを消すと、破片が全部消える不具合になる。SelfTest で「割れた後にルートを Destroy しても、分かれた破片は描画 item に残る」を固定する
+
 ## やらないこと (このサブでは)
 
 - 割れた後の挙動 (sub-08)、`onBreak` と ABI (sub-12)、スキン (sub-10)

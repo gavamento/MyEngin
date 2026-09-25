@@ -1241,6 +1241,54 @@ void RegisterBuiltinComponents()
         // WorldHash / スナップショットに入るので、2 回目の Play・巻き戻し・分岐実行で位相が揃う
         MYE_JP("波の時刻 (tick)", MYE_FIELD_FLAGS(WaterWaveComponent, timeTicks, Int32, kFieldReadOnly)),
     });
+
+    // M80f: 破壊のルート。新規 opt-in 型 (既存シーンに居ないので追加自体は WorldHash 不変)。
+    // broken/detachedCount は破断結果を表す sim 状態、他は焼き直し専用の設定値
+    RegisterComponent<DestructibleComponent>("Destructible", {
+        MYE_JP("破片資産", MYE_FIELD_TIP(DestructibleComponent, fractureAsset, AssetRef,
+                                         ".mfrac - the baked fracture asset actually used at runtime")),
+        MYE_JP("破片数の目安",
+               MYE_FIELD_RANGE(DestructibleComponent, pieceCount, Int32, 2.0f, 256.0f)),
+        MYE_JP("分割 seed", MYE_FIELD(DestructibleComponent, seed, UInt32)),
+        MYE_JP("開いたメッシュ",
+               MYE_FIELD_TIP(DestructibleComponent, openMeshMode, Int32,
+                             "0=reject an open mesh 1=allow voxelization")),
+        MYE_JP("ボクセル解像度",
+               MYE_FIELD_RANGE(DestructibleComponent, voxelResolution, Int32, 16.0f, 256.0f)),
+        MYE_JP("断面マテリアル", MYE_FIELD_TIP(DestructibleComponent, innerMaterial, AssetRef,
+                                              "null = use the root's own material")),
+        MYE_JP("接着強度", MYE_FIELD_TIP(DestructibleComponent, strength, Float,
+                                         "newtons - the baseline bond strength between pieces")),
+        MYE_JP("割れた後の挙動",
+               MYE_FIELD_TIP(DestructibleComponent, afterBreak, Int32,
+                             "0=keep 1=destroy after N ticks 2=sink then destroy "
+                             "3=shrink then destroy 4=go static once asleep 5=cap oldest debris")),
+        MYE_JP("挙動開始まで (tick)",
+               MYE_FIELD_TIP(DestructibleComponent, afterBreakTicks, Int32,
+                             "ticks after detaching before afterBreak 1/2/3 starts")),
+        MYE_JP("消える長さ (tick)",
+               MYE_FIELD_TIP(DestructibleComponent, fadeTicks, Int32,
+                             "duration in ticks of afterBreak 2 (sink) / 3 (shrink)")),
+        MYE_JP("破片の上限",
+               MYE_FIELD_TIP(DestructibleComponent, maxDebris, Int32,
+                             "afterBreak=5: oldest detached chunks beyond this are destroyed")),
+        MYE_JP("割れた", MYE_FIELD_FLAGS(DestructibleComponent, broken, Bool, kFieldReadOnly)),
+        MYE_JP("分離済み数",
+               MYE_FIELD_FLAGS(DestructibleComponent, detachedCount, Int32, kFieldReadOnly)),
+    });
+
+    // M80f: 破片。root/index は生成時に固定 (資産との対応)。全欄 hash 対象
+    RegisterComponent<FracturePieceComponent>("FracturePiece", {
+        MYE_JP("ルート", MYE_FIELD_FLAGS(FracturePieceComponent, root, EntityRef, kFieldReadOnly)),
+        MYE_JP("破片 index", MYE_FIELD_FLAGS(FracturePieceComponent, index, Int32, kFieldReadOnly)),
+        MYE_JP("切断済み隣接",
+               MYE_FIELD_FLAGS(FracturePieceComponent, brokenBonds, UInt32, kFieldReadOnly)),
+        MYE_JP("蓄積ダメージ", MYE_FIELD_TIP(FracturePieceComponent, damage, Float,
+                                            "accumulated by ApplyFractureDamage only")),
+        MYE_JP("分離後 tick",
+               MYE_FIELD_TIP(FracturePieceComponent, releaseTicks, Int32, "-1 = still attached")),
+        MYE_JP("段階", MYE_FIELD_FLAGS(FracturePieceComponent, phase, Int32, kFieldReadOnly)),
+    });
 }
 
 } // namespace mye

@@ -75,13 +75,13 @@ rem 前回の失敗マーカーが残っていると :diagnose が古い tick �
 del /q cache\*.mismatch.txt 2>nul
 if exist cache\replay_logs rd /s /q cache\replay_logs
 
-echo === parallel verification: 8 scene chains + time travel x2 + what-if x2 + rule check ===
+echo === parallel verification: 9 scene chains + time travel x2 + what-if x2 + rule check ===
 rem ★Entry は空白なし相対パスで渡す (人間/CI が bat を叩くのと同じ呼び形に固定。
 rem   バッチ読取りの罠と chcp 437 の理由は runner 冒頭のコメント参照)
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 8 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui) + snapshot round-trip + time travel + rule check
+echo [PASS] replay consistency (Debug/Release, 9 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture) + snapshot round-trip + time travel + rule check
 exit /b 0
 
 rem ---------------------------------------------------------------- :failed
@@ -121,6 +121,10 @@ if exist cache\golden_ui.rep.mismatch.txt (
     set DIAGFOUND=1
     rem 期待側の撮り直しは記録と同じ引数 (台本込み) でないと入力がずれる
     call :diagnose "cache\golden_ui.rep" "--ui-demo --ui-demo-input"
+)
+if exist cache\golden_fracture.rep.mismatch.txt (
+    set DIAGFOUND=1
+    call :diagnose "cache\golden_fracture.rep" "--fracture-demo"
 )
 if "%DIAGFOUND%"=="0" echo [diag] no mismatch markers - failures happened before any hash comparison, see the job logs above
 echo [FAIL] replay verification
@@ -260,6 +264,17 @@ if exist cache\ui_showcase.scene.json del /q cache\ui_showcase.scene.json
 call :chain cache\golden_ui.rep "--ui-demo --ui-demo-input" "--ui-demo"
 exit /b %ERRORLEVEL%
 
+rem ---- 破壊 (M80f)。壊れる前の縦切り: 破片の複合が 1 剛体として床へ落ちて転がる ----
+rem 資産はファイルを作らずビルド時にメモリ上で焼く (fracture://demo_*)。Debug と Release が
+rem 独立に焼いて 600 tick の replay が一致すること自体が、分割コアの構成間一致
+rem (sub-02 の契約) を実行経路で証明する。FractureSystem (破断) は sub-07 以降なので
+rem このペアでは何も割れない — 破断の被覆はそちらのサブで追加する
+rem シーンはコードから毎回組み直す (parts / physics / joints と同じ流儀)
+:job_fracture
+if exist cache\fracture_showcase.scene.json del /q cache\fracture_showcase.scene.json
+call :chain cache\golden_fracture.rep "--fracture-demo" "--fracture-demo"
+exit /b %ERRORLEVEL%
+
 rem ---- タイムトラベルの巻き戻し (M52e) ----
 rem 「T まで進める → T-K へ戻す → 記録入力で T まで再シム → 元の T とハッシュ一致」を
 rem 複数の K で実走し、続けて「スクラブ中は tick が止まる」「再開すると分岐して未来を捨てる」
@@ -332,7 +347,7 @@ rem ---------------------------------------------------------------- :diagnose
 rem 失敗した照合の「どのフィールドが割れたか」を出す (M52a)。
 rem   %1 = .rep パス / %2 = シーン切替の追加引数 ("" / "--parts-demo" / "--flow-demo" /
 rem                        "--local-demo" / "--physics-demo" / "--joint-demo" /
-rem                        "--acoustic-demo" / "--ui-demo --ui-demo-input")
+rem                        "--acoustic-demo" / "--ui-demo --ui-demo-input" / "--fracture-demo")
 rem 失敗側のダンプは EngineLoop が MISMATCH 時に自動で残しているので、
 rem ここでは期待側 (= その .rep を録ったのと同じコマンド) を撮り直して突き合わせる
 :diagnose

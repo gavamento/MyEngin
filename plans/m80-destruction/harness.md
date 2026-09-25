@@ -11,8 +11,8 @@
 | sub-02 | OK | 3 | e2175f9 | Voronoi 分割・凸包・接着グラフ。トーラス分は sub-13 へ移管 |
 | sub-03 | OK | 1 | 8c9d984 | 破片資産 .mfrac と FractureLibrary |
 | sub-04 | OK | 2 | 42a8dfe | ボクセル化 + surface nets。既定解像度 32。開いた箱 48/64 は sub-14 へ移管 |
-| sub-05 | OK | 1 | (本コミット) | 複合の上限撤廃・形状単位インパルス |
-| sub-06 | 未着手 | 0 | | Destructible/FracturePiece・事前生成・root proxy |
+| sub-05 | OK | 1 | dd46d99 | 複合の上限撤廃・形状単位インパルス |
+| sub-06 | OK | 1 | (本コミット) | Destructible/FracturePiece・事前生成・root proxy |
 | sub-07 | 未着手 | 0 | | 接着の破断と塊の剛体化 |
 | sub-08 | 未着手 | 0 | | 割れた後の 6 挙動 |
 | sub-09 | 未着手 | 0 | | Inspector・非同期焼き・Undo |
@@ -41,6 +41,7 @@
 | Q-10 | 破片の位相的な閉じ | 求めない (幾何的な閉じ = 体積保存 + ベクトル面積≈0)。B で継ぎ目の閉じを足す | 推奨で仮決定 (Notion Q-10、回答待ち。sub-02 round 2 の planner 裁定) |
 | Q-11 | ボクセル化の見た目と既定解像度 | surface nets (滑らか)、既定は Release 10 秒以内の最大 | 推奨で仮決定 (Notion Q-11、回答待ち。planner の #10) |
 | Q-12 | 外部ライブラリ libtess2 の取り込み | 取り込む (external/、SGI FSL B 2.0) | 推奨で仮決定 (Notion Q-12、回答待ち。planner の #11) |
+| Q-13 | shot_verify の golden 4 枚 (parts/joints/acoustic_forward/acoustic_deferred) が M80 着手前からずれている | M80 では更新せず除外。原因調査と更新は M80 の外 | 推奨で仮決定 (Notion Q-13、回答待ち。planner の #12) |
 
 ## 申し送り (セッション跨ぎ)
 - **運用 (2026-09-25 ユーザー指示)**: ハーネス中の質問は推奨案で仮決定して進める。質問は Notion「活動記録」のページ
@@ -52,3 +53,4 @@
 - coder は `model: "sonnet"` で起動する。
 - ABI の現状は v21 / 125 スロット (メモの v16/110 は古い)。
 - ルート直下の *.log (_build_round2.log 等) は 9/13〜9/23 付けで今回のハーネス以前のもの、.gitignore 済み。触らない。coder の作業ファイルはスクラッチパッドへ出す。
+- **shot_verify の切り分け (2026-09-25 司会)**: 4 枚 (parts / joints / acoustic_forward / acoustic_deferred) は M80 着手前 73c8d76 と 14d8775 のクリーン worktree で、数値・worst 座標・actual PNG の MD5 まで完全一致で割れる。M80 の差分と WIP (WaterPass.cpp) は無関係。以後のサブはこの 4 枚を除外して判定する (spec §5 受け入れ条件 10)。

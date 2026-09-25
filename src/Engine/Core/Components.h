@@ -1734,6 +1734,41 @@ struct WaterWaveComponent {
     }
 };
 
+// ---- 破壊 (Destructible、TypeId=64、M80f) ----
+// 「壊せる物」のルート。事前生成 (BuildFracturePieces) で子として破片 (FracturePiece) の
+// 複合を組む。焼きの入力欄 (fractureAsset 以外) は**焼き直しにだけ**効く — 実行時の破断は
+// `.mfrac` (FractureLibrary) の中身を正とし、ここの pieceCount 等を直接は見ない。
+// hash 対象: broken / detachedCount は割れたかどうかを表す sim 状態
+struct DestructibleComponent {
+    AssetID fractureAsset = {};    // .mfrac (spec §4.2)
+    int32_t pieceCount = 16;       // 焼き直しの目安値 (2..256)
+    uint32_t seed = 1;             // 焼き直しの分割 seed
+    int32_t openMeshMode = 0;      // 0=拒否 1=ボクセル化を許容 (焼き直しにだけ効く)
+    int32_t voxelResolution = 32;  // ボクセルの最長辺セル数 (16..256、焼き直しにだけ効く)
+    AssetID innerMaterial = {};    // 断面 (_cap) のマテリアル。null = ルートのもの
+    float strength = 5000.0f;      // 接着の基準強度 [N]
+    int32_t afterBreak = 0;        // 割れた後の挙動 0..5 (spec §4.1)
+    int32_t afterBreakTicks = 300; // 挙動 1/2/3 の開始までの tick
+    int32_t fadeTicks = 60;        // 挙動 2/3 の長さ (tick)
+    int32_t maxDebris = 64;        // 挙動 5 の上限 (この Destructible だけの上限)
+    bool broken = false;           // 一度でも割れたか。sim 状態
+    int32_t detachedCount = 0;     // 分かれた塊の累計 (ReadOnly、sim 状態)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- 破片 (FracturePiece、TypeId=65、M80f) ----
+// Destructible の直子。1 個が `.mfrac` の破片 1 個に対応する。root と index は生成時に固定し
+// 以後書き換えない (書き換えると資産との対応が壊れる)。全欄 hash 対象
+struct FracturePieceComponent {
+    EntityID root = kNullEntity; // Destructible を持つルート
+    int32_t index = 0;           // .mfrac の破片 index
+    uint32_t brokenBonds = 0;    // 隣接表の k 番目が切れていれば bit k
+    float damage = 0.0f;         // ApplyFractureDamage の蓄積
+    int32_t releaseTicks = -1;   // 分かれてからの tick (リーダーだけが進める。-1 = 未分離)
+    int32_t phase = 0;           // 割れた後の段階 (0 通常 / 1 沈み・縮み中)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

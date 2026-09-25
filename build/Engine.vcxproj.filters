@@ -285,6 +285,9 @@
     <ClCompile Include="..\src\Engine\Engine\FontSelfTest.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\FractureBuilder.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp">
       <Filter>Engine\HotReload</Filter>
     </ClCompile>
@@ -1012,6 +1015,9 @@
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\FontSelfTest.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\FractureBuilder.h">
       <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\GameFlow.h">

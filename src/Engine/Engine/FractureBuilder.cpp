@@ -1,0 +1,174 @@
+//====================================================================================
+//                          FractureBuilder.cpp
+//  MyEngin/ 秋田蓮音                                                     09/25/2026
+//                                          破片エンティティの事前生成の実装
+//====================================================================================
+#include "Engine/Engine/FractureBuilder.h"
+
+#include <cstdio>
+#include <vector>
+
+#include "Engine/Core/Components.h"
+#include "Engine/Core/Log.h"
+#include "Engine/Core/World.h"
+#include "Engine/Engine/EntityNaming.h"
+#include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Physics/FractureLibrary.h"
+
+namespace mye {
+namespace {
+
+// root の直子のうち FracturePiece.root == root なものを集める。
+// out が非 null なら見つけた (エンティティ, index) を積む
+void CollectExistingPieces(World& world, EntityID root, std::vector<EntityID>* outEntities)
+{
+    const auto* rootH = world.GetComponent<HierarchyComponent>(root);
+    for (EntityID c = rootH ? rootH->firstChild : kNullEntity; !c.IsNull();) {
+        const auto* fp = world.GetComponent<FracturePieceComponent>(c);
+        const auto* ch = world.GetComponent<HierarchyComponent>(c);
+        const EntityID next = ch ? ch->nextSibling : kNullEntity;
+        if (fp != nullptr && fp->root == root && outEntities != nullptr) {
+            outEntities->push_back(c);
+        }
+        c = next;
+    }
+}
+
+} // namespace
+
+int BuildFracturePieces(World& world, EntityID root, const FractureAssetHandle& asset)
+{
+    if (root.IsNull() || !world.IsAlive(root)) {
+        return 0;
+    }
+
+    // 再生成: 既存の破片を先に消す (DestroyEntity は tick 末適用なので即座に反映させる)
+    {
+        std::vector<EntityID> existing;
+        CollectExistingPieces(world, root, &existing);
+        for (EntityID e : existing) {
+            world.DestroyEntity(e);
+        }
+        if (!existing.empty()) {
+            world.ApplyStructuralChanges();
+        }
+    }
+
+    if (asset.pieces.empty()) {
+        return 0;
+    }
+
+    // root に Rigidbody が無ければ付ける。既にあれば compoundColliders だけ立てる
+    if (world.GetComponent<RigidbodyComponent>(root) == nullptr) {
+        world.AddComponent<RigidbodyComponent>(root);
+    }
+    if (auto* rb = world.GetComponent<RigidbodyComponent>(root)) {
+        rb->compoundColliders = true;
+    }
+    // root 自身の Collider は外す — 複合の子形状と二重に当たらないようにする
+    if (world.GetComponent<ColliderComponent>(root) != nullptr) {
+        MYE_LOG_WARN("[fracture] %s: removing the root's own Collider (fracture pieces replace it "
+                     "as a compound)",
+                     world.GetName(root));
+        world.RemoveComponent<ColliderComponent>(root);
+    }
+
+    // root 自身のアーキタイプはここまでで確定 (以後は子しか触らない) — ポインタを安全に読める
+    AssetID outerMaterial = {};
+    AssetID innerMaterial = {};
+    if (const auto* mr = world.GetComponent<MeshRendererComponent>(root)) {
+        outerMaterial = mr->material;
+    }
+    if (const auto* d = world.GetComponent<DestructibleComponent>(root)) {
+        innerMaterial = d->innerMaterial;
+    }
+    if (innerMaterial.IsNull()) {
+        innerMaterial = outerMaterial;
+    }
+
+    for (size_t i = 0; i < asset.pieces.size(); ++i) {
+        const FracturePieceRef& piece = asset.pieces[i];
+
+        char fragNameBuf[32];
+        std::snprintf(fragNameBuf, sizeof(fragNameBuf), "Frag%d", static_cast<int>(i));
+        const std::string fragName = MakeUniqueSiblingName(world, root, fragNameBuf, kNullEntity);
+        GameObject frag(&world, world.CreateEntity(fragName));
+        world.SetParent(frag.Id(), root);
+
+        // 構造変更 (AddComponent) を先に済ませてからポインタを取り直す
+        // (アーキタイプ移動で既存のコンポーネントポインタは死ぬ)
+        frag.AddComponent<MeshRendererComponent>();
+        frag.AddComponent<ColliderComponent>();
+        frag.AddComponent<FracturePieceComponent>();
+
+        if (auto* lt = frag.GetComponent<LocalTransform>()) {
+            lt->position = piece.origin;
+        }
+        if (auto* mr = frag.GetComponent<MeshRendererComponent>()) {
+            mr->mesh = piece.outerMesh;
+            mr->material = outerMaterial;
+        }
+        if (auto* col = frag.GetComponent<ColliderComponent>()) {
+            col->shape = collidershape::kConvex;
+            col->isTrigger = false;
+            col->meshAsset = piece.hull;
+        }
+        if (auto* fp = frag.GetComponent<FracturePieceComponent>()) {
+            fp->root = root;
+            fp->index = static_cast<int32_t>(i);
+            fp->brokenBonds = 0;
+            fp->damage = 0.0f;
+            fp->releaseTicks = -1;
+            fp->phase = 0;
+        }
+
+        const std::string capName = MakeUniqueSiblingName(world, frag.Id(), "_cap", kNullEntity);
+        GameObject cap(&world, world.CreateEntity(capName));
+        world.SetParent(cap.Id(), frag.Id());
+        cap.AddComponent<MeshRendererComponent>();
+        if (auto* mr = cap.GetComponent<MeshRendererComponent>()) {
+            mr->mesh = piece.capMesh;
+            mr->material = innerMaterial;
+        }
+    }
+
+    world.ApplyStructuralChanges();
+    return static_cast<int>(asset.pieces.size());
+}
+
+bool ValidateFracturePieces(World& world, EntityID root, const FractureAssetHandle* asset)
+{
+    if (root.IsNull() || !world.IsAlive(root)) {
+        return false;
+    }
+    if (asset == nullptr) {
+        MYE_LOG_ERROR("[fracture] %s: fracture asset is not loaded, this destructible will not break",
+                     world.GetName(root));
+        return false;
+    }
+
+    std::vector<EntityID> existing;
+    CollectExistingPieces(world, root, &existing);
+
+    std::vector<bool> seen(asset->pieces.size(), false);
+    for (EntityID e : existing) {
+        const auto* fp = world.GetComponent<FracturePieceComponent>(e);
+        if (fp == nullptr || fp->index < 0 || static_cast<size_t>(fp->index) >= seen.size()
+            || seen[static_cast<size_t>(fp->index)]) {
+            MYE_LOG_ERROR("[fracture] %s: fracture piece index is out of range or duplicated "
+                         "(asset pieces=%zu)",
+                         world.GetName(root), asset->pieces.size());
+            return false;
+        }
+        seen[static_cast<size_t>(fp->index)] = true;
+    }
+    if (existing.size() != asset->pieces.size()) {
+        MYE_LOG_ERROR("[fracture] %s: piece count mismatch (asset=%zu, entities=%zu) - this "
+                     "destructible will not break",
+                     world.GetName(root), asset->pieces.size(), existing.size());
+        return false;
+    }
+    return true;
+}
+
+} // namespace mye

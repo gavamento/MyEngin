@@ -18,6 +18,7 @@ spec §4.1「割れた後」の表を FractureSystem に足す。単位は分か
    - 5: この Destructible の、まだ残っている分かれた塊の数が `maxDebris` を超えたら、`releaseTicks` の大きい順 (同値は entity index 小) に超過分を Destroy
 3. すべて tick 数と hashed な欄だけで決める。Destroy / RemoveComponent はコマンドバッファ
 4. `--fracture-demo` の破壊物に挙動の違うものを並べてよい (例: 箱 = 1、壁 = 5)。replay 一致
+5. (sub-06 からの申し送り) 絵が安定したので、`tools\shot_verify.bat` に `--fracture-demo` の golden を 2 枚追加する (割れる前 / 割れた後の決まった tick)
 
 ## やらないこと (このサブでは)
 

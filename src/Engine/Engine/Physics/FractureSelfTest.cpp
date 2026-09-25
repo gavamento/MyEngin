@@ -15,13 +15,19 @@
 
 #include <DirectXMath.h>
 
+#include "Engine/Core/Components.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/World.h"
 #include "Engine/Engine/Asset/FractureAsset.h"
+#include "Engine/Engine/FractureBuilder.h"
+#include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/Physics/ConvexColliderLibrary.h"
 #include "Engine/Engine/Physics/FractureBake.h"
 #include "Engine/Engine/Physics/FractureLibrary.h"
 #include "Engine/Engine/Physics/FractureMesh.h"
 #include "Engine/Engine/Physics/FractureVoxel.h"
+#include "Engine/Engine/Physics/PhysicsSystem.h"
+#include "Engine/Engine/Scene.h"
 #include "Engine/Renderer/GpuResources.h"
 
 using namespace DirectX;
@@ -1211,6 +1217,231 @@ bool RunFractureSelfTest()
             timeVoxelize("open box / res64", MakeOpenBox(1, 1, 1), 64);
             timeVoxelize("open box / res128", MakeOpenBox(1, 1, 1), 128);
             timeVoxelize("open box / res256", MakeOpenBox(1, 1, 1), 256);
+        }
+    }
+
+    // ---- 15. 破片エンティティの事前生成 (BuildFracturePieces、M80f) ----
+    {
+        // (15a) 子が破片数 x 2 (Frag<i> + _cap) でき、欄の値が正しい。
+        // root 自身の Collider は外れ、Rigidbody(compoundColliders) が付く。
+        // 2 回呼んでも子は倍にならない (再生成)
+        {
+            Scene s;
+            World& w = s.GetWorld();
+            GameObject root = s.CreateGameObject("Root");
+            root.SetLocalPosition(1.0f, 2.0f, 3.0f);
+
+            auto* rootMr = root.AddComponent<MeshRendererComponent>();
+            rootMr->mesh = AssetID{ HashStr("fracture-selftest://root_mesh") };
+            rootMr->material = AssetID{ HashStr("fracture-selftest://root_mat") };
+            const AssetID outerMaterialExpected = rootMr->material; // ポインタ寿命内に値だけ控える
+
+            auto* d = root.AddComponent<DestructibleComponent>();
+            d->innerMaterial = AssetID{ HashStr("fracture-selftest://inner_mat") };
+            const AssetID innerMaterialExpected = d->innerMaterial;
+
+            // 生成前に既存の Collider を持たせておく (外れることを確認する対象)
+            auto* rootCol = root.AddComponent<ColliderComponent>();
+            rootCol->shape = collidershape::kBox;
+
+            FractureAssetHandle handle;
+            handle.namePrefix = "fracture-selftest://build_pieces";
+            for (int i = 0; i < 3; ++i) {
+                char nameBuf[64];
+                FracturePieceRef pr;
+                pr.origin = { static_cast<float>(i) * 0.5f, 0.0f, 0.0f };
+                pr.volume = 1.0;
+                std::snprintf(nameBuf, sizeof(nameBuf), "fracture-selftest://outer%d", i);
+                pr.outerMesh = AssetID{ HashStr(nameBuf) };
+                std::snprintf(nameBuf, sizeof(nameBuf), "fracture-selftest://cap%d", i);
+                pr.capMesh = AssetID{ HashStr(nameBuf) };
+                std::snprintf(nameBuf, sizeof(nameBuf), "fracture-selftest://hull%d", i);
+                pr.hull = AssetID{ HashStr(nameBuf) };
+                handle.pieces.push_back(pr);
+            }
+
+            const int built = BuildFracturePieces(w, root.Id(), handle);
+            check(built == 3, "BuildFracturePieces: returns the piece count");
+
+            int fragCount = 0, capCount = 0;
+            bool seenIndex[3] = { false, false, false };
+            const auto* rootH = w.GetComponent<HierarchyComponent>(root.Id());
+            for (EntityID c = rootH ? rootH->firstChild : kNullEntity; !c.IsNull();) {
+                const auto* fp = w.GetComponent<FracturePieceComponent>(c);
+                if (fp != nullptr) {
+                    ++fragCount;
+                    check(fp->root == root.Id(), "BuildFracturePieces: FracturePiece.root points at the root");
+                    if (fp->index >= 0 && fp->index < 3) {
+                        seenIndex[fp->index] = true;
+                    }
+                    const size_t idx = static_cast<size_t>(fp->index);
+                    const auto* lt = w.GetComponent<LocalTransform>(c);
+                    check(lt != nullptr && idx < handle.pieces.size()
+                              && lt->position.x == handle.pieces[idx].origin.x
+                              && lt->position.y == handle.pieces[idx].origin.y
+                              && lt->position.z == handle.pieces[idx].origin.z,
+                          "BuildFracturePieces: Frag<i> LocalTransform.position == piece.origin");
+                    const auto* mr = w.GetComponent<MeshRendererComponent>(c);
+                    check(mr != nullptr && mr->mesh == handle.pieces[idx].outerMesh
+                              && mr->material == outerMaterialExpected,
+                          "BuildFracturePieces: Frag<i> MeshRenderer uses the outer mesh and the root's material");
+                    const auto* col = w.GetComponent<ColliderComponent>(c);
+                    check(col != nullptr && col->shape == collidershape::kConvex
+                              && col->meshAsset == handle.pieces[idx].hull,
+                          "BuildFracturePieces: Frag<i> Collider is a convex hull pointing at #hull");
+
+                    int childCount = 0;
+                    const auto* fh = w.GetComponent<HierarchyComponent>(c);
+                    for (EntityID cc = fh ? fh->firstChild : kNullEntity; !cc.IsNull();) {
+                        ++childCount;
+                        ++capCount;
+                        const auto* capMr = w.GetComponent<MeshRendererComponent>(cc);
+                        check(capMr != nullptr && capMr->mesh == handle.pieces[idx].capMesh
+                                  && capMr->material == innerMaterialExpected,
+                              "BuildFracturePieces: _cap MeshRenderer uses the cap mesh and innerMaterial");
+                        const auto* cch = w.GetComponent<HierarchyComponent>(cc);
+                        cc = cch ? cch->nextSibling : kNullEntity;
+                    }
+                    check(childCount == 1, "BuildFracturePieces: Frag<i> has exactly one _cap child");
+                }
+                const auto* ch = w.GetComponent<HierarchyComponent>(c);
+                c = ch ? ch->nextSibling : kNullEntity;
+            }
+            check(fragCount == 3 && capCount == 3,
+                  "BuildFracturePieces: 3 pieces produce 3 Frag + 3 _cap children");
+            check(seenIndex[0] && seenIndex[1] && seenIndex[2],
+                  "BuildFracturePieces: piece indices cover 0..N-1 with no duplicates");
+
+            check(w.GetComponent<ColliderComponent>(root.Id()) == nullptr,
+                  "BuildFracturePieces: the root's own Collider is removed");
+            const auto* rb = w.GetComponent<RigidbodyComponent>(root.Id());
+            check(rb != nullptr && rb->compoundColliders,
+                  "BuildFracturePieces: the root gets a compound Rigidbody");
+
+            // 2 回目: 子は倍にならない (再生成)
+            const int builtAgain = BuildFracturePieces(w, root.Id(), handle);
+            check(builtAgain == 3, "BuildFracturePieces: rebuilding still returns the piece count");
+            int fragCount2 = 0;
+            const auto* rootH2 = w.GetComponent<HierarchyComponent>(root.Id());
+            for (EntityID c = rootH2 ? rootH2->firstChild : kNullEntity; !c.IsNull();) {
+                if (w.GetComponent<FracturePieceComponent>(c) != nullptr) {
+                    ++fragCount2;
+                }
+                const auto* ch = w.GetComponent<HierarchyComponent>(c);
+                c = ch ? ch->nextSibling : kNullEntity;
+            }
+            check(fragCount2 == 3, "BuildFracturePieces: calling it twice does not double the children");
+        }
+
+        // (15b) 資産の破片数と子の index 集合が合わない Destructible は無効
+        // (ValidateFracturePieces、spec §4.1 エッジケース)
+        {
+            Scene s;
+            World& w = s.GetWorld();
+            GameObject root = s.CreateGameObject("Root2");
+
+            FractureAssetHandle handle;
+            handle.namePrefix = "fracture-selftest://validate";
+            handle.pieces.assign(2, FracturePieceRef{});
+            BuildFracturePieces(w, root.Id(), handle);
+            check(ValidateFracturePieces(w, root.Id(), &handle),
+                  "ValidateFracturePieces: a freshly built root matches its asset");
+
+            // 焼き直しで破片が増えたと仮定すると、子の index 集合と合わなくなる
+            FractureAssetHandle grown = handle;
+            grown.pieces.push_back(FracturePieceRef{});
+            check(!ValidateFracturePieces(w, root.Id(), &grown),
+                  "ValidateFracturePieces: a piece-count mismatch is rejected");
+
+            check(!ValidateFracturePieces(w, root.Id(), nullptr),
+                  "ValidateFracturePieces: a missing (nullptr) asset is rejected without crashing");
+        }
+
+        // (15c) 動的ルートが 1 剛体として落ちて床で止まり、同じ形の凸包 2 個を手で複合にした
+        // 物と同じ高さで静止する (= 重心・慣性が一致し、sub-05 の複合合成を通っている証拠)
+        {
+            ConvexColliderLibrary colliders;
+            auto boxHull = [](float hx, float hy, float hz) {
+                ConvexHullData h;
+                BuildConvexHull({ { -hx, -hy, -hz }, { hx, -hy, -hz }, { hx, hy, -hz }, { -hx, hy, -hz },
+                                  { -hx, -hy, hz }, { hx, -hy, hz }, { hx, hy, hz }, { -hx, hy, hz } },
+                                h);
+                return h;
+            };
+            const AssetID kHalfA{ HashStr("fracture-selftest://compound_half_a") };
+            const AssetID kHalfB{ HashStr("fracture-selftest://compound_half_b") };
+            colliders.Register(kHalfA, boxHull(0.5f, 0.5f, 0.5f));
+            colliders.Register(kHalfB, boxHull(0.5f, 0.5f, 0.5f));
+            convexcol::Install(&colliders);
+
+            FractureAssetHandle handle;
+            handle.namePrefix = "fracture-selftest://compound_settle";
+            FracturePieceRef a;
+            a.origin = { -0.5f, 0.0f, 0.0f };
+            a.volume = 0.5;
+            a.hull = kHalfA;
+            FracturePieceRef b;
+            b.origin = { 0.5f, 0.0f, 0.0f };
+            b.volume = 0.5;
+            b.hull = kHalfB;
+            handle.pieces = { a, b };
+
+            PhysicsSystem phys;
+            constexpr float kDt = 1.0f / 60.0f;
+
+            auto settle = [&](bool useFracturePieces) {
+                Scene s;
+                World& w = s.GetWorld();
+                GameObject ground = s.CreateGameObject("Ground");
+                ground.SetLocalPosition(0.0f, -0.5f, 0.0f);
+                ground.SetLocalScale(10.0f, 1.0f, 10.0f);
+                auto* gcol = ground.AddComponent<ColliderComponent>();
+                gcol->shape = collidershape::kBox;
+                gcol->halfExtents = { 0.5f, 0.5f, 0.5f };
+
+                GameObject root = s.CreateGameObject("Compound");
+                root.SetLocalPosition(0.0f, 3.0f, 0.0f);
+                if (useFracturePieces) {
+                    BuildFracturePieces(w, root.Id(), handle);
+                } else {
+                    auto* rb = root.AddComponent<RigidbodyComponent>();
+                    rb->compoundColliders = true;
+                    auto makeChild = [&](const char* name, AssetID hull, float x) {
+                        GameObject child = s.CreateGameObject(name);
+                        w.SetParent(child.Id(), root.Id());
+                        w.ApplyStructuralChanges();
+                        auto* col = child.AddComponent<ColliderComponent>();
+                        col->shape = collidershape::kConvex;
+                        col->meshAsset = hull;
+                        if (auto* lt = child.GetComponent<LocalTransform>()) {
+                            lt->position = { x, 0.0f, 0.0f };
+                        }
+                    };
+                    makeChild("HalfA", kHalfA, -0.5f);
+                    makeChild("HalfB", kHalfB, 0.5f);
+                }
+                w.ApplyStructuralChanges();
+                if (auto* rb = w.GetComponent<RigidbodyComponent>(root.Id())) {
+                    rb->mass = 4.0f;
+                }
+                for (int i = 0; i < 180; ++i) {
+                    phys.Update(w, kDt);
+                }
+                return w.GetComponent<LocalTransform>(root.Id())->position.y;
+            };
+
+            const float yBuilt = settle(true);
+            const float yManual = settle(false);
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                          "BuildFracturePieces: settles at the same height as a manually authored "
+                          "compound of the same hulls (built=%.5f, manual=%.5f)",
+                          static_cast<double>(yBuilt), static_cast<double>(yManual));
+            check(std::fabs(yBuilt - yManual) < 1e-4f, buf);
+            check(yBuilt > 0.45f && yBuilt < 0.55f,
+                  "BuildFracturePieces: the compound rests at half its own height (~0.5)");
+
+            convexcol::Install(nullptr);
         }
     }
 

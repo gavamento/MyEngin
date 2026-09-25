@@ -1094,6 +1094,15 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     // ---- ステージ 1 (直列): 候補を収集 (順序 = ForEachArchetype/row = 決定的) ----
     std::vector<CullCand> cullCands;
     const bool interp = prevWorld != nullptr && interpAlpha < 1.0f; // M36b
+    // M80f: root proxy の描画規則。破壊物の無いシーンに追加コストが出ないよう、
+    // まず Destructible の有無だけを 1 回スキャンする (存在ゲート。以後は車輪と同じ
+    // 「アーキタイプごとに型 index を 1 回引く」経路に落ちる)
+    bool anyDestructibles = false;
+    {
+        const ComponentTypeId destructibleReq[] = { DestructibleComponent::sTypeId };
+        world.ForEachArchetype(destructibleReq,
+                               [&](Archetype& a) { anyDestructibles = anyDestructibles || a.Count() != 0; });
+    }
     const ComponentTypeId req[] = { MeshRendererComponent::sTypeId, WorldMatrixComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
         const int mi = arch.FindTypeIndex(MeshRendererComponent::sTypeId);
@@ -1101,10 +1110,39 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         // M60i: 車輪の見た目回転。**アーキタイプごとに 1 回引くだけ**なので、
         // 車輪を持たないシーンは 1 命令も余計に走らない (存在ゲートと同じ効き)
         const int whi = arch.FindTypeIndex(WheelComponent::sTypeId);
+        // M80f: root proxy。dsi/fpi はそのエンティティ自身が Destructible/FracturePiece を
+        // 持つ速い経路。`_cap` はどちらも持たない直子なので hi 経由で親 (Frag<i>) の
+        // FracturePiece を見て同じ規則に従わせる
+        const int dsi = anyDestructibles ? arch.FindTypeIndex(DestructibleComponent::sTypeId) : -1;
+        const int fpi = anyDestructibles ? arch.FindTypeIndex(FracturePieceComponent::sTypeId) : -1;
+        const int hi = anyDestructibles ? arch.FindTypeIndex(HierarchyComponent::sTypeId) : -1;
         for (uint32_t row = 0; row < arch.Count(); ++row) {
             const EntityID e = arch.EntityAt(row);
             if (!IsEntityActive(world, e)) {
                 continue; // 無効エンティティは描画しない (M10)
+            }
+            if (anyDestructibles) {
+                if (dsi >= 0) {
+                    // 割れたら元メッシュは描かない (破片側が描く)
+                    if (static_cast<const DestructibleComponent*>(arch.GetPtr(dsi, row))->broken) {
+                        continue;
+                    }
+                } else if (fpi >= 0) {
+                    // 破片 (Frag<i>) は割れる前は描かない
+                    const auto* fp = static_cast<const FracturePieceComponent*>(arch.GetPtr(fpi, row));
+                    const auto* d = world.GetComponent<DestructibleComponent>(fp->root);
+                    if (d == nullptr || !d->broken) {
+                        continue;
+                    }
+                } else if (hi >= 0) {
+                    const auto* h = static_cast<const HierarchyComponent*>(arch.GetPtr(hi, row));
+                    if (const auto* pfp = world.GetComponent<FracturePieceComponent>(h->parent)) {
+                        const auto* d = world.GetComponent<DestructibleComponent>(pfp->root);
+                        if (d == nullptr || !d->broken) {
+                            continue;
+                        }
+                    }
+                }
             }
             const auto* mr = static_cast<const MeshRendererComponent*>(arch.GetPtr(mi, row));
             if (mr->mesh.IsNull() || mr->material.IsNull()) {

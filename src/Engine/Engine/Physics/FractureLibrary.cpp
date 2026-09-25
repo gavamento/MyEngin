@@ -119,9 +119,15 @@ const FractureAssetHandle* FractureLibrary::RegisterInternal(const std::string& 
         FracturePieceRef ref;
         ref.origin = pr.origin;
         ref.volume = pr.volume;
+        // 完全に内部の破片は outer/cap が 0 頂点になり得る (幾何的には正当)。0 頂点のまま
+        // Register すると頂点/インデックスバッファの作成が失敗するため、空なら未登録のままにする
         if (resources_ != nullptr) {
-            ref.outerMesh = resources_->meshes.Register(FragName(prefix, i), pr.outerVerts, pr.outerIndices);
-            ref.capMesh = resources_->meshes.Register(CapName(prefix, i), pr.capVerts, pr.capIndices);
+            if (!pr.outerVerts.empty() && !pr.outerIndices.empty()) {
+                ref.outerMesh = resources_->meshes.Register(FragName(prefix, i), pr.outerVerts, pr.outerIndices);
+            }
+            if (!pr.capVerts.empty() && !pr.capIndices.empty()) {
+                ref.capMesh = resources_->meshes.Register(CapName(prefix, i), pr.capVerts, pr.capIndices);
+            }
         }
         const AssetID hullId{ HashStr(HullName(prefix, i)) };
         if (colliders_ != nullptr) {

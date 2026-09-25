@@ -25,8 +25,11 @@
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/FbxLoader.h"
+#include "Engine/Engine/FractureBuilder.h" // M80f: 破片エンティティの事前生成
 #include "Engine/Engine/GameObject.h"
 #include "Engine/Engine/ModelLoader.h"
+#include "Engine/Engine/Physics/FractureBake.h"    // M80f: --fracture-demo の焼き
+#include "Engine/Engine/Physics/FractureLibrary.h" // M80f: メモリ上焼きの登録口
 #include "Engine/Engine/Physics/PhysMatLibrary.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/RagdollBuilder.h"
@@ -3895,6 +3898,140 @@ void BuildModalShowcaseScene(EngineContext& ctx)
         rb->mass = 1.5f; // kg (タイル玉サイズの小道具相当)
         auto* modal = ball.AddComponent<ModalSoundComponent>();
         modal->mesh = sphere; // MeshRenderer.mesh と同じだが、球であることを明示しておく
+    }
+}
+
+namespace {
+
+// resources.meshes の CPU 頂点/インデックスを、分割コア (FractureBake.h) が使う Renderer
+// 非依存の頂点形式へ詰め替える (FractureLibrary.cpp の ToMeshVertex とは逆向き)
+FractureMesh ToFractureMesh(const Mesh& mesh)
+{
+    FractureMesh out;
+    out.verts.resize(mesh.positions.size());
+    for (size_t i = 0; i < mesh.positions.size(); ++i) {
+        out.verts[i].position = mesh.positions[i];
+        out.verts[i].normal = i < mesh.normals.size() ? mesh.normals[i] : DirectX::XMFLOAT3{ 0, 1, 0 };
+        out.verts[i].uv = i < mesh.uvs.size() ? mesh.uvs[i] : DirectX::XMFLOAT2{ 0, 0 };
+    }
+    out.indices.assign(mesh.indices.begin(), mesh.indices.end());
+    return out;
+}
+
+// builtin キューブを Voronoi 分割し、ファイルを作らずメモリ上へ登録する (--fracture-demo 用、
+// 接頭辞 "fracture://demo_..."）。Debug と Release が同じ入力から独立に焼いて replay が
+// 一致すること自体が、分割コアの構成間一致 (sub-02 の契約) を実行経路で証明する
+const FractureAssetHandle* BakeDemoFracture(RenderResources& res, const char* namePrefix, uint32_t seed,
+                                            int32_t pieceCount)
+{
+    Mesh* cubeMesh = res.meshes.Get(res.meshes.Cube());
+    if (cubeMesh == nullptr) {
+        return nullptr;
+    }
+    FractureBakeInput in;
+    in.sourceMesh = ToFractureMesh(*cubeMesh);
+    in.seed = seed;
+    in.pieceCount = pieceCount;
+    FractureBakeResult bake;
+    if (!BakeFracture(in, bake) || !bake.success) {
+        MYE_LOG_ERROR("[fracture-demo] bake failed (%s): %s", namePrefix, bake.failReason.c_str());
+        return nullptr;
+    }
+    FractureLibrary* lib = fracturelib::Library();
+    if (lib == nullptr) {
+        return nullptr;
+    }
+    return lib->RegisterBaked(namePrefix, bake, HashStr("builtin://cube"), seed, pieceCount, 0, 32);
+}
+
+} // namespace
+
+void BuildFractureShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    World& w = s.GetWorld();
+    RenderResources& res = *ctx.resources;
+    s.SetName("fracture_showcase");
+    const AssetID cube = res.meshes.Cube();
+    const AssetID matSteel = FindPhysMat("steel");
+
+    auto makeMat = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = AssetID{ HashStr("forward_lit") };
+        m.texture = res.textures.White();
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    makeMat("frdemo_floor", 0.30f, 0.32f, 0.36f);
+    makeMat("frdemo_box", 0.75f, 0.35f, 0.22f);
+    makeMat("frdemo_wall", 0.55f, 0.56f, 0.60f);
+    makeMat("frdemo_inner", 0.86f, 0.80f, 0.62f);
+
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    camera.SetLocalPosition(0.0f, 5.0f, -12.0f);
+    camera.SetLocalRotationEuler(14.0f, 0.0f, 0.0f);
+
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(50.0f, -30.0f, 0.0f);
+
+    // ---- 物理環境 ----
+    {
+        GameObject envGo = s.CreateGameObject("Environment");
+        auto* env = envGo.AddComponent<PhysicsEnvironmentComponent>();
+        env->gravity = { 0.0f, -9.81f, 0.0f };
+    }
+
+    // ---- 床 ----
+    {
+        GameObject floor = s.CreateGameObject("Floor");
+        floor.SetLocalPosition(0.0f, -0.5f, 0.0f);
+        floor.SetLocalScale(24.0f, 1.0f, 24.0f);
+        auto* mr = floor.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("frdemo_floor") };
+        auto* col = floor.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kBox;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        col->physMaterial = matSteel;
+        col->friction = 0.8f;
+    }
+
+    // ---- 落下して転がる破壊物の箱 (動的ルート)。壊れる前は 1 剛体として動くだけを見せる
+    //      (FractureSystem は sub-07 以降。この tick では何も割れない) ----
+    {
+        const FractureAssetHandle* baked = BakeDemoFracture(res, "fracture://demo_box", 1, 8);
+        GameObject box = s.CreateGameObject("FractureBox");
+        box.SetLocalPosition(-2.5f, 4.0f, 0.0f);
+        box.SetLocalRotationEuler(22.0f, 17.0f, 0.0f); // 転がる初期姿勢
+        auto* mr = box.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("frdemo_box") };
+        auto* rb = box.AddComponent<RigidbodyComponent>();
+        rb->mass = 8.0f;
+        auto* d = box.AddComponent<DestructibleComponent>();
+        d->innerMaterial = AssetID{ HashStr("frdemo_inner") };
+        if (baked != nullptr) {
+            BuildFracturePieces(w, box.Id(), *baked);
+        }
+    }
+
+    // ---- 固定の壁 (kinematic ルート、sub-07 で撃つ的)。この時点では割れない ----
+    {
+        const FractureAssetHandle* baked = BakeDemoFracture(res, "fracture://demo_wall", 2, 12);
+        GameObject wall = s.CreateGameObject("FractureWall");
+        wall.SetLocalPosition(3.0f, 0.5f, 0.0f);
+        auto* mr = wall.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("frdemo_wall") };
+        auto* rb = wall.AddComponent<RigidbodyComponent>();
+        rb->isKinematic = true;
+        auto* d = wall.AddComponent<DestructibleComponent>();
+        d->innerMaterial = AssetID{ HashStr("frdemo_inner") };
+        if (baked != nullptr) {
+            BuildFracturePieces(w, wall.Id(), *baked);
+        }
     }
 }
 
