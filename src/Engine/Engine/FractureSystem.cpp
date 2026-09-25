@@ -205,6 +205,37 @@ void CopyOtherRigidbodyFields(const RigidbodyComponent& src, RigidbodyComponent&
     dst.ccd = src.ccd;
 }
 
+// 分離のとき、連結成分のうちどれを「元の塊の続き」として残すかを選ぶ (spec §4.1 破断 4)。
+// root の塊なら体積最大 (先着優先で同値は index 最小側)、リーダーの塊ならリーダー自身を含む
+// 成分。kinematic かどうかはこの選択に従うだけ (残る側は呼び出し元が owner の Rigidbody を
+// そのまま使い回すので isKinematic は不変、新リーダー側は常に dynamic — ProcessRoot 参照)。
+// 将来の接地アンカー判定 (sub-15 拡張点、ADR-021) は、この関数を「体積最大」以外の基準
+// (例: 地面に接する成分を優先) へ差し替える形で足す想定
+template <typename VolumeFn>
+size_t SelectStayComponent(bool isRootOwner, int32_t ownerPieceIndex,
+                           const std::vector<std::pair<int32_t, std::vector<int32_t>>>& comps,
+                           VolumeFn compVolume)
+{
+    if (!isRootOwner) {
+        for (size_t c = 0; c < comps.size(); ++c) {
+            if (std::binary_search(comps[c].second.begin(), comps[c].second.end(), ownerPieceIndex)) {
+                return c;
+            }
+        }
+        return 0;
+    }
+    size_t stayIdx = 0;
+    double bestVol = -1.0;
+    for (size_t c = 0; c < comps.size(); ++c) {
+        const double v = compVolume(comps[c].second);
+        if (v > bestVol) {
+            bestVol = v;
+            stayIdx = c;
+        }
+    }
+    return stayIdx;
+}
+
 // 1 個の Destructible を処理する: 荷重→接着の破断→塊ごとの連結成分の作り直し→分かれた
 // 成分の昇格 (spec §4.1 破断 1〜7)。myPieces は fp->root==root な現在の全破片 (順不同)。
 // 今回新しく分かれた塊の onBreak 通知は outBreakEvents の末尾へ「新リーダー index 昇順」で
@@ -398,26 +429,7 @@ void ProcessRoot(World& world, EntityID root, DestructibleComponent& dc, const F
             return c;
         };
 
-        // 残留成分の決定: root は体積最大 (先着優先で同値は index 最小側)、
-        // リーダーはリーダー自身を含む成分
-        size_t stayIdx = 0;
-        if (isRootOwner) {
-            double bestVol = -1.0;
-            for (size_t c = 0; c < comps.size(); ++c) {
-                const double v = compVolume(comps[c].second);
-                if (v > bestVol) {
-                    bestVol = v;
-                    stayIdx = c;
-                }
-            }
-        } else {
-            for (size_t c = 0; c < comps.size(); ++c) {
-                if (std::binary_search(comps[c].second.begin(), comps[c].second.end(), ownerPieceIndex)) {
-                    stayIdx = c;
-                    break;
-                }
-            }
-        }
+        const size_t stayIdx = SelectStayComponent(isRootOwner, ownerPieceIndex, comps, compVolume);
 
         const double ownerOldVolume = compVolume(nodeSet);
         const XMFLOAT3 ownerOldCenter = compCenter(nodeSet);

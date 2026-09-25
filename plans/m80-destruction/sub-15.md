@@ -1,8 +1,8 @@
 # sub-15: 拡張点の確認と整理、位相的な閉じの再調査 (ユーザー回答の反映)
 
 - 依存: sub-12
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (コミット待ち)
+- 往復: 1
 
 ## 出所
 
@@ -90,4 +90,95 @@ tools\check_rules.ps1
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-15 (round 1)
+実装:
+  - `src/Engine/Engine/FractureSystem.cpp:SelectStayComponent` — A-2 (接地アンカーの判定)。
+    `ProcessRoot` に直書きされていた「分離のとき残す成分を選ぶ」ロジック (root=体積最大 /
+    リーダー=リーダーを含む成分) をテンプレート関数へ切り出した。同じ入力から同じ `stayIdx`
+    を返すだけの機械的な抽出で挙動は変えていない (digest/replay で確認済み)。将来の接地
+    アンカー判定はこの関数の「体積最大」判定を差し替える形になる、と関数コメントと
+    ADR-021 に書いた
+  - `docs/adr/ADR-021-fracture-destruction.md` — 「拡張点の確認 (sub-15)」節を新設し、A の
+    5 件それぞれの現状確認と将来の差し込み口を記載。「位相的な閉じの再調査 (sub-15)」節を
+    新設し、B の調査結果の要旨と 3 択の結論を記載。既存の「未解決のまま残した後回し項目」の
+    位相的な閉じの行を、新設節への参照へ更新
+  - `plans/m80-destruction/topology-survey.md` (新規) — B の調査の詳細 (計測方法、5 入力
+    ×境界辺数の表、ε 感度表、方式評価、3 択の結論)
+  - 一時プローブ (`FractureSelfTest.cpp` / `FractureSkinSelfTest.cpp` に位相的な境界辺数の
+    計測コードを一時追加し `--selftest` で実測、記録後に `git checkout` で完全に revert —
+    最終差分には含まれない)
+仕様との差分:
+  - [追加] A-1 (スキン描画) の判断: `.mfrac` の `MeshVertex` は M18 由来のボーン欄を既に
+    持てる構造なので、版上げなしで拡張できることを確認した。ただし**今の焼きでウェイトを
+    実際に埋める処理は追加しなかった**。理由: 分割コア (`FractureBake.h`) が骨を知らない
+    設計を保つ方針 (決定 1 と対) のもとで、意味のあるウェイトを埋めるには
+    `AssignFractureBonesAndTransform` に頂点追跡の新経路が要り、消費者 (破片ごとのスキン
+    描画) がまだ無い状態でこれを足すと検証されないデータになる (AGENTS §5)。sub-15.md は
+    「検討し、判断をSELF_EVALに書く」としており、ここに判断根拠を書いた
+  - [追加] A-3 (凸分解) の判断: `.mfrac` の v2 化 (凸包の列) は**今回やらなかった**。理由:
+    版上げをしても `BuildFracturePieces`/物理側の消費経路が伴わないと死んだデータになり、
+    2026-09-26 時点で `.mfrac` 資産が 0 件 (assets 配下を確認) なので、実装するときに
+    v1→v2 の版上げをしても移行コストが小さいと判断した。将来の手順を ADR に書いた
+  - [追加] A-4・A-5 は既存の設計で構造的に足りていることを確認しただけで、コード変更なし
+    (ADR に 1 段落ずつ記載)
+  - [追加] B は調査のみでコードを書いていない (Notion 回答どおり延期)。結論は
+    (ii) 条件付きで可能 — 実行中の再分割 (B) 着手時に専用マイルストーンとして検討する
+検証:
+  - `bin\x64\Debug\Editor.exe --selftest` → 0 FAILURE (43 サブテスト群 ALL PASS)。fracture
+    bake digest (lshape seed=42 pieces=10): `0x521C987A83D781F7`、(torus seed=44 pieces=8):
+    `0xD9B0EEB57B686B71` — SelectStayComponent 抽出前と完全一致 (抽出前後で 2 回計測して比較)
+  - `bin\x64\Release\Editor.exe --selftest` → 0 FAILURE。同じ digest 2 本が Debug と完全一致
+  - `tools\replay_verify.bat` → 14 job 全 PASS (demo/parts/flow/mp/physics/joints/acoustic/ui/
+    fracture の 9 シーンチェーン + timetravel×2 + whatif×2 + rules)。`fracture` job も PASS
+  - `tools\shot_verify.bat` → 4 枚 FAIL (`parts` maxDiff=198, `joints` maxDiff=83,
+    `acoustic_forward` maxDiff=83, `acoustic_deferred` maxDiff=82)、他は全 PASS。この 4 枚は
+    harness.md に記録済みの「M80 着手前 73c8d76 からずれている既知の 4 枚」と完全一致 (名前・
+    症状とも) — 受け入れ条件どおり除外扱い
+  - `tools\check_rules.ps1` → 0 error(s), 0 warning(s)
+  - `.mfrac` の版は上げていないので v1 読み込みの新規 SelfTest は追加していない (既存の
+    往復テストのみで十分)
+  - WIP 不変: `git status --short` で `src/Engine/Renderer/WaterPass.cpp` (既存 WIP、未編集)
+    以外に自分が触っていないファイルの変更が無いことを確認
+自己採点 (1-5):
+  仕様適合: 4 — 受け入れ条件 1-4 を満たした。A の判断 3 件 (A-1/A-3 は「実装しない」、A-4/A-5
+    は「変更不要」) は sub-15.md が明示的に許容する選択肢だが、A-1 の解釈 (拡張点の記述に
+    留める) は planner の確認を経ていないので不安・質問に残す
+  正しさ: 5 — 構造変更 (SelectStayComponent) は digest 一致・replay_verify 全 PASS・
+    shot_verify (既知 4 枚除く) 全 PASS・selftest 0 FAILURE で検証済み。B の調査は実測に
+    基づく (一時プローブの実行結果を記録、ε 感度も 3 段階で確認して手法の妥当性を検算した)
+  コード品質: 4 — SelectStayComponent の抽出は機械的で最小。ADR の追記は既存の文体・粒度に
+    合わせた。テンプレート化 (VolumeFn) は呼び出し元のラムダをそのまま渡すための最小の型
+    消去で、既存コードの慣例 (ラムダを直接使う) からの逸脱ではあるが、関数を切り出すには
+    `asset.pieces` を参照する `compVolume` を渡す必要があり、`std::function` にすると
+    ヒープ確保が毎回発生する分だけ template のほうが単純と判断した
+  テスト: 4 — 既存の SelfTest・replay_verify・shot_verify・check_rules で構造変更を検証した。
+    B は新しい自動テストを追加していない (仕様どおり「コードは書かない」調査のため)。
+    位相的な閉じの計測手法自体 (ε 差分による内訳推定) は近似であり、topology-survey.md に
+    その限界を明記した
+不安・質問:
+  - A-1 (スキン描画) の判断について: 「今の焼きでウェイトを保存しておくか」を検討した結果
+    「保存しない」を選んだ (根拠は上記)。これは推奨解釈だが、ADR-021 の決定 1 (root proxy)
+    や既存のスキン破壊設計 (骨追従→剛体化、破片ごとのスキン描画はしない) と整合的だと判断
+    しての選択。逆の判断 (今のうちにウェイトだけ埋めておく) を望む場合は次回以降のサブで
+    差分は小さい (提案した差し込み口 1 箇所を埋めるだけ) ので、reworkの負担は大きくない
+  - A-3 (凸分解) の `.mfrac` 版上げも同様に「今はやらない」を選んだ。既存の `.mfrac` 資産が
+    0 件という前提が変わったら (どこかのサブや外部プロジェクトが実際に焼いた資産をコミット
+    したら) この判断の根拠が弱くなる点は申し送りに書いた
+  - B の 3 択の結論 (ii 条件付きで可能) は、調査手法 (ε 差分による丸め/T字接合の内訳推定) が
+    近似であることを前提にしている。より厳密な分類 (交点の由来を直接追跡する) をすれば
+    数字は変わり得るが、3 択の結論 (今すぐ実装するには規模が大きく、消費者が無い) 自体は
+    変わらないと考えている
+触ったファイル:
+  - docs/adr/ADR-021-fracture-destruction.md
+  - src/Engine/Engine/FractureSystem.cpp
+  - plans/m80-destruction/topology-survey.md (新規)
+申し送り:
+  - A-3 の「`.mfrac` 資産 0 件」という前提は 2026-09-26 時点のスナップショット。今後
+    どこかで実際に `.mfrac` が焼かれてコミットされたら、凸分解の版上げの判断 (今回は
+    「まだやらない」) を再検討する価値が下がる (移行コストが上がる) ことを記録しておく
+  - B (位相的な閉じ) の実装は、実行中の再分割 (B 機能、spec の「やらない」節) に着手する
+    ときに再検討する。topology-survey.md に規模の見積もり (400〜800 行、`.mfrac` v2 化必須)
+    と根本原因 (3 箇所の独立クリップ経路) を書いてあるので、そのまま設計の出発点にできる
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner)。A-2 は `SelectStayComponent` へ切り出し、digest の一致で挙動が不変。A-1 / A-3 は「今は入れない」判断を採用した。ユーザー回答の趣旨 (推奨案のまま、将来の拡張を入れやすく) に合う: ADR-021 に差し込み口 (関数名、`.mfrac` の欄の有無、版上げの手順と後方互換の読み替え) が具体的に書かれている。消費者の無いデータを先に入れないのは AGENTS §5 に沿う。A-4 / A-5 は既存設計で足りる。B は (ii) 条件付きで可能 (実行中の再分割に着手するとき専用マイルストーン、400〜800 行、`.mfrac` の版上げ込み)

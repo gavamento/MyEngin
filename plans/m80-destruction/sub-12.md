@@ -1,7 +1,7 @@
 # sub-12: ABI v22 (onBreak / ApplyFractureDamage)・デモ仕上げ・文書
 
 - 依存: sub-11
-- 状態: OK (コミット待ち)
+- 状態: OK (commit ca86f26)
 - 往復: 1
 
 ## やること

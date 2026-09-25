@@ -2,7 +2,7 @@
 
 - 依頼原文: m80-destruction: UE の Chaos Destruction 相当の破壊物理を実装する。要件と事前調査は plans/m80-destruction/design-draft.md (要件節はユーザー確定済み)。運用: 質問は AskUserQuestion を使わず推奨で裁定し、Notion (https://app.notion.com/p/3e502024a4d481df8d01cbe69c013018) の表へ記録して先へ進む。作業ツリーの既存 WIP には触らない。
 - 開始: 2026-09-25 / 基点コミット: 73c8d76277fae380161f706b6015747f1ef68166
-- フェーズ: 実装
+- フェーズ: レビュー
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
@@ -18,9 +18,9 @@
 | sub-09 | OK | 1 | c9764c4 | Inspector・非同期焼き・Undo |
 | sub-10 | OK | 3 | 5236868 | スキンメッシュの破壊 |
 | sub-11 | OK | 1 | 5b33f5f | 計測・ベンチ・上限 |
-| sub-12 | OK | 1 | (本コミット) | ABI v22・デモ・spec/ADR |
+| sub-12 | OK | 1 | ca86f26 | ABI v22・デモ・spec/ADR |
 | sub-14 | OK | 1 | 14d8775 | 断面の三角形分割を libtess2 に置き換え (依存 sub-04、sub-09 が依存) |
-| sub-15 | 未着手 | 0 | | 拡張点の確認と整理 + 位相的な閉じの再調査 (Notion 回答の反映、依存 sub-12) |
+| sub-15 | OK | 1 | (本コミット) | 拡張点の確認と整理 + 位相的な閉じの再調査 (Notion 回答の反映、依存 sub-12) |
 | sub-13 | OK | 1 | d873eac | 凸包生成の無限ループ修正 + トーラス焼き (依存 sub-02、sub-06 が依存) |
 
 ## レビュー
