@@ -1616,8 +1616,12 @@ MYE_STR(Insp_FractureVoxelizeHint,
 MYE_STR(Insp_FracturePrefabDisabled,
         "Disabled on prefab instances (adding/removing children isn't recorded as an override).",
         "プレハブインスタンスでは無効です (子の増減は上書きとして記録されません)")
-MYE_STR(Insp_FractureSkinUnsupported, "Skinned meshes aren't supported yet.",
-                                      "スキンメッシュは未対応です")
+MYE_STR(Insp_FracturePlayModeDisabled,
+        "Disabled while playing (Stop reverts the scene, discarding the generated pieces).",
+        "再生中は無効です (Stop でシーンが巻き戻り、生成した破片は消えます)")
+MYE_STR(Insp_FractureSkinNoWeights,
+        "Couldn't read bone weights for this mesh (enable the model cache and reload it).",
+        "このメッシュのボーンウェイトを読み取れません（モデルキャッシュを有効にして読み込み直してください）")
 MYE_STR(Insp_FractureNoMesh,
         "No mesh: add a MeshRenderer with a mesh first.",
         "メッシュがありません。メッシュ付きの MeshRenderer が必要です")

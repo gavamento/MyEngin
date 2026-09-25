@@ -45,6 +45,7 @@
 #include "Engine/Engine/ParticleSelfTest.h"
 #include "Engine/Engine/Physics/ConvexSelfTest.h"
 #include "Engine/Engine/Physics/FractureSelfTest.h"
+#include "Engine/Engine/Physics/FractureSkinSelfTest.h" // M80j: スキンメッシュの破壊
 #include "Engine/Engine/Physics/RagdollSelfTest.h"
 #include "Engine/Engine/Physics/XpbdSelfTest.h"
 #include "Engine/Engine/Physics/PhysMatSelfTest.h"
@@ -523,6 +524,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunWaterSurfaceSelfTest();              // M79e: 水面サーフェス経路・MyEngineWater
         ok &= mye::RunFractureSelfTest();                  // M80a: 破壊分割コア (閉じ判定・平面切断)
         ok &= mye::RunFractureEditorSelfTest();            // M80i: 破壊物 Inspector の焼き回り
+        ok &= mye::RunFractureSkinSelfTest();              // M80j: スキンメッシュの破壊
         return ok ? 0 : 1;
     }
 

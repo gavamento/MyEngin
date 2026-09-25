@@ -15,8 +15,8 @@
 | sub-06 | OK | 1 | 68cf2d4 | Destructible/FracturePiece・事前生成・root proxy |
 | sub-07 | OK | 2 | 7b09398 | 接着の破断と塊の剛体化 |
 | sub-08 | OK | 2 | 5e04bcd | 割れた後の 6 挙動 |
-| sub-09 | OK | 1 | (本コミット) | Inspector・非同期焼き・Undo |
-| sub-10 | 未着手 | 0 | | スキンメッシュの破壊 |
+| sub-09 | OK | 1 | c9764c4 | Inspector・非同期焼き・Undo |
+| sub-10 | OK | 3 | (本コミット) | スキンメッシュの破壊 |
 | sub-11 | 未着手 | 0 | | 計測・ベンチ・上限 |
 | sub-12 | 未着手 | 0 | | ABI v22・デモ・spec/ADR |
 | sub-14 | OK | 1 | 14d8775 | 断面の三角形分割を libtess2 に置き換え (依存 sub-04、sub-09 が依存) |
@@ -55,3 +55,4 @@
 - ABI の現状は v21 / 125 スロット (メモの v16/110 は古い)。
 - ルート直下の *.log (_build_round2.log 等) は 9/13〜9/23 付けで今回のハーネス以前のもの、.gitignore 済み。触らない。coder の作業ファイルはスクラッチパッドへ出す。
 - **shot_verify の切り分け (2026-09-25 司会)**: 4 枚 (parts / joints / acoustic_forward / acoustic_deferred) は M80 着手前 73c8d76 と 14d8775 のクリーン worktree で、数値・worst 座標・actual PNG の MD5 まで完全一致で割れる。M80 の差分と WIP (WaterPass.cpp) は無関係。以後のサブはこの 4 枚を除外して判定する (spec §5 受け入れ条件 10)。
+- **M80 外の既存問題 (ユーザーへ報告する)**: src/Engine/Engine/Asset/CookedCacheSelfTest.cpp:144-147 が固定名の一時ディレクトリ (mye_cook_selftest) を開始時に remove_all しており、Debug と Release の --selftest を同時に走らせると互いに消し合って不安定になり得る (sub-10 round 2 で同型の不安定を発見)。

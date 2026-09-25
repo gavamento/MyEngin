@@ -740,7 +740,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     ImGuizmo::BeginFrame(); // ImGui NewFrame 後・ギズモ使用前に 1 回
 
     hierarchy_.OnImGui(ctx, selection_, undo_);
-    inspector_.OnImGui(ctx, selection_, undo_, preview_);
+    inspector_.OnImGui(ctx, selection_, undo_, preview_, playMode_.InPlayMode());
     console_.OnImGui(settings_.externalEditorCmd);
     sceneView_.OnImGui(ctx, selection_, undo_, settings_);
     gameView_.OnImGui(ctx, selection_);

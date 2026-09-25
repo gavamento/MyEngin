@@ -63,8 +63,10 @@ class InspectorWindow {
 public:
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     // preview はマテリアルのライブプレビュー用 (M53)。AssetBrowser のサムネイルと同一インスタンス
+    // inPlayMode: PlayModeController::InPlayMode() (Editing 以外)。DrawDestructibleNotes が
+    // 生成ボタンの無効化に使う (Play 中の生成は Stop でシーンごと巻き戻る)
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
-                 AssetPreviewCache& preview);
+                 AssetPreviewCache& preview, bool inPlayMode);
 
 private:
     // アセット選択時の表示 (M40c): 名前/種別/GUID + テクスチャは Import Settings 編集
@@ -274,6 +276,8 @@ private:
         std::string failReason;
     };
     std::unordered_map<uint64_t, FractureBakeOutcome> fractureOutcomes_;
+    // OnImGui が毎フレーム書き、DrawDestructibleNotes が読むだけ (M80j sub-10 round 2)
+    bool inPlayMode_ = false;
 };
 
 } // namespace mye

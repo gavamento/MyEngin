@@ -128,6 +128,8 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\FractureLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\FractureMesh.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\FractureSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\FractureSkinBake.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\FractureSkinSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\FractureVoxel.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\MeshColliderLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsDebugDraw.cpp" />
@@ -381,6 +383,8 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\FractureLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\FractureMesh.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\FractureSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Physics\FractureSkinBake.h" />
+    <ClInclude Include="..\src\Engine\Engine\Physics\FractureSkinSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\FractureVoxel.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\MeshColliderLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\PhysicsDebugDraw.h" />

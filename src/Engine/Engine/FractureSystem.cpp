@@ -454,6 +454,10 @@ void ProcessRoot(World& world, EntityID root, DestructibleComponent& dc, const F
             const double compVol = compVolume(members);
             const XMFLOAT3 newVel = velocityAt(compCenter(members));
 
+            // M80j: 骨追従 (スキン破壊) をやめて剛体化する。世界姿勢は ReparentKeepWorld が
+            // 今 tick の LocalTransform (PartFollowSystem が既に書き終えた値) から読むので、
+            // 外す順序は結果に影響しない (どちらも tick 末のコマンドバッファへ積むだけ)
+            world.RemoveComponent<PartComponent>(leaderEntity);
             ReparentKeepWorld(world, leaderEntity, rootParent);
             auto* leaderRb = world.AddComponent<RigidbodyComponent>(leaderEntity);
             CopyOtherRigidbodyFields(ownerOldRb, *leaderRb);
@@ -467,6 +471,7 @@ void ProcessRoot(World& world, EntityID root, DestructibleComponent& dc, const F
 
             for (int32_t m : members) {
                 if (m != leaderIndex) {
+                    world.RemoveComponent<PartComponent>(entityOf[static_cast<size_t>(m)]);
                     ReparentKeepWorld(world, entityOf[static_cast<size_t>(m)], leaderEntity);
                 }
             }

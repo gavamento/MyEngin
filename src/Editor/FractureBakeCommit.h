@@ -5,6 +5,8 @@
 //====================================================================================
 #pragma once
 #include <cstdint>
+#include <string>
+#include <vector>
 
 #include "Engine/Core/EntityID.h"
 #include "Editor/FractureBakeService.h"
@@ -23,9 +25,11 @@ class UndoStack;
 //   3. root の Destructible.fractureAsset を書き換え、BuildFracturePieces で子を組み直す —
 //      ここまでを 1 Undo エントリにまとめる (spec §4.3「子の組み直しと欄の変更は 1 記録」)
 // 戻り値 false は書き出し/登録に失敗した (ディスク書き込み不可、root が既に破棄された等)。
-// root に Destructible が無い (焼き待ちの間に外された) 場合も false
+// root に Destructible が無い (焼き待ちの間に外された) 場合も false。
+// pieceBoneNames (M80j): 非空なら result.pieces と同じ並びの骨名を .mfrac へ書く (非スキンは空)
 bool CommitFractureBake(EngineContext& ctx, Selection& selection, UndoStack& undo, EntityID root,
                         uint64_t fid, const FractureBakeRequest& request,
-                        const FractureBakeResult& result);
+                        const FractureBakeResult& result,
+                        const std::vector<std::string>& pieceBoneNames = {});
 
 } // namespace mye

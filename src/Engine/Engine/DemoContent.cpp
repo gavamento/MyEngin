@@ -30,6 +30,7 @@
 #include "Engine/Engine/ModelLoader.h"
 #include "Engine/Engine/Physics/FractureBake.h"    // M80f: --fracture-demo の焼き
 #include "Engine/Engine/Physics/FractureLibrary.h" // M80f: メモリ上焼きの登録口
+#include "Engine/Engine/Physics/FractureSkinBake.h" // M80j: スキン破壊の骨割り当て
 #include "Engine/Engine/Physics/PhysMatLibrary.h"
 #include "Engine/Engine/Prefab.h"
 #include "Engine/Engine/RagdollBuilder.h"
@@ -3944,6 +3945,110 @@ const FractureAssetHandle* BakeDemoFracture(RenderResources& res, const char* na
     return lib->RegisterBaked(namePrefix, bake, HashStr("builtin://cube"), seed, pieceCount, 0, 32);
 }
 
+// ---- スキン破壊 (M80j): 2 骨の「腕」を手続き生成する ----
+// FractureSkinSelfTest.cpp と同じ最小構成 (下半分=Bone0 / 上半分=Bone1、CCW 外向きの箱) を
+// このファイルにも複製する (非公開ヘルパはファイルごとに持つ既存の流儀)。バインドポーズのまま
+// 描く (アニメさせない — このデモの目的は「割れる前/後」の絵の切り替えで、追従アニメ自体の
+// 検証は FractureSkinSelfTest が既に持つ)
+struct DemoSkinArm {
+    std::vector<MeshVertex> verts;
+    std::vector<uint32_t> indices;
+    std::vector<FractureSkinVertex> skinVerts;
+    SkinnedModel model;
+};
+
+DemoSkinArm MakeDemoSkinArm(float hx, float hy, float hz)
+{
+    DemoSkinArm arm;
+    // 面ごとに 4 頂点を独立させ、面法線をそのまま持たせる (FractureSelfTest.cpp の MakeBox は
+    // 8 頂点共有・対角方向の法線で、ヘッドレスの物理検証専用 — 実際にライトを当てて描くと
+    // 面が平らなのに法線が滑らかに変化して「ねじれた」ように見える。破片も元メッシュの法線を
+    // そのまま引き継ぐので、割れる前・後の両方でここを直しておく)
+    struct FaceVert {
+        float x, y, z;
+    };
+    auto addFace = [&](const FaceVert& a, const FaceVert& b, const FaceVert& c, const FaceVert& d,
+                       float nx, float ny, float nz) {
+        const uint32_t base = static_cast<uint32_t>(arm.verts.size());
+        const FaceVert corners[4] = { a, b, c, d };
+        for (const FaceVert& p : corners) {
+            MeshVertex mv;
+            mv.position = { p.x, p.y, p.z };
+            mv.normal = { nx, ny, nz };
+            mv.uv = { 0.0f, 0.0f };
+            mv.boneIndices[0] = (p.y > 0.0f) ? 1 : 0;
+            mv.boneWeights = { 1.0f, 0.0f, 0.0f, 0.0f };
+            arm.verts.push_back(mv);
+            FractureSkinVertex sv;
+            sv.position = mv.position;
+            sv.boneIndices[0] = mv.boneIndices[0];
+            sv.boneWeights = mv.boneWeights;
+            arm.skinVerts.push_back(sv);
+        }
+        arm.indices.push_back(base + 0);
+        arm.indices.push_back(base + 1);
+        arm.indices.push_back(base + 2);
+        arm.indices.push_back(base + 0);
+        arm.indices.push_back(base + 2);
+        arm.indices.push_back(base + 3);
+    };
+    const FaceVert p000{ -hx, -hy, -hz }, p100{ hx, -hy, -hz }, p110{ hx, hy, -hz }, p010{ -hx, hy, -hz };
+    const FaceVert p001{ -hx, -hy, hz }, p101{ hx, -hy, hz }, p111{ hx, hy, hz }, p011{ -hx, hy, hz };
+    addFace(p000, p010, p110, p100, 0, 0, -1);  // -Z
+    addFace(p001, p101, p111, p011, 0, 0, 1);   // +Z
+    addFace(p000, p100, p101, p001, 0, -1, 0);  // -Y
+    addFace(p010, p011, p111, p110, 0, 1, 0);   // +Y
+    addFace(p000, p001, p011, p010, -1, 0, 0);  // -X
+    addFace(p100, p110, p111, p101, 1, 0, 0);   // +X
+
+    arm.model.joints.resize(2);
+    arm.model.joints[0].name = "Bone0";
+    arm.model.joints[0].parent = -1;
+    arm.model.joints[0].bindT = { 0.0f, -hy, 0.0f };
+    arm.model.joints[0].bindR = { 0.0f, 0.0f, 0.0f, 1.0f };
+    arm.model.joints[0].bindS = { 1.0f, 1.0f, 1.0f };
+    arm.model.joints[0].inverseBind = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, hy, 0, 1 };
+    arm.model.joints[1].name = "Bone1";
+    arm.model.joints[1].parent = 0;
+    arm.model.joints[1].bindT = { 0.0f, 2.0f * hy, 0.0f };
+    arm.model.joints[1].bindR = { 0.0f, 0.0f, 0.0f, 1.0f };
+    arm.model.joints[1].bindS = { 1.0f, 1.0f, 1.0f };
+    arm.model.joints[1].inverseBind = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -hy, 0, 1 };
+    return arm;
+}
+
+// 手続き生成した腕を Voronoi 分割し、骨へ割り当ててメモリ上へ登録する (--fracture-demo 用)
+const FractureAssetHandle* BakeDemoSkinFracture(const char* namePrefix, const DemoSkinArm& arm, float hy)
+{
+    FractureBakeInput in;
+    in.sourceMesh.verts.resize(arm.verts.size());
+    for (size_t i = 0; i < arm.verts.size(); ++i) {
+        in.sourceMesh.verts[i].position = arm.verts[i].position;
+        in.sourceMesh.verts[i].normal = arm.verts[i].normal;
+        in.sourceMesh.verts[i].uv = arm.verts[i].uv;
+    }
+    in.sourceMesh.indices.assign(arm.indices.begin(), arm.indices.end());
+    // 下半分/上半分がそれぞれ 1 破片になるよう、明示シードで確実な 2 分割にする
+    // (PlaceSeeds のランダム配置に頼らない — 骨割り当ての検算はこの形状依存)
+    FractureBakeResult bake;
+    const bool baked
+        = BakeFractureWithSeeds(in.sourceMesh, { { 0, -hy * 0.5f, 0 }, { 0, hy * 0.5f, 0 } }, 0.1f, bake);
+    if (!baked || !bake.success) {
+        MYE_LOG_ERROR("[fracture-demo] skin arm bake failed (%s): %s", namePrefix, bake.failReason.c_str());
+        return nullptr;
+    }
+    std::vector<FractureSkinJoint> joints;
+    for (const SkeletonJoint& j : arm.model.joints) {
+        joints.push_back({ j.name, j.inverseBind });
+    }
+    const std::vector<std::string> boneNames = AssignFractureBonesAndTransform(bake, arm.skinVerts, joints);
+    FractureLibrary* lib = fracturelib::Library();
+    if (lib == nullptr) {
+        return nullptr;
+    }
+    return lib->RegisterBaked(namePrefix, bake, HashStr("demo://skin_arm"), 1, 2, 0, 32, boneNames);
+}
+
 } // namespace
 
 void BuildFractureShowcaseScene(EngineContext& ctx)
@@ -4049,6 +4154,34 @@ void BuildFractureShowcaseScene(EngineContext& ctx)
         }
     }
 
+    // ---- スキンメッシュの破壊 (M80j)。2 骨の腕を kinematic ルートとして置き、球を当てると
+    //      Bone1 側 (上半分) が骨追従から剛体化して落ち、Bone0 側は骨に追従したまま残る。
+    //      バインドポーズのまま (アニメさせない — 追従アニメ自体の検証は FractureSkinSelfTest) ----
+    constexpr float kArmHx = 0.4f, kArmHy = 1.0f, kArmHz = 0.4f;
+    {
+        const char* prefix = "fracture://demo_skin_arm";
+        const DemoSkinArm arm = MakeDemoSkinArm(kArmHx, kArmHy, kArmHz);
+        const FractureAssetHandle* baked = BakeDemoSkinFracture(prefix, arm, kArmHy);
+        const AssetID armMesh = res.meshes.Register("frdemo_skin_arm_mesh", arm.verts, arm.indices);
+        const AssetID armSkin = res.skinnedModels.Register("frdemo_skin_arm_model", arm.model);
+        GameObject skinArm = s.CreateGameObject("FractureSkinArm");
+        skinArm.SetLocalPosition(8.0f, 3.0f, 0.0f);
+        auto* mr = skinArm.AddComponent<MeshRendererComponent>();
+        mr->mesh = armMesh;
+        mr->material = AssetID{ HashStr("frdemo_box") };
+        auto* sm = skinArm.AddComponent<SkinnedMeshComponent>();
+        sm->model = armSkin;
+        sm->clip = -1; // クリップ無し = 常にバインドポーズ
+        sm->playing = false;
+        auto* d = skinArm.AddComponent<DestructibleComponent>();
+        d->innerMaterial = AssetID{ HashStr("frdemo_inner") };
+        d->strength = 200.0f; // 理由は箱・壁と同じ (上のコメント参照)
+        d->fractureAsset = AssetID{ HashStr(prefix) };
+        if (baked != nullptr) {
+            BuildFracturePieces(w, skinArm.Id(), *baked);
+        }
+    }
+
     // ---- 撃ち出す弾 (M80g)。決定的な初速の球を tick 0 から飛ばす (重力なしの直進 — 他の
     //      デモの射出弾と同じ流儀だが、着地後の箱と kinematic な壁の両方へ確実に当てるため
     //      重力を切って軌道を単純にした)。箱は着地 (概ね tick 50 前後) してから当たるよう
@@ -4069,6 +4202,10 @@ void BuildFractureShowcaseScene(EngineContext& ctx)
     };
     makeCannonball("FractureBallBox", { -2.5f, 0.55f, -20.0f }, { 0.0f, 0.0f, 30.0f });
     makeCannonball("FractureBallWall", { 3.0f, 0.5f, -15.0f }, { 0.0f, 0.0f, 30.0f });
+    // Bone1 (上半分) の中心あたり (root + (0, hy/2, 0)) を狙う。バインドポーズ固定なので
+    // 静的に計算できる (FractureSkinSelfTest の狙い方と同じ式)
+    makeCannonball("FractureBallSkinArm", { 8.0f, 3.0f + kArmHy * 0.5f, -15.0f },
+                   { 0.0f, 0.0f, 30.0f });
 }
 
 } // namespace mye

@@ -18,6 +18,9 @@
 #include "Editor/EditorWidgets.h"
 #include "Editor/FractureBakeCommit.h" // M80i: 焼き成功結果の確定 (.mfrac 保存・登録・Undo)
 #include "Engine/Core/AssetGuidResolver.h"
+#include "Engine/Core/AssetKeyResolver.h" // M80j: guid:// 登録名 → クック元パス (スキンの骨ウェイト取得)
+#include "Engine/Engine/Asset/ModelCook.h" // M80j: .mmdl クックキャッシュからボーンウェイト付き頂点を読む
+#include "Engine/Engine/Physics/FractureSkinBake.h" // M80j: 骨割り当てへ渡す入力の型
 #include "Editor/EditorComponentCatalog.h"
 #include "Editor/PartTagNames.h"
 #include "Editor/PhysicsLayerNames.h"
@@ -553,8 +556,11 @@ InspectorTargets CollectInspectorTargets(EngineContext& ctx, const Selection& se
 } // namespace
 
 void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
-                              AssetPreviewCache& preview)
+                              AssetPreviewCache& preview, bool inPlayMode)
 {
+    // M80j (sub-10 round 2): Play 中は「生成」を押しても .mfrac は書かれるが Stop で子ごと
+    // 消える (Play はシーンをスナップショットに戻す) ので、DrawDestructibleNotes が読む
+    inPlayMode_ = inPlayMode;
     if (!open) {
         return;
     }
@@ -1359,18 +1365,53 @@ void InspectorWindow::DrawDestructibleNotes(EngineContext& ctx, Selection& selec
         }
     }
 
-    // 生成ボタンの可否 (spec §4.3): プレハブインスタンス / スキン未対応 / ソースメッシュ無し
+    // 生成ボタンの可否 (spec §4.3): Play 中 / プレハブインスタンス / ソースメッシュ無し / スキンは
+    // ウェイトを取得できるかで判定する (複数選択は呼び出し元で除外済み、DrawComponentNotes 参照)
     const auto* mr = world.GetComponent<MeshRendererComponent>(e);
     Mesh* mesh = (mr != nullptr && !mr->mesh.IsNull() && ctx.resources != nullptr)
         ? ctx.resources->meshes.Get(mr->mesh)
         : nullptr;
+    const auto* skinComp = world.GetComponent<SkinnedMeshComponent>(e);
+    // スキンの焼きに要る入力 (ボーンウェイト付き頂点・骨のバインド行列)。.mmdl クックキャッシュ
+    // から毎フレーム引き直す (「生成済み」表示と同じ流儀 — シーンを読み直しても正しく動くように
+    // 都度導出する)。取得できなければ生成ボタンを無効にする
+    std::vector<FractureSkinVertex> skinVerts;
+    std::vector<FractureSkinJoint> skinJoints;
+    bool skinInputReady = false;
+    if (skinComp != nullptr && mesh != nullptr && mr != nullptr && ctx.resources != nullptr) {
+        const std::string* meshName = ctx.resources->meshes.NameOf(mr->mesh);
+        const std::wstring srcPath =
+            meshName != nullptr ? assetkey::SourcePathForSubAssetKey(*meshName) : std::wstring{};
+        std::vector<MeshVertex> weighted;
+        if (meshName != nullptr && !srcPath.empty()
+            && ModelCook::TryLoadCookedMeshVertices(srcPath, *meshName, weighted)) {
+            if (const SkinnedModel* model = ctx.resources->skinnedModels.Get(skinComp->model)) {
+                skinJoints.reserve(model->joints.size());
+                for (const SkeletonJoint& j : model->joints) {
+                    skinJoints.push_back({ j.name, j.inverseBind });
+                }
+                skinVerts.resize(weighted.size());
+                for (size_t i = 0; i < weighted.size(); ++i) {
+                    skinVerts[i].position = weighted[i].position;
+                    std::memcpy(skinVerts[i].boneIndices, weighted[i].boneIndices,
+                               sizeof(skinVerts[i].boneIndices));
+                    skinVerts[i].boneWeights = weighted[i].boneWeights;
+                }
+                skinInputReady = !skinJoints.empty();
+            }
+        }
+    }
     const char* disableReason = nullptr;
-    if (tg.isPrefabMember) {
+    if (inPlayMode_) {
+        // Play 中の生成は .mfrac 自体は書けるが、Stop でシーンがスナップショットへ巻き戻り
+        // 生成した子ごと消える (PlayModeController.h の契約) ので黙って無駄骨にしない
+        disableReason = Tr(StrId::Insp_FracturePlayModeDisabled);
+    } else if (tg.isPrefabMember) {
         disableReason = Tr(StrId::Insp_FracturePrefabDisabled);
-    } else if (world.GetComponent<SkinnedMeshComponent>(e) != nullptr) {
-        disableReason = Tr(StrId::Insp_FractureSkinUnsupported);
     } else if (mesh == nullptr || mesh->positions.empty() || mesh->indices.empty()) {
         disableReason = Tr(StrId::Insp_FractureNoMesh);
+    } else if (skinComp != nullptr && !skinInputReady) {
+        disableReason = Tr(StrId::Insp_FractureSkinNoWeights);
     }
     const bool canGenerate = (disableReason == nullptr) && (state != FractureBakeJobState::Baking);
 
@@ -1384,6 +1425,10 @@ void InspectorWindow::DrawDestructibleNotes(EngineContext& ctx, Selection& selec
         req.pieceCount = comp->pieceCount;
         req.openMeshMode = comp->openMeshMode;
         req.voxelResolution = comp->voxelResolution;
+        if (skinInputReady) {
+            req.skinVertices = std::move(skinVerts);
+            req.skinJoints = std::move(skinJoints);
+        }
         fractureBakeService_.Request(tg.fid, std::move(req));
     }
     ImGui::EndDisabled();
@@ -1402,7 +1447,8 @@ void InspectorWindow::CommitFractureBakeResult(EngineContext& ctx, Selection& se
 {
     FractureBakeRequest req;
     FractureBakeResult result;
-    if (!fractureBakeService_.TakeResult(tg.fid, req, result)) {
+    std::vector<std::string> pieceBoneNames; // M80j: スキンのときだけ非空
+    if (!fractureBakeService_.TakeResult(tg.fid, req, result, pieceBoneNames)) {
         return;
     }
 
@@ -1421,7 +1467,7 @@ void InspectorWindow::CommitFractureBakeResult(EngineContext& ctx, Selection& se
                      result.failReason.c_str());
         return;
     }
-    if (!CommitFractureBake(ctx, selection, undo, tg.e, tg.fid, req, result)) {
+    if (!CommitFractureBake(ctx, selection, undo, tg.e, tg.fid, req, result, pieceBoneNames)) {
         fractureOutcomes_[tg.fid].success = false;
         fractureOutcomes_[tg.fid].failReason = "failed to write or register the .mfrac asset";
     }

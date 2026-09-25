@@ -29,6 +29,7 @@ struct FracturePieceRef {
     AssetID capMesh;   // MeshLibrary "<prefix>#frag<i>#cap"
     AssetID hull;      // ConvexColliderLibrary "<prefix>#frag<i>#hull"
     std::vector<FractureAsset::NeighborRecord> neighbors;
+    std::string boneName; // スキン破壊 (M80j)。空 = 骨なし (通常の破片)
 };
 
 // 1 資産分の読み込み・登録済み状態。data は ConvexColliderLibrary::Clear() 後の
@@ -59,9 +60,12 @@ public:
 
     // GUID の無いメモリ上の焼き結果を登録する (--fracture-demo 用)。
     // namePrefix の一意性は呼び出し側が保証する。同じ namePrefix は差し替え
+    // boneNames (M80j): 非空なら bake.pieces と同じ並びで破片ごとの骨名を .mfrac へ書く
+    // (AssignFractureBonesAndTransform の戻り値をそのまま渡す想定)。既定は非スキン
     const FractureAssetHandle* RegisterBaked(const std::string& namePrefix, const FractureBakeResult& bake,
                                               uint64_t sourceMeshHash, uint32_t seed, int32_t pieceCount,
-                                              int32_t openMeshMode, int32_t voxelResolution);
+                                              int32_t openMeshMode, int32_t voxelResolution,
+                                              const std::vector<std::string>& boneNames = {});
 
     // 登録名 (ファイルなら "guid://<16hex>") で引く。未登録は nullptr
     const FractureAssetHandle* Find(const std::string& namePrefix) const;
@@ -89,9 +93,12 @@ private:
 
 // FractureBakeResult (Renderer 非依存の FractureVertex を使う分割コアの出力) を
 // .mfrac の保存形式 (MeshVertex ベース) へ詰め替える
+// boneNames (M80j): 非空なら bake.pieces[i] の骨名として pieces[i].boneName へ書く
+// (i が範囲外なら空のまま = 非スキン扱い)
 FractureAsset::FractureData BuildFractureAssetData(const FractureBakeResult& bake, uint64_t sourceMeshHash,
                                                     uint32_t seed, int32_t pieceCount, int32_t openMeshMode,
-                                                    int32_t voxelResolution);
+                                                    int32_t voxelResolution,
+                                                    const std::vector<std::string>& boneNames = {});
 
 // モジュール注入 (convexcol:: と同じ流儀)。EngineLoop が起動時に Install し終了時に外す
 namespace fracturelib {

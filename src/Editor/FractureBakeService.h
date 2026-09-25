@@ -9,11 +9,14 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 #include "Engine/Engine/Physics/FractureBake.h"
 #include "Engine/Engine/Physics/FractureMesh.h"
+#include "Engine/Engine/Physics/FractureSkinBake.h" // M80j: スキンの骨割り当て入力
 
 namespace mye {
 
@@ -27,6 +30,10 @@ struct FractureBakeRequest {
     int32_t pieceCount = 16;
     int32_t openMeshMode = 0;
     int32_t voxelResolution = 32;
+    // M80j: スキン破壊。skinJoints が非空なら sourceMesh.verts と同じ並びのウェイトを渡す
+    // (骨割り当て・骨空間への変換は WorkerLoop 内で焼きの後処理として行う)
+    std::vector<FractureSkinVertex> skinVertices;
+    std::vector<FractureSkinJoint> skinJoints;
 };
 
 // 要求 1 件の状態。id ごとに独立 (Destructible の tg.fid をキーに使う想定)
@@ -53,8 +60,10 @@ public:
     // ジョブ」と一致するときだけ意味を持つ。一致しない = キュー待ち中とみなし ClosedCheck を返す)
     FractureBakeStage GetStage(uint64_t id) const;
 
-    // Ready な結果を取り出す (呼ぶと内部エントリは消え None に戻る)。Ready でなければ false
-    bool TakeResult(uint64_t id, FractureBakeRequest& requestOut, FractureBakeResult& resultOut);
+    // Ready な結果を取り出す (呼ぶと内部エントリは消え None に戻る)。Ready でなければ false。
+    // boneNamesOut (M80j): スキン破壊のとき bake.pieces と同じ並びの割り当て骨名。非スキンは空
+    bool TakeResult(uint64_t id, FractureBakeRequest& requestOut, FractureBakeResult& resultOut,
+                    std::vector<std::string>& boneNamesOut);
 
     void Pump(); // メインスレッド: ワーカー結果を毎フレーム取り込む
     void Shutdown();
@@ -68,11 +77,13 @@ private:
         uint64_t id = 0;
         FractureBakeRequest request;
         FractureBakeResult result;
+        std::vector<std::string> pieceBoneNames; // M80j。非スキンは空
     };
     struct Entry {
         FractureBakeJobState state = FractureBakeJobState::None;
         FractureBakeRequest request;
         FractureBakeResult result; // state==Ready のときだけ意味を持つ
+        std::vector<std::string> pieceBoneNames; // M80j。result と同じ並び
     };
 
     void EnsureWorker();

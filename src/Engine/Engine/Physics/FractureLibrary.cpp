@@ -45,7 +45,8 @@ void ToMeshData(const FractureMesh& mesh, std::vector<MeshVertex>& verts, std::v
 
 FractureAsset::FractureData BuildFractureAssetData(const FractureBakeResult& bake, uint64_t sourceMeshHash,
                                                     uint32_t seed, int32_t pieceCount, int32_t openMeshMode,
-                                                    int32_t voxelResolution)
+                                                    int32_t voxelResolution,
+                                                    const std::vector<std::string>& boneNames)
 {
     FractureAsset::FractureData data;
     data.sourceMeshHash = sourceMeshHash;
@@ -55,7 +56,8 @@ FractureAsset::FractureData BuildFractureAssetData(const FractureBakeResult& bak
     data.voxelResolution = voxelResolution;
     data.mergedCount = bake.mergedCount;
     data.pieces.reserve(bake.pieces.size());
-    for (const FracturePieceBake& piece : bake.pieces) {
+    for (size_t i = 0; i < bake.pieces.size(); ++i) {
+        const FracturePieceBake& piece = bake.pieces[i];
         FractureAsset::PieceRecord pr;
         pr.origin = piece.origin;
         pr.volume = piece.volume;
@@ -65,6 +67,9 @@ FractureAsset::FractureData BuildFractureAssetData(const FractureBakeResult& bak
         pr.neighbors.reserve(piece.neighbors.size());
         for (const FractureNeighbor& n : piece.neighbors) {
             pr.neighbors.push_back({ n.pieceIndex, n.area });
+        }
+        if (i < boneNames.size()) {
+            pr.boneName = boneNames[i];
         }
         data.droppedNeighborTotal += piece.droppedNeighbors;
         data.pieces.push_back(std::move(pr));
@@ -95,10 +100,11 @@ const FractureAssetHandle* FractureLibrary::RegisterBaked(const std::string& nam
                                                            const FractureBakeResult& bake,
                                                            uint64_t sourceMeshHash, uint32_t seed,
                                                            int32_t pieceCount, int32_t openMeshMode,
-                                                           int32_t voxelResolution)
+                                                           int32_t voxelResolution,
+                                                           const std::vector<std::string>& boneNames)
 {
-    FractureAsset::FractureData data
-        = BuildFractureAssetData(bake, sourceMeshHash, seed, pieceCount, openMeshMode, voxelResolution);
+    FractureAsset::FractureData data = BuildFractureAssetData(bake, sourceMeshHash, seed, pieceCount,
+                                                               openMeshMode, voxelResolution, boneNames);
     return RegisterInternal(namePrefix, std::move(data));
 }
 
@@ -141,6 +147,7 @@ const FractureAssetHandle* FractureLibrary::RegisterInternal(const std::string& 
         }
         ref.hull = hullId;
         ref.neighbors = pr.neighbors;
+        ref.boneName = pr.boneName;
         handle.pieces.push_back(std::move(ref));
     }
     handle.data = std::move(data);

@@ -57,7 +57,8 @@ FractureBakeStage FractureBakeService::GetStage(uint64_t id) const
 }
 
 bool FractureBakeService::TakeResult(uint64_t id, FractureBakeRequest& requestOut,
-                                     FractureBakeResult& resultOut)
+                                     FractureBakeResult& resultOut,
+                                     std::vector<std::string>& boneNamesOut)
 {
     const auto it = entries_.find(id);
     if (it == entries_.end() || it->second.state != FractureBakeJobState::Ready) {
@@ -65,6 +66,7 @@ bool FractureBakeService::TakeResult(uint64_t id, FractureBakeRequest& requestOu
     }
     requestOut = std::move(it->second.request);
     resultOut = std::move(it->second.result);
+    boneNamesOut = std::move(it->second.pieceBoneNames);
     entries_.erase(it);
     return true;
 }
@@ -110,6 +112,12 @@ void FractureBakeService::WorkerLoop()
         r.id = job.id;
         r.request = job.request;
         BakeFracture(in, r.result); // 戻り値は result.success と同じ意味なので見なくてよい
+        // M80j: スキン破壊。骨割り当てと骨空間への変換も「焼き」の一部としてワーカースレッドで
+        // 行う (焼きの結果を書き換えるだけで UI は触らない — ModalSoundLibrary と同じ境界)
+        if (r.result.success && !job.request.skinJoints.empty()) {
+            r.pieceBoneNames = AssignFractureBonesAndTransform(r.result, job.request.skinVertices,
+                                                                job.request.skinJoints);
+        }
 
         hasCurrentJob_.store(false, std::memory_order_relaxed);
         {
@@ -133,6 +141,7 @@ void FractureBakeService::Pump()
         entry.state = FractureBakeJobState::Ready;
         entry.request = std::move(r.request);
         entry.result = std::move(r.result);
+        entry.pieceBoneNames = std::move(r.pieceBoneNames);
     }
 }
 

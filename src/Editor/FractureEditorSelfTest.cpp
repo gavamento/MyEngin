@@ -246,7 +246,8 @@ bool RunFractureEditorSelfTest()
         }
         FractureBakeRequest reqOut;
         FractureBakeResult resultOut;
-        const bool took = svc.TakeResult(1, reqOut, resultOut);
+        std::vector<std::string> boneNamesOut;
+        const bool took = svc.TakeResult(1, reqOut, resultOut, boneNamesOut);
         check(took, "async: the worker finishes and Pump/TakeResult deliver the result");
         check(svc.GetState(1) == FractureBakeJobState::None,
               "async: TakeResult consumes the entry (no double-commit on the next frame)");

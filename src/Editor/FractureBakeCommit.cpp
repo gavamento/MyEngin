@@ -24,7 +24,8 @@ namespace mye {
 
 bool CommitFractureBake(EngineContext& ctx, Selection& selection, UndoStack& undo, EntityID root,
                         uint64_t fid, const FractureBakeRequest& request,
-                        const FractureBakeResult& result)
+                        const FractureBakeResult& result,
+                        const std::vector<std::string>& pieceBoneNames)
 {
     World& world = ctx.scene->GetWorld();
     if (!world.IsAlive(root)) {
@@ -43,7 +44,7 @@ bool CommitFractureBake(EngineContext& ctx, Selection& selection, UndoStack& und
                              + std::to_wstring(request.pieceCount) + FractureAsset::kFractureExt;
     const FractureAsset::FractureData data
         = BuildFractureAssetData(result, request.sourceMeshHash, request.seed, request.pieceCount,
-                                request.openMeshMode, request.voxelResolution);
+                                request.openMeshMode, request.voxelResolution, pieceBoneNames);
     if (!FractureAsset::Save(path, data)) {
         MYE_LOG_ERROR("[fracture] failed to write %s", WideToUtf8(path).c_str());
         return false;

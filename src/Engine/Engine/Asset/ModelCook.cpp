@@ -352,4 +352,27 @@ void SaveToCache(const std::wstring& srcPath, const ModelCookData& d)
     }
 }
 
+bool TryLoadCookedMeshVertices(const std::wstring& srcPath, const std::string& meshKey,
+                               std::vector<MeshVertex>& outVertices)
+{
+    if (!CookedCache::Enabled()) {
+        return false;
+    }
+    std::vector<uint8_t> payload;
+    if (!CookedCache::ReadValidated(srcPath, kModelExt, payload)) {
+        return false;
+    }
+    ModelCookData d;
+    if (!Deserialize(payload, d)) {
+        return false;
+    }
+    for (const CookedMesh& m : d.meshes) {
+        if (m.key == meshKey) {
+            outVertices = m.vertices;
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace mye::ModelCook

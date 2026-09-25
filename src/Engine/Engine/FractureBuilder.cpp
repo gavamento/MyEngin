@@ -62,8 +62,13 @@ int BuildFracturePieces(World& world, EntityID root, const FractureAssetHandle& 
     if (world.GetComponent<RigidbodyComponent>(root) == nullptr) {
         world.AddComponent<RigidbodyComponent>(root);
     }
+    // M80j: スキン破壊のルートは常に kinematic (骨アニメが動かす。物理には動かさせない)
+    const bool isSkinRoot = world.GetComponent<SkinnedMeshComponent>(root) != nullptr;
     if (auto* rb = world.GetComponent<RigidbodyComponent>(root)) {
         rb->compoundColliders = true;
+        if (isSkinRoot) {
+            rb->isKinematic = true;
+        }
     }
     // root 自身の Collider は外す — 複合の子形状と二重に当たらないようにする
     if (world.GetComponent<ColliderComponent>(root) != nullptr) {
@@ -120,6 +125,13 @@ int BuildFracturePieces(World& world, EntityID root, const FractureAssetHandle& 
             fp->damage = 0.0f;
             fp->releaseTicks = -1;
             fp->phase = 0;
+        }
+        // M80j: 骨が割り当たっている破片 (スキン破壊) は root 直下の子として骨に追従する
+        // (PartFollowSystem の「部位は source の直子」規約、spec §10.5 Ragdolls と同じ形)
+        if (!piece.boneName.empty()) {
+            auto* pc = frag.AddComponent<PartComponent>();
+            std::snprintf(pc->joint, sizeof(pc->joint), "%s", piece.boneName.c_str());
+            pc->source = kNullEntity; // 最も近い SkinnedMesh (= root) へフォールバック
         }
 
         const std::string capName = MakeUniqueSiblingName(world, frag.Id(), "_cap", kNullEntity);

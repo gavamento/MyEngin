@@ -76,5 +76,12 @@ bool TryReplayFromCache(RenderResources& resources, ShaderManager& shaders,
                         const std::wstring& srcPath);
 void SaveToCache(const std::wstring& srcPath, const ModelCookData& d);
 
+// M80j: スキン破壊の骨割り当てに使う。srcPath の .mmdl クックキャッシュから meshKey に一致する
+// CookedMesh の頂点 (ボーンウェイト込み。MeshLibrary の CPU コピーには残らない — GpuResources.cpp
+// の Register 参照) を取り出す。CookedCache が無効・ファイル無し・キー不一致は false
+// (MeshLibrary/ModelLoader の構造は変えない — 呼び出し側がスキン破壊の入力なしとして扱う)
+bool TryLoadCookedMeshVertices(const std::wstring& srcPath, const std::string& meshKey,
+                               std::vector<MeshVertex>& outVertices);
+
 } // namespace ModelCook
 } // namespace mye
