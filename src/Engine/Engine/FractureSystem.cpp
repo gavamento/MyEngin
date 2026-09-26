@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "Engine/Core/AssetGuidResolver.h"
+#include "Engine/Core/Check.h"
 #include "Engine/Core/Components.h"
 #include "Engine/Core/HierarchyWalk.h"
 #include "Engine/Core/Log.h"
@@ -71,11 +72,16 @@ XMFLOAT3 ComposeWorldScale(World& world, EntityID e)
     return s;
 }
 
-// child の現在のワールド姿勢を保ったまま newParent の下でのローカル TRS を書いてから
-// SetParent する。**XMMatrixInverse/XMMatrixDecompose は使わない** — どちらも構成間で
-// ビットが割れうる (PartFollowSystem.h の DecomposeRowMajorTRS 導入の理由と同じ)。
-// SetParent 自体は World::SetParent が常に tick 末のコマンドバッファへ積む
-void ReparentKeepWorld(World& world, EntityID child, EntityID newParent)
+// child の現在のワールド姿勢を保つ newParent 基準の新しい LocalTransform を計算し、
+// FractureSystem の「tick 末に書く表」(pendingLocals) へ積む。**LocalTransform はまだ書かない**
+// — SetParent (ここで積む。World::SetParent は常に tick 末のコマンドバッファ) が実際に
+// 反映されるのは World::ApplyStructuralChanges の後であり、書き込みの時期をそれに揃える
+// (FractureSystem::ApplyDeferredLocals が ApplyStructuralChanges の直後に書く)。
+// こうすることで、tick の途中はどの経路の位置クエリも「古い親 + 古い LocalTransform」の
+// ままで一貫する (spec §4.1 破断 4)。**XMMatrixInverse/XMMatrixDecompose は使わない** —
+// どちらも構成間でビットが割れうる (PartFollowSystem.h の DecomposeRowMajorTRS 導入の理由と同じ)
+void ReparentKeepWorld(World& world, EntityID child, EntityID newParent,
+                       std::vector<FracturePendingLocal>& pendingLocals)
 {
     float cpx, cpy, cpz, cqx, cqy, cqz, cqw;
     ComposeEntityWorldPose(world, child, cpx, cpy, cpz, cqx, cqy, cqz, cqw);
@@ -98,11 +104,12 @@ void ReparentKeepWorld(World& world, EntityID child, EntityID newParent)
     float lqx, lqy, lqz, lqw;
     QuatMul(-pqx, -pqy, -pqz, pqw, cqx, cqy, cqz, cqw, lqx, lqy, lqz, lqw);
 
-    if (auto* lt = world.GetComponent<LocalTransform>(child)) {
-        lt->position = { rx * isx, ry * isy, rz * isz };
-        lt->rotation = { lqx, lqy, lqz, lqw };
-        lt->scale = { cscale.x * isx, cscale.y * isy, cscale.z * isz };
-    }
+    FracturePendingLocal pl;
+    pl.entity = child;
+    pl.position = { rx * isx, ry * isy, rz * isz };
+    pl.rotation = { lqx, lqy, lqz, lqw };
+    pl.scale = { cscale.x * isx, cscale.y * isy, cscale.z * isz };
+    pendingLocals.push_back(pl);
     world.SetParent(child, newParent);
 }
 
@@ -223,7 +230,8 @@ size_t SelectStayComponent(bool isRootOwner, int32_t ownerPieceIndex,
 void ProcessRoot(World& world, EntityID root, DestructibleComponent& dc, const FractureAssetHandle& asset,
                  double avgNeighborArea, const std::vector<PieceEntry>& myPieces,
                  const std::vector<ShapeImpulse>& shapeImpulses, float dt,
-                 std::vector<FractureBreakEvent>& outBreakEvents)
+                 std::vector<FractureBreakEvent>& outBreakEvents,
+                 std::vector<FracturePendingLocal>& pendingLocals)
 {
     const int32_t n = static_cast<int32_t>(asset.pieces.size());
     if (n <= 1) {
@@ -464,13 +472,21 @@ void ProcessRoot(World& world, EntityID root, DestructibleComponent& dc, const F
                 }
             }
             {
+                // onBreak の point は破片の体積重心 (ワールド) で測る (spec §2)。
+                // スキン破片は原点が骨原点に潰れているため、localCenter のオフセットが要る
+                // (非スキンは localCenter ≈ 0 なのでほぼ変わらない)
+                const EntityID maxLoadEntity = entityOf[static_cast<size_t>(maxLoadIdx)];
                 float mpx, mpy, mpz, mqx, mqy, mqz, mqw;
-                ComposeEntityWorldPose(world, entityOf[static_cast<size_t>(maxLoadIdx)], mpx, mpy,
-                                      mpz, mqx, mqy, mqz, mqw);
+                ComposeEntityWorldPose(world, maxLoadEntity, mpx, mpy, mpz, mqx, mqy, mqz, mqw);
+                const XMFLOAT3 maxLoadScale = ComposeWorldScale(world, maxLoadEntity);
+                const XMFLOAT3& localCenter = asset.pieces[static_cast<size_t>(maxLoadIdx)].localCenter;
+                float lcx, lcy, lcz;
+                QuatRotate(mqx, mqy, mqz, mqw, maxLoadScale.x * localCenter.x,
+                          maxLoadScale.y * localCenter.y, maxLoadScale.z * localCenter.z, lcx, lcy, lcz);
                 FractureBreakEvent ev;
                 ev.root = root;
                 ev.leader = leaderEntity;
-                ev.point = { mpx, mpy, mpz };
+                ev.point = { mpx + lcx, mpy + lcy, mpz + lcz };
                 ev.impulse = load[static_cast<size_t>(maxLoadIdx)];
                 pendingBreaks.emplace_back(leaderIndex, ev);
             }
@@ -479,7 +495,7 @@ void ProcessRoot(World& world, EntityID root, DestructibleComponent& dc, const F
             // 今 tick の LocalTransform (PartFollowSystem が既に書き終えた値) から読むので、
             // 外す順序は結果に影響しない (どちらも tick 末のコマンドバッファへ積むだけ)
             world.RemoveComponent<PartComponent>(leaderEntity);
-            ReparentKeepWorld(world, leaderEntity, rootParent);
+            ReparentKeepWorld(world, leaderEntity, rootParent, pendingLocals);
             auto* leaderRb = world.AddComponent<RigidbodyComponent>(leaderEntity);
             CopyOtherRigidbodyFields(ownerOldRb, *leaderRb);
             leaderRb->velocity = newVel;
@@ -493,7 +509,7 @@ void ProcessRoot(World& world, EntityID root, DestructibleComponent& dc, const F
             for (int32_t m : members) {
                 if (m != leaderIndex) {
                     world.RemoveComponent<PartComponent>(entityOf[static_cast<size_t>(m)]);
-                    ReparentKeepWorld(world, entityOf[static_cast<size_t>(m)], leaderEntity);
+                    ReparentKeepWorld(world, entityOf[static_cast<size_t>(m)], leaderEntity, pendingLocals);
                 }
             }
 
@@ -517,10 +533,6 @@ void ProcessRoot(World& world, EntityID root, DestructibleComponent& dc, const F
         outBreakEvents.push_back(std::move(pb.second));
     }
 }
-
-// afterBreak=3 (縮んで消える) の scale 下限。0 まで落とすと零体積・0 除算の芽になるため
-// 消える直前の tick まで正の値を保つ (spec §4.1 破断の「最終 tick の直前で最小値を下限」)
-constexpr float kMinFractureFadeScale = 1e-3f;
 
 // 割れた後の後始末 (spec §4.1「割れた後」)。myPieces はこの root の全破片 (ProcessRoot 呼び出し
 // 前後でエンティティそのものは変わらない)。preTickLeaders は ProcessRoot を呼ぶ**前**に集めた
@@ -588,14 +600,19 @@ void ProcessAfterBreak(World& world, DestructibleComponent& dc, const std::vecto
                 if (auto* fp = world.GetComponent<FracturePieceComponent>(l.entity)) {
                     fp->phase = 1;
                 }
-                if (auto* lt = world.GetComponent<LocalTransform>(l.entity)) {
-                    const int32_t fade = (std::max)(dc.fadeTicks, 0);
-                    const float t = fade > 0
-                        ? std::clamp(static_cast<float>(l.releaseTicks - dc.afterBreakTicks)
-                                         / static_cast<float>(fade), 0.0f, 1.0f)
-                        : 1.0f;
-                    const float scale = (std::max)(1.0f - t, kMinFractureFadeScale);
-                    lt->scale = { scale, scale, scale };
+                // 縮み始めの scale (非一様を含む) を基準値として欄に持たず、前 tick の値へ
+                // 比例係数を掛けるだけで各軸の比を保ったまま 0 へ向かう。t=releaseTicks-
+                // afterBreakTicks (>=1) の目標比 (fade-t)/fade を、1 tick 前の比
+                // (fade-t+1)/fade からの相対係数として掛ける。t==0 (縮み始め) は係数 1 (無変更)
+                const int32_t fade = (std::max)(dc.fadeTicks, 0);
+                const int32_t t = l.releaseTicks - dc.afterBreakTicks;
+                if (t >= 1 && t <= fade) {
+                    if (auto* lt = world.GetComponent<LocalTransform>(l.entity)) {
+                        const float ratio = static_cast<float>(fade - t) / static_cast<float>(fade - t + 1);
+                        lt->scale.x *= ratio;
+                        lt->scale.y *= ratio;
+                        lt->scale.z *= ratio;
+                    }
                 }
             }
             if (l.releaseTicks >= dc.afterBreakTicks + dc.fadeTicks) {
@@ -745,6 +762,11 @@ void FractureSystem::UpdateImpl(World& world, float dt, const std::vector<ShapeI
                                 ScriptHost* scripts, ManagedHost* managed)
 {
     lastBreakEvents_.clear();
+    // ApplyDeferredLocals は毎 tick、ApplyStructuralChanges の直後に呼ばれ、この表を空にして
+    // いるはず (spec §4.1 破断 4)。ここで空になっていないのは呼び忘れ (前 tick で
+    // ApplyStructuralChanges だけ呼んで ApplyDeferredLocals を呼んでいない) を意味する —
+    // 黙って捨てず (捨てると分離した破片の姿勢が古いまま固定される)、ログで気づけるようにする
+    MYE_CHECK(pendingLocals_.empty());
     std::unordered_map<uint64_t, std::vector<PieceEntry>> piecesByRoot;
     struct RootJob {
         EntityID root;
@@ -849,7 +871,7 @@ void FractureSystem::UpdateImpl(World& world, float dt, const std::vector<ShapeI
 
         const size_t eventsBefore = lastBreakEvents_.size();
         ProcessRoot(world, job.root, *job.dc, *handle, avgNeighborArea, myPieces, shapeImpulses, dt,
-                   lastBreakEvents_);
+                   lastBreakEvents_, pendingLocals_);
         // 今回この root で新しく積まれた分だけ配信する (spec §4.1 破断 8: ルート index →
         // 新リーダー index 昇順。jobs が root index 昇順、ProcessRoot 内が leader index
         // 昇順なので、lastBreakEvents_ 全体もこの順で並ぶ)
@@ -885,6 +907,13 @@ void ApplyFractureDamage(World& world, EntityID entityOrPiece, const XMFLOAT3& p
         return;
     }
 
+    // 破片の位置は体積重心 (localCenter) で測る (spec §2)。資産が解決できなければ
+    // localCenter は既定の (0,0,0) のまま (従来どおり破片の原点だけで測る、安全側)
+    const FractureAssetHandle* handle = nullptr;
+    if (const auto* dc = world.GetComponent<DestructibleComponent>(root)) {
+        handle = ResolveFractureAsset(dc->fractureAsset);
+    }
+
     struct Cand {
         EntityID entity;
         float dist;
@@ -899,9 +928,18 @@ void ApplyFractureDamage(World& world, EntityID entityOrPiece, const XMFLOAT3& p
             if (fp->root != root) {
                 continue;
             }
+            XMFLOAT3 localCenter{ 0.0f, 0.0f, 0.0f };
+            if (handle != nullptr && fp->index >= 0
+                && static_cast<size_t>(fp->index) < handle->pieces.size()) {
+                localCenter = handle->pieces[static_cast<size_t>(fp->index)].localCenter;
+            }
             float px, py, pz, qx, qy, qz, qw;
             ComposeEntityWorldPose(world, e, px, py, pz, qx, qy, qz, qw);
-            const float dx = px - point.x, dy = py - point.y, dz = pz - point.z;
+            const XMFLOAT3 scale = ComposeWorldScale(world, e);
+            float lcx, lcy, lcz;
+            QuatRotate(qx, qy, qz, qw, scale.x * localCenter.x, scale.y * localCenter.y,
+                      scale.z * localCenter.z, lcx, lcy, lcz);
+            const float dx = (px + lcx) - point.x, dy = (py + lcy) - point.y, dz = (pz + lcz) - point.z;
             const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
             if (radius <= 0.0f || d <= radius) {
                 cands.push_back({ e, d });
@@ -931,6 +969,18 @@ void ApplyFractureDamage(World& world, EntityID entityOrPiece, const XMFLOAT3& p
             fp->damage += amount * falloff;
         }
     }
+}
+
+void FractureSystem::ApplyDeferredLocals(World& world)
+{
+    for (const FracturePendingLocal& p : pendingLocals_) {
+        if (auto* lt = world.GetComponent<LocalTransform>(p.entity)) {
+            lt->position = p.position;
+            lt->rotation = p.rotation;
+            lt->scale = p.scale;
+        }
+    }
+    pendingLocals_.clear();
 }
 
 } // namespace mye

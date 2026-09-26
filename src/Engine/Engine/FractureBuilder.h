@@ -26,12 +26,6 @@ struct FractureAssetHandle;
 // 戻り値は作った破片数 (asset.pieces が空 / root が無効なら 0)
 int BuildFracturePieces(World& world, EntityID root, const FractureAssetHandle& asset);
 
-// root の Destructible が参照する資産の破片数と、直子の `FracturePiece.index` の集合が
-// 過不足なく一致するか (spec §4.1 エッジケース)。asset==nullptr (.mfrac が見つからない/
-// 読めない) も不一致として扱う。不一致なら ERROR を 1 回出して false を返す — 呼び出し側
-// (sub-07 の破断ロジック) はこの Destructible を「無効」として扱い、破断しない
-bool ValidateFracturePieces(World& world, EntityID root, const FractureAssetHandle* asset);
-
 // root 直下の `FracturePiece.root == root` な子の数 (ログを出さない照会版、M80i)。
 // Inspector が「生成済み」の表示 (焼き直後、まだ何も割れていない状態) に使う。
 // ValidateFracturePieces は不一致のたび ERROR を出すため、UI ポーリングには使えない

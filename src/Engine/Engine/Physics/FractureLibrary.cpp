@@ -6,6 +6,7 @@
 #include "Engine/Engine/Physics/FractureLibrary.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include "Engine/Core/AssetKeyResolver.h"
@@ -39,6 +40,40 @@ void ToMeshData(const FractureMesh& mesh, std::vector<MeshVertex>& verts, std::v
         verts[i] = ToMeshVertex(mesh.verts[i]);
     }
     indices.assign(mesh.indices.begin(), mesh.indices.end());
+}
+
+// 原点基準の四面体分割による体積・体積重心 (FractureBake.cpp の ComputeVolumeCentroid と同じ式。
+// あちらは分割コア専用の非公開関数なので、ここでは outer+cap の 2 本の MeshVertex メッシュを
+// まとめて畳み込めるように書き直す)。破片ローカル空間 (spec §2 の localCenter) の計算に使う
+void AccumulateTetrahedra(const std::vector<MeshVertex>& verts, const std::vector<uint32_t>& indices,
+                          double& volume, double& cx, double& cy, double& cz)
+{
+    for (size_t t = 0; t + 2 < indices.size(); t += 3) {
+        const DirectX::XMFLOAT3& p0 = verts[indices[t + 0]].position;
+        const DirectX::XMFLOAT3& p1 = verts[indices[t + 1]].position;
+        const DirectX::XMFLOAT3& p2 = verts[indices[t + 2]].position;
+        const double v = (static_cast<double>(p0.x) * (static_cast<double>(p1.y) * p2.z - static_cast<double>(p1.z) * p2.y)
+                         - static_cast<double>(p0.y) * (static_cast<double>(p1.x) * p2.z - static_cast<double>(p1.z) * p2.x)
+                         + static_cast<double>(p0.z) * (static_cast<double>(p1.x) * p2.y - static_cast<double>(p1.y) * p2.x))
+                        / 6.0;
+        volume += v;
+        cx += v * (static_cast<double>(p0.x) + p1.x + p2.x) / 4.0;
+        cy += v * (static_cast<double>(p0.y) + p1.y + p2.y) / 4.0;
+        cz += v * (static_cast<double>(p0.z) + p1.z + p2.z) / 4.0;
+    }
+}
+
+// 破片ローカル空間 (outer+cap) での体積重心。体積がほぼ 0 (完全に内部の破片で
+// outer/cap が空 など) なら (0,0,0) を返す
+DirectX::XMFLOAT3 ComputePieceLocalCenter(const FractureAsset::PieceRecord& pr)
+{
+    double volume = 0.0, cx = 0.0, cy = 0.0, cz = 0.0;
+    AccumulateTetrahedra(pr.outerVerts, pr.outerIndices, volume, cx, cy, cz);
+    AccumulateTetrahedra(pr.capVerts, pr.capIndices, volume, cx, cy, cz);
+    if (std::fabs(volume) <= 1e-15) {
+        return { 0, 0, 0 };
+    }
+    return { static_cast<float>(cx / volume), static_cast<float>(cy / volume), static_cast<float>(cz / volume) };
 }
 
 } // namespace
@@ -138,6 +173,7 @@ const FractureAssetHandle* FractureLibrary::RegisterInternal(const std::string& 
         FracturePieceRef ref;
         ref.origin = pr.origin;
         ref.volume = pr.volume;
+        ref.localCenter = ComputePieceLocalCenter(pr);
         // 完全に内部の破片は outer/cap が 0 頂点になり得る (幾何的には正当)。0 頂点のまま
         // Register すると頂点/インデックスバッファの作成が失敗するため、空なら未登録のままにする
         if (resources_ != nullptr) {

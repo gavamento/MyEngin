@@ -1197,7 +1197,23 @@ bool BakeFractureCore(const FractureMesh& source, const std::vector<XMFLOAT3>& s
         newIndexOf[static_cast<size_t>(order[rank])] = static_cast<int32_t>(rank);
     }
 
-    // ---- 6/8. 破片ごとの出力 (原点シフト・凸包・隣接の切り捨て) ----
+    // ---- 6a. 隣接 (相手 index 昇順、まだ切り捨てない) を全破片ぶん先に組む ----
+    // 切り捨てを対称にするには、自分の隣接数だけでなく相手の判断も見る必要があるため、
+    // 破片ごとに独立処理はできない (CapNeighborsSymmetrically へ全破片ぶんまとめて渡す)
+    std::vector<std::vector<FractureNeighbor>> allNeighbors(order.size());
+    for (size_t rank = 0; rank < order.size(); ++rank) {
+        std::vector<FractureNeighbor>& neighbors = allNeighbors[rank];
+        for (const auto& [otherIdx, area] : adj[static_cast<size_t>(order[rank])]) {
+            neighbors.push_back({ newIndexOf[static_cast<size_t>(otherIdx)], area });
+        }
+        std::sort(neighbors.begin(), neighbors.end(), [](const FractureNeighbor& a, const FractureNeighbor& b) {
+            return a.pieceIndex < b.pieceIndex;
+        });
+    }
+    std::vector<int32_t> droppedCounts;
+    CapNeighborsSymmetrically(allNeighbors, droppedCounts);
+
+    // ---- 6b/8. 破片ごとの出力 (原点シフト・凸包) ----
     out.pieces.resize(order.size());
     for (size_t rank = 0; rank < order.size(); ++rank) {
         const RawPiece& rp = rawPieces[static_cast<size_t>(order[rank])];
@@ -1229,40 +1245,8 @@ bool BakeFractureCore(const FractureMesh& source, const std::vector<XMFLOAT3>& s
         }
         BuildConvexHull(DedupPositionsExact(std::move(hullPts)), piece.hull);
 
-        std::vector<FractureNeighbor> neighbors;
-        for (const auto& [otherIdx, area] : adj[static_cast<size_t>(order[rank])]) {
-            neighbors.push_back({ newIndexOf[static_cast<size_t>(otherIdx)], area });
-        }
-        std::sort(neighbors.begin(), neighbors.end(), [](const FractureNeighbor& a, const FractureNeighbor& b) {
-            return a.pieceIndex < b.pieceIndex;
-        });
-        piece.droppedNeighbors = 0;
-        if (static_cast<int32_t>(neighbors.size()) > kMaxFractureNeighbors) {
-            std::vector<int32_t> byAreaAsc(neighbors.size());
-            for (size_t i = 0; i < neighbors.size(); ++i) {
-                byAreaAsc[i] = static_cast<int32_t>(i);
-            }
-            std::sort(byAreaAsc.begin(), byAreaAsc.end(), [&](int32_t a, int32_t b) {
-                if (neighbors[static_cast<size_t>(a)].area != neighbors[static_cast<size_t>(b)].area) {
-                    return neighbors[static_cast<size_t>(a)].area < neighbors[static_cast<size_t>(b)].area;
-                }
-                return neighbors[static_cast<size_t>(a)].pieceIndex < neighbors[static_cast<size_t>(b)].pieceIndex;
-            });
-            const size_t dropCount = neighbors.size() - static_cast<size_t>(kMaxFractureNeighbors);
-            std::vector<uint8_t> dropped(neighbors.size(), 0);
-            for (size_t i = 0; i < dropCount; ++i) {
-                dropped[static_cast<size_t>(byAreaAsc[i])] = 1;
-            }
-            std::vector<FractureNeighbor> kept;
-            for (size_t i = 0; i < neighbors.size(); ++i) {
-                if (!dropped[i]) {
-                    kept.push_back(neighbors[i]);
-                }
-            }
-            piece.droppedNeighbors = static_cast<int32_t>(dropCount);
-            neighbors = std::move(kept);
-        }
-        piece.neighbors = std::move(neighbors);
+        piece.neighbors = std::move(allNeighbors[rank]);
+        piece.droppedNeighbors = droppedCounts[rank];
 
         out.pieces[rank] = std::move(piece);
     }
@@ -1272,6 +1256,55 @@ bool BakeFractureCore(const FractureMesh& source, const std::vector<XMFLOAT3>& s
 }
 
 } // namespace
+
+void CapNeighborsSymmetrically(std::vector<std::vector<FractureNeighbor>>& neighbors,
+                               std::vector<int32_t>& droppedCount)
+{
+    const int32_t n = static_cast<int32_t>(neighbors.size());
+    droppedCount.assign(static_cast<size_t>(n), 0);
+
+    // 破片ごとに「自分の隣接数の超過分」を面積の小さい順 (同値は相手 index 小) に選び、
+    // 消す組 (min(i,j), max(i,j)) の集合を作る。和集合を取るので、どちらか一方が
+    // 落とすと判断すれば両側から消える (対称性はここで保証する)
+    std::set<std::pair<int32_t, int32_t>> toDrop;
+    for (int32_t i = 0; i < n; ++i) {
+        const auto& list = neighbors[static_cast<size_t>(i)];
+        const int32_t over = static_cast<int32_t>(list.size()) - kMaxFractureNeighbors;
+        if (over <= 0) {
+            continue;
+        }
+        std::vector<int32_t> byAreaAsc(list.size());
+        for (size_t k = 0; k < byAreaAsc.size(); ++k) {
+            byAreaAsc[k] = static_cast<int32_t>(k);
+        }
+        std::sort(byAreaAsc.begin(), byAreaAsc.end(), [&](int32_t a, int32_t b) {
+            if (list[static_cast<size_t>(a)].area != list[static_cast<size_t>(b)].area) {
+                return list[static_cast<size_t>(a)].area < list[static_cast<size_t>(b)].area;
+            }
+            return list[static_cast<size_t>(a)].pieceIndex < list[static_cast<size_t>(b)].pieceIndex;
+        });
+        for (int32_t k = 0; k < over; ++k) {
+            const int32_t j = list[static_cast<size_t>(byAreaAsc[static_cast<size_t>(k)])].pieceIndex;
+            toDrop.insert({ (std::min)(i, j), (std::max)(i, j) });
+        }
+    }
+    if (toDrop.empty()) {
+        return;
+    }
+
+    for (int32_t i = 0; i < n; ++i) {
+        auto& list = neighbors[static_cast<size_t>(i)];
+        const size_t before = list.size();
+        list.erase(std::remove_if(list.begin(), list.end(),
+                                  [&](const FractureNeighbor& nb) {
+                                      return toDrop.count({ (std::min)(i, nb.pieceIndex),
+                                                            (std::max)(i, nb.pieceIndex) })
+                                          != 0;
+                                  }),
+                   list.end());
+        droppedCount[static_cast<size_t>(i)] = static_cast<int32_t>(before - list.size());
+    }
+}
 
 bool BakeFracture(const FractureBakeInput& input, FractureBakeResult& out)
 {

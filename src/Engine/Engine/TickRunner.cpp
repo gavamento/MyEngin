@@ -506,6 +506,11 @@ void RunOneTick(TickServices& ts)
         effectQueue.clear();
     }
     scene.GetWorld().ApplyStructuralChanges(); // フェーズ 7 (tick 末適用 = ADR-005)
+    // M80g/spec §4.1 破断4: 分離で付け替えた破片の新しい LocalTransform を、SetParent の反映
+    // (直上の ApplyStructuralChanges) の直後・ハッシュを取る前に書く。書き込みの時期を
+    // そろえることで、tick の途中は「古い親 + 古い LocalTransform」のまま一貫する。
+    // Destructible が無い/何も分かれなかった tick は表が空なので no-op
+    fractureSystem.ApplyDeferredLocals(scene.GetWorld());
 
     // ここから先の変異・ダンプ・記録・照合が撮るハッシュの源 (全部同じ束で撮る)
     const SimSources hashSources = SimSourcesOf(scene, &particleSystem.Cpu(), ts.xpbd, ts.acoustic);

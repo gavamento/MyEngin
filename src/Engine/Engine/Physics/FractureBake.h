@@ -24,16 +24,26 @@ namespace mye {
 inline constexpr int32_t kMaxFracturePieces = 256;
 inline constexpr int32_t kMaxFractureNeighbors = 32;
 
-// 焼き方式の版。BakeFracture の出力が変わる変更 (アルゴリズム・丸め・順序) をしたら上げる。
+// 焼き方式の版。BakeFracture の出力が変わる変更 (アルゴリズム・丸め・順序) をしたら必ず上げる。
+// 上げないと、RT の BVH など「同じ ID の中身」を前提にしたキャッシュが古いまま残る。
 // `.mfrac` の保存名 (内容ハッシュ) に混ぜ込み、同じソース入力でも版が違えば別ファイルとして
 // 保存させる — 上げ忘れは FractureLibrary::ReloadFromFile が保険になる
-inline constexpr uint32_t kFractureBakeVersion = 1;
+inline constexpr uint32_t kFractureBakeVersion = 2; // 隣接 32 本超の切り捨てを対称化
 
 // 破片 i の隣接 1 本 (相手 index、面積)
 struct FractureNeighbor {
     int32_t pieceIndex = 0;
     float area = 0.0f;
 };
+
+// 隣接が 32 本 (kMaxFractureNeighbors) を超える破片の切り捨てを対称に行う (spec §4.1 焼き7)。
+// neighbors は破片 index 昇順の対称な隣接グラフ (neighbors[i] に j があれば neighbors[j] に i が
+// ある) を入力に取り、超過分を面積の小さい順 (同値は相手 index 小) に選んで両側から同時に消す。
+// i 側の判断で j 側も巻き込むため、32 本以下だった破片が結果的にそれより少なくなることがある
+// (上限を守ることだけが制約で、それ自体は仕様違反ではない)。droppedCount[i] は i 側から実際に
+// 消えた本数 (neighbors と同じ並び、対称なので総和は必ず偶数)。決定的 (同じ入力で同じ出力)
+void CapNeighborsSymmetrically(std::vector<std::vector<FractureNeighbor>>& neighbors,
+                               std::vector<int32_t>& droppedCount);
 
 // 焼き結果の破片 1 個。outer / cap / hull は破片原点 (体積重心) を基準にしたローカル空間
 struct FracturePieceBake {

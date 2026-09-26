@@ -445,6 +445,7 @@ bool RunFractureEditorSelfTest()
             for (int i = 0; i < 3; ++i) {
                 fsys.Update(w, 1.0f / 60.0f, {});
                 w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
             }
             const auto* dcAfter = crateGo ? w.GetComponent<DestructibleComponent>(crateGo.Id()) : nullptr;
             check(dcAfter != nullptr && dcAfter->broken,

@@ -234,6 +234,7 @@ void RunOneBench(const FractureBakeResult& bake, int32_t pieceCount, int32_t obj
             fsys.Update(w, kDt, impulses);
         }
         w.ApplyStructuralChanges();
+        fsys.ApplyDeferredLocals(w);
 
         if (breakTick < 0) {
             for (const EntityID e : destructibleEntities) {

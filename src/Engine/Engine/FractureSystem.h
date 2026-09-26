@@ -33,8 +33,22 @@ struct FractureBreakEvent {
     float impulse = 0.0f;
 };
 
+// 分離で付け替えた破片 1 個ぶんの、tick 末に書く新しい LocalTransform (spec §4.1 破断 4)。
+// ReparentKeepWorld は SetParent (tick 末のコマンドバッファ) を積む一方でこれを直接書かず、
+// FractureSystem::ApplyDeferredLocals が World::ApplyStructuralChanges の直後に書く —
+// 書き込みの時期を SetParent の反映と揃えることで、tick の途中は「古い親 + 古い
+// LocalTransform」のまま一貫させ、階層と姿勢が食い違う窓を作らない
+struct FracturePendingLocal {
+    EntityID entity;
+    DirectX::XMFLOAT3 position{ 0.0f, 0.0f, 0.0f };
+    DirectX::XMFLOAT4 rotation{ 0.0f, 0.0f, 0.0f, 1.0f };
+    DirectX::XMFLOAT3 scale{ 1.0f, 1.0f, 1.0f };
+};
+
 // 接着の破断と塊の剛体化 (spec §4.1「破断」1〜7、M80g)。TickRunner が
-// collisionSystem::Update の後・tick 末の ApplyStructuralChanges より前に 1 回呼ぶ。
+// collisionSystem::Update の後・tick 末の ApplyStructuralChanges より前に Update() を 1 回呼び、
+// ApplyStructuralChanges の直後・ハッシュを取る前に ApplyDeferredLocals() をもう 1 回呼ぶ
+// (呼び出し元は必ずこの組で呼ぶこと。片方だけ呼ぶと分離した破片の姿勢が古いままになる)。
 //
 // 荷重: 破片 i の C_i = 形状単位インパルス(shapeImpulses から引く)/dt、L_i = C_i + damage_i。
 // 接着 (i,j) は i 昇順・隣接表順に見て max(L_i,L_j) >= S_ij で両側の brokenBonds ビットを立てる。
@@ -69,6 +83,22 @@ public:
     void Update(World& world, float dt, const std::vector<ShapeImpulse>& shapeImpulses,
                ScriptHost* scripts = nullptr, ManagedHost* managed = nullptr);
 
+    // 直近 Update で発行した onBreak の記録 (観測用。非ハッシュ・決定論)。
+    // SelfTest がスクリプトを経由せずに「誰が・どこで・どれだけの荷重で分かれたか」を検算する
+    const std::vector<FractureBreakEvent>& LastBreakEvents() const { return lastBreakEvents_; }
+
+    // World::ApplyStructuralChanges の直後・ハッシュを取る前に呼ぶ後処理 (spec §4.1 破断 4)。
+    // Update() が積んだ「tick 末に書く LocalTransform」の表を実際に書き、表を空にする。
+    // TickRunner が本番の呼び出し元 (SelfTest は Update()+World::ApplyStructuralChanges() の
+    // 組に必ずこれも続けること — 呼び忘れると分離した破片の姿勢が古いままになる)。
+    // Destructible が無い/何も分かれなかった tick は表が最初から空なので何もしない
+    void ApplyDeferredLocals(World& world);
+
+    // 直近 Update で積まれ、まだ ApplyDeferredLocals で書いていない件数 (観測用)。
+    // tick 末に ApplyDeferredLocals を呼んだ直後は必ず 0 — 表が tick の境界をまたいで
+    // 残らないことを SelfTest がこの不変量で検査する (spec §4.1 破断 4)
+    size_t PendingLocalCount() const { return pendingLocals_.size(); }
+
     // シーン切替時にキャッシュを捨てる (PartFollowSystem::Reset と同じ流儀)。
     // assetCache_ は資産参照から再計算すれば同じ値に戻るだけの記録、erroredOnce_ は
     // ログの抑止だけなので、どちらを捨てても sim 結果は変わらない
@@ -76,11 +106,8 @@ public:
     {
         assetCache_.clear();
         erroredOnce_.clear();
+        pendingLocals_.clear();
     }
-
-    // 直近 Update で発行した onBreak の記録 (観測用。非ハッシュ・決定論)。
-    // SelfTest がスクリプトを経由せずに「誰が・どこで・どれだけの荷重で分かれたか」を検算する
-    const std::vector<FractureBreakEvent>& LastBreakEvents() const { return lastBreakEvents_; }
 
 private:
     struct AssetCache {
@@ -97,6 +124,7 @@ private:
     std::unordered_map<uint64_t, AssetCache> assetCache_;
     std::unordered_set<uint64_t> erroredOnce_;             // ERROR を 1 回だけ出すためのログ抑止 (判定には使わない)
     std::vector<FractureBreakEvent> lastBreakEvents_;      // 直近 Update の onBreak 記録 (観測用)
+    std::vector<FracturePendingLocal> pendingLocals_;      // ApplyDeferredLocals が書く表
 };
 
 // ワールドに DestructibleComponent が 1 つでもあるか。**存在ゲート**専用 — false なら

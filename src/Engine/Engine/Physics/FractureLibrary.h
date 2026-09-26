@@ -25,6 +25,11 @@ class ConvexColliderLibrary;
 struct FracturePieceRef {
     DirectX::XMFLOAT3 origin{ 0, 0, 0 };
     double volume = 0.0;
+    // 破片ローカル空間 (outer+cap の座標系) での体積重心。スキンでない破片は origin が既に
+    // 体積重心なのでほぼ (0,0,0)。スキン破片は origin が骨の原点に潰れる (FractureSkinBake.cpp)
+    // ため、損傷判定や onBreak の位置はこちらを使う (spec §2 の裁定)。読み込み時に計算する
+    // だけの派生値で `.mfrac` には書かない
+    DirectX::XMFLOAT3 localCenter{ 0, 0, 0 };
     AssetID outerMesh; // MeshLibrary "<prefix>#frag<i>"
     AssetID capMesh;   // MeshLibrary "<prefix>#frag<i>#cap"
     AssetID hull;      // ConvexColliderLibrary "<prefix>#frag<i>#hull"

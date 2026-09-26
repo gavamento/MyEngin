@@ -432,7 +432,8 @@ struct DetachedLeaderSetup {
 
 DetachedLeaderSetup SetupDetachedLeader(Scene& s, FractureLibrary& lib, ConvexColliderLibrary& colliders,
                                         RenderResources& resources, const char* assetKey,
-                                        int32_t pieceCount)
+                                        int32_t pieceCount,
+                                        const XMFLOAT3& rootScale = { 1.0f, 1.0f, 1.0f })
 {
     colliders.Init(&resources);
     lib.Init(&resources, &colliders);
@@ -444,6 +445,7 @@ DetachedLeaderSetup SetupDetachedLeader(Scene& s, FractureLibrary& lib, ConvexCo
 
     World& w = s.GetWorld();
     GameObject root = s.CreateGameObject("Row");
+    root.SetLocalScale(rootScale.x, rootScale.y, rootScale.z);
     root.AddComponent<RigidbodyComponent>();
     root.AddComponent<DestructibleComponent>();
     root.GetComponent<RigidbodyComponent>()->mass = static_cast<float>(pieceCount);
@@ -459,6 +461,7 @@ DetachedLeaderSetup SetupDetachedLeader(Scene& s, FractureLibrary& lib, ConvexCo
     ApplyFractureDamage(w, root.Id(), rowBake.pieces[0].origin, 0.0f, 150.0f);
     fsys.Update(w, 1.0f / 60.0f, none);
     w.ApplyStructuralChanges();
+    fsys.ApplyDeferredLocals(w);
 
     return { root.Id(), leader, d };
 }
@@ -893,6 +896,67 @@ bool RunFractureSelfTest()
                       && r.pieces[0].droppedNeighbors == 0 && r.pieces[1].droppedNeighbors == 0,
                   "voronoi adjacency: neighbor count within 32, none dropped");
         }
+    }
+
+    // ---- 10b. 隣接 32 本超の切り捨てを対称にする (人工的な隣接グラフ、CapNeighborsSymmetrically) ----
+    // 実際の焼きで 33 本以上の隣接を作るには非常に多くの破片が要るため、分割コアが渡す
+    // 「破片ごとの隣接リスト」の形そのものを人工的に組んで、切り捨て関数を直接検算する
+    {
+        constexpr int32_t kExtra = 40; // piece0 は 40 隣接 (32 本超)、他は piece0 の 1 本だけ
+        constexpr int32_t kN = kExtra + 1;
+        std::vector<std::vector<FractureNeighbor>> graph(static_cast<size_t>(kN));
+        for (int32_t j = 1; j <= kExtra; ++j) {
+            const float area = static_cast<float>(j); // 面積は index と同じ (index 1..8 が最小)
+            graph[0].push_back({ j, area });
+            graph[static_cast<size_t>(j)].push_back({ 0, area });
+        }
+        const std::vector<std::vector<FractureNeighbor>> graphCopy = graph;
+
+        std::vector<int32_t> dropped;
+        CapNeighborsSymmetrically(graph, dropped);
+
+        check(graph[0].size() == static_cast<size_t>(kMaxFractureNeighbors),
+              "neighbor cap: the over-limit piece ends up with exactly 32 neighbors");
+        check(dropped[0] == kExtra - kMaxFractureNeighbors,
+              "neighbor cap: dropped count matches the excess (40-32=8)");
+
+        // 面積の小さい順 (index 1..8) が落ちているはず
+        bool smallestDropped = true;
+        for (int32_t j = 1; j <= kExtra - kMaxFractureNeighbors; ++j) {
+            const bool stillThere = std::any_of(graph[0].begin(), graph[0].end(),
+                                                [&](const FractureNeighbor& nb) { return nb.pieceIndex == j; });
+            smallestDropped = smallestDropped && !stillThere;
+        }
+        check(smallestDropped, "neighbor cap: the smallest-area neighbors (index 1..8) are the ones dropped");
+
+        // 対称性: どの j についても、piece0 側に j があるとき、そのときに限り j 側にも 0 がある
+        bool symmetric = true;
+        int32_t totalDropped = 0;
+        for (int32_t j = 1; j <= kExtra; ++j) {
+            const bool inPiece0 = std::any_of(graph[0].begin(), graph[0].end(),
+                                              [&](const FractureNeighbor& nb) { return nb.pieceIndex == j; });
+            const bool inPieceJ = !graph[static_cast<size_t>(j)].empty();
+            symmetric = symmetric && (inPiece0 == inPieceJ);
+            totalDropped += dropped[static_cast<size_t>(j)];
+        }
+        check(symmetric,
+              "neighbor cap: symmetric after capping (no one-sided reference survives on either side)");
+        check(totalDropped == kExtra - kMaxFractureNeighbors,
+              "neighbor cap: the far side (piece 1..40) loses exactly the dropped pairs, no more");
+
+        // 決定論: 同じ入力を 2 回かけて同じ結果
+        std::vector<std::vector<FractureNeighbor>> graph2 = graphCopy;
+        std::vector<int32_t> dropped2;
+        CapNeighborsSymmetrically(graph2, dropped2);
+        bool sameResult = dropped == dropped2 && graph.size() == graph2.size();
+        for (size_t i = 0; sameResult && i < graph.size(); ++i) {
+            sameResult = graph[i].size() == graph2[i].size();
+            for (size_t k = 0; sameResult && k < graph[i].size(); ++k) {
+                sameResult = graph[i][k].pieceIndex == graph2[i][k].pieceIndex
+                    && graph[i][k].area == graph2[i][k].area;
+            }
+        }
+        check(sameResult, "neighbor cap: deterministic (same input twice gives byte-identical output)");
     }
 
     // ---- 11. 決定論: 同じ入力の digest が一致し、seed を変えると変わる (Debug/Release 比較用ログ) ----
@@ -1500,7 +1564,7 @@ bool RunFractureSelfTest()
         }
 
         // (15b) 資産の破片数と子の index 集合が合わない Destructible は無効
-        // (ValidateFracturePieces、spec §4.1 エッジケース)
+        // (DestructiblePiecesMatchAsset、本番の判定と同じ関数。spec §4.1 エッジケース)
         {
             Scene s;
             World& w = s.GetWorld();
@@ -1510,17 +1574,14 @@ bool RunFractureSelfTest()
             handle.namePrefix = "fracture-selftest://validate";
             handle.pieces.assign(2, FracturePieceRef{});
             BuildFracturePieces(w, root.Id(), handle);
-            check(ValidateFracturePieces(w, root.Id(), &handle),
-                  "ValidateFracturePieces: a freshly built root matches its asset");
+            check(DestructiblePiecesMatchAsset(w, root.Id(), handle, /*broken=*/false),
+                  "DestructiblePiecesMatchAsset: a freshly built root matches its asset");
 
             // 焼き直しで破片が増えたと仮定すると、子の index 集合と合わなくなる
             FractureAssetHandle grown = handle;
             grown.pieces.push_back(FracturePieceRef{});
-            check(!ValidateFracturePieces(w, root.Id(), &grown),
-                  "ValidateFracturePieces: a piece-count mismatch is rejected");
-
-            check(!ValidateFracturePieces(w, root.Id(), nullptr),
-                  "ValidateFracturePieces: a missing (nullptr) asset is rejected without crashing");
+            check(!DestructiblePiecesMatchAsset(w, root.Id(), grown, /*broken=*/false),
+                  "DestructiblePiecesMatchAsset: a piece-count mismatch is rejected");
         }
 
         // (15c) 動的ルートが 1 剛体として落ちて床で止まり、同じ形の凸包 2 個を手で複合にした
@@ -1651,7 +1712,7 @@ bool RunFractureSelfTest()
             w.ApplyStructuralChanges();
             // root 自身のコンポーネント構成は BuildFracturePieces 後も変わらない
             // (既に Rigidbody 所持・Collider 無し) ので、rootRb/d はここから先も有効
-            check(ValidateFracturePieces(w, root.Id(), handle),
+            check(DestructiblePiecesMatchAsset(w, root.Id(), *handle, /*broken=*/false),
                   "fracture system: row8 root matches its (synthetic) asset");
 
             const EntityID piece0 = FindPieceChild(w, root.Id(), 0);
@@ -1669,6 +1730,7 @@ bool RunFractureSelfTest()
                 FractureSystem fsys;
                 fsys.Update(w, 1.0f / 60.0f, weak);
                 w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
                 check(!d->broken, "fracture system: a weak impact does not break any bond");
             }
 
@@ -1677,6 +1739,7 @@ bool RunFractureSelfTest()
             FractureSystem fsys;
             fsys.Update(w, 1.0f / 60.0f, strong);
             w.ApplyStructuralChanges();
+            fsys.ApplyDeferredLocals(w);
             check(d->broken && d->detachedCount == 1,
                   "fracture system: a strong impact breaks the bond and detaches exactly one chunk");
 
@@ -1721,6 +1784,118 @@ bool RunFractureSelfTest()
                           "fracture system: linear momentum is conserved (%.6f,%.6f,%.6f vs %.6f,%.6f,%.6f)",
                           pxAfter, pyAfter, pzAfter, px0, py0, pz0);
             check(Near(pxAfter, px0, 1e-5) && Near(pyAfter, py0, 1e-5) && Near(pzAfter, pz0, 1e-5), buf);
+
+            fracturelib::Install(nullptr);
+        }
+
+        // (16a2) リーダー自身も同じ tick で分離するとき、そのメンバー (2 個以上) の
+        // ReparentKeepWorld がリーダーの「食い違った」姿勢ではなく正しい姿勢を基準に
+        // 計算すること (spec §4.1 破断 4)。ReparentKeepWorld がリーダーの新しい
+        // LocalTransform を即座に書いてしまうと、直後に呼ばれるメンバーの
+        // ComposeEntityWorldPose(leader) が「旧い親 + 新しい (リーダー基準の)
+        // LocalTransform」を合成してしまい、メンバーの位置が大きくずれる
+        {
+            constexpr int32_t kRowCount = 7;
+            FractureBakeResult rowBake = MakeRowFractureBake(kRowCount, 0.25f);
+            // 2-3 間の接着だけ弱くする (面積を小さくして相対しきい値を下げる) — 損傷を
+            // piece2 だけに与えても、1-2 間や 3-4 間は切れずに 2-3 間だけが切れるようにする
+            for (auto& nb : rowBake.pieces[2].neighbors) {
+                if (nb.pieceIndex == 3) {
+                    nb.area = 0.1f;
+                }
+            }
+            for (auto& nb : rowBake.pieces[3].neighbors) {
+                if (nb.pieceIndex == 2) {
+                    nb.area = 0.1f;
+                }
+            }
+
+            RenderResources resources;
+            ConvexColliderLibrary colliders;
+            colliders.Init(&resources);
+            FractureLibrary lib;
+            lib.Init(&resources, &colliders);
+            fracturelib::Install(&lib);
+            const FractureAssetHandle* handle = lib.RegisterBaked(
+                "fracture-selftest://row7weak", rowBake, HashStr("fracture-selftest://row7weak_src"), 0,
+                kRowCount, 0, 0);
+            check(handle != nullptr && handle->pieces.size() == static_cast<size_t>(kRowCount),
+                  "member reparent: row7 (weak 2-3 joint) synthetic asset registers");
+
+            Scene s;
+            World& w = s.GetWorld();
+            GameObject root = s.CreateGameObject("Row7Weak");
+            root.AddComponent<RigidbodyComponent>();
+            root.AddComponent<DestructibleComponent>();
+            root.GetComponent<RigidbodyComponent>()->mass = static_cast<float>(kRowCount);
+            auto* d = root.GetComponent<DestructibleComponent>();
+            d->strength = 100.0f;
+            d->fractureAsset = AssetID{ HashStr("fracture-selftest://row7weak") };
+            BuildFracturePieces(w, root.Id(), *handle);
+            w.ApplyStructuralChanges();
+
+            // piece2 だけへ損傷 (50 >= 弱い接着のしきい値 25、通常の接着のしきい値 ~117 未満)
+            ApplyFractureDamage(w, root.Id(), rowBake.pieces[2].origin, 0.0f, 50.0f);
+            FractureSystem fsys;
+            std::vector<ShapeImpulse> none;
+            fsys.Update(w, 1.0f / 60.0f, none);
+            w.ApplyStructuralChanges();
+            fsys.ApplyDeferredLocals(w);
+
+            const auto* dAfter = w.GetComponent<DestructibleComponent>(root.Id());
+            check(dAfter != nullptr && dAfter->broken && dAfter->detachedCount == 1,
+                  "member reparent: exactly one chunk (pieces 0,1,2) detaches");
+
+            // 分離後は piece0/1/2 のどれも root の直子ではなくなる (leader は root の親の下、
+            // member1/2 は leader の下) ので、root==root.Id() の FracturePiece を世界全体から探す
+            EntityID leader = kNullEntity, member1 = kNullEntity, member2 = kNullEntity;
+            {
+                const ComponentTypeId fpReq[] = { FracturePieceComponent::sTypeId };
+                w.ForEachArchetype(fpReq, [&](Archetype& arch) {
+                    const int fi = arch.FindTypeIndex(FracturePieceComponent::sTypeId);
+                    for (uint32_t row = 0; row < arch.Count(); ++row) {
+                        const auto* fp = static_cast<const FracturePieceComponent*>(arch.GetPtr(fi, row));
+                        if (fp->root != root.Id()) {
+                            continue;
+                        }
+                        const EntityID e = arch.EntityAt(row);
+                        if (fp->index == 0) leader = e;
+                        else if (fp->index == 1) member1 = e;
+                        else if (fp->index == 2) member2 = e;
+                    }
+                });
+            }
+            check(!leader.IsNull() && !member1.IsNull() && !member2.IsNull(),
+                  "member reparent: leader (piece0) and both members (piece1, piece2) exist");
+            if (!leader.IsNull() && !member1.IsNull() && !member2.IsNull()) {
+                check(w.GetParent(member1) == leader && w.GetParent(member2) == leader,
+                      "member reparent: both members are reparented under the leader");
+                const auto* lt1 = w.GetComponent<LocalTransform>(member1);
+                const auto* lt2 = w.GetComponent<LocalTransform>(member2);
+                // 元の row では piece1/piece2 は piece0 よりそれぞれ +0.5/+1.0 だけ +X 側にある
+                // (halfExtent=0.25 の step=0.5)。分離後もリーダー基準でこの相対位置が保たれる
+                // はず (ReparentKeepWorld は世界姿勢を保つ計算なので、回転の無いこの配置では
+                // 単純な差分になる)
+                char buf[256];
+                std::snprintf(buf, sizeof(buf),
+                              "member reparent: piece1's position relative to the leader is preserved "
+                              "(got %.4f,%.4f,%.4f, want ~0.5,0,0)",
+                              static_cast<double>(lt1 ? lt1->position.x : -999.0),
+                              static_cast<double>(lt1 ? lt1->position.y : -999.0),
+                              static_cast<double>(lt1 ? lt1->position.z : -999.0));
+                check(lt1 != nullptr && Near(lt1->position.x, 0.5, 1e-4, 1e-5)
+                          && Near(lt1->position.y, 0.0, 1e-4, 1e-5) && Near(lt1->position.z, 0.0, 1e-4, 1e-5),
+                      buf);
+                std::snprintf(buf, sizeof(buf),
+                              "member reparent: piece2's position relative to the leader is preserved "
+                              "(got %.4f,%.4f,%.4f, want ~1.0,0,0)",
+                              static_cast<double>(lt2 ? lt2->position.x : -999.0),
+                              static_cast<double>(lt2 ? lt2->position.y : -999.0),
+                              static_cast<double>(lt2 ? lt2->position.z : -999.0));
+                check(lt2 != nullptr && Near(lt2->position.x, 1.0, 1e-4, 1e-5)
+                          && Near(lt2->position.y, 0.0, 1e-4, 1e-5) && Near(lt2->position.z, 0.0, 1e-4, 1e-5),
+                      buf);
+            }
 
             fracturelib::Install(nullptr);
         }
@@ -1783,6 +1958,7 @@ bool RunFractureSelfTest()
                         phys.Update(w, kDt, nullptr, nullptr, &impulses);
                         fsys.Update(w, kDt, impulses);
                         w.ApplyStructuralChanges();
+                        fsys.ApplyDeferredLocals(w);
                     }
                     const bool broken = d->broken;
                     fracturelib::Install(nullptr);
@@ -1836,6 +2012,7 @@ bool RunFractureSelfTest()
             FractureSystem fsys;
             fsys.Update(w, 1.0f / 60.0f, hit);
             w.ApplyStructuralChanges();
+            fsys.ApplyDeferredLocals(w);
 
             check(d->broken && d->detachedCount == 1,
                   "fracture system: hitting one end of a kinematic wall detaches it");
@@ -1913,6 +2090,7 @@ bool RunFractureSelfTest()
                         phys.Update(w, kDt, nullptr, nullptr, &impulses);
                         fsys.Update(w, kDt, impulses);
                         w.ApplyStructuralChanges();
+                        fsys.ApplyDeferredLocals(w);
                         outHashes.push_back(HashWorld(w));
                     }
                     fracturelib::Install(nullptr);
@@ -1977,6 +2155,7 @@ bool RunFractureSelfTest()
                 std::vector<ShapeImpulse> none;
                 fsys.Update(w, 1.0f / 60.0f, none);
                 w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
                 const auto* d = w.GetComponent<DestructibleComponent>(root);
                 check(d != nullptr && d->broken,
                       "fracture system: ApplyFractureDamage >= strength in one shot detaches the piece");
@@ -1998,6 +2177,7 @@ bool RunFractureSelfTest()
                 FractureSystem fsys1;
                 fsys1.Update(w, 1.0f / 60.0f, none);
                 w.ApplyStructuralChanges();
+                fsys1.ApplyDeferredLocals(w);
                 const auto* d1 = w.GetComponent<DestructibleComponent>(root);
                 check(d1 != nullptr && !d1->broken,
                       "fracture system: a single sub-threshold ApplyFractureDamage does not break it yet");
@@ -2006,6 +2186,7 @@ bool RunFractureSelfTest()
                 FractureSystem fsys2;
                 fsys2.Update(w, 1.0f / 60.0f, none);
                 w.ApplyStructuralChanges();
+                fsys2.ApplyDeferredLocals(w);
                 const auto* d2 = w.GetComponent<DestructibleComponent>(root);
                 check(d2 != nullptr && d2->broken,
                       "fracture system: accumulated ApplyFractureDamage across two calls detaches it");
@@ -2074,6 +2255,7 @@ bool RunFractureSelfTest()
             ApplyFractureDamage(wA, rootA, rowBake.pieces[0].origin, 0.0f, 150.0f);
             fsysA.Update(wA, 1.0f / 60.0f, none);
             wA.ApplyStructuralChanges();
+            fsysA.ApplyDeferredLocals(wA);
             {
                 const auto* dA = wA.GetComponent<DestructibleComponent>(rootA);
                 check(dA != nullptr && dA->broken && dA->detachedCount == 1,
@@ -2107,10 +2289,12 @@ bool RunFractureSelfTest()
                     }
                     fsysA.Update(wA, 1.0f / 60.0f, none);
                     wA.ApplyStructuralChanges();
+                    fsysA.ApplyDeferredLocals(wA);
                     hashesA.push_back(HashWorld(wA));
 
                     fsysB.Update(wB, 1.0f / 60.0f, none);
                     wB.ApplyStructuralChanges();
+                    fsysB.ApplyDeferredLocals(wB);
                     hashesB.push_back(HashWorld(wB));
                 }
 
@@ -2193,9 +2377,11 @@ bool RunFractureSelfTest()
                     }
                     fsysA.Update(wA, 1.0f / 60.0f, none);
                     wA.ApplyStructuralChanges();
+                    fsysA.ApplyDeferredLocals(wA);
                     hashesA.push_back(HashWorld(wA));
                     fsysB.Update(wB, 1.0f / 60.0f, none);
                     wB.ApplyStructuralChanges();
+                    fsysB.ApplyDeferredLocals(wB);
                     hashesB.push_back(HashWorld(wB));
                 }
                 const auto* dAfterA = wA.GetComponent<DestructibleComponent>(rootA);
@@ -2291,6 +2477,7 @@ bool RunFractureSelfTest()
             FractureSystem fsys;
             fsys.Update(w, 1.0f / 60.0f, impulses); // scripts/managed 省略 = 観測だけ
             w.ApplyStructuralChanges();
+            fsys.ApplyDeferredLocals(w);
 
             check(d->broken && d->detachedCount == 2,
                   "onBreak: a strong impact on an interior piece detaches both sides at once");
@@ -2354,6 +2541,7 @@ bool RunFractureSelfTest()
             FractureSystem fsys; // 1 個の長生き FractureSystem (EngineLoop が持つのと同じ運用)
             fsys.Update(w, 1.0f / 60.0f, {}); // 資産 A をこの root でキャッシュさせる
             w.ApplyStructuralChanges();
+            fsys.ApplyDeferredLocals(w);
 
             // Play 中に Inspector で資産を差し替えたのと同じ操作: 資産 B へ切り替えて組み直す
             d->fractureAsset = AssetID{ HashStr("fracture-selftest://cache_b") };
@@ -2366,6 +2554,7 @@ bool RunFractureSelfTest()
             for (int i = 0; i < 3; ++i) {
                 fsys.Update(w, 1.0f / 60.0f, {});
                 w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
             }
             check(d->broken,
                   "asset cache: the same FractureSystem instance re-resolves after fractureAsset "
@@ -2391,6 +2580,7 @@ bool RunFractureSelfTest()
             for (int i = 0; i < 500; ++i) {
                 fsys.Update(w, 1.0f / 60.0f, none);
                 w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
             }
             check(w.IsAlive(setup.leader), "afterBreak=0 (keep): the detached piece is never destroyed");
             const auto* leaderFp = w.GetComponent<FracturePieceComponent>(setup.leader);
@@ -2417,11 +2607,13 @@ bool RunFractureSelfTest()
             for (int i = 0; i < 4; ++i) {
                 fsys.Update(w, 1.0f / 60.0f, none);
                 w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
             }
             check(w.IsAlive(setup.leader),
                   "afterBreak=1 (destroy after N ticks): still alive one tick before the threshold");
             fsys.Update(w, 1.0f / 60.0f, none);
             w.ApplyStructuralChanges();
+            fsys.ApplyDeferredLocals(w);
             check(!w.IsAlive(setup.leader),
                   "afterBreak=1 (destroy after N ticks): destroyed exactly on the threshold tick");
             fracturelib::Install(nullptr);
@@ -2467,6 +2659,7 @@ bool RunFractureSelfTest()
                 phys.Update(w, kDt, nullptr, nullptr, &impulses);
                 fsys.Update(w, kDt, impulses);
                 w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
 
                 if (tick == kAfterTicks - 1) {
                     aliveBeforeThreshold = w.IsAlive(setup.leader);
@@ -2522,18 +2715,21 @@ bool RunFractureSelfTest()
             for (int i = 0; i < kAfterTicks - 1; ++i) {
                 fsys.Update(w, 1.0f / 60.0f, none);
                 w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
             }
             check(w.GetComponent<LocalTransform>(setup.leader)->scale.x == 1.0f,
                   "afterBreak=3 (shrink): scale is unchanged before afterBreakTicks");
 
             fsys.Update(w, 1.0f / 60.0f, none); // releaseTicks == afterBreakTicks (t=0)
             w.ApplyStructuralChanges();
+            fsys.ApplyDeferredLocals(w);
             check(w.GetComponent<LocalTransform>(setup.leader)->scale.x == 1.0f,
                   "afterBreak=3 (shrink): scale starts at 1 exactly on afterBreakTicks");
 
             for (int i = 0; i < kFadeTicks / 2; ++i) { // releaseTicks == afterBreakTicks + fadeTicks/2
                 fsys.Update(w, 1.0f / 60.0f, none);
                 w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
             }
             const float scaleHalf = w.GetComponent<LocalTransform>(setup.leader)->scale.x;
             check(scaleHalf > 0.4f && scaleHalf < 0.6f,
@@ -2542,14 +2738,96 @@ bool RunFractureSelfTest()
             for (int i = 0; i < kFadeTicks / 2 - 1; ++i) { // releaseTicks == afterBreakTicks+fadeTicks-1
                 fsys.Update(w, 1.0f / 60.0f, none);
                 w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
             }
             check(w.IsAlive(setup.leader),
                   "afterBreak=3 (shrink): still alive one tick before afterBreakTicks+fadeTicks");
 
             fsys.Update(w, 1.0f / 60.0f, none); // releaseTicks == afterBreakTicks + fadeTicks
             w.ApplyStructuralChanges();
+            fsys.ApplyDeferredLocals(w);
             check(!w.IsAlive(setup.leader),
                   "afterBreak=3 (shrink): destroyed exactly at afterBreakTicks+fadeTicks");
+            fracturelib::Install(nullptr);
+            convexcol::Install(nullptr);
+        }
+
+        // (17d2) afterBreak=3、非一様スケールのルート (2, 1, 0.5): 縮み始めに大きさが飛ばず、
+        // 各軸の比 (4:2:1) を保ったまま 0 へ向かう
+        {
+            RenderResources resources;
+            ConvexColliderLibrary colliders;
+            FractureLibrary lib;
+            Scene s;
+            const DetachedLeaderSetup setup = SetupDetachedLeader(
+                s, lib, colliders, resources, "fracture-selftest://afterbreak3-scale", 3, { 2.0f, 1.0f, 0.5f });
+            constexpr int32_t kAfterTicks = 10;
+            constexpr int32_t kFadeTicks = 10;
+            setup.dc->afterBreak = 3;
+            setup.dc->afterBreakTicks = kAfterTicks;
+            setup.dc->fadeTicks = kFadeTicks;
+            World& w = s.GetWorld();
+            FractureSystem fsys;
+            std::vector<ShapeImpulse> none;
+
+            const auto scaleOf = [&]() { return w.GetComponent<LocalTransform>(setup.leader)->scale; };
+            const XMFLOAT3 s0 = scaleOf();
+            check(Near(s0.x, 2.0, 1e-5, 1e-6) && Near(s0.y, 1.0, 1e-5, 1e-6) && Near(s0.z, 0.5, 1e-5, 1e-6),
+                  "afterBreak=3 (non-uniform shrink): the leader starts at the root's scale (2,1,0.5)");
+
+            for (int i = 0; i < kAfterTicks - 1; ++i) {
+                fsys.Update(w, 1.0f / 60.0f, none);
+                w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
+            }
+            const XMFLOAT3 sBefore = scaleOf();
+            check(Near(sBefore.x, 2.0, 1e-5, 1e-6) && Near(sBefore.y, 1.0, 1e-5, 1e-6)
+                      && Near(sBefore.z, 0.5, 1e-5, 1e-6),
+                  "afterBreak=3 (non-uniform shrink): scale is unchanged before afterBreakTicks");
+
+            fsys.Update(w, 1.0f / 60.0f, none); // releaseTicks == afterBreakTicks (t=0)
+            w.ApplyStructuralChanges();
+            fsys.ApplyDeferredLocals(w);
+            const XMFLOAT3 sAtStart = scaleOf();
+            check(Near(sAtStart.x, 2.0, 1e-5, 1e-6) && Near(sAtStart.y, 1.0, 1e-5, 1e-6)
+                      && Near(sAtStart.z, 0.5, 1e-5, 1e-6),
+                  "afterBreak=3 (non-uniform shrink): no jump exactly on afterBreakTicks (was 2/1/0.5 "
+                  "before, still 2/1/0.5 here)");
+
+            for (int i = 0; i < kFadeTicks / 2; ++i) {
+                fsys.Update(w, 1.0f / 60.0f, none);
+                w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
+            }
+            const XMFLOAT3 sHalf = scaleOf();
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                          "afterBreak=3 (non-uniform shrink): each axis is roughly halfway down "
+                          "(%.4f,%.4f,%.4f), ratio preserved",
+                          static_cast<double>(sHalf.x), static_cast<double>(sHalf.y),
+                          static_cast<double>(sHalf.z));
+            check(sHalf.x > 0.8f && sHalf.x < 1.2f && sHalf.y > 0.4f && sHalf.y < 0.6f && sHalf.z > 0.2f
+                      && sHalf.z < 0.3f,
+                  buf);
+            std::snprintf(buf, sizeof(buf),
+                          "afterBreak=3 (non-uniform shrink): axis ratio still 4:2:1 (x/y=%.4f, y/z=%.4f)",
+                          static_cast<double>(sHalf.x / sHalf.y), static_cast<double>(sHalf.y / sHalf.z));
+            check(std::fabs(sHalf.x / sHalf.y - 2.0f) < 0.02f && std::fabs(sHalf.y / sHalf.z - 2.0f) < 0.02f,
+                  buf);
+
+            for (int i = 0; i < kFadeTicks / 2 - 1; ++i) {
+                fsys.Update(w, 1.0f / 60.0f, none);
+                w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
+            }
+            check(w.IsAlive(setup.leader),
+                  "afterBreak=3 (non-uniform shrink): still alive one tick before afterBreakTicks+fadeTicks");
+
+            fsys.Update(w, 1.0f / 60.0f, none); // releaseTicks == afterBreakTicks + fadeTicks
+            w.ApplyStructuralChanges();
+            fsys.ApplyDeferredLocals(w);
+            check(!w.IsAlive(setup.leader),
+                  "afterBreak=3 (non-uniform shrink): destroyed exactly at afterBreakTicks+fadeTicks");
             fracturelib::Install(nullptr);
             convexcol::Install(nullptr);
         }
@@ -2570,6 +2848,7 @@ bool RunFractureSelfTest()
 
             fsys.Update(w, 1.0f / 60.0f, none);
             w.ApplyStructuralChanges();
+            fsys.ApplyDeferredLocals(w);
             check(w.GetComponent<RigidbodyComponent>(setup.leader) != nullptr,
                   "afterBreak=4 (static once asleep): the leader still has a Rigidbody while awake");
 
@@ -2578,6 +2857,7 @@ bool RunFractureSelfTest()
             w.GetComponent<RigidbodyComponent>(setup.leader)->isSleeping = true;
             fsys.Update(w, 1.0f / 60.0f, none);
             w.ApplyStructuralChanges();
+            fsys.ApplyDeferredLocals(w);
             check(w.GetComponent<RigidbodyComponent>(setup.leader) == nullptr,
                   "afterBreak=4 (static once asleep): the Rigidbody is removed once isSleeping becomes true");
             check(w.GetComponent<ColliderComponent>(setup.leader) != nullptr,
@@ -2626,12 +2906,14 @@ bool RunFractureSelfTest()
             ApplyFractureDamage(w, root.Id(), rowBake.pieces[0].origin, 0.0f, 150.0f);
             fsys.Update(w, 1.0f / 60.0f, none);
             w.ApplyStructuralChanges();
+            fsys.ApplyDeferredLocals(w);
             check(w.GetComponent<RigidbodyComponent>(piece0) != nullptr,
                   "afterBreak=5 (cap oldest debris): the first detached piece becomes a leader");
 
             for (int i = 0; i < 5; ++i) { // releaseTicks に差をつける
                 fsys.Update(w, 1.0f / 60.0f, none);
                 w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
             }
             check(w.IsAlive(piece0), "afterBreak=5 (cap oldest debris): still within the cap while alone");
 
@@ -2639,6 +2921,7 @@ bool RunFractureSelfTest()
             ApplyFractureDamage(w, root.Id(), rowBake.pieces[kCount - 1].origin, 0.0f, 150.0f);
             fsys.Update(w, 1.0f / 60.0f, none);
             w.ApplyStructuralChanges();
+            fsys.ApplyDeferredLocals(w);
 
             check(!w.IsAlive(piece0),
                   "afterBreak=5 (cap oldest debris): exceeding maxDebris destroys the older chunk");
@@ -2710,6 +2993,7 @@ bool RunFractureSelfTest()
                     phys.Update(w, kDt, nullptr, nullptr, &impulses);
                     fsys.Update(w, kDt, impulses);
                     w.ApplyStructuralChanges();
+                    fsys.ApplyDeferredLocals(w);
                     outHashes.push_back(HashWorld(w));
                 }
                 fracturelib::Install(nullptr);
@@ -2796,6 +3080,7 @@ bool RunFractureSelfTest()
                 phys.Update(w, kDt, nullptr, nullptr, &impulses);
                 fsys.Update(w, kDt, impulses);
                 w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
                 for (int32_t i = 0; i < 12; ++i) {
                     const EntityID pe = pieceOf[static_cast<size_t>(i)];
                     if (pe.IsNull() || !w.IsAlive(pe)) {
@@ -2822,6 +3107,103 @@ bool RunFractureSelfTest()
             fracturelib::Install(nullptr);
             convexcol::Install(nullptr);
         }
+    }
+
+    // ---- 19. 割れた tick の中 (onBreak/LateUpdate 相当、まだ ApplyStructuralChanges 前) でも、
+    //      分かれた破片のワールド位置が tick 末の位置と一致する (spec §4.1 破断 4、受け入れ条件 3) ----
+    // root ("Wall") はワールド原点から離れた位置 (3, 0.5, 0) に置き、その直下の破片が分かれる。
+    // ReparentKeepWorld は SetParent (tick 末のコマンドバッファ) を積むだけで LocalTransform は
+    // まだ書かない (FractureSystem::ApplyDeferredLocals が ApplyStructuralChanges の直後に書く)。
+    // そのため割れた tick の間は「古い親 (root) + 古い LocalTransform」のままの世界位置
+    // (root.position + piece.origin) が保たれ、tick 末の書き込み後も同じ値のまま変わらない
+    {
+        constexpr int32_t kCount = 3;
+        const XMFLOAT3 rootPos{ 3.0f, 0.5f, 0.0f };
+        const FractureBakeResult rowBake = MakeRowFractureBake(kCount, 0.25f);
+        const XMFLOAT3 expectedWorld{ rootPos.x + rowBake.pieces[0].origin.x,
+                                      rootPos.y + rowBake.pieces[0].origin.y,
+                                      rootPos.z + rowBake.pieces[0].origin.z };
+
+        RenderResources resources;
+        ConvexColliderLibrary colliders;
+        FractureLibrary lib;
+        colliders.Init(&resources);
+        lib.Init(&resources, &colliders);
+        fracturelib::Install(&lib);
+        convexcol::Install(&colliders);
+
+        const FractureAssetHandle* handle = lib.RegisterBaked(
+            "fracture-selftest://midtick", rowBake, HashStr("fracture-selftest://midtick_src"), 0, kCount, 0, 0);
+
+        Scene s;
+        World& w = s.GetWorld();
+        GameObject root = s.CreateGameObject("Wall");
+        root.SetLocalPosition(rootPos.x, rootPos.y, rootPos.z); // ワールド原点から離した配置
+        root.AddComponent<RigidbodyComponent>();
+        root.AddComponent<DestructibleComponent>();
+        root.GetComponent<RigidbodyComponent>()->mass = static_cast<float>(kCount);
+        auto* d = root.GetComponent<DestructibleComponent>();
+        d->strength = 100.0f;
+        d->fractureAsset = AssetID{ HashStr("fracture-selftest://midtick") };
+        if (handle != nullptr) {
+            BuildFracturePieces(w, root.Id(), *handle);
+        }
+        w.ApplyStructuralChanges();
+
+        const EntityID leader = FindPieceChild(w, root.Id(), 0);
+        check(!leader.IsNull(), "mid-tick pose: piece 0 exists");
+
+        FractureSystem fsys;
+        std::vector<ShapeImpulse> none;
+        ApplyFractureDamage(w, root.Id(), expectedWorld, 0.0f, 150.0f); // 割れる前: 世界座標で piece0 を狙う
+        check(fsys.PendingLocalCount() == 0, "mid-tick pose: nothing pending before the piece separates");
+
+        fsys.Update(w, 1.0f / 60.0f, none); // ★ここではまだ w.ApplyStructuralChanges() を呼ばない
+        check(fsys.PendingLocalCount() > 0,
+              "mid-tick pose: the separated piece's new LocalTransform is queued, not written yet");
+
+        // ---- 同じ tick の中 (onBreak/LateUpdate から呼ばれた想定): 階層はまだ古い親のままだが、
+        //      世界位置は分かれる前と同じ (正しい) 値のまま ----
+        float px, py, pz, qx, qy, qz, qw;
+        ComposeEntityWorldPose(w, leader, px, py, pz, qx, qy, qz, qw);
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+                      "mid-tick pose: right after Update() (before ApplyStructuralChanges), the world "
+                      "position is still correct (got %.4f,%.4f,%.4f vs %.4f,%.4f,%.4f)",
+                      static_cast<double>(px), static_cast<double>(py), static_cast<double>(pz),
+                      static_cast<double>(expectedWorld.x), static_cast<double>(expectedWorld.y),
+                      static_cast<double>(expectedWorld.z));
+        check(std::fabs(px - expectedWorld.x) < 1e-4f && std::fabs(py - expectedWorld.y) < 1e-4f
+                  && std::fabs(pz - expectedWorld.z) < 1e-4f,
+              buf);
+
+        // 小さい半径で分かれたばかりの破片を狙うと、同じ tick のうちでも正しく当たる
+        const float damageBefore = w.GetComponent<FracturePieceComponent>(leader)->damage;
+        ApplyFractureDamage(w, root.Id(), expectedWorld, 0.05f, 500.0f);
+        const float damageAfter = w.GetComponent<FracturePieceComponent>(leader)->damage;
+        check(damageAfter > damageBefore,
+              "mid-tick pose: ApplyFractureDamage at the piece's correct world position hits it, even "
+              "before ApplyStructuralChanges");
+
+        // ---- tick 末: ApplyStructuralChanges → ApplyDeferredLocals で表が空になり、
+        //      世界位置は変わらない (ReparentKeepWorld は世界姿勢を保つ計算式のため) ----
+        w.ApplyStructuralChanges();
+        fsys.ApplyDeferredLocals(w);
+        check(fsys.PendingLocalCount() == 0,
+              "mid-tick pose: the table is empty right after the tick-end flush");
+
+        float px2, py2, pz2, qx2, qy2, qz2, qw2;
+        ComposeEntityWorldPose(w, leader, px2, py2, pz2, qx2, qy2, qz2, qw2);
+        std::snprintf(buf, sizeof(buf),
+                      "mid-tick pose: after the tick-end flush, the world position matches the mid-tick "
+                      "value (got %.4f,%.4f,%.4f vs %.4f,%.4f,%.4f)",
+                      static_cast<double>(px2), static_cast<double>(py2), static_cast<double>(pz2),
+                      static_cast<double>(px), static_cast<double>(py), static_cast<double>(pz));
+        check(std::fabs(px2 - px) < 1e-4f && std::fabs(py2 - py) < 1e-4f && std::fabs(pz2 - pz) < 1e-4f,
+              buf);
+
+        fracturelib::Install(nullptr);
+        convexcol::Install(nullptr);
     }
 
     if (failCount == 0) {

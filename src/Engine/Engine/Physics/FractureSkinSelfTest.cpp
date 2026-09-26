@@ -715,6 +715,7 @@ bool RunFractureSkinSelfTest()
             phys.Update(w, kDt, nullptr, nullptr, &impulses);
             fsys.Update(w, kDt, impulses);
             w.ApplyStructuralChanges();
+            fsys.ApplyDeferredLocals(w);
         }
 
         const auto* dAfter = w.GetComponent<DestructibleComponent>(root.Id());
@@ -733,6 +734,146 @@ bool RunFractureSkinSelfTest()
         if (w.IsAlive(remaining)) {
             check(w.GetComponent<PartComponent>(remaining) != nullptr,
                   "fracture system: the piece that stayed with the root keeps following its bone");
+        }
+
+        fracturelib::Install(nullptr);
+        convexcol::Install(nullptr);
+    }
+
+    // ---- 6. 骨が同じ 2 破片の位置は localCenter (体積重心) で区別する (受け入れ条件 2) ----
+    // 骨空間変換で原点は骨の原点 (0,0,0) へ潰れるため、同じ骨に割り当てた破片どうしは
+    // LocalTransform.position だけでは区別できない。損傷判定と onBreak の point は
+    // 破片ごとの localCenter で測ることを確かめる
+    {
+        constexpr float kSameBoneHx = 0.6f, kSameBoneHy = 0.5f, kSameBoneHz = 0.5f;
+        SkinBoxSource sameBoneBox = MakeSkinBox(kSameBoneHx, kSameBoneHy, kSameBoneHz);
+        // 単一の骨 (index 0) へ束ねる (MakeSkinBox の Y による 2 骨割り当てを上書きする)
+        for (MeshVertex& v : sameBoneBox.verts) {
+            v.boneIndices[0] = 0;
+            v.boneWeights = { 1.0f, 0.0f, 0.0f, 0.0f };
+        }
+        for (FractureSkinVertex& v : sameBoneBox.skinVerts) {
+            v.boneIndices[0] = 0;
+            v.boneWeights = { 1.0f, 0.0f, 0.0f, 0.0f };
+        }
+
+        SkinnedModel sameBoneModel;
+        sameBoneModel.joints.resize(1);
+        sameBoneModel.joints[0].name = "Bone0";
+        sameBoneModel.joints[0].parent = -1;
+        sameBoneModel.joints[0].bindT = { 0.0f, 0.0f, 0.0f };
+        sameBoneModel.joints[0].bindR = { 0.0f, 0.0f, 0.0f, 1.0f };
+        sameBoneModel.joints[0].bindS = { 1.0f, 1.0f, 1.0f };
+        sameBoneModel.joints[0].inverseBind = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+
+        const FractureMesh src = ToFractureMesh(sameBoneBox.verts, sameBoneBox.indices);
+        // X 方向に 2 分割 (Y 方向の MakeSkinBox 既定の切れ目とは無関係な、骨とは独立の分割面)
+        const std::vector<XMFLOAT3> sameBoneSeeds
+            = { { -kSameBoneHx * 0.5f, 0.0f, 0.0f }, { kSameBoneHx * 0.5f, 0.0f, 0.0f } };
+        FractureBakeResult sameBoneBake;
+        const bool baked = BakeFractureWithSeeds(src, sameBoneSeeds, 0.1f, sameBoneBake);
+        check(baked && sameBoneBake.success && sameBoneBake.pieces.size() == 2,
+              "same-bone pieces: the box splits into exactly 2 pieces");
+        if (!baked || !sameBoneBake.success || sameBoneBake.pieces.size() != 2) {
+            return false; // 前提が崩れるので打ち切る (このファイル前半の書式と同じ)
+        }
+
+        std::vector<FractureSkinJoint> sameBoneJoints;
+        for (const SkeletonJoint& j : sameBoneModel.joints) {
+            sameBoneJoints.push_back({ j.name, j.inverseBind });
+        }
+        const std::vector<std::string> sameBoneNames
+            = AssignFractureBonesAndTransform(sameBoneBake, sameBoneBox.skinVerts, sameBoneJoints);
+        check(sameBoneNames.size() == 2 && sameBoneNames[0] == "Bone0" && sameBoneNames[1] == "Bone0",
+              "same-bone pieces: both pieces are assigned to the same bone");
+
+        RenderResources resources;
+        ConvexColliderLibrary colliders;
+        FractureLibrary lib;
+        colliders.Init(&resources);
+        lib.Init(&resources, &colliders);
+        fracturelib::Install(&lib);
+        convexcol::Install(&colliders);
+
+        const AssetID meshId = resources.meshes.Register("samebone_mesh", sameBoneBox.verts, sameBoneBox.indices);
+        const AssetID skinId = resources.skinnedModels.Register("samebone_model", sameBoneModel);
+
+        const char* prefix = "fracture-selftest://samebone";
+        const FractureAssetHandle* handle
+            = lib.RegisterBaked(prefix, sameBoneBake, HashStr("samebone_mesh"), 1, 2, 0, 32, sameBoneNames);
+        check(handle != nullptr && handle->pieces.size() == 2,
+              "same-bone pieces: the asset registers with 2 pieces");
+
+        Scene s;
+        World& w = s.GetWorld();
+        GameObject root = s.CreateGameObject("SameBoneArm");
+        auto* mr = root.AddComponent<MeshRendererComponent>();
+        mr->mesh = meshId;
+        auto* sm = root.AddComponent<SkinnedMeshComponent>();
+        sm->model = skinId;
+        sm->clip = 0;
+        sm->playing = false; // バインドポーズのまま (骨追従は本題ではない)
+        auto* d = root.AddComponent<DestructibleComponent>();
+        d->strength = 50.0f;
+        d->fractureAsset = AssetID{ HashStr(prefix) };
+        if (handle != nullptr) {
+            BuildFracturePieces(w, root.Id(), *handle);
+        }
+        w.ApplyStructuralChanges();
+
+        const EntityID frag0 = FindPieceChild(w, root.Id(), 0);
+        const EntityID frag1 = FindPieceChild(w, root.Id(), 1);
+        check(!frag0.IsNull() && !frag1.IsNull(), "same-bone pieces: both fracture pieces exist");
+
+        const auto* lt0 = w.GetComponent<LocalTransform>(frag0);
+        const auto* lt1 = w.GetComponent<LocalTransform>(frag1);
+        check(lt0 != nullptr && lt1 != nullptr && lt0->position.x == 0.0f && lt0->position.y == 0.0f
+                  && lt0->position.z == 0.0f && lt1->position.x == 0.0f && lt1->position.y == 0.0f
+                  && lt1->position.z == 0.0f,
+              "same-bone pieces: both pieces sit at the bone origin (0,0,0) - position alone cannot "
+              "tell them apart");
+
+        const XMFLOAT3 center0 = handle->pieces[0].localCenter;
+        const XMFLOAT3 center1 = handle->pieces[1].localCenter;
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+                      "same-bone pieces: localCenter tells the pieces apart (piece0.x=%.4f, piece1.x=%.4f)",
+                      static_cast<double>(center0.x), static_cast<double>(center1.x));
+        check(std::fabs(center0.x - center1.x) > 0.1f, buf);
+
+        // ---- ApplyFractureDamage: 片方の重心の近くへ小さい半径で与えると、そちらだけに損傷が入る ----
+        ApplyFractureDamage(w, root.Id(), center0, 0.05f, 100.0f);
+        const auto* fp0 = w.GetComponent<FracturePieceComponent>(frag0);
+        const auto* fp1 = w.GetComponent<FracturePieceComponent>(frag1);
+        check(fp0 != nullptr && fp1 != nullptr && fp0->damage > 0.0f && fp1->damage == 0.0f,
+              "same-bone pieces: ApplyFractureDamage near piece0's centroid only damages piece0");
+
+        // ---- onBreak の point は破片の体積重心のワールド位置と一致する ----
+        ApplyFractureDamage(w, root.Id(), center0, 0.05f, 1000.0f); // 確実に閾値を超えさせる
+        FractureSystem fsys;
+        std::vector<ShapeImpulse> none;
+        fsys.Update(w, 1.0f / 60.0f, none);
+        w.ApplyStructuralChanges();
+        fsys.ApplyDeferredLocals(w);
+        check(!fsys.LastBreakEvents().empty(), "same-bone pieces: the damaged piece detaches");
+        if (!fsys.LastBreakEvents().empty()) {
+            // どちらの塊が体積最大側 (root に残る) になるかはタイブレークに依存し得るので、
+            // 実際に分かれたリーダーの index から期待値を引く (spec §4.1 破断 8)
+            const FractureBreakEvent& ev = fsys.LastBreakEvents().front();
+            const auto* leaderFp = w.GetComponent<FracturePieceComponent>(ev.leader);
+            check(leaderFp != nullptr, "same-bone pieces: the onBreak leader has a FracturePieceComponent");
+            if (leaderFp != nullptr) {
+                const XMFLOAT3& expected = handle->pieces[static_cast<size_t>(leaderFp->index)].localCenter;
+                std::snprintf(buf, sizeof(buf),
+                              "same-bone pieces: onBreak point matches the detached piece's own centroid "
+                              "(got %.4f,%.4f,%.4f vs %.4f,%.4f,%.4f)",
+                              static_cast<double>(ev.point.x), static_cast<double>(ev.point.y),
+                              static_cast<double>(ev.point.z), static_cast<double>(expected.x),
+                              static_cast<double>(expected.y), static_cast<double>(expected.z));
+                check(std::fabs(ev.point.x - expected.x) < 1e-4f && std::fabs(ev.point.y - expected.y) < 1e-4f
+                          && std::fabs(ev.point.z - expected.z) < 1e-4f,
+                      buf);
+            }
         }
 
         fracturelib::Install(nullptr);

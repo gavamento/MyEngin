@@ -149,41 +149,6 @@ int BuildFracturePieces(World& world, EntityID root, const FractureAssetHandle& 
     return static_cast<int>(asset.pieces.size());
 }
 
-bool ValidateFracturePieces(World& world, EntityID root, const FractureAssetHandle* asset)
-{
-    if (root.IsNull() || !world.IsAlive(root)) {
-        return false;
-    }
-    if (asset == nullptr) {
-        MYE_LOG_ERROR("[fracture] %s: fracture asset is not loaded, this destructible will not break",
-                     world.GetName(root));
-        return false;
-    }
-
-    std::vector<EntityID> existing;
-    CollectExistingPieces(world, root, &existing);
-
-    std::vector<bool> seen(asset->pieces.size(), false);
-    for (EntityID e : existing) {
-        const auto* fp = world.GetComponent<FracturePieceComponent>(e);
-        if (fp == nullptr || fp->index < 0 || static_cast<size_t>(fp->index) >= seen.size()
-            || seen[static_cast<size_t>(fp->index)]) {
-            MYE_LOG_ERROR("[fracture] %s: fracture piece index is out of range or duplicated "
-                         "(asset pieces=%zu)",
-                         world.GetName(root), asset->pieces.size());
-            return false;
-        }
-        seen[static_cast<size_t>(fp->index)] = true;
-    }
-    if (existing.size() != asset->pieces.size()) {
-        MYE_LOG_ERROR("[fracture] %s: piece count mismatch (asset=%zu, entities=%zu) - this "
-                     "destructible will not break",
-                     world.GetName(root), asset->pieces.size(), existing.size());
-        return false;
-    }
-    return true;
-}
-
 int CountFracturePieceChildren(World& world, EntityID root)
 {
     std::vector<EntityID> existing;
