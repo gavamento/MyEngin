@@ -4060,6 +4060,13 @@ void BuildFractureShowcaseScene(EngineContext& ctx)
     const AssetID cube = res.meshes.Cube();
     const AssetID matSteel = FindPhysMat("steel");
 
+    // 固定の壁。床から浮かせた寸法をここでまとめ、壁本体と射出弾の狙いの
+    // 両方から参照する (狙いがずれないように)
+    constexpr float kWallX = 3.0f;
+    constexpr float kWallWidth = 2.5f, kWallHeight = 2.5f, kWallThickness = 0.6f;
+    constexpr float kWallBottomAboveFloor = 1.5f; // 床との間に落下ぶんの隙間を空ける
+    constexpr float kWallCenterY = kWallBottomAboveFloor + kWallHeight * 0.5f;
+
     auto makeMat = [&](const char* name, float r, float g, float b) {
         Material m;
         m.shader = AssetID{ HashStr("forward_lit") };
@@ -4118,10 +4125,8 @@ void BuildFractureShowcaseScene(EngineContext& ctx)
         rb->mass = 8.0f;
         auto* d = box.AddComponent<DestructibleComponent>();
         d->innerMaterial = AssetID{ HashStr("frdemo_inner") };
-        // 実物理のインパルスは複数の子形状 (破片) に分かれて配られるため、既定値 (5000N) では
-        // このデモの衝突では割れない (FractureSelfTest の box8 インパクト検算と同じ理屈)。
-        // 「割れる前/後」の 2 枚を確実に見せるための値
-        d->strength = 200.0f;
+        // strength は既定値のまま (実測した既定 70N で足りる。20kg・30m/s の球衝突は
+        // 桁違いに大きい)
         // FractureSystem が実行時にこの Destructible の資産を再解決するための参照
         // (メモリ登録なので guid ではなく登録名の hash と同じ値、ResolveFractureAsset 参照)
         d->fractureAsset = AssetID{ HashStr(prefix) };
@@ -4130,24 +4135,28 @@ void BuildFractureShowcaseScene(EngineContext& ctx)
         }
     }
 
-    // ---- 固定の壁 (kinematic ルート)。撃った所だけ抜け、体積最大の塊が固定のまま残る ----
+    // ---- 固定の壁 (kinematic ルート)。床から浮かせて置き、下寄りを撃つ。
+    //      壁の残りは kinematic のまま宙に固定される。下寄りの破片は、外れると
+    //      真下が壁の外 (床までの隙間) になるため重力で落ちて穴が見える。上寄りを
+    //      撃った場合は、外れても真下に壁の残りが支えとして残り続けるため落ちない
+    //      (実測で確認済み。壁の上端を撃つ案は採らなかった) ----
     {
         const char* prefix = "fracture://demo_wall";
         const FractureAssetHandle* baked = BakeDemoFracture(res, prefix, 2, 12);
         GameObject wall = s.CreateGameObject("FractureWall");
-        wall.SetLocalPosition(3.0f, 0.5f, 0.0f);
+        wall.SetLocalScale(kWallWidth, kWallHeight, kWallThickness);
+        wall.SetLocalPosition(kWallX, kWallCenterY, 0.0f);
         auto* mr = wall.AddComponent<MeshRendererComponent>();
         mr->mesh = cube;
         mr->material = AssetID{ HashStr("frdemo_wall") };
         auto* rb = wall.AddComponent<RigidbodyComponent>();
         rb->isKinematic = true;
-        // 分かれた破片の質量は「ルートの全質量 × 体積比」で決まる (spec §4.1 破断 5)。既定の
-        // 1.0 のままだと 1 破片が 1kg 未満になり、衝突の運動量がそのまま速度に化けて
-        // 弾け飛んだ破片が一瞬で画面外へ消える (壁らしい重さを与えて見た目を安定させる)
-        rb->mass = 40.0f;
+        // 分かれた破片の質量は「ルートの全質量 × 体積比」で決まる (spec §4.1 破断 5)。壁らしい
+        // 重さを与えて、外れた破片が床に落ちたときの見た目を安定させる
+        rb->mass = 100.0f;
         auto* d = wall.AddComponent<DestructibleComponent>();
         d->innerMaterial = AssetID{ HashStr("frdemo_inner") };
-        d->strength = 200.0f; // 理由は箱と同じ (上のコメント参照)
+        // strength は既定値のまま (実測した既定 70N で足りる)
         d->fractureAsset = AssetID{ HashStr(prefix) };
         if (baked != nullptr) {
             BuildFracturePieces(w, wall.Id(), *baked);
@@ -4181,7 +4190,7 @@ void BuildFractureShowcaseScene(EngineContext& ctx)
         sm->playing = false;
         auto* d = skinArm.AddComponent<DestructibleComponent>();
         d->innerMaterial = AssetID{ HashStr("frdemo_inner") };
-        d->strength = 200.0f; // 理由は箱・壁と同じ (上のコメント参照)
+        // strength は既定値のまま (箱と同じ理由、上のコメント参照)
         d->fractureAsset = AssetID{ HashStr(prefix) };
         if (baked != nullptr) {
             BuildFracturePieces(w, skinArm.Id(), *baked);
@@ -4207,7 +4216,9 @@ void BuildFractureShowcaseScene(EngineContext& ctx)
         rb->velocity = vel;
     };
     makeCannonball("FractureBallBox", { -2.5f, 0.55f, -20.0f }, { 0.0f, 0.0f, 30.0f });
-    makeCannonball("FractureBallWall", { 3.0f, 0.5f, -15.0f }, { 0.0f, 0.0f, 30.0f });
+    // 壁の下寄りを狙う (上のコメント参照)
+    makeCannonball("FractureBallWall", { kWallX, kWallCenterY - kWallHeight * 0.35f, -15.0f },
+                   { 0.0f, 0.0f, 30.0f });
     // Bone1 (上半分) の中心あたり (root + (0, hy/2, 0)) を狙う。バインドポーズ固定なので
     // 静的に計算できる (FractureSkinSelfTest の狙い方と同じ式)
     makeCannonball("FractureBallSkinArm", { 8.0f, 3.0f + kArmHy * 0.5f, -15.0f },

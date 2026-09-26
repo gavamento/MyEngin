@@ -46,6 +46,7 @@
 #include "Engine/Engine/FractureBuilder.h" // M80i: BuildFracturePieces / CountFracturePieceChildren
 #include "Engine/Engine/FractureSystem.h" // ResolveFractureAsset / FracturePieceIndicesMatchAsset の共有
 #include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/HotReload/ReloadHub.h" // M80p: ReloadCount() でスキンウェイトキャッシュを無効化
 #include "Engine/Engine/Modal/ModalSoundLibrary.h" // 状態 (Missing/Baking/Ready/Failed/NoModel)
 #include "Engine/Engine/Parts.h"
 #include "Engine/Engine/Physics/FractureLibrary.h" // M80i: .mfrac の登録 (FractureLibrary/fracturelib::)
@@ -1311,6 +1312,32 @@ void InspectorWindow::ExportModalPreviewWav(EngineContext& ctx)
     MYE_LOG_INFO("modal preview wav saved: %s", WideToUtf8(path).c_str());
 }
 
+// M80p: ModelCook::TryLoadCookedMeshVertices はファイル全体の読み込み・検証・
+// デシリアライズを伴い、DrawDestructibleNotes から毎フレーム呼ばれると重い。(srcPath, meshKey)
+// が前回と同じで、その間に資産のホットリロードが起きていなければ (ReloadCount 不変) 結果を使い回す
+bool InspectorWindow::GetCachedSkinWeights(EngineContext& ctx, uint64_t fid, const std::wstring& srcPath,
+                                           const std::string& meshKey,
+                                           std::vector<MeshVertex>& outVertices)
+{
+    const uint64_t reloadCount = ctx.reloadHub != nullptr ? ctx.reloadHub->ReloadCount() : 0;
+    auto it = fractureSkinWeightCache_.find(fid);
+    if (it != fractureSkinWeightCache_.end() && it->second.srcPath == srcPath
+        && it->second.meshKey == meshKey && it->second.reloadCountAtCache == reloadCount) {
+        outVertices = it->second.vertices;
+        return it->second.found;
+    }
+
+    FractureSkinWeightCache entry;
+    entry.srcPath = srcPath;
+    entry.meshKey = meshKey;
+    entry.reloadCountAtCache = reloadCount;
+    entry.found = ModelCook::TryLoadCookedMeshVertices(srcPath, meshKey, entry.vertices);
+    outVertices = entry.vertices;
+    const bool found = entry.found;
+    fractureSkinWeightCache_[fid] = std::move(entry);
+    return found;
+}
+
 // M80i: Destructible 節の末尾。焼き中の表示・完了時の確定 (CommitFractureBakeResult)・
 // 生成ボタンの可否判定・拒否/失敗理由を出す。マルチ選択では呼ばれない (呼び出し元で除外済み)
 void InspectorWindow::DrawDestructibleNotes(EngineContext& ctx, Selection& selection, UndoStack& undo,
@@ -1335,6 +1362,9 @@ void InspectorWindow::DrawDestructibleNotes(EngineContext& ctx, Selection& selec
     if (state == FractureBakeJobState::Baking) {
         ImGui::TextDisabled(Tr(StrId::Insp_FractureBaking),
                             FractureStageLabel(fractureBakeService_.GetStage(tg.fid)));
+        if (ImGui::Button(Tr(StrId::Insp_FractureCancel))) {
+            fractureBakeService_.Cancel(tg.fid);
+        }
     } else {
         // 「生成済み」表示は焼き結果のキャッシュではなく今の世界の状態 (Destructible.fractureAsset
         // + 直子の数) から毎フレーム導出する — シーンを読み直しても正しい表示になるように
@@ -1361,11 +1391,13 @@ void InspectorWindow::DrawDestructibleNotes(EngineContext& ctx, Selection& selec
                 }
             }
         }
-        // 直近 (このセッション中) の焼きが拒否/失敗だったときだけ理由を添える
+        // 直近 (このセッション中) の焼きが拒否/失敗/取り消しだったときだけ理由を添える
         const auto outIt = fractureOutcomes_.find(tg.fid);
         if (outIt != fractureOutcomes_.end() && !outIt->second.success) {
             const FractureBakeOutcome& o = outIt->second;
-            if (o.rejectedOpenMesh) {
+            if (o.cancelled) {
+                ImGui::TextDisabled("%s", Tr(StrId::Insp_FractureCancelled));
+            } else if (o.rejectedOpenMesh) {
                 ImGui::TextColored(themeColor::Error, Tr(StrId::Insp_FractureOpenMeshReason),
                                    o.boundaryEdges, o.nonManifoldEdges, o.orientationMismatches);
                 ImGui::TextColored(themeColor::Error, "%s", Tr(StrId::Insp_FractureVoxelizeHint));
@@ -1395,7 +1427,7 @@ void InspectorWindow::DrawDestructibleNotes(EngineContext& ctx, Selection& selec
             meshName != nullptr ? assetkey::SourcePathForSubAssetKey(*meshName) : std::wstring{};
         std::vector<MeshVertex> weighted;
         if (meshName != nullptr && !srcPath.empty()
-            && ModelCook::TryLoadCookedMeshVertices(srcPath, *meshName, weighted)) {
+            && GetCachedSkinWeights(ctx, tg.fid, srcPath, *meshName, weighted)) {
             if (const SkinnedModel* model = ctx.resources->skinnedModels.Get(skinComp->model)) {
                 skinJoints.reserve(model->joints.size());
                 for (const SkeletonJoint& j : model->joints) {
@@ -1469,6 +1501,7 @@ void InspectorWindow::CommitFractureBakeResult(EngineContext& ctx, Selection& se
     outcome.boundaryEdges = result.boundaryEdges;
     outcome.nonManifoldEdges = result.nonManifoldEdges;
     outcome.orientationMismatches = result.orientationMismatches;
+    outcome.cancelled = result.cancelled;
     outcome.failReason = result.failReason;
     fractureOutcomes_[tg.fid] = outcome;
 

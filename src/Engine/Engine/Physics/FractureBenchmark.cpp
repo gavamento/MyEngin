@@ -6,6 +6,7 @@
 #include "Engine/Engine/Physics/FractureBenchmark.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <map>
@@ -264,6 +265,163 @@ void RunOneBench(const FractureBakeResult& bake, int32_t pieceCount, int32_t obj
     convexcol::Install(nullptr);
 }
 
+// ---- strength の既定値決定 (M80p) ----
+// 質量 1kg・破片 16・一辺 1m の箱を dropHeight [m] から重力落下させ、ticks tick 動かして
+// 割れたかを返す。dropHeight==0 は「床に置いたまま」(既定の質量 1kg・一辺 1m の Destructible
+// で 3 基準を測る、spec §2)
+bool RunStrengthDropScenario(const FractureBakeResult& bake, float strength, float dropHeight, int ticks)
+{
+    RenderResources resources;
+    ConvexColliderLibrary colliders;
+    colliders.Init(&resources);
+    FractureLibrary lib;
+    lib.Init(&resources, &colliders);
+    fracturelib::Install(&lib);
+    convexcol::Install(&colliders);
+    const FractureAssetHandle* handle = lib.RegisterBaked(
+        "fracture-bench://calib", bake, HashStr("fracture-bench://calib_src"), 1, 16, 0, 32);
+
+    Scene s;
+    World& w = s.GetWorld();
+    // --fracture-demo と同じく PhysicsEnvironment を置く (置かないと substeps=1 固定・
+    // スリープ無効のまま — 存在ゲートの規約、Components.h の PhysicsEnvironmentComponent
+    // 参照。置かない計測は「起こりえない設定」を測ることになり基準にならない)
+    s.CreateGameObject("Environment").AddComponent<PhysicsEnvironmentComponent>();
+    GameObject floor = s.CreateGameObject("Floor");
+    floor.SetLocalPosition(0.0f, -0.5f, 0.0f);
+    floor.SetLocalScale(24.0f, 1.0f, 24.0f);
+    auto* floorCol = floor.AddComponent<ColliderComponent>();
+    floorCol->shape = collidershape::kBox;
+    floorCol->halfExtents = { 0.5f, 0.5f, 0.5f };
+
+    GameObject box = s.CreateGameObject("CalibBox");
+    box.SetLocalPosition(0.0f, dropHeight + 0.5f, 0.0f); // 箱の底面が床から dropHeight だけ上
+    auto* rb = box.AddComponent<RigidbodyComponent>();
+    rb->mass = 1.0f;
+    auto* d = box.AddComponent<DestructibleComponent>();
+    d->strength = strength;
+    d->fractureAsset = AssetID{ HashStr("fracture-bench://calib") };
+    if (handle != nullptr) {
+        BuildFracturePieces(w, box.Id(), *handle);
+    }
+    w.ApplyStructuralChanges();
+
+    PhysicsSystem phys;
+    FractureSystem fsys;
+    constexpr float kDt = 1.0f / 60.0f;
+    bool broken = false;
+    for (int t = 0; t < ticks && !broken; ++t) {
+        std::vector<ShapeImpulse> impulses;
+        phys.Update(w, kDt, nullptr, nullptr, &impulses);
+        fsys.Update(w, kDt, impulses);
+        w.ApplyStructuralChanges();
+        fsys.ApplyDeferredLocals(w);
+        const auto* dd = w.GetComponent<DestructibleComponent>(box.Id());
+        broken = dd != nullptr && dd->broken;
+    }
+
+    fracturelib::Install(nullptr);
+    convexcol::Install(nullptr);
+    return broken;
+}
+
+// [lo,hi] の間で pred が非増加 (pred(lo)==true, pred(hi)==false) と仮定し、対数二分探索で
+// 「pred が true であり続ける最大の S」を返す (iters 回で相対誤差 2^-iters まで狭める)
+template <typename Pred>
+float BisectUpperBound(float lo, float hi, int iters, Pred pred)
+{
+    for (int i = 0; i < iters; ++i) {
+        const float mid = std::sqrt(lo * hi);
+        if (pred(mid)) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+// [lo,hi] の間で pred が非減少 (pred(lo)==false, pred(hi)==true) と仮定し、対数二分探索で
+// 「pred が true になる最小の S」を返す
+template <typename Pred>
+float BisectLowerBound(float lo, float hi, int iters, Pred pred)
+{
+    for (int i = 0; i < iters; ++i) {
+        const float mid = std::sqrt(lo * hi);
+        if (pred(mid)) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    return hi;
+}
+
+// DestructibleComponent.strength の既定値を実測で決める。基準は spec §2 の 3 つ
+// (質量 1kg・破片 16・一辺 1m の箱が、3m 落下で割れる/1m 落下で割れない/床に 600 tick 置いても
+// 割れない)。対数二分探索で各基準の境界を求め、重なる範囲があればその対数中央値を返す。
+// 合否判定はしない — 呼び出し側 (SelfTest) が採用した既定値で 3 基準を再検算する
+void RunFractureStrengthCalibration()
+{
+    FractureBakeInput in;
+    in.sourceMesh = MakeBenchBox(0.5f, 0.5f, 0.5f); // 一辺 1m (半径 0.5)
+    in.seed = 1;
+    in.pieceCount = 16;
+    FractureBakeResult bake;
+    if (!BakeFracture(in, bake) || !bake.success) {
+        MYE_LOG_ERROR("[fracture-bench] calibration bake failed: %s", bake.failReason.c_str());
+        return;
+    }
+
+    constexpr float kLo = 1.0f;
+    constexpr float kHi = 1.0e7f;
+    constexpr int kIters = 24; // 相対誤差 2^-24 ≈ 6e-8 まで (対数スケールなので十分細かい)
+
+    // (a) 3m 落下は割れる: 割れ続ける最大の S。kLo でも割れないなら基準 (a) を満たす S が
+    // 無い (-1)。kHi でも割れるなら探索範囲内では上限なし (kHi をそのまま返す)
+    const bool breaksAtLo3m = RunStrengthDropScenario(bake, kLo, 3.0f, 180);
+    const bool breaksAtHi3m = RunStrengthDropScenario(bake, kHi, 3.0f, 180);
+    MYE_LOG_INFO("[fracture-bench] calibration: 3m drop breaks at S=%.0f -> %d, S=%.0f -> %d", kLo,
+                breaksAtLo3m ? 1 : 0, kHi, breaksAtHi3m ? 1 : 0);
+    const float sAMax = !breaksAtLo3m ? -1.0f
+        : breaksAtHi3m ? kHi
+        : BisectUpperBound(kLo, kHi, kIters,
+                            [&](float S) { return RunStrengthDropScenario(bake, S, 3.0f, 180); });
+
+    // (c) 1m 落下では割れない: 割れなくなる最小の S。kLo で既に割れないなら基準 (c) は
+    // 下限なしで満たされる (0)。kHi でも割れるなら基準 (c) を満たす S が無い (-1)
+    const bool breaksAtLo1m = RunStrengthDropScenario(bake, kLo, 1.0f, 150);
+    const bool breaksAtHi1m = RunStrengthDropScenario(bake, kHi, 1.0f, 150);
+    MYE_LOG_INFO("[fracture-bench] calibration: 1m drop breaks at S=%.0f -> %d, S=%.0f -> %d", kLo,
+                breaksAtLo1m ? 1 : 0, kHi, breaksAtHi1m ? 1 : 0);
+    const float sCMin = !breaksAtLo1m ? 0.0f
+        : breaksAtHi1m ? -1.0f
+        : BisectLowerBound(kLo, kHi, kIters,
+                            [&](float S) { return !RunStrengthDropScenario(bake, S, 1.0f, 150); });
+
+    // (b) 床に 600 tick 置いても割れない: (c) と同じ形の境界
+    const bool breaksAtLo0m = RunStrengthDropScenario(bake, kLo, 0.0f, 600);
+    const bool breaksAtHi0m = RunStrengthDropScenario(bake, kHi, 0.0f, 600);
+    MYE_LOG_INFO("[fracture-bench] calibration: resting 600 ticks breaks at S=%.0f -> %d, S=%.0f -> %d",
+                kLo, breaksAtLo0m ? 1 : 0, kHi, breaksAtHi0m ? 1 : 0);
+    const float sBMin = !breaksAtLo0m ? 0.0f
+        : breaksAtHi0m ? -1.0f
+        : BisectLowerBound(kLo, kHi, kIters,
+                            [&](float S) { return !RunStrengthDropScenario(bake, S, 0.0f, 600); });
+
+    MYE_LOG_INFO("[fracture-bench] calibration: sAMax=%.1f sCMin=%.1f sBMin=%.1f", sAMax, sCMin, sBMin);
+    const float sLoWindow = (std::max)(sCMin, sBMin);
+    if (sAMax >= 0.0f && sCMin >= 0.0f && sBMin >= 0.0f && sLoWindow < sAMax) {
+        const float recommended = std::sqrt((std::max)(sLoWindow, 1.0f) * sAMax);
+        MYE_LOG_INFO("[fracture-bench] calibration: valid range [%.1f, %.1f], recommended (log-mid) = %.1f",
+                    sLoWindow, sAMax, recommended);
+    } else {
+        MYE_LOG_ERROR("[fracture-bench] calibration: no S satisfies all 3 criteria "
+                     "(sAMax=%.1f, sCMin=%.1f, sBMin=%.1f)",
+                     sAMax, sCMin, sBMin);
+    }
+}
+
 } // namespace
 
 int RunFractureBenchmark()
@@ -300,11 +458,12 @@ int RunFractureBenchmark()
     //      落として軽量化)、この表 (pieceCount=16 の実測値) は --fracture-bench (Release)
     //      に一本化した (sub-11/sub-12)。合否判定はしない (計測専用) ----
     {
-        auto bakeOpenMesh = [](const char* label, const FractureMesh& mesh, int32_t resolution) {
+        auto bakeOpenMesh = [](const char* label, const FractureMesh& mesh, uint32_t seed,
+                              int32_t pieceCount, int32_t resolution) {
             FractureBakeInput in;
             in.sourceMesh = mesh;
-            in.seed = 11;
-            in.pieceCount = 16;
+            in.seed = seed;
+            in.pieceCount = pieceCount;
             in.openMeshMode = 1;
             in.voxelResolution = resolution;
             FractureBakeResult r;
@@ -312,15 +471,26 @@ int RunFractureBenchmark()
             const bool ok = BakeFracture(in, r);
             const auto t1 = std::chrono::steady_clock::now();
             const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-            MYE_LOG_INFO("[fracture-bench] voxelize bake: %s res=%d pieceCount=16 ok=%d pieces=%d = %.2f ms",
-                        label, resolution, ok && r.success ? 1 : 0,
-                        ok && r.success ? static_cast<int>(r.pieces.size()) : -1, ms);
+            MYE_LOG_INFO(
+                "[fracture-bench] voxelize bake: %s seed=%u pieceCount=%d res=%d ok=%d pieces=%d = %.2f ms",
+                label, seed, pieceCount, resolution, ok && r.success ? 1 : 0,
+                ok && r.success ? static_cast<int>(r.pieces.size()) : -1, ms);
+            if (!ok || !r.success) {
+                MYE_LOG_ERROR("[fracture-bench] voxelize bake: %s res=%d fail reason: %s", label,
+                             resolution, r.failReason.c_str());
+            }
         };
         for (const int32_t res : { 32, 48, 64 }) {
-            bakeOpenMesh("open box", MakeBenchOpenBox(1.0f, 1.0f, 1.0f), res);
-            bakeOpenMesh("plane quad", MakeBenchPlaneQuad(1.0f), res);
+            bakeOpenMesh("open box", MakeBenchOpenBox(1.0f, 1.0f, 1.0f), 11, 16, res);
+            bakeOpenMesh("plane quad", MakeBenchPlaneQuad(1.0f), 11, 16, res);
+        }
+        // 一辺 1m の開いた箱・16 破片・seed=1 で解像度ごとの成否を記録する (bench.md 参照)
+        for (const int32_t res : { 64, 72, 80, 96, 128 }) {
+            bakeOpenMesh("open box 1m", MakeBenchOpenBox(0.5f, 0.5f, 0.5f), 1, 16, res);
         }
     }
+
+    RunFractureStrengthCalibration();
 
     MYE_LOG_INFO("[fracture-bench] ==== done ====");
     return 0;

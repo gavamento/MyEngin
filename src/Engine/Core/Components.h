@@ -1744,9 +1744,13 @@ struct DestructibleComponent {
     int32_t pieceCount = 16;       // 焼き直しの目安値 (2..256)
     uint32_t seed = 1;             // 焼き直しの分割 seed
     int32_t openMeshMode = 0;      // 0=拒否 1=ボクセル化を許容 (焼き直しにだけ効く)
-    int32_t voxelResolution = 32;  // ボクセルの最長辺セル数 (16..256、焼き直しにだけ効く)
+    // ボクセルの最長辺セル数 (焼き直しにだけ効く)。Inspector の選べる範囲は 16..72
+    // (bench.md 参照)。クランプ自体は FractureVoxel.h の 16..256 のまま
+    int32_t voxelResolution = 32;
     AssetID innerMaterial = {};    // 断面 (_cap) のマテリアル。null = ルートのもの
-    float strength = 5000.0f;      // 接着の基準強度 [N]
+    // 接着の基準強度 [N]。既定値の根拠は plans/m80-destruction/bench.md
+    // (質量が変われば範囲も変わるので調整すること)
+    float strength = 70.0f;
     int32_t afterBreak = 0;        // 割れた後の挙動 0..5 (spec §4.1)
     int32_t afterBreakTicks = 300; // 挙動 1/2/3 の開始までの tick
     int32_t fadeTicks = 60;        // 挙動 2/3 の長さ (tick)

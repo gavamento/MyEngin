@@ -1261,12 +1261,24 @@ void RegisterBuiltinComponents()
         MYE_JP("開いたメッシュ",
                MYE_FIELD_TIP(DestructibleComponent, openMeshMode, Int32,
                              "0=reject an open mesh 1=allow voxelization")),
+        // M80p: 上限を 256 (分割コアのハード上限) から 72 (Inspector で選べる
+        // 範囲) へ下げた。開いた箱・16 破片で 80 以上は焼きが失敗する (bench.md 参照)。
+        // スクリプト等で 72 を超える値を明示的に設定すること自体は妨げない (クランプは
+        // FractureVoxel.h 側の 256 のまま)
         MYE_JP("ボクセル解像度",
-               MYE_FIELD_RANGE(DestructibleComponent, voxelResolution, Int32, 16.0f, 256.0f)),
+               ::mye::FieldDesc{
+                   .name = "voxelResolution", .type = ::mye::FieldType::Int32,
+                   .offset = static_cast<uint32_t>(offsetof(DestructibleComponent, voxelResolution)),
+                   .minVal = 16.0f, .maxVal = 72.0f,
+                   .tooltip = "cells along the longest side; open-box bakes with 16 pieces start "
+                              "failing at 80+ (see bench.md) — this is the largest value verified "
+                              "to succeed" }),
         MYE_JP("断面マテリアル", MYE_FIELD_TIP(DestructibleComponent, innerMaterial, AssetRef,
                                               "null = use the root's own material")),
         MYE_JP("接着強度", MYE_FIELD_TIP(DestructibleComponent, strength, Float,
-                                         "newtons - the baseline bond strength between pieces")),
+                                         "newtons - the baseline bond strength between pieces "
+                                         "(default 70N measured for a 1kg/16-piece/1m box, "
+                                         "see bench.md; heavier objects need a higher value)")),
         MYE_JP("割れた後の挙動",
                MYE_FIELD_TIP(DestructibleComponent, afterBreak, Int32,
                              "0=keep 1=destroy after N ticks 2=sink then destroy "

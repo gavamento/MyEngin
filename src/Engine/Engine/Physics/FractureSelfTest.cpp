@@ -1447,6 +1447,13 @@ bool RunFractureSelfTest()
             bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 48, 4);
             bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 64, 4);
             bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 64, 4);
+            // Inspector の選べる上限 (72、bench.md の実測) でも経路が壊れていない
+            // ことを固定する。pieceCount=16 での成否そのものは --fracture-bench (Release、
+            // bench.md) が実測・記録済み — Debug で pieceCount=16・res=72 を焼くと単体で
+            // 約 290 秒かかり (計測済み)、--selftest の所要時間を大きく損なうため、ここでは
+            // 既存の 48/64 と同じ軽量パラメータ (pieceCount=4) で経路だけを確かめる
+            bakeOpenMesh("open box", MakeOpenBox(1, 1, 1), 72, 4);
+            bakeOpenMesh("plane quad", MakePlaneQuad(1.0f), 72, 4);
         }
     }
 
@@ -3204,6 +3211,201 @@ bool RunFractureSelfTest()
 
         fracturelib::Install(nullptr);
         convexcol::Install(nullptr);
+    }
+
+    // ---- 20. strength の既定値: 質量1kg・破片16・一辺1mの箱で spec §2 の
+    //      3基準 (3m落下は割れる/1m落下は割れない/床に600 tick置いても割れない) を、
+    //      DestructibleComponent::strength の既定値のまま満たす。根拠は bench.md ----
+    {
+        auto runDrop = [](float dropHeight, int ticks) {
+            FractureBakeInput in;
+            in.sourceMesh = MakeBox(0.5f, 0.5f, 0.5f); // 一辺 1m
+            in.seed = 1;
+            in.pieceCount = 16;
+            FractureBakeResult bake;
+            if (!BakeFracture(in, bake) || !bake.success) {
+                return false;
+            }
+
+            RenderResources resources;
+            ConvexColliderLibrary colliders;
+            colliders.Init(&resources);
+            FractureLibrary lib;
+            lib.Init(&resources, &colliders);
+            fracturelib::Install(&lib);
+            convexcol::Install(&colliders);
+            const FractureAssetHandle* handle = lib.RegisterBaked(
+                "fracture-selftest://strength_default", bake,
+                HashStr("fracture-selftest://strength_default_src"), 1, 16, 0, 32);
+
+            Scene s;
+            World& w = s.GetWorld();
+            // PhysicsEnvironment 無しは substeps=1 固定・スリープ無効のままなので置く
+            // (Components.h の PhysicsEnvironmentComponent 参照。--fracture-demo と同じ構え)
+            s.CreateGameObject("Environment").AddComponent<PhysicsEnvironmentComponent>();
+            GameObject floor = s.CreateGameObject("Floor");
+            floor.SetLocalPosition(0.0f, -0.5f, 0.0f);
+            floor.SetLocalScale(24.0f, 1.0f, 24.0f);
+            auto* floorCol = floor.AddComponent<ColliderComponent>();
+            floorCol->shape = collidershape::kBox;
+            floorCol->halfExtents = { 0.5f, 0.5f, 0.5f };
+
+            GameObject box = s.CreateGameObject("DefaultStrengthBox");
+            box.SetLocalPosition(0.0f, dropHeight + 0.5f, 0.0f); // 底面が床から dropHeight だけ上
+            box.AddComponent<RigidbodyComponent>()->mass = 1.0f;
+            auto* d = box.AddComponent<DestructibleComponent>(); // strength は既定値のまま
+            d->fractureAsset = AssetID{ HashStr("fracture-selftest://strength_default") };
+            if (handle != nullptr) {
+                BuildFracturePieces(w, box.Id(), *handle);
+            }
+            w.ApplyStructuralChanges();
+
+            PhysicsSystem phys;
+            FractureSystem fsys;
+            constexpr float kDt = 1.0f / 60.0f;
+            bool broken = false;
+            for (int t = 0; t < ticks && !broken; ++t) {
+                std::vector<ShapeImpulse> impulses;
+                phys.Update(w, kDt, nullptr, nullptr, &impulses);
+                fsys.Update(w, kDt, impulses);
+                w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
+                const auto* dd = w.GetComponent<DestructibleComponent>(box.Id());
+                broken = dd != nullptr && dd->broken;
+            }
+
+            fracturelib::Install(nullptr);
+            convexcol::Install(nullptr);
+            return broken;
+        };
+
+        check(runDrop(3.0f, 180),
+              "strength default: a 1kg/16-piece/1m box breaks when dropped from 3m");
+        check(!runDrop(1.0f, 150),
+              "strength default: the same box does not break when dropped from 1m");
+        check(!runDrop(0.0f, 600),
+              "strength default: the same box does not break after resting on the floor for 600 ticks");
+    }
+
+    // ---- 21. 分離の一般不変量: 複数の塊が同時に分かれても、全破片の
+    //      ワールド姿勢 (位置・回転) が分離の前後で保たれる (相対 1e-5)。重力・物理は使わず
+    //      FractureSystem だけを回す (ずれれば ReparentKeepWorld/付け替えの計算そのものの
+    //      不具合とわかる) ----
+    {
+        struct PoseSnapshot {
+            float px = 0, py = 0, pz = 0, qx = 0, qy = 0, qz = 0, qw = 1;
+        };
+
+        // root==rootId の FracturePiece を index 順に世界全体から集める (分離後は leader/member
+        // が root の子から外れるため、階層を辿らず ForEachArchetype で拾う)
+        auto collectPieces = [](World& world, EntityID rootId, int32_t count,
+                                std::vector<EntityID>& outByIndex) {
+            outByIndex.assign(static_cast<size_t>(count), kNullEntity);
+            const ComponentTypeId fpReq[] = { FracturePieceComponent::sTypeId };
+            world.ForEachArchetype(fpReq, [&](Archetype& arch) {
+                const int fi = arch.FindTypeIndex(FracturePieceComponent::sTypeId);
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    const auto* fp = static_cast<const FracturePieceComponent*>(arch.GetPtr(fi, row));
+                    if (fp->root == rootId && fp->index >= 0 && fp->index < count) {
+                        outByIndex[static_cast<size_t>(fp->index)] = arch.EntityAt(row);
+                    }
+                }
+            });
+        };
+
+        auto runInvariant = [&](bool kinematicRoot) {
+            constexpr int32_t kCount = 32;
+            const FractureBakeResult rowBake = MakeRowFractureBake(kCount, 0.25f);
+
+            RenderResources resources;
+            ConvexColliderLibrary colliders;
+            colliders.Init(&resources);
+            FractureLibrary lib;
+            lib.Init(&resources, &colliders);
+            fracturelib::Install(&lib);
+            convexcol::Install(&colliders);
+            const std::string key
+                = kinematicRoot ? "fracture-selftest://invariant_wall" : "fracture-selftest://invariant_box";
+            const FractureAssetHandle* handle
+                = lib.RegisterBaked(key.c_str(), rowBake, HashStr(key + "_src"), 0, kCount, 0, 0);
+
+            Scene s;
+            World& w = s.GetWorld();
+            GameObject root = s.CreateGameObject(kinematicRoot ? "InvariantWall" : "InvariantBox");
+            root.SetLocalPosition(2.0f, 3.0f, -1.0f);
+            root.SetLocalRotationEuler(0.0f, 30.0f, 0.0f); // 単位でない姿勢で ReparentKeepWorld を検算
+            root.AddComponent<RigidbodyComponent>();
+            root.AddComponent<DestructibleComponent>();
+            auto* rootRb = root.GetComponent<RigidbodyComponent>();
+            rootRb->mass = static_cast<float>(kCount);
+            rootRb->isKinematic = kinematicRoot;
+            auto* d = root.GetComponent<DestructibleComponent>();
+            d->strength = 100.0f;
+            d->fractureAsset = AssetID{ HashStr(key) };
+            if (handle != nullptr) {
+                BuildFracturePieces(w, root.Id(), *handle);
+            }
+            w.ApplyStructuralChanges();
+
+            FractureSystem fsys;
+            const std::vector<ShapeImpulse> none;
+            bool poseOk = true;
+
+            // 2 回に分けて、それぞれ「その時点で最大の塊」の内側の 1 破片へ十分な損傷を与え、
+            // 両隣の接着を同時に切って 2 断片を同時に分離させる (index 5 → [0..4]+[5]、
+            // 残った [6..31] のうち index 26 → [6..25]+[26]+[27..31] の大小 2 断片)
+            for (const int32_t idx : { 5, 26 }) {
+                std::vector<EntityID> before;
+                collectPieces(w, root.Id(), kCount, before);
+                std::vector<PoseSnapshot> beforePose(static_cast<size_t>(kCount));
+                for (int32_t i = 0; i < kCount; ++i) {
+                    const EntityID e = before[static_cast<size_t>(i)];
+                    if (e.IsNull()) {
+                        poseOk = false;
+                        continue;
+                    }
+                    PoseSnapshot& p = beforePose[static_cast<size_t>(i)];
+                    ComposeEntityWorldPose(w, e, p.px, p.py, p.pz, p.qx, p.qy, p.qz, p.qw);
+                }
+
+                ApplyFractureDamage(w, root.Id(), rowBake.pieces[static_cast<size_t>(idx)].origin, 0.0f,
+                                    200.0f);
+                fsys.Update(w, 1.0f / 60.0f, none);
+                w.ApplyStructuralChanges();
+                fsys.ApplyDeferredLocals(w);
+
+                std::vector<EntityID> after;
+                collectPieces(w, root.Id(), kCount, after);
+                for (int32_t i = 0; i < kCount; ++i) {
+                    const EntityID e = after[static_cast<size_t>(i)];
+                    if (e.IsNull()) {
+                        poseOk = false;
+                        continue;
+                    }
+                    PoseSnapshot cur;
+                    ComposeEntityWorldPose(w, e, cur.px, cur.py, cur.pz, cur.qx, cur.qy, cur.qz, cur.qw);
+                    const PoseSnapshot& b = beforePose[static_cast<size_t>(i)];
+                    poseOk = poseOk && Near(cur.px, b.px, 1e-5, 1e-6) && Near(cur.py, b.py, 1e-5, 1e-6)
+                        && Near(cur.pz, b.pz, 1e-5, 1e-6) && Near(cur.qx, b.qx, 1e-5, 1e-6)
+                        && Near(cur.qy, b.qy, 1e-5, 1e-6) && Near(cur.qz, b.qz, 1e-5, 1e-6)
+                        && Near(cur.qw, b.qw, 1e-5, 1e-6);
+                }
+            }
+
+            const auto* dAfter = w.GetComponent<DestructibleComponent>(root.Id());
+            const bool detachedAsExpected = dAfter != nullptr && dAfter->detachedCount == 4;
+
+            fracturelib::Install(nullptr);
+            convexcol::Install(nullptr);
+            return poseOk && detachedAsExpected;
+        };
+
+        check(runInvariant(false),
+              "separation invariant: a 32-piece dynamic box keeps every piece's world pose across "
+              "multiple simultaneous separations (2 ticks x 2 chunks)");
+        check(runInvariant(true),
+              "separation invariant: a 32-piece kinematic wall keeps every piece's world pose across "
+              "multiple simultaneous separations (2 ticks x 2 chunks)");
     }
 
     if (failCount == 0) {

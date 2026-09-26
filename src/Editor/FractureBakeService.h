@@ -60,6 +60,12 @@ public:
     // ジョブ」と一致するときだけ意味を持つ。一致しない = キュー待ち中とみなし ClosedCheck を返す)
     FractureBakeStage GetStage(uint64_t id) const;
 
+    // 取り消し (M80p)。id が今処理中のジョブなら旗を立てて BakeFracture の段階の合間・
+    // セル切断ループの合間で打ち切らせる (有限時間で Ready になり、result.cancelled==true)。
+    // まだキュー待ちなら、始めてすらいないのでその場でキューから外して None に戻す。
+    // どちらでもなければ何もしない (Baking 中でない id を渡しても安全)
+    void Cancel(uint64_t id);
+
     // Ready な結果を取り出す (呼ぶと内部エントリは消え None に戻る)。Ready でなければ false。
     // boneNamesOut (M80j): スキン破壊のとき bake.pieces と同じ並びの割り当て骨名。非スキンは空
     bool TakeResult(uint64_t id, FractureBakeRequest& requestOut, FractureBakeResult& resultOut,
@@ -107,6 +113,10 @@ private:
     std::atomic<uint64_t> currentJobId_{ 0 };
     std::atomic<bool> hasCurrentJob_{ false };
     std::atomic<int32_t> currentStage_{ 0 };
+
+    // 現在処理中のジョブへの取り消し要求 (M80p)。WorkerLoop が次のジョブを取り出すたびに
+    // false へ戻す (前のジョブの取り消しが次のジョブへ持ち越されないように)
+    std::atomic<bool> cancelRequested_{ false };
 };
 
 } // namespace mye

@@ -16,6 +16,7 @@
 #include "Engine/Engine/Audio/SoundAsset.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/Physics/PhysMatLibrary.h"
+#include "Engine/Renderer/GpuResources.h" // MeshVertex (M80p: スキン破壊のウェイト照会キャッシュ)
 #include "Engine/Renderer/FxStackAsset.h"     // M78c: fxstack アセット編集状態
 #include "Engine/Renderer/ProjectShaderProperties.h"  // M78c r2: スキーマ駆動 Inspector
 
@@ -60,6 +61,10 @@ struct InspectorComponentRow {
 // M40a マルチ選択: 全選択が共通に持つコンポーネントを表示 (値は primary のもの)、
 // 編集/削除/追加/paste/reset は全選択へバッチ適用 (1 Undo エントリ)。ギズモは primary のみ
 class InspectorWindow {
+    // M80p: GetCachedSkinWeights のキャッシュ挙動 (ImGui 非依存) をヘッドレスで
+    // 検算する。ImGui の描画自体は screenshot 検証の範囲 (このファイルではテストしない)
+    friend bool RunFractureEditorSelfTest();
+
 public:
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     // preview はマテリアルのライブプレビュー用 (M53)。AssetBrowser のサムネイルと同一インスタンス
@@ -273,11 +278,29 @@ private:
         int32_t boundaryEdges = 0;
         int32_t nonManifoldEdges = 0;
         int32_t orientationMismatches = 0;
+        bool cancelled = false; // M80p: 「取り消し」ボタンによる打ち切り (失敗理由と区別する)
         std::string failReason;
     };
     std::unordered_map<uint64_t, FractureBakeOutcome> fractureOutcomes_;
     // OnImGui が毎フレーム書き、DrawDestructibleNotes が読むだけ (M80j sub-10 round 2)
     bool inPlayMode_ = false;
+
+    // M80p: DrawDestructibleNotes がスキンの生成ボタンの可否判定に使う
+    // .mmdl クックキャッシュの読み込み結果をメッシュ (srcPath+meshKey) ごとにキャッシュする。
+    // 読み込み・検証・デシリアライズは重く、選択中は毎フレーム呼ばれていた。
+    // ReloadHub::ReloadCount() が変わったら (資産のホットリロード) 無効化する
+    struct FractureSkinWeightCache {
+        std::wstring srcPath;
+        std::string meshKey;
+        uint64_t reloadCountAtCache = 0;
+        bool found = false;
+        std::vector<MeshVertex> vertices;
+    };
+    std::unordered_map<uint64_t, FractureSkinWeightCache> fractureSkinWeightCache_;
+    // キャッシュ越しに TryLoadCookedMeshVertices を呼ぶ。fid はキャッシュのキー (Destructible
+    // を持つエンティティの fileId、fractureBakeService_ と同じ規約)
+    bool GetCachedSkinWeights(EngineContext& ctx, uint64_t fid, const std::wstring& srcPath,
+                             const std::string& meshKey, std::vector<MeshVertex>& outVertices);
 };
 
 } // namespace mye

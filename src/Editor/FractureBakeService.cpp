@@ -56,6 +56,24 @@ FractureBakeStage FractureBakeService::GetStage(uint64_t id) const
     return FractureBakeStage::ClosedCheck; // キュー待ち中の既定表示
 }
 
+void FractureBakeService::Cancel(uint64_t id)
+{
+    if (hasCurrentJob_.load(std::memory_order_relaxed)
+        && currentJobId_.load(std::memory_order_relaxed) == id) {
+        cancelRequested_.store(true, std::memory_order_relaxed);
+        return;
+    }
+    // まだ始まっていない (キュー待ち) なら、その場で取り除いて None に戻す
+    std::lock_guard<std::mutex> lk(mutex_);
+    for (auto it = jobQueue_.begin(); it != jobQueue_.end(); ++it) {
+        if (it->id == id) {
+            jobQueue_.erase(it);
+            entries_.erase(id); // Request/TakeResult と同じくメインスレッド専用の表なので直接触れる
+            break;
+        }
+    }
+}
+
 bool FractureBakeService::TakeResult(uint64_t id, FractureBakeRequest& requestOut,
                                      FractureBakeResult& resultOut,
                                      std::vector<std::string>& boneNamesOut)
@@ -97,6 +115,8 @@ void FractureBakeService::WorkerLoop()
         currentJobId_.store(job.id, std::memory_order_relaxed);
         currentStage_.store(static_cast<int32_t>(FractureBakeStage::ClosedCheck),
                             std::memory_order_relaxed);
+        // 前のジョブの取り消しが新しいジョブへ持ち越されないように、ここで必ず戻す
+        cancelRequested_.store(false, std::memory_order_relaxed);
         hasCurrentJob_.store(true, std::memory_order_relaxed);
 
         FractureBakeInput in;
@@ -107,6 +127,7 @@ void FractureBakeService::WorkerLoop()
         in.voxelResolution = job.request.voxelResolution;
         in.progress = &FractureBakeService::OnBakeProgress;
         in.progressUserData = this;
+        in.cancelFlag = &cancelRequested_;
 
         JobResult r;
         r.id = job.id;
@@ -148,14 +169,19 @@ void FractureBakeService::Pump()
 void FractureBakeService::Shutdown()
 {
     if (workerStarted_) {
+        // 実行中のジョブを打ち切る (M80p)。待つのは今処理中のセル切断 1 回ぶんまでで、
+        // キュー待ちの残りは焼かずに捨てる (エディタの終了で新しい焼きを始めない)
+        cancelRequested_.store(true, std::memory_order_relaxed);
         {
             std::lock_guard<std::mutex> lk(mutex_);
             workerStop_ = true;
+            jobQueue_.clear();
         }
         cv_.notify_all();
         if (worker_.joinable()) {
             worker_.join();
         }
+        cancelRequested_.store(false, std::memory_order_relaxed);
         workerStarted_ = false;
         workerStop_ = false;
     }

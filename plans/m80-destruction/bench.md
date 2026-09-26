@@ -157,7 +157,52 @@ STL イテレータチェック込みのため、既存の `FractureSelfTest.cpp
 計測ツールの選び方 (Editor.exe) が原因で、破片が壊れる前から描かれていたわけではない**
 (むしろ逆で、Editor.exe 経路では一度も壊れていなかった)。
 
-## 8. 検証コマンド
+## 9. strength の既定値 (sub-18、review-1 #5)
+
+`RunFractureStrengthCalibration()` (`FractureBenchmark.cpp`、`--fracture-bench` の一部) が、質量
+1kg・破片16・一辺1mの箱で spec §2 の3基準それぞれの境界を対数二分探索で求める (PhysicsEnvironment
+を置いた状態、詳細はコード comment 参照)。実測 (Release):
+
+| 基準 | 境界 |
+|---|---|
+| (a) 3m 落下で割れる | S ≤ 91.7N |
+| (b) 床に 600 tick 置いても割れない | S ≥ 1.8N |
+| (c) 1m 落下では割れない | S ≥ 53.5N |
+
+3 基準を同時に満たす範囲は `[53.5, 91.7]`。対数中央値 **70N** を既定値にした
+(`DestructibleComponent::strength`)。旧既定 5000N は普通の衝突では割れないほど過大だった
+(review-1 #5)。デモ・ベンチ・テストで下げていた 100〜200N の値は、新既定 70N で足りるものは
+戻した (`--fracture-demo` の箱・壁・スキン腕、`--fracture-bench` は引き続き 200N のまま —
+物理精度ではなく性能計測が目的で、既定値へ揃える必要が薄いため)。
+
+## 10. voxelResolution の Inspector 上限 (sub-18、review-1 #6)
+
+開いた箱・16破片 (`--fracture-bench` の一部) で解像度を伸ばすと、72 までは成功し 80 以上は
+失敗する:
+
+| 解像度 | 結果 | 焼き時間 (Release) |
+|---|---|---|
+| 64 | 成功 | 17.7s |
+| 72 | 成功 | 22.2s |
+| 80 | 失敗 | 26.2s |
+| 96 | 失敗 | 36.5s |
+| 128 | 失敗 | 67.6s |
+
+失敗はすべて同じ経路: `FractureBake.cpp` の `ProcessAdjacentPair` が呼ぶ `CutMeshByPlane`
+(セルの二等分面でボクセル化済みメッシュ全体を 1 回切る、sub-01 の単一平面カット) が
+`positive側の蓋: 外側面と閉じ合わない` で失敗する (`FractureMesh.cpp` の `VerifyCapOrientation`
+または `GeometricCapClosureValid`)。高解像度になるほど、この 1 回切りに渡される三角形数が
+非常に多くなり (数千〜数万)、境界ループが長く複雑になる。ratio (欠けの大きさ) は解像度に対して
+単調ではない (80: 0.0306、96: 0.0041、128: 0.0269) — 特定の頂点配置が閉じ判定の許容誤差
+(`FractureMesh.cpp` の固定・相対 ε) の境界に近いかどうかに左右される離散的な失敗と見られる。
+根本原因 (多頂点の境界ループに対する `VerifyCapOrientation`/`CapLoops` の頑健性) の追究・修正は
+本サブの範囲を超える (単一平面カットの改修は既存の閉じ判定・体積・接着面積の契約に触れ、
+決定性の再検証が要る大きめの変更になる)。Inspector の選べる範囲を実測で成功する最大の
+**72** に下げた (`Components.cpp` の `voxelResolution` フィールド)。内部のハードクランプ
+(`FractureVoxel.h` の [16,256]) は変えていない — スクリプト等で 72 を超える値を明示的に
+設定すること自体は妨げない。
+
+## 11. 検証コマンド
 
 ```
 bin\x64\Release\Editor.exe --fracture-bench

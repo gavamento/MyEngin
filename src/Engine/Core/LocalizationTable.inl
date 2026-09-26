@@ -1599,6 +1599,7 @@ MYE_STR(ScmConf_Unmerged,      "could not be merged", "マージできません�
 // ---- M80i: 破壊物 (Destructible) の Inspector ----
 MYE_STR(Insp_FractureGenerate,  "Generate Pieces",  "破片を生成")
 MYE_STR(Insp_FractureBaking,    "Baking: %s",        "焼いています: %s")
+MYE_STR(Insp_FractureCancel,    "Cancel",            "取り消し")
 MYE_STR(Insp_FractureStageClosedCheck, "checking closed",   "閉じ判定")
 MYE_STR(Insp_FractureStageVoxelize,    "voxelizing",         "ボクセル化")
 MYE_STR(Insp_FractureStageSplit,       "splitting",          "分割")
@@ -1607,6 +1608,7 @@ MYE_STR(Insp_FractureStateNone,  "Not generated",    "未生成")
 MYE_STR(Insp_FractureStateReady, "Generated: %d piece(s), %d neighbor(s) dropped, %d merged",
                                  "生成済み: 破片 %d 個、隣接の切り捨て %d、統合 %d")
 MYE_STR(Insp_FractureStateFailed, "Bake failed: %s", "焼きに失敗: %s")
+MYE_STR(Insp_FractureCancelled,   "Bake cancelled",  "焼きを取り消しました")
 MYE_STR(Insp_FractureOpenMeshReason,
         "Not a closed mesh: %d boundary edge(s) / %d non-manifold edge(s) / %d orientation mismatch(es)",
         "閉じていません: 境界辺 %d 本 / 非多様体辺 %d 本 / 向き不一致 %d 本")

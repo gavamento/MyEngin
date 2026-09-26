@@ -22,11 +22,14 @@
 #include "Editor/FractureBakeService.h"
 #include "Editor/Selection.h"
 #include "Editor/Undo/UndoStack.h"
+#include "Editor/Windows/InspectorWindow.h" // M80p: GetCachedSkinWeights (friend) の検算
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Hash.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
+#include "Engine/Engine/Asset/CookedCache.h" // M80p: 検算用にキャッシュ済み .mmdl を直接操作する
 #include "Engine/Engine/Asset/FractureAsset.h"
+#include "Engine/Engine/Asset/ModelCook.h" // M80p: ModelCook::SaveToCache で実アセット無しに .mmdl を作る
 #include "Engine/Engine/AssetDatabase.h"
 #include "Engine/Engine/EngineLoop.h"
 #include "Engine/Engine/FractureBuilder.h"
@@ -283,6 +286,125 @@ bool RunFractureEditorSelfTest()
               "async: the worker's output digest matches a synchronous BakeFracture with the same "
               "input (the thread boundary changes nothing about the bake itself)");
         svc.Shutdown();
+    }
+
+    // ---- (4b) 取り消し (M80p): 焼き始めた後の取り消しが有限時間で
+    //      Ready(cancelled=true) になる。まだキュー待ちの取り消しは即座に None へ戻る ----
+    {
+        FractureBakeService svc;
+
+        // 焼き始めた後の取り消し: 256 破片 (数百 ms 以上かかる、bench.md 参照) を投げ、
+        // 実際に Split 段階へ入ったのを確認してから Cancel する (セル切断ループの途中を
+        // 確実に捉える。固定時間の sleep だけに頼らない)
+        FractureBakeRequest req;
+        req.sourceMesh = MakeBox(1, 1, 1);
+        req.seed = 5;
+        req.pieceCount = 256;
+        svc.Request(1, req);
+        const auto splitDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (svc.GetStage(1) != FractureBakeStage::Split
+               && std::chrono::steady_clock::now() < splitDeadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        svc.Cancel(1);
+
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (svc.GetState(1) != FractureBakeJobState::Ready
+               && std::chrono::steady_clock::now() < deadline) {
+            svc.Pump();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        FractureBakeRequest reqOut;
+        FractureBakeResult resultOut;
+        std::vector<std::string> boneNamesOut;
+        const bool took = svc.TakeResult(1, reqOut, resultOut, boneNamesOut);
+        check(took, "cancel: a bake that was cancelled mid-flight still reaches Ready in finite time");
+        check(took && !resultOut.success && resultOut.cancelled,
+              "cancel: the result reports cancelled (not just a generic failure)");
+        svc.Shutdown();
+    }
+
+    // ---- (4b2) Shutdown が焼きの途中でも速やかに戻る (M80p)。Cancel を挟まず
+    //      Shutdown だけを呼び、同じ入力の同期焼き (フルの所要時間) と比べて有意に短いことを
+    //      見る (絶対時間ではなく相対比較にして、Debug/Release の速度差に依存しない検算にする) ----
+    {
+        FractureBakeInput fullIn;
+        fullIn.sourceMesh = MakeBox(1, 1, 1);
+        fullIn.seed = 5;
+        fullIn.pieceCount = 256;
+        FractureBakeResult fullResult;
+        const auto fullStart = std::chrono::steady_clock::now();
+        BakeFracture(fullIn, fullResult);
+        const double fullBakeMs
+            = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - fullStart).count();
+
+        FractureBakeService svc;
+        FractureBakeRequest req;
+        req.sourceMesh = fullIn.sourceMesh;
+        req.seed = fullIn.seed;
+        req.pieceCount = fullIn.pieceCount;
+        svc.Request(1, req);
+        const auto splitDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (svc.GetStage(1) != FractureBakeStage::Split
+               && std::chrono::steady_clock::now() < splitDeadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        const auto shutdownStart = std::chrono::steady_clock::now();
+        svc.Shutdown();
+        const double shutdownMs
+            = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - shutdownStart)
+                  .count();
+        char buf[224];
+        std::snprintf(buf, sizeof(buf),
+                      "shutdown: Shutdown() mid-bake returns in %.1f ms, well under a full synchronous "
+                      "bake of the same input (%.1f ms) — it did not wait for the bake to finish",
+                      shutdownMs, fullBakeMs);
+        check(shutdownMs < fullBakeMs * 0.5, buf);
+    }
+
+    // ---- (4c) スキンウェイト照会のキャッシュ (M80p): Inspector 側は同じ
+    //      (fid, srcPath, meshKey) の 2 回目以降で .mmdl を読み直さない。呼び出し回数を
+    //      数える代わりに、キャッシュ後に .mmdl を消しても同じ結果を返すことで検算する
+    //      (観測可能な挙動そのものを見る) ----
+    {
+        CookedCache::Configure((root / L"weight_cache_cooked").wstring(), true);
+        const std::wstring srcPath = (root / L"weight_cache_src.glb").wstring();
+        { std::ofstream(srcPath, std::ios::binary) << "x"; } // ReadValidated が mtime を見るので実在させる
+        ModelCook::ModelCookData data;
+        const std::vector<MeshVertex> verts(3); // 中身は問わない (件数だけ見る)
+        data.AddMesh("meshA", verts, { 0, 1, 2 });
+        ModelCook::SaveToCache(srcPath, data);
+
+        InspectorWindow win;
+        EngineContext cacheCtx;
+        std::vector<MeshVertex> out1;
+        const bool got1 = win.GetCachedSkinWeights(cacheCtx, 1, srcPath, "meshA", out1);
+        check(got1 && out1.size() == verts.size(),
+              "weight cache: the first call reads the freshly written .mmdl");
+
+        // .mmdl を退避する (キャッシュが効いていなければ次の呼び出しは失敗するはず)
+        const std::wstring mmdlPath = CookedCache::PathFor(srcPath, ModelCook::kModelExt);
+        const std::wstring movedPath = mmdlPath + L".movedaway";
+        std::error_code moveEc;
+        fs::rename(mmdlPath, movedPath, moveEc);
+        check(!moveEc, "weight cache: setup can move the .mmdl aside to prove caching");
+
+        std::vector<MeshVertex> out2;
+        const bool got2 = win.GetCachedSkinWeights(cacheCtx, 1, srcPath, "meshA", out2);
+        check(got2 && out2.size() == verts.size(),
+              "weight cache: the same (fid, srcPath, meshKey) reuses the cached result after the "
+              ".mmdl is gone (no re-read)");
+
+        // 別の fid (別エンティティ扱い) はキャッシュを共有しない。.mmdl は既に無いので、
+        // 素直に読みに行けば失敗するはず (キャッシュが fid をまたいで誤爆していないことも確認)
+        std::vector<MeshVertex> out3;
+        const bool got3 = win.GetCachedSkinWeights(cacheCtx, 2, srcPath, "meshA", out3);
+        check(!got3,
+              "weight cache: a different fid is unaffected by another entity's cache (a fresh "
+              "lookup correctly fails once the .mmdl is gone)");
+
+        fs::rename(movedPath, mmdlPath, moveEc);
+        CookedCache::Configure(L"", false); // 他スイートへ漏らさない
     }
 
     // ---- (5) CommitFractureBake: .mfrac 保存・登録・BuildFracturePieces・Undo/Redo ----

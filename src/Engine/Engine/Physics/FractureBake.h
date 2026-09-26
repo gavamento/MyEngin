@@ -4,6 +4,7 @@
 //                                          破壊分割コア: Voronoi分割・凸包・接着グラフ
 //====================================================================================
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -80,6 +81,10 @@ struct FractureBakeInput {
     int32_t voxelResolution = 32;
     FractureBakeProgressFn progress = nullptr; // 任意 (Editor の非同期焼き用、M80i)
     void* progressUserData = nullptr;
+    // 取り消しの旗 (任意、M80p)。非 null かつ true なら、段階の合間 (ClosedCheck/Voxelize/Split
+    // の境界) とセル切断ループの合間で焼きを打ち切り、failReason="取り消し" で false を返す。
+    // 既定 nullptr は既存呼び出しと同じ挙動 (見ない)
+    const std::atomic<bool>* cancelFlag = nullptr;
 };
 
 struct FractureBakeResult {
@@ -92,6 +97,7 @@ struct FractureBakeResult {
     int32_t boundaryEdges = 0;
     int32_t nonManifoldEdges = 0;
     int32_t orientationMismatches = 0;
+    bool cancelled = false; // cancelFlag による打ち切り (M80p)。failReason の文字列判定はしない
     std::vector<FracturePieceBake> pieces;
     int32_t seedsRequested = 0;
     int32_t seedsPlaced = 0;   // 内部シードとして実際に置けた数 (試行上限で届かないことがある)

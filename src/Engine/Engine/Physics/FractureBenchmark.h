@@ -11,6 +11,7 @@ namespace mye {
 // 構築し、焼き時間と tick ごとの物理 / FractureSystem の内部スコープ (Profiler.h の
 // phys.* / fracture.*) を「壊れる前 / 割れた瞬間 / 割れた後」の 3 区間で集計して
 // MYE_LOG_INFO へ出す。ウィンドウ・D3D デバイスは作らない (World を直接操作する)。
+// DestructibleComponent.strength の既定値の実測 (RunFractureStrengthCalibration) も含む。
 // 戻り値は常に 0 (合否判定はしない計測専用コマンド)
 int RunFractureBenchmark();
 
