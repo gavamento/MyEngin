@@ -2,7 +2,7 @@
 
 - 依頼原文: m80-destruction: UE の Chaos Destruction 相当の破壊物理を実装する。要件と事前調査は plans/m80-destruction/design-draft.md (要件節はユーザー確定済み)。運用: 質問は AskUserQuestion を使わず推奨で裁定し、Notion (https://app.notion.com/p/3e502024a4d481df8d01cbe69c013018) の表へ記録して先へ進む。作業ツリーの既存 WIP には触らない。
 - 開始: 2026-09-25 / 基点コミット: 73c8d76277fae380161f706b6015747f1ef68166
-- フェーズ: レビュー (round 2)
+- フェーズ: 完了
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
@@ -23,12 +23,13 @@
 | sub-15 | OK | 1 | d973c32 | 拡張点の確認と整理 + 位相的な閉じの再調査 (Notion 回答の反映、依存 sub-12) |
 | sub-16 | OK | 1 | 7d3cec3 | review-1: 資産の経路 (#1 #2 #8 #9 #12) |
 | sub-17 | OK | 2 | 16ab02a | review-1: 実行時の正しさ (#3 #4 #11 #13) |
-| sub-18 | OK | 1 | (本コミット) | review-1: 調整と操作性 (#5 #6 #7 #10) |
+| sub-18 | OK | 1 | d5c1dbf | review-1: 調整と操作性 (#5 #6 #7 #10) |
 | sub-13 | OK | 1 | d873eac | 凸包生成の無限ループ修正 + トーラス焼き (依存 sub-02、sub-06 が依存) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
+| 2 | PASS | 4/5/4/4 | minor 3 (下記の申し送り)。全文 review-2.md |
 | 1 | FAIL | 2/2/3/3 | blocker 2 (セッションをまたぐと割れない / .mfrac 名の衝突と再登録) + major 5 + minor 6。全文 review-1.md |
 
 ## ユーザー判断
@@ -64,3 +65,7 @@
 - **M80 外の既存問題 (ユーザーへ報告する)**: src/Engine/Engine/Asset/CookedCacheSelfTest.cpp:144-147 が固定名の一時ディレクトリ (mye_cook_selftest) を開始時に remove_all しており、Debug と Release の --selftest を同時に走らせると互いに消し合って不安定になり得る (sub-10 round 2 で同型の不安定を発見)。
 - **ユーザーへ報告する**: ABI v22 に上がったので、外部プロジェクト (三校 / HAL Collector) の GameLogic.dll はエンジン更新後に再ビルドが必要 (v21 の DLL は版検証でロード拒否)。
 - reviewer round 1 の worktree `C:\HAL\mye_rv80_r1_1454` が残っている (ソースは HEAD と同じ、Release の Editor.exe はプローブ入り)。削除はユーザー確認後。
+- **review-2 の minor (未対応、M80 の後で扱う)**:
+  1. strength は質量に依らない絶対値なので、既定 70 N では 40 kg 以上の Destructible が置いただけで tick 0 に崩れる (1 kg の物に 5 kg を載せても崩れる)。較正は 1 kg だけ。(a) 質量あたりの強度にする / (b) Inspector で自壊を警告 / (c) 文書化、のどれか。Notion Q-16 でユーザーに確認。
+  2. --fracture-demo の箱 (8 kg、4 m から落下) は既定の strength では着地で割れる。engine_spec §10.8 とデモのコメント (「砲弾が転がる箱から塊を外す」) と実際が合わない。
+  3. 保存名のハッシュ (FractureBakeCommit.cpp の ComputeFractureBakeInputHash) にスキンのウェイトと骨 (inverseBind) が入っていない。形が同じでスケルトンが違う物を同じエンティティ名で焼くと同じファイルに上書きされる (コード上の事実、未再現)。
