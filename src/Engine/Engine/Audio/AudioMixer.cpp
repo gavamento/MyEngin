@@ -137,7 +137,11 @@ uint64_t MixerLibrary::LoadFromFile(const std::wstring& path)
         return 0;
     }
     MixerAsset m;
-    if (!FromJson(j, m)) {
+    try {
+        if (!FromJson(j, m)) {
+            return 0;
+        }
+    } catch (const json::exception&) {
         return 0;
     }
     m.name = NameFromPath(path);
@@ -157,12 +161,7 @@ bool MixerLibrary::SaveToFile(uint64_t hash) const
     if (m == nullptr) {
         return false;
     }
-    std::ofstream f(fs::path(m->path), std::ios::binary);
-    if (!f) {
-        return false;
-    }
-    f << ToJson(*m).dump(2);
-    return true;
+    return WriteFileReplacing(m->path, ToJson(*m).dump(2));
 }
 
 const MixerAsset* MixerLibrary::Get(uint64_t hash) const

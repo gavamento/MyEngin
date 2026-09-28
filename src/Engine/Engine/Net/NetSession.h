@@ -24,8 +24,8 @@ namespace mye {
 //   即 desync する。SubmitLocalInput は tick ごとに 1 回だけ呼ぶこと (EngineLoop は
 //   「tick t を回す直前に t + inputDelay を確定させる」形で 1 回を保証している)。
 //
-// 再送機構は持たない。**直近 kNetRedundancy tick 分を毎回まるごと送り直す**ことで
-// ロスを吸収する (ロスに強く、順序も重複も気にしなくてよい)。
+// 相手の lastAckTick から未確認入力を再送し、予測材料として直近入力も送る。
+// どちらも同じ確定値の冗長送信なので、順序と重複でシミュレーション結果は変わらない。
 
 // プロトコル版。パケットのレイアウト (ヘッダ / InputSnapshot) かハンドシェイクの項目 (NetIdentity) が
 // 変わったら上げる — 意味論が同じでも**旧版と繋ぐと入力が丸ごとずれる**
@@ -36,7 +36,7 @@ namespace mye {
 // v5 (M75b): InputSnapshot 88 -> 112 バイト + NetIdentity 48 -> 64 バイト (referenceW/H、fontMetricsHash)
 inline constexpr uint32_t kNetProtoVersion = 5;
 inline constexpr uint32_t kNetMagic = 0x4E45594Du; // 'MYEN'
-inline constexpr uint32_t kNetRedundancy = 8;  // 1 パケットに載せる直近 tick 数
+inline constexpr uint32_t kNetRedundancy = 8;  // 1 パケットの入力 tick 数
 inline constexpr uint32_t kNetRingTicks = 512; // 入力リングの深さ (tick)
 inline constexpr uint32_t kNetKeepAliveMs = 50;
 // desync 照合の刻み (M52i)。**この tick 番号のときだけ**確定ハッシュを主張する。
@@ -147,7 +147,7 @@ struct NetPacketHeader {
     uint32_t playerIndex = 0;     // 送信者のレーン
     uint32_t count = 0;           // 後続 InputSnapshot の本数 (制御メッセージは 0)
     uint64_t baseTick = 0;        // 後続 InputSnapshot[0] の tick
-    uint64_t lastAckTick = 0;     // 送信者が次に消費する tick (診断用: どこで詰まっているか)
+    uint64_t lastAckTick = 0;     // 送信者が次に消費する tick (相手の再送起点)
     uint32_t sendTimeMs = 0;      // 送信者のセッション内経過 ms
     uint32_t echoTimeMs = 0;      // 直前に受け取った相手の sendTimeMs (RTT 計測)
     // ---- v2 (M52i): desync 検出のピギーバック ----
@@ -261,6 +261,7 @@ private:
     uint32_t localIndex_ = 0;
     uint64_t startTick_ = 0;
     uint64_t nextNeededTick_ = 0; // これ未満の tick は受け取っても捨てる (リング保護)
+    uint64_t peerNextNeededTick_ = 0; // 相手が未確認の最古 tick。再送の起点
     uint64_t lastSubmitted_ = 0;
     bool hasSubmitted_ = false;
     bool peerSaidBye_ = false;

@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 #include <DirectXMath.h>
 
@@ -815,6 +816,17 @@ void TestTaaResolve()
     //    ★shot_verify は --frames 6 --shot-frame 3 = 撮影時点で履歴 3 枚しかない。
     //    「収束後の絵」前提の実装だとここが崩れる
     TEST_CHECK(same(taa::Resolve(cur, hist, wideMin, wideMax, 0.5f, 0.5f, false, 0.9f), cur));
+    {
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const XMFLOAT3 invalid{ nan, 0.5f, 0.6f };
+        const XMFLOAT3 clean = taa::Resolve(invalid, hist, wideMin, wideMax,
+                                             0.5f, 0.5f, false, 0.9f);
+        TEST_CHECK(clean.x == 0.0f && clean.y == 0.5f && clean.z == 0.6f);
+        const XMFLOAT3 history{ nan, 0.1f, 0.6f };
+        const XMFLOAT3 blended = taa::Resolve(cur, history, wideMin, wideMax,
+                                               0.5f, 0.5f, true, 0.9f);
+        TEST_CHECK(std::isfinite(blended.x) && std::isfinite(blended.y) && std::isfinite(blended.z));
+    }
 
     // ② 履歴 UV が画面外 → 前フレームにその画素は無いので cur。境界は [0,1) の半開区間
     TEST_CHECK(same(taa::Resolve(cur, hist, wideMin, wideMax, -0.001f, 0.5f, true, 0.9f), cur));

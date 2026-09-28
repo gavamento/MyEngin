@@ -769,7 +769,9 @@ void RunOneTick(TickServices& ts)
         if (full.find(L':') == std::wstring::npos) {
             full = assetsRoot + L"\\" + full; // assets ルート相対を絶対化
         }
-        if (SceneSerializer::LoadFromFile(scene, full)) {
+        if (SceneSerializer::LoadFromFile(scene, full, [&managedHost]() {
+                managedHost.OnSceneReloaded();
+            })) {
             scene.GetWorld().Rng().Seed(0x4D794531ull); // 決定論的再シード (World 既定値)
             collisionSystem.Reset();
             particleSystem.ResetParticles();
@@ -792,7 +794,6 @@ void RunOneTick(TickServices& ts)
             // 起動ロードと同じ扱い)
             PreloadFractureAssets(scene.GetWorld());
             scriptHost.ClearStarted();
-            managedHost.OnSceneReloaded();
             if (ts.computeAbi) {
                 ts.computeAbi->Shutdown(); // 旧シーンのスクリプトが握った GPU バッファを回収
             }

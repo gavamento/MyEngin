@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <functional>
 #include <unordered_map>
 #include <vector>
 
@@ -30,7 +31,8 @@ nlohmann::json SaveToJson(Scene& scene);
 bool LoadFromJson(Scene& scene, const nlohmann::json& root); // 既存内容は破棄される
 
 bool SaveToFile(Scene& scene, const std::wstring& path);
-bool LoadFromFile(Scene& scene, const std::wstring& path);
+bool LoadFromFile(Scene& scene, const std::wstring& path,
+                  const std::function<void()>& beforeApply = {});
 
 // 実行中シーンへの差分適用 (engine_spec.md 8.3 — 外部エディタでの編集を反映)。
 // fileId で照合し、既存エンティティは更新 / 新規は生成 / 消えたものは破棄する。

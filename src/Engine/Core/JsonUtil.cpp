@@ -1,6 +1,8 @@
 #include "Engine/Core/JsonUtil.h"
 
+#include <algorithm>
 #include <cstring>
+#include <vector>
 
 #include "Engine/Core/EntityID.h"
 
@@ -27,11 +29,25 @@ bool ReadArray(void* p, size_t count, const json& value)
     if (!value.is_array() || value.size() != count) {
         return false;
     }
-    T* v = static_cast<T*>(p);
+    std::vector<T> converted;
+    converted.reserve(count);
     for (size_t i = 0; i < count; ++i) {
-        v[i] = value[i].get<T>();
+        converted.push_back(value[i].get<T>());
     }
+    std::memcpy(p, converted.data(), count * sizeof(T));
     return true;
+}
+
+size_t Utf8PrefixLength(const std::string& value, size_t capacity)
+{
+    size_t length = (std::min)(value.size(), capacity);
+    if (length == value.size()) {
+        return length;
+    }
+    while (length > 0 && (static_cast<unsigned char>(value[length]) & 0xc0u) == 0x80u) {
+        --length;
+    }
+    return length;
 }
 
 } // namespace
@@ -95,17 +111,17 @@ bool FieldFromJson(void* comp, const FieldDesc& field, const json& value)
         case FieldType::String64: {
             const std::string s = value.get<std::string>();
             char* dst = static_cast<char*>(p);
-            const size_t n = (s.size() < 63) ? s.size() : 63;
+            const size_t n = Utf8PrefixLength(s, 63);
+            std::memset(dst, 0, 64);
             memcpy(dst, s.data(), n);
-            dst[n] = '\0';
             return true;
         }
         case FieldType::String256: {
             const std::string s = value.get<std::string>();
             char* dst = static_cast<char*>(p);
-            const size_t n = (s.size() < 255) ? s.size() : 255;
+            const size_t n = Utf8PrefixLength(s, 255);
+            std::memset(dst, 0, 256);
             memcpy(dst, s.data(), n);
-            dst[n] = '\0';
             return true;
         }
         case FieldType::EntityRef:

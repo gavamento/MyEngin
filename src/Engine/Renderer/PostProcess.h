@@ -95,7 +95,7 @@ public:
         // AfterTonemap 用 LDR 中間バッファ (最終 dst への出力前に使う)
         RenderTexture userPostLdr; // R8G8B8A8_UNORM (フル解像度)
         // ---- M44b: 自動露出 (ヒストグラム 256 bin + 露出倍率 1 要素、GPU 常駐) ----
-        // exposureBuf[0] はフレームを跨いで持ち越す適応状態 (初期値 1.0、リサイズで再生成 = リセット)
+        // Resolve 時に viewKey に対応する履歴を参照する。解像度キャッシュには所有させない。
         Microsoft::WRL::ComPtr<ID3D11Buffer> histBuf;
         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> histUAV;
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> histSRV;
@@ -188,6 +188,14 @@ private:
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer_;
 
     std::vector<Target> cache_; // サイズ別 (LRU、上限あり)
+    struct ExposureHistory {
+        Microsoft::WRL::ComPtr<ID3D11Buffer> buffer;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> uav;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+        uint32_t lastSerial = 0;
+        bool hasLast = false;
+    };
+    ExposureHistory exposure_[4]; // viewKey 0 は持続しないプレビュー、1..3 はビュー別
 };
 
 struct CameraPostFxComponent;

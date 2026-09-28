@@ -1,5 +1,6 @@
 #include "Engine/Platform/PathUtil.h"
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 
@@ -116,7 +117,10 @@ std::wstring Utf8ToWide(std::string_view s)
 //   rename はアトミックなので、読み手には「前の完全な内容」か「新しい完全な内容」しか見えない
 bool WriteFileReplacing(const std::wstring& path, std::string_view bytes)
 {
-    const std::wstring tmpPath = path + L"." + std::to_wstring(GetCurrentProcessId()) + L".tmp";
+    static std::atomic<uint64_t> nextTempId{ 0 };
+    const std::wstring tmpPath = path + L"." + std::to_wstring(GetCurrentProcessId()) + L"."
+        + std::to_wstring(GetCurrentThreadId()) + L"."
+        + std::to_wstring(nextTempId.fetch_add(1, std::memory_order_relaxed)) + L".tmp";
     std::error_code ec;
     {
         std::ofstream f(std::filesystem::path(tmpPath), std::ios::binary | std::ios::trunc);

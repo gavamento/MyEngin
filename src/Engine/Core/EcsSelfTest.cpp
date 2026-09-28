@@ -6,6 +6,8 @@
 #include <vector>
 
 #include "Engine/Core/Components.h"
+#include "Engine/Core/ByteIo.h"
+#include "Engine/Core/ComponentRegistry.h"
 #include "Engine/Core/HierarchyWalk.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/World.h"
@@ -52,6 +54,28 @@ void TestLifetimeAndGenerations()
     TEST_CHECK(!w.IsAlive(e));
     TEST_CHECK(w.IsAlive(e2));
     TEST_CHECK(w.EntityFromIndex(e2.index) == e2);
+}
+
+void TestInvalidSnapshotDoesNotMutate()
+{
+    World world;
+    const EntityID entity = world.CreateEntity("snapshot survivor");
+    std::vector<std::byte> bytes;
+    ByteWriter writer(bytes);
+    world.SnapshotWrite(writer);
+
+    // magic(4), archetype count(8), first type count(8), then first TypeId.
+    constexpr size_t kFirstTypeOffset = 20;
+    TEST_CHECK(bytes.size() > kFirstTypeOffset + sizeof(uint32_t));
+    if (bytes.size() <= kFirstTypeOffset + sizeof(uint32_t)) {
+        return;
+    }
+    const uint32_t unknownType = ComponentRegistry::Get().Count();
+    std::memcpy(bytes.data() + kFirstTypeOffset, &unknownType, sizeof(unknownType));
+    ByteReader reader(bytes.data(), bytes.size());
+    TEST_CHECK(!world.SnapshotRead(reader));
+    TEST_CHECK(world.IsAlive(entity));
+    TEST_CHECK(std::strcmp(world.GetName(entity), "snapshot survivor") == 0);
 }
 
 void TestArchetypeMovePreservesData()
@@ -406,6 +430,7 @@ bool RunEcsSelfTest()
     g_failCount = 0;
     MYE_LOG_INFO("==== ECS self test ====");
     TestLifetimeAndGenerations();
+    TestInvalidSnapshotDoesNotMutate();
     TestArchetypeMovePreservesData();
     TestDeferredCommandsDuringIteration();
     TestHierarchyAndSubtreeDestroy();

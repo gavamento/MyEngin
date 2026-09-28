@@ -60,18 +60,15 @@ bool ModalSoundLibrary::LoadModel(const std::wstring& path)
     if (!LoadDmNet(path, *net, &err)) {
         MYE_LOG_WARN("[modal] failed to load .dmnet: %s (%s)", WideToUtf8(path).c_str(),
                      err.c_str());
-        net_.reset();
         return false;
     }
     if (!backend_) {
         MYE_LOG_WARN("[modal] no inference backend installed, cannot load .dmnet");
-        net_.reset();
         return false;
     }
     if (!backend_->Prepare(*net, &err)) {
         MYE_LOG_WARN("[modal] backend Prepare() failed: %s (%s)", err.c_str(),
                      WideToUtf8(path).c_str());
-        net_.reset();
         return false;
     }
     net_ = std::move(net);
@@ -303,6 +300,9 @@ void ModalSoundLibrary::Pump()
     }
     bool inferredOne = false;
     for (JobResult& r : done) {
+        if (r.net != net_) {
+            continue; // 差替え前の推論結果を新モデルのキャッシュへ戻さない
+        }
         if (r.needsMainInfer && !inferredOne) {
             inferredOne = true;
             if (backend_ && r.net) {

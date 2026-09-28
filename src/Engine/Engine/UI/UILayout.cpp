@@ -164,6 +164,10 @@ bool ResolveWorldBase(World& world, EntityID e, const UIElementComponent* el, in
     const float cw = px * m._14 + py * m._24 + pz * m._34 + m._44;
     const bool behind = cw <= 1e-4f; // ほぼカメラ面上もまとめて背面扱い (ゼロ除算防止)
     const bool clamp = el && el->clampToScreen;
+    if (!std::isfinite(cw) || std::abs(cw) <= 1e-4f) {
+        out.visible = false;
+        return true;
+    }
     if (behind && !clamp) {
         out.visible = false;
         return true;

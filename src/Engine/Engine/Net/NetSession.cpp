@@ -102,6 +102,7 @@ bool NetSession::Start(const NetConfig& cfg, const NetIdentity& localId, uint64_
     localId_ = localId;
     startTick_ = startTick;
     nextNeededTick_ = startTick;
+    peerNextNeededTick_ = startTick;
     lastSubmitted_ = 0;
     hasSubmitted_ = false;
     peerSaidBye_ = false;
@@ -216,32 +217,41 @@ void NetSession::SendHandshake(NetMsg type, NetReject reason, uint32_t assignedI
 
 void NetSession::SendInputPacket(uint64_t upToTick)
 {
-    // 直近 kNetRedundancy tick を新しい順に集めてから反転する。
-    // 「リングに実際に入っている自レーンの値」だけを載せるので、開始直後で
-    // まだ 8 本たまっていなくても正しい長さのパケットになる
-    InputSnapshot tmp[kNetRedundancy] = {};
-    uint32_t n = 0;
-    uint64_t t = upToTick;
-    while (n < kNetRedundancy) {
-        const size_t idx = Slot(t) + localIndex_;
-        if (stamp_[idx] != t) {
-            break;
-        }
-        tmp[n++] = ring_[idx];
-        if (t == startTick_) {
-            break;
-        }
-        --t;
-    }
-    if (n == 0) {
+    // 相手の未確認 tick を必ず再送窓に含める。直近だけを送ると、1 パケットの
+    // 欠落が冗長数を超えた後は相手が永久に進めなくなる。
+    const uint64_t first = std::max(startTick_, peerNextNeededTick_);
+    if (first > upToTick) {
         return;
     }
-    InputSnapshot payload[kNetRedundancy] = {};
-    for (uint32_t i = 0; i < n; ++i) {
-        payload[i] = tmp[n - 1 - i]; // 昇順へ戻す
+    if (upToTick - first >= kNetRingTicks) {
+        MYE_LOG_ERROR("[net] cannot resend tick %llu: local input ring was overwritten",
+                      static_cast<unsigned long long>(first));
+        state_ = NetState::Failed;
+        return;
     }
-    SendTo(NetMsg::Input, payload, static_cast<size_t>(n) * sizeof(InputSnapshot), n,
-           upToTick - (n - 1), true);
+    const auto sendWindow = [&](uint64_t begin) {
+        InputSnapshot payload[kNetRedundancy] = {};
+        uint32_t n = 0;
+        for (uint64_t t = begin; t <= upToTick && n < kNetRedundancy; ++t) {
+            const size_t idx = Slot(t) + localIndex_;
+            if (stamp_[idx] != t) {
+                break;
+            }
+            payload[n++] = ring_[idx];
+        }
+        if (n != 0) {
+            SendTo(NetMsg::Input, payload, static_cast<size_t>(n) * sizeof(InputSnapshot), n,
+                   begin, true);
+        }
+    };
+    sendWindow(first);
+    // 投機側は古い tick の消費を待たずに先へ進む。新しい入力も同時に送らないと
+    // 相手の予測材料が届かず、相互に進捗が止まる。
+    const uint64_t recent = upToTick >= kNetRedundancy - 1
+        ? std::max(startTick_, upToTick - (kNetRedundancy - 1)) : startTick_;
+    if (recent > first) {
+        sendWindow(recent);
+    }
 }
 
 void NetSession::StoreInput(uint64_t tick, uint32_t player, const InputSnapshot& in)
@@ -365,6 +375,9 @@ void NetSession::HandlePacket(const NetAddress& from, const uint8_t* data, int s
     }
     lastRecvMs_ = NowMs();
     peerSendTimeMs_ = h.sendTimeMs;
+    if (h.lastAckTick > peerNextNeededTick_ && h.lastAckTick <= lastSubmitted_ + 1) {
+        peerNextNeededTick_ = h.lastAckTick;
+    }
     // M52i: 相手の確定点 (後退させない理由は下の peerConfirm* の更新)
     if (h.confirmHash != 0) {
         const size_t slot =
@@ -602,7 +615,7 @@ void NetSession::Finish()
     }
     // ★最後の入力を撃ち切ってから抜ける。相手はこちらの最後の数 tick をまだ受け取って
     //   いないかもしれず、ここで黙って終了すると相手だけが stall タイムアウトで落ちる。
-    //   再送機構が無いぶん、終了時だけは冗長回数を厚くして確率で押し切る
+    //   終了時だけは冗長回数を厚くして最後の入力を届ける
     for (int i = 0; i < 16 && hasSubmitted_; ++i) {
         SendInputPacket(lastSubmitted_);
     }

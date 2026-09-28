@@ -329,6 +329,13 @@ void ScriptHost::SetTickContext(const InputSnapshot& input, uint64_t tickIndex, 
 void ScriptHost::RunPhase(Phase phase)
 {
     World& world = scene_->GetWorld();
+    if (phase == Phase::StartAndUpdate) {
+        std::erase_if(started_, [&world](const ScriptStartedKey& key) {
+            const EntityID e{static_cast<uint32_t>(key.entity >> 32),
+                             static_cast<uint32_t>(key.entity)};
+            return !world.IsAlive(e) || !world.HasComponent(e, static_cast<ComponentTypeId>(key.script));
+        });
+    }
     for (ScriptType& type : types_) { // 登録順 (決定論)
         const bool wantStart = (phase == Phase::StartAndUpdate) && type.start != nullptr;
         auto fn = (phase == Phase::StartAndUpdate) ? type.update : type.lateUpdate;

@@ -45,6 +45,10 @@ constexpr int kGyroIterations = 3;
 constexpr float kPenetrationSlop = 0.0005f; // 微小めり込みは許容 (ジッタ抑制)
 // |vn| がこの閾値未満の接触は反発 0 扱い (micro-bounce 除去 = 静止安定の柱。~2g·dt)
 constexpr float kRestitutionVelThreshold = 0.3f;
+float SolverCoefficient(float value, float upper)
+{
+    return std::isfinite(value) ? std::clamp(value, 0.0f, upper) : 0.0f;
+}
 // ブロードフェーズ AABB の膨張量 (M28d)。ソルバ内の位置補正移動を保守的にカバーする。
 // 仮に候補から漏れても「次 tick で解決」に留まり、候補列は決定論なのでハッシュ一致性は不変
 constexpr float kBroadphaseMargin = 0.1f;
@@ -3275,9 +3279,10 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             // 材料の結合則は**接触と同じ** — μ は sqrt(積)、転がり抵抗は max
             // (相手が 0 の瞬間に消えないため。接触で c.muRoll を決める所のコメントが正本)
             const Body& G = bodies[hitBody];
-            const float mu = std::sqrt(l.wc->friction * G.friction);
-            const float roll
-                = (l.wc->rollingResistance > G.roll) ? l.wc->rollingResistance : G.roll;
+            const float mu = std::sqrt(SolverCoefficient(l.wc->friction, 100.0f)
+                                       * SolverCoefficient(G.friction, 100.0f));
+            const float roll = (std::max)(SolverCoefficient(l.wc->rollingResistance, 10.0f),
+                                           SolverCoefficient(G.roll, 10.0f));
             const float kEffF = EffectiveMassInv(A, rx, ry, rz, fx, fy, fz);
             const float kEffR = EffectiveMassInv(A, rx, ry, rz, rgx, rgy, rgz);
             float thr = l.veh->throttle;
@@ -3766,15 +3771,18 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             c.nx = m.nx;
             c.ny = m.ny;
             c.nz = m.nz;
-            c.mu = std::sqrt(A.friction * B.friction);
+            c.mu = std::sqrt(SolverCoefficient(A.friction, 100.0f)
+                             * SolverCoefficient(B.friction, 100.0f));
             // M59f2: μs も同じ結合則。材料未割当なら A.frictionS==A.friction なので
             // muS と mu がビットまで一致し、下の静止/動の分岐が消える
-            c.muS = std::sqrt(A.frictionS * B.frictionS);
+            c.muS = std::sqrt(SolverCoefficient(A.frictionS, 100.0f)
+                              * SolverCoefficient(B.frictionS, 100.0f));
             // ★転がり抵抗だけ **max** で結合する (摩擦の sqrt(積) ではない)。
             //   転がり抵抗はどちらか一方の材料のヒステリシスで生まれるので、
             //   「素の床に置いたゴム球が転がり続ける」ほうが物理として間違い。
             //   sqrt(積) だと相手が 0 の瞬間に消えてしまう
-            c.muRoll = (A.roll > B.roll) ? A.roll : B.roll;
+            c.muRoll = (std::max)(SolverCoefficient(A.roll, 10.0f),
+                                  SolverCoefficient(B.roll, 10.0f));
             c.count = m.count;
             // 法線から接線基底を決定論的に作る (分岐は入力だけに依存)。
             // 0.57735 = 1/sqrt(3) — 最も長い成分を避けて正規化の桁落ちを防ぐ古典手法。
@@ -3793,7 +3801,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 }
                 Cross(c.nx, c.ny, c.nz, c.t1[0], c.t1[1], c.t1[2], c.t2[0], c.t2[1], c.t2[2]);
             }
-            const float e = std::min(A.restitution, B.restitution);
+            const float e = (std::min)(SolverCoefficient(A.restitution, 1.0f),
+                                       SolverCoefficient(B.restitution, 1.0f));
             // ---- 粘着 (M60d): 法線インパルスの下限を負まで開ける ----
             // ★結合則は **min** (弱いほうが勝つ = 反発と揃える)。両方 0 = 未割当なら
             //   下限は 0 のままで、下のクランプは従来と同じ定数比較に畳まれる。
@@ -4457,7 +4466,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 //    次サブステップも同じしきい値を超えて同じ TOI で止められ、貫通が
                 //    生まれず接触も作られず、壁の手前で永久に浮く
                 const Body& B = bodies[hitJ];
-                float rest = (A.restitution < B.restitution) ? A.restitution : B.restitution;
+                float rest = (std::min)(SolverCoefficient(A.restitution, 1.0f),
+                                         SolverCoefficient(B.restitution, 1.0f));
                 if (vn > -restitutionVelThreshold) {
                     rest = 0.0f; // 通常ソルバと同じ micro-bounce 除去の規約
                 }

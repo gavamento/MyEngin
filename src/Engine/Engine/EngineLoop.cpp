@@ -1663,6 +1663,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (!netEnabled || !net.Running()) {
                 return true;
             }
+            if (netRollbackActive && tick >= netRb.ConfirmedTick()
+                && tick - netRb.ConfirmedTick() >= kNetMaxSpeculation) {
+                const double t0 = clock.Now();
+                const bool got = net.WaitForInputs(netRb.ConfirmedTick(), kNetStallWaitMs);
+                net.NoteStall((clock.Now() - t0) * 1000.0);
+                netStalled = !got;
+                return false; // 確定Tickの更新は次のNetReconcile後に再評価する
+            }
             if (net.HasInputs(tick)) {
                 return true;
             }
@@ -1671,7 +1679,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             //   「遅延が小さいときだけ滑らか」という中途半端な挙動になり、
             //   ロールバックが本当に効いているのかも分からなくなる。
             //   上限まで先行したら、そこから先は M52h と同じく待つ
-            if (netRollbackActive && tick - netRb.ConfirmedTick() < kNetMaxSpeculation) {
+            if (netRollbackActive && (tick < netRb.ConfirmedTick()
+                || tick - netRb.ConfirmedTick() < kNetMaxSpeculation)) {
                 return true;
             }
             const double t0 = clock.Now();

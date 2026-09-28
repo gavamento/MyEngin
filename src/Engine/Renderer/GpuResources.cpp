@@ -780,6 +780,7 @@ void TextureLibrary::AsyncWorker()
         }
         DecodeResult r;
         r.id = job.id;
+        r.generation = job.generation;
         int w = 0, h = 0, comp = 0;
         stbi_uc* pixels = stbi_load(job.utf8Path.c_str(), &w, &h, &comp, 4);
         if (pixels) {
@@ -823,7 +824,7 @@ AssetID TextureLibrary::RequestLoadFileAsync(const std::wstring& path)
     EnsureWorker();
     {
         std::lock_guard<std::mutex> lk(asyncMutex_);
-        jobQueue_.push_back({ id.value, WideToUtf8(path) });
+        jobQueue_.push_back({ id.value, generations_[id.value], WideToUtf8(path) });
     }
     asyncCv_.notify_one();
     return id;
@@ -840,6 +841,9 @@ void TextureLibrary::PollAsyncLoads()
         done.swap(doneQueue_);
     }
     for (DecodeResult& r : done) {
+        if (r.generation != generations_[r.id]) {
+            continue;
+        }
         pending_.erase(r.id);
         if (!r.ok) {
             MYE_LOG_WARN("async texture decode failed (id=%016llx)",
@@ -978,6 +982,8 @@ bool TextureLibrary::ReplaceFromFile(AssetID id, const std::wstring& path)
             return false;
         }
         it->second = std::move(fresh);
+        ++generations_[id.value];
+        pending_.erase(id.value);
         return true;
     }
     const std::string utf8 = WideToUtf8(path);
@@ -993,6 +999,8 @@ bool TextureLibrary::ReplaceFromFile(AssetID id, const std::wstring& path)
         return false;
     }
     it->second = std::move(fresh); // AssetID は不変のまま実体を差し替え (spec 8.2)
+    ++generations_[id.value];
+    pending_.erase(id.value);
     return true;
 }
 

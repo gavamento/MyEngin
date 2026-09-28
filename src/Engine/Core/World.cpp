@@ -660,6 +660,7 @@ bool World::SnapshotRead(ByteReader& r)
 
     // ---- 読み切ってから差し替える (途中で失敗しても現世界を壊さない) ----
     std::vector<std::unique_ptr<Archetype>> archetypes;
+    const ComponentRegistry& registry = ComponentRegistry::Get();
     const size_t archCount = r.Count(sizeof(uint64_t)); // 1 アーキタイプ最低 8B は消費する
     archetypes.reserve(archCount);
     for (size_t a = 0; a < archCount && r.Ok(); ++a) {
@@ -672,12 +673,24 @@ bool World::SnapshotRead(ByteReader& r)
         for (size_t i = 0; i < typeCount; ++i) {
             sizes[i] = r.U32();
         }
+        for (size_t i = 0; i < typeCount; ++i) {
+            if (types[i] >= registry.Count() || sizes[i] != registry.Desc(types[i]).size
+                || (i != 0 && types[i - 1] >= types[i])) {
+                MYE_LOG_ERROR("[snapshot] invalid component layout");
+                return false;
+            }
+        }
         const size_t rowCount = r.Count(sizeof(EntityID));
         std::vector<EntityID> ents(rowCount);
         r.Raw(ents.data(), rowCount * sizeof(EntityID));
         std::vector<std::vector<std::byte>> columns(typeCount);
         for (size_t i = 0; i < typeCount && r.Ok(); ++i) {
             const size_t n = r.Count(sizeof(std::byte));
+            if (sizes[i] == 0 || rowCount > SIZE_MAX / sizes[i]
+                || n != rowCount * sizes[i]) {
+                MYE_LOG_ERROR("[snapshot] invalid column length");
+                return false;
+            }
             columns[i].resize(n);
             r.Raw(columns[i].data(), n);
         }
@@ -713,12 +726,48 @@ bool World::SnapshotRead(ByteReader& r)
         MYE_LOG_ERROR("[snapshot] world section truncated");
         return false;
     }
-    for (const RawRecord& rec : raw) {
+    std::vector<std::vector<uint8_t>> occupied(archetypes.size());
+    for (size_t i = 0; i < archetypes.size(); ++i) {
+        occupied[i].resize(archetypes[i]->Count(), 0);
+    }
+    size_t actualAlive = 0;
+    for (size_t index = 0; index < raw.size(); ++index) {
+        const RawRecord& rec = raw[index];
         if (rec.archIndex != kNoArchetype && rec.archIndex >= archetypes.size()) {
             MYE_LOG_ERROR("[snapshot] world record points at archetype %u of %zu", rec.archIndex,
                           archetypes.size());
             return false;
         }
+        if (rec.archIndex != kNoArchetype) {
+            if (rec.row >= occupied[rec.archIndex].size()
+                || occupied[rec.archIndex][rec.row] != 0) {
+                return false;
+            }
+            const EntityID entity = archetypes[rec.archIndex]->EntityAt(rec.row);
+            if (entity.index != index || entity.generation != rec.generation) {
+                return false;
+            }
+            occupied[rec.archIndex][rec.row] = 1;
+            ++actualAlive;
+        }
+    }
+    for (const auto& rows : occupied) {
+        for (uint8_t used : rows) {
+            if (used == 0) {
+                return false;
+            }
+        }
+    }
+    if (actualAlive != aliveCount) {
+        return false;
+    }
+    std::vector<uint8_t> freeSeen(raw.size(), 0);
+    for (uint32_t index : freeIndices) {
+        if (index >= raw.size() || freeSeen[index] != 0
+            || raw[index].archIndex != kNoArchetype) {
+            return false;
+        }
+        freeSeen[index] = 1;
     }
 
     // ---- 差し替え ----

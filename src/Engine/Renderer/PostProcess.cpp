@@ -257,12 +257,9 @@ PostProcess::Target* PostProcess::Acquire(GraphicsDevice& device, int width, int
         || !t.userPostLdr.Create(device, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, false)) {
         return nullptr;
     }
-    // M44b: 自動露出バッファ (ヒストグラム 256 bin + 露出倍率 1 要素、初期値 1.0)
-    const float kInitialExposure = 1.0f;
+    // ヒストグラムは解像度別。露出履歴は Resolve で viewKey 別に割り当てる。
     if (!CreateStructured(device.Device(), sizeof(uint32_t), 256, nullptr, 0, t.histBuf,
-                          &t.histUAV, &t.histSRV)
-        || !CreateStructured(device.Device(), sizeof(float), 1, &kInitialExposure, 0,
-                             t.exposureBuf, &t.exposureUAV, &t.exposureSRV)) {
+                          &t.histUAV, &t.histSRV)) {
         return nullptr;
     }
     cache_.insert(cache_.begin(), std::move(t));
@@ -690,6 +687,25 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     if (!prog || !prog->valid || dst == nullptr) {
         return; // 解決不能 (シェーダ未コンパイル等)。呼び出し側は既に HDR に描画済み
     }
+    const uint32_t viewSlot = view.viewKey < 4 ? view.viewKey : 0;
+    ExposureHistory& exposure = exposure_[viewSlot];
+    if (!exposure.buffer) {
+        const float initial = 1.0f;
+        if (!CreateStructured(device.Device(), sizeof(float), 1, &initial, 0,
+                              exposure.buffer, &exposure.uav, &exposure.srv)) {
+            return;
+        }
+    }
+    if (viewSlot == 0 || !exposure.hasLast
+        || exposure.lastSerial + 1u != view.viewFrameIndex) {
+        const float initial = 1.0f;
+        device.Context()->UpdateSubresource(exposure.buffer.Get(), 0, nullptr, &initial, 0, 0);
+    }
+    exposure.lastSerial = view.viewFrameIndex;
+    exposure.hasLast = viewSlot != 0;
+    t.exposureBuf = exposure.buffer;
+    t.exposureUAV = exposure.uav;
+    t.exposureSRV = exposure.srv;
     resolveTimer_.Begin(device); // M44d: Resolve 全体の GPU 時間 (ProfilerWindow "postfx" 行)
 
     // M55d: TAA はチェーンの **先頭** (DoF より前)。ボケや速度スミアを掛けた後の絵を

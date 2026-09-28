@@ -92,6 +92,9 @@ void TrailStore::Update(World& world, uint64_t tick)
             }
         }
         // 寿命失効 (先頭=最古から)。duration 秒 → tick 換算
+        if (!nb.pts.empty() && tick < nb.pts.back().tick) {
+            nb.pts.clear();
+        }
         const float lifeTicks = (std::max)(1.0f, c.tr->duration * 60.0f);
         size_t expire = 0;
         while (expire < nb.pts.size()

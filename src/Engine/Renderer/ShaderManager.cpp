@@ -547,8 +547,9 @@ void ShaderManager::RequestRecompileForFile(const std::wstring& normalizedPath)
             continue;
         }
         bool alreadyPending = false;
-        for (const AsyncCompile& ac : async_) {
+        for (AsyncCompile& ac : async_) {
             if (ac.id == id) {
+                ac.dirty = true;
                 alreadyPending = true;
                 break;
             }
@@ -586,8 +587,9 @@ void ShaderManager::RequestRecompileForFile(const std::wstring& normalizedPath)
             continue;
         }
         bool alreadyPending = false;
-        for (const AsyncSurfaceCompile& ac : asyncSurface_) {
+        for (AsyncSurfaceCompile& ac : asyncSurface_) {
             if (ac.id == id) {
+                ac.dirty = true;
                 alreadyPending = true;
                 break;
             }
@@ -616,15 +618,29 @@ void ShaderManager::PollAsyncCompiles()
             continue;
         }
         ShaderProgram fresh = async_[i].future.get();
-        if (fresh.valid) {
+        const bool dirty = async_[i].dirty;
+        const uint64_t id = async_[i].id;
+        if (fresh.valid && !dirty) {
             ShaderProgram& slot = programs_[async_[i].id];
             fresh.generation = slot.generation + 1;
             slot = std::move(fresh); // セーフポイントでの差し替え (フェーズ 2)
             MYE_LOG_INFO("[reload] shader swapped");
-        } else {
+        } else if (!dirty) {
             MYE_LOG_WARN("[reload] shader compile failed - keeping previous shader");
         }
         async_.erase(async_.begin() + static_cast<ptrdiff_t>(i));
+        if (dirty) {
+            const ShaderProgram& slot = programs_.at(id);
+            const std::wstring path = slot.path;
+            const bool isCompute = slot.isCompute;
+            async_.push_back({ id, std::async(std::launch::async, [this, path, isCompute] {
+                                   ShaderProgram next;
+                                   next.path = path;
+                                   next.isCompute = isCompute;
+                                   CompileProgram(path, next);
+                                   return next;
+                               }) });
+        }
     }
 
     for (size_t i = 0; i < asyncSurface_.size();) {
@@ -633,14 +649,28 @@ void ShaderManager::PollAsyncCompiles()
             continue;
         }
         SurfaceProgram fresh = asyncSurface_[i].future.get();
-        if (fresh.valid) {
+        const bool dirty = asyncSurface_[i].dirty;
+        const uint64_t id = asyncSurface_[i].id;
+        if (fresh.valid && !dirty) {
             surfacePrograms_[asyncSurface_[i].id] = std::move(fresh);
             MYE_LOG_INFO("[reload] surface shader swapped");
-        } else {
+        } else if (!dirty) {
             MYE_LOG_WARN("[reload] surface shader compile failed - keeping previous shader: %s",
                          fresh.errorMessage.c_str());
         }
         asyncSurface_.erase(asyncSurface_.begin() + static_cast<ptrdiff_t>(i));
+        if (dirty) {
+            const SurfaceProgram& slot = surfacePrograms_.at(id);
+            const std::wstring path = slot.path;
+            const uint64_t previousGeneration = slot.generation;
+            asyncSurface_.push_back({ id, std::async(std::launch::async,
+                [this, path, previousGeneration] {
+                    SurfaceProgram next;
+                    next.path = path;
+                    CompileSurfaceProgram(path, next, previousGeneration);
+                    return next;
+                }) });
+        }
     }
 }
 

@@ -130,11 +130,34 @@ void SampleTrackValues(const AnimTrack& t, int32_t time, float out[4])
 
 }
 
+bool ResolveTrackOffset(const AnimTrack& track, uint32_t& offset)
+{
+    const ComponentRegistry& registry = ComponentRegistry::Get();
+    if (track.comp >= registry.Count()) {
+        return false;
+    }
+    const ComponentDesc& desc = registry.Desc(track.comp);
+    for (const FieldDesc& field : desc.fields) {
+        if (track.field == field.name && track.type == field.type
+            && track.compCount == FieldFloatCount(field.type)
+            && field.offset <= desc.size
+            && track.compCount * sizeof(float) <= desc.size - field.offset) {
+            offset = field.offset;
+            return true;
+        }
+    }
+    return false;
+}
+
 void SampleTrackInto(void* comp, const AnimTrack& t, int32_t time)
 {
+    uint32_t offset = 0;
+    if (!ResolveTrackOffset(t, offset)) {
+        return;
+    }
     float out[4];
     SampleTrackValues(t, time, out);
-    float* dst = reinterpret_cast<float*>(static_cast<uint8_t*>(comp) + t.offset);
+    float* dst = reinterpret_cast<float*>(static_cast<uint8_t*>(comp) + offset);
     for (uint32_t i = 0; i < t.compCount; ++i) {
         dst[i] = out[i];
     }
@@ -169,9 +192,13 @@ void ApplyClipPoseBlended(World& w, EntityID animator, const AnimationClipAsset&
         if (!comp) {
             continue;
         }
+        uint32_t offset = 0;
+        if (!ResolveTrackOffset(t, offset)) {
+            continue;
+        }
         float bv[4];
         SampleTrackValues(t, timeTo, bv);
-        float* dst = reinterpret_cast<float*>(static_cast<uint8_t*>(comp) + t.offset);
+        float* dst = reinterpret_cast<float*>(static_cast<uint8_t*>(comp) + offset);
         if (t.type == FieldType::Quat) {
             const XMVECTOR qa = XMLoadFloat4(reinterpret_cast<const XMFLOAT4*>(dst)); // 現在=from
             const XMVECTOR qb = XMLoadFloat4(reinterpret_cast<const XMFLOAT4*>(bv));
@@ -311,8 +338,12 @@ uint64_t AnimationLibrary::LoadFromFile(const std::wstring& path)
         return 0;
     }
     AnimationClipAsset clip;
-    if (!FromJson(root, clip)) {
-        MYE_LOG_WARN("anim load: no tracks array in %s", WideToUtf8(path).c_str());
+    try {
+        if (!FromJson(root, clip)) {
+            return 0;
+        }
+    } catch (const json::exception& ex) {
+        MYE_LOG_WARN("anim data invalid: %s (%s)", WideToUtf8(path).c_str(), ex.what());
         return 0;
     }
     return Register(path, std::move(clip));
@@ -327,13 +358,8 @@ bool AnimationLibrary::SaveToFile(uint64_t hash) const
     const json root = ToJson(it->second);
     std::error_code ec;
     fs::create_directories(fs::path(it->second.path).parent_path(), ec);
-    std::ofstream f(fs::path(it->second.path), std::ios::binary);
-    if (!f) {
-        return false;
-    }
     const std::string text = root.dump(2);
-    f.write(text.data(), static_cast<std::streamsize>(text.size()));
-    return true;
+    return WriteFileReplacing(it->second.path, text);
 }
 
 const AnimationClipAsset* AnimationLibrary::Get(uint64_t hash) const

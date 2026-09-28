@@ -57,8 +57,15 @@ bool Input::HandleMessage(void* hwnd, uint32_t msg, uint64_t wparam, int64_t lpa
             // リモートデスクトップ / タブレット / 一部の仮想機は正規化**絶対**座標を寄越す。
             // 前回値との差を取る。基準が無い初回は 0 (視点を跳ねさせない)
             if (rawAbsValid_) {
-                mouseDeltaX_ += static_cast<int32_t>(m.lLastX) - rawAbsX_;
-                mouseDeltaY_ += static_cast<int32_t>(m.lLastY) - rawAbsY_;
+                const bool virtualDesktop = (m.usFlags & MOUSE_VIRTUAL_DESKTOP) != 0;
+                const int width = GetSystemMetrics(virtualDesktop ? SM_CXVIRTUALSCREEN : SM_CXSCREEN);
+                const int height = GetSystemMetrics(virtualDesktop ? SM_CYVIRTUALSCREEN : SM_CYSCREEN);
+                if (width > 0 && height > 0) {
+                    mouseDeltaX_ += static_cast<int32_t>(
+                        (static_cast<int64_t>(m.lLastX - rawAbsX_) * width) / 65536);
+                    mouseDeltaY_ += static_cast<int32_t>(
+                        (static_cast<int64_t>(m.lLastY - rawAbsY_) * height) / 65536);
+                }
             }
             rawAbsX_ = static_cast<int32_t>(m.lLastX);
             rawAbsY_ = static_cast<int32_t>(m.lLastY);

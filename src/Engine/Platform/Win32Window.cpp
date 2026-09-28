@@ -174,7 +174,8 @@ intptr_t Win32Window::HandleMsg(void* hwndRaw, uint32_t msg, uint64_t wparam, in
 {
     const HWND hwnd = static_cast<HWND>(hwndRaw);
 
-    for (MsgHandler& handler : handlers_) {
+    const auto handlers = handlers_; // 同期メッセージによる再入中の登録・再確保から走査を隔離する
+    for (const MsgHandler& handler : handlers) {
         int64_t result = 0;
         if (handler(hwndRaw, msg, wparam, lparam, result)) {
             return result;

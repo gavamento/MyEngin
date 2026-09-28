@@ -180,10 +180,12 @@ private:
     // ---- 非同期ロード (M23) ----
     struct DecodeJob {
         uint64_t id = 0;
+        uint64_t generation = 0;
         std::string utf8Path;
     };
     struct DecodeResult {
         uint64_t id = 0;
+        uint64_t generation = 0;
         std::vector<uint8_t> pixels; // RGBA8
         int w = 0;
         int h = 0;
@@ -195,6 +197,7 @@ private:
     std::deque<DecodeJob> jobQueue_;       // asyncMutex_ で保護
     std::vector<DecodeResult> doneQueue_;  // asyncMutex_ で保護
     std::unordered_set<uint64_t> pending_; // メインスレッド専用 (二重投入ガード)
+    std::unordered_map<uint64_t, uint64_t> generations_; // リロード後の旧decode結果を拒否
     bool workerStop_ = false;              // asyncMutex_ で保護
     bool workerStarted_ = false;           // メインスレッド専用
 };

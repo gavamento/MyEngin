@@ -16,6 +16,7 @@ GameObject Scene::FindByFileId(uint64_t fileId)
             if (world_.IsAlive(e)) {
                 if (const auto* f = world_.GetComponent<FileIdComponent>(e);
                     f && f->value == fileId) {
+                    fileIdHistory_[fileId] = e;
                     return GameObject(&world_, e);
                 }
             }
@@ -36,8 +37,11 @@ GameObject Scene::FindByFileId(uint64_t fileId)
             }
         }
     });
-    if (useCache && result) {
-        fileIdCache_[fileId] = result.Id();
+    if (result) {
+        fileIdHistory_[fileId] = result.Id();
+        if (useCache) {
+            fileIdCache_[fileId] = result.Id();
+        }
     }
     return result;
 }
@@ -54,8 +58,11 @@ uint64_t Scene::EnsureFileId(EntityID e)
     } else if (f->value == 0) {
         f->value = NextFileId();
     }
-    if (f->value != 0 && World::SimCacheEnabled()) {
-        fileIdCache_[f->value] = e; // 採番点でも充填 (直後の FindByFileId の初回走査を省く)
+    if (f->value != 0) {
+        fileIdHistory_[f->value] = e;
+        if (World::SimCacheEnabled()) {
+            fileIdCache_[f->value] = e; // 採番点でも充填 (直後の FindByFileId の初回走査を省く)
+        }
     }
     return f->value;
 }

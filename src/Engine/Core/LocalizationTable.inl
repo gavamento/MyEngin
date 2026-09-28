@@ -847,6 +847,8 @@ MYE_STR(Confirm_DontSave,     "Don't Save", "保存しない")
 // ★再生中の ctx.scene は文書ではなく動いている世界 (LoadScene で別シーンにもなる)。保存を止める
 MYE_STR(Save_BlockedPlaying,  "Cannot save while playing. Stop first, then save.",
                               "再生中は保存できません。停止してから保存してください。")
+MYE_STR(SceneSwitch_BlockedPlaying, "Cannot switch scenes while playing. Stop first.",
+                                    "再生中はシーンを切り替えられません。停止してから操作してください。")
 // ★M70a: 型を引けなかったコンポーネントを抱えたまま保存したときの告知。**黙って通すと
 // 「保存は成功したのに次に開くと値が既定へ戻る」に見える**ので、保持したことを必ず言う
 MYE_STR(Save_UnknownKept,     "Saved with %d unknown component(s) kept as-is.",

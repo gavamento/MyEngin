@@ -876,6 +876,10 @@ bool DeserializeConvexHull(const uint8_t* p, size_t size, size_t& pos, ConvexHul
         || !readArray(out.edges)) {
         return false;
     }
+    if (out.verts.size() > kConvexMaxVerts || out.faces.size() > kConvexMaxFaces
+        || out.edges.size() > kConvexMaxEdges) {
+        return false;
+    }
     if (!r.Pod(out.volume) || !r.Pod(out.com) || !r.Bytes(out.inertia, sizeof(out.inertia))
         || !r.Pod(out.aabbMin) || !r.Pod(out.aabbMax) || !r.Pod(out.boundRadius)) {
         return false;

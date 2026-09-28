@@ -9,6 +9,7 @@
 
 #include "Engine/Core/Components.h"
 #include "Engine/Core/Hash.h"
+#include "Engine/Core/JsonUtil.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/NameUtil.h"
 #include "Engine/Core/Profiler.h"
@@ -42,6 +43,21 @@ bool RunSceneSerializerSelfTest()
         }
     };
 
+    {
+        float values[3] = { 7.0f, 8.0f, 9.0f };
+        const FieldDesc arrayField{ "values", FieldType::Float3, 0 };
+        check(!FieldFromJson(values, arrayField, nlohmann::json::array({ 1.0f, "bad", 3.0f }))
+                  && values[0] == 7.0f && values[1] == 8.0f && values[2] == 9.0f,
+              "invalid array element leaves the whole field unchanged");
+        char fixed[64];
+        std::fill(std::begin(fixed), std::end(fixed), static_cast<char>(0x7f));
+        const FieldDesc stringField{ "fixed", FieldType::String64, 0 };
+        const std::string longText = std::string(62, 'a') + "\xe3\x81\x82";
+        check(FieldFromJson(fixed, stringField, longText)
+                  && fixed[62] == 0 && fixed[63] == 0,
+              "fixed UTF-8 string truncates at character boundary and clears padding");
+    }
+
     // ---- テストシーン構築 ----
     Scene scene;
     scene.SetName("SerializerTest");
@@ -62,6 +78,16 @@ bool RunSceneSerializerSelfTest()
     // ---- 保存 → 読込 → 再保存 ----
     const nlohmann::json first = SceneSerializer::SaveToJson(scene);
     check(first["entities"].size() == 3, "3 entities saved");
+    {
+        nlohmann::json bad = first;
+        bad["entities"][0].erase("fileId");
+        check(!SceneSerializer::LoadFromJson(scene, bad) && scene.GetWorld().AliveCount() == 3,
+              "missing fileId rejects scene without changing world");
+        bad = first;
+        bad["entities"][0]["fileId"] = 0;
+        check(!SceneSerializer::LoadFromJson(scene, bad) && scene.GetWorld().AliveCount() == 3,
+              "zero fileId rejects scene without changing world");
+    }
 
     check(SceneSerializer::LoadFromJson(scene, first), "load succeeds");
     check(scene.GetWorld().AliveCount() == 3, "3 entities after load");
@@ -144,6 +170,18 @@ bool RunSceneSerializerSelfTest()
             refOk = p2 && p2->target == rb2.Id() && !rb2.Id().IsNull();
         }
         check(refOk, "EntityRef restored by fileId across save/load");
+        if (ra2 && rb2) {
+            const nlohmann::json targetPayload = SceneSerializer::SubtreeToJson(s2, rb2.Id());
+            const EntityID oldTarget = rb2.Id();
+            s2.GetWorld().DestroyEntity(oldTarget);
+            s2.GetWorld().ApplyStructuralChanges();
+            const bool applied = SceneSerializer::ApplyPartial(s2, targetPayload);
+            GameObject restored = s2.FindByFileId(rbFid);
+            auto* external = static_cast<RefProbe*>(s2.GetWorld().GetComponentRaw(ra2.Id(), probeType));
+            check(applied && restored && restored.Id() != oldTarget && external
+                      && external->target == restored.Id(),
+                  "partial restore repairs EntityRef outside payload");
+        }
     }
 
     // ---- 兄弟順の保存/復元 (M8) ----
@@ -1862,6 +1900,13 @@ bool RunSceneSerializerSelfTest()
         LocalTransform lt;
         SampleTrackInto(&lt, clip.tracks[0], 5);
         check(lt.position.x == 5.0f, "linear interp at t=5 -> 5.0");
+        AnimTrack staleOffset = clip.tracks[0];
+        staleOffset.offset = sizeof(LocalTransform) + 16;
+        SampleTrackInto(&lt, staleOffset, 5);
+        check(lt.position.x == 5.0f, "animation resolves field after stale offset");
+        staleOffset.field = "missingField";
+        SampleTrackInto(&lt, staleOffset, 10);
+        check(lt.position.x == 5.0f, "animation ignores missing field");
         SampleTrackInto(&lt, clip.tracks[0], 0);
         check(lt.position.x == 0.0f, "clamp before first key");
         SampleTrackInto(&lt, clip.tracks[0], 100);

@@ -277,9 +277,19 @@ struct MiniDumpJob {
     HANDLE file;
 };
 MiniDumpJob g_dumpJob = {};
+HANDLE g_dumpStart = nullptr;
+HANDLE g_dumpDone = nullptr;
+HANDLE g_dumpThread = nullptr;
+HANDLE g_bundleFinished = nullptr;
+volatile LONG g_dumpStop = 0;
 
 DWORD WINAPI MiniDumpThread(LPVOID)
 {
+    for (;;) {
+        WaitForSingleObject(g_dumpStart, INFINITE);
+        if (InterlockedCompareExchange(&g_dumpStop, 0, 0) != 0) {
+            return 0;
+        }
     // Normal + スレッド情報 + アンロード済みモジュール。
     // メモリを丸ごと入れるオプション (WithFullMemory) は数百 MB になるので使わない —
     // 「ハンドラ内で数百 MB を書くのは自殺行為」(計画の★罠)
@@ -288,12 +298,14 @@ DWORD WINAPI MiniDumpThread(LPVOID)
     const BOOL ok = g_miniDumpWriteDump(
         GetCurrentProcess(), GetCurrentProcessId(), g_dumpJob.file, type,
         g_dumpJob.info.ExceptionPointers != nullptr ? &g_dumpJob.info : nullptr, nullptr, nullptr);
-    return ok != FALSE ? 1u : 0u;
+        g_dumpJob.file = ok != FALSE ? g_dumpJob.file : INVALID_HANDLE_VALUE;
+        SetEvent(g_dumpDone);
+    }
 }
 
 void WriteMiniDump(EXCEPTION_POINTERS* ep)
 {
-    if (g_miniDumpWriteDump == nullptr) {
+    if (g_miniDumpWriteDump == nullptr || g_dumpThread == nullptr) {
         return;
     }
     BundlePath(L"minidump.dmp");
@@ -316,14 +328,11 @@ void WriteMiniDump(EXCEPTION_POINTERS* ep)
     //   crash.txt と crash.rep はこの時点で書き終わっているので、ここで失敗しても
     //   バンドルの本体は失われない。
     bool ok = false;
-    const HANDLE thread = CreateThread(nullptr, 0, &MiniDumpThread, nullptr, 0, nullptr);
-    if (thread != nullptr) {
-        // 落ちているプロセスなので待ちは有限に切る (dbghelp が固まっても諦める)
-        if (WaitForSingleObject(thread, 20000) == WAIT_OBJECT_0) {
-            DWORD code = 0;
-            ok = GetExitCodeThread(thread, &code) != FALSE && code == 1u;
-        }
-        CloseHandle(thread);
+    ResetEvent(g_dumpDone);
+    if (SetEvent(g_dumpStart) != FALSE) {
+        // 落ちているプロセスなので待ちは有限に切る。
+        ok = WaitForSingleObject(g_dumpDone, 20000) == WAIT_OBJECT_0
+            && g_dumpJob.file != INVALID_HANDLE_VALUE;
     }
     CloseHandle(h);
     if (!ok) {
@@ -458,9 +467,13 @@ void WriteCrashText(EXCEPTION_POINTERS* ep, const char* kind, const wchar_t* det
 void WriteBundle(EXCEPTION_POINTERS* ep, const char* kind, const wchar_t* detail)
 {
     if (InterlockedCompareExchange(&g_inHandler, 1, 0) != 0) {
-        return; // 二重フォルト: 最初の 1 回に賭ける
+        if (g_bundleFinished != nullptr) {
+            WaitForSingleObject(g_bundleFinished, 30000);
+        }
+        return;
     }
     if (!g_installed || !MakeBundleDir()) {
+        if (g_bundleFinished != nullptr) { SetEvent(g_bundleFinished); }
         return;
     }
     WriteCrashText(ep, kind, detail);
@@ -473,6 +486,7 @@ void WriteBundle(EXCEPTION_POINTERS* ep, const char* kind, const wchar_t* detail
     msg.Ascii("[crash] bundle written: ");
     msg.Str(g_bundleDir);
     EmitRawLine(msg.Text());
+    if (g_bundleFinished != nullptr) { SetEvent(g_bundleFinished); }
 }
 
 // 非 SEH 経路 (terminate / purecall / 不正パラメータ) 用に現在地の CONTEXT を合成する。
@@ -594,6 +608,13 @@ void InstallCrashHandler(const CrashHandlerConfig& config)
         g_miniDumpWriteDump =
             reinterpret_cast<MiniDumpWriteDumpFn>(GetProcAddress(dbghelp, "MiniDumpWriteDump"));
     }
+    g_dumpStart = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    g_dumpDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    g_bundleFinished = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (g_dumpStart != nullptr && g_dumpDone != nullptr && g_miniDumpWriteDump != nullptr) {
+        InterlockedExchange(&g_dumpStop, 0);
+        g_dumpThread = CreateThread(nullptr, 0, &MiniDumpThread, nullptr, 0, nullptr);
+    }
 
     g_prevFilter = SetUnhandledExceptionFilter(UnhandledFilter);
     g_prevTerminate = std::set_terminate(TerminateHandlerFn);
@@ -630,6 +651,16 @@ void UninstallCrashHandler()
     _set_purecall_handler(nullptr);
     _set_invalid_parameter_handler(nullptr);
     g_installed = false;
+    InterlockedExchange(&g_dumpStop, 1);
+    if (g_dumpStart != nullptr) { SetEvent(g_dumpStart); }
+    if (g_dumpThread != nullptr) {
+        WaitForSingleObject(g_dumpThread, INFINITE);
+        CloseHandle(g_dumpThread);
+        g_dumpThread = nullptr;
+    }
+    if (g_dumpStart != nullptr) { CloseHandle(g_dumpStart); g_dumpStart = nullptr; }
+    if (g_dumpDone != nullptr) { CloseHandle(g_dumpDone); g_dumpDone = nullptr; }
+    if (g_bundleFinished != nullptr) { CloseHandle(g_bundleFinished); g_bundleFinished = nullptr; }
     g_payload = nullptr;
     g_payloadUser = nullptr;
     g_tickIndex = nullptr;

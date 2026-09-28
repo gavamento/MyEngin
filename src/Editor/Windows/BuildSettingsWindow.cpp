@@ -87,7 +87,13 @@ bool BuildSettingsWindow::StageCopy(EngineContext& ctx, std::string& detail)
 {
     std::error_code ec;
     const fs::path exeDir = GetExecutableDir(); // Runtime.exe / GameLogic.dll と同じ場所
-    const fs::path out = fs::path(Utf8ToWide(outputDir_));
+    const fs::path finalOut = fs::path(Utf8ToWide(outputDir_));
+    static uint64_t nextStage = 0;
+    do {
+        stagingDir_ = finalOut.wstring() + L".staging."
+            + std::to_wstring(GetCurrentProcessId()) + L"." + std::to_wstring(++nextStage);
+    } while (fs::exists(stagingDir_, ec));
+    const fs::path out = stagingDir_;
     const fs::path assetsSrc = fs::path(ctx.assetsRoot);
 
     fs::create_directories(out, ec);
@@ -122,22 +128,28 @@ bool BuildSettingsWindow::StageCopy(EngineContext& ctx, std::string& detail)
 
     // 1b) C# スクリプトホスト (CoreCLR) — nethost.dll + マネージド一式 (Roslyn 含む)
     // これらが無いと配布先で C# スクリプトが動かない (native ManagedHost の Init が失敗)。
-    copyFile(exeDir / L"nethost.dll", out / L"nethost.dll");
+    ok = copyFile(exeDir / L"nethost.dll", out / L"nethost.dll") && ok;
     auto copyGlob = [&](const wchar_t* pattern) {
+        bool copied = true;
         for (const auto& e : fs::directory_iterator(exeDir, ec)) {
             if (!e.is_regular_file()) {
                 continue;
             }
             const std::wstring fn = e.path().filename().wstring();
             if (fn.rfind(pattern, 0) == 0) { // 前方一致
-                copyFile(e.path(), out / e.path().filename());
+                copied = copyFile(e.path(), out / e.path().filename()) && copied;
             }
         }
+        return copied && !ec;
     };
-    copyGlob(L"MyeScripting");         // .dll / .runtimeconfig.json / .deps.json / .pdb
-    copyGlob(L"Microsoft.CodeAnalysis"); // Roslyn
-    copyGlob(L"System.Collections.Immutable");
-    copyGlob(L"System.Reflection.Metadata");
+    ok = copyGlob(L"MyeScripting") && ok;
+    ok = copyGlob(L"Microsoft.CodeAnalysis") && ok;
+    ok = copyGlob(L"System.Collections.Immutable") && ok;
+    ok = copyGlob(L"System.Reflection.Metadata") && ok;
+    if (!ok || !fs::exists(exeDir / L"MyeScripting.dll", ec)) {
+        detail = "C# host copy failed";
+        return false;
+    }
 
     // 1c) .NET ランタイム同梱 (自己完結配布)。プロセス内の hostfxr.dll / coreclr.dll から
     // SDK レイアウトを特定する。配布先の Runtime.exe は exe 隣の dotnet\ を DOTNET_ROOT として
@@ -183,12 +195,12 @@ bool BuildSettingsWindow::StageCopy(EngineContext& ctx, std::string& detail)
                              WideToUtf8(ver).c_str(),
                              WideToUtf8(fxrVerDir.filename().wstring()).c_str());
             } else {
-                MYE_LOG_WARN("[build] .NET runtime bundle incomplete "
-                             "(target needs .NET 8 installed for C# scripts)");
+                detail = ".NET runtime bundle incomplete";
+                return false;
             }
         } else {
-            MYE_LOG_WARN("[build] coreclr.dll not located — skipping runtime bundle "
-                         "(target needs .NET 8 installed)");
+            detail = "coreclr.dll or hostfxr.dll not located";
+            return false;
         }
     }
 
@@ -238,21 +250,33 @@ bool BuildSettingsWindow::StageCopy(EngineContext& ctx, std::string& detail)
             }
             const std::wstring ext = LowerExt(e.path());
             if (ext == L".mmdl" || ext == L".mpcm" || ext == TerrainAsset::kTerrainExt) {
-                if (copyFile(e.path(), cookedDst / e.path().filename())) {
-                    ++cooked;
+                if (!copyFile(e.path(), cookedDst / e.path().filename())) {
+                    detail = "cooked asset copy failed";
+                    return false;
                 }
+                ++cooked;
             }
         }
         std::ofstream seal(cookedDst / CookedCache::kSealedMarker, std::ios::binary);
         seal << "sealed by MyEngine build\n";
+        seal.close();
+        if (!seal) {
+            detail = "cook seal write failed";
+            return false;
+        }
         MYE_LOG_INFO("[build] bundled %d cooked file(s) + sealed marker", cooked);
     }
 
     // 3) ブートシーンを main.scene.json として配置 (Runtime は既定でこれを読む)
     const fs::path chosen = assetsSrc / L"scenes" / Utf8ToWide(bootScene_);
     const fs::path bootDst = out / L"assets" / L"scenes" / L"main.scene.json";
-    if (fs::exists(chosen, ec) && chosen.filename() != L"main.scene.json") {
-        copyFile(chosen, bootDst);
+    if (!fs::exists(chosen, ec)) {
+        detail = "boot scene not found";
+        return false;
+    }
+    if (chosen.filename() != L"main.scene.json" && !copyFile(chosen, bootDst)) {
+        detail = "boot scene copy failed";
+        return false;
     }
 
     int fileCount = 0;
@@ -278,7 +302,7 @@ bool BuildSettingsWindow::StageDds(EngineContext& ctx, std::string& detail)
 {
     (void)ctx;
     std::error_code ec;
-    const fs::path outAssets = fs::path(Utf8ToWide(outputDir_)) / L"assets";
+    const fs::path outAssets = fs::path(stagingDir_) / L"assets";
     int cooked = 0, skipped = 0, failed = 0;
     for (const auto& e : fs::recursive_directory_iterator(outAssets, ec)) {
         if (!e.is_regular_file()) {
@@ -311,6 +335,85 @@ bool BuildSettingsWindow::StageDds(EngineContext& ctx, std::string& detail)
     return failed == 0;
 }
 
+bool BuildSettingsWindow::PublishPackage(std::string& detail)
+{
+    const fs::path out = fs::path(Utf8ToWide(outputDir_));
+    const fs::path staged = stagingDir_;
+    const fs::path zip = fs::path(out.wstring() + L".zip");
+    const fs::path stagedZip = fs::path(staged.wstring() + L".zip");
+    std::error_code ec;
+    fs::path previous;
+    fs::path previousZip;
+    if (zipOutput_ && !fs::exists(stagedZip, ec)) {
+        detail = "staged zip is missing";
+        return false;
+    }
+    if (fs::exists(out, ec)) {
+        uint64_t suffix = 0;
+        do {
+            previous = fs::path(out.wstring() + L".previous."
+                + std::to_wstring(GetCurrentProcessId()) + L"." + std::to_wstring(++suffix));
+        } while (fs::exists(previous, ec));
+        fs::rename(out, previous, ec);
+        if (ec) {
+            detail = "cannot move previous package: " + ec.message();
+            return false;
+        }
+    }
+    fs::rename(staged, out, ec);
+    if (ec) {
+        if (!previous.empty()) {
+            std::error_code restoreError;
+            fs::rename(previous, out, restoreError);
+            if (restoreError) {
+                detail = "cannot publish package or restore previous package: " + ec.message()
+                    + "; " + restoreError.message();
+                return false;
+            }
+        }
+        detail = "cannot publish staged package: " + ec.message();
+        return false;
+    }
+    const auto rollbackPackage = [&]() {
+        std::error_code rollbackError;
+        fs::rename(out, staged, rollbackError);
+        if (!rollbackError && !previous.empty()) {
+            fs::rename(previous, out, rollbackError);
+        }
+        return rollbackError;
+    };
+    if (zipOutput_) {
+        if (fs::exists(zip, ec)) {
+            uint64_t suffix = 0;
+            do {
+                previousZip = fs::path(zip.wstring() + L".previous."
+                    + std::to_wstring(GetCurrentProcessId()) + L"." + std::to_wstring(++suffix));
+            } while (fs::exists(previousZip, ec));
+            fs::rename(zip, previousZip, ec);
+            if (ec) {
+                const std::string publishError = ec.message();
+                const std::error_code rollbackError = rollbackPackage();
+                detail = "cannot move previous zip: " + publishError;
+                if (rollbackError) detail += "; package rollback failed: " + rollbackError.message();
+                return false;
+            }
+        }
+        fs::rename(stagedZip, zip, ec);
+        if (ec) {
+            const std::string publishError = ec.message();
+            std::error_code zipRestoreError;
+            if (!previousZip.empty()) fs::rename(previousZip, zip, zipRestoreError);
+            const std::error_code rollbackError = rollbackPackage();
+            detail = "cannot publish zip: " + publishError;
+            if (zipRestoreError) detail += "; zip restore failed: " + zipRestoreError.message();
+            if (rollbackError) detail += "; package rollback failed: " + rollbackError.message();
+            return false;
+        }
+    }
+    detail = "published package";
+    return true;
+}
+
 void BuildSettingsWindow::FinishStage(StrId name, bool ok, bool skipped, std::string detail)
 {
     results_.push_back({ name, ok, skipped, std::move(detail) });
@@ -332,6 +435,7 @@ void BuildSettingsWindow::StartCliPackage(const std::wstring& outDir, bool dds, 
     }
     results_.clear();
     status_.clear();
+    stagingDir_.clear();
     stage_ = Stage::Scripts;
     MYE_LOG_INFO("[build] CLI package started: %s", outputDir_);
 }
@@ -457,15 +561,13 @@ void BuildSettingsWindow::AdvancePipeline(EngineContext& ctx)
     case Stage::Zip: {
         if (!zipOutput_) {
             FinishStage(StrId::Build_StZip, true, true, {});
-            stage_ = Stage::Done;
-            status_ = Tr(StrId::Build_DoneOk);
+            stage_ = Stage::Publish;
             return;
         }
-        const fs::path out = fs::path(Utf8ToWide(outputDir_));
+        const fs::path out = fs::path(stagingDir_);
         const fs::path zip = fs::path(out.wstring() + L".zip");
         if (proc_ == nullptr) {
             std::error_code ec;
-            fs::remove(zip, ec); // 古い zip を先に落とす (tar は truncate するが明示的に)
             procLog_ = out.wstring() + L".zip.log";
             // Windows 標準の bsdtar (-a = 拡張子から zip 形式を推定)。出力フォルダの中身を
             // アーカイブ直下に入れる — 展開してそのまま実行できる形。
@@ -500,8 +602,16 @@ void BuildSettingsWindow::AdvancePipeline(EngineContext& ctx)
         FinishStage(StrId::Build_StZip, ok, false,
                     ok ? WideToUtf8(zip.filename().wstring())
                        : "exit " + std::to_string(code));
+        stage_ = ok ? Stage::Publish : Stage::Done;
+        if (!ok) status_ = Tr(StrId::Build_Failed);
+        return;
+    }
+    case Stage::Publish: {
+        std::string detail;
+        const bool ok = PublishPackage(detail);
+        FinishStage(StrId::Build_StCopy, ok, false, std::move(detail));
         stage_ = Stage::Done;
-        status_ = ok ? Tr(StrId::Build_DoneOk) : Tr(StrId::Build_Failed);
+        status_ = Tr(ok ? StrId::Build_DoneOk : StrId::Build_Failed);
         return;
     }
     }

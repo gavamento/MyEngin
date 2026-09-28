@@ -389,13 +389,14 @@ bool ValidateDocument(const json& root, std::string& why)
         if (!item.is_object()) {
             return fail(at + " is not an object");
         }
-        if (item.contains("fileId")) {
-            if (!IsFileIdValue(item["fileId"])) {
-                return fail(at + ".fileId is not a non-negative integer");
-            }
+        if (!item.contains("fileId") || !IsFileIdValue(item["fileId"])
+            || item["fileId"].get<uint64_t>() == 0) {
+            return fail(at + ".fileId must be a positive integer");
+        }
+        {
             // 重複すると fileId → EntityID の対応表が後勝ちになり、親と参照が別の実体を指す
             const uint64_t fid = item["fileId"].get<uint64_t>();
-            if (fid != 0 && !fileIds.insert(fid).second) {
+            if (!fileIds.insert(fid).second) {
                 return fail(at + ".fileId " + std::to_string(fid) + " is used twice");
             }
         }
@@ -719,6 +720,7 @@ bool ApplyPartial(Scene& scene, const json& entities, bool removeHiddenMissing)
 
     // fileId で照合し find-or-create
     std::unordered_map<uint64_t, EntityID> incoming;
+    std::unordered_map<uint64_t, EntityID> regenerated; // 旧 EntityID → 同じ fileId の新 EntityID
     for (const json& item : entities) {
         const uint64_t fid = item.value("fileId", 0ull);
         if (fid == 0) {
@@ -729,10 +731,15 @@ bool ApplyPartial(Scene& scene, const json& entities, bool removeHiddenMissing)
         if (g) {
             e = g.Id();
         } else {
+            const EntityID previous = scene.LastEntityForFileId(fid);
             GameObject obj = scene.CreateGameObject(item.value("name", std::string("entity")));
             obj.AddComponent<FileIdComponent>()->value = fid;
             e = obj.Id();
+            if (!previous.IsNull() && previous != e) {
+                regenerated[(static_cast<uint64_t>(previous.index) << 32) | previous.generation] = e;
+            }
         }
+        scene.EnsureFileId(e); // 再生成後の fileId → EntityID 履歴を更新
         incoming[fid] = e;
     }
     auto toEntity = [&](uint64_t fid) -> EntityID {
@@ -783,6 +790,33 @@ bool ApplyPartial(Scene& scene, const json& entities, bool removeHiddenMissing)
     }
 
     world.ApplyStructuralChanges();
+    if (!regenerated.empty()) {
+        const ComponentRegistry& registry = ComponentRegistry::Get();
+        for (const auto& archetype : world.Archetypes()) {
+            for (ComponentTypeId type : archetype->Types()) {
+                if (type >= registry.Count()) {
+                    continue;
+                }
+                const ComponentDesc& desc = registry.Desc(type);
+                const int column = archetype->FindTypeIndex(type);
+                for (const FieldDesc& field : desc.fields) {
+                    if (field.type != FieldType::EntityRef
+                        || field.offset > desc.size
+                        || sizeof(EntityID) > desc.size - field.offset) {
+                        continue;
+                    }
+                    for (uint32_t row = 0; row < archetype->Count(); ++row) {
+                        auto* ref = reinterpret_cast<EntityID*>(
+                            static_cast<uint8_t*>(archetype->GetPtr(column, row)) + field.offset);
+                        const uint64_t key = (static_cast<uint64_t>(ref->index) << 32) | ref->generation;
+                        if (auto it = regenerated.find(key); it != regenerated.end()) {
+                            *ref = it->second;
+                        }
+                    }
+                }
+            }
+        }
+    }
     return true;
 }
 
@@ -877,7 +911,8 @@ bool SaveToFile(Scene& scene, const std::wstring& path)
     return true;
 }
 
-bool LoadFromFile(Scene& scene, const std::wstring& path)
+bool LoadFromFile(Scene& scene, const std::wstring& path,
+                  const std::function<void()>& beforeApply)
 {
     std::ifstream f(std::filesystem::path(path), std::ios::binary);
     if (!f) {
@@ -890,6 +925,14 @@ bool LoadFromFile(Scene& scene, const std::wstring& path)
     } catch (const json::exception& ex) {
         MYE_LOG_ERROR("scene parse failed: %s (%s)", WideToUtf8(path).c_str(), ex.what());
         return false;
+    }
+    std::string why;
+    if (!ValidateDocument(root, why)) {
+        MYE_LOG_ERROR("scene load: invalid json (%s)", why.c_str());
+        return false;
+    }
+    if (beforeApply) {
+        beforeApply();
     }
     bool ok = false;
     try {

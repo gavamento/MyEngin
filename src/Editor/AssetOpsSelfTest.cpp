@@ -9,6 +9,8 @@
 #include <system_error>
 #include <vector>
 
+#include <Windows.h>
+
 #include "nlohmann/json.hpp"
 
 #include "Editor/AssetOps.h"
@@ -60,6 +62,54 @@ bool RunAssetOpsSelfTest()
     fs::create_directories(root, ec);
 
     EngineContext ctx; // assetDb は null (テーブル更新は AssetDatabaseSelfTest が担当)
+
+    {
+        const fs::path locked = root / L"locked.anim.json";
+        WriteDummy(locked);
+        HANDLE handle = CreateFileW(locked.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING,
+                                    FILE_ATTRIBUTE_NORMAL, nullptr);
+        const bool rejected = handle != INVALID_HANDLE_VALUE
+            && !WriteFileReplacing(locked.wstring(), "replacement");
+        if (handle != INVALID_HANDLE_VALUE) {
+            CloseHandle(handle);
+        }
+        std::ifstream f(locked, std::ios::binary);
+        std::string bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        check(rejected && bytes == "dummy", "failed replacement preserves previous asset bytes");
+        f.close();
+        const bool replaced = WriteFileReplacing(locked.wstring(), "updated");
+        std::ifstream updatedFile(locked, std::ios::binary);
+        std::string updated((std::istreambuf_iterator<char>(updatedFile)),
+                            std::istreambuf_iterator<char>());
+        check(replaced && updated == "updated", "successful replacement publishes complete asset bytes");
+    }
+
+    {
+        const struct {
+            const wchar_t* filename;
+            std::wstring (*create)(EngineContext&, const std::wstring&, const std::string&);
+        } cases[] = {
+            { L"existing.mat.json", &CreateMaterialAsset },
+            { L"existing.sound.json", &CreateSoundAsset },
+            { L"existing.mixer.json", &CreateMixerAsset },
+            { L"existing.physmat.json", &CreatePhysMatAsset },
+        };
+        bool preserved = true;
+        for (const auto& item : cases) {
+            const fs::path path = root / item.filename;
+            WriteDummy(path);
+            preserved = item.create(ctx, root.wstring(), "existing").empty() && preserved;
+            std::ifstream f(path, std::ios::binary);
+            std::string bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            preserved = (bytes == "dummy") && preserved;
+        }
+        const fs::path scenePath = root / L"existing.scene.json";
+        WriteDummy(scenePath);
+        preserved = CreateSceneAsset(root.wstring(), "existing").empty() && preserved;
+        std::ifstream sceneFile(scenePath, std::ios::binary);
+        std::string sceneBytes((std::istreambuf_iterator<char>(sceneFile)), std::istreambuf_iterator<char>());
+        check(preserved && sceneBytes == "dummy", "create refuses duplicate assets and preserves bytes");
+    }
 
     // ---- (1) 複合サフィックス維持 + .meta 同伴 ----
     const fs::path walk = root / L"walk.anim.json";

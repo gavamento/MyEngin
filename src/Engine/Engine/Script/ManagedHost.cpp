@@ -190,6 +190,9 @@ const ManagedHost::CsType* ManagedHost::FindByComponent(ComponentTypeId t) const
 
 void ManagedHost::RegisterTypes()
 {
+    for (CsType& type : types_) {
+        type.managedIndex = -1;
+    }
     const int32_t count = vt_.GetTypeCount();
     for (int32_t i = 0; i < count; ++i) {
         char nameBuf[256] = {};
@@ -340,6 +343,11 @@ void ManagedHost::RunPhase(Phase phase)
     World& world = scene_->GetWorld();
     if (phase == Phase::StartAndUpdate) {
         ReleaseOrphanInstances(); // 前 tick までに外れた / 消えたコンポーネントの分
+        std::erase_if(started_, [&world](const ScriptStartedKey& key) {
+            const EntityID e{static_cast<uint32_t>(key.entity >> 32),
+                             static_cast<uint32_t>(key.entity)};
+            return !world.IsAlive(e) || !world.HasComponent(e, static_cast<ComponentTypeId>(key.script));
+        });
     }
     for (CsType& type : types_) { // 登録順 (安定順序)
         if (type.componentId == kInvalidComponentType || type.managedIndex < 0) {

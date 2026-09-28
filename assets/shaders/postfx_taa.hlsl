@@ -43,12 +43,21 @@ VSOut VSMain(uint vid : SV_VertexID)
     return o;
 }
 
+float3 FiniteRgb(float3 color)
+{
+    return float3(isfinite(color.x) ? color.x : 0.0f,
+                  isfinite(color.y) ? color.y : 0.0f,
+                  isfinite(color.z) ? color.z : 0.0f);
+}
+
 float4 PSMain(VSOut i) : SV_Target
 {
     const int2 maxPx = int2(gTaaSize) - int2(1, 1);
     const int2 px = clamp(int2(i.pos.xy), int2(0, 0), maxPx);
     // シーン / 速度は描画先と同解像度なので Load (サンプラの補間で嘘をつかない)
-    const float4 curSample = gTaaCur.Load(int3(px, 0));
+    const float4 rawCur = gTaaCur.Load(int3(px, 0));
+    const float4 curSample = float4(FiniteRgb(rawCur.rgb),
+                                   isfinite(rawCur.a) ? rawCur.a : 1.0f);
     const float3 cur = curSample.rgb;
     if (gTaaHistValid == 0) {
         return curSample; // 履歴なし = 今フレームそのまま (初回フレームの縮退)
@@ -60,19 +69,20 @@ float4 PSMain(VSOut i) : SV_Target
     [unroll] for (int y = -1; y <= 1; ++y) {
         [unroll] for (int x = -1; x <= 1; ++x) {
             const int2 q = clamp(px + int2(x, y), int2(0, 0), maxPx);
-            const float3 c = gTaaCur.Load(int3(q, 0)).rgb;
+            const float3 c = FiniteRgb(gTaaCur.Load(int3(q, 0)).rgb);
             nmin = min(nmin, c);
             nmax = max(nmax, c);
         }
     }
 
     const float2 uv = (float2(px) + 0.5f) / gTaaSize;
-    const float2 prevUv = uv - gTaaVelocity.Load(int3(px, 0));
-    if (any(prevUv < 0.0f) || any(prevUv >= 1.0f)) {
+    const float2 velocity = gTaaVelocity.Load(int3(px, 0));
+    const float2 prevUv = uv - velocity;
+    if (!all(isfinite(velocity)) || any(prevUv < 0.0f) || any(prevUv >= 1.0f)) {
         return curSample; // 前フレームの画面の外 = 履歴が存在しない
     }
 
     // 履歴は非整数 UV になるのでバイリニア。クランプは箱への押し込み
-    const float3 hist = clamp(gTaaHist.SampleLevel(gLinear, prevUv, 0).rgb, nmin, nmax);
+    const float3 hist = clamp(FiniteRgb(gTaaHist.SampleLevel(gLinear, prevUv, 0).rgb), nmin, nmax);
     return float4(lerp(cur, hist, gTaaFeedback), curSample.a);
 }

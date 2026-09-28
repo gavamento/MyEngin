@@ -135,11 +135,13 @@ private:
     struct AsyncCompile {
         uint64_t id;
         std::future<ShaderProgram> future;
+        bool dirty = false;
     };
     std::vector<AsyncCompile> async_;
     struct AsyncSurfaceCompile {
         uint64_t id;
         std::future<SurfaceProgram> future;
+        bool dirty = false;
     };
     std::vector<AsyncSurfaceCompile> asyncSurface_; // M79 sub-02: サーフェスのホットリロード
     std::wstring cacheDir_; // 空 = キャッシュ無効

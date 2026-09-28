@@ -44,7 +44,7 @@ public:
     }
 
 private:
-    enum class Stage { Idle, Scripts, CompileCs, CookWarm, Copy, Dds, Zip, Done };
+    enum class Stage { Idle, Scripts, CompileCs, CookWarm, Copy, Dds, Zip, Publish, Done };
     struct StageResult {
         StrId name;
         bool ok = false;
@@ -57,8 +57,10 @@ private:
     bool StageCookWarm(EngineContext& ctx, std::string& detail);
     bool StageCopy(EngineContext& ctx, std::string& detail); // exe / assets 等のコピー + cooked 同梱
     bool StageDds(EngineContext& ctx, std::string& detail);
+    bool PublishPackage(std::string& detail);
 
     char outputDir_[512] = {};
+    std::wstring stagingDir_;
     std::string bootScene_ = "main.scene.json";
     bool init_ = false;
     bool bundleDotnet_ = true;   // .NET ランタイムを同梱して自己完結配布にする

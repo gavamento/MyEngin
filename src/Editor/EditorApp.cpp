@@ -1880,6 +1880,10 @@ bool EditorApp::OpenScene(EngineContext& ctx)
 // ファイルダイアログを経ない共通ロード経路 (OpenScene と AssetBrowser ダブルクリックが使う)
 bool EditorApp::LoadSceneFromPath(EngineContext& ctx, const std::wstring& path)
 {
+    if (playMode_.InPlayMode()) {
+        toasts_.Notify(LogLevel::Warn, Tr(StrId::SceneSwitch_BlockedPlaying));
+        return false;
+    }
     // ★選択と Undo はロードに成功してから捨てる。不正なファイルなら LoadFromFile はシーンに触らずに
     //   false を返すので、失敗したときは今の編集をそのまま続けられる
     if (!SceneSerializer::LoadFromFile(*ctx.scene, path)) {
@@ -1907,6 +1911,11 @@ bool EditorApp::LoadSceneFromPath(EngineContext& ctx, const std::wstring& path)
 
 void EditorApp::RequestGuardedAction(EngineContext& ctx, PendingAction action)
 {
+    if (playMode_.InPlayMode() && (action == PendingAction::NewScene
+        || action == PendingAction::OpenScene || action == PendingAction::OpenSceneAsset)) {
+        toasts_.Notify(LogLevel::Warn, Tr(StrId::SceneSwitch_BlockedPlaying));
+        return;
+    }
     if (!IsSceneDirty()) {
         ExecuteAction(ctx, action);
         return;

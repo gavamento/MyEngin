@@ -111,7 +111,11 @@ uint64_t SoundLibrary::LoadFromFile(const std::wstring& path)
         return 0;
     }
     SoundAsset a;
-    if (!FromJson(j, a)) {
+    try {
+        if (!FromJson(j, a)) {
+            return 0;
+        }
+    } catch (const json::exception&) {
         return 0;
     }
     a.name = NameFromPath(path);
@@ -133,12 +137,7 @@ bool SoundLibrary::SaveToFile(uint64_t hash) const
     if (s == nullptr) {
         return false;
     }
-    std::ofstream f(fs::path(s->path), std::ios::binary);
-    if (!f) {
-        return false;
-    }
-    f << ToJson(*s).dump(2);
-    return true;
+    return WriteFileReplacing(s->path, ToJson(*s).dump(2));
 }
 
 const SoundAsset* SoundLibrary::Get(uint64_t hash) const

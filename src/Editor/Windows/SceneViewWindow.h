@@ -116,6 +116,8 @@ private:
     ImGuizmo::MODE gizmoMode_ = ImGuizmo::LOCAL;
     bool orthographic_ = false;
     bool gizmoActive_ = false; // Undo transient 記録中 (ドラッグ全体で 1 エントリ)
+    uint64_t gizmoFileId_ = 0;
+    bool gizmoBlockedUntilRelease_ = false;
     bool camSpeedDirty_ = false; // RMB+ホイールで速度変更中 (RMB リリース時に settings.Save)
     bool showGrid_ = true;
     bool showGizmos_ = true; // コライダー/ライト/カメラ等の補助表示 (ビルボードアイコン含む)

@@ -54,6 +54,36 @@ using namespace DirectX;
 namespace mye {
 namespace {
 
+bool WriteNewAssetFile(const std::wstring& path, const std::string& bytes)
+{
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return false; // 同名ファイルがある場合も既存内容には触れない
+    }
+    size_t offset = 0;
+    bool ok = true;
+    while (offset < bytes.size()) {
+        DWORD written = 0;
+        const DWORD size = static_cast<DWORD>(std::min<size_t>(bytes.size() - offset, MAXDWORD));
+        if (!WriteFile(file, bytes.data() + offset, size, &written, nullptr) || written == 0) {
+            ok = false;
+            break;
+        }
+        offset += written;
+    }
+    if (ok) {
+        ok = FlushFileBuffers(file) != 0;
+    }
+    if (!CloseHandle(file)) {
+        ok = false;
+    }
+    if (!ok) {
+        DeleteFileW(path.c_str()); // この呼出しが CREATE_NEW で作った不完全ファイルだけ
+    }
+    return ok;
+}
+
 // C++ 識別子向けサニタイズ (英数 _ のみ、先頭は英字。数字始まり/空は Script を前置)
 std::string SanitizeIdentifier(const std::string& in)
 {
@@ -307,18 +337,19 @@ std::wstring CreateSceneAsset(const std::wstring& dir, const std::string& name)
 {
     const std::string safe = SanitizeFileName(name, "New Scene");
     const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".scene.json";
+    if (fs::exists(path)) {
+        return {};
+    }
     nlohmann::json root;
     root["engine"] = "MyEngine";
     root["version"] = 2;
     root["sceneName"] = safe;
     root["nextFileId"] = 1;
     root["entities"] = nlohmann::json::array();
-    std::ofstream f{ fs::path(path) };
-    if (!f) {
+    if (!WriteNewAssetFile(path, root.dump(2))) {
         MYE_LOG_ERROR(Tr(StrId::Log_WriteSceneFail), WideToUtf8(path).c_str());
         return {};
     }
-    f << root.dump(2);
     MYE_LOG_INFO(Tr(StrId::Log_CreatedScene), WideToUtf8(path).c_str());
     return path;
 }
@@ -330,14 +361,17 @@ std::wstring CreateAnimationAsset(EngineContext& ctx, const std::wstring& dir, c
     }
     const std::string safe = SanitizeFileName(name, "New Clip");
     const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".anim.json";
+    if (fs::exists(path)) {
+        return {};
+    }
     AnimationClipAsset clip;
     clip.name = safe;
     clip.lengthTicks = 60;
-    const uint64_t hash = ctx.anims->Register(path, clip);
-    if (hash == 0 || !ctx.anims->SaveToFile(hash)) {
+    if (!WriteNewAssetFile(path, AnimationLibrary::ToJson(clip).dump(2))) {
         MYE_LOG_ERROR(Tr(StrId::Log_WriteAnimFail), WideToUtf8(path).c_str());
         return {};
     }
+    ctx.anims->Register(path, std::move(clip));
     MYE_LOG_INFO(Tr(StrId::Log_CreatedAnim), WideToUtf8(path).c_str());
     return path;
 }
@@ -346,6 +380,9 @@ std::wstring CreateMaterialAsset(EngineContext& ctx, const std::wstring& dir, co
 {
     const std::string safe = SanitizeFileName(name, "New Material");
     const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".mat.json";
+    if (fs::exists(path)) {
+        return {};
+    }
     nlohmann::json root;
     root["engine"] = "MyEngine";
     root["material"] = 1;
@@ -361,13 +398,10 @@ std::wstring CreateMaterialAsset(EngineContext& ctx, const std::wstring& dir, co
     root["texture"] = "";   // assets ルート相対パス (空 = 白テクスチャ)
     root["normalMap"] = ""; // 空 = ノーマルマップなし
     root["transparent"] = false;
-    std::ofstream f{ fs::path(path) };
-    if (!f) {
+    if (!WriteNewAssetFile(path, root.dump(2))) {
         MYE_LOG_ERROR(Tr(StrId::Log_WriteMatFail), WideToUtf8(path).c_str());
         return {};
     }
-    f << root.dump(2);
-    f.close();
     // 生成直後に登録 → 参照ピッカー / ダブルクリック割り当てで即使える
     if (ctx.resources) {
         ctx.resources->materials.LoadFromFile(path, ctx.resources->textures, ctx.assetsRoot);
@@ -380,16 +414,16 @@ std::wstring CreateSoundAsset(EngineContext& ctx, const std::wstring& dir, const
 {
     const std::string safe = SanitizeFileName(name, "New Sound");
     const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".sound.json";
+    if (fs::exists(path)) {
+        return {};
+    }
     SoundAsset s;
     s.name = safe;
     s.variations.push_back(SoundVariation{}); // 空スロットを 1 本 (Inspector で clip を選ぶ)
-    std::ofstream f{ fs::path(path), std::ios::binary };
-    if (!f) {
+    if (!WriteNewAssetFile(path, SoundLibrary::ToJson(s).dump(2))) {
         MYE_LOG_ERROR(Tr(StrId::Log_WriteSoundFail), WideToUtf8(path).c_str());
         return {};
     }
-    f << SoundLibrary::ToJson(s).dump(2);
-    f.close();
     // 生成直後に登録 → 参照ピッカー / ダブルクリック試聴で即使える (CreateMaterialAsset 範型)
     if (ctx.sounds) {
         ctx.sounds->LoadFromFile(path);
@@ -436,15 +470,15 @@ std::wstring CreateMixerAsset(EngineContext& ctx, const std::wstring& dir, const
 {
     const std::string safe = SanitizeFileName(name, "New Mixer");
     const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".mixer.json";
+    if (fs::exists(path)) {
+        return {};
+    }
     MixerAsset m = DefaultMixer(); // Master / BGM / SE / UI
     m.name = safe;
-    std::ofstream f{ fs::path(path), std::ios::binary };
-    if (!f) {
+    if (!WriteNewAssetFile(path, MixerLibrary::ToJson(m).dump(2))) {
         MYE_LOG_ERROR(Tr(StrId::Log_WriteMixerFail), WideToUtf8(path).c_str());
         return {};
     }
-    f << MixerLibrary::ToJson(m).dump(2);
-    f.close();
     // 生成直後に登録 → Audio Mixer 窓のアセット一覧にそのまま出る (CreateSoundAsset 範型)。
     // **アクティブの切り替えはしない** — 作った瞬間に鳴っているバス構成が変わると事故る
     if (ctx.mixers) {
@@ -459,15 +493,15 @@ std::wstring CreatePhysMatAsset(EngineContext& ctx, const std::wstring& dir, con
     (void)ctx; // 署名は他の Create* と揃える (InstantiateAssetAtPath 経由の互換。AssetOps.h 注記)
     const std::string safe = SanitizeFileName(name, "New PhysMat");
     const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".physmat.json";
+    if (fs::exists(path)) {
+        return {};
+    }
     PhysMat m;
     m.name = safe;
-    std::ofstream f{ fs::path(path), std::ios::binary };
-    if (!f) {
+    if (!WriteNewAssetFile(path, PhysMatLibrary::ToJson(m).dump(2))) {
         MYE_LOG_ERROR(Tr(StrId::Log_WritePhysMatFail), WideToUtf8(path).c_str());
         return {};
     }
-    f << PhysMatLibrary::ToJson(m).dump(2);
-    f.close();
     // 生成直後に登録 → 参照ピッカー (M59a2 の Collider.physMaterial) で即使える
     if (PhysMatLibrary* pm = physmat::Library()) {
         pm->LoadFromFile(path);
@@ -524,12 +558,7 @@ bool ProjectShaderShortNameInUse(const std::wstring& assetsRoot, const std::stri
 
 bool WriteBinaryFile(const std::wstring& path, const std::string& content)
 {
-    std::ofstream f{ fs::path(path), std::ios::binary };
-    if (!f) {
-        return false;
-    }
-    f << content;
-    return f.good();
+    return WriteNewAssetFile(path, content);
 }
 
 std::string PostShaderTemplate(const std::string& safeName)

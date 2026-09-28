@@ -959,6 +959,14 @@ void AudioSystem::StopVoicesUsingClip(AssetID id)
     for (Voice& v : voices_) {
         if (v.active && v.clip == id) {
             StopSlot(v);
+            // DestroyVoice は音声スレッドがこの voice のデータ参照を終えるまで待つ。
+            // 旧 PCM の解放はこの後の RegisterClip で行う。
+            if (v.voice != nullptr) {
+                v.voice->DestroyVoice();
+                v.voice = nullptr;
+                v.channels = 0;
+                v.sampleRate = 0;
+            }
         }
     }
 }

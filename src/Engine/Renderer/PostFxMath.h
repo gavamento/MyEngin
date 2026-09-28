@@ -349,12 +349,18 @@ inline DirectX::XMFLOAT3 Resolve(const DirectX::XMFLOAT3& cur, const DirectX::XM
                                  const DirectX::XMFLOAT3& nmin, const DirectX::XMFLOAT3& nmax,
                                  float prevU, float prevV, bool histValid, float feedback)
 {
+    const auto finite = [](float value) { return std::isfinite(value) ? value : 0.0f; };
+    const DirectX::XMFLOAT3 safeCur{ finite(cur.x), finite(cur.y), finite(cur.z) };
     if (!histValid || !HistoryUvValid(prevU, prevV)) {
-        return cur;
+        return safeCur;
     }
-    const DirectX::XMFLOAT3 c = ClampToNeighborhood(hist, nmin, nmax);
-    return { cur.x + (c.x - cur.x) * feedback, cur.y + (c.y - cur.y) * feedback,
-             cur.z + (c.z - cur.z) * feedback };
+    const DirectX::XMFLOAT3 safeHist{ finite(hist.x), finite(hist.y), finite(hist.z) };
+    const DirectX::XMFLOAT3 safeMin{ finite(nmin.x), finite(nmin.y), finite(nmin.z) };
+    const DirectX::XMFLOAT3 safeMax{ finite(nmax.x), finite(nmax.y), finite(nmax.z) };
+    const DirectX::XMFLOAT3 c = ClampToNeighborhood(safeHist, safeMin, safeMax);
+    return { safeCur.x + (c.x - safeCur.x) * feedback,
+             safeCur.y + (c.y - safeCur.y) * feedback,
+             safeCur.z + (c.z - safeCur.z) * feedback };
 }
 
 } // namespace taa

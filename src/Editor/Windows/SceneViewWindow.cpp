@@ -1030,14 +1030,32 @@ void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoSt
                                 float rectW, float rectH)
 {
     World& world = ctx.scene->GetWorld();
+    if (gizmoActive_ && selection.primary != gizmoFileId_) {
+        undo.CancelRecord();
+        gizmoActive_ = false;
+        gizmoFileId_ = 0;
+        gizmoBlockedUntilRelease_ = true;
+    }
     GameObject sel = ctx.scene->FindByFileId(selection.primary);
     if (!sel) {
+        if (gizmoActive_) {
+            undo.CancelRecord();
+            gizmoActive_ = false;
+            gizmoFileId_ = 0;
+            gizmoBlockedUntilRelease_ = true;
+        }
         return;
     }
     const EntityID e = sel.Id();
     auto* wm = world.GetComponent<WorldMatrixComponent>(e);
     auto* lt = world.GetComponent<LocalTransform>(e);
     if (!wm || !lt) {
+        if (gizmoActive_) {
+            undo.CancelRecord();
+            gizmoActive_ = false;
+            gizmoFileId_ = 0;
+            gizmoBlockedUntilRelease_ = true;
+        }
         return;
     }
 
@@ -1060,15 +1078,19 @@ void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoSt
                                            gizmoMode_, &worldM.m[0][0], nullptr,
                                            snap ? snapVals : nullptr);
     const bool using_ = ImGuizmo::IsUsing();
+    if (!ImGui::IsMouseDown(0)) {
+        gizmoBlockedUntilRelease_ = false;
+    }
 
     // ドラッグ開始 (rising edge): この時点で LocalTransform はまだ変更前 → before を撮る
-    if (using_ && !gizmoActive_) {
+    if (using_ && !gizmoActive_ && !gizmoBlockedUntilRelease_) {
         gizmoActive_ = true;
+        gizmoFileId_ = selection.primary;
         undo.BeginRecord("Gizmo", selection);
         undo.CaptureBefore(*ctx.scene, selection.primary);
     }
 
-    if (used) {
+    if (used && gizmoActive_) {
         // ワールド行列 → ローカル行列 (親があれば親ワールドの逆行列を掛ける)
         WriteWorldToLocal(world, e, *lt, worldM);
     }
@@ -1076,8 +1098,9 @@ void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoSt
     // ドラッグ終了 (falling edge): after を撮って 1 エントリ確定
     if (!using_ && gizmoActive_) {
         gizmoActive_ = false;
-        undo.CaptureAfter(*ctx.scene, selection.primary);
+        undo.CaptureAfter(*ctx.scene, gizmoFileId_);
         undo.EndRecord(selection);
+        gizmoFileId_ = 0;
     }
 }
 
@@ -1597,6 +1620,11 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     // ギズモ (ImGui 描画レイヤ — シーン RT/backbuffer には焼き込まれない)
     if (selection.primary != 0 && !terrainBrush_) {
         DrawGizmo(ctx, selection, undo, settings, imgPos.x, imgPos.y, avail.x, avail.y);
+    } else if (gizmoActive_) {
+        undo.CancelRecord();
+        gizmoActive_ = false;
+        gizmoFileId_ = 0;
+        gizmoBlockedUntilRelease_ = true;
     }
 
     // ---- ビルボードアイコン (M40b): カメラ/ライト/エミッタ位置に FA アイコンを重ねる。

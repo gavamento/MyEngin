@@ -358,7 +358,8 @@ fn run_per_path_chunk(state: &State, head: &[&str], paths: &[String]) -> Result<
     for chunk in paths.chunks(MAX_PATHS_PER_CALL) {
         let mut argv: Vec<&str> = head.to_vec();
         argv.push("--");
-        for p in chunk {
+        let literal_paths: Vec<String> = chunk.iter().map(|p| format!(":(literal){p}")).collect();
+        for p in &literal_paths {
             argv.push(p.as_str());
         }
         let out = git::run(&state.root, &argv)?;
@@ -480,7 +481,8 @@ fn diff(state: &mut State, args: &Value) -> Result<Value, ErrorBody> {
         argv.push("--cached");
     }
     argv.push("--");
-    argv.push(path.as_str());
+    let literal_path = format!(":(literal){path}");
+    argv.push(literal_path.as_str());
     let out = git::run(&state.root, &argv)?;
     if !out.success() {
         return Err(git::classify_error(&out));

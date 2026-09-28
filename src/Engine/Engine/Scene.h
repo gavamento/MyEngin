@@ -51,6 +51,11 @@ public:
     // 破棄して線形走査にフォールバックして補修する。fileId はシーン内一意 (NextFileId
     // 単調採番) が前提。World::SimCacheEnabled()==false で従来の線形走査のみ
     GameObject FindByFileId(uint64_t fileId);
+    EntityID LastEntityForFileId(uint64_t fileId) const
+    {
+        auto it = fileIdHistory_.find(fileId);
+        return it == fileIdHistory_.end() ? kNullEntity : it->second;
+    }
 
     // e に fileId が無ければ採番して返す (Undo/選択が同一性キーとして使う)。0 = 無効
     uint64_t EnsureFileId(EntityID e);
@@ -65,6 +70,7 @@ public:
         overrides_.clear();
         unknownComps_.clear();
         fileIdCache_.clear();
+        fileIdHistory_.clear();
     }
 
     // ---- ゲームフロー (M51g、決定台帳 5) ----
@@ -213,7 +219,7 @@ public:
         overrides_ = std::move(t);
     }
     // fileId 索引は派生物 (M51a)。復元後の EntityID は総入れ替えなので必ず捨てる
-    void InvalidateFileIdCache() { fileIdCache_.clear(); }
+    void InvalidateFileIdCache() { fileIdCache_.clear(); fileIdHistory_.clear(); }
 
 private:
     World world_;
@@ -226,6 +232,7 @@ private:
     // fileId → EntityID の検証つきキャッシュ (M51a)。ヒット時に生存 + 値一致を必ず確認
     // するため stale エントリは無害 (書込点の網羅は不要)。0 (未採番) は入れない
     std::unordered_map<uint64_t, EntityID> fileIdCache_;
+    std::unordered_map<uint64_t, EntityID> fileIdHistory_; // Undo 再生成前の参照先
     TimeControl time_;       // ポーズ/タイムスケール (M51g)
     UIInteractionState ui_;  // UI の hovered/pressed/clicked/focused (M70c)
     PersistStore persist_;   // シーン跨ぎ永続 (M51g)。Clear で消えない

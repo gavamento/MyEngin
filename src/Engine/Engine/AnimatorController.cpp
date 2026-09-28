@@ -128,7 +128,11 @@ uint64_t ControllerLibrary::LoadFromFile(const std::wstring& path)
         return 0;
     }
     ControllerAsset a;
-    if (!FromJson(j, a)) {
+    try {
+        if (!FromJson(j, a)) {
+            return 0;
+        }
+    } catch (const json::exception&) {
         return 0;
     }
     a.name = NameFromPath(path);
@@ -150,12 +154,7 @@ bool ControllerLibrary::SaveToFile(uint64_t hash) const
     if (!c) {
         return false;
     }
-    std::ofstream f(c->path);
-    if (!f) {
-        return false;
-    }
-    f << ToJson(*c).dump(2);
-    return true;
+    return WriteFileReplacing(c->path, ToJson(*c).dump(2));
 }
 
 const ControllerAsset* ControllerLibrary::Get(uint64_t hash) const
