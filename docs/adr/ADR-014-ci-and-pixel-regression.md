@@ -66,3 +66,25 @@ C++ の `TreatWarningAsError` は **ClCompile の項目メタデータ**なの�
   テスト側で `fs::last_write_time` を秒単位でずらす。
 - `.gitattributes` に `*.png binary` を明示している。golden が改行変換されると
   「ピクセル回帰が理由不明で赤い」形で出る。
+
+## 追記: Performance Regression CI (2026-09-29)
+
+- Release の `Editor.exe --perf-bench <json> --perf-commit <40桁SHA>` はヘッドレスで
+  8 項目を固定入力、3 回ウォームアップ、9 回測定の中央値で記録する。対象は
+  ECS 更新、Transform 伝播、broadphase、XPBD、D3D11 WARP の CPU Draw 投入、
+  sim snapshot、world hash、AssetDatabase の 10k アセット走査。Draw は GPU 完了待ちを
+  含めず、AssetDatabase は `.meta` 準備後の再走査を測る。
+- `tools/perf_verify.ps1` は指定した対象と基準のソースを同じ runner に展開し、
+  それぞれ Release ビルドして JSON を比較する。基準の既定は対象の第一親。
+  目標値はレポートに表示するだけで、性能値では CI を失敗にしない。
+  コミット・ビルド・計測・JSON の欠落や不正値は失敗とする。
+- 初回導入時に限り基準コミットにベンチが存在しないため、対象だけ測り、
+  基準を `unavailable` と明記する。次のコミットからコミット間比較を行う。
+- Editor の専用「性能比較検証」ウィンドウはエンジンリポジトリの分岐線付き Gitline を表示する。
+  選択したコミットを基準にし、未選択なら現在の HEAD の第一親を使う。
+  `tools/perf_dispatch.ps1` が GitHub CLI の既存認証で workflow_dispatch を起動する。
+  対象と基準の両方が origin に push 済みであることを確認する。
+  認証が無い場合はログイン案内を表示し、エディタ内にトークンを保存しない。
+- 専用ウィンドウで起動時の HEAD と基準 SHA を固定表示する。成果物 `mye-performance`
+  を待って取得し、8 項目の現在値・基準値・増減率・目標比を同じ窓に表示する。
+  GitHub の実行 URL と失敗理由も同じ窓に表示する。

@@ -118,6 +118,7 @@
     <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\ParticleSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Parts.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\PerfBenchmark.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\AeroSampling.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Broadphase.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\ConvexColliderLibrary.cpp" />
@@ -230,6 +231,7 @@
     <ClCompile Include="..\src\Engine\Renderer\ImGuiRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ImGuiTheme.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\MeshInstancing.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\PerfDrawBenchmark.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\PickingPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\PostProcess.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ProjectComputeRunner.cpp" />
@@ -374,6 +376,7 @@
     <ClInclude Include="..\src\Engine\Engine\Particles\ParticleSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\ParticleSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Parts.h" />
+    <ClInclude Include="..\src\Engine\Engine\PerfBenchmark.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\AeroSampling.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Broadphase.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\ConvexColliderLibrary.h" />
@@ -494,6 +497,7 @@
     <ClInclude Include="..\src\Engine\Renderer\ImGuiTheme.h" />
     <ClInclude Include="..\src\Engine\Renderer\MeshBind.h" />
     <ClInclude Include="..\src\Engine\Renderer\MeshInstancing.h" />
+    <ClInclude Include="..\src\Engine\Renderer\PerfDrawBenchmark.h" />
     <ClInclude Include="..\src\Engine\Renderer\PickingPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\PostFxMath.h" />
     <ClInclude Include="..\src\Engine\Renderer\PostProcess.h" />

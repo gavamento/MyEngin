@@ -13,6 +13,7 @@ private:
     static constexpr int kHistory = 240;
     float frameHistory_[kHistory] = {};
     int cursor_ = 0;
+
 };
 
 } // namespace mye

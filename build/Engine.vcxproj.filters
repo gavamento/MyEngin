@@ -357,6 +357,9 @@
     <ClCompile Include="..\src\Engine\Engine\Parts.cpp">
       <Filter>Engine</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\PerfBenchmark.cpp">
+      <Filter>Engine</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Physics\AeroSampling.cpp">
       <Filter>Engine\Physics</Filter>
     </ClCompile>
@@ -691,6 +694,9 @@
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\MeshInstancing.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\PerfDrawBenchmark.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\PickingPass.cpp">
@@ -1125,6 +1131,9 @@
     <ClInclude Include="..\src\Engine\Engine\Parts.h">
       <Filter>Engine</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\PerfBenchmark.h">
+      <Filter>Engine</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\AeroSampling.h">
       <Filter>Engine\Physics</Filter>
     </ClInclude>
@@ -1483,6 +1492,9 @@
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\MeshInstancing.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\PerfDrawBenchmark.h">
       <Filter>Renderer</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\PickingPass.h">

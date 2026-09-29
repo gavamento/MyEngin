@@ -105,6 +105,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Animator", &animatorController_.open },
                     { "Search", &search_.open },
                     { "Profiler", &profiler_.open },
+                    { "Performance Compare", &performanceCompare_.open },
                     { "Timeline", &timeline_.open },
                     { "Network", &net_.open },
                     { "Source Control", &sourceControl_.open },
@@ -750,6 +751,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     gameView_.OnImGui(ctx, selection_);
     particleSettings_.OnImGui(ctx, settings_);
     profiler_.OnImGui(ctx);
+    performanceCompare_.OnImGui();
     timeline_.OnImGui(ctx, playMode_);
     net_.OnImGui(ctx);
     {
@@ -757,6 +759,12 @@ void EditorApp::OnImGui(EngineContext& ctx)
         // ★窓に渡すのは「今 dirty か」と「保存する手段」だけ。EngineContext を
         //   渡すと、ソース管理の窓からシーンを開き直すような越境が書けてしまう
         SourceControlHost scmHost;
+        scmHost.openExternalUrl = [](const std::string& url) {
+            if (url.starts_with("https://github.com/")) {
+                ShellExecuteW(nullptr, L"open", Utf8ToWide(url).c_str(), nullptr, nullptr,
+                              SW_SHOWNORMAL);
+            }
+        };
         scmHost.sceneDirty = IsSceneDirty();
         // M66d: working tree を書き換えるボタン (破棄) のゲート。窓は判定に使うだけで
         // 表そのものは持たない (2 箇所に条件を書くと必ず食い違う)
@@ -1426,6 +1434,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem(Tr(StrId::Win_Animator), nullptr, &animatorController_.open);
         ImGui::MenuItem(Tr(StrId::Win_Search), nullptr, &search_.open);
         ImGui::MenuItem(Tr(StrId::Win_Profiler), nullptr, &profiler_.open);
+        ImGui::MenuItem(Tr(StrId::Win_PerformanceCompare), nullptr, &performanceCompare_.open);
         ImGui::MenuItem(Tr(StrId::Win_Timeline), nullptr, &timeline_.open);
         ImGui::MenuItem(Tr(StrId::Win_Net), nullptr, &net_.open);
         ImGui::MenuItem(Tr(StrId::Win_SourceControl), nullptr, &sourceControl_.open);
@@ -1802,6 +1811,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Sound Generator", rightBottom);
     ImGui::DockBuilderDockWindow("Audio Mixer", bottom);
     ImGui::DockBuilderDockWindow("Profiler", rightBottom);
+    ImGui::DockBuilderDockWindow("Performance Compare", rightBottom);
     ImGui::DockBuilderDockWindow("Timeline", bottom);
     ImGui::DockBuilderDockWindow("Console", bottom);
     // ★Source Control は**左列 (Hierarchy と同じ束)**。

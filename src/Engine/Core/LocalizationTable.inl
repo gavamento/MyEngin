@@ -30,6 +30,8 @@ MYE_STR(Win_Animation,        "Animation###Animation",                 "アニ�
 MYE_STR(Win_Animator,         "Animator###Animator",                   "アニメーター###Animator")
 MYE_STR(Win_Search,           "Search###Search",                       "検索###Search")
 MYE_STR(Win_Profiler,         "Profiler###Profiler",                   "プロファイラー###Profiler")
+MYE_STR(Win_PerformanceCompare, "Performance Compare###Performance Compare",
+                                "性能比較検証###Performance Compare")
 MYE_STR(Win_ParticleSettings, "Particle Settings###Particle Settings", "パーティクル設定###Particle Settings")
 MYE_STR(Win_SoundGenerator,   "Sound Generator###Sound Generator",     "サウンドジェネレーター###Sound Generator")
 MYE_STR(Win_AudioMixer,       "Audio Mixer###Audio Mixer",             "オーディオミキサー###Audio Mixer")
@@ -298,6 +300,34 @@ MYE_STR(Prof_Memory,          "memory: %llu live allocs, %.1f MB total (%llu all
                               "メモリ: %llu 件が生存 / 合計 %.1f MB (確保 %llu / 解放 %llu)")
 MYE_STR(Prof_RenderPath,      "render path: %s",              "レンダーパス: %s")
 MYE_STR(Prof_Entities,        "entities: %u",                 "エンティティ: %u")
+MYE_STR(Prof_PerfHeader,      "Performance CI", "性能回帰 CI")
+MYE_STR(Prof_PerfBaseSha,     "Baseline SHA (empty = first parent)###ProfPerfBase",
+                              "基準 SHA (空欄なら第一親)###ProfPerfBase")
+MYE_STR(Prof_PerfRun,         "Run Performance CI###ProfPerfRun", "性能回帰 CI を起動###ProfPerfRun")
+MYE_STR(Prof_PerfRunning,     "Starting Performance CI...", "性能回帰 CI を起動中...")
+MYE_STR(Prof_PerfWaiting,     "Waiting for the CI result artifact...", "CI の結果成果物を待っています...")
+MYE_STR(Prof_PerfDownloading, "Retrying the result download...", "結果のダウンロードを再試行しています...")
+MYE_STR(Prof_PerfComplete,    "Performance results loaded.", "性能計測の結果を読み込みました。")
+MYE_STR(Prof_PerfFailed,      "Could not start Performance CI.", "性能回帰 CI を起動できませんでした。")
+MYE_STR(Prof_PerfInvalidResult, "The performance result is missing or invalid.",
+                              "性能計測の結果が見つからないか、形式が正しくありません。")
+MYE_STR(Prof_PerfInvalidSha,  "Enter a 40-digit commit SHA.", "40 桁のコミット SHA を入力してください。")
+MYE_STR(Prof_PerfNoRepo,      "The engine repository was not found.", "エンジンのリポジトリが見つかりません。")
+MYE_STR(Prof_PerfCopyLink,    "Copy CI link###ProfPerfCopyLink", "CI リンクをコピー###ProfPerfCopyLink")
+MYE_STR(Prof_PerfMetric,      "Metric", "項目")
+MYE_STR(Prof_PerfCurrent,     "Current ms", "現在 ms")
+MYE_STR(Prof_PerfBaseline,    "Baseline ms", "基準 ms")
+MYE_STR(Prof_PerfChange,      "Change", "増減率")
+MYE_STR(Prof_PerfGoal,        "Goal ratio", "目標比")
+MYE_STR(Prof_PerfTargetCommit, "Measured commit", "計測したコミット")
+MYE_STR(Prof_PerfBaseCommit,   "Baseline commit", "基準コミット")
+MYE_STR(Perf_Refresh,         "Refresh Gitline###PerfRefresh", "Gitline を更新###PerfRefresh")
+MYE_STR(Perf_HistoryError,    "Could not load the engine Git history.",
+                               "エンジンの Git 履歴を読み込めませんでした。")
+MYE_STR(Perf_FirstParent,     "Using the first parent of HEAD.", "HEAD の第一親を基準にします。")
+MYE_STR(Perf_UseFirstParent,  "Use first parent###PerfFirstParent", "第一親を基準にする###PerfFirstParent")
+MYE_STR(Perf_LaunchedTarget,  "Run target", "実行時の対象")
+MYE_STR(Perf_LaunchedBase,    "Run baseline", "実行時の基準")
 
 // ---- パーティクル設定 (M47b) ----
 MYE_STR(Particle_Backend,     "Backend",                     "バックエンド")
@@ -1375,6 +1405,10 @@ MYE_STR(Scm_CommitDone,        "Committed %s", "コミットしました: %s")
 MYE_STR(Scm_HistoryEmpty,      "No commits yet.", "まだコミットがありません。")
 MYE_STR(Scm_HistoryPick,       "Select a commit to read its full subject.",
                                "コミットを選ぶと件名の全文が出ます。")
+MYE_STR(Scm_PerfCompare,       "Compare performance with this commit###ScmPerfCompare",
+                               "このコミットと性能比較###ScmPerfCompare")
+MYE_STR(Scm_PerfDispatching,   "Starting Performance CI...", "Performance CI を起動中...")
+MYE_STR(Scm_PerfOpenRun,       "Open CI run###ScmPerfOpenRun", "CI 実行を開く###ScmPerfOpenRun")
 
 // ---- M66n: フォルダ単位の選択 / すべてステージ ----
 // ★「すべて解除」を「すべてステージ解除」にしないのは幅の都合 (既定のドック幅では

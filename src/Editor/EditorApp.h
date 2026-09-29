@@ -25,6 +25,7 @@
 #include "Editor/Windows/InspectorWindow.h"
 #include "Editor/Windows/ParticleSettingsWindow.h"
 #include "Editor/Windows/ProfilerWindow.h"
+#include "Editor/Windows/PerformanceCompareWindow.h"
 #include "Editor/Windows/NetWindow.h"
 #include "Editor/Windows/TimelineWindow.h"
 #include "Editor/Windows/ProjectSettingsWindow.h"
@@ -160,6 +161,7 @@ private:
     GameViewWindow gameView_;
     ParticleSettingsWindow particleSettings_;
     ProfilerWindow profiler_;
+    PerformanceCompareWindow performanceCompare_;
     TimelineWindow timeline_; // M52e: 巻き戻しスクラブ (Play 中のみ中身がある)
     NetWindow net_;           // M52i: ネットセッションの状態 (--net-host/join 時のみ中身がある)
     // M66b: git 連携。**セッションは窓と独立**に生きる (窓を閉じていても status は最新)

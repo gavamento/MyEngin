@@ -50,6 +50,7 @@ struct SourceControlHost {
     std::function<std::vector<std::string>()> gitignoreMissing;
     // 不足行だけを末尾に追記する (既存行は触らない)
     std::function<void()> applyGitignore;
+    std::function<void(const std::string&)> openExternalUrl;
 };
 
 // 「保存してコミット」の 3 手 (spec §4.1「commit 周り」、M66k)。

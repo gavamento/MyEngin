@@ -95,6 +95,7 @@
 #include "Engine/Renderer/TextureCookSelfTest.h"
 #include "Engine/Renderer/VolumeTexture.h"
 #include "Engine/Engine/Physics/FractureBenchmark.h" // M80k: --fracture-bench
+#include "Engine/Engine/PerfBenchmark.h"
 
 namespace {
 
@@ -163,6 +164,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     std::wstring modalVoxelizeOut;        // --out DIR
     bool modalBake = false;               // --modal-bake (M76e: .dmnet → .msfm のヘッドレス CLI)
     bool fractureBench = false;           // --fracture-bench (M80k: 破壊物理のヘッドレス性能計測)
+    std::wstring perfBenchOutput;         // --perf-bench FILE
+    std::string perfBenchCommit;           // --perf-commit SHA
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -211,6 +214,19 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             // と同じ「連鎖の手前」の置き方)。実行は下の早期 return 群と同じ場所で行う
             if (arg == L"--fracture-bench") {
                 fractureBench = true;
+                continue;
+            }
+            if (arg == L"--perf-bench" && i + 1 < argc) {
+                perfBenchOutput = argv[++i];
+                continue;
+            }
+            if (arg == L"--perf-commit" && i + 1 < argc) {
+                const std::wstring sha = argv[++i];
+                if (sha.size() != 40 || sha.find_first_not_of(L"0123456789abcdefABCDEF")
+                        != std::wstring::npos) {
+                    return 1;
+                }
+                for (wchar_t digit : sha) perfBenchCommit.push_back(static_cast<char>(digit));
                 continue;
             }
             if (arg == L"--selftest") {
@@ -344,6 +360,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     // 破片数 (16/32/64/128/256) と破壊物の個数 (1/8) の組み合わせを順に測って終了する
     if (fractureBench) {
         return mye::RunFractureBenchmark();
+    }
+    if (!perfBenchOutput.empty()) {
+        if (perfBenchCommit.size() != 40 || perfBenchCommit.find_first_not_of("0123456789abcdefABCDEF")
+                != std::string::npos) {
+            return 1;
+        }
+        return mye::RunPerfBenchmark(perfBenchOutput, perfBenchCommit);
     }
 
     // --hash-diff A B: ワールドハッシュのフィールド単位ダンプを突き合わせて終了 (M52a)。

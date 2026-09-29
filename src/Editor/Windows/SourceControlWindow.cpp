@@ -6,6 +6,7 @@
 #include "Editor/EditorWidgets.h" // ScmBadgeColor (バッジの色表は 1 箇所、M66i)
 #include "Editor/SourceControl/PairRule.h"
 #include "Engine/Core/Localization.h"
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/ImGuiTheme.h" // themeColor (意味色。バッジ色はここからしか採らない)
 
 #include "imgui.h"
@@ -1163,7 +1164,7 @@ void SourceControlWindow::DrawHistory(SourceControlSession& scm)
         ImGui::TextDisabled("%s", Tr(StrId::Scm_HistoryEmpty));
         return;
     }
-    const float detailH = ImGui::GetTextLineHeightWithSpacing() * 3.0f;
+    const float detailH = ImGui::GetTextLineHeightWithSpacing() * 6.0f;
     const float listH = (std::max)(80.0f, ImGui::GetContentRegionAvail().y - detailH);
     if (ImGui::BeginChild("###ScmHistoryList", ImVec2(0, listH), ImGuiChildFlags_Borders)) {
         for (const CommitInfo& c : history) {
@@ -1193,6 +1194,7 @@ void SourceControlWindow::DrawHistory(SourceControlSession& scm)
     }
     ImGui::TextWrapped("%s", picked->subject.c_str());
     ImGui::TextDisabled("%s", picked->sha.c_str());
+
 }
 
 void SourceControlWindow::DrawNode(const SourceControlModel& model, int index)
