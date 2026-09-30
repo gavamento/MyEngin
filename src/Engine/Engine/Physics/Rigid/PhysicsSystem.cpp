@@ -2134,6 +2134,23 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             fn(compoundShapes[static_cast<size_t>(b.subFirst + k)].pose);
         }
     };
+    // ボディを並進だけ動かす (位置補正用)。**複合の子形状の pose も同じだけ動かす** —
+    // 子形状はサブステップ先頭で親から組んだあと固定なので、親の pose だけ動かすと
+    // 子形状は古い位置で貫通を測り続け、同じ貫通を「接地した子形状の数 × 反復回数」ぶん
+    // 押し出して剛体を持ち上げる (破壊物が床で異常に跳ねた原因)。並進は形状の向き・寸法に
+    // 触らないので、組み直さず原点をずらすだけで厳密。子形状を持たないボディは従来の
+    // 3 行と同じ演算になる
+    auto translateBody = [&compoundShapes](Body& b, float dx, float dy, float dz) {
+        b.pose.px += dx;
+        b.pose.py += dy;
+        b.pose.pz += dz;
+        for (int k = 0; k < b.subCount; ++k) {
+            ShapePose& sp = compoundShapes[static_cast<size_t>(b.subFirst + k)].pose;
+            sp.px += dx;
+            sp.py += dy;
+            sp.pz += dz;
+        }
+    };
     // 形状ペアの総当たり。複合 × 複合でも「同じボディペア」として扱うのが要点 (決定台帳)
     auto forEachShapePair = [&forEachShape](const Body& A, const Body& B, auto&& fn) {
         forEachShape(A, [&](const ShapePose& pa) {
@@ -4246,7 +4263,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     continue;
                 }
                 // M60e: 複合は形状ペアごとに押し出す。位置補正はもともと反復なので、
-                // 同じペアを複数回押しても収束の向きは変わらない
+                // 同じペアを複数回押しても収束の向きは変わらない — ただしそれは
+                // **押した結果が次の測定に反映される**ときだけ成り立つ (translateBody 参照)
                 forEachShapePair(A, B, [&](const ShapePose& pa,
                                            const ShapePose& pb) {
                 shapes::Manifold m;
@@ -4262,12 +4280,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 const float corr = std::max(maxDepth - kPenetrationSlop, 0.0f);
                 const float ci = corr * A.invMass / tim;
                 const float cj = corr * B.invMass / tim;
-                A.pose.px += m.nx * ci;
-                A.pose.py += m.ny * ci;
-                A.pose.pz += m.nz * ci;
-                B.pose.px -= m.nx * cj;
-                B.pose.py -= m.ny * cj;
-                B.pose.pz -= m.nz * cj;
+                translateBody(A, m.nx * ci, m.ny * ci, m.nz * ci);
+                translateBody(B, -m.nx * cj, -m.ny * cj, -m.nz * cj);
                 });
             }
         }

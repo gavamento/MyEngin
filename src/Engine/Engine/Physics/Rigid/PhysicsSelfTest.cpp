@@ -5856,6 +5856,51 @@ bool RunPhysicsSelfTest()
             check(hy < -0.98f,
                   "compound: an explicit centre of mass still wins over the derived one");
         }
+
+        // -- (e-8) 多数の子形状で着地しても位置補正で跳ね上がらない --
+        // ★回帰: 位置補正が親の pose だけ動かし子形状の pose を古いまま測っていたため、
+        //   同じ貫通を「接地した子形状の数 × 反復回数」ぶん押し出して剛体を持ち上げていた
+        //   (破壊物 = 破片の複合が床で数 m 跳ねた)。反発 0 の単体 box は跳ねないので、
+        //   同じ外形を 4x4 の子形状に割った複合も跳ねてはいけない
+        {
+            auto dropApex = [&](bool compound) {
+                Scene s;
+                MakeGround(s, "G", 0.0f, -0.5f, 0.0f, 10.0f, 0.5f, 10.0f);
+                GameObject go;
+                if (compound) {
+                    DirectX::XMFLOAT3 offs[16];
+                    DirectX::XMFLOAT3 halfs[16];
+                    for (int i = 0; i < 16; ++i) {
+                        offs[i] = { -0.375f + 0.25f * static_cast<float>(i % 4), 0.0f,
+                                    -0.375f + 0.25f * static_cast<float>(i / 4) };
+                        halfs[i] = { 0.125f, 0.25f, 0.125f };
+                    }
+                    go = makeCompound(s, true, 0.0f, 2.25f, 0.0f, offs, halfs, 16).parent;
+                } else {
+                    go = MakeBox(s, "Single", 0.0f, 2.25f, 0.0f, 0.5f, 0.25f, 0.5f);
+                    go.GetComponent<RigidbodyComponent>()->mass = 1.0f;
+                }
+                const auto* lt = go.GetComponent<LocalTransform>();
+                bool landed = false;
+                float apex = -1e9f;
+                for (int i = 0; i < 180; ++i) {
+                    phys.Update(s.GetWorld(), kDt);
+                    const float y = lt->position.y;
+                    landed = landed || y < 0.3f; // 静止位置は y = 0.25 (半高)
+                    if (landed) {
+                        apex = (std::max)(apex, y);
+                    }
+                }
+                return apex;
+            };
+            const float apexCompound = dropApex(true);
+            const float apexSingle = dropApex(false);
+            MYE_LOG_INFO("  [phys] compound landing apex: 16 children %.4f / single box %.4f (rest 0.25)",
+                         static_cast<double>(apexCompound), static_cast<double>(apexSingle));
+            check(apexSingle < 0.26f, "compound landing: the single box reference does not bounce");
+            check(apexCompound < 0.26f,
+                  "compound landing: 16 child shapes touching down do not stack their push-out");
+        }
     }
 
 
