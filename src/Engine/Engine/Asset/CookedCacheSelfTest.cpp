@@ -8,19 +8,19 @@
 #include <string>
 #include <vector>
 
-#include "Engine/Core/Hash.h"
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Util/Hash.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Asset/CookedCache.h"
 #include "Engine/Engine/Asset/ModelCook.h"
 #include "Engine/Engine/Asset/TerrainAsset.h"
-#include "Engine/Engine/Audio/AudioClip.h"
-#include "Engine/Engine/FbxLoader.h"
-#include "Engine/Engine/ModelLoader.h"
+#include "Engine/Engine/Audio/Playback/AudioClip.h"
+#include "Engine/Engine/Asset/FbxLoader.h"
+#include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Platform/PathUtil.h"
-#include "Engine/Renderer/GpuResources.h"
-#include "Engine/Renderer/ImageWrite.h"
-#include "Engine/Renderer/ShaderManager.h"
-#include "Engine/Renderer/Skeleton.h"
+#include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Texture/ImageWrite.h"
+#include "Engine/Renderer/Shader/ShaderManager.h"
+#include "Engine/Renderer/Mesh/Skeleton.h"
 
 namespace mye {
 namespace {

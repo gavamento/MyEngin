@@ -57,7 +57,7 @@
   planner は AskUserQuestion を使わず、未決事項に `[ユーザーに聞ける]` を付けて返す。司会は Notion へ転記し、
   「ユーザー判断」表に「推奨で仮決定 (Notion Q-n、回答待ち)」と書く。resume 時は Notion の回答欄を読み、推奨と違う回答は planner へ補足として送る。
 - 上限 (差し戻し 3 / レビュー 3) 到達時も Notion へ記録。後続が依存しなければ当該サブを「保留」にして先へ、依存すれば中断して報告。
-- **作業ツリー**: 開始時点の未コミット WIP (deepmodal 関連、`src/Engine/Renderer/WaterPass.cpp`、`tools/deepmodal/train.py`、`assets/deepmodal/*`、ルート直下の一時ファイル群) には触らない。コミットは SELF_EVAL の「触ったファイル」だけ。WIP と同じファイルを触る必要が出たらそのサブで止めて Notion に記録。
+- **作業ツリー**: 開始時点の未コミット WIP (deepmodal 関連、`src/Engine/Renderer/Passes/WaterPass.cpp`、`tools/deepmodal/train.py`、`assets/deepmodal/*`、ルート直下の一時ファイル群) には触らない。コミットは SELF_EVAL の「触ったファイル」だけ。WIP と同じファイルを触る必要が出たらそのサブで止めて Notion に記録。
 - coder は `model: "sonnet"` で起動する。
 - ABI の現状は v21 / 125 スロット (メモの v16/110 は古い)。
 - ルート直下の *.log (_build_round2.log 等) は 9/13〜9/23 付けで今回のハーネス以前のもの、.gitignore 済み。触らない。coder の作業ファイルはスクラッチパッドへ出す。

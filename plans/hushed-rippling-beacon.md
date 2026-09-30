@@ -28,7 +28,7 @@
 
 一方で**下地はほぼ揃っている**。ゼロから作るのは「場」と「判断」だけ:
 
-- `VolumeTexture` (`src\Engine\Renderer\VolumeTexture.h`) — Texture3D の所有者。froxel が実戦投入済み
+- `VolumeTexture` (`src\Engine\Renderer\Device\VolumeTexture.h`) — Texture3D の所有者。froxel が実戦投入済み
 - `shapes::Overlap` / `ComputeAabb` / `MakePoseFromMatrix` (`Physics\Shapes.h`) — ボクセル化の下請け
 - `Shapes.cpp:2344` `RayTerrain()` — **決定論的セル DDA の唯一の前例**
 - `ColliderComponent.physMaterial` → `physmat::Resolve` — 床材の解決経路が既に通っている
@@ -215,12 +215,12 @@
 | `src\Engine\Engine\Acoustic\AcousticGrid.h/.cpp` **(新規)** | 純関数のみ。`AcousticGridDesc{int dimX,dimY,dimZ; float cellSize,minX,minY,minZ;}` / `WorldToCell` / `CellToWorldCenter` / `CellIndex` / `InBounds` / `kFaceCost=11 kEdgeCost=16 kCornerCost=19` / 26 近傍オフセット表 (**固定順 = 決定論のタイブレーク**) |
 | `src\Engine\Engine\Acoustic\AcousticField.h/.cpp` **(新規)** | 場の所有者。M65a では `Sync(World&)` (ボリューム探索 + 占有ベイク) と空の波表のみ。`Reset()` / `Invalidate()` / `Waves()` — **`XpbdBackend.h` の写し** |
 | `src\Engine\Engine\Acoustic\AcousticSelfTest.h/.cpp` **(新規)** | `RunAcousticSelfTest()` |
-| `src\Engine\Core\Components.h` / `.cpp` | 5 型を POD で追加 → `RegisterBuiltinComponents()` の**末尾に append** (TypeId 45〜49)。`MYE_JP` + `MYE_FIELD_RANGE` / `_TIP` |
+| `src\Engine\Core\Ecs\Components.h` / `.cpp` | 5 型を POD で追加 → `RegisterBuiltinComponents()` の**末尾に append** (TypeId 45〜49)。`MYE_JP` + `MYE_FIELD_RANGE` / `_TIP` |
 | `Replay\WorldHasher.h/.cpp` | `SimSources` に `const AcousticField* acoustic` を**末尾 append** / `HashAcousticWaves()` (`HashXpbdPools` の写し) を**内容ゲート付き**で畳む (active な波が 0 本なら節ごと畳まない) |
 | `Replay\SimSnapshot.h/.cpp` | `SimRefs` に `AcousticField* acoustic` 末尾 append / **`kSimSnapshotVersion` 9→10** + 履歴コメント / `kAcousticMagic='ACU1'` の節を **XPB 節の直後**に / ★**読み側は復元後に `Invalidate()` を呼ぶ** |
 | `Engine\TickRunner.h/.cpp` | `TickServices` に `AcousticField* acoustic` / `:334` の直前に**新フェーズ 3.4** を作り `if (stepSim && ts.acoustic) ts.acoustic->Update(...)` / **ハッシュ呼び出し 7 箇所** (`:422,441,449,456,479,498` 付近) の `SimSources` 初期化子 / シーン遷移ブロック (`:597-613`) に `Reset()` |
 | `Engine\EngineLoop.cpp` | `:118` 付近に `AcousticField acoustic;` の実体 / `:455` の `SimRefs` / `:707` 付近の `tickServices.acoustic = &acoustic;` |
-| `src\Editor\EditorMain.cpp` | `:593` の `&&` 連鎖**末尾**に `&& mye::RunAcousticSelfTest()` (実測 42 → **43 スイート**。CLAUDE.md の「40」は古いので同時に直す) |
+| `src\Editor\App\EditorMain.cpp` | `:593` の `&&` 連鎖**末尾**に `&& mye::RunAcousticSelfTest()` (実測 42 → **43 スイート**。CLAUDE.md の「40」は古いので同時に直す) |
 | `engine_spec.md` / `CLAUDE.md` | 新章の骨子 + 11.3 のハッシュ対象表に波表 / selftest 本数 |
 | `pwsh -File tools\gen_project_files.ps1` | 新規 6 ファイル |
 

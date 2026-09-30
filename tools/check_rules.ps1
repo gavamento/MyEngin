@@ -77,7 +77,7 @@ $constGroups = @(
     @{
         label = 'kMaxBones / MYE_MAX_BONES'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'            = 'constexpr\s+int\s+kMaxBones\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'            = 'constexpr\s+int\s+kMaxBones\s*=\s*(\d+)'
             'assets\shaders\forward_skinned.hlsl'          = '#\s*define\s+MYE_MAX_BONES\s+(\d+)'
             'assets\shaders\deferred_gbuffer_skinned.hlsl' = '#\s*define\s+MYE_MAX_BONES\s+(\d+)'
             'assets\shaders\shadow_depth_skinned.hlsl'     = '#\s*define\s+MYE_MAX_BONES\s+(\d+)'
@@ -86,7 +86,7 @@ $constGroups = @(
     @{
         label = 'kEmissiveMaxIntensity / MYE_EMISSIVE_MAX'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kEmissiveMaxIntensity\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h' = 'constexpr\s+int\s+kEmissiveMaxIntensity\s*=\s*(\d+)'
             'assets\shaders\common.hlsli'       = '#\s*define\s+MYE_EMISSIVE_MAX\s+(\d+)'
         }
     },
@@ -178,7 +178,7 @@ $constGroups = @(
     @{
         label = 'kMaxLights / MAX_LIGHTS / MYE_RT_MAX_LIGHTS'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kMaxLights\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h' = 'constexpr\s+int\s+kMaxLights\s*=\s*(\d+)'
             'assets\shaders\common.hlsli'       = '#\s*define\s+MAX_LIGHTS\s+(\d+)'
             'assets\shaders\rt_common.hlsli'    = '#\s*define\s+MYE_RT_MAX_LIGHTS\s+(\d+)'
         }
@@ -192,7 +192,7 @@ $constGroups = @(
         #   壊れる形) だけを止める。引数側は SampleShadowCSM のコメントで注意喚起する
         label = 'ShadowPass::kCascades / SampleShadowCSM vps[]'
         sites = @{
-            'src\Engine\Renderer\ShadowPass.h' = 'static\s+constexpr\s+int\s+kCascades\s*=\s*(\d+)'
+            'src\Engine\Renderer\Passes\ShadowPass.h' = 'static\s+constexpr\s+int\s+kCascades\s*=\s*(\d+)'
             'assets\shaders\common.hlsli'      = 'float4x4\s+vps\[(\d+)\]'
         }
     },
@@ -201,7 +201,7 @@ $constGroups = @(
         # 食い違うと ShadowTile 配列の後ろが読めなくなる (= 静かに壊れる) 典型
         label = 'kMaxShadowTiles / MYE_MAX_SHADOW_TILES'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kMaxShadowTiles\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h' = 'constexpr\s+int\s+kMaxShadowTiles\s*=\s*(\d+)'
             'assets\shaders\common.hlsli'       = '#\s*define\s+MYE_MAX_SHADOW_TILES\s+(\d+)'
         }
     },
@@ -214,7 +214,7 @@ $constGroups = @(
         #   同じ地表を出すための共有点) なので照合先も 1 本
         label = 'kTerrainObjectCbSlot / register(b4)'
         sites = @{
-            'src\Engine\Renderer\TerrainPass.h'      = 'constexpr\s+uint32_t\s+kTerrainObjectCbSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Passes\TerrainPass.h'      = 'constexpr\s+uint32_t\s+kTerrainObjectCbSlot\s*=\s*(\d+)'
             'assets\shaders\terrain_common.hlsli'    = 'cbuffer\s+TerrainObject\s*:\s*register\(b(\d+)\)'
         }
     },
@@ -224,21 +224,21 @@ $constGroups = @(
     @{
         label = 'kTerrainSplatSrvSlot / register(t20)'
         sites = @{
-            'src\Engine\Renderer\TerrainPass.h'   = 'constexpr\s+uint32_t\s+kTerrainSplatSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Passes\TerrainPass.h'   = 'constexpr\s+uint32_t\s+kTerrainSplatSrvSlot\s*=\s*(\d+)'
             'assets\shaders\terrain_common.hlsli' = 'Texture2D\s+gTerrainSplat\s*:\s*register\(t(\d+)\)'
         }
     },
     @{
         label = 'kTerrainAlbedoSrvSlot / register(t21)'
         sites = @{
-            'src\Engine\Renderer\TerrainPass.h'   = 'constexpr\s+uint32_t\s+kTerrainAlbedoSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Passes\TerrainPass.h'   = 'constexpr\s+uint32_t\s+kTerrainAlbedoSrvSlot\s*=\s*(\d+)'
             'assets\shaders\terrain_common.hlsli' = 'Texture2D\s+gTerrainAlbedo\[[^\]]*\]\s*:\s*register\(t(\d+)\)'
         }
     },
     @{
         label = 'kTerrainNormalSrvSlot / register(t25)'
         sites = @{
-            'src\Engine\Renderer\TerrainPass.h'   = 'constexpr\s+uint32_t\s+kTerrainNormalSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Passes\TerrainPass.h'   = 'constexpr\s+uint32_t\s+kTerrainNormalSrvSlot\s*=\s*(\d+)'
             'assets\shaders\terrain_common.hlsli' = 'Texture2D\s+gTerrainNormal\[[^\]]*\]\s*:\s*register\(t(\d+)\)'
         }
     },
@@ -246,7 +246,7 @@ $constGroups = @(
         # レイヤ数は CB の配列長そのもの。ずれると tint / tiling が丸ごと別の場所を指す
         label = 'kTerrainLayerCount / MYE_TERRAIN_LAYERS'
         sites = @{
-            'src\Engine\Renderer\TerrainPass.h'   = 'constexpr\s+uint32_t\s+kTerrainLayerCount\s*=\s*(\d+)'
+            'src\Engine\Renderer\Passes\TerrainPass.h'   = 'constexpr\s+uint32_t\s+kTerrainLayerCount\s*=\s*(\d+)'
             'assets\shaders\terrain_common.hlsli' = '#\s*define\s+MYE_TERRAIN_LAYERS\s+(\d+)'
             'src\Engine\Engine\Asset\TerrainAsset.h' = 'constexpr\s+uint32_t\s+kMaxLayers\s*=\s*(\d+)'
         }
@@ -257,7 +257,7 @@ $constGroups = @(
         # 前フレームの値が残る (絵は普通に出てしまう)
         label = 'kHzbThreadGroupSize / MYE_HZB_TG'
         sites = @{
-            'src\Engine\Renderer\HzbPass.h'     = 'constexpr\s+int\s+kHzbThreadGroupSize\s*=\s*(\d+)'
+            'src\Engine\Renderer\Passes\HzbPass.h'     = 'constexpr\s+int\s+kHzbThreadGroupSize\s*=\s*(\d+)'
             'assets\shaders\hzb_reduce.cs.hlsl' = '#\s*define\s+MYE_HZB_TG\s+(\d+)'
         }
     }
@@ -267,7 +267,7 @@ $constGroups = @(
         # 「反射が途中で切れる」形でしか現れない (絵は普通に出る) ので機械照合しておく
         label = 'kSsrMaxSteps / MYE_SSR_MAX_STEPS'
         sites = @{
-            'src\Engine\Renderer\SsrPass.h' = 'constexpr\s+int\s+kSsrMaxSteps\s*=\s*(\d+)'
+            'src\Engine\Renderer\Passes\SsrPass.h' = 'constexpr\s+int\s+kSsrMaxSteps\s*=\s*(\d+)'
             'assets\shaders\ssr_trace.hlsl'  = '#\s*define\s+MYE_SSR_MAX_STEPS\s+(\d+)'
         }
     }
@@ -277,7 +277,7 @@ $constGroups = @(
         # 食い違うと CB のレイアウトごとずれる (絵は普通に出る)
         label = 'kMaxReflectionProbes / MYE_MAX_REFLECTION_PROBES'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kMaxReflectionProbes\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h' = 'constexpr\s+int\s+kMaxReflectionProbes\s*=\s*(\d+)'
             'assets\shaders\common.hlsli'       = '#\s*define\s+MYE_MAX_REFLECTION_PROBES\s+(\d+)'
         }
     },
@@ -288,7 +288,7 @@ $constGroups = @(
         # 絵は出るのにフォグだけがちらつくという、目で追いにくい壊れ方をする
         label = 'froxel::kGroupSize / MYE_FROXEL_GROUP'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'   = 'constexpr\s+int\s+kGroupSize\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'   = 'constexpr\s+int\s+kGroupSize\s*=\s*(\d+)'
             # HLSL 側の正本は froxel_common.hlsli 1 本 (clear / inject / temporal /
             # integrate の 4 本が同じ割り方を要求する。各 .cs.hlsl は #define を持たない)
             'assets\shaders\froxel_common.hlsli'  = '#\s*define\s+MYE_FROXEL_GROUP\s+(\d+)'
@@ -303,7 +303,7 @@ $constGroups = @(
         #   余地を消してあるので、照合先は define だけでよい
         label = 'acoustic::kGlowSrvSlot / MYE_ACOUSTIC_SRV_SLOT'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kGlowSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'      = 'constexpr\s+int\s+kGlowSrvSlot\s*=\s*(\d+)'
             'assets\shaders\acoustic_common.hlsli' = '#\s*define\s+MYE_ACOUSTIC_SRV_SLOT\s+(\d+)'
         }
     },
@@ -314,7 +314,7 @@ $constGroups = @(
         # (M57e が t7 で 3 回踏んだ罠と同型)
         label = 'acoustic::kGlowForwardSrvSlot / MYE_ACOUSTIC_FWD_SRV_SLOT'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kGlowForwardSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'      = 'constexpr\s+int\s+kGlowForwardSrvSlot\s*=\s*(\d+)'
             'assets\shaders\acoustic_common.hlsli' = '#\s*define\s+MYE_ACOUSTIC_FWD_SRV_SLOT\s+(\d+)'
         }
     },
@@ -322,7 +322,7 @@ $constGroups = @(
         # 2026-09-12「描画だけ円」: 見通しビットの 3D テクスチャ。Deferred は t16 (本数 16 -> 17)
         label = 'acoustic::kFrontSrvSlot / MYE_ACOUSTIC_FRONT_SRV_SLOT'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kFrontSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'      = 'constexpr\s+int\s+kFrontSrvSlot\s*=\s*(\d+)'
             'assets\shaders\acoustic_common.hlsli' = '#\s*define\s+MYE_ACOUSTIC_FRONT_SRV_SLOT\s+(\d+)'
         }
     },
@@ -330,7 +330,7 @@ $constGroups = @(
         # 同じく Forward 系 (t9、本数 8 -> 9。ForwardPath + DeferredPath の透明後段)
         label = 'acoustic::kFrontForwardSrvSlot / MYE_ACOUSTIC_FRONT_FWD_SRV_SLOT'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kFrontForwardSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'      = 'constexpr\s+int\s+kFrontForwardSrvSlot\s*=\s*(\d+)'
             'assets\shaders\acoustic_common.hlsli' = '#\s*define\s+MYE_ACOUSTIC_FRONT_FWD_SRV_SLOT\s+(\d+)'
         }
     },
@@ -338,7 +338,7 @@ $constGroups = @(
         # 波スロット数 (CB の配列長)。C++ は RenderView::kAcousticWaveSlots、HLSL は MYE_ACOUSTIC_WAVE_SLOTS
         label = 'RenderView::kAcousticWaveSlots / MYE_ACOUSTIC_WAVE_SLOTS'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kAcousticWaveSlots\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'      = 'constexpr\s+int\s+kAcousticWaveSlots\s*=\s*(\d+)'
             'assets\shaders\acoustic_common.hlsli' = '#\s*define\s+MYE_ACOUSTIC_WAVE_SLOTS\s+(\d+)'
         }
     },
@@ -349,8 +349,8 @@ $constGroups = @(
         # 別状態になる。両者は別ヘッダに住んでいるので機械照合しておく
         label = 'froxel::kJitterSequenceLength / camerajitter::kSequenceLength'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+uint32_t\s+kJitterSequenceLength\s*=\s*(\d+)'
-            'src\Engine\Renderer\PostFxMath.h'  = 'constexpr\s+uint32_t\s+kSequenceLength\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h' = 'constexpr\s+uint32_t\s+kJitterSequenceLength\s*=\s*(\d+)'
+            'src\Engine\Renderer\PostFx\PostFxMath.h'  = 'constexpr\s+uint32_t\s+kSequenceLength\s*=\s*(\d+)'
         }
     },
     @{
@@ -362,7 +362,7 @@ $constGroups = @(
         #   t16 = 見通しビット (kFrontSrvSlot)。番号を詰めないこと
         label = 'froxel::kSrvSlot / deferred_light register(t15)'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h' = 'constexpr\s+int\s+kSrvSlot\s*=\s*(\d+)'
             'assets\shaders\deferred_light.hlsl' = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
         }
     },
@@ -375,7 +375,7 @@ $constGroups = @(
         # **その 1 本だけ霧が 0 になる** = 半透明だけ霧が抜ける、という形で静かに壊れる
         label = 'froxel::kForwardSrvSlot / forward_* + skybox register(t7)'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'          = 'constexpr\s+int\s+kForwardSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'          = 'constexpr\s+int\s+kForwardSrvSlot\s*=\s*(\d+)'
             'assets\shaders\forward_lit.hlsl'            = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
             'assets\shaders\forward_lit_instanced.hlsl'  = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
             'assets\shaders\forward_skinned.hlsl'        = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
@@ -391,7 +391,7 @@ $constGroups = @(
         # **粒子だけ霧が 0** (加算合成なので「粒子が浮く」形で出る)
         label = 'froxel::kParticleSrvSlot / particle_render register(t3)'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kParticleSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'      = 'constexpr\s+int\s+kParticleSrvSlot\s*=\s*(\d+)'
             'assets\shaders\particle_render.hlsl'    = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
         }
     },
@@ -403,7 +403,7 @@ $constGroups = @(
         # 「番号が違う = バグ」と早合点して片方を書き換えないこと
         label = 'froxel::kGpuParticleSrvSlot / particle_render_gpu register(t4)'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'        = 'constexpr\s+int\s+kGpuParticleSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'        = 'constexpr\s+int\s+kGpuParticleSrvSlot\s*=\s*(\d+)'
             'assets\shaders\particle_render_gpu.hlsl'  = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
         }
     },
@@ -413,7 +413,7 @@ $constGroups = @(
         # **VFX だけ霧が 0** になる
         label = 'froxel::kVfxSrvSlot / vfx_sprite register(t1)'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h' = 'constexpr\s+int\s+kVfxSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h' = 'constexpr\s+int\s+kVfxSrvSlot\s*=\s*(\d+)'
             'assets\shaders\vfx_sprite.hlsl'    = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
         }
     },
@@ -452,42 +452,42 @@ $constGroups = @(
     @{
         label = 'particlelight::kCpuLightCbSlot / MYE_PARTICLE_LIGHT_SLOT_CB (CPU)'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kCpuLightCbSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'      = 'constexpr\s+int\s+kCpuLightCbSlot\s*=\s*(\d+)'
             'assets\shaders\particle_render.hlsl'    = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_CB\s+b(\d+)'
         }
     },
     @{
         label = 'particlelight::kGpuLightCbSlot / MYE_PARTICLE_LIGHT_SLOT_CB (GPU)'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'        = 'constexpr\s+int\s+kGpuLightCbSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'        = 'constexpr\s+int\s+kGpuLightCbSlot\s*=\s*(\d+)'
             'assets\shaders\particle_render_gpu.hlsl'  = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_CB\s+b(\d+)'
         }
     },
     @{
         label = 'particlelight::kCpuShadowSrvSlot / MYE_PARTICLE_LIGHT_SLOT_CSM (CPU)'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kCpuShadowSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'      = 'constexpr\s+int\s+kCpuShadowSrvSlot\s*=\s*(\d+)'
             'assets\shaders\particle_render.hlsl'    = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_CSM\s+t(\d+)'
         }
     },
     @{
         label = 'particlelight::kGpuShadowSrvSlot / MYE_PARTICLE_LIGHT_SLOT_CSM (GPU)'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'        = 'constexpr\s+int\s+kGpuShadowSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'        = 'constexpr\s+int\s+kGpuShadowSrvSlot\s*=\s*(\d+)'
             'assets\shaders\particle_render_gpu.hlsl'  = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_CSM\s+t(\d+)'
         }
     },
     @{
         label = 'particlelight::kCpuIrradianceSrvSlot / MYE_PARTICLE_LIGHT_SLOT_IRR (CPU)'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'      = 'constexpr\s+int\s+kCpuIrradianceSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'      = 'constexpr\s+int\s+kCpuIrradianceSrvSlot\s*=\s*(\d+)'
             'assets\shaders\particle_render.hlsl'    = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_IRR\s+t(\d+)'
         }
     },
     @{
         label = 'particlelight::kGpuIrradianceSrvSlot / MYE_PARTICLE_LIGHT_SLOT_IRR (GPU)'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'        = 'constexpr\s+int\s+kGpuIrradianceSrvSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'        = 'constexpr\s+int\s+kGpuIrradianceSrvSlot\s*=\s*(\d+)'
             'assets\shaders\particle_render_gpu.hlsl'  = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_IRR\s+t(\d+)'
         }
     },
@@ -495,7 +495,7 @@ $constGroups = @(
         # 比較サンプラだけは CPU / GPU とも s1 = 3 サイトを 1 グループで見られる
         label = 'particlelight::kShadowSamplerSlot / MYE_PARTICLE_LIGHT_SLOT_SAMP'
         sites = @{
-            'src\Engine\Renderer\RenderTypes.h'        = 'constexpr\s+int\s+kShadowSamplerSlot\s*=\s*(\d+)'
+            'src\Engine\Renderer\Pipeline\RenderTypes.h'        = 'constexpr\s+int\s+kShadowSamplerSlot\s*=\s*(\d+)'
             'assets\shaders\particle_render.hlsl'      = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_SAMP\s+s(\d+)'
             'assets\shaders\particle_render_gpu.hlsl'  = '#\s*define\s+MYE_PARTICLE_LIGHT_SLOT_SAMP\s+s(\d+)'
         }
@@ -608,9 +608,9 @@ foreach ($f in Get-Sources) {
     }
 }
 
-$tablePath = Join-Path $repo 'src\Engine\Core\LocalizationTable.inl'
+$tablePath = Join-Path $repo 'src\Engine\Core\Localization\LocalizationTable.inl'
 if (-not (Test-Path $tablePath)) {
-    Write-Host "ERROR [rule 10] missing file: src\Engine\Core\LocalizationTable.inl"
+    Write-Host "ERROR [rule 10] missing file: src\Engine\Core\Localization\LocalizationTable.inl"
     $errors++
 } else {
     $seenIds = @{}

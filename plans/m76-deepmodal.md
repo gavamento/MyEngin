@@ -192,11 +192,11 @@ tests\            test_fem / test_modal / test_compact / test_layout / test_cont
 
 **変更ファイル**
 - 新規 `src\Engine\Engine\Modal\ModalTypes.h` (定数 / `DmNetHeader` POD / `ModalCellFeature { float v[192]; }` / `MaskCh` `AmpCh` / `MelBandCenters(float out[32])`)
-- 新規 `src\Engine\Engine\Audio\ModalSynth.h/.cpp` (`ModalModeSet` / `ModalPostParams { young, density, sizeL, alpha, beta, maskThreshold, gain, impulse }` / `BuildModes` / `ModalSynthRender` / `ModalClipSeconds`)
-- 新規 `src\Engine\Engine\Audio\ModalSynthSelfTest.h/.cpp`
-- `src\Engine\Engine\Physics\PhysMatLibrary.h/.cpp`、`PhysMatSelfTest.cpp`、`assets\physmats\*.physmat.json` (11 本)
-- `src\Engine\Engine\Audio\ImpactSynth.h:23` のコメント更新 (「モーダル経路は ModalSynth が別に持つ」)
-- `src\Editor\EditorMain.cpp:427` の後ろに `RunModalSynthSelfTest()`
+- 新規 `src\Engine\Engine\Audio\Synth\ModalSynth.h/.cpp` (`ModalModeSet` / `ModalPostParams { young, density, sizeL, alpha, beta, maskThreshold, gain, impulse }` / `BuildModes` / `ModalSynthRender` / `ModalClipSeconds`)
+- 新規 `src\Engine\Engine\Audio\Synth\ModalSynthSelfTest.h/.cpp`
+- `src\Engine\Engine\Physics\Rigid\PhysMatLibrary.h/.cpp`、`PhysMatSelfTest.cpp`、`assets\physmats\*.physmat.json` (11 本)
+- `src\Engine\Engine\Audio\Synth\ImpactSynth.h:23` のコメント更新 (「モーダル経路は ModalSynth が別に持つ」)
+- `src\Editor\App\EditorMain.cpp:427` の後ろに `RunModalSynthSelfTest()`
 
 **要点**: `BuildModes` に World も PhysMat も渡さない (値だけ) = selftest がデバイスもワールドも無しで全経路を叩ける。
 
@@ -204,7 +204,7 @@ tests\            test_fem / test_modal / test_compact / test_layout / test_cont
 
 ### M76b — ボクセル化と CLI (Checkpoint B)
 
-**変更ファイル**: 新規 `Modal\Voxelizer.h/.cpp` (`VoxelizeMesh` / `TriBoxOverlap` / `FloodFillInterior` / `LocalPointToCell` / `BuildCellSlotTable` / `SerializeVox` / `DeserializeVox`)、新規 `Modal\TriangleSoup.h/.cpp`、新規 `src\Editor\ModalTools.h/.cpp` (`RunModalVoxelizeCli`。モデルのヘッドレス登録は `SubAssetMigration.cpp` を流用)、新規 `Modal\ModalSelfTest.h/.cpp` (M76e/f で積み増す)、`EditorMain.cpp`。
+**変更ファイル**: 新規 `Modal\Voxelizer.h/.cpp` (`VoxelizeMesh` / `TriBoxOverlap` / `FloodFillInterior` / `LocalPointToCell` / `BuildCellSlotTable` / `SerializeVox` / `DeserializeVox`)、新規 `Modal\TriangleSoup.h/.cpp`、新規 `src\Editor\Tools\ModalTools.h/.cpp` (`RunModalVoxelizeCli`。モデルのヘッドレス登録は `SubAssetMigration.cpp` を流用)、新規 `Modal\ModalSelfTest.h/.cpp` (M76e/f で積み増す)、`EditorMain.cpp`。
 
 **要点**: C 節。flood-fill は明示スタックで固定順。
 
@@ -237,7 +237,7 @@ tests\            test_fem / test_modal / test_compact / test_layout / test_cont
 - `Asset\CookedCache.h/.cpp` (`SourcePathForSubAssetKey`)、`Physics\ConvexColliderLibrary.cpp` (委譲)
 - `EngineLoop.h/.cpp` (所有 / Init / SetBackend / Install / LoadModel / Pump / Shutdown)、`Platform\PathUtil.h/.cpp` (`FindEngineDeepModalDir`)、`EngineCli.cpp` (`--modal-backend`)
 - `HotReload\ReloadHub.h/.cpp` (`ReloadKind::ModalNet`)、`ReloadHubSelfTest.cpp`
-- `src\Editor\ModalTools.cpp` (`RunModalBakeCli`)、`EditorMain.cpp` (`--modal-bake`)、連鎖末尾に `RunModalSelfTest()`
+- `src\Editor\Tools\ModalTools.cpp` (`RunModalBakeCli`)、`EditorMain.cpp` (`--modal-bake`)、連鎖末尾に `RunModalSelfTest()`
 
 **要点**: F / D 節。ワーカーの失敗は `Failed` にして WARN 1 回。`Request` は mesh 未登録 / positions 空なら `Missing` (キャッシュしない)。バックエンドが `RunsOnWorkerThread()==false` のときはボクセル化だけワーカーで済ませ、推論は `Pump()` で 1 フレーム 1 ジョブ。
 

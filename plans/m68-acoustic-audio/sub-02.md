@@ -48,14 +48,14 @@ spec §4.1.3 / §4.1.4 / §4.1.6 (M68b 分) / §4.2 (足音・tone) / §4.3 (ミ
 
 | ファイル | 場所 | 何を |
 |---|---|---|
-| `src\Engine\Engine\Audio\AudioSystem.h` | `AudioSpatial` の後 / class 内 `SetReverbPreset` の隣 / private に `override_` + `overrideActive_` | POD + 4 関数 |
-| `src\Engine\Engine\Audio\AudioSystem.cpp` | `:43-52` の隣に変換、`:589-600` | 選択 1 箇所 |
-| `src\Engine\Engine\Audio\AcousticAudio.h/.cpp` | 末尾 | 3 関数 |
-| `src\Engine\Engine\Audio\AudioSourceSystem.h/.cpp` | `Update` 先頭 / probe 更新の後 / `Reset` | キュー・room・drain |
+| `src\Engine\Engine\Audio\Playback\AudioSystem.h` | `AudioSpatial` の後 / class 内 `SetReverbPreset` の隣 / private に `override_` + `overrideActive_` | POD + 4 関数 |
+| `src\Engine\Engine\Audio\Playback\AudioSystem.cpp` | `:43-52` の隣に変換、`:589-600` | 選択 1 箇所 |
+| `src\Engine\Engine\Audio\Spatial\AcousticAudio.h/.cpp` | 末尾 | 3 関数 |
+| `src\Engine\Engine\Audio\Playback\AudioSourceSystem.h/.cpp` | `Update` 先頭 / probe 更新の後 / `Reset` | キュー・room・drain |
 | `src\Engine\Engine\TickRunner.cpp` | `:570-576` | push |
 | `src\Engine\Engine\Acoustic\AcousticField.h` | `:54` | コメント 1 行 |
-| `src\Editor\Windows\AudioMixerWindow.cpp` | `:389` の後 | 表示 |
-| `src\Engine\Core\LocalizationTable.inl` | `:642` の隣 | 1 行 |
+| `src\Editor\Windows\Audio\AudioMixerWindow.cpp` | `:389` の後 | 表示 |
+| `src\Engine\Core\Localization\LocalizationTable.inl` | `:642` の隣 | 1 行 |
 | `src\Engine\Engine\DemoContent.cpp` | `Acoustic Audio` エンティティ | tone 名 |
 | `src\Engine\Engine\EngineLoop.cpp` / `ProfilerWindow.cpp` | summary / 行 | 欄追加 |
 | `assets\audio\` | 新規 16 ファイル | 足音 |
@@ -85,16 +85,16 @@ A6 は `git diff 8e4272e --stat -- src/Engine/Engine/Acoustic` が `AcousticFiel
 ```
 SELF_EVAL: sub-02 (round 1)
 実装:
-  - src/Engine/Engine/Audio/AudioSystem.h — AudioReverbParams (I3DL2 13 フィールドの POD、
+  - src/Engine/Engine/Audio/Playback/AudioSystem.h — AudioReverbParams (I3DL2 13 フィールドの POD、
     AudioBusState の直後) / PresetReverbParams (static) / SetReverbOverride / ClearReverbOverride /
     ReverbOverrideActive、private に reverbOverride_ + reverbOverrideActive_
-  - src/Engine/Engine/Audio/AudioSystem.cpp — SDK 型との相互変換 ToPod / FromPod +
+  - src/Engine/Engine/Audio/Playback/AudioSystem.cpp — SDK 型との相互変換 ToPod / FromPod +
     static_assert(sizeof ==)、**ApplyReverbParams() の 1 箇所**で override / プリセットを選択
-  - src/Engine/Engine/Audio/AcousticAudio.h/.cpp — LerpReverbParams ((1-t)*a + t*b の形。
+  - src/Engine/Engine/Audio/Spatial/AcousticAudio.h/.cpp — LerpReverbParams ((1-t)*a + t*b の形。
     端点が厳密一致する / 整数は lround) / RoomBlend (smoothstep、下端 >= 上端は段に倒す) /
     WaveShotResult / MakeWaveShotPlay。ShapeAcousticSpatial の手順 6 に
     「Detour/Occluded は io.reverbSend += detourWet (上限 1)」を追加
-  - src/Engine/Engine/Audio/AudioSourceSystem.h/.cpp — PushWaveShot (上限 64、超過は数える) /
+  - src/Engine/Engine/Audio/Playback/AudioSourceSystem.h/.cpp — PushWaveShot (上限 64、超過は数える) /
     PendingShotCount (テスト用) / Reset(AudioSystem&)、Update の**先頭**でキューを swap して空に、
     probe 更新の後に room (RoomBlend → roomSmoothTicks 平滑 → |Δt| > 0.01 で SetReverbOverride、
     非 active は ClearReverbOverride)、音源ループの後に shot の drain (MakeWaveShotPlay → Play)、
@@ -103,14 +103,14 @@ SELF_EVAL: sub-02 (round 1)
     Waves() を舐め、active かつ bornTick == ctx.tickIndex を PushWaveShot。
     LoadScene の audioSources.Reset(audioSystem)
   - src/Engine/Engine/Acoustic/AcousticField.h — bornTick のコメント 1 行 (A6 の唯一の diff)
-  - src/Editor/Windows/AudioMixerWindow.cpp / src/Engine/Core/LocalizationTable.inl —
+  - src/Editor/Windows/Audio/AudioMixerWindow.cpp / src/Engine/Core/Localization/LocalizationTable.inl —
     ReverbOverrideActive() のとき SameLine + TextDisabled("%s", Tr(Mixer_AcousticOverride))、
     en/ja 1 行追加
-  - src/Engine/Core/Components.h — AcousticAudioComponent::openLarge 0.6 → 0.8 (7b)
+  - src/Engine/Core/Ecs/Components.h — AcousticAudioComponent::openLarge 0.6 → 0.8 (7b)
   - src/Engine/Engine/DemoContent.cpp — Acoustic Audio に toneSound0..3 = step_soft/wood/hard/metal
   - src/Engine/Engine/EngineLoop.cpp — summary に shots / skipped / unknownKey / dropped / room
-  - src/Editor/Windows/ProfilerWindow.cpp — 行末に , shots %d, room t=%.2f
-  - src/Engine/Engine/Audio/AcousticAudioSelfTest.cpp — T16〜T21 (23 アサート、合計 70)
+  - src/Editor/Windows/Debug/ProfilerWindow.cpp — 行末に , shots %d, room t=%.2f
+  - src/Engine/Engine/Audio/Spatial/AcousticAudioSelfTest.cpp — T16〜T21 (23 アサート、合計 70)
   - assets/audio/step_soft|wood|hard|metal.wav + .sound.json + .meta ×2 (新規 16 ファイル)
 
 足音 4 本の SynthParams (SynthCore で焼いた実値。**これだけで再現できる**。
@@ -254,21 +254,21 @@ noiseSeed 0x9E3779B97F4A7C15 (既定)):
      「自分の音を自分で聞かない」除外やログの追跡に使える。今のままでよいか。
 
 触ったファイル:
-  src/Engine/Engine/Audio/AudioSystem.h
-  src/Engine/Engine/Audio/AudioSystem.cpp
-  src/Engine/Engine/Audio/AcousticAudio.h
-  src/Engine/Engine/Audio/AcousticAudio.cpp
-  src/Engine/Engine/Audio/AcousticAudioSelfTest.cpp
-  src/Engine/Engine/Audio/AudioSourceSystem.h
-  src/Engine/Engine/Audio/AudioSourceSystem.cpp
+  src/Engine/Engine/Audio/Playback/AudioSystem.h
+  src/Engine/Engine/Audio/Playback/AudioSystem.cpp
+  src/Engine/Engine/Audio/Spatial/AcousticAudio.h
+  src/Engine/Engine/Audio/Spatial/AcousticAudio.cpp
+  src/Engine/Engine/Audio/Spatial/AcousticAudioSelfTest.cpp
+  src/Engine/Engine/Audio/Playback/AudioSourceSystem.h
+  src/Engine/Engine/Audio/Playback/AudioSourceSystem.cpp
   src/Engine/Engine/Acoustic/AcousticField.h
   src/Engine/Engine/TickRunner.cpp
   src/Engine/Engine/EngineLoop.cpp
   src/Engine/Engine/DemoContent.cpp
-  src/Engine/Core/Components.h
-  src/Engine/Core/LocalizationTable.inl
-  src/Editor/Windows/AudioMixerWindow.cpp
-  src/Editor/Windows/ProfilerWindow.cpp
+  src/Engine/Core/Ecs/Components.h
+  src/Engine/Core/Localization/LocalizationTable.inl
+  src/Editor/Windows/Audio/AudioMixerWindow.cpp
+  src/Editor/Windows/Debug/ProfilerWindow.cpp
   assets/audio/step_soft.wav
   assets/audio/step_soft.wav.meta
   assets/audio/step_soft.sound.json
@@ -313,7 +313,7 @@ noiseSeed 0x9E3779B97F4A7C15 (既定)):
 ```
 SELF_EVAL: sub-02 (round 2)
 実装:
-  - #1 (must): src/Engine/Core/Components.h — AcousticAudioComponent::openSmall 0.2 → 0.30。
+  - #1 (must): src/Engine/Core/Ecs/Components.h — AcousticAudioComponent::openSmall 0.2 → 0.30。
     コメントに実測 9 点 (廊下 東 0.287 / 中 0.357 / 西 0.496、縦廊下 0.404・0.529、
     部屋 A 隅 0.468 / 中央 0.668、部屋 B 戸口 0.607 / 中央 0.800) と、
     「**この指標は部屋の隅と廊下の端を区別できない** (廊下西端 0.50 > 部屋 A 隅 0.47)。
@@ -400,21 +400,21 @@ SELF_EVAL: sub-02 (round 2)
      (b) M65 追補として別コミットに切る、(c) 台帳の申し送りに残して触らない。
      **このサブの範囲外**と判断して手を付けていない。
 触ったファイル: (round 1 + round 2 の全量)
-  src/Engine/Engine/Audio/AudioSystem.h
-  src/Engine/Engine/Audio/AudioSystem.cpp
-  src/Engine/Engine/Audio/AcousticAudio.h
-  src/Engine/Engine/Audio/AcousticAudio.cpp
-  src/Engine/Engine/Audio/AcousticAudioSelfTest.cpp
-  src/Engine/Engine/Audio/AudioSourceSystem.h
-  src/Engine/Engine/Audio/AudioSourceSystem.cpp
+  src/Engine/Engine/Audio/Playback/AudioSystem.h
+  src/Engine/Engine/Audio/Playback/AudioSystem.cpp
+  src/Engine/Engine/Audio/Spatial/AcousticAudio.h
+  src/Engine/Engine/Audio/Spatial/AcousticAudio.cpp
+  src/Engine/Engine/Audio/Spatial/AcousticAudioSelfTest.cpp
+  src/Engine/Engine/Audio/Playback/AudioSourceSystem.h
+  src/Engine/Engine/Audio/Playback/AudioSourceSystem.cpp
   src/Engine/Engine/Acoustic/AcousticField.h
   src/Engine/Engine/TickRunner.cpp
   src/Engine/Engine/EngineLoop.cpp
   src/Engine/Engine/DemoContent.cpp
-  src/Engine/Core/Components.h
-  src/Engine/Core/LocalizationTable.inl
-  src/Editor/Windows/AudioMixerWindow.cpp
-  src/Editor/Windows/ProfilerWindow.cpp
+  src/Engine/Core/Ecs/Components.h
+  src/Engine/Core/Localization/LocalizationTable.inl
+  src/Editor/Windows/Audio/AudioMixerWindow.cpp
+  src/Editor/Windows/Debug/ProfilerWindow.cpp
   assets/audio/step_soft.wav / .wav.meta / .sound.json / .sound.json.meta
   assets/audio/step_wood.wav / .wav.meta / .sound.json / .sound.json.meta
   assets/audio/step_hard.wav / .wav.meta / .sound.json / .sound.json.meta

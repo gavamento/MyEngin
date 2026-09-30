@@ -3,13 +3,13 @@
 #include <algorithm>
 #include <chrono>
 
-#include "Engine/Core/Log.h"
-#include "Engine/Engine/Physics/MeshColliderLibrary.h"
-#include "Engine/Renderer/FrustumCull.h"
-#include "Engine/Renderer/GpuBufferUtil.h"
-#include "Engine/Renderer/GpuResources.h"
-#include "Engine/Renderer/GraphicsDevice.h"
-#include "Engine/Renderer/RenderTypes.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/Physics/Collider/MeshColliderLibrary.h"
+#include "Engine/Renderer/Pipeline/FrustumCull.h"
+#include "Engine/Renderer/Device/GpuBufferUtil.h"
+#include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Device/GraphicsDevice.h"
+#include "Engine/Renderer/Pipeline/RenderTypes.h"
 
 using namespace DirectX;
 

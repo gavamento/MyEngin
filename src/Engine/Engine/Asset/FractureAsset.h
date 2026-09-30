@@ -10,8 +10,8 @@
 
 #include <DirectXMath.h>
 
-#include "Engine/Engine/Physics/ConvexHull.h"
-#include "Engine/Renderer/GpuResources.h"
+#include "Engine/Engine/Physics/Collider/ConvexHull.h"
+#include "Engine/Renderer/Device/GpuResources.h"
 
 namespace mye {
 namespace FractureAsset {

@@ -1,0 +1,365 @@
+#include "Engine/Engine/Rendering/WaterWaveSelfTest.h"
+
+#include <cmath>
+#include <cstring>
+#include <vector>
+
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Ecs/ComponentRegistry.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Util/WaveMath.h"
+#include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Scene/GameObject.h"
+#include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
+#include "Engine/Engine/Replay/WorldHasher.h"
+#include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/Scene/SceneSerializer.h"
+
+using namespace DirectX;
+
+namespace mye {
+
+bool RunWaterWaveSelfTest()
+{
+    MYE_LOG_INFO("==== WaterWave self test (Gerstner waves) ====");
+    RegisterBuiltinComponents();
+    int failCount = 0;
+    auto check = [&](bool cond, const char* what) {
+        if (cond) {
+            MYE_LOG_INFO("  PASS: %s", what);
+        } else {
+            MYE_LOG_ERROR("  FAIL: %s", what);
+            ++failCount;
+        }
+    };
+
+    // 1. 静水面テスト (波なし / スケール 0)
+    {
+        GerstnerWave waves[1] = { { 1.0f, 10.0f, 2.0f, 0.0f, 0.5f } };
+        XMFLOAT3 pos;
+        XMFLOAT3 norm;
+        wave::SampleGerstnerWaves(waves, 1, 5.0f, 5.0f, 1.0f, 2.0f, 0.0f, 1.0f, pos, norm);
+        check(std::fabs(pos.x - 5.0f) < 1e-6f && std::fabs(pos.z - 5.0f) < 1e-6f,
+              "calm water: zero horizontal displacement when scale is 0");
+        check(std::fabs(pos.y - 2.0f) < 1e-6f,
+              "calm water: vertical position equals baseHeight when scale is 0");
+        check(std::fabs(norm.x) < 1e-6f && std::fabs(norm.y - 1.0f) < 1e-6f && std::fabs(norm.z) < 1e-6f,
+              "calm water: normal is strictly +Y (0, 1, 0)");
+    }
+
+    // 2. 単一正弦波の周期性 (wavelength = 20.0m)
+    {
+        GerstnerWave waves[1] = { { 0.5f, 20.0f, 3.0f, 0.0f, 0.0f } }; // +X 方向, 正弦波 (Q=0)
+        const float t = 0.0f;
+        const float baseH = 0.0f;
+
+        const float h0 = wave::EvaluateWaveHeight(waves, 1, 0.0f, 0.0f, t, baseH, 1.0f, 1.0f);
+        const float hPeriod = wave::EvaluateWaveHeight(waves, 1, 20.0f, 0.0f, t, baseH, 1.0f, 1.0f);
+        const float hTwoPeriod = wave::EvaluateWaveHeight(waves, 1, 40.0f, 0.0f, t, baseH, 1.0f, 1.0f);
+
+        check(std::fabs(h0 - hPeriod) < 1e-5f, "wave periodicity: height at x=0 equals height at x=lambda");
+        check(std::fabs(h0 - hTwoPeriod) < 1e-5f, "wave periodicity: height at x=0 equals height at x=2*lambda");
+
+        // 波高の範囲 [baseH - A, baseH + A]
+        bool bounded = true;
+        for (int i = 0; i < 20; ++i) {
+            const float x = static_cast<float>(i);
+            const float y = wave::EvaluateWaveHeight(waves, 1, x, 0.0f, t, baseH, 1.0f, 1.0f);
+            if (y > 0.5f + 1e-5f || y < -0.5f - 1e-5f) {
+                bounded = false;
+                break;
+            }
+        }
+        check(bounded, "wave amplitude bound: height is strictly bounded within [-A, +A]");
+    }
+
+    // 3. Gerstner波のトロコイド特性 (波頭の尖りと急峻度 Q)
+    {
+        GerstnerWave waves[1] = { { 1.0f, 20.0f, 2.0f, 0.0f, 0.8f } }; // Q = 0.8
+        XMFLOAT3 crestPos;
+        XMFLOAT3 crestNorm;
+        // x = 0, t = 0 で cos(phi) = 1 (波頭の頂点)
+        wave::SampleGerstnerWaves(waves, 1, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, crestPos, crestNorm);
+        check(std::fabs(crestPos.y - 1.0f) < 1e-5f, "gerstner crest: max elevation matches amplitude");
+
+        // 波頭直前 (x = -2m): sin(phi) < 0 なので dx = -Q*A*sin(phi) > 0 となり、+X (波頭側) へ引き寄せられる
+        XMFLOAT3 flankPos;
+        XMFLOAT3 flankNorm;
+        wave::SampleGerstnerWaves(waves, 1, -2.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, flankPos, flankNorm);
+        check(flankPos.x > -2.0f, "gerstner trochoid: water particles displace towards the crest");
+
+        // 法線が単位ベクトルであること
+        const float normLen = std::sqrt(flankNorm.x * flankNorm.x + flankNorm.y * flankNorm.y + flankNorm.z * flankNorm.z);
+        check(std::fabs(normLen - 1.0f) < 1e-5f, "analytical normal: unit length (|N| == 1)");
+    }
+
+    // 4. 複数波の重ね合わせと決定論性 (Bit-level Determinism)
+    {
+        WaterWaveComponent comp;
+        comp.waveCount = 4;
+        comp.overallScale = 1.0f;
+        comp.timeScale = 1.0f;
+
+        GerstnerWave waveArray[4];
+        comp.ExtractWaves(waveArray, 4);
+
+        const float x = 12.345f;
+        const float z = -67.890f;
+        const float t = 3.14159f;
+
+        XMFLOAT3 p1, n1;
+        XMFLOAT3 p2, n2;
+        wave::SampleGerstnerWaves(waveArray, 4, x, z, t, comp.baseHeight, comp.overallScale, comp.timeScale, p1, n1);
+        wave::SampleGerstnerWaves(waveArray, 4, x, z, t, comp.baseHeight, comp.overallScale, comp.timeScale, p2, n2);
+
+        check(p1.x == p2.x && p1.y == p2.y && p1.z == p2.z,
+              "determinism: repeated evaluation produces bit-identical position");
+        check(n1.x == n2.x && n1.y == n2.y && n1.z == n2.z,
+              "determinism: repeated evaluation produces bit-identical normal");
+    }
+
+    // 5. 逆写像反復 (固定点反復) による厳密な水面高さ評価
+    {
+        GerstnerWave waves[2] = {
+            { 0.5f, 15.0f, 2.0f,  0.0f, 0.5f },
+            { 0.3f,  8.0f, 3.0f, 45.0f, 0.4f }
+        };
+        const float targetX = 5.0f;
+        const float targetZ = 3.0f;
+        const float t = 1.5f;
+
+        const float fastH = wave::EvaluateWaveHeight(waves, 2, targetX, targetZ, t, 0.0f, 1.0f, 1.0f);
+        const float iterH = wave::EvaluateWaveHeightIterative(waves, 2, targetX, targetZ, t, 0.0f, 1.0f, 1.0f, 3);
+
+        // 適切な範囲に収まり、高速版との差が妥当であること
+        check(std::isfinite(iterH), "iterative wave height: converges to a finite value");
+        check(std::fabs(iterH - fastH) < 1.0f, "iterative wave height: within physical variance of fast height");
+    }
+
+    // 6. ECS 登録と ResolveActiveWaterWave の動作
+    {
+        check(WaterWaveComponent::sTypeId != kInvalidComponentType,
+              "ecs registration: WaterWaveComponent has a valid TypeId");
+
+        World world;
+        check(ResolveActiveWaterWave(world) == nullptr,
+              "resolve water wave: returns null when no WaterWave entity exists");
+
+        EntityID e1 = world.CreateEntity("WaterSurface1");
+        auto* w1 = world.AddComponent<WaterWaveComponent>(e1);
+        w1->enabled = 1;
+        w1->baseHeight = 1.5f;
+
+        EntityID e2 = world.CreateEntity("WaterSurface2");
+        auto* w2 = world.AddComponent<WaterWaveComponent>(e2);
+        w2->enabled = 1;
+        w2->baseHeight = 3.0f;
+
+        const WaterWaveComponent* best = ResolveActiveWaterWave(world);
+        check(best != nullptr && best->baseHeight == 1.5f,
+              "resolve water wave: selects entity with smallest index");
+
+        world.GetComponent<WaterWaveComponent>(e1)->enabled = 0;
+        best = ResolveActiveWaterWave(world);
+        check(best != nullptr && best->baseHeight == 3.0f,
+              "resolve water wave: skips disabled component and selects next active one");
+    }
+
+    // 7. surfaceMaterial (M79 sub-05): 描画専用の差し替え口。
+    //    保存/復元は従来どおり行うが、WorldHash / リプレイには一切畳み込まれないこと
+    {
+        const ComponentDesc& desc = ComponentRegistry::Get().Desc(WaterWaveComponent::sTypeId);
+        const FieldDesc* smField = nullptr;
+        for (const FieldDesc& f : desc.fields) {
+            if (std::strcmp(f.name, "surfaceMaterial") == 0) {
+                smField = &f;
+                break;
+            }
+        }
+        check(smField != nullptr, "surfaceMaterial: field is registered");
+        if (smField != nullptr) {
+            check((smField->flags & kFieldNoHash) != 0, "surfaceMaterial: kFieldNoHash flag is set");
+            check((smField->flags & kFieldNoSerialize) == 0,
+                  "surfaceMaterial: kFieldNoSerialize is NOT set (still saved to scene JSON)");
+        }
+
+        Scene sceneA;
+        GameObject waterGo = sceneA.CreateGameObject("Water");
+        auto* waveA = waterGo.AddComponent<WaterWaveComponent>();
+        waveA->enabled = true;
+        waveA->baseHeight = 0.5f;
+        waveA->wave0Amplitude = 0.33f;
+        sceneA.GetWorld().ApplyStructuralChanges();
+
+        const uint64_t hashWithout = HashWorld(sceneA.GetWorld());
+        waveA->surfaceMaterial = AssetID{ 0x0123456789ABCDEFull };
+        const uint64_t hashWith = HashWorld(sceneA.GetWorld());
+        check(hashWithout == hashWith,
+              "surfaceMaterial: WorldHash is identical whether the field is set or not");
+
+        const nlohmann::json saved = SceneSerializer::SaveToJson(sceneA);
+        Scene sceneB;
+        check(SceneSerializer::LoadFromJson(sceneB, saved), "surfaceMaterial: scene JSON reload succeeds");
+        GameObject waterGoB = sceneB.Find("Water");
+        auto* waveB = static_cast<bool>(waterGoB) ? waterGoB.GetComponent<WaterWaveComponent>() : nullptr;
+        check(waveB != nullptr && waveB->surfaceMaterial == waveA->surfaceMaterial,
+              "surfaceMaterial: round-trips through scene JSON save/load");
+    }
+
+    // 8. waveCount の範囲外 (レビュー #5): 物理の浮力は描画と同じく 1〜4 に丸めて使う。
+    //    丸めずに 5 以上を渡すと波配列の範囲外を読み、-1 だと波が無い扱いになっていた
+    {
+        auto simulate = [](int32_t waveCount) {
+            Scene s;
+            GameObject waterGo = s.CreateGameObjectTracked("Water");
+            auto* wave = waterGo.AddComponent<WaterWaveComponent>();
+            wave->enabled = true;
+            wave->affectBuoyancy = true;
+            wave->baseHeight = 0.0f;
+            wave->overallScale = 1.0f;
+            wave->waveCount = waveCount;
+            wave->wave0Amplitude = 0.6f;
+            wave->wave1Amplitude = 0.4f;
+            wave->wave2Amplitude = 0.3f;
+            wave->wave3Amplitude = 0.2f;
+            GameObject ball = s.CreateGameObjectTracked("Buoy");
+            ball.SetLocalPosition(1.3f, 0.0f, -0.7f);
+            auto* col = ball.AddComponent<ColliderComponent>();
+            col->shape = 0;
+            col->radius = 0.5f;
+            auto* rb = ball.AddComponent<RigidbodyComponent>();
+            rb->mass = 1000.0f * (4.0f / 3.0f) * 3.14159265f * 0.125f * 0.5f; // 水の半分の密度
+            ball.AddComponent<BuoyancyComponent>();
+            s.GetWorld().ApplyStructuralChanges();
+            PhysicsSystem phys; // テストごとに新品 (内部状態をテスト間で持ち越さない)
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), 1.0f / 60.0f);
+            }
+            return ball.GetComponent<LocalTransform>()->position;
+        };
+        const XMFLOAT3 p1 = simulate(1);
+        const XMFLOAT3 pNeg = simulate(-1);
+        const XMFLOAT3 p4 = simulate(4);
+        const XMFLOAT3 p5 = simulate(5);
+        check(pNeg.x == p1.x && pNeg.y == p1.y && pNeg.z == p1.z,
+              "waveCount clamp: -1 buoyancy is bit-identical to 1 (same rule as the renderer)");
+        check(p5.x == p4.x && p5.y == p4.y && p5.z == p4.z,
+              "waveCount clamp: 5 buoyancy is bit-identical to 4 (no out-of-range wave read)");
+        check(p1.y != p4.y, "waveCount clamp: 1 and 4 waves actually differ (the test can see waves)");
+        WaterWaveComponent c;
+        c.waveCount = 7;
+        check(c.ClampedWaveCount() == 4, "waveCount clamp: 7 -> 4");
+        c.waveCount = 0;
+        check(c.ClampedWaveCount() == 1, "waveCount clamp: 0 -> 1");
+    }
+
+    // 8b. 水位の基準 (再レビュー #3): 描画は水面エンティティのワールド行列で平面を置き、その上に
+    //     baseHeight と波を足す。浮力も同じく「水面エンティティのワールド y + baseHeight + 波」で評価する。
+    //     エンティティを y=2 に置いた水面と、原点に置いて baseHeight を +2 した水面で浮き方がビット一致する
+    {
+        auto simulate = [](float waterEntityY, float baseHeight) {
+            Scene s;
+            GameObject waterGo = s.CreateGameObjectTracked("Water");
+            waterGo.SetLocalPosition(0.0f, waterEntityY, 0.0f);
+            auto* wave = waterGo.AddComponent<WaterWaveComponent>();
+            wave->enabled = true;
+            wave->affectBuoyancy = true;
+            wave->baseHeight = baseHeight;
+            wave->overallScale = 1.0f;
+            wave->wave0Amplitude = 0.3f;
+            GameObject ball = s.CreateGameObjectTracked("Buoy");
+            ball.SetLocalPosition(0.4f, 2.0f, -0.3f);
+            auto* col = ball.AddComponent<ColliderComponent>();
+            col->shape = 0;
+            col->radius = 0.5f;
+            auto* rb = ball.AddComponent<RigidbodyComponent>();
+            rb->mass = 1000.0f * (4.0f / 3.0f) * 3.14159265f * 0.125f * 0.5f; // 水の半分の密度
+            ball.AddComponent<BuoyancyComponent>();
+            s.GetWorld().ApplyStructuralChanges();
+            PhysicsSystem phys;
+            for (int i = 0; i < 180; ++i) {
+                phys.Update(s.GetWorld(), 1.0f / 60.0f);
+            }
+            return ball.GetComponent<LocalTransform>()->position;
+        };
+        const XMFLOAT3 byEntity = simulate(2.0f, 0.0f);
+        const XMFLOAT3 byBase = simulate(0.0f, 2.0f);
+        MYE_LOG_INFO("  water level: entity y=2 -> ball y=%.4f, baseHeight 2 -> ball y=%.4f", byEntity.y, byBase.y);
+        check(byEntity.x == byBase.x && byEntity.y == byBase.y && byEntity.z == byBase.z,
+              "water level: entity world y is added like the renderer (bit-identical to baseHeight +2)");
+        check(byBase.y > 1.0f, "water level: the ball actually floats near y=2 (the test can see the level)");
+    }
+
+    // 9. 波の時計 (レビュー #3): 浮力の時刻は WaterWave.timeTicks (シミュレーション tick 数)。
+    //    PhysicsSystem 内の累積時刻だった頃は、同じ PhysicsSystem で 2 回目の Play をすると
+    //    前回の時刻から始まり、新しいプロセスのリプレイと結果が割れた
+    {
+        auto buildScene = [](Scene& s) {
+            GameObject waterGo = s.CreateGameObjectTracked("Water");
+            auto* wave = waterGo.AddComponent<WaterWaveComponent>();
+            wave->enabled = true;
+            wave->affectBuoyancy = true;
+            wave->wave0Amplitude = 0.8f;
+            GameObject ball = s.CreateGameObjectTracked("Buoy");
+            ball.SetLocalPosition(0.4f, 0.0f, 0.2f);
+            auto* col = ball.AddComponent<ColliderComponent>();
+            col->shape = 0;
+            col->radius = 0.5f;
+            auto* rb = ball.AddComponent<RigidbodyComponent>();
+            rb->mass = 1000.0f * (4.0f / 3.0f) * 3.14159265f * 0.125f * 0.5f;
+            ball.AddComponent<BuoyancyComponent>();
+            s.GetWorld().ApplyStructuralChanges();
+            return ball;
+        };
+        auto run = [](Scene& s, PhysicsSystem& phys, int ticks) {
+            for (int i = 0; i < ticks; ++i) {
+                phys.Update(s.GetWorld(), 1.0f / 60.0f);
+            }
+        };
+
+        // 1 回目の「Play」: 新品の PhysicsSystem で 90 tick
+        Scene first;
+        GameObject firstBall = buildScene(first);
+        PhysicsSystem fresh;
+        run(first, fresh, 90);
+        const XMFLOAT3 pFresh = firstBall.GetComponent<LocalTransform>()->position;
+
+        // 2 回目の「Play」: 別のシーンで 200 tick 回した後の同じ PhysicsSystem で、同じシーンを 90 tick
+        PhysicsSystem reused;
+        {
+            Scene warmup;
+            buildScene(warmup);
+            run(warmup, reused, 200);
+        }
+        Scene second;
+        GameObject secondBall = buildScene(second);
+        run(second, reused, 90);
+        const XMFLOAT3 pReused = secondBall.GetComponent<LocalTransform>()->position;
+        check(pFresh.x == pReused.x && pFresh.y == pReused.y && pFresh.z == pReused.z,
+              "wave clock: a reused PhysicsSystem gives bit-identical buoyancy (second Play == new process)");
+
+        const auto* waveAfter = first.Find("Water").GetComponent<WaterWaveComponent>();
+        check(waveAfter->timeTicks == 90, "wave clock: timeTicks advances by one per physics tick");
+
+        // ハッシュに入る = 位相の食い違いがリプレイ検証で検出される
+        auto* waveMut = first.Find("Water").GetComponent<WaterWaveComponent>();
+        const uint64_t h0 = HashWorld(first.GetWorld());
+        waveMut->timeTicks += 1;
+        const uint64_t h1 = HashWorld(first.GetWorld());
+        check(h0 != h1, "wave clock: timeTicks is part of the WorldHash");
+
+        // シーン JSON を往復する (Play 開始の保存→読み直しで位相が保たれる)
+        const nlohmann::json saved = SceneSerializer::SaveToJson(first);
+        Scene reloaded;
+        check(SceneSerializer::LoadFromJson(reloaded, saved), "wave clock: scene JSON reload succeeds");
+        const auto* waveReloaded = reloaded.Find("Water").GetComponent<WaterWaveComponent>();
+        check(waveReloaded != nullptr && waveReloaded->timeTicks == waveMut->timeTicks,
+              "wave clock: timeTicks round-trips through scene JSON");
+    }
+
+    MYE_LOG_INFO("==== WaterWave self test: %s (fail count: %d) ====",
+                 (failCount == 0 ? "ALL PASS" : "FAILED"), failCount);
+    return failCount == 0;
+}
+
+} // namespace mye

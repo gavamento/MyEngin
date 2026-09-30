@@ -10,7 +10,7 @@
 #include "Shared/ScriptAPI.h"
 
 namespace {
-// PlayerInputComponent (Engine/Core/Components.h) の名前ハッシュ。
+// PlayerInputComponent (Engine/Core/Ecs/Components.h) の名前ハッシュ。
 // **毎 tick ハッシュを取り直さない** — 文字列を舐めるコストを 4 体 × 60Hz 払う理由が無い
 const uint64_t kCompPlayerInput = MyeNameHash("PlayerInput");
 const uint64_t kFieldAxes = MyeNameHash("axes");

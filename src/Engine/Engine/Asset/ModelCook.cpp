@@ -4,10 +4,10 @@
 #include <filesystem>
 #include <system_error>
 
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Asset/CookedCache.h"
 #include "Engine/Platform/PathUtil.h"
-#include "Engine/Renderer/ShaderManager.h"
+#include "Engine/Renderer/Shader/ShaderManager.h"
 
 namespace mye::ModelCook {
 namespace {

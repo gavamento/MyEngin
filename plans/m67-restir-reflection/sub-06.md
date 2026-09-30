@@ -58,8 +58,8 @@ spec §4.3 の spatial、§4.1 の `--rt-class-override`、§4.4 のチューニ
 - `assets\shaders\rt_refl_restir_spatial.cs.hlsl`
 - `src\Engine\Engine\RayTracing\RtScene.h/.cpp` (`Update` の引数) / `src\Engine\Engine\RenderSystem.cpp` (1120 行付近の呼び出し)
 - `src\Engine\Renderer\RayTracing\RtPasses.cpp` (`RenderReflection` の SVGF 引数)
-- `src\Engine\Engine\EngineLoop.h/.cpp` / `src\Editor\EditorMain.cpp` / `src\Runtime\RuntimeMain.cpp` (CLI)
-- `src\Editor\EditorApp.cpp` (RT Debug メニュー、Froxel サブメニュー 1131-1157 行が雛形) / `LocalizationTable.inl`
+- `src\Engine\Engine\EngineLoop.h/.cpp` / `src\Editor\App\EditorMain.cpp` / `src\Runtime\RuntimeMain.cpp` (CLI)
+- `src\Editor\App\EditorApp.cpp` (RT Debug メニュー、Froxel サブメニュー 1131-1157 行が雛形) / `LocalizationTable.inl`
 
 ## 受け入れ条件 (このサブ)
 

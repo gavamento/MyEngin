@@ -191,7 +191,7 @@
 全欄ハッシュ対象 (ReadOnly 表示)。
 
 #### `.mfrac`
-ByteWriter / ByteReader (`Engine/Core/ByteIo.h`) で、magic `"MFRC"`、版 1。中身: ソースの識別 (メッシュ登録名のハッシュ、焼き入力)、破片数、破片ごとに {原点 (ソース空間)、体積、外側メッシュ (MeshVertex + index)、蓋メッシュ、凸包 (`SerializeConvexHull`)、隣接 (相手 index, 面積) ×≤32、スキンなら骨名}、焼きの記録 (落とした隣接数、統合数)。境界検査付きで、壊れたファイルでも落ちない。書き出しは同じ入力で同じバイト列。AssetType に `Fracture` を末尾追加 (`AssetDatabase.h:13-32`)。
+ByteWriter / ByteReader (`Engine/Core/Util/ByteIo.h`) で、magic `"MFRC"`、版 1。中身: ソースの識別 (メッシュ登録名のハッシュ、焼き入力)、破片数、破片ごとに {原点 (ソース空間)、体積、外側メッシュ (MeshVertex + index)、蓋メッシュ、凸包 (`SerializeConvexHull`)、隣接 (相手 index, 面積) ×≤32、スキンなら骨名}、焼きの記録 (落とした隣接数、統合数)。境界検査付きで、壊れたファイルでも落ちない。書き出しは同じ入力で同じバイト列。AssetType に `Fracture` を末尾追加 (`AssetDatabase.h:13-32`)。
 
 #### 互換性
 - 既存コンポーネントの欄は変えない (`kSimSnapshotVersion` を上げるかは WaterWave (63) 追加時の前例に従う)
@@ -242,7 +242,7 @@ ByteWriter / ByteReader (`Engine/Core/ByteIo.h`) で、magic `"MFRC"`、版 1。
 24. (review-1) `strength` の既定値が、spec §2 の 3 つの基準を満たす — `--selftest`
 25. (review-1) `voxelResolution` の Inspector の上限で、開いた箱・16 破片の焼きが成功する。焼きを取り消せ、エディタの終了が焼き終わりを待たない — `--selftest` + 手動
 26. (review-1) 固定の壁のデモで、撃った所の塊が落ちて穴が見える — スクショ (golden の撮り直し)
-20. どのサブも WIP ファイル (`src/Engine/Renderer/WaterPass.cpp`、`tools/deepmodal/*`、`assets/deepmodal/*`、ルート直下の一時ファイル) を変更しない — `git diff --stat` / SELF_EVAL の触ったファイル
+20. どのサブも WIP ファイル (`src/Engine/Renderer/Passes/WaterPass.cpp`、`tools/deepmodal/*`、`assets/deepmodal/*`、ルート直下の一時ファイル) を変更しない — `git diff --stat` / SELF_EVAL の触ったファイル
 
 ## 6. サブ分割
 

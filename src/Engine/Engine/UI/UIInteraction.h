@@ -13,7 +13,7 @@
 //   換算するので (M75b)、窓の大きさに依らない。
 #include <cstdint>
 
-#include "Engine/Core/EntityID.h"
+#include "Engine/Core/Ecs/EntityID.h"
 
 namespace mye {
 

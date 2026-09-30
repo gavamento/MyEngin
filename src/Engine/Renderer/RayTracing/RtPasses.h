@@ -4,9 +4,9 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
-#include "Engine/Renderer/GpuTimer.h"
-#include "Engine/Renderer/RenderTexture.h"
-#include "Engine/Renderer/RenderTypes.h"
+#include "Engine/Renderer/Device/GpuTimer.h"
+#include "Engine/Renderer/Device/RenderTexture.h"
+#include "Engine/Renderer/Pipeline/RenderTypes.h"
 
 namespace mye {
 

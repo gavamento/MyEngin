@@ -26,10 +26,10 @@ spec §4.3 を実装する。
 
 ## 触る場所 (planner の見立て)
 
-- `src/Editor/Windows/InspectorWindow.cpp/.h` — マテリアル節、fxstack Properties 節、`schemaCache`
-- `src/Editor/AssetOps.cpp/.h`、`src/Editor/Windows/AssetBrowserWindow.cpp` — 作成メニュー
-- `src/Engine/Core/LocalizationTable.inl`
-- `src/Editor/AssetOpsSelfTest.cpp` — サーフェステンプレートの作成＋コンパイル、`MaterialEditToJson` が `properties` を保持すること (Inspector の関数を SelfTest から呼べない場合は JSON 往復を担う関数を切り出す)
+- `src/Editor/Windows/Scene/InspectorWindow.cpp/.h` — マテリアル節、fxstack Properties 節、`schemaCache`
+- `src/Editor/Asset/AssetOps.cpp/.h`、`src/Editor/Windows/Asset/AssetBrowserWindow.cpp` — 作成メニュー
+- `src/Engine/Core/Localization/LocalizationTable.inl`
+- `src/Editor/Asset/AssetOpsSelfTest.cpp` — サーフェステンプレートの作成＋コンパイル、`MaterialEditToJson` が `properties` を保持すること (Inspector の関数を SelfTest から呼べない場合は JSON 往復を担う関数を切り出す)
 
 ## 受け入れ条件 (このサブ)
 
@@ -58,14 +58,14 @@ Editor.exe --project <一時> --screenshot <png>   (一時プローブ。メモ�
 
 SELF_EVAL: sub-04 (round 1)
 実装:
-  - `src/Engine/Renderer/ShaderManager.cpp`:`ShaderManager.h` — `IsProjectIndexedShaderFile` の `.cs.hlsl` off-by-one を修正 (8 文字リテラルを 9 文字比較していた)。`ProjectShaderNames(suffixFilter)` (索引済み短名の昇順列挙、マテリアル Inspector のシェーダコンボ用) と `FetchPropertySchema(name)` (`ResolveShaderPath` 経由で Properties スキーマ取得、fxstack/マテリアル共通) を追加
-  - `src/Editor/AssetOps.cpp`:`AssetOps.h` — 同じ off-by-one を `IsProjectIndexedShaderFilename` にも修正 (＋ `.surface.hlsl` 判定を追加、従来抜けていた)。`SurfaceShaderTemplate` / `CreateSurfaceShaderAsset` を追加 (Properties 2 件・include・PerMaterial・VSMain(gWorld/gViewProj 使用)・PSMain(MyeSunShadow+MyeApplyFog 使用) を含み実コンパイルが通るテンプレート)
-  - `src/Editor/Windows/AssetBrowserWindow.cpp` — `kCreateSurfaceShader` を追加し、Create > Shader メニューに「サーフェスシェーダ」項目、`DoCreate` に生成 + `RebuildProjectShaderIndex` の分岐を追加
-  - `src/Engine/Renderer/ProjectShaderProperties.h`:`.cpp` — `DecodeMaterialProperties` / `EncodeMaterialProperties` を追加 (`.mat.json` の `properties` ⇄ `PropValue` map、JSON テキスト直渡し・ImGui 非依存で AssetOpsSelfTest から呼べる)。Tex2D は数値なら Material.texture と同じ 10 進 GUID 文字列で内部保持し、書き出し時に「文字列が全桁数字なら JSON 数値」で書き戻す (読み側が文字列を 16 進として読むため、数値のまま素通しすると次回ロードで値化けする罠を回避)
-  - `src/Editor/Windows/InspectorWindow.h`:`.cpp` — `MaterialEditState::properties` を追加。`LoadMaterialEdit`/`MaterialEditToJson` で `DecodeMaterialProperties`/`EncodeMaterialProperties` を使い properties を読み書き (空なら `properties` キーを書かない = forward_lit 等の既存ファイルを汚さない)。`DrawMaterialInspector` の `shader:` 表示をコンボ (forward_lit + 索引済み `*.surface` 昇順、索引に無い値は先頭に読み取り専用で差し込み) に置換し、失敗バナー (`ShaderManager::LoadSurface`/`GetSurface` から取得、赤字)、Properties セクション (サーフェス選択時のみ) を追加。ライブプレビューはサーフェス選択時 `forward_lit` の Material に固定 (理由は差分参照)。`DrawFxStackInspector` の Properties 取得・描画を `GetOrFetchPropertySchema`/`DrawPropertiesEditor` (新規共通関数) 呼び出しへ置換
-  - `src/Engine/Core/LocalizationTable.inl` — `Asset_SurfaceShader` / `Log_WriteSurfaceShaderFail` / `Log_CreatedSurfaceShader` / `Insp_MatShader` / `Insp_MatShaderFailed` / `Insp_MatProperties` を日英で追加
-  - `src/Engine/Renderer/ShaderManagerProjectIndexSelfTest.cpp` — `.cs.hlsl` 索引の回帰テストを追加 (修正前に FAIL することを確認してから修正)
-  - `src/Editor/AssetOpsSelfTest.cpp` — `.cs.hlsl` 重複拒否の回帰テスト (修正前に FAIL することを確認してから修正)、サーフェステンプレートの作成+WARP 実コンパイル確認、`DecodeMaterialProperties`/`EncodeMaterialProperties` の型別往復テスト (Tex2D 数値 GUID・組込み名文字列・スキーマ外キー保持) を追加
+  - `src/Engine/Renderer/Shader/ShaderManager.cpp`:`ShaderManager.h` — `IsProjectIndexedShaderFile` の `.cs.hlsl` off-by-one を修正 (8 文字リテラルを 9 文字比較していた)。`ProjectShaderNames(suffixFilter)` (索引済み短名の昇順列挙、マテリアル Inspector のシェーダコンボ用) と `FetchPropertySchema(name)` (`ResolveShaderPath` 経由で Properties スキーマ取得、fxstack/マテリアル共通) を追加
+  - `src/Editor/Asset/AssetOps.cpp`:`AssetOps.h` — 同じ off-by-one を `IsProjectIndexedShaderFilename` にも修正 (＋ `.surface.hlsl` 判定を追加、従来抜けていた)。`SurfaceShaderTemplate` / `CreateSurfaceShaderAsset` を追加 (Properties 2 件・include・PerMaterial・VSMain(gWorld/gViewProj 使用)・PSMain(MyeSunShadow+MyeApplyFog 使用) を含み実コンパイルが通るテンプレート)
+  - `src/Editor/Windows/Asset/AssetBrowserWindow.cpp` — `kCreateSurfaceShader` を追加し、Create > Shader メニューに「サーフェスシェーダ」項目、`DoCreate` に生成 + `RebuildProjectShaderIndex` の分岐を追加
+  - `src/Engine/Renderer/Shader/ProjectShaderProperties.h`:`.cpp` — `DecodeMaterialProperties` / `EncodeMaterialProperties` を追加 (`.mat.json` の `properties` ⇄ `PropValue` map、JSON テキスト直渡し・ImGui 非依存で AssetOpsSelfTest から呼べる)。Tex2D は数値なら Material.texture と同じ 10 進 GUID 文字列で内部保持し、書き出し時に「文字列が全桁数字なら JSON 数値」で書き戻す (読み側が文字列を 16 進として読むため、数値のまま素通しすると次回ロードで値化けする罠を回避)
+  - `src/Editor/Windows/Scene/InspectorWindow.h`:`.cpp` — `MaterialEditState::properties` を追加。`LoadMaterialEdit`/`MaterialEditToJson` で `DecodeMaterialProperties`/`EncodeMaterialProperties` を使い properties を読み書き (空なら `properties` キーを書かない = forward_lit 等の既存ファイルを汚さない)。`DrawMaterialInspector` の `shader:` 表示をコンボ (forward_lit + 索引済み `*.surface` 昇順、索引に無い値は先頭に読み取り専用で差し込み) に置換し、失敗バナー (`ShaderManager::LoadSurface`/`GetSurface` から取得、赤字)、Properties セクション (サーフェス選択時のみ) を追加。ライブプレビューはサーフェス選択時 `forward_lit` の Material に固定 (理由は差分参照)。`DrawFxStackInspector` の Properties 取得・描画を `GetOrFetchPropertySchema`/`DrawPropertiesEditor` (新規共通関数) 呼び出しへ置換
+  - `src/Engine/Core/Localization/LocalizationTable.inl` — `Asset_SurfaceShader` / `Log_WriteSurfaceShaderFail` / `Log_CreatedSurfaceShader` / `Insp_MatShader` / `Insp_MatShaderFailed` / `Insp_MatProperties` を日英で追加
+  - `src/Engine/Renderer/Shader/ShaderManagerProjectIndexSelfTest.cpp` — `.cs.hlsl` 索引の回帰テストを追加 (修正前に FAIL することを確認してから修正)
+  - `src/Editor/Asset/AssetOpsSelfTest.cpp` — `.cs.hlsl` 重複拒否の回帰テスト (修正前に FAIL することを確認してから修正)、サーフェステンプレートの作成+WARP 実コンパイル確認、`DecodeMaterialProperties`/`EncodeMaterialProperties` の型別往復テスト (Tex2D 数値 GUID・組込み名文字列・スキーマ外キー保持) を追加
 
 仕様との差分:
   - [追加] `ShaderManager::ProjectShaderNames` / `FetchPropertySchema` — sub-04.md の「触る場所」に明記は無いが、シェーダコンボと Properties 共通化 (spec §2 Inspector 行) を実装するのに必要な最小限の公開 API
@@ -98,18 +98,18 @@ SELF_EVAL: sub-04 (round 1)
   - なし。§7 の未決事項はいずれも sub-05 (WaterWave) 向けで本サブには影響しない
 
 触ったファイル:
-  - `src/Editor/AssetOps.cpp`
-  - `src/Editor/AssetOps.h`
-  - `src/Editor/AssetOpsSelfTest.cpp`
-  - `src/Editor/Windows/AssetBrowserWindow.cpp`
-  - `src/Editor/Windows/InspectorWindow.cpp`
-  - `src/Editor/Windows/InspectorWindow.h`
-  - `src/Engine/Core/LocalizationTable.inl`
-  - `src/Engine/Renderer/ProjectShaderProperties.cpp`
-  - `src/Engine/Renderer/ProjectShaderProperties.h`
-  - `src/Engine/Renderer/ShaderManager.cpp`
-  - `src/Engine/Renderer/ShaderManager.h`
-  - `src/Engine/Renderer/ShaderManagerProjectIndexSelfTest.cpp`
+  - `src/Editor/Asset/AssetOps.cpp`
+  - `src/Editor/Asset/AssetOps.h`
+  - `src/Editor/Asset/AssetOpsSelfTest.cpp`
+  - `src/Editor/Windows/Asset/AssetBrowserWindow.cpp`
+  - `src/Editor/Windows/Scene/InspectorWindow.cpp`
+  - `src/Editor/Windows/Scene/InspectorWindow.h`
+  - `src/Engine/Core/Localization/LocalizationTable.inl`
+  - `src/Engine/Renderer/Shader/ProjectShaderProperties.cpp`
+  - `src/Engine/Renderer/Shader/ProjectShaderProperties.h`
+  - `src/Engine/Renderer/Shader/ShaderManager.cpp`
+  - `src/Engine/Renderer/Shader/ShaderManager.h`
+  - `src/Engine/Renderer/Shader/ShaderManagerProjectIndexSelfTest.cpp`
 
 申し送り:
   - sub-05 (WaterWave) は本サブのシェーダコンボ・Properties 共通化とは独立。ただし `MaterialEditState::properties` の型 (`PropValue` map) と `DecodeMaterialProperties`/`EncodeMaterialProperties` はそのまま流用できる想定
@@ -117,9 +117,9 @@ SELF_EVAL: sub-04 (round 1)
 
 SELF_EVAL: sub-04 (round 2)
 実装:
-  - `src/Editor/Windows/InspectorWindow.cpp` — シェーダコンボの選択変更ハンドラから `matEdit_.properties.clear()` を削除。`ApplyMaterialShaderSelection(matEdit_.shader, items[curIndex])` を呼ぶだけにし、Properties マップには一切触れないようにした (spec §4.1「シェーダを戻したとき値が残る」契約どおり)
-  - `src/Engine/Renderer/ProjectShaderProperties.h`:`.cpp` — `ApplyMaterialShaderSelection(shaderName, newShaderName)` を追加。中身はシェーダ名の代入のみで Properties には触れない、という契約そのものを関数に切り出した (InspectorWindow の private 型 `MaterialEditState` を経由せず `std::string`/`PropValue` map レベルで完結するので `AssetOpsSelfTest.cpp` から直接呼べる)
-  - `src/Editor/AssetOpsSelfTest.cpp` — 回帰テストを追加: シェーダ名を A→B→A と `ApplyMaterialShaderSelection` で切り替えても `properties` マップの中身 (件数・値) が変化しないこと、最終的に `EncodeMaterialProperties` で JSON へ戻したとき元の値 (`_Tint`) が保持されていることを確認 (round 1 の `properties.clear()` 回帰の再発防止)
+  - `src/Editor/Windows/Scene/InspectorWindow.cpp` — シェーダコンボの選択変更ハンドラから `matEdit_.properties.clear()` を削除。`ApplyMaterialShaderSelection(matEdit_.shader, items[curIndex])` を呼ぶだけにし、Properties マップには一切触れないようにした (spec §4.1「シェーダを戻したとき値が残る」契約どおり)
+  - `src/Engine/Renderer/Shader/ProjectShaderProperties.h`:`.cpp` — `ApplyMaterialShaderSelection(shaderName, newShaderName)` を追加。中身はシェーダ名の代入のみで Properties には触れない、という契約そのものを関数に切り出した (InspectorWindow の private 型 `MaterialEditState` を経由せず `std::string`/`PropValue` map レベルで完結するので `AssetOpsSelfTest.cpp` から直接呼べる)
+  - `src/Editor/Asset/AssetOpsSelfTest.cpp` — 回帰テストを追加: シェーダ名を A→B→A と `ApplyMaterialShaderSelection` で切り替えても `properties` マップの中身 (件数・値) が変化しないこと、最終的に `EncodeMaterialProperties` で JSON へ戻したとき元の値 (`_Tint`) が保持されていることを確認 (round 1 の `properties.clear()` 回帰の再発防止)
 
 仕様との差分:
   - なし。round 1 の [追加/解釈] (シェーダ切替で properties をクリアする) は指摘により撤回し、spec §4.1 のとおり「保持する」に修正した
@@ -138,18 +138,18 @@ SELF_EVAL: sub-04 (round 2)
 不安・質問: なし
 
 触ったファイル (round 1 + round 2 の全量):
-  - `src/Editor/AssetOps.cpp`
-  - `src/Editor/AssetOps.h`
-  - `src/Editor/AssetOpsSelfTest.cpp`
-  - `src/Editor/Windows/AssetBrowserWindow.cpp`
-  - `src/Editor/Windows/InspectorWindow.cpp`
-  - `src/Editor/Windows/InspectorWindow.h`
-  - `src/Engine/Core/LocalizationTable.inl`
-  - `src/Engine/Renderer/ProjectShaderProperties.cpp`
-  - `src/Engine/Renderer/ProjectShaderProperties.h`
-  - `src/Engine/Renderer/ShaderManager.cpp`
-  - `src/Engine/Renderer/ShaderManager.h`
-  - `src/Engine/Renderer/ShaderManagerProjectIndexSelfTest.cpp`
+  - `src/Editor/Asset/AssetOps.cpp`
+  - `src/Editor/Asset/AssetOps.h`
+  - `src/Editor/Asset/AssetOpsSelfTest.cpp`
+  - `src/Editor/Windows/Asset/AssetBrowserWindow.cpp`
+  - `src/Editor/Windows/Scene/InspectorWindow.cpp`
+  - `src/Editor/Windows/Scene/InspectorWindow.h`
+  - `src/Engine/Core/Localization/LocalizationTable.inl`
+  - `src/Engine/Renderer/Shader/ProjectShaderProperties.cpp`
+  - `src/Engine/Renderer/Shader/ProjectShaderProperties.h`
+  - `src/Engine/Renderer/Shader/ShaderManager.cpp`
+  - `src/Engine/Renderer/Shader/ShaderManager.h`
+  - `src/Engine/Renderer/Shader/ShaderManagerProjectIndexSelfTest.cpp`
   - (新規ファイルなし。`gen_project_files.ps1` は不要)
 
 申し送り:
@@ -157,10 +157,10 @@ SELF_EVAL: sub-04 (round 2)
 
 SELF_EVAL: sub-04 (round 3)
 実装:
-  - `src/Engine/Renderer/ProjectShaderProperties.h`:`.cpp` — `PropertySchemaCache` を追加。`shaderName` をキーに `{更新時刻, ok フラグ, スキーマ}` を持ち、`GetOrFetch(shaderName, resolvedPath, fetch)` は `resolvedPath` の `std::filesystem::last_write_time` を前回取得時と比較し、変わっていれば (またはどちらか一方でも取得できなければ) `fetch()` で取り直す。ImGui 非依存で `AssetOpsSelfTest.cpp` から直接叩ける
-  - `src/Editor/Windows/InspectorWindow.h` — `matSchemaCache_` と `FxStackEditState::schemaCache` の型を `std::unordered_map<std::string, PropertyParseResult>` から `PropertySchemaCache` に変更。`GetOrFetchPropertySchema` のシグネチャも合わせて変更
-  - `src/Editor/Windows/InspectorWindow.cpp`:`GetOrFetchPropertySchema` — `ctx.shaders->ResolveShaderPath(shaderName)` で解決したパスを鍵にして `PropertySchemaCache::GetOrFetch` を呼ぶだけに変更 (素朴な `find`/`emplace` を撤去)。`shaderName` 空 / `ctx.shaders` 無しの経路は従来どおりキャッシュに触れず空スキーマを返す
-  - `src/Editor/AssetOpsSelfTest.cpp` — `PropertySchemaCache` の回帰テストを追加 (詳細は検証欄)
+  - `src/Engine/Renderer/Shader/ProjectShaderProperties.h`:`.cpp` — `PropertySchemaCache` を追加。`shaderName` をキーに `{更新時刻, ok フラグ, スキーマ}` を持ち、`GetOrFetch(shaderName, resolvedPath, fetch)` は `resolvedPath` の `std::filesystem::last_write_time` を前回取得時と比較し、変わっていれば (またはどちらか一方でも取得できなければ) `fetch()` で取り直す。ImGui 非依存で `AssetOpsSelfTest.cpp` から直接叩ける
+  - `src/Editor/Windows/Scene/InspectorWindow.h` — `matSchemaCache_` と `FxStackEditState::schemaCache` の型を `std::unordered_map<std::string, PropertyParseResult>` から `PropertySchemaCache` に変更。`GetOrFetchPropertySchema` のシグネチャも合わせて変更
+  - `src/Editor/Windows/Scene/InspectorWindow.cpp`:`GetOrFetchPropertySchema` — `ctx.shaders->ResolveShaderPath(shaderName)` で解決したパスを鍵にして `PropertySchemaCache::GetOrFetch` を呼ぶだけに変更 (素朴な `find`/`emplace` を撤去)。`shaderName` 空 / `ctx.shaders` 無しの経路は従来どおりキャッシュに触れず空スキーマを返す
+  - `src/Editor/Asset/AssetOpsSelfTest.cpp` — `PropertySchemaCache` の回帰テストを追加 (詳細は検証欄)
 
 仕様との差分:
   - なし。review-1 #5 の期待どおり「ファイル更新時刻でキャッシュを捨てる」を実装した。`SurfaceProgram::generation` ではなく更新時刻を選んだ理由: fxstack (ポスト/コンピュート) の `ShaderProgram` には `generation` が無く、両方のキャッシュ (`matSchemaCache_`/`schemaCache`) を同じ機構で直すには generation に依存しない手段が要ったため。この判断は差分ではなく指摘の「期待」欄に明記された two 案 (generation か更新時刻) のうち後者を採った選択
@@ -183,11 +183,11 @@ SELF_EVAL: sub-04 (round 3)
   - なし
 
 触ったファイル (round 3、round 1/2 分に追加):
-  - `src/Editor/AssetOpsSelfTest.cpp`
-  - `src/Editor/Windows/InspectorWindow.cpp`
-  - `src/Editor/Windows/InspectorWindow.h`
-  - `src/Engine/Renderer/ProjectShaderProperties.cpp`
-  - `src/Engine/Renderer/ProjectShaderProperties.h`
+  - `src/Editor/Asset/AssetOpsSelfTest.cpp`
+  - `src/Editor/Windows/Scene/InspectorWindow.cpp`
+  - `src/Editor/Windows/Scene/InspectorWindow.h`
+  - `src/Engine/Renderer/Shader/ProjectShaderProperties.cpp`
+  - `src/Engine/Renderer/Shader/ProjectShaderProperties.h`
   - (新規ファイルなし。`gen_project_files.ps1` 不要。`assets/shaders/WaterGerstner.surface.hlsl` は sub-05 の並行作業中につき未触。一時プロジェクト `%TEMP%\mye_sub04_probe` は起動確認のみで内容変更なし)
 
 申し送り:

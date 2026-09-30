@@ -3,11 +3,11 @@
 
 #include <wrl/client.h>
 
-#include "Engine/Core/Components.h"
-#include "Engine/Core/Random.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Util/Random.h"
 #include "Engine/Engine/Particles/GpuAliveEstimator.h"
 #include "Engine/Engine/Particles/IParticleBackend.h"
-#include "Engine/Renderer/GpuTimer.h"
+#include "Engine/Renderer/Device/GpuTimer.h"
 
 namespace mye {
 

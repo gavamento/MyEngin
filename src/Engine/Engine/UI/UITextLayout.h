@@ -5,7 +5,7 @@
 // (k = FontAtlas::GlyphScale(fontScale)) で、描画側と同じ式なのでズレない。
 #include <vector>
 
-#include "Engine/Renderer/FontGeometry.h"
+#include "Engine/Renderer/Text/FontGeometry.h"
 
 namespace mye {
 namespace textlayout {

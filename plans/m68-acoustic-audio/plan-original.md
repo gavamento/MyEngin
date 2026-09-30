@@ -202,9 +202,9 @@ listenerPos, AudioSpatial& io, float& gainOut, AcousticShapeState* smooth)` に�
 
 ### M68a — リスナー場 + 遮蔽・回折 (仮想発音位置 + LPF) + 部品 + selftest 45 本目
 
-**新規**: `src\Engine\Engine\Audio\AcousticAudio.h/.cpp` (`AcousticProbe` = Dial の写し + 箱 + 予算 /
+**新規**: `src\Engine\Engine\Audio\Spatial\AcousticAudio.h/.cpp` (`AcousticProbe` = Dial の写し + 箱 + 予算 /
 `ClassifyPath` / `ShapeAcousticSpatial` / `Openness` / `AcousticShapeState` / `PendingWaveShot`)、
-`src\Engine\Engine\Audio\AcousticAudioSelfTest.h/.cpp`。`pwsh -File tools\gen_project_files.ps1`。
+`src\Engine\Engine\Audio\Spatial\AcousticAudioSelfTest.h/.cpp`。`pwsh -File tools\gen_project_files.ps1`。
 
 **変更**:
 - `Components.h/.cpp`: `AcousticAudioComponent` を**末尾 (TypeId 50)** に `kComponentNoHash` で登録、

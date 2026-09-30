@@ -89,9 +89,9 @@ SELF_EVAL: sub-08 (round 1)
     頭数には数えるがそれ以外の挙動判定からは外す (次 tick から判定を始める)。理由は「仕様との
     差分」参照
   - `src/Engine/Engine/FractureSystem.h` — 上記の設計意図をクラス冒頭のコメントに追記
-  - `src/Engine/Core/Components.cpp` — `afterBreak` のツールチップに、スリープ無効時 (4) は
+  - `src/Engine/Core/Ecs/Components.cpp` — `afterBreak` のツールチップに、スリープ無効時 (4) は
     静的化しない旨を追記 (やること 2 の指示どおり)
-  - `src/Engine/Engine/Physics/FractureSelfTest.cpp` — `SetupDetachedLeader` ヘルパと、6 挙動 +
+  - `src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp` — `SetupDetachedLeader` ヘルパと、6 挙動 +
     決定論の 22 個の check を追加 (セクション 17)。behavior 2 は実際に `PhysicsSystem` を回し、
     床コライダーを置いて「mask クリア後に沈んで床の下へ抜ける」ことを実際の物理で確認する
   - `src/Engine/Engine/DemoContent.cpp` (`BuildFractureShowcaseScene`) — `--fracture-demo` の
@@ -156,8 +156,8 @@ SELF_EVAL: sub-08 (round 1)
 触ったファイル:
   - src/Engine/Engine/FractureSystem.h
   - src/Engine/Engine/FractureSystem.cpp
-  - src/Engine/Core/Components.cpp
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
+  - src/Engine/Core/Ecs/Components.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
   - src/Engine/Engine/DemoContent.cpp
   - tools/shot_verify.bat
   - tests/golden/fracture_before.png
@@ -173,7 +173,7 @@ SELF_EVAL: sub-08 (round 1)
 
 SELF_EVAL: sub-08 (round 2)
 実装:
-  - `src/Engine/Engine/Physics/FractureSelfTest.cpp` — セクション 18 として、「round 1 の裁定」
+  - `src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp` — セクション 18 として、「round 1 の裁定」
     手順 3 の固定検査 (kinematic 壁に球をぶつけ、分かれた破片の最大の速さ ≤ 衝突直前の球の速さ
     × 2 × 1.05) を追加した。計測用の一時ログ・診断コードは全て削除済み (下記「検証」の実測値は
     一時的に足して取り、確認後に削除した)
@@ -243,7 +243,7 @@ SELF_EVAL: sub-08 (round 2)
   テスト: 5 — round 1 の裁定が要求した固定検査 (2 倍速上限) を追加し、Debug/Release 双方で
     PASS。既存 22 check・replay 9 シーン・shot 23 枚 (既知 4 枚除く) も無回帰
 触ったファイル (round 2 差分のみ):
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp (セクション 18 追加)
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp (セクション 18 追加)
   - tests/golden/fracture_before.png (撮り直し、旧ファイルと MD5 一致)
   - tests/golden/fracture_after.png (撮り直し、旧ファイルと MD5 一致)
   - plans/m80-destruction/sub-08.md (このメモ)

@@ -1,0 +1,191 @@
+#pragma once
+#include <unordered_set>
+#include <vector>
+#include <wrl/client.h>
+
+#include "Engine/Renderer/Passes/HzbPass.h"
+#include "Engine/Renderer/Mesh/MeshInstancing.h"
+#include "Engine/Renderer/Pipeline/RenderPath.h"
+#include "Engine/Renderer/Device/RenderTexture.h"
+#include "Engine/Renderer/Passes/SkyboxPass.h"
+#include "Engine/Renderer/Passes/SsrPass.h"
+#include "Engine/Renderer/Passes/TerrainPass.h"
+#include "Engine/Renderer/Passes/WaterPass.h"
+
+namespace mye {
+
+struct Material;             // GpuResources.h
+struct Mesh;                 // GpuResources.h
+struct SurfaceMaterialState; // GpuResources.h (M79 sub-03)
+
+// Deferred レンダリング (engine_spec.md 6.1 Option B / M6.5)。
+//   1. ジオメトリパス: opaque → GBuffer (albedo RGBA8 + 法線 R10G10B10A2 + 共有深度)
+//   2. ライティングパス: フルスクリーン解決 (Forward と同じ common.hlsli の関数)
+//   3. 透明後段: transparent はマテリアルの Forward シェーダで上描き
+//      (パーティクルはさらにその後、RenderSystem が共通の Forward 後段として描く)
+// ライトは Forward と同じ LightList データを使うため、切替で見た目が一致する
+class DeferredPath : public IRenderPath {
+public:
+    const char* Name() const override { return "Deferred"; }
+    bool Init(GraphicsDevice& device, ShaderManager& shaders) override;
+    void Shutdown() override;
+    void Render(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
+                const SceneLightData& lights, RenderResources& resources,
+                ShaderManager& shaders) override;
+    // M55c/M55d: GBuffer RT4 = 画面速度。Deferred だけが書ける (Forward に MRT は無い) ので、
+    // TAA / モーションブラー v2 / RT の物体モーションは **Deferred 限定**の機能になる
+    bool WritesVelocity() const override { return true; }
+    ID3D11ShaderResourceView* VelocitySRV() const override { return gbVelocity_.SRV(); }
+    // M56c: HZB を組んだ GPU 時間 (ProfilerWindow 表示用)。組まないフレームは前の値が残る
+    float HzbGpuMs() const override { return hzb_.GpuMs(); }
+    // M56d: SSR (コピー + 階層 Z トレース + 加算合成) の GPU 時間。同上
+    float SsrGpuMs() const override { return ssr_.GpuMs(); }
+    // M57d: 光パス (t15) で不透明ピクセルへ合成する。背景ピクセルと透明後段
+    // (Forward t7) も受け持つ (M57e)。スカイとパーティクルは SkyboxPass /
+    // ParticleSystem が view.froxelSRV を直接読む。ここが true のパスでは
+    // ゴッドレイは自動 off になる (三重計上の解消)
+    bool AppliesFroxel() const override { return true; }
+
+private:
+    // M56a: デカール (投影ボックス)。ジオメトリパス直後・SSAO 前に albedo を上描きする。
+    // view.decals が null / 空なら 1 命令も発行せずに return する
+    void RenderDecals(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view,
+                      RenderResources& resources, const DirectX::XMFLOAT4X4& viewProjT);
+    // M56b: RT1 (法線) の読み取り用コピーを用意する (無ければ作る / サイズが変わったら作り直す)。
+    // 戻り値 false = 確保できなかった → そのフレームは albedo だけの M56a 相当へ縮退する
+    bool EnsureNormalCopy(GraphicsDevice& device);
+
+    // ---- Render の段 (Render が上から呼ぶ順)。段をまたぐ値は DeferredFrame (.cpp で定義) で受け渡す ----
+    struct DeferredFrame;
+    // 1) + 1.1) GBuffer 5 本と深度へ不透明と地形を書く。フレーム定数 (pf) と velocity 用 CB もここで組む
+    void RenderGeometry(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
+                        RenderResources& resources, ShaderManager& shaders, DeferredFrame& f);
+    void RenderSsao(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders, DeferredFrame& f); // 1.5)
+    void BuildHzb(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders, DeferredFrame& f);   // 1.6)
+    void RenderRayTracing(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
+                          DeferredFrame& f); // 1.7)
+    void RenderLighting(const RenderView& view, DeferredFrame& f);                                              // 2)
+    void RenderSky(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders, DeferredFrame& f);  // 2.5)
+    void RenderSsr(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders, DeferredFrame& f);  // 2.6)
+    // 2.65) M79 sub-03: 不透明サーフェスの「フォワード段」。SSR の後・水面 (2.7) の前。
+    // GBuffer から除外したサーフェスアイテム (f.surfaceOpaqueIdx、RenderGeometry が集める) を
+    // 速度エントリ (前後 2 回評価) で HDR シーン (view.rtv) + 画面速度 (gbVelocity_) + 深度 (view.dsv)
+    // へ描く。アイテムが 0 件なら RT / ステート / SRV を一切触らない (既定シーンのビット一致)
+    void RenderSurfaceForward(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
+                              RenderResources& resources, ShaderManager& shaders, DeferredFrame& f);
+    // M79 sub-05 round 2: device を追加 (透明サーフェスの色エントリが GetOrBuildSurfaceState を
+    // 呼ぶために必要)。呼び出し元は Render 1 箇所のみ
+    void RenderTransparent(GraphicsDevice& device, const RenderView& view, const RenderQueue& queue,
+                           RenderResources& resources, ShaderManager& shaders, DeferredFrame& f); // 3)
+    // M79 sub-05 round 2: shader が "*.surface" の透明アイテムを 1 個描く (色エントリのみ。
+    // 速度は書かない = spec §4.1 Deferred 透明列。予約 CB は RenderSurfaceForward が同じフレームで
+    // 既に埋めた surfacePerFrameCB_/surfaceFrameCB_/surfaceWaterCB_ をそのまま使う)。
+    // 描画後に IA/VS/PS/CB/SRV/サンプラが forward_lit の前提と食い違うので、
+    // 呼び出し側 (RenderTransparent) が続けてバインドを戻すこと (ForwardPath::DrawItems と同じ流儀)
+    void DrawSurfaceTransparentItem(GraphicsDevice& device, const RenderItem& item, const Material& mat,
+                                    const Mesh& mesh, SurfaceMaterialState& surf, ShaderManager& shaders,
+                                    RenderResources& resources, const RenderView& view);
+    void RenderDebugViews(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
+                          DeferredFrame& f); // 4) - 6)
+
+    RenderTexture gbAlbedo_;   // a=1 でジオメトリ有りマーク
+    RenderTexture gbNormal_;   // ワールド法線 *0.5+0.5
+    RenderTexture gbPosition_; // ワールド座標 (Point/Spot ライティング用)
+    RenderTexture gbMaterial_; // r=metallic g=roughness (PBR、M17)
+    // M55c: 画面速度 (R16G16_FLOAT)。読むのは TAA (M55d) / モーションブラー v2 (M55e) /
+    // RT の物体モーション (M55f)。光パス (t0-t16) には張らず、読む側が自分で SRV を bind する
+    RenderTexture gbVelocity_;
+
+    Microsoft::WRL::ComPtr<ID3D11Buffer> perFrameCB_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> perObjectCB_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> materialCB_; // PBR パラメータ
+    Microsoft::WRL::ComPtr<ID3D11Buffer> lightCB_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> shadowSampler_; // 比較サンプラ (PCF)
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> iblSampler_;    // LINEAR/CLAMP (M38c)
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer_;
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerWire_; // SceneView Wireframe (M40b)
+    // M79 sub-06: doubleSided なサーフェス用 (Cull None、Solid)。サーフェス段/透明段が描画直前に
+    // 張り、直後に rasterizer_/rasterizerWire_ へ戻す
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerCullNone_;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthOpaque_;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthDisabled_;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthTransparent_;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> blendOpaque_;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> blendAlpha_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> boneCB_; // ボーンパレット (b3、スキニング、M18)
+    AssetID gbufferShader_ = {};
+    AssetID gbufferSkinnedShader_ = {}; // deferred_gbuffer_skinned (スキンメッシュ用に差替)
+    AssetID lightShader_ = {};
+    // ---- インスタンシング (M38f)。非スキン opaque の連続 run を一括描画 ----
+    AssetID gbufferInstancedShader_ = {};
+    MeshInstanceBuffer instanceBuf_;
+    std::vector<uint8_t> canInstance_; // フレーム毎スクラッチ
+    std::vector<MeshInstanceRun> runs_;
+    std::vector<DirectX::XMFLOAT4X4> worlds_;
+    // M55c: worlds_ と**同じ並び**の「前フレームに描いた world」(VS t1)。
+    // BuildInstanceRuns は共有 (Forward/Shadow も呼ぶ) なので触らず、runs_ から組み直す
+    std::vector<DirectX::XMFLOAT4X4> prevWorlds_;
+    MeshInstanceBuffer prevInstanceBuf_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> velocityCB_; // b4 (GBuffer パス専用)
+    // M55c: velocity の可視化 (RenderView::velocityDebug != 0 のときだけ)
+    AssetID velocityDebugShader_ = {};
+    Microsoft::WRL::ComPtr<ID3D11Buffer> velocityDebugCB_;
+    // ---- M56a: デカール ----
+    AssetID decalShader_ = {};
+    Microsoft::WRL::ComPtr<ID3D11Buffer> decalCB_;
+    // 投影ボックス専用のラスタライザ。CULL_FRONT (裏面を描く = カメラが箱に入っても消えない)
+    // + DepthClipEnable=FALSE (箱が near/far を跨いでも欠けない)
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerDecal_;
+    // ---- M56b: 法線 / roughness の上描き ----
+    // MRT ごとに別の書込マスクとブレンド係数を持つ独立ブレンド (Init のコメント参照)
+    Microsoft::WRL::ComPtr<ID3D11BlendState> blendDecal_;
+    // ★**RT1 (法線) のコピー**。デカールは受け面の法線を角度フェードのために読むので、
+    //   RT1 を RTV として bind するフレームは同じリソースを SRV でも読めない
+    //   (同一リソースの読み書き二重バインドは D3D が禁じている)。RenderTexture を
+    //   使わないのは RTV / DSV が要らないため — SRV だけの素の Texture2D で足りる。
+    //   **法線も roughness も書かないフレームでは 1 バイトも確保しない** (遅延生成)
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> gbNormalCopy_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> gbNormalCopySrv_;
+    int normalCopyW_ = 0;
+    int normalCopyH_ = 0;
+    // ---- M56c: HZB (min-Z ピラミッド) ----
+    // 組む条件は **view.hzbDebug != 0 と SSR の要求の or** (BuildHzb)。どちらも off の既定では
+    // 1 命令も増えない。可視化シェーダは velocityDebugShader_ と同じ立ち位置
+    HzbPass hzb_;
+    AssetID hzbDebugShader_ = {};
+    Microsoft::WRL::ComPtr<ID3D11Buffer> hzbDebugCB_;
+    // ---- M56d: SSR (スクリーンスペース反射) ----
+    // HZB の唯一の本番消費者。**view.ssrEnabled が HZB を組む条件に or で入る** —
+    // 忘れると SSR が null のピラミッドを見て何も映らない
+    SsrPass ssr_;
+    SkyboxPass skybox_; // ライトパス後・透明前に空を塗る (M29d)
+    // 地形 (M58c)。GBuffer へ専用シェーダで書く — 不透明パスは material->shader を
+    // 見ないのでマテリアル経由では通せない (TerrainPass.h の頭のコメント参照)
+    TerrainPass terrain_;
+    // 水面 (SSR 後・透明後段前)
+    WaterPass water_;
+
+    // ---- M79 sub-03: サーフェスシェーダーの予約 CB (GBuffer の perFrameCB_ とは別バッファ。
+    //      ForwardPath と同じ内容を Deferred のフォワード段用に持つ) ----
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfacePerFrameCB_;   // MyEnginePerFrame
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfaceFrameCB_;      // MyEngineSurfaceFrame
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfacePerObjectCB_;  // MyEnginePerObject
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfaceWaterCB_;      // MyEngineWater (sub-05 まで 0 埋め)
+    AssetID surfaceErrorId_ = {}; // "surface_error" (失敗時のマゼンタ代替)
+    std::unordered_set<uint64_t> skinnedSurfaceWarned_; // スキン+サーフェスの WARN はマテリアル毎に 1 回
+
+    // ---- SSAO (M38e、半解像度) ----
+    RenderTexture ssaoRaw_;
+    RenderTexture ssaoBlur_;
+    AssetID ssaoShader_ = {};
+    AssetID ssaoBlurShader_ = {};
+    Microsoft::WRL::ComPtr<ID3D11Buffer> ssaoCB_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> ssaoBlurCB_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> pointClamp_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> pointWrap_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> noiseTex_; // 4x4 ランダム回転
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> noiseSrv_;
+};
+
+} // namespace mye

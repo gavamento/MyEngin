@@ -17,11 +17,11 @@
 
 
 ### 調査で確かめた事実
-- **物理**は tick ごとに作り直すステートレス型。永続状態はコンポーネントのフィールドに置く (ハッシュとスナップショットは自動で被覆)。body の順序は entity.index 昇順。構造変更は tick 末のコマンドバッファ経由。イテレーション中にアーキタイプを新規作成すると `MYE_CHECK` で落ちる (`src/Engine/Core/World.cpp:275`)。
+- **物理**は tick ごとに作り直すステートレス型。永続状態はコンポーネントのフィールドに置く (ハッシュとスナップショットは自動で被覆)。body の順序は entity.index 昇順。構造変更は tick 末のコマンドバッファ経由。イテレーション中にアーキタイプを新規作成すると `MYE_CHECK` で落ちる (`src/Engine/Core/Ecs/World.cpp:275`)。
 - **複合コライダー**: `kMaxCompoundShapes=16` はスタック配列の大きさで、17 個目以降の子形状は「当たるのに慣性へ入らない」黙った不整合になる (`PhysicsSystem.cpp:1617-1645`)。接触は 1 ボディペア 1 件に畳まれ、どの子形状 (破片) が叩かれたかが分からない (`:4348-4389`)。
-- **凸包**: 頂点は 64 まで。`BuildConvexHull` / `ConvexMassProperties` / `ConvexColliderLibrary::Register` (`src/Engine/Engine/Physics/ConvexHull.h`、`ConvexColliderLibrary.h:41`)。初回は tick 内で遅延生成される → 破片は事前にクックまたは登録する。
+- **凸包**: 頂点は 64 まで。`BuildConvexHull` / `ConvexMassProperties` / `ConvexColliderLibrary::Register` (`src/Engine/Engine/Physics/Collider/ConvexHull.h`、`ConvexColliderLibrary.h:41`)。初回は tick 内で遅延生成される → 破片は事前にクックまたは登録する。
 - **破断の型**: 関節の breakImpulse を集計し、tick 末に判定して `broken` フラグを立てる (`PhysicsSystem.cpp:3911-3928, 4483-4517`)。応力の入力として `SolidContact.impulse` が破壊用に予約済み (`PhysicsSystem.h:22-35`)。
-- **メッシュ**: CPU 側の `Mesh` には positions / indices / normals / uvs だけが残り、**ボーンウェイトは残らない** (ウェイト込みの頂点はクック blob `.mmdl` の `CookedMesh.vertices` にだけある)。CPU スキニング関数は無い。ボーンパレットは CPU で計算している (`src/Engine/Renderer/Skeleton.h`)。
+- **メッシュ**: CPU 側の `Mesh` には positions / indices / normals / uvs だけが残り、**ボーンウェイトは残らない** (ウェイト込みの頂点はクック blob `.mmdl` の `CookedMesh.vertices` にだけある)。CPU スキニング関数は無い。ボーンパレットは CPU で計算している (`src/Engine/Renderer/Mesh/Skeleton.h`)。
 - **閉じているかの判定は無い**。ボクセル→メッシュ化も無い。`Voxelizer` は 32³ 固定で Deep-Modal と契約を共有しているので、流用せず別関数にする。
 - **描画**: 同じ mesh・同じ material が続くときだけインスタンシングされる。RT は参照メッシュの集合が変わると連結 BLAS を全部焼き直す (`RtScene.cpp:64-99`)。
 - **エディタ**: Reflection の自動 UI (enum 型は無く Int32 で代用) と `DrawComponentNotes` の手書き付記。非同期ベイクの前例は ModalSoundLibrary (worker + 状態列挙 + ボタン無効化)。数値の進捗バーは前例なし。
@@ -60,10 +60,10 @@
 - j ABI v22 (onBreak、API、C# ミラー) + デモシーン + engine_spec と ADR の更新
 
 ## 主要ファイル
-- 物理: `src/Engine/Engine/Physics/PhysicsSystem.cpp`, `PhysicsSystem.h`, `ConvexHull.h`, `ConvexColliderLibrary.*`
-- ECS: `src/Engine/Core/Components.h/.cpp`, `src/Engine/Engine/TickRunner.cpp`
-- メッシュ: `src/Engine/Renderer/GpuResources.h`, `src/Engine/Engine/Asset/ModelCook.h`, `src/Engine/Renderer/Skeleton.h`, `src/Engine/Engine/PartFollowSystem.cpp`
-- エディタ: `src/Editor/Windows/InspectorWindow.cpp`, `src/Editor/EditorComponentCatalog.cpp`, `src/Engine/Core/LocalizationTable.inl`
+- 物理: `src/Engine/Engine/Physics/Rigid/PhysicsSystem.cpp`, `PhysicsSystem.h`, `ConvexHull.h`, `ConvexColliderLibrary.*`
+- ECS: `src/Engine/Core/Ecs/Components.h/.cpp`, `src/Engine/Engine/TickRunner.cpp`
+- メッシュ: `src/Engine/Renderer/Device/GpuResources.h`, `src/Engine/Engine/Asset/ModelCook.h`, `src/Engine/Renderer/Mesh/Skeleton.h`, `src/Engine/Engine/PartFollowSystem.cpp`
+- エディタ: `src/Editor/Windows/Scene/InspectorWindow.cpp`, `src/Editor/Widgets/EditorComponentCatalog.cpp`, `src/Engine/Core/Localization/LocalizationTable.inl`
 - ABI: `src/Shared/EngineAPI.h`, `src/Shared/ScriptTypes.h`, `src/Scripting/Interop.cs`, `src/Engine/Engine/Script/EngineApiTable.cpp`, `tools/check_rules.ps1`
 - 新規: 分割コア (`src/Engine/Engine/Physics/Fracture*` 想定)、`plans/m80-destruction/`
 

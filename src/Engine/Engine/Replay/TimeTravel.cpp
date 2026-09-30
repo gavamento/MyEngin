@@ -2,10 +2,10 @@
 
 #include <algorithm>
 
-#include "Engine/Core/Log.h"
-#include "Engine/Core/World.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
-#include "Engine/Engine/Scene.h"
+#include "Engine/Engine/Scene/Scene.h"
 
 namespace mye {
 

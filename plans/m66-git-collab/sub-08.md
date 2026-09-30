@@ -24,8 +24,8 @@
 
 ## 触る場所 (planner の見立て)
 
-- 変更: `src\Editor\ProjectTemplates.cpp`、`src\Engine\Engine\Particles\ParticleSystem.{h,cpp}` (永続化のみ。**sim 経路には触れない**)、`src\Editor\EditorSettings.{h,cpp}`、`src\Editor\EditorApp.cpp` (起動時の受け渡し)、
-  `src\Editor\Windows\ProjectSettingsWindow.cpp` (backend 行 + Apply)、Particle Settings 窓 (トグルの保存呼び出しを外す)、`SourceControlWindow.cpp` (適用ボタン)、`ParticleSelfTest.cpp`、`SourceControlSelfTest.cpp`、`LocalizationTable.inl`。
+- 変更: `src\Editor\Project\ProjectTemplates.cpp`、`src\Engine\Engine\Particles\ParticleSystem.{h,cpp}` (永続化のみ。**sim 経路には触れない**)、`src\Editor\EditorSettings.{h,cpp}`、`src\Editor\App\EditorApp.cpp` (起動時の受け渡し)、
+  `src\Editor\Windows\Project\ProjectSettingsWindow.cpp` (backend 行 + Apply)、Particle Settings 窓 (トグルの保存呼び出しを外す)、`SourceControlWindow.cpp` (適用ボタン)、`ParticleSelfTest.cpp`、`SourceControlSelfTest.cpp`、`LocalizationTable.inl`。
 
 ## 受け入れ条件 (このサブ)
 
@@ -58,13 +58,13 @@ SELF_EVAL: sub-08 (round 1)
   - src/Editor/Windows/SourceControlWindow.{h,cpp}:DrawHeader — 設定ポップアップに
     「推奨 .gitignore を適用」。不足が無ければ BeginDisabled、ツールチップに追記予定の行を列挙。
     host に `gitignoreMissing` (呼ばれたときだけ読む) / `applyGitignore` を追加
-  - src/Editor/EditorApp.cpp:OnImGui — 上記 2 つの実体 (読む→純関数→書く + トースト + status 再取得)
+  - src/Editor/App/EditorApp.cpp:OnImGui — 上記 2 つの実体 (読む→純関数→書く + トースト + status 再取得)
   - src/Engine/Engine/Particles/ParticleSystem.{h,cpp} — 決定 8。LoadSettings(path) を public にし
     **particleBackend だけ**を読む/書く。SetActiveKind / SetCompareMode の SaveSettings 呼び出しを撤去し、
     SetCompareOffsetX / CompareOverriddenByCli を追加。旧の「★呼んではいけない」注記を現状に合わせて書き直し
   - src/Editor/EditorSettings.{h,cpp} — particleCompareMode / particleCompareOffsetX /
     particleCpuSimd (既定は旧値と同じ false / 4.0 / true)
-  - src/Editor/EditorApp.cpp:OnStart — 起動時に個人設定を ParticleSystem へ流す。
+  - src/Editor/App/EditorApp.cpp:OnStart — 起動時に個人設定を ParticleSystem へ流す。
     `--particle-compare` で起動していたら CLI を勝たせる
   - src/Editor/Windows/ParticleSettingsWindow.{h,cpp} — OnImGui(ctx, settings)。compare / simd は
     editor_settings.json へ、バックエンドはセッション上書き (注記行を 1 行追加)
@@ -76,7 +76,7 @@ SELF_EVAL: sub-08 (round 1)
     logging::WriteSrc を直接呼び `path(line)` を LogEntry.file/line に乗せる (JumpToSource が使える形)
   - src/Editor/DocumentDirty.{h,cpp} → DiskCompare.{h,cpp} に `git mv` (planner 追記 a)。
     include 4 ファイル更新 + gen_project_files.ps1
-  - src/Engine/Core/LocalizationTable.inl — en/ja 9 件追加、未使用の Scm_ComingSoon を削除 (planner 追記 b)
+  - src/Engine/Core/Localization/LocalizationTable.inl — en/ja 9 件追加、未使用の Scm_ComingSoon を削除 (planner 追記 b)
   - tools/collab/src/git.rs:classify_error — "you have unmerged files" → merge_in_progress (planner 追記 c)
   - tools/collab_fixture.ps1 — fixture の .gitignore を 7 行へ (テンプレと揃える)
   - テスト: ParticleSelfTest (永続化不変 6 件) / SourceControlSelfTest (g) (gitignore 13 件) /

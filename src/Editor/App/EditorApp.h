@@ -1,0 +1,248 @@
+#pragma once
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "nlohmann/json.hpp"
+
+#include "Editor/Asset/AssetPreviewCache.h"
+#include "Editor/App/EditorSettings.h"
+#include "Editor/Widgets/EditorToolbar.h"
+#include "Editor/App/LayoutManager.h"
+#include "Editor/Scene/PlayModeController.h"
+#include "Editor/Scene/Selection.h"
+#include "Editor/App/ShortcutHub.h"
+#include "Editor/Widgets/StatusBar.h"
+#include "Editor/Widgets/ToastCenter.h"
+#include "Editor/Undo/UndoStack.h"
+#include "Editor/Windows/Animation/AnimationWindow.h"
+#include "Editor/Windows/Animation/AnimatorControllerWindow.h"
+#include "Editor/Windows/Asset/AssetBrowserWindow.h"
+#include "Editor/Windows/Project/BuildSettingsWindow.h"
+#include "Editor/Windows/Debug/ConsoleWindow.h"
+#include "Editor/Windows/Scene/GameViewWindow.h"
+#include "Editor/Windows/Scene/HierarchyWindow.h"
+#include "Editor/Windows/Scene/InspectorWindow.h"
+#include "Editor/Windows/Scene/ParticleSettingsWindow.h"
+#include "Editor/Windows/Debug/ProfilerWindow.h"
+#include "Editor/Windows/Debug/PerformanceCompareWindow.h"
+#include "Editor/Windows/Project/NetWindow.h"
+#include "Editor/Windows/Debug/TimelineWindow.h"
+#include "Editor/Windows/Project/ProjectSettingsWindow.h"
+#include "Editor/Windows/Scene/SceneViewWindow.h"
+#include "Editor/Windows/Project/SourceControlWindow.h"
+#include "Editor/Windows/Asset/SearchWindow.h"
+#include "Editor/Windows/Audio/AudioMixerWindow.h"
+#include "Editor/Windows/Audio/SoundGenWindow.h"
+#include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Scene/GameObject.h"
+#include "Engine/Engine/Rendering/ProbeBaker.h"
+#include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/Demo/ShowcaseScenes.h"
+#include "Engine/Engine/Scene/TransformSystem.h"
+
+namespace mye {
+
+// エディタ本体 (engine_spec.md 9 章)。dockspace + 各ウィンドウ + Play 制御
+class EditorApp : public IEngineApp {
+public:
+    void OnStart(EngineContext& ctx) override;
+    void OnTick(EngineContext& ctx) override;
+    void OnRenderViews(EngineContext& ctx) override;
+    void OnImGui(EngineContext& ctx) override;
+    // M56f: 焼いたプローブ束を**デバイスより先に**解放する。ComPtr のデストラクタ任せに
+    // すると EditorApp の破棄 (= device.Shutdown の後) まで生き残る。
+    // ★同じ問題は preview_ (AssetPreviewCache) にもあるが、そちらはここで解放していない
+    void OnShutdown(EngineContext& ctx) override;
+    // Game ビューの画像だけがゲームの画面 (2026-09-14。範囲外のクリックはゲームに渡さない)
+    bool GameMouseArea(InputRect& out) override;
+
+    bool saveSceneOnStart = false; // --save-scene-on-start (シーンリロード検証用)
+    bool autoPlay = false;         // --autoplay (起動直後に Play。スクリプト検証用)
+    bool openTimeline = false;     // --whatif-selftest (M72c: 分岐レーンを撮れるよう Timeline を開く)
+    float perfRate = 0.0f;         // --perf-rate N (>0 でデモエミッタの放出数を上書き — 性能計測用)
+    int perfMax = 0;               // --perf-max N
+    bool startDeferred = false;    // --deferred (起動時から Deferred パス — 検証用)
+    std::string selectName;        // --select NAME (起動時に名前でエンティティを選択 — ギズモ検証用)
+    int pickTestFrame = -1;        // --pick-test (このフレームで中心をピッキングし PASS/FAIL ログ)
+    std::wstring sceneOverride;    // --scene PATH (既定の main.scene.json の代わりに読むシーン)
+    // --*-demo (ShowcaseScenes.cpp の表の 1 行)。複数渡したら表の上の行が勝つ。nullptr = 通常の起動
+    const ShowcaseDef* showcase = nullptr;
+    ShowcaseOptions showcaseOptions; // --terrain-lod / --terrain-skirt (M58e。地形ショーケースだけが使う)
+    // --edit-actor PATH (M48k): 起動直後にミニシーン編集モードで開く。
+    // 編集モードの入口はダブルクリックだけで自動検証できないため、既存の検証フラグ
+    // (--select / --pick-test / --parts-demo) と同じ流儀で口を開けてある
+    std::wstring editActorPath;
+    // --package DIR (M51j): BuildSettings の段階パイプラインを CLI から実行して終了する
+    // (検証/CI 用。GUI とコード経路を完全共有)。--package-dds / --package-zip で opt-in 段も
+    std::wstring packageDir;
+    bool packageDds = false;
+    bool packageZip = false;
+    std::string packageBoot; // --package-boot <scene.json> (空 = 既定 main.scene.json)
+    // パイプラインの成否 (M52b)。EditorMain がプロセスの終了コードへ載せる —
+    // CI は「dist が出来たか」ではなく exit code で機械判定する
+    int packageExitCode = 0;
+
+private:
+    // 未保存変更ガード (M27b): dirty なら確認モーダルを経由して実行する
+    // OpenSceneAsset = AssetBrowser ダブルクリック (pendingOpenScenePath_ をダイアログなしでロード)
+    // ExitActorEdit = ミニシーン編集の終了 (M48k)。未保存なら同じ確認モーダルを通す
+    enum class PendingAction { None, NewScene, OpenScene, OpenSceneAsset, Exit, ExitActorEdit };
+
+    void DrawMainMenuBar(EngineContext& ctx);
+    void HandleShortcuts(EngineContext& ctx);
+    void SaveCurrentScene(EngineContext& ctx);
+    bool BlockSaveWhilePlaying(); // true = 再生中なので保存を止めた (トーストは中で出す)
+    bool IsSceneDirty() const { return undo_.StateSerial() != savedStateSerial_; }
+    void RequestGuardedAction(EngineContext& ctx, PendingAction action);
+    void ExecuteAction(EngineContext& ctx, PendingAction action);
+    void DrawSaveConfirmModal(EngineContext& ctx);
+    void DrawProbePreview(); // M56e: 焼いた 6 面のサムネイル (専用の小窓)
+    void UpdateWindowTitle(EngineContext& ctx);
+    void PollReloadToasts(EngineContext& ctx);
+    // 選択エンティティ操作 (グローバルショートカット。全て Undo 統合)
+    nlohmann::json GatherSelectionSubtrees(EngineContext& ctx); // 選択のサブツリー群 (fileId 重複除去)
+    void DuplicateSelection(EngineContext& ctx);
+    void CopySelection(EngineContext& ctx);
+    void CutSelection(EngineContext& ctx);
+    void PasteClipboard(EngineContext& ctx);
+    void DeleteSelection(EngineContext& ctx);
+    void SetupDockLayout(unsigned int dockspaceId);
+    // M66d: 書き込み系 git 操作のゲート入力を集める (4 窓の未保存判定は 500 ms キャッシュ)
+    GateInputs BuildGateInputs(EngineContext& ctx);
+    // M66e: [Rebuild Scripts] の子プロセスを毎フレーム見る (終了でトースト + ゲート解放)
+    void PollScriptBuild();
+    // M66m: 初回自動ビルドの子プロセスを毎フレーム見る。成功したら scm_ の再ロードを試す
+    void PollCollabBuild();
+    // M66h: 失敗した build_scripts.log の error 行を Console へ流す (file:line 付き)
+    void ReportScriptBuildErrors();
+    void SaveSceneAs(EngineContext& ctx);
+    bool OpenScene(EngineContext& ctx); // true = 実際にロードした (キャンセル時 false)
+    bool LoadSceneFromPath(EngineContext& ctx, const std::wstring& path); // ダイアログなし共通経路
+    void ProcessPendingFileDrops(EngineContext& ctx); // エクスプローラー D&D (OnImGui 冒頭で消費)
+
+    // ---- ミニシーン編集モード (M48k) ----
+    // 構成アセット (.actor.json / .prefab.json) を**専用の Scene** に展開して編集する。
+    // Hierarchy / Inspector / SceneView / Undo / Selection はすべて引数駆動なので、
+    // 描画の間だけ `ctx.scene` をミニシーンへ差し替えるだけで丸ごと使い回せる。
+    // ScriptHost / ManagedHost / ReloadHub が Init 時に captured した `Scene*` と、
+    // EngineLoop がローカルに持つ Scene には**一切触れない** = tick 経路は無傷
+    struct ActorEdit {
+        Scene scene; // アセットの実体 (fileId == localId)
+        std::wstring path;
+        std::string name;
+        bool actorFormat = true; // 読み込んだ宣言キーを維持する (.prefab.json を勝手に移行しない)
+        // ---- 外側 (通常シーン) の編集状態の退避 ----
+        // ★編集中は selection_ / undo_ / savedStateSerial_ の**中身をアセット側に入れ替える**。
+        //   こうすると EditorApp 内の selection_/undo_ 参照を 1 つも書き換えずに
+        //   「今開いている文書」を丸ごと切り替えられる (ショートカット・複製・削除・
+        //   ダーティ判定・タイトルバーが全部そのまま効く)
+        Selection outerSelection;
+        UndoStack outerUndo;
+        uint64_t outerSavedSerial = 0;
+    };
+    void OpenActorEdit(EngineContext& ctx, const std::wstring& path);
+    void SaveActorEdit(EngineContext& ctx);
+    void CloseActorEdit(EngineContext& ctx);
+    bool InActorEdit() const { return actorEdit_ != nullptr; }
+
+    std::unique_ptr<ActorEdit> actorEdit_; // 非 null = 編集モード中
+    TransformSystem actorTransform_;       // ミニシーンの WorldMatrix はエンジン tick が回さない
+
+    Selection selection_;
+    UndoStack undo_;
+    EditorSettings settings_;
+    ShortcutHub shortcuts_;
+    PlayModeController playMode_;
+    HierarchyWindow hierarchy_;
+    InspectorWindow inspector_;
+    ConsoleWindow console_;
+    SceneViewWindow sceneView_;
+    GameViewWindow gameView_;
+    ParticleSettingsWindow particleSettings_;
+    ProfilerWindow profiler_;
+    PerformanceCompareWindow performanceCompare_;
+    TimelineWindow timeline_; // M52e: 巻き戻しスクラブ (Play 中のみ中身がある)
+    NetWindow net_;           // M52i: ネットセッションの状態 (--net-host/join 時のみ中身がある)
+    // M66b: git 連携。**セッションは窓と独立**に生きる (窓を閉じていても status は最新)
+    SourceControlSession scm_;
+    SourceControlWindow sourceControl_;
+    // M66d: working tree を書き換える git 操作の唯一の入口 (ゲート + 一括適用 + モーダル)
+    GitTransaction gitTx_;
+    // M66e: Asset Browser の [Rebuild Scripts] で起動した子プロセス (void* = HANDLE)。
+    // ★ここで**持ち続ける**ことがゲートの成立条件そのもの。fire-and-forget にすると
+    //   ビルド中に checkout が通る (bin\ と cache\ を書いている最中に入れ替わる)
+    void* scriptBuildProc_ = nullptr;
+    std::wstring scriptBuildLog_;
+    // 2026-09-18: 上の scriptBuildProc_ が「起動時の自動焼き直し」で立ったものか。
+    // 完了トーストの文言を手押しと分けるためだけに持つ (自動経路の失敗は
+    // 「C++ スクリプトが 1 本もロードされていない」= 手押しとは重さの違う事実)
+    bool scriptBuildAuto_ = false;
+    // M66m: 初回自動ビルド (scm_.Start が NoService で終わったときだけ立つ)。
+    // scriptBuildProc_ と同じ理由でハンドルを持ち続ける必要は無い —
+    // MyeCollab.dll が無い間は scm_.State() != None が既に GateBlocker::ServiceUnavailable
+    // を立てているので、ここは完了検知とトーストのためだけの保持
+    void* collabBuildProc_ = nullptr;
+    std::wstring collabBuildLog_;
+    // M52e: スクラブ解除の判定に使う前フレームの再生状態 (状態ではなく遷移を見るため)
+    PlayState prevPlayState_ = PlayState::Editing;
+    AssetBrowserWindow assetBrowser_;
+    AnimationWindow animation_;
+    AnimatorControllerWindow animatorController_;
+    SearchWindow search_;
+    ProjectSettingsWindow projectSettings_;
+    BuildSettingsWindow buildSettings_;
+    SoundGenWindow soundGen_;
+    AudioMixerWindow audioMixer_;
+    AssetPreviewCache preview_; // AssetBrowser のメッシュ/プレハブサムネイル (M27d)
+
+    // ---- 反射プローブのベイク (M56e) ----
+    // ★メニューのコールバックの中で焼いてはいけない。OnImGui は ImGui の描画提出の
+    //   直前なので、そこで 6 面を描くと RTV を握り替えたまま UI の描画が始まり、
+    //   UI がプローブの面へ流れ込む。要求フラグだけ立てて、次フレームの OnRenderViews
+    //   (= SceneView / GameView と同じ「描いてよい場所」) で焼く
+    bool probeBakeRequested_ = false;
+    bool showProbePreview_ = false;
+    ProbeBaker probeBaker_;
+    BakedProbe probePreview_; // 「ここでベイク」で焼いた 1 個 (シーンのプローブとは無関係)
+    // ---- M56f: シーンに置いたプローブの束 ----
+    // ★焼いた瞬間に ctx.renderSystem->reflectionProbes をここへ向ける = SceneView も
+    //   GameView も同じ束を見る (AssetPreviewCache は別インスタンスなので影響しない)
+    bool probeBakeAllRequested_ = false;
+    ReflectionProbeArray probeSet_;
+    int probePreviewIndex_ = 0; // プレビュー窓に出す束の添字
+    // true = プレビュー窓は「ここでベイク」の結果を出す。BakeAll で false になる
+    bool probePreviewAdHoc_ = true;
+
+    nlohmann::json clipboard_; // コピー/カットしたサブツリー群 (SubtreeToJson 形式の配列)
+    std::wstring scenePath_;
+    bool rebuildDockLayout_ = false;
+    bool showStats_ = true;
+    LayoutManager layouts_; // 名前付きレイアウト (ツールバー右端のドロップダウン)
+
+    // ---- フィードバック層 (M27b) / ツールバー (M27c) ----
+    EditorToolbar toolbar_;
+    StatusBar statusBar_;
+    ToastCenter toasts_;
+    std::string projectName_;              // マニフェストの name (レガシー起動時は空)
+    uint64_t savedStateSerial_ = 0;        // 最後に保存/ロードした時点の UndoStack::StateSerial
+    PendingAction pendingAction_ = PendingAction::None;
+    std::wstring pendingOpenScenePath_;    // OpenSceneAsset の対象 (AssetBrowser ダブルクリック)
+    bool openSaveConfirm_ = false;         // 確認モーダルを開くリクエスト
+    bool closeRequested_ = false;          // ウィンドウ × ボタン (WM_CLOSE を横取り)
+    std::wstring baseTitle_;               // タイトルバー原文 (dirty で " *" を付ける)
+    bool titleDirtyShown_ = false;
+    uint32_t lastDllVersion_ = 0;          // GameLogic ホットリロードのトースト検知用
+    uint64_t lastReloadCount_ = 0;         // アセットホットリロードのトースト検知用
+
+    // ---- エクスプローラー D&D インポート ----
+    struct PendingFileDrop {
+        std::vector<std::wstring> paths;
+        float clientX = 0.0f; // ドロップ位置 (クライアント座標)
+        float clientY = 0.0f;
+        bool inClientArea = false; // DragQueryPoint の戻り値 (false = タイトルバー等)
+    };
+    std::vector<PendingFileDrop> pendingFileDrops_; // WM_DROPFILES → 次の OnImGui で消費
+};
+
+} // namespace mye

@@ -694,7 +694,7 @@ bat が読む環境変数 `MYE_EXTRA_ARGS` 経由で注入し、bat 本体はロ
   `FieldDesc::name` があるのでフィールド名は既に取れる。**★`HashEntity` は `FieldTypeSize(f.type)` 分まるごと読む** —
   ダンプも同じバイト範囲を出さないと String64 の終端以降 (M48i の罠) を見落とす。
 - **触る**: `src\Engine\Engine\Replay\WorldHasher.h/.cpp`、`Engine\EngineLoop.cpp` (MISMATCH 時に
-  `<rep>.tickNNNN.actual.dump` を自動書き出し)、`src\Editor\EditorMain.cpp` / `src\Runtime\RuntimeMain.cpp`
+  `<rep>.tickNNNN.actual.dump` を自動書き出し)、`src\Editor\App\EditorMain.cpp` / `src\Runtime\RuntimeMain.cpp`
   (`--hash-dump PATH` / `--hash-dump-tick T` / `--hash-diff A B`)、`tools\replay_verify.bat` (失敗時のみ
   PASS 側の dump を撮って diff を表示)、新規 `tools\bisect_replay.bat` (`git bisect run` ラッパ)。
 - **検証**: selftest (2 世界を 1 フィールドだけ変えて `--hash-diff` 相当が**その 1 行だけ**を報告 / 3 出口の total 一致 /
@@ -703,7 +703,7 @@ bat が読む環境変数 `MYE_EXTRA_ARGS` 経由で注入し、bat 本体はロ
 
 ### M52b: CI (GitHub Actions) + WARP フォールバック
 - **目的**: push で 8 ビルド + selftest + check_rules + replay_verify 3 ペア + package が回る。README にバッジ。
-- **触る**: `src\Engine\Renderer\GraphicsDevice.h/.cpp` (HARDWARE 失敗時の WARP 再試行 + `EngineConfig::forceWarp` +
+- **触る**: `src\Engine\Renderer\Device\GraphicsDevice.h/.cpp` (HARDWARE 失敗時の WARP 再試行 + `EngineConfig::forceWarp` +
   採用アダプタのログ)、`Engine\EngineLoop.h` / 両 Main (`--warp`)、`tools\replay_verify.bat` (`MYE_EXTRA_ARGS` 対応)、
   新規 `.github\workflows\ci.yml`、`README.md` (バッジ + CI で回る検証の一覧)。
 - **ワークフロー**: windows-2022 / 単一 job 直列 / `concurrency` で同一 ref の古い run をキャンセル / `timeout-minutes` /
@@ -721,8 +721,8 @@ bat が読む環境変数 `MYE_EXTRA_ARGS` 経由で注入し、bat 本体はロ
   `--warp --no-audio --width 960 --height 540 --shot-frame 3 --frames 8` 固定。golden は `tests\golden\*.png`。
   対象は 5 本: 既定デモ (Forward) / 既定デモ (`--deferred`) / parts showcase / flow title / UI プローブシーン (新規に小さいものを 1 本コミット)。
   **RT デモは WARP では重すぎるので CI 対象外** (ローカル任意)。
-- **触る**: 新規 `src\Engine\Renderer\ImageDiff.h/.cpp` (stb_image で読み、最大チャンネル差 / 差分画素数 / 差分ヒート PNG)、
-  `src\Editor\EditorMain.cpp` (`--img-diff A B [--tol N] [--diff-out PNG]`、exit 0/1)、
+- **触る**: 新規 `src\Engine\Renderer\Texture\ImageDiff.h/.cpp` (stb_image で読み、最大チャンネル差 / 差分画素数 / 差分ヒート PNG)、
+  `src\Editor\App\EditorMain.cpp` (`--img-diff A B [--tol N] [--diff-out PNG]`、exit 0/1)、
   新規 `tools\shot_verify.bat` (`--update` で golden 再生成)、`tests\golden\`、`.gitignore` (`tests\actual\`)、`.github\workflows\ci.yml`。
 - **検証**: selftest (ImageDiff: 同一画像 = 0 / 1 画素だけ変えた画像 = 差分 1 / サイズ違いはエラー) /
   `shot_verify.bat` が 5 本 PASS / golden を 1 画素改竄して赤になることを確認 / CI で失敗時に actual + diff が artifact に出ること。
@@ -732,7 +732,7 @@ bat が読む環境変数 `MYE_EXTRA_ARGS` 経由で注入し、bat 本体はロ
 ### M52d: SimSnapshot 基盤 + tick 本体の関数抽出 + ReplayFile v4
 - **目的**: 「撮って戻して同じ入力で回すと同じハッシュ列」を機械保証する共通部品。e / f / i の全てがこれに乗る。
 - **触る**: 新規 `src\Engine\Engine\Replay\SimSnapshot.h/.cpp` (`SimRefs` で sim レーンの所有者を束ね、`Capture` / `Restore`)、
-  `src\Engine\Core\World.h/.cpp` (private メンバへ触るための `SnapshotWrite`/`SnapshotRead`)、
+  `src\Engine\Core\Ecs\World.h/.cpp` (private メンバへ触るための `SnapshotWrite`/`SnapshotRead`)、
   `Core\Archetype.h` (カラム生バイトの取り出し)、`Engine\Engine\EngineLoop.cpp` (tick 本体 = 現 `EngineLoop.cpp:548-820` を
   `RunOneTick(TickServices&, ...)` へ抽出)、`Engine\Replay\Replay.h/.cpp` (**v4**: `snapshotSize` + `playerCount` を追加、
   ヘッダ直後に snapshot blob。blob があれば EngineLoop はシーンロードの代わりに Restore する)、両 Main (`--snapshot-stress N`)。
@@ -750,8 +750,8 @@ bat が読む環境変数 `MYE_EXTRA_ARGS` 経由で注入し、bat 本体はロ
   シーク = 「target 以下の最寄りスナップショットへ Restore → 記録入力で target まで描画なし再シム」。
   シーク後に Play を続けると**その時点から分岐**し未来のリングは破棄する (Unity に無い挙動なので UI で明示)。
   再シム中は出力レーン (オーディオ / 振動 / セーブ書出) を record/verify と同じ条件で抑止する。
-- **触る**: 新規 `src\Editor\TimeTravel.h/.cpp`、新規 `src\Editor\Windows\TimelineWindow.h/.cpp`、
-  `Editor\EditorApp.h/.cpp` (窓登録 + ドックレイアウト)、`Editor\EditorToolbar.cpp` (巻き戻しボタン)、
+- **触る**: 新規 `src\Editor\TimeTravel.h/.cpp`、新規 `src\Editor\Windows\Debug\TimelineWindow.h/.cpp`、
+  `Editor\App\EditorApp.h/.cpp` (窓登録 + ドックレイアウト)、`Editor\Widgets\EditorToolbar.cpp` (巻き戻しボタン)、
   `Engine\Engine\EngineLoop.cpp` (再シムゲート)、`LocalizationTable.inl`。
 - **検証**: 自動プローブ `--timetravel-selftest` (`--autoplay` と同じ流儀の CLI 検証。tick T まで進める → T-K へシーク →
   記録入力で T まで再シム → ハッシュが元の T と一致、を複数の K で) / replay_verify 3 ペア + snapshot-stress 無風 /
@@ -918,7 +918,7 @@ bat が読む環境変数 `MYE_EXTRA_ARGS` 経由で注入し、bat 本体はロ
 
 - ~~`World` の private メンバへスナップショットが触る手段 (メンバ関数追加 vs friend) — レイヤ規約との相性~~
   → **M52d で解決**: `World::SnapshotWrite/SnapshotRead` をメンバ関数で追加 (friend は不採用)。
-  バイト列ヘルパは `Engine/Core/ByteIo.h` に置く — SimSnapshot 本体は Engine 層なので、
+  バイト列ヘルパは `Engine/Core/Util/ByteIo.h` に置く — SimSnapshot 本体は Engine 層なので、
   Core の World から参照するとレイヤ規約に反するため
 - `AudioSystem::Init` が音声デバイス無し環境で失敗したときの挙動 (CI runner。`--no-audio` で回避できるはずだが未確認)
 - GitHub Actions windows-2022 での D3D11 WARP デバイス生成 + ウィンドウ生成の実地確認 (**M52b 唯一の未知数**)

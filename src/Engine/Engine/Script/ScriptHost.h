@@ -4,8 +4,8 @@
 #include <set>
 #include <string>
 
-#include "Engine/Core/EntityID.h"
-#include "Engine/Core/Reflection.h" // FieldDesc (FieldDescFromScriptField の戻り値)
+#include "Engine/Core/Ecs/EntityID.h"
+#include "Engine/Core/Ecs/Reflection.h" // FieldDesc (FieldDescFromScriptField の戻り値)
 #include "Engine/Engine/Script/EngineApiTable.h"
 #include "Engine/Engine/Script/ScriptKeys.h" // ScriptStartedKey (snapshot も読む)
 #include "Engine/Platform/Input.h"

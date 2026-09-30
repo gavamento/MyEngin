@@ -14,7 +14,7 @@ spec §4.1「ボクセル化」と §4.2 `.mvox`。学習とランタイムが�
   `LocalPointToCell(const VoxelFrame&, const float p[3]) -> uint16_t`、`BuildCellSlotTable(const VoxelGrid&, uint16_t cellSlot[4096])` (無効 cell は焼き時に総当たりで最寄り有効 cell、同値は小 index)、
   `SerializeVox` / `DeserializeVox` (72 B ヘッダ = 18 フィールド × 4 B、フィールド単位で書く。round 1 で 64 B → 72 B に訂正)。
 - `Modal/TriangleSoup.h/.cpp`: OFF (ModelNet の「OFF」直後に数字が続く癖に対応) / OBJ (v と f のみ、負 index と `a/b/c` 形式を許容) の最小リーダ。
-- `src\Editor\ModalTools.h/.cpp`: `RunModalVoxelizeCli(list, outDir)` — 1 行 1 パス (`.off/.obj/.gltf/.fbx/builtin://cube` 等)。FBX/glTF は `SubAssetMigration.cpp` と同じヘッドレス登録経路、`builtin://` は `MeshLibrary`。出力 `DIR\<stem>#meshN#primM.mvox`。exit 0 / 1 (入力欠落・読めない)。
+- `src\Editor\Tools\ModalTools.h/.cpp`: `RunModalVoxelizeCli(list, outDir)` — 1 行 1 パス (`.off/.obj/.gltf/.fbx/builtin://cube` 等)。FBX/glTF は `SubAssetMigration.cpp` と同じヘッドレス登録経路、`builtin://` は `MeshLibrary`。出力 `DIR\<stem>#meshN#primM.mvox`。exit 0 / 1 (入力欠落・読めない)。
 - `EditorMain.cpp`: `--modal-voxelize --list F --out DIR` を **else-if 連鎖の外** (`if (arg == L"--modal-voxelize") { ...; continue; }` を `if (arg == L"--selftest")` の手前) で拾う (C1061)。処理本体は `--cook-font-metrics` (EditorMain.cpp:369-380) の隣に「ウィンドウも D3D も作らない」早期 return として置く。
 - `Modal/ModalSelfTest.h/.cpp` (sub-05/06 で積み増す)、`tests\deepmodal\list_builtin.txt` (builtin 6 種)。
 
@@ -23,8 +23,8 @@ spec §4.1「ボクセル化」と §4.2 `.mvox`。学習とランタイムが�
 
 ## 触る場所 (planner の見立て)
 - 新規 `src\Engine\Engine\Modal\Voxelizer.h/.cpp`、`TriangleSoup.h/.cpp`、`ModalSelfTest.h/.cpp`
-- 新規 `src\Editor\ModalTools.h/.cpp`、`tests\deepmodal\list_builtin.txt`
-- `src\Editor\EditorMain.cpp` (引数: 140-200 付近、本体: 369 付近、selftest 連鎖)
+- 新規 `src\Editor\Tools\ModalTools.h/.cpp`、`tests\deepmodal\list_builtin.txt`
+- `src\Editor\App\EditorMain.cpp` (引数: 140-200 付近、本体: 369 付近、selftest 連鎖)
 - 参考: `src\Editor\SubAssetMigration.cpp` (ヘッドレス登録)、`GpuResources.cpp:151` `MeshLibrary::Register` (positions/indices/aabb は全メッシュで保持される — 確認済み)、`AcousticGrid` の `CellIndex` (x 最内)
 - `.gitattributes` に `*.mvox binary`
 - ソース追加後 `pwsh -File tools\gen_project_files.ps1`
@@ -57,7 +57,7 @@ SELF_EVAL: sub-02 (round 1)
     (単位立方体 27000 / 中心 1 / 8 隅 0 / pad 0、薄板、蓋なし箱、2:1:0.5 の longestEdge、
     +X 面中心セル、cellSlot の独立総当たり照合、.mvox 往復 memcmp、OFF/OBJ (glued header 含む)、
     決定論 2 回一致)
-  - `src/Editor/ModalTools.h/.cpp` — `RunModalVoxelizeCli`。builtin:// は `MeshLibrary` の
+  - `src/Editor/Tools/ModalTools.h/.cpp` — `RunModalVoxelizeCli`。builtin:// は `MeshLibrary` の
     `Cube()/Sphere()/.../Capsule()` を `Init()` 無しで直接呼ぶ (`Register` は `device_==nullptr`
     を許容する設計 — GraphicsDevice を 1 つも作らない)。.off/.obj は `TriangleSoup`、.fbx/.gltf/.glb
     は `FbxLoader::RegisterAssets`/`ModelLoader::RegisterAssets` のヘッドレス登録
@@ -67,7 +67,7 @@ SELF_EVAL: sub-02 (round 1)
     `#mesh<N>#(part|prim)<M>` を解析して出力ファイル名 `<stem>#mesh<N>#prim<M>.mvox` に反映
     (解析できなければ 0/0 にフォールバック)。存在しない入力・読めないモデル・未対応拡張子は
     1 行ごとにエラーを出して続行し、1 件でもあれば exit 1
-  - `src/Editor/EditorMain.cpp` — `--modal-voxelize`/`--list`/`--out` を else-if 連鎖の**手前**
+  - `src/Editor/App/EditorMain.cpp` — `--modal-voxelize`/`--list`/`--out` を else-if 連鎖の**手前**
     (C1061 回避、`--cook-font-metrics` と同型) で拾って `continue`、本体呼び出しは
     `--migrate-subasset-ids` の直後・`if (selftest)` の手前に追加。selftest 連鎖の末尾
     (`RunModalSynthSelfTest()` の直後) に `RunModalSelfTest()` を追加
@@ -140,9 +140,9 @@ SELF_EVAL: sub-02 (round 1)
     spec.md 側の記述を 72 B に修正するか、あるいは意図された削減方法 (どのフィールドを削るか)
     があれば教えてほしい
 触ったファイル:
-  - src/Editor/EditorMain.cpp
-  - src/Editor/ModalTools.h
-  - src/Editor/ModalTools.cpp
+  - src/Editor/App/EditorMain.cpp
+  - src/Editor/Tools/ModalTools.h
+  - src/Editor/Tools/ModalTools.cpp
   - src/Engine/Engine/Modal/TriangleSoup.h
   - src/Engine/Engine/Modal/TriangleSoup.cpp
   - src/Engine/Engine/Modal/Voxelizer.h

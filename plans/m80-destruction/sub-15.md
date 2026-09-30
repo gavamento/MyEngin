@@ -67,7 +67,7 @@ ADR-021 に、上の A の 5 件の「将来の拡張がどこに入るか」と
 ## 触る場所 (planner の見立て)
 
 - `docs/adr/ADR-021-fracture-destruction.md`
-- (必要なら) `src/Engine/Engine/FractureSystem.cpp` (成分の選択を切り出す)、`src/Engine/Engine/Physics/FractureMesh.cpp` (三角形分割の境界を切り出す)、`src/Engine/Engine/Asset/FractureAsset.*` と `FractureLibrary.*` (凸包の列の版上げ。やる場合)、`FractureBake` / `FractureSkinBake` (ウェイトの保存。やる場合)
+- (必要なら) `src/Engine/Engine/FractureSystem.cpp` (成分の選択を切り出す)、`src/Engine/Engine/Physics/Fracture/FractureMesh.cpp` (三角形分割の境界を切り出す)、`src/Engine/Engine/Asset/FractureAsset.*` と `FractureLibrary.*` (凸包の列の版上げ。やる場合)、`FractureBake` / `FractureSkinBake` (ウェイトの保存。やる場合)
 - `FractureSelfTest.cpp` (版上げをした場合の v1 読み込み・往復)
 
 ## 受け入れ条件 (このサブ)
@@ -137,7 +137,7 @@ SELF_EVAL: sub-15 (round 1)
   - `tools\check_rules.ps1` → 0 error(s), 0 warning(s)
   - `.mfrac` の版は上げていないので v1 読み込みの新規 SelfTest は追加していない (既存の
     往復テストのみで十分)
-  - WIP 不変: `git status --short` で `src/Engine/Renderer/WaterPass.cpp` (既存 WIP、未編集)
+  - WIP 不変: `git status --short` で `src/Engine/Renderer/Passes/WaterPass.cpp` (既存 WIP、未編集)
     以外に自分が触っていないファイルの変更が無いことを確認
 自己採点 (1-5):
   仕様適合: 4 — 受け入れ条件 1-4 を満たした。A の判断 3 件 (A-1/A-3 は「実装しない」、A-4/A-5

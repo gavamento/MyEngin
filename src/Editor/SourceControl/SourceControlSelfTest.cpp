@@ -10,23 +10,23 @@
 #include <string>
 #include <thread>
 
-#include "Editor/EditorSettings.h"
-#include "Editor/EditorWidgets.h" // ScmBadgeColor (M66i: バッジの色表を機械で固定する)
-#include "Editor/ProjectTemplates.h"
+#include "Editor/App/EditorSettings.h"
+#include "Editor/Widgets/EditorWidgets.h" // ScmBadgeColor (M66i: バッジの色表を機械で固定する)
+#include "Editor/Project/ProjectTemplates.h"
 #include "Editor/SourceControl/CollabClient.h"
 #include "Editor/SourceControl/GitTransaction.h"
 #include "Editor/SourceControl/PairRule.h"
 #include "Editor/SourceControl/SourceControlState.h"
 #include "Editor/SourceControl/StageClassifier.h"
-#include "Editor/Windows/ProjectSettingsWindow.h" // InputActionsDifferFromDisk (M66k)
-#include "Editor/Windows/SourceControlWindow.h"   // SaveThenCommit / ShouldClearCommitMessage (M66k)
-#include "Engine/Core/Hash.h"
-#include "Engine/Core/Localization.h"
-#include "Engine/Core/Log.h"
-#include "Engine/Engine/Project.h"
+#include "Editor/Windows/Project/ProjectSettingsWindow.h" // InputActionsDifferFromDisk (M66k)
+#include "Editor/Windows/Project/SourceControlWindow.h"   // SaveThenCommit / ShouldClearCommitMessage (M66k)
+#include "Engine/Core/Util/Hash.h"
+#include "Engine/Core/Localization/Localization.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/App/Project.h"
 #include "Engine/Platform/InputActions.h"
 #include "Engine/Platform/PathUtil.h"
-#include "Engine/Renderer/ImGuiTheme.h" // themeColor (M66i)
+#include "Engine/Renderer/ImGui/ImGuiTheme.h" // themeColor (M66i)
 
 #include "imgui.h"
 

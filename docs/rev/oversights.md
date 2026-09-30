@@ -11,10 +11,10 @@
 ### [P0] `World::SnapshotRead` における入力検証欠如による任意のヒープ境界外アクセス・クラッシュ
 
 #### 対象コードパスと行番号
-- [`C:/HAL/MyEngin/src/Engine/Core/World.cpp:670-689`](file:///C:/HAL/MyEngin/src/Engine/Core/World.cpp#L670-L689)
-- [`C:/HAL/MyEngin/src/Engine/Core/World.cpp:716-722`](file:///C:/HAL/MyEngin/src/Engine/Core/World.cpp#L716-L722)
-- [`C:/HAL/MyEngin/src/Engine/Core/Archetype.cpp:22-24`](file:///C:/HAL/MyEngin/src/Engine/Core/Archetype.cpp#L22-L24)
-- [`C:/HAL/MyEngin/src/Engine/Core/ComponentRegistry.h:65`](file:///C:/HAL/MyEngin/src/Engine/Core/ComponentRegistry.h#L65)
+- [`C:/HAL/MyEngin/src/Engine/Core/Ecs/World.cpp:670-689`](file:///C:/HAL/MyEngin/src/Engine/Core/Ecs/World.cpp#L670-L689)
+- [`C:/HAL/MyEngin/src/Engine/Core/Ecs/World.cpp:716-722`](file:///C:/HAL/MyEngin/src/Engine/Core/Ecs/World.cpp#L716-L722)
+- [`C:/HAL/MyEngin/src/Engine/Core/Ecs/Archetype.cpp:22-24`](file:///C:/HAL/MyEngin/src/Engine/Core/Ecs/Archetype.cpp#L22-L24)
+- [`C:/HAL/MyEngin/src/Engine/Core/Ecs/ComponentRegistry.h:65`](file:///C:/HAL/MyEngin/src/Engine/Core/Ecs/ComponentRegistry.h#L65)
 
 #### 脆弱性・不整合のメカニズム
 1. **未検査の `ComponentTypeId` による `ComponentRegistry` 境界外読み出し**:
@@ -38,7 +38,7 @@
 ## 2. なぜ初回レビューで見落としたかの原因分析 (Root Cause Analysis - Round 1/2)
 
 1. **スコープバイアス (直近差分への過度な集中)**:
-   - 直近の大規模コミット群である M80（破壊・Destructionシステム）の実装差分に意識が過度に集中し、エンジン基盤層（`src/Engine/Core/World.cpp` の既存スナップショット復元部）の入力バリデーション監査を怠った。
+   - 直近の大規模コミット群である M80（破壊・Destructionシステム）の実装差分に意識が過度に集中し、エンジン基盤層（`src/Engine/Core/Ecs/World.cpp` の既存スナップショット復元部）の入力バリデーション監査を怠った。
 2. **観点の横展開（水平展開）の欠如**:
    - `FractureAsset::Deserialize`（`FractureAsset.cpp`）では、破損バイナリに対するヘッダー・バージョン・頂点インデックス境界検査を重点的に確認したにもかかわらず、「バイナリデシリアライズにおける完全防護」という同一観点を、エンジン全体の最も重要な基盤である `World::SnapshotRead` へ横展開して監査しなかった。
 3. **「既存の完成機能」に対する無意識の前提**:
@@ -74,22 +74,22 @@
 
 ### 見落としパターン E: エディタ操作（UI状態機械）とデータライフサイクルの非同期・割り込み
 - **発見された不具合**:
-  1. PlayMode 中にシーンを開く/新規作成するとスナップショットが残留し、Play 停止時に新シーンが旧シーンで上書き破壊される（[P0-1](file:///C:/HAL/MyEngin/src/Editor/EditorApp.cpp#L1893-L1896)）。
-  2. ギズモドラッグ中にエンティティ破棄や選択変更が起きると Undo トランザクションが孤立し、異種エンティティ間のスナップショット合成（キメラ化）が発生する（[P0-2](file:///C:/HAL/MyEngin/src/Editor/Windows/SceneViewWindow.cpp#L1033-L1081)）。
-  3. 部分更新（`ApplyPartial`）によるエンティティ再生成時、ペイロード外の第三者エンティティが持つ `EntityRef`（EntityID）が再解決されずダングリング化する（[P1-1](file:///C:/HAL/MyEngin/src/Engine/Engine/SceneSerializer.cpp#L720-L765)）。
+  1. PlayMode 中にシーンを開く/新規作成するとスナップショットが残留し、Play 停止時に新シーンが旧シーンで上書き破壊される（[P0-1](file:///C:/HAL/MyEngin/src/Editor/App/EditorApp.cpp#L1893-L1896)）。
+  2. ギズモドラッグ中にエンティティ破棄や選択変更が起きると Undo トランザクションが孤立し、異種エンティティ間のスナップショット合成（キメラ化）が発生する（[P0-2](file:///C:/HAL/MyEngin/src/Editor/Windows/Scene/SceneViewWindow.cpp#L1033-L1081)）。
+  3. 部分更新（`ApplyPartial`）によるエンティティ再生成時、ペイロード外の第三者エンティティが持つ `EntityRef`（EntityID）が再解決されずダングリング化する（[P1-1](file:///C:/HAL/MyEngin/src/Engine/Engine/Scene/SceneSerializer.cpp#L720-L765)）。
 - **見落としの根本原因**:
   - 過去のレビューは「ヘッドレス・直列実行」を前提とする C++ 単体テスト（SelfTest）やリプレイ検証（`replay_verify.bat`）に過度に依存していた。
   - 即時モード GUI（ImGui）における「フレームを跨ぐドラッグ」「フォーカス喪失」「ショートカットキー割り込み」「部分的な Undo/Redo 再生成」といった**ユーザーの非同期・不規則なUI操作とデータライフサイクルが交差するシナリオ**を検証スコープから完全に除外していた。
 
 ### 見落としパターン F: 外部非同期 API（XAudio2）の量子（Quantum）モデルとメモリ解放の競合
 - **発見された不具合**:
-  - クリップ再登録・ホットリロード時に `FlushSourceBuffers` 直後に PCM バッファを解放し、XAudio2 オーディオスレッドが解放済みメモリを読み取って UAF クラッシュを引き起こす（[P0-3](file:///C:/HAL/MyEngin/src/Engine/Engine/Audio/AudioSystem.cpp#L907-L910)）。
+  - クリップ再登録・ホットリロード時に `FlushSourceBuffers` 直後に PCM バッファを解放し、XAudio2 オーディオスレッドが解放済みメモリを読み取って UAF クラッシュを引き起こす（[P0-3](file:///C:/HAL/MyEngin/src/Engine/Engine/Audio/Playback/AudioSystem.cpp#L907-L910)）。
 - **見落としの根本原因**:
   - API 名の「`FlushSourceBuffers`（フラッシュ完了）」という単語から、「バッファが完全に手放された」と直感的に誤認した。XAudio2 が「約10msの処理量子単位」で非同期に動いており、現在処理中のバッファはクォンタム終了まで解放されないという**低レベル非同期オーディオランタイムの契約**を意識していなかった。
 
 ### 見落としパターン G: IEEE 754 NaN と C++ 比較演算子の「全比較 false」によるガードすり抜け
 - **発見された不具合**:
-  - ModalSynth において縮退オブジェクトによるゼロ除算で NaN が混入した際、`if (underRoot <= 0.0f)` などの全ガード節が false となり、NaN がそのまま PCM 生成へ流れて `std::bad_alloc` や UB キャストを引き起こす（[P0-4](file:///C:/HAL/MyEngin/src/Engine/Engine/Audio/ModalSynth.cpp#L52-L174)）。
+  - ModalSynth において縮退オブジェクトによるゼロ除算で NaN が混入した際、`if (underRoot <= 0.0f)` などの全ガード節が false となり、NaN がそのまま PCM 生成へ流れて `std::bad_alloc` や UB キャストを引き起こす（[P0-4](file:///C:/HAL/MyEngin/src/Engine/Engine/Audio/Synth/ModalSynth.cpp#L52-L174)）。
   - 自動露出ヒストグラム（HLSL）で NaN 輝度が入り、`groupshared uint sBins[256]` に対しアドレス `4294967295` への LDS 境界外書き込み・TDR を引き起こす（[P0-7](file:///C:/HAL/MyEngin/assets/shaders/postfx_hist.cs.hlsl#L18-L37)）。
 - **見落としの根本原因**:
   - ガード節を書く際に「正常な実数」のみを無意識に仮定していた。IEEE 754 において「NaN に対する大小・等値比較はすべて false を返す」という言語仕様の罠を考慮せず、`!std::isfinite()` や `isfinite()` による明示的な有限性検証を行っていなかった。
@@ -124,16 +124,16 @@
 
 ### 見落としパターン K: 物理幾何における「教科書的アルゴリズムの境界値」と「直感の罠」
 - **発見された不具合**:
-  1. Sutherland-Hodgman 多角形クリッピングの境界値（$d=0$）で同一頂点が二重登録され、接触マニフォールドが重複点で浪費される（[P1-4](file:///C:/HAL/MyEngin/src/Engine/Engine/Physics/ConvexCollision.cpp#L367-L379)）。
-  2. 接触マニフォールド削減を「深度ソート降順」のみで行った結果、わずかな傾きで支持面が 1 次元の線分に縮退し、箱が直交軸まわりに転倒・不安定化する（[P2-1](file:///C:/HAL/MyEngin/src/Engine/Engine/Physics/ConvexCollision.cpp#L412-L424)）。
-  3. 三角形重心とボックス中心の内積で接触法線の向きを決めていたため、ボックスが床をわずかに超えて貫通した瞬間に法線が 180 度反転し、床の内側へ吸い込まれる（[P1-1](file:///C:/HAL/MyEngin/src/Engine/Engine/Physics/Shapes.cpp#L1435-L1444)）。
+  1. Sutherland-Hodgman 多角形クリッピングの境界値（$d=0$）で同一頂点が二重登録され、接触マニフォールドが重複点で浪費される（[P1-4](file:///C:/HAL/MyEngin/src/Engine/Engine/Physics/Collider/ConvexCollision.cpp#L367-L379)）。
+  2. 接触マニフォールド削減を「深度ソート降順」のみで行った結果、わずかな傾きで支持面が 1 次元の線分に縮退し、箱が直交軸まわりに転倒・不安定化する（[P2-1](file:///C:/HAL/MyEngin/src/Engine/Engine/Physics/Collider/ConvexCollision.cpp#L412-L424)）。
+  3. 三角形重心とボックス中心の内積で接触法線の向きを決めていたため、ボックスが床をわずかに超えて貫通した瞬間に法線が 180 度反転し、床の内側へ吸い込まれる（[P1-1](file:///C:/HAL/MyEngin/src/Engine/Engine/Physics/Rigid/Shapes.cpp#L1435-L1444)）。
 - **見落としの根本原因**:
   - 教科書通りのアルゴリズム（クリッピング、深度優先選択）を盲信し、「接触力学では最大面積の支持多角形（Support Polygon）の維持が最優先である」という物理エンジンの本質的要求と照合していなかった。
   - 正常系の浅い貫通テストケースばかりで検証し、深い貫通・境界平面上という動的極限条件での挙動トレースを怠っていた。
 
 ### 見落としパターン L: 「安全側の包含（外接球）」が引き起こす逆転の早期ガード・すり抜け
 - **発見された不具合**:
-  - CCD（連続衝突判定）において、安全側として外接球半径 $R$ を採用した結果、細長い剛体が障害物の手前 0.5m にある時点で「既に接触している」と誤判定され、CCD が除外ガードでスキップされて壁をすり抜ける（[P1-3](file:///C:/HAL/MyEngin/src/Engine/Engine/Physics/PhysicsSystem.cpp#L1171-L1172)）。
+  - CCD（連続衝突判定）において、安全側として外接球半径 $R$ を採用した結果、細長い剛体が障害物の手前 0.5m にある時点で「既に接触している」と誤判定され、CCD が除外ガードでスキップされて壁をすり抜ける（[P1-3](file:///C:/HAL/MyEngin/src/Engine/Engine/Physics/Rigid/PhysicsSystem.cpp#L1171-L1172)）。
 - **見落としの根本原因**:
   - 「外接球で包含すれば衝突を取りこぼさないから安全側である」という直感に頼り、「包含が大きすぎると、移動前接触の除外チェックを誤発火させて処理そのものをバイパスさせる」という**ガード条件との相互作用の逆転現象**を見落としていた。
 
@@ -164,13 +164,13 @@
 
 ### 見落としパターン P: 幾何射影・シャドウスプリットにおける「対数空間（Log Space）ゼロ割れ」
 - **発見された不具合**:
-  - `FrustumCull.h` の `ComputeCascadeSplits` において、`nearZ <= 0` のときに `std::pow(farZ / nearZ, p)` がゼロ除算・負数累乗により NaN を返し、`cascadeSplits` が全滅してディレクショナルシャドウが全消滅する（[P0-2](file:///C:/HAL/MyEngin/src/Engine/Renderer/FrustumCull.h#L14-L22)）。
+  - `FrustumCull.h` の `ComputeCascadeSplits` において、`nearZ <= 0` のときに `std::pow(farZ / nearZ, p)` がゼロ除算・負数累乗により NaN を返し、`cascadeSplits` が全滅してディレクショナルシャドウが全消滅する（[P0-2](file:///C:/HAL/MyEngin/src/Engine/Renderer/Pipeline/FrustumCull.h#L14-L22)）。
 - **見落としの根本原因**:
   - 正常な透視投影（$nearZ = 0.1, farZ = 1000$）の範囲内でのみユニットテストが書かれており、カメラの nearClip が 0 や負値に設定された極限条件（未設定・エディタでの不正入力）での対数補間式（Practical Split）の特異点チェックが抜けていた。
 
 ### 見落としパターン Q: ポストプロセスリソース管理における「ビュー時間状態と解像度キーの結合」
 - **発見された不具合**:
-  - `PostProcess::Acquire` において、解像度キー（`w,h`）を元にレンダーターゲットを管理しているため、エディタウィンドウをドラッグして連続リサイズした際、毎フレーム大量の VRAM 破棄・再生成ストールが発生するだけでなく、自動露出バッファ（`exposureBuf`）の過去履歴が消失して激しい明滅（露出フリッカー）を引き起こす（[P1-2](file:///C:/HAL/MyEngin/src/Engine/Renderer/PostProcess.cpp#L240-L274)）。
+  - `PostProcess::Acquire` において、解像度キー（`w,h`）を元にレンダーターゲットを管理しているため、エディタウィンドウをドラッグして連続リサイズした際、毎フレーム大量の VRAM 破棄・再生成ストールが発生するだけでなく、自動露出バッファ（`exposureBuf`）の過去履歴が消失して激しい明滅（露出フリッカー）を引き起こす（[P1-2](file:///C:/HAL/MyEngin/src/Engine/Renderer/PostFx/PostProcess.cpp#L240-L274)）。
 - **見落としの根本原因**:
   - 「ターゲットテクスチャのサイズ適合」という描画リソースの都合と、「自動露出の明暗適応」というビュー（カメラ）の時間的シミュレーション状態を同一のキャッシュ構造体（`Target`）に混在させ、所有権とライフサイクルの分離を怠っていた。
 

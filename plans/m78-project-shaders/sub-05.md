@@ -35,7 +35,7 @@ C++ (`ScriptAPI.h`) と C# (`Interop.cs` + `MyeScript.cs`) の糖衣を付ける
 - `src/Scripting/Interop.cs` — 末尾ミラー + Engine 窓口
 - `src/Shared/ScriptAPI.h` / `src/Scripting/MyeScript.cs` — 糖衣
 - `tools/check_rules.ps1` — `$apiVersionSlots[21] = N`
-- `src/Editor/PartSelfTest.cpp` (または専用 SelfTest) — `== 21u` と新スロット契約 (Texture バインド成功／未解決で 0)
+- `src/Editor/SelfTest/PartSelfTest.cpp` (または専用 SelfTest) — `== 21u` と新スロット契約 (Texture バインド成功／未解決で 0)
 - Renderer 側バッファ／テクスチャ解決 (sub-04 成果物＋AssetID→SRV)
 - `docs/history/api-scripting-tools.md` — v21 一行
 - `Project.h` の `kEngineVersion` があれば同期 (メモリ記載)
@@ -75,8 +75,8 @@ SELF_EVAL: sub-05 (round 1)
 実装:
   - src/Shared/EngineAPI.h — MYE_API_VERSION 21、MYE_COMPUTE_BUFFER_*、末尾 7 スロット (SetComputeTextureFromAsset 必須)。EngineAPI コメント誤字 (无効→無効) を修正
   - src/Engine/Engine/Script/EngineApiTable.cpp — v21 ラムダ 7 本を ComputeAbiRunner / ShaderManager / TextureLibrary へ配線
-  - src/Engine/Renderer/ComputeAbiRunner.h/.cpp — 世代付き uint64 ハンドル、D3DReflect 名前バインド、組み込み white キー、上限 64、Shutdown 回収
-  - src/Engine/Renderer/ComputeAbiSelfTest.cpp — Create→SetBuffer/Float/Float4/Texture→Dispatch→Release、UAF・上限・builtin テクスチャ
+  - src/Engine/Renderer/Compute/ComputeAbiRunner.h/.cpp — 世代付き uint64 ハンドル、D3DReflect 名前バインド、組み込み white キー、上限 64、Shutdown 回収
+  - src/Engine/Renderer/Compute/ComputeAbiSelfTest.cpp — Create→SetBuffer/Float/Float4/Texture→Dispatch→Release、UAF・上限・builtin テクスチャ
   - src/Scripting/Interop.cs / MyeScript.cs / ScriptAPI.h — 末尾ミラーと糖衣
   - ScriptHost.h / ManagedHost.h / EngineLoop.cpp / TickRunner — SetComputeAbi とシーン遷移時 computeAbi->Shutdown()
   - ShaderManager — csBytecode 保持 (Reflect 用)
@@ -103,7 +103,7 @@ SELF_EVAL: sub-05 (round 1)
   コード品質: 4 — 既存層・日本語コメント・DLL 境界を踏襲
   テスト: 4 — 規則 11・変異・ComputeAbiSelfTest・managed 両構成・C# プローブ実施。フル selftest 総合 exit 0 は未達 (Part)
 不安・質問: なし
-触ったファイル: src/Shared/EngineAPI.h, src/Shared/ScriptAPI.h, src/Engine/Engine/Script/EngineApiTable.h, src/Engine/Engine/Script/EngineApiTable.cpp, src/Engine/Engine/Script/ScriptHost.h, src/Engine/Engine/Script/ManagedHost.h, src/Engine/Engine/EngineLoop.cpp, src/Engine/Engine/TickRunner.h, src/Engine/Engine/TickRunner.cpp, src/Engine/Renderer/ComputeAbiRunner.h, src/Engine/Renderer/ComputeAbiRunner.cpp, src/Engine/Renderer/ComputeAbiSelfTest.h, src/Engine/Renderer/ComputeAbiSelfTest.cpp, src/Engine/Renderer/ProjectComputeRunner.h, src/Engine/Renderer/ShaderManager.h, src/Engine/Renderer/ShaderManager.cpp, src/Scripting/Interop.cs, src/Scripting/MyeScript.cs, src/Editor/EditorMain.cpp, src/Editor/PartSelfTest.cpp, tools/check_rules.ps1, docs/history/api-scripting-tools.md, build/Engine.vcxproj, build/Engine.vcxproj.filters, plans/m78-project-shaders/sub-05.md
+触ったファイル: src/Shared/EngineAPI.h, src/Shared/ScriptAPI.h, src/Engine/Engine/Script/EngineApiTable.h, src/Engine/Engine/Script/EngineApiTable.cpp, src/Engine/Engine/Script/ScriptHost.h, src/Engine/Engine/Script/ManagedHost.h, src/Engine/Engine/EngineLoop.cpp, src/Engine/Engine/TickRunner.h, src/Engine/Engine/TickRunner.cpp, src/Engine/Renderer/Compute/ComputeAbiRunner.h, src/Engine/Renderer/Compute/ComputeAbiRunner.cpp, src/Engine/Renderer/Compute/ComputeAbiSelfTest.h, src/Engine/Renderer/Compute/ComputeAbiSelfTest.cpp, src/Engine/Renderer/Compute/ProjectComputeRunner.h, src/Engine/Renderer/Shader/ShaderManager.h, src/Engine/Renderer/Shader/ShaderManager.cpp, src/Scripting/Interop.cs, src/Scripting/MyeScript.cs, src/Editor/App/EditorMain.cpp, src/Editor/SelfTest/PartSelfTest.cpp, tools/check_rules.ps1, docs/history/api-scripting-tools.md, build/Engine.vcxproj, build/Engine.vcxproj.filters, plans/m78-project-shaders/sub-05.md
 申し送り: GameLogic.dll は MYE_API_VERSION 21 で再ビルド必須。parts-demo 検証時は cache\parts_showcase.scene.json が古いと BuildPartsShowcaseScene をスキップするので C# プローブ前に削除すること。C# レーンは replay 被覆外 (Compute 結果の ECS/WorldHash 書き戻し禁止)
 ```
 

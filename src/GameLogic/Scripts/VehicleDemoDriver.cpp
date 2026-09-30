@@ -12,7 +12,7 @@
 #include "Shared/ScriptAPI.h"
 
 namespace {
-// VehicleComponent (Engine/Core/Components.h) の名前ハッシュ。
+// VehicleComponent (Engine/Core/Ecs/Components.h) の名前ハッシュ。
 // **毎 tick 取り直さない** — 文字列を舐める理由が無い (LocalPlayerDemo と同じ流儀)
 const uint64_t kCompVehicle = MyeNameHash("Vehicle");
 const uint64_t kFieldSteer = MyeNameHash("steer");

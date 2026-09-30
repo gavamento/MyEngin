@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Platform/PathUtil.h"
 

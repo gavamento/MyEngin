@@ -9,10 +9,10 @@
 #include <cmath>
 #include <vector>
 
-#include "Engine/Core/Components.h"
-#include "Engine/Core/Profiler.h"
-#include "Engine/Core/Random.h"
-#include "Engine/Core/World.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
+#include "Engine/Core/Util/Random.h"
+#include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 
 namespace mye {

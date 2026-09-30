@@ -10,7 +10,7 @@ sub-02 round 3 (差し戻し上限) で、トーラス (`MakeTorus(2.0, 0.6, 24,
 
 ## 原因 (planner がコードで特定済み)
 
-`src/Engine/Engine/Physics/ConvexHull.cpp:219-307` の逐次追加ループ:
+`src/Engine/Engine/Physics/Collider/ConvexHull.cpp:219-307` の逐次追加ループ:
 - 最遠点 `pick` は `dmax > eps` なので `keep` に入り、`outside.swap(keep)` の後も **`outside` に残る**
 - 地平線の新面が縮退して `MakeTriPlane` が失敗すると (`ok == false`)、`continue; // pick は既に outside から外れている` で次の周回へ進む。しかしコメントに反して pick は outside に残っている
 - `tris` も `outside` も変わっていないので、次の周回で**同じ pick が選ばれ、同じ理由で失敗する** = 無限ループ。`vertCount` も増えないので `kConvexMaxVerts` の上限でも止まらない
@@ -32,8 +32,8 @@ sub-02 round 3 (差し戻し上限) で、トーラス (`MakeTorus(2.0, 0.6, 24,
 
 ## 触る場所 (planner の見立て)
 
-- `src/Engine/Engine/Physics/ConvexHull.cpp` (219-307 のループ内、`if (!ok)` の所)
-- `src/Engine/Engine/Physics/ConvexSelfTest.cpp` または `FractureSelfTest.cpp`
+- `src/Engine/Engine/Physics/Collider/ConvexHull.cpp` (219-307 のループ内、`if (!ok)` の所)
+- `src/Engine/Engine/Physics/Collider/ConvexSelfTest.cpp` または `FractureSelfTest.cpp`
 - **触らない**: WIP ファイル
 
 ## 受け入れ条件 (このサブ)
@@ -58,16 +58,16 @@ tools\check_rules.ps1
 
 SELF_EVAL: sub-13 (round 1)
 実装:
-  - src/Engine/Engine/Physics/ConvexHull.cpp:BuildTriHull — 逐次追加ループの `if (!ok)` 分岐で、
+  - src/Engine/Engine/Physics/Collider/ConvexHull.cpp:BuildTriHull — 逐次追加ループの `if (!ok)` 分岐で、
     地平線の新面が縮退して失敗した `pick` を `outside` から `std::remove`/`erase` で取り除いて
     から `continue` するよう修正 (`outside.erase(std::remove(outside.begin(), outside.end(), pick), outside.end());`)。
     実態と食い違っていたコメント (「pick は既に outside から外れている」) も書き直した
-  - src/Engine/Engine/Physics/ConvexSelfTest.cpp / .h — トーラス (`MakeTorus(2.0, 0.6, 24, 16)`、
+  - src/Engine/Engine/Physics/Collider/ConvexSelfTest.cpp / .h — トーラス (`MakeTorus(2.0, 0.6, 24, 16)`、
     pieceCount=8、seed=1) の焼きで rank=7 の破片に現れた点群 (`BuildConvexHull` へ渡す直前、
     位置の完全一致で重複除去した 195 点、一時的なログ出力で実測して取得) を `TorusRank7Points()`
     としてフィクスチャ化し、`BuildConvexHull` が有限時間で終わり `Valid()` を返すことを確認する
     回帰テストを追加
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp — sub-02 でハング回避のためコメントアウト・
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp — sub-02 でハング回避のためコメントアウト・
     見送りにされていたトーラスの Voronoi 焼きテスト (7 節: pieceCount 8/32)、digest 一致テスト
     (11 節)、焼き時間計測 (12 節、torus 8/32 pieces) を復元・追加。「BuildConvexHull で停止する」
     旨の古い NOTE コメントを削除
@@ -102,10 +102,10 @@ SELF_EVAL: sub-13 (round 1)
     timing テストを復元し、Debug/Release 双方で実行して結果を記録した
 不安・質問: なし
 触ったファイル:
-  - src/Engine/Engine/Physics/ConvexHull.cpp
-  - src/Engine/Engine/Physics/ConvexSelfTest.cpp
-  - src/Engine/Engine/Physics/ConvexSelfTest.h
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
+  - src/Engine/Engine/Physics/Collider/ConvexHull.cpp
+  - src/Engine/Engine/Physics/Collider/ConvexSelfTest.cpp
+  - src/Engine/Engine/Physics/Collider/ConvexSelfTest.h
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
 申し送り: なし (sub-06 は依存すると harness.md にあるが、本サブの修正・追加テストは
   ConvexHull.cpp の 1 分岐のみで完結しており、他サブへ影響する変更はない)
 
@@ -141,11 +141,11 @@ SELF_EVAL: sub-13 (round 2)
     (`FractureMesh.h:19-20`)。指摘は「FractureMesh.cpp」のみを列挙しており .h は対象に
     含まれていなかったため触っていない。同種の指摘が再度出るなら知らせてほしい
 触ったファイル:
-  - src/Engine/Engine/Physics/ConvexHull.cpp
-  - src/Engine/Engine/Physics/ConvexSelfTest.cpp
-  - src/Engine/Engine/Physics/ConvexSelfTest.h
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
-  - src/Engine/Engine/Physics/FractureBake.cpp
+  - src/Engine/Engine/Physics/Collider/ConvexHull.cpp
+  - src/Engine/Engine/Physics/Collider/ConvexSelfTest.cpp
+  - src/Engine/Engine/Physics/Collider/ConvexSelfTest.h
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureBake.cpp
 申し送り: なし
 
 ## フィードバック履歴

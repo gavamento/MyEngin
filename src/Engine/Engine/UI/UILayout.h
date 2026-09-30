@@ -14,7 +14,7 @@
 //   子の UI 専用エンティティを space=1 でぶら下げる (親矩形基準なので一緒に追従する)。
 #include <DirectXMath.h>
 
-#include "Engine/Core/EntityID.h"
+#include "Engine/Core/Ecs/EntityID.h"
 
 namespace mye {
 

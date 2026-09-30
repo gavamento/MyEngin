@@ -12,11 +12,11 @@
 
 #include <nlohmann/json.hpp>
 
-#include "Engine/Core/Hash.h"
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Util/Hash.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Platform/PathUtil.h"
-#include "Engine/Renderer/FontFiles.h"
-#include "Engine/Renderer/FontGeometry.h"
+#include "Engine/Renderer/Text/FontFiles.h"
+#include "Engine/Renderer/Text/FontGeometry.h"
 
 namespace mye {
 namespace uitext {

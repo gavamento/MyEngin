@@ -44,8 +44,8 @@ C:\HAL\MyEngin\plans\m80-destruction\review-1.md の指摘 #5・#6・#7 (planner
 
 ## 触る場所 (planner の見立て)
 
-- `src/Engine/Core/Components.h/.cpp`、`src/Engine/Engine/DemoContent.cpp`、`src/Engine/Engine/Physics/FractureBenchmark.cpp`、テスト類
-- `src/Engine/Engine/Physics/FractureBake.*`、`FractureVoxel.*`、`src/Editor/FractureBakeService.*`、`src/Editor/Windows/InspectorWindow.cpp`、`src/Engine/Core/LocalizationTable.inl`
+- `src/Engine/Core/Ecs/Components.h/.cpp`、`src/Engine/Engine/DemoContent.cpp`、`src/Engine/Engine/Physics/Fracture/FractureBenchmark.cpp`、テスト類
+- `src/Engine/Engine/Physics/FractureBake.*`、`FractureVoxel.*`、`src/Editor/FractureBakeService.*`、`src/Editor/Windows/Scene/InspectorWindow.cpp`、`src/Engine/Core/Localization/LocalizationTable.inl`
 - `src/Engine/Engine/Asset/ModelCook.cpp` または Inspector 側のキャッシュ
 - `tests/golden/fracture_*.png`、`tools/shot_verify.bat`
 
@@ -74,41 +74,41 @@ tools\check_rules.ps1
 ```
 SELF_EVAL: sub-18 (round 1)
 実装:
-  - src/Engine/Core/Components.h:DestructibleComponent.strength — 既定値を 5000.0f → 70.0f に変更
+  - src/Engine/Core/Ecs/Components.h:DestructibleComponent.strength — 既定値を 5000.0f → 70.0f に変更
     (実測、根拠は bench.md §9)。voxelResolution のコメントを Inspector 上限 (16..72) とハード
     クランプ (16..256) の区別が分かるよう更新
-  - src/Engine/Core/Components.cpp — strength のツールチップに既定値の根拠 (bench.md) を追記。
+  - src/Engine/Core/Ecs/Components.cpp — strength のツールチップに既定値の根拠 (bench.md) を追記。
     voxelResolution を MYE_FIELD_RANGE から生 FieldDesc (min=16, max=72 + ツールチップ) に変更
     (review-1 #6)
-  - src/Engine/Engine/Physics/FractureBenchmark.h/.cpp:RunFractureStrengthCalibration —
+  - src/Engine/Engine/Physics/Fracture/FractureBenchmark.h/.cpp:RunFractureStrengthCalibration —
     質量1kg・破片16・一辺1mの箱で spec §2 の3基準それぞれの境界を対数二分探索で求め、範囲の
     対数中央値を計測ログへ出す (--fracture-bench の一部)。voxelize bench の解像度表に
     64/72/80/96/128 (review-1 #6 の再現条件、seed=1・一辺1m) を追加し、失敗理由を
     MYE_LOG_ERROR へ出すよう修正
-  - src/Engine/Engine/Physics/FractureBake.h:FractureBakeInput.cancelFlag /
+  - src/Engine/Engine/Physics/Fracture/FractureBake.h:FractureBakeInput.cancelFlag /
     FractureBakeResult.cancelled — 取り消し用の口を追加 (既定 nullptr/false、既存呼び出しに
     影響なし)
-  - src/Engine/Engine/Physics/FractureBake.cpp — BakeFracture() の段階の合間
+  - src/Engine/Engine/Physics/Fracture/FractureBake.cpp — BakeFracture() の段階の合間
     (ClosedCheck→Voxelize→Split) と BakeFractureCore() のセル切断ループ (外側面クリップ・
     断面クリップの各シード反復) の合間で cancelFlag を見て打ち切る (review-1 #6)
-  - src/Editor/FractureBakeService.h/.cpp:Cancel(id) — 実行中なら旗を立てる、キュー待ちなら
+  - src/Editor/Tools/FractureBakeService.h/.cpp:Cancel(id) — 実行中なら旗を立てる、キュー待ちなら
     その場で取り除く。cancelRequested_ は次のジョブ開始時にリセット。Shutdown() は取り消して
     から join し、待機中のジョブは焼かずに捨てる
-  - src/Editor/Windows/InspectorWindow.h/.cpp — 焼き中に「取り消し」ボタンを表示
+  - src/Editor/Windows/Scene/InspectorWindow.h/.cpp — 焼き中に「取り消し」ボタンを表示
     (Cancel(tg.fid) を呼ぶ)。取り消し済みの結果は専用メッセージ (Insp_FractureCancelled) を
     出す。GetCachedSkinWeights — ModelCook::TryLoadCookedMeshVertices の呼び出しを
     (fid, srcPath, meshKey) ごとにキャッシュし、ReloadHub::ReloadCount() の変化で無効化する
     (review-1 #10)
-  - src/Engine/Core/LocalizationTable.inl — Insp_FractureCancel / Insp_FractureCancelled を追加
+  - src/Engine/Core/Localization/LocalizationTable.inl — Insp_FractureCancel / Insp_FractureCancelled を追加
   - src/Engine/Engine/DemoContent.cpp — 固定壁を床から浮かせ (2.5×2.5×0.6m、非一様スケール、
     床から 1.5m の隙間)、弾の狙いを壁の下寄りに変更 (理由は仕様との差分参照)。box/skinArm の
     strength 明示指定を削除し既定値 (70N) に戻した
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp — 既定値が spec §2 の3基準を満たすことを
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp — 既定値が spec §2 の3基準を満たすことを
     確かめる SelfTest (質量1kg・破片16・一辺1mの箱、runDrop) を追加。sub-17 申し送りの分離
     不変量テスト (32破片の動的箱・kinematic壁、2 tick×2断片が同時に分離しても全破片の
     ワールド姿勢が相対1e-5で保たれることを検算) を追加。voxelize テストに res=72 (軽量な
     pieceCount=4) を追加
-  - src/Editor/FractureEditorSelfTest.cpp — 焼きの取り消しテスト (Split 段階へ入ったのを
+  - src/Editor/Tools/FractureEditorSelfTest.cpp — 焼きの取り消しテスト (Split 段階へ入ったのを
     確認してから Cancel し、有限時間で Ready(cancelled=true) になることを確認)。Shutdown が
     焼きの途中でも速やかに戻ることを、同じ入力の同期フルベイクとの相対比較 (Debug 36%、
     Release 30%) で確認。スキンウェイト照会キャッシュのテスト (キャッシュ後に .mmdl を退避
@@ -170,20 +170,20 @@ SELF_EVAL: sub-18 (round 1)
      golden の箱の見た目 (破片境界の陰影) がわずかに変わりました (意図した変更。20kg・30m/s の
      球衝突は既定値でも桁違いに大きいエネルギーなので機能上の懸念はありません)
 触ったファイル:
-  - src/Engine/Core/Components.h
-  - src/Engine/Core/Components.cpp
-  - src/Engine/Core/LocalizationTable.inl
-  - src/Engine/Engine/Physics/FractureBenchmark.h
-  - src/Engine/Engine/Physics/FractureBenchmark.cpp
-  - src/Engine/Engine/Physics/FractureBake.h
-  - src/Engine/Engine/Physics/FractureBake.cpp
-  - src/Editor/FractureBakeService.h
-  - src/Editor/FractureBakeService.cpp
-  - src/Editor/Windows/InspectorWindow.h
-  - src/Editor/Windows/InspectorWindow.cpp
+  - src/Engine/Core/Ecs/Components.h
+  - src/Engine/Core/Ecs/Components.cpp
+  - src/Engine/Core/Localization/LocalizationTable.inl
+  - src/Engine/Engine/Physics/Fracture/FractureBenchmark.h
+  - src/Engine/Engine/Physics/Fracture/FractureBenchmark.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureBake.h
+  - src/Engine/Engine/Physics/Fracture/FractureBake.cpp
+  - src/Editor/Tools/FractureBakeService.h
+  - src/Editor/Tools/FractureBakeService.cpp
+  - src/Editor/Windows/Scene/InspectorWindow.h
+  - src/Editor/Windows/Scene/InspectorWindow.cpp
   - src/Engine/Engine/DemoContent.cpp
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
-  - src/Editor/FractureEditorSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
+  - src/Editor/Tools/FractureEditorSelfTest.cpp
   - tests/golden/fracture_before.png
   - tests/golden/fracture_after.png
   - plans/m80-destruction/bench.md

@@ -16,7 +16,7 @@
 #include <cstdio>
 #include <cstring>
 
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Platform/PathUtil.h"
 
 #pragma comment(lib, "ws2_32.lib")

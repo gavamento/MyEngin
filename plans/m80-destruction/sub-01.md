@@ -26,11 +26,11 @@ M80 で最もリスクの高い未知 = **「閉じた (凹んだ・穴のある
 
 ## 触る場所 (planner の見立て)
 
-- 新規 `src/Engine/Engine/Physics/FractureMesh.h/.cpp` (名前は coder 判断。Engine 層の純関数。Renderer の `MeshVertex` を使うか独自の頂点構造にするかは coder 判断 — sub-03 で `MeshVertex` に詰め替えられればよい)
-- 参考: `src/Engine/Engine/Physics/ConvexHull.cpp` (−0 の畳み方、縮退の扱い、決定論の書き方)
-- 新規 SelfTest と `src/Editor/EditorMain.cpp` の登録 (末尾追加)
+- 新規 `src/Engine/Engine/Physics/Fracture/FractureMesh.h/.cpp` (名前は coder 判断。Engine 層の純関数。Renderer の `MeshVertex` を使うか独自の頂点構造にするかは coder 判断 — sub-03 で `MeshVertex` に詰め替えられればよい)
+- 参考: `src/Engine/Engine/Physics/Collider/ConvexHull.cpp` (−0 の畳み方、縮退の扱い、決定論の書き方)
+- 新規 SelfTest と `src/Editor/App/EditorMain.cpp` の登録 (末尾追加)
 - ファイル追加後 `tools\gen_project_files.ps1`
-- **触らない**: `src/Engine/Renderer/WaterPass.cpp`、`tools/deepmodal/*`、`assets/deepmodal/*`、ルート直下の一時ファイル
+- **触らない**: `src/Engine/Renderer/Passes/WaterPass.cpp`、`tools/deepmodal/*`、`assets/deepmodal/*`、ルート直下の一時ファイル
 
 ## 受け入れ条件 (このサブ)
 
@@ -60,16 +60,16 @@ tools\check_rules.ps1
 
 SELF_EVAL: sub-01 (round 1)
 実装:
-  - src/Engine/Engine/Physics/FractureMesh.h:FractureVertex,FractureMesh,ClosedMeshCheck,PlaneCutResult — 破壊分割コア専用の最小頂点/メッシュ型とAPI宣言 (Renderer非依存)
-  - src/Engine/Engine/Physics/FractureMesh.cpp:CheckClosedMesh — 位置のビット一致溶接 (-0.0畳み込み) + 無向辺の使用数・向きで境界辺/非多様体/向き不一致を検出
-  - src/Engine/Engine/Physics/FractureMesh.cpp:CutMeshByPlane — 三角形ごとに平面クリップしposPoly/negPolyへファン分割、外側面 (out.positive/negative.outer) を構築。断面の輪郭は自前で辺の向きを推測せず、できあがった外側面自身の境界辺 (ExtractBoundaryEdges、CheckClosedMeshと同じ溶接手法) から取り直す
-  - src/Engine/Engine/Physics/FractureMesh.cpp:ChainAllLoops — 断面の切断辺 (方向付き) を位置一致 (std::map、決定的) で繋ぎ、単純閉ループ列にする。同じ位置から2本出る/後続が見つからない/規定回数で閉じない、をすべて安全に失敗として返す
-  - src/Engine/Engine/Physics/FractureMesh.cpp:CapLoops — 複数ループを「内包しているループの本数の偶奇」で外周/穴に分類 (面積の符号には依存しない設計、理由は不安・質問欄)。穴は直接の親 (1段内側) へ割り当て、BridgeHoleIntoOuter で橋渡しした上でEarClipにより耳切り三角形分割。蓋頂点のUVはtangent/bitangentへの正射影 (箱投影) で埋める
-  - src/Engine/Engine/Physics/FractureMesh.cpp:BridgeHoleIntoOuter — Heldの手法の簡略版 (穴の最右点Mから+u方向レイでouterと交差、視認性を反射頂点で補正)
-  - src/Engine/Engine/Physics/FractureMesh.cpp:EarClip — 単純多角形の耳切り。有効な耳のうち最も丸い(cr最大)ものを毎回選ぶ決定的アルゴリズム。橋渡しが作る「同じ座標の複製点 (橋の両端)」は耳を塞ぐ判定から除外する (実測でここが穴あき蓋の詰まりの真因だった)
-  - src/Engine/Engine/Physics/FractureMesh.cpp:VerifyAndFixCapOrientation — 外側面+蓋を合成しCheckClosedMeshで検算、境界辺・非多様体が0で向き不一致だけ残る場合に限り蓋全体を裏返して再検算する安全網
-  - src/Engine/Engine/Physics/FractureSelfTest.h/.cpp — 閉じ判定7件、平面切断 (箱3・L字2・トーラス2)、穴あき蓋 (トーラス輪切り、面積を多角形近似の解析値と照合)、エッジケース3件 (平面が触れない/頂点をちょうど通る/面上に乗る)、決定論1件、処理時間計測を追加。L字テストメッシュは当初7頂点 (A,B,C,D,E,F,H) の2矩形分割だったが、HがA-F辺上に乗る共線点で扇三角形が退化し実際に平面切断で破綻したため6頂点のAからの扇分割に修正した
-  - src/Editor/EditorMain.cpp — `RunFractureSelfTest()` を `--selftest` の末尾に登録
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.h:FractureVertex,FractureMesh,ClosedMeshCheck,PlaneCutResult — 破壊分割コア専用の最小頂点/メッシュ型とAPI宣言 (Renderer非依存)
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp:CheckClosedMesh — 位置のビット一致溶接 (-0.0畳み込み) + 無向辺の使用数・向きで境界辺/非多様体/向き不一致を検出
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp:CutMeshByPlane — 三角形ごとに平面クリップしposPoly/negPolyへファン分割、外側面 (out.positive/negative.outer) を構築。断面の輪郭は自前で辺の向きを推測せず、できあがった外側面自身の境界辺 (ExtractBoundaryEdges、CheckClosedMeshと同じ溶接手法) から取り直す
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp:ChainAllLoops — 断面の切断辺 (方向付き) を位置一致 (std::map、決定的) で繋ぎ、単純閉ループ列にする。同じ位置から2本出る/後続が見つからない/規定回数で閉じない、をすべて安全に失敗として返す
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp:CapLoops — 複数ループを「内包しているループの本数の偶奇」で外周/穴に分類 (面積の符号には依存しない設計、理由は不安・質問欄)。穴は直接の親 (1段内側) へ割り当て、BridgeHoleIntoOuter で橋渡しした上でEarClipにより耳切り三角形分割。蓋頂点のUVはtangent/bitangentへの正射影 (箱投影) で埋める
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp:BridgeHoleIntoOuter — Heldの手法の簡略版 (穴の最右点Mから+u方向レイでouterと交差、視認性を反射頂点で補正)
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp:EarClip — 単純多角形の耳切り。有効な耳のうち最も丸い(cr最大)ものを毎回選ぶ決定的アルゴリズム。橋渡しが作る「同じ座標の複製点 (橋の両端)」は耳を塞ぐ判定から除外する (実測でここが穴あき蓋の詰まりの真因だった)
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp:VerifyAndFixCapOrientation — 外側面+蓋を合成しCheckClosedMeshで検算、境界辺・非多様体が0で向き不一致だけ残る場合に限り蓋全体を裏返して再検算する安全網
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.h/.cpp — 閉じ判定7件、平面切断 (箱3・L字2・トーラス2)、穴あき蓋 (トーラス輪切り、面積を多角形近似の解析値と照合)、エッジケース3件 (平面が触れない/頂点をちょうど通る/面上に乗る)、決定論1件、処理時間計測を追加。L字テストメッシュは当初7頂点 (A,B,C,D,E,F,H) の2矩形分割だったが、HがA-F辺上に乗る共線点で扇三角形が退化し実際に平面切断で破綻したため6頂点のAからの扇分割に修正した
+  - src/Editor/App/EditorMain.cpp — `RunFractureSelfTest()` を `--selftest` の末尾に登録
 
 仕様との差分:
   - [追加] 蓋のUVは「tangent/bitangentへの正射影 (平面基底そのもの)」として実装した。仕様は「箱投影」とだけ書かれ具体的な定義がなかったため、最も素直な解釈で埋めた。軸平行な切断平面ではワールド2軸への投影と一致する
@@ -83,7 +83,7 @@ SELF_EVAL: sub-01 (round 1)
   - `MSBuild MyEngine.sln /p:Configuration=Release /p:Platform=x64 /t:Editor` → ビルド成功
   - `bin\x64\Release\Editor.exe --selftest` → 全体exit code 0、`Fracture mesh core self test: ALL PASS` (Debugと同じテストが全てPASS)
   - `tools\check_rules.ps1` → `0 error(s), 0 warning(s)`
-  - `git status --short` → WIPファイル (WaterPass.cpp、deepmodal関連、ルート直下の一時ファイル) は無変更。新規4ファイルと`src/Editor/EditorMain.cpp`、`build/Engine.vcxproj[.filters]`のみ差分
+  - `git status --short` → WIPファイル (WaterPass.cpp、deepmodal関連、ルート直下の一時ファイル) は無変更。新規4ファイルと`src/Editor/App/EditorMain.cpp`、`build/Engine.vcxproj[.filters]`のみ差分
   - 処理時間: 10000三角形 (トーラス100×50分割) を16平面で切る — Release 407.29 ms (25.456 ms/cut)、Debug 4779.22 ms (298.702 ms/cut)
 
 自己採点 (1-5):
@@ -98,23 +98,23 @@ SELF_EVAL: sub-01 (round 1)
   3. 仕様との差分に書いた「蓋のUV=tangent/bitangentへの正射影」は裁定で埋めた。斜めの切断平面ではワールド軸に沿わない投影になるが、目視での歪みは未確認 (sub-01は描画に繋がないため)。sub-06以降で実際にテクスチャを貼ったときに見た目が想定と違えば、投影の基底の選び方 (OrthonormalBasisの分岐点、Duff et al. 2017の構成) を見直す必要があるかもしれない
 
 触ったファイル:
-  - src/Engine/Engine/Physics/FractureMesh.h (新規)
-  - src/Engine/Engine/Physics/FractureMesh.cpp (新規)
-  - src/Engine/Engine/Physics/FractureSelfTest.h (新規)
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp (新規)
-  - src/Editor/EditorMain.cpp (RunFractureSelfTest() の登録を1行追加)
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.h (新規)
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp (新規)
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.h (新規)
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp (新規)
+  - src/Editor/App/EditorMain.cpp (RunFractureSelfTest() の登録を1行追加)
 
 申し送り: 次サブ (Voronoi分割) は本サブの`CutMeshByPlane`/`CheckClosedMesh`/`SignedVolume`をそのまま部品として使う想定。`FractureVertex`/`FractureMesh`はRendererに依存しない独自型なので、sub-03で`MeshVertex`へ詰め替える経路を忘れないこと。`CapLoops`の内部関数 (BridgeHoleIntoOuter, EarClip等) は匿名namespace内でこのファイル限定なので、sub-02で同種の多角形分割が要るなら関数の切り出し (ヘッダへの公開) を検討すること。
 
 SELF_EVAL: sub-01 (round 2)
 実装:
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp:MakeTorus — 三角形の巻き順を `Tri(a,b,c)/Tri(a,c,d)` から `Tri(a,c,b)/Tri(a,d,c)` へ修正。∂/∂θ×∂/∂φ (旧の巻き順が実質使っていた向き) は管の中心へ向く内向きだったため、逆向きの `Tri(a,c,b)` 系に直して外向きにした (planner の手計算どおりの原因だった)
-  - src/Engine/Engine/Physics/FractureMesh.h/.cpp:ClosedMeshCheck.signedVolume — `CheckClosedMesh` が常に `SignedVolume(mesh)` を計算して返すようにした (closed かどうかに関わらず計算。閉じたメッシュでは実体積、負なら内向き)
-  - src/Engine/Engine/Physics/FractureMesh.h/.cpp:FlipMeshWinding — 新規公開関数。全三角形の2・3番目のindexを入れ替えるだけで頂点は複製しない。内向きの閉じたメッシュを`CutMeshByPlane`に渡す前に外向きへ正規化するために使う
-  - src/Engine/Engine/Physics/FractureMesh.cpp:VerifyAndFixCapOrientation → VerifyCapOrientation に改名・簡略化 — 「裏返して再検算」の補正経路を削除し、外側面+蓋を合成した閉じ判定 (`CheckClosedMesh`) の結果をそのまま返すだけにした。向き不一致を黙って隠さず、閉じていないと確認できなかった蓋は素直に失敗として返す
-  - src/Engine/Engine/Physics/FractureMesh.h — `CutMeshByPlane` の前提 (閉じていて外向き=signedVolume>0) をコメントに明記。`PlaneCutSide.cap` のUVコメントを「箱投影」から「断面平面への正射影」に修正 (round 1 の spec 変更に合わせる)
-  - src/Engine/Engine/Physics/FractureMesh.cpp:CapLoops — 「面積の符号が直感と逆になる」というコメントを、根本原因 (射影基底と capNormal の関係で外周でも符号がどちらにもなり得る、恒常的な性質) に基づく説明へ書き直した。内包数の偶奇による外周/穴判定と、EarClipへ渡す前の強制的なCCW揃えのロジック自体は変更していない (planner指摘のとおり、これはEarClipがCCW前提であることに由来する別の・引き続き必要な仕組み)
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp — 全テスト入力メッシュ (box/torus/seamed box/lshape、および平面切断テストの各入力) に `SignedVolume(mesh) > 0` の検査を追加。「内向きトーラス→検出→FlipMeshWinding で正規化→切断→両側とも外向きで閉じる」テストを新規追加 (受け入れ条件7・8)
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp:MakeTorus — 三角形の巻き順を `Tri(a,b,c)/Tri(a,c,d)` から `Tri(a,c,b)/Tri(a,d,c)` へ修正。∂/∂θ×∂/∂φ (旧の巻き順が実質使っていた向き) は管の中心へ向く内向きだったため、逆向きの `Tri(a,c,b)` 系に直して外向きにした (planner の手計算どおりの原因だった)
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.h/.cpp:ClosedMeshCheck.signedVolume — `CheckClosedMesh` が常に `SignedVolume(mesh)` を計算して返すようにした (closed かどうかに関わらず計算。閉じたメッシュでは実体積、負なら内向き)
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.h/.cpp:FlipMeshWinding — 新規公開関数。全三角形の2・3番目のindexを入れ替えるだけで頂点は複製しない。内向きの閉じたメッシュを`CutMeshByPlane`に渡す前に外向きへ正規化するために使う
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp:VerifyAndFixCapOrientation → VerifyCapOrientation に改名・簡略化 — 「裏返して再検算」の補正経路を削除し、外側面+蓋を合成した閉じ判定 (`CheckClosedMesh`) の結果をそのまま返すだけにした。向き不一致を黙って隠さず、閉じていないと確認できなかった蓋は素直に失敗として返す
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.h — `CutMeshByPlane` の前提 (閉じていて外向き=signedVolume>0) をコメントに明記。`PlaneCutSide.cap` のUVコメントを「箱投影」から「断面平面への正射影」に修正 (round 1 の spec 変更に合わせる)
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp:CapLoops — 「面積の符号が直感と逆になる」というコメントを、根本原因 (射影基底と capNormal の関係で外周でも符号がどちらにもなり得る、恒常的な性質) に基づく説明へ書き直した。内包数の偶奇による外周/穴判定と、EarClipへ渡す前の強制的なCCW揃えのロジック自体は変更していない (planner指摘のとおり、これはEarClipがCCW前提であることに由来する別の・引き続き必要な仕組み)
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp — 全テスト入力メッシュ (box/torus/seamed box/lshape、および平面切断テストの各入力) に `SignedVolume(mesh) > 0` の検査を追加。「内向きトーラス→検出→FlipMeshWinding で正規化→切断→両側とも外向きで閉じる」テストを新規追加 (受け入れ条件7・8)
   - 処理時間の内訳を一時的に計測 (chrono計測 + printf、検証後に削除): 10000三角形の切断1回あたり、Release で `extract` (ExtractBoundaryEdges) ≈7ms、`verify` (VerifyCapOrientation内のCheckClosedMesh) ≈8ms が支配的で、`clip` ≈1ms、`chain` ≈0.1ms、`cap` (EarClip込み) ≈0.7〜1msは小さい。extractとverifyはどちらも内部で`WeldedIds`(全頂点の位置ソート)を呼んでおり、ここがボトルネックの実体だと分かった (詳細は不安・質問欄)
 
 仕様との差分:
@@ -126,7 +126,7 @@ SELF_EVAL: sub-01 (round 2)
   - `MSBuild ... /p:Configuration=Release /t:Editor` → ビルド成功
   - `bin\x64\Release\Editor.exe --selftest` → exit code 0、同じ全項目PASS、`[ERROR]   FAIL:` 0件
   - `tools\check_rules.ps1` → `0 error(s), 0 warning(s)`
-  - `git status --short` → WIPファイルは無変更。差分は新規4ファイル+`src/Editor/EditorMain.cpp`+`build/Engine.vcxproj[.filters]`のみ (round 1 と同じ、追加ファイルなし)
+  - `git status --short` → WIPファイルは無変更。差分は新規4ファイル+`src/Editor/App/EditorMain.cpp`+`build/Engine.vcxproj[.filters]`のみ (round 1 と同じ、追加ファイルなし)
   - 処理時間 (最終、計測用printf除去後): Release 10000三角形×16平面 = 289.08 ms (18.068 ms/cut)、内訳計測時 (printfあり、除去前) は `extract`+`verify` が合計の半分強を占めることを確認済み
 
 自己採点 (1-5):
@@ -140,11 +140,11 @@ SELF_EVAL: sub-01 (round 2)
   2. round 1 で指摘のあった「EarClipのCCW前提による強制的な向き揃え」はそのまま残した (planner指摘 1(d) の解釈どおり)。これはMakeTorusのバグとは独立した、EarClip自体の前提に基づく必要な仕組みだと理解しているが、この理解が誤っていないか (= 今回のMakeTorus修正だけで実は不要になったのに残してしまっていないか) を一応確認したい。全テストがpassしている以上、少なくとも害はないと判断している
 
 触ったファイル: (round 1 と同じ、追加ファイルなし)
-  - src/Engine/Engine/Physics/FractureMesh.h
-  - src/Engine/Engine/Physics/FractureMesh.cpp
-  - src/Engine/Engine/Physics/FractureSelfTest.h (変更なし、内容は round 1 のまま)
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
-  - src/Editor/EditorMain.cpp (変更なし、内容は round 1 のまま)
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.h
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.h (変更なし、内容は round 1 のまま)
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
+  - src/Editor/App/EditorMain.cpp (変更なし、内容は round 1 のまま)
 
 ## フィードバック履歴
 - round 1: VERDICT REWORK (planner)。must 2 件: (1) 蓋の向き補正が要った根本原因 = SelfTest の `MakeTorus` が内向きに巻かれていた (θ=0,φ=0 で面法線 (−1,0,0))。生成を外向きへ直し、全テスト入力の符号付き体積 > 0 を検査し、外向きの入力で `VerifyAndFixCapOrientation` の裏返しが一度も起きないことをテストで固定する。裏返しは廃止して「検算に落ちたら失敗」にする (内向きの入力は切断前に正規化する契約) (2) `CheckClosedMesh` の結果に符号付き体積 (または内向きフラグ) を足し、内向きの閉じたメッシュを外向きへ裏返す関数を用意して、内向きのトーラスを入口で正規化してから切ると外向きの結果が得られるテストを足す。should 1 件: 10k 三角形 / 1 切断 25 ms (Release) の内訳を 1 行 (どこが支配的か) 測る。回答: 質問 2 (EarClip O(n^3)) は今は最適化しない。sub-02 で焼き時間を記録し sub-11 で判断。質問 3 (UV) は正射影を仕様として採用 (spec 変更)。build\Engine.vcxproj / .filters はコミットに含める

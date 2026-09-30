@@ -2,12 +2,12 @@
 
 #include <algorithm>
 
-#include "Editor/Selection.h"
-#include "Engine/Core/World.h"
-#include "Engine/Engine/GameObject.h"
-#include "Engine/Engine/Prefab.h"
-#include "Engine/Engine/Scene.h"
-#include "Engine/Engine/SceneSerializer.h"
+#include "Editor/Scene/Selection.h"
+#include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Scene/GameObject.h"
+#include "Engine/Engine/Scene/Prefab.h"
+#include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/Scene/SceneSerializer.h"
 
 namespace mye {
 

@@ -211,12 +211,12 @@ SELF_EVAL: sub-06 (round 1)
   - `src/Editor/SourceControl/GitTransaction.h`
   - `src/Editor/SourceControl/GitTransaction.cpp`
   - `src/Editor/SourceControl/SourceControlSelfTest.cpp`
-  - `src/Editor/Windows/SourceControlWindow.h`
-  - `src/Editor/Windows/SourceControlWindow.cpp`
-  - `src/Editor/EditorApp.cpp`
-  - `src/Editor/EditorSettings.h`
-  - `src/Editor/EditorSettings.cpp`
-  - `src/Engine/Core/LocalizationTable.inl`
+  - `src/Editor/Windows/Project/SourceControlWindow.h`
+  - `src/Editor/Windows/Project/SourceControlWindow.cpp`
+  - `src/Editor/App/EditorApp.cpp`
+  - `src/Editor/App/EditorSettings.h`
+  - `src/Editor/App/EditorSettings.cpp`
+  - `src/Engine/Core/Localization/LocalizationTable.inl`
   (`plans/m66-git-collab/harness.md` と `sub-05.md` は着手時点で既に司会が更新済みでした。私は触っていません)
 
 申し送り:

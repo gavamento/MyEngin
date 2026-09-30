@@ -6,8 +6,8 @@
 #include <filesystem>
 #include <fstream>
 
-#include "Engine/Core/Hash.h"
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Util/Hash.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace fs = std::filesystem;

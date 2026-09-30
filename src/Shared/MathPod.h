@@ -37,7 +37,7 @@ struct MyeColor {
     float a = 1.0f;
 };
 
-// mye::EntityID (Engine/Core/EntityID.h) とバイナリ互換。エンジン側で static_assert される
+// mye::EntityID (Engine/Core/Ecs/EntityID.h) とバイナリ互換。エンジン側で static_assert される
 struct MyeEntityId {
     uint32_t index = 0xFFFFFFFFu;
     uint32_t generation = 0;

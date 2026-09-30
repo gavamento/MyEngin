@@ -5,8 +5,8 @@
 #include <filesystem>
 #include <string>
 
-#include "Engine/Core/Hash.h"
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Util/Hash.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Platform/InputActions.h"
 
 namespace mye {

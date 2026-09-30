@@ -62,15 +62,15 @@ M67 review-1 の minor 1〜5 を全件片付ける。**golden は 1 枚も動か
 |---|---|---|
 | `src/Engine/Engine/RenderSystem.h` | `:244` (`RtRestirGpuMs`) の並び | 実効 ReSTIR 状態の判定を 1 本追加 |
 | `src/Engine/Engine/RenderSystem.cpp` | `:1148-1149` | 上の判定を呼ぶ形へ |
-| `src/Editor/EditorApp.cpp` | `:1267` / `:1305-1321` | `BeginDisabled` の判定 / クラス表を子メニューへ |
-| `src/Engine/Core/LocalizationTable.inl` | ReSTIR の文字列群 | 子メニュー名 1 本 (en/ja) |
+| `src/Editor/App/EditorApp.cpp` | `:1267` / `:1305-1321` | `BeginDisabled` の判定 / クラス表を子メニューへ |
+| `src/Engine/Core/Localization/LocalizationTable.inl` | ReSTIR の文字列群 | 子メニュー名 1 本 (en/ja) |
 | `src/Engine/Renderer/RayTracing/RtPasses.cpp` | `:164` / `:786` | `frameIndex` をパディングへ |
 | `assets/shaders/rt_restir_cb.hlsli` | `:34` / `gRsClass` 直前 | `gRsFrameIndex` をパディングへ / offsetof の注意 1 行 |
 | `src/Engine/Renderer/RayTracing/RtPasses.h` | `:60` / `:197` | コメントを実態へ |
-| `src/Engine/Renderer/GpuResources.cpp` | `:1017-1027` | 共有関数を呼ぶ形へ |
-| `src/Editor/Windows/InspectorWindow.cpp` | `:1480-1486` | 同上 |
+| `src/Engine/Renderer/Device/GpuResources.cpp` | `:1017-1027` | 共有関数を呼ぶ形へ |
+| `src/Editor/Windows/Scene/InspectorWindow.cpp` | `:1480-1486` | 同上 |
 | 共有関数の置き場所 | — | `GpuResources.h` は **nlohmann を include していない** (重いヘッダを増やさない方が良い)。`Engine/Core` には**置けない** (`kRtReflClass*` は Renderer 層の `RtTypes.h`、Core は Renderer を知らない)。**Renderer 層に小さなヘッダを 1 枚足す**のが planner の見立て。新規ファイルを足したら `pwsh -File tools\gen_project_files.ps1` |
-| `src/Editor/AssetOpsSelfTest.cpp` | `:328-352` | `3.0` / `4.0` / `true` のケース追加 |
+| `src/Editor/Asset/AssetOpsSelfTest.cpp` | `:328-352` | `3.0` / `4.0` / `true` のケース追加 |
 | `engine_spec.md` | `:478` | 受理規則の文言 |
 
 ## 受け入れ条件 (このサブ)
@@ -109,26 +109,26 @@ git status
 ### SELF_EVAL: sub-01 (round 1)
 
 実装:
-- `src/Engine/Renderer/ReflectionClassJson.h` / `.cpp` (新規) — `.mat.json` の
+- `src/Engine/Renderer/Device/ReflectionClassJson.h` / `.cpp` (新規) — `.mat.json` の
   `reflectionClass` 受理規則を 1 本に。「非整数」は **JSON の型ではなく値**で判定
   (`node.is_number()` → `get<double>()` → `isfinite && v == floor(v)` → `[0, kRtReflClassCount)`)。
   欠損は無言、キーがあって落としたときだけ `MYE_LOG_WARN` 1 行。
   警告の値表示は `dump(-1, ' ', false, error_handler_t::replace)` — 既定の `dump()` は
   不正 UTF-8 で `type_error` を投げるため (「例外を外へ出さない」が存在理由の関数で
   警告側が投げたら本末転倒)。
-- `src/Engine/Renderer/GpuResources.cpp:1022` (`ParseMaterialJson`) — 共有関数を呼ぶ形へ。
-- `src/Editor/Windows/InspectorWindow.cpp:1481` (`LoadMaterialEdit`) — 同上。
+- `src/Engine/Renderer/Device/GpuResources.cpp:1022` (`ParseMaterialJson`) — 共有関数を呼ぶ形へ。
+- `src/Editor/Windows/Scene/InspectorWindow.cpp:1481` (`LoadMaterialEdit`) — 同上。
 - `src/Engine/Engine/RenderSystem.h:245-255` — `RtRestirEffective()` (実効 ReSTIR 状態の唯一の判定)。
-- `src/Engine/Engine/RenderSystem.cpp:1149` / `src/Editor/EditorApp.cpp:1268` — 両方がそれを呼ぶ。
-- `src/Editor/EditorApp.cpp:1309-1327` — クラス表 5 行 × 3 スライダ (20 行) を子メニュー
+- `src/Engine/Engine/RenderSystem.cpp:1149` / `src/Editor/App/EditorApp.cpp:1268` — 両方がそれを呼ぶ。
+- `src/Editor/App/EditorApp.cpp:1309-1327` — クラス表 5 行 × 3 スライダ (20 行) を子メニュー
   `Restir_ClassTable` へ畳む。親メニューは 9 行 + セパレータ 2 本。
-- `src/Engine/Core/LocalizationTable.inl:180` — `Restir_ClassTable` (en/ja、`###` 無し)。
+- `src/Engine/Core/Localization/LocalizationTable.inl:180` — `Restir_ClassTable` (en/ja、`###` 無し)。
 - `src/Engine/Renderer/RayTracing/RtPasses.cpp:164-170` — `frameIndex` → `pad1` (外した理由付き)、
   `:792` の代入を削除。
 - `assets/shaders/rt_restir_cb.hlsli:34` — `gRsFrameIndex` → `gRsPad1`、`gRsClass` 直前に
   offsetof 160 の注意 1 行。
 - `src/Engine/Renderer/RayTracing/RtPasses.h:60` / `:199` — コメントを実態へ。
-- `src/Editor/AssetOpsSelfTest.cpp:324-383` — spec §4.1 の表を全行固定: `3.0` / `4.0` / `-0.0` /
+- `src/Editor/Asset/AssetOpsSelfTest.cpp:324-383` — spec §4.1 の表を全行固定: `3.0` / `4.0` / `-0.0` /
   `-0` (受ける側) と `true` / `null` / `[3]` / `{}` / `3.0e10` (落とす側) を追加。
 - `engine_spec.md:478` — 受理規則の文言を「値で判定」「欠損は無言 / 落としたら警告 1 行」へ。
 
@@ -138,7 +138,7 @@ git status
   の 3 か所だけ = モデル取り込み経路。`.mat.json` を読む `MaterialLibrary::LoadFromFile` /
   `MaterialFromJsonText` は `ModelCookData` に一切触れない。
 - **`Material` はワールドハッシュに載らない** → replay 非接触。根拠:
-  `MeshRendererComponent` (`src/Engine/Core/Components.h:44-48`) のフィールドは
+  `MeshRendererComponent` (`src/Engine/Core/Ecs/Components.h:44-48`) のフィールドは
   `AssetID mesh` / `AssetID material` の 2 本だけ。`WorldHasher.cpp` / `.h` に
   `Material` / `MaterialLibrary` / `GpuResources` の語は 1 つも無い (grep 0 件)。
 

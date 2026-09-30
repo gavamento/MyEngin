@@ -9,7 +9,7 @@
 
 #include <DirectXMath.h>
 
-#include "Engine/Renderer/FontGeometry.h" // FontGlyphMap (M34: FontAtlas とグリフ共有)
+#include "Engine/Renderer/Text/FontGeometry.h" // FontGlyphMap (M34: FontAtlas とグリフ共有)
 
 namespace mye {
 

@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "Engine/Core/EntityID.h"
+#include "Engine/Core/Ecs/EntityID.h"
 #include "Engine/Engine/Acoustic/AcousticGrid.h"
 
 namespace mye {

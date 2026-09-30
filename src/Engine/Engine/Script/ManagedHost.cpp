@@ -11,12 +11,12 @@
 #include "nethost/hostfxr.h"
 #include "nethost/nethost.h"
 
-#include "Engine/Core/Archetype.h"
-#include "Engine/Core/Components.h"
-#include "Engine/Core/Hash.h"
-#include "Engine/Core/Log.h"
-#include "Engine/Core/World.h"
-#include "Engine/Engine/Scene.h"
+#include "Engine/Core/Ecs/Archetype.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Util/Hash.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {

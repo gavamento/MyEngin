@@ -7,10 +7,10 @@
 
 #include <DirectXMath.h>
 
-#include "Engine/Core/Components.h"
-#include "Engine/Core/Random.h"          // M61b: 形状サンプリング (Pcg32 消費列の正本)
-#include "Engine/Renderer/FrustumCull.h" // プール単位カリング (描画専用 — ハッシュ非関与)
-#include "Engine/Renderer/PostFxMath.h"  // M55a: LinearizeDepth (CPU ミラーの正本)
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Util/Random.h"          // M61b: 形状サンプリング (Pcg32 消費列の正本)
+#include "Engine/Renderer/Pipeline/FrustumCull.h" // プール単位カリング (描画専用 — ハッシュ非関与)
+#include "Engine/Renderer/PostFx/PostFxMath.h"  // M55a: LinearizeDepth (CPU ミラーの正本)
 
 // パーティクルの放出計画 (burst/duration/loop/playing) と多点グラデーション評価を
 // CPU/GPU 両バックエンドと selftest で共有する純関数群 (D3D 非依存)。

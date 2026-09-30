@@ -66,7 +66,7 @@ LocalTransform が位置・回転・スケールを持ち、Hierarchy から Wor
 
 未登録のコンポーネントは現在の実装では JSON データを保留して再保存時に戻します。これは「意味を理解して実行する」機能ではなく、「未登録だからといって保存で消さない」機能です。型が利用可能かどうかは別途確認する必要があります。
 
-根拠: [World.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Core/World.h)、[Components.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Core/Components.h)、[Reflection.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Core/Reflection.h)、[SchemaComponents.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/SchemaComponents.cpp)、[SceneSerializer.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/SceneSerializer.cpp)。
+根拠: [World.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Core/Ecs/World.h)、[Components.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Core/Ecs/Components.h)、[Reflection.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Core/Ecs/Reflection.h)、[SchemaComponents.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Schema/SchemaComponents.cpp)、[SceneSerializer.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Scene/SceneSerializer.cpp)。
 
 ## 4. ゲーム更新とスクリプト
 
@@ -93,7 +93,7 @@ LocalTransform が位置・回転・スケールを持ち、Hierarchy から Wor
 - 非ハッシュの描画コンポーネントは汎用 API で書けますが、同 API の読み取りは制限されています。描画側の値が sim の判断に流入するのを防ぐ設計です。
 - ホットリロードの対象はゲーム DLL です。エンジン本体の変更には再ビルドが必要です。
 
-根拠: [TickRunner.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/TickRunner.cpp)、[ScriptAPI.h](C:/HAKtokyo/My_Engin/MyEngin/src/Shared/ScriptAPI.h)、[EngineApiTable.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Script/EngineApiTable.cpp)、[DllReloader.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/HotReload/DllReloader.cpp)、[ManagedHost.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Script/ManagedHost.cpp)。
+根拠: [TickRunner.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Loop/TickRunner.cpp)、[ScriptAPI.h](C:/HAKtokyo/My_Engin/MyEngin/src/Shared/ScriptAPI.h)、[EngineApiTable.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Script/EngineApiTable.cpp)、[DllReloader.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/HotReload/DllReloader.cpp)、[ManagedHost.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Script/ManagedHost.cpp)。
 
 ## 5. アセットと再利用
 
@@ -123,7 +123,7 @@ Part は武器の持ち手や車体の接続点に相当するソケットです
 
 ファイル監視からシェーダ、テクスチャ、モデル、シーン、構成アセットなどを更新します。シェーダは include 依存を追い、コンパイル失敗時は旧シェーダを維持します。リロードできることと、すべての編集中状態が無条件に移行されることは別です。
 
-根拠: [AssetDatabase.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/AssetDatabase.h)、[FbxLoader.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/FbxLoader.cpp)、[CookedCache.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Asset/CookedCache.h)、[Prefab.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Prefab.h)、[Parts.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Parts.h)、[ReloadHub.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/HotReload/ReloadHub.cpp)。
+根拠: [AssetDatabase.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Asset/AssetDatabase.h)、[FbxLoader.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Asset/FbxLoader.cpp)、[CookedCache.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Asset/CookedCache.h)、[Prefab.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Scene/Prefab.h)、[Parts.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Animation/Parts.h)、[ReloadHub.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/HotReload/ReloadHub.cpp)。
 
 ## 6. レンダリング
 
@@ -157,7 +157,7 @@ SSAO、TAA、SSR は Deferred に依存します。TAA は履歴を利用する�
 
 距離 Fog は Linear / Exp / Exp2、高さ方向の減衰、太陽方向の散乱表現を持ちます。別に Froxel のボリュメトリック処理があり、空間を小区画に分けて光と霧を積分し、時間蓄積して合成します。Froxel 使用時はゴッドレイの重複計上を抑える処理があります。
 
-根拠: [RenderSystem.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/RenderSystem.cpp)、[RenderTypes.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Renderer/RenderTypes.h)、[PostProcess.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Renderer/PostProcess.cpp)、[RtPasses.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Renderer/RayTracing/RtPasses.cpp)、[FroxelPass.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Renderer/FroxelPass.cpp)、[ADR-016](C:/HAKtokyo/My_Engin/MyEngin/docs/adr/ADR-016-restir-reflection.md)。
+根拠: [RenderSystem.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Rendering/RenderSystem.cpp)、[RenderTypes.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Renderer/Pipeline/RenderTypes.h)、[PostProcess.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Renderer/PostFx/PostProcess.cpp)、[RtPasses.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Renderer/RayTracing/RtPasses.cpp)、[FroxelPass.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Renderer/Passes/FroxelPass.cpp)、[ADR-016](C:/HAKtokyo/My_Engin/MyEngin/docs/adr/ADR-016-restir-reflection.md)。
 
 ## 7. 地形・アニメーション・VFX
 
@@ -179,7 +179,7 @@ ParticleEmitter には発生数・寿命・形状・速度・色・サイズな�
 
 SpriteRenderer は板状画像、TrailRenderer は移動の軌跡、TextMesh は空間内文字を描きます。Effect はこれらを束ねた演出の再生・再始動・寿命管理に利用できます。
 
-根拠: [TerrainEdit.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Asset/TerrainEdit.h)、[TerrainSystem.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/TerrainSystem.cpp)、[Animation.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Animation.h)、[AnimatorController.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/AnimatorController.h)、[ParticleSystem.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Particles/ParticleSystem.cpp)、[VfxRenderer.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Vfx/VfxRenderer.cpp)。
+根拠: [TerrainEdit.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Asset/TerrainEdit.h)、[TerrainSystem.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Rendering/TerrainSystem.cpp)、[Animation.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Animation/Animation.h)、[AnimatorController.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Animation/AnimatorController.h)、[ParticleSystem.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Particles/ParticleSystem.cpp)、[VfxRenderer.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Vfx/VfxRenderer.cpp)。
 
 ## 8. 物理
 
@@ -206,7 +206,7 @@ CC のジャンプ API 自体は接地条件を判断しないため、呼び出
 
 車両は PhysicsEnvironment の有無に影響されます。欠けていても期待する設定になると仮定しないでください。XPBD はロープまでで、布、ソフトボディ、塑性変形、粒子と世界の衝突、破砕、熱・流体・電気シミュレーションは実装済み機能に含めません。浮力があることは流体ソルバの存在を意味しません。
 
-根拠: [PhysicsSystem.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Physics/PhysicsSystem.h)、[PhysicsSystem.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Physics/PhysicsSystem.cpp)、[PhysicsQueries.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Physics/PhysicsQueries.cpp)、[RagdollBuilder.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/RagdollBuilder.cpp)、[XpbdBackend.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Physics/XpbdBackend.cpp)。
+根拠: [PhysicsSystem.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Physics/Rigid/PhysicsSystem.h)、[PhysicsSystem.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Physics/Rigid/PhysicsSystem.cpp)、[PhysicsQueries.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Physics/Rigid/PhysicsQueries.cpp)、[RagdollBuilder.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Physics/Ragdoll/RagdollBuilder.cpp)、[XpbdBackend.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Physics/Xpbd/XpbdBackend.cpp)。
 
 ## 9. 音声・音響伝播・敵 AI
 
@@ -226,7 +226,7 @@ AcousticAudio はこの伝播を実際の音へ接続します。経路長から
 
 AgentBrain は Patrol / Alert / Search / Chase / Return の 5 状態です。AcousticListener による聴覚と LightSeeker による光センサーを組み合わせ、AcousticNav を使って移動します。同じエンティティの移動入力をスクリプトと AI の両方が書くと、後に走る AI が優先される設計です。一般目的の Behavior Tree エディタや NavMesh ベイクとは区別します。
 
-根拠: [AudioSystem.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Audio/AudioSystem.h)、[SynthCore.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Audio/SynthCore.h)、[AcousticField.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Acoustic/AcousticField.h)、[AcousticAudio.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Audio/AcousticAudio.cpp)、[AgentSystem.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Acoustic/AgentSystem.h)、[ADR-017](C:/HAKtokyo/My_Engin/MyEngin/docs/adr/ADR-017-acoustic-audio.md)。
+根拠: [AudioSystem.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Audio/Playback/AudioSystem.h)、[SynthCore.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Audio/Synth/SynthCore.h)、[AcousticField.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Acoustic/AcousticField.h)、[AcousticAudio.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Audio/Spatial/AcousticAudio.cpp)、[AgentSystem.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Acoustic/AgentSystem.h)、[ADR-017](C:/HAKtokyo/My_Engin/MyEngin/docs/adr/ADR-017-acoustic-audio.md)。
 
 ## 10. 入力・ゲーム内 UI・ゲーム進行
 
@@ -247,7 +247,7 @@ hovered / pressed / clicked / focused をスクリプトより前に評価しま
 
 通常のセーブは、全エンティティ・物理の途中状態をそのまま保存するスナップショットではありません。ロードは記録・検証・ネット中には制限されます。ゲーム内ポーズと、エディタで tick 自体を止める Pause / Hold は異なる制御です。
 
-根拠: [InputActions.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Platform/InputActions.h)、[UILayout.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/UI/UILayout.cpp)、[UIInteraction.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/UI/UIInteraction.cpp)、[GameFlow.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/GameFlow.h)、[SaveGame.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/SaveGame.h)。
+根拠: [InputActions.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Platform/InputActions.h)、[UILayout.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/UI/UILayout.cpp)、[UIInteraction.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/UI/UIInteraction.cpp)、[GameFlow.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Loop/GameFlow.h)、[SaveGame.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Scene/SaveGame.h)。
 
 ## 11. エディタの機能
 
@@ -282,7 +282,7 @@ Rust サービスは JSON と 6 つの C ABI 関数でエディタに接続し�
 
 サービスがない場合は Source Control が利用不可になります。認証の初期設定と Git 自体の制約は残ります。モデルのサブアセット ID に関する配置先の制約は M74a で無くなりました。これはゲーム内ネットワーク機能とは独立です。
 
-根拠: [EditorApp.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/EditorApp.cpp)、[EditorApp.h](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/EditorApp.h)、[SearchWindow.h](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/Windows/SearchWindow.h)、[PlayModeController.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/PlayModeController.cpp)、[GitTransaction.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/SourceControl/GitTransaction.cpp)、[ADR-015](C:/HAKtokyo/My_Engin/MyEngin/docs/adr/ADR-015-in-process-rust-collab.md)。
+根拠: [EditorApp.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/App/EditorApp.cpp)、[EditorApp.h](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/App/EditorApp.h)、[SearchWindow.h](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/Windows/Asset/SearchWindow.h)、[PlayModeController.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/Scene/PlayModeController.cpp)、[GitTransaction.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/SourceControl/GitTransaction.cpp)、[ADR-015](C:/HAKtokyo/My_Engin/MyEngin/docs/adr/ADR-015-in-process-rust-collab.md)。
 
 ## 12. リプレイ・タイムトラベル・クラッシュ再現
 
@@ -340,7 +340,7 @@ Build Settings は、スクリプト再ビルド、クックの準備、Runtime 
 
 スクリーンショットの固定条件、WARP、内蔵フォント、画像差分の許容値、sim / cook キャッシュの切替など、原因を分けるための CLI があります。テストの存在は対象範囲の検証手段がある証拠であり、全機能の正しさを一括保証するものではありません。
 
-根拠: [Project.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Project.h)、[BuildSettingsWindow.h](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/Windows/BuildSettingsWindow.h)、[EditorMain.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/EditorMain.cpp)、[RuntimeMain.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Runtime/RuntimeMain.cpp)、[CI](C:/HAKtokyo/My_Engin/MyEngin/.github/workflows/ci.yml)。
+根拠: [Project.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/App/Project.h)、[BuildSettingsWindow.h](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/Windows/Project/BuildSettingsWindow.h)、[EditorMain.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/App/EditorMain.cpp)、[RuntimeMain.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Runtime/RuntimeMain.cpp)、[CI](C:/HAKtokyo/My_Engin/MyEngin/.github/workflows/ci.yml)。
 
 ## 15. 実装と既存文書の差・残る制約
 
@@ -363,7 +363,7 @@ Build Settings は、スクリプト再ビルド、クックの準備、Runtime 
 
 また、`plans` の将来案は、対応する実装・登録・呼び出しがあることを確認できない限り実装済みへ分類しません。ゲーム企画や外部プロジェクトの個別ルールもエンジン共通機能と区別します。
 
-根拠: [dogfooding.md](C:/HAKtokyo/My_Engin/MyEngin/docs/dogfooding.md)、[engine_spec.md](C:/HAKtokyo/My_Engin/MyEngin/engine_spec.md)、[EngineAPI.h](C:/HAKtokyo/My_Engin/MyEngin/src/Shared/EngineAPI.h)、[SceneSerializer.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/SceneSerializer.cpp)。
+根拠: [dogfooding.md](C:/HAKtokyo/My_Engin/MyEngin/docs/dogfooding.md)、[engine_spec.md](C:/HAKtokyo/My_Engin/MyEngin/engine_spec.md)、[EngineAPI.h](C:/HAKtokyo/My_Engin/MyEngin/src/Shared/EngineAPI.h)、[SceneSerializer.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Scene/SceneSerializer.cpp)。
 
 ## 16. 説明・デモの組み立て方
 

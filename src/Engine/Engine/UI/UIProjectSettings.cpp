@@ -6,7 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Diagnostics/Log.h"
 
 namespace mye {
 namespace uilayout {

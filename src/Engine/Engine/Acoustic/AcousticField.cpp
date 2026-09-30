@@ -9,15 +9,15 @@
 #include <cmath>
 #include <utility>
 
-#include "Engine/Core/Check.h"
-#include "Engine/Core/Components.h"
-#include "Engine/Core/Hash.h"
-#include "Engine/Core/Log.h"
-#include "Engine/Core/Profiler.h"
-#include "Engine/Core/World.h"
-#include "Engine/Engine/Physics/PhysMatLibrary.h"
-#include "Engine/Engine/Physics/PhysicsSystem.h"
-#include "Engine/Engine/Physics/Shapes.h"
+#include "Engine/Core/Diagnostics/Check.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Util/Hash.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
+#include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
+#include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
+#include "Engine/Engine/Physics/Rigid/Shapes.h"
 
 namespace mye {
 namespace {

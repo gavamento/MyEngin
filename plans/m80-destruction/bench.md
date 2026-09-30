@@ -3,7 +3,7 @@
 計測環境: Release|x64 (計測は Release で実施。焼き時間の Debug 値は sub-04/sub-14 の既存記録を参照)。
 `bin\x64\Release\Editor.exe --fracture-bench` で自動生成 (フラグ名は coder 判断)。ヘッドレス
 (ウィンドウ・D3D デバイスを作らず World を直接操作する専用パス、実装は
-`src/Engine/Engine/Physics/FractureBenchmark.cpp`)。1 tick = 1/60 s、150 tick 実行。
+`src/Engine/Engine/Physics/Fracture/FractureBenchmark.cpp`)。1 tick = 1/60 s、150 tick 実行。
 
 ## 1. シーン構成
 
@@ -85,9 +85,9 @@ STL イテレータチェック込みのため、既存の `FractureSelfTest.cpp
   基準で決める (spec のハード上限も Destructible ごと)
 
 反映:
-- `src/Engine/Core/Components.cpp`: `DestructibleComponent.pieceCount` のツールチップに
+- `src/Engine/Core/Ecs/Components.cpp`: `DestructibleComponent.pieceCount` のツールチップに
   「推奨 64 以下、Release で線形より速く増える」を追加 (範囲 2..256 は変更なし)
-- `src/Editor/Windows/InspectorWindow.cpp`: 生成済み破片数が 64 を超えたら Inspector に
+- `src/Editor/Windows/Scene/InspectorWindow.cpp`: 生成済み破片数が 64 を超えたら Inspector に
   黄色警告を表示 (`Insp_FracturePieceCountHigh`、`LocalizationTable.inl` に追加)
 
 ## 6. RT — 割れた瞬間の BLAS 焼き直しスパイク

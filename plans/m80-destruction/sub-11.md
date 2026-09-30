@@ -21,7 +21,7 @@
 
 ## 触る場所 (planner の見立て)
 
-- `src/Engine/Engine/Physics/PhysicsSystem.cpp`、`FractureSystem.cpp` (スコープ)
+- `src/Engine/Engine/Physics/Rigid/PhysicsSystem.cpp`、`FractureSystem.cpp` (スコープ)
 - `src/Engine/Engine/EngineCli.cpp` (計測フラグ)、`DemoContent.cpp` (ベンチシーン)
 - `src/Engine/Engine/RayTracing/RtScene.cpp` (対策するなら)
 - `Components.cpp` の範囲、`InspectorWindow.cpp` の推奨表示
@@ -49,12 +49,12 @@ tools\check_rules.ps1
 
 SELF_EVAL: sub-11 (round 1)
 実装:
-  - `src/Engine/Engine/Physics/PhysicsSystem.cpp:PhysicsSystem::Update` — `std::optional<prof::ScopeTimer>` 1 本を `.emplace(name)` で使い回し、`phys.collect`(収集: 動的/静的/CC 収集・複合合成・質量慣性・関節収集・車輪配線)→`phys.broad`(サブステップ内の積分・外力・ブロードフェーズ・起床判定)→`phys.narrow`(関節拘束ブロック構築・接触制約生成)→`phys.solve`(接触解決・位置補正・CCD・位置積分・接触/インパルス出力)→`phys.writeback`(書き戻し) の 5 区分を計測。emplace は前段の Pop→新段の Push を自動で行うので、関数内に早期 return が増えても対応が崩れない (関数自体は実測トップレベルに早期 return が無いことを確認済みだが、ラムダ内 return と将来の変更に備えて RAII にした)
+  - `src/Engine/Engine/Physics/Rigid/PhysicsSystem.cpp:PhysicsSystem::Update` — `std::optional<prof::ScopeTimer>` 1 本を `.emplace(name)` で使い回し、`phys.collect`(収集: 動的/静的/CC 収集・複合合成・質量慣性・関節収集・車輪配線)→`phys.broad`(サブステップ内の積分・外力・ブロードフェーズ・起床判定)→`phys.narrow`(関節拘束ブロック構築・接触制約生成)→`phys.solve`(接触解決・位置補正・CCD・位置積分・接触/インパルス出力)→`phys.writeback`(書き戻し) の 5 区分を計測。emplace は前段の Pop→新段の Push を自動で行うので、関数内に早期 return が増えても対応が崩れない (関数自体は実測トップレベルに早期 return が無いことを確認済みだが、ラムダ内 return と将来の変更に備えて RAII にした)
   - `src/Engine/Engine/FractureSystem.cpp:FractureSystem::UpdateImpl` — `fracture.collect`(CollectAllPieces + Destructible 列挙) / `fracture.process`(ProcessRoot + ProcessAfterBreak) の 2 区分を追加
-  - `src/Engine/Engine/Physics/FractureBenchmark.h/.cpp` (新規) — `--fracture-bench` の実体。ウィンドウ・D3D を作らず `Scene`/`World` を直接操作し、`PhysicsSystem::Update`/`FractureSystem::Update` を手動で回すヘッドレスループ (`froxel-probe` と同じ「専用の軽量パス」の流儀)。破片数 16/32/64/128/256 × 破壊物 1/8 個、150 tick、3 区間 (壊れる前/割れた瞬間 10 tick/割れた後) で `prof::FrameScopes()` を集計してログへ出す
-  - `src/Editor/EditorMain.cpp` — `--fracture-bench` フラグ (値なし)。`--modal-voxelize` と同じ「連鎖の手前で拾って continue」の置き方、実行は `--froxel-probe` と同じ早期 return 群に合流
-  - `src/Engine/Core/Components.cpp:DestructibleComponent.pieceCount` — 生 `FieldDesc` (`PhysicsEnvironmentComponent.substeps` と同じ流儀) でレンジ + ツールチップを両方付け、推奨上限 64 を明記。範囲 (2..256) と既定値 (16) は実測に照らして変更不要と判断しそのまま
-  - `src/Engine/Core/LocalizationTable.inl` / `src/Editor/Windows/InspectorWindow.cpp:DrawDestructibleNotes` — 生成済みの破片数が 64 超のとき黄色警告 (`Insp_FracturePieceCountHigh`) を Inspector に表示
+  - `src/Engine/Engine/Physics/Fracture/FractureBenchmark.h/.cpp` (新規) — `--fracture-bench` の実体。ウィンドウ・D3D を作らず `Scene`/`World` を直接操作し、`PhysicsSystem::Update`/`FractureSystem::Update` を手動で回すヘッドレスループ (`froxel-probe` と同じ「専用の軽量パス」の流儀)。破片数 16/32/64/128/256 × 破壊物 1/8 個、150 tick、3 区間 (壊れる前/割れた瞬間 10 tick/割れた後) で `prof::FrameScopes()` を集計してログへ出す
+  - `src/Editor/App/EditorMain.cpp` — `--fracture-bench` フラグ (値なし)。`--modal-voxelize` と同じ「連鎖の手前で拾って continue」の置き方、実行は `--froxel-probe` と同じ早期 return 群に合流
+  - `src/Engine/Core/Ecs/Components.cpp:DestructibleComponent.pieceCount` — 生 `FieldDesc` (`PhysicsEnvironmentComponent.substeps` と同じ流儀) でレンジ + ツールチップを両方付け、推奨上限 64 を明記。範囲 (2..256) と既定値 (16) は実測に照らして変更不要と判断しそのまま
+  - `src/Engine/Core/Localization/LocalizationTable.inl` / `src/Editor/Windows/Scene/InspectorWindow.cpp:DrawDestructibleNotes` — 生成済みの破片数が 64 超のとき黄色警告 (`Insp_FracturePieceCountHigh`) を Inspector に表示
   - `src/Engine/Engine/RayTracing/RtScene.cpp:RtScene::RebuildBlasIfNeeded` — 実際に連結 BLAS を焼き直した回だけ (毎フレームではない) 焼き直し時間をログへ出す。破壊で参照メッシュ集合が変わった瞬間のスパイクを観測できる恒久ログとして残した (sim/ハッシュ/リプレイに関与しない)
   - `plans/m80-destruction/bench.md` (新規) — 焼き時間・物理/FractureSystem のフェーズ別時間・上限の決定根拠・RT スパイク・描画コストの計測記録
 仕様との差分:
@@ -81,14 +81,14 @@ SELF_EVAL: sub-11 (round 1)
   - Debug ビルドで `FractureSelfTest.cpp` の開いたメッシュボクセル化ベンチ (`bakeOpenMesh`、sub-04/14 由来) が Release 比で 8〜12 倍遅く、`--selftest` 全体の完走に約 10 分かかった (res=32 の open box だけで 56〜130 秒)。これは今回変更した箇所とは無関係な既存コードの性質だが、開発時の `--selftest` の実行体験に影響する規模だと考えたため報告する。対応要否は planner 判断
   - 「割れた瞬間の描画コスト」の自動計測ツール化は見送った (bench.md §7)。恒久的なドローコール計測フックを RenderSystem に足すかどうかは、この先のサブ (ADR-021 を書く sub-12 など) で判断してほしい
 触ったファイル:
-  - src/Engine/Engine/Physics/PhysicsSystem.cpp
+  - src/Engine/Engine/Physics/Rigid/PhysicsSystem.cpp
   - src/Engine/Engine/FractureSystem.cpp
-  - src/Engine/Engine/Physics/FractureBenchmark.h (新規)
-  - src/Engine/Engine/Physics/FractureBenchmark.cpp (新規)
-  - src/Editor/EditorMain.cpp
-  - src/Engine/Core/Components.cpp
-  - src/Engine/Core/LocalizationTable.inl
-  - src/Editor/Windows/InspectorWindow.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureBenchmark.h (新規)
+  - src/Engine/Engine/Physics/Fracture/FractureBenchmark.cpp (新規)
+  - src/Editor/App/EditorMain.cpp
+  - src/Engine/Core/Ecs/Components.cpp
+  - src/Engine/Core/Localization/LocalizationTable.inl
+  - src/Editor/Windows/Scene/InspectorWindow.cpp
   - src/Engine/Engine/RayTracing/RtScene.cpp
   - plans/m80-destruction/bench.md (新規)
 申し送り: sub-12 (ABI v22・デモ仕上げ・文書) へ — `engine_spec.md` に破壊の性能特性 (推奨 64 破片・ハード上限 256・ドローコールは破片数に比例して増える) を書く際は bench.md を参照。RT の BLAS 再構築ログ (`[rt] BLAS rebuild: ...`) は今回追加した恒久ログなので、ADR-021 の「観測可能性」節に載せてよい

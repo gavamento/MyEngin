@@ -198,11 +198,11 @@ textScale = (2 * fontScale) * 0.5 == fontScale
 | ★`src\Engine\Engine\Replay\Replay.cpp:135-159` | **`FirstDifferentInputField` に `mouseCanvasX/Y` の比較行を追加**。忘れると `--rep-diff` と `net_verify` が「新フィールドだけ違う 2 本」を `identical` と報告する = **決定論検査そのものが嘘をつく** |
 | `src\Engine\Engine\Replay\SimSnapshot.h` | `kSimSnapshotVersion` 7→8 + 版履歴。LOP 節は `sizeof` 依存なので自動追従 |
 | `src\Engine\Engine\Net\NetSelfTest.cpp:111-114` | `sizeof(InputSnapshot) == 64` → 72、`kNetMaxPacket == 64 + 8*72 = 640B` (MTU 1400B 以内、`kNetRedundancy=8` 据え置きで可) |
-| `src\Editor\Windows\GameViewWindow.cpp:120-142` | 選択 UI のアウトラインも `CanvasTransform` を通す (`ResolveRect` に RT 実寸を渡す前提が壊れる) |
+| `src\Editor\Windows\Scene\GameViewWindow.cpp:120-142` | 選択 UI のアウトラインも `CanvasTransform` を通す (`ResolveRect` に RT 実寸を渡す前提が壊れる) |
 | `assets\scenes\ui_probe.scene.json` | UIElement 16 個の `x/y/w/h/fontScale/sliceBorder` を**全部 2 倍**。972 行だが機械的 |
 | `src\Engine\Engine\DemoContent.cpp:563-568, 633-655, 739` | `BuildFlowTitleScene` / `BuildFlowGameScene` / `BuildNetDuelScene` の UI 数値を 2 倍 |
-| `src\Editor\CreateMenu.cpp:113-153` | UI 生成の既定サイズを 1920x1080 想定へ (パネル 240x160 → 480x320 等) |
-| `src\Engine\Core\Components.cpp:254-266` | UIElement の px フィールドのツールチップに「キャンバス 1920x1080 基準」と明記 |
+| `src\Editor\Widgets\CreateMenu.cpp:113-153` | UI 生成の既定サイズを 1920x1080 想定へ (パネル 240x160 → 480x320 等) |
+| `src\Engine\Core\Ecs\Components.cpp:254-266` | UIElement の px フィールドのツールチップに「キャンバス 1920x1080 基準」と明記 |
 | `tools\shot_verify.bat` | 18 枚目 `ui_probe_720` (`--width 1280 --height 720`) を追加。撮影条件行のコメントを更新 |
 | `src\Engine\Engine\UI\UISelfTest.cpp` | 新規 check: `CanvasTransform` の 16:9 / 4:3 / 1:1 / 極端アスペクト、キャンバス↔実 px の往復 |
 | `engine_spec.md` / `docs\adr\ADR-014` / `CLAUDE.md` | 撮影枚数 (17→18) と UI 座標系の記述 |
@@ -257,7 +257,7 @@ void (*onUIClick)(void* state, MyeUpdateContext* ctx, MyeEntityId button);
 - `MyeScript.cs:49-53` の `SetUIRect`/`SetUILayout` を削除 (判断 4)。
 - `tools\check_rules.ps1:514` の `$apiVersionSlots` へ **`15 = 107`** を追加 (102 + 上表の 5 本。
   **bump と同時**。片方だけだと規則 11-c で止まる。スロットを増減したらこの数も直す)。
-- `src\Editor\PartSelfTest.cpp:177` の `MYE_API_VERSION == 14u` → `15u`、
+- `src\Editor\SelfTest\PartSelfTest.cpp:177` の `MYE_API_VERSION == 14u` → `15u`、
   `:179-211` の充填チェックへ v15 の 5 スロットを追加。
 - `src\Scripting\Interop.cs` の `MyeEngineApi` へ**同じ位置**に 5 本 append (位置ミラー)。
 - `src\GameLogic\Scripts\UIButtonDemo.cpp` を **`OnUIClick` 版へ書き換え** (矩形フィールド 4 本を

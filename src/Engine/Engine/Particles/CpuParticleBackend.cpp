@@ -5,13 +5,13 @@
 
 #include <xmmintrin.h>
 
-#include "Engine/Core/Log.h"
-#include "Engine/Core/World.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Particles/ParticleCurves.h"
 #include "Engine/Platform/Clock.h"
-#include "Engine/Renderer/GpuResources.h"
-#include "Engine/Renderer/GraphicsDevice.h"
-#include "Engine/Renderer/ShaderManager.h"
+#include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Device/GraphicsDevice.h"
+#include "Engine/Renderer/Shader/ShaderManager.h"
 
 using namespace DirectX;
 

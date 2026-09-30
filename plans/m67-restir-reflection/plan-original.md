@@ -201,11 +201,11 @@ CB の uniform フラグで**後から有効化できる形**にしておき、�
 | `src/Engine/Renderer/RayTracing/RtMath.h` | ReSTIR 数学の CPU ミラー（`RtGgxVndf` / `RtReflWeight` と同じ流儀） |
 | `src/Engine/Renderer/RayTracing/RtPasses.h/.cpp` | `RtReservoir` 構造体 + viewKey 別スロット + 2 Dispatch + `GpuTimer` 2 本 + `RestirGpuMs()` |
 | `src/Engine/Engine/RayTracing/RtScene.cpp` / `RtSceneBuild.cpp` | Material の `reflectionClass` を `RtInstance.pad0` へ写す |
-| `src/Engine/Renderer/RenderTypes.h` | `RenderView` **末尾 append**: `rtReflRestir` / `rtReflRestirSpatial` / `rtReflRestirVisRay`。デバッグモードを 12（reservoir M）/ 13（ヒット側 ReflectionClass 色分け）へ拡張 |
-| `src/Engine/Renderer/GpuResources.h/.cpp` | `Material` **末尾に `reflectionClass` を append**（`emissiveIntensity` が M46i でそうやって足された前例あり）+ `ParseMaterialJson`（`GpuResources.cpp:1001-1052`）に 1 キー。**欠損キーは既定値に落ちるので既存 `.mat.json` は挙動不変** |
+| `src/Engine/Renderer/Pipeline/RenderTypes.h` | `RenderView` **末尾 append**: `rtReflRestir` / `rtReflRestirSpatial` / `rtReflRestirVisRay`。デバッグモードを 12（reservoir M）/ 13（ヒット側 ReflectionClass 色分け）へ拡張 |
+| `src/Engine/Renderer/Device/GpuResources.h/.cpp` | `Material` **末尾に `reflectionClass` を append**（`emissiveIntensity` が M46i でそうやって足された前例あり）+ `ParseMaterialJson`（`GpuResources.cpp:1001-1052`）に 1 キー。**欠損キーは既定値に落ちるので既存 `.mat.json` は挙動不変** |
 | `src/Engine/Engine/RayTracing/RtSelfTest.cpp` | ReSTIR 数学のテスト（reservoir 更新の重み保存 / Jacobian の対称性 / M=1 で現行推定と一致） |
-| `src/Editor/EditorApp.cpp` | RT サブメニュー（`:1062-1240` 付近）に ReSTIR トグル + デバッグモード 12/13 |
-| `src/Engine/Core/LocalizationTable.inl` | UI 文字列（en/ja 両方、`###` の右辺は両言語一致かつ一意） |
+| `src/Editor/App/EditorApp.cpp` | RT サブメニュー（`:1062-1240` 付近）に ReSTIR トグル + デバッグモード 12/13 |
+| `src/Engine/Core/Localization/LocalizationTable.inl` | UI 文字列（en/ja 両方、`###` の右辺は両言語一致かつ一意） |
 | `tools/check_rules.ps1` | `$constGroups` に新規の C++⇄HLSL 共有定数を登録（**忘れると定数バッファ不一致で静かに壊れる**） |
 
 ### 触らないもの（初版から削除）

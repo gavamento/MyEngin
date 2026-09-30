@@ -30,8 +30,8 @@ spec §4.1「パスへの組み込み」の Deferred 行と CSM 行を実装し�
 
 ## 触る場所 (planner の見立て)
 
-- `src/Engine/Renderer/DeferredPath.cpp/.h` — `Render` の段の並び (`DeferredPath.cpp:716-737`)、`RenderGeometry`、新しい段の関数。MRT のブレンド状態 (`IndependentBlendEnable=FALSE` の前提、`DeferredPath.cpp:760-761`) と R16G16F の組み合わせを確認
-- `src/Engine/Renderer/ShadowPass.cpp` — `Render` (`ShadowPass.cpp:117-`) のループとインスタンス run
+- `src/Engine/Renderer/Pipeline/DeferredPath.cpp/.h` — `Render` の段の並び (`DeferredPath.cpp:716-737`)、`RenderGeometry`、新しい段の関数。MRT のブレンド状態 (`IndependentBlendEnable=FALSE` の前提、`DeferredPath.cpp:760-761`) と R16G16F の組み合わせを確認
+- `src/Engine/Renderer/Passes/ShadowPass.cpp` — `Render` (`ShadowPass.cpp:117-`) のループとインスタンス run
 - `src/Engine/Renderer/TaaPass.*` — 変更は不要の見込み (velocitySRV を読むだけ)。触るなら理由を書く
 - 検証用の一時シーン: 変位 (`gTime` 駆動のサイン波) ありの平面と、それを受ける床、静止カメラ、太陽 1 本
 
@@ -67,9 +67,9 @@ Runtime.exe --project <一時> --scene <一時> --deferred --taa --screenshot <p
 
 SELF_EVAL: sub-03 (round 1)
 実装:
-  - `src/Engine/Renderer/DeferredPath.h/.cpp` — `RenderGeometry` の GBuffer ループとインスタンス run 構築 (canInstance_) から、shader が `*.surface` の不透明アイテム (非スキン) を除外し `DeferredFrame::surfaceOpaqueIdx` に集める (skin+surface は従来のスキン GBuffer 経路へフォールスルー + WARN 1 回、`skinnedSurfaceWarned_`)。新設 `RenderSurfaceForward` (2.65 段、`RenderSsr` の後・`water_.Render` の前) が `surfaceOpaqueIdx` を読み、サーフェスプログラムの**速度エントリ**で RT0=`view.rtv` (HDR シーン) + RT1=`gbVelocity_` (GBuffer と同じ RT を使い回す) + `view.dsv` (テスト+書込) へ描く。予約 CB (`MyEnginePerFrame`/`MyEngineSurfaceFrame`/`MyEngineWater`) は `RenderGeometry` が既に組んだ `f.pf`/`f.vel` の値をそのまま転記し、二重に式を書かない。`surfaceOpaqueIdx` が空ならこの段は RT/ステート/SRV を一切触らずに return する
-  - `src/Engine/Renderer/ShadowPass.h/.cpp` — `Render` に `uint32_t viewFrameIndex` 引数を追加 (呼び出し元は `src/Engine/Engine/RenderSystem.cpp` の 1 箇所のみ)。カスケード毎に `MyEngineSurfaceFrameCB.shadowViewProj = transpose(lightViewProjs[c])` を積み、サーフェスの不透明アイテム (非スキン、`surf->ready`) は**影エントリ** (`shadowVS`、PS なし) で描く。失敗中 (`useErrorFallback`) は従来の `shadow_depth` (変位なし) へフォールスルーする (sub-03.md の指示どおり)。canInstance_ からもサーフェスマテリアルを除外
-  - `src/Engine/Renderer/ShadowPass.h` — サーフェスの影エントリ用予約 CB (`surfacePerFrameCB_`/`surfaceFrameCB_`/`surfacePerObjectCB_`/`surfaceWaterCB_`) を追加。`MyEnginePerFrame` は**全 0 固定**で運用 (仕様との差分 [逸脱] 参照)
+  - `src/Engine/Renderer/Pipeline/DeferredPath.h/.cpp` — `RenderGeometry` の GBuffer ループとインスタンス run 構築 (canInstance_) から、shader が `*.surface` の不透明アイテム (非スキン) を除外し `DeferredFrame::surfaceOpaqueIdx` に集める (skin+surface は従来のスキン GBuffer 経路へフォールスルー + WARN 1 回、`skinnedSurfaceWarned_`)。新設 `RenderSurfaceForward` (2.65 段、`RenderSsr` の後・`water_.Render` の前) が `surfaceOpaqueIdx` を読み、サーフェスプログラムの**速度エントリ**で RT0=`view.rtv` (HDR シーン) + RT1=`gbVelocity_` (GBuffer と同じ RT を使い回す) + `view.dsv` (テスト+書込) へ描く。予約 CB (`MyEnginePerFrame`/`MyEngineSurfaceFrame`/`MyEngineWater`) は `RenderGeometry` が既に組んだ `f.pf`/`f.vel` の値をそのまま転記し、二重に式を書かない。`surfaceOpaqueIdx` が空ならこの段は RT/ステート/SRV を一切触らずに return する
+  - `src/Engine/Renderer/Passes/ShadowPass.h/.cpp` — `Render` に `uint32_t viewFrameIndex` 引数を追加 (呼び出し元は `src/Engine/Engine/RenderSystem.cpp` の 1 箇所のみ)。カスケード毎に `MyEngineSurfaceFrameCB.shadowViewProj = transpose(lightViewProjs[c])` を積み、サーフェスの不透明アイテム (非スキン、`surf->ready`) は**影エントリ** (`shadowVS`、PS なし) で描く。失敗中 (`useErrorFallback`) は従来の `shadow_depth` (変位なし) へフォールスルーする (sub-03.md の指示どおり)。canInstance_ からもサーフェスマテリアルを除外
+  - `src/Engine/Renderer/Passes/ShadowPass.h` — サーフェスの影エントリ用予約 CB (`surfacePerFrameCB_`/`surfaceFrameCB_`/`surfacePerObjectCB_`/`surfaceWaterCB_`) を追加。`MyEnginePerFrame` は**全 0 固定**で運用 (仕様との差分 [逸脱] 参照)
   - `docs/surface-shaders-deferred-limits.md` (新規) — 「Deferred のサーフェス画素には SSAO/SSR/デカール/RT 受光が掛からない」「シャドウアトラス (スポット/ポイント) の影は変位なし」を記載
 
 仕様との差分:
@@ -103,10 +103,10 @@ SELF_EVAL: sub-03 (round 1)
   3. 自動 SelfTest (DeferredPath/ShadowPass のサーフェス経路を WARP 実描画で固定するテスト) を追加すべきか。sub-01/02 は明記されていたが sub-03.md には無く、検証コマンドも Runtime.exe スクショのみだったため見送ったが、CLAUDE.md 第 7 章の「レンダラーの挙動を変更する場合は回帰テストを追加する」との整合が要る
 
 触ったファイル:
-  - `src/Engine/Renderer/DeferredPath.h`
-  - `src/Engine/Renderer/DeferredPath.cpp`
-  - `src/Engine/Renderer/ShadowPass.h`
-  - `src/Engine/Renderer/ShadowPass.cpp`
+  - `src/Engine/Renderer/Pipeline/DeferredPath.h`
+  - `src/Engine/Renderer/Pipeline/DeferredPath.cpp`
+  - `src/Engine/Renderer/Passes/ShadowPass.h`
+  - `src/Engine/Renderer/Passes/ShadowPass.cpp`
   - `src/Engine/Engine/RenderSystem.cpp`
   - `docs/surface-shaders-deferred-limits.md` (新規)
 
@@ -117,12 +117,12 @@ SELF_EVAL: sub-03 (round 1)
 SELF_EVAL: sub-03 (round 2)
 実装:
   - #1 (受け入れ条件 1 の実地確認): 一時プロジェクトのシーンに WaterWave (baseHeight をキャスターの中心高さに合わせて交差させる)・手前透明メッシュ・奥透明メッシュ・パーティクルエミッタ 1 個を追加した一時シーン (`main_depth_order.scene.json`) を作成し、Deferred で Runtime.exe スクショを撮った。詳細は下記「検証」参照。プロダクトコードの変更は無し (round 1 の実装で既に正しく動いていたことの実地確認)
-  - #2 (自動 SelfTest, must): `src/Engine/Renderer/SurfaceDeferredSelfTest.h/.cpp` (新規) を追加。sub-02 の `SurfaceMaterialSelfTest` と同じ手法 (WARP デバイス + 一時ディレクトリの `.surface.hlsl`/`.mat.json` + オフスクリーン RTV/staging read-back) で、指定された (a)〜(d) を検証:
+  - #2 (自動 SelfTest, must): `src/Engine/Renderer/Shader/SurfaceDeferredSelfTest.h/.cpp` (新規) を追加。sub-02 の `SurfaceMaterialSelfTest` と同じ手法 (WARP デバイス + 一時ディレクトリの `.surface.hlsl`/`.mat.json` + オフスクリーン RTV/staging read-back) で、指定された (a)〜(d) を検証:
     - (a)(b) `TestDeferredForwardStepVelocityAndBypass`: `DeferredPath::Render` を実駆動し、`gTime` で頂点を変位させる最小サーフェス (`DisplaceProbe.surface`) と変位しない比較用 (`RigidProbe.surface`) を同一シーンに置く。両アイテムとも `item.world == item.prevWorld` (エンティティ自体は動かさない) にして「シェーダ変位だけに由来する速度」を対象にした。`DeferredPath::VelocitySRV()` (公開 API、既存) を read-back し、変位ありは非 0・変位なしは厳密に 0 を確認。HDR シーン (`view.rtv`) は `ambient=0` の光源環境下でも両アイテムとも PSMain の固定色のまま (GBuffer/光パスを経由していれば真っ黒になるはずの条件) であることを確認し、GBuffer バイパスの証拠にした
     - (c) `TestShadowPassDepthReflectsDisplacement`: `ShadowPass::Render` を実駆動し、真上 (y=10) から見下ろす正射影ライト (`XMMatrixLookToLH` + `XMMatrixOrthographicLH`) で同じ 2 アイテムの影を描き、`ShadowPass::SRV()` (Texture2DArray R32_FLOAT、TYPELESS → R32_FLOAT staging へ型変換コピー) を read-back。変位あり/なしで深度値が `1e-4` を超えて異なることを確認
     - (d): 専用テストは追加せず、「既存 golden (`--selftest` 全体 / `tools\replay_verify.bat` の既定シーン群、いずれもサーフェス材質を含まない) が本サブの変更前後でビット一致する」ことを根拠として明記した (round 1 で確認済み、round 2 でも再確認。理由: サーフェス 0 件時の「フォワード段が何も張らない」は `DeferredPath::RenderSurfaceForward` 冒頭の早期 return 1 行で保証される構造的性質であり、既定シーン (サーフェス material を一切参照しない) の golden 不変がそのまま「0 件で何も変わらない」の実地証拠になっている)
     - **反証**: `assets/shaders/MyEngineSurfaceEntries.hlsli` の `MyePSVelocity` を一時的に `myeVelocityOut = float2(0,0)` 固定に改変し `--selftest` を実行 → 新設した (a) のチェックが実際に FAIL (exit code 1) することを確認。その後ファイルを復元し (`git diff` 空を確認)、`--selftest` が全 PASS (exit 0) に戻ることを確認
-  - `src/Editor/EditorMain.cpp` に `#include "Engine/Renderer/SurfaceDeferredSelfTest.h"` と `ok &= mye::RunSurfaceDeferredSelfTest();` を追加 (M79c として登録)
+  - `src/Editor/App/EditorMain.cpp` に `#include "Engine/Renderer/Shader/SurfaceDeferredSelfTest.h"` と `ok &= mye::RunSurfaceDeferredSelfTest();` を追加 (M79c として登録)
   - #3 (should): `assets/shaders/MyEngineSurface.hlsli` の先頭コメントと `docs/surface-shaders-deferred-limits.md` に「影エントリでは `MyEnginePerFrame` が 0 埋め (ShadowPass が環境確定より前に走るため)。VSMain の変位に `gCameraPos` 等を使うと影だけ形が違う」を追記した。ToonFlat.surface.hlsl (既存サンプル) 自体は PerFrame の値を変位に使っていないため触っていない — 作者が実際に読む場所 (共通 include の先頭コメントと docs) に書く方が実効性が高いと判断した
   - `tools\gen_project_files.ps1` (pwsh) を実行し `build/Engine.vcxproj`/`.filters` に新規ファイルを反映
 
@@ -154,14 +154,14 @@ SELF_EVAL: sub-03 (round 2)
 不安・質問: なし (round 1 の 3 件はすべて本ラウンドで解消・確定済み。planner 回答のとおり実施した)
 
 触ったファイル (round 1 分を含めた全量):
-  - `src/Engine/Renderer/DeferredPath.h`
-  - `src/Engine/Renderer/DeferredPath.cpp`
-  - `src/Engine/Renderer/ShadowPass.h`
-  - `src/Engine/Renderer/ShadowPass.cpp`
+  - `src/Engine/Renderer/Pipeline/DeferredPath.h`
+  - `src/Engine/Renderer/Pipeline/DeferredPath.cpp`
+  - `src/Engine/Renderer/Passes/ShadowPass.h`
+  - `src/Engine/Renderer/Passes/ShadowPass.cpp`
   - `src/Engine/Engine/RenderSystem.cpp`
-  - `src/Engine/Renderer/SurfaceDeferredSelfTest.h` (新規、round 2)
-  - `src/Engine/Renderer/SurfaceDeferredSelfTest.cpp` (新規、round 2)
-  - `src/Editor/EditorMain.cpp` (round 2: include + 登録)
+  - `src/Engine/Renderer/Shader/SurfaceDeferredSelfTest.h` (新規、round 2)
+  - `src/Engine/Renderer/Shader/SurfaceDeferredSelfTest.cpp` (新規、round 2)
+  - `src/Editor/App/EditorMain.cpp` (round 2: include + 登録)
   - `assets/shaders/MyEngineSurface.hlsli` (round 2: コメント追記)
   - `docs/surface-shaders-deferred-limits.md` (新規、round 1 作成・round 2 追記)
   - `build/Engine.vcxproj` (生成物、round 2 で再生成)
@@ -175,8 +175,8 @@ SELF_EVAL: sub-03 (round 2)
 
 SELF_EVAL: sub-03 (round 3)
 実装:
-  - #1 (review-1 blocker, ShadowPass の固定スロット未復元) — `src/Engine/Renderer/ShadowPass.cpp:221-231` に `restoreFixedShadowSlots` ラムダを追加し、`:302` のサーフェス影エントリ `DrawIndexed` 直後 (`continue` の前) で呼ぶ。内容は VS b0 (`objectCB_`) の再バインドと、VS t0 (instance SRV。`runs_` が空なら null) の再バインドのみ。VS/IL の復元コードは足していない — `boundShader` が既に「直前に張った VS/IL の実体」を追跡しており、サーフェスの `surfaceProgramId` は `depthShader_`/`depthSkinnedShader_`/`depthInstancedShader_` のいずれとも値が一致しないため、次の非サーフェスアイテムの `if (itemShader != boundShader)` / `if (depthInstancedShader_.value != boundShader)` が既存コードのまま自然に真になり、VS/IL は次アイテムの描画時に確実に張り直る (コードを読んで確認、後述のテストでも実証)。sub-02 の `ForwardPath::restoreForwardLitBindings` (`boundShader=0` で強制フルリバインド) とは違う経路だが、同じ帰結を狭い変更で得ている
-  - 受け入れ条件 (追加分・混在順序 SelfTest) — `src/Engine/Renderer/SurfaceDeferredSelfTest.cpp` に `TestShadowPassFixedSlotsSurviveSurfaceEntry` を新規追加。VS で `Texture2D _HeightTex` を読む `kVTexSurface` フィクスチャ (Properties `_HeightTex ("Height", 2D) = "white" {}` で既定テクスチャ自動解決) を使い、「サーフェス→非サーフェス instanced run 2 個」(順序 A) と「非サーフェス instanced run 2 個→サーフェス」(順序 B、基準値) の 2 順序で `ShadowPass::Render` を実駆動し、`ShadowPass::SRV()` を read-back。順序 B を基準に、順序 A でも (a) 影が消えない (深度が clear 値 1.0 のままでない)、(b) 順序 A/B の深度が完全一致することを確認
+  - #1 (review-1 blocker, ShadowPass の固定スロット未復元) — `src/Engine/Renderer/Passes/ShadowPass.cpp:221-231` に `restoreFixedShadowSlots` ラムダを追加し、`:302` のサーフェス影エントリ `DrawIndexed` 直後 (`continue` の前) で呼ぶ。内容は VS b0 (`objectCB_`) の再バインドと、VS t0 (instance SRV。`runs_` が空なら null) の再バインドのみ。VS/IL の復元コードは足していない — `boundShader` が既に「直前に張った VS/IL の実体」を追跡しており、サーフェスの `surfaceProgramId` は `depthShader_`/`depthSkinnedShader_`/`depthInstancedShader_` のいずれとも値が一致しないため、次の非サーフェスアイテムの `if (itemShader != boundShader)` / `if (depthInstancedShader_.value != boundShader)` が既存コードのまま自然に真になり、VS/IL は次アイテムの描画時に確実に張り直る (コードを読んで確認、後述のテストでも実証)。sub-02 の `ForwardPath::restoreForwardLitBindings` (`boundShader=0` で強制フルリバインド) とは違う経路だが、同じ帰結を狭い変更で得ている
+  - 受け入れ条件 (追加分・混在順序 SelfTest) — `src/Engine/Renderer/Shader/SurfaceDeferredSelfTest.cpp` に `TestShadowPassFixedSlotsSurviveSurfaceEntry` を新規追加。VS で `Texture2D _HeightTex` を読む `kVTexSurface` フィクスチャ (Properties `_HeightTex ("Height", 2D) = "white" {}` で既定テクスチャ自動解決) を使い、「サーフェス→非サーフェス instanced run 2 個」(順序 A) と「非サーフェス instanced run 2 個→サーフェス」(順序 B、基準値) の 2 順序で `ShadowPass::Render` を実駆動し、`ShadowPass::SRV()` を read-back。順序 B を基準に、順序 A でも (a) 影が消えない (深度が clear 値 1.0 のままでない)、(b) 順序 A/B の深度が完全一致することを確認
   - 受け入れ条件 (追加分・Deferred の水面/透明の確認) — 同ファイルに `TestDeferredWaterAndTransparentUnaffectedBySurfaceForwardStep` を新規追加。`DeferredPath::Render` をフル駆動し、画面上の別位置に distractor サーフェス (VS テクスチャ付き、x=-4) / 透明キューブ (forward_lit、x=0) / 水面のみの読み取り点 (x=+4) を配置。distractor の有無 (2 回描画) で透明キューブの画素・水面のみの画素がどちらも完全一致することを確認。読む前にコードを読み、`DeferredPath::RenderTransparent` が自身の呼び出し冒頭で `bindForwardLitFixed()` を無条件に呼び (`DeferredPath.cpp:1600`)、`WaterPass::Render` も呼び出しの都度 VS/PS の CB・サンプラ・SRV・シェーダ・頂点/インデックスバッファを全部自分で張り直す (`WaterPass.cpp:159-226`) ことを確認済み — この 2 つは元から ShadowPass と違う設計 (毎回フルリバインド) で、review-1 #1 と同じクラスの不具合を作っていないことをコードで確認したうえで、それを崩れないよう固定する回帰テストとして追加した (新しいバグを見つけたわけではない)
   - `docs/surface-shaders-deferred-limits.md` は round 1/2 の内容のまま変更なし (review-1 #1 は「作者が読む規約」ではなく実装の内部バグだったため、docs への追記は不要と判断)
 
@@ -208,8 +208,8 @@ SELF_EVAL: sub-03 (round 3)
 不安・質問: なし
 
 触ったファイル (round 3 分、round 1/2 分は上記と同一):
-  - `src/Engine/Renderer/ShadowPass.cpp` (review-1 #1 の修正: `restoreFixedShadowSlots` 追加・呼び出し)
-  - `src/Engine/Renderer/SurfaceDeferredSelfTest.cpp` (新規テスト 2 本追加: `TestShadowPassFixedSlotsSurviveSurfaceEntry` / `TestDeferredWaterAndTransparentUnaffectedBySurfaceForwardStep`、`kVTexSurface` フィクスチャ追加、`#include "Engine/Core/Hash.h"` / `#include "Engine/Renderer/WaterPass.h"` 追加)
+  - `src/Engine/Renderer/Passes/ShadowPass.cpp` (review-1 #1 の修正: `restoreFixedShadowSlots` 追加・呼び出し)
+  - `src/Engine/Renderer/Shader/SurfaceDeferredSelfTest.cpp` (新規テスト 2 本追加: `TestShadowPassFixedSlotsSurviveSurfaceEntry` / `TestDeferredWaterAndTransparentUnaffectedBySurfaceForwardStep`、`kVTexSurface` フィクスチャ追加、`#include "Engine/Core/Util/Hash.h"` / `#include "Engine/Renderer/Passes/WaterPass.h"` 追加)
 
 申し送り:
   - `DeferredPath.cpp`/`.h` および `ShadowPass.h` は本ラウンドで一切変更していない (`git diff` で確認済み)。review-1 #1 は ShadowPass 単体のバグで、DeferredPath 側の `RenderSurfaceForward`→水面/透明の経路は元から安全 (`bindForwardLitFixed` / `WaterPass::Render` のフルリバインド) だった

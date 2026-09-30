@@ -33,10 +33,10 @@ spec §4.1 (op 一覧のうち hello / repo_check / status / hint_changed) / §4
 
 ## 触る場所 (planner の見立て)
 
-- 新規: `tools\collab\src\watch.rs`、`src\Editor\SourceControl\SourceControlState.h/.cpp`、`src\Editor\Windows\SourceControlWindow.h/.cpp`。
-- 変更: `CollabClient.*`、`ops.rs` / `worker.rs` (通知)、`Cargo.toml` (notify)、`src\Editor\EditorApp.h/.cpp` (メンバ・メニュー・Poll・起動)、
-  `src\Engine\Engine\Project.h/.cpp` (`canonicalRoot`)、`src\Editor\ProjectTemplates.cpp` (作成時に書く)、`src\Editor\ProjectManager.cpp` (リネームで失わない = 構造体経由なら無作業)、
-  `src\Engine\Core\LocalizationTable.inl`、`SourceControlSelfTest.cpp`。
+- 新規: `tools\collab\src\watch.rs`、`src\Editor\SourceControl\SourceControlState.h/.cpp`、`src\Editor\Windows\Project\SourceControlWindow.h/.cpp`。
+- 変更: `CollabClient.*`、`ops.rs` / `worker.rs` (通知)、`Cargo.toml` (notify)、`src\Editor\App\EditorApp.h/.cpp` (メンバ・メニュー・Poll・起動)、
+  `src\Engine\Engine\Project.h/.cpp` (`canonicalRoot`)、`src\Editor\Project\ProjectTemplates.cpp` (作成時に書く)、`src\Editor\Project\ProjectManager.cpp` (リネームで失わない = 構造体経由なら無作業)、
+  `src\Engine\Core\Localization\LocalizationTable.inl`、`SourceControlSelfTest.cpp`。
 - 前例: `NetWindow.h` (Editor 層が POD を読む境界)、`ToastCenter::Notify`、`ImGuiTheme.h` の 5 箇条 (バッジ色は `themeColor::*`)、`EditorSettings.cpp` の `value(key, default)`。
 
 ## 受け入れ条件 (このサブ)

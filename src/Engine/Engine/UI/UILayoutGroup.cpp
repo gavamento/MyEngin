@@ -8,8 +8,8 @@
 #include <climits>
 #include <cmath>
 
-#include "Engine/Core/Components.h"
-#include "Engine/Core/World.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/UI/UIWidgets.h" // M75f: LayoutDrivenBits の Slider 駆動
 #include "Engine/Engine/UI/UITextMetrics.h"
 

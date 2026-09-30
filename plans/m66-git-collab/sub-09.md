@@ -22,7 +22,7 @@
 
 ## 触る場所 (planner の見立て)
 
-- 変更: `src\Editor\SourceControl\SourceControlState.*`、`src\Editor\Windows\AssetBrowserWindow.cpp`、`src\Engine\Renderer\ImGuiTheme.{h,cpp}` (必要なときだけ)、`src\Editor\EditorApp.cpp`、`src\Editor\AssetOps.cpp`、各 Save 窓 (1 行ずつ)、`SourceControlSelfTest.cpp`。
+- 変更: `src\Editor\SourceControl\SourceControlState.*`、`src\Editor\Windows\Asset\AssetBrowserWindow.cpp`、`src\Engine\Renderer\ImGuiTheme.{h,cpp}` (必要なときだけ)、`src\Editor\App\EditorApp.cpp`、`src\Editor\Asset\AssetOps.cpp`、各 Save 窓 (1 行ずつ)、`SourceControlSelfTest.cpp`。
 
 ## 受け入れ条件 (このサブ)
 
@@ -86,12 +86,12 @@ tools\replay_verify.bat
 - `src/Editor/SourceControl/SourceControlState.h` / `.cpp`
 - `src/Editor/SourceControl/ScmHint.h` / `.cpp` (新規)
 - `src/Editor/SourceControl/SourceControlSelfTest.cpp`
-- `src/Editor/EditorWidgets.h` / `.cpp`
-- `src/Editor/EditorApp.cpp`
-- `src/Editor/AssetOps.cpp`
-- `src/Editor/Windows/AssetBrowserWindow.h` / `.cpp`
-- `src/Editor/Windows/SourceControlWindow.cpp`
-- `src/Editor/Windows/AnimationWindow.cpp` / `AnimatorControllerWindow.cpp` / `AudioMixerWindow.cpp` / `ProjectSettingsWindow.cpp`
+- `src/Editor/Widgets/EditorWidgets.h` / `.cpp`
+- `src/Editor/App/EditorApp.cpp`
+- `src/Editor/Asset/AssetOps.cpp`
+- `src/Editor/Windows/Asset/AssetBrowserWindow.h` / `.cpp`
+- `src/Editor/Windows/Project/SourceControlWindow.cpp`
+- `src/Editor/Windows/Animation/AnimationWindow.cpp` / `AnimatorControllerWindow.cpp` / `AudioMixerWindow.cpp` / `ProjectSettingsWindow.cpp`
 - `build/Editor.vcxproj` / `build/Editor.vcxproj.filters` (gen_project_files の生成物)
 - `plans/m66-git-collab/sub-09.md` (この節)
 
@@ -138,9 +138,9 @@ tools\replay_verify.bat
 不安・質問: なし (round 1 の質問 1 は本 round で解消、質問 2 は planner が spec で読み替え確定)
 
 触ったファイル: (round 1 の一覧 + 今回の差分。今回変わったのは下の 3 本)
-- `src/Editor/EditorWidgets.h` / `.cpp` (色表の置換 + 宣言コメント)
+- `src/Editor/Widgets/EditorWidgets.h` / `.cpp` (色表の置換 + 宣言コメント)
 - `src/Editor/SourceControl/SourceControlSelfTest.cpp` ((d3) 追加 + imgui / EditorWidgets / ImGuiTheme の include)
-- (round 1 から継続) `src/Editor/SourceControl/SourceControlState.h` / `.cpp`、`src/Editor/SourceControl/ScmHint.h` / `.cpp` (新規)、`src/Editor/EditorApp.cpp`、`src/Editor/AssetOps.cpp`、`src/Editor/Windows/AssetBrowserWindow.h` / `.cpp`、`src/Editor/Windows/SourceControlWindow.cpp`、`src/Editor/Windows/{AnimationWindow,AnimatorControllerWindow,AudioMixerWindow,ProjectSettingsWindow}.cpp`、`build/Editor.vcxproj` / `.filters`、`plans/m66-git-collab/sub-09.md`
+- (round 1 から継続) `src/Editor/SourceControl/SourceControlState.h` / `.cpp`、`src/Editor/SourceControl/ScmHint.h` / `.cpp` (新規)、`src/Editor/App/EditorApp.cpp`、`src/Editor/Asset/AssetOps.cpp`、`src/Editor/Windows/Asset/AssetBrowserWindow.h` / `.cpp`、`src/Editor/Windows/Project/SourceControlWindow.cpp`、`src/Editor/Windows/{AnimationWindow,AnimatorControllerWindow,AudioMixerWindow,ProjectSettingsWindow}.cpp`、`build/Editor.vcxproj` / `.filters`、`plans/m66-git-collab/sub-09.md`
 
 申し送り:
 - ImGui のスタイル色に依存する関数をヘッドレスのセルフテストから呼ぶときは、**context を 1 個作って捨てる**のが最小の手 (`SourceControlSelfTest` (d3) が実例)。バックエンドも `NewFrame` も要らない。`GetStyleColorVec4` は既定スタイルを返すので「テーマの値そのもの」を検査する用途には使えない (= 意味色は `themeColor::*` と直接比較する)。

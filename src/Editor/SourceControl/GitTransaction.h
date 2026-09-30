@@ -7,8 +7,8 @@
 
 #include "Editor/SourceControl/SourceControlState.h"
 #include "Editor/SourceControl/StageClassifier.h"
-#include "Engine/Core/Localization.h" // StrId (阻害要因の文言)
-#include "Engine/Core/Log.h"          // LogLevel (トーストの重み)
+#include "Engine/Core/Localization/Localization.h" // StrId (阻害要因の文言)
+#include "Engine/Core/Diagnostics/Log.h"          // LogLevel (トーストの重み)
 
 namespace mye {
 

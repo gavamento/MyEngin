@@ -90,9 +90,9 @@
 
 ## 触る場所 (planner の見立て。coder は確認すること)
 
-- `src\Editor\Windows\SourceControlWindow.cpp` (567-572 付近)、必要なら `LocalizationTable.inl` の
+- `src\Editor\Windows\Project\SourceControlWindow.cpp` (567-572 付近)、必要なら `LocalizationTable.inl` の
   該当行 (文言は変えない見込み)。
-- `src\Editor\Windows\BuildSettingsWindow.h` (32-39)。`IsRunning()` の削除で他が壊れないことを grep で確認。
+- `src\Editor\Windows\Project\BuildSettingsWindow.h` (32-39)。`IsRunning()` の削除で他が壊れないことを grep で確認。
 - `src\Engine\Engine\HotReload\ReloadHub.cpp` (163-177) — コメントのみ。
 - `engine_spec.md` §14.5 / §14.6。
 
@@ -134,18 +134,18 @@ pwsh -File tools\collab_fixture.ps1 cache\m66l_fx   (受け入れ条件 1 のス
 ```
 SELF_EVAL: sub-12 (round 1)
 実装:
-  - #3 src\Editor\Windows\SourceControlWindow.cpp:DrawChanges — Stage / Unstage の後ろの
+  - #3 src\Editor\Windows\Project\SourceControlWindow.cpp:DrawChanges — Stage / Unstage の後ろの
     SameLine を外し、3 つのヒント (Scm_Busy / Scm_SelectToStage / Scm_SelectedCount) を
     **次の行に折り返して**出す。TextDisabled は折り返さないので
     PushStyleColor(ImGuiCol_Text, ImGuiCol_TextDisabled の色) + TextWrapped + PopStyleColor。
     文言は 1 文字も変えていない。3 つとも同じ扱いにしたのは、短い 2 つだけ横に残すと
     状態で行の高さが変わって下の破棄ボタンが動くから (理由をコメントに記載)
-  - #6 src\Editor\Windows\BuildSettingsWindow.h — 未使用の `IsRunning()` を削除 (参照 0 件を
+  - #6 src\Editor\Windows\Project\BuildSettingsWindow.h — 未使用の `IsRunning()` を削除 (参照 0 件を
     全ソース grep で確認)。コメントを実態へ: 呼び出し元は「この窓の Stage::Scripts」と
     「Asset Browser の [Rebuild Scripts] を受ける EditorApp::PollScriptBuild」の 2 経路で、
     後者は M66e で一本化した = ゲートから観測できない経路はもう無い。受け入れ条件 2 に
     合わせて `RebuildGameLogic` の名前は書かない (grep 0 件)
-  - #6 追補 src\Editor\AssetOps.cpp:PrepareProjectScriptsBat の関数コメント — 「起動は
+  - #6 追補 src\Editor\Asset\AssetOps.cpp:PrepareProjectScriptsBat の関数コメント — 「起動は
     呼び出し側 (RebuildGameLogic = fire-and-forget / StartGameLogicBuild = ...) の責務」も
     削除済み関数を生きているかのように書いていたので実態へ (削除跡コメントは残す)
   - #7 src\Engine\Engine\HotReload\ReloadHub.cpp:EndBatch — コメントのみ。
@@ -220,9 +220,9 @@ SELF_EVAL: sub-12 (round 1)
      indexState にも Untracked が入るため。fixture は必ず未追跡を持つので、実質いつも skip。
      直すなら `?` を除外する 1 行だが、sub-11 の成果物なので触っていない
 触ったファイル:
-  - src\Editor\Windows\SourceControlWindow.cpp
-  - src\Editor\Windows\BuildSettingsWindow.h
-  - src\Editor\AssetOps.cpp
+  - src\Editor\Windows\Project\SourceControlWindow.cpp
+  - src\Editor\Windows\Project\BuildSettingsWindow.h
+  - src\Editor\Asset\AssetOps.cpp
   - src\Engine\Engine\HotReload\ReloadHub.cpp
   - src\Editor\SourceControl\SourceControlSelfTest.cpp
   - engine_spec.md
@@ -254,7 +254,7 @@ SELF_EVAL: sub-12 (round 2)
     コメントに残した。合わせて `engine_spec.md` §14.5 の "the failing commit is skipped unless the
     index is clean" を「staged が無く マージ途中でもないときだけ走る / **未追跡は staged に数えない**
     (数えると fixture 相手では必ず自分で自分を飛ばす)」に書き換え
-  - #2 (should) src\Editor\Windows\SourceControlWindow.cpp:DrawRemoteBar — 帯の 5 か所を
+  - #2 (should) src\Editor\Windows\Project\SourceControlWindow.cpp:DrawRemoteBar — 帯の 5 か所を
     spec §4.3 の幅の規則に合わせた: `Scm_NoRemote` / `Scm_NoUpstream` / behind の `label` /
     `Scm_AheadBanner` / `Scm_UpToDate` を `PushStyleColor(TextDisabled の色) + TextWrapped` へ。
     behind だけは既存の `themeColor::Accent` の push 内なので色は足していない (`TextUnformatted` →
@@ -310,9 +310,9 @@ SELF_EVAL: sub-12 (round 2)
     #2 の折り返しは画像でしか確認できない。round 1 と同じ理由で 3
 不安・質問: なし (round 1 の 2 件はどちらもこの round で解消した)
 触ったファイル: (round 1 + round 2 の合算)
-  - src\Editor\Windows\SourceControlWindow.cpp
-  - src\Editor\Windows\BuildSettingsWindow.h
-  - src\Editor\AssetOps.cpp
+  - src\Editor\Windows\Project\SourceControlWindow.cpp
+  - src\Editor\Windows\Project\BuildSettingsWindow.h
+  - src\Editor\Asset\AssetOps.cpp
   - src\Engine\Engine\HotReload\ReloadHub.cpp
   - src\Editor\SourceControl\SourceControlSelfTest.cpp
   - engine_spec.md

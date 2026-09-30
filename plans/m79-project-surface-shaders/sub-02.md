@@ -27,8 +27,8 @@ spec §4.1「パスへの組み込み」の Forward 行、「失敗時」、§4.
 
 ## 触る場所 (planner の見立て)
 
-- `src/Engine/Renderer/GpuResources.h/.cpp` — `MaterialLibrary`、`ParseMaterialJson` (`GpuResources.cpp:1046-`、「フィールドを足すときはここだけ」の唯一の本体)。遅延 Load には ShaderManager への参照が要る — 読み込み時に渡すか、描画時に名前から解決するかは coder 判断 (層の向きに注意: Renderer 内で閉じる)
-- `src/Engine/Renderer/ForwardPath.cpp` — `DrawItems` (`ForwardPath.cpp:392-476`)
+- `src/Engine/Renderer/Device/GpuResources.h/.cpp` — `MaterialLibrary`、`ParseMaterialJson` (`GpuResources.cpp:1046-`、「フィールドを足すときはここだけ」の唯一の本体)。遅延 Load には ShaderManager への参照が要る — 読み込み時に渡すか、描画時に名前から解決するかは coder 判断 (層の向きに注意: Renderer 内で閉じる)
+- `src/Engine/Renderer/Pipeline/ForwardPath.cpp` — `DrawItems` (`ForwardPath.cpp:392-476`)
 - `src/Engine/Renderer/ProjectShaderProperties.*` — パース再利用。リフレクションオフセット版のパックは新関数でよい (M78 の `PackProperties` の意味は変えない)
 - マテリアルのホットリロード経路 (`src/Engine/Engine/HotReload/` 周辺)
 - SelfTest: `.mat.json` の `properties` 読み込み→リフレクションオフセットでのパック、失敗時にエラーシェーダへ落ちる判定、既存 `CookedCacheSelfTest` が無変更で通る (`sizeof(Material)` 不変)
@@ -63,13 +63,13 @@ Runtime.exe --project <一時プロジェクト or Water のコピー> --scene <
 
 SELF_EVAL: sub-02 (round 1)
 実装:
-  - `src/Engine/Renderer/GpuResources.h/.cpp` — `SurfaceMaterialState`(公開構造体: ready/useErrorFallback/errorMessage/perMaterialCB/perMaterialGpuCB/textures) を新設。`MaterialLibrary` に横テーブル `surfaceSources_`(shaderName・properties JSON テキスト・assetsRoot・revision) と `GetOrBuildSurfaceState(materialId, shaders, textures, device)` を追加。`ParseMaterialJson` に `shaderNameOut`/`propertiesJsonOut` の出力引数を追加 (唯一の本体はそのまま)。`LoadFromFile` が shader 名の `.surface` 接尾辞判定で横テーブルを更新/削除する。Properties→PerMaterial のパックはリフレクションのオフセットで行い (`ProjectShaderProperties::PackPropertiesReflected` 新設)、Tex2D は数値 GUID (Material の texture/normalMap と同じ規約) / 文字列 (ビルトイン名・16 進 GUID・相対パス) を受理して解決する
-  - `src/Engine/Renderer/ProjectShaderProperties.h/.cpp` — `PackPropertiesReflected`/`ReflectedVarSlot` を追加 (`PackProperties` のパース順パックとは別関数、意味は変えない)
-  - `src/Engine/Renderer/SurfaceProgram.h` — `SurfaceProgram` に `propertiesSchema`(Properties DSL のパース結果) と `generation`(ホットリロード世代番号) を追加
-  - `src/Engine/Renderer/ShaderCache.h/.cpp` — `ShaderCacheEntry::isSurface` を追加 (5 blob: 色VS/PS・影VS・速度VS/PS)、`SurfaceShaderCacheConfigKey`/`SurfaceShaderCacheFileName` を新設。`kVersion` を 1→2 (blob 数の妥当性検査に isSurface を混ぜたため。既存 CS/VS+PS キャッシュも含め次回コンパイル時に 1 回だけ再生成されるが、バイト列自体は変わらないので描画結果に影響しない)
-  - `src/Engine/Renderer/ShaderManager.h/.cpp` — `CompileSurfaceProgram` に `previousGeneration` 引数、Properties パース (失敗=シェーダ全体無効)、バイトコードキャッシュ (`TryLoadCachedSurface`/`InstantiateSurface`、キーは生成エントリ込みの結合ソース全体のハッシュ + include 依存の中身ハッシュ) を追加。`RequestRecompileForFile`/`PollAsyncCompiles` に `surfacePrograms_` 用の非同期経路 (`asyncSurface_`) を追加し、失敗時は旧プログラム (generation 含め) を維持する
-  - `src/Engine/Renderer/SurfaceDrawBind.h` (新規) — `BindSurfaceNamedCB/SRV/Sampler`(D3DReflect の名前解決で VS/PS 両方へバインド)。Forward 専用にせず共有ヘッダに切り出し、sub-03 (Deferred) からも使える形にした
-  - `src/Engine/Renderer/ForwardPath.h/.cpp` — サーフェス予約 CB 4 本 (`surfacePerFrameCB_`/`surfaceFrameCB_`/`surfacePerObjectCB_`/`surfaceWaterCB_`、forward_lit の b0-b2 とは別バッファ) と `surfaceErrorId_`(`surface_error` を `LoadSurface` 経由でプリロード) を追加。`Render` で `MyEnginePerFrameCB`/`MyEngineSurfaceFrameCB`(spec §2 の時計 `viewFrameIndex/60`)/`MyEngineWaterCB`(sub-05 まで 0 埋め) を構築・アップロード。`DrawItems` に `GetOrBuildSurfaceState` 判定を追加し、サーフェスマテリアルは新設 `DrawSurfaceItem`(色エントリのみ、D3DReflect 名前解決で予約 CB・予約テクスチャ/サンプラ・`MyEnginePerMaterial`・作者 Texture2D をバインド) で描画。スキン+サーフェスは従来のスキン経路へフォールスルーしつつ WARN 1 回 (`skinnedSurfaceWarned_` でマテリアル毎に重複抑止)。サーフェス描画の直後に `restoreForwardLitBindings`(ラムダ) で forward_lit の b0-b2・s0-s2・t1-t9・IA/VS/PS 前提を必ず復元し、続くアイテムがどちらの種類でも壊れないようにした
+  - `src/Engine/Renderer/Device/GpuResources.h/.cpp` — `SurfaceMaterialState`(公開構造体: ready/useErrorFallback/errorMessage/perMaterialCB/perMaterialGpuCB/textures) を新設。`MaterialLibrary` に横テーブル `surfaceSources_`(shaderName・properties JSON テキスト・assetsRoot・revision) と `GetOrBuildSurfaceState(materialId, shaders, textures, device)` を追加。`ParseMaterialJson` に `shaderNameOut`/`propertiesJsonOut` の出力引数を追加 (唯一の本体はそのまま)。`LoadFromFile` が shader 名の `.surface` 接尾辞判定で横テーブルを更新/削除する。Properties→PerMaterial のパックはリフレクションのオフセットで行い (`ProjectShaderProperties::PackPropertiesReflected` 新設)、Tex2D は数値 GUID (Material の texture/normalMap と同じ規約) / 文字列 (ビルトイン名・16 進 GUID・相対パス) を受理して解決する
+  - `src/Engine/Renderer/Shader/ProjectShaderProperties.h/.cpp` — `PackPropertiesReflected`/`ReflectedVarSlot` を追加 (`PackProperties` のパース順パックとは別関数、意味は変えない)
+  - `src/Engine/Renderer/Shader/SurfaceProgram.h` — `SurfaceProgram` に `propertiesSchema`(Properties DSL のパース結果) と `generation`(ホットリロード世代番号) を追加
+  - `src/Engine/Renderer/Shader/ShaderCache.h/.cpp` — `ShaderCacheEntry::isSurface` を追加 (5 blob: 色VS/PS・影VS・速度VS/PS)、`SurfaceShaderCacheConfigKey`/`SurfaceShaderCacheFileName` を新設。`kVersion` を 1→2 (blob 数の妥当性検査に isSurface を混ぜたため。既存 CS/VS+PS キャッシュも含め次回コンパイル時に 1 回だけ再生成されるが、バイト列自体は変わらないので描画結果に影響しない)
+  - `src/Engine/Renderer/Shader/ShaderManager.h/.cpp` — `CompileSurfaceProgram` に `previousGeneration` 引数、Properties パース (失敗=シェーダ全体無効)、バイトコードキャッシュ (`TryLoadCachedSurface`/`InstantiateSurface`、キーは生成エントリ込みの結合ソース全体のハッシュ + include 依存の中身ハッシュ) を追加。`RequestRecompileForFile`/`PollAsyncCompiles` に `surfacePrograms_` 用の非同期経路 (`asyncSurface_`) を追加し、失敗時は旧プログラム (generation 含め) を維持する
+  - `src/Engine/Renderer/Shader/SurfaceDrawBind.h` (新規) — `BindSurfaceNamedCB/SRV/Sampler`(D3DReflect の名前解決で VS/PS 両方へバインド)。Forward 専用にせず共有ヘッダに切り出し、sub-03 (Deferred) からも使える形にした
+  - `src/Engine/Renderer/Pipeline/ForwardPath.h/.cpp` — サーフェス予約 CB 4 本 (`surfacePerFrameCB_`/`surfaceFrameCB_`/`surfacePerObjectCB_`/`surfaceWaterCB_`、forward_lit の b0-b2 とは別バッファ) と `surfaceErrorId_`(`surface_error` を `LoadSurface` 経由でプリロード) を追加。`Render` で `MyEnginePerFrameCB`/`MyEngineSurfaceFrameCB`(spec §2 の時計 `viewFrameIndex/60`)/`MyEngineWaterCB`(sub-05 まで 0 埋め) を構築・アップロード。`DrawItems` に `GetOrBuildSurfaceState` 判定を追加し、サーフェスマテリアルは新設 `DrawSurfaceItem`(色エントリのみ、D3DReflect 名前解決で予約 CB・予約テクスチャ/サンプラ・`MyEnginePerMaterial`・作者 Texture2D をバインド) で描画。スキン+サーフェスは従来のスキン経路へフォールスルーしつつ WARN 1 回 (`skinnedSurfaceWarned_` でマテリアル毎に重複抑止)。サーフェス描画の直後に `restoreForwardLitBindings`(ラムダ) で forward_lit の b0-b2・s0-s2・t1-t9・IA/VS/PS 前提を必ず復元し、続くアイテムがどちらの種類でも壊れないようにした
   - `assets/shaders/MyEngineSurface.hlsli` — `MyeApplyFog` にフロクセル合成を追加 (should)。`screenPos` は SV_Position を引数に足さず `posW` を `gViewProj` で再投影して求める (作者規約のシグネチャ `(color, posW)` を変えないための代償)。`clip.w<=0` は解析フォグのみへ縮退 (0 除算/NaN を作らない。`ComputeVelocityUv` と同じ規約)。fxc の X4000/X4008 誤検知警告は「if の両分岐で return せず 1 つの result に代入して最後に 1 回だけ return する」形へ直して解消した (実害のある警告ではないが、作者が書く同種のコードで無用な警告が出ないよう解消しておいた)
   - `assets/shaders/ToonFlat.surface.hlsl`(+.meta) — サンプル (M78 の `MyTint.post.hlsl` と同じ位置付け。平塗りトゥーン、Color/Range/Tex2D の 3 種のプロパティを使用。既定シーンからは参照しない)
   - `src/Engine/Renderer/SurfaceMaterialSelfTest.{h,cpp}` (新規、`EditorMain.cpp` 末尾 append で登録) — (1) `PackPropertiesReflected` がパース順ではなくリフレクションのオフセットで詰めることの単体検証、(2) `ShaderManager`: `LoadSurface` の冪等性 (同名を繰り返しても再コンパイルしない)・ホットリロード成功/失敗 (世代番号・旧プログラム維持)・バイトコードキャッシュの hit/miss/ソース変更時の無効化、(3) `MaterialLibrary::GetOrBuildSurfaceState`: Properties (Color/Range/Tex2D) の実コンパイル経由でのパック照合・Tex2D 既定フォールバック・`.mat.json` 再読込での再パック・失敗時 (存在しない shader 名) のエラーフォールバック・対象外マテリアルで nullptr、(4) **`ForwardPath` を実 WARP デバイスで実際に `Render` し** オフスクリーン RTV を read-back: サーフェス色エントリの固定色描画・forward_lit 単体との比較によるバインド非破壊の検証・存在しない shader 名でのマゼンタ描画・properties._Color の値違いが実描画に反映されること (2 マテリアルで別の色になることも含む)、(5) `assets/shaders/ToonFlat.surface.hlsl` がそのままコンパイルできること
@@ -102,21 +102,21 @@ SELF_EVAL: sub-02 (round 1)
   1. Tex2D プロパティの GUID 符号化 (数値 GUID + 文字列の両方を受理) は spec の「fxstack と同じ」という記述と厳密には一致しない解釈拡張。sub-04 (マテリアル Inspector) がテクスチャピッカーで properties を書き出すとき、この規則 (両対応) を前提にしてよいか確認したい
   2. `MyeApplyFog` のフロクセル合成が速度エントリ (sub-03) から見ると `gViewProj` が「前」側のままになりうる件 (仕様との差分参照)。sub-03 で speed エントリの `PSMain` 内から `MyeApplyFog` を呼ぶ場合は、専用の再投影ロジック (速度エントリ専用の static や別ヘルパ) が要るかもしれない。方式は sub-03 の coder 判断でよいか、それとも sub-02 の時点で用意すべきだったか
 触ったファイル:
-  - `src/Engine/Renderer/GpuResources.h`
-  - `src/Engine/Renderer/GpuResources.cpp`
-  - `src/Engine/Renderer/ProjectShaderProperties.h`
-  - `src/Engine/Renderer/ProjectShaderProperties.cpp`
-  - `src/Engine/Renderer/SurfaceProgram.h`
-  - `src/Engine/Renderer/ShaderCache.h`
-  - `src/Engine/Renderer/ShaderCache.cpp`
-  - `src/Engine/Renderer/ShaderManager.h`
-  - `src/Engine/Renderer/ShaderManager.cpp`
-  - `src/Engine/Renderer/ForwardPath.h`
-  - `src/Engine/Renderer/ForwardPath.cpp`
-  - `src/Engine/Renderer/SurfaceDrawBind.h` (新規)
-  - `src/Engine/Renderer/SurfaceMaterialSelfTest.h` (新規)
-  - `src/Engine/Renderer/SurfaceMaterialSelfTest.cpp` (新規)
-  - `src/Editor/EditorMain.cpp`
+  - `src/Engine/Renderer/Device/GpuResources.h`
+  - `src/Engine/Renderer/Device/GpuResources.cpp`
+  - `src/Engine/Renderer/Shader/ProjectShaderProperties.h`
+  - `src/Engine/Renderer/Shader/ProjectShaderProperties.cpp`
+  - `src/Engine/Renderer/Shader/SurfaceProgram.h`
+  - `src/Engine/Renderer/Shader/ShaderCache.h`
+  - `src/Engine/Renderer/Shader/ShaderCache.cpp`
+  - `src/Engine/Renderer/Shader/ShaderManager.h`
+  - `src/Engine/Renderer/Shader/ShaderManager.cpp`
+  - `src/Engine/Renderer/Pipeline/ForwardPath.h`
+  - `src/Engine/Renderer/Pipeline/ForwardPath.cpp`
+  - `src/Engine/Renderer/Shader/SurfaceDrawBind.h` (新規)
+  - `src/Engine/Renderer/Shader/SurfaceMaterialSelfTest.h` (新規)
+  - `src/Engine/Renderer/Shader/SurfaceMaterialSelfTest.cpp` (新規)
+  - `src/Editor/App/EditorMain.cpp`
   - `assets/shaders/MyEngineSurface.hlsli`
   - `assets/shaders/ToonFlat.surface.hlsl` (新規)
   - `assets/shaders/ToonFlat.surface.hlsl.meta` (新規)
@@ -134,8 +134,8 @@ SELF_EVAL: sub-02 (round 2)
 実装:
   - `assets/shaders/MyEngineSurfaceEntries.hlsli` — **must #1 の修正**。`MyePSColor` と `MyePSVelocity` (PS エントリ) が `PSMain` を呼ぶ前に、位置用 static (`gViewProj`/`gWorld`/`gTime`/`gWaterTime`) へ「今フレーム」の値 (`gMyeCurViewProj`/`gMyeWorld`/`gMyeCurTime`/`gMyeCurWaterTime`) を代入し直すようにした。VS と PS は別プログラム (別々の D3DCompile) なので、VS エントリでの代入は PS には届かず、修正前は PS から見た static が常に未代入 (ゼロ行列 / 0) だった。ファイル冒頭にも「VS と PS は別プログラム」の注記を追加
   - `assets/shaders/MyEngineSurface.hlsli` — `MyeApplyFog` のコメントを修正 (「速度エントリの PSMain から見ると前側のまま」は上の修正で解消したので、「PS エントリは今フレームの値を代入し直すので常に今フレームの VP になる」に書き換え)
-  - `src/Engine/Renderer/SurfaceShaderSelfTest.cpp` — **回帰テスト**。`VelocityProbe.surface` の `PSMain` を `float4(gTime, 0, 0, 1)` に変更 (色 read-back を追加)。draw A (`curTime=0.7`) で PS 側の gTime が今フレーム値 (0.7) を見ることを確認 — 修正前はここが 0 になり FAIL することを実際に確認済み (下記「検証」参照)。draw B は read-back 経路自体の生存確認として残す (curTime=0.0 なので単独では未代入と区別できないことをコメントで明記)
-  - `src/Engine/Renderer/SurfaceMaterialSelfTest.cpp` — **回帰テスト (ForwardPath 経由)**。`PsStaticsProbe.surface` (gTime を R、posW を gViewProj で再投影した NDC.x を G へ出す) を追加。`view.viewFrameIndex=30` (gTime=0.5) で off-center (x=-2) のクワッドを描き、R≈127・G≈42 (今フレームの値) を確認。修正前は R=0・G≈127 (未代入=ゼロ行列の再投影) になることを実際に確認済み
+  - `src/Engine/Renderer/Shader/SurfaceShaderSelfTest.cpp` — **回帰テスト**。`VelocityProbe.surface` の `PSMain` を `float4(gTime, 0, 0, 1)` に変更 (色 read-back を追加)。draw A (`curTime=0.7`) で PS 側の gTime が今フレーム値 (0.7) を見ることを確認 — 修正前はここが 0 になり FAIL することを実際に確認済み (下記「検証」参照)。draw B は read-back 経路自体の生存確認として残す (curTime=0.0 なので単独では未代入と区別できないことをコメントで明記)
+  - `src/Engine/Renderer/Shader/SurfaceMaterialSelfTest.cpp` — **回帰テスト (ForwardPath 経由)**。`PsStaticsProbe.surface` (gTime を R、posW を gViewProj で再投影した NDC.x を G へ出す) を追加。`view.viewFrameIndex=30` (gTime=0.5) で off-center (x=-2) のクワッドを描き、R≈127・G≈42 (今フレームの値) を確認。修正前は R=0・G≈127 (未代入=ゼロ行列の再投影) になることを実際に確認済み
   - **must #2: 実プロジェクト/実シーン経由の screenshot 検証**。`%TEMP%\claude\...\scratchpad\mye_m79_sub02_verify\` に一時プロジェクトを作成 (assets/shaders・assets/materials・assets/scenes、リポジトリ外・コミットしない)。`.mat.json` ごとに `.meta` を自作し GUID を固定値にすることで (`EnsureMeta` が既存 GUID を尊重する規則を利用)、`MeshRenderer.material` の数値をハッシュ計算に頼らず確定させた。`Runtime.exe --project <一時> --scene <一時> --warp --no-audio --frames 10 --shot-frame 5 --screenshot <png>` で撮影。詳細は下記「検証」参照
 
 仕様との差分:
@@ -165,22 +165,22 @@ SELF_EVAL: sub-02 (round 2)
 不安・質問: なし (round 1 の 2 件はどちらも本ラウンドで解消・確定済み)
 
 触ったファイル (round 1 分を含む全量):
-  - `src/Engine/Renderer/GpuResources.h`
-  - `src/Engine/Renderer/GpuResources.cpp`
-  - `src/Engine/Renderer/ProjectShaderProperties.h`
-  - `src/Engine/Renderer/ProjectShaderProperties.cpp`
-  - `src/Engine/Renderer/SurfaceProgram.h`
-  - `src/Engine/Renderer/ShaderCache.h`
-  - `src/Engine/Renderer/ShaderCache.cpp`
-  - `src/Engine/Renderer/ShaderManager.h`
-  - `src/Engine/Renderer/ShaderManager.cpp`
-  - `src/Engine/Renderer/ForwardPath.h`
-  - `src/Engine/Renderer/ForwardPath.cpp`
-  - `src/Engine/Renderer/SurfaceDrawBind.h` (新規)
-  - `src/Engine/Renderer/SurfaceMaterialSelfTest.h` (新規)
-  - `src/Engine/Renderer/SurfaceMaterialSelfTest.cpp` (新規)
-  - `src/Engine/Renderer/SurfaceShaderSelfTest.cpp` (round 2 で追記)
-  - `src/Editor/EditorMain.cpp`
+  - `src/Engine/Renderer/Device/GpuResources.h`
+  - `src/Engine/Renderer/Device/GpuResources.cpp`
+  - `src/Engine/Renderer/Shader/ProjectShaderProperties.h`
+  - `src/Engine/Renderer/Shader/ProjectShaderProperties.cpp`
+  - `src/Engine/Renderer/Shader/SurfaceProgram.h`
+  - `src/Engine/Renderer/Shader/ShaderCache.h`
+  - `src/Engine/Renderer/Shader/ShaderCache.cpp`
+  - `src/Engine/Renderer/Shader/ShaderManager.h`
+  - `src/Engine/Renderer/Shader/ShaderManager.cpp`
+  - `src/Engine/Renderer/Pipeline/ForwardPath.h`
+  - `src/Engine/Renderer/Pipeline/ForwardPath.cpp`
+  - `src/Engine/Renderer/Shader/SurfaceDrawBind.h` (新規)
+  - `src/Engine/Renderer/Shader/SurfaceMaterialSelfTest.h` (新規)
+  - `src/Engine/Renderer/Shader/SurfaceMaterialSelfTest.cpp` (新規)
+  - `src/Engine/Renderer/Shader/SurfaceShaderSelfTest.cpp` (round 2 で追記)
+  - `src/Editor/App/EditorMain.cpp`
   - `assets/shaders/MyEngineSurface.hlsli`
   - `assets/shaders/MyEngineSurfaceEntries.hlsli` (round 2 で修正、sub-01 由来のファイル)
   - `assets/shaders/ToonFlat.surface.hlsl` (新規)
@@ -194,11 +194,11 @@ SELF_EVAL: sub-02 (round 2)
 
 SELF_EVAL: sub-02 (round 3)
 実装:
-  - `src/Engine/Renderer/ForwardPath.cpp` — `DrawItems` の `restoreForwardLitBindings` に VS t0 (`forward_lit_instanced.hlsl` の `StructuredBuffer<MeshInstance> gInstances : register(t0)`) の復元を追加 (#2)。`runs` (呼び出し元がこのフレーム instancing を使うか) が非 null のときだけ `instanceBuf_.SRV()` を戻し、null (透明段など、そもそも VS t0 を張っていない呼び出し) のときは null に戻す。他の VS/PS の CB・SRV・サンプラ・IL/VS/PS・ラスタライザは既存の `restoreForwardLitBindings`/`bindForwardLitFixed` (Deferred 透明段) で洗い出し済みであることをコード読解で確認し (forward_lit / forward_lit_instanced が VS 側で使うリソースは PerFrame(b0)/PerObject(b1)/MaterialParams(b2)/インスタンス SRV(VS t0) のみ、DrawSurfaceItem は RSSetState を一切呼ばない)、追加の復元は不要と判断した
-  - `src/Engine/Renderer/SurfaceProgram.h` — `SurfaceReflectedVar` に `cbufferName` (所属 cbuffer 名) を追加
-  - `src/Engine/Renderer/ShaderManager.cpp` — `ReflectSurfaceBytecode` が `cbufferName` を埋めるようにした
-  - `src/Engine/Renderer/GpuResources.cpp` — `GetOrBuildSurfaceState` の `collect` ラムダを `var.cbufferName == surface::kPerMaterialCB` でフィルタし、`MyEnginePerMaterial` 以外の cbuffer (予約 CB) の変数・サイズを取り込まないようにした (#4)。`#include "Engine/Renderer/SurfaceShaderTypes.h"` を追加
-  - `src/Engine/Renderer/SurfaceMaterialSelfTest.cpp` — 回帰テスト 2 件を追加。(a) `TestMaterialLibrarySurfaceState` に、`_Tint(float4)+_Amp(float)`=32 バイトの `MyEnginePerMaterial` を持つ既存フィクスチャで `perMaterialCB.size() == 32` かつ `!= sizeof(MyEnginePerFrameCB)` を検査 (#4)。(b) `TestForwardPathDrawsSurfaceItems` に、VS で `Texture2D _HeightTex : register(t0)` を読む `VTex.surface` フィクスチャを追加し、「サーフェス→instanced forward_lit (2 個)」と逆順「instanced forward_lit→サーフェス」の両方を実 WARP 描画し、instanced run が消えないこと・描画順で絵が変わらないことを read-back で検査 (#2、spec 受け入れ条件 13)
+  - `src/Engine/Renderer/Pipeline/ForwardPath.cpp` — `DrawItems` の `restoreForwardLitBindings` に VS t0 (`forward_lit_instanced.hlsl` の `StructuredBuffer<MeshInstance> gInstances : register(t0)`) の復元を追加 (#2)。`runs` (呼び出し元がこのフレーム instancing を使うか) が非 null のときだけ `instanceBuf_.SRV()` を戻し、null (透明段など、そもそも VS t0 を張っていない呼び出し) のときは null に戻す。他の VS/PS の CB・SRV・サンプラ・IL/VS/PS・ラスタライザは既存の `restoreForwardLitBindings`/`bindForwardLitFixed` (Deferred 透明段) で洗い出し済みであることをコード読解で確認し (forward_lit / forward_lit_instanced が VS 側で使うリソースは PerFrame(b0)/PerObject(b1)/MaterialParams(b2)/インスタンス SRV(VS t0) のみ、DrawSurfaceItem は RSSetState を一切呼ばない)、追加の復元は不要と判断した
+  - `src/Engine/Renderer/Shader/SurfaceProgram.h` — `SurfaceReflectedVar` に `cbufferName` (所属 cbuffer 名) を追加
+  - `src/Engine/Renderer/Shader/ShaderManager.cpp` — `ReflectSurfaceBytecode` が `cbufferName` を埋めるようにした
+  - `src/Engine/Renderer/Device/GpuResources.cpp` — `GetOrBuildSurfaceState` の `collect` ラムダを `var.cbufferName == surface::kPerMaterialCB` でフィルタし、`MyEnginePerMaterial` 以外の cbuffer (予約 CB) の変数・サイズを取り込まないようにした (#4)。`#include "Engine/Renderer/Shader/SurfaceShaderTypes.h"` を追加
+  - `src/Engine/Renderer/Shader/SurfaceMaterialSelfTest.cpp` — 回帰テスト 2 件を追加。(a) `TestMaterialLibrarySurfaceState` に、`_Tint(float4)+_Amp(float)`=32 バイトの `MyEnginePerMaterial` を持つ既存フィクスチャで `perMaterialCB.size() == 32` かつ `!= sizeof(MyEnginePerFrameCB)` を検査 (#4)。(b) `TestForwardPathDrawsSurfaceItems` に、VS で `Texture2D _HeightTex : register(t0)` を読む `VTex.surface` フィクスチャを追加し、「サーフェス→instanced forward_lit (2 個)」と逆順「instanced forward_lit→サーフェス」の両方を実 WARP 描画し、instanced run が消えないこと・描画順で絵が変わらないことを read-back で検査 (#2、spec 受け入れ条件 13)
 
 仕様との差分: なし (review-1 #2 #4 の指摘どおりに直した。解釈で埋めた箇所はない)
 
@@ -224,11 +224,11 @@ SELF_EVAL: sub-02 (round 3)
 不安・質問: なし
 
 触ったファイル (round 3 で変更した分):
-  - `src/Engine/Renderer/ForwardPath.cpp`
-  - `src/Engine/Renderer/SurfaceProgram.h`
-  - `src/Engine/Renderer/ShaderManager.cpp`
-  - `src/Engine/Renderer/GpuResources.cpp`
-  - `src/Engine/Renderer/SurfaceMaterialSelfTest.cpp`
+  - `src/Engine/Renderer/Pipeline/ForwardPath.cpp`
+  - `src/Engine/Renderer/Shader/SurfaceProgram.h`
+  - `src/Engine/Renderer/Shader/ShaderManager.cpp`
+  - `src/Engine/Renderer/Device/GpuResources.cpp`
+  - `src/Engine/Renderer/Shader/SurfaceMaterialSelfTest.cpp`
 
 申し送り:
   - review-1 #1 (ShadowPass、sub-03 差し戻し分) は本サブの範囲外のため触っていない

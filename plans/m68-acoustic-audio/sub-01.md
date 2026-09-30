@@ -9,10 +9,10 @@
 spec §4.1.1 / §4.1.2 / §4.1.5 / §4.1.6 (M68a 分) / §4.2 (コンポーネント・`lpfCoefficient`・hum) を実装する。
 **sim には 1 バイトも触らない** (`src\Engine\Engine\Acoustic\` に diff なし。このサブではコメント行も触らない)。
 
-1. `src\Engine\Engine\Audio\AcousticAudio.h/.cpp` (新規): `AcousticProbe` (Dial の 3 本目の写し + 箱 + `kProbeCellBudget` +
+1. `src\Engine\Engine\Audio\Spatial\AcousticAudio.h/.cpp` (新規): `AcousticProbe` (Dial の 3 本目の写し + 箱 + `kProbeCellBudget` +
    再構築契機 S18 + 開放度 S13 の閉形式)、`ClassifyPath` / `ShapeAcousticSpatial` (純関数、spec §4.1.2 の 8 段)、
    `AcousticShapeState` / `AcousticShapeInfo` / `AcousticAudioStats` / `PendingWaveShot` (POD。**M68a では定義だけ**、push/drain は M68b)。
-2. `src\Engine\Engine\Audio\AcousticAudioSelfTest.h/.cpp` (新規): 下の T1〜T15。`pwsh -File tools\gen_project_files.ps1`。
+2. `src\Engine\Engine\Audio\Spatial\AcousticAudioSelfTest.h/.cpp` (新規): 下の T1〜T15。`pwsh -File tools\gen_project_files.ps1`。
 3. `Components.h/.cpp`: `AcousticAudioComponent` を**末尾 (TypeId 50)** に `kComponentNoHash` で登録 (spec §4.2 の表、全 22 フィールド)。
    `Components.cpp:840` 付近の予約コメント / `CLAUDE.md:150-151` / `plans\supple-weaving-loom.md` (:36 / :120 / :214 / :246 / :290) の
    「50/51」を「51/52」へ。
@@ -53,17 +53,17 @@ spec §4.1.1 / §4.1.2 / §4.1.5 / §4.1.6 (M68a 分) / §4.2 (コンポーネ�
 
 | ファイル | 場所 | 何を |
 |---|---|---|
-| `src\Engine\Engine\Audio\AcousticAudio.h/.cpp` | 新規 | probe / 整形 / POD 群。include は `Acoustic/AcousticField.h` + `Acoustic/AcousticGrid.h` + `Audio/AudioSystem.h` + `Audio/SpatialMath.h` + `Core/Components.h` |
-| `src\Engine\Engine\Audio\AcousticAudioSelfTest.h/.cpp` | 新規 | `bool RunAcousticAudioSelfTest();` (`AcousticSelfTest.cpp` の `check` 流儀、`DebugSetGrid` + `MakeLMaze` の写し) |
-| `src\Engine\Core\Components.h` | `AgentBrainComponent` (`:1276`) の後 | `AcousticAudioComponent` |
-| `src\Engine\Core\Components.cpp` | `:840` のコメント、`AgentBrain` 登録の後 (`:952` の `}` の前) | 登録 + 予約コメント |
-| `src\Engine\Engine\Audio\AudioSystem.h` | `:57` (`pitch` の後) | `lpfCoefficient` |
-| `src\Engine\Engine\Audio\AudioSystem.cpp` | `:1146` | `min` |
-| `src\Engine\Engine\Audio\AudioSourceSystem.h/.cpp` | `SourceState` (`:69-78`)、`Update` (`:324-453`)、`Reset` (`:200`) | 上記 5 |
+| `src\Engine\Engine\Audio\Spatial\AcousticAudio.h/.cpp` | 新規 | probe / 整形 / POD 群。include は `Acoustic/AcousticField.h` + `Acoustic/AcousticGrid.h` + `Audio/AudioSystem.h` + `Audio/SpatialMath.h` + `Core/Components.h` |
+| `src\Engine\Engine\Audio\Spatial\AcousticAudioSelfTest.h/.cpp` | 新規 | `bool RunAcousticAudioSelfTest();` (`AcousticSelfTest.cpp` の `check` 流儀、`DebugSetGrid` + `MakeLMaze` の写し) |
+| `src\Engine\Core\Ecs\Components.h` | `AgentBrainComponent` (`:1276`) の後 | `AcousticAudioComponent` |
+| `src\Engine\Core\Ecs\Components.cpp` | `:840` のコメント、`AgentBrain` 登録の後 (`:952` の `}` の前) | 登録 + 予約コメント |
+| `src\Engine\Engine\Audio\Playback\AudioSystem.h` | `:57` (`pitch` の後) | `lpfCoefficient` |
+| `src\Engine\Engine\Audio\Playback\AudioSystem.cpp` | `:1146` | `min` |
+| `src\Engine\Engine\Audio\Playback\AudioSourceSystem.h/.cpp` | `SourceState` (`:69-78`)、`Update` (`:324-453`)、`Reset` (`:200`) | 上記 5 |
 | `src\Engine\Engine\EngineLoop.h/.cpp` | `EngineConfig` (`:165-169` の隣)、`EngineContext` (`:328` `sounds` の隣)、`:287`、`:390`、`:1832` | 配線 |
-| `src\Editor\EditorMain.cpp` | `:382`、`:625` | CLI、連鎖 |
+| `src\Editor\App\EditorMain.cpp` | `:382`、`:625` | CLI、連鎖 |
 | `src\Runtime\RuntimeMain.cpp` | `:370` | CLI |
-| `src\Editor\Windows\ProfilerWindow.cpp` | `:87-101` の隣 | 1 行 |
+| `src\Editor\Windows\Debug\ProfilerWindow.cpp` | `:87-101` の隣 | 1 行 |
 | `src\Engine\Engine\DemoContent.cpp` | `:3116` (関数末尾) | 3 エンティティ |
 | `assets\audio\` | 新規 4 ファイル | hum |
 | `CLAUDE.md` / `plans\supple-weaving-loom.md` | 上記 | 数字 |
@@ -117,25 +117,25 @@ Hum の `dPath` は 28〜40 m / `rebuilds ≥ 2`。予測と違ったら分類�
 ```
 SELF_EVAL: sub-01 (round 1)
 実装:
-  - src/Engine/Engine/Audio/AcousticAudio.h/.cpp (新規) — AcousticProbe / AcousticShapeState /
+  - src/Engine/Engine/Audio/Spatial/AcousticAudio.h/.cpp (新規) — AcousticProbe / AcousticShapeState /
     AcousticShapeInfo / AcousticAudioStats / PendingWaveShot (定義のみ) / AcousticPathClass。
     BuildProbeField = Dial の 3 本目 (AdvanceWaveOneRing をリング分周なしで完走した写し)、
     UpdateAcousticProbe (再構築契機 + kProbeCellBudget)、ComputeOpenness (閉形式が分母)、
     ChamferClosedForm、ShapeAcousticSpatial (spec §4.1.2 の 8 段)
-  - src/Engine/Engine/Audio/AcousticAudioSelfTest.h/.cpp (新規) — T1〜T15 (47 アサート)
-  - src/Engine/Core/Components.h/.cpp — AcousticAudioComponent (TypeId 50 / kComponentNoHash /
+  - src/Engine/Engine/Audio/Spatial/AcousticAudioSelfTest.h/.cpp (新規) — T1〜T15 (47 アサート)
+  - src/Engine/Core/Ecs/Components.h/.cpp — AcousticAudioComponent (TypeId 50 / kComponentNoHash /
     全 22 フィールド)。:840 の予約コメントを 51/52 へ
-  - src/Engine/Engine/Audio/AudioSystem.h — AudioSpatial::lpfCoefficient (末尾追加、既定 1.0)
-  - src/Engine/Engine/Audio/AudioSystem.cpp — applyLpf(dry, min(LPFDirectCoefficient, s.lpfCoefficient))
-  - src/Engine/Engine/Audio/AudioSourceSystem.h/.cpp — SetAcousticField / SetAcousticAudioLog /
+  - src/Engine/Engine/Audio/Playback/AudioSystem.h — AudioSpatial::lpfCoefficient (末尾追加、既定 1.0)
+  - src/Engine/Engine/Audio/Playback/AudioSystem.cpp — applyLpf(dry, min(LPFDirectCoefficient, s.lpfCoefficient))
+  - src/Engine/Engine/Audio/Playback/AudioSourceSystem.h/.cpp — SetAcousticField / SetAcousticAudioLog /
     AcousticStats、SourceState::shape (vel と同じ 3 箇所で {})、Update に dTicks 採取 +
     FindAcousticAudio + probe 更新 + per-voice 整形 + log、Reset で probe 無効化
   - src/Engine/Engine/EngineLoop.h/.cpp — EngineConfig::acousticAudioLogTicks、
     EngineContext::audioSources、:287 隣の配線 2 行、:390 隣の ctx 代入、[rt] 隣の summary、
     ★メインループ直前の audioSystem.Update(0.0f) (下記「仕様との差分」[追加] 1)
-  - src/Editor/EditorMain.cpp / src/Runtime/RuntimeMain.cpp — --acoustic-audio-log N
-  - src/Editor/EditorMain.cpp — 連鎖末尾に RunAcousticAudioSelfTest() (45 本目)
-  - src/Editor/Windows/ProfilerWindow.cpp — acoustic-audio: 行 (stats.active のときだけ)
+  - src/Editor/App/EditorMain.cpp / src/Runtime/RuntimeMain.cpp — --acoustic-audio-log N
+  - src/Editor/App/EditorMain.cpp — 連鎖末尾に RunAcousticAudioSelfTest() (45 本目)
+  - src/Editor/Windows/Debug/ProfilerWindow.cpp — acoustic-audio: 行 (stats.active のときだけ)
   - src/Engine/Engine/DemoContent.cpp — BuildAcousticShowcaseScene 末尾に Watcher Ears (子) /
     Acoustic Audio / Hum の 3 体。Watcher の EntityID をブロック外へ持ち出しただけで生成順は不変
   - assets/audio/hum.wav + hum.sound.json + .meta x2 (新規)
@@ -244,21 +244,21 @@ hum の SynthParams (SynthCore で焼いた実値。再現手順):
      spec §4.4 の「Debug 数 ms」より重い。v1 で許容か、probeMaxRing の既定を下げるか。
 
 触ったファイル:
-  src/Engine/Engine/Audio/AcousticAudio.h
-  src/Engine/Engine/Audio/AcousticAudio.cpp
-  src/Engine/Engine/Audio/AcousticAudioSelfTest.h
-  src/Engine/Engine/Audio/AcousticAudioSelfTest.cpp
-  src/Engine/Engine/Audio/AudioSourceSystem.h
-  src/Engine/Engine/Audio/AudioSourceSystem.cpp
-  src/Engine/Engine/Audio/AudioSystem.h
-  src/Engine/Engine/Audio/AudioSystem.cpp
-  src/Engine/Core/Components.h
-  src/Engine/Core/Components.cpp
+  src/Engine/Engine/Audio/Spatial/AcousticAudio.h
+  src/Engine/Engine/Audio/Spatial/AcousticAudio.cpp
+  src/Engine/Engine/Audio/Spatial/AcousticAudioSelfTest.h
+  src/Engine/Engine/Audio/Spatial/AcousticAudioSelfTest.cpp
+  src/Engine/Engine/Audio/Playback/AudioSourceSystem.h
+  src/Engine/Engine/Audio/Playback/AudioSourceSystem.cpp
+  src/Engine/Engine/Audio/Playback/AudioSystem.h
+  src/Engine/Engine/Audio/Playback/AudioSystem.cpp
+  src/Engine/Core/Ecs/Components.h
+  src/Engine/Core/Ecs/Components.cpp
   src/Engine/Engine/EngineLoop.h
   src/Engine/Engine/EngineLoop.cpp
   src/Engine/Engine/DemoContent.cpp
-  src/Editor/EditorMain.cpp
-  src/Editor/Windows/ProfilerWindow.cpp
+  src/Editor/App/EditorMain.cpp
+  src/Editor/Windows/Debug/ProfilerWindow.cpp
   src/Runtime/RuntimeMain.cpp
   build/Engine.vcxproj
   build/Engine.vcxproj.filters

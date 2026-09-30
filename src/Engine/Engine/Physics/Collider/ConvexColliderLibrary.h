@@ -1,0 +1,76 @@
+#pragma once
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#include "Engine/Core/Ecs/EntityID.h"
+#include "Engine/Engine/Physics/Collider/ConvexHull.h"
+
+namespace mye {
+
+struct RenderResources;
+
+// ---- 凸包コライダーのキャッシュ + クック (M60f、Collider.shape=5) ----
+// MeshLibrary が持つ CPU 頂点から凸包を作ってキャッシュする。MeshColliderLibrary (shape=3)
+// と同じ「AssetID → 形状データの lazy 構築」だが、**こちらはクックが乗る**:
+//
+//   `.mmdl` / `.mpcm` に続く CookedCache の第 3 の種 = `.mcvx`。1 ファイルに
+//   「そのモデルファイル由来の凸包」を key (= メッシュ登録名) つきで並べた表を置き、
+//   要求されたメッシュの分だけ**遅延で書き足していく**。モデルのロード時に全メッシュの
+//   凸包を先に焼く設計にしないのは、「どのメッシュを凸包として使うか」を知っているのが
+//   モデルではなくシーン (Collider.shape=5) だから — 先に焼くと使わない分まで焼ける。
+//
+// 元ファイルのパスは **AssetID の逆引き**で得る。モデル由来のメッシュ登録名は
+// "guid://<16hex>#mesh0#prim0" (M74a) なので、接頭辞の GUID を assetguid::ResolvePath で
+// 現在パスへ引いたものがクックのソースパスになる。手続き生成メッシュ (builtin:// / 地形チャンク /
+// selftest) は接頭辞を持たないか GUID が解決できないので、その場生成だけになる
+// (CookedCache 側が stat に失敗して無効化されるため、特別扱いのコードは要らない)。
+//
+// 決定論: 生成は入力頂点順に依らず (ConvexHull.h)、blob は生値なので
+// **クックから読んだ凸包とフレッシュ生成した凸包はビット同一**。`.mmdl` と同じ契約で、
+// これが崩れると「キャッシュの有無でワールドハッシュが変わる」= 最悪の壊れ方をする。
+class ConvexColliderLibrary {
+public:
+    void Init(RenderResources* resources) { resources_ = resources; }
+    // 未登録メッシュ / CPU 頂点なしは nullptr (呼び出し側は shape=5 を無視する)
+    const ConvexHullData* Get(AssetID meshAsset);
+    // 任意データの直接登録 (selftest / 手続き生成メッシュ用)。同 ID は差し替え
+    void Register(AssetID id, ConvexHullData data);
+    // ★本番経路で呼ぶなら fracturelib::Library()->ReregisterAll() を対で呼ぶこと (M80、ADR-021) —
+    //   さもないと破片の凸包 (shape=5) が黙って無視されすり抜ける
+    void Clear();
+
+private:
+    using CookTable = std::vector<std::pair<std::string, ConvexHullData>>; // key 昇順
+
+    // srcPath の `.mcvx` を読み込む (未読なら 1 回だけ)。戻り値は表への参照
+    CookTable& LoadTable(const std::wstring& srcPath);
+    void SaveTable(const std::wstring& srcPath, const CookTable& table);
+
+    RenderResources* resources_ = nullptr;
+    std::unordered_map<uint64_t, std::unique_ptr<ConvexHullData>> cache_;
+    std::unordered_map<std::wstring, CookTable> tables_;
+};
+
+// モジュール注入 (meshcol:: / terraincol:: と同じ流儀)。EngineLoop が起動時に Install し
+// 終了時に外す。PhysicsSystem / クエリ / トリガーの pose 構築サイトが shape=5 の実体解決に
+// 使う。メインスレッド専用
+namespace convexcol {
+void Install(ConvexColliderLibrary* lib);
+const ConvexHullData* Resolve(AssetID meshAsset); // 未接続/未登録 = nullptr
+} // namespace convexcol
+
+// `.mcvx` の表 ⇄ blob (selftest から直接叩けるように公開する)
+void SerializeConvexTable(const std::vector<std::pair<std::string, ConvexHullData>>& table,
+                          std::vector<uint8_t>& out);
+bool DeserializeConvexTable(const std::vector<uint8_t>& in,
+                            std::vector<std::pair<std::string, ConvexHullData>>& out);
+
+// メッシュ登録名からクック元ファイルのパスを引く ("guid://<16hex>#mesh0#prim0" → GUID の現在パス)。
+// 接頭辞が無い (手続き生成) / GUID が解決できない (resolver 未設定・未知) は空を返す
+std::wstring ConvexCookSourcePath(const std::string& meshName);
+
+} // namespace mye

@@ -41,13 +41,13 @@ spec §4.1 の全部 (`--rt-class-override` を除く)。元計画 S1。ReSTIR �
 
 - `src\Engine\Renderer\RayTracing\RtTypes.h` (131-141)
 - `assets\shaders\rt_common.hlsli` (37-46 の `RtInstance`、282 の `RtHitMaterial` の隣、定数は 9-10 行の隣)
-- `src\Engine\Renderer\GpuResources.h` (182-196) / `GpuResources.cpp` (1001-1020 `ParseMaterialJson`)
+- `src\Engine\Renderer\Device\GpuResources.h` (182-196) / `GpuResources.cpp` (1001-1020 `ParseMaterialJson`)
 - `src\Engine\Engine\RayTracing\RtScene.cpp` (163-185)
-- `src\Editor\AssetOps.cpp` (327-345) / `src\Editor\AssetOpsSelfTest.cpp` (305-320)
-- `src\Editor\Windows\InspectorWindow.h` (60-70 `MaterialEdit`) / `.cpp` (1448-1500 load/save、1563-1572 スライダ)
+- `src\Editor\Asset\AssetOps.cpp` (327-345) / `src\Editor\Asset\AssetOpsSelfTest.cpp` (305-320)
+- `src\Editor\Windows\Scene\InspectorWindow.h` (60-70 `MaterialEdit`) / `.cpp` (1448-1500 load/save、1563-1572 スライダ)
 - `assets\shaders\rt_debug.cs.hlsl` (55-62)
-- `src\Editor\EditorApp.cpp` (1160-1200 RT Debug メニュー)
-- `src\Engine\Core\LocalizationTable.inl` (141-161 の RT 群、`Mat_*` 群)
+- `src\Editor\App\EditorApp.cpp` (1160-1200 RT Debug メニュー)
+- `src\Engine\Core\Localization\LocalizationTable.inl` (141-161 の RT 群、`Mat_*` 群)
 - `src\Engine\Engine\DemoContent.cpp` (1125-1150 `rdemo_*` / 2699-2732 `adem_*`)
 - `tools\check_rules.ps1` (`$constGroups`、90-110 の RT 群の隣)
 
@@ -89,25 +89,25 @@ SELF_EVAL: sub-02 (round 1)
   - assets\shaders\rt_common.hlsli — MYE_RT_REFL_CLASS_COUNT 5 / RtInstance.pad0 → reflectionClass /
     RtHitReflectionClass(RtHit) / RtReflClassColor(int)。色表は MYE_RT_REFL_CLASS_COUNT 長の
     配列にし、上限判定にもその定数を使う (定義するだけだと規則 9 の照合が形骸化する)
-  - src\Engine\Renderer\GpuResources.h:Material — 末尾に reflectionClass (既定 kRtReflClassDefault)。
+  - src\Engine\Renderer\Device\GpuResources.h:Material — 末尾に reflectionClass (既定 kRtReflClassDefault)。
     既定値を 1 箇所から取るため RtTypes.h を include
-  - src\Engine\Renderer\GpuResources.cpp:ParseMaterialJson — "reflectionClass" を is_number_integer()
+  - src\Engine\Renderer\Device\GpuResources.cpp:ParseMaterialJson — "reflectionClass" を is_number_integer()
     で型検査してから [0,5) を採用。欠損 / 非整数 / 範囲外は 4 (クランプしない)
   - src\Engine\Engine\RayTracing\RtScene.cpp:RtScene::Update — Material* を先に引く順へ入れ替え、
     inst.reflectionClass を充填 (mat==nullptr は 4)
-  - src\Editor\AssetOps.cpp:CreateMaterialAsset — 雛形に "reflectionClass": 4
+  - src\Editor\Asset\AssetOps.cpp:CreateMaterialAsset — 雛形に "reflectionClass": 4
   - src\Editor\Windows\InspectorWindow.{h,cpp} — MaterialEditState.reflectionClass /
     LoadMaterialEdit (ParseMaterialJson と同じ判定) / MaterialEditToJson / Combo 5 項目 + ツールチップ
   - assets\shaders\rt_debug.cs.hlsl — gDebugMode == 13 で RtReflClassColor(RtHitReflectionClass(hit))
-  - src\Editor\EditorApp.cpp — RT Debug メニューに mode 13 (11 の直後)
-  - src\Engine\Core\LocalizationTable.inl — Menu_RtDbgReflClass / Mat_ReflClass /
+  - src\Editor\App\EditorApp.cpp — RT Debug メニューに mode 13 (11 の直後)
+  - src\Engine\Core\Localization\LocalizationTable.inl — Menu_RtDbgReflClass / Mat_ReflClass /
     Insp_TipReflClass / ReflClass_Hero..Default を en/ja
   - src\Engine\Engine\DemoContent.cpp — makeMat に既定引数 reflClass を追加 (2 箇所)。
     rdemo_spin=0 / rdemo_pillar_a,b,c=3 / adem_player=0 / adem_agent_ear,eye=1。エンティティ追加なし・順序不変
-  - src\Editor\AssetOpsSelfTest.cpp — JSON 往復に reflectionClass を追加 + 範囲外/非整数 4 ケース +
+  - src\Editor\Asset\AssetOpsSelfTest.cpp — JSON 往復に reflectionClass を追加 + 範囲外/非整数 4 ケース +
     両端 (0/4) + Create > Material の雛形往復
   - tools\check_rules.ps1 — $constGroups に kRtReflClassCount / MYE_RT_REFL_CLASS_COUNT
-  - src\Engine\Renderer\RenderTypes.h — rtDebugMode のモード一覧コメントに 13 を追記 (コメントのみ)
+  - src\Engine\Renderer\Pipeline\RenderTypes.h — rtDebugMode のモード一覧コメントに 13 を追記 (コメントのみ)
 仕様との差分:
   - [追加] src\Engine\Engine\Asset\CookedCache.h:kCookVersion 1 → 2 +
     src\Engine\Engine\Asset\ModelCook.cpp の static_assert 56 → 64。理由: Material は cooked blob へ
@@ -175,20 +175,20 @@ SELF_EVAL: sub-02 (round 1)
 触ったファイル:
   - assets\shaders\rt_common.hlsli
   - assets\shaders\rt_debug.cs.hlsl
-  - src\Editor\AssetOps.cpp
-  - src\Editor\AssetOpsSelfTest.cpp
-  - src\Editor\EditorApp.cpp
-  - src\Editor\Windows\InspectorWindow.cpp
-  - src\Editor\Windows\InspectorWindow.h
-  - src\Engine\Core\LocalizationTable.inl
+  - src\Editor\Asset\AssetOps.cpp
+  - src\Editor\Asset\AssetOpsSelfTest.cpp
+  - src\Editor\App\EditorApp.cpp
+  - src\Editor\Windows\Scene\InspectorWindow.cpp
+  - src\Editor\Windows\Scene\InspectorWindow.h
+  - src\Engine\Core\Localization\LocalizationTable.inl
   - src\Engine\Engine\Asset\CookedCache.h
   - src\Engine\Engine\Asset\ModelCook.cpp
   - src\Engine\Engine\DemoContent.cpp
   - src\Engine\Engine\RayTracing\RtScene.cpp
-  - src\Engine\Renderer\GpuResources.cpp
-  - src\Engine\Renderer\GpuResources.h
+  - src\Engine\Renderer\Device\GpuResources.cpp
+  - src\Engine\Renderer\Device\GpuResources.h
   - src\Engine\Renderer\RayTracing\RtTypes.h
-  - src\Engine\Renderer\RenderTypes.h
+  - src\Engine\Renderer\Pipeline\RenderTypes.h
   - tools\check_rules.ps1
   - plans\m67-restir-reflection\sub-02.md (この実装メモ)
 申し送り:

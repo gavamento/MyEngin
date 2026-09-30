@@ -46,7 +46,7 @@ LoadLibrary して JSON が往復する」を潰す**。Source Control 窓はま
 ## 触る場所 (planner の見立て)
 
 - 新規: `tools\collab\**`、`tools\build_collab.bat`、`tools\collab_fixture.ps1`、`tools\collab_verify.bat` / `.ps1`、`tests\collab\*.ndjson`、`src\Editor\SourceControl\{CollabProtocol.h, CollabClient.h, CollabClient.cpp, SourceControlSelfTest.h, SourceControlSelfTest.cpp}`、`docs\adr\ADR-015-*.md`。
-- 変更: `.gitignore`、`.github\workflows\ci.yml`、`tools\check_rules.ps1`、`src\Editor\EditorMain.cpp` (連鎖末尾)、`build\Editor.vcxproj` (生成)、`engine_spec.md` §13 の一覧。
+- 変更: `.gitignore`、`.github\workflows\ci.yml`、`tools\check_rules.ps1`、`src\Editor\App\EditorMain.cpp` (連鎖末尾)、`build\Editor.vcxproj` (生成)、`engine_spec.md` §13 の一覧。
 - 前例: `src\Engine\Engine\Script\DllReloader.h` (LoadLibrary の流儀)、`BuildSettingsWindow.cpp:38-82` (子プロセス旗)、`tools\build_managed.bat` (sln 外ビルドの bat の型)、`ci.yml` の既存ステップ順。
 
 ## 受け入れ条件 (このサブ)

@@ -31,7 +31,7 @@ spec §4.1「焼き」、§4.2 `.msfm` / `.dmnet`、§4.4 スレッド (ユー�
 - `Platform/PathUtil`: `FindEngineDeepModalDir()` (単ルート、`FindEngineShaderDir` と同型)。呼び手で「プロジェクト assets\deepmodal → エンジン assets\deepmodal」。
 - `HotReload/ReloadHub`: `ReloadKind::ModalNet`、`{ L".dmnet", ReloadKind::ModalNet, 6 }` (rank)。処理は `ReloadModel()` → `Clear()`。
 - `EngineCli.cpp` の表に `--modal-backend <cpu|d3d11cs>` (`--particle-backend` と同型。未実装名は WARN + cpu、綴り違いは false = exit 1)。`EngineCliSelfTest` にケース。
-- `src\Editor\ModalTools.cpp` に `RunModalBakeCli(projectDir)`: `.dmnet` を読み AssetDatabase のモデルをヘッドレス登録 → 各 prim を `BakeSync` → `.msfm`。1 行/メッシュ (`name state ms validCells`) + 合計 (`bakes= bakeMsAvg=`)。exit 0 / 1 / 2 (モデル無し)。`EditorMain.cpp` では連鎖の外で拾う (sub-02 と同じ場所)。
+- `src\Editor\Tools\ModalTools.cpp` に `RunModalBakeCli(projectDir)`: `.dmnet` を読み AssetDatabase のモデルをヘッドレス登録 → 各 prim を `BakeSync` → `.msfm`。1 行/メッシュ (`name state ms validCells`) + 合計 (`bakes= bakeMsAvg=`)。exit 0 / 1 / 2 (モデル無し)。`EditorMain.cpp` では連鎖の外で拾う (sub-02 と同じ場所)。
 - `ModalSelfTest` に積み増し。selftest 連鎖に `RunModalSelfTest()` が無ければ足す。
 
 ## やらないこと (このサブでは)
@@ -42,7 +42,7 @@ spec §4.1「焼き」、§4.2 `.msfm` / `.dmnet`、§4.4 スレッド (ユー�
 - `src\Engine\Engine\Asset\` (AssetKey / CookedCache のどちらか。`kCookVersion` は触らない)、`Physics\ConvexColliderLibrary.cpp:31-41` (委譲)
 - `src\Engine\Engine\EngineLoop.h/.cpp` (260-274 / 2257 / 2530)、`Platform\PathUtil.h/.cpp`、`EngineCli.cpp` / `EngineLoop.h` (config フィールド)、`EngineCliSelfTest.cpp`
 - `HotReload\ReloadHub.h:55-70` / `.cpp:47-69`、`ReloadHubSelfTest.cpp`
-- `src\Editor\ModalTools.cpp`、`EditorMain.cpp`
+- `src\Editor\Tools\ModalTools.cpp`、`EditorMain.cpp`
 - 参考: `GpuResources.cpp:720` AsyncWorker、`RunFroxelVolumeProbe` (将来の GPU 読み戻しの雛形。今回は触らない)
 - ソース追加後 `pwsh -File tools\gen_project_files.ps1`
 
@@ -96,9 +96,9 @@ SELF_EVAL: sub-05 (round 1)
     同じ `CookedCache::ReadValidated/Write` を叩く。`namespace modalsound` (Install/
     Library/IsReady/Header) と `ResolveDeepModalPath` (プロジェクト→エンジンの
     2 ルート) も同ファイル。
-  - `src\Engine\Core\AssetKeyResolver.h/.cpp` — `assetkey::SourcePathForSubAssetKey`
+  - `src\Engine\Core\Asset\AssetKeyResolver.h/.cpp` — `assetkey::SourcePathForSubAssetKey`
     を新設 (`ParseSubAssetKey` + `assetguid::ResolvePath` の中身をここへ 1 本化)。
-  - `src\Engine\Engine\Physics\ConvexColliderLibrary.cpp` — `ConvexCookSourcePath` を
+  - `src\Engine\Engine\Physics\Collider\ConvexColliderLibrary.cpp` — `ConvexCookSourcePath` を
     `assetkey::SourcePathForSubAssetKey` への委譲に変更 (ビット中立、`AssetGuidResolver.h`
     の直接 include を削除)。
   - `src\Engine\Platform\PathUtil.h/.cpp` — `FindEngineDeepModalDir()` (`FindEngineShaderDir`
@@ -115,13 +115,13 @@ SELF_EVAL: sub-05 (round 1)
     Init→SetBackendByName→Install→LoadModel の順で配線 (260 行台)、`Pump()` を
     `audioSources.Update` の**直前**に追加 (2257 行付近)、`modalsound::Install(nullptr)`
     → `Shutdown()` を `convexcol::Install(nullptr)` の隣に追加 (2530 行付近)。
-  - `src\Editor\ModalTools.h/.cpp` — `RunModalBakeCli(projectDir)`: assets を再帰走査して
+  - `src\Editor\Tools\ModalTools.h/.cpp` — `RunModalBakeCli(projectDir)`: assets を再帰走査して
     `.fbx/.glb/.gltf` をヘッドレス登録 (`AssetDatabase::ScanAndSync/InstallAsKeyResolver`
     経由、`SubAssetMigration.cpp::RunMigration` と同じ手順) → 登録済み全メッシュを
     `BakeSync` → 1 行/メッシュ (`name state ms validCells`) + 合計行
     (`models= bakes= bakeMsAvg=`)。`CookedCache::Configure` の cookedDir 二経路は
     `EngineLoop.cpp` の起動配線と同じ式。
-  - `src\Editor\EditorMain.cpp` — `--modal-bake` を `--modal-voxelize` と同じ「連鎖の
+  - `src\Editor\App\EditorMain.cpp` — `--modal-bake` を `--modal-voxelize` と同じ「連鎖の
     手前」で拾って `RunModalBakeCli(projectDir)` へ (`--project` は既存の連鎖内で
     先に処理されるので、ここに来る時点で確定済み)。
   - `src\Engine\Engine\Modal\ModalSelfTest.cpp` — 6 節・44 チェックを追加
@@ -264,9 +264,9 @@ SELF_EVAL: sub-05 (round 1)
   - src\Engine\Engine\Modal\ModalSoundLibrary.h (新規)
   - src\Engine\Engine\Modal\ModalSoundLibrary.cpp (新規)
   - src\Engine\Engine\Modal\ModalSelfTest.cpp
-  - src\Engine\Core\AssetKeyResolver.h
-  - src\Engine\Core\AssetKeyResolver.cpp
-  - src\Engine\Engine\Physics\ConvexColliderLibrary.cpp
+  - src\Engine\Core\Asset\AssetKeyResolver.h
+  - src\Engine\Core\Asset\AssetKeyResolver.cpp
+  - src\Engine\Engine\Physics\Collider\ConvexColliderLibrary.cpp
   - src\Engine\Platform\PathUtil.h
   - src\Engine\Platform\PathUtil.cpp
   - src\Engine\Engine\HotReload\ReloadHub.h
@@ -276,9 +276,9 @@ SELF_EVAL: sub-05 (round 1)
   - src\Engine\Engine\EngineCliSelfTest.cpp
   - src\Engine\Engine\EngineLoop.h
   - src\Engine\Engine\EngineLoop.cpp
-  - src\Editor\ModalTools.h
-  - src\Editor\ModalTools.cpp
-  - src\Editor\EditorMain.cpp
+  - src\Editor\Tools\ModalTools.h
+  - src\Editor\Tools\ModalTools.cpp
+  - src\Editor\App\EditorMain.cpp
   - build\Engine.vcxproj (機械生成)
   - build\Engine.vcxproj.filters (機械生成)
 

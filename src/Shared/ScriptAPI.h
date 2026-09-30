@@ -165,7 +165,7 @@ void (*GetBreakFn())(void*, MyeUpdateContext*, MyeEntityId, MyeVec3, float)
 
 inline uint64_t LayoutHash(const MyeScriptField* fields, uint32_t count)
 {
-    // FNV-1a (Engine/Core/Hash.h と同じ定数 — Shared はエンジンヘッダを include できないため再掲)
+    // FNV-1a (Engine/Core/Util/Hash.h と同じ定数 — Shared はエンジンヘッダを include できないため再掲)
     uint64_t h = 14695981039346656037ull;
     auto mix = [&h](const void* data, size_t size) {
         const unsigned char* p = static_cast<const unsigned char*>(data);
@@ -311,7 +311,7 @@ struct Registrar {
 
 // ---- スクリプト用ユーティリティ (DLL 内で完結。境界は越えない) ----
 
-// 名前 → ハッシュ。FNV-1a 64bit で **Engine/Core/Hash.h の HashStr と同一の定数**
+// 名前 → ハッシュ。FNV-1a 64bit で **Engine/Core/Util/Hash.h の HashStr と同一の定数**
 // (MyePartTag と同じ再掲。一致は SchemaSelfTest が機械検査している)。
 // ★この節の先頭に置くのは、下の MyeGameObject が WorldMatrix を引くのに使うため
 inline constexpr uint64_t MyeNameHash(const char* name)
@@ -526,7 +526,7 @@ inline void MyeStopMusic(const MyeUpdateContext& ctx, float fadeSeconds = 1.0f)
 //     const MyeEntityId hand = MyeFindPart(ctx, enemy, "Hips/HandR");
 //     if (!MyeEntityIdIsNull(hand)) { ctx.api->Instantiate(ctx.api->engine, "fx_fire", {}, hand); }
 
-// タグ名 → タグ ID。FNV-1a 64bit で、**Engine/Core/Hash.h の HashStr と同一の定数**。
+// タグ名 → タグ ID。FNV-1a 64bit で、**Engine/Core/Util/Hash.h の HashStr と同一の定数**。
 // Shared はエンジンヘッダを include できないので再掲する (LayoutHash と同じ扱い)。
 // 一致は PartSelfTest が MyePartTag == Parts::TagOf で機械検査している
 inline constexpr uint64_t MyePartTag(const char* name)

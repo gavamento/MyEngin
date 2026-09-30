@@ -140,8 +140,8 @@ eplay_verify.bat` → exit 0 (10 ジョブ、**無変更緑**)
   - `tests/collab/0{1..7}_*.expected.ndjson` (status の 2 キー追加ぶんの撮り直し)
   - `src/Editor/SourceControl/CollabProtocol.h` / `SourceControlState.h` / `SourceControlState.cpp`
   - `src/Editor/SourceControl/GitTransaction.h` / `GitTransaction.cpp` / `SourceControlSelfTest.cpp`
-  - `src/Editor/Windows/SourceControlWindow.h` / `SourceControlWindow.cpp`
-  - `src/Editor/EditorApp.cpp` / `src/Engine/Core/LocalizationTable.inl`
+  - `src/Editor/Windows/Project/SourceControlWindow.h` / `SourceControlWindow.cpp`
+  - `src/Editor/App/EditorApp.cpp` / `src/Engine/Core/Localization/LocalizationTable.inl`
   - `plans/m66-git-collab/sub-07.md` (この節)
 
 申し送り:

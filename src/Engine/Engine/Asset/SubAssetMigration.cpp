@@ -10,16 +10,16 @@
 #include <iterator>
 #include <system_error>
 
-#include "Engine/Core/AssetGuidResolver.h"
-#include "Engine/Core/AssetKeyResolver.h"
-#include "Engine/Core/Hash.h"
-#include "Engine/Engine/AssetDatabase.h"
-#include "Engine/Engine/FbxLoader.h"
-#include "Engine/Engine/ModelLoader.h"
+#include "Engine/Core/Asset/AssetGuidResolver.h"
+#include "Engine/Core/Asset/AssetKeyResolver.h"
+#include "Engine/Core/Util/Hash.h"
+#include "Engine/Engine/Asset/AssetDatabase.h"
+#include "Engine/Engine/Asset/FbxLoader.h"
+#include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Platform/PathUtil.h"
-#include "Engine/Renderer/GpuResources.h"
-#include "Engine/Renderer/ShaderManager.h"
-#include "Engine/Renderer/Skeleton.h"
+#include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Shader/ShaderManager.h"
+#include "Engine/Renderer/Mesh/Skeleton.h"
 
 namespace fs = std::filesystem;
 

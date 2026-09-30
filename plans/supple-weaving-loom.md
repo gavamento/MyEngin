@@ -78,7 +78,7 @@ EngineLoop (所有)
   検証済みの独立系)。粒子順 = 池順 = owner.index 昇順。接触候補は明示キーで整列。
   乱数は使わない (XPBD に乱数は不要)。`std::cos/sin` 禁止 (`AeroSampling.h:16-19` と同じ理由)。
 - **コードの置き場**: `PhysicsSystem::Update` は既に 3400 行の単一関数。XPBD は
-  `src\Engine\Engine\Physics\XpbdBackend.h/.cpp` (池と Sync) +
+  `src\Engine\Engine\Physics\Xpbd\XpbdBackend.h/.cpp` (池と Sync) +
   `XpbdSolver.h/.cpp` (拘束射影の純関数群) の新規ファイルに置き、Update からは
   段ごとの呼び出しだけを書く。
 

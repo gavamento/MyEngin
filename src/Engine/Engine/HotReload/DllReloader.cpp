@@ -7,7 +7,7 @@
 
 #include <Windows.h>
 
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Script/ScriptHost.h"
 #include "Engine/Platform/PathUtil.h"
 

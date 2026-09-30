@@ -104,10 +104,10 @@ Inspector のプレビュー既定値 (4.0) と ヘッドレス `kProbeImpulse` 
 - `shot_verify` の 2 枚 (pre-existing、spec §8 で決着済み)
 
 ## 触る場所 (planner の見立て)
-- `src\Engine\Engine\Audio\ModalAudio.h/.cpp` (`C(J)` の導入、定数)、`Acoustic\AcousticGrid.h` (`kImpactRefImpulse` を使う)
-- `src\Engine\Engine\Audio\ModalAudioSelfTest.cpp` (カーブの単調性・下限・目標点)
-- `src\Editor\ModalTools.cpp` (`--modal-bake` の `silent=` 集計)
-- `src\Editor\Windows\InspectorWindow.cpp` (共有定数化 + 結果表示、指摘 2 と対)
+- `src\Engine\Engine\Audio\Synth\ModalAudio.h/.cpp` (`C(J)` の導入、定数)、`Acoustic\AcousticGrid.h` (`kImpactRefImpulse` を使う)
+- `src\Engine\Engine\Audio\Synth\ModalAudioSelfTest.cpp` (カーブの単調性・下限・目標点)
+- `src\Editor\Tools\ModalTools.cpp` (`--modal-bake` の `silent=` 集計)
+- `src\Editor\Windows\Scene\InspectorWindow.cpp` (共有定数化 + 結果表示、指摘 2 と対)
 - `src\Engine\Engine\DemoContent.cpp` (末尾に sphere を 1 個)
 - `tools\deepmodal\export.py` / `README.md`、`assets\deepmodal\deepmodal.dmnet` (再 export)
 - `engine_spec.md` / `docs\adr\ADR-020-deep-modal.md` / `.gitattributes`
@@ -146,13 +146,13 @@ spec §5 の **24, 25**。
 
 SELF_EVAL: sub-10 (round 1)
 実装:
-  - `src/Engine/Engine/Audio/ModalAudio.h/.cpp` — `ModalImpulseCurve(J)` (`C(J) = kImpactRefImpulse·(J/kImpactRefImpulse)^kModalImpulseExponent`) を追加。`CollectModalImpacts` の `emitSide` で `k[]` を組む直前に適用 (`excessImpulse` は生の J のまま保持。ログ/`kImpactMinImpulse` の擦り判定は圧縮前)。`kModalPreviewDefaultImpulse=15.0f` を新設 (Inspector と `--modal-face-probe` の共有既定値、指摘 2 の是正)。`CollectModalImpacts` 冒頭に `ModalSoundComponent` を持つアーキタイプが 1 つも無ければ即 return するガードを追加 (指摘 6)。
-  - `src/Engine/Engine/Audio/ModalAudioSelfTest.cpp` — 既存テスト (1) を圧縮後の値と比較するよう修正、新規 (9) で `ModalImpulseCurve` の `C(J<=0)=0` / `C(ref)=ref` / Checkpoint J 単調性 / 独立 double 参照との一致を検査。
-  - `src/Engine/Engine/Audio/AudioSourceSystem.cpp` — `--modal-face-probe` の独自定数 `kProbeImpulse` を `kModalPreviewDefaultImpulse` へ一本化し `ModalImpulseCurve()` を適用。`[追加]` 診断用環境変数 `MYE_MODAL_PROBE_IMPULSE` で probe 力積を上書き可能にした (dBFS×J 較正表を実測するのに任意の J が要るため)。
-  - `src/Editor/Windows/InspectorWindow.h/.cpp` — `ModalAudio.h` を include し `ModalPreviewState.impulse` の既定値を共有定数化。`everFired`/`lastResult` を追加し、`FireModalPreviewFace` が `Played` 以外も含めて必ず記録・`ModalImpulseCurve()` を適用するよう修正。`DrawModalSoundNotes` に直近結果の表示行 (`Insp_ModalResultHeading`) を追加、`ModalShotResultLabel()` を新設 (指摘 2 の是正、H の規則)。
-  - `src/Engine/Core/LocalizationTable.inl` — `Insp_ModalResultHeading`/`Played`/`NotReady`/`NoModel`/`Cooldown`/`BelowMin`/`PoolFull`/`PlayFailed` の 8 エントリを追加 (en/ja)。
+  - `src/Engine/Engine/Audio/Synth/ModalAudio.h/.cpp` — `ModalImpulseCurve(J)` (`C(J) = kImpactRefImpulse·(J/kImpactRefImpulse)^kModalImpulseExponent`) を追加。`CollectModalImpacts` の `emitSide` で `k[]` を組む直前に適用 (`excessImpulse` は生の J のまま保持。ログ/`kImpactMinImpulse` の擦り判定は圧縮前)。`kModalPreviewDefaultImpulse=15.0f` を新設 (Inspector と `--modal-face-probe` の共有既定値、指摘 2 の是正)。`CollectModalImpacts` 冒頭に `ModalSoundComponent` を持つアーキタイプが 1 つも無ければ即 return するガードを追加 (指摘 6)。
+  - `src/Engine/Engine/Audio/Synth/ModalAudioSelfTest.cpp` — 既存テスト (1) を圧縮後の値と比較するよう修正、新規 (9) で `ModalImpulseCurve` の `C(J<=0)=0` / `C(ref)=ref` / Checkpoint J 単調性 / 独立 double 参照との一致を検査。
+  - `src/Engine/Engine/Audio/Playback/AudioSourceSystem.cpp` — `--modal-face-probe` の独自定数 `kProbeImpulse` を `kModalPreviewDefaultImpulse` へ一本化し `ModalImpulseCurve()` を適用。`[追加]` 診断用環境変数 `MYE_MODAL_PROBE_IMPULSE` で probe 力積を上書き可能にした (dBFS×J 較正表を実測するのに任意の J が要るため)。
+  - `src/Editor/Windows/Scene/InspectorWindow.h/.cpp` — `ModalAudio.h` を include し `ModalPreviewState.impulse` の既定値を共有定数化。`everFired`/`lastResult` を追加し、`FireModalPreviewFace` が `Played` 以外も含めて必ず記録・`ModalImpulseCurve()` を適用するよう修正。`DrawModalSoundNotes` に直近結果の表示行 (`Insp_ModalResultHeading`) を追加、`ModalShotResultLabel()` を新設 (指摘 2 の是正、H の規則)。
+  - `src/Engine/Core/Localization/LocalizationTable.inl` — `Insp_ModalResultHeading`/`Played`/`NotReady`/`NoModel`/`Cooldown`/`BelowMin`/`PoolFull`/`PlayFailed` の 8 エントリを追加 (en/ja)。
   - `src/Engine/Engine/Modal/ModalFeatureMap.h/.cpp` — `ModalFeatureMapAllMaskOff(map, maskThreshold)` を新設 (`BuildModes` 手順 3 と同じ閾値式で全 cell・全帯域 mask off を判定、C の可視化)。
-  - `src/Editor/ModalTools.h/.cpp`、`src/Editor/EditorMain.cpp` — `RunModalBakeCli` に `backendName` 引数を追加し `--modal-backend` を実際に通す (指摘 5 の是正、旧実装は "cpu" 固定で黙って無視)。bake ループで `ModalFeatureMapAllMaskOff` を呼び `silent` タグ + `silent=N` 集計を出力に追加 (C)。ループ末尾で `lib.FlushDirtyTables()` を明示呼び出し。
+  - `src/Editor/Tools/ModalTools.h/.cpp`、`src/Editor/App/EditorMain.cpp` — `RunModalBakeCli` に `backendName` 引数を追加し `--modal-backend` を実際に通す (指摘 5 の是正、旧実装は "cpu" 固定で黙って無視)。bake ループで `ModalFeatureMapAllMaskOff` を呼び `silent` タグ + `silent=N` 集計を出力に追加 (C)。ループ末尾で `lib.FlushDirtyTables()` を明示呼び出し。
   - `src/Engine/Engine/Modal/ModalSoundLibrary.h/.cpp` — `dirtyTables_` (dirty フラグ) を追加し `UpdateTableEntry` は保存せず dirty 登録のみに変更、`FlushDirtyTables()` を新設して `Shutdown()`/`Clear()` から呼ぶ (指摘 3 の是正、O(n²) I/O を解消)。
   - `src/Engine/Engine/Modal/ModalSelfTest.cpp` — fixture.dmnet の `bandCenterHz[32]` (Python が焼いた値) と C++ の `MelBandCenters()` を 1e-2Hz で照合するテストを追加 (指摘 4 の是正。既存の `ModalSynthSelfTest.cpp` の同語反復テストはそのまま残した — reviewer の期待は「足す」であって「置き換える」ではないため)。
   - `src/Engine/Engine/DemoContent.cpp` — `BuildModalShowcaseScene`/`RegisterModalShowcaseContent` の**末尾**に `builtin://sphere` を使う `TileSphere` (物理マテリアル `tile`) を追加 (E、指摘 7)。
@@ -214,16 +214,16 @@ SELF_EVAL: sub-10 (round 1)
   - assets/deepmodal/deepmodal.dmnet
   - docs/adr/ADR-020-deep-modal.md
   - engine_spec.md
-  - src/Editor/EditorMain.cpp
-  - src/Editor/ModalTools.cpp
-  - src/Editor/ModalTools.h
-  - src/Editor/Windows/InspectorWindow.cpp
-  - src/Editor/Windows/InspectorWindow.h
-  - src/Engine/Core/LocalizationTable.inl
-  - src/Engine/Engine/Audio/AudioSourceSystem.cpp
-  - src/Engine/Engine/Audio/ModalAudio.cpp
-  - src/Engine/Engine/Audio/ModalAudio.h
-  - src/Engine/Engine/Audio/ModalAudioSelfTest.cpp
+  - src/Editor/App/EditorMain.cpp
+  - src/Editor/Tools/ModalTools.cpp
+  - src/Editor/Tools/ModalTools.h
+  - src/Editor/Windows/Scene/InspectorWindow.cpp
+  - src/Editor/Windows/Scene/InspectorWindow.h
+  - src/Engine/Core/Localization/LocalizationTable.inl
+  - src/Engine/Engine/Audio/Playback/AudioSourceSystem.cpp
+  - src/Engine/Engine/Audio/Synth/ModalAudio.cpp
+  - src/Engine/Engine/Audio/Synth/ModalAudio.h
+  - src/Engine/Engine/Audio/Synth/ModalAudioSelfTest.cpp
   - src/Engine/Engine/DemoContent.cpp
   - src/Engine/Engine/Modal/ModalFeatureMap.cpp
   - src/Engine/Engine/Modal/ModalFeatureMap.h
@@ -252,7 +252,7 @@ SELF_EVAL: sub-10 (round 3)
 すべて今回のセッションで実行したコマンドの出力から直接書き起こしています。
 
 実装 (round 3、round 2 の must #1 を反映):
-  - `src/Engine/Engine/Audio/ModalAudio.h` — `kModalImpulseExponent` を **0.18 → 0.5** へ変更。
+  - `src/Engine/Engine/Audio/Synth/ModalAudio.h` — `kModalImpulseExponent` を **0.18 → 0.5** へ変更。
     コメントを全面的に書き直し、「p は demo の張り付き回避で決めない」「現実的な力積域
     (0.35〜100 N・s) の音量差が既存の波レーン (`acoustic::ImpactGain`、J=0.35→6 に 24.7dB) と
     同等になるよう選ぶ」「アンカー (`C(kImpactRefImpulse)=kImpactRefImpulse`) は p に依らない
@@ -283,7 +283,7 @@ SELF_EVAL: sub-10 (round 3)
     ないと解釈し、20/20 (belowMin=0, playFailed=0) をもって満たしたと判断した。
 
 検証 (すべて今回のセッションで実行、コマンドと出力を直接記録):
-  - `grep -n "kModalImpulseExponent = " src/Engine/Engine/Audio/ModalAudio.h` →
+  - `grep -n "kModalImpulseExponent = " src/Engine/Engine/Audio/Synth/ModalAudio.h` →
     `constexpr float kModalImpulseExponent = 0.5f;` (確認 1)。
   - `python3` で `assets/deepmodal/deepmodal.dmnet` のヘッダを直接 parse →
     `ampScale=11478.0`、`weightsHash=5553600061897636384`。`git show HEAD:...` で取り出した
@@ -363,7 +363,7 @@ SELF_EVAL: sub-10 (round 3)
      不変条件の解釈 (総数ではなく「全 Played」) で良いか、確認をお願いします。
 
 触ったファイル (round 3、round 1 からの追加分):
-  - src/Engine/Engine/Audio/ModalAudio.h (kModalImpulseExponent 0.18→0.5 + コメント全面改稿)
+  - src/Engine/Engine/Audio/Synth/ModalAudio.h (kModalImpulseExponent 0.18→0.5 + コメント全面改稿)
   - src/Engine/Engine/DemoContent.cpp (4 物体の質量を useDensity から直接指定へ)
   - engine_spec.md (§10.7.2 の p 選定根拠と表を全面更新)
   - docs/adr/ADR-020-deep-modal.md (決定 10 全面改稿、決定 12 の 20/20 注記、決定 5 の -8.0dBFS 訂正)

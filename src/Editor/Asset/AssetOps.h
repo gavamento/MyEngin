@@ -1,0 +1,208 @@
+#pragma once
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include <DirectXMath.h>
+
+#include "Engine/Core/Ecs/EntityID.h"
+#include "Engine/Engine/Asset/AssetDatabase.h" // AssetType
+
+namespace mye {
+
+struct EngineContext;
+struct Selection;
+class UndoStack;
+
+// AssetBrowser のドラッグ&ドロップ用ペイロード名。データは UTF-8 のファイルパス (null 終端)。
+inline constexpr const char* kAssetDragPayload = "MYE_ASSET";
+
+// ---- ファイル名ユーティリティ (M50b で公開) ----
+// 禁止文字 (\/:*?"<>| + 制御文字) を除去する緩いサニタイズ。非 ASCII (日本語名) は通す。
+// 前後空白と末尾ドットを落とし、空になったら fallback
+std::string SanitizeFileName(const std::string& in, const char* fallback);
+// destDir 直下で衝突しない絶対パスを返す ("name.ext" → "name (1).ext"。
+// .actor.json 等の複合サフィックスは維持)
+std::wstring MakeUniqueAssetPath(const std::wstring& destDir, const std::wstring& filename);
+
+// ---- アセット新規作成 (AssetBrowser の右クリック Create) ----
+// M51i: 戻り値を作成パスに変更 (Create Undo 記録のため。失敗は空)
+std::wstring CreateFolderAsset(const std::wstring& dir, const std::string& name);
+std::wstring CreateSceneAsset(const std::wstring& dir, const std::string& name);   // .scene.json (空)
+std::wstring CreateAnimationAsset(EngineContext& ctx, const std::wstring& dir,
+                                  const std::string& name);                        // .anim.json
+std::wstring CreateMaterialAsset(EngineContext& ctx, const std::wstring& dir,
+                                 const std::string& name);                         // .mat.json
+std::wstring CreateSoundAsset(EngineContext& ctx, const std::wstring& dir,
+                              const std::string& name);                            // .sound.json
+std::wstring CreateMixerAsset(EngineContext& ctx, const std::wstring& dir,
+                              const std::string& name);                            // .mixer.json
+std::wstring CreatePhysMatAsset(EngineContext& ctx, const std::wstring& dir,
+                                const std::string& name);                          // .physmat.json (M59a1)
+// M78: プロジェクトポスト／コンピュート／fxstack (HLSL は assetsRoot\shaders 固定)
+std::wstring CreatePostShaderAsset(EngineContext& ctx, const std::wstring& dir,
+                                 const std::string& name);   // *.post.hlsl (dir = Browser カレント)
+std::wstring CreateComputeShaderAsset(EngineContext& ctx, const std::wstring& dir,
+                                      const std::string& name); // *.cs.hlsl
+// M79 sub-04: プロジェクトサーフェスシェーダー (VSMain/PSMain + Properties)
+std::wstring CreateSurfaceShaderAsset(EngineContext& ctx, const std::wstring& dir,
+                                      const std::string& name); // *.surface.hlsl
+std::wstring CreateFxStackAsset(EngineContext& ctx, const std::wstring& dir,
+                                const std::string& name);                          // *.fxstack.json
+// post + fxstack を同じ stem で生成。戻り値は fxstack パス (失敗は空)
+std::wstring CreatePostEffectSet(EngineContext& ctx, const std::wstring& dir,
+                                 const std::string& name);
+// .actor.json (M48d)。ルート 1 個だけの最小構成アセット。**新規作成は常に .actor.json** —
+// 既存 .prefab.json は読み書きとも据え置き (強制移行しない)
+std::wstring CreateActorAsset(EngineContext& ctx, const std::wstring& dir,
+                              const std::string& name);                            // .actor.json
+// <root>\src\GameLogic\Scripts\<name>.cpp。root はプロジェクト起動なら <project>、
+// レガシー起動ならエンジンリポジトリ
+std::wstring CreateCppScript(EngineContext& ctx, const std::string& name);
+std::wstring CreateCSharpScript(EngineContext& ctx, const std::string& name); // assets\scripts\<name>.cs
+
+// ---- 外部ファイルインポート (エクスプローラー D&D) ----
+struct ImportResult {
+    int imported = 0; // コピーしたファイル数 (フォルダ内の個々のファイルも数える)
+    int skipped = 0;  // 自己ドロップ / .meta / OS ゴミファイルでスキップ
+    int failed = 0;   // コピー失敗
+};
+// srcs (絶対パス) を destDir へコピーし .meta を付与する。フォルダは再帰コピー。
+// 同名は "name (1).ext" 形式で自動リネーム (.scene.json 等の複合サフィックスは維持)
+ImportResult ImportExternalPaths(EngineContext& ctx, const std::vector<std::wstring>& srcs,
+                                 const std::wstring& destDir);
+
+// ---- アセット移動 (グリッド/ツリーへの D&D、M30b) ----
+// srcPath (ファイル or フォルダ) を destDir 直下へ移動する。**.meta を同伴移動** して GUID を
+// 永続させ (インポートと違い外部由来でないので安全)、ctx.assetDb の実行時テーブルも更新する。
+// 同一フォルダ / 自己・子孫への移動 / .meta 直接指定は無視。同名衝突は " (1)" 連番。
+// undo 非 null なら Relocate エントリを積む (M51i)。戻り値: 移動後の絶対パス (無視/失敗は空)
+std::wstring MoveAssetToFolder(EngineContext& ctx, const std::wstring& srcPath,
+                               const std::wstring& destDir, UndoStack* undo = nullptr);
+
+// ---- アセットリネーム (右クリック → Rename、M30d) ----
+// srcPath を同じフォルダ内で newName にリネームする。ファイルは拡張子/複合サフィックス
+// (.prefab.json 等) を維持し newName は stem のみ (Unity 同様)。.meta を同伴リネームして
+// GUID を永続させ (= シーン参照維持)、ctx.assetDb のテーブルも更新する。
+// 不正文字 (\/:*?"<>|) は拒否。同名衝突は " (1)" 連番。
+// undo 非 null なら Relocate エントリを積む (M51i)。戻り値: 新パス (無視/失敗は空)
+std::wstring RenameAsset(EngineContext& ctx, const std::wstring& srcPath,
+                         const std::string& newName, UndoStack* undo = nullptr);
+
+// ---- アセット削除 (M51i) ----
+// path (ファイル or フォルダ) を **ごみ箱** へ移動する (IFileOperation + FOF_ALLOWUNDO)。
+// ファイルは .meta を同伴し、フォルダは配下ごと。ctx.assetDb の実行時テーブルからも除去する。
+// UndoStack には積まない — 復元手段はごみ箱 (OS の「元に戻す」→ エディタ再起動の再走査で復活)
+bool DeleteAssetToRecycleBin(EngineContext& ctx, const std::wstring& path);
+
+// ---- アセット複製 (M51i、Ctrl+D) ----
+// srcPath を同じフォルダ内へ "name (1).ext" 連番でコピーする。**旧 .meta はコピーしない** —
+// 新パスのパスハッシュで新規 GUID を発行する (GUID の複製は byGuid_ の後勝ち上書きで
+// 既存シーン参照が複製物へ張り替わる事故になる)。フォルダは配下を再帰コピー
+// (.meta 除外 = 全ファイル新 GUID)。undo 非 null なら Duplicate エントリを積む。
+// 戻り値: 複製先の絶対パス (失敗は空)
+std::wstring DuplicateAsset(EngineContext& ctx, const std::wstring& srcPath,
+                            UndoStack* undo = nullptr);
+
+// ---- Create の Undo 記録 (M51i) ----
+// 生成直後のアセットを Create エントリとして積む (undo = ごみ箱へ / redo = 内容を書き戻す)。
+// Create* の署名は変えない — InstantiateAssetAtPath 内部の CreateSoundAsset (シーン Undo
+// エントリの一部) を独立エントリに割らないため、記録は AssetBrowser の Create 経路だけが行う
+void RecordAssetCreated(UndoStack& undo, const std::wstring& path);
+
+// 複合サフィックス (.scene.json 等) を保ったままファイル名を stem/suffix に分割する
+// (リネーム UI のプリフィル用に公開。実装は ImportExternalPaths と共用)
+void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstring& suffix);
+
+// ---- ピッカーのディスク候補 ----
+struct DiskAssetCandidate {
+    std::wstring path;   // 絶対パス
+    std::string relUtf8; // assetsRoot からの相対パス (表示用)
+};
+// assetsRoot 以下の種別 type のファイルを相対パス順に列挙する (.meta は除く)。
+// ディスクを読むだけで .meta は作らない — GUID は選ばれたときに AssetDatabase::GuidForPath で確定する。
+// 再帰走査なので、Inspector はポップアップを開いている間だけ呼ぶ (毎フレーム呼ぶと重い)
+std::vector<DiskAssetCandidate> CollectDiskAssetCandidates(const std::wstring& assetsRoot, AssetType type);
+
+// ---- アセット配置 (ドラッグ&ドロップ) ----
+// path が .prefab.json ならインスタンス化、.glb/.gltf ならモデルロード。1 Undo エントリ + 自動選択。
+// pos 非 null でその位置に、parentFileId 非 0 でその子に配置。
+void InstantiateAssetAtPath(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                            const std::wstring& path, const DirectX::XMFLOAT3* pos,
+                            uint64_t parentFileId);
+
+// ---- スクリプトアタッチ (D&D で .cs をエンティティへ、M31) ----
+// csPath (.cs) から C# スクリプトコンポーネント (生成 .cs は namespace 無し → FullName ==
+// ファイル名 stem) を target に付与する。未登録なら CompileCSharpScripts で自動コンパイルして
+// から再解決する。付与は Add Component と同じ 1 Undo エントリ + 付与先を自動選択。
+// 戻り値: 成功なら true (種別違い / 未解決 / 二重付与は false で WARN ログ)
+bool AttachScriptToEntity(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                          const std::wstring& csPath, EntityID target);
+
+// ---- マテリアル割当 (D&D で .mat.json をエンティティへ) ----
+// matPath (.mat.json) をロードして target の MeshRenderer に割り当てる
+// (AssetBrowser ダブルクリック割当と同じ流儀の 1 Undo エントリ)。
+// 戻り値: 成功なら true (MeshRenderer 不在 / ロード失敗は false で WARN ログ)
+bool AssignMaterialToEntity(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                            const std::wstring& matPath, EntityID target);
+
+// ---- スクリプトワークフロー ----
+void OpenInExternalEditor(const std::string& editorCmd, const std::wstring& path); // {file}/{line} 置換
+void CompileCSharpScripts(EngineContext& ctx); // assets\scripts\*.cs をエンジン内 Roslyn でコンパイル
+
+// C++ スクリプトのビルド (M51j。**唯一の起動口**)。
+// プロジェクト起動時は <project>\src\GameLogic\Scripts\*.cpp を <project>\cache\ に
+// 生成した vcxproj で、レガシー起動時は tools\build_scripts.bat でビルドする。
+// プロセスハンドル (void* = HANDLE) を返し、呼び出し側が毎フレームポーリングして
+// 完了と終了コードを拾う。出力は logPathOut のファイルへリダイレクトされる
+// (pause で止まらないよう stdin は NUL)。失敗 (bat 不在等) は nullptr。
+// ★ハンドルは呼び出し側が CloseHandle すること。**走っている間は書き込み系 git 操作の
+//   ゲートを閉じる** (bin\ と cache\ を書き換えている最中に checkout が通らないように)
+void* StartGameLogicBuild(EngineContext& ctx, std::wstring& logPathOut);
+
+// 起動時の C++ スクリプト自動焼き直し (2026-09-18) を撃つかどうかの判定。**純関数** (I/O 無し)。
+// 引数はすべて呼び出し側が観測した事実:
+//   hasProject    … --project 起動か。裸起動では撃たない — replay / shot / CI は全部裸起動
+//                   (tools\collab_fixture.ps1 冒頭) なので、検証の最中に MSBuild が走って
+//                   DLL が入れ替わる事故を仕組みとして起こさない
+//   packaging     … --package 実行中か。BuildSettings のパイプラインが自分で焼くので、
+//                   同じ vcxproj / obj を 2 プロセスが同時に叩かないよう撃たない
+//   scriptsLoaded … 初回ロードが成功したか (DllReloader::Version() != 0)。
+//                   ★判定を「DLL が古いか」ではなく「ロードできたか」に置いている =
+//                     mtime を推測しないので誤爆がゼロ。代わりに「ソースの方が新しいのに
+//                     ロードは通る」古い DLL は拾えない (それは別の段の話)
+//   scriptCount   … <project>\src\GameLogic\Scripts の .cpp 本数。0 本なら DLL が無いのが
+//                   正常なので撃たない
+bool ShouldAutoRebuildScripts(bool hasProject, bool packaging, bool scriptsLoaded,
+                              size_t scriptCount);
+
+// <project>\src\GameLogic\Scripts 直下の .cpp を数える (再帰しない。無ければ 0)。
+// ★列挙条件は PrepareProjectScriptsBat と同じに保つこと — 「撃つと決めた根拠」と
+//   「実際にコンパイルされる一覧」がずれると、中身 0 本の DLL を焼いて成功扱いになる
+size_t CountProjectScriptSources(const std::wstring& projectRoot);
+
+// MyeCollab.dll (Rust) の初回自動ビルド (M66m)。EditorApp が起動直後、DLL が見つからず
+// Unavailable::NoService になったときだけ呼ぶ。cargo が PATH にも rustup の既定
+// インストール先にも見つからなければ**何もせず nullptr** (ログもしない) — rustup 未導入は
+// CollabClient::Load と同じく正常な縮退であって異常ではない。エンジンリポジトリが
+// 見つからない (配布 exe 等) 場合も同様に nullptr。
+// StartGameLogicBuild と同型 (cmd.exe /c 経由、stdout/stderr をログへ、stdin は NUL、
+// CREATE_NO_WINDOW)。ハンドルは呼び出し側が CloseHandle すること
+void* StartCollabBuild(std::wstring& logPathOut);
+
+// build_scripts.log の 1 行を Console へ流すための分解結果 (M66h)
+struct BuildErrorLine {
+    std::string file; // MSVC が告げたソースパス。空 = 行番号が無い形 (LINK エラー等)
+    int line = 0;     // 1 以上なら Console のソースジャンプが使える
+    std::string text; // ログの行 (前後の空白を落としたもの)
+};
+
+// MSBuild / MSVC のログから **error 行だけ**を拾う (M66h)。**純関数**。
+//   - 判定は ": error " / ": fatal error " の部分一致。warning は拾わない —
+//     「なぜ失敗したか」を知りたい場面で警告を流すと、本当の行が埋もれる
+//   - "x.cpp(12,34): error C2065:" → file="x.cpp" / line=12。括弧が無ければ line=0
+//   - MSBuild は同じエラーを要約でもう 1 度出すので**完全一致で重複を落とす**
+//   - 入力は UTF-8 (ログはコンソール ANSI なので呼ぶ前に変換すること)
+std::vector<BuildErrorLine> ParseBuildErrorLines(const std::string& logUtf8);
+
+} // namespace mye

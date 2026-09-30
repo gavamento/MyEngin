@@ -5,21 +5,21 @@
 #include <Windows.h>
 #include <shellapi.h>
 
-#include "Engine/Core/Log.h"
-#include "Engine/Engine/DemoContent.h"
-#include "Engine/Engine/EngineCli.h"
-#include "Engine/Engine/FractureSystem.h" // PreloadFractureAssets (シーンロード直後の破片資産先読み)
-#include "Engine/Engine/ShowcaseScenes.h"
-#include "Engine/Engine/EngineLoop.h"
-#include "Engine/Engine/Prefab.h"
-#include "Engine/Engine/Project.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/Demo/DemoContent.h"
+#include "Engine/Engine/App/EngineCli.h"
+#include "Engine/Engine/Physics/Fracture/FractureSystem.h" // PreloadFractureAssets (シーンロード直後の破片資産先読み)
+#include "Engine/Engine/Demo/ShowcaseScenes.h"
+#include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Scene/Prefab.h"
+#include "Engine/Engine/App/Project.h"
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
-#include "Engine/Engine/Scene.h"
-#include "Engine/Engine/SceneSerializer.h"
+#include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/Scene/SceneSerializer.h"
 #include "Engine/Platform/CrashHandler.h"
 #include "Engine/Platform/PathUtil.h"
-#include "Engine/Renderer/ShaderManager.h"
+#include "Engine/Renderer/Shader/ShaderManager.h"
 
 namespace {
 

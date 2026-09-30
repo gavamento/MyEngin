@@ -18,7 +18,7 @@
 
 #include <DirectXMath.h>
 
-#include "Engine/Core/EntityID.h"
+#include "Engine/Core/Ecs/EntityID.h"
 #include "Engine/Engine/Modal/CpuModalBackend.h"
 #include "Engine/Engine/Modal/ModalFeatureMap.h"
 

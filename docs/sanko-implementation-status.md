@@ -73,14 +73,14 @@
 | [企画書](../三校企画.md) | `C:\HAL\MyEngin\三校企画.md` |
 | [音響処理（参照）](../src/Engine/Engine/Acoustic/AcousticField.cpp) | `C:\HAL\MyEngin\src\Engine\Engine\Acoustic\AcousticField.cpp` |
 | [敵処理（参照）](../src/Engine/Engine/Acoustic/AgentSystem.cpp) | `C:\HAL\MyEngin\src\Engine\Engine\Acoustic\AgentSystem.cpp` |
-| [コンポーネント（参照）](../src/Engine/Core/Components.h) | `C:\HAL\MyEngin\src\Engine\Core\Components.h` |
+| [コンポーネント（参照）](../src/Engine/Core/Ecs/Components.h) | `C:\HAL\MyEngin\src\Engine\Core\Ecs\Components.h` |
 | [スクリプトAPI（参照）](../src/Shared/ScriptAPI.h) | `C:\HAL\MyEngin\src\Shared\ScriptAPI.h` |
 | [Engine API（参照）](../src/Shared/EngineAPI.h) | `C:\HAL\MyEngin\src\Shared\EngineAPI.h` |
-| [安全半径の登録](../src/Engine/Core/Components.cpp) | `C:\HAL\MyEngin\src\Engine\Core\Components.cpp` |
+| [安全半径の登録](../src/Engine/Core/Ecs/Components.cpp) | `C:\HAL\MyEngin\src\Engine\Core\Ecs\Components.cpp` |
 | [敵更新の宣言](../src/Engine/Engine/Acoustic/AgentSystem.h) | `C:\HAL\MyEngin\src\Engine\Engine\Acoustic\AgentSystem.h` |
-| [固定時間の受け渡し](../src/Engine/Engine/TickRunner.cpp) | `C:\HAL\MyEngin\src\Engine\Engine\TickRunner.cpp` |
+| [固定時間の受け渡し](../src/Engine/Engine/Loop/TickRunner.cpp) | `C:\HAL\MyEngin\src\Engine\Engine\Loop\TickRunner.cpp` |
 | [保存形式v14](../src/Engine/Engine/Replay/SimSnapshot.h) | `C:\HAL\MyEngin\src\Engine\Engine\Replay\SimSnapshot.h` |
-| [音声テストの版追随](../src/Engine/Engine/Audio/AcousticAudioSelfTest.cpp) | `C:\HAL\MyEngin\src\Engine\Engine\Audio\AcousticAudioSelfTest.cpp` |
+| [音声テストの版追随](../src/Engine/Engine/Audio/Spatial/AcousticAudioSelfTest.cpp) | `C:\HAL\MyEngin\src\Engine\Engine\Audio\Spatial\AcousticAudioSelfTest.cpp` |
 | [削除なしのReplay検証](../tools/verify_sanko_replay.ps1) | `C:\HAL\MyEngin\tools\verify_sanko_replay.ps1` |
 
 ## 初回の検証結果

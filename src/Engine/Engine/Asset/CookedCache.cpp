@@ -7,9 +7,9 @@
 #include <process.h> // _getpid (並列クック時のテンポラリ名の一意化)
 #include <string>
 
-#include "Engine/Core/AssetKeyResolver.h"
-#include "Engine/Core/Hash.h"
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Asset/AssetKeyResolver.h"
+#include "Engine/Core/Util/Hash.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye::CookedCache {

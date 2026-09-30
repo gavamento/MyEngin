@@ -1,0 +1,242 @@
+#pragma once
+#include <map>
+#include <set>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
+
+#include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Loop/GameFlow.h"
+#include "Engine/Engine/Scene/GameObject.h"
+#include "Engine/Engine/UI/UIInteraction.h"
+
+namespace mye {
+
+// アクティブなワールドの所有者。M2 で JSON シリアライズ (保存/読込/Play スナップショット) が載る
+class Scene {
+public:
+    // シーン文書の現行 version (SceneSerializer::SaveToJson が書く値)。
+    //   v1: EntityRef を [index, generation] で保存 (M8 以前)
+    //   v2: EntityRef を fileId で保存 + childIndex (M8)
+    //   v3: 「キー不在 = ベース追随」をコンポーネント構造へ拡張 (M50c) —
+    //       ベースにあり実体に無く "-Component" キーの無い comp は、ロード時に
+    //       ベース値で追加してよい (v2 以前の文書では記録へのマージのみで実体は不変)
+    //   v4: UI の配置を UIElement.anchor/x/y/w/h/space から RectTransform へ分離 (M75a)。
+    //       ロードは版番号ではなく「UIElement に anchor キーあり && RectTransform 無し」で
+    //       旧形式を検出して変換する (プレハブのミニシーンや手書き JSON も拾う) —
+    //       v4 は「この形式で保存した」の宣言
+    static constexpr int kDocVersion = 4;
+    GameObject CreateGameObject(std::string_view name)
+    {
+        return GameObject(&world_, world_.CreateEntity(name));
+    }
+
+    // エディタ経由の生成: fileId を即採番して付与する。
+    // Undo/Redo の同一性キーになり、Play/Stop や再ロードで EntityID が変わっても追跡できる。
+    // (シリアライザのロード経路は fileId をファイル値で設定するため CreateGameObject を使う)
+    GameObject CreateGameObjectTracked(std::string_view name)
+    {
+        GameObject o = CreateGameObject(name);
+        o.AddComponent<FileIdComponent>()->value = NextFileId();
+        return o;
+    }
+
+    // 名前で線形検索 (最初に一致したもの)。見つからなければ無効な GameObject。
+    // 重複名は「先勝ち」の意味論があるため索引化しない (M51a で据え置きを決定)
+    GameObject Find(std::string_view name);
+
+    // fileId で検索 (シーンリロードの差分適用 / Prefab::Instantiate / エディタ選択解決)。
+    // M51a: ヒット時検証つきキャッシュ — ヒットしたら生存 + 値一致を確認し、stale なら
+    // 破棄して線形走査にフォールバックして補修する。fileId はシーン内一意 (NextFileId
+    // 単調採番) が前提。World::SimCacheEnabled()==false で従来の線形走査のみ
+    GameObject FindByFileId(uint64_t fileId);
+    EntityID LastEntityForFileId(uint64_t fileId) const
+    {
+        auto it = fileIdHistory_.find(fileId);
+        return it == fileIdHistory_.end() ? kNullEntity : it->second;
+    }
+
+    // e に fileId が無ければ採番して返す (Undo/選択が同一性キーとして使う)。0 = 無効
+    uint64_t EnsureFileId(EntityID e);
+
+    // 全エンティティ破棄 (名前と nextFileId は保持)。
+    // TimeControl / PersistStore も保持する (M51g) — PersistStore は LoadScene
+    // (LoadFromJson → Clear) を生き延びるのが存在意義。TimeControl も跨ぎ維持
+    // (Unity の timeScale と同じ意味論。スクリプト層は非ゲートなのでいつでも解除できる)
+    void Clear()
+    {
+        world_.Clear();
+        overrides_.clear();
+        unknownComps_.clear();
+        fileIdCache_.clear();
+        fileIdHistory_.clear();
+    }
+
+    // ---- ゲームフロー (M51g、決定台帳 5) ----
+    // どちらも Scene 保持の sim 状態で WorldHash 対象 (RNG の直後に追記)。
+    // Play/Stop の復元は PlayModeController がスナップショットする
+    TimeControl& Time() { return time_; }
+    const TimeControl& Time() const { return time_; }
+    PersistStore& Persist() { return persist_; }
+    const PersistStore& Persist() const { return persist_; }
+
+    // ---- UI 対話状態 (M70c) ----
+    // TimeControl と同じ扱い: Scene が持つ sim 状態で WorldHash 対象、SimSnapshot の
+    // Scene 節に入る。**Clear では消さない** — シーン遷移をまたぐ意味は無いが、
+    // 消すなら「消す」を明示的に書くべき値なので LoadScene 側で Clear() を呼ぶ
+    // (TickRunner のシーン遷移が呼ぶ)。詳細は UIInteraction.h
+    UIInteractionState& UI() { return ui_; }
+    const UIInteractionState& UI() const { return ui_; }
+
+    // このシーンを読み書きしたファイルの絶対パス (SceneSerializer::SaveToFile/LoadFromFile
+    // が設定)。メモリ上で組んだシーン (デモ構築) は空。SaveGame の「現シーンパス」記録用 (M51g)
+    const std::wstring& SourcePath() const { return sourcePath_; }
+    void SetSourcePath(std::wstring p) { sourcePath_ = std::move(p); }
+
+    World& GetWorld() { return world_; }
+    const std::string& Name() const { return name_; }
+    void SetName(std::string_view name) { name_ = name; }
+
+    uint64_t NextFileId() { return nextFileId_++; }
+    void SetNextFileId(uint64_t v) { nextFileId_ = v; }
+    uint64_t PeekNextFileId() const { return nextFileId_; }
+
+    // このシーンをロードした文書の version (LoadFromJson が設定する)。
+    // RefreshNonOverridden が v3 の構造追随を掛けてよいかの判定に使う。
+    // 既定は kDocVersion — メモリ上で組んだシーン (デモ構築等) は現行形式そのもの
+    int LoadedVersion() const { return loadedVersion_; }
+    void SetLoadedVersion(int v) { loadedVersion_ = v; }
+
+    // ---- プレハブ override リスト (M48e) ----
+    //
+    // プレハブインスタンスのメンバごとに「ユーザーが上書きした葉フィールド」の集合を持つ。
+    // キーは `"Component.field"`、エンティティ名だけは `"name"`。
+    // **ECS の外に置き WorldHash には入れない** — シミュレーション状態ではなく編集メタデータで、
+    // ロード後の値には差が出ないため (差が出るなら refresh のバグ)。
+    //
+    // 記録の有無そのものが意味を持つ:
+    //   - 記録あり (空集合を含む) = 新形式。ロード時にベース最新値で非 override を更新してよい
+    //   - 記録なし               = レガシー (M48d 以前に保存されたシーン)。ライブ diff に
+    //                              フォールバックし、値には一切触らない (ビット不変ロード)
+    // シリアライズはエンティティ JSON の `"overrides"` キー (SceneSerializer::WriteEntity)。
+    using OverrideSet = std::set<std::string>; // ソート済み = 決定論的なファイル出力
+
+    void SetOverrides(uint64_t fileId, OverrideSet keys)
+    {
+        if (fileId != 0) {
+            overrides_[fileId] = std::move(keys); // 空集合でも「記録あり」として残す
+        }
+    }
+    void ClearOverrides(uint64_t fileId) { overrides_.erase(fileId); }
+    void MarkOverride(uint64_t fileId, std::string key)
+    {
+        if (fileId != 0) {
+            overrides_[fileId].insert(std::move(key));
+        }
+    }
+    void UnmarkOverride(uint64_t fileId, const std::string& key)
+    {
+        if (auto it = overrides_.find(fileId); it != overrides_.end()) {
+            it->second.erase(key);
+        }
+    }
+    const OverrideSet* GetOverrides(uint64_t fileId) const
+    {
+        auto it = overrides_.find(fileId);
+        return (it != overrides_.end()) ? &it->second : nullptr;
+    }
+    bool HasOverrideRecord(uint64_t fileId) const { return overrides_.count(fileId) != 0; }
+
+    // ---- 未知コンポーネントのパススルー (M70a) ----
+    //
+    // レジストリに引けなかった型のコンポーネントを、生 JSON のまま fileId 別に預かる表。
+    // 元凶は「ロードが非可逆 / 保存はアーキタイプだけを正本とする」という 2 経路の非対称で、
+    // **壊れるのは読めなかった瞬間ではなく保存した瞬間**だった。引き金はスキーマ型に限らず、
+    // GameLogic.dll のロード失敗や C# ホストの初期化失敗でも同じ消え方をする
+    // (どちらも起動は続行するので、気付くのは次に開いて調整値が既定値へ戻ったとき)。
+    // 「知らないから捨てる」を「知らないから触らない」へ寄せるための箱。
+    //
+    // overrides_ と同じく **ECS の外に置き WorldHash には入れない**。ただし overrides_ と違い
+    // **SimSnapshot にも入れない** — tick 中に 1 バイトも変化しないので撮る理由が無く、
+    // blob を太らせるだけ (Play/Stop の往復は SaveToJson/LoadFromJson が運ぶので無傷)。
+    // 内側を std::map にするのは出力順を決定論にするため (OverrideSet が std::set なのと同じ)。
+    using UnknownCompSet = std::map<std::string, std::string>; // 型名 → フィールドの生 JSON
+
+    // JSON が唯一の正解 (SetOverrides と同じ意味論)。空なら記録ごと消す —
+    // マージにすると、ファイルから消えたはずの未知コンポーネントが次の保存で蘇る
+    void SetUnknownComponents(uint64_t fileId, UnknownCompSet comps)
+    {
+        if (fileId == 0) {
+            return;
+        }
+        if (comps.empty()) {
+            unknownComps_.erase(fileId);
+        } else {
+            unknownComps_[fileId] = std::move(comps);
+        }
+    }
+    const UnknownCompSet* GetUnknownComponents(uint64_t fileId) const
+    {
+        auto it = unknownComps_.find(fileId);
+        return (it != unknownComps_.end()) ? &it->second : nullptr;
+    }
+    // 保持している総件数 (エディタの保存トーストが「N 個を保持したまま保存した」を出す)
+    size_t UnknownComponentCount() const
+    {
+        size_t n = 0;
+        for (const auto& [fid, set] : unknownComps_) {
+            n += set.size();
+        }
+        return n;
+    }
+    // live に無い fileId の預かりを捨てる (SaveToJson が全エンティティ確定後に呼ぶ)。
+    // 破棄済み fileId の分はどこからも書き出されないので無害だが、ApplyDiff
+    // (ホットリロード) を繰り返すと溜まりっぱなしになるため一掃する
+    void RetainUnknownComponents(const std::vector<uint64_t>& live)
+    {
+        if (unknownComps_.empty()) {
+            return;
+        }
+        std::set<uint64_t> keep(live.begin(), live.end());
+        for (auto it = unknownComps_.begin(); it != unknownComps_.end();) {
+            if (keep.count(it->first) != 0) {
+                ++it;
+            } else {
+                it = unknownComps_.erase(it);
+            }
+        }
+    }
+
+    // ---- sim スナップショット (M52d) ----
+    // SimSnapshot 専用の入り口。override 表は編集メタデータで WorldHash 非対象だが、
+    // タイムトラベルで「過去の tick に戻る」ときは編集状態ごと戻さないと辻褄が合わない
+    // ので撮影対象に含める (決定台帳 1)。書き出しは fileId 昇順に整列すること —
+    // unordered_map の走査順は決定論ではなく、blob のバイト列が実行ごとに変わってしまう
+    const std::unordered_map<uint64_t, OverrideSet>& OverridesTable() const { return overrides_; }
+    void ReplaceOverridesTable(std::unordered_map<uint64_t, OverrideSet> t)
+    {
+        overrides_ = std::move(t);
+    }
+    // fileId 索引は派生物 (M51a)。復元後の EntityID は総入れ替えなので必ず捨てる
+    void InvalidateFileIdCache() { fileIdCache_.clear(); fileIdHistory_.clear(); }
+
+private:
+    World world_;
+    std::string name_ = "Untitled";
+    uint64_t nextFileId_ = 1;
+    int loadedVersion_ = kDocVersion; // LoadFromJson が文書の値で上書きする
+    std::unordered_map<uint64_t, OverrideSet> overrides_; // fileId → 上書き済みキー集合
+    // fileId → 未登録型の生 JSON (M70a)。ロードで預かり、保存でそのまま書き戻す
+    std::unordered_map<uint64_t, UnknownCompSet> unknownComps_;
+    // fileId → EntityID の検証つきキャッシュ (M51a)。ヒット時に生存 + 値一致を必ず確認
+    // するため stale エントリは無害 (書込点の網羅は不要)。0 (未採番) は入れない
+    std::unordered_map<uint64_t, EntityID> fileIdCache_;
+    std::unordered_map<uint64_t, EntityID> fileIdHistory_; // Undo 再生成前の参照先
+    TimeControl time_;       // ポーズ/タイムスケール (M51g)
+    UIInteractionState ui_;  // UI の hovered/pressed/clicked/focused (M70c)
+    PersistStore persist_;   // シーン跨ぎ永続 (M51g)。Clear で消えない
+    std::wstring sourcePath_; // ロード/保存元の絶対パス (M51g)。メモリ構築シーンは空
+};
+
+} // namespace mye

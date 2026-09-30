@@ -8,11 +8,11 @@
 #include <sstream>
 #include <vector>
 
-#include "Engine/Core/ComponentRegistry.h" // ワールド追従 UI の検証 (スクリプト状態の脇役扱い)
-#include "Engine/Core/Components.h"
-#include "Engine/Core/Log.h"
-#include "Engine/Core/World.h"
-#include "Engine/Engine/TransformSystem.h" // ワールド追従 UI の検証 (WorldMatrix 生成)
+#include "Engine/Core/Ecs/ComponentRegistry.h" // ワールド追従 UI の検証 (スクリプト状態の脇役扱い)
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Scene/TransformSystem.h" // ワールド追従 UI の検証 (WorldMatrix 生成)
 #include "Engine/Engine/UI/UIGeometry.h"
 #include "Engine/Engine/UI/UIInteraction.h"
 #include "Engine/Engine/UI/UILayout.h"
@@ -24,10 +24,10 @@
 #include "Engine/Engine/UI/UITextLayout.h"
 #include "Engine/Engine/UI/UIFontMetricsCook.h" // M75d
 #include "Engine/Engine/UI/UITextMetrics.h"     // M75d
-#include "Engine/Engine/Scene.h"           // M75a: 旧形式 (v3) シーンのロード時変換
-#include "Engine/Engine/SceneSerializer.h"
-#include "Engine/Engine/DemoContent.h"          // M75f: --ui-demo-input の台本の純関数性
-#include "Engine/Engine/Prefab.h"               // M75f: ウィジェットのプレハブ往復 (EntityRef の付け替え)
+#include "Engine/Engine/Scene/Scene.h"           // M75a: 旧形式 (v3) シーンのロード時変換
+#include "Engine/Engine/Scene/SceneSerializer.h"
+#include "Engine/Engine/Demo/DemoContent.h"          // M75f: --ui-demo-input の台本の純関数性
+#include "Engine/Engine/Scene/Prefab.h"               // M75f: ウィジェットのプレハブ往復 (EntityRef の付け替え)
 #include "Engine/Engine/Replay/WorldHasher.h"   // M75f: Toggle の値がハッシュに載る
 #include "Engine/Engine/UI/UIWidgetFactory.h"   // M75f
 #include "Engine/Engine/UI/UIWidgets.h"         // M75f

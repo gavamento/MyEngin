@@ -11,7 +11,7 @@ C:\HAL\MyEngin\plans\m80-destruction\review-1.md の指摘 #1 (blocker)・#2 (bl
 ## やること
 
 1. **#1 `fractureAsset` の表現をそろえる**:
-   - 問題: 今は `HashStr("guid://<hex>")` を保存している (`src/Editor/FractureBakeCommit.cpp:70`)。解決側はこれを GUID として `ResolvePath` に渡している (`FractureSystem.cpp` の資産解決)
+   - 問題: 今は `HashStr("guid://<hex>")` を保存している (`src/Editor/Tools/FractureBakeCommit.cpp:70`)。解決側はこれを GUID として `ResolvePath` に渡している (`FractureSystem.cpp` の資産解決)
    - 直し方: 他のファイル資産の AssetRef (例: `Collider.physMaterial` の `.physmat.json`、マテリアル) が何を保存しているかを確かめ、**同じ表現**にそろえる。保存側・解決側・Inspector の資産欄の表示・`--fracture-demo` の GUID なし登録 (`fracture://demo...`) の 4 か所で、表現が一致すること
 2. **#1 読み込みの時期**:
    - シーンを読み込んだとき、**最初の物理 tick より前**に、Destructible が参照する `.mfrac` を FractureLibrary に登録する (凸包の登録も含む。1 tick 目に凸包が未登録で shape=5 が無視される問題の解消)
@@ -37,7 +37,7 @@ C:\HAL\MyEngin\plans\m80-destruction\review-1.md の指摘 #1 (blocker)・#2 (bl
 
 ## 触る場所 (planner の見立て)
 
-- `src/Editor/FractureBakeCommit.*`、`src/Editor/FractureBakeService.*`、`src/Editor/Windows/InspectorWindow.cpp`
+- `src/Editor/FractureBakeCommit.*`、`src/Editor/FractureBakeService.*`、`src/Editor/Windows/Scene/InspectorWindow.cpp`
 - `src/Engine/Engine/Physics/FractureLibrary.*`、`src/Engine/Engine/Asset/FractureAsset.*`、`src/Engine/Engine/FractureSystem.*`、`src/Engine/Engine/FractureBuilder.*`
 - シーン読み込みの 3 経路 (Editor / Runtime / TickRunner の LoadScene)
 - `src/Engine/Engine/RayTracing/RtScene.cpp` (同じ ID の中身の差し替えを反映させる必要があれば)
@@ -73,16 +73,16 @@ tools\check_rules.ps1
 ```
 SELF_EVAL: sub-16 (round 1)
 実装:
-  - src/Editor/FractureBakeCommit.cpp:CommitFractureBake — 保存名を `<エンティティ名>_<焼きの入力16hex>.mfrac` に変更 (ComputeFractureBakeInputHash: ソースメッシュの頂点/index バイト列・seed・pieceCount・openMeshMode・voxelResolution・kFractureBakeVersion から FNV-1a)。`comp->fractureAsset` を `HashStr("guid://<hex>")` ではなく、他の AssetRef (Collider.physMaterial 等) と同じ「GUID の値そのもの」に変更。書いた直後は `FractureLibrary::LoadFromFile` ではなく新設の `ReloadFromFile` を呼び、既に読み込み済みでも必ず読み直して登録し直す
-  - src/Engine/Engine/Physics/FractureBake.h — `kFractureBakeVersion` (焼き方式の版、既定 1) を新設
-  - src/Engine/Engine/Physics/FractureLibrary.h/.cpp — `ReloadFromFile(path)` を追加 (キャッシュを無視して読み直し、同じ登録名で RegisterInternal をやり直す)。`LoadFromFile` は「キャッシュに無ければ ReloadFromFile を呼ぶ」実装に整理
+  - src/Editor/Tools/FractureBakeCommit.cpp:CommitFractureBake — 保存名を `<エンティティ名>_<焼きの入力16hex>.mfrac` に変更 (ComputeFractureBakeInputHash: ソースメッシュの頂点/index バイト列・seed・pieceCount・openMeshMode・voxelResolution・kFractureBakeVersion から FNV-1a)。`comp->fractureAsset` を `HashStr("guid://<hex>")` ではなく、他の AssetRef (Collider.physMaterial 等) と同じ「GUID の値そのもの」に変更。書いた直後は `FractureLibrary::LoadFromFile` ではなく新設の `ReloadFromFile` を呼び、既に読み込み済みでも必ず読み直して登録し直す
+  - src/Engine/Engine/Physics/Fracture/FractureBake.h — `kFractureBakeVersion` (焼き方式の版、既定 1) を新設
+  - src/Engine/Engine/Physics/Fracture/FractureLibrary.h/.cpp — `ReloadFromFile(path)` を追加 (キャッシュを無視して読み直し、同じ登録名で RegisterInternal をやり直す)。`LoadFromFile` は「キャッシュに無ければ ReloadFromFile を呼ぶ」実装に整理
   - src/Engine/Engine/FractureSystem.h/.cpp — `ResolveFractureAsset` をファイルスコープの匿名名前空間から export し、ヘッダで宣言 (Inspector と共有)。`PreloadFractureAssets(World&)` を新設 (Destructible を走査して `ResolveFractureAsset` を呼ぶだけ)。`PiecesMatchAssetNow` の中身を `FracturePieceIndicesMatchAsset(assetPieceCount, indices, broken, outReason)` として export し、`PiecesMatchAssetNow` はそれに委譲する形にリファクタ。`FractureSystem::assetCache_` のキーを `EntityKey(root)` から `job.dc->fractureAsset.value` に変更 (`erroredOnce_`/`piecesByRoot` のキーは root のまま維持)
   - src/Engine/Engine/FractureBuilder.h/.cpp — `DestructiblePiecesMatchAsset(world, root, asset, broken)` を新設。World 中の全 FracturePiece から `root==root` なものを (階層を辿らず) 集めて `FracturePieceIndicesMatchAsset` へ渡す
-  - src/Editor/Windows/InspectorWindow.cpp:DrawDestructibleNotes — 資産の解決を `lib->FindByAssetId` の直呼びから `ResolveFractureAsset` に変更。一致判定を `CountFracturePieceChildren` (直子限定カウント) から `DestructiblePiecesMatchAsset` (FractureSystem と同じ規則、broken 後は個数の完全一致を求めない) に変更
+  - src/Editor/Windows/Scene/InspectorWindow.cpp:DrawDestructibleNotes — 資産の解決を `lib->FindByAssetId` の直呼びから `ResolveFractureAsset` に変更。一致判定を `CountFracturePieceChildren` (直子限定カウント) から `DestructiblePiecesMatchAsset` (FractureSystem と同じ規則、broken 後は個数の完全一致を求めない) に変更
   - src/Engine/Engine/Asset/FractureAsset.cpp:Deserialize — 境界検査を追加: 外側/蓋メッシュの index が頂点数の範囲内、隣接先 index が破片数の範囲内かつ自分自身でない、隣接の対称性 (i→j があれば j→i)。違反はいずれも false (壊れたファイルとして安全に失敗)
-  - src/Editor/EditorApp.cpp / src/Runtime/RuntimeMain.cpp / src/Engine/Engine/TickRunner.cpp — シーンロード直後 (Editor 起動時ロード・`LoadSceneFromPath` 共通経路・Runtime 起動時ロード・TickRunner の実行時 `LoadScene`) に `PreloadFractureAssets(world)` を追加。最初の物理 tick より前に .mfrac の凸包/メッシュが登録される
-  - src/Editor/FractureEditorSelfTest.cpp — 保存名の書き換えに合わせて (5) の実ファイル名検査を prefix 一致に変更。新規 (6) セッションをまたぐ解決 (実 AssetDatabase でセッション 1 を焼いて保存 → セッション 2 で新しい AssetDatabase/FractureLibrary/World を作って開き直し、最初の物理 tick 前の凸包登録・Inspector 相当の一致判定・実際に割れることを検証)。新規 (7) 同名 2 エンティティが中身の違いで別ファイル、同じ中身の再焼きで同じファイルになることを検証
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp — (13c2) 壊れた `.mfrac` (範囲外 outer/cap index・範囲外/自己参照の隣接・非対称な隣接) が Deserialize で失敗することを検証。(16g) 同じ `FractureSystem` インスタンスのまま `fractureAsset` を差し替えても (Play 中の Inspector 操作を模す)、新しい資産で正しく解決・破断することを検証 (資産キャッシュが root キーのままだと index out of range で壊れていたケース)
+  - src/Editor/App/EditorApp.cpp / src/Runtime/RuntimeMain.cpp / src/Engine/Engine/TickRunner.cpp — シーンロード直後 (Editor 起動時ロード・`LoadSceneFromPath` 共通経路・Runtime 起動時ロード・TickRunner の実行時 `LoadScene`) に `PreloadFractureAssets(world)` を追加。最初の物理 tick より前に .mfrac の凸包/メッシュが登録される
+  - src/Editor/Tools/FractureEditorSelfTest.cpp — 保存名の書き換えに合わせて (5) の実ファイル名検査を prefix 一致に変更。新規 (6) セッションをまたぐ解決 (実 AssetDatabase でセッション 1 を焼いて保存 → セッション 2 で新しい AssetDatabase/FractureLibrary/World を作って開き直し、最初の物理 tick 前の凸包登録・Inspector 相当の一致判定・実際に割れることを検証)。新規 (7) 同名 2 エンティティが中身の違いで別ファイル、同じ中身の再焼きで同じファイルになることを検証
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp — (13c2) 壊れた `.mfrac` (範囲外 outer/cap index・範囲外/自己参照の隣接・非対称な隣接) が Deserialize で失敗することを検証。(16g) 同じ `FractureSystem` インスタンスのまま `fractureAsset` を差し替えても (Play 中の Inspector 操作を模す)、新しい資産で正しく解決・破断することを検証 (資産キャッシュが root キーのままだと index out of range で壊れていたケース)
 仕様との差分:
   - [追加] 起動時の資産走査 (`RegisterAssetLibraries`/`DemoContent.cpp`) に `.mfrac` を足さず、「シーン読み込みで参照されたものだけを読む」方式にした。sub-16.md のやること2 で明示的に coder 判断とされ、後者が推奨と書かれていたため
   - [未実装] やること4 の「RtScene の BVH のように同じ ID で中身が変わると古いまま残るキャッシュがあれば、合わせて無効化する」は実装していない。内容ハッシュ命名にしたことで「同じパス・別内容」が起こるのは `kFractureBakeVersion` を上げ忘れた場合の保険的なケースに限られ (通常の再焼きは中身が同じか、パス自体が変わる)、かつ `MeshColliderLibrary`/`RtScene` には部分無効化の API が無く、この保険的ケースのためだけに無関係な RT サブシステムへ手を入れるのはスコープが広すぎると判断した。実測でも本サブの範囲では発生しない (shot_verify の fracture_before/after は無関係のまま PASS)。プランナーの判断を仰ぎたい (不安・質問参照)
@@ -104,20 +104,20 @@ SELF_EVAL: sub-16 (round 1)
   - RtScene/MeshColliderLibrary の「同じ ID で中身が変わったときの無効化」を本サブで実装しないことにした判断 (仕様との差分の [未実装] 参照) の是非をプランナーに確認したい。却下でなければ sub-17/18 か新規サブへ回してほしい
   - spec §4.3 の保存先の記述が §2 の review 由来の裁定 (16hex 命名) と矛盾したまま残っている。プランナー側で §4.3 本文の更新をお願いしたい
 触ったファイル:
-  - src/Editor/EditorApp.cpp
-  - src/Editor/FractureBakeCommit.cpp
-  - src/Editor/FractureBakeCommit.h
-  - src/Editor/FractureEditorSelfTest.cpp
-  - src/Editor/Windows/InspectorWindow.cpp
+  - src/Editor/App/EditorApp.cpp
+  - src/Editor/Tools/FractureBakeCommit.cpp
+  - src/Editor/Tools/FractureBakeCommit.h
+  - src/Editor/Tools/FractureEditorSelfTest.cpp
+  - src/Editor/Windows/Scene/InspectorWindow.cpp
   - src/Engine/Engine/Asset/FractureAsset.cpp
   - src/Engine/Engine/FractureBuilder.cpp
   - src/Engine/Engine/FractureBuilder.h
   - src/Engine/Engine/FractureSystem.cpp
   - src/Engine/Engine/FractureSystem.h
-  - src/Engine/Engine/Physics/FractureBake.h
-  - src/Engine/Engine/Physics/FractureLibrary.cpp
-  - src/Engine/Engine/Physics/FractureLibrary.h
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureBake.h
+  - src/Engine/Engine/Physics/Fracture/FractureLibrary.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureLibrary.h
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
   - src/Engine/Engine/TickRunner.cpp
   - src/Runtime/RuntimeMain.cpp
 申し送り:

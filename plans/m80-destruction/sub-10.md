@@ -24,7 +24,7 @@ spec §2「スキンメッシュ」行と §4.1 の裁定どおり。
 
 ## 触る場所 (planner の見立て)
 
-- `src/Engine/Engine/Asset/ModelCook.h/.cpp`、`src/Engine/Renderer/Skeleton.h` (`inverseBind`、`FindJointByName`)
+- `src/Engine/Engine/Asset/ModelCook.h/.cpp`、`src/Engine/Renderer/Mesh/Skeleton.h` (`inverseBind`、`FindJointByName`)
 - sub-02 の焼き (骨空間への変換は焼きの後段で)、sub-03 の `.mfrac` (骨名)
 - `FractureBuilder.*` (Part を付ける)、`FractureSystem.cpp` (Part を外す)
 - `src/Engine/Engine/PartFollowSystem.cpp` (読むだけの見込み。変えるなら SELF_EVAL に理由)
@@ -73,7 +73,7 @@ tools\check_rules.ps1
 - FBX / glTF 由来の頂点の分割とウェイト
 - 両面化・開いたメッシュの扱い
 
-ユーザー要件は「スキンメッシュも含めた複雑な素材」で、受け入れ条件 1 も「スキンの梁 (または既存のスキン資産)」を挙げている。手続き生成の 2 骨の腕だけでは、新しく書いた読み出しの口が本物の `.mmdl` で動くかを誰も見ていない。ヘッドレスで実アセットを読む前例はある (`src/Editor/PartSelfTest.cpp:596-650` が `CesiumMan.glb` と `skinned_beam.fbx` をロードしている) ので、SelfTest で確かめられる。
+ユーザー要件は「スキンメッシュも含めた複雑な素材」で、受け入れ条件 1 も「スキンの梁 (または既存のスキン資産)」を挙げている。手続き生成の 2 骨の腕だけでは、新しく書いた読み出しの口が本物の `.mmdl` で動くかを誰も見ていない。ヘッドレスで実アセットを読む前例はある (`src/Editor/SelfTest/PartSelfTest.cpp:596-650` が `CesiumMan.glb` と `skinned_beam.fbx` をロードしている) ので、SelfTest で確かめられる。
 
 手順:
 1. **実アセットの SelfTest** (手続き生成の腕のテストは残す): `assets\models\CesiumMan.glb` と `assets\models\skinned_beam.fbx` を、PartSelfTest と同じ方法でヘッドレスにロードする (クックを通して `.mmdl` を作る / 読む)。それぞれのスキンメッシュについて、次を検査する:
@@ -90,7 +90,7 @@ tools\check_rules.ps1
 
 SELF_EVAL: sub-10 (round 1)
 実装:
-  - src/Engine/Engine/Physics/FractureSkinBake.h/.cpp (新規) — `AssignFractureBonesAndTransform`。
+  - src/Engine/Engine/Physics/Fracture/FractureSkinBake.h/.cpp (新規) — `AssignFractureBonesAndTransform`。
     焼き結果 (`FractureBakeResult`) を破片ごとに骨へ割り当て、origin/outer/cap/hull を
     その骨の `inverseBind` を掛けた空間 (原点=骨の原点) へ書き換える純関数。骨割り当ては
     「破片の外側面の頂点をソース頂点と位置のビット一致で照合し、ウェイトを骨ごとに合計して
@@ -110,7 +110,7 @@ SELF_EVAL: sub-10 (round 1)
     `CookedCache::ReadValidated` + `ModelCook::Deserialize` で読み出せる。MeshLibrary/
     ModelLoader/FbxLoader の構造は変えていない (ConvexColliderLibrary::Get の
     `ConvexCookSourcePath` 解決と同じパターンを踏襲)
-  - src/Engine/Engine/Physics/FractureLibrary.h/.cpp — `BuildFractureAssetData` /
+  - src/Engine/Engine/Physics/Fracture/FractureLibrary.h/.cpp — `BuildFractureAssetData` /
     `RegisterBaked` に `boneNames` (既定空 = 非スキン、既存呼び出しは無変更) を追加し
     `PieceRecord.boneName` / `FracturePieceRef.boneName` へ配線
   - src/Engine/Engine/FractureBuilder.cpp — root が `SkinnedMeshComponent` を持てば
@@ -121,24 +121,24 @@ SELF_EVAL: sub-10 (round 1)
     (`ReparentKeepWorld` の前後) で `RemoveComponent<PartComponent>` を新リーダー本体と
     メンバー全員に対して呼ぶ (骨追従をやめて剛体化)。ルートに残る塊のメンバーは触らない
     ので Part のまま追従を続ける
-  - src/Editor/FractureBakeService.h/.cpp — `FractureBakeRequest` に `skinVertices`/
+  - src/Editor/Tools/FractureBakeService.h/.cpp — `FractureBakeRequest` に `skinVertices`/
     `skinJoints` (既定空)。`WorkerLoop` は `BakeFracture` 成功後、`skinJoints` が非空なら
     `AssignFractureBonesAndTransform` を同じワーカースレッドで呼ぶ (骨割り当ても「焼き」の
     一部として非同期化)。`TakeResult`/`Entry`/`JobResult` に `pieceBoneNames` を追加
-  - src/Editor/FractureBakeCommit.h/.cpp — `CommitFractureBake` に `pieceBoneNames`
+  - src/Editor/Tools/FractureBakeCommit.h/.cpp — `CommitFractureBake` に `pieceBoneNames`
     (既定空) を追加し `BuildFractureAssetData` へ渡す
-  - src/Editor/Windows/InspectorWindow.cpp — `DrawDestructibleNotes` のスキン無条件無効化
+  - src/Editor/Windows/Scene/InspectorWindow.cpp — `DrawDestructibleNotes` のスキン無条件無効化
     ゲートを外し、`SkinnedMeshComponent` を持つエンティティでは
     `ModelCook::TryLoadCookedMeshVertices` (+ `assetkey::SourcePathForSubAssetKey` で
     メッシュ登録名からクック元パスを解決) でウェイトを取得できたときだけ生成ボタンを
     有効化する (取得できなければ理由付きで無効)。取得できたら生成要求にウェイト・骨行列を
     載せる。`CommitFractureBakeResult` は `pieceBoneNames` も取り出して `CommitFractureBake`
     へ渡す
-  - src/Editor/FractureEditorSelfTest.cpp — `TakeResult` の新シグネチャ (boneNamesOut 追加)
+  - src/Editor/Tools/FractureEditorSelfTest.cpp — `TakeResult` の新シグネチャ (boneNamesOut 追加)
     に合わせて呼び出し側を更新 (この 1 箇所のみ。他は既定引数で無変更)
-  - src/Engine/Core/LocalizationTable.inl — `Insp_FractureSkinUnsupported` (スキン=常に無効)
+  - src/Engine/Core/Localization/LocalizationTable.inl — `Insp_FractureSkinUnsupported` (スキン=常に無効)
     を `Insp_FractureSkinNoWeights` (ウェイトを取得できないときだけ無効) へ置き換え
-  - src/Engine/Engine/Physics/FractureSkinSelfTest.h/.cpp (新規) — 2 骨の「腕」(下半分=Bone0
+  - src/Engine/Engine/Physics/Fracture/FractureSkinSelfTest.h/.cpp (新規) — 2 骨の「腕」(下半分=Bone0
     ルート/上半分=Bone1、Bone0 の子) を完全に手続き生成 (FBX 不使用) して検証:
     (1) 明示シード 2 個で焼き、両破片が幾何的に閉じ (BakeFractureCore の合否判定を再利用)、
     Bone0/Bone1 へ正しく割り当たる、(2) 骨空間の頂点 × jointGlobal(bind) が変換前の絶対
@@ -164,7 +164,7 @@ SELF_EVAL: sub-10 (round 1)
     になり必ず非多様体で拒否される (机上検算で確認、実行はしていない)。ボクセル化
     (openMeshMode=1) で通す手もあるが、表裏の重複三角形はレイパリティ内外判定を不安定に
     しうるため、テスト対象を素直な閉じたメッシュにする方を選んだ
-  - [追加] src/Engine/Engine/Physics/FractureSkinBake.h/.cpp — 「触る場所」の想定
+  - [追加] src/Engine/Engine/Physics/Fracture/FractureSkinBake.h/.cpp — 「触る場所」の想定
     (FractureBuilder.*、ModelCook.h/.cpp、Skeleton.h) には無い新規ファイル。理由:
     FractureBake.h は「このファイルは骨を知らない」と明記されたアーキテクチャ境界を持ち
     (sub-02)、FractureBuilder.cpp は「破片エンティティの事前生成」という別責務
@@ -266,25 +266,25 @@ SELF_EVAL: sub-10 (round 1)
      このサブでは対応していない (DrawDestructibleNotes は触ったが、この nit 自体は
      スキン対応と無関係なため対応漏れとして残る)
 触ったファイル:
-  - src/Engine/Engine/Physics/FractureSkinBake.h (新規)
-  - src/Engine/Engine/Physics/FractureSkinBake.cpp (新規)
-  - src/Engine/Engine/Physics/FractureSkinSelfTest.h (新規)
-  - src/Engine/Engine/Physics/FractureSkinSelfTest.cpp (新規)
-  - src/Engine/Engine/Physics/FractureLibrary.h
-  - src/Engine/Engine/Physics/FractureLibrary.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureSkinBake.h (新規)
+  - src/Engine/Engine/Physics/Fracture/FractureSkinBake.cpp (新規)
+  - src/Engine/Engine/Physics/Fracture/FractureSkinSelfTest.h (新規)
+  - src/Engine/Engine/Physics/Fracture/FractureSkinSelfTest.cpp (新規)
+  - src/Engine/Engine/Physics/Fracture/FractureLibrary.h
+  - src/Engine/Engine/Physics/Fracture/FractureLibrary.cpp
   - src/Engine/Engine/FractureBuilder.cpp
   - src/Engine/Engine/FractureSystem.cpp
   - src/Engine/Engine/Asset/ModelCook.h
   - src/Engine/Engine/Asset/ModelCook.cpp
   - src/Engine/Engine/DemoContent.cpp
-  - src/Engine/Core/LocalizationTable.inl
-  - src/Editor/FractureBakeService.h
-  - src/Editor/FractureBakeService.cpp
-  - src/Editor/FractureBakeCommit.h
-  - src/Editor/FractureBakeCommit.cpp
-  - src/Editor/Windows/InspectorWindow.cpp
-  - src/Editor/FractureEditorSelfTest.cpp
-  - src/Editor/EditorMain.cpp
+  - src/Engine/Core/Localization/LocalizationTable.inl
+  - src/Editor/Tools/FractureBakeService.h
+  - src/Editor/Tools/FractureBakeService.cpp
+  - src/Editor/Tools/FractureBakeCommit.h
+  - src/Editor/Tools/FractureBakeCommit.cpp
+  - src/Editor/Windows/Scene/InspectorWindow.cpp
+  - src/Editor/Tools/FractureEditorSelfTest.cpp
+  - src/Editor/App/EditorMain.cpp
   - tests/golden/fracture_before.png (更新)
   - tests/golden/fracture_after.png (更新)
   - スクショ (一時、コミット対象外): before =
@@ -306,7 +306,7 @@ SELF_EVAL: sub-10 (round 1)
 
 SELF_EVAL: sub-10 (round 2)
 実装 (round 1 からの差分。指摘番号は FIX_REQUEST のもの):
-  - #1 [must] 実アセットの経路: src/Engine/Engine/Physics/FractureSkinSelfTest.cpp に
+  - #1 [must] 実アセットの経路: src/Engine/Engine/Physics/Fracture/FractureSkinSelfTest.cpp に
     `CheckRealSkinnedAsset` (新規) を追加し、`assets\models\CesiumMan.glb` と
     `assets\models\skinned_beam.fbx` を PartSelfTest.cpp と同じ手法でヘッドレスにロードして
     検査する。**最初に確かめた前提**: `.mmdl` を書くのは `ModelLoader::RegisterAssets`/
@@ -437,11 +437,11 @@ SELF_EVAL: sub-10 (round 2)
      Install しているので動く設計) だけになったと考えている。時間予算の都合で
      このサブでは対応していない
 触ったファイル (round 2 で追加/変更。round 1 の一覧は上記参照):
-  - src/Engine/Engine/Physics/FractureSkinBake.h/.cpp (法線の逆転置、最近傍フォールバック)
-  - src/Engine/Engine/Physics/FractureSkinSelfTest.h/.cpp (実アセット検査を追加)
-  - src/Editor/Windows/InspectorWindow.h/.cpp (inPlayMode 引数・無効化)
-  - src/Editor/EditorApp.cpp (OnImGui 呼び出しに inPlayMode を渡す)
-  - src/Engine/Core/LocalizationTable.inl (Insp_FracturePlayModeDisabled を追加)
+  - src/Engine/Engine/Physics/Fracture/FractureSkinBake.h/.cpp (法線の逆転置、最近傍フォールバック)
+  - src/Engine/Engine/Physics/Fracture/FractureSkinSelfTest.h/.cpp (実アセット検査を追加)
+  - src/Editor/Windows/Scene/InspectorWindow.h/.cpp (inPlayMode 引数・無効化)
+  - src/Editor/App/EditorApp.cpp (OnImGui 呼び出しに inPlayMode を渡す)
+  - src/Engine/Core/Localization/LocalizationTable.inl (Insp_FracturePlayModeDisabled を追加)
   - plans/m80-destruction/sub-10.md (このメモ)
   - tests/golden/fracture_before.png / fracture_after.png は**今回変更なし** (差分の
     「触ったファイル」からは除外。round 1 で更新したものが変わらず有効)
@@ -523,7 +523,7 @@ SELF_EVAL: sub-10 (round 3)
      できていない
   2. round 1・2 から持ち越し: Inspector の「生成」ボタンを実クリックする確認は今回も未実施
 触ったファイル (round 3 で追加/変更):
-  - src/Engine/Engine/Physics/FractureSkinSelfTest.cpp (置き場のプロセス固有化・終了時
+  - src/Engine/Engine/Physics/Fracture/FractureSkinSelfTest.cpp (置き場のプロセス固有化・終了時
     remove_all・「書かれていない」チェックの追加)
   - plans/m80-destruction/sub-10.md (このメモ)
 申し送り:

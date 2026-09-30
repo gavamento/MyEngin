@@ -25,11 +25,11 @@ spec §4.3 の Inspector を作る。焼きは Engine 層の純関数、UI と�
 
 ## 触る場所 (planner の見立て)
 
-- `src/Editor/Windows/InspectorWindow.cpp`
-- 新規 `src/Editor/FractureBakeService.h/.cpp` (ワーカー。名前は coder 判断)
-- `src/Engine/Core/LocalizationTable.inl`
+- `src/Editor/Windows/Scene/InspectorWindow.cpp`
+- 新規 `src/Editor/Tools/FractureBakeService.h/.cpp` (ワーカー。名前は coder 判断)
+- `src/Engine/Core/Localization/LocalizationTable.inl`
 - `src/Editor/Undo/UndoStack.*` (使うだけ)
-- `src/Editor/EditorMain.cpp` (SelfTest 登録があれば)
+- `src/Editor/App/EditorMain.cpp` (SelfTest 登録があれば)
 
 ## 受け入れ条件 (このサブ)
 
@@ -56,24 +56,24 @@ tools\check_rules.ps1
 
 SELF_EVAL: sub-09 (round 1)
 実装:
-  - src/Engine/Engine/Physics/FractureBake.h/.cpp:BakeFracture/BakeFractureCore — 段階コールバック
+  - src/Engine/Engine/Physics/Fracture/FractureBake.h/.cpp:BakeFracture/BakeFractureCore — 段階コールバック
     (FractureBakeStage: ClosedCheck/Voxelize/Split/Hull) と、拒否理由の構造化フィールド
     (rejectedOpenMesh/boundaryEdges/nonManifoldEdges/orientationMismatches) を追加。全て
     既存 17 箇所の呼び出しに影響しないデフォルト引数・追加フィールド (出力バイト列/digest は不変)
   - src/Engine/Engine/FractureBuilder.h/.cpp:CountFracturePieceChildren — ログを出さない
     「資産と子の一致」照会 (ValidateFracturePieces は不一致のたび ERROR を出すため毎フレーム UI
     から呼べない)
-  - src/Editor/FractureBakeService.h/.cpp (新規) — 単一ワーカースレッドの非同期焼きキュー
+  - src/Editor/Tools/FractureBakeService.h/.cpp (新規) — 単一ワーカースレッドの非同期焼きキュー
     (ModalSoundLibrary と同型)。id (Destructible の fileId) ごとに None/Baking/Ready の状態
-  - src/Editor/FractureBakeCommit.h/.cpp (新規) — 焼き成功結果の確定 (.mfrac 保存 → .meta 確定
+  - src/Editor/Tools/FractureBakeCommit.h/.cpp (新規) — 焼き成功結果の確定 (.mfrac 保存 → .meta 確定
     → FractureLibrary 登録 → Destructible.fractureAsset 書き換え → BuildFracturePieces、1 Undo
     エントリ)。ImGui に触れない純関数として分離し SelfTest から直接呼べるようにした
-  - src/Editor/Windows/InspectorWindow.h/.cpp:DrawDestructibleNotes/CommitFractureBakeResult —
+  - src/Editor/Windows/Scene/InspectorWindow.h/.cpp:DrawDestructibleNotes/CommitFractureBakeResult —
     Destructible 節の末尾 (生成ボタン・焼き中の段階表示・生成済み/拒否/失敗の表示・プレハブ
     インスタンス/スキン/メッシュ無しでの無効化)。OnImGui 冒頭で fractureBakeService_.Pump()
     を毎フレーム呼ぶ
-  - src/Engine/Core/LocalizationTable.inl — Insp_Fracture* 一式 (両言語、check_rules.ps1 規則10 PASS)
-  - src/Editor/FractureEditorSelfTest.h/.cpp (新規) + EditorMain.cpp 登録 — 拒否理由の構造化
+  - src/Engine/Core/Localization/LocalizationTable.inl — Insp_Fracture* 一式 (両言語、check_rules.ps1 規則10 PASS)
+  - src/Editor/Tools/FractureEditorSelfTest.h/.cpp (新規) + EditorMain.cpp 登録 — 拒否理由の構造化
     フィールド、進行段階コールバックの順序、.mfrac のバイト一致、非同期ワーカーの
     digest 一致、CommitFractureBake の Undo/Redo を検証
 仕様との差分:
@@ -147,20 +147,20 @@ SELF_EVAL: sub-09 (round 1)
      コードレビュー済みだが、実機の目視確認はしていない。reviewer が必要と判断すれば
      一時プローブで追加撮影する
 触ったファイル:
-  - src/Editor/Windows/InspectorWindow.h
-  - src/Editor/Windows/InspectorWindow.cpp
-  - src/Editor/FractureBakeService.h (新規)
-  - src/Editor/FractureBakeService.cpp (新規)
-  - src/Editor/FractureBakeCommit.h (新規)
-  - src/Editor/FractureBakeCommit.cpp (新規)
-  - src/Editor/FractureEditorSelfTest.h (新規)
-  - src/Editor/FractureEditorSelfTest.cpp (新規)
-  - src/Editor/EditorMain.cpp
-  - src/Engine/Core/LocalizationTable.inl
+  - src/Editor/Windows/Scene/InspectorWindow.h
+  - src/Editor/Windows/Scene/InspectorWindow.cpp
+  - src/Editor/Tools/FractureBakeService.h (新規)
+  - src/Editor/Tools/FractureBakeService.cpp (新規)
+  - src/Editor/Tools/FractureBakeCommit.h (新規)
+  - src/Editor/Tools/FractureBakeCommit.cpp (新規)
+  - src/Editor/Tools/FractureEditorSelfTest.h (新規)
+  - src/Editor/Tools/FractureEditorSelfTest.cpp (新規)
+  - src/Editor/App/EditorMain.cpp
+  - src/Engine/Core/Localization/LocalizationTable.inl
   - src/Engine/Engine/FractureBuilder.h
   - src/Engine/Engine/FractureBuilder.cpp
-  - src/Engine/Engine/Physics/FractureBake.h
-  - src/Engine/Engine/Physics/FractureBake.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureBake.h
+  - src/Engine/Engine/Physics/Fracture/FractureBake.cpp
 申し送り:
   - sub-10 (スキンメッシュ) は Destructible の「スキン未対応」ゲート (world.GetComponent<
     SkinnedMeshComponent>(e) != nullptr で生成ボタンを無効化) を外し、骨空間で焼く経路を

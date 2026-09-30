@@ -3,9 +3,9 @@
 #include <filesystem>
 #include <fstream>
 
-#include "Engine/Core/Components.h"
-#include "Engine/Core/Log.h"
-#include "Engine/Core/World.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/World.h"
 #include "Engine/Platform/PathUtil.h"
 
 #include "nlohmann/json.hpp"

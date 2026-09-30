@@ -6,17 +6,17 @@
 #include <cmath>
 #include <cstring>
 
-#include "Engine/Core/Components.h"
-#include "Engine/Core/World.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/UI/UIGeometry.h"
 #include "Engine/Engine/UI/UILayout.h"
 #include "Engine/Engine/UI/UILayoutGroup.h" // M75e: LayoutScratch
 #include "Engine/Engine/UI/UITextLayout.h"
 #include "Engine/Engine/UI/UITextMetrics.h" // M75d: 行高の一致を固定するだけ
 #include "Engine/Engine/UI/UIWidgets.h"     // M75f: Selectable の色 / 画像と Toggle のチェックマーク
-#include "Engine/Renderer/GpuResources.h"
-#include "Engine/Renderer/GraphicsDevice.h"
-#include "Engine/Renderer/ShaderManager.h"
+#include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Device/GraphicsDevice.h"
+#include "Engine/Renderer/Shader/ShaderManager.h"
 
 using namespace DirectX;
 using Microsoft::WRL::ComPtr;

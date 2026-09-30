@@ -5,7 +5,7 @@
 #include <filesystem>
 #include <fstream>
 
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {

@@ -104,7 +104,7 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
 | **M75j** | `--ui-demo` 最終形 (`ui_widgets` / `ui_widgets_16x10`) / engine_spec §6.11-6.15 / ADR-020 / README / CLAUDE.md / dogfooding.md | — | 確定 |
 
 ### M75a — 触るファイル
-`Core/Components.h/.cpp` (51 登録、UIElement から 6 フィールド削除) / `Core/ComponentRegistry.h` (UiAux) / `UI/UILayout.h/.cpp` (ResolveImpl、xform、IsUiOnlyEntity) / `UI/UIInteraction.cpp` (HitTest 逆変換) / `UI/UIRenderer.cpp` (頂点変換、シザー AABB) / `Engine/SceneSerializer.cpp` (`MigrateLegacyUiRects`) / `Engine/Scene.h` (v4) / `Engine/DemoContent.cpp` (MakeUiText/MakeUiButton 等 15 か所) / `Editor/CreateMenu.cpp` / `Editor/Windows/InspectorWindow.cpp` (アンカープリセット 4x4 ピッカー、Pos/W/H ⇄ Left/Right/Top/Bottom 表示、`kEnumFields` に basis、解決済み矩形 read-only) / `Editor/EditorComponentCatalog.cpp` / `Script/EngineApiTable.cpp` / `LocalizationTable.inl` / `assets\scenes\{ui_probe,flow_title,flow_game}.scene.json` (エディタで開いて v4 保存し直す = 自動変換の実走確認)。
+`Core/Components.h/.cpp` (51 登録、UIElement から 6 フィールド削除) / `Core/ComponentRegistry.h` (UiAux) / `UI/UILayout.h/.cpp` (ResolveImpl、xform、IsUiOnlyEntity) / `UI/UIInteraction.cpp` (HitTest 逆変換) / `UI/UIRenderer.cpp` (頂点変換、シザー AABB) / `Engine/SceneSerializer.cpp` (`MigrateLegacyUiRects`) / `Engine/Scene.h` (v4) / `Engine/DemoContent.cpp` (MakeUiText/MakeUiButton 等 15 か所) / `Editor/Widgets/CreateMenu.cpp` / `Editor/Windows/Scene/InspectorWindow.cpp` (アンカープリセット 4x4 ピッカー、Pos/W/H ⇄ Left/Right/Top/Bottom 表示、`kEnumFields` に basis、解決済み矩形 read-only) / `Editor/Widgets/EditorComponentCatalog.cpp` / `Script/EngineApiTable.cpp` / `LocalizationTable.inl` / `assets\scenes\{ui_probe,flow_title,flow_game}.scene.json` (エディタで開いて v4 保存し直す = 自動変換の実走確認)。
 テスト (UISelfTest +): 旧式/新式 memcmp、ストレッチ、pivot、basis、回転 45° のヒット/非ヒット、恒等ゲート、v3 JSON からの自動変換 (SceneSerializerSelfTest)、UiAux 機械検査。検証: 共通 + golden 4 枚 `--tol 0` + replay_verify (flow シーンが v3 → 変換経路を通る)。
 
 ### M75b — 触るファイル
@@ -118,7 +118,7 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
 プレハブ往復: CreateMenu が子構成ごと作る Toggle/Slider/ScrollView/Dropdown をプレハブ化 → 展開して EntityRef (graphic/fillRect/content/list) が再マップされる検査を f/g に 1 本ずつ。
 
 ### M75i — 触るファイル
-`Editor/Windows/GameViewWindow.h/.cpp` (Rect Tool トグル、`gameSurface` 書き込み、ハンドル描画/操作) / `Engine/EngineLoop.h` (`EngineContext.gameSurface`) / `UI/UILayout.h/.cpp` (`SurfaceToCanvas/CanvasToSurface`、`RectToTransform`) / `LocalizationTable.inl` / `EditorSettings`。テスト: 往復 (全アンカー種別 × pivot)。エディタ操作は一時プローブ + `--screenshot` で絵を撮って確認 (ImGui は backbuffer に載る)。
+`Editor/Windows/Scene/GameViewWindow.h/.cpp` (Rect Tool トグル、`gameSurface` 書き込み、ハンドル描画/操作) / `Engine/EngineLoop.h` (`EngineContext.gameSurface`) / `UI/UILayout.h/.cpp` (`SurfaceToCanvas/CanvasToSurface`、`RectToTransform`) / `LocalizationTable.inl` / `EditorSettings`。テスト: 往復 (全アンカー種別 × pivot)。エディタ操作は一時プローブ + `--screenshot` で絵を撮って確認 (ImGui は backbuffer に載る)。
 
 ### M75j — 文書
 `engine_spec.md` (§6.11 追記: サーフェス記録・3 モード・project_settings・複数キャンバス / §6.12 追記: バブリング・drag・changed・Cancel / §6.13 RectTransform と自動レイアウト / §6.14 ウィジェットと InputField / §6.15 Rect Tool / §11.3 .rep v8 / ABI 表 v19 / §12.3 の UI スケール項を消す) / `docs/adr/ADR-020-ui-layout-determinism.md` (純関数+メモ vs 駆動、計測表アセット + 固定 fallback、y 下向き、サーフェス記録、ConstantPixelSize 非採用、兄弟順キー、状態の別コンポーネント化、C# の閉じ方) / `README.md` / `CLAUDE.md` (末尾 TypeId 61、Cloth/SoftBody 62/63、CLI 一覧に `--cook-font-metrics` (M75d)、「フォントを差し替えたら計測表を cook してコミット」、検証表の枚数・ペア数、ABI v19=124、「UI コンポーネントを足す」チェックリスト = UiAux) / `docs/dogfooding.md` (HAL Collector: 初回ロードで v4 化、Rebuild Scripts、fontmetrics の cook)。

@@ -79,13 +79,13 @@ SELF_EVAL: sub-12 (round 1)
   - `tools/check_rules.ps1` — `$apiVersionSlots` に `22 = 126` を追加
   - `docs/history/api-scripting-tools.md` — v22 の経緯を追記
   - `docs/adr/ADR-021-fracture-destruction.md` (新規) — 事前分割 + 接着グラフ + root proxy の設計判断・却下案・拡張点・`ConvexColliderLibrary::Clear()` 契約を記録
-  - `src/Engine/Engine/Physics/ConvexColliderLibrary.h` — `Clear()` 宣言に `ReregisterAll()` を対で呼ぶ契約を 1 行追記
+  - `src/Engine/Engine/Physics/Collider/ConvexColliderLibrary.h` — `Clear()` 宣言に `ReregisterAll()` を対で呼ぶ契約を 1 行追記
   - `engine_spec.md` — §10.8 (破壊の節、新設) / §11.3 (replay 一覧に UI・fracture を追加、7→9 ペアへ訂正) / §12.2 (Physics 行に M80 追加、§12.3 の M61/M62 記述を訂正) / §13 (ADR-018〜021 を追加) を追記
   - `tools/replay_verify.bat` — `:job_fracture` のコメントを現状 (破断・スクリプトが実際に動く) に合わせて更新
   - `plans/m80-destruction/bench.md` — §7 に「`prof::GetRenderStats()` の中身」と「sub-11 の『45 で変化しない』の原因 (Editor.exe の headless capture は Play/シミュレーションを開始しないため、当時は一度も割れていなかった)」を追記。§2 の焼き時間表と同じ内容を `--fracture-bench` にも実装として反映 (下記)
-  - `src/Engine/Engine/Physics/FractureBenchmark.cpp` — ボクセル化 (開いたメッシュ) の焼き時間計測セクションを追加 (`MakeBenchOpenBox`/`MakeBenchPlaneQuad`、解像度 32/48/64 × 開いた箱/平面、pieceCount=16、`--fracture-bench` の一部として実行)。従来 FractureSelfTest.cpp にあった同じ表をここへ移設
-  - `src/Engine/Engine/Physics/FractureSelfTest.cpp` — (a) onBreak の 2 ブロック追加 (後述の「テスト」参照)。(b) sub-11 由来の軽量化: 開いたメッシュの解像度 48/64 バケの `pieceCount` を 16→4 に削減 (解像度 32 は 16 のまま)、時間計測専用で合否に数えなかった「解像度 64/128/256 の voxelize 単体タイミング」ループを削除 (`--fracture-bench` へ移設。正しさの被覆はそのまま: res32/48/64 いずれも `openMeshMode=1` の bake 成功 + 全破片が幾何的に閉じることを検証し続ける)
-  - `src/Editor/PartSelfTest.cpp` / `src/Engine/Renderer/ComputeAbiSelfTest.cpp` — ABI v22 化に伴いハードコードされていた `MYE_API_VERSION == 21u` / `api.version == 21u` の期待値チェックを 22u へ更新 (Debug --selftest で FAIL していたのを発見・修正)
+  - `src/Engine/Engine/Physics/Fracture/FractureBenchmark.cpp` — ボクセル化 (開いたメッシュ) の焼き時間計測セクションを追加 (`MakeBenchOpenBox`/`MakeBenchPlaneQuad`、解像度 32/48/64 × 開いた箱/平面、pieceCount=16、`--fracture-bench` の一部として実行)。従来 FractureSelfTest.cpp にあった同じ表をここへ移設
+  - `src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp` — (a) onBreak の 2 ブロック追加 (後述の「テスト」参照)。(b) sub-11 由来の軽量化: 開いたメッシュの解像度 48/64 バケの `pieceCount` を 16→4 に削減 (解像度 32 は 16 のまま)、時間計測専用で合否に数えなかった「解像度 64/128/256 の voxelize 単体タイミング」ループを削除 (`--fracture-bench` へ移設。正しさの被覆はそのまま: res32/48/64 いずれも `openMeshMode=1` の bake 成功 + 全破片が幾何的に閉じることを検証し続ける)
+  - `src/Editor/SelfTest/PartSelfTest.cpp` / `src/Engine/Renderer/Compute/ComputeAbiSelfTest.cpp` — ABI v22 化に伴いハードコードされていた `MYE_API_VERSION == 21u` / `api.version == 21u` の期待値チェックを 22u へ更新 (Debug --selftest で FAIL していたのを発見・修正)
 
 仕様との差分:
   - [追加] `FractureSystem::LastBreakEvents()` (観測用、非ハッシュのメンバ関数) を新設した。sub-12.md は明示していないが、onBreak の配信内容 (leader/point/impulse/順序) を実 DLL を介さずに --selftest で検算するための唯一の現実的な経路として追加した (理由は「不安・質問」参照)。sim 状態・WorldHash には一切影響しない (CollisionSystem の `LastCollisionEnter()` 等の既存の観測用 API と同じ位置づけ)
@@ -127,11 +127,11 @@ SELF_EVAL: sub-12 (round 1)
   - src/Engine/Engine/FractureSystem.cpp
   - src/Engine/Engine/TickRunner.cpp
   - src/Engine/Engine/DemoContent.cpp
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
-  - src/Engine/Engine/Physics/FractureBenchmark.cpp
-  - src/Engine/Engine/Physics/ConvexColliderLibrary.h
-  - src/Editor/PartSelfTest.cpp
-  - src/Engine/Renderer/ComputeAbiSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureBenchmark.cpp
+  - src/Engine/Engine/Physics/Collider/ConvexColliderLibrary.h
+  - src/Editor/SelfTest/PartSelfTest.cpp
+  - src/Engine/Renderer/Compute/ComputeAbiSelfTest.cpp
   - src/GameLogic/Scripts/FractureDamageProbe.cpp (新規)
   - src/Scripting/Interop.cs
   - src/Scripting/Bootstrap.cs

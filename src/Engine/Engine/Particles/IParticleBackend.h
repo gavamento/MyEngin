@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-#include "Engine/Renderer/RenderTypes.h"
+#include "Engine/Renderer/Pipeline/RenderTypes.h"
 
 namespace mye {
 

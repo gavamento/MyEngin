@@ -23,14 +23,14 @@
 
 ## 触る場所 (planner の見立て)
 
-- `src/Engine/Core/Components.h/.cpp`、`src/Editor/EditorComponentCatalog.cpp`
+- `src/Engine/Core/Ecs/Components.h/.cpp`、`src/Editor/Widgets/EditorComponentCatalog.cpp`
 - 新規 `src/Engine/Engine/FractureBuilder.h/.cpp` (名前は coder 判断)
 - `src/Engine/Engine/RenderSystem.cpp` (描画の規則)
 - `src/Engine/Engine/DemoContent.cpp/.h`、`src/Engine/Engine/ShowcaseScenes.cpp`、`src/Engine/Engine/EngineCliSelfTest.cpp`
 - `tools/replay_verify.bat` (+ `tools/shot_verify.bat` 任意)
 - `FractureSelfTest.cpp` にケース追加
-- `src/Engine/Core/LocalizationTable.inl` (コンポーネント名・欄名の表示にローカライズが要るなら)
-- **触らない**: `src/Engine/Renderer/WaterPass.cpp` (WIP)。RenderSystem 側の変更で WaterPass に手を入れる必要が出たら止めて報告
+- `src/Engine/Core/Localization/LocalizationTable.inl` (コンポーネント名・欄名の表示にローカライズが要るなら)
+- **触らない**: `src/Engine/Renderer/Passes/WaterPass.cpp` (WIP)。RenderSystem 側の変更で WaterPass に手を入れる必要が出たら止めて報告
 
 ## 受け入れ条件 (このサブ)
 
@@ -59,7 +59,7 @@ tools\check_rules.ps1
 
 SELF_EVAL: sub-06 (round 1)
 実装:
-  - src/Engine/Core/Components.h/.cpp — `DestructibleComponent` (TypeId 64) / `FracturePieceComponent`
+  - src/Engine/Core/Ecs/Components.h/.cpp — `DestructibleComponent` (TypeId 64) / `FracturePieceComponent`
     (TypeId 65) を spec §4.2 の欄どおり追加し末尾登録。**kSimSnapshotVersion (現在 23) は据え置いた**。
     根拠: `Components.cpp` 冒頭の登録順コメント「末尾に足した opt-in の型 (無ければ何もしない) は、
     持つエンティティが既存シーンに居ないので既存シーンのワールドハッシュを 1 バイトも変えない =
@@ -68,7 +68,7 @@ SELF_EVAL: sub-06 (round 1)
     ときの話 (AcousticAudioSelfTest.cpp のコメント "v23 = WaterWave.timeTicks" が裏付け)。今回は
     新規コンポーネント 2 個の追加のみで既存コンポーネントへのフィールド追加は無いので、前例に照らして
     bump 不要と判断した
-  - src/Editor/EditorComponentCatalog.cpp — Destructible/FracturePiece を Physics カテゴリへ登録
+  - src/Editor/Widgets/EditorComponentCatalog.cpp — Destructible/FracturePiece を Physics カテゴリへ登録
   - src/Engine/Engine/FractureBuilder.h/.cpp (新規) — `BuildFracturePieces(World&, EntityID, const
     FractureAssetHandle&)` と `ValidateFracturePieces(World&, EntityID, const FractureAssetHandle*)`。
     RagdollBuilder.cpp と同じ流儀 (AddComponent を先に済ませてからポインタを取り直す、
@@ -94,7 +94,7 @@ SELF_EVAL: sub-06 (round 1)
     保存されることを検査する行を追加
   - tools/replay_verify.bat — `fracture` job を追加 (`:job_fracture`、`-Jobs` 一覧、`:failed` の
     診断分岐、echo の本数・シーン一覧を更新)
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp — セクション 15 として
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp — セクション 15 として
     `BuildFracturePieces`/`ValidateFracturePieces` のテストを追加 (このサブの受け入れ条件 1/2/4 に対応)。
     2 (a) 子の欄値の正しさと再生成での非重複、(b) `ValidateFracturePieces` の破片数不一致検出、
     (c) 手で組んだ凸包 2 個 (`ConvexColliderLibrary::Register` 直登録) を使い、
@@ -102,7 +102,7 @@ SELF_EVAL: sub-06 (round 1)
     **同じ高さ (0.50649) で静止する**ことを確認 (sub-05 の複合合成を通っている証拠)。
     Debug/Release で値がビット一致することも確認した
 仕様との差分:
-  - [追加] src/Engine/Engine/Physics/FractureLibrary.cpp — `RegisterInternal` が outer/cap の
+  - [追加] src/Engine/Engine/Physics/Fracture/FractureLibrary.cpp — `RegisterInternal` が outer/cap の
     頂点配列が空の破片でも `MeshLibrary::Register` を無条件に呼んでいた不具合を修正 (空なら
     未登録のまま = null AssetID、`MeshRenderer.mesh.IsNull()` の既存チェックに委ねる)。
     理由: 完全に内部 (元の表面に触れない) な Voronoi セルは outer/cap が 0 頂点になり得る
@@ -176,9 +176,9 @@ SELF_EVAL: sub-06 (round 1)
     「coder 判断」とされている項目)。理由: sub-07 で破断が入ると絵が変わるため、今 golden を
     固定してもすぐ撮り直しになる。sub-07/08 で見た目が安定してから追加するのが良いと判断した
 触ったファイル:
-  - src/Engine/Core/Components.h
-  - src/Engine/Core/Components.cpp
-  - src/Editor/EditorComponentCatalog.cpp
+  - src/Engine/Core/Ecs/Components.h
+  - src/Engine/Core/Ecs/Components.cpp
+  - src/Editor/Widgets/EditorComponentCatalog.cpp
   - src/Engine/Engine/FractureBuilder.h (新規)
   - src/Engine/Engine/FractureBuilder.cpp (新規)
   - src/Engine/Engine/RenderSystem.cpp
@@ -186,8 +186,8 @@ SELF_EVAL: sub-06 (round 1)
   - src/Engine/Engine/DemoContent.cpp
   - src/Engine/Engine/ShowcaseScenes.cpp
   - src/Engine/Engine/EngineCliSelfTest.cpp
-  - src/Engine/Engine/Physics/FractureLibrary.cpp
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureLibrary.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
   - tools/replay_verify.bat
 申し送り:
   - sub-07 (破断) は `ValidateFracturePieces` をまだどこからも呼んでいない (ライブラリ関数として

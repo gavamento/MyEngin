@@ -5,7 +5,7 @@
 #include <filesystem>
 #include <fstream>
 
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Replay/CrashRing.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Platform/PathUtil.h"

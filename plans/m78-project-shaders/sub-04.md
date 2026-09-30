@@ -54,14 +54,14 @@ tools\check_rules.ps1
 
 SELF_EVAL: sub-04 (round 1)
 実装:
-  - src/Engine/Renderer/ProjectComputeRunner.h: ComputeDispatchPoint enum・ProjectComputePassDesc 構造体・ProjectComputeRunner クラス宣言。DispatchPointToString/FromString 変換関数
-  - src/Engine/Renderer/ProjectComputeRunner.cpp: SetPasses (上限 8 + キャッシュ再利用)・HasPasses・EnsureCached (LoadCompute/ParseProperties/CB/UAV テクスチャ)・RunDispatch (priority 昇順安定ソート→Dispatch→unbind)・GetOutputSRV・ReleaseBuffers
-  - src/Engine/Renderer/ProjectComputeRunnerSelfTest.h/.cpp: 空スタック/DispatchPoint 変換/フィルタ/上限/グループ計算/ClearPasses/定数値 の 7 テスト
-  - src/Engine/Renderer/PostProcess.h: Resolve に computeRunner=nullptr パラメータ追加
-  - src/Engine/Renderer/PostProcess.cpp: Resolve の BeforeTonemap 点で RunDispatch(BeforeTonemap)、AfterTonemap 点で RunDispatch(AfterTonemap) を呼ぶよう修正
+  - src/Engine/Renderer/Compute/ProjectComputeRunner.h: ComputeDispatchPoint enum・ProjectComputePassDesc 構造体・ProjectComputeRunner クラス宣言。DispatchPointToString/FromString 変換関数
+  - src/Engine/Renderer/Compute/ProjectComputeRunner.cpp: SetPasses (上限 8 + キャッシュ再利用)・HasPasses・EnsureCached (LoadCompute/ParseProperties/CB/UAV テクスチャ)・RunDispatch (priority 昇順安定ソート→Dispatch→unbind)・GetOutputSRV・ReleaseBuffers
+  - src/Engine/Renderer/Compute/ProjectComputeRunnerSelfTest.h/.cpp: 空スタック/DispatchPoint 変換/フィルタ/上限/グループ計算/ClearPasses/定数値 の 7 テスト
+  - src/Engine/Renderer/PostFx/PostProcess.h: Resolve に computeRunner=nullptr パラメータ追加
+  - src/Engine/Renderer/PostFx/PostProcess.cpp: Resolve の BeforeTonemap 点で RunDispatch(BeforeTonemap)、AfterTonemap 点で RunDispatch(AfterTonemap) を呼ぶよう修正
   - src/Engine/Engine/RenderSystem.h: ProjectComputeRunner.h include・projectComputeRunner_ メンバ追加
   - src/Engine/Engine/RenderSystem.cpp: fxstack ロード時に Compute エントリも projectComputeRunner_.SetPasses() へ流す。fxStack 未設定時・ロード失敗時に ClearPasses() を追加。BeforePost を postFx_.Resolve() 前に RunDispatch。postFx_.Resolve に &projectComputeRunner_ を渡す
-  - src/Editor/EditorMain.cpp: ProjectComputeRunnerSelfTest.h include + ok &= RunProjectComputeRunnerSelfTest() 追加
+  - src/Editor/App/EditorMain.cpp: ProjectComputeRunnerSelfTest.h include + ok &= RunProjectComputeRunnerSelfTest() 追加
   - build/Engine.vcxproj + build/Engine.vcxproj.filters: 新規 4 ファイルを追加
 
 仕様との差分:
@@ -88,15 +88,15 @@ SELF_EVAL: sub-04 (round 1)
   3. コンピュート出力 SRV を後続ポストが読む経路 (GetOutputSRV → texture resolver) が未実装。「後続ポストが SRV として参照できる」は should と判断したが、確認を求む
 
 触ったファイル:
-  - src/Engine/Renderer/ProjectComputeRunner.h (新規)
-  - src/Engine/Renderer/ProjectComputeRunner.cpp (新規)
-  - src/Engine/Renderer/ProjectComputeRunnerSelfTest.h (新規)
-  - src/Engine/Renderer/ProjectComputeRunnerSelfTest.cpp (新規)
-  - src/Engine/Renderer/PostProcess.h
-  - src/Engine/Renderer/PostProcess.cpp
+  - src/Engine/Renderer/Compute/ProjectComputeRunner.h (新規)
+  - src/Engine/Renderer/Compute/ProjectComputeRunner.cpp (新規)
+  - src/Engine/Renderer/Compute/ProjectComputeRunnerSelfTest.h (新規)
+  - src/Engine/Renderer/Compute/ProjectComputeRunnerSelfTest.cpp (新規)
+  - src/Engine/Renderer/PostFx/PostProcess.h
+  - src/Engine/Renderer/PostFx/PostProcess.cpp
   - src/Engine/Engine/RenderSystem.h
   - src/Engine/Engine/RenderSystem.cpp
-  - src/Editor/EditorMain.cpp
+  - src/Editor/App/EditorMain.cpp
   - build/Engine.vcxproj
   - build/Engine.vcxproj.filters
 
@@ -159,8 +159,8 @@ SELF_EVAL: sub-04 (round 2)
 
 触ったファイル:
   - assets/shaders/project_post_blit.hlsl (新規)
-  - src/Engine/Renderer/PostProcess.h
-  - src/Engine/Renderer/PostProcess.cpp
+  - src/Engine/Renderer/PostFx/PostProcess.h
+  - src/Engine/Renderer/PostFx/PostProcess.cpp
   - src/Engine/Engine/RenderSystem.cpp
 
 ---
@@ -194,8 +194,8 @@ SELF_EVAL: sub-04 (round 3)
   なし
 
 触ったファイル:
-  - src/Engine/Renderer/ProjectComputeRunnerSelfTest.h
-  - src/Engine/Renderer/FxStackSelfTest.cpp
+  - src/Engine/Renderer/Compute/ProjectComputeRunnerSelfTest.h
+  - src/Engine/Renderer/PostFx/FxStackSelfTest.cpp
   - plans/m78-project-shaders/sub-04.md (実装メモのみ)
 
 申し送り:

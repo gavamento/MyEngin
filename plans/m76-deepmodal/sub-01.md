@@ -27,10 +27,10 @@ spec §4.1「後処理 BuildModes」「合成 ModalSynthRender」「Mel」と §
 
 ## 触る場所 (planner の見立て)
 - 新規 `src\Engine\Engine\Modal\ModalTypes.h`
-- 新規 `src\Engine\Engine\Audio\ModalSynth.h/.cpp`、`ModalSynthSelfTest.h/.cpp`
-- `src\Engine\Engine\Physics\PhysMatLibrary.h:33-67` (struct 末尾) / `.cpp:118` ToJson / `:140` FromJson / `:171` Sanitize / `PhysMatSelfTest.cpp`
+- 新規 `src\Engine\Engine\Audio\Synth\ModalSynth.h/.cpp`、`ModalSynthSelfTest.h/.cpp`
+- `src\Engine\Engine\Physics\Rigid\PhysMatLibrary.h:33-67` (struct 末尾) / `.cpp:118` ToJson / `:140` FromJson / `:171` Sanitize / `PhysMatSelfTest.cpp`
 - `assets\physmats\{carpet,glass,glue,gravel,ice,metal,rubber,steel,tile,water,wood}.physmat.json`
-- `src\Engine\Engine\Audio\ImpactSynth.h:23`、`src\Editor\EditorMain.cpp` (selftest 連鎖)
+- `src\Engine\Engine\Audio\Synth\ImpactSynth.h:23`、`src\Editor\App\EditorMain.cpp` (selftest 連鎖)
 - 参考: `ImpactSynth.cpp:77` `AddDampedSine` (アタック規約)、`ImpactSynthSelfTest.cpp:37` `RmsIn`
 - ソース追加後 `pwsh -File tools\gen_project_files.ps1`
 
@@ -52,14 +52,14 @@ spec §5 の 1, 2, 3。
 SELF_EVAL: sub-01 (round 1)
 実装:
   - `src\Engine\Engine\Modal\ModalTypes.h` (新規) — `kModalVoxelN/kModalMapN/kModalBands/kModalChannels/kModalVoxelPad`、`ModalCellFeature`、`MaskCh`/`AmpCh`、`DmNetHeader` POD (spec §4.2 の順序どおり)、`MelBandCenters` (inline、mel(100..10000Hz) を 32 帯域に等分し区間中点の逆変換)
-  - `src\Engine\Engine\Audio\ModalSynth.h/.cpp` (新規) — `ModalModeSet`/`ModalPostParams`、`kModalTailAmp=1/32768`、`kModalSampleRate=44100`、`BuildModes` (spec §4.1 手順 1-7 を 1 関数に、mask 閾値→log-amp 逆正規化→|k|加重合成→参照材質 λ→式12 のスケール則→目標材質の c/f→過減衰・ナイキスト・無音の棄却)、`ModalClipSeconds`、`ModalSynthRender` (2 次再帰共振器・double 状態・位相 0・1ms 線形アタック・tanh ソフトクリップ |x|>0.8・mono/44100/int16)
-  - `src\Engine\Engine\Audio\ModalSynthSelfTest.h/.cpp` (新規) — 受け入れ条件 1 の (1)-(9) を全て実装 (零交差周波数・RMS 減衰比・振幅線形性・長さ規則両端・Mel の別経路 double 照合・E/ρ/L のスケール則 (相対 1e-4)・mask 閾値・k=0・過減衰/ナイキスト棄却)
-  - `src\Engine\Engine\Physics\PhysMatLibrary.h` — `PhysMat` 末尾に `youngsModulus`(既定0) / `poissonRatio`(既定0.3、保持のみ) / `rayleighAlpha`(既定0) / `rayleighBeta`(既定0) を追加
-  - `src\Engine\Engine\Physics\PhysMatLibrary.cpp` — `ToJson` は常に4本書く、`FromJson` は contains+既定 (前方互換)、`Sanitize` は E∈[0,1e13] / ν∈[0,0.49] / α∈[0,1e4] / β∈[0,1e-2]
-  - `src\Engine\Engine\Physics\PhysMatSelfTest.cpp` — 前方互換 (旧JSON→既定値)・Sanitize (NaN/負値/ν上限0.49)・ToJson/FromJson 往復に4フィールド分のケースを追加
+  - `src\Engine\Engine\Audio\Synth\ModalSynth.h/.cpp` (新規) — `ModalModeSet`/`ModalPostParams`、`kModalTailAmp=1/32768`、`kModalSampleRate=44100`、`BuildModes` (spec §4.1 手順 1-7 を 1 関数に、mask 閾値→log-amp 逆正規化→|k|加重合成→参照材質 λ→式12 のスケール則→目標材質の c/f→過減衰・ナイキスト・無音の棄却)、`ModalClipSeconds`、`ModalSynthRender` (2 次再帰共振器・double 状態・位相 0・1ms 線形アタック・tanh ソフトクリップ |x|>0.8・mono/44100/int16)
+  - `src\Engine\Engine\Audio\Synth\ModalSynthSelfTest.h/.cpp` (新規) — 受け入れ条件 1 の (1)-(9) を全て実装 (零交差周波数・RMS 減衰比・振幅線形性・長さ規則両端・Mel の別経路 double 照合・E/ρ/L のスケール則 (相対 1e-4)・mask 閾値・k=0・過減衰/ナイキスト棄却)
+  - `src\Engine\Engine\Physics\Rigid\PhysMatLibrary.h` — `PhysMat` 末尾に `youngsModulus`(既定0) / `poissonRatio`(既定0.3、保持のみ) / `rayleighAlpha`(既定0) / `rayleighBeta`(既定0) を追加
+  - `src\Engine\Engine\Physics\Rigid\PhysMatLibrary.cpp` — `ToJson` は常に4本書く、`FromJson` は contains+既定 (前方互換)、`Sanitize` は E∈[0,1e13] / ν∈[0,0.49] / α∈[0,1e4] / β∈[0,1e-2]
+  - `src\Engine\Engine\Physics\Rigid\PhysMatSelfTest.cpp` — 前方互換 (旧JSON→既定値)・Sanitize (NaN/負値/ν上限0.49)・ToJson/FromJson 往復に4フィールド分のケースを追加
   - `assets\physmats\{metal,steel,glass,tile,wood,rubber,ice,carpet,gravel,glue,water}.physmat.json` — spec §4.2 の初期値 (E/ν/α/β) を追記 (carpet/gravel/glue/water は E/α/β=0, ν=0.3)
-  - `src\Engine\Engine\Audio\ImpactSynth.h:23` 付近のコメント更新 (「モーダル経路は ModalSynth.h が別に持つ」を明記)
-  - `src\Editor\EditorMain.cpp` — `ModalSynthSelfTest.h` を include、selftest 連鎖の末尾 (ReloadHubSelfTest の次、EngineCliSelfTest の手前) に `RunModalSynthSelfTest()` を追加
+  - `src\Engine\Engine\Audio\Synth\ImpactSynth.h:23` 付近のコメント更新 (「モーダル経路は ModalSynth.h が別に持つ」を明記)
+  - `src\Editor\App\EditorMain.cpp` — `ModalSynthSelfTest.h` を include、selftest 連鎖の末尾 (ReloadHubSelfTest の次、EngineCliSelfTest の手前) に `RunModalSynthSelfTest()` を追加
   - `pwsh -File tools\gen_project_files.ps1` を実行し `build\Engine.vcxproj` / `.filters` を更新 (新規4ファイルを追加)
 仕様との差分:
   - なし。spec §4.1/§4.2 と sub-01.md の指示どおりに実装した。`ModalPostParams`/`BuildModes` の引数から ν を除外する指示も遵守 (型として ν を渡せない形にした)
@@ -76,13 +76,13 @@ SELF_EVAL: sub-01 (round 1)
 不安・質問: なし
 触ったファイル:
   - src/Engine/Engine/Modal/ModalTypes.h (新規)
-  - src/Engine/Engine/Audio/ModalSynth.h (新規)
-  - src/Engine/Engine/Audio/ModalSynth.cpp (新規)
-  - src/Engine/Engine/Audio/ModalSynthSelfTest.h (新規)
-  - src/Engine/Engine/Audio/ModalSynthSelfTest.cpp (新規)
-  - src/Engine/Engine/Physics/PhysMatLibrary.h
-  - src/Engine/Engine/Physics/PhysMatLibrary.cpp
-  - src/Engine/Engine/Physics/PhysMatSelfTest.cpp
+  - src/Engine/Engine/Audio/Synth/ModalSynth.h (新規)
+  - src/Engine/Engine/Audio/Synth/ModalSynth.cpp (新規)
+  - src/Engine/Engine/Audio/Synth/ModalSynthSelfTest.h (新規)
+  - src/Engine/Engine/Audio/Synth/ModalSynthSelfTest.cpp (新規)
+  - src/Engine/Engine/Physics/Rigid/PhysMatLibrary.h
+  - src/Engine/Engine/Physics/Rigid/PhysMatLibrary.cpp
+  - src/Engine/Engine/Physics/Rigid/PhysMatSelfTest.cpp
   - assets/physmats/metal.physmat.json
   - assets/physmats/steel.physmat.json
   - assets/physmats/glass.physmat.json
@@ -94,8 +94,8 @@ SELF_EVAL: sub-01 (round 1)
   - assets/physmats/gravel.physmat.json
   - assets/physmats/glue.physmat.json
   - assets/physmats/water.physmat.json
-  - src/Engine/Engine/Audio/ImpactSynth.h
-  - src/Editor/EditorMain.cpp
+  - src/Engine/Engine/Audio/Synth/ImpactSynth.h
+  - src/Editor/App/EditorMain.cpp
   - build/Engine.vcxproj (gen_project_files.ps1 の生成物。ソース追加に伴う機械更新)
   - build/Engine.vcxproj.filters (同上)
 申し送り: sub-02 (ボクセライザ) は独立に着手可能。sub-05 (推論/ModalSoundLibrary) は本サブが定義した `DmNetHeader`/`ModalCellFeature`/`BuildModes`/`ModalSynthRender` をそのまま消費する想定 — フィールド順序・意味は spec §4.1/§4.2 のとおりに実装済みなので変更なしで使えるはず。`replay_verify.bat` を手元でフル並列 (既定12) で回すとホスト側のメモリ不足でプロセスごと kill されることがあるため、次回以降も `MYE_REPLAY_JOBS=3` 程度に落として実行することを推奨する (エンジン自体の挙動やテスト結果には影響しない、ホスト環境固有の制約)。

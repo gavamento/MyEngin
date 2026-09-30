@@ -1,51 +1,140 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
+    <Filter Include="App">
+      <UniqueIdentifier>{0E7089C3-DD61-5917-A505-AF2FD981F30D}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Asset">
+      <UniqueIdentifier>{10E11BED-4EA7-7254-E859-ED343276A914}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Project">
+      <UniqueIdentifier>{34B3B430-F3B8-5207-2179-7877CCF35676}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Scene">
+      <UniqueIdentifier>{B476C07F-B98E-5ED8-F948-077400762D65}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="SelfTest">
+      <UniqueIdentifier>{5A06D53C-931A-3BA5-4572-5E5182940C46}</UniqueIdentifier>
+    </Filter>
     <Filter Include="SourceControl">
       <UniqueIdentifier>{5590C054-446C-F986-95EB-F68E197B6B7A}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Tools">
+      <UniqueIdentifier>{FAC517FC-5616-64EF-269E-F088212737A0}</UniqueIdentifier>
     </Filter>
     <Filter Include="Undo">
       <UniqueIdentifier>{C45724AD-B67D-BA3E-BE10-0FFAC17BD3A6}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Widgets">
+      <UniqueIdentifier>{9043029E-9E9C-1DA6-36E1-76F68CEEE880}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Windows">
       <UniqueIdentifier>{BD808CBF-0BAB-73DA-16EE-0B0A085E97ED}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Windows\Animation">
+      <UniqueIdentifier>{B9251E7D-D0F1-7A1E-09D7-20B8AC2D22A4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Windows\Asset">
+      <UniqueIdentifier>{30F29991-144D-0C0E-199D-F691FDA43950}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Windows\Audio">
+      <UniqueIdentifier>{CD58D56D-4C30-9235-66C6-FA58A55ECCD3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Windows\Debug">
+      <UniqueIdentifier>{00695B93-7425-B0D3-BE81-00FE988E80CA}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Windows\Project">
+      <UniqueIdentifier>{2F35A4AB-FD8C-7F90-539E-3CB29A102AC2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Windows\Scene">
+      <UniqueIdentifier>{EE604B7F-6B52-BFC9-FDD9-D122510A3432}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\Editor\AssetOps.cpp" />
-    <ClCompile Include="..\src\Editor\AssetOpsSelfTest.cpp" />
-    <ClCompile Include="..\src\Editor\AssetPreviewCache.cpp" />
-    <ClCompile Include="..\src\Editor\CameraPilot.cpp" />
-    <ClCompile Include="..\src\Editor\CameraPilotSelfTest.cpp" />
-    <ClCompile Include="..\src\Editor\ChildProcess.cpp" />
-    <ClCompile Include="..\src\Editor\ComponentClipboard.cpp" />
-    <ClCompile Include="..\src\Editor\CreateMenu.cpp" />
-    <ClCompile Include="..\src\Editor\DecalSelfTest.cpp" />
-    <ClCompile Include="..\src\Editor\DiskCompare.cpp" />
-    <ClCompile Include="..\src\Editor\EditorApp.cpp" />
-    <ClCompile Include="..\src\Editor\EditorComponentCatalog.cpp" />
-    <ClCompile Include="..\src\Editor\EditorGlobalSettings.cpp" />
-    <ClCompile Include="..\src\Editor\EditorMain.cpp" />
-    <ClCompile Include="..\src\Editor\EditorSettings.cpp" />
-    <ClCompile Include="..\src\Editor\EditorToolbar.cpp" />
-    <ClCompile Include="..\src\Editor\EditorWidgets.cpp" />
-    <ClCompile Include="..\src\Editor\FractureBakeCommit.cpp" />
-    <ClCompile Include="..\src\Editor\FractureBakeService.cpp" />
-    <ClCompile Include="..\src\Editor\FractureEditorSelfTest.cpp" />
-    <ClCompile Include="..\src\Editor\GameFlowSelfTest.cpp" />
-    <ClCompile Include="..\src\Editor\HzbSelfTest.cpp" />
-    <ClCompile Include="..\src\Editor\LayoutManager.cpp" />
-    <ClCompile Include="..\src\Editor\LightSelectionSelfTest.cpp" />
-    <ClCompile Include="..\src\Editor\ModalTools.cpp" />
-    <ClCompile Include="..\src\Editor\PartSelfTest.cpp" />
-    <ClCompile Include="..\src\Editor\PartTagNames.cpp" />
-    <ClCompile Include="..\src\Editor\PhysicsLayerNames.cpp" />
-    <ClCompile Include="..\src\Editor\PlayModeController.cpp" />
-    <ClCompile Include="..\src\Editor\ProbeBakerSelfTest.cpp" />
-    <ClCompile Include="..\src\Editor\ProjectManager.cpp" />
-    <ClCompile Include="..\src\Editor\ProjectRegistry.cpp" />
-    <ClCompile Include="..\src\Editor\ProjectTemplates.cpp" />
-    <ClCompile Include="..\src\Editor\RagdollBuildSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\App\ChildProcess.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\App\DiskCompare.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\App\EditorApp.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\App\EditorGlobalSettings.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\App\EditorMain.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\App\EditorSettings.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\App\LayoutManager.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Asset\AssetOps.cpp">
+      <Filter>Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Asset\AssetOpsSelfTest.cpp">
+      <Filter>Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Asset\AssetPreviewCache.cpp">
+      <Filter>Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Project\PartTagNames.cpp">
+      <Filter>Project</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Project\PhysicsLayerNames.cpp">
+      <Filter>Project</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Project\ProjectManager.cpp">
+      <Filter>Project</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Project\ProjectRegistry.cpp">
+      <Filter>Project</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Project\ProjectTemplates.cpp">
+      <Filter>Project</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Scene\CameraPilot.cpp">
+      <Filter>Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Scene\CameraPilotSelfTest.cpp">
+      <Filter>Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Scene\ComponentClipboard.cpp">
+      <Filter>Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Scene\PlayModeController.cpp">
+      <Filter>Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\DecalSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\GameFlowSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\HzbSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\LightSelectionSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\PartSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\ProbeBakerSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\RagdollBuildSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\SsrSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\TerrainSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\SourceControl\CollabClient.cpp">
       <Filter>SourceControl</Filter>
     </ClCompile>
@@ -67,109 +156,189 @@
     <ClCompile Include="..\src\Editor\SourceControl\StageClassifier.cpp">
       <Filter>SourceControl</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\SsrSelfTest.cpp" />
-    <ClCompile Include="..\src\Editor\StatusBar.cpp" />
-    <ClCompile Include="..\src\Editor\TerrainSelfTest.cpp" />
-    <ClCompile Include="..\src\Editor\ToastCenter.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\FractureBakeCommit.cpp">
+      <Filter>Tools</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\FractureBakeService.cpp">
+      <Filter>Tools</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\FractureEditorSelfTest.cpp">
+      <Filter>Tools</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\ModalTools.cpp">
+      <Filter>Tools</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Undo\UndoSelfTest.cpp">
+      <Filter>Undo</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Undo\UndoStack.cpp">
       <Filter>Undo</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\UndoSelfTest.cpp" />
-    <ClCompile Include="..\src\Editor\Windows\AnimationWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Widgets\CreateMenu.cpp">
+      <Filter>Widgets</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\AnimatorControllerWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Widgets\EditorComponentCatalog.cpp">
+      <Filter>Widgets</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\AssetBrowserWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Widgets\EditorToolbar.cpp">
+      <Filter>Widgets</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\AudioMixerWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Widgets\EditorWidgets.cpp">
+      <Filter>Widgets</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\BuildSettingsWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Widgets\StatusBar.cpp">
+      <Filter>Widgets</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\ConsoleWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Widgets\ToastCenter.cpp">
+      <Filter>Widgets</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\GameViewWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Windows\Animation\AnimationWindow.cpp">
+      <Filter>Windows\Animation</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\HierarchyWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.cpp">
+      <Filter>Windows\Animation</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\InspectorWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.cpp">
+      <Filter>Windows\Asset</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\NetWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Windows\Asset\SearchWindow.cpp">
+      <Filter>Windows\Asset</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\ParticleSettingsWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Windows\Audio\AudioMixerWindow.cpp">
+      <Filter>Windows\Audio</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\PerformanceCompareWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Windows\Audio\SoundGenWindow.cpp">
+      <Filter>Windows\Audio</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\ProfilerWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Windows\Debug\ConsoleWindow.cpp">
+      <Filter>Windows\Debug</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\ProjectSettingsWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Windows\Debug\PerformanceCompareWindow.cpp">
+      <Filter>Windows\Debug</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\SceneViewGhost.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Windows\Debug\ProfilerWindow.cpp">
+      <Filter>Windows\Debug</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\SceneViewWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Windows\Debug\TimelineWindow.cpp">
+      <Filter>Windows\Debug</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\SearchWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Windows\Project\BuildSettingsWindow.cpp">
+      <Filter>Windows\Project</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\SoundGenWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Windows\Project\NetWindow.cpp">
+      <Filter>Windows\Project</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\SourceControlWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.cpp">
+      <Filter>Windows\Project</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\Windows\TimelineWindow.cpp">
-      <Filter>Windows</Filter>
+    <ClCompile Include="..\src\Editor\Windows\Project\SourceControlWindow.cpp">
+      <Filter>Windows\Project</Filter>
     </ClCompile>
-    <ClInclude Include="..\src\Editor\AssetOps.h" />
-    <ClInclude Include="..\src\Editor\AssetOpsSelfTest.h" />
-    <ClInclude Include="..\src\Editor\AssetPreviewCache.h" />
-    <ClInclude Include="..\src\Editor\CameraPilot.h" />
-    <ClInclude Include="..\src\Editor\CameraPilotSelfTest.h" />
-    <ClInclude Include="..\src\Editor\ChildProcess.h" />
-    <ClInclude Include="..\src\Editor\ComponentClipboard.h" />
-    <ClInclude Include="..\src\Editor\CreateMenu.h" />
-    <ClInclude Include="..\src\Editor\DecalSelfTest.h" />
-    <ClInclude Include="..\src\Editor\DiskCompare.h" />
-    <ClInclude Include="..\src\Editor\EditorApp.h" />
-    <ClInclude Include="..\src\Editor\EditorComponentCatalog.h" />
-    <ClInclude Include="..\src\Editor\EditorGlobalSettings.h" />
-    <ClInclude Include="..\src\Editor\EditorSettings.h" />
-    <ClInclude Include="..\src\Editor\EditorToolbar.h" />
-    <ClInclude Include="..\src\Editor\EditorWidgets.h" />
-    <ClInclude Include="..\src\Editor\FractureBakeCommit.h" />
-    <ClInclude Include="..\src\Editor\FractureBakeService.h" />
-    <ClInclude Include="..\src\Editor\FractureEditorSelfTest.h" />
-    <ClInclude Include="..\src\Editor\GameFlowSelfTest.h" />
-    <ClInclude Include="..\src\Editor\HzbSelfTest.h" />
-    <ClInclude Include="..\src\Editor\LayoutManager.h" />
-    <ClInclude Include="..\src\Editor\LightSelectionSelfTest.h" />
-    <ClInclude Include="..\src\Editor\ModalTools.h" />
-    <ClInclude Include="..\src\Editor\PartSelfTest.h" />
-    <ClInclude Include="..\src\Editor\PartTagNames.h" />
-    <ClInclude Include="..\src\Editor\PhysicsLayerNames.h" />
-    <ClInclude Include="..\src\Editor\PlayModeController.h" />
-    <ClInclude Include="..\src\Editor\ProbeBakerSelfTest.h" />
-    <ClInclude Include="..\src\Editor\ProjectManager.h" />
-    <ClInclude Include="..\src\Editor\ProjectRegistry.h" />
-    <ClInclude Include="..\src\Editor\ProjectTemplates.h" />
-    <ClInclude Include="..\src\Editor\RagdollBuildSelfTest.h" />
-    <ClInclude Include="..\src\Editor\Selection.h" />
-    <ClInclude Include="..\src\Editor\ShortcutHub.h" />
+    <ClCompile Include="..\src\Editor\Windows\Scene\GameViewWindow.cpp">
+      <Filter>Windows\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Scene\HierarchyWindow.cpp">
+      <Filter>Windows\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Scene\InspectorWindow.cpp">
+      <Filter>Windows\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Scene\ParticleSettingsWindow.cpp">
+      <Filter>Windows\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Scene\SceneViewGhost.cpp">
+      <Filter>Windows\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Scene\SceneViewWindow.cpp">
+      <Filter>Windows\Scene</Filter>
+    </ClCompile>
+    <ClInclude Include="..\src\Editor\App\ChildProcess.h">
+      <Filter>App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\App\DiskCompare.h">
+      <Filter>App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\App\EditorApp.h">
+      <Filter>App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\App\EditorGlobalSettings.h">
+      <Filter>App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\App\EditorSettings.h">
+      <Filter>App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\App\LayoutManager.h">
+      <Filter>App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\App\ShortcutHub.h">
+      <Filter>App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Asset\AssetOps.h">
+      <Filter>Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Asset\AssetOpsSelfTest.h">
+      <Filter>Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Asset\AssetPreviewCache.h">
+      <Filter>Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Project\PartTagNames.h">
+      <Filter>Project</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Project\PhysicsLayerNames.h">
+      <Filter>Project</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Project\ProjectManager.h">
+      <Filter>Project</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Project\ProjectRegistry.h">
+      <Filter>Project</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Project\ProjectTemplates.h">
+      <Filter>Project</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Scene\CameraPilot.h">
+      <Filter>Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Scene\CameraPilotSelfTest.h">
+      <Filter>Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Scene\ComponentClipboard.h">
+      <Filter>Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Scene\PlayModeController.h">
+      <Filter>Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Scene\Selection.h">
+      <Filter>Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\DecalSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\GameFlowSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\HzbSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\LightSelectionSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\PartSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\ProbeBakerSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\RagdollBuildSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\SsrSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\TerrainSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\SourceControl\CollabClient.h">
       <Filter>SourceControl</Filter>
     </ClInclude>
@@ -194,70 +363,98 @@
     <ClInclude Include="..\src\Editor\SourceControl\StageClassifier.h">
       <Filter>SourceControl</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\SsrSelfTest.h" />
-    <ClInclude Include="..\src\Editor\StatusBar.h" />
-    <ClInclude Include="..\src\Editor\TerrainSelfTest.h" />
-    <ClInclude Include="..\src\Editor\ToastCenter.h" />
+    <ClInclude Include="..\src\Editor\Tools\FractureBakeCommit.h">
+      <Filter>Tools</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\FractureBakeService.h">
+      <Filter>Tools</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\FractureEditorSelfTest.h">
+      <Filter>Tools</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\ModalTools.h">
+      <Filter>Tools</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Undo\UndoSelfTest.h">
+      <Filter>Undo</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\Undo\UndoStack.h">
       <Filter>Undo</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\UndoSelfTest.h" />
-    <ClInclude Include="..\src\Editor\Windows\AnimationWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Widgets\CreateMenu.h">
+      <Filter>Widgets</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\AnimatorControllerWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Widgets\EditorComponentCatalog.h">
+      <Filter>Widgets</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\AssetBrowserWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Widgets\EditorToolbar.h">
+      <Filter>Widgets</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\AudioMixerWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Widgets\EditorWidgets.h">
+      <Filter>Widgets</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\BuildSettingsWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Widgets\StatusBar.h">
+      <Filter>Widgets</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\ConsoleWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Widgets\ToastCenter.h">
+      <Filter>Widgets</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\GameViewWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Windows\Animation\AnimationWindow.h">
+      <Filter>Windows\Animation</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\HierarchyWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.h">
+      <Filter>Windows\Animation</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\InspectorWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.h">
+      <Filter>Windows\Asset</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\NetWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Windows\Asset\SearchWindow.h">
+      <Filter>Windows\Asset</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\ParticleSettingsWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Windows\Audio\AudioMixerWindow.h">
+      <Filter>Windows\Audio</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\PerformanceCompareWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Windows\Audio\SoundGenWindow.h">
+      <Filter>Windows\Audio</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\ProfilerWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Windows\Debug\ConsoleWindow.h">
+      <Filter>Windows\Debug</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\ProjectSettingsWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Windows\Debug\PerformanceCompareWindow.h">
+      <Filter>Windows\Debug</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\SceneViewWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Windows\Debug\ProfilerWindow.h">
+      <Filter>Windows\Debug</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\SearchWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Windows\Debug\TimelineWindow.h">
+      <Filter>Windows\Debug</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\SoundGenWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Windows\Project\BuildSettingsWindow.h">
+      <Filter>Windows\Project</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\SourceControlWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Windows\Project\NetWindow.h">
+      <Filter>Windows\Project</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\Windows\TimelineWindow.h">
-      <Filter>Windows</Filter>
+    <ClInclude Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.h">
+      <Filter>Windows\Project</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Project\SourceControlWindow.h">
+      <Filter>Windows\Project</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Scene\GameViewWindow.h">
+      <Filter>Windows\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Scene\HierarchyWindow.h">
+      <Filter>Windows\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Scene\InspectorWindow.h">
+      <Filter>Windows\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Scene\ParticleSettingsWindow.h">
+      <Filter>Windows\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Scene\SceneViewWindow.h">
+      <Filter>Windows\Scene</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

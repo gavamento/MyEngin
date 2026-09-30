@@ -591,7 +591,7 @@ namespace MyeScripting
         // ★C# レーンはリプレイ/ワールドハッシュの対象外 (別レーン) — 引く行為自体は
         //   決定論だが、C# から sim を動かす経路は record/verify で回らないので注意
 
-        // タグ名 → タグ ID。FNV-1a 64bit で、ネイティブ Engine/Core/Hash.h の HashStr と
+        // タグ名 → タグ ID。FNV-1a 64bit で、ネイティブ Engine/Core/Util/Hash.h の HashStr と
         // 同一の定数 (バイト列は UTF-8)。ここがズレると同じ名前で別 ID を引くことになる
         public static ulong PartTag(string name)
         {

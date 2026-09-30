@@ -7,8 +7,8 @@
 
 #include <cmath>
 
-#include "Engine/Core/Components.h"
-#include "Engine/Core/World.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/UI/UIInteraction.h"
 #include "Engine/Engine/UI/UILayout.h"
 #include "Engine/Engine/UI/UILayoutGroup.h" // LayoutScratch

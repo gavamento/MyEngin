@@ -4,22 +4,22 @@
 #include <filesystem>
 #include <fstream>
 
-#include "Engine/Core/Log.h"
-#include "Engine/Engine/Animation.h"
-#include "Engine/Engine/Audio/AudioMixer.h"
-#include "Engine/Engine/Audio/AudioSystem.h"
-#include "Engine/Engine/Audio/ImpactSoundAsset.h"
-#include "Engine/Engine/Audio/SoundAsset.h"
-#include "Engine/Engine/FbxLoader.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/Animation/Animation.h"
+#include "Engine/Engine/Audio/Playback/AudioMixer.h"
+#include "Engine/Engine/Audio/Playback/AudioSystem.h"
+#include "Engine/Engine/Audio/Synth/ImpactSoundAsset.h"
+#include "Engine/Engine/Audio/Playback/SoundAsset.h"
+#include "Engine/Engine/Asset/FbxLoader.h"
 #include "Engine/Engine/Modal/ModalSoundLibrary.h"
-#include "Engine/Engine/ModelLoader.h"
-#include "Engine/Engine/Physics/PhysMatLibrary.h"
-#include "Engine/Engine/Prefab.h"
-#include "Engine/Engine/Scene.h"
-#include "Engine/Engine/SceneSerializer.h"
+#include "Engine/Engine/Asset/ModelLoader.h"
+#include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
+#include "Engine/Engine/Scene/Prefab.h"
+#include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/Scene/SceneSerializer.h"
 #include "Engine/Platform/PathUtil.h"
-#include "Engine/Renderer/GpuResources.h"
-#include "Engine/Renderer/ShaderManager.h"
+#include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Shader/ShaderManager.h"
 
 namespace mye {
 namespace {

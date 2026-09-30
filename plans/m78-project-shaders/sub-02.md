@@ -25,7 +25,7 @@
 
 ## 触る場所 (planner の見立て)
 
-- `src/Engine/Renderer/PostProcess.cpp` / `.h` — Resolve 内の 2 挿入点
+- `src/Engine/Renderer/PostFx/PostProcess.cpp` / `.h` — Resolve 内の 2 挿入点
 - 新規 Runner / Pass クラス (Renderer 配下)
 - `assets/shaders/ProjectPostCommon.hlsli` およびサンプル／エラー用ポスト HLSL
 - `RenderSystem.cpp` — Runner への設定受け渡しが必要なら最小限
@@ -56,15 +56,15 @@ tools\check_rules.ps1
 ### SELF_EVAL: sub-02 (round 1)
 
 **実装:**
-- `src/Engine/Renderer/ProjectEffectRunner.h` : `PostInsertionPoint` enum, `ProjectPostPassDesc` 構造体, `ProjectEffectRunner` クラス宣言
-- `src/Engine/Renderer/ProjectEffectRunner.cpp` : `AddPass/ClearPasses/HasPasses/EnsureCached/DrawFullscreen/RunPasses/PrepareShaders` 実装
-- `src/Engine/Renderer/ProjectEffectRunnerSelfTest.h/.cpp` : 5 テスト (空スタック/挿入点フィルタ/disabled/priority安定ソート/定数値)
+- `src/Engine/Renderer/PostFx/ProjectEffectRunner.h` : `PostInsertionPoint` enum, `ProjectPostPassDesc` 構造体, `ProjectEffectRunner` クラス宣言
+- `src/Engine/Renderer/PostFx/ProjectEffectRunner.cpp` : `AddPass/ClearPasses/HasPasses/EnsureCached/DrawFullscreen/RunPasses/PrepareShaders` 実装
+- `src/Engine/Renderer/PostFx/ProjectEffectRunnerSelfTest.h/.cpp` : 5 テスト (空スタック/挿入点フィルタ/disabled/priority安定ソート/定数値)
 - `assets/shaders/ProjectPostCommon.hlsli` : エンジン共通バインド (b0=EnginePostCB, t0=gSceneColor, t1=gSceneDepth, s0=gLinearClamp, VSMain)
 - `assets/shaders/project_post_magenta.hlsl` : マゼンタフォールバックシェーダ (PSMain → (1,0,1,1))
-- `src/Engine/Renderer/PostProcess.h` : Target に `userPostA/B/userPostLdr` 追加, `magentaShader_` 追加, `Resolve` に `ProjectEffectRunner* runner=nullptr` 追加
-- `src/Engine/Renderer/PostProcess.cpp` : `Acquire` に 3 RT 追加, `Init` に `magentaShader_` ロード追加, `Resolve` に BeforeTonemap/AfterTonemap フック追加
+- `src/Engine/Renderer/PostFx/PostProcess.h` : Target に `userPostA/B/userPostLdr` 追加, `magentaShader_` 追加, `Resolve` に `ProjectEffectRunner* runner=nullptr` 追加
+- `src/Engine/Renderer/PostFx/PostProcess.cpp` : `Acquire` に 3 RT 追加, `Init` に `magentaShader_` ロード追加, `Resolve` に BeforeTonemap/AfterTonemap フック追加
 - `build/Engine.vcxproj` / `build/Engine.vcxproj.filters` : 新規ソース追加
-- `src/Editor/EditorMain.cpp` : `RunProjectEffectRunnerSelfTest()` を selftest チェーン末尾に追加
+- `src/Editor/App/EditorMain.cpp` : `RunProjectEffectRunnerSelfTest()` を selftest チェーン末尾に追加
 
 **仕様との差分:**
 - [追加] `ProjectPostPassDesc::propertyValues` は `PropValue` 型 (`std::variant<float, std::array<float,4>>`) で保持。sub-03 fxstack が JSON から充填する前提。
@@ -92,13 +92,13 @@ tools\check_rules.ps1
 - EnsureCached でシェーダソースを `_wfopen_s` で読んでいる。ShaderManager がソースをキャッシュしていないため、プロパティパースのためにファイルを再読みする実装とした。sub-03 以降で ShaderManager からソース取得の口を追加することを申し送る。
 
 **触ったファイル:**
-- `src/Engine/Renderer/ProjectEffectRunner.h`
-- `src/Engine/Renderer/ProjectEffectRunner.cpp`
-- `src/Engine/Renderer/ProjectEffectRunnerSelfTest.h`
-- `src/Engine/Renderer/ProjectEffectRunnerSelfTest.cpp`
-- `src/Engine/Renderer/PostProcess.h`
-- `src/Engine/Renderer/PostProcess.cpp`
-- `src/Editor/EditorMain.cpp`
+- `src/Engine/Renderer/PostFx/ProjectEffectRunner.h`
+- `src/Engine/Renderer/PostFx/ProjectEffectRunner.cpp`
+- `src/Engine/Renderer/PostFx/ProjectEffectRunnerSelfTest.h`
+- `src/Engine/Renderer/PostFx/ProjectEffectRunnerSelfTest.cpp`
+- `src/Engine/Renderer/PostFx/PostProcess.h`
+- `src/Engine/Renderer/PostFx/PostProcess.cpp`
+- `src/Editor/App/EditorMain.cpp`
 - `build/Engine.vcxproj`
 - `build/Engine.vcxproj.filters`
 - `assets/shaders/ProjectPostCommon.hlsli`
@@ -115,8 +115,8 @@ tools\check_rules.ps1
 ### SELF_EVAL: sub-02 (round 2)
 
 **実装:**
-- #1: `src/Editor/EditorMain.cpp` — `--selftest` の `const bool ok = A() && B() && ...` を `bool ok = true; ok &= A(); ok &= B(); ...` に全面変更。先行失敗があっても全テストが必ず実行される。末尾 append 規約 (統合契約の予約 7) の並び順は維持。
-- #2: `src/Engine/Renderer/ProjectEffectRunner.h/.cpp` — `CollectSortedPasses(PostInsertionPoint)` を追加。RunPasses と同じ収集・ソートロジックを公開し、SelfTest が実装本体を直接観測できるようにした。`TestPrioritySort` を全面書き直し: `AddPass` → `CollectSortedPasses` → 順序確認の流れで実装本体の安定ソートを検証。Z(200)→A(100)→M(100) 登録 → A→M→Z の期待順を確認、逆順 (M→A) 登録でも安定ソートで元の登録順を維持することを確認。
+- #1: `src/Editor/App/EditorMain.cpp` — `--selftest` の `const bool ok = A() && B() && ...` を `bool ok = true; ok &= A(); ok &= B(); ...` に全面変更。先行失敗があっても全テストが必ず実行される。末尾 append 規約 (統合契約の予約 7) の並び順は維持。
+- #2: `src/Engine/Renderer/PostFx/ProjectEffectRunner.h/.cpp` — `CollectSortedPasses(PostInsertionPoint)` を追加。RunPasses と同じ収集・ソートロジックを公開し、SelfTest が実装本体を直接観測できるようにした。`TestPrioritySort` を全面書き直し: `AddPass` → `CollectSortedPasses` → 順序確認の流れで実装本体の安定ソートを検証。Z(200)→A(100)→M(100) 登録 → A→M→Z の期待順を確認、逆順 (M→A) 登録でも安定ソートで元の登録順を維持することを確認。
 - #3: 実装メモに手動マゼンタ検証手順を追加 (本 SELF_EVAL の「手動検証手順」節)。
 - #4 (nit): C4127 — `TestInsertionPointConstants` で `const auto` を `volatile auto` に変更して定数畳み込みを防止。警告 0 件を確認。
 
@@ -148,10 +148,10 @@ tools\check_rules.ps1
 **不安・質問:** なし
 
 **触ったファイル:**
-- `src/Editor/EditorMain.cpp`
-- `src/Engine/Renderer/ProjectEffectRunner.h`
-- `src/Engine/Renderer/ProjectEffectRunner.cpp`
-- `src/Engine/Renderer/ProjectEffectRunnerSelfTest.cpp`
+- `src/Editor/App/EditorMain.cpp`
+- `src/Engine/Renderer/PostFx/ProjectEffectRunner.h`
+- `src/Engine/Renderer/PostFx/ProjectEffectRunner.cpp`
+- `src/Engine/Renderer/PostFx/ProjectEffectRunnerSelfTest.cpp`
 - (round 1 分: ProjectEffectRunner.h/cpp/SelfTest, PostProcess.h/cpp, build/*.vcxproj*, assets/shaders/*)
 
 **申し送り:**
@@ -185,9 +185,9 @@ tools\check_rules.ps1
 **不安・質問:** なし
 
 **触ったファイル:**
-- `src/Engine/Renderer/ProjectEffectRunner.h`
-- `src/Engine/Renderer/ProjectEffectRunner.cpp`
-- `src/Engine/Renderer/ProjectEffectRunnerSelfTest.cpp`
+- `src/Engine/Renderer/PostFx/ProjectEffectRunner.h`
+- `src/Engine/Renderer/PostFx/ProjectEffectRunner.cpp`
+- `src/Engine/Renderer/PostFx/ProjectEffectRunnerSelfTest.cpp`
 
 **申し送り:**
 - `AddPass` も上限をかけるなら planner 裁定後 (現状は `SetPasses` のみ)。

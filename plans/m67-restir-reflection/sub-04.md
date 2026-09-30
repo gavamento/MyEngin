@@ -70,12 +70,12 @@ ReSTIR on でも off と `--img-diff --tol 1` で一致することが、配管�
 - `assets\shaders\rt_refl.cs.hlsl` / `rt_refl_restir_spatial.cs.hlsl` (新規) / `rt_blit.hlsl` (33-44)
 - `src\Engine\Renderer\RayTracing\RtPasses.h` (56-59 `RtReflResult`、116-125 `RtHistory` の隣、154-198 メンバ) /
   `RtPasses.cpp` (131-143 CB 群の隣、160-228 Init のシェーダ登録、649-725 `RenderReflection`、769-803 `RenderDebug`)
-- `src\Engine\Renderer\RenderTypes.h` (`RenderView` 末尾 = 395 行付近の `acoustic*` の後ろ)
+- `src\Engine\Renderer\Pipeline\RenderTypes.h` (`RenderView` 末尾 = 395 行付近の `acoustic*` の後ろ)
 - `src\Engine\Engine\RenderSystem.h` (139-162) / `RenderSystem.cpp` (1112-1145)
 - `src\Engine\Engine\EngineLoop.h` (118-136) / `EngineLoop.cpp` (266-275、1826-1837)
-- `src\Editor\EditorMain.cpp` (341-346) / `src\Runtime\RuntimeMain.cpp` (337-342)
-- `src\Editor\EditorApp.cpp` (1160-1240) / `src\Editor\Windows\ProfilerWindow.cpp` (134-138)
-- `src\Engine\Core\LocalizationTable.inl`
+- `src\Editor\App\EditorMain.cpp` (341-346) / `src\Runtime\RuntimeMain.cpp` (337-342)
+- `src\Editor\App\EditorApp.cpp` (1160-1240) / `src\Editor\Windows\Debug\ProfilerWindow.cpp` (134-138)
+- `src\Engine\Core\Localization\LocalizationTable.inl`
 
 ## 受け入れ条件 (このサブ)
 
@@ -269,16 +269,16 @@ SELF_EVAL: sub-04 (round 1)
   - assets/shaders/rt_refl_restir_spatial.cs.hlsl (新規) + .meta
   - src/Engine/Renderer/RayTracing/RtPasses.h
   - src/Engine/Renderer/RayTracing/RtPasses.cpp
-  - src/Engine/Renderer/RenderTypes.h
-  - src/Engine/Renderer/DeferredPath.cpp
+  - src/Engine/Renderer/Pipeline/RenderTypes.h
+  - src/Engine/Renderer/Pipeline/DeferredPath.cpp
   - src/Engine/Engine/RenderSystem.h
   - src/Engine/Engine/RenderSystem.cpp
   - src/Engine/Engine/EngineLoop.h
   - src/Engine/Engine/EngineLoop.cpp
-  - src/Engine/Core/LocalizationTable.inl
-  - src/Editor/EditorMain.cpp
-  - src/Editor/EditorApp.cpp
-  - src/Editor/Windows/ProfilerWindow.cpp
+  - src/Engine/Core/Localization/LocalizationTable.inl
+  - src/Editor/App/EditorMain.cpp
+  - src/Editor/App/EditorApp.cpp
+  - src/Editor/Windows/Debug/ProfilerWindow.cpp
   - src/Runtime/RuntimeMain.cpp
   - plans/m67-restir-reflection/sub-04.md (この実装メモ)
 申し送り:

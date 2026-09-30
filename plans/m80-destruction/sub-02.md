@@ -8,7 +8,7 @@
 
 sub-01 の切断を使って、spec §4.1「焼き」の 2〜8 を純関数として完成させる。入力はメッシュ (溶接前の positions / indices / normals / uvs)、`seed`、`pieceCount`、出力は「破片の列 + 接着グラフ + 焼きの記録」。
 
-1. **内部シード**: `Pcg32` (`src/Engine/Core/Random.h`) を `seed` で初期化し、AABB 内の点を棄却法でメッシュ内部に `pieceCount` 個とる。内外判定は決定的なレイのパリティ (軸平行レイ等。縮退で頂点・辺を通る場合の扱いを固定)。試行回数に上限を置き、足りなければ取れた数で進む (記録に残す)
+1. **内部シード**: `Pcg32` (`src/Engine/Core/Util/Random.h`) を `seed` で初期化し、AABB 内の点を棄却法でメッシュ内部に `pieceCount` 個とる。内外判定は決定的なレイのパリティ (軸平行レイ等。縮退で頂点・辺を通る場合の扱いを固定)。試行回数に上限を置き、足りなければ取れた数で進む (記録に残す)
 2. **セル多面体**: 膨らませた AABB の箱を、他のシードとの二等分面で切った凸多面体として作る。メッシュは**セルの面だけで**順に切る (全シード対の平面で切らない。計算量のため)
 3. **非連結の分離**: 切った結果を連結成分 (溶接後の三角形の辺連結) に分け、別の破片にする
 4. **極小片の統合**: 体積が全破片の平均 × `minVolumeRatio` (既定 0.1) 未満の破片を、接着面積が最大の隣へ統合 (同値は index 小)。統合後の破片は凹んでよい
@@ -26,8 +26,8 @@ sub-01 の切断を使って、spec §4.1「焼き」の 2〜8 を純関数と�
 
 ## 触る場所 (planner の見立て)
 
-- sub-01 の `FractureMesh.*` の続き、または新規 `src/Engine/Engine/Physics/FractureBake.h/.cpp` (分け方は coder 判断)
-- `src/Engine/Engine/Physics/ConvexHull.h` の `BuildConvexHull` (使うだけ。変えない)
+- sub-01 の `FractureMesh.*` の続き、または新規 `src/Engine/Engine/Physics/Fracture/FractureBake.h/.cpp` (分け方は coder 判断)
+- `src/Engine/Engine/Physics/Collider/ConvexHull.h` の `BuildConvexHull` (使うだけ。変えない)
 - `FractureSelfTest.cpp` にケース追加
 
 ## 受け入れ条件 (このサブ)
@@ -99,7 +99,7 @@ tools\check_rules.ps1
 
 SELF_EVAL: sub-02 (round 1)
 実装:
-  - `src/Engine/Engine/Physics/FractureBake.h/.cpp` (新規) — spec §4.1 焼き 2〜8 を実装。
+  - `src/Engine/Engine/Physics/Fracture/FractureBake.h/.cpp` (新規) — spec §4.1 焼き 2〜8 を実装。
     `BakeFracture` (内部シード生成込み) / `BakeFractureWithSeeds` (SelfTest 専用、明示シード) /
     `FractureBakeDigest` を公開。内部シードは `Pcg32` + 軸平行レイのパリティ判定 (縮退・境界近傍は
     棄却して再抽選、`PlaceSeeds`)。セルの候補面は箱を Sutherland-Hodgman (`PolyFace`/
@@ -113,13 +113,13 @@ SELF_EVAL: sub-02 (round 1)
     体積閾値を統合のたびに残り破片で数え直しながら隣接面積最大へ統合 (`MergePieceInto`/
     `RemovePiece`)。接着グラフはシードタグ由来の面積を面積降順で貪欲対応付け
     (`ResolvePieceAdjacency`)。並び替えは originSeed 昇順→最小頂点位置。digest は
-    FNV-1a (`Engine/Core/Hash.h`) で outer/cap/凸包/隣接表を直列化して算出
-  - `src/Engine/Engine/Physics/FractureMesh.cpp` — `EarClip` に「耳が見つからない場合、残りの
+    FNV-1a (`Engine/Core/Util/Hash.h`) で outer/cap/凸包/隣接表を直列化して算出
+  - `src/Engine/Engine/Physics/Fracture/FractureMesh.cpp` — `EarClip` に「耳が見つからない場合、残りの
     多角形が (頂点ごとの隣接辺長基準の相対しきい値で) 凸ならファン分割へ切り替え、面積が
     シューレース公式と一致することを検算してから採用する」フォールバックを追加 (`IsConvexCCW`)。
     連続する平面切断を重ねた断面で密な点列ができ耳が誤って「塞がれている」と判定される
     ケースの緩和。sub-01 の既存経路 (単発切断) には影響しない加算のみの変更
-  - `src/Engine/Engine/Physics/FractureSelfTest.cpp` — sub-02 向けにセクション 7〜12 を追加
+  - `src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp` — sub-02 向けにセクション 7〜12 を追加
     (Voronoi 分割の閉じ+体積+凸包、非連結分離、極小片統合、接着グラフ、digest 決定論、焼き時間)。
     `PieceClosed`/`TotalBakedVolume` ヘルパを追加
   - `build/Engine.vcxproj(.filters)` — `tools\gen_project_files.ps1` で新規ファイルを反映
@@ -171,7 +171,7 @@ SELF_EVAL: sub-02 (round 1)
     (lshape seed=42 pieces=17) が Debug と **完全一致** (`0x7B721857D5554C30`) — 決定論
     そのものは Debug/Release で崩れていないことを確認
   - `tools\check_rules.ps1` → 0 error / 0 warning
-  - `git status --short` → WIP 対象ファイル (`assets/deepmodal/*`, `src/Engine/Renderer/WaterPass.cpp`,
+  - `git status --short` → WIP 対象ファイル (`assets/deepmodal/*`, `src/Engine/Renderer/Passes/WaterPass.cpp`,
     `tools/deepmodal/train.py`) は変更していないことを確認
   - 焼き時間 (Debug, box=12 三角形, lshape=20 三角形): box/8=53.8ms, box/32=502.0ms,
     lshape/12=122.2ms。トーラス (768 三角形) は pieceCount=8 でも数百秒で終わらず記録できず
@@ -205,10 +205,10 @@ SELF_EVAL: sub-02 (round 1)
   - 極小片統合のしきい値を「統合のたびに数え直す」という解釈で実装した (仕様との差分に記載)。
     体積保存バグが直れば merge テスト自体は再検証が必要
 触ったファイル:
-  - src/Engine/Engine/Physics/FractureBake.h (新規)
-  - src/Engine/Engine/Physics/FractureBake.cpp (新規)
-  - src/Engine/Engine/Physics/FractureMesh.cpp
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureBake.h (新規)
+  - src/Engine/Engine/Physics/Fracture/FractureBake.cpp (新規)
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
 申し送り:
   - sub-03 (資産化) 着手前に、この体積保存バグの扱いを planner に決めてほしい。バグを抱えたまま
     `.mfrac` 化しても、壊れた形状を保存するだけになる
@@ -222,7 +222,7 @@ SELF_EVAL: sub-02 (round 1)
 
 SELF_EVAL: sub-02 (round 2)
 実装:
-  - `src/Engine/Engine/Physics/FractureBake.cpp` — round 1 の裁定どおり、蓋の作り方を
+  - `src/Engine/Engine/Physics/Fracture/FractureBake.cpp` — round 1 の裁定どおり、蓋の作り方を
     「シード対 (i,j) ごとに元の閉じたメッシュを `CutMeshByPlane` で 1 回だけ切り、i と j の
     他の候補面の和集合で三角形単位クリップして絞り込み、i 側はそのまま・j 側は巻きを反転して
     共有する」方式に作り直した (`ProcessAdjacentPair`/`TriangleClipMesh`/
@@ -291,7 +291,7 @@ SELF_EVAL: sub-02 (round 2)
   - `bin\x64\Release\Editor.exe --selftest` → 同じ 5 件 FAIL、他は PASS。digest
     (lshape seed=42 pieces=10) が Debug と完全一致 (`0x0E4E0BC955C78172`)
   - `tools\check_rules.ps1` → 0 error / 0 warning
-  - `git status --short` → WIP 対象ファイル (`src/Engine/Renderer/WaterPass.cpp` ほか) は
+  - `git status --short` → WIP 対象ファイル (`src/Engine/Renderer/Passes/WaterPass.cpp` ほか) は
     変更していないことを確認
   - 焼き時間 (Debug): box/8=32.9ms (焼き失敗までの時間)、box/32=447.3ms (同)、
     lshape/12=150.0ms (成功)。round 1 (box/32 が実質ハング相当) から大幅に改善したが、
@@ -324,9 +324,9 @@ SELF_EVAL: sub-02 (round 2)
     分離)・6 (トーラスの焼き時間) が未達のまま。round 1 の判断に続き、このまま REWORK と
     するか、設計の再検討 (上記 (a)(b) など) を伴う次ラウンドに進めるか、判断を仰ぎたい
 触ったファイル:
-  - src/Engine/Engine/Physics/FractureBake.cpp
-  - src/Engine/Engine/Physics/FractureMesh.cpp (CapLoops コメント訂正)
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp (トーラステストの復元・再退避、digest/timing
+  - src/Engine/Engine/Physics/Fracture/FractureBake.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp (CapLoops コメント訂正)
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp (トーラステストの復元・再退避、digest/timing
     テストの調整)
 申し送り:
   - `ProcessAdjacentPair` の絞り込みを「i の他の候補面のみ」に変えてみる実験は、次のセッションで
@@ -371,7 +371,7 @@ SELF_EVAL: sub-02 (round 3)
   - 上記に加え、`tools\check_rules.ps1` で検出した規約違反 (rule 2: assert ではなく
     `MYE_CHECK` を使う) を 3 箇所 (`ClipTrianglesAndAppend`/`AppendTagged`/`MergePieceInto`
     の triTag・三角形数整合チェック、round 2 の「should #3」で追加した箇所) で修正した。
-    `<cassert>` を外し `Engine/Core/Check.h` を include、`assert(...)` を `MYE_CHECK(...)`
+    `<cassert>` を外し `Engine/Core/Diagnostics/Check.h` を include、`assert(...)` を `MYE_CHECK(...)`
     に置換した
   - section 8 (非連結分離テスト) を、乱数シード探索 (seed 1..50 の総当たり) から、
     幾何的に設計した明示 2 シードへ書き換えた。頂点近接ベースの連結成分判定に切り替えた
@@ -417,7 +417,7 @@ SELF_EVAL: sub-02 (round 3)
     `BuildConvexHull` の停止により計測不能 (上記)
   - `tools\check_rules.ps1` → 修正前は 3 error (assert 使用)、修正後は 0 error / 0 warning
   - `git status --short` → WIP 対象ファイル (`assets/deepmodal/*`、
-    `src/Engine/Renderer/WaterPass.cpp`、`tools/deepmodal/train.py`、`.agents/`、`SKILL.md`)
+    `src/Engine/Renderer/Passes/WaterPass.cpp`、`tools/deepmodal/train.py`、`.agents/`、`SKILL.md`)
     は変更していないことを確認。`build/Engine.vcxproj(.filters)` は前ラウンド
     (`FractureBake.h/.cpp` 追加時) から変更済みで、今回はファイルの追加・削除が無いため
     `tools\gen_project_files.ps1` の再実行は不要
@@ -456,11 +456,11 @@ SELF_EVAL: sub-02 (round 3)
     round 1/2 の裁定「回避策を積まずに入力と理由をそのまま返す」方針に従い、これ以上の
     作り込み (`ConvexHull.cpp` の外側での回避策) はしていない
 触ったファイル:
-  - src/Engine/Engine/Physics/FractureBake.cpp
-  - src/Engine/Engine/Physics/FractureBake.h (round 1 で新規追加、今回は変更なし)
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp (round 2 裁定に沿ったテスト整理、
+  - src/Engine/Engine/Physics/Fracture/FractureBake.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureBake.h (round 1 で新規追加、今回は変更なし)
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp (round 2 裁定に沿ったテスト整理、
     section 8 を設計値ベースの非連結テストへ変更、section 12 の NOTE 更新)
-  - src/Engine/Engine/Physics/FractureMesh.cpp (round 1 の `CapLoops` コメント訂正のまま、
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp (round 1 の `CapLoops` コメント訂正のまま、
     今回は追加の変更なし)
 申し送り:
   - `ConvexHull.cpp` の `BuildConvexHull` は、点数が同程度でも特定の点配置 (トーラスの

@@ -192,7 +192,7 @@ Asset Browser に作成用の入口があり、シェーダー変更は include 
 
 **専用スタックの見た目は Game ビュー / Runtime で確認します。** Scene ビューのカメラ上書き経路ではユーザーポストとスタック内 Compute を実行しません。
 
-Tex2D の既定名には制限があります。現在 `white` は白テクスチャ、`gray` / `black` / `bump` は警告付きで白へフォールバックします。[既定テクスチャの説明](docs/project-shaders-tex2d-defaults.md) と、実装の [ShaderManager](src/Engine/Renderer/ShaderManager.h)、[FxStackAsset](src/Engine/Renderer/FxStackAsset.h)、[ComputeAbiRunner](src/Engine/Renderer/ComputeAbiRunner.h) を参照してください。
+Tex2D の既定名には制限があります。現在 `white` は白テクスチャ、`gray` / `black` / `bump` は警告付きで白へフォールバックします。[既定テクスチャの説明](docs/project-shaders-tex2d-defaults.md) と、実装の [ShaderManager](src/Engine/Renderer/Shader/ShaderManager.h)、[FxStackAsset](src/Engine/Renderer/PostFx/FxStackAsset.h)、[ComputeAbiRunner](src/Engine/Renderer/Compute/ComputeAbiRunner.h) を参照してください。
 
 ## エディタ操作
 
@@ -277,7 +277,7 @@ UI は日本語・英語に対応し、メニューから切り替えられま�
 
 `--warp` はソフトウェア描画を指定します。`--no-audio` は音声初期化を無効にするため、音の確認には使用しません。
 
-CLI の正本は [EngineCli.cpp](src/Engine/Engine/EngineCli.cpp)（共通フラグ）、[EditorMain.cpp](src/Editor/EditorMain.cpp)、[RuntimeMain.cpp](src/Runtime/RuntimeMain.cpp)、[ShowcaseScenes.cpp](src/Engine/Engine/ShowcaseScenes.cpp)（デモ一覧）です。デモや検証は `cache/` やシーンなどの生成物を書き出す場合があります。
+CLI の正本は [EngineCli.cpp](src/Engine/Engine/App/EngineCli.cpp)（共通フラグ）、[EditorMain.cpp](src/Editor/App/EditorMain.cpp)、[RuntimeMain.cpp](src/Runtime/RuntimeMain.cpp)、[ShowcaseScenes.cpp](src/Engine/Engine/Demo/ShowcaseScenes.cpp)（デモ一覧）です。デモや検証は `cache/` やシーンなどの生成物を書き出す場合があります。
 
 ## 配布パッケージ
 
@@ -291,7 +291,7 @@ Release の本体をビルドし、外部プロジェクトのスクリプトを
 
 パイプラインはスクリプトビルド、アセットのクック、コピーなどを処理します。プロジェクトの `cache/GameLogic.dll`、アセット、エンジン組込みシェーダーを集め、選んだ起動シーンを配布先の `assets/scenes/main.scene.json` に配置します。C# を使う場合はホストと .NET 実行依存も確認します。Git サービスや `.git` は配布対象に含めません。
 
-生成後は **出力先の `Runtime.exe`** を起動して、起動シーン・入力・音・フォント・シーン遷移を確認してください。パッケージ生成成功と、配布先でゲームを遊び通せることは別の確認です。処理の正本は [BuildSettingsWindow.cpp](src/Editor/Windows/BuildSettingsWindow.cpp) です。
+生成後は **出力先の `Runtime.exe`** を起動して、起動シーン・入力・音・フォント・シーン遷移を確認してください。パッケージ生成成功と、配布先でゲームを遊び通せることは別の確認です。処理の正本は [BuildSettingsWindow.cpp](src/Editor/Windows/Project/BuildSettingsWindow.cpp) です。
 
 ## 検証と CI
 
@@ -386,7 +386,7 @@ plans/           個別機能の計画・作業記録
 
 設計上の必須条件は、上位層から下位層への依存、Renderer 外へ生の D3D 型を露出させないこと、`src/Shared/` を C ABI + POD に限定することです。ソース管理機能は Editor に置き、Engine / Runtime / GameLogic / Shared から依存させません。
 
-シミュレーションは固定 **60 Hz Tick**、描画は Frame として分けます。PCG32 の seed、処理順序、構造変更の適用点、状態の所有権を管理し、Debug / Release で状態を変える条件分岐を避けます。通常 Tick・巻き戻し・ネットの再実行は [TickRunner.cpp](src/Engine/Engine/TickRunner.cpp) の共通経路を使います。
+シミュレーションは固定 **60 Hz Tick**、描画は Frame として分けます。PCG32 の seed、処理順序、構造変更の適用点、状態の所有権を管理し、Debug / Release で状態を変える条件分岐を避けます。通常 Tick・巻き戻し・ネットの再実行は [TickRunner.cpp](src/Engine/Engine/Loop/TickRunner.cpp) の共通経路を使います。
 
 開発時の判断・コーディング規約・変更に応じた検証は [AGENTS.md](AGENTS.md) に集約しています。設計方針を、すべての既存コードが既に満たしているという監査結果と混同しないでください。
 

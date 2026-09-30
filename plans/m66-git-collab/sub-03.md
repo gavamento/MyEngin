@@ -29,7 +29,7 @@ spec §4.1 (op: stage / unstage / commit / log / diff / identity_check) / 決定
 
 - 変更: `tools\collab\src\ops.rs`、`SourceControlWindow.cpp` (Changes / History)、`SourceControlState.*` (index/worktree の別を保持)、
   新規 `src\Editor\SourceControl\PairRule.h/.cpp`、`SourceControlSelfTest.cpp`、`LocalizationTable.inl`、`tests\collab\02_*.ndjson`、`tools\collab_verify.ps1` (シナリオ追加)。
-- 参照: `src\Engine\Engine\AssetDatabase.{h,cpp}` (`EnsureMeta` `:226-238`、`ClassifyPath`)、`src\Editor\AssetOps.cpp:199-206` (登録の前例)。
+- 参照: `src\Engine\Engine\AssetDatabase.{h,cpp}` (`EnsureMeta` `:226-238`、`ClassifyPath`)、`src\Editor\Asset\AssetOps.cpp:199-206` (登録の前例)。
 
 ## 受け入れ条件 (このサブ)
 
@@ -71,9 +71,9 @@ tools\replay_verify.bat
   `ApplyWriteResult` / `AbsolutePathOf`。repo_check 成功時に `RequestIdentity` も投げる。
 - `src/Editor/Windows/SourceControlWindow.{h,cpp}`: Changes タブ (Stage/Unstage/選択件数/一覧/
   差分ペイン/コミット欄/保存してコミット)、History タブ、`SourceControlHost` (dirty + 保存手段)。
-- `src/Editor/EditorApp.cpp`: 窓の既定表示 (`open = !projectRoot.empty()`)、`SourceControlHost` の
+- `src/Editor/App/EditorApp.cpp`: 窓の既定表示 (`open = !projectRoot.empty()`)、`SourceControlHost` の
   組み立て、commit 成功トースト。
-- `src/Engine/Core/LocalizationTable.inl`: Scm_* を 16 本追加 (en/ja)。
+- `src/Engine/Core/Localization/LocalizationTable.inl`: Scm_* を 16 本追加 (en/ja)。
 - `tools/collab_verify.ps1`: `# git <args>` ディレクティブ (fixture の前提条件を作る口) と、
   diff の `index <blob>..<blob>` 正規化。ディレクティブ判定を `^#\s(verb)\s` の厳密一致に。
 - `tests/collab/03_commit.ndjson` / `04_identity.ndjson` (+ expected)。

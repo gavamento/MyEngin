@@ -75,7 +75,7 @@ Init 失敗も同型。`.actor.json` / `.prefab.json` も `Prefab.cpp:1524` (`Sa
 3. **書き戻し** — `WriteEntity` (`:100`) の末尾で、その fileId の退避分を `comps` に足す。
    **すでに登録済みになった名前はスキップ** (アーキタイプ側が勝つ) — スキーマを直して開き直した
    あとに二重書きしないため。
-4. **保存時の告知** — `src/Editor/EditorApp.cpp:1441` が Ctrl+S / File メニュー / 未保存モーダル /
+4. **保存時の告知** — `src/Editor/App/EditorApp.cpp:1441` が Ctrl+S / File メニュー / 未保存モーダル /
    「保存してコミット」の**唯一の絞り**なので、ここ 1 箇所で「未知のコンポーネント N 個を保持した
    まま保存しました」をトーストで出す (Unity の Missing Script 相当)。文字列は
    `LocalizationTable.inl` に en/ja 両方。

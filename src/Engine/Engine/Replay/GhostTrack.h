@@ -5,7 +5,7 @@
 
 #include <DirectXMath.h>
 
-#include "Engine/Core/EntityID.h"
+#include "Engine/Core/Ecs/EntityID.h"
 
 namespace mye {
 

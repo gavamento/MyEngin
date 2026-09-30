@@ -14,7 +14,7 @@
 #include "Shared/ScriptAPI.h"
 
 namespace {
-// AcousticEmitterComponent (Engine/Core/Components.h) の名前ハッシュ。
+// AcousticEmitterComponent (Engine/Core/Ecs/Components.h) の名前ハッシュ。
 // **毎 tick 取り直さない** (VehicleDemoDriver と同じ流儀)
 const uint64_t kCompEmitter = MyeNameHash("AcousticEmitter");
 const uint64_t kFieldLoudness = MyeNameHash("pendingLoudness");

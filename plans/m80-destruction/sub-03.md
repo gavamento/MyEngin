@@ -8,7 +8,7 @@
 
 spec §4.2「`.mfrac`」と、破片メッシュ・凸包の登録 (spec §2 「破片メッシュの参照方法」) を作る。
 
-1. **形式**: `src/Engine/Core/ByteIo.h` の `ByteWriter` / `ByteReader` で、magic `"MFRC"`・版 1。中身は spec §4.2 の列挙どおり (スキンの骨名は版 1 から欄だけ用意し sub-10 で埋めてよい。空文字 = 骨なし)。凸包は `SerializeConvexHull` / `DeserializeConvexHull`。書き出しは同じ入力で同じバイト列、読みは境界検査付きで壊れたファイルでも落ちない
+1. **形式**: `src/Engine/Core/Util/ByteIo.h` の `ByteWriter` / `ByteReader` で、magic `"MFRC"`・版 1。中身は spec §4.2 の列挙どおり (スキンの骨名は版 1 から欄だけ用意し sub-10 で埋めてよい。空文字 = 骨なし)。凸包は `SerializeConvexHull` / `DeserializeConvexHull`。書き出しは同じ入力で同じバイト列、読みは境界検査付きで壊れたファイルでも落ちない
 2. **AssetType**: `AssetDatabase.h:13-32` の enum に `Fracture` (`.mfrac`) を**末尾追加**。`.meta` の GUID が振られること
 3. **FractureLibrary** (Engine 層。名前は coder 判断): `.mfrac` を AssetID で読み込み、破片 i について
    - MeshLibrary に `guid://<mfracGuid16hex>#frag<i>` (外側面) と `#frag<i>#cap` (蓋) を `MeshVertex` で登録 (ボーン欄は 0)
@@ -27,10 +27,10 @@ spec §4.2「`.mfrac`」と、破片メッシュ・凸包の登録 (spec §2 「
 
 ## 触る場所 (planner の見立て)
 
-- 新規 `src/Engine/Engine/Asset/FractureAsset.h/.cpp` (形式) と `src/Engine/Engine/Physics/FractureLibrary.h/.cpp` (登録)。分け方は coder 判断
+- 新規 `src/Engine/Engine/Asset/FractureAsset.h/.cpp` (形式) と `src/Engine/Engine/Physics/Fracture/FractureLibrary.h/.cpp` (登録)。分け方は coder 判断
 - `src/Engine/Engine/AssetDatabase.h/.cpp` (AssetType 末尾追加、拡張子の対応)
-- `src/Engine/Renderer/GpuResources.h` の `MeshLibrary::Register` (使うだけ)
-- `src/Engine/Engine/Physics/ConvexColliderLibrary.h/.cpp` の `Register` / `Clear` の呼び出し元 (再登録の差し込み)
+- `src/Engine/Renderer/Device/GpuResources.h` の `MeshLibrary::Register` (使うだけ)
+- `src/Engine/Engine/Physics/Collider/ConvexColliderLibrary.h/.cpp` の `Register` / `Clear` の呼び出し元 (再登録の差し込み)
 - 前例: `src/Engine/Engine/Asset/TerrainAsset.cpp` (magic / 版 / Reader)、`ModalSoundLibrary` (`guid://<16hex>#modal#<id>` 登録名)
 - `FractureSelfTest.cpp` にケース追加
 
@@ -57,12 +57,12 @@ tools\check_rules.ps1
 
 SELF_EVAL: sub-03 (round 1)
 実装:
-  - `src/Engine/Engine/Asset/FractureAsset.h/.cpp` (新規) — `.mfrac` の保存形式 (`FractureData`/`PieceRecord`/`NeighborRecord`)。`ByteWriter`/`ByteReader` (`Engine/Core/ByteIo.h`) で `Serialize`/`Deserialize`、`WriteFileReplacing` (`PathUtil.h`) で原子的な `Save`、`Load` はファイル読込 + `Deserialize`。magic `"MFRC"`・版 1。凸包は `SerializeConvexHull`/`DeserializeConvexHull` の生バイトを長さ前置きで埋め込む。境界検査: 破片数は resize 前に `kMaxFracturePieces` で、隣接数は読み込み後に `kMaxFractureNeighbors` で検算し、超過は失敗を返す (bad_alloc を作らない)
-  - `src/Engine/Engine/Physics/FractureLibrary.h/.cpp` (新規) — `.mfrac` の読み込みと `MeshLibrary`/`ConvexColliderLibrary` への登録。登録名は `"guid://<mfracGuid16hex>#frag<i>"` 系 (`assetkey::SubAssetKeyPrefix` 由来)、GUID の無いメモリ焼き結果は呼び出し側が渡す任意の接頭辞 (`RegisterBaked`)。`FractureAssetHandle` が登録済み `AssetID` と元の `FractureAsset::FractureData` (凸包データ込み) を保持し、`ReregisterAll()` が `ConvexColliderLibrary::Clear()` 後に凸包を登録し直す。`BuildFractureAssetData` が `FractureBakeResult` (`FractureVertex`) → `.mfrac` 形式 (`MeshVertex`) への詰め替えを行う。読み込み失敗はパスごとに ERROR 1 回 + nullptr (再試行しても再ログしない)
+  - `src/Engine/Engine/Asset/FractureAsset.h/.cpp` (新規) — `.mfrac` の保存形式 (`FractureData`/`PieceRecord`/`NeighborRecord`)。`ByteWriter`/`ByteReader` (`Engine/Core/Util/ByteIo.h`) で `Serialize`/`Deserialize`、`WriteFileReplacing` (`PathUtil.h`) で原子的な `Save`、`Load` はファイル読込 + `Deserialize`。magic `"MFRC"`・版 1。凸包は `SerializeConvexHull`/`DeserializeConvexHull` の生バイトを長さ前置きで埋め込む。境界検査: 破片数は resize 前に `kMaxFracturePieces` で、隣接数は読み込み後に `kMaxFractureNeighbors` で検算し、超過は失敗を返す (bad_alloc を作らない)
+  - `src/Engine/Engine/Physics/Fracture/FractureLibrary.h/.cpp` (新規) — `.mfrac` の読み込みと `MeshLibrary`/`ConvexColliderLibrary` への登録。登録名は `"guid://<mfracGuid16hex>#frag<i>"` 系 (`assetkey::SubAssetKeyPrefix` 由来)、GUID の無いメモリ焼き結果は呼び出し側が渡す任意の接頭辞 (`RegisterBaked`)。`FractureAssetHandle` が登録済み `AssetID` と元の `FractureAsset::FractureData` (凸包データ込み) を保持し、`ReregisterAll()` が `ConvexColliderLibrary::Clear()` 後に凸包を登録し直す。`BuildFractureAssetData` が `FractureBakeResult` (`FractureVertex`) → `.mfrac` 形式 (`MeshVertex`) への詰め替えを行う。読み込み失敗はパスごとに ERROR 1 回 + nullptr (再試行しても再ログしない)
   - `src/Engine/Engine/AssetDatabase.h/.cpp` — `AssetType::Fracture` を末尾追加、`.mfrac` の `ClassifyPath`/`TypeName`/`ParseTypeName` を配線 (`.terrain.json` と同じ並び)
   - `src/Engine/Engine/EngineLoop.cpp` — `FractureLibrary fractureAssets` を追加し、`convexColliders.Init` の直後に `Init(&resources, &convexColliders)` + `fracturelib::Install`。終了時に `fracturelib::Install(nullptr)` (`convexcol::Install(nullptr)` と対称)。sub-03 の「EngineLoop への Install はコーダー判断」の指示に従い実施 (Destructible が無いシーンでは何も呼ばれないので存在ゲート違反にはならない)
-  - `src/Engine/Engine/Physics/FractureMesh.h` — 申し送りどおり、ヘッダコメントの sub-02/sub-03 という作業経緯の参照を除去 (理由の文は残し、詰め替え先を「FractureLibrary」と具体名で書き直した)
-  - `src/Engine/Engine/Physics/FractureSelfTest.h/.cpp` — セクション 13 として `.mfrac` の往復・壊れた入力・`FractureLibrary` 登録/`Clear()`後の再登録・ファイル往復・欠落ファイルのテストを追加 (27 チェック)
+  - `src/Engine/Engine/Physics/Fracture/FractureMesh.h` — 申し送りどおり、ヘッダコメントの sub-02/sub-03 という作業経緯の参照を除去 (理由の文は残し、詰め替え先を「FractureLibrary」と具体名で書き直した)
+  - `src/Engine/Engine/Physics/Fracture/FractureSelfTest.h/.cpp` — セクション 13 として `.mfrac` の往復・壊れた入力・`FractureLibrary` 登録/`Clear()`後の再登録・ファイル往復・欠落ファイルのテストを追加 (27 チェック)
   - `src/Engine/Engine/AssetDatabaseSelfTest.cpp` — `.mfrac` の `ClassifyPath`/`TypeName`往復チェックを追加 (自分が触った `AssetType::Fracture` の検証)
   - `build/Engine.vcxproj` / `build/Engine.vcxproj.filters` — `tools\gen_project_files.ps1` で新規ファイルを登録
 仕様との差分:
@@ -88,15 +88,15 @@ SELF_EVAL: sub-03 (round 1)
 触ったファイル:
   - src/Engine/Engine/Asset/FractureAsset.h (新規)
   - src/Engine/Engine/Asset/FractureAsset.cpp (新規)
-  - src/Engine/Engine/Physics/FractureLibrary.h (新規)
-  - src/Engine/Engine/Physics/FractureLibrary.cpp (新規)
+  - src/Engine/Engine/Physics/Fracture/FractureLibrary.h (新規)
+  - src/Engine/Engine/Physics/Fracture/FractureLibrary.cpp (新規)
   - src/Engine/Engine/AssetDatabase.h
   - src/Engine/Engine/AssetDatabase.cpp
   - src/Engine/Engine/AssetDatabaseSelfTest.cpp
   - src/Engine/Engine/EngineLoop.cpp
-  - src/Engine/Engine/Physics/FractureMesh.h
-  - src/Engine/Engine/Physics/FractureSelfTest.h
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.h
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.h
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
   - build/Engine.vcxproj (gen_project_files.ps1 の生成物)
   - build/Engine.vcxproj.filters (gen_project_files.ps1 の生成物)
 申し送り:

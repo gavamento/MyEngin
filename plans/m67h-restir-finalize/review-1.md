@@ -46,7 +46,7 @@ round: 1
      比較 run の実物を 1 枚コピーしており (`git diff --stat 9a893cd..HEAD -- tests/` =
      `demo_render_rtrefl_restir.png` の 1 ファイルのみ)、この行だけが逆の作法を指している。
      coder は同ファイルの `:368` を確認済みと報告しているが 10 行下は見ていない。
-     同種の残り 3 か所: `src\Editor\EditorApp.cpp:1262`「★ここで確定した値は後続 M67h が定数表へ
+     同種の残り 3 か所: `src\Editor\App\EditorApp.cpp:1262`「★ここで確定した値は後続 M67h が定数表へ
      焼く (spec §4.6)」(**coder が 3 行下の :1265 を書き換えた同じブロック**)、
      `src\Engine\Renderer\RayTracing\RtTypes.h:276`「S5 / M67h で再評価できるようにしておく」、
      `CLAUDE.md:109`「S5 / M67h で既定を on へ反転したときに」 —

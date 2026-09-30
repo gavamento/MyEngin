@@ -24,7 +24,7 @@ constexpr uint8_t kVkV = 0x56; // 一人称 / 俯瞰の切り替え
 //   ここに CRT 依存を挟むと「別の Windows で .rep が再生できない」種類の壊れ方になる。
 constexpr float kDeg2Rad = kMyeDeg2Rad;
 
-// AcousticEmitterComponent (Engine/Core/Components.h) の名前ハッシュ。
+// AcousticEmitterComponent (Engine/Core/Ecs/Components.h) の名前ハッシュ。
 // **毎 tick 取り直さない** (WavePinger と同じ流儀)
 const uint64_t kCompEmitter = MyeNameHash("AcousticEmitter");
 const uint64_t kFieldStride = MyeNameHash("stepDistanceM");

@@ -8,9 +8,9 @@
 
 #include <DirectXMath.h>
 
-#include "Engine/Core/Log.h"
-#include "Engine/Core/Random.h"
-#include "Engine/Engine/Physics/MeshColliderLibrary.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Util/Random.h"
+#include "Engine/Engine/Physics/Collider/MeshColliderLibrary.h"
 #include "Engine/Engine/RayTracing/RtSceneBuild.h"
 #include "Engine/Renderer/RayTracing/RtMath.h"
 

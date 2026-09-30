@@ -92,7 +92,7 @@ M50 完遂 (`d52e015`, ABI v11, kEngineVersion 0.65) 後の次期マイルスト
 
 ### M51a: Sim 索引 — クエリキャッシュ + fileId 索引 + 型二分探索
 - **目的**: `ForEachArchetype` 線形マッチ (`World.h:63-82`)、`FindByFileId` 全走査 (`Scene.cpp:7-24`)、`FindTypeIndex` 線形を潰し、A/B ゲート基盤 (`useSimCache`) を敷く。
-- **触る**: `src\Engine\Core\World.h/.cpp`, `Core\Archetype.h`, `Engine\Scene.h/.cpp`, `Engine\EngineLoop.h`, `src\Runtime\RuntimeMain.cpp`, `src\Editor\EditorMain.cpp`, selftest 追加。
+- **触る**: `src\Engine\Core\Ecs\World.h/.cpp`, `Core\Archetype.h`, `Engine\Scene.h/.cpp`, `Engine\EngineLoop.h`, `src\Runtime\RuntimeMain.cpp`, `src\Editor\App\EditorMain.cpp`, selftest 追加。
 - **検証**: selftest (キャッシュ後のアーキタイプ追加をクエリが拾う / fileId 破棄→再生成→索引補修 / 型索引と線形の全件一致) / replay_verify 無風 / **ON record → `--no-sim-cache` verify ビット一致 (逆向きも)** / parts_showcase ロード時間 before/after 計測。
 
 ### M51b: アセットクックキャッシュ — モデル + .ogg PCM
@@ -108,22 +108,22 @@ M50 完遂 (`d52e015`, ABI v11, kEngineVersion 0.65) 後の次期マイルスト
 
 ### M51d: 入力アクションマッピング (ABI は M51h)
 - **目的**: JSON アセット + エンジン内評価器 + ProjectSettings 編集 UI。
-- **触る**: `src\Engine\Platform\InputActions.h/.cpp` (新規、`Load` + `Evaluate(cur, prev)` 純関数), `Engine\EngineLoop.h/.cpp` (prev 保持 + スナップショット確定直後に評価), VK⇄名前テーブル `.inl` (新規), `src\Editor\Windows\ProjectSettingsWindow.cpp`, `assets\input\actions.json` サンプル。
+- **触る**: `src\Engine\Platform\InputActions.h/.cpp` (新規、`Load` + `Evaluate(cur, prev)` 純関数), `Engine\EngineLoop.h/.cpp` (prev 保持 + スナップショット確定直後に評価), VK⇄名前テーブル `.inl` (新規), `src\Editor\Windows\Project\ProjectSettingsWindow.cpp`, `assets\input\actions.json` サンプル。
 - **検証**: selftest (held/pressed/released 全遷移 + deadzone/軸合成 + 不正 JSON 耐性) / replay_verify 無風 / 手動: キー捕捉→保存→ライブ表示。
 
 ### M51e: UI ランタイム拡張 — 親子・クリップ・整列・折返し
 - **目的**: メニュー/ダイアログが「組める」UI ランタイム。UIElement 末尾 append (`space`/`clipChildren`/`align`/`wrap`) + UIRenderer 拡張。
-- **触る**: `src\Engine\Core\Components.h`, `Engine\UI\UILayout.h/.cpp` (新規 `ResolveRect` — UIRenderer/UINav/UIHitTest 共有), `UI\UIRenderer.h/.cpp` (シザー分割 + `MeasureText/LayoutText` 抽出), `UI\UINav.h`, `Renderer\FontAtlas.h`。wrap は文字単位折返し (日本語優先)。
+- **触る**: `src\Engine\Core\Ecs\Components.h`, `Engine\UI\UILayout.h/.cpp` (新規 `ResolveRect` — UIRenderer/UINav/UIHitTest 共有), `UI\UIRenderer.h/.cpp` (シザー分割 + `MeasureText/LayoutText` 抽出), `UI\UINav.h`, `Renderer\FontAtlas.h`。wrap は文字単位折返し (日本語優先)。
 - **検証**: replay_verify 無風 (NoHash append の実証) / selftest (ResolveRect: 9 アンカー × 入れ子、LayoutText: 折返し行数・整列オフセット) / 手動目視。
 
 ### M51f: UI オーサリング — Create メニュー + Inspector
 - **目的**: UI を Add Component 手組みから解放。
-- **触る**: `src\Editor\CreateMenu.cpp/.h` (UI > Panel/Image/Button/Text、選択が UIElement 持ちなら子として space=1)、`Windows\InspectorWindow.cpp` (anchor 9-grid ピッカー、kind/align/fillMode コンボ)、`Windows\GameViewWindow.cpp` (選択 UI の解決済み矩形アウトライン — UILayout 共有)、`LocalizationTable.inl`。既存 Undo 定型に乗せる。ビューポート内ドラッグ編集は見送り (M52 候補)。
+- **触る**: `src\Editor\Widgets\CreateMenu.cpp/.h` (UI > Panel/Image/Button/Text、選択が UIElement 持ちなら子として space=1)、`Windows\InspectorWindow.cpp` (anchor 9-grid ピッカー、kind/align/fillMode コンボ)、`Windows\GameViewWindow.cpp` (選択 UI の解決済み矩形アウトライン — UILayout 共有)、`LocalizationTable.inl`。既存 Undo 定型に乗せる。ビューポート内ドラッグ編集は見送り (M52 候補)。
 - **検証**: replay_verify 無風 / 手動: Create→描画 / Undo 往復 / 9-grid 全切替 / アウトラインと描画矩形の一致。
 
 ### M51g: ゲームフロー — ポーズ/タイムスケール + 永続ストア + セーブ/ロード (**WorldHash 構成変更**)
 - **目的**: 決定台帳 5 をエンジン内部に実装 (ABI は M51h)。
-- **触る**: `src\Engine\Engine\Scene.h/.cpp` (TimeControl/PersistStore メンバ + `Time()`/`Persist()` API), `Engine\EngineLoop.cpp` (`ShouldStep()` ゲート + SaveGame 書出をオーディオ drain の隣 + LoadGame をセーフポイント消費), `Replay\WorldHasher.h/.cpp` (RNG 直後に追記、PersistStore は key 昇順), `src\Editor\PlayModeController.h` (**スナップショット/復元に TimeControl+PersistStore 追加 — 忘れると Stop 後に永続値が漏れる、本サブの罠筆頭**), `Engine\SaveGame.h/.cpp` (新規)。
+- **触る**: `src\Engine\Engine\Scene.h/.cpp` (TimeControl/PersistStore メンバ + `Time()`/`Persist()` API), `Engine\EngineLoop.cpp` (`ShouldStep()` ゲート + SaveGame 書出をオーディオ drain の隣 + LoadGame をセーフポイント消費), `Replay\WorldHasher.h/.cpp` (RNG 直後に追記、PersistStore は key 昇順), `src\Editor\Scene\PlayModeController.h` (**スナップショット/復元に TimeControl+PersistStore 追加 — 忘れると Stop 後に永続値が漏れる、本サブの罠筆頭**), `Engine\SaveGame.h/.cpp` (新規)。
 - **検証**: replay_verify PASS (録り直しなので無風) / selftest (scalePercent=50 で 600 tick 中 300 ステップ / PersistStore 挿入順を変えて同ハッシュ / Save→Load 往復一致) / 手動: Play 中ポーズ→物理静止・C# UI 継続、Stop→Play で永続値が残らない。
 
 ### M51h: ABI v12 束ね + Interop 公開 + ミラー機械照合 (MYE_API_VERSION 11→12)
@@ -133,12 +133,12 @@ M50 完遂 (`d52e015`, ABI v11, kEngineVersion 0.65) 後の次期マイルスト
 
 ### M51i: AssetBrowser UX — 検索/型フィルタ/Delete/Duplicate + アセット操作 Undo
 - **目的**: AssetBrowser を「消せる・増やせる・見つかる」に。
-- **触る**: `src\Editor\AssetOps.h/.cpp` (`DeleteAssetToRecycleBin` = IFileOperation + .meta 同伴 + フォルダ再帰 / `DuplicateAsset` = 新 GUID 発行 / Rename・Move・Duplicate・Create に UndoStack 引数 — 逆ファイル操作エントリ、逆操作先消滅時は WARN + no-op), `Windows\AssetBrowserWindow.cpp/.h` (検索 + AssetType フィルタ + 再帰検索モード + 確認モーダル + Delete/Ctrl+D), `LocalizationTable.inl`。削除前のシーン参照チェックはやらない (ごみ箱 + GUID 安定が保険)。
+- **触る**: `src\Editor\Asset\AssetOps.h/.cpp` (`DeleteAssetToRecycleBin` = IFileOperation + .meta 同伴 + フォルダ再帰 / `DuplicateAsset` = 新 GUID 発行 / Rename・Move・Duplicate・Create に UndoStack 引数 — 逆ファイル操作エントリ、逆操作先消滅時は WARN + no-op), `Windows\AssetBrowserWindow.cpp/.h` (検索 + AssetType フィルタ + 再帰検索モード + 確認モーダル + Delete/Ctrl+D), `LocalizationTable.inl`。削除前のシーン参照チェックはやらない (ごみ箱 + GUID 安定が保険)。
 - **検証**: selftest (Duplicate の新旧 GUID 不一致 + 連番命名) / 手動: Delete→ごみ箱→OS 復元→再走査で復活 / Rename→Undo→シーン参照維持 / replay_verify 無風。
 
 ### M51j: ビルドワンストップ + 統合デモ + 仕上げ
 - **目的**: ビルド強化 + M51 全機能を消費する統合デモで締める。
-- **触る**: `src\Editor\Windows\BuildSettingsWindow.cpp/.h` (段階化: スクリプトリビルド→クック温め→コピー + `cache\cooked\` 同梱→DDS 一括 opt-in→zip opt-in、各段の進捗表示), `Engine\DemoContent.cpp` (`--flow-demo`: タイトル→ゲーム→ポーズ→リザルト。C++ = アクションマップ/ポーズ/PersistStore スコア持ち越し/セーブロード、C# = メニュー UI), `tools\replay_verify.bat` (**3 ペア目 --flow-demo 追加** — TimeControl/PersistStore/アクションマップの 600 tick 検証 = M51 決定論保証の総括), `engine_spec.md` 更新。
+- **触る**: `src\Editor\Windows\Project\BuildSettingsWindow.cpp/.h` (段階化: スクリプトリビルド→クック温め→コピー + `cache\cooked\` 同梱→DDS 一括 opt-in→zip opt-in、各段の進捗表示), `Engine\DemoContent.cpp` (`--flow-demo`: タイトル→ゲーム→ポーズ→リザルト。C++ = アクションマップ/ポーズ/PersistStore スコア持ち越し/セーブロード、C# = メニュー UI), `tools\replay_verify.bat` (**3 ペア目 --flow-demo 追加** — TimeControl/PersistStore/アクションマップの 600 tick 検証 = M51 決定論保証の総括), `engine_spec.md` 更新。
 - **検証**: replay_verify 3 ペア PASS / パッケージ出力を別フォルダで実行→クック済み高速起動 + デモ完走 / zip 展開→同様 / DDS opt-in で描画不変 (目視)。
 
 ---

@@ -29,11 +29,11 @@ spec §4.1「作者規約」「共通 include」「エンジン生成エント�
 
 ## 触る場所 (planner の見立て)
 
-- `src/Engine/Renderer/ShaderManager.h/.cpp` — `IsProjectIndexedShaderFile` (`ShaderManager.cpp:130-136`) に `.surface.hlsl`、サーフェス用ロード・生成エントリ付きコンパイル・リフレクション保持。`ShaderProgram` (`ShaderManager.h:20-32`) に VS/PS バイトコードかバインド表を足すか、サーフェス専用の構造体を別に持つかは coder 判断。バイトコードキャッシュ (`TryLoadCached` / `Instantiate`) との整合 (生成エントリを含むソースでキー化) に注意
+- `src/Engine/Renderer/Shader/ShaderManager.h/.cpp` — `IsProjectIndexedShaderFile` (`ShaderManager.cpp:130-136`) に `.surface.hlsl`、サーフェス用ロード・生成エントリ付きコンパイル・リフレクション保持。`ShaderProgram` (`ShaderManager.h:20-32`) に VS/PS バイトコードかバインド表を足すか、サーフェス専用の構造体を別に持つかは coder 判断。バイトコードキャッシュ (`TryLoadCached` / `Instantiate`) との整合 (生成エントリを含むソースでキー化) に注意
 - 入力レイアウト: `BuildInputLayout` (`ShaderManager.cpp:83-128`) とは別に MeshVertex (`GpuResources.h:30-39`) の固定オフセット版
 - リフレクションの前例: `ComputeAbiRunner.cpp:79-134`
 - 速度の式: `assets/shaders/common.hlsli` の `ComputeVelocityUv`、`DeferredPath.cpp:156-165` の VelocityCB
-- `src/Engine/Renderer/ShaderManagerProjectIndexSelfTest.cpp` — surface ケース追加
+- `src/Engine/Renderer/Shader/ShaderManagerProjectIndexSelfTest.cpp` — surface ケース追加
 - 新規 SelfTest (例 `SurfaceShaderSelfTest.cpp/.h`) と `EditorMain.cpp` の登録 (M78 と同じ `ok &=` 集約・末尾 append)
 - ファイル追加後 `tools\gen_project_files.ps1`
 
@@ -61,13 +61,13 @@ tools\check_rules.ps1
 
 SELF_EVAL: sub-01 (round 1)
 実装:
-  - `src/Engine/Renderer/SurfaceProgram.h` — `SurfaceProgram`/`SurfaceEntryReflection`/`SurfaceReflectedResource`/`SurfaceReflectedVar` を新設。色/速度/影の 3 系統 5 エントリ (VS/PS) のバイトコード・入力レイアウト・リフレクション表・エラー文を保持
-  - `src/Engine/Renderer/SurfaceShaderTypes.h` — 予約 CB の C++ 正本 (`MyEnginePerFrameCB`/`MyEngineSurfaceFrameCB`/`MyEnginePerObjectCB`/`MyEngineWaterCB`)。`GpuLight`/`ShadowTileCB`/`FroxelForwardCB`/`AcousticCB`/`kMaxLights`/`kMaxShadowTiles` (RenderTypes.h) と `GerstnerWave` (WaveMath.h) を再利用
+  - `src/Engine/Renderer/Shader/SurfaceProgram.h` — `SurfaceProgram`/`SurfaceEntryReflection`/`SurfaceReflectedResource`/`SurfaceReflectedVar` を新設。色/速度/影の 3 系統 5 エントリ (VS/PS) のバイトコード・入力レイアウト・リフレクション表・エラー文を保持
+  - `src/Engine/Renderer/Shader/SurfaceShaderTypes.h` — 予約 CB の C++ 正本 (`MyEnginePerFrameCB`/`MyEngineSurfaceFrameCB`/`MyEnginePerObjectCB`/`MyEngineWaterCB`)。`GpuLight`/`ShadowTileCB`/`FroxelForwardCB`/`AcousticCB`/`kMaxLights`/`kMaxShadowTiles` (RenderTypes.h) と `GerstnerWave` (WaveMath.h) を再利用
   - `assets/shaders/MyEngineSurface.hlsli`(+.meta) — 位置に効く `static` (`gViewProj`/`gWorld`/`gTime`/`gWaterTime`)、予約 CB 4 本、予約テクスチャ/サンプラ、ヘルパ (`MyeSunShadow`/`MyeApplyFog`)
   - `assets/shaders/MyEngineSurfaceEntries.hlsli`(+.meta) — 生成エントリ本体 (`MyeVSColor`/`MyePSColor`/`MyeVSShadow`/`MyeVSVelocity`/`MyePSVelocity`)。速度は `VSMain` を前後 2 回評価し、`SV_Position` が PS ではピクセル座標に化ける問題を避けるため `myeCurClip`/`myePrevClip` を別セマンティクスで複製 (`deferred_gbuffer.hlsl` の既存手口を踏襲)
   - `assets/shaders/surface_error.hlsl`(+.meta) — 組込みマゼンタ・変位なし。他の `*.surface.hlsl` と同じ `LoadSurface` 経路でコンパイルできる形
-  - `src/Engine/Renderer/ShaderManager.h/.cpp` — `IsProjectIndexedShaderFile` に `.surface.hlsl` を追加 (索引・短名解決)。`LoadSurface`/`GetSurface`/`CompileSurfaceProgram` を新設。作者ソース + `MyEngineSurfaceEntries.hlsli` を 1 つの翻訳単位として 5 エントリを個別 `D3DCompile`。失敗時は「サーフェス規約: ...」を先頭に付ける。`BuildSurfaceInputLayout` (MeshVertex 固定オフセット、`APPEND_ALIGNED` 不使用) と `ReflectSurfaceBytecode` (D3DReflect、`D3D_SVF_USED` で絞らない全列挙) を追加
-  - `src/Engine/Renderer/ShaderManagerProjectIndexSelfTest.cpp` — `*.surface.hlsl` の一意/重複ケースを追加
+  - `src/Engine/Renderer/Shader/ShaderManager.h/.cpp` — `IsProjectIndexedShaderFile` に `.surface.hlsl` を追加 (索引・短名解決)。`LoadSurface`/`GetSurface`/`CompileSurfaceProgram` を新設。作者ソース + `MyEngineSurfaceEntries.hlsli` を 1 つの翻訳単位として 5 エントリを個別 `D3DCompile`。失敗時は「サーフェス規約: ...」を先頭に付ける。`BuildSurfaceInputLayout` (MeshVertex 固定オフセット、`APPEND_ALIGNED` 不使用) と `ReflectSurfaceBytecode` (D3DReflect、`D3D_SVF_USED` で絞らない全列挙) を追加
+  - `src/Engine/Renderer/Shader/ShaderManagerProjectIndexSelfTest.cpp` — `*.surface.hlsl` の一意/重複ケースを追加
   - `src/Engine/Renderer/SurfaceShaderSelfTest.{h,cpp}` (新規、`EditorMain.cpp` 末尾 append で登録) — 規約どおり/規約違反の 2 フィクスチャのコンパイル・リフレクション名前解決・予約 CB オフセット照合に加え、**実 WARP デバイスで実描画** して検証: (a) `VSIn` を `TEXCOORD0` 先・`POSITION` 後・`NORMAL` 省略の部分集合・順不同にし、`MeshVertex` 固定オフセットで正しく頂点を読めることを velocity の read-back 値で確認、(b) 速度エントリが `gWorld` の前後差・`gTime` の前後差をそれぞれ独立に正しく速度へ反映することを 2 回の Draw + 1x1 ターゲット read-back で数値照合 (期待値を手計算し `Check` で突合)
   - `tools\gen_project_files.ps1` を実行 (`build/Engine.vcxproj`・`.filters` に新規ファイルを反映)
 
@@ -94,14 +94,14 @@ SELF_EVAL: sub-01 (round 1)
   1. `MyEnginePerFrame` から先頭の `gViewProj` を落とした解釈 (仕様との差分 [逸脱] 参照) でよいか。逆に「バイト単位で既存 PerFrameCB と完全一致させたい」なら、位置用 static を `gMyeViewProj` のような別名にして `gViewProj`(CB) と衝突を避ける設計に直す必要がある (sub-02 着手前に決めたい)
   2. ホットリロード (`RequestRecompileForFile`/`PollAsyncCompiles`) とバイトコードキャッシュを `SurfaceProgram` へ配線するのは sub-01 に戻すべきか、sub-02 以降でよいか。spec §4.1 の「保存するとホットリロード」は M79 全体の要求だが、sub-01 の受け入れ条件には含まれていない
 触ったファイル:
-  - `src/Engine/Renderer/ShaderManager.h`
-  - `src/Engine/Renderer/ShaderManager.cpp`
-  - `src/Engine/Renderer/ShaderManagerProjectIndexSelfTest.cpp`
-  - `src/Editor/EditorMain.cpp`
-  - `src/Engine/Renderer/SurfaceProgram.h` (新規)
-  - `src/Engine/Renderer/SurfaceShaderTypes.h` (新規)
-  - `src/Engine/Renderer/SurfaceShaderSelfTest.h` (新規)
-  - `src/Engine/Renderer/SurfaceShaderSelfTest.cpp` (新規)
+  - `src/Engine/Renderer/Shader/ShaderManager.h`
+  - `src/Engine/Renderer/Shader/ShaderManager.cpp`
+  - `src/Engine/Renderer/Shader/ShaderManagerProjectIndexSelfTest.cpp`
+  - `src/Editor/App/EditorMain.cpp`
+  - `src/Engine/Renderer/Shader/SurfaceProgram.h` (新規)
+  - `src/Engine/Renderer/Shader/SurfaceShaderTypes.h` (新規)
+  - `src/Engine/Renderer/Shader/SurfaceShaderSelfTest.h` (新規)
+  - `src/Engine/Renderer/Shader/SurfaceShaderSelfTest.cpp` (新規)
   - `assets/shaders/MyEngineSurface.hlsli` (新規)
   - `assets/shaders/MyEngineSurface.hlsli.meta` (新規)
   - `assets/shaders/MyEngineSurfaceEntries.hlsli` (新規)

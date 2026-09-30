@@ -11,24 +11,24 @@
 #include <string>
 #include <vector>
 
-#include "Engine/Core/Check.h"
-#include "Engine/Core/Components.h"
-#include "Engine/Core/Log.h"
-#include "Engine/Core/World.h"
+#include "Engine/Core/Diagnostics/Check.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AcousticGrid.h"
 #include "Engine/Engine/Acoustic/AcousticNav.h"
 #include "Engine/Engine/Acoustic/AgentSystem.h"
-#include "Engine/Engine/GameObject.h"
-#include "Engine/Engine/Physics/PhysMatLibrary.h"
-#include "Engine/Engine/Physics/PhysicsSystem.h"
+#include "Engine/Engine/Scene/GameObject.h"
+#include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
+#include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
-#include "Engine/Engine/SceneSerializer.h"
-#include "Engine/Engine/Scene.h"
-#include "Engine/Engine/TransformSystem.h"
-#include "Engine/Renderer/RenderTypes.h" // M65i: MakeAcousticCB (混ぜ具合が z 席へ流れるか)
+#include "Engine/Engine/Scene/SceneSerializer.h"
+#include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/Scene/TransformSystem.h"
+#include "Engine/Renderer/Pipeline/RenderTypes.h" // M65i: MakeAcousticCB (混ぜ具合が z 席へ流れるか)
 
 namespace mye {
 namespace {

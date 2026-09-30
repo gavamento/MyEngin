@@ -3,12 +3,12 @@
 #include <algorithm>
 #include <cstring>
 
-#include "Engine/Core/Log.h"
-#include "Engine/Renderer/GpuBufferUtil.h"
-#include "Engine/Renderer/GraphicsDevice.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Renderer/Device/GpuBufferUtil.h"
+#include "Engine/Renderer/Device/GraphicsDevice.h"
 #include "Engine/Renderer/RayTracing/RtMath.h"  // M46g: 太陽コーンの cos (CPU が唯一の出所)
 #include "Engine/Renderer/RayTracing/RtTypes.h" // テンポラル蓄積のしきい値 / 履歴長上限
-#include "Engine/Renderer/ShaderManager.h"
+#include "Engine/Renderer/Shader/ShaderManager.h"
 
 using namespace DirectX;
 

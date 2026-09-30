@@ -22,7 +22,7 @@ namespace {
 // mutex で保護している (JobSystem.cpp の DrainChunks コメント参照)。Deep-Modal の推論は
 // ModalSoundLibrary の非同期焼きワーカースレッド上で走る一方、メインスレッドの
 // TransformSystem::Update / RenderSystem も毎 tick/フレーム jobs::System().ParallelRanges を
-// 呼ぶ (実地確認: src\Engine\Engine\TransformSystem.cpp / RenderSystem.cpp)。
+// 呼ぶ (実地確認: src\Engine\Engine\Scene\TransformSystem.cpp / RenderSystem.cpp)。
 // 2 つの呼び出し元が同時に同じ JobSystem インスタンスの batch_ / 単調増加する cursor_ を
 // 書き換えると、片方のバッチの chunk をもう片方の呼び出しが横取りする形で壊れる
 // (cursor_ はバッチをまたいで単調増加するだけで、どのバッチの chunk かは base/last の

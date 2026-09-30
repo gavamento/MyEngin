@@ -4,11 +4,35 @@
     <Filter Include="Core">
       <UniqueIdentifier>{B21C5918-6603-2043-7EA4-46B3A97E5078}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Core\Asset">
+      <UniqueIdentifier>{6D0DE1DD-1957-B261-21F7-5B3DB76198E6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Core\Diagnostics">
+      <UniqueIdentifier>{D75F9862-6183-2392-FA31-2AFE9A24C6E7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Core\Ecs">
+      <UniqueIdentifier>{BD02A7D5-AB70-83BB-819D-94591FC29B29}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Core\Jobs">
+      <UniqueIdentifier>{9CFB0A69-7E51-7201-354F-BE0B3EB81919}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Core\Localization">
+      <UniqueIdentifier>{09D84D1C-92D7-007B-B5F6-66C473D12EEC}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Core\Util">
+      <UniqueIdentifier>{561CF8E6-360C-41F8-C55F-54B24EFC76CA}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine">
       <UniqueIdentifier>{582F5D06-2930-51DE-CAD8-59B10249443A}</UniqueIdentifier>
     </Filter>
     <Filter Include="Engine\Acoustic">
       <UniqueIdentifier>{4DE32154-5722-F731-D33C-5C952749BE8E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Engine\Animation">
+      <UniqueIdentifier>{8EAE007A-59E2-648C-DF7C-338872B78200}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Engine\App">
+      <UniqueIdentifier>{68992D10-E923-F0BB-D560-0B2BBCA5E32C}</UniqueIdentifier>
     </Filter>
     <Filter Include="Engine\Asset">
       <UniqueIdentifier>{9A2B1019-B5E2-F703-E666-AD9277ECABC5}</UniqueIdentifier>
@@ -16,8 +40,23 @@
     <Filter Include="Engine\Audio">
       <UniqueIdentifier>{5725AD66-3920-E794-128E-9D8078930437}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Audio\Playback">
+      <UniqueIdentifier>{120EB582-BA85-A10D-4233-EEA9F1090CC3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Engine\Audio\Spatial">
+      <UniqueIdentifier>{2BF14D1A-8C59-002C-8BED-234774597A58}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Engine\Audio\Synth">
+      <UniqueIdentifier>{3240EA11-FC6E-D842-470C-E7AF81E3B1D1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Engine\Demo">
+      <UniqueIdentifier>{7645A0A4-277D-9725-8E8E-E117DE4A378F}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\HotReload">
       <UniqueIdentifier>{45E1E3BD-577C-EB21-9437-FCBCEC610D8C}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Engine\Loop">
+      <UniqueIdentifier>{8409D9F7-36C8-F765-75AB-37A575359F58}</UniqueIdentifier>
     </Filter>
     <Filter Include="Engine\Modal">
       <UniqueIdentifier>{33C3F477-C681-6F8B-16E5-7CDE5CC1123C}</UniqueIdentifier>
@@ -31,11 +70,35 @@
     <Filter Include="Engine\Physics">
       <UniqueIdentifier>{B8A7D7DC-13E1-39DC-133A-8490218AA135}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Physics\Collider">
+      <UniqueIdentifier>{93D68CE7-AA62-CEC3-AA7F-8B5F38A0D079}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Engine\Physics\Fracture">
+      <UniqueIdentifier>{938B4A71-AF00-83E4-8F3B-44EA34B0AF79}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Engine\Physics\Ragdoll">
+      <UniqueIdentifier>{60061B32-AB45-822A-BD39-FC077037C84C}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Engine\Physics\Rigid">
+      <UniqueIdentifier>{5679475D-F7C2-0677-9BA3-98B5BA9DC29F}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Engine\Physics\Xpbd">
+      <UniqueIdentifier>{78F3847A-4663-FAE1-BB65-D7B589080BB7}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\RayTracing">
       <UniqueIdentifier>{BC200033-10AF-6797-1437-D1FAD27CE707}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Rendering">
+      <UniqueIdentifier>{34B4F580-4D9C-A8EB-5B5F-0F513C958215}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Replay">
       <UniqueIdentifier>{DBAE9292-5C25-5143-7BD0-30A497BF8AF2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Engine\Scene">
+      <UniqueIdentifier>{4A084C85-6C49-0D98-C1BD-1653E3379123}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Engine\Schema">
+      <UniqueIdentifier>{86DF8946-27DD-1EBD-B891-D0343EE58C70}</UniqueIdentifier>
     </Filter>
     <Filter Include="Engine\Script">
       <UniqueIdentifier>{01586F12-A871-BEFB-7266-0B4C59DCE30B}</UniqueIdentifier>
@@ -73,73 +136,103 @@
     <Filter Include="Renderer">
       <UniqueIdentifier>{FA760276-7897-C107-03A6-426F3AAFB41D}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Renderer\Compute">
+      <UniqueIdentifier>{3D007B85-E9BE-5D19-D219-4282F3A97E94}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Renderer\Device">
+      <UniqueIdentifier>{A3234ABC-C48D-1338-A291-053DEE027373}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Renderer\ImGui">
+      <UniqueIdentifier>{767C4C2E-2CA4-8C98-C3F1-B3E0E5DA1340}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Renderer\Mesh">
+      <UniqueIdentifier>{E234B65C-D802-E08F-FFDE-CE488BD9638E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Renderer\Passes">
+      <UniqueIdentifier>{091C3455-3EFA-42EB-502B-5BDE7FF51730}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Renderer\Pipeline">
+      <UniqueIdentifier>{B32B167B-78F6-CEC8-F0D2-025F096552A1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Renderer\PostFx">
+      <UniqueIdentifier>{81CFDFF6-5C3A-6F55-C68C-1B99EACF38EB}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Renderer\RayTracing">
       <UniqueIdentifier>{EBC6B46E-9DDA-EE48-CB45-A1351C84ADAA}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Renderer\Shader">
+      <UniqueIdentifier>{BB02E7F2-09DD-DEF3-28F6-A233912AA0F9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Renderer\Text">
+      <UniqueIdentifier>{562C1C40-E4C3-D91B-FEB8-5A87E33C3CFE}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Renderer\Texture">
+      <UniqueIdentifier>{3EF3CEB9-6F1B-0FC5-AB30-11072EFDB763}</UniqueIdentifier>
     </Filter>
     <Filter Include="Shared">
       <UniqueIdentifier>{3EA2E46E-D5BF-AB27-828F-05F51EEDB435}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\Engine\Core\Archetype.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Asset\AssetGuidResolver.cpp">
+      <Filter>Core\Asset</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\AssetGuidResolver.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Asset\AssetKeyResolver.cpp">
+      <Filter>Core\Asset</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\AssetKeyResolver.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Asset\ImportMetaResolver.cpp">
+      <Filter>Core\Asset</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\Check.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Diagnostics\Check.cpp">
+      <Filter>Core\Diagnostics</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\ComponentRegistry.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Diagnostics\Log.cpp">
+      <Filter>Core\Diagnostics</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\Components.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Diagnostics\MemoryTrack.cpp">
+      <Filter>Core\Diagnostics</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\EcsSelfTest.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Diagnostics\Profiler.cpp">
+      <Filter>Core\Diagnostics</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\FileWatcher.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Ecs\Archetype.cpp">
+      <Filter>Core\Ecs</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\Format.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Ecs\ComponentRegistry.cpp">
+      <Filter>Core\Ecs</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\ImportMetaResolver.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Ecs\Components.cpp">
+      <Filter>Core\Ecs</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\JobSystem.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Ecs\EcsSelfTest.cpp">
+      <Filter>Core\Ecs</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\JobSystemSelfTest.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Ecs\World.cpp">
+      <Filter>Core\Ecs</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\JsonUtil.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Jobs\JobSystem.cpp">
+      <Filter>Core\Jobs</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\Localization.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Jobs\JobSystemSelfTest.cpp">
+      <Filter>Core\Jobs</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\LocalizationSelfTest.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Localization\Localization.cpp">
+      <Filter>Core\Localization</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\Log.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Localization\LocalizationSelfTest.cpp">
+      <Filter>Core\Localization</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\MemoryTrack.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Util\FileWatcher.cpp">
+      <Filter>Core\Util</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\Profiler.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Util\Format.cpp">
+      <Filter>Core\Util</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\Utf8.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Util\JsonUtil.cpp">
+      <Filter>Core\Util</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Core\World.cpp">
-      <Filter>Core</Filter>
+    <ClCompile Include="..\src\Engine\Core\Util\Utf8.cpp">
+      <Filter>Core\Util</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticDebugDraw.cpp">
       <Filter>Engine\Acoustic</Filter>
@@ -159,14 +252,50 @@
     <ClCompile Include="..\src\Engine\Engine\Acoustic\AgentSystem.cpp">
       <Filter>Engine\Acoustic</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Animation.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Animation\Animation.cpp">
+      <Filter>Engine\Animation</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\AnimatorController.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Animation\AnimatorController.cpp">
+      <Filter>Engine\Animation</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\AnimatorControllerSelfTest.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Animation\AnimatorControllerSelfTest.cpp">
+      <Filter>Engine\Animation</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Animation\PartFollowSystem.cpp">
+      <Filter>Engine\Animation</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Animation\Parts.cpp">
+      <Filter>Engine\Animation</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Animation\SkeletonSelfTest.cpp">
+      <Filter>Engine\Animation</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Animation\SkinningSystem.cpp">
+      <Filter>Engine\Animation</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\App\DisplaySettings.cpp">
+      <Filter>Engine\App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\App\EngineCli.cpp">
+      <Filter>Engine\App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\App\EngineCliSelfTest.cpp">
+      <Filter>Engine\App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\App\PerfBenchmark.cpp">
+      <Filter>Engine\App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\App\Project.cpp">
+      <Filter>Engine\App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Asset\AssetDatabase.cpp">
+      <Filter>Engine\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Asset\AssetDatabaseSelfTest.cpp">
+      <Filter>Engine\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Asset\CgltfImpl.cpp">
+      <Filter>Engine\Asset</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Asset\CookedCache.cpp">
       <Filter>Engine\Asset</Filter>
@@ -174,10 +303,16 @@
     <ClCompile Include="..\src\Engine\Engine\Asset\CookedCacheSelfTest.cpp">
       <Filter>Engine\Asset</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Asset\FbxLoader.cpp">
+      <Filter>Engine\Asset</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Asset\FractureAsset.cpp">
       <Filter>Engine\Asset</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Asset\ModelCook.cpp">
+      <Filter>Engine\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Asset\ModelLoader.cpp">
       <Filter>Engine\Asset</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Asset\SubAssetKeySelfTest.cpp">
@@ -192,104 +327,68 @@
     <ClCompile Include="..\src\Engine\Engine\Asset\TerrainEdit.cpp">
       <Filter>Engine\Asset</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\AssetDatabase.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Asset\UfbxImpl.cpp">
+      <Filter>Engine\Asset</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\AssetDatabaseSelfTest.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Playback\AudioClip.cpp">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\AcousticAudio.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Playback\AudioMixer.cpp">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\AcousticAudioSelfTest.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Playback\AudioSelfTest.cpp">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\AudioClip.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Playback\AudioSourceSystem.cpp">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\AudioMixer.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Playback\AudioSystem.cpp">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\AudioSelfTest.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Playback\MusicStream.cpp">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\AudioSourceSystem.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Playback\SoundAsset.cpp">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\AudioSystem.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Playback\StbVorbisImpl.cpp">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\ImpactSoundAsset.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Spatial\AcousticAudio.cpp">
+      <Filter>Engine\Audio\Spatial</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\ImpactSynth.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Spatial\AcousticAudioSelfTest.cpp">
+      <Filter>Engine\Audio\Spatial</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\ImpactSynthSelfTest.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Synth\ImpactSoundAsset.cpp">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\ModalAudio.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Synth\ImpactSynth.cpp">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\ModalAudioSelfTest.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Synth\ImpactSynthSelfTest.cpp">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\ModalSynth.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Synth\ModalAudio.cpp">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\ModalSynthSelfTest.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Synth\ModalAudioSelfTest.cpp">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\MusicStream.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Synth\ModalSynth.cpp">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\SoundAsset.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Synth\ModalSynthSelfTest.cpp">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\StbVorbisImpl.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Audio\Synth\SynthCore.cpp">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Audio\SynthCore.cpp">
-      <Filter>Engine\Audio</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Demo\DemoContent.cpp">
+      <Filter>Engine\Demo</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\CgltfImpl.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\CollisionSystem.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\DemoContent.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\DisplaySettings.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\EffectSystem.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\EngineCli.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\EngineCliSelfTest.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\EngineLoop.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\EntityNaming.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\FbxLoader.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\FontSelfTest.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\FractureBuilder.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\FractureSystem.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Demo\ShowcaseScenes.cpp">
+      <Filter>Engine\Demo</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp">
       <Filter>Engine\HotReload</Filter>
@@ -303,8 +402,14 @@
     <ClCompile Include="..\src\Engine\Engine\HotReload\ReloadHubSelfTest.cpp">
       <Filter>Engine\HotReload</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\LightSelection.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Loop\EngineLoop.cpp">
+      <Filter>Engine\Loop</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Loop\PlayerInputSystem.cpp">
+      <Filter>Engine\Loop</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Loop\TickRunner.cpp">
+      <Filter>Engine\Loop</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Modal\CpuModalBackend.cpp">
       <Filter>Engine\Modal</Filter>
@@ -327,9 +432,6 @@
     <ClCompile Include="..\src\Engine\Engine\Modal\Voxelizer.cpp">
       <Filter>Engine\Modal</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\ModelLoader.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Net\NetRollback.cpp">
       <Filter>Engine\Net</Filter>
     </ClCompile>
@@ -339,125 +441,113 @@
     <ClCompile Include="..\src\Engine\Engine\Net\NetSession.cpp">
       <Filter>Engine\Net</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\PartFollowSystem.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Particles\CpuParticleBackend.cpp">
       <Filter>Engine\Particles</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Particles\GpuParticleBackend.cpp">
       <Filter>Engine\Particles</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSelfTest.cpp">
+      <Filter>Engine\Particles</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSystem.cpp">
       <Filter>Engine\Particles</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\ParticleSelfTest.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Collider\ConvexColliderLibrary.cpp">
+      <Filter>Engine\Physics\Collider</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Parts.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Collider\ConvexCollision.cpp">
+      <Filter>Engine\Physics\Collider</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\PerfBenchmark.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Collider\ConvexHull.cpp">
+      <Filter>Engine\Physics\Collider</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\AeroSampling.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Collider\ConvexSelfTest.cpp">
+      <Filter>Engine\Physics\Collider</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\Broadphase.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Collider\MeshColliderLibrary.cpp">
+      <Filter>Engine\Physics\Collider</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\ConvexColliderLibrary.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Collider\TerrainColliderLibrary.cpp">
+      <Filter>Engine\Physics\Collider</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\ConvexCollision.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Fracture\FractureBake.cpp">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\ConvexHull.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Fracture\FractureBenchmark.cpp">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\ConvexSelfTest.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Fracture\FractureBuilder.cpp">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\FractureBake.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Fracture\FractureLibrary.cpp">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\FractureBenchmark.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Fracture\FractureMesh.cpp">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\FractureLibrary.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Fracture\FractureSelfTest.cpp">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\FractureMesh.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Fracture\FractureSkinBake.cpp">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\FractureSelfTest.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Fracture\FractureSkinSelfTest.cpp">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\FractureSkinBake.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Fracture\FractureSystem.cpp">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\FractureSkinSelfTest.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Fracture\FractureVoxel.cpp">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\FractureVoxel.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Ragdoll\Ragdoll.cpp">
+      <Filter>Engine\Physics\Ragdoll</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\MeshColliderLibrary.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Ragdoll\RagdollBuilder.cpp">
+      <Filter>Engine\Physics\Ragdoll</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsDebugDraw.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Ragdoll\RagdollSelfTest.cpp">
+      <Filter>Engine\Physics\Ragdoll</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsQueries.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\AeroSampling.cpp">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\PhysicsSystem.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\Broadphase.cpp">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\PhysMatLibrary.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\CollisionSystem.cpp">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\PhysMatSelfTest.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsDebugDraw.cpp">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\RagdollSelfTest.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsQueries.cpp">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\Shapes.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSelfTest.cpp">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\TerrainColliderLibrary.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSystem.cpp">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\XpbdBackend.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysMatLibrary.cpp">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\XpbdSelfTest.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysMatSelfTest.cpp">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Physics\XpbdSolver.cpp">
-      <Filter>Engine\Physics</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\Shapes.cpp">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\PhysicsSelfTest.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Xpbd\XpbdBackend.cpp">
+      <Filter>Engine\Physics\Xpbd</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\PlayerInputSystem.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Xpbd\XpbdSelfTest.cpp">
+      <Filter>Engine\Physics\Xpbd</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Prefab.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\ProbeBaker.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Project.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Ragdoll.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\RagdollBuilder.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Xpbd\XpbdSolver.cpp">
+      <Filter>Engine\Physics\Xpbd</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtScene.cpp">
       <Filter>Engine\RayTracing</Filter>
@@ -468,8 +558,20 @@
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSelfTest.cpp">
       <Filter>Engine\RayTracing</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\RenderSystem.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\LightSelection.cpp">
+      <Filter>Engine\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\ProbeBaker.cpp">
+      <Filter>Engine\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\RenderSystem.cpp">
+      <Filter>Engine\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\TerrainSystem.cpp">
+      <Filter>Engine\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\WaterWaveSelfTest.cpp">
+      <Filter>Engine\Rendering</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Replay\CrashRing.cpp">
       <Filter>Engine\Replay</Filter>
@@ -504,26 +606,44 @@
     <ClCompile Include="..\src\Engine\Engine\Replay\WorldHasherSelfTest.cpp">
       <Filter>Engine\Replay</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\SaveGame.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Scene\EntityNaming.cpp">
+      <Filter>Engine\Scene</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Scene.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Scene\Prefab.cpp">
+      <Filter>Engine\Scene</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\SceneSelfTest.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Scene\SaveGame.cpp">
+      <Filter>Engine\Scene</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\SceneSerializer.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Scene\Scene.cpp">
+      <Filter>Engine\Scene</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\SchemaCodegen.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Scene\SceneSelfTest.cpp">
+      <Filter>Engine\Scene</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\SchemaComponents.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Scene\SceneSerializer.cpp">
+      <Filter>Engine\Scene</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\SchemaSelfTest.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Scene\TagNames.cpp">
+      <Filter>Engine\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Scene\Tags.cpp">
+      <Filter>Engine\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Scene\TagSelfTest.cpp">
+      <Filter>Engine\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Scene\TransformSystem.cpp">
+      <Filter>Engine\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Schema\SchemaCodegen.cpp">
+      <Filter>Engine\Schema</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Schema\SchemaComponents.cpp">
+      <Filter>Engine\Schema</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Schema\SchemaSelfTest.cpp">
+      <Filter>Engine\Schema</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Script\EngineApiTable.cpp">
       <Filter>Engine\Script</Filter>
@@ -534,35 +654,8 @@
     <ClCompile Include="..\src\Engine\Engine\Script\ScriptHost.cpp">
       <Filter>Engine\Script</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\ShowcaseScenes.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\SkeletonSelfTest.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\SkinningSystem.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\TagNames.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\Tags.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\TagSelfTest.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\TerrainSystem.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\TickRunner.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\TransformSystem.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\UfbxImpl.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\UI\FontSelfTest.cpp">
+      <Filter>Engine\UI</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\UI\UIFontMetricsCook.cpp">
       <Filter>Engine\UI</Filter>
@@ -594,14 +687,14 @@
     <ClCompile Include="..\src\Engine\Engine\UI\UIWidgets.cpp">
       <Filter>Engine\UI</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Vfx\EffectSystem.cpp">
+      <Filter>Engine\Vfx</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Vfx\VfxRenderer.cpp">
       <Filter>Engine\Vfx</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\VfxSelfTest.cpp">
-      <Filter>Engine</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Engine\WaterWaveSelfTest.cpp">
-      <Filter>Engine</Filter>
+    <ClCompile Include="..\src\Engine\Engine\Vfx\VfxSelfTest.cpp">
+      <Filter>Engine\Vfx</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Platform\Clock.cpp">
       <Filter>Platform</Filter>
@@ -627,260 +720,260 @@
     <ClCompile Include="..\src\Engine\Platform\Win32Window.cpp">
       <Filter>Platform</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\AcousticVolumePass.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Compute\ComputeAbiRunner.cpp">
+      <Filter>Renderer\Compute</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ComputeAbiRunner.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Compute\ComputeAbiSelfTest.cpp">
+      <Filter>Renderer\Compute</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ComputeAbiSelfTest.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Compute\ProjectComputeRunner.cpp">
+      <Filter>Renderer\Compute</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\DeferredPath.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Compute\ProjectComputeRunnerSelfTest.cpp">
+      <Filter>Renderer\Compute</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\EditorLinePass.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Device\GpuResources.cpp">
+      <Filter>Renderer\Device</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\EnvMapBaker.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Device\GpuTimer.cpp">
+      <Filter>Renderer\Device</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\FontAtlas.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Device\GraphicsDevice.cpp">
+      <Filter>Renderer\Device</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\FontFiles.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Device\ReflectionClassJson.cpp">
+      <Filter>Renderer\Device</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ForwardPath.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Device\RenderTexture.cpp">
+      <Filter>Renderer\Device</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\FroxelPass.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Device\SwapChain.cpp">
+      <Filter>Renderer\Device</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\FxStackAsset.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Device\VolumeTexture.cpp">
+      <Filter>Renderer\Device</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\FxStackSelfTest.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\ImGui\ImGuiRenderer.cpp">
+      <Filter>Renderer\ImGui</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\GhostMeshPass.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\ImGui\ImGuiTheme.cpp">
+      <Filter>Renderer\ImGui</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\GpuResources.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Mesh\MeshInstancing.cpp">
+      <Filter>Renderer\Mesh</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\GpuTimer.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Mesh\Skeleton.cpp">
+      <Filter>Renderer\Mesh</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\GraphicsDevice.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\AcousticVolumePass.cpp">
+      <Filter>Renderer\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\HzbPass.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\EditorLinePass.cpp">
+      <Filter>Renderer\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ImageDiff.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\EnvMapBaker.cpp">
+      <Filter>Renderer\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ImageDiffSelfTest.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\FroxelPass.cpp">
+      <Filter>Renderer\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ImageWrite.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\GhostMeshPass.cpp">
+      <Filter>Renderer\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ImGuiRenderer.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\HzbPass.cpp">
+      <Filter>Renderer\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ImGuiTheme.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\PickingPass.cpp">
+      <Filter>Renderer\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\MeshInstancing.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\ShadowAtlas.cpp">
+      <Filter>Renderer\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\PerfDrawBenchmark.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\ShadowPass.cpp">
+      <Filter>Renderer\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\PickingPass.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\SkyboxPass.cpp">
+      <Filter>Renderer\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\PostProcess.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\SsrPass.cpp">
+      <Filter>Renderer\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ProjectComputeRunner.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\TaaPass.cpp">
+      <Filter>Renderer\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ProjectComputeRunnerSelfTest.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\TerrainPass.cpp">
+      <Filter>Renderer\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ProjectEffectRunner.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\WaterPass.cpp">
+      <Filter>Renderer\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ProjectEffectRunnerSelfTest.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\WaterSurfaceSelfTest.cpp">
+      <Filter>Renderer\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ProjectShaderProperties.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Pipeline\DeferredPath.cpp">
+      <Filter>Renderer\Pipeline</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ProjectShaderPropertiesSelfTest.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Pipeline\ForwardPath.cpp">
+      <Filter>Renderer\Pipeline</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Pipeline\PerfDrawBenchmark.cpp">
+      <Filter>Renderer\Pipeline</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Pipeline\RenderQueue.cpp">
+      <Filter>Renderer\Pipeline</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Pipeline\RenderSelfTest.cpp">
+      <Filter>Renderer\Pipeline</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\PostFx\FxStackAsset.cpp">
+      <Filter>Renderer\PostFx</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\PostFx\FxStackSelfTest.cpp">
+      <Filter>Renderer\PostFx</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\PostFx\PostProcess.cpp">
+      <Filter>Renderer\PostFx</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\PostFx\ProjectEffectRunner.cpp">
+      <Filter>Renderer\PostFx</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\PostFx\ProjectEffectRunnerSelfTest.cpp">
+      <Filter>Renderer\PostFx</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\RayTracing\RtPasses.cpp">
       <Filter>Renderer\RayTracing</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ReflectionClassJson.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Shader\ProjectShaderProperties.cpp">
+      <Filter>Renderer\Shader</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\RenderQueue.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Shader\ProjectShaderPropertiesSelfTest.cpp">
+      <Filter>Renderer\Shader</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\RenderSelfTest.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Shader\ShaderCache.cpp">
+      <Filter>Renderer\Shader</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\RenderTexture.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Shader\ShaderManager.cpp">
+      <Filter>Renderer\Shader</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ShaderCache.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Shader\ShaderManagerProjectIndexSelfTest.cpp">
+      <Filter>Renderer\Shader</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ShaderManager.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Shader\SurfaceDeferredSelfTest.cpp">
+      <Filter>Renderer\Shader</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ShaderManagerProjectIndexSelfTest.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Shader\SurfaceMaterialSelfTest.cpp">
+      <Filter>Renderer\Shader</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ShadowAtlas.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Shader\SurfaceShaderSelfTest.cpp">
+      <Filter>Renderer\Shader</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\ShadowPass.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Text\FontAtlas.cpp">
+      <Filter>Renderer\Text</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\Skeleton.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Text\FontFiles.cpp">
+      <Filter>Renderer\Text</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\SkyboxPass.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Texture\ImageDiff.cpp">
+      <Filter>Renderer\Texture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\SsrPass.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Texture\ImageDiffSelfTest.cpp">
+      <Filter>Renderer\Texture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\StbImpl.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Texture\ImageWrite.cpp">
+      <Filter>Renderer\Texture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\SurfaceDeferredSelfTest.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Texture\StbImpl.cpp">
+      <Filter>Renderer\Texture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\SurfaceMaterialSelfTest.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Texture\TextureCook.cpp">
+      <Filter>Renderer\Texture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\SurfaceShaderSelfTest.cpp">
-      <Filter>Renderer</Filter>
+    <ClCompile Include="..\src\Engine\Renderer\Texture\TextureCookSelfTest.cpp">
+      <Filter>Renderer\Texture</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\SwapChain.cpp">
-      <Filter>Renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\TaaPass.cpp">
-      <Filter>Renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\TerrainPass.cpp">
-      <Filter>Renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\TextureCook.cpp">
-      <Filter>Renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\TextureCookSelfTest.cpp">
-      <Filter>Renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\VolumeTexture.cpp">
-      <Filter>Renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\WaterPass.cpp">
-      <Filter>Renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Engine\Renderer\WaterSurfaceSelfTest.cpp">
-      <Filter>Renderer</Filter>
-    </ClCompile>
-    <ClInclude Include="..\src\Engine\Core\Archetype.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Asset\AssetGuidResolver.h">
+      <Filter>Core\Asset</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\AssetGuidResolver.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Asset\AssetKeyResolver.h">
+      <Filter>Core\Asset</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\AssetKeyResolver.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Asset\ImportMetaResolver.h">
+      <Filter>Core\Asset</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\ByteIo.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Diagnostics\Check.h">
+      <Filter>Core\Diagnostics</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\Check.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Diagnostics\Log.h">
+      <Filter>Core\Diagnostics</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\ComponentRegistry.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Diagnostics\Profiler.h">
+      <Filter>Core\Diagnostics</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\Components.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Ecs\Archetype.h">
+      <Filter>Core\Ecs</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\EcsSelfTest.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Ecs\ComponentRegistry.h">
+      <Filter>Core\Ecs</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\EntityID.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Ecs\Components.h">
+      <Filter>Core\Ecs</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\FileWatcher.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Ecs\EcsSelfTest.h">
+      <Filter>Core\Ecs</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\Format.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Ecs\EntityID.h">
+      <Filter>Core\Ecs</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\Hash.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Ecs\HierarchyWalk.h">
+      <Filter>Core\Ecs</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\HierarchyWalk.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Ecs\Reflection.h">
+      <Filter>Core\Ecs</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\ImportMetaResolver.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Ecs\World.h">
+      <Filter>Core\Ecs</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\JobSystem.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Jobs\JobSystem.h">
+      <Filter>Core\Jobs</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\JobSystemSelfTest.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Jobs\JobSystemSelfTest.h">
+      <Filter>Core\Jobs</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\JsonUtil.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Localization\Localization.h">
+      <Filter>Core\Localization</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\Localization.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Localization\LocalizationSelfTest.h">
+      <Filter>Core\Localization</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\LocalizationSelfTest.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Localization\LocalizationTable.inl">
+      <Filter>Core\Localization</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\LocalizationTable.inl">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Util\ByteIo.h">
+      <Filter>Core\Util</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\Log.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Util\FileWatcher.h">
+      <Filter>Core\Util</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\NameUtil.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Util\Format.h">
+      <Filter>Core\Util</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\Profiler.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Util\Hash.h">
+      <Filter>Core\Util</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\Random.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Util\JsonUtil.h">
+      <Filter>Core\Util</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\Reflection.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Util\NameUtil.h">
+      <Filter>Core\Util</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\Utf8.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Util\Random.h">
+      <Filter>Core\Util</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\WaveMath.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Util\Utf8.h">
+      <Filter>Core\Util</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Core\World.h">
-      <Filter>Core</Filter>
+    <ClInclude Include="..\src\Engine\Core\Util\WaveMath.h">
+      <Filter>Core\Util</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticDebugDraw.h">
       <Filter>Engine\Acoustic</Filter>
@@ -900,14 +993,47 @@
     <ClInclude Include="..\src\Engine\Engine\Acoustic\AgentSystem.h">
       <Filter>Engine\Acoustic</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Animation.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Animation\Animation.h">
+      <Filter>Engine\Animation</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\AnimatorController.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Animation\AnimatorController.h">
+      <Filter>Engine\Animation</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\AnimatorControllerSelfTest.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Animation\AnimatorControllerSelfTest.h">
+      <Filter>Engine\Animation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Animation\PartFollowSystem.h">
+      <Filter>Engine\Animation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Animation\Parts.h">
+      <Filter>Engine\Animation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Animation\SkeletonSelfTest.h">
+      <Filter>Engine\Animation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Animation\SkinningSystem.h">
+      <Filter>Engine\Animation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\App\DisplaySettings.h">
+      <Filter>Engine\App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\App\EngineCli.h">
+      <Filter>Engine\App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\App\EngineCliSelfTest.h">
+      <Filter>Engine\App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\App\PerfBenchmark.h">
+      <Filter>Engine\App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\App\Project.h">
+      <Filter>Engine\App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Asset\AssetDatabase.h">
+      <Filter>Engine\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Asset\AssetDatabaseSelfTest.h">
+      <Filter>Engine\Asset</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Asset\CookedCache.h">
       <Filter>Engine\Asset</Filter>
@@ -915,10 +1041,16 @@
     <ClInclude Include="..\src\Engine\Engine\Asset\CookedCacheSelfTest.h">
       <Filter>Engine\Asset</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Asset\FbxLoader.h">
+      <Filter>Engine\Asset</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Asset\FractureAsset.h">
       <Filter>Engine\Asset</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Asset\ModelCook.h">
+      <Filter>Engine\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Asset\ModelLoader.h">
       <Filter>Engine\Asset</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Asset\SubAssetKeySelfTest.h">
@@ -933,119 +1065,74 @@
     <ClInclude Include="..\src\Engine\Engine\Asset\TerrainEdit.h">
       <Filter>Engine\Asset</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\AssetDatabase.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Playback\AudioClip.h">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\AssetDatabaseSelfTest.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Playback\AudioMixer.h">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\AcousticAudio.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Playback\AudioSelfTest.h">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\AcousticAudioSelfTest.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Playback\AudioSourceSystem.h">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\AudioClip.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Playback\AudioSystem.h">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\AudioMixer.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Playback\MusicMath.h">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\AudioSelfTest.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Playback\MusicStream.h">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\AudioSourceSystem.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Playback\SoundAsset.h">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\AudioSystem.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Playback\StbVorbis.h">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\ImpactSoundAsset.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Playback\VoicePolicy.h">
+      <Filter>Engine\Audio\Playback</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\ImpactSynth.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Spatial\AcousticAudio.h">
+      <Filter>Engine\Audio\Spatial</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\ImpactSynthSelfTest.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Spatial\AcousticAudioSelfTest.h">
+      <Filter>Engine\Audio\Spatial</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\ModalAudio.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Spatial\SpatialMath.h">
+      <Filter>Engine\Audio\Spatial</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\ModalAudioSelfTest.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Synth\ImpactSoundAsset.h">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\ModalSynth.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Synth\ImpactSynth.h">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\ModalSynthSelfTest.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Synth\ImpactSynthSelfTest.h">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\MusicMath.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Synth\ModalAudio.h">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\MusicStream.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Synth\ModalAudioSelfTest.h">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\SoundAsset.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Synth\ModalSynth.h">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\SpatialMath.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Synth\ModalSynthSelfTest.h">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\StbVorbis.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Audio\Synth\SynthCore.h">
+      <Filter>Engine\Audio\Synth</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\SynthCore.h">
-      <Filter>Engine\Audio</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Demo\DemoContent.h">
+      <Filter>Engine\Demo</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Audio\VoicePolicy.h">
-      <Filter>Engine\Audio</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\CollisionSystem.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\DebugDraw.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\DemoContent.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\DisplaySettings.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\EffectSystem.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\EngineCli.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\EngineCliSelfTest.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\EngineLoop.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\EntityNaming.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\FbxLoader.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\FontSelfTest.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\FractureBuilder.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\FractureSystem.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\GameFlow.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\GameObject.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Demo\ShowcaseScenes.h">
+      <Filter>Engine\Demo</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\HotReload\DllReloader.h">
       <Filter>Engine\HotReload</Filter>
@@ -1059,8 +1146,17 @@
     <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHubSelfTest.h">
       <Filter>Engine\HotReload</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\LightSelection.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Loop\EngineLoop.h">
+      <Filter>Engine\Loop</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Loop\GameFlow.h">
+      <Filter>Engine\Loop</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Loop\PlayerInputSystem.h">
+      <Filter>Engine\Loop</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Loop\TickRunner.h">
+      <Filter>Engine\Loop</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Modal\CpuModalBackend.h">
       <Filter>Engine\Modal</Filter>
@@ -1089,9 +1185,6 @@
     <ClInclude Include="..\src\Engine\Engine\Modal\Voxelizer.h">
       <Filter>Engine\Modal</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\ModelLoader.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Net\NetRollback.h">
       <Filter>Engine\Net</Filter>
     </ClInclude>
@@ -1103,9 +1196,6 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Net\NetSession.h">
       <Filter>Engine\Net</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\PartFollowSystem.h">
-      <Filter>Engine</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Particles\CpuParticleBackend.h">
       <Filter>Engine\Particles</Filter>
@@ -1122,113 +1212,104 @@
     <ClInclude Include="..\src\Engine\Engine\Particles\ParticleCurves.h">
       <Filter>Engine\Particles</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Particles\ParticleSelfTest.h">
+      <Filter>Engine\Particles</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Particles\ParticleSystem.h">
       <Filter>Engine\Particles</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\ParticleSelfTest.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Collider\ConvexColliderLibrary.h">
+      <Filter>Engine\Physics\Collider</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Parts.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Collider\ConvexCollision.h">
+      <Filter>Engine\Physics\Collider</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\PerfBenchmark.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Collider\ConvexHull.h">
+      <Filter>Engine\Physics\Collider</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\AeroSampling.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Collider\ConvexSelfTest.h">
+      <Filter>Engine\Physics\Collider</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\Broadphase.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Collider\MeshColliderLibrary.h">
+      <Filter>Engine\Physics\Collider</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\ConvexColliderLibrary.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Collider\TerrainColliderLibrary.h">
+      <Filter>Engine\Physics\Collider</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\ConvexCollision.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Fracture\FractureBake.h">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\ConvexHull.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Fracture\FractureBenchmark.h">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\ConvexSelfTest.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Fracture\FractureBuilder.h">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\FractureBake.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Fracture\FractureLibrary.h">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\FractureBenchmark.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Fracture\FractureMesh.h">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\FractureLibrary.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Fracture\FractureSelfTest.h">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\FractureMesh.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Fracture\FractureSkinBake.h">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\FractureSelfTest.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Fracture\FractureSkinSelfTest.h">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\FractureSkinBake.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Fracture\FractureSystem.h">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\FractureSkinSelfTest.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Fracture\FractureVoxel.h">
+      <Filter>Engine\Physics\Fracture</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\FractureVoxel.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Ragdoll\Ragdoll.h">
+      <Filter>Engine\Physics\Ragdoll</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\MeshColliderLibrary.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Ragdoll\RagdollBuilder.h">
+      <Filter>Engine\Physics\Ragdoll</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\PhysicsDebugDraw.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Ragdoll\RagdollSelfTest.h">
+      <Filter>Engine\Physics\Ragdoll</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\PhysicsSystem.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\AeroSampling.h">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\PhysMatLibrary.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\Broadphase.h">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\PhysMatSelfTest.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\CollisionSystem.h">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\RagdollSelfTest.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysicsDebugDraw.h">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\Shapes.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSelfTest.h">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\TerrainColliderLibrary.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSystem.h">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\XpbdBackend.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysMatLibrary.h">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\XpbdSelfTest.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysMatSelfTest.h">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Physics\XpbdSolver.h">
-      <Filter>Engine\Physics</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\Shapes.h">
+      <Filter>Engine\Physics\Rigid</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\PhysicsSelfTest.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Xpbd\XpbdBackend.h">
+      <Filter>Engine\Physics\Xpbd</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\PlayerInputSystem.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Xpbd\XpbdSelfTest.h">
+      <Filter>Engine\Physics\Xpbd</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Prefab.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\ProbeBaker.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Project.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Ragdoll.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\RagdollBuilder.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Xpbd\XpbdSolver.h">
+      <Filter>Engine\Physics\Xpbd</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtScene.h">
       <Filter>Engine\RayTracing</Filter>
@@ -1239,8 +1320,23 @@
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSelfTest.h">
       <Filter>Engine\RayTracing</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\RenderSystem.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\DebugDraw.h">
+      <Filter>Engine\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\LightSelection.h">
+      <Filter>Engine\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\ProbeBaker.h">
+      <Filter>Engine\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\RenderSystem.h">
+      <Filter>Engine\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\TerrainSystem.h">
+      <Filter>Engine\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\WaterWaveSelfTest.h">
+      <Filter>Engine\Rendering</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Replay\CrashRing.h">
       <Filter>Engine\Replay</Filter>
@@ -1275,26 +1371,47 @@
     <ClInclude Include="..\src\Engine\Engine\Replay\WorldHasherSelfTest.h">
       <Filter>Engine\Replay</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\SaveGame.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Scene\EntityNaming.h">
+      <Filter>Engine\Scene</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Scene.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Scene\GameObject.h">
+      <Filter>Engine\Scene</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\SceneSelfTest.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Scene\Prefab.h">
+      <Filter>Engine\Scene</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\SceneSerializer.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Scene\SaveGame.h">
+      <Filter>Engine\Scene</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\SchemaCodegen.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Scene\Scene.h">
+      <Filter>Engine\Scene</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\SchemaComponents.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Scene\SceneSelfTest.h">
+      <Filter>Engine\Scene</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\SchemaSelfTest.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Scene\SceneSerializer.h">
+      <Filter>Engine\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Scene\TagNames.h">
+      <Filter>Engine\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Scene\Tags.h">
+      <Filter>Engine\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Scene\TagSelfTest.h">
+      <Filter>Engine\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Scene\TransformSystem.h">
+      <Filter>Engine\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Schema\SchemaCodegen.h">
+      <Filter>Engine\Schema</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Schema\SchemaComponents.h">
+      <Filter>Engine\Schema</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Schema\SchemaSelfTest.h">
+      <Filter>Engine\Schema</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Script\EngineApiTable.h">
       <Filter>Engine\Script</Filter>
@@ -1308,32 +1425,8 @@
     <ClInclude Include="..\src\Engine\Engine\Script\ScriptKeys.h">
       <Filter>Engine\Script</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\ShowcaseScenes.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\SkeletonSelfTest.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\SkinningSystem.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\TagNames.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Tags.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\TagSelfTest.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\TerrainSystem.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\TickRunner.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\TransformSystem.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\UI\FontSelfTest.h">
+      <Filter>Engine\UI</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\UI\UIFontMetricsCook.h">
       <Filter>Engine\UI</Filter>
@@ -1374,17 +1467,17 @@
     <ClInclude Include="..\src\Engine\Engine\UI\UIWidgets.h">
       <Filter>Engine\UI</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Vfx\EffectSystem.h">
+      <Filter>Engine\Vfx</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxGeometry.h">
       <Filter>Engine\Vfx</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxRenderer.h">
       <Filter>Engine\Vfx</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\VfxSelfTest.h">
-      <Filter>Engine</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\WaterWaveSelfTest.h">
-      <Filter>Engine</Filter>
+    <ClInclude Include="..\src\Engine\Engine\Vfx\VfxSelfTest.h">
+      <Filter>Engine\Vfx</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\Clock.h">
       <Filter>Platform</Filter>
@@ -1413,119 +1506,146 @@
     <ClInclude Include="..\src\Engine\Platform\Win32Window.h">
       <Filter>Platform</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\AcousticVolumePass.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Compute\ComputeAbiRunner.h">
+      <Filter>Renderer\Compute</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ComputeAbiRunner.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Compute\ComputeAbiSelfTest.h">
+      <Filter>Renderer\Compute</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ComputeAbiSelfTest.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Compute\ProjectComputeRunner.h">
+      <Filter>Renderer\Compute</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\DeferredPath.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Compute\ProjectComputeRunnerSelfTest.h">
+      <Filter>Renderer\Compute</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\EditorLinePass.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Device\GpuBufferUtil.h">
+      <Filter>Renderer\Device</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\EnvMapBaker.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Device\GpuResources.h">
+      <Filter>Renderer\Device</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\FontAtlas.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Device\GpuTimer.h">
+      <Filter>Renderer\Device</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\FontFiles.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Device\GraphicsDevice.h">
+      <Filter>Renderer\Device</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\FontGeometry.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Device\ReflectionClassJson.h">
+      <Filter>Renderer\Device</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ForwardPath.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Device\RenderTexture.h">
+      <Filter>Renderer\Device</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\FroxelPass.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Device\SwapChain.h">
+      <Filter>Renderer\Device</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\FrustumCull.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Device\VolumeTexture.h">
+      <Filter>Renderer\Device</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\FxStackAsset.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\ImGui\ImGuiRenderer.h">
+      <Filter>Renderer\ImGui</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\FxStackSelfTest.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\ImGui\ImGuiTheme.h">
+      <Filter>Renderer\ImGui</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\GhostMeshPass.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Mesh\MeshBind.h">
+      <Filter>Renderer\Mesh</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\GpuBufferUtil.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Mesh\MeshInstancing.h">
+      <Filter>Renderer\Mesh</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\GpuResources.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Mesh\Skeleton.h">
+      <Filter>Renderer\Mesh</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\GpuTimer.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\AcousticVolumePass.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\GraphicsDevice.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\EditorLinePass.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\HzbPass.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\EnvMapBaker.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ImageDiff.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\FroxelPass.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ImageDiffSelfTest.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\GhostMeshPass.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ImageWrite.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\HzbPass.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ImGuiRenderer.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\PickingPass.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ImGuiTheme.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\ShadowAtlas.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\MeshBind.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\ShadowPass.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\MeshInstancing.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\SkyboxPass.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\PerfDrawBenchmark.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\SkyResolve.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\PickingPass.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\SsrPass.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\PostFxMath.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\TaaPass.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\PostProcess.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\TerrainPass.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ProjectComputeRunner.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\WaterPass.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ProjectComputeRunnerSelfTest.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\WaterSurfaceSelfTest.h">
+      <Filter>Renderer\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ProjectEffectRunner.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Pipeline\DeferredPath.h">
+      <Filter>Renderer\Pipeline</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ProjectEffectRunnerSelfTest.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Pipeline\ForwardPath.h">
+      <Filter>Renderer\Pipeline</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ProjectFxStackPolicy.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Pipeline\FrustumCull.h">
+      <Filter>Renderer\Pipeline</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ProjectShaderProperties.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Pipeline\PerfDrawBenchmark.h">
+      <Filter>Renderer\Pipeline</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ProjectShaderPropertiesSelfTest.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Pipeline\RenderPath.h">
+      <Filter>Renderer\Pipeline</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Pipeline\RenderSelfTest.h">
+      <Filter>Renderer\Pipeline</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Pipeline\RenderTypes.h">
+      <Filter>Renderer\Pipeline</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\PostFx\FxStackAsset.h">
+      <Filter>Renderer\PostFx</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\PostFx\FxStackSelfTest.h">
+      <Filter>Renderer\PostFx</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\PostFx\PostFxMath.h">
+      <Filter>Renderer\PostFx</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\PostFx\PostProcess.h">
+      <Filter>Renderer\PostFx</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\PostFx\ProjectEffectRunner.h">
+      <Filter>Renderer\PostFx</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\PostFx\ProjectEffectRunnerSelfTest.h">
+      <Filter>Renderer\PostFx</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\PostFx\ProjectFxStackPolicy.h">
+      <Filter>Renderer\PostFx</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtMath.h">
       <Filter>Renderer\RayTracing</Filter>
@@ -1536,89 +1656,62 @@
     <ClInclude Include="..\src\Engine\Renderer\RayTracing\RtTypes.h">
       <Filter>Renderer\RayTracing</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ReflectionClassJson.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Shader\ProjectShaderProperties.h">
+      <Filter>Renderer\Shader</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\RenderPath.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Shader\ProjectShaderPropertiesSelfTest.h">
+      <Filter>Renderer\Shader</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\RenderSelfTest.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Shader\ShaderCache.h">
+      <Filter>Renderer\Shader</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\RenderTexture.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Shader\ShaderManager.h">
+      <Filter>Renderer\Shader</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\RenderTypes.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Shader\ShaderManagerProjectIndexSelfTest.h">
+      <Filter>Renderer\Shader</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ShaderCache.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Shader\SurfaceDeferredSelfTest.h">
+      <Filter>Renderer\Shader</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ShaderManager.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Shader\SurfaceDrawBind.h">
+      <Filter>Renderer\Shader</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ShaderManagerProjectIndexSelfTest.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Shader\SurfaceMaterialSelfTest.h">
+      <Filter>Renderer\Shader</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ShadowAtlas.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Shader\SurfaceProgram.h">
+      <Filter>Renderer\Shader</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\ShadowPass.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Shader\SurfaceShaderSelfTest.h">
+      <Filter>Renderer\Shader</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\Skeleton.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Shader\SurfaceShaderTypes.h">
+      <Filter>Renderer\Shader</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\SkyboxPass.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Text\FontAtlas.h">
+      <Filter>Renderer\Text</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\SkyResolve.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Text\FontFiles.h">
+      <Filter>Renderer\Text</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\SsrPass.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Text\FontGeometry.h">
+      <Filter>Renderer\Text</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\SurfaceDeferredSelfTest.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Texture\ImageDiff.h">
+      <Filter>Renderer\Texture</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\SurfaceDrawBind.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Texture\ImageDiffSelfTest.h">
+      <Filter>Renderer\Texture</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\SurfaceMaterialSelfTest.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Texture\ImageWrite.h">
+      <Filter>Renderer\Texture</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\SurfaceProgram.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Texture\TextureCook.h">
+      <Filter>Renderer\Texture</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\SurfaceShaderSelfTest.h">
-      <Filter>Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\SurfaceShaderTypes.h">
-      <Filter>Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\SwapChain.h">
-      <Filter>Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\TaaPass.h">
-      <Filter>Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\TerrainPass.h">
-      <Filter>Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\TextureCook.h">
-      <Filter>Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\TextureCookSelfTest.h">
-      <Filter>Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\VolumeTexture.h">
-      <Filter>Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\WaterPass.h">
-      <Filter>Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Engine\Renderer\WaterSurfaceSelfTest.h">
-      <Filter>Renderer</Filter>
+    <ClInclude Include="..\src\Engine\Renderer\Texture\TextureCookSelfTest.h">
+      <Filter>Renderer\Texture</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Shared\EngineAPI.h">
       <Filter>Shared</Filter>

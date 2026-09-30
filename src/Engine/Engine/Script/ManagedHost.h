@@ -6,8 +6,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "Engine/Core/EntityID.h"
-#include "Engine/Core/Reflection.h" // FieldType
+#include "Engine/Core/Ecs/EntityID.h"
+#include "Engine/Core/Ecs/Reflection.h" // FieldType
 #include "Engine/Engine/Script/EngineApiTable.h"
 #include "Engine/Engine/Script/ScriptKeys.h" // ScriptStartedKey (C++ ホストと同じキー)
 #include "Engine/Platform/Input.h"

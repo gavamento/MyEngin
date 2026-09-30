@@ -1,7 +1,7 @@
 #include "Engine/Platform/Win32Window.h"
 
-#include "Engine/Core/Check.h"
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Diagnostics/Check.h"
+#include "Engine/Core/Diagnostics/Log.h"
 
 #include <Windows.h>
 

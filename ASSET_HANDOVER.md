@@ -235,7 +235,7 @@ $LASTEXITCODE
 
 ## 10. FBX互換性の注意点
 
-調査対象は `src/Engine/Engine/FbxLoader.cpp` です。別PCのコード版が変わっていたら再確認してください。
+調査対象は `src/Engine/Engine/Asset/FbxLoader.cpp` です。別PCのコード版が変わっていたら再確認してください。
 
 - ufbxで左手系Y-up、メートルへ変換し、ZミラーとADJUST_TRANSFORMSを使用する設定に合わせています。
 - UVは1セット。読み込み側でVを反転します。

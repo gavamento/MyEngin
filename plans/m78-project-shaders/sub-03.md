@@ -57,8 +57,8 @@ tools\check_rules.ps1
 SELF_EVAL: sub-03 (round 3)
 実装:
   - #1: src/Engine/Engine/RenderSystem.cpp:ResolvePost — CameraOverride 時に projectEffectRunner_/projectComputeRunner_ を ClearPasses; BeforePost Dispatch と postFx_.Resolve へは nullptr (ShouldInjectProjectFxStack)
-  - #1: src/Engine/Renderer/ProjectFxStackPolicy.h — ShouldInjectProjectFxStack(bool cameraOverrideActive)
-  - #1: src/Engine/Renderer/FxStackSelfTest.cpp — TestProjectFxStackInjectionPolicy (テスト 8)
+  - #1: src/Engine/Renderer/PostFx/ProjectFxStackPolicy.h — ShouldInjectProjectFxStack(bool cameraOverrideActive)
+  - #1: src/Engine/Renderer/PostFx/FxStackSelfTest.cpp — TestProjectFxStackInjectionPolicy (テスト 8)
   - #3: RenderSystem Tex2D リゾルバ — gray/black/bump を white フォールバック＋初回 MYE_LOG_WARN; docs/project-shaders-tex2d-defaults.md; ProjectPostCommon.hlsli コメント
   - #5: assets/shaders/MyTint.post.hlsl + .meta, assets/MyTint.fxstack.json + .meta (手動 Tint 手順と spec 例に一致)
 
@@ -81,8 +81,8 @@ SELF_EVAL: sub-03 (round 3)
 
 触ったファイル:
   - src/Engine/Engine/RenderSystem.cpp
-  - src/Engine/Renderer/ProjectFxStackPolicy.h
-  - src/Engine/Renderer/FxStackSelfTest.cpp
+  - src/Engine/Renderer/PostFx/ProjectFxStackPolicy.h
+  - src/Engine/Renderer/PostFx/FxStackSelfTest.cpp
   - assets/shaders/MyTint.post.hlsl
   - assets/shaders/MyTint.post.hlsl.meta
   - assets/MyTint.fxstack.json
@@ -99,14 +99,14 @@ SELF_EVAL: sub-03 (round 3)
 
 SELF_EVAL: sub-03 (round 2)
 実装:
-  - src/Engine/Renderer/ProjectShaderProperties.h : PropValue — `std::string` を第3 variant として追加 (Tex2D のアセット名 / GUID hex)
-  - src/Engine/Renderer/FxStackAsset.cpp : ParseProperties(local), SerializeProperties — JSON 文字列値 (Tex2D) のロード・保存を追加
-  - src/Engine/Renderer/FxStackSelfTest.cpp : TestTex2DRoundTrip — Tex2D プロパティ (ビルトイン名 / GUID hex 文字列) の load/save round-trip テスト追加 (テスト 7)
-  - src/Engine/Renderer/ProjectEffectRunner.h : TextureResolver, SetTextureResolver, DrawFullscreen (userTexSRVs 追加), texResolver_ メンバ
-  - src/Engine/Renderer/ProjectEffectRunner.cpp : DrawFullscreen — t2+ スロットへ userTexSRVs バインド + 後始末; RunPasses — schema の Tex2D 行を収集して texResolver_ で SRV 解決し DrawFullscreen に渡す
+  - src/Engine/Renderer/Shader/ProjectShaderProperties.h : PropValue — `std::string` を第3 variant として追加 (Tex2D のアセット名 / GUID hex)
+  - src/Engine/Renderer/PostFx/FxStackAsset.cpp : ParseProperties(local), SerializeProperties — JSON 文字列値 (Tex2D) のロード・保存を追加
+  - src/Engine/Renderer/PostFx/FxStackSelfTest.cpp : TestTex2DRoundTrip — Tex2D プロパティ (ビルトイン名 / GUID hex 文字列) の load/save round-trip テスト追加 (テスト 7)
+  - src/Engine/Renderer/PostFx/ProjectEffectRunner.h : TextureResolver, SetTextureResolver, DrawFullscreen (userTexSRVs 追加), texResolver_ メンバ
+  - src/Engine/Renderer/PostFx/ProjectEffectRunner.cpp : DrawFullscreen — t2+ スロットへ userTexSRVs バインド + 後始末; RunPasses — schema の Tex2D 行を収集して texResolver_ で SRV 解決し DrawFullscreen に渡す
   - src/Engine/Engine/RenderSystem.cpp : ResolvePost — フレームごとに SetTextureResolver を設定 (builtin 名 / GUID hex → Texture SRV)
-  - src/Editor/Windows/InspectorWindow.h : FxStackEditState::schemaCache 追加, DrawFxStackInspector 引数に EngineContext& ctx 追加, ProjectShaderProperties.h / unordered_map インクルード追加
-  - src/Editor/Windows/InspectorWindow.cpp : DrawFxStackInspector — スキーマ駆動 UI に全面改修 (Header/HideInInspector/Range/Float/Color/Vector/Tex2D ピッカー); フォールバックとして JSON キー列挙を維持; ShaderManager.h / ProjectShaderProperties.h インクルード追加
+  - src/Editor/Windows/Scene/InspectorWindow.h : FxStackEditState::schemaCache 追加, DrawFxStackInspector 引数に EngineContext& ctx 追加, ProjectShaderProperties.h / unordered_map インクルード追加
+  - src/Editor/Windows/Scene/InspectorWindow.cpp : DrawFxStackInspector — スキーマ駆動 UI に全面改修 (Header/HideInInspector/Range/Float/Color/Vector/Tex2D ピッカー); フォールバックとして JSON キー列挙を維持; ShaderManager.h / ProjectShaderProperties.h インクルード追加
 
 仕様との差分:
   - [追加] FxStackSelfTest.cpp の MYE_LOG_INFO 文字列は英語表記 (round 1 からの継続)
@@ -133,14 +133,14 @@ SELF_EVAL: sub-03 (round 2)
   - black/gray/bump ビルトインテクスチャが現状 white にフォールバック (専用テクスチャ未整備)。sub-04 以降での整備推奨
 
 触ったファイル:
-  - src/Engine/Renderer/ProjectShaderProperties.h
-  - src/Engine/Renderer/FxStackAsset.cpp
-  - src/Engine/Renderer/FxStackSelfTest.cpp
-  - src/Engine/Renderer/ProjectEffectRunner.h
-  - src/Engine/Renderer/ProjectEffectRunner.cpp
+  - src/Engine/Renderer/Shader/ProjectShaderProperties.h
+  - src/Engine/Renderer/PostFx/FxStackAsset.cpp
+  - src/Engine/Renderer/PostFx/FxStackSelfTest.cpp
+  - src/Engine/Renderer/PostFx/ProjectEffectRunner.h
+  - src/Engine/Renderer/PostFx/ProjectEffectRunner.cpp
   - src/Engine/Engine/RenderSystem.cpp
-  - src/Editor/Windows/InspectorWindow.h
-  - src/Editor/Windows/InspectorWindow.cpp
+  - src/Editor/Windows/Scene/InspectorWindow.h
+  - src/Editor/Windows/Scene/InspectorWindow.cpp
 
 申し送り:
   - FxStackKind::Compute の実行本体 (sub-04)
@@ -178,19 +178,19 @@ SELF_EVAL: sub-03 (round 2)
 
 実装:
   新規ファイル:
-    - src/Engine/Renderer/FxStackAsset.h     — FxStackAsset / FxStackEntry / PropValue 型、LoadFxStack / SaveFxStack / InsertionToString / InsertionFromString
-    - src/Engine/Renderer/FxStackAsset.cpp   — nlohmann::json による JSON ロード・保存実装
-    - src/Engine/Renderer/FxStackSelfTest.h  — RunFxStackSelfTest 宣言
-    - src/Engine/Renderer/FxStackSelfTest.cpp — 6 ケース (空JSON / Post round-trip / Compute / Insertion変換 / 壊れたJSON / 混在パス)
+    - src/Engine/Renderer/PostFx/FxStackAsset.h     — FxStackAsset / FxStackEntry / PropValue 型、LoadFxStack / SaveFxStack / InsertionToString / InsertionFromString
+    - src/Engine/Renderer/PostFx/FxStackAsset.cpp   — nlohmann::json による JSON ロード・保存実装
+    - src/Engine/Renderer/PostFx/FxStackSelfTest.h  — RunFxStackSelfTest 宣言
+    - src/Engine/Renderer/PostFx/FxStackSelfTest.cpp — 6 ケース (空JSON / Post round-trip / Compute / Insertion変換 / 壊れたJSON / 混在パス)
 
   既存ファイル変更:
-    - src/Engine/Renderer/ProjectEffectRunner.h/cpp — SetPasses() 追加 (シェーダキャッシュ保持更新)
+    - src/Engine/Renderer/PostFx/ProjectEffectRunner.h/cpp — SetPasses() 追加 (シェーダキャッシュ保持更新)
     - src/Engine/Engine/AssetDatabase.h/cpp          — AssetType::FxStack 追加、*.fxstack.json 分類
-    - src/Engine/Core/Components.h/cpp               — CameraPostFxComponent に AssetID fxStack フィールド追加
+    - src/Engine/Core/Ecs/Components.h/cpp               — CameraPostFxComponent に AssetID fxStack フィールド追加
     - src/Engine/Engine/RenderSystem.h/cpp           — projectEffectRunner_ / lastFxStackId_ メンバ追加、ResolvePost でロード→SetPasses→PostProcess::Resolve に渡す
-    - src/Engine/Core/LocalizationTable.inl          — Insp_FxStack* StrId 追加
-    - src/Editor/Windows/InspectorWindow.h/cpp       — fxstack Inspector UI (LoadFxStackEdit / DrawFxStackInspector / DrawAssetRef FxStack 対応)
-    - src/Editor/EditorMain.cpp                      — RunFxStackSelfTest 登録
+    - src/Engine/Core/Localization/LocalizationTable.inl          — Insp_FxStack* StrId 追加
+    - src/Editor/Windows/Scene/InspectorWindow.h/cpp       — fxstack Inspector UI (LoadFxStackEdit / DrawFxStackInspector / DrawAssetRef FxStack 対応)
+    - src/Editor/App/EditorMain.cpp                      — RunFxStackSelfTest 登録
     - build/Engine.vcxproj / .filters                — 新規 .cpp/.h 手動追加
 
 検証結果:

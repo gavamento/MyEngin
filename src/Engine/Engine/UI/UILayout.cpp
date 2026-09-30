@@ -2,10 +2,10 @@
 
 #include <cmath>
 
-#include "Engine/Core/ComponentRegistry.h" // kComponentScriptState (UI 専用判定)
-#include "Engine/Core/Components.h"
-#include "Engine/Core/World.h"
-#include "Engine/Engine/RenderSystem.h" // PrevWorldStore (描画補間 M36b)
+#include "Engine/Core/Ecs/ComponentRegistry.h" // kComponentScriptState (UI 専用判定)
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Rendering/RenderSystem.h" // PrevWorldStore (描画補間 M36b)
 #include "Engine/Engine/UI/UILayoutGroup.h" // M75e: 自動レイアウト
 #include "Engine/Engine/UI/UIWidgets.h"     // M75f: Slider の fill / handle のアンカー
 #include "Engine/Platform/Input.h" // InputSnapshot (M75b: CanvasOfInput)

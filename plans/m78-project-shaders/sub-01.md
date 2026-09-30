@@ -18,7 +18,7 @@ HLSL 先頭の `/*@MyEngineProperties ... @*/` をパースし、プロパティ
 
 ## 触る場所 (planner の見立て)
 
-- 新規: `src/Engine/Renderer/ProjectShaderProperties.h` / `.cpp` (または `Engine/Asset/` 配下 — 層として Renderer がパースしてよいか確認。文字列パースのみなら Core 寄りでも可)
+- 新規: `src/Engine/Renderer/Shader/ProjectShaderProperties.h` / `.cpp` (または `Engine/Asset/` 配下 — 層として Renderer がパースしてよいか確認。文字列パースのみなら Core 寄りでも可)
 - 新規: `*SelfTest.cpp` を隣に配置
 - 必要なら `tools/gen_project_files.ps1` で vcxproj 更新
 - **触らない**: `PostProcess.cpp`、`EngineAPI.h`、`Material` / `GpuResources` の Material POD
@@ -46,10 +46,10 @@ tools\check_rules.ps1
 ### round 1 SELF_EVAL
 
 **実装:**
-- `src/Engine/Renderer/ProjectShaderProperties.h` : `PropType` / `PropAttr` / `PropertySchema` / `PropertyParseResult` / `ParseProperties` / `PackProperties` の型と公開 API 宣言
-- `src/Engine/Renderer/ProjectShaderProperties.cpp` : DSL ブロック抽出・属性パース・プロパティ行パース・CB オフセット割り当て・パック実装
-- `src/Engine/Renderer/ProjectShaderPropertiesSelfTest.h` / `.cpp` : 12 ケースの回帰テスト
-- `src/Editor/EditorMain.cpp` : include 追加・selftest 連鎖末尾に `RunProjectShaderPropertiesSelfTest()` を追加
+- `src/Engine/Renderer/Shader/ProjectShaderProperties.h` : `PropType` / `PropAttr` / `PropertySchema` / `PropertyParseResult` / `ParseProperties` / `PackProperties` の型と公開 API 宣言
+- `src/Engine/Renderer/Shader/ProjectShaderProperties.cpp` : DSL ブロック抽出・属性パース・プロパティ行パース・CB オフセット割り当て・パック実装
+- `src/Engine/Renderer/Shader/ProjectShaderPropertiesSelfTest.h` / `.cpp` : 12 ケースの回帰テスト
+- `src/Editor/App/EditorMain.cpp` : include 追加・selftest 連鎖末尾に `RunProjectShaderPropertiesSelfTest()` を追加
 - `build/Engine.vcxproj` / `Engine.vcxproj.filters` : gen_project_files.ps1 で更新 (新 4 ファイル)
 
 **仕様との差分:**

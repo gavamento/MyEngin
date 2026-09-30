@@ -6,16 +6,16 @@
 #include <fstream>
 #include <string_view>
 
-#include "Engine/Core/Components.h"
-#include "Engine/Core/Hash.h"
-#include "Engine/Core/Log.h"
-#include "Engine/Core/World.h"
-#include "Engine/Engine/GameFlow.h"
-#include "Engine/Engine/Tags.h" // 汎用タグ (NoSerialize = 汎用ループ外なので明示的に畳む)
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Util/Hash.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Loop/GameFlow.h"
+#include "Engine/Engine/Scene/Tags.h" // 汎用タグ (NoSerialize = 汎用ループ外なので明示的に畳む)
 #include "Engine/Engine/UI/UIInteraction.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
-#include "Engine/Engine/Physics/XpbdBackend.h"
+#include "Engine/Engine/Physics/Xpbd/XpbdBackend.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {

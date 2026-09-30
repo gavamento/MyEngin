@@ -18,10 +18,10 @@ spec §4.3。
 新しい配色ルール (`themeColor::*` の状態 → 色) は足さない (状態はテキスト表示)。ランタイムのロジック変更。
 
 ## 触る場所 (planner の見立て)
-- `src\Editor\Windows\InspectorWindow.cpp` (ModalSound 節 / PhysMat 2058-2077)
-- `src\Editor\EditorComponentCatalog.cpp`
-- `src\Engine\Core\LocalizationTable.inl`
-- 参考: `src\Editor\Windows\SoundGenWindow.cpp:19` (プレビュー id の置き方) / 181-234
+- `src\Editor\Windows\Scene\InspectorWindow.cpp` (ModalSound 節 / PhysMat 2058-2077)
+- `src\Editor\Widgets\EditorComponentCatalog.cpp`
+- `src\Engine\Core\Localization\LocalizationTable.inl`
+- 参考: `src\Editor\Windows\Audio\SoundGenWindow.cpp:19` (プレビュー id の置き方) / 181-234
 
 ## 受け入れ条件 (このサブ)
 spec §5 の 18。
@@ -37,14 +37,14 @@ spec §5 の 18。
 
 SELF_EVAL: sub-07 (round 1)
 実装:
-- `src\Editor\Windows\InspectorWindow.cpp` — `DrawComponentNotes` に `desc.name == "ModalSound" && !tg.multi` の分岐を追加し `DrawModalSoundNotes` を呼ぶ。同メソッドで
+- `src\Editor\Windows\Scene\InspectorWindow.cpp` — `DrawComponentNotes` に `desc.name == "ModalSound" && !tg.multi` の分岐を追加し `DrawModalSoundNotes` を呼ぶ。同メソッドで
   `modalsound::Library()->Request(mesh)` (未着手なら非ブロッキングで焼きジョブを積む。AudioSourceSystem::Update と同じ入口) → 状態文字列 (`Insp_ModalState` = "State: %s (%s)"、5 状態は個別 StrId) / `Cells: %u` (validCount) / Impulse スライダ (0.1..20 N・s、既定 4.0) / 6 面ボタン (`+X -X +Y -Y +Z -Z`、`ready = state==Ready && fm && hdr` で `BeginDisabled`) / Export WAV ボタン (`modalPreview_.valid` で disabled) を描画。
 - `FireModalPreviewFace` — 面 index → axis/sign → ローカル AABB 面中心 (`fm.frame.aabbMin/aabbMax`) と内向き法線 × impulse から `PendingModalImpact` を組み立て (`CollectModalImpacts` と同じ形)、`WorldMatrixComponent` でワールド化、`ColliderComponent.physMaterial` から `physmat::Resolve` で材質解決、`ModalWorldScaleOfLongestAxis` でスケール、**sub-06 と同じ `MakeModalShotPlay`** を呼ぶ (2 本目の規則は書いていない)。Played なら `modalPreview_` に保存しつつ `RegisterClip(kModalPreviewClipId) → Play(kBusUi, priority=255)` (SoundGenWindow::Preview と同型)。BelowMin 等は何もしない (直前の有効プレビューを残す)。
 - `ExportModalPreviewWav` — `modalPreview_.clip` を `assets\audio\modal_<entityFid>_<faceSlug>.wav` へ `WriteWavToFile`、重複名は " (N)" 連番 (SoundGenWindow::Save と同じ規約)、成功したら `ctx.audio->LoadClipFile` で即登録。
-- `src\Editor\Windows\InspectorWindow.h` — 前方宣言 3 つ (`ModalSoundComponent`/`ModalFeatureMap`/`DmNetHeader`)、メソッド宣言 3 つ、`ModalPreviewState` (impulse/clip/valid/face/entityFid) を追加。`AudioClip` 型のために `Audio/AudioClip.h` を include。
+- `src\Editor\Windows\Scene\InspectorWindow.h` — 前方宣言 3 つ (`ModalSoundComponent`/`ModalFeatureMap`/`DmNetHeader`)、メソッド宣言 3 つ、`ModalPreviewState` (impulse/clip/valid/face/entityFid) を追加。`AudioClip` 型のために `Audio/AudioClip.h` を include。
 - `DrawPhysMatInspector` に E / ν / α / β の 4 DragFloat 行を Adhesion の直後に追加 (Sanitize と同じ範囲: E[0,1e13]・ν[0,0.49]・α[0,1e4]・β[0,1e-2])。ν の行だけ `IsItemHovered()` → `SetTooltip("%s", Tr(...))` でツールチップ (ランタイム未使用の告知)。
-- `src\Editor\EditorComponentCatalog.cpp` — `{ "ModalSound", { ICON_FA_DRUM, "Audio", "モーダルサウンド" } }` を追加。
-- `src\Engine\Core\LocalizationTable.inl` — PhysMat 5 行 (E/ν/ν tip/α/β) + ModalSound セクション 16 行 (state 1+5 / cells / impulse / heading / face 6 / export)。全て `Tr()` を printf の唯一引数にしない形 (%s%s は可変引数越し)。
+- `src\Editor\Widgets\EditorComponentCatalog.cpp` — `{ "ModalSound", { ICON_FA_DRUM, "Audio", "モーダルサウンド" } }` を追加。
+- `src\Engine\Core\Localization\LocalizationTable.inl` — PhysMat 5 行 (E/ν/ν tip/α/β) + ModalSound セクション 16 行 (state 1+5 / cells / impulse / heading / face 6 / export)。全て `Tr()` を printf の唯一引数にしない形 (%s%s は可変引数越し)。
 
 仕様との差分:
 - [追加] Export WAV のファイル名 `<entity>` 部分を「エンティティの `fileId`」とした。spec は `modal_<entity>_<face>.wav` とだけ書いており entity の表現形式を明示していなかったため、Undo/参照系で使われている安定 ID (`InspectorTargets::fid`) を採用した (entity 名や EntityID.index は改名/世代で変わりうるため)。挙動に実害はないが解釈で埋めた箇所として明記する。
@@ -76,10 +76,10 @@ SELF_EVAL: sub-07 (round 1)
 - `wood.physmat.json` を手動検証 (PhysMat 4 フィールドの Save/Revert 往復) のために一時的に編集し、最終的に `rayleighAlpha` を元の 10.0 へ戻して再 Save したが、Editor の Save は PhysMat の全フィールドを再シリアライズするため、**キー順がアルファベット順に変わり、浮動小数点が倍精度往復の丸め誤差を含む形になり、末尾に改行が無くなり、`acousticSound: ""` の既定フィールドが追加された** (`git diff assets/physmats/wood.physmat.json` で確認できる、意味的な値は全て元通り)。これは PhysMat Save ボタンの既存の一般的な挙動 (sub-07 が触れていない `PhysMatLibrary::ToJson`/`nlohmann::json` の性質) であり、私の変更が原因ではないが、コミット対象に含めるかどうかは司会/planner の判断を仰ぎたい。
 
 触ったファイル:
-- src\Editor\Windows\InspectorWindow.cpp
-- src\Editor\Windows\InspectorWindow.h
-- src\Editor\EditorComponentCatalog.cpp
-- src\Engine\Core\LocalizationTable.inl
+- src\Editor\Windows\Scene\InspectorWindow.cpp
+- src\Editor\Windows\Scene\InspectorWindow.h
+- src\Editor\Widgets\EditorComponentCatalog.cpp
+- src\Engine\Core\Localization\LocalizationTable.inl
 
 申し送り:
 - sub-08 (M76h) の耳確認で実モデルが入ったら、Inspector プレビューも同じ経路 (`MakeModalShotPlay`) を通るため改めて確認しておくとよい (fixture の乱数重みでは「軽い衝撃 (impulse 4 未満)」だと BelowMin になりやすいことを実機で確認した — 実モデルでは ampScale 等のヘッダ値が変わるので閾値感覚も変わる可能性がある)。

@@ -7,15 +7,15 @@
 #include <unordered_map>
 #include <vector>
 
-#include "Engine/Core/ByteIo.h"
-#include "Engine/Core/Check.h"
-#include "Engine/Core/Log.h"
-#include "Engine/Core/World.h"
-#include "Engine/Engine/CollisionSystem.h"
+#include "Engine/Core/Util/ByteIo.h"
+#include "Engine/Core/Diagnostics/Check.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Physics/Rigid/CollisionSystem.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
-#include "Engine/Engine/Physics/XpbdBackend.h"
-#include "Engine/Engine/Scene.h"
+#include "Engine/Engine/Physics/Xpbd/XpbdBackend.h"
+#include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Script/ScriptHost.h"
 
 namespace mye {

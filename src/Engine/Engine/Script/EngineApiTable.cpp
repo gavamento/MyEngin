@@ -4,20 +4,20 @@
 #include <cstddef>
 #include <cstring>
 
-#include "Engine/Core/Components.h"
-#include "Engine/Core/Hash.h"
-#include "Engine/Core/Log.h"
-#include "Engine/Core/World.h"
-#include "Engine/Engine/Audio/AudioSystem.h" // HashBusName (バス名ハッシュの規則は 1 本だけ)
-#include "Engine/Engine/EffectSystem.h"
-#include "Engine/Engine/FractureSystem.h" // v22 (M80l): ApplyFractureDamage
-#include "Engine/Engine/GameObject.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Util/Hash.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Audio/Playback/AudioSystem.h" // HashBusName (バス名ハッシュの規則は 1 本だけ)
+#include "Engine/Engine/Vfx/EffectSystem.h"
+#include "Engine/Engine/Physics/Fracture/FractureSystem.h" // v22 (M80l): ApplyFractureDamage
+#include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Net/NetRuntime.h" // v13 Net* の参照先 POD (M52i)
-#include "Engine/Engine/Parts.h" // v9 部位クエリ (M48h)
-#include "Engine/Engine/Physics/PhysicsSystem.h"
-#include "Engine/Engine/Scene.h"
-#include "Engine/Engine/TagNames.h" // v20 TagIndex (名前 → 番号)
-#include "Engine/Engine/Tags.h"     // v20 タグ判定の唯一の実装
+#include "Engine/Engine/Animation/Parts.h" // v9 部位クエリ (M48h)
+#include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
+#include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/Scene/TagNames.h" // v20 TagIndex (名前 → 番号)
+#include "Engine/Engine/Scene/Tags.h"     // v20 タグ判定の唯一の実装
 #include "Engine/Engine/Script/ScriptKeys.h" // ToShared
 #include "Engine/Engine/UI/UIInteraction.h" // v16 (M70c): ヒットテスト/ナビの唯一の実装
 #include "Engine/Engine/UI/UILayout.h" // M51e: 矩形解決を描画と共有 (キャンバス座標のナビ矩形)
@@ -25,8 +25,8 @@
 #include "Engine/Engine/UI/UIWidgets.h" // M75f: ウィジェットの根もボタン状態 / フォーカスの相手になる
 #include "Engine/Platform/InputActions.h" // v12 GetActionState/GetAxisValue (M51h)
 #include "Engine/Platform/PathUtil.h"
-#include "Engine/Renderer/ComputeAbiRunner.h" // v21 (M78e)
-#include "Engine/Renderer/GraphicsDevice.h"    // v21 (M78e): Device() の完全型
+#include "Engine/Renderer/Compute/ComputeAbiRunner.h" // v21 (M78e)
+#include "Engine/Renderer/Device/GraphicsDevice.h"    // v21 (M78e): Device() の完全型
 
 namespace mye {
 namespace {

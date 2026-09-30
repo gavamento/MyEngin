@@ -7,8 +7,8 @@
 
 #include <cmath>
 
-#include "Engine/Core/Log.h"
-#include "Engine/Engine/Audio/SpatialMath.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/Audio/Spatial/SpatialMath.h"
 
 namespace mye {
 namespace acoustic {

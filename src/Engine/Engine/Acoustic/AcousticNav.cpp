@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <cmath>
 
-#include "Engine/Core/Profiler.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 
 namespace mye {

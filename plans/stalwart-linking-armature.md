@@ -35,7 +35,7 @@ M60  関節と機構 (剛体トラック)
 
 ## M60 が前提にする現状 (実ファイル裏取り済み)
 
-- **ソルバの現構造** (`src\Engine\Engine\Physics\PhysicsSystem.cpp` 2361 行、`Update` は :457-2085):
+- **ソルバの現構造** (`src\Engine\Engine\Physics\Rigid\PhysicsSystem.cpp` 2361 行、`Update` は :457-2085):
   収集 (:462 動的 / :547 静的 / :589 CC) → env 解決 (:640) → **サブステップループ (:643)**
   { 速度積分 (:667) → pose と慣性 (:700) → ConstantForce (:725) → 空力 (:755/:834) →
   翼面 (:924) → 浮力 (:1098) → ジャイロ (:1168) → **SpringJoint (:1227)** →
@@ -62,7 +62,7 @@ M60  関節と機構 (剛体トラック)
   `socketWorld = jointGlobal * entityWorld` は実測で確定済み。
   `PartFollowSystem` は「骨 → 部位」の一方向 (LocalTransform を書く = ハッシュ対象)。
   **ラグドールは逆向き (剛体 → 骨) が要る**。
-- **TypeId は 39 (AeroSurface) が最後** (`src\Engine\Core\Components.cpp` :615)。次は 40。
+- **TypeId は 39 (AeroSurface) が最後** (`src\Engine\Core\Ecs\Components.cpp` :615)。次は 40。
 - **可視化**: `Physics\PhysicsDebugDraw.h` の `PhysicsDebugFlags` / `BuildPhysicsDebugLines` (M59e)。
 - 検証資産の現状: replay_verify **5 ペア** / golden **12 枚** (M59l で 13) / selftest 連鎖の末尾は
   `RunPhysMatSelfTest` → `RunCameraPilotSelfTest`。
@@ -747,7 +747,7 @@ M60d の申し送り 11 で見つけた死にコード。**HEAD にまだ残っ�
 true→false は kinematic へ戻って `PartFollowSystem` が再び駆動する。**ブレンドは v1 では
 約束しない** (計画どおり)。`SkinningSystem` は `sm->playing = 0` で止められる (非ハッシュ)。
 
-#### 検証 (新規 `src\Engine\Engine\Physics\RagdollSelfTest.cpp`)
+#### 検証 (新規 `src\Engine\Engine\Physics\Ragdoll\RagdollSelfTest.cpp`)
 
 ★**`PhysicsSelfTest.cpp` は 6109 行で限界**。M60f が `ConvexSelfTest.cpp` を分けた前例に
 倣い、ラグドールは新規ファイルへ。`ModelLoader` は Engine 層なので骨ロードは可能

@@ -3,8 +3,8 @@
 #include <string>
 #include <vector>
 
-#include "Engine/Renderer/GpuResources.h"
-#include "Engine/Renderer/Skeleton.h"
+#include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Mesh/Skeleton.h"
 
 namespace mye {
 

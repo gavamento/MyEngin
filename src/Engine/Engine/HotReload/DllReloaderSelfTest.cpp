@@ -6,9 +6,9 @@
 
 #include <Windows.h>
 
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/HotReload/DllReloader.h"
-#include "Engine/Engine/Scene.h"
+#include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Script/ScriptHost.h"
 
 namespace mye {

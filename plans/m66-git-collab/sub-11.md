@@ -70,11 +70,11 @@
 
 ## 触る場所 (planner の見立て。coder は確認すること)
 
-- `src\Editor\Windows\SourceControlWindow.cpp` — `DrawCommitBox` (996-1013 付近)。指摘 1・4。
+- `src\Editor\Windows\Project\SourceControlWindow.cpp` — `DrawCommitBox` (996-1013 付近)。指摘 1・4。
 - `src\Editor\SourceControl\SourceControlState.{h,cpp}` — `Commit()` の成功を窓へ返す Take 系 1 個。指摘 4。
 - `src\Editor\DiskCompare.{h,cpp}` + `src\Editor\Windows\ProjectSettingsWindow.{h,cpp}` — 指摘 2。
 - `src\Editor\SourceControl\GitTransaction.{h,cpp}` — `Phase::Running` の経過時間と案内。指摘 8。
-- `src\Engine\Core\LocalizationTable.inl` — 新しい文言 (en/ja)。
+- `src\Engine\Core\Localization\LocalizationTable.inl` — 新しい文言 (en/ja)。
 - `src\Editor\SourceControl\SourceControlSelfTest.cpp` — 受け入れ条件 18/19/20 の固定。
 - ファイルは増減しない見込み (増減したら `pwsh -File tools\gen_project_files.ps1`)。
 
@@ -132,7 +132,7 @@ SELF_EVAL: sub-11 (round 1)
   - #8 src/Editor/SourceControl/GitTransaction.{h,cpp}:kStuckHintSec / ShouldShowStuckHint /
     runningSince_ — Phase::Running に入った時刻 (ImGui::GetTime = 実時間) を控え、15 s を
     **超えた**ときだけ回復案内を Warning 色 + 折り返しで出す
-  - src/Engine/Core/LocalizationTable.inl:Scm_OpStuckHint — en/ja。書式指定子なし、`###` なし
+  - src/Engine/Core/Localization/LocalizationTable.inl:Scm_OpStuckHint — en/ja。書式指定子なし、`###` なし
   - src/Editor/SourceControl/SourceControlSelfTest.cpp — (j) 節 15 checks (18/19/20 の固定) +
     MYE_COLLAB_PROBE に 2 checks (実 DLL の commit 失敗 -> 本文を残す)
 仕様との差分:
@@ -189,18 +189,18 @@ SELF_EVAL: sub-11 (round 1)
   - 一時プローブ (EditorApp / GitTransaction の env 分岐) は**削除済み**。恒久で残したのは
     MYE_COLLAB_PROBE 内の 2 件だけ。
 触ったファイル:
-  - src/Editor/DiskCompare.h
-  - src/Editor/DiskCompare.cpp
-  - src/Editor/Windows/ProjectSettingsWindow.h
-  - src/Editor/Windows/ProjectSettingsWindow.cpp
-  - src/Editor/Windows/SourceControlWindow.h
-  - src/Editor/Windows/SourceControlWindow.cpp
+  - src/Editor/App/DiskCompare.h
+  - src/Editor/App/DiskCompare.cpp
+  - src/Editor/Windows/Project/ProjectSettingsWindow.h
+  - src/Editor/Windows/Project/ProjectSettingsWindow.cpp
+  - src/Editor/Windows/Project/SourceControlWindow.h
+  - src/Editor/Windows/Project/SourceControlWindow.cpp
   - src/Editor/SourceControl/SourceControlState.h
   - src/Editor/SourceControl/SourceControlState.cpp
   - src/Editor/SourceControl/GitTransaction.h
   - src/Editor/SourceControl/GitTransaction.cpp
   - src/Editor/SourceControl/SourceControlSelfTest.cpp
-  - src/Engine/Core/LocalizationTable.inl
+  - src/Engine/Core/Localization/LocalizationTable.inl
   - plans/m66-git-collab/sub-11.md (この実装メモ)
 申し送り:
   - sub-12 (§14.6) が指す実装: `GitTransaction.h` の `kStuckHintSec` (= 15.0) と

@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-#include "Engine/Core/EntityID.h"
+#include "Engine/Core/Ecs/EntityID.h"
 #include "Shared/MathPod.h" // MyeEntityId
 
 namespace mye {

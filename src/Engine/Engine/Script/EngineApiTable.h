@@ -3,8 +3,8 @@
 #include <string>
 #include <vector>
 
-#include "Engine/Engine/DebugDraw.h"
-#include "Engine/Engine/Physics/PhysicsSystem.h" // v14 (M59k): SolidContact
+#include "Engine/Engine/Rendering/DebugDraw.h"
+#include "Engine/Engine/Physics/Rigid/PhysicsSystem.h" // v14 (M59k): SolidContact
 #include "Engine/Platform/Input.h"
 #include "Shared/EngineAPI.h"
 

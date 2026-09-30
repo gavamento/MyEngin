@@ -3,7 +3,7 @@
 ## 決定
 
 - エディタ UI の既定言語を**日本語**にし、英語も残して**実行時に切り替えられる**ようにする
-- 文字列の実体は **X マクロ 1 ファイル** (`src/Engine/Core/LocalizationTable.inl`) に置き、
+- 文字列の実体は **X マクロ 1 ファイル** (`src/Engine/Core/Localization/LocalizationTable.inl`) に置き、
   `StrId` enum と英語/日本語の 2 配列を同じファイルから生成する
 - ウィンドウ名とモーダル名は **`"表示名###英語ID"`** 形式にして、表示だけを訳し ID は固定する
 - Inspector の**フィールド表示名は `FieldDesc::displayName`**、**コンポーネント表示名は

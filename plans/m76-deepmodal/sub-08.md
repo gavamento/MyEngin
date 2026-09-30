@@ -224,8 +224,8 @@ SELF_EVAL: sub-08 (round 1)
 - engine_spec.md
 - docs\adr\ADR-020-deep-modal.md (新規)
 - plans\m76-deepmodal.md (新規)
-- src\Engine\Engine\Audio\AudioSourceSystem.cpp
-- src\Engine\Engine\Audio\AudioSourceSystem.h
+- src\Engine\Engine\Audio\Playback\AudioSourceSystem.cpp
+- src\Engine\Engine\Audio\Playback\AudioSourceSystem.h
 - src\Engine\Engine\EngineCli.cpp
 - src\Engine\Engine\EngineCliSelfTest.cpp
 - src\Engine\Engine\EngineLoop.cpp
@@ -272,7 +272,7 @@ SELF_EVAL: sub-08 (round 2)
   100 epoch = 800 step しかなく、LR が終盤 3.1e-5 まで落ちて Adam が実質止まっていた
   (= underfit)。ModelNet10 も同じ `train.py` を使うため、既定値そのものを直した
   (README にサンプル数が増えた場合の確認方法を明記)。
-- `src\Engine\Engine\Audio\AudioSourceSystem.cpp` — `--modal-face-probe` の
+- `src\Engine\Engine\Audio\Playback\AudioSourceSystem.cpp` — `--modal-face-probe` の
   `kProbeImpulse` を 4.0f → **15.0f** へ変更。再学習後のネットは 4.0 N・s では WoodBox の
   6 面すべてが BelowMin になった (ネットの応答曲線が変わったため) — Inspector のスライダ上限
   (20 N・s) に寄せて閾値の余裕を確保した。
@@ -371,7 +371,7 @@ SELF_EVAL: sub-08 (round 2)
 - tools\deepmodal\README.md (pooled R² の学習曲線とモデル既定値の説明を追記)
 - docs\adr\ADR-020-deep-modal.md (決定 8 を追加、耳確認の数値を再学習後の値に更新)
 - plans\m76-deepmodal.md (閉じ部分の pooled R² 記述を更新)
-- src\Engine\Engine\Audio\AudioSourceSystem.cpp (`kProbeImpulse` 4.0→15.0)
+- src\Engine\Engine\Audio\Playback\AudioSourceSystem.cpp (`kProbeImpulse` 4.0→15.0)
 - assets\deepmodal\deepmodal.dmnet (差し替え、サイズ不変 3,368,464 B、pooled R²=0.6277 で学習)
 
 申し送り:

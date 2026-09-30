@@ -45,7 +45,7 @@
 #define MYE_COMPUTE_BUFFER_STRUCTURED 0x01u // 構造化バッファ (最低フラグ)
 #define MYE_COMPUTE_BUFFER_UAV        0x02u // UAV ビューも作成する (書き込み可)
 
-// MYE_LOG レベル (Engine/Core/Log.h の LogLevel と同値)
+// MYE_LOG レベル (Engine/Core/Diagnostics/Log.h の LogLevel と同値)
 enum MyeLogLevel {
     MYE_LOG_LEVEL_TRACE = 0,
     MYE_LOG_LEVEL_INFO = 1,
@@ -591,7 +591,7 @@ struct MyeEngineApi {
 
     // ---- v20: 汎用タグ (TagComponent) ----
     // タグは番号 0..63 のビット集合で、名前はプロジェクト設定 (project_settings.json の "tags")。
-    // 判定の規則は Engine/Engine/Tags.h の 1 本きり (エディタ・描画と同じ関数を見る)。
+    // 判定の規則は Engine/Engine/Scene/Tags.h の 1 本きり (エディタ・描画と同じ関数を見る)。
     // TagIndex: 名前 → 番号。空文字列 / 未登録は -1。大文字小文字は区別する。
     //   ★名前の表はプロジェクトの資産なので、同じ資産で走る記録と検証では同じ番号が返る。
     //     毎フレーム引かずに Start で番号へ解決して持つのが安い

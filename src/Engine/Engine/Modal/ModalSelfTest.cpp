@@ -16,17 +16,17 @@
 
 #include <DirectXPackedVector.h>
 
-#include "Engine/Core/AssetKeyResolver.h"
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Asset/AssetKeyResolver.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Modal/CpuModalBackend.h"
 #include "Engine/Engine/Modal/DmNet.h"
 #include "Engine/Engine/Modal/ModalFeatureMap.h"
 #include "Engine/Engine/Modal/ModalSoundLibrary.h"
 #include "Engine/Engine/Modal/TriangleSoup.h"
 #include "Engine/Engine/Modal/Voxelizer.h"
-#include "Engine/Engine/Physics/ConvexColliderLibrary.h"
+#include "Engine/Engine/Physics/Collider/ConvexColliderLibrary.h"
 #include "Engine/Platform/PathUtil.h"
-#include "Engine/Renderer/GpuResources.h"
+#include "Engine/Renderer/Device/GpuResources.h"
 
 using namespace DirectX;
 

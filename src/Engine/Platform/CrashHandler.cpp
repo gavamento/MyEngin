@@ -9,7 +9,7 @@
 // Windows.h の後でなければならない
 #include <DbgHelp.h>
 
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Platform/PathUtil.h"
 
 // ビルド時に埋め込まれる git ハッシュと構成 (build\Common.props の MyeBuildInfo)。

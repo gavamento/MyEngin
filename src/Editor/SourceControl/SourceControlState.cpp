@@ -7,9 +7,9 @@
 #include <utility>
 
 #include "Editor/SourceControl/PairRule.h"
-#include "Engine/Core/Log.h"
-#include "Engine/Engine/AssetDatabase.h"
-#include "Engine/Engine/Project.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/Asset/AssetDatabase.h"
+#include "Engine/Engine/App/Project.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {

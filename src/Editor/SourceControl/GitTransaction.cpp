@@ -3,19 +3,19 @@
 #include <algorithm>
 #include <filesystem>
 
-#include "Editor/EditorSettings.h"
-#include "Editor/PartTagNames.h"
-#include "Editor/PhysicsLayerNames.h"
-#include "Engine/Core/Log.h"
-#include "Engine/Engine/AnimatorController.h"
-#include "Engine/Engine/AssetDatabase.h"
-#include "Engine/Engine/Audio/AudioSystem.h"
-#include "Engine/Engine/EngineLoop.h"
-#include "Engine/Engine/RenderSystem.h"
+#include "Editor/App/EditorSettings.h"
+#include "Editor/Project/PartTagNames.h"
+#include "Editor/Project/PhysicsLayerNames.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/Animation/AnimatorController.h"
+#include "Engine/Engine/Asset/AssetDatabase.h"
+#include "Engine/Engine/Audio/Playback/AudioSystem.h"
+#include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Rendering/RenderSystem.h"
 #include "Engine/Platform/InputActions.h"
 #include "Engine/Platform/PathUtil.h"
-#include "Engine/Renderer/GpuResources.h"
-#include "Engine/Renderer/ImGuiTheme.h"
+#include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/ImGui/ImGuiTheme.h"
 
 #include "imgui.h"
 

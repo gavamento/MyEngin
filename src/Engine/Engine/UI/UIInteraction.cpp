@@ -2,9 +2,9 @@
 
 #include <vector>
 
-#include "Engine/Core/Components.h"
-#include "Engine/Core/Hash.h"
-#include "Engine/Core/World.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Util/Hash.h"
+#include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/UI/UILayout.h"
 #include "Engine/Engine/UI/UILayoutGroup.h" // M75e: LayoutScratch
 #include "Engine/Engine/UI/UINav.h"

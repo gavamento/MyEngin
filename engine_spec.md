@@ -1206,7 +1206,7 @@ As a shared foundation for all hot-reload targets, the Core layer provides **fil
 The editor ships in **Japanese by default** and can be switched to English at runtime from
 *View > Language*. See [ADR-010](docs/adr/ADR-010-editor-localization.md).
 
-- Every UI string lives in `src/Engine/Core/LocalizationTable.inl`, one line per string. The
+- Every UI string lives in `src/Engine/Core/Localization/LocalizationTable.inl`, one line per string. The
   `StrId` enum and both language tables are generated from that single file by the preprocessor,
   so a missing translation is a compile error rather than a runtime fallback
 - Window and modal titles use the `"display###stable-id"` form. `ImHashStr` resets the hash at

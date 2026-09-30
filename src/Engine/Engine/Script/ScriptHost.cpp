@@ -8,11 +8,11 @@
 
 #include <Windows.h>
 
-#include "Engine/Core/Components.h"
-#include "Engine/Core/Log.h"
-#include "Engine/Core/World.h"
-#include "Engine/Engine/GameObject.h"
-#include "Engine/Engine/Scene.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Scene/GameObject.h"
+#include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Script/EngineApiTable.h"
 #include "Engine/Platform/PathUtil.h"
 

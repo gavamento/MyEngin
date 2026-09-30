@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <cstring>
 
-#include "Engine/Core/Components.h"
-#include "Engine/Core/World.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Ecs/World.h"
 
 namespace mye {
 

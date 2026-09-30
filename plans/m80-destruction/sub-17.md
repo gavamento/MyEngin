@@ -40,8 +40,8 @@ C:\HAL\MyEngin\plans\m80-destruction\review-1.md の指摘 #3・#4 (planner 宛�
 
 ## 触る場所 (planner の見立て)
 
-- `src/Engine/Engine/FractureSystem.*`、`src/Engine/Engine/Physics/FractureLibrary.*`、`src/Engine/Engine/Physics/FractureBake.cpp`
-- `src/Engine/Core/Components.h/.cpp` (欄を足す場合)、`src/Engine/Engine/Replay/SimSnapshot.h`、`src/Engine/Engine/AcousticAudioSelfTest.cpp` (版を上げる場合)
+- `src/Engine/Engine/FractureSystem.*`、`src/Engine/Engine/Physics/FractureLibrary.*`、`src/Engine/Engine/Physics/Fracture/FractureBake.cpp`
+- `src/Engine/Core/Ecs/Components.h/.cpp` (欄を足す場合)、`src/Engine/Engine/Replay/SimSnapshot.h`、`src/Engine/Engine/AcousticAudioSelfTest.cpp` (版を上げる場合)
 - `FractureSelfTest.cpp` / `FractureSkinSelfTest.cpp`
 
 ## 受け入れ条件 (このサブ)
@@ -88,7 +88,7 @@ SELF_EVAL: sub-17 (round 1)
     {s,s,s} での上書きをやめ、前 tick の scale へ比例係数 (fade-t)/(fade-t+1) を掛ける
     逐次方式に変更 (欄は増やさない coder 判断)。非一様スケールも各軸独立に保たれる。
     最終 tick は整数 0 の除算前後で厳密に 0.0f になる (kMinFractureFadeScale は削除)
-  - src/Engine/Engine/Physics/FractureLibrary.h/.cpp:FracturePieceRef::localCenter — #4。
+  - src/Engine/Engine/Physics/Fracture/FractureLibrary.h/.cpp:FracturePieceRef::localCenter — #4。
     破片ローカル (outer+cap) の体積重心を読み込み時に計算して持つ (.mfrac の形式は不変)
   - src/Engine/Engine/FractureSystem.cpp:ProcessRoot (onBreak の point) / ApplyFractureDamage
     (距離判定) — #4。localCenter のワールド変換オフセットを足すよう変更
@@ -99,7 +99,7 @@ SELF_EVAL: sub-17 (round 1)
     fracturesys::Instance() 経由でこの表を読み、world.GetParent() の代わりに使う
     ComposeWorldPoseWithOverride で世界姿勢を合成する。EngineLoop.cpp で
     fracturesys::Install(&fractureSystem) を配線 (fracturelib と同じ流儀)
-  - src/Engine/Engine/Physics/FractureBake.h/.cpp:CapNeighborsSymmetrically — #13。
+  - src/Engine/Engine/Physics/Fracture/FractureBake.h/.cpp:CapNeighborsSymmetrically — #13。
     隣接 32 本超の切り捨てを全破片ぶんまとめて判定し、どちらか一方が「落とす」と
     決めた組を両側から消す (対称性を保証)。kFractureBakeVersion を 1→2 に上げ、
     宣言コメントに「上げないと RT の BVH 等のキャッシュが古いまま残る」を追記
@@ -148,7 +148,7 @@ SELF_EVAL: sub-17 (round 1)
     のみ FAIL (差分の実測値は今回の変更前と同一)。fracture_before/after は maxDiff=0 で
     PASS、flow_title の FAIL なし
   - `tools\check_rules.ps1` → 0 error / 0 warning
-  - `git status --short` で `src/Engine/Renderer/WaterPass.cpp` / `.agents/` / `SKILL.md`
+  - `git status --short` で `src/Engine/Renderer/Passes/WaterPass.cpp` / `.agents/` / `SKILL.md`
     が無変更であることを確認
 自己採点 (1-5):
   仕様適合: 4 — #3・#4・#13・(sub-16 申し送りの) item5 は sub-17.md の記述どおりに実装し
@@ -179,12 +179,12 @@ SELF_EVAL: sub-17 (round 1)
   - src/Engine/Engine/FractureSystem.cpp
   - src/Engine/Engine/FractureBuilder.h
   - src/Engine/Engine/FractureBuilder.cpp
-  - src/Engine/Engine/Physics/FractureBake.h
-  - src/Engine/Engine/Physics/FractureBake.cpp
-  - src/Engine/Engine/Physics/FractureLibrary.h
-  - src/Engine/Engine/Physics/FractureLibrary.cpp
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
-  - src/Engine/Engine/Physics/FractureSkinSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureBake.h
+  - src/Engine/Engine/Physics/Fracture/FractureBake.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureLibrary.h
+  - src/Engine/Engine/Physics/Fracture/FractureLibrary.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureSkinSelfTest.cpp
   - src/Engine/Engine/EngineLoop.cpp
 申し送り:
   - sub-18 も FractureSystem.cpp を触る。今回変わったシグネチャ: ReparentKeepWorld
@@ -221,20 +221,20 @@ SELF_EVAL: sub-17 (round 2)
     (stepSim に関わらず毎 tick 呼ぶ。表が空の tick は no-op)
   - src/Engine/Engine/EngineLoop.cpp — `fracturesys::Install` の配線 2 箇所を削除 (モジュール
     自体を廃止したため)
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp・FractureSkinSelfTest.cpp・
-    src/Editor/FractureEditorSelfTest.cpp・src/Engine/Engine/Physics/FractureBenchmark.cpp —
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp・FractureSkinSelfTest.cpp・
+    src/Editor/Tools/FractureEditorSelfTest.cpp・src/Engine/Engine/Physics/Fracture/FractureBenchmark.cpp —
     `<fsys 変数>.Update(...); ...; <world 変数>.ApplyStructuralChanges();` という組み合わせの
     直後に `<fsys 変数>.ApplyDeferredLocals(<world 変数>);` を機械的に挿入 (42 箇所。書き込みが
     tick 末に移ったため、Update()+ApplyStructuralChanges() だけでは分離した破片の
     LocalTransform が古いままになる)。挿入は Python スクリプトで機械的に行い、`--selftest` が
     全 PASS (かつ `MYE_CHECK` の ERROR ログが 0 件) になることで抜け漏れが無いことを確認した
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp — テスト 19 (割れた tick 中の
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp — テスト 19 (割れた tick 中の
     ApplyFractureDamage) を「注入の有無の対比」から「`PendingLocalCount()` が分離直後に増え、
     `ApplyDeferredLocals` の直後に 0 に戻ること」「割れた tick の途中 (Update 直後、
     ApplyStructuralChanges 前) でも `ComposeEntityWorldPose` が tick 末と同じワールド位置を
     返すこと」「その位置へ小さい半径で `ApplyFractureDamage` を呼ぶと同じ tick のうちでも
     正しく当たること」を検査する形に書き直した (round 1 の裁定 手順 6)
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp — 新規テスト (16a2)「リーダー自身も同じ
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp — 新規テスト (16a2)「リーダー自身も同じ
     tick で分離するとき、2 個以上のメンバーの位置がリーダー基準で正しく計算されること」を
     追加 (下の「仕様との差分」参照。round 1 に潜んでいた別のバグをこの実装で見つけたため)
   - tests/golden/fracture_after.png — 撮り直した (下の「仕様との差分」参照)
@@ -278,7 +278,7 @@ SELF_EVAL: sub-17 (round 2)
     で FAIL していた。原因は上記のバグ修正による見た目の変化)。`fracture_before.png` は
     撮り直し不要 (maxDiff=0 で PASS のまま、分離が起きる前のショットなので無関係)
   - `tools\check_rules.ps1` → 0 error / 0 warning
-  - `git status --short` で `src/Engine/Renderer/WaterPass.cpp` / `.agents/` / `SKILL.md` が
+  - `git status --short` で `src/Engine/Renderer/Passes/WaterPass.cpp` / `.agents/` / `SKILL.md` が
     無変更であることを確認
 自己採点 (1-5):
   仕様適合: 4 — 「round 1 の裁定」の手順 1〜7 をそのまま実装し、全部満たした (#3・#4・#13・
@@ -304,8 +304,8 @@ SELF_EVAL: sub-17 (round 2)
 触ったファイル (round 1 からの追加分):
   - src/Engine/Engine/TickRunner.cpp
   - src/Engine/Engine/EngineLoop.cpp (round 1 の配線を削除する形で再度変更)
-  - src/Editor/FractureEditorSelfTest.cpp
-  - src/Engine/Engine/Physics/FractureBenchmark.cpp
+  - src/Editor/Tools/FractureEditorSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureBenchmark.cpp
   - tests/golden/fracture_after.png
 申し送り:
   - sub-18 は FractureSystem.cpp をさらに触る。round 2 で `ReparentKeepWorld` の戻り値の

@@ -5,7 +5,7 @@
 
 #include <Windows.h>
 
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Platform/PathUtil.h" // WideToUtf8 (ログは UTF-8 の narrow で出す)
 
 namespace mye {

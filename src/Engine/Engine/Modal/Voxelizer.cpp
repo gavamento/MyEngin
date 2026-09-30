@@ -9,7 +9,7 @@
 #include <cmath>
 #include <cstring>
 
-#include "Engine/Core/Check.h"
+#include "Engine/Core/Diagnostics/Check.h"
 
 using namespace DirectX;
 

@@ -7,10 +7,10 @@
 
 #include <algorithm>
 
-#include "Engine/Core/Components.h"
-#include "Engine/Core/World.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
-#include "Engine/Engine/DebugDraw.h"
+#include "Engine/Engine/Rendering/DebugDraw.h"
 
 namespace mye {
 namespace {

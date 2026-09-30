@@ -7,8 +7,8 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
-#include "Engine/Core/EntityID.h"
-#include "Engine/Renderer/FontAtlas.h"
+#include "Engine/Core/Ecs/EntityID.h"
+#include "Engine/Renderer/Text/FontAtlas.h"
 
 namespace mye {
 

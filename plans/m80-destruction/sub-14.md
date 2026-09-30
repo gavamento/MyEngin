@@ -6,7 +6,7 @@
 
 ## 出所
 
-断面 (蓋) の三角形分割 `EarClip` (`src/Engine/Engine/Physics/FractureMesh.cpp`) の失敗が、同じ種類で 3 回出た:
+断面 (蓋) の三角形分割 `EarClip` (`src/Engine/Engine/Physics/Fracture/FractureMesh.cpp`) の失敗が、同じ種類で 3 回出た:
 - sub-01: 穴の橋渡しで詰まる
 - sub-02: 閉じていない入力を渡していたことが主因だが、耳切りも破綻していた
 - sub-04: ボクセル化した開いた箱で、解像度 48 / 64 のとき失敗。Release で 12.5 秒 / 24.2 秒と遅い。共線点の対策と surface nets を入れた後も残った
@@ -47,7 +47,7 @@
 ## 触る場所 (planner の見立て)
 
 - 新規 `external/libtess2/` と `external/VERSIONS.md`
-- `src/Engine/Engine/Physics/FractureMesh.cpp` (`CapLoops` と周辺の削除)
+- `src/Engine/Engine/Physics/Fracture/FractureMesh.cpp` (`CapLoops` と周辺の削除)
 - `tools\gen_project_files.ps1` の external の扱い (必要なら)、`build/Engine.vcxproj(.filters)`
 - `FractureSelfTest.cpp`
 - **触らない**: WIP ファイル
@@ -80,10 +80,10 @@ SELF_EVAL: sub-14 (round 1)
   - build/Common.props:AdditionalIncludeDirectories — `external\libtess2\Include` を追加 (Source 配下の .c が `#include "tesselator.h"` を無限定で解決できるようにするため。imgui と同じ流儀)
   - build/Engine.vcxproj — libtess2 の 7 個の .c を手書き ClCompile へ追加 (WarningLevel Level3、TreatWarningAsError false。imgui/ImGuizmo と同じ扱い)
   - tools/gen_project_files.ps1, build/Engine.vcxproj.filters — `external\libtess2` を `$engineExternal` のフィルタ自動生成対象に追加
-  - src/Engine/Engine/Physics/FractureMesh.cpp:CapLoops — libtess2 (TESS_WINDING_ODD、法線は常に (0,0,1) 固定、2D 頂点で投入) による三角形分割へ全面置き換え。`EarClip`/`BridgeHoleIntoOuter`/`IsConvexCCW`/`PointInPoly2`/`PointInTriangle2`/`Cross2`/`Cross2D` (内包数による外周・穴の分類、凸フォールバック含む) を削除。`Pt2` から未使用の `vertexIdx` を削除
-  - src/Engine/Engine/Physics/FractureMesh.cpp:CutMeshByPlane, VerifyCapOrientation, GeometricCapClosureValid (新設) — `CapLoops` が `hadNewVertices` (輪郭の接触・交差で縮退した入力だったか) を返すようにし、`true` の側だけ厳密な位相的閉じ (`VerifyCapOrientation`) の代わりに幾何的な閉じ (`GeometricCapClosureValid`: 体積>0 かつベクトル面積の和が表面積の 1e-4 以下、sub-02 の `ValidatePieceGeometry` と同じ式) で合否を決める
-  - src/Engine/Engine/Physics/FractureBake.cpp — コメント中の `EarClip` への言及を削除 (実装ロジックの変更なし)
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp — 4b節「輪郭が接触・交差する縮退入力」を追加。openMeshMode=1 res=48/64 の `mustSucceed` を `true` に変更 (全部合否対象に格上げ)、`false` 分岐が到達不能になった `bakeOpenMesh` ラムダの死コードを削除
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp:CapLoops — libtess2 (TESS_WINDING_ODD、法線は常に (0,0,1) 固定、2D 頂点で投入) による三角形分割へ全面置き換え。`EarClip`/`BridgeHoleIntoOuter`/`IsConvexCCW`/`PointInPoly2`/`PointInTriangle2`/`Cross2`/`Cross2D` (内包数による外周・穴の分類、凸フォールバック含む) を削除。`Pt2` から未使用の `vertexIdx` を削除
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp:CutMeshByPlane, VerifyCapOrientation, GeometricCapClosureValid (新設) — `CapLoops` が `hadNewVertices` (輪郭の接触・交差で縮退した入力だったか) を返すようにし、`true` の側だけ厳密な位相的閉じ (`VerifyCapOrientation`) の代わりに幾何的な閉じ (`GeometricCapClosureValid`: 体積>0 かつベクトル面積の和が表面積の 1e-4 以下、sub-02 の `ValidatePieceGeometry` と同じ式) で合否を決める
+  - src/Engine/Engine/Physics/Fracture/FractureBake.cpp — コメント中の `EarClip` への言及を削除 (実装ロジックの変更なし)
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp — 4b節「輪郭が接触・交差する縮退入力」を追加。openMeshMode=1 res=48/64 の `mustSucceed` を `true` に変更 (全部合否対象に格上げ)、`false` 分岐が到達不能になった `bakeOpenMesh` ラムダの死コードを削除
 仕様との差分:
   - [追加] `hadNewVertices` の判定に、TESS_UNDEF の有無だけでなく「出力頂点数が入力点数と不一致」「出力三角形数がオイラーの公式の期待値 (V+2(L-1)-2) と不一致」の 2 条件を追加した。理由: 実測で、libtess2 が新規頂点 (TESS_UNDEF) を作らずに入力頂点を黙って統合するケース (532 入力→531 出力、TESS_UNDEF 0 件) と、自己交差・重複点のいずれの兆候もないのに三角形数が期待より 1 枚少ないケース (392 頂点の単純ループで 389 枚、期待 390 枚) の両方が実際の res32/48/64 ボクセル化断面で見つかった。TESS_UNDEF の有無だけでは検出できないため追加した (詳細・未解明点は不安・質問 2)
   - [逸脱] TESS_UNDEF 頂点の位置・UV を「隣の入力頂点から属性を作る」という sub-14.md の記述に対し、実装では (tangent, bitangent, capNormal) の直交基底による厳密な逆射影で作った。理由: 近似ではなく厳密に復元でき、既存の `OrthonormalBasis` の情報だけで計算できるため。UV・法線は元の意図 (平面法線・平面への正射影) と一致する
@@ -116,9 +116,9 @@ SELF_EVAL: sub-14 (round 1)
   - build/Engine.vcxproj
   - build/Engine.vcxproj.filters
   - tools/gen_project_files.ps1
-  - src/Engine/Engine/Physics/FractureMesh.cpp
-  - src/Engine/Engine/Physics/FractureBake.cpp (コメントのみ)
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureBake.cpp (コメントのみ)
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
 申し送り:
   - sub-09 (エディタ非同期焼き) は本subに依存する。res48/64 は Release で 10 秒を超える (open box 10.83 s / 20.12 s) ので、Inspector の非同期実行・キャンセル不能な長時間ブロッキングを避ける設計 (spec §4.3 で既に前提) を必ず実装すること
   - `voxelResolution` の既定値は 32 のまま (申し送り4参照)

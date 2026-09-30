@@ -55,28 +55,28 @@
 ## assets/shaders/vfx_sprite.hlsl — VFX のフォグ
 - (M32c → M57追補) M32c の VFX フォグは ApplyFog の手書き劣化コピーで、M43a のハイトフォグと太陽インスキャッタを持っていなかった = 同じシーンでメッシュと VFX の霧の濃さが食い違っていた。M57追補で forward_lit と同じ ApplyFog へ寄せ、距離も「VS で計算 + 線形補間」から PS の毎ピクセル計算に変えた。
 
-## src/Engine/Core/AssetKeyResolver.h / Components.h — サブアセット ID と地形のパス
+## src/Engine/Core/Asset/AssetKeyResolver.h / Components.h — サブアセット ID と地形のパス
 - (M51j) モデル由来のサブアセット ID が正規化絶対パスのハッシュだったせいで、シーンをコミットできなくなった。TerrainComponent がアセットを相対パス文字列で持つのはこの穴を避けるため。
 - (M74 以前) 接頭辞が正規化した絶対パスそのものだったので、シーン JSON に保存したサブアセット ID がチェックアウト先に依存した。clone 先が違う 2 台で、互いが置いたモデルがログも無く描画から消えた (三校のステージで踏んだ)。M74a で .meta の GUID 由来に直した (ADR-019)。
 
-## src/Engine/Core/Components.cpp — IsEntityActive が祖先を見る理由
+## src/Engine/Core/Ecs/Components.cpp — IsEntityActive が祖先を見る理由
 - (M64a → M64b) M64a まで自エンティティしか見ていなかった。ドッグフーディングで実際に踏んだ: 車に乗っているあいだプレイヤーを親ごと止めたのに、体の箱が地面に立ったままだった。祖先を辿る形は PhysicsSystem の車輪→剛体探索、Parts::RaycastParts の root 判定で既に使っていた。
 
-## src/Engine/Core/Components.cpp / Components.h — フィールドのまとめ確保
+## src/Engine/Core/Ecs/Components.cpp / Components.h — フィールドのまとめ確保
 - (M61a / M63a) 後続サブが消費するフィールドを最初のサブでまとめて確保した。5 サブに分けて足すと sizeof が 5 回変わり、snapshot 版 bump と golden .rep 再記録が 5 回要るため (M63a で snapshot 版は v7)。
 - (M65a) 音響 5 コンポーネント (TypeId 45〜49) を、M65f までしか使わないフィールドも含めて 1 コミットで確保した (途中のサブで足すと snapshot 版が 5 回上がる)。
 - (M68a) AcousticAudio も M68b でしか読まない残響と波の欄まで確保した (後から足すと Inspector のレイアウトとシーン JSON が 2 度動く)。
 - (M60a) Joint はリミット / モータ / 破断 (M60c/d) の分まで先に切った (M59a1 で確立した「スキーマを先に切る」流儀) が、それはリミット/モータ/破断しか見ておらず、restRotation (M60b) が漏れた (申し送り M60b-1)。
 - (M18 追補 / M65h 追補) 既存の型へ末尾フィールドを足して生バイトが変わり、kSimSnapshotVersion を上げた (M65h 追補で v11、M18 追補で v16)。
 
-## src/Engine/Core/Components.cpp — M60' の Cloth / SoftBody の TypeId
+## src/Engine/Core/Ecs/Components.cpp — M60' の Cloth / SoftBody の TypeId
 - M60' は 45=Cloth / 46=SoftBody を予約していたが、M65a の音響 5 本 (45〜49) が先に取ったので 50/51 へ、M68a が 50 = AcousticAudio を取ったので 51/52 へ繰り下げた (M60'h/k はどちらも未登録なのでデータは壊れていない。plans\supple-weaving-loom.md の予約表も同時に書き換えた)。その後 WaveSound (51) と M75 の UI コンポーネント群 (52〜) が先に埋めることになり、見込みは 62/63 になった。
 
-## src/Engine/Core/Components.h — Joint の接触除外 / Skybox の cubemap
+## src/Engine/Core/Ecs/Components.h — Joint の接触除外 / Skybox の cubemap
 - (M60g2 まで) 繋がったペアの接触を外す手段が無く、隣り合う骨などのコライダーを見た目より縮める幾何の逃げで凌いでいた。M60j で disableCollision (直接繋がった 1 ペアだけ) を足した。
 - dogfooding #8 に cubemap 未実装とあったが、M38b で実装済みだった (記述が古かった)。
 
-## src/Engine/Core/JobSystem.cpp — ParallelRanges のフィールド書き込み
+## src/Engine/Core/Jobs/JobSystem.cpp — ParallelRanges のフィールド書き込み
 - 以前はフィールドを素の書き込みにしていて、drain 中のワーカーが破棄済みの fn_ を読んで落ちていた。
 
 ## src/Engine/Platform/Input.h / Input.cpp — ゲーム面の記録形式

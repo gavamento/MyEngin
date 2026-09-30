@@ -29,13 +29,13 @@ spec §4.1「経路 (ランタイム)」全部 (ユーザー計画 Phase 12–14
 Inspector / カタログ / ローカライズ (sub-07)。合成のワーカー化。絶対音量の圧縮は**耳確認の結果を「不安・質問」に書くまで**入れない。
 
 ## 触る場所 (planner の見立て)
-- `src\Engine\Core\Components.h` / `Components.cpp:1157` の後
+- `src\Engine\Core\Ecs\Components.h` / `Components.cpp:1157` の後
 - `src\Engine\Engine\Acoustic\AcousticGrid.h:120-132` 付近 / `AcousticField.cpp:914-998`
-- 新規 `src\Engine\Engine\Audio\ModalAudio.h/.cpp`、`ModalAudioSelfTest.h/.cpp`
+- 新規 `src\Engine\Engine\Audio\Synth\ModalAudio.h/.cpp`、`ModalAudioSelfTest.h/.cpp`
 - `src\Engine\Engine\TickRunner.cpp:608-645`、`Audio\AudioSourceSystem.h/.cpp` (260-267 push の型、385-406 drain 入口、621-676 shot 再生)、`Audio\AcousticAudio.cpp:514-540`
 - `src\Engine\Engine\EngineCli.cpp` / `EngineLoop.h/.cpp` (2577 summary)、`EngineCliSelfTest.cpp`
 - `src\Engine\Engine\ShowcaseScenes.cpp:47` 付近 / `DemoContent.h/.cpp`
-- `src\Editor\EditorMain.cpp` (selftest 連鎖)
+- `src\Editor\App\EditorMain.cpp` (selftest 連鎖)
 - 参考: `PhysicsSystem.h:17-34` SolidContact (normal は大 index → 小 index、key = 小<<32 | 大、entity.index のみ)、`TransformSystem` は 409 で確定済み = WorldMatrix は今 tick の値
 - ソース追加後 `pwsh -File tools\gen_project_files.ps1`
 
@@ -54,11 +54,11 @@ spec §5 の 15, 16, 17。
 
 SELF_EVAL: sub-06 (round 1)
 実装:
-  - `src/Engine/Core/Components.h`:`ModalSoundComponent` — TypeId 61 (末尾 append)。`mesh`/`gain`/`maskThreshold`/`cooldownTicks`/`sizeScale`/`maxDistance`/`muteWave`。`kComponentNoHash` のみ (`kComponentUiAux` は付けない)
-  - `src/Engine/Core/Components.cpp`:`RegisterBuiltinComponents()` — `UIToggleGroup` の直後 (末尾) に `ModalSound` を登録
+  - `src/Engine/Core/Ecs/Components.h`:`ModalSoundComponent` — TypeId 61 (末尾 append)。`mesh`/`gain`/`maskThreshold`/`cooldownTicks`/`sizeScale`/`maxDistance`/`muteWave`。`kComponentNoHash` のみ (`kComponentUiAux` は付けない)
+  - `src/Engine/Core/Ecs/Components.cpp`:`RegisterBuiltinComponents()` — `UIToggleGroup` の直後 (末尾) に `ModalSound` を登録
   - `src/Engine/Engine/Acoustic/AcousticGrid.h`:`acoustic::RestingImpulse` 宣言を追加 (`World`/`EntityID` を使うため `EntityID.h` を include + `class World;` 前方宣言)
   - `src/Engine/Engine/Acoustic/AcousticField.cpp`:`acoustic::RestingImpulse` を定義 — `DrainImpacts` の `dynamicMass` ラムダ + `(dynamicMass(ea)+dynamicMass(eb))*gMag*dt*kImpactRestingMargin` を **1 文字も変えず** 抽出。`DrainImpacts` 側は `acoustic::RestingImpulse(world, ea, eb, gMag, dt)` を呼ぶだけに置換 (評価順・定数の参照順は不変)
-  - 新規 `src/Engine/Engine/Audio/ModalAudio.h/.cpp`:
+  - 新規 `src/Engine/Engine/Audio/Synth/ModalAudio.h/.cpp`:
     - `PendingModalImpact`(source/mesh/worldPoint/localPoint/k/excessImpulse/tick/key)、`ModalAudioStats`、`ModalShotResult`、`ModalShotInfo`
     - `ResolveModalMesh` (ModalSound.mesh 空 → 同 entity の MeshRenderer.mesh。CollectModalImpacts と ResolveWaveShotSound の口封じが共有する唯一の規則)
     - `ModalWorldScaleOfLongestAxis` (Physics/Shapes.cpp::MakePoseFromMatrix と同じ行ベクトル長でスケール近似)
@@ -66,12 +66,12 @@ SELF_EVAL: sub-06 (round 1)
     - `CollectModalImpacts` — index→EntityID 表は `AcousticField::DrainImpacts` (923-940) と同じ作り方を複製。両側 ModalSound は両方 (小→大の順)。法線は「大 index→小 index」、E が小なら `nE=n`、大なら `nE=-n` (`XMVector3TransformNormal` + 再正規化)。局所点は `XMVector3TransformCoord`
     - `MakeModalShotPlay` — `modal::LocalPointToCell` → `ModalFeatureMap::CellFeature` → `BuildModes`(mat==null は `post.density=hdr.refDensity`/`alpha=hdr.refAlpha`/`beta=hdr.refBeta` を渡して σ2=1・c=cRef にする。σ1 は BuildModes 内の `young<=0` 特別扱いに任せる) → `ModalSynthRender` → `AudioSpatial`(position/spatialBlend/minDistance/maxDistance/rolloff/dopplerScale/pitch を埋め、reverbSend は 0 のまま呼び出し側へ委譲)
   - `src/Engine/Engine/TickRunner.cpp`:`!ts.resim` ブロック、wave push の直後に `CollectModalImpacts` → `audioSources.PushModalImpact` (門は `audioSystem.IsReady() && !IsSuspended()` のみ。`ts.acoustic` の有無には依存しない)
-  - `src/Engine/Engine/Audio/AudioSourceSystem.h/.cpp`:`SetModalLibrary`/`SetModalAudioLog`/`SetModalSyncBake`/`ModalStats`/`PushModalImpact`(上限 64、溢れは `dropped`)/`ModalEntityState`(sorted vector + 二分探索、EntityID の index→generation で比較)/`ModalClipSlotState`(32 スロット、`endTick` 予約)/`kMaxModalShotsPerTick=4`。`Update()`: キュー swap を wave shot と**同じ場所**(IsReady 判定より前) に追加。drain は wave shot ループの直後、**acOn を要求しない**独立ブロック。cooldown→Request/BakeSync→PhysMat解決→`MakeModalShotPlay`→ラウンドロビンでスロット選択(埋まっていれば`PoolFull`)→`RegisterClip`→`PlayDesc{bus=SE,volume=1,priority=128}`→acOn なら `ShapeAcousticSpatial` で `desc.volume` に gain を掛ける→`Play`。`[modal] t=`/`summary` のログ出力
-  - `src/Engine/Engine/Audio/AcousticAudio.cpp`:`ResolveWaveShotSound` 先頭に (0) `ModalSound.muteWave!=0 && modalsound::IsReady(mesh)` なら `mute=1;return;`
+  - `src/Engine/Engine/Audio/Playback/AudioSourceSystem.h/.cpp`:`SetModalLibrary`/`SetModalAudioLog`/`SetModalSyncBake`/`ModalStats`/`PushModalImpact`(上限 64、溢れは `dropped`)/`ModalEntityState`(sorted vector + 二分探索、EntityID の index→generation で比較)/`ModalClipSlotState`(32 スロット、`endTick` 予約)/`kMaxModalShotsPerTick=4`。`Update()`: キュー swap を wave shot と**同じ場所**(IsReady 判定より前) に追加。drain は wave shot ループの直後、**acOn を要求しない**独立ブロック。cooldown→Request/BakeSync→PhysMat解決→`MakeModalShotPlay`→ラウンドロビンでスロット選択(埋まっていれば`PoolFull`)→`RegisterClip`→`PlayDesc{bus=SE,volume=1,priority=128}`→acOn なら `ShapeAcousticSpatial` で `desc.volume` に gain を掛ける→`Play`。`[modal] t=`/`summary` のログ出力
+  - `src/Engine/Engine/Audio/Spatial/AcousticAudio.cpp`:`ResolveWaveShotSound` 先頭に (0) `ModalSound.muteWave!=0 && modalsound::IsReady(mesh)` なら `mute=1;return;`
   - `src/Engine/Engine/EngineCli.cpp`:`--modal-audio-log N` / `--modal-sync-bake` を Deep-Modal 節に追加。`src/Engine/Engine/EngineLoop.h`:`modalAudioLogTicks`/`modalSyncBake` フィールド追加。`src/Engine/Engine/EngineLoop.cpp`:`SetModalLibrary(&modalSounds)` 等の配線 + 終了時 `[modal] summary` (`[acaudio] summary` の隣、`impacts>0` のときだけ出す)
   - `src/Engine/Engine/EngineCliSelfTest.cpp`:上記 2 フラグのパーステスト追加
-  - `src/Engine/Engine/ShowcaseScenes.cpp` / `src/Engine/Engine/DemoContent.h/.cpp`:`--modal-demo` — 木/金属/ガラスの箱 3 個が「左半分=木・右半分=金属」の床に落ちるシーン。**AcousticAudio を置かない** (Bypass 経路)。`RegisterModalShowcaseContent` を `src/Editor/EditorApp.cpp` と `src/Runtime/RuntimeMain.cpp` に配線
-  - 新規 `src/Engine/Engine/Audio/ModalAudioSelfTest.h/.cpp`、`src/Editor/EditorMain.cpp` の selftest 連鎖末尾 (`RunModalSelfTest()` の後) に追加
+  - `src/Engine/Engine/ShowcaseScenes.cpp` / `src/Engine/Engine/DemoContent.h/.cpp`:`--modal-demo` — 木/金属/ガラスの箱 3 個が「左半分=木・右半分=金属」の床に落ちるシーン。**AcousticAudio を置かない** (Bypass 経路)。`RegisterModalShowcaseContent` を `src/Editor/App/EditorApp.cpp` と `src/Runtime/RuntimeMain.cpp` に配線
+  - 新規 `src/Engine/Engine/Audio/Synth/ModalAudioSelfTest.h/.cpp`、`src/Editor/App/EditorMain.cpp` の selftest 連鎖末尾 (`RunModalSelfTest()` の後) に追加
   - `pwsh -File tools/gen_project_files.ps1` を実行 (`build/Engine.vcxproj`/`.filters` に新規 4 ファイルが載る)
 仕様との差分:
   - [追加] `PendingModalImpact` に `localPoint`(発音元ローカルの接触点) を追加。sub-06.md の prose 列挙 (「接触点ワールド / ローカル k[3] / …」) には無いが、`MakeModalShotPlay` の signature に WorldMatrix が無い (§4.1 通り) ため、cell 選択に使うローカル座標は「今 tick の WorldMatrix が手に入る」`CollectModalImpacts` の時点で計算して保持する以外に作りようが無かった。ワールド座標 (`worldPoint`) は元の prose 通り AudioSpatial.position 用に保持
@@ -97,17 +97,17 @@ SELF_EVAL: sub-06 (round 1)
   2. **受け入れ条件 2 の手動検証コマンド (`--frames 300` のみ、`--screenshot` 無し) は tick 数が実時間依存で非決定的** であることが判明した (EngineLoop.cpp の既存挙動: `dt` が `kFixedDt` に固定されるのは `--screenshot`/`--timetravel-selftest`/`--whatif-selftest` のときだけで、それ以外は `clock.BeginFrame()` の実時間が使われる。実測で同じコマンドが 25 tick から 110 tick まで揺れた)。これは本サブの変更とは無関係な既存の性質。`--screenshot <path>` を足すと `frame==tick` が保証され、`[modal] t=` 行は `bakeMsAvg` を除いて byte 一致することを確認済み (上記「検証」参照)。**この既存の非決定性は sub-06 の実装に起因しないので直さなかった**が、この手動検証コマンドを再利用する後続 sub (07/08) やレビュアが同じ罠を踏まないよう、`--screenshot` を足すことを推奨する。仕様 (spec §5 受け入れ条件 16 / sub-06.md 受け入れ条件 2) の文言を直すかどうかは planner の判断を仰ぎたい
   3. cooldown の更新タイミング (`est.lastShotTick` を更新するのは `Played` のときだけで、`NotReady`/`BelowMin`/`PoolFull`/`PlayFailed` では更新しない) は spec に明記が無かったため、`AcousticField::DrainEmitters` の cooldown 設計 (Emit 成功時のみ更新) に倣った。却下されるべき理由があれば教えてほしい
 触ったファイル:
-  - src/Engine/Core/Components.h
-  - src/Engine/Core/Components.cpp
+  - src/Engine/Core/Ecs/Components.h
+  - src/Engine/Core/Ecs/Components.cpp
   - src/Engine/Engine/Acoustic/AcousticGrid.h
   - src/Engine/Engine/Acoustic/AcousticField.cpp
-  - src/Engine/Engine/Audio/ModalAudio.h (新規)
-  - src/Engine/Engine/Audio/ModalAudio.cpp (新規)
-  - src/Engine/Engine/Audio/ModalAudioSelfTest.h (新規)
-  - src/Engine/Engine/Audio/ModalAudioSelfTest.cpp (新規)
-  - src/Engine/Engine/Audio/AudioSourceSystem.h
-  - src/Engine/Engine/Audio/AudioSourceSystem.cpp
-  - src/Engine/Engine/Audio/AcousticAudio.cpp
+  - src/Engine/Engine/Audio/Synth/ModalAudio.h (新規)
+  - src/Engine/Engine/Audio/Synth/ModalAudio.cpp (新規)
+  - src/Engine/Engine/Audio/Synth/ModalAudioSelfTest.h (新規)
+  - src/Engine/Engine/Audio/Synth/ModalAudioSelfTest.cpp (新規)
+  - src/Engine/Engine/Audio/Playback/AudioSourceSystem.h
+  - src/Engine/Engine/Audio/Playback/AudioSourceSystem.cpp
+  - src/Engine/Engine/Audio/Spatial/AcousticAudio.cpp
   - src/Engine/Engine/TickRunner.cpp
   - src/Engine/Engine/EngineCli.cpp
   - src/Engine/Engine/EngineCliSelfTest.cpp
@@ -116,8 +116,8 @@ SELF_EVAL: sub-06 (round 1)
   - src/Engine/Engine/ShowcaseScenes.cpp
   - src/Engine/Engine/DemoContent.h
   - src/Engine/Engine/DemoContent.cpp
-  - src/Editor/EditorApp.cpp
-  - src/Editor/EditorMain.cpp
+  - src/Editor/App/EditorApp.cpp
+  - src/Editor/App/EditorMain.cpp
   - src/Runtime/RuntimeMain.cpp
   - build/Engine.vcxproj
   - build/Engine.vcxproj.filters

@@ -10,9 +10,9 @@
 #include <filesystem>
 #include <fstream>
 
-#include "Engine/Core/ByteIo.h"
-#include "Engine/Core/Log.h"
-#include "Engine/Engine/Physics/FractureBake.h" // kMaxFracturePieces / kMaxFractureNeighbors (上限の検算)
+#include "Engine/Core/Util/ByteIo.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/Physics/Fracture/FractureBake.h" // kMaxFracturePieces / kMaxFractureNeighbors (上限の検算)
 #include "Engine/Platform/PathUtil.h"
 
 namespace fs = std::filesystem;

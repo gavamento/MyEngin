@@ -439,7 +439,7 @@ Runtime で成功することを実測で確認した。
 **回避（当時）** — `VehicleDriver::ApplyPlayerActive` で子の `Active` も一緒に倒していた。
 
 **修正 (M64b)** — `IsEntityActive` を**自分と祖先すべて**を見る形にした
-（`Engine/Core/Components.cpp`）。1 つでも無効なら無効、という Unity と同じ規約。
+（`Engine/Core/Ecs/Components.cpp`）。1 つでも無効なら無効、という Unity と同じ規約。
 
 ```cpp
 for (EntityID cur = e; !cur.IsNull(); cur = world.GetParent(cur)) {

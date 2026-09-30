@@ -6,8 +6,8 @@
 #include <filesystem>
 #include <fstream>
 
-#include "Engine/Core/Hash.h"
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Util/Hash.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Asset/CookedCache.h"
 #include "Engine/Engine/Asset/TerrainEdit.h" // M58f: ブラシ編集サイドカーの取り込み
 #include "Engine/Platform/PathUtil.h"

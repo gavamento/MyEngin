@@ -16,14 +16,14 @@ planner 向けの事前調査書。ユーザーとの合意事項と、着手前
 ## 2. すでにある土台 (作り直さないこと)
 
 ### 2.1 複数シェーダルート = プロジェクト上書きは実装済み
-`src/Engine/Renderer/ShaderManager.h:36` のコメントのとおり、シェーダルートは
+`src/Engine/Renderer/Shader/ShaderManager.h:36` のコメントのとおり、シェーダルートは
 **優先度順の複数持ち** `[<project>\assets\shaders, <engineRepo>\assets\shaders]`。
 プロジェクト側に同名 `.hlsl` を置けばエンジン組込みを上書きでき、置かなければエンジン側が使われる。
 
 配線箇所:
 - `src/Engine/Engine/EngineLoop.cpp:255-261`
-- `src/Editor/EditorMain.cpp:388-395`
-- `src/Engine/Renderer/VolumeTexture.cpp:552` (`options.shaderDirs`)
+- `src/Editor/App/EditorMain.cpp:388-395`
+- `src/Engine/Renderer/Device/VolumeTexture.cpp:552` (`options.shaderDirs`)
 
 `ShaderManager::ResolvePath` が各ルートを順に探し、`ReportShadowedBuiltins()` が
 上位ルートが組込みを隠している箇所を警告する。**「ファイルを置く導線」はもう存在する**。
@@ -42,8 +42,8 @@ planner 向けの事前調査書。ユーザーとの合意事項と、着手前
 
 ### 3.1 新規シェーダは誰もコンパイルしない ★最大の穴
 `MaterialLibrary::LoadFromFile` は名前を **ハッシュするだけ**で `shaders.Load(name)` を呼ばない
-(`src/Engine/Renderer/GpuResources.cpp:1048`)。起動時に `Load` されるのは
-エンジンが名前を直書きしている分のみ (`src/Editor/EditorApp.cpp:89`、各 Pass の `Init`)。
+(`src/Engine/Renderer/Device/GpuResources.cpp:1048`)。起動時に `Load` されるのは
+エンジンが名前を直書きしている分のみ (`src/Editor/App/EditorApp.cpp:89`、各 Pass の `Init`)。
 
 結果: `.mat.json` に独自名を書くと `shaders.Get(id)` が null → `ForwardPath.cpp:443` の
 `if (!prog || !prog->valid) continue;` で **描画がまるごとスキップ = 物体が消える**。
@@ -53,7 +53,7 @@ planner 向けの事前調査書。ユーザーとの合意事項と、着手前
 (エラーシェーダで描く / 組込みへ落とす のどちらか。planner が決めること)。
 
 ### 3.2 Deferred の不透明パスは `mat->shader` を見ていない
-`src/Engine/Renderer/DeferredPath.cpp:941` — 常に `gbufferShader_` / `gbufferSkinnedShader_` /
+`src/Engine/Renderer/Pipeline/DeferredPath.cpp:941` — 常に `gbufferShader_` / `gbufferSkinnedShader_` /
 `gbufferInstancedShader_` 固定。`mat->shader` が効くのは:
 - `ForwardPath.cpp:441` (非スキン・非インスタンスのみ。skinned は `skinnedShader_` に、
   instanced は `litInstancedShader_` に強制差し替え)
@@ -64,7 +64,7 @@ planner 向けの事前調査書。ユーザーとの合意事項と、着手前
 `MeshBind.h:29` 近辺と `DeferredPath.cpp:21`(レイアウト注記), `:905`, `:941` を読むこと。
 
 ### 3.3 シェーダ固有パラメータが無い
-`MaterialCB` は **16 バイト固定** (`src/Engine/Renderer/MeshBind.h:29`):
+`MaterialCB` は **16 バイト固定** (`src/Engine/Renderer/Mesh/MeshBind.h:29`):
 `metallic / roughness / hasNormal(int) / emissive`。
 テクスチャは `BindMaterialTextures` が t0 (albedo) と `normalSlot` の 2 枚だけを張る。
 スロット規約が **パスごとに違う** ことに注意: forward_lit は法線が t2 (t1 は影)、
@@ -82,7 +82,7 @@ GBuffer は t1 (`MeshBind.h` の `kForwardNormalSlot` / `kGBufferNormalSlot`)。
 判断は planner。`src/Engine/Engine/Asset/ModelCook.cpp:282` も合わせて読むこと。
 
 ### 3.4 Inspector にシェーダを選ぶ UI が無い
-`src/Editor/Windows/InspectorWindow.cpp:2028` は `ImGui::TextDisabled("shader: %s", ...)` の
+`src/Editor/Windows/Scene/InspectorWindow.cpp:2028` は `ImGui::TextDisabled("shader: %s", ...)` の
 **読み取り専用表示**。編集状態は `InspectorWindow.h:116` の `std::string shader = "forward_lit"`。
 保存は `InspectorWindow.cpp:1958`、読み込みは `:1911`。
 
@@ -92,10 +92,10 @@ GBuffer は t1 (`MeshBind.h` の `kForwardNormalSlot` / `kGBufferNormalSlot`)。
 プレビューの一貫性は自動で付いてくる**。
 
 ### 3.5 ポストエフェクトは固定チェーン
-`src/Engine/Renderer/PostProcess.h` の `Settings` は
+`src/Engine/Renderer/PostFx/PostProcess.h` の `Settings` は
 tonemap / bloom / fxaa / 色収差 / ビネット / ゴッドレイ / LUT / 自動露出 / DoF / モーションブラー / TAA を
 **構造体のフィールドとして直書き**した固定チェーン。ユーザーパスを差し込む口は無い。
-`CameraPostFxComponent` (`src/Engine/Core/Components.h:769`) がシーン側の露出口。
+`CameraPostFxComponent` (`src/Engine/Core/Ecs/Components.h:769`) がシーン側の露出口。
 
 → 「挿入位置」「順序」「パラメータ露出」を新規に設計する必要がある。
 Unity URP の ScriptableRendererPass + Volume Component が参考になるはず (別途調査)。

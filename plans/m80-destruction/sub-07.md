@@ -28,7 +28,7 @@ spec §4.1「破断」の 1〜7 (イベント発行の 8 は sub-12) を Fractur
 
 - 新規 `src/Engine/Engine/FractureSystem.h/.cpp`
 - `src/Engine/Engine/TickRunner.cpp` (呼び出しと存在ゲート、物理への出力ポインタ)
-- `src/Engine/Core/World.h/.cpp` の遅延構造変更 API (使うだけ)
+- `src/Engine/Core/Ecs/World.h/.cpp` の遅延構造変更 API (使うだけ)
 - `DemoContent.cpp` の fracture builder
 - `FractureSelfTest.cpp` にケース追加
 - 前例: 関節の破断 `PhysicsSystem.cpp:4483-4517` (tick 末判定・フラグで表す)
@@ -96,12 +96,12 @@ SELF_EVAL: sub-07 (round 1)
     `outShapeImpulses` ポインタと `FractureSystem::Update` 呼び出しの両方をゲート
     (collisionSystem の後・tick 末 ApplyStructuralChanges の前、stepSim 条件は物理と共通)。
     シーン遷移時に `fractureSystem.Reset()` (partFollowSystem と同じ流儀)
-  - `src/Engine/Engine/Physics/FractureLibrary.h/.cpp` — `FindByAssetId` を追加 [追加、根拠は
+  - `src/Engine/Engine/Physics/Fracture/FractureLibrary.h/.cpp` — `FindByAssetId` を追加 [追加、根拠は
     差分欄]。`RegisterInternal` で `byHash_[HashStr(prefix)]=prefix` を記録
   - `src/Engine/Engine/DemoContent.cpp/.h` — `--fracture-demo` に `Destructible.fractureAsset`
     の設定 (`FindByAssetId` で実行時に再解決できるように) と、tick 0 から重力なしで直進する
     決定的な球 2 発 (箱用・壁用) を追加。箱と壁が実際に割れるようにした
-  - `src/Engine/Engine/Physics/FractureSelfTest.cpp` — 「16. 接着の破断と塊の剛体化」を追加
+  - `src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp` — 「16. 接着の破断と塊の剛体化」を追加
     (16a 荷重判定・質量・運動量保存の検算 [合成資産、shapeImpulses を直接組み立てて検算]、
     16b 実物理衝突での弱い球/十分な球、16c kinematic ルートの壁、16d 240 tick の並走ハッシュ
     一致、16e ApplyFractureDamage の一発/蓄積、16f root proxy の可視規則)
@@ -168,11 +168,11 @@ SELF_EVAL: sub-07 (round 1)
   - src/Engine/Engine/TickRunner.h
   - src/Engine/Engine/TickRunner.cpp
   - src/Engine/Engine/EngineLoop.cpp
-  - src/Engine/Engine/Physics/FractureLibrary.h
-  - src/Engine/Engine/Physics/FractureLibrary.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureLibrary.h
+  - src/Engine/Engine/Physics/Fracture/FractureLibrary.cpp
   - src/Engine/Engine/DemoContent.h
   - src/Engine/Engine/DemoContent.cpp
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
   - build/Engine.vcxproj (gen_project_files.ps1 による自動更新)
   - build/Engine.vcxproj.filters (同上)
 申し送り:
@@ -248,7 +248,7 @@ SELF_EVAL: sub-07 (round 2)
 触ったファイル (round 1 から増減なし):
   - src/Engine/Engine/FractureSystem.h
   - src/Engine/Engine/FractureSystem.cpp
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
   - (他は round 1 と同じ。新規ファイルの追加は無いため gen_project_files.ps1 の再実行は不要
     — build/Engine.vcxproj(.filters) は round 1 のもののまま)
 申し送り: round 1 と同じ (変更なし)
@@ -298,8 +298,8 @@ SELF_EVAL: sub-07 (round 3)
 触ったファイル (round 2 から増減なし、コメント/ログ文言のみの変更):
   - src/Engine/Engine/FractureSystem.h
   - src/Engine/Engine/FractureSystem.cpp
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
-  - src/Engine/Engine/Physics/FractureLibrary.h
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureLibrary.h
   - src/Engine/Engine/RenderSystem.cpp
 申し送り: round 1 と同じ (変更なし)
 

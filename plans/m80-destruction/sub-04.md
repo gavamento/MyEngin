@@ -22,7 +22,7 @@ spec §4.1 焼き 1 の「`openMeshMode == 1`: ボクセル化を許容」の経
 
 ## 触る場所 (planner の見立て)
 
-- 新規 `src/Engine/Engine/Physics/FractureVoxel.h/.cpp` (名前は coder 判断)
+- 新規 `src/Engine/Engine/Physics/Fracture/FractureVoxel.h/.cpp` (名前は coder 判断)
 - sub-02 の焼きの入口
 - `FractureSelfTest.cpp` にケース追加
 - **触らない**: `src/Engine/Engine/Modal/*`、`tools/deepmodal/*`、`assets/deepmodal/*`
@@ -68,7 +68,7 @@ tools\check_rules.ps1
 
 SELF_EVAL: sub-04 (round 1)
 実装:
-  - src/Engine/Engine/Physics/FractureVoxel.h/.cpp (新規) — `VoxelizeMeshForFracture(source, resolution, out)`。
+  - src/Engine/Engine/Physics/Fracture/FractureVoxel.h/.cpp (新規) — `VoxelizeMeshForFracture(source, resolution, out)`。
     入力 (開いていてよい) の AABB を最長辺基準で `[16,256]` セルへクランプした解像度で立方セル格子化し、
     外周 1 セルの空きパディングを確保 (`ComputeGridFrame`)。三角形と重なるセルを Akenine-Möller の
     三角形/箱オーバーラップ (`TriBoxOverlap`、Modal/Voxelizer.cpp と同じアルゴリズムだが独立実装) で
@@ -78,14 +78,14 @@ SELF_EVAL: sub-04 (round 1)
     (`CornerPos`) なので、隣接セルが生成する同じ角は常にビット同一になり、位置溶接ベースの
     `CheckClosedMesh` がそのまま使える。関数の最後で `CheckClosedMesh` を呼び、通らなければ失敗を返す
     (このサブの受け入れ条件3)
-  - src/Engine/Engine/Physics/FractureBake.h/.cpp:BakeFracture — 「焼きの入口」として、
+  - src/Engine/Engine/Physics/Fracture/FractureBake.h/.cpp:BakeFracture — 「焼きの入口」として、
     `FractureBakeInput` に `openMeshMode`/`voxelResolution` を追加。`CheckClosedMesh` で入力を検査し、
     閉じていなければ `openMeshMode==0` で理由付き拒否、`==1` で `VoxelizeMeshForFracture` を呼んで
     閉じたメッシュに差し替えてから続行。閉じている (元から/ボクセル化後) が `signedVolume<0` なら
     `FlipMeshWinding` で正規化してから `PlaceSeeds`/`BakeFractureCore` へ渡す。既存の箱/L字/トーラスの
     digest (`0xA62D9B06031B23C8` / `0x87A81F882E68E6DE`、sub-02/13 の記録値と一致) が変わらないことを
     確認済み — 既に閉じて外向きな入力には無効な分岐
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp/.h — セクション14として、開いた箱/平面(quad)/
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp/.h — セクション14として、開いた箱/平面(quad)/
     二重壁 (新規 `MakeDoubleWallMesh`、平行2枚の非連結な開いた面) のボクセル化が閉じることの確認、
     解像度16/64での三角形数増加とAABB差 (両方とも1セル以内、要求の2セル以内を満たす) の確認、
     同一入力の2回のバイト列一致 (`SerializeMesh` の比較)、`BakeFracture` 経由の `openMeshMode` 0/1分岐
@@ -159,12 +159,12 @@ SELF_EVAL: sub-04 (round 1)
      もし本来の (頂点位置を平均化する) surface nets アルゴリズムを求めているなら実装し直しが必要
 
 触ったファイル:
-  - src/Engine/Engine/Physics/FractureVoxel.h (新規)
-  - src/Engine/Engine/Physics/FractureVoxel.cpp (新規)
-  - src/Engine/Engine/Physics/FractureBake.h
-  - src/Engine/Engine/Physics/FractureBake.cpp
-  - src/Engine/Engine/Physics/FractureSelfTest.h
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureVoxel.h (新規)
+  - src/Engine/Engine/Physics/Fracture/FractureVoxel.cpp (新規)
+  - src/Engine/Engine/Physics/Fracture/FractureBake.h
+  - src/Engine/Engine/Physics/Fracture/FractureBake.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.h
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
 
 申し送り:
   - 不安・質問1のとおり、`Destructible.voxelResolution` の既定値 (64) + 典型的な pieceCount (16) の
@@ -177,7 +177,7 @@ SELF_EVAL: sub-04 (round 1)
 
 SELF_EVAL: sub-04 (round 2)
 実装:
-  - src/Engine/Engine/Physics/FractureVoxel.cpp — 占有境界をそのまま四角形にする「ブロック抽出」を
+  - src/Engine/Engine/Physics/Fracture/FractureVoxel.cpp — 占有境界をそのまま四角形にする「ブロック抽出」を
     廃止し、真の surface nets に置き換えた。`ResolveAmbiguousConfigurations` (新規): 格子面 (3方向)
     を張る隣接4セルが対角にだけ占有される曖昧な配置を、空きセルのうち格子 index 最小のものを
     占有にして解消する。1件の反映がどこまで波及するか事前に読めないため、影響を受け得るグループ
@@ -189,18 +189,18 @@ SELF_EVAL: sub-04 (round 2)
     MakeBoxFaces と同じ規則を再利用)。対角の三角形分割は短い方を選ぶ (surface nets の頂点は
     厳密な平面上とは限らないため)。SelfTest 専用に `BuildSurfaceNetsFromOccupancy` (占有格子を
     直接与えてこのパイプラインだけを検証する入口) を追加
-  - src/Engine/Engine/Physics/FractureVoxel.cpp:ComputeGridFrame — **実バグを発見して修正**。
+  - src/Engine/Engine/Physics/Fracture/FractureVoxel.cpp:ComputeGridFrame — **実バグを発見して修正**。
     入力の extent が `voxelResolution` のちょうど整数倍に近いと、内部領域の境界が AABB とぴったり
     重なり、パディングセル (常に非占有のはずの層) が `TriBoxOverlap` の微小マージン (1e-6*h) で
     誤って占有判定されることがあった (open box を resolution=32 で焼くと再現し、境界辺 120〜256本
     で `CheckClosedMesh` が失敗した)。内部セル数を「余白がセル 0.1 個分未満なら 1 セル足す」規則に
     変更し、パディングとの間に常に十分な余白を確保した
-  - src/Engine/Engine/Physics/FractureMesh.cpp:EarClip — 共線点 (前後と一直線上にあり、間に挟まれて
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp:EarClip — 共線点 (前後と一直線上にあり、間に挟まれて
     いる点。`|cr|<=areaEps` かつ `dot(curr-prev,next-curr)>0`) を、毎周回「最も丸い耳」探索の前に
     面積0の耳として優先的に外すようにした。面積0なので体積にも辺の使用回数にも影響しない
-  - src/Engine/Engine/Physics/FractureBake.h — `FractureBakeInput::voxelResolution` の既定値を
+  - src/Engine/Engine/Physics/Fracture/FractureBake.h — `FractureBakeInput::voxelResolution` の既定値を
     64→32 に変更 (下記の計測結果に基づく)
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp — 受け入れ条件7 (surface nets の非ブロック性を
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp — 受け入れ条件7 (surface nets の非ブロック性を
     単独セルの体積比較で検証、対角の曖昧配置が閉じることを検証) と条件8 (`BakeFracture` の
     `openMeshMode=1, pieceCount=16` を解像度32/48/64・開いた箱と平面で実行し時間を記録) のテストを
     追加。解像度32は合否判定あり (must)、48/64 は下記の理由により記録のみ (合否に数えない) にした
@@ -266,12 +266,12 @@ SELF_EVAL: sub-04 (round 2)
      閉じるようになった (surface nets 化・共線点除去とは独立の、別種の不具合)
 
 触ったファイル:
-  - src/Engine/Engine/Physics/FractureVoxel.h
-  - src/Engine/Engine/Physics/FractureVoxel.cpp
-  - src/Engine/Engine/Physics/FractureMesh.cpp
-  - src/Engine/Engine/Physics/FractureBake.h
-  - src/Engine/Engine/Physics/FractureSelfTest.h
-  - src/Engine/Engine/Physics/FractureSelfTest.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureVoxel.h
+  - src/Engine/Engine/Physics/Fracture/FractureVoxel.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureMesh.cpp
+  - src/Engine/Engine/Physics/Fracture/FractureBake.h
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.h
+  - src/Engine/Engine/Physics/Fracture/FractureSelfTest.cpp
 
 申し送り:
   - 既定値は `voxelResolution=32` (このサブの計測に基づく確定)。sub-06 で `Destructible` を

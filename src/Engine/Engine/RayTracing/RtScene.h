@@ -6,7 +6,7 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
-#include "Engine/Core/EntityID.h"
+#include "Engine/Core/Ecs/EntityID.h"
 #include "Engine/Engine/RayTracing/RtSceneBuild.h"
 #include "Engine/Renderer/RayTracing/RtPasses.h"
 

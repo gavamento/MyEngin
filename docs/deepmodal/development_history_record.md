@@ -48,7 +48,7 @@
    - **Mask Accuracy: 97.43%**, **Pooled $R^2 = 0.0653$** を達成。
    - 特化モデル: [assets/deepmodal/deepmodal_creatures.dmnet](file:///C:/HAL/MyEngin/assets/deepmodal/deepmodal_creatures.dmnet) (3.36 MB)
 4. **仕様書およびコンポーネント設定ガイドの作成**:
-   - [`ModalSoundComponent`](file:///C:/HAL/MyEngin/src/Engine/Core/Components.h#L1621) の設定項目および、エネミー種別（生体、メカ、スケルトン、ゴーレム）ごとの推奨物理材質（`PhysMat`）設定対照表を作成。
+   - [`ModalSoundComponent`](file:///C:/HAL/MyEngin/src/Engine/Core/Ecs/Components.h#L1621) の設定項目および、エネミー種別（生体、メカ、スケルトン、ゴーレム）ごとの推奨物理材質（`PhysMat`）設定対照表を作成。
    - 詳細仕様書: [docs/deepmodal/character_enemy_modal_spec.md](file:///C:/HAL/MyEngin/docs/deepmodal/character_enemy_modal_spec.md)
 
 ### フェーズ 4: 全データセット統合大規模学習（13,560 サンプル）

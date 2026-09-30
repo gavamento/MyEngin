@@ -63,7 +63,7 @@ im2col + ブロック GEMM のタイル幅を実測で詰める。ここは加�
 - `src\Engine\Engine\Modal\ModalSelfTest.cpp` (両経路の検査、再現性の検査)
 - `tools\check_rules.ps1` (`$constGroups` に 1 エントリ)
 - 必要なら `src\Engine\Engine\EngineCli.cpp` / `EngineCliSelfTest.cpp` (計測用スイッチ、持ち越し nit)
-- 参考: `src\Engine\Core\JobSystem.h` の `ParallelRanges` / `ParallelFor`
+- 参考: `src\Engine\Core\Jobs\JobSystem.h` の `ParallelRanges` / `ParallelFor`
 
 ## 受け入れ条件 (このサブ)
 spec §5 の **22, 23**。

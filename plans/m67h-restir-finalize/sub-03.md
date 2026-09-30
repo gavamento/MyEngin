@@ -21,7 +21,7 @@ reviewer の指摘 1〜3 を閉じる。**3 件とも「次の人を誤らせる
   (理由 = 他 23 枚を巻き込まない / `git status` が「1 枚だけ動いた」証拠になる)。
   **★bat は CRLF で書くこと** (CLAUDE.md の環境の罠。LF だと cmd.exe が行を途中で切り、
   CP932 環境では日本語 rem の途中で割れて断片がコマンド実行される)。
-- `src\Editor\EditorApp.cpp:1262`「後続 M67h が定数表へ焼く (spec §4.6)」→
+- `src\Editor\App\EditorApp.cpp:1262`「後続 M67h が定数表へ焼く (spec §4.6)」→
   「M67h で決着済み (ADR-016「S5 の結論」)」の 1 行で足りる。
   ★sub-01 が 3 行下 (:1265 付近) を書き換えた同じブロックで、**そのとき見落とした**。
 - `src\Engine\Renderer\RayTracing\RtTypes.h:276`「S5 / M67h で再評価できるようにしておく」→ 同様。
@@ -90,7 +90,7 @@ reviewer は新マスクで max 10 を実測しているので、**29 px は原�
 | ファイル | 位置 | 何を |
 |---|---|---|
 | `tools\shot_verify.bat` | `:378` 付近 | `--update` の指示を実物コピーへ。**CRLF 厳守** |
-| `src\Editor\EditorApp.cpp` | `:1262` | 「後続 M67h が焼く」→「M67h で決着済み」 |
+| `src\Editor\App\EditorApp.cpp` | `:1262` | 「後続 M67h が焼く」→「M67h で決着済み」 |
 | `src\Engine\Renderer\RayTracing\RtTypes.h` | `:276` 付近 | 同上 (設計意図は残し、時期の指定だけ落とす) |
 | `CLAUDE.md` | `:109` 付近 | 同上 |
 | `docs\adr\ADR-016-restir-reflection.md` | `:495-498` | 再測値へ。「未特定の 1 画素」を撤去。用語を ±12 px に統一 |
@@ -161,7 +161,7 @@ SELF_EVAL: sub-03 (round 1)
     書き込み後に「LF のみの行 = 0 / BEL = 0」を機械確認 + shot_verify 完走で二重確認
     (1 回目の書き込みで Bash ヒアドキュメントがバックスラッシュを 1 段潰し
     `tests\actual` が `tests<BEL>ctual` になったのを検出して修正済み)
-  - #1 src\Editor\EditorApp.cpp:1262-1263 — 「★ここで確定した値は後続 M67h が定数表へ焼く
+  - #1 src\Editor\App\EditorApp.cpp:1262-1263 — 「★ここで確定した値は後続 M67h が定数表へ焼く
     (spec §4.6)」→「★ここで触った値はどこにも残らない。既定値の確定は M67h で決着済みで、
     出所は今も RtTypes.h ただ 1 か所 (ADR-016「S5 の結論」)」
   - #1 src\Engine\Renderer\RayTracing\RtTypes.h:276-278 — 「効く可能性があり、S5 / M67h で
@@ -256,7 +256,7 @@ SELF_EVAL: sub-03 (round 1)
      これ以上は「当時の手順を復元する」作業になる = 行動が変わらない問いだと判断した
 触ったファイル:
   - tools\shot_verify.bat
-  - src\Editor\EditorApp.cpp
+  - src\Editor\App\EditorApp.cpp
   - src\Engine\Renderer\RayTracing\RtTypes.h
   - docs\adr\ADR-016-restir-reflection.md
   - engine_spec.md
@@ -285,7 +285,7 @@ ADR への追記 1 行が増えた分)、`grep -rn "S5" src/ tools/ docs/ CLAUDE
 | 場所 | 何が古かったか | どうしたか |
 |---|---|---|
 | `tools\shot_verify.bat:378` | 「M67h で焼いたら `--update` で撮り直す」= **本件が避けた手順を指示** | 実態 (M67i で差し替え済み + 次も実物コピー) へ。理由つき 4 行 |
-| `src\Editor\EditorApp.cpp:1262` | 「後続 M67h が定数表へ焼く」 | 「決着済み。出所は今も RtTypes.h」へ |
+| `src\Editor\App\EditorApp.cpp:1262` | 「後続 M67h が定数表へ焼く」 | 「決着済み。出所は今も RtTypes.h」へ |
 | `src\Engine\Renderer\RayTracing\RtTypes.h:276` | 「S5 / M67h で再評価できるようにしておく」 | 設計意図は残し、時期の指定を「M67h で決着 = off 維持」へ |
 | `docs\adr\ADR-016:180` (追記は :184) | 「所見: S5 で最初に触るノブは M 上限」= 未来形 | 「この所見は当たった」+ 誤用の戒めを 3 行追記 |
 | `CLAUDE.md:109` | 「S5 / M67h で既定を on へ反転したときに」 | **未修正** (運用規約。置換案は SELF_EVAL へ) |

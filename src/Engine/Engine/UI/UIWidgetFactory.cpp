@@ -7,8 +7,8 @@
 
 #include <cstdio>
 
-#include "Engine/Core/Components.h"
-#include "Engine/Engine/Scene.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/UI/UIWidgets.h"
 
 namespace mye {

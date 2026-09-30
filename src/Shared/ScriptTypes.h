@@ -6,7 +6,7 @@
 
 #include "Shared/EngineAPI.h"
 
-// Engine/Core/Reflection.h の FieldType と同値 (エンジン側で変換・検証される)
+// Engine/Core/Ecs/Reflection.h の FieldType と同値 (エンジン側で変換・検証される)
 enum MyeFieldType {
     MYE_FIELD_FLOAT = 0,
     MYE_FIELD_INT32 = 1,

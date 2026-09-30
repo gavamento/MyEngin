@@ -10,7 +10,7 @@
 // 形は Unity の既定のウィジェットに合わせ、寸法だけこのエンジンの既定 (Create > UI の 160x40) に寄せた。
 // 根は中央アンカー・中央 pivot (AddUnityStyleRect と同じ)。どれも CreateGameObjectTracked で作る
 // (Undo の同一性キーとプレハブ化に fileId が要る)
-#include "Engine/Engine/GameObject.h"
+#include "Engine/Engine/Scene/GameObject.h"
 
 namespace mye {
 

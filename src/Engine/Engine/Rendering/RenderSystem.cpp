@@ -1,0 +1,2034 @@
+#include "Engine/Engine/Rendering/RenderSystem.h"
+
+#include <algorithm>
+#include <cfloat>
+#include <cmath>
+#include <filesystem>
+#include <system_error>
+
+#include "Engine/Core/Asset/AssetGuidResolver.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Jobs/JobSystem.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Renderer/PostFx/FxStackAsset.h"  // M78c: fxstack ロード
+#include "Engine/Renderer/Compute/ProjectComputeRunner.h" // M78d: DispatchPointFromString
+#include "Engine/Renderer/PostFx/ProjectFxStackPolicy.h" // M78 §4.1 CameraOverride
+#include "Engine/Core/Diagnostics/Profiler.h"
+#include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Acoustic/AcousticField.h" // M65d: 残光ボリュームの転送元
+#include "Engine/Engine/Physics/Fracture/FractureSystem.h" // M80g: root proxy の可視規則を FractureSystem と共有
+#include "Engine/Engine/Particles/ParticleSystem.h"
+#include "Engine/Engine/Physics/Ragdoll/Ragdoll.h" // M60g1: 剛体が骨を駆動しているときのパレット
+#include "Engine/Engine/Animation/SkinningSystem.h" // M18 追補: クロスフェード込みのポーズ評価
+#include "Engine/Engine/Scene/Tags.h"           // 汎用タグ: RT の適用範囲
+#include "Engine/Engine/Vfx/VfxRenderer.h"
+#include "Engine/Platform/PathUtil.h" // WideToUtf8 (fxstack のパスをログへ)
+#include "Engine/Renderer/Pipeline/FrustumCull.h"
+#include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Device/GraphicsDevice.h"
+#include "Engine/Renderer/PostFx/PostFxMath.h" // M55b: camerajitter
+#include "Engine/Renderer/Pipeline/RenderPath.h"
+#include "Engine/Renderer/Passes/SkyResolve.h"
+
+using namespace DirectX;
+
+namespace mye {
+namespace {
+
+// フラスタムカリング候補 (M25: 収集は直列、可視判定 + viewZ を並列、キュー構築は直列)。
+struct CullCand {
+    EntityID e;
+    AssetID mesh;
+    AssetID material;
+    XMFLOAT4X4 world;
+    const Mesh* meshPtr;
+    float viewZ;
+    uint8_t visible;
+    uint8_t skinned;
+    // M79 sub-06: サーフェスマテリアルの視錐台余白 [m] (.mat.json boundsPadding、非サーフェスは 0)。
+    // MaterialLibrary の横テーブル参照はステージ 1 (直列) で解決しておく — ステージ 2 は
+    // ジョブ並列の純関数なので、その中でテーブルを引くと並列化の前提 (要素独立) が崩れる
+    float boundsPadding = 0.0f;
+};
+
+constexpr size_t kCullGrain = 256; // これ未満は直列 (スレッド起動コスト回避)
+
+// ---- M65d: `--acoustic-dump N` の読み戻し検査 ----
+//
+// ★「転送が正しい」を数値で主張できる唯一の手段。GPU から読み戻したバイト列を
+//   **CPU 側の残光配列とバイト単位で**突き合わせる — RowPitch と DepthPitch を取り違えると Z がずれた絵になり、
+//   しかも絵は普通に出るので目視では絶対に見つからない。
+// 併せて「残光が閉セルに入っていないこと」も数える。閉セルは波が絶対に訪れないので、
+// ここが 0 でなければ伝播か転送のどちらかが壁を越えている。
+void DumpAcousticVolume(GraphicsDevice& device, const AcousticVolumePass& pass,
+                        const AcousticField& field)
+{
+    std::vector<uint8_t> gpu;
+    if (!pass.Volume().ReadbackBytes(device, gpu)) {
+        MYE_LOG_ERROR("[acoustic-dump] readback failed (R8_UNORM の Texture3D が読めない)");
+        return;
+    }
+    const std::vector<uint8_t>& cpu = field.Glow();
+    const AcousticGridDesc& g = field.Grid();
+    if (gpu.size() != cpu.size()) {
+        MYE_LOG_ERROR("[acoustic-dump] size mismatch: gpu %zu vs cpu %zu", gpu.size(), cpu.size());
+        return;
+    }
+    size_t mismatch = 0;
+    int32_t firstX = -1, firstY = -1, firstZ = -1;
+    size_t nonZero = 0, solidLit = 0;
+    uint8_t maxV = 0;
+    for (int32_t z = 0; z < g.dimZ; ++z) {
+        for (int32_t y = 0; y < g.dimY; ++y) {
+            for (int32_t x = 0; x < g.dimX; ++x) {
+                const size_t i = static_cast<size_t>(acoustic::CellIndex(g, x, y, z));
+                if (gpu[i] != cpu[i]) {
+                    if (mismatch == 0) {
+                        firstX = x;
+                        firstY = y;
+                        firstZ = z;
+                    }
+                    ++mismatch;
+                }
+                if (cpu[i] != 0) {
+                    ++nonZero;
+                    maxV = (cpu[i] > maxV) ? cpu[i] : maxV;
+                    if (field.IsSolid(x, y, z)) {
+                        ++solidLit;
+                    }
+                }
+            }
+        }
+    }
+    uint32_t activeWaves = 0;
+    for (const AcousticField::Wave& w : field.Waves()) {
+        activeWaves += (w.active != 0) ? 1u : 0u;
+    }
+    MYE_LOG_INFO("[acoustic-dump] grid %dx%dx%d (%zu cells, %.1f KB) / active waves %u / "
+                 "upload %.3f ms",
+                 g.dimX, g.dimY, g.dimZ, cpu.size(),
+                 static_cast<double>(cpu.size()) / 1024.0, activeWaves,
+                 static_cast<double>(pass.LastUploadMs()));
+    MYE_LOG_INFO("[acoustic-dump] glow: %zu non-zero (%.2f%%), max %u (energy %.5f)", nonZero,
+                 cpu.empty() ? 0.0 : 100.0 * static_cast<double>(nonZero) / static_cast<double>(cpu.size()),
+                 static_cast<unsigned>(maxV), static_cast<double>(acoustic::DecodeGlow(maxV)));
+    if (mismatch != 0) {
+        MYE_LOG_ERROR("[acoustic-dump] GPU/CPU MISMATCH: %zu cells (first at %d,%d,%d: gpu %u vs "
+                      "cpu %u) — RowPitch/DepthPitch を疑うこと",
+                      mismatch, firstX, firstY, firstZ,
+                      static_cast<unsigned>(gpu[static_cast<size_t>(acoustic::CellIndex(g, firstX, firstY, firstZ))]),
+                      static_cast<unsigned>(cpu[static_cast<size_t>(acoustic::CellIndex(g, firstX, firstY, firstZ))]));
+    } else {
+        MYE_LOG_INFO("[acoustic-dump] GPU readback matches the CPU field byte for byte");
+    }
+    if (solidLit != 0) {
+        MYE_LOG_ERROR("[acoustic-dump] %zu solid cells are lit — 波が壁の中へ入っている",
+                      solidLit);
+    } else {
+        MYE_LOG_INFO("[acoustic-dump] no solid cell is lit (壁の向こうは完全にゼロ)");
+    }
+
+    // ---- 2026-09-12「描画だけ円」: 残光の byte と解析的な波面のモデル値を同じセルで並べる ----
+    // シェーダ (acoustic_common.hlsli AcousticFront) と同じ式を CPU で引き、原点から +x へ
+    // 1 セルずつ「残光 / 円」を出す。両者が大きくずれたら減衰モデルか半径の取り方が違う
+    const float keepRaw = field.GlowKeepPerTick();
+    const float keep = (keepRaw > 0.0f && keepRaw < 1.0f) ? keepRaw : acoustic::kGlowDecayPerTick;
+    const AcousticField::FrontWave* fws = field.FrontWaves();
+    const std::vector<uint32_t>& mask = field.FrontMask();
+    for (uint32_t s = 0; s < AcousticField::kMaxWaves; ++s) {
+        const AcousticField::FrontWave& fw = fws[s];
+        if (fw.active == 0) {
+            continue;
+        }
+        int32_t ox = 0, oy = 0, oz = 0;
+        if (!acoustic::WorldToCell(g, fw.ox, fw.oy, fw.oz, ox, oy, oz)) {
+            continue;
+        }
+        MYE_LOG_INFO("[acoustic-dump] front slot %u: origin cell (%d,%d,%d) R=%.2fm amp=%.2f "
+                     "maxD=%.2fm tick/m=%.1f extraAge=%.0f keep=%.4f",
+                     s, ox, oy, oz, static_cast<double>(fw.radiusM), static_cast<double>(fw.amplitude),
+                     static_cast<double>(fw.maxDistM), static_cast<double>(fw.ticksPerMetre),
+                     static_cast<double>(fw.extraAgeTicks), static_cast<double>(keep));
+        std::string row;
+        for (int32_t k = 0; ox + k < g.dimX && k <= 24; ++k) {
+            const size_t ci = static_cast<size_t>(acoustic::CellIndex(g, ox + k, oy, oz));
+            const unsigned glow = cpu[ci];
+            const bool bit = !mask.empty() && (mask[ci] & (1u << s)) != 0;
+            const float d = static_cast<float>(k) * g.cellSize;
+            float model = 0.0f;
+            if (bit && d < fw.radiusM && d < fw.maxDistM) {
+                const float ratio = g.cellSize / (std::max)(d, g.cellSize);
+                float t = std::sqrt(std::sqrt((std::min)(fw.amplitude * ratio * ratio, 1.0f)));
+                t *= (std::min)(1.0f, (std::max)(0.0f, (fw.radiusM - d) / (0.5f * g.cellSize)));
+                const float age = (fw.radiusM - d) * fw.ticksPerMetre + fw.extraAgeTicks;
+                const float vStar = 1.0f / (std::max)(1.0f - keep, 1e-4f);
+                float v = t * 255.0f;
+                float n = age;
+                if (v > vStar) {
+                    const float n1 = (std::min)(n, std::log(vStar / v) / std::log(keep));
+                    v = v * std::exp(n1 * std::log(keep)) - 0.5f * n1;
+                    n -= n1;
+                }
+                v -= n;
+                model = (std::max)(v, 0.0f);
+            }
+            char buf[48];
+            snprintf(buf, sizeof(buf), " %u/%.0f%s", glow, static_cast<double>(model), bit ? "" : "-");
+            row += buf;
+        }
+        MYE_LOG_INFO("[acoustic-dump]   +x: glow/circle per cell (- = no line of sight):%s", row.c_str());
+        // 原点の層と、床の画素がサンプルする層 (y = 0 + 法線押し出し) を上から見た見通しビットの
+        // 地図 (# = 円を描く / . = 残光だけ / X = 壁)。自由空間で # の縁が凸でなければ
+        // 見通し判定の閾値が低すぎる
+        int32_t fx = 0, fy = oy, fz = 0;
+        (void)acoustic::WorldToCell(g, fw.ox, 0.75f * g.cellSize, fw.oz, fx, fy, fz);
+        const int32_t layers[2] = { oy, fy };
+        for (int li = 0; li < (fy == oy ? 1 : 2); ++li) {
+            const int32_t ly = layers[li];
+            MYE_LOG_INFO("[acoustic-dump]   layer y=%d (%s):", ly, li == 0 ? "origin" : "floor sample");
+            const int32_t rad = 20;
+            for (int32_t z = oz - rad; z <= oz + rad; ++z) {
+                if (z < 0 || z >= g.dimZ) {
+                    continue;
+                }
+                std::string line;
+                for (int32_t x = ox - rad; x <= ox + rad; ++x) {
+                    if (x < 0 || x >= g.dimX) {
+                        line += ' ';
+                        continue;
+                    }
+                    const size_t ci = static_cast<size_t>(acoustic::CellIndex(g, x, ly, z));
+                    if (field.IsSolid(x, ly, z)) {
+                        line += 'X';
+                    } else if (x == ox && z == oz) {
+                        line += 'O';
+                    } else if (!mask.empty() && (mask[ci] & (1u << s)) != 0) {
+                        line += '#';
+                    } else {
+                        line += (cpu[ci] != 0) ? '.' : ' ';
+                    }
+                }
+                MYE_LOG_INFO("[acoustic-dump]   |%s|", line.c_str());
+            }
+        }
+    }
+}
+
+
+// 前 tick → 現 tick のワールド行列を成分 lerp する (M36b 描画補間)。
+// 平行移動は厳密 lerp、回転 3x3 は成分 lerp — 1/60s の姿勢差では非直交化は不可視。
+// render-only なので float 誤差は sim/hash に無関係
+XMFLOAT4X4 LerpWorld(const XMFLOAT4X4& a, const XMFLOAT4X4& b, float t)
+{
+    XMFLOAT4X4 o;
+    const float* pa = &a._11;
+    const float* pb = &b._11;
+    float* po = &o._11;
+    for (int i = 0; i < 16; ++i) {
+        po[i] = pa[i] + (pb[i] - pa[i]) * t;
+    }
+    return o;
+}
+
+// 車輪の見た目 (M60i)。**描画専用の合成で、ワールドハッシュは 1 バイトも増えない**。
+// ソルバは車輪の LocalTransform を書かない (書くとハッシュ対象が増える) ので、
+// 転がり・切れ角・サスの伸縮は出力フィールドを読んでここで絵にするしかない
+// — ラグドールのボーンパレット (M60g1) とまったく同じ「決定論の面積を広げない」判断。
+//
+// エンティティの**ローカル空間**で ①車軸 (ローカル X) まわりに転がし ②切れ角ぶん
+// ローカル Y まわりに回し ③サスの伸びぶんローカル -Y へ下げる、の順に掛ける。
+// 車輪の取り付け点は「サスの上端」なので、③が無いと車輪が宙に浮いて見える。
+//
+// ★ローカル空間 = **スケールが掛かる前**。したがって非一様スケールの車輪は回すと歪む
+//   (v1 の制限。車輪の寸法は Wheel の radius が正本なので、メッシュ側に焼くのが本筋)。
+// ★**子エンティティへは伝播しない** — 車輪メッシュは車輪エンティティ自身に置くこと。
+XMFLOAT4X4 ApplyWheelVisual(const XMFLOAT4X4& world, const WheelComponent& wc)
+{
+    const XMMATRIX m = XMMatrixRotationX(wc.rotationAngle) * XMMatrixRotationY(wc.steerAngle)
+                       * XMMatrixTranslation(0.0f, wc.compression - wc.restLength, 0.0f);
+    XMFLOAT4X4 out;
+    XMStoreFloat4x4(&out, XMMatrixMultiply(m, XMLoadFloat4x4(&world)));
+    return out;
+}
+
+// 平行光の view-proj (行ベクトル規約 world*view*proj)。シーン AABB にフィットした正射影。
+// 戻り値は非転置 (ShadowPass が world と合成、RenderView 用に別途転置する)。
+XMFLOAT4X4 ComputeDirectionalLightVP(const XMFLOAT3& lightDir, const XMFLOAT3& sceneMin,
+                                     const XMFLOAT3& sceneMax)
+{
+    const XMVECTOR dir = XMVector3Normalize(XMLoadFloat3(&lightDir));
+    const XMFLOAT3 cf = { (sceneMin.x + sceneMax.x) * 0.5f, (sceneMin.y + sceneMax.y) * 0.5f,
+                          (sceneMin.z + sceneMax.z) * 0.5f };
+    const XMVECTOR center = XMLoadFloat3(&cf);
+    const XMFLOAT3 ext = { sceneMax.x - sceneMin.x, sceneMax.y - sceneMin.y,
+                           sceneMax.z - sceneMin.z };
+    const float radius = 0.5f * std::sqrt(ext.x * ext.x + ext.y * ext.y + ext.z * ext.z);
+    const XMVECTOR eye = XMVectorSubtract(center, XMVectorScale(dir, radius * 2.0f + 1.0f));
+    const bool nearlyVertical = std::fabs(XMVectorGetY(dir)) > 0.99f;
+    const XMVECTOR up = nearlyVertical ? XMVectorSet(0, 0, 1, 0) : XMVectorSet(0, 1, 0, 0);
+    const XMMATRIX lightView = XMMatrixLookToLH(eye, dir, up);
+
+    const XMFLOAT3 corners[8] = {
+        { sceneMin.x, sceneMin.y, sceneMin.z }, { sceneMax.x, sceneMin.y, sceneMin.z },
+        { sceneMin.x, sceneMax.y, sceneMin.z }, { sceneMax.x, sceneMax.y, sceneMin.z },
+        { sceneMin.x, sceneMin.y, sceneMax.z }, { sceneMax.x, sceneMin.y, sceneMax.z },
+        { sceneMin.x, sceneMax.y, sceneMax.z }, { sceneMax.x, sceneMax.y, sceneMax.z },
+    };
+    float minX = FLT_MAX, minY = FLT_MAX, minZ = FLT_MAX;
+    float maxX = -FLT_MAX, maxY = -FLT_MAX, maxZ = -FLT_MAX;
+    for (const XMFLOAT3& c : corners) {
+        const XMVECTOR vv = XMVector3TransformCoord(XMLoadFloat3(&c), lightView);
+        const float x = XMVectorGetX(vv), y = XMVectorGetY(vv), z = XMVectorGetZ(vv);
+        minX = std::min(minX, x); maxX = std::max(maxX, x);
+        minY = std::min(minY, y); maxY = std::max(maxY, y);
+        minZ = std::min(minZ, z); maxZ = std::max(maxZ, z);
+    }
+    const float margin = radius * 0.05f + 0.5f;
+    const XMMATRIX lightProj = XMMatrixOrthographicOffCenterLH(minX - margin, maxX + margin,
+                                                               minY - margin, maxY + margin,
+                                                               std::max(0.05f, minZ - 1.0f),
+                                                               maxZ + 1.0f);
+    XMFLOAT4X4 out;
+    XMStoreFloat4x4(&out, XMMatrixMultiply(lightView, lightProj));
+    return out;
+}
+
+// スポットライトの view-proj (M54c、行ベクトル規約 world*view*proj)。戻り値は非転置。
+// 円錐をちょうど包む透視 1 面。fov は外角の 2 倍 + 余白 —
+// ★余白が要る理由: 3x3 PCF はタイル境界の外へタップを伸ばす。円錐の縁が
+//   ぴったり枠に接していると、縁だけ「タイル外 = 影なし」に落ちて輪郭が硬くなる。
+// near は 0.05 固定 (これ以上手前は減衰式でもほぼ寄与しない)、far は減衰半径。
+// far を range に合わせるのは深度精度のため — シーン全体に合わせると近傍が潰れる。
+XMFLOAT4X4 ComputeSpotLightVP(const XMFLOAT3& position, const XMFLOAT3& direction, float cosOuter,
+                              float range)
+{
+    const XMVECTOR eye = XMLoadFloat3(&position);
+    const XMVECTOR dir = XMVector3Normalize(XMLoadFloat3(&direction));
+    const bool nearlyVertical = std::fabs(XMVectorGetY(dir)) > 0.99f;
+    const XMVECTOR up = nearlyVertical ? XMVectorSet(0, 0, 1, 0) : XMVectorSet(0, 1, 0, 0);
+    const XMMATRIX lightView = XMMatrixLookToLH(eye, dir, up);
+
+    const float clamped = std::min(std::max(cosOuter, -0.99f), 0.9999f);
+    const float halfAngle = std::acos(clamped);
+    // 余白 6 度。上限 85 度 (= fov 170 度) は透視行列が発散しない範囲
+    const float fovY = std::min(2.0f * (halfAngle + XMConvertToRadians(6.0f)),
+                                XMConvertToRadians(170.0f));
+    const float farZ = std::max(range, 1.0f);
+    const XMMATRIX lightProj = XMMatrixPerspectiveFovLH(fovY, 1.0f, 0.05f, farZ);
+
+    XMFLOAT4X4 out;
+    XMStoreFloat4x4(&out, XMMatrixMultiply(lightView, lightProj));
+    return out;
+}
+
+// D3D cubemap 面順 (+X,-X,+Y,-Y,+Z,-Z) の forward/up 基底 (M54d)。
+// **EnvMapBaker.cpp の kFaces と同一表を意図的に複製している** — あちらは IBL ベイクの
+// 匿名 namespace にあり、公開すると「環境マップの都合」がシャドウ側の依存になる。
+// HLSL 側 common.hlsli の CubeFaceIndex もこの順番。3 者がずれると絵は出るが合わない
+struct CubeFaceBasis {
+    XMFLOAT3 forward;
+    XMFLOAT3 up;
+};
+constexpr CubeFaceBasis kCubeFaces[6] = {
+    { { 1, 0, 0 }, { 0, 1, 0 } },  // +X
+    { { -1, 0, 0 }, { 0, 1, 0 } }, // -X
+    { { 0, 1, 0 }, { 0, 0, -1 } }, // +Y
+    { { 0, -1, 0 }, { 0, 0, 1 } }, // -Y
+    { { 0, 0, 1 }, { 0, 1, 0 } },  // +Z
+    { { 0, 0, -1 }, { 0, 1, 0 } }, // -Z
+};
+
+// 点光源 1 面ぶんの lightViewProj (M54d)。face は kCubeFaces の添字。
+// ★fov はちょうど 90 度ではなく「タイル境界に PCF 用の余白を marginTexels 取る」ぶんだけ
+//   広い。CubeFaceIndex はちょうど 90 度で面を切り替えるので、90 度で焼くと境界画素の
+//   3x3 タップがタイルの外へ出る → SampleShadowAtlas の clamp が働いて自分の深度でなく
+//   縁の深度を舐め、面の継ぎ目に沿って影の線が走る。tan(fov/2) を 1+2m/S にすると
+//   90 度境界がタイル内側 m テクセルへ寄る (実測 S=1024 / m=2 で継ぎ目が消える)
+XMFLOAT4X4 ComputePointLightFaceVP(const XMFLOAT3& position, int face, float range, int tileSize)
+{
+    const CubeFaceBasis& b = kCubeFaces[(face < 0 || face > 5) ? 0 : face];
+    const XMVECTOR eye = XMLoadFloat3(&position);
+    const XMMATRIX lightView =
+        XMMatrixLookToLH(eye, XMLoadFloat3(&b.forward), XMLoadFloat3(&b.up));
+    constexpr float kMarginTexels = 2.0f;
+    const float s = static_cast<float>(std::max(tileSize, 16));
+    const float fovY = 2.0f * std::atan(1.0f + 2.0f * kMarginTexels / s);
+    const float farZ = std::max(range, 1.0f);
+    const XMMATRIX lightProj = XMMatrixPerspectiveFovLH(fovY, 1.0f, 0.05f, farZ);
+
+    XMFLOAT4X4 out;
+    XMStoreFloat4x4(&out, XMMatrixMultiply(lightView, lightProj));
+    return out;
+}
+
+// CSM のカスケード VP 列 (M38d)。カメラの部分フラスタム 8 隅をライトビューへ射影して
+// フィットした ortho を作る。practical split (λ=0.5)、影距離は kShadowMaxDist まで。
+// テクセルスナップで安定化。ライト方向のキャスター (フラスタム外) を拾うため
+// 近平面はシーン AABB のライト空間 z まで引き戻す。
+// 非 perspective (エディタ Ortho ビュー) は従来のシーン全体フィットを全カスケードに複製。
+constexpr float kShadowMaxDist = 60.0f;
+
+void ComputeCascadeVPs(const XMFLOAT3& lightDir, const XMFLOAT3& sceneMin,
+                       const XMFLOAT3& sceneMax, const RenderView& view, int resolution,
+                       XMFLOAT4X4* outVPs, float* outSplits, int count)
+{
+    const XMMATRIX camView = XMLoadFloat4x4(&view.view);
+    // M55b: カスケードのフィットは非ジッタ側で行う。ジッタ付きだとカメラフラスタムの
+    // 8 隅がサブピクセル分毎フレーム動き、テクセルスナップで殺したはずの影の揺れが戻る
+    const XMMATRIX camProj = XMLoadFloat4x4(&view.projNoJitter);
+    XMFLOAT4X4 pj;
+    XMStoreFloat4x4(&pj, camProj);
+    const bool perspective = std::fabs(pj._34 - 1.0f) < 1e-3f; // LH perspective は _34 == 1
+
+    if (!perspective || resolution <= 0) {
+        const XMFLOAT4X4 whole = ComputeDirectionalLightVP(lightDir, sceneMin, sceneMax);
+        for (int c = 0; c < count; ++c) {
+            outVPs[c] = whole;
+            outSplits[c] = kShadowMaxDist;
+        }
+        return;
+    }
+
+    // 射影行列から near/far を復元 (行ベクトル規約: zNdc = P33 + P43/viewZ)
+    const float nearZ = (std::fabs(pj._33) > 1e-6f) ? (-pj._43 / pj._33) : 0.1f;
+    const float rawFar = (std::fabs(1.0f - pj._33) > 1e-6f) ? (pj._43 / (1.0f - pj._33)) : 1000.0f;
+    const float farZ = std::min(std::max(rawFar, nearZ + 1.0f), kShadowMaxDist);
+    ComputeCascadeSplits(nearZ, farZ, count, 0.5f, outSplits);
+
+    // 共有ライトビュー (原点はシーン中心)
+    const XMVECTOR dir = XMVector3Normalize(XMLoadFloat3(&lightDir));
+    const XMFLOAT3 cf = { (sceneMin.x + sceneMax.x) * 0.5f, (sceneMin.y + sceneMax.y) * 0.5f,
+                          (sceneMin.z + sceneMax.z) * 0.5f };
+    const XMFLOAT3 ext = { sceneMax.x - sceneMin.x, sceneMax.y - sceneMin.y,
+                           sceneMax.z - sceneMin.z };
+    const float radius = 0.5f * std::sqrt(ext.x * ext.x + ext.y * ext.y + ext.z * ext.z);
+    const XMVECTOR eye =
+        XMVectorSubtract(XMLoadFloat3(&cf), XMVectorScale(dir, radius * 2.0f + 1.0f));
+    const bool nearlyVertical = std::fabs(XMVectorGetY(dir)) > 0.99f;
+    const XMVECTOR up = nearlyVertical ? XMVectorSet(0, 0, 1, 0) : XMVectorSet(0, 1, 0, 0);
+    const XMMATRIX lightView = XMMatrixLookToLH(eye, dir, up);
+
+    // シーン AABB のライト空間 z 範囲 (フラスタム外キャスターの取りこぼし防止)
+    float sceneMinZ = FLT_MAX, sceneMaxZ = -FLT_MAX;
+    for (int i = 0; i < 8; ++i) {
+        const XMFLOAT3 c = { (i & 1) ? sceneMax.x : sceneMin.x, (i & 2) ? sceneMax.y : sceneMin.y,
+                             (i & 4) ? sceneMax.z : sceneMin.z };
+        const float z = XMVectorGetZ(XMVector3TransformCoord(XMLoadFloat3(&c), lightView));
+        sceneMinZ = std::min(sceneMinZ, z);
+        sceneMaxZ = std::max(sceneMaxZ, z);
+    }
+
+    const XMMATRIX invVP = XMMatrixInverse(nullptr, XMMatrixMultiply(camView, camProj));
+    auto ndcZ = [&](float viewZ) { return pj._33 + pj._43 / viewZ; };
+    float splitNear = nearZ;
+    for (int c = 0; c < count; ++c) {
+        const float splitFar = outSplits[c];
+        // 部分フラスタムの 8 隅 (NDC → ワールド)
+        float minX = FLT_MAX, maxX = -FLT_MAX, minY = FLT_MAX, maxY = -FLT_MAX;
+        float minZ = FLT_MAX, maxZ = -FLT_MAX;
+        for (int i = 0; i < 8; ++i) {
+            const float nx = (i & 1) ? 1.0f : -1.0f;
+            const float ny = (i & 2) ? 1.0f : -1.0f;
+            const float nz = (i & 4) ? ndcZ(splitFar) : ndcZ(splitNear);
+            const XMVECTOR w = XMVector3TransformCoord(XMVectorSet(nx, ny, nz, 0), invVP);
+            const XMVECTOR lv = XMVector3TransformCoord(w, lightView);
+            const float x = XMVectorGetX(lv), y = XMVectorGetY(lv), z = XMVectorGetZ(lv);
+            minX = std::min(minX, x); maxX = std::max(maxX, x);
+            minY = std::min(minY, y); maxY = std::max(maxY, y);
+            minZ = std::min(minZ, z); maxZ = std::max(maxZ, z);
+        }
+        // テクセルスナップ (カメラ移動でのシャドウエッジのちらつき防止)
+        const float margin = 1.0f;
+        minX -= margin; maxX += margin;
+        minY -= margin; maxY += margin;
+        const float texelX = (maxX - minX) / static_cast<float>(resolution);
+        const float texelY = (maxY - minY) / static_cast<float>(resolution);
+        if (texelX > 0.0f && texelY > 0.0f) {
+            minX = std::floor(minX / texelX) * texelX;
+            minY = std::floor(minY / texelY) * texelY;
+            maxX = std::floor(maxX / texelX) * texelX;
+            maxY = std::floor(maxY / texelY) * texelY;
+        }
+        // 近平面はシーン AABB まで引き戻す (ライト方向の手前にいるキャスターを含める)
+        const float zNear = std::min(minZ, sceneMinZ) - 1.0f;
+        const float zFar = std::min(maxZ + 1.0f, sceneMaxZ + 1.0f) + 1.0f;
+        const XMMATRIX lightProj =
+            XMMatrixOrthographicOffCenterLH(minX, maxX, minY, maxY, zNear, std::max(zFar, zNear + 1.0f));
+        XMStoreFloat4x4(&outVPs[c], XMMatrixMultiply(lightView, lightProj));
+        splitNear = splitFar;
+    }
+}
+
+} // namespace
+
+Texture* LoadTextureRememberingFailure(TextureLibrary& textures, AssetID id, const std::wstring& path,
+                                       bool srgb, FailedTextureLoad& failed)
+{
+    if (Texture* loaded = textures.Get(id)) {
+        return loaded;
+    }
+    std::error_code stampEc;
+    const auto writeTime = std::filesystem::last_write_time(path, stampEc);
+    const int64_t stamp = stampEc ? 0 : static_cast<int64_t>(writeTime.time_since_epoch().count());
+    if (!ShouldRetryTextureLoad(failed, id.value, stamp)) {
+        return nullptr; // 前回と同じ中身で失敗済み (エラーログは初回の 1 回だけ)
+    }
+    textures.LoadFile(path, srgb);
+    Texture* tex = textures.Get(id);
+    failed = tex ? FailedTextureLoad{} : FailedTextureLoad{ id.value, stamp };
+    return tex;
+}
+
+void CollectEnvironment(World& world, RenderView& view)
+{
+    // 最初 (entity.index 最小) の active な Skybox
+    uint32_t bestSky = 0xFFFFFFFFu;
+    const ComponentTypeId skyReq[] = { SkyboxComponent::sTypeId };
+    world.ForEachArchetype(skyReq, [&](Archetype& arch) {
+        const int si = arch.FindTypeIndex(SkyboxComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (e.index >= bestSky || !IsEntityActive(world, e)) {
+                continue;
+            }
+            bestSky = e.index;
+            const auto* sb = static_cast<const SkyboxComponent*>(arch.GetPtr(si, row));
+            // M38b / M76: cubemap / panoramic 実装 — SRV 解決は RenderSystem 側 (この関数は純データのまま)
+            view.skyMode = sb->mode;
+            view.skyCubemapId = sb->cubemapTexture;
+            view.skyTop = { sb->topColor.x, sb->topColor.y, sb->topColor.z };
+            view.skyHorizon = { sb->horizonColor.x, sb->horizonColor.y, sb->horizonColor.z };
+            view.skyBottom = { sb->bottomColor.x, sb->bottomColor.y, sb->bottomColor.z };
+            // 2026-09-14: 星空と環境光の切り離し (純パススルー。丸めは SkyboxPass / IBL の判定側)
+            view.skyStarDensity = sb->starDensity;
+            view.skyStarBrightness = sb->starBrightness;
+            view.skyStarTwinkle = sb->starTwinkle;
+            view.skyStarCells = sb->starCells;
+            view.skyLighting = sb->lighting;
+        }
+    });
+
+    // 最初の active な Fog
+    uint32_t bestFog = 0xFFFFFFFFu;
+    const ComponentTypeId fogReq[] = { FogComponent::sTypeId };
+    world.ForEachArchetype(fogReq, [&](Archetype& arch) {
+        const int fi = arch.FindTypeIndex(FogComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (e.index >= bestFog || !IsEntityActive(world, e)) {
+                continue;
+            }
+            bestFog = e.index;
+            const auto* fog = static_cast<const FogComponent*>(arch.GetPtr(fi, row));
+            view.fogMode = (fog->mode >= 0 && fog->mode <= 2) ? fog->mode : 0;
+            view.fogColor = { fog->color.x, fog->color.y, fog->color.z };
+            view.fogDensity = fog->density;
+            view.fogStart = fog->start;
+            view.fogEnd = fog->end;
+            view.fogHeightFalloff = fog->heightFalloff; // M43a (純パススルー)
+            view.fogBaseHeight = fog->baseHeight;
+            view.fogInscatterIntensity = fog->inscatterIntensity;
+            view.fogInscatterPower = fog->inscatterPower;
+        }
+    });
+}
+
+// RenderSystem::Render の段をまたぐ 1 フレームぶんの値。段の関数が上から順に埋め、後の段が読む
+struct RenderSystem::FrameContext {
+    RenderView view;                                   // この 1 回の描画の指示 (パスへ渡す)
+    PostProcess::Target* hdr = nullptr;                // HDR 中間 (M16)。null = 直描き
+    float aspectRatio = 1.0f;
+    bool cameraFound = false;
+    EntityID camEntity = kNullEntity;                  // シーンカメラの実体 (CameraPostFx 参照用、M29e)
+    bool froxelOn = false;                             // M57c: この描画でフロクセルを回すか
+    FroxelSettings effectiveFroxel;                    // グローバル設定 + シーンカメラの CameraPostFx
+    Frustum frustum = {};                              // メッシュとライトのカリング (カメラがある時のみ)
+    bool cullEnabled = false;
+    SceneLightData lights;                             // 選別後のライト。view.lights がこの実体を指す
+    XMFLOAT3 sceneMin = { FLT_MAX, FLT_MAX, FLT_MAX };    // 不透明キャスターの world AABB (影のフィット、M17)
+    XMFLOAT3 sceneMax = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+    bool hasScene = false;
+    bool distortionActive = false;                     // M42d: このフレーム歪みバッファを使ったか
+};
+
+bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& path,
+                          ShaderManager& shaders, RenderResources& resources,
+                          const FrameTarget& target, const CameraOverride* cameraOverride,
+                          ParticleSystem* particles, VfxRenderer* vfx)
+{
+    // ★後の段は前の段が view / lights に書いた値を読む
+    FrameContext f;
+    BeginView(device, shaders, target, f);
+    ResolveCamera(world, cameraOverride, f);
+    DecideTaaAndFroxel(world, path, target, cameraOverride, f);
+    CollectLights(world, f);
+    CollectDrawables(world, resources, target, f);
+    RenderCascadeShadows(device, shaders, resources, f);
+    AllocateShadowAtlas(device, shaders, resources, f);
+    PrepareEnvironment(world, device, shaders, resources, target, cameraOverride, f);
+    UpdateRtScene(device, shaders, resources, target, f);
+    UpdateFroxel(device, shaders, target, f);
+    UpdateAcousticVolume(device, target, f);
+
+    queue_.Sort();
+    path.Render(device, f.view, queue_, f.lights, resources, shaders);
+    // M55d: 画面速度 (GBuffer RT4) はパスが所有する — 描いた後でないと SRV が無い。
+    // TAA (ポスプロ) がこの後で読む。Forward は null = TAA は自然に不成立になる
+    f.view.velocitySRV = path.VelocitySRV();
+    // M56c: HZB の GPU 時間を写す。Forward は既定の 0 を返すので、パスを切り替えると
+    // 行が消えるのではなく 0.000 ms になる (「計っていない」と「速い」の区別は
+    // ProfilerWindow が hzbDebugMip で行を出し分けることで付けている)
+    hzbGpuMs_ = path.HzbGpuMs();
+    ssrGpuMs_ = path.SsrGpuMs(); // M56d (同上)
+
+    DrawParticlesAndDebug(world, device, shaders, resources, target, cameraOverride, particles, vfx, f);
+    ResolvePost(world, device, shaders, resources, path, target, cameraOverride, f);
+    return f.cameraFound;
+}
+
+// 描画先から RenderView を初期化し、HDR 中間 (M16) を確保する
+void RenderSystem::BeginView(GraphicsDevice& device, ShaderManager& shaders, const FrameTarget& target,
+                             FrameContext& f)
+{
+    RenderView& view = f.view;
+    PostProcess::Target*& hdr = f.hdr;
+    view.dsv = target.dsv;
+    view.width = target.width;
+    view.height = target.height;
+    memcpy(view.clearColor, target.clearColor, sizeof(view.clearColor));
+    view.depthSRV = target.depthSRV;       // M42a: null なら深度読み系効果は自然無効
+    view.dsvReadOnly = target.dsvReadOnly;
+
+    // シーン + パーティクルを HDR 中間 (R16F, color のみ) へ描き、最後にトーンマップ解決で
+    // target.rtv へ書く。depth は target.dsv を共有するため、解決後にエディタが重ねる
+    // ギズモ/線 (rt_.DSV() 利用) の深度テストはそのまま成立する。
+    if (!postFx_.IsReady()) {
+        postFx_.Init(device, shaders);
+    }
+    if (enablePostFx && postFx_.IsReady()) {
+        hdr = postFx_.Acquire(device, target.width, target.height);
+    }
+    view.rtv = (hdr != nullptr) ? hdr->scene.RTV() : target.rtv; // 確保失敗時は従来直描きにフォールバック
+    if (hdr != nullptr) {
+        // M38a: 背景クリア色も authored 色 → リニアへ (トーンマップ + OETF と対)。
+        // 直描き (postFx 無効) 経路は OETF が掛からないので変換しない
+        for (int i = 0; i < 3; ++i) {
+            view.clearColor[i] = SrgbToLinear(view.clearColor[i]);
+        }
+    }
+
+    f.aspectRatio = (target.height > 0)
+        ? static_cast<float>(target.width) / static_cast<float>(target.height) : 1.0f;
+}
+
+// カメラ: CameraOverride (エディタ視界) か、シーンの isPrimary カメラ (無ければ最初のカメラ)
+void RenderSystem::ResolveCamera(World& world, const CameraOverride* cameraOverride, FrameContext& f)
+{
+    RenderView& view = f.view;
+    const float aspectRatio = f.aspectRatio;
+    bool& cameraFound = f.cameraFound;
+    EntityID& camEntity = f.camEntity;
+    if (cameraOverride) {
+        view.view = cameraOverride->view;
+        if (cameraOverride->hasProj) {
+            // M55b: 呼び出し側 (SceneView) が既に組んである行列をそのまま使う。
+            // ここで組み直すと Ortho トグルが描画へ届かず、ギズモ/ピッキングの行列
+            // (SceneViewWindow::lastProj_) と食い違ったままになる
+            view.proj = cameraOverride->proj;
+        } else {
+            const XMMATRIX p = XMMatrixPerspectiveFovLH(
+                XMConvertToRadians(cameraOverride->fovYDeg), aspectRatio,
+                cameraOverride->nearZ, cameraOverride->farZ);
+            XMStoreFloat4x4(&view.proj, p);
+        }
+        view.cameraPos = cameraOverride->position;
+        view.debugViewMode = cameraOverride->debugViewMode; // M40b (SceneView のみ非 0)
+        view.nearZ = cameraOverride->nearZ; // M42a: 深度線形化用
+        view.farZ = cameraOverride->farZ;
+        cameraFound = true;
+    } else {
+        const ComponentTypeId req[] = { CameraComponent::sTypeId, WorldMatrixComponent::sTypeId };
+        XMFLOAT4X4 camWorld = {};
+        CameraComponent cam = {};
+        world.ForEachArchetype(req, [&](Archetype& arch) {
+            const int ci = arch.FindTypeIndex(CameraComponent::sTypeId);
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const auto* c = static_cast<const CameraComponent*>(arch.GetPtr(ci, row));
+                if (!cameraFound || c->isPrimary) {
+                    cam = *c;
+                    camWorld = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+                    camEntity = arch.EntityAt(row); // M29e: CameraPostFx 参照用
+                    cameraFound = true;
+                    if (c->isPrimary) {
+                        return;
+                    }
+                }
+            }
+        });
+        if (cameraFound) {
+            // M36b: カメラも補間 (スクリプト駆動カメラの tick 刻みを消す)
+            if (prevWorld && interpAlpha < 1.0f) {
+                if (const XMFLOAT4X4* pw = prevWorld->Get(camEntity)) {
+                    camWorld = LerpWorld(*pw, camWorld, interpAlpha);
+                }
+            }
+            const XMMATRIX w = XMLoadFloat4x4(&camWorld);
+            const XMMATRIX v = XMMatrixInverse(nullptr, w);
+            const XMMATRIX p = XMMatrixPerspectiveFovLH(
+                XMConvertToRadians(cam.fovYDeg), aspectRatio, cam.nearZ, cam.farZ);
+            XMStoreFloat4x4(&view.view, v);
+            XMStoreFloat4x4(&view.proj, p);
+            view.cameraPos = { camWorld._41, camWorld._42, camWorld._43 };
+            view.nearZ = cam.nearZ; // M42a: 深度線形化用
+            view.farZ = cam.farZ;
+        } else {
+            XMStoreFloat4x4(&view.view, XMMatrixIdentity());
+            XMStoreFloat4x4(&view.proj, XMMatrixIdentity());
+        }
+    }
+}
+
+// ジッタ前の射影の保存 (M55b)、TAA の有効判定 (M55d)、フロクセルの有効判定 (M57c)、ジッタの適用
+void RenderSystem::DecideTaaAndFroxel(World& world, IRenderPath& path, const FrameTarget& target,
+                                      const CameraOverride* cameraOverride, FrameContext& f)
+{
+    RenderView& view = f.view;
+    const bool cameraFound = f.cameraFound;
+    const EntityID camEntity = f.camEntity;
+    const PostProcess::Target* hdr = f.hdr;
+    bool& froxelOn = f.froxelOn;
+    FroxelSettings& effectiveFroxel = f.effectiveFroxel;
+    // ---- M55b: カメラジッタの一元化 ----
+    // 射影の組み立ては上の 2 経路 (CameraOverride / シーンカメラ) に分かれているが、
+    // ジッタを載せるのは **ここ 1 箇所だけ**。projNoJitter が「ジッタ前」の正本で、
+    // 再投影 (prevVP_ の保存 / モーションブラー / RT テンポラル)、シャドウのカスケード
+    // フィット、視錐台カリング、太陽の画面位置はすべてそちらを読む
+    // (混ぜると「カメラが毎フレーム半ピクセル動いた」ことになり履歴が毎回外れる)。
+    // viewKey==0 (AssetPreview) は履歴も TAA も持たないので常に非ジッタ。
+    view.projNoJitter = view.proj;
+    // ワールド追従 UI 用: 補間済みカメラのジッタ無し view×proj を公開 (UIRenderer が
+    // この Render の直後に読む)。ジッタ入りを渡すと UI が毎フレーム半ピクセル揺れる
+    lastCamValid = cameraFound;
+    if (cameraFound) {
+        XMStoreFloat4x4(&lastViewProjNoJitter,
+                        XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.projNoJitter));
+    }
+    view.viewKey = target.viewKey; // M55d: TAA の履歴スロット
+    view.viewFrameIndex = (target.viewKey < 4) ? viewSerial_[target.viewKey] : 0u;
+    // ---- M55d: TAA の有効判定 ----
+    // ★ジッタと TAA は**必ず同じ条件**で on/off する。TAA 抜きでジッタだけ載せると
+    //   画面が毎フレーム半ピクセル揺れるだけになるので、「velocity を書かないパス
+    //   (Forward)」「HDR 配管なし」「AssetPreview」はジッタごと落とす。
+    // 設定の出所はポスプロと同じ規則 (グローバル設定 → シーンカメラの CameraPostFx で上書き)
+    // だが、判定はマージ (Resolve 直前) より前に要るのでここで先に引く
+    {
+        bool taaOn = postFxSettings.taaOn != 0;
+        if (!cameraOverride && !camEntity.IsNull()) {
+            if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
+                taaOn = pfx->taaOn;
+            }
+        }
+        view.taaEnabled = (taaOn && cameraFound && hdr != nullptr && path.WritesVelocity()
+                           && target.viewKey > 0 && target.viewKey < 4)
+            ? 1 : 0;
+    }
+    // ---- M57c: フロクセルの有効判定とパラメータ ----
+    // 設定の出所は TAA / ポスプロと同じ規則 (グローバル設定 → シーンカメラの
+    // CameraPostFx があればそちらが勝つ)。**判定だけここで先に引く** — 実際の
+    // ディスパッチはシャドウアトラスと環境の収集が終わったあと (path.Render の直前)。
+    // ★SceneView のエディタカメラ (CameraOverride) には CameraPostFx が効かない
+    //   規約なので、そちらは --froxel / Rendering メニューのグローバル設定だけで動く
+    froxelOn = enableFroxel;
+    effectiveFroxel = froxelSettings;
+    if (!cameraOverride && !camEntity.IsNull()) {
+        if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
+            froxelOn = pfx->froxelOn;
+            effectiveFroxel.density = pfx->froxelDensity;
+            effectiveFroxel.anisotropy = pfx->froxelAnisotropy;
+        }
+    }
+    froxelOn = froxelOn && cameraFound;
+    if (view.taaEnabled != 0 && jitterAmplitude > 0.0f) {
+        float px = 0.0f;
+        float py = 0.0f;
+        camerajitter::Sample(view.viewFrameIndex, px, py);
+        px *= jitterAmplitude;
+        py *= jitterAmplitude;
+        float ndcX = 0.0f;
+        float ndcY = 0.0f;
+        camerajitter::PixelsToNdc(px, py, view.width, view.height, ndcX, ndcY);
+        view.jitterPixels[0] = px;
+        view.jitterPixels[1] = py;
+        view.jitterNdc[0] = ndcX;
+        view.jitterNdc[1] = ndcY;
+        view.proj = camerajitter::ApplyToProj(view.proj, ndcX, ndcY);
+    }
+}
+
+// 視錐台 (M16。メッシュとライトのカリング用。カメラがある時のみ。描画専用でハッシュ非対象) と、
+// ライトの候補収集 → SelectLights (M54b)
+void RenderSystem::CollectLights(World& world, FrameContext& f)
+{
+    RenderView& view = f.view;
+    Frustum& frustum = f.frustum;
+    SceneLightData& lights = f.lights;
+    f.cullEnabled = f.cameraFound;
+    const bool cullEnabled = f.cullEnabled;
+    if (cullEnabled) {
+        XMFLOAT4X4 vp;
+        // M55b: カリングは非ジッタ側。サブピクセルで可視判定が反転すると
+        // 境界の物体がフレーム毎に出入りして TAA の履歴に穴が空く
+        XMStoreFloat4x4(&vp, XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.projNoJitter));
+        frustum = BuildFrustum(vp);
+    }
+
+    // ---- ライト (Directional/Point/Spot) ----
+    // M54b: ここは候補を集めるだけで、カリング / 決定論ソート / 上限 kMaxLights の適用は
+    // LightSelection.cpp の純関数が行う (M54c のシャドウアトラスが「影を投げるライトの列」の
+    // frame 間安定性を要求するため、順序を決める場所を 1 箇所に閉じた)。
+    {
+        const ComponentTypeId req[] = { LightComponent::sTypeId, WorldMatrixComponent::sTypeId };
+        bool ambientSet = false;
+        std::vector<LightCandidate> cands;
+        world.ForEachArchetype(req, [&](Archetype& arch) {
+            const int li = arch.FindTypeIndex(LightComponent::sTypeId);
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                if (!IsEntityActive(world, e)) {
+                    continue; // 無効化されたライトは寄与しない
+                }
+                const auto* l = static_cast<const LightComponent*>(arch.GetPtr(li, row));
+                const auto* w = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
+                LightCandidate& c = cands.emplace_back();
+                c.sortKey = e.index; // 決定論キー (アーキタイプの並び順に依存しない)
+                c.castShadow = l->castShadow;
+                GpuLight& g = c.light;
+                // ワールド行列の第 3 行 = ローカル +Z の向き、第 4 行 = 位置
+                XMVECTOR dir = XMVector3Normalize(
+                    XMVectorSet(w->value._31, w->value._32, w->value._33, 0));
+                XMStoreFloat3(&g.direction, dir);
+                g.position = { w->value._41, w->value._42, w->value._43 };
+                g.color = SrgbToLinear(l->color); // M38a: authored 色をリニアへ
+                g.intensity = l->intensity;
+                g.type = l->type;
+                g.range = l->range;
+                g.cosInner = std::cos(XMConvertToRadians(l->spotInnerDeg));
+                g.cosOuter = std::cos(XMConvertToRadians(l->spotOuterDeg));
+                if (!ambientSet) {
+                    // アンビエントは最初のライトの値を全体に使う (M38a: リニアへ)。
+                    // ★選別後の先頭ではなく**走査順の先頭** — 選別の順に替えると ambient の出どころが変わり絵が動く
+                    lights.ambient = SrgbToLinear(l->ambient);
+                    ambientSet = true;
+                }
+            }
+        });
+        lightSelection = SelectLights(cands.data(), static_cast<int>(cands.size()),
+                                      cullEnabled ? &frustum : nullptr);
+        lights.count = lightSelection.count;
+        for (int i = 0; i < lightSelection.count; ++i) {
+            lights.lights[i] = lightSelection.lights[i].light;
+        }
+        // カリングで意図せずライトが消えていないかを目視するための 1 行。
+        // 毎フレーム出すとログが埋まるので、初めて見る組み合わせのときだけ出す
+        {
+            auto pack = [](int v) { return static_cast<uint64_t>((std::min)((std::max)(v, 0), 0xFFFF)); };
+            const uint64_t key = pack(lightSelection.count) | (pack(lightSelection.culled) << 16)
+                | (pack(lightSelection.overflow) << 32) | (pack(lightSelection.shadowCount) << 48);
+            bool seen = false;
+            for (int i = 0; i < lightLogSeenCount_; ++i) {
+                seen = seen || lightLogSeen_[i] == key;
+            }
+            if (!seen && lightLogSeenCount_ < static_cast<int>(std::size(lightLogSeen_))) {
+                lightLogSeen_[lightLogSeenCount_++] = key;
+                MYE_LOG_INFO("Lights: %d selected (culled %d, dropped %d, shadow casters %d)",
+                             lightSelection.count, lightSelection.culled, lightSelection.overflow,
+                             lightSelection.shadowCount);
+            }
+        }
+    }
+}
+
+// 収集: 前フレーム world のストアを進め (M55c)、地形 (M58c) / デカール (M56a) / メッシュを集めてキューへ。
+// メッシュはカリング (並列) → スキンのパレット → 不透明 / 半透明の振り分けと、影のフィット用 AABB の集約
+void RenderSystem::CollectDrawables(World& world, RenderResources& resources, const FrameTarget& target,
+                                    FrameContext& f)
+{
+    RenderView& view = f.view;
+    const Frustum& frustum = f.frustum;
+    const bool cullEnabled = f.cullEnabled;
+    XMFLOAT3& sceneMin = f.sceneMin;
+    XMFLOAT3& sceneMax = f.sceneMax;
+    bool& hasScene = f.hasScene;
+    // ---- M55c: 「前フレームに実際に描いた world 行列」のストアを今フレームへ進める ----
+    // viewKey==0 (AssetPreview) は履歴を持たない = velocity は常に 0 に落ちる。
+    // viewSerial_ はこの Render の末尾で +1 されるので、ここでの値が「今フレームの通番」
+    const uint32_t prevRenderKey = (target.viewKey > 0 && target.viewKey < 4) ? target.viewKey : 0u;
+    PrevRenderWorldStore* prevRender = (prevRenderKey != 0) ? &prevRender_[prevRenderKey] : nullptr;
+    if (prevRender != nullptr) {
+        prevRender->Begin(viewSerial_[prevRenderKey], target.width, target.height);
+    }
+
+    // ---- 収集 ----
+    queue_.Clear();
+    skinPalettes_.clear(); // スキンメッシュのボーンパレット (M18、フレーム毎に再構築)
+    const XMMATRIX v = XMLoadFloat4x4(&view.view);
+    // ---- 地形 (M58c): メッシュとは別レーンで収集する ----
+    // TerrainComponent は kComponentNoHash = 描画専用。ここで作るのは
+    // 「可視チャンクの描画指示」だけで sim には 1 バイトも触れない。
+    // ★カメラが無いフレーム (cullEnabled==false) は収集しない — 視錐台がゼロ行列のままで
+    //   CullChunks に渡しても意味のある結果にならない (メッシュ側がカリングを
+    //   丸ごと飛ばしているのと同じ扱い)。
+    // ★assetsRoot が空 = AssetPreviewCache の専用 RenderSystem。サムネイルに地形を
+    //   混ぜないための元栓はここ 1 箇所 (「配線の 2 箇所目」で毎回漏れるところ)
+    terrainList_.items.clear();
+    if (cullEnabled && !assetsRoot.empty()) {
+        terrainSystem_.Collect(world, resources.meshes, resources.textures, assetsRoot,
+                               frustum, view.view, terrainScratch_);
+        terrainList_.items.reserve(terrainScratch_.size());
+        for (const TerrainDrawItem& t : terrainScratch_) {
+            TerrainRenderItem it;
+            it.mesh = t.mesh;
+            it.world = t.world;
+            it.viewZ = t.viewZ;
+            it.surface = t.surface; // M58d: スプラット + 4 レイヤの bind
+            // 汎用タグ: 地形も RT を受ける面の判定はメッシュと同じ規則 (祖先のタグを継承)
+            it.rtReceiver = (rtReceiverTagMask == 0
+                             || Tags::PassesFilter(Tags::EffectiveMask(world, t.entity),
+                                                   rtReceiverTagMask))
+                ? 1.0f
+                : 0.0f;
+            terrainList_.items.push_back(it);
+        }
+        // 近い順 (early-z が効く順)。比較規則の正本は TerrainPass.h の
+        // TerrainDrawOrderLess (規則 7 のタイブレークつき。TerrainSelfTest が検査する)
+        std::sort(terrainList_.items.begin(), terrainList_.items.end(),
+                  TerrainDrawOrderLess);
+    }
+    view.terrain = &terrainList_;
+
+    // ---- デカール (M56a): メッシュとは別レーンで収集する (地形と同じ流儀) ----
+    // DecalComponent は kComponentNoHash = 描画専用。ここで作るのは「投影ボックス 1 個
+    // ぶんの描画指示」だけで sim には 1 バイトも触れない。
+    // ★視錐台カリングは v1 では**しない**。箱の外の受け面は PS 側の OBB 判定で
+    //   捨てられるので絵は正しく、デカールは数個の想定 (数が問題になるのは
+    //   「画面外の箱でも 12 三角形をラスタライズする」コストが見えてからでよい)。
+    // ★AssetPreviewCache の専用 RenderSystem 用の元栓は要らない — プレビュー世界には
+    //   デカールが 1 個も居ないので、下の収集が空リストを作り view.decals が
+    //   「空 = 何もしない」に落ちる (地形は共有ワールドを見るので元栓が要った)
+    decalList_.items.clear();
+    {
+        const ComponentTypeId req[] = { DecalComponent::sTypeId,
+                                        WorldMatrixComponent::sTypeId };
+        world.ForEachArchetype(req, [&](Archetype& arch) {
+            const int di = arch.FindTypeIndex(DecalComponent::sTypeId);
+            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                if (!IsEntityActive(world, e)) {
+                    continue; // 無効化されたデカールは貼られない
+                }
+                const auto* d = static_cast<const DecalComponent*>(arch.GetPtr(di, row));
+                if (d->color.w <= 0.0f) {
+                    continue; // 完全に透明 = 描いても 1 画素も変わらない
+                }
+                const auto* w =
+                    static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
+                DecalRenderItem it;
+                if (!FillDecalTransform(w->value, it)) {
+                    continue; // スケール 0 等で逆行列が作れない
+                }
+                it.color = SrgbToLinear(XMFLOAT3(d->color.x, d->color.y, d->color.z));
+                it.opacity = d->color.w;
+                it.angleFadeCos = DecalAngleFadeCos(d->angleFadeDeg);
+                it.uvScale[0] = d->uvScale.x;
+                it.uvScale[1] = d->uvScale.y;
+                it.uvOffset[0] = d->uvOffset.x;
+                it.uvOffset[1] = d->uvOffset.y;
+                it.texture = d->texture;
+                it.sortOrder = d->sortOrder;
+                it.sortKey = e.index; // 決定論キー (アーキタイプの並び順に依存しない)
+                // M56b: 強度は [0,1] に丸めてから渡す。**そのままハードウェアの
+                // ブレンド係数になる**ので、1 を超えると dst 側の係数 (1-src) が負に
+                // なって法線が反転する (Inspector のスライダは止めるがスクリプト経由は素通り)
+                it.normalTexture = d->normalTex;
+                it.normalStrength = DecalStrength01(d->normalStrength);
+                it.roughness = DecalStrength01(d->roughness);
+                it.roughnessStrength = DecalStrength01(d->roughnessStrength);
+                decalList_.items.push_back(it);
+            }
+        });
+        // 比較規則の正本は RenderTypes.h の DecalDrawOrderLess
+        // (規則 7 のタイブレークつき。DecalSelfTest が検査する)
+        std::sort(decalList_.items.begin(), decalList_.items.end(), DecalDrawOrderLess);
+    }
+    view.decals = &decalList_;
+
+    // ---- 水面 (M69): メッシュとは別レーンで収集 (地形/デカールと同じ流儀) ----
+    // シーン内で entity.index 最小かつ active/enabled な WaterWaveComponent を解決 (PhysicsSystem と同一規則)
+    view.water = nullptr;
+    waterData_.active = false;
+    waterData_.useSurfaceRoute = false;
+    {
+        const ComponentTypeId req[] = { WaterWaveComponent::sTypeId };
+        uint32_t bestIndex = UINT32_MAX;
+        const WaterWaveComponent* bestWave = nullptr;
+        EntityID bestEntity = kNullEntity;
+
+        world.ForEachArchetype(req, [&](Archetype& arch) {
+            const int wi = arch.FindTypeIndex(WaterWaveComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                if (e.index >= bestIndex) {
+                    continue;
+                }
+                if (!IsEntityActive(world, e)) {
+                    continue;
+                }
+                const auto* wave = static_cast<const WaterWaveComponent*>(arch.GetPtr(wi, row));
+                if (!wave->enabled) {
+                    continue;
+                }
+                bestIndex = e.index;
+                bestWave = wave;
+                bestEntity = e;
+            }
+        });
+
+        if (bestWave != nullptr) {
+            waterData_.active = true;
+            // 水面の時刻 = 浮力と同じ tick の時計 (WaterWave.timeTicks)。描画フレーム数では進めない
+            // (60 FPS 以外で見た目の波と浮き物の水位がずれ、SceneView と GameView でも別の位相になった)。
+            // timeTicks は「直近の tick の状態」の時刻なので、メッシュと同じく前 tick → 直近 tick を
+            // interpAlpha で補間する (Edit 中 / 決定的撮影は alpha=1 = 直近 tick そのもの)。
+            // Edit 中はエディタの水面プレビューの経過秒だけを足す (waterPreviewSeconds、描画専用)
+            const float ticks = static_cast<float>(bestWave->timeTicks - 1) + interpAlpha;
+            const float t = (ticks * (1.0f / 60.0f) + waterPreviewSeconds) * bestWave->timeScale;
+            // 速度エントリの「前」= このビューが前フレームに描いた時刻 (履歴が無いビューは今と同じ = 速度 0)
+            const uint32_t waterVk = (target.viewKey > 0 && target.viewKey < 4) ? target.viewKey : 0u;
+            const float tPrev = (waterVk != 0 && prevWaterTimeValid_[waterVk]) ? prevWaterTime_[waterVk] : t;
+            if (waterVk != 0) {
+                prevWaterTime_[waterVk] = t;
+                prevWaterTimeValid_[waterVk] = true;
+            }
+
+            // ワールド行列の取得 (WorldMatrixComponent があればそれを使う)
+            if (const auto* wm = world.GetComponent<WorldMatrixComponent>(bestEntity)) {
+                waterData_.world = wm->value;
+            } else if (const auto* lt = world.GetComponent<LocalTransform>(bestEntity)) {
+                XMVECTOR pos = XMLoadFloat3(&lt->position);
+                XMVECTOR rot = XMLoadFloat4(&lt->rotation);
+                XMVECTOR scl = XMLoadFloat3(&lt->scale);
+                XMMATRIX m = XMMatrixAffineTransformation(scl, XMVectorZero(), rot, pos);
+                XMStoreFloat4x4(&waterData_.world, m);
+            } else {
+                waterData_.world = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
+            }
+
+            // WaterMaterialCB への詰め込み (authored 色は sRGB -> Linear 変換)
+            waterData_.material.deepColor = SrgbToLinear(bestWave->deepColor);
+            waterData_.material.shallowColor = SrgbToLinear(bestWave->shallowColor);
+            waterData_.material.waveParams0 = { bestWave->wave0Amplitude, bestWave->wave0Wavelength, bestWave->wave0Speed, bestWave->wave0DirAngle };
+            waterData_.material.waveParams1 = { bestWave->wave1Amplitude, bestWave->wave1Wavelength, bestWave->wave1Speed, bestWave->wave1DirAngle };
+            waterData_.material.waveParams2 = { bestWave->wave2Amplitude, bestWave->wave2Wavelength, bestWave->wave2Speed, bestWave->wave2DirAngle };
+            waterData_.material.waveParams3 = { bestWave->wave3Amplitude, bestWave->wave3Wavelength, bestWave->wave3Speed, bestWave->wave3DirAngle };
+            waterData_.material.waveSteepness = { bestWave->wave0Steepness, bestWave->wave1Steepness, bestWave->wave2Steepness, bestWave->wave3Steepness };
+            waterData_.material.waterSettings = { bestWave->baseHeight, bestWave->overallScale, t, bestWave->foamStrength };
+            waterData_.material.waterOptics = { bestWave->fresnelPower, bestWave->smoothness, 0.0f, 0.0f };
+            // 浮力 (PhysicsSystem) とサーフェス水面 (下の surfaceCb) と同じ本数で波を打ち切る
+            waterData_.material.waveCount = { bestWave->ClampedWaveCount(), 0, 0, 0 };
+
+            // ---- M79 sub-05: MyEngineWater CB (予約 CB。全サーフェスシェーダへ名前で張る) ----
+            // 水面自身の描画経路 (surfaceMaterial の有無) に関係なく埋める — 他メッシュの
+            // サーフェスシェーダ (例: 船体) が水面レベルを読めるようにするため (spec §4.1)
+            waterData_.curWaterTime = t;
+            waterData_.prevWaterTime = tPrev;
+            waterData_.surfaceCb.enabled = 1;
+            waterData_.surfaceCb.baseHeight = bestWave->baseHeight;
+            waterData_.surfaceCb.overallScale = bestWave->overallScale;
+            waterData_.surfaceCb.waveCount = bestWave->ClampedWaveCount(); // 浮力と同じ規則
+            bestWave->ExtractWaves(waterData_.surfaceCb.waves, WaterWaveComponent::kMaxWaves);
+            waterData_.surfaceCb.deepColor = waterData_.material.deepColor;
+            waterData_.surfaceCb.shallowColor = waterData_.material.shallowColor;
+
+            view.water = &waterData_;
+
+            // ---- M79 sub-05: surfaceMaterial が解決できれば、水面を 1 個の RenderItem として
+            //      通常のメッシュ経路 (Forward 不透明/透明、Deferred サーフェス段/透明段、CSM 影) に
+            //      乗せる。WaterPass::Render はこのフレーム何も描かない (useSurfaceRoute)。
+            //      未設定 / GUID が解決できない場合は従来どおり WaterPass が描く ----
+            if (!bestWave->surfaceMaterial.IsNull()) {
+                const Material* smat = resources.materials.Get(bestWave->surfaceMaterial);
+                if (smat != nullptr) {
+                    waterData_.useSurfaceRoute = true;
+                    RenderItem item;
+                    item.mesh = resources.meshes.WaterPlane();
+                    item.material = bestWave->surfaceMaterial;
+                    item.entity = bestEntity;
+                    item.world = waterData_.world;
+                    // 水面プレートは動かない前提 (sub-05.md) — velocity はシェーダの gWaterTime
+                    // 変位 (前後 2 回評価の差) だけに由来させる
+                    item.prevWorld = waterData_.world;
+                    const XMVECTOR posWS = XMVectorSet(waterData_.world._41, waterData_.world._42,
+                                                       waterData_.world._43, 1);
+                    item.viewZ = XMVectorGetZ(XMVector3TransformCoord(posWS, v));
+                    // ★sceneMin/sceneMax (CSM のカスケードフィットに使う AABB) には加えない —
+                    //   巨大な水面プレートを混ぜるとカスケードが不必要に広がり、陸上の影の
+                    //   解像度が落ちる (従来の WaterPass も一貫してシャドウフィットの対象外)
+                    if (smat->transparent != 0) {
+                        queue_.transparent.push_back(item);
+                    } else {
+                        queue_.opaque.push_back(item);
+                    }
+                }
+            }
+        }
+    }
+
+    int culledCount = 0;
+    // 不透明キャスターの world AABB を集約 → シャドウ範囲のフィットに使う (M17)
+    sceneMin = { FLT_MAX, FLT_MAX, FLT_MAX };
+    sceneMax = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+    hasScene = false;
+
+    // ---- ステージ 1 (直列): 候補を収集 (順序 = ForEachArchetype/row = 決定的) ----
+    std::vector<CullCand> cullCands;
+    const bool interp = prevWorld != nullptr && interpAlpha < 1.0f; // M36b
+    // M80f: root proxy の描画規則。破壊物の無いシーンに追加コストが出ないよう、
+    // まず Destructible の有無だけを 1 回スキャンする (存在ゲート。以後は車輪と同じ
+    // 「アーキタイプごとに型 index を 1 回引く」経路に落ちる)
+    bool anyDestructibles = false;
+    {
+        const ComponentTypeId destructibleReq[] = { DestructibleComponent::sTypeId };
+        world.ForEachArchetype(destructibleReq,
+                               [&](Archetype& a) { anyDestructibles = anyDestructibles || a.Count() != 0; });
+    }
+    const ComponentTypeId req[] = { MeshRendererComponent::sTypeId, WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int mi = arch.FindTypeIndex(MeshRendererComponent::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        // M60i: 車輪の見た目回転。**アーキタイプごとに 1 回引くだけ**なので、
+        // 車輪を持たないシーンは 1 命令も余計に走らない (存在ゲートと同じ効き)
+        const int whi = arch.FindTypeIndex(WheelComponent::sTypeId);
+        // M80f: root proxy。dsi/fpi はそのエンティティ自身が Destructible/FracturePiece を
+        // 持つ速い経路。`_cap` はどちらも持たない直子なので hi 経由で親 (Frag<i>) の
+        // FracturePiece を見て同じ規則に従わせる
+        const int dsi = anyDestructibles ? arch.FindTypeIndex(DestructibleComponent::sTypeId) : -1;
+        const int fpi = anyDestructibles ? arch.FindTypeIndex(FracturePieceComponent::sTypeId) : -1;
+        const int hi = anyDestructibles ? arch.FindTypeIndex(HierarchyComponent::sTypeId) : -1;
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (!IsEntityActive(world, e)) {
+                continue; // 無効エンティティは描画しない (M10)
+            }
+            if (anyDestructibles) {
+                if (dsi >= 0) {
+                    // 割れたら元メッシュは描かない (破片側が描く)
+                    if (static_cast<const DestructibleComponent*>(arch.GetPtr(dsi, row))->broken) {
+                        continue;
+                    }
+                } else if (fpi >= 0) {
+                    // 破片 (Frag<i>) は割れる前は描かない。可視規則は FractureSystem と共有
+                    // (ShouldHideUnbrokenFracturePiece)
+                    const auto* fp = static_cast<const FracturePieceComponent*>(arch.GetPtr(fpi, row));
+                    const auto* d = world.GetComponent<DestructibleComponent>(fp->root);
+                    if (ShouldHideUnbrokenFracturePiece(d)) {
+                        continue;
+                    }
+                } else if (hi >= 0) {
+                    const auto* h = static_cast<const HierarchyComponent*>(arch.GetPtr(hi, row));
+                    if (const auto* pfp = world.GetComponent<FracturePieceComponent>(h->parent)) {
+                        const auto* d = world.GetComponent<DestructibleComponent>(pfp->root);
+                        if (ShouldHideUnbrokenFracturePiece(d)) {
+                            continue;
+                        }
+                    }
+                }
+            }
+            const auto* mr = static_cast<const MeshRendererComponent*>(arch.GetPtr(mi, row));
+            if (mr->mesh.IsNull() || mr->material.IsNull()) {
+                continue;
+            }
+            const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
+            XMFLOAT4X4 worldMat = wm->value;
+            if (interp) {
+                // M36b: 前 tick との補間 (新規 spawn は prev 無し → 現在値)
+                if (const XMFLOAT4X4* pw = prevWorld->Get(e)) {
+                    worldMat = LerpWorld(*pw, wm->value, interpAlpha);
+                }
+            }
+            if (whi >= 0) {
+                // 補間**後**に掛ける。補間の対象は sim が書いたワールド行列だけで、
+                // 出力フィールドから作る見た目はその上に載る
+                worldMat = ApplyWheelVisual(
+                    worldMat, *static_cast<const WheelComponent*>(arch.GetPtr(whi, row)));
+            }
+            // M79 sub-06: 余白はここ (直列ステージ) で MaterialLibrary の横テーブルから解決する。
+            // 非サーフェスマテリアルは 0 を返すので既存の判定と 1 ビットも変わらない
+            cullCands.push_back({ e, mr->mesh, mr->material, worldMat,
+                                   resources.meshes.Get(mr->mesh), 0.0f, 1,
+                                   world.GetComponent<SkinnedMeshComponent>(e) != nullptr ? uint8_t{ 1 }
+                                                                                         : uint8_t{ 0 },
+                                   resources.materials.GetSurfaceBoundsPadding(mr->material) });
+        }
+    });
+
+    // ---- ステージ 2 (並列): 視錐台テスト + viewZ (要素独立・純関数、M25) ----
+    jobs::System().ParallelRanges(cullCands.size(), kCullGrain, [&](size_t a, size_t b) {
+        for (size_t i = a; i < b; ++i) {
+            CullCand& c = cullCands[i];
+            // スキン付きメッシュの AABB はバインドポーズの頂点から作られており、現在の
+            // ボーン姿勢を包まない。これで落とすと、別メッシュになっている手・指などが
+            // アニメ中だけ消える。全クリップを包む bounds を持つまでは保守的に描画する。
+            if (cullEnabled && c.meshPtr
+                && !RenderableInFrustum(frustum, c.world, c.meshPtr->aabbMin, c.meshPtr->aabbMax,
+                                        c.skinned != 0, c.boundsPadding)) {
+                c.visible = 0;
+                continue;
+            }
+            const XMVECTOR posWS = XMVectorSet(c.world._41, c.world._42, c.world._43, 1);
+            c.viewZ = XMVectorGetZ(XMVector3TransformCoord(posWS, v));
+        }
+    });
+
+    // ---- ステージ 3 (直列): 可視候補をキュー化 (スキン/AABB/キューは順序依存で直列) ----
+    const bool collectRt =
+        rtDebugMode != rtdebug::kOff || enableRtGi || enableRtShadow || enableRtRefl; // M46b/f/g/h
+    rtInstances_.clear();
+    // 汎用タグのフィルタがどちらも 0 なら祖先を辿らない (既定の経路はタグを 1 回も引かない)
+    const bool rtTagFilter = rtReceiverTagMask != 0 || rtSceneTagMask != 0;
+    for (const CullCand& c : cullCands) {
+        const uint64_t rtTags = rtTagFilter ? Tags::EffectiveMask(world, c.e) : 0ull;
+        // M46b: レイトレ用の収集はフラスタムカリングしない (画面外の物体も
+        // 反射や GI には効くため)。v1 制限: スキンメッシュ (CPU 頂点がバインドポーズ
+        // のままなので姿勢が反映できない) と半透明は BVH に入れない。
+        // 汎用タグ: rtSceneTagMask を持たない物も入れない (= 反射に映らず影も落とさない)
+        if (collectRt && Tags::PassesFilter(rtTags, rtSceneTagMask)
+            && world.GetComponent<SkinnedMeshComponent>(c.e) == nullptr) {
+            const Material* rtMat = resources.materials.Get(c.material);
+            if (!rtMat || rtMat->transparent == 0) {
+                rtInstances_.push_back({ c.mesh, c.material, c.world });
+            }
+        }
+        if (!c.visible) {
+            ++culledCount;
+            continue;
+        }
+        RenderItem item;
+        item.mesh = c.mesh;
+        item.material = c.material;
+        item.entity = c.e;
+        item.world = c.world;
+        item.viewZ = c.viewZ;
+        item.rtReceiver = Tags::PassesFilter(rtTags, rtReceiverTagMask) ? 1.0f : 0.0f;
+        // M55c: velocity 用に「前フレームに実際に描いた行列」を載せる。履歴が無い
+        // (初回 / リサイズ / 前フレームは視錐台の外だった / 生成直後) ときは現在値と
+        // 同値を入れる = 画面速度が厳密に 0 = カメラ再投影のみへ縮退する。
+        // Lookup は Record より先 (同じスロットを読んでから上書きする)
+        item.prevWorld = c.world;
+        if (prevRender != nullptr) {
+            if (const XMFLOAT4X4* pr = prevRender->Lookup(c.e)) {
+                item.prevWorld = *pr;
+            }
+            prevRender->Record(c.e, c.world);
+        }
+
+        // スキンメッシュ (M18): ポーズを評価してボーンパレットを構築し item に載せる。
+        // ポーズは描画専用 (SkinnedMeshComponent は kComponentNoHash)
+        if (auto* sm = world.GetComponent<SkinnedMeshComponent>(c.e)) {
+            if (const SkinnedModel* model = resources.skinnedModels.Get(sm->model)) {
+                skinPalettes_.emplace_back();
+                std::vector<XMFLOAT4X4>& palette = skinPalettes_.back();
+                const float timeSec = static_cast<float>(sm->timeTicks) / 60.0f;
+                // M60g1: ラグドールが作動中なら、骨の姿勢はアニメではなく**部位の
+                // LocalTransform (= 剛体が置いた値)** から組む。入力が ECS 状態だけの
+                // 純関数なので、ビュー毎に Render() が呼ばれても同じ絵になる
+                // M18 追補: クロスフェード中は 2 クリップを混ぜた局所行列から組む。
+                // フェードしていない間は M18 の経路をそのまま通す (golden が動かない)
+                if (const auto* rag = world.GetComponent<RagdollComponent>(c.e);
+                    rag && rag->active) {
+                    std::vector<XMMATRIX> locals;
+                    SampleSkinnedLocals(*model, *sm, locals);
+                    ragdoll::BuildBonePaletteFromLocals(world, c.e, *model, locals, palette);
+                } else if (IsSkinFading(*sm)) {
+                    std::vector<XMMATRIX> locals;
+                    SampleSkinnedLocals(*model, *sm, locals);
+                    ComputeBonePaletteWithOverrides(*model, locals, {}, {}, palette);
+                } else {
+                    ComputeBonePalette(*model, sm->clip, timeSec, palette);
+                }
+                if (palette.size() > static_cast<size_t>(kMaxBones)) {
+                    // 上限超過は切り捨て (シェーダの定数バッファが kMaxBones 固定のため)。
+                    // 黙って切ると姿勢が壊れた原因が追えないので model 毎に 1 回だけ WARN
+                    if (std::find(boneOverflowWarned_.begin(), boneOverflowWarned_.end(),
+                                  sm->model.value)
+                        == boneOverflowWarned_.end()) {
+                        boneOverflowWarned_.push_back(sm->model.value);
+                        MYE_LOG_WARN("skinned model has %zu bones, clamped to %d "
+                                     "(MYE_MAX_BONES): pose will be wrong for the extra bones",
+                                     palette.size(), kMaxBones);
+                    }
+                    palette.resize(static_cast<size_t>(kMaxBones));
+                }
+                item.bones = palette.data();
+                item.boneCount = static_cast<int32_t>(palette.size());
+            }
+        }
+
+        const Material* mat = resources.materials.Get(c.material);
+        if (mat && mat->transparent != 0) {
+            queue_.transparent.push_back(item);
+        } else {
+            queue_.opaque.push_back(item);
+            if (c.meshPtr) {
+                XMFLOAT3 wmin, wmax;
+                // M79 sub-06: 影のキャスターはこのカリング済みキューから取るので、
+                // CSM のフィット AABB もカリングと同じ余白で広げる。0 のときは従来と同じ AABB
+                WorldAabb(c.world, c.meshPtr->aabbMin, c.meshPtr->aabbMax, wmin, wmax,
+                         c.boundsPadding);
+                sceneMin = { std::min(sceneMin.x, wmin.x), std::min(sceneMin.y, wmin.y),
+                             std::min(sceneMin.z, wmin.z) };
+                sceneMax = { std::max(sceneMax.x, wmax.x), std::max(sceneMax.y, wmax.y),
+                             std::max(sceneMax.z, wmax.z) };
+                hasScene = true;
+            }
+        }
+    }
+    prof::AddCulled(culledCount);
+}
+
+// 平行光の CSM (M17 / M38d): 最初の平行光でシーンにフィットした 3 カスケードを描く
+void RenderSystem::RenderCascadeShadows(GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
+                                        FrameContext& f)
+{
+    RenderView& view = f.view;
+    SceneLightData& lights = f.lights;
+    const XMFLOAT3& sceneMin = f.sceneMin;
+    const XMFLOAT3& sceneMax = f.sceneMax;
+    const bool hasScene = f.hasScene;
+    if (!shadowPass_.IsReady()) {
+        shadowPass_.Init(device, shaders);
+    }
+    view.shadowSRV = nullptr;
+    if (enableShadows && shadowPass_.IsReady() && hasScene) {
+        int dirIdx = -1;
+        for (int i = 0; i < lights.count; ++i) {
+            if (lights.lights[i].type == lighttype::kDirectional) {
+                dirIdx = i;
+                break;
+            }
+        }
+        if (dirIdx >= 0) {
+            // M38d: カメラフィットの 3 カスケード (非 perspective はシーン全体×3 に縮退)
+            XMFLOAT4X4 lightVPs[ShadowPass::kCascades];
+            float splits[ShadowPass::kCascades];
+            ComputeCascadeVPs(lights.lights[dirIdx].direction, sceneMin, sceneMax, view,
+                              shadowPass_.Resolution(), lightVPs, splits,
+                              ShadowPass::kCascades);
+            shadowPass_.Render(device, shaders, queue_, resources, lightVPs,
+                               ShadowPass::kCascades, view.viewFrameIndex, enableInstancing,
+                               view.water); // M79 sub-05: MyEngineWater (影エントリ用)
+            for (int c = 0; c < ShadowPass::kCascades; ++c) {
+                XMStoreFloat4x4(&view.lightViewProj[c],
+                                XMMatrixTranspose(XMLoadFloat4x4(&lightVPs[c])));
+                view.cascadeSplits[c] = splits[c];
+            }
+            view.cascadeCount = ShadowPass::kCascades;
+            view.shadowSRV = shadowPass_.SRV();
+            view.shadowTexelSize = 1.0f / static_cast<float>(shadowPass_.Resolution());
+        }
+    }
+}
+
+// 局所ライトのシャドウアトラス (M54c: スポット 1 面 / M54d: 点光源 6 面): 影を投げるライトへ枠を前詰めで割り当てて描く
+void RenderSystem::AllocateShadowAtlas(GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
+                                       FrameContext& frame) // f は下の面番号ループが使う名前
+{
+    RenderView& view = frame.view;
+    SceneLightData& lights = frame.lights;
+    const XMFLOAT3& sceneMin = frame.sceneMin;
+    const XMFLOAT3& sceneMax = frame.sceneMax;
+    const bool hasScene = frame.hasScene;
+    // 枠は「M54b の決定論キーで並んだライト順に前詰め」= シーンが変わらなければ
+    // frame をまたいでも同じライトが同じ枠に落ちる (割当が揺れると影がポップする)。
+    // ★点光源は 6 枚を**連番**で取る — シェーダは shadowTile + 面番号で引くので、
+    //   途中に他のライトの枠が挟まると隣の深度を読んでしまう
+    view.shadowAtlasSRV = nullptr;
+    view.shadowTileCount = 0;
+    shadowAtlasFaceCulled_ = 0;
+    if (enableShadows && enableLocalShadows && hasScene) {
+        int tileCount = 0;
+        int culledFaces = 0;
+        int casters = 0;
+        for (int i = 0; i < lightSelection.count && i < lights.count; ++i) {
+            if (lightSelection.lights[i].shadowSlot < 0) {
+                continue;
+            }
+            const GpuLight& g = lights.lights[i];
+            const int faces = (g.type == lighttype::kPoint) ? 6 : ((g.type == lighttype::kSpot) ? 1 : 0);
+            if (faces == 0) {
+                continue; // 平行光の影は CSM (ShadowPass) の担当
+            }
+            // アトラス未生成ならここで初めて作る (64MB。影を使わないシーンでは払わない)
+            if (!shadowAtlas_.IsReady() && !shadowAtlas_.Init(device, shaders)) {
+                break;
+            }
+            // ★入り切らないライトは break ではなく skip。6 枚要る点光源が入らなくても
+            //   後ろに並ぶ 1 枚のスポットはまだ入る。選別順に前詰めという規則は
+            //   保たれるので、割当は決定論のまま
+            if (tileCount + faces > shadowAtlas_.TileCapacity()) {
+                continue;
+            }
+            const int base = tileCount;
+            for (int f = 0; f < faces; ++f) {
+                ShadowTile& tile = view.shadowTiles[base + f];
+                shadowAtlas_.FillTileRect(base + f, tile);
+                tile.lightViewProj = (faces == 6)
+                    ? ComputePointLightFaceVP(g.position, f, g.range, shadowAtlas_.TileSize())
+                    : ComputeSpotLightVP(g.position, g.direction, g.cosOuter, g.range);
+                // 定数バイアスはラスタライザ側 (傾斜依存) を主役にしているので極小。
+                // 0 にすると自己遮蔽の縞が出る距離帯が残る (実測で詰めた値)
+                tile.depthBias = 0.00015f;
+                // ★面カリング (M54d): この面の視錐台がシーン AABB に触れないなら描かない。
+                //   タイルは**確保したまま** pixelSize=0 にする — 連番を詰めると
+                //   shadowTile + 面番号の対応が崩れる。描かれないタイルはクリア値
+                //   1.0 (最遠) のままなので、サンプルしても「影なし」に落ちる
+                if (!WorldAabbInFrustum(BuildFrustum(tile.lightViewProj), sceneMin, sceneMax)) {
+                    tile.pixelSize = 0;
+                    ++culledFaces;
+                }
+            }
+            lights.lights[i].shadowTile = base;
+            lights.lights[i].shadowFaces = faces;
+            tileCount += faces;
+            ++casters;
+        }
+        if (tileCount > 0) {
+            shadowAtlas_.Render(device, shaders, queue_, resources, view.shadowTiles,
+                                tileCount, enableInstancing);
+            view.shadowAtlasSRV = shadowAtlas_.SRV();
+            view.shadowAtlasTexel =
+                1.0f / static_cast<float>(shadowAtlas_.Resolution());
+            view.shadowTileCount = tileCount;
+        }
+        shadowAtlasFaceCulled_ = culledFaces;
+        // M54d: 割当の実測をログへ。ヘッドレス撮影では ProfilerWindow が見えないので、
+        // 「6 面が連番で取れたか / 面カリングが効いたか」はここでしか確認できない。
+        // M54b のライト選別ログと同じ「出たことのある組み合わせを 1 回ずつ」方式
+        // (SceneView と GameView で結果が食い違うと毎フレーム 2 行出続けるため)
+        if (tileCount > 0) {
+            auto pack = [](int v) { return static_cast<uint64_t>(v & 0xFFFF); };
+            const uint64_t key = pack(tileCount) | (pack(culledFaces) << 16)
+                | (pack(casters) << 32) | (pack(shadowAtlas_.DrawCalls()) << 48);
+            bool seen = false;
+            for (int i = 0; i < shadowLogSeenCount_; ++i) {
+                seen = seen || shadowLogSeen_[i] == key;
+            }
+            if (!seen && shadowLogSeenCount_ < static_cast<int>(std::size(shadowLogSeen_))) {
+                shadowLogSeen_[shadowLogSeenCount_++] = key;
+                MYE_LOG_INFO("ShadowAtlas: %d tiles for %d local casters (%d faces culled, "
+                             "%d draws, %d draws culled)",
+                             tileCount, casters, culledFaces, shadowAtlas_.DrawCalls(),
+                             shadowAtlas_.CulledDraws());
+            }
+        }
+    }
+}
+
+// 描画フラグと環境: SSAO / SSR / プローブ、Skybox / Fog の収集と色のリニア化、太陽、IBL、前フレームの viewProj
+void RenderSystem::PrepareEnvironment(World& world, GraphicsDevice& device, ShaderManager& shaders,
+                                      RenderResources& resources, const FrameTarget& target,
+                                      const CameraOverride* cameraOverride, FrameContext& f)
+{
+    RenderView& view = f.view;
+    const EntityID camEntity = f.camEntity;
+    SceneLightData& lights = f.lights;
+    view.ssaoEnabled = enableSsao ? 1 : 0; // M38e (Deferred のみ消費)
+    view.instancingEnabled = enableInstancing ? 1 : 0; // M38f
+    view.velocityDebug = velocityDebugMode;            // M55c (Deferred のみ消費)
+    view.hzbDebug = hzbDebugMip;                       // M56c (Deferred のみ消費)
+    view.ssrEnabled = enableSsr ? 1 : 0;               // M56d (Deferred のみ消費)
+    // M56f: 焼いたプローブ束をそのまま指す (Deferred のみ消費)。ベイクした所有者が
+    // このポインタを立てるまで null = 1 命令も増えない。**トグルを設けていない**のは、
+    // 「焼いていない = 無い」で十分だから (焼く操作そのものが明示 opt-in)
+    view.probes = reflectionProbes;
+    // M40d: シーンカメラの CameraPostFx から SSAO パラメータ (override = エディタ視界は既定)
+    if (!cameraOverride && !camEntity.IsNull()) {
+        if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
+            view.ssaoRadius = pfx->ssaoRadius;
+            view.ssaoIntensity = pfx->ssaoIntensity;
+            // M56d: SSR はグローバル設定をシーンカメラが上書きする (TAA と同じ規則)。
+            // SceneView (cameraOverride あり) はグローバル設定のまま = エディタ視界は不変
+            view.ssrEnabled = pfx->ssrOn ? 1 : 0;
+            view.ssrMaxRoughness = pfx->ssrMaxRoughness;
+            view.ssrIntensity = pfx->ssrIntensity;
+        }
+    }
+    CollectEnvironment(world, view); // M29d: Skybox/Fog を view に反映
+    // M38a: 環境の authored 色をリニアへ (CollectEnvironment 自体は純パススルーのまま =
+    // selftest 不変)。スカイ/フォグは HDR 中間に描かれ、トーンマップ後の OETF と対になる
+    view.skyTop = SrgbToLinear(view.skyTop);
+    view.skyHorizon = SrgbToLinear(view.skyHorizon);
+    view.skyBottom = SrgbToLinear(view.skyBottom);
+    view.fogColor = SrgbToLinear(view.fogColor);
+    // M43a: 太陽 = 最初の平行光 (CSM の dirIdx と同じ規則)。色はリニア・強度込み。
+    // 平行光が無いシーンではインスキャッタ無効化 (黒い太陽へ lerp して暗転する事故を防ぐ)
+    {
+        int sunIdx = -1;
+        for (int i = 0; i < lights.count; ++i) {
+            if (lights.lights[i].type == lighttype::kDirectional) {
+                sunIdx = i;
+                break;
+            }
+        }
+        if (sunIdx >= 0) {
+            const GpuLight& g = lights.lights[sunIdx];
+            view.sunDirection = g.direction;
+            view.sunColor = { g.color.x * g.intensity, g.color.y * g.intensity,
+                              g.color.z * g.intensity };
+        } else {
+            view.fogInscatterIntensity = 0.0f;
+        }
+    }
+    // M38b / M76: cubemap / panoramic スカイの SRV 解決 (未ロードなら遅延ロード、不正なら gradient にフォールバック)
+    // ★Skybox 無し (-1) は -1 のまま (ResolveSkyMode)。-1 まで 0 に落とすと、Skybox を置いていない
+    //   シーンにグラデーション空と IBL が出て背景とライティングが変わる
+    {
+        bool hasTexture = false;
+        bool isCube = false;
+        if (view.skyMode > 0 && !view.skyCubemapId.IsNull()) {
+            Texture* tex = resources.textures.Get(view.skyCubemapId);
+            if (!tex) {
+                const std::wstring texPath = assetguid::ResolvePath(view.skyCubemapId.value);
+                if (!texPath.empty()) {
+                    tex = LoadTextureRememberingFailure(resources.textures, view.skyCubemapId, texPath,
+                                                        /*srgb=*/true, skyLoadFailed_);
+                }
+            }
+            if (tex && tex->srv && tex->tex) {
+                view.skyCubemap = tex->srv.Get();
+                D3D11_TEXTURE2D_DESC td = {};
+                tex->tex->GetDesc(&td);
+                hasTexture = true;
+                isCube = (td.MiscFlags & D3D11_RESOURCE_MISC_TEXTURECUBE) != 0 || td.ArraySize == 6;
+            }
+        }
+        view.skyMode = ResolveSkyMode(view.skyMode, hasTexture, isCube);
+    }
+    // M38c: スカイがあるなら IBL 環境マップを取得 (初回のみ GPU ベイク、以後キャッシュ)。
+    // gradient も同じベイクに通す — シェーダ側は「IBL on/off」の 2 択で済む。
+    // ベイクは RT/シェーダ状態を触るが、この後の path.Render が全て再設定するので安全
+    // 2026-09-14: Skybox.lighting = 0 なら焼かない = IBL の SRV が null のまま = 各パスは定数アンビエントへ
+    //   落ちる (ForwardPath / DeferredPath / SsrPass の判定はどれも「3 枚そろったら IBL」の 1 本)
+    const bool skyLights = (view.skyLighting != 0);
+    if ((view.skyMode == 1 || view.skyMode == 2) && view.skyCubemap != nullptr && skyLights) {
+        const bool isPano = (view.skyMode == 2);
+        const EnvMaps em =
+            envBaker_.GetForCubemap(device, shaders, view.skyCubemapId, view.skyCubemap, isPano);
+        view.iblIrradiance = em.irradiance;
+        view.iblPrefiltered = em.prefiltered;
+        view.iblBrdfLut = em.brdfLut;
+        view.iblSpecMips = em.specMips;
+    } else if (view.skyMode == 0 && skyLights) {
+        const EnvMaps em = envBaker_.GetForGradient(device, shaders, view.skyTop, view.skyHorizon,
+                                                    view.skyBottom); // リニア変換済みの色
+        view.iblIrradiance = em.irradiance;
+        view.iblPrefiltered = em.prefiltered;
+        view.iblBrdfLut = em.brdfLut;
+        view.iblSpecMips = em.specMips;
+    }
+    // M44d: 前フレームの viewProj / カメラ位置 (viewKey 毎)。初フレーム/リサイズは invalid。
+    // モーションブラー (ポスプロ) と RT のテンポラル再投影 (M46d) の共通の出所なので、
+    // path.Render より前で埋める
+    if (target.viewKey > 0 && target.viewKey < 4) {
+        const PrevViewProj& p = prevVP_[target.viewKey];
+        if (p.valid && p.w == target.width && p.h == target.height) {
+            view.prevViewProj = p.m;
+            view.prevCameraPos = p.pos;
+            view.prevViewProjValid = 1;
+        }
+    }
+}
+
+// レイトレ用シーン (M46b) を GPU へ上げて view へ配線し、SSR / プローブが要る環境 BRDF LUT を焼く
+void RenderSystem::UpdateRtScene(GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
+                                 const FrameTarget& target, FrameContext& f)
+{
+    RenderView& view = f.view;
+    // M46b: レイトレ用シーン (BLAS 連結 + TLAS + インスタンス) を GPU へ。
+    // デバッグ表示・GI 合成・RT 影のどれも off なら収集自体が空なので、
+    // この節はまるごと従来経路と同じになる
+    if ((rtDebugMode != rtdebug::kOff || enableRtGi || enableRtShadow || enableRtRefl)
+        && !rtInstances_.empty()) {
+        if (!rtPasses_.IsReady()) {
+            rtPasses_.Init(device, shaders);
+        }
+        rtScene_.Init(device);
+        // M67f: クラス上書き (--rt-class-override / チューニング UI) は**インスタンスを
+        // 組むこの 1 か所**で効かせる。デバッグ 13 (一次ヒットのクラス色) も同じ
+        // RtInstance を読むので、上書きした瞬間に画面全体が 1 色になるのが期待どおり
+        rtScene_.Update(rtInstances_, resources, rtReflRestirParams.classOverride);
+        if (rtPasses_.IsReady() && rtScene_.Bindings().IsValid()) {
+            view.rtDebugMode = rtDebugMode;
+            view.rtScene = &rtScene_.Bindings();
+            view.rtPasses = &rtPasses_;
+            view.rtResolutionScale = rtResolutionScale;
+            view.rtBounces = rtBounces;
+            // freeze 中は毎フレーム同じ乱数列 = 決定的なスクリーンショットが撮れる
+            view.rtFrameIndex = rtFreezeSeed ? 0u : rtFrameCounter_;
+            ++rtFrameCounter_;
+            // M46d: テンポラル蓄積。履歴は viewKey 別 (SceneView と GameView が混線しない)
+            view.rtTemporal = rtTemporal ? 1 : 0;
+            view.rtViewKey = (target.viewKey < 4) ? target.viewKey : 0u;
+            view.rtViewSerial = viewSerial_[view.rtViewKey];
+            // M46e: SVGF。凍結中はテンポラル分散が 0 に潰れるので空間推定へ落とす合図も渡す
+            view.rtSvgf = rtSvgf ? 1 : 0;
+            view.rtFreezeSeed = rtFreezeSeed ? 1 : 0;
+            // M46f: 最終画像への合成 (ライトパスの拡散環境項を GI で置換)
+            view.rtGiEnabled = enableRtGi ? 1 : 0;
+            // M46g: 平行光のシャドウ係数を CSM でなくレイトレの可視率で作る。
+            // 「Shadows」トグルは影全体の元栓なので、off なら RT 影も出さない
+            view.rtShadowEnabled = (enableRtShadow && enableShadows) ? 1 : 0;
+            // M46h: スペキュラ環境項をレイトレ反射で置換
+            view.rtReflEnabled = enableRtRefl ? 1 : 0;
+            // M67d: ReSTIR。デバッグ 12 (reservoir の M) / 14 (反射像側のクラス) は
+            // reservoir そのものを映すので、トグルが off でも強制的に立てる。
+            // ★条件の出所は RtRestirEffective() 1 本 (M67h) — エディタのチューニング UI も
+            //   同じ関数で有効/無効を決める
+            view.rtReflRestir = RtRestirEffective() ? 1 : 0;
+            view.rtReflRestirParams = rtReflRestirParams;
+            // 合成は split-sum なので環境 BRDF LUT (t7) が要る。IBL は「スカイがある」
+            // ことが条件だが LUT 自体はスカイに依らない純関数なので、スカイ無しの
+            // シーンでも反射のためにベイクしておく。irradiance/prefiltered は
+            // null のままなので pf.iblEnabled は false に留まる = IBL は有効化されない
+            if (enableRtRefl && view.iblBrdfLut == nullptr) {
+                view.iblBrdfLut = envBaker_.GetBrdfLut(device, shaders);
+            }
+        }
+    }
+    // M56d: SSR も split-sum なので環境 BRDF LUT が要る。RT 反射 (すぐ上) と同じ理屈で、
+    // **スカイの無いシーンでも LUT だけは焼く** — LUT はスカイに依らない純関数で、
+    // irradiance / prefiltered は null のままなので pf.iblEnabled は false に留まる。
+    // ★これを忘れると LUT が null → SampleLevel が 0 を返す → 環境 BRDF が 0 →
+    //   **SSR を on にしても絵が 1 ピクセルも変わらない** (--render-demo にはスカイが無い)
+    // M56f: 反射プローブも split-sum で合成する = 同じ理由で LUT が要る。
+    // ★これを忘れると「プローブを焼いたのに絵が 1 画素も変わらない」になる
+    //   (--render-demo にはスカイが無いので LUT が誰にも焼かれない)
+    if ((view.ssrEnabled != 0 || (view.probes != nullptr && view.probes->count > 0))
+        && view.iblBrdfLut == nullptr) {
+        view.iblBrdfLut = envBaker_.GetBrdfLut(device, shaders);
+    }
+}
+
+// フロクセル (M57b-M57d): 注入 → テンポラル → 前方積分。結果は光パスが読む
+void RenderSystem::UpdateFroxel(GraphicsDevice& device, ShaderManager& shaders, const FrameTarget& target,
+                                FrameContext& f)
+{
+    RenderView& view = f.view;
+    SceneLightData& lights = f.lights;
+    const bool froxelOn = f.froxelOn;
+    FroxelSettings& effectiveFroxel = f.effectiveFroxel;
+    // ★置き場所はここしかない: 上流に CollectEnvironment (高度フォグのパラメータ) と
+    //   シャドウアトラス (SampleShadowAtlas の入力) が要り、下流の path.Render より
+    //   前でないと消費側 (光パス) が積分結果を読めない。
+    // ★**積分が走らなかったフレームは SRV が null のまま** =
+    //   光パス側のゲートで ApplyFog へ落ちる (正射影ビュー / シェーダ未ロードなど)
+    if (froxelOn && (froxelPass_.IsReady() || froxelPass_.Init(device, shaders))) {
+        view.froxelSRV = froxelPass_.Render(device, shaders, view, lights, effectiveFroxel);
+        view.froxelNearZ = froxelPass_.GridNearZ();
+        view.froxelFarZ = froxelPass_.GridFarZ();
+        view.froxelSlices = froxelPass_.GridSliceCount();
+        // 「そのビューの N 回目の描画」= 決定的撮影モードでは frame 番号と一致する
+        // (viewSerial_ はこの Render の末尾で +1 される = ここでの値が今フレームの通番)
+        const uint32_t serial = (target.viewKey < 4) ? viewSerial_[target.viewKey] : 0u;
+        if (froxelDumpFrame >= 0 && static_cast<uint32_t>(froxelDumpFrame) == serial) {
+            froxelPass_.DebugDumpAB(device, shaders, view, lights, effectiveFroxel);
+            // DebugDumpAB は検査のために注入をもう 2 回走らせてボリュームを塗り替える。
+            // その状態の scatter_ を積分し直さないまま光パスへ渡すと「ダンプした
+            // フレームだけ絵が違う」になるので、確定した設定でもう一度回して戻す
+            view.froxelSRV = froxelPass_.Render(device, shaders, view, lights, effectiveFroxel);
+        }
+    }
+}
+
+// 音響の残光ボリューム (M65d) と解析的な波面: CPU の値を 3D テクスチャへ上げて view へ配線する
+// (読むのは M65e の光パス。転送の正しさは `--acoustic-dump` の読み戻しで数値として確かめる)
+void RenderSystem::UpdateAcousticVolume(GraphicsDevice& device, const FrameTarget& target, FrameContext& f)
+{
+    RenderView& view = f.view;
+    // ★三重のゲート: ポインタが null / ボリュームが無い / 一度も光っていない、の
+    //   どれかなら SRV は null のまま = 既存の絵は 1 ビットも動かない
+    acousticSupplied_ = false;
+    if (acousticField != nullptr && acousticField->HasVolume() && acousticField->VisualActive()) {
+        const AcousticGridDesc& ag = acousticField->Grid();
+        const std::vector<uint8_t>& glow = acousticField->Glow();
+        if (static_cast<int64_t>(glow.size()) == ag.CellCount()) {
+            AcousticVolumeUpload up;
+            up.cells = glow.data();
+            up.dimX = ag.dimX;
+            up.dimY = ag.dimY;
+            up.dimZ = ag.dimZ;
+            up.serial = acousticField->VisualSerial();
+            if (acousticPass_.Upload(device, up)) {
+                view.acousticSRV = acousticPass_.SRV();
+                view.acousticGridMin[0] = ag.minX;
+                view.acousticGridMin[1] = ag.minY;
+                view.acousticGridMin[2] = ag.minZ;
+                // 1 / (dim * cellSize) = ワールド差分をテクスチャ座標 [0,1] へ写す係数。
+                // ★**dim を掛けるのが要点** — cellSize だけで割るとセル単位の座標になる
+                view.acousticInvSize[0] = 1.0f / (static_cast<float>(ag.dimX) * ag.cellSize);
+                view.acousticInvSize[1] = 1.0f / (static_cast<float>(ag.dimY) * ag.cellSize);
+                view.acousticInvSize[2] = 1.0f / (static_cast<float>(ag.dimZ) * ag.cellSize);
+                // M65h: ボリューム側の明るさ (glowIntensity) と全体係数の積。
+                // 既定はどちらも 1.0 = 既存の絵と 1 ビットも変わらない
+                view.acousticIntensity = acousticIntensity * acousticField->GlowIntensity();
+                // 強い残光に面の色を混ぜる割合。既定 0 = 既存の絵と 1 ビットも変わらない
+                view.acousticAlbedoMix = acousticField->GlowAlbedoMix();
+                // 閉セルは波が絶対に訪れない = 壁面の残光は開セル側にしかない。
+                // 法線方向へ 0.75 セル押し出して開セル側を引くのが
+                // 「壁に当たった面だけが光る」の正体 (計画 判断 5)
+                view.acousticNormalPush = 0.75f * ag.cellSize;
+                acousticSupplied_ = true;
+                // 2026-09-12「描画だけ円」: 見通しビットと波の表。マスクの転送に失敗したら
+                // SRV が null のまま = 従来 (残光だけ) の絵に静かに戻る
+                const std::vector<uint32_t>& front = acousticField->FrontMask();
+                if (acousticFront && acousticField->FrontActive()
+                    && static_cast<int64_t>(front.size()) == ag.CellCount()
+                    && acousticPass_.UploadFront(device, front.data(), ag.dimX, ag.dimY, ag.dimZ,
+                                                 acousticField->FrontSerial())) {
+                    view.acousticFrontSRV = acousticPass_.FrontSRV();
+                    const AcousticField::FrontWave* waves = acousticField->FrontWaves();
+                    int n = 0;
+                    for (uint32_t s = 0; s < AcousticField::kMaxWaves && s < RenderView::kAcousticWaveSlots; ++s) {
+                        // スロット番号 = マスクのビット番号なので、空きも位置を保って詰めない
+                        RenderView::AcousticWaveGpu& g = view.acousticWaves[s];
+                        g = RenderView::AcousticWaveGpu{};
+                        if (waves[s].active == 0) {
+                            continue;
+                        }
+                        g.origin[0] = waves[s].ox;
+                        g.origin[1] = waves[s].oy;
+                        g.origin[2] = waves[s].oz;
+                        g.radiusM = waves[s].radiusM;
+                        g.amplitude = waves[s].amplitude;
+                        g.maxDistM = waves[s].maxDistM;
+                        g.ticksPerMetre = waves[s].ticksPerMetre;
+                        g.extraAgeTicks = waves[s].extraAgeTicks;
+                        n = static_cast<int>(s) + 1;
+                    }
+                    view.acousticWaveCount = n;
+                    const float keep = acousticField->GlowKeepPerTick();
+                    view.acousticKeepPerTick = (keep > 0.0f && keep < 1.0f) ? keep : acoustic::kGlowDecayPerTick;
+                    view.acousticCellSize = ag.cellSize;
+                }
+            }
+        }
+        // 「そのビューの N 回目の描画」= 決定的撮影モードでは frame 番号と一致する
+        const uint32_t acSerial = (target.viewKey < 4) ? viewSerial_[target.viewKey] : 0u;
+        if (acousticDumpFrame >= 0 && static_cast<uint32_t>(acousticDumpFrame) == acSerial
+            && acousticSupplied_) {
+            DumpAcousticVolume(device, acousticPass_, *acousticField);
+        }
+    }
+}
+
+// パスの後段: VFX (M29c) → パーティクル (M42 / M63d) → スクリプトの DebugDrawLine (M37)
+void RenderSystem::DrawParticlesAndDebug(World& world, GraphicsDevice& device, ShaderManager& shaders,
+                                         RenderResources& resources, const FrameTarget& target,
+                                         const CameraOverride* cameraOverride, ParticleSystem* particles,
+                                         VfxRenderer* vfx, FrameContext& f)
+{
+    RenderView& view = f.view;
+    SceneLightData& lights = f.lights;
+    PostProcess::Target* hdr = f.hdr;
+    bool& distortionActive = f.distortionActive;
+    // VFX (M29c): Sprite/Trail/TextMesh をメッシュ (不透明+透明) の後・パーティクルの前に
+    // 重ねる。HDR 中間へ描かれ postfx を通る。RT はパスがバインドしたまま
+    if (vfx) {
+        vfx->Render(world, device, shaders, resources, view);
+    }
+
+    // M63d: パーティクルへライトを渡す。**パスの外で描かれる**ので forward_lit /
+    // deferred_light が使う CB には相乗りできず、RenderView 経由が唯一の口になる。
+    // ★ここで初めて配線するのは、パーティクル (と VFX) より前を 1 行も変えないため。
+    //   非所有ポインタなので lights の寿命 (この関数のローカル) より長生きしない
+    view.lights = &lights;
+
+    // パーティクルは常に Forward 後段 (どのレンダリングパスでも共通)。HDR 中間へ加算される
+    distortionActive = false;
+    if (particles) {
+        // M42d: blendMode=2 (distortion) のエミッタが存在するときだけ歪みバッファを
+        // クリアして配線する (HDR 経路限定。バッファ未使用フレームのクリアコストを避ける)
+        if (hdr != nullptr && hdr->distort.IsValid()) {
+            const ComponentTypeId req2[] = { ParticleEmitterComponent::sTypeId };
+            bool hasDistortion = false;
+            world.ForEachArchetype(req2, [&](Archetype& arch) {
+                const int pi = arch.FindTypeIndex(ParticleEmitterComponent::sTypeId);
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    const auto* p =
+                        static_cast<const ParticleEmitterComponent*>(arch.GetPtr(pi, row));
+                    if (p->blendMode == 2) {
+                        hasDistortion = true;
+                        return;
+                    }
+                }
+            });
+            if (hasDistortion) {
+                const float zero[4] = { 0, 0, 0, 0 };
+                device.Context()->ClearRenderTargetView(hdr->distort.RTV(), zero);
+                view.distortionRTV = hdr->distort.RTV();
+                distortionActive = true;
+            }
+        }
+        // M42a: パーティクル系は深度書込みしない (WriteMask=ZERO) ので read-only DSV に
+        // 差し替える。これで深度 SRV (view.depthSRV) との同時バインドが合法になり、
+        // ソフトパーティクル (M42b) 等が深度を読める。read-only ビューが無ければ従来どおり
+        if (view.dsvReadOnly != nullptr) {
+            device.Context()->OMSetRenderTargets(1, &view.rtv, view.dsvReadOnly);
+        }
+        particles->Render(device, view, shaders, resources);
+
+        // M42e: GPU 深度衝突へシーンカメラの深度を供給する。次 tick の sim が使う =
+        // 衝突相手は前フレームの深度 (仕様)。SceneView エディタカメラ (cameraOverride) は
+        // 衝突源にしない — ゲームカメラの見た目だけが物理感を持つ
+        if (!cameraOverride && view.depthSRV != nullptr) {
+            particles->Gpu().SetSceneDepth(view.depthSRV, view.view, view.proj, view.width,
+                                           view.height, view.nearZ, view.farZ);
+        }
+    }
+
+    // スクリプトの DebugDrawLine (v7、M37): シーン空間の線を深度テスト付きで重ねる。
+    // ポスプロ解決前 = HDR 中間 (直描き時は最終 RT) に描く
+    if (debugLines != nullptr && !debugLines->empty()) {
+        if (!linePass_.IsReady()) {
+            linePass_.Init(device, shaders); // 遅延 Init (postFx_ 前例)
+        }
+        if (linePass_.IsReady()) {
+            linePass_.Begin();
+            for (const DebugLineCmd& l : *debugLines) {
+                linePass_.AddLine({ l.ax, l.ay, l.az }, { l.bx, l.by, l.bz }, l.rgba, false);
+            }
+            linePass_.Render(device, shaders, view.rtv, view.dsv, target.width, target.height,
+                             view.view, view.proj);
+        }
+    }
+}
+
+// HDR → LDR 解決 (トーンマップ、CameraPostFx の上書きマージ) と、次フレーム用の viewProj / 描画通番の保存
+void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManager& shaders,
+                               RenderResources& resources, IRenderPath& path, const FrameTarget& target,
+                               const CameraOverride* cameraOverride, FrameContext& f)
+{
+    RenderView& view = f.view;
+    PostProcess::Target* hdr = f.hdr;
+    const EntityID camEntity = f.camEntity;
+    const bool distortionActive = f.distortionActive;
+    // HDR → LDR 解決 (トーンマップ)。HDR 中間を使った時のみ。
+    // シーンカメラに CameraPostFx があれば上書きマージ (M29e。CameraOverride 経路は
+    // エディタ視界なのでグローバル設定のまま)
+    if (hdr != nullptr) {
+        PostProcess::Settings effective = postFxSettings;
+        if (!cameraOverride && !camEntity.IsNull()) {
+            if (const auto* pfx = world.GetComponent<CameraPostFxComponent>(camEntity)) {
+                effective = MergeCameraPostFx(postFxSettings, *pfx);
+            }
+        }
+        // M44d: 前フレーム viewProj は path.Render 前に充填済み (view.prevViewProj)。
+        // SceneView (cameraOverride) はエディタ操作中のスミアが UX を阻害するため強制 off
+        if (cameraOverride) {
+            effective.motionBlurIntensity = 0.0f;
+        }
+        // M57d: フォグ三重計上の 3 つめを降ろす。ゴッドレイ (postfx_godray_mask/blur) は
+        // 「遮蔽マスクが空だけ」の**スクリーンスペース近似**で、フロクセルはその上位互換
+        // (深度を持つ全ての遮蔽物 + 局所ライト + シャドウアトラス) にあたる。
+        // 両方走らせると太陽まわりの散乱を 2 回足すことになるので、フロクセルが
+        // 実際に絵へ出たフレームだけ自動で降ろす。**ユーザー設定は書き換えない** —
+        // ここで潰すのは「このフレームで使う実効値」だけなので、froxel を切れば戻る
+        // ★条件に path.AppliesFroxel() が要る — 積分結果を読まないパスで SRV の有無だけで
+        //   判定すると「ゴッドレイだけ消えて霧が増えない」になる
+        if (view.froxelSRV != nullptr && path.AppliesFroxel()) {
+            effective.godrayIntensity = 0.0f;
+        }
+        // M44a: LUT の SRV 解決 (MaterialLibrary の GUID→パス解決と同じ流儀)。
+        // 未ロードなら遅延ロード — LUT はデータなので srgb=false (デコード禁止)。
+        // 解決できなければ lutSRV=null のまま = Resolve 側で強制 off
+        if (effective.lutIntensity > 0.0f && !effective.lutTexture.IsNull()) {
+            Texture* lut = resources.textures.Get(effective.lutTexture);
+            if (!lut) {
+                const std::wstring lutPath = assetguid::ResolvePath(effective.lutTexture.value);
+                if (!lutPath.empty()) {
+                    lut = LoadTextureRememberingFailure(resources.textures, effective.lutTexture, lutPath,
+                                                        /*srgb=*/false, lutLoadFailed_);
+                }
+            }
+            if (lut && lut->srv) {
+                effective.lutSRV = lut->srv.Get();
+            }
+        }
+        // M78c/d: fxStack からこのビューのユーザーポスト／コンピュートを更新する。
+        // ランナーは viewKey 毎 (Scene View と Game View が互いのパスを消し合わない)。
+        // 実効 fxStack が null (Scene View / fxStack を持たないカメラ / 解決不能) ならパスを消す
+        const uint32_t fxKey = (target.viewKey < 4) ? target.viewKey : 0u;
+        ProjectEffectRunner&  effectRunner  = projectEffectRunner_[fxKey];
+        ProjectComputeRunner& computeRunner = projectComputeRunner_[fxKey];
+        const CameraPostFxComponent* camPostFx =
+            camEntity.IsNull() ? nullptr : world.GetComponent<CameraPostFxComponent>(camEntity);
+        const AssetID requestedFx = camPostFx ? camPostFx->fxStack : AssetID{};
+        const std::wstring fxPath =
+            requestedFx.IsNull() ? std::wstring() : assetguid::ResolvePath(requestedFx.value);
+        const AssetID fxId = EffectiveFxStack(cameraOverride != nullptr, camPostFx != nullptr,
+                                              requestedFx, !fxPath.empty());
+        if (fxId.IsNull()) {
+            if (!loadedFxStackId_[fxKey].IsNull()) {
+                effectRunner.ClearPasses();
+                computeRunner.ClearPasses();
+                loadedFxStackId_[fxKey]    = {};
+                loadedFxStackStamp_[fxKey] = 0;
+            }
+        } else {
+            // Tex2D リゾルバをフレームごとに設定 (resources の参照は ResolvePost が生きている間有効)
+            effectRunner.SetTextureResolver(
+                [&resources, &computeRunner](const std::string& name) -> ID3D11ShaderResourceView*
+                {
+                    // M78d: コンピュートパス出力 SRV を shader 名で先引き (§3 GetOutputSRV 接続)
+                    // 例: fxstack.json で _Mask = "MySim.cs" と書いた場合、MySim.cs の出力 UAV が
+                    // そのまま SRV としてポストの t2 以降に渡る (fill CS → ポスト表示の手動手順参照)。
+                    if (!name.empty())
+                    {
+                        if (ID3D11ShaderResourceView* srv = computeRunner.GetOutputSRV(name))
+                            return srv;
+                    }
+                    // ビルトイン名またはフォールバック → white
+                    auto getWhite = [&]() -> ID3D11ShaderResourceView* {
+                        Texture* t = resources.textures.Get(resources.textures.White());
+                        return t ? t->srv.Get() : nullptr;
+                    };
+                    if (name.empty() || name == "white") {
+                        return getWhite();
+                    }
+                    if (name == "gray" || name == "black" || name == "bump") {
+                        // spec §4.1: 専用 SRV 未整備時は white ＋ WARN (docs/project-shaders-tex2d-defaults.md)
+                        static bool warnedGray = false;
+                        static bool warnedBlack = false;
+                        static bool warnedBump = false;
+                        if (name == "gray" && !warnedGray) {
+                            warnedGray = true;
+                            MYE_LOG_WARN(
+                                "RenderSystem: Tex2D 既定 'gray' は専用 SRV 未整備のため white にフォールバックします");
+                        } else if (name == "black" && !warnedBlack) {
+                            warnedBlack = true;
+                            MYE_LOG_WARN(
+                                "RenderSystem: Tex2D 既定 'black' は専用 SRV 未整備のため white にフォールバックします");
+                        } else if (name == "bump" && !warnedBump) {
+                            warnedBump = true;
+                            MYE_LOG_WARN(
+                                "RenderSystem: Tex2D 既定 'bump' は専用 SRV 未整備のため white にフォールバックします");
+                        }
+                        return getWhite();
+                    }
+                    // GUID hex 文字列として解決
+                    char* endp = nullptr;
+                    const unsigned long long val = strtoull(name.c_str(), &endp, 16);
+                    if (val != 0 && endp && *endp == '\0') {
+                        Texture* t = resources.textures.Get(AssetID{ static_cast<uint64_t>(val) });
+                        if (t && t->srv) {
+                            return t->srv.Get();
+                        }
+                        // 未ロードなら非同期ロードをキック
+                        const std::wstring texPath = assetguid::ResolvePath(static_cast<uint64_t>(val));
+                        if (!texPath.empty()) {
+                            resources.textures.RequestLoadFileAsync(texPath);
+                        }
+                    }
+                    return getWhite();
+                });
+
+            // fxstack.json は ID が変わったかファイルが書き換わったときだけ読む
+            // (エディタで保存した値は更新時刻の変化で拾う。同期読み込みを毎フレーム走らせない)
+            std::error_code stampEc;
+            const auto writeTime = std::filesystem::last_write_time(fxPath, stampEc);
+            const int64_t stamp = stampEc ? 0 : static_cast<int64_t>(writeTime.time_since_epoch().count());
+            if (NeedsFxStackReload(loadedFxStackId_[fxKey], loadedFxStackStamp_[fxKey], fxId, stamp)) {
+                FxStackAsset fx;
+                std::string errMsg;
+                if (LoadFxStack(fxPath, fx, &errMsg)) {
+                    // M78c: Post パスを ProjectEffectRunner へ流す
+                    std::vector<ProjectPostPassDesc> postDescs;
+                    postDescs.reserve(fx.passes.size());
+                    // M78d: Compute パスを ProjectComputeRunner へ流す
+                    std::vector<ProjectComputePassDesc> compDescs;
+                    compDescs.reserve(fx.passes.size());
+
+                    for (const auto& entry : fx.passes) {
+                        if (entry.kind == FxStackKind::Post) {
+                            ProjectPostPassDesc d;
+                            d.shaderName     = entry.shader;
+                            d.insertion      = entry.insertion;
+                            d.priority       = entry.priority;
+                            d.enabled        = entry.enabled;
+                            d.propertyValues = entry.properties;
+                            postDescs.push_back(std::move(d));
+                        } else if (entry.kind == FxStackKind::Compute) {
+                            ProjectComputePassDesc d;
+                            d.shader        = entry.shader;
+                            d.dispatchPoint = DispatchPointFromString(entry.dispatchPoint);
+                            d.priority      = entry.priority;
+                            d.enabled       = entry.enabled;
+                            d.propertyValues = entry.properties;
+                            compDescs.push_back(std::move(d));
+                        }
+                    }
+                    // SetPasses は同名・同挿入点のキャッシュを保つので、値だけの変更では CB も UAV も作り直さない
+                    effectRunner.SetPasses(std::move(postDescs));
+                    computeRunner.SetPasses(std::move(compDescs));
+                } else {
+                    MYE_LOG_WARN("RenderSystem: fxstack ロード失敗 (%s): %s",
+                                 WideToUtf8(fxPath).c_str(), errMsg.c_str());
+                    effectRunner.ClearPasses();
+                    computeRunner.ClearPasses();
+                }
+                loadedFxStackId_[fxKey]    = fxId;
+                loadedFxStackStamp_[fxKey] = stamp;
+            }
+        }
+
+        ProjectEffectRunner*  injectPostFx = nullptr;
+        ProjectComputeRunner* injectComputeFx = nullptr;
+        if (ShouldInjectProjectFxStack(cameraOverride != nullptr)) {
+            injectPostFx     = &effectRunner;
+            injectComputeFx  = &computeRunner;
+        }
+
+        // M78d: BeforePost コンピュートを Resolve 前に実行する (HDR 描画完了直後)
+        if (injectComputeFx != nullptr
+            && computeRunner.HasPasses(ComputeDispatchPoint::BeforePost))
+        {
+            computeRunner.RunDispatch(ComputeDispatchPoint::BeforePost,
+                                      device, shaders,
+                                      hdr->scene.SRV(), view.depthSRV,
+                                      target.width, target.height);
+        }
+
+        postFx_.Resolve(device, shaders, *hdr, target.rtv, target.width, target.height,
+                        effective, view, distortionActive,
+                        injectPostFx,     // M78c: ユーザーポスト (Scene View は nullptr)
+                        injectComputeFx); // M78d: ユーザーコンピュート (Scene View は nullptr)
+    }
+    // M44d: 次フレームのモーションブラー用に viewProj を保存 (viewKey=0 = AssetPreview は対象外)。
+    // M46d: カメラ位置と描画通番も同じ場所で更新する (再投影とテンポラル履歴の連続性判定)。
+    // ★M55b: ここに保存するのは **非ジッタ側** (projNoJitter)。この 1 箇所を
+    // RtPasses (M46d) と PostProcess::RunMotionBlur (M44d) の **両方** が読むので、
+    // ジッタ付きを入れると RT テンポラルとモーションブラーが同時に壊れる
+    if (target.viewKey > 0 && target.viewKey < 4) {
+        PrevViewProj& p = prevVP_[target.viewKey];
+        XMStoreFloat4x4(&p.m, XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.projNoJitter));
+        p.pos = view.cameraPos;
+        p.w = target.width;
+        p.h = target.height;
+        p.valid = true;
+        ++viewSerial_[target.viewKey];
+    }
+}
+
+} // namespace mye

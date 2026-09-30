@@ -12,9 +12,9 @@
 #include <iterator>
 #include <sstream>
 
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Platform/PathUtil.h"
-#include "Engine/Renderer/FontFiles.h"
+#include "Engine/Renderer/Text/FontFiles.h"
 
 #include "stb/stb_truetype.h"
 

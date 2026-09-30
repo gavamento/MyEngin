@@ -9,11 +9,11 @@
 #include <cstdio>
 #include <filesystem>
 
-#include "Engine/Core/AssetKeyResolver.h"
-#include "Engine/Core/Log.h"
+#include "Engine/Core/Asset/AssetKeyResolver.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Asset/CookedCache.h"
 #include "Engine/Platform/PathUtil.h"
-#include "Engine/Renderer/GpuResources.h"
+#include "Engine/Renderer/Device/GpuResources.h"
 
 namespace fs = std::filesystem;
 

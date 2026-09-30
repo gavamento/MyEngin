@@ -3,13 +3,13 @@
 #include <algorithm>
 #include <cmath>
 
-#include "Engine/Core/Log.h"
-#include "Engine/Core/World.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Particles/ParticleCurves.h"
-#include "Engine/Renderer/GpuBufferUtil.h" // M46a: バッファ生成ヘルパ
-#include "Engine/Renderer/GpuResources.h" // M42c: TextureLibrary (フリップブック解決)
-#include "Engine/Renderer/GraphicsDevice.h"
-#include "Engine/Renderer/ShaderManager.h"
+#include "Engine/Renderer/Device/GpuBufferUtil.h" // M46a: バッファ生成ヘルパ
+#include "Engine/Renderer/Device/GpuResources.h" // M42c: TextureLibrary (フリップブック解決)
+#include "Engine/Renderer/Device/GraphicsDevice.h"
+#include "Engine/Renderer/Shader/ShaderManager.h"
 
 using namespace DirectX;
 
