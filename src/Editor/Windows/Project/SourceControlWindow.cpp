@@ -10,8 +10,70 @@
 #include "Engine/Renderer/ImGui/ImGuiTheme.h" // themeColor (意味色。バッジ色はここからしか採らない)
 
 #include "imgui.h"
+#include "fontawesome/IconsFontAwesome6.h"
 
 namespace mye {
+
+void DrawScmFileMenu(SourceControlSession& scm, const SourceControlHost& host,
+                     const std::vector<std::string>& paths, bool folder)
+{
+    const bool available = scm.Ready() && !paths.empty() && !paths.front().empty()
+        && paths.front().find("..") != 0;
+    if (available) { scm.PrepareContextTargets(paths); }
+    const auto& targets = scm.ContextTargets();
+    auto item = [&](const char* icon, StrId label, const char* action) {
+        const std::string text = std::string(icon) + " " + Tr(label);
+        bool eligible = false;
+        const auto rows = targets.is_object() ? targets.value("targets", nlohmann::json::array()) : nlohmann::json::array();
+        for (const auto& row : rows) {
+            if (row.value("conflict", false)) { continue; }
+            const std::string a = action;
+            const std::string path = row.value("path", std::string());
+            if ((a == "ignore" || a == "untrack" || a == "untrack_ignore") && ScmPathKey(path) == ".gitignore") { continue; }
+            const std::string index = row.value("index", std::string("."));
+            const std::string work = row.value("worktree", std::string("."));
+            eligible |= (a == "stage" || a == "discard") ? work != "." || index == "?"
+                : a == "unstage" ? index != "." && index != "?"
+                : a == "ignore" ? row.value("exists", false) || row.value("tracked", false)
+                : row.value("tracked", false);
+        }
+        const bool enabled = available && host.writeBlockers.empty() && !scm.WriteInFlight()
+            && eligible && static_cast<bool>(host.requestAction);
+        if (ImGui::MenuItem(text.c_str(), nullptr, false, enabled)) {
+            host.requestAction({{"action", action}, {"paths", paths}});
+        }
+        if (!enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::BeginTooltip();
+            if (!available) { ImGui::TextUnformatted(Tr(StrId::GateB_ServiceUnavailable)); }
+            if (!eligible) { ImGui::TextUnformatted(Tr(targets.is_null() ? StrId::Scm_Loading : StrId::Scm_ActionNoTargets)); }
+            if (targets.contains("error")) { ImGui::TextWrapped("%s", targets["error"].get_ref<const std::string&>().c_str()); }
+            for (const auto b : host.writeBlockers) { ImGui::TextUnformatted(Tr(GateBlockerText(b))); }
+            ImGui::EndTooltip();
+        }
+    };
+    item(ICON_FA_PLUS, StrId::Scm_Stage, "stage");
+    item(ICON_FA_MINUS, StrId::Scm_Unstage, "unstage");
+    const std::string diff = std::string(ICON_FA_FILE_LINES) + " " + Tr(StrId::Scm_ActionDiff);
+    const bool diffEnabled = available && !folder && paths.size() == 1 && host.requestDiff;
+    if (ImGui::MenuItem(diff.c_str(), nullptr, false, diffEnabled)) { host.requestDiff(paths.front()); }
+    if (!diffEnabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("%s", Tr(StrId::Scm_ActionSingleDiff));
+    }
+    item(ICON_FA_ARROW_ROTATE_LEFT, StrId::Scm_Discard, "discard");
+    ImGui::Separator();
+    item(ICON_FA_LINK_SLASH, StrId::Scm_ActionUntrack, "untrack");
+    item(ICON_FA_LINK_SLASH, StrId::Scm_ActionUntrackIgnore, "untrack_ignore");
+    item(ICON_FA_BAN, StrId::Scm_ActionIgnore, "ignore");
+    const std::string copy = std::string(ICON_FA_COPY) + " " + Tr(StrId::Scm_ActionCopyPath);
+    if (ImGui::MenuItem(copy.c_str(), nullptr, false, !paths.empty() && !scm.Toplevel().empty())) {
+        std::string text;
+        for (const auto& path : paths) {
+            if (!text.empty()) { text += '\n'; }
+            text += scm.Toplevel() + "/" + path;
+        }
+        ImGui::SetClipboardText(text.c_str());
+    }
+}
 
 namespace {
 
@@ -212,10 +274,11 @@ void SourceControlWindow::OnImGui(SourceControlSession& scm, const SourceControl
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem(Tr(StrId::Scm_TabHistory))) {
-            DrawHistory(scm);
+            DrawHistory(scm, host);
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
+        DrawBranchDialog(scm, host);
     }
     ImGui::End();
 }
@@ -332,7 +395,7 @@ void SourceControlWindow::DrawHeader(SourceControlSession& scm, const SourceCont
 
     if (scm.MergeInProgress()) {
         ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Error);
-        ImGui::TextWrapped("%s", Tr(StrId::Scm_MergeInProgress));
+        ImGui::TextWrapped(Tr(StrId::Scm_ActionInProgress), scm.Operation().empty() ? "merge" : scm.Operation().c_str());
         ImGui::PopStyleColor();
     } else if (scm.RebaseInProgress()) {
         ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
@@ -632,26 +695,31 @@ void SourceControlWindow::DrawChanges(SourceControlSession& scm, const SourceCon
     //   連打すると自分同士で locked_index を踏む
     const bool busy = scm.WriteInFlight();
     const std::vector<PairedEntry> rows = SelectedRows(model);
-    ImGui::BeginDisabled(rows.empty() || busy);
+    auto requestRows = [&host](const char* action, const std::vector<PairedEntry>& entries) {
+        std::vector<std::string> paths;
+        for (const auto& row : entries) { paths.push_back(row.path); }
+        if (host.requestAction) { host.requestAction({{"action", action}, {"paths", paths}}); }
+    };
+    ImGui::BeginDisabled(rows.empty() || busy || !host.writeBlockers.empty());
     if (ImGui::Button(Tr(StrId::Scm_Stage))) {
-        scm.StageRows(rows);
+        requestRows("stage", rows);
     }
     ImGui::SameLine();
     if (ImGui::Button(Tr(StrId::Scm_Unstage))) {
-        scm.UnstageRows(rows);
+        requestRows("unstage", rows);
     }
     ImGui::EndDisabled();
     // ★「すべて」は選択に依らない (一覧に出ている変更行**全部**)。フォルダを 1 つずつ
     //   選んで回らずに済ませるための行で、index を動かすだけなので破棄と違って
     //   ゲートは通さない (M66n)。行を分けているのは幅 — 既定のドック幅では 4 個の
     //   ボタンが 1 行に収まらない (M66d の破棄行と同じ理由)
-    ImGui::BeginDisabled(model.entries.empty() || busy);
+    ImGui::BeginDisabled(model.entries.empty() || busy || !host.writeBlockers.empty());
     if (ImGui::Button(Tr(StrId::Scm_StageAll))) {
-        scm.StageRows(model.entries);
+        requestRows("stage", model.entries);
     }
     ImGui::SameLine();
     if (ImGui::Button(Tr(StrId::Scm_UnstageAll))) {
-        scm.UnstageRows(model.entries);
+        requestRows("unstage", model.entries);
     }
     ImGui::EndDisabled();
     // ★ヒントはボタンの右 (SameLine) ではなく**次の行に折り返して**出す。既定ドック幅
@@ -743,7 +811,7 @@ void SourceControlWindow::DrawChanges(SourceControlSession& scm, const SourceCon
 
     if (ImGui::BeginChild("###ScmChangeList", ImVec2(0, listH), ImGuiChildFlags_Borders)) {
         for (const int child : model.nodes[0].children) {
-            DrawNode(model, child);
+            DrawNode(scm, host, child);
         }
     }
     ImGui::EndChild();
@@ -761,6 +829,9 @@ void SourceControlWindow::DrawConflicts(SourceControlSession& scm, const SourceC
     ImGui::TextWrapped("%s", Tr(scm.RebaseInProgress() ? StrId::Scm_RebaseInProgress
                                                        : StrId::Scm_ConflictMode));
     ImGui::PopStyleColor();
+    if (!scm.Operation().empty()) {
+        ImGui::TextWrapped(Tr(StrId::Scm_ActionInProgress), scm.Operation().c_str());
+    }
     const ConflictList& list = scm.Conflicts();
     if (!list.valid) {
         ImGui::TextDisabled("%s", Tr(StrId::Scm_Loading));
@@ -776,7 +847,7 @@ void SourceControlWindow::DrawConflicts(SourceControlSession& scm, const SourceC
 
     // ---- 操作列 (既定のドック幅 285px に収まるのは 3 個まで) ----
     ImGui::BeginDisabled(busy || !gateOpen || !host.requestMergeAbort);
-    if (ImGui::Button(Tr(StrId::Scm_AbortMerge))) {
+    if (ImGui::Button(Tr(StrId::Scm_ActionAbort))) {
         host.requestMergeAbort();
     }
     ImGui::EndDisabled();
@@ -786,7 +857,7 @@ void SourceControlWindow::DrawConflicts(SourceControlSession& scm, const SourceC
     }
     ImGui::SameLine();
     ImGui::BeginDisabled(busy || !gateOpen || !allResolved || !host.requestMergeContinue);
-    if (ImGui::Button(Tr(StrId::Scm_ContinueMerge))) {
+    if (ImGui::Button(Tr(StrId::Scm_ActionContinue))) {
         host.requestMergeContinue();
     }
     ImGui::EndDisabled();
@@ -880,12 +951,14 @@ void SourceControlWindow::DrawDiffWindow(SourceControlSession& scm)
         return;
     }
     const DiffView& diff = scm.Diff();
-    if (ImGui::Checkbox(Tr(StrId::Scm_DiffStaged), &diffStaged_)) {
-        diffRequestedPath_.clear(); // 次のフレームで取り直す
+    if (diff.parents > 1) { ImGui::TextWrapped("%s", Tr(StrId::Scm_ActionFirstParent)); }
+    if (!diff.commit && ImGui::Checkbox(Tr(StrId::Scm_DiffStaged), &diffStaged_)) {
+        diffRequestedStaged_ = diffStaged_;
+        scm.RequestDiff(diff.path, diffStaged_);
     }
     ImGui::SameLine();
-    if (selected_.size() == 1) {
-        ImGui::TextDisabled("%s", selected_[0].c_str());
+    if (!diff.path.empty()) {
+        ImGui::TextDisabled("%s", diff.path.c_str());
     } else {
         ImGui::TextDisabled("%s", Tr(StrId::Scm_DiffPick));
     }
@@ -893,11 +966,11 @@ void SourceControlWindow::DrawDiffWindow(SourceControlSession& scm)
     // ★横スクロールは**差分本文があるときだけ**有効にする。案内文まで横スクロール
     //   領域に入れると、窓が細いときに 1 行が右へ流れて読めなくなる
     //   (M66c のプローブで "No textual diff (new, binary or unchanged on thi" と切れた)
-    const bool hasDiffText = selected_.size() == 1 && diff.valid && !diff.loading
+    const bool hasDiffText = (diff.commit || !diff.path.empty()) && diff.valid && !diff.loading
         && !diff.text.empty();
     if (ImGui::BeginChild("###ScmDiffView", ImVec2(0, 0), ImGuiChildFlags_None,
                           hasDiffText ? ImGuiWindowFlags_HorizontalScrollbar : 0)) {
-        if (selected_.size() != 1) {
+        if (!diff.commit && diff.path.empty()) {
             ImGui::TextWrapped("%s", Tr(StrId::Scm_DiffPick));
         } else if (diff.loading || !diff.valid) {
             ImGui::TextWrapped("%s", Tr(StrId::Scm_Loading));
@@ -955,6 +1028,8 @@ void SourceControlWindow::DrawBranches(SourceControlSession& scm, const SourceCo
     ImGui::SameLine();
     ImGui::BeginDisabled(busy);
     if (ImGui::Button(Tr(StrId::Scm_NewBranch))) {
+        branchFrom_ = scm.Model().head;
+        renameBranch_.clear();
         newBranchName_[0] = '\0';
         newBranchOpen_ = true;
     }
@@ -966,59 +1041,13 @@ void SourceControlWindow::DrawBranches(SourceControlSession& scm, const SourceCo
         ImGui::TextDisabled("%s", Tr(StrId::Scm_BranchPick));
     }
 
-    // ---- 作成モーダル ----
-    if (newBranchOpen_) {
-        ImGui::OpenPopup(Tr(StrId::Scm_NewBranchTitle));
-    }
-    {
-        const ImGuiViewport* vp = ImGui::GetMainViewport();
-        // ★Appearing ではなく Always。AlwaysAutoResize の窓は出た最初のフレームに
-        //   自分の大きさを知らないので、Appearing だとずれた位置で確定する (M66d の nit)
-        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
-                                       vp->WorkPos.y + vp->WorkSize.y * 0.5f),
-                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    }
-    if (ImGui::BeginPopupModal(Tr(StrId::Scm_NewBranchTitle), nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextDisabled(Tr(StrId::Scm_NewBranchFrom),
-                            branches.current.empty() ? Tr(StrId::Scm_Detached)
-                                                     : branches.current.c_str());
-        ImGui::SetNextItemWidth(260.0f);
-        ImGui::InputText(Tr(StrId::Scm_NewBranchName), newBranchName_, sizeof(newBranchName_));
-        ImGui::Spacing();
-        const bool nameOk = HasVisibleText(newBranchName_);
-        ImGui::BeginDisabled(!nameOk || busy);
-        if (ImGui::Button(Tr(StrId::Scm_NewBranchCreate), ImVec2(120, 0))) {
-            const std::string name = newBranchName_;
-            // from は空 = 現在の HEAD (サービス側の既定)
-            scm.CreateBranch(name, {},
-                             [this, name](bool ok, const std::string&, const std::string&) {
-                                 if (ok) {
-                                     createdBranch_ = name;
-                                     selectedBranch_ = name;
-                                 }
-                             });
-            newBranchOpen_ = false;
-            // ★閉じるのを明示する。開いたままにすると次に開く modal が
-            //   その上に積まれ、位置も入力も前の modal に引きずられる
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(110, 0))) {
-            newBranchOpen_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-
     ImGui::Separator();
     if (branches.locals.empty() && branches.remotes.empty()) {
         ImGui::TextDisabled("%s", Tr(StrId::Scm_BranchNone));
         return;
     }
     // ---- 一覧 (ローカル → リモート) ----
-    auto drawRows = [this, &branches](const std::vector<BranchInfo>& rows) {
+    auto drawRows = [this, &branches, &scm, &host](const std::vector<BranchInfo>& rows, bool local) {
         for (const BranchInfo& b : rows) {
             const bool isCurrent = b.name == branches.current;
             ImGui::PushID(b.name.c_str());
@@ -1028,6 +1057,34 @@ void SourceControlWindow::DrawBranches(SourceControlSession& scm, const SourceCo
             }
             if (ImGui::Selectable(b.name.c_str(), selectedBranch_ == b.name)) {
                 selectedBranch_ = b.name;
+            }
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { contextBranch_ = b; }
+            if (ImGui::BeginPopupContextItem("###ScmBranchContext")) {
+                const BranchInfo& frozenBranch = contextBranch_;
+                if (IconMenuItem(ICON_FA_COPY, Tr(StrId::Scm_ActionCopyName))) { ImGui::SetClipboardText(frozenBranch.name.c_str()); }
+                const bool enabled = host.writeBlockers.empty() && !scm.WriteInFlight() && host.requestAction;
+                if (IconMenuItem(ICON_FA_CODE_BRANCH, Tr(StrId::Scm_NewBranch), enabled)) {
+                    branchFrom_ = frozenBranch.oid;
+                    renameBranch_.clear();
+                    newBranchName_[0] = '\0';
+                    newBranchOpen_ = true;
+                }
+                if (IconMenuItem(ICON_FA_CODE_BRANCH, Tr(StrId::Scm_Switch), enabled && !isCurrent)) {
+                    if (host.requestCheckout) { host.requestCheckout(frozenBranch.name); }
+                }
+                if (IconMenuItem(ICON_FA_PEN, Tr(StrId::Scm_ActionRename), enabled && local && frozenBranch.renameAllowed)) {
+                    renameBranch_ = frozenBranch.name;
+                    branchFrom_ = frozenBranch.oid;
+                    std::snprintf(newBranchName_, sizeof(newBranchName_), "%s", frozenBranch.name.c_str());
+                    newBranchOpen_ = true;
+                }
+                if (IconMenuItem(ICON_FA_TRASH, Tr(StrId::Scm_ActionDelete), enabled && local && frozenBranch.deleteAllowed)) {
+                    host.requestAction({{"action", "branch_delete"}, {"name", frozenBranch.name}});
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && (!local || !frozenBranch.deleteAllowed)) {
+                    ImGui::SetTooltip("%s", Tr(StrId::Scm_ActionBranchProtected));
+                }
+                ImGui::EndPopup();
             }
             if (isCurrent) {
                 ImGui::PopStyleColor();
@@ -1049,15 +1106,65 @@ void SourceControlWindow::DrawBranches(SourceControlSession& scm, const SourceCo
     };
     if (ImGui::BeginChild("###ScmBranchList", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
         ImGui::SeparatorText(Tr(StrId::Scm_BranchLocal));
-        drawRows(branches.locals);
+        drawRows(branches.locals, true);
         if (!branches.remotes.empty()) {
             // ★リモート追跡は checkout の扱いが違う (-t で追跡ブランチを作ってから乗る)
             //   ので節を分ける。混ぜると「同じ名前が 2 つある」ように見える
             ImGui::SeparatorText(Tr(StrId::Scm_BranchRemote));
-            drawRows(branches.remotes);
+            drawRows(branches.remotes, false);
         }
     }
     ImGui::EndChild();
+}
+
+void SourceControlWindow::DrawBranchDialog(SourceControlSession& scm, const SourceControlHost& host)
+{
+    const bool busy = scm.WriteInFlight();
+    // ---- 作成モーダル ----
+    if (newBranchOpen_) {
+        ImGui::OpenPopup(Tr(StrId::Scm_NewBranchTitle));
+    }
+    {
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        // ★Appearing ではなく Always。AlwaysAutoResize の窓は出た最初のフレームに
+        //   自分の大きさを知らないので、Appearing だとずれた位置で確定する (M66d の nit)
+        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
+                                       vp->WorkPos.y + vp->WorkSize.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    }
+    if (ImGui::BeginPopupModal(Tr(StrId::Scm_NewBranchTitle), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextDisabled(Tr(StrId::Scm_NewBranchFrom),
+                            branchFrom_.empty() ? Tr(StrId::Scm_Detached)
+                                                     : branchFrom_.c_str());
+        ImGui::SetNextItemWidth(260.0f);
+        ImGui::InputText(Tr(StrId::Scm_NewBranchName), newBranchName_, sizeof(newBranchName_));
+        ImGui::Spacing();
+        const bool nameOk = HasVisibleText(newBranchName_) && host.writeBlockers.empty();
+        ImGui::BeginDisabled(!nameOk || busy);
+        if (ImGui::Button(Tr(StrId::Scm_NewBranchCreate), ImVec2(120, 0))) {
+            const std::string name = newBranchName_;
+            if (host.requestAction) {
+                if (renameBranch_.empty()) {
+                    host.requestAction({{"action", "branch_create"}, {"name", name}, {"sha", branchFrom_}});
+                } else {
+                    host.requestAction({{"action", "branch_rename"}, {"name", renameBranch_}, {"newName", name}});
+                }
+            }
+            newBranchOpen_ = false;
+            // ★閉じるのを明示する。開いたままにすると次に開く modal が
+            //   その上に積まれ、位置も入力も前の modal に引きずられる
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(110, 0))) {
+            newBranchOpen_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
 }
 
 void SourceControlWindow::DrawCommitBox(SourceControlSession& scm, const SourceControlHost& host,
@@ -1147,7 +1254,7 @@ void SourceControlWindow::SubmitCommit(SourceControlSession& scm)
     });
 }
 
-void SourceControlWindow::DrawHistory(SourceControlSession& scm)
+void SourceControlWindow::DrawHistory(SourceControlSession& scm, const SourceControlHost& host)
 {
     if (!historyRequested_) {
         // タブを開いた最初のフレームで 1 回だけ取りに行く
@@ -1171,6 +1278,39 @@ void SourceControlWindow::DrawHistory(SourceControlSession& scm)
             ImGui::PushID(c.sha.c_str());
             if (ImGui::Selectable("###ScmHistoryRow", selectedCommit_ == c.sha)) {
                 selectedCommit_ = c.sha;
+            }
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { contextCommit_ = c; }
+            if (ImGui::BeginPopupContextItem("###ScmHistoryContext")) {
+                const CommitInfo& frozenCommit = contextCommit_;
+                if (IconMenuItem(ICON_FA_COPY, Tr(StrId::Scm_ActionCopySha))) { ImGui::SetClipboardText(frozenCommit.sha.c_str()); }
+                if (IconMenuItem(ICON_FA_COPY, Tr(StrId::Scm_ActionCopySubject))) { ImGui::SetClipboardText(frozenCommit.subject.c_str()); }
+                if (IconMenuItem(ICON_FA_FILE_LINES, Tr(StrId::Scm_ActionDiff))) {
+                    scm.RequestCommitDiff(frozenCommit.sha);
+                    diffOpen = true;
+                    diffFocusRequest_ = true;
+                }
+                const bool enabled = host.writeBlockers.empty() && !scm.WriteInFlight() && host.requestAction;
+                if (IconMenuItem(ICON_FA_CODE_BRANCH, Tr(StrId::Scm_NewBranch), enabled)) {
+                    branchFrom_ = frozenCommit.sha;
+                    renameBranch_.clear();
+                    newBranchName_[0] = '\0';
+                    newBranchOpen_ = true;
+                }
+                const bool historyEnabled = enabled && scm.Model().entries.empty()
+                    && !scm.Model().branch.empty() && scm.Model().branch != "(detached)";
+                for (const auto& operation : std::vector<std::pair<StrId, const char*>>{
+                        {StrId::Scm_ActionSoft, "soft"}, {StrId::Scm_ActionMixed, "mixed"},
+                        {StrId::Scm_ActionRevert, "commit_revert"}, {StrId::Scm_ActionCherry, "cherry_pick"}}) {
+                    const bool needsParent = std::string(operation.second) == "commit_revert" || std::string(operation.second) == "cherry_pick";
+                    const bool eligible = historyEnabled && (!needsParent || (frozenCommit.parents >= 0 && frozenCommit.parents <= 1));
+                    if (IconMenuItem(ICON_FA_ARROW_ROTATE_LEFT, Tr(operation.first), eligible)) {
+                        host.requestAction({{"action", operation.second}, {"sha", frozenCommit.sha}});
+                    }
+                    if (!eligible && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                        ImGui::SetTooltip("%s", Tr(needsParent && frozenCommit.parents > 1 ? StrId::Scm_ActionMergeDisabled : StrId::Scm_ActionCleanRequired));
+                    }
+                }
+                ImGui::EndPopup();
             }
             ImGui::SameLine(0.0f, 0.0f);
             ImGui::TextDisabled("%s  %s  %s", ShortSha(c.sha).c_str(), ShortDate(c.date).c_str(),
@@ -1197,19 +1337,39 @@ void SourceControlWindow::DrawHistory(SourceControlSession& scm)
 
 }
 
-void SourceControlWindow::DrawNode(const SourceControlModel& model, int index)
+void SourceControlWindow::DrawFileContext(SourceControlSession& scm, const SourceControlHost& host,
+                                         const std::string& path, bool folder,
+                                         const std::vector<std::string>& subtree)
 {
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+        if (folder) {
+            selected_ = subtree;
+        } else if (std::find(selected_.begin(), selected_.end(), path) == selected_.end()) {
+            selected_ = {path};
+        }
+        contextPaths_ = selected_;
+        contextFolder_ = folder;
+    }
+    if (ImGui::BeginPopupContextItem("###ScmFileContext")) {
+        DrawScmFileMenu(scm, host, contextPaths_, contextFolder_);
+        ImGui::EndPopup();
+    }
+}
+
+void SourceControlWindow::DrawNode(SourceControlSession& scm, const SourceControlHost& host, int index)
+{
+    const auto& model = scm.Model();
     const ScmNode& node = model.nodes[static_cast<size_t>(index)];
     // 行頭にバッジ、その右にラベル。
     // ★ImGui::SameLine(x) は**窓ローカルの絶対座標**で、TreePush が積んだインデントを
     //   見ない。固定値 (28.0f) を渡すと、深い階層の行ではラベルがバッジより左に来て
     //   **文字が重なる** (M66b のプローブで main.scene.json の頭が潰れた)。
     //   今の行の開始 x (= インデント込み) を基準にすること
-    constexpr float kBadgeWidth = 18.0f;
+    const float kBadgeWidth = ImGui::GetFontSize() * 3.0f;
     const float rowX = ImGui::GetCursorPosX();
     const char* badge = ChangeStateBadge(node.state);
     ImGui::PushStyleColor(ImGuiCol_Text, ScmBadgeColor(node.state));
-    ImGui::TextUnformatted(badge[0] != '\0' ? badge : " ");
+    ImGui::Text("%s %s", ScmStateIcon(node.state), badge[0] != '\0' ? badge : " ");
     ImGui::PopStyleColor();
     ImGui::SameLine(rowX + kBadgeWidth);
 
@@ -1235,12 +1395,16 @@ void SourceControlWindow::DrawNode(const SourceControlModel& model, int index)
         if (subtreeSelected) {
             flags |= ImGuiTreeNodeFlags_Selected;
         }
-        const bool opened = ImGui::TreeNodeEx(node.name.c_str(), flags);
+        // ラベルは空にして、フォルダアイコン (金) + 名前を上から描く (DrawItemIconLabel)
+        const bool opened = ImGui::TreeNodeEx("##folder", flags);
+        DrawItemIconLabel(FolderIcon(opened), FolderIconColor(ImGui::IsItemHovered()),
+                          node.name.c_str(), false);
         // ★IsItemToggledOpen を見ないと、矢印を押した / ダブルクリックで開いた
         //   フレームでも選択が動く (開閉のつもりの操作で選択が入れ替わる)
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
             ApplySubtreeSelection(selected_, subtree, ImGui::GetIO().KeyCtrl);
         }
+        DrawFileContext(scm, host, node.path, true, subtree);
         // ★ツールチップは**子を描く前**に出す (直前の項目 = このフォルダ行)。
         //   件数を出すのは「このフォルダを選ぶと何件動くか」を押す前に見せるため
         if (ImGui::IsItemHovered()) {
@@ -1251,7 +1415,7 @@ void SourceControlWindow::DrawNode(const SourceControlModel& model, int index)
         }
         if (opened) {
             for (const int child : node.children) {
-                DrawNode(model, child);
+                DrawNode(scm, host, child);
             }
             ImGui::TreePop();
         }
@@ -1263,7 +1427,10 @@ void SourceControlWindow::DrawNode(const SourceControlModel& model, int index)
     const bool isSelected =
         std::find(selected_.begin(), selected_.end(), entry.path) != selected_.end();
     ImGui::PushID(node.path.c_str());
-    if (ImGui::Selectable(node.name.c_str(), isSelected)) {
+    const char* typeIcon = FileTypeIconUtf8(node.path.c_str());
+    const bool clicked = ImGui::Selectable("##file", isSelected);
+    DrawSelectableIconLabel(typeIcon, FileIconColor(), node.name.c_str());
+    if (clicked) {
         // 行を選んだら差分の窓を開く (spec §4.3「選択時に開く」)。閉じたあとは
         // 次に選び直すまで開かない = 邪魔にならない。
         // ★**手前に出すところまでやる**。開くだけだと、同じドック束の別タブ
@@ -1285,11 +1452,16 @@ void SourceControlWindow::DrawNode(const SourceControlModel& model, int index)
             selected_.assign(1, entry.path);
         }
     }
+    DrawFileContext(scm, host, entry.path, false, {});
+    // ★ツールチップはファイル行 (Selectable) に付ける。幅の確保 (Dummy) やサイドカー件数の
+    //   後で IsItemHovered を見ると、判定がそちらへ移ってしまう
+    const bool rowHovered = ImGui::IsItemHovered();
     if (!entry.sidecars.empty()) {
+        ReserveItemIconLabel(typeIcon, node.name.c_str());
         ImGui::SameLine();
         ImGui::TextDisabled(Tr(StrId::Scm_SidecarCount), static_cast<int>(entry.sidecars.size()));
     }
-    if (ImGui::IsItemHovered()) {
+    if (rowHovered || ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         ImGui::TextUnformatted(entry.path.c_str());
         if (!entry.oldPath.empty()) {

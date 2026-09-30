@@ -13,6 +13,7 @@ namespace mye {
 // トグルボタン。ON = themeColor::AccentSoft (選択系) / mode=true なら PlayAccent 系
 // (地形ブラシ・カメラ操縦のような「別モードに入る」トグル)。tooltip は null 可
 bool ToolbarToggle(const char* label, bool on, const char* tooltip = nullptr, bool mode = false);
+bool IconMenuItem(const char* icon, const char* label, bool enabled = true);
 
 // フレーム高に揃えた縦の区切り線。テキスト "|" をベースライン描画すると
 // ボタンと縦位置が揃わないので、区切りは必ずこれを使う
@@ -60,6 +61,24 @@ private:
 // ラベルを "###id" で空にして上から描く方式。アイテム矩形でクリップする。
 // framed = CollapsingHeader (枠あり TreeNode)。false = Hierarchy の素の TreeNode
 void DrawItemIconLabel(const char* icon, const ImVec4& iconColor, const char* label, bool framed);
+// DrawItemIconLabel の Selectable 版 (ラベルを "##id" にした Selectable の文字位置へ描く)
+void DrawSelectableIconLabel(const char* icon, const ImVec4& iconColor, const char* label);
+// 空ラベルの項目は ItemSize にラベル幅が乗らず、直後の SameLine() (バッジ等) が
+// 上描きした名前へ重なる。アイコン + ラベル分の幅をここで確保してから後続を並べる。
+// ★Dummy を 1 つ置く = 「直前のアイテム」が変わるので、クリック / 右クリック /
+//   ツールチップを**全部さばいた後**に呼ぶこと
+void ReserveItemIconLabel(const char* icon, const char* label);
+
+// ---- ファイル種別アイコン (Source Control の変更一覧 / Asset Browser) ----
+// 種類の判定は AssetDatabase::ClassifyPath が先 (複合サフィックス .anim.json 等はあちらが正本)、
+// Unknown なら末尾の拡張子 (大小文字無視) で引く。どれにも当たらなければ汎用ファイル
+const char* FolderIcon(bool open);
+const char* FileTypeIcon(const wchar_t* path);
+const char* FileTypeIconUtf8(const char* path);
+// 色は種類で変えない。意味色 (Success/Warning/Error/Prefab) は Git の状態バッジが使うので、
+// 種類に流用すると状態と見分けられなくなる。フォルダだけ Asset Browser のタイルと同じ金
+ImVec4 FolderIconColor(bool hovered);
+ImVec4 FileIconColor();
 
 // ---- Source Control のバッジ (M66b の変更一覧 / M66i の Content Browser) ----
 // ★色の表は**ここ 1 箇所**に置く。窓ごとに持つと、意味の見直しやテーマ替えで
@@ -75,6 +94,7 @@ enum class ChangeState : uint8_t;
 //   Accent のバッジが載ると読めなくなる (M66i round 1 で実測)。
 //   SourceControlSelfTest (d3) が全状態について機械的に固定している
 ImVec4 ScmBadgeColor(ChangeState s);
+const char* ScmStateIcon(ChangeState s);
 
 // タイル (フォルダアイコン / サムネイル) の左上隅へバッジ文字を描く。
 // None なら何も描かない。**drawlist へ直接描く**のでアイテムを消費しない =

@@ -183,7 +183,7 @@ void DrawTreeBadge(ChangeState s)
         return;
     }
     ImGui::SameLine();
-    ImGui::TextColored(ScmBadgeColor(s), "%s", ChangeStateBadge(s));
+    ImGui::TextColored(ScmBadgeColor(s), "%s %s", ScmStateIcon(s), ChangeStateBadge(s));
 }
 
 } // namespace
@@ -226,7 +226,10 @@ void AssetBrowserWindow::DrawDirTree(EngineContext& ctx, const std::wstring& dir
         if (entry.path().wstring() == current_) {
             flags |= ImGuiTreeNodeFlags_Selected;
         }
-        const bool nodeOpen = ImGui::TreeNodeEx(name.c_str(), flags);
+        // ラベルは空にして、フォルダアイコン (金) + 名前を上から描く (DrawItemIconLabel)
+        const bool nodeOpen = ImGui::TreeNodeEx(name.c_str() /*ID*/, flags, "");
+        DrawItemIconLabel(FolderIcon(nodeOpen), FolderIconColor(ImGui::IsItemHovered()),
+                          name.c_str(), false);
         if (ImGui::IsItemClicked()) {
             current_ = entry.path().wstring();
         }
@@ -240,6 +243,7 @@ void AssetBrowserWindow::DrawDirTree(EngineContext& ctx, const std::wstring& dir
         }
         // 右クリック → Rename (M30d)。実行はモーダル確定時 (iterator 保護)
         if (ImGui::BeginPopupContextItem()) {
+            if (drawGitMenu) { drawGitMenu(entry.path().wstring(), true); }
             if (ImGui::MenuItem(Tr(StrId::Asset_RenameItem))) {
                 BeginRename(entry.path().wstring());
             }
@@ -247,7 +251,12 @@ void AssetBrowserWindow::DrawDirTree(EngineContext& ctx, const std::wstring& dir
         }
         // フォルダの集約バッジ (配下で最も重い状態。M66i)
         if (scm_ != nullptr) {
-            DrawTreeBadge(scm_->BadgeForFolder(entry.path().wstring()));
+            const ChangeState badge = scm_->BadgeForFolder(entry.path().wstring());
+            if (badge != ChangeState::None) {
+                // 空ラベルの TreeNode は名前の幅を持たないので、先に確保しないとバッジが名前に重なる
+                ReserveItemIconLabel(FolderIcon(nodeOpen), name.c_str());
+                DrawTreeBadge(badge);
+            }
         }
         if (nodeOpen) {
             DrawDirTree(ctx, entry.path().wstring());
@@ -486,9 +495,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             const ImVec2 ts = ImGui::CalcTextSize(ICON_FA_FOLDER);
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(mn.x + (kCell - ts.x) * 0.5f, mn.y + (kCell - ts.y) * 0.5f),
-                // 配色ルール (ImGuiTheme.h) の帯に収めた金 — 原色寄りの黄 (232,196,80) は目に刺さる
-                folderHovered ? IM_COL32(219, 194, 134, 255) : IM_COL32(199, 173, 112, 255),
-                ICON_FA_FOLDER);
+                ImGui::GetColorU32(FolderIconColor(folderHovered)), ICON_FA_FOLDER);
             ImGui::PopFont();
             // フォルダタイルの集約バッジ (M66i)。左上に重ねる = 名前を隠さない
             if (scm_ != nullptr) {
@@ -513,6 +520,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         }
         // 右クリック → Rename (M30d) / Duplicate / Delete (M51i)
         if (ImGui::BeginPopupContextItem("##folderctx")) {
+            if (drawGitMenu) { drawGitMenu(dirPath.wstring(), true); }
             if (ImGui::MenuItem(Tr(StrId::Asset_RenameItem))) {
                 BeginRename(dirPath.wstring());
             }
@@ -580,10 +588,25 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         // フォルダタイルと同じ流儀: 透明ボタンをアイテムにして絵は drawlist で重ねる
         ImGui::PushStyleColor(ImGuiCol_Button, thumb ? ImVec4(0, 0, 0, 0)
                                                      : ImGui::GetStyleColorVec4(ImGuiCol_Button));
-        ImGui::Button(thumb ? "##tile"
-                            : TileLabel(type, ext, path),
-                      ImVec2(kCell, kCell));
+        ImGui::Button("##tile", ImVec2(kCell, kCell));
         ImGui::PopStyleColor();
+        if (!thumb) {
+            // サムネイルが無いタイル: 種別アイコンを大きく中央に、種別の単語 (TileLabel) を下に小さく。
+            // 単語を残すのは、同じアイコンでも "img" (デコード待ち) / "model" (生成待ち) のように
+            // 状況を区別できるようにするため
+            const ImVec2 mn = ImGui::GetItemRectMin();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const char* icon = FileTypeIcon(path.c_str());
+            const char* word = TileLabel(type, ext, path);
+            ImGui::PushFont(nullptr, kCell * 0.45f);
+            const ImVec2 is = ImGui::CalcTextSize(icon);
+            dl->AddText(ImVec2(mn.x + (kCell - is.x) * 0.5f, mn.y + (kCell - is.y) * 0.42f),
+                        ImGui::GetColorU32(FileIconColor()), icon);
+            ImGui::PopFont();
+            const ImVec2 ws = ImGui::CalcTextSize(word);
+            dl->AddText(ImVec2(mn.x + (kCell - ws.x) * 0.5f, mn.y + kCell - ws.y - 4.0f),
+                        ImGui::GetColorU32(FileIconColor()), word);
+        }
         if (thumb) {
             const ImVec2 mn = ImGui::GetItemRectMin();
             const ImVec2 mx = ImGui::GetItemRectMax();
@@ -615,6 +638,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         // 右クリックメニュー: Rename (M30d) + Duplicate/Delete (M51i)
         // + 画像なら Import Settings (M39b) / DDS 圧縮 (M24)
         if (ImGui::BeginPopupContextItem("##filectx")) {
+            if (drawGitMenu) { drawGitMenu(path, false); }
             if (ImGui::MenuItem(Tr(StrId::Asset_RenameItem))) {
                 BeginRename(path);
             }

@@ -88,6 +88,7 @@ struct ScmNode {
 //   ままの値を返し、C++ が表示用に削る — 逆にするとサービス側の都合で
 //   「7 桁だと思っていたら 8 桁だった」のような表示専用のバグが増える
 struct CommitInfo {
+    int parents = -1;
     std::string sha;     // 40 桁
     std::string author;
     std::string date;    // 厳密 ISO-8601 (%aI)
@@ -96,6 +97,8 @@ struct CommitInfo {
 
 // 差分の子窓が読む内容 (M66c)。シーン JSON の意味付けはしない (v1.5)
 struct DiffView {
+    bool commit = false;
+    int parents = 0;
     std::string path;
     bool staged = false;
     std::string text;
@@ -106,6 +109,8 @@ struct DiffView {
 
 // Branches タブの 1 行 (M66e)。`branches` 応答の 1 件
 struct BranchInfo {
+    bool renameAllowed = false;
+    bool deleteAllowed = false;
     std::string name;     // 短縮名 ("main" / "origin/main")。checkout にそのまま渡す
     std::string oid;      // 先端のコミット (40 桁)
     std::string upstream; // 追跡先の短縮名。空 = 追跡なし
@@ -278,7 +283,8 @@ public:
     const std::string& ErrorCode() const { return errorCode_; }
     const std::string& ErrorDetail() const { return errorDetail_; }
     bool Busy() const { return client_.PendingCount() > 0; }
-    bool MergeInProgress() const { return mergeInProgress_; }
+    bool MergeInProgress() const { return mergeInProgress_ || !operation_.empty(); }
+    const std::string& Operation() const { return operation_; }
     bool RebaseInProgress() const { return rebaseInProgress_; }
     const std::string& Toplevel() const { return toplevel_; }
 
@@ -315,6 +321,11 @@ public:
     void Commit(const std::string& message, WriteDoneFn done = {});
     void RequestLog(int n);
     void RequestDiff(const std::string& path, bool staged);
+    void RequestCommitDiff(const std::string& sha);
+    using ActionPreviewDoneFn = std::function<void(bool, const nlohmann::json&, const std::string&)>;
+    void RequestActionPreview(const nlohmann::json& args, ActionPreviewDoneFn done);
+    void PrepareContextTargets(const std::vector<std::string>& paths);
+    const nlohmann::json& ContextTargets() const { return contextTargets_; }
     void RequestIdentity();
 
     const std::vector<CommitInfo>& History() const { return history_; }
@@ -366,6 +377,7 @@ public:
     //   ReloadHub の一括適用が掛かっていない状態で working tree を入れ替えると、
     //   エディタが掴んだままのファイルが下から差し替わる)
     void Checkout(const std::string& name, CheckoutDoneFn done);
+    void ExecuteAction(uint64_t token, CheckoutDoneFn done);
 
     // ---- M66f: fetch / pull / push / remote_state ----
     // fetch は working tree を触らないのでゲートを通さない (塞ぐのは WriteInFlight だけ)。
@@ -450,6 +462,10 @@ private:
     static Unavailable UnavailableFromCode(const std::string& code);
 
     CollabClient client_;
+    std::vector<std::string> contextTargetPaths_;
+    nlohmann::json contextTargets_;
+    uint64_t contextGeneration_ = 0;
+    bool contextTargetsPending_ = false;
     SourceControlModel model_;
     std::wstring projectRoot_;
     // NormalizePathKey(projectRoot_) を末尾の区切りを落として控えたもの (M66i)。
@@ -464,6 +480,7 @@ private:
     bool started_ = false;
     bool statusInFlight_ = false;
     bool mergeInProgress_ = false;
+    std::string operation_;
     bool rebaseInProgress_ = false;
     bool canonicalMismatch_ = false;
     bool headMoved_ = false;

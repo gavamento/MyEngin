@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <functional>
 
 #include "Editor/Scene/Selection.h"
 #include "Engine/Core/Asset/ImportMetaResolver.h"
@@ -24,6 +25,7 @@ const char* AssetTileLabel(const std::wstring& path);
 //   それ以外は OS 既定アプリで開く。
 class AssetBrowserWindow {
 public:
+    std::function<void(const std::wstring&, bool)> drawGitMenu;
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     // scm は Git バッジの引き先 (M66i)。**null 可** — 裸起動 / Collab 利用不可でも
     // Content Browser はバッジ無しで動く。窓の開閉とは無関係に status は最新なので、

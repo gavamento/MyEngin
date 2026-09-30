@@ -49,6 +49,8 @@ pub fn is_interesting(rel: &str) -> bool {
         return inside == "head"
             || inside == "index"
             || inside == "merge_head"
+            || inside == "cherry_pick_head" || inside == "revert_head"
+            || inside == "sequencer" || inside.starts_with("sequencer/")
             || inside.starts_with("refs/")
             || inside.starts_with("rebase-merge/")
             // rebase-apply = am 型のリベース。repo_check がこちらも「リベース中」と

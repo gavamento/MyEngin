@@ -101,6 +101,8 @@ public:
     // EditorApp が握っているものへの後処理の口。**GitTransaction に EngineContext 以外の
     // エディタ状態を持ち込まない**ため、必要なものだけ関数で受け取る
     struct Hooks {
+        std::function<std::vector<GateBlocker>()> freshBlockers;
+        std::function<void(const std::wstring&)> openPath;
         // シーンを開き直す (EditorApp::LoadSceneFromPath)。戻り値 = 実際に読めたか
         std::function<bool(const std::wstring&)> loadScene;
         // アクティブシーンがブランチ側で消えた -> 空シーンへ (EditorApp の NewScene 相当)
@@ -126,6 +128,7 @@ public:
     // ---- revert (M66d) ----
     // paths は toplevel 相対 '/' 区切り。untracked = そのうち「削除される」件数
     void RequestRevert(std::vector<std::string> paths, int untrackedCount);
+    void RequestAction(nlohmann::json args);
 
     // ---- checkout (M66e) ----
     // ブランチを切り替える。**押した瞬間には何もしない** — まず
@@ -165,6 +168,7 @@ private:
     //   「変更集合をどう決めるか」だけ — revert は実行前後のディスク、
     //   それ以外 (checkout / pull / merge_abort / continue) は git が返した `names`
     enum class OpKind : uint8_t {
+        Action,
         Revert,
         Checkout,
         Pull,
@@ -211,6 +215,9 @@ private:
     std::wstring AbsolutePathOf(EngineContext& ctx, const std::string& rel) const;
 
     Hooks hooks_;
+    nlohmann::json actionArgs_;
+    nlohmann::json actionPreview_;
+    bool actionChangesTree_ = false;
     Phase phase_ = Phase::Idle;
     OpKind op_ = OpKind::Revert;
 

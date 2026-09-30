@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include "Editor/SourceControl/SourceControlState.h"
 
 namespace mye {
 
@@ -38,6 +39,9 @@ private:
     bool LoadPerformanceResult();
 
     std::wstring repoRoot_;
+    SourceControlSession diffSession_;
+    bool diffSessionStarted_ = false;
+    bool diffOpen_ = false;
     std::wstring historyLogPath_;
     void* historyProcess_ = nullptr;
     bool historyRequested_ = false;

@@ -418,3 +418,32 @@ sub-12 が sub-11 に依存するのは、§14.6 に書く既知の制約の 1 �
 - 2026-09-04 (sub-12 round 1、coder の質問 1): §4.3 に「幅の規則」を新設 (左列 287 px では**文**は折り返す / **語**は折り返さない / 文言を短くして収めない / 基準は ja / 推測で全箇所を触らない)。受け入れ条件 21 を追加。review-1 #3 は 1 箇所の指摘だったが、同型が `DrawRemoteBar` の帯にも出ている (coder が ja で実測) ため、個別の指摘ではなく規則として置いた。窓には非折り返しの `TextDisabled` が 31 箇所あり、全部を推測で触るのは害のほうが大きい (ツリー行や横スクロールの子窓では折り返しが正しくない)。
 - 2026-09-04 (sub-12 round 1、coder の質問 2): 受け入れ条件 22 を追加。sub-11 で恒久化した `MYE_COLLAB_PROBE` の「失敗する commit」検査が、**未追跡ファイルが 1 個あるだけで飛ばされる** (`porcelain.rs:156-160` が未追跡を `index='?'` で返し、`StateFromStatusChar('?')` が `Untracked` ≠ `None` になるため)。fixture は必ず未追跡を持つので実質いつも空振り = 「テストがあるのに走っていない」。飛ばす条件は「index に staged がある / マージ途中」だけで足りる (未追跡だけなら commit は必ず失敗し、リポジトリは変わらない)。sub-12 round 2 の must。
 - 2026-09-04 (sub-12 round 2、coder SELF_EVAL): §5 の受け入れ条件 22 に「サイドカーだけが status に載った行は保守的に飛ばす」を追記。planner の指示 (「`Untracked` を除外」) だけでは不足で、`x.png.meta` **だけ**を stage した状態では本体行の `indexState` が `None` のまま (`SourceControlState.cpp:236-240` は `path == primary` のときしか内訳を入れない) = プローブが**成功する commit** を打ってリポジトリを変えてしまう。coder の追加 (`!primaryListed && stagedForCommit(state)`) を採用。過剰に飛ばす側 (サイドカーだけが worktree 変更されている行) は許容する。
+## 2026-10-01: Gitコンテキスト操作の拡張
+
+実装計画は [implementation_plan.md](../../docs/implementation_plan.md)、検証状態は
+[git-context-actions-implementation.md](../../docs/git-context-actions-implementation.md) に記録する。
+
+- `action_targets`（読取）はindex・statusからファイル／フォルダと既存サイドカーを列挙する。
+- `action_preview`（読取）は操作・対象・除外理由・元HEAD・変更予測・ignoreルールを返す。
+  workerは確認情報を1件保持し、単回使用のtokenを返す。新しいプレビューで古いtokenは無効になる。
+- `action_execute`（書込）はtokenだけを受け取り、HEAD・status・index・対象内容を再検証して実行する。
+  `success`・`completed`・`remaining`・`names`・`status`を返し、Gitが途中で失敗した場合も
+  変更済みファイルをEditorのGitTransactionへ渡す。`success:false`を成功表示しない。
+- `commit_diff`（読取）は完全SHAを受け取り、第1親との差分と親数・省略フラグを返す。
+  rootコミットは空ツリーと比較する。表示は読取専用で、外部diff/textconvは起動しない。
+- 操作種別はstage／unstage／discard／untrack／untrack_ignore／ignore、soft／mixed／commit_revert／cherry_pick、
+  branch_create／branch_rename／branch_delete。ファイル破棄とコミットrevertを区別する。
+- `operation`フィールドをstatus・repo_check・conflictsへ追加する。既存のmerge/rebaseフィールドの意味は維持する。
+  CHERRY_PICK_HEAD／REVERT_HEAD／sequencerを検出し、`continue`／`merge_abort`を実際の操作に振り分ける。
+  logに`parents`、ローカルブランチ情報に`renameAllowed`／`deleteAllowed`を追加する。
+- `.gitignore`は**確認開始から実行直前までのディスク上の変更を検出する**。
+  バイト列・存在・更新日時・サイズを照合し、変更時は再確認を要求する。未保存バッファ検出ではない。
+  追記中はWindowsの共有モードで他の書込を拒否し、BOM・既存バイト列・改行形式を保持する。
+  否定ルールが既存の同一ルールを無効にしている場合は、追跡解除前に停止する。
+- stageでは既存PairRuleに従って不足する.metaを確認プレビュー前に準備する。
+  取消し時にも準備済み.metaは保持し、indexは変更しない。untrackでは.metaを生成しない。
+- 履歴変更には未追跡を含むclean状態と通常のローカルブランチを要求する。
+  Editorの未保存・再生・ビルド等のゲートは実行直前にも再評価する。
+  マージコミットの適用、hard reset、強制削除、force pushは提供しない。
+- シンボリックリンク・submoduleなど通常ファイル以外の対象は、この拡張では安全側に拒否する。
+  C ABI・PROTO_VERSIONは変更しない。古いDLLの未知opは更新案内にする。

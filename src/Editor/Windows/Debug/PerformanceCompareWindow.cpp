@@ -9,6 +9,8 @@
 #include <string>
 
 #include "Editor/App/ChildProcess.h"
+#include "Editor/Widgets/EditorWidgets.h"
+#include "fontawesome/IconsFontAwesome6.h"
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Platform/PathUtil.h"
 #include "nlohmann/json.hpp"
@@ -231,6 +233,16 @@ void PerformanceCompareWindow::DrawGitline(float height)
             if (ImGui::Selectable(label.c_str(), selectedSha_ == row.sha, 0, ImVec2(0, rowHeight))) {
                 selectedSha_ = row.sha;
             }
+            if (ImGui::BeginPopupContextItem("###PerfCommitContext")) {
+                if (IconMenuItem(ICON_FA_CLOCK_ROTATE_LEFT, Tr(StrId::Scm_ActionBaseline))) { selectedSha_ = row.sha; }
+                if (IconMenuItem(ICON_FA_COPY, Tr(StrId::Scm_ActionCopySha))) { ImGui::SetClipboardText(row.sha.c_str()); }
+                if (IconMenuItem(ICON_FA_COPY, Tr(StrId::Scm_ActionCopySubject))) { ImGui::SetClipboardText(row.subject.c_str()); }
+                if (IconMenuItem(ICON_FA_FILE_LINES, Tr(StrId::Scm_ActionDiff), diffSession_.Ready())) {
+                    diffSession_.RequestCommitDiff(row.sha);
+                    diffOpen_ = true;
+                }
+                ImGui::EndPopup();
+            }
             ImGui::PopID();
         }
     }
@@ -258,11 +270,30 @@ void PerformanceCompareWindow::RunComparison()
 
 void PerformanceCompareWindow::OnImGui()
 {
+    if (diffSessionStarted_) { diffSession_.Poll(); }
+    if (diffOpen_) {
+        if (ImGui::Begin(Tr(StrId::Scm_ActionPerfDiff), &diffOpen_)) {
+            const auto& diff = diffSession_.Diff();
+            ImGui::TextWrapped("%s", WideToUtf8(repoRoot_).c_str());
+            ImGui::TextWrapped("%s", diff.path.c_str());
+            if (diff.parents > 1) { ImGui::TextWrapped("%s", Tr(StrId::Scm_ActionFirstParent)); }
+            if (diff.loading) { ImGui::TextUnformatted(Tr(StrId::Scm_Loading)); }
+            if (diff.truncated) { ImGui::TextWrapped("%s", Tr(StrId::Scm_DiffTruncated)); }
+            ImGui::BeginChild("###PerfDiffText", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+            ImGui::TextUnformatted(diff.text.c_str());
+            ImGui::EndChild();
+        }
+        ImGui::End();
+    }
     PollHistory();
     PollPerformanceCi();
     if (!open) return;
     if (!ImGui::Begin(Tr(StrId::Win_PerformanceCompare), &open)) { ImGui::End(); return; }
     if (repoRoot_.empty()) repoRoot_ = FindEngineRepoRoot();
+    if (!repoRoot_.empty() && !diffSessionStarted_) {
+        diffSession_.Start(GetExecutableDir(), repoRoot_, false, 0);
+        diffSessionStarted_ = true;
+    }
     if (repoRoot_.empty()) {
         ImGui::TextDisabled("%s", Tr(StrId::Prof_PerfNoRepo));
         ImGui::End();

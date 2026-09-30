@@ -187,6 +187,25 @@ void GitTransaction::UpdateActiveSceneRel()
         : std::string();
 }
 
+void GitTransaction::RequestAction(nlohmann::json args)
+{
+    if (phase_ != Phase::Idle) {
+        return;
+    }
+    op_ = OpKind::Action;
+    actionArgs_ = std::move(args);
+    actionPreview_ = {};
+    const std::string action = actionArgs_.value("action", std::string());
+    actionChangesTree_ = action == "discard" || action == "commit_revert" || action == "cherry_pick";
+    paths_.clear();
+    checkoutChanges_.clear();
+    reportPaths_.clear();
+    untrackedCount_ = 0;
+    conflictReport_ = false;
+    predictSent_ = false;
+    phase_ = Phase::Predict;
+}
+
 void GitTransaction::RequestRevert(std::vector<std::string> paths, int untrackedCount)
 {
     if (paths.empty() || phase_ != Phase::Idle) {
@@ -304,6 +323,25 @@ void GitTransaction::SendPredict(SourceControlSession& scm)
 {
     predictSent_ = true;
     UpdateActiveSceneRel();
+    if (op_ == OpKind::Action) {
+        scm.RequestActionPreview(actionArgs_, [this](bool ok, const nlohmann::json& preview,
+                                                     const std::string& detail) {
+            if (!ok) {
+                responseOk_ = false;
+                errorDetail_ = detail;
+                phase_ = Phase::Report;
+                return;
+            }
+            actionPreview_ = preview;
+            paths_ = preview.value("paths", std::vector<std::string>{});
+            StageInputs in;
+            in.changes = actionChangesTree_ ? ChangesFromNames(preview["names"]) : std::vector<StageChange>{};
+            in.activeScene = activeSceneRel_;
+            predicted_ = Classify(in);
+            phase_ = Phase::Confirm;
+        });
+        return;
+    }
     // ★向きは HEAD -> target。「共通祖先から」ではない — 知りたいのは
     //   **working tree に実際に降ってくるファイル**で、履歴の枝分かれではない
     scm.RequestDiffNames("HEAD", target_,
@@ -341,6 +379,34 @@ std::wstring GitTransaction::AbsolutePathOf(EngineContext& ctx, const std::strin
 
 void GitTransaction::BeginOp(EngineContext& ctx, SourceControlSession& scm)
 {
+    if (hooks_.freshBlockers) {
+        auto blockers = hooks_.freshBlockers();
+        if (op_ == OpKind::MergeAbort || op_ == OpKind::MergeContinue) {
+            blockers = BlockersForConflictOps(blockers);
+        }
+        if (!blockers.empty()) {
+            errorDetail_.clear();
+            for (const auto blocker : blockers) {
+                errorDetail_ += std::string(Tr(GateBlockerText(blocker))) + "\n";
+            }
+            responseOk_ = false;
+            phase_ = Phase::Report;
+            return;
+        }
+    }
+    if (op_ == OpKind::Action && !actionChangesTree_) {
+        phase_ = Phase::Running;
+        runningSince_ = ImGui::GetTime();
+        scm.ExecuteAction(actionPreview_.value("token", uint64_t{0}),
+            [this](const SourceControlSession::TreeOpResult& r) {
+                responseOk_ = r.ok;
+                errorCode_ = r.errorCode;
+                errorDetail_ = r.errorDetail;
+                reportText_ = Tr(StrId::Scm_ActionDone);
+                phase_ = Phase::Report;
+            });
+        return;
+    }
     // ---- 実行前処理 (spec §4.1) ----
     // 1) 音楽を止める。WAV の MusicStream は**ファイルを開いたまま**なので、
     //    git がそのファイルを書き換えられない (共有違反で checkout ごと失敗する)
@@ -399,6 +465,9 @@ void GitTransaction::BeginOp(EngineContext& ctx, SourceControlSession& scm)
             phase_ = Phase::Applying;
         };
         switch (op_) {
+        case OpKind::Action:
+            scm.ExecuteAction(actionPreview_.value("token", uint64_t{0}), onDone);
+            break;
         case OpKind::Pull:
             scm.Pull(allowMerge_, onDone);
             break;
@@ -620,6 +689,11 @@ void GitTransaction::ApplyResult(EngineContext& ctx, SourceControlSession& scm)
         phase_ = Phase::ConflictScan;
         return;
     }
+    if (!responseOk_ && (op_ == OpKind::Action || op_ == OpKind::MergeAbort || op_ == OpKind::MergeContinue)
+        && !checkoutChanges_.empty()) {
+        conflictReport_ = true;
+        responseOk_ = true;
+    }
     if (!responseOk_) {
         // 失敗。**必ず EndBatch を通す** — 通さないとホットリロードが止まったまま残る
         if (ctx.reloadHub != nullptr) {
@@ -704,6 +778,8 @@ void GitTransaction::ApplyResult(EngineContext& ctx, SourceControlSession& scm)
         } else if (op_ == OpKind::MergeContinue) {
             std::snprintf(buf, sizeof(buf), Tr(StrId::Scm_ContinueDone),
                           static_cast<int>(changes.size()));
+        } else if (op_ == OpKind::Action) {
+            std::snprintf(buf, sizeof(buf), "%s", Tr(StrId::Scm_ActionDone));
         } else {
             std::snprintf(buf, sizeof(buf), Tr(StrId::Scm_DiscardDone),
                           static_cast<int>(paths_.size()));
@@ -718,6 +794,7 @@ void GitTransaction::ApplyResult(EngineContext& ctx, SourceControlSession& scm)
     if (conflictReport_) {
         // マージ済みの分は適用した。残りは競合の報告 (一覧は窓の競合モードが持つ)
         conflictReport_ = false;
+        responseOk_ = false;
         phase_ = Phase::Report;
         return;
     }
@@ -769,10 +846,11 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 
     // モーダルの題名は op ごと。pull は「切替」でも「破棄」でもないので別に持つ
-    const StrId titleId = op_ == OpKind::Checkout ? StrId::Scm_SwitchTitle
+    const StrId titleId = op_ == OpKind::Action ? StrId::Scm_ActionTitle
+        : op_ == OpKind::Checkout ? StrId::Scm_SwitchTitle
         : op_ == OpKind::Pull                     ? StrId::Scm_PullTitle
-        : op_ == OpKind::MergeAbort               ? StrId::Scm_AbortTitle
-        : op_ == OpKind::MergeContinue            ? StrId::Scm_ContinueTitle
+        : op_ == OpKind::MergeAbort               ? StrId::Scm_ActionAbortTitle
+        : op_ == OpKind::MergeContinue            ? StrId::Scm_ActionContinueTitle
                                                   : StrId::Scm_DiscardTitle;
 
     if (phase_ == Phase::ConflictScan) {
@@ -807,7 +885,46 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
         const char* title = Tr(titleId);
         ImGui::OpenPopup(title);
         if (ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            if (op_ == OpKind::Checkout) {
+            if (op_ == OpKind::Action) {
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
+                const std::string action = actionArgs_.value("action", std::string());
+                ImGui::TextUnformatted(action.c_str());
+                ImGui::TextUnformatted(actionPreview_.value("root", std::string()).c_str());
+                ImGui::TextWrapped("%s", Tr(StrId::Scm_ActionReview));
+                ImGui::Text(Tr(StrId::Scm_SelectedCount), static_cast<int>(paths_.size()));
+                if (action == "stage") {
+                    ImGui::TextWrapped("%s", Tr(StrId::Scm_ActionStageNote));
+                }
+                if (action == "untrack" || action == "untrack_ignore") {
+                    ImGui::TextWrapped("%s", Tr(StrId::Scm_ActionUntrackNote));
+                }
+                if (action == "ignore" || action == "untrack_ignore") {
+                    ImGui::TextWrapped("%s", Tr(StrId::Scm_ActionIgnoreNote));
+                }
+                if (action == "soft" || action == "mixed") {
+                    ImGui::TextWrapped("%s", Tr(action == "soft" ? StrId::Scm_ActionSoftNote : StrId::Scm_ActionMixedNote));
+                }
+                if (action == "discard") {
+                    ImGui::TextWrapped("%s", Tr(StrId::Scm_ActionDiscardNote));
+                }
+                if (action == "branch_delete") {
+                    ImGui::TextWrapped("%s", Tr(StrId::Scm_ActionDeleteNote));
+                }
+                for (const char* key : {"head", "sha", "subject", "ref", "name", "newName"}) {
+                    if (actionPreview_.contains(key) && actionPreview_[key].is_string()) {
+                        ImGui::TextWrapped("%s: %s", key, actionPreview_[key].get_ref<const std::string&>().c_str());
+                    }
+                }
+                ImGui::TextWrapped("%s", Tr(StrId::Scm_ActionRecovery));
+                for (const auto& excluded : actionPreview_.value("excluded", nlohmann::json::array())) {
+                    ImGui::TextWrapped("%s: %s (%s)", Tr(StrId::Scm_ActionExcluded),
+                        excluded.value("path", std::string()).c_str(), excluded.value("reason", std::string()).c_str());
+                }
+                for (const auto& rule : actionPreview_.value("rules", nlohmann::json::array())) {
+                    ImGui::TextUnformatted(rule.get_ref<const std::string&>().c_str());
+                }
+                ImGui::PopTextWrapPos();
+            } else if (op_ == OpKind::Checkout) {
                 ImGui::Text(Tr(StrId::Scm_SwitchTo), target_.c_str());
                 ImGui::Text(Tr(StrId::Scm_SwitchBody), static_cast<int>(paths_.size()));
             } else if (op_ == OpKind::Pull) {
@@ -823,10 +940,12 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
                 // 中止で失われるのは「マージが降らせた分」。**元に戻せない**ので
                 // 件数だけでなく警告色で言う
                 ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
-                ImGui::TextUnformatted(Tr(StrId::Scm_AbortBody));
+                ImGui::TextWrapped(Tr(StrId::Scm_ActionInProgress), scm.Operation().c_str());
+                ImGui::TextWrapped("%s", Tr(StrId::Scm_ActionAbortNote));
                 ImGui::PopStyleColor();
             } else if (op_ == OpKind::MergeContinue) {
-                ImGui::Text(Tr(StrId::Scm_ContinueBody), static_cast<int>(paths_.size()));
+                ImGui::TextWrapped(Tr(StrId::Scm_ActionInProgress), scm.Operation().c_str());
+                ImGui::TextWrapped("%s", Tr(StrId::Scm_ActionContinueNote));
             } else {
                 ImGui::Text(Tr(StrId::Scm_DiscardBody), static_cast<int>(paths_.size()));
             }
@@ -839,7 +958,12 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
             if (ImGui::BeginChild("###ScmDiscardList", ImVec2(420.0f, 120.0f),
                                   ImGuiChildFlags_Borders)) {
                 for (const std::string& p : paths_) {
-                    ImGui::TextUnformatted(p.c_str());
+                    const auto absolute = AbsolutePathOf(ctx, p);
+                    const auto text = WideToUtf8(absolute);
+                    if (ImGui::Selectable(text.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups)
+                        && hooks_.openPath) {
+                        hooks_.openPath(absolute);
+                    }
                 }
             }
             ImGui::EndChild();
@@ -862,7 +986,8 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
                     ImGui::PopStyleColor();
                 }
             } else {
-                const StrId confirmId = op_ == OpKind::Checkout ? StrId::Scm_SwitchConfirm
+                const StrId confirmId = op_ == OpKind::Action ? StrId::Scm_ActionConfirm
+                    : op_ == OpKind::Checkout ? StrId::Scm_SwitchConfirm
                     : op_ == OpKind::Pull                       ? StrId::Scm_PullConfirm
                     : op_ == OpKind::MergeAbort                 ? StrId::Scm_AbortConfirm
                     : op_ == OpKind::MergeContinue              ? StrId::Scm_ContinueConfirm
@@ -961,6 +1086,7 @@ void GitTransaction::OnImGui(EngineContext& ctx, SourceControlSession& scm)
     if (ImGui::BeginPopupModal(Tr(StrId::Scm_RestartTitle), nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextWrapped("%s", Tr(StrId::Scm_RestartBody));
+        if (!errorDetail_.empty()) { ImGui::TextWrapped("%s", errorDetail_.c_str()); }
         if (restartFailed_) {
             // ★失敗しても閉じない。閉じると「あとで」と同じ状態になる。
             //   自力で起動し直してもらうしかないので、そう書いて出す

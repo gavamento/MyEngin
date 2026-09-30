@@ -112,6 +112,24 @@ bool RunSourceControlSelfTest()
 
     // ---- (a) 応答/通知の配線 (DLL 不要) ----
     {
+        check(CollabOpKindOf(collabop::kActionPreview) == CollabOpKind::Read
+                  && CollabOpKindOf(collabop::kActionTargets) == CollabOpKind::Read
+                  && CollabOpKindOf(collabop::kCommitDiff) == CollabOpKind::Read
+                  && CollabOpKindOf(collabop::kActionExecute) == CollabOpKind::Write,
+              "context actions: previews time out safely; execution never times out");
+        SourceControlSession scm;
+        scm.Start(L"", L"", false, 0);
+        scm.Client().DispatchLine("{\"event\":\"status_changed\",\"status\":{\"entries\":[],\"operation\":\"cherry-pick\"}}");
+        check(scm.MergeInProgress() && scm.Operation() == "cherry-pick",
+              "external cherry-pick state closes the normal write gate");
+        scm.Client().DispatchLine("{\"event\":\"status_changed\",\"status\":{\"entries\":[],\"operation\":\"revert\"}}");
+        check(scm.MergeInProgress() && scm.Operation() == "revert",
+              "external revert state survives status refresh");
+        scm.Client().DispatchLine("{\"event\":\"status_changed\",\"status\":{\"entries\":[]}}");
+        check(!scm.MergeInProgress(), "missing optional operation field remains compatible");
+        scm.Shutdown();
+    }
+    {
         CollabClient client;
         int called = 0;
         std::string gotVersion;

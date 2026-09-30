@@ -8,6 +8,7 @@
 
 #include "Editor/SourceControl/PairRule.h"
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Localization/Localization.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
 #include "Engine/Engine/App/Project.h"
 #include "Engine/Platform/PathUtil.h"
@@ -560,6 +561,7 @@ void SourceControlSession::FlushHints()
 
 void SourceControlSession::ApplyStatusResult(const nlohmann::json& result)
 {
+    if (!contextTargetsPending_) { contextTargets_ = nlohmann::json(); }
     model_ = BuildModel(result);
     errorCode_.clear();
     errorDetail_.clear();
@@ -568,8 +570,9 @@ void SourceControlSession::ApplyStatusResult(const nlohmann::json& result)
     //   起動時の残骸トースト (mergeWarned_) は repo_check だけが立てる —
     //   ここで立てると、自分で起こした競合にも「前回の残骸です」と出る
     mergeInProgress_ = result.value("mergeInProgress", mergeInProgress_);
+    operation_ = result.value("operation", std::string());
     rebaseInProgress_ = result.value("rebaseInProgress", rebaseInProgress_);
-    if (mergeInProgress_ || rebaseInProgress_ || model_.HasConflict()) {
+    if (MergeInProgress() || rebaseInProgress_ || model_.HasConflict()) {
         // 競合中は一覧を status と同じ頻度で取り直す。**窓が開いていなくても**
         // 保存のガード (IsConflictedPath) がこの一覧を読むので、窓の描画に
         // 取得を紐付けない
@@ -885,6 +888,7 @@ void SourceControlSession::RequestLog(int n)
                 info.author = c.value("author", std::string());
                 info.date = c.value("date", std::string());
                 info.subject = c.value("subject", std::string());
+                info.parents = c.value("parents", -1);
                 history_.push_back(std::move(info));
             }
         }
@@ -902,6 +906,8 @@ void SourceControlSession::RequestDiff(const std::string& path, bool staged)
     // 応答が返る前に別の行を選んでも、最後に投げた要求の結果だけが残るように
     // 「今どのパスを見ているか」を先に確定させる
     diff_.path = path;
+    diff_.commit = false;
+    diff_.parents = 0;
     diff_.staged = staged;
     diff_.loading = true;
     client_.Request(collabop::kDiff, { { "path", path }, { "staged", staged } },
@@ -909,7 +915,7 @@ void SourceControlSession::RequestDiff(const std::string& path, bool staged)
                         // 先行して投げた別パスの応答が後から来ることがある。
                         // 今見ているものと違えば捨てる (捨てないと一覧の選択と
                         // 差分の中身が食い違ったまま残る)
-                        if (diff_.path != path || diff_.staged != staged) {
+                        if (diff_.commit || diff_.path != path || diff_.staged != staged) {
                             return;
                         }
                         diff_.loading = false;
@@ -923,6 +929,107 @@ void SourceControlSession::RequestDiff(const std::string& path, bool staged)
                         diff_.truncated = msg["result"].value("truncated", false);
                         diff_.valid = true;
                     });
+}
+
+void SourceControlSession::RequestCommitDiff(const std::string& sha)
+{
+    if (!Ready() || sha.empty()) {
+        return;
+    }
+    diff_ = {};
+    diff_.commit = true;
+    diff_.path = sha;
+    diff_.loading = true;
+    client_.Request(collabop::kCommitDiff, {{"sha", sha}}, [this, sha](const nlohmann::json& msg) {
+        if (!diff_.commit || diff_.path != sha) {
+            return;
+        }
+        diff_.loading = false;
+        diff_.valid = true;
+        if (!msg.value("ok", false)) {
+            ApplyError(msg);
+            diff_.text = errorDetail_;
+            return;
+        }
+        const auto& r = msg["result"];
+        diff_.text = r.value("text", std::string());
+        diff_.truncated = r.value("truncated", false);
+        diff_.parents = r.value("parents", 0);
+    });
+}
+
+void SourceControlSession::PrepareContextTargets(const std::vector<std::string>& paths)
+{
+    if (!Ready() || paths.empty()) { return; }
+    if (contextTargetPaths_ == paths && (contextTargetsPending_ || !contextTargets_.is_null())) { return; }
+    contextTargetPaths_ = paths;
+    contextTargets_ = nlohmann::json();
+    contextTargetsPending_ = true;
+    const uint64_t generation = ++contextGeneration_;
+    client_.Request(collabop::kActionTargets, {{"paths", paths}}, [this, generation](const nlohmann::json& msg) {
+        if (generation != contextGeneration_) { return; }
+        contextTargetsPending_ = false;
+        if (msg.value("ok", false)) { contextTargets_ = msg["result"]; }
+        else {
+            ApplyError(msg);
+            contextTargets_ = {{"error", errorDetail_.find("unknown op") != std::string::npos
+                ? std::string(Tr(StrId::Scm_ActionUpdateService)) : errorDetail_}};
+        }
+    });
+}
+
+void SourceControlSession::RequestActionPreview(const nlohmann::json& args, ActionPreviewDoneFn done)
+{
+    if (!Ready() || WriteInFlight()) {
+        done(false, {}, Tr(StrId::Scm_Busy));
+        return;
+    }
+    if (args.value("action", std::string()) == "stage") {
+        // Preserve StageRows' asset identity preparation before taking the confirmation snapshot.
+        std::vector<PairedEntry> rows;
+        const auto selected = args.value("paths", std::vector<std::string>{});
+        for (const auto& row : model_.entries) {
+            for (const auto& path : selected) {
+                if (row.path == path || row.path.starts_with(path + "/")) {
+                    rows.push_back(row);
+                    break;
+                }
+            }
+        }
+        const auto plan = pairrule::Collect(rows, [this](const std::string& path) {
+            std::error_code ec;
+            return std::filesystem::exists(AbsolutePathOf(path), ec);
+        });
+        for (const auto& path : plan.toEnsureMeta) {
+            if (AssetDatabase::EnsureMeta(AbsolutePathOf(path)) == 0) {
+                done(false, {}, Tr(StrId::Scm_ActionMetaFailed));
+                return;
+            }
+        }
+    }
+    client_.Request(collabop::kActionPreview, args, [this, done](const nlohmann::json& msg) {
+        if (!msg.value("ok", false)) {
+            ApplyError(msg);
+            const std::string detail = errorCode_ == collaberr::kBadRequest
+                && errorDetail_.find("unknown op") != std::string::npos
+                ? Tr(StrId::Scm_ActionUpdateService) : errorDetail_;
+            done(false, {}, detail);
+            return;
+        }
+        done(true, msg["result"], {});
+    });
+}
+
+void SourceControlSession::ExecuteAction(uint64_t token, CheckoutDoneFn done)
+{
+    SendTreeOp(collabop::kActionExecute, {{"token", token}},
+        [this, done](const TreeOpResult& r) {
+            RequestStatus();
+            RequestBranches();
+            RequestLog(historyCount_ > 0 ? historyCount_ : 50);
+            RequestRemoteState();
+            done(r);
+        }, {});
 }
 
 void SourceControlSession::RequestIdentity()
@@ -1000,6 +1107,8 @@ BranchList BuildBranchList(const nlohmann::json& r)
             }
             info.oid = b.value("oid", std::string());
             info.upstream = b.value("upstream", std::string());
+            info.renameAllowed = b.value("renameAllowed", false);
+            info.deleteAllowed = b.value("deleteAllowed", false);
             dst.push_back(std::move(info));
         }
     };
@@ -1170,6 +1279,20 @@ void SourceControlSession::SendTreeOp(const char* op, const nlohmann::json& args
                         if (p.is_string()) {
                             r.errorPaths.push_back(p.get<std::string>());
                         }
+                    }
+                }
+            }
+            if (msg.contains("result") && msg["result"].contains("success")) {
+                const auto& result = msg["result"];
+                r.ok = result.value("success", false);
+                if (!r.ok) {
+                    r.errorCode = result["error"].value("code", std::string());
+                    r.errorDetail = result["error"].value("detail", std::string());
+                    if (result.contains("completed")) {
+                        r.errorDetail += "\n" + std::string(Tr(StrId::Scm_ActionCompleted))
+                            + " " + result["completed"].dump();
+                        r.errorDetail += "\n" + std::string(Tr(StrId::Scm_ActionRemaining))
+                            + " " + result["remaining"].dump();
                     }
                 }
             }

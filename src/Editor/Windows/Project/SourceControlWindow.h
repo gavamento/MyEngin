@@ -14,6 +14,8 @@ namespace mye {
 //   ような越境が書けてしまう。頼めるのは**保存**と**破棄の要求**だけに絞る
 //   (実際の破棄は GitTransaction が確認モーダルとゲートを通してから実行する)
 struct SourceControlHost {
+    std::function<void(nlohmann::json)> requestAction;
+    std::function<void(const std::string&)> requestDiff;
     // 今開いている文書 (シーン or ミニシーン編集中のアセット) に未保存の変更があるか
     bool sceneDirty = false;
     // 保存を実行し、保存した文書の**絶対パス**を返す。
@@ -52,6 +54,9 @@ struct SourceControlHost {
     std::function<void()> applyGitignore;
     std::function<void(const std::string&)> openExternalUrl;
 };
+
+void DrawScmFileMenu(SourceControlSession& scm, const SourceControlHost& host,
+                     const std::vector<std::string>& paths, bool folder);
 
 // 「保存してコミット」の 3 手 (spec §4.1「commit 周り」、M66k)。
 // **1 手目 (保存) が失敗したら stage も commit もしない** — そのまま commit すると
@@ -120,14 +125,17 @@ private:
     // 上流との関係の帯 + fetch / pull / push の 3 ボタン (M66f)
     void DrawRemoteBar(SourceControlSession& scm, const SourceControlHost& host);
     void DrawBranches(SourceControlSession& scm, const SourceControlHost& host);
+    void DrawBranchDialog(SourceControlSession& scm, const SourceControlHost& host);
     void DrawDiffWindow(SourceControlSession& scm);
     // compact = 窓が低いとき (ラベルを省いて入力欄を 2 行にする)
     void DrawCommitBox(SourceControlSession& scm, const SourceControlHost& host, bool compact);
     // 今の入力欄を commit へ投げる。**成功応答を受けてから**入力欄を空にする (M66k)
     void SubmitCommit(SourceControlSession& scm);
-    void DrawHistory(SourceControlSession& scm);
+    void DrawHistory(SourceControlSession& scm, const SourceControlHost& host);
     // ツリーを 1 ノード分描く (再帰)
-    void DrawNode(const SourceControlModel& model, int index);
+    void DrawNode(SourceControlSession& scm, const SourceControlHost& host, int index);
+    void DrawFileContext(SourceControlSession& scm, const SourceControlHost& host,
+                         const std::string& path, bool folder, const std::vector<std::string>& subtree);
     // ゲートが閉じている理由をツールチップに出す (直前の項目に対して)
     static void DrawBlockerTooltip(const std::vector<GateBlocker>& blockers);
     // 行の集合 -> revert に渡すパスと「削除される件数」
@@ -139,6 +147,12 @@ private:
     void SyncDiffRequest(SourceControlSession& scm);
 
     std::vector<std::string> selected_; // 選択中の本体パス (path 昇順を保つ)
+    std::vector<std::string> contextPaths_;
+    bool contextFolder_ = false;
+    std::string branchFrom_;
+    std::string renameBranch_;
+    CommitInfo contextCommit_;
+    BranchInfo contextBranch_;
     // コミット本文。**固定バッファ**にしているのは、この版の ImGui に
     // std::string 版の InputText (misc/cpp/imgui_stdlib) を組み込んでいないため
     // (external/imgui/misc/cpp が無い)。1 KB は subject + 本文数行に十分

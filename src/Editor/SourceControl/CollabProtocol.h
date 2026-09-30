@@ -16,6 +16,10 @@ constexpr int kCollabProtoVersion = 1;
 // op 名 (spec §4.1 で v1 に凍結)。文字列直書きを避けるのは、綴り違いが
 // bad_request として**実行時にしか**現れないため
 namespace collabop {
+constexpr const char* kActionTargets = "action_targets";
+constexpr const char* kActionPreview = "action_preview";
+constexpr const char* kActionExecute = "action_execute";
+constexpr const char* kCommitDiff = "commit_diff";
 constexpr const char* kHello = "hello";
 constexpr const char* kRepoCheck = "repo_check";
 constexpr const char* kStatus = "status";
@@ -85,6 +89,7 @@ inline CollabOpKind CollabOpKindOf(std::string_view op)
     }
     // 読み取り系 = リポジトリを 1 バイトも変えない op
     constexpr std::string_view kReadOps[] = {
+        "action_targets", "action_preview", "commit_diff",
         "repo_check", "status", "log",      "diff",         "diff_names",
         "branches",   "conflicts", "remote_state", "identity_check", "hint_changed",
     };

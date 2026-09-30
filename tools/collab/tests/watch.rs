@@ -16,6 +16,10 @@ fn git_internals_are_filtered_to_the_five_interesting_paths() {
     assert!(is_interesting(".git/HEAD"));
     assert!(is_interesting(".git/index"));
     assert!(is_interesting(".git/MERGE_HEAD"));
+    assert!(is_interesting(".git/CHERRY_PICK_HEAD"));
+    assert!(is_interesting(".git/REVERT_HEAD"));
+    assert!(is_interesting(".git/sequencer"));
+    assert!(is_interesting(".git/sequencer/todo"));
     assert!(is_interesting(".git/refs/heads/main"));
     assert!(is_interesting(".git/refs/remotes/origin/main"));
     assert!(is_interesting(".git/rebase-merge/done"));

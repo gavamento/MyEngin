@@ -1,11 +1,17 @@
 #include "Editor/Widgets/EditorWidgets.h"
 
 #include <algorithm>
+#include <cwctype>
+#include <filesystem>
+#include <string>
 
 #include "Editor/SourceControl/SourceControlState.h" // ChangeState / ChangeStateBadge (M66i)
+#include "Engine/Engine/Asset/AssetDatabase.h"       // ClassifyPath (ファイル種別アイコン)
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/ImGui/ImGuiTheme.h"
 
 #include "imgui.h"
+#include "fontawesome/IconsFontAwesome6.h"
 #include "imgui_internal.h" // SeparatorEx (縦区切り)
 
 namespace mye {
@@ -18,7 +24,27 @@ ImVec4 Lighten(const ImVec4& c, float k)
                   c.w);
 }
 
+// pos (スクリーン座標) から「色付きアイコン + 通常色ラベル」を描く。直前のアイテム矩形でクリップする
+void DrawIconLabelAt(ImVec2 pos, const char* icon, const ImVec4& iconColor, const char* label)
+{
+    const ImVec2 mn = ImGui::GetItemRectMin();
+    const ImVec2 mx = ImGui::GetItemRectMax();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec4 clip(mn.x, mn.y, mx.x, mx.y);
+    ImFont* font = ImGui::GetFont();
+    const float size = ImGui::GetFontSize();
+    dl->AddText(font, size, pos, ImGui::GetColorU32(iconColor), icon, nullptr, 0.0f, &clip);
+    pos.x += ImGui::CalcTextSize(icon).x + ImGui::GetStyle().ItemInnerSpacing.x;
+    dl->AddText(font, size, pos, ImGui::GetColorU32(ImGuiCol_Text), label, nullptr, 0.0f, &clip);
+}
+
 } // namespace
+
+bool IconMenuItem(const char* icon, const char* label, bool enabled)
+{
+    const std::string text = std::string(icon) + " " + label;
+    return ImGui::MenuItem(text.c_str(), nullptr, false, enabled);
+}
 
 bool ToolbarToggle(const char* label, bool on, const char* tooltip, bool mode)
 {
@@ -147,16 +173,127 @@ void DrawItemIconLabel(const char* icon, const ImVec4& iconColor, const char* la
     // text_offset_y = framed ? FramePadding.y : 0)。imgui 更新で描画がズレたらここを疑う
     const ImGuiStyle& style = ImGui::GetStyle();
     const ImVec2 mn = ImGui::GetItemRectMin();
-    const ImVec2 mx = ImGui::GetItemRectMax();
-    ImVec2 pos(mn.x + ImGui::GetFontSize() + style.FramePadding.x * (framed ? 3.0f : 2.0f),
-               mn.y + (framed ? style.FramePadding.y : 0.0f));
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec4 clip(mn.x, mn.y, mx.x, mx.y);
-    ImFont* font = ImGui::GetFont();
-    const float size = ImGui::GetFontSize();
-    dl->AddText(font, size, pos, ImGui::GetColorU32(iconColor), icon, nullptr, 0.0f, &clip);
-    pos.x += ImGui::CalcTextSize(icon).x + style.ItemInnerSpacing.x;
-    dl->AddText(font, size, pos, ImGui::GetColorU32(ImGuiCol_Text), label, nullptr, 0.0f, &clip);
+    DrawIconLabelAt(ImVec2(mn.x + ImGui::GetFontSize() + style.FramePadding.x * (framed ? 3.0f : 2.0f),
+                           mn.y + (framed ? style.FramePadding.y : 0.0f)),
+                    icon, iconColor, label);
+}
+
+void DrawSelectableIconLabel(const char* icon, const ImVec4& iconColor, const char* label)
+{
+    // Selectable は項目矩形を ItemSpacing の半分 (切り捨て) だけ左上へ広げ、文字は元の位置に置く
+    // (imgui 1.92 Selectable の spacing_L / spacing_U)
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const ImVec2 mn = ImGui::GetItemRectMin();
+    DrawIconLabelAt(ImVec2(mn.x + IM_TRUNC(style.ItemSpacing.x * 0.5f),
+                           mn.y + IM_TRUNC(style.ItemSpacing.y * 0.5f)),
+                    icon, iconColor, label);
+}
+
+void ReserveItemIconLabel(const char* icon, const char* label)
+{
+    const float width = ImGui::CalcTextSize(icon).x + ImGui::GetStyle().ItemInnerSpacing.x
+        + ImGui::CalcTextSize(label).x;
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::Dummy(ImVec2(width, 0.0f));
+}
+
+const char* FolderIcon(bool open)
+{
+    return open ? ICON_FA_FOLDER_OPEN : ICON_FA_FOLDER;
+}
+
+const char* FileTypeIcon(const wchar_t* path)
+{
+    switch (AssetDatabase::ClassifyPath(path)) {
+    case AssetType::Texture: return ICON_FA_FILE_IMAGE;
+    case AssetType::Model: return ICON_FA_CUBE;
+    case AssetType::Prefab:
+    case AssetType::Actor: return ICON_FA_CUBES;
+    case AssetType::Scene: return ICON_FA_MAP;
+    case AssetType::Anim: return ICON_FA_PERSON_RUNNING;
+    case AssetType::Controller: return ICON_FA_DIAGRAM_PROJECT;
+    case AssetType::Material: return ICON_FA_PALETTE;
+    case AssetType::PhysMat: return ICON_FA_BASKETBALL;
+    case AssetType::Audio: return ICON_FA_FILE_AUDIO;
+    case AssetType::Sound: return ICON_FA_VOLUME_HIGH;
+    case AssetType::Mixer: return ICON_FA_SLIDERS;
+    case AssetType::Shader: return ICON_FA_WAND_MAGIC_SPARKLES;
+    case AssetType::Script: return ICON_FA_FILE_CODE;
+    case AssetType::Schema: return ICON_FA_TABLE;
+    case AssetType::Terrain: return ICON_FA_MOUNTAIN;
+    case AssetType::FxStack: return ICON_FA_LAYER_GROUP;
+    case AssetType::Fracture: return ICON_FA_BURST;
+    default: break;
+    }
+    // エンジンのアセット種別に無いもの (ソースコード・文書・動画など) は末尾の拡張子で引く
+    std::wstring ext = std::filesystem::path(path).extension().wstring();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
+    struct ExtIcon {
+        const wchar_t* ext;
+        const char* icon;
+    };
+    static const ExtIcon kExtIcons[] = {
+        { L".png", ICON_FA_FILE_IMAGE },  { L".jpg", ICON_FA_FILE_IMAGE },
+        { L".jpeg", ICON_FA_FILE_IMAGE }, { L".tga", ICON_FA_FILE_IMAGE },
+        { L".bmp", ICON_FA_FILE_IMAGE },  { L".dds", ICON_FA_FILE_IMAGE },
+        { L".hdr", ICON_FA_FILE_IMAGE },  { L".psd", ICON_FA_FILE_IMAGE },
+        { L".mp3", ICON_FA_FILE_AUDIO },  { L".flac", ICON_FA_FILE_AUDIO },
+        { L".cpp", ICON_FA_FILE_CODE },   { L".c", ICON_FA_FILE_CODE },
+        { L".cc", ICON_FA_FILE_CODE },    { L".h", ICON_FA_FILE_CODE },
+        { L".hpp", ICON_FA_FILE_CODE },   { L".inl", ICON_FA_FILE_CODE },
+        { L".cs", ICON_FA_FILE_CODE },    { L".rs", ICON_FA_FILE_CODE },
+        { L".py", ICON_FA_FILE_CODE },    { L".ps1", ICON_FA_FILE_CODE },
+        { L".bat", ICON_FA_FILE_CODE },   { L".cmd", ICON_FA_FILE_CODE },
+        { L".sh", ICON_FA_FILE_CODE },    { L".hlsl", ICON_FA_WAND_MAGIC_SPARKLES },
+        { L".hlsli", ICON_FA_WAND_MAGIC_SPARKLES },
+        { L".json", ICON_FA_FILE_LINES }, { L".ndjson", ICON_FA_FILE_LINES },
+        { L".md", ICON_FA_FILE_LINES },   { L".txt", ICON_FA_FILE_LINES },
+        { L".yml", ICON_FA_FILE_LINES },  { L".yaml", ICON_FA_FILE_LINES },
+        { L".toml", ICON_FA_FILE_LINES }, { L".ini", ICON_FA_FILE_LINES },
+        { L".xml", ICON_FA_FILE_LINES },  { L".csv", ICON_FA_FILE_CSV },
+        { L".mp4", ICON_FA_FILE_VIDEO },  { L".webm", ICON_FA_FILE_VIDEO },
+        { L".avi", ICON_FA_FILE_VIDEO },  { L".mov", ICON_FA_FILE_VIDEO },
+        { L".mkv", ICON_FA_FILE_VIDEO },  { L".zip", ICON_FA_FILE_ZIPPER },
+        { L".7z", ICON_FA_FILE_ZIPPER },  { L".glb", ICON_FA_CUBE },
+        { L".gltf", ICON_FA_CUBE },       { L".fbx", ICON_FA_CUBE },
+        { L".obj", ICON_FA_CUBE },
+    };
+    for (const ExtIcon& e : kExtIcons) {
+        if (ext == e.ext) {
+            return e.icon;
+        }
+    }
+    return ICON_FA_FILE;
+}
+
+const char* FileTypeIconUtf8(const char* path)
+{
+    return FileTypeIcon(Utf8ToWide(path).c_str());
+}
+
+ImVec4 FolderIconColor(bool hovered)
+{
+    // 配色ルール (ImGuiTheme.h) の帯に収めた金 — 原色寄りの黄 (232,196,80) は目に刺さる
+    return hovered ? ImVec4(219.0f / 255.0f, 194.0f / 255.0f, 134.0f / 255.0f, 1.0f)
+                   : ImVec4(199.0f / 255.0f, 173.0f / 255.0f, 112.0f / 255.0f, 1.0f);
+}
+
+ImVec4 FileIconColor()
+{
+    return ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+}
+
+const char* ScmStateIcon(ChangeState s)
+{
+    switch (s) {
+    case ChangeState::Modified: return ICON_FA_PEN;
+    case ChangeState::Added: return ICON_FA_PLUS;
+    case ChangeState::Deleted: return ICON_FA_TRASH;
+    case ChangeState::Renamed: return ICON_FA_ARROW_RIGHT;
+    case ChangeState::Untracked: return ICON_FA_QUESTION;
+    case ChangeState::Conflict: return ICON_FA_TRIANGLE_EXCLAMATION;
+    default: return "";
+    }
 }
 
 ImVec4 ScmBadgeColor(ChangeState s)
@@ -182,7 +319,8 @@ ImVec4 ScmBadgeColor(ChangeState s)
 
 void DrawScmTileBadge(ChangeState s, const ImVec2& tileMin)
 {
-    const char* text = ChangeStateBadge(s);
+    const std::string badge = std::string(ScmStateIcon(s)) + " " + ChangeStateBadge(s);
+    const char* text = s == ChangeState::None ? "" : badge.c_str();
     if (text[0] == '\0') {
         return;
     }

@@ -15,8 +15,12 @@ use crate::git;
 use crate::porcelain;
 use crate::protocol::{self, code, event, ErrorBody};
 
+mod actions;
+
 /// worker スレッドが 1 本だけ持つ状態。**sim にも UI にも触らない**
 pub struct State {
+    action_preview: Option<actions::Preview>,
+    action_serial: u64,
     pub root: PathBuf,
     /// hello で受け取る設定 (M66f: worker のタイマーがこの 2 つを読む)
     pub fetch_interval_min: i64,
@@ -51,6 +55,8 @@ pub struct State {
 impl State {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         State {
+            action_preview: None,
+            action_serial: 0,
             root: root.into(),
             fetch_interval_min: 5,
             auto_fetch: true,
@@ -75,6 +81,10 @@ pub type Dispatcher = fn(&mut State, &str, &Value) -> Result<Value, ErrorBody>;
 
 pub fn dispatch(state: &mut State, op: &str, args: &Value) -> Result<Value, ErrorBody> {
     match op {
+        "action_targets" => actions::targets(state, args),
+        "action_preview" => actions::preview(state, args),
+        "action_execute" => actions::execute(state, args),
+        "commit_diff" => actions::commit_diff(state, args),
         "hello" => hello(state, args),
         "repo_check" => repo_check(state),
         "status" => status(state),
@@ -202,6 +212,7 @@ fn repo_check(state: &mut State) -> Result<Value, ErrorBody> {
         "head": head,
         "mergeInProgress": merging,
         "rebaseInProgress": rebasing,
+        "operation": actions::operation(state),
     }))
 }
 
@@ -285,6 +296,7 @@ fn build_status(state: &mut State) -> Result<Value, ErrorBody> {
         "behind": info.behind,
         "mergeInProgress": merging,
         "rebaseInProgress": rebasing,
+        "operation": actions::operation(state),
         // porcelain の `# branch.oid`。**ここに載せておくと HEAD の移動検知に
         // rev-parse を 1 回も足さずに済む** (未出生ブランチでは空文字列)
         "head": info.oid,
@@ -338,7 +350,7 @@ fn arg_paths(args: &Value) -> Result<Vec<String>, ErrorBody> {
         if s.is_empty() {
             return Err(ErrorBody::new(code::BAD_REQUEST, "empty path"));
         }
-        if s.starts_with('-') {
+        if s.starts_with('/') || s.contains(['\\', ':', '\0']) {
             return Err(ErrorBody::new(code::BAD_REQUEST, format!("path looks like an option: {s}")));
         }
         if s.split('/').any(|seg| seg == "..") {
@@ -355,7 +367,7 @@ fn arg_paths(args: &Value) -> Result<Vec<String>, ErrorBody> {
 
 /// パス群に対して git を 1 回叩く (上限で分割)。失敗した時点で止めて分類済みエラーを返す
 fn run_per_path_chunk(state: &State, head: &[&str], paths: &[String]) -> Result<(), ErrorBody> {
-    for chunk in paths.chunks(MAX_PATHS_PER_CALL) {
+    for chunk in path_chunks(paths) {
         let mut argv: Vec<&str> = head.to_vec();
         argv.push("--");
         let literal_paths: Vec<String> = chunk.iter().map(|p| format!(":(literal){p}")).collect();
@@ -368,6 +380,24 @@ fn run_per_path_chunk(state: &State, head: &[&str], paths: &[String]) -> Result<
         }
     }
     Ok(())
+}
+
+fn path_chunks(paths: &[String]) -> Vec<&[String]> {
+    const ARGUMENT_BUDGET: usize = 24_000;
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut length = 0;
+    for (i, path) in paths.iter().enumerate() {
+        let cost = path.encode_utf16().count() + 16;
+        if i > start && (length + cost > ARGUMENT_BUDGET || i - start >= MAX_PATHS_PER_CALL) {
+            chunks.push(&paths[start..i]);
+            start = i;
+            length = 0;
+        }
+        length += cost;
+    }
+    if start < paths.len() { chunks.push(&paths[start..]); }
+    chunks
 }
 
 /// stage — `git add -A -- <paths>`。
@@ -453,10 +483,18 @@ fn log(state: &mut State, args: &Value) -> Result<Value, ErrorBody> {
         }
         return Err(git::classify_error(&out));
     }
+    let parents_out = git::run(&state.root, &["rev-list", "--parents", "-n", &n_text, "HEAD"])?;
+    if !parents_out.success() { return Err(git::classify_error(&parents_out)); }
+    let parent_counts: std::collections::BTreeMap<String, usize> = parents_out.stdout_text().lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            parts.next().map(|sha| (sha.to_string(), parts.count()))
+        }).collect();
     let commits: Vec<Value> = porcelain::parse_log_z(&out.stdout)
         .into_iter()
         .map(|e| {
-            json!({ "sha": e.sha, "author": e.author, "date": e.date, "subject": e.subject })
+            json!({ "sha": e.sha, "author": e.author, "date": e.date, "subject": e.subject,
+                "parents": parent_counts.get(&e.sha).copied().unwrap_or(0) })
         })
         .collect();
     Ok(json!({ "commits": commits }))
@@ -682,13 +720,16 @@ fn branches(state: &mut State) -> Result<Value, ErrorBody> {
         if e.current {
             current = e.name.clone();
         }
-        let row = json!({ "name": e.name, "oid": e.oid, "upstream": e.upstream });
+        let mut row = json!({ "name": e.name, "oid": e.oid, "upstream": e.upstream });
         if e.refname.starts_with("refs/remotes/") {
             if e.refname.ends_with("/HEAD") {
                 continue;
             }
             remotes.push(row);
         } else {
+            row["renameAllowed"] = json!(actions::branch_available(state, &e.name, true).is_ok());
+            row["deleteAllowed"] = json!(!e.current && actions::branch_available(state, &e.name, false).is_ok()
+                && git::run(&state.root, &["merge-base", "--is-ancestor", &e.oid, "HEAD"])?.success());
             locals.push(row);
         }
     }
@@ -1142,6 +1183,7 @@ fn conflicts(state: &mut State) -> Result<Value, ErrorBody> {
         "merged": merged,
         "mergeInProgress": merging,
         "rebaseInProgress": rebasing,
+        "operation": actions::operation(state),
     }))
 }
 
@@ -1219,6 +1261,10 @@ fn names_by_existence(state: &State, paths: &[String], before: &[bool]) -> Vec<V
 /// `GitTransaction` の OpKind を 1 つ足すだけで、段階分類から後処理まで同じ 1 本を通る
 fn merge_abort(state: &mut State) -> Result<Value, ErrorBody> {
     toplevel(&state.root)?;
+    let operation = actions::operation(state);
+    if operation == "revert" || operation == "cherry-pick" {
+        return actions::finish(state, &operation, false);
+    }
     let (merging, rebasing) = merge_state(state);
     if !merging && !rebasing {
         return Err(ErrorBody::new(code::BAD_REQUEST, "no merge or rebase is in progress"));
@@ -1254,6 +1300,10 @@ fn merge_abort(state: &mut State) -> Result<Value, ErrorBody> {
 ///   そのまま使って即コミットする (実測 git 2.48.1)
 fn merge_continue(state: &mut State) -> Result<Value, ErrorBody> {
     toplevel(&state.root)?;
+    let operation = actions::operation(state);
+    if operation == "revert" || operation == "cherry-pick" {
+        return actions::finish(state, &operation, true);
+    }
     let (merging, rebasing) = merge_state(state);
     if rebasing {
         // v1 は rebase を始めない (spec §4.1 の pull は --no-rebase)。外で始まった

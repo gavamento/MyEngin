@@ -330,6 +330,18 @@ void EditorApp::OnStart(EngineContext& ctx)
             // ただしゲートが ActorEdit で閉じているので、実際にはここへ来ない
             return actorEdit_ ? actorEdit_->path : scenePath_;
         };
+        hooks.freshBlockers = [this, &ctx]() {
+            auto in = BuildGateInputs(ctx);
+            in.animationDirty = animation_.HasUnsavedChanges();
+            in.controllerDirty = animatorController_.HasUnsavedChanges();
+            in.mixerDirty = audioMixer_.HasUnsavedChanges();
+            in.projectSettingsDirty = projectSettings_.HasUnsavedChanges();
+            return ComputeBlockers(in);
+        };
+        hooks.openPath = [](const std::wstring& path) {
+            const std::wstring args = L"/select,\"" + path + L"\"";
+            ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+        };
         gitTx_.SetHooks(std::move(hooks));
     }
     savedStateSerial_ = undo_.StateSerial(); // ロード直後 = clean
@@ -759,6 +771,11 @@ void EditorApp::OnImGui(EngineContext& ctx)
         // ★窓に渡すのは「今 dirty か」と「保存する手段」だけ。EngineContext を
         //   渡すと、ソース管理の窓からシーンを開き直すような越境が書けてしまう
         SourceControlHost scmHost;
+        scmHost.requestAction = [this](nlohmann::json args) { gitTx_.RequestAction(std::move(args)); };
+        scmHost.requestDiff = [this](const std::string& path) {
+            scm_.RequestDiff(path, false);
+            sourceControl_.diffOpen = true;
+        };
         scmHost.openExternalUrl = [](const std::string& url) {
             if (url.starts_with("https://github.com/")) {
                 ShellExecuteW(nullptr, L"open", Utf8ToWide(url).c_str(), nullptr, nullptr,
@@ -769,8 +786,18 @@ void EditorApp::OnImGui(EngineContext& ctx)
         // M66d: working tree を書き換えるボタン (破棄) のゲート。窓は判定に使うだけで
         // 表そのものは持たない (2 箇所に条件を書くと必ず食い違う)
         scmHost.writeBlockers = ComputeBlockers(BuildGateInputs(ctx));
+        assetBrowser_.drawGitMenu = [this, scmHost](const std::wstring& path, bool folder) {
+            const auto rel = std::filesystem::path(path).lexically_relative(
+                std::filesystem::path(Utf8ToWide(scm_.Toplevel())));
+            const auto utf8 = WideToUtf8(rel.generic_wstring());
+            if (ImGui::BeginMenu("Git")) {
+                DrawScmFileMenu(scm_, scmHost, {utf8}, folder);
+                ImGui::EndMenu();
+            }
+        };
         scmHost.requestRevert = [this](std::vector<std::string> paths, int untracked) {
-            gitTx_.RequestRevert(std::move(paths), untracked);
+            (void)untracked;
+            gitTx_.RequestAction({{"action", "discard"}, {"paths", paths}});
         };
         // M66f: 背景 fetch の設定は EditorSettings (個人設定) 側にあり、窓は
         // 預かって編集するだけ。保存と hello の再送はここで一括して行う
