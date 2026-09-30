@@ -27,6 +27,8 @@
 #include "Editor/SourceControl/ScmHint.h" // M66i: タグ名の保存直後に status を取り直させる
 #include "Engine/Engine/Scene/TagNames.h" // 汎用タグの名前表 (タグ欄のドロップダウン)
 #include "Engine/Engine/Scene/Tags.h" // 汎用タグの読み書き (Tags::OwnMask / SetOwnMask)
+#include "Engine/Engine/RayTracing/RtScope.h" // RT の実効値と根拠 (描画と同じ判定)
+#include "Engine/Engine/Rendering/RenderSystem.h" // RT のタグ規則 / レーンの on/off
 #include "Editor/Scene/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Ecs/ComponentRegistry.h"
@@ -367,6 +369,10 @@ constexpr const char* kUISliderDirLabels[] = { "Left To Right", "Right To Left",
 constexpr const char* kUISliderDirJa[] = { "左→右", "右→左", "下→上", "上→下" };
 constexpr const char* kUIPresetColJa[] = { "左", "中央", "右", "伸縮" };
 constexpr const char* kUIPresetRowJa[] = { "上", "中央", "下", "伸縮" };
+// RayTracing.inScene / receiver (kRtScopeInherit / On / Off の並び)
+constexpr const char* kRtScopeLabels[] = { "Inherit", "On", "Off" };
+constexpr const char* kRtScopeJa[] = { "継承", "ON", "OFF" };
+static_assert(kRtScopeInherit == 0 && kRtScopeOn == 1 && kRtScopeOff == 2);
 // 番号の表 (Components.h) とラベルの件数を機械で揃える。種類を足してラベルを忘れると
 // コンボが "(invalid)" 表示になり、エディタから選ぶ手段が消える (M60f で踏んだ)
 static_assert(std::size(kColliderShapeLabels) == collidershape::kCount
@@ -413,6 +419,8 @@ constexpr EnumFieldLabels kEnumFields[] = {
     { "Fog", "mode", kFogModeLabels, 3, kFogModeJa },
     { "CameraPostFx", "tonemapMode", kTonemapLabels, 3, kTonemapJa },
     { "PartBounds", "shape", kPartBoundsShapeLabels, 2, kPartBoundsShapeJa },
+    { "RayTracing", "inScene", kRtScopeLabels, 3, kRtScopeJa },
+    { "RayTracing", "receiver", kRtScopeLabels, 3, kRtScopeJa },
 };
 
 // ImGui::InputText は終端より後ろのバイトを掃除しない。一方 WorldHasher は登録フィールドを
@@ -1079,6 +1087,55 @@ void InspectorWindow::DrawComponentFields(EngineContext& ctx, Selection& selecti
     }
 }
 
+namespace {
+
+// RT の実効値 1 レーン分を「実効 BVH に入る: ON (タグ Background)」の形で出す
+void DrawRtScopeLine(World& world, StrId laneLabel, const RtScopeLane& lane, EntityID self)
+{
+    char from[96] = {};
+    switch (lane.source) {
+    case RtScopeSource::Explicit:
+        if (lane.from == self) {
+            std::snprintf(from, sizeof(from), "%s", Tr(StrId::Insp_RtFromSelf));
+        } else {
+            const auto* nc = world.GetComponent<NameComponent>(lane.from);
+            std::snprintf(from, sizeof(from), "%s %s", Tr(StrId::Insp_RtFromParent),
+                          (nc != nullptr && nc->value[0] != '\0') ? nc->value : "?");
+        }
+        break;
+    case RtScopeSource::Tag:
+        std::snprintf(from, sizeof(from), "%s %s", Tr(StrId::Insp_RtFromTag),
+                      TagNames::Get().Display(lane.tagIndex));
+        break;
+    case RtScopeSource::Default:
+        std::snprintf(from, sizeof(from), "%s", Tr(StrId::Insp_RtFromDefault));
+        break;
+    }
+    ImGui::TextDisabled("%s %s: %s (%s)", Tr(StrId::Insp_RtEffective), Tr(laneLabel),
+                        Tr(lane.on ? StrId::Menu_RtRuleOn : StrId::Menu_RtRuleOff), from);
+}
+
+// RayTracing / MeshRenderer / Terrain 節の末尾に、描画と同じ判定 (ResolveRtScope) の結果を出す。
+// ★子の MeshRenderer にも出すのは、親に付けた設定やタグ規則が「本当に子へ効いているか」を
+//   子を選んだだけで確かめられるようにするため (設定を持たない物でも実効値が見える)
+void DrawRtScopeNotes(EngineContext& ctx, EntityID e)
+{
+    if (ctx.renderSystem == nullptr) {
+        return;
+    }
+    const RenderSystem& rs = *ctx.renderSystem;
+    TagNames::Get().Load(ctx.assetsRoot);
+    World& world = ctx.scene->GetWorld();
+    const RtScope scope = ResolveRtScope(world, e, rs.rtTagRules);
+    DrawRtScopeLine(world, StrId::Insp_RtInScene, scope.inScene, e);
+    DrawRtScopeLine(world, StrId::Insp_RtReceiver, scope.receiver, e);
+    if (!rs.enableRtGi && !rs.enableRtShadow && !rs.enableRtRefl) {
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_RtLanesOff));
+    }
+}
+
+} // namespace
+
 // 型ごとの付記 (フィールド行の下)。PartBounds の警告と、カメラの操縦ボタン
 bool& EditorWaterPreviewOn()
 {
@@ -1133,6 +1190,15 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
     // 焼きはメッシュ 1 つ・エンティティ 1 つに対する非同期処理)
     if (std::strcmp(desc.name, "Destructible") == 0 && !tg.multi) {
         DrawDestructibleNotes(ctx, selection, undo, tg, row);
+    }
+    // RT の実効値。RayTracing を持つ物はその節に、持たない物は描画される節 (MeshRenderer /
+    // Terrain) に 1 回だけ出す。マルチ選択では出さない (物ごとに違いうるため)
+    const bool hasRt = world.GetComponent<RayTracingComponent>(tg.e) != nullptr;
+    const bool rtRow = hasRt ? std::strcmp(desc.name, "RayTracing") == 0
+                             : (std::strcmp(desc.name, "MeshRenderer") == 0
+                                || std::strcmp(desc.name, "Terrain") == 0);
+    if (rtRow && !tg.multi) {
+        DrawRtScopeNotes(ctx, tg.e);
     }
 }
 

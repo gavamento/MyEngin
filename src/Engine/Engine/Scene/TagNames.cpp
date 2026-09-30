@@ -171,27 +171,34 @@ int32_t TagNames::IndexOf(std::string_view name) const
     return -1;
 }
 
-RtTagSettings LoadRtTagSettings(const std::wstring& assetsRoot)
+RtTagRules LoadRtTagRules(const std::wstring& assetsRoot)
 {
-    RtTagSettings s;
+    // ★旧形式 ("receivers" / "scene" = 対象を絞るフィルタ) は読まない。既定 OFF の規則と
+    //   意味が逆向きで、読み替えると「絞り込みのつもりで付けたタグ」が黙って ON 規則になる
+    RtTagRules r;
     const json j = ReadSettings(assetsRoot);
     if (j.contains("rayTracingTags") && j["rayTracingTags"].is_object()) {
         const json& rt = j["rayTracingTags"];
-        if (rt.contains("receivers")) {
-            s.receiverMask = MaskFromIndexArray(rt["receivers"]);
-        }
-        if (rt.contains("scene")) {
-            s.sceneMask = MaskFromIndexArray(rt["scene"]);
-        }
+        auto read = [&rt](const char* key, uint64_t& out) {
+            if (rt.contains(key)) {
+                out = MaskFromIndexArray(rt[key]);
+            }
+        };
+        read("sceneOn", r.sceneOn);
+        read("sceneOff", r.sceneOff);
+        read("receiverOn", r.receiverOn);
+        read("receiverOff", r.receiverOff);
     }
-    return s;
+    return r;
 }
 
-bool SaveRtTagSettings(const std::wstring& assetsRoot, const RtTagSettings& settings)
+bool SaveRtTagRules(const std::wstring& assetsRoot, const RtTagRules& rules)
 {
     json rt = json::object();
-    rt["receivers"] = IndexArrayFromMask(settings.receiverMask);
-    rt["scene"] = IndexArrayFromMask(settings.sceneMask);
+    rt["sceneOn"] = IndexArrayFromMask(rules.sceneOn);
+    rt["sceneOff"] = IndexArrayFromMask(rules.sceneOff);
+    rt["receiverOn"] = IndexArrayFromMask(rules.receiverOn);
+    rt["receiverOff"] = IndexArrayFromMask(rules.receiverOff);
     return WriteSettingsKey(assetsRoot, "rayTracingTags", std::move(rt));
 }
 

@@ -1773,6 +1773,21 @@ struct FracturePieceComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- レイトレ適用 (RayTracing、TypeId=66) ----
+// この物 (と子孫) に RT を効かせるかの個別設定。**kComponentNoHash** — 描画専用レーン。
+// 各欄は 継承 / ON / OFF の 3 状態で、判定規則は RtScope.h の ResolveRtScope 1 本きり:
+//   自分 → 祖先の順に最初の ON/OFF → タグ規則 (project_settings.json) → 既定 OFF
+// 継承を 3 状態目に持つのは、FBX のようにメッシュが子孫に分かれた物をルート 1 か所で
+// 切り替えつつ、特定の子だけ上書きできるようにするため
+inline constexpr int32_t kRtScopeInherit = 0;
+inline constexpr int32_t kRtScopeOn = 1;
+inline constexpr int32_t kRtScopeOff = 2;
+struct RayTracingComponent {
+    int32_t inScene = kRtScopeInherit;  // BVH に入る (反射に映る / RT の影を落とす)
+    int32_t receiver = kRtScopeInherit; // RT の GI / 影 / 反射を受ける面
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

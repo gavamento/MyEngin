@@ -220,8 +220,8 @@ const CliFlag kEngineCliFlags[] = {
     { L"--rt-gi", CliValue::None, [](CliArgs& a) { a.c.rtGi = true; return true; } },
     { L"--rt-shadow", CliValue::None, [](CliArgs& a) { a.c.rtShadow = true; return true; } },
     { L"--rt-refl", CliValue::None, [](CliArgs& a) { a.c.rtRefl = true; return true; } },
-    // 汎用タグ: RT を受ける面 / BVH に入る物をタグ番号のカンマ区切りで限定する (空 = 制限なし)。
-    // project_settings.json の "rayTracingTags" より優先し、書き戻さない
+    // タグの ON 規則: RT を受ける面 / BVH に入る物をタグ番号のカンマ区切りで ON にする
+    // (空 = ON 規則なし)。project_settings.json の "rayTracingTags" の *On より優先し、書き戻さない
     { L"--rt-receiver-tags", CliValue::One,
       [](CliArgs& a) {
           if (!ParseTagIndexList(a.v1, a.c.rtReceiverTagMask)) {

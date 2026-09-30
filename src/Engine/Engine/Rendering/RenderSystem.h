@@ -9,6 +9,7 @@
 #include "Engine/Engine/Rendering/DebugDraw.h"
 #include "Engine/Engine/Rendering/LightSelection.h"
 #include "Engine/Engine/RayTracing/RtScene.h"
+#include "Engine/Engine/Scene/TagNames.h" // RtTagRules (タグによる RT の一括 ON/OFF)
 #include "Engine/Engine/Rendering/TerrainSystem.h"
 #include "Engine/Renderer/Passes/AcousticVolumePass.h"
 #include "Engine/Renderer/Passes/EditorLinePass.h"
@@ -176,13 +177,11 @@ public:
     // roughness が kRtReflMaxRoughness を超える面は従来どおり IBL プリフィルタのまま
     // (ローブが広すぎて 1spp が成立せず、かつ IBL との差も縮むため)
     bool enableRtRefl = false;
-    // 汎用タグによる RT の適用範囲 (TagNames.h の RtTagSettings と同じ意味。0 = 制限なし)。
-    //   rtReceiverTagMask = RT を受ける面 (祖先のタグも継承して判定)
-    //   rtSceneTagMask    = BVH に入る物 (反射に映る / 影を落とす)
+    // タグによる RT の一括 ON/OFF 規則。物ごとの判定は ResolveRtScope (RtScope.h) —
+    // 個別設定 (RayTracingComponent) → この規則 → 既定 OFF の順。
     // 出所は project_settings.json の "rayTracingTags" (EngineLoop が起動時に読む) と
-    // CLI の --rt-receiver-tags / --rt-scene-tags、エディタの RT メニュー
-    uint64_t rtReceiverTagMask = 0;
-    uint64_t rtSceneTagMask = 0;
+    // CLI の --rt-receiver-tags / --rt-scene-tags (ON 規則の上書き)、エディタの RT メニュー
+    RtTagRules rtTagRules;
     // M67d: ReSTIR 反射 (--rt-restir / View > RT デバッグのトグル)。RT 反射が前提。
     // false なら反射シェーダの uniform 分岐が M67d 以前の経路を走る = 絵はビット一致。
     // ★rtdebug::NeedsRestir のモードでは RenderSystem が強制的に立てる (影の kShadowVisibility と同じ流儀)

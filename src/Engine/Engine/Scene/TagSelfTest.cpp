@@ -14,6 +14,7 @@
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/RayTracing/RtScope.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
@@ -270,22 +271,34 @@ bool RunTagSelfTest()
         names.Load(dir.wstring(), true);
         check(names.IndexOf("RtHero") == 1 && !names.DiffersFromDisk(), "TagNames: save/load round trip");
 
-        RtTagSettings rt;
-        rt.receiverMask = Tags::BitOf(1) | Tags::BitOf(63);
-        rt.sceneMask = Tags::BitOf(0);
-        check(SaveRtTagSettings(dir.wstring(), rt), "RtTagSettings: save");
-        const RtTagSettings back = LoadRtTagSettings(dir.wstring());
-        check(back.receiverMask == rt.receiverMask && back.sceneMask == rt.sceneMask,
-              "RtTagSettings: round trip");
+        RtTagRules rt;
+        rt.sceneOn = Tags::BitOf(0);
+        rt.sceneOff = Tags::BitOf(4);
+        rt.receiverOn = Tags::BitOf(1) | Tags::BitOf(63);
+        rt.receiverOff = Tags::BitOf(2);
+        check(SaveRtTagRules(dir.wstring(), rt), "RtTagRules: save");
+        const RtTagRules back = LoadRtTagRules(dir.wstring());
+        check(back.sceneOn == rt.sceneOn && back.sceneOff == rt.sceneOff
+                  && back.receiverOn == rt.receiverOn && back.receiverOff == rt.receiverOff,
+              "RtTagRules: round trip");
         {
             std::ifstream f(dir / L"project_settings.json");
             nlohmann::json j;
             f >> j;
             check(j.contains("physicsLayers") && j["tags"].size() == 3,
-                  "RtTagSettings: other keys are preserved");
+                  "RtTagRules: other keys are preserved");
         }
-        check(LoadRtTagSettings((dir / L"missing").wstring()).receiverMask == 0,
-              "RtTagSettings: missing file = no filter");
+        {
+            // 旧形式 (対象を絞るフィルタ) は読まない = 規則なし
+            std::ofstream f(dir / L"project_settings.json");
+            f << R"({"rayTracingTags":{"receivers":[1],"scene":[0]}})";
+        }
+        const RtTagRules legacy = LoadRtTagRules(dir.wstring());
+        check(legacy.sceneOn == 0 && legacy.receiverOn == 0, "RtTagRules: the legacy filter keys are ignored");
+        const RtTagRules missing = LoadRtTagRules((dir / L"missing").wstring());
+        check(missing.sceneOn == 0 && missing.sceneOff == 0 && missing.receiverOn == 0
+                  && missing.receiverOff == 0,
+              "RtTagRules: missing file = no rules");
         fs::remove_all(dir, ec);
 
         uint64_t m = 123;
@@ -296,6 +309,79 @@ bool RunTagSelfTest()
         check(!ParseTagIndexList(L"64", m) && m == 5, "ParseTagIndexList: 64 rejected, out untouched");
         check(!ParseTagIndexList(L"1,,2", m) && !ParseTagIndexList(L"a", m),
               "ParseTagIndexList: malformed rejected");
+    }
+
+    // ---- RT の適用範囲 (ResolveRtScope): 個別設定 → タグ規則 → 既定 OFF ----
+    //   Model (RayTracing inScene=ON)        Tagged (tag 20)
+    //     Mesh (なし)                          Leaf (tag 21)
+    //       Deep (RayTracing inScene=OFF)
+    {
+        Scene sr;
+        GameObject model = sr.CreateGameObjectTracked("Model");
+        GameObject mesh = sr.CreateGameObjectTracked("Mesh");
+        GameObject deep = sr.CreateGameObjectTracked("Deep");
+        GameObject tagged = sr.CreateGameObjectTracked("Tagged");
+        GameObject leaf = sr.CreateGameObjectTracked("Leaf");
+        GameObject bare = sr.CreateGameObjectTracked("Bare");
+        mesh.SetParent(model);
+        deep.SetParent(mesh);
+        leaf.SetParent(tagged);
+        World& wr = sr.GetWorld();
+        wr.ApplyStructuralChanges();
+        const uint64_t hashNoRt = HashWorld(wr);
+        model.AddComponent<RayTracingComponent>()->inScene = kRtScopeOn;
+        deep.AddComponent<RayTracingComponent>()->inScene = kRtScopeOff;
+        Tags::SetOwnMask(wr, tagged.Id(), Tags::BitOf(20));
+        Tags::SetOwnMask(wr, leaf.Id(), Tags::BitOf(21));
+        wr.ApplyStructuralChanges();
+
+        const RtTagRules none;
+        const RtScope b = ResolveRtScope(wr, bare.Id(), none);
+        check(!b.inScene.on && !b.receiver.on && b.inScene.source == RtScopeSource::Default,
+              "RtScope: default is OFF on both lanes");
+        const RtScope m0 = ResolveRtScope(wr, model.Id(), none);
+        check(m0.inScene.on && m0.inScene.source == RtScopeSource::Explicit && m0.inScene.from == model.Id(),
+              "RtScope: own explicit ON");
+        const RtScope m1 = ResolveRtScope(wr, mesh.Id(), none);
+        check(m1.inScene.on && m1.inScene.from == model.Id(), "RtScope: a parent's ON reaches the child");
+        check(!m1.receiver.on && m1.receiver.source == RtScopeSource::Default,
+              "RtScope: lanes are independent (receiver stays default)");
+        const RtScope d = ResolveRtScope(wr, deep.Id(), none);
+        check(!d.inScene.on && d.inScene.from == deep.Id(), "RtScope: the nearest explicit setting wins");
+
+        RtTagRules rules;
+        rules.sceneOn = Tags::BitOf(20);
+        rules.receiverOn = Tags::BitOf(20);
+        const RtScope t0 = ResolveRtScope(wr, tagged.Id(), rules);
+        check(t0.inScene.on && t0.inScene.source == RtScopeSource::Tag && t0.inScene.tagIndex == 20,
+              "RtScope: tag ON rule");
+        const RtScope t1 = ResolveRtScope(wr, leaf.Id(), rules);
+        check(t1.inScene.on && t1.receiver.on, "RtScope: a parent's tag reaches the child");
+        rules.sceneOff = Tags::BitOf(21);
+        const RtScope t2 = ResolveRtScope(wr, leaf.Id(), rules);
+        check(!t2.inScene.on && t2.inScene.tagIndex == 21 && t2.receiver.on,
+              "RtScope: an OFF rule beats an ON rule (per lane)");
+        Tags::SetOwnMask(wr, model.Id(), Tags::BitOf(21));
+        wr.ApplyStructuralChanges();
+        const RtScope t3 = ResolveRtScope(wr, mesh.Id(), rules);
+        check(t3.inScene.on && t3.inScene.source == RtScopeSource::Explicit,
+              "RtScope: an explicit setting beats the tag rules");
+        Tags::SetOwnMask(wr, model.Id(), 0ull);
+        wr.ApplyStructuralChanges();
+
+        // 描画専用 (kComponentNoHash): 付けてもワールドハッシュは変わらない。保存はされる
+        // (タグはハッシュ対象なので外してから比べる)
+        Tags::SetOwnMask(wr, tagged.Id(), 0ull);
+        Tags::SetOwnMask(wr, leaf.Id(), 0ull);
+        wr.ApplyStructuralChanges();
+        check(HashWorld(wr) == hashNoRt, "RtScope: RayTracing does not enter the world hash");
+        const nlohmann::json saved = SceneSerializer::SaveToJson(sr);
+        Scene s2;
+        SceneSerializer::LoadFromJson(s2, saved);
+        const GameObject deep2 = s2.Find("Deep");
+        const auto* rt2 = deep2 ? s2.GetWorld().GetComponent<RayTracingComponent>(deep2.Id()) : nullptr;
+        check(rt2 != nullptr && rt2->inScene == kRtScopeOff && rt2->receiver == kRtScopeInherit,
+              "RtScope: RayTracing survives a save/load round trip");
     }
 
     // ---- インスタンス run は RT を受けるかの違いで切れる ----

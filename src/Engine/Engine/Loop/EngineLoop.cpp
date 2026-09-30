@@ -355,13 +355,17 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.rtSvgf = config.rtSvgf;   // M46e (--rt-no-svgf)
     renderSystem.enableRtGi = config.rtGi;             // M46f (--rt-gi、Deferred のみ)
     // 汎用タグ: 名前の表を tick より前に読んでおく (スクリプトの TagIndex が tick 中に表を
-    // 書き換えないように)。RT の適用範囲はプロジェクト設定 → CLI の順で上書き
+    // 書き換えないように)。RT のタグ規則はプロジェクト設定 → CLI (ON 規則だけ) の順で上書き
     TagNames::Get().Load(assetsRoot);
     {
-        const RtTagSettings rtTags = LoadRtTagSettings(assetsRoot);
-        renderSystem.rtReceiverTagMask =
-            config.rtReceiverTagsSet ? config.rtReceiverTagMask : rtTags.receiverMask;
-        renderSystem.rtSceneTagMask = config.rtSceneTagsSet ? config.rtSceneTagMask : rtTags.sceneMask;
+        RtTagRules rules = LoadRtTagRules(assetsRoot);
+        if (config.rtReceiverTagsSet) {
+            rules.receiverOn = config.rtReceiverTagMask;
+        }
+        if (config.rtSceneTagsSet) {
+            rules.sceneOn = config.rtSceneTagMask;
+        }
+        renderSystem.rtTagRules = rules;
     }
     renderSystem.enableRtShadow = config.rtShadow;     // M46g (--rt-shadow、Deferred のみ)
     renderSystem.enableRtRefl = config.rtRefl;         // M46h (--rt-refl、Deferred のみ)

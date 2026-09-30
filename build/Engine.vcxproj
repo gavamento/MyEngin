@@ -153,6 +153,7 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\Xpbd\XpbdSolver.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtScene.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\RayTracing\RtScope.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\LightSelection.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\ProbeBaker.cpp" />
@@ -407,6 +408,7 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\Xpbd\XpbdSolver.h" />
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtScene.h" />
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.h" />
+    <ClInclude Include="..\src\Engine\Engine\RayTracing\RtScope.h" />
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\DebugDraw.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\LightSelection.h" />

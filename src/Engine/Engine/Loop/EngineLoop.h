@@ -136,7 +136,8 @@ struct EngineConfig {
     // M46f: レイトレ GI を最終画像へ合成する (--rt-gi)。Deferred パスのみ。
     // off なら BVH の構築も転送も走らないので既定の描画経路は一切変わらない
     bool rtGi = false;
-    // 汎用タグによる RT の適用範囲の CLI 上書き (--rt-receiver-tags / --rt-scene-tags "0,3")。
+    // タグによる RT の ON 規則の CLI 上書き (--rt-receiver-tags / --rt-scene-tags "0,3")。
+    // RtTagRules の receiverOn / sceneOn だけを差し替え、OFF 規則はプロジェクト設定のまま。
     // *Set が false なら project_settings.json の "rayTracingTags" を使う。
     // **書き戻さない** (--particle-backend と同じ「その実行だけ」の上書き)
     bool rtReceiverTagsSet = false;

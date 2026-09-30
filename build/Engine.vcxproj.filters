@@ -555,6 +555,9 @@
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.cpp">
       <Filter>Engine\RayTracing</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\RayTracing\RtScope.cpp">
+      <Filter>Engine\RayTracing</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSelfTest.cpp">
       <Filter>Engine\RayTracing</Filter>
     </ClCompile>
@@ -1315,6 +1318,9 @@
       <Filter>Engine\RayTracing</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.h">
+      <Filter>Engine\RayTracing</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\RayTracing\RtScope.h">
       <Filter>Engine\RayTracing</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSelfTest.h">

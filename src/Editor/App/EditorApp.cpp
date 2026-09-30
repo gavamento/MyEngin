@@ -1108,34 +1108,57 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             ImGui::MenuItem(Tr(StrId::Menu_RtShadow), nullptr, &ctx.renderSystem->enableRtShadow);
             // M46h: 滑らかな面のスペキュラ環境項をレイトレ反射で置換 (画面外も映る)
             ImGui::MenuItem(Tr(StrId::Menu_RtReflection), nullptr, &ctx.renderSystem->enableRtRefl);
-            // 汎用タグ: RT を受ける面 / BVH に入る物をタグで限定する。
+            // タグによる RT の一括 ON/OFF 規則 (個別設定の無い物にだけ効く。判定は ResolveRtScope)。
             // ★RT のトグルと違い**プロジェクトへ保存する** (project_settings.json の rayTracingTags) —
-            //   「このゲームでは主役と床だけ RT」はプロジェクトの決めごとで、起動のたびに選び直す物ではない
+            //   「背景は RT、キャラは除外」はプロジェクトの決めごとで、起動のたびに選び直す物ではない
             {
-                auto tagMaskMenu = [&](const char* menuLabel, const char* hint, uint64_t& mask) {
+                auto tagRuleMenu = [&](const char* menuLabel, const char* hint, uint64_t& onMask,
+                                       uint64_t& offMask) {
                     if (!ImGui::BeginMenu(menuLabel)) {
                         return;
                     }
                     TagNames& tn = TagNames::Get();
                     tn.Load(ctx.assetsRoot);
                     bool changed = false;
-                    if (ImGui::MenuItem(Tr(StrId::Menu_RtTagsAll), nullptr, mask == 0)) {
-                        mask = 0;
+                    if (ImGui::MenuItem(Tr(StrId::Menu_RtTagsAll), nullptr, false,
+                                        onMask != 0 || offMask != 0)) {
+                        onMask = 0;
+                        offMask = 0;
                         changed = true;
                     }
                     ImGui::Separator();
+                    // 3 択の列位置。タグ名の最長 (kNameCapacity 相当) を目安に固定幅で揃える
+                    const float colX = ImGui::GetCursorPosX() + ImGui::GetFontSize() * 10.0f;
+                    const float colStep = ImGui::GetFontSize() * 4.5f;
                     bool anyNamed = false;
                     for (int i = 0; i < kMaxTags; ++i) {
-                        const bool on = ((mask >> i) & 1ull) != 0;
-                        // 名前の無い番号は出さない。ただし立っているビットは出す (外せなくなるのを防ぐ)
-                        if (tn.Name(i)[0] == '\0' && !on) {
+                        const uint64_t bit = 1ull << i;
+                        const int state = (offMask & bit) != 0 ? kRtScopeOff
+                                          : (onMask & bit) != 0 ? kRtScopeOn
+                                                                : kRtScopeInherit;
+                        // 名前の無い番号は出さない。ただし規則が立っている番号は出す (外せなくなるのを防ぐ)
+                        if (tn.Name(i)[0] == '\0' && state == kRtScopeInherit) {
                             continue;
                         }
                         anyNamed = true;
                         ImGui::PushID(i);
-                        if (ImGui::MenuItem(tn.Display(i), nullptr, on)) {
-                            mask ^= 1ull << i;
-                            changed = true;
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted(tn.Display(i));
+                        const char* choices[] = { Tr(StrId::Menu_RtRuleNone), Tr(StrId::Menu_RtRuleOn),
+                                                  Tr(StrId::Menu_RtRuleOff) };
+                        const int modes[] = { kRtScopeInherit, kRtScopeOn, kRtScopeOff };
+                        for (int k = 0; k < 3; ++k) {
+                            ImGui::SameLine(colX + colStep * static_cast<float>(k));
+                            if (ImGui::RadioButton(choices[k], state == modes[k]) && state != modes[k]) {
+                                onMask &= ~bit;
+                                offMask &= ~bit;
+                                if (modes[k] == kRtScopeOn) {
+                                    onMask |= bit;
+                                } else if (modes[k] == kRtScopeOff) {
+                                    offMask |= bit;
+                                }
+                                changed = true;
+                            }
                         }
                         ImGui::PopID();
                     }
@@ -1145,18 +1168,15 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
                     ImGui::Separator();
                     ImGui::TextDisabled("%s", hint);
                     ImGui::EndMenu();
-                    if (changed) {
-                        const RtTagSettings saved{ ctx.renderSystem->rtReceiverTagMask,
-                                                   ctx.renderSystem->rtSceneTagMask };
-                        if (SaveRtTagSettings(ctx.assetsRoot, saved)) {
-                            scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json");
-                        }
+                    if (changed && SaveRtTagRules(ctx.assetsRoot, ctx.renderSystem->rtTagRules)) {
+                        scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json");
                     }
                 };
-                tagMaskMenu(Tr(StrId::Menu_RtReceiverTags), Tr(StrId::Menu_RtReceiverHint),
-                            ctx.renderSystem->rtReceiverTagMask);
-                tagMaskMenu(Tr(StrId::Menu_RtSceneTags), Tr(StrId::Menu_RtSceneHint),
-                            ctx.renderSystem->rtSceneTagMask);
+                RtTagRules& rules = ctx.renderSystem->rtTagRules;
+                tagRuleMenu(Tr(StrId::Menu_RtSceneTags), Tr(StrId::Menu_RtSceneHint), rules.sceneOn,
+                            rules.sceneOff);
+                tagRuleMenu(Tr(StrId::Menu_RtReceiverTags), Tr(StrId::Menu_RtReceiverHint),
+                            rules.receiverOn, rules.receiverOff);
             }
             // M55c: GBuffer RT4 (velocity) の可視化。bool ではなく int なので MenuItem の
             // 選択状態で表し、クリックでトグルする (rtDebugMode の 0/N と同じ流儀)

@@ -20,7 +20,7 @@
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Physics/Ragdoll/Ragdoll.h" // M60g1: 剛体が骨を駆動しているときのパレット
 #include "Engine/Engine/Animation/SkinningSystem.h" // M18 追補: クロスフェード込みのポーズ評価
-#include "Engine/Engine/Scene/Tags.h"           // 汎用タグ: RT の適用範囲
+#include "Engine/Engine/RayTracing/RtScope.h" // RT の適用範囲 (個別設定 / タグ規則)
 #include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Platform/PathUtil.h" // WideToUtf8 (fxstack のパスをログへ)
 #include "Engine/Renderer/Pipeline/FrustumCull.h"
@@ -874,6 +874,10 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     queue_.Clear();
     skinPalettes_.clear(); // スキンメッシュのボーンパレット (M18、フレーム毎に再構築)
     const XMMATRIX v = XMLoadFloat4x4(&view.view);
+    // RT のどれかのレーン (か RT デバッグ表示) が on か。off のフレームは適用範囲を 1 回も
+    // 判定しない (祖先を辿らない) — 既定の経路のコストと絵を RT 導入前のまま保つ
+    const bool rtAnyLane =
+        rtDebugMode != rtdebug::kOff || enableRtGi || enableRtShadow || enableRtRefl; // M46b/f/g/h
     // ---- 地形 (M58c): メッシュとは別レーンで収集する ----
     // TerrainComponent は kComponentNoHash = 描画専用。ここで作るのは
     // 「可視チャンクの描画指示」だけで sim には 1 バイトも触れない。
@@ -893,10 +897,9 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             it.world = t.world;
             it.viewZ = t.viewZ;
             it.surface = t.surface; // M58d: スプラット + 4 レイヤの bind
-            // 汎用タグ: 地形も RT を受ける面の判定はメッシュと同じ規則 (祖先のタグを継承)
-            it.rtReceiver = (rtReceiverTagMask == 0
-                             || Tags::PassesFilter(Tags::EffectiveMask(world, t.entity),
-                                                   rtReceiverTagMask))
+            // 地形も RT を受ける面の判定はメッシュと同じ規則 (ResolveRtScope)。
+            // RT が全レーン off なら 1 固定 = G-Buffer が RT 適用範囲の導入前とビット一致
+            it.rtReceiver = (!rtAnyLane || ResolveRtScope(world, t.entity, rtTagRules).receiver.on)
                 ? 1.0f
                 : 0.0f;
             terrainList_.items.push_back(it);
@@ -1193,18 +1196,15 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     });
 
     // ---- ステージ 3 (直列): 可視候補をキュー化 (スキン/AABB/キューは順序依存で直列) ----
-    const bool collectRt =
-        rtDebugMode != rtdebug::kOff || enableRtGi || enableRtShadow || enableRtRefl; // M46b/f/g/h
     rtInstances_.clear();
-    // 汎用タグのフィルタがどちらも 0 なら祖先を辿らない (既定の経路はタグを 1 回も引かない)
-    const bool rtTagFilter = rtReceiverTagMask != 0 || rtSceneTagMask != 0;
     for (const CullCand& c : cullCands) {
-        const uint64_t rtTags = rtTagFilter ? Tags::EffectiveMask(world, c.e) : 0ull;
+        // RT の適用範囲 (個別設定 → タグ規則 → 既定 OFF)。RT が off のフレームは引かない
+        const RtScope rtScope = rtAnyLane ? ResolveRtScope(world, c.e, rtTagRules) : RtScope{};
         // M46b: レイトレ用の収集はフラスタムカリングしない (画面外の物体も
         // 反射や GI には効くため)。v1 制限: スキンメッシュ (CPU 頂点がバインドポーズ
         // のままなので姿勢が反映できない) と半透明は BVH に入れない。
-        // 汎用タグ: rtSceneTagMask を持たない物も入れない (= 反射に映らず影も落とさない)
-        if (collectRt && Tags::PassesFilter(rtTags, rtSceneTagMask)
+        // 適用範囲が OFF の物も入れない (= 反射に映らず RT の影も落とさない)
+        if (rtAnyLane && rtScope.inScene.on
             && world.GetComponent<SkinnedMeshComponent>(c.e) == nullptr) {
             const Material* rtMat = resources.materials.Get(c.material);
             if (!rtMat || rtMat->transparent == 0) {
@@ -1221,7 +1221,8 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         item.entity = c.e;
         item.world = c.world;
         item.viewZ = c.viewZ;
-        item.rtReceiver = Tags::PassesFilter(rtTags, rtReceiverTagMask) ? 1.0f : 0.0f;
+        // RT が off のフレームは 1 固定 = G-Buffer が適用範囲の導入前とビット一致
+        item.rtReceiver = (!rtAnyLane || rtScope.receiver.on) ? 1.0f : 0.0f;
         // M55c: velocity 用に「前フレームに実際に描いた行列」を載せる。履歴が無い
         // (初回 / リサイズ / 前フレームは視錐台の外だった / 生成直後) ときは現在値と
         // 同値を入れる = 画面速度が厳密に 0 = カメラ再投影のみへ縮退する。

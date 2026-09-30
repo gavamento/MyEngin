@@ -456,6 +456,23 @@ Design rationale and measured cost: **ADR-009**.
   compares the *current* world position's distance to the previous camera, because a 2D
   velocity cannot restore the previous camera distance: an object that changes its distance
   to the camera by more than 5% in one frame drops its history and falls back to 1 spp
+- **Which objects get RT (scope)** — two independent lanes per object: *in the BVH* (reflected,
+  casts RT shadows) and *receiver* (gets RT GI / shadow / reflection; otherwise keeps CSM / IBL).
+  **The default is off** — turning a lane on in View > Rendering changes nothing until objects opt in.
+  One rule decides both the picture and the Inspector's "Effective" line
+  (`ResolveRtScope`, `Engine/Engine/RayTracing/RtScope.h`), per lane:
+  1. the nearest explicit On/Off on the entity or an ancestor — `RayTracing` component (TypeId 66,
+     `kComponentNoHash`, fields `inScene` / `receiver` = Inherit / On / Off). Inherit is the default
+     so a model root can switch every child mesh while one child still overrides it
+  2. tag rules from `project_settings.json` `"rayTracingTags"` (`sceneOn` / `sceneOff` /
+     `receiverOn` / `receiverOff`, tag numbers). Tags of ancestors count; **Off beats On**.
+     They are evaluated every frame, so a script's `SetTag` takes effect at once. Edited from
+     View > Rendering > RT tag rules; `--rt-scene-tags` / `--rt-receiver-tags "0,3"` override only
+     the On sets for one run. The pre-2026-09 filter keys (`scene` / `receivers`) are not read
+  3. otherwise off.
+
+  With every lane off the scope is never resolved and `rtReceiver` stays 1, so the G-Buffer — and
+  the picture — is unchanged. `--render-demo` marks all its meshes On for the RT goldens
 - **Not covered in v1**: skinned meshes and transparents are absent from the BVH, secondary
   hits shade from material constants only (no bindless textures), and local lights cast no
   ray-traced shadows

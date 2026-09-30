@@ -1,6 +1,7 @@
 #include "Engine/Engine/Demo/DemoContent.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -1467,6 +1468,27 @@ void BuildRenderShowcaseScene(EngineContext& ctx)
     }
 
     s.GetWorld().ApplyStructuralChanges();
+
+    // RT の適用範囲は既定 OFF なので、描画物すべてを明示的に ON にする
+    // (golden の demo_render_rtrefl / rtgi / rtrefl_restir がこのシーンの RT を撮る)。
+    // ★RT レーンが off の撮影には効かない (RenderSystem は RT off のフレームで判定しない)
+    {
+        World& w = s.GetWorld();
+        std::vector<EntityID> meshes;
+        const std::array<ComponentTypeId, 1> req = { MeshRendererComponent::sTypeId };
+        w.ForEachArchetype(req, [&](Archetype& arch) {
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                meshes.push_back(arch.EntityAt(row));
+            }
+        });
+        for (EntityID e : meshes) {
+            if (auto* rt = w.AddComponent<RayTracingComponent>(e)) {
+                rt->inScene = kRtScopeOn;
+                rt->receiver = kRtScopeOn;
+            }
+        }
+        w.ApplyStructuralChanges();
+    }
 }
 
 void RegisterTerrainShowcaseContent(EngineContext& ctx)

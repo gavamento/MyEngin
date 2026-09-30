@@ -169,16 +169,29 @@ MYE_STR(Menu_RtTemporal,      "Temporal Accumulation", "テンポラル蓄積")
 MYE_STR(Menu_RtSvgf,          "SVGF Spatial Filter",   "SVGF 空間フィルタ")
 // M67d: ReSTIR (反射サンプルの時空間再利用)。RT 反射が前提で、off なら再利用なしの RT 反射
 MYE_STR(Menu_RtRestir,        "ReSTIR Reflection",     "ReSTIR 反射")
-// 汎用タグによる RT の適用範囲 (project_settings.json の rayTracingTags に保存)
-MYE_STR(Menu_RtReceiverTags,  "RT Receiver Tags",      "RT を受けるタグ")
-MYE_STR(Menu_RtSceneTags,     "RT Scene Tags",         "RT に映るタグ")
-MYE_STR(Menu_RtTagsAll,       "All (no filter)",       "すべて (制限なし)")
+// タグによる RT の一括 ON/OFF 規則 (project_settings.json の rayTracingTags に保存)
+MYE_STR(Menu_RtReceiverTags,  "RT Receiver Tag Rules", "RT を受けるタグ規則")
+MYE_STR(Menu_RtSceneTags,     "RT Scene Tag Rules",    "RT に映るタグ規則")
+MYE_STR(Menu_RtTagsAll,       "Clear all rules",       "規則をすべて外す")
+MYE_STR(Menu_RtRuleNone,      "None",                  "なし")
+MYE_STR(Menu_RtRuleOn,        "On",                    "ON")
+MYE_STR(Menu_RtRuleOff,       "Off",                   "OFF")
 MYE_STR(Menu_RtTagsNoNames,   "No tag names yet (Project Settings > Tags)",
                               "タグ名が未登録です (プロジェクト設定 > タグ)")
-MYE_STR(Menu_RtReceiverHint,  "Surfaces with none of these tags keep raster shadows / IBL (tags of parents count)",
-                              "どのタグも持たない面はラスタの影 / IBL のまま (親のタグも含めて判定)")
-MYE_STR(Menu_RtSceneHint,     "Objects with none of these tags are left out of the BVH: not reflected, cast no RT shadow",
-                              "どのタグも持たない物は BVH に入らず、反射に映らず RT の影も落としません")
+MYE_STR(Menu_RtReceiverHint,  "Applies to objects without their own RayTracing setting (parent tags count, Off wins). Default: off",
+                              "個別設定 (レイトレーシング) の無い物に効きます (親のタグも含む、OFF 優先)。既定は OFF")
+MYE_STR(Menu_RtSceneHint,     "Applies to objects without their own RayTracing setting (parent tags count, Off wins). Default: off",
+                              "個別設定 (レイトレーシング) の無い物に効きます (親のタグも含む、OFF 優先)。既定は OFF")
+// Inspector の RayTracing: 実効値と、それがどこで決まったか
+MYE_STR(Insp_RtEffective,     "Effective",             "実効")
+MYE_STR(Insp_RtInScene,       "In BVH",                "BVH に入る")
+MYE_STR(Insp_RtReceiver,      "Receives RT",           "RT を受ける")
+MYE_STR(Insp_RtFromSelf,      "this object",           "この物の設定")
+MYE_STR(Insp_RtFromParent,    "parent",                "親")
+MYE_STR(Insp_RtFromTag,       "tag",                   "タグ")
+MYE_STR(Insp_RtFromDefault,   "default",               "既定")
+MYE_STR(Insp_RtLanesOff,      "RT lanes are off (View > Rendering)",
+                              "RT のレーンが全部 off です (表示 > レンダリング)")
 // M67f: ReSTIR のチューニング (非永続。既定の出所は RtTypes.h の定数表)。
 // ★"###" の右辺は両言語で一致・テーブル内で一意。クラス表の 3 本は 5 行で
 //   同じラベルを使い回すので、呼ぶ側が PushID(cls) で ID を分ける

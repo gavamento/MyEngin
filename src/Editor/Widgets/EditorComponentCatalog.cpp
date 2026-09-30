@@ -41,6 +41,8 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "ReflectionProbe", { ICON_FA_GLOBE, "Rendering", "反射プローブ" } },
         // 水面波 (Gerstner 波)
         { "WaterWave", { ICON_FA_WATER, "Rendering", "水面波" } },
+        // レイトレ適用 (継承 / ON / OFF)。RT の描画範囲だけを決めるので Rendering に置く
+        { "RayTracing", { ICON_FA_SUN, "Rendering", "レイトレーシング" } },
         // Physics
         { "Collider", { ICON_FA_VECTOR_SQUARE, "Physics", "コライダー" } },
         { "Rigidbody", { ICON_FA_CIRCLE_DOT, "Physics", "リジッドボディ" } },

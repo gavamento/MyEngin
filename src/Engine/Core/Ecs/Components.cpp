@@ -1311,6 +1311,15 @@ void RegisterBuiltinComponents()
                MYE_FIELD_TIP(FracturePieceComponent, releaseTicks, Int32, "-1 = still attached")),
         MYE_JP("段階", MYE_FIELD_FLAGS(FracturePieceComponent, phase, Int32, kFieldReadOnly)),
     });
+
+    // レイトレ適用 (TypeId=66、末尾 append)。**kComponentNoHash** — 決めるのは RT の描画
+    // 範囲だけで sim には触らない。新規 opt-in 型なので既存シーンのハッシュも不変
+    RegisterComponent<RayTracingComponent>("RayTracing", {
+        MYE_JP("BVH に入る", MYE_FIELD_TIP(RayTracingComponent, inScene, Int32,
+                                          "0=inherit 1=on 2=off: reflected / casts RT shadows")),
+        MYE_JP("RT を受ける", MYE_FIELD_TIP(RayTracingComponent, receiver, Int32,
+                                           "0=inherit 1=on 2=off: receives RT GI / shadow / reflection")),
+    }, kComponentNoHash);
 }
 
 } // namespace mye

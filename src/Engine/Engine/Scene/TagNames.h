@@ -44,17 +44,21 @@ private:
     std::wstring loadedRoot_;
 };
 
-// RT をどのタグに適用するか (project_settings.json の `"rayTracingTags"`)。
-//   receiverMask = RT の反射 / GI / 影を**受ける**面のタグ。0 = 全部の面 (従来どおり)
-//   sceneMask    = BVH に**入る**物のタグ (反射に映る / 影を落とす)。0 = 全部の物 (従来どおり)
-// 保存はタグ番号の配列 ("receivers": [0, 3]) — 名前ではなく番号にするのは TagComponent と同じ理由
-struct RtTagSettings {
-    uint64_t receiverMask = 0;
-    uint64_t sceneMask = 0;
+// タグによる RT の一括 ON/OFF 規則 (project_settings.json の `"rayTracingTags"`)。
+// 個別設定 (RayTracingComponent) が無い物にだけ効く。評価の規則は RtScope.h の ResolveRtScope。
+//   scene*    = BVH に**入る**か (反射に映る / RT の影を落とす)
+//   receiver* = RT の GI / 影 / 反射を**受ける**か
+//   *On / *Off のどちらにも無いタグは規則なし。同じ物が両方に当たれば OFF が勝つ
+// 保存はタグ番号の配列 ("sceneOn": [0, 3]) — 名前ではなく番号にするのは TagComponent と同じ理由
+struct RtTagRules {
+    uint64_t sceneOn = 0;
+    uint64_t sceneOff = 0;
+    uint64_t receiverOn = 0;
+    uint64_t receiverOff = 0;
 };
-// 読めなかった / キーが無いときは既定 (両方 0) を返す = 従来の挙動
-RtTagSettings LoadRtTagSettings(const std::wstring& assetsRoot);
-bool SaveRtTagSettings(const std::wstring& assetsRoot, const RtTagSettings& settings);
+// 読めなかった / キーが無いときは規則なし (全部 0) = すべて既定 OFF
+RtTagRules LoadRtTagRules(const std::wstring& assetsRoot);
+bool SaveRtTagRules(const std::wstring& assetsRoot, const RtTagRules& rules);
 
 // "0,3,5" のようなタグ番号のカンマ区切りをビット集合へ (CLI の --rt-receiver-tags 用)。
 // 範囲外・数字以外を含むなら false (out は触らない)。空文字列は 0 = 制限なし
