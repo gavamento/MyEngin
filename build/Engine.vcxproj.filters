@@ -103,6 +103,9 @@
     <Filter Include="Engine\Script">
       <UniqueIdentifier>{01586F12-A871-BEFB-7266-0B4C59DCE30B}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Session">
+      <UniqueIdentifier>{65616315-DB51-DBD3-83C2-A431855687C5}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\UI">
       <UniqueIdentifier>{AD97C4EA-898A-15C7-7B0A-F4DF0AA75D30}</UniqueIdentifier>
     </Filter>
@@ -665,6 +668,12 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Script\ScriptHost.cpp">
       <Filter>Engine\Script</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Session\SessionSelfTest.cpp">
+      <Filter>Engine\Session</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Session\SessionTypes.cpp">
+      <Filter>Engine\Session</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\UI\FontSelfTest.cpp">
       <Filter>Engine\UI</Filter>
@@ -1448,6 +1457,12 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Script\ScriptKeys.h">
       <Filter>Engine\Script</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Session\SessionSelfTest.h">
+      <Filter>Engine\Session</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Session\SessionTypes.h">
+      <Filter>Engine\Session</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\UI\FontSelfTest.h">
       <Filter>Engine\UI</Filter>

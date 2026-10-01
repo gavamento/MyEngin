@@ -240,3 +240,4 @@
 (確定後の変更のみ)
 - 2026-10-02 ユーザー: D3/D4/D5/D6 は planner 裁定どおりで確定 (台帳に記録)。
 - 2026-10-02 sub-01 VERDICT round 1 (coder SELF_EVAL の不安 1-4 への回答): C3 に基点から失敗している 2 項目の除外を明記、R-6 (GPU パーティクル設定)・R-7 (コンピュート ABI の結果を sim に入れない制限)・R-8 (Server の cook キャッシュ無効) を追加。sub-09 に R-7 / D13 を既知制限として書く項目を追加。
+- 2026-10-02 sub-02 VERDICT round 1: (1) SessionLanes は SimRefs に別参照を持たず Scene 経由で撮る (coder 逸脱を承認、配線漏れ防止)。(2) D10 のハッシュ節ゲートは SessionLanes::systemInput (sim 状態、初めてシステム入力を適用した tick に 1) で表す — SessionConfig.role で判定するのと同値で、スナップショットに乗る。(3) `--rep-diff` はヘッダのうち tick 列の意味に効く項目だけを比較する (role / inputDelay / 締め切り / 版番号は比較しない — net_verify が role の違う .rep を突き合わせるため)。(4) 規則 13-a の許可リストに既存経路の EngineApiTable.cpp (v13 Net* → 表示専用 NetRuntimeInfo) を理由付きで入れる。許可は sub-03 で NetRuntime.h の include だけに絞る。(5) 再シム (ロールバック / タイムトラベル) で SystemInputTick を tick ごとに差し替える要件を sub-04 に追加。

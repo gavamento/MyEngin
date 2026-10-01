@@ -1,6 +1,7 @@
 #include "Engine/Engine/Replay/WorldHasher.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -12,6 +13,7 @@
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Loop/GameFlow.h"
 #include "Engine/Engine/Scene/Tags.h" // 汎用タグ (NoSerialize = 汎用ループ外なので明示的に畳む)
+#include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Engine/UI/UIInteraction.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
@@ -427,6 +429,38 @@ uint64_t HashUiInteraction(uint64_t h, const UIInteractionState* ui, DumpCtx* d)
     return h;
 }
 
+// M81b: セッションのレーン状態。UI 対話状態の直後 (Scene が持つ小さな sim 状態として隣に置く)。
+// 呼び出し側 (SimSourcesOf) がシステム入力を持つ記録でだけ非 null を渡す。
+// 適用イベントの写しはゲームから読めるので、未使用スロットは畳まず appliedCount 件だけ畳む
+uint64_t HashSessionLanes(uint64_t h, const SessionLanes* s, DumpCtx* d)
+{
+    if (s == nullptr) {
+        return h;
+    }
+    char field[32];
+    FoldU64(h, d, "SessionLanes", "lastEventSeq", s->lastEventSeq);
+    for (uint32_t i = 0; i < kMaxPlayers; ++i) {
+        std::snprintf(field, sizeof(field), "lane%u.state", i);
+        FoldU64(h, d, "SessionLanes", field, s->lanes[i].state);
+        std::snprintf(field, sizeof(field), "lane%u.playerId", i);
+        FoldU64(h, d, "SessionLanes", field, s->lanes[i].playerId);
+    }
+    FoldU64(h, d, "SessionLanes", "appliedCount", s->appliedCount);
+    const uint32_t n = std::min(s->appliedCount, kMaxSystemEventsPerTick);
+    for (uint32_t i = 0; i < n; ++i) {
+        const SystemEvent& ev = s->applied[i];
+        std::snprintf(field, sizeof(field), "applied%u.eventSeq", i);
+        FoldU64(h, d, "SessionLanes", field, ev.eventSeq);
+        std::snprintf(field, sizeof(field), "applied%u.playerId", i);
+        FoldU64(h, d, "SessionLanes", field, ev.playerId);
+        std::snprintf(field, sizeof(field), "applied%u.kind", i);
+        FoldU64(h, d, "SessionLanes", field, ev.kind);
+        std::snprintf(field, sizeof(field), "applied%u.lane", i);
+        FoldU64(h, d, "SessionLanes", field, ev.lane);
+    }
+    return h;
+}
+
 void CollectEntitiesSorted(World& world, std::vector<EntityID>& out)
 {
     out.clear();
@@ -481,6 +515,7 @@ uint64_t HashWorldImpl(World& world, const SimSources& src,
     // ゲームフロー状態 (M51g: RNG の直後)
     total = HashGameFlow(total, src.time, src.persist, d);
     total = HashUiInteraction(total, src.ui, d);
+    total = HashSessionLanes(total, src.sessionLanes, d);
     // CPU パーティクル (spec 11.3: ハッシュ対象)
     if (src.particles) {
         const uint64_t ph = HashCpuParticles(*src.particles, d);

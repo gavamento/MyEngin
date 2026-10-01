@@ -19,6 +19,9 @@ spec D5 / D6 / D7 / D8 / 4.2 の SimProvenance を実値で埋め、照合を 1 
 7. P2P: `NetIdentity` を SimProvenance + 既存の P2P 項目 (canvas、referenceW/H、fontMetricsHash、startWorldHash 等) から作る形へ変え、`kNetProtoVersion` 6、`NetReject` に末尾追加 (`EngineVersion`, `GameVersion`, `ContentHash`)。`CompareNetIdentity` は内部で `CompareProvenance` を呼ぶ (照合項目を二重管理しない)。
 8. .rep v9 のヘッダの SimProvenance を実値で書く。起動ログに 1 行で出す (`[provenance] engine=... game=... content=...`)。
 
+10. (sub-02 VERDICT should) check_rules 規則 13-a の許可リストのうち `EngineApiTable.cpp` を「`Engine/Engine/Net/NetRuntime.h` の include だけ許可」に絞る。許可リストの他の行 (EngineLoop.cpp / HeadlessSim.cpp) はファイル単位のままでよい (ネット組立の持ち主)。
+9. (sub-02 VERDICT から) `DiffReplayFiles` は SessionConfig.configBits と SimProvenance の一部を比較する (sub-02 の実装)。configBits と provenance を実値で埋めると、net_verify の「ローカル参照 (offline) ↔ host」の `--rep-diff` が起動オプションの差で割れうる。**比較する項目を「tick 列の意味に効くもの」に限る**方針 (sub-02 で role / inputDelay / 版番号を外したのと同じ) を保ち、net_verify (C7) が PASS することで確認する。`--allow-game-mismatch` のビットは比較から外す。
+
 ## やらないこと (このサブでは)
 - サーバ/クライアントのプロトコル (sub-04)
 - manifest の署名・改ざん検知 (対象外)

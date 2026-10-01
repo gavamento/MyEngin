@@ -76,6 +76,7 @@
 #include "Engine/Engine/App/EngineCliSelfTest.h"
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
 #include "Engine/Engine/Replay/CrashRingSelfTest.h"
+#include "Engine/Engine/Session/SessionSelfTest.h"
 #include "Engine/Platform/CrashHandler.h"
 #include "Engine/Platform/InputActionsSelfTest.h"
 #include "Engine/Platform/PathUtil.h"
@@ -562,6 +563,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunFractureSelfTest();                  // M80a: 破壊分割コア (閉じ判定・平面切断)
         ok &= mye::RunFractureEditorSelfTest();            // M80i: 破壊物 Inspector の焼き回り
         ok &= mye::RunFractureSkinSelfTest();              // M80j: スキンメッシュの破壊
+        ok &= mye::RunSessionSelfTest();                   // M81b: システム入力 / SessionLanes / .rep v9
         return ok ? 0 : 1;
     }
 

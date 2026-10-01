@@ -52,7 +52,8 @@ bool CrashRing::TakeSnapshot(const SimRefs& refs, uint64_t tick)
     }
     World& world = refs.scene->GetWorld(); // Rng() は非 const 版しか無い
     const uint32_t lanes = (config_.playerCount == 0) ? 1u : config_.playerCount; // M52g
-    const size_t recordBytes = sizeof(InputSnapshot) * lanes + sizeof(uint64_t);
+    const uint32_t flags = RoleHasSystemInput(config_.session.role) ? kReplayFlagSystemInput : 0u;
+    const size_t recordBytes = static_cast<size_t>(ReplayTickRecordBytes(lanes, flags));
     const size_t need = sizeof(MyeReplayHeader) + scratch_.size() + config_.maxTicks * recordBytes;
 
     // ★ここから ready_ = true までは .rep として一貫していない。
@@ -72,6 +73,14 @@ bool CrashRing::TakeSnapshot(const SimRefs& refs, uint64_t tick)
     header.snapshotSize = scratch_.size();
     header.tickCount = 0;
     header.playerCount = lanes; // M52g
+    // M81b: セッション設定と開始スナップショットの素性。worldHash / blobHash は 0 = 未計算
+    // (撮影のたびに全体をハッシュしない。ハッシュはクラッシュ時に使うものではない)
+    header.flags = flags;
+    header.session = config_.session;
+    header.session.playerCount = lanes;
+    header.startMeta.tick = tick;
+    header.startMeta.lastEventSeq = refs.scene->Lanes().lastEventSeq;
+    header.startMeta.config = header.session;
     std::memcpy(image_.data(), &header, sizeof(header));
     std::memcpy(image_.data() + sizeof(header), scratch_.data(), scratch_.size());
 
@@ -91,7 +100,8 @@ std::byte* CrashRing::RecordAt(uint64_t index)
     return image_.data() + recordBase_ + static_cast<size_t>(index) * RecordBytes();
 }
 
-void CrashRing::OnTickBegin(uint64_t tick, const InputSnapshot* inputs, uint32_t playerCount)
+void CrashRing::OnTickBegin(uint64_t tick, const InputSnapshot* inputs, uint32_t playerCount,
+                            const SystemInputTick* systemInput)
 {
     if (!enabled_ || !ready_) {
         return;
@@ -115,9 +125,16 @@ void CrashRing::OnTickBegin(uint64_t tick, const InputSnapshot* inputs, uint32_t
         const InputSnapshot& src = (inputs != nullptr && p < playerCount) ? inputs[p] : zero;
         std::memcpy(rec + sizeof(InputSnapshot) * p, &src, sizeof(InputSnapshot));
     }
+    size_t hashOffset = sizeof(InputSnapshot) * lanes;
+    if ((header->flags & kReplayFlagSystemInput) != 0) {
+        const SystemInputTick sys = NormalizeSystemInput(systemInput != nullptr ? *systemInput
+                                                                              : SystemInputTick{});
+        std::memcpy(rec + hashOffset, &sys, sizeof(SystemInputTick));
+        hashOffset += sizeof(SystemInputTick);
+    }
     // ★まだ走っていない tick なので期待ハッシュは存在しない = 予約値 0 (Replay.h)
     const uint64_t unverified = 0;
-    std::memcpy(rec + sizeof(InputSnapshot) * lanes, &unverified, sizeof(uint64_t));
+    std::memcpy(rec + hashOffset, &unverified, sizeof(uint64_t));
     // ここで初めてレコードが「見える」。発行は tickCount の 1 ストアだけなので、
     // どこで落ちてもイメージは常に整合する (書きかけのレコードは範囲外に居る)
     header->tickCount += 1;
@@ -142,8 +159,8 @@ void CrashRing::OnTickEnd(const SimRefs& refs, uint64_t ranTick, uint64_t hashAf
         MyeReplayHeader* header = HeaderOf(image_);
         std::byte* rec = RecordAt(header->tickCount - 1);
         // 8 バイト整列の単一ストア = 途中で落ちても中途半端な値にはならない
-        std::memcpy(rec + sizeof(InputSnapshot) * header->playerCount, &hashAfter,
-                    sizeof(uint64_t));
+        // ハッシュはレコードの末尾 (システム入力の有無に依らない)
+        std::memcpy(rec + RecordBytes() - sizeof(uint64_t), &hashAfter, sizeof(uint64_t));
         inFlight_ = false;
         nextTick_ = ranTick + 1;
         ++ticksSinceSnapshot_;

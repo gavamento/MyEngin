@@ -6,17 +6,18 @@
 #include <fstream>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {
 namespace {
 constexpr uint32_t kReplayMagic = 0x5045524Du; // 'MREP'
-constexpr uint32_t kReplayVersion = kReplayFileVersion;
 } // namespace
 
 void ReplayRecorder::Start(const std::wstring& path, uint64_t rngState, uint64_t rngInc,
                            uint32_t entityCount, uint32_t playerCount, const std::byte* snapshot,
-                           size_t snapshotSize)
+                           size_t snapshotSize, const SessionConfig& session,
+                           const SimProvenance& provenance, const SnapshotMeta& startMeta)
 {
     path_ = path;
     header_ = {};
@@ -24,26 +25,36 @@ void ReplayRecorder::Start(const std::wstring& path, uint64_t rngState, uint64_t
     header_.rngInc = rngInc;
     header_.entityCount = entityCount;
     header_.playerCount = (playerCount == 0) ? 1u : playerCount;
+    header_.session = session;
+    header_.provenance = provenance;
+    header_.startMeta = startMeta;
+    header_.flags = RoleHasSystemInput(session.role) ? kReplayFlagSystemInput : 0u;
     snapshot_.clear();
     if (snapshot != nullptr && snapshotSize > 0) {
         snapshot_.assign(snapshot, snapshot + snapshotSize);
     }
     header_.snapshotSize = snapshot_.size();
     inputs_.clear();
+    systemInputs_.clear();
     hashes_.clear();
     active_ = true;
-    MYE_LOG_INFO("[replay] recording to %s (players %u, snapshot %zu bytes)",
-                 WideToUtf8(path).c_str(), header_.playerCount, snapshot_.size());
+    MYE_LOG_INFO("[replay] recording to %s (players %u, snapshot %zu bytes, system input %s)",
+                 WideToUtf8(path).c_str(), header_.playerCount, snapshot_.size(),
+                 header_.flags != 0 ? "yes" : "no");
 }
 
 void ReplayRecorder::RecordTick(const InputSnapshot* lanes, uint32_t playerCount,
-                                uint64_t worldHash)
+                                uint64_t worldHash, const SystemInputTick* systemInput)
 {
     // 宣言と実際が食い違ったら**宣言側に合わせて**書く (足りない分はゼロ値)。
     // ここで黙って可変長にすると、ファイルの tick レコード長が tick ごとに変わって
     // 再生側が一切読めなくなる
     for (uint32_t p = 0; p < header_.playerCount; ++p) {
         inputs_.push_back((lanes != nullptr && p < playerCount) ? lanes[p] : InputSnapshot{});
+    }
+    if ((header_.flags & kReplayFlagSystemInput) != 0) {
+        systemInputs_.push_back(NormalizeSystemInput(systemInput != nullptr ? *systemInput
+                                                                          : SystemInputTick{}));
     }
     hashes_.push_back(worldHash);
 }
@@ -68,12 +79,16 @@ bool ReplayRecorder::Finish()
         f.write(reinterpret_cast<const char*>(snapshot_.data()),
                 static_cast<std::streamsize>(snapshot_.size()));
     }
-    // tick レコード = InputSnapshot × playerCount + uint64 hash。
+    // tick レコード = InputSnapshot × playerCount + (flags.bit0 のとき SystemInputTick) + uint64 hash。
     // 入力列とハッシュ列を別々に持っているので、書くときに tick 単位で綴じ直す
     const size_t perTick = header_.playerCount;
+    const bool hasSystemInput = (header_.flags & kReplayFlagSystemInput) != 0;
     for (size_t t = 0; t < hashes_.size(); ++t) {
         f.write(reinterpret_cast<const char*>(&inputs_[t * perTick]),
                 static_cast<std::streamsize>(perTick * sizeof(InputSnapshot)));
+        if (hasSystemInput) {
+            f.write(reinterpret_cast<const char*>(&systemInputs_[t]), sizeof(SystemInputTick));
+        }
         f.write(reinterpret_cast<const char*>(&hashes_[t]), sizeof(uint64_t));
     }
     MYE_LOG_INFO("[replay] recorded %llu ticks -> %s",
@@ -92,16 +107,44 @@ bool ReplayPlayer::Load(const std::wstring& path)
         return false;
     }
     // ★ヘッダも中身もまず手元の変数へ読み、全部そろってから差し替える (途中で失敗しても前の内容を壊さない)
-    MyeReplayHeader header;
-    f.read(reinterpret_cast<char*>(&header), sizeof(header));
-    if (!f || header.magic != kReplayMagic) {
+    // v8 と v9 は先頭 56 バイトが同じ並び。まず共通部を読んで版を決め、v9 なら残りを読む。
+    // v8 の新項目 (flags / SessionConfig / SimProvenance / SnapshotMeta) は「不明」= 0 のまま
+    MyeReplayHeaderV8 base = {};
+    f.read(reinterpret_cast<char*>(&base), sizeof(base));
+    if (!f || base.magic != kReplayMagic) {
         MYE_LOG_ERROR("[replay] bad file magic");
         return false;
     }
-    if (header.version != kReplayVersion || header.inputSize != sizeof(InputSnapshot)) {
-        MYE_LOG_ERROR("[replay] incompatible version/layout (v%u, input %u bytes)",
-                      header.version, header.inputSize);
+    if (base.version < kReplayOldestReadableVersion || base.version > kReplayFileVersion
+        || base.inputSize != sizeof(InputSnapshot)) {
+        MYE_LOG_ERROR("[replay] incompatible version/layout (v%u, input %u bytes)", base.version,
+                      base.inputSize);
         return false;
+    }
+    MyeReplayHeader header;
+    header.magic = base.magic;
+    header.version = base.version;
+    header.fixedDt = base.fixedDt;
+    header.inputSize = base.inputSize;
+    header.tickCount = base.tickCount;
+    header.rngState = base.rngState;
+    header.rngInc = base.rngInc;
+    header.entityCount = base.entityCount;
+    header.playerCount = base.playerCount;
+    header.snapshotSize = base.snapshotSize;
+    size_t headerBytes = sizeof(MyeReplayHeaderV8);
+    if (base.version >= 9) {
+        headerBytes = sizeof(MyeReplayHeader);
+        f.read(reinterpret_cast<char*>(&header) + sizeof(MyeReplayHeaderV8),
+               static_cast<std::streamsize>(sizeof(MyeReplayHeader) - sizeof(MyeReplayHeaderV8)));
+        if (!f) {
+            MYE_LOG_ERROR("[replay] truncated file (v9 header)");
+            return false;
+        }
+        if ((header.flags & ~kReplayFlagSystemInput) != 0) {
+            MYE_LOG_ERROR("[replay] unknown header flags 0x%x", header.flags);
+            return false;
+        }
     }
     if (header.playerCount == 0 || header.playerCount > kMaxPlayers) {
         MYE_LOG_ERROR("[replay] playerCount = %u (supported: 1..%u)", header.playerCount, kMaxPlayers);
@@ -110,15 +153,14 @@ bool ReplayPlayer::Load(const std::wstring& path)
     // ★件数は確保の**前**に実ファイル長と突き合わせる。壊れたヘッダの tickCount / snapshotSize を
     //   そのまま resize すると、数バイトのファイルで何 GB も確保しにいく (tickCount x playerCount の
     //   桁あふれもここで起きなくなる: 1 tick の長さで割ってから比べるので掛け算をしない)
-    const uint64_t body = fileSize - sizeof(header); // magic を読めた = ヘッダ長はある
+    const uint64_t body = fileSize - headerBytes; // ヘッダは読めた = 実ファイルはヘッダ長以上
     if (header.snapshotSize > body) {
         MYE_LOG_ERROR("[replay] truncated file (snapshot %llu bytes, %llu bytes after the header)",
                       static_cast<unsigned long long>(header.snapshotSize),
                       static_cast<unsigned long long>(body));
         return false;
     }
-    const uint64_t perTickBytes =
-        static_cast<uint64_t>(header.playerCount) * sizeof(InputSnapshot) + sizeof(uint64_t);
+    const uint64_t perTickBytes = ReplayTickRecordBytes(header.playerCount, header.flags);
     if (header.tickCount > (body - header.snapshotSize) / perTickBytes) {
         MYE_LOG_ERROR("[replay] truncated file (%llu ticks declared, room for %llu)",
                       static_cast<unsigned long long>(header.tickCount),
@@ -129,12 +171,40 @@ bool ReplayPlayer::Load(const std::wstring& path)
     if (!snapshot.empty()) {
         f.read(reinterpret_cast<char*>(snapshot.data()), static_cast<std::streamsize>(snapshot.size()));
     }
+    // D9: スナップショットを埋めた v9 は、ヘッダの rngState / rngInc が blob の World RNG と
+    // 一致しなければ拒否する (RNG の真値が 2 つあって食い違えると、復元経路ごとに別の世界になる)。
+    // blob の版が違う (v8 の旧 blob など) と読み取れないが、それは RestoreSimSnapshot が拒む
+    if (header.version >= 9 && !snapshot.empty()) {
+        uint64_t blobState = 0;
+        uint64_t blobInc = 0;
+        if (PeekSimSnapshotWorldRng(snapshot.data(), snapshot.size(), blobState, blobInc)
+            && (blobState != header.rngState || blobInc != header.rngInc)) {
+            MYE_LOG_ERROR("[replay] header RNG (%016llx/%016llx) differs from the embedded "
+                          "snapshot's world RNG (%016llx/%016llx)",
+                          static_cast<unsigned long long>(header.rngState),
+                          static_cast<unsigned long long>(header.rngInc),
+                          static_cast<unsigned long long>(blobState),
+                          static_cast<unsigned long long>(blobInc));
+            return false;
+        }
+    }
     const size_t perTick = header.playerCount;
+    const bool hasSystemInput = (header.flags & kReplayFlagSystemInput) != 0;
     std::vector<InputSnapshot> inputs(static_cast<size_t>(header.tickCount) * perTick);
+    std::vector<SystemInputTick> systemInputs(
+        hasSystemInput ? static_cast<size_t>(header.tickCount) : 0);
     std::vector<uint64_t> hashes(static_cast<size_t>(header.tickCount));
     for (size_t t = 0; t < hashes.size(); ++t) {
         f.read(reinterpret_cast<char*>(&inputs[t * perTick]),
                static_cast<std::streamsize>(perTick * sizeof(InputSnapshot)));
+        if (hasSystemInput) {
+            f.read(reinterpret_cast<char*>(&systemInputs[t]), sizeof(SystemInputTick));
+            if (f && systemInputs[t].eventCount > kMaxSystemEventsPerTick) {
+                MYE_LOG_ERROR("[replay] tick %zu has %u system events (max %u)", t,
+                              systemInputs[t].eventCount, kMaxSystemEventsPerTick);
+                return false;
+            }
+        }
         f.read(reinterpret_cast<char*>(&hashes[t]), sizeof(uint64_t));
     }
     if (!f) {
@@ -144,11 +214,13 @@ bool ReplayPlayer::Load(const std::wstring& path)
     header_ = header;
     snapshot_ = std::move(snapshot);
     inputs_ = std::move(inputs);
+    systemInputs_ = std::move(systemInputs);
     hashes_ = std::move(hashes);
     active_ = true;
-    MYE_LOG_INFO("[replay] loaded %llu ticks from %s (players %u, snapshot %zu bytes)",
+    MYE_LOG_INFO("[replay] loaded %llu ticks from %s (v%u, players %u, snapshot %zu bytes, system input %s)",
                  static_cast<unsigned long long>(hashes_.size()), WideToUtf8(path).c_str(),
-                 header_.playerCount, snapshot_.size());
+                 header_.version, header_.playerCount, snapshot_.size(),
+                 hasSystemInput ? "yes" : "no");
     return true;
 }
 
@@ -233,6 +305,27 @@ ReplayDiffResult DiffReplayFiles(const std::wstring& a, const std::wstring& b)
         { "rngInc", ha.rngInc, hb.rngInc },
         { "entityCount", ha.entityCount, hb.entityCount },
         { "snapshotSize", ha.snapshotSize, hb.snapshotSize },
+        // ---- v9 (M81b)。sim の結果に効く項目だけを比べる ----
+        // ★session.role / inputDelay / deadlineTicks / rejoinTimeoutTicks は**記録者の事情**
+        //   (ホストと参加者、サーバとクライアントで違って当然) なので比べない。
+        //   provenance も engine / game / protocol / api / replay の版は比べない: Debug と Release の
+        //   混在 (--allow-game-mismatch) で正当に食い違う。sim に効く contentHash と schemaVersion、
+        //   開始スナップショットの initialSnapshotHash だけを見る
+        { "flags", ha.flags, hb.flags },
+        { "session.playerCount", ha.session.playerCount, hb.session.playerCount },
+        { "session.tickRate", ha.session.tickRate, hb.session.tickRate },
+        { "session.seed", ha.session.seed, hb.session.seed },
+        { "session.configBits", ha.session.configBits, hb.session.configBits },
+        { "session.referenceW", ha.session.referenceW, hb.session.referenceW },
+        { "session.referenceH", ha.session.referenceH, hb.session.referenceH },
+        { "session.fontMetricsHash", ha.session.fontMetricsHash, hb.session.fontMetricsHash },
+        { "provenance.schemaVersion", ha.provenance.schemaVersion, hb.provenance.schemaVersion },
+        { "provenance.contentHash", ha.provenance.contentHash, hb.provenance.contentHash },
+        { "provenance.initialSnapshotHash", ha.provenance.initialSnapshotHash,
+          hb.provenance.initialSnapshotHash },
+        { "startMeta.tick", ha.startMeta.tick, hb.startMeta.tick },
+        { "startMeta.worldHash", ha.startMeta.worldHash, hb.startMeta.worldHash },
+        { "startMeta.lastEventSeq", ha.startMeta.lastEventSeq, hb.startMeta.lastEventSeq },
         // ★tickCount はここに入れない (M52i)。desync バンドルの 2 本は「割れた側が先に
         //   気づいて先に止まる」ので**必ず長さが違う**。長さ違いを門前払いにすると、
         //   本当に見たい「どの tick から割れたか」に一生たどり着けない。
@@ -261,6 +354,21 @@ ReplayDiffResult DiffReplayFiles(const std::wstring& a, const std::wstring& b)
                               "tick %llu: input lane %u differs at %s (the two runs did NOT "
                               "consume the same input)",
                               static_cast<unsigned long long>(t), p, field.c_str());
+                r.firstDiffTick = t;
+                r.summary = buf;
+                return r;
+            }
+        }
+        if (pa.HasSystemInput() && pb.HasSystemInput()) {
+            // flags が一致しているので両方持つか両方持たない。イベントは入力の一部なので
+            // ハッシュより先に見る (「同じ入力で割れた」のか「入力が違う」のかを区別する)
+            const std::string field =
+                FirstDifferentSystemInputField(pa.SystemInputForTick(t), pb.SystemInputForTick(t));
+            if (!field.empty()) {
+                std::snprintf(buf, sizeof(buf),
+                              "tick %llu: %s differs (the two runs did NOT consume the same "
+                              "system input)",
+                              static_cast<unsigned long long>(t), field.c_str());
                 r.firstDiffTick = t;
                 r.summary = buf;
                 return r;

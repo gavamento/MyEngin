@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <string>
 
+#include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Platform/Input.h"
 
 namespace mye {
@@ -420,6 +421,11 @@ struct EngineContext {
     uint32_t playerCount = 1;
     InputSnapshot& Input() { return inputs[0]; }
     const InputSnapshot& Input() const { return inputs[0]; }
+    // システム入力 (M81b、参加・離脱)。inputs と同じく**呼び出し側が確定させてから** RunOneTick へ渡す。
+    // hasSystemInput が偽のセッション (オフライン / P2P) では RunOneTick は何もしない。
+    // 値の出どころは .rep の記録か、確定入力を作るサーバだけ — 実時間や受信順を直接入れない
+    SystemInputTick systemInput = {};
+    bool hasSystemInput = false;
     // アクションマップ (M51d)。EngineLoop が所有し tick 頭に評価済み。
     // assets\input\actions.json が無ければ空マップ (ActionState/AxisValue は常に 0)
     InputActions* inputActions = nullptr;

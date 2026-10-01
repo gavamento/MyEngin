@@ -9,6 +9,7 @@
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Loop/GameFlow.h"
 #include "Engine/Engine/Scene/GameObject.h"
+#include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Engine/UI/UIInteraction.h"
 
 namespace mye {
@@ -88,6 +89,14 @@ public:
     // (TickRunner のシーン遷移が呼ぶ)。詳細は UIInteraction.h
     UIInteractionState& UI() { return ui_; }
     const UIInteractionState& UI() const { return ui_; }
+
+    // ---- セッションのレーン状態 (M81b) ----
+    // Scene が持つ sim 状態で、SimSnapshot の SES 節に入り、システム入力を持つ記録では
+    // ワールドハッシュにも畳まれる。**Clear / LoadScene では消さない**: セッション (誰がどの
+    // レーンに居るか) はシーンを跨いで続くもので、遷移のたびに消すと途中参加者のレーンが
+    // 全員 Empty に戻ってしまう
+    SessionLanes& Lanes() { return lanes_; }
+    const SessionLanes& Lanes() const { return lanes_; }
 
     // このシーンを読み書きしたファイルの絶対パス (SceneSerializer::SaveToFile/LoadFromFile
     // が設定)。メモリ上で組んだシーン (デモ構築) は空。SaveGame の「現シーンパス」記録用 (M51g)
@@ -236,6 +245,7 @@ private:
     TimeControl time_;       // ポーズ/タイムスケール (M51g)
     UIInteractionState ui_;  // UI の hovered/pressed/clicked/focused (M70c)
     PersistStore persist_;   // シーン跨ぎ永続 (M51g)。Clear で消えない
+    SessionLanes lanes_ = {}; // セッションのレーン状態 (M81b)。Clear で消えない
     std::wstring sourcePath_; // ロード/保存元の絶対パス (M51g)。メモリ構築シーンは空
 };
 

@@ -386,6 +386,8 @@ HeadlessVerifyResult HeadlessSim::VerifyReplay()
                      m.player.PlayerCount(), ctx.playerCount);
         ctx.playerCount = m.player.PlayerCount();
     }
+    // M81b: システム入力を持つ記録は tick ごとにそれも流す (EngineLoop の verify 経路と同じ)
+    ctx.hasSystemInput = m.player.HasSystemInput();
     if (!m.player.Snapshot().empty()) {
         // v4 の埋め込み初期状態: シーンの中身に依存せず記録開始時点へ丸ごと戻せる
         if (!RestoreSimSnapshot(m.simRefs, m.player.Snapshot().data(), m.player.Snapshot().size())) {
@@ -407,6 +409,9 @@ HeadlessVerifyResult HeadlessSim::VerifyReplay()
     while (!ctx.requestExit && m.player.HasTick(ctx.tickIndex)) {
         for (uint32_t p = 0; p < ctx.playerCount; ++p) {
             ctx.inputs[p] = m.player.InputForTick(ctx.tickIndex, p);
+        }
+        if (ctx.hasSystemInput) {
+            ctx.systemInput = m.player.SystemInputForTick(ctx.tickIndex);
         }
         RunOneTick(m.tickServices);
     }

@@ -13,7 +13,7 @@ spec 4.1.1 / 4.1.4〜4.1.8 / 4.2 (プロトコル) / D4 / D11 / D12 を、**ト�
    - パケットは既存 `NetPacketHeader` を流用し `NetMsg` に追加 (spec 4.2、既存値は動かさない)。
    - **トランスポート**: 送受信を `std::function` か小さな POD キュー経由にして、実 `UdpSocket` と偽トランスポートを差し替え可能にする (仮想関数の抽象クラスを増やさない方が既存の流儀に合う — coder が既存コードを見て選ぶ。選んだ理由を SELF_EVAL に)。
    - **クロック**: `NowMs()` を内部で読まない。呼び出し側が渡す。
-2. ロールバック: `NetRollback` のリング容量をコンパイル時最大 (16+4) にし、上限を `Begin` の引数で受ける。P2P は 8 (現状と同じ挙動)、サーバ構成のクライアントは 12。投機記録 (`NetSpecTick`) に SystemInputTick を足し、予測が外れたとき (イベントが来た) も巻き戻す。
+2. ロールバック: `NetRollback` のリング容量をコンパイル時最大 (16+4) にし、上限を `Begin` の引数で受ける。P2P は 8 (現状と同じ挙動)、サーバ構成のクライアントは 12。投機記録 (`NetSpecTick`) に SystemInputTick を足し、予測が外れたとき (イベントが来た) も巻き戻す。**再シム (NetResimFrom) は tick ごとに `ctx.systemInput` / `ctx.hasSystemInput` をその tick の記録値へ差し替えてから RunOneTick を呼ぶ** (sub-02 で判明: 差し替えないと復元後の lastEventSeq に対して古い systemInput が別の tick で適用される)。TimeTravel のリング (SeekTo の再シム) も同じ: SystemInputTick をリングに持たせるか、`hasSystemInput` の構成ではタイムトラベルのリングを無効にするかを選び、選んだ理由を SELF_EVAL に書く (planner の推奨は後者 — サーバ/クライアント構成でのタイムトラベルは M81 の範囲外)。selftest に「システムイベントを含む区間をまたぐロールバック」を入れる。
 3. 1 プロセス内の検証ハーネス (selftest):
    - 偽トランスポート: seed 付き `Pcg32` で遅延 (固定 + ジッタ)・ロス・並べ替え・重複を作る。時刻は仮想時刻 (ms) をテストが進める。
    - sim: sub-01 のヘッドレス sim ホストを N+1 個 (サーバ 1 + クライアント 3) 立てる。GameLogic のスクリプトを複数インスタンスで共有できない場合 (spec R-4) は、スクリプト無しのコード構築シーン (PlayerInput のミラー + 物理) で行い、その判断を SELF_EVAL に書く。

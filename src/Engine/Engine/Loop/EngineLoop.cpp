@@ -10,6 +10,7 @@
 #include "Engine/Core/Jobs/JobSystem.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Diagnostics/Profiler.h"
+#include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Util/Random.h"
 #include "Engine/Engine/Animation/Animation.h"
 #include "Engine/Engine/Animation/AnimatorController.h"
@@ -691,6 +692,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ReplayRecorder recorder;
     ReplayPlayer player;
     int exitCode = netFailed ? 1 : 0;
+    // M81b: 記録者のセッション設定。role は記録者の役割にすぎず再生結果に効かない (--rep-diff も比べない)。
+    // engine / game / content の出自 (SimProvenance) と inputDelay 以外の値は sub-03 以降が埋める。
+    // 検証中は .rep の値で上書きする (下の replayVerifyPath 節)
+    SessionConfig sessionConfig = {};
+    sessionConfig.role = static_cast<uint32_t>(config.netRole);
+    sessionConfig.playerCount = ctx.playerCount;
+    sessionConfig.tickRate = 60;
+    sessionConfig.inputDelay = netEnabled ? static_cast<uint32_t>(config.netInputDelay) : 0u;
 
     // ---- 反射プローブのベイカ (M56e、--probe-bake のときだけ実体を持つ) ----
     // 専用の RenderSystem を内側に抱えるので、使わない実行では確保もしない
@@ -712,6 +721,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                          player.PlayerCount(), ctx.playerCount);
             ctx.playerCount = player.PlayerCount();
         }
+        // M81b: システム入力を持つ記録 (flags.bit0) は tick ごとの置換でそれも流す。
+        // 以後の CrashRing / 再録画にも同じ役割 (role) を引き継ぐ
+        ctx.hasSystemInput = player.HasSystemInput();
+        sessionConfig = player.Header().session;
         if (!player.Snapshot().empty()) {
             // v4 の埋め込み初期状態 (M52d)。**シーンの中身に依存せず**記録開始時点へ丸ごと
             // 戻せるので、配布ビルドで落ちた .rep をどのシーンからでも再生できる (M52f が本命)。
@@ -736,9 +749,24 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             MYE_LOG_ERROR("[replay] could not capture the embedded snapshot");
             return 1;
         }
+        // 開始スナップショットの素性 (M81b)。blob を埋めるときだけ worldHash / blobHash を計算する
+        // (埋めない記録で余計なハッシュを撮らない)
+        sessionConfig.playerCount = ctx.playerCount;
+        SimProvenance provenance = {};
+        SnapshotMeta startMeta = {};
+        startMeta.tick = ctx.tickIndex;
+        startMeta.lastEventSeq = scene.Lanes().lastEventSeq;
+        startMeta.config = sessionConfig;
+        if (!startSnapshot.empty()) {
+            startMeta.blobHash = HashBytes(startSnapshot.data(), startSnapshot.size());
+            startMeta.worldHash = HashWorld(scene.GetWorld(), simRefs.HashSources());
+            provenance.initialSnapshotHash = startMeta.blobHash;
+        }
+        startMeta.provenance = provenance;
         recorder.Start(config.replayRecordPath, scene.GetWorld().Rng().State(),
                        scene.GetWorld().Rng().Inc(), scene.GetWorld().AliveCount(),
-                       ctx.playerCount, startSnapshot.data(), startSnapshot.size());
+                       ctx.playerCount, startSnapshot.data(), startSnapshot.size(), sessionConfig,
+                       provenance, startMeta);
     }
 
     // ---- クラッシュ .rep のリングを起こす (M52f) ----
@@ -749,6 +777,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // ★レコード長を決めるので Begin より前に (M52g)。ここから先 playerCount は動かない
         CrashRingConfig crashCfg = crashRing.Config();
         crashCfg.playerCount = ctx.playerCount;
+        // M81b: システム入力を持つセッションは crash.rep にも持たせる (role で flags が決まる)
+        sessionConfig.playerCount = ctx.playerCount;
+        crashCfg.session = sessionConfig;
         crashCfg.hashInterval = static_cast<uint64_t>(
             (config.crashHashInterval > 0) ? config.crashHashInterval : 1);
         crashRing.Configure(crashCfg);
@@ -1187,7 +1218,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             const bool predicted = BuildNetInputs(t, ctx.inputs);
             // ポーズ tick も忠実になぞる (飛ばすと prevTickInput が食い違う)
             ctx.simulateScripts = (e != nullptr) ? e->simulated : savedSimulate;
-            crashRing.OnTickBegin(t, ctx.inputs, ctx.playerCount);
+            crashRing.OnTickBegin(t, ctx.inputs, ctx.playerCount,
+                                  ctx.hasSystemInput ? &ctx.systemInput : nullptr);
             RunOneTick(tickServices);
             const uint64_t h = TickEndHash();
             crashRing.OnTickEnd(simRefs, t, h);
@@ -1659,6 +1691,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 for (uint32_t p = 0; p < ctx.playerCount; ++p) {
                     ctx.inputs[p] = player.InputForTick(ctx.tickIndex, p);
                 }
+                // M81b: システム入力もレーン入力と同じ場所・同じ時点で置換する
+                if (ctx.hasSystemInput) {
+                    ctx.systemInput = player.SystemInputForTick(ctx.tickIndex);
+                }
             } else if (netEnabled && net.Running()) {
                 // ネットの確定入力で全レーンを置換する。**verify の置換と同じ場所**に
                 // 置いてあるので、この tick が消費した列がそのまま .rep に載る
@@ -1716,10 +1752,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 // マウス量も同じ (PointerDeltaCarry)。次の target へ同じ量を送ると相手側で 2 回回る
                 PointerDeltaCarry::ClearAfterTick(netLiveInput);
             }
-            // ★クラッシュ .rep へは tick に**入る前**に入力を載せる (M52f)。
+                    // ★クラッシュ .rep へは tick に**入る前**に入力を載せる (M52f)。
             //   落ちるのは RunOneTick の中なので、tick 末に載せる作りだと
             //   「まさに落ちた tick」が .rep に残らず、再生してもその tick へ入れない
-            crashRing.OnTickBegin(ranTick, ctx.inputs, ctx.playerCount);
+            crashRing.OnTickBegin(ranTick, ctx.inputs, ctx.playerCount,
+                                  ctx.hasSystemInput ? &ctx.systemInput : nullptr);
             if (crashTestKind != CrashTestKind::None
                 && ranTick == static_cast<uint64_t>(config.crashTestTick)) {
                 MYE_LOG_ERROR("[crash] --crash-test %s: crashing on purpose at tick %llu",

@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "Engine/Engine/Replay/SimSnapshot.h"
+#include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Platform/Input.h"
 
 namespace mye {
@@ -39,11 +40,15 @@ struct CrashRingConfig {
     // チューニング値ではなく実行の性質だが、ここに置くと「撮り直しのたびに読み直す」
     // 1 経路で済む (別 setter だと Begin 前後で食い違う窓ができる)
     uint32_t playerCount = 1;
+    // セッション設定 (M81b)。**role が Server / Client ならレコードに SystemInputTick が付く**ので
+    // レコード長を決める — playerCount と同じく Begin より前に確定していること。
+    // 既定 (role = 0) は従来の形と 1 バイトも変わらない
+    SessionConfig session = {};
 };
 
 class CrashRing {
 public:
-    // レコード 1 本 = 入力 (playerCount 本ぶん) + tick 末ハッシュ。
+    // レコード 1 本 = 入力 (playerCount 本ぶん) + (システム入力があれば SystemInputTick) + tick 末ハッシュ。
     // ★**撮影時に固めた値**を返す (config_ を直接読まない) — 撮影後に Configure で
     //   レーン数が変わると、イメージ内のヘッダ (= 実際のレイアウト) と食い違って
     //   レコードの読み書き位置がずれる。取り直すまでは撮影時の形が正しい
@@ -59,8 +64,10 @@ public:
     bool Begin(const SimRefs& refs, uint64_t tick);
 
     // tick 本体を呼ぶ**直前**。その tick が消費する入力レーンを先に載せる
-    // (inputs は playerCount 本の配列)
-    void OnTickBegin(uint64_t tick, const InputSnapshot* inputs, uint32_t playerCount);
+    // (inputs は playerCount 本の配列)。systemInput はシステム入力を持つセッションでだけ使われる
+    // (null はイベント無しの tick)
+    void OnTickBegin(uint64_t tick, const InputSnapshot* inputs, uint32_t playerCount,
+                     const SystemInputTick* systemInput = nullptr);
     // 現在 in-flight の tick が CrashRing 自身のハッシュ checkpoint か。
     bool NeedsHashAfterTick(uint64_t ranTick) const;
     // tick が走り切った直後。in-flight レコードのハッシュを確定し、必要なら撮り直す

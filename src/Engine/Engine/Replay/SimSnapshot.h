@@ -30,6 +30,7 @@ SimSources SimSourcesOf(Scene& scene, const CpuParticleBackend* particles, const
 // **対象は sim レーンだけ** = record/verify がハッシュを撮っている範囲と同一:
 //   World (全アーキタイプのカラム生バイト + レコード表 + freeIndices + ルート + RNG)
 //   Scene (TimeControl / UI 対話状態 / PersistStore / nextFileId / sourcePath / override 表)
+//   SessionLanes (M81b。Scene が持つので refs.scene から引く = SimRefs に別参照を足さない)
 //   CpuParticleBackend の池 / XpbdBackend の池 (M60'b) /
 //   CollisionSystem の前 tick ペア / ScriptHost の Start 済み記録
 //   EngineLoop の prevTickInput (アクション評価の pressed/released 判定に効く) と
@@ -97,7 +98,8 @@ struct SimRefs {
 // v21 (2026-09-14): AcousticField::kMaxWaves 16 -> 32 (古い blob は ReadAcoustic が本数不一致で拒む)
 // v22: 組込みコンポーネントの 0/1 int32 フィールドを bool 化 (World 節の生カラムサイズ変更)
 // v23: WaterWaveComponent へ surfaceMaterial (M79e) と timeTicks (浮力と水面の時計) を末尾追加
-inline constexpr uint32_t kSimSnapshotVersion = 23;
+// v24 (M81b): SES 節 (SessionLanes) を ACU 節の後・World 節の前に追加
+inline constexpr uint32_t kSimSnapshotVersion = 24;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ
@@ -110,5 +112,12 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
 
 // blob 先頭のヘッダだけ読む (.rep 埋め込み blob の素性確認 / ログ用)
 bool PeekSimSnapshotTick(const std::byte* data, size_t size, uint64_t& outTick);
+
+// blob に入っている World RNG (state / inc) を読む。magic と版が現行でなければ false。
+// ★World 節は blob の**最後**で、その末尾 16 バイトが RNG (CaptureSimSnapshot の並びに依存する。
+//   SimSnapshotSelfTest が「撮った World の RNG と一致する」ことを固定している)。
+// .rep ヘッダの rngState / rngInc との突き合わせ (ReplayPlayer::Load) に使う
+bool PeekSimSnapshotWorldRng(const std::byte* data, size_t size, uint64_t& outState,
+                             uint64_t& outInc);
 
 } // namespace mye

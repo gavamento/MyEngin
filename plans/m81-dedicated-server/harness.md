@@ -17,8 +17,8 @@
 
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 ヘッドレス Server.exe + golden .rep 照合 | 実装中 | 0 | | |
-| sub-02 Session 型・システム入力・.rep v9 | 未着手 | 0 | | |
+| sub-01 ヘッドレス Server.exe + golden .rep 照合 | OK | 1 | c562782 | 9 シーン全部ヘッドレスで一致 |
+| sub-02 Session 型・システム入力・.rep v9 | OK | 1 | (次コミット) | v8 .rep 読込可、規則 13 追加 |
 | sub-03 SimProvenance と NetIdentity 統合 | 未着手 | 0 | | |
 | sub-04 プロトコルと 1 プロセス内検証 | 未着手 | 0 | | |
 | sub-05 Server 実運用ループ・LocalHosting・server_verify | 未着手 | 0 | | |
@@ -35,3 +35,7 @@
 - (planner 2026-10-01) spec.md 確定・sub-01〜09 作成。AskUserQuestion 不可のため D3/D4/D5/D6 を裁定し [ユーザーに聞ける] として PLAN_RESULT に返した。
 - 着手順: sub-01 → 02 → 03 → 04 → 05 → 07 → 08 (ユーザー手動)。sub-06 は sub-02 後なら並列可、sub-09 は 05 と 06 の後。
 - sub-01 の結果 (どのシーンがヘッドレスで通るか) で後続の前提が変わりうる。VERDICT で範囲を裁定する。
+- (司会 2026-10-02) sub-01 OK (c562782)。既存の問題 (M81 範囲外): Source control self test 2 項目が基点から失敗 / /p:MyeWarnAsError=true が ProjectComputeRunnerSelfTest.cpp の C4127 で失敗。C3 はこの 2 項目のみ除外
+- (司会 2026-10-02) sub-01 の作業物 (C:\HAL\_m81_sub01_base、cache\sub01_baseline\、cache\sub01_neg\、tmp\sub01_*.log) はユーザー許可を得て削除済み (復元不可、いずれも再生成可能な検証用)
+- (sub-01 → 後続) HeadlessSim は複数インスタンス交互実行時に tick 直前で Activate() が必要。確定入力の差し込み口は VerifyReplay の ctx.inputs[p] 代入。sub-04 では入力置換を EngineLoop と HeadlessSim で共通関数にする
+- (司会 2026-10-02) sub-02 OK。planner 指摘: 規則 13-a の EngineApiTable.cpp 全面許可を NetRuntime.h の include だけに絞る (sub-03 やること 10)。再シム時の SystemInputTick 差し替え・TimeTravel の扱いは sub-04 要件へ。sub-03 は configBits を埋めても net_verify の --rep-diff が割れないこと (やること 9)

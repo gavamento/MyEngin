@@ -15,6 +15,7 @@ class AcousticField;
 struct TimeControl;
 struct UIInteractionState;
 class PersistStore;
+struct SessionLanes;
 
 // ワールド状態ハッシュ (engine_spec.md 11.3)。
 // 対象: 全エンティティ (index 昇順) の親リンク + シリアライズ対象コンポーネントの
@@ -46,6 +47,10 @@ struct SimSources {
     // 4 語畳む。ゲートすると「フォーカスが外れた瞬間だけ節が消える」= 節の有無が
     // 状態に依存する形になり、ダンプが読みにくくなる
     const UIInteractionState* ui = nullptr;
+    // M81b: セッションのレーン状態。★**システム入力を持つ記録のときだけ非 null** (SimSourcesOf が
+    // SessionLanes::systemInput でゲートする)。持たない記録 (オフライン / P2P) は節ごと畳まない =
+    // 既存シーンのハッシュ列を 1 tick も動かさない (D10)
+    const SessionLanes* sessionLanes = nullptr;
 };
 
 uint64_t HashWorld(World& world, const SimSources& src = {});

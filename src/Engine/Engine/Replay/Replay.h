@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Platform/Input.h"
 
 namespace mye {
@@ -12,7 +13,7 @@ namespace mye {
 // 形式 (リトルエンディアン、バイナリ):
 //   MyeReplayHeader
 //   埋め込み sim スナップショット (snapshotSize バイト、0 なら無し)
-//   tick 毎: InputSnapshot × playerCount + uint64 worldHash
+//   tick 毎: InputSnapshot × playerCount + (flags.bit0 のとき) SystemInputTick + uint64 worldHash
 // InputSnapshot / WorldHasher のレイアウトが変わったら version を上げること。
 //
 // ★**worldHash == 0 は「期待値なし」の予約値** (M52f)。
@@ -33,7 +34,28 @@ namespace mye {
 // v6 (M70b): InputSnapshot 72 -> 88 バイト (UI キャンバスの 4 値)
 // v7 (M70c): WorldHasher に UI 対話状態の節 (InputSnapshot は不変)
 // v8 (M75b): InputSnapshot 88 -> 112 バイト (ゲーム面 px + 面の寸法、文字キュー) + WorldHasher の UI 節に changed / ドラッグ状態
-inline constexpr uint32_t kReplayFileVersion = 8;
+// v9 (M81b): ヘッダへ flags / SessionConfig / SimProvenance / 開始 SnapshotMeta、tick レコードへ
+//            SystemInputTick (flags.bit0 のとき)。v8 も読める (新項目は「不明」= 0)
+inline constexpr uint32_t kReplayFileVersion = 9;
+inline constexpr uint32_t kReplayOldestReadableVersion = 8;
+
+// flags.bit0: tick レコードに SystemInputTick が付く (SessionConfig.role が Server / Client の記録)
+inline constexpr uint32_t kReplayFlagSystemInput = 1u << 0;
+
+// v8 までのヘッダ (ディスク上のレイアウト)。v8 の読み込みだけに使う
+struct MyeReplayHeaderV8 {
+    uint32_t magic;
+    uint32_t version;
+    float fixedDt;
+    uint32_t inputSize;
+    uint64_t tickCount;
+    uint64_t rngState;
+    uint64_t rngInc;
+    uint32_t entityCount;
+    uint32_t playerCount;
+    uint64_t snapshotSize;
+};
+static_assert(sizeof(MyeReplayHeaderV8) == 56, "the v8 header layout is fixed");
 
 struct MyeReplayHeader {
     uint32_t magic = 0x5045524Du; // 'MREP'
@@ -46,20 +68,45 @@ struct MyeReplayHeader {
     uint32_t entityCount = 0; // 記録開始時 (サニティチェック)
     uint32_t playerCount = 1; // v4: 1 = 従来のシングル入力
     uint64_t snapshotSize = 0; // v4: 埋め込みスナップショットのバイト数 (0 = 無し)
+    // ---- v9 (M81b)。先頭 56 バイトは v8 と同じ並び ----
+    uint32_t flags = 0;        // kReplayFlag*
+    uint32_t pad = 0;
+    SessionConfig session = {};
+    SimProvenance provenance = {};
+    // 開始スナップショットの素性。0 は「未計算」
+    SnapshotMeta startMeta = {};
 };
+static_assert(sizeof(MyeReplayHeader) == sizeof(MyeReplayHeaderV8) + 8 + sizeof(SessionConfig)
+                                             + sizeof(SimProvenance) + sizeof(SnapshotMeta),
+              "MyeReplayHeader has no implicit padding");
+
+// tick レコード 1 本のバイト数 (Load の件数検証と CrashRing が使う)
+inline uint64_t ReplayTickRecordBytes(uint32_t playerCount, uint32_t flags)
+{
+    return static_cast<uint64_t>(playerCount) * sizeof(InputSnapshot)
+        + (((flags & kReplayFlagSystemInput) != 0) ? sizeof(SystemInputTick) : 0)
+        + sizeof(uint64_t);
+}
 
 // 記録: tick 毎の入力 + ワールドハッシュを蓄積し、Finish でファイルへ書き出す
 class ReplayRecorder {
 public:
     // snapshot 非 null で「開始時点の sim 状態」をヘッダ直後へ埋め込む (M52f が使う)。
     // 埋め込みの有無は再生側が header.snapshotSize で判断する。
-    // playerCount = 入力レーン数 (M52g)。1 なら v4 以前と 1 バイトも変わらない列になる
+    // playerCount = 入力レーン数 (M52g)。1 なら v4 以前と 1 バイトも変わらない列になる。
+    // session.role が Server / Client ならヘッダ flags.bit0 が立ち、tick レコードに SystemInputTick が付く。
+    // ★snapshot を埋めるとき rngState / rngInc は**そのスナップショットの World RNG と同じ値**を渡すこと
+    //   (Load が blob と突き合わせ、食い違えば拒否する。真値を 2 つ持っても食い違えないようにする)
     void Start(const std::wstring& path, uint64_t rngState, uint64_t rngInc, uint32_t entityCount,
                uint32_t playerCount = 1, const std::byte* snapshot = nullptr,
-               size_t snapshotSize = 0);
+               size_t snapshotSize = 0, const SessionConfig& session = SessionConfig{},
+               const SimProvenance& provenance = SimProvenance{},
+               const SnapshotMeta& startMeta = SnapshotMeta{});
     // lanes は playerCount 本の配列。**Start で宣言した本数と一致すること** —
-    // ここが食い違うとファイルの tick レコード長と中身がずれる
-    void RecordTick(const InputSnapshot* lanes, uint32_t playerCount, uint64_t worldHash);
+    // ここが食い違うとファイルの tick レコード長と中身がずれる。
+    // systemInput は flags.bit0 の記録でだけ使われる (null はイベント無しの tick)
+    void RecordTick(const InputSnapshot* lanes, uint32_t playerCount, uint64_t worldHash,
+                    const SystemInputTick* systemInput = nullptr);
     bool Finish(); // ファイル書き出し
     bool IsActive() const { return active_; }
     uint64_t TickCount() const { return hashes_.size(); }
@@ -69,6 +116,7 @@ private:
     MyeReplayHeader header_;
     std::vector<std::byte> snapshot_;
     std::vector<InputSnapshot> inputs_; // playerCount 本ずつ tick 順に並ぶ
+    std::vector<SystemInputTick> systemInputs_; // flags.bit0 のときだけ tick 毎に 1 本
     std::vector<uint64_t> hashes_;
     bool active_ = false;
 };
@@ -89,6 +137,13 @@ public:
     // シーンロードの代わりに Restore して再生を始められる (M52f)
     const std::vector<std::byte>& Snapshot() const { return snapshot_; }
     const MyeReplayHeader& Header() const { return header_; }
+    // flags.bit0: この記録はシステム入力を持つ。EngineLoop / HeadlessSim は ctx.hasSystemInput へ写す
+    bool HasSystemInput() const { return (header_.flags & kReplayFlagSystemInput) != 0; }
+    // HasSystemInput() のときだけ有効
+    const SystemInputTick& SystemInputForTick(uint64_t tick) const
+    {
+        return systemInputs_[static_cast<size_t>(tick)];
+    }
 
     const InputSnapshot& InputForTick(uint64_t tick) const
     {
@@ -113,6 +168,7 @@ private:
     MyeReplayHeader header_;
     std::vector<std::byte> snapshot_;
     std::vector<InputSnapshot> inputs_;
+    std::vector<SystemInputTick> systemInputs_;
     std::vector<uint64_t> hashes_;
     bool active_ = false;
 };

@@ -46,6 +46,7 @@
 #include "Engine/Engine/Script/ScriptHost.h"
 #include "Engine/Engine/Animation/SkinningSystem.h"
 #include "Engine/Engine/Scene/TransformSystem.h"
+#include "Engine/Engine/Session/SessionTypes.h" // M81b: ApplySystemInput
 #include "Engine/Engine/UI/UIInteraction.h" // M70c: UI 対話の評価 (スクリプト層より前)
 #include "Engine/Engine/UI/UIWidgets.h"     // M75f: Toggle / Slider の値の更新
 #include "Engine/Engine/Vfx/VfxRenderer.h"
@@ -250,6 +251,16 @@ void RunOneTick(TickServices& ts)
     const auto Verifying = [&ts] { return ts.player != nullptr && ts.player->IsActive(); };
     // M52h: ネットのロックステップ中も「巻き戻せない側 / 2 台で揃わない側」を止める
     const auto Networked = [&ts] { return ts.netLockstep; };
+
+    // M81b: システム入力 (参加・離脱) の適用。フェーズ 1 の確定入力の一部なので、入力を使う
+    // 何よりも前 (アクション評価の前) に 1 回だけ。システム入力の無い構成では何もしない =
+    // 既存シーンのハッシュ列に影響しない。SessionLanes::systemInput は「この記録はシステム入力を
+    // 持つ」の印で、ハッシュ節のゲートとスナップショットに乗って引き継がれる
+    if (ctx.hasSystemInput) {
+        SessionLanes& lanes = scene.Lanes();
+        lanes.systemInput = 1;
+        ApplySystemInput(lanes, ctx.systemInput);
+    }
 
     // M51d: アクション評価。tick の入力が確定した直後 (verify の置換の後) に
     // 前 tick との比較で held/pressed/released と軸値を確定する。
@@ -556,7 +567,8 @@ void RunOneTick(TickServices& ts)
     if (Recording()) {
         ts.recorder->RecordTick(ctx.inputs, ctx.playerCount,
                                 HashWorld(scene.GetWorld(),
-                                          hashSources));
+                                          hashSources),
+                                ctx.hasSystemInput ? &ctx.systemInput : nullptr);
         if (ts.recorder->TickCount() >= static_cast<uint64_t>(config.replayTicks)) {
             ts.recorder->Finish();
             ctx.requestExit = true;

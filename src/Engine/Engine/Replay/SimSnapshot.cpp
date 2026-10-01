@@ -24,7 +24,9 @@ SimSources SimSourcesOf(Scene& scene, const CpuParticleBackend* particles, const
                         const AcousticField* acoustic)
 {
     // 並びは SimSources の member 順 (畳み込む順序は HashWorldImpl が決めるので、ここは関係ない)
-    return { particles, &scene.Time(), &scene.Persist(), xpbd, acoustic, &scene.UI() };
+    // SessionLanes はシステム入力を持つ記録のときだけ畳む (D10)。持たない記録のハッシュ列を動かさない
+    const SessionLanes* lanes = scene.Lanes().systemInput != 0 ? &scene.Lanes() : nullptr;
+    return { particles, &scene.Time(), &scene.Persist(), xpbd, acoustic, &scene.UI(), lanes };
 }
 
 namespace {
@@ -38,6 +40,7 @@ constexpr uint32_t kScrMagic = 0x31524353u;   // 'SCR1'
 constexpr uint32_t kLoopMagic = 0x31504F4Cu;  // 'LOP1'
 constexpr uint32_t kXpbdMagic = 0x31425058u;  // 'XPB1' (M60'b)
 constexpr uint32_t kAcousticMagic = 0x31554341u; // 'ACU1' (M65a)
+constexpr uint32_t kSessionMagic = 0x31534553u;  // 'SES1' (M81b)
 
 constexpr size_t kHeaderBytes = 4 * sizeof(uint32_t) + sizeof(uint64_t);
 
@@ -429,6 +432,59 @@ void WriteLoop(ByteWriter& w, const InputSnapshot* prevTickInput, const uint64_t
     w.U64(audioHandleSeq != nullptr ? *audioHandleSeq : 0);
 }
 
+// ---- SessionLanes (M81b、v24) ----
+// 構造体のメモリをそのまま書かず、項目ごとに書く: pad の中身に依存しない blob にする
+// ("同じ状態なら同じ blob" の不変条件)。SessionLanes は Scene が持つので refs.scene から引く
+void WriteSession(ByteWriter& w, const SessionLanes& s)
+{
+    w.U32(kSessionMagic);
+    w.U32(s.systemInput);
+    w.U32(s.appliedCount);
+    w.U64(s.lastEventSeq);
+    for (const LaneSlot& lane : s.lanes) {
+        w.U32(lane.state);
+        w.U64(lane.playerId);
+    }
+    for (const SystemEvent& ev : s.applied) {
+        w.U64(ev.eventSeq);
+        w.U64(ev.playerId);
+        w.U8(ev.kind);
+        w.U8(ev.lane);
+    }
+}
+
+bool ReadSession(ByteReader& r, SessionLanes& out)
+{
+    if (r.U32() != kSessionMagic) {
+        MYE_LOG_ERROR("[snapshot] session section magic mismatch");
+        return false;
+    }
+    out = {};
+    out.systemInput = r.U32();
+    out.appliedCount = r.U32();
+    out.lastEventSeq = r.U64();
+    for (LaneSlot& lane : out.lanes) {
+        lane.state = r.U32();
+        lane.playerId = r.U64();
+    }
+    for (SystemEvent& ev : out.applied) {
+        ev.eventSeq = r.U64();
+        ev.playerId = r.U64();
+        ev.kind = r.U8();
+        ev.lane = r.U8();
+    }
+    // 壊れた blob を sim 状態へ入れない (appliedCount は添字に使われる / state は 0..2)
+    bool valid = r.Ok() && out.appliedCount <= kMaxSystemEventsPerTick;
+    for (const LaneSlot& lane : out.lanes) {
+        valid = valid && lane.state <= static_cast<uint32_t>(LaneState::Reserved);
+    }
+    if (!valid) {
+        MYE_LOG_ERROR("[snapshot] session section is corrupt");
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
@@ -452,6 +508,7 @@ bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
     WriteLoop(w, refs.prevTickInput, refs.audioHandleSeq);
     WriteXpbd(w, refs.xpbd); // M60'b (v4)
     WriteAcoustic(w, refs.acoustic); // M65a (v10)
+    WriteSession(w, refs.scene->Lanes()); // M81b (v24)
     // ★World は**最後**に置く。復元は「小さい節を全部一時領域へ読み切ってから
     //   World::SnapshotRead (それ自体が全読み後に一括差し替え) を呼ぶ」順で走るので、
     //   どこで失敗しても現世界に手が付いていない状態で戻れる
@@ -522,6 +579,10 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     if (!ReadAcoustic(r, acousticWaves)) { // M65a (v10)。refs.acoustic が無ければ読み捨てる
         return false;
     }
+    SessionLanes sessionLanes = {};
+    if (!ReadSession(r, sessionLanes)) { // M81b (v24)
+        return false;
+    }
     if (!r.Ok()) {
         MYE_LOG_ERROR("[snapshot] truncated blob");
         return false;
@@ -534,6 +595,7 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
 
     refs.scene->Time() = scene.time;
     refs.scene->UI() = scene.ui; // M70c
+    refs.scene->Lanes() = sessionLanes; // M81b
     refs.scene->Persist().Entries() = std::move(scene.persist);
     refs.scene->SetNextFileId(scene.nextFileId);
     refs.scene->SetName(scene.name); // v15 (M71a)
@@ -591,6 +653,24 @@ bool PeekSimSnapshotTick(const std::byte* data, size_t size, uint64_t& outTick)
     r.U32();
     outTick = r.U64();
     return r.Ok();
+}
+
+bool PeekSimSnapshotWorldRng(const std::byte* data, size_t size, uint64_t& outState,
+                             uint64_t& outInc)
+{
+    constexpr size_t kRngBytes = 2 * sizeof(uint64_t);
+    if (data == nullptr || size < kHeaderBytes + kRngBytes) {
+        return false;
+    }
+    ByteReader head(data, size);
+    if (head.U32() != kMagic || head.U32() != kSimSnapshotVersion) {
+        return false;
+    }
+    // World 節は最後で、RNG はその末尾 (CaptureSimSnapshot / World::SnapshotWrite の並び)
+    ByteReader tail(data + size - kRngBytes, kRngBytes);
+    outState = tail.U64();
+    outInc = tail.U64();
+    return tail.Ok();
 }
 
 } // namespace mye

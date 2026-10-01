@@ -796,6 +796,81 @@ foreach ($d in $scmDirs) {
     }
 }
 
+# 規則 13: sim 側とネット/ホスティングの依存方向 (M81、DD §3「機械的に見張る」)
+# sim が実時間・受信順・SDK コールバック由来の値を読むと、サーバ実機の .rep を別 PC で再生しても
+# 同じハッシュ列にならない。replay_verify は sim の中身しか見ないので、静的に見える include で守る。
+#   13-a: Core / Engine / GameLogic / Shared が Net/ Platform/Net/ Server/ GameLift を include しない
+#         (許可リストは下。各行に「sim から到達するか」の判定理由を書く)
+#   13-b: Session/ (sim 側の型の置き場) は Net/ Platform/Net/ を include しない (Net → Session は可、逆は不可)
+#   13-c: GameLift SDK のヘッダ / lib 名は build\Server.vcxproj と src\Server\ 以外に現れない
+$netIncludeRx = '^\s*#\s*include\s*[<"](?:[^>"]*(?:Engine[\\/]Net[\\/]|Platform[\\/]Net[\\/])|Server[\\/]|aws[\\/]gamelift|[^>"]*GameLiftServerAPI)'
+$netGuardDirs = @('src\Engine\Core', 'src\Engine\Engine', 'src\GameLogic', 'src\Shared')
+$netAllow = @(
+    # Net/ 自身 (確定入力へ変換して sim に渡す側)
+    @{ Path = 'src\Engine\Engine\Net\'; Reason = 'the net layer itself' },
+    # tick ループ: ネットの組み立てを担う唯一の場所。sim へは確定入力 (ctx.inputs / systemInput) としてだけ入る
+    @{ Path = 'src\Engine\Engine\Loop\EngineLoop.cpp'; Reason = 'loop owner: net values reach the sim only as confirmed inputs' },
+    # CLI の解釈。NetRole 等は EngineConfig の POD として渡り、sim 状態には触れない
+    @{ Path = 'src\Engine\Engine\App\'; Reason = 'startup / CLI parsing, not reachable from RunOneTick' },
+    # NetRuntimeInfo (表示専用 POD) の実体を持って ABI の Net* スロットが「ローカル」を返すようにするだけ。
+    # 値は常に既定 (active = false) で、sim から到達するが何も運ばない
+    @{ Path = 'src\Engine\Engine\Loop\HeadlessSim.cpp'; Reason = 'owns an inactive NetRuntimeInfo for the ABI Net* slots' },
+    # ★sim から到達する (スクリプトが tick 中に呼べる): ABI v13 の Net* スロットが NetRuntimeInfo
+    # (表示専用・機種依存の POD) を読む。既存の経路で M81 は広げない (新スロットは確定入力から導く値だけ)。
+    # 書き戻し禁止は NetRuntime.h の契約と desync 検出が防波堤
+    @{ Path = 'src\Engine\Engine\Script\EngineApiTable.cpp'; Reason = 'ABI v13 Net* slots read the display-only NetRuntimeInfo (existing path)' }
+)
+foreach ($d in $netGuardDirs) {
+    $full = Join-Path $repo $d
+    if (-not (Test-Path $full)) {
+        Write-Host "ERROR [rule 13] missing directory: $d"
+        $errors++
+        continue
+    }
+    $files = Get-ChildItem -Recurse -File $full | Where-Object { $_.Extension -in '.cpp', '.h', '.hpp', '.inl' }
+    foreach ($f in $files) {
+        $rel = [System.IO.Path]::GetRelativePath($repo, $f.FullName)
+        $allowed = $false
+        foreach ($a in $netAllow) {
+            if ($rel.StartsWith($a.Path, [System.StringComparison]::OrdinalIgnoreCase)) { $allowed = $true; break }
+        }
+        if ($allowed) { continue }
+        $lineNo = 0
+        foreach ($line in [System.IO.File]::ReadLines($f.FullName)) {
+            $lineNo++
+            if ($line -match $netIncludeRx) {
+                Write-Host "ERROR [rule 13-a] $($f.FullName):${lineNo}: sim-side code must not include net / hosting headers (add to the allow list only after checking it is unreachable from RunOneTick)"
+                $errors++
+            }
+        }
+    }
+}
+$sessionDir = Join-Path $repo 'src\Engine\Engine\Session'
+if (Test-Path $sessionDir) {
+    foreach ($f in (Get-ChildItem -Recurse -File $sessionDir | Where-Object { $_.Extension -in '.cpp', '.h', '.hpp', '.inl' })) {
+        $lineNo = 0
+        foreach ($line in [System.IO.File]::ReadLines($f.FullName)) {
+            $lineNo++
+            if ($line -match '^\s*#\s*include\s*[<"][^>"]*(Engine[\\/]Net[\\/]|Platform[\\/]Net[\\/])') {
+                Write-Host "ERROR [rule 13-b] $($f.FullName):${lineNo}: Session/ is the sim-side type home and must not depend on Net/"
+                $errors++
+            }
+        }
+    }
+}
+$gameLiftRx = 'aws-cpp-sdk-gamelift|aws[\\/]gamelift|GameLiftServerAPI|gamelift-server-sdk'
+foreach ($f in (Get-ChildItem -Recurse -File "$repo\src" | Where-Object { $_.Extension -in '.cpp', '.h', '.hpp', '.inl' })) {
+    if ($f.FullName.StartsWith((Join-Path $repo 'src\Server') + '\', [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+    Test-CodeLines $f $gameLiftRx 'rule 13-c' 'GameLift SDK names are allowed only in src\Server and build\Server.vcxproj'
+}
+foreach ($f in (Get-ChildItem -Recurse -File "$repo\build" | Where-Object { $_.Extension -in '.vcxproj', '.props', '.targets', '.filters' })) {
+    if ($f.Name -in 'Server.vcxproj', 'Server.vcxproj.filters') { continue }
+    foreach ($h in (Select-String -Path $f.FullName -Pattern $gameLiftRx)) {
+        Write-Host "ERROR [rule 13-c] $($h.Path):$($h.LineNumber): GameLift SDK names are allowed only in build\Server.vcxproj"
+        $errors++
+    }
+}
+
 Write-Host "=== result: $errors error(s), $warnings warning(s) ==="
 if ($errors -gt 0) { exit 1 }
 exit 0
