@@ -558,6 +558,11 @@ AssetID TextureLibrary::LoadFile(const std::wstring& path, bool srgb)
     if (textures_.contains(id.value)) {
         return id; // 先勝ち (フラグ違いは無視 — per-asset 指定は .meta の srgb on/off で)
     }
+    if (!device_) {
+        // ヘッドレス (M48a / Server): GPU テクスチャは作れず、decode しても捨てるだけ。
+        // null を返す結果は従来と同じ (decode 後に作成失敗で null) — ERROR ログと decode の無駄を省く
+        return {};
+    }
     // M39b: .meta のインポート設定が呼び出し側ヒントを上書きする (auto = ヒントのまま)
     importmeta::TextureImportSettings imp;
     importmeta::Resolve(path, imp);

@@ -107,6 +107,11 @@ $runtimeSrc = Get-SourceItems @(@{ Path = 'src\Runtime'; Prefix = '' })
 Update-Vcxproj 'Runtime' $runtimeSrc
 Update-Filters 'Runtime' $runtimeSrc
 
+# ---- Server (ヘッドレス専用サーバ、M81) ----
+$serverSrc = Get-SourceItems @(@{ Path = 'src\Server'; Prefix = '' })
+Update-Vcxproj 'Server' $serverSrc
+Update-Filters 'Server' $serverSrc
+
 # ---- GameLogic: src\GameLogic + src\Shared ----
 $logicSrc = Get-SourceItems @(
     @{ Path = 'src\GameLogic'; Prefix = '' },

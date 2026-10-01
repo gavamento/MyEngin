@@ -73,14 +73,11 @@ public:
     void Init(GraphicsDevice& device)
     {
         device_ = &device;
-        Cube();
-        Sphere();
-        Plane();
-        Quad();
-        Cylinder();
-        Capsule();
-        WaterPlane();
+        RegisterBuiltinPrimitives();
     }
+    // GPU デバイス無し (ヘッドレス Server) の初期化。CPU 側の positions / indices / AABB だけを
+    // 持つ組込みプリミティブを Init と同じ集合・同じ順序で登録する
+    void InitHeadless() { RegisterBuiltinPrimitives(); }
     AssetID Register(std::string_view name, std::span<const MeshVertex> vertices,
                      std::span<const uint32_t> indices);
     Mesh* Get(AssetID id);
@@ -101,6 +98,16 @@ public:
     std::vector<AssetEntry> Enumerate() const;
 
 private:
+    void RegisterBuiltinPrimitives()
+    {
+        Cube();
+        Sphere();
+        Plane();
+        Quad();
+        Cylinder();
+        Capsule();
+        WaterPlane();
+    }
     GraphicsDevice* device_ = nullptr;
     std::unordered_map<uint64_t, Mesh> meshes_;
     std::unordered_map<uint64_t, std::string> names_;
@@ -330,6 +337,9 @@ struct RenderResources {
         meshes.Init(device);
         textures.Init(device);
     }
+    // ヘッドレス Server 用。組込みメッシュだけ CPU 側データで登録する (テクスチャは device 無しで
+    // 素通しのまま)。sim が読む positions / indices / skinnedModels はこれで揃う
+    void InitHeadless() { meshes.InitHeadless(); }
 };
 
 } // namespace mye

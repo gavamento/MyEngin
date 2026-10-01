@@ -58,6 +58,7 @@
 #include "Engine/Engine/Schema/SchemaComponents.h"
 #include "Engine/Engine/Animation/PartFollowSystem.h"
 #include "Engine/Engine/Animation/SkinningSystem.h"
+#include "Engine/Engine/Loop/SimInit.h"
 #include "Engine/Engine/Loop/TickRunner.h"
 #include "Engine/Engine/Scene/TransformSystem.h"
 #include "Engine/Engine/UI/UILayout.h" // ワールド追従 UI の射影コンテキスト
@@ -196,18 +197,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 未指定はレガシー動作 (exe から上へ assets を探索、imgui.ini は CWD 相対)
     std::wstring assetsRoot;
     std::wstring imguiIniPath = L"imgui.ini";
+    if (!ResolveAssetsRoot(config, assetsRoot)) {
+        return 1;
+    }
     if (!config.projectRoot.empty()) {
-        assetsRoot = config.projectRoot + L"\\assets";
         std::error_code fsec;
-        if (!std::filesystem::exists(assetsRoot, fsec)) {
-            MYE_LOG_ERROR("project assets not found: %s", WideToUtf8(assetsRoot).c_str());
-            return 1;
-        }
         const std::wstring localDir = config.projectRoot + L"\\" + kProjectLocalDir;
         std::filesystem::create_directories(localDir, fsec);
         imguiIniPath = localDir + L"\\imgui.ini";
-    } else {
-        assetsRoot = FindAssetsRoot();
     }
 
     // M51g: セーブディレクトリ (SaveGame/LoadGame)。二経路は cache\cooked と同じ規則。
@@ -279,18 +276,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                      WideToUtf8(shaderCacheDir).c_str());
     }
     resources.Init(device);
-    // M41: 静的メッシュコライダー (Collider.shape=3)。pose 構築サイトが meshcol::Resolve で
-    // AssetID → BVH 付きコライダーデータを引けるように接続する
-    meshColliders.Init(&resources);
-    meshcol::Install(&meshColliders);
-    // M60f: 凸包コライダー (Collider.shape=5)。meshcol と同じ AssetID→形状の解決だが
-    // クック (.mcvx) が乗るので CookedCache::Configure より後で使われること (Get は lazy)
-    convexColliders.Init(&resources);
-    convexcol::Install(&convexColliders);
-    // M80c: 破片資産 (.mfrac)。凸包は convexColliders へ委譲する (Clear() 後の
-    // 再登録は呼び出し側が ReregisterAll() を呼ぶ責務。現状の呼び出し元はまだ無い)
-    fractureAssets.Init(&resources, &convexColliders);
-    fracturelib::Install(&fractureAssets);
+    // sim が AssetID から形状・設定を引くライブラリ群 (HeadlessSim と共有、SimInit.h)。
+    // 破片資産 (.mfrac) の Clear() 後の再登録は呼び出し側が ReregisterAll() を呼ぶ責務
+    // (現状の呼び出し元はまだ無い)
+    InstallSimLibraries({ &resources, &meshColliders, &convexColliders, &fractureAssets,
+                          &physMatLibrary, &terrainColliders });
     // M76e: Deep-Modal 推論。CLI (--modal-backend) は綴りだけ検査済みで、未実装名
     // ("d3d11cs") への縮退はここ (SetBackendByName) が WARN 付きでやる。
     // .dmnet が無い (M76h 未実装/未生成) 環境では LoadModel が false を返すだけで、
@@ -299,42 +289,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     modalSounds.SetBackendByName(WideToUtf8(config.modalBackendName));
     modalsound::Install(&modalSounds);
     modalSounds.LoadModel(ResolveDeepModalPath(assetsRoot));
-    // M59a1: 物理マテリアル (.physmat.json)。起動走査 (RegisterAssetLibraries) と ReloadHub が
-    // physmat::Library() 経由で読み込むので、走査より前に注入しておくこと
-    physmat::Install(&physMatLibrary);
-    // M59i: 地形コライダー (Collider.shape=4)。描画の TerrainSystem とは別に sim 用の
-    // 地形データを持つ — 描画のキャッシュを読むと「絵を出したかどうか」で sim が変わる
-    terraincol::Install(&terrainColliders);
     if (!forwardPath.Init(device, shaderManager)) {
         return 1;
     }
     if (!deferredPath.Init(device, shaderManager)) {
         return 1;
     }
-    // M75c: UI の既定キャンバスの基準解像度 (project_settings.json の ui 節)。**tick が回る前に
-    // 1 回だけ**書く静的な値 — sim のヒットテストが読むので、途中で変えると同じ .rep の再生が割れる
-    // (.rep には載せない。ネットは NetIdentity.referenceW/H で入口照合する)
-    {
-        const uilayout::ProjectUiSettings uiSettings = uilayout::LoadProjectUiSettings(assetsRoot);
-        uilayout::SetDefaultCanvasReference(uiSettings.referenceW, uiSettings.referenceH);
-        if (uiSettings.referenceW != uilayout::kCanvasRefW
-            || uiSettings.referenceH != uilayout::kCanvasRefH) {
-            MYE_LOG_INFO("[ui] default canvas reference %dx%d (project_settings.json)",
-                         uiSettings.referenceW, uiSettings.referenceH);
-        }
-    }
-    // M75d: フォント計測表 (assets\fonts\<描画フォント>.fontmetrics.json)。基準解像度と同じく
-    // **tick が回る前に 1 回だけ**。Layout / Fitter が sim の中で読むので、途中で差し替えると
-    // 再シムや .rep の検証が割れる。表が無いときは固定メトリクス (ロード側が必要なら WARN を出す)。
-    // ★`--font-embedded` とは無関係に読む — 描画フラグで sim の入力が変わってはならない
-    {
-        uitext::SetActiveFontMetrics(uitext::LoadProjectFontMetrics(assetsRoot));
-        const uitext::FontMetrics& fm = uitext::ActiveFontMetrics();
-        if (!fm.Empty()) {
-            MYE_LOG_INFO("[ui] font metrics: %s (%u glyphs, hash 0x%016llx)", fm.FontName().c_str(),
-                         fm.GlyphCount(), static_cast<unsigned long long>(fm.Hash()));
-        }
-    }
+    // tick が回る前に 1 回だけ決める sim の静的な入力 (UI 基準解像度 / フォント計測表 / タグ名。
+    // HeadlessSim と共有、SimInit.h)。タグ名は下の RT タグ規則の読込より前に済ませる
+    InitSimProjectState(assetsRoot);
     // M21: 失敗してもエンジンは継続 (UI が出ないだけ)。M52c: --font-embedded でフォント固定
     uiRenderer.Init(device, shaderManager, assetsRoot, config.fontEmbedded);
     vfxRenderer.Init(device, shaderManager, &uiRenderer); // M29c: 同上 (VFX が出ないだけ)
@@ -354,9 +317,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.rtFreezeSeed = config.rtFreezeSeed;
     renderSystem.rtSvgf = config.rtSvgf;   // M46e (--rt-no-svgf)
     renderSystem.enableRtGi = config.rtGi;             // M46f (--rt-gi、Deferred のみ)
-    // 汎用タグ: 名前の表を tick より前に読んでおく (スクリプトの TagIndex が tick 中に表を
-    // 書き換えないように)。RT のタグ規則はプロジェクト設定 → CLI (ON 規則だけ) の順で上書き
-    TagNames::Get().Load(assetsRoot);
+    // 汎用タグの名前の表は InitSimProjectState で読み済み。
+    // RT のタグ規則はプロジェクト設定 → CLI (ON 規則だけ) の順で上書き
     {
         RtTagRules rules = LoadRtTagRules(assetsRoot);
         if (config.rtReceiverTagsSet) {
@@ -412,13 +374,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.rtFreezeSeed =
         (config.rtFreezeSeed || renderSystem.postFxSettings.aeInstant) && !config.rtAnimSeed;
 
-    // ---- スキーマ由来の動的コンポーネント (M48j) ----
-    // ★呼ぶ位置がそのまま決定論の契約: 組込み型 (World の生成時に RegisterBuiltinComponents で
-    //   済んでいる) の後、**GameLogic.dll のスクリプト型より前**。この 1 箇所に固定しておくと
-    //   スキーマ型は組込み群とスクリプト群の間の連続ブロックになり、スクリプト型の TypeId は
-    //   一様にずれるだけ = エンティティ内の相対順が変わらない = 既存シーンのハッシュ不変
-    schema::RegisterSchemaComponents(assetsRoot);
-
+    // スキーマ由来の動的コンポーネント (M48j) の登録 → GameLogic.dll のロードは LoadGameLogic
+    // (SimInit.cpp。HeadlessSim と共有)。
     // GameLogic.dll (スクリプト層)。監視先は起動形態で 2 通りに分かれる:
     //   レガシー起動 (--project なし) = エンジンの exe と同じ構成のビルド出力。
     //     build\GameLogic.vcxproj が作るもので、replay_verify / selftest はこちらを使う
@@ -434,22 +391,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     //     照合も壊れる。Runtime で版違いを踏んだらエディタで開き直すか手で MSBuild する
     // 分岐は assetsRoot ではなく projectRoot の有無で行う — assetsRoot 由来にすると
     // レガシー時に <repo>\cache\GameLogic.dll を見に行って既存の検証経路が壊れる
-    scriptHost.Init(&scene);
     {
         const std::wstring cacheHot =
             (std::filesystem::path(assetsRoot).parent_path() / L"cache" / L"hot").wstring();
         const std::wstring dllPath = config.projectRoot.empty()
             ? GetExecutableDir() + L"\\GameLogic.dll"
             : config.projectRoot + L"\\cache\\GameLogic.dll";
-        dllReloader.Init(&scriptHost, dllPath, cacheHot);
-        if (!dllReloader.LoadInitial()) {
-            // ★黙って続けない。C++ スクリプトが 1 本も無い世界は「動くけれど別物」で、
-            //   リプレイもネットも全く違う結果になる (M52h でシャドウコピーの衝突により
-            //   実際に踏んだ)。エンジンは継続できるので停止まではしないが、
-            //   ログ上で必ず目立たせる
-            MYE_LOG_ERROR("[dll] GameLogic.dll was not loaded - NO C++ scripts are registered "
-                          "(the world will not match a normal run)");
-        }
+        LoadGameLogic(scene, scriptHost, dllReloader, assetsRoot, dllPath, cacheHot);
     }
 
     // C# スクリプトホスト (CoreCLR)。未導入でも失敗ログのみでエンジンは継続する
@@ -467,21 +415,27 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // クリップの実ロードは M45c から RegisterAssetLibraries (assets\**\*.wav|*.ogg の走査) が
     // 担う — 単一ファイルのハードコードはここには置かない
     audioSystem.Init(config.audio);
-    audioScriptRng.Seed(0x4D796541536372ull); // "MyeAScr" — world.Rng() とは別ストリーム
+    audioScriptRng.Seed(kAudioScriptRngSeed); // world.Rng() とは別ストリーム
     // v13 (M52i): ネットセッションの状態 POD。**宣言はここ** (スクリプトへ配線する
     // 時点で生きていること = Run のスコープ)。中身を書くのはフレーム末の 1 か所だけ
     NetRuntimeInfo netInfo;
-    scriptHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
-                                 &audioHandleSeq, &inputActions, &pendingSaveSlot,
-                                 &pendingLoadSlot, &padVibration, &netInfo, &cursorLock,
-                                 &pendingLoadPersistSlot, &windowMode);
-    managedHost.SetSharedServices(&audioQueue, &pendingScene, &effectQueue, &debugLines,
-                                  &audioHandleSeq, &inputActions, &pendingSaveSlot,
-                                  &pendingLoadSlot, &padVibration, &netInfo, &cursorLock,
-                                  &pendingLoadPersistSlot, &windowMode);
-    // v18: 開発中の実行か。プロセスの定数なので起動時に 1 回だけ渡す (sim 状態ではない = .rep に載らない)
-    scriptHost.SetDevelopmentRun(config.developmentRun);
-    managedHost.SetDevelopmentRun(config.developmentRun);
+    {
+        SimSharedServices shared;
+        shared.audioQueue = &audioQueue;
+        shared.pendingScene = &pendingScene;
+        shared.effectQueue = &effectQueue;
+        shared.debugLines = &debugLines;
+        shared.audioHandleSeq = &audioHandleSeq;
+        shared.inputActions = &inputActions;
+        shared.pendingSaveSlot = &pendingSaveSlot;
+        shared.pendingLoadSlot = &pendingLoadSlot;
+        shared.padVibration = &padVibration;
+        shared.netInfo = &netInfo;
+        shared.cursorLock = &cursorLock;
+        shared.pendingLoadPersistSlot = &pendingLoadPersistSlot;
+        shared.windowMode = &windowMode;
+        WireScriptServices(scriptHost, managedHost, shared, config.developmentRun);
+    }
     scriptHost.SetComputeAbi(&computeAbi, &device, &shaderManager, &resources.textures);
     managedHost.SetComputeAbi(&computeAbi, &device, &shaderManager, &resources.textures);
 
@@ -517,16 +471,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.assetsRoot = assetsRoot;
     ctx.projectRoot = config.projectRoot;
     ctx.imguiIniPath = imguiIniPath;
-    // M51d: 入力アクションマップ (assets\input\actions.json)。不在 = 空マップ = no-op
-    inputActions.Load(assetsRoot);
+    // 入力アクションマップ (M51d) の読込と AssetDatabase の同期 (M23 / M30c)。
+    // アセット登録 (app.OnStart → RegisterAssetLibraries) の前に済ませる
+    InitSimAssets(assetDatabase, inputActions, assetsRoot);
     ctx.inputActions = &inputActions;
-
-    // M23: assets\ を走査して .meta サイドカー (GUID) を生成/同期する。
-    // アセット登録 (app.OnStart → RegisterAssetLibraries) の前に済ませ、パス⇄GUID 解決を利用可能にする。
-    assetDatabase.ScanAndSync(assetsRoot);
-    // M30c: 以後の path→AssetID キー計算 (IdForFile/HashForPath) を GUID 解決経由にする。
-    // 未移動アセットは GUID == path-hash なので既存シーン/リプレイはビット不変
-    assetDatabase.InstallAsKeyResolver();
 
     // M25: ジョブシステム起動 (min(16, cores-2) ワーカー)。--no-jobs で直列化。
     jobs::System().Init();
@@ -540,21 +488,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     jobs::System().SetEnabled(config.useJobs);
     MYE_LOG_INFO("[jobs] %s (%d workers)", config.useJobs ? "enabled" : "disabled (serial)",
                  jobs::System().WorkerCount());
-    // M51a: sim 索引 (World クエリキャッシュ / Scene fileId 索引)。--no-sim-cache で素通し
-    World::SetSimCacheEnabled(config.useSimCache);
-    MYE_LOG_INFO("[simcache] %s", config.useSimCache ? "enabled" : "disabled (linear)");
-    // M51b: アセットクックキャッシュ (モデル + .ogg PCM)。--no-cook-cache で毎回フルパース。
-    // ディレクトリの二経路は GameLogic.dll と同じ規則 — 分岐は必ず projectRoot で判定する。
-    // RegisterAssetLibraries (app.OnStart) より前に設定しておくこと
-    {
-        const std::wstring cookedDir =
-            (config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot)
-            + L"\\cache\\cooked";
-        CookedCache::Configure(cookedDir, config.useCookCache);
-        MYE_LOG_INFO("[cook] %s (%s)",
-                     config.useCookCache ? "enabled" : "disabled (parse every launch)",
-                     WideToUtf8(cookedDir).c_str());
-    }
+    // sim 索引 (M51a) とアセットクックキャッシュ (M51b)。
+    // クックのディレクトリの二経路は GameLogic.dll と同じ規則 — 分岐は必ず projectRoot で判定する
+    ConfigureSimCaches(config,
+                       (config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot)
+                           + L"\\cache\\cooked");
     ctx.fixedDt = static_cast<float>(kFixedDt);
 
     // ---- クラッシュバンドル (M52f) ----
@@ -2602,13 +2540,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 描画はもう止まっているので実害は無いが、「所有者が死ぬ前に参照を切る」を
     // 1 箇所で守っておく (reflectionProbes と同じ規約)
     renderSystem.acousticField = nullptr;
-    meshcol::Install(nullptr); // M41 (meshColliders 破棄前に必ず外す)
-    convexcol::Install(nullptr); // M60f (convexColliders 破棄前に必ず外す)
-    fracturelib::Install(nullptr); // M80c (fractureAssets 破棄前に必ず外す)
+    // M41 / M60f / M80c / M59a1 / M59i: sim のライブラリ注入 (各ライブラリ破棄前に必ず外す)
+    UninstallSimLibraries();
     modalsound::Install(nullptr); // M76e (modalSounds 破棄前に必ず外す)
     modalSounds.Shutdown(); // ワーカー join (TextureLibrary::AsyncWorker と同じ流儀)
-    physmat::Install(nullptr); // M59a1 (physMatLibrary 破棄前に必ず外す)
-    terraincol::Install(nullptr); // M59i (terrainColliders 破棄前に必ず外す)
     AssetDatabase::UninstallKeyResolver(); // M30c (assetDatabase 破棄前に必ず外す)
     vfxRenderer.Shutdown(); // M29c
     uiRenderer.Shutdown();  // M21

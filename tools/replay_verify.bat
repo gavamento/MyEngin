@@ -3,7 +3,8 @@ rem replay_verify.bat — Debug/Release 一貫性の自動検証 (engine_spec.md
 rem   1. 両構成をビルド
 rem   2. 並列プールで下の -Jobs の全ジョブを回す (tools\run_parallel.ps1、並列度の既定 = 論理コア数):
 rem        - シーンごとのチェーン: record (Debug, --replay-fast) →
-rem          snapshot stress 付き verify (Debug) → verify (Release)
+rem          snapshot stress 付き verify (Debug) → verify (Release) →
+rem          ヘッドレス Server.exe (Release) の verify (M81a)
 rem        - タイムトラベルの巻き戻しと分岐 What-if (それぞれ Debug / Release)
 rem        - 静的規則チェック (check_rules.ps1)
 rem   3. 失敗時は mismatch マーカーの残ったシーンだけ :diagnose を直列で回す
@@ -327,6 +328,14 @@ bin\x64\Debug\Editor.exe %CVER% --replay-verify %CREP% --snapshot-stress 37 %MYE
 echo === verify %CREP% : Release ===
 bin\x64\Release\Editor.exe %CVER% --replay-verify %CREP% %MYE_EXTRA_ARGS% || (
     echo [FAIL] Release verify: %CREP%
+    endlocal & exit /b 1
+)
+rem M81a: 窓も GPU も無いヘッドレス Server.exe (Release) でも同じ .rep を全 tick 照合する。
+rem Debug の Editor が録った .rep を Release の Server が通す = 構成間 + 実行形態間のビット一致。
+rem Server は GPU を持たず終了前に d3d11 等がロードされていないことを自己検査する (exit 2)
+echo === verify %CREP% : Release, headless Server.exe ===
+bin\x64\Release\Server.exe %CVER% --replay-verify %CREP% %MYE_EXTRA_ARGS% || (
+    echo [FAIL] headless Server verify: %CREP%
     endlocal & exit /b 1
 )
 endlocal & exit /b 0

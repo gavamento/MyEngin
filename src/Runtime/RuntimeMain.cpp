@@ -6,7 +6,7 @@
 #include <shellapi.h>
 
 #include "Engine/Core/Diagnostics/Log.h"
-#include "Engine/Engine/Demo/DemoContent.h"
+#include "Engine/Engine/Demo/StartScene.h"
 #include "Engine/Engine/App/EngineCli.h"
 #include "Engine/Engine/Physics/Fracture/FractureSystem.h" // PreloadFractureAssets (シーンロード直後の破片資産先読み)
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
@@ -51,55 +51,12 @@ public:
 
     void OnStart(mye::EngineContext& ctx) override
     {
-        ctx.shaders->Load("forward_lit");
-        mye::RegisterDemoContent(ctx);   // Editor と同じ実体登録 (AssetID 解決)
-        mye::RegisterAssetLibraries(ctx); // .prefab / .anim を登録
-        if (scenePath.empty() && showcase != nullptr) {
-            // ショーケースは表の保存先 (ShowcaseScenes.cpp)。cache\ の行はコードから毎回組む —
-            // **shot_verify はこの経路で撮る**ので、保存済みが残っていると exists() 側へ落ちて
-            // golden が静かに変わる。bat 側で撮影前に消している
-            scenePath = mye::ShowcaseScenePath(*showcase, ctx.assetsRoot);
-        } else if (scenePath.empty()) {
-            scenePath = ctx.assetsRoot + L"\\scenes\\main.scene.json";
-            mye::ProjectManifest manifest; // ブートシーンはマニフェスト優先 (M26)
-            if (!ctx.projectRoot.empty() && mye::LoadProjectManifest(ctx.projectRoot, manifest)) {
-                scenePath = mye::ProjectBootScenePath(ctx.projectRoot, manifest);
-            }
-        }
-        // ショーケース材質は無条件で登録する (M50a)。--scene で保存済みショーケースを
-        // 直接開く経路でも実体が揃う。
-        // Runtime には --parts-demo が無いので、フラグでゲートすると parts 材質は常に欠落する
-        mye::RegisterRtShowcaseContent(ctx);
-        mye::RegisterPartsShowcaseContent(ctx);
-        mye::RegisterFlowShowcaseContent(ctx); // M51j: flow_* 材質 (配布ブートシーンにも使う)
-        mye::RegisterLocalPlayersContent(ctx);  // M52g: mp_* 材質 (同上の理由で常時)
-        mye::RegisterNetDuelContent(ctx);       // M52i: duel_* 材質 (同上)
-        mye::RegisterRenderShowcaseContent(ctx); // M54a: rdemo_* 材質 (同上)
-        mye::RegisterTerrainShowcaseContent(ctx); // M58c: tdemo_* 材質 (同上)
-        mye::RegisterPhysicsShowcaseContent(ctx); // M59d: pdemo_* 材質 (同上)
-        mye::RegisterJointShowcaseContent(ctx);   // M60i: jdemo_* 材質 + 車輪メッシュ (同上)
-        mye::RegisterFogShowcaseContent(ctx);     // M57追補: fdemo_* 材質 (同上)
-        mye::RegisterParticleShowcaseContent(ctx); // M63a: vdemo_* 材質 + 手続きテクスチャ (同上)
-        mye::RegisterAcousticShowcaseContent(ctx); // M65b: adem_* 材質 (同上)
-        mye::RegisterModalShowcaseContent(ctx);    // M76f: mdemo_* 材質 (同上)
-        if (std::filesystem::exists(scenePath)) {
-            mye::SceneSerializer::LoadFromFile(*ctx.scene, scenePath);
-            // Editor と同じ「ロード直後 1 回」(M48e)。ここを揃えないと Editor で録った .rep と
-            // Runtime の verify で初期状態が食い違う
-            mye::Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs);
-            // 最初の物理 tick より前に破片資産を先読みしておく (Editor 側と同じ)
-            mye::PreloadFractureAssets(ctx.scene->GetWorld());
-        } else if (showcase != nullptr && showcase->build != nullptr) {
-            showcase->build(ctx, showcaseOptions);
-        } else {
-            mye::BuildDemoScene(ctx); // ブートシーンが無ければデモを構築
-        }
-        // ランタイムは即 Play 相当。Editor の PlayModeController::Play と同じ Save+Load リロードで
-        // EntityID を正規化する — これにより Editor が録った .rep と決定論的に一致する (M8 規約)。
-        {
-            const nlohmann::json snap = mye::SceneSerializer::SaveToJson(*ctx.scene);
-            mye::SceneSerializer::LoadFromJson(*ctx.scene, snap);
-        }
+        // 起動シーンの用意は Editor / ヘッドレス Server と共有 (StartScene.cpp)
+        mye::StartSceneOptions options;
+        options.scenePath = scenePath;
+        options.showcase = showcase;
+        options.showcaseOptions = showcaseOptions;
+        scenePath = mye::PrepareStartScene(ctx, options);
         if (startDeferred) {
             ctx.renderPath = ctx.renderPathDeferred;
         }

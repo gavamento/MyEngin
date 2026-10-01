@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{D4E5F6A7-5555-4D8E-AF10-2B3C4D5E6F70}</ProjectGuid>
+    <RootNamespace>Server</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <UseDebugLibraries Condition="'$(Configuration)'=='Debug'">true</UseDebugLibraries>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <Import Project="Common.props" />
+  <!--
+    ヘッドレス専用サーバ (M81)。Engine.lib を丸ごとリンクするので GPU / 音声 / コントローラの import は残るが、
+    すべて遅延ロードにする = それらの関数を呼ばない限り DLL はロードされない。
+    実行後に GetModuleHandleW で「ロードされていないこと」を Server.exe 自身が検査する (ServerMain.cpp)。
+    nethost は ManagedHost::Init (C# ホストの起動) だけが呼ぶ。サーバは C# レーンを持たないので同様に遅延
+  -->
+  <ItemDefinitionGroup>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;dxguid.lib;winmm.lib;delayimp.lib;$(RepoRoot)external\nethost\nethost.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <DelayLoadDLLs>d3d11.dll;dxgi.dll;d3dcompiler_47.dll;xaudio2_9.dll;Xinput9_1_0.dll;nethost.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
+      <!-- LNK4199: 実際に import が無い DLL (リンカが未参照の GPU 系オブジェクトを引かなかった) への
+           DELAYLOAD は警告になる。Engine.lib の将来の変更で import が増えても遅延になるよう指定は残す -->
+      <AdditionalOptions>/IGNORE:4199 %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- BEGIN FILES (tools\gen_project_files.ps1 が再生成する。手編集しない) -->
+  <ItemGroup>
+    <ClCompile Include="..\src\Server\ServerMain.cpp" />
+  </ItemGroup>
+  <!-- END FILES -->
+  <ItemGroup>
+    <ProjectReference Include="Engine.vcxproj">
+      <Project>{8F2D5C31-1A2B-4E3F-9C4D-5E6F7A8B9C0D}</Project>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

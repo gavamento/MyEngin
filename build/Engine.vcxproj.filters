@@ -390,6 +390,9 @@
     <ClCompile Include="..\src\Engine\Engine\Demo\ShowcaseScenes.cpp">
       <Filter>Engine\Demo</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Demo\StartScene.cpp">
+      <Filter>Engine\Demo</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp">
       <Filter>Engine\HotReload</Filter>
     </ClCompile>
@@ -405,7 +408,13 @@
     <ClCompile Include="..\src\Engine\Engine\Loop\EngineLoop.cpp">
       <Filter>Engine\Loop</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Loop\HeadlessSim.cpp">
+      <Filter>Engine\Loop</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Loop\PlayerInputSystem.cpp">
+      <Filter>Engine\Loop</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Loop\SimInit.cpp">
       <Filter>Engine\Loop</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Loop\TickRunner.cpp">
@@ -1137,6 +1146,9 @@
     <ClInclude Include="..\src\Engine\Engine\Demo\ShowcaseScenes.h">
       <Filter>Engine\Demo</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Demo\StartScene.h">
+      <Filter>Engine\Demo</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\HotReload\DllReloader.h">
       <Filter>Engine\HotReload</Filter>
     </ClInclude>
@@ -1155,7 +1167,13 @@
     <ClInclude Include="..\src\Engine\Engine\Loop\GameFlow.h">
       <Filter>Engine\Loop</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Loop\HeadlessSim.h">
+      <Filter>Engine\Loop</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Loop\PlayerInputSystem.h">
+      <Filter>Engine\Loop</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Loop\SimInit.h">
       <Filter>Engine\Loop</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Loop\TickRunner.h">
