@@ -156,6 +156,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return r.summary.find("could not be loaded") != std::string::npos ? 2 : 1;
     }
 
+    // --write-content-manifest PATH: assets の content_manifest.json を書いて終了 (M81c)
+    if (!cli.writeContentManifest.empty()) {
+        return mye::RunWriteContentManifestCli(config.projectRoot, cli.writeContentManifest);
+    }
+
     mye::EngineLoop loop;
     return loop.Run(config, app);
 }

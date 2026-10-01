@@ -28,6 +28,10 @@ public:
 
     uint32_t Version() const { return counter_; }
 
+    // 現在ロード中の GameLogic.dll のバイト列ハッシュ (SimProvenance.gameVersion)。
+    // 実際にロードしたシャドウコピーを読んだ値で、リロードに成功するたびに更新される。0 = 未ロード
+    uint64_t LoadedGameVersion() const { return loadedHash_; }
+
     // 最後にロードを試みた DLL の書き込み時刻 (FILETIME)。失敗も記録する (理由は DllReloader.cpp の TryCopyAndLoad)。
     // 0 = まだ試していない。セルフテストが読む
     uint64_t LastTriedWriteTime() const { return lastWriteTime_; }
@@ -50,6 +54,7 @@ private:
     std::wstring cacheDir_;
     uint64_t lastWriteTime_ = 0; // FILETIME (LastTriedWriteTime の値)
     uint32_t counter_ = 0;
+    uint64_t loadedHash_ = 0;
     uint64_t lastPollMs_ = 0;
 };
 

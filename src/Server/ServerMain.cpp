@@ -121,6 +121,9 @@ int wmain(int argc, wchar_t** argv)
         }
         return r.summary.find("could not be loaded") != std::string::npos ? 2 : 1;
     }
+    if (!cli.writeContentManifest.empty()) {
+        return mye::RunWriteContentManifestCli(setup.config.projectRoot, cli.writeContentManifest);
+    }
 
     if (setup.config.replayVerifyPath.empty()) {
         PrintUsage();

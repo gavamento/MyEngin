@@ -5,6 +5,7 @@
 #include <thread>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/Session/Provenance.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {
@@ -58,19 +59,36 @@ const char* NetRejectName(NetReject r)
         return "UI reference resolution (project_settings.json ui.referenceW/H)";
     case NetReject::FontMetrics:
         return "font metrics table (assets\\fonts\\*.fontmetrics.json differs)";
+    case NetReject::EngineVersion: return "engine build (different git commit)";
+    case NetReject::GameVersion:
+        return "GameLogic.dll differs (--allow-game-mismatch downgrades this to a warning)";
+    case NetReject::ContentHash:
+        return "assets content (a scene / prefab / config file differs; images, shaders, audio are ignored)";
     }
     return "?";
 }
 
 NetReject CompareNetIdentity(const NetIdentity& a, const NetIdentity& b)
 {
-    if (a.proto != b.proto) return NetReject::Proto;
-    if (a.apiVersion != b.apiVersion) return NetReject::ApiVersion;
-    if (a.repVersion != b.repVersion) return NetReject::RepVersion;
-    if (a.snapshotVersion != b.snapshotVersion) return NetReject::SnapshotVersion;
+    // 出自の項目は CompareProvenance が正本 (ここで項目を二重に持たない)
+    const bool allowGame = (a.configBits & kNetCfgAllowGameMismatch) != 0;
+    switch (CompareProvenance(a.prov, b.prov, allowGame)) {
+    case ProvenanceMismatch::None: break;
+    case ProvenanceMismatch::ProtocolVersion: return NetReject::Proto;
+    case ProvenanceMismatch::ApiVersion: return NetReject::ApiVersion;
+    case ProvenanceMismatch::ReplayVersion: return NetReject::RepVersion;
+    case ProvenanceMismatch::SchemaVersion: return NetReject::SnapshotVersion;
+    case ProvenanceMismatch::EngineVersion: return NetReject::EngineVersion;
+    case ProvenanceMismatch::GameVersion: return NetReject::GameVersion;
+    case ProvenanceMismatch::ContentHash: return NetReject::ContentHash;
+    case ProvenanceMismatch::InitialSnapshot: return NetReject::WorldHash;
+    }
     if (a.playerCount != b.playerCount) return NetReject::PlayerCount;
     if (a.inputDelay != b.inputDelay) return NetReject::InputDelay;
-    if (a.configBits != b.configBits) return NetReject::ConfigBits;
+    // --allow-game-mismatch は照合の方針で、片側だけが付けても起動オプションの食い違いにしない
+    if (((a.configBits ^ b.configBits) & ~static_cast<uint32_t>(kNetCfgAllowGameMismatch)) != 0) {
+        return NetReject::ConfigBits;
+    }
     // M70b: キャンバスは「実 px ÷ 一様スケール」を整数へ丸めた値なので、同じアスペクトなら
     // 解像度が違っても厳密に同じ float になる (== で比べてよい。近似比較にすると
     // 「ほぼ同じアスペクト」を通してしまい、弾く意味が薄れる)

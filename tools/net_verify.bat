@@ -66,8 +66,10 @@ if !ERRORLEVEL! EQU 0 (
 )
 
 call :case A 7801 0  "--net-delay 3" "%DBG%\Runtime.exe" "%DBG%\Runtime.exe"
-call :case B 7802 20 "--net-delay 3" "%DBG%\Runtime.exe" "%REL%\Runtime.exe"
-call :case C 7803 30 "--net-delay 1" "%DBG%\Runtime.exe" "%REL%\Runtime.exe"
+rem ★Debug↔Release は GameLogic.dll のバイト列が必ず違う (gameVersion の照合で弾かれる) ので、
+rem   混在のケース B/C だけ --allow-game-mismatch で WARN に落とす (両側に渡す。.rep の configBits に残る)
+call :case B 7802 20 "--net-delay 3 --allow-game-mismatch" "%DBG%\Runtime.exe" "%REL%\Runtime.exe"
+call :case C 7803 30 "--net-delay 1 --allow-game-mismatch" "%DBG%\Runtime.exe" "%REL%\Runtime.exe"
 call :case D 7804 20 "--net-delay 3 --net-no-rollback" "%DBG%\Runtime.exe" "%DBG%\Runtime.exe"
 call :desync 7805
 

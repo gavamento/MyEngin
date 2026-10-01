@@ -10,6 +10,7 @@
 
 #include "Engine/Engine/Demo/StartScene.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Session/SessionTypes.h"
 
 namespace mye {
 
@@ -62,6 +63,8 @@ public:
     const std::wstring& AssetsRoot() const;
     // 自己検査用: Server が使うシャドウコピー先 (Editor / Runtime の cache\hot とは別)
     const std::wstring& ShadowCopyDir() const;
+    // 起動時に算出した出自 (engine / game / content ...)。Init 後に有効
+    const SimProvenance& Provenance() const;
 
 private:
     struct Impl;

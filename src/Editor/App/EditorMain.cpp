@@ -393,6 +393,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return r.summary.find("could not be loaded") != std::string::npos ? 2 : 1;
     }
 
+    // --write-content-manifest PATH [--project DIR]: assets の content_manifest.json を書いて終了 (M81c)
+    if (!cli.writeContentManifest.empty()) {
+        return mye::RunWriteContentManifestCli(projectDir, cli.writeContentManifest);
+    }
+
     // --img-diff A B [--tol N] [--fail-pixels N] [--diff-out PNG]: スクショ回帰の判定 (M52c)。
     // 一致 (許容内) なら exit 0、差があれば exit 1、そもそも比較できなければ exit 2。
     // ★「差が無い」と「比べられなかった」を同じ終了コードにしない — 寸法違いや読み込み失敗を

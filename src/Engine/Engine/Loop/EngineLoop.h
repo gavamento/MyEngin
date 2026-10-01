@@ -331,6 +331,9 @@ struct EngineConfig {
     int netPlayers = 2;            // --net-players N (M52 は 2 人 P2P 固定)
     int netInputDelay = 3;         // --net-delay N (tick)。全 peer で一致必須
     int netLossPercent = 0;        // --net-loss N (入力パケットを故意に捨てる。検証用)
+    // --allow-game-mismatch (M81c): GameLogic.dll の食い違いだけを WARN に落として接続を許す。
+    // Debug と Release の混在検証用 (本番では使わない)。.rep の SessionConfig.configBits に残る
+    bool allowGameMismatch = false;
 
     // ---- 予測ロールバック + desync 検出 (M52i) ----
     // 既定 on。未着レーンを予測 (直近の確定値の繰り返し) で埋めて先へ進み、外れたら

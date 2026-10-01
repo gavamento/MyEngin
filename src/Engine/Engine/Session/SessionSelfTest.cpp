@@ -24,6 +24,7 @@
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/Session/Provenance.h"
 #include "Engine/Engine/Session/SessionTypes.h"
 
 namespace mye {
@@ -546,6 +547,224 @@ bool RunSessionSelfTest()
         bad.Finish();
         ReplayPlayer pb;
         check(!pb.Load(snapPath), "D9: a header RNG that differs from the embedded snapshot is rejected");
+    }
+
+    // ---- P1: engineVersion ----
+    {
+        check(EngineVersionFromGit("unknown") == 0 && EngineVersionFromGit("") == 0,
+              "P1: an unknown git descriptor maps to 0 (= unknown)");
+        const uint64_t clean = EngineVersionFromGit("0123456789ab");
+        const uint64_t dirty = EngineVersionFromGit("0123456789ab-dirty");
+        check(clean != 0 && dirty != 0 && clean != dirty, "P1: a dirty build has a different engineVersion");
+        check(IsDirtyGit("0123456789ab-dirty") && !IsDirtyGit("0123456789ab") && !IsDirtyGit(""),
+              "P1: -dirty is detected");
+        check(MakeSimProvenance(1, 2, 6).engineVersion == EngineVersionFromGit(EngineBuildGit()),
+              "P1: the provenance carries the engineVersion of this build");
+    }
+
+    // ---- P2: gameVersion と CompareProvenance ----
+    {
+        const std::wstring dllA = (tempDir / L"mye_prov_a.bin").wstring();
+        const std::wstring dllB = (tempDir / L"mye_prov_b.bin").wstring();
+        const std::wstring dllA2 = (tempDir / L"mye_prov_a2.bin").wstring();
+        WriteAll(dllA, { 'G', 'L', '1', 0 });
+        WriteAll(dllA2, { 'G', 'L', '1', 0 });
+        WriteAll(dllB, { 'G', 'L', '2', 0 });
+        const uint64_t ha = HashFileBytes(dllA);
+        check(ha != 0 && ha == HashFileBytes(dllA2) && ha != HashFileBytes(dllB)
+                  && HashFileBytes((tempDir / L"mye_prov_missing.bin").wstring()) == 0,
+              "P2: gameVersion = byte hash (same bytes match, different bytes differ, missing file = 0)");
+
+        const SimProvenance base = MakeSimProvenance(ha, 0xC0DE, 6);
+        check(CompareProvenance(base, base) == ProvenanceMismatch::None, "P2: identical provenance matches");
+        SimProvenance other = base;
+        other.gameVersion = HashFileBytes(dllB);
+        check(CompareProvenance(base, other) == ProvenanceMismatch::GameVersion,
+              "P2: a different GameLogic.dll is reported as GameVersion");
+        check(CompareProvenance(base, other, /*allowGameMismatch=*/true) == ProvenanceMismatch::None,
+              "P2: --allow-game-mismatch downgrades only the game mismatch");
+        other.contentHash ^= 1;
+        check(CompareProvenance(base, other, true) == ProvenanceMismatch::ContentHash,
+              "P2: --allow-game-mismatch does not hide a content mismatch");
+
+        struct Case {
+            ProvenanceMismatch want;
+            void (*mutate)(SimProvenance&);
+        };
+        const Case cases[] = {
+            { ProvenanceMismatch::ProtocolVersion, [](SimProvenance& p) { p.protocolVersion += 1; } },
+            { ProvenanceMismatch::ApiVersion, [](SimProvenance& p) { p.apiVersion += 1; } },
+            { ProvenanceMismatch::ReplayVersion, [](SimProvenance& p) { p.replayVersion += 1; } },
+            { ProvenanceMismatch::SchemaVersion, [](SimProvenance& p) { p.schemaVersion ^= 1; } },
+            { ProvenanceMismatch::EngineVersion, [](SimProvenance& p) { p.engineVersion ^= 1; } },
+            { ProvenanceMismatch::GameVersion, [](SimProvenance& p) { p.gameVersion ^= 1; } },
+            { ProvenanceMismatch::ContentHash, [](SimProvenance& p) { p.contentHash ^= 1; } },
+            { ProvenanceMismatch::InitialSnapshot, [](SimProvenance& p) { p.initialSnapshotHash ^= 1; } },
+        };
+        bool allCases = true;
+        for (const Case& c : cases) {
+            SimProvenance p = base;
+            c.mutate(p);
+            allCases = allCases && CompareProvenance(base, p) == c.want;
+        }
+        check(allCases, "P2: every provenance field is reported under its own name");
+
+        // 0 = 不明の規則: 双方 0 は WARN 付きで一致、片方だけ 0 は不一致 (engineVersion / contentHash)
+        SimProvenance z1 = base, z2 = base;
+        z1.engineVersion = z2.engineVersion = 0;
+        z1.contentHash = z2.contentHash = 0;
+        check(CompareProvenance(z1, z2) == ProvenanceMismatch::None,
+              "P2: unknown (0) on both sides matches (with a warning)");
+        z2.engineVersion = 5;
+        check(CompareProvenance(z1, z2) == ProvenanceMismatch::EngineVersion,
+              "P2: engineVersion unknown on one side only is a mismatch");
+        z2.engineVersion = 0;
+        z2.contentHash = 5;
+        check(CompareProvenance(z1, z2) == ProvenanceMismatch::ContentHash,
+              "P2: contentHash unknown on one side only is a mismatch");
+        check(ComputeSchemaVersion() == ComputeSchemaVersion() && ComputeSchemaVersion() != 0,
+              "P2: schemaVersion is a stable fold");
+
+        // --allow-game-mismatch は configBits に載るが、--rep-diff の比較からは外れる
+        // (ほかのビットの食い違いは今までどおり割れる)
+        auto recordWithBits = [&](const std::wstring& path, uint32_t bits) {
+            ReplayRecorder rec;
+            SessionConfig cfg = {};
+            cfg.playerCount = 1;
+            cfg.tickRate = 60;
+            cfg.configBits = bits;
+            SnapshotMeta meta = {};
+            rec.Start(path, 11, 22, 3, 1, nullptr, 0, cfg, SimProvenance{}, meta);
+            const InputSnapshot in = MakeInput(1);
+            rec.RecordTick(&in, 1, 0xA0);
+            return rec.Finish();
+        };
+        const std::wstring repA = (tempDir / L"mye_prov_cfg_a.rep").wstring();
+        const std::wstring repB = (tempDir / L"mye_prov_cfg_b.rep").wstring();
+        check(recordWithBits(repA, kCfgSynthInput | kCfgJobs)
+                  && recordWithBits(repB, kCfgSynthInput | kCfgJobs | kCfgAllowGameMismatch)
+                  && DiffReplayFiles(repA, repB).same,
+              "P2: --rep-diff ignores the --allow-game-mismatch bit");
+        check(recordWithBits(repB, kCfgSynthInput) && !DiffReplayFiles(repA, repB).same,
+              "P2: --rep-diff still compares the other configBits");
+
+        for (const std::wstring& p : { dllA, dllB, dllA2, repA, repB }) {
+            std::filesystem::remove(p, ec);
+        }
+    }
+
+    // ---- P3: contentHash / content_manifest.json ----
+    {
+        check(IsContentExcludedExtension(L".png") && IsContentExcludedExtension(L".PNG")
+                  && IsContentExcludedExtension(L".hlsl") && IsContentExcludedExtension(L".wav")
+                  && IsContentExcludedExtension(L".ttf") && IsContentExcludedExtension(L".dds"),
+              "P3: image / shader / audio / font extensions are excluded (case-insensitive)");
+        check(!IsContentExcludedExtension(L".json") && !IsContentExcludedExtension(L".meta")
+                  && !IsContentExcludedExtension(L".prefab") && !IsContentExcludedExtension(L".fbx")
+                  && !IsContentExcludedExtension(L"") && !IsContentExcludedExtension(L".newkind"),
+              "P3: scenes / prefabs / .meta / models / unknown kinds are included (exclusion list, not allow list)");
+
+        namespace fs = std::filesystem;
+        const fs::path root = tempDir / L"mye_content_test";
+        fs::remove_all(root, ec);
+        fs::create_directories(root / L"scenes", ec);
+        fs::create_directories(root / L"shaders", ec);
+        auto put = [&](const fs::path& rel, const std::string& text) {
+            WriteAll((root / rel).wstring(), std::vector<char>(text.begin(), text.end()));
+        };
+        put(L"scenes\\main.scene.json", "{\"a\":1}");
+        put(L"scenes\\main.scene.json.meta", "guid-1");
+        put(L"hero.prefab", "prefab");
+        put(L"tex.png", "png-1");
+        put(L"shaders\\x.hlsl", "hlsl-1");
+        put(L"hit.WAV", "wav-1");
+
+        std::vector<ContentEntry> entries;
+        const bool collected = CollectContentEntries(root.wstring(), entries);
+        const uint64_t base = FoldContentEntries(entries);
+        bool sorted = true;
+        for (size_t i = 1; i < entries.size(); ++i) {
+            sorted = sorted && entries[i - 1].path < entries[i].path;
+        }
+        check(collected && entries.size() == 3 && sorted && entries[0].path == "hero.prefab"
+                  && entries[1].path == "scenes/main.scene.json",
+              "P3: entries are the non-excluded files, root-relative, '/'-separated, sorted");
+
+        auto hashNow = [&]() {
+            std::vector<ContentEntry> e;
+            CollectContentEntries(root.wstring(), e);
+            return FoldContentEntries(e);
+        };
+        put(L"tex.png", "png-2-changed");
+        put(L"shaders\\x.hlsl", "hlsl-2-changed");
+        put(L"hit.WAV", "wav-2-changed");
+        check(hashNow() == base, "P3: changing excluded files (png / hlsl / wav) leaves contentHash unchanged");
+        put(L"shaders\\new.hlsl", "added");
+        check(hashNow() == base, "P3: adding an excluded file leaves contentHash unchanged");
+        put(L"tex.png.meta", "import settings"); // 除外する種類の .meta も対象外
+        put(L"tex.dds.meta", "generated at first run");
+        check(hashNow() == base, "P3: the .meta of an excluded kind (png / dds) is not hashed");
+        fs::create_directories(root / L"scripts" / L"Generated", ec);
+        put(L"scripts\\Generated\\Schema.cs", "// regenerated at every start");
+        check(hashNow() == base, "P3: the engine-generated scripts\\Generated\\ output is not hashed");
+
+        put(L"hero.prefab", "prefaB");
+        const uint64_t afterPrefab = hashNow();
+        check(afterPrefab != base, "P3: changing a .prefab by one byte changes contentHash");
+        put(L"hero.prefab", "prefab");
+        put(L"scenes\\main.scene.json", "{\"a\":2}");
+        check(hashNow() != base, "P3: changing a .scene.json by one byte changes contentHash");
+        put(L"scenes\\main.scene.json", "{\"a\":1}");
+        put(L"scenes\\main.scene.json.meta", "guid-2");
+        check(hashNow() != base, "P3: changing a .meta by one byte changes contentHash");
+        put(L"scenes\\main.scene.json.meta", "guid-1");
+        put(L"extra.newkind", "x");
+        check(hashNow() != base, "P3: adding a file of an unknown kind changes contentHash (included by default)");
+        fs::remove(root / L"extra.newkind", ec);
+        check(hashNow() == base, "P3: restoring the files restores contentHash");
+
+        // manifest の往復。assets 直下の manifest 自身は対象に入らない
+        const std::wstring manifestPath = (root / kContentManifestName).wstring();
+        uint64_t written = 0;
+        uint64_t readBack = 0;
+        size_t fileCount = 0;
+        check(WriteContentManifest(manifestPath, root.wstring(), &written) && written == base
+                  && ReadContentManifest(manifestPath, readBack, &fileCount) && readBack == base
+                  && fileCount == 3,
+              "P3: manifest round-trip returns the same contentHash");
+        put(L"content_manifest.json.meta", "guid-of-the-manifest"); // AssetDatabase が付ける sidecar
+        check(hashNow() == base && ResolveContentHash(root.wstring()) == base,
+              "P3: the manifest and its .meta are not hashed, and ResolveContentHash reads the manifest");
+
+        // 手で壊された manifest は信用しない (計算値へ落ちる)
+        std::vector<char> text = ReadAll(manifestPath);
+        const std::string needle = "\"size\": ";
+        const std::string all(text.begin(), text.end());
+        const size_t at = all.find(needle);
+        if (at != std::string::npos) {
+            std::string broken = all;
+            broken[at + needle.size()] = broken[at + needle.size()] == '9' ? '8' : '9';
+            WriteAll(manifestPath, std::vector<char>(broken.begin(), broken.end()));
+        }
+        check(at != std::string::npos && !ReadContentManifest(manifestPath, readBack),
+              "P3: a hand-edited manifest is rejected");
+        put(L"hero.prefab", "prefaB");
+        check(ResolveContentHash(root.wstring()) == afterPrefab,
+              "P3: an unusable manifest falls back to computing from the assets");
+
+        // 正規化: 大文字小文字だけ違うパスは同じ contentHash になる
+        const fs::path rootB = tempDir / L"mye_content_test_b";
+        fs::remove_all(rootB, ec);
+        fs::create_directories(rootB / L"Scenes", ec);
+        WriteAll((rootB / L"Hero.PREFAB").wstring(), { 'p', 'r', 'e', 'f', 'a', 'B' });
+        WriteAll((rootB / L"Scenes" / L"Main.Scene.JSON").wstring(), { '{', '"', 'a', '"', ':', '1', '}' });
+        WriteAll((rootB / L"Scenes" / L"Main.Scene.JSON.meta").wstring(), { 'g', 'u', 'i', 'd', '-', '1' });
+        std::vector<ContentEntry> eb;
+        CollectContentEntries(rootB.wstring(), eb);
+        check(FoldContentEntries(eb) == afterPrefab, "P3: paths are lower-cased, so letter case alone does not change contentHash");
+
+        fs::remove_all(root, ec);
+        fs::remove_all(rootB, ec);
     }
 
     std::filesystem::remove(plainPath, ec);

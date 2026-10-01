@@ -14,7 +14,7 @@ spec 4.3 / E1 / E2。
    - `engine_spec.md` §11 に §11.5 (専用サーバ: プロトコル、確定処理、途中参加、.rep v9、server_verify)、ABI v23、§13 の ADR 一覧に ADR-022。
    - `docs\engine-feature-guide.md` §13 (今「専用サーバ…は本機能に含めません」) を更新。
    - `docs\test_checklists.md` に server_verify と Anywhere 手動確認の項目。
-   - 既知の制限 (多レーン UI 不可 = D13、コンピュート ABI の結果を sim に入れない = spec R-7、GPU パーティクル設定は全員一致が前提 = R-6、Server は cook キャッシュ無効 = R-8、トークン 15 分、Windows のみ) を明記。
+   - 既知の制限 (多レーン UI 不可 = D13、コンピュート ABI の結果を sim に入れない = spec R-7、GPU パーティクル設定は全員一致が前提 = R-6、Server は cook キャッシュ無効 = R-8、contentHash の対象 (拡張子の除外 + その種類の .meta + manifest 自身・`scripts/Generated/` のパス除外、R-9、デモが書くシーンファイルで揺れうる)、トークン 15 分、Windows のみ) を明記。
 
 ## やらないこと (このサブでは)
 - 新しいネット機能

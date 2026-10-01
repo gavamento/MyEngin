@@ -315,7 +315,10 @@ ReplayDiffResult DiffReplayFiles(const std::wstring& a, const std::wstring& b)
         { "session.playerCount", ha.session.playerCount, hb.session.playerCount },
         { "session.tickRate", ha.session.tickRate, hb.session.tickRate },
         { "session.seed", ha.session.seed, hb.session.seed },
-        { "session.configBits", ha.session.configBits, hb.session.configBits },
+        // kCfgAllowGameMismatch は照合の方針 (Debug / Release 混在の検証で片側だけ付く) で、
+        // tick 列の意味に効かないので外す
+        { "session.configBits", ha.session.configBits & ~static_cast<uint32_t>(kCfgAllowGameMismatch),
+          hb.session.configBits & ~static_cast<uint32_t>(kCfgAllowGameMismatch) },
         { "session.referenceW", ha.session.referenceW, hb.session.referenceW },
         { "session.referenceH", ha.session.referenceH, hb.session.referenceH },
         { "session.fontMetricsHash", ha.session.fontMetricsHash, hb.session.fontMetricsHash },

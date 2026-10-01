@@ -1,8 +1,8 @@
 # sub-03: 出自情報 (engine/game/content) と NetIdentity の統合
 
 - 依存: sub-02
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (コミット待ち)
+- 往復: 2
 
 ## やること
 spec D5 / D6 / D7 / D8 / 4.2 の SimProvenance を実値で埋め、照合を 1 関数にまとめ、P2P の NetIdentity もそこから作る。
@@ -46,4 +46,15 @@ spec 5. の **P1, P2, P3, P4** と **C1, C2, C3, C5, C6, C7**。
 
 ## 実装メモ (coder が追記)
 
+### round 1 (SELF_EVAL 写し)
+- 新設 `Session/Provenance.{h,cpp}`: EngineVersionFromGit / HashFileBytes / ComputeSchemaVersion / ContentEntry・Collect・Fold / WriteContentManifest・ReadContentManifest・ResolveContentHash / MakeSimProvenance / FormatProvenance / CompareProvenance(+ProvenanceMismatchName)。
+- `SessionConfigBits` (kCfg*) を SessionTypes.h に新設。Net の kNetCfg* は同値の別名 (+ kNetCfgAllowGameMismatch)。
+- `NetIdentity` 64 -> 96 バイト (SimProvenance 抱え込み)、`kNetProtoVersion` 6、`NetReject` 末尾に EngineVersion / GameVersion / ContentHash。`CompareNetIdentity` は `CompareProvenance` を呼ぶ。
+- `DllReloader::LoadedGameVersion()` (ロードしたシャドウコピーのバイト列ハッシュ)。`SimInit` に `BuildSessionConfigBits` / `FillSessionConfigFromProject` / `BuildRunProvenance`。EngineLoop と HeadlessSim が同じ位置 (InitSimAssets・ConfigureSimCaches の後、OnStart の前) で呼ぶ。
+- CLI `--allow-game-mismatch` / `--write-content-manifest PATH` (Editor / Runtime / Server)。Build Settings の StageCopy に manifest を焼く 1 段。
+- `DiffReplayFiles` は configBits の kCfgAllowGameMismatch だけ比較から外す。check_rules 規則 13-a の EngineApiTable.cpp は NetRuntime.h の include だけ許可。net_verify の B/C に `--allow-game-mismatch`。
+- 検証は SELF_EVAL (司会へ返した報告) を参照。
+
 ## フィードバック履歴
+- round 1: VERDICT REWORK (planner 2026-10-02)。must 1 件: 配布物へ manifest を焼く段 (BuildSettingsWindow.cpp:StageCopy) が未実行。CI の package smoke (`Editor.exe --package cache\dist_ci`、ci.yml:156-158) が毎回通る経路なので、実行確認なしでは出せない。`Editor.exe --package` で焼き、配布物の Runtime が `[content] manifest:` で同じハッシュを読み、配布物の assets を再計算した値とも一致することを示す。ci.yml の package contents に `assets\content_manifest.json` を足す。不安 1〜4 は全件承認 (spec 変更履歴)。
+- round 2: VERDICT OK (planner 2026-10-02)。#1 (a)〜(d) を確認 (非 DDS / DDS の両方で、焼いた値 = 配布物 Runtime が読んだ値 = manifest 無しで再計算した値 = 0x84ecea05e1ad86d0)。実走で見つかった 2 件 (焼く位置、除外種類の .meta) の修正を承認。should: 修正後の初回 `--package` が 1 回だけ exit 1 になった件は原因が拾えていない。CI の package smoke か以後のサブで再現したら、ログを残して調べること (台帳の申し送り)。

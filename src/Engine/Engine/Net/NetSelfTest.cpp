@@ -20,9 +20,12 @@ namespace {
 NetIdentity MakeIdentity()
 {
     NetIdentity id;
-    id.apiVersion = 12;
-    id.repVersion = 4;
-    id.snapshotVersion = 3;
+    id.prov.apiVersion = 12;
+    id.prov.replayVersion = 4;
+    id.prov.schemaVersion = 3;
+    id.prov.engineVersion = 0xE1E1E1E1ull;
+    id.prov.gameVersion = 0x6A3E6A3Eull;
+    id.prov.contentHash = 0xC0117E27ull;
     id.playerCount = 2;
     id.inputDelay = 3;
     id.configBits = kNetCfgSynthInput | kNetCfgJobs;
@@ -113,14 +116,17 @@ bool RunNetSelfTest()
     // ---- 1. 線上のレイアウト ----
     // proto v2 (M52i) でヘッダへ確定 (tick, hash) の 16 バイトが増えた
     check(sizeof(NetPacketHeader) == 64, "packet header is 64 bytes");
-    // M70b: NetIdentity に canvasW/H が入って 40 -> 48 / M75b: 基準解像度 + 計測表ハッシュで 64。
-    // payload もその分だけ太る
-    check(sizeof(NetHandshakePayload) == 72, "handshake payload is 72 bytes");
+    // M70b: NetIdentity に canvasW/H が入って 40 -> 48 / M75b: 基準解像度 + 計測表ハッシュで 64 /
+    // M81c: 出自 SimProvenance (48 バイト) を抱えて 96。payload もその分だけ太る
+    check(sizeof(NetIdentity) == 96, "net identity is 96 bytes");
+    check(sizeof(NetHandshakePayload) == 104, "handshake payload is 104 bytes");
     // M64a: 生マウスデルタ (int32 x2) が入って 64 -> 72 / M70b: UI キャンバス 4 値で 88 /
     // M75b: ゲーム面 + 文字キューで 112
     check(sizeof(InputSnapshot) == 112, "input snapshot is 112 bytes");
     check(kNetMaxPacket == 64 + 8 * 112, "max packet = header + 8 inputs");
-    check(kNetProtoVersion == 5, "protocol version is 5 (M75b surface + chars + UI fingerprint)");
+    check(kNetProtoVersion == 6, "protocol version is 6 (M81c provenance in the handshake)");
+    check(MakeIdentity().prov.protocolVersion == kNetProtoVersion,
+          "a default identity carries the current protocol version");
 
     // ---- 2. 指紋の照合はフィールドごとに理由を返す ----
     {
@@ -130,10 +136,10 @@ bool RunNetSelfTest()
             NetReject want;
             NetIdentity id;
         };
-        NetIdentity a = base; a.proto += 1;
-        NetIdentity b = base; b.apiVersion += 1;
-        NetIdentity c = base; c.repVersion += 1;
-        NetIdentity d = base; d.snapshotVersion += 1;
+        NetIdentity a = base; a.prov.protocolVersion += 1;
+        NetIdentity b = base; b.prov.apiVersion += 1;
+        NetIdentity c = base; c.prov.replayVersion += 1;
+        NetIdentity d = base; d.prov.schemaVersion += 1;
         NetIdentity e = base; e.playerCount += 1;
         NetIdentity f = base; f.inputDelay += 1;
         NetIdentity g = base; g.configBits ^= kNetCfgSynthInput;
@@ -143,7 +149,13 @@ bool RunNetSelfTest()
         // M75b: 基準解像度が違う 2 台 / フォント計測表が違う 2 台 (0 = 表なし と表あり)
         NetIdentity j = base; j.referenceW = 1280;
         NetIdentity k = base; k.fontMetricsHash = 0x1234ull;
+        // M81c: 出自 (エンジンのビルド / GameLogic.dll / assets の中身)
+        NetIdentity l = base; l.prov.engineVersion ^= 1ull;
+        NetIdentity m = base; m.prov.gameVersion ^= 1ull;
+        NetIdentity n = base; n.prov.contentHash ^= 1ull;
         const Case cases[] = {
+            { NetReject::EngineVersion, l },   { NetReject::GameVersion, m },
+            { NetReject::ContentHash, n },
             { NetReject::Proto, a },           { NetReject::ApiVersion, b },
             { NetReject::RepVersion, c },      { NetReject::SnapshotVersion, d },
             { NetReject::PlayerCount, e },     { NetReject::InputDelay, f },
@@ -156,6 +168,22 @@ bool RunNetSelfTest()
             ok = ok && CompareNetIdentity(base, cs.id) == cs.want;
         }
         check(ok, "each identity field reports its own reject reason");
+
+        // M81c: --allow-game-mismatch は GameLogic.dll の食い違いだけを通す。
+        // 判定は自分側 (第 1 引数) の configBits で行い、ビットそのものは configBits の一致検査から外れる
+        NetIdentity allowing = base;
+        allowing.configBits |= kNetCfgAllowGameMismatch;
+        check(CompareNetIdentity(allowing, m) == NetReject::None
+                  && CompareNetIdentity(base, m) == NetReject::GameVersion,
+              "--allow-game-mismatch lets a different GameLogic.dll through (only on the side that asks)");
+        NetIdentity mAndContent = m;
+        mAndContent.prov.contentHash ^= 1ull;
+        check(CompareNetIdentity(allowing, mAndContent) == NetReject::ContentHash
+                  && CompareNetIdentity(allowing, l) == NetReject::EngineVersion,
+              "--allow-game-mismatch does not hide an engine or content mismatch");
+        check(CompareNetIdentity(allowing, base) == NetReject::None
+                  && CompareNetIdentity(base, allowing) == NetReject::None,
+              "the allow bit alone is not a launch-option mismatch");
     }
 
     // ---- 3. ループバックのハンドシェイク ----

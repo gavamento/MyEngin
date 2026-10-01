@@ -18,8 +18,8 @@
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
 | sub-01 ヘッドレス Server.exe + golden .rep 照合 | OK | 1 | c562782 | 9 シーン全部ヘッドレスで一致 |
-| sub-02 Session 型・システム入力・.rep v9 | OK | 1 | (次コミット) | v8 .rep 読込可、規則 13 追加 |
-| sub-03 SimProvenance と NetIdentity 統合 | 未着手 | 0 | | |
+| sub-02 Session 型・システム入力・.rep v9 | OK | 1 | 0cc7504 | v8 .rep 読込可、規則 13 追加 |
+| sub-03 SimProvenance と NetIdentity 統合 | OK | 2 | (次コミット) | round2 で配布物 manifest の不一致 2 件を修正 |
 | sub-04 プロトコルと 1 プロセス内検証 | 未着手 | 0 | | |
 | sub-05 Server 実運用ループ・LocalHosting・server_verify | 未着手 | 0 | | |
 | sub-06 ABI v23 | 未着手 | 0 | | sub-02 後なら並列可 |
@@ -39,3 +39,6 @@
 - (司会 2026-10-02) sub-01 の作業物 (C:\HAL\_m81_sub01_base、cache\sub01_baseline\、cache\sub01_neg\、tmp\sub01_*.log) はユーザー許可を得て削除済み (復元不可、いずれも再生成可能な検証用)
 - (sub-01 → 後続) HeadlessSim は複数インスタンス交互実行時に tick 直前で Activate() が必要。確定入力の差し込み口は VerifyReplay の ctx.inputs[p] 代入。sub-04 では入力置換を EngineLoop と HeadlessSim で共通関数にする
 - (司会 2026-10-02) sub-02 OK。planner 指摘: 規則 13-a の EngineApiTable.cpp 全面許可を NetRuntime.h の include だけに絞る (sub-03 やること 10)。再シム時の SystemInputTick 差し替え・TimeTravel の扱いは sub-04 要件へ。sub-03 は configBits を埋めても net_verify の --rep-diff が割れないこと (やること 9)
+- (司会 2026-10-02) sub-03 OK (round 2)。未解明: 修正後の初回 `Editor.exe --package` が 1 回だけ exit 1 (再実行・DDS 版は PASS)。CI の package smoke か以後のサブで再現したら stdout/stderr を別ファイルに残して調べる
+- (司会) assets\scenes\main.scene.json は git 未追跡。CI の package smoke での出どころは未確認 (sub-03 では CI の挙動は変わらないと planner 判断)
+- (sub-03 → sub-04) サーバ構成の照合は NetIdentity を経由させず CompareProvenance + 必要項目の別 payload。Provenance は HeadlessSim::Provenance()。SessionConfig.deadlineTicks / rejoinTimeoutTicks は sub-04 で埋める

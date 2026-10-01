@@ -30,6 +30,18 @@ constexpr bool RoleHasSystemInput(uint32_t role)
         || role == static_cast<uint32_t>(SessionRole::Client);
 }
 
+// SessionConfig.configBits の内訳。「ビット同一のはず」と分かっている起動オプションも入れる
+// (食い違ったまま desync を追うより入口で弾くほうが安い)。Net/ の NetConfigBits は同じ値の別名
+enum SessionConfigBits : uint32_t {
+    kCfgSynthInput = 1u << 0,
+    kCfgJobs = 1u << 1,
+    kCfgSimCache = 1u << 2,
+    kCfgCookCache = 1u << 3,
+    // --allow-game-mismatch: GameLogic.dll の食い違いを WARN に落として接続を許した記録。
+    // 照合の方針であって tick 列の意味には効かないので、--rep-diff と接続の configBits 照合は無視する
+    kCfgAllowGameMismatch = 1u << 4,
+};
+
 // セッション開始時に確定し、走行中は変えない設定。0 は「不明/未設定」の予約値
 struct SessionConfig {
     uint32_t role;               // SessionRole

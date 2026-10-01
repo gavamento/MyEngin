@@ -13,6 +13,7 @@ struct EngineCliExtras {
     std::wstring repDiffB;
     std::wstring hashDiffA;    // --hash-diff A B (M52a)
     std::wstring hashDiffB;
+    std::wstring writeContentManifest; // --write-content-manifest PATH (M81c)
 };
 
 enum class CliParse {
@@ -20,6 +21,10 @@ enum class CliParse {
     Consumed, // 読んだ。i は最後に読んだ値の位置まで進んでいる
     Error,    // 値の綴り違い。メッセージは stderr へ出してある (Main は exit 1)
 };
+
+// --write-content-manifest PATH の実行 (3 つの Main が共有)。projectDir 空 = エンジンリポジトリの assets。
+// 書き出して終了コードを返す (0 = 書いた / 1 = 失敗)。ウィンドウも D3D も作らない
+int RunWriteContentManifestCli(const std::wstring& projectDir, const std::wstring& manifestPath);
 
 // argv[i] が共通フラグなら、値まで読んで config / extras へ書く (表は EngineCli.cpp の kEngineCliFlags)
 CliParse ParseEngineCliFlag(int argc, wchar_t** argv, int& i, EngineConfig& config, EngineCliExtras& extras);

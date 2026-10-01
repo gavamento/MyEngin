@@ -496,6 +496,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                            + L"\\cache\\cooked");
     ctx.fixedDt = static_cast<float>(kFixedDt);
 
+    // この実行の出自 (M81c)。assets を書き換えうる起動手順 (InitSimAssets の .meta 同期) の後、
+    // シーン構築 (OnStart) の前に 1 回だけ作る。ネットの照合と .rep のヘッダが同じ値を使う
+    // contentHash は接続するか .rep を録るときだけ計算する (assets 全体のハッシュは毎回の起動に重い)
+    const SimProvenance runProvenance = BuildRunProvenance(
+        dllReloader, assetsRoot, kNetProtoVersion,
+        config.netRole != 0 || !config.replayRecordPath.empty());
+
     // ---- クラッシュバンドル (M52f) ----
     // ★設置は app.OnStart の**前**。シーンロードやスクリプト初期化で落ちるのは
     //   もっともありふれた壊れ方で、そこを取りこぼすとハンドラの価値が半分になる。
@@ -624,14 +631,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             netFailed = true;
         }
         NetIdentity id;
-        id.apiVersion = MYE_API_VERSION;
-        id.repVersion = kReplayFileVersion;
-        id.snapshotVersion = kSimSnapshotVersion;
+        id.prov = runProvenance;
         id.playerCount = ncfg.playerCount;
         id.inputDelay = ncfg.inputDelay;
-        id.configBits = (config.synthInput ? kNetCfgSynthInput : 0u)
-            | (config.useJobs ? kNetCfgJobs : 0u) | (config.useSimCache ? kNetCfgSimCache : 0u)
-            | (config.useCookCache ? kNetCfgCookCache : 0u);
+        id.configBits = BuildSessionConfigBits(config);
         // UI キャンバス (M70b)。**アスペクト比が違う 2 台は入口で弾く** —
         // sim (ヒットテスト / フォーカスナビ) が読むのはレーン 0 = ホスト側のキャンバスなので、
         // 参加側のアスペクトが違うと「見えている場所」と「押せる場所」が参加側だけズレる。
@@ -693,13 +696,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ReplayPlayer player;
     int exitCode = netFailed ? 1 : 0;
     // M81b: 記録者のセッション設定。role は記録者の役割にすぎず再生結果に効かない (--rep-diff も比べない)。
-    // engine / game / content の出自 (SimProvenance) と inputDelay 以外の値は sub-03 以降が埋める。
+    // 起動時に決まる欄 (configBits / 基準解像度 / 計測表) は FillSessionConfigFromProject、
+    // seed は記録開始時に埋める。締め切り / 再接続猶予はサーバ専用なので 0 のまま (M81d 以降)。
     // 検証中は .rep の値で上書きする (下の replayVerifyPath 節)
     SessionConfig sessionConfig = {};
     sessionConfig.role = static_cast<uint32_t>(config.netRole);
     sessionConfig.playerCount = ctx.playerCount;
-    sessionConfig.tickRate = 60;
     sessionConfig.inputDelay = netEnabled ? static_cast<uint32_t>(config.netInputDelay) : 0u;
+    FillSessionConfigFromProject(sessionConfig, config);
 
     // ---- 反射プローブのベイカ (M56e、--probe-bake のときだけ実体を持つ) ----
     // 専用の RenderSystem を内側に抱えるので、使わない実行では確保もしない
@@ -752,7 +756,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // 開始スナップショットの素性 (M81b)。blob を埋めるときだけ worldHash / blobHash を計算する
         // (埋めない記録で余計なハッシュを撮らない)
         sessionConfig.playerCount = ctx.playerCount;
-        SimProvenance provenance = {};
+        sessionConfig.seed = scene.GetWorld().Rng().State(); // 記録開始時点の RNG (rngState と同じ値)
+        SimProvenance provenance = runProvenance;
         SnapshotMeta startMeta = {};
         startMeta.tick = ctx.tickIndex;
         startMeta.lastEventSeq = scene.Lanes().lastEventSeq;

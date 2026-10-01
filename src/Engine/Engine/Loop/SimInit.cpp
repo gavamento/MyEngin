@@ -24,6 +24,7 @@
 #include "Engine/Engine/Script/EngineApiTable.h"
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Engine/Script/ScriptHost.h"
+#include "Engine/Engine/Session/Provenance.h"
 #include "Engine/Engine/UI/UILayout.h"
 #include "Engine/Engine/UI/UIProjectSettings.h"
 #include "Engine/Engine/UI/UITextMetrics.h"
@@ -174,6 +175,39 @@ void ConfigureSimCaches(const EngineConfig& config, const std::wstring& cookedDi
     MYE_LOG_INFO("[cook] %s (%s)",
                  config.useCookCache ? "enabled" : "disabled (parse every launch)",
                  WideToUtf8(cookedDir).c_str());
+}
+
+uint32_t BuildSessionConfigBits(const EngineConfig& config)
+{
+    return (config.synthInput ? kCfgSynthInput : 0u) | (config.useJobs ? kCfgJobs : 0u)
+        | (config.useSimCache ? kCfgSimCache : 0u) | (config.useCookCache ? kCfgCookCache : 0u)
+        | (config.allowGameMismatch ? kCfgAllowGameMismatch : 0u);
+}
+
+void FillSessionConfigFromProject(SessionConfig& cfg, const EngineConfig& config)
+{
+    cfg.tickRate = 60;
+    cfg.configBits = BuildSessionConfigBits(config);
+    cfg.referenceW = static_cast<uint32_t>(uilayout::DefaultCanvasDesc().referenceW);
+    cfg.referenceH = static_cast<uint32_t>(uilayout::DefaultCanvasDesc().referenceH);
+    cfg.fontMetricsHash = uitext::ActiveFontMetrics().Hash();
+}
+
+SimProvenance BuildRunProvenance(const DllReloader& dllReloader, const std::wstring& assetsRoot,
+                                 uint32_t protocolVersion, bool withContentHash)
+{
+    const std::string_view git = EngineBuildGit();
+    if (IsDirtyGit(git)) {
+        // dirty 同士は中身が違っても同じ engineVersion になる (開発時の既知の穴)
+        MYE_LOG_WARN("[provenance] engine build %s has uncommitted changes - two different dirty "
+                     "builds compare as equal", std::string(git).c_str());
+    }
+    const SimProvenance p = MakeSimProvenance(
+        dllReloader.LoadedGameVersion(), withContentHash ? ResolveContentHash(assetsRoot) : 0,
+        protocolVersion);
+    MYE_LOG_INFO("%s%s", FormatProvenance(p).c_str(),
+                 withContentHash ? "" : " (content hash not computed: no net / recording)");
+    return p;
 }
 
 } // namespace mye

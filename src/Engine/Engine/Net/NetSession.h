@@ -2,9 +2,11 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "Engine/Core/Util/Random.h"
+#include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/Platform/Net/UdpSocket.h"
 
@@ -34,7 +36,8 @@ namespace mye {
 // v3 (M64a): InputSnapshot 64 -> 72 バイト
 // v4 (M70b): InputSnapshot 72 -> 88 バイト + NetIdentity 40 -> 48 バイト (canvasW/H)
 // v5 (M75b): InputSnapshot 88 -> 112 バイト + NetIdentity 48 -> 64 バイト (referenceW/H、fontMetricsHash)
-inline constexpr uint32_t kNetProtoVersion = 5;
+// v6 (M81c): NetIdentity 64 -> 96 バイト (出自 SimProvenance 48 バイトを抱える: engine / game / content を追加)
+inline constexpr uint32_t kNetProtoVersion = 6;
 inline constexpr uint32_t kNetMagic = 0x4E45594Du; // 'MYEN'
 inline constexpr uint32_t kNetRedundancy = 8;  // 1 パケットの入力 tick 数
 inline constexpr uint32_t kNetRingTicks = 512; // 入力リングの深さ (tick)
@@ -73,10 +76,10 @@ struct NetConfig {
 // 接続前に照合する「同じものを走らせているか」の指紋 (desync の最大要因を入口で潰す)。
 // **POD のままパケットに載る** — バイト順は無変換 (同一アーキテクチャ間の P2P 前提)
 struct NetIdentity {
-    uint32_t proto = kNetProtoVersion;
-    uint32_t apiVersion = 0;      // MYE_API_VERSION
-    uint32_t repVersion = 0;      // ReplayFile の版
-    uint32_t snapshotVersion = 0; // SimSnapshot blob の版
+    // 出自 (proto / api / rep / schema / engine / game / content)。照合は CompareProvenance 1 本で、
+    // この struct 側に同じ項目を持たない (二重管理しない)。initialSnapshotHash は P2P では 0
+    // (開始ワールドハッシュ startWorldHash が同じ役を担う)
+    SimProvenance prov = { 0, kNetProtoVersion };
     uint32_t playerCount = 0;
     uint32_t inputDelay = 0;
     uint32_t configBits = 0;      // 決定論に効く起動オプション (NetConfigBits)
@@ -100,16 +103,18 @@ struct NetIdentity {
     uint64_t fontMetricsHash = 0;
     uint64_t startWorldHash = 0;  // 開始時点のワールドハッシュ (= 同じシーンか)
 };
-static_assert(sizeof(NetIdentity) == 64, "NetIdentity is part of the wire format");
+static_assert(sizeof(NetIdentity) == 96, "NetIdentity is part of the wire format");
+static_assert(std::is_trivially_copyable_v<NetIdentity>, "NetIdentity is sent as raw bytes");
 
 // configBits の内訳。**「ビット同一のはず」と分かっているものも入れる** —
 // 分かっているのは検証済みの構成だけで、食い違ったまま何時間も desync を追うより
-// 入口で弾くほうが安い
+// 入口で弾くほうが安い。値の正本は Session/SessionTypes.h の SessionConfigBits (.rep にも載る)
 enum NetConfigBits : uint32_t {
-    kNetCfgSynthInput = 1u << 0,
-    kNetCfgJobs = 1u << 1,
-    kNetCfgSimCache = 1u << 2,
-    kNetCfgCookCache = 1u << 3,
+    kNetCfgSynthInput = kCfgSynthInput,
+    kNetCfgJobs = kCfgJobs,
+    kNetCfgSimCache = kCfgSimCache,
+    kNetCfgCookCache = kCfgCookCache,
+    kNetCfgAllowGameMismatch = kCfgAllowGameMismatch, // 照合の方針なので configBits の一致検査からは外す
 };
 
 // 拒否理由 (ログに出す。参加側が「何が違うのか」を 1 行で分かるように)
@@ -129,11 +134,17 @@ enum class NetReject : uint32_t {
     // WorldHash / Busy の番号が動く (proto で弾けるが、ログを読み違える余地を作らない)
     ReferenceSize, // UI の基準解像度の不一致
     FontMetrics,   // フォント計測表の不一致
+    // M81c。出自 (SimProvenance) の項目。同じく末尾に足す
+    EngineVersion, // エンジンのビルド (git 記述子)
+    GameVersion,   // GameLogic.dll のバイト列
+    ContentHash,   // assets の中身 (描画・音声専用の拡張子を除く)
 };
 
 const char* NetRejectName(NetReject r);
 
-// 指紋の照合。**最初に食い違ったものを返す** (全部並べるより原因が 1 行で読める)
+// 指紋の照合。**最初に食い違ったものを返す** (全部並べるより原因が 1 行で読める)。
+// 出自の項目は CompareProvenance に委ねる。a を自分側として読み、a.configBits の
+// kNetCfgAllowGameMismatch が立っていれば GameLogic.dll の食い違いだけ WARN に落とす
 NetReject CompareNetIdentity(const NetIdentity& a, const NetIdentity& b);
 
 // ---- パケット (リトルエンディアン固定・無変換) ----
@@ -168,7 +179,7 @@ struct NetHandshakePayload {
     uint32_t assignedIndex = 0; // Accept: 受信者が使うレーン
     uint32_t reason = 0;        // Reject: NetReject
 };
-static_assert(sizeof(NetHandshakePayload) == 72, "NetHandshakePayload is part of the wire format");
+static_assert(sizeof(NetHandshakePayload) == 104, "NetHandshakePayload is part of the wire format");
 
 // パケット 1 個の最大長 (ヘッダ + 冗長分の入力)
 inline constexpr size_t kNetMaxPacket =

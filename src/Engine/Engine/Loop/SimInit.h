@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "Engine/Engine/Session/SessionTypes.h"
+
 namespace mye {
 
 struct EngineConfig;
@@ -93,5 +95,22 @@ void InitSimAssets(AssetDatabase& assetDatabase, InputActions& inputActions,
 
 // sim 索引 (--no-sim-cache) と、アセットクックキャッシュの置き場 / 有効無効を設定する
 void ConfigureSimCaches(const EngineConfig& config, const std::wstring& cookedDir);
+
+// ---- 出自情報 (M81c)。LoadGameLogic と InitSimProjectState の後に呼ぶこと ----
+
+// 決定論に効く起動オプションのビット (SessionConfigBits)。--allow-game-mismatch もここで立つ
+uint32_t BuildSessionConfigBits(const EngineConfig& config);
+
+// SessionConfig のうち起動時に決まる欄 (tickRate / configBits / UI 基準解像度 / フォント計測表ハッシュ)
+// を埋める。role / playerCount / inputDelay / seed など呼び出し側の事情の欄には触れない
+void FillSessionConfigFromProject(SessionConfig& cfg, const EngineConfig& config);
+
+// この実行の出自 (engine / game / content / schema / api)。game は dllReloader が実際にロードした
+// DLL のバイト列ハッシュ、content は assets の manifest か計算値 (時間はログ)。
+// protocolVersion はネット層の版 (Net/ を include できる呼び出し側が渡す)。結果を起動ログにも 1 行出す。
+// withContentHash = false なら contentHash は計算せず 0 (assets 全体を舐める分の起動時間を、
+// 接続も記録もしない実行で払わない)
+SimProvenance BuildRunProvenance(const DllReloader& dllReloader, const std::wstring& assetsRoot,
+                                 uint32_t protocolVersion, bool withContentHash);
 
 } // namespace mye

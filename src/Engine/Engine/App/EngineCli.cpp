@@ -3,8 +3,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cwchar>
+#include <filesystem>
 
 #include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Session/Provenance.h"
+#include "Engine/Platform/PathUtil.h" // FindAssetsRoot (--write-content-manifest)
 #include "Engine/Engine/Scene/TagNames.h" // --rt-receiver-tags / --rt-scene-tags の解析
 
 namespace mye {
@@ -99,6 +102,13 @@ const CliFlag kEngineCliFlags[] = {
           return true;
       } },
 
+    // M81c: assets の content_manifest.json を書き出して終了する (パッケージ工程 / 検証用。Main が実行する)
+    { L"--write-content-manifest", CliValue::One,
+      [](CliArgs& a) {
+          a.x.writeContentManifest = a.v1;
+          return true;
+      } },
+
     // ---- クラッシュバンドル (M52f) ----
     // 意図的に落としてクラッシュバンドルを検証する。★綴り違いは Main が ParseCrashTestKind で弾く
     { L"--crash-test", CliValue::One,
@@ -137,6 +147,8 @@ const CliFlag kEngineCliFlags[] = {
     { L"--net-delay", CliValue::One, [](CliArgs& a) { a.c.netInputDelay = _wtoi(a.v1); return true; } },
     // 入力パケットを故意に捨てる (検証用)
     { L"--net-loss", CliValue::One, [](CliArgs& a) { a.c.netLossPercent = _wtoi(a.v1); return true; } },
+    // M81c: GameLogic.dll の食い違いを WARN に落として接続を許す (Debug / Release 混在の検証用)
+    { L"--allow-game-mismatch", CliValue::None, [](CliArgs& a) { a.c.allowGameMismatch = true; return true; } },
     // M52i: 予測ロールバックを切って M52h の素の遅延ロックステップへ落とす
     { L"--net-no-rollback", CliValue::None, [](CliArgs& a) { a.c.netRollback = false; return true; } },
     // 検出しても止めずに走り続ける (観察用)
@@ -363,6 +375,21 @@ const CliFlag kEngineCliFlags[] = {
 };
 
 } // namespace
+
+int RunWriteContentManifestCli(const std::wstring& projectDir, const std::wstring& manifestPath)
+{
+    const std::wstring assetsRoot = projectDir.empty()
+        ? FindAssetsRoot()
+        : (std::filesystem::absolute(projectDir) / L"assets").wstring();
+    uint64_t hash = 0;
+    if (!WriteContentManifest(manifestPath, assetsRoot, &hash)) {
+        std::fwprintf(stderr, L"could not write the content manifest: %ls\n", manifestPath.c_str());
+        return 1;
+    }
+    std::fwprintf(stdout, L"[content] contentHash 0x%016llx <- %ls\n", static_cast<unsigned long long>(hash),
+                  assetsRoot.c_str());
+    return 0;
+}
 
 CliParse ParseEngineCliFlag(int argc, wchar_t** argv, int& i, EngineConfig& config, EngineCliExtras& extras)
 {

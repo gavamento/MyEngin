@@ -818,7 +818,8 @@ $netAllow = @(
     # ★sim から到達する (スクリプトが tick 中に呼べる): ABI v13 の Net* スロットが NetRuntimeInfo
     # (表示専用・機種依存の POD) を読む。既存の経路で M81 は広げない (新スロットは確定入力から導く値だけ)。
     # 書き戻し禁止は NetRuntime.h の契約と desync 検出が防波堤
-    @{ Path = 'src\Engine\Engine\Script\EngineApiTable.cpp'; Reason = 'ABI v13 Net* slots read the display-only NetRuntimeInfo (existing path)' }
+    # 許可は NetRuntime.h の include だけ (OnlyInclude)。Net/ の他のヘッダ (セッション本体) は引き込ませない
+    @{ Path = 'src\Engine\Engine\Script\EngineApiTable.cpp'; OnlyInclude = 'Engine/Engine/Net/NetRuntime.h'; Reason = 'ABI v13 Net* slots read the display-only NetRuntimeInfo (existing path)' }
 )
 foreach ($d in $netGuardDirs) {
     $full = Join-Path $repo $d
@@ -831,14 +832,20 @@ foreach ($d in $netGuardDirs) {
     foreach ($f in $files) {
         $rel = [System.IO.Path]::GetRelativePath($repo, $f.FullName)
         $allowed = $false
+        $onlyInclude = $null
         foreach ($a in $netAllow) {
-            if ($rel.StartsWith($a.Path, [System.StringComparison]::OrdinalIgnoreCase)) { $allowed = $true; break }
+            if ($rel.StartsWith($a.Path, [System.StringComparison]::OrdinalIgnoreCase)) {
+                if ($a.ContainsKey('OnlyInclude')) { $onlyInclude = $a.OnlyInclude } else { $allowed = $true }
+                break
+            }
         }
         if ($allowed) { continue }
         $lineNo = 0
         foreach ($line in [System.IO.File]::ReadLines($f.FullName)) {
             $lineNo++
             if ($line -match $netIncludeRx) {
+                # ファイル単位ではなく特定ヘッダの include だけを許す項目
+                if ($onlyInclude -and $line.Contains($onlyInclude)) { continue }
                 Write-Host "ERROR [rule 13-a] $($f.FullName):${lineNo}: sim-side code must not include net / hosting headers (add to the allow list only after checking it is unreachable from RunOneTick)"
                 $errors++
             }

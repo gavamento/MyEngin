@@ -1,7 +1,7 @@
 # sub-02: Session 型・システム入力・SessionLanes・.rep v9・規則 13
 
 - 依存: sub-01
-- 状態: OK (コミット待ち)
+- 状態: OK (commit 0cc7504)
 - 往復: 1
 
 ## やること

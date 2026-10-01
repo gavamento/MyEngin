@@ -160,7 +160,7 @@ jobs:
       - name: package contents
         shell: pwsh
         run: |
-          $need = @('Runtime.exe', 'GameLogic.dll', 'assets\shaders', 'assets\scenes')
+          $need = @('Runtime.exe', 'GameLogic.dll', 'assets\shaders', 'assets\scenes', 'assets\content_manifest.json')
           $missing = $need | Where-Object { -not (Test-Path "cache\dist_ci\$_") }
           if ($missing) { throw "package is missing: $($missing -join ', ')" }
           # M66a: 配布物に開発用の道具とリポジトリを混ぜない。--package は明示コピーなので

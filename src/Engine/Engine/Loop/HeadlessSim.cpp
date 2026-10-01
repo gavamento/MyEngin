@@ -43,6 +43,7 @@
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Net/NetRuntime.h"
+#include "Engine/Engine/Net/NetSession.h" // kNetProtoVersion (出自の protocolVersion)
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Scene/SceneSerializer.h"
@@ -135,6 +136,7 @@ struct HeadlessSim::Impl : IEngineApp {
     std::vector<DebugLineCmd> debugLines;
     InputActions inputActions;
     NetRuntimeInfo netInfo;
+    SimProvenance provenance = {};
 
     EngineContext ctx;
     InputSnapshot prevTickInput[kMaxPlayers] = {};
@@ -333,6 +335,9 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
                  jobs::System().WorkerCount());
     ConfigureSimCaches(m.config, base + L"\\cache\\cooked");
     ctx.fixedDt = static_cast<float>(kFixedDt);
+    // 出自 (M81c)。EngineLoop と同じ位置 (InitSimAssets の後・シーン構築の前)
+    m.provenance = BuildRunProvenance(m.dllReloader, m.assetsRoot, kNetProtoVersion,
+                                      /*withContentHash=*/true); // サーバの出自は常に完全な形で持つ
 
     m.simRefs.scene = &m.scene;
     m.simRefs.particles = &m.particleSystem.Cpu();
@@ -427,5 +432,6 @@ HeadlessVerifyResult HeadlessSim::VerifyReplay()
 uint64_t HeadlessSim::TickIndex() const { return impl_->ctx.tickIndex; }
 const std::wstring& HeadlessSim::AssetsRoot() const { return impl_->assetsRoot; }
 const std::wstring& HeadlessSim::ShadowCopyDir() const { return impl_->shadowCopyDir; }
+const SimProvenance& HeadlessSim::Provenance() const { return impl_->provenance; }
 
 } // namespace mye

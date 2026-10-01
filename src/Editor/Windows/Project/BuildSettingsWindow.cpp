@@ -22,6 +22,7 @@
 #include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Engine/Schema/SchemaCodegen.h"
+#include "Engine/Engine/Session/Provenance.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/Texture/TextureCook.h"
 
@@ -277,6 +278,28 @@ bool BuildSettingsWindow::StageCopy(EngineContext& ctx, std::string& detail)
     if (chosen.filename() != L"main.scene.json" && !copyFile(chosen, bootDst)) {
         detail = "boot scene copy failed";
         return false;
+    }
+    // ブートシーンの .meta (GUID) も main.scene.json の隣へ。無いと配布先の初回起動が新しい .meta を
+    // 作り、content_manifest.json を焼いた時点の assets と中身が変わってしまう
+    if (chosen.filename() != L"main.scene.json") {
+        const fs::path chosenMeta = fs::path(chosen.wstring() + L".meta");
+        if (fs::exists(chosenMeta, ec) && !copyFile(chosenMeta, fs::path(bootDst.wstring() + L".meta"))) {
+            detail = "boot scene meta copy failed";
+            return false;
+        }
+    }
+
+    // M81c: content_manifest.json を配布物の assets 直下へ焼く。接続時の contentHash はこれを読むだけで
+    // 済み、起動時に全ファイルを舐めない。ブートシーンの配置の後に焼くこと (対象に入るため)。
+    // 後段の DDS 一括クックが触るのは除外拡張子 (とその .meta) だけなので、焼いた値は配布物の最終形と一致する
+    {
+        uint64_t contentHash = 0;
+        const std::wstring packagedAssets = (out / L"assets").wstring();
+        if (!WriteContentManifest(packagedAssets + L"\\" + kContentManifestName, packagedAssets,
+                                  &contentHash)) {
+            detail = "content manifest write failed";
+            return false;
+        }
     }
 
     int fileCount = 0;

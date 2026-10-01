@@ -9,6 +9,7 @@
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Script/ScriptHost.h"
+#include "Engine/Engine/Session/Provenance.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {
@@ -169,6 +170,7 @@ bool DllReloader::TryCopyAndLoad()
         return false;
     }
     lastWriteTime_ = writeTime;
+    loadedHash_ = HashFileBytes(dllCopy);
     MYE_LOG_INFO("[dll] hot reload complete (v%u)", counter_);
     return true;
 }
