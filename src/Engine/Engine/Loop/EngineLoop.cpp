@@ -40,6 +40,8 @@
 #include "Engine/Engine/Rendering/ProbeBaker.h"
 #include "Engine/Engine/App/Project.h"
 #include "Engine/Engine/Rendering/RenderSystem.h"
+#include "Engine/Engine/Net/ClientSession.h"
+#include "Engine/Engine/Net/ClientSimRunner.h"
 #include "Engine/Engine/Net/NetRollback.h"
 #include "Engine/Engine/Net/NetRuntime.h"
 #include "Engine/Engine/Net/NetSession.h"
@@ -71,6 +73,7 @@
 #include "Engine/Platform/Clock.h"
 #include "Engine/Platform/CrashHandler.h"
 #include "Engine/Platform/InputActions.h"
+#include "Engine/Platform/Net/UdpSocket.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Win32Window.h"
 #include "Engine/Renderer/Compute/ComputeAbiRunner.h" // v21
@@ -602,7 +605,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     bool netFailed = false;
     // ★--replay-verify はネットに勝つ。.rep には全レーンの入力が既に入っているので、
     //   そこへネット越しの入力を混ぜたら検証にならない
-    const bool netEnabled = config.netRole != 0 && config.replayVerifyPath.empty();
+    const bool netWanted = config.netRole != 0 && config.replayVerifyPath.empty();
+    // 専用サーバへ接続するクライアント (M81e) は P2P (host / join) と別の経路 (ClientSimRunner)。
+    // netEnabled は P2P だけを指す。どちらも「ネット中」として共有する箇所は netEnabled || clientEnabled と書く
+    const bool clientEnabled = netWanted && config.netRole == static_cast<int>(NetRole::Client);
+    const bool netEnabled = netWanted && !clientEnabled;
     if (config.netRole != 0 && !config.replayVerifyPath.empty()) {
         MYE_LOG_WARN("[net] --replay-verify wins over the net session (the .rep already carries "
                      "every lane's input)");
@@ -744,7 +751,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // 記録開始時の RNG 状態を復元して同一 tick 列を再現する (v3 以来の従来経路)
             scene.GetWorld().Rng().Restore(player.RngState(), player.RngInc());
         }
-    } else if (!config.replayRecordPath.empty() && !netFailed) {
+    } else if (!config.replayRecordPath.empty() && !netFailed && !clientEnabled) {
+        // (専用サーバのクライアントは、参加スナップショットの復元後に onSnapshotApplied が記録を始める)
         // 接続できなかったときは記録も始めない (0 tick の .rep を残すと、後で
         // 「録れているのに中身が無い」という別の謎になる)。
         // --rep-snapshot: 記録開始時点の sim 状態を .rep の先頭へ埋め込む。
@@ -836,9 +844,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // ---- tick 本体へ渡す参照束 (M52d) ----
     // 中身はすべてこのスコープのローカルなので、ループ前に 1 回組んで使い回す
     // (契約は TickRunner.h の TickServices)
+    // tick 本体が読む設定の写し。参加後の tick 番号で決まる検証用の poke だけを実行中に書き換える
+    EngineConfig tickConfig = config;
     TickServices tickServices;
     tickServices.ctx = &ctx;
-    tickServices.config = &config;
+    tickServices.config = &tickConfig;
     tickServices.scene = &scene;
     tickServices.app = &app;
     tickServices.inputActions = &inputActions;
@@ -887,15 +897,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.exitCode = &exitCode;
     // M52h: セッションが立った時点で C# レーンは最後まで止める。途中で on/off すると
     // 「片方だけ C# が動いた tick」が生まれて必ず割れるので、走行中は変えない
-    tickServices.netLockstep = netEnabled;
+    tickServices.netLockstep = netEnabled || clientEnabled;
     // ★ロールバック中は .rep の記録を EngineLoop が引き取る (M52i)。
     //   RunOneTick の中で記録すると**予測で走った tick までファイルに載る**ので、
     //   巻き戻して走り直した tick が二重に並んだ .rep になる。記録してよいのは
     //   「確定入力で走り、もう覆らない」と分かった tick だけ = 確定した瞬間に書く。
     //   ロールバック無しの素のロックステップ (M52h) は全 tick が最初から確定なので
     //   従来どおり RunOneTick の中で記録する (経路を増やさない)
-    if (netRollbackActive) {
-        tickServices.recorder = nullptr;
+    if (netRollbackActive || clientEnabled) {
+        tickServices.recorder = nullptr; // クライアントも確定した tick だけを onCommitted が記録する
     }
 
     // ---- 再シムの共通部 (M52e / M72d) ----
@@ -1403,6 +1413,227 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         }
     };
 
+    // ---- 専用サーバ構成のクライアント (M81e) ----
+    // 経路は ClientSimRunner のフック (runTick / worldHash / liveInput / onCommitted / onSnapshotApplied) だけで
+    // 繋ぐ。P2P の NetReconcile 系 lambda と同方式のものを 3 本目として書かない。tick 本体は同じ RunOneTick 1 本
+    // (ApplyConfirmedInputs で確定入力を置換してから呼ぶ。verify / P2P と同じ置換の関数)。
+    // ★ネット越しの値が sim へ入るのは、サーバが確定した NetConfirmedTick (レーン入力 + SystemInputTick) と
+    //   スナップショットだけ。時刻 (実時間) は「いつ tick を回すか」を決めるのみ
+    ClientSession clientSession;
+    ClientSimRunner clientRunner;
+    UdpSocket clientSocket;
+    NetAddress clientServerAddr;
+    Pcg32 clientLossRng;
+    std::vector<uint8_t> clientRecvBuf(2048);
+    uint8_t clientPendingChars = 0;     // このフレーム頭に写した文字数。自レーンの入力を確定させたら入力キューから捨てる
+    uint64_t clientCommittedTotal = 0;  // .rep の区間をまたいだ確定 tick の累計 (--replay-ticks の判定)
+    uint32_t clientRecordSegment = 0;   // 再同期のたびに .rep を切る (tick が連続しなくなるため)
+    bool clientDone = false;            // --replay-ticks 到達 (Bye を送って終わる)
+    bool clientDropped = false;         // --net-drop-after 到達 (Bye を送らずに終わる)
+    bool clientHasJoined = false;       // 最初の参加スナップショットを復元した
+    uint64_t clientFirstTick = 0;       // その tick (--net-drop-after / --net-poke-after の起点)
+    const auto ClientNowMs = [&clock]() -> uint64_t { return static_cast<uint64_t>(clock.Now() * 1000.0); };
+    const auto ClientRepPath = [&config](uint32_t segment) -> std::wstring {
+        if (segment == 0) {
+            return config.replayRecordPath;
+        }
+        const std::filesystem::path path(config.replayRecordPath);
+        return (path.parent_path() / (path.stem().wstring() + L".rs" + std::to_wstring(segment)
+                                      + path.extension().wstring())).wstring();
+    };
+    if (clientEnabled) {
+        ctx.hasSystemInput = true; // 受け取る確定入力は SystemInputTick を持つ
+        ctx.net = &netInfo;
+        netInfo.active = true;
+        netInfo.rollbackEnabled = true;
+        netInfo.role = config.netRole;
+
+        ClientSessionConfig ccfg;
+        ccfg.provenance = runProvenance;
+        SessionConfig fill = {};
+        FillSessionConfigFromProject(fill, config);
+        ccfg.configBits = fill.configBits;
+        ccfg.referenceW = fill.referenceW;
+        ccfg.referenceH = fill.referenceH;
+        ccfg.fontMetricsHash = fill.fontMetricsHash;
+        ccfg.playerSessionId = WideToUtf8(config.netPlayerSessionId);
+        ccfg.playerId = config.netPlayerId;
+        ccfg.allowGameMismatch = config.allowGameMismatch;
+
+        const bool clientOk = ResolveEndpoint(config.netJoinTarget, clientServerAddr) && clientSocket.Open(0);
+        if (!clientOk) {
+            MYE_LOG_ERROR("[client] could not open a socket to %s", WideToUtf8(config.netJoinTarget).c_str());
+        }
+        // ロス注入の乱数は sim の RNG と完全に別のストリーム (ハッシュにも .rep にも影響しない)
+        clientLossRng.Seed(static_cast<uint64_t>(clientSocket.LocalPort()) * 0x9E3779B9ull + 1, 4);
+
+        ClientSimHooks hooks;
+        hooks.runTick = [&](const InputSnapshot* lanes, uint32_t pc, const SystemInputTick& sys,
+                            bool resim) -> uint64_t {
+            ctx.playerCount = pc; // サーバの SessionConfig.playerCount (Welcome)。走行中は変わらない
+            ApplyConfirmedInputs(ctx, lanes, &sys);
+            IEngineApp* const savedApp = tickServices.app;
+            PrevWorldStore* const savedPrev = tickServices.prevWorld;
+            if (resim) {
+                tickServices.app = nullptr;       // エディタ更新は回さない
+                tickServices.prevWorld = nullptr; // 描画補間の採取も要らない
+                tickServices.resim = true;
+                audioSystem.SetSuspended(true); // 捨てた未来の音を断つ
+            }
+            RunOneTick(tickServices);
+            if (resim) {
+                tickServices.app = savedApp;
+                tickServices.prevWorld = savedPrev;
+                tickServices.resim = false;
+                audioSystem.SetSuspended(recorder.IsActive() || player.IsActive());
+            }
+            return TickEndHash();
+        };
+        hooks.worldHash = [&]() -> uint64_t { return TickEndHash(); };
+        hooks.liveInput = [&](uint64_t tick) -> InputSnapshot {
+            if (config.synthInput) {
+                return SynthLaneInput(tick, clientSession.Lane());
+            }
+            // ライブ入力は 1 tick ぶんだけ渡す (P2P の自レーンと同じ規則): 文字とマウス量を渡したら捨てる。
+            // 次の target へ同じ量を送ると相手側で 2 回打たれる / 回る
+            InputSnapshot in = netLiveInput;
+            for (uint16_t& c : netLiveInput.chars) {
+                c = 0;
+            }
+            netLiveInput.charCount = 0;
+            PointerDeltaCarry::ClearAfterTick(netLiveInput);
+            if (clientPendingChars > 0) {
+                input.ConsumeChars(clientPendingChars);
+                clientPendingChars = 0;
+            }
+            return in;
+        };
+        hooks.onCommitted = [&](uint64_t, const NetConfirmedTick& confirmed, uint64_t hashAfter) {
+            if (!recorder.IsActive()) {
+                return;
+            }
+            recorder.RecordTick(confirmed.inputs, ctx.playerCount, hashAfter, &confirmed.sys);
+            ++clientCommittedTotal;
+            if (config.replayTicks > 0 && clientCommittedTotal >= static_cast<uint64_t>(config.replayTicks)) {
+                recorder.Finish();
+                clientDone = true;
+            }
+        };
+        // 参加 / 再同期のスナップショットを復元した直後 (まだ 1 tick も回していない): ここが .rep と
+        // クラッシュリングの開始点。レーン数はサーバの SessionConfig が決める
+        hooks.onSnapshotApplied = [&](const SnapshotMeta& meta, const std::vector<std::byte>& blob) {
+            const uint32_t pc = clientSession.PlayerCount();
+            ctx.playerCount = pc;
+            SessionConfig joined = meta.config;
+            joined.role = static_cast<uint32_t>(SessionRole::Client);
+            joined.playerCount = pc;
+            sessionConfig = joined;
+            CrashRingConfig crashCfg = crashRing.Config();
+            crashCfg.playerCount = pc;
+            crashCfg.session = joined;
+            crashRing.Configure(crashCfg); // 次の crashRing.Begin (ClientSimRunner が直後に呼ぶ) から効く
+            MYE_LOG_INFO("[client] joined: lane=%u playerId=%llu snapshot tick=%llu (%zu bytes, %u lane(s))",
+                         clientSession.Lane(), static_cast<unsigned long long>(clientSession.PlayerId()),
+                         static_cast<unsigned long long>(meta.tick), blob.size(), pc);
+            if (!clientHasJoined) {
+                clientHasJoined = true;
+                clientFirstTick = meta.tick;
+                if (config.netPokeAfterTicks >= 0) {
+                    tickConfig.netPokeTick = static_cast<int64_t>(meta.tick) + config.netPokeAfterTicks;
+                    MYE_LOG_WARN("[client] --net-poke-after %lld: the sim will be corrupted on purpose at tick %lld",
+                                 static_cast<long long>(config.netPokeAfterTicks),
+                                 static_cast<long long>(tickConfig.netPokeTick));
+                }
+            }
+            if (config.replayRecordPath.empty()) {
+                return;
+            }
+            if (recorder.IsActive()) {
+                recorder.Finish(); // 再同期: 前の区間はここまで
+            }
+            SimProvenance prov = meta.provenance;
+            prov.initialSnapshotHash = meta.blobHash;
+            SnapshotMeta start = meta;
+            start.config = joined;
+            start.provenance = prov;
+            // rngState / rngInc は blob の World RNG と同じ値 (復元直後 = まだ tick を回していない)
+            recorder.Start(ClientRepPath(clientRecordSegment++), scene.GetWorld().Rng().State(),
+                           scene.GetWorld().Rng().Inc(), scene.GetWorld().AliveCount(), pc, blob.data(),
+                           blob.size(), joined, prov, start);
+        };
+        ClientSimRunnerConfig rcfg;
+        rcfg.maxSpeculation = kNetMaxSpeculationClient;
+        rcfg.crashRing = &crashRing;
+        rcfg.crashRoot = config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot;
+        // desync は診断バンドルを出して再同期する (spec 4.1.7)。P2P の --net-no-halt-on-desync は対象外
+        rcfg.haltOnDesync = false;
+
+        if (clientOk) {
+            clientSession.Start(
+                ccfg,
+                [&](const void* data, size_t size) {
+                    NetPacketHeader h;
+                    const bool isBye = NetParseHeader(static_cast<const uint8_t*>(data), size, h)
+                        && h.type == static_cast<uint16_t>(NetMsg::Bye);
+                    if (!isBye && config.netLossPercent > 0
+                        && (clientLossRng.NextU32() % 100u) < static_cast<uint32_t>(config.netLossPercent)) {
+                        return; // 故意の欠落 (検証用)。再送で埋まる
+                    }
+                    clientSocket.Send(clientServerAddr, data, size);
+                },
+                ClientNowMs());
+            clientRunner.Attach(&clientSession, simRefs, hooks, rcfg);
+            MYE_LOG_INFO("[client] connecting to %s (player session id \"%s\"%s)",
+                         WideToUtf8(config.netJoinTarget).c_str(), ccfg.playerSessionId.c_str(),
+                         ccfg.playerId != 0 ? ", reconnecting" : "");
+        } else {
+            exitCode = 1;
+            running = false;
+        }
+    }
+    // 1 フレームに 1 回: 受信 → セッション駆動 → tick (ClientSimRunner::Update が Poll も呼ぶ) → 終了条件
+    const auto ClientFrame = [&]() {
+        if (!clientEnabled || clientDone || clientDropped || !running) {
+            return;
+        }
+        NetAddress from;
+        for (int i = 0; i < 512; ++i) {
+            const int n = clientSocket.Recv(clientRecvBuf.data(), clientRecvBuf.size(), from);
+            if (n <= 0) {
+                break;
+            }
+            if (from == clientServerAddr) {
+                clientSession.OnPacket(clientRecvBuf.data(), static_cast<size_t>(n), ClientNowMs());
+            }
+        }
+        clientRunner.Update(ClientNowMs());
+        if (clientSession.State() == ClientState::Failed) {
+            if (clientSession.RejectReason() != NetReject::None) {
+                MYE_LOG_ERROR("[client] the server refused the connection: %s", clientSession.FailReason().c_str());
+            }
+            exitCode = 1;
+            ctx.requestExit = true;
+        } else if (clientRunner.Failed()) {
+            exitCode = 1;
+            ctx.requestExit = true;
+        } else if (clientRunner.Halted()) {
+            exitCode = 4;
+            ctx.requestExit = true;
+        } else if (clientDone) {
+            ctx.requestExit = true;
+        } else if (config.netDropAfterTicks >= 0 && clientHasJoined && clientSession.Running()
+                   && clientRunner.TickIndex() >= clientFirstTick + static_cast<uint64_t>(config.netDropAfterTicks)) {
+            MYE_LOG_WARN("[client] --net-drop-after %lld reached (tick %llu): dropping the connection without a Bye",
+                         static_cast<long long>(config.netDropAfterTicks),
+                         static_cast<unsigned long long>(clientRunner.TickIndex()));
+            clientDropped = true;
+            if (recorder.IsActive()) {
+                recorder.Finish();
+            }
+            ctx.requestExit = true;
+        }
+    };
+
     // --timetravel-selftest の進行状態 (M52e)。各段は「その確認待ち」
     enum class TtStage {
         Running,   // 走行中 (N tick 走ったらシーク往復を検査してスクラブを出す)
@@ -1490,7 +1721,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             InputSurface surface;
             surface.w = static_cast<int32_t>(swapChain.Width());
             surface.h = static_cast<int32_t>(swapChain.Height());
-            const uint32_t captureLanes = netEnabled ? 1u : ctx.playerCount;
+            const uint32_t captureLanes = (netEnabled || clientEnabled) ? 1u : ctx.playerCount;
             for (uint32_t p = 0; p < captureLanes; ++p) {
                 ctx.inputs[p] = input.CaptureSnapshot(p, surface);
             }
@@ -1529,6 +1760,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 //   「相手から返ってきた自分の入力」を送り直す循環になる
                 netLiveInput = ctx.inputs[0];
                 net.Poll();
+            } else if (clientEnabled) {
+                netLiveInput = ctx.inputs[0]; // 同じ理由 (ClientSimRunner の liveInput が読む)
+                clientPendingChars = liveCharsPending;
             }
         }
         logging::SetCurrentFrame(ctx.frameIndex);
@@ -1556,7 +1790,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // ★replayTicks > 0 を条件に含める — 無いと「終わりの無い記録」が全速で回り続ける。
         //   ネットは対象外 (相手の実時間と歩調を合わせる必要があり、早回しの意味が無い)
         const bool fastRecording = config.replayFast && recorder.IsActive() && !netEnabled
-            && config.replayTicks > 0;
+            && !clientEnabled && config.replayTicks > 0;
         // ---- オーディオのゲート (M45): 記録/検証中はサスペンドする。
         // drain だけでなく **オーディオ更新フレーム全体** を止めるのが要点 — 検証中は
         // 1 フレームで最大 64 tick 回るので、ゲートが drain だけだと 3D 計算 (M45e) や
@@ -1686,9 +1920,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         //   ここはホットリロードのセーフポイントも通過済みで、確実に tick 境界
         NetReconcile();
         NetCheckDesync();
+        if (clientEnabled) {
+            ClientFrame();
+            accumulator = 0.0; // tick を回すのは ClientSimRunner (自前の accumulator)。ここに溜めない
+        }
         // ★Scrubbing() は毎イテレーション読み直す (M73a): ステップ予算を使い切った tick の末で
         //   Hold が立ち、同じフレームの残り accumulator ぶんを走らせずに抜けるため
-        while (!timeTravel.Scrubbing() && ticks < maxTicksThisFrame
+        while (!clientEnabled && !timeTravel.Scrubbing() && ticks < maxTicksThisFrame
                && (verifying ? player.HasTick(ctx.tickIndex)
                              : ((fastRecording || accumulator >= kFixedDt)
                                 && NetReady(ctx.tickIndex)))) {
@@ -1885,7 +2123,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         }
         // 回らなかったフレームのマウス量を次へ持ち越す (回ったフレームは 0 が残る)。
         // ★スクラブ中とフォーカス喪失中は捨てる — 再開した 1 tick で視点が飛ぶ
-        pointerCarry.EndFrame(ctx.inputs[0], timeTravel.Scrubbing() || !window.HasFocus());
+        pointerCarry.EndFrame(clientEnabled ? netLiveInput : ctx.inputs[0],
+                              timeTravel.Scrubbing() || !window.HasFocus());
         if (!verifying && !fastRecording && ticks == kMaxTicksPerFrame && accumulator > kFixedDt) {
             // 追いつけない分は捨てる (スローモーション化を許容し、tick 爆発を防ぐ)
             accumulator = kFixedDt;
@@ -1930,6 +2169,32 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             netInfo.packetsDropped = net.PacketsDropped();
             netInfo.stalls = net.StallCount();
             netInfo.stallMs = net.StallMs();
+        }
+        if (clientEnabled) {
+            // 専用サーバ構成のクライアント (M81e)。書くのはこの 1 か所 (P2P の上の節と同じ規約)
+            const NetRollback& rb = clientRunner.Rollback();
+            netInfo.connected = clientSession.Running();
+            netInfo.localPlayer = clientSession.Lane();
+            netInfo.playerCount = clientSession.PlayerCount();
+            netInfo.inputDelay = clientSession.InputDelay();
+            netInfo.pingMs = static_cast<float>(clientSession.RttMs());
+            netInfo.confirmedTick = clientRunner.ConfirmedTick();
+            netInfo.speculation = static_cast<uint32_t>(
+                clientRunner.TickIndex() > clientRunner.ConfirmedTick()
+                    ? clientRunner.TickIndex() - clientRunner.ConfirmedTick() : 0);
+            netInfo.predictedTicks = rb.PredictedTicks();
+            netInfo.rollbacks = rb.RollbackCount();
+            netInfo.rollbackTicks = rb.RollbackTicks();
+            netInfo.maxRollbackDepth = rb.MaxRollbackDepth();
+            uint64_t h = 0;
+            if (rb.ConfirmedTick() > 0 && rb.CommittedHash(rb.ConfirmedTick() - 1, h)) {
+                netInfo.localHash = h;
+            }
+            netInfo.desync = clientRunner.Stats().desyncs > 0;
+            netInfo.packetsSent = clientSession.Stats().packetsOut;
+            netInfo.packetsRecv = clientSession.Stats().packetsIn;
+            netInfo.stalls = clientRunner.Stats().stalls;
+            netInfo.stallMs = clientRunner.Stats().stallMs;
         }
         // ---- タイムトラベルの自動プローブ (M52e、--timetravel-selftest N) ----
         // 「T まで進める → T-K へ戻す → 記録入力で T まで再シム → 元の T とハッシュ一致」を
@@ -2396,7 +2661,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             //   「前 tick の行列」を描き続けてしまう (ステップ直後に 1 フレームだけ新しい位置 →
             //   翌フレームからステップ前の位置、に見える)。止まっている間は最新 tick を出す
             const bool interpOk = lastTickSimulated && !recorder.IsActive() && !player.IsActive()
-                && !timeTravel.Scrubbing();
+                && !timeTravel.Scrubbing() && !clientEnabled;
             renderSystem.interpAlpha = interpOk
                 ? std::clamp(static_cast<float>(accumulator / kFixedDt), 0.0f, 1.0f)
                 : 1.0f;
@@ -2628,6 +2893,28 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             MYE_LOG_ERROR("[net] session ended on a DESYNC at tick %llu",
                           static_cast<unsigned long long>(netDesyncTick));
         }
+    }
+    if (clientEnabled && clientSocket.IsOpen()) {
+        if (!clientDropped) {
+            clientSession.Close(ClientNowMs()); // Bye (予約を早く解放できる)。落ちた扱いのときは送らない
+        }
+        const NetRollback& rb = clientRunner.Rollback();
+        const ClientSimRunnerStats& rs = clientRunner.Stats();
+        MYE_LOG_INFO("[client] rollback: %llu rollback(s) / %llu re-simulated tick(s) / max depth %llu / %llu "
+                     "predicted tick(s) / %llu resim(s) across system events / confirmed up to tick %llu",
+                     static_cast<unsigned long long>(rb.RollbackCount()), static_cast<unsigned long long>(rb.RollbackTicks()),
+                     static_cast<unsigned long long>(rb.MaxRollbackDepth()), static_cast<unsigned long long>(rb.PredictedTicks()),
+                     static_cast<unsigned long long>(rs.resimsAcrossEvents),
+                     static_cast<unsigned long long>(clientRunner.ConfirmedTick()));
+        MYE_LOG_INFO("[client] session: %llu tick(s) run, %llu catch-up, %llu stall(s), %llu snapshot(s) applied, "
+                     "%llu resync request(s), %llu desync(s), packets in/out %llu/%llu",
+                     static_cast<unsigned long long>(rs.ticksRun), static_cast<unsigned long long>(rs.catchUpTicks),
+                     static_cast<unsigned long long>(rs.stalls), static_cast<unsigned long long>(rs.snapshotsApplied),
+                     static_cast<unsigned long long>(clientSession.Stats().resyncs),
+                     static_cast<unsigned long long>(rs.desyncs),
+                     static_cast<unsigned long long>(clientSession.Stats().packetsIn),
+                     static_cast<unsigned long long>(clientSession.Stats().packetsOut));
+        clientSocket.Close();
     }
     if (recorder.IsActive()) {
         recorder.Finish(); // maxFrames 等で先に抜けた場合も書き出す

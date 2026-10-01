@@ -20,6 +20,12 @@ spec 4.1.9 / R-2 / G1〜G4。
    - 5.6 の `InitCustomLogger` があれば SDK のログをエンジンのログへ流す (任意のスレッドから来るので、Log がスレッド安全かを確認してから)。
 4. `docs\gamelift-anywhere.md`: IAM (開発者は `gamelift:*`、セッション作成側の最小権限)、`create-location custom-*`、`create-fleet --compute-type ANYWHERE`、`register-compute` (応答の `GameLiftServiceSdkEndpoint` を ws-url に)、`get-compute-auth-token` (約 15 分で失効)、Server.exe の起動例、`create-game-session` / `create-player-session`、Runtime の `--net-connect` と `--player-session-id`、ファイアウォール、片付け (deregister-compute / delete-fleet / delete-location)。
 
+5. (sub-05 VERDICT から、GameLift 運用の前提) **サーバの記録を異常終了で失わない**。現状、サーバの .rep はメモリに溜めて正常終了 / Terminate / timeout のときにだけ書く。1 時間で約 140MB 溜まり、異常終了すると何も残らない。
+   - `ReplayRecorder` に逐次書出しモードを足す: 開始時にヘッダ (tickCount = 0) と埋め込みスナップショットを書き、tick レコードは追記して一定間隔 (既定 60 tick) で flush する。Finish でヘッダの tickCount を書き戻す。tickCount が 0 のまま残った .rep (= 異常終了) は、Load 側でファイル長から完了済みの tick 数を求めて読めるようにする。途中で切れたレコードは捨てる。
+   - Server.exe にクラッシュハンドラを付ける (Editor / Runtime と同じ CrashHandler)。落ちた .rep が上の規則で読めることを selftest で確かめる (書きかけのファイルを切り詰めて Load)。
+   - Editor / Runtime の既存の記録 (replay_verify) は今までどおり (逐次モードは Server が使う)。逐次モードと一括モードで .rep がバイト一致することも selftest で確かめる。
+6. (sub-05 から) LocalHosting の Ctrl+C → Terminate の経路と、GameLiftHosting の OnProcessTerminate → ProcessEnding の経路を、同じ「Terminate を受けたら .rep を閉じて終了」の 1 関数に通し、G3 の偽 SDK テストで Terminate 時に .rep が閉じられることを確かめる。
+
 ## やらないこと (このサブでは)
 - 実 AWS との疎通 (sub-08、ユーザー作業)
 - トークンの自動更新、EC2 フリート、FlexMatch
@@ -31,7 +37,7 @@ spec 4.1.9 / R-2 / G1〜G4。
 - 新規 `docs\gamelift-anywhere.md`
 
 ## 受け入れ条件 (このサブ)
-spec 5. の **G1, G2, G3, G4** と **C1〜C6**。
+spec 5. の **G1, G2, G3, G4**、**R4** と **C1〜C6**。
 - G1 には「/MT・/MTd で Engine.lib とリンクでき、LNK2038 が出ない」を含む。
 
 ## 検証コマンド

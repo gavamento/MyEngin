@@ -104,6 +104,32 @@ bool RecordSample(const std::wstring& path, uint32_t role, uint32_t lanes,
     return rec.Finish();
 }
 
+// startTick から count tick の .rep を録る (開始スナップショット無し。startMeta.tick に開始 tick を入れる)。
+// tick t の入力は MakeInput(t*10+p)、ハッシュは 0xA000+t。badTick の tick だけハッシュを変える (~0 = 変えない)
+bool RecordFrom(const std::wstring& path, uint64_t startTick, uint32_t count, uint64_t badTick)
+{
+    ReplayRecorder rec;
+    SessionConfig cfg = {};
+    cfg.role = static_cast<uint32_t>(SessionRole::Client);
+    cfg.playerCount = 2;
+    cfg.tickRate = 60;
+    cfg.referenceW = 1920;
+    cfg.referenceH = 1080;
+    SimProvenance prov = {};
+    prov.contentHash = 0xC0FFEE;
+    SnapshotMeta meta = {};
+    meta.tick = startTick;
+    rec.Start(path, 11 + startTick, 22, 3 + static_cast<uint32_t>(startTick), 2, nullptr, 0, cfg, prov, meta);
+    InputSnapshot in[kMaxPlayers] = {};
+    for (uint64_t t = startTick; t < startTick + count; ++t) {
+        for (uint32_t p = 0; p < 2; ++p) {
+            in[p] = MakeInput(static_cast<uint32_t>(t * 10 + p));
+        }
+        rec.RecordTick(in, 2, t == badTick ? 0xBAD : 0xA000 + t, nullptr);
+    }
+    return rec.Finish();
+}
+
 } // namespace
 
 bool RunSessionSelfTest()
@@ -232,6 +258,28 @@ bool RunSessionSelfTest()
         std::memset(expect.chars, 0, sizeof(expect.chars));
         check(std::memcmp(&sub, &expect, sizeof(InputSnapshot)) == 0,
               "S1: SubstituteLateInput keeps every other field (keys / buttons / position)");
+    }
+    {
+        // クライアントの予測 (D12 の分割): 文字と wheelDelta は 0、mouseDelta は繰り返す。それ以外はそのまま
+        InputSnapshot latest = MakeInput(7);
+        latest.mouseDeltaX = 40;
+        latest.mouseDeltaY = -30;
+        latest.wheelDelta = 120;
+        latest.charCount = 2;
+        latest.chars[0] = 'A';
+        const InputSnapshot pred = PredictLaneInput(latest);
+        check(pred.mouseDeltaX == 40 && pred.mouseDeltaY == -30 && pred.wheelDelta == 0 && pred.charCount == 0
+                  && pred.chars[0] == 0,
+              "S1: PredictLaneInput repeats the mouse delta but drops chars and the wheel");
+        InputSnapshot expect = latest;
+        expect.wheelDelta = 0;
+        expect.charCount = 0;
+        std::memset(expect.chars, 0, sizeof(expect.chars));
+        check(std::memcmp(&pred, &expect, sizeof(InputSnapshot)) == 0,
+              "S1: PredictLaneInput keeps every other field");
+        const InputSnapshot sub = SubstituteLateInput(latest);
+        check(sub.mouseDeltaX == 0 && sub.mouseDeltaY == 0,
+              "S1: the server's substitute (a confirmed value) still zeroes the mouse delta");
     }
     {
         const SessionLanes d = DefaultLanesFor(2);
@@ -377,6 +425,29 @@ bool RunSessionSelfTest()
         const ReplayDiffResult s = DiffReplayFiles(sysPath, sys2Path);
         check(!s.same && s.summary.find("session.seed") != std::string::npos,
               "S2: --rep-diff names a differing SessionConfig field");
+    }
+
+    // --rep-diff-overlap: 開始 tick が違う 2 本 (サーバ .rep と途中参加クライアント .rep) の重なり区間だけを比べる
+    {
+        const std::wstring a = (tempDir / L"mye_session_overlap_a.rep").wstring();
+        const std::wstring b = (tempDir / L"mye_session_overlap_b.rep").wstring();
+        check(RecordFrom(a, 0, 6, ~0ull) && RecordFrom(b, 3, 4, ~0ull), "overlap: record a 6-tick run and a run from tick 3");
+        check(!DiffReplayFiles(a, b).same, "overlap: the strict comparison rejects runs with different start ticks");
+        const ReplayDiffResult ok = DiffReplayFiles(a, b, 3);
+        check(ok.same && ok.summary.find("3 ticks [3, 6)") != std::string::npos,
+              "overlap: [3, 6) is compared and identical");
+        const ReplayDiffResult few = DiffReplayFiles(a, b, 4);
+        check(!few.same && few.summary.find("overlap in only 3") != std::string::npos,
+              "overlap: a shorter overlap than the minimum fails");
+        check(RecordFrom(b, 3, 4, 5), "overlap: record the later run with a corrupted hash at tick 5");
+        const ReplayDiffResult bad = DiffReplayFiles(a, b, 3);
+        check(!bad.same && bad.firstDiffTick == 5 && bad.summary.find("tick 5: world hash differs") != std::string::npos,
+              "overlap: the corrupted tick is named by its session tick, not its index in the file");
+        check(RecordFrom(b, 10, 4, ~0ull), "overlap: record a run that does not overlap");
+        check(!DiffReplayFiles(a, b, 1).same, "overlap: disjoint runs never compare equal");
+        std::error_code ec;
+        std::filesystem::remove(a, ec);
+        std::filesystem::remove(b, ec);
     }
 
     // ---- S3: スナップショットとハッシュ上の SessionLanes ----

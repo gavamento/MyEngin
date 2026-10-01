@@ -323,7 +323,7 @@ struct EngineConfig {
     bool uiDemoInput = false;
 
     // ---- ネット対戦: UDP + 遅延ロックステップ (M52h、決定台帳 5) ----
-    // NetRole の生値 (0=off / 1=host / 2=join)。**Engine/Net の型をここへ持ち込まない**
+    // NetRole の生値 (0=off / 1=host / 2=join / 4=専用サーバへ接続するクライアント)。**Engine/Net の型をここへ持ち込まない**
     // ために int で持つ (crashTest と同じ流儀 — EngineLoop.h はほぼ全 TU が読む)
     int netRole = 0;
     int netPort = 7777;            // --net-host PORT
@@ -334,6 +334,13 @@ struct EngineConfig {
     // --allow-game-mismatch (M81c): GameLogic.dll の食い違いだけを WARN に落として接続を許す。
     // Debug と Release の混在検証用 (本番では使わない)。.rep の SessionConfig.configBits に残る
     bool allowGameMismatch = false;
+    // ---- 専用サーバへ接続するクライアント (M81e、--net-connect HOST:PORT) ----
+    // 接続先は netJoinTarget、netRole = 4。ネット越しの値は確定入力 (レーン入力 + システム入力) の形でだけ sim へ入る
+    std::wstring netPlayerSessionId; // --player-session-id (ホスティングの認証。空 = 認証なし)
+    uint64_t netPlayerId = 0;        // --net-player-id (再接続の主張。0 = 新規参加)
+    // 検証用の仕掛け。どちらも「最初の参加スナップショットの tick から数えて N tick 後」(参加 tick は実行ごとに違うため)
+    int64_t netDropAfterTicks = -1;  // --net-drop-after N: Bye を送らずに終了する (クラッシュ・回線断の再現)。-1 = 無効
+    int64_t netPokeAfterTicks = -1;  // --net-poke-after N: その tick の末に sim 状態を 1 フィールド壊す (--net-poke-tick と同じ変異)
 
     // ---- 予測ロールバック + desync 検出 (M52i) ----
     // 既定 on。未着レーンを予測 (直近の確定値の繰り返し) で埋めて先へ進み、外れたら

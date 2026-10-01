@@ -11,6 +11,7 @@ struct EngineCliExtras {
     std::wstring crashTestArg; // --crash-test <kind> (綴りの検査は Main が ParseCrashTestKind で行う)
     std::wstring repDiffA;     // --rep-diff A B (M52h)
     std::wstring repDiffB;
+    uint64_t repDiffOverlapMin = 0; // --rep-diff-overlap N (M81e): 重なった tick 区間だけを比べる。0 = 厳密比較
     std::wstring hashDiffA;    // --hash-diff A B (M52a)
     std::wstring hashDiffB;
     std::wstring writeContentManifest; // --write-content-manifest PATH (M81c)

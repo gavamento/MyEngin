@@ -285,6 +285,22 @@ bool RunEngineCliSelfTest()
           "--net-host keeps the default port");
     r = RunParse({ L"--net-host", L"9000" });
     check(r.consumed == 1 && r.config.netRole == 1 && r.config.netPort == 9000, "--net-host PORT");
+    // M81e: 専用サーバへ接続するクライアントの引数
+    r = RunParse({ L"--net-connect", L"127.0.0.1:7777" });
+    check(r.consumed == 1 && r.config.netRole == 4 && r.config.netJoinTarget == L"127.0.0.1:7777",
+          "--net-connect HOST:PORT makes a server client (netRole 4)");
+    r = RunParse({ L"--player-session-id", L"abc", L"--net-player-id", L"42" });
+    check(r.consumed == 2 && r.config.netPlayerSessionId == L"abc" && r.config.netPlayerId == 42,
+          "--player-session-id ID / --net-player-id N");
+    check(def.netPlayerId == 0 && def.netPlayerSessionId.empty() && def.netDropAfterTicks == -1
+              && def.netPokeAfterTicks == -1,
+          "the server-client options default to off");
+    r = RunParse({ L"--net-drop-after", L"240", L"--net-poke-after", L"100" });
+    check(r.consumed == 2 && r.config.netDropAfterTicks == 240 && r.config.netPokeAfterTicks == 100,
+          "--net-drop-after N / --net-poke-after N");
+    r = RunParse({ L"--rep-diff", L"a.rep", L"b.rep", L"--rep-diff-overlap", L"100" });
+    check(r.consumed == 2 && r.extras.repDiffA == L"a.rep" && r.extras.repDiffOverlapMin == 100,
+          "--rep-diff-overlap N");
 
     // ---- 共通フラグとして読まないもの ----
     r = RunParse({ L"--frames" });

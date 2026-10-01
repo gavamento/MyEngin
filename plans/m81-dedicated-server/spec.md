@@ -185,6 +185,7 @@
 - **R1** `tools\server_verify.bat` (新規): Server.exe (Debug) + Runtime.exe × 3 (Debug / Release 混在、`--warp --no-audio --synth-input`) をローカルで起動、ロス 20% 注入、途中参加 1 名 (遅れて起動)、1 名の切断 → 再接続。終了後に (a) サーバ .rep と各クライアントの確定 tick ハッシュ (クライアントが書く `.rep`) が全 tick 一致、(b) サーバ .rep を Debug と Release の Server.exe `--replay-verify` でオフライン再生して全 tick 一致、(c) 同じ .rep を Runtime (`--replay-verify`、窓あり) でも一致 (= role に依存しない)。
 - **R2** Server.exe がタイムアウト付きで必ず終了する (クライアント全員の Bye、または `--replay-ticks`)。
 - **R3** Release の Server.exe で 4 クライアント時の tick 平均時間をログに出す (4.4)。
+- **R4** (sub-07 で実施) サーバの .rep は逐次書き出し、異常終了しても完了済みの tick まで読める。Server.exe にクラッシュハンドラ。逐次モードと一括モードの .rep がバイト一致 (selftest)。
 
 ### A 群 — ABI v23 (sub-06)
 - **A1** `MYE_API_VERSION 23`、スロット 131、check_rules 11-a〜d PASS、`Interop.cs` を機械照合 (ABI bump の検証レシピ)。
@@ -211,7 +212,7 @@
 | sub-04 | サーバ/クライアントのプロトコルと 1 プロセス内検証 | sub-03 | N1-N4, C1-C3, C5-C7 | `M81d: 入力確定型サーバのプロトコルと途中参加・再接続` |
 | sub-05 | Server.exe の実運用ループ・Runtime の --net-connect・server_verify | sub-04 | R1-R3, C1-C7 | `M81e: Server.exe と Runtime を繋ぎ server_verify を追加` |
 | sub-06 | ABI v23 (レーン状態・playerId・システムイベント) | sub-02 | A1-A2, C1-C3, C5, C6 (sub-05 後なら C4 も) | `M81f: ABI v23 でレーン状態と参加・離脱をゲームへ公開 (ABI 変更)` |
-| sub-07 | GameLiftHosting と SDK 組込・Anywhere 手順書 | sub-05 | G1-G4, C1-C6 | `M81g: GameLift Server SDK 5.x を Server.exe へ組み込む` |
+| sub-07 | GameLiftHosting と SDK 組込・Anywhere 手順書・サーバ記録の逐次化 | sub-05 | G1-G4, R4, C1-C6 | `M81g: GameLift Server SDK 5.x を Server.exe へ組み込む` |
 | sub-08 | GameLift Anywhere 実疎通 (ユーザー手動確認) | sub-07 | G5, (修正が出たら C1-C6) | `M81h: GameLift Anywhere の実疎通で出た問題を修正` (修正が無ければ記録のみのコミット) |
 | sub-09 | エディタ NetWindow と文書 (ADR-022 等) | sub-05, sub-06 | E1-E2, C1-C3 | `M81i: NetWindow のサーバ接続表示と ADR-022・仕様書の更新` |
 
@@ -234,6 +235,7 @@
 - R-7 (sub-01 で判明): コンピュート ABI (v21) は device 無しで 0 / no-op を返す。GPU の結果を読み戻して sim 状態へ書くスクリプトは Server と描画クライアントで割れる。裁定: **サーバ対象のゲームでは禁止の既知制限**として sub-09 の文書 (ADR-022 / engine_spec §11.5) に明記する (GPU 結果は Debug/Release/WARP でもビット一致が保証されないので、もともと sim に入れてよい値ではない)。
 - R-8 (sub-01 で判明): Server は cook キャッシュを常に無効にしている (起動時に毎回モデルをパース。Release 約 0.9 秒)。Server 専用の cook 置き場は「毎回パース ≡ クック再生」のビット一致がヘッドレスで未証明なので今は入れない。起動時間が問題になったら後続で、replay_verify と同じ「コールド録画 → ウォーム照合」の形で証明してから入れる。
 - R-9 (sub-03 で判明): 除外種類の .meta (テクスチャ等の GUID) は contentHash に入らない。テクスチャの AssetID をハッシュ対象のコンポーネントへ書くコードがあり、かつサーバとクライアントで .meta の GUID が違う場合は contentHash で弾けず desync する。現状そうした sim コンポーネントは見つかっておらず (render-demo の DecalComponent のみ)、GUID が食い違うのはアセットの移動時 = シーン / プレハブも同時に変わる場合が大半なので許容する。desync 検出 (4.1.7) が最後の防波堤。
+- R-10 (sub-05 で判明): 4 クライアントでも tick 時間の max が 7〜14ms に跳ねる (参加時のスナップショット撮影と推定、未切り分け)。締め切り 3 tick (50ms) には収まる。sub-08 の実疎通で参加時の max をログで見て、問題があればスナップショット撮影の分割を後続で検討する。
 - R-5: GameLift 実疎通はユーザーの AWS アカウント・IAM・費用を伴う。sub-08 はユーザーの手が空くまで保留してよい (他サブの完了を妨げない)。
 
 ## 8. 変更履歴
@@ -245,3 +247,4 @@
 - 2026-10-02 sub-03 VERDICT round 1: (1) D5 の contentHash に**パス単位の除外**を追加: `content_manifest.json` 自身とその `.meta` (AssetDatabase が自動生成し、manifest の有無で集合が変わる)、`scripts/Generated/` (起動のたびに書き直す派生物)。実測で割れたことが根拠。(2) EngineLoop はネット接続か `--replay-record` のときだけ contentHash を計算する (他は 0 とログに明記)。Server は常に計算。(3) D6: `--allow-game-mismatch` は server_verify に加えて net_verify の Debug↔Release ケース (B/C) も使う (同じ事情 = 構成の違う GameLogic.dll は必ず別バイト)。本番では使わない。(4) `--flow-demo` が OnStart で gitignore 済みのシーンファイルを assets へ書くため、デモ同士の接続では contentHash が実行履歴で揺れうる — デモ専用の既知事項として許容し、sub-09 の文書に書く。(5) `--rep-diff` は configBits の jobs / simcache / cookcache / synth を引き続き比較する (起動構成の違いを差分として見せるのは診断として有益。net_verify は PASS)。(6) P1 の dirty 実機対は selftest で代替を承認 (作業ツリーが常に dirty なため)。
 - 2026-10-02 sub-03 VERDICT round 2: (1) D5 の「.meta は含める」を改める — **除外する種類 (画像・シェーダ・音声・フォント実体) の .meta も除外**し、それ以外の .meta (シーン・プレハブ等の GUID) は含める。根拠: DDS 一括クックが配布先の初回起動で .dds.meta を増やし、manifest の値と実体が割れたのを実測。(2) 配布物にはブートシーンの .meta もコピーする (配布先の初回起動が新しい GUID の .meta を作って中身を変えないため)。manifest はブートシーン配置の後に焼く。(3) ci.yml の package contents が `assets\content_manifest.json` の存在を検査する。残るリスクは R-9。
 - 2026-10-02 sub-04 VERDICT round 1: (1) 4.1.4 の確定条件を改定 — 待つのは「有効な tick の入力を 1 本でも届けた Live の peer」のレーンだけ。スナップショット受信中・復元中・追いつき中の参加者は待たず、代替入力で確定する (待つと参加のたびに全員の tick が止まる)。また、サーバは予定時刻の inputDelay tick 前より早く確定しない。どちらも「どの tick に何を入れたか」を変えるだけで、値は記録されるので決定論に影響しない。(2) 既定値: deadlineTicks 3 (50ms)、rejoinTimeoutTicks 1800 (30 秒)。CLI (`--net-deadline` 等) で上書き。(3) D12 を分割 — サーバの代替入力 (SubstituteLateInput) は消費型を全部 0 のまま。**クライアントの予測は別関数**にし、chars / charCount / wheelDelta だけ 0、mouseDelta は繰り返す (sub-05)。予測は確定値に入らないので sim の正しさに無関係、当たりやすさで決める。根拠: 合成入力で RTT 150ms のとき 530 tick 中 520 回巻き戻した実測。(4) サーバ/クライアント構成 (hasSystemInput) ではタイムトラベルのリングを起こさない。(5) 再接続は Leave → Rejoin を同じ tick に積む「乗っ取り」を許す。認証は playerId + player session ID の一致。(6) R-4 解決: GameLogic.dll を 1 プロセスの 4 sim で共有して tick を交互に回しても一致 (実測)。
+- 2026-10-02 sub-05 VERDICT round 1: (1) 終了条件「全員の Bye 後」を `--exit-when-empty` (peer が 0 になって 2 秒、Bye とタイムアウトを区別しない) と `--server-timeout` (exit 5) に置き換える。(2) クライアントの入力置換は ClientSimRunner の runTick フックの中で、同じ `ApplyConfirmedInputs` を呼ぶ (置換の関数は 1 本のまま)。クライアントの再シムは `ClientSimRunner::ResimFrom` (NetResimFrom は P2P 専用)。(3) クライアントは再同期のたびに .rep を `<stem>.rs<N>.rep` に切る。`--rep-diff-overlap N` で開始 tick の違う .rep の重なり区間を比べる。(4) server_verify は CI に載せない (net_verify と同じ理由。論理は selftest が CI で押さえる)。(5) サーバの記録の逐次化とクラッシュ時の記録を R4 として sub-07 に追加 (GameLift 運用の前提)。(6) R-10 を追加。(7) D12 の改定 (予測 = PredictLaneInput) は sub-04 VERDICT で反映済み、実装は sub-05 で完了。

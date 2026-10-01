@@ -42,7 +42,12 @@
   </ItemDefinitionGroup>
   <!-- BEGIN FILES (tools\gen_project_files.ps1 が再生成する。手編集しない) -->
   <ItemGroup>
+    <ClCompile Include="..\src\Server\Hosting\LocalHosting.cpp" />
+    <ClCompile Include="..\src\Server\ServerLoop.cpp" />
     <ClCompile Include="..\src\Server\ServerMain.cpp" />
+    <ClInclude Include="..\src\Server\Hosting\IHostingProvider.h" />
+    <ClInclude Include="..\src\Server\Hosting\LocalHosting.h" />
+    <ClInclude Include="..\src\Server\ServerLoop.h" />
   </ItemGroup>
   <!-- END FILES -->
   <ItemGroup>

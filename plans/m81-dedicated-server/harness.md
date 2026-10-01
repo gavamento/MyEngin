@@ -20,8 +20,8 @@
 | sub-01 ヘッドレス Server.exe + golden .rep 照合 | OK | 1 | c562782 | 9 シーン全部ヘッドレスで一致 |
 | sub-02 Session 型・システム入力・.rep v9 | OK | 1 | 0cc7504 | v8 .rep 読込可、規則 13 追加 |
 | sub-03 SimProvenance と NetIdentity 統合 | OK | 2 | a26e245 | round2 で配布物 manifest の不一致 2 件を修正 |
-| sub-04 プロトコルと 1 プロセス内検証 | OK | 1 | (次コミット) | N1〜N4 自動化、R-4 解決 |
-| sub-05 Server 実運用ループ・LocalHosting・server_verify | 未着手 | 0 | | |
+| sub-04 プロトコルと 1 プロセス内検証 | OK | 1 | d5e1540 | N1〜N4 自動化、R-4 解決 |
+| sub-05 Server 実運用ループ・LocalHosting・server_verify | OK | 1 | (次コミット) | server_verify 4 ケース PASS、tick avg 0.059ms |
 | sub-06 ABI v23 | 未着手 | 0 | | sub-02 後なら並列可 |
 | sub-07 GameLiftHosting + SDK 5.x | 未着手 | 0 | | |
 | sub-08 Anywhere 実疎通 (ユーザー手動) | 未着手 | 0 | | |
@@ -44,3 +44,4 @@
 - (sub-03 → sub-04) サーバ構成の照合は NetIdentity を経由させず CompareProvenance + 必要項目の別 payload。Provenance は HeadlessSim::Provenance()。SessionConfig.deadlineTicks / rejoinTimeoutTicks は sub-04 で埋める
 - (司会 2026-10-02) sub-04 OK。spec 4.1.4 改定 (Live の peer だけ待つ)、既定 締め切り 3 tick / 予約 1800 tick、D12 をサーバ代替入力とクライアント予測に分割 (予測改善は sub-05 やること 6)。EngineLoop のクライアント経路は ClientSimRunner のフックで繋ぐ (sub-05 やること 5)
 - (既知の観察、M81 範囲外) Debug と Release の Editor.exe --selftest を同時実行すると M79 の surface material / deferred / water surface が FAIL (シェーダキャッシュ置き場の共有と推定、未調査)。CI は直列 (ci.yml:137-143) なので影響なし
+- (司会 2026-10-02) sub-05 OK。サーバ .rep の逐次書き出し・クラッシュハンドラ・Terminate/Ctrl+C 経路統一は sub-07 (受け入れ条件 R4) へ。tick 時間 max 7〜14ms は spec R-10 (sub-08 で参加時の max を見る)。server_verify は CI に載せない (net_verify と同じ流儀)。Editor Play からの --net-connect 実走は sub-09 へ。ServerLoop.cpp の 0 バイト事故は司会が 16.8KB を確認済み

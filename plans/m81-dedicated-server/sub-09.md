@@ -8,7 +8,7 @@
 spec 4.3 / E1 / E2。
 
 1. NetWindow (`src\Editor\Windows\Project\NetWindow.cpp`): クライアント接続欄 (HOST:PORT、player session ID、接続ボタン = エディタの Play をクライアントとして始める経路。既存の P2P 開始の流儀に合わせる) と、接続中の表示 (役割、自レーン、playerId、レーン 4 本の状態と playerId、確定 tick、先行量、到着余裕、再同期回数、desync 回数)。値は NetRuntimeInfo (拡張が要れば POD のまま足す) からだけ読む。文字列は `Tr()` + LocalizationTable の en/ja。
-2. スクショ 2 枚 (Release): 未接続、ローカルの Server.exe へ接続中。撮り方は既存の一時プローブ + `--screenshot` の流儀。画像は `plans\m81-dedicated-server\shots\` に置く。目視はユーザー。
+2. Editor の Play から `--net-connect` 相当でローカルの Server.exe に繋ぎ、確定 tick が進むことをログで示す (sub-05 では Runtime だけ実走した)。スクショ 2 枚 (Release): 未接続、ローカルの Server.exe へ接続中。撮り方は既存の一時プローブ + `--screenshot` の流儀。画像は `plans\m81-dedicated-server\shots\` に置く。目視はユーザー。
 3. 文書:
    - `docs\adr\ADR-022-dedicated-server.md`: 背景 (P2P の限界)、決定 (入力確定型、状態配信型を採らない理由 = ADR-013 との整合)、決定論の原則 (DD §3 の要約)、ホスティング抽象、spec D3/D4/D5/D6/D11/D12 の裁定、却下案。
    - `engine_spec.md` §11 に §11.5 (専用サーバ: プロトコル、確定処理、途中参加、.rep v9、server_verify)、ABI v23、§13 の ADR 一覧に ADR-022。

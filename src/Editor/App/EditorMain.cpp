@@ -386,7 +386,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     // そもそも読めなければ 2。ネットの 2 プロセスが**同じ tick 列を回した**ことの機械証明で、
     // 割れたときは「どの tick の どのレーンの どのフィールドか」まで 1 行で出る
     if (!cli.repDiffA.empty() && !cli.repDiffB.empty()) {
-        const mye::ReplayDiffResult r = mye::DiffReplayFiles(cli.repDiffA, cli.repDiffB);
+        const mye::ReplayDiffResult r = mye::DiffReplayFiles(cli.repDiffA, cli.repDiffB, cli.repDiffOverlapMin);
         std::fprintf(stdout, "[rep-diff] %s\n", r.summary.c_str());
         if (r.same) {
             return 0;

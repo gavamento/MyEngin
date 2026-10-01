@@ -79,6 +79,17 @@ uint32_t ServerSession::LivePeerCount() const
     return n;
 }
 
+uint32_t ServerSession::ActivePeerCount() const
+{
+    uint32_t n = 0;
+    for (const Peer& p : peers_) {
+        if (p.phase != Phase::Gone) {
+            ++n;
+        }
+    }
+    return n;
+}
+
 bool ServerSession::CheckpointHash(uint64_t tick, uint64_t& outHash) const
 {
     if (tick % kNetHashCheckpoint != 0) {

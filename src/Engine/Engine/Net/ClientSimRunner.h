@@ -36,6 +36,9 @@ struct ClientSimHooks {
     std::function<InputSnapshot(uint64_t tick)> liveInput;
     // 確定した tick を番号順に 1 回ずつ通知する (.rep の記録先)。予測で走った tick は来ない
     std::function<void(uint64_t tick, const NetConfirmedTick& confirmed, uint64_t hashAfter)> onCommitted;
+    // 参加・再同期のスナップショットを復元し、ワールドハッシュの一致を確かめた直後 (ロールバックのリングを
+    // 起こす前)。blob はこの呼び出しの間だけ有効。.rep の開始点 (開始スナップショット) を作る側が使う。null 可
+    std::function<void(const SnapshotMeta& meta, const std::vector<std::byte>& blob)> onSnapshotApplied;
 };
 
 struct ClientSimRunnerConfig {
@@ -56,6 +59,7 @@ struct ClientSimRunnerStats {
     double stallMs = 0.0;
     uint64_t desyncs = 0;
     uint64_t snapshotsApplied = 0;
+    uint64_t resimsAcrossEvents = 0; // システムイベント (参加・離脱) を含む区間を再シムした回数
 };
 
 class ClientSimRunner {

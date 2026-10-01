@@ -277,9 +277,128 @@ std::string FirstDifferentInputField(const InputSnapshot& a, const InputSnapshot
     return std::string();
 }
 
+// pa の idxA 番目と pb の idxB 番目から count 本の tick を比べる。割れたら r を埋めて true。
+// absTick0 = 比較の先頭の絶対 tick (メッセージ用。ファイル内の番号ではなくセッションの tick で名指しする)
+bool DiffTickRange(const ReplayPlayer& pa, const ReplayPlayer& pb, uint64_t idxA, uint64_t idxB, uint64_t count,
+                   uint64_t absTick0, ReplayDiffResult& r)
+{
+    char buf[256];
+    const uint32_t lanes = pa.PlayerCount();
+    for (uint64_t i = 0; i < count; ++i) {
+        const uint64_t ta = idxA + i;
+        const uint64_t tb = idxB + i;
+        const uint64_t t = absTick0 + i;
+        for (uint32_t p = 0; p < lanes; ++p) {
+            const std::string field = FirstDifferentInputField(pa.InputForTick(ta, p), pb.InputForTick(tb, p));
+            if (!field.empty()) {
+                std::snprintf(buf, sizeof(buf),
+                              "tick %llu: input lane %u differs at %s (the two runs did NOT "
+                              "consume the same input)",
+                              static_cast<unsigned long long>(t), p, field.c_str());
+                r.firstDiffTick = t;
+                r.summary = buf;
+                return true;
+            }
+        }
+        if (pa.HasSystemInput() && pb.HasSystemInput()) {
+            // flags が一致しているので両方持つか両方持たない。イベントは入力の一部なので
+            // ハッシュより先に見る (「同じ入力で割れた」のか「入力が違う」のかを区別する)
+            const std::string field =
+                FirstDifferentSystemInputField(pa.SystemInputForTick(ta), pb.SystemInputForTick(tb));
+            if (!field.empty()) {
+                std::snprintf(buf, sizeof(buf),
+                              "tick %llu: %s differs (the two runs did NOT consume the same "
+                              "system input)",
+                              static_cast<unsigned long long>(t), field.c_str());
+                r.firstDiffTick = t;
+                r.summary = buf;
+                return true;
+            }
+        }
+        if (pa.ExpectedHash(ta) != pb.ExpectedHash(tb)) {
+            std::snprintf(buf, sizeof(buf),
+                          "tick %llu: world hash differs (%016llx vs %016llx) - same input, "
+                          "different simulation",
+                          static_cast<unsigned long long>(t),
+                          static_cast<unsigned long long>(pa.ExpectedHash(ta)),
+                          static_cast<unsigned long long>(pb.ExpectedHash(tb)));
+            r.firstDiffTick = t;
+            r.summary = buf;
+            return true;
+        }
+    }
+    return false;
+}
+
+// 開始 tick (開始スナップショットの tick。v8 以前と通常の記録は 0) が違う 2 本の、tick が重なる区間だけを比べる。
+// サーバの .rep (tick 0 から) と途中参加クライアントの .rep (参加 tick から) を突き合わせる道具。
+// ヘッダは「世界の意味に効く項目」だけを見る: 開始状態 (rng / 実体数 / スナップショット) は
+// 開始 tick が違えば違って当然なので比べず、重なった区間の入力・イベント・ハッシュで判定する
+ReplayDiffResult DiffOverlap(const ReplayPlayer& pa, const ReplayPlayer& pb, uint64_t minTicks)
+{
+    ReplayDiffResult r;
+    const MyeReplayHeader& ha = pa.Header();
+    const MyeReplayHeader& hb = pb.Header();
+    char buf[256];
+    struct HeaderField {
+        const char* name;
+        uint64_t a;
+        uint64_t b;
+    };
+    const uint32_t kMask = ~static_cast<uint32_t>(kCfgAllowGameMismatch);
+    const HeaderField fields[] = {
+        { "playerCount", ha.playerCount, hb.playerCount },
+        { "flags", ha.flags, hb.flags },
+        { "session.tickRate", ha.session.tickRate, hb.session.tickRate },
+        { "session.configBits", ha.session.configBits & kMask, hb.session.configBits & kMask },
+        { "session.referenceW", ha.session.referenceW, hb.session.referenceW },
+        { "session.referenceH", ha.session.referenceH, hb.session.referenceH },
+        { "session.fontMetricsHash", ha.session.fontMetricsHash, hb.session.fontMetricsHash },
+        { "provenance.schemaVersion", ha.provenance.schemaVersion, hb.provenance.schemaVersion },
+        { "provenance.contentHash", ha.provenance.contentHash, hb.provenance.contentHash },
+    };
+    for (const HeaderField& f : fields) {
+        if (f.a != f.b) {
+            std::snprintf(buf, sizeof(buf), "header.%s differs: %llu vs %llu", f.name,
+                          static_cast<unsigned long long>(f.a), static_cast<unsigned long long>(f.b));
+            r.summary = buf;
+            return r;
+        }
+    }
+    const uint64_t startA = ha.startMeta.tick;
+    const uint64_t startB = hb.startMeta.tick;
+    const uint64_t endA = startA + pa.TickCount();
+    const uint64_t endB = startB + pb.TickCount();
+    const uint64_t from = (startA > startB) ? startA : startB;
+    const uint64_t to = (endA < endB) ? endA : endB;
+    const uint64_t n = (to > from) ? to - from : 0;
+    if (n == 0 || n < minTicks) {
+        std::snprintf(buf, sizeof(buf),
+                      "the two runs overlap in only %llu tick(s) ([%llu, %llu) vs [%llu, %llu)), need at least %llu",
+                      static_cast<unsigned long long>(n), static_cast<unsigned long long>(startA),
+                      static_cast<unsigned long long>(endA), static_cast<unsigned long long>(startB),
+                      static_cast<unsigned long long>(endB), static_cast<unsigned long long>(minTicks));
+        r.summary = buf;
+        return r;
+    }
+    if (DiffTickRange(pa, pb, from - startA, from - startB, n, from, r)) {
+        return r;
+    }
+    std::snprintf(buf, sizeof(buf),
+                  "identical over the overlap: %llu ticks [%llu, %llu) x %u lanes (runs cover [%llu, %llu) and "
+                  "[%llu, %llu))",
+                  static_cast<unsigned long long>(n), static_cast<unsigned long long>(from),
+                  static_cast<unsigned long long>(to), ha.playerCount, static_cast<unsigned long long>(startA),
+                  static_cast<unsigned long long>(endA), static_cast<unsigned long long>(startB),
+                  static_cast<unsigned long long>(endB));
+    r.same = true;
+    r.summary = buf;
+    return r;
+}
+
 } // namespace
 
-ReplayDiffResult DiffReplayFiles(const std::wstring& a, const std::wstring& b)
+ReplayDiffResult DiffReplayFiles(const std::wstring& a, const std::wstring& b, uint64_t overlapMinTicks)
 {
     ReplayDiffResult r;
     ReplayPlayer pa;
@@ -287,6 +406,9 @@ ReplayDiffResult DiffReplayFiles(const std::wstring& a, const std::wstring& b)
     if (!pa.Load(a) || !pb.Load(b)) {
         r.summary = "one of the .rep files could not be loaded";
         return r;
+    }
+    if (overlapMinTicks > 0) {
+        return DiffOverlap(pa, pb, overlapMinTicks);
     }
     const MyeReplayHeader& ha = pa.Header();
     const MyeReplayHeader& hb = pb.Header();
@@ -348,46 +470,8 @@ ReplayDiffResult DiffReplayFiles(const std::wstring& a, const std::wstring& b)
         return r;
     }
     const uint64_t ticks = (pa.TickCount() < pb.TickCount()) ? pa.TickCount() : pb.TickCount();
-    for (uint64_t t = 0; t < ticks; ++t) {
-        for (uint32_t p = 0; p < ha.playerCount; ++p) {
-            const std::string field =
-                FirstDifferentInputField(pa.InputForTick(t, p), pb.InputForTick(t, p));
-            if (!field.empty()) {
-                std::snprintf(buf, sizeof(buf),
-                              "tick %llu: input lane %u differs at %s (the two runs did NOT "
-                              "consume the same input)",
-                              static_cast<unsigned long long>(t), p, field.c_str());
-                r.firstDiffTick = t;
-                r.summary = buf;
-                return r;
-            }
-        }
-        if (pa.HasSystemInput() && pb.HasSystemInput()) {
-            // flags が一致しているので両方持つか両方持たない。イベントは入力の一部なので
-            // ハッシュより先に見る (「同じ入力で割れた」のか「入力が違う」のかを区別する)
-            const std::string field =
-                FirstDifferentSystemInputField(pa.SystemInputForTick(t), pb.SystemInputForTick(t));
-            if (!field.empty()) {
-                std::snprintf(buf, sizeof(buf),
-                              "tick %llu: %s differs (the two runs did NOT consume the same "
-                              "system input)",
-                              static_cast<unsigned long long>(t), field.c_str());
-                r.firstDiffTick = t;
-                r.summary = buf;
-                return r;
-            }
-        }
-        if (pa.ExpectedHash(t) != pb.ExpectedHash(t)) {
-            std::snprintf(buf, sizeof(buf),
-                          "tick %llu: world hash differs (%016llx vs %016llx) - same input, "
-                          "different simulation",
-                          static_cast<unsigned long long>(t),
-                          static_cast<unsigned long long>(pa.ExpectedHash(t)),
-                          static_cast<unsigned long long>(pb.ExpectedHash(t)));
-            r.firstDiffTick = t;
-            r.summary = buf;
-            return r;
-        }
+    if (DiffTickRange(pa, pb, 0, 0, ticks, 0, r)) {
+        return r;
     }
     if (pa.TickCount() != pb.TickCount()) {
         // 共通部分は完全一致した = 「同じ tick 列を回したが、片方が先に止まった」。

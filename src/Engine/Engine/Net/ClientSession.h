@@ -89,8 +89,8 @@ public:
     uint64_t ConfirmedFrontier() const { return frontier_; }
     bool HasConfirmed(uint64_t tick) const { return tick >= meta_.tick && tick < frontier_ && IsStored(tick); }
     const NetConfirmedTick* Confirmed(uint64_t tick) const;
-    // 未確定 tick の他レーンの予測 = 確定済みの最新値から消費型を落としたもの (SubstituteLateInput)。
-    // 確定が 1 本も無ければゼロ入力
+    // 未確定 tick の他レーンの予測 = 確定済みの最新値の繰り返し (PredictLaneInput: 文字と wheelDelta は 0、
+    // mouseDelta は繰り返す)。サーバの代替入力 (SubstituteLateInput) とは別。確定が 1 本も無ければゼロ入力
     InputSnapshot PredictLane(uint64_t tick, uint32_t lane) const;
 
     // 自レーンの tick 入力を確定させて送る。**同じ tick へ 2 回呼ばないこと** (一度決めた値は変えない)

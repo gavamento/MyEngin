@@ -152,6 +152,12 @@ int AllocateLane(const SessionLanes& lanes);
 // 消費型をそのまま繰り返すと文字が 2 回打たれ、視点が 2 回回る
 InputSnapshot SubstituteLateInput(const InputSnapshot& prev);
 
+// クライアントが他レーンの未着 tick を予測するときの入力 = 最新の確定値の繰り返し。
+// SubstituteLateInput と違い mouseDeltaX/Y は繰り返す (視点の回転は連続しやすく、0 にすると外れる)。
+// 文字と wheelDelta は 1 回きりの出来事なので 0。予測は確定値に入らず sim の正しさに無関係で、
+// 当たりやすさだけで決めてよい (サーバの代替入力は確定値になるので SubstituteLateInput のまま)
+InputSnapshot PredictLaneInput(const InputSnapshot& latestConfirmed);
+
 // システム入力の無い構成 (オフライン / P2P) の既定のレーン状態:
 // [0, playerCount) が Connected (playerId 0)、イベント 0 件
 SessionLanes DefaultLanesFor(uint32_t playerCount);

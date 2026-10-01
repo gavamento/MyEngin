@@ -210,7 +210,7 @@ bool WriteNetDesyncBundle(const std::wstring& crashRoot, const NetDesyncReport& 
     f << "MyEngine desync report (M52i)\n";
     f << "checkpoint tick  " << rep.tick << "\n";
     f << "detected at tick " << rep.nowTick << "\n";
-    f << "role             " << (rep.role == 1 ? "host" : (rep.role == 2 ? "join" : "?")) << "\n";
+    f << "role             " << (rep.role == 1 ? "host" : (rep.role == 2 ? "join" : (rep.role == 4 ? "client" : "?"))) << "\n";
     f << "local lane       " << rep.localPlayer << "\n";
     char hex[32];
     std::snprintf(hex, sizeof(hex), "%016llX", static_cast<unsigned long long>(rep.localHash));

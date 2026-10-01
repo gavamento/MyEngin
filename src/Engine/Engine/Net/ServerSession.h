@@ -110,10 +110,12 @@ public:
     const SessionLanes& Lanes() const { return lanes_; }
     const ServerStats& Stats() const { return stats_; }
     uint32_t LivePeerCount() const;
+    // 切断済み (Gone) 以外の peer の数 (接続処理中を含む)。「全員が出ていった」判定用
+    uint32_t ActivePeerCount() const;
     // この tick までの checkpoint ハッシュ (ログ / selftest)
     bool CheckpointHash(uint64_t tick, uint64_t& outHash) const;
 
-    // 試験用: eventSeq を n 欠番にする (クライアントの欠番検出の試験)。本番では呼ばない
+    // selftest 専用。本番 (Server.exe) では呼ばない: eventSeq を n 欠番にして、クライアントの欠番検出を試す
     void TestSkipEventSeq(uint32_t n) { eventSeq_ += n; }
 
 private:

@@ -165,6 +165,15 @@ InputSnapshot SubstituteLateInput(const InputSnapshot& prev)
     return out;
 }
 
+InputSnapshot PredictLaneInput(const InputSnapshot& latestConfirmed)
+{
+    InputSnapshot out = latestConfirmed;
+    std::memset(out.chars, 0, sizeof(out.chars));
+    out.charCount = 0;
+    out.wheelDelta = 0;
+    return out;
+}
+
 SessionLanes DefaultLanesFor(uint32_t playerCount)
 {
     SessionLanes lanes = {};

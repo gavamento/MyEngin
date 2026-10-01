@@ -357,7 +357,7 @@ InputSnapshot ClientSession::PredictLane(uint64_t tick, uint32_t lane) const
         uint64_t t = (std::min)(tick, frontier_ - 1);
         for (uint32_t k = 0; k < kNetRedundancy * 2; ++k) {
             if (HasConfirmed(t)) {
-                return SubstituteLateInput(conf_[t % kNetHistoryTicks].inputs[lane]);
+                return PredictLaneInput(conf_[t % kNetHistoryTicks].inputs[lane]);
             }
             if (t == 0 || t <= meta_.tick) {
                 break;

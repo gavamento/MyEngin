@@ -1,5 +1,6 @@
 #include "Engine/Engine/App/EngineCli.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cwchar>
@@ -101,6 +102,13 @@ const CliFlag kEngineCliFlags[] = {
           a.x.hashDiffB = a.v2;
           return true;
       } },
+    // M81e: --rep-diff を「tick が重なった区間だけ」の比較にする (サーバ .rep と途中参加クライアント .rep)。
+    // 値 = 重なりの最小 tick 数 (これ未満なら失敗)
+    { L"--rep-diff-overlap", CliValue::One,
+      [](CliArgs& a) {
+          a.x.repDiffOverlapMin = static_cast<uint64_t>((std::max)(_wtoi64(a.v1), 0ll));
+          return true;
+      } },
 
     // M81c: assets の content_manifest.json を書き出して終了する (パッケージ工程 / 検証用。Main が実行する)
     { L"--write-content-manifest", CliValue::One,
@@ -147,6 +155,24 @@ const CliFlag kEngineCliFlags[] = {
     { L"--net-delay", CliValue::One, [](CliArgs& a) { a.c.netInputDelay = _wtoi(a.v1); return true; } },
     // 入力パケットを故意に捨てる (検証用)
     { L"--net-loss", CliValue::One, [](CliArgs& a) { a.c.netLossPercent = _wtoi(a.v1); return true; } },
+    // M81e: 専用サーバへ接続するクライアントになる (netRole 4 = NetRole::Client)。HOST:PORT
+    { L"--net-connect", CliValue::One,
+      [](CliArgs& a) {
+          a.c.netRole = 4;
+          a.c.netJoinTarget = a.v1;
+          return true;
+      } },
+    // サーバの player session ID (ホスティングの認証。LocalHosting は検証しない)。再接続でも同じ値を渡すこと
+    { L"--player-session-id", CliValue::One, [](CliArgs& a) { a.c.netPlayerSessionId = a.v1; return true; } },
+    // 再接続の主張: 前回の接続でサーバが割り当てた playerId (ログの "playerId=" の値)
+    { L"--net-player-id", CliValue::One,
+      [](CliArgs& a) {
+          a.c.netPlayerId = _wcstoui64(a.v1, nullptr, 10);
+          return true;
+      } },
+    // 検証用 (どちらも参加スナップショットの tick から N tick 後): Bye を送らずに終了する / sim 状態を壊す
+    { L"--net-drop-after", CliValue::One, [](CliArgs& a) { a.c.netDropAfterTicks = _wtoi64(a.v1); return true; } },
+    { L"--net-poke-after", CliValue::One, [](CliArgs& a) { a.c.netPokeAfterTicks = _wtoi64(a.v1); return true; } },
     // M81c: GameLogic.dll の食い違いを WARN に落として接続を許す (Debug / Release 混在の検証用)
     { L"--allow-game-mismatch", CliValue::None, [](CliArgs& a) { a.c.allowGameMismatch = true; return true; } },
     // M52i: 予測ロールバックを切って M52h の素の遅延ロックステップへ落とす

@@ -68,6 +68,9 @@ void ClientSimRunner::ApplySnapshot(uint64_t nowMs)
     bool match = RestoreSimSnapshot(refs_, blob.data(), blob.size());
     // 復元した tick が meta と同じで、ワールドハッシュも一致して初めて参加を成立させる
     match = match && TickIndex() == meta.tick && hooks_.worldHash() == meta.worldHash;
+    if (match && hooks_.onSnapshotApplied) {
+        hooks_.onSnapshotApplied(meta, blob); // OnSnapshotApplied(true) が blob を手放す前
+    }
     session_->OnSnapshotApplied(match, nowMs);
     if (!match) {
         return;
@@ -134,6 +137,22 @@ bool ClientSimRunner::ResimFrom(uint64_t from)
     }
     if (cfg_.crashRing != nullptr) {
         cfg_.crashRing->Rewind(from);
+    }
+    // 区間にシステムイベントがあれば記録する: 再シムが tick ごとの確定イベントで差し替わって走ることの実走の証跡
+    uint32_t eventTicks = 0;
+    uint32_t eventCount = 0;
+    for (uint64_t t = from; t < resume; ++t) {
+        if (const NetConfirmedTick* c = session_->Confirmed(t)) {
+            eventTicks += c->sys.eventCount > 0 ? 1u : 0u;
+            eventCount += c->sys.eventCount;
+        }
+    }
+    if (eventCount > 0) {
+        ++stats_.resimsAcrossEvents;
+        MYE_LOG_INFO("[client] rollback to tick %llu re-simulates %llu tick(s) across %u system event(s) in %u tick(s) "
+                     "(join / leave / rejoin applied from the confirmed record)",
+                     static_cast<unsigned long long>(from), static_cast<unsigned long long>(resume - from), eventCount,
+                     eventTicks);
     }
     for (uint64_t t = from; t < resume; ++t) {
         InputSnapshot lanes[kMaxPlayers] = {};

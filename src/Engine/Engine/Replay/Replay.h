@@ -182,6 +182,8 @@ struct ReplayDiffResult {
     uint64_t firstDiffTick = 0; // same=false かつ tick 列で割れたときのみ意味を持つ
     std::string summary;        // 1 行の結論 (そのままログへ出す)
 };
-ReplayDiffResult DiffReplayFiles(const std::wstring& a, const std::wstring& b);
+// overlapMinTicks > 0 (--rep-diff-overlap N): 開始 tick が違う 2 本の、tick が重なる区間だけを比べ、
+// 重なりが N tick 未満なら失敗にする (サーバ .rep と途中参加クライアント .rep の突き合わせ)。0 = 従来の厳密比較
+ReplayDiffResult DiffReplayFiles(const std::wstring& a, const std::wstring& b, uint64_t overlapMinTicks = 0);
 
 } // namespace mye
