@@ -95,7 +95,7 @@ public:
     std::set<ScriptStartedKey>& StartedForSnapshot() { return started_; }
 
     // 毎 tick、フェーズ 3/5 で呼ぶ (Play 中のみ)
-    void SetTickContext(const InputSnapshot& input, uint64_t tickIndex, float dt);
+    void SetTickContext(const InputSnapshot& input, uint64_t tickIndex, float dt, uint32_t playerCount);
     void RunStartAndUpdate(); // フェーズ 3: 新規インスタンスの Start → 全 Update
     void RunLateUpdate();     // フェーズ 5
 

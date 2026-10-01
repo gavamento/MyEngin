@@ -17,6 +17,8 @@
 #include <vector>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/ComponentRegistry.h"
+#include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Util/Random.h"
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
 #include "Engine/Engine/Loop/HeadlessSim.h"
@@ -27,7 +29,9 @@
 #include "Engine/Engine/Net/ServerSession.h"
 #include "Engine/Engine/Replay/CrashRing.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
+#include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/Script/EngineApiTable.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {
@@ -484,7 +488,43 @@ bool InitSim(HeadlessSim& sim)
     s.config.localPlayers = static_cast<int>(kMaxPlayers);
     s.scene.showcase = FindShowcase(L"--local-demo", /*editor=*/true);
     s.systemInput = true;
-    return s.scene.showcase != nullptr && sim.Init(s);
+    if (s.scene.showcase == nullptr || !sim.Init(s)) {
+        return false;
+    }
+    // ABI v23 の probe (GameLogic.dll の NetEventProbe)。DLL が無い環境では付けず、probe の照合を飛ばす。
+    // 全 sim に同じ順で付けるので、初期スナップショットとクライアントへの転送に乗る
+    const ComponentTypeId probe = ComponentRegistry::Get().FindByName("NetEventProbe");
+    if (probe != kInvalidComponentType) {
+        Scene* scene = sim.Refs().scene;
+        scene->GetWorld().AddComponentRaw(scene->CreateGameObject("NetEventProbeHost").Id(), probe);
+    }
+    return true;
+}
+
+bool HasEventProbe()
+{
+    return ComponentRegistry::Get().FindByName("NetEventProbe") != kInvalidComponentType;
+}
+
+// probe のフィールドを ABI (GetComponentField) 経由で読む。無ければ false
+bool ReadProbe(HeadlessSim& sim, const char* field, uint64_t& out)
+{
+    Scene* scene = sim.Refs().scene;
+    const GameObject host = scene->Find("NetEventProbeHost");
+    if (!host) {
+        return false;
+    }
+    ScriptApiContext apiCtx;
+    apiCtx.scene = scene;
+    MyeEngineApi api = {};
+    BuildEngineApi(api, &apiCtx);
+    uint64_t buf = 0; // 4 バイトのフィールドは下位に入る (リトルエンディアン)
+    const MyeEntityId id = { host.Id().index, host.Id().generation };
+    if (api.GetComponentField(&apiCtx, id, HashStr("NetEventProbe"), HashStr(field), &buf, sizeof(buf), nullptr) <= 0) {
+        return false;
+    }
+    out = buf;
+    return true;
 }
 
 SessionConfig SimSessionConfig(uint32_t deadlineTicks, uint32_t rejoinTimeoutTicks)
@@ -822,6 +862,78 @@ void CheckReplayOfLog(Sims& sims, const ScenarioResult& r, const char* name)
           static_cast<unsigned long long>(bad));
 }
 
+// ABI v23 (A2): probe が読んだ参加・離脱の数が、確定入力列の中のイベント数と一致する。
+// CheckReplayOfLog の直後 (server sim が確定列を最後まで回した状態) で呼ぶ。
+// 全クライアントが同じ tick に同じイベントを読んだことは、probe の値がワールドハッシュに載っている
+// ことと、CountChainMismatches (各クライアントの確定ハッシュ列 == サーバ) の両方で示される
+void CheckEventProbe(Sims& sims, const ScenarioResult& r, const char* name)
+{
+    if (!HasEventProbe()) {
+        MYE_LOG_WARN("[server-net selftest] %s: NetEventProbe is not registered (GameLogic.dll not loaded) - ABI v23 "
+                     "probe checks skipped", name);
+        return;
+    }
+    uint64_t want[5] = {}; // Join / Leave / Rejoin / Release, 最後の eventSeq
+    uint64_t lastEventTick = 0;
+    for (size_t i = 0; i < r.log.size(); ++i) {
+        const SystemInputTick& s = r.log[i].sys;
+        for (uint32_t e = 0; e < s.eventCount; ++e) {
+            const uint8_t kind = s.events[e].kind;
+            if (kind >= 1 && kind <= 4) {
+                ++want[kind - 1];
+            }
+            want[4] = s.events[e].eventSeq;
+            lastEventTick = i;
+        }
+    }
+    HeadlessSim& sim = sims.server;
+    sim.Activate();
+    uint64_t got[7] = {};
+    const char* fields[7] = { "joinCount", "leaveCount", "rejoinCount", "releaseCount", "lastEventSeq",
+                              "lastEventTick", "laneMask" };
+    bool readable = true;
+    for (int i = 0; i < 7; ++i) {
+        readable = ReadProbe(sim, fields[i], got[i]) && readable;
+    }
+    Check(readable, "%s: the NetEventProbe fields are readable", name);
+    if (!readable) {
+        return;
+    }
+    Check(got[0] == want[0] && got[1] == want[1] && got[2] == want[2] && got[3] == want[3] && got[4] == want[4],
+          "%s: the probe counted join %llu/%llu leave %llu/%llu rejoin %llu/%llu release %llu/%llu lastSeq %llu/%llu "
+          "(read/in the confirmed input)", name, (unsigned long long)got[0], (unsigned long long)want[0],
+          (unsigned long long)got[1], (unsigned long long)want[1], (unsigned long long)got[2],
+          (unsigned long long)want[2], (unsigned long long)got[3], (unsigned long long)want[3],
+          (unsigned long long)got[4], (unsigned long long)want[4]);
+    Check(want[0] > 0 && want[1] > 0 && want[2] > 0 && want[3] > 0,
+          "%s: the scenario exercises all four event kinds (join/leave/rejoin/release)", name);
+    // probe は Update (tick の中) で読むので、イベントを適用した tick そのものを記録している
+    Check(got[5] == lastEventTick, "%s: the probe read the last event on tick %llu (applied on tick %llu)", name,
+          (unsigned long long)got[5], (unsigned long long)lastEventTick);
+    // 最終レーン状態から導いたマスクと probe の最後の観測が一致 (最終 tick の Update で読んだ値)
+    uint32_t mask = 0;
+    for (uint32_t l = 0; l < kMaxPlayers; ++l) {
+        if (sim.Refs().scene->Lanes().lanes[l].state == static_cast<uint32_t>(LaneState::Connected)) {
+            mask |= 1u << l;
+        }
+    }
+    Check(got[6] == mask, "%s: the probe's lane mask %llx equals the final SessionLanes' %x", name,
+          (unsigned long long)got[6], mask);
+    // 負の対照: probe の値はワールドハッシュに載っている (載っていなければ chain 一致は何も示さない)
+    const uint64_t before = sim.WorldHash();
+    ScriptApiContext apiCtx;
+    apiCtx.scene = sim.Refs().scene;
+    MyeEngineApi api = {};
+    BuildEngineApi(api, &apiCtx);
+    const GameObject host = apiCtx.scene->Find("NetEventProbeHost");
+    const MyeEntityId id = { host.Id().index, host.Id().generation };
+    const int32_t bumped = static_cast<int32_t>(got[0]) + 1;
+    const bool wrote = api.SetComponentField(&apiCtx, id, HashStr("NetEventProbe"), HashStr("joinCount"), &bumped,
+                                             sizeof(bumped)) == 1;
+    const uint64_t after = sim.WorldHash();
+    Check(wrote && after != before, "%s (negative control): changing the probe's joinCount changes the world hash", name);
+}
+
 LinkSpec Link(uint32_t base, uint32_t jitter, uint32_t loss, uint32_t reorder, uint32_t dup)
 {
     LinkSpec s;
@@ -858,6 +970,7 @@ void TestLifecycle(Sims& sims)
     LogScenario(d.name, d, r);
     Check(CountChainMismatches(r, d.name) == 0, "%s: every client's committed hash chain equals the server's", d.name);
     CheckReplayOfLog(sims, r, d.name);
+    CheckEventProbe(sims, r, d.name);
     Check(r.stats.joins == 3 && r.stats.rejoins == 1, "%s: joins %llu (want 3) / rejoins %llu (want 1)", d.name,
           static_cast<unsigned long long>(r.stats.joins), static_cast<unsigned long long>(r.stats.rejoins));
     Check(r.stats.leaves >= 2 && r.stats.releases == 1, "%s: leaves %llu (want >= 2) / releases %llu (want 1)", d.name,

@@ -13,6 +13,7 @@
 #include "Engine/Engine/Physics/Fracture/FractureSystem.h" // v22 (M80l): ApplyFractureDamage
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Net/NetRuntime.h" // v13 Net* の参照先 POD (M52i)
+#include "Engine/Engine/Session/SessionTypes.h" // v23 (M81f): NetLane* / NetSystemEvent* の参照先
 #include "Engine/Engine/Animation/Parts.h" // v9 部位クエリ (M48h)
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Engine/Scene/Scene.h"
@@ -75,6 +76,18 @@ void PushAudioOp(ScriptApiContext* c, ScriptAudioOp op, uint64_t handle, float a
     e.handle = handle;
     e.a = a;
     c->audioQueue->push_back(e);
+}
+
+// v23 (M81f): 今 tick のレーン状態。システム入力を持つ記録は Scene の SessionLanes (確定入力から
+// 導いた sim 状態) をそのまま、持たない構成 (オフライン / P2P) は playerCount から導く既定値。
+// どちらも .rep で再現する値だけを元にし、NetRuntimeInfo (機種依存) は読まない
+SessionLanes LanesOf(void* engine)
+{
+    const ScriptApiContext* c = Ctx(engine);
+    if (c->scene != nullptr && c->scene->Lanes().systemInput != 0) {
+        return c->scene->Lanes();
+    }
+    return DefaultLanesFor(c->playerCount);
 }
 
 } // namespace
@@ -870,6 +883,52 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     out.NetRollbackCount = [](void* engine) -> uint64_t {
         const NetRuntimeInfo* n = Ctx(engine)->net;
         return n != nullptr ? n->rollbacks : 0ull;
+    };
+
+    // ---- v23 (M81f): レーン状態と参加・離脱 ----
+    // ★上の v13 と違い**確定入力から導く sim 値** (LanesOf)。sim へ書いてよい
+    out.NetLaneMask = [](void* engine) -> uint32_t {
+        const SessionLanes l = LanesOf(engine);
+        uint32_t mask = 0;
+        for (uint32_t i = 0; i < kMaxPlayers; ++i) {
+            if (l.lanes[i].state == static_cast<uint32_t>(LaneState::Connected)) {
+                mask |= 1u << i;
+            }
+        }
+        return mask;
+    };
+    out.NetLaneState = [](void* engine, uint32_t lane) -> uint32_t {
+        if (lane >= kMaxPlayers) {
+            return static_cast<uint32_t>(LaneState::Empty);
+        }
+        return LanesOf(engine).lanes[lane].state;
+    };
+    out.NetLanePlayerId = [](void* engine, uint32_t lane) -> uint64_t {
+        if (lane >= kMaxPlayers) {
+            return 0ull;
+        }
+        const LaneSlot& s = LanesOf(engine).lanes[lane];
+        return s.state == static_cast<uint32_t>(LaneState::Empty) ? 0ull : s.playerId;
+    };
+    out.NetSystemEventCount = [](void* engine) -> uint32_t {
+        return LanesOf(engine).appliedCount;
+    };
+    out.NetGetSystemEvent = [](void* engine, uint32_t index, MyeNetSystemEvent* out) -> int {
+        const SessionLanes l = LanesOf(engine);
+        if (index >= l.appliedCount || index >= kMaxSystemEventsPerTick) {
+            if (out != nullptr) {
+                *out = {};
+            }
+            return 0;
+        }
+        if (out != nullptr) {
+            const SystemEvent& e = l.applied[index];
+            out->eventSeq = e.eventSeq;
+            out->playerId = e.playerId;
+            out->kind = e.kind;
+            out->lane = e.lane;
+        }
+        return 1;
     };
 
     // ---- 入力アクションのレーン指定版 (M52i、v13) ----

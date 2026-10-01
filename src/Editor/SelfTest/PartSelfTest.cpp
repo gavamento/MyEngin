@@ -175,8 +175,8 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 22u,
-              "abi: the table reports v22");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 23u,
+              "abi: the table reports v23");
         check(api.FindPart != nullptr && api.FindPartsByTag != nullptr,
               "abi: the v9 part slots are filled in");
         check(api.RaycastParts != nullptr, "abi: the v10 RaycastParts slot is filled in");
@@ -193,6 +193,50 @@ bool RunPartSelfTest()
                   && api.NetPlayerCount(api.engine) == 1
                   && api.NetRollbackCount(api.engine) == 0ull,
               "abi: without a session the net slots report 'local, one lane'");
+        // v23 (M81f): レーン状態と参加・離脱。確定入力から導く値で、v13 の Net* とは別系統
+        check(api.NetLaneMask != nullptr && api.NetLaneState != nullptr && api.NetLanePlayerId != nullptr
+                  && api.NetSystemEventCount != nullptr && api.NetGetSystemEvent != nullptr,
+              "abi: the v23 lane slots are filled in");
+        {
+            // 非サーバ構成の既定: レーン [0, playerCount) が Connected、playerId 0、イベント 0 件
+            check(api.NetLaneMask(api.engine) == 0x1u && api.NetLaneState(api.engine, 0) == 1u
+                      && api.NetLaneState(api.engine, 1) == 0u && api.NetLanePlayerId(api.engine, 0) == 0ull
+                      && api.NetSystemEventCount(api.engine) == 0u,
+                  "abi v23: without system input the lanes default to [0, playerCount) = 1 lane connected");
+            MyeNetSystemEvent ev = { 7, 7, 7, 7 };
+            check(api.NetGetSystemEvent(api.engine, 0, &ev) == 0 && ev.eventSeq == 0 && ev.playerId == 0
+                      && ev.kind == 0 && ev.lane == 0,
+                  "abi v23: an out-of-range event index returns 0 and zero-fills out");
+            api.NetGetSystemEvent(api.engine, 0, nullptr); // null 出力で落ちない
+            check(api.NetLaneState(api.engine, 4) == 0u && api.NetLaneState(api.engine, 0xFFFFFFFFu) == 0u
+                      && api.NetLanePlayerId(api.engine, 99) == 0ull,
+                  "abi v23: out-of-range lanes read as Empty / playerId 0");
+            apiCtx.playerCount = 3;
+            check(api.NetLaneMask(api.engine) == 0x7u, "abi v23: the default mask follows playerCount (3 lanes)");
+            apiCtx.playerCount = 1;
+
+            // システム入力を持つ記録: Scene の SessionLanes (確定入力の適用結果) をそのまま返す
+            SessionLanes saved = scene.Lanes();
+            scene.Lanes() = {};
+            scene.Lanes().systemInput = 1;
+            SystemInputTick in = {};
+            in.eventCount = 3;
+            in.events[0] = { 1, 11, static_cast<uint8_t>(SystemEventKind::Join), 0, {} };
+            in.events[1] = { 2, 22, static_cast<uint8_t>(SystemEventKind::Join), 0, {} };
+            in.events[2] = { 3, 11, static_cast<uint8_t>(SystemEventKind::Leave), 0, {} };
+            ApplySystemInput(scene.Lanes(), in);
+            check(api.NetLaneMask(api.engine) == 0x2u && api.NetLaneState(api.engine, 0) == 2u
+                      && api.NetLaneState(api.engine, 1) == 1u && api.NetLaneState(api.engine, 2) == 0u
+                      && api.NetLanePlayerId(api.engine, 0) == 11ull && api.NetLanePlayerId(api.engine, 1) == 22ull
+                      && api.NetLanePlayerId(api.engine, 2) == 0ull,
+                  "abi v23: with system input the lanes come from SessionLanes (Reserved keeps its playerId)");
+            MyeNetSystemEvent e2 = {};
+            check(api.NetSystemEventCount(api.engine) == 3u && api.NetGetSystemEvent(api.engine, 2, &e2) == 1
+                      && e2.eventSeq == 3 && e2.playerId == 11 && e2.kind == 2 && e2.lane == 0
+                      && api.NetGetSystemEvent(api.engine, 3, &e2) == 0 && e2.eventSeq == 0,
+                  "abi v23: events come back in eventSeq order with the applied lane; index 3 is out of range");
+            scene.Lanes() = saved;
+        }
         check(api.GetComponentField != nullptr && api.SetComponentField != nullptr,
               "abi: the v11 generic field slots are filled in");
         // v15 (M64a): マウスルック。GetMouseDelta は InputSnapshot 由来なので、

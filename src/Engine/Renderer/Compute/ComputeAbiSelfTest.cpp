@@ -89,7 +89,7 @@ bool RunComputeAbiSelfTest()
     MyeEngineApi api = {};
     BuildEngineApi(api, &apiCtx);
 
-    Check(api.version == 22u, "api version is 22");
+    Check(api.version == MYE_API_VERSION, "api version matches MYE_API_VERSION");
     Check(api.CreateComputeBuffer && api.ReleaseComputeBuffer && api.SetComputeBuffer
               && api.SetComputeFloat && api.SetComputeFloat4 && api.SetComputeTextureFromAsset
               && api.DispatchCompute,

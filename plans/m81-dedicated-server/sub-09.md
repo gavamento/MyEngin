@@ -11,6 +11,7 @@ spec 4.3 / E1 / E2。
 2. Editor の Play から `--net-connect` 相当でローカルの Server.exe に繋ぎ、確定 tick が進むことをログで示す (sub-05 では Runtime だけ実走した)。スクショ 2 枚 (Release): 未接続、ローカルの Server.exe へ接続中。撮り方は既存の一時プローブ + `--screenshot` の流儀。画像は `plans\m81-dedicated-server\shots\` に置く。目視はユーザー。
 3. 文書:
    - `docs\adr\ADR-022-dedicated-server.md`: 背景 (P2P の限界)、決定 (入力確定型、状態配信型を採らない理由 = ADR-013 との整合)、決定論の原則 (DD §3 の要約)、ホスティング抽象、spec D3/D4/D5/D6/D11/D12 の裁定、却下案。
+   - ABI v23 (126 → 131)、D3 (役割スロットを足さない)、v13 (表示専用・機種依存) と v23 (確定入力から導く sim 値) の違い、**外部プロジェクト (三校 / HAL Collector) の GameLogic.dll は apiVersion 22 のままだと拒否されるので再ビルドが必須**、NetEventProbe (検証用、自動では付かない) を書く。
    - `engine_spec.md` §11 に §11.5 (専用サーバ: プロトコル、確定処理、途中参加、.rep v9、server_verify)、ABI v23、§13 の ADR 一覧に ADR-022。
    - `docs\engine-feature-guide.md` §13 (今「専用サーバ…は本機能に含めません」) を更新。
    - `docs\test_checklists.md` に server_verify と Anywhere 手動確認の項目。

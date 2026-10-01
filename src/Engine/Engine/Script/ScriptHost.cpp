@@ -315,7 +315,8 @@ bool ScriptHost::LoadModule(const std::wstring& dllPath)
     return true;
 }
 
-void ScriptHost::SetTickContext(const InputSnapshot& input, uint64_t tickIndex, float dt)
+void ScriptHost::SetTickContext(const InputSnapshot& input, uint64_t tickIndex, float dt,
+                                uint32_t playerCount)
 {
     input_ = input;
     tickIndex_ = tickIndex;
@@ -324,6 +325,7 @@ void ScriptHost::SetTickContext(const InputSnapshot& input, uint64_t tickIndex, 
     apiCtx_.input = input;
     apiCtx_.tickIndex = tickIndex;
     apiCtx_.dt = dt;
+    apiCtx_.playerCount = playerCount;
 }
 
 void ScriptHost::RunPhase(Phase phase)

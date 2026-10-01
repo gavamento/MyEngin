@@ -81,6 +81,16 @@ namespace MyeScripting
         public float Impulse;   // その tick の法線インパルス合計 [N*s]
     }
 
+    // v23 (M81f): NetGetSystemEvent の出力 (EngineAPI.h の MyeNetSystemEvent と同一レイアウト)
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MyeNetSystemEvent
+    {
+        public ulong EventSeq;
+        public ulong PlayerId;
+        public uint Kind;
+        public uint Lane;
+    }
+
     // v16 (M70c): GetUIRect の出力。**キャンバス座標** (基準 1920x1080、M70b)
     [StructLayout(LayoutKind.Sequential)]
     internal struct MyeUIRect
@@ -255,6 +265,13 @@ namespace MyeScripting
         public delegate* unmanaged<void*, byte*, uint, uint, uint, int> DispatchCompute;
         // ---- v22 (M80l): 破壊への損傷 ----
         public delegate* unmanaged<void*, MyeEntityId, MyeVec3, float, float, void> ApplyFractureDamage;
+        // ---- v23 (M81f): 専用サーバのレーン状態と参加・離脱 ----
+        // ★ラッパは足さない — C# レーンはネット中は止まるので使い手が無い。位置ミラーのために並べるだけ
+        public delegate* unmanaged<void*, uint> NetLaneMask;
+        public delegate* unmanaged<void*, uint, uint> NetLaneState;
+        public delegate* unmanaged<void*, uint, ulong> NetLanePlayerId;
+        public delegate* unmanaged<void*, uint> NetSystemEventCount;
+        public delegate* unmanaged<void*, uint, MyeNetSystemEvent*, int> NetGetSystemEvent;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。

@@ -325,7 +325,8 @@ bool ManagedHost::CompileScripts(const std::wstring& scriptsDir)
     return true;
 }
 
-void ManagedHost::SetTickContext(const InputSnapshot& input, uint64_t tickIndex, float dt)
+void ManagedHost::SetTickContext(const InputSnapshot& input, uint64_t tickIndex, float dt,
+                                 uint32_t playerCount)
 {
     input_ = input;
     tickIndex_ = tickIndex;
@@ -333,6 +334,7 @@ void ManagedHost::SetTickContext(const InputSnapshot& input, uint64_t tickIndex,
     apiCtx_.input = input;
     apiCtx_.tickIndex = tickIndex;
     apiCtx_.dt = dt;
+    apiCtx_.playerCount = playerCount;
 }
 
 void ManagedHost::RunPhase(Phase phase)

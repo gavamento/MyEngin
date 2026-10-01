@@ -123,6 +123,9 @@ struct ScriptApiContext {
     // v13 (M52i): ネットセッションの状態 (EngineLoop が毎フレーム書く読み取り専用 POD)。
     // null = ネットを張っていない → Net* スロットは既定値を返す
     const NetRuntimeInfo* net = nullptr;
+    // v23 (M81f): 今 tick のレーン数 (TickContext.playerCount)。システム入力の無い構成で
+    // NetLane* が返す既定のレーン状態の元。.rep で再現する値で、NetRuntimeInfo (機種依存) とは別
+    uint32_t playerCount = 1;
     // v14 (M59k): **今 tick の**ソリッド接触列 (key 昇順)。GetContactInfo の引き先。
     // ★他の共有バッファと違い SetSharedServices で 1 回配線するのではなく、
     //   TickRunner が tick 頭で null に落とし、物理 Update の直後に繋ぎ直す。

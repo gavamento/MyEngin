@@ -1,7 +1,7 @@
 # sub-05: Server.exe の実運用ループ・Runtime の --net-connect・server_verify
 
 - 依存: sub-04
-- 状態: OK (コミット待ち)
+- 状態: OK (commit 9f0a196)
 - 往復: 1
 
 ## やること

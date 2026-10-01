@@ -325,7 +325,7 @@ void RunOneTick(TickServices& ts)
     // ---- フェーズ 3: スクリプト層 Start → Update ----
     const bool runScripts = ctx.simulateScripts && scriptHost.IsLoaded();
     if (runScripts) {
-        scriptHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt);
+        scriptHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt, ctx.playerCount);
         scriptHost.RunStartAndUpdate();
     }
     // C# スクリプト層 (別レーン): 記録/検証/ネット中は走らせない → 純 C++ 決定論を保持。
@@ -334,7 +334,7 @@ void RunOneTick(TickServices& ts)
     const bool runManaged = ctx.simulateScripts && managedHost.IsReady()
         && !Recording() && !Verifying() && !Networked() && !ts.resim;
     if (runManaged) {
-        managedHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt);
+        managedHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt, ctx.playerCount);
         managedHost.RunStartAndUpdate();
     }
     // ---- 音響 (フェーズ 3.4、M65a): スクリプト層の直後・アニメと物理の前 ----

@@ -35,7 +35,8 @@
 // v21 (M78e): Compute ABI — CreateComputeBuffer / ReleaseComputeBuffer / SetComputeBuffer /
 //             SetComputeFloat / SetComputeFloat4 / SetComputeTextureFromAsset / DispatchCompute
 // v22 (M80l): 破壊 (M80) — ApplyFractureDamage スロット + MyeScriptDesc 末尾の onBreak イベント
-#define MYE_API_VERSION 22u
+// v23 (M81f): 専用サーバのレーン状態・playerId・参加/離脱イベント (NetLaneMask 以降の 5 本)
+#define MYE_API_VERSION 23u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -101,6 +102,15 @@ struct MyeContactInfo {
     // 接触では m*g*dt になる (= 「どれだけの重さが載っているか」)。衝突の瞬間は
     // 運動量変化そのものなので、着地音の音量や破壊の閾値にそのまま使える
     float impulse;
+};
+
+// v23 (M81f) NetGetSystemEvent の出力。SystemEvent (Engine/Session/SessionTypes.h) の
+// 参加・離脱を、この tick に確定入力として適用された形で渡す
+struct MyeNetSystemEvent {
+    uint64_t eventSeq; // サーバ発行の単調増加 (1 始まり)
+    uint64_t playerId; // レーンとは別。再接続しても変わらない
+    uint32_t kind;     // 1 Join / 2 Leave / 3 Rejoin / 4 Release
+    uint32_t lane;     // 適用結果のレーン
 };
 
 struct MyeEngineApi {
@@ -654,6 +664,25 @@ struct MyeEngineApi {
     //   ないエンティティ・破断済みで資産が解決できない場合は何もしない
     void (*ApplyFractureDamage)(void* engine, MyeEntityId entity, MyeVec3 point, float radius,
                                 float amount);
+
+    // ---- v23 (M81f): 専用サーバのレーン状態と参加・離脱 ----
+    // ★v13 の Net* (表示専用・機種依存) とは別物。ここの 5 本は**確定入力 (システム入力) から導いた
+    //   sim 状態** (Scene が持つ SessionLanes、WorldHash 対象) の読み取りで、全員が同じ tick に
+    //   同じ値を読む。Update から読んで sim 状態へ書いてよい。
+    // ★非サーバ構成 (オフライン / P2P) の既定値: レーン [0, playerCount) が Connected、
+    //   playerId は全て 0、イベントは 0 件。
+    // ★自分がサーバかクライアントかを知る口は**無い** (意図的)。役割は機種依存で、sim から
+    //   読めると分岐してハッシュが割れるため。
+    // NetLaneMask: Connected のレーンのビット (bit i = レーン i)
+    uint32_t (*NetLaneMask)(void* engine);
+    // NetLaneState: 0 Empty / 1 Connected / 2 Reserved (切断後の予約中)。範囲外レーンは 0
+    uint32_t (*NetLaneState)(void* engine, uint32_t lane);
+    // NetLanePlayerId: そのレーンの playerId。Empty・範囲外・非サーバ構成は 0
+    uint64_t (*NetLanePlayerId)(void* engine, uint32_t lane);
+    // NetSystemEventCount: この tick の頭に適用された参加・離脱イベントの数 (最大 8)
+    uint32_t (*NetSystemEventCount)(void* engine);
+    // NetGetSystemEvent: index 番目 (eventSeq 昇順) を out に書いて 1。範囲外は out を 0 埋めして 0
+    int (*NetGetSystemEvent)(void* engine, uint32_t index, MyeNetSystemEvent* out);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

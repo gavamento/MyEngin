@@ -1,8 +1,8 @@
 # sub-06: ABI v23 (レーン状態・playerId・システムイベント)
 
 - 依存: sub-02 (sub-03〜05 と並列可。sub-05 の後に着手するなら C4 も課す)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (コミット待ち)
+- 往復: 1
 
 ## やること
 spec 4.2 の ABI v23 と D3 / D14。
@@ -36,5 +36,10 @@ spec 5. の **A1, A2** と **C1, C2, C3, C5, C6** (sub-05 完了後なら C4)。
 - `tools\replay_verify.bat`
 
 ## 実装メモ (coder が追記)
-
+### SELF_EVAL sub-06 (round 1)
+- 実装: EngineAPI.h (v23 / 5 スロット / MyeNetSystemEvent / 版履歴 / v13 との違いを注記)、EngineApiTable.cpp (LanesOf: systemInput!=0 なら Scene::Lanes()、無ければ DefaultLanesFor(playerCount))、EngineApiTable.h (ScriptApiContext::playerCount)、ScriptHost/ManagedHost::SetTickContext に playerCount 追加、TickRunner が ctx.playerCount を渡す、ScriptAPI.h 糖衣、Interop.cs 位置ミラー + MyeNetSystemEvent、check_rules 11-c (23 = 131)、GameLogic/Scripts/NetEventProbe.cpp、PartSelfTest (a: 既定値と SessionLanes 経由)、ServerNetSelfTest (b: probe を全 sim に付け N1 で照合)。
+- 仕様との差分: [追加] ScriptApiContext::playerCount と SetTickContext の引数 (非サーバ構成の既定値の元。spec 4.2 の「ctx.playerCount から決まる」を実現する経路)。[追加] ComputeAbiSelfTest.cpp の版固定 22 を MYE_API_VERSION 参照へ。[追加] NetEventProbe は自動では付かず selftest が名前で付ける (デモの RNG ストリームを動かさないため)。C# にラッパは足していない (C# レーンはネット中停止、v17-v19 と同じ流儀)。
+- 検証: Debug/Release ビルド OK / check_rules exit 0 / Debug・Release Editor.exe --selftest は既知 2 項目 (Source control) 以外 ALL PASS (Server/client net 含む) / replay_verify PASS / server_verify ABCD PASS (exit 0) / build_managed Release 0 エラー。ログ tmp\m81f_*。
+- 未検証: C# 側の v23 ミラーの実走 (ラッパ無し・位置ミラーのみ。check_rules 11-a/b で順序と引数個数は機械照合)。外部プロジェクト (三校 / HAL Collector) の GameLogic.dll は apiVersion 22 のため v23 では ScriptHost が拒否する = 再ビルド必須。
 ## フィードバック履歴
+- round 1: VERDICT OK (planner 2026-10-02)。A1 (v23 = 131、11-a〜d) と A2 を確認。A2 は、非サーバの既定値、SessionLanes 経由の値、N1 の全イベント種別の probe 照合、ハッシュ連動の負の対照で示されている。C1〜C4 も PASS。ScriptApiContext::playerCount の追加は、エンジン側だけで C# の構造体を変えないことを diff で確認して承認。nit: ABI bump の検証レシピにある「C# の temp プローブ実走」は省略された。新スロットは末尾追加で C# から呼ばれず、順序は 11-a/b が機械照合しているので許容する。外部プロジェクトの再ビルド必須は sub-09 の文書と台帳の申し送りへ。

@@ -968,6 +968,45 @@ inline uint64_t MyeNetRollbackCount(const MyeUpdateContext& ctx)
     return ctx.api->NetRollbackCount(ctx.api->engine);
 }
 
+// ---- v23 (M81f): レーン状態と参加・離脱 ----
+// ★上の Net* と違い**確定入力から導く sim 値**で、全員が同じ tick に同じ値を読む。
+//   sim 状態へ書いてよい。サーバかクライアントかを返す口は無い (機種依存になるため)
+enum MyeNetLaneState : uint32_t {
+    MYE_NET_LANE_EMPTY = 0,
+    MYE_NET_LANE_CONNECTED = 1,
+    MYE_NET_LANE_RESERVED = 2, // 切断後の予約中
+};
+enum MyeNetSystemEventKind : uint32_t {
+    MYE_NET_EVENT_JOIN = 1,
+    MYE_NET_EVENT_LEAVE = 2,
+    MYE_NET_EVENT_REJOIN = 3,
+    MYE_NET_EVENT_RELEASE = 4,
+};
+// Connected のレーンのビット (bit i = レーン i)。非サーバ構成は [0, playerCount) が立つ
+inline uint32_t MyeNetLaneMask(const MyeUpdateContext& ctx)
+{
+    return ctx.api->NetLaneMask(ctx.api->engine);
+}
+inline uint32_t MyeNetLaneState(const MyeUpdateContext& ctx, uint32_t lane)
+{
+    return ctx.api->NetLaneState(ctx.api->engine, lane);
+}
+// レーンの playerId。Empty・範囲外・非サーバ構成は 0
+inline uint64_t MyeNetLanePlayerId(const MyeUpdateContext& ctx, uint32_t lane)
+{
+    return ctx.api->NetLanePlayerId(ctx.api->engine, lane);
+}
+// この tick の頭に適用された参加・離脱の数
+inline uint32_t MyeNetSystemEventCount(const MyeUpdateContext& ctx)
+{
+    return ctx.api->NetSystemEventCount(ctx.api->engine);
+}
+// index 番目のイベント (eventSeq 昇順)。範囲外は false で out を 0 埋め
+inline bool MyeNetGetSystemEvent(const MyeUpdateContext& ctx, uint32_t index, MyeNetSystemEvent* out)
+{
+    return ctx.api->NetGetSystemEvent(ctx.api->engine, index, out) != 0;
+}
+
 // レーン指定のアクション/軸。**これは決定論の内側** (記録済み入力の純関数) なので
 // sim 状態へそのまま書いてよい。player は 0..kMaxPlayers-1、範囲外は 0
 inline bool MyeActionHeldFor(const MyeUpdateContext& ctx, const char* name, uint32_t player)
