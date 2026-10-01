@@ -29,6 +29,7 @@
 #include "Engine/Engine/Audio/Playback/SoundAsset.h"
 #include "Engine/Engine/HotReload/DllReloader.h"
 #include "Engine/Engine/Loop/SimInit.h"
+#include "Engine/Engine/Loop/TickInputs.h"
 #include "Engine/Engine/Loop/TickRunner.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Physics/Collider/ConvexColliderLibrary.h"
@@ -358,6 +359,7 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
             ? kMaxPlayers
             : static_cast<uint32_t>(m.config.localPlayers);
     }
+    ctx.hasSystemInput = setup.systemInput;
     m.OnStart(ctx);
     // OnStart で積まれた構造変更 (SetParent 等) を確定する (EngineLoop と同じ点)
     m.scene.GetWorld().ApplyStructuralChanges();
@@ -412,12 +414,7 @@ HeadlessVerifyResult HeadlessSim::VerifyReplay()
     // EngineLoop の verify 経路と同じ順序: 入力の置換 → RunOneTick (ハッシュ照合は RunOneTick の中)。
     // 実時間は待たない。不一致なら TickRunner が requestExit を立てる
     while (!ctx.requestExit && m.player.HasTick(ctx.tickIndex)) {
-        for (uint32_t p = 0; p < ctx.playerCount; ++p) {
-            ctx.inputs[p] = m.player.InputForTick(ctx.tickIndex, p);
-        }
-        if (ctx.hasSystemInput) {
-            ctx.systemInput = m.player.SystemInputForTick(ctx.tickIndex);
-        }
+        ApplyReplayInputs(ctx, m.player);
         RunOneTick(m.tickServices);
     }
     r.elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -428,6 +425,27 @@ HeadlessVerifyResult HeadlessSim::VerifyReplay()
     r.passed = !m.player.failed && m.exitCode == 0 && m.player.HasTick(ctx.tickIndex) == false;
     return r;
 }
+
+uint64_t HeadlessSim::RunTick(const InputSnapshot* lanes, const SystemInputTick* sys, bool resim)
+{
+    Impl& m = *impl_;
+    Activate();
+    ApplyConfirmedInputs(m.ctx, lanes, sys);
+    m.tickServices.resim = resim;
+    RunOneTick(m.tickServices);
+    m.tickServices.resim = false;
+    return WorldHash();
+}
+
+uint64_t HeadlessSim::WorldHash()
+{
+    Impl& m = *impl_;
+    return HashWorld(m.scene.GetWorld(), m.simRefs.HashSources());
+}
+
+const SimRefs& HeadlessSim::Refs() const { return impl_->simRefs; }
+uint32_t HeadlessSim::PlayerCount() const { return impl_->ctx.playerCount; }
+void HeadlessSim::SetPokeTick(int64_t tick) { impl_->config.netPokeTick = tick; }
 
 uint64_t HeadlessSim::TickIndex() const { return impl_->ctx.tickIndex; }
 const std::wstring& HeadlessSim::AssetsRoot() const { return impl_->assetsRoot; }

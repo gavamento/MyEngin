@@ -444,6 +444,15 @@
     <ClCompile Include="..\src\Engine\Engine\Modal\Voxelizer.cpp">
       <Filter>Engine\Modal</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Net\ClientSession.cpp">
+      <Filter>Engine\Net</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Net\ClientSimRunner.cpp">
+      <Filter>Engine\Net</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Net\NetProtocol.cpp">
+      <Filter>Engine\Net</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Net\NetRollback.cpp">
       <Filter>Engine\Net</Filter>
     </ClCompile>
@@ -451,6 +460,12 @@
       <Filter>Engine\Net</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Net\NetSession.cpp">
+      <Filter>Engine\Net</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Net\ServerNetSelfTest.cpp">
+      <Filter>Engine\Net</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Net\ServerSession.cpp">
       <Filter>Engine\Net</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Particles\CpuParticleBackend.cpp">
@@ -1188,6 +1203,9 @@
     <ClInclude Include="..\src\Engine\Engine\Loop\SimInit.h">
       <Filter>Engine\Loop</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Loop\TickInputs.h">
+      <Filter>Engine\Loop</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Loop\TickRunner.h">
       <Filter>Engine\Loop</Filter>
     </ClInclude>
@@ -1218,6 +1236,15 @@
     <ClInclude Include="..\src\Engine\Engine\Modal\Voxelizer.h">
       <Filter>Engine\Modal</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Net\ClientSession.h">
+      <Filter>Engine\Net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Net\ClientSimRunner.h">
+      <Filter>Engine\Net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Net\NetProtocol.h">
+      <Filter>Engine\Net</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Net\NetRollback.h">
       <Filter>Engine\Net</Filter>
     </ClInclude>
@@ -1228,6 +1255,12 @@
       <Filter>Engine\Net</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Net\NetSession.h">
+      <Filter>Engine\Net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Net\ServerNetSelfTest.h">
+      <Filter>Engine\Net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Net\ServerSession.h">
       <Filter>Engine\Net</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Particles\CpuParticleBackend.h">

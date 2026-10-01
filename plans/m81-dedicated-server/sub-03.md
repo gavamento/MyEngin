@@ -1,7 +1,7 @@
 # sub-03: 出自情報 (engine/game/content) と NetIdentity の統合
 
 - 依存: sub-02
-- 状態: OK (コミット待ち)
+- 状態: OK (commit a26e245)
 - 往復: 2
 
 ## やること

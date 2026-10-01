@@ -60,6 +60,7 @@
 #include "Engine/Engine/Animation/PartFollowSystem.h"
 #include "Engine/Engine/Animation/SkinningSystem.h"
 #include "Engine/Engine/Loop/SimInit.h"
+#include "Engine/Engine/Loop/TickInputs.h"
 #include "Engine/Engine/Loop/TickRunner.h"
 #include "Engine/Engine/Scene/TransformSystem.h"
 #include "Engine/Engine/UI/UILayout.h" // ワールド追従 UI の射影コンテキスト
@@ -674,13 +675,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // ★撮影点は startWorldHash を撮ったのと**同じ点** (OnStart + 構造変更適用の直後)。
         //   ここが「tick startTick が走る前」の状態 = 最初の巻き戻し先になる
         if (!netFailed && config.netRollback) {
-            netRollbackActive = netRb.Begin(simRefs, ctx.tickIndex);
+            netRollbackActive = netRb.Begin(simRefs, ctx.tickIndex, kNetMaxSpeculation);
         }
         if (!netFailed) {
             MYE_LOG_INFO("[net] lockstep ready: local lane %u of %u, input delay %u ticks, "
                          "rollback %s (max %u ticks ahead)",
                          net.LocalPlayerIndex(), ctx.playerCount, ncfg.inputDelay,
-                         netRollbackActive ? "on" : "off", kNetMaxSpeculation);
+                         netRollbackActive ? "on" : "off", netRb.MaxSpeculation());
         }
         netInfo.active = true;
         netInfo.rollbackEnabled = netRollbackActive;
@@ -1212,6 +1213,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         for (uint32_t p = 0; p < kMaxPlayers; ++p) {
             savedInputs[p] = ctx.inputs[p];
         }
+        const SystemInputTick savedSystemInput = ctx.systemInput;
         IEngineApp* const savedApp = tickServices.app;
         PrevWorldStore* const savedPrev = tickServices.prevWorld;
         tickServices.app = nullptr;       // エディタ更新は回さない
@@ -1221,6 +1223,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         for (uint64_t t = from; t < resume; ++t) {
             const NetSpecTick* e = netRb.Entry(t);
             const bool predicted = BuildNetInputs(t, ctx.inputs);
+            // システム入力を持つ構成では、tick ごとに**その tick の記録値**へ差し替える。
+            // 差し替えないと、復元後の lastEventSeq に対して古い値が別の tick で適用される
+            if (ctx.hasSystemInput) {
+                ctx.systemInput = (e != nullptr && e->hasSys) ? e->sys : SystemInputTick{};
+            }
             // ポーズ tick も忠実になぞる (飛ばすと prevTickInput が食い違う)
             ctx.simulateScripts = (e != nullptr) ? e->simulated : savedSimulate;
             crashRing.OnTickBegin(t, ctx.inputs, ctx.playerCount,
@@ -1229,7 +1236,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             const uint64_t h = TickEndHash();
             crashRing.OnTickEnd(simRefs, t, h);
             netRb.OnTickEnd(simRefs, t, ctx.inputs, ctx.playerCount, h, predicted,
-                            ctx.simulateScripts);
+                            ctx.simulateScripts, ctx.hasSystemInput ? &ctx.systemInput : nullptr);
         }
         tickServices.app = savedApp;
         tickServices.prevWorld = savedPrev;
@@ -1238,6 +1245,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         for (uint32_t p = 0; p < kMaxPlayers; ++p) {
             ctx.inputs[p] = savedInputs[p];
         }
+        ctx.systemInput = savedSystemInput;
         audioSystem.SetSuspended(recorder.IsActive() || player.IsActive());
         return resume - from;
     };
@@ -1575,7 +1583,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         //   巻き戻しても相手はついてこないので、スクラブは原理的に成立しない。
         //   同じ tick 境界を 2 種類の巻き戻し (シークとロールバック) が奪い合う状態も
         //   作らずに済む — この排他は「機能の削り」ではなく意味論の帰結
-        if (timeTravel.BeginPending() && !recorder.IsActive() && !verifying && !netEnabled) {
+        // M81d: システム入力 (hasSystemInput) を持つ構成でも起こさない — リングの再シムは
+        // tick ごとの SystemInputTick を持たないので、シークすると lanes が食い違う。
+        // サーバ/クライアント構成のタイムトラベルは M81 の範囲外
+        if (timeTravel.BeginPending() && !recorder.IsActive() && !verifying && !netEnabled
+            && !ctx.hasSystemInput) {
             scene.GetWorld().ApplyStructuralChanges(); // 撮影点の前提 (構造変更が空)
             timeTravel.Begin(simRefs, ctx.tickIndex);
         }
@@ -1643,7 +1655,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 return true;
             }
             if (netRollbackActive && tick >= netRb.ConfirmedTick()
-                && tick - netRb.ConfirmedTick() >= kNetMaxSpeculation) {
+                && tick - netRb.ConfirmedTick() >= netRb.MaxSpeculation()) {
                 const double t0 = clock.Now();
                 const bool got = net.WaitForInputs(netRb.ConfirmedTick(), kNetStallWaitMs);
                 net.NoteStall((clock.Now() - t0) * 1000.0);
@@ -1659,7 +1671,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             //   ロールバックが本当に効いているのかも分からなくなる。
             //   上限まで先行したら、そこから先は M52h と同じく待つ
             if (netRollbackActive && (tick < netRb.ConfirmedTick()
-                || tick - netRb.ConfirmedTick() < kNetMaxSpeculation)) {
+                || tick - netRb.ConfirmedTick() < netRb.MaxSpeculation())) {
                 return true;
             }
             const double t0 = clock.Now();
@@ -1692,14 +1704,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 (void)forked; // M72d: 分岐のゴーストを焼く
             }
             if (verifying) {
-                // フェーズ 1 の入力をレーンごと置換する
-                for (uint32_t p = 0; p < ctx.playerCount; ++p) {
-                    ctx.inputs[p] = player.InputForTick(ctx.tickIndex, p);
-                }
-                // M81b: システム入力もレーン入力と同じ場所・同じ時点で置換する
-                if (ctx.hasSystemInput) {
-                    ctx.systemInput = player.SystemInputForTick(ctx.tickIndex);
-                }
+                // フェーズ 1 の入力をレーンごと置換する。M81b: システム入力もレーン入力と
+                // 同じ場所・同じ時点で置換する (HeadlessSim の verify と同じ関数)
+                ApplyReplayInputs(ctx, player);
             } else if (netEnabled && net.Running()) {
                 // ネットの確定入力で全レーンを置換する。**verify の置換と同じ場所**に
                 // 置いてあるので、この tick が消費した列がそのまま .rep に載る
@@ -1710,10 +1717,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     // M52i: 未着レーンは予測で埋める (そろっていれば確定値がそのまま入る)
                     netTickPredicted = BuildNetInputs(ctx.tickIndex, ctx.inputs);
                 } else {
-                    const InputSnapshot* lanes = net.InputsFor(ctx.tickIndex);
-                    for (uint32_t p = 0; p < ctx.playerCount; ++p) {
-                        ctx.inputs[p] = lanes[p];
-                    }
+                    ApplyConfirmedInputs(ctx, net.InputsFor(ctx.tickIndex), nullptr);
                 }
             } else if (config.synthInput) {
                 // 合成入力 (M52g、--synth-input)。**verify の置換と同じ場所**に置くのが要点 —
@@ -1799,7 +1803,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     // ★ここでは .rep へ書かない / 相手へハッシュを主張しない —
                     //   この tick はまだ覆りうる。確定は NetCommitConfirmed の仕事
                     netRb.OnTickEnd(simRefs, ranTick, ctx.inputs, ctx.playerCount, tickHash,
-                                    netTickPredicted, ctx.simulateScripts);
+                                    netTickPredicted, ctx.simulateScripts,
+                                    ctx.hasSystemInput ? &ctx.systemInput : nullptr);
                     if (!netRb.Active()) {
                         MYE_LOG_ERROR("[net] rollback ring failed at tick %llu - exiting",
                                       static_cast<unsigned long long>(ranTick));

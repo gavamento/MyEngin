@@ -15,16 +15,14 @@ namespace {
 
 constexpr uint64_t kNoTick = ~0ull;
 
-size_t RingIndex(uint64_t tick)
-{
-    return static_cast<size_t>(tick % kNetSpecRing);
-}
-
 } // namespace
 
-bool NetRollback::Begin(const SimRefs& refs, uint64_t startTick)
+bool NetRollback::Begin(const SimRefs& refs, uint64_t startTick, uint32_t maxSpeculation)
 {
     Clear();
+    maxSpec_ = (maxSpeculation < 1) ? 1u
+        : ((maxSpeculation > kNetMaxSpeculationLimit) ? kNetMaxSpeculationLimit : maxSpeculation);
+    ringSize_ = maxSpec_ + 4;
     if (!TakeSnapshot(refs, startTick)) {
         MYE_LOG_ERROR("[net] rollback: could not capture the starting snapshot - "
                       "falling back to plain lockstep");
@@ -41,7 +39,7 @@ void NetRollback::Clear()
     confirmed_ = 0;
     rollbacks_ = rollbackTicks_ = maxDepth_ = predictedTicks_ = 0;
     snapBytes_ = 0;
-    for (uint32_t i = 0; i < kNetSpecRing; ++i) {
+    for (uint32_t i = 0; i < kNetSpecRingMax; ++i) {
         snaps_[i].tick = kNoTick;
         snaps_[i].blob.clear();
         specValid_[i] = false;
@@ -73,7 +71,7 @@ bool NetRollback::TakeSnapshot(const SimRefs& refs, uint64_t tick)
 
 void NetRollback::OnTickEnd(const SimRefs& refs, uint64_t ranTick, const InputSnapshot* inputs,
                             uint32_t playerCount, uint64_t hashAfter, bool predicted,
-                            bool simulated)
+                            bool simulated, const SystemInputTick* sys)
 {
     if (!active_) {
         return;
@@ -90,6 +88,10 @@ void NetRollback::OnTickEnd(const SimRefs& refs, uint64_t ranTick, const InputSn
     e.hashAfter = hashAfter;
     e.predicted = predicted;
     e.simulated = simulated;
+    if (sys != nullptr) {
+        e.sys = NormalizeSystemInput(*sys);
+        e.hasSys = true;
+    }
     specTick_[i] = ranTick;
     specValid_[i] = true;
     if (predicted) {
@@ -129,6 +131,16 @@ bool NetRollback::InputsMatch(uint64_t tick, const InputSnapshot* lanes,
     //   .rep はこの生バイトをそのまま書いて 2 プロセス間でバイト比較している
     //   (--rep-diff) ので、ここで memcmp を使うのは既存の不変量と同じ土俵
     return std::memcmp(e->inputs, lanes, sizeof(InputSnapshot) * n) == 0;
+}
+
+bool NetRollback::SystemMatch(uint64_t tick, const SystemInputTick& sys) const
+{
+    const NetSpecTick* e = Entry(tick);
+    if (e == nullptr) {
+        return false;
+    }
+    const SystemInputTick norm = NormalizeSystemInput(sys);
+    return std::memcmp(&e->sys, &norm, sizeof(SystemInputTick)) == 0;
 }
 
 const std::vector<std::byte>* NetRollback::SnapshotBefore(uint64_t tick) const

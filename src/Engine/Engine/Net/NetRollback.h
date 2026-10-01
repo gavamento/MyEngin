@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "Engine/Engine/Replay/SimSnapshot.h"
+#include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Platform/Input.h"
 
 namespace mye {
@@ -32,10 +33,16 @@ struct HashDump;
 //   RunOneTick 直後だけだから (World::SnapshotWrite の MYE_CHECK)。
 
 // 予測で先行できる上限 tick 数。超えたら stall する (= M52h の挙動へ落ちる)。
-// 8 tick = 133ms。これ以上先行すると「巻き戻ったときの見た目の飛び」が実用にならない
+// 8 tick = 133ms。これ以上先行すると「巻き戻ったときの見た目の飛び」が実用にならない。
+// これは P2P の値 (既定)。サーバ/クライアント構成は RTT + 締め切りぶん余計に先行するので
+// kNetMaxSpeculationClient (12 tick = 200ms) を Begin へ渡す
 inline constexpr uint32_t kNetMaxSpeculation = 8;
-// リングの実長。[confirmed, current] の最大 kNetMaxSpeculation+1 本を常に保持できること
+inline constexpr uint32_t kNetMaxSpeculationClient = 12;
+// 実行時に選べる上限の最大値。リングの配列はこの値でコンパイル時に確保する
+inline constexpr uint32_t kNetMaxSpeculationLimit = 16;
+// リングの実長 (既定 = P2P)。[confirmed, current] の最大 maxSpeculation+1 本を常に保持できること
 inline constexpr uint32_t kNetSpecRing = kNetMaxSpeculation + 4;
+inline constexpr uint32_t kNetSpecRingMax = kNetMaxSpeculationLimit + 4;
 // 確定ハッシュの保持長 (desync 照合用)。相手の確定点はネットワーク遅延ぶん遅れて届く
 inline constexpr uint32_t kNetHashRing = 256;
 
@@ -44,26 +51,37 @@ struct NetSpecTick {
     InputSnapshot inputs[kMaxPlayers] = {}; // その tick が実際に消費した入力
     uint64_t hashAfter = 0;                 // tick 末のワールドハッシュ
     bool predicted = false;                 // 未確定レーンを予測で埋めて走った
+    // サーバ/クライアント構成のシステム入力 (参加・離脱)。再シムは tick ごとにこの記録値へ
+    // ctx.systemInput を差し替える (差し替えないと、復元後の lastEventSeq に対して古い値が別の tick で適用される)
+    SystemInputTick sys = {};
+    bool hasSys = false;
     // その tick で sim を進めたか (ポーズ tick も prevTickInput を動かすので飛ばせない)
     bool simulated = true;
 };
 
 class NetRollback {
 public:
-    // startTick が走る**前**の状態を 1 枚撮って開始する。撮影に失敗したら無効のまま
-    bool Begin(const SimRefs& refs, uint64_t startTick);
+    // startTick が走る**前**の状態を 1 枚撮って開始する。撮影に失敗したら無効のまま。
+    // maxSpeculation = 予測で先行できる tick 数 (1..kNetMaxSpeculationLimit。範囲外は丸める)
+    bool Begin(const SimRefs& refs, uint64_t startTick,
+               uint32_t maxSpeculation = kNetMaxSpeculation);
     void Clear();
     bool Active() const { return active_; }
+    uint32_t MaxSpeculation() const { return maxSpec_; }
 
-    // tick が走り切った直後に呼ぶ。投機記録を残し、「次 tick が走る前」を 1 枚撮る
+    // tick が走り切った直後に呼ぶ。投機記録を残し、「次 tick が走る前」を 1 枚撮る。
+    // sys = その tick が消費したシステム入力 (システム入力を持つ構成だけ。null は持たない)
     void OnTickEnd(const SimRefs& refs, uint64_t ranTick, const InputSnapshot* inputs,
-                   uint32_t playerCount, uint64_t hashAfter, bool predicted, bool simulated);
+                   uint32_t playerCount, uint64_t hashAfter, bool predicted, bool simulated,
+                   const SystemInputTick* sys = nullptr);
 
     const NetSpecTick* Entry(uint64_t tick) const;
     // 予測フラグを下ろす (届いた確定値が予測と一致した = もう巻き戻す理由が無い)
     void MarkConfirmed(uint64_t tick);
     // 記録済みの入力と lanes が **バイト一致**するか (playerCount 本だけ見る)
     bool InputsMatch(uint64_t tick, const InputSnapshot* lanes, uint32_t playerCount) const;
+    // 記録済みのシステム入力と **バイト一致**するか (正規化済みの値同士を比べる)
+    bool SystemMatch(uint64_t tick, const SystemInputTick& sys) const;
 
     // 「tick が走る前」の状態 blob (無ければ nullptr)
     const std::vector<std::byte>* SnapshotBefore(uint64_t tick) const;
@@ -91,8 +109,11 @@ private:
     };
 
     bool TakeSnapshot(const SimRefs& refs, uint64_t tick);
+    size_t RingIndex(uint64_t tick) const { return static_cast<size_t>(tick % ringSize_); }
 
     bool active_ = false;
+    uint32_t maxSpec_ = kNetMaxSpeculation;
+    uint32_t ringSize_ = kNetSpecRing; // maxSpec_ + 4 (剰余の法。P2P は従来どおり 12)
     uint64_t confirmed_ = 0;
     uint64_t rollbacks_ = 0;
     uint64_t rollbackTicks_ = 0;
@@ -100,10 +121,10 @@ private:
     uint64_t predictedTicks_ = 0;
     size_t snapBytes_ = 0;
 
-    Slot snaps_[kNetSpecRing];
-    NetSpecTick spec_[kNetSpecRing];
-    uint64_t specTick_[kNetSpecRing] = {};
-    bool specValid_[kNetSpecRing] = {};
+    Slot snaps_[kNetSpecRingMax];
+    NetSpecTick spec_[kNetSpecRingMax];
+    uint64_t specTick_[kNetSpecRingMax] = {};
+    bool specValid_[kNetSpecRingMax] = {};
 
     uint64_t hashTick_[kNetHashRing] = {};
     uint64_t hashValue_[kNetHashRing] = {}; // 0 = 空き (Replay.h と同じ予約)

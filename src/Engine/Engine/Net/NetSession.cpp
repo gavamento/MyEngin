@@ -64,16 +64,18 @@ const char* NetRejectName(NetReject r)
         return "GameLogic.dll differs (--allow-game-mismatch downgrades this to a warning)";
     case NetReject::ContentHash:
         return "assets content (a scene / prefab / config file differs; images, shaders, audio are ignored)";
+    case NetReject::ServerFull: return "the server is full (no free player lane)";
+    case NetReject::PlayerRejected: return "the hosting provider rejected this player session";
+    case NetReject::UnknownPlayer:
+        return "no reserved lane for this player (wrong playerId / player session ID, or the reservation expired)";
     }
     return "?";
 }
 
-NetReject CompareNetIdentity(const NetIdentity& a, const NetIdentity& b)
+NetReject NetRejectFromProvenance(ProvenanceMismatch m)
 {
-    // 出自の項目は CompareProvenance が正本 (ここで項目を二重に持たない)
-    const bool allowGame = (a.configBits & kNetCfgAllowGameMismatch) != 0;
-    switch (CompareProvenance(a.prov, b.prov, allowGame)) {
-    case ProvenanceMismatch::None: break;
+    switch (m) {
+    case ProvenanceMismatch::None: return NetReject::None;
     case ProvenanceMismatch::ProtocolVersion: return NetReject::Proto;
     case ProvenanceMismatch::ApiVersion: return NetReject::ApiVersion;
     case ProvenanceMismatch::ReplayVersion: return NetReject::RepVersion;
@@ -82,6 +84,17 @@ NetReject CompareNetIdentity(const NetIdentity& a, const NetIdentity& b)
     case ProvenanceMismatch::GameVersion: return NetReject::GameVersion;
     case ProvenanceMismatch::ContentHash: return NetReject::ContentHash;
     case ProvenanceMismatch::InitialSnapshot: return NetReject::WorldHash;
+    }
+    return NetReject::Proto;
+}
+
+NetReject CompareNetIdentity(const NetIdentity& a, const NetIdentity& b)
+{
+    // 出自の項目は CompareProvenance が正本 (ここで項目を二重に持たない)
+    const bool allowGame = (a.configBits & kNetCfgAllowGameMismatch) != 0;
+    const NetReject fromProv = NetRejectFromProvenance(CompareProvenance(a.prov, b.prov, allowGame));
+    if (fromProv != NetReject::None) {
+        return fromProv;
     }
     if (a.playerCount != b.playerCount) return NetReject::PlayerCount;
     if (a.inputDelay != b.inputDelay) return NetReject::InputDelay;

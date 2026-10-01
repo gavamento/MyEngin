@@ -25,6 +25,10 @@ sub-04 のプロトコルを実プロセスへ配線し、プロセス間で検�
    - サーバ .rep を Debug / Release の `Server.exe --replay-verify` と `Runtime.exe --replay-verify --warp --no-audio` で再生して全 tick 一致。
 4. CI: server_verify を既存 CI 定義に**任意ジョブ** (失敗しても全体を落とさない) として足すかは、既存の CI 定義の流儀を見て判断し SELF_EVAL に書く (spec R-3)。
 
+5. (sub-04 VERDICT から) **EngineLoop のクライアント経路は `Net\ClientSimRunner` のフック (runTick / worldHash / liveInput / onCommitted) で繋ぐ**。EngineLoop に P2P の lambda (NetReconcile 等) と同方式のクライアント版をもう 1 本書かない (二重実装を 3 本目にしない)。P2P の lambda はそのままでよい。サーバは `ServerSession.h` 冒頭の順序 (OnPacket* → TryConfirm → RunTick → OnTickRan → .rep 記録 → Pump) を守る。
+6. (sub-04 VERDICT should、spec D12 の改定) クライアント予測の改善: 予測は「最新の確定値の繰り返し。ただし chars / charCount / wheelDelta は 0」にする (mouseDeltaX/Y は繰り返す)。サーバの代替入力 (SubstituteLateInput、消費型を全部 0) とは別の関数にする — 予測は確定値に入らず sim の正しさに関係しないので、当たりやすさだけで決めてよい。R1 のケースで巻き戻し回数・再シム tick 数を変更前後で SELF_EVAL に並べる。
+7. (sub-04 申し送り) EngineLoop の NetResimFrom の SystemInputTick 差し替えは sub-04 では EngineLoop 上で実走していない。R1 のロスありケースでクライアントが巻き戻しを起こし、その区間に参加・離脱が入ることをログで示す。
+
 ## やらないこと (このサブでは)
 - GameLift (sub-07)
 - NetWindow の UI (sub-09)

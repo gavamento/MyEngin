@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "Engine/Core/Util/Random.h"
+#include "Engine/Engine/Session/Provenance.h"
 #include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/Platform/Net/UdpSocket.h"
@@ -52,7 +53,9 @@ inline constexpr uint64_t kNetHashCheckpoint = 8;
 // 受け取った checkpoint ハッシュの保持数 (8 tick 刻み x 64 = 512 tick ぶん)
 inline constexpr uint32_t kNetPeerHashRing = 64;
 
-enum class NetRole : int { None = 0, Host = 1, Join = 2 };
+// Host / Join = P2P (2 人)。Server / Client = 入力確定型の専用サーバ構成 (M81、ServerSession / ClientSession)。
+// 数値は Session/SessionTypes.h の SessionRole と同じ
+enum class NetRole : int { None = 0, Host = 1, Join = 2, Server = 3, Client = 4 };
 
 enum class NetState : int {
     Idle,       // 未開始
@@ -138,9 +141,16 @@ enum class NetReject : uint32_t {
     EngineVersion, // エンジンのビルド (git 記述子)
     GameVersion,   // GameLogic.dll のバイト列
     ContentHash,   // assets の中身 (描画・音声専用の拡張子を除く)
+    // M81d。サーバ構成 (ServerSession) の拒否理由。同じく末尾に足す
+    ServerFull,     // 満員 (空きレーンが無い)
+    PlayerRejected, // ホスティングの検証 (player session ID) が通らない
+    UnknownPlayer,  // 再接続の主張 (playerId) に合う予約レーンが無い / player session ID が違う
 };
 
 const char* NetRejectName(NetReject r);
+
+// 出自の食い違い項目 → 拒否理由 (P2P のハンドシェイクとサーバ構成の Hello が共有する)
+NetReject NetRejectFromProvenance(ProvenanceMismatch m);
 
 // 指紋の照合。**最初に食い違ったものを返す** (全部並べるより原因が 1 行で読める)。
 // 出自の項目は CompareProvenance に委ねる。a を自分側として読み、a.configBits の
@@ -148,7 +158,12 @@ const char* NetRejectName(NetReject r);
 NetReject CompareNetIdentity(const NetIdentity& a, const NetIdentity& b);
 
 // ---- パケット (リトルエンディアン固定・無変換) ----
-enum class NetMsg : uint16_t { Join = 1, Accept = 2, Reject = 3, Input = 4, Bye = 5 };
+// Join..Bye は P2P。Hello 以降は入力確定型のサーバ構成 (M81d、NetProtocol.h)。既存値は動かさない
+enum class NetMsg : uint16_t {
+    Join = 1, Accept = 2, Reject = 3, Input = 4, Bye = 5,
+    Hello = 6, Welcome = 7, ClientInput = 8, Confirmed = 9,
+    SnapshotChunk = 10, SnapshotAck = 11, ResyncRequest = 12,
+};
 
 struct NetPacketHeader {
     uint32_t magic = kNetMagic;

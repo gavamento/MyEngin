@@ -10,6 +10,7 @@
 
 #include "Engine/Engine/Demo/StartScene.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Session/SessionTypes.h"
 
 namespace mye {
@@ -19,6 +20,9 @@ struct HeadlessSimSetup {
     // useSimCache / localPlayers / replayVerifyPath など。クックキャッシュは常に切る (下の注記)
     EngineConfig config;
     StartSceneOptions scene;
+    // true: サーバ / クライアントのセッションとして動かす。RunTick へ渡すシステム入力
+    // (参加・離脱) を tick ごとに適用し、SessionLanes を sim 状態に持つ (ctx.hasSystemInput)
+    bool systemInput = false;
 };
 
 struct HeadlessVerifyResult {
@@ -58,6 +62,19 @@ public:
     // setup.config.replayVerifyPath の .rep を読み込み、全 tick を照合する。
     // 不一致なら <rep>.tickN.actual.dump と <rep>.mismatch.txt を残して打ち切る (TickRunner の経路)
     HeadlessVerifyResult VerifyReplay();
+
+    // ---- 確定入力で 1 tick ずつ進める (サーバ / クライアントの確定 tick と再シム) ----
+    // lanes (PlayerCount() 本) と sys を ctx へ置換して RunOneTick を 1 回回し、tick 末のワールドハッシュを
+    // 返す。置換は EngineLoop の verify と同じ ApplyConfirmedInputs。resim = ロールバックの再シム
+    // (TickServices::resim)。複数インスタンスを交互に回すので、内部で Activate() する
+    uint64_t RunTick(const InputSnapshot* lanes, const SystemInputTick* sys, bool resim);
+    // いまの sim 状態のワールドハッシュ (tick 末ハッシュと同じ束)
+    uint64_t WorldHash();
+    // スナップショットの撮影 / 復元に使う参照束 (NetRollback / RestoreSimSnapshot 用)
+    const SimRefs& Refs() const;
+    uint32_t PlayerCount() const;
+    // --net-poke-tick と同じ意図的な状態破壊 (desync 検出の検証用。-1 = 無効)
+    void SetPokeTick(int64_t tick);
 
     uint64_t TickIndex() const;
     const std::wstring& AssetsRoot() const;
