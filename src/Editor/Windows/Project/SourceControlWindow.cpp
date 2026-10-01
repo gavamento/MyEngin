@@ -244,6 +244,14 @@ void SourceControlWindow::OnImGui(SourceControlSession& scm, const SourceControl
         return;
     }
 
+    if (scm.SetupAvailable()) {
+        if (ImGui::Button(Tr(StrId::Scm_SetupSettings))) {
+            setupOpen_ = true;
+            setupLoaded_ = false;
+            scm.RequestSetup();
+        }
+        DrawSetup(scm, host);
+    }
     const Unavailable state = scm.State();
     if (state != Unavailable::None) {
         // 「使えない」を 1 つの文言に潰さない — 理由ごとにユーザーがすべきことが違う
@@ -280,6 +288,102 @@ void SourceControlWindow::OnImGui(SourceControlSession& scm, const SourceControl
         ImGui::EndTabBar();
         DrawBranchDialog(scm, host);
     }
+    ImGui::End();
+}
+
+void SourceControlWindow::DrawSetup(SourceControlSession& scm, const SourceControlHost& host)
+{
+    if (!setupOpen_) { return; }
+    ImGui::SetNextWindowSize(ImVec2(600.0f, 540.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin(Tr(StrId::Scm_SetupWindow), &setupOpen_)) { ImGui::End(); return; }
+    const auto& info = scm.SetupInfo();
+    const std::string root = info.value("root", std::string());
+    if (root != setupRoot_) { setupLoaded_ = false; setupRoot_ = root; setupConfirm_ = false; }
+    if (!setupLoaded_ && !scm.SetupBusy() && info.contains("root")) {
+        std::snprintf(setupName_, sizeof(setupName_), "%s", info.value("name", std::string()).c_str());
+        std::snprintf(setupEmail_, sizeof(setupEmail_), "%s", info.value("email", std::string()).c_str());
+        std::snprintf(setupUrl_, sizeof(setupUrl_), "%s", info.value("origin", std::string()).c_str());
+        setupAccount_ = info.value("account", std::string());
+        setupLoaded_ = true;
+    }
+    ImGui::TextWrapped("%s", info.value("root", std::string()).c_str());
+    ImGui::Text("Git: %s", info.value("git", std::string()).c_str());
+    ImGui::Text("GCM: %s", info.value("gcm", std::string()).c_str());
+    if (info.contains("gcm") && info.value("gcm", std::string()).empty()) {
+        ImGui::TextWrapped("%s", Tr(StrId::Scm_SetupGcmMissing));
+    }
+    ImGui::TextWrapped("%s", Tr(StrId::Scm_SetupReadHint));
+    bool blocked = !scm.SetupAvailable() || scm.WriteInFlight() || scm.SetupBusy();
+    for (const auto blocker : host.writeBlockers) {
+        if (blocker == GateBlocker::Playing || blocker == GateBlocker::NetActive
+            || blocker == GateBlocker::BuildRunning || blocker == GateBlocker::ScriptBuildRunning
+            || blocker == GateBlocker::MergeInProgress) { blocked = true; }
+    }
+    if (scm.SetupBusy()) {
+        ImGui::TextWrapped("%s", Tr(StrId::Scm_SetupWaiting));
+        if (ImGui::Button(Tr(StrId::Scm_SetupCancel))) { scm.CancelSetup(); }
+    }
+    ImGui::BeginDisabled(blocked);
+    if (ImGui::Button(Tr(StrId::Scm_SetupRefresh))) { setupLoaded_ = false; scm.RequestSetup(); }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(info.value("gcm", std::string()).empty());
+    if (ImGui::Button(Tr(StrId::Scm_SetupLogin))) { scm.RunSetup(collabop::kGithubLogin, {}); }
+    ImGui::EndDisabled();
+    if (scm.State() == Unavailable::NotRepo) {
+        ImGui::InputText(Tr(StrId::Scm_SetupBranch), setupBranch_, sizeof(setupBranch_));
+        if (ImGui::Button(Tr(StrId::Scm_SetupInit))) { setupConfirm_ = true; setupInit_ = true; }
+    } else {
+        ImGui::Separator();
+        ImGui::TextWrapped("%s", Tr(StrId::Scm_SetupLocal));
+        ImGui::InputText(Tr(StrId::Scm_SetupName), setupName_, sizeof(setupName_));
+        ImGui::InputText(Tr(StrId::Scm_SetupEmail), setupEmail_, sizeof(setupEmail_));
+        if (ImGui::BeginCombo(Tr(StrId::Scm_SetupAccount), setupAccount_.c_str())) {
+            for (const auto& entry : info.value("accounts", nlohmann::json::array())) {
+                const std::string account = entry.get<std::string>();
+                if (ImGui::Selectable(account.c_str(), account == setupAccount_)) { setupAccount_ = account; }
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::Button(Tr(StrId::Scm_SetupSaveIdentity))) {
+            scm.RunSetup(collabop::kIdentitySave, {{"name", setupName_}, {"email", setupEmail_}, {"account", setupAccount_}});
+        }
+        ImGui::Separator();
+        ImGui::TextWrapped("origin: %s", info.value("origin", std::string()).c_str());
+        ImGui::InputText(Tr(StrId::Scm_SetupUrl), setupUrl_, sizeof(setupUrl_));
+        const bool pushUrl = !info.value("pushUrl", std::string()).empty();
+        if (pushUrl) { ImGui::TextWrapped("%s", Tr(StrId::Scm_SetupPushUrl)); }
+        ImGui::BeginDisabled(pushUrl);
+        if (ImGui::Button(Tr(StrId::Scm_SetupConnect))) { setupConfirm_ = true; setupInit_ = false; }
+        ImGui::EndDisabled();
+        if (host.gitignoreMissing) {
+            const auto missing = host.gitignoreMissing();
+            if (!missing.empty()) {
+                ImGui::Separator();
+                for (const auto& line : missing) { ImGui::TextUnformatted(line.c_str()); }
+                if (ImGui::Button(Tr(StrId::Scm_ApplyGitignore)) && host.applyGitignore) { host.applyGitignore(); }
+            }
+        }
+    }
+    if (setupConfirm_) { ImGui::OpenPopup(Tr(StrId::Scm_SetupConfirm)); }
+    if (ImGui::BeginPopupModal(Tr(StrId::Scm_SetupConfirm), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("%s", info.value("root", std::string()).c_str());
+        if (setupInit_) { ImGui::TextUnformatted(setupBranch_); }
+        else {
+            ImGui::TextWrapped("origin: %s", info.value("origin", std::string()).c_str());
+            ImGui::TextWrapped("-> %s", setupUrl_);
+        }
+        if (ImGui::Button(Tr(StrId::Scm_SetupApply))) {
+            if (setupInit_) { scm.RunSetup(collabop::kRepoInit, {{"branch", setupBranch_}}); }
+            else { scm.RunSetup(collabop::kRemoteConnect, {{"url", setupUrl_}, {"expectedOrigin", info.value("origin", std::string())}}); }
+            setupConfirm_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(Tr(StrId::Scm_SetupCancel))) { setupConfirm_ = false; ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+    ImGui::EndDisabled();
+    if (!scm.SetupMessage().empty()) { ImGui::TextWrapped("%s", scm.SetupMessage().c_str()); }
     ImGui::End();
 }
 

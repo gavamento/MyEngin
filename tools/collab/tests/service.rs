@@ -34,10 +34,10 @@ fn echo_dispatcher(_state: &mut State, op: &str, args: &Value) -> Result<Value, 
 }
 
 #[test]
-fn proto_version_is_one() {
+fn proto_version_is_two() {
     // C++ の kCollabProtoVersion と対。値を変えるときは
     // src\Editor\SourceControl\CollabProtocol.h と**同時に**変えること
-    assert_eq!(PROTO_VERSION, 1);
+    assert_eq!(PROTO_VERSION, 2);
 }
 
 #[test]

@@ -346,6 +346,9 @@ void SourceControlSession::Start(const std::wstring& exeDir, const std::wstring&
     started_ = true;
     autoFetch_ = autoFetch;
     fetchIntervalMin_ = fetchIntervalMin;
+    setupInfo_ = nlohmann::json::object();
+    setupBusy_ = false;
+    setupMessage_.clear();
     projectRoot_ = projectRoot;
     if (projectRoot_.empty()) {
         // 裸起動。**DLL のロードすらしない** — プロジェクトが無ければ
@@ -1030,6 +1033,49 @@ void SourceControlSession::ExecuteAction(uint64_t token, CheckoutDoneFn done)
             RequestRemoteState();
             done(r);
         }, {});
+}
+
+void SourceControlSession::RequestSetup()
+{
+    if (!SetupAvailable() || setupBusy_ || WriteInFlight()) { return; }
+    setupBusy_ = true;
+    client_.Request("setup_state", nlohmann::json::object(), [this](const nlohmann::json& msg) {
+        setupBusy_ = false;
+        if (msg.value("ok", false)) { setupInfo_ = msg["result"]; }
+        else { ApplyError(msg); setupMessage_ = errorDetail_; }
+    });
+}
+
+void SourceControlSession::RunSetup(const char* op, nlohmann::json args)
+{
+    if (!SetupAvailable() || setupBusy_ || WriteInFlight()) { return; }
+    setupBusy_ = true;
+    setupMessage_.clear();
+    args["generation"] = ++setupGeneration_;
+    const std::string operation = op;
+    client_.Request(op, args, [this, operation](const nlohmann::json& msg) {
+        setupBusy_ = false;
+        if (!msg.value("ok", false)) {
+            ApplyError(msg);
+            setupMessage_ = errorCode_ == "cancelled" ? Tr(StrId::Scm_SetupCancelled)
+                : errorCode_ == "timeout" ? Tr(StrId::Scm_SetupTimeout) : errorDetail_;
+            if (operation == "repo_init") { SendRepoCheck(); }
+            else if (operation == "identity_save") { RequestIdentity(); }
+            RequestSetup();
+            return;
+        }
+        setupMessage_ = operation == "remote_connect" && msg["result"].value("hasHistory", false)
+            ? Tr(StrId::Scm_SetupFetchHint) : Tr(StrId::Scm_SetupSuccess);
+        if (operation == "repo_init") { SendRepoCheck(); }
+        else { RequestIdentity(); RequestRemoteState(); }
+        RequestSetup();
+    });
+}
+
+void SourceControlSession::CancelSetup()
+{
+    if (!setupBusy_) { return; }
+    client_.Request("setup_cancel", {{"generation", setupGeneration_}}, [](const nlohmann::json&) {});
 }
 
 void SourceControlSession::RequestIdentity()

@@ -11,11 +11,17 @@ namespace mye {
 //   「起動はするが応答の形だけ違う」= 最も気付きにくい壊れ方をする。
 //   check_rules.ps1 の規則 9 ($constGroups) が両者を機械照合しているので、
 //   片方だけ変えると規則検査で止まる (そこが唯一の防波堤)
-constexpr int kCollabProtoVersion = 1;
+constexpr int kCollabProtoVersion = 2;
 
 // op 名 (spec §4.1 で v1 に凍結)。文字列直書きを避けるのは、綴り違いが
 // bad_request として**実行時にしか**現れないため
 namespace collabop {
+constexpr const char* kSetupState = "setup_state";
+constexpr const char* kRepoInit = "repo_init";
+constexpr const char* kIdentitySave = "identity_save";
+constexpr const char* kGithubLogin = "github_login";
+constexpr const char* kRemoteConnect = "remote_connect";
+constexpr const char* kSetupCancel = "setup_cancel";
 constexpr const char* kActionTargets = "action_targets";
 constexpr const char* kActionPreview = "action_preview";
 constexpr const char* kActionExecute = "action_execute";

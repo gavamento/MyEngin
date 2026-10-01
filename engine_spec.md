@@ -3141,7 +3141,7 @@ machine-readable `paths[]` carries the truth.
 Why the window is unavailable is an enum rather than a boolean, because the user's next action
 differs per case: `NoProject` (bare start) / `NoService` / `ProtoMismatch` / `NoGit` / `GitTooOld`
 (< 2.11, no `status --porcelain=v2`) / `NotRepo` / `ToplevelMismatch` / `ServiceDied`.
-Creating a repository (`git init`) is not in v1 — `NotRepo` explains and points elsewhere.
+Protocol v2 adds project-local Git setup: `NotRepo` offers initialization (default branch `main`), author settings, GCM browser sign-in and connection to an existing GitHub HTTPS repository.
 
 ### 14.3 The write transaction
 
@@ -3177,6 +3177,26 @@ folder's badge and a pair's badge both come from `CombineState` = the heaviest m
 pair), commit** — because "save then commit" would commit the index as it stood *before* the save.
 The commit button is disabled while `user.name` / `user.email` are unset: git happily invents
 `user@MACHINE.(none)` and the fabricated identity would then live in shared history.
+
+### 14.3.1 Project Git setup (protocol v2)
+
+The Source Control Connection / Settings window exposes `setup_state`, `repo_init`,
+`identity_save`, `github_login`, `remote_connect`, and `setup_cancel`. Editor and collab
+must use protocol version 2 together; DLL C ABI slots are unchanged.
+
+Initialization never nests a repository under another repository and never stages or
+commits files. Author and selected GitHub account settings are project-local. Authentication
+uses Git Credential Manager (`git credential-manager github login --browser`), not gh;
+credentials remain with GCM. Account existence is distinct from repository access.
+
+Only `https://github.com/owner/repository[.git]` is accepted for new connections. A successful
+`ls-remote` is required before adding/changing origin; an explicit push URL blocks changes.
+The old origin must still match the confirmed value. Connections do not fetch, merge, or push;
+read access does not prove push permission. Background authentication remains noninteractive.
+Browser login has a 300-second process deadline, connection checks 30 seconds. Cancellation
+is delivered outside the worker FIFO and the UI stays locked until the process tree exits.
+The recommended gitignore lines can be explicitly appended through the existing host hook;
+existing lines are preserved. Existing SSH repositories keep the previous behavior.
 
 ### 14.4 Remote and conflicts
 
@@ -3261,7 +3281,7 @@ which turns the self test's DLL round trip from SKIP into a failure.
   since M74a sub-asset IDs derive from `.meta` GUIDs (§10.2.1). `canonicalRoot` in
   `project.mye.json` still records the creation path and reports a mismatch, as information only.
 - Out of scope for v1: pull requests and review, LFS, sparse checkout, three-way merge of scene
-  files, `git init`, and any credential UI.
+  files, GitHub repository creation, and cloning.
 
 ---
 

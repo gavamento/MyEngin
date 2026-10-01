@@ -8,6 +8,92 @@ use std::process::{Command, Stdio};
 
 use crate::protocol::{code, ErrorBody};
 
+#[cfg(windows)]
+struct SetupJob(*mut std::ffi::c_void);
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn CreateJobObjectW(attributes: *mut std::ffi::c_void, name: *const u16) -> *mut std::ffi::c_void;
+    fn AssignProcessToJobObject(job: *mut std::ffi::c_void, process: *mut std::ffi::c_void) -> i32;
+    fn TerminateJobObject(job: *mut std::ffi::c_void, code: u32) -> i32;
+    fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+}
+
+#[cfg(windows)]
+impl SetupJob {
+    fn attach(child: &std::process::Child) -> Result<Self, ErrorBody> {
+        use std::os::windows::io::AsRawHandle;
+        let handle = unsafe { CreateJobObjectW(std::ptr::null_mut(), std::ptr::null()) };
+        if handle.is_null() { return Err(spawn_error(std::io::Error::last_os_error())); }
+        let job = Self(handle);
+        if unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle()) } == 0 {
+            return Err(spawn_error(std::io::Error::last_os_error()));
+        }
+        Ok(job)
+    }
+    fn terminate(&self) { unsafe { TerminateJobObject(self.0, 1); } }
+}
+
+#[cfg(windows)]
+impl Drop for SetupJob {
+    fn drop(&mut self) { self.terminate(); unsafe { CloseHandle(self.0); } }
+}
+
+/// Setup commands have a real process deadline; the UI must not release its lock
+/// while a timed-out authentication helper is still running.
+pub fn run_setup(cwd: &Path, args: &[&str], seconds: u64,
+                 cancel: &std::sync::atomic::AtomicU64, generation: u64,
+                 interactive: bool) -> Result<GitOutput, ErrorBody> {
+    use std::io::Read;
+    use std::sync::atomic::Ordering;
+    if cancel.load(Ordering::SeqCst) >= generation {
+        return Err(ErrorBody::new("cancelled", "cancelled"));
+    }
+    let mut cmd = build(cwd, args)?;
+    cmd.env("GCM_INTERACTIVE", if interactive { "always" } else { "never" });
+    let mut child = cmd.spawn().map_err(spawn_error)?;
+    #[cfg(windows)]
+    let job = match SetupJob::attach(&child) {
+        Ok(job) => job,
+        Err(error) => { let _ = child.kill(); let _ = child.wait(); return Err(error); }
+    };
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let read = |pipe: Option<Box<dyn Read + Send>>| std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut p) = pipe {
+            let mut block = [0u8; 4096];
+            while let Ok(n) = p.read(&mut block) {
+                if n == 0 { break; }
+                if bytes.len() < 262144 { bytes.extend_from_slice(&block[..n]); }
+            }
+        }
+        bytes
+    });
+    let out = read(stdout.map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let err = read(stderr.map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let started = std::time::Instant::now();
+    let mut stopped = None;
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(spawn_error)? { break status; }
+        if cancel.load(Ordering::SeqCst) >= generation || started.elapsed().as_secs() >= seconds {
+            stopped = Some(if cancel.load(Ordering::SeqCst) >= generation { "cancelled" } else { "timeout" });
+            #[cfg(windows)]
+            job.terminate();
+            let _ = child.kill();
+            break child.wait().map_err(spawn_error)?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    #[cfg(windows)]
+    job.terminate();
+    let stdout = out.join().unwrap_or_default();
+    let stderr = err.join().unwrap_or_default();
+    if let Some(reason) = stopped { return Err(ErrorBody::new(reason, reason)); }
+    Ok(GitOutput { status: status.code().unwrap_or(-1), stdout, stderr })
+}
+
 /// `git status --porcelain=v2` が使える最小バージョン。
 ///
 /// 出典: https://raw.githubusercontent.com/git/git/v2.11.0/Documentation/git-status.txt

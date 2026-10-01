@@ -16,9 +16,11 @@ use crate::porcelain;
 use crate::protocol::{self, code, event, ErrorBody};
 
 mod actions;
+mod setup;
 
 /// worker スレッドが 1 本だけ持つ状態。**sim にも UI にも触らない**
 pub struct State {
+    pub cancel_setup: std::sync::Arc<std::sync::atomic::AtomicU64>,
     action_preview: Option<actions::Preview>,
     action_serial: u64,
     pub root: PathBuf,
@@ -55,6 +57,7 @@ pub struct State {
 impl State {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         State {
+            cancel_setup: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             action_preview: None,
             action_serial: 0,
             root: root.into(),
@@ -81,6 +84,7 @@ pub type Dispatcher = fn(&mut State, &str, &Value) -> Result<Value, ErrorBody>;
 
 pub fn dispatch(state: &mut State, op: &str, args: &Value) -> Result<Value, ErrorBody> {
     match op {
+        "setup_state" | "repo_init" | "identity_save" | "github_login" | "remote_connect" => setup::dispatch(state, op, args),
         "action_targets" => actions::targets(state, args),
         "action_preview" => actions::preview(state, args),
         "action_execute" => actions::execute(state, args),

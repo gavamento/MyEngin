@@ -327,6 +327,14 @@ public:
     void PrepareContextTargets(const std::vector<std::string>& paths);
     const nlohmann::json& ContextTargets() const { return contextTargets_; }
     void RequestIdentity();
+    bool SetupAvailable() const { return client_.Ready() &&
+        (repoState_ == Unavailable::None || repoState_ == Unavailable::NotRepo); }
+    const nlohmann::json& SetupInfo() const { return setupInfo_; }
+    bool SetupBusy() const { return setupBusy_; }
+    const std::string& SetupMessage() const { return setupMessage_; }
+    void RequestSetup();
+    void RunSetup(const char* op, nlohmann::json args);
+    void CancelSetup();
 
     const std::vector<CommitInfo>& History() const { return history_; }
     bool HistoryValid() const { return historyValid_; }
@@ -515,6 +523,10 @@ private:
     std::vector<CommitInfo> history_;
     DiffView diff_;
     std::string lastCommit_;   // TakeLastCommit で 1 回だけ取り出す
+    nlohmann::json setupInfo_ = nlohmann::json::object();
+    bool setupBusy_ = false;
+    uint64_t setupGeneration_ = 0;
+    std::string setupMessage_;
     std::string identityName_;
     std::string identityEmail_;
     bool historyValid_ = false;

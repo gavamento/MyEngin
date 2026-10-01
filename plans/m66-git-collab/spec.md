@@ -47,7 +47,7 @@ sim には 1 バイトも触れない (`replay_verify.bat` 7 ペア + golden 19 
   M66a に「DLL を Editor からロードして hello が往復する」薄い縦切りを含める (最大の未知を最初に潰す)。
 - やらない: 元計画「対象外」の全項目 (PR / Review / Sparse / LFS / 3-way / 意味付き diff /
   `assetsRoot` 相対化 / エンジンリポ管理 / 認証 UI / 未知コンポーネント保持)。
-  **`git init` (リポジトリ作成) は v1 に含めない** — 「利用不可: リポジトリではありません」+ 案内のみ (R2 で確定)。
+  **v1時点では `git init`・認証UIは対象外だったが、プロトコルv2のGitセットアップで追加した。** 現行仕様は `engine_spec.md` §14.3.1 と `docs/git-setup-connection.md` を参照する。GitHub上のリポジトリ新規作成とCloneは引き続き対象外。
   同一リポを 2 つのエディタで同時に開く運用は非対応 (index.lock 競合は git のエラーをそのまま表示)。
   `MyeCollab.dll` のホットリロードはしない (エディタ実行中は `build_collab.bat` が上書きできない = `MyeScripting.dll` と同じ)。
 - 後回し: 外部 (ターミナル) で git を叩いたときの HEAD 移動検知は**トーストのみ** (v1)。

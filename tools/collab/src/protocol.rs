@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 /// 一致していなければならない。**check_rules.ps1 の規則 9 ($constGroups) が機械照合する**
 /// — DLL と exe は別々にビルドされて別々に配られるので、食い違いは「起動はするが
 /// 応答の形だけ違う」= 最も気付きにくい壊れ方をする。
-pub const PROTO_VERSION: u32 = 1;
+pub const PROTO_VERSION: u32 = 2;
 
 /// `error.code` の一覧 (spec §4.1 で v1 に凍結)。
 /// 文字列を直書きせずここを通すのは、C++ 側が code → Tr() の表を持つため

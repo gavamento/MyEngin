@@ -820,6 +820,11 @@ bool RunSourceControlSelfTest()
 
     // ---- op の待ち方 (タイムアウトと OpInFlight) ----
     {
+        check(CollabOpKindOf(collabop::kSetupState) == CollabOpKind::Write
+                  && CollabOpKindOf(collabop::kRepoInit) == CollabOpKind::Write
+                  && CollabOpKindOf(collabop::kGithubLogin) == CollabOpKind::Write
+                  && CollabOpKindOf(collabop::kRemoteConnect) == CollabOpKind::Write,
+              "setup retains the operation lock until the worker acknowledges process exit");
         check(CollabOpKindOf("hello") == CollabOpKind::Handshake
                   && CollabOpKindOf("status") == CollabOpKind::Read
                   && CollabOpKindOf("hint_changed") == CollabOpKind::Read

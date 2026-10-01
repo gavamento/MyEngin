@@ -40,6 +40,7 @@ enum Msg {
 const TICK: Duration = Duration::from_secs(1);
 
 pub struct Service {
+    cancel_setup: Arc<std::sync::atomic::AtomicU64>,
     tx: Option<Sender<Msg>>,
     out: Arc<Mutex<VecDeque<String>>>,
     dead: Arc<AtomicBool>,
@@ -94,10 +95,13 @@ impl Service {
         let (tx, rx) = channel::<Msg>();
         let out_w = Arc::clone(&out);
         let dead_w = Arc::clone(&dead);
+        let cancel_setup = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let cancel_worker = Arc::clone(&cancel_setup);
         let handle = std::thread::Builder::new()
             .name("mye_collab_worker".to_string())
             .spawn(move || {
                 let mut state = State::new(root);
+                state.cancel_setup = cancel_worker;
                 loop {
                     // ★background のときだけ `recv_timeout`。CLI で使うと
                     //   「何も来ていないのに 1 秒ごとに起きる」だけの無駄になるうえ、
@@ -134,11 +138,19 @@ impl Service {
                 }
             })
             .ok();
-        Service { tx: Some(tx), out, dead, handle, watch: None }
+        Service { cancel_setup, tx: Some(tx), out, dead, handle, watch: None }
     }
 
     /// 非同期。応答は poll で届く
     pub fn request(&self, line: String) {
+        if let Ok(v) = serde_json::from_str::<Value>(&line) {
+            if v["op"] == "setup_cancel" {
+                let target = v["args"]["generation"].as_u64().unwrap_or(0);
+                self.cancel_setup.fetch_max(target, Ordering::SeqCst);
+                self.push(Response::ok(extract_id(&line), serde_json::json!({})).to_line());
+                return;
+            }
+        }
         if self.dead.load(Ordering::SeqCst) {
             // worker が panic 済み。**待たせない**ことが最優先 — C++ 側は id 待ちの
             // コールバックを抱えているので、返さないと永久に「実行中」のままになる
@@ -173,6 +185,7 @@ impl Drop for Service {
         // ★監視を**先に**止める。逆順にすると、閉じた worker のチャネルへ
         //   Refresh を送りつける競合が残る (送信は握り潰すので害は無いが、
         //   監視スレッドが生きたまま FreeLibrary されると即死する)
+        self.cancel_setup.store(u64::MAX, Ordering::SeqCst);
         self.watch = None;
         // ★join を飛ばして FreeLibrary すると、走っている worker のコードごと
         //   アンロードされてエディタが落ちる。destroy → FreeLibrary の順は

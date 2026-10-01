@@ -1345,8 +1345,8 @@ MYE_STR(Scm_GitTooOld,        "git is too old. 2.11 or newer is required.",
                               "git が古すぎます。2.11 以降が必要です。")
 MYE_STR(Scm_NotRepo,          "This project is not inside a git repository.",
                               "このプロジェクトは git リポジトリの中にありません。")
-MYE_STR(Scm_NotRepoHint,      "Create or clone the repository outside the editor - the editor does not run git init.",
-                              "リポジトリの作成やクローンはエディタの外で行ってください。エディタは git init を実行しません。")
+MYE_STR(Scm_NotRepoHint,      "Open Connection / Settings to initialize Git and connect an existing repository.",
+                              "接続・設定からGitを初期化し、既存リポジトリへ接続できます。")
 MYE_STR(Scm_ToplevelMismatch, "The project root is not the top of the repository.",
                               "プロジェクトルートがリポジトリのトップではありません。")
 MYE_STR(Scm_ToplevelHint,     "Repository top: %s",  "リポジトリのトップ: %s")
@@ -1412,8 +1412,8 @@ MYE_STR(Scm_SaveAndCommit,     "Save and commit###ScmSaveAndCommit",
                                "保存してコミット###ScmSaveAndCommit")
 MYE_STR(Scm_UnsavedNotIncluded, "Unsaved edits are not part of the commit.",
                                 "未保存の変更は含まれません。")
-MYE_STR(Scm_IdentitySetup,     "Set your identity first: git config --global user.name / user.email",
-                               "先に名前を設定してください: git config --global user.name / user.email")
+MYE_STR(Scm_IdentitySetup,     "Set author name and email in Connection / Settings.",
+                               "接続・設定で作者名とメールアドレスを設定してください。")
 MYE_STR(Scm_CommitDone,        "Committed %s", "コミットしました: %s")
 MYE_STR(Scm_HistoryEmpty,      "No commits yet.", "まだコミットがありません。")
 MYE_STR(Scm_HistoryPick,       "Select a commit to read its full subject.",
@@ -1731,3 +1731,28 @@ MYE_STR(Scm_ActionAbortTitle, "Abort Git operation###ScmActionAbortModal", "Git�
 MYE_STR(Scm_ActionContinueTitle, "Continue Git operation###ScmActionContinueModal", "Git操作の継続###ScmActionContinueModal")
 MYE_STR(Scm_ActionAbortNote, "Abort the current Git operation. Its applied changes and conflict resolutions may be lost; review the affected paths.", "進行中のGit操作を中止します。その操作の適用内容や競合解決の編集が失われる場合があります。対象パスを確認してください。")
 MYE_STR(Scm_ActionContinueNote, "Continue the current Git operation using staged conflict resolutions. A commit may be created without opening an external editor.", "ステージ済みの競合解決内容を使ってGit操作を継続します。外部エディタを開かずにコミットを作成する場合があります。")
+
+MYE_STR(Scm_SetupSettings, "Connection / Settings", "接続・設定")
+MYE_STR(Scm_SetupWindow, "Git Setup###ScmSetup", "Gitセットアップ###ScmSetup")
+MYE_STR(Scm_SetupReadHint, "Stored accounts do not prove access. Connection verifies read access only, not push permission.", "保存済みアカウントとアクセス成功は別です。接続確認は読み取りのみで、Push権限は保証しません。")
+MYE_STR(Scm_SetupWaiting, "Waiting for Git / browser authentication...", "Git操作・ブラウザ認証を待っています…")
+MYE_STR(Scm_SetupCancel, "Cancel", "キャンセル")
+MYE_STR(Scm_SetupRefresh, "Refresh settings", "設定を更新")
+MYE_STR(Scm_SetupLogin, "Sign in to GitHub", "GitHubへログイン")
+MYE_STR(Scm_SetupBranch, "Initial branch", "初期ブランチ")
+MYE_STR(Scm_SetupInit, "Initialize Git", "Gitを初期化")
+MYE_STR(Scm_SetupLocal, "Save author and account in this project only.", "作者とアカウントをこのプロジェクトのみに保存します。")
+MYE_STR(Scm_SetupName, "Author name", "作者名")
+MYE_STR(Scm_SetupEmail, "Author email", "メールアドレス")
+MYE_STR(Scm_SetupAccount, "Stored GitHub account", "保存済みGitHubアカウント")
+MYE_STR(Scm_SetupSaveIdentity, "Save author / account", "作者・アカウントを保存")
+MYE_STR(Scm_SetupUrl, "GitHub HTTPS URL", "GitHub HTTPS URL")
+MYE_STR(Scm_SetupPushUrl, "An explicit push URL exists. Update it outside this setup.", "個別のPush URLが設定されています。この設定画面では変更できません。")
+MYE_STR(Scm_SetupConnect, "Verify and connect", "接続確認して登録")
+MYE_STR(Scm_SetupConfirm, "Confirm Git setup###ScmSetupConfirm", "Gitセットアップの確認###ScmSetupConfirm")
+MYE_STR(Scm_SetupApply, "Apply", "適用")
+MYE_STR(Scm_SetupSuccess, "Setup completed.", "設定が完了しました。")
+MYE_STR(Scm_SetupFetchHint, "Connected. Fetch to inspect remote history.", "接続しました。Fetchしてリモートの履歴を確認してください。")
+MYE_STR(Scm_SetupCancelled, "The operation was cancelled. Check the current settings before retrying.", "操作をキャンセルしました。現在の設定を確認してから再実行してください。")
+MYE_STR(Scm_SetupTimeout, "The operation timed out. Check the network or authentication and retry.", "操作がタイムアウトしました。通信・認証状態を確認して再実行してください。")
+MYE_STR(Scm_SetupGcmMissing, "Git Credential Manager is unavailable. Enable it in Git for Windows to use browser sign-in.", "Git Credential Managerが利用できません。ブラウザ認証を使うにはGit for Windowsで導入してください。")

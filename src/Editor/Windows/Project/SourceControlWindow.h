@@ -117,6 +117,7 @@ public:
     std::string TakePushed();
 
 private:
+    void DrawSetup(SourceControlSession& scm, const SourceControlHost& host);
     void DrawHeader(SourceControlSession& scm, const SourceControlHost& host);
     void DrawChanges(SourceControlSession& scm, const SourceControlHost& host);
     // 競合中の Changes タブ (M66g、spec §4.1 決定 9)。**タブは増やさない** —
@@ -146,6 +147,16 @@ private:
     // 選択が変わったら差分を取り直す
     void SyncDiffRequest(SourceControlSession& scm);
 
+    bool setupOpen_ = false;
+    bool setupLoaded_ = false;
+    bool setupConfirm_ = false;
+    bool setupInit_ = false;
+    char setupBranch_[128] = "main";
+    char setupName_[256] = {};
+    char setupEmail_[256] = {};
+    char setupUrl_[512] = {};
+    std::string setupAccount_;
+    std::string setupRoot_;
     std::vector<std::string> selected_; // 選択中の本体パス (path 昇順を保つ)
     std::vector<std::string> contextPaths_;
     bool contextFolder_ = false;
