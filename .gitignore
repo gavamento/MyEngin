@@ -39,3 +39,5 @@ tools/deepmodal/**/__pycache__/
 tools/deepmodal/.pytest_cache/
 tools/deepmodal/runs/
 /CLAUDE.md
+/エンジン配布用
+/tmp/pdfs

@@ -68,6 +68,15 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      target_sha:
+        description: 'Pushed target commit SHA (empty = selected ref HEAD)'
+        required: false
+        type: string
+      base_sha:
+        description: 'Pushed baseline commit SHA (empty = target first parent)'
+        required: false
+        type: string
 
 # 同一 ref の古い run は捨てる (windows runner は分単価が高い)
 concurrency:
@@ -177,3 +186,34 @@ jobs:
             bin/x64/*/crash/**
           if-no-files-found: ignore
           retention-days: 7
+
+  performance:
+    name: performance regression (Release, report only)
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: compare commits
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          INPUT_BASE_SHA: ${{ inputs.base_sha }}
+          INPUT_TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          $target = if ($env:INPUT_TARGET_SHA) { $env:INPUT_TARGET_SHA } elseif ($env:EVENT_NAME -eq 'pull_request') { $env:PR_HEAD_SHA } else { $env:EVENT_SHA }
+          $base = $env:INPUT_BASE_SHA
+          pwsh -NoProfile -File tools/perf_verify.ps1 -TargetSha $target -BaseSha $base -OutputDir "$env:RUNNER_TEMP/perf-results"
+      - name: performance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mye-performance
+          path: |
+            ${{ runner.temp }}/perf-results/*.json
+            ${{ runner.temp }}/perf-results/summary.md
+          if-no-files-found: ignore
+          retention-days: 14
