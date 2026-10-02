@@ -724,6 +724,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         probeBaker->assetsRoot = ctx.assetsRoot; // 地形もキャプチャに写す
         memcpy(probeBaker->clearColor, config.clearColor, sizeof(probeBaker->clearColor));
     }
+    uint64_t verifyStartTick = 0; // スナップショット復元後の tick (合否判定が「0 tick 照合」を弾くのに使う)
     if (!config.replayVerifyPath.empty()) {
         if (!player.Load(config.replayVerifyPath)) {
             return 1;
@@ -751,6 +752,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // 記録開始時の RNG 状態を復元して同一 tick 列を再現する (v3 以来の従来経路)
             scene.GetWorld().Rng().Restore(player.RngState(), player.RngInc());
         }
+        verifyStartTick = ctx.tickIndex;
     } else if (!config.replayRecordPath.empty() && !netFailed && !clientEnabled) {
         // (専用サーバのクライアントは、参加スナップショットの復元後に onSnapshotApplied が記録を始める)
         // 接続できなかったときは記録も始めない (0 tick の .rep を残すと、後で
@@ -897,7 +899,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.exitCode = &exitCode;
     // M52h: セッションが立った時点で C# レーンは最後まで止める。途中で on/off すると
     // 「片方だけ C# が動いた tick」が生まれて必ず割れるので、走行中は変えない
-    tickServices.netLockstep = netEnabled || clientEnabled;
+    tickServices.netLockstep = NetLockstepBoundary(netWanted ? config.netRole : 0);
     // ★ロールバック中は .rep の記録を EngineLoop が引き取る (M52i)。
     //   RunOneTick の中で記録すると**予測で走った tick までファイルに載る**ので、
     //   巻き戻して走り直した tick が二重に並んだ .rep になる。記録してよいのは
@@ -906,6 +908,16 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     //   従来どおり RunOneTick の中で記録する (経路を増やさない)
     if (netRollbackActive || clientEnabled) {
         tickServices.recorder = nullptr; // クライアントも確定した tick だけを onCommitted が記録する
+    }
+    // 専用サーバのクライアントのライブ tick は、サーバと同じゲート (TickRunner.h の IsNetSessionGates) で回す。
+    // HeadlessSim のセッション構成は ServerNetSelfTest が同じ関数で検査する
+    if (clientEnabled) {
+        const TickGates gates = GatesOf(tickServices);
+        MYE_LOG_INFO("[net] tick gates: netLockstep=%d resim=%d recorder=%d player=%d", gates.netLockstep ? 1 : 0,
+                     gates.resim ? 1 : 0, gates.hasRecorder ? 1 : 0, gates.hasPlayer ? 1 : 0);
+        if (!IsNetSessionGates(gates)) {
+            MYE_LOG_ERROR("[net] the client's tick gates differ from the server session's (see IsNetSessionGates)");
+        }
     }
 
     // ---- 再シムの共通部 (M52e / M72d) ----
@@ -2564,13 +2576,20 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             }
         }
         if (verifying && !player.failed && !player.HasTick(ctx.tickIndex)) {
-            // 未完了 tick (クラッシュ .rep の最後の 1 本) がある場合は必ず併記する。
-            // 「600 tick 一致」と「599 tick 一致 + 1 tick 未照合」を同じ文で出さない
-            MYE_LOG_INFO("[replay] VERIFY PASS: %llu ticks hash-identical%s",
-                         static_cast<unsigned long long>(player.verifiedTicks),
-                         player.unverifiedTicks > 0
-                             ? " (plus in-flight tick(s) with no expected hash - crash bundle)"
-                             : "");
+            std::string verifyFailReason;
+            if (JudgeReplayVerification(player, verifyStartTick, verifyFailReason)) {
+                // 未完了 tick (クラッシュ .rep の最後の 1 本) がある場合は必ず併記する。
+                // 「600 tick 一致」と「599 tick 一致 + 1 tick 未照合」を同じ文で出さない
+                MYE_LOG_INFO("[replay] VERIFY PASS: %llu ticks hash-identical%s",
+                             static_cast<unsigned long long>(player.verifiedTicks),
+                             player.unverifiedTicks > 0
+                                 ? " (plus in-flight tick(s) with no expected hash - crash bundle)"
+                                 : "");
+            } else {
+                MYE_LOG_ERROR("[replay] VERIFY FAIL: %s (verified %llu ticks)", verifyFailReason.c_str(),
+                              static_cast<unsigned long long>(player.verifiedTicks));
+                exitCode = 1;
+            }
             ctx.requestExit = true;
         }
         timings.tickMs = static_cast<float>((clock.Now() - tTicks) * 1000.0);

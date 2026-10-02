@@ -812,9 +812,9 @@ $netAllow = @(
     @{ Path = 'src\Engine\Engine\Loop\EngineLoop.cpp'; Reason = 'loop owner: net values reach the sim only as confirmed inputs' },
     # CLI の解釈。NetRole 等は EngineConfig の POD として渡り、sim 状態には触れない
     @{ Path = 'src\Engine\Engine\App\'; Reason = 'startup / CLI parsing, not reachable from RunOneTick' },
-    # NetRuntimeInfo (表示専用 POD) の実体を持って ABI の Net* スロットが「ローカル」を返すようにするだけ。
-    # 値は常に既定 (active = false) で、sim から到達するが何も運ばない
-    @{ Path = 'src\Engine\Engine\Loop\HeadlessSim.cpp'; Reason = 'owns an inactive NetRuntimeInfo for the ABI Net* slots' },
+    # NetRuntimeInfo (表示専用 POD) の実体を持ち、セッション構成では D14 の固定値で埋める (NetRuntime.h)。
+    # NetSession.h は kNetProtoVersion と NetRole の値だけに使う。許可はこの 2 つの include だけ (OnlyInclude)
+    @{ Path = 'src\Engine\Engine\Loop\HeadlessSim.cpp'; OnlyInclude = @('Engine/Engine/Net/NetRuntime.h', 'Engine/Engine/Net/NetSession.h'); Reason = 'owns the NetRuntimeInfo for the ABI Net* slots; reads kNetProtoVersion / NetRole values only' },
     # ★sim から到達する (スクリプトが tick 中に呼べる): ABI v13 の Net* スロットが NetRuntimeInfo
     # (表示専用・機種依存の POD) を読む。既存の経路で M81 は広げない (新スロットは確定入力から導く値だけ)。
     # 書き戻し禁止は NetRuntime.h の契約と desync 検出が防波堤
@@ -845,7 +845,9 @@ foreach ($d in $netGuardDirs) {
             $lineNo++
             if ($line -match $netIncludeRx) {
                 # ファイル単位ではなく特定ヘッダの include だけを許す項目
-                if ($onlyInclude -and $line.Contains($onlyInclude)) { continue }
+                $permitted = $false
+                foreach ($oi in $onlyInclude) { if ($line.Contains($oi)) { $permitted = $true } }
+                if ($permitted) { continue }
                 Write-Host "ERROR [rule 13-a] $($f.FullName):${lineNo}: sim-side code must not include net / hosting headers (add to the allow list only after checking it is unreachable from RunOneTick)"
                 $errors++
             }

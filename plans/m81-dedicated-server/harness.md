@@ -3,7 +3,7 @@
 - 依頼原文: M81 汎用 Dedicated Server + AWS GameLift 対応。ユーザーと合意済みの設計案は C:\HAL\MyEngin\plans\m81-dedicated-server\design-draft.md (slug: m81-dedicated-server)。planner はこれを起点に仕様を確定し、サブへ分割すること。決定論を壊さないこと (design-draft §3) が全サブ共通の必須条件。
   - 元のユーザー発言: 「汎用Dedicated Server機能を作り、そのホスティング先の一つとしてAWS GameLiftを対応させたい」「決定論を壊さないように開発/ネットワーク管理を行うこと」
 - 開始: 2026-10-01 / 基点コミット: 4e67907b5548b1e2ca48585d50519d6c1b895530
-- フェーズ: 実装
+- フェーズ: 実装 (review-1 FAIL の修正)
 
 ## ユーザー判断 (プランモードでの合意。design-draft.md に詳細)
 - 同期方式 = 入力確定型サーバ / サーバ OS = Windows 先行 / GameLift = Server SDK 組込 + Anywhere 疎通まで / 最大 4 人
@@ -25,11 +25,14 @@
 | sub-06 ABI v23 | OK | 1 | 3145e9c | 126→131 スロット、NetIsServer は足さない |
 | sub-07 GameLiftHosting + SDK 5.x | OK | 1 | 82aeba4 | SDK 5.6.0 を /MT 静的 lib、.rep 逐次書出し |
 | sub-08 Anywhere 実疎通 (ユーザー手動) | ユーザー待ち | 0 | | |
-| sub-09 NetWindow と文書 | OK | 1 | (次コミット) | ADR-022、Editor Play から実接続 |
+| sub-09 NetWindow と文書 | OK | 1 | d16d77b | ADR-022、Editor Play から実接続 |
+| sub-10 決定論の境界の修正 (review-1 #1 #2 #4 #9) | OK | 1 | (次コミット) | NetLockstepBoundary 共通化、0 tick は FAIL |
+| sub-11 クライアント記録再生・時刻同期・運用 (review-1 #3 #5 #6 #7 #8 #10) | 未着手 | 0 | | 新規 |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
+| 1 | FAIL | 2/2/4/3 | blocker 2 (#1 サーバの sim だけ LoadGame/LoadPersist が効く, #2 D14 未実装) / major 3 (#3 クライアント .rep・バンドル再生不能, #4 0 tick で PASS, #5 到着余裕が収束しない) / minor 5 (#6〜#10) |
 
 ## 申し送り (セッション跨ぎ)
 - (planner 2026-10-01) spec.md 確定・sub-01〜09 作成。AskUserQuestion 不可のため D3/D4/D5/D6 を裁定し [ユーザーに聞ける] として PLAN_RESULT に返した。
@@ -52,3 +55,5 @@
 - (sub-07 → 後続) R-11: AcceptPlayerSession / RemovePlayerSession は同期呼び出しで 60Hz ループを止めうる (sub-08 で参加時の tick 時間を見て判断)。R-10 続報: server_verify D で max 39.5ms。SDK の TLS は証明書を検証しない (ADR-022 に既知の制限として書く)。初回 Debug selftest だけ Fracture weight cache 3 項目が 1 回 FAIL (再実行で消える、M80p、再現したら報告)。tmp\m81g_sdk* / m81g_vcpkg* は数 GB の作業ツリー (M81 完了後に削除可否を確認)
 - (司会 2026-10-02) sub-09 OK。R-12: スクショ時の到着余裕 230ms (目標 約 17ms)、定常状態での収束をレビューと sub-08 で確認。coder がスクショ撮影でユーザーの imgui.ini (gitignore) を書き換えた → ユーザーへ報告済み
 - (司会 2026-10-02) sub-08 以外の全サブ OK。sub-08 はユーザー手作業待ちのまま Phase 3 (レビュー) へ進む。reviewer への追加観点: R-12 の定常状態の到着余裕、sub-07 最終改名後に未再実行だった replay_verify / server_verify / net_verify / Editor --selftest の再実行
+- (司会 2026-10-02) review-1 FAIL → planner は既存サブを差し戻さず新規 sub-10 (#1 #2 #4 #9) / sub-11 (#3 #5 #6 #7 #8 #10) で修正。sub-08 の依存に sub-10 を追加 (推奨は sub-11 の後)。修正後は同じ reviewer へ round 2
+- (司会 2026-10-02) sub-10 OK。V12 (オフライン再生でも .rep の SessionConfig から NetIsConnected/NetPlayerCount を立てる) を sub-11 へ。Editor クライアント実プロセスでのゲート検査ログは sub-11 V9 の実走で確認

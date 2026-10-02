@@ -89,11 +89,17 @@
 **4.1.6 時刻同期**
 - サーバは各クライアントへ「そのクライアントの tick T の入力が締め切りに対して何 ms 前に届いたか」(到着余裕) を Confirmed に載せて返す。
 - クライアントは到着余裕が目標 (既定 1 tick ぶん) を保つよう、tick の進め方を ±最大 2% だけ速め/遅めにする (accumulator への加算係数)。**これは「いつ tick が回るか」だけを変え、sim には入らない。**
+- (review-1 #5 で追加) 参加・再同期直後の「追いつき」(余分な tick) と定常の速度係数は、**同じ基準 (サーバの予定時刻に対する自分の位置 = 到着余裕) から導く**。サーバの確定フロンティアは、入力が早く着くと予定より前倒しで進むので、追いつきの基準にしない。受け入れ: 偽トランスポート (遅延一定・ロス 0) で、参加から 10 秒後以降の到着余裕の移動平均が「目標 ± 1 tick」に入る (selftest で assert)。
 
 **4.1.7 desync**
 - サーバは `kNetHashCheckpoint` (8) の倍数 tick の確定ハッシュを Confirmed に載せる。
 - クライアントは自分の**確定** tick のハッシュと突き合わせ、不一致なら `WriteNetDesyncBundle` で診断バンドルを出したうえで再同期 (4.1.5 と同じスナップショット送付) を要求する。黙って飲み込まない (ログ + NetRuntimeInfo.desync + 統計)。
 - サーバ側は止まらない (1 人の不具合で試合全体を落とさない)。
+- (review-1 #3 で追加) クライアントのバンドルは**単独で再生できる**こと。`local.rep` は開始 tick ≠ 0 の .rep (参加・再同期の tick から始まる) で、`ReplayPlayer` は `startMeta.tick` を基点に tick を引く (クライアントの通常の .rep と `.rsN.rep` も同じ)。`desync.txt` の手順は、相手のバンドルではなく**サーバの .rep** を同じ tick まで再生して dump し、`--hash-diff` で突き合わせる形にする (サーバは止まらずバンドルを出さないため)。
+- (review-1 #4 で追加) `--replay-verify` は照合した tick が 0 本、または復元後の tick が .rep の範囲外なら FAIL (exit 1、理由をログ)。Editor / Runtime / Server 共通。
+
+**4.1.7b エディタをクライアントにしたときの再生操作** (review-1 #7 で追加)
+- クライアント接続中のエディタでは Pause / Step を無効にする (ボタンを無効表示し、ツールチップで理由を出す)。Stop はセッションを Bye で抜けて Play を終える。sim は常に simulateScripts = true で回す (サーバと同じ)。Pause をそのまま効かせると、クライアントだけ simulateScripts = false の tick ができて checkpoint ごとに desync → 再同期を繰り返すため。
 
 **4.1.8 予測上限**
 - クライアント/サーバ構成のクライアント: 12 tick。P2P: 8 tick (現状維持)。D4。
@@ -154,7 +160,7 @@
 - **C2** `pwsh -File tools\check_rules.ps1` が exit 0 (規則 13 ができた後はそれも含む)。
 - **C3** `Editor.exe --selftest` (Debug と Release) が全 PASS。ただし基点 4e67907 で既に失敗している Source control self test の 2 項目 (`external cherry-pick state closes the normal write gate` / `external revert state survives status refresh`、sub-01 で HEAD の別ビルドにより確認) は除外し、SELF_EVAL に「その 2 項目以外 ALL PASS」と書く。除外はこの 2 項目に限る
 - **C4** sub-05 以降: `tools\server_verify.bat` が PASS。
-- **C5** 差分の中に「ネット / ホスティング / 実時間 / 受信順 / SDK コールバック由来の値を、確定入力 (`InputSnapshot` / `SystemInputTick`) 以外の経路で sim (RunOneTick から到達するコード、World / Scene の状態) へ渡すコード」が無いこと。reviewer は diff の中で sim 側へ値が入る箇所を列挙し、それぞれが確定入力として .rep に記録される値であることを確認する。
+- **C5** (review-1 で補強: `TickServices` のゲート系フラグ — netLockstep / resim 等 — を経由して外部 I/O が sim に入る経路も対象。経路ごとに EngineLoop と HeadlessSim の両方を見る) 差分の中に「ネット / ホスティング / 実時間 / 受信順 / SDK コールバック由来の値を、確定入力 (`InputSnapshot` / `SystemInputTick`) 以外の経路で sim (RunOneTick から到達するコード、World / Scene の状態) へ渡すコード」が無いこと。reviewer は diff の中で sim 側へ値が入る箇所を列挙し、それぞれが確定入力として .rep に記録される値であることを確認する。
 - **C6** `_DEBUG` / `NDEBUG` で sim 状態が変わる分岐、unordered コンテナの走査順やアドレスに依存する順序決定、`rand()` / `std::random_device` を足していないこと (check_rules 規則 1/7/8 + 目視)。
 - **C7** `tools\net_verify.bat` が PASS (P2P を壊していない)。sub-03 以降 (P2P のハンドシェイクに触れるサブ) で必須、それ以外は Net/ に触れたサブで必須。
 
@@ -186,7 +192,23 @@
 - **R1** `tools\server_verify.bat` (新規): Server.exe (Debug) + Runtime.exe × 3 (Debug / Release 混在、`--warp --no-audio --synth-input`) をローカルで起動、ロス 20% 注入、途中参加 1 名 (遅れて起動)、1 名の切断 → 再接続。終了後に (a) サーバ .rep と各クライアントの確定 tick ハッシュ (クライアントが書く `.rep`) が全 tick 一致、(b) サーバ .rep を Debug と Release の Server.exe `--replay-verify` でオフライン再生して全 tick 一致、(c) 同じ .rep を Runtime (`--replay-verify`、窓あり) でも一致 (= role に依存しない)。
 - **R2** Server.exe がタイムアウト付きで必ず終了する (クライアント全員の Bye、または `--replay-ticks`)。
 - **R3** Release の Server.exe で 4 クライアント時の tick 平均時間をログに出す (4.4)。
+- **R5** (review-1 #6) server_verify は各クライアントについて「生きていたレーン tick のうち代替入力になった割合 (late-subst)」と強制再同期の回数をログに出す。**ロス 0 のケース A では、late-subst 5% 以下かつ強制再同期 0 を合格条件にする**。ケース D (WARP の Runtime 4 台を 1 台の PC で同時に回す) は負荷試験として割合を出すだけで合否に使わず、R3 の tick 時間もケース D の値は「計測環境の制約あり」として文書に書く。
 - **R4** (sub-07 で実施) サーバの .rep は逐次書き出し、異常終了しても完了済みの tick まで読める。Server.exe にクラッシュハンドラ。逐次モードと一括モードの .rep がバイト一致 (selftest)。
+
+### V 群 — レビュー round 1 の修正 (sub-10 / sub-11)
+- **V1** (#1) ライブサーバの HeadlessSim も、ネット中と同じ TickServices の境界 (netLockstep 相当: C# 停止・LoadGame / LoadPersist の no-op) で回る。EngineLoop と HeadlessSim は、このフラグを**同じ関数**から導く。selftest: サーバ/クライアント構成で tick 中に LoadPersist / LoadGame を積み (実在するセーブファイルを置いて)、サーバとクライアントのハッシュ一致と、サーバ確定ログの再生一致を固定する。
+- **V2** (#1 根本) EngineLoop と HeadlessSim の TickServices の組み立てで、ゲート系のフラグ (netLockstep / resim / app / recorder / player 等) の対応表をコードのコメントか selftest で機械的に照合できるようにする。方式は coder が選び、選んだ理由を書く。
+- **V3** (#2) サーバの NetRuntimeInfo を D14 の値 (active = 1、connected = 1、playerCount = SessionConfig.playerCount、localPlayer = 0) で埋める。書く場所は 1 か所。サーバ構成で v13 の Net* がこの値を返す selftest。
+- **V4** (#4) 4.1.7 の「0 tick の照合は FAIL」。selftest と、#3 の 2 本 (0 tick になっていた .rep) で実測。
+- **V5** (#9) 規則 13-a の HeadlessSim.cpp の許可を `OnlyInclude` で NetRuntime.h / NetSession.h だけに絞る。
+- **V6** (#3) 4.1.7 のクライアント側の再生。server_verify ケース C に「クライアントのバンドルの local.rep が単独で再生でき、desync tick の dump が出て、サーバ .rep の同じ tick の dump と `--hash-diff` で割れたフィールドが名指しされる」検査を足す。ケース A のクライアント .rep を `--replay-verify` して 0 でない tick 数で PASS する検査も足す。
+- **V7** (#5) 4.1.6 の追いつき基準の統一と、到着余裕の収束を selftest で assert。実プロセス (Release の Server + クライアント 1 台、ロス 0、2 分) で定常の到着余裕をログに出す。
+- **V8** (#6) R5。
+- **V9** (#7) 4.1.7b。スクショ 1 枚 (クライアント接続中に Pause / Step が無効表示)。
+- **V10** (#8) ServerLoop の PeerTable が Gone になった peer の宛先を回収する。上限に達したら ERROR ログを出す。宛先の探索は線形でよいが、回収を selftest で固定する。
+- **V11** (#10) 再接続の Hello で、旧所有者の Leave が積まれ済みなら二重に積まない。同じ受信周に「旧 peer の Gone」と「再接続の Hello」が届く場合の selftest。
+
+- **V12** (sub-10 VERDICT) システム入力を持つ .rep をオフライン再生するとき、verify 用 sim の NetRuntimeInfo を D14 と同じ値 (connected = 1、playerCount = SessionConfig.playerCount) で立てる。v13 の Net* を sim へ書くプローブで、サーバ .rep の再生が全 tick 一致することを selftest で固定する。
 
 ### A 群 — ABI v23 (sub-06)
 - **A1** `MYE_API_VERSION 23`、スロット 131、check_rules 11-a〜d PASS、`Interop.cs` を機械照合 (ABI bump の検証レシピ)。
@@ -214,8 +236,10 @@
 | sub-05 | Server.exe の実運用ループ・Runtime の --net-connect・server_verify | sub-04 | R1-R3, C1-C7 | `M81e: Server.exe と Runtime を繋ぎ server_verify を追加` |
 | sub-06 | ABI v23 (レーン状態・playerId・システムイベント) | sub-02 | A1-A2, C1-C3, C5, C6 (sub-05 後なら C4 も) | `M81f: ABI v23 でレーン状態と参加・離脱をゲームへ公開 (ABI 変更)` |
 | sub-07 | GameLiftHosting と SDK 組込・Anywhere 手順書・サーバ記録の逐次化 | sub-05 | G1-G4, R4, C1-C6 | `M81g: GameLift Server SDK 5.x を Server.exe へ組み込む` |
-| sub-08 | GameLift Anywhere 実疎通 (ユーザー手動確認) | sub-07 | G5, (修正が出たら C1-C6) | `M81h: GameLift Anywhere の実疎通で出た問題を修正` (修正が無ければ記録のみのコミット) |
+| sub-08 | GameLift Anywhere 実疎通 (ユーザー手動確認) | sub-07, sub-10 (推奨: sub-11 も) | G5, (修正が出たら C1-C6) | `M81h: GameLift Anywhere の実疎通で出た問題を修正` (修正が無ければ記録のみのコミット) |
 | sub-09 | エディタ NetWindow と文書 (ADR-022 等) | sub-05, sub-06 | E1-E2, C1-C3 | `M81i: NetWindow のサーバ接続表示と ADR-022・仕様書の更新` |
+| sub-10 | 決定論の境界の修正 (review-1 #1 #2 #4 #9) | sub-09 | V1-V5, C1-C7 | `M81j: サーバの sim をネット中と同じ境界で回し、0 tick の照合を失敗にする` |
+| sub-11 | クライアント記録の再生・時刻同期・運用の修正 (review-1 #3 #5 #6 #7 #8 #10) | sub-10 | V6-V12, R5, C1-C7 | `M81k: クライアントの .rep を再生可能にし、時刻同期を収束させる` |
 
 並列にできるもの: sub-06 は sub-02 の後なら sub-03〜05 と並列可。sub-09 の文書部分は sub-06 と sub-05 の後。
 
@@ -256,3 +280,13 @@
 - 2026-10-02 sub-06 VERDICT round 1: (1) 非サーバ構成の既定値の元として ScriptApiContext に playerCount (TickContext 由来 = .rep で再現する値) を足す (エンジン側だけで C# の構造体は不変)。(2) C# 側は位置ミラーのみで糖衣は足さない (ネット中は C# レーンが止まる)。(3) 検証用スクリプト NetEventProbe はデモへ自動では付けない (デモの生成順 = 粒子 RNG のストリームと golden を動かさない)。(4) ABI v23 により外部プロジェクトの GameLogic.dll は再ビルドが必須。これは ABI bump の通常の帰結なのでユーザー判断の論点にはせず、sub-09 の文書と台帳に記録する。
 - 2026-10-02 sub-07 VERDICT round 1: (1) D17 を追加 (ビルド済み .lib をコミットする裁定。ユーザーに確認する論点)。(2) Release 確定で RemovePlayerSession を呼ぶ口として `playerReleased` フックと `IHostingProvider::PlayerReleased` を追加 (playerLeft は一時切断のたびに呼ばれ、そこで Remove すると再接続を GameLift が拒否するため)。(3) GameLift のゲームプロパティ `myeDeadlineTicks` / `myeRejoinTimeoutTicks` で SessionConfig の締め切りと予約期間を上書きする。人数の上限は ValidatePlayer で絞る (レーン数は sim の構築時に決まるため)。(4) InitSDK は 30 秒でタイムアウトする (実測で、繋がらない接続先だと 171 秒たっても戻らなかった)。(5) R-10 の続報と R-11 を追加。
 - 2026-10-02 sub-09 VERDICT round 1: (1) NetWindow の接続ボタンは「`--net-connect ... --autoplay` を付けてエディタをもう 1 つ起動する」とする (セッションは起動時のハンドシェイクで張る、という既存の設計を保つ。走行中の窓は張り直さない)。(2) NetRuntimeInfo に専用サーバ構成の表示欄を追加する。レーンの状態は sim の SessionLanes を読み取り専用で写すだけで、ABI の NetLane* とは別経路。(3) Server のクラッシュバンドルの再現手順を、逐次 .rep を `Server.exe --replay-verify` にかける形にする。(4) R-12 を追加。
+- 2026-10-02 review-1 への応答 (REVIEW_RESPONSE)
+  - planner 宛ての #3 / #6 / #7 は 3 件とも仕様の穴として認めた。
+    - #3: 4.1.7 に「クライアントのバンドルと .rep は単独で再生できる」を追加。方式は案 (a) を採る (`ReplayPlayer` が startMeta.tick を基点に引く)。desync.txt の手順は「サーバ .rep を同じ tick まで再生して dump し --hash-diff」に改める。案 (b) だけにしなかったのは、クライアントの通常 .rep と .rsN.rep も再生できないままになるため。
+    - #6: R5 (late-subst の割合と強制再同期をログに出し、ケース A で合否判定。ケース D は負荷試験として扱う) を追加。
+    - #7: 4.1.7b (クライアント接続中のエディタは Pause / Step を無効、Stop は Bye で抜ける) を追加。
+  - coder 宛てのうち #4 と #5 は仕様側の記述も補った。#4 は 4.1.7 に「0 tick の照合は FAIL」、#5 は 4.1.6 に「追いつきと速度係数は同じ基準から導く」+ 収束の受け入れ条件。目標値 1 tick は変えない。
+  - C5 の観点を補強した。TickServices のゲート系フラグを経由する外部 I/O も対象にする。sub-04 の C5 一覧はこの観点が抜けていて、それが #1 を見逃した原因。
+  - V 群 (V1〜V11) を新設し、sub-10 / sub-11 を新規に作った。sub-08 の依存に sub-10 を追加した。#1 と #2 はサーバ .rep の中身を変えうるので、実疎通より先に直す。
+  - #2 (D14) は仕様に書いてあったのに実装されず、差分欄にも出ていなかった。仕様の変更は無い。
+- 2026-10-02 sub-10 VERDICT round 1: (1) netLockstep は共通関数 `NetLockstepBoundary` から導き、ゲート系フラグは `TickGates` / `IsNetSessionGates` で照合する (V2 の方式)。(2) V4 の FAIL 条件に「照合した tick が 0 本 (期待ハッシュの無い tick だけで走った)」を加える。(3) V12 を追加。D14 の目的 (サーバとクライアントで sim から見える値をそろえる) は、オフライン再生にも同じく当てはまるため。sub-11 で実装する。

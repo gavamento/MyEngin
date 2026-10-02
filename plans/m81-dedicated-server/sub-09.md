@@ -1,7 +1,7 @@
 # sub-09: エディタ NetWindow と文書 (ADR-022 等)
 
 - 依存: sub-05, sub-06
-- 状態: OK (コミット待ち)
+- 状態: OK (commit d16d77b)
 - 往復: 1
 
 ## やること

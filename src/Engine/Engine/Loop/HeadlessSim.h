@@ -10,10 +10,13 @@
 
 #include "Engine/Engine/Demo/StartScene.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Loop/TickRunner.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Session/SessionTypes.h"
 
 namespace mye {
+
+struct NetRuntimeInfo;
 
 struct HeadlessSimSetup {
     // 共有 CLI (ParseEngineCliFlag) で埋めた設定。sim に効くのは projectRoot / useJobs /
@@ -32,6 +35,7 @@ struct HeadlessVerifyResult {
     uint64_t unverifiedTicks = 0;   // 期待ハッシュが 0 の tick (クラッシュ .rep の未完了 tick)
     uint64_t totalTicks = 0;        // .rep に入っている tick 数
     uint64_t firstMismatchTick = 0; // passed == false かつ ran のときだけ意味を持つ
+    std::string failReason;         // passed == false かつ ran のときの理由 (照合 0 tick / 範囲外 / 不一致 / 途中停止)
     double elapsedMs = 0.0;         // tick ループの実時間 (ログ用。sim には入らない)
 };
 
@@ -82,6 +86,12 @@ public:
     const std::wstring& ShadowCopyDir() const;
     // 起動時に算出した出自 (engine / game / content ...)。Init 後に有効
     const SimProvenance& Provenance() const;
+    // この sim の RunOneTick が使うゲート系フラグ (selftest が IsNetSessionGates で照合する)
+    TickGates Gates() const;
+    // LoadGame / LoadPersist / SaveGame が読み書くセーブ置き場 (Editor / Runtime とは別)
+    const std::wstring& SaveDir() const;
+    // ABI v13 の Net* スロットが読む値 (systemInput = true のセッション構成では D14 の固定値)
+    const NetRuntimeInfo& NetInfo() const;
 
 private:
     struct Impl;

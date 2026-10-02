@@ -187,6 +187,12 @@ private:
     bool active_ = false;
 };
 
+// --replay-verify の合否 (EngineLoop / HeadlessSim 共通)。照合した tick が 0 本の「合格」を作らない:
+// 1 tick も比べていないものは通ったとは言えない。startTick = スナップショット復元後の tick
+// (ReplayPlayer は tick を絶対値で引くので、0 以外から始まる .rep は範囲外になる)。
+// 不合格なら理由を reason へ書く (合格のときは空)
+bool JudgeReplayVerification(const ReplayPlayer& player, uint64_t startTick, std::string& reason);
+
 // .rep 2 本の突き合わせ (M52h、--rep-diff A B)。
 // ネット対戦の 2 プロセスが**本当に同じ tick 列を回したか**を機械判定するための道具。
 // ★`fc /b` で済ませない理由は M52a と同じ: 割れたときに「どの tick の どのレーンの

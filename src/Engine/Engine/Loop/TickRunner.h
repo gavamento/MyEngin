@@ -150,6 +150,44 @@ struct TickServices {
     int* exitCode = nullptr;
 };
 
+// ネットのロックステップ境界 (TickServices::netLockstep) を立てる条件の正本。
+// EngineLoop (P2P / 専用サーバのクライアント) と HeadlessSim (専用サーバのセッション) が
+// **同じ関数**から導く。片方だけ立て忘れると、LoadGame / LoadPersist が立て忘れた側でだけ
+// ディスクのセーブを sim へ読み込み、2 者のワールドが割れる。
+// netRole: NetRole の生値 (EngineConfig::netRole と同じ。0 = ネットのセッションなし)
+constexpr bool NetLockstepBoundary(int netRole)
+{
+    return netRole != 0;
+}
+
+// RunOneTick の決定論の境界を決めるゲート系フラグの写し (selftest が機械的に照合する)。
+// 「ある / ない」だけを持つ。ゲートの意味は TickRunner.cpp の Recording / Verifying / Networked
+struct TickGates {
+    bool netLockstep = false;
+    bool resim = false;
+    bool hasRecorder = false;
+    bool hasPlayer = false;
+};
+
+inline TickGates GatesOf(const TickServices& ts)
+{
+    TickGates g;
+    g.netLockstep = ts.netLockstep;
+    g.resim = ts.resim;
+    g.hasRecorder = ts.recorder != nullptr;
+    g.hasPlayer = ts.player != nullptr;
+    return g;
+}
+
+// ネットのセッション中 (専用サーバのサーバ / クライアント) のライブ tick が満たすべきゲート。
+// 記録はセッション側が確定 tick だけを書くので recorder は持たず、再生ゲート (player) は
+// 持つが非アクティブ。EngineLoop のクライアント構成と HeadlessSim のセッション構成の両方が
+// この値になること (HeadlessSim は ServerNetSelfTest、EngineLoop は起動時のログで検査)
+inline bool IsNetSessionGates(const TickGates& g)
+{
+    return g.netLockstep && !g.resim && !g.hasRecorder && g.hasPlayer;
+}
+
 // tick 1 回 (フェーズ 3 → 3.5 → 3.6 → 4 → 5 → 7 → tick 末の出力レーン) を回し、
 // 最後に ctx.tickIndex を 1 進める。
 // ★ctx.inputs[0..playerCount) は**呼び出し側が確定させてから**渡すこと — ライブ入力 /

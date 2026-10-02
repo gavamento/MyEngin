@@ -372,9 +372,8 @@ int wmain(int argc, wchar_t** argv)
                          r.elapsedMs,
                          r.totalTicks > 0 ? r.elapsedMs / static_cast<double>(r.totalTicks) : 0.0);
         } else {
-            MYE_LOG_ERROR("[headless] verified %llu ticks - VERIFY FAIL: first mismatch at tick %llu",
-                          static_cast<unsigned long long>(r.verifiedTicks),
-                          static_cast<unsigned long long>(r.firstMismatchTick));
+            MYE_LOG_ERROR("[headless] verified %llu ticks - VERIFY FAIL: %s",
+                          static_cast<unsigned long long>(r.verifiedTicks), r.failReason.c_str());
             exitCode = 1;
         }
         // 終了前の H2 検査 (sim がまだ生きている = 遅延ロードされた DLL があればここで見える)

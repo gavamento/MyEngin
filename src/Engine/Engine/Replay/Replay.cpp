@@ -14,6 +14,31 @@ namespace {
 constexpr uint32_t kReplayMagic = 0x5045524Du; // 'MREP'
 } // namespace
 
+bool JudgeReplayVerification(const ReplayPlayer& player, uint64_t startTick, std::string& reason)
+{
+    reason.clear();
+    if (player.failed) {
+        reason = "hash mismatch at tick " + std::to_string(player.firstMismatchTick);
+        return false;
+    }
+    if (player.TickCount() == 0) {
+        reason = "the .rep has no tick records";
+        return false;
+    }
+    if (player.verifiedTicks == 0) {
+        if (!player.HasTick(startTick)) {
+            reason = "the restored start tick " + std::to_string(startTick) + " is outside the .rep's tick range [0, "
+                + std::to_string(player.TickCount()) + ") - no tick was run (records are looked up by "
+                  "absolute tick, so a .rep that starts after tick 0 is not replayable)";
+        } else {
+            reason = "no tick was compared against an expected hash (" + std::to_string(player.unverifiedTicks)
+                + " tick(s) ran without one)";
+        }
+        return false;
+    }
+    return true;
+}
+
 void ReplayRecorder::Start(const std::wstring& path, uint64_t rngState, uint64_t rngInc,
                            uint32_t entityCount, uint32_t playerCount, const std::byte* snapshot,
                            size_t snapshotSize, const SessionConfig& session,

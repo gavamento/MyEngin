@@ -154,12 +154,14 @@ struct HeadlessSim::Impl : IEngineApp {
     }
     void OnTick(EngineContext& c) override { c.simulateScripts = true; }
 
-    void BuildTickServices();
+    void BuildTickServices(int netRole);
 };
 
 // EngineLoop::Run の tickServices 組み立てと対応する (契約は TickRunner.h の TickServices)。
-// メンバを足す・消すときは両方を見ること
-void HeadlessSim::Impl::BuildTickServices()
+// メンバを足す・消すときは両方を見ること。ゲート系 (netLockstep / recorder / player / resim) の
+// 対応は TickRunner.h の IsNetSessionGates で機械的に照合する。
+// netRole: セッション構成なら NetRole の生値、そうでなければ 0
+void HeadlessSim::Impl::BuildTickServices(int netRole)
 {
     TickServices& ts = tickServices;
     ts.ctx = &ctx;
@@ -205,8 +207,10 @@ void HeadlessSim::Impl::BuildTickServices()
     ts.prefabLibrary = &prefabLibrary;
     ts.assetsRoot = &assetsRoot;
     ts.saveDir = &saveDir;
-    ts.recorder = nullptr; // 記録はしない (照合専用)
+    ts.recorder = nullptr; // 記録は RunTick の呼び出し側 (ServerLoop) が確定 tick だけを書く
     ts.player = &player;
+    // ネット中と同じ決定論の境界。立てないと LoadGame / LoadPersist がこのサーバでだけセーブファイルを読む
+    ts.netLockstep = NetLockstepBoundary(netRole);
     ts.prevWorld = nullptr; // 描画補間の採取は要らない
     ts.lastTickSimulated = &lastTickSimulated;
     ts.exitCode = &exitCode;
@@ -349,7 +353,7 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     m.simRefs.prevTickInput = m.prevTickInput;
     m.simRefs.audioHandleSeq = &m.audioHandleSeq;
     m.simRefs.tickIndex = &ctx.tickIndex;
-    m.BuildTickServices();
+    m.BuildTickServices(setup.systemInput ? static_cast<int>(NetRole::Server) : 0);
     m.initialized = true; // 以降の失敗でも破棄時に外すべき注入が入っている
 
     // ---- 起動シーン ----
@@ -360,6 +364,16 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
             : static_cast<uint32_t>(m.config.localPlayers);
     }
     ctx.hasSystemInput = setup.systemInput;
+    if (setup.systemInput) {
+        // ABI v13 の Net* (NetIsConnected / NetPlayerCount) の答え。ゲームが tick 中に読んで sim へ使いうるので、
+        // クライアント (EngineLoop が connected = 稼働中 / playerCount = セッションの人数) と同じ値にする (spec D14)。
+        // サーバの NetRuntimeInfo はここだけで書く
+        m.netInfo.active = true;
+        m.netInfo.connected = true;
+        m.netInfo.role = static_cast<int>(NetRole::Server);
+        m.netInfo.localPlayer = 0;
+        m.netInfo.playerCount = ctx.playerCount;
+    }
     m.OnStart(ctx);
     // OnStart で積まれた構造変更 (SetParent 等) を確定する (EngineLoop と同じ点)
     m.scene.GetWorld().ApplyStructuralChanges();
@@ -409,6 +423,7 @@ HeadlessVerifyResult HeadlessSim::VerifyReplay()
     // 検証中は音を止める扱い (EngineLoop と同じ。デバイスは無いので実害は無いが門を揃える)
     m.audioSystem.SetSuspended(true);
     r.ran = true;
+    const uint64_t startTick = ctx.tickIndex;
 
     const auto t0 = std::chrono::steady_clock::now();
     // EngineLoop の verify 経路と同じ順序: 入力の置換 → RunOneTick (ハッシュ照合は RunOneTick の中)。
@@ -422,7 +437,13 @@ HeadlessVerifyResult HeadlessSim::VerifyReplay()
     r.verifiedTicks = m.player.verifiedTicks;
     r.unverifiedTicks = m.player.unverifiedTicks;
     r.firstMismatchTick = m.player.firstMismatchTick;
-    r.passed = !m.player.failed && m.exitCode == 0 && m.player.HasTick(ctx.tickIndex) == false;
+    // 全 tick を走り切り (途中で止まっていない)、かつ 1 本以上を実際に照合した
+    const bool ranToEnd = m.exitCode == 0 && !m.player.HasTick(ctx.tickIndex);
+    r.passed = ranToEnd && JudgeReplayVerification(m.player, startTick, r.failReason);
+    if (!r.passed && r.failReason.empty()) {
+        r.failReason = m.player.failed ? "hash mismatch at tick " + std::to_string(m.player.firstMismatchTick)
+                                       : "the replay stopped before its last tick";
+    }
     return r;
 }
 
@@ -451,5 +472,8 @@ uint64_t HeadlessSim::TickIndex() const { return impl_->ctx.tickIndex; }
 const std::wstring& HeadlessSim::AssetsRoot() const { return impl_->assetsRoot; }
 const std::wstring& HeadlessSim::ShadowCopyDir() const { return impl_->shadowCopyDir; }
 const SimProvenance& HeadlessSim::Provenance() const { return impl_->provenance; }
+TickGates HeadlessSim::Gates() const { return GatesOf(impl_->tickServices); }
+const std::wstring& HeadlessSim::SaveDir() const { return impl_->saveDir; }
+const NetRuntimeInfo& HeadlessSim::NetInfo() const { return impl_->netInfo; }
 
 } // namespace mye

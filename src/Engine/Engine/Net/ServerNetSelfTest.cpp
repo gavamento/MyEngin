@@ -21,15 +21,21 @@
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Util/Random.h"
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
+#include "Engine/Engine/Loop/GameFlow.h"
 #include "Engine/Engine/Loop/HeadlessSim.h"
+#include "Engine/Engine/Loop/TickRunner.h"
 #include "Engine/Engine/Net/ClientSession.h"
 #include "Engine/Engine/Net/ClientSimRunner.h"
 #include "Engine/Engine/Net/NetProtocol.h"
 #include "Engine/Engine/Net/NetRollback.h"
+#include "Engine/Engine/Net/NetRuntime.h"
+#include "Engine/Engine/Net/NetSession.h"
 #include "Engine/Engine/Net/ServerSession.h"
 #include "Engine/Engine/Replay/CrashRing.h"
+#include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Scene/GameObject.h"
+#include "Engine/Engine/Scene/SaveGame.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Script/EngineApiTable.h"
 #include "Engine/Platform/PathUtil.h"
@@ -498,12 +504,59 @@ bool InitSim(HeadlessSim& sim)
         Scene* scene = sim.Refs().scene;
         scene->GetWorld().AddComponentRaw(scene->CreateGameObject("NetEventProbeHost").Id(), probe);
     }
+    // LoadGame / LoadPersist の境界を見る probe (GameLogic.dll の SaveLoadProbe)。同じく全 sim に同じ順で付ける
+    const ComponentTypeId saveProbe = ComponentRegistry::Get().FindByName("SaveLoadProbe");
+    if (saveProbe != kInvalidComponentType) {
+        Scene* scene = sim.Refs().scene;
+        scene->GetWorld().AddComponentRaw(scene->CreateGameObject("SaveLoadProbeHost").Id(), saveProbe);
+    }
     return true;
 }
 
 bool HasEventProbe()
 {
     return ComponentRegistry::Get().FindByName("NetEventProbe") != kInvalidComponentType;
+}
+
+bool HasSaveLoadProbe()
+{
+    return ComponentRegistry::Get().FindByName("SaveLoadProbe") != kInvalidComponentType;
+}
+
+// SaveLoadProbe のフィールドを ABI 経由で読み書きする。4 バイトのフィールドは下位に入る (リトルエンディアン)
+bool ReadSaveProbe(HeadlessSim& sim, const char* field, uint64_t& out)
+{
+    Scene* scene = sim.Refs().scene;
+    const GameObject host = scene->Find("SaveLoadProbeHost");
+    if (!host) {
+        return false;
+    }
+    ScriptApiContext apiCtx;
+    apiCtx.scene = scene;
+    MyeEngineApi api = {};
+    BuildEngineApi(api, &apiCtx);
+    uint64_t buf = 0;
+    const MyeEntityId id = { host.Id().index, host.Id().generation };
+    if (api.GetComponentField(&apiCtx, id, HashStr("SaveLoadProbe"), HashStr(field), &buf, sizeof(buf), nullptr) <= 0) {
+        return false;
+    }
+    out = buf;
+    return true;
+}
+
+bool WriteSaveProbe(HeadlessSim& sim, const char* field, const void* value, int32_t size)
+{
+    Scene* scene = sim.Refs().scene;
+    const GameObject host = scene->Find("SaveLoadProbeHost");
+    if (!host) {
+        return false;
+    }
+    ScriptApiContext apiCtx;
+    apiCtx.scene = scene;
+    MyeEngineApi api = {};
+    BuildEngineApi(api, &apiCtx);
+    const MyeEntityId id = { host.Id().index, host.Id().generation };
+    return api.SetComponentField(&apiCtx, id, HashStr("SaveLoadProbe"), HashStr(field), value, size) == 1;
 }
 
 // probe のフィールドを ABI (GetComponentField) 経由で読む。無ければ false
@@ -552,6 +605,10 @@ struct ScenarioDef {
     uint32_t peerTimeoutMs = 1000;
     uint32_t quietTicks = 0;      // この tick 未満の自レーン入力はゼロ
     uint32_t maxSpeculation = kNetMaxSpeculationClient;
+    // SaveLoadProbe: この tick に LoadPersist / LoadGame を積ませる (0 = 積まない)。slot のセーブは試験が置く
+    uint64_t persistLoadTick = 0;
+    uint64_t gameLoadTick = 0;
+    int32_t saveSlot = 0;
     LinkSpec link[kClients + 1];
     std::vector<Action> actions;
 };
@@ -566,9 +623,13 @@ struct ClientOutcome {
     uint64_t lastSnapshotTick = 0;
     ClientState finalState = ClientState::Idle;
     uint64_t finalTick = 0;
+    bool running = false;            // 終了時にセッションが稼働中 (EngineLoop が netInfo.connected へ写す値)
+    uint32_t sessionPlayerCount = 0; // セッションの人数 (同 netInfo.playerCount)
 };
 
 struct ScenarioResult {
+    // サーバが最初の tick を回す前の sim 状態。probe の設定を書いたシナリオだけ入る (空 = 共通の初期スナップショット)
+    std::vector<std::byte> startBlob;
     std::vector<uint64_t> serverHash;
     std::vector<NetConfirmedTick> log;
     ServerStats stats;
@@ -612,6 +673,8 @@ void Harvest(ClientNode& n, ClientOutcome& out)
     }
     out.finalState = n.session->State();
     out.finalTick = n.runner->TickIndex();
+    out.running = n.session->Running();
+    out.sessionPlayerCount = n.session->PlayerCount();
 }
 
 std::wstring CrashRoot()
@@ -630,6 +693,16 @@ ScenarioResult RunScenario(Sims& sims, const ScenarioDef& def)
     }
     for (HeadlessSim& c : sims.client) {
         c.SetPokeTick(-1);
+    }
+    if (def.persistLoadTick != 0 || def.gameLoadTick != 0) {
+        // probe の要求 tick を最初のスナップショットへ含める (クライアントは参加スナップショットで受け取る)
+        const bool wrote = WriteSaveProbe(serverSim, "loadPersistTick", &def.persistLoadTick, sizeof(def.persistLoadTick))
+            && WriteSaveProbe(serverSim, "loadGameTick", &def.gameLoadTick, sizeof(def.gameLoadTick))
+            && WriteSaveProbe(serverSim, "slot", &def.saveSlot, sizeof(def.saveSlot));
+        if (!wrote || !CaptureSimSnapshot(serverSim.Refs(), res.startBlob)) {
+            Check(false, "[%s] could not set up the SaveLoadProbe", def.name);
+            return res;
+        }
     }
 
     FakeNet net(def.seed);
@@ -844,7 +917,8 @@ void CheckReplayOfLog(Sims& sims, const ScenarioResult& r, const char* name)
 {
     HeadlessSim& sim = sims.server;
     sim.Activate();
-    if (!RestoreSimSnapshot(sim.Refs(), sims.initialBlob.data(), sims.initialBlob.size())) {
+    const std::vector<std::byte>& start = r.startBlob.empty() ? sims.initialBlob : r.startBlob;
+    if (!RestoreSimSnapshot(sim.Refs(), start.data(), start.size())) {
         Check(false, "[%s] could not reset the sim for the log replay", name);
         return;
     }
@@ -1319,6 +1393,226 @@ void TestRollbackAcrossSystemEvents(Sims& sims)
                                           "system input does NOT reproduce the confirmed run");
 }
 
+// サーバの確定入力列 r.log を .rep (role = Server) として書く。from > 0 なら from の直前の状態を開始
+// スナップショットにして from 以降だけを記録する (参加途中のクライアントが録る .rep と同じ形)
+bool WriteRepFromLog(Sims& sims, const ScenarioResult& r, const std::wstring& path, size_t from)
+{
+    HeadlessSim& sim = sims.server;
+    sim.Activate();
+    const std::vector<std::byte>& start = r.startBlob.empty() ? sims.initialBlob : r.startBlob;
+    if (!RestoreSimSnapshot(sim.Refs(), start.data(), start.size())) {
+        return false;
+    }
+    from = (std::min)(from, r.log.size());
+    for (size_t i = 0; i < from; ++i) {
+        sim.RunTick(r.log[i].inputs, &r.log[i].sys, false);
+    }
+    std::vector<std::byte> blob;
+    if (!CaptureSimSnapshot(sim.Refs(), blob)) {
+        return false;
+    }
+    World& world = sim.Refs().scene->GetWorld();
+    const SessionConfig session = SimSessionConfig(3, 150);
+    SimProvenance prov = sim.Provenance();
+    SnapshotMeta meta = {};
+    meta.tick = sim.TickIndex();
+    meta.lastEventSeq = sim.Refs().scene->Lanes().lastEventSeq;
+    meta.config = session;
+    meta.blobHash = HashBytes(blob.data(), blob.size());
+    meta.worldHash = sim.WorldHash();
+    prov.initialSnapshotHash = meta.blobHash;
+    meta.provenance = prov;
+    ReplayRecorder rec;
+    rec.Start(path, world.Rng().State(), world.Rng().Inc(), world.AliveCount(), kMaxPlayers, blob.data(), blob.size(),
+              session, prov, meta);
+    if (!rec.IsActive()) {
+        return false;
+    }
+    for (size_t i = from; i < r.log.size(); ++i) {
+        rec.RecordTick(r.log[i].inputs, kMaxPlayers, r.serverHash[i], &r.log[i].sys);
+    }
+    return rec.Finish();
+}
+
+struct OfflineVerify {
+    bool ready = false;
+    HeadlessVerifyResult result;
+    TickGates gates;
+};
+
+// Server.exe --replay-verify と同じ経路 (systemInput = false の HeadlessSim で VerifyReplay)
+OfflineVerify VerifyRepOffline(const std::wstring& path)
+{
+    OfflineVerify o;
+    HeadlessSimSetup s;
+    s.config.title = L"MyEngine ServerNetSelfTest verify";
+    s.config.localPlayers = static_cast<int>(kMaxPlayers);
+    s.config.replayVerifyPath = path;
+    s.scene.showcase = FindShowcase(L"--local-demo", /*editor=*/true);
+    HeadlessSim sim;
+    if (s.scene.showcase == nullptr || !sim.Init(s)) {
+        return o;
+    }
+    o.ready = true;
+    o.gates = sim.Gates();
+    o.result = sim.VerifyReplay();
+    return o;
+}
+
+// V3 (D14): サーバ構成の sim が v13 の Net* へ返す値。ゲームが tick の中で読みうる NetIsConnected / NetPlayerCount は
+// クライアント (EngineLoop が connected = 稼働中、playerCount = セッションの人数 を書く) と同じ値になる
+void CheckSessionNetInfo(HeadlessSim& sim, const char* who, uint32_t wantPlayers)
+{
+    ScriptApiContext apiCtx;
+    apiCtx.net = &sim.NetInfo();
+    MyeEngineApi api = {};
+    BuildEngineApi(api, &apiCtx);
+    Check(api.NetIsConnected(&apiCtx) == 1, "%s: NetIsConnected = 1 in a session sim (D14)", who);
+    Check(api.NetPlayerCount(&apiCtx) == wantPlayers, "%s: NetPlayerCount = %u (the session's player count), got %u", who,
+          wantPlayers, api.NetPlayerCount(&apiCtx));
+    Check(api.NetLocalPlayer(&apiCtx) == 0, "%s: NetLocalPlayer = 0 (D14)", who);
+    Check(sim.NetInfo().active && sim.NetInfo().role == static_cast<int>(NetRole::Server),
+          "%s: the session sim's NetRuntimeInfo is active with role Server", who);
+}
+
+// V1 / V2 / V3 / V4: サーバの sim がネット中と同じ決定論の境界で回る。
+// 実在のセーブファイルを置き、tick の中で LoadPersist / LoadGame を積む。境界が立っていれば、サーバもクライアントも
+// セーブを sim へ読み込まない (ネット中は no-op) ので、ハッシュ列が一致し、サーバ .rep のオフライン再生 (Verifying) も一致する。
+// 立っていなければ、サーバだけがセーブを読んで割れる (負の対照は SELF_EVAL の手順で境界を外して確認する)
+void TestSaveLoadBoundary(Sims& sims)
+{
+    if (!HasSaveLoadProbe()) {
+        MYE_LOG_WARN("[server-net selftest] SaveLoadProbe is not registered (GameLogic.dll not loaded) - the save "
+                     "boundary checks are skipped");
+        return;
+    }
+    constexpr int32_t kSlot = 7;
+    constexpr int32_t kSavedValue = 1234;
+    HeadlessSim& server = sims.server;
+
+    // ゲート系フラグ (V2): セッション構成の sim はすべて同じ境界。再生専用の sim (systemInput = false) とは違う
+    Check(IsNetSessionGates(server.Gates()), "server sim: the live tick gates are the net-session gates");
+    for (int k = 0; k < kClients; ++k) {
+        Check(IsNetSessionGates(sims.client[k].Gates()), "client sim %d: the live tick gates are the net-session gates", k + 1);
+    }
+    Check(NetLockstepBoundary(static_cast<int>(NetRole::Server)) && NetLockstepBoundary(static_cast<int>(NetRole::Client))
+              && NetLockstepBoundary(static_cast<int>(NetRole::Host)) && !NetLockstepBoundary(0),
+          "NetLockstepBoundary: every net role sets the boundary, no role does not");
+
+    // 実在のセーブ (scenePath 無し = LoadGame もシーンを動かさない)
+    const std::wstring savePath = SaveGameFile::PathForSlot(server.SaveDir(), kSlot);
+    std::error_code ec;
+    std::filesystem::create_directories(server.SaveDir(), ec);
+    PersistStore saved;
+    int32_t savedValue = kSavedValue;
+    saved.Set(HashStr("save_probe.value"), &savedValue, sizeof(savedValue));
+    Check(SaveGameFile::Write(savePath, L"", saved), "wrote a real save file for slot %d", kSlot);
+
+    ScenarioDef d;
+    d.name = "V1 LoadPersist / LoadGame in a session";
+    d.seed = 707;
+    d.endMs = 9000;
+    d.persistLoadTick = 180;
+    d.gameLoadTick = 360;
+    d.saveSlot = kSlot;
+    for (int k = 1; k <= kClients; ++k) {
+        d.link[k] = Link(25, 10, 5, 5, 0);
+    }
+    d.actions = { { Action::Start, 0, 1, 0 }, { Action::Start, 5, 2, 0 }, { Action::Start, 10, 3, 0 } };
+    ScenarioResult r = RunScenario(sims, d);
+    LogScenario(d.name, d, r);
+    Check(r.log.size() > 450, "%s: the scenario runs past both load ticks (%zu ticks)", d.name, r.log.size());
+    Check(CountChainMismatches(r, d.name) == 0, "%s: every client's committed hash chain equals the server's", d.name);
+    CheckReplayOfLog(sims, r, d.name);
+
+    // 要求は積まれたが、セーブは sim へ入っていない (サーバ・クライアントとも)
+    const auto checkProbe = [&](HeadlessSim& sim, const char* who) {
+        uint64_t requests = 0, value = 0;
+        sim.Activate();
+        Check(ReadSaveProbe(sim, "requests", requests) && ReadSaveProbe(sim, "persistValue", value),
+              "%s: the SaveLoadProbe fields are readable", who);
+        Check(requests == 2, "%s: the script requested LoadPersist and LoadGame (%llu requests)", who,
+              static_cast<unsigned long long>(requests));
+        Check(static_cast<int32_t>(value) == -1 && sim.Refs().scene->Persist().Find(HashStr("save_probe.value")) == nullptr,
+              "%s: the save file was NOT loaded into the sim during the session (persistValue %d)", who,
+              static_cast<int32_t>(value));
+    };
+    checkProbe(server, "server sim");
+    for (int k = 1; k <= kClients; ++k) {
+        if (!r.client[k].committed.empty() && r.client[k].committed.rbegin()->first > 361) {
+            checkProbe(sims.client[k - 1], k == 1 ? "client sim 1" : (k == 2 ? "client sim 2" : "client sim 3"));
+        }
+    }
+
+    // サーバの確定ログの .rep を、Server.exe --replay-verify と同じ経路 (Verifying) で再生して一致 (V1)
+    const std::filesystem::path dir(CrashRoot());
+    std::filesystem::create_directories(dir, ec);
+    const std::wstring fullRep = (dir / L"save_boundary_full.rep").wstring();
+    Check(WriteRepFromLog(sims, r, fullRep, 0), "%s: wrote the server's confirmed log as a .rep", d.name);
+    const OfflineVerify full = VerifyRepOffline(fullRep);
+    Check(full.ready && full.result.ran && full.result.passed && full.result.verifiedTicks == r.log.size(),
+          "%s: the offline replay of the server .rep matches every tick (verified %llu of %zu, reason '%s')", d.name,
+          static_cast<unsigned long long>(full.result.verifiedTicks), r.log.size(), full.result.failReason.c_str());
+    // 再生専用の sim (systemInput = false) はセッションのゲートではない = IsNetSessionGates は両者を区別できる
+    Check(full.ready && !IsNetSessionGates(full.gates) && full.gates.hasPlayer,
+          "%s (negative control): the replay-only sim's gates are not the net-session gates", d.name);
+
+    // V3: 参加中のクライアントが書く値 (稼働中 / セッションの人数) とサーバの Net* が同じ
+    CheckSessionNetInfo(server, "server sim", kMaxPlayers);
+    ScriptApiContext serverCtx;
+    serverCtx.net = &server.NetInfo();
+    MyeEngineApi serverApi = {};
+    BuildEngineApi(serverApi, &serverCtx);
+    for (int k = 1; k <= kClients; ++k) {
+        const ClientOutcome& c = r.client[k];
+        Check(c.running && c.sessionPlayerCount != 0, "%s: client %d is running with a session (%u lanes)", d.name, k,
+              c.sessionPlayerCount);
+        Check((serverApi.NetIsConnected(&serverCtx) == 1) == c.running
+                  && serverApi.NetPlayerCount(&serverCtx) == c.sessionPlayerCount,
+              "%s: the server's NetIsConnected / NetPlayerCount equal client %d's (%u lanes)", d.name, k,
+              c.sessionPlayerCount);
+    }
+    for (int k = 0; k < kClients; ++k) {
+        CheckSessionNetInfo(sims.client[k], k == 0 ? "client sim 1" : (k == 1 ? "client sim 2" : "client sim 3"),
+                            kMaxPlayers);
+    }
+
+    // V4: 0 tick の照合は FAIL。tick が 0 本の .rep と、開始 tick が .rep の範囲外の .rep (参加途中のクライアントの .rep の形)
+    const std::wstring emptyRep = (dir / L"save_boundary_empty.rep").wstring();
+    Check(WriteRepFromLog(sims, r, emptyRep, r.log.size()), "%s: wrote a .rep with no tick records", d.name);
+    const OfflineVerify empty = VerifyRepOffline(emptyRep);
+    Check(empty.ready && empty.result.ran && !empty.result.passed && empty.result.verifiedTicks == 0
+              && empty.result.failReason.find("no tick records") != std::string::npos,
+          "%s: a .rep with no ticks FAILS (passed %d, verified %llu, reason '%s')", d.name, empty.result.passed ? 1 : 0,
+          static_cast<unsigned long long>(empty.result.verifiedTicks), empty.result.failReason.c_str());
+    const std::wstring lateRep = (dir / L"save_boundary_late.rep").wstring();
+    Check(WriteRepFromLog(sims, r, lateRep, r.log.size() - 3), "%s: wrote a .rep that starts at tick %zu", d.name,
+          r.log.size() - 3);
+    const OfflineVerify late = VerifyRepOffline(lateRep);
+    Check(late.ready && late.result.ran && !late.result.passed && late.result.verifiedTicks == 0
+              && late.result.failReason.find("outside the .rep's tick range") != std::string::npos,
+          "%s: a .rep whose start tick is outside its record range FAILS (passed %d, verified %llu, reason '%s')", d.name,
+          late.result.passed ? 1 : 0, static_cast<unsigned long long>(late.result.verifiedTicks),
+          late.result.failReason.c_str());
+    // 判定関数そのもの
+    {
+        ReplayPlayer none;
+        std::string reason;
+        Check(!JudgeReplayVerification(none, 0, reason) && !reason.empty(),
+              "JudgeReplayVerification: a player with no records is not a pass ('%s')", reason.c_str());
+        ReplayPlayer mismatch;
+        mismatch.failed = true;
+        mismatch.firstMismatchTick = 9;
+        Check(!JudgeReplayVerification(mismatch, 0, reason) && reason.find("tick 9") != std::string::npos,
+              "JudgeReplayVerification: a hash mismatch is not a pass ('%s')", reason.c_str());
+    }
+
+    std::filesystem::remove(savePath, ec);
+    std::filesystem::remove(fullRep, ec);
+    std::filesystem::remove(emptyRep, ec);
+    std::filesystem::remove(lateRep, ec);
+}
+
 } // namespace
 
 bool RunServerNetSelfTest()
@@ -1360,6 +1654,7 @@ bool RunServerNetSelfTest()
             timed("N3 eventSeq gap", &TestEventGap);
             timed("N3 desync", &TestDesync);
             timed("N4 speculation limit", &TestSpeculationLimit);
+            timed("V1-V4 save/load boundary, net info, empty replay", &TestSaveLoadBoundary);
         }
     }
 

@@ -10,7 +10,8 @@ namespace mye {
 //     ・エディタの NetWindow (Editor 層。Engine の内部型を掴ませたくない)
 //     ・ABI v13 の NetXxx スロット (Script 層。DLL 境界は C ABI + POD のみ)
 //     ・ログ / セルフテスト
-//   EngineLoop が毎フレーム 1 回だけ書き、他は読むだけ。
+//   EngineLoop が毎フレーム 1 回だけ書き、他は読むだけ。専用サーバ (HeadlessSim) は
+//   起動時に固定値 (active / connected / playerCount) を 1 回だけ書く。
 //
 // ★ここに載る値は**すべて機種依存 (実時間・ネットワーク状況・自分がどちら側か)**。
 //   スクリプトから読めるようにはするが、**読んだ値を sim 状態へ書き戻してはいけない**。
