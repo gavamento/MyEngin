@@ -569,6 +569,9 @@ void ServerSession::AfterApply(uint64_t tick)
                          static_cast<unsigned long long>(ev.playerId), static_cast<unsigned>(ev.lane));
             break;
         case SystemEventKind::Release:
+            if (laneSid_[ev.lane][0] != '\0' && hooks_.playerReleased) {
+                hooks_.playerReleased(laneSid_[ev.lane]);
+            }
             std::memset(laneSid_[ev.lane], 0, sizeof(laneSid_[ev.lane]));
             releaseQueued_[ev.lane] = false;
             ++stats_.releases;

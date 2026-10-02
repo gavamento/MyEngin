@@ -6,11 +6,24 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\src\Server\Hosting\GameLiftHosting.cpp">
+      <Filter>Hosting</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Server\Hosting\GameLiftSdkAws.cpp">
+      <Filter>Hosting</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Server\Hosting\LocalHosting.cpp">
       <Filter>Hosting</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Server\ServerLoop.cpp" />
     <ClCompile Include="..\src\Server\ServerMain.cpp" />
+    <ClCompile Include="..\src\Server\ServerSelfTest.cpp" />
+    <ClInclude Include="..\src\Server\Hosting\GameLiftHosting.h">
+      <Filter>Hosting</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Server\Hosting\GameLiftSdk.h">
+      <Filter>Hosting</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Server\Hosting\IHostingProvider.h">
       <Filter>Hosting</Filter>
     </ClInclude>
@@ -18,5 +31,6 @@
       <Filter>Hosting</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Server\ServerLoop.h" />
+    <ClInclude Include="..\src\Server\ServerSelfTest.h" />
   </ItemGroup>
 </Project>

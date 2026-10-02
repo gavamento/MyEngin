@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <vector>
 
 #include <Windows.h>
@@ -15,6 +16,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Util/Random.h"
+#include "Engine/Platform/CrashHandler.h"
 #include "Engine/Engine/Loop/HeadlessSim.h"
 #include "Engine/Engine/Net/NetProtocol.h"
 #include "Engine/Engine/Net/ServerSession.h"
@@ -92,6 +94,41 @@ uint64_t MakeSessionId(uint16_t port)
 
 } // namespace
 
+void InterpretHostingEvents(const std::vector<HostingEvent>& events, HostingDecision& d)
+{
+    for (const HostingEvent& e : events) {
+        if (e.kind == HostingEventKind::StartSession) {
+            d.startSession = true;
+            if (e.session.deadlineTicks != 0) {
+                d.session.deadlineTicks = e.session.deadlineTicks;
+            }
+            if (e.session.rejoinTimeoutTicks != 0) {
+                d.session.rejoinTimeoutTicks = e.session.rejoinTimeoutTicks;
+            }
+        } else if (e.kind == HostingEventKind::Terminate) {
+            d.terminate = true;
+        }
+        // HealthCheck: ループが回っていること自体が応答。何もしない
+    }
+}
+
+bool CloseSession(ReplayRecorder& recorder, const std::wstring& recordPath, IHostingProvider& hosting)
+{
+    bool ok = true;
+    if (recorder.IsActive()) {
+        const uint64_t recorded = recorder.TickCount();
+        if (recorder.Finish()) {
+            MYE_LOG_INFO("[server] recorded %llu tick(s) to %s", static_cast<unsigned long long>(recorded),
+                         WideToUtf8(recordPath).c_str());
+        } else {
+            ok = false;
+        }
+    }
+    // 記録を閉じてから外へ知らせる (知らせた直後にプロセスが片付けられても .rep は完成している)
+    hosting.NotifySessionEnded();
+    return ok;
+}
+
 int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopConfig& cfgIn)
 {
     ServerLoopConfig cfg = cfgIn;
@@ -111,41 +148,42 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
     const SteadyClock::time_point origin = SteadyClock::now();
 
     // ---- ホスティング: 準備完了を知らせ、セッション開始の指示を待つ ----
-    if (!hosting.NotifyReady(socket.LocalPort(), {})) {
+    // 回収してほしいログ = 記録する .rep (GameLift がプロセス終了時に集める)
+    std::vector<std::wstring> logPaths;
+    if (!cfg.replayRecordPath.empty()) {
+        logPaths.push_back(std::filesystem::absolute(cfg.replayRecordPath).wstring());
+    }
+    if (!hosting.NotifyReady(socket.LocalPort(), logPaths)) {
         MYE_LOG_ERROR("[server] hosting '%s' could not be marked ready", hosting.Name());
         return kServerExitFailed;
     }
     std::vector<HostingEvent> events;
-    bool started = false;
-    bool terminate = false;
-    while (!started && !terminate) {
+    HostingDecision decision;
+    while (!decision.startSession && !decision.terminate) {
         events.clear();
         hosting.Poll(events);
-        for (const HostingEvent& e : events) {
-            if (e.kind == HostingEventKind::StartSession) {
-                started = true;
-                if (e.session.deadlineTicks != 0) {
-                    cfg.session.deadlineTicks = e.session.deadlineTicks;
-                }
-                if (e.session.rejoinTimeoutTicks != 0) {
-                    cfg.session.rejoinTimeoutTicks = e.session.rejoinTimeoutTicks;
-                }
-            } else if (e.kind == HostingEventKind::Terminate) {
-                terminate = true;
-            }
-        }
+        InterpretHostingEvents(events, decision);
         if (cfg.timeoutSec > 0 && NowMs(origin) > static_cast<uint64_t>(cfg.timeoutSec) * 1000) {
             MYE_LOG_ERROR("[server] timed out (%u s) before the hosting started a session", cfg.timeoutSec);
-            hosting.NotifySessionEnded();
+            ReplayRecorder none;
+            CloseSession(none, cfg.replayRecordPath, hosting);
             return kServerExitTimeout;
         }
-        if (!started && !terminate) {
+        if (!decision.startSession && !decision.terminate) {
             Sleep(5);
         }
     }
-    if (terminate && !started) {
+    if (decision.terminate && !decision.startSession) {
         MYE_LOG_INFO("[server] terminated by the hosting before a session started");
+        ReplayRecorder none;
+        CloseSession(none, cfg.replayRecordPath, hosting);
         return kServerExitOk;
+    }
+    if (decision.session.deadlineTicks != 0) {
+        cfg.session.deadlineTicks = decision.session.deadlineTicks;
+    }
+    if (decision.session.rejoinTimeoutTicks != 0) {
+        cfg.session.rejoinTimeoutTicks = decision.session.rejoinTimeoutTicks;
     }
 
     // ---- セッション開始: .rep の開始点 (tick 0 のスナップショット) と ServerSession ----
@@ -168,8 +206,14 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
         start.worldHash = sim.WorldHash();
         prov.initialSnapshotHash = start.blobHash;
         start.provenance = prov;
+        // 逐次書き出し: 異常終了しても flush 済みの tick までは .rep が読める (Load がファイル長から復元する)
         recorder.Start(cfg.replayRecordPath, world.Rng().State(), world.Rng().Inc(), world.AliveCount(),
-                       cfg.session.playerCount, startBlob.data(), startBlob.size(), cfg.session, prov, start);
+                       cfg.session.playerCount, startBlob.data(), startBlob.size(), cfg.session, prov, start,
+                       kServerReplayFlushTicks);
+        if (!recorder.IsActive()) {
+            MYE_LOG_ERROR("[server] could not open %s for recording", WideToUtf8(cfg.replayRecordPath).c_str());
+            return kServerExitFailed;
+        }
     }
 
     PeerTable peers;
@@ -197,6 +241,7 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
     };
     hooks.validatePlayer = [&](const char* id) { return hosting.ValidatePlayer(id); };
     hooks.playerLeft = [&](const char* id) { hosting.PlayerLeft(id); };
+    hooks.playerReleased = [&](const char* id) { hosting.PlayerReleased(id); };
     hooks.captureSnapshot = [&](std::vector<std::byte>& blob, uint64_t& worldHash) {
         sim.Activate();
         if (!CaptureSimSnapshot(sim.Refs(), blob)) {
@@ -207,6 +252,7 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
     };
     ServerSession session;
     if (!session.Init(sc, hooks)) {
+        CloseSession(recorder, cfg.replayRecordPath, hosting);
         return kServerExitFailed;
     }
     MYE_LOG_INFO("[server] session %016llx started: %u lane(s), input delay %u, deadline %u tick(s), rejoin timeout "
@@ -227,7 +273,11 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
     uint64_t statsTicks = 0;
     double statsTickMsSum = 0.0;
     std::vector<uint8_t> buf(2048);
-    bool stop = false;
+    // 開始と同じ Poll で Terminate が来ていたら、セッションを始めてすぐ閉じる (落とさない)
+    bool stop = decision.terminate;
+    if (stop) {
+        MYE_LOG_INFO("[server] terminate requested by the hosting");
+    }
     while (!stop) {
         const uint64_t now = NowMs(origin);
         bool busy = false;
@@ -253,11 +303,11 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
         // 2. ホスティングの出来事
         events.clear();
         hosting.Poll(events);
-        for (const HostingEvent& e : events) {
-            if (e.kind == HostingEventKind::Terminate) {
-                MYE_LOG_INFO("[server] terminate requested by the hosting");
-                stop = true;
-            }
+        HostingDecision loopDecision;
+        InterpretHostingEvents(events, loopDecision);
+        if (loopDecision.terminate) {
+            MYE_LOG_INFO("[server] terminate requested by the hosting");
+            stop = true;
         }
 
         // 3. 締め切り判定と確定 → RunTick → .rep へ記録 (送信より先)
@@ -276,6 +326,11 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
             tickMsSum += ms;
             statsTickMsSum += ms;
             tickMsMax = (std::max)(tickMsMax, ms);
+            if (cfg.crashTestKind != 0 && cfg.crashAtTick > 0 && ticks == static_cast<uint64_t>(cfg.crashAtTick)) {
+                MYE_LOG_WARN("[server] --crash-test: crashing on purpose after %llu tick(s)",
+                             static_cast<unsigned long long>(ticks));
+                TriggerTestCrash(static_cast<CrashTestKind>(cfg.crashTestKind));
+            }
             if (cfg.tickLimit > 0 && ticks >= static_cast<uint64_t>(cfg.tickLimit)) {
                 MYE_LOG_INFO("[server] --replay-ticks %lld reached", static_cast<long long>(cfg.tickLimit));
                 stop = true;
@@ -332,15 +387,10 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
         }
     }
 
-    // ---- 後始末: 記録を閉じてから外へ知らせる ----
-    if (recorder.IsActive()) {
-        const uint64_t recorded = recorder.TickCount();
-        if (recorder.Finish()) {
-            MYE_LOG_INFO("[server] recorded %llu tick(s) to %s", static_cast<unsigned long long>(recorded),
-                         WideToUtf8(cfg.replayRecordPath).c_str());
-        } else {
-            exitCode = kServerExitFailed;
-        }
+    // ---- 後始末: 記録を閉じてから外へ知らせる (CloseSession)。統計ログは .rep を閉じた後に出す ----
+    const bool recordingClosed = CloseSession(recorder, cfg.replayRecordPath, hosting);
+    if (!recordingClosed) {
+        exitCode = kServerExitFailed;
     }
     const ServerStats& st = session.Stats();
     MYE_LOG_INFO("[server] tick time: avg %.3f ms, max %.3f ms over %llu tick(s) (peak %u live client(s), %u lane(s))",
@@ -364,7 +414,6 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
         MYE_LOG_WARN("[server] tick time avg %.3f ms exceeds the %.1f ms budget with %u clients",
                      tickMsSum / static_cast<double>(ticks), kTickBudgetMs, peakLive);
     }
-    hosting.NotifySessionEnded();
     return exitCode;
 }
 

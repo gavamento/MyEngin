@@ -10,6 +10,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <initializer_list>
 #include <iterator>
 #include <string>
@@ -128,6 +129,157 @@ bool RecordFrom(const std::wstring& path, uint64_t startTick, uint32_t count, ui
         rec.RecordTick(in, 2, t == badTick ? 0xBAD : 0xA000 + t, nullptr);
     }
     return rec.Finish();
+}
+
+// ---- R4: .rep の逐次書き出し ----
+
+// Server 相当 (4 レーン + システム入力) の .rep を録る。streamFlushTicks = 0 は一括モード。
+// tick t の入力は MakeInput(t*10+p)、5 tick ごとにイベント 1 件
+bool RecordLongSample(const std::wstring& path, uint32_t streamFlushTicks, uint32_t ticks,
+                      const std::vector<std::byte>& snapshot, bool finish = true)
+{
+    ReplayRecorder rec;
+    SessionConfig cfg = {};
+    cfg.role = static_cast<uint32_t>(SessionRole::Server);
+    cfg.playerCount = 4;
+    cfg.tickRate = 60;
+    cfg.referenceW = 1920;
+    cfg.referenceH = 1080;
+    SimProvenance prov = {};
+    prov.contentHash = 0xC0FFEE;
+    SnapshotMeta meta = {};
+    rec.Start(path, 11, 22, 3, 4, snapshot.empty() ? nullptr : snapshot.data(), snapshot.size(), cfg, prov,
+              meta, streamFlushTicks);
+    if (!rec.IsActive()) {
+        return false;
+    }
+    InputSnapshot in[kMaxPlayers] = {};
+    for (uint32_t t = 0; t < ticks; ++t) {
+        for (uint32_t p = 0; p < 4; ++p) {
+            in[p] = MakeInput(t * 10 + p);
+        }
+        SystemInputTick sys = {};
+        if (t % 5 == 0) {
+            sys = MakeTick({ MakeEvent(t / 5 + 1, 1, SystemEventKind::Join, t % 4) });
+        }
+        rec.RecordTick(in, 4, 0xA000 + t, &sys);
+    }
+    return finish ? rec.Finish() : true;
+}
+
+void CheckReplayStreaming(const std::filesystem::path& tempDir, const std::function<bool(bool, const char*)>& check)
+{
+    std::error_code ec;
+    const std::wstring batchPath = (tempDir / L"mye_rs_batch.rep").wstring();
+    const std::wstring streamPath = (tempDir / L"mye_rs_stream.rep").wstring();
+    const std::wstring cutPath = (tempDir / L"mye_rs_cut.rep").wstring();
+    std::vector<std::byte> blob(96);
+    for (size_t i = 0; i < blob.size(); ++i) {
+        blob[i] = static_cast<std::byte>(i * 7 + 1);
+    }
+    constexpr uint64_t kRec = 4 * sizeof(InputSnapshot) + sizeof(SystemInputTick) + sizeof(uint64_t);
+    const size_t base = sizeof(MyeReplayHeader) + blob.size();
+
+    // 逐次と一括でバイト一致 (flush 間隔・tick 数・スナップショットの有無を変えて)
+    struct Case {
+        uint32_t flush;
+        uint32_t ticks;
+        bool snapshot;
+    };
+    bool allSame = true;
+    for (const Case& c : { Case{ 60, 200, true }, Case{ 1, 7, true }, Case{ 60, 5, false }, Case{ 60, 0, true },
+                           Case{ 7, 120, false } }) {
+        const std::vector<std::byte> snap = c.snapshot ? blob : std::vector<std::byte>{};
+        const bool a = RecordLongSample(batchPath, 0, c.ticks, snap);
+        const bool b = RecordLongSample(streamPath, c.flush, c.ticks, snap);
+        if (!(a && b && ReadAll(batchPath) == ReadAll(streamPath))) {
+            MYE_LOG_ERROR("  R4 case flush=%u ticks=%u snapshot=%d differs", c.flush, c.ticks, c.snapshot ? 1 : 0);
+            allSame = false;
+        }
+    }
+    check(allSame, "R4: streaming and batch recorders write byte-identical .rep files");
+
+    // 逐次モードのメモリ: tick を溜め込まない (ファイルにだけある)
+    RecordLongSample(streamPath, 60, 200, blob);
+    const std::vector<char> full = ReadAll(streamPath);
+    check(full.size() == base + 200 * kRec, "R4: a finished streaming .rep has header + snapshot + 200 records");
+    {
+        ReplayPlayer p;
+        check(p.Load(streamPath) && p.TickCount() == 200 && !p.RecoveredUnfinished(),
+              "R4: a finished streaming .rep loads normally (not flagged as recovered)");
+    }
+
+    // 異常終了を模す: tickCount を 0 に戻し、57 tick + 100 バイトで切る
+    {
+        std::vector<char> cut(full.begin(), full.begin() + static_cast<std::ptrdiff_t>(base + 57 * kRec + 100));
+        const uint64_t zero = 0;
+        std::memcpy(cut.data() + offsetof(MyeReplayHeader, tickCount), &zero, sizeof(zero));
+        WriteAll(cutPath, cut);
+        ReplayPlayer p;
+        // 埋め込み blob は偽物なので RNG の突き合わせは行われない (Peek できない)。tick 列だけを検査する
+        if (check(p.Load(cutPath), "R4: a .rep left with tickCount 0 loads")) {
+            check(p.TickCount() == 57 && p.RecoveredUnfinished(),
+                  "R4: the tick count comes from the file length (57), the cut record is dropped");
+            const InputSnapshot want = MakeInput(56 * 10 + 3);
+            check(std::memcmp(&p.InputForTick(56, 3), &want, sizeof(InputSnapshot)) == 0
+                      && p.ExpectedHash(56) == 0xA000 + 56 && p.SystemInputForTick(55).eventCount == 1
+                      && p.SystemInputForTick(56).eventCount == 0,
+                  "R4: recovered ticks carry the same inputs, system input and hashes");
+        }
+        // 切れ目がちょうどレコード境界でも同じ
+        cut.resize(base + 3 * kRec);
+        WriteAll(cutPath, cut);
+        ReplayPlayer p2;
+        check(p2.Load(cutPath) && p2.TickCount() == 3, "R4: a cut on a record boundary keeps every whole record");
+        // スナップショットの途中で切れたものは読めない (開始点が無い)
+        cut.resize(sizeof(MyeReplayHeader) + 10);
+        WriteAll(cutPath, cut);
+        ReplayPlayer p3;
+        check(!p3.Load(cutPath), "R4: a file cut inside the embedded snapshot is rejected");
+        // ヘッダ + スナップショットだけ (tick 0 本) は 0 tick の記録として読める
+        cut.assign(full.begin(), full.begin() + static_cast<std::ptrdiff_t>(base));
+        std::memcpy(cut.data() + offsetof(MyeReplayHeader, tickCount), &zero, sizeof(zero));
+        WriteAll(cutPath, cut);
+        ReplayPlayer p4;
+        check(p4.Load(cutPath) && p4.TickCount() == 0 && !p4.RecoveredUnfinished(),
+              "R4: header + snapshot only loads as a 0-tick recording");
+    }
+
+    // 実際に閉じないまま途中を覗く: flush 済みの 120 tick は必ず読める
+    {
+        ReplayRecorder rec;
+        SessionConfig cfg = {};
+        cfg.role = static_cast<uint32_t>(SessionRole::Server);
+        cfg.playerCount = 4;
+        rec.Start(streamPath, 11, 22, 3, 4, blob.data(), blob.size(), cfg, SimProvenance{}, SnapshotMeta{}, 60);
+        InputSnapshot in[kMaxPlayers] = {};
+        for (uint32_t t = 0; t < 130; ++t) {
+            in[0] = MakeInput(t);
+            rec.RecordTick(in, 4, 0xB000 + t, nullptr);
+        }
+        const std::vector<char> live = ReadAll(streamPath); // 閉じる前 = 落ちた直後と同じ状態
+        WriteAll(cutPath, live);
+        ReplayPlayer p;
+        const uint64_t onDisk = (live.size() - base) / kRec;
+        check(p.Load(cutPath) && p.RecoveredUnfinished() && p.TickCount() == onDisk && onDisk >= 120 && onDisk <= 130
+                  && p.ExpectedHash(119) == 0xB000 + 119,
+              "R4: a recording that was never closed still yields every flushed tick (>= 120 of 130)");
+        check(rec.Finish(), "R4: the same recorder can still be finished afterwards");
+        ReplayPlayer q;
+        check(q.Load(streamPath) && q.TickCount() == 130 && !q.RecoveredUnfinished(),
+              "R4: after Finish all 130 ticks are present");
+    }
+
+    // 開けないパスでは Start が非アクティブのまま (黙って記録しない状態を作らない)
+    {
+        ReplayRecorder rec;
+        rec.Start((tempDir / L"mye_rs_no_such_dir_\x1" / L"?.rep").wstring(), 1, 2, 3, 4, nullptr, 0,
+                  SessionConfig{}, SimProvenance{}, SnapshotMeta{}, 60);
+        check(!rec.IsActive() && !rec.Finish(), "R4: an unwritable path leaves the streaming recorder inactive");
+    }
+    std::filesystem::remove(batchPath, ec);
+    std::filesystem::remove(streamPath, ec);
+    std::filesystem::remove(cutPath, ec);
 }
 
 } // namespace
@@ -445,7 +597,6 @@ bool RunSessionSelfTest()
               "overlap: the corrupted tick is named by its session tick, not its index in the file");
         check(RecordFrom(b, 10, 4, ~0ull), "overlap: record a run that does not overlap");
         check(!DiffReplayFiles(a, b, 1).same, "overlap: disjoint runs never compare equal");
-        std::error_code ec;
         std::filesystem::remove(a, ec);
         std::filesystem::remove(b, ec);
     }
@@ -837,6 +988,8 @@ bool RunSessionSelfTest()
         fs::remove_all(root, ec);
         fs::remove_all(rootB, ec);
     }
+
+    CheckReplayStreaming(tempDir, check);
 
     std::filesystem::remove(plainPath, ec);
     std::filesystem::remove(sysPath, ec);

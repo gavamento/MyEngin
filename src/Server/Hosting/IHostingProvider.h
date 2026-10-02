@@ -44,7 +44,11 @@ public:
     virtual void Poll(std::vector<HostingEvent>& out) = 0;
     // 参加者の認証 (player session ID)。false なら Hello を拒否する
     virtual bool ValidatePlayer(const char* playerSessionId) = 0;
+    // 接続が切れた (再接続の猶予はまだある。レーンは予約されたまま)
     virtual void PlayerLeft(const char* playerSessionId) = 0;
+    // 予約が解放された (猶予切れ = 切断確定)。ホスティング側の player session もここで片付ける
+    virtual void PlayerReleased(const char*) {}
+    // セッションの終わりをホスティングへ知らせる (GameLift なら ProcessEnding)。プロセスはこの後終了する
     virtual void NotifySessionEnded() = 0;
     virtual void Shutdown() = 0;
 };

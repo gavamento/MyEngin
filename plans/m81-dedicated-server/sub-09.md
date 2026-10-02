@@ -17,6 +17,8 @@ spec 4.3 / E1 / E2。
    - `docs\test_checklists.md` に server_verify と Anywhere 手動確認の項目。
    - 既知の制限 (多レーン UI 不可 = D13、コンピュート ABI の結果を sim に入れない = spec R-7、GPU パーティクル設定は全員一致が前提 = R-6、Server は cook キャッシュ無効 = R-8、contentHash の対象 (拡張子の除外 + その種類の .meta + manifest 自身・`scripts/Generated/` のパス除外、R-9、デモが書くシーンファイルで揺れうる)、トークン 15 分、Windows のみ) を明記。
 
+4. (sub-07 から) Server のクラッシュバンドルの crash.txt の再現手順を Server 向けに直す (crash.rep ではなく逐次 .rep を `Server.exe --replay-verify` にかける手順)。文書には次も書く: .rep の逐次書出しと異常終了時の救済、`Server.exe --selftest`、ゲームプロパティ `myeDeadlineTicks` / `myeRejoinTimeoutTicks`、SDK の TLS は証明書を検証しないこと (暗号化は M81 の対象外)、R-11。docs	est_checklists.md に `Server.exe --selftest` を追加する。
+
 ## やらないこと (このサブでは)
 - 新しいネット機能
 

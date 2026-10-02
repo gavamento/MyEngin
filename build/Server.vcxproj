@@ -30,6 +30,30 @@
     実行後に GetModuleHandleW で「ロードされていないこと」を Server.exe 自身が検査する (ServerMain.cpp)。
     nethost は ManagedHost::Init (C# ホストの起動) だけが呼ぶ。サーバは C# レーンを持たないので同様に遅延
   -->
+  <!--
+    AWS GameLift Server SDK 5.x (M81g)。GameLift の依存はこのプロジェクトだけに閉じる (check_rules 規則 13-c)。
+    ★SDK は external\gamelift-server-sdk\lib\<構成>\ の静的ライブラリ。Debug = /MTd、Release = /MT で
+      ビルドしてあり、Engine.lib と CRT が一致する (手順と取得元は external\gamelift-server-sdk\BUILD.md)。
+    ★GAMELIFT_USE_STD は SDK 公開クラスのレイアウトを変える。ライブラリのビルドと必ず同じ値にする。
+    ★OpenSSL 3 は DLL でしかリンクできない。import lib をリンクし、ビルド後に DLL を出力先へ置く。
+    ★SDK の公開ヘッダは外部インクルード扱いにして警告を止める (第三者コード。警告 0 の機械化の対象外)。
+    ★SDK のヘッダは古い MSVC 流儀の WIN32 マクロで Windows を判定する (_WIN32 ではない)。定義しないと
+      gmtime_r (POSIX) を引いてコンパイルできない。ライブラリのビルドも /DWIN32 で揃えてある。
+  -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>GAMELIFT_USE_STD=1;WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <AdditionalOptions>/external:I "$(RepoRoot)external\gamelift-server-sdk\include" /external:I "$(RepoRoot)external\openssl\include" %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>$(RepoRoot)external\gamelift-server-sdk\lib\$(Configuration)\aws-cpp-sdk-gamelift-server.lib;$(RepoRoot)external\openssl\lib\libssl.lib;$(RepoRoot)external\openssl\lib\libcrypto.lib;ws2_32.lib;crypt32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <PostBuildEvent>
+      <Command>xcopy /Y /D /Q "$(RepoRoot)external\openssl\redist\*.dll" "$(OutDir)" &gt; nul</Command>
+      <Message>copy OpenSSL DLLs (GameLift Server SDK dependency)</Message>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
   <ItemDefinitionGroup>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -42,12 +66,18 @@
   </ItemDefinitionGroup>
   <!-- BEGIN FILES (tools\gen_project_files.ps1 が再生成する。手編集しない) -->
   <ItemGroup>
+    <ClCompile Include="..\src\Server\Hosting\GameLiftHosting.cpp" />
+    <ClCompile Include="..\src\Server\Hosting\GameLiftSdkAws.cpp" />
     <ClCompile Include="..\src\Server\Hosting\LocalHosting.cpp" />
     <ClCompile Include="..\src\Server\ServerLoop.cpp" />
     <ClCompile Include="..\src\Server\ServerMain.cpp" />
+    <ClCompile Include="..\src\Server\ServerSelfTest.cpp" />
+    <ClInclude Include="..\src\Server\Hosting\GameLiftHosting.h" />
+    <ClInclude Include="..\src\Server\Hosting\GameLiftSdk.h" />
     <ClInclude Include="..\src\Server\Hosting\IHostingProvider.h" />
     <ClInclude Include="..\src\Server\Hosting\LocalHosting.h" />
     <ClInclude Include="..\src\Server\ServerLoop.h" />
+    <ClInclude Include="..\src\Server\ServerSelfTest.h" />
   </ItemGroup>
   <!-- END FILES -->
   <ItemGroup>

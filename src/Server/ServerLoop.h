@@ -6,13 +6,15 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 
+#include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Session/SessionTypes.h"
+#include "Server/Hosting/IHostingProvider.h"
 
 namespace mye {
 
 class HeadlessSim;
-class IHostingProvider;
 
 struct ServerLoopConfig {
     uint16_t port = 7777;
@@ -25,12 +27,33 @@ struct ServerLoopConfig {
     uint32_t emptyGraceMs = 2000;    // exitWhenEmpty の判定を安定させる猶予
     uint32_t timeoutSec = 0;         // > 0: 実時間でこれを超えたら必ず終了する (検証の保険)
     uint32_t statsIntervalSec = 5;   // 統計ログの間隔 (sim の外。0 = 終了時だけ)
+    // 検証用: 確定 tick がこの数に達した直後に、意図的にプロセスを落とす (--crash-test / --crash-at-tick)。
+    // 逐次記録した .rep とクラッシュバンドルの検証に使う。0 = 無効
+    uint8_t crashTestKind = 0;       // CrashTestKind
+    int64_t crashAtTick = 0;
 };
+
+// .rep の逐次書き出しの flush 間隔 (tick)。異常終了で失う記録は最大でこの長さ (60 tick = 1 秒)
+inline constexpr uint32_t kServerReplayFlushTicks = 60;
 
 // 終了コード
 inline constexpr int kServerExitOk = 0;
 inline constexpr int kServerExitFailed = 1;
 inline constexpr int kServerExitTimeout = 5; // timeoutSec に達して打ち切った
+
+// Poll が返した出来事の解釈結果。待機中の周回も主ループも同じ関数 (InterpretHostingEvents) を通す
+struct HostingDecision {
+    bool startSession = false;
+    HostingSessionRequest session = {};
+    bool terminate = false; // StartSession と同じ Poll で来ても落とさない (呼び出し側が始めてすぐ閉じる)
+};
+void InterpretHostingEvents(const std::vector<HostingEvent>& events, HostingDecision& decision);
+
+// セッションの幕引き。記録中の .rep を閉じ (逐次モードなら tickCount を書き戻し)、そのあとで
+// ホスティングへ終わりを知らせる。ホスティングの Terminate (Ctrl+C / GameLift の OnProcessTerminate)・
+// 全員退出・tick 上限・タイムアウトのどれで終わるときも、この 1 関数を通る。
+// 戻り値: .rep を正しく閉じられた (記録していなければ true)
+bool CloseSession(ReplayRecorder& recorder, const std::wstring& recordPath, IHostingProvider& hosting);
 
 // 実時間 60Hz で ServerSession を回す。1 周の処理順は spec 4.1.4 のとおり固定:
 //   受信 → ホスティングの出来事 → 締め切り判定と確定 → RunTick → .rep へ記録 → 送信

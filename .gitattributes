@@ -21,3 +21,10 @@ tests/deepmodal/*.bin binary
 # 日本語 rem コメントの断片がコマンド実行される — net_verify で実際に踏んだ)。
 # blob は LF のまま、checkout 時の変換だけを強制する。autocrlf の個人設定に依存させない。
 *.bat text eol=crlf
+
+# GameLift Server SDK / OpenSSL (M81g): ビルド済みバイナリとパッチは改行変換させない
+# (パッチが CRLF 化すると git apply が通らず、SDK の再ビルド手順 BUILD.md が壊れる)
+external/gamelift-server-sdk/lib/**/*.lib binary
+external/gamelift-server-sdk/patches/*.patch -text
+external/openssl/redist/*.dll binary
+external/openssl/lib/*.lib binary

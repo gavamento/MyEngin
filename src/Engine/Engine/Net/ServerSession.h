@@ -69,6 +69,8 @@ struct ServerHooks {
     std::function<bool(const char* playerSessionId)> validatePlayer;
     // 参加者の離脱通知 (ホスティングが管理する player session の解放など)。null 可
     std::function<void(const char* playerSessionId)> playerLeft;
+    // レーンの予約が解放された (Release イベントの適用時 = 切断確定)。ホスティングの player session の片付け用。null 可
+    std::function<void(const char* playerSessionId)> playerReleased;
     // いまの sim 状態 (= 次に確定する tick が走る前) を撮り、その時のワールドハッシュを返す。
     // 呼ばれるのは TryConfirm の中だけで、直前の tick を走らせ終えている
     std::function<bool(std::vector<std::byte>& blob, uint64_t& worldHash)> captureSnapshot;

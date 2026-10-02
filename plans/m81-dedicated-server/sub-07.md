@@ -1,8 +1,8 @@
 # sub-07: GameLiftHosting と SDK 組込・Anywhere 手順書
 
 - 依存: sub-05
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (コミット待ち — .lib のコミット可否をユーザーに確認してから)
+- 往復: 1
 
 ## やること
 spec 4.1.9 / R-2 / G1〜G4。
@@ -48,4 +48,16 @@ spec 5. の **G1, G2, G3, G4**、**R4** と **C1〜C6**。
 
 ## 実装メモ (coder が追記)
 
+### round 1 (coder)
+
+- 最初の未知 (CRT) は解決: SDK v5.6.0 は `gamelift-server-sdk\` を直接 configure (`CMAKE_POLICY_DEFAULT_CMP0091=NEW` + `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>`) で /MT・/MTd の静的 .lib にでき、Server.exe が Engine.lib と LNK2038 なしでリンクできた。
+- 落とし穴: 既定のままだと .lib が Release 281MB / Debug 347MB (git に入らない)。`/Zi` 除去パッチ + unity ビルド (1 翻訳単位) で Release 53MB / Debug 72MB (gzip で計 8.5MB)。手順は `external\gamelift-server-sdk\BUILD.md` + `build_sdk.ps1` (別ディレクトリへ再ビルドして再現確認済み: サイズは 4 バイト差)。
+- 取得元: SDK = https://github.com/amazon-gamelift/amazon-gamelift-servers-cpp-server-sdk タグ v5.6.0 (`7c2a5a7cae6616b1ca2f217aaceff36b06393c80`)。SDK の CMake が取る依存 = asio-1-20-0 / websocketpp 0.8.2 / rapidjson v1.1.0 / spdlog v1.14.0 / concurrentqueue v1.0.4 (ヘッダオンリー、.lib に取り込み済み)。OpenSSL = vcpkg (microsoft/vcpkg `fbb0f7bb200b07a9eb9081c7a3cf51d1aa1c51a1`) の openssl 3.6.5 x64-windows。AWS CLI のオプション名は docs.aws.amazon.com/cli/latest/reference/gamelift/ で照合。
+
+詳細な SELF_EVAL は司会への返信を正本とする (下の要点)。
+
+- 実装: Replay.{h,cpp} の逐次書出しモード (Start の streamFlushTicks) と Load の tickCount = 0 救済 / GameLiftSdk.h (IGameLiftSdk 差し替え口) / GameLiftHosting.{h,cpp} / GameLiftSdkAws.cpp / ServerSelfTest.{h,cpp} (`Server.exe --selftest`) / ServerLoop の InterpretHostingEvents + CloseSession (Terminate の 1 本の経路) / ServerMain (--hosting gamelift、--gamelift-*、クラッシュハンドラ、--crash-test) / ServerSession の playerReleased フック / Server.vcxproj / docs\gamelift-anywhere.md / external の SDK と OpenSSL。
+- 検証: Server.exe --selftest 49 項目 PASS (Debug / Release、実ループ + 偽 SDK の Terminate、実プロセスへの Ctrl+Break を含む) / replay_verify PASS / server_verify ABCD PASS / net_verify PASS / check_rules 0 error / Editor --selftest は Debug・Release とも既知 2 項目以外 PASS (初回の Debug だけ Fracture editor の weight cache 3 項目が落ち、再実行で再現せず) / G2 0.86 秒 exit 1。実 AWS には未接続。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner 2026-10-02)。最初の未知 (/MT) を解決し、.lib を 281/347MB から 53/72MB へ縮めた。確認した受け入れ条件は G1〜G4 と R4 (偽 SDK の 49 項目、実ループ、Ctrl+Break、実クラッシュから 198 tick 回復して全一致)、C1〜C7。追加分 (playerReleased、ゲームプロパティ、InitSDK の 30 秒タイムアウト、待機ループの Terminate 取りこぼしの修正) はすべて承認。ビルド済み .lib (125MB) のコミットは spec D17 で裁定済みだが、リポジトリ履歴に恒久的に残るのでユーザーに確認してからコミットする。nit: クラッシュバンドルの crash.txt の文面が crash.rep 前提になっている (Server では逐次 .rep が代わり)。直すのは sub-09 でよい。

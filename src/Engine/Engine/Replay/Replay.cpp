@@ -17,9 +17,16 @@ constexpr uint32_t kReplayMagic = 0x5045524Du; // 'MREP'
 void ReplayRecorder::Start(const std::wstring& path, uint64_t rngState, uint64_t rngInc,
                            uint32_t entityCount, uint32_t playerCount, const std::byte* snapshot,
                            size_t snapshotSize, const SessionConfig& session,
-                           const SimProvenance& provenance, const SnapshotMeta& startMeta)
+                           const SimProvenance& provenance, const SnapshotMeta& startMeta,
+                           uint32_t streamFlushTicks)
 {
+    if (stream_.is_open()) {
+        stream_.close(); // 閉じずに Start し直された記録は破棄する (tickCount = 0 の未完了ファイルとして残る)
+    }
     path_ = path;
+    streamFlushTicks_ = streamFlushTicks;
+    streamFailed_ = false;
+    tickCount_ = 0;
     header_ = {};
     header_.rngState = rngState;
     header_.rngInc = rngInc;
@@ -37,10 +44,36 @@ void ReplayRecorder::Start(const std::wstring& path, uint64_t rngState, uint64_t
     inputs_.clear();
     systemInputs_.clear();
     hashes_.clear();
+    if (streamFlushTicks_ > 0) {
+        // 逐次モード: ヘッダ (tickCount = 0) と開始スナップショットを先に書いて flush する。
+        // ここまで書けていれば、その後どこで落ちても Load が完了済みの tick まで読める
+        std::error_code ec;
+        std::filesystem::create_directories(std::filesystem::path(path_).parent_path(), ec);
+        stream_.open(std::filesystem::path(path_), std::ios::binary | std::ios::out | std::ios::trunc);
+        if (stream_) {
+            stream_.write(reinterpret_cast<const char*>(&header_), sizeof(header_));
+            if (!snapshot_.empty()) {
+                stream_.write(reinterpret_cast<const char*>(snapshot_.data()),
+                              static_cast<std::streamsize>(snapshot_.size()));
+            }
+            stream_.flush();
+        }
+        if (!stream_) {
+            MYE_LOG_ERROR("[replay] cannot write %s", WideToUtf8(path).c_str());
+            stream_.close();
+            stream_.clear();
+            snapshot_.clear(); // 逐次モードは blob を保持しない (書き終えた)
+            active_ = false;
+            return;
+        }
+        snapshot_.clear();
+        snapshot_.shrink_to_fit();
+    }
     active_ = true;
-    MYE_LOG_INFO("[replay] recording to %s (players %u, snapshot %zu bytes, system input %s)",
-                 WideToUtf8(path).c_str(), header_.playerCount, snapshot_.size(),
-                 header_.flags != 0 ? "yes" : "no");
+    MYE_LOG_INFO("[replay] recording to %s (players %u, snapshot %llu bytes, system input %s%s)",
+                 WideToUtf8(path).c_str(), header_.playerCount,
+                 static_cast<unsigned long long>(header_.snapshotSize),
+                 header_.flags != 0 ? "yes" : "no", streamFlushTicks_ > 0 ? ", streaming" : "");
 }
 
 void ReplayRecorder::RecordTick(const InputSnapshot* lanes, uint32_t playerCount,
@@ -49,14 +82,39 @@ void ReplayRecorder::RecordTick(const InputSnapshot* lanes, uint32_t playerCount
     // 宣言と実際が食い違ったら**宣言側に合わせて**書く (足りない分はゼロ値)。
     // ここで黙って可変長にすると、ファイルの tick レコード長が tick ごとに変わって
     // 再生側が一切読めなくなる
+    const bool hasSystemInput = (header_.flags & kReplayFlagSystemInput) != 0;
+    if (streamFlushTicks_ > 0) {
+        // tick レコード 1 本ぶん (Load / ReplayTickRecordBytes と同じ並び) をそのまま追記する
+        for (uint32_t p = 0; p < header_.playerCount; ++p) {
+            const InputSnapshot in = (lanes != nullptr && p < playerCount) ? lanes[p] : InputSnapshot{};
+            stream_.write(reinterpret_cast<const char*>(&in), sizeof(in));
+        }
+        if (hasSystemInput) {
+            const SystemInputTick sys =
+                NormalizeSystemInput(systemInput != nullptr ? *systemInput : SystemInputTick{});
+            stream_.write(reinterpret_cast<const char*>(&sys), sizeof(sys));
+        }
+        stream_.write(reinterpret_cast<const char*>(&worldHash), sizeof(worldHash));
+        ++tickCount_;
+        if (tickCount_ % streamFlushTicks_ == 0) {
+            stream_.flush();
+        }
+        if (!stream_ && !streamFailed_) {
+            streamFailed_ = true;
+            MYE_LOG_ERROR("[replay] write to %s failed at tick %llu - the recording is incomplete",
+                          WideToUtf8(path_).c_str(), static_cast<unsigned long long>(tickCount_));
+        }
+        return;
+    }
     for (uint32_t p = 0; p < header_.playerCount; ++p) {
         inputs_.push_back((lanes != nullptr && p < playerCount) ? lanes[p] : InputSnapshot{});
     }
-    if ((header_.flags & kReplayFlagSystemInput) != 0) {
+    if (hasSystemInput) {
         systemInputs_.push_back(NormalizeSystemInput(systemInput != nullptr ? *systemInput
                                                                           : SystemInputTick{}));
     }
     hashes_.push_back(worldHash);
+    ++tickCount_;
 }
 
 bool ReplayRecorder::Finish()
@@ -65,7 +123,24 @@ bool ReplayRecorder::Finish()
         return false;
     }
     active_ = false;
-    header_.tickCount = hashes_.size();
+    header_.tickCount = tickCount_;
+
+    if (streamFlushTicks_ > 0) {
+        // 逐次モード: 末尾まで flush してから、ヘッダの tickCount だけを書き戻す
+        stream_.flush();
+        stream_.seekp(static_cast<std::streamoff>(offsetof(MyeReplayHeader, tickCount)));
+        stream_.write(reinterpret_cast<const char*>(&header_.tickCount), sizeof(header_.tickCount));
+        stream_.flush();
+        const bool ok = static_cast<bool>(stream_) && !streamFailed_;
+        stream_.close();
+        if (!ok) {
+            MYE_LOG_ERROR("[replay] could not finalise %s", WideToUtf8(path_).c_str());
+            return false;
+        }
+        MYE_LOG_INFO("[replay] recorded %llu ticks -> %s (streaming)",
+                     static_cast<unsigned long long>(tickCount_), WideToUtf8(path_).c_str());
+        return true;
+    }
 
     std::error_code ec;
     std::filesystem::create_directories(std::filesystem::path(path_).parent_path(), ec);
@@ -161,6 +236,19 @@ bool ReplayPlayer::Load(const std::wstring& path)
         return false;
     }
     const uint64_t perTickBytes = ReplayTickRecordBytes(header.playerCount, header.flags);
+    // tickCount = 0 のまま tick レコードが続くファイルは、逐次記録 (ReplayRecorder の逐次モード) が
+    // Finish に届かず落ちた跡。ファイル長から完了済みの tick 数を求め、切れた末尾のレコードは捨てる。
+    // 一括モードは tick が 1 本以上あれば tickCount > 0 で書くので、正常なファイルとは混ざらない
+    bool recovered = false;
+    if (header.tickCount == 0 && body - header.snapshotSize >= perTickBytes) {
+        const uint64_t whole = (body - header.snapshotSize) / perTickBytes;
+        const uint64_t droppedBytes = (body - header.snapshotSize) % perTickBytes;
+        MYE_LOG_WARN("[replay] %s was not closed (tickCount 0): recovered %llu complete tick(s), dropped %llu trailing byte(s)",
+                     WideToUtf8(path).c_str(), static_cast<unsigned long long>(whole),
+                     static_cast<unsigned long long>(droppedBytes));
+        header.tickCount = whole;
+        recovered = true;
+    }
     if (header.tickCount > (body - header.snapshotSize) / perTickBytes) {
         MYE_LOG_ERROR("[replay] truncated file (%llu ticks declared, room for %llu)",
                       static_cast<unsigned long long>(header.tickCount),
@@ -216,6 +304,7 @@ bool ReplayPlayer::Load(const std::wstring& path)
     inputs_ = std::move(inputs);
     systemInputs_ = std::move(systemInputs);
     hashes_ = std::move(hashes);
+    recovered_ = recovered;
     active_ = true;
     MYE_LOG_INFO("[replay] loaded %llu ticks from %s (v%u, players %u, snapshot %zu bytes, system input %s)",
                  static_cast<unsigned long long>(hashes_.size()), WideToUtf8(path).c_str(),

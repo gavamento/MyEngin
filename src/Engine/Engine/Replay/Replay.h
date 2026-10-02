@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -88,7 +89,11 @@ inline uint64_t ReplayTickRecordBytes(uint32_t playerCount, uint32_t flags)
         + sizeof(uint64_t);
 }
 
-// 記録: tick 毎の入力 + ワールドハッシュを蓄積し、Finish でファイルへ書き出す
+// 記録: tick 毎の入力 + ワールドハッシュを蓄積し、Finish でファイルへ書き出す。
+// 逐次モード (Start の streamFlushTicks > 0): 開始時にヘッダ (tickCount = 0) と埋め込みスナップショットを
+// 書き、tick は追記して streamFlushTicks 本ごとに flush する。Finish が tickCount を書き戻す。
+// 異常終了で tickCount = 0 のまま残ったファイルは、ReplayPlayer::Load がファイル長から完了済みの
+// tick 数を求めて読む (切れたレコードは捨てる)。一括モードと逐次モードの出力は 1 バイトも違わない。
 class ReplayRecorder {
 public:
     // snapshot 非 null で「開始時点の sim 状態」をヘッダ直後へ埋め込む (M52f が使う)。
@@ -97,27 +102,33 @@ public:
     // session.role が Server / Client ならヘッダ flags.bit0 が立ち、tick レコードに SystemInputTick が付く。
     // ★snapshot を埋めるとき rngState / rngInc は**そのスナップショットの World RNG と同じ値**を渡すこと
     //   (Load が blob と突き合わせ、食い違えば拒否する。真値を 2 つ持っても食い違えないようにする)
+    // streamFlushTicks > 0: 逐次モード。ファイルを開けなければ IsActive() が false のまま (エラーログ付き)
     void Start(const std::wstring& path, uint64_t rngState, uint64_t rngInc, uint32_t entityCount,
                uint32_t playerCount = 1, const std::byte* snapshot = nullptr,
                size_t snapshotSize = 0, const SessionConfig& session = SessionConfig{},
                const SimProvenance& provenance = SimProvenance{},
-               const SnapshotMeta& startMeta = SnapshotMeta{});
+               const SnapshotMeta& startMeta = SnapshotMeta{}, uint32_t streamFlushTicks = 0);
     // lanes は playerCount 本の配列。**Start で宣言した本数と一致すること** —
     // ここが食い違うとファイルの tick レコード長と中身がずれる。
     // systemInput は flags.bit0 の記録でだけ使われる (null はイベント無しの tick)
     void RecordTick(const InputSnapshot* lanes, uint32_t playerCount, uint64_t worldHash,
                     const SystemInputTick* systemInput = nullptr);
-    bool Finish(); // ファイル書き出し
+    // ファイル書き出し (逐次モードでは tickCount の書き戻しと close)。書き損じていれば false
+    bool Finish();
     bool IsActive() const { return active_; }
-    uint64_t TickCount() const { return hashes_.size(); }
+    uint64_t TickCount() const { return tickCount_; }
 
 private:
     std::wstring path_;
     MyeReplayHeader header_;
     std::vector<std::byte> snapshot_;
-    std::vector<InputSnapshot> inputs_; // playerCount 本ずつ tick 順に並ぶ
-    std::vector<SystemInputTick> systemInputs_; // flags.bit0 のときだけ tick 毎に 1 本
-    std::vector<uint64_t> hashes_;
+    std::vector<InputSnapshot> inputs_; // playerCount 本ずつ tick 順に並ぶ (一括モードのみ)
+    std::vector<SystemInputTick> systemInputs_; // flags.bit0 のときだけ tick 毎に 1 本 (一括モードのみ)
+    std::vector<uint64_t> hashes_;              // (一括モードのみ)
+    uint64_t tickCount_ = 0;
+    uint32_t streamFlushTicks_ = 0; // 0 = 一括モード
+    std::ofstream stream_;
+    bool streamFailed_ = false;
     bool active_ = false;
 };
 
@@ -127,6 +138,8 @@ public:
     bool Load(const std::wstring& path);
     bool IsActive() const { return active_; }
     uint64_t TickCount() const { return hashes_.size(); }
+    // true = 逐次記録が閉じられないまま残った .rep (ヘッダの tickCount = 0) を、ファイル長から救って読んだ
+    bool RecoveredUnfinished() const { return recovered_; }
     uint64_t RngState() const { return header_.rngState; }
     uint64_t RngInc() const { return header_.rngInc; }
     // 1 tick あたりの入力レーン数 (M52g)。**EngineLoop はこの値を ctx.playerCount へ
@@ -170,6 +183,7 @@ private:
     std::vector<InputSnapshot> inputs_;
     std::vector<SystemInputTick> systemInputs_;
     std::vector<uint64_t> hashes_;
+    bool recovered_ = false;
     bool active_ = false;
 };
 

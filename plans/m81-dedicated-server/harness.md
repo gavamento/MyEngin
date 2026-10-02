@@ -22,8 +22,8 @@
 | sub-03 SimProvenance と NetIdentity 統合 | OK | 2 | a26e245 | round2 で配布物 manifest の不一致 2 件を修正 |
 | sub-04 プロトコルと 1 プロセス内検証 | OK | 1 | d5e1540 | N1〜N4 自動化、R-4 解決 |
 | sub-05 Server 実運用ループ・LocalHosting・server_verify | OK | 1 | 9f0a196 | server_verify 4 ケース PASS、tick avg 0.059ms |
-| sub-06 ABI v23 | OK | 1 | (次コミット) | 126→131 スロット、NetIsServer は足さない |
-| sub-07 GameLiftHosting + SDK 5.x | 未着手 | 0 | | |
+| sub-06 ABI v23 | OK | 1 | 3145e9c | 126→131 スロット、NetIsServer は足さない |
+| sub-07 GameLiftHosting + SDK 5.x | OK | 1 | (次コミット) | SDK 5.6.0 を /MT 静的 lib、.rep 逐次書出し |
 | sub-08 Anywhere 実疎通 (ユーザー手動) | 未着手 | 0 | | |
 | sub-09 NetWindow と文書 | 未着手 | 0 | | |
 
@@ -46,3 +46,7 @@
 - (既知の観察、M81 範囲外) Debug と Release の Editor.exe --selftest を同時実行すると M79 の surface material / deferred / water surface が FAIL (シェーダキャッシュ置き場の共有と推定、未調査)。CI は直列 (ci.yml:137-143) なので影響なし
 - (司会 2026-10-02) sub-05 OK。サーバ .rep の逐次書き出し・クラッシュハンドラ・Terminate/Ctrl+C 経路統一は sub-07 (受け入れ条件 R4) へ。tick 時間 max 7〜14ms は spec R-10 (sub-08 で参加時の max を見る)。server_verify は CI に載せない (net_verify と同じ流儀)。Editor Play からの --net-connect 実走は sub-09 へ。ServerLoop.cpp の 0 バイト事故は司会が 16.8KB を確認済み
 - (司会 2026-10-02) sub-06 OK (ABI v23 = 131 スロット)。**外部プロジェクト (三校 / HAL Collector) の GameLogic.dll は apiVersion 22 のため v23 エンジンでは拒否される → 次に外部プロジェクトで作業するときは最初に再ビルドが必要**。SetTickContext に playerCount 引数が必須になった
+- (司会 2026-10-02) ユーザー許可を得て tmp\ の M81 検証ログ 134 件 (m81b_* / m81e_* / m81f_* / build_* / probe_v_* / srv_* ほか、すべて 10/02 01:00 以降の作成) を削除 (復元不可、再生成可能)。tmp\pdfs\ (M81 以前から存在) と作業中の sub-07 の tmp\m81g_* は残した
+- (司会 2026-10-02) ユーザー判断 D17: GameLift SDK のビルド済み .lib (Debug 72MB + Release 53MB) と OpenSSL の DLL を git にコミットする (planner 裁定どおり)
+- (司会 2026-10-02) coder の誤操作で作られたルート直下の 0 バイト CMakeLists.txt をユーザー許可を得て削除 (未追跡・内容なし)
+- (sub-07 → 後続) R-11: AcceptPlayerSession / RemovePlayerSession は同期呼び出しで 60Hz ループを止めうる (sub-08 で参加時の tick 時間を見て判断)。R-10 続報: server_verify D で max 39.5ms。SDK の TLS は証明書を検証しない (ADR-022 に既知の制限として書く)。初回 Debug selftest だけ Fracture weight cache 3 項目が 1 回 FAIL (再実行で消える、M80p、再現したら報告)。tmp\m81g_sdk* / m81g_vcpkg* は数 GB の作業ツリー (M81 完了後に削除可否を確認)

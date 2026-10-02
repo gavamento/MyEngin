@@ -5,6 +5,7 @@
 //====================================================================================
 #include <cstdio>
 #include <filesystem>
+#include <memory>
 #include <string>
 
 #include <Windows.h>
@@ -18,9 +19,12 @@
 #include "Engine/Engine/Net/ServerSession.h"
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
+#include "Engine/Platform/CrashHandler.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Server/Hosting/GameLiftHosting.h"
 #include "Server/Hosting/LocalHosting.h"
 #include "Server/ServerLoop.h"
+#include "Server/ServerSelfTest.h"
 
 namespace {
 
@@ -68,40 +72,121 @@ struct ServerOptions {
     int rejoinTimeoutTicks = static_cast<int>(mye::kServerDefaultRejoinTimeoutTicks);
     bool exitWhenEmpty = false;
     int timeoutSec = 0;
+    // --hosting gamelift (Anywhere)。認証トークンはコマンド履歴に残さないよう環境変数から読む
+    std::wstring gameLiftWsUrl;
+    std::wstring gameLiftFleetId;
+    std::wstring gameLiftHostId;
+    std::wstring gameLiftProcessId; // 省略時はプロセス ID
 };
+
+// GameLift のトークンを渡す環境変数 (約 15 分で失効する)
+constexpr const wchar_t* kGameLiftTokenEnv = L"MYE_GAMELIFT_AUTH_TOKEN";
 
 void PrintUsage()
 {
     std::fprintf(stderr,
-                 "usage: Server.exe [--port N] [--hosting local] [--max-players 1..4] [--*-demo | --scene <path>]\n"
+                 "usage: Server.exe [--port N] [--hosting local|gamelift] [--max-players 1..4] [--*-demo | --scene <path>]\n"
                  "                  [--net-delay N] [--net-deadline N] [--net-rejoin-timeout N] [--net-loss N]\n"
                  "                  [--replay-record <file.rep>] [--replay-ticks N] [--exit-when-empty]\n"
                  "                  [--server-timeout SEC] [--allow-game-mismatch] [--project <dir>] [--synth-input]\n"
+                 "                  [--crash-test KIND --crash-at-tick N] [--no-crash-handler]\n"
+                 "                  [--gamelift-ws-url URL --gamelift-fleet-id ID --gamelift-host-id ID\n"
+                 "                   [--gamelift-process-id ID]]   (--hosting gamelift; token in env MYE_GAMELIFT_AUTH_TOKEN)\n"
                  "       Server.exe --replay-verify <file.rep> [--*-demo | --scene <path>] [--project <dir>]\n"
+                 "       Server.exe --selftest\n"
                  "  (live server)    Runs the confirmed-input server on UDP port N (default 7777) until every client has\n"
                  "                   left (--exit-when-empty), --replay-ticks is reached, --server-timeout expires or\n"
-                 "                   Ctrl+C. exit 0 = normal, 1 = failed, 5 = --server-timeout.\n"
+                 "                   Ctrl+C / the hosting terminates it. The .rep is written as the session runs and closed\n"
+                 "                   on every normal exit. exit 0 = normal, 1 = failed, 5 = --server-timeout.\n"
                  "  --replay-verify  Replays a .rep headlessly and compares every tick's world hash.\n"
                  "                   exit 0 = all ticks identical, 1 = mismatch / could not run, "
-                 "2 = a GPU / audio module was loaded.\n");
+                 "2 = a GPU / audio module was loaded.\n"
+                 "  --selftest       GameLift hosting (fake SDK) / .rep closing on terminate. exit 0 = all pass.\n");
+}
+
+// クラッシュバンドル (minidump + crash.txt) を設置する。Editor / Runtime と同じ CrashHandler。
+// tickIndex は sim が立ってから渡せる (null なら crash.txt の tick は 0)。2 回目以降の Install は差し替え
+void InstallServerCrashHandler(const mye::EngineConfig& config, const uint64_t* tickIndex)
+{
+    if (!config.crashHandler) {
+        return;
+    }
+    mye::CrashHandlerConfig cc;
+    cc.crashRoot = config.projectRoot.empty() ? mye::GetExecutableDir() : config.projectRoot;
+    cc.appName = config.title;
+    cc.tickIndex = tickIndex;
+    mye::InstallCrashHandler(cc);
+}
+
+struct CrashHandlerScope {
+    ~CrashHandlerScope() { mye::UninstallCrashHandler(); }
+};
+
+// ホスティングを作る。nullptr のときは理由を 1 行 stderr に出してある (呼び出し側は exit 1)
+std::unique_ptr<mye::IHostingProvider> MakeHosting(const ServerOptions& opt)
+{
+    if (opt.hosting == L"local") {
+        return std::make_unique<mye::LocalHosting>();
+    }
+    if (opt.hosting != L"gamelift") {
+        std::fprintf(stderr, "--hosting %s is not known (local | gamelift)\n",
+                     mye::WideToUtf8(opt.hosting).c_str());
+        return nullptr;
+    }
+    mye::GameLiftHostingOptions go;
+    go.connection.webSocketUrl = mye::WideToUtf8(opt.gameLiftWsUrl);
+    go.connection.fleetId = mye::WideToUtf8(opt.gameLiftFleetId);
+    go.connection.hostId = mye::WideToUtf8(opt.gameLiftHostId);
+    go.connection.processId = mye::WideToUtf8(
+        opt.gameLiftProcessId.empty() ? std::to_wstring(GetCurrentProcessId()) : opt.gameLiftProcessId);
+    wchar_t token[4096] = {};
+    const DWORD n = GetEnvironmentVariableW(kGameLiftTokenEnv, token, static_cast<DWORD>(std::size(token)));
+    if (n > 0 && n < std::size(token)) {
+        go.connection.authToken = mye::WideToUtf8(token);
+    }
+    go.laneCount = static_cast<uint32_t>(opt.maxPlayers);
+    // 接続情報が欠けていれば InitSDK を呼ぶ前に、足りないものを全部挙げて止める (SDK の失敗より分かりやすい)
+    std::string missing;
+    const auto need = [&](bool have, const char* what) {
+        if (!have) {
+            missing += (missing.empty() ? "" : ", ");
+            missing += what;
+        }
+    };
+    need(!go.connection.webSocketUrl.empty(), "--gamelift-ws-url");
+    need(!go.connection.fleetId.empty(), "--gamelift-fleet-id");
+    need(!go.connection.hostId.empty(), "--gamelift-host-id");
+    need(!go.connection.authToken.empty(), "env MYE_GAMELIFT_AUTH_TOKEN");
+    if (!missing.empty()) {
+        std::fprintf(stderr,
+                     "--hosting gamelift needs a GameLift Anywhere connection; missing: %s (see docs\\gamelift-anywhere.md)\n",
+                     missing.c_str());
+        return nullptr;
+    }
+    return std::make_unique<mye::GameLiftHosting>(mye::CreateAwsGameLiftSdk(), std::move(go));
 }
 
 // 実運用ループを回す。sim の起動・H2 の自己検査・ホスティングの寿命をここで持つ
-int RunLiveServer(mye::HeadlessSimSetup& setup, const ServerOptions& opt, bool tickLimitGiven)
+int RunLiveServer(mye::HeadlessSimSetup& setup, const ServerOptions& opt, bool tickLimitGiven,
+                  mye::CrashTestKind crashKind)
 {
-    if (opt.hosting != L"local") {
-        std::fprintf(stderr, "--hosting %s is not available in this build (only 'local')\n",
-                     mye::WideToUtf8(opt.hosting).c_str());
+    // 接続情報の不備は sim の起動 (数秒) より先に知らせる
+    std::unique_ptr<mye::IHostingProvider> hostingPtr = MakeHosting(opt);
+    if (hostingPtr == nullptr) {
         return 1;
     }
+    mye::IHostingProvider& hosting = *hostingPtr;
     setup.systemInput = true; // サーバは参加・離脱をシステム入力として tick ごとに適用する
     setup.config.localPlayers = opt.maxPlayers;
 
+    InstallServerCrashHandler(setup.config, nullptr); // 起動中の異常も拾う。tick 番号は sim が立ってから渡す
     mye::HeadlessSim sim;
+    CrashHandlerScope crashScope; // sim より後に宣言 = 先に外れる (ハンドラが破棄済みの sim を指さない)
     if (!sim.Init(setup)) {
         MYE_LOG_ERROR("[headless] could not start the simulation");
         return 1;
     }
+    InstallServerCrashHandler(setup.config, sim.Refs().tickIndex);
     if (!ShadowCopyIsIsolated(sim)) {
         MYE_LOG_ERROR("[headless] the shadow-copy directory is shared with Editor / Runtime");
         return 2;
@@ -123,10 +208,15 @@ int RunLiveServer(mye::HeadlessSimSetup& setup, const ServerOptions& opt, bool t
     lc.tickLimit = tickLimitGiven ? setup.config.replayTicks : 0; // replayTicks の既定 (600) は記録用で、サーバには効かせない
     lc.exitWhenEmpty = opt.exitWhenEmpty;
     lc.timeoutSec = static_cast<uint32_t>(opt.timeoutSec);
+    lc.crashTestKind = static_cast<uint8_t>(crashKind);
+    lc.crashAtTick = setup.config.crashTestTick;
 
-    mye::LocalHosting hosting;
     if (!hosting.Init()) {
         MYE_LOG_ERROR("[server] hosting '%s' failed to initialise", hosting.Name());
+        hosting.Shutdown();
+        // SDK の内部スレッド (時間切れで切り離した InitSDK など) が動いたままの終了処理を避け、ここで確実に落とす
+        std::fflush(nullptr);
+        TerminateProcess(GetCurrentProcess(), 1);
         return 1;
     }
     const int rc = mye::RunServerLoop(sim, hosting, lc);
@@ -147,8 +237,13 @@ int wmain(int argc, wchar_t** argv)
     mye::EngineCliExtras cli;
     ServerOptions opt;
     bool tickLimitGiven = false;
+    bool selfTest = false;
     for (int i = 1; i < argc; ++i) {
         tickLimitGiven = tickLimitGiven || std::wstring(argv[i]) == L"--replay-ticks";
+        selfTest = selfTest || std::wstring(argv[i]) == L"--selftest";
+    }
+    if (selfTest) {
+        return mye::RunServerSelfTest() ? 0 : 1;
     }
 
     for (int i = 1; i < argc; ++i) {
@@ -187,6 +282,14 @@ int wmain(int argc, wchar_t** argv)
             opt.exitWhenEmpty = true;
         } else if (arg == L"--server-timeout" && i + 1 < argc) {
             opt.timeoutSec = _wtoi(argv[++i]);
+        } else if (arg == L"--gamelift-ws-url" && i + 1 < argc) {
+            opt.gameLiftWsUrl = argv[++i];
+        } else if (arg == L"--gamelift-fleet-id" && i + 1 < argc) {
+            opt.gameLiftFleetId = argv[++i];
+        } else if (arg == L"--gamelift-host-id" && i + 1 < argc) {
+            opt.gameLiftHostId = argv[++i];
+        } else if (arg == L"--gamelift-process-id" && i + 1 < argc) {
+            opt.gameLiftProcessId = argv[++i];
         } else {
             std::fprintf(stderr, "unknown or incomplete argument: %s\n", mye::WideToUtf8(arg).c_str());
             PrintUsage();
@@ -227,16 +330,29 @@ int wmain(int argc, wchar_t** argv)
             PrintUsage();
             return 1;
         }
-        return RunLiveServer(setup, opt, tickLimitGiven);
+        // --crash-test KIND --crash-at-tick N: 確定 tick が N に達した直後に意図的に落とす (検証用)
+        mye::CrashTestKind crashKind = mye::CrashTestKind::None;
+        if (!cli.crashTestArg.empty()) {
+            crashKind = mye::ParseCrashTestKind(cli.crashTestArg.c_str());
+            if (crashKind == mye::CrashTestKind::None || setup.config.crashTestTick <= 0) {
+                std::fprintf(stderr, "--crash-test needs a known KIND (av / purecall / terminate / invalidparam / "
+                                     "stackoverflow) and --crash-at-tick N (> 0)\n");
+                return 1;
+            }
+        }
+        return RunLiveServer(setup, opt, tickLimitGiven, crashKind);
     }
 
     int exitCode = 0;
     {
+        InstallServerCrashHandler(setup.config, nullptr);
         mye::HeadlessSim sim;
+        CrashHandlerScope crashScope;
         if (!sim.Init(setup)) {
             MYE_LOG_ERROR("[headless] could not start the simulation");
             return 1;
         }
+        InstallServerCrashHandler(setup.config, sim.Refs().tickIndex);
         if (!ShadowCopyIsIsolated(sim)) {
             MYE_LOG_ERROR("[headless] the shadow-copy directory is shared with Editor / Runtime");
             return 2;
