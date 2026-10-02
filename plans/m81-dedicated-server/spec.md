@@ -36,6 +36,7 @@
 | D14 | 既存の Net* (v13) スロットはサーバ構成で何を返すか | `EngineAPI.h:409-419` は表示専用の機種依存値 | 裁定 | 意味を変えない。サーバプロセスでは `NetLocalPlayer` = 0、`NetIsConnected` = 1 (セッション稼働中)、`NetPlayerCount` = 4 (SessionConfig.playerCount)。v23 の新スロットは**確定入力から導く sim 値**で、v13 とは出どころが違うことをヘッダのコメントで区別する |
 | D15 | システム入力をどこに持つか | InputSnapshot はレーンごと 112 バイトで、`.rep` / スナップショット / プロトコルの 3 版に縛られている (`Input.h:99-101`)。イベントはレーンではなく tick に属する | 裁定 | InputSnapshot は**変えない**。tick ごとの別レコード `SystemInputTick` を新設し、.rep v9 の tick レコード・`Confirmed` パケット・ロールバックの投機記録に載せる。sim 側の状態は `SessionLanes` (レーン状態・playerId・最後に適用した eventSeq) として Scene が持ち、スナップショットとハッシュに入れる |
 | D17 | ビルド済みの GameLift SDK .lib (Debug 72MB + Release 53MB、gzip で計 8.5MB) と OpenSSL の DLL を git にコミットするか | DD §5 で「ビルド済み .lib と公開ヘッダを external\ に置く」と合意済み。リポジトリの方針は「クローン → F5 で動く」(external\VERSIONS.md)。CI は sln 全体をビルドするので、.lib が無いと Server のリンクで落ちる。GitHub の 1 ファイル 100MB 制限の内側。代替案は 2 つ: (a) .lib を gitignore にし、build_sdk.ps1 を CI と各開発機で実行する (OpenSSL の開発版・ネット接続・数分のビルドが必要)、(b) Git LFS | 裁定 (sub-07 VERDICT) | **コミットする** (合意どおり)。ただし .lib はリポジトリ履歴に恒久的に残るので、コミット前にユーザーに確認する。[ユーザーに聞ける] |
+| D18 | 到着余裕の目標値。4.1.6 は「1 tick 固定」だが、sub-11 の実測で、ジッタの大きい端末では締め切り越え (代替入力) が増えると分かった。代替入力の割合は、WARP の Runtime 1 台で 26%、Editor で約 14%、実 GPU の Runtime で 0%。review-1 で余裕が 90ms に張り付いていたのが、偶然ジッタ吸収のクッションになっていた | sub-11 SELF_EVAL の実測 (cache\m81k_v7c/v7d/v9_server.log) | 裁定 (sub-11 VERDICT)。[ユーザーに聞ける] | **案 (a) 適応目標**を採る。目標 = clamp(1 tick + 2σ, 1 tick, 6 tick)。σ はサーバが測る余裕の標本の、直近の標準偏差 (sim の外の値)。ジッタの無い回線では今と同じ 1 tick (操作遅延が最小)、ジッタの大きい端末では自動でクッションが増える。却下した案: (b) 3 tick 固定 (良い回線でも常に約 33ms の遅延が増える)、(c) 1 tick のまま (ジッタの大きい端末の入力が大量に代替入力になる = 操作が抜け落ちる)。sub-12 で実装する |
 | D16 | 型の置き場所 (sim 側から Net/ を include させない規則と両立するか) | DD §3「sim 側から Net/ Hosting/ Platform/Net/ を include しない」。だが Replay (.rep) と TickRunner は SessionConfig / SystemInputTick を読む | 裁定 | `SessionConfig` / `SimProvenance` / `SnapshotMeta` / `SystemEvent` / `SystemInputTick` / `SessionLanes` と純関数群は **`src\Engine\Engine\Session\`** (新設、sim 側) に置く。Net/ はここを include してよいが逆は禁止 (check_rules 規則 13 で検査) |
 
 ## 3. スコープ
@@ -90,6 +91,8 @@
 - サーバは各クライアントへ「そのクライアントの tick T の入力が締め切りに対して何 ms 前に届いたか」(到着余裕) を Confirmed に載せて返す。
 - クライアントは到着余裕が目標 (既定 1 tick ぶん) を保つよう、tick の進め方を ±最大 2% だけ速め/遅めにする (accumulator への加算係数)。**これは「いつ tick が回るか」だけを変え、sim には入らない。**
 - (review-1 #5 で追加) 参加・再同期直後の「追いつき」(余分な tick) と定常の速度係数は、**同じ基準 (サーバの予定時刻に対する自分の位置 = 到着余裕) から導く**。サーバの確定フロンティアは、入力が早く着くと予定より前倒しで進むので、追いつきの基準にしない。受け入れ: 偽トランスポート (遅延一定・ロス 0) で、参加から 10 秒後以降の到着余裕の移動平均が「目標 ± 1 tick」に入る (selftest で assert)。
+
+- (sub-11 VERDICT で改定、D18) 目標は固定の 1 tick ではなく、clamp(1 tick + 2σ, 1 tick, 6 tick) とする。σ は直近の余裕の標本の標準偏差。
 
 **4.1.7 desync**
 - サーバは `kNetHashCheckpoint` (8) の倍数 tick の確定ハッシュを Confirmed に載せる。
@@ -208,6 +211,9 @@
 - **V10** (#8) ServerLoop の PeerTable が Gone になった peer の宛先を回収する。上限に達したら ERROR ログを出す。宛先の探索は線形でよいが、回収を selftest で固定する。
 - **V11** (#10) 再接続の Hello で、旧所有者の Leave が積まれ済みなら二重に積まない。同じ受信周に「旧 peer の Gone」と「再接続の Hello」が届く場合の selftest。
 
+- **V13** (D18、sub-12) 適応目標。selftest で次を assert する。ジッタ 0 で窓平均が 16ms ± 1 tick。片道 30ms ± 10ms のジッタで代替入力率 ≤ 5%、かつ窓平均 ≤ 1 tick + 2σ + 1 tick。server_verify のケース A を WARP のクライアントに戻し、R5 (late-subst ≤ 5%) を通す。
+- **V14** (sub-11 不安 2) R5 の判定に「ケース A のクライアントが要求した再同期 (desync / EventGap / BadSnapshot) が 0」を加える。ロス 0 で起きるなら不具合なので。
+- **V15** (sub-11 不安 3、R-13) RTT が予測上限を超えて追いつけないクライアント (遅延 > 約 250ms) を、サーバが検出してログに出す。文書 (ADR-022 / engine_spec §11.5 / docs\gamelift-anywhere.md) にも対応上限として書く。再スナップショットによる救済はしない。
 - **V12** (sub-10 VERDICT) システム入力を持つ .rep をオフライン再生するとき、verify 用 sim の NetRuntimeInfo を D14 と同じ値 (connected = 1、playerCount = SessionConfig.playerCount) で立てる。v13 の Net* を sim へ書くプローブで、サーバ .rep の再生が全 tick 一致することを selftest で固定する。
 
 ### A 群 — ABI v23 (sub-06)
@@ -240,6 +246,7 @@
 | sub-09 | エディタ NetWindow と文書 (ADR-022 等) | sub-05, sub-06 | E1-E2, C1-C3 | `M81i: NetWindow のサーバ接続表示と ADR-022・仕様書の更新` |
 | sub-10 | 決定論の境界の修正 (review-1 #1 #2 #4 #9) | sub-09 | V1-V5, C1-C7 | `M81j: サーバの sim をネット中と同じ境界で回し、0 tick の照合を失敗にする` |
 | sub-11 | クライアント記録の再生・時刻同期・運用の修正 (review-1 #3 #5 #6 #7 #8 #10) | sub-10 | V6-V12, R5, C1-C7 | `M81k: クライアントの .rep を再生可能にし、時刻同期を収束させる` |
+| sub-12 | 到着余裕の適応目標と、server_verify の判定強化 | sub-11 | V13-V15, C1-C7 | `M81l: 到着余裕の目標をジッタに合わせて適応させる` |
 
 並列にできるもの: sub-06 は sub-02 の後なら sub-03〜05 と並列可。sub-09 の文書部分は sub-06 と sub-05 の後。
 
@@ -265,6 +272,7 @@
 - R-10 続報 (sub-07): server_verify ケース D (Release・4 クライアント) で avg 0.201ms / max 39.5ms。締め切り 50ms には収まるが余裕が小さい。sub-08 で再確認する。
 - 既知の観察 (M81 範囲外): 初回の Debug `Editor.exe --selftest` で Fracture editor の weight cache 3 項目が一度だけ FAIL し、再実行では出なかった (sub-07)。C3 の除外対象ではないので、再現したら報告すること。
 - R-12 (sub-09 で判明): NetWindow のスクショで、到着余裕 (arrival margin) が 230ms と出ていた。4.1.6 の目標は約 1 tick (17ms)。参加直後の追いつき中の値かもしれないが、定常状態で目標に収束しているかは未確認。収束しない場合は、クライアントが必要以上に先行していて、操作から確定までの遅延が無駄に増えている。sim の正しさには影響しない。reviewer の検証と sub-08 で、定常状態の値をログで確かめる。
+- R-13 (sub-11 で判明): 往復 300ms (片道 150ms) の回線では、予測上限 12 tick のためクライアントが最初の有効な入力に届かず、サーバに待たれないまま入力が落ち続ける。対応上限は RTT 約 250ms とし、超えたらサーバが検出してログに出す (V15)。救済 (再スナップショット) は後続。
 - R-5: GameLift 実疎通はユーザーの AWS アカウント・IAM・費用を伴う。sub-08 はユーザーの手が空くまで保留してよい (他サブの完了を妨げない)。
 
 ## 8. 変更履歴
@@ -290,3 +298,8 @@
   - V 群 (V1〜V11) を新設し、sub-10 / sub-11 を新規に作った。sub-08 の依存に sub-10 を追加した。#1 と #2 はサーバ .rep の中身を変えうるので、実疎通より先に直す。
   - #2 (D14) は仕様に書いてあったのに実装されず、差分欄にも出ていなかった。仕様の変更は無い。
 - 2026-10-02 sub-10 VERDICT round 1: (1) netLockstep は共通関数 `NetLockstepBoundary` から導き、ゲート系フラグは `TickGates` / `IsNetSessionGates` で照合する (V2 の方式)。(2) V4 の FAIL 条件に「照合した tick が 0 本 (期待ハッシュの無い tick だけで走った)」を加える。(3) V12 を追加。D14 の目的 (サーバとクライアントで sim から見える値をそろえる) は、オフライン再生にも同じく当てはまるため。sub-11 で実装する。
+- 2026-10-02 sub-11 VERDICT round 1
+  - 差分を承認した。StartTick は「スナップショットを埋めた記録だけ startMeta.tick」。marginMs の意味は「前回送信からの標本の平均」に変え、遅れた入力は負の標本として数える (proto は据え置き)。エディタはクライアント接続中、Play も無効にする。
+  - D18 を追加した (到着余裕の適応目標、[ユーザーに聞ける])。4.1.6 を改定した。
+  - V13〜V15 と R-13 を追加し、sub-12 を新設した。
+  - ケース A を実 GPU のクライアントにした暫定措置は、sub-12 で WARP に戻す。

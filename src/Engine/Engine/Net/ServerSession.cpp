@@ -40,6 +40,7 @@ bool ServerSession::Init(const ServerSessionConfig& cfg, const ServerHooks& hook
     pending_.clear();
     peers_.clear();
     history_.assign(kNetHistoryTicks, NetConfirmedTick{});
+    confirmMs_.assign(kNetHistoryTicks, 0);
     for (uint32_t l = 0; l < kMaxPlayers; ++l) {
         for (uint32_t i = 0; i < kInputRing; ++i) {
             laneInputs_[l][i] = InputSlot{};
@@ -113,6 +114,16 @@ ServerSession::Peer* ServerSession::FindPeer(uint32_t key)
     return nullptr;
 }
 
+bool ServerSession::HasPeer(uint32_t key) const
+{
+    for (const Peer& p : peers_) {
+        if (p.key == key) {
+            return true;
+        }
+    }
+    return false;
+}
+
 ServerSession::Peer* ServerSession::FindPeerByEvent(uint64_t eventSeq)
 {
     for (Peer& p : peers_) {
@@ -141,6 +152,15 @@ ServerSession::Peer* ServerSession::FindOwnerOfLane(int lane)
         }
     }
     return nullptr;
+}
+
+// 到着余裕の標本を 1 つ足す (tick ごとにちょうど 1 つ)。Confirmed へはその平均を載せる。
+// 標本を「最後の値」で送ると、遅れて着いた入力の負の値が、同じ周に確定する別の tick の正の値で上書きされ、
+// クライアントは実際より余裕があると思い込む (遅れた tick が多いほど偏る)
+void ServerSession::NoteMargin(Peer& p, int64_t marginMs)
+{
+    p.marginSum += ClampMargin(marginMs);
+    ++p.marginCount;
 }
 
 NetPacketHeader ServerSession::BaseHeader() const
@@ -359,9 +379,17 @@ void ServerSession::HandleHello(uint32_t key, const NetPacketHeader& h, const ui
         if (lanes_.lanes[lane].state == static_cast<uint32_t>(LaneState::Connected)) {
             // 古い接続がまだ生きている扱い (クライアントが落ちて即再起動した等)。乗っ取る:
             // Leave → Rejoin を同じ tick に積めば、レーンは同じまま新しい peer に移る
+            // 旧 peer が同じ受信周で Bye / タイムアウトにより Gone 済みなら、Leave はもう積まれている
+            // (FindOwnerOfLane は Gone を返さない)。2 本目の Leave は適用時に「not connected」の ERROR になり、
+            // 無効なイベントが確定入力 (.rep) に残る
+            bool leaveAlreadyQueued = false;
+            for (const SystemEvent& ev : pending_) {
+                leaveAlreadyQueued = leaveAlreadyQueued || (ev.kind == static_cast<uint8_t>(SystemEventKind::Leave)
+                                                            && ev.playerId == hp.playerId);
+            }
             if (Peer* old = FindOwnerOfLane(lane)) {
                 DropPeerInternal(*old, "taken over by a reconnect");
-            } else {
+            } else if (!leaveAlreadyQueued) {
                 QueueEvent(SystemEventKind::Leave, hp.playerId, static_cast<uint8_t>(lane));
             }
         }
@@ -405,8 +433,20 @@ void ServerSession::HandleClientInput(Peer& p, const NetPacketHeader& h, const u
         if (tick < nextTick_) {
             // 確定済み。冗長送信で受け取り済みの重複は数えず、間に合わなかった入力だけ数える
             const InputSlot& done = SlotOf(lane, tick);
-            if (!(done.valid && done.tick == tick)) {
+            // 冗長送信の同じ tick は二度数えない (数えた最新の tick より新しいものだけ)
+            if (!(done.valid && done.tick == tick) && (p.lateSampledTick == ~0ull || tick > p.lateSampledTick)) {
+                p.lateSampledTick = tick;
                 ++stats_.lateInputsDropped;
+                // 間に合わなかった入力が実際にいつ着いたか = 本当の遅れ (負の到着余裕)。確定時点の代替入力は
+                // 「まだ着いていない」としか言えないので、遅れの大きさはここでだけ分かる。
+                // クライアントの追いつきが参加直後・停止後の何 tick もの遅れを測る唯一の手がかり。
+                // 待たれていないレーン (参加直後で最初の入力がまだ有効になっていない) はサーバが待たずに確定したので、
+                // 基準は締め切りではなく実際に確定した時刻
+                const uint64_t confirmedAt = confirmMs_[tick % kNetHistoryTicks];
+                if (tick + kNetHistoryTicks > nextTick_ && confirmedAt != 0) {
+                    const uint64_t reference = (std::min)(DeadlineMs(tick), confirmedAt);
+                    NoteMargin(p, static_cast<int64_t>(reference) - static_cast<int64_t>(nowMs));
+                }
             }
             continue;
         }
@@ -627,21 +667,22 @@ bool ServerSession::TryConfirm(uint64_t nowMs, NetConfirmedTick& out)
         if (lanes_.lanes[l].state == static_cast<uint32_t>(LaneState::Connected)) {
             const InputSlot& s = SlotOf(l, tick);
             Peer* p = FindLivePeerOfLane(static_cast<int>(l));
+            if (WaitsOnLane(l, tick)) {
+                ++stats_.laneWaitedTicks[l];
+            }
             if (s.valid && s.tick == tick) {
                 ct.inputs[l] = s.in;
                 if (p != nullptr) {
-                    p->marginMs = ClampMargin(static_cast<int64_t>(DeadlineMs(tick)) - static_cast<int64_t>(s.arrivalMs));
-                    p->marginValid = true;
+                    NoteMargin(*p, static_cast<int64_t>(DeadlineMs(tick)) - static_cast<int64_t>(s.arrivalMs));
                 }
             } else {
                 // 締め切り超過 (または未稼働)。前 tick の確定入力から消費型を落とした値で埋める
                 ct.inputs[l] = SubstituteLateInput(prevInput_[l]);
                 if (WaitsOnLane(l, tick)) {
                     ++stats_.lateSubstitutions;
-                    if (p != nullptr) {
-                        p->marginMs = ClampMargin(static_cast<int64_t>(DeadlineMs(tick)) - static_cast<int64_t>(nowMs));
-                        p->marginValid = true;
-                    }
+                    ++stats_.laneLateSubst[l];
+                    // 到着余裕はここでは更新しない: 着いていない入力の遅れは分からない (HandleClientInput が
+                    // 遅れて着いた時に測る)。ここで 0 付近の値を書くと、本当の遅れを毎 tick 上書きして隠してしまう
                 }
             }
         }
@@ -702,6 +743,7 @@ bool ServerSession::TryConfirm(uint64_t nowMs, NetConfirmedTick& out)
     AfterApply(tick);
 
     history_[tick % kNetHistoryTicks] = ct;
+    confirmMs_[tick % kNetHistoryTicks] = nowMs == 0 ? 1 : nowMs;
     ++nextTick_;
     ++stats_.confirmedTicks;
     out = ct;
@@ -768,6 +810,7 @@ void ServerSession::PumpConfirmed(Peer& p, uint64_t nowMs)
     if (frontier - p.ackTick >= kNetHistoryTicks - 8) {
         // 履歴から溢れる (クライアントの ack が止まっている) — 再送では追いつけない
         if (!p.resyncPending) {
+            ++stats_.forcedResyncs;
             MYE_LOG_WARN("[server] peer %u fell %llu ticks behind - forcing a resync", p.key,
                          static_cast<unsigned long long>(frontier - p.ackTick));
         }
@@ -791,8 +834,13 @@ void ServerSession::PumpConfirmed(Peer& p, uint64_t nowMs)
         t = frontier; // keepalive: レコード無し
     }
     NetConfirmedPayload pl = {};
-    pl.marginMs = p.marginMs;
-    pl.flags = p.marginValid ? kNetConfirmedFlagMarginValid : 0u;
+    // 前回の送信から標本が 1 つでもあれば、その平均。無ければ「標本なし」(クライアントは古い値を何度も数えない)
+    if (p.marginCount > 0) {
+        pl.marginMs = static_cast<int32_t>(p.marginSum / static_cast<int64_t>(p.marginCount));
+        pl.flags = kNetConfirmedFlagMarginValid;
+        p.marginSum = 0;
+        p.marginCount = 0;
+    }
     uint32_t cp = 0;
     const uint64_t latest = (frontier > 0) ? (frontier - 1) / kNetHashCheckpoint * kNetHashCheckpoint : 0;
     for (uint32_t k = 0; k < 8 && cp < kNetCheckpointsPerPacket; ++k) {

@@ -326,6 +326,7 @@ struct EngineConfig {
     // NetRole の生値 (0=off / 1=host / 2=join / 4=専用サーバへ接続するクライアント)。**Engine/Net の型をここへ持ち込まない**
     // ために int で持つ (crashTest と同じ流儀 — EngineLoop.h はほぼ全 TU が読む)
     int netRole = 0;
+    static constexpr int kNetRoleClient = 4; // 専用サーバへ接続するクライアント (NetRole::Client の生値。上の理由で型は持ち込まない)
     int netPort = 7777;            // --net-host PORT
     std::wstring netJoinTarget;    // --net-join HOST:PORT
     int netPlayers = 2;            // --net-players N (M52 は 2 人 P2P 固定)
@@ -456,6 +457,9 @@ struct EngineContext {
     float fixedDt = 1.0f / 60.0f;
     FrameTimings timings;     // 前フレームの計測値
     bool requestExit = false;
+    // 専用サーバのクライアント構成で、エディタの Stop などが「セッションを抜ける」ことを要求する。
+    // EngineLoop が Bye を送って tick を止める (プロセスは終わらない)。それ以外の構成では読まれない
+    bool netLeaveRequested = false;
 };
 
 class IEngineApp {

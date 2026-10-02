@@ -98,42 +98,52 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
         // ミニシーン (= アセットの実体) に走らせると編集内容が壊れる
         ImGui::BeginDisabled(inActorEdit);
         ImGui::SameLine(ImGui::GetWindowWidth() * 0.5f - 48.0f);
+        // 専用サーバへクライアントとして接続している間は Pause / Step を使えない (Stop = セッションを抜ける)。
+        // 抜けたあとの Play もできない (セッションは窓を起動し直して繋ぎ直す)
+        const bool netLocked = playMode.NetClientLocked();
         if (state == PlayState::Editing) {
+            ImGui::BeginDisabled(netLocked);
             if (ImGui::Button(ICON_FA_PLAY)) {
                 selection.Clear(); // 復元で EntityID が変わるため選択解除
                 undo.BeginPlaySession();
                 playMode.Play(*ctx.scene);
             }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", Tr(StrId::Tool_TipPlay));
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("%s", Tr(netLocked ? StrId::Tool_TipPlayLockedNet : StrId::Tool_TipPlay));
             }
         } else {
             ImGui::PushStyleColor(ImGuiCol_Button, themeColor::PlayAccent);
             if (ImGui::Button(ICON_FA_STOP)) {
                 selection.Clear();
                 playMode.Stop(*ctx.scene);
+                ctx.netLeaveRequested = netLocked; // クライアント接続中の Stop は Bye でセッションを抜ける
                 undo.EndPlaySession(); // Play 中に積まれた Undo エントリを破棄
                 // シーンはスナップショットから戻るが、音とコンピュートバッファはエンジン側に残る
                 ReleasePlaySessionEngineState(ctx.audio, ctx.computeAbi);
             }
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", Tr(StrId::Tool_TipStop));
+                ImGui::SetTooltip("%s", Tr(netLocked ? StrId::Tool_TipStopNet : StrId::Tool_TipStop));
             }
             ImGui::SameLine();
+            ImGui::BeginDisabled(netLocked);
             if (ImGui::Button(state == PlayState::Paused ? ICON_FA_PLAY : ICON_FA_PAUSE)) {
                 playMode.TogglePause();
             }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", Tr(StrId::Tool_TipPause));
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("%s", Tr(netLocked ? StrId::Tool_TipPauseLockedNet : StrId::Tool_TipPause));
             }
             if (state == PlayState::Paused) {
                 ImGui::SameLine();
+                ImGui::BeginDisabled(netLocked);
                 if (ImGui::Button(ICON_FA_FORWARD_STEP)) {
                     playMode.Step();
                 }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("%s", Tr(StrId::Tool_TipStep));
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("%s", Tr(netLocked ? StrId::Tool_TipPauseLockedNet : StrId::Tool_TipStep));
                 }
             }
             // ---- 巻き戻し (M52e) ----

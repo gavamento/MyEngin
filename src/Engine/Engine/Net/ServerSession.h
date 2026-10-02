@@ -80,6 +80,11 @@ struct ServerStats {
     uint64_t joins = 0, rejoins = 0, leaves = 0, releases = 0, rejects = 0;
     uint64_t confirmedTicks = 0;
     uint64_t lateSubstitutions = 0; // 締め切り超過で代替入力にした (レーン, tick) の数
+    // レーンごと: 確定を待たれた tick の数と、そのうち代替入力になった数 (late-subst の割合 = 後者 / 前者)
+    uint64_t laneWaitedTicks[kMaxPlayers] = {};
+    uint64_t laneLateSubst[kMaxPlayers] = {};
+    uint64_t forcedResyncs = 0;
+     // クライアントの ack が履歴から溢れ、サーバが再同期を強いた回数
     uint64_t lateInputsDropped = 0; // 確定済みの tick に間に合わなかった入力 (冗長送信の重複は数えない)
     uint64_t snapshotsSent = 0, resyncsServed = 0;
     uint64_t chunksSent = 0, chunkResends = 0;
@@ -112,6 +117,8 @@ public:
     const SessionLanes& Lanes() const { return lanes_; }
     const ServerStats& Stats() const { return stats_; }
     uint32_t LivePeerCount() const;
+    // key の peer をまだ保持しているか (Pump が Gone を片付けた後は、接続処理中と稼働中だけ)。トランスポート側が宛先の表を掃除する判定用
+    bool HasPeer(uint32_t key) const;
     // 切断済み (Gone) 以外の peer の数 (接続処理中を含む)。「全員が出ていった」判定用
     uint32_t ActivePeerCount() const;
     // この tick までの checkpoint ハッシュ (ログ / selftest)
@@ -152,8 +159,10 @@ private:
         uint64_t lastAckAdvanceMs = 0;
         // ---- 入力 ----
         uint64_t inputsFrom = ~0ull; // この tick 以降はレーンの入力を待つ (最初に届いた有効な入力の tick)
-        int32_t marginMs = 0;
-        bool marginValid = false;
+        // 到着余裕の標本 (tick ごとに 1 つ) の、前回の Confirmed 送信からの合計と個数。送信時に平均を載せる
+        int64_t marginSum = 0;
+        uint32_t marginCount = 0;
+        uint64_t lateSampledTick = ~0ull; // 遅れて着いた入力を標本にした最新の tick (冗長送信の同じ tick を二度数えない)
         uint64_t lastDesyncReportTick = ~0ull; // 同じ checkpoint の不一致を何度も数えない
     };
 
@@ -161,6 +170,7 @@ private:
         uint64_t tick = 0;
         bool valid = false;
         uint64_t arrivalMs = 0;
+
         InputSnapshot in = {};
     };
 
@@ -170,6 +180,7 @@ private:
     Peer* FindPeerByEvent(uint64_t eventSeq);
     Peer* FindLivePeerOfLane(int lane);
     Peer* FindOwnerOfLane(int lane);
+    static void NoteMargin(Peer& p, int64_t marginMs);
     void HandleHello(uint32_t key, const NetPacketHeader& h, const uint8_t* body, size_t bodySize,
                      uint64_t nowMs);
     void HandleClientInput(Peer& p, const NetPacketHeader& h, const uint8_t* body, size_t bodySize,
@@ -201,6 +212,7 @@ private:
     std::vector<SystemEvent> pending_; // eventSeq 昇順 (発行順)
     std::vector<Peer> peers_;
     std::vector<NetConfirmedTick> history_; // [tick % kNetHistoryTicks]
+    std::vector<uint64_t> confirmMs_;       // 同じ添字: その tick を確定した時刻 (0 = 未確定)
     InputSlot laneInputs_[kMaxPlayers][kInputRing];
     InputSnapshot prevInput_[kMaxPlayers] = {};
     char laneSid_[kMaxPlayers][kNetPlayerSessionIdLen + 1] = {};

@@ -3003,9 +3003,22 @@ the client's prediction repeats the newest confirmed input but zeroes `chars` / 
 (`PredictLaneInput`), because a prediction never enters recorded state. The server carries its world
 hash in `Confirmed` every `kNetHashCheckpoint = 8` ticks. A client that disagrees writes the same
 `crash\desync_<tick>_p<lane>\` bundle as §11.4 and asks for a resync (a fresh snapshot) instead of
-halting; the server keeps running. Each resync starts a new client `.rep` (`<stem>.rs<N>.rep`).
+halting; the server keeps running. Each resync starts a new client `.rep` (`<stem>.rs<N>.rep`). A
+client `.rep` (and the bundle's `local.rep`) starts at the join tick, not tick 0; `ReplayPlayer` looks
+records up from the embedded snapshot's tick (`startMeta.tick`), so it replays alone, and the bundle's
+`desync.txt` says to replay *the server's* `.rep` to the same tick and `--hash-diff` the two dumps (the
+server never writes a bundle). `--replay-verify` fails when it compared 0 ticks.
 Clock sync shifts only *when* ticks run (±2 % on the accumulator, plus catch-up ticks after a join),
-driven by the server's report of how many ms before the deadline the client's input arrived.
+driven by the server's report of how many ms before the deadline the client's input arrived (target
+`targetMarginMs` = 16 ms). The speed factor and the catch-up come from that **one** error: the server
+also reports how late an input really was when it arrives after its tick was confirmed (measured against
+the deadline, or against the confirmation time for a lane it did not wait on yet), the client runs the
+missing ticks once, then drops margin samples for RTT + 100 ms so the old reports are not counted twice.
+The confirmed frontier is not used: it runs ahead of the schedule when inputs arrive early, and a
+catch-up keyed to it cancelled the slow-down. With a constant delay and no loss the margin sits at the
+target from the 10th second on (selftest `V7 time sync`, ±1 tick), and returns there 10 s after a delay
+change. The editor, as a server client, disables Pause / Step (the server never pauses; a client tick
+with `simulateScripts = false` would desync at every checkpoint); Stop sends Bye and stops the sim.
 
 **Headless `Server.exe`.** Console subsystem, no window, device or audio output. It links the engine but
 loads none of `d3d11.dll` / `dxgi.dll` / `d3dcompiler_47.dll` / `xaudio2_9.dll` (all `/DELAYLOAD`) and
@@ -3018,7 +3031,11 @@ with the Editor / Runtime. The tick is the very `RunOneTick` of the Editor, so n
 `--net-connect HOST:PORT [--player-session-id ID]` (Runtime and Editor; the Editor's Network window has a
 connect box that starts a second editor with these arguments). Measured with 4 Release clients on
 the `--local-demo` scene: average tick time 0.06–0.2 ms, with spikes of 7–40 ms around a join
-(snapshot capture; inside the 50 ms deadline, but the margin is small).
+(snapshot capture; inside the 50 ms deadline, but the margin is small). **Measurement environment:**
+`server_verify.bat` case D runs the server and four WARP `Runtime.exe` on one PC, so they fight for the
+same cores; its tick times, `late-subst` and any forced resync are a load test and are printed, not
+judged. Only case A (loss 0, two clients) is judged: `late-subst` (the share of waited lane ticks that
+got a substituted input) ≤ 5 % per lane and no server-forced resync.
 
 **Hosting.** `IHostingProvider` (`Init`, `NotifyReady`, `Poll` → `StartSession` / `Terminate` /
 `HealthCheck`, `ValidatePlayer`, `PlayerLeft`, `PlayerReleased`, `NotifySessionEnded`, `Shutdown`) with
@@ -3044,7 +3061,11 @@ ticks they share.
 return values **derived from confirmed input** — every client reads the same join on the same tick — so
 unlike the ABI v13 slots in §11.4 (machine-dependent, presentation only) they may drive simulation
 state. Outside a server session the lanes `[0, playerCount)` are `Connected`, player ids are 0 and no
-events exist (`playerCount` comes from the `.rep`-reproduced tick context). `NetIsServer` /
+events exist (`playerCount` comes from the `.rep`-reproduced tick context). The ABI v13 slots
+`NetIsConnected` / `NetPlayerCount` read 1 / `playerCount` in a server session (server, client, and the
+offline replay of a system-input `.rep`, from its `SessionConfig`), so a game that wrongly writes them
+into state still replays like the live run; `NetLocalPlayer` / `NetPingMs` / `NetRollbackCount` stay
+machine-dependent (default values in a replay). `NetIsServer` /
 `NetIsClient` were deliberately **not** added: every script entry point runs inside a tick, where such
 a call could only return an error and 0. The C# side is a position-only mirror (the C# lane is stopped in
 network play). **A `GameLogic.dll` built for `apiVersion` 22 is refused by a v23 engine; external projects

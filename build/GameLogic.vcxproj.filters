@@ -34,6 +34,9 @@
     <ClCompile Include="..\src\GameLogic\Scripts\NetHudDemo.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\NetInfoProbe.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\GameLogic\Scripts\PartAttachDemo.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>

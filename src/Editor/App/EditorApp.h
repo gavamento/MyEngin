@@ -60,6 +60,7 @@ public:
     bool saveSceneOnStart = false; // --save-scene-on-start (シーンリロード検証用)
     bool autoPlay = false;         // --autoplay (起動直後に Play。スクリプト検証用)
     bool openTimeline = false;     // --whatif-selftest (M72c: 分岐レーンを撮れるよう Timeline を開く)
+    bool serverClient = false;     // M81: --net-connect (専用サーバのクライアント)。Pause / Step を無効にし、sim は常に simulateScripts = true で回す
     bool openNet = false;          // --net-host / --net-join / --net-connect (M81i: セッションの状態を見られるよう Network を開く)
     float perfRate = 0.0f;         // --perf-rate N (>0 でデモエミッタの放出数を上書き — 性能計測用)
     int perfMax = 0;               // --perf-max N

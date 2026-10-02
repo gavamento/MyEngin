@@ -152,8 +152,8 @@ bool RunCrashRingSelfTest()
                 const InputSnapshot want = MakeInput(static_cast<uint32_t>(i));
                 // .rep の tick 番号はスナップショット tick からの絶対値ではなく 0 始まり
                 inputsOk = inputsOk
-                    && std::memcmp(&p.InputForTick(i), &want, sizeof(InputSnapshot)) == 0;
-                hashesOk = hashesOk && p.ExpectedHash(i) == hashes[i];
+                    && std::memcmp(&p.InputAt(i, 0), &want, sizeof(InputSnapshot)) == 0;
+                hashesOk = hashesOk && p.HashAt(i) == hashes[i];
             }
             check(inputsOk, "入力列がそのまま往復する");
             check(hashesOk, "ハッシュ列がそのまま往復する");
@@ -187,11 +187,11 @@ bool RunCrashRingSelfTest()
         ReplayPlayer p;
         if (check(RoundTrip(ring, repPath, p), "in-flight 込みで読み直せる")) {
             check(p.TickCount() == 4, "in-flight tick も tickCount に入る");
-            check(p.ExpectedHash(3) == 0 && !p.HasExpectedHash(3),
+            check(p.HashAt(3) == 0,
                   "in-flight tick の期待ハッシュは 0 = 期待値なし");
-            check(p.HasExpectedHash(2), "完走した tick は期待値を持つ");
+            check((p.HashAt(2) != 0), "完走した tick は期待値を持つ");
             const InputSnapshot want = MakeInput(9);
-            check(std::memcmp(&p.InputForTick(3), &want, sizeof(InputSnapshot)) == 0,
+            check(std::memcmp(&p.InputAt(3, 0), &want, sizeof(InputSnapshot)) == 0,
                   "in-flight tick の入力は載っている (= 落ちた tick へ再突入できる)");
         }
     }
@@ -201,7 +201,7 @@ bool RunCrashRingSelfTest()
     {
         ReplayPlayer p;
         if (check(RoundTrip(ring, repPath, p), "確定後も読み直せる")) {
-            check(p.ExpectedHash(3) == 0x4444444444444444ull, "確定ハッシュで上書きされている");
+            check(p.HashAt(3) == 0x4444444444444444ull, "確定ハッシュで上書きされている");
         }
     }
 
@@ -274,9 +274,9 @@ bool RunCrashRingSelfTest()
                 const InputSnapshot w0 = MakeInput(static_cast<uint32_t>(i));
                 const InputSnapshot w1 = MakeInput(static_cast<uint32_t>(i) + 50);
                 lanesOk = lanesOk
-                    && std::memcmp(&p2.InputForTick(i, 0), &w0, sizeof(InputSnapshot)) == 0
-                    && std::memcmp(&p2.InputForTick(i, 1), &w1, sizeof(InputSnapshot)) == 0
-                    && p2.ExpectedHash(i) == 0x7000000000000000ull + i;
+                    && std::memcmp(&p2.InputAt(i, 0), &w0, sizeof(InputSnapshot)) == 0
+                    && std::memcmp(&p2.InputAt(i, 1), &w1, sizeof(InputSnapshot)) == 0
+                    && p2.HashAt(i) == 0x7000000000000000ull + i;
             }
             check(lanesOk, "2P: レーンごとの入力とハッシュがそのまま往復する");
         }
@@ -317,12 +317,12 @@ bool RunCrashRingSelfTest()
             for (uint64_t i = 0; i < 5; ++i) {
                 const InputSnapshot want = MakeInput(static_cast<uint32_t>(i) + 80);
                 inputsKept = inputsKept
-                    && std::memcmp(&sparsePlayer.InputForTick(i), &want, sizeof(InputSnapshot)) == 0;
+                    && std::memcmp(&sparsePlayer.InputAt(i, 0), &want, sizeof(InputSnapshot)) == 0;
             }
             check(inputsKept, "checkpoint: 入力は間引かず全 tick 保存する");
-            check(!sparsePlayer.HasExpectedHash(0) && !sparsePlayer.HasExpectedHash(1)
-                      && sparsePlayer.ExpectedHash(2) == 0x8888888888888888ull
-                      && !sparsePlayer.HasExpectedHash(3) && !sparsePlayer.HasExpectedHash(4),
+            check((sparsePlayer.HashAt(0) == 0) && (sparsePlayer.HashAt(1) == 0)
+                      && sparsePlayer.HashAt(2) == 0x8888888888888888ull
+                      && (sparsePlayer.HashAt(3) == 0) && (sparsePlayer.HashAt(4) == 0),
                   "checkpoint: 対象 tick だけ期待ハッシュを持つ");
         }
     }

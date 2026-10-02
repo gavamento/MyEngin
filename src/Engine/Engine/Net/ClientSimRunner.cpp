@@ -316,7 +316,7 @@ void ClientSimRunner::Update(uint64_t nowMs)
             stalledNow_ = false;
         }
         const bool byAccumulator = acc_ >= kTickMs;
-        const bool byCatchUp = !byAccumulator && session_->CatchUpTicks(t) > 0;
+        const bool byCatchUp = !byAccumulator && session_->CatchUpPending() > 0;
         if (!byAccumulator && !byCatchUp) {
             break;
         }
@@ -338,6 +338,7 @@ void ClientSimRunner::Update(uint64_t nowMs)
             ++stats_.ticksRun;
         } else {
             ++stats_.catchUpTicks;
+            session_->OnCatchUpTickRan(nowMs);
         }
         ++ran;
     }

@@ -39,6 +39,12 @@ public:
     // 「ステップを押した = 分岐して 1 tick 進めたい」を外から観測する必要がある
     bool StepPending() const { return stepPending_; }
 
+    // 専用サーバへクライアントとして接続しているエディタでは、Pause / Step を無効にする (Stop = セッションを抜ける)。
+    // クライアントだけ simulateScripts = false の tick ができると、サーバ (常に true) と world が割れて
+    // checkpoint ごとに desync → 再同期を繰り返すため。ツールバーもタイムラインも Pause / Step はここを通る
+    void SetNetClientLocked(bool locked) { netClientLocked_ = locked; }
+    bool NetClientLocked() const { return netClientLocked_; }
+
     // 毎 tick 呼ぶ。true ならこの tick でゲームロジックを進める (Step は 1 回で消費)
     bool ConsumeSimulateTick();
 
@@ -50,6 +56,7 @@ private:
     TimeControl timeSnapshot_;
     PersistStore persistSnapshot_;
     bool stepPending_ = false;
+    bool netClientLocked_ = false;
     TimeTravel* tt_ = nullptr; // M73a: 非所有。null なら Pause は sim だけ止める
 };
 

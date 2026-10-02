@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -205,6 +206,7 @@ struct MiniWorld {
     bool autoApply = true;
     uint64_t maxChunksInOnePump = 0;
     uint32_t lastTickRan = 0;
+    std::vector<SystemEvent> events; // 確定した tick に載ったシステムイベント (確定順)
 
     explicit MiniWorld(uint64_t seed) : net(seed) {}
 
@@ -247,6 +249,9 @@ struct MiniWorld {
         NetConfirmedTick ct;
         for (int i = 0; i < 8 && srv.TryConfirm(now, ct); ++i) {
             srv.OnTickRan(ct.tick, 0x1000ull + ct.tick);
+            for (uint32_t e = 0; e < ct.sys.eventCount; ++e) {
+                events.push_back(ct.sys.events[e]);
+            }
         }
         const uint64_t before = srv.Stats().chunksSent;
         srv.Pump(now);
@@ -430,6 +435,65 @@ void TestGracefulLeave()
           b.Lane(), lane);
 }
 
+// ログリングの cursor 以降に出た ERROR の数 (cursor は logging::TotalWritten() で取る)
+size_t CountErrorLogsSince(uint64_t cursor)
+{
+    LogEntry buf[64];
+    size_t errors = 0;
+    for (size_t n = logging::ReadSince(cursor, buf, 64); n != 0; n = logging::ReadSince(cursor, buf, 64)) {
+        for (size_t i = 0; i < n; ++i) {
+            errors += buf[i].level == LogLevel::Error ? 1u : 0u;
+        }
+    }
+    return errors;
+}
+
+// V11: 旧 peer が Gone (切断を知った) になった同じ受信周に、同じ player の再接続 Hello が届く。
+// Leave は旧 peer の脱落で 1 本だけ積まれ、Hello が 2 本目を積まない (2 本目は適用時に「not connected」の
+// ERROR になり、無効なイベントが確定入力 = .rep に残る)
+void TestReconnectLeavesOnce()
+{
+    MiniWorld w(9);
+    ServerSessionConfig sc = FakeServerConfig(4);
+    w.Start(sc, 2000);
+    ClientSession& a = w.AddClient(FakeClientConfig("p-a"));
+    w.Run(300);
+    Check(a.Running(), "reconnect: the first client is running");
+    const uint64_t playerId = a.PlayerId();
+    const uint32_t lane = a.Lane();
+    w.events.clear();
+    const uint64_t errorCursor = logging::TotalWritten();
+    w.srv.DropPeer(1); // トランスポートが切断を知った (Leave が積まれる)
+    ClientSessionConfig again = FakeClientConfig("p-a");
+    again.playerId = playerId;
+    ClientSession& b = w.AddClient(again); // Hello は次の Step の受信で、TryConfirm の前に届く
+    w.Run(w.now + 600);
+    uint32_t leaves = 0;
+    uint32_t rejoins = 0;
+    bool leaveFirst = false;
+    for (const SystemEvent& ev : w.events) {
+        if (ev.playerId != playerId) {
+            continue;
+        }
+        if (ev.kind == static_cast<uint8_t>(SystemEventKind::Leave)) {
+            ++leaves;
+            leaveFirst = rejoins == 0;
+        } else if (ev.kind == static_cast<uint8_t>(SystemEventKind::Rejoin)) {
+            ++rejoins;
+        }
+    }
+    Check(b.Running() && b.Lane() == lane && b.PlayerId() == playerId,
+          "reconnect: the same player gets the same lane back (running %d, lane %u vs %u)", b.Running() ? 1 : 0, b.Lane(),
+          lane);
+    Check(leaves == 1 && rejoins == 1 && leaveFirst,
+          "reconnect: exactly one Leave then one Rejoin were confirmed (leaves %u, rejoins %u)", leaves, rejoins);
+    Check(w.srv.Stats().leaves == 1, "reconnect: the server counted one leave (%llu)",
+          static_cast<unsigned long long>(w.srv.Stats().leaves));
+    Check(!w.srv.HasPeer(1) && w.srv.HasPeer(2), "reconnect: the session keeps only the new peer (HasPeer old %d, new %d)",
+          w.srv.HasPeer(1) ? 1 : 0, w.srv.HasPeer(2) ? 1 : 0);
+    const size_t errors = CountErrorLogsSince(errorCursor);
+    Check(errors == 0, "reconnect: no ERROR was logged while the events were applied (%zu)", errors);
+}
 void TestSnapshotTransfer()
 {
     MiniWorld w(5);
@@ -510,6 +574,12 @@ bool InitSim(HeadlessSim& sim)
         Scene* scene = sim.Refs().scene;
         scene->GetWorld().AddComponentRaw(scene->CreateGameObject("SaveLoadProbeHost").Id(), saveProbe);
     }
+    // v13 の Net* を毎 tick sim へ書く probe (GameLogic.dll の NetInfoProbe)。ライブとオフライン再生で同じ値を読むことの検証用
+    const ComponentTypeId infoProbe = ComponentRegistry::Get().FindByName("NetInfoProbe");
+    if (infoProbe != kInvalidComponentType) {
+        Scene* scene = sim.Refs().scene;
+        scene->GetWorld().AddComponentRaw(scene->CreateGameObject("NetInfoProbeHost").Id(), infoProbe);
+    }
     return true;
 }
 
@@ -557,6 +627,27 @@ bool WriteSaveProbe(HeadlessSim& sim, const char* field, const void* value, int3
     BuildEngineApi(api, &apiCtx);
     const MyeEntityId id = { host.Id().index, host.Id().generation };
     return api.SetComponentField(&apiCtx, id, HashStr("SaveLoadProbe"), HashStr(field), value, size) == 1;
+}
+
+// NetInfoProbe のフィールドを ABI 経由で読む (無ければ false)
+bool ReadNetInfoProbe(HeadlessSim& sim, const char* field, uint64_t& out)
+{
+    Scene* scene = sim.Refs().scene;
+    const GameObject host = scene->Find("NetInfoProbeHost");
+    if (!host) {
+        return false;
+    }
+    ScriptApiContext apiCtx;
+    apiCtx.scene = scene;
+    MyeEngineApi api = {};
+    BuildEngineApi(api, &apiCtx);
+    uint64_t buf = 0;
+    const MyeEntityId id = { host.Id().index, host.Id().generation };
+    if (api.GetComponentField(&apiCtx, id, HashStr("NetInfoProbe"), HashStr(field), &buf, sizeof(buf), nullptr) <= 0) {
+        return false;
+    }
+    out = buf;
+    return true;
 }
 
 // probe のフィールドを ABI (GetComponentField) 経由で読む。無ければ false
@@ -609,6 +700,7 @@ struct ScenarioDef {
     uint64_t persistLoadTick = 0;
     uint64_t gameLoadTick = 0;
     int32_t saveSlot = 0;
+    bool traceMargin = false;
     LinkSpec link[kClients + 1];
     std::vector<Action> actions;
 };
@@ -625,6 +717,8 @@ struct ClientOutcome {
     uint64_t finalTick = 0;
     bool running = false;            // 終了時にセッションが稼働中 (EngineLoop が netInfo.connected へ写す値)
     uint32_t sessionPlayerCount = 0; // セッションの人数 (同 netInfo.playerCount)
+    // (now ms, 到着余裕 ms) を 50ms ごと。traceMargin のシナリオで、標本が有効なときだけ
+    std::vector<std::pair<uint64_t, double>> marginTrace;
 };
 
 struct ScenarioResult {
@@ -802,6 +896,13 @@ ScenarioResult RunScenario(Sims& sims, const ScenarioDef& def)
             if (nodes[k].alive) {
                 sims.client[k - 1].Activate();
                 nodes[k].runner->Update(now);
+            }
+        }
+        if (def.traceMargin && now % 50 == 0) {
+            for (int k = 1; k <= kClients; ++k) {
+                if (nodes[k].alive && nodes[k].session->Running() && nodes[k].session->MarginValid()) {
+                    res.client[k].marginTrace.emplace_back(now, nodes[k].session->MarginMs());
+                }
             }
         }
         // 4. シナリオの操作
@@ -1309,6 +1410,107 @@ void TestSpeculationLimit(Sims& sims)
     CheckReplayOfLog(sims, b, e.name);
 }
 
+// 到着余裕の標本 (50ms ごと) を [fromMs, toMs) の 1 秒窓で平均し、全部の窓が目標 ± 1 tick に入るか。
+// 窓の数を返す (0 = 標本が無い = 検査していない)。外れた窓があれば最初の 1 つを name 付きで報告する
+int CheckMarginWindows(const ClientOutcome& c, uint64_t fromMs, uint64_t toMs, const char* name, int client)
+{
+    constexpr double kTarget = 16.0; // ClientSessionConfig::targetMarginMs の既定
+    constexpr double kTickMs = 1000.0 / 60.0;
+    int windows = 0;
+    std::string means;
+    for (uint64_t w = fromMs; w + 1000 <= toMs; w += 1000) {
+        double sum = 0.0;
+        int n = 0;
+        for (const auto& s : c.marginTrace) {
+            if (s.first >= w && s.first < w + 1000) {
+                sum += s.second;
+                ++n;
+            }
+        }
+        if (n == 0) {
+            Check(false, "%s: client %d has no margin sample in [%llu, %llu) ms", name, client,
+                  static_cast<unsigned long long>(w), static_cast<unsigned long long>(w + 1000));
+            continue;
+        }
+        ++windows;
+        const double mean = sum / n;
+        means += (means.empty() ? "" : " ") + std::to_string(static_cast<int>(std::lround(mean)));
+        Check(std::fabs(mean - kTarget) <= kTickMs,
+              "%s: client %d's arrival margin averages %.1f ms in [%llu, %llu) ms (target %.0f +- %.1f)", name, client,
+              mean, static_cast<unsigned long long>(w), static_cast<unsigned long long>(w + 1000), kTarget, kTickMs);
+    }
+    MYE_LOG_INFO("[server-net selftest] %s: client %d arrival margin, 1 s window means in [%llu, %llu) ms: %s ms", name,
+                 client, static_cast<unsigned long long>(fromMs), static_cast<unsigned long long>(toMs), means.c_str());
+    return windows;
+}
+
+// V7 (spec 4.1.6): 到着余裕が目標 (1 tick) に収束する。追いつきと速度係数が同じ基準 (到着余裕) から導かれるので、
+// 遅延が一定ならロス 0 でも参加の 10 秒後以降は目標 +- 1 tick に入り、遅延が変わっても 10 秒後に戻る。
+// 以前は 2 つが別の基準 (到着余裕 / 確定フロンティア) を追って打ち消し合い、約 90ms に張り付いた
+void TestTimeSync(Sims& sims)
+{
+    {
+        ScenarioDef d;
+        d.name = "V7 time sync (1 client, 25ms one-way, then 75ms)";
+        d.seed = 701;
+        d.endMs = 40000;
+        d.traceMargin = true;
+        d.link[1] = Link(25, 0, 0, 0, 0);
+        d.actions = {
+            { Action::Start, 0, 1, 0 },
+            { Action::SetLink, 20000, 1, 75 }, // 片道 25 -> 75ms (往復 50 -> 150ms)
+        };
+        ScenarioResult r = RunScenario(sims, d);
+        LogScenario(d.name, d, r);
+        Check(CountChainMismatches(r, d.name) == 0, "%s: the client's committed hash chain equals the server's", d.name);
+        const int before = CheckMarginWindows(r.client[1], 10000, 20000, d.name, 1);
+        const int after = CheckMarginWindows(r.client[1], 30000, 40000, d.name, 1);
+        Check(before == 10 && after == 10, "%s: 10 + 10 one-second windows were checked (%d + %d)", d.name, before, after);
+        const double lateRate = r.stats.laneWaitedTicks[0] > 0
+            ? static_cast<double>(r.stats.laneLateSubst[0]) / static_cast<double>(r.stats.laneWaitedTicks[0])
+            : 1.0;
+        MYE_LOG_INFO("[server-net selftest] %s: late-subst %llu of %llu waited tick(s) (%.2f%%), catch-up %llu tick(s)",
+                     d.name, static_cast<unsigned long long>(r.stats.laneLateSubst[0]),
+                     static_cast<unsigned long long>(r.stats.laneWaitedTicks[0]), lateRate * 100.0,
+                     static_cast<unsigned long long>(r.client[1].catchUpTicks));
+    }
+    {
+        // 参加の時点で遅れが大きい (往復 180ms = Hello → Welcome → スナップショット受信に半秒かかる。往復 300ms は予測上限 12 tick では取り戻せない = N4) クライアントも、
+        // 追いつき (到着余裕から導く) で埋めて目標へ収束する
+        ScenarioDef d;
+        d.name = "V7 time sync (1 client, 90ms one-way: joins half a second behind)";
+        d.seed = 703;
+        d.endMs = 30000;
+        d.traceMargin = true;
+        d.link[1] = Link(90, 0, 0, 0, 0);
+        d.actions = { { Action::Start, 0, 1, 0 } };
+        ScenarioResult r = RunScenario(sims, d);
+        LogScenario(d.name, d, r);
+        Check(CountChainMismatches(r, d.name) == 0, "%s: the client's committed hash chain equals the server's", d.name);
+        Check(CheckMarginWindows(r.client[1], 10000, 30000, d.name, 1) == 20, "%s: 20 one-second windows were checked",
+              d.name);
+        Check(r.client[1].catchUpTicks > 0, "%s: the client caught up after joining behind (%llu catch-up ticks)", d.name,
+              static_cast<unsigned long long>(r.client[1].catchUpTicks));
+    }
+    {
+        ScenarioDef d;
+        d.name = "V7 time sync (3 clients, 30ms +- 10 jitter)";
+        d.seed = 702;
+        d.endMs = 30000;
+        d.traceMargin = true;
+        for (int k = 1; k <= kClients; ++k) {
+            d.link[k] = Link(30, 10, 0, 0, 0);
+        }
+        d.actions = { { Action::Start, 0, 1, 0 }, { Action::Start, 40, 2, 0 }, { Action::Start, 80, 3, 0 } };
+        ScenarioResult r = RunScenario(sims, d);
+        LogScenario(d.name, d, r);
+        Check(CountChainMismatches(r, d.name) == 0, "%s: every client's committed hash chain equals the server's", d.name);
+        for (int k = 1; k <= kClients; ++k) {
+            Check(CheckMarginWindows(r.client[k], 10000, 30000, d.name, k) == 20,
+                  "%s: client %d: 20 one-second windows were checked", d.name, k);
+        }
+    }
+}
 // システムイベントをまたぐロールバック: 予測 (イベント無し) で走った区間に Join / Leave が確定で届いたら、
 // 直前のスナップショットへ戻して tick ごとの記録値で再シムすると、最初から確定入力で走った sim と
 // ビット同一の結果になる
@@ -1395,7 +1597,9 @@ void TestRollbackAcrossSystemEvents(Sims& sims)
 
 // サーバの確定入力列 r.log を .rep (role = Server) として書く。from > 0 なら from の直前の状態を開始
 // スナップショットにして from 以降だけを記録する (参加途中のクライアントが録る .rep と同じ形)
-bool WriteRepFromLog(Sims& sims, const ScenarioResult& r, const std::wstring& path, size_t from)
+// startMetaTickOffset != 0: ヘッダの startMeta.tick だけをずらす (埋め込みスナップショットの tick と食い違う壊れた .rep を作る)
+bool WriteRepFromLog(Sims& sims, const ScenarioResult& r, const std::wstring& path, size_t from,
+                     uint64_t startMetaTickOffset = 0)
 {
     HeadlessSim& sim = sims.server;
     sim.Activate();
@@ -1415,7 +1619,7 @@ bool WriteRepFromLog(Sims& sims, const ScenarioResult& r, const std::wstring& pa
     const SessionConfig session = SimSessionConfig(3, 150);
     SimProvenance prov = sim.Provenance();
     SnapshotMeta meta = {};
-    meta.tick = sim.TickIndex();
+    meta.tick = sim.TickIndex() + startMetaTickOffset;
     meta.lastEventSeq = sim.Refs().scene->Lanes().lastEventSeq;
     meta.config = session;
     meta.blobHash = HashBytes(blob.data(), blob.size());
@@ -1438,16 +1642,23 @@ struct OfflineVerify {
     bool ready = false;
     HeadlessVerifyResult result;
     TickGates gates;
+    // 再生が終わった sim の NetInfoProbe (probe が無い環境では probeRead = false)
+    bool probeRead = false;
+    uint64_t probeConnectedTicks = 0;
+    uint64_t probePlayerCount = 0;
 };
 
 // Server.exe --replay-verify と同じ経路 (systemInput = false の HeadlessSim で VerifyReplay)
-OfflineVerify VerifyRepOffline(const std::wstring& path)
+// dumpPath 非空: dumpTick の tick 末のフィールド単位ダンプを書く (--hash-dump-tick / --hash-dump)
+OfflineVerify VerifyRepOffline(const std::wstring& path, const std::wstring& dumpPath = L"", int64_t dumpTick = 0)
 {
     OfflineVerify o;
     HeadlessSimSetup s;
     s.config.title = L"MyEngine ServerNetSelfTest verify";
     s.config.localPlayers = static_cast<int>(kMaxPlayers);
     s.config.replayVerifyPath = path;
+    s.config.hashDumpPath = dumpPath;
+    s.config.hashDumpTick = dumpTick;
     s.scene.showcase = FindShowcase(L"--local-demo", /*editor=*/true);
     HeadlessSim sim;
     if (s.scene.showcase == nullptr || !sim.Init(s)) {
@@ -1456,6 +1667,8 @@ OfflineVerify VerifyRepOffline(const std::wstring& path)
     o.ready = true;
     o.gates = sim.Gates();
     o.result = sim.VerifyReplay();
+    o.probeRead = ReadNetInfoProbe(sim, "connectedTicks", o.probeConnectedTicks)
+        && ReadNetInfoProbe(sim, "playerCountSeen", o.probePlayerCount);
     return o;
 }
 
@@ -1553,6 +1766,20 @@ void TestSaveLoadBoundary(Sims& sims)
     Check(full.ready && full.result.ran && full.result.passed && full.result.verifiedTicks == r.log.size(),
           "%s: the offline replay of the server .rep matches every tick (verified %llu of %zu, reason '%s')", d.name,
           static_cast<unsigned long long>(full.result.verifiedTicks), r.log.size(), full.result.failReason.c_str());
+    // V12: ゲームが v13 の Net* を毎 tick 読んで sim へ書いても (誤用だが)、サーバ .rep のオフライン再生は
+    // ライブと同じ値を読む (再生専用の sim でも NetIsConnected = 1 / NetPlayerCount = 人数)。
+    // 上の全 tick 一致 (ライブのサーバのハッシュ列と同じ) がその証拠で、ここでは probe が実際に値を読んだことも見る
+    // (読んでいなければ一致は何も示さない)
+    if (full.probeRead) {
+        Check(full.probeConnectedTicks == r.log.size() && full.probePlayerCount == kMaxPlayers,
+              "%s: the offline replay's NetInfoProbe read NetIsConnected = 1 on every tick and NetPlayerCount = %u (connected "
+              "ticks %llu of %zu, player count %llu)", d.name, kMaxPlayers,
+              static_cast<unsigned long long>(full.probeConnectedTicks), r.log.size(),
+              static_cast<unsigned long long>(full.probePlayerCount));
+    } else {
+        MYE_LOG_WARN("[server-net selftest] %s: NetInfoProbe is not registered (GameLogic.dll not loaded) - V12 check skipped",
+                     d.name);
+    }
     // 再生専用の sim (systemInput = false) はセッションのゲートではない = IsNetSessionGates は両者を区別できる
     Check(full.ready && !IsNetSessionGates(full.gates) && full.gates.hasPlayer,
           "%s (negative control): the replay-only sim's gates are not the net-session gates", d.name);
@@ -1585,15 +1812,39 @@ void TestSaveLoadBoundary(Sims& sims)
               && empty.result.failReason.find("no tick records") != std::string::npos,
           "%s: a .rep with no ticks FAILS (passed %d, verified %llu, reason '%s')", d.name, empty.result.passed ? 1 : 0,
           static_cast<unsigned long long>(empty.result.verifiedTicks), empty.result.failReason.c_str());
+    // 開始 tick がスナップショットの tick と食い違う .rep (ヘッダが壊れている) は、範囲外として FAIL
     const std::wstring lateRep = (dir / L"save_boundary_late.rep").wstring();
-    Check(WriteRepFromLog(sims, r, lateRep, r.log.size() - 3), "%s: wrote a .rep that starts at tick %zu", d.name,
-          r.log.size() - 3);
+    const size_t clientFrom = r.log.size() / 2;
+    Check(WriteRepFromLog(sims, r, lateRep, clientFrom, /*startMetaTickOffset=*/1000), "%s: wrote a .rep whose header start "
+          "tick (%zu) differs from its snapshot's", d.name, clientFrom + 1000);
     const OfflineVerify late = VerifyRepOffline(lateRep);
     Check(late.ready && late.result.ran && !late.result.passed && late.result.verifiedTicks == 0
               && late.result.failReason.find("outside the .rep's tick range") != std::string::npos,
           "%s: a .rep whose start tick is outside its record range FAILS (passed %d, verified %llu, reason '%s')", d.name,
           late.result.passed ? 1 : 0, static_cast<unsigned long long>(late.result.verifiedTicks),
           late.result.failReason.c_str());
+
+    // V6: 参加途中のクライアントが録る .rep (開始 tick = 参加 tick ≠ 0) は単独で再生でき、全 tick 一致する。
+    // ReplayPlayer が startMeta.tick を基点に引く。サーバ .rep (tick 0 から) の同じ tick のダンプとも一致する
+    const std::wstring clientRep = (dir / L"save_boundary_client.rep").wstring();
+    Check(WriteRepFromLog(sims, r, clientRep, clientFrom), "%s: wrote a client-shaped .rep that starts at tick %zu", d.name,
+          clientFrom);
+    const int64_t dumpTick = static_cast<int64_t>(clientFrom + 10);
+    const std::wstring clientDump = (dir / L"save_boundary_client.dump").wstring();
+    const std::wstring serverDump = (dir / L"save_boundary_server.dump").wstring();
+    const OfflineVerify client = VerifyRepOffline(clientRep, clientDump, dumpTick);
+    Check(client.ready && client.result.ran && client.result.passed && client.result.verifiedTicks == r.log.size() - clientFrom,
+          "%s: a .rep that starts at tick %zu replays alone and matches every tick (verified %llu of %zu, reason '%s')", d.name,
+          clientFrom, static_cast<unsigned long long>(client.result.verifiedTicks), r.log.size() - clientFrom,
+          client.result.failReason.c_str());
+    const OfflineVerify serverFull = VerifyRepOffline(fullRep, serverDump, dumpTick);
+    HashDump dc;
+    HashDump ds;
+    const bool dumpsRead = ReadHashDump(clientDump, dc) && ReadHashDump(serverDump, ds);
+    Check(serverFull.result.passed && dumpsRead && dc.tick == static_cast<uint64_t>(dumpTick) && !dc.lines.empty()
+              && DiffHashDumps(dc, ds, 0).Same(),
+          "%s: the client .rep's dump at tick %lld exists and equals the server .rep's dump at the same tick (%zu lines)",
+          d.name, static_cast<long long>(dumpTick), dc.lines.size());
     // 判定関数そのもの
     {
         ReplayPlayer none;
@@ -1611,6 +1862,9 @@ void TestSaveLoadBoundary(Sims& sims)
     std::filesystem::remove(fullRep, ec);
     std::filesystem::remove(emptyRep, ec);
     std::filesystem::remove(lateRep, ec);
+    std::filesystem::remove(clientRep, ec);
+    std::filesystem::remove(clientDump, ec);
+    std::filesystem::remove(serverDump, ec);
 }
 
 } // namespace
@@ -1626,6 +1880,7 @@ bool RunServerNetSelfTest()
         TestTickRecordRoundTrip();
         TestRejectPaths();
         TestGracefulLeave();
+        TestReconnectLeavesOnce();
         TestSnapshotTransfer();
     }
 
@@ -1654,6 +1909,7 @@ bool RunServerNetSelfTest()
             timed("N3 eventSeq gap", &TestEventGap);
             timed("N3 desync", &TestDesync);
             timed("N4 speculation limit", &TestSpeculationLimit);
+            timed("V7 time sync", &TestTimeSync);
             timed("V1-V4 save/load boundary, net info, empty replay", &TestSaveLoadBoundary);
         }
     }

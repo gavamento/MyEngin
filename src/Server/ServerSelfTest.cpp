@@ -230,6 +230,47 @@ uint64_t ReadRepHeaderTickCount(const std::wstring& path)
 using CheckFn = std::function<bool(bool, const char*)>;
 
 // ---- G3: SDK のコールバックは Poll (tick 境界) でだけ処理される ----
+// V10: 宛先の表 (PeerTable) は、セッションが手放した peer の宛先を回収する。再接続はそのたびに新しい
+// エフェメラルポートから来るので、回収が無いと上限 (1024) に達して以後の Hello を受けられなくなる
+void TestPeerTable(const CheckFn& check)
+{
+    const auto addr = [](uint32_t i) {
+        NetAddress a;
+        a.ipv4 = 0x0100007Fu + (i << 8);
+        a.port = static_cast<uint16_t>(5000u + (i % 1000u));
+        return a;
+    };
+    PeerTable table;
+    bool allRegistered = true;
+    for (uint32_t i = 0; i < PeerTable::kMaxAddrs; ++i) {
+        allRegistered = allRegistered && table.KeyOf(addr(i), true) == i + 1;
+    }
+    check(allRegistered && table.Size() == PeerTable::kMaxAddrs, "V10: the table takes kMaxAddrs addresses with keys 1..N");
+    check(table.KeyOf(addr(7), false) == 8, "V10: a known address keeps its key");
+    check(table.KeyOf(addr(PeerTable::kMaxAddrs + 5), true) == 0 && table.HellosIgnoredWhileFull() == 1,
+          "V10: a full table ignores a new Hello (the ERROR log names it once) and counts it");
+    check(table.KeyOf(addr(PeerTable::kMaxAddrs + 6), false) == 0, "V10: an unknown non-Hello sender never registers");
+    // 偶数のキーだけ残す = 半分を回収。空いたぶん新しい Hello を受けられ、キーは再利用しない
+    const size_t freed = table.Sweep([](uint32_t key) { return key % 2 == 0; });
+    NetAddress gone;
+    check(freed == PeerTable::kMaxAddrs / 2 && table.Size() == PeerTable::kMaxAddrs / 2
+              && !table.AddressOf(1, gone) && table.AddressOf(2, gone) && gone == addr(1),
+          "V10: Sweep frees exactly the addresses the session no longer holds");
+    const uint32_t fresh = table.KeyOf(addr(PeerTable::kMaxAddrs + 5), true);
+    check(fresh == PeerTable::kMaxAddrs + 1, "V10: after the sweep the same Hello is accepted with a never-used key");
+    // 再接続の嵐: 毎回新しい宛先から Hello が来て、前の宛先は Gone で回収される。上限を何倍も超えて続けられる
+    table.Sweep([](uint32_t) { return false; });
+    bool storm = true;
+    uint32_t lastKey = fresh;
+    for (uint32_t i = 0; i < 5 * PeerTable::kMaxAddrs; ++i) {
+        const uint32_t key = table.KeyOf(addr(100000 + i), true);
+        storm = storm && key > lastKey;
+        lastKey = key;
+        table.Sweep([key](uint32_t k) { return k == key; });
+        storm = storm && table.Size() == 1;
+    }
+    check(storm, "V10: 5x the cap of reconnects, each from a new address, are all accepted");
+}
 void TestGameLiftHosting(const CheckFn& check)
 {
     // InitSDK の失敗は 1 行で説明される。SDK の後始末 (ProcessEnding / Destroy) は呼ばない
@@ -599,6 +640,7 @@ bool RunServerSelfTest()
     std::error_code ec;
     const std::filesystem::path tempDir = std::filesystem::temp_directory_path(ec);
 
+    TestPeerTable(check);
     TestGameLiftHosting(check);
     TestSessionFunnel(check, tempDir);
     TestLoopTerminate(check, tempDir);

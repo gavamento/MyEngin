@@ -32,7 +32,6 @@ namespace {
 
 using SteadyClock = std::chrono::steady_clock;
 
-constexpr uint32_t kMaxPeerAddrs = 1024;       // 見知らぬ宛先で表が膨らむのを止める上限
 constexpr int kMaxConfirmsPerIteration = 8;    // 1 周で追いつく tick 数の上限 (受信と送信を飢えさせない)
 constexpr int kMaxDatagramsPerIteration = 512;
 
@@ -46,36 +45,6 @@ struct TimerResolutionScope {
         }
     }
     bool active = false;
-};
-
-// 宛先 (IPv4:port) → ServerSession の不透明な peer キー。キーは 1 始まりの通し番号 (0 は「無し」の予約)
-class PeerTable {
-public:
-    // 既知ならそのキー。未知なら create のときだけ登録して返す。0 = 見つからない / 登録できない
-    uint32_t KeyOf(const NetAddress& from, bool create)
-    {
-        for (size_t i = 0; i < addrs_.size(); ++i) {
-            if (addrs_[i] == from) {
-                return static_cast<uint32_t>(i) + 1;
-            }
-        }
-        if (!create || addrs_.size() >= kMaxPeerAddrs) {
-            return 0;
-        }
-        addrs_.push_back(from);
-        return static_cast<uint32_t>(addrs_.size());
-    }
-    bool AddressOf(uint32_t key, NetAddress& out) const
-    {
-        if (key == 0 || key > addrs_.size()) {
-            return false;
-        }
-        out = addrs_[key - 1];
-        return true;
-    }
-
-private:
-    std::vector<NetAddress> addrs_;
 };
 
 uint64_t NowMs(SteadyClock::time_point origin)
@@ -94,6 +63,43 @@ uint64_t MakeSessionId(uint16_t port)
 
 } // namespace
 
+uint32_t PeerTable::KeyOf(const NetAddress& from, bool create)
+{
+    for (const Entry& e : entries_) {
+        if (e.addr == from) {
+            return e.key;
+        }
+    }
+    if (!create) {
+        return 0;
+    }
+    if (entries_.size() >= kMaxAddrs) {
+        ++ignoredWhileFull_;
+        if (!fullReported_) {
+            fullReported_ = true;
+            MYE_LOG_ERROR("[server] the peer address table is full (%u addresses): ignoring new Hello packets until "
+                          "an address is released (first ignored: %s)",
+                          kMaxAddrs, NetAddressToString(from).c_str());
+        }
+        return 0;
+    }
+    Entry e;
+    e.addr = from;
+    e.key = nextKey_++;
+    entries_.push_back(e);
+    return e.key;
+}
+
+bool PeerTable::AddressOf(uint32_t key, NetAddress& out) const
+{
+    for (const Entry& e : entries_) {
+        if (e.key == key) {
+            out = e.addr;
+            return true;
+        }
+    }
+    return false;
+}
 void InterpretHostingEvents(const std::vector<HostingEvent>& events, HostingDecision& d)
 {
     for (const HostingEvent& e : events) {
@@ -340,6 +346,9 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
         // 4. 送信 (Welcome / チャンク / Confirmed / keepalive) と peer のタイムアウト検出
         session.Pump(now);
         peakLive = (std::max)(peakLive, session.LivePeerCount());
+        // セッションが手放した peer (Gone の片付け後、Hello を断った相手) の宛先を回収する。
+        // Reject などの返信は OnPacket / TryConfirm の中で送り終えている
+        peers.Sweep([&](uint32_t key) { return session.HasPeer(key); });
 
         // 5. 終了条件
         if (cfg.exitWhenEmpty) {
@@ -408,6 +417,18 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
                  static_cast<unsigned long long>(st.clientDesyncReports),
                  static_cast<unsigned long long>(st.packetsIn), static_cast<unsigned long long>(st.packetsOut),
                  static_cast<unsigned long long>(packetsDropped));
+    // レーンごとの代替入力の割合 (確定を待たれた tick のうち、締め切りまでに入力が着かなかった割合)。
+    // server_verify のケース A がこの値と forced resyncs を合否に使う
+    for (uint32_t lane = 0; lane < cfg.session.playerCount; ++lane) {
+        const uint64_t waited = st.laneWaitedTicks[lane];
+        if (waited == 0) {
+            continue;
+        }
+        MYE_LOG_INFO("[server] lane %u: waited on %llu tick(s), late-subst %llu (%.2f%%)", lane,
+                     static_cast<unsigned long long>(waited), static_cast<unsigned long long>(st.laneLateSubst[lane]),
+                     100.0 * static_cast<double>(st.laneLateSubst[lane]) / static_cast<double>(waited));
+    }
+    MYE_LOG_INFO("[server] forced resyncs: %llu", static_cast<unsigned long long>(st.forcedResyncs));
     // 目標値 (4 クライアントでの平均 tick 時間)。超えても止めず報告だけする (測定は Release の server_verify)
     constexpr double kTickBudgetMs = 4.0;
     if (ticks > 0 && peakLive >= kMaxPlayers && tickMsSum / static_cast<double>(ticks) > kTickBudgetMs) {

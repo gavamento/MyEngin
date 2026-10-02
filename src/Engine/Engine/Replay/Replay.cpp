@@ -27,9 +27,10 @@ bool JudgeReplayVerification(const ReplayPlayer& player, uint64_t startTick, std
     }
     if (player.verifiedTicks == 0) {
         if (!player.HasTick(startTick)) {
-            reason = "the restored start tick " + std::to_string(startTick) + " is outside the .rep's tick range [0, "
-                + std::to_string(player.TickCount()) + ") - no tick was run (records are looked up by "
-                  "absolute tick, so a .rep that starts after tick 0 is not replayable)";
+            reason = "the restored start tick " + std::to_string(startTick) + " is outside the .rep's tick range ["
+                + std::to_string(player.StartTick()) + ", " + std::to_string(player.StartTick() + player.TickCount())
+                + ") - no tick was run (records are looked up from the .rep's start tick, so the embedded snapshot's tick"
+                  " must equal the header's startMeta.tick)";
         } else {
             reason = "no tick was compared against an expected hash (" + std::to_string(player.unverifiedTicks)
                 + " tick(s) ran without one)";
@@ -403,7 +404,7 @@ bool DiffTickRange(const ReplayPlayer& pa, const ReplayPlayer& pb, uint64_t idxA
         const uint64_t tb = idxB + i;
         const uint64_t t = absTick0 + i;
         for (uint32_t p = 0; p < lanes; ++p) {
-            const std::string field = FirstDifferentInputField(pa.InputForTick(ta, p), pb.InputForTick(tb, p));
+            const std::string field = FirstDifferentInputField(pa.InputAt(ta, p), pb.InputAt(tb, p));
             if (!field.empty()) {
                 std::snprintf(buf, sizeof(buf),
                               "tick %llu: input lane %u differs at %s (the two runs did NOT "
@@ -418,7 +419,7 @@ bool DiffTickRange(const ReplayPlayer& pa, const ReplayPlayer& pb, uint64_t idxA
             // flags が一致しているので両方持つか両方持たない。イベントは入力の一部なので
             // ハッシュより先に見る (「同じ入力で割れた」のか「入力が違う」のかを区別する)
             const std::string field =
-                FirstDifferentSystemInputField(pa.SystemInputForTick(ta), pb.SystemInputForTick(tb));
+                FirstDifferentSystemInputField(pa.SystemInputAt(ta), pb.SystemInputAt(tb));
             if (!field.empty()) {
                 std::snprintf(buf, sizeof(buf),
                               "tick %llu: %s differs (the two runs did NOT consume the same "
@@ -429,13 +430,13 @@ bool DiffTickRange(const ReplayPlayer& pa, const ReplayPlayer& pb, uint64_t idxA
                 return true;
             }
         }
-        if (pa.ExpectedHash(ta) != pb.ExpectedHash(tb)) {
+        if (pa.HashAt(ta) != pb.HashAt(tb)) {
             std::snprintf(buf, sizeof(buf),
                           "tick %llu: world hash differs (%016llx vs %016llx) - same input, "
                           "different simulation",
                           static_cast<unsigned long long>(t),
-                          static_cast<unsigned long long>(pa.ExpectedHash(ta)),
-                          static_cast<unsigned long long>(pb.ExpectedHash(tb)));
+                          static_cast<unsigned long long>(pa.HashAt(ta)),
+                          static_cast<unsigned long long>(pb.HashAt(tb)));
             r.firstDiffTick = t;
             r.summary = buf;
             return true;

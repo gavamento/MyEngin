@@ -11,12 +11,18 @@ rem   使い方:  tools\server_verify.bat [ticks] [cases]
 rem             ticks = クライアントが記録する確定 tick 数 (既定 600)
 rem             cases = 回すケースの文字 (既定 ABCD。例: B だけ)
 rem
-rem   ケース A: Debug サーバ + Debug x2 / ロス 0%%
+rem   ケース A: Debug サーバ + Debug x2 / ロス 0%%。合否に使う: (1) クライアント .rep を単独で --replay-verify して 0 でない
+rem             tick 数で PASS (開始 tick = 参加 tick の .rep の再生)、(2) late-subst (確定を待たれたレーン tick のうち代替入力に
+rem             なった割合) が各レーンで 5%% 以下、(3) サーバが強制した再同期が 0 (spec V6 / V8 / R5)
 rem   ケース B: Debug サーバ + Debug / Release 混在 x3 / ロス 20%% / 途中参加 1 / 切断 -> 再接続 1
 rem             (Debug と Release の GameLogic.dll は必ず別バイトなので --allow-game-mismatch を使うのはこのケースだけ)
 rem   ケース C: desync 注入 (クライアントの sim を参加の 100 tick 後に 1 フィールド壊す) ->
-rem             診断バンドル + 再同期 -> 再同期後の区間はサーバと一致、壊れた区間は壊した tick で割れる
-rem   ケース D: Release サーバ + Release x4 / ロス 0%% -> サーバの tick 時間をログに出す (R3、4 ms 目標)
+rem             診断バンドル + 再同期 -> 再同期後の区間はサーバと一致、壊れた区間は壊した tick で割れる。
+rem             クライアントのバンドルの local.rep は単独で再生でき (壊した tick より前は一致)、バンドルの local.dump と
+rem             サーバ .rep の同じ tick のダンプの --hash-diff が壊したフィールドを名指しする (V6)
+rem   ケース D: Release サーバ + Release x4 / ロス 0%% -> サーバの tick 時間と late-subst をログに出す。
+rem             ★負荷試験: 1 台の PC で WARP の Runtime 4 台が論理コアを奪い合うので、R3 の tick 時間 (4 ms 目標) も
+rem               late-subst も計測環境の制約を受ける。値を出すだけで合否には使わない (V8 / R5)
 rem
 rem   ★ネット越しの値が sim へ入るのは確定入力 (レーン入力 + SystemInputTick) だけ。クライアントの予測・巻き戻し・
 rem     再同期が働いていても、確定した tick の .rep はサーバと 1 バイトも違わない、が中心の主張。
@@ -48,6 +54,10 @@ del /q cache\sv_*.rep cache\sv_*.log cache\sv_*.code 2>nul
 rem サーバとクライアントで一致が必要な起動オプション (configBits): 合成入力を両方に渡す
 set SRV_ARGS=--local-demo --synth-input --max-players 4 --net-delay 3
 set CLI_ARGS=--local-demo --synth-input --warp --no-audio
+rem ケース A だけ実 GPU で描くクライアントを使う: WARP (ソフトウェア描画) は 1 フレームが長く、tick が数本ずつまとめて走って
+rem 入力がまとめて着く (到着の揺れが大きい)。到着余裕の目標 1 tick (16 ms) ではその揺れだけで 25 %% 前後が締め切りを越えるので、
+rem late-subst を合否に使うケースでは描画のペースが安定した実 GPU を使う (sim は描画に依存しない)
+set CLI_ARGS_GPU=--local-demo --synth-input --no-audio
 set FAILED=0
 
 if not "!CASES:A=!"=="!CASES!" call :case_A
@@ -196,6 +206,113 @@ for /f "tokens=3 delims==" %%a in ('findstr /c:"joined: lane=" "%~1"') do (
 )
 goto :eof
 
+rem %1 = ケース名 / %2 = クライアント名 / %3 = クライアントの .rep。Server.exe --replay-verify が 0 でない tick 数で PASS すること
+rem ★クライアントの .rep は参加 tick のスナップショットから始まる (開始 tick が 0 でない)。以前は 0 tick で PASS と答えていた
+:check_client_rep
+%DBG%\Server.exe --local-demo --replay-verify "%~3" > cache\sv_%~1_clientrep_%~2.log 2>&1
+set CRC=!ERRORLEVEL!
+findstr /r /c:"verified [1-9][0-9]* ticks - VERIFY PASS" cache\sv_%~1_clientrep_%~2.log >nul 2>&1
+if !ERRORLEVEL! NEQ 0 (
+    echo   [FAIL] %~1: the %~2 client .rep did not replay alone with a non-zero tick count ^(exit !CRC!^) - see cache\sv_%~1_clientrep_%~2.log
+    set /a FAILED+=1
+    goto :eof
+)
+for /f "tokens=*" %%L in ('findstr /c:"VERIFY PASS" cache\sv_%~1_clientrep_%~2.log') do echo   client .rep %~2 replays alone: PASS  %%L
+goto :eof
+
+rem %1 = ケース名 / %2 = サーバのログ。レーンごとの late-subst を表示する (合否には使わない)
+:show_late_subst
+for /f "tokens=*" %%L in ('findstr /c:"[server] lane " "%~2"') do echo   %~1 %%L
+for /f "tokens=*" %%L in ('findstr /c:"[server] forced resyncs:" "%~2"') do echo   %~1 %%L
+goto :eof
+
+rem %1 = ケース名 / %2 = サーバのログ / %3 = 許容する割合 ^(整数 %%^)。各レーンの late-subst が %3 %% 以下であること
+:check_late_subst
+set LATESEEN=0
+set LATEOK=1
+for /f "tokens=*" %%L in ('findstr /c:"[server] lane " "%~2"') do (
+    set "LL=%%L"
+    echo   %~1 %%L
+    set "PCTTXT=!LL:*late-subst =!"
+    for /f "tokens=2 delims=(" %%p in ("!PCTTXT!") do for /f "tokens=1,2 delims=.%%" %%i in ("%%p") do (
+        set LATESEEN=1
+        if %%i GTR %~3 set LATEOK=0
+        if %%i EQU %~3 if not "%%j"=="00" set LATEOK=0
+    )
+)
+if "!LATESEEN!"=="0" (
+    echo   [FAIL] %~1: no per-lane late-subst line in %~2
+    set /a FAILED+=1
+    goto :eof
+)
+if "!LATEOK!"=="0" (
+    echo   [FAIL] %~1: a lane's late-subst exceeds %~3 %% - see %~2
+    set /a FAILED+=1
+    goto :eof
+)
+echo   late-subst within %~3 %% on every lane: ok
+goto :eof
+
+rem %1 = ケース名 / %2 = サーバのログ。サーバが強制した再同期 (クライアントの ack が履歴から溢れた) が 0 回
+:check_forced_resync
+findstr /c:"[server] forced resyncs: 0" "%~2" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 (
+    echo   [FAIL] %~1: the server forced a resync - see %~2
+    findstr /c:"forced resyncs:" /c:"forcing a resync" "%~2"
+    set /a FAILED+=1
+    goto :eof
+)
+echo   forced resyncs: 0 ok
+goto :eof
+
+rem %1 = ケース名 / %2 = 壊したクライアントのログ / %3 = サーバ .rep / %4 = 壊した tick。
+rem   クライアントの診断バンドル (desync_<tick>_p<lane>) の local.rep は、開始 tick が参加 tick (0 でない) なのに単独で再生でき、
+rem   壊した tick の直前まで一致して壊した tick で割れる。バンドルの local.dump (検出した tick の状態) と、サーバ .rep を
+rem   同じ tick まで再生して撮ったダンプを --hash-diff すると、壊したフィールド (LocalTransform) が名指しされる
+:check_bundle
+set "BUNDLE="
+for /f "tokens=*" %%L in ('findstr /c:"bundle: " "%~2"') do if not defined BUNDLE (
+    set "BL=%%L"
+    set "BUNDLE=!BL:*bundle: =!"
+)
+if "!BUNDLE!"=="" echo   [FAIL] %~1: no "bundle:" line in %~2 - the corrupted client wrote no diagnostic bundle
+if "!BUNDLE!"=="" set /a FAILED+=1
+if "!BUNDLE!"=="" goto :eof
+if not exist "!BUNDLE!\local.rep" echo   [FAIL] %~1: no local.rep in the bundle !BUNDLE!
+if not exist "!BUNDLE!\local.rep" set /a FAILED+=1
+if not exist "!BUNDLE!\local.rep" goto :eof
+echo   bundle: !BUNDLE!
+%DBG%\Server.exe --local-demo --replay-verify "!BUNDLE!\local.rep" > cache\sv_%~1_bundle_verify.log 2>&1
+findstr /r /c:"verified [1-9][0-9]* ticks - VERIFY FAIL: hash mismatch at tick %~4" cache\sv_%~1_bundle_verify.log >nul 2>&1
+if !ERRORLEVEL! NEQ 0 (
+    echo   [FAIL] %~1: the bundle's local.rep did not replay alone up to the corrupted tick %~4 - see cache\sv_%~1_bundle_verify.log
+    set /a FAILED+=1
+) else (
+    for /f "tokens=*" %%L in ('findstr /c:"VERIFY FAIL" cache\sv_%~1_bundle_verify.log') do echo   bundle local.rep replays alone, matches before tick %~4 and differs there: PASS  %%L
+)
+set "NOWTICK="
+for /f "tokens=4" %%t in ('findstr /c:"detected at tick" "!BUNDLE!\desync.txt"') do set NOWTICK=%%t
+if "!NOWTICK!"=="" echo   [FAIL] %~1: no "detected at tick" line in the bundle's desync.txt
+if "!NOWTICK!"=="" set /a FAILED+=1
+if "!NOWTICK!"=="" goto :eof
+%DBG%\Server.exe --local-demo --replay-verify "%~3" --hash-dump-tick !NOWTICK! --hash-dump cache\sv_%~1_server_at_detect.dump > cache\sv_%~1_server_dump.log 2>&1
+if not exist cache\sv_%~1_server_at_detect.dump echo   [FAIL] %~1: replaying the server .rep wrote no dump at tick !NOWTICK! - see cache\sv_%~1_server_dump.log
+if not exist cache\sv_%~1_server_at_detect.dump set /a FAILED+=1
+if not exist cache\sv_%~1_server_at_detect.dump goto :eof
+%DBG%\Server.exe --hash-diff cache\sv_%~1_server_at_detect.dump "!BUNDLE!\local.dump" > cache\sv_%~1_hashdiff.log 2>&1
+set HDCODE=!ERRORLEVEL!
+findstr /c:"LocalTransform" cache\sv_%~1_hashdiff.log >nul 2>&1
+set FDCODE=!ERRORLEVEL!
+if !HDCODE! EQU 0 echo   [FAIL] %~1: --hash-diff found no difference between the server dump and the bundle's local.dump at tick !NOWTICK!
+if !HDCODE! EQU 0 set /a FAILED+=1
+if !HDCODE! EQU 0 goto :eof
+if !FDCODE! NEQ 0 echo   [FAIL] %~1: --hash-diff did not name the corrupted LocalTransform - see cache\sv_%~1_hashdiff.log
+if !FDCODE! NEQ 0 set /a FAILED+=1
+if !FDCODE! NEQ 0 goto :eof
+echo   server .rep dump vs bundle local.dump at tick !NOWTICK!: --hash-diff names the corrupted field:
+findstr /c:"LocalTransform" cache\sv_%~1_hashdiff.log
+goto :eof
+
 rem -------------------------------------------------------------------- ケース A
 :case_A
 set PORT=7821
@@ -208,11 +325,12 @@ if not "!WAITOK!"=="1" (
     set /a FAILED+=1
     exit /b 0
 )
-rem client 1 は後から来る client 2 より十分長く居る (全員が出ていくと --exit-when-empty でサーバが終わるため)
-set /a AT=%TICKS%*5
-call :launch "cache\sv_A_1.code" "%DBG%\Runtime.exe %CLI_ARGS% --net-connect 127.0.0.1:%PORT% --player-session-id p1 --replay-ticks !AT! --replay-record cache\sv_A_c1.rep > cache\sv_A_c1.log 2>&1"
+rem client 1 は後から来る client 2 より十分長く居る (全員が出ていくと --exit-when-empty でサーバが終わるため)。
+rem client 2 の起動 (シェーダ等の読み込み) で同じ PC の client 1 が数秒止まるので、その分が 5 %% を越えないよう長めに録る
+set /a AT=%TICKS%*8
+call :launch "cache\sv_A_1.code" "%DBG%\Runtime.exe %CLI_ARGS_GPU% --net-connect 127.0.0.1:%PORT% --player-session-id p1 --replay-ticks !AT! --replay-record cache\sv_A_c1.rep > cache\sv_A_c1.log 2>&1"
 call :wait_joined A c1
-call :launch "cache\sv_A_2.code" "%DBG%\Runtime.exe %CLI_ARGS% --net-connect 127.0.0.1:%PORT% --player-session-id p2 --replay-ticks %TICKS% --replay-record cache\sv_A_c2.rep > cache\sv_A_c2.log 2>&1"
+call :launch "cache\sv_A_2.code" "%DBG%\Runtime.exe %CLI_ARGS_GPU% --net-connect 127.0.0.1:%PORT% --player-session-id p2 --replay-ticks %TICKS% --replay-record cache\sv_A_c2.rep > cache\sv_A_c2.log 2>&1"
 call :expect_exit A "client 1" cache\sv_A_1.code 300
 call :expect_exit A "client 2" cache\sv_A_2.code 300
 call :expect_exit A "server" cache\sv_A_s.code 60
@@ -222,6 +340,12 @@ call :check_agree A c2 cache\sv_A_server.rep cache\sv_A_c2.rep
 call :show_client_stats A c1 cache\sv_A_c1.log
 call :show_client_stats A c2 cache\sv_A_c2.log
 call :check_replays A cache\sv_A_server.rep
+rem V6: 参加 tick から始まるクライアント .rep を単独で再生できる (0 tick の PASS は FAIL 扱い)
+call :check_client_rep A c1 cache\sv_A_c1.rep
+call :check_client_rep A c2 cache\sv_A_c2.rep
+rem V8 / R5: ロス 0 のケースは代替入力が 5%% 以下かつ強制再同期 0
+call :check_late_subst A cache\sv_A_server.log 5
+call :check_forced_resync A cache\sv_A_server.log
 exit /b 0
 
 rem -------------------------------------------------------------------- ケース B
@@ -288,6 +412,7 @@ call :show_client_stats B c1 cache\sv_B_c1.log
 call :show_client_stats B c2 cache\sv_B_c2.log
 call :show_client_stats B c2b cache\sv_B_c2b.log
 call :show_client_stats B c3 cache\sv_B_c3.log
+call :show_late_subst B cache\sv_B_server.log
 call :check_replays B cache\sv_B_server.rep
 exit /b 0
 
@@ -354,6 +479,8 @@ if not exist cache\sv_C_c2.rs1.rep (
     call :check_agree C c2_after_resync cache\sv_C_server.rep cache\sv_C_c2.rs1.rep
 )
 call :check_agree C c1 cache\sv_C_server.rep cache\sv_C_c1.rep
+rem V6: クライアントの診断バンドル (desync.txt の手順) が実際に使える
+call :check_bundle C cache\sv_C_c2.log cache\sv_C_server.rep !POKETICK!
 findstr /c:"client desync reports 1" cache\sv_C_server.log >nul 2>&1
 if !ERRORLEVEL! NEQ 0 (
     echo   [WARN] C: the server did not log exactly one client desync report ^(timing^) - see cache\sv_C_server.log
@@ -385,9 +512,10 @@ for %%K in (1 2 3 4) do call :expect_exit D "client %%K" cache\sv_D_%%K.code 300
 call :expect_exit D "server" cache\sv_D_s.code 60
 call :check_scripts D
 for %%K in (1 2 3 4) do call :check_agree D c%%K cache\sv_D_server.rep cache\sv_D_c%%K.rep
-echo   R3 - Release server tick time with 4 clients:
+echo   R3 - Release server tick time with 4 clients ^(load test: 4 WARP Runtime processes share this PC, so not judged^):
 findstr /c:"tick time:" cache\sv_D_server.log
 findstr /c:"exceeds the" cache\sv_D_server.log
+call :show_late_subst D cache\sv_D_server.log
 call :check_replays D cache\sv_D_server.rep
 exit /b 0
 

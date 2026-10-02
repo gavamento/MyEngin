@@ -10,6 +10,7 @@
 
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Session/SessionTypes.h"
+#include "Engine/Platform/Net/UdpSocket.h"
 #include "Server/Hosting/IHostingProvider.h"
 
 namespace mye {
@@ -54,6 +55,48 @@ void InterpretHostingEvents(const std::vector<HostingEvent>& events, HostingDeci
 // 全員退出・tick 上限・タイムアウトのどれで終わるときも、この 1 関数を通る。
 // 戻り値: .rep を正しく閉じられた (記録していなければ true)
 bool CloseSession(ReplayRecorder& recorder, const std::wstring& recordPath, IHostingProvider& hosting);
+
+// 宛先 (IPv4:port) → ServerSession の不透明な peer キー。キーは 1 始まりの通し番号で、再利用しない
+// (ServerSession はレーンの持ち主をキーで覚えているので、古い持ち主と新しい宛先が同じキーを持つと取り違える)。
+// 再接続は新しいエフェメラルポートから来るので、宛先は Sweep で回収しないと表が埋まり Hello を受けられなくなる
+class PeerTable {
+public:
+    static constexpr uint32_t kMaxAddrs = 1024; // 見知らぬ宛先で表が膨らむのを止める上限 (回収後の同時保持数)
+
+    // 既知ならそのキー。未知なら create のときだけ登録して返す。0 = 見つからない / 登録できない。
+    // 満杯で Hello を捨てるときは ERROR ログ (回収されるまで 1 回だけ)
+    uint32_t KeyOf(const NetAddress& from, bool create);
+    bool AddressOf(uint32_t key, NetAddress& out) const;
+    // keep(key) が false のキーの宛先を表から外す。外した数を返す
+    template <class KeepFn>
+    size_t Sweep(KeepFn&& keep)
+    {
+        const size_t before = entries_.size();
+        for (size_t i = 0; i < entries_.size();) {
+            if (keep(entries_[i].key)) {
+                ++i;
+            } else {
+                entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
+        if (entries_.size() < kMaxAddrs) {
+            fullReported_ = false;
+        }
+        return before - entries_.size();
+    }
+    size_t Size() const { return entries_.size(); }
+    uint64_t HellosIgnoredWhileFull() const { return ignoredWhileFull_; }
+
+private:
+    struct Entry {
+        NetAddress addr;
+        uint32_t key = 0;
+    };
+    std::vector<Entry> entries_;
+    uint32_t nextKey_ = 1; // 0 は「無し」の予約
+    bool fullReported_ = false;
+    uint64_t ignoredWhileFull_ = 0;
+};
 
 // 実時間 60Hz で ServerSession を回す。1 周の処理順は spec 4.1.4 のとおり固定:
 //   受信 → ホスティングの出来事 → 締め切り判定と確定 → RunTick → .rep へ記録 → 送信

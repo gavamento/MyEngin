@@ -17,8 +17,11 @@ namespace mye {
 namespace {
 
 constexpr double kTickMs = 1000.0 / 60.0;
-// 追いつきの許容幅。これ以内の遅れは速度係数 (±2%) に任せる
-constexpr int64_t kCatchUpSlackTicks = 2;
+// 追いつきの許容幅 (到着余裕の目標からの遅れ)。これ以内の遅れは速度係数 (±2%) に任せる
+constexpr double kCatchUpSlackTicks = 2.0;
+// 追いつきの後、到着余裕の標本を捨てる時間 = RTT + これ。追いつく前に送った入力についての報告が
+// 往復して戻るまで待たないと、すでに埋めた遅れをもう一度数えて行き過ぎる
+constexpr uint32_t kCatchUpHoldExtraMs = 100;
 constexpr uint32_t kResyncRetryMs = 200;
 constexpr uint32_t kMaxSnapshotBytes = 256u * 1024u * 1024u;
 
@@ -79,6 +82,8 @@ void ClientSession::Start(const ClientSessionConfig& cfg, ClientSendFn send, uin
     localConfirmTick_ = localConfirmHash_ = 0;
     marginMs_ = 0.0;
     marginValid_ = false;
+    catchUpPending_ = 0;
+    holdUntilMs_ = 0;
     rttMs_ = 0.0;
     serverFrontier_ = 0;
     startMs_ = lastRecvMs_ = lastAckMs_ = lastResyncReqMs_ = nowMs;
@@ -189,6 +194,8 @@ void ClientSession::ResetStream(uint64_t fromTick)
     lastSeenEventSeq_ = meta_.lastEventSeq;
     std::memset(svCp_, 0, sizeof(svCp_));
     marginValid_ = false;
+    catchUpPending_ = 0;
+    holdUntilMs_ = 0;
 }
 
 void ClientSession::OnPacket(const void* data, size_t size, uint64_t nowMs)
@@ -400,10 +407,11 @@ void ClientSession::OnConfirmed(const NetPacketHeader& h, const uint8_t* body, s
     }
     std::memcpy(&pl, body, sizeof(pl));
     serverFrontier_ = (std::max)(serverFrontier_, h.lastAckTick);
-    if ((pl.flags & kNetConfirmedFlagMarginValid) != 0) {
+    if ((pl.flags & kNetConfirmedFlagMarginValid) != 0 && nowMs >= holdUntilMs_) {
         const double sample = static_cast<double>(pl.marginMs);
         marginMs_ = marginValid_ ? marginMs_ + (sample - marginMs_) / 8.0 : sample;
         marginValid_ = true;
+        PlanCatchUp();
     }
     if (h.echoTimeMs != 0) {
         const uint32_t elapsed = static_cast<uint32_t>(nowMs) - h.echoTimeMs;
@@ -545,24 +553,42 @@ void ClientSession::Poll(uint64_t nowMs)
     }
 }
 
+// 到着余裕の目標からの遅れ (tick)。正 = 入力が遅い (速く)、負 = 早すぎる (遅く)。
+// 速度係数と追いつきはどちらもこの 1 つの誤差から導く (確定フロンティアは入力が早く着くと
+// 予定より前へ進むので基準にしない: 2 つの制御が別の基準を追うと互いを打ち消す)
+double ClientSession::MarginErrorTicks() const
+{
+    return (static_cast<double>(cfg_.targetMarginMs) - marginMs_) / kTickMs;
+}
+
 double ClientSession::SpeedFactor() const
 {
     if (!marginValid_) {
         return 1.0;
     }
-    const double err = (static_cast<double>(cfg_.targetMarginMs) - marginMs_) / kTickMs;
-    return 1.0 + 0.02 * (std::max)(-1.0, (std::min)(1.0, err));
+    return 1.0 + 0.02 * (std::max)(-1.0, (std::min)(1.0, MarginErrorTicks()));
 }
 
-int64_t ClientSession::CatchUpTicks(uint64_t clientTick) const
+void ClientSession::PlanCatchUp()
 {
-    // 入力 (tick + inputDelay) がサーバの確定フロンティアに間に合う最小の自 tick。
-    // フロンティアは RTT/2 前の値なので、往復ぶん先を見込む
-    const int64_t rttTicks = static_cast<int64_t>(std::ceil(rttMs_ / kTickMs));
-    const int64_t minTick = static_cast<int64_t>(serverFrontier_) + rttTicks
-        - static_cast<int64_t>(config_.inputDelay) + 1;
-    const int64_t behind = minTick - static_cast<int64_t>(clientTick);
-    return behind > kCatchUpSlackTicks ? behind : 0;
+    if (catchUpPending_ > 0 || state_ != ClientState::Running) {
+        return;
+    }
+    const double late = MarginErrorTicks();
+    if (late > kCatchUpSlackTicks) {
+        catchUpPending_ = static_cast<int64_t>(std::floor(late));
+    }
 }
 
+void ClientSession::OnCatchUpTickRan(uint64_t nowMs)
+{
+    if (catchUpPending_ <= 0) {
+        return;
+    }
+    if (--catchUpPending_ == 0) {
+        // 追いつき終わり。古い標本で決めた誤差は捨て、追いつき後の入力についての報告が届くまで待つ
+        marginValid_ = false;
+        holdUntilMs_ = nowMs + static_cast<uint64_t>(std::ceil(rttMs_)) + kCatchUpHoldExtraMs;
+    }
+}
 } // namespace mye

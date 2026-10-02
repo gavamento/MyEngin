@@ -224,15 +224,33 @@ bool WriteNetDesyncBundle(const std::wstring& crashRoot, const NetDesyncReport& 
          "world state. Hashes are exchanged every 8 ticks, so the real divergence is at or\n"
          "just before the checkpoint tick above. The simulation is no longer deterministic\n"
          "across the two builds/machines.\n\n";
-    f << "How to find the field that diverged (both bundles are needed):\n";
-    f << "  1. Runtime.exe --rep-diff <peerA>/local.rep <peerB>/local.rep\n";
-    f << "     -> T = the first tick whose recorded hash differs (T <= " << rep.tick << ").\n";
-    f << "  2. Runtime.exe --replay-verify <peerA>/local.rep --hash-dump-tick T "
-         "--hash-dump a.dump\n";
-    f << "     Runtime.exe --replay-verify <peerB>/local.rep --hash-dump-tick T "
-         "--hash-dump b.dump\n";
-    f << "  3. Runtime.exe --hash-diff a.dump b.dump\n";
-    f << "     -> names the component/field that first went out of sync.\n\n";
+    if (rep.role == 4) {
+        // 専用サーバ構成: サーバは止まらずバンドルを出さないので、相手側の再現にはサーバの .rep を使う。
+        // local.rep は参加 / 再同期の tick から始まるが、再生側が開始 tick を基点に引くので単独で再生できる
+        f << "How to find the field that diverged (the server does not write a bundle; use the\n"
+             "server's .rep, i.e. the file given to the server's --replay-record):\n";
+        f << "  1. Server.exe --replay-verify <server>.rep --hash-dump-tick " << rep.nowTick
+          << " --hash-dump server.dump\n";
+        f << "  2. Runtime.exe --hash-diff server.dump <this bundle>/local.dump\n";
+        f << "     -> names the component/field that went out of sync (local.dump = this client's\n"
+             "        state at tick " << rep.nowTick << ").\n";
+        f << "  To look at the checkpoint tick " << rep.tick << " itself, replay both .rep files to it:\n";
+        f << "     Server.exe --replay-verify <server>.rep --hash-dump-tick " << rep.tick
+          << " --hash-dump server.dump\n";
+        f << "     Runtime.exe --replay-verify <this bundle>/local.rep --hash-dump-tick " << rep.tick
+          << " --hash-dump client.dump\n";
+        f << "     Runtime.exe --hash-diff server.dump client.dump\n\n";
+    } else {
+        f << "How to find the field that diverged (both bundles are needed):\n";
+        f << "  1. Runtime.exe --rep-diff <peerA>/local.rep <peerB>/local.rep\n";
+        f << "     -> T = the first tick whose recorded hash differs (T <= " << rep.tick << ").\n";
+        f << "  2. Runtime.exe --replay-verify <peerA>/local.rep --hash-dump-tick T "
+             "--hash-dump a.dump\n";
+        f << "     Runtime.exe --replay-verify <peerB>/local.rep --hash-dump-tick T "
+             "--hash-dump b.dump\n";
+        f << "  3. Runtime.exe --hash-diff a.dump b.dump\n";
+        f << "     -> names the component/field that first went out of sync.\n\n";
+    }
     f << "local.dump is the field-level dump at tick " << rep.nowTick
       << " (the detection point), kept so the state is\n"
          "not lost even if the .rep can no longer be replayed.\n";

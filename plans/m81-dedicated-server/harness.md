@@ -26,8 +26,9 @@
 | sub-07 GameLiftHosting + SDK 5.x | OK | 1 | 82aeba4 | SDK 5.6.0 を /MT 静的 lib、.rep 逐次書出し |
 | sub-08 Anywhere 実疎通 (ユーザー手動) | ユーザー待ち | 0 | | |
 | sub-09 NetWindow と文書 | OK | 1 | d16d77b | ADR-022、Editor Play から実接続 |
-| sub-10 決定論の境界の修正 (review-1 #1 #2 #4 #9) | OK | 1 | (次コミット) | NetLockstepBoundary 共通化、0 tick は FAIL |
-| sub-11 クライアント記録再生・時刻同期・運用 (review-1 #3 #5 #6 #7 #8 #10) | 未着手 | 0 | | 新規 |
+| sub-10 決定論の境界の修正 (review-1 #1 #2 #4 #9) | OK | 1 | c6ac1aa | NetLockstepBoundary 共通化、0 tick は FAIL |
+| sub-11 クライアント記録再生・時刻同期・運用 (review-1 #3 #5 #6 #7 #8 #10) | OK | 1 | (次コミット) | 到着余裕 16ms に収束、クライアント .rep 再生可 |
+| sub-12 到着余裕の目標 (D18)・再同期の数え方・追いつけない検出 (V13〜V15) | ユーザー判断待ち | 0 | | 新規 |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -57,3 +58,5 @@
 - (司会 2026-10-02) sub-08 以外の全サブ OK。sub-08 はユーザー手作業待ちのまま Phase 3 (レビュー) へ進む。reviewer への追加観点: R-12 の定常状態の到着余裕、sub-07 最終改名後に未再実行だった replay_verify / server_verify / net_verify / Editor --selftest の再実行
 - (司会 2026-10-02) review-1 FAIL → planner は既存サブを差し戻さず新規 sub-10 (#1 #2 #4 #9) / sub-11 (#3 #5 #6 #7 #8 #10) で修正。sub-08 の依存に sub-10 を追加 (推奨は sub-11 の後)。修正後は同じ reviewer へ round 2
 - (司会 2026-10-02) sub-10 OK。V12 (オフライン再生でも .rep の SessionConfig から NetIsConnected/NetPlayerCount を立てる) を sub-11 へ。Editor クライアント実プロセスでのゲート検査ログは sub-11 V9 の実走で確認
+- (司会 2026-10-02) ユーザー許可を得て sub-10 負の対照の残骸 bin\x64\Debug\cache\server_net_selftest\save_boundary_full.rep.mismatch.txt / .tick180.actual.dump を削除 (再生成可能)
+- (司会 2026-10-02) sub-11 OK。review-1 #1〜#10 は sub-10/11 で対応済み。sub-12 (V13 D18 適応目標 / V14 クライアント要求の再同期も R5 に含める / V15 RTT 約 250ms 超の追いつけないクライアントを WARN + 文書化、R-13) の後に review round 2。sub-08 は sub-12 の後を推奨

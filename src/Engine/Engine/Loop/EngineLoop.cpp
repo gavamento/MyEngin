@@ -738,6 +738,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // 以後の CrashRing / 再録画にも同じ役割 (role) を引き継ぐ
         ctx.hasSystemInput = player.HasSystemInput();
         sessionConfig = player.Header().session;
+        if (ctx.hasSystemInput) {
+            // ライブのセッション中と同じ Net* の答え (HeadlessSim::VerifyReplay と同じ。spec D14)
+            netInfo.connected = true;
+            netInfo.playerCount = sessionConfig.playerCount;
+        }
         if (!player.Snapshot().empty()) {
             // v4 の埋め込み初期状態 (M52d)。**シーンの中身に依存せず**記録開始時点へ丸ごと
             // 戻せるので、配布ビルドで落ちた .rep をどのシーンからでも再生できる (M52f が本命)。
@@ -1442,6 +1447,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     uint32_t clientRecordSegment = 0;   // 再同期のたびに .rep を切る (tick が連続しなくなるため)
     bool clientDone = false;            // --replay-ticks 到達 (Bye を送って終わる)
     bool clientDropped = false;         // --net-drop-after 到達 (Bye を送らずに終わる)
+    bool clientLeft = false;            // ctx.netLeaveRequested (エディタの Stop): Bye を送って tick を止めた
+    uint64_t clientNextSyncLogMs = 0;   // 次に時刻同期の状態をログへ出す時刻 (10 秒ごと。実時間の記録で sim には入らない)
     bool clientHasJoined = false;       // 最初の参加スナップショットを復元した
     uint64_t clientFirstTick = 0;       // その tick (--net-drop-after / --net-poke-after の起点)
     const auto ClientNowMs = [&clock]() -> uint64_t { return static_cast<uint64_t>(clock.Now() * 1000.0); };
@@ -1605,7 +1612,18 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     }
     // 1 フレームに 1 回: 受信 → セッション駆動 → tick (ClientSimRunner::Update が Poll も呼ぶ) → 終了条件
     const auto ClientFrame = [&]() {
-        if (!clientEnabled || clientDone || clientDropped || !running) {
+        if (!clientEnabled || clientDone || clientDropped || clientLeft || !running) {
+            return;
+        }
+        if (ctx.netLeaveRequested) {
+            // エディタの Stop: Bye でセッションを抜け (サーバはレーンを予約にして Leave を記録する)、tick を止める。
+            // プロセスは終えない (エディタの窓は残る)
+            clientLeft = true;
+            clientSession.Close(ClientNowMs());
+            if (recorder.IsActive()) {
+                recorder.Finish();
+            }
+            MYE_LOG_INFO("[client] left the session (Stop in the editor): Bye sent, the sim stops ticking");
             return;
         }
         NetAddress from;
@@ -1619,6 +1637,16 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             }
         }
         clientRunner.Update(ClientNowMs());
+        if (clientSession.Running() && clientSession.MarginValid() && ClientNowMs() >= clientNextSyncLogMs) {
+            // 定常状態で到着余裕が目標に収束しているかを実プロセスのログで確かめる (server_verify / 手動確認用)
+            clientNextSyncLogMs = ClientNowMs() + 10000;
+            MYE_LOG_INFO("[client] time sync: arrival margin %.1f ms (target %u), rtt %.1f ms, speed x%.4f, "
+                         "%llu tick(s) run, %llu catch-up",
+                         clientSession.MarginMs(), clientSession.TargetMarginMs(), clientSession.RttMs(),
+                         clientSession.SpeedFactor(),
+                         static_cast<unsigned long long>(clientRunner.Stats().ticksRun),
+                         static_cast<unsigned long long>(clientRunner.Stats().catchUpTicks));
+        }
         if (clientSession.State() == ClientState::Failed) {
             if (clientSession.RejectReason() != NetReject::None) {
                 MYE_LOG_ERROR("[client] the server refused the connection: %s", clientSession.FailReason().c_str());

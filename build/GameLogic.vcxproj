@@ -51,6 +51,7 @@
     <ClCompile Include="..\src\GameLogic\Scripts\NetDuelDemo.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\NetEventProbe.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\NetHudDemo.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\NetInfoProbe.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\PartAttachDemo.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\PartRaycastDemo.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\PlayerController.cpp" />

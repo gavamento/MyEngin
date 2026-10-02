@@ -193,6 +193,7 @@ void EditorApp::OnStart(EngineContext& ctx)
         buildSettings_.StartCliPackage(std::filesystem::absolute(packageDir).wstring(),
                                        packageDds, packageZip, packageBoot);
     }
+    playMode_.SetNetClientLocked(serverClient);
     if (autoPlay && !actorEdit_) { // 編集モード中の Play は禁止 (ツールバーでも無効化している)
         playMode_.Play(*ctx.scene);
     }
@@ -403,8 +404,11 @@ void EditorApp::OnStart(EngineContext& ctx)
 
 void EditorApp::OnTick(EngineContext& ctx)
 {
-    // ゲームロジック (GameLogic.dll のスクリプト) は Play 中のみ実行される
-    ctx.simulateScripts = playMode_.ConsumeSimulateTick();
+    // ゲームロジック (GameLogic.dll のスクリプト) は Play 中のみ実行される。
+    // 専用サーバのクライアントは常に実行する: サーバの sim は Pause できず常に実行しているので、
+    // 止めた tick があると world が割れる (Pause / Step はツールバー側で無効にしてある)
+    const bool simulateThisTick = playMode_.ConsumeSimulateTick();
+    ctx.simulateScripts = simulateThisTick || serverClient;
 }
 
 bool EditorApp::GameMouseArea(InputRect& out)

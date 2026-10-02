@@ -221,9 +221,9 @@ void CheckReplayStreaming(const std::filesystem::path& tempDir, const std::funct
             check(p.TickCount() == 57 && p.RecoveredUnfinished(),
                   "R4: the tick count comes from the file length (57), the cut record is dropped");
             const InputSnapshot want = MakeInput(56 * 10 + 3);
-            check(std::memcmp(&p.InputForTick(56, 3), &want, sizeof(InputSnapshot)) == 0
-                      && p.ExpectedHash(56) == 0xA000 + 56 && p.SystemInputForTick(55).eventCount == 1
-                      && p.SystemInputForTick(56).eventCount == 0,
+            check(std::memcmp(&p.InputAt(56, 3), &want, sizeof(InputSnapshot)) == 0
+                      && p.HashAt(56) == 0xA000 + 56 && p.SystemInputAt(55).eventCount == 1
+                      && p.SystemInputAt(56).eventCount == 0,
                   "R4: recovered ticks carry the same inputs, system input and hashes");
         }
         // 切れ目がちょうどレコード境界でも同じ
@@ -262,7 +262,7 @@ void CheckReplayStreaming(const std::filesystem::path& tempDir, const std::funct
         ReplayPlayer p;
         const uint64_t onDisk = (live.size() - base) / kRec;
         check(p.Load(cutPath) && p.RecoveredUnfinished() && p.TickCount() == onDisk && onDisk >= 120 && onDisk <= 130
-                  && p.ExpectedHash(119) == 0xB000 + 119,
+                  && p.HashAt(119) == 0xB000 + 119,
               "R4: a recording that was never closed still yields every flushed tick (>= 120 of 130)");
         check(rec.Finish(), "R4: the same recorder can still be finished afterwards");
         ReplayPlayer q;
@@ -465,8 +465,8 @@ bool RunSessionSelfTest()
                       && p.Header().session.referenceW == 1920 && p.Header().provenance.contentHash == 0xC0FFEE,
                   "S2: SessionConfig / SimProvenance round-trip");
             const InputSnapshot want = MakeInput(21);
-            check(std::memcmp(&p.InputForTick(2, 1), &want, sizeof(InputSnapshot)) == 0
-                      && p.ExpectedHash(2) == 0xA002,
+            check(std::memcmp(&p.InputAt(2, 1), &want, sizeof(InputSnapshot)) == 0
+                      && p.HashAt(2) == 0xA002,
                   "S2: lane inputs and hashes round-trip");
         }
         const std::vector<char> bytes = ReadAll(plainPath);
@@ -480,12 +480,12 @@ bool RunSessionSelfTest()
             check(p.HasSystemInput() && (p.Header().flags & kReplayFlagSystemInput) != 0
                       && p.PlayerCount() == 4,
                   "S2: flags.bit0 is set for a Server recording");
-            check(p.SystemInputForTick(0).eventCount == 1 && p.SystemInputForTick(1).eventCount == 0
-                      && p.SystemInputForTick(2).eventCount == 2
-                      && p.SystemInputForTick(2).events[1].kind == static_cast<uint8_t>(SystemEventKind::Leave)
-                      && p.SystemInputForTick(2).events[0].eventSeq == 2,
+            check(p.SystemInputAt(0).eventCount == 1 && p.SystemInputAt(1).eventCount == 0
+                      && p.SystemInputAt(2).eventCount == 2
+                      && p.SystemInputAt(2).events[1].kind == static_cast<uint8_t>(SystemEventKind::Leave)
+                      && p.SystemInputAt(2).events[0].eventSeq == 2,
                   "S2: SystemInputTick records round-trip");
-            check(p.ExpectedHash(1) == 0xA001 && p.ExpectedHash(2) == 0xA002,
+            check(p.HashAt(1) == 0xA001 && p.HashAt(2) == 0xA002,
                   "S2: hashes round-trip next to the system input");
         }
         const std::vector<char> bytes = ReadAll(sysPath);
@@ -539,8 +539,8 @@ bool RunSessionSelfTest()
             check(p.Header().version == 8 && p.PlayerCount() == 2 && p.TickCount() == 2
                       && p.RngState() == 123 && p.RngInc() == 457 && p.Header().entityCount == 5,
                   "S2: v8 header fields are read");
-            check(std::memcmp(&p.InputForTick(1, 1), &want, sizeof(InputSnapshot)) == 0
-                      && p.ExpectedHash(0) == 0xB000 && p.ExpectedHash(1) == 0xB001,
+            check(std::memcmp(&p.InputAt(1, 1), &want, sizeof(InputSnapshot)) == 0
+                      && p.HashAt(0) == 0xB000 && p.HashAt(1) == 0xB001,
                   "S2: v8 tick records (lanes + hash) are read");
             check(!p.HasSystemInput() && p.Header().session.role == 0 && p.Header().session.playerCount == 0
                       && p.Header().provenance.contentHash == 0,
@@ -714,11 +714,16 @@ bool RunSessionSelfTest()
             ReplayPlayer p;
             if (check(ring.WriteRepFile(crashPath.c_str()) && p.Load(crashPath),
                       "S3: the crash ring writes a loadable v9 .rep")) {
-                check(p.HasSystemInput() && p.TickCount() == 1 && p.SystemInputForTick(0).eventCount == 1
-                          && p.SystemInputForTick(0).events[0].eventSeq == 4 && p.ExpectedHash(0) == 0xABCDEF
+                check(p.HasSystemInput() && p.TickCount() == 1 && p.SystemInputAt(0).eventCount == 1
+                          && p.SystemInputAt(0).events[0].eventSeq == 4 && p.HashAt(0) == 0xABCDEF
                           && p.Header().session.role == static_cast<uint32_t>(SessionRole::Server)
                           && p.Header().startMeta.tick == 50,
                       "S3: crash .rep keeps the system input, the hash and the session");
+                // V6: 開始 tick が 50 の記録は、sim の tick (ctx.tickIndex) をそのまま渡して引ける
+                check(p.StartTick() == 50 && p.HasTick(50) && !p.HasTick(49) && !p.HasTick(51)
+                          && p.ExpectedHash(50) == 0xABCDEF && p.SystemInputForTick(50).eventCount == 1
+                          && std::memcmp(&p.InputForTick(50, 1), &in[1], sizeof(InputSnapshot)) == 0,
+                      "V6: a record that starts at tick 50 is looked up by the sim's own tick (49 and 51 are outside)");
             }
             CrashRing plainRing;
             CrashRingConfig plainCfg;

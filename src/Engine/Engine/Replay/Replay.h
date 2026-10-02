@@ -152,22 +152,29 @@ public:
     const MyeReplayHeader& Header() const { return header_; }
     // flags.bit0: この記録はシステム入力を持つ。EngineLoop / HeadlessSim は ctx.hasSystemInput へ写す
     bool HasSystemInput() const { return (header_.flags & kReplayFlagSystemInput) != 0; }
-    // HasSystemInput() のときだけ有効
-    const SystemInputTick& SystemInputForTick(uint64_t tick) const
-    {
-        return systemInputs_[static_cast<size_t>(tick)];
-    }
+    // 記録の先頭が sim の何 tick 目か。埋め込みスナップショットを持つ記録は startMeta.tick
+    // (復元で ctx.tickIndex がこの値になる)、持たない記録は 0 (シーンロードから tick 0 で始まる)。
+    // クライアントの .rep / .rsN.rep / desync バンドル / CrashRing は参加・撮影 tick から始まる
+    uint64_t StartTick() const { return snapshot_.empty() ? 0 : header_.startMeta.tick; }
 
-    const InputSnapshot& InputForTick(uint64_t tick) const
-    {
-        return inputs_[static_cast<size_t>(tick) * header_.playerCount];
-    }
+    // ---- tick で引く (sim の ctx.tickIndex をそのまま渡す。範囲外は HasTick が偽) ----
+    // HasSystemInput() のときだけ有効
+    const SystemInputTick& SystemInputForTick(uint64_t tick) const { return SystemInputAt(tick - StartTick()); }
+    const InputSnapshot& InputForTick(uint64_t tick) const { return InputAt(tick - StartTick(), 0); }
     const InputSnapshot& InputForTick(uint64_t tick, uint32_t player) const
     {
-        return inputs_[static_cast<size_t>(tick) * header_.playerCount + player];
+        return InputAt(tick - StartTick(), player);
     }
-    uint64_t ExpectedHash(uint64_t tick) const { return hashes_[static_cast<size_t>(tick)]; }
-    bool HasTick(uint64_t tick) const { return tick < hashes_.size(); }
+    uint64_t ExpectedHash(uint64_t tick) const { return HashAt(tick - StartTick()); }
+    bool HasTick(uint64_t tick) const { return tick >= StartTick() && tick - StartTick() < hashes_.size(); }
+
+    // ---- 記録の通し番号 (0 始まり) で引く。2 本の .rep を重ね合わせる --rep-diff 用 ----
+    const SystemInputTick& SystemInputAt(uint64_t index) const { return systemInputs_[static_cast<size_t>(index)]; }
+    const InputSnapshot& InputAt(uint64_t index, uint32_t player) const
+    {
+        return inputs_[static_cast<size_t>(index) * header_.playerCount + player];
+    }
+    uint64_t HashAt(uint64_t index) const { return hashes_[static_cast<size_t>(index)]; }
     // 0 = 期待値なし (未完了 tick または checkpoint 外)
     bool HasExpectedHash(uint64_t tick) const { return ExpectedHash(tick) != 0; }
 
@@ -189,7 +196,7 @@ private:
 
 // --replay-verify の合否 (EngineLoop / HeadlessSim 共通)。照合した tick が 0 本の「合格」を作らない:
 // 1 tick も比べていないものは通ったとは言えない。startTick = スナップショット復元後の tick
-// (ReplayPlayer は tick を絶対値で引くので、0 以外から始まる .rep は範囲外になる)。
+// (記録の範囲 [StartTick, StartTick + TickCount) の外なら、スナップショットと startMeta.tick の食い違い)。
 // 不合格なら理由を reason へ書く (合格のときは空)
 bool JudgeReplayVerification(const ReplayPlayer& player, uint64_t startTick, std::string& reason);
 

@@ -607,6 +607,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.autoPlay = autoPlay;
     app.openTimeline = openTimeline;
     app.openNet = config.netRole != 0;
+    app.serverClient = config.netRole == mye::EngineConfig::kNetRoleClient;
     app.showcase = showcase;
     app.showcaseOptions = showcaseOptions;
     app.editActorPath = editActorPath;

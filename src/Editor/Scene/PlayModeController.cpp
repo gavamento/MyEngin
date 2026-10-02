@@ -53,6 +53,9 @@ void PlayModeController::TogglePause()
 
 void PlayModeController::Pause()
 {
+    if (netClientLocked_) {
+        return;
+    }
     if (state_ == PlayState::Playing) {
         state_ = PlayState::Paused;
     }
@@ -80,7 +83,7 @@ void PlayModeController::Resume()
 
 void PlayModeController::Step()
 {
-    if (state_ != PlayState::Paused) {
+    if (netClientLocked_ || state_ != PlayState::Paused) {
         return;
     }
     stepPending_ = true;

@@ -409,6 +409,13 @@ HeadlessVerifyResult HeadlessSim::VerifyReplay()
     }
     // M81b: システム入力を持つ記録は tick ごとにそれも流す (EngineLoop の verify 経路と同じ)
     ctx.hasSystemInput = m.player.HasSystemInput();
+    if (ctx.hasSystemInput) {
+        // サーバ / クライアント構成の記録は、ライブではセッション中 (NetIsConnected = 1、NetPlayerCount = 人数)
+        // で録られている。ゲームが tick 中にこれを読んで sim へ使うと、オフライン再生がライブと割れるので、
+        // 再生でも同じ値にする (spec D14)。NetLocalPlayer / NetPingMs / NetRollbackCount は機種依存のまま既定値
+        m.netInfo.connected = true;
+        m.netInfo.playerCount = m.player.Header().session.playerCount;
+    }
     if (!m.player.Snapshot().empty()) {
         // v4 の埋め込み初期状態: シーンの中身に依存せず記録開始時点へ丸ごと戻せる
         if (!RestoreSimSnapshot(m.simRefs, m.player.Snapshot().data(), m.player.Snapshot().size())) {

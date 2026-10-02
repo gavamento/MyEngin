@@ -112,10 +112,14 @@ public:
     // accumulator への加算係数。到着余裕が目標より小さい (入力が遅い) と速く、大きいと遅くする。±2% 上限。
     // ★「いつ tick が回るか」だけを変える。sim には入らない
     double SpeedFactor() const;
-    // クライアントが「遅れすぎ」なとき、追いつくために余分に回すべき tick 数 (0 以下 = 遅れていない)。
-    // 参加直後 / 再同期直後に生の速度係数 2% では何秒もかかる差を埋める
-    int64_t CatchUpTicks(uint64_t clientTick) const;
+    // 追いつきのために余分に回すべき tick 数 (0 = 無し)。到着余裕が目標より 2 tick を超えて小さいとき
+    // (参加直後 / 再同期直後 / 長い停止の後) に、速度係数 2% では何秒もかかる差を埋める分を 1 回だけ決める。
+    // 回すたびに OnCatchUpTickRan を呼ぶこと
+    int64_t CatchUpPending() const { return catchUpPending_; }
+    void OnCatchUpTickRan(uint64_t nowMs);
     double MarginMs() const { return marginMs_; }
+    bool MarginValid() const { return marginValid_; }
+    uint32_t TargetMarginMs() const { return cfg_.targetMarginMs; }
     double RttMs() const { return rttMs_; }
     uint64_t ServerFrontier() const { return serverFrontier_; }
 
@@ -130,6 +134,8 @@ private:
     void SendAck(uint64_t nowMs);
     void SendInputPacket(uint64_t upToTick, uint64_t nowMs);
     void SendHeaderOnly(NetMsg type, const void* payload, size_t payloadSize, uint64_t nowMs);
+    double MarginErrorTicks() const;
+    void PlanCatchUp();
     NetPacketHeader BaseHeader(uint64_t nowMs) const;
     void Send(NetMsg type, const NetPacketHeader& h, const void* payload, size_t payloadSize,
               const void* tail = nullptr, size_t tailSize = 0);
@@ -180,6 +186,8 @@ private:
     // 時刻同期
     double marginMs_ = 0.0;
     bool marginValid_ = false;
+    int64_t catchUpPending_ = 0;
+    uint64_t holdUntilMs_ = 0; // この時刻までは到着余裕の標本を捨てる (追いつきの直後)
     double rttMs_ = 0.0;
     uint64_t serverFrontier_ = 0;
 
