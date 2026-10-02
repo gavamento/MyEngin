@@ -1320,6 +1320,69 @@ void RegisterBuiltinComponents()
         MYE_JP("RT を受ける", MYE_FIELD_TIP(RayTracingComponent, receiver, Int32,
                                            "0=inherit 1=on 2=off: receives RT GI / shadow / reflection")),
     }, kComponentNoHash);
+
+    // M75g: スクロールとドロップダウン (TypeId=67〜70、末尾 append、この順)。
+    // Scrollbar / ScrollRect / Dropdown は **sim が値を書く状態なのでハッシュ対象** (UiAux だけ)。
+    // DropdownItem は見た目と規則の入力 = NoHash + UiAux (Selectable / ToggleGroup と同じ扱い)
+    RegisterComponent<UIScrollbarComponent>("UIScrollbar", {
+        MYE_JP("つまみの矩形", MYE_FIELD_TIP(UIScrollbarComponent, handleRect, EntityRef,
+                                             "anchors are driven from value and size inside its parent")),
+        MYE_JP("向き", MYE_FIELD_TIP(UIScrollbarComponent, direction, Int32,
+                                     "0 = left to right 1 = right to left 2 = bottom to top 3 = top to bottom")),
+        MYE_JP("値", MYE_FIELD_RANGE(UIScrollbarComponent, value, Float, 0.0f, 1.0f)),
+        MYE_JP("サイズ", MYE_FIELD_RANGE(UIScrollbarComponent, size, Float, 0.0f, 1.0f)),
+        MYE_JP("段数", MYE_FIELD_TIP(UIScrollbarComponent, numberOfSteps, Int32, "2 or more snaps the value; 0 = continuous")),
+        MYE_JP("掴んだ位置", MYE_FIELD_FLAGS(UIScrollbarComponent, dragOffset, Float2, kFieldHidden)),
+    }, kComponentUiAux);
+
+    RegisterComponent<UIScrollRectComponent>("UIScrollRect", {
+        MYE_JP("中身", MYE_FIELD_TIP(UIScrollRectComponent, content, EntityRef, "the rect that scrolls")),
+        MYE_JP("表示範囲", MYE_FIELD_TIP(UIScrollRectComponent, viewport, EntityRef,
+                                         "the visible area; empty = this entity's own rect")),
+        MYE_JP("横", MYE_FIELD(UIScrollRectComponent, horizontal, Bool)),
+        MYE_JP("縦", MYE_FIELD(UIScrollRectComponent, vertical, Bool)),
+        MYE_JP("動き方", MYE_FIELD_TIP(UIScrollRectComponent, movementType, Int32,
+                                       "0 = unrestricted 1 = elastic 2 = clamped")),
+        MYE_JP("弾性", MYE_FIELD_TIP(UIScrollRectComponent, elasticity, Float, "seconds to spring back (elastic)")),
+        MYE_JP("慣性", MYE_FIELD(UIScrollRectComponent, inertia, Bool)),
+        MYE_JP("減速率", MYE_FIELD_RANGE(UIScrollRectComponent, decelerationRate, Float, 0.0f, 1.0f)),
+        MYE_JP("ホイール感度", MYE_FIELD_TIP(UIScrollRectComponent, scrollSensitivity, Float,
+                                             "canvas units per wheel notch")),
+        MYE_JP("横のスクロールバー", MYE_FIELD(UIScrollRectComponent, horizontalScrollbar, EntityRef)),
+        MYE_JP("縦のスクロールバー", MYE_FIELD(UIScrollRectComponent, verticalScrollbar, EntityRef)),
+        MYE_JP("スクロール位置", MYE_FIELD_TIP(UIScrollRectComponent, position, Float2,
+                                               "added to the content's anchored position")),
+        MYE_JP("速度", MYE_FIELD_FLAGS(UIScrollRectComponent, velocity, Float2, kFieldHidden)),
+        MYE_JP("ドラッグ中", MYE_FIELD_FLAGS(UIScrollRectComponent, dragging, Bool, kFieldHidden)),
+        MYE_JP("ドラッグ開始点", MYE_FIELD_FLAGS(UIScrollRectComponent, pointerStart, Float2, kFieldHidden)),
+        MYE_JP("ドラッグ開始位置", MYE_FIELD_FLAGS(UIScrollRectComponent, contentStart, Float2, kFieldHidden)),
+    }, kComponentUiAux);
+
+    RegisterComponent<UIDropdownComponent>("UIDropdown", {
+        MYE_JP("一覧", MYE_FIELD_TIP(UIDropdownComponent, templateRect, EntityRef,
+                                     "shown only while expanded")),
+        MYE_JP("表題の文字", MYE_FIELD_TIP(UIDropdownComponent, captionText, EntityRef,
+                                           "UIElement that shows the selected option")),
+        MYE_JP("値", MYE_FIELD(UIDropdownComponent, value, Int32)),
+        MYE_JP("開いている", MYE_FIELD(UIDropdownComponent, expanded, Bool)),
+        MYE_JP("選択肢の数", MYE_FIELD_RANGE(UIDropdownComponent, optionCount, Int32, 0.0f,
+                                                       static_cast<float>(kDropdownMaxOptions))),
+        MYE_JP("選択肢 0", MYE_FIELD(UIDropdownComponent, option0, String64)),
+        MYE_JP("選択肢 1", MYE_FIELD(UIDropdownComponent, option1, String64)),
+        MYE_JP("選択肢 2", MYE_FIELD(UIDropdownComponent, option2, String64)),
+        MYE_JP("選択肢 3", MYE_FIELD(UIDropdownComponent, option3, String64)),
+        MYE_JP("選択肢 4", MYE_FIELD(UIDropdownComponent, option4, String64)),
+        MYE_JP("選択肢 5", MYE_FIELD(UIDropdownComponent, option5, String64)),
+        MYE_JP("選択肢 6", MYE_FIELD(UIDropdownComponent, option6, String64)),
+        MYE_JP("選択肢 7", MYE_FIELD(UIDropdownComponent, option7, String64)),
+    }, kComponentUiAux);
+
+    RegisterComponent<UIDropdownItemComponent>("UIDropdownItem", {
+        MYE_JP("index", MYE_FIELD(UIDropdownItemComponent, index, Int32)),
+        MYE_JP("ラベル", MYE_FIELD_TIP(UIDropdownItemComponent, label, EntityRef, "draws the option text")),
+        MYE_JP("チェックマーク", MYE_FIELD_TIP(UIDropdownItemComponent, checkmark, EntityRef,
+                                               "drawn only for the selected option")),
+    }, kComponentNoHash | kComponentUiAux);
 }
 
 } // namespace mye

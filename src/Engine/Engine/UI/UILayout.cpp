@@ -88,6 +88,11 @@ EntityID FindUIParent(World& world, EntityID e)
 
 } // namespace
 
+double DetPow(double base, double exponent)
+{
+    return DetExp(exponent * DetLn(base));
+}
+
 // 「UI 専用オブジェクト」判定 (完全自動追従の基準)。
 // ★全エンティティは基本アーキタイプ (Name/LocalTransform/WorldMatrix/Hierarchy) を持つので
 //   「Transform の有無」では判定できない (最初の実装で全 screen UI が追従して全滅した)。
@@ -256,10 +261,11 @@ UIResolved ResolveImpl(World& world, EntityID e, int screenW, int screenH,
     if (!(parentResolved
           && ResolveLayoutChild(world, parentE, e, base, out.scale, scratch, r))) {
         // M75f: Slider の fillRect / handleRect はアンカーを value から導く (Unity は書き込むが、ここでは
-        // Layout Group と同じく書かない)。Slider の無い要素は rt をそのまま使う
+        // Layout Group と同じく書かない)。M75g: Scrollbar のつまみ / ScrollRect の中身 / Dropdown の一覧の
+        // 高さも同じ口で導く。ウィジェットの無い要素は rt をそのまま使う
         RectTransformComponent slid;
         const RectTransformComponent& use =
-            (rtp != nullptr && uiwidgets::SliderDrivenTransform(world, e, rt, slid)) ? slid : rt;
+            (rtp != nullptr && uiwidgets::WidgetDrivenTransform(world, e, rt, slid)) ? slid : rt;
         RectTransformComponent fitted;
         if (ApplyContentSizeFitter(world, e, use, base, out.scale, scratch, fitted)) {
             r = RectFromTransform(fitted, base, out.scale);
@@ -613,6 +619,11 @@ UIRect ResolveClipRect(World& world, EntityID e, int screenW, int screenH,
         }
         if (world.GetComponent<UICanvasComponent>(p) != nullptr) {
             break; // 属するキャンバスより上は別の座標系 (入れ子の Canvas は外側のクリップを受けない)
+        }
+        if (uiwidgets::IsDropdownTemplate(world, p)) {
+            // M75g: ドロップダウンの一覧は外側のクリップを受けない (Unity は一覧を最上位の Canvas へ
+            // 作るので、スクロールビューの中のドロップダウンでも一覧が切れない)
+            break;
         }
         p = FindUIParent(world, p);
     }

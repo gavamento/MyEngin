@@ -705,6 +705,9 @@ bool IsLayoutChild(World& world, EntityID group, EntityID child)
         le != nullptr && le->ignoreLayout) {
         return false;
     }
+    if (uiwidgets::IsDropdownItemUnused(world, child)) {
+        return false; // M75g: 選択肢の数を越えた一覧の項目は詰める (描画 / ヒットからも外れている)
+    }
     return IsEntityActive(world, child);
 }
 
@@ -817,9 +820,8 @@ uint32_t LayoutDrivenBits(World& world, EntityID e)
             bits |= kDrivenHeight | kDrivenByFitter;
         }
     }
-    if (uiwidgets::IsSliderDriven(world, e)) {
-        bits |= kDrivenBySlider; // M75f: 位置とサイズは編集できるが、アンカーは効かない
-    }
+    // M75f / M75g: ウィジェットが RectTransform の一部を値から導いている
+    bits |= uiwidgets::WidgetDrivenBits(world, e);
     return bits;
 }
 

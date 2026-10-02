@@ -3656,27 +3656,89 @@ void BuildUiShowcaseScene(EngineContext& ctx)
             sl.GetComponent<UISelectableComponent>()->interactable = sp.interactable;
         }
     }
+
+    // ---- M75g: スクロールとドロップダウン ----
+    // 置き場所は上辺中央の行 (LayoutRow) と Title の間の帯 (y 156..326)。子の構成は Create > UI と同じ
+    // uiwidgets::CreateScrollView / CreateDropdown。★座標は入力台本 (UiDemoScriptInput) と対
+    //
+    // (1) Scroll View 360x170: 中身は 10 行の縦の Group + Fitter (高さ 412) で、幅は見える範囲より 200 広い =
+    //     縦横とも動く。Elastic + 慣性 (既定)
+    {
+        GameObject sv = uiwidgets::CreateScrollView(s, "WidgetScrollView");
+        placeTopLeft(sv, 470.0f, 156.0f, 360.0f, 170.0f);
+        GameObject content(&s.GetWorld(), sv.GetComponent<UIScrollRectComponent>()->content);
+        {
+            content.GetComponent<RectTransformComponent>()->sizeDelta = { 200.0f, 0.0f };
+            {
+                auto* g = content.AddComponent<UILayoutGroupComponent>();
+                g->kind = uilayout::kLayoutVertical;
+                g->padding = { 8.0f, 8.0f, 8.0f, 8.0f };
+                g->spacing = { 0.0f, 4.0f };
+                g->controlChildWidth = 1;
+                g->controlChildHeight = 1;
+                g->forceExpandWidth = 1;
+                g->forceExpandHeight = 0;
+            }
+            content.AddComponent<UIContentSizeFitterComponent>()->verticalFit = uilayout::kFitPreferred;
+            const char* const rowNames[10] = { "ScrollRow0", "ScrollRow1", "ScrollRow2", "ScrollRow3",
+                                               "ScrollRow4", "ScrollRow5", "ScrollRow6", "ScrollRow7",
+                                               "ScrollRow8", "ScrollRow9" };
+            const char* const rowTexts[10] = { "ROW 0", "ROW 1", "ROW 2", "ROW 3", "ROW 4",
+                                               "ROW 5", "ROW 6", "ROW 7", "ROW 8", "ROW 9" };
+            for (int i = 0; i < 10; ++i) {
+                const float t = static_cast<float>(i) / 9.0f;
+                GameObject row = panel(rowNames[i], &content, 0.0f, 0.0f, 0.0f, 0.0f, 10.0f, 10.0f,
+                                       { 0.25f + 0.40f * t, 0.30f, 0.55f - 0.25f * t, 1.0f }, 0);
+                row.AddComponent<UILayoutElementComponent>()->preferredHeight = 36.0f;
+                label("ScrollRowLabel", row, rowTexts[i], 2.0f, 0);
+            }
+        }
+    }
+
+    // (2) Dropdown 300x40: 選択肢 4 つ・値 1。**開いた状態で始める** = golden に一覧 (手前に出る・高さが選択肢の
+    //     数に縮む・選択中の印) が写る。入力台本の最初の押下は Blocker に当たって閉じる
+    {
+        GameObject dd = uiwidgets::CreateDropdown(s, "WidgetDropdown", 2.0f);
+        placeTopLeft(dd, 860.0f, 160.0f, 300.0f, 40.0f);
+        {
+            auto* d = dd.GetComponent<UIDropdownComponent>();
+            d->optionCount = 4;
+            d->value = 1;
+            d->expanded = true;
+            std::snprintf(d->option0, sizeof(d->option0), "%s", "EASY");
+            std::snprintf(d->option1, sizeof(d->option1), "%s", "NORMAL");
+            std::snprintf(d->option2, sizeof(d->option2), "%s", "HARD");
+            std::snprintf(d->option3, sizeof(d->option3), "%s", "EXPERT");
+        }
+    }
 }
 
 void UiDemoScriptInput(uint64_t tick, InputSnapshot& lane0)
 {
     // 1 手 = [from, to) の区間。ポインタは (x0,y0) → (x1,y1) を線形に動き、buttons / vk はその間ずっと
-    // 押している (vk は UINav* / Submit のキー。2 tick 押して離す = pressed のエッジが 1 回)
+    // 押している (vk は UINav* / Submit のキー。2 tick 押して離す = pressed のエッジが 1 回)。
+    // M75g: wheel はその区間の毎 tick に渡すホイールの生値 (WHEEL_DELTA = 120 が 1 目盛り、負 = 手前へ回す)
     struct Step {
         uint16_t from, to;
         float x0, y0, x1, y1;
         uint8_t buttons;
         uint8_t vk;
+        int16_t wheel;
     };
     constexpr uint8_t kVkReturn = 0x0D; // VK_RETURN = UINavSubmit
+    constexpr uint8_t kVkEscape = 0x1B; // VK_ESCAPE = UINavCancel (M75g)
     constexpr uint8_t kVkLeft = 0x25;   // VK_LEFT = UINavLeft
     constexpr uint8_t kVkRight = 0x27;  // VK_RIGHT = UINavRight
     constexpr uint8_t kVkDown = 0x28;   // VK_DOWN = UINavDown
+    constexpr int16_t kWheelDown = -120; // 手前へ 1 目盛り = 中身が上へ動く (下の方が見える)
     // 座標 = 既定キャンバス 1920x1080 の点 (= ゲーム面 px)。BuildUiShowcaseScene の配置から手で解いた値:
     //   Toggle i の Background の中心 (56, 530 + 48i) / SOLO のラベル (206, 626) / SELECTABLE (186, 740)
     //   左→右の溝 x 1366..1746 (y 624) / 右→左 (y 680) / 操作不可 (y 736) / 下→上の溝 y 614..834 (x 1820)
+    // M75g: Scroll View (470,156)-(830,326) の見える範囲 (470,156)-(810,306) / 縦のバー x 810..830 / 横のバー
+    //   y 306..326。Dropdown (860,160)-(1160,200)、開いた一覧の項目 i は y 206 + 28i から 28 (選択肢 4 つ)
     static constexpr Step kSteps[] = {
-        // Toggle A (群で唯一の on): 押しても on のまま = changed は立たない
+        // Toggle A (群で唯一の on): 押しても on のまま = changed は立たない。
+        // ★M75g: 1 周目は Dropdown が開いた状態で始まるので、この押下は Blocker に当たって一覧を閉じるだけになる
         { 0, 10, 56, 530, 56, 530, 0, 0 },     { 10, 14, 56, 530, 56, 530, 1, 0 },
         { 14, 20, 56, 530, 56, 530, 0, 0 },
         // Toggle B: B が on になり A が off (群の規則)
@@ -3718,14 +3780,45 @@ void UiDemoScriptInput(uint64_t tick, InputSnapshot& lane0)
         // 操作不可の Slider: 押してドラッグしても値は動かない
         { 300, 306, 1600, 736, 1600, 736, 0, 0 }, { 306, 316, 1600, 736, 1650, 736, 1, 0 },
         { 316, 320, 1650, 736, 1650, 736, 0, 0 },
+        // ---- M75g ----
+        // Scroll View: ホイールを手前へ 3 目盛り (1 目盛りずつ間を空ける)
+        { 320, 330, 640, 230, 640, 230, 0, 0 },
+        { 330, 331, 640, 230, 640, 230, 0, 0, kWheelDown }, { 331, 334, 640, 230, 640, 230, 0, 0 },
+        { 334, 335, 640, 230, 640, 230, 0, 0, kWheelDown }, { 335, 338, 640, 230, 640, 230, 0, 0 },
+        { 338, 339, 640, 230, 640, 230, 0, 0, kWheelDown }, { 339, 346, 640, 230, 640, 230, 0, 0 },
+        // 行をつかんで上へ投げる: 閾値を越えた tick に ScrollRect がドラッグを引き取り、離した後は慣性で滑って
+        // 下端を越えた分を Elastic で戻す
+        { 346, 356, 640, 250, 640, 150, 1, 0 }, { 356, 380, 640, 150, 640, 150, 0, 0 },
+        // 縦のバー: 溝の上端より上 (バーの背景) を押して値 1 (上端) へ → 押したまま下へ (つまみが付いてくる)
+        { 380, 384, 820, 165, 820, 165, 1, 0 }, { 384, 396, 820, 165, 820, 290, 1, 0 },
+        { 396, 402, 820, 290, 820, 290, 0, 0 },
+        // 横のバー: 右寄りを押す (つまみの中心が押した点へ飛ぶ)
+        { 402, 406, 780, 316, 780, 316, 1, 0 }, { 406, 412, 780, 316, 780, 316, 0, 0 },
+        // Dropdown: 開く → 項目 2 (HARD) を押す = 値 2 で閉じる。★離す tick は根の上に置く (離すと同時に
+        // 項目へ動かすと、まだ一覧が開いていないので根の外で離したことになり開かない。1 回踏んだ)
+        { 412, 416, 1010, 180, 1010, 180, 1, 0 }, { 416, 418, 1010, 180, 1010, 180, 0, 0 },
+        { 418, 422, 1010, 276, 1010, 276, 0, 0 },
+        { 422, 426, 1010, 276, 1010, 276, 1, 0 }, { 426, 432, 1010, 276, 1010, 276, 0, 0 },
+        // 開く (選択中の項目 2 にフォーカス。カーソルは根の上 = Blocker なので項目を奪わない) → 下 (項目 3) →
+        // Enter = 値 3 (EXPERT) で閉じる
+        { 432, 436, 1010, 180, 1010, 180, 1, 0 }, { 436, 440, 1010, 180, 1010, 180, 0, 0 },
+        { 440, 442, 1010, 180, 1010, 180, 0, kVkDown }, { 442, 446, 1010, 180, 1010, 180, 0, 0 },
+        { 446, 448, 1010, 180, 1010, 180, 0, kVkReturn }, { 448, 452, 1010, 180, 1010, 180, 0, 0 },
+        // 開く → Escape (Cancel) で閉じる = 値は変わらない
+        { 452, 456, 1010, 180, 1010, 180, 1, 0 }, { 456, 460, 1010, 180, 1010, 180, 0, 0 },
+        { 460, 462, 1010, 180, 1010, 180, 0, kVkEscape }, { 462, 466, 1010, 180, 1010, 180, 0, 0 },
+        // 開く → 一覧の外 (Title の上) を押す = Blocker で閉じる
+        { 466, 470, 1010, 180, 1010, 180, 1, 0 }, { 470, 476, 1010, 180, 700, 450, 0, 0 },
+        { 476, 480, 700, 450, 700, 450, 1, 0 },   { 480, 490, 700, 450, 700, 450, 0, 0 },
     };
     constexpr uint64_t kStart = 30;   // シーンが落ち着くまで待つ
-    constexpr uint64_t kPeriod = 320; // 600 tick で 1.8 周 (2 周目は群の A / B が入れ替わる)
+    constexpr uint64_t kPeriod = 490; // 600 tick で 1.2 周
 
     float x = 8.0f; // 待機位置: 背景だけがある左下の隅
     float y = 1072.0f;
     uint8_t buttons = 0;
     uint8_t vk = 0;
+    int16_t wheel = 0;
     if (tick >= kStart) {
         const uint64_t p = (tick - kStart) % kPeriod;
         for (const Step& st : kSteps) {
@@ -3735,6 +3828,7 @@ void UiDemoScriptInput(uint64_t tick, InputSnapshot& lane0)
                 y = st.y0 + (st.y1 - st.y0) * t;
                 buttons = st.buttons;
                 vk = st.vk;
+                wheel = st.wheel;
                 break;
             }
         }
@@ -3746,6 +3840,8 @@ void UiDemoScriptInput(uint64_t tick, InputSnapshot& lane0)
     lane0.mouseX = static_cast<int32_t>(x);
     lane0.mouseY = static_cast<int32_t>(y);
     lane0.mouseButtons = buttons;
+    // M75g: ホイールも置き換える (キーと同じ理由 — 同じフレームの 2 本目の tick に残らないように)
+    lane0.wheelDelta = wheel;
     // ★キーは OR ではなく**丸ごと置き換える**。EngineLoop はライブ入力をフレーム頭に 1 回だけ写し、
     //   同じフレームで回る 2 本目以降の tick は前の tick が書いた ctx.inputs[0] をそのまま受け取る。
     //   OR だと前の tick で押したキーが消えず (--replay-fast は 1 フレームで何 tick も回る)、

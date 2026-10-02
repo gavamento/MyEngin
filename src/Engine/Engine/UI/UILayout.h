@@ -96,6 +96,10 @@ CanvasInfo CanvasSize(int screenW, int screenH);
 void SetDefaultCanvasReference(int referenceW, int referenceH);
 const CanvasDesc& DefaultCanvasDesc();
 
+// 決定論の base^exponent (base > 0)。Canvas Scaler の Match と同じ double の級数 (UILayout.cpp の
+// DetLn / DetExp) で解く。M75g: ScrollRect の慣性の減速 (decelerationRate^dt) が使う
+double DetPow(double base, double exponent);
+
 // ---- 複数キャンバス (M75c) ----
 // e が属するキャンバス = 自分を含む最寄りの UICanvas 祖先。無ければ kNullEntity (= 既定キャンバス)。
 // 入れ子は非対応: 最寄りが勝ち、その上の階層とは座標系もクリップも切れる

@@ -367,6 +367,9 @@ constexpr const char* kUINavModeJa[] = { "なし", "左右", "上下", "自動",
 constexpr const char* kUISliderDirLabels[] = { "Left To Right", "Right To Left", "Bottom To Top",
                                                "Top To Bottom" };
 constexpr const char* kUISliderDirJa[] = { "左→右", "右→左", "下→上", "上→下" };
+// M75g: ScrollRect の動き方 (uiwidgets::kScroll* と同じ並び)
+constexpr const char* kUIScrollMovementLabels[] = { "Unrestricted", "Elastic", "Clamped" };
+constexpr const char* kUIScrollMovementJa[] = { "制限なし", "Elastic (端で戻る)", "Clamped (端で止まる)" };
 constexpr const char* kUIPresetColJa[] = { "左", "中央", "右", "伸縮" };
 constexpr const char* kUIPresetRowJa[] = { "上", "中央", "下", "伸縮" };
 // RayTracing.inScene / receiver (kRtScopeInherit / On / Off の並び)
@@ -411,6 +414,9 @@ constexpr EnumFieldLabels kEnumFields[] = {
     { "UISelectable", "transition", kUITransitionLabels, 3, kUITransitionJa },
     { "UISelectable", "navigationMode", kUINavModeLabels, 5, kUINavModeJa },
     { "UISlider", "direction", kUISliderDirLabels, 4, kUISliderDirJa },
+    // M75g: Scrollbar の向きは Slider と同じ並び
+    { "UIScrollbar", "direction", kUISliderDirLabels, 4, kUISliderDirJa },
+    { "UIScrollRect", "movementType", kUIScrollMovementLabels, 3, kUIScrollMovementJa },
     { "UIElement", "wrap", kOffOnLabels, 2, kOffOnJa },
     { "ConstantForce", "relative", kForceSpaceLabels, 2, kForceSpaceJa },
     { "SpriteRenderer", "billboardMode", kBillboardLabels, 3, kBillboardJa },
@@ -1083,6 +1089,15 @@ void InspectorWindow::DrawComponentFields(EngineContext& ctx, Selection& selecti
         }
         if ((driven & uilayout::kDrivenBySlider) != 0) {
             ImGui::TextDisabled("%s", Tr(StrId::Insp_UIDrivenSlider)); // M75f
+        }
+        if ((driven & uilayout::kDrivenByScrollbar) != 0) {
+            ImGui::TextDisabled("%s", Tr(StrId::Insp_UIDrivenScrollbar)); // M75g
+        }
+        if ((driven & uilayout::kDrivenByScrollRect) != 0) {
+            ImGui::TextDisabled("%s", Tr(StrId::Insp_UIDrivenScrollRect)); // M75g
+        }
+        if ((driven & uilayout::kDrivenByDropdown) != 0) {
+            ImGui::TextDisabled("%s", Tr(StrId::Insp_UIDrivenDropdown)); // M75g
         }
     }
 }

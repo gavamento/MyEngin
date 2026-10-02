@@ -875,6 +875,10 @@ MYE_STR(Create_UIGridLayout,  "Grid Layout Group",       "グリッドレイア�
 // M75f: ウィジェット (子構成込み)
 MYE_STR(Create_UIToggle,      "Toggle",            "トグル")
 MYE_STR(Create_UISlider,      "Slider",            "スライダー")
+// M75g: スクロールとドロップダウン (子構成込み)
+MYE_STR(Create_UIScrollbar,   "Scrollbar",         "スクロールバー")
+MYE_STR(Create_UIScrollView,  "Scroll View",       "スクロールビュー")
+MYE_STR(Create_UIDropdown,    "Dropdown",          "ドロップダウン")
 
 // ---- 統計ウィンドウ / 未保存確認 (M47b) ----
 MYE_STR(Stats_Fps,            "FPS: %.1f (%.3f ms)",        "FPS: %.1f (%.3f ms)")
@@ -1291,6 +1295,13 @@ MYE_STR(Insp_UIDrivenFitter,      "Size is set by the Content Size Fitter",
 // M75f: Slider の fillRect / handleRect (アンカーは value から導かれる)
 MYE_STR(Insp_UIDrivenSlider,      "Anchors are set by the parent Slider",
                                   "アンカーは親の Slider が決めています")
+// M75g: Scrollbar のつまみ / ScrollRect の中身 / Dropdown の一覧
+MYE_STR(Insp_UIDrivenScrollbar,   "Anchors are set by the parent Scrollbar",
+                                  "アンカーは親の Scrollbar が決めています")
+MYE_STR(Insp_UIDrivenScrollRect,  "The Scroll Rect's scroll position is added to the position",
+                                  "位置には Scroll Rect のスクロール位置が足されます")
+MYE_STR(Insp_UIDrivenDropdown,    "Height shrinks to fit the Dropdown's options",
+                                  "高さは Dropdown の選択肢の数に合わせて縮みます")
 MYE_STR(Insp_PmOvRestitution, "Override Restitution", "反発を上書き")
 
 // ---- Deep-Modal インスペクタプレビュー (M76g) ----

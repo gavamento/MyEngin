@@ -609,6 +609,93 @@ struct UIToggleGroupComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- Scrollbar (M75g) ----
+// Unity の Scrollbar。handleRect の**アンカーを value と size から導く** (Slider と同じく書き込まない —
+// uilayout::Resolve が uiwidgets::WidgetDrivenTransform を通す)。つまみを掴めば掴んだ位置を保って追従し、
+// 溝を押せばつまみの中心が押した点へ飛ぶ (Unity の ClickRepeat が毎フレーム UpdateDrag するのと同じ結果)。
+// ScrollRect に繋がっている間は value / size を ScrollRect が毎 tick 書き、操作された value を ScrollRect が読む。
+// ★**ハッシュ対象** — value / size / dragOffset は sim が書く状態
+struct UIScrollbarComponent {
+    EntityID handleRect = kNullEntity; // つまみ。親 (Sliding Area) の中でアンカーが value と size から決まる
+    int32_t direction = 0; // 0 = 左→右 / 1 = 右→左 / 2 = 下→上 / 3 = 上→下 (Slider と同じ並び)
+    // 0..1。ScrollRect が Elastic で引っ張っている間は 0..1 を越えうる (Unity と同じ。見た目は 0..1 に切る)
+    float value = 0.0f;
+    float size = 0.2f;         // つまみの長さ (溝に対する比 0..1)
+    int32_t numberOfSteps = 0; // 2 以上なら value をその段数に丸めて読む (0 / 1 = 連続)
+    // つまみを掴んだ点とつまみの中心の差 (キャンバス単位。Unity の m_Offset)。Inspector には出さない
+    DirectX::XMFLOAT2 dragOffset = { 0.0f, 0.0f };
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- Scroll Rect (M75g) ----
+// Unity の ScrollRect。content を viewport の中で動かす。ホイール / ドラッグ / スクロールバーで動き、
+// Elastic は端を越えた分をバネで戻し、慣性 (inertia) は離した後も decelerationRate で減速しながら滑る。
+// 時間は**固定 tick (1/60 秒)** で進める (Unity の unscaledDeltaTime の代わり) = 描画の速さに依らない。
+// ★content の RectTransform には**書き込まない**: position (スクロール量) を足した位置で uilayout::Resolve が
+//   解く (Slider / Layout Group と同じ「駆動しても保存値は変えない」形)。座標は y 下向き (position.y が増えると
+//   中身が下へ動く = 上の方が見える)
+// ★**ハッシュ対象** — position / velocity / ドラッグの状態は sim が書く
+struct UIScrollRectComponent {
+    EntityID content = kNullEntity;  // 動かす矩形
+    EntityID viewport = kNullEntity; // 見える範囲。null = 自分の矩形 (Unity と同じ)
+    bool horizontal = true;
+    bool vertical = true;
+    int32_t movementType = 1; // 0 = 制限なし / 1 = Elastic (端で戻る) / 2 = Clamped (端で止まる)。既定は Unity と同じ
+    float elasticity = 0.1f;  // Elastic の戻りの時定数 (秒)
+    bool inertia = true;
+    float decelerationRate = 0.135f; // 1 秒あたりに残る速度の比 (0 = 即停止、1 = 減速なし)
+    // ホイール 1 目盛りで動く量 (キャンバス単位)。★Unity は 1 目盛り = 1 単位 × scrollSensitivity (既定 1) で、
+    //   実用には遅すぎるので既定を 40 にした
+    float scrollSensitivity = 40.0f;
+    EntityID horizontalScrollbar = kNullEntity;
+    EntityID verticalScrollbar = kNullEntity;
+    DirectX::XMFLOAT2 position = { 0.0f, 0.0f }; // content の anchoredPosition に足すスクロール量
+    // ---- ここから Inspector に出さない状態 ----
+    DirectX::XMFLOAT2 velocity = { 0.0f, 0.0f }; // 単位 / 秒
+    bool dragging = false;
+    DirectX::XMFLOAT2 pointerStart = { 0.0f, 0.0f }; // ドラッグを始めた点 (キャンバス単位)
+    DirectX::XMFLOAT2 contentStart = { 0.0f, 0.0f }; // そのときの position
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- Dropdown (M75g) ----
+// Unity の Dropdown。押すと一覧 (templateRect) が開き、項目を押すと value が変わって閉じる。開いている間は
+// 一覧の外の押下が全部「閉じる」になる (Unity の Blocker)。Cancel (Escape / パッド B) でも閉じる。
+// 選択肢は**文字列の配列** (kDropdownMaxOptions 個まで、optionCount 個を使う)。一覧の項目は
+// Create > UI > Dropdown が kDropdownMaxOptions 個を常設の子として作り、index >= optionCount の項目は
+// uiwidgets::IsUiHidden で描画 / ヒット / ナビ / 自動レイアウトから外れる (tick の途中で物を生成しない)。
+// 表題 (captionText) と項目のラベルの文字は描画の上書きで選択肢から引く (UIElement.text には書かない)。
+// ★**ハッシュ対象** — value / expanded は sim が書く状態 (選択肢の文字列も一緒に畳まれる)
+inline constexpr int kDropdownMaxOptions = 8;
+struct UIDropdownComponent {
+    EntityID templateRect = kNullEntity; // 開いたときに見せる一覧 (閉じている間は描かない・当たらない)
+    EntityID captionText = kNullEntity;  // 選択中の選択肢を表示する UIElement (文字)
+    int32_t value = 0;                   // 選択中の index
+    bool expanded = false;
+    int32_t optionCount = 3;
+    char option0[64] = "Option A";
+    char option1[64] = "Option B";
+    char option2[64] = "Option C";
+    char option3[64] = {};
+    char option4[64] = {};
+    char option5[64] = {};
+    char option6[64] = {};
+    char option7[64] = {};
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- Dropdown Item (M75g) ----
+// Dropdown の一覧の項目 1 つ (Unity の DropdownItem)。持ち主は最寄りの祖先の UIDropdown。
+// label に選択肢 index の文字を、checkmark を value == index の間だけ描く (どちらも描画の上書き)。
+// 押せるのは同じエンティティの UISelectable (Create > UI > Dropdown が付ける)。
+// 見た目と規則の入力なので NoHash + UiAux
+struct UIDropdownItemComponent {
+    int32_t index = 0;
+    EntityID label = kNullEntity;     // 選択肢の文字を描く UIElement
+    EntityID checkmark = kNullEntity; // 選択中の印 (value == index の間だけ描く)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 // ---- Animator Controller (M22) ----
 // ステートマシンでアニメーションクリップを切替・ブレンドする。**無ければ何もしない** (opt-in)。
 // LocalTransform (ハッシュ対象) を駆動するので状態は決定論・**hash 対象** (kComponentNoHash を付けない)。

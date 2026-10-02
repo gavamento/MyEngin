@@ -229,6 +229,22 @@ GameObject CreateUISlider(EngineContext& ctx, const char* name)
     return uiwidgets::CreateSlider(*ctx.scene, name, uiwidgets::kSliderLeftToRight);
 }
 
+// M75g: スクロールとドロップダウン (構成の正本は uiwidgets::CreateScrollbar / CreateScrollView / CreateDropdown)
+GameObject CreateUIScrollbar(EngineContext& ctx, const char* name)
+{
+    return uiwidgets::CreateScrollbar(*ctx.scene, name, uiwidgets::kSliderLeftToRight);
+}
+
+GameObject CreateUIScrollView(EngineContext& ctx, const char* name)
+{
+    return uiwidgets::CreateScrollView(*ctx.scene, name);
+}
+
+GameObject CreateUIDropdown(EngineContext& ctx, const char* name)
+{
+    return uiwidgets::CreateDropdown(*ctx.scene, name);
+}
+
 GameObject RecordCreate(EngineContext& ctx, Selection& selection, UndoStack& undo, const char* label,
                         const std::function<GameObject()>& make)
 {
@@ -341,6 +357,13 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
                      &CreateUIToggle);
         CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UISlider), "Slider",
                      &CreateUISlider);
+        // M75g
+        CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIScrollbar), "Scrollbar",
+                     &CreateUIScrollbar);
+        CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIScrollView), "Scroll View",
+                     &CreateUIScrollView);
+        CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIDropdown), "Dropdown",
+                     &CreateUIDropdown);
         ImGui::Separator(); // M75e: 自動レイアウトの器
         CreateUIItem(ctx, selection, undo, parent, Tr(StrId::Create_UIHLayout),
                      "Horizontal Layout Group", &CreateUIHorizontalLayout);

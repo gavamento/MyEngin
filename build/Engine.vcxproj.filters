@@ -714,6 +714,9 @@
     <ClCompile Include="..\src\Engine\Engine\UI\UIRenderer.cpp">
       <Filter>Engine\UI</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\UI\UIScrollSelfTest.cpp">
+      <Filter>Engine\UI</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\UI\UISelfTest.cpp">
       <Filter>Engine\UI</Filter>
     </ClCompile>

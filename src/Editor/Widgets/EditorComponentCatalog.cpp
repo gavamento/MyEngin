@@ -92,6 +92,10 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "UIToggle", { ICON_FA_TOGGLE_ON, "UI", "トグル" } }, // M75f
         { "UISlider", { ICON_FA_SLIDERS, "UI", "スライダー" } }, // M75f
         { "UIToggleGroup", { ICON_FA_OBJECT_GROUP, "UI", "トグルグループ" } }, // M75f
+        { "UIScrollbar", { ICON_FA_ARROWS_UP_DOWN, "UI", "スクロールバー" } }, // M75g
+        { "UIScrollRect", { ICON_FA_SCROLL, "UI", "スクロールレクト" } }, // M75g
+        { "UIDropdown", { ICON_FA_SQUARE_CARET_DOWN, "UI", "ドロップダウン" } }, // M75g
+        { "UIDropdownItem", { ICON_FA_LIST_UL, "UI", "ドロップダウンの項目" } }, // M75g
     };
     return t;
 }

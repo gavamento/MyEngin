@@ -205,6 +205,7 @@
     <ClCompile Include="..\src\Engine\Engine\UI\UILayoutGroup.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UIProjectSettings.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UIRenderer.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\UI\UIScrollSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UISelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UITextMetrics.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UIWidgetFactory.cpp" />

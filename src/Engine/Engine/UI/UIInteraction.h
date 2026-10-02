@@ -86,7 +86,7 @@ inline constexpr const char* kActionNavDown = "UINavDown";
 inline constexpr const char* kActionNavLeft = "UINavLeft";
 inline constexpr const char* kActionNavRight = "UINavRight";
 inline constexpr const char* kActionSubmit = "UINavSubmit";
-// M75b: 取り消し (Escape / パッド B)。Dropdown を閉じる・InputField の編集を捨てる (M75g/h) が読む
+// M75b: 取り消し (Escape / パッド B)。Dropdown を閉じる (M75g)・InputField の編集を捨てる (M75h) が読む
 inline constexpr const char* kActionNavCancel = "UINavCancel";
 
 // ドラッグ開始の閾値 (M75b、ゲーム面 px)。Unity の EventSystem.pixelDragThreshold の既定値と同じ 10。
@@ -110,8 +110,12 @@ EntityID FindNextFocus(World& world, int canvasW, int canvasH, EntityID current,
 // スナップショットにもハッシュにも載せない (載せる状態は UIInteractionState と Toggle / Slider 側)
 struct TickEvents {
     EntityID pressBegan = kNullEntity;    // この tick に掴んだ要素 (泡立ち後)。Slider が「押した点へ飛ぶか」を決める
-    EntityID navStepTarget = kNullEntity; // 向きの軸の UINav* を値の変更として受けた Slider
+    EntityID navStepTarget = kNullEntity; // 向きの軸の UINav* を値の変更として受けた Slider / Scrollbar
     int navStepDir = -1;                  // そのときの uinav::NavDir (-1 = 無し)
+    bool cancel = false;                  // M75g: UINavCancel を押した (開いている Dropdown を閉じる)
+    // M75g: この tick にドラッグ閾値を越え、ドラッグを ScrollRect が引き取った (pressed がその ScrollRect に
+    // 移っている)。ドラッグの起点はこの tick のポインタ位置 (Unity の OnBeginDrag と同じ)
+    EntityID scrollDragBegan = kNullEntity;
 };
 
 // 1 tick 分の評価。**スクリプト層より前**に 1 回だけ呼ぶ (TickRunner)。

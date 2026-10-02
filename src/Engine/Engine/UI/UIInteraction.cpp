@@ -1,5 +1,6 @@
 #include "Engine/Engine/UI/UIInteraction.h"
 
+#include <iterator> // std::size
 #include <vector>
 
 #include "Engine/Core/Ecs/Components.h"
@@ -34,7 +35,13 @@ void ForEachUiElement(World& world, int canvasW, int canvasH, F&& fn)
             if (!IsEntityActive(world, e)) {
                 continue;
             }
-            fn(e, *static_cast<const UIElementComponent*>(arch.GetPtr(ci, row)), wc, scratch);
+            // M75g: 閉じた Dropdown の一覧と使われていない項目は無いものとして扱う (描画と同じ規則)
+            const uiwidgets::UiScope scope = uiwidgets::ScopeOf(world, e);
+            if (scope.hidden) {
+                continue;
+            }
+            fn(e, *static_cast<const UIElementComponent*>(arch.GetPtr(ci, row)), scope.orderBump, wc,
+               scratch);
         }
     });
 }
@@ -48,7 +55,7 @@ EntityID HitTest(World& world, int canvasW, int canvasH, float pointX, float poi
     int32_t bestOrder = 0;
     bool have = false;
     ForEachUiElement(world, canvasW, canvasH,
-                     [&](EntityID e, const UIElementComponent& el,
+                     [&](EntityID e, const UIElementComponent& el, int32_t orderBump,
                          const uilayout::UIWorldContext* wc, uilayout::LayoutScratch& scratch) {
                          const uilayout::UIResolved res =
                              uilayout::Resolve(world, e, canvasW, canvasH, wc, &scratch);
@@ -96,15 +103,16 @@ EntityID HitTest(World& world, int canvasW, int canvasH, float pointX, float poi
                              }
                          }
                          // 最前面 = (キャンバスの sortOrder, order, entity.index) の最大 (M75c)。
-                         // UIRenderer の描画順と同じキー
+                         // UIRenderer の描画順と同じキー。M75g: 開いた Dropdown の一覧は order を底上げ
                          const int32_t sortOrder = uilayout::CanvasSortOrder(world, canvasE);
+                         const int32_t order = el.order + orderBump;
                          if (!have || sortOrder > bestSort
                              || (sortOrder == bestSort
-                                 && (el.order > bestOrder
-                                     || (el.order == bestOrder && e.index > best.index)))) {
+                                 && (order > bestOrder
+                                     || (order == bestOrder && e.index > best.index)))) {
                              best = e;
                              bestSort = sortOrder;
-                             bestOrder = el.order;
+                             bestOrder = order;
                              have = true;
                          }
                      });
@@ -125,6 +133,10 @@ EntityID FindNextFocus(World& world, int canvasW, int canvasH, EntityID current,
     // ウィジェットの根は「操作可能 && navigationMode != None」、M75f)
     const auto consider = [&](EntityID e) {
         if (!IsEntityActive(world, e) || !uiwidgets::IsFocusCandidate(world, e)) {
+            return;
+        }
+        // M75g: 閉じた一覧 / 使われていない項目には飛ばない。Dropdown が開いている間は一覧の中だけ
+        if (uiwidgets::IsUiHidden(world, e) || !uiwidgets::IsInModalScope(world, e)) {
             return;
         }
         // 祖先クリップで完全に隠れた要素は候補から外す
@@ -161,12 +173,17 @@ EntityID FindNextFocus(World& world, int canvasW, int canvasH, EntityID current,
     }
     // M75f: UIElement を持たないウィジェットの根 (Toggle / Slider。見た目は子が持つ) も候補になる。
     // 1 つのエンティティを 2 回数えないよう「持っている型のうち並びの先頭」の走査でだけ拾う
-    // (並べ方は結果に効かない — 吸着は index 最小、FindNext の同点も index で決まる)
+    // (並べ方は結果に効かない — 吸着は index 最小、FindNext の同点も index で決まる)。
+    // M75g: Scrollbar / Dropdown / Dropdown の項目も同じ (IsWidgetRoot と同じ型の並び)
     {
         const ComponentTypeId widgetTypes[] = { UISelectableComponent::sTypeId,
                                                 UIToggleComponent::sTypeId,
-                                                UISliderComponent::sTypeId };
-        for (int ti = 0; ti < 3; ++ti) {
+                                                UISliderComponent::sTypeId,
+                                                UIScrollbarComponent::sTypeId,
+                                                UIDropdownComponent::sTypeId,
+                                                UIDropdownItemComponent::sTypeId };
+        constexpr int kWidgetTypeCount = static_cast<int>(std::size(widgetTypes));
+        for (int ti = 0; ti < kWidgetTypeCount; ++ti) {
             const ComponentTypeId req[] = { widgetTypes[ti] };
             world.ForEachArchetype(req, [&](Archetype& arch) {
                 if (arch.FindTypeIndex(UIElementComponent::sTypeId) >= 0) {
@@ -296,9 +313,16 @@ void Evaluate(World& world, const InputSnapshot& in, const InputSnapshot& prevIn
     const float mouseX = uilayout::SurfaceToCanvas(in.mouseSurfX, canvas);
     const float mouseY = uilayout::SurfaceToCanvas(in.mouseSurfY, canvas);
     // M75f: ヒットした要素 (画像や文字) から最寄りのウィジェットの根へ泡立てる。ウィジェットの無い
-    // シーンでは HitTest の結果そのまま
-    const EntityID under =
-        uiwidgets::BubbleTarget(world, HitTest(world, canvasW, canvasH, mouseX, mouseY));
+    // シーンでは HitTest の結果そのまま。
+    // M75g: Dropdown が開いている間は、一覧の外 (何も無い所を含む) が Dropdown の根になる (Unity の Blocker)
+    const EntityID under = uiwidgets::ApplyModalBlocker(
+        world, uiwidgets::BubbleTarget(world, HitTest(world, canvasW, canvasH, mouseX, mouseY)));
+    // M75g: 一覧の項目にカーソルが入ったらフォーカスを移す (Unity の DropdownItem.OnPointerEnter)。
+    // 入った tick だけ = 乗せたままキーで動かしても引き戻さない
+    if (under != state.hovered && uiwidgets::IsDropdownItemRoot(world, under)
+        && uiwidgets::IsFocusCandidate(world, under)) {
+        state.focused = under;
+    }
     state.hovered = under;
     const bool down = in.MouseDown(0);
     if (down) {
@@ -328,12 +352,23 @@ void Evaluate(World& world, const InputSnapshot& in, const InputSnapshot& prevIn
             const float dy = in.mouseSurfY - state.pressSurfY;
             if (dx * dx + dy * dy > kDragThresholdSurfPx * kDragThresholdSurfPx) {
                 state.dragging = 1; // 以後、離すまで保持する
+                // M75g: ドラッグを受けるのが祖先の ScrollRect なら、押下はそこへ移る (Unity: pointerDrag が
+                // pointerPress と違うと押した要素へ PointerUp を送り、クリックの資格を外す)。押していた
+                // ボタンは離した扱い = クリックにならない
+                const EntityID scroll = uiwidgets::DragScrollTarget(world, state.pressed);
+                if (scroll != kNullEntity) {
+                    state.pressed = scroll;
+                    ev.scrollDragBegan = scroll;
+                }
             }
         }
     } else if (state.pressed != kNullEntity) {
         // 離した。**掴んだ要素の上で離したときだけ** click (Unity 意味論) —
-        // 押してから外へドラッグして離す操作は取り消しになる
-        if (state.pressed == under) {
+        // 押してから外へドラッグして離す操作は取り消しになる。
+        // M75g: ScrollRect が引き取ったドラッグはクリックにしない
+        const bool scrollDrag = state.dragging != 0
+            && world.GetComponent<UIScrollRectComponent>(state.pressed) != nullptr;
+        if (state.pressed == under && !scrollDrag) {
             state.clicked = under;
         }
         state.pressed = kNullEntity;
@@ -358,12 +393,11 @@ void Evaluate(World& world, const InputSnapshot& in, const InputSnapshot& prevIn
         }
         if (dir >= 0) {
             // M75f: フォーカス中の Slider は向きの軸の入力を値の変更として受ける (Unity の Slider.OnMove)。
-            // 自動ナビなら常に受け、それ以外のモードはその向きに行き先が無いときだけ受ける
+            // 自動ナビなら常に受け、それ以外のモードはその向きに行き先が無いときだけ受ける。
+            // M75g: Scrollbar も同じ (Unity の Scrollbar.OnMove / FindSelectableOn* の上書きが Slider と同じ)
             const EntityID current = state.focused;
-            const auto* slider = (current != kNullEntity && world.IsAlive(current))
-                ? world.GetComponent<UISliderComponent>(current) : nullptr;
-            if (slider != nullptr && uiwidgets::IsInteractable(world, current)
-                && uiwidgets::SliderMoveOnAxis(*slider, dir)) {
+            if (current != kNullEntity && uiwidgets::IsInteractable(world, current)
+                && uiwidgets::TakesNavStep(world, current, dir)) {
                 const EntityID next =
                     (uiwidgets::SelectableOf(world, current).navigationMode == uiwidgets::kNavAutomatic)
                     ? current : FindNextFocus(world, canvasW, canvasH, current, dir);
@@ -386,19 +420,23 @@ void Evaluate(World& world, const InputSnapshot& in, const InputSnapshot& prevIn
                  && !uiwidgets::IsInteractable(world, state.focused))) {
             state.clicked = state.focused;
         }
+        // M75g: Cancel は開いている Dropdown を閉じる (uiwidgets::Update が読む)
+        ev.cancel = navPressed(kActionNavCancel);
     }
 
     // ---- 生存確認 + UIElement.focused への書き戻し ----
     // 参照先が消えている / focusable でなくなっていたら手放す (世代付き EntityID なので
     // 破棄後の再利用は別 ID になる = ここは「本当に同じ要素か」の検査になる)。
-    // M75f: UIElement を持たないウィジェットの根 (Toggle / Slider) も対話の相手になれる
+    // M75f: UIElement を持たないウィジェットの根 (Toggle / Slider) も対話の相手になれる。
+    // M75g: ドラッグを引き取った ScrollRect も (pressed が移る先)
     const auto stillUsable = [&world](EntityID e) {
         if (e == kNullEntity) {
             return false;
         }
         return world.IsAlive(e)
             && (world.GetComponent<UIElementComponent>(e) != nullptr
-                || uiwidgets::IsWidgetRoot(world, e));
+                || uiwidgets::IsWidgetRoot(world, e)
+                || world.GetComponent<UIScrollRectComponent>(e) != nullptr);
     };
     if (!stillUsable(state.hovered)) { state.hovered = kNullEntity; }
     if (!stillUsable(state.pressed)) { state.pressed = kNullEntity; }

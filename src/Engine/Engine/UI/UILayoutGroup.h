@@ -127,6 +127,9 @@ inline constexpr uint32_t kDrivenWidth = 1u << 1;    // 幅が上書きされて
 inline constexpr uint32_t kDrivenHeight = 1u << 2;   // 高さが上書きされている
 inline constexpr uint32_t kDrivenByFitter = 1u << 3; // 上書きの一部は自分の ContentSizeFitter
 inline constexpr uint32_t kDrivenBySlider = 1u << 4; // M75f: アンカーを祖先の Slider が value から決めている
+inline constexpr uint32_t kDrivenByScrollbar = 1u << 5;  // M75g: アンカーを祖先の Scrollbar が value / size から決めている
+inline constexpr uint32_t kDrivenByScrollRect = 1u << 6; // M75g: 位置に ScrollRect のスクロール量が足されている
+inline constexpr uint32_t kDrivenByDropdown = 1u << 7;   // M75g: 高さを Dropdown が選択肢の数に合わせて縮めている
 uint32_t LayoutDrivenBits(World& world, EntityID e);
 
 } // namespace uilayout

@@ -250,9 +250,16 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
             if (!IsEntityActive(world, e)) {
                 continue;
             }
+            // M75g: 閉じた Dropdown の一覧と使われていない項目は描かない。開いた一覧は order を底上げして
+            // 手前に描く (HitTest と同じ規則 = 見えている一覧が押せる)
+            const uiwidgets::UiScope scope = uiwidgets::ScopeOf(world, e);
+            if (scope.hidden) {
+                continue;
+            }
             const auto* el = static_cast<const UIElementComponent*>(arch.GetPtr(ci, row));
             const EntityID canvasE = uilayout::FindCanvas(world, e);
-            items.push_back({ uilayout::CanvasSortOrder(world, canvasE), el->order, e, canvasE, el });
+            items.push_back({ uilayout::CanvasSortOrder(world, canvasE), el->order + scope.orderBump, e,
+                              canvasE, el });
         }
     });
     if (items.empty()) {
@@ -268,10 +275,20 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
         return a.e.index < b.e.index;
     });
 
+    // M75f: Selectable の遷移 (色 / 画像) と off の Toggle のチェックマーク。M75g: Dropdown の表題と項目の文字。
+    // ウィジェットの無いシーンでは空で、下の color は el.color の複写のまま
+    std::vector<uiwidgets::VisualOverride> overrides;
+    uiwidgets::CollectVisualOverrides(world, ui, overrides);
+
     // ---- フェーズ 1: 全テキストのグリフを焼成 (アトラス成長はここだけで起きる) ----
     for (const Item& it : items) {
         if (it.el->kind == 1 || it.el->kind == 2) {
             font_.EnsureText(it.el->text);
+        }
+    }
+    for (const uiwidgets::VisualOverride& v : overrides) {
+        if ((v.flags & uiwidgets::kVisText) != 0) {
+            font_.EnsureText(v.text.c_str()); // M75g: 差し替える文字もここで焼く
         }
     }
 
@@ -298,10 +315,6 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
     const D3D11_RECT fullScissor = { 0, 0, width, height };
     // M75e: 自動レイアウトのメモはこのフレームの描画 1 回ぶん (結果は変えない。描画中に World は動かない)
     uilayout::LayoutScratch layoutScratch;
-    // M75f: Selectable の遷移 (色 / 画像) と off の Toggle のチェックマーク。ウィジェットの無いシーンでは空で、
-    // 下の color は el.color の複写のまま
-    std::vector<uiwidgets::VisualOverride> overrides;
-    uiwidgets::CollectVisualOverrides(world, ui, overrides);
     for (const Item& it : items) {
         const UIElementComponent& el = *it.el;
         uiwidgets::VisualOverride vis;
@@ -366,9 +379,11 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
             }
         }
 
+        // M75g: Dropdown の表題 / 項目は選択肢の文字に差し替える (UIElement.text には書かない)
+        const char* text = ((vis.flags & uiwidgets::kVisText) != 0) ? vis.text.c_str() : el.text;
         if (el.kind == 1) {
             // テキスト (背景無し)。M51e: 矩形 (w,h) 内で整列 + 折返し (既定 0/0 = 左上)
-            PushTextInRect(el.text, rx, ry, rect.w, rect.h, textScale, color, el.align,
+            PushTextInRect(text, rx, ry, rect.w, rect.h, textScale, color, el.align,
                            el.wrap != 0);
         } else if (el.kind == 2) {
             // ボタン: 背景 + hover/press ハイライト + 中央ラベル。
@@ -390,7 +405,7 @@ void UIRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sha
             }
             PushQuad(whiteSrv_, false, rx, ry, rect.w, rect.h, 0, 0, 1, 1, bg);
             const XMFLOAT4 label = { 1, 1, 1, 1 };
-            PushTextInRect(el.text, rx, ry, rect.w, rect.h, textScale, label, 4, false);
+            PushTextInRect(text, rx, ry, rect.w, rect.h, textScale, label, 4, false);
         } else {
             // パネル / 画像 (M35: 9-slice / fillAmount 対応)
             ID3D11ShaderResourceView* srv = whiteSrv_;

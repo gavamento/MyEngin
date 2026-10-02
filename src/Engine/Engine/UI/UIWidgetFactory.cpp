@@ -1,7 +1,7 @@
 //====================================================================================
 //                          UIWidgetFactory.cpp
 //  MyEngine/ 秋田蓮音                                                      09/13/2026
-//                                          子構成込みのウィジェット（Toggle / Slider）の組み立ての実装
+//                                          子構成込みのウィジェット（Toggle / Slider / Scroll / Dropdown）の組み立ての実装
 //====================================================================================
 #include "Engine/Engine/UI/UIWidgetFactory.h"
 
@@ -9,6 +9,7 @@
 
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/UI/UILayoutGroup.h" // M75g: Dropdown の一覧の Layout Group / Fitter の定数
 #include "Engine/Engine/UI/UIWidgets.h"
 
 namespace mye {
@@ -138,6 +139,221 @@ GameObject CreateSlider(Scene& scene, const char* name, int direction)
         slider->fillRect = fill.Id();
         slider->handleRect = handle.Id();
         slider->direction = dir;
+    }
+    return root;
+}
+
+GameObject CreateScrollbar(Scene& scene, const char* name, int direction)
+{
+    const int dir = (direction >= kSliderLeftToRight && direction <= kSliderTopToBottom)
+        ? direction : kSliderLeftToRight;
+    const bool vertical = dir == kSliderBottomToTop || dir == kSliderTopToBottom;
+
+    GameObject root = scene.CreateGameObjectTracked(name);
+    AddRect(root, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.0f, 0.0f },
+            vertical ? DirectX::XMFLOAT2{ 20.0f, 160.0f } : DirectX::XMFLOAT2{ 160.0f, 20.0f });
+    AddPanel(root, { 0.18f, 0.19f, 0.24f, 1.0f });
+
+    // Unity の既定と同じく、溝の内側 10 にアンカー部分を取り、つまみの sizeDelta 20 で溝の端まで届かせる
+    GameObject area = scene.CreateGameObjectTracked("Sliding Area");
+    AddInsetRect(area, { 0.0f, 0.0f }, { 1.0f, 1.0f }, 10.0f, 10.0f, 10.0f, 10.0f);
+    area.SetParent(root);
+
+    GameObject handle = scene.CreateGameObjectTracked("Handle");
+    AddRect(handle, { 0.0f, 0.0f }, { 1.0f, 1.0f }, { 0.5f, 0.5f }, { 0.0f, 0.0f }, { 20.0f, 20.0f });
+    AddPanel(handle, { 0.72f, 0.74f, 0.80f, 1.0f });
+    handle.SetParent(area);
+
+    root.AddComponent<UISelectableComponent>()->targetGraphic = handle.Id();
+    {
+        auto* bar = root.AddComponent<UIScrollbarComponent>();
+        bar->handleRect = handle.Id();
+        bar->direction = dir;
+    }
+    return root;
+}
+
+GameObject CreateScrollView(Scene& scene, const char* name)
+{
+    constexpr float kBarWidth = 20.0f;
+    GameObject root = scene.CreateGameObjectTracked(name);
+    AddRect(root, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.0f, 0.0f }, { 400.0f, 300.0f });
+    AddPanel(root, { 0.10f, 0.11f, 0.14f, 1.0f });
+
+    // 左上基準で右と下にスクロールバーの幅を空ける (Unity の Viewport は pivot (0,1) = 左上)
+    GameObject viewport = scene.CreateGameObjectTracked("Viewport");
+    AddRect(viewport, { 0.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, 0.0f },
+            { -kBarWidth, -kBarWidth });
+    {
+        auto* el = viewport.AddComponent<UIElementComponent>();
+        el->kind = 0;
+        el->color = { 0.14f, 0.15f, 0.19f, 1.0f };
+        el->clipChildren = true;
+    }
+    viewport.SetParent(root);
+
+    // 上辺に沿って横いっぱい、pivot は左上 (Unity の Content と同じ)。高さは見える範囲より大きくしておく
+    GameObject content = scene.CreateGameObjectTracked("Content");
+    AddRect(content, { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 0.0f, 0.0f }, { 0.0f, 0.0f }, { 0.0f, 600.0f });
+    content.SetParent(viewport);
+
+    GameObject hbar = CreateScrollbar(scene, "Scrollbar Horizontal", kSliderLeftToRight);
+    {
+        auto* rt = hbar.GetComponent<RectTransformComponent>();
+        rt->anchorMin = { 0.0f, 1.0f };
+        rt->anchorMax = { 1.0f, 1.0f };
+        rt->pivot = { 0.0f, 1.0f };
+        rt->anchoredPosition = { 0.0f, 0.0f };
+        rt->sizeDelta = { -kBarWidth, kBarWidth };
+    }
+    hbar.SetParent(root);
+
+    GameObject vbar = CreateScrollbar(scene, "Scrollbar Vertical", kSliderBottomToTop);
+    {
+        auto* rt = vbar.GetComponent<RectTransformComponent>();
+        rt->anchorMin = { 1.0f, 0.0f };
+        rt->anchorMax = { 1.0f, 1.0f };
+        rt->pivot = { 1.0f, 0.0f };
+        rt->anchoredPosition = { 0.0f, 0.0f };
+        rt->sizeDelta = { kBarWidth, -kBarWidth };
+    }
+    vbar.SetParent(root);
+
+    {
+        auto* sr = root.AddComponent<UIScrollRectComponent>();
+        sr->content = content.Id();
+        sr->viewport = viewport.Id();
+        sr->horizontalScrollbar = hbar.Id();
+        sr->verticalScrollbar = vbar.Id();
+    }
+    return root;
+}
+
+GameObject CreateDropdown(Scene& scene, const char* name, float labelScale)
+{
+    constexpr float kItemHeight = 28.0f;
+    constexpr float kBarWidth = 20.0f;
+    const DirectX::XMFLOAT4 textColor = { 0.15f, 0.16f, 0.20f, 1.0f };
+
+    GameObject root = scene.CreateGameObjectTracked(name);
+    AddRect(root, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.0f, 0.0f }, { 160.0f, 40.0f });
+    AddPanel(root, { 1.0f, 1.0f, 1.0f, 1.0f }); // 状態色を掛けるので白 (Unity の既定と同じ)
+
+    GameObject label = scene.CreateGameObjectTracked("Label");
+    AddInsetRect(label, { 0.0f, 0.0f }, { 1.0f, 1.0f }, 10.0f, 6.0f, 30.0f, 7.0f);
+    {
+        auto* el = label.AddComponent<UIElementComponent>();
+        el->kind = 1;
+        el->align = 3; // 左中央
+        el->color = textColor;
+        el->fontScale = labelScale;
+    }
+    label.SetParent(root);
+
+    GameObject arrow = scene.CreateGameObjectTracked("Arrow");
+    AddRect(arrow, { 1.0f, 0.5f }, { 1.0f, 0.5f }, { 0.5f, 0.5f }, { -15.0f, 0.0f }, { 14.0f, 14.0f });
+    AddPanel(arrow, { 0.30f, 0.32f, 0.40f, 1.0f });
+    arrow.SetParent(root);
+
+    // 一覧は根の下辺から 2 下に吊る (Unity の Template: 横いっぱい・pivot は上辺)。高さは選択肢の数に合わせて
+    // 縮む (uiwidgets::WidgetDrivenTransform) ので、ここは最大の高さ
+    GameObject tmpl = scene.CreateGameObjectTracked("Template");
+    AddRect(tmpl, { 0.0f, 1.0f }, { 1.0f, 1.0f }, { 0.5f, 0.0f }, { 0.0f, 2.0f }, { 0.0f, 200.0f });
+    AddPanel(tmpl, { 0.95f, 0.95f, 0.97f, 1.0f });
+    tmpl.SetParent(root);
+
+    GameObject viewport = scene.CreateGameObjectTracked("Viewport");
+    AddRect(viewport, { 0.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, 0.0f }, { -kBarWidth, 0.0f });
+    {
+        auto* el = viewport.AddComponent<UIElementComponent>();
+        el->kind = 0;
+        el->color = { 0.95f, 0.95f, 0.97f, 1.0f };
+        el->clipChildren = true;
+    }
+    viewport.SetParent(tmpl);
+
+    GameObject content = scene.CreateGameObjectTracked("Content");
+    AddRect(content, { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 0.5f, 0.0f }, { 0.0f, 0.0f }, { 0.0f, kItemHeight });
+    {
+        auto* g = content.AddComponent<UILayoutGroupComponent>();
+        g->kind = uilayout::kLayoutVertical;
+        g->padding = { 0.0f, 4.0f, 0.0f, 4.0f };
+        g->controlChildWidth = true;
+        g->controlChildHeight = false;
+        g->forceExpandWidth = true;
+        g->forceExpandHeight = false;
+    }
+    content.AddComponent<UIContentSizeFitterComponent>()->verticalFit = uilayout::kFitPreferred;
+    content.SetParent(viewport);
+
+    for (int i = 0; i < kDropdownMaxOptions; ++i) {
+        char itemName[16];
+        std::snprintf(itemName, sizeof(itemName), "Item %d", i);
+        GameObject item = scene.CreateGameObjectTracked(itemName);
+        AddRect(item, { 0.0f, 0.0f }, { 0.0f, 0.0f }, { 0.5f, 0.5f }, { 0.0f, 0.0f }, { 0.0f, kItemHeight });
+        AddPanel(item, { 0.35f, 0.55f, 0.90f, 1.0f });
+        item.SetParent(content);
+
+        GameObject check = scene.CreateGameObjectTracked("Item Checkmark");
+        AddRect(check, { 0.0f, 0.5f }, { 0.0f, 0.5f }, { 0.5f, 0.5f }, { 14.0f, 0.0f }, { 10.0f, 10.0f });
+        AddPanel(check, textColor);
+        check.SetParent(item);
+
+        GameObject itemLabel = scene.CreateGameObjectTracked("Item Label");
+        AddInsetRect(itemLabel, { 0.0f, 0.0f }, { 1.0f, 1.0f }, 28.0f, 0.0f, 8.0f, 0.0f);
+        {
+            auto* el = itemLabel.AddComponent<UIElementComponent>();
+            el->kind = 1;
+            el->align = 3;
+            el->color = textColor;
+            el->fontScale = labelScale;
+        }
+        itemLabel.SetParent(item);
+
+        {
+            // 背景は普段は透明で、カーソル / フォーカス / 押下の間だけ青く出る (Unity の項目の Toggle と同じ役)
+            auto* sel = item.AddComponent<UISelectableComponent>();
+            sel->normalColor = { 1.0f, 1.0f, 1.0f, 0.0f };
+            sel->highlightedColor = { 1.0f, 1.0f, 1.0f, 0.55f };
+            sel->selectedColor = { 1.0f, 1.0f, 1.0f, 0.85f };
+            sel->pressedColor = { 0.8f, 0.8f, 0.8f, 1.0f };
+            sel->disabledColor = { 1.0f, 1.0f, 1.0f, 0.0f };
+        }
+        {
+            auto* di = item.AddComponent<UIDropdownItemComponent>();
+            di->index = i;
+            di->label = itemLabel.Id();
+            di->checkmark = check.Id();
+        }
+    }
+
+    GameObject bar = CreateScrollbar(scene, "Scrollbar", kSliderBottomToTop);
+    {
+        auto* rt = bar.GetComponent<RectTransformComponent>();
+        rt->anchorMin = { 1.0f, 0.0f };
+        rt->anchorMax = { 1.0f, 1.0f };
+        rt->pivot = { 1.0f, 0.0f };
+        rt->anchoredPosition = { 0.0f, 0.0f };
+        rt->sizeDelta = { kBarWidth, 0.0f };
+    }
+    bar.SetParent(tmpl);
+
+    {
+        // Unity の Template の ScrollRect: 縦だけ・Clamped
+        auto* sr = tmpl.AddComponent<UIScrollRectComponent>();
+        sr->content = content.Id();
+        sr->viewport = viewport.Id();
+        sr->horizontal = false;
+        sr->vertical = true;
+        sr->movementType = kScrollClamped;
+        sr->verticalScrollbar = bar.Id();
+    }
+
+    root.AddComponent<UISelectableComponent>();
+    {
+        auto* dd = root.AddComponent<UIDropdownComponent>();
+        dd->templateRect = tmpl.Id();
+        dd->captionText = label.Id();
     }
     return root;
 }

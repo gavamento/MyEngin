@@ -2468,6 +2468,11 @@ bool RunUISelfTest()
         }
     }
 
+    // M75g: スクロールとドロップダウンは別ファイル (この関数が長くなりすぎたため)。失敗は 1 件として数える
+    if (!RunUIScrollSelfTest()) {
+        ++failCount;
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== UI self test: ALL PASS ====");
         return true;

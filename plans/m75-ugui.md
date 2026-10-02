@@ -98,7 +98,7 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
 | **M75d** | フォント計測表アセット (cook CLI/ボタン + ローダ + `uitext::Measure` + 固定メトリクス fallback + net fingerprint 値) | — | 不変 |
 | **M75e** | Layout Group / LayoutElement / ContentSizeFitter + `LayoutScratch` | — | `ui_widgets` 更新 |
 | **M75f** | Selectable + Toggle + Slider + バブリング + `changed` + replay 8 ペア目 `--ui-demo` (決定論の入力台本) | — | `ui_widgets` 更新 |
-| **M75g** | ScrollRect + Dropdown + `IsUiHidden` | — | `ui_widgets` 更新 |
+| **M75g** | ScrollRect + Scrollbar + Dropdown + `IsUiHidden` (完了 2026-10-03) | — | `ui_widgets` 更新 |
 | **M75h** | InputField + ABI v19 (12 本) + C# ミラー + `UiWidgetsDemo.cpp` | ABI 18→19 | `ui_widgets` 更新 |
 | **M75i** | Rect Tool + GameView → サーフェス換算 (**M75a 以降なら並列 worktree 可**) | — | 不変 |
 | **M75j** | `--ui-demo` 最終形 (`ui_widgets` / `ui_widgets_16x10`) / engine_spec §6.11-6.15 / ADR-020 / README / CLAUDE.md / dogfooding.md | — | 確定 |
@@ -323,6 +323,67 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
   `--ui-demo` も maxDiff=0) / **`replay_verify` PASS** (8 シーン = 新しい `ui` ペアを含む 13 ジョブ、`MYE_REPLAY_JOBS=3`) /
   Inspector (Selectable の列挙 / Slider の fill・handle の注記) は `Editor.exe --ui-demo --select <名前> --height 3000 --screenshot` で目視。
   ★CLAUDE.md の検証表 (「7 シーンチェーン」「12 ジョブ」) と CLI 一覧 (`--ui-demo-input`) は M75j でまとめて直す。
+
+- **M75g (2026-10-03)**: master で直接実装。ユーザー決定 3 つ (着手時に確認): **Scrollbar を含める** /
+  **ScrollRect は Elastic と慣性まで入れる** (計画は「慣性無し」) / **Dropdown の選択肢は文字列の配列**。
+  計画 F から変えた点・計画に無かった事実:
+- **TypeId は 67 UIScrollbar / 68 UIScrollRect / 69 UIDropdown / 70 UIDropdownItem** (計画の 59〜61 は M76f / M80 / RT の
+  末尾 append の後ろへずれた。ModalSound 61・Tag 62・WaterWave 63・Destructible 64・FracturePiece 65・RayTracing 66)。
+  ★実行時のスキーマ型 (`Health` など) はこの後ろ = 71〜 に振られる。**M75h の InputField は 71** で、スキーマ型がまた 1 つずれる。
+  ハッシュ: Scrollbar / ScrollRect / Dropdown は対象 (UiAux だけ)、DropdownItem は NoHash + UiAux。
+- **計画 M75b の宿題「wheelDelta / mouseDelta をフレーム頭で消費」は M75g の前に解決済み** (`b4a35c0` の `PointerDeltaCarry`:
+  実際に回った tick へ 1 回だけ渡す)。ScrollRect はそのまま InputSnapshot.wheelDelta を読む。
+- **ScrollRect は Unity の ScrollRect.cs (com.unity.ugui main) の OnScroll / OnInitializePotentialDrag / OnBeginDrag / OnDrag /
+  OnEndDrag / LateUpdate / UpdateScrollbars / normalizedPosition を固定 tick (1/60 秒) で移植** (`uiwidgets::UpdateScrollRect`)。
+  SmoothDamp は Unity の多項式近似そのまま、慣性の減速 `decelerationRate^dt` は CRT の pow ではなく `uilayout::DetPow`
+  (Canvas Scaler の Match と同じ double の級数) を公開して使う。y 下向きへ写しても式の形が変わらないのは軸ごとに独立だから —
+  向きが効くのはホイールの符号・縦の normalizedPosition (Unity と同じ「0 = 下」)・Scrollbar の向きだけ (`ScrollFrame`)。
+  - 中身の矩形は **tick の頭で 1 回だけ解き、以後は position の差で平行移動**させる (Unity の UpdateBounds の解き直しと同じ値。
+    解き直さないのは LayoutScratch が古い配置を返しうるため)。
+  - **content の RectTransform には書かない**: `position` を anchoredPosition に足して解く (`WidgetDrivenTransform`、Slider と同じ形)。
+  - 複数の ScrollRect は **entity.index 順**に進める (入れ子は外側の位置が内側の矩形に効く。走査順に任せない)。
+  - `scrollSensitivity` の既定は **40 (キャンバス単位 / 1 目盛り)**。Unity は 1 目盛り = 1 単位 × 1 で実用に遅すぎるため。
+  - **入れていないもの**: Scrollbar の AutoHide / AutoHideAndExpandViewport (常に表示) / 回転した content の境界 (矩形で近似) /
+    onValueChanged 相当は `changed` (慣性 / Elastic で動いている tick も、他に何も立っていなければ立つ)。
+- **ドラッグの引き渡し** (Unity の pointerDrag): 閾値を越えた tick に、押した要素から祖先へ辿って最初の ScrollRect が押下を引き取る
+  (`DragScrollTarget`。Slider / Scrollbar を押したときは自分でドラッグ)。`state.pressed` がその ScrollRect に移り、離しても
+  クリックにならない (Unity の eligibleForClick)。`TickEvents.scrollDragBegan` で Update へ渡す (計画の申し送りどおり Evaluate の中で積む)。
+  Evaluate の stillUsable は UIScrollRect も対話の相手として残す。
+- **Scrollbar**: 溝を押すとつまみの中心が押した点へ飛び、つまみを掴むと中心とのずれ (`dragOffset`) を保つ。Unity の ClickRepeat
+  (押している間毎フレーム UpdateDrag) と結果が同じになる形。値は生のまま持ち `numberOfSteps` で丸めて読む (`ScrollbarSteppedValue`)。
+  向きの軸のキーは Slider と同じ口 (`uiwidgets::TakesNavStep`。Evaluate の Slider 専用分岐をこれへ置き換えた)。
+- **Dropdown**:
+  - 一覧の項目は Create > UI > Dropdown が **kDropdownMaxOptions = 8 個を常設**で作り、`index >= optionCount` の項目は
+    `IsUiHidden` で描画 / ヒット / ナビ / Layout Group (`IsLayoutChild`) から外れる。tick の途中で物を作らない。
+  - **表題と項目の文字は描画の上書き (`kVisText`) で選択肢から引く。UIElement.text には書かない** — エディタで選択肢を書き換えると
+    再生しなくても絵が追従する。代わりに ABI の GetUIText で表題を読むと作者の値が返る (M75h で ABI を足すなら GetDropdown を使う)。
+  - 開いた一覧は `kDropdownListOrderBump` (+10000) を描画とヒットの order に足し (`ScopeOf`)、**祖先のクリップを受けない**
+    (`ResolveClipRect` が一覧の根で止まる = スクロールビューの中のドロップダウンでも切れない)。Canvas の sortOrder は越えない (制限)。
+  - Blocker は `ApplyModalBlocker`: 開いている間は一覧の外のヒット (何も無い所を含む) が Dropdown の根になり、押すと閉じる。
+    ホイールとドラッグも一覧の外では誰も受けない、ナビの候補も一覧の中だけ (`IsInModalScope`)。
+  - ★`BubbleTarget` は一覧の根で止める (一覧は Dropdown の子だが意味は別の窓)。止めないと一覧の背景を押しただけで閉じる (1 回踏んだ)。
+  - 一覧の高さは選択肢の数に合わせて縮む (`WidgetDrivenTransform`。Unity の Show)。前提は Create > UI の構成 (一覧の縦アンカーが 1 点 /
+    viewport が縦に伸縮 / content が縦の Layout Group)。外れた構成では縮めない。**画面外へはみ出したときの上下反転は無い** (制限)。
+  - Show で一覧の ScrollRect を先頭へ戻す (Unity は毎回作り直すので常に先頭)。他に開いている Dropdown は閉じる。
+- `--ui-demo` の積み増し: LayoutRow と Title の間の帯に Scroll View (10 行・縦横に動く) と Dropdown (選択肢 4 つ、**開いた状態で始める**
+  = golden に一覧が写る)。台本 (`UiDemoScriptInput`) は 490 tick 周期にし、ホイール (`Step.wheel`) / 行のドラッグと慣性 / 縦横のバー /
+  一覧の項目のクリック / キー (下 + Enter) / Escape / Blocker を足した。1 周目の最初の押下 (Toggle A) は Blocker に当たって一覧を閉じる。
+  被覆は `Editor.exe --ui-demo --replay-verify cache\golden_ui.rep --hash-dump X --hash-dump-tick N` で確認した (p = tick - 30):
+  p340 ホイール 3 目盛り = position.y -120 / p365 投げた後の慣性 velocity.y -310 / p415 横のバー = x -200 (右端)、縦のバー = y -262 (下端) /
+  p420 開く → p426 HARD で値 2・閉じる → p442 開く → p446 下 + Enter で値 3 → p456 開く → p466 Escape で閉じる (値 3 のまま) →
+  p476 開く → p486 一覧の外の押下で閉じる。★最初の台本は「離す tick と同時に項目へ動かす」書き方で、根の外で離したことになり
+  開かなかった (被覆の確認で発覚) — 離す tick は根の上に置くこと。
+- **M75g の検証**: Debug / Release ビルド 0 エラー (★`/p:MyeWarnAsError=true` は M75g と無関係の既存の
+  `ProjectComputeRunnerSelfTest.cpp` の C4127 で止まる) / Debug `--selftest`: 新設の `RunUIScrollSelfTest` (43 項目、`UIScrollSelfTest.cpp`) は ALL PASS、
+  全体の exit 1 は **Source control self test の既存 2 件** (`external cherry-pick state ...` / `external revert state ...`。
+  `src\Editor\SourceControl\` は無変更) / `check_rules` 0 / **`shot_verify`**: `ui_widgets` だけを手で更新 (差分は新しい 2 つの
+  ウィジェットの矩形の中だけ。Debug と Release の `--ui-demo` も maxDiff=0)。FAIL のまま残る 5 枚 = 既知の 4 枚 (parts / joints /
+  acoustic_forward / acoustic_deferred、M80 の Q-13) + **fracture_after** — **M75g 着手前の HEAD (`579169b`) を worktree で
+  ビルドして (GameLogic.dll と MyeScripting.dll も作って) 撮ると、joints / acoustic ×2 / fracture_after の 4 枚は今回の actual と
+  バイト一致** = M75g 由来ではない。fracture_after は M80 の review-2 では PASS だったので、M81 のどこかで動いた。
+  ★worktree で Runtime だけをビルドすると GameLogic.dll / C# が無く fracture のデモの絵が変わる (FractureDamageProbe) — 1 回踏んだ。
+  **`replay_verify` PASS** (14 ジョブ、`MYE_REPLAY_JOBS=3` で 239 s。`ui` ペアは修正後の台本で記録し直し) / Release `--selftest` も
+  Debug と同じ結果 (UI 系 ALL PASS、Source control の既存 2 件だけ FAIL)。
 
 ## 各サブに共通する罠
 - `IsUiOnlyEntity` の許容漏れ (UiAux で構造的に潰す)。
