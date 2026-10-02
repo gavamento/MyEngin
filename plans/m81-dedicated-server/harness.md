@@ -24,7 +24,7 @@
 | sub-05 Server 実運用ループ・LocalHosting・server_verify | OK | 1 | 9f0a196 | server_verify 4 ケース PASS、tick avg 0.059ms |
 | sub-06 ABI v23 | OK | 1 | 3145e9c | 126→131 スロット、NetIsServer は足さない |
 | sub-07 GameLiftHosting + SDK 5.x | OK | 1 | 82aeba4 | SDK 5.6.0 を /MT 静的 lib、.rep 逐次書出し |
-| sub-08 Anywhere 実疎通 (ユーザー手動) | ユーザー待ち | 0 | | |
+| sub-08 Anywhere 実疎通 (ユーザー手動) | 実疎通済み (未確定 2 点、2026-10-02) | 0 | | |
 | sub-09 NetWindow と文書 | OK | 1 | d16d77b | ADR-022、Editor Play から実接続 |
 | sub-10 決定論の境界の修正 (review-1 #1 #2 #4 #9) | OK | 1 | c6ac1aa | NetLockstepBoundary 共通化、0 tick は FAIL |
 | sub-11 クライアント記録再生・時刻同期・運用 (review-1 #3 #5 #6 #7 #8 #10) | OK | 1 | 18b53df | 到着余裕 16ms に収束、クライアント .rep 再生可 |

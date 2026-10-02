@@ -4,10 +4,12 @@
 player session を作って、`Runtime.exe --net-connect` で入るまでの手順。EC2 フリートは対象外
 (Windows の EC2 / コンテナは M81 のスコープ外)。
 
-> **この手順書の状態**: AWS CLI のオプション名は AWS CLI リファレンス (docs.aws.amazon.com/cli/latest/reference/gamelift/)
-> で照合した。Server.exe 側の GameLift 連携は偽の SDK を使った自己テスト (`Server.exe --selftest`) で確かめてある。
-> **実際の AWS へはまだ一度も接続していない** (M81 sub-08 でこの手順をユーザーが実行して初めて確かめる)。
-> 手順中の「未検証」は、その点を実機で確認するという印。食い違いが出たらこの文書を直すこと。
+> **この手順書の状態**: 2026-10-02 に `ap-northeast-1` (東京) で、同じ PC 内 (`127.0.0.1`) の実疎通を通した
+> (M81 sub-08。記録は `plans\m81-dedicated-server\anywhere-log\`)。確認できたのは ProcessReady → ゲームセッションの
+> ACTIVE → player session の Accept → Runtime の参加 → セッションの TERMINATED まで。
+> **実機で未確定なのは 2 点**: Ctrl+C で止めたときに `ProcessEnding` で即座に TERMINATED になるか、
+> 切断から猶予後の `RemovePlayerSession` (どちらも 11 章)。手順中の「未検証」は実機で確かめていない点の印。
+> 食い違いが出たらこの文書を直すこと。
 
 ## 0. 全体像
 
@@ -33,8 +35,12 @@ player session を作って、`Runtime.exe --net-connect` で入るまでの手�
 
 ## 1. 準備
 
-- AWS アカウントと AWS CLI v2 (`aws --version`)。リージョンは GameLift Anywhere に対応している所 (例 `us-west-2`)。
-  以降の例は `--region us-west-2` を省略している。`aws configure` か `AWS_REGION` で揃えること。
+- AWS アカウントと AWS CLI v2 (`aws --version`。`winget install -e --id Amazon.AWSCLI` で入る。入れたら PowerShell を
+  開き直す)。リージョンは GameLift Anywhere に対応している所 (実疎通は `ap-northeast-1`)。
+  以降の例は `--region` を省略している。CLI の既定リージョンを、フリートを作るリージョンに揃えること。
+- CLI の認証は **`aws login`** (ブラウザでコンソールにログインし、その資格情報を CLI で使う) が簡単。アクセスキーを
+  作らずに済む。初回はリージョンを聞かれる。途中で「AWS skills と MCP server を設定するか」と聞かれたら `n` でよい。
+  期限が切れて認証エラーになったら `aws login` をやり直す。
 - `bin\x64\Release\Server.exe` と同じフォルダに `libssl-3-x64.dll` / `libcrypto-3-x64.dll` があること
   (ビルド後に自動でコピーされる)。配布先へ Server.exe を持っていくときは 2 つも一緒に。
 - 費用: Anywhere のフリートやコンピュート登録に課金があるかは AWS の GameLift 料金ページで確認すること。
@@ -81,10 +87,16 @@ aws gamelift create-location --location-name custom-mye-dev
 aws gamelift create-fleet --name mye-anywhere --compute-type ANYWHERE --locations Location=custom-mye-dev
 ```
 
+コンソール (GameLift の「Anywhere フリートを作成」) でも作れる。入力が要るのはフリート名とカスタムロケーション名だけで、
+「コスト」「メトリクスグループ名」「タグ」は空欄でよい (コストはキューの配置判断用の自己申告値で、請求とは関係ない)。
+ロケーション名の入力欄に `custom-` を自分で重ねて付けると `custom-custom-...` ができる (実疎通で 1 回起きた)。
+作ったロケーション名は大文字小文字まで以降のコマンドと一致させる。
+
 ## 3. この PC をコンピュートとして登録する
 
 `--ip-address` は**クライアントが Server.exe に UDP で届く IP**。GameSession / PlayerSession の応答に
-この IP とサーバのポートが入って返る。同じ PC 内の試験なら `127.0.0.1` で足りるはず (未検証)。
+この IP とサーバのポートが入って返る。同じ PC 内の試験なら `127.0.0.1` で足りる (実疎通で確認。ファイアウォールの設定も不要だった)。
+登録は一度すれば残る (Server.exe を止めても消えない)。登録済みかは `aws gamelift list-compute --fleet-id <FleetId>` で見られる。
 別の PC から入れるなら、その PC から見えるアドレスにする (「7. ファイアウォールとポート」)。
 
 ```powershell
@@ -96,22 +108,24 @@ aws gamelift register-compute --fleet-id <FleetId> --compute-name mye-dev-pc --i
 
 ## 4. 認証トークンを取って Server.exe を起動する
 
-トークンは **約 15 分で失効する**。取ってからすぐ起動し、疎通確認 (CreateGameSession まで) を 15 分以内に終える。
-トークンの自動更新は M81 では行わない (長く動かすなら取り直して再起動)。
+トークンは **約 15 分で失効する** (失効が効くのは Server.exe の InitSDK。player session の期限は別で 60 秒、5 章)。
+取ってからすぐ起動する。トークンの自動更新は M81 では行わない (長く動かすなら取り直して再起動)。
+一度止めた Server.exe を起動し直すときも、トークンは取り直す。
 
 トークンは**環境変数**で渡す (コマンドラインに出すとプロセス一覧や履歴に残るため、引数では受け付けない)。
+`C:\HAL\MyEngin` (リポジトリのルート) で実行する。起動コマンドは**1 行のまま貼る** (行末のバッククォートで折り返した
+形は貼り付けで途中が落ちやすく、実疎通では `--hosting gamelift` 以降が落ちて local で起動した)。
 
 ```powershell
-$env:MYE_GAMELIFT_AUTH_TOKEN = (aws gamelift get-compute-auth-token --fleet-id <FleetId> --compute-name mye-dev-pc --query AuthToken --output text)
-
-bin\x64\Release\Server.exe --hosting gamelift `
-  --gamelift-ws-url <GameLiftServiceSdkEndpoint> `
-  --gamelift-fleet-id <FleetId> `
-  --gamelift-host-id mye-dev-pc `
-  --port 7777 --max-players 4 `
-  --local-demo --synth-input `
-  --replay-record cache\anywhere_server.rep
+$fleet = "<FleetId>"
+$env:MYE_GAMELIFT_AUTH_TOKEN = (aws gamelift get-compute-auth-token --fleet-id $fleet --compute-name mye-dev-pc --query AuthToken --output text)
+bin\x64\Release\Server.exe --hosting gamelift --gamelift-ws-url <GameLiftServiceSdkEndpoint> --gamelift-fleet-id $fleet --gamelift-host-id mye-dev-pc --port 7777 --max-players 4 --local-demo --synth-input --replay-record cache\anywhere_server.rep
 ```
+
+- `session ... started` の行の末尾が **`hosting 'gamelift'`** であることを確かめる。`hosting 'local'` なら
+  `--hosting gamelift` が渡っていない (GameLift には何も届かず、5 章で `FleetCapacityExceededException` になる)。
+- Server.exe は 1 つだけ起動する。前のものが残っていると `bind(port 7777) failed (10048)` で終わる (10 章)。
+- 起動直後の `[script] PlayerController started ...` などはシーンの初期化のログで、InitSDK より前に出る。
 
 - `--gamelift-host-id` は register-compute の `--compute-name` と同じ値。`--gamelift-process-id` は省略すると PID。
 - シーン指定 (`--local-demo` / `--scene` / `--project`) と、クライアントと一致が必要な起動オプション
@@ -121,6 +135,8 @@ bin\x64\Release\Server.exe --hosting gamelift `
   (原因は URL の誤り / フリート・コンピュートの ID の誤り / トークンの失効のいずれか)。
 - 起動に成功するとログに `[gamelift] ProcessReady sent (UDP port 7777 ...)` が出て、セッションの割り当てを待つ
   (この間 tick は回らない)。`--server-timeout SEC` を付けると、割り当てが来ないまま SEC 秒たったときに exit 5 で終わる。
+- 待機中は約 1 分おきに `[gamelift-sdk] Calling ReportHealth` / `HeartbeatServerProcess` が出る (正常)。
+  `[gamelift-sdk] [METRICS] Global metrics processor is not initialized` は SDK のメトリクスを使っていないためで、無視してよい。
 
 ## 5. ゲームセッションと player session を作る
 
@@ -135,26 +151,33 @@ aws gamelift create-game-session --fleet-id <FleetId> --location custom-mye-dev 
   --game-properties Key=myeDeadlineTicks,Value=3
 ```
 
-- 応答の `GameSessionId` を控える。Server.exe のログに `game session ... activated` が出れば成功。
+- **Server.exe のログに `ProcessReady sent` が出てから**実行する (先に打つと `FleetCapacityExceededException`)。
+- 応答の `GameSessionId` (`arn:aws:gamelift:...` の長い文字列) を控える。Server.exe のログに `game session ... activated` が出れば成功。
   `aws gamelift describe-game-sessions --fleet-id <FleetId> --location custom-mye-dev --game-session-id <id>` で
   `Status` が `ACTIVATING` → `ACTIVE` になる。
 - `--maximum-player-session-count` が `--max-players` (サーバのレーン数) より小さければ小さい方が入場の上限になる。
   大きければレーン数で頭打ち (超えた分は Reject)。レーン数は sim を作る時点で決まるので、セッションで広げることはできない。
 
-プレイヤーごとに player session を作る (`--player-id` は任意の文字列):
+プレイヤーごとに player session を作る (`--player-id` は任意の文字列)。
+
+**player session は作ってから 60 秒以内に Server.exe が Accept しないと `TIMEDOUT` になる** (GameLift の仕様。
+実疎通では手で ID を写している間に切れ、クライアントが `PlayerRejected` になった)。作成と接続 (6 章) は続けて実行する:
 
 ```powershell
-aws gamelift create-player-session --game-session-id <GameSessionId> --player-id player1
+$gs = "<GameSessionId>"
+$ps = aws gamelift create-player-session --game-session-id $gs --player-id player1 --query "PlayerSession.PlayerSessionId" --output text
+bin\x64\Release\Runtime.exe --local-demo --synth-input --net-connect 127.0.0.1:7777 --player-session-id $ps
 ```
 
-応答の `PlayerSessionId` (`psess-...`) と `IpAddress` / `Port` を控える。
+`127.0.0.1:7777` は `register-compute` の `--ip-address` と `--port` の値 (player session の応答の `IpAddress` / `Port`
+にも同じものが入る)。`aws` コマンドはどのフォルダで実行してもよいが、`Runtime.exe` の相対パスのためルートで実行する。
+状態は `aws gamelift describe-player-sessions --game-session-id $gs` で見られる (RESERVED → ACTIVE、切れたら TIMEDOUT)。
 
 ## 6. クライアントから接続する
 
-```powershell
-bin\x64\Release\Runtime.exe --local-demo --synth-input `
-  --net-connect <IpAddress>:<Port> --player-session-id <PlayerSessionId>
-```
+コマンドは 5 章の末尾のとおり (player session の作成と続けて実行する)。成功するとクライアントのログに
+`[client] welcome: lane 0, player 1 ...` → `joined: lane=0 ...` が出て、player session が ACTIVE になる。
+参加直後の `time sync: arrival margin -352.0 ms ... catch-up` のような負の値は途中参加の追いつき中の表示で、正常。
 
 - サーバと同じシーン・同じ起動オプションにすること。出自 (エンジンのビルド / GameLogic.dll / assets の内容) が
   サーバと違うと Hello が拒否される (Reject のログに理由が出る)。Debug と Release を混ぜる検証では
@@ -180,7 +203,11 @@ bin\x64\Release\Runtime.exe --local-demo --synth-input `
 ## 8. 終了の仕方と確認
 
 - Server.exe を止める: GameLift から `OnProcessTerminate` が来る、または Ctrl+C。どちらも**同じ経路**で
-  記録中の .rep を閉じてから `ProcessEnding` → `Destroy` を送って終了する (exit 0)。
+  記録中の .rep を閉じてから `ProcessEnding` → `Destroy` を送って終了する (exit 0)。ログに
+  `[gamelift] ProcessEnding sent` が出る。**ウィンドウの × で閉じない** (Windows の終了猶予は数秒で、ログも
+  ウィンドウごと消える。実疎通では × で閉じたため ProcessEnding が届いたか確かめられず、TERMINATED まで約 4 分かかった)。
+- 切断の確認をするなら、Runtime を閉じてから `--net-rejoin-timeout` (既定 30 秒) より長く待ってからサーバを止める。
+  待たずに止めると `RemovePlayerSession` は送られず、player session は ACTIVE のまま残る (セッション終了で片付く)。
   `--exit-when-empty` は全員が出てから 2 秒で、`--replay-ticks N` は N tick で、同じ経路で終わる。
 - .rep (`--replay-record`) は走りながら書かれる (`flush` 1 秒おき)。**異常終了しても、完了済みの tick までは**
   `Server.exe --replay-verify` / `Runtime.exe --replay-verify` で読める (ヘッダの tickCount が 0 のまま残るので
@@ -200,7 +227,12 @@ aws gamelift delete-location --location-name custom-mye-dev
 ```
 
 実行中のゲームセッションがあるとフリートは消せない。Server.exe を止めて `TERMINATED` を確認してから行う。
-ファイアウォール規則も消す (7 章)。
+フリートの削除には数分かかり、ロケーションはフリートが消えてからでないと消せない。削除の進み具合は
+`aws gamelift list-fleets` で見る (消えると `"FleetIds": []`。消えたフリートに `describe-fleet-attributes --query
+"FleetAttributes[0].Status"` を打つと `None` が返る)。最後に `aws gamelift list-locations --filters CUSTOM` が
+`"Locations": []` になれば完了。ファイアウォール規則を作っていたら消す (7 章)。
+
+削除は元に戻せないので、Claude Code の自動モードでは AI からの実行が止められる (実疎通ではユーザーが手で実行した)。
 
 ## 10. うまくいかないとき
 
@@ -210,7 +242,9 @@ aws gamelift delete-location --location-name custom-mye-dev
 | `InitSDK did not finish within 30 s ...` | `--gamelift-ws-url` の誤り、`--gamelift-fleet-id` / `--gamelift-host-id` の誤り、トークンの失効 (15 分)、443 が通らない。SDK のログ `[gamelift-sdk] ...` に接続の再試行が出る |
 | `InitSDK failed: ...` | SDK が返したエラー名とメッセージがそのまま出る (多くはトークン / ID の不一致) |
 | ProcessReady のあと何も起きない | `create-game-session` の `--location` がフリートのカスタムロケーションと違う。`describe-game-sessions` で状態を見る |
-| クライアントが `PlayerRejected` | player session ID の誤り / 期限切れ / 別のゲームセッションのもの。Server のログに `AcceptPlayerSession(...) failed` が出る |
+| `create-game-session` が `FleetCapacityExceededException ... No active and available server processes` | ProcessReady を送った Server.exe がいない。止まっている / `hosting 'local'` で起動している (4 章) / まだ ProcessReady 前 |
+| `bind(port 7777) failed (10048)` / `could not open UDP port 7777` | 別の Server.exe が 7777 を使っている。`Get-NetUDPEndpoint -LocalPort 7777` で PID を見て、残っている方を止める |
+| クライアントが `PlayerRejected` (`the hosting provider rejected this player session`) | player session が**作成から 60 秒を過ぎて TIMEDOUT** (5 章。`describe-player-sessions` で確認)、ID の誤り、別のゲームセッションのもの。Server のログに `AcceptPlayerSession(...) failed` が出る |
 | クライアントが Reject (出自の違い) | サーバとクライアントでビルド / GameLogic.dll / assets / 起動オプションが違う (6 章) |
 | 人数が足りないのに入れない | `--maximum-player-session-count` か `--max-players` が小さい (5 章)。Server のログに `game session is full` |
 
@@ -229,3 +263,6 @@ aws gamelift delete-location --location-name custom-mye-dev
   `OnProcessTerminate` も来なくなりうる (未検証)。長く動かすときは取り直して再起動する。
 - SDK の TLS は証明書を検証しない設定になっている (SDK 側の実装。M81 では変えない)。
 - 1 プロセスが担当できるゲームセッションは 1 つ。2 つ目が割り当てられても無視する (ログに警告)。
+- 実機で未確定 (2026-10-02 の実疎通で観測できなかった): Ctrl+C で止めたときに `ProcessEnding` でセッションが
+  すぐ TERMINATED になるか (× で閉じた回は約 4 分後に TERMINATED)、猶予切れの `RemovePlayerSession` で player session が
+  COMPLETED になるか。次に実疎通するときに 8 章の手順で確かめる。参加時の tick 時間 (R-11) もまだ見ていない。

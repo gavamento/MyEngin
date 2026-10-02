@@ -1,7 +1,7 @@
 # sub-08: GameLift Anywhere 実疎通 (ユーザー手動確認)
 
 - 依存: sub-07, sub-10 (推奨: sub-11 と sub-12 の後。時刻同期と運用の修正が入ってから実疎通したほうが、R-10 / R-12 の計測に意味がある)
-- 状態: 未着手 (ユーザーの AWS アカウント・IAM の準備待ち。他サブの完了を妨げない — spec R-5)
+- 状態: 実疎通済み (2026-10-02、`ap-northeast-1`、同一 PC)。受け入れ条件は満たした。未確定 2 点 (ProcessEnding の即時反映 / RemovePlayerSession) と R-11 / R-12 の観測は次回の実疎通へ。記録は `anywhere-log\2026-10-02-anywhere.md`
 - 往復: 0
 
 ## やること
@@ -31,5 +31,6 @@ spec 5. の **G5** (+ 修正があれば C1〜C6)。
 - 修正があれば `tools\server_verify.bat`、`tools\replay_verify.bat`、`pwsh -File tools\check_rules.ps1`
 
 ## 実装メモ (coder が追記)
+- (2026-10-02 実疎通) コードの修正は無し。詰まった点 (バッククォート折り返しで `hosting 'local'` 起動 / Server.exe の二重起動 / player session の 60 秒 TIMEDOUT / `custom-` の二重付け) は `docs\gamelift-anywhere.md` に反映した。サーバを × で閉じたため ProcessEnding の送信ログは未確認
 
 ## フィードバック履歴
