@@ -84,6 +84,7 @@ D3D をリンクするがロードしない = d3d11 / dxgi / d3dcompiler_47 / xa
 | D6 | `gameVersion` = ロードした GameLogic.dll のバイト列ハッシュ。食い違いは拒否。検証用に `--allow-game-mismatch` (WARN + `configBits` に記録) | Debug と Release の DLL は必ず別バイトだが sim は同値でなければならない。server_verify / net_verify の混在ケースだけが使う。本番では使わない |
 | D11 | システムイベントに `Release` (予約の解放) を足す | タイムアウトは実時間の出来事なので、イベント列に載らないと割り当てが純関数にならない。サーバが 1 回だけ変換して記録 |
 | D12 | 代替入力 (サーバ) は前 tick の確定入力から消費型 (chars / mouseDelta / wheelDelta) を 0 にしたもの。クライアントの予測は別関数 (`PredictLaneInput`: chars / wheelDelta だけ 0、mouseDelta は繰り返す) | 消費型を繰り返すと文字が 2 回打たれ視点が 2 回回る。予測は確定値に入らないので当たりやすさで決めてよい |
+| D18 | 到着余裕の目標は固定の 1 tick ではなく `clamp(1 tick + 2σ, 1 tick, 6 tick)`。σ はサーバが測る余裕の標本 (tick ごとに 1 つ、直近 180 個 = 約 3 秒) の標準偏差で、`Confirmed` の `flags` 上位 16 bit (1/4 ms 単位) に載せる。クライアントは受けた σ をなだらかにして (1/32 ずつ) 目標へ反映する | ジッタのある回線 (WARP / Editor / 実回線) は 1 tick の余裕では 14〜26% が締め切りを越えた (sub-11 実測)。目標を深くするのは「いつ tick が回るか」だけで sim に入らない。ペイロードの大きさは変えず (旧クライアントは bit0 しか見ない)、`kNetProtoVersion` も 6 のまま (P2P の出自と `.rep` の版を巻き込まない) |
 | D8 | `engineVersion` = `MYE_GIT_HASH` (既存の `MyeBuildInfo`) の 64bit ハッシュ | 新しい仕組みを作らない。Debug / Release で同値 |
 | D9/D10 | `.rep` v9 でも `rngState/rngInc` を残す。v8 の `.rep` は読める | スナップショット無し記録の開始 RNG。システム入力を持たない記録のハッシュ列は 1 tick も動かさない |
 
@@ -100,6 +101,7 @@ D3D をリンクするがロードしない = d3d11 / dxgi / d3dcompiler_47 / xa
 
 ## 既知の制限
 
+- **追いつけないクライアント (R-13)**: 対応できる往復はおよそ 250ms (予測上限 12 tick + inputDelay 3 tick = 15 tick)。これを超える回線のクライアントは、最初の有効な入力に届かず入力が確定に間に合い続けない (サーバは待たずに進める)。サーバは直近 180 標本の 9 割以上が締め切り後になったら peer ごとに 1 回 WARN (`cannot keep up`、おおよその往復を添える) を出す。再スナップショットによる救済はしない (後続)。
 - 多レーン UI は不可 (D13): UI はレーン 0 の入力だけで評価される。サーバ構成ではキャンバス寸法の照合をしない (基準解像度とフォント計測表は照合する)。
 - コンピュート ABI (v21) は device 無しの Server では 0 / no-op。GPU の結果を sim 状態へ書き戻すスクリプトは Server と描画クライアントで割れるので、サーバ対象のゲームでは禁止 (R-7)。
 - GPU パーティクル設定 (`particleBackend: gpu`) は全員一致が前提 (R-6)。Server は device 無しで CPU 側を選ぶ代わりに Update が no-op になり、GPU パーティクルはハッシュに入らない。設定の一致は `contentHash` (`project_settings.json` を含む) が保証する。

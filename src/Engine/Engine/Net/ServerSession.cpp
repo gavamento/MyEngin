@@ -6,10 +6,12 @@
 #include "Engine/Engine/Net/ServerSession.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Util/Hash.h"
+#include "Engine/Engine/Net/NetRollback.h"
 #include "Engine/Engine/Session/Provenance.h"
 
 namespace mye {
@@ -159,8 +161,67 @@ ServerSession::Peer* ServerSession::FindOwnerOfLane(int lane)
 // クライアントは実際より余裕があると思い込む (遅れた tick が多いほど偏る)
 void ServerSession::NoteMargin(Peer& p, int64_t marginMs)
 {
-    p.marginSum += ClampMargin(marginMs);
+    const int32_t v = ClampMargin(marginMs);
+    p.marginSum += v;
     ++p.marginCount;
+
+    if (p.marginRingCount == kMarginWindow) {
+        const int64_t old = p.marginRing[p.marginRingNext];
+        p.ringSum -= old;
+        p.ringSumSq -= old * old;
+        p.ringLate -= (old < 0) ? 1 : 0;
+    } else {
+        ++p.marginRingCount;
+    }
+    p.marginRing[p.marginRingNext] = v;
+    p.marginRingNext = (p.marginRingNext + 1) % kMarginWindow;
+    p.ringSum += v;
+    p.ringSumSq += static_cast<int64_t>(v) * v;
+    p.ringLate += (v < 0) ? 1 : 0;
+}
+
+// 窓内の標本の標準偏差 (1/4 ms 単位、16 bit に収まる範囲)。標本が少ないうちは 0 (= 目標は 1 tick のまま)
+uint32_t ServerSession::MarginSigmaQuarterMs(const Peer& p)
+{
+    constexpr uint32_t kMinSamples = 8;
+    if (p.marginRingCount < kMinSamples) {
+        return 0;
+    }
+    const double n = static_cast<double>(p.marginRingCount);
+    const double mean = static_cast<double>(p.ringSum) / n;
+    const double var = (std::max)(0.0, static_cast<double>(p.ringSumSq) / n - mean * mean);
+    const double q = std::sqrt(var) * kNetConfirmedSigmaUnitsPerMs;
+    return static_cast<uint32_t>((std::min)(q, 65535.0));
+}
+
+// 窓の標本のほぼ全部が締め切り後 = 予測上限 (kNetMaxSpeculationClient tick) に届かず、入力が確定に
+// 間に合い続けていない。往復がおよそ (上限 + inputDelay) tick を超える回線で起きる。救済はしない (ログだけ)
+void ServerSession::WarnIfUnreachable(Peer& p)
+{
+    constexpr uint32_t kLateTenths = 9; // 窓の 9/10 以上が遅れたら警告
+    if (p.marginRingCount < kMarginWindow) {
+        return;
+    }
+    const bool hopeless = p.ringLate * 10 >= kMarginWindow * kLateTenths;
+    if (!hopeless) {
+        if (p.ringLate * 2 < kMarginWindow) {
+            p.unreachableWarned = false;
+        }
+        return;
+    }
+    if (p.unreachableWarned) {
+        return;
+    }
+    p.unreachableWarned = true;
+    ++stats_.unreachableWarnings;
+    const double tickMs = 1000.0 / static_cast<double>(kNetTickRateHz);
+    const double limitMs = (kNetMaxSpeculationClient + cfg_.session.inputDelay) * tickMs;
+    const double lateMs = -static_cast<double>(p.ringSum) / static_cast<double>(p.marginRingCount);
+    MYE_LOG_WARN("[server] peer %u (lane %d) cannot keep up: its inputs arrive %.0f ms after the deadline on average "
+                 "(%u of %u samples late). Round trip is about %.0f ms; the supported limit is about %.0f ms "
+                 "(speculation %u ticks + input delay %u ticks)",
+                 p.key, p.lane, lateMs, p.ringLate, p.marginRingCount, limitMs + (std::max)(0.0, lateMs), limitMs,
+                 kNetMaxSpeculationClient, cfg_.session.inputDelay);
 }
 
 NetPacketHeader ServerSession::BaseHeader() const
@@ -833,11 +894,12 @@ void ServerSession::PumpConfirmed(Peer& p, uint64_t nowMs)
     } else {
         t = frontier; // keepalive: レコード無し
     }
+    WarnIfUnreachable(p);
     NetConfirmedPayload pl = {};
     // 前回の送信から標本が 1 つでもあれば、その平均。無ければ「標本なし」(クライアントは古い値を何度も数えない)
     if (p.marginCount > 0) {
         pl.marginMs = static_cast<int32_t>(p.marginSum / static_cast<int64_t>(p.marginCount));
-        pl.flags = kNetConfirmedFlagMarginValid;
+        pl.flags = kNetConfirmedFlagMarginValid | (MarginSigmaQuarterMs(p) << kNetConfirmedSigmaShift);
         p.marginSum = 0;
         p.marginCount = 0;
     }

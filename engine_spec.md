@@ -3010,14 +3010,19 @@ records up from the embedded snapshot's tick (`startMeta.tick`), so it replays a
 server never writes a bundle). `--replay-verify` fails when it compared 0 ticks.
 Clock sync shifts only *when* ticks run (±2 % on the accumulator, plus catch-up ticks after a join),
 driven by the server's report of how many ms before the deadline the client's input arrived (target
-`targetMarginMs` = 16 ms). The speed factor and the catch-up come from that **one** error: the server
+= `clamp(targetMarginMs + 2σ, targetMarginMs, 6 ticks)`, `targetMarginMs` = 16 ms; σ is the standard
+deviation of the server's last 180 margin samples, carried in the upper 16 bits of `Confirmed.flags` in
+1/4 ms and smoothed by the client, so the payload size and `kNetProtoVersion` are unchanged). The speed factor and the catch-up come from that **one** error: the server
 also reports how late an input really was when it arrives after its tick was confirmed (measured against
 the deadline, or against the confirmation time for a lane it did not wait on yet), the client runs the
 missing ticks once, then drops margin samples for RTT + 100 ms so the old reports are not counted twice.
 The confirmed frontier is not used: it runs ahead of the schedule when inputs arrive early, and a
 catch-up keyed to it cancelled the slow-down. With a constant delay and no loss the margin sits at the
 target from the 10th second on (selftest `V7 time sync`, ±1 tick), and returns there 10 s after a delay
-change. The editor, as a server client, disables Pause / Step (the server never pauses; a client tick
+change. **Supported round trip: about 250 ms** (speculation limit 12 ticks + `inputDelay` 3 ticks). A client farther
+away than that never catches up with its first valid input, so the server never waits on it; the server
+logs a `cannot keep up` WARN once per peer when 90 % of its last 180 samples are late, with the estimated
+round trip. It is not rescued (no re-snapshot in M81). The editor, as a server client, disables Pause / Step (the server never pauses; a client tick
 with `simulateScripts = false` would desync at every checkpoint); Stop sends Bye and stops the sim.
 
 **Headless `Server.exe`.** Console subsystem, no window, device or audio output. It links the engine but

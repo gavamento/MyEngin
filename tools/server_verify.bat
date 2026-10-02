@@ -13,7 +13,11 @@ rem             cases = 回すケースの文字 (既定 ABCD。例: B だけ)
 rem
 rem   ケース A: Debug サーバ + Debug x2 / ロス 0%%。合否に使う: (1) クライアント .rep を単独で --replay-verify して 0 でない
 rem             tick 数で PASS (開始 tick = 参加 tick の .rep の再生)、(2) late-subst (確定を待たれたレーン tick のうち代替入力に
-rem             なった割合) が各レーンで 5%% 以下、(3) サーバが強制した再同期が 0 (spec V6 / V8 / R5)
+rem             なった割合) が各レーンで 5%% 以下、(3) サーバが強制した再同期が 0、(4) クライアントが要求した再同期
+rem             ^(desync / EventGap / BadSnapshot^) も 0 (spec V6 / V8 / V13 / V14 / R5)
+rem             クライアントは WARP (窓 640x360): 1 フレームが長く tick がまとめて走るので入力の到着が揺れるが、サーバが測った
+rem             揺れからクライアントが到着余裕の目標を 1 tick + 2σ へ深くして吸収する (D18)。窓を小さくするのは、2 台の
+rem             WARP が論理コアを奪い合って片方が数十秒止まる (締め切りを大きく越える) のを避けるため
 rem   ケース B: Debug サーバ + Debug / Release 混在 x3 / ロス 20%% / 途中参加 1 / 切断 -> 再接続 1
 rem             (Debug と Release の GameLogic.dll は必ず別バイトなので --allow-game-mismatch を使うのはこのケースだけ)
 rem   ケース C: desync 注入 (クライアントの sim を参加の 100 tick 後に 1 フィールド壊す) ->
@@ -54,10 +58,6 @@ del /q cache\sv_*.rep cache\sv_*.log cache\sv_*.code 2>nul
 rem サーバとクライアントで一致が必要な起動オプション (configBits): 合成入力を両方に渡す
 set SRV_ARGS=--local-demo --synth-input --max-players 4 --net-delay 3
 set CLI_ARGS=--local-demo --synth-input --warp --no-audio
-rem ケース A だけ実 GPU で描くクライアントを使う: WARP (ソフトウェア描画) は 1 フレームが長く、tick が数本ずつまとめて走って
-rem 入力がまとめて着く (到着の揺れが大きい)。到着余裕の目標 1 tick (16 ms) ではその揺れだけで 25 %% 前後が締め切りを越えるので、
-rem late-subst を合否に使うケースでは描画のペースが安定した実 GPU を使う (sim は描画に依存しない)
-set CLI_ARGS_GPU=--local-demo --synth-input --no-audio
 set FAILED=0
 
 if not "!CASES:A=!"=="!CASES!" call :case_A
@@ -265,6 +265,24 @@ if !ERRORLEVEL! NEQ 0 (
 echo   forced resyncs: 0 ok
 goto :eof
 
+rem %1 = ケース名 / %2 = クライアント名 / %3 = クライアントのログ / %4 = 再同期後の .rep ^(あってはならない^)
+rem   クライアントが ResyncRequest を送った ^(desync / EventGap / BadSnapshot^) ログ行も、再同期で切れた .rsN.rep も無いこと
+:check_client_resync
+findstr /c:"requesting a resync" "%~3" >nul 2>&1
+if !ERRORLEVEL! EQU 0 (
+    echo   [FAIL] %~1: %~2 asked the server for a resync - see %~3
+    findstr /c:"requesting a resync" "%~3"
+    set /a FAILED+=1
+    goto :eof
+)
+if exist "%~4" (
+    echo   [FAIL] %~1: %~2 wrote %~4, so it resynced - see %~3
+    set /a FAILED+=1
+    goto :eof
+)
+echo   %~2 requested no resync: ok
+goto :eof
+
 rem %1 = ケース名 / %2 = 壊したクライアントのログ / %3 = サーバ .rep / %4 = 壊した tick。
 rem   クライアントの診断バンドル (desync_<tick>_p<lane>) の local.rep は、開始 tick が参加 tick (0 でない) なのに単独で再生でき、
 rem   壊した tick の直前まで一致して壊した tick で割れる。バンドルの local.dump (検出した tick の状態) と、サーバ .rep を
@@ -326,11 +344,15 @@ if not "!WAITOK!"=="1" (
     exit /b 0
 )
 rem client 1 は後から来る client 2 より十分長く居る (全員が出ていくと --exit-when-empty でサーバが終わるため)。
-rem client 2 の起動 (シェーダ等の読み込み) で同じ PC の client 1 が数秒止まるので、その分が 5 %% を越えないよう長めに録る
+rem client 2 の起動 (シェーダ等の読み込み) で同じ PC の client 1 が数秒止まるので、その分が 5 %% を越えないよう長めに録る。
+rem client 2 自身も、参加直後の追いつき (約 0.5 秒ぶんの代替入力) が分母の 10 秒だけでは大きく見えるので、30 秒録る
+rem 窓を小さくして WARP の描画コストを減らす (2 台の WARP が論理コアを奪い合って片方が長く止まるのを避ける。sim は窓の大きさに依存しない)
+set A_SMALL=--width 640 --height 360
 set /a AT=%TICKS%*8
-call :launch "cache\sv_A_1.code" "%DBG%\Runtime.exe %CLI_ARGS_GPU% --net-connect 127.0.0.1:%PORT% --player-session-id p1 --replay-ticks !AT! --replay-record cache\sv_A_c1.rep > cache\sv_A_c1.log 2>&1"
+set /a A2T=%TICKS%*3
+call :launch "cache\sv_A_1.code" "%DBG%\Runtime.exe %CLI_ARGS% %A_SMALL% --net-connect 127.0.0.1:%PORT% --player-session-id p1 --replay-ticks !AT! --replay-record cache\sv_A_c1.rep > cache\sv_A_c1.log 2>&1"
 call :wait_joined A c1
-call :launch "cache\sv_A_2.code" "%DBG%\Runtime.exe %CLI_ARGS_GPU% --net-connect 127.0.0.1:%PORT% --player-session-id p2 --replay-ticks %TICKS% --replay-record cache\sv_A_c2.rep > cache\sv_A_c2.log 2>&1"
+call :launch "cache\sv_A_2.code" "%DBG%\Runtime.exe %CLI_ARGS% %A_SMALL% --net-connect 127.0.0.1:%PORT% --player-session-id p2 --replay-ticks !A2T! --replay-record cache\sv_A_c2.rep > cache\sv_A_c2.log 2>&1"
 call :expect_exit A "client 1" cache\sv_A_1.code 300
 call :expect_exit A "client 2" cache\sv_A_2.code 300
 call :expect_exit A "server" cache\sv_A_s.code 60
@@ -346,6 +368,9 @@ call :check_client_rep A c2 cache\sv_A_c2.rep
 rem V8 / R5: ロス 0 のケースは代替入力が 5%% 以下かつ強制再同期 0
 call :check_late_subst A cache\sv_A_server.log 5
 call :check_forced_resync A cache\sv_A_server.log
+rem V14: クライアントが自分から要求した再同期も 0 (ロス 0 で起きるなら不具合)
+call :check_client_resync A c1 cache\sv_A_c1.log cache\sv_A_c1.rs1.rep
+call :check_client_resync A c2 cache\sv_A_c2.log cache\sv_A_c2.rs1.rep
 exit /b 0
 
 rem -------------------------------------------------------------------- ケース B

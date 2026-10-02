@@ -1,8 +1,8 @@
 # sub-12: 到着余裕の適応目標と、server_verify の判定強化
 
 - 依存: sub-11
-- 状態: 未着手 (D18 のユーザー回答待ち。回答によって「やること 1」が変わる)
-- 往復: 0
+- 状態: OK (コミット待ち)。D18 = 案 (a) (ユーザー判断 2026-10-02)
+- 往復: 1
 
 ## やること
 spec D18 / 4.1.6 (改定) / V13〜V15 / R-13。
@@ -47,4 +47,11 @@ spec 5. の **V13 (案 a / b のとき)、V14、V15** と **C1〜C7**。
 
 ## 実装メモ (coder が追記)
 
+### round 1 (SELF_EVAL 要旨)
+- 案 (a)。σ はサーバが計算して `Confirmed.flags` の上位 16 bit (1/4 ms 単位) に載せた。窓は 180 標本 (tick ごと 1 標本、約 3 秒)。クライアントは σ を 1/32 ずつなだらかにして目標 = clamp(16ms + 2σ, 16ms, 6 tick) にする。ペイロードの大きさ・`kNetProtoVersion` は不変 (旧クライアントは bit0 だけ見る。版を上げると P2P の出自と `.rep` を巻き込む)。
+- V15: サーバが直近 180 標本の 9 割以上が締め切り後になった peer に 1 回 WARN (`cannot keep up`)。`ServerStats.unreachableWarnings`。文書 3 か所に対応上限 (往復約 250ms) を記載。
+- server_verify A は WARP に戻し、窓 640x360 (2 台の WARP の奪い合いで片方が数十秒止まるため) と client 2 の記録を 3 倍 (30 秒) にした。V14 は `:check_client_resync` (ログの `requesting a resync` と `.rs1.rep`)。
+- 検証: Debug / Release `Editor.exe --selftest` (Source control 既知 2 項目のみ FAIL、Server/client net は ALL PASS)、Debug / Release `Server.exe --selftest` PASS、check_rules 0 error、net_verify / replay_verify PASS、server_verify ABCD PASS (A: 0.37% / 1.05%)。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner 2026-10-02)。確認した受け入れ条件は次のとおり。V13 (selftest の 2 シナリオで目標 ± 1 tick・代替入力率 0%、ケース A を WARP に戻して 0.37% / 1.05%、σ を無視した対照では FAIL)、V14 (クライアント要求の再同期 0)、V15 (片道 150ms で WARN 1 回、片道 90ms では 0)、C1〜C7。実プロセス 3 構成で、Editor は 14% → 0.13%、WARP は 26% → 1.6% に改善した。承認した点: σ を Confirmed.flags の上位 16bit に載せ proto を据え置く判断、係数 (平滑 1/32、窓 180、上限 6 tick)、WARN の条件を割合にしたこと、ケース A の窓縮小と記録延長 (検証環境の措置。エンジンの挙動は不変)。

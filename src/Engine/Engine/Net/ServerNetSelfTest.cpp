@@ -717,8 +717,12 @@ struct ClientOutcome {
     uint64_t finalTick = 0;
     bool running = false;            // 終了時にセッションが稼働中 (EngineLoop が netInfo.connected へ写す値)
     uint32_t sessionPlayerCount = 0; // セッションの人数 (同 netInfo.playerCount)
-    // (now ms, 到着余裕 ms) を 50ms ごと。traceMargin のシナリオで、標本が有効なときだけ
-    std::vector<std::pair<uint64_t, double>> marginTrace;
+    // 50ms ごとの (now ms, 到着余裕 ms, 目標 ms, σ ms)。traceMargin のシナリオで、標本が有効なときだけ
+    struct MarginSample {
+        uint64_t ms = 0;
+        double margin = 0.0, target = 0.0, sigma = 0.0;
+    };
+    std::vector<MarginSample> marginTrace;
 };
 
 struct ScenarioResult {
@@ -901,7 +905,9 @@ ScenarioResult RunScenario(Sims& sims, const ScenarioDef& def)
         if (def.traceMargin && now % 50 == 0) {
             for (int k = 1; k <= kClients; ++k) {
                 if (nodes[k].alive && nodes[k].session->Running() && nodes[k].session->MarginValid()) {
-                    res.client[k].marginTrace.emplace_back(now, nodes[k].session->MarginMs());
+                    res.client[k].marginTrace.push_back({ now, nodes[k].session->MarginMs(),
+                                                          nodes[k].session->TargetMarginMs(),
+                                                          nodes[k].session->SigmaMs() });
                 }
             }
         }
@@ -1412,18 +1418,24 @@ void TestSpeculationLimit(Sims& sims)
 
 // 到着余裕の標本 (50ms ごと) を [fromMs, toMs) の 1 秒窓で平均し、全部の窓が目標 ± 1 tick に入るか。
 // 窓の数を返す (0 = 標本が無い = 検査していない)。外れた窓があれば最初の 1 つを name 付きで報告する
-int CheckMarginWindows(const ClientOutcome& c, uint64_t fromMs, uint64_t toMs, const char* name, int client)
+//
+// adaptive = false: 目標は 16ms 固定とみなす (ジッタ 0 の回線。D18 の「ジッタ 0 で 16ms ± 1 tick」)。
+// adaptive = true : 目標は窓内の目標の平均 (= 1 tick + 2σ。上下限あり) とみなす
+// (D18 の「窓平均 <= 1 tick + 2σ + 1 tick」と、そこへ収束していること)
+int CheckMarginWindows(const ClientOutcome& c, uint64_t fromMs, uint64_t toMs, const char* name, int client,
+                       bool adaptive = false)
 {
-    constexpr double kTarget = 16.0; // ClientSessionConfig::targetMarginMs の既定
+    constexpr double kBaseTarget = 16.0; // ClientSessionConfig::targetMarginMs の既定
     constexpr double kTickMs = 1000.0 / 60.0;
     int windows = 0;
     std::string means;
     for (uint64_t w = fromMs; w + 1000 <= toMs; w += 1000) {
-        double sum = 0.0;
+        double sum = 0.0, targetSum = 0.0;
         int n = 0;
         for (const auto& s : c.marginTrace) {
-            if (s.first >= w && s.first < w + 1000) {
-                sum += s.second;
+            if (s.ms >= w && s.ms < w + 1000) {
+                sum += s.margin;
+                targetSum += s.target;
                 ++n;
             }
         }
@@ -1434,14 +1446,29 @@ int CheckMarginWindows(const ClientOutcome& c, uint64_t fromMs, uint64_t toMs, c
         }
         ++windows;
         const double mean = sum / n;
+        const double target = adaptive ? targetSum / n : kBaseTarget;
         means += (means.empty() ? "" : " ") + std::to_string(static_cast<int>(std::lround(mean)));
-        Check(std::fabs(mean - kTarget) <= kTickMs,
-              "%s: client %d's arrival margin averages %.1f ms in [%llu, %llu) ms (target %.0f +- %.1f)", name, client,
-              mean, static_cast<unsigned long long>(w), static_cast<unsigned long long>(w + 1000), kTarget, kTickMs);
+        if (adaptive) {
+            means += "/" + std::to_string(static_cast<int>(std::lround(target)));
+        }
+        Check(std::fabs(mean - target) <= kTickMs,
+              "%s: client %d's arrival margin averages %.1f ms in [%llu, %llu) ms (target %.1f +- %.1f)", name, client,
+              mean, static_cast<unsigned long long>(w), static_cast<unsigned long long>(w + 1000), target, kTickMs);
     }
     MYE_LOG_INFO("[server-net selftest] %s: client %d arrival margin, 1 s window means in [%llu, %llu) ms: %s ms", name,
                  client, static_cast<unsigned long long>(fromMs), static_cast<unsigned long long>(toMs), means.c_str());
     return windows;
+}
+
+// 全レーンの代替入力率 (待たれた tick のうち、締め切り超過で代替入力にした割合)
+double LateSubstRate(const ScenarioResult& r)
+{
+    uint64_t waited = 0, late = 0;
+    for (uint32_t l = 0; l < kMaxPlayers; ++l) {
+        waited += r.stats.laneWaitedTicks[l];
+        late += r.stats.laneLateSubst[l];
+    }
+    return waited > 0 ? static_cast<double>(late) / static_cast<double>(waited) : 1.0;
 }
 
 // V7 (spec 4.1.6): 到着余裕が目標 (1 tick) に収束する。追いつきと速度係数が同じ基準 (到着余裕) から導かれるので、
@@ -1491,24 +1518,69 @@ void TestTimeSync(Sims& sims)
               d.name);
         Check(r.client[1].catchUpTicks > 0, "%s: the client caught up after joining behind (%llu catch-up ticks)", d.name,
               static_cast<unsigned long long>(r.client[1].catchUpTicks));
+        Check(r.stats.unreachableWarnings == 0, "%s: a client within the limit is not reported (%llu)", d.name,
+              static_cast<unsigned long long>(r.stats.unreachableWarnings));
     }
     {
-        ScenarioDef d;
-        d.name = "V7 time sync (3 clients, 30ms +- 10 jitter)";
-        d.seed = 702;
-        d.endMs = 30000;
-        d.traceMargin = true;
-        for (int k = 1; k <= kClients; ++k) {
-            d.link[k] = Link(30, 10, 0, 0, 0);
+        // D18 (V13): ジッタがあれば目標は 1 tick + 2σ まで深くなり、到着余裕はそこへ収束して代替入力は 5% 以下
+        const struct {
+            const char* name;
+            uint64_t seed;
+            uint32_t base, jitter;
+        } kJitter[] = {
+            { "V13 time sync (3 clients, 30ms + 0..10 jitter)", 702, 30, 10 },
+            { "V13 time sync (3 clients, 20..40ms: 30ms +- 10 jitter)", 704, 20, 20 },
+        };
+        for (const auto& j : kJitter) {
+            ScenarioDef d;
+            d.name = j.name;
+            d.seed = j.seed;
+            d.endMs = 30000;
+            d.traceMargin = true;
+            for (int k = 1; k <= kClients; ++k) {
+                d.link[k] = Link(j.base, j.jitter, 0, 0, 0);
+            }
+            d.actions = { { Action::Start, 0, 1, 0 }, { Action::Start, 40, 2, 0 }, { Action::Start, 80, 3, 0 } };
+            ScenarioResult r = RunScenario(sims, d);
+            LogScenario(d.name, d, r);
+            Check(CountChainMismatches(r, d.name) == 0, "%s: every client's committed hash chain equals the server's",
+                  d.name);
+            for (int k = 1; k <= kClients; ++k) {
+                Check(CheckMarginWindows(r.client[k], 10000, 30000, d.name, k, true) == 20,
+                      "%s: client %d: 20 one-second windows were checked", d.name, k);
+                double sigmaSum = 0.0;
+                int n = 0;
+                for (const auto& s : r.client[k].marginTrace) {
+                    if (s.ms >= 10000) {
+                        sigmaSum += s.sigma;
+                        ++n;
+                    }
+                }
+                MYE_LOG_INFO("[server-net selftest] %s: client %d's sigma averages %.1f ms after 10 s", d.name, k,
+                             n > 0 ? sigmaSum / n : 0.0);
+            }
+            const double rate = LateSubstRate(r);
+            MYE_LOG_INFO("[server-net selftest] %s: late-subst rate %.2f%%", d.name, rate * 100.0);
+            Check(rate <= 0.05, "%s: substituted inputs are at most 5%% of the waited ticks (%.2f%%)", d.name,
+                  rate * 100.0);
+            Check(r.stats.unreachableWarnings == 0, "%s: no client is reported as unable to keep up (%llu)", d.name,
+                  static_cast<unsigned long long>(r.stats.unreachableWarnings));
         }
-        d.actions = { { Action::Start, 0, 1, 0 }, { Action::Start, 40, 2, 0 }, { Action::Start, 80, 3, 0 } };
+    }
+    {
+        // V15 (R-13): 往復 300ms は予測上限 (12 tick) と inputDelay (3 tick) の合計 250ms を超えて追いつけない。
+        // サーバがそれを検出して WARN を出す (救済はしない)。往復 180ms の V7 は出さない
+        ScenarioDef d;
+        d.name = "V15 client that cannot keep up (1 client, 150ms one-way)";
+        d.seed = 705;
+        d.endMs = 20000;
+        d.link[1] = Link(150, 0, 0, 0, 0);
+        d.actions = { { Action::Start, 0, 1, 0 } };
         ScenarioResult r = RunScenario(sims, d);
         LogScenario(d.name, d, r);
-        Check(CountChainMismatches(r, d.name) == 0, "%s: every client's committed hash chain equals the server's", d.name);
-        for (int k = 1; k <= kClients; ++k) {
-            Check(CheckMarginWindows(r.client[k], 10000, 30000, d.name, k) == 20,
-                  "%s: client %d: 20 one-second windows were checked", d.name, k);
-        }
+        Check(r.stats.unreachableWarnings == 1, "%s: the server warned once (%llu)", d.name,
+              static_cast<unsigned long long>(r.stats.unreachableWarnings));
+        Check(r.stats.forcedResyncs == 0, "%s: the server did not rescue it with a forced resync", d.name);
     }
 }
 // システムイベントをまたぐロールバック: 予測 (イベント無し) で走った区間に Join / Leave が確定で届いたら、

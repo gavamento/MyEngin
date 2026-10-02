@@ -303,8 +303,9 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] `tools\server_verify.bat` (全ケース ABCD): A 2 クライアント / B Debug・Release 混在 3 クライアント + ロス 20% + 途中参加 +
       切断 → 再接続 / C desync 注入 → バンドル + 再同期 / D Release 4 クライアント。各ケースで、サーバ `.rep` と各クライアントの確定 tick が
       重なり区間で全 tick 一致し、サーバ `.rep` が Debug / Release の `Server.exe --replay-verify` と窓ありの `Runtime.exe --replay-verify` でも一致する。
-      A はさらに、クライアント `.rep` (参加 tick から始まる) を単独で `--replay-verify` して 0 でない tick 数で PASS し、ロス 0 での各レーンの
-      `late-subst` (確定を待たれた tick のうち代替入力になった割合) が 5% 以下かつサーバが強制した再同期が 0 であること。C はさらに、診断バンドルの
+      A (WARP のクライアント) はさらに、クライアント `.rep` (参加 tick から始まる) を単独で `--replay-verify` して 0 でない tick 数で PASS し、ロス 0 での各レーンの
+      `late-subst` (確定を待たれた tick のうち代替入力になった割合) が 5% 以下、サーバが強制した再同期が 0、
+      クライアントが要求した再同期 (desync / EventGap / BadSnapshot。ログの `requesting a resync` と `.rs1.rep`) も 0 であること。C はさらに、診断バンドルの
       `local.rep` が単独で再生でき (壊した tick の直前まで一致)、バンドルの `local.dump` とサーバ `.rep` の同じ tick のダンプの `--hash-diff` が
       壊した `LocalTransform` を名指しすること
       **D は 1 台の PC で WARP の Runtime 4 台とサーバが論理コアを奪い合う負荷試験**で、tick 時間 (R3) も `late-subst` も計測環境の制約を受ける。
@@ -326,7 +327,9 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] 接続したエディタのツールバーで、一時停止 / ステップが無効表示になりツールチップに理由が出る (`--lang ja` / `--lang en`)。
       停止を押すとサーバのログに `left` (Leave) が出て、そのエディタの sim は止まり、再生ボタンも無効のまま。
       サーバが止まらないので、一時停止を許すと tick ごとに desync → 再同期を繰り返してしまう (M81k)
-- [ ] 接続して 2 分ほど放置し、Network 窓の到着余裕が目標 (約 16 ms) の近くで安定している (以前は約 90 ms に張り付いた)
+- [ ] 接続して 2 分ほど放置し、Network 窓の到着余裕が目標 (ジッタが無ければ約 16 ms、あれば 16 ms + 2σ で最大 100 ms) の近くで安定している
+      (以前は約 90 ms に張り付いた)。クライアントのログ `time sync: arrival margin X ms (target Y, sigma Z)` で確かめる
+- [ ] 往復 250ms を超える回線 (selftest の `V15` が偽トランスポートで再現) では、サーバのログに `cannot keep up` の WARN が peer ごとに 1 回出る
 
 ### GameLift Anywhere (手動、AWS アカウントが要る。手順は `docs\gamelift-anywhere.md`)
 

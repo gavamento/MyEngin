@@ -114,12 +114,16 @@ struct NetCheckpoint {
 };
 
 inline constexpr uint32_t kNetConfirmedFlagMarginValid = 1u;
+// flags の上位 16 bit = 到着余裕の標本の標準偏差 (1/4 ms 単位)。旧クライアントは bit0 しか見ないので
+// ペイロードの大きさも kNetProtoVersion も変えずに載せられる
+inline constexpr uint32_t kNetConfirmedSigmaShift = 16;
+inline constexpr uint32_t kNetConfirmedSigmaUnitsPerMs = 4;
 
 // s -> c。本体の後ろに count 本の tick レコードが続く
 struct NetConfirmedPayload {
-    // 受信した最新の自レーン入力の到着余裕 (締め切りの何 ms 前に届いたか。負 = 締め切り後)
+    // 前回の送信からの自レーン入力の到着余裕の平均 (締め切りの何 ms 前に届いたか。負 = 締め切り後)
     int32_t marginMs;
-    uint32_t flags; // bit0 = marginMs は実測値 (サーバがまだ自レーンの入力を受け取っていなければ 0)
+    uint32_t flags; // bit0 = marginMs は実測値 (標本が無ければ 0)、bit16..31 = 標準偏差
     NetCheckpoint checkpoints[kNetCheckpointsPerPacket]; // 新しい順
 };
 static_assert(sizeof(NetConfirmedPayload) == 8 + 16 * kNetCheckpointsPerPacket,

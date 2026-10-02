@@ -1640,9 +1640,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         if (clientSession.Running() && clientSession.MarginValid() && ClientNowMs() >= clientNextSyncLogMs) {
             // 定常状態で到着余裕が目標に収束しているかを実プロセスのログで確かめる (server_verify / 手動確認用)
             clientNextSyncLogMs = ClientNowMs() + 10000;
-            MYE_LOG_INFO("[client] time sync: arrival margin %.1f ms (target %u), rtt %.1f ms, speed x%.4f, "
+            MYE_LOG_INFO("[client] time sync: arrival margin %.1f ms (target %.1f, sigma %.1f), rtt %.1f ms, speed x%.4f, "
                          "%llu tick(s) run, %llu catch-up",
-                         clientSession.MarginMs(), clientSession.TargetMarginMs(), clientSession.RttMs(),
+                         clientSession.MarginMs(), clientSession.TargetMarginMs(), clientSession.SigmaMs(),
+                         clientSession.RttMs(),
                          clientSession.SpeedFactor(),
                          static_cast<unsigned long long>(clientRunner.Stats().ticksRun),
                          static_cast<unsigned long long>(clientRunner.Stats().catchUpTicks));

@@ -216,6 +216,11 @@ aws gamelift delete-location --location-name custom-mye-dev
 
 ## 11. 既知の制限
 
+- **対応できる往復はおよそ 250ms まで** (予測上限 12 tick + inputDelay 3 tick)。これを超える回線のクライアントは、
+  最初の有効な入力に届かず、入力が確定に間に合い続けない (サーバは待たずに進める)。サーバのログに
+  `[server] peer N (lane L) cannot keep up: ... Round trip is about X ms; the supported limit is about 250 ms` が 1 回出る。
+  救済 (再スナップショット) はしない。遠いリージョンのクライアントは、近いロケーションのフリートへ入れる。
+
 - `AcceptPlayerSession` / `RemovePlayerSession` は SDK の同期呼び出しで、**メインループ (tick) の中で**呼ばれる。
   応答が速い間は問題にならないが、GameLift への WebSocket が詰まると SDK 内の再試行の間サーバのループが止まる
   (その間は tick が進まず、他の参加者の入力も処理されない)。実疎通で参加時の tick 時間を見て、

@@ -37,6 +37,10 @@ namespace mye {
 inline constexpr uint32_t kServerDefaultDeadlineTicks = 3;
 inline constexpr uint32_t kServerDefaultRejoinTimeoutTicks = 60 * 30;
 
+// 到着余裕の標準偏差を取る標本の窓 (tick ごとに 1 標本 = 約 3 秒)。
+// 短いと稀なジッタの山を見落とし、長いと参加直後の追いつきの遅れが目標を持ち上げ続ける
+inline constexpr uint32_t kMarginWindow = 180;
+
 // 専用サーバの SessionConfig の既定値 (role = Server、tickRate = 60)。残りの項目は呼び出し側が埋める
 inline SessionConfig DefaultServerSessionConfig(uint32_t playerCount, uint32_t inputDelay)
 {
@@ -83,8 +87,8 @@ struct ServerStats {
     // レーンごと: 確定を待たれた tick の数と、そのうち代替入力になった数 (late-subst の割合 = 後者 / 前者)
     uint64_t laneWaitedTicks[kMaxPlayers] = {};
     uint64_t laneLateSubst[kMaxPlayers] = {};
-    uint64_t forcedResyncs = 0;
-     // クライアントの ack が履歴から溢れ、サーバが再同期を強いた回数
+    uint64_t forcedResyncs = 0;      // クライアントの ack が履歴から溢れ、サーバが再同期を強いた回数
+    uint64_t unreachableWarnings = 0; // 追いつけないクライアントを検出して WARN を出した回数 (R-13)
     uint64_t lateInputsDropped = 0; // 確定済みの tick に間に合わなかった入力 (冗長送信の重複は数えない)
     uint64_t snapshotsSent = 0, resyncsServed = 0;
     uint64_t chunksSent = 0, chunkResends = 0;
@@ -162,6 +166,14 @@ private:
         // 到着余裕の標本 (tick ごとに 1 つ) の、前回の Confirmed 送信からの合計と個数。送信時に平均を載せる
         int64_t marginSum = 0;
         uint32_t marginCount = 0;
+        // 直近 kMarginWindow 個の標本 (標準偏差と「追いつけない」検出用)。送信で空にしない
+        int32_t marginRing[kMarginWindow] = {};
+        uint32_t marginRingNext = 0;
+        uint32_t marginRingCount = 0;
+        int64_t ringSum = 0;
+        int64_t ringSumSq = 0;
+        uint32_t ringLate = 0;        // リング内の負の標本の数
+        bool unreachableWarned = false;
         uint64_t lateSampledTick = ~0ull; // 遅れて着いた入力を標本にした最新の tick (冗長送信の同じ tick を二度数えない)
         uint64_t lastDesyncReportTick = ~0ull; // 同じ checkpoint の不一致を何度も数えない
     };
@@ -181,6 +193,8 @@ private:
     Peer* FindLivePeerOfLane(int lane);
     Peer* FindOwnerOfLane(int lane);
     static void NoteMargin(Peer& p, int64_t marginMs);
+    static uint32_t MarginSigmaQuarterMs(const Peer& p);
+    void WarnIfUnreachable(Peer& p);
     void HandleHello(uint32_t key, const NetPacketHeader& h, const uint8_t* body, size_t bodySize,
                      uint64_t nowMs);
     void HandleClientInput(Peer& p, const NetPacketHeader& h, const uint8_t* body, size_t bodySize,

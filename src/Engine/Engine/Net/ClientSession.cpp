@@ -23,6 +23,10 @@ constexpr double kCatchUpSlackTicks = 2.0;
 // 往復して戻るまで待たないと、すでに埋めた遅れをもう一度数えて行き過ぎる
 constexpr uint32_t kCatchUpHoldExtraMs = 100;
 constexpr uint32_t kResyncRetryMs = 200;
+// σ のなだらかにする係数 (Confirmed 1 本ごと)。目標がジッタの揺れに合わせて跳ねない程度に遅く
+constexpr double kSigmaSmoothing = 1.0 / 32.0;
+// 目標 = 下限 + この倍数 × σ。正規分布なら遅れの確率は片側 2.3% 程度
+constexpr double kSigmaMultiplier = 2.0;
 constexpr uint32_t kMaxSnapshotBytes = 256u * 1024u * 1024u;
 
 } // namespace
@@ -82,6 +86,8 @@ void ClientSession::Start(const ClientSessionConfig& cfg, ClientSendFn send, uin
     localConfirmTick_ = localConfirmHash_ = 0;
     marginMs_ = 0.0;
     marginValid_ = false;
+    sigmaMs_ = 0.0;
+    sigmaValid_ = false;
     catchUpPending_ = 0;
     holdUntilMs_ = 0;
     rttMs_ = 0.0;
@@ -194,6 +200,8 @@ void ClientSession::ResetStream(uint64_t fromTick)
     lastSeenEventSeq_ = meta_.lastEventSeq;
     std::memset(svCp_, 0, sizeof(svCp_));
     marginValid_ = false;
+    sigmaMs_ = 0.0;
+    sigmaValid_ = false;
     catchUpPending_ = 0;
     holdUntilMs_ = 0;
 }
@@ -411,6 +419,10 @@ void ClientSession::OnConfirmed(const NetPacketHeader& h, const uint8_t* body, s
         const double sample = static_cast<double>(pl.marginMs);
         marginMs_ = marginValid_ ? marginMs_ + (sample - marginMs_) / 8.0 : sample;
         marginValid_ = true;
+        const double sigma = static_cast<double>(pl.flags >> kNetConfirmedSigmaShift)
+            / static_cast<double>(kNetConfirmedSigmaUnitsPerMs);
+        sigmaMs_ = sigmaValid_ ? sigmaMs_ + (sigma - sigmaMs_) * kSigmaSmoothing : sigma;
+        sigmaValid_ = true;
         PlanCatchUp();
     }
     if (h.echoTimeMs != 0) {
@@ -553,12 +565,20 @@ void ClientSession::Poll(uint64_t nowMs)
     }
 }
 
+// 目標はジッタが大きいほど深く取り、小さければ 1 tick に戻す。「いつ tick が回るか」だけを決め、sim には入らない
+double ClientSession::TargetMarginMs() const
+{
+    const double lo = static_cast<double>(cfg_.targetMarginMs);
+    const double hi = (std::max)(lo, cfg_.maxTargetTicks * kTickMs);
+    return (std::max)(lo, (std::min)(hi, lo + kSigmaMultiplier * sigmaMs_));
+}
+
 // 到着余裕の目標からの遅れ (tick)。正 = 入力が遅い (速く)、負 = 早すぎる (遅く)。
 // 速度係数と追いつきはどちらもこの 1 つの誤差から導く (確定フロンティアは入力が早く着くと
 // 予定より前へ進むので基準にしない: 2 つの制御が別の基準を追うと互いを打ち消す)
 double ClientSession::MarginErrorTicks() const
 {
-    return (static_cast<double>(cfg_.targetMarginMs) - marginMs_) / kTickMs;
+    return (TargetMarginMs() - marginMs_) / kTickMs;
 }
 
 double ClientSession::SpeedFactor() const

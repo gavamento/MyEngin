@@ -27,8 +27,8 @@
 | sub-08 Anywhere 実疎通 (ユーザー手動) | ユーザー待ち | 0 | | |
 | sub-09 NetWindow と文書 | OK | 1 | d16d77b | ADR-022、Editor Play から実接続 |
 | sub-10 決定論の境界の修正 (review-1 #1 #2 #4 #9) | OK | 1 | c6ac1aa | NetLockstepBoundary 共通化、0 tick は FAIL |
-| sub-11 クライアント記録再生・時刻同期・運用 (review-1 #3 #5 #6 #7 #8 #10) | OK | 1 | (次コミット) | 到着余裕 16ms に収束、クライアント .rep 再生可 |
-| sub-12 到着余裕の目標 (D18)・再同期の数え方・追いつけない検出 (V13〜V15) | ユーザー判断待ち | 0 | | 新規 |
+| sub-11 クライアント記録再生・時刻同期・運用 (review-1 #3 #5 #6 #7 #8 #10) | OK | 1 | 18b53df | 到着余裕 16ms に収束、クライアント .rep 再生可 |
+| sub-12 到着余裕の目標 (D18)・再同期の数え方・追いつけない検出 (V13〜V15) | OK | 1 | (次コミット) | 適応目標で代替入力 Editor 14%→0.13% / WARP 26%→1.6% |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -60,3 +60,6 @@
 - (司会 2026-10-02) sub-10 OK。V12 (オフライン再生でも .rep の SessionConfig から NetIsConnected/NetPlayerCount を立てる) を sub-11 へ。Editor クライアント実プロセスでのゲート検査ログは sub-11 V9 の実走で確認
 - (司会 2026-10-02) ユーザー許可を得て sub-10 負の対照の残骸 bin\x64\Debug\cache\server_net_selftest\save_boundary_full.rep.mismatch.txt / .tick180.actual.dump を削除 (再生成可能)
 - (司会 2026-10-02) sub-11 OK。review-1 #1〜#10 は sub-10/11 で対応済み。sub-12 (V13 D18 適応目標 / V14 クライアント要求の再同期も R5 に含める / V15 RTT 約 250ms 超の追いつけないクライアントを WARN + 文書化、R-13) の後に review round 2。sub-08 は sub-12 の後を推奨
+- (司会 2026-10-02) ユーザー判断 D18: 到着余裕の目標は案 (a) 適応目標 = clamp(1 tick + 2σ, 1 tick, 6 tick) (planner 裁定どおり)
+- (司会 2026-10-02) ユーザー指示: 全サブ (sub-12・review round 2 の修正まで) が終わったら、M81 全体のまとめを **Notion の活動記録に 1 ページとして** 書く (M81a〜i のまとめはチャットで提示済み、Notion 未保存)
+- (司会 2026-10-02) sub-12 OK。server_verify ケース A は Debug WARP クライアント 2 台の CPU 奪い合いで不安定になるため、クライアント窓を 640x360・client 2 の記録を 30 秒にしている (検証環境の措置、エンジン挙動は不変)。review round 2 でケース A が揺れたらまずこれを疑う

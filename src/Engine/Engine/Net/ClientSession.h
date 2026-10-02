@@ -37,7 +37,8 @@ struct ClientSessionConfig {
     uint32_t serverTimeoutMs = 3000;
     uint32_t ackIntervalMs = 30;    // スナップショット受信中の SnapshotAck 間隔
     uint32_t keepAliveMs = 50;
-    uint32_t targetMarginMs = 16;   // 到着余裕の目標 (1 tick ぶん)
+    uint32_t targetMarginMs = 16;   // 到着余裕の目標の下限 (1 tick ぶん)。ジッタがあれば 2σ 足して最大 maxTargetTicks まで上げる
+    uint32_t maxTargetTicks = 6;    // 目標の上限 (tick)
     uint32_t maxSnapshotAttempts = 3;
 };
 
@@ -119,7 +120,9 @@ public:
     void OnCatchUpTickRan(uint64_t nowMs);
     double MarginMs() const { return marginMs_; }
     bool MarginValid() const { return marginValid_; }
-    uint32_t TargetMarginMs() const { return cfg_.targetMarginMs; }
+    // いまの目標 = clamp(下限 + 2σ, 下限, 上限)。σ はサーバが Confirmed に載せる標本の標準偏差をなだらかにしたもの
+    double TargetMarginMs() const;
+    double SigmaMs() const { return sigmaMs_; }
     double RttMs() const { return rttMs_; }
     uint64_t ServerFrontier() const { return serverFrontier_; }
 
@@ -186,6 +189,8 @@ private:
     // 時刻同期
     double marginMs_ = 0.0;
     bool marginValid_ = false;
+    double sigmaMs_ = 0.0;
+    bool sigmaValid_ = false;
     int64_t catchUpPending_ = 0;
     uint64_t holdUntilMs_ = 0; // この時刻までは到着余裕の標本を捨てる (追いつきの直後)
     double rttMs_ = 0.0;
