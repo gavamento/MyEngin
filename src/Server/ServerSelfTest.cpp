@@ -23,6 +23,7 @@
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
 #include "Engine/Engine/Loop/HeadlessSim.h"
 #include "Engine/Engine/Loop/SimInit.h"
+#include "Engine/Engine/Navigation/NavDeterminismSelfTest.h"
 #include "Engine/Engine/Net/ServerSession.h"
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Platform/PathUtil.h"
@@ -645,6 +646,8 @@ bool RunServerSelfTest()
     TestSessionFunnel(check, tempDir);
     TestLoopTerminate(check, tempDir);
     TestRealConsoleTerminate(check, tempDir);
+    // Server.exe でも Recast 系のハッシュが Editor と一致することを確かめる (M82a)
+    check(RunNavDeterminismSelfTest(), "NavMesh: Recast のビット一致と状態の復元");
 
     if (failCount == 0) {
         MYE_LOG_INFO("Server self test: ALL PASS");

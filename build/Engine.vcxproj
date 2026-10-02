@@ -115,6 +115,8 @@
     <ClCompile Include="..\src\Engine\Engine\Modal\ModalSoundLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Modal\TriangleSoup.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Modal\Voxelizer.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Navigation\NavDeterminismSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Navigation\NavTileCacheSupport.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Net\ClientSession.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Net\ClientSimRunner.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Net\NetProtocol.cpp" />
@@ -380,6 +382,8 @@
     <ClInclude Include="..\src\Engine\Engine\Modal\ModalTypes.h" />
     <ClInclude Include="..\src\Engine\Engine\Modal\TriangleSoup.h" />
     <ClInclude Include="..\src\Engine\Engine\Modal\Voxelizer.h" />
+    <ClInclude Include="..\src\Engine\Engine\Navigation\NavDeterminismSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Navigation\NavTileCacheSupport.h" />
     <ClInclude Include="..\src\Engine\Engine\Net\ClientSession.h" />
     <ClInclude Include="..\src\Engine\Engine\Net\ClientSimRunner.h" />
     <ClInclude Include="..\src\Engine\Engine\Net\NetProtocol.h" />
@@ -629,6 +633,122 @@
       <TreatWarningAsError>false</TreatWarningAsError>
     </ClCompile>
     <ClCompile Include="..\external\libtess2\Source\tess.c">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Recast\Source\Recast.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Recast\Source\RecastAlloc.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Recast\Source\RecastArea.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Recast\Source\RecastAssert.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Recast\Source\RecastContour.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Recast\Source\RecastFilter.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Recast\Source\RecastLayers.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Recast\Source\RecastMesh.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Recast\Source\RecastMeshDetail.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Recast\Source\RecastRasterization.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Recast\Source\RecastRegion.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Detour\Source\DetourAlloc.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Detour\Source\DetourAssert.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Detour\Source\DetourCommon.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Detour\Source\DetourNavMesh.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Detour\Source\DetourNavMeshBuilder.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Detour\Source\DetourNavMeshQuery.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\Detour\Source\DetourNode.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\DetourTileCache\Source\DetourTileCache.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\DetourTileCache\Source\DetourTileCacheBuilder.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\DetourCrowd\Source\DetourCrowd.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\DetourCrowd\Source\DetourLocalBoundary.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\DetourCrowd\Source\DetourObstacleAvoidance.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\DetourCrowd\Source\DetourPathCorridor.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\DetourCrowd\Source\DetourPathQueue.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\DetourCrowd\Source\DetourProximityGrid.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\DebugUtils\Source\DebugDraw.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\DebugUtils\Source\DetourDebugDraw.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\recastnavigation\DebugUtils\Source\RecastDebugDraw.cpp">
       <WarningLevel>Level3</WarningLevel>
       <TreatWarningAsError>false</TreatWarningAsError>
     </ClCompile>

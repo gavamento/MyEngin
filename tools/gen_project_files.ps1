@@ -92,7 +92,8 @@ $engineSrc = Get-SourceItems @(
 Update-Vcxproj 'Engine' $engineSrc
 $engineExternal = Get-SourceItems @(
     @{ Path = 'external\imgui'; Prefix = 'external\imgui' },
-    @{ Path = 'external\libtess2'; Prefix = 'external\libtess2' }
+    @{ Path = 'external\libtess2'; Prefix = 'external\libtess2' },
+    @{ Path = 'external\recastnavigation'; Prefix = 'external\recastnavigation' }
 )
 # external は vcxproj に手書き済み (WarningLevel 指定のため)。filters のみ反映
 Update-Filters 'Engine' ($engineSrc + $engineExternal)

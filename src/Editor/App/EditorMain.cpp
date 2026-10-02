@@ -78,6 +78,7 @@
 #include "Engine/Engine/Replay/CrashRingSelfTest.h"
 #include "Engine/Engine/Session/SessionSelfTest.h"
 #include "Engine/Engine/Net/ServerNetSelfTest.h"
+#include "Engine/Engine/Navigation/NavDeterminismSelfTest.h"
 #include "Engine/Platform/CrashHandler.h"
 #include "Engine/Platform/InputActionsSelfTest.h"
 #include "Engine/Platform/PathUtil.h"
@@ -571,6 +572,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunFractureSkinSelfTest();              // M80j: スキンメッシュの破壊
         ok &= mye::RunSessionSelfTest();                   // M81b: システム入力 / SessionLanes / .rep v9
         ok &= mye::RunServerNetSelfTest();                 // M81d: 入力確定型サーバ/クライアント (1 プロセス内の偽トランスポート)
+        ok &= mye::RunNavDeterminismSelfTest();            // M82a: Recast のビット一致と状態の保存・復元
         return ok ? 0 : 1;
     }
 
