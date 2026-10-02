@@ -1141,8 +1141,8 @@ MYE_STR(TT_TipDivergence,     "seek to the first diverging tick", "最初に乖�
 
 // ---- ネットワーク (M52i) ----
 MYE_STR(Win_Net,              "Network###Net", "ネットワーク###Net")
-MYE_STR(Net_Inactive,         "No net session. Launch with --net-host PORT or --net-join HOST:PORT.",
-                              "ネットセッションはありません。--net-host PORT か --net-join HOST:PORT で起動してください。")
+MYE_STR(Net_Inactive,         "No net session. Launch with --net-host PORT, --net-join HOST:PORT or --net-connect HOST:PORT.",
+                              "ネットセッションはありません。--net-host PORT / --net-join HOST:PORT / --net-connect HOST:PORT で起動してください。")
 MYE_STR(Net_Connecting,       "connecting...", "接続中...")
 MYE_STR(Net_Role,             "role: %s   lane %u of %u   input delay %u ticks",
                               "役: %s   レーン %u / %u   入力遅延 %u tick")
@@ -1164,6 +1164,33 @@ MYE_STR(Net_Desync,           "DESYNC at tick %llu - a bundle was written to cra
                               "tick %llu で DESYNC — crash\\desync_<tick>_p<lane>\\ にバンドルを出力しました。")
 MYE_STR(Net_HashNote,         "World hashes are exchanged every 8 confirmed ticks; a mismatch halts the session.",
                               "確定 tick 8 個ごとにワールドハッシュを交換します。食い違うとセッションを停止します。")
+
+// 専用サーバ (M81i)
+MYE_STR(Net_ConnectHeader,    "Connect to a dedicated server (opens a client editor)",
+                              "専用サーバへ接続 (クライアントのエディタを別に起動します)")
+MYE_STR(Net_ConnectHost,      "HOST:PORT###NetConnectHost", "接続先 HOST:PORT###NetConnectHost")
+MYE_STR(Net_ConnectSession,   "player session ID (optional)###NetConnectSession",
+                              "player session ID (省略可)###NetConnectSession")
+MYE_STR(Net_ConnectButton,    "Connect###NetConnectButton", "接続###NetConnectButton")
+MYE_STR(Net_ConnectLaunched,  "Started a client editor. Look at its Network window.",
+                              "クライアントのエディタを起動しました。状態はそちらのネットワーク窓に出ます。")
+MYE_STR(Net_ConnectFailed,    "Could not start: check HOST:PORT / player session ID (no spaces or quotes) and the log.",
+                              "起動できません。HOST:PORT / player session ID (空白と引用符は不可) とログを確認してください。")
+MYE_STR(Net_ConnectNote,      "The handshake checks that both sides run the same build, game and content. A mismatch is rejected.",
+                              "ハンドシェイクで、ビルド・ゲーム・コンテンツが同じかを照合します。食い違うと拒否されます。")
+MYE_STR(Net_RoleServerClient, "dedicated server client", "専用サーバのクライアント")
+MYE_STR(Net_PlayerId,         "playerId %llu   (assigned by the server; use it to reconnect)",
+                              "playerId %llu   (サーバが割り当てた値。再接続の主張に使います)")
+MYE_STR(Net_LaneRow,          "lane %u%s: %s   playerId %llu", "レーン %u%s: %s   playerId %llu")
+MYE_STR(Net_LaneYou,          " (you)", " (自分)")
+MYE_STR(Net_LaneEmpty,        "empty", "空き")
+MYE_STR(Net_LaneConnected,    "connected", "接続中")
+MYE_STR(Net_LaneReserved,     "reserved", "予約中")
+MYE_STR(Net_ServerTicks,      "confirmed through tick %llu   %u ticks ahead   arrival margin %.1f ms   ping %.0f ms",
+                              "tick %llu まで確定   先行 %u tick   到着余裕 %.1f ms   ping %.0f ms")
+MYE_STR(Net_ServerSync,       "resyncs: %llu   desyncs: %llu", "再同期: %llu 回   desync: %llu 回")
+MYE_STR(Net_ServerDesyncNote, "DESYNC detected: a bundle was written to crash\\ and the client resynced from the server.",
+                              "DESYNC を検出しました。crash\\ にバンドルを出力し、サーバから再同期しました。")
 
 // ---- 地形 (M58) ----
 MYE_STR(Terrain_AssetType,    "Terrain",             "地形")

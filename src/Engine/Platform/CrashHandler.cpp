@@ -53,6 +53,7 @@ const uint64_t* g_tickIndex = nullptr;
 const uint64_t* g_frameIndex = nullptr;
 const wchar_t* g_sceneLabel = nullptr;
 CrashPayloadFn g_payload = nullptr;
+bool g_streamedReplay = false;
 void* g_payloadUser = nullptr;
 
 LPTOP_LEVEL_EXCEPTION_FILTER g_prevFilter = nullptr;
@@ -429,11 +430,18 @@ void WriteCrashText(EXCEPTION_POINTERS* ep, const char* kind, const wchar_t* det
     s.Ascii("\n\n");
     s.Ascii("再現手順:\n");
     s.Ascii("  1. 同じコミット (git " MYE_GIT_HASH ") の " MYE_BUILD_CONFIG " ビルドを用意する\n");
-    s.Ascii("  2. Runtime.exe --replay-verify \"");
-    AppendWide(s, g_bundleDir);
-    s.Ascii("\\crash.rep\"\n");
-    s.Ascii("     crash.rep は開始スナップショットを埋め込んでいるので、起動シーンに依らず\n");
-    s.Ascii("     落ちる直前の tick まで丸ごと再現する (最後の tick は未完了 = 期待ハッシュ無し)。\n");
+    if (g_streamedReplay) {
+        // Server は .rep を逐次書き出す (crash.rep は無い)。異常終了した .rep も完了済みの tick まで読める
+        s.Ascii("  2. このバンドルに crash.rep は無い。Server は --replay-record で指定した .rep を逐次書き出しているので、\n");
+        s.Ascii("     その .rep を起動時と同じシーン指定で Server.exe --replay-verify <その .rep> にかける。\n");
+        s.Ascii("     開始スナップショットを埋め込んでいるので、完了済みの tick まで丸ごと再現する。\n");
+    } else {
+        s.Ascii("  2. Runtime.exe --replay-verify \"");
+        AppendWide(s, g_bundleDir);
+        s.Ascii("\\crash.rep\"\n");
+        s.Ascii("     crash.rep は開始スナップショットを埋め込んでいるので、起動シーンに依らず\n");
+        s.Ascii("     落ちる直前の tick まで丸ごと再現する (最後の tick は未完了 = 期待ハッシュ無し)。\n");
+    }
     s.Ascii("  3. RVA を file:line へ落とすときは minidump.dmp + 上の stamp と一致する pdb。\n");
     s.Ascii("\n---- recent log (oldest first) ----\n");
 
@@ -597,6 +605,7 @@ void InstallCrashHandler(const CrashHandlerConfig& config)
     g_frameIndex = config.frameIndex;
     g_sceneLabel = config.sceneLabel;
     g_payload = config.payload;
+    g_streamedReplay = config.streamedReplay;
     g_payloadUser = config.payloadUser;
     if (g_installed) {
         return; // 2 回目以降は設定の差し替えだけ
@@ -662,6 +671,7 @@ void UninstallCrashHandler()
     if (g_dumpDone != nullptr) { CloseHandle(g_dumpDone); g_dumpDone = nullptr; }
     if (g_bundleFinished != nullptr) { CloseHandle(g_bundleFinished); g_bundleFinished = nullptr; }
     g_payload = nullptr;
+    g_streamedReplay = false;
     g_payloadUser = nullptr;
     g_tickIndex = nullptr;
     g_frameIndex = nullptr;

@@ -115,6 +115,7 @@ void InstallServerCrashHandler(const mye::EngineConfig& config, const uint64_t* 
     cc.crashRoot = config.projectRoot.empty() ? mye::GetExecutableDir() : config.projectRoot;
     cc.appName = config.title;
     cc.tickIndex = tickIndex;
+    cc.streamedReplay = true;
     mye::InstallCrashHandler(cc);
 }
 

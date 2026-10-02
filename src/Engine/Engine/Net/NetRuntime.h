@@ -49,6 +49,15 @@ struct NetRuntimeInfo {
     uint64_t packetsDropped = 0; // --net-loss で故意に捨てた分
     uint64_t stalls = 0;
     double stallMs = 0.0;
+
+    // ---- 専用サーバ構成のクライアントだけが書く (M81i、role == 4) ----
+    // 表示専用。ABI の NetLane* (確定入力から導く sim 値) とは別の経路で、ここから sim へ書き戻さない
+    uint64_t playerId = 0;          // サーバが振った playerId (0 = 未参加)
+    uint32_t laneState[4] = {};     // LaneState の生値 (0 Empty / 1 Connected / 2 Reserved)。自分の World の写し
+    uint64_t lanePlayerId[4] = {};
+    float arrivalMarginMs = 0.0f;   // 自分の入力が締め切りに対して何 ms 前に届いたか
+    uint64_t resyncs = 0;           // 再同期を要求した回数
+    uint64_t desyncs = 0;           // desync を検出した回数
 };
 
 } // namespace mye

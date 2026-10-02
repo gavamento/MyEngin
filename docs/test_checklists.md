@@ -286,3 +286,48 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] 戻る → 編集点より**手前**へさらに戻る → 前進で編集点を跨いで進める → self-check が OK
       (M73b 以前は HASH MISMATCH)
 - [ ] `--lang ja` で文字幅が崩れない (トランスポートの状態語 / 帯のラベル列 64px)
+
+## M81: 専用サーバ (Server.exe) と GameLift
+
+自動化できる部分は先に通す。実プロセスの `server_verify.bat` は全ケースで約 13 分かかり、CI には載せない
+(UDP + 複数プロセス + 実時間。`net_verify.bat` と同じ理由)。Debug と Release の `Editor.exe --selftest` は直列で回す
+(同時に回すとシェーダキャッシュ置き場を共有して M79 の項目が落ちる)。
+
+### 自動検証 (M81a〜M81i)
+
+- [ ] `bin\x64\Debug\Editor.exe --selftest` / `bin\x64\Release\Editor.exe --selftest` (直列): Session self test と
+      Server/client net self test が PASS。既知の失敗は Source control の 2 項目 (`external cherry-pick state closes the normal
+      write gate` / `external revert state survives status refresh`) のみ
+- [ ] `bin\x64\Debug\Server.exe --selftest` / `bin\x64\Release\Server.exe --selftest`: 全項目 PASS (exit 0)。GameLift の偽 SDK、
+      Terminate の 1 本の経路、実プロセスへの Ctrl+Break、`.rep` の逐次書出しと救済を含む
+- [ ] `tools\server_verify.bat` (全ケース ABCD): A 2 クライアント / B Debug・Release 混在 3 クライアント + ロス 20% + 途中参加 +
+      切断 → 再接続 / C desync 注入 → バンドル + 再同期 / D Release 4 クライアント。各ケースで、サーバ `.rep` と各クライアントの確定 tick が
+      重なり区間で全 tick 一致し、サーバ `.rep` が Debug / Release の `Server.exe --replay-verify` と窓ありの `Runtime.exe --replay-verify` でも一致する。
+      D のログの `tick time: avg ... max ...` を見て、avg が 4 ms を大きく下回ること (max は参加時に 7〜40 ms まで跳ねる = R-10)
+- [ ] `tools\replay_verify.bat`: 9 シーンすべてに Release の `Server.exe --replay-verify` が含まれ PASS
+- [ ] `tools\net_verify.bat`: P2P が従来どおり PASS (プロトコル版 6)
+- [ ] `pwsh -File tools\check_rules.ps1`: 規則 13 (sim 側から Net / Hosting を include しない、GameLift の依存は Server.vcxproj だけ) を含め 0 error
+
+### エディタの Network 窓 (M81i)
+
+- [ ] セッションが無いときの Network 窓に、HOST:PORT と player session ID の入力欄、接続ボタンが出る。`--lang ja` / `--lang en` の両方で
+      文字が崩れず、長い文は窓幅で折り返す
+- [ ] HOST:PORT を空にする / 引用符か空白を含めて接続を押すと「起動できません」が赤で出る (エディタは増えない)
+- [ ] `Server.exe --local-demo --synth-input --max-players 4 --net-delay 3 --port 7777` を起動し、別の Editor で
+      `Editor.exe --local-demo --synth-input --net-connect 127.0.0.1:7777 --autoplay` → Network 窓が自動で開き、役割「専用サーバのクライアント」、
+      自レーンと playerId、レーン 4 本の状態 (Empty / Connected / Reserved と playerId)、確定 tick が進む、先行 tick、到着余裕、再同期 / desync 0 回
+- [ ] 接続欄から接続すると、もう 1 つのエディタが `--net-connect` 付きで起動する (この窓のセッションは変わらない)
+
+### GameLift Anywhere (手動、AWS アカウントが要る。手順は `docs\gamelift-anywhere.md`)
+
+- [ ] IAM / カスタムロケーション / Anywhere フリート / `RegisterCompute` / 認証トークン (約 15 分で失効する。取ったらすぐ起動する) を用意し、
+      `MYE_GAMELIFT_AUTH_TOKEN` を環境変数に置いて `Server.exe --hosting gamelift ...` を起動する (トークンをコマンド履歴に残さない)
+- [ ] `Server.exe --hosting gamelift` を接続情報なしで起動すると、足りない項目を 1 行で挙げて exit 1 (30 秒以内に戻る)
+- [ ] `CreateGameSession` でゲームセッションが ACTIVE になり、`CreatePlayerSession` の ID を `--player-session-id` に渡した Runtime が接続できる。
+      誤った ID は拒否される
+- [ ] プレイ中に Runtime を落として (Bye 無し) 同じ `--net-player-id` / player session ID で再接続すると、同じレーンへ戻る。
+      保持期間 (既定 30 秒、`myeRejoinTimeoutTicks`) を過ぎると席が解放される
+- [ ] 参加の瞬間のサーバの tick 時間 (`tick time: ... max`) をログで確認する。`AcceptPlayerSession` が詰まって tick が止まらないか (R-11)
+- [ ] 終了 (`TerminateGameSession` または Ctrl+C) でゲームセッションが TERMINATED になり、Server.exe が exit 0 で終わる。
+      サーバの `.rep` が最後まで読め、`Server.exe --replay-verify` で全 tick 一致する
+- [ ] 片付け (フリート / ロケーション / コンピュートの削除) まで行い、AWS 側のログを `plans\m81-dedicated-server\anywhere-log\` に残す

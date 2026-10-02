@@ -143,6 +143,8 @@ struct CrashHandlerConfig {
     const wchar_t* sceneLabel = nullptr;
     CrashPayloadFn payload = nullptr;
     void* payloadUser = nullptr;
+    // true = .rep を逐次書き出すプロセス (Server.exe)。crash.rep は無く、再現手順の文面を Server 向けにする
+    bool streamedReplay = false;
 };
 
 // 4 経路のハンドラを設置する。2 回目以降の Install は設定の差し替えとして扱う

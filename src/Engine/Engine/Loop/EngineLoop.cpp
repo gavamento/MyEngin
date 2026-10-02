@@ -2195,6 +2195,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             netInfo.packetsRecv = clientSession.Stats().packetsIn;
             netInfo.stalls = clientRunner.Stats().stalls;
             netInfo.stallMs = clientRunner.Stats().stallMs;
+            netInfo.playerId = clientSession.PlayerId();
+            const SessionLanes& laneView = scene.Lanes();
+            for (uint32_t i = 0; i < kMaxPlayers; ++i) {
+                netInfo.laneState[i] = laneView.lanes[i].state;
+                netInfo.lanePlayerId[i] = laneView.lanes[i].playerId;
+            }
+            netInfo.arrivalMarginMs = static_cast<float>(clientSession.MarginMs());
+            netInfo.resyncs = clientSession.Stats().resyncs;
+            netInfo.desyncs = clientRunner.Stats().desyncs;
         }
         // ---- タイムトラベルの自動プローブ (M52e、--timetravel-selftest N) ----
         // 「T まで進める → T-K へ戻す → 記録入力で T まで再シム → 元の T とハッシュ一致」を

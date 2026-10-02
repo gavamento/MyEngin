@@ -312,11 +312,23 @@ CrashRing は直近スナップショットと、そこからの全 tick 入力�
 
 UDP の 2 人 P2P を対象とし、相手の入力が揃うまで待つ遅延ロックステップと、予測入力で先に進めて差があれば戻す予測ロールバックを持ちます。直近入力を重複送信してパケット損失に備え、確定 tick のハッシュで不一致を検出します。不一致時の診断バンドル、人工的な遅延・損失、自己検証用の不一致注入があります。
 
-入力基盤が複数レーンを持つことから、多人数インターネット対戦まで完成しているとは判断できません。マッチメイキング、NAT 越えサービス、専用サーバ、アカウント基盤は本機能に含めません。C# はネット中に止め、ping や自分の peer 番号など機種・接続依存の値は sim の分岐に戻さない設計です。
+C# はネット中に止め、ping や自分の peer 番号など機種・接続依存の値は sim の分岐に戻さない設計です。UI キャンバス寸法を P2P の接続時に照合するため、同一アスペクトで解像度だけが異なる場合と、アスペクトそのものが異なる場合では互換条件が違います。
 
-UI キャンバス寸法を接続時に照合するため、同一アスペクトで解像度だけが異なる場合と、アスペクトそのものが異なる場合では互換条件が違います。
+### 専用サーバ (M81)
 
-根拠: [NetSession.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Net/NetSession.h)、[NetRollback.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Net/NetRollback.cpp)、[net_verify.bat](C:/HAKtokyo/My_Engin/MyEngin/tools/net_verify.bat)、[ADR-013](C:/HAKtokyo/My_Engin/MyEngin/docs/adr/ADR-013-predictive-rollback-netcode.md)。
+P2P とは別に、GPU も窓も無いマシンで動くヘッドレスの `Server.exe` と、それに繋ぐクライアント構成があります。最大 4 人で、途中参加・切断・再接続を扱います。サーバが各 tick の全レーン入力を**確定してから**配り、自分も同じ `RunOneTick` を回す入力確定型です。クライアントは P2P と同じ予測ロールバックで追従し、ワールドの状態は流しません。サーバの `.rep` はどの PC で再生しても、サーバ実機と同じハッシュ列になります。
+
+- **起動**: `Server.exe --port N --hosting local|gamelift --max-players 1..4` (ほかに `--net-delay` / `--net-deadline` / `--net-rejoin-timeout` / `--replay-record` / `--exit-when-empty` / `--server-timeout`)。クライアントは Runtime または Editor に `--net-connect HOST:PORT [--player-session-id ID]`。エディタの Network 窓には接続欄があり、押すと `--net-connect` 付きでエディタをもう 1 つ起動します (この窓自身のセッションは変えません)。
+- **参加・離脱**: ゲームには参加・離脱を「システムイベント」として全員が同じ tick に受け取ります。ABI v23 の `NetLaneMask` / `NetLaneState` / `NetLanePlayerId` / `NetSystemEventCount` / `NetGetSystemEvent` で読めます。これらは確定入力から導く値で、sim の状態に使ってよいものです。v13 の `NetPingMs` などは従来どおり表示専用で、`NetIsServer` / `NetIsClient` は ABI にありません。
+- **ABI v23 の影響**: 外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は `apiVersion` 22 のままだと拒否されるので、v23 のエンジンで開く前に再ビルドが必須です。検証用スクリプト `NetEventProbe` はデモへ自動では付きません。
+- **接続時の照合**: エンジンのビルド、`GameLogic.dll`、sim が読むアセット (`contentHash`)、プロトコルとスナップショットの版を照合し、食い違えば最初の項目名つきで拒否します。Debug と Release の混在検証だけ `--allow-game-mismatch` を使います (本番では使いません)。
+- **締め切りと予約**: 遅い入力は 3 tick (50ms) を超えると前の入力 (文字・ホイール・マウス移動は 0) で確定します。切断したレーンは 30 秒予約します。GameLift ではゲームプロパティ `myeDeadlineTicks` / `myeRejoinTimeoutTicks` で上書きできます。
+- **ホスティング**: `LocalHosting` (開発・CI) と `GameLiftHosting` (Server SDK 5.x、Anywhere で疎通)。手順は [gamelift-anywhere.md](C:/HAL/MyEngin/docs/gamelift-anywhere.md)。SDK の TLS は証明書を検証せず、通信の暗号化は M81 の対象外 (認証は player session ID の照合のみ) です。
+- **記録と検証**: サーバは `.rep` (v9) を逐次書き出し、異常終了しても完了済みの tick まで読めます。クラッシュバンドルの `crash.txt` は、その `.rep` を `Server.exe --replay-verify` にかける手順を示します。`Server.exe --selftest` は GameLift の偽 SDK と `.rep` の書き出しを確認します。
+
+既知の制限: UI を操作できるのはレーン 0 だけ (多レーン UI 不可)、コンピュート ABI の結果を sim に入れてはいけない、GPU パーティクルの設定は全員一致が前提、Server は cook キャッシュを使わない、`contentHash` は描画・音声専用の拡張子を除く (除外した種類の `.meta` は入らない)、Anywhere の認証トークンは約 15 分で失効する、Windows のみ。マッチメイキング、NAT 越えサービス、アカウント基盤、EC2 フリート、Linux は含めません。詳細は [ADR-022](C:/HAL/MyEngin/docs/adr/ADR-022-dedicated-server.md) と [engine_spec.md](C:/HAL/MyEngin/engine_spec.md) §11.5。
+
+根拠: [NetSession.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Net/NetSession.h)、[NetRollback.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Net/NetRollback.cpp)、[net_verify.bat](C:/HAKtokyo/My_Engin/MyEngin/tools/net_verify.bat)、[ADR-013](C:/HAKtokyo/My_Engin/MyEngin/docs/adr/ADR-013-predictive-rollback-netcode.md)、[ServerSession.h](C:/HAL/MyEngin/src/Engine/Engine/Net/ServerSession.h)、[ServerLoop.cpp](C:/HAL/MyEngin/src/Server/ServerLoop.cpp)、[server_verify.bat](C:/HAL/MyEngin/tools/server_verify.bat)。
 
 ## 14. プロジェクト・配布・検証
 
@@ -331,6 +343,8 @@ Build Settings は、スクリプト再ビルド、クックの準備、Runtime 
 | `tools/replay_verify.bat` | 対象シーンの Debug / Release リプレイ比較 |
 | `tools/shot_verify.bat` | 基準 PNG との描画回帰 |
 | `tools/net_verify.bat` | 通信・ロックステップ・ロールバックの検証 |
+| `tools/server_verify.bat` | 専用サーバ + 複数クライアントの実プロセス検証 (サーバ `.rep` との全 tick 一致) |
+| `Server.exe --selftest` | GameLift の偽 SDK、`.rep` の逐次書出し |
 | `tools/crash_verify.bat` | クラッシュと保存された再現記録の検証 |
 | `tools/collab_verify.bat` | Git サービス・連携処理 |
 | `tools/watcher_rules_verify.bat` | 更新監視とルールの検証 |

@@ -1,7 +1,7 @@
 # sub-07: GameLiftHosting と SDK 組込・Anywhere 手順書
 
 - 依存: sub-05
-- 状態: OK (コミット待ち — .lib のコミット可否をユーザーに確認してから)
+- 状態: OK (commit 82aeba4)
 - 往復: 1
 
 ## やること

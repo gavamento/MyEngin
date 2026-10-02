@@ -606,6 +606,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.saveSceneOnStart = saveSceneOnStart;
     app.autoPlay = autoPlay;
     app.openTimeline = openTimeline;
+    app.openNet = config.netRole != 0;
     app.showcase = showcase;
     app.showcaseOptions = showcaseOptions;
     app.editActorPath = editActorPath;

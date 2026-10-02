@@ -2936,6 +2936,142 @@ prevent this; the checkpoint comparison catches it within eight ticks and produc
 is the same bargain the rest of this chapter makes: rules plus mechanical verification, not
 enforcement. `--net-demo` (`NetDuelDemo` + `NetHudDemo`) exists as the worked example of the split.
 
+### 11.5 Dedicated server (input-confirming, M81)
+
+M81 adds a headless `Server.exe` and a client/server topology next to the 2-player P2P of §11.4. It
+cashes in the same claim — *when* a tick runs may depend on the network, *what* a tick consumes may
+depend on nothing but confirmed input — for up to **4 clients, late join and reconnect**. The server
+confirms every lane's input for tick *T*, writes it to its `.rep`, then sends it; it runs the same
+`RunOneTick` itself and never speculates or rolls back. Clients use the §11.4 predictive rollback
+against the server's confirmed stream. State is never streamed. Rationale and rejected alternatives:
+[ADR-022](docs/adr/ADR-022-dedicated-server.md).
+
+**Roles.** `NetRole` gains `Server = 3` and `Client = 4`; `Host` / `Join` stay as P2P. The server has no
+lane of its own: every lane is remote. Because the simulation never reads the role, a `.rep` recorded by
+the server replays identically on a client PC (`SessionConfig.role` is a recording fact, not an input).
+
+**What a tick consumes.** Only `SessionConfig` (immutable) and, per tick, `InputSnapshot[4]` plus a
+`SystemInputTick`. Joins and leaves are `SystemEvent { eventSeq, playerId, kind, lane }` with
+`kind = Join / Leave / Rejoin / Release`, at most `kMaxSystemEventsPerTick = 8` per tick. `eventSeq` is
+one session-wide monotone counter assigned by the server; `playerId` is the `eventSeq` of the first Join
+and is independent of the lane. The pure function `ApplySystemInput(SessionLanes&, SystemInputTick)` runs
+right after phase 1 and before the action map is evaluated: events apply in `eventSeq` order, a Join
+takes the lowest `Empty` lane, a Leave turns a lane `Reserved` (keeping its `playerId`), the same
+`playerId` rejoining gets the same lane back, and `Release` frees it. An invalid event (a Leave for a
+lane that does not exist, an already-applied `eventSeq`) is logged and ignored inside the pure function,
+so the server, the clients and a replay all make the same decision. `SessionLanes` lives in the `Scene`,
+is part of the snapshot (`kSimSnapshotVersion` 24) and is folded into the world hash only for records that
+carry system input.
+
+**Server confirmation (spec 4.1.4).** Tick *T* is confirmed when every *live* lane that has delivered
+input has delivered *T*, or when wall-clock time passes the tick's due time plus `deadlineTicks`
+(default 3 = 50 ms; game property `myeDeadlineTicks`, `--net-deadline`). A late lane gets
+`SubstituteLateInput(previous confirmed input)`: the previous input with the consumable fields (`chars`,
+`charCount`, `mouseDeltaX/Y`, `wheelDelta`) zeroed — repeating them would type a character twice and turn
+the camera twice. `Reserved` and `Empty` lanes get zero input. Participants who are still downloading a
+snapshot are not waited for, otherwise every join would stall everyone. Time decides *which tick* a value
+lands in; the value itself is what gets recorded. Each pass of the loop is ordered: receive →
+hosting events → deadline decision → confirm → `RunOneTick` → record to `.rep` → send. A reserved lane
+is released after `rejoinTimeoutTicks` (default 1800 = 30 s; `myeRejoinTimeoutTicks`, `--net-rejoin-timeout`)
+by emitting a `Release` event, so the timeout is on the record rather than in wall-clock time.
+
+**Protocol.** New messages reuse the 64-byte `NetPacketHeader`: `Hello(6)`, `Welcome(7)`, `ClientInput(8)`,
+`Confirmed(9)`, `SnapshotChunk(10)`, `SnapshotAck(11)`, `ResyncRequest(12)`; `Reject` names the first
+mismatching provenance field. Inputs and confirmations are sent redundantly like §11.4; the snapshot is
+the only reliable channel (chunks of at most 1024 bytes, an acknowledgement bitmap, at most 32 chunks per
+frame so a join cannot stall the tick). `kNetProtoVersion` is 6 for P2P and server alike.
+
+**Late join and reconnect.** On `Hello` the server picks the next tick boundary *S*, puts a Join (or
+Rejoin) into tick *S*'s system input, and snapshots the world *before tick S runs* (right after
+`ApplyStructuralChanges`) with `SnapshotMeta.tick = S`. The client restores it and compares the world hash
+with `SnapshotMeta.worldHash`; a mismatch aborts the join and asks again (three attempts, then Failed).
+A client that vanished without Bye can come back with the same `playerId` and player session ID and take
+over its lane (Leave and Rejoin are queued into the same tick).
+
+**Provenance (what is compared before play).** `SimProvenance` = `engineVersion` (hash of `MYE_GIT_HASH`),
+`protocolVersion`, `apiVersion`, `schemaVersion`, `replayVersion`, `gameVersion` (64-bit hash of the loaded
+`GameLogic.dll` bytes), `contentHash`, `initialSnapshotHash`; `CompareProvenance` names the first
+difference. `contentHash` covers every file under `assets\` except render- and audio-only extensions
+(images, shaders, audio, font binaries; the `.meta` of those kinds too) and the paths
+`content_manifest.json` and `scripts/Generated/`. Packaging bakes `content_manifest.json`
+(`--write-content-manifest PATH`); without it the hash is computed at start-up and the time is logged.
+`--allow-game-mismatch` downgrades only a `gameVersion` mismatch to a warning and records the fact in
+`configBits`; it exists for the Debug↔Release mixes of `server_verify.bat` / `net_verify.bat`.
+
+**Prediction and desync.** Clients may run `kNetMaxSpeculationClient = 12` ticks ahead (P2P stays at 8);
+the client's prediction repeats the newest confirmed input but zeroes `chars` / `wheelDelta`
+(`PredictLaneInput`), because a prediction never enters recorded state. The server carries its world
+hash in `Confirmed` every `kNetHashCheckpoint = 8` ticks. A client that disagrees writes the same
+`crash\desync_<tick>_p<lane>\` bundle as §11.4 and asks for a resync (a fresh snapshot) instead of
+halting; the server keeps running. Each resync starts a new client `.rep` (`<stem>.rs<N>.rep`).
+Clock sync shifts only *when* ticks run (±2 % on the accumulator, plus catch-up ticks after a join),
+driven by the server's report of how many ms before the deadline the client's input arrived.
+
+**Headless `Server.exe`.** Console subsystem, no window, device or audio output. It links the engine but
+loads none of `d3d11.dll` / `dxgi.dll` / `d3dcompiler_47.dll` / `xaudio2_9.dll` (all `/DELAYLOAD`) and
+checks that after the run (exit 2 if loaded); it never shares the cook cache or hot-reload shadow copies
+with the Editor / Runtime. The tick is the very `RunOneTick` of the Editor, so nothing in it branches on
+"is this the server". `Server.exe --replay-verify <rep>` replays a `.rep` headlessly and is part of
+`replay_verify.bat`. Live options: `--port`, `--hosting local|gamelift`, `--max-players 1..4`,
+`--net-delay`, `--net-deadline`, `--net-rejoin-timeout`, `--exit-when-empty`, `--server-timeout`
+(exit 5), `--replay-record`, `--replay-ticks`, `--net-loss`, `--allow-game-mismatch`. Clients use
+`--net-connect HOST:PORT [--player-session-id ID]` (Runtime and Editor; the Editor's Network window has a
+connect box that starts a second editor with these arguments). Measured with 4 Release clients on
+the `--local-demo` scene: average tick time 0.06–0.2 ms, with spikes of 7–40 ms around a join
+(snapshot capture; inside the 50 ms deadline, but the margin is small).
+
+**Hosting.** `IHostingProvider` (`Init`, `NotifyReady`, `Poll` → `StartSession` / `Terminate` /
+`HealthCheck`, `ValidatePlayer`, `PlayerLeft`, `PlayerReleased`, `NotifySessionEnded`, `Shutdown`) with
+`LocalHosting` and `GameLiftHosting` (Server SDK 5.6.0, static `/MT` `.lib` + OpenSSL 3 DLLs under
+`external\`). SDK callbacks arrive on SDK threads and are only queued; `Poll` consumes them at a tick
+boundary. Only `Server.vcxproj` may depend on the SDK (`check_rules` rule 13, which also forbids the
+simulation side from including `Net/`, `Hosting/` and `Platform/Net/`). The AWS procedure is
+[docs/gamelift-anywhere.md](docs/gamelift-anywhere.md).
+
+**Recording.** `.rep` v9 (`kReplayFileVersion = 9`): header gains `flags` (bit 0 = system-input records),
+`SessionConfig`, `SimProvenance` and the starting `SnapshotMeta`; a tick record is
+`InputSnapshot × playerCount` + (flag) `SystemInputTick` (200 bytes) + the world hash. v8 files still
+load. `rngState` / `rngInc` remain for records without an embedded snapshot, and with one the writer stores the
+world's RNG and the reader rejects a mismatch. The server writes its `.rep` incrementally, so a crash
+loses at most the unfinished tick; a file whose `tickCount` was never finalised is read up to the last
+complete tick. The server's crash bundle has no `crash.rep`; `crash.txt` points at the incremental `.rep`
+to feed to `Server.exe --replay-verify`. `--rep-diff` names the first differing field of the new header
+and the system input; `--rep-diff-overlap N` compares two `.rep`s that start at different ticks over the
+ticks they share.
+
+**Scripting (ABI v23, M81f).** `MYE_API_VERSION` 23, 126 → 131 slots, appended at the end:
+`NetLaneMask`, `NetLaneState`, `NetLanePlayerId`, `NetSystemEventCount`, `NetGetSystemEvent`. These
+return values **derived from confirmed input** — every client reads the same join on the same tick — so
+unlike the ABI v13 slots in §11.4 (machine-dependent, presentation only) they may drive simulation
+state. Outside a server session the lanes `[0, playerCount)` are `Connected`, player ids are 0 and no
+events exist (`playerCount` comes from the `.rep`-reproduced tick context). `NetIsServer` /
+`NetIsClient` were deliberately **not** added: every script entry point runs inside a tick, where such
+a call could only return an error and 0. The C# side is a position-only mirror (the C# lane is stopped in
+network play). **A `GameLogic.dll` built for `apiVersion` 22 is refused by a v23 engine; external projects
+(Sanko, HAL Collector) must rebuild.** `NetEventProbe` (counts joins and leaves into the world) is a
+verification script and is never attached to the demos automatically, so the demo generation order — the
+particle RNG stream — and the goldens do not move.
+
+**Verification.** `Editor.exe --selftest` runs the Session suite and the in-process server/client suite
+(one server and three clients over a seeded fake transport: missed deadline, late join, drop → reconnect,
+reservation timeout → Release, 20 % loss, reordering; the confirmed-input log, not the arrival order,
+decides the hash chain; an event-sequence gap triggers a resync; an injected desync produces a bundle and
+a resync; RTT 150 ms does not stall at speculation 12). `Server.exe --selftest` covers the GameLift
+hosting against a fake SDK and the incremental `.rep`. `tools\server_verify.bat` runs real processes with
+loss, a late join, a drop and rejoin, and a desync injection, then checks that the server `.rep`
+equals every client's confirmed ticks and replays identically in Debug and Release `Server.exe` and in a
+windowed `Runtime.exe`. It is not in CI, for the reason `net_verify.bat` is not (UDP, several processes,
+wall-clock time); the selftests carry the logic in CI.
+
+**Known limits.** Only lane 0's input reaches the UI (no multi-lane UI); canvas size is not compared
+for a server session (reference resolution and the font-metrics table are). Compute-ABI results (device-less
+server returns 0 / no-op) must not be written into simulation state in a game meant for the server.
+A GPU particle back end has to be configured identically on every participant (the `contentHash` covers
+`project_settings.json`). The server never uses the cook cache. `AcceptPlayerSession` /
+`RemovePlayerSession` are synchronous SDK calls inside the 60 Hz loop. The Anywhere auth token expires
+in about 15 minutes. The SDK's TLS does not verify certificates and nothing is encrypted by M81 (player
+session ID only). Windows only, 4 players at most.
+
 ---
 
 ## 12. Milestones
@@ -2977,7 +3113,7 @@ interleave — several tracks ran in parallel and a few milestones were revisite
 | Audio | M45 | Decode, voice pool, bus graph with dB faders and mute / solo, reverb presets, streaming music, a procedural synth window |
 | Physics | M20, M28, M59, M60, M60′, M80 | Rigid bodies and raycasts; capsules and OBBs; an accumulated-impulse substepping solver with aerodynamics, buoyancy, gyroscopic terms, friction, material assets, sleep and islands, CCD and terrain height fields; joints, motors, breakage, compound and convex colliders, ragdolls, vehicles; an XPBD lane for deformables (rope); **Chaos-Destruction-style pre-baked fracture** (§10.8): Voronoi splitting, root-proxy rendering, adhesion breaking, six after-break behaviours and ABI v22's `ApplyFractureDamage`/`onBreak` (ADR-021) |
 | Acoustics | M65, M68 | Integer chamfer wavefront propagation in which **one field serves four roles** — the glow volume that draws the world, enemy hearing with direction of arrival, navigation drawn from the same weights, and the player's ears (ADR-017); occlusion and diffraction shaping, room reverb interpolation, waves that are actually audible |
-| Determinism and verification | M6, M51, M52 | Replay hashing across Debug / Release plus static rule checks; sim indices, game flow, pause and time scale, save / load, staged packaging; field-level hash diffing, a `git bisect` wrapper, time travel, crash bundles that replay, **two-player P2P rollback netcode** (ADR-013); CI and pixel regression (ADR-014) |
+| Determinism and verification | M6, M51, M52 | Replay hashing across Debug / Release plus static rule checks; sim indices, game flow, pause and time scale, save / load, staged packaging; field-level hash diffing, a `git bisect` wrapper, time travel, crash bundles that replay, **two-player P2P rollback netcode** (ADR-013); CI and pixel regression (ADR-014); **headless dedicated server** with late join, reconnect, `.rep` v9 and ABI v23 lane state, hosted locally or on GameLift Anywhere (M81, §11.5, ADR-022) |
 | Project system and source control | M26, M27, M33, M66 | `--project` and the project manager; editor theme and Japanese fonts; **Git for the project repository from inside the editor**, backed by an in-process Rust cdylib behind six C entry points (§14, ADR-015) |
 | Infrastructure | M25 | Job system (`ParallelFor` / `ParallelRanges`), used by the transform hierarchy and frustum culling |
 
@@ -3023,7 +3159,8 @@ ADR-012 structural prefab overrides / **ADR-013 predictive rollback netcode** (�
 **ADR-017 acoustic propagation driving real audio** (§10.6) /
 ADR-018 time-travel branches (what-if replay) / ADR-019 GUID-keyed model sub-asset keys /
 ADR-020 Deep-Modal impact synthesis (§10.7) /
-**ADR-021 pre-baked destructible fracture** (§10.8).
+**ADR-021 pre-baked destructible fracture** (§10.8) /
+**ADR-022 dedicated server (input-confirming) and hosting abstraction** (§11.5).
 
 ---
 

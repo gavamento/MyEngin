@@ -23,9 +23,9 @@
 | sub-04 プロトコルと 1 プロセス内検証 | OK | 1 | d5e1540 | N1〜N4 自動化、R-4 解決 |
 | sub-05 Server 実運用ループ・LocalHosting・server_verify | OK | 1 | 9f0a196 | server_verify 4 ケース PASS、tick avg 0.059ms |
 | sub-06 ABI v23 | OK | 1 | 3145e9c | 126→131 スロット、NetIsServer は足さない |
-| sub-07 GameLiftHosting + SDK 5.x | OK | 1 | (次コミット) | SDK 5.6.0 を /MT 静的 lib、.rep 逐次書出し |
-| sub-08 Anywhere 実疎通 (ユーザー手動) | 未着手 | 0 | | |
-| sub-09 NetWindow と文書 | 未着手 | 0 | | |
+| sub-07 GameLiftHosting + SDK 5.x | OK | 1 | 82aeba4 | SDK 5.6.0 を /MT 静的 lib、.rep 逐次書出し |
+| sub-08 Anywhere 実疎通 (ユーザー手動) | ユーザー待ち | 0 | | |
+| sub-09 NetWindow と文書 | OK | 1 | (次コミット) | ADR-022、Editor Play から実接続 |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -50,3 +50,5 @@
 - (司会 2026-10-02) ユーザー判断 D17: GameLift SDK のビルド済み .lib (Debug 72MB + Release 53MB) と OpenSSL の DLL を git にコミットする (planner 裁定どおり)
 - (司会 2026-10-02) coder の誤操作で作られたルート直下の 0 バイト CMakeLists.txt をユーザー許可を得て削除 (未追跡・内容なし)
 - (sub-07 → 後続) R-11: AcceptPlayerSession / RemovePlayerSession は同期呼び出しで 60Hz ループを止めうる (sub-08 で参加時の tick 時間を見て判断)。R-10 続報: server_verify D で max 39.5ms。SDK の TLS は証明書を検証しない (ADR-022 に既知の制限として書く)。初回 Debug selftest だけ Fracture weight cache 3 項目が 1 回 FAIL (再実行で消える、M80p、再現したら報告)。tmp\m81g_sdk* / m81g_vcpkg* は数 GB の作業ツリー (M81 完了後に削除可否を確認)
+- (司会 2026-10-02) sub-09 OK。R-12: スクショ時の到着余裕 230ms (目標 約 17ms)、定常状態での収束をレビューと sub-08 で確認。coder がスクショ撮影でユーザーの imgui.ini (gitignore) を書き換えた → ユーザーへ報告済み
+- (司会 2026-10-02) sub-08 以外の全サブ OK。sub-08 はユーザー手作業待ちのまま Phase 3 (レビュー) へ進む。reviewer への追加観点: R-12 の定常状態の到着余裕、sub-07 最終改名後に未再実行だった replay_verify / server_verify / net_verify / Editor --selftest の再実行
