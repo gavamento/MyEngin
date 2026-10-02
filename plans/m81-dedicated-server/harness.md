@@ -3,7 +3,7 @@
 - 依頼原文: M81 汎用 Dedicated Server + AWS GameLift 対応。ユーザーと合意済みの設計案は C:\HAL\MyEngin\plans\m81-dedicated-server\design-draft.md (slug: m81-dedicated-server)。planner はこれを起点に仕様を確定し、サブへ分割すること。決定論を壊さないこと (design-draft §3) が全サブ共通の必須条件。
   - 元のユーザー発言: 「汎用Dedicated Server機能を作り、そのホスティング先の一つとしてAWS GameLiftを対応させたい」「決定論を壊さないように開発/ネットワーク管理を行うこと」
 - 開始: 2026-10-01 / 基点コミット: 4e67907b5548b1e2ca48585d50519d6c1b895530
-- フェーズ: 実装 (review-1 FAIL の修正)
+- フェーズ: 完了 (sub-08 = GameLift Anywhere 実疎通のみユーザー手作業待ち)
 
 ## ユーザー判断 (プランモードでの合意。design-draft.md に詳細)
 - 同期方式 = 入力確定型サーバ / サーバ OS = Windows 先行 / GameLift = Server SDK 組込 + Anywhere 疎通まで / 最大 4 人
@@ -28,12 +28,13 @@
 | sub-09 NetWindow と文書 | OK | 1 | d16d77b | ADR-022、Editor Play から実接続 |
 | sub-10 決定論の境界の修正 (review-1 #1 #2 #4 #9) | OK | 1 | c6ac1aa | NetLockstepBoundary 共通化、0 tick は FAIL |
 | sub-11 クライアント記録再生・時刻同期・運用 (review-1 #3 #5 #6 #7 #8 #10) | OK | 1 | 18b53df | 到着余裕 16ms に収束、クライアント .rep 再生可 |
-| sub-12 到着余裕の目標 (D18)・再同期の数え方・追いつけない検出 (V13〜V15) | OK | 1 | (次コミット) | 適応目標で代替入力 Editor 14%→0.13% / WARP 26%→1.6% |
+| sub-12 到着余裕の目標 (D18)・再同期の数え方・追いつけない検出 (V13〜V15) | OK | 1 | f8a5cba | 適応目標で代替入力 Editor 14%→0.13% / WARP 26%→1.6% |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
 | 1 | FAIL | 2/2/4/3 | blocker 2 (#1 サーバの sim だけ LoadGame/LoadPersist が効く, #2 D14 未実装) / major 3 (#3 クライアント .rep・バンドル再生不能, #4 0 tick で PASS, #5 到着余裕が収束しない) / minor 5 (#6〜#10) |
+| 2 | PASS | 4/4/4/4 | minor 2 (#1 V15 WARN が RTT と断定・クライアント停止と区別できない, #2 R5 判定で一度も待たれないレーンが黙って外れる) |
 
 ## 申し送り (セッション跨ぎ)
 - (planner 2026-10-01) spec.md 確定・sub-01〜09 作成。AskUserQuestion 不可のため D3/D4/D5/D6 を裁定し [ユーザーに聞ける] として PLAN_RESULT に返した。
@@ -63,3 +64,5 @@
 - (司会 2026-10-02) ユーザー判断 D18: 到着余裕の目標は案 (a) 適応目標 = clamp(1 tick + 2σ, 1 tick, 6 tick) (planner 裁定どおり)
 - (司会 2026-10-02) ユーザー指示: 全サブ (sub-12・review round 2 の修正まで) が終わったら、M81 全体のまとめを **Notion の活動記録に 1 ページとして** 書く (M81a〜i のまとめはチャットで提示済み、Notion 未保存)
 - (司会 2026-10-02) sub-12 OK。server_verify ケース A は Debug WARP クライアント 2 台の CPU 奪い合いで不安定になるため、クライアント窓を 640x360・client 2 の記録を 30 秒にしている (検証環境の措置、エンジン挙動は不変)。review round 2 でケース A が揺れたらまずこれを疑う
+- (司会 2026-10-02) review round 2 PASS。残 minor: (1) V15 の "cannot keep up" WARN が遅れの原因を往復時間と断定する (同 PC の WARP の CPU 奪い合いでも出る。server_verify B で "about 1759 ms" に対し実 RTT 70〜95ms)。サーバ側 RTT 推定の併記か文面修正。(2) server_verify A の R5 判定で、一度も待たれなかったレーン (V15 状態) は行が出ず黙って外れる → 参加クライアント数ぶんのレーン行と "cannot keep up" 0 を合否に。合否外の観察: ケース B (20% ロス) は Debug WARP の CPU 奪い合いで late-subst 44%
+- (司会) sub-08 の前に直すべき blocker は無い。M81h の実疎通はユーザーの準備ができ次第 docs\gamelift-anywhere.md の手順で
