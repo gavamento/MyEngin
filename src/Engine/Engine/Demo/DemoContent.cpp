@@ -26,6 +26,9 @@
 #include "Engine/Engine/Audio/Playback/SoundAsset.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 #include "Engine/Engine/Asset/FbxLoader.h"
+#include "Engine/Engine/Navigation/NavBake.h"      // M82c: --nav-demo のベイク
+#include "Engine/Engine/Navigation/NavMeshAsset.h" // M82c: メモリ上の登録
+#include "Engine/Engine/Scene/TransformSystem.h"
 #include "Engine/Engine/Physics/Fracture/FractureBuilder.h" // M80f: 破片エンティティの事前生成
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Asset/ModelLoader.h"
@@ -4341,6 +4344,149 @@ void BuildFractureShowcaseScene(EngineContext& ctx)
     // 静的に計算できる (FractureSkinSelfTest の狙い方と同じ式)
     makeCannonball("FractureBallSkinArm", { 8.0f, 3.0f + kArmHy * 0.5f, -15.0f },
                    { 0.0f, 0.0f, 30.0f });
+}
+
+// M82c: --nav-demo。段差・坂・台・孤島・壁のある庭に Agent を 6 体置く。
+// ★ナビメッシュはファイルを作らずシーン構築時にメモリ上で焼いて登録する (`nav://demo`)。
+//   コミットした .mnav だとベイク方式の版 (kNavBakeVersion) を上げたときに古くなるが、
+//   これなら Debug / Release / Server が独立に焼いて replay が一致すること自体が、
+//   ベイクの構成間一致 (sub-02 の契約) を実行経路で証明する
+void BuildNavShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    World& w = s.GetWorld();
+    RenderResources& res = *ctx.resources;
+    s.SetName("nav_showcase");
+
+    auto makeMat = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = AssetID{ HashStr("forward_lit") };
+        m.texture = res.textures.White();
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    makeMat("navdemo_floor", 0.30f, 0.32f, 0.36f);
+    makeMat("navdemo_block", 0.62f, 0.60f, 0.55f);
+    makeMat("navdemo_wall", 0.45f, 0.30f, 0.28f);
+    const AssetID agentColors[] = {
+        makeMat("navdemo_agent0", 0.90f, 0.35f, 0.30f), makeMat("navdemo_agent1", 0.95f, 0.70f, 0.25f),
+        makeMat("navdemo_agent2", 0.45f, 0.80f, 0.35f), makeMat("navdemo_agent3", 0.30f, 0.65f, 0.90f),
+        makeMat("navdemo_agent4", 0.65f, 0.45f, 0.90f), makeMat("navdemo_agent5", 0.90f, 0.50f, 0.75f),
+    };
+    const AssetID cube = res.meshes.Cube();
+
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    camera.SetLocalPosition(0.0f, 17.0f, -19.0f);
+    camera.SetLocalRotationEuler(42.0f, 0.0f, 0.0f);
+
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(50.0f, -30.0f, 0.0f);
+
+    {
+        GameObject envGo = s.CreateGameObject("Environment");
+        auto* env = envGo.AddComponent<PhysicsEnvironmentComponent>();
+        env->gravity = { 0.0f, -9.81f, 0.0f };
+    }
+
+    // 静的な箱 (見た目 = cube を拡大、当たり = 単位箱。Transform の scale が当たりにも掛かる)
+    auto addBlock = [&](const char* name, DirectX::XMFLOAT3 center, DirectX::XMFLOAT3 half, const char* material,
+                        const DirectX::XMFLOAT4* rotation = nullptr) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(center.x, center.y, center.z);
+        go.SetLocalScale(half.x * 2.0f, half.y * 2.0f, half.z * 2.0f);
+        if (rotation != nullptr) {
+            go.GetComponent<LocalTransform>()->rotation = *rotation;
+        }
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr(material) };
+        auto* col = go.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kBox;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        return go;
+    };
+
+    // 庭の形状。NavAgentSelfTest の庭と同じ構成 (傾斜の上限は maxClimb とセル幅で決まる: Components.h)
+    constexpr float kPi = 3.14159265f;
+    constexpr float kStepHeight = 0.1f;
+    constexpr float kRampDeg = 10.0f;
+    addBlock("Floor", { 0.0f, -0.5f, 0.0f }, { 12.0f, 0.5f, 12.0f }, "navdemo_floor");
+    addBlock("Step", { -4.0f, kStepHeight * 0.5f, 0.0f }, { 1.5f, kStepHeight * 0.5f, 12.0f }, "navdemo_block");
+    const float rampAngle = kRampDeg * kPi / 180.0f;
+    const float sn = std::sin(rampAngle);
+    const float cs = std::cos(rampAngle);
+    const DirectX::XMFLOAT4 rampRotation = { 0.0f, 0.0f, std::sin(rampAngle * 0.5f), std::cos(rampAngle * 0.5f) };
+    addBlock("Ramp", { 4.0f + 2.0f * cs + 0.1f * sn, 2.0f * sn - 0.1f * cs, 0.0f }, { 2.0f, 0.1f, 3.0f },
+             "navdemo_block", &rampRotation);
+    const float platformTop = 4.0f * sn;
+    addBlock("Platform", { 9.4f, platformTop * 0.5f, 0.0f }, { 1.6f, platformTop * 0.5f, 3.0f }, "navdemo_block");
+    addBlock("Island", { 0.0f, 1.5f, 8.0f }, { 2.0f, 1.5f, 2.0f }, "navdemo_wall"); // 登れない高さ
+    addBlock("WallA", { 1.0f, 1.0f, -6.0f }, { 0.4f, 1.0f, 3.0f }, "navdemo_wall");
+    addBlock("WallB", { 6.0f, 1.0f, 8.0f }, { 3.0f, 1.0f, 0.4f }, "navdemo_wall");
+
+    GameObject surfaceGo = s.CreateGameObject("NavMesh Surface");
+    {
+        auto* sf = surfaceGo.AddComponent<NavMeshSurfaceComponent>();
+        sf->center = { 0.0f, 3.0f, 0.0f };
+        sf->size = { 26.0f, 10.0f, 26.0f };
+        sf->cellSize = 0.2f;
+        sf->cellHeight = 0.1f;
+        sf->tileSize = 40;
+    }
+
+    // Agent。左端に並べ、東の台 / 孤島 / 北東 / 南東 / 反対側の隅へ向かう。
+    // NavDemoDriver (GameLogic) が 300 tick で出発点へ戻す (GameLogic.dll 未ロード = ヘッドレス selftest 等では戻らない)
+    struct AgentSpec {
+        float startZ;
+        DirectX::XMFLOAT3 destination;
+        int quality;
+    };
+    const AgentSpec specs[] = {
+        { -7.0f, { 9.4f, platformTop, -1.0f }, 2 }, { -4.0f, { 9.4f, platformTop, 1.0f }, 3 },
+        { -1.0f, { 0.0f, 3.0f, 8.0f }, 2 },         { 2.0f, { 10.0f, 0.0f, -9.0f }, 1 },
+        { 5.0f, { 10.0f, 0.0f, 9.0f }, 2 },         { 8.5f, { -9.0f, 0.0f, -9.0f }, 3 },
+    };
+    const ComponentTypeId driver = ComponentRegistry::Get().FindByName("NavDemoDriver");
+    int colorIndex = 0;
+    for (const AgentSpec& spec : specs) {
+        GameObject agent = s.CreateGameObject("NavAgent");
+        agent.SetLocalPosition(-9.0f, 0.9f, spec.startZ);
+        agent.AddComponent<CharacterControllerComponent>();
+        auto* na = agent.AddComponent<NavMeshAgentComponent>();
+        na->destination = spec.destination;
+        na->hasDestination = true;
+        na->avoidanceQuality = spec.quality;
+        if (driver != kInvalidComponentType) {
+            w.AddComponentRaw(agent.Id(), driver);
+        }
+        // 見た目は子へ逃がす (CC のカプセルは本体の scale を拾うので本体は無スケール)
+        GameObject body = s.CreateGameObject("Body");
+        body.SetParent(agent);
+        body.SetLocalScale(0.6f, 0.9f, 0.6f);
+        auto* mr = body.AddComponent<MeshRendererComponent>();
+        mr->mesh = res.meshes.Capsule();
+        mr->material = agentColors[colorIndex++ % 6];
+    }
+
+    // ベイクして登録する。入力収集はワールド行列を読むので Transform を一度確定させる
+    w.ApplyStructuralChanges();
+    TransformSystem transforms;
+    transforms.Update(w);
+    NavBakeInputs inputs;
+    constexpr uint64_t kNavDemoGuid = HashStr("nav://demo");
+    if (!NavPrepareBakeInputs(w, surfaceGo.Id(), inputs)) {
+        MYE_LOG_ERROR("[nav-demo] cannot collect the bake input");
+        return;
+    }
+    NavBakeOutput baked = NavBakeAsset(inputs.config, inputs.soup, nullptr);
+    if (baked.status != NavBakeStatus::Ok) {
+        MYE_LOG_ERROR("[nav-demo] bake failed: %s", baked.message.c_str());
+        return;
+    }
+    NavMeshAsset::RegisterInMemory(kNavDemoGuid, std::move(baked.data));
+    w.GetComponent<NavMeshSurfaceComponent>(surfaceGo.Id())->navAsset = AssetID{ kNavDemoGuid };
 }
 
 } // namespace mye

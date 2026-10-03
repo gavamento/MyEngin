@@ -8,8 +8,8 @@
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
 | sub-01 | OK | 1 | 9944784 | Recast vendor + ビット一致・復元方式の試作 (M82a) |
-| sub-02 | 実装中 | 0 | | NavMeshSurface + .mnav ベイク + 輪郭描画 (M82b) |
-| sub-03 | 未着手 | 0 | | NavMeshAgent + dtCrowd + SimSnapshot (M82c) |
+| sub-02 | OK | 1 | b310244 | NavMeshSurface + .mnav ベイク + 輪郭描画 (M82b) |
+| sub-03 | 実装中 | 0 | | NavMeshAgent + dtCrowd + SimSnapshot (M82c) |
 | sub-04 | 未着手 | 0 | | 半透明の塗り + golden nav (M82d) |
 | sub-05 | 未着手 | 0 | | NavMeshObstacle (M82e) |
 | sub-06 | 未着手 | 0 | | NavMeshModifier + エリアコスト (M82f) |
@@ -32,6 +32,7 @@
 - Q3 Off-Mesh Link の渡り方は Linear / Jump / Manual の 3 種 (裁定どおり)
 - Q4 NavMesh の表示: **線に加え、Unity のような半透明の塗りも付ける** (planner 裁定から変更)
 - Q5 スクリプト API は M82 に入れる (sub-07、裁定どおり)
+- (2026-10-03、司会経由で回答) spec 2. #18: NavMesh の表示を編集中 (非 Play) の SceneView にも出す (裁定どおり)。範囲箱ギズモと一緒に sub-04 で実装
 - エンジンのバージョン変更 (0.6.8.22) は `b1920a7` で単独コミット済み (harness のサブとは無関係)
 
 ## 申し送り (セッション跨ぎ)
@@ -41,4 +42,5 @@
 - (planner) TypeId は末尾 append で予約しない。ABI は sub-07 着手時の次番号 (起票時 v23 = 131)。どちらも M75h と先着順、m75-ugui.md に注記する
 - (planner 2026-10-03 Q 回答反映) Q1 → spec 4.4 F1〜F5 + 受け入れ条件 18 (再ベイクは作らず差し込み口だけ)。Q4 → 塗りの sub-04 を挿入し旧 sub-04〜08 を sub-05〜09 (M82e〜M82i) へ繰り下げ、受け入れ条件 17・golden `nav`
 - (planner 2026-10-03 sub-02 VERDICT) `.mnav` は NavSystem::Update の遅延ロードを採用 (spec 2. #17)、sub-03 の restore は読み込みを先に済ませる。編集中の SceneView 表示と Surface の範囲箱ギズモを sub-04 へ追加 (spec 2. #18、`[ユーザーに聞ける]`)。reviewer 向け: Editor GUI (Play 中の輪郭 / Bake ボタン) は未観測、Server/client net self test の 1 回限りの FAIL (V1、tick 270 の .rep) は未再現
+- (planner 2026-10-03 sub-03 VERDICT) 坂の実効上限 atan(maxClimb/(2·cellSize)) (既定で約 9 度) は spec 2. #19 で「制約として受け入れ + インスペクタで表示・警告 (sub-04)」と裁定、`[ユーザーに聞ける]`。areaMask は sub-06 1b、Obstacle の restore 検証は sub-05 3b、ADR に書く事実は sub-09 へ。build\GameLogic.vcxproj(.filters) は NavDemoDriver.cpp を含むのでステージ必須。cache\ の scratch (nb.ps1 等) は git 管理外で残置 (削除は承認が要る)
 - (planner) sub-01 の結論 (復元方式 a/b/c) で sub-03 以降の SimSnapshot の形が決まる。sub-01 の VERDICT 時に spec 4.4 を確定させる

@@ -1416,8 +1416,30 @@ void RegisterBuiltinComponents()
                                                  ".mnav - the baked navigation mesh (set by Bake)")),
         MYE_JP("ナビメッシュを描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawNavMesh, Bool, kFieldNoHash)),
         MYE_JP("タイル境界を描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawTileBounds, Bool, kFieldNoHash)),
+        MYE_JP("エージェントの経路を描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawAgentPaths, Bool, kFieldNoHash)),
     });
 #undef MYE_NAV_AREA_COST
+
+    // M82c: NavMesh Agent (TypeId=72、末尾 append)。実行状態 3 本は NavSystem が毎 tick 書く (読み取り専用)
+    RegisterComponent<NavMeshAgentComponent>("NavMeshAgent", {
+        MYE_JP("エージェント種別", MYE_FIELD_TIP(NavMeshAgentComponent, agentTypeId, Int32,
+                                                 "walks on the surface with the same agent type id")),
+        MYE_JP("最高速度", MYE_FIELD_RANGE(NavMeshAgentComponent, speed, Float, 0.0f, 50.0f)),
+        MYE_JP("加速度", MYE_FIELD_RANGE(NavMeshAgentComponent, acceleration, Float, 0.1f, 200.0f)),
+        MYE_JP("旋回速度 (度/秒)", MYE_FIELD_TIP(NavMeshAgentComponent, angularSpeedDeg, Float,
+                                                 "turn speed toward the moving direction; 0 = never rotate")),
+        MYE_JP("停止距離", MYE_FIELD_TIP(NavMeshAgentComponent, stoppingDistance, Float,
+                                         "arrives when closer than this to the destination")),
+        MYE_JP("回避の半径", MYE_FIELD_RANGE(NavMeshAgentComponent, radius, Float, 0.05f, 5.0f)),
+        MYE_JP("回避の高さ", MYE_FIELD_RANGE(NavMeshAgentComponent, height, Float, 0.2f, 10.0f)),
+        MYE_JP("回避の品質", MYE_FIELD_TIP(NavMeshAgentComponent, avoidanceQuality, Int32,
+                                           "0 = no avoidance (agents overlap); 1..3 = avoidance quality (higher is heavier)")),
+        MYE_JP("目的地", MYE_FIELD(NavMeshAgentComponent, destination, Float3)),
+        MYE_JP("目的地あり", MYE_FIELD(NavMeshAgentComponent, hasDestination, Bool)),
+        MYE_JP("状態", MYE_FIELD_FLAGS(NavMeshAgentComponent, status, Int32, kFieldReadOnly)),
+        MYE_JP("残り距離", MYE_FIELD_FLAGS(NavMeshAgentComponent, remainingDistance, Float, kFieldReadOnly)),
+        MYE_JP("部分経路", MYE_FIELD_FLAGS(NavMeshAgentComponent, pathPartial, Bool, kFieldReadOnly)),
+    });
 }
 
 } // namespace mye

@@ -8,6 +8,7 @@
 spec 5. の 11, 12, 15, 16, 17, 18 (c)。
 
 1. `docs\adr\ADR-023-navmesh.md` を仕上げる (sub-01 の下書き + 各サブの決定: 復元方式、**将来の実行時再ベイクの足し方 (どの関数を・どの tick のどのステップで呼ぶか・何が未実装か)**、塗りの描画レーン、TypeId、`.mnav`、エリアコストを Surface に置いた理由、CC 必須、Link の渡り、Obstacle の同期確定、除外した案と理由、AcousticNav との役割分担)。
+   sub-03 から: 坂の実効上限 atan(maxClimb / (2·cellSize)) と CC の登れる段差の実測 (spec 2. #19 / #5)、`targetPathqRef` を tick 末に `DT_PATHQ_INVALID` へ正規化する理由 (dtPathQueue の連番は復元で 1 からになる)、回避なし = `collisionQueryRange` 0.01 で近傍探索ごと止める理由、Nav 節の実測 (6 体 2,894 B / 128 体 38,782 B、capture +64 µs、restore 58 µs、ロールバック 148 KB に対し 128 体で +26% → 差分化しない)、最悪 tick の `dtCrowd::update` (128 体一斉要求で 0.76-0.87 ms、dtPathQueue 容量 8 件が自然に絞るので件数制限を足さない)。
 2. `engine_spec.md` に NavMesh 節 (コンポーネント、Tick 位置、スナップショット、ABI 表の版)。`docs\engine-feature-guide.md` 9.3 の「NavMesh ベイクとは区別します」を書き換え。`AcousticNav.h:22-24` のコメントを「音響ナビは NavMesh を使わない (汎用移動は ADR-023 の NavMesh)」の意味に整える。`docs\test_checklists.md` に NavMesh の手動確認項目。`CLAUDE.md` / `AGENTS.md` に末尾 TypeId や検証表の記述があれば更新 (無ければ触らない)。`plans\m75-ugui.md` の TypeId 注記。
 3. 全体検証: 両構成 `/p:MyeWarnAsError=true`、`--selftest` 両構成、`check_rules`、`replay_verify` (全ジョブ)、`shot_verify`、Runtime.exe `--nav-demo` 実走 + スクショ、エディタで Create → 4 項目 → Bake → 再生で Agent が歩くのを `--screenshot` で確認。
 

@@ -495,6 +495,9 @@
     <ClCompile Include="..\src\Engine\Engine\Modal\Voxelizer.cpp">
       <Filter>Engine\Modal</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Navigation\NavAgentSelfTest.cpp">
+      <Filter>Engine\Navigation</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavBake.cpp">
       <Filter>Engine\Navigation</Filter>
     </ClCompile>
@@ -1310,6 +1313,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Modal\Voxelizer.h">
       <Filter>Engine\Modal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Navigation\NavAgentSelfTest.h">
+      <Filter>Engine\Navigation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavBake.h">
       <Filter>Engine\Navigation</Filter>

@@ -10,7 +10,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 
+#include "Engine/Core/Asset/AssetGuidResolver.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Util/ByteIo.h"
 #include "Engine/Platform/PathUtil.h"
@@ -29,6 +31,12 @@ constexpr uint32_t kMagic = static_cast<uint32_t>('M') | (static_cast<uint32_t>(
 constexpr int32_t kMaxTileGrid = 4096;
 constexpr int32_t kMaxLayers = 1 << 20;
 constexpr int32_t kMaxLayerBytes = 1 << 24;
+
+std::map<uint64_t, Data>& MemoryAssets()
+{
+    static std::map<uint64_t, Data> assets;
+    return assets;
+}
 
 bool ReadWholeFile(const std::wstring& path, std::vector<uint8_t>& out)
 {
@@ -224,6 +232,22 @@ bool Load(const std::wstring& path, Data& out)
         return false;
     }
     return Deserialize(blob, out);
+}
+
+void RegisterInMemory(uint64_t guid, Data data)
+{
+    MemoryAssets()[guid] = std::move(data);
+}
+
+bool LoadByGuid(uint64_t guid, Data& out)
+{
+    const auto it = MemoryAssets().find(guid);
+    if (it != MemoryAssets().end()) {
+        out = it->second;
+        return true;
+    }
+    const std::wstring path = assetguid::ResolvePath(guid);
+    return !path.empty() && Load(path, out);
 }
 
 NavTileStoreConfig MakeStoreConfig(const Data& d)

@@ -351,6 +351,7 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     m.simRefs.particles = &m.particleSystem.Cpu();
     m.simRefs.xpbd = &m.xpbd;
     m.simRefs.acoustic = &m.acoustic;
+    m.simRefs.nav = &m.navSystem; // M82c
     m.simRefs.collision = &m.collisionSystem;
     m.simRefs.scripts = &m.scriptHost;
     m.simRefs.prevTickInput = m.prevTickInput;

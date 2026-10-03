@@ -155,7 +155,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // FSM の状態は全部 AgentBrainComponent 側 = ECS = snapshot に載っている。
     // だから 3 点セット契約の対象外 (XpbdBackend / AcousticField とはそこが違う)
     AgentSystem agentSystem;
-    // M82b: ナビメッシュ。.mnav から作る導出値で ECS 外。SimSnapshot の Nav 節は M82c
+    // M82b: ナビメッシュ。ナビメッシュ本体は .mnav から作る導出値、dtCrowd とスロット表は sim 状態 (SimSnapshot の Nav 節)
     NavSystem navSystem;
     std::vector<SolidContact> solidContacts; // 物理→衝突イベントの tick 内受け渡し (M28c)
     PrefabLibrary prefabLibrary;
@@ -559,6 +559,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     simRefs.particles = &particleSystem.Cpu();
     simRefs.xpbd = &xpbd; // M60'b: ハッシュ (SimSources) と対で撮る
     simRefs.acoustic = &acoustic; // M65a: 同上 (復元側が Invalidate も呼ぶ)
+    simRefs.nav = &navSystem; // M82c: 同上 (dtCrowd・スロット表)
     simRefs.collision = &collisionSystem;
     simRefs.scripts = &scriptHost;
     simRefs.prevTickInput = prevTickInput;

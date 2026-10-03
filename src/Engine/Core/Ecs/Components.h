@@ -1888,8 +1888,8 @@ struct NavMeshSurfaceComponent {
     DirectX::XMFLOAT3 size = { 20.0f, 10.0f, 20.0f };
     float agentRadius = 0.3f;
     float agentHeight = 1.8f;
-    float maxClimb = 0.1f;       // 仮置き。CharacterController の実測 (M82c) で決める
-    float maxSlopeDeg = 45.0f;
+    float maxClimb = 0.1f;       // CC が低速 (1.5 m/s) でも越えられる 0.15 m の内側 (NavAgentSelfTest の実測)
+    float maxSlopeDeg = 45.0f;   // ★Recast の ledge 判定は 2 * cellSize * tan(傾斜) > maxClimb の面を捨てるので、実効の上限は maxClimb とセル幅にも縛られる
     float cellSize = 0.3f;
     float cellHeight = 0.1f;
     int32_t tileSize = 32;       // 1 タイルの一辺 (セル数)
@@ -1899,6 +1899,42 @@ struct NavMeshSurfaceComponent {
     AssetID navAsset = {};       // .mnav (null = 未ベイク)
     bool drawNavMesh = true;     // 輪郭と範囲の描画 (kFieldNoHash)
     bool drawTileBounds = false; // タイル境界の描画 (kFieldNoHash)
+    bool drawAgentPaths = true;  // この Surface の Agent の経路 (コリドーの角) の描画 (kFieldNoHash、M82c)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// NavMeshAgent の実行状態 (status)。Link の渡り中 (OnLink) は M82g で使う
+namespace navagentstatus {
+enum : int32_t {
+    kIdle = 0,     // 目的地なし
+    kMoving = 1,
+    kArrived = 2,  // 目的地 (部分経路なら届く限りの最寄り) に着いた
+    kNoPath = 3,   // 始点か目的地がナビメッシュに乗らない / 経路探索の失敗
+    kOnLink = 4,
+    kInactive = 5, // 動かせない (CC が無い・Surface が無い・容量超過など)
+};
+} // namespace navagentstatus
+
+// ナビメッシュ上を目的地へ歩くエージェント (M82c)。**CharacterController 必須**: NavSystem が
+// dtCrowd で求めた速度を CharacterController.moveInput へ書き、重力・接地・衝突は CC が担う。
+// 同じエンティティに AgentBrain があれば、後に走る NavSystem の moveInput が勝つ。
+// hash 対象 (実行状態の status / remainingDistance / pathPartial は NavSystem が毎 tick 書く sim 状態)。
+// destination は ABI の Get/SetComponentField で書ける
+struct NavMeshAgentComponent {
+    int32_t agentTypeId = 0;        // 同じ値の Surface に乗る
+    float speed = 3.5f;             // 最高速度 (m/s)
+    float acceleration = 8.0f;      // 最大加速度 (m/s^2)
+    float angularSpeedDeg = 360.0f; // 進行方向への旋回速度 (度/秒)。0 なら回転しない
+    float stoppingDistance = 0.1f;  // 目的地までこの距離以内で Arrived
+    float radius = 0.3f;            // 回避用の半径
+    float height = 1.8f;
+    int32_t avoidanceQuality = 2;   // 0 = 回避なし (すり抜ける) / 1..3 = 回避の品質 (大きいほど重い)
+    DirectX::XMFLOAT3 destination = { 0.0f, 0.0f, 0.0f };
+    bool hasDestination = false;
+    // ---- 実行状態 (kFieldReadOnly) ----
+    int32_t status = navagentstatus::kIdle;
+    float remainingDistance = 0.0f; // 経路に沿った残りの距離の見積り
+    bool pathPartial = false;       // 目的地まで届かず、届く限りの最寄りへ向かっている
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

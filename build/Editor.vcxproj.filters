@@ -105,6 +105,9 @@
     <ClCompile Include="..\src\Editor\Scene\ComponentClipboard.cpp">
       <Filter>Scene</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Scene\ComponentDependencies.cpp">
+      <Filter>Scene</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Scene\PlayModeController.cpp">
       <Filter>Scene</Filter>
     </ClCompile>
@@ -313,6 +316,9 @@
       <Filter>Scene</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Scene\ComponentClipboard.h">
+      <Filter>Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Scene\ComponentDependencies.h">
       <Filter>Scene</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Scene\PlayModeController.h">

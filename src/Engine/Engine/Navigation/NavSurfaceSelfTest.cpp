@@ -38,6 +38,7 @@ namespace {
 
 // 期待値は Debug で採取し、Release で同じ値になることを確認して焼く (docs\adr\ADR-023-navmesh.md)
 constexpr uint64_t kExpectedAssetHash = 0xA9EF6D223C161FE4ull;
+constexpr float kNavTestDt = 1.0f / 60.0f;
 constexpr uint64_t kTestAssetGuid = 0x4E41564D45534831ull; // "NAVMESH1"
 
 struct Checker {
@@ -442,11 +443,11 @@ bool RunNavSurfaceSelfTest()
         const EntityID rtSurface = BuildScene(runtimeScene, false);
         World& rtWorld = runtimeScene.GetWorld();
         NavSystem nav;
-        nav.Update(rtWorld);
+        nav.Update(rtWorld, kNavTestDt);
         ck.Check(nav.Surfaces().size() == 1 && nav.Surfaces()[0].state == NavSurfaceState::NoAsset,
                  "navAsset が未設定の Surface は NoAsset (落ちない)");
         rtWorld.GetComponent<NavMeshSurfaceComponent>(rtSurface)->navAsset = AssetID{ kTestAssetGuid };
-        nav.Update(rtWorld);
+        nav.Update(rtWorld, kNavTestDt);
         ck.Check(nav.Surfaces().size() == 1 && nav.Surfaces()[0].state == NavSurfaceState::Loaded
                      && nav.Surfaces()[0].polyCount == bake.polyCount,
                  "navAsset を設定すると読み込まれ、ポリゴン数がベイク結果と一致する");
@@ -464,19 +465,19 @@ bool RunNavSurfaceSelfTest()
         nav.AppendDebugLines(rtWorld, lines);
         ck.Check(lines.empty(), "表示フラグを切ると線が出ない");
         const NavTileStore* before = nav.Surfaces()[0].store.get();
-        nav.Update(rtWorld);
+        nav.Update(rtWorld, kNavTestDt);
         ck.Check(nav.Surfaces()[0].store.get() == before, "構成が変わらない tick では読み直さない");
         nav.Reset();
         ck.Check(nav.Surfaces().empty(), "Reset で捨てる");
 
         rtWorld.GetComponent<NavMeshSurfaceComponent>(rtSurface)->navAsset = AssetID{ kTestAssetGuid + 1 };
-        nav.Update(rtWorld);
+        nav.Update(rtWorld, kNavTestDt);
         ck.Check(nav.Surfaces().size() == 1 && nav.Surfaces()[0].state == NavSurfaceState::Failed,
                  "解決できない GUID の Surface だけが Failed になる (落ちない)");
 
         Scene bare;
         NavSystem navBare;
-        navBare.Update(bare.GetWorld());
+        navBare.Update(bare.GetWorld(), kNavTestDt);
         ck.Check(navBare.Surfaces().empty(), "Surface が無いシーンでは何も持たない");
         assetguid::Install(nullptr, nullptr);
     }

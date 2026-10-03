@@ -53,6 +53,7 @@
     <ClCompile Include="..\src\Editor\Scene\CameraPilot.cpp" />
     <ClCompile Include="..\src\Editor\Scene\CameraPilotSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Scene\ComponentClipboard.cpp" />
+    <ClCompile Include="..\src\Editor\Scene\ComponentDependencies.cpp" />
     <ClCompile Include="..\src\Editor\Scene\PlayModeController.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\DecalSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\GameFlowSelfTest.cpp" />
@@ -123,6 +124,7 @@
     <ClInclude Include="..\src\Editor\Scene\CameraPilot.h" />
     <ClInclude Include="..\src\Editor\Scene\CameraPilotSelfTest.h" />
     <ClInclude Include="..\src\Editor\Scene\ComponentClipboard.h" />
+    <ClInclude Include="..\src\Editor\Scene\ComponentDependencies.h" />
     <ClInclude Include="..\src\Editor\Scene\PlayModeController.h" />
     <ClInclude Include="..\src\Editor\Scene\Selection.h" />
     <ClInclude Include="..\src\Editor\SelfTest\DecalSelfTest.h" />

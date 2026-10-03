@@ -1815,3 +1815,23 @@ MYE_STR(Insp_NavCancelled,   "Bake cancelled",  "ベイクを取り消しまし�
 MYE_STR(Insp_NavPlayModeDisabled,
         "Disabled while playing (Stop reverts the scene, discarding the new reference).",
         "再生中は無効です (Stop でシーンが巻き戻り、設定した参照が消えます)")
+
+// ---- M82c: NavMesh Agent の Inspector ----
+MYE_STR(Insp_NavAgentStatus,   "Status: %s (remaining %.2f m%s)", "状態: %s (残り %.2f m%s)")
+MYE_STR(Insp_NavAgentPartial,  ", partial path", "、部分経路")
+MYE_STR(Insp_NavSt_Idle,       "Idle",     "待機")
+MYE_STR(Insp_NavSt_Moving,     "Moving",   "移動中")
+MYE_STR(Insp_NavSt_Arrived,    "Arrived",  "到着")
+MYE_STR(Insp_NavSt_NoPath,     "No path",  "経路なし")
+MYE_STR(Insp_NavSt_OnLink,     "On link",  "リンク通過中")
+MYE_STR(Insp_NavSt_Inactive,   "Inactive", "停止中")
+MYE_STR(Insp_NavAgentNoCc,     "Needs a CharacterController: the agent stays inactive without it.",
+                               "CharacterController が必要です。無いとエージェントは動きません")
+MYE_STR(Insp_NavAgentRigidbody, "A Rigidbody disables the CharacterController: the agent stays inactive.",
+                               "Rigidbody があると CharacterController が無効になり、エージェントは動きません")
+MYE_STR(Insp_NavAgentBrain,    "AgentBrain also writes CharacterController.moveInput; the NavMeshAgent runs later and wins.",
+                               "AgentBrain も CharacterController.moveInput を書きます。後に走る NavMeshAgent が勝ちます")
+MYE_STR(Insp_NavAgentNoSurface, "No NavMeshSurface has this agent type id.",
+                               "このエージェント種別の NavMeshSurface がありません")
+MYE_STR(Insp_NavAgentTooBig,   "The agent or its CharacterController is larger than the baked navigation mesh (radius %.2f / height %.2f): it may clip walls.",
+                               "エージェントまたは CharacterController がベイクしたナビメッシュより大きい (半径 %.2f / 高さ %.2f) ため、壁に食い込む場合があります")

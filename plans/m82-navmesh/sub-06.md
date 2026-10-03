@@ -8,6 +8,7 @@
 spec 2. #10、4.1 (Modifier、エリア)。
 
 1. `NavMeshModifierComponent` を末尾 append (hash 対象)。ローカル AABB + `area` (0..15)。
+1b. (sub-03 VERDICT) `NavMeshAgentComponent` に `areaMask` u32 (既定 全エリア可) を**末尾**に追加 (hash 対象)。`NavMeshProcess::process` のポリゴンフラグをエリア別にすると NavDeterminismSelfTest の期待ハッシュが動く — 動いたら理由を SELF_EVAL に書いて更新。
 2. ベイク時: Recast の `rcMarkBoxArea` / convex volume で範囲内のエリアを書き換える。実行時: Modifier が動いた / 増減したら、TileCache の `dtTileCacheMeshProcess` か層の area 書き換えで反映 (Obstacle と同じ tick 境界の同期更新)。方式は coder が決め、restore 後一致を SelfTest で確かめる。
 3. Surface の `areaCosts[16]` を dtQueryFilter に反映、Agent の `areaMask` で include flags。エリアの名前は `project_settings.json` (表示のみ、既存の PartTagNames / PhysicsLayerNames の読み書きの流儀)。0 = Walkable / 1 = NotWalkable / 2 = Jump は固定名。
 4. Create → 3D Object → NavMesh Modifier、Add Component、ギズモ、デバッグ描画のエリア色、インスペクタ、Localization。

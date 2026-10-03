@@ -10,6 +10,7 @@ spec 4.1 (Obstacle、Tick の順序 (1))。
 1. `NavMeshObstacleComponent` を末尾 append (hash 対象)。Box / Cylinder、`carve`。
 2. NavSystem の tick 頭で、Obstacle の集合 (エンティティキー順) と前 tick の差分を TileCache へ反映 (add / remove、移動は remove + add、閾値以下の移動は無視するなら閾値を定数で)。`dtTileCache::update` を upToDate まで同期で回し、その tick の Crowd 更新から新しいタイルを使う。`carve=false` は Crowd の回避対象 (動く障害物) としてだけ扱うか、何もしないかを coder が決めて理由を書く (Unity の carve=false は回避のみ)。
 3. SimSnapshot の Nav 節に障害物の状態を含める (sub-01 の方式どおり)。タイルの再構築で salt が変わる経路 (restore 後の一致) を SelfTest で確認。
+3b. (sub-03 申し送り / 不安 3) Obstacle コンポーネントと store の障害物の対応 (キー) が restore 後も保たれ、restore 直後の Update が障害物を二重に足さない・消し忘れないこと、restore 後の Commit を含めて連続実行と一致することを SelfTest で確かめる。Obstacle 同期は `NavSystem::Update` の SyncSurfaces の後に足す。
 4. Create → 3D Object → NavMesh Obstacle、Add Component、ギズモ (形)、デバッグ描画、インスペクタ、Localization。
 5. `--nav-demo` に Obstacle の出し入れ (tick で決まる) を足し、`nav` ジョブを録り直す。
 6. TileCache 更新の所要時間を SelfTest のログに出す。**`NavTileStore::Commit` は変更のたびに全タイルを入れ直す (O(全タイル)、sub-01 の決定)** ので、数百タイル + 障害物を毎 tick 動かす条件で計測する。重ければ最適化してよいが、「キー順・スロット順に入れ直して dtNavMesh の履歴依存を消す」性質を保ち、復元一致の SelfTest で確かめる。

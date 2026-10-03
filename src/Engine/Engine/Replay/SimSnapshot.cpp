@@ -14,6 +14,7 @@
 #include "Engine/Engine/Physics/Rigid/CollisionSystem.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
+#include "Engine/Engine/Navigation/NavSystem.h"
 #include "Engine/Engine/Physics/Xpbd/XpbdBackend.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Script/ScriptHost.h"
@@ -21,12 +22,12 @@
 namespace mye {
 
 SimSources SimSourcesOf(Scene& scene, const CpuParticleBackend* particles, const XpbdBackend* xpbd,
-                        const AcousticField* acoustic)
+                        const AcousticField* acoustic, const NavSystem* nav)
 {
     // 並びは SimSources の member 順 (畳み込む順序は HashWorldImpl が決めるので、ここは関係ない)
     // SessionLanes はシステム入力を持つ記録のときだけ畳む (D10)。持たない記録のハッシュ列を動かさない
     const SessionLanes* lanes = scene.Lanes().systemInput != 0 ? &scene.Lanes() : nullptr;
-    return { particles, &scene.Time(), &scene.Persist(), xpbd, acoustic, &scene.UI(), lanes };
+    return { particles, &scene.Time(), &scene.Persist(), xpbd, acoustic, &scene.UI(), lanes, nav };
 }
 
 namespace {
@@ -41,6 +42,7 @@ constexpr uint32_t kLoopMagic = 0x31504F4Cu;  // 'LOP1'
 constexpr uint32_t kXpbdMagic = 0x31425058u;  // 'XPB1' (M60'b)
 constexpr uint32_t kAcousticMagic = 0x31554341u; // 'ACU1' (M65a)
 constexpr uint32_t kSessionMagic = 0x31534553u;  // 'SES1' (M81b)
+constexpr uint32_t kNavMagic = 0x3156414Eu;      // 'NAV1' (M82c)
 
 constexpr size_t kHeaderBytes = 4 * sizeof(uint32_t) + sizeof(uint64_t);
 
@@ -485,6 +487,41 @@ bool ReadSession(ByteReader& r, SessionLanes& out)
     return true;
 }
 
+// ---- Nav 節 (M82c) ----
+// 中身は NavSystem が書式を持つ不透明なバイト列。NavSystem が無い構成 / Surface が無いシーンでは
+// 「Surface 0 個」の短い節を書く (節は常にある = レイアウトが構成に依らない)
+bool WriteNav(ByteWriter& w, const NavSystem* nav)
+{
+    w.U32(kNavMagic);
+    NavByteWriter block;
+    if (nav != nullptr) {
+        if (!nav->SaveSnapshot(block)) {
+            MYE_LOG_ERROR("[snapshot] nav state cannot be saved (a path request is still pending)");
+            return false;
+        }
+    } else {
+        NavSystem().SaveSnapshot(block);
+    }
+    w.Blob(block.Data().data(), block.Size());
+    return true;
+}
+
+bool ReadNav(ByteReader& r, std::vector<uint8_t>& out)
+{
+    if (r.U32() != kNavMagic) {
+        MYE_LOG_ERROR("[snapshot] nav section magic mismatch");
+        return false;
+    }
+    const size_t size = r.Count(sizeof(uint8_t));
+    out.resize(size);
+    r.Raw(out.data(), size);
+    if (!r.Ok() || !NavSystem::ValidateSnapshot(out.data(), out.size())) {
+        MYE_LOG_ERROR("[snapshot] nav section is corrupt");
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
@@ -509,6 +546,9 @@ bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
     WriteXpbd(w, refs.xpbd); // M60'b (v4)
     WriteAcoustic(w, refs.acoustic); // M65a (v10)
     WriteSession(w, refs.scene->Lanes()); // M81b (v24)
+    if (!WriteNav(w, refs.nav)) { // M82c (v25)
+        return false;
+    }
     // ★World は**最後**に置く。復元は「小さい節を全部一時領域へ読み切ってから
     //   World::SnapshotRead (それ自体が全読み後に一括差し替え) を呼ぶ」順で走るので、
     //   どこで失敗しても現世界に手が付いていない状態で戻れる
@@ -583,6 +623,10 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     if (!ReadSession(r, sessionLanes)) { // M81b (v24)
         return false;
     }
+    std::vector<uint8_t> navBlock;
+    if (!ReadNav(r, navBlock)) { // M82c (v25)。refs.nav が無い構成では読み捨てる
+        return false;
+    }
     if (!r.Ok()) {
         MYE_LOG_ERROR("[snapshot] truncated blob");
         return false;
@@ -602,6 +646,10 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     refs.scene->SetSourcePath(std::move(scene.sourcePath));
     refs.scene->ReplaceOverridesTable(std::move(scene.overrides));
     refs.scene->InvalidateFileIdCache(); // 派生物 (EntityID が総入れ替えされたので必ず)
+    if (refs.nav != nullptr) {
+        // ★World を差し替えた後・次の Update の前。Surface の .mnav を読み込んでから状態を当てる
+        refs.nav->ApplySnapshot(refs.scene->GetWorld(), navBlock.data(), navBlock.size());
+    }
 
     if (refs.particles != nullptr) {
         refs.particles->PoolsForSnapshot() = std::move(pools);

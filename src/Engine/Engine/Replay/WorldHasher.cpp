@@ -17,6 +17,7 @@
 #include "Engine/Engine/UI/UIInteraction.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
+#include "Engine/Engine/Navigation/NavSystem.h"
 #include "Engine/Engine/Physics/Xpbd/XpbdBackend.h"
 #include "Engine/Platform/PathUtil.h"
 
@@ -371,6 +372,16 @@ uint64_t HashXpbdPools(const XpbdBackend& xpbd, DumpCtx* d)
     return h;
 }
 
+// NavMesh の外部状態 (M82c)。crowd の全エージェントとスロット表を NavSystem::StateHash が 1 つの値にする。
+// ダンプには載っている Agent 数と合成値の 2 行だけ出す (どの Agent が割れたかは ECS 側の NavMeshAgent 行で分かる)
+uint64_t HashNavState(const NavSystem& nav, DumpCtx* d)
+{
+    uint64_t h = kFnvOffset;
+    FoldU64(h, d, "Nav", "agents", static_cast<uint64_t>(nav.HashedAgentCount()));
+    FoldU64(h, d, "Nav", "stateHash", nav.StateHash());
+    return h;
+}
+
 // M51g: ゲームフロー状態 (決定台帳 5)。RNG の直後・パーティクルの前に畳み込む。
 // PersistStore は std::map = キー昇順走査 (挿入順に依存しない — selftest が固定)
 uint64_t HashGameFlow(uint64_t h, const TimeControl* time, const PersistStore* persist, DumpCtx* d)
@@ -533,6 +544,12 @@ uint64_t HashWorldImpl(World& world, const SimSources& src,
         const uint64_t ah = HashAcousticWaves(*src.acoustic, d);
         total = HashCombine(total, ah);
         EmitU64(d, "Acoustic", "#total", ah, total);
+    }
+    // NavMesh の外部状態 (M82c)。内容ゲート (理由は WorldHasher.h の SimSources::nav)
+    if (src.nav && src.nav->HasHashableState()) {
+        const uint64_t nh = HashNavState(*src.nav, d);
+        total = HashCombine(total, nh);
+        EmitU64(d, "Nav", "#total", nh, total);
     }
     return total;
 }

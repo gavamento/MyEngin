@@ -79,6 +79,7 @@
 #include "Engine/Engine/Session/SessionSelfTest.h"
 #include "Engine/Engine/Net/ServerNetSelfTest.h"
 #include "Engine/Engine/Navigation/NavDeterminismSelfTest.h"
+#include "Engine/Engine/Navigation/NavAgentSelfTest.h"
 #include "Engine/Engine/Navigation/NavSurfaceSelfTest.h"
 #include "Editor/Tools/NavEditorSelfTest.h"
 #include "Engine/Platform/CrashHandler.h"
@@ -577,6 +578,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunNavDeterminismSelfTest();            // M82a: Recast のビット一致と状態の保存・復元
         ok &= mye::RunNavSurfaceSelfTest();                // M82b: Surface のベイク入力・.mnav・NavSystem
         ok &= mye::RunNavEditorSelfTest();                 // M82b: Create / Bake / Clear の皮
+        ok &= mye::RunNavAgentSelfTest();                  // M82c: Agent・dtCrowd・SimSnapshot の Nav 節
         return ok ? 0 : 1;
     }
 

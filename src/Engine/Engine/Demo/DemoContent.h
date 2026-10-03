@@ -248,4 +248,9 @@ void RegisterModalShowcaseContent(EngineContext& ctx);
 //   構成間一致 (sub-02 の契約) を実行経路で証明する
 void BuildFractureShowcaseScene(EngineContext& ctx);
 
+// M82c: ナビメッシュのショーケース (--nav-demo)。段差・坂・台・登れない孤島・壁のある庭に NavMeshAgent を 6 体置く。
+// ★ナビメッシュはファイルを作らずシーン構築時にメモリ上で焼いて登録する (`nav://demo`、NavMeshAsset::RegisterInMemory)。
+//   GameLogic の NavDemoDriver が 300 tick で目的地を出発点へ切り替える (固定 tick で決まる)
+void BuildNavShowcaseScene(EngineContext& ctx);
+
 } // namespace mye

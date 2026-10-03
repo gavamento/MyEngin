@@ -129,7 +129,7 @@ jobs:
       #    (既定デモ / 部位ショーケース / ゲームフロー / ローカル 2P / 物理 / 関節 / 音響)
       #    → snapshot 往復 → タイムトラベル巻き戻し → check_rules.ps1 まで回る。
       #    照合が割れたときは bat 自身がフィールド単位の差分を出す (M52a)
-      - name: replay determinism (build x8 + 7 scene pairs + rule check)
+      - name: replay determinism (build x8 + 10 scene pairs + rule check)
         shell: cmd
         run: tools\replay_verify.bat
 

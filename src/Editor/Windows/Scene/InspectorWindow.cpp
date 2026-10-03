@@ -15,6 +15,7 @@
 #include "Editor/Asset/AssetOps.h"
 #include "Editor/Scene/CameraPilot.h"
 #include "Editor/Scene/ComponentClipboard.h"
+#include "Editor/Scene/ComponentDependencies.h"
 #include "Editor/Widgets/EditorWidgets.h"
 #include "Editor/Tools/FractureBakeCommit.h" // M80i: 焼き成功結果の確定 (.mfrac 保存・登録・Undo)
 #include "Editor/Tools/NavBakeCommit.h"      // M82b: ベイク結果の確定 (.mnav 保存・参照の設定・Undo)
@@ -1213,6 +1214,10 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
     if (std::strcmp(desc.name, "NavMeshSurface") == 0 && !tg.multi) {
         DrawNavMeshSurfaceNotes(ctx, selection, undo, tg);
     }
+    // M82c: Agent の実行状態と警告。状態は sim が書く値の読み取り表示なのでマルチ選択では出さない
+    if (std::strcmp(desc.name, "NavMeshAgent") == 0 && !tg.multi) {
+        DrawNavMeshAgentNotes(ctx, tg);
+    }
     // RT の実効値。RayTracing を持つ物はその節に、持たない物は描画される節 (MeshRenderer /
     // Terrain) に 1 回だけ出す。マルチ選択では出さない (物ごとに違いうるため)
     const bool hasRt = world.GetComponent<RayTracingComponent>(tg.e) != nullptr;
@@ -1635,6 +1640,63 @@ const InspectorWindow::NavAssetSummary& InspectorWindow::GetNavAssetSummary(uint
     return navSummaryCache_.emplace(guid, summary).first->second;
 }
 
+// M82c: NavMeshAgent 節の末尾。状態は NavSystem が毎 tick 書く値 (編集中は前回の Play の値のまま)。
+// 警告は「動かない / 食い込む」原因になる組み合わせだけ: CC 無し、Rigidbody で CC 無効、Surface 無し、
+// ベイク寸法より大きい (ベイクの寸法は Surface のコンポーネントが持つ = CC と共有できない、M82 spec 2. #6)
+void InspectorWindow::DrawNavMeshAgentNotes(EngineContext& ctx, const InspectorTargets& tg)
+{
+    World& world = ctx.scene->GetWorld();
+    const auto* agent = world.GetComponent<NavMeshAgentComponent>(tg.e);
+    if (agent == nullptr) {
+        return;
+    }
+    ImGui::Separator();
+    const char* names[] = { Tr(StrId::Insp_NavSt_Idle),     Tr(StrId::Insp_NavSt_Moving),
+                            Tr(StrId::Insp_NavSt_Arrived),  Tr(StrId::Insp_NavSt_NoPath),
+                            Tr(StrId::Insp_NavSt_OnLink),   Tr(StrId::Insp_NavSt_Inactive) };
+    const int status = agent->status >= 0 && agent->status < 6 ? agent->status : navagentstatus::kInactive;
+    ImGui::TextDisabled(Tr(StrId::Insp_NavAgentStatus), names[status], agent->remainingDistance,
+                        agent->pathPartial ? Tr(StrId::Insp_NavAgentPartial) : "");
+
+    const auto* cc = world.GetComponent<CharacterControllerComponent>(tg.e);
+    if (cc == nullptr) {
+        ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_NavAgentNoCc));
+    } else if (world.GetComponent<RigidbodyComponent>(tg.e) != nullptr) {
+        ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_NavAgentRigidbody));
+    }
+    if (world.GetComponent<AgentBrainComponent>(tg.e) != nullptr) {
+        ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_NavAgentBrain));
+    }
+
+    // 同じ agentTypeId の Surface のうちキーが最小のもの (NavSystem の割り当てと同じ規則)
+    const NavMeshSurfaceComponent* surface = nullptr;
+    EntityID surfaceEntity = kNullEntity;
+    const ComponentTypeId req[] = { NavMeshSurfaceComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int si = arch.FindTypeIndex(NavMeshSurfaceComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const auto* s = static_cast<const NavMeshSurfaceComponent*>(arch.GetPtr(si, row));
+            const EntityID e = arch.EntityAt(row);
+            const bool better = surface == nullptr || e.index < surfaceEntity.index
+                || (e.index == surfaceEntity.index && e.generation < surfaceEntity.generation);
+            if (s->agentTypeId == agent->agentTypeId && better) {
+                surface = s;
+                surfaceEntity = e;
+            }
+        }
+    });
+    if (surface == nullptr) {
+        ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_NavAgentNoSurface));
+        return;
+    }
+    const float radius = (std::max)(agent->radius, cc != nullptr ? cc->radius : 0.0f);
+    const float height = (std::max)(agent->height, cc != nullptr ? cc->height : 0.0f);
+    if (radius > surface->agentRadius + 1e-4f || height > surface->agentHeight + 1e-4f) {
+        ImGui::TextColored(themeColor::Warning, Tr(StrId::Insp_NavAgentTooBig), surface->agentRadius,
+                           surface->agentHeight);
+    }
+}
+
 // M82b: NavMeshSurface 節の末尾。ベイクの確定 (メインスレッド限定の .mnav 保存・AssetDatabase 登録・Undo) は
 // CommitNavBake (NavBakeCommit.h) が持つ — ImGui に触れない純粋なロジックなので SelfTest からも呼べる
 void InspectorWindow::DrawNavMeshSurfaceNotes(EngineContext& ctx, Selection& selection, UndoStack& undo,
@@ -1852,7 +1914,7 @@ void InspectorWindow::DrawAddComponentPopup(EngineContext& ctx, Selection& selec
                 std::vector<uint64_t> addedFids;
                 for (size_t i = 0; i < tg.ents.size(); ++i) {
                     if (!world.HasComponent(tg.ents[i], t)) {
-                        world.AddComponentRaw(tg.ents[i], t);
+                        AddComponentWithRequirements(world, tg.ents[i], t); // M82c: NavMeshAgent なら CC も同じ Undo で
                         addedFids.push_back(tg.fids[i]);
                     }
                 }

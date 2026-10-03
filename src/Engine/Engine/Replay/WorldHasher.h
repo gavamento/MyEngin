@@ -12,6 +12,7 @@ class World;
 class CpuParticleBackend;
 class XpbdBackend;
 class AcousticField;
+class NavSystem;
 struct TimeControl;
 struct UIInteractionState;
 class PersistStore;
@@ -51,6 +52,10 @@ struct SimSources {
     // SessionLanes::systemInput でゲートする)。持たない記録 (オフライン / P2P) は節ごと畳まない =
     // 既存シーンのハッシュ列を 1 tick も動かさない (D10)
     const SessionLanes* sessionLanes = nullptr;
+    // M82c: NavMesh の外部状態 (dtCrowd のエージェント配列・スロット表・ナビメッシュの差し替え分)。
+    // ★xpbd / acoustic と同じ**内容ゲート** (crowd に載っている Agent が 1 体も無ければ節ごと畳まない) —
+    // NavMesh 系を使わないシーンのハッシュ列を 1 tick も動かさない。Agent のコンポーネント自体は ECS の通常経路で畳まれる
+    const NavSystem* nav = nullptr;
 };
 
 uint64_t HashWorld(World& world, const SimSources& src = {});

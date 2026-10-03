@@ -1,7 +1,7 @@
 # sub-02: NavMeshSurface とベイク (.mnav) + 輪郭のデバッグ描画
 
 - 依存: sub-01
-- 状態: OK (コミット待ち)
+- 状態: OK (commit b310244)
 - 往復: 1
 
 ## やること

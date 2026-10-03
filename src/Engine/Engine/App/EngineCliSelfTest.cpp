@@ -339,6 +339,11 @@ bool RunEngineCliSelfTest()
     check(fractureDemo != nullptr && FindShowcase(L"--fracture-demo", false) == fractureDemo
               && ShowcaseScenePath(*fractureDemo, L"c:\\p\\assets") == L"cache\\fracture_showcase.scene.json",
           "--fracture-demo is offered to the Runtime and saves under cache");
+    // M82c: --nav-demo も Runtime にも提供され、cache\ 側へ保存する
+    const ShowcaseDef* navDemo = FindShowcase(L"--nav-demo", true);
+    check(navDemo != nullptr && FindShowcase(L"--nav-demo", false) == navDemo
+              && ShowcaseScenePath(*navDemo, L"c:\\p\\assets") == L"cache\\nav_showcase.scene.json",
+          "--nav-demo is offered to the Runtime and saves under cache");
 
     MYE_LOG_INFO("Engine CLI self test: %s (%d failure(s))", failCount == 0 ? "OK" : "FAILED", failCount);
     return failCount == 0;

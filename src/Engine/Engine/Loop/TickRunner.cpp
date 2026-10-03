@@ -390,7 +390,7 @@ void RunOneTick(TickServices& ts)
     // 走査だけで何もしない (RNG もハッシュも触らない)
     if (stepSim && ts.navSystem != nullptr) {
         MYE_PROFILE_SCOPE("nav");
-        ts.navSystem->Update(scene.GetWorld());
+        ts.navSystem->Update(scene.GetWorld(), ctx.fixedDt);
     }
     // ---- アニメーション (フェーズ 3.5): スクリプト後・Transform 前に LocalTransform を確定 ----
     // Play 中のみ進行 (編集時は Animation 窓が明示サンプリングする)。M51g からは
@@ -537,7 +537,7 @@ void RunOneTick(TickServices& ts)
     fractureSystem.ApplyDeferredLocals(scene.GetWorld());
 
     // ここから先の変異・ダンプ・記録・照合が撮るハッシュの源 (全部同じ束で撮る)
-    const SimSources hashSources = SimSourcesOf(scene, &particleSystem.Cpu(), ts.xpbd, ts.acoustic);
+    const SimSources hashSources = SimSourcesOf(scene, &particleSystem.Cpu(), ts.xpbd, ts.acoustic, ts.navSystem);
 
     // ---- 意図的な状態の変異 (M52i、--net-poke-tick N) ----
     // desync 検出と診断チェーン (--rep-diff → --hash-diff) が本当に働くかは、

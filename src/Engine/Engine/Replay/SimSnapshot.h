@@ -12,6 +12,7 @@ class Scene;
 class CpuParticleBackend;
 class XpbdBackend;
 class AcousticField;
+class NavSystem;
 class CollisionSystem;
 class ScriptHost;
 
@@ -20,7 +21,7 @@ class ScriptHost;
 // 呼び出し側で波括弧初期化を手書きすると、項目を足したときに 1 か所だけ古いまま残る
 // (M70c: acoustic を 4 か所で渡し忘れ、波の出るシーンでだけ crash .rep が全 tick 割れた)
 SimSources SimSourcesOf(Scene& scene, const CpuParticleBackend* particles, const XpbdBackend* xpbd,
-                        const AcousticField* acoustic);
+                        const AcousticField* acoustic, const NavSystem* nav = nullptr);
 
 // sim レーンのスナップショット (M52d、決定台帳 1)。
 // 「ある tick の sim 状態を丸ごと保存し、後でビット同一に復元し、そこから同じ入力で
@@ -67,9 +68,13 @@ struct SimRefs {
     //   同一 tick の往復しか見ないのでこの穴を検出できなかった (M52e で発見)
     uint64_t* audioHandleSeq = nullptr;
     uint64_t* tickIndex = nullptr; // 撮影時に読み、復元時に書き戻す (null なら素通し)
+    // M82c: NavMesh。復元されるのは Surface ごとの store の差し替え分・dtCrowd・スロット表で、ナビメッシュ本体は
+    // .mnav から作り直す導出値。★RestoreSimSnapshot は World を差し替えた後に NavSystem::ApplySnapshot を呼ぶ
+    // (Surface の .mnav を先に読み込んでから状態を当てる = 空の NavSystem へ復元しても次の Update が読み直さない)
+    NavSystem* nav = nullptr;
 
     // この束で撮るワールドハッシュの源 (SimSourcesOf)。scene は非 null が前提
-    SimSources HashSources() const { return SimSourcesOf(*scene, particles, xpbd, acoustic); }
+    SimSources HashSources() const { return SimSourcesOf(*scene, particles, xpbd, acoustic, nav); }
 };
 
 // blob の形式版。**.rep の版とは独立** (M52a 申し送り 7 と同じ規約) —
@@ -99,7 +104,8 @@ struct SimRefs {
 // v22: 組込みコンポーネントの 0/1 int32 フィールドを bool 化 (World 節の生カラムサイズ変更)
 // v23: WaterWaveComponent へ surfaceMaterial (M79e) と timeTicks (浮力と水面の時計) を末尾追加
 // v24 (M81b): SES 節 (SessionLanes) を ACU 節の後・World 節の前に追加
-inline constexpr uint32_t kSimSnapshotVersion = 24;
+// v25 (M82c): NAV 節 (NavSystem の差し替え分・dtCrowd・スロット表) を SES 節の後・World 節の前に追加。NavMeshAgent コンポーネント
+inline constexpr uint32_t kSimSnapshotVersion = 25;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

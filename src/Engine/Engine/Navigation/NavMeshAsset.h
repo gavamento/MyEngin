@@ -52,6 +52,11 @@ bool Deserialize(const std::vector<uint8_t>& in, Data& out);
 bool Save(const std::wstring& path, const Data& d);
 bool Load(const std::wstring& path, Data& out);
 
+// ファイルを作らない資産 (--nav-demo のようにシーン構築時に焼く用途)。guid -> Data。メインスレッド専用。
+// LoadByGuid は先にここを引き、無ければ AssetGuidResolver 経由のファイルを読む
+void RegisterInMemory(uint64_t guid, Data data);
+bool LoadByGuid(uint64_t guid, Data& out);
+
 // 資産から NavTileStore の設定を作る
 NavTileStoreConfig MakeStoreConfig(const Data& d);
 

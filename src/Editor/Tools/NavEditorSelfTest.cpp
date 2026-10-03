@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 
+#include "Editor/Scene/ComponentDependencies.h"
 #include "Editor/Scene/Selection.h"
 #include "Editor/Tools/NavBakeCommit.h"
 #include "Editor/Tools/NavBakeService.h"
@@ -118,6 +119,45 @@ bool RunNavEditorSelfTest()
                 world.ApplyStructuralChanges();
             }
         }
+        undo.ClearAll();
+    }
+
+    // ---- 1b. Add Component: NavMeshAgent を足すと CharacterController も同じ 1 Undo で付く (M82c) ----
+    {
+        GameObject target = scene.CreateGameObjectTracked("AgentTarget");
+        world.ApplyStructuralChanges();
+        const uint64_t targetFid = scene.EnsureFileId(target.Id());
+        undo.BeginRecord("Add Component", selection);
+        undo.CaptureBefore(scene, targetFid);
+        AddComponentWithRequirements(world, target.Id(), NavMeshAgentComponent::sTypeId);
+        world.ApplyStructuralChanges();
+        undo.CaptureAfter(scene, targetFid);
+        undo.EndRecord(selection);
+        check(world.GetComponent<NavMeshAgentComponent>(target.Id()) != nullptr
+                  && world.GetComponent<CharacterControllerComponent>(target.Id()) != nullptr,
+              "Add Component: NavMeshAgent also adds the CharacterController it needs");
+        undo.Undo(scene, selection);
+        world.ApplyStructuralChanges();
+        check(world.GetComponent<NavMeshAgentComponent>(target.Id()) == nullptr
+                  && world.GetComponent<CharacterControllerComponent>(target.Id()) == nullptr,
+              "Undo: one Undo removes both the agent and the controller");
+        undo.Redo(scene, selection);
+        world.ApplyStructuralChanges();
+        check(world.GetComponent<NavMeshAgentComponent>(target.Id()) != nullptr
+                  && world.GetComponent<CharacterControllerComponent>(target.Id()) != nullptr,
+              "Redo: both come back");
+        // 既に CC を持つエンティティの CC は重複させず、そのまま残す
+        GameObject withCc = scene.CreateGameObjectTracked("AgentWithController");
+        withCc.AddComponent<CharacterControllerComponent>()->radius = 0.45f;
+        world.ApplyStructuralChanges();
+        AddComponentWithRequirements(world, withCc.Id(), NavMeshAgentComponent::sTypeId);
+        world.ApplyStructuralChanges();
+        const auto* keptCc = world.GetComponent<CharacterControllerComponent>(withCc.Id());
+        check(keptCc != nullptr && keptCc->radius == 0.45f && world.GetComponent<NavMeshAgentComponent>(withCc.Id()) != nullptr,
+              "Add Component: an existing CharacterController is kept as is");
+        target.Destroy();
+        withCc.Destroy();
+        world.ApplyStructuralChanges();
         undo.ClearAll();
     }
 

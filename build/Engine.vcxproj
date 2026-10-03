@@ -115,6 +115,7 @@
     <ClCompile Include="..\src\Engine\Engine\Modal\ModalSoundLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Modal\TriangleSoup.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Modal\Voxelizer.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Navigation\NavAgentSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavBake.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavBakeInput.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavDeterminismSelfTest.cpp" />
@@ -387,6 +388,7 @@
     <ClInclude Include="..\src\Engine\Engine\Modal\ModalTypes.h" />
     <ClInclude Include="..\src\Engine\Engine\Modal\TriangleSoup.h" />
     <ClInclude Include="..\src\Engine\Engine\Modal\Voxelizer.h" />
+    <ClInclude Include="..\src\Engine\Engine\Navigation\NavAgentSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavBake.h" />
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavBakeInput.h" />
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavDeterminismSelfTest.h" />
