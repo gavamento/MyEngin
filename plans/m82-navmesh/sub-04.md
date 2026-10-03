@@ -14,6 +14,8 @@ spec 2. #13 (Q4 のユーザー回答で範囲入り)、4.3 (塗り)、受け入
    - 描画パスが 2 系統ある (ADR-007) なら両方で出る。
 2. DebugUtils の `duDebugDraw` 実装を「三角形 → 塗りレーン、線 → 既存の線レーン」に振り分ける (sub-02 では三角形を輪郭線へ落としていた)。色はエリアごと (0 = 水色系の Unity 風、Jump などは別色、ユーザー定義エリアは固定パレット)。
 3. 表示切り替えに「塗り」を足す (Surface のインスペクタ。既定 on)。Runtime でも出せる。
+3b. (sub-02 VERDICT、spec 2. #18 / 4.3) **編集中 (非 Play) の SceneView にも塗り + 輪郭を出す**。sim の tick (`NavSystem::Update` は stepSim でしか走らない) に頼らない表示専用の読み込み / 線の作り方を足す (例: Editor が持つ表示用の NavSystem か、Engine 側の「.mnav → 描画用の線・三角形」関数を Editor から呼ぶ)。Bake の完了直後に Play せず表示が更新されること。sim 状態・ハッシュには触れない。
+3c. **Surface の範囲箱ギズモ** (spec 4.3、`center` / `size` のローカル AABB を SceneView に描く。既存のギズモ描画箇所に合わせる)。sub-02 で割り当て漏れだった分。
 4. **golden `nav`**: `--nav-demo` の固定 tick を NavMesh の塗り + 輪郭 + Agent 経路の表示ありで撮る golden を `tests\golden\` に追加し `tools\shot_verify.bat` に載せる。既存 golden の作り方 (撮影構成、許容差、CI の WARP でのスキップ条件 `MYE_SHOT_SKIP_*`) に合わせ、WARP と実 GPU で半透明の混合が割れるなら既存の前例どおり許容差かスキップを決めて理由を書く。
 
 ## やらないこと (このサブでは)
@@ -27,6 +29,7 @@ spec 2. #13 (Q4 のユーザー回答で範囲入り)、4.3 (塗り)、受け入
 1. (spec 17) `Runtime.exe --nav-demo --screenshot` で、床の上に半透明のエリア色の塗り + 輪郭線が見え、床と Z ファイトしない (画像パスを SELF_EVAL に)。Editor の SceneView でも同じ。
 2. NavMesh 不変の tick で三角形を作り直していないことを、ログ (作り直し回数) で示す。
 3. golden `nav` が shot_verify に載って PASS。既存 golden は不変。
+3b. 編集中 (Play していない) の SceneView で、Bake 直後に塗り + 輪郭と Surface の範囲箱が見える。— Editor の `--screenshot` (一時プローブ可) または手動確認の画像パス
 4. NavMesh 系の無いシーンでは描画コストが増えない (空のレーンでパスを呼ばない)。replay_verify 全 PASS (描画は sim 外だがレーン追加で sim を触っていないことの確認)、0 警告、check_rules 0 (シェーダ定数を共有するなら rule 9)。
 
 ## 検証コマンド

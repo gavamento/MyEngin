@@ -7,8 +7,8 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 | 実装中 | 0 | | Recast vendor + ビット一致・復元方式の試作 (M82a) |
-| sub-02 | 未着手 | 0 | | NavMeshSurface + .mnav ベイク + 輪郭描画 (M82b) |
+| sub-01 | OK | 1 | 9944784 | Recast vendor + ビット一致・復元方式の試作 (M82a) |
+| sub-02 | 実装中 | 0 | | NavMeshSurface + .mnav ベイク + 輪郭描画 (M82b) |
 | sub-03 | 未着手 | 0 | | NavMeshAgent + dtCrowd + SimSnapshot (M82c) |
 | sub-04 | 未着手 | 0 | | 半透明の塗り + golden nav (M82d) |
 | sub-05 | 未着手 | 0 | | NavMeshObstacle (M82e) |
@@ -40,4 +40,5 @@
 - (planner) 事前計画のサブ 3 (経路追従) と 7 (Crowd) は統合 = 最初から dtCrowd (spec 2. #9)。エリアコストは project_settings ではなく Surface コンポーネント (spec 2. #10)
 - (planner) TypeId は末尾 append で予約しない。ABI は sub-07 着手時の次番号 (起票時 v23 = 131)。どちらも M75h と先着順、m75-ugui.md に注記する
 - (planner 2026-10-03 Q 回答反映) Q1 → spec 4.4 F1〜F5 + 受け入れ条件 18 (再ベイクは作らず差し込み口だけ)。Q4 → 塗りの sub-04 を挿入し旧 sub-04〜08 を sub-05〜09 (M82e〜M82i) へ繰り下げ、受け入れ条件 17・golden `nav`
+- (planner 2026-10-03 sub-02 VERDICT) `.mnav` は NavSystem::Update の遅延ロードを採用 (spec 2. #17)、sub-03 の restore は読み込みを先に済ませる。編集中の SceneView 表示と Surface の範囲箱ギズモを sub-04 へ追加 (spec 2. #18、`[ユーザーに聞ける]`)。reviewer 向け: Editor GUI (Play 中の輪郭 / Bake ボタン) は未観測、Server/client net self test の 1 回限りの FAIL (V1、tick 270 の .rep) は未再現
 - (planner) sub-01 の結論 (復元方式 a/b/c) で sub-03 以降の SimSnapshot の形が決まる。sub-01 の VERDICT 時に spec 4.4 を確定させる

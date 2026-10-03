@@ -8,6 +8,7 @@
 
 #include "Editor/Asset/AssetPreviewCache.h"
 #include "Editor/Tools/FractureBakeService.h" // M80i: 破片焼きの非同期ワーカー
+#include "Editor/Tools/NavBakeService.h"      // M82b: ナビメッシュ・ベイクの非同期ワーカー
 #include "Editor/Scene/Selection.h"
 #include "Engine/Core/Ecs/EntityID.h"
 #include "Engine/Core/Asset/ImportMetaResolver.h"
@@ -106,6 +107,11 @@ private:
     // BuildFracturePieces で子を組み直す (1 Undo エントリ)。失敗/拒否は fractureOutcomes_ へ残す
     void CommitFractureBakeResult(EngineContext& ctx, Selection& selection, UndoStack& undo,
                                   const InspectorTargets& tg);
+    // M82b: NavMeshSurface 節の末尾 (Bake / Clear・進捗・結果の要約)。
+    // DrawComponentNotes から desc.name == "NavMeshSurface" のときだけ呼ばれる。
+    // ベイクが Ready になっていればここで確定させる (.mnav 保存 + 参照の設定 = 1 Undo)
+    void DrawNavMeshSurfaceNotes(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                 const InspectorTargets& tg);
     // 6 面ボタン 1 個ぶんの本体。sub-06 と同じ MakeModalShotPlay を呼ぶ (2 本目の規則を書かない)
     void FireModalPreviewFace(EngineContext& ctx, const InspectorTargets& tg,
                               const ModalSoundComponent& comp, const ModalFeatureMap& fm,
@@ -284,6 +290,27 @@ private:
     std::unordered_map<uint64_t, FractureBakeOutcome> fractureOutcomes_;
     // OnImGui が毎フレーム書き、DrawDestructibleNotes が読むだけ (M80j sub-10 round 2)
     bool inPlayMode_ = false;
+
+    // ナビメッシュのベイク (M82b)。ID は Surface を持つエンティティの fileId
+    NavBakeService navBakeService_;
+    // 直近 (このセッション中) のベイクの結果。失敗・取り消しの理由と所要時間の表示用
+    struct NavBakeOutcome {
+        NavBakeStatus status = NavBakeStatus::Ok;
+        std::string message;
+        int triangleCount = 0;
+        int elapsedMs = 0;
+    };
+    std::unordered_map<uint64_t, NavBakeOutcome> navBakeOutcomes_;
+    // 参照中の .mnav の要約 (GUID ごと)。読み込みとポリゴン数の数え上げが重いので 1 回だけ作る
+    struct NavAssetSummary {
+        bool loadable = false;
+        int tiles = 0;
+        int layers = 0;
+        int polygons = 0;
+        int kilobytes = 0;
+    };
+    std::unordered_map<uint64_t, NavAssetSummary> navSummaryCache_;
+    const NavAssetSummary& GetNavAssetSummary(uint64_t guid);
 
     // M80p: DrawDestructibleNotes がスキンの生成ボタンの可否判定に使う
     // .mmdl クックキャッシュの読み込み結果をメッシュ (srcPath+meshKey) ごとにキャッシュする。

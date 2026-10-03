@@ -33,6 +33,8 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 | 14 | スクリプト API (ABI) を M82 に入れるか、BT (M-C) まで待つか | ABI は v23 = 131 スロット (`EngineAPI.h:39`、`check_rules.ps1:676`)。目的地は既存の Get/SetComponentField で書けるが、経路クエリ・最近点・ランダム点は関数が要る。M75h が v24 を計画済み (`plans\m75-ugui.md` G 節) | Q5: M82 に入れる (裁定どおり) | **M82 で ABI を 1 回 bump** (C++ と C# ミラー)。版は着手時点の次番号 (M75h より先なら v24、M75h は v25 へ)。BT を待つと GameLogic から NavMesh を使えない期間が長い |
 | 15 | ベイク結果をどこに置くか | 前例は `.mfrac` (`FractureAsset.h:23`、`assets\Fracture\<名前>_<入力ハッシュ>.mfrac`、GUID で参照、エディタで非同期ベイク `FractureBakeService.h`)。音響のベイクは永続化されない (`AcousticField.h:311`) | — | `.mnav` を新設し `.mfrac` と同じ流儀 (GUID 参照、入力ハッシュ名、非同期ベイク、1 Undo で参照を設定)。中身は TileCache の層 + ベイク設定。dtNavMesh のタイルはロード時に層から作る |
 | 16 | NavMesh 部品が無いシーンの既存リプレイ・golden が変わらないか | AgentSystem は「Agent が居ないとき RNG を引かない」(`AgentSystem.h:43-45`)。ハッシュは XPBD / 音響を中身があるときだけ畳む (WorldHasher) | — | **Presence gate を必須**: NavMesh 系コンポーネントが 1 つも無いシーンでは、RNG・ハッシュ・SimSnapshot の Nav 節の中身がどれも変わらない (節自体は空で書く) |
+| 17 | `.mnav` の読み込みを `PreloadFractureAssets` の 3 か所 (`StartScene.cpp:67` / `EditorApp` / `TickRunner.cpp` のシーン遷移) に足すべきか (sub-02 で coder が逸脱) | `NavSystem::Update` (`NavSystem.cpp`) は stepSim の tick ごとに Surface の (entity, navAsset GUID) をキー順に並べ、前回と違うときだけ読み直す。フェーズ 3.4b は物理 3.6 より前なので最初の物理 tick に間に合う。Server / HeadlessSim も同じ経路 (`HeadlessSim.cpp` が NavSystem を所有) | — (技術判断、planner が sub-02 VERDICT で採用) | **tick 内の遅延ロードを採用**。呼び出し箇所 3 つに散らすより、シーン遷移 / Play 開始 / 復元のどれでも「その tick の World」で決まる方が漏れが無い。条件: sub-03 の SimSnapshot restore は Nav 節を当てる**前に**同じ読み込み (公開した同期関数) を済ませる — 空の NavSystem へ restore した直後の Update が読み直して復元状態を上書きしないこと |
+| 18 | 編集中 (非 Play) の SceneView に NavMesh を出すか | sub-02 の輪郭は TickRunner フェーズ 4 の `debugLines` 経由で、物理 / 音響のデバッグ線と同じく Play 中 (と Runtime / Server の tick) にしか出ない。Unity は編集中の Scene ビューに NavMesh を出す。Bake の結果を見るのに Play が要るのは制作の手間 | `[ユーザーに聞ける]` (planner 裁定) | **編集中にも出す** (塗り + 輪郭)。sim を回さない表示専用の読み込み経路を足す。描画レーンを新設する sub-04 に入れる。Surface の範囲箱ギズモ (4.3、どのサブにも割り当て漏れ) も sub-04 へ。却下: 「Play 中だけ」= Bake → 確認の往復ごとに Play が要る |
 
 ## 3. スコープ
 
@@ -81,7 +83,8 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 ### 4.2 データ・保存形式・互換性
 
 - 新 TypeId 5 個を**末尾 append** (2. #3)。シーン (`kDocVersion=4`) は変えない (型名保存なので新型の追加は互換)。
-- `.mnav`: 版付きバイナリ (`.mfrac` と同じ Serialize / Deserialize、境界検査、同じ入力から同じバイト)。中身 = ベイク設定 + 入力ハッシュ + TileCache の圧縮層 (圧縮器は**無圧縮の自作** `dtTileCacheCompressor`、FastLZ を入れない) + Link / Modifier のベイク時スナップ。保存先 `assets\NavMesh\<Surface名>_<入力ハッシュ16桁>.mnav`、`.meta` で GUID、`AssetType::NavMesh`、ビルド設定のコピー対象に追加 (`BuildSettingsWindow.cpp:253`)。
+- `.mnav`: 版付きバイナリ (`.mfrac` と同じ Serialize / Deserialize、境界検査、同じ入力から同じバイト)。中身 = ベイク設定 + 入力ハッシュ + TileCache の圧縮層 (圧縮器は**無圧縮の自作** `dtTileCacheCompressor`、FastLZ を入れない) + Link / Modifier のベイク時スナップ。保存先 `assets\NavMesh\<Surface名>_<入力ハッシュ16桁>.mnav`、`.meta` で GUID、`AssetType::NavMesh`。ビルド (配布物) へは `BuildSettingsWindow.cpp:208-210` の `assets\` 丸ごとコピーで入る (:253 の一覧はクック物専用で対象外。sub-02 VERDICT で訂正)。
+- 読み込み: `NavSystem::Update` (stepSim の tick、フェーズ 3.4b) が Surface の (entity, navAsset) の変化を見て遅延ロードする (2. #17)。
 - SimSnapshot: Nav 節を追加し `kSimSnapshotVersion` 24 → 25 (sub-01 の結論で節の中身を決める。節が要らない結論なら bump しない)。
 - ABI: 1 回だけ bump (2. #14)。最小の関数: `NavSetDestination` / `NavStop` / `NavGetAgentState` / `NavFindPath` (コーナー列を呼び出し側バッファへ) / `NavSamplePosition` (最寄り点) / `NavRaycast` / `NavFindRandomPoint` (半径内、World RNG)。全部 POD + C ABI、`Interop.cs` 位置ミラー、`check_rules.ps1` の版表を更新。
 
@@ -90,7 +93,8 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 - Create → 3D Object: 既存 6 項目の後に区切り線、`NavMesh Surface` / `NavMesh Obstacle` / `NavMesh Modifier` / `NavMesh Link`。Undo は既存の `CreateItem` / `RecordCreate`。Surface はシーン境界を覆う既定サイズ (20×10×20)。
 - Add Component に 5 種。NavMeshAgent を足すと CC が無ければ CC も足す (1 Undo)。
 - Surface のインスペクタ: ベイク設定、`Bake` / `Clear`、ベイク中の進捗とキャンセル、結果の要約 (タイル数・ポリゴン数・所要時間)、表示切り替え (NavMesh / タイル境界 / Link / Obstacle / 経路)。寸法の不整合 (Agent / CC が Surface より大きい) を警告。
-- SceneView ギズモ: Surface の範囲箱、Obstacle の形、Modifier の箱、Link の 2 点と矢印。
+- SceneView ギズモ: Surface の範囲箱 (sub-04)、Obstacle の形 (sub-05)、Modifier の箱 (sub-06)、Link の 2 点と矢印 (sub-07)。
+- NavMesh の表示は**編集中 (非 Play) の SceneView にも出る** (2. #18、sub-04)。Bake 直後に Play せず結果を確認できること。
 - デバッグ描画は Runtime でも出せる (`debugLines` 経路 + 新設の三角形レーン、resim 中は積まない)。**NavMesh は半透明の塗り (エリア色、Unity 風) + 輪郭線**。床と Z ファイトしない。NavMesh が変わらない tick では三角形を作り直さない。golden `nav` (`--nav-demo` の固定 tick、表示 on) を `shot_verify` に載せる。
 - 文字列は全部 `LocalizationTable.inl` (en / ja)。
 
@@ -169,6 +173,11 @@ sub-04〜sub-06 は依存上どれも sub-03 の後だが、`--nav-demo` / golde
 ## 8. 変更履歴
 
 (確定後の変更のみ)
+
+- 2026-10-03 / 出所: coder SELF_EVAL sub-02 round 1 (planner VERDICT)
+  - 4.2: ビルド設定のコピー対象への `.mnav` 追加を削除。`BuildSettingsWindow.cpp:208-210` が `assets\` を再帰コピーするので不要 (spec の見立て違い)。
+  - 2. #17 / 4.2: `.mnav` の読み込みを Preload 3 か所ではなく `NavSystem::Update` の遅延ロードに変更 (coder の逸脱を採用)。sub-03 の restore は Nav 節を当てる前に読み込みを済ませる条件を追加。
+  - 2. #18 / 4.3: 編集中の SceneView にも NavMesh を出す (planner 裁定、`[ユーザーに聞ける]`)。Surface の範囲箱ギズモがどのサブにも割り当てられていなかったので sub-04 へ。
 
 - 2026-10-03 / 出所: coder SELF_EVAL sub-01 round 1
   - 4.4: 復元方式を (b') で確定 (候補 a / b / c はどれも不成立、実測と根拠は ADR-023)。計測値と Off-Mesh を dtCrowd に渡らせない方針を追記。

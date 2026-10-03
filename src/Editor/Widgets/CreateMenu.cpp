@@ -65,6 +65,13 @@ GameObject CreateCapsule(EngineContext& ctx, const char* name)
     return CreateMeshObject(ctx, name, ctx.resources->meshes.Capsule());
 }
 
+GameObject CreateNavMeshSurface(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    obj.AddComponent<NavMeshSurfaceComponent>(); // 既定は 20 x 10 x 20 の範囲 (Components.h)
+    return obj;
+}
+
 GameObject CreateDirectionalLight(EngineContext& ctx, const char* name)
 {
     GameObject obj = ctx.scene->CreateGameObjectTracked(name);
@@ -333,6 +340,9 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Quad), "Quad", &CreateQuad);
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Cylinder), "Cylinder", &CreateCylinder);
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Capsule), "Capsule", &CreateCapsule);
+        ImGui::Separator();
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_NavMeshSurface), "NavMesh Surface",
+                   &CreateNavMeshSurface); // M82b
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(Tr(StrId::Create_Light))) {

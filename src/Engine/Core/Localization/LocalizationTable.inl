@@ -849,6 +849,7 @@ MYE_STR(Create_Plane,         "Plane",             "平面")
 MYE_STR(Create_Quad,          "Quad",              "クアッド")
 MYE_STR(Create_Cylinder,      "Cylinder",          "シリンダー")
 MYE_STR(Create_Capsule,       "Capsule",           "カプセル")
+MYE_STR(Create_NavMeshSurface, "NavMesh Surface",  "ナビメッシュサーフェス") // M82b
 MYE_STR(Create_Light,         "Light",             "ライト")
 MYE_STR(Create_DirLight,      "Directional Light", "平行光")
 MYE_STR(Create_PointLight,    "Point Light",       "ポイントライト")
@@ -1797,3 +1798,20 @@ MYE_STR(Scm_SetupFetchHint, "Connected. Fetch to inspect remote history.", "接�
 MYE_STR(Scm_SetupCancelled, "The operation was cancelled. Check the current settings before retrying.", "操作をキャンセルしました。現在の設定を確認してから再実行してください。")
 MYE_STR(Scm_SetupTimeout, "The operation timed out. Check the network or authentication and retry.", "操作がタイムアウトしました。通信・認証状態を確認して再実行してください。")
 MYE_STR(Scm_SetupGcmMissing, "Git Credential Manager is unavailable. Enable it in Git for Windows to use browser sign-in.", "Git Credential Managerが利用できません。ブラウザ認証を使うにはGit for Windowsで導入してください。")
+
+// ---- M82b: NavMesh Surface の Inspector ----
+MYE_STR(Insp_NavBake,        "Bake",            "ベイク")
+MYE_STR(Insp_NavClear,       "Clear",           "クリア")
+MYE_STR(Insp_NavCancel,      "Cancel",          "取り消し")
+MYE_STR(Insp_NavBaking,      "Baking: %d / %d tiles", "ベイク中: %d / %d タイル")
+MYE_STR(Insp_NavStateNone,   "Not baked",       "未ベイク")
+MYE_STR(Insp_NavStateReady,  "Baked: %d tile(s), %d layer(s), %d polygon(s), %d KB",
+                             "ベイク済み: タイル %d 枚、層 %d 枚、ポリゴン %d 枚、%d KB")
+MYE_STR(Insp_NavStateBroken, "The referenced .mnav cannot be loaded. Bake again or clear it.",
+                             "参照している .mnav を読み込めません。ベイクし直すかクリアしてください")
+MYE_STR(Insp_NavLastBake,    "Last bake: %d triangle(s), %d ms", "前回のベイク: 三角形 %d 枚、%d ms")
+MYE_STR(Insp_NavFailed,      "Bake failed: %s", "ベイクに失敗: %s")
+MYE_STR(Insp_NavCancelled,   "Bake cancelled",  "ベイクを取り消しました")
+MYE_STR(Insp_NavPlayModeDisabled,
+        "Disabled while playing (Stop reverts the scene, discarding the new reference).",
+        "再生中は無効です (Stop でシーンが巻き戻り、設定した参照が消えます)")

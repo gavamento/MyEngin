@@ -243,6 +243,10 @@ bool NavBakeTileLayers(const NavBakeConfig& config, const NavTriangleInput& inpu
 
 void NavCalcTileGrid(const NavBakeConfig& config, int& outTilesX, int& outTilesY);
 
+// タイルの継ぎ目のために、タイル 1 枚のベイクが入力へ広げる余白 (セル数)。
+// 入力三角形をタイルごとに絞るときは、この分だけ広げた範囲で絞ること
+int NavTileBorderCells(const NavBakeConfig& config);
+
 // ベイク設定から NavTileStore の設定を作る
 NavTileStoreConfig NavMakeStoreConfig(const NavBakeConfig& config, int maxTiles, int maxPolysPerTile, int maxObstacles);
 

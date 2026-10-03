@@ -886,6 +886,11 @@ void NavCalcTileGrid(const NavBakeConfig& config, int& outTilesX, int& outTilesY
     outTilesY = (gh + config.tileSize - 1) / config.tileSize;
 }
 
+int NavTileBorderCells(const NavBakeConfig& config)
+{
+    return static_cast<int>(std::ceil(config.agentRadius / config.cellSize)) + 3;
+}
+
 NavTileStoreConfig NavMakeStoreConfig(const NavBakeConfig& config, int maxTiles, int maxPolysPerTile, int maxObstacles)
 {
     NavTileStoreConfig out;
@@ -947,7 +952,7 @@ bool NavBakeTileLayers(const NavBakeConfig& config, const NavTriangleInput& inpu
     cfg.mergeRegionArea = config.mergeRegionArea;
     cfg.maxVertsPerPoly = DT_VERTS_PER_POLYGON;
     cfg.tileSize = config.tileSize;
-    cfg.borderSize = cfg.walkableRadius + 3; // 隣のタイルとの継ぎ目に必要な余白
+    cfg.borderSize = NavTileBorderCells(config); // 隣のタイルとの継ぎ目に必要な余白 (walkableRadius + 3)
     cfg.width = cfg.tileSize + cfg.borderSize * 2;
     cfg.height = cfg.tileSize + cfg.borderSize * 2;
 

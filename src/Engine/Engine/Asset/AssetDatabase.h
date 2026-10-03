@@ -30,6 +30,7 @@ enum class AssetType : int32_t {
     PhysMat,    // .physmat.json (M59a1 — 物理マテリアル。剛体ソルバ用の材料特性)
     FxStack,    // .fxstack.json (M78c — プロジェクトポスト／コンピュートパスのスタック定義)
     Fracture,   // .mfrac (M80c — 破壊の破片資産。Voronoi 分割済みメッシュ・凸包)
+    NavMesh,    // .mnav (M82b — ナビメッシュのベイク結果。TileCache の層)
 };
 
 // アセット 1 件のサイドカー情報 (<asset>.meta に JSON で保存)。

@@ -17,6 +17,7 @@
 #include "Engine/Engine/Acoustic/AcousticDebugDraw.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AgentSystem.h" // M65f: 敵の思考 (フェーズ 3.4 の後半)
+#include "Engine/Engine/Navigation/NavSystem.h" // M82b: ナビメッシュ (フェーズ 3.4 と 3.5 の間)
 #include "Engine/Engine/Audio/Spatial/AcousticAudio.h" // ResolveWaveShotSound (鳴る波の音の選択)
 #include "Engine/Engine/Audio/Playback/AudioMixer.h"
 #include "Engine/Engine/Audio/Playback/AudioSourceSystem.h"
@@ -384,6 +385,13 @@ void RunOneTick(TickServices& ts)
             ts.acoustic->UpdateFrontPreview(ctx.tickIndex);
         }
     }
+    // ---- ナビメッシュ (フェーズ 3.4b、M82b): 音響 + AgentSystem の後・アニメの前 ----
+    // AgentSystem は ts.acoustic のゲートの中なので相乗りしない。Surface が無いシーンでは
+    // 走査だけで何もしない (RNG もハッシュも触らない)
+    if (stepSim && ts.navSystem != nullptr) {
+        MYE_PROFILE_SCOPE("nav");
+        ts.navSystem->Update(scene.GetWorld());
+    }
     // ---- アニメーション (フェーズ 3.5): スクリプト後・Transform 前に LocalTransform を確定 ----
     // Play 中のみ進行 (編集時は Animation 窓が明示サンプリングする)。M51g からは
     // TimeControl の tick ゲート (stepSim) も掛かる — エフェクトの duration/linger や
@@ -467,6 +475,11 @@ void RunOneTick(TickServices& ts)
             const AcousticDebugFlags& acDebug = GetAcousticDebugFlags();
             if (acDebug.Any() && ts.acoustic != nullptr) {
                 BuildAcousticDebugLines(scene.GetWorld(), *ts.acoustic, acDebug, debugLines);
+            }
+            // ナビメッシュの輪郭 (M82b)。表示は Surface ごとのフラグ (NoHash) で決まる。
+            // 線は読み込み時に作ってあるので、ここは写すだけ
+            if (ts.navSystem != nullptr) {
+                ts.navSystem->AppendDebugLines(scene.GetWorld(), debugLines);
             }
         }
     }
@@ -798,6 +811,9 @@ void RunOneTick(TickServices& ts)
             scene.UI().Clear();
             if (ts.agentSystem) {
                 ts.agentSystem->Reset(); // M65f: 航法グリッドも旧シーンのもの
+            }
+            if (ts.navSystem) {
+                ts.navSystem->Reset(); // M82b: 旧シーンのナビメッシュ。次の tick が新シーンの分を読む
             }
             vfxRenderer.Reset(); // M29c: トレイル点列も新シーンでリセット
             partFollowSystem.Reset(); // M48g: 旧シーンの warn 抑制を捨てる

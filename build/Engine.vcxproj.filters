@@ -495,7 +495,22 @@
     <ClCompile Include="..\src\Engine\Engine\Modal\Voxelizer.cpp">
       <Filter>Engine\Modal</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Navigation\NavBake.cpp">
+      <Filter>Engine\Navigation</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Navigation\NavBakeInput.cpp">
+      <Filter>Engine\Navigation</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavDeterminismSelfTest.cpp">
+      <Filter>Engine\Navigation</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Navigation\NavMeshAsset.cpp">
+      <Filter>Engine\Navigation</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Navigation\NavSurfaceSelfTest.cpp">
+      <Filter>Engine\Navigation</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Navigation\NavSystem.cpp">
       <Filter>Engine\Navigation</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavTileCacheSupport.cpp">
@@ -1296,7 +1311,22 @@
     <ClInclude Include="..\src\Engine\Engine\Modal\Voxelizer.h">
       <Filter>Engine\Modal</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Navigation\NavBake.h">
+      <Filter>Engine\Navigation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Navigation\NavBakeInput.h">
+      <Filter>Engine\Navigation</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavDeterminismSelfTest.h">
+      <Filter>Engine\Navigation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Navigation\NavMeshAsset.h">
+      <Filter>Engine\Navigation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Navigation\NavSurfaceSelfTest.h">
+      <Filter>Engine\Navigation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Navigation\NavSystem.h">
       <Filter>Engine\Navigation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavTileCacheSupport.h">

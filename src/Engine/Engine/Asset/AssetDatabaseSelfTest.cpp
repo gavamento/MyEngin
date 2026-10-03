@@ -85,8 +85,10 @@ bool RunAssetDatabaseSelfTest()
     // M80c: .mfrac (破片資産)
     check(AssetDatabase::ClassifyPath(L"x\\Prop.mfrac") == AssetType::Fracture,
           ".mfrac is classified as the fracture asset type");
+    check(AssetDatabase::ClassifyPath(L"x\\Level.mnav") == AssetType::NavMesh,
+          ".mnav is classified as the navmesh asset type");
     for (AssetType t : { AssetType::Actor, AssetType::Prefab, AssetType::Sound, AssetType::Mixer,
-                         AssetType::Schema, AssetType::PhysMat, AssetType::Fracture }) {
+                         AssetType::Schema, AssetType::PhysMat, AssetType::Fracture, AssetType::NavMesh }) {
         check(AssetDatabase::ParseTypeName(AssetDatabase::TypeName(t)) == t,
               "asset type name round-trips through .meta");
     }

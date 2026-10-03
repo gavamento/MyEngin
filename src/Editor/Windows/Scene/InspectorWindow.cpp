@@ -17,6 +17,8 @@
 #include "Editor/Scene/ComponentClipboard.h"
 #include "Editor/Widgets/EditorWidgets.h"
 #include "Editor/Tools/FractureBakeCommit.h" // M80i: 焼き成功結果の確定 (.mfrac 保存・登録・Undo)
+#include "Editor/Tools/NavBakeCommit.h"      // M82b: ベイク結果の確定 (.mnav 保存・参照の設定・Undo)
+#include "Engine/Engine/Navigation/NavMeshAsset.h"
 #include "Engine/Core/Asset/AssetGuidResolver.h"
 #include "Engine/Core/Asset/AssetKeyResolver.h" // M80j: guid:// 登録名 → クック元パス (スキンの骨ウェイト取得)
 #include "Engine/Engine/Asset/ModelCook.h" // M80j: .mmdl クックキャッシュからボーンウェイト付き頂点を読む
@@ -1206,6 +1208,11 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
     if (std::strcmp(desc.name, "Destructible") == 0 && !tg.multi) {
         DrawDestructibleNotes(ctx, selection, undo, tg, row);
     }
+    // M82b: ナビメッシュの Bake / Clear。ベイクは Surface 1 つ・エンティティ 1 つに対する非同期処理なので
+    // マルチ選択では出さない
+    if (std::strcmp(desc.name, "NavMeshSurface") == 0 && !tg.multi) {
+        DrawNavMeshSurfaceNotes(ctx, selection, undo, tg);
+    }
     // RT の実効値。RayTracing を持つ物はその節に、持たない物は描画される節 (MeshRenderer /
     // Terrain) に 1 回だけ出す。マルチ選択では出さない (物ごとに違いうるため)
     const bool hasRt = world.GetComponent<RayTracingComponent>(tg.e) != nullptr;
@@ -1595,6 +1602,136 @@ void InspectorWindow::CommitFractureBakeResult(EngineContext& ctx, Selection& se
     if (!CommitFractureBake(ctx, selection, undo, tg.e, tg.fid, req, result, pieceBoneNames)) {
         fractureOutcomes_[tg.fid].success = false;
         fractureOutcomes_[tg.fid].failReason = "failed to write or register the .mfrac asset";
+    }
+}
+
+// M82b: 参照中の .mnav の要約。GUID ごとに 1 回だけ読む (ポリゴン数は dtNavMesh を組まないと数えられない)
+const InspectorWindow::NavAssetSummary& InspectorWindow::GetNavAssetSummary(uint64_t guid)
+{
+    const auto it = navSummaryCache_.find(guid);
+    if (it != navSummaryCache_.end()) {
+        return it->second;
+    }
+    NavAssetSummary summary;
+    const std::wstring path = assetguid::ResolvePath(guid);
+    NavMeshAsset::Data data;
+    if (!path.empty() && NavMeshAsset::Load(path, data)) {
+        NavTileStore store;
+        if (NavMeshAsset::BuildStore(data, store)) {
+            const dtNavMesh* nav = store.NavMesh();
+            for (int i = 0; i < nav->getMaxTiles(); ++i) {
+                const dtMeshTile* tile = nav->getTile(i);
+                if (tile != nullptr && tile->header != nullptr) {
+                    ++summary.tiles;
+                    summary.polygons += tile->header->polyCount;
+                }
+            }
+            summary.layers = static_cast<int>(data.layers.size());
+            std::error_code ec;
+            summary.kilobytes = static_cast<int>(std::filesystem::file_size(path, ec) / 1024);
+            summary.loadable = true;
+        }
+    }
+    return navSummaryCache_.emplace(guid, summary).first->second;
+}
+
+// M82b: NavMeshSurface 節の末尾。ベイクの確定 (メインスレッド限定の .mnav 保存・AssetDatabase 登録・Undo) は
+// CommitNavBake (NavBakeCommit.h) が持つ — ImGui に触れない純粋なロジックなので SelfTest からも呼べる
+void InspectorWindow::DrawNavMeshSurfaceNotes(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                              const InspectorTargets& tg)
+{
+    World& world = ctx.scene->GetWorld();
+    const auto* comp = world.GetComponent<NavMeshSurfaceComponent>(tg.e);
+    if (comp == nullptr) {
+        return;
+    }
+
+    if (navBakeService_.GetState(tg.fid) == NavBakeJobState::Ready) {
+        NavBakeResult result;
+        if (navBakeService_.TakeResult(tg.fid, result)) {
+            NavBakeOutcome outcome;
+            outcome.status = result.output.status;
+            outcome.message = result.output.message;
+            outcome.triangleCount = result.output.data.inputTriangleCount;
+            outcome.elapsedMs = static_cast<int>(result.elapsedMs);
+            if (result.output.status == NavBakeStatus::Ok
+                && !CommitNavBake(ctx, selection, undo, tg.e, tg.fid, result.output)) {
+                outcome.status = NavBakeStatus::Failed;
+                outcome.message = "failed to write the .mnav asset";
+            }
+            if (outcome.status == NavBakeStatus::Failed || outcome.status == NavBakeStatus::Empty) {
+                MYE_LOG_ERROR("[nav] bake failed for '%s': %s", world.GetName(tg.e), outcome.message.c_str());
+            }
+            navBakeOutcomes_[tg.fid] = std::move(outcome);
+            comp = world.GetComponent<NavMeshSurfaceComponent>(tg.e); // 構造変更で動きうるので取り直す
+            if (comp == nullptr) {
+                return;
+            }
+            navSummaryCache_.erase(comp->navAsset.value); // 同じ名前のファイルを書き直した場合に読み直す
+        }
+    }
+
+    ImGui::Separator();
+    const NavBakeJobState state = navBakeService_.GetState(tg.fid);
+    if (state == NavBakeJobState::Baking) {
+        int done = 0;
+        int total = 0;
+        navBakeService_.GetProgress(tg.fid, done, total);
+        ImGui::TextDisabled(Tr(StrId::Insp_NavBaking), done, total);
+        ImGui::ProgressBar(total > 0 ? static_cast<float>(done) / static_cast<float>(total) : 0.0f,
+                           ImVec2(-1.0f, 0.0f));
+        if (ImGui::Button(Tr(StrId::Insp_NavCancel))) {
+            navBakeService_.Cancel(tg.fid);
+        }
+        return;
+    }
+
+    if (comp->navAsset.IsNull()) {
+        ImGui::TextUnformatted(Tr(StrId::Insp_NavStateNone));
+    } else {
+        const NavAssetSummary& summary = GetNavAssetSummary(comp->navAsset.value);
+        if (summary.loadable) {
+            ImGui::Text(Tr(StrId::Insp_NavStateReady), summary.tiles, summary.layers, summary.polygons,
+                        summary.kilobytes);
+        } else {
+            ImGui::TextColored(themeColor::Error, "%s", Tr(StrId::Insp_NavStateBroken));
+        }
+    }
+    const auto outIt = navBakeOutcomes_.find(tg.fid);
+    if (outIt != navBakeOutcomes_.end()) {
+        const NavBakeOutcome& o = outIt->second;
+        switch (o.status) {
+        case NavBakeStatus::Ok:
+            ImGui::TextDisabled(Tr(StrId::Insp_NavLastBake), o.triangleCount, o.elapsedMs);
+            break;
+        case NavBakeStatus::Cancelled:
+            ImGui::TextDisabled("%s", Tr(StrId::Insp_NavCancelled));
+            break;
+        case NavBakeStatus::Empty:
+        case NavBakeStatus::Failed:
+            ImGui::TextColored(themeColor::Error, Tr(StrId::Insp_NavFailed), o.message.c_str());
+            break;
+        }
+    }
+
+    // Play 中の Bake は .mnav 自体は書けるが、Stop でシーンがスナップショットへ巻き戻り参照が消える
+    const char* disableReason = inPlayMode_ ? Tr(StrId::Insp_NavPlayModeDisabled) : nullptr;
+    ImGui::BeginDisabled(disableReason != nullptr);
+    if (ImGui::Button(Tr(StrId::Insp_NavBake))) {
+        NavBakeInputs inputs;
+        if (NavPrepareBakeInputs(world, tg.e, inputs)) {
+            navBakeService_.Request(tg.fid, std::move(inputs));
+        }
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(comp->navAsset.IsNull());
+    if (ImGui::Button(Tr(StrId::Insp_NavClear))) {
+        ClearNavBake(ctx, selection, undo, tg.e, tg.fid);
+    }
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
+    if (disableReason != nullptr) {
+        ImGui::TextDisabled("%s", disableReason);
     }
 }
 

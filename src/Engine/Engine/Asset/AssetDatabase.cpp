@@ -105,6 +105,9 @@ AssetType AssetDatabase::ClassifyPath(const std::wstring& path)
     if (EndsWith(s, ".mfrac")) {
         return AssetType::Fracture;
     }
+    if (EndsWith(s, ".mnav")) {
+        return AssetType::NavMesh;
+    }
     if (EndsWith(s, ".png") || EndsWith(s, ".jpg") || EndsWith(s, ".jpeg") || EndsWith(s, ".tga")
         || EndsWith(s, ".bmp") || EndsWith(s, ".dds")) {
         return AssetType::Texture;
@@ -145,6 +148,7 @@ const char* AssetDatabase::TypeName(AssetType t)
     case AssetType::PhysMat: return "physmat";
     case AssetType::FxStack: return "fxstack";
     case AssetType::Fracture: return "fracture";
+    case AssetType::NavMesh: return "navmesh";
     case AssetType::Unknown:
     default: return "unknown";
     }
@@ -170,6 +174,7 @@ AssetType AssetDatabase::ParseTypeName(const std::string& s)
     if (s == "physmat") return AssetType::PhysMat;
     if (s == "fxstack") return AssetType::FxStack;
     if (s == "fracture") return AssetType::Fracture;
+    if (s == "navmesh") return AssetType::NavMesh;
     return AssetType::Unknown;
 }
 

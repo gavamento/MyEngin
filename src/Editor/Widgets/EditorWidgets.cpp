@@ -223,6 +223,7 @@ const char* FileTypeIcon(const wchar_t* path)
     case AssetType::Terrain: return ICON_FA_MOUNTAIN;
     case AssetType::FxStack: return ICON_FA_LAYER_GROUP;
     case AssetType::Fracture: return ICON_FA_BURST;
+    case AssetType::NavMesh: return ICON_FA_ROUTE;
     default: break;
     }
     // エンジンのアセット種別に無いもの (ソースコード・文書・動画など) は末尾の拡張子で引く

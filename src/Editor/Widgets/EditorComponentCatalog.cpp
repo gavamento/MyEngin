@@ -96,6 +96,8 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "UIScrollRect", { ICON_FA_SCROLL, "UI", "スクロールレクト" } }, // M75g
         { "UIDropdown", { ICON_FA_SQUARE_CARET_DOWN, "UI", "ドロップダウン" } }, // M75g
         { "UIDropdownItem", { ICON_FA_LIST_UL, "UI", "ドロップダウンの項目" } }, // M75g
+        // M82b: ナビメッシュ。ベイクした歩行面を持つ Surface (Agent / Obstacle 等は M82c 以降)
+        { "NavMeshSurface", { ICON_FA_ROUTE, "Navigation", "ナビメッシュサーフェス" } },
     };
     return t;
 }
@@ -120,7 +122,8 @@ const std::vector<const char*>& ComponentUiCategories()
 {
     static const std::vector<const char*> cats = { "General",   "Rendering", "Physics",
                                                    "Animation", "VFX",       "Audio",
-                                                   "Environment", "UI",      "Scripts" };
+                                                   "Environment", "Navigation", "UI",
+                                                   "Scripts" };
     return cats;
 }
 
@@ -134,7 +137,8 @@ const char* ComponentCategoryLabel(const char* categoryKey)
     static const Row kRows[] = {
         { "General", "一般" },      { "Rendering", "レンダリング" }, { "Physics", "物理" },
         { "Animation", "アニメーション" }, { "VFX", "エフェクト" },  { "Audio", "オーディオ" },
-        { "Environment", "環境" },  { "UI", "UI" },                  { "Scripts", "スクリプト" },
+        { "Environment", "環境" },  { "Navigation", "ナビゲーション" }, { "UI", "UI" },
+        { "Scripts", "スクリプト" },
     };
     for (const Row& r : kRows) {
         if (std::strcmp(r.key, categoryKey) == 0) {

@@ -1875,6 +1875,33 @@ struct RayTracingComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- NavMesh Surface (M82b) ----
+// エリア ID は 0..15。0 = 歩行可 (コスト 1)、1 = 歩行不可、2 = Jump。コストの使い道は M82f
+inline constexpr int32_t kNavAreaCount = 16;
+
+// ナビメッシュのベイク範囲と設定。ベイク結果 (.mnav) は navAsset が GUID で指す。
+// hash 対象 = 設定値と navAsset。表示フラグだけ kFieldNoHash (描画専用)。
+// ベイク寸法 (agentRadius 等) はベイク時の定数で、実行時の CharacterController とは別物 (M82 spec 2. #6)
+struct NavMeshSurfaceComponent {
+    int32_t agentTypeId = 0;                              // Agent と Surface の対応キー
+    DirectX::XMFLOAT3 center = { 0.0f, 0.0f, 0.0f };      // ベイク範囲 (エンティティのローカル空間)
+    DirectX::XMFLOAT3 size = { 20.0f, 10.0f, 20.0f };
+    float agentRadius = 0.3f;
+    float agentHeight = 1.8f;
+    float maxClimb = 0.1f;       // 仮置き。CharacterController の実測 (M82c) で決める
+    float maxSlopeDeg = 45.0f;
+    float cellSize = 0.3f;
+    float cellHeight = 0.1f;
+    int32_t tileSize = 32;       // 1 タイルの一辺 (セル数)
+    uint32_t collectLayerMask = 0xFFFFFFFFu; // 入力にするコライダーのレイヤー集合
+    float areaCosts[kNavAreaCount] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+                                       1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+    AssetID navAsset = {};       // .mnav (null = 未ベイク)
+    bool drawNavMesh = true;     // 輪郭と範囲の描画 (kFieldNoHash)
+    bool drawTileBounds = false; // タイル境界の描画 (kFieldNoHash)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

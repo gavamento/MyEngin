@@ -25,6 +25,7 @@ struct ShapeImpulse;
 class XpbdBackend;
 class AcousticField;
 class AgentSystem;
+class NavSystem;
 class TransformSystem;
 class CollisionSystem;
 class ParticleSystem;
@@ -93,6 +94,9 @@ struct TickServices {
     // 物理 (3.6) より前なので、書いた moveInput が同じ tick で効く。
     // null = AI を回さない (World 単体の selftest 経路)
     AgentSystem* agentSystem = nullptr;
+    // M82b: ナビメッシュ (.mnav の読み込みと輪郭の描画)。フェーズ 3.4 の後・アニメの前に Update する。
+    // null = 回さない (World 単体の selftest 経路)
+    NavSystem* navSystem = nullptr;
     TransformSystem* transformSystem = nullptr;
     CollisionSystem* collisionSystem = nullptr;
     ParticleSystem* particleSystem = nullptr;

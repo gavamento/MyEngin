@@ -1383,6 +1383,41 @@ void RegisterBuiltinComponents()
         MYE_JP("チェックマーク", MYE_FIELD_TIP(UIDropdownItemComponent, checkmark, EntityRef,
                                                "drawn only for the selected option")),
     }, kComponentNoHash | kComponentUiAux);
+
+    // M82b: NavMesh Surface (TypeId=71、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変。
+    // 設定値と navAsset は hash 対象。表示フラグだけ kFieldNoHash。areaCosts は M82f の UI ができるまで
+    // Inspector に出さない (保存・ハッシュ・スクリプトからの読み書きは有効)
+#define MYE_NAV_AREA_COST(i)                                                                      \
+    ::mye::FieldDesc{ .name = "areaCost" #i, .type = ::mye::FieldType::Float,                      \
+                      .offset = static_cast<uint32_t>(offsetof(NavMeshSurfaceComponent, areaCosts) \
+                                                      + (i) * sizeof(float)),                      \
+                      .flags = ::mye::kFieldHidden }
+    RegisterComponent<NavMeshSurfaceComponent>("NavMeshSurface", {
+        MYE_JP("エージェント種別", MYE_FIELD_TIP(NavMeshSurfaceComponent, agentTypeId, Int32,
+                                                 "agents use the surface with the same agent type id")),
+        MYE_JP("範囲の中心", MYE_FIELD_TIP(NavMeshSurfaceComponent, center, Float3,
+                                           "bake bounds center in this entity's local space")),
+        MYE_JP("範囲の大きさ", MYE_FIELD_TIP(NavMeshSurfaceComponent, size, Float3,
+                                             "bake bounds size; the world AABB of this box is baked")),
+        MYE_JP("エージェント半径", MYE_FIELD_RANGE(NavMeshSurfaceComponent, agentRadius, Float, 0.05f, 5.0f)),
+        MYE_JP("エージェント高さ", MYE_FIELD_RANGE(NavMeshSurfaceComponent, agentHeight, Float, 0.2f, 10.0f)),
+        MYE_JP("登れる段差", MYE_FIELD_RANGE(NavMeshSurfaceComponent, maxClimb, Float, 0.0f, 5.0f)),
+        MYE_JP("登れる傾斜 (度)", MYE_FIELD_RANGE(NavMeshSurfaceComponent, maxSlopeDeg, Float, 0.0f, 89.0f)),
+        MYE_JP("セルの大きさ", MYE_FIELD_RANGE(NavMeshSurfaceComponent, cellSize, Float, 0.05f, 2.0f)),
+        MYE_JP("セルの高さ", MYE_FIELD_RANGE(NavMeshSurfaceComponent, cellHeight, Float, 0.02f, 1.0f)),
+        MYE_JP("タイルの大きさ (セル)", MYE_FIELD_RANGE(NavMeshSurfaceComponent, tileSize, Int32, 16.0f, 128.0f)),
+        MYE_JP("入力レイヤー", MYE_FIELD_TIP(NavMeshSurfaceComponent, collectLayerMask, UInt32,
+                                             "colliders on these layers are baked")),
+        MYE_NAV_AREA_COST(0), MYE_NAV_AREA_COST(1), MYE_NAV_AREA_COST(2), MYE_NAV_AREA_COST(3),
+        MYE_NAV_AREA_COST(4), MYE_NAV_AREA_COST(5), MYE_NAV_AREA_COST(6), MYE_NAV_AREA_COST(7),
+        MYE_NAV_AREA_COST(8), MYE_NAV_AREA_COST(9), MYE_NAV_AREA_COST(10), MYE_NAV_AREA_COST(11),
+        MYE_NAV_AREA_COST(12), MYE_NAV_AREA_COST(13), MYE_NAV_AREA_COST(14), MYE_NAV_AREA_COST(15),
+        MYE_JP("ナビメッシュ資産", MYE_FIELD_TIP(NavMeshSurfaceComponent, navAsset, AssetRef,
+                                                 ".mnav - the baked navigation mesh (set by Bake)")),
+        MYE_JP("ナビメッシュを描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawNavMesh, Bool, kFieldNoHash)),
+        MYE_JP("タイル境界を描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawTileBounds, Bool, kFieldNoHash)),
+    });
+#undef MYE_NAV_AREA_COST
 }
 
 } // namespace mye

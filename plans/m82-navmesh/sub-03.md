@@ -9,6 +9,7 @@ spec 4.1 (Agent、Tick の位置、AgentBrain 共存、エッジケース)、4.4
 
 1. `NavMeshAgentComponent` を末尾 append (hash 対象)。Add Component で CC が無ければ CC も足す (1 Undo)。
 2. `NavSystem` (sim 側、`src\Engine\Engine\Navigation\`): Surface ごとに dtNavMesh / dtTileCache / dtNavMeshQuery / dtCrowd (容量 既定 128) を持つ。TickRunner のフェーズ 3.4 の後・3.5 の前に独立の `if (stepSim)` ブロック。順序は spec 4.1 のとおり (Agent はエンティティキー順で同期、CC の実位置を crowd へ、`dtCrowd::update(1/60)`、望む速度 → CC.moveInput、状態 → Agent)。
+2b. (sub-02 VERDICT、spec 2. #17) `.mnav` の読み込みは `NavSystem::Update` 内の遅延ロード (Surface の (entity, navAsset) が変わったときだけ)。restore はこの読み込みを**Nav 節を当てる前に**済ませる (同期関数を公開して restore 側から呼ぶ等)。空の NavSystem へ restore → 次の Update が「構成が変わった」と読み直して復元状態を捨てる、を起こさないこと。受け入れ 3 の SelfTest がこの経路を通る。
 3. **sub-01 で決めた復元方式**で (タイル差し替え済みの状態でも成り立つ形のまま。spec 4.4 F4) SimSnapshot に Nav 節を足す (`kSimSnapshotVersion` 24 → 25)。World hash にも Nav の外部状態を畳む (中身があるときだけ、XPBD / 音響と同じ content-gated)。Presence gate: NavMesh 系が無ければ RNG もハッシュも変わらない。
 4. **計測 (sub-01 の申し送り)**: `--nav-demo` 実機で (i) Nav 節の capture バイト数と時間 (ロールバックの毎 tick capture 約 148 KB への上乗せ) (ii) 最悪 tick の `dtCrowd::update` 時間 (経路要求を同じ update で完走させるパッチの影響)。(i) は 128 体換算で +45% の見込み — 差分化するかの判断材料として SELF_EVAL に数字を書く。(ii) が重ければ 1 tick の経路要求を**件数で**絞る (時間で絞らない)。
 4b. CC が越えられる段差の実測 → Surface の `maxClimb` 既定を確定 (spec 2. #5、R3)。結果を SELF_EVAL に書く。

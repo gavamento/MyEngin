@@ -23,6 +23,7 @@
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AgentSystem.h" // M65f: 敵の思考 (実体はここが持つ)
+#include "Engine/Engine/Navigation/NavSystem.h" // M82b: ナビメッシュ (実体はここが持つ)
 #include "Engine/Engine/Audio/Playback/AudioMixer.h"
 #include "Engine/Engine/Audio/Playback/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/Playback/AudioSystem.h"
@@ -154,6 +155,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // FSM の状態は全部 AgentBrainComponent 側 = ECS = snapshot に載っている。
     // だから 3 点セット契約の対象外 (XpbdBackend / AcousticField とはそこが違う)
     AgentSystem agentSystem;
+    // M82b: ナビメッシュ。.mnav から作る導出値で ECS 外。SimSnapshot の Nav 節は M82c
+    NavSystem navSystem;
     std::vector<SolidContact> solidContacts; // 物理→衝突イベントの tick 内受け渡し (M28c)
     PrefabLibrary prefabLibrary;
     AnimationLibrary animLibrary;
@@ -876,6 +879,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.xpbd = &xpbd; // M60'b
     tickServices.acoustic = &acoustic; // M65a
     tickServices.agentSystem = &agentSystem; // M65f
+    tickServices.navSystem = &navSystem; // M82b
     tickServices.transformSystem = &transformSystem;
     tickServices.collisionSystem = &collisionSystem;
     tickServices.particleSystem = &particleSystem;
