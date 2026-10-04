@@ -16,6 +16,7 @@
 namespace mye {
 
 class World;
+class Pcg32;
 struct NavMeshAgentComponent;
 struct NavMeshObstacleComponent;
 struct NavMeshModifierComponent;
@@ -139,6 +140,14 @@ struct NavSystemStats {
     int linkWarnings = 0;          // 「つながらない Link」の警告を出した回数 (Reset 以降)
 };
 
+// QueryRaycast の結果。hit = ナビメッシュの縁 (壁・歩けないエリア) で止まった。止まらなければ point = to
+struct NavRaycastResult {
+    bool hit = false;
+    float point[3] = {};
+    float normal[3] = {}; // hit のときの壁の法線 (水平)
+    float distance = 0.0f;
+};
+
 // Surface の .mnav を読み込んで dtNavMesh を持ち、NavMeshAgent を dtCrowd で歩かせる。
 // 状態は 2 種類ある:
 //   - ナビメッシュ (store): アセットから作る導出値。Obstacle 等で変わった分は Nav 節に入る
@@ -182,10 +191,35 @@ public:
     uint64_t StateHash() const;
     int HashedAgentCount() const;
 
+    // ---- スクリプト API (ABI v24) のクエリ ----
+    // 読み取り専用 (sim 状態を変えない)。対象は agentTypeId が合う最初の Surface (Agent の割り当てと同じ規則)。
+    // 通れるエリアは areaMask と、その Surface の areaCosts (Agent と同じ filter)。
+    // Surface が未読み込み (最初の tick の Update より前を含む) なら全部失敗を返す
+    // 始点・終点を 1 m x 2 m の近傍でナビメッシュへ吸着して経路を引き、角を out へ書く (先頭は吸着した始点)。
+    // 届かない目的地は届く限りの最寄りまで (outPartial = true)。戻り値は書いた角の数 (0 = 失敗)
+    int QueryFindPath(World& world, int agentTypeId, const float* from, const float* to, uint32_t areaMask,
+                      float* outCorners, int maxCorners, bool* outPartial) const;
+    // pos の最寄りのナビメッシュ上の点 (extents は半径の箱)。見つからなければ false
+    bool QuerySamplePosition(World& world, int agentTypeId, const float* pos, const float* extents, uint32_t areaMask,
+                             float* outPoint) const;
+    // ナビメッシュ上を from から to へ歩く線が壁で止まるか。from がナビメッシュに乗らなければ false (out は触らない)
+    bool QueryRaycast(World& world, int agentTypeId, const float* from, const float* to, uint32_t areaMask,
+                      NavRaycastResult& out) const;
+    // center を中心とする半径 radius の円の中から一様に選んだ点のうち、ナビメッシュに乗るもの (最大 16 回試す)。
+    // rng は呼び出し側の World の RNG。Surface なし / center の近傍にナビメッシュなし / radius が不正のときは rng を引かない。
+    // center からつながっているかは見ない
+    bool QueryRandomPoint(World& world, int agentTypeId, const float* center, float radius, uint32_t areaMask, Pcg32& rng,
+                          float* outPoint) const;
+    // Manual の Link で止まっている (入口へ近づく途中を含む) Agent に完了を通知する。該当しなければ false
+    bool CompleteLink(World& world, EntityID agent) const;
+
     const std::vector<NavSurfaceRuntime>& Surfaces() const { return surfaces_; }
     const NavSystemStats& Stats() const { return stats_; }
 
 private:
+    // agentTypeId の Surface (最初の 1 つ) を返し、filter を areaMask と Surface の areaCosts で組む。Loaded でなければ null
+    const NavSurfaceRuntime* ResolveQuerySurface(World& world, int agentTypeId, uint32_t areaMask, dtQueryFilter& filter) const;
+
     struct Key {
         EntityID entity;
         uint64_t assetGuid = 0;

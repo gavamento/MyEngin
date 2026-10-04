@@ -305,6 +305,7 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
         shared.cursorLock = &m.cursorLock;
         shared.pendingLoadPersistSlot = &m.pendingLoadPersistSlot;
         shared.windowMode = &m.windowMode;
+        shared.nav = &m.navSystem;
         WireScriptServices(m.scriptHost, m.managedHost, shared, m.config.developmentRun);
     }
     // GPU デバイスは無い: コンピュート ABI のスロットは 0 / no-op を返す

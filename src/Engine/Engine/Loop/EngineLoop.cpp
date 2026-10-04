@@ -446,6 +446,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         shared.cursorLock = &cursorLock;
         shared.pendingLoadPersistSlot = &pendingLoadPersistSlot;
         shared.windowMode = &windowMode;
+        shared.nav = &navSystem;
         WireScriptServices(scriptHost, managedHost, shared, config.developmentRun);
     }
     scriptHost.SetComputeAbi(&computeAbi, &device, &shaderManager, &resources.textures);

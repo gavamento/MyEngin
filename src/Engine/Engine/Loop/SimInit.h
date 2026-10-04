@@ -24,6 +24,7 @@ struct NetRuntimeInfo;
 class Scene;
 class ScriptHost;
 class ManagedHost;
+class NavSystem;
 class DllReloader;
 class AssetDatabase;
 class InputActions;
@@ -84,6 +85,7 @@ struct SimSharedServices {
     CursorLockState* cursorLock = nullptr;
     int* pendingLoadPersistSlot = nullptr;
     WindowModeState* windowMode = nullptr;
+    const NavSystem* nav = nullptr; // v24: NavFindPath 等のクエリの引き先。null = 該当スロットが 0 を返す
 };
 void WireScriptServices(ScriptHost& scriptHost, ManagedHost& managedHost,
                         const SimSharedServices& services, bool developmentRun);

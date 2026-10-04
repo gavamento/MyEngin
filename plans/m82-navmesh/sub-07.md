@@ -1,7 +1,7 @@
 # sub-07: NavMeshLink (Off-Mesh Link の渡り)
 
 - 依存: sub-06
-- 状態: OK (コミット待ち)
+- 状態: OK (commit ade6b23)
 - 往復: 2
 
 ## やること

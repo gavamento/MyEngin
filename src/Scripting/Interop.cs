@@ -91,6 +91,26 @@ namespace MyeScripting
         public uint Lane;
     }
 
+    // v24 (M82i): NavGetAgentState の出力 (EngineAPI.h の MyeNavAgentState と同一レイアウト)
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MyeNavAgentState
+    {
+        public int Status;              // 0 Idle / 1 Moving / 2 Arrived / 3 NoPath / 4 OnLink / 5 Inactive / 6 Stuck
+        public float RemainingDistance; // 経路に沿った残りの距離の見積り [m]
+        public int PathPartial;         // 1 = 目的地まで届かず、届く限りの最寄りへ向かっている
+        public MyeVec3 Velocity;        // CharacterController.velocity
+    }
+
+    // v24 (M82i): NavRaycast の出力 (EngineAPI.h の MyeNavRaycastHit と同一レイアウト)
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MyeNavRaycastHit
+    {
+        public int Hit;         // 1 = ナビメッシュの縁で止まった / 0 = 終点まで歩けた
+        public MyeVec3 Point;   // 止まった点 (Hit = 0 なら終点)
+        public MyeVec3 Normal;  // 壁の法線 (水平)
+        public float Distance;  // 吸着した始点から Point までの距離 [m]
+    }
+
     // v16 (M70c): GetUIRect の出力。**キャンバス座標** (基準 1920x1080、M70b)
     [StructLayout(LayoutKind.Sequential)]
     internal struct MyeUIRect
@@ -272,6 +292,15 @@ namespace MyeScripting
         public delegate* unmanaged<void*, uint, ulong> NetLanePlayerId;
         public delegate* unmanaged<void*, uint> NetSystemEventCount;
         public delegate* unmanaged<void*, uint, MyeNetSystemEvent*, int> NetGetSystemEvent;
+        // ---- v24 (M82i): NavMesh ----
+        public delegate* unmanaged<void*, MyeEntityId, MyeVec3, int> NavSetDestination;
+        public delegate* unmanaged<void*, MyeEntityId, int> NavStop;
+        public delegate* unmanaged<void*, MyeEntityId, MyeNavAgentState*, int> NavGetAgentState;
+        public delegate* unmanaged<void*, int, MyeVec3, MyeVec3, uint, MyeVec3*, int, int*, int> NavFindPath;
+        public delegate* unmanaged<void*, int, MyeVec3, MyeVec3, uint, MyeVec3*, int> NavSamplePosition;
+        public delegate* unmanaged<void*, int, MyeVec3, MyeVec3, uint, MyeNavRaycastHit*, int> NavRaycast;
+        public delegate* unmanaged<void*, int, MyeVec3, float, uint, MyeVec3*, int> NavFindRandomPoint;
+        public delegate* unmanaged<void*, MyeEntityId, int> NavCompleteLink;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -1118,5 +1147,82 @@ namespace MyeScripting
         {
             if (_api != null) _api->ApplyFractureDamage(_api->Engine, entity, point, radius, amount);
         }
+
+        // ---- v24 (M82i): NavMesh。座標はワールド。クエリは agentTypeId が合う最初の Surface で行い、
+        //   Surface が未読み込み (シーンを読んだ最初の tick を含む) なら false / 0 を返す ----
+        // 目的地を書いて歩かせる / 止める (NavMeshAgent 非所持は false)
+        public static bool NavSetDestination(MyeEntityId entity, MyeVec3 destination)
+            => _api != null && _api->NavSetDestination(_api->Engine, entity, destination) != 0;
+        public static bool NavStop(MyeEntityId entity)
+            => _api != null && _api->NavStop(_api->Engine, entity) != 0;
+
+        public static bool NavGetAgentState(MyeEntityId entity, out MyeNavAgentState state)
+        {
+            state = default;
+            if (_api == null) return false;
+            fixed (MyeNavAgentState* p = &state)
+            {
+                return _api->NavGetAgentState(_api->Engine, entity, p) != 0;
+            }
+        }
+
+        // from から to への経路の角を corners へ書き、書いた数を返す (0 = 失敗)。
+        // 届かない目的地は届く限りの最寄りまでで partial = true
+        public static int NavFindPath(int agentTypeId, MyeVec3 from, MyeVec3 to, uint areaMask,
+                                      MyeVec3[] corners, out bool partial)
+        {
+            partial = false;
+            if (_api == null || corners == null || corners.Length == 0) return 0;
+            int part = 0;
+            int count;
+            fixed (MyeVec3* p = corners)
+            {
+                count = _api->NavFindPath(_api->Engine, agentTypeId, from, to, areaMask, p,
+                                          corners.Length, &part);
+            }
+            partial = part != 0;
+            return count;
+        }
+
+        // pos の最寄りのナビメッシュ上の点 (extents は探す範囲の半径)
+        public static bool NavSamplePosition(int agentTypeId, MyeVec3 pos, MyeVec3 extents,
+                                             uint areaMask, out MyeVec3 point)
+        {
+            point = MyeVec3.Zero;
+            if (_api == null) return false;
+            fixed (MyeVec3* p = &point)
+            {
+                return _api->NavSamplePosition(_api->Engine, agentTypeId, pos, extents, areaMask, p) != 0;
+            }
+        }
+
+        // ナビメッシュの上を from から to へ歩く線が壁で止まるか (hit.Hit)。from が乗らなければ false
+        public static bool NavRaycast(int agentTypeId, MyeVec3 from, MyeVec3 to, uint areaMask,
+                                      out MyeNavRaycastHit hit)
+        {
+            hit = default;
+            if (_api == null) return false;
+            fixed (MyeNavRaycastHit* p = &hit)
+            {
+                return _api->NavRaycast(_api->Engine, agentTypeId, from, to, areaMask, p) != 0;
+            }
+        }
+
+        // center を中心とする半径 radius の円の中の、ナビメッシュ上のランダム点 (World の RNG を引く。
+        // center の近傍にナビメッシュが無いなどの早い失敗では引かない。つながっているかは見ない)
+        public static bool NavFindRandomPoint(int agentTypeId, MyeVec3 center, float radius,
+                                              uint areaMask, out MyeVec3 point)
+        {
+            point = MyeVec3.Zero;
+            if (_api == null) return false;
+            fixed (MyeVec3* p = &point)
+            {
+                return _api->NavFindRandomPoint(_api->Engine, agentTypeId, center, radius, areaMask, p) != 0;
+            }
+        }
+
+        // Manual の Link で止まっている Agent に完了を通知する
+        public static bool NavCompleteLink(MyeEntityId entity)
+            => _api != null && _api->NavCompleteLink(_api->Engine, entity) != 0;
     }
 }

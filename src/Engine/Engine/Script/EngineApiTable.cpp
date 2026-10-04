@@ -12,6 +12,7 @@
 #include "Engine/Engine/Vfx/EffectSystem.h"
 #include "Engine/Engine/Physics/Fracture/FractureSystem.h" // v22 (M80l): ApplyFractureDamage
 #include "Engine/Engine/Scene/GameObject.h"
+#include "Engine/Engine/Navigation/NavSystem.h" // v24 (M82i): Nav* のクエリ
 #include "Engine/Engine/Net/NetRuntime.h" // v13 Net* の参照先 POD (M52i)
 #include "Engine/Engine/Session/SessionTypes.h" // v23 (M81f): NetLane* / NetSystemEvent* の参照先
 #include "Engine/Engine/Animation/Parts.h" // v9 部位クエリ (M48h)
@@ -1267,6 +1268,116 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
                                  float amount) {
         ApplyFractureDamage(Sc(engine)->GetWorld(), ToEngine(entity),
                             DirectX::XMFLOAT3{ point.x, point.y, point.z }, radius, amount);
+    };
+
+    // ---- v24 (M82i): NavMesh。クエリの実体は NavSystem (Recast の型は Navigation の中に閉じる) ----
+    out.NavSetDestination = [](void* engine, MyeEntityId entity, MyeVec3 destination) -> int {
+        auto* agent = Sc(engine)->GetWorld().GetComponent<NavMeshAgentComponent>(ToEngine(entity));
+        if (agent == nullptr) {
+            return 0;
+        }
+        agent->destination = { destination.x, destination.y, destination.z };
+        agent->hasDestination = true;
+        return 1;
+    };
+    out.NavStop = [](void* engine, MyeEntityId entity) -> int {
+        auto* agent = Sc(engine)->GetWorld().GetComponent<NavMeshAgentComponent>(ToEngine(entity));
+        if (agent == nullptr) {
+            return 0;
+        }
+        agent->hasDestination = false;
+        return 1;
+    };
+    out.NavGetAgentState = [](void* engine, MyeEntityId entity, MyeNavAgentState* out) -> int {
+        World& world = Sc(engine)->GetWorld();
+        const auto* agent = world.GetComponent<NavMeshAgentComponent>(ToEngine(entity));
+        if (agent == nullptr) {
+            return 0;
+        }
+        if (out != nullptr) {
+            out->status = agent->status;
+            out->remainingDistance = agent->remainingDistance;
+            out->pathPartial = agent->pathPartial ? 1 : 0;
+            out->velocity = {};
+            if (const auto* cc = world.GetComponent<CharacterControllerComponent>(ToEngine(entity))) {
+                out->velocity = { cc->velocity.x, cc->velocity.y, cc->velocity.z };
+            }
+        }
+        return 1;
+    };
+    out.NavFindPath = [](void* engine, int32_t agentTypeId, MyeVec3 from, MyeVec3 to, uint32_t areaMask,
+                         MyeVec3* outCorners, int32_t maxCorners, int32_t* outPartial) -> int32_t {
+        if (outPartial != nullptr) {
+            *outPartial = 0;
+        }
+        const NavSystem* nav = Ctx(engine)->nav;
+        if (nav == nullptr || outCorners == nullptr || maxCorners <= 0) {
+            return 0;
+        }
+        static_assert(sizeof(MyeVec3) == sizeof(float) * 3, "MyeVec3 は float 3 つ (Navigation の float[3] へ書く)");
+        const float f[3] = { from.x, from.y, from.z };
+        const float t[3] = { to.x, to.y, to.z };
+        bool partial = false;
+        const int count = nav->QueryFindPath(Sc(engine)->GetWorld(), agentTypeId, f, t, areaMask,
+                                             reinterpret_cast<float*>(outCorners), maxCorners, &partial);
+        if (count > 0 && outPartial != nullptr) {
+            *outPartial = partial ? 1 : 0;
+        }
+        return count;
+    };
+    out.NavSamplePosition = [](void* engine, int32_t agentTypeId, MyeVec3 pos, MyeVec3 extents, uint32_t areaMask,
+                               MyeVec3* out) -> int {
+        const NavSystem* nav = Ctx(engine)->nav;
+        if (nav == nullptr || out == nullptr) {
+            return 0;
+        }
+        const float p[3] = { pos.x, pos.y, pos.z };
+        const float e[3] = { extents.x, extents.y, extents.z };
+        float r[3] = {};
+        if (!nav->QuerySamplePosition(Sc(engine)->GetWorld(), agentTypeId, p, e, areaMask, r)) {
+            return 0;
+        }
+        *out = { r[0], r[1], r[2] };
+        return 1;
+    };
+    out.NavRaycast = [](void* engine, int32_t agentTypeId, MyeVec3 from, MyeVec3 to, uint32_t areaMask,
+                        MyeNavRaycastHit* out) -> int {
+        const NavSystem* nav = Ctx(engine)->nav;
+        if (nav == nullptr) {
+            return 0;
+        }
+        const float f[3] = { from.x, from.y, from.z };
+        const float t[3] = { to.x, to.y, to.z };
+        NavRaycastResult r;
+        if (!nav->QueryRaycast(Sc(engine)->GetWorld(), agentTypeId, f, t, areaMask, r)) {
+            return 0;
+        }
+        if (out != nullptr) {
+            out->hit = r.hit ? 1 : 0;
+            out->point = { r.point[0], r.point[1], r.point[2] };
+            out->normal = { r.normal[0], r.normal[1], r.normal[2] };
+            out->distance = r.distance;
+        }
+        return 1;
+    };
+    out.NavFindRandomPoint = [](void* engine, int32_t agentTypeId, MyeVec3 center, float radius, uint32_t areaMask,
+                                MyeVec3* out) -> int {
+        const NavSystem* nav = Ctx(engine)->nav;
+        if (nav == nullptr || out == nullptr) {
+            return 0;
+        }
+        World& world = Sc(engine)->GetWorld();
+        const float c[3] = { center.x, center.y, center.z };
+        float r[3] = {};
+        if (!nav->QueryRandomPoint(world, agentTypeId, c, radius, areaMask, world.Rng(), r)) {
+            return 0;
+        }
+        *out = { r[0], r[1], r[2] };
+        return 1;
+    };
+    out.NavCompleteLink = [](void* engine, MyeEntityId entity) -> int {
+        const NavSystem* nav = Ctx(engine)->nav;
+        return nav != nullptr && nav->CompleteLink(Sc(engine)->GetWorld(), ToEngine(entity)) ? 1 : 0;
     };
 }
 

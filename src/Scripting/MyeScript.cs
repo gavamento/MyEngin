@@ -526,6 +526,31 @@ namespace MyeScripting
                                                   float amount)
             => Engine.ApplyFractureDamage(entity.Id, point, radius, amount);
 
+        // ---- NavMesh (v24、M82i) ----
+        // 座標はワールド。areaMask の既定は全エリア。クエリは Surface が未読み込み (シーンを読んだ最初の tick を含む) なら
+        // false / 0 を返す。NavFindRandomPoint は World の RNG を引く (失敗時は引かない)
+        protected const uint NavAllAreas = 0xFFFFFFFFu;
+        // 自分の目的地を書いて歩かせる / 止める (NavMeshAgent が無ければ false)
+        protected bool NavSetDestination(MyeVec3 destination) => Engine.NavSetDestination(SelfId, destination);
+        protected bool NavStop() => Engine.NavStop(SelfId);
+        protected bool NavGetAgentState(out MyeNavAgentState state)
+            => Engine.NavGetAgentState(SelfId, out state);
+        // 経路の角を corners へ書き、書いた数を返す (0 = 失敗)。partial = 届く限りの最寄りまで
+        protected static int NavFindPath(int agentTypeId, MyeVec3 from, MyeVec3 to, MyeVec3[] corners,
+                                         out bool partial, uint areaMask = NavAllAreas)
+            => Engine.NavFindPath(agentTypeId, from, to, areaMask, corners, out partial);
+        protected static bool NavSamplePosition(int agentTypeId, MyeVec3 pos, MyeVec3 extents,
+                                                out MyeVec3 point, uint areaMask = NavAllAreas)
+            => Engine.NavSamplePosition(agentTypeId, pos, extents, areaMask, out point);
+        protected static bool NavRaycast(int agentTypeId, MyeVec3 from, MyeVec3 to,
+                                         out MyeNavRaycastHit hit, uint areaMask = NavAllAreas)
+            => Engine.NavRaycast(agentTypeId, from, to, areaMask, out hit);
+        protected static bool NavFindRandomPoint(int agentTypeId, MyeVec3 center, float radius,
+                                                 out MyeVec3 point, uint areaMask = NavAllAreas)
+            => Engine.NavFindRandomPoint(agentTypeId, center, radius, areaMask, out point);
+        // 自分が Manual の Link で止まっているとき、完了を通知して出口へ渡らせる
+        protected bool NavCompleteLink() => Engine.NavCompleteLink(SelfId);
+
         // ---- ライフサイクル (すべて任意オーバーライド) ----
         public virtual void Start() { }
         public virtual void Update(float dt) { }

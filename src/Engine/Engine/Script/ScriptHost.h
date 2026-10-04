@@ -80,6 +80,9 @@ public:
     // v18: 開発中の実行か (EngineConfig::developmentRun)。プロセスの定数なので起動時に 1 回だけ呼ぶ
     void SetDevelopmentRun(bool on) { apiCtx_.developmentRun = on ? 1 : 0; }
 
+    // v24: ナビメッシュのクエリの引き先 (NavSystem は EngineLoop / HeadlessSim の所有)。起動時に 1 回
+    void SetNavSystem(const NavSystem* nav) { apiCtx_.nav = nav; }
+
     // v14 (M59k): 今 tick の接触列を繋ぐ / 外す。**毎 tick 呼ぶ** —
     // TickRunner が tick 頭で nullptr、物理 Update の直後に実体を渡す。
     // これで GetContactInfo が読めるのは「今 tick の物理が書いた列」だけになる

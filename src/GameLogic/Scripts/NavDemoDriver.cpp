@@ -15,6 +15,13 @@ struct NavDemoDriver : Script<NavDemoDriver> {
     int32_t switched = 0;       // 目的地を書き換えた回数 (被覆の本体)
     float lastRemaining = 0.0f; // 最後に読んだ NavMeshAgent.remainingDistance
     bool homeSet = false;
+    // ABI v24 (Nav*) の結果。tick 120 に 1 回だけ引いて sim 状態へ書き戻す (呼ぶだけでは replay が割れを検知できない)
+    int32_t cornerCount = 0;   // NavFindPath の角の数
+    int32_t pathPartial = 0;   // 同・届く限りの最寄りまでか
+    float sampleY = 0.0f;      // NavSamplePosition が返した点の高さ
+    int32_t rayHit = 0;        // NavRaycast が壁で止まったか
+    MyeVec3 randomPoint = {};  // NavFindRandomPoint の点 (World の RNG)
+    int32_t stateStatus = -1;  // NavGetAgentState の status
 
     void Update(MyeUpdateContext& ctx)
     {
@@ -38,7 +45,38 @@ struct NavDemoDriver : Script<NavDemoDriver> {
         if (ctx.tickIndex == kSwitchTick && MyeSetField(ctx, ctx.self, comp, fDestination, home)) {
             ++switched;
         }
+
+        constexpr uint64_t kNavApiTick = 120;
+        constexpr uint32_t kAllAreas = 0xFFFFFFFFu;
+        if (ctx.tickIndex == kNavApiTick) {
+            MyeVec3 p = {};
+            ctx.api->GetLocalPosition(ctx.api->engine, ctx.self, &p);
+            const MyeVec3 feet = { p.x, p.y - kCapsuleHalfHeight, p.z };
+            const MyeVec3 farCorner = { 10.0f, 0.0f, -9.0f };
+            MyeVec3 corners[32] = {};
+            bool partial = false;
+            cornerCount = MyeNavFindPath(ctx, 0, feet, farCorner, kAllAreas, corners, 32, partial);
+            pathPartial = partial ? 1 : 0;
+            MyeVec3 sample = {};
+            if (MyeNavSamplePosition(ctx, 0, { 0.0f, 5.0f, 0.0f }, { 1.0f, 6.0f, 1.0f }, kAllAreas, sample)) {
+                sampleY = sample.y;
+            }
+            MyeNavRaycastHit hit = {};
+            if (MyeNavRaycast(ctx, 0, feet, farCorner, kAllAreas, hit)) {
+                rayHit = hit.hit;
+            }
+            MyeNavFindRandomPoint(ctx, 0, feet, 3.0f, kAllAreas, randomPoint);
+            MyeNavAgentState state = {};
+            if (MyeNavGetAgentState(ctx, ctx.self, state)) {
+                stateStatus = state.status;
+            }
+        }
+        // 同じ値の再設定は経路を引き直さない (汎用フィールドの書き込みと同じ結果になるはず)
+        if (ctx.tickIndex == kSwitchTick) {
+            MyeNavSetDestination(ctx, ctx.self, home);
+        }
     }
 };
 REGISTER_SCRIPT(NavDemoDriver,
-                FIELDS(MYE_F_JP(switched, "切り替え回数"), MYE_F_JP(lastRemaining, "直近の残り距離"), home, homeSet));
+                FIELDS(MYE_F_JP(switched, "切り替え回数"), MYE_F_JP(lastRemaining, "直近の残り距離"), home, homeSet,
+                       cornerCount, pathPartial, sampleY, rayHit, randomPoint, stateStatus));

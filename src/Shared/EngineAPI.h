@@ -36,7 +36,9 @@
 //             SetComputeFloat / SetComputeFloat4 / SetComputeTextureFromAsset / DispatchCompute
 // v22 (M80l): 破壊 (M80) — ApplyFractureDamage スロット + MyeScriptDesc 末尾の onBreak イベント
 // v23 (M81f): 専用サーバのレーン状態・playerId・参加/離脱イベント (NetLaneMask 以降の 5 本)
-#define MYE_API_VERSION 23u
+// v24 (M82i): NavMesh — NavSetDestination / NavStop / NavGetAgentState / NavFindPath / NavSamplePosition /
+//             NavRaycast / NavFindRandomPoint / NavCompleteLink (NetGetSystemEvent の次の 8 本)
+#define MYE_API_VERSION 24u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -111,6 +113,23 @@ struct MyeNetSystemEvent {
     uint64_t playerId; // レーンとは別。再接続しても変わらない
     uint32_t kind;     // 1 Join / 2 Leave / 3 Rejoin / 4 Release
     uint32_t lane;     // 適用結果のレーン
+};
+
+// v24 (M82i) NavGetAgentState の出力。NavMeshAgent の実行状態 (status は navagentstatus と同値:
+// 0 Idle / 1 Moving / 2 Arrived / 3 NoPath / 4 OnLink / 5 Inactive / 6 Stuck)
+struct MyeNavAgentState {
+    int32_t status;
+    float remainingDistance; // 経路に沿った残りの距離の見積り [m]
+    int32_t pathPartial;     // 1 = 目的地まで届かず、届く限りの最寄りへ向かっている
+    MyeVec3 velocity;        // CharacterController.velocity (CC が無ければ 0)
+};
+
+// v24 (M82i) NavRaycast の出力
+struct MyeNavRaycastHit {
+    int32_t hit;     // 1 = ナビメッシュの縁 (壁・歩けないエリア) で止まった / 0 = 終点まで歩けた (point = to)
+    MyeVec3 point;   // 止まった点 (hit = 0 なら to)
+    MyeVec3 normal;  // 壁の法線 (水平。hit = 0 なら 0)
+    float distance;  // from を吸着した点から point までの距離 [m]
 };
 
 struct MyeEngineApi {
@@ -683,6 +702,44 @@ struct MyeEngineApi {
     uint32_t (*NetSystemEventCount)(void* engine);
     // NetGetSystemEvent: index 番目 (eventSeq 昇順) を out に書いて 1。範囲外は out を 0 埋めして 0
     int (*NetGetSystemEvent)(void* engine, uint32_t index, MyeNetSystemEvent* out);
+
+    // ---- v24 (M82i): NavMesh ----
+    // ★クエリ系は agentTypeId が合う最初の Surface (エンティティキー順、Agent の割り当てと同じ規則) を使い、
+    //   通れるエリアは areaMask と、その Surface の areaCosts (Agent と同じ filter)。
+    //   Surface が未ベイク / 未読み込み (シーンを読んだ最初の tick のスクリプトは、まだ NavSystem の読み込み前) なら
+    //   全部 0 を返すだけで何も書かない。クエリは NavSystem の更新 (スクリプトの後) より前の状態を見る。
+    // ★座標は全てワールド。全部 sim 状態を変えないクエリで、NavSetDestination / NavStop / NavCompleteLink だけが
+    //   NavMeshAgent のフィールドを書く (Get/SetComponentField と同じ。tick の頭の NavSystem が拾う)。
+
+    // NavSetDestination: Agent の目的地を書いて歩かせる (destination + hasDestination)。NavMeshAgent 非所持は 0。
+    //   同じ値の再設定は経路を引き直さない (Stuck / Arrived からは目的地が変わるまで復帰しない)
+    int (*NavSetDestination)(void* engine, MyeEntityId entity, MyeVec3 destination);
+    // NavStop: 目的地を外して止める (hasDestination = 0)。NavMeshAgent 非所持は 0
+    int (*NavStop)(void* engine, MyeEntityId entity);
+    // NavGetAgentState: 実行状態を out へ。NavMeshAgent 非所持は 0 (out は触らない)
+    int (*NavGetAgentState)(void* engine, MyeEntityId entity, MyeNavAgentState* out);
+    // NavFindPath: from から to への経路の角 (先頭は from を吸着した点) を outCorners へ最大 maxCorners 個書き、
+    //   書いた数を返す (0 = 失敗: Surface なし / from か to の近く (1 m x 2 m) にナビメッシュがない / 経路なし)。
+    //   届かない目的地は届く限りの最寄りまで返し、*outPartial = 1 (null 可)。maxCorners の上限は 256 (超えた分は切り捨て)
+    int32_t (*NavFindPath)(void* engine, int32_t agentTypeId, MyeVec3 from, MyeVec3 to, uint32_t areaMask,
+                           MyeVec3* outCorners, int32_t maxCorners, int32_t* outPartial);
+    // NavSamplePosition: pos の最寄りのナビメッシュ上の点 (extents は探す範囲の半径)。無ければ 0
+    int (*NavSamplePosition)(void* engine, int32_t agentTypeId, MyeVec3 pos, MyeVec3 extents, uint32_t areaMask,
+                             MyeVec3* out);
+    // NavRaycast: from から to へナビメッシュの上を歩く線が壁で止まるか。成功 (from がナビメッシュに乗る) で 1、
+    //   止まったかどうかは out->hit。from が乗らなければ 0 (out は触らない)
+    int (*NavRaycast)(void* engine, int32_t agentTypeId, MyeVec3 from, MyeVec3 to, uint32_t areaMask,
+                      MyeNavRaycastHit* out);
+    // NavFindRandomPoint: center を中心に半径 radius の円の中から一様に選んだ点のうち、ナビメッシュの上に乗るものを out へ。
+    //   ★乱数は World の RNG (RandomFloat01 と同じ列) を引く = 同じ入力から同じ点が出る。
+    //     center の近傍 (1 m x 2 m) にナビメッシュが無い / radius が 0 以下 / Surface なしは、RNG を引かずに 0。
+    //     円がほとんどナビメッシュの外で 16 回試して乗らなかった場合も 0 (このときは RNG を引いている)。
+    //   ★center から**つながっている**とは限らない (孤島の点も返る)。要るなら NavFindPath の partial で確かめる
+    int (*NavFindRandomPoint)(void* engine, int32_t agentTypeId, MyeVec3 center, float radius, uint32_t areaMask,
+                              MyeVec3* out);
+    // NavCompleteLink: Manual の Link で止まっている (入口へ近づく途中を含む) Agent に完了を通知し、出口へ渡らせる
+    //   (NavMeshAgent.linkComplete = 1)。該当しなければ 0 (何も書かない)
+    int (*NavCompleteLink)(void* engine, MyeEntityId entity);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

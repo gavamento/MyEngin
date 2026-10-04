@@ -89,7 +89,7 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 - `.mnav`: 版付きバイナリ (`.mfrac` と同じ Serialize / Deserialize、境界検査、同じ入力から同じバイト)。中身 = ベイク設定 + 入力ハッシュ + TileCache の圧縮層 (圧縮器は**無圧縮の自作** `dtTileCacheCompressor`、FastLZ を入れない) 。Link と Modifier は .mnav に入れない (どちらも実行時のオーバーレイ、4.1)。保存先 `assets\NavMesh\<Surface名>_<入力ハッシュ16桁>.mnav`、`.meta` で GUID、`AssetType::NavMesh`。ビルド (配布物) へは `BuildSettingsWindow.cpp:208-210` の `assets\` 丸ごとコピーで入る (:253 の一覧はクック物専用で対象外。sub-02 VERDICT で訂正)。
 - 読み込み: `NavSystem::Update` (stepSim の tick、フェーズ 3.4b) が Surface の (entity, navAsset) の変化を見て遅延ロードする (2. #17)。
 - SimSnapshot: Nav 節の書式を変えるサブは、そのたびに `kSimSnapshotVersion` を上げる (旧 blob を明示的に拒否する。sub-10 で 26、sub-05 で 27)。Nav 節を追加し `kSimSnapshotVersion` 24 → 25 (sub-01 の結論で節の中身を決める。節が要らない結論なら bump しない)。
-- ABI: 1 回だけ bump (2. #14)。最小の関数: `NavSetDestination` / `NavStop` / `NavGetAgentState` / `NavFindPath` (コーナー列を呼び出し側バッファへ) / `NavSamplePosition` (最寄り点) / `NavRaycast` / `NavFindRandomPoint` (半径内、World RNG)。全部 POD + C ABI、`Interop.cs` 位置ミラー、`check_rules.ps1` の版表を更新。
+- ABI: 1 回だけ bump (2. #14)。最小の関数: `NavSetDestination` / `NavStop` / `NavGetAgentState` / `NavFindPath` (コーナー列を呼び出し側バッファへ) / `NavSamplePosition` (最寄り点) / `NavRaycast` / `NavFindRandomPoint` (半径内、World RNG)。全部 POD + C ABI、`Interop.cs` 位置ミラー、`check_rules.ps1` の版表を更新。 **確定 (sub-08)**: v24 = 139 スロット。上の 7 本に `NavCompleteLink` (Manual Link の完了通知。Manual を渡っている間だけ有効) を足して 8 本。`NavSamplePosition` は areaMask を取り、`NavFindPath` は `outPartial` (null 可) を返す。`NavFindRandomPoint` は Detour の `findRandomPointAroundCircle` を使わない (円に触れるポリゴンの点を返すので、半径外の点が出る)。代わりに World の Pcg32 で円の中の点を一様に最大 16 回選び、最寄りのポリゴンへ吸着して半径内なら採用する。center とのつながりは見ない。Surface 無し・近傍に NavMesh 無し・radius ≤ 0 のときは RNG を引かない。クエリは前の tick の NavSystem::Update で確定した状態を見るので、シーンを読んだ最初の tick は 0 を返す。
 
 ### 4.3 UI / ビジュアル
 
@@ -179,6 +179,9 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 ## 8. 変更履歴
 
 (確定後の変更のみ)
+
+- 2026-10-04 / 出所: coder SELF_EVAL sub-08 round 1 (planner VERDICT OK)
+  - 4.2 ABI: v24 = 139 で確定。NavCompleteLink の追加、NavSamplePosition の areaMask、NavFindPath の outPartial、NavFindRandomPoint の方式 (半径内を保証するため Detour の関数を使わない) を記録した。外部プロジェクト (三校 / HAL Collector) の GameLogic.dll は版の不一致で読み込みを拒否されるので、再ビルドが要る (ユーザー作業)。
 
 - 2026-10-04 / 出所: coder SELF_EVAL sub-07 round 2 (planner VERDICT OK)
   - 4.1: 渡りの終端で出口が NavMesh に載らないときの状態を、Inactive ではなく既存の『NavMesh の外』の扱い (NoPath / Idle) にした。Inactive は『動かせない理由』(CC 無し・Surface 無し・容量超過) 専用のまま残す。渡り終えるたびに経路を 1 回引き直す。出口に床が無いことは編集中には分からないので、実行時の WARN だけで知らせる (Inspector に出すのは、静的に分かる『入口が Surface の外』と『出口が 2 タイル以上離れる』の 2 種)。

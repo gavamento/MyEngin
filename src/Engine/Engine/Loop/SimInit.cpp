@@ -149,6 +149,8 @@ void WireScriptServices(ScriptHost& scriptHost, ManagedHost& managedHost,
     // v18: 開発中の実行か。プロセスの定数なので起動時に 1 回だけ渡す (sim 状態ではない = .rep に載らない)
     scriptHost.SetDevelopmentRun(developmentRun);
     managedHost.SetDevelopmentRun(developmentRun);
+    scriptHost.SetNavSystem(s.nav);
+    managedHost.SetNavSystem(s.nav);
 }
 
 void InitSimAssets(AssetDatabase& assetDatabase, InputActions& inputActions,

@@ -16,6 +16,7 @@ class ComputeAbiRunner; // v21 (M78e)
 class GraphicsDevice;   // v21
 class ShaderManager;    // v21
 class TextureLibrary;   // v21
+class NavSystem;        // v24
 
 // パッド振動の目標値 (v12、M51h)。スロットはここへ書くだけで、実際の XInputSetState は
 // EngineLoop がフレーム末 (出力レーン) に適用する — record/verify 中とフォーカス喪失中は
@@ -143,6 +144,8 @@ struct ScriptApiContext {
     GraphicsDevice*   graphicsDevice = nullptr;
     ShaderManager*    shaderManager  = nullptr;
     TextureLibrary*   textureLibrary = nullptr;
+    // v24: Nav* のクエリの引き先。null 時は Nav* スロットが 0 を返す
+    const NavSystem* nav = nullptr;
 };
 
 // out に MyeEngineApi (engine = ctx) を構築する。ctx の生存は呼び出し側が管理する。

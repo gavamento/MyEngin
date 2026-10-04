@@ -16,6 +16,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Core/Util/Random.h"
 #include "Engine/Engine/Navigation/NavBake.h"
 #include "Engine/Engine/Navigation/NavDebugDraw.h"
 #include "Engine/Engine/Navigation/NavMeshAsset.h"
@@ -26,6 +27,8 @@
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Scene/TransformSystem.h"
+#include "Engine/Engine/Script/EngineApiTable.h"
+#include "Engine/Engine/Script/ScriptKeys.h"
 
 namespace mye {
 namespace {
@@ -39,6 +42,7 @@ constexpr uint64_t kYardGuid = 0x4E41564147454E31ull;  // メモリ登録の GUI
 constexpr uint64_t kOpenGuid = 0x4E41564147454E32ull;
 constexpr uint64_t kFieldGuid = 0x4E41564147454E33ull;
 constexpr uint64_t kRavineGuid = 0x4E41564147454E34ull;
+constexpr uint64_t kApiGuid = 0x4E41564147454E35ull;  // スクリプト API のテストの庭
 // Debug で採取し、Release で同じ値になることを確認して焼く (docs\adr\ADR-023-navmesh.md)
 constexpr uint64_t kExpectedYardHash = 0x1AB952061BC96FF8ull;
 
@@ -1997,6 +2001,198 @@ bool RunNavAgentSelfTest()
         ck.Check(sawOnLink && agent->status == navagentstatus::kArrived && std::fabs(wm->value.m[3][0] - 10.0f) < 0.5f
                      && std::fabs(wm->value.m[3][2]) < 0.5f && std::fabs(wm->value.m[3][1] - 0.9f) < 0.3f,
                  rotated != 0 ? "(Link 親付き) 平行移動と 90 度回転をした親の子の Agent が谷を渡り、ワールドの目的地に着く" : "(Link 親付き) 平行移動した親の子の Agent が谷を渡り、ワールドの目的地に着く");
+    }
+
+    // ---- 12. スクリプト API (ABI v24): EngineApi のテーブル越しに Nav* を呼ぶ ----
+    {
+        Scene scene;
+        const Yard yard = BuildYard(scene);
+        const EntityID walker = AddAgent(scene, "Walker", -9.0f, 0.0f, -9.0f, nullptr, true);
+        ck.Check(BakeSurface(scene, yard.surface, kApiGuid, nullptr), "(API) 庭をベイクできる");
+        Sim sim(scene);
+        World& world = sim.GetWorld();
+        ScriptApiContext sctx;
+        sctx.scene = &scene;
+        sctx.nav = &sim.nav;
+        MyeEngineApi api;
+        BuildEngineApi(api, &sctx);
+        const MyeEntityId walkerId = ToShared(walker);
+        const MyeVec3 from = { -9.0f, 0.0f, -9.0f };
+        MyeVec3 corners[32] = {};
+        int32_t partial = -1;
+
+        ck.Check(api.NavFindPath(api.engine, 0, from, { -9.0f, 0.0f, -5.0f }, 0xFFFFFFFFu, corners, 32, &partial) == 0 && partial == 0,
+                 "(API) NavSystem の最初の Update より前 (Surface が未読み込み) は NavFindPath が 0 を返す");
+        MyeVec3 sampled = {};
+        ck.Check(api.NavSamplePosition(api.engine, 0, from, { 1.0f, 2.0f, 1.0f }, 0xFFFFFFFFu, &sampled) == 0,
+                 "(API) 同じく NavSamplePosition が 0 を返す");
+        for (int i = 0; i < 3; ++i) {
+            sim.Step();
+        }
+
+        // 経路
+        int32_t n = api.NavFindPath(api.engine, 0, from, { -9.0f, 0.0f, -5.0f }, 0xFFFFFFFFu, corners, 32, &partial);
+        ck.Check(n == 2 && partial == 0 && std::fabs(corners[0].x - from.x) < 0.1f && std::fabs(corners[1].z - (-5.0f)) < 0.05f
+                     && std::fabs(corners[1].x - (-9.0f)) < 0.05f,
+                 "(API) NavFindPath: 遮るもののない直線は角 2 つ (始点と終点)、partial = 0");
+        n = api.NavFindPath(api.engine, 0, from, { 10.0f, 0.0f, -9.0f }, 0xFFFFFFFFu, corners, 32, &partial);
+        float pathLength = 0.0f;
+        for (int i = 1; i < n; ++i) {
+            const float dx = corners[i].x - corners[i - 1].x;
+            const float dz = corners[i].z - corners[i - 1].z;
+            pathLength += std::sqrt(dx * dx + dz * dz);
+        }
+        MYE_LOG_INFO("  [api] path around the deck: %d corners, length %.2f m", static_cast<int>(n), pathLength);
+        ck.Check(n >= 3 && partial == 0 && pathLength > 19.2f && std::fabs(corners[n - 1].x - 10.0f) < 0.05f,
+                 "(API) NavFindPath: 低い台 (登れない高さ) をはさむ経路は迂回する (角 3 つ以上、直線距離 19 m より長い)");
+        MyeVec3 firstOnly[1] = {};
+        ck.Check(api.NavFindPath(api.engine, 0, from, { 10.0f, 0.0f, -9.0f }, 0xFFFFFFFFu, firstOnly, 1, nullptr) == 1,
+                 "(API) NavFindPath: maxCorners を超える分は切り捨てる (null の outPartial も受ける)");
+        n = api.NavFindPath(api.engine, 0, from, { 0.0f, 3.0f, 8.0f }, 0xFFFFFFFFu, corners, 32, &partial);
+        ck.Check(n >= 1 && partial == 1, "(API) NavFindPath: 孤島の上 (届かない目的地) は届く限りの最寄りまで返し partial = 1");
+        ck.Check(api.NavFindPath(api.engine, 0, from, { 50.0f, 0.0f, 0.0f }, 0xFFFFFFFFu, corners, 32, &partial) == 0 && partial == 0,
+                 "(API) NavFindPath: 目的地の近くにナビメッシュが無ければ 0");
+        ck.Check(api.NavFindPath(api.engine, 7, from, { -9.0f, 0.0f, -5.0f }, 0xFFFFFFFFu, corners, 32, &partial) == 0,
+                 "(API) NavFindPath: agentTypeId の Surface が無ければ 0");
+        ck.Check(api.NavFindPath(api.engine, 0, from, { -9.0f, 0.0f, -5.0f }, 0u, corners, 32, &partial) == 0
+                     && api.NavFindPath(api.engine, 0, from, { -9.0f, 0.0f, -5.0f }, 0xFFFFFFFFu, nullptr, 32, &partial) == 0
+                     && api.NavFindPath(api.engine, 0, from, { -9.0f, 0.0f, -5.0f }, 0xFFFFFFFFu, corners, 0, &partial) == 0
+                     && api.NavFindPath(api.engine, 0, from, { NAN, 0.0f, 0.0f }, 0xFFFFFFFFu, corners, 32, &partial) == 0,
+                 "(API) NavFindPath: areaMask 0 / 出力なし / maxCorners 0 / 非有限の座標は 0");
+
+        // 最寄り点
+        ck.Check(api.NavSamplePosition(api.engine, 0, { 0.0f, 5.0f, 0.0f }, { 1.0f, 6.0f, 1.0f }, 0xFFFFFFFFu, &sampled) == 1
+                     && std::fabs(sampled.x) < 1.01f && std::fabs(sampled.y) < 0.3f && std::fabs(sampled.z) < 1.01f,
+                 "(API) NavSamplePosition: 空中の点の最寄りは床の上");
+        ck.Check(api.NavSamplePosition(api.engine, 0, { 100.0f, 0.0f, 100.0f }, { 1.0f, 2.0f, 1.0f }, 0xFFFFFFFFu, &sampled) == 0
+                     && api.NavSamplePosition(api.engine, 0, { 0.0f, 0.0f, 0.0f }, { 1.0f, 2.0f, 1.0f }, 0xFFFFFFFFu, nullptr) == 0,
+                 "(API) NavSamplePosition: 範囲内にナビメッシュが無い / 出力なしは 0");
+
+        // レイ
+        MyeNavRaycastHit hit = {};
+        const int rayOk = api.NavRaycast(api.engine, 0, from, { 10.0f, 0.0f, -9.0f }, 0xFFFFFFFFu, &hit);
+        MYE_LOG_INFO("  [api] raycast: ok %d hit %d point (%.2f, %.2f, %.2f) dist %.2f normal (%.2f, %.2f, %.2f)", rayOk, hit.hit,
+                     hit.point.x, hit.point.y, hit.point.z, hit.distance, hit.normal.x, hit.normal.y, hit.normal.z);
+        ck.Check(rayOk == 1 && hit.hit == 1 && hit.point.x > 3.5f && hit.point.x < 5.0f && hit.distance > 12.0f && hit.distance < 14.5f
+                     && std::fabs(hit.normal.x) > 0.5f,
+                 "(API) NavRaycast: 低い台の手前で止まり、止まった点・距離・法線を返す");
+        ck.Check(api.NavRaycast(api.engine, 0, from, { -9.0f, 0.0f, -5.0f }, 0xFFFFFFFFu, &hit) == 1 && hit.hit == 0
+                     && std::fabs(hit.point.z - (-5.0f)) < 0.001f && std::fabs(hit.distance - 4.0f) < 0.3f,
+                 "(API) NavRaycast: 遮るものが無ければ hit = 0 で point は終点");
+        ck.Check(api.NavRaycast(api.engine, 0, { 50.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0xFFFFFFFFu, &hit) == 0,
+                 "(API) NavRaycast: 始点がナビメッシュに乗らなければ 0");
+
+        // ランダム点 (World の RNG)
+        const MyeVec3 center = { -9.0f, 0.0f, 5.0f };
+        const Pcg32 saved = world.Rng();
+        MyeVec3 p1 = {};
+        MyeVec3 p2 = {};
+        const int r1 = api.NavFindRandomPoint(api.engine, 0, center, 3.0f, 0xFFFFFFFFu, &p1);
+        const Pcg32 afterOne = world.Rng();
+        world.Rng() = saved;
+        const int r2 = api.NavFindRandomPoint(api.engine, 0, center, 3.0f, 0xFFFFFFFFu, &p2);
+        ck.Check(r1 == 1 && r2 == 1 && p1.x == p2.x && p1.y == p2.y && p1.z == p2.z,
+                 "(API) NavFindRandomPoint: World の RNG を戻せば同じ点 (決定論)");
+        Pcg32 cmpA = saved;
+        Pcg32 cmpB = afterOne;
+        ck.Check(cmpA.NextU32() != cmpB.NextU32(), "(API) NavFindRandomPoint: World の RNG を進める");
+        bool allInside = true;
+        for (int i = 0; i < 40; ++i) {
+            MyeVec3 p = {};
+            allInside = allInside && api.NavFindRandomPoint(api.engine, 0, center, 3.0f, 0xFFFFFFFFu, &p) == 1;
+            const float dx = p.x - center.x;
+            const float dz = p.z - center.z;
+            allInside = allInside && std::sqrt(dx * dx + dz * dz) <= 3.0f + 0.1f && std::fabs(p.y) < 0.3f;
+        }
+        ck.Check(allInside, "(API) NavFindRandomPoint: 40 回とも半径内のナビメッシュ上の点");
+        const Pcg32 beforeFail = world.Rng();
+        MyeVec3 unused = {};
+        const int failed = api.NavFindRandomPoint(api.engine, 0, { 100.0f, 0.0f, 100.0f }, 3.0f, 0xFFFFFFFFu, &unused)
+                         + api.NavFindRandomPoint(api.engine, 0, center, 0.0f, 0xFFFFFFFFu, &unused)
+                         + api.NavFindRandomPoint(api.engine, 7, center, 3.0f, 0xFFFFFFFFu, &unused);
+        Pcg32 cmpC = beforeFail;
+        Pcg32 cmpD = world.Rng();
+        ck.Check(failed == 0 && cmpC.NextU32() == cmpD.NextU32(),
+                 "(API) NavFindRandomPoint: 失敗 (範囲外 / 半径 0 / Surface なし) は 0 を返し RNG を引かない");
+
+        // Agent の制御
+        const MyeVec3 target = { -9.0f, 0.0f, -4.0f };
+        ck.Check(api.NavSetDestination(api.engine, walkerId, target) == 1, "(API) NavSetDestination: Agent に目的地を書ける");
+        for (int i = 0; i < 6; ++i) {
+            sim.Step();
+        }
+        MyeNavAgentState state = {};
+        const auto* agent = world.GetComponent<NavMeshAgentComponent>(walker);
+        ck.Check(api.NavGetAgentState(api.engine, walkerId, &state) == 1 && state.status == navagentstatus::kMoving
+                     && state.status == agent->status && state.remainingDistance > 1.0f
+                     && state.remainingDistance == agent->remainingDistance && state.pathPartial == 0,
+                 "(API) NavGetAgentState: 歩き出した Agent は Moving と残り距離を返す (コンポーネントの値と一致)");
+        for (int i = 0; i < 400; ++i) {
+            sim.Step();
+        }
+        ck.Check(api.NavGetAgentState(api.engine, walkerId, &state) == 1 && state.status == navagentstatus::kArrived,
+                 "(API) NavGetAgentState: 着いたら Arrived");
+        ck.Check(api.NavSetDestination(api.engine, walkerId, { -9.0f, 0.0f, -9.0f }) == 1 && api.NavStop(api.engine, walkerId) == 1,
+                 "(API) NavStop: 目的地を外せる");
+        sim.Step();
+        sim.Step();
+        ck.Check(!agent->hasDestination && agent->status == navagentstatus::kIdle && api.NavGetAgentState(api.engine, walkerId, &state) == 1
+                     && state.status == navagentstatus::kIdle,
+                 "(API) NavStop: 次の tick で Idle になる");
+        const MyeEntityId surfaceId = ToShared(yard.surface);
+        ck.Check(api.NavSetDestination(api.engine, surfaceId, target) == 0 && api.NavStop(api.engine, surfaceId) == 0
+                     && api.NavGetAgentState(api.engine, surfaceId, &state) == 0 && api.NavCompleteLink(api.engine, surfaceId) == 0
+                     && api.NavGetAgentState(api.engine, MyeEntityId{}, &state) == 0,
+                 "(API) NavMeshAgent を持たないエンティティ / null id には 0 を返す");
+        ck.Check(api.NavCompleteLink(api.engine, walkerId) == 0 && !agent->linkComplete,
+                 "(API) NavCompleteLink: Link を渡っていない Agent には何も書かず 0");
+
+        // nav を繋いでいないテーブルは Nav* のクエリが 0
+        ScriptApiContext bare;
+        bare.scene = &scene;
+        MyeEngineApi bareApi;
+        BuildEngineApi(bareApi, &bare);
+        ck.Check(bareApi.NavFindPath(bareApi.engine, 0, from, target, 0xFFFFFFFFu, corners, 32, &partial) == 0
+                     && bareApi.NavRaycast(bareApi.engine, 0, from, target, 0xFFFFFFFFu, &hit) == 0
+                     && bareApi.NavFindRandomPoint(bareApi.engine, 0, center, 3.0f, 0xFFFFFFFFu, &unused) == 0
+                     && bareApi.NavCompleteLink(bareApi.engine, walkerId) == 0,
+                 "(API) NavSystem を繋いでいない構成ではクエリ系が 0 を返す");
+    }
+
+    // ---- 12b. スクリプト API: Manual の Link の完了通知 (NavCompleteLink) ----
+    {
+        Scene scene;
+        const EntityID surface = BuildRavine(scene);
+        const float linkStart[3] = { -3.0f, 0.0f, 0.0f };
+        const float linkEnd[3] = { 3.0f, 0.0f, 0.0f };
+        AddLink(scene, linkStart, linkEnd, navlinktraversal::kManual, true);
+        const float dest[3] = { 10.0f, 0.0f, 0.0f };
+        const EntityID walker = AddAgent(scene, "Walker", -10.0f, 0.0f, 0.0f, &dest[0], true);
+        ck.Check(BakeSurface(scene, surface, kRavineGuid, nullptr), "(API Link) 谷をベイクできる");
+        Sim sim(scene);
+        World& world = sim.GetWorld();
+        ScriptApiContext sctx;
+        sctx.scene = &scene;
+        sctx.nav = &sim.nav;
+        MyeEngineApi api;
+        BuildEngineApi(api, &sctx);
+        const MyeEntityId walkerId = ToShared(walker);
+        sim.Step();
+        ck.Check(api.NavCompleteLink(api.engine, walkerId) == 0 && !world.GetComponent<NavMeshAgentComponent>(walker)->linkComplete,
+                 "(API Link) 入口へ近づく前の通知は無視する (次の Link に持ち越さない)");
+        for (int i = 0; i < 400; ++i) {
+            sim.Step();
+        }
+        MyeNavAgentState state = {};
+        ck.Check(api.NavGetAgentState(api.engine, walkerId, &state) == 1 && state.status == navagentstatus::kOnLink,
+                 "(API Link) Manual の入口で止まっている間、NavGetAgentState は OnLink");
+        ck.Check(api.NavCompleteLink(api.engine, walkerId) == 1, "(API Link) NavCompleteLink: 止まっている Agent の通知は受け付ける");
+        for (int i = 0; i < 4; ++i) {
+            sim.Step();
+        }
+        ck.Check(world.GetComponent<LocalTransform>(walker)->position.x > 2.0f
+                     && !world.GetComponent<NavMeshAgentComponent>(walker)->linkComplete,
+                 "(API Link) 通知すると出口へ移る");
     }
 
     ck.Check(kExpectedYardHash == 0 || yardHashAtEnd == kExpectedYardHash,

@@ -1007,6 +1007,53 @@ inline bool MyeNetGetSystemEvent(const MyeUpdateContext& ctx, uint32_t index, My
     return ctx.api->NetGetSystemEvent(ctx.api->engine, index, out) != 0;
 }
 
+// ---- v24 (M82i): NavMesh ----
+// 座標はワールド。クエリは agentTypeId が合う最初の Surface で行い、未読み込みなら false / 0。
+// 目的地を書いて歩かせる / 止める (NavMeshAgent 非所持は false)
+inline bool MyeNavSetDestination(const MyeUpdateContext& ctx, MyeEntityId agent, MyeVec3 destination)
+{
+    return ctx.api->NavSetDestination(ctx.api->engine, agent, destination) != 0;
+}
+inline bool MyeNavStop(const MyeUpdateContext& ctx, MyeEntityId agent)
+{
+    return ctx.api->NavStop(ctx.api->engine, agent) != 0;
+}
+inline bool MyeNavGetAgentState(const MyeUpdateContext& ctx, MyeEntityId agent, MyeNavAgentState& out)
+{
+    return ctx.api->NavGetAgentState(ctx.api->engine, agent, &out) != 0;
+}
+// 経路の角を outCorners へ書いた数 (0 = 失敗)。届かない目的地は届く限りの最寄りまでで outPartial = true
+inline int32_t MyeNavFindPath(const MyeUpdateContext& ctx, int32_t agentTypeId, MyeVec3 from, MyeVec3 to,
+                              uint32_t areaMask, MyeVec3* outCorners, int32_t maxCorners, bool& outPartial)
+{
+    int32_t partial = 0;
+    const int32_t count = ctx.api->NavFindPath(ctx.api->engine, agentTypeId, from, to, areaMask, outCorners,
+                                               maxCorners, &partial);
+    outPartial = partial != 0;
+    return count;
+}
+inline bool MyeNavSamplePosition(const MyeUpdateContext& ctx, int32_t agentTypeId, MyeVec3 pos, MyeVec3 extents,
+                                 uint32_t areaMask, MyeVec3& out)
+{
+    return ctx.api->NavSamplePosition(ctx.api->engine, agentTypeId, pos, extents, areaMask, &out) != 0;
+}
+inline bool MyeNavRaycast(const MyeUpdateContext& ctx, int32_t agentTypeId, MyeVec3 from, MyeVec3 to,
+                          uint32_t areaMask, MyeNavRaycastHit& out)
+{
+    return ctx.api->NavRaycast(ctx.api->engine, agentTypeId, from, to, areaMask, &out) != 0;
+}
+// World の RNG を引く (失敗時は引かない)
+inline bool MyeNavFindRandomPoint(const MyeUpdateContext& ctx, int32_t agentTypeId, MyeVec3 center, float radius,
+                                  uint32_t areaMask, MyeVec3& out)
+{
+    return ctx.api->NavFindRandomPoint(ctx.api->engine, agentTypeId, center, radius, areaMask, &out) != 0;
+}
+// Manual の Link で止まっている Agent に完了を通知する
+inline bool MyeNavCompleteLink(const MyeUpdateContext& ctx, MyeEntityId agent)
+{
+    return ctx.api->NavCompleteLink(ctx.api->engine, agent) != 0;
+}
+
 // レーン指定のアクション/軸。**これは決定論の内側** (記録済み入力の純関数) なので
 // sim 状態へそのまま書いてよい。player は 0..kMaxPlayers-1、範囲外は 0
 inline bool MyeActionHeldFor(const MyeUpdateContext& ctx, const char* name, uint32_t player)

@@ -16,6 +16,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Core/Util/Random.h"
 #include "Engine/Engine/Navigation/NavBakeInput.h"
 #include "Engine/Platform/PathUtil.h"
 
@@ -1676,6 +1677,226 @@ void NavSystem::PostPhysics(World& world, float dt)
             }
         }
     }
+}
+
+namespace {
+
+// スクリプト API のクエリの上限。経路の回廊 (ポリゴン列) と角の数
+constexpr int kQueryMaxPathPolys = 256;
+constexpr int kQueryMaxCorners = 256;
+
+// QueryRandomPoint が円の中の点を試す回数と、点をナビメッシュへ吸着する水平の範囲 (m)。
+// 範囲を狭くするのは、吸着で一様性が崩れない (縁から遠い点は捨てる) ようにするため
+constexpr int kRandomPointAttempts = 16;
+constexpr float kRandomPointSnapHorizontal = 0.5f;
+
+bool AllFinite(const float* v, int count)
+{
+    for (int i = 0; i < count; ++i) {
+        if (!std::isfinite(v[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+const NavSurfaceRuntime* NavSystem::ResolveQuerySurface(World& world, int agentTypeId, uint32_t areaMask,
+                                                        dtQueryFilter& filter) const
+{
+    for (const NavSurfaceRuntime& surface : surfaces_) {
+        const auto* sc = world.GetComponent<NavMeshSurfaceComponent>(surface.entity);
+        if (sc == nullptr || sc->agentTypeId != agentTypeId) {
+            continue;
+        }
+        if (surface.state != NavSurfaceState::Loaded || surface.query == nullptr) {
+            return nullptr;
+        }
+        filter.setIncludeFlags(static_cast<unsigned short>(areaMask & kNavFlagAllAreas));
+        filter.setExcludeFlags(0);
+        for (int i = 0; i < kNavAreaCount; ++i) {
+            filter.setAreaCost(i, (std::max)(1.0f, sc->areaCosts[i]));
+        }
+        return &surface;
+    }
+    return nullptr;
+}
+
+int NavSystem::QueryFindPath(World& world, int agentTypeId, const float* from, const float* to, uint32_t areaMask,
+                             float* outCorners, int maxCorners, bool* outPartial) const
+{
+    if (outPartial != nullptr) {
+        *outPartial = false;
+    }
+    if (outCorners == nullptr || maxCorners <= 0 || !AllFinite(from, 3) || !AllFinite(to, 3)) {
+        return 0;
+    }
+    dtQueryFilter filter;
+    const NavSurfaceRuntime* surface = ResolveQuerySurface(world, agentTypeId, areaMask, filter);
+    if (surface == nullptr) {
+        return 0;
+    }
+    const dtNavMeshQuery& query = *surface->query;
+    const float ext[3] = { kDestHorizontal, kDestVertical, kDestHorizontal };
+    dtPolyRef startRef = 0;
+    dtPolyRef endRef = 0;
+    float startPt[3] = {};
+    float endPt[3] = {};
+    query.findNearestPoly(from, ext, &filter, &startRef, startPt);
+    query.findNearestPoly(to, ext, &filter, &endRef, endPt);
+    if (startRef == 0 || endRef == 0) {
+        return 0;
+    }
+    dtPolyRef polys[kQueryMaxPathPolys];
+    int polyCount = 0;
+    const dtStatus pathStatus = query.findPath(startRef, endRef, startPt, endPt, &filter, polys, &polyCount, kQueryMaxPathPolys);
+    if (dtStatusFailed(pathStatus) || polyCount <= 0) {
+        return 0;
+    }
+    // 回廊が目的地のポリゴンまで届かなければ、回廊の最後のポリゴン上の最寄り点を終点にする (dtCrowd と同じ)
+    bool partial = dtStatusDetail(pathStatus, DT_PARTIAL_RESULT) || polys[polyCount - 1] != endRef;
+    if (polys[polyCount - 1] != endRef) {
+        float closest[3] = {};
+        if (dtStatusFailed(query.closestPointOnPoly(polys[polyCount - 1], endPt, closest, nullptr))) {
+            return 0;
+        }
+        dtVcopy(endPt, closest);
+    }
+    const int cap = (std::min)(maxCorners, kQueryMaxCorners);
+    float straight[kQueryMaxCorners * 3];
+    int cornerCount = 0;
+    if (dtStatusFailed(query.findStraightPath(startPt, endPt, polys, polyCount, straight, nullptr, nullptr, &cornerCount, cap)) || cornerCount <= 0) {
+        return 0;
+    }
+    std::memcpy(outCorners, straight, sizeof(float) * 3 * static_cast<size_t>(cornerCount));
+    if (outPartial != nullptr) {
+        *outPartial = partial;
+    }
+    return cornerCount;
+}
+
+bool NavSystem::QuerySamplePosition(World& world, int agentTypeId, const float* pos, const float* extents, uint32_t areaMask,
+                                    float* outPoint) const
+{
+    if (outPoint == nullptr || !AllFinite(pos, 3) || !AllFinite(extents, 3)) {
+        return false;
+    }
+    dtQueryFilter filter;
+    const NavSurfaceRuntime* surface = ResolveQuerySurface(world, agentTypeId, areaMask, filter);
+    if (surface == nullptr) {
+        return false;
+    }
+    const float ext[3] = { std::fabs(extents[0]), std::fabs(extents[1]), std::fabs(extents[2]) };
+    dtPolyRef ref = 0;
+    float nearest[3] = {};
+    surface->query->findNearestPoly(pos, ext, &filter, &ref, nearest);
+    if (ref == 0) {
+        return false;
+    }
+    dtVcopy(outPoint, nearest);
+    return true;
+}
+
+bool NavSystem::QueryRaycast(World& world, int agentTypeId, const float* from, const float* to, uint32_t areaMask,
+                             NavRaycastResult& out) const
+{
+    if (!AllFinite(from, 3) || !AllFinite(to, 3)) {
+        return false;
+    }
+    dtQueryFilter filter;
+    const NavSurfaceRuntime* surface = ResolveQuerySurface(world, agentTypeId, areaMask, filter);
+    if (surface == nullptr) {
+        return false;
+    }
+    const float ext[3] = { kDestHorizontal, kDestVertical, kDestHorizontal };
+    dtPolyRef startRef = 0;
+    float startPt[3] = {};
+    surface->query->findNearestPoly(from, ext, &filter, &startRef, startPt);
+    if (startRef == 0) {
+        return false;
+    }
+    float t = 0.0f;
+    float normal[3] = {};
+    dtPolyRef visited[kQueryMaxPathPolys];
+    int visitedCount = 0;
+    if (dtStatusFailed(surface->query->raycast(startRef, startPt, to, &filter, &t, normal, visited, &visitedCount, kQueryMaxPathPolys))) {
+        return false;
+    }
+    out = NavRaycastResult{};
+    const float length = std::sqrt(dtVdistSqr(startPt, to));
+    if (t > 1.0f) { // 壁に当たらず終点まで歩けた (Detour は FLT_MAX を返す)
+        dtVcopy(out.point, to);
+        out.distance = length;
+        return true;
+    }
+    out.hit = true;
+    for (int i = 0; i < 3; ++i) {
+        out.point[i] = startPt[i] + (to[i] - startPt[i]) * t;
+        out.normal[i] = normal[i];
+    }
+    out.distance = length * t;
+    return true;
+}
+
+bool NavSystem::QueryRandomPoint(World& world, int agentTypeId, const float* center, float radius, uint32_t areaMask, Pcg32& rng,
+                                 float* outPoint) const
+{
+    if (outPoint == nullptr || !AllFinite(center, 3) || !std::isfinite(radius) || radius <= 0.0f) {
+        return false;
+    }
+    dtQueryFilter filter;
+    const NavSurfaceRuntime* surface = ResolveQuerySurface(world, agentTypeId, areaMask, filter);
+    if (surface == nullptr) {
+        return false;
+    }
+    const float ext[3] = { kDestHorizontal, kDestVertical, kDestHorizontal };
+    dtPolyRef startRef = 0;
+    float startPt[3] = {};
+    surface->query->findNearestPoly(center, ext, &filter, &startRef, startPt);
+    if (startRef == 0) {
+        return false;
+    }
+    // dtNavMeshQuery::findRandomPointAroundCircle は円に触れるポリゴンの中のどこかを返し、円の外の点も出る
+    // (広い床だと半径が意味を持たない)。半径内を保証するため、円の中の点を自分で選んでナビメッシュへ吸着する
+    constexpr float kTwoPi = 6.28318530717959f;
+    const float snapExt[3] = { kRandomPointSnapHorizontal, kDestVertical, kRandomPointSnapHorizontal };
+    for (int attempt = 0; attempt < kRandomPointAttempts; ++attempt) {
+        const float angle = rng.NextFloat01() * kTwoPi;
+        const float r = radius * std::sqrt(rng.NextFloat01());
+        const float sample[3] = { center[0] + r * std::cos(angle), center[1], center[2] + r * std::sin(angle) };
+        dtPolyRef ref = 0;
+        float snapped[3] = {};
+        surface->query->findNearestPoly(sample, snapExt, &filter, &ref, snapped);
+        if (ref == 0) {
+            continue;
+        }
+        const float dx = snapped[0] - center[0];
+        const float dz = snapped[2] - center[2];
+        if (dx * dx + dz * dz <= radius * radius) {
+            dtVcopy(outPoint, snapped);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool NavSystem::CompleteLink(World& world, EntityID entity) const
+{
+    auto* agent = world.GetComponent<NavMeshAgentComponent>(entity);
+    if (agent == nullptr) {
+        return false;
+    }
+    for (const NavSurfaceRuntime& surface : surfaces_) {
+        for (const NavAgentSlot& slot : surface.slots) {
+            // 渡りの途中 (Linear / Jump) に立てると、次の Manual の Link に持ち越して即完了してしまうので Manual だけ受ける
+            if (slot.entity == entity && slot.linkPhase != 0 && slot.linkMode == navlinktraversal::kManual) {
+                agent->linkComplete = true;
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 void NavSystem::Reset()

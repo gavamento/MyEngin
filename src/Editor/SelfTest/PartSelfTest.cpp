@@ -175,8 +175,13 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 23u,
-              "abi: the table reports v23");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 24u,
+              "abi: the table reports v24");
+        // v24 (M82i): NavMesh。呼んだ結果は NavAgentSelfTest が見る (ここは充填のみ)
+        check(api.NavSetDestination != nullptr && api.NavStop != nullptr && api.NavGetAgentState != nullptr
+                  && api.NavFindPath != nullptr && api.NavSamplePosition != nullptr && api.NavRaycast != nullptr
+                  && api.NavFindRandomPoint != nullptr && api.NavCompleteLink != nullptr,
+              "abi: the v24 nav slots are filled in");
         check(api.FindPart != nullptr && api.FindPartsByTag != nullptr,
               "abi: the v9 part slots are filled in");
         check(api.RaycastParts != nullptr, "abi: the v10 RaycastParts slot is filled in");
