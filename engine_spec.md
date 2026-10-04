@@ -2389,6 +2389,60 @@ against the wall's pre-break (in a kinematic case, infinite) mass, so a bullet s
 the same tick the wall starts to come apart, and the departing pieces start from that tick's
 rest/kinematic velocity rather than inheriting a share of the impact.
 
+### 10.9 NavMesh (M82)
+
+**What it does.** A designer drops a `NavMeshSurface` over the level, presses Bake, and `NavMeshAgent`s walk to a
+destination over steps and slopes, around obstacles and each other, and across jump points. Recast Navigation
+v1.6.0 is vendored under `external\recastnavigation\` (patches in its `PATCHES.md`). The decisions, the rejected
+alternatives and the measurements are in [docs/adr/ADR-023-navmesh.md](docs/adr/ADR-023-navmesh.md); this
+section records what future work needs to know.
+
+**Components** (TypeIds 71-75, appended at the end of the registry; all hash-relevant except the debug flags):
+
+| Component | Role |
+|---|---|
+| `NavMeshSurface` (71) | Bake box, agent size (`agentRadius`, `agentHeight`, `maxClimb` 0.3, `maxSlopeDeg` 45), `autoCellSize` (on by default), `tileSize` 48, `areaCosts[16]`, `navAsset` (`.mnav` GUID). One `dtNavMesh` per Surface; an Agent uses the Surface with its `agentTypeId` (lowest entity key wins, with a warning) |
+| `NavMeshAgent` (72) | `destination`, `speed`, `areaMask`, `avoidanceQuality` 0-3; runtime `status` (Idle / Moving / Arrived / NoPath / OnLink / Inactive / Stuck), `remainingDistance`, `pathPartial`. Requires a `CharacterController` (else `Inactive`) |
+| `NavMeshObstacle` (73) | Box / Cylinder carved out of the mesh in the same tick. `carve = false` does nothing |
+| `NavMeshModifier` (74) | Box that repaints the area at run time (not baked) |
+| `NavMeshLink` (75) | Off-Mesh Link: Linear / Jump / Manual traversal; not baked into the `.mnav` |
+
+**Tick position.** `NavSystem::Update` runs in the fixed-tick loop after acoustics + `AgentSystem` and before
+animation (own `if (stepSim)` block): (1) lazy-load `.mnav` when a Surface's (entity, asset) changes (2) apply
+Obstacle / Modifier / Link diffs to the TileCache and `Commit` synchronously (3) sync Agents into `dtCrowd` in entity-key
+order (4) `dtCrowd::update(1/60)` (5) write the desired velocity into `CC.moveInput` and the state into the Agent.
+`NavSystem::PostPhysics` runs after physics (3.6) and overwrites the position of Agents that are crossing a Link.
+A scene with no NavMesh component leaves the RNG, the world hash and the snapshot Nav section unchanged.
+
+**Snapshot.** `SimSnapshot` has a Nav section (`kSimSnapshotVersion` 29): `NavTileStore` state (replaced layers,
+obstacles / modifiers / links, slot table, per-slot salts; state version 4), every `dtCrowd` agent including its
+`dtLocalBoundary`, and the Link-crossing state in `NavAgentSlot`. Restoring rebuilds `dtNavMesh` from the layers and
+re-adds every tile in key order, because `dtNavMesh` link order depends on `addTile` / `removeTile` history. Path
+requests finish inside one `dtCrowd::update` (Recast patch 1), so no half-finished `dtPathQueue` exists at a tick
+boundary. Debug, Release and `Server.exe` produce identical hashes (`--nav-demo` in `replay_verify`).
+
+**Character step-up.** `CharacterController.stepOffset` (default 0.3, multiplied by `|scale.y|`) climbs a step of up to
+that height regardless of speed. The Surface picks `cellSize` / `cellHeight` from the agent size and slope limit so
+`maxSlopeDeg` and `maxClimb` take effect as written; the NavMesh step limit can still exceed `maxClimb` by less than
+one cell, and the remaining mismatch is caught by `Stuck` (no progress for 60 ticks).
+
+**Display.** The mesh is drawn as a translucent area-coloured fill plus outline by `NavDebugView` on the render-frame
+side, so it appears while editing and while playing through one path. Golden `nav` (`--nav-demo`, frame 120) is in
+`shot_verify`.
+
+**Scripting (ABI v24).** `NavSetDestination`, `NavStop`, `NavGetAgentState` (agent state); `NavFindPath` (corner list,
+`outPartial`), `NavSamplePosition`, `NavRaycast`, `NavFindRandomPoint` (uniform in the circle via the world `Pcg32`, up to
+16 tries, snapped to the nearest polygon; consumes no RNG when there is no Surface or `radius <= 0`; the point is
+not guaranteed to be connected to the centre); `NavCompleteLink` (finishes a Manual Link). Queries read the state
+confirmed by the previous tick's `NavSystem::Update`, so the first tick after loading a scene returns 0.
+
+**Future run-time re-bake.** Not implemented. `NavCollectTriangles` + `NavBakeTile` (Editor-independent) and
+`NavTileStore::ReplaceTileLayers` + `Commit` are the insertion points; the call order and the open items are in
+ADR-023 ("将来の実行時再ベイクの足し方").
+
+**Known limits.** Static geometry is baked in the editor only (a breakable wall is an Obstacle). A partial path
+reports `Arrived` 60 ticks late. The translucent fill is unverified on the CI WARP adapter.
+
 ---
 
 ## 11. Debug/Release Consistency Policy
@@ -3078,6 +3132,12 @@ network play). **A `GameLogic.dll` built for `apiVersion` 22 is refused by a v23
 verification script and is never attached to the demos automatically, so the demo generation order — the
 particle RNG stream — and the goldens do not move.
 
+**Scripting (ABI v24, M82i).** `MYE_API_VERSION` 24, 131 → 139 slots, appended after `NetGetSystemEvent`:
+`NavSetDestination`, `NavStop`, `NavGetAgentState`, `NavFindPath`, `NavSamplePosition`, `NavRaycast`,
+`NavFindRandomPoint`, `NavCompleteLink` (semantics in §10.9). **A `GameLogic.dll` built for `apiVersion` 23
+is refused by a v24 engine; external projects (Sanko, HAL Collector) must rebuild.** The next ABI bump
+(M75h, InputField) is v25.
+
 **Verification.** `Editor.exe --selftest` runs the Session suite and the in-process server/client suite
 (one server and three clients over a seeded fake transport: missed deadline, late join, drop → reconnect,
 reservation timeout → Release, 20 % loss, reordering; the confirmed-input log, not the arrival order,
@@ -3186,7 +3246,8 @@ ADR-012 structural prefab overrides / **ADR-013 predictive rollback netcode** (�
 ADR-018 time-travel branches (what-if replay) / ADR-019 GUID-keyed model sub-asset keys /
 ADR-020 Deep-Modal impact synthesis (§10.7) /
 **ADR-021 pre-baked destructible fracture** (§10.8) /
-**ADR-022 dedicated server (input-confirming) and hosting abstraction** (§11.5).
+**ADR-022 dedicated server (input-confirming) and hosting abstraction** (§11.5) /
+**ADR-023 NavMesh (Recast Navigation) and determinism** (§10.9).
 
 ---
 

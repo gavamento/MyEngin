@@ -344,3 +344,36 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] 終了 (`TerminateGameSession` または Ctrl+C) でゲームセッションが TERMINATED になり、Server.exe が exit 0 で終わる。
       サーバの `.rep` が最後まで読め、`Server.exe --replay-verify` で全 tick 一致する
 - [ ] 片付け (フリート / ロケーション / コンピュートの削除) まで行い、AWS 側のログを `plans\m81-dedicated-server\anywhere-log\` に残す
+
+## M82: NavMesh (Recast Navigation)
+
+自動検証は `Editor.exe --selftest` (NavDeterminism / NavSurface / NavAgent / NavEditor / Physics の段差)、`tools\replay_verify.bat` の `nav` ジョブ、
+`tools\shot_verify.bat` の golden `nav`。下は画面と実操作で確かめる項目 (設計: `docs\adr\ADR-023-navmesh.md`)。
+
+### Surface とベイク (M82b / M82d / M82e)
+
+- [ ] Hierarchy の Create → 3D Object の下に NavMesh Surface / Obstacle / Modifier / Link があり、どれも Undo / Redo できる
+- [ ] Surface の Inspector で Bake を押すと進捗が出て、終わると `assets\NavMesh\<名前>_<16桁>.mnav` ができ、タイル数・ポリゴン数・時間が出る。Clear で参照が外れる
+- [ ] Bake 直後に Play せず、SceneView に半透明のエリア色と輪郭線が出る。床とちらつかない (Z ファイトしない)
+- [ ] `autoCellSize` が on のとき、Inspector に実際のセル (例 0.150 m、高さ 0.050 m) と実効の傾斜上限が出る。`maxSlopeDeg` を実効の上限より上げると警告が出る
+- [ ] Surface の範囲箱ギズモが SceneView に出て、動かすと範囲が変わる
+
+### Agent の移動 (M82c / M82d / M82f)
+
+- [ ] `Runtime.exe --nav-demo` で Agent が段差 (0.3 m)・坂 (30 度)・台を越えて目的地へ歩き、届かない島では止まる。壁を貫通しない
+- [ ] NavMeshAgent を Add Component すると CharacterController も一緒に付く。CC を外すと Inactive になり警告がログに 1 回出る
+- [ ] 2 体が向かい合ってすれ違うとき、回避あり (`avoidanceQuality` 1 以上) は重ならず、0 は重なりうる
+- [ ] 縁で前へ進めなくなった Agent は約 1 秒後に `Stuck` になり、WARN が 1 回出る。目的地を変えると解除される
+- [ ] CharacterController の `stepOffset` を 0 にすると段差を登らない。Transform の scale.y を倍にすると登れる高さも倍になる
+
+### Obstacle / Modifier / Link (M82f〜M82h)
+
+- [ ] Play 中に Obstacle (carve) を経路上へ動かすと、同じ tick で切り抜きが表示に反映され Agent が迂回する。消すと元に戻る。`carve` を外した Obstacle の Inspector に注意書きが出る
+- [ ] Modifier でエリアを高コストにした帯を Agent が避ける。`areaMask` で除いたエリアには入らない。Inspector のコストをドラッグすると 1 Undo
+- [ ] Link の Linear / Jump / Manual をそれぞれ Agent が渡る。Manual は `NavCompleteLink` まで入口で止まる。片方向の Link は逆向きに使われない
+- [ ] Link の入口が Surface の外、または出口が 2 タイル以上離れるとき、Inspector に警告が出る
+- [ ] 渡っている最中に Link を削除・移動しても、Agent は出口まで渡り切って NavMesh に戻る
+
+### 回帰 (M82j)
+
+- [ ] 外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は ABI v24 で再ビルドが要る (古い DLL は読み込みを拒否される)

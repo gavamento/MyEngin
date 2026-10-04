@@ -15,8 +15,8 @@
 | sub-05 | OK | 2 | a7de835 | NavMeshObstacle (M82f) |
 | sub-06 | OK | 1 | d05f179 | NavMeshModifier + エリアコスト (M82g) |
 | sub-07 | OK | 2 | ade6b23 | NavMeshLink (M82h) |
-| sub-08 | 実装中 | 0 | | スクリプト API、ABI bump (M82i) |
-| sub-09 | 未着手 | 0 | | ADR-023 / 文書 / 全体検証 (M82j) |
+| sub-08 | OK | 1 | d8ff284 | スクリプト API、ABI bump (M82i) |
+| sub-09 | 差し戻し (round 2 実装中) | 1 | | ADR-023 / 文書 / 全体検証 (M82j) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -61,5 +61,6 @@
 - (planner 2026-10-04 sub-07 VERDICT round 1 = REWORK) must: 渡っている途中の Link の削除・移動 (未定義の動作になりうる)。should: 出口がつながらない Link の警告、親を持つ Agent。作業ファイルに cache の s07 が追加された
 - (planner 2026-10-04 sub-07 VERDICT round 2 = OK) reviewer が見ること: Inspector の Link の警告 2 種の見た目。replay_verify の ui ジョブで、環境のメモリ不足による texture load outofmem が 1 回出た (再実行で PASS。nav とは無関係)
 - (planner 2026-10-04 sub-08 VERDICT OK) ABI v24 = 139。外部プロジェクト (三校 / HAL Collector) の GameLogic.dll は v24 で読み込みを拒否されるので、ユーザーに再ビルドが要ることを伝える (MyEngine の作業では外部に書かない)
+- (planner 2026-10-04 sub-09 VERDICT round 1 = REWORK、文書だけ) ADR の古い記述を 2 か所直す。R9: `/p:MyeWarnAsError=true` は Release でも落ちる (CI の MYE_MSBUILD_ARGS では Debug / Release とも通らない。M82 の範囲外の別件)。作業ファイルに cache の s09_*.log が追加された
 - (planner) 削除の承認待ちの作業ファイル: `C:\HAL\MyEngin\cache\s10\` (26 MB) と `C:\HAL\MyEngin\cache\base10_rel\` (37 MB)。round 2 で着手前の基準として再利用できるので、sub-10 が OK になるまで残す
 - (planner) sub-01 の結論 (復元方式 a/b/c) で sub-03 以降の SimSnapshot の形が決まる。sub-01 の VERDICT 時に spec 4.4 を確定させる

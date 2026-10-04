@@ -172,7 +172,7 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 - R3. (解消、sub-03 実測 → sub-10) CC は `stepOffset` で段差を登る。`maxClimb` 既定 0.3。
 - R10. セルサイズ自動決定で既定の cs が 0.3 → 0.15 になり、ベイク量が約 4 倍・タイルの実寸が半分になる。sub-10 で既定範囲のベイク時間とタイル数を測り、`tileSize` の既定を決める。
 - R4. (解消、sub-01) 経路要求は同じ update で完走させるパッチで途中状態を無くした。代わりに重い経路が 1 tick に集中しうる — sub-03 で最悪 tick の時間を計測し、問題なら**要求数 (件数) で**絞る (時間で絞ると決定論が崩れる)。
-- R9. `/p:MyeWarnAsError=true` が HEAD (`ProjectComputeRunnerSelfTest.cpp` の C4127) で失敗する = CI の設定 (`ci.yml` の `MYE_MSBUILD_ARGS`) では現状ビルドが落ちる。M82 の範囲外。
+- R9. (sub-09 で Release も同じと判明) `/p:MyeWarnAsError=true` が Debug / Release とも HEAD (`ProjectComputeRunnerSelfTest.cpp` の C4127、7 件) で失敗する。このため、このフラグ付きでは Editor / GameLogic / Server の M82 変更分を確認できていない (通常ビルドでは警告 0) = CI の設定 (`ci.yml` の `MYE_MSBUILD_ARGS`) では現状ビルドが落ちる。M82 の範囲外。
 - R5. ABI 番号は M75h と先着順。sub-07 着手時に `EngineAPI.h` の現在版を確認する。
 - R6. replay_verify のジョブ数が増え実行時間が延びる (現在 14 ジョブ、`MYE_REPLAY_JOBS=3` で 239 s)。
 

@@ -83,7 +83,7 @@ LocalTransform が位置・回転・スケールを持ち、Hierarchy から Wor
 | ゲーム API | 生成、親子付け、シーン遷移、UI、音、アニメーション、入力、永続値 |
 | デバッグ API | ログ、線描画、状態の参照 |
 
-現在の ABI は `MYE_API_VERSION = 18` です。v17 の `GetSceneName` は、環境依存の絶対パスをゲーム状態に持ち込まず、シーン名を取得するための入口です。v18 の `IsDevelopmentRun` は、エディタ / `--project` 付きの Runtime と配布物を見分けて、デバッグ操作を配布物で閉じるための入口です。
+現在の ABI は `MYE_API_VERSION = 24` (139 スロット) です。v17 の `GetSceneName` は、環境依存の絶対パスをゲーム状態に持ち込まず、シーン名を取得するための入口です。v18 の `IsDevelopmentRun` は、エディタ / `--project` 付きの Runtime と配布物を見分けて、デバッグ操作を配布物で閉じるための入口です。v23 はネット対戦のレーン情報 (13 章)、v24 は NavMesh の 8 関数 (`NavSetDestination` / `NavStop` / `NavGetAgentState` / `NavFindPath` / `NavSamplePosition` / `NavRaycast` / `NavFindRandomPoint` / `NavCompleteLink`、9.4 節) です。版が上がると古い `GameLogic.dll` は読み込みを拒否されるので、外部プロジェクトは再ビルドが要ります。
 
 **利用時の制約:**
 
@@ -224,9 +224,27 @@ AcousticAudio はこの伝播を実際の音へ接続します。経路長から
 
 ### 9.3 音・光に反応する AI
 
-AgentBrain は Patrol / Alert / Search / Chase / Return の 5 状態です。AcousticListener による聴覚と LightSeeker による光センサーを組み合わせ、AcousticNav を使って移動します。同じエンティティの移動入力をスクリプトと AI の両方が書くと、後に走る AI が優先される設計です。一般目的の Behavior Tree エディタや NavMesh ベイクとは区別します。
+AgentBrain は Patrol / Alert / Search / Chase / Return の 5 状態です。AcousticListener による聴覚と LightSeeker による光センサーを組み合わせ、AcousticNav を使って移動します。同じエンティティの移動入力をスクリプトと AI の両方が書くと、後に走る AI が優先される設計です。AgentBrain は音響ナビ専用で、段差・坂・敵同士の回避・ジャンプ地点を扱う汎用の移動は 9.4 の NavMesh が受け持ちます。同じエンティティに AgentBrain と NavMeshAgent があれば、後に走る NavMesh 側が移動入力を決めます。一般目的の Behavior Tree エディタは別マイルストーンです。
 
 根拠: [AudioSystem.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Audio/Playback/AudioSystem.h)、[SynthCore.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Audio/Synth/SynthCore.h)、[AcousticField.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Acoustic/AcousticField.h)、[AcousticAudio.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Audio/Spatial/AcousticAudio.cpp)、[AgentSystem.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Acoustic/AgentSystem.h)、[ADR-017](C:/HAKtokyo/My_Engin/MyEngin/docs/adr/ADR-017-acoustic-audio.md)。
+
+### 9.4 NavMesh (経路探索と群衆移動、M82)
+
+Recast Navigation (v1.6.0、`external/recastnavigation/`) を取り込んだ汎用の移動です。レベルに NavMeshSurface を置いて Bake すると、NavMeshAgent が目的地へ段差・坂・障害物を避けて歩きます。設計判断と決定論の根拠は [ADR-023](docs/adr/ADR-023-navmesh.md)、仕様は `engine_spec.md` 10.9 を参照してください。
+
+| コンポーネント | 役割 |
+|---|---|
+| NavMeshSurface | ベイク範囲・エージェント寸法 (半径・高さ・登れる段差・登れる傾斜)・エリアコスト 16 種。Inspector の Bake で `assets/NavMesh/*.mnav` を作り GUID で参照する。セルの大きさは既定で自動決定 |
+| NavMeshAgent | 目的地・速度・回避品質・`areaMask`。状態 (Idle / Moving / Arrived / NoPath / OnLink / Inactive / Stuck) を毎 tick 書く。CharacterController が必須で、無ければ Inactive |
+| NavMeshObstacle | Box / Cylinder で NavMesh を切り抜く。変更は同じ tick の内に確定し、Agent が迂回する |
+| NavMeshModifier | 箱の範囲のエリアを実行時に塗り替える (ベイクには焼き込まない) |
+| NavMeshLink | Off-Mesh Link。Linear / Jump / Manual の 3 種の渡り方 |
+
+Create → 3D Object に 4 項目 (NavMesh Surface / Obstacle / Modifier / Link) があり、Add Component で NavMeshAgent を足すと CharacterController も一緒に付きます。NavMesh は編集中も Play 中も SceneView に半透明のエリア色と輪郭線で出ます。CharacterController には `stepOffset` (既定 0.3、Transform の `|scale.y|` 倍) が加わり、設定した高さまでの段差を速度に関係なく登ります。
+
+制約: 静的ジオメトリの実行時の再ベイクは未実装です (壊れる壁は Obstacle で表す)。部分経路の到着は完全な経路より 60 tick (1 秒) 遅れます。ABI の `NavFindRandomPoint` が返す点は中心とつながっているとは限りません。
+
+根拠: [NavSystem.h](C:/HAL/MyEngin/src/Engine/Engine/Navigation/NavSystem.h)、[NavTileCacheSupport.h](C:/HAL/MyEngin/src/Engine/Engine/Navigation/NavTileCacheSupport.h)、[ADR-023](C:/HAL/MyEngin/docs/adr/ADR-023-navmesh.md)。
 
 ## 10. 入力・ゲーム内 UI・ゲーム進行
 
@@ -360,7 +378,7 @@ Build Settings は、スクリプト再ビルド、クックの準備、Runtime 
 
 | 項目 | 調査時の判定 |
 |---|---|
-| ABI v16 / 110 スロットという README 記述 | 現行コードは v18。公開関数一覧はリファレンス参照 |
+| ABI v16 / 110 スロットという README 記述 | 現行コードは v24 / 139 スロット (M82i)。公開関数一覧はリファレンス参照 |
 | 未登録コンポーネントの保存消失 | 現行は未登録 JSON を保持する実装あり。古い未解決扱いを転記しない |
 | ハイスコアだけの読込ができない | `LoadPersist` が実装済み |
 | Skybox cubemap が未実装 | 実装済み。旧記録側の誤り |

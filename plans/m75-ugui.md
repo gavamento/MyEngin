@@ -80,6 +80,8 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
 
 ### G. ABI v19 (M75h、1 回)
 - (2026-09-15: v18 は M75 の外で IsDevelopmentRun 1 本が使ったので、ここは v19 へ繰り下げ)
+- (2026-10-04: v19〜v23 は M75 の外で使われ、**v24 = 139 スロットは M82 (NavMesh、8 本) が使った**。**M75h の ABI は v25**。スロット数は着手時の `EngineAPI.h` /
+  `check_rules.ps1` の `$apiVersionSlots` から数え直す。上の「v19 / 112 → 124」は計画時の値)
 - 12 スロット追加 (112 → 124、`check_rules.ps1` の `$apiVersionSlots` に `19 = 124`): `SetRectTransform(id, const MyeRectTransform*)` / `SetToggle` / `GetToggle` (-1 = 非所持) / `SetSlider` / `GetSlider` / `SetScroll` / `GetScroll` / `SetDropdown` / `GetDropdown` / `SetInputText` / `GetInputText(id, buf, cap)` (GetSceneName 規約) / `SetInteractable`。`UIButtonState` に bit4 `kDragging` / bit5 `kValueChanged` (スロット不変)。
 - 線引き: ハッシュ対象のウィジェット状態は**読める** (Get 5 本は C# へも公開)。UIElement/RectTransform/Selectable の見た目は write-only のまま (GetRectTransform は作らない)。**C# からは Set* を全部閉じる** (`MyeScript.cs:83-93` の SetUIRect と同じ理由)。`Interop.cs` は位置ミラーなので 12 本並べる。外部プロジェクト (HAL Collector) は Rebuild Scripts が要る。
 
@@ -330,6 +332,8 @@ Canvas Scaler は Expand (1920x1080 固定) のみ、Layout Group もウィジ�
 - **TypeId は 67 UIScrollbar / 68 UIScrollRect / 69 UIDropdown / 70 UIDropdownItem** (計画の 59〜61 は M76f / M80 / RT の
   末尾 append の後ろへずれた。ModalSound 61・Tag 62・WaterWave 63・Destructible 64・FracturePiece 65・RayTracing 66)。
   ★実行時のスキーマ型 (`Health` など) はこの後ろ = 71〜 に振られる。**M75h の InputField は 71** で、スキーマ型がまた 1 つずれる。
+  ★★**2026-10-04 追記: TypeId 71〜75 は M82 (NavMesh) が使った** (71 NavMeshSurface / 72 NavMeshAgent / 73 NavMeshObstacle / 74 NavMeshModifier /
+  75 NavMeshLink)。**M75h の InputField は 76 以降**で、実行時のスキーマ型はその後ろ。
   ハッシュ: Scrollbar / ScrollRect / Dropdown は対象 (UiAux だけ)、DropdownItem は NoHash + UiAux。
 - **計画 M75b の宿題「wheelDelta / mouseDelta をフレーム頭で消費」は M75g の前に解決済み** (`b4a35c0` の `PointerDeltaCarry`:
   実際に回った tick へ 1 回だけ渡す)。ScrollRect はそのまま InputSnapshot.wheelDelta を読む。
