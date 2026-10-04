@@ -98,7 +98,7 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 - Surface のインスペクタ: ベイク設定、`Bake` / `Clear`、ベイク中の進捗とキャンセル、結果の要約 (タイル数・ポリゴン数・所要時間)、表示切り替え (NavMesh / タイル境界 / Link / Obstacle / 経路)。寸法の不整合 (Agent / CC が Surface より大きい) を警告。
 - SceneView ギズモ: Surface の範囲箱 (sub-04)、Obstacle の形 (sub-05)、Modifier の箱 (sub-06)、Link の 2 点と矢印 (sub-07)。
 - NavMesh の表示は**編集中 (非 Play) の SceneView にも出る** (2. #18、sub-04)。Bake 直後に Play せず結果を確認できること。
-- デバッグ描画は Runtime でも出せる (`debugLines` 経路 + 新設の三角形レーン、resim 中は積まない)。**NavMesh は半透明の塗り (エリア色、Unity 風) + 輪郭線**。床と Z ファイトしない。NavMesh が変わらない tick では三角形を作り直さない。golden `nav` (`--nav-demo` の固定 tick、表示 on) を `shot_verify` に載せる。
+- デバッグ描画は Runtime でも出せる。NavMesh 本体 (塗り + 輪郭 + タイル境界) は**描画フレーム側の表示レーン** (`NavDebugView` → `RenderSystem::navView` → `NavFillPass` / 線パス) で出す。sim の tick に頼らないので編集中も同じ経路になり、resim の影響も受けない (sub-04 で tick レーンから変更)。Agent の経路線は従来どおり tick の `debugLines` (resim 中は積まない)。Play 中に Obstacle などで実行時に変わった NavMesh を表示へ反映するのは sub-05。**NavMesh は半透明の塗り (エリア色、Unity 風) + 輪郭線**。床と Z ファイトしない。NavMesh が変わらない tick では三角形を作り直さない。golden `nav` (`--nav-demo` の固定 tick、表示 on) を `shot_verify` に載せる。
 - 文字列は全部 `LocalizationTable.inl` (en / ja)。
 
 ### 4.4 非機能
@@ -179,6 +179,10 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 ## 8. 変更履歴
 
 (確定後の変更のみ)
+
+- 2026-10-04 / 出所: coder SELF_EVAL sub-04 round 1 (planner VERDICT OK)
+  - 4.3: NavMesh 本体の表示を『sim → 描画の三角形レーン』から『描画フレーム側の NavDebugView』に変更 (coder の逸脱を採用)。理由: 編集中の表示 (2. #18) と Play 中の表示が 1 経路になる。sub-02 で NavSystem にあった輪郭線もこちらへ移った。代わりに、実行時の TileCache の変更 (Obstacle など) は NavDebugView から見えない。反映は sub-05 の やること 8 に追加。
+  - R7 (WARP の半透明) は、開発機の WARP で golden `nav` を撮り、tol=3、`MYE_SHOT_SKIP_NAV` の囲いだけ用意する形で決着。CI の WARP での一致は未確認 (赤くなったら ci.yml に 1 行足す)。
 
 - 2026-10-04 / 出所: coder SELF_EVAL sub-10 round 2 (planner VERDICT OK)
   - 2. #20 の補足: cellHeight の自動値は、目標 max(0.02, min(cs/2, maxClimb/6)) を『maxClimb がちょうど整数セルになる分割数』に丸め、×0.9999 で floor の落とし穴を避ける。単純な maxClimb/6 では急な坂の設定で 1 セル欠ける (60 度が 56 度) のを SelfTest で検出したため。

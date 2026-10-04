@@ -23,6 +23,7 @@
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AgentSystem.h" // M65f: 敵の思考 (実体はここが持つ)
+#include "Engine/Engine/Navigation/NavDebugDraw.h" // M82e: ナビメッシュの塗り・輪郭
 #include "Engine/Engine/Navigation/NavSystem.h" // M82b: ナビメッシュ (実体はここが持つ)
 #include "Engine/Engine/Audio/Playback/AudioMixer.h"
 #include "Engine/Engine/Audio/Playback/AudioSourceSystem.h"
@@ -157,6 +158,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     AgentSystem agentSystem;
     // M82b: ナビメッシュ。ナビメッシュ本体は .mnav から作る導出値、dtCrowd とスロット表は sim 状態 (SimSnapshot の Nav 節)
     NavSystem navSystem;
+    // M82e: ナビメッシュの表示用ジオメトリ (塗り・輪郭)。sim ではなく描画フレームごとに更新する出力レーン。
+    // tick を回さない編集中の SceneView にも出すため NavSystem とは別に持つ
+    NavDebugView navDebugView;
     std::vector<SolidContact> solidContacts; // 物理→衝突イベントの tick 内受け渡し (M28c)
     PrefabLibrary prefabLibrary;
     AnimationLibrary animLibrary;
@@ -2729,6 +2733,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 : 1.0f;
             renderSystem.prevWorld = &prevWorld;
             renderSystem.debugLines = &debugLines; // v7 DebugDrawLine (M37)
+            // M82e: 表示用のナビメッシュはフレームごとに最新にする (Surface が無ければ走査だけ)。
+            // OnRenderViews の前に置く = 編集中の SceneView も Bake 直後の絵になる
+            navDebugView.Refresh(scene.GetWorld());
+            renderSystem.navView = &navDebugView;
 
             app.OnRenderViews(ctx); // エディタの SceneView / GameView (独自 RT)
 

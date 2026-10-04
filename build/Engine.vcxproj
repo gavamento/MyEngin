@@ -118,6 +118,7 @@
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavAgentSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavBake.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavBakeInput.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Navigation\NavDebugDraw.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavDeterminismSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavMeshAsset.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavSurfaceSelfTest.cpp" />
@@ -250,6 +251,7 @@
     <ClCompile Include="..\src\Engine\Renderer\Passes\FroxelPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\GhostMeshPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\HzbPass.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Passes\NavFillPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\PickingPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\ShadowAtlas.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\ShadowPass.cpp" />
@@ -391,6 +393,7 @@
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavAgentSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavBake.h" />
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavBakeInput.h" />
+    <ClInclude Include="..\src\Engine\Engine\Navigation\NavDebugDraw.h" />
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavDeterminismSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavMeshAsset.h" />
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavSurfaceSelfTest.h" />
@@ -535,6 +538,7 @@
     <ClInclude Include="..\src\Engine\Renderer\Passes\FroxelPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\GhostMeshPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\HzbPass.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Passes\NavFillPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\PickingPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\ShadowAtlas.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\ShadowPass.h" />

@@ -21,6 +21,7 @@
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Navigation/NavBake.h"
+#include "Engine/Engine/Navigation/NavDebugDraw.h"
 #include "Engine/Engine/Physics/Collider/ConvexColliderLibrary.h"
 #include "Engine/Engine/Physics/Collider/ConvexHull.h"
 #include "Engine/Engine/Physics/Collider/MeshColliderLibrary.h"
@@ -543,19 +544,61 @@ bool RunNavSurfaceSelfTest()
         ck.Check(nav.Surfaces().size() == 1 && nav.Surfaces()[0].state == NavSurfaceState::Loaded
                      && nav.Surfaces()[0].polyCount == bake.polyCount,
                  "navAsset を設定すると読み込まれ、ポリゴン数がベイク結果と一致する");
+        // Agent の経路線は NavSystem、ナビメッシュの輪郭・塗りは NavDebugView (M82e)。Agent が居なければ経路線は出ない
         std::vector<DebugLineCmd> lines;
         nav.AppendDebugLines(rtWorld, lines);
-        const size_t outlineCount = lines.size();
+        ck.Check(lines.empty(), "Agent が居ない Surface では NavSystem の線は出ない");
+
+        auto* drawFlags = rtWorld.GetComponent<NavMeshSurfaceComponent>(rtSurface);
+        NavDebugView view;
+        view.Refresh(rtWorld);
+        const size_t outlineCount = view.Lines().size();
+        const size_t fillCount = view.FillVertices().size();
         ck.Check(outlineCount > 0, "輪郭の線が出る");
-        lines.clear();
-        rtWorld.GetComponent<NavMeshSurfaceComponent>(rtSurface)->drawTileBounds = true;
-        nav.AppendDebugLines(rtWorld, lines);
-        ck.Check(lines.size() > outlineCount, "タイル境界を有効にすると線が増える");
-        lines.clear();
-        rtWorld.GetComponent<NavMeshSurfaceComponent>(rtSurface)->drawNavMesh = false;
-        rtWorld.GetComponent<NavMeshSurfaceComponent>(rtSurface)->drawTileBounds = false;
-        nav.AppendDebugLines(rtWorld, lines);
-        ck.Check(lines.empty(), "表示フラグを切ると線が出ない");
+        ck.Check(fillCount > 0 && fillCount % 3 == 0, "塗りの三角形が出る (3 頂点ずつ)");
+        bool fillOk = true;
+        for (const DebugFillVertex& v : view.FillVertices()) {
+            fillOk = fillOk && v.a > 0.0f && v.a < 1.0f && v.b > 0.9f; // 既定のエリア 0 は水色 (b が強い)
+        }
+        ck.Check(fillOk, "塗りは半透明で、エリア 0 は水色");
+        ck.Check(view.GetStats().rebuildCount == 1 && view.GetStats().loadCount == 1, "最初の Refresh で 1 回だけ作る");
+        for (int i = 0; i < 100; ++i) {
+            view.Refresh(rtWorld);
+        }
+        ck.Check(view.GetStats().rebuildCount == 1 && view.GetStats().refreshCount == 101,
+                 "構成が変わらないフレームでは三角形を作り直さない (101 回呼んで作り直し 1 回)");
+
+        const uint64_t serialBefore = view.FillSerial();
+        drawFlags->drawTileBounds = true;
+        view.Refresh(rtWorld);
+        ck.Check(view.Lines().size() > outlineCount, "タイル境界を有効にすると線が増える");
+        ck.Check(view.FillSerial() != serialBefore && view.GetStats().rebuildCount == 2 && view.GetStats().loadCount == 1,
+                 "表示フラグを変えると作り直すが、.mnav は読み直さない");
+        drawFlags->drawNavMeshFill = false;
+        view.Refresh(rtWorld);
+        ck.Check(view.FillVertices().empty() && !view.Lines().empty(), "塗りだけを切ると三角形は出ず、線は残る");
+        drawFlags->drawNavMeshFill = true;
+        drawFlags->drawNavMesh = false;
+        drawFlags->drawTileBounds = false;
+        view.Refresh(rtWorld);
+        ck.Check(view.Lines().empty() && view.FillVertices().size() == fillCount, "輪郭を切ると線は出ず、塗りは残る");
+        drawFlags->drawNavMeshFill = false;
+        view.Refresh(rtWorld);
+        ck.Check(view.Lines().empty() && view.FillVertices().empty(), "表示フラグを全部切ると何も出ない");
+        drawFlags->drawNavMesh = true;
+        drawFlags->drawNavMeshFill = true;
+        drawFlags->navAsset = AssetID{ kTestAssetGuid + 1 };
+        view.Refresh(rtWorld);
+        ck.Check(view.Lines().empty() && view.FillVertices().empty(), "読めない GUID の Surface は何も出さず、落ちない");
+        drawFlags->navAsset = AssetID{ kTestAssetGuid };
+        view.Refresh(rtWorld);
+        ck.Check(view.FillVertices().size() == fillCount, "元の資産に戻すと塗りが戻る");
+        Scene bareView;
+        NavDebugView viewBare;
+        viewBare.Refresh(bareView.GetWorld());
+        ck.Check(viewBare.GetStats().rebuildCount == 0 && viewBare.FillVertices().empty(),
+                 "Surface が無いシーンでは何も作らない");
+
         const NavTileStore* before = nav.Surfaces()[0].store.get();
         nav.Update(rtWorld, kNavTestDt);
         ck.Check(nav.Surfaces()[0].store.get() == before, "構成が変わらない tick では読み直さない");

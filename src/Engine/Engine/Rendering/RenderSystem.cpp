@@ -17,6 +17,7 @@
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Acoustic/AcousticField.h" // M65d: 残光ボリュームの転送元
 #include "Engine/Engine/Physics/Fracture/FractureSystem.h" // M80g: root proxy の可視規則を FractureSystem と共有
+#include "Engine/Engine/Navigation/NavDebugDraw.h" // M82e: ナビメッシュの塗り・輪郭
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Physics/Ragdoll/Ragdoll.h" // M60g1: 剛体が骨を駆動しているときのパレット
 #include "Engine/Engine/Animation/SkinningSystem.h" // M18 追補: クロスフェード込みのポーズ評価
@@ -1799,16 +1800,36 @@ void RenderSystem::DrawParticlesAndDebug(World& world, GraphicsDevice& device, S
         }
     }
 
+    // ナビメッシュの半透明の塗り (M82e)。線より先 (塗りの上に輪郭と経路線が乗る)。
+    // 空のシーンではパスを Init もしない
+    if (navView != nullptr && !navView->FillVertices().empty()) {
+        if (!navFillPass_.IsReady()) {
+            navFillPass_.Init(device, shaders);
+        }
+        static_assert(sizeof(DebugFillVertex) == NavFillPass::kVertexStride);
+        navFillPass_.Render(device, shaders, navView->FillVertices().data(),
+                            static_cast<uint32_t>(navView->FillVertices().size()), navView->FillSerial(), view.rtv,
+                            view.dsv, target.width, target.height, view.view, view.proj);
+    }
+
     // スクリプトの DebugDrawLine (v7、M37): シーン空間の線を深度テスト付きで重ねる。
-    // ポスプロ解決前 = HDR 中間 (直描き時は最終 RT) に描く
-    if (debugLines != nullptr && !debugLines->empty()) {
+    // ポスプロ解決前 = HDR 中間 (直描き時は最終 RT) に描く。ナビメッシュの輪郭線も同じ線パスで描く
+    const bool hasNavLines = navView != nullptr && !navView->Lines().empty();
+    if ((debugLines != nullptr && !debugLines->empty()) || hasNavLines) {
         if (!linePass_.IsReady()) {
             linePass_.Init(device, shaders); // 遅延 Init (postFx_ 前例)
         }
         if (linePass_.IsReady()) {
             linePass_.Begin();
-            for (const DebugLineCmd& l : *debugLines) {
-                linePass_.AddLine({ l.ax, l.ay, l.az }, { l.bx, l.by, l.bz }, l.rgba, false);
+            if (hasNavLines) {
+                for (const DebugLineCmd& l : navView->Lines()) {
+                    linePass_.AddLine({ l.ax, l.ay, l.az }, { l.bx, l.by, l.bz }, l.rgba, false);
+                }
+            }
+            if (debugLines != nullptr) {
+                for (const DebugLineCmd& l : *debugLines) {
+                    linePass_.AddLine({ l.ax, l.ay, l.az }, { l.bx, l.by, l.bz }, l.rgba, false);
+                }
             }
             linePass_.Render(device, shaders, view.rtv, view.dsv, target.width, target.height,
                              view.view, view.proj);

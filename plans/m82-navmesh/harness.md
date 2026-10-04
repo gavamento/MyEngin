@@ -10,8 +10,8 @@
 | sub-01 | OK | 1 | 9944784 | Recast vendor + ビット一致・復元方式の試作 (M82a) |
 | sub-02 | OK | 1 | b310244 | NavMeshSurface + .mnav ベイク + 輪郭描画 (M82b) |
 | sub-03 | OK | 1 | aa677a6 | NavMeshAgent + dtCrowd + SimSnapshot (M82c) |
-| sub-10 | OK | 2 | (M82d) | CC の stepOffset + セルサイズ自動決定で傾斜・段差を設定どおりに (M82d、sub-03 の次に実行) |
-| sub-04 | 未着手 | 0 | | 半透明の塗り + golden nav (M82e) |
+| sub-10 | OK | 2 | f54440f | CC の stepOffset + セルサイズ自動決定で傾斜・段差を設定どおりに (M82d、sub-03 の次に実行) |
+| sub-04 | OK | 1 | (M82e) | 半透明の塗り + golden nav (M82e) |
 | sub-05 | 未着手 | 0 | | NavMeshObstacle (M82f) |
 | sub-06 | 未着手 | 0 | | NavMeshModifier + エリアコスト (M82g) |
 | sub-07 | 未着手 | 0 | | NavMeshLink (M82h) |
@@ -54,5 +54,6 @@
 - (planner) 外部プロジェクトの既存問題 (M82 の範囲外、着手前 HEAD から同じ): 三校の `tools\verify.bat` は shot の golden 不一致と『敵が巡回を出ない』の 2 件で FAIL する。三校と HAL Collector の `cache\GameLogic.dll` は v22 のままで、エンジン v23 では読み込めなかった。sub-10 の coder が三校の `cache\GameLogic.dll` (git 管理外) を焼き直した (司会の指示の範囲外。ユーザーへの報告は司会)
 - (planner 2026-10-04) stepOffset は |scale.y| 倍 (ユーザー回答、spec 2. #21)。そのため `--acoustic-demo` の Agent Eye が衝撃板に乗るようになる。acoustic_forward / acoustic_deferred の golden は着手前から FAIL しているので、M82 では撮り直さない。将来撮り直すときは、この挙動の変化も含まれることを確認すること
 - (planner 2026-10-04 sub-10 VERDICT round 2 = OK) reviewer が見ること: 段差を登る tick の見た目の跳び (0.13〜0.16 m / tick)、Inspector の Surface 行に折り返しを足した後の画像 (`cache\s10\insp_surface3.png`、未確認)。acoustic の golden は Agent Eye の乗り上がりを守らない (撮影の範囲に写らない)。作業ファイルに `cache\probe0_rel\` が追加された
+- (planner 2026-10-04 sub-04 VERDICT OK) NavMesh の表示は描画フレーム側の NavDebugView (編集中も Play 中も同じ経路)。実行時の変化の表示と Inspector の誤警告は sub-05 の やること 8 / 9 へ。reviewer が見ること: Bake ボタンを押した直後に SceneView が更新されるか。`MYE_SHOT_SKIP_NAV` は ci.yml にまだ無い (CI の WARP で赤くなったら足す)。作業ファイルに `cache\s04\` が追加された
 - (planner) 削除の承認待ちの作業ファイル: `C:\HAL\MyEngin\cache\s10\` (26 MB) と `C:\HAL\MyEngin\cache\base10_rel\` (37 MB)。round 2 で着手前の基準として再利用できるので、sub-10 が OK になるまで残す
 - (planner) sub-01 の結論 (復元方式 a/b/c) で sub-03 以降の SimSnapshot の形が決まる。sub-01 の VERDICT 時に spec 4.4 を確定させる

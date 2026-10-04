@@ -15,6 +15,7 @@
 #include "Engine/Renderer/Passes/EditorLinePass.h"
 #include "Engine/Renderer/Passes/EnvMapBaker.h"
 #include "Engine/Renderer/Passes/FroxelPass.h"
+#include "Engine/Renderer/Passes/NavFillPass.h"
 #include "Engine/Renderer/PostFx/PostProcess.h"
 #include "Engine/Renderer/PostFx/ProjectEffectRunner.h" // M78c: fxstack 駆動ユーザーポスト
 #include "Engine/Renderer/Compute/ProjectComputeRunner.h" // M78d: fxstack 駆動ユーザーコンピュート
@@ -35,6 +36,7 @@ class ShaderManager;
 class AcousticField;
 class ParticleSystem;
 class VfxRenderer;
+class NavDebugView;
 struct RenderResources;
 struct Texture;
 class TextureLibrary;
@@ -150,6 +152,10 @@ public:
     // スクリプトの DebugDrawLine (v7、M37)。EngineLoop が接続。非 null かつ非空で
     // シーン描画後 (ポスプロ解決前) に深度テスト付きの線として重ねる
     const std::vector<DebugLineCmd>* debugLines = nullptr;
+
+    // M82e: ナビメッシュの表示 (半透明の塗り + 輪郭線)。EngineLoop が接続し、描画フレームごとに
+    // 更新する (sim の tick とは無関係なので、編集中の SceneView にも出る)。null / 空なら何も呼ばない
+    const NavDebugView* navView = nullptr;
 
     // M46b: レイトレのデバッグ表示 (Deferred のみ)。0 = off、値の意味は RenderTypes.h の rtDebugMode の凡例が正本。
     // BVH の構築と転送は、これが非 0 か RT のレーン (GI / 影 / 反射) のどれかが有効なときに走る
@@ -373,6 +379,7 @@ private:
     AcousticVolumePass acousticPass_;
     bool acousticSupplied_ = false; // 直近フレームで SRV を供給できたか (統計表示用)
     EditorLinePass linePass_; // DebugDrawLine 用 (v7、遅延 Init)
+    NavFillPass navFillPass_; // ナビメッシュの塗り (M82e、遅延 Init)
     EnvMapBaker envBaker_;    // IBL 環境マップ (M38c、lazy ベイク + キャッシュ)
     // スキンメッシュのボーンパレット (M18)。フレーム毎に再構築。deque = push_back で
     // 既存要素の .data() ポインタが無効化されない (RenderItem.bones が参照する)

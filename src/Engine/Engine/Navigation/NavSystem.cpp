@@ -11,9 +11,7 @@
 #include <cstdio>
 #include <cstring>
 
-#include "DebugDraw.h"
 #include "DetourCommon.h"
-#include "DetourDebugDraw.h"
 #include "Engine/Core/Asset/AssetGuidResolver.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
@@ -45,17 +43,12 @@ int NavSurfaceRuntime::OccupiedSlots() const
 
 namespace {
 
-// 床と Z ファイトしないための持ち上げ (m)
-constexpr float kOutlineLift = 0.03f;
+// 経路線を床と Z ファイトさせないための持ち上げ (m)
+constexpr float kPathLift = 0.03f;
 // 0xRRGGBBAA (DebugLineCmd と同じ並び)
-constexpr uint32_t kBoundaryColor = 0x40E8FFFFu;
-constexpr uint32_t kInnerEdgeColor = 0x40E8FF60u;
-constexpr uint32_t kTileBoundColor = 0xFFC040C0u;
 constexpr uint32_t kPathMovingColor = 0x60FF60FFu;
 constexpr uint32_t kPathArrivedColor = 0x80C0FFFFu;
 constexpr uint32_t kPathNoPathColor = 0xFF4040FFu;
-// DebugUtils が外周を太い線 (2.5)、内側の辺を細い線 (1.5) で描くことを見分けに使う
-constexpr float kBoundaryWidthMin = 2.0f;
 
 // dtCrowd の容量 (Surface ごと)。超えた Agent はエンティティキーの後ろから Inactive
 constexpr int kCrowdCapacity = 128;
@@ -103,97 +96,14 @@ const char* ReasonText(int reason)
     }
 }
 
-// DebugUtils の duDebugDraw を DebugLineCmd へ流す。M82b は輪郭の線だけを使うので、
-// 三角形・四角形・点は捨てる (塗りは M82d)
-class LineCollector final : public duDebugDraw {
-public:
-    explicit LineCollector(std::vector<DebugLineCmd>& out) : out_(out) {}
-
-    void depthMask(bool) override {}
-    void texture(bool) override {}
-
-    void begin(duDebugDrawPrimitives prim, float size) override
-    {
-        collecting_ = prim == DU_DRAW_LINES;
-        color_ = size >= kBoundaryWidthMin ? kBoundaryColor : kInnerEdgeColor;
-        pending_ = 0;
-    }
-
-    void vertex(const float* pos, unsigned int) override { Push(pos[0], pos[1], pos[2]); }
-    void vertex(const float x, const float y, const float z, unsigned int) override { Push(x, y, z); }
-    void vertex(const float* pos, unsigned int, const float*) override { Push(pos[0], pos[1], pos[2]); }
-    void vertex(const float x, const float y, const float z, unsigned int, const float, const float) override
-    {
-        Push(x, y, z);
-    }
-
-    void end() override
-    {
-        collecting_ = false;
-        pending_ = 0;
-    }
-
-private:
-    void Push(float x, float y, float z)
-    {
-        if (!collecting_) {
-            return;
-        }
-        if (pending_ == 0) {
-            first_[0] = x;
-            first_[1] = y + kOutlineLift;
-            first_[2] = z;
-            pending_ = 1;
-            return;
-        }
-        DebugLineCmd cmd;
-        cmd.ax = first_[0];
-        cmd.ay = first_[1];
-        cmd.az = first_[2];
-        cmd.bx = x;
-        cmd.by = y + kOutlineLift;
-        cmd.bz = z;
-        cmd.rgba = color_;
-        out_.push_back(cmd);
-        pending_ = 0;
-    }
-
-    std::vector<DebugLineCmd>& out_;
-    bool collecting_ = false;
-    uint32_t color_ = kBoundaryColor;
-    int pending_ = 0;
-    float first_[3] = {};
-};
-
-void AddRect(std::vector<DebugLineCmd>& out, const float* bmin, const float* bmax)
-{
-    const float y = bmin[1] + kOutlineLift;
-    const float x0 = bmin[0];
-    const float x1 = bmax[0];
-    const float z0 = bmin[2];
-    const float z1 = bmax[2];
-    const float corners[4][2] = { { x0, z0 }, { x1, z0 }, { x1, z1 }, { x0, z1 } };
-    for (int i = 0; i < 4; ++i) {
-        DebugLineCmd cmd;
-        cmd.ax = corners[i][0];
-        cmd.ay = y;
-        cmd.az = corners[i][1];
-        cmd.bx = corners[(i + 1) % 4][0];
-        cmd.by = y;
-        cmd.bz = corners[(i + 1) % 4][1];
-        cmd.rgba = kTileBoundColor;
-        out.push_back(cmd);
-    }
-}
-
 void AddLine(std::vector<DebugLineCmd>& out, const float* a, const float* b, uint32_t rgba)
 {
     DebugLineCmd cmd;
     cmd.ax = a[0];
-    cmd.ay = a[1] + kOutlineLift;
+    cmd.ay = a[1] + kPathLift;
     cmd.az = a[2];
     cmd.bx = b[0];
-    cmd.by = b[1] + kOutlineLift;
+    cmd.by = b[1] + kPathLift;
     cmd.bz = b[2];
     cmd.rgba = rgba;
     out.push_back(cmd);
@@ -402,10 +312,7 @@ void NavSystem::Load(NavSurfaceRuntime& surface, const char* name)
         }
         ++surface.tileCount;
         surface.polyCount += tile->header->polyCount;
-        AddRect(surface.tileBoundLines, tile->header->bmin, tile->header->bmax);
     }
-    LineCollector collector(surface.outlineLines);
-    duDebugDrawNavMesh(&collector, *nav, 0);
 
     surface.store = std::move(store);
     surface.query = std::move(query);
@@ -872,12 +779,6 @@ void NavSystem::AppendDebugLines(World& world, std::vector<DebugLineCmd>& out) c
         const auto* comp = world.GetComponent<NavMeshSurfaceComponent>(surface.entity);
         if (comp == nullptr) {
             continue;
-        }
-        if (comp->drawNavMesh) {
-            out.insert(out.end(), surface.outlineLines.begin(), surface.outlineLines.end());
-        }
-        if (comp->drawTileBounds) {
-            out.insert(out.end(), surface.tileBoundLines.begin(), surface.tileBoundLines.end());
         }
         if (!comp->drawAgentPaths) {
             continue;

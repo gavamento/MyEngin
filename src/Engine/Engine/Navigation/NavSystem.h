@@ -55,10 +55,6 @@ struct NavSurfaceRuntime {
     int layerCount = 0;
     int tileCount = 0;
     int polyCount = 0;
-    // 描画用の線 (ワールド座標)。読み込み時に 1 回だけ作る。NavMesh が変わらない tick では作り直さない
-    std::vector<DebugLineCmd> outlineLines;
-    std::vector<DebugLineCmd> tileBoundLines;
-
     int OccupiedSlots() const;
 };
 
@@ -85,7 +81,8 @@ public:
     // 旧シーンの NavMesh を捨てる (シーン遷移)。次の Update が読み直す
     void Reset();
 
-    // 表示フラグの立った Surface の線を out へ足す。描画レーン (sim 状態に触れない)
+    // drawAgentPaths の立った Surface の Agent の経路線を out へ足す。描画レーン (sim 状態に触れない)。
+    // ナビメッシュ自体の輪郭・塗りは NavDebugView (NavDebugDraw.h) が持つ
     void AppendDebugLines(World& world, std::vector<DebugLineCmd>& out) const;
 
     // ---- SimSnapshot の Nav 節 ----

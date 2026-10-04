@@ -1898,10 +1898,11 @@ struct NavMeshSurfaceComponent {
     float areaCosts[kNavAreaCount] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
                                        1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
     AssetID navAsset = {};       // .mnav (null = 未ベイク)
-    bool drawNavMesh = true;     // 輪郭と範囲の描画 (kFieldNoHash)
+    bool drawNavMesh = true;     // 輪郭の描画 (kFieldNoHash)
     bool drawTileBounds = false; // タイル境界の描画 (kFieldNoHash)
     bool drawAgentPaths = true;  // この Surface の Agent の経路 (コリドーの角) の描画 (kFieldNoHash、M82c)
     bool autoCellSize = true;    // true: セルを agentRadius / maxClimb / maxSlopeDeg から決める (NavResolveCellSize)
+    bool drawNavMeshFill = true; // 半透明の塗りの描画 (kFieldNoHash、M82e)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

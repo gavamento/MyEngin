@@ -22,6 +22,7 @@
 #include "Engine/Engine/Audio/Playback/SoundAsset.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Animation/Parts.h"
+#include "Engine/Engine/Navigation/NavBakeInput.h" // M82e: Surface の範囲箱 (NavMakeBakeConfig)
 #include "Engine/Engine/Physics/Collider/ConvexHull.h" // M60f: shape=5 のワイヤ表示
 #include "Engine/Engine/Acoustic/AcousticDebugDraw.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsDebugDraw.h"
@@ -407,6 +408,7 @@ constexpr uint32_t kAudioMax = 0x2080A0FFu;   // maxDistance (ここから先は
 constexpr uint32_t kPartBone = 0xF060C0FFu;   // 部位: ボーン追従あり (マゼンタ)
 constexpr uint32_t kPartStatic = 0x8080A0FFu; // 部位: 静的ソケット (くすんだ青灰)
 constexpr uint32_t kProbeBox = 0x60C0FFFFu;   // 反射プローブ (水色)
+constexpr uint32_t kNavSurface = 0x30D8C0FFu; // NavMeshSurface のベイク範囲 (青緑)
 constexpr uint32_t kSelection = 0xFFA030FFu;  // 選択アウトライン
 
 constexpr float kLightMarkerRadius = 0.3f;
@@ -469,6 +471,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         DrawPartSocketGizmos(world);
         DrawPartBoundsGizmos(world);
         DrawReflectionProbeGizmos(world);
+        DrawNavSurfaceGizmos(world);
     }
 
     DrawSelectionOutline(ctx, world, selection);
@@ -816,6 +819,18 @@ void SceneViewWindow::DrawReflectionProbeGizmos(World& world)
                                 std::fabs(rp.extents.z) },
                               gizmo::kProbeBox);
             lines_.AddWireSphere({ wm._41, wm._42, wm._43 }, gizmo::kProbePointRadius, gizmo::kProbeBox); // 撮影点
+        });
+}
+
+// NavMeshSurface のベイク範囲 (M82e)。ベイクが実際に使うのはローカル箱をワールドへ送った AABB なので、
+// 箱ではなくその AABB を描く (NavMakeBakeConfig と同じ計算 = 描いた範囲と焼く範囲がずれない)
+void SceneViewWindow::DrawNavSurfaceGizmos(World& world)
+{
+    ForEachWithWorldMatrix<NavMeshSurfaceComponent>(
+        world, [&](const NavMeshSurfaceComponent& surface, const XMFLOAT4X4& wm, EntityID) {
+            const NavBakeConfig bake = NavMakeBakeConfig(surface, wm);
+            lines_.AddAABB({ bake.boundsMin[0], bake.boundsMin[1], bake.boundsMin[2] },
+                           { bake.boundsMax[0], bake.boundsMax[1], bake.boundsMax[2] }, gizmo::kNavSurface);
         });
 }
 

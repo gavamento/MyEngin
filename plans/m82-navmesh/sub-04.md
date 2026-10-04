@@ -1,8 +1,8 @@
 # sub-04: NavMesh の半透明の塗り (エリア色) と golden `nav`
 
 - 依存: sub-10 (sub-03 の後に sub-10 を挟む)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (コミット待ち)
+- 往復: 1
 
 ## やること
 spec 2. #13 (Q4 のユーザー回答で範囲入り)、4.3 (塗り)、受け入れ条件 17。
@@ -39,4 +39,12 @@ spec 2. #13 (Q4 のユーザー回答で範囲入り)、4.3 (塗り)、受け入
 
 ## 実装メモ (coder が追記)
 
+### round 1
+- 経路: 塗り・輪郭・タイル境界は新設の `NavDebugView` (NavDebugDraw.h/.cpp) が `.mnav` から自前で読んで作る。EngineLoop が描画フレームごとに `Refresh(world)` を呼び (OnRenderViews の前)、`RenderSystem::navView` 経由で `DrawParticlesAndDebug` が `NavFillPass` (塗り) → `EditorLinePass` (輪郭、既存の線パス) の順に描く。ForwardPath / DeferredPath の両方が `DrawParticlesAndDebug` を通る。
+- Surface の構成 (entity, navAsset, 表示フラグ 3 種) が前回と同じなら何も作り直さない。作り直し回数と所要時間は `[nav] debug view rebuilt (#N)` のログと `GetStats()`。
+- 新パスは editor_line.hlsl を流用 (位置 + 色をそのまま出す) = 新シェーダ・.meta 無し。床とは持ち上げ (塗り 2 cm / 線 3 cm) + 傾斜つき深度バイアス -1.5 で Z ファイトを避ける。
+- golden `nav` = `--nav-demo` frame 120、tol=3、`MYE_SHOT_SKIP_NAV` の囲い付き。Agent の経路線は golden に含める (3d の決定、下記)。
+- 検証結果 (Release/Debug/shot_verify/replay_verify/check_rules/画像) は SELF_EVAL を参照。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-10-04)。描画フレーム側のレーンへの逸脱を採用した (spec 4.3)。経路線を golden に含めること、tol=3、`MYE_SHOT_SKIP_NAV` の囲いも採用。should: Bake ボタンを実際に押した直後に、編集中の SceneView の表示が更新されるかは reviewer が観察する (SelfTest で GUID を差し替えて確認済みで、GUI 操作は未観測)。実行時の NavMesh の変化の表示は sub-05 の やること 8 へ。nit: `--nav-demo` の Inspector で『.mnav を読めない』と誤った警告が出る (メモリ上の資産を見ていない) → sub-05 の やること 9 へ。

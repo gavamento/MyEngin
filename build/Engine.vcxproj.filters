@@ -504,6 +504,9 @@
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavBakeInput.cpp">
       <Filter>Engine\Navigation</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Navigation\NavDebugDraw.cpp">
+      <Filter>Engine\Navigation</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavDeterminismSelfTest.cpp">
       <Filter>Engine\Navigation</Filter>
     </ClCompile>
@@ -898,6 +901,9 @@
       <Filter>Renderer\Passes</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Passes\HzbPass.cpp">
+      <Filter>Renderer\Passes</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\NavFillPass.cpp">
       <Filter>Renderer\Passes</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Passes\PickingPass.cpp">
@@ -1321,6 +1327,9 @@
       <Filter>Engine\Navigation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavBakeInput.h">
+      <Filter>Engine\Navigation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Navigation\NavDebugDraw.h">
       <Filter>Engine\Navigation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavDeterminismSelfTest.h">
@@ -1753,6 +1762,9 @@
       <Filter>Renderer\Passes</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Passes\HzbPass.h">
+      <Filter>Renderer\Passes</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\NavFillPass.h">
       <Filter>Renderer\Passes</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Passes\PickingPass.h">

@@ -17,6 +17,9 @@ spec 4.1 (Obstacle、Tick の順序 (1))。
 
 7. (sub-10 VERDICT、spec 2. #20) **詰まり検出**: `Moving` の Agent が、経路の残り距離を一定 tick (名前付き定数。例: 60 tick) の間に一定量 (例: radius の 1/4) 以上縮められなかったら、`Stuck` (新しい状態。status の値を末尾に追加) にして止め、変わった tick に 1 回 WARN を出す。目的地を変えたら解除する。原因は 2 つある: NavMesh と CC の段差判定の量子化のずれ (残りは 1 セル未満)、Obstacle で塞がれた後の押し合い。SelfTest: maxClimb + 1 セル未満の台に向かう Agent が `Stuck` になること。決定論 (tick 数で判定、時間は使わない) と、Nav 節の restore 後一致 (詰まりのカウンタは Agent のコンポーネントか Nav 節に持たせる)。
 
+8. (sub-04 VERDICT) **実行時の NavMesh の変化を表示へ反映する**: いまの `NavDebugView` は .mnav から読んだ静的な形を描く。Play 中 (と Runtime) は、NavSystem の store が持つ dtNavMesh の世代番号 (Commit で増える) を鍵に加え、変わったときだけ NavSystem の dtNavMesh から作り直す。作り直しの回数をログに出す。編集中は従来どおり .mnav から作る。描画レーンは sim 状態を書き換えない。Play 中に同じ .mnav を表示用にもう 1 回読んでいる (sub-04 の SELF_EVAL) のも、NavSystem の dtNavMesh を参照する形に寄せられるならここで解消する。golden `nav` は Obstacle が NavMesh を切り抜いた絵で撮り直す (`tests\golden\nav.png` だけを手撮りする。`--update` は全枚を触るので使わない)。
+9. (sub-04 VERDICT、nit) Surface のインスペクタの『.mnav を読めない』の警告を、`NavMeshAsset::LoadByGuid` (メモリ上の登録も見る) で判定するように直す。`--nav-demo` で誤って出ている。
+
 ## やらないこと (このサブでは)
 - Modifier / Link / ABI
 

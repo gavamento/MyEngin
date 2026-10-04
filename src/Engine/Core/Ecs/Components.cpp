@@ -1420,6 +1420,7 @@ void RegisterBuiltinComponents()
         MYE_JP("エージェントの経路を描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawAgentPaths, Bool, kFieldNoHash)),
         MYE_JP("セルの大きさを自動で決める", MYE_FIELD_TIP(NavMeshSurfaceComponent, autoCellSize, Bool,
                                                          "derive the cell size from agent radius, max climb and max slope so the slope setting actually works")),
+        MYE_JP("ナビメッシュの塗りを描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawNavMeshFill, Bool, kFieldNoHash)),
     });
 #undef MYE_NAV_AREA_COST
 

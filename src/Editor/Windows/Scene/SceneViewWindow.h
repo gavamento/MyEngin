@@ -59,6 +59,7 @@ private:
     void DrawPartSocketGizmos(World& world);
     void DrawPartBoundsGizmos(World& world);
     void DrawReflectionProbeGizmos(World& world);
+    void DrawNavSurfaceGizmos(World& world); // M82e: Surface のベイク範囲
     void DrawSelectionOutline(EngineContext& ctx, World& world, const Selection& selection);
     // 分岐のゴースト (M72e、SceneViewGhost.cpp): 非ライブの分岐を同じ tick のワイヤ箱 + トレイルで重ねる
     void BuildGhostOverlay(EngineContext& ctx);

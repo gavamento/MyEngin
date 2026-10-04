@@ -412,6 +412,25 @@ set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 123
 call :shot fracture_after --fracture-demo
 set SHOT=%SHOTBASE% --no-fxaa
 
+rem ---- 28 枚目 (M82e): ナビメッシュのショーケース。**NavMesh の半透明の塗り + 輪郭線 + Agent の経路線の唯一のピクセル被覆**。
+rem      床の上のエリア色の塗り (床と Z ファイトしないこと) / ポリゴンの輪郭 / 歩いている Agent の経路線と目的地の印を絵に固定する。
+rem ★frame 120 で撮る (physics / joints と同じ理由)。frame 3 では Agent が出発点にいて経路線が短く、
+rem   dtCrowd の追従 (角を結ぶ線) が絵に出ない。120 tick = 2 秒で 6 体が回廊・坂・台へ散らばる。
+rem   sim は固定 tick の決定論 (Debug / Release / WARP でビット一致、NavDeterminism self test) なので同じ絵になる。
+rem   Agent の経路線は毎 tick 作り直す線レーンだが、撮影は tick 固定なので安定する (同一バイナリで 2 回撮って maxDiff=0)。
+rem ★tol=3 の CI 判定に載せる。半透明は SRC_ALPHA / INV_SRC_ALPHA の固定機能ブレンドだけで、しきい値分岐も
+rem   テンポラル蓄積も無い (音響 / UI の golden と同じ根拠)。golden も撮影も WARP なので実 GPU との差は対象外。
+rem   ★ランナーで赤くなったら MYE_SHOT_SKIP_NAV を立てる (ci.yml の env に 1 行足すだけ)
+rem ★保存済みが残っているとロード経路に落ちるので撮影前に消す (physics 等と同じ)。
+rem   NavDemoDriver (GameLogic.dll) は 300 tick で目的地を切り替えるだけなので、120 tick の絵には効かない
+if defined MYE_SHOT_SKIP_NAV goto :skip_nav
+set NAV_SCENE=cache\nav_showcase.scene.json
+if exist %NAV_SCENE% del /q %NAV_SCENE%
+set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 123 --shot-frame 120 --no-fxaa
+call :shot nav --nav-demo
+set SHOT=%SHOTBASE% --no-fxaa
+:skip_nav
+
 echo.
 if %UPDATE%==1 (
     echo [shot_verify] golden updated in %GOLDEN% - review the images before committing
@@ -424,9 +443,9 @@ if not %FAILED%==0 (
     exit /b 1
 )
 if defined MYE_SHOT_SKIP_FXAA (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints/fog/particle/acoustic/fracture_after at frame 120^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints/fog/particle/acoustic/nav/fracture_after at frame 120^)
 ) else (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints/fog/particle/acoustic/fracture_after at frame 120 + rtrefl_restir at frame 40 + fxaa/taa/ssr/froxel/fog/particle/rt at tol=0^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints/fog/particle/acoustic/nav/fracture_after at frame 120 + rtrefl_restir at frame 40 + fxaa/taa/ssr/froxel/fog/particle/rt at tol=0^)
 )
 exit /b 0
 
