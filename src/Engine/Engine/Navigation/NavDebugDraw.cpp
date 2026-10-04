@@ -30,6 +30,12 @@ constexpr float kFillAlpha = 0.38f;
 // DebugUtils が外周を太い線 (2.5)、内側の辺を細い線 (1.5) で描くことを見分けに使う
 constexpr float kBoundaryWidthMin = 2.0f;
 
+// 歩行面から外れる三角形・線分を割る下限の辺の長さ (層のセル数)。段差の縁に出る斜めの帯の幅でもある
+constexpr float kSubdivideCells = 3.0f;
+constexpr int kSubdivideMaxDepth = 24;
+// 割らずに済む、頂点の高さで張った平面と歩行面の最大の差 (m)。塗りと歩行面の許容差 0.1 m より十分小さく取る
+constexpr float kFlatTolerance = 0.04f;
+
 // 表示の作り直しを毎回ログに出す回数 (以降は 2 の冪の回だけ)
 constexpr uint32_t kLogAlways = 8;
 
@@ -55,8 +61,10 @@ bool KeyLess(const EntityID& a, const EntityID& b)
 // DebugUtils の duDebugDraw を表示用の三角形と線へ流す。点・四角形は捨てる (ナビメッシュ本体は使わない)
 class GeometryCollector final : public duDebugDraw {
 public:
-    GeometryCollector(std::vector<DebugFillVertex>& fill, std::vector<DebugLineCmd>& lines)
-        : fill_(fill), lines_(lines)
+    // store の層の高さで頂点の y を歩行面へ合わせる。ポリゴンは頂点の高さの平面なので、段差の天面や坂からずれる。
+    // 辺は最大 kSubdivideCells セルまで割り、割った点ごとに合わせる
+    GeometryCollector(std::vector<DebugFillVertex>& fill, std::vector<DebugLineCmd>& lines, const NavTileStore& store)
+        : fill_(fill), lines_(lines), store_(store), maxEdge_(kSubdivideCells * store.CellSize())
     {
     }
 
@@ -68,6 +76,7 @@ public:
         prim_ = prim;
         lineColor_ = size >= kBoundaryWidthMin ? kBoundaryColor : kInnerEdgeColor;
         pendingLine_ = 0;
+        pendingTri_ = 0;
     }
 
     void vertex(const float* pos, unsigned int color) override { Push(pos[0], pos[1], pos[2], color); }
@@ -82,6 +91,7 @@ public:
     {
         prim_ = DU_DRAW_POINTS;
         pendingLine_ = 0;
+        pendingTri_ = 0;
     }
 
     // 面ごとの色は areaToCol で決め、DebugUtils が付ける半透明度は捨てて kFillAlpha に揃える
@@ -95,15 +105,13 @@ private:
     void Push(float x, float y, float z, unsigned int color)
     {
         if (prim_ == DU_DRAW_TRIS) {
-            DebugFillVertex v;
-            v.x = x;
-            v.y = y + kFillLift;
-            v.z = z;
-            v.r = static_cast<float>(color & 0xFFu) / 255.0f;
-            v.g = static_cast<float>((color >> 8) & 0xFFu) / 255.0f;
-            v.b = static_cast<float>((color >> 16) & 0xFFu) / 255.0f;
-            v.a = kFillAlpha;
-            fill_.push_back(v);
+            tri_[pendingTri_][0] = x;
+            tri_[pendingTri_][1] = y;
+            tri_[pendingTri_][2] = z;
+            if (++pendingTri_ == 3) {
+                EmitTriangle(MakePoint(tri_[0]), MakePoint(tri_[1]), MakePoint(tri_[2]), color, 0);
+                pendingTri_ = 0;
+            }
             return;
         }
         if (prim_ != DU_DRAW_LINES) {
@@ -111,25 +119,166 @@ private:
         }
         if (pendingLine_ == 0) {
             first_[0] = x;
-            first_[1] = y + kLineLift;
+            first_[1] = y;
             first_[2] = z;
             pendingLine_ = 1;
             return;
         }
+        const float second[3] = { x, y, z };
+        EmitSegment(MakePoint(first_), MakePoint(second), 0);
+        pendingLine_ = 0;
+    }
+
+    static float DistSqr(const float* a, const float* b)
+    {
+        const float dx = a[0] - b[0];
+        const float dy = a[1] - b[1];
+        const float dz = a[2] - b[2];
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    // 割った点。p は DebugUtils が出したポリゴン上の位置 (y は平面の高さ)、surfaceY は歩行面の高さ
+    struct Point {
+        float p[3];
+        float surfaceY;
+    };
+
+    Point MakePoint(const float* p) const
+    {
+        Point out = { { p[0], p[1], p[2] }, p[1] };
+        store_.SampleSurfaceHeight(p[0], p[2], p[1], out.surfaceY);
+        return out;
+    }
+
+    Point MidPoint(const Point& a, const Point& b) const
+    {
+        const float m[3] = { (a.p[0] + b.p[0]) * 0.5f, (a.p[1] + b.p[1]) * 0.5f, (a.p[2] + b.p[2]) * 0.5f };
+        return MakePoint(m);
+    }
+
+    // 三角形の頂点の歩行面の高さで張った平面に対して、層の高さが kFlatTolerance を超えて外れるか。
+    // 層のセルの 2 つおきに調べ、重心は必ず調べる
+    bool Deviates(const Point& a, const Point& b, const Point& c) const
+    {
+        const float det = (b.p[2] - c.p[2]) * (a.p[0] - c.p[0]) + (c.p[0] - b.p[0]) * (a.p[2] - c.p[2]);
+        if (std::fabs(det) < 1e-12f) {
+            return false;
+        }
+        const auto outside = [&](float x, float z, float& w0, float& w1, float& w2) {
+            w0 = ((b.p[2] - c.p[2]) * (x - c.p[0]) + (c.p[0] - b.p[0]) * (z - c.p[2])) / det;
+            w1 = ((c.p[2] - a.p[2]) * (x - c.p[0]) + (a.p[0] - c.p[0]) * (z - c.p[2])) / det;
+            w2 = 1.0f - w0 - w1;
+            return w0 < 0.0f || w1 < 0.0f || w2 < 0.0f;
+        };
+        const auto deviation = [&](float x, float z, float w0, float w1, float w2) {
+            float surface = 0.0f;
+            const float hint = w0 * a.p[1] + w1 * b.p[1] + w2 * c.p[1];
+            if (!store_.SampleSurfaceHeight(x, z, hint, surface)) {
+                return 0.0f;
+            }
+            return std::fabs(surface - (w0 * a.surfaceY + w1 * b.surfaceY + w2 * c.surfaceY));
+        };
+        const float cx = (a.p[0] + b.p[0] + c.p[0]) / 3.0f;
+        const float cz = (a.p[2] + b.p[2] + c.p[2]) / 3.0f;
+        if (deviation(cx, cz, 1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f) > kFlatTolerance) {
+            return true;
+        }
+        const float stride = 2.0f * store_.CellSize();
+        const float minX = (std::min)(a.p[0], (std::min)(b.p[0], c.p[0]));
+        const float maxX = (std::max)(a.p[0], (std::max)(b.p[0], c.p[0]));
+        const float minZ = (std::min)(a.p[2], (std::min)(b.p[2], c.p[2]));
+        const float maxZ = (std::max)(a.p[2], (std::max)(b.p[2], c.p[2]));
+        for (float z = std::ceil(minZ / stride) * stride; z <= maxZ; z += stride) {
+            for (float x = std::ceil(minX / stride) * stride; x <= maxX; x += stride) {
+                float w0 = 0.0f;
+                float w1 = 0.0f;
+                float w2 = 0.0f;
+                if (!outside(x, z, w0, w1, w2) && deviation(x, z, w0, w1, w2) > kFlatTolerance) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // 平らな三角形はそのまま、歩行面から外れるものは最長辺を二等分して割る (辺が maxEdge_ 以下になるまで)
+    void EmitTriangle(const Point& a, const Point& b, const Point& c, unsigned int color, int depth)
+    {
+        const float lab = DistSqr(a.p, b.p);
+        const float lbc = DistSqr(b.p, c.p);
+        const float lca = DistSqr(c.p, a.p);
+        const float longest = (std::max)(lab, (std::max)(lbc, lca));
+        if (longest > maxEdge_ * maxEdge_ && depth < kSubdivideMaxDepth && Deviates(a, b, c)) {
+            if (longest == lab) {
+                const Point m = MidPoint(a, b);
+                EmitTriangle(a, m, c, color, depth + 1);
+                EmitTriangle(m, b, c, color, depth + 1);
+            } else if (longest == lbc) {
+                const Point m = MidPoint(b, c);
+                EmitTriangle(a, b, m, color, depth + 1);
+                EmitTriangle(a, m, c, color, depth + 1);
+            } else {
+                const Point m = MidPoint(c, a);
+                EmitTriangle(a, b, m, color, depth + 1);
+                EmitTriangle(m, b, c, color, depth + 1);
+            }
+            return;
+        }
+        for (const Point* pt : { &a, &b, &c }) {
+            DebugFillVertex v;
+            v.x = pt->p[0];
+            v.y = pt->surfaceY + kFillLift;
+            v.z = pt->p[2];
+            v.r = static_cast<float>(color & 0xFFu) / 255.0f;
+            v.g = static_cast<float>((color >> 8) & 0xFFu) / 255.0f;
+            v.b = static_cast<float>((color >> 16) & 0xFFu) / 255.0f;
+            v.a = kFillAlpha;
+            fill_.push_back(v);
+        }
+    }
+
+    // 線分も同じ。層のセルごとに調べ、歩行面から外れるなら半分に割る
+    void EmitSegment(const Point& a, const Point& b, int depth)
+    {
+        if (DistSqr(a.p, b.p) > maxEdge_ * maxEdge_ && depth < kSubdivideMaxDepth && SegmentDeviates(a, b)) {
+            const Point m = MidPoint(a, b);
+            EmitSegment(a, m, depth + 1);
+            EmitSegment(m, b, depth + 1);
+            return;
+        }
         DebugLineCmd cmd;
-        cmd.ax = first_[0];
-        cmd.ay = first_[1];
-        cmd.az = first_[2];
-        cmd.bx = x;
-        cmd.by = y + kLineLift;
-        cmd.bz = z;
+        cmd.ax = a.p[0];
+        cmd.ay = a.surfaceY + kLineLift;
+        cmd.az = a.p[2];
+        cmd.bx = b.p[0];
+        cmd.by = b.surfaceY + kLineLift;
+        cmd.bz = b.p[2];
         cmd.rgba = lineColor_;
         lines_.push_back(cmd);
-        pendingLine_ = 0;
+    }
+
+    bool SegmentDeviates(const Point& a, const Point& b) const
+    {
+        const float length = std::sqrt(DistSqr(a.p, b.p));
+        const int steps = (std::max)(1, static_cast<int>(length / (2.0f * store_.CellSize())));
+        for (int i = 0; i <= steps; ++i) {
+            const float t = (static_cast<float>(i) + 0.5f) / static_cast<float>(steps + 1);
+            float surface = 0.0f;
+            const float hint = a.p[1] + (b.p[1] - a.p[1]) * t;
+            if (store_.SampleSurfaceHeight(a.p[0] + (b.p[0] - a.p[0]) * t, a.p[2] + (b.p[2] - a.p[2]) * t, hint, surface)
+                && std::fabs(surface - (a.surfaceY + (b.surfaceY - a.surfaceY) * t)) > kFlatTolerance) {
+                return true;
+            }
+        }
+        return false;
     }
 
     std::vector<DebugFillVertex>& fill_;
     std::vector<DebugLineCmd>& lines_;
+    const NavTileStore& store_;
+    float maxEdge_;
+    float tri_[3][3] = {};
+    int pendingTri_ = 0;
     duDebugDrawPrimitives prim_ = DU_DRAW_POINTS;
     uint32_t lineColor_ = kBoundaryColor;
     int pendingLine_ = 0;
@@ -207,15 +356,16 @@ void NavDebugView::ScanKeys(World& world, const NavSystem* nav)
               [](const Key& a, const Key& b) { return KeyLess(a.entity, b.entity); });
 }
 
-void NavDebugView::BuildFromMesh(Geometry& g, const dtNavMesh& mesh)
+void NavDebugView::BuildFromMesh(Geometry& g, const NavTileStore& store)
 {
+    const dtNavMesh& mesh = *store.NavMesh();
     for (int i = 0; i < mesh.getMaxTiles(); ++i) {
         const dtMeshTile* tile = mesh.getTile(i);
         if (tile != nullptr && tile->header != nullptr) {
             AddRect(g.tileBounds, tile->header->bmin, tile->header->bmax);
         }
     }
-    GeometryCollector collector(g.fill, g.outline);
+    GeometryCollector collector(g.fill, g.outline, store);
     duDebugDrawNavMesh(&collector, mesh, 0);
     g.loaded = true;
 }
@@ -235,7 +385,7 @@ NavDebugView::Geometry& NavDebugView::GeometryFor(World& world, const Key& key)
     g.modifierHash = key.modifierHash;
     if (key.live != nullptr) {
         ++stats_.liveCount;
-        BuildFromMesh(g, *static_cast<const NavTileStore*>(key.live)->NavMesh());
+        BuildFromMesh(g, *static_cast<const NavTileStore*>(key.live));
         return g;
     }
     ++stats_.loadCount;
@@ -261,7 +411,7 @@ NavDebugView::Geometry& NavDebugView::GeometryFor(World& world, const Key& key)
                          failures);
         }
     }
-    BuildFromMesh(g, *store->NavMesh());
+    BuildFromMesh(g, *store);
     return g;
 }
 

@@ -1690,6 +1690,16 @@ constexpr int kQueryMaxCorners = 256;
 constexpr int kRandomPointAttempts = 16;
 constexpr float kRandomPointSnapHorizontal = 0.5f;
 
+// クエリが返す点の y を歩行面に合わせる (ポリゴンは頂点の高さの平面で、段差の上や坂ではずれる)。
+// 層に高さが無い点は Detour の値のまま
+void SnapToSurface(const NavTileStore& store, float* point)
+{
+    float y = point[1];
+    if (store.SampleSurfaceHeight(point[0], point[2], point[1], y)) {
+        point[1] = y;
+    }
+}
+
 bool AllFinite(const float* v, int count)
 {
     for (int i = 0; i < count; ++i) {
@@ -1769,6 +1779,9 @@ int NavSystem::QueryFindPath(World& world, int agentTypeId, const float* from, c
     if (dtStatusFailed(query.findStraightPath(startPt, endPt, polys, polyCount, straight, nullptr, nullptr, &cornerCount, cap)) || cornerCount <= 0) {
         return 0;
     }
+    for (int i = 0; i < cornerCount; ++i) {
+        SnapToSurface(*surface->store, &straight[i * 3]);
+    }
     std::memcpy(outCorners, straight, sizeof(float) * 3 * static_cast<size_t>(cornerCount));
     if (outPartial != nullptr) {
         *outPartial = partial;
@@ -1794,6 +1807,7 @@ bool NavSystem::QuerySamplePosition(World& world, int agentTypeId, const float* 
     if (ref == 0) {
         return false;
     }
+    SnapToSurface(*surface->store, nearest);
     dtVcopy(outPoint, nearest);
     return true;
 }
@@ -1835,6 +1849,7 @@ bool NavSystem::QueryRaycast(World& world, int agentTypeId, const float* from, c
         out.point[i] = startPt[i] + (to[i] - startPt[i]) * t;
         out.normal[i] = normal[i];
     }
+    SnapToSurface(*surface->store, out.point);
     out.distance = length * t;
     return true;
 }
@@ -1874,6 +1889,7 @@ bool NavSystem::QueryRandomPoint(World& world, int agentTypeId, const float* cen
         const float dx = snapped[0] - center[0];
         const float dz = snapped[2] - center[2];
         if (dx * dx + dz * dz <= radius * radius) {
+            SnapToSurface(*surface->store, snapped);
             dtVcopy(outPoint, snapped);
             return true;
         }

@@ -981,6 +981,182 @@ bool RunNavAgentSelfTest()
                  "(表示) 編集中 (NavSystem を渡さない) は .mnav から組み、切り抜き前の形に戻る");
     }
 
+    // ---- 6d. 高さ: 段差の天面と 30 度の坂の上で、クエリの y と塗りの高さが歩行面と 0.1 m 以内 ----
+    {
+        constexpr float kHeightTolerance = 0.1f;
+        constexpr float kFillLiftDrawn = 0.02f; // NavDebugDraw.cpp の kFillLift
+        const float rampSlope = std::tan(kRampDeg * 3.14159265f / 180.0f);
+        // 庭の歩行面の高さ。縁 (段差の側面・坂の端・台との重なり) の近くは扱わないので、その外だけ定義する
+        const auto surfaceY = [&](float x, float& out) {
+            if (x > -5.0f && x < -3.0f) { out = kStepHeight; return true; }
+            if (x > 4.4f && x < 6.6f) { out = (x - 4.0f) * rampSlope; return true; }
+            if (x > 7.9f && x < 10.2f) { out = 2.0f; return true; }
+            if (x > -8.0f && x < -6.0f) { out = 0.0f; return true; }
+            return false;
+        };
+        Scene scene;
+        const Yard yard = BuildYard(scene);
+        ck.Check(BakeSurface(scene, yard.surface, kYardGuid, nullptr), "(高さ) 庭をベイクできる");
+        Sim sim(scene);
+        World& world = sim.GetWorld();
+        sim.Step();
+        const NavSurfaceRuntime& surface = sim.nav.Surfaces()[0];
+
+        float worstSample = 0.0f;
+        float worstRaw = 0.0f;
+        int sampleCount = 0;
+        bool sampleOk = true;
+        for (float x = -7.9f; x < 10.2f; x += 0.1f) {
+            float expectY = 0.0f;
+            if (!surfaceY(x, expectY)) {
+                continue;
+            }
+            for (const float z : { -2.0f, 0.0f, 2.0f }) {
+                const float pos[3] = { x, expectY + 0.4f, z };
+                const float ext[3] = { 0.5f, 1.5f, 0.5f };
+                float out[3] = {};
+                if (!sim.nav.QuerySamplePosition(world, 0, pos, ext, 0xFFFFFFFFu, out)) {
+                    sampleOk = false;
+                    continue;
+                }
+                dtQueryFilter filter;
+                filter.setIncludeFlags(kNavFlagAllAreas);
+                dtPolyRef ref = 0;
+                float raw[3] = {};
+                surface.query->findNearestPoly(pos, ext, &filter, &ref, raw);
+                worstSample = (std::max)(worstSample, std::fabs(out[1] - expectY));
+                worstRaw = (std::max)(worstRaw, std::fabs(raw[1] - expectY));
+                ++sampleCount;
+            }
+        }
+        MYE_LOG_INFO("  [height] NavSamplePosition over %d points: worst |y - surface| = %.3f m (Detour polygon plane alone: %.3f m)",
+                     sampleCount, worstSample, worstRaw);
+        ck.Check(sampleOk && sampleCount > 200 && worstSample <= kHeightTolerance,
+                 "(高さ) NavSamplePosition の y は段差の天面・坂・台の上で歩行面との差 0.1 m 以内");
+
+        // 経路の角: 段差の天面から坂の上までの経路。始点と終点が段差の天面・坂の上にある
+        {
+            const float from[3] = { -4.0f, kStepHeight, 0.0f };
+            const float to[3] = { 5.5f, 1.5f * rampSlope, 0.0f };
+            float corners[32 * 3] = {};
+            bool partial = false;
+            const int n = sim.nav.QueryFindPath(world, 0, from, to, 0xFFFFFFFFu, corners, 32, &partial);
+            float worst = 0.0f;
+            int measured = 0;
+            for (int i = 0; i < n; ++i) {
+                float expectY = 0.0f;
+                if (!surfaceY(corners[i * 3], expectY)) {
+                    continue; // 縁の上の角は歩行面が決まらない
+                }
+                const float err = std::fabs(corners[i * 3 + 1] - expectY);
+                MYE_LOG_INFO("  [height] path corner %d (%.2f, %.3f, %.2f) error %.3f", i, corners[i * 3], corners[i * 3 + 1], corners[i * 3 + 2], err);
+                worst = (std::max)(worst, err);
+                ++measured;
+            }
+            ck.Check(measured >= 2 && !partial && worst <= kHeightTolerance,
+                     "(高さ) NavFindPath の角の y は歩行面との差 0.1 m 以内 (段差の天面から坂の上へ)");
+        }
+
+        // Raycast の当たり点: 段差の天面と坂の上を +z へ歩き、縁 (Surface の端・坂の幅) で止まる
+        {
+            bool hitsOk = true;
+            float worst = 0.0f;
+            for (const float x : { -4.5f, -3.5f, 4.8f, 5.6f, 6.4f }) {
+                float expectY = 0.0f;
+                surfaceY(x, expectY);
+                const float from[3] = { x, expectY, 0.0f };
+                const float to[3] = { x, expectY, 20.0f };
+                NavRaycastResult hit;
+                if (!sim.nav.QueryRaycast(world, 0, from, to, 0xFFFFFFFFu, hit) || !hit.hit) {
+                    hitsOk = false;
+                    continue;
+                }
+                worst = (std::max)(worst, std::fabs(hit.point[1] - expectY));
+            }
+            MYE_LOG_INFO("  [height] NavRaycast hit points: worst |y - surface| = %.3f m", worst);
+            ck.Check(hitsOk && worst <= kHeightTolerance, "(高さ) NavRaycast の当たり点の y は歩行面との差 0.1 m 以内");
+        }
+
+        // ランダムな点: 段差の天面と坂の上に中心を置いた半径 1 m の円
+        {
+            Pcg32 rng;
+            rng.Seed(12345u);
+            float worst = 0.0f;
+            int drawn = 0;
+            for (const float cx : { -4.0f, 5.5f }) {
+                float centerY = 0.0f;
+                surfaceY(cx, centerY);
+                const float center[3] = { cx, centerY, 0.0f };
+                for (int i = 0; i < 40; ++i) {
+                    float out[3] = {};
+                    if (!sim.nav.QueryRandomPoint(world, 0, center, 1.0f, 0xFFFFFFFFu, rng, out)) {
+                        continue;
+                    }
+                    float expectY = 0.0f;
+                    if (surfaceY(out[0], expectY)) {
+                        worst = (std::max)(worst, std::fabs(out[1] - expectY));
+                        ++drawn;
+                    }
+                }
+            }
+            MYE_LOG_INFO("  [height] NavFindRandomPoint over %d points: worst |y - surface| = %.3f m", drawn, worst);
+            ck.Check(drawn > 40 && worst <= kHeightTolerance, "(高さ) NavFindRandomPoint の y は歩行面との差 0.1 m 以内");
+        }
+
+        // 塗り: 歩行面の上の各点を覆う三角形のうち、塗りの高さが歩行面に最も近いものを探す。
+        // 台の中 (箱の底面と地面が接する所) には到達できない床が取り残され、同じ (x, z) を地面の高さの三角形も覆う
+        const auto checkFill = [&](NavDebugView& view, const char* source) {
+            const std::vector<DebugFillVertex>& fill = view.FillVertices();
+            float worst = 0.0f;
+            int covered = 0;
+            int uncovered = 0;
+            int stepPoints = 0;
+            for (float x = -7.9f; x < 10.2f; x += 0.25f) {
+                float expectY = 0.0f;
+                if (!surfaceY(x, expectY)) {
+                    continue;
+                }
+                for (const float z : { -2.0f, 0.0f, 2.0f }) {
+                    float best = 1e9f;
+                    for (size_t i = 0; i + 2 < fill.size(); i += 3) {
+                        const DebugFillVertex& a = fill[i];
+                        const DebugFillVertex& b = fill[i + 1];
+                        const DebugFillVertex& c = fill[i + 2];
+                        const float det = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+                        if (std::fabs(det) < 1e-9f) {
+                            continue;
+                        }
+                        const float w0 = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / det;
+                        const float w1 = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / det;
+                        const float w2 = 1.0f - w0 - w1;
+                        if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f) {
+                            continue;
+                        }
+                        const float y = w0 * a.y + w1 * b.y + w2 * c.y - kFillLiftDrawn;
+                        best = (std::min)(best, std::fabs(y - expectY));
+                    }
+                    if (best > 1e8f) {
+                        ++uncovered;
+                        continue;
+                    }
+                    ++covered;
+                    stepPoints += expectY == kStepHeight ? 1 : 0;
+                    worst = (std::max)(worst, best);
+                }
+            }
+            MYE_LOG_INFO("  [height] fill (%s): %d triangles, %d points checked (%d on the step top, %d not covered), worst |y - surface| = %.3f m",
+                         source, view.GetStats().lastTriangles, covered, stepPoints, uncovered, worst);
+            ck.Check(uncovered == 0 && stepPoints >= 10 && worst <= kHeightTolerance,
+                     "(高さ) 塗りは段差の天面・坂・台の上の各点を歩行面との差 0.1 m 以内の高さで覆う (天面が塗られる)");
+        };
+        NavDebugView liveView;
+        liveView.Refresh(world, &sim.nav);
+        checkFill(liveView, "Play 中: NavSystem のナビメッシュ");
+        NavDebugView editView;
+        editView.Refresh(world, nullptr);
+        checkFill(editView, "編集中: .mnav");
+    }
+
     // ---- 6c. 形と付ける Surface: y 回転した箱は実形のまま切り、Surface の範囲外の障害物は TileCache に入れない ----
     {
         Scene scene;

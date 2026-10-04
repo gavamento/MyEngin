@@ -345,6 +345,113 @@ int NavTileStore::FindEntry(int tx, int ty, int layer) const
     return static_cast<int>(it - entries_.begin());
 }
 
+bool NavTileStore::SampleSurfaceHeight(float x, float z, float yHint, float& outY) const
+{
+    const float tileSpan = static_cast<float>(config_.cache.width) * config_.cache.cs;
+    if (!(tileSpan > 0.0f) || !std::isfinite(x) || !std::isfinite(z)) {
+        return false;
+    }
+    const int tx = static_cast<int>(std::floor((x - config_.cache.orig[0]) / tileSpan));
+    const int ty = static_cast<int>(std::floor((z - config_.cache.orig[2]) / tileSpan));
+    const float cs = config_.cache.cs;
+    const float ch = config_.cache.ch;
+    constexpr uint8_t kNoHeight = 0xFF;
+    // 隣のセルとの高さの差がこの勾配 (高さ / 水平距離) 以内なら同じ斜面とみなし、超えれば段差として勾配に使わない
+    constexpr float kMaxSlopeGradient = 1.2f;
+    const size_t headerSize = static_cast<size_t>(dtAlign4(sizeof(dtTileCacheLayerHeader)));
+
+    bool found = false;
+    float bestY = 0.0f;
+    float bestGap = 0.0f;
+    for (int layerIndex = 0;; ++layerIndex) {
+        const int entryIndex = FindEntry(tx, ty, layerIndex);
+        if (entryIndex < 0) {
+            break;
+        }
+        const std::vector<uint8_t>& blob = entries_[static_cast<size_t>(entryIndex)].blob;
+        if (blob.size() < headerSize) {
+            continue;
+        }
+        dtTileCacheLayerHeader header;
+        std::memcpy(&header, blob.data(), sizeof(header));
+        const int w = header.width;
+        const int h = header.height;
+        const size_t gridSize = static_cast<size_t>(w) * static_cast<size_t>(h);
+        if (blob.size() < headerSize + gridSize * 3u) {
+            continue;
+        }
+        const uint8_t* heights = blob.data() + headerSize;
+        const uint8_t* areas = heights + gridSize;
+        const auto cellValue = [&](int ix, int iz) -> int {
+            if (ix < 0 || iz < 0 || ix >= w || iz >= h) {
+                return -1;
+            }
+            const size_t index = static_cast<size_t>(ix + iz * w);
+            return (heights[index] == kNoHeight || areas[index] == DT_TILECACHE_NULL_AREA) ? -1 : heights[index];
+        };
+        // 隣のセルとの勾配 (高さ / 水平距離)。段差・縁・高さの無いセルは使わず、両隣が使えれば中央差分
+        const auto gradient = [&](int value, int ix, int iz, int stepX, int stepZ) -> float {
+            const int lo = cellValue(ix - stepX, iz - stepZ);
+            const int hi = cellValue(ix + stepX, iz + stepZ);
+            const float limit = kMaxSlopeGradient * cs / ch;
+            const bool okLo = lo >= 0 && std::fabs(static_cast<float>(value - lo)) <= limit;
+            const bool okHi = hi >= 0 && std::fabs(static_cast<float>(hi - value)) <= limit;
+            if (okLo && okHi) {
+                return static_cast<float>(hi - lo) * ch / (2.0f * cs);
+            }
+            if (okHi) {
+                return static_cast<float>(hi - value) * ch / cs;
+            }
+            return okLo ? static_cast<float>(value - lo) * ch / cs : 0.0f;
+        };
+        const int cx = static_cast<int>(std::floor((x - header.bmin[0]) / cs));
+        const int cz = static_cast<int>(std::floor((z - header.bmin[2]) / cs));
+
+        // 真上のセルを優先し、高さが無い (縁・歩けない) ときだけ隣の 8 セルから借りる
+        float layerY = 0.0f;
+        bool layerFound = false;
+        for (int ring = 0; ring <= 1 && !layerFound; ++ring) {
+            float layerGap = 0.0f;
+            for (int dz = -ring; dz <= ring; ++dz) {
+                for (int dx = -ring; dx <= ring; ++dx) {
+                    if (ring == 1 && dx == 0 && dz == 0) {
+                        continue;
+                    }
+                    const int ix = cx + dx;
+                    const int iz = cz + dz;
+                    const int v = cellValue(ix, iz);
+                    if (v < 0) {
+                        continue;
+                    }
+                    // セルの値は、セルの範囲の面の最大高さを切り上げて (最低 1 セルの厚みで) 量子化したもの。
+                    // 切り上げの平均 (半セル) と、斜面で範囲の隅が中心より高い分を引き、斜面に沿ってセル内の位置へ寄せる
+                    const float gx = gradient(v, ix, iz, 1, 0);
+                    const float gz = gradient(v, ix, iz, 0, 1);
+                    const float centerX = header.bmin[0] + (static_cast<float>(ix) + 0.5f) * cs;
+                    const float centerZ = header.bmin[2] + (static_cast<float>(iz) + 0.5f) * cs;
+                    const float y = header.bmin[1] + static_cast<float>(v) * ch - 0.5f * ch
+                                  - 0.5f * cs * (std::fabs(gx) + std::fabs(gz)) + gx * (x - centerX) + gz * (z - centerZ);
+                    const float gap = std::fabs(y - yHint);
+                    if (!layerFound || gap < layerGap) {
+                        layerFound = true;
+                        layerGap = gap;
+                        layerY = y;
+                    }
+                }
+            }
+        }
+        if (layerFound && (!found || std::fabs(layerY - yHint) < bestGap)) {
+            found = true;
+            bestGap = std::fabs(layerY - yHint);
+            bestY = layerY;
+        }
+    }
+    if (found) {
+        outY = bestY;
+    }
+    return found;
+}
+
 int NavTileStore::FindBase(int tx, int ty, int layer) const
 {
     for (size_t i = 0; i < baseBlobs_.size(); ++i) {

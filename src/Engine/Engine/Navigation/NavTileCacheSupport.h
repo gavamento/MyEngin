@@ -213,6 +213,12 @@ public:
     // キー昇順 (0 <= index < ObstacleCount())。Add / Remove / LoadState で並びが変わる
     const NavObstacleSpec& ObstacleAt(int index) const { return obstacles_[static_cast<size_t>(index)]; }
     uint64_t HashObstacles() const;
+    // 歩行面の高さ。ポリゴンは頂点の高さの平面しか持たない (詳細メッシュが無い) ので、段差の上や坂で歩行面と
+    // ずれる。層のセルの高さ (ベイクで量子化した値) を引いて補う。層の高さは障害物・Modifier で変わらない。
+    // 層が複数ある柱は yHint (ポリゴン上の高さ) に最も近い層を採る。層が無い所・歩けないセルは false (outY 不変)。
+    // 層のバイト列の純関数で、sim の状態を読まない・書かない
+    bool SampleSurfaceHeight(float x, float z, float yHint, float& outY) const;
+    float CellSize() const { return config_.cache.cs; }
     // dtNavMesh が作り直されるたびに、プロセス内で一意な新しい値になる (0 = まだ組んでいない)。表示側が作り直しの要否を
     // 判断する鍵で、sim の状態ではない (ハッシュにもスナップショットにも入らない)
     uint64_t Generation() const { return generation_; }

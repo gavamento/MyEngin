@@ -721,6 +721,7 @@ struct MyeEngineApi {
     // NavFindPath: from から to への経路の角 (先頭は from を吸着した点) を outCorners へ最大 maxCorners 個書き、
     //   書いた数を返す (0 = 失敗: Surface なし / from か to の近く (1 m x 2 m) にナビメッシュがない / 経路なし)。
     //   届かない目的地は届く限りの最寄りまで返し、*outPartial = 1 (null 可)。maxCorners の上限は 256 (超えた分は切り捨て)
+    //   ★Nav* が返す点の y は、ベイクした層から引いた歩行面の高さ (段差の天面・坂で 0.1 m 以内)。ポリゴンの平面の高さではない
     int32_t (*NavFindPath)(void* engine, int32_t agentTypeId, MyeVec3 from, MyeVec3 to, uint32_t areaMask,
                            MyeVec3* outCorners, int32_t maxCorners, int32_t* outPartial);
     // NavSamplePosition: pos の最寄りのナビメッシュ上の点 (extents は探す範囲の半径)。無ければ 0

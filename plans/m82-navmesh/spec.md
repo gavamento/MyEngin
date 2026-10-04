@@ -79,7 +79,7 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 - エリア: 0 = Walkable (コスト 1)、1 = NotWalkable、2 = Jump (Link の既定)、3〜15 = ユーザー定義。名前は `project_settings.json` (表示のみ)、コストは Surface の `areaCosts`。
 - **Tick の位置**: TickRunner の フェーズ 3.4 (音響 + AgentSystem) の後、3.5 (アニメーション) の前に独立した `if (stepSim)` ブロックで `NavSystem::Update` (AgentSystem は `ts.acoustic` ゲートの中なので相乗りしない)。順序は (1) Obstacle / Modifier / Link のコンポーネント差分を TileCache へ反映し、`update` を**全部終わるまで**同期で回す (2) Agent をエンティティキー (entity.index、同値は generation) 順に dtCrowd と同期 (CC の実位置を crowd 側へ書き戻す) (3) `dtCrowd::update(1/60)` (4) 望む速度を CC.moveInput へ、状態を Agent へ書く。物理 (3.6) の後に Link 渡り中の Agent の位置を上書きする。
 - **AgentBrain との共存**: 同じエンティティに AgentBrain と NavMeshAgent があれば、moveInput は後に走る NavSystem が勝つ (feature guide 9.3 の「後に走る AI が優先」と同じ規則) + インスペクタ警告。
-- 目的地まで完全な経路が無ければ、dtCrowd の部分経路 (最寄りの到達可能点まで) で動き、着いたら `Arrived` + `pathPartial = true`。部分経路の終点は CC では届かない位置になりうる (NavMesh の縁と CC の停止位置の差) ので、部分経路のときは『終点の近くで前進が止まった』も到着として扱い、`Stuck` にはしない (sub-05 round 2)。`Stuck` (sub-05) は、完全な経路の途中で前進できない場合と、部分経路の終点から遠い所で前進できない場合に使う: `Moving` の残り距離が 60 tick の間に基準から max(radius/4, 1 cm) 以上動かなければ止め、WARN を 1 回出す。目的地の変更・取り消し・到着で解除する。目的地も始点も NavMesh に乗らない (最寄り点が見つからない) ときだけ `NoPath`。
+- 目的地まで完全な経路が無ければ、dtCrowd の部分経路 (最寄りの到達可能点まで) で動き、着いたら `Arrived` + `pathPartial = true`。部分経路の終点は CC では届かない位置になりうる (NavMesh の縁と CC の停止位置の差) ので、部分経路のときは『終点の近くで前進が止まった』も到着として扱い、`Stuck` にはしない (sub-05 round 2)。`Stuck` は**表示と通知だけで、Agent を止めない** (review-1 #1 で変更): `Moving` の残り距離が 60 tick の間に基準から max(radius/4, 1 cm) 以上縮まなければ `Stuck` にして WARN を 1 回出す。dtCrowd の移動目標と moveInput はそのまま押し続け、前進が戻れば `Moving` へ自動で戻る。**目的地の渋滞は到着として扱う**: 前進が 60 tick 止まり、(a) 残り距離が max(stoppingDistance, 2 × radius) 以内、または (b) 同じ目的地 (差 ≤ stoppingDistance) で既に `Arrived` の Agent に接している (中心距離 ≤ 半径の和 + 余裕) なら `Arrived` にする。(b) は連鎖するので、N 体が同じ目的地へ向かっても全員がいずれ `Arrived` になる。判定は Agent のエンティティキー順に行い、決定的にする。
 - 乱数: `findRandomPoint` 系の `frand` は `World::Rng()` (Pcg32) 経由。Agent が居ないときは引かない。
 - エッジケース: Surface が無い / アセット未ベイク / `agentTypeId` に合う Surface が無い → Agent は `Inactive` で止まる (落ちない、ログは状態が変わった tick に 1 回)。アセット読み込み失敗 → その Surface だけ無効、他は動く。dtCrowd の容量 (既定 128、Surface ごと) を超えた Agent は entity キー順で後ろから `Inactive`。
 
@@ -89,7 +89,7 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 - `.mnav`: 版付きバイナリ (`.mfrac` と同じ Serialize / Deserialize、境界検査、同じ入力から同じバイト)。中身 = ベイク設定 + 入力ハッシュ + TileCache の圧縮層 (圧縮器は**無圧縮の自作** `dtTileCacheCompressor`、FastLZ を入れない) 。Link と Modifier は .mnav に入れない (どちらも実行時のオーバーレイ、4.1)。保存先 `assets\NavMesh\<Surface名>_<入力ハッシュ16桁>.mnav`、`.meta` で GUID、`AssetType::NavMesh`。ビルド (配布物) へは `BuildSettingsWindow.cpp:208-210` の `assets\` 丸ごとコピーで入る (:253 の一覧はクック物専用で対象外。sub-02 VERDICT で訂正)。
 - 読み込み: `NavSystem::Update` (stepSim の tick、フェーズ 3.4b) が Surface の (entity, navAsset) の変化を見て遅延ロードする (2. #17)。
 - SimSnapshot: Nav 節の書式を変えるサブは、そのたびに `kSimSnapshotVersion` を上げる (旧 blob を明示的に拒否する。sub-10 で 26、sub-05 で 27)。Nav 節を追加し `kSimSnapshotVersion` 24 → 25 (sub-01 の結論で節の中身を決める。節が要らない結論なら bump しない)。
-- ABI: 1 回だけ bump (2. #14)。最小の関数: `NavSetDestination` / `NavStop` / `NavGetAgentState` / `NavFindPath` (コーナー列を呼び出し側バッファへ) / `NavSamplePosition` (最寄り点) / `NavRaycast` / `NavFindRandomPoint` (半径内、World RNG)。全部 POD + C ABI、`Interop.cs` 位置ミラー、`check_rules.ps1` の版表を更新。 **確定 (sub-08)**: v24 = 139 スロット。上の 7 本に `NavCompleteLink` (Manual Link の完了通知。Manual を渡っている間だけ有効) を足して 8 本。`NavSamplePosition` は areaMask を取り、`NavFindPath` は `outPartial` (null 可) を返す。`NavFindRandomPoint` は Detour の `findRandomPointAroundCircle` を使わない (円に触れるポリゴンの点を返すので、半径外の点が出る)。代わりに World の Pcg32 で円の中の点を一様に最大 16 回選び、最寄りのポリゴンへ吸着して半径内なら採用する。center とのつながりは見ない。Surface 無し・近傍に NavMesh 無し・radius ≤ 0 のときは RNG を引かない。クエリは前の tick の NavSystem::Update で確定した状態を見るので、シーンを読んだ最初の tick は 0 を返す。
+- ABI: 1 回だけ bump (2. #14)。最小の関数: `NavSetDestination` / `NavStop` / `NavGetAgentState` / `NavFindPath` (コーナー列を呼び出し側バッファへ) / `NavSamplePosition` (最寄り点) / `NavRaycast` / `NavFindRandomPoint` (半径内、World RNG)。全部 POD + C ABI、`Interop.cs` 位置ミラー、`check_rules.ps1` の版表を更新。 **確定 (sub-08)**: v24 = 139 スロット。上の 7 本に `NavCompleteLink` (Manual Link の完了通知。Manual を渡っている間だけ有効) を足して 8 本。`NavSamplePosition` は areaMask を取り、`NavFindPath` は `outPartial` (null 可) を返す。`NavFindRandomPoint` は Detour の `findRandomPointAroundCircle` を使わない (円に触れるポリゴンの点を返すので、半径外の点が出る)。代わりに World の Pcg32 で円の中の点を一様に最大 16 回選び、最寄りのポリゴンへ吸着して半径内なら採用する。center とのつながりは見ない。Surface 無し・近傍に NavMesh 無し・radius ≤ 0 のときは RNG を引かない。クエリは前の tick の NavSystem::Update で確定した状態を見るので、シーンを読んだ最初の tick は 0 を返す。 **返す点の高さは歩行面に合わせる** (review-1 #3): TileCache のポリゴンは頂点の高さしか持たず、段差の天面や坂の途中で 0.25〜0.4 m ずれる。NavSamplePosition / NavFindPath のコーナー / NavRaycast の当たり点 / NavFindRandomPoint の y は、歩行面との差が 0.1 m 以内であること (sub-11)。
 
 ### 4.3 UI / ビジュアル
 
@@ -98,7 +98,7 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 - Surface のインスペクタ: ベイク設定、`Bake` / `Clear`、ベイク中の進捗とキャンセル、結果の要約 (タイル数・ポリゴン数・所要時間)、表示切り替え (NavMesh / タイル境界 / Link / Obstacle / 経路)。寸法の不整合 (Agent / CC が Surface より大きい) を警告。
 - SceneView ギズモ: Surface の範囲箱 (sub-04)、Obstacle の形 (sub-05)、Modifier の箱 (sub-06)、Link の 2 点と矢印 (sub-07)。
 - NavMesh の表示は**編集中 (非 Play) の SceneView にも出る** (2. #18、sub-04)。Bake 直後に Play せず結果を確認できること。
-- デバッグ描画は Runtime でも出せる。NavMesh 本体 (塗り + 輪郭 + タイル境界) は**描画フレーム側の表示レーン** (`NavDebugView` → `RenderSystem::navView` → `NavFillPass` / 線パス) で出す。sim の tick に頼らないので編集中も同じ経路になり、resim の影響も受けない (sub-04 で tick レーンから変更)。Agent の経路線は従来どおり tick の `debugLines` (resim 中は積まない)。Play 中に Obstacle などで実行時に変わった NavMesh を表示へ反映するのは sub-05。**NavMesh は半透明の塗り (エリア色、Unity 風) + 輪郭線**。床と Z ファイトしない。NavMesh が変わらない tick では三角形を作り直さない。golden `nav` (`--nav-demo` の固定 tick、表示 on) を `shot_verify` に載せる。
+- デバッグ描画は Runtime でも出せる。NavMesh 本体 (塗り + 輪郭 + タイル境界) は**描画フレーム側の表示レーン** (`NavDebugView` → `RenderSystem::navView` → `NavFillPass` / 線パス) で出す。sim の tick に頼らないので編集中も同じ経路になり、resim の影響も受けない (sub-04 で tick レーンから変更)。Agent の経路線は従来どおり tick の `debugLines` (resim 中は積まない)。Play 中に Obstacle などで実行時に変わった NavMesh を表示へ反映するのは sub-05。**NavMesh は半透明の塗り (エリア色、Unity 風) + 輪郭線**。 塗りと輪郭は**歩行面の高さ**に沿う (段差の天面に埋もれない、坂で浮き沈みしない。review-1 #2、sub-11)。床と Z ファイトしない。NavMesh が変わらない tick では三角形を作り直さない。golden `nav` (`--nav-demo` の固定 tick、表示 on) を `shot_verify` に載せる。
 - 文字列は全部 `LocalizationTable.inl` (en / ja)。
 
 ### 4.4 非機能
@@ -144,6 +144,8 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 17. NavMesh が半透明のエリア色で塗られ、輪郭線と一緒に Editor と Runtime で出る。床と Z ファイトしない。NavMesh 不変の tick で三角形を作り直さない。golden `nav` が `shot_verify` で PASS。— `Runtime.exe --nav-demo --screenshot` + ログ + `tools\shot_verify.bat`
 18. 将来の実行時再ベイクの差し込み口 (4.4 F1〜F5) がある: (a) タイル差し替え後の保存 → 復元 → 連続実行一致の SelfTest (b) Engine 層の入力収集 + タイルベイク関数を Editor 無しの SelfTest から呼んで、エディタのベイクと同じバイトが出る (c) ADR-023 に再ベイクの足し方 (どの関数を、どのタイミングで呼ぶか) が書かれている。— SelfTest + ADR
 19. CC の `stepOffset` = h で、高さ h の段差を速度 (0.5 m/s 以上) に関係なく登り、h + 0.05 m は登らない。既定は 0.3 (Unity と同じ)。`stepOffset` を 0 にした CC は着手前と同じ挙動 (CC の状態列が一致)。Surface のインスペクタに実際のセルサイズと実効の坂上限が出て、設定がそれを超えると警告。— PhysicsSelfTest / NavAgentSelfTest / NavEditorSelfTest / replay_verify
+20. (review-1 #1) N 体 (2 / 4 / 8) が回避あり (既定) で同じ目的地へ向かうと、全員がいずれ `Arrived` になる。前進できない Agent は `Stuck` になっても押し続け、塞ぎが消えれば `Moving` へ戻る。— NavAgentSelfTest
+21. (review-1 #2 / #3) 段差 (天面 0.3 m) と 30 度の坂の上で、塗りと輪郭が歩行面に沿い、ABI のクエリが返す y が歩行面との差 0.1 m 以内。— NavAgentSelfTest / NavSurfaceSelfTest + golden `nav` (段差の天面が塗られている)
 
 ## 6. サブ分割
 
@@ -159,8 +161,10 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 | sub-07 | NavMeshLink (Off-Mesh Link の渡り) | sub-06 | 4 (Link), 10, 12 (Link 追加) | `M82h: NavMeshLink — Off-Mesh Link を Linear / Jump / Manual で渡る` |
 | sub-08 | スクリプト API (ABI bump + C# ミラー) | sub-07 | 14 | `M82i: NavMesh のスクリプト API (ABI vNN)` |
 | sub-09 | 文書と全体検証 | sub-08 | 11, 12, 15, 16, 17, 18 (c) | `M82j: NavMesh の ADR-023 と仕様書・機能ガイドを更新し、全体検証を通す` |
+| sub-11 | NavMesh の高さを歩行面に合わせる (塗り・輪郭・ABI クエリの y) | sub-09 | 21 | `M82k: NavMesh の高さを歩行面に合わせる — 段差と坂で塗りとクエリの y がずれない` |
+| sub-12 | 渋滞を到着として扱い、Stuck で止めない + レビューの小さな指摘 | sub-11 | 20 | `M82l: 同じ目的地の渋滞を到着として扱い、Stuck で止めない — レビュー指摘の修正` |
 
-**実行順は sub-03 → sub-10 → sub-04 → … → sub-09** (sub-10 はユーザー回答で後から足したので番号が飛ぶ。コミット接頭辞は実行順に M82d〜M82j)。sub-04〜sub-06 は依存上どれも sub-03 の後だが、`--nav-demo` / golden `nav` / TileCache の更新経路を共有するので**直列で回す**。sub-07 は sub-06 のエリア (Jump) を使う。
+レビュー round 1 の修正は sub-11 → sub-12 の順 (どちらも NavSystem と golden `nav` を触るので直列)。**実行順は sub-03 → sub-10 → sub-04 → … → sub-09** (sub-10 はユーザー回答で後から足したので番号が飛ぶ。コミット接頭辞は実行順に M82d〜M82j)。sub-04〜sub-06 は依存上どれも sub-03 の後だが、`--nav-demo` / golden `nav` / TileCache の更新経路を共有するので**直列で回す**。sub-07 は sub-06 のエリア (Jump) を使う。
 
 ## 7. 未決事項・リスク
 
@@ -179,6 +183,15 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 ## 8. 変更履歴
 
 (確定後の変更のみ)
+
+- 2026-10-04 / 出所: coder SELF_EVAL sub-11 round 1 (planner VERDICT OK)
+  - 4.2 / 4.3: 歩行面の高さは TileCache の層のセルの高さから求める (`NavTileStore::SampleSurfaceHeight`、方式 (a))。ABI クエリの出口 (`SnapToSurface`) と表示の適応分割で使う。sim の状態・ハッシュ・.mnav の形式は不変。詳細メッシュ (b) は採らない (Recast に層から作る口が無く、全ハッシュの焼き直しになるため)。
+  - 既知の限界: dtCrowd の Agent の位置の y と Agent の経路線は補正していない (ABI の MyeNavAgentState は位置を返さない)。台の中に到達できない床のポリゴンが残ることがあり、NavFindRandomPoint の候補に混ざりうる (着手前からの性質。M82 の範囲外)。
+
+- 2026-10-04 / 出所: reviewer round 1 (REVIEW FAIL)、planner の REVIEW_RESPONSE
+  - #1 (major、planner 宛、認める): 4.1 の Stuck の規則に穴があった。同じ目的地の渋滞を『詰まり』と見なして止めていた。Stuck は止めない (表示と通知だけ)、目的地の近く・到着済みの Agent に接したら到着、に変更。受け入れ条件 20 を新設し、sub-12 で実装する。`[ユーザーに聞ける]`
+  - #3 (minor、planner 宛、認める): クエリの y の誤差は、制約として書くのではなく補正する。原因は #2 と同じ (TileCache のポリゴンが頂点の高さしか持たない) なので、1 つの仕組みで塗りとクエリを両方直す。4.2 に精度の要件を追加、受け入れ条件 21 を新設し、sub-11 で実装する。`[ユーザーに聞ける]`
+  - #2 / #4 / #5 / #6 / #7 (coder 宛): 仕様側の問題は無い。#2 は sub-11、#4〜#7 は sub-12 で直す。
 
 - 2026-10-04 / 出所: coder SELF_EVAL sub-08 round 1 (planner VERDICT OK)
   - 4.2 ABI: v24 = 139 で確定。NavCompleteLink の追加、NavSamplePosition の areaMask、NavFindPath の outPartial、NavFindRandomPoint の方式 (半径内を保証するため Detour の関数を使わない) を記録した。外部プロジェクト (三校 / HAL Collector) の GameLogic.dll は版の不一致で読み込みを拒否されるので、再ビルドが要る (ユーザー作業)。

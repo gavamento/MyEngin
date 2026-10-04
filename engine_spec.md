@@ -2427,14 +2427,20 @@ that height regardless of speed. The Surface picks `cellSize` / `cellHeight` fro
 one cell, and the remaining mismatch is caught by `Stuck` (no progress for 60 ticks).
 
 **Display.** The mesh is drawn as a translucent area-coloured fill plus outline by `NavDebugView` on the render-frame
-side, so it appears while editing and while playing through one path. Golden `nav` (`--nav-demo`, frame 120) is in
-`shot_verify`.
+side, so it appears while editing and while playing through one path. Fill and outline follow the walkable surface
+(the baked layer cell heights), not the polygon plane, so the top of a 0.3 m step and a slope are painted at their
+real height; the triangles are split only where the plane and the layer differ by more than 0.04 m. Golden `nav`
+(`--nav-demo`, frame 120) is in `shot_verify`.
 
 **Scripting (ABI v24).** `NavSetDestination`, `NavStop`, `NavGetAgentState` (agent state); `NavFindPath` (corner list,
 `outPartial`), `NavSamplePosition`, `NavRaycast`, `NavFindRandomPoint` (uniform in the circle via the world `Pcg32`, up to
 16 tries, snapped to the nearest polygon; consumes no RNG when there is no Surface or `radius <= 0`; the point is
 not guaranteed to be connected to the centre); `NavCompleteLink` (finishes a Manual Link). Queries read the state
-confirmed by the previous tick's `NavSystem::Update`, so the first tick after loading a scene returns 0.
+confirmed by the previous tick's `NavSystem::Update`, so the first tick after loading a scene returns 0. The `y` of
+`NavSamplePosition`, the `NavFindPath` corners, the `NavRaycast` hit point and `NavFindRandomPoint` is the walkable surface
+height from the baked layers (`NavTileStore::SampleSurfaceHeight`), within 0.1 m on steps and slopes up to 45 degrees at the
+default cell size; the polygon plane alone is off by 0.4 m. The polygon is still a plane, so Detour's own values (the
+`dtCrowd` agent position y) are not corrected (ADR-023 decision 13).
 
 **Future run-time re-bake.** Not implemented. `NavCollectTriangles` + `NavBakeTile` (Editor-independent) and
 `NavTileStore::ReplaceTileLayers` + `Commit` are the insertion points; the call order and the open items are in

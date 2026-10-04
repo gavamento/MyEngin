@@ -11,8 +11,6 @@
 #include "Engine/Core/Ecs/EntityID.h"
 #include "Engine/Engine/Rendering/DebugDraw.h"
 
-class dtNavMesh;
-
 namespace mye {
 
 class World;
@@ -83,7 +81,7 @@ private:
     };
 
     void ScanKeys(World& world, const NavSystem* nav);
-    static void BuildFromMesh(Geometry& g, const dtNavMesh& mesh);
+    static void BuildFromMesh(Geometry& g, const NavTileStore& store);
     void Rebuild(World& world);
     Geometry& GeometryFor(World& world, const Key& key);
 

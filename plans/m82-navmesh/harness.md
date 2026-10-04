@@ -2,7 +2,7 @@
 
 - 依頼原文: ナビメッシュの実装,.claude\plans\imperative-scribbling-shore.md,不明点やあいまいな点は質問をして
 - 開始: 2026-10-03 / 基点コミット: 159cff102b872e4b55c57034adefda9db912a6a7
-- フェーズ: 実装
+- フェーズ: レビュー
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
@@ -16,11 +16,14 @@
 | sub-06 | OK | 1 | d05f179 | NavMeshModifier + エリアコスト (M82g) |
 | sub-07 | OK | 2 | ade6b23 | NavMeshLink (M82h) |
 | sub-08 | OK | 1 | d8ff284 | スクリプト API、ABI bump (M82i) |
-| sub-09 | 差し戻し (round 2 実装中) | 1 | | ADR-023 / 文書 / 全体検証 (M82j) |
+| sub-09 | OK | 2 | 4e0d7e5 | ADR-023 / 文書 / 全体検証 (M82j) |
+| sub-11 | 実装中 | 0 | | 高さを歩行面に合わせる (塗り・輪郭・クエリの y) (M82k、review-1 #2 #3) |
+| sub-12 | 未着手 | 0 | | 同じ目的地の渋滞を到着扱い + レビューの小さな指摘 (M82l、review-1 #1 #4〜#7) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
+| 1 | FAIL | 3/4/3/4 | major 2 (同じ目的地で Stuck / 塗りの高さ)、minor 5 (review-1.md) |
 
 ## ユーザー判断
 - (2026-10-03、事前の計画セッションで確定) NavMesh は Recast Navigation を vendor して使う。自前 A* への置き換えはしない
@@ -38,6 +41,8 @@
 - (2026-10-03、司会経由で回答) CharacterController.stepOffset の既定: planner の裁定「既定 0、既存の CC は不変」を**覆して Unity と同じ 0.3**。既存シーンの CC も段差を登るようになる
 - (2026-10-04、司会経由で回答) spec 2. #20 段差の量子化ずれ: autoCellSize で cellHeight も自動 (既定 0.05) + 残りは sub-05 の Stuck 検出で受ける (裁定どおり)
 - (2026-10-04、司会経由で回答) spec 2. #21 stepOffset の拡大縮小: planner の裁定「掛けない (ワールド m)」を**覆して Unity と同じく scale を掛ける**。acoustic デモの拡大した敵 (scale.y 1.6) が 0.45 m の板に乗り上がり、acoustic の replay 基準と golden が動くことを受け入れる
+- (2026-10-04、司会経由で回答) review-1 #1 同じ目的地の渋滞: Stuck は表示と通知だけで止めない。目的地の近く (2 × radius 以内) か、到着済みの仲間に接していれば Arrived (裁定どおり)
+- (2026-10-04、司会経由で回答) review-1 #3 クエリの y のずれ: 補正する (歩行面との差 0.1 m 以内、ABI の版は上げない) (裁定どおり)
 - エンジンのバージョン変更 (0.6.8.22) は `b1920a7` で単独コミット済み (harness のサブとは無関係)
 
 ## 申し送り (セッション跨ぎ)
@@ -62,5 +67,7 @@
 - (planner 2026-10-04 sub-07 VERDICT round 2 = OK) reviewer が見ること: Inspector の Link の警告 2 種の見た目。replay_verify の ui ジョブで、環境のメモリ不足による texture load outofmem が 1 回出た (再実行で PASS。nav とは無関係)
 - (planner 2026-10-04 sub-08 VERDICT OK) ABI v24 = 139。外部プロジェクト (三校 / HAL Collector) の GameLogic.dll は v24 で読み込みを拒否されるので、ユーザーに再ビルドが要ることを伝える (MyEngine の作業では外部に書かない)
 - (planner 2026-10-04 sub-09 VERDICT round 1 = REWORK、文書だけ) ADR の古い記述を 2 か所直す。R9: `/p:MyeWarnAsError=true` は Release でも落ちる (CI の MYE_MSBUILD_ARGS では Debug / Release とも通らない。M82 の範囲外の別件)。作業ファイルに cache の s09_*.log が追加された
+- (planner 2026-10-04 REVIEW_RESPONSE round 1) #1 (渋滞で Stuck のまま止まる) と #3 (クエリの y の誤差) を仕様の穴として認めた。sub-11 (高さ、#2 #3) → sub-12 (Stuck と到着、#4〜#7) を新設 (M82k / M82l)。#1 と #3 の裁定は `[ユーザーに聞ける]`
+- (planner 2026-10-04 sub-11 VERDICT OK) 高さは方式 (a) で、ハッシュは不変。reviewer が見ること: 編集中の SceneView で、段差の天面と坂が塗られているか (スクショ未取得)。既知の限界: 台の中の取り残された床が NavFindRandomPoint の候補に混ざりうる。作業ファイルに %TEMP% の s11 が追加された
 - (planner) 削除の承認待ちの作業ファイル: `C:\HAL\MyEngin\cache\s10\` (26 MB) と `C:\HAL\MyEngin\cache\base10_rel\` (37 MB)。round 2 で着手前の基準として再利用できるので、sub-10 が OK になるまで残す
 - (planner) sub-01 の結論 (復元方式 a/b/c) で sub-03 以降の SimSnapshot の形が決まる。sub-01 の VERDICT 時に spec 4.4 を確定させる
