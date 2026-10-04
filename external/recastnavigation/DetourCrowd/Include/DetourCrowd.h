@@ -269,6 +269,10 @@ public:
 	/// @return The requested agent.
 	dtCrowdAgent* getEditableAgent(const int idx);
 
+	/// MYE-PATCH(M82h): 直近の update で OFFMESH に入った agent の渡り先 (startPos / endPos / polyRef)。
+	/// 渡りは呼び出し側が行うので、dtCrowd はここを読み取り用に公開するだけ (active は OFFMESH に入った update の間だけ立つ)。
+	const dtCrowdAgentAnimation* getAgentAnimation(const int idx) const;
+
 	/// The maximum number of agents that can be managed by the object.
 	/// @return The maximum number of agents.
 	int getAgentCount() const;

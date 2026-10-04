@@ -856,6 +856,7 @@ MYE_STR(Create_Capsule,       "Capsule",           "カプセル")
 MYE_STR(Create_NavMeshSurface, "NavMesh Surface",  "ナビメッシュサーフェス") // M82b
 MYE_STR(Create_NavMeshObstacle, "NavMesh Obstacle", "ナビメッシュ障害物") // M82f
 MYE_STR(Create_NavMeshModifier, "NavMesh Modifier", "ナビメッシュモディファイア") // M82g
+MYE_STR(Create_NavMeshLink,   "NavMesh Link",      "ナビメッシュリンク") // M82h
 MYE_STR(Create_Light,         "Light",             "ライト")
 MYE_STR(Create_DirLight,      "Directional Light", "平行光")
 MYE_STR(Create_PointLight,    "Point Light",       "ポイントライト")
@@ -1857,6 +1858,21 @@ MYE_STR(Insp_NavAreaCosts,     "Area costs",  "エリアのコスト")
 MYE_STR(Insp_NavAreaCostHint,  "1 = normal. Agents avoid areas with a higher cost; area names come from Project Settings.",
                                "1 が標準。高いほどエージェントが避けます。エリア名はプロジェクト設定で変えられます")
 MYE_STR(Insp_NavAreaMask,      "Walkable areas", "歩けるエリア")
+
+// ---- M82h: NavMesh Link ----
+MYE_STR(Insp_NavLinkArea,      "Area %d: %s", "エリア %d: %s")
+MYE_STR(Insp_NavLinkBlocked,   "Area 1 is Not Walkable: no agent uses this link.",
+                               "エリア 1 は歩行不可です。このリンクはどのエージェントも使いません")
+MYE_STR(Insp_NavLinkOneWay,    "One way: agents go from the entrance to the exit only.",
+                               "片方向です。エージェントは入口から出口へだけ渡ります")
+MYE_STR(Insp_NavLinkManual,    "Manual: the agent stops at the entrance with status OnLink until a script writes linkComplete = true on the agent.",
+                               "Manual: エージェントは入口で止まって OnLink になり、スクリプトがエージェントの linkComplete に true を書くまで待ちます")
+MYE_STR(Insp_NavLinkNoSurface, "The entrance is outside every NavMesh Surface: this link is not used.",
+                               "入口がどの NavMesh Surface の範囲にも入っていません。このリンクは使われません")
+MYE_STR(Insp_NavLinkExitFar,   "The exit is 2 or more tiles away from the entrance: it cannot be connected. Move the points closer (within one tile) or enlarge the tile size.",
+                               "出口が入口のタイルから 2 枚以上離れていてつながりません。2 点を 1 タイルの内に近づけるか、タイルの大きさを広げてください")
+MYE_STR(Insp_NavLinkCrossing,  "Crossing a link: entrance (%.2f, %.2f, %.2f) -> exit (%.2f, %.2f, %.2f)",
+                               "リンクを渡り中: 入口 (%.2f, %.2f, %.2f) -> 出口 (%.2f, %.2f, %.2f)")
 
 // ---- M82d: NavMesh Surface のセルサイズと実効の坂の上限 ----
 MYE_STR(Insp_NavCellAuto,      "auto",   "自動")

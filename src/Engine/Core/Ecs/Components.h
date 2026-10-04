@@ -1904,10 +1904,11 @@ struct NavMeshSurfaceComponent {
     bool autoCellSize = true;    // true: セルを agentRadius / maxClimb / maxSlopeDeg から決める (NavResolveCellSize)
     bool drawNavMeshFill = true; // 半透明の塗りの描画 (kFieldNoHash、M82e)
     bool drawObstacles = true;   // 実行時に NavMesh を切り抜いている障害物の枠線の描画 (kFieldNoHash、M82f)
+    bool drawLinks = true;       // NavMeshLink の線 (入口 -> 出口と矢印) の描画 (kFieldNoHash、M82h)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
-// NavMeshAgent の実行状態 (status)。Link の渡り中 (OnLink) は M82g で使う
+// NavMeshAgent の実行状態 (status)。Link の渡り中は OnLink (M82h)
 namespace navagentstatus {
 enum : int32_t {
     kIdle = 0,     // 目的地なし
@@ -1941,6 +1942,10 @@ struct NavMeshAgentComponent {
     float remainingDistance = 0.0f; // 経路に沿った残りの距離の見積り
     bool pathPartial = false;       // 目的地まで届かず、届く限りの最寄りへ向かっている
     uint32_t areaMask = 0xFFFFFFFFu; // 歩いてよいエリアの集合 (ビット i = エリア i、M82g)。0 = どこも歩けない
+    // ---- Link の渡り (M82h) ----
+    bool linkComplete = false;       // Manual の Link で止まっている間に true を書くと、出口へ移って渡り終える (NavSystem が false に戻す)
+    DirectX::XMFLOAT3 linkStart = { 0.0f, 0.0f, 0.0f }; // 渡っている Link の入口 (ワールド。kFieldReadOnly、渡っていない間は前回の値)
+    DirectX::XMFLOAT3 linkEnd = { 0.0f, 0.0f, 0.0f };   // 同じく出口
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -1978,6 +1983,31 @@ struct NavMeshModifierComponent {
     DirectX::XMFLOAT3 center = { 0.0f, 0.0f, 0.0f };  // ローカル中心
     DirectX::XMFLOAT3 size = { 2.0f, 2.0f, 2.0f };
     int32_t area = 3;                                 // 0..15
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// NavMeshLink の渡り方 (traversal)
+namespace navlinktraversal {
+enum : int32_t {
+    kLinear = 0, // 入口から出口へ一定速度の直線
+    kJump = 1,   // 放物線 (頂点が jumpHeight だけ高い)
+    kManual = 2, // 入口で止まり、Agent.linkComplete が立つまで待つ (status = OnLink)
+};
+} // namespace navlinktraversal
+
+// 離れた 2 点の歩行面をつなぐ Off-Mesh Link (M82h)。start / end はローカル座標 (エンティティの変換に従う)。
+// ベイクには入れず、NavSystem が毎 tick の状態を TileCache のタイルへ差し込む (Obstacle / Modifier と同じ tick 境界の同期確定)。
+// 片方向 (bidirectional = false) の Link は end から start へは使われない。area は 2 = Jump が既定
+// (Agent の areaMask と Surface の areaCosts がそのまま効く)。hash 対象 (全フィールド)
+struct NavMeshLinkComponent {
+    DirectX::XMFLOAT3 start = { -1.0f, 0.0f, 0.0f };
+    DirectX::XMFLOAT3 end = { 1.0f, 0.0f, 0.0f };
+    float width = 1.0f;             // 両端が歩行面から外れていてもよい幅 (m)。半分が吸着半径
+    bool bidirectional = true;
+    int32_t area = 2;               // 0..15
+    int32_t traversal = navlinktraversal::kJump;
+    float traversalSpeed = 3.5f;    // Linear / Jump で渡る速さ (m/s)
+    float jumpHeight = 1.0f;        // Jump の弧の高さ (m。両端の高い方からではなく、直線からの持ち上げ)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

@@ -37,6 +37,9 @@ uint8_t NavAreaToLayerArea(int area);
 
 constexpr uint64_t kNavFnvSeed = 14695981039346656037ull;
 
+// Link の入口・出口がこれ以下の動きなら作り直さない (m)。毎 tick 動く Link でタイルを入れ直さないため
+constexpr float kLinkMoveThreshold = 0.05f;
+
 // FNV-1a 64bit。ビット列をそのまま畳む (浮動小数の -0.0 と 0.0 も区別する)
 uint64_t NavFnv1a(uint64_t hash, const void* data, size_t size);
 
@@ -100,11 +103,33 @@ struct NavTileKey {
     int layer = 0;
 };
 
-// 層からポリゴンメッシュを作るたびに呼ばれ、エリア ID -> フラグの写像と再構築したタイルの記録をする
+// Off-Mesh Link (NavMeshLink) 1 本の記録。座標はワールド。key は呼び出し側の決定的なキー (エンティティキー)
+struct NavLinkSpec {
+    uint64_t key = 0;
+    float start[3] = {};
+    float end[3] = {};
+    float radius = 0.5f;       // 両端を歩行面へ吸着させる半径 (dtOffMeshConnection::rad)
+    uint8_t bidirectional = 1; // 0 = start -> end だけ
+    uint8_t area = 2;          // 0..15。ポリゴンのフラグは通常の面と同じ 1 << area
+    uint32_t userId = 0;       // dtOffMeshConnection::userId。渡るときに Link を引く鍵 (エンティティの index)
+};
+
+// 層からポリゴンメッシュを作るたびに呼ばれ、エリア ID -> フラグの写像と再構築したタイルの記録、
+// それと Off-Mesh Link の差し込みをする (dtCreateNavMeshData は入口がタイルの範囲に入る Link だけをそのタイルに持つ)
 class NavMeshProcess final : public dtTileCacheMeshProcess {
 public:
     void process(struct dtNavMeshCreateParams* params, unsigned char* polyAreas, unsigned short* polyFlags) override;
     std::vector<NavTileKey> rebuilt;
+    const std::vector<NavLinkSpec>* links = nullptr; // NavTileStore の links_ (key 昇順)
+
+private:
+    // dtNavMeshCreateParams が指す配列の持ち主 (dtCreateNavMeshData が返るまで有効)
+    std::vector<float> conVerts_;
+    std::vector<float> conRad_;
+    std::vector<unsigned short> conFlags_;
+    std::vector<unsigned char> conAreas_;
+    std::vector<unsigned char> conDir_;
+    std::vector<unsigned int> conUserId_;
 };
 
 // 障害物 1 つの記録 (形 + キー)。type は
@@ -156,6 +181,15 @@ public:
                                 uint8_t area = kNavNoPaint);
     bool AddCylinderObstacle(uint64_t key, const float* pos, float radius, float height, uint8_t area = kNavNoPaint);
     bool RemoveObstacle(uint64_t key);
+
+    // Off-Mesh Link を wanted (key 昇順) に合わせる。変わった Link の入口があるタイル列だけ作り直す
+    // (dtNavMesh への反映は Commit())。位置が kLinkMoveThreshold 以内の動きは変えない。戻り値は変えた本数 (失敗は -1)
+    int ReplaceLinks(const std::vector<NavLinkSpec>& wanted);
+    int LinkCount() const { return static_cast<int>(links_.size()); }
+    const NavLinkSpec& LinkAt(int index) const { return links_[static_cast<size_t>(index)]; }
+    // dtNavMesh が実際に持っている Off-Mesh 接続の数。LinkCount() より少なければ、入口がナビメッシュの無い所にある Link がある
+    int ConnectedLinkCount() const;
+    uint64_t HashLinks() const;
 
     // tick 境界の同期確定: 要求を全部処理して dtNavMesh を正規化する
     bool Commit();
@@ -212,6 +246,7 @@ private:
         std::vector<uint8_t> blob;
     };
 
+    bool RebuildColumnsOfLinks(const std::vector<NavLinkSpec>& before, const std::vector<NavLinkSpec>& after);
     int FindEntry(int tx, int ty, int layer) const;
     int FindBase(int tx, int ty, int layer) const;
     int LowestFreeSlot() const;
@@ -239,6 +274,7 @@ private:
     std::vector<LayerEntry> entries_;
     std::vector<BaseBlob> baseBlobs_;
     std::vector<ObstacleEntry> obstacles_;
+    std::vector<NavLinkSpec> links_;
     std::vector<uint32_t> slotSalt_;
 };
 

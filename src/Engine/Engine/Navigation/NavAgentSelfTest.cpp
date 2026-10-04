@@ -38,8 +38,9 @@ constexpr float kOnMeshTolerance = 0.05f; // HasPolyAt: 最寄り点がこの距
 constexpr uint64_t kYardGuid = 0x4E41564147454E31ull;  // メモリ登録の GUID (ファイルを作らない)
 constexpr uint64_t kOpenGuid = 0x4E41564147454E32ull;
 constexpr uint64_t kFieldGuid = 0x4E41564147454E33ull;
+constexpr uint64_t kRavineGuid = 0x4E41564147454E34ull;
 // Debug で採取し、Release で同じ値になることを確認して焼く (docs\adr\ADR-023-navmesh.md)
-constexpr uint64_t kExpectedYardHash = 0x5D708FD4EEC92492ull;
+constexpr uint64_t kExpectedYardHash = 0x1AB952061BC96FF8ull;
 
 struct Checker {
     int failCount = 0;
@@ -108,6 +109,7 @@ struct Sim {
     {
         nav.Update(GetWorld(), kDt);
         physics.Update(GetWorld(), kDt);
+        nav.PostPhysics(GetWorld(), kDt);
         transforms.Update(GetWorld());
         ++tick;
     }
@@ -363,6 +365,104 @@ struct ModifierScript {
             break;
         default:
             break;
+        }
+    }
+};
+
+// 幅 4 m の谷 (x = -2..2 は床が無い) をはさんだ 2 つの床。谷を渡る経路は Link だけ。zShift は床の中心の z
+EntityID BuildRavine(Scene& scene)
+{
+    AddBox(scene, "GroundA", -8.0f, -0.5f, 0.0f, 6.0f, 0.5f, 8.0f);
+    AddBox(scene, "GroundB", 8.0f, -0.5f, 0.0f, 6.0f, 0.5f, 8.0f);
+    return AddSurface(scene, 15.0f, 9.0f);
+}
+
+GameObject AddLinkObject(Scene& scene, const float* start, const float* end, int32_t traversal, bool bidirectional,
+                         int32_t area = 2)
+{
+    GameObject go = scene.CreateGameObjectTracked("Link");
+    auto* link = go.AddComponent<NavMeshLinkComponent>();
+    link->start = { start[0], start[1], start[2] };
+    link->end = { end[0], end[1], end[2] };
+    link->traversal = traversal;
+    link->bidirectional = bidirectional;
+    link->area = area;
+    return go;
+}
+
+EntityID AddLink(Scene& scene, const float* start, const float* end, int32_t traversal, bool bidirectional,
+                 int32_t area = 2)
+{
+    return AddLinkObject(scene, start, end, traversal, bidirectional, area).Id();
+}
+
+bool FiniteAgent(World& world, EntityID e)
+{
+    const auto* lt = world.GetComponent<LocalTransform>(e);
+    const auto* agent = world.GetComponent<NavMeshAgentComponent>(e);
+    return lt != nullptr && agent != nullptr && std::isfinite(lt->position.x) && std::isfinite(lt->position.y)
+        && std::isfinite(lt->position.z) && std::isfinite(agent->remainingDistance);
+}
+
+// 谷の Agent 1 体の観測
+struct RavineRun {
+    bool sawOnLink = false;
+    int onLinkTicks = 0;
+    float maxFeetY = -1.0e9f;
+    int status = -1;
+    bool partial = false;
+    float x = 0.0f;
+    float z = 0.0f;
+};
+
+// 谷を渡る Agent を ticks 回す。Link を 1 本置く (traversal < 0 なら置かない)。areaMask は Agent の歩けるエリア
+RavineRun RunRavine(int32_t traversal, bool bidirectional, uint32_t areaMask, float startX, float destX, int ticks)
+{
+    Scene scene;
+    const EntityID surface = BuildRavine(scene);
+    const float linkStart[3] = { -3.0f, 0.0f, 0.0f };
+    const float linkEnd[3] = { 3.0f, 0.0f, 0.0f };
+    if (traversal >= 0) {
+        AddLink(scene, linkStart, linkEnd, traversal, bidirectional);
+    }
+    const float dest[3] = { destX, 0.0f, 0.0f };
+    const EntityID walker = AddAgent(scene, "Walker", startX, 0.0f, 0.0f, &dest[0], true);
+    scene.GetWorld().GetComponent<NavMeshAgentComponent>(walker)->areaMask = areaMask;
+    RavineRun run;
+    if (!BakeSurface(scene, surface, kRavineGuid, nullptr)) {
+        return run;
+    }
+    Sim sim(scene);
+    World& world = sim.GetWorld();
+    for (int i = 0; i < ticks; ++i) {
+        sim.Step();
+        const auto* agent = world.GetComponent<NavMeshAgentComponent>(walker);
+        const auto* lt = world.GetComponent<LocalTransform>(walker);
+        if (agent->status == navagentstatus::kOnLink) {
+            run.sawOnLink = true;
+            ++run.onLinkTicks;
+            run.maxFeetY = (std::max)(run.maxFeetY, lt->position.y - 0.9f);
+        }
+    }
+    const auto* agent = world.GetComponent<NavMeshAgentComponent>(walker);
+    const auto* lt = world.GetComponent<LocalTransform>(walker);
+    run.status = agent->status;
+    run.partial = agent->pathPartial;
+    run.x = lt->position.x;
+    run.z = lt->position.z;
+    return run;
+}
+
+// 谷が 2 本の Link (z = -4 の Jump と z = +4 の Manual) で渡れる庭の台本。Manual は tick 300 に完了を通知する
+struct LinkScript {
+    EntityID manualWalker = kNullEntity;
+    void Apply(Sim& sim, uint64_t tick)
+    {
+        if (tick == 300) {
+            auto* agent = sim.GetWorld().GetComponent<NavMeshAgentComponent>(manualWalker);
+            if (agent != nullptr && agent->status == navagentstatus::kOnLink) {
+                agent->linkComplete = true;
+            }
         }
     }
 };
@@ -1462,6 +1562,441 @@ bool RunNavAgentSelfTest()
         view.Refresh(world, nullptr);
         ck.Check(view.GetStats().rebuildCount == 4 && view.GetStats().lastTriangles == flatTriangles,
                  "(Modifier 表示) Modifier を消すと元の形に戻る");
+    }
+
+    // ---- 11. Link: Linear / Jump / Manual で谷を渡り、片方向は逆向きに使わず、areaMask で絞れる ----
+    {
+        constexpr int kRunTicks = 900;
+        const RavineRun noLink = RunRavine(-1, true, 0xFFFFFFFFu, -10.0f, 10.0f, kRunTicks);
+        ck.Check(!noLink.sawOnLink && noLink.partial && noLink.x < -2.0f,
+                 "(Link) Link が無ければ谷は渡れず、部分経路で手前の縁に着く");
+
+        const RavineRun linear = RunRavine(navlinktraversal::kLinear, true, 0xFFFFFFFFu, -10.0f, 10.0f, kRunTicks);
+        MYE_LOG_INFO("  [link] linear: status %d onLink %d ticks, x %.2f", linear.status, linear.onLinkTicks, linear.x);
+        ck.Check(linear.sawOnLink && linear.status == navagentstatus::kArrived && !linear.partial
+                     && std::fabs(linear.x - 10.0f) < 0.4f,
+                 "(Link) Linear: 谷の向こうの目的地へ渡って着く (OnLink を経て Arrived、部分経路ではない)");
+        ck.Check(linear.onLinkTicks >= 90 && linear.onLinkTicks <= 160,
+                 "(Link) Linear: 渡る時間が 6 m / 3.5 m/s に近い (入口への近づきを含めて 90..160 tick)");
+        ck.Check(linear.maxFeetY < 0.2f, "(Link) Linear: 直線で渡り、持ち上がらない");
+
+        const RavineRun jump = RunRavine(navlinktraversal::kJump, true, 0xFFFFFFFFu, -10.0f, 10.0f, kRunTicks);
+        MYE_LOG_INFO("  [link] jump: status %d onLink %d ticks, peak feet y %.2f", jump.status, jump.onLinkTicks, jump.maxFeetY);
+        ck.Check(jump.sawOnLink && jump.status == navagentstatus::kArrived && std::fabs(jump.x - 10.0f) < 0.4f,
+                 "(Link) Jump: 谷の向こうの目的地へ渡って着く");
+        ck.Check(jump.maxFeetY > 0.9f && jump.maxFeetY < 1.2f, "(Link) Jump: 弧の頂点が jumpHeight (1 m) まで持ち上がる");
+
+        const RavineRun back = RunRavine(navlinktraversal::kLinear, true, 0xFFFFFFFFu, 10.0f, -10.0f, kRunTicks);
+        ck.Check(back.sawOnLink && back.status == navagentstatus::kArrived && std::fabs(back.x - (-10.0f)) < 0.4f,
+                 "(Link) 双方向の Link は出口から入口へも渡れる");
+        const RavineRun oneWay = RunRavine(navlinktraversal::kLinear, false, 0xFFFFFFFFu, 10.0f, -10.0f, kRunTicks);
+        ck.Check(!oneWay.sawOnLink && oneWay.partial && oneWay.x > 2.0f,
+                 "(Link) 片方向の Link は逆向きには使われない (出口側の Agent は渡れず、手前の縁で部分経路になる)");
+        const RavineRun oneWayForward = RunRavine(navlinktraversal::kLinear, false, 0xFFFFFFFFu, -10.0f, 10.0f, kRunTicks);
+        ck.Check(oneWayForward.sawOnLink && oneWayForward.status == navagentstatus::kArrived,
+                 "(Link) 片方向の Link も順方向には渡れる");
+
+        const RavineRun masked = RunRavine(navlinktraversal::kLinear, true, 0xFFFFFFFFu & ~(1u << 2), -10.0f, 10.0f, kRunTicks);
+        ck.Check(!masked.sawOnLink && masked.partial && masked.x < -2.0f,
+                 "(Link) areaMask が Link のエリア (2) を外している Agent は Link を使わない");
+
+        // Manual: 入口で止まり、完了の通知まで動かない。通知すると出口へ移って歩き続ける
+        Scene scene;
+        const EntityID surface = BuildRavine(scene);
+        const float linkStart[3] = { -3.0f, 0.0f, 0.0f };
+        const float linkEnd[3] = { 3.0f, 0.0f, 0.0f };
+        AddLink(scene, linkStart, linkEnd, navlinktraversal::kManual, true);
+        const float dest[3] = { 10.0f, 0.0f, 0.0f };
+        const EntityID walker = AddAgent(scene, "Walker", -10.0f, 0.0f, 0.0f, &dest[0], true);
+        ck.Check(BakeSurface(scene, surface, kRavineGuid, nullptr), "(Link) 谷をベイクできる");
+        Sim sim(scene);
+        World& world = sim.GetWorld();
+        for (int i = 0; i < 400; ++i) {
+            sim.Step();
+        }
+        const auto* agent = world.GetComponent<NavMeshAgentComponent>(walker);
+        const float heldX = world.GetComponent<LocalTransform>(walker)->position.x;
+        ck.Check(agent->status == navagentstatus::kOnLink && std::fabs(heldX - (-3.0f)) < 0.3f
+                     && std::fabs(agent->linkStart.x - (-3.0f)) < 0.3f && std::fabs(agent->linkEnd.x - 3.0f) < 0.3f,
+                 "(Link) Manual: 入口で止まって OnLink になり、linkStart / linkEnd を公開する");
+        for (int i = 0; i < 300; ++i) {
+            sim.Step();
+        }
+        ck.Check(world.GetComponent<NavMeshAgentComponent>(walker)->status == navagentstatus::kOnLink
+                     && std::fabs(world.GetComponent<LocalTransform>(walker)->position.x - heldX) < 0.05f,
+                 "(Link) Manual: 完了の通知が無い間は 300 tick たっても動かない");
+        world.GetComponent<NavMeshAgentComponent>(walker)->linkComplete = true;
+        for (int i = 0; i < 4; ++i) {
+            sim.Step();
+        }
+        ck.Check(!world.GetComponent<NavMeshAgentComponent>(walker)->linkComplete
+                     && world.GetComponent<LocalTransform>(walker)->position.x > 2.0f,
+                 "(Link) Manual: 完了を通知すると出口へ移り、通知のフラグは NavSystem が戻す");
+        for (int i = 0; i < 400; ++i) {
+            sim.Step();
+        }
+        agent = world.GetComponent<NavMeshAgentComponent>(walker);
+        ck.Check(agent->status == navagentstatus::kArrived && !agent->pathPartial
+                     && std::fabs(world.GetComponent<LocalTransform>(walker)->position.x - 10.0f) < 0.4f,
+                 "(Link) Manual: 渡り終えたあと目的地まで歩いて Arrived");
+    }
+
+    // ---- 11b. Link の実行時の編集: 足す・動かす・消すと同じ tick に TileCache が変わり、保存した状態へ復元できる ----
+    {
+        Scene scene;
+        const EntityID surface = BuildRavine(scene);
+        ck.Check(BakeSurface(scene, surface, kRavineGuid, nullptr), "(Link 編集) 谷をベイクできる");
+        World& world = scene.GetWorld();
+        Sim sim(scene);
+        sim.Step();
+        const NavTileStore& store = *sim.nav.Surfaces()[0].store;
+        const uint64_t meshBefore = store.HashNavMesh(false);
+        ck.Check(store.LinkCount() == 0 && store.ConnectedLinkCount() == 0, "(Link 編集) 最初は Link が無い");
+
+        const float linkStart[3] = { -3.0f, 0.0f, 0.0f };
+        const float linkEnd[3] = { 3.0f, 0.0f, 0.0f };
+        const EntityID link = AddLink(scene, linkStart, linkEnd, navlinktraversal::kLinear, true);
+        world.ApplyStructuralChanges();
+        sim.Step();
+        ck.Check(store.LinkCount() == 1 && store.ConnectedLinkCount() == 1 && store.HashNavMesh(false) != meshBefore,
+                 "(Link 編集) Link を足した tick のうちに TileCache へ入る (入口のあるタイルが Off-Mesh 接続を持つ)");
+        ck.Check(sim.nav.Stats().linkChanges == 1, "(Link 編集) その tick の linkChanges が 1");
+        sim.Step();
+        ck.Check(sim.nav.Stats().linkChanges == 0, "(Link 編集) 変わらない tick は何もしない");
+
+        world.GetComponent<LocalTransform>(link)->position.z += 3.0f;
+        sim.Step();
+        ck.Check(store.LinkCount() == 1 && std::fabs(store.LinkAt(0).start[2] - 3.0f) < 0.01f && store.ConnectedLinkCount() == 1,
+                 "(Link 編集) Link を動かすと入口が新しい位置へ付け直される");
+        world.GetComponent<LocalTransform>(link)->position.z += 0.02f; // 閾値以内の揺れ
+        sim.Step();
+        ck.Check(sim.nav.Stats().linkChanges == 0, "(Link 編集) 閾値以内の揺れでは作り直さない");
+
+        world.DestroyEntity(link);
+        world.ApplyStructuralChanges();
+        sim.Step();
+        ck.Check(store.LinkCount() == 0 && store.ConnectedLinkCount() == 0 && store.HashNavMesh(false) == meshBefore,
+                 "(Link 編集) Link を消すと元のナビメッシュに戻る");
+
+        // 歩行面の無い所に入口がある Link は dtNavMesh に残らない (警告して無視される)
+        const float farStart[3] = { 0.0f, 0.0f, 0.0f };
+        AddLink(scene, farStart, linkEnd, navlinktraversal::kLinear, true);
+        world.ApplyStructuralChanges();
+        sim.Step();
+        ck.Check(store.LinkCount() == 1 && store.ConnectedLinkCount() == 0,
+                 "(Link 編集) 谷の真ん中 (床が無い) に入口がある Link は接続されず無視される");
+    }
+
+    // ---- 11c. Link の SimSnapshot: 渡りの途中 (Jump の空中と Manual の待機) で撮って、空の NavSystem / 元の NavSystem へ復元して連続実行と一致 ----
+    {
+        Scene scene;
+        const EntityID surface = BuildRavine(scene);
+        const float jumpStart[3] = { -3.0f, 0.0f, -4.0f };
+        const float jumpEnd[3] = { 3.0f, 0.0f, -4.0f };
+        const float manualStart[3] = { -3.0f, 0.0f, 4.0f };
+        const float manualEnd[3] = { 3.0f, 0.0f, 4.0f };
+        AddLink(scene, jumpStart, jumpEnd, navlinktraversal::kJump, true);
+        AddLink(scene, manualStart, manualEnd, navlinktraversal::kManual, true);
+        const float jumpDest[3] = { 10.0f, 0.0f, -4.0f };
+        const float manualDest[3] = { 10.0f, 0.0f, 4.0f };
+        const EntityID jumper = AddAgent(scene, "Jumper", -10.0f, 0.0f, -4.0f, &jumpDest[0], true, 1);
+        LinkScript script;
+        script.manualWalker = AddAgent(scene, "Waiter", -10.0f, 0.0f, 4.0f, &manualDest[0], true, 1);
+        ck.Check(BakeSurface(scene, surface, kRavineGuid, nullptr), "(Link 復元) 谷をベイクできる");
+
+        Sim sim(scene);
+        SimRefs refs;
+        refs.scene = &scene;
+        refs.nav = &sim.nav;
+        uint64_t tickRef = 0;
+        refs.tickIndex = &tickRef;
+
+        // Jumper が空中に出て 20 tick たつまで進める
+        int airborne = 0;
+        for (int i = 0; i < 400 && airborne < 20; ++i) {
+            script.Apply(sim, sim.tick);
+            sim.Step();
+            const auto* a = sim.GetWorld().GetComponent<NavMeshAgentComponent>(jumper);
+            airborne = a->status == navagentstatus::kOnLink ? airborne + 1 : 0;
+        }
+        const int warm = static_cast<int>(sim.tick);
+        tickRef = sim.tick;
+        constexpr int kAhead = 420;
+        const auto* waiter = sim.GetWorld().GetComponent<NavMeshAgentComponent>(script.manualWalker);
+        ck.Check(airborne >= 20 && waiter->status == navagentstatus::kOnLink && warm < 300,
+                 "(Link 復元) 撮影の時点で Jumper は渡りの途中、Waiter は Manual の入口で待っている");
+        std::vector<std::byte> blob;
+        ck.Check(CaptureSimSnapshot(refs, blob), "(Link 復元) 渡りの途中で撮影できる");
+
+        std::vector<uint64_t> continuous;
+        for (int i = 0; i < kAhead; ++i) {
+            script.Apply(sim, sim.tick);
+            sim.Step();
+            continuous.push_back(WorldHashOf(sim, &sim.nav));
+        }
+        ck.Check(sim.GetWorld().GetComponent<NavMeshAgentComponent>(jumper)->status == navagentstatus::kArrived
+                     && sim.GetWorld().GetComponent<NavMeshAgentComponent>(script.manualWalker)->status == navagentstatus::kArrived,
+                 "(Link 復元) 連続実行の終わりでは 2 体とも谷を渡って Arrived");
+
+        Sim restored(scene);
+        restored.tick = static_cast<uint64_t>(warm);
+        SimRefs refs2 = refs;
+        refs2.nav = &restored.nav;
+        uint64_t tick2 = 0;
+        refs2.tickIndex = &tick2;
+        ck.Check(RestoreSimSnapshot(refs2, blob.data(), blob.size()), "(Link 復元) 空の NavSystem へ復元できる (戻り値 true)");
+        ck.Check(restored.nav.Surfaces()[0].store->LinkCount() == 2, "(Link 復元) 復元直後の store が Link を 2 本持つ");
+        std::vector<std::byte> again;
+        CaptureSimSnapshot(refs2, again);
+        ck.Check(again == blob, "(Link 復元) 復元直後の再撮影が元の blob とバイト一致");
+        bool same = true;
+        for (int i = 0; i < kAhead; ++i) {
+            script.Apply(restored, restored.tick);
+            restored.Step();
+            same = same && WorldHashOf(restored, &restored.nav) == continuous[static_cast<size_t>(i)];
+        }
+        ck.Check(same, "(Link 復元) 空の NavSystem から 420 tick (着地・Manual の完了・歩行の再開) の毎 tick ハッシュが連続実行と一致");
+
+        ck.Check(RestoreSimSnapshot(refs, blob.data(), blob.size()), "(Link 復元) 渡り終えた後の元の NavSystem へ巻き戻せる");
+        sim.tick = static_cast<uint64_t>(warm);
+        bool replay = true;
+        for (int i = 0; i < kAhead; ++i) {
+            script.Apply(sim, sim.tick);
+            sim.Step();
+            replay = replay && WorldHashOf(sim, &sim.nav) == continuous[static_cast<size_t>(i)];
+        }
+        ck.Check(replay, "(Link 復元) 元の NavSystem で巻き戻して再実行しても連続実行と一致する");
+
+        bool stable = true;
+        sim.tick = static_cast<uint64_t>(warm);
+        RestoreSimSnapshot(refs, blob.data(), blob.size());
+        for (int i = 0; i < kAhead && stable; ++i) {
+            script.Apply(sim, sim.tick);
+            sim.Step();
+            std::vector<std::byte> b1;
+            std::vector<std::byte> b2;
+            CaptureSimSnapshot(refs, b1);
+            RestoreSimSnapshot(refs, b1.data(), b1.size());
+            CaptureSimSnapshot(refs, b2);
+            stable = b1 == b2;
+        }
+        ck.Check(stable, "(Link 復元) 渡りの間も tick ごとの 撮影 -> 復元 -> 再撮影 が一致し続ける");
+    }
+
+    // ---- 11d. 渡っている途中の Link の削除・移動・非アクティブ化・Surface の読み直し: 保存した出口まで渡り切ってから歩行へ戻る ----
+    {
+        enum class Edit { Destroy, Move, Deactivate, Reload };
+        const char* const editNames[] = { "削除", "移動", "非アクティブ化", "Surface の読み直し" };
+        const char* const modeNames[] = { "Linear", "Jump", "Manual" };
+        constexpr uint64_t kRavineGuid2 = 0x4E41564147454E35ull;
+        for (int32_t mode = navlinktraversal::kLinear; mode <= navlinktraversal::kManual; ++mode) {
+            for (int e = 0; e < 4; ++e) {
+                const Edit edit = static_cast<Edit>(e);
+                char label[128];
+                std::snprintf(label, sizeof(label), "(Link 途中変更) %s の渡りの途中で Link を%s", modeNames[mode], editNames[e]);
+                Scene scene;
+                const EntityID surface = BuildRavine(scene);
+                const float linkStart[3] = { -3.0f, 0.0f, 0.0f };
+                const float linkEnd[3] = { 3.0f, 0.0f, 0.0f };
+                GameObject linkObject = AddLinkObject(scene, linkStart, linkEnd, mode, true);
+                const EntityID link = linkObject.Id();
+                const float dest[3] = { 10.0f, 0.0f, 0.0f };
+                const EntityID walker = AddAgent(scene, "Walker", -10.0f, 0.0f, 0.0f, &dest[0], true, 1);
+                if (!BakeSurface(scene, surface, kRavineGuid, nullptr)) {
+                    ck.Check(false, "(Link 途中変更) 谷をベイクできる");
+                    continue;
+                }
+                Sim sim(scene);
+                World& world = sim.GetWorld();
+                SimRefs refs;
+                refs.scene = &scene;
+                refs.nav = &sim.nav;
+                uint64_t tickRef = 0;
+                refs.tickIndex = &tickRef;
+
+                int onLink = 0;
+                for (int i = 0; i < 900 && onLink < 30; ++i) {
+                    sim.Step();
+                    onLink = world.GetComponent<NavMeshAgentComponent>(walker)->status == navagentstatus::kOnLink ? onLink + 1 : 0;
+                }
+                bool setupOk = onLink >= 30;
+                switch (edit) {
+                case Edit::Destroy:
+                    world.DestroyEntity(link);
+                    world.ApplyStructuralChanges();
+                    break;
+                case Edit::Move:
+                    world.GetComponent<LocalTransform>(link)->position.z += 3.0f;
+                    break;
+                case Edit::Deactivate:
+                    linkObject.AddComponent<ActiveComponent>()->enabled = false;
+                    world.ApplyStructuralChanges();
+                    break;
+                case Edit::Reload:
+                    setupOk = BakeSurface(scene, surface, kRavineGuid2, nullptr) && setupOk;
+                    break;
+                }
+                sim.Step();
+                const uint64_t completeTick = sim.tick + 20;
+                const auto completeScript = [&](Sim& target) {
+                    if (target.tick == completeTick) {
+                        auto* a = target.GetWorld().GetComponent<NavMeshAgentComponent>(walker);
+                        if (a != nullptr && a->status == navagentstatus::kOnLink) {
+                            a->linkComplete = true;
+                        }
+                    }
+                };
+                const uint64_t warm = sim.tick;
+                tickRef = sim.tick;
+                std::vector<std::byte> blob;
+                const bool captured = edit == Edit::Reload || CaptureSimSnapshot(refs, blob);
+
+                constexpr int kAhead = 500;
+                std::vector<uint64_t> continuous;
+                bool finite = true;
+                for (int i = 0; i < kAhead; ++i) {
+                    completeScript(sim);
+                    sim.Step();
+                    finite = finite && FiniteAgent(world, walker);
+                    continuous.push_back(WorldHashOf(sim, &sim.nav));
+                }
+                const auto* agent = world.GetComponent<NavMeshAgentComponent>(walker);
+                const auto* lt = world.GetComponent<LocalTransform>(walker);
+                bool resultOk = false;
+                if (edit == Edit::Reload) {
+                    // 読み直しで渡りの状態は捨てられる。落ちず、NaN を出さず、渡り中のままにならない
+                    resultOk = agent->status != navagentstatus::kOnLink;
+                } else {
+                    resultOk = agent->status == navagentstatus::kArrived && std::fabs(lt->position.x - 10.0f) < 0.5f;
+                }
+                ck.Check(setupOk && captured && finite && resultOk, label);
+
+                if (edit != Edit::Reload) {
+                    Sim restored(scene);
+                    restored.tick = warm;
+                    SimRefs refs2 = refs;
+                    refs2.nav = &restored.nav;
+                    uint64_t tick2 = 0;
+                    refs2.tickIndex = &tick2;
+                    bool same = RestoreSimSnapshot(refs2, blob.data(), blob.size());
+                    for (int i = 0; same && i < kAhead; ++i) {
+                        completeScript(restored);
+                        restored.Step();
+                        same = same && WorldHashOf(restored, &restored.nav) == continuous[static_cast<size_t>(i)];
+                    }
+                    char restoreLabel[160];
+                    std::snprintf(restoreLabel, sizeof(restoreLabel), "%s: その直後に撮った状態の復元が連続実行と一致", label);
+                    ck.Check(same, restoreLabel);
+                }
+            }
+        }
+    }
+
+    // ---- 11e. つながらない Link の警告: 出口が 2 タイル以上離れた Link と、歩行面に入口が無い Link は WARN を状態が変わった tick に 1 回数える ----
+    {
+        Scene scene;
+        const EntityID surface = BuildRavine(scene);
+        ck.Check(BakeSurface(scene, surface, kRavineGuid, nullptr), "(Link 警告) 谷をベイクできる");
+        World& world = scene.GetWorld();
+        Sim sim(scene);
+        const float nearStart[3] = { -3.0f, 0.0f, 0.0f };
+        const float nearEnd[3] = { 3.0f, 0.0f, 0.0f };
+        AddLink(scene, nearStart, nearEnd, navlinktraversal::kLinear, true);
+        world.ApplyStructuralChanges();
+        for (int i = 0; i < 3; ++i) {
+            sim.Step();
+        }
+        ck.Check(sim.nav.Stats().linkDisconnected == 0 && sim.nav.Stats().linkWarnings == 0,
+                 "(Link 警告) 隣のタイルまでの出口の Link はつながり、警告しない");
+
+        const float farStart[3] = { -10.0f, 0.0f, 0.0f };
+        const float farEnd[3] = { 10.0f, 0.0f, 0.0f };
+        const EntityID farLink = AddLink(scene, farStart, farEnd, navlinktraversal::kLinear, true);
+        world.ApplyStructuralChanges();
+        for (int i = 0; i < 5; ++i) {
+            sim.Step();
+        }
+        ck.Check(sim.nav.Surfaces()[0].store->LinkCount() == 2 && sim.nav.Surfaces()[0].store->ConnectedLinkCount() == 1
+                     && sim.nav.Stats().linkDisconnected == 1 && sim.nav.Stats().linkWarnings == 1,
+                 "(Link 警告) 出口が 3 タイル離れた Link はつながらず、警告は 1 回だけ (毎 tick は出さない)");
+        std::vector<NavLinkSpec> specs;
+        NavCollectLinkSpecs(world, specs);
+        NavLinkSpec farSpec;
+        for (const NavLinkSpec& spec : specs) {
+            if (spec.key == NavLinkKey(farLink)) {
+                farSpec = spec;
+            }
+        }
+        ck.Check(specs.size() == 2 && NavCheckLinkPlacement(world, farSpec) == NavLinkPlacement::ExitTooFar
+                     && NavCheckLinkPlacement(world, specs[0].key == farSpec.key ? specs[1] : specs[0]) == NavLinkPlacement::Ok,
+                 "(Link 警告) 静的な検査 (Inspector 用) が 2 タイル以上離れた出口を見つけ、近い Link は通す");
+
+        const float holeStart[3] = { 0.0f, 0.0f, 0.0f }; // 谷の真ん中 (床が無い)
+        AddLink(scene, holeStart, nearEnd, navlinktraversal::kLinear, true);
+        world.ApplyStructuralChanges();
+        for (int i = 0; i < 5; ++i) {
+            sim.Step();
+        }
+        ck.Check(sim.nav.Stats().linkDisconnected == 2 && sim.nav.Stats().linkWarnings == 2,
+                 "(Link 警告) 入口に歩行面が無い Link を足すと、数が変わった tick に 1 回だけ警告が増える");
+
+        const float outsideStart[3] = { 50.0f, 0.0f, 0.0f };
+        const EntityID outside = AddLink(scene, outsideStart, nearEnd, navlinktraversal::kLinear, true);
+        world.ApplyStructuralChanges();
+        NavCollectLinkSpecs(world, specs);
+        NavLinkSpec outsideSpec;
+        for (const NavLinkSpec& spec : specs) {
+            if (spec.key == NavLinkKey(outside)) {
+                outsideSpec = spec;
+            }
+        }
+        ck.Check(NavCheckLinkPlacement(world, outsideSpec) == NavLinkPlacement::NoSurface,
+                 "(Link 警告) 静的な検査が、どの Surface にも入らない入口を見つける");
+    }
+
+    // ---- 11f. 親を持つ Agent の渡り: 親を動かして回した状態でも、渡り切った位置がワールドで正しい ----
+    for (int rotated = 0; rotated < 2; ++rotated) {
+        Scene scene;
+        const EntityID surface = BuildRavine(scene);
+        const float linkStart[3] = { -3.0f, 0.0f, 0.0f };
+        const float linkEnd[3] = { 3.0f, 0.0f, 0.0f };
+        AddLink(scene, linkStart, linkEnd, navlinktraversal::kJump, true);
+        GameObject rig = scene.CreateGameObjectTracked("Rig");
+        rig.SetLocalPosition(2.0f, 0.0f, -1.0f);
+        if (rotated != 0) {
+            rig.GetComponent<LocalTransform>()->rotation = { 0.0f, 0.70710678f, 0.0f, 0.70710678f }; // y 軸まわり 90 度
+        }
+        GameObject child = scene.CreateGameObjectTracked("ChildWalker");
+        child.SetParent(rig);
+        // ワールド (-10, 0.9, 0) = 回転 90 度 (x' = z, z' = -x) と平行移動 (2, 0, -1) を戻したローカル座標
+        if (rotated != 0) {
+            child.SetLocalPosition(-1.0f, 0.9f, -12.0f);
+        } else {
+            child.SetLocalPosition(-12.0f, 0.9f, 1.0f); // 回さないときは平行移動 (2, 0, -1) を引いただけ
+        }
+        child.AddComponent<CharacterControllerComponent>();
+        auto* na = child.AddComponent<NavMeshAgentComponent>();
+        na->destination = { 10.0f, 0.0f, 0.0f };
+        na->hasDestination = true;
+        na->avoidanceQuality = 1;
+        Sim sim(scene);
+        World& world = sim.GetWorld();
+        // Sim の TransformSystem に階層を組ませてからベイクする (ベイクの TransformSystem が階層の dirty を消すため)
+        world.ApplyStructuralChanges();
+        sim.transforms.Update(world);
+        ck.Check(BakeSurface(scene, surface, kRavineGuid, nullptr), "(Link 親付き) 谷をベイクできる");
+        bool sawOnLink = false;
+        for (int i = 0; i < 1000; ++i) {
+            sim.Step();
+            sawOnLink = sawOnLink || world.GetComponent<NavMeshAgentComponent>(child.Id())->status == navagentstatus::kOnLink;
+        }
+        const auto* wm = world.GetComponent<WorldMatrixComponent>(child.Id());
+        const auto* agent = world.GetComponent<NavMeshAgentComponent>(child.Id());
+        MYE_LOG_INFO("  [link] parented walker (rotated %d): status %d world (%.2f, %.2f, %.2f)", rotated, agent->status, wm->value.m[3][0],
+                     wm->value.m[3][1], wm->value.m[3][2]);
+        ck.Check(sawOnLink && agent->status == navagentstatus::kArrived && std::fabs(wm->value.m[3][0] - 10.0f) < 0.5f
+                     && std::fabs(wm->value.m[3][2]) < 0.5f && std::fabs(wm->value.m[3][1] - 0.9f) < 0.3f,
+                 rotated != 0 ? "(Link 親付き) 平行移動と 90 度回転をした親の子の Agent が谷を渡り、ワールドの目的地に着く" : "(Link 親付き) 平行移動した親の子の Agent が谷を渡り、ワールドの目的地に着く");
     }
 
     ck.Check(kExpectedYardHash == 0 || yardHashAtEnd == kExpectedYardHash,

@@ -414,6 +414,10 @@ constexpr uint32_t kNavObstacle = 0xFF9030FFu;    // NavMeshObstacle の切り�
 constexpr uint32_t kNavObstacleOff = 0x808080FFu; // carve が無効な Obstacle (灰)
 constexpr int kNavObstacleSegments = 16;
 constexpr uint32_t kNavModifier = 0xC070FFFFu;    // NavMeshModifier の塗る箱 (紫)
+constexpr uint32_t kNavLink = 0x40FFC0FFu;        // NavMeshLink の入口・出口と矢印 (緑。NavSystem の実行時の線と同じ)
+constexpr float kNavLinkEndRadius = 0.15f;
+constexpr float kNavLinkArrowLength = 0.35f;
+constexpr float kNavLinkArrowSpread = 0.4f;
 constexpr uint32_t kSelection = 0xFFA030FFu;  // 選択アウトライン
 
 constexpr float kLightMarkerRadius = 0.3f;
@@ -479,6 +483,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         DrawNavSurfaceGizmos(world);
         DrawNavObstacleGizmos(world);
         DrawNavModifierGizmos(world);
+        DrawNavLinkGizmos(world);
     }
 
     DrawSelectionOutline(ctx, world, selection);
@@ -893,6 +898,41 @@ void SceneViewWindow::DrawNavModifierGizmos(World& world)
                 lines_.AddWireBox(boxWorld, { spec.v[3], spec.v[4], spec.v[5] }, gizmo::kNavModifier);
             } else {
                 lines_.AddAABB({ spec.v[0], spec.v[1], spec.v[2] }, { spec.v[3], spec.v[4], spec.v[5] }, gizmo::kNavModifier);
+            }
+        });
+}
+
+// NavMeshLink の入口と出口 (球) と、その間の線・矢印 (M82h)。NavSystem が実際に使う座標 (NavMakeLinkSpec) をそのまま描く =
+// 無効な Link (入口と出口が同じ点など) は描かない。矢尻は向き (片方向は出口だけ、双方向は両端)
+void SceneViewWindow::DrawNavLinkGizmos(World& world)
+{
+    ForEachWithWorldMatrix<NavMeshLinkComponent>(
+        world, [&](const NavMeshLinkComponent& link, const XMFLOAT4X4& wm, EntityID e) {
+            NavLinkSpec spec;
+            if (!NavMakeLinkSpec(link, wm.m, e, spec)) {
+                return;
+            }
+            const XMFLOAT3 a = { spec.start[0], spec.start[1], spec.start[2] };
+            const XMFLOAT3 b = { spec.end[0], spec.end[1], spec.end[2] };
+            lines_.AddWireSphere(a, gizmo::kNavLinkEndRadius, gizmo::kNavLink);
+            lines_.AddWireSphere(b, gizmo::kNavLinkEndRadius, gizmo::kNavLink);
+            lines_.AddLine(a, b, gizmo::kNavLink);
+            const float dx = b.x - a.x;
+            const float dz = b.z - a.z;
+            const float length = std::sqrt(dx * dx + dz * dz);
+            if (length < 1.0e-4f) {
+                return;
+            }
+            const auto arrowAt = [&](const XMFLOAT3& tip, float dirX, float dirZ) {
+                const float backX = -dirX * gizmo::kNavLinkArrowLength;
+                const float backZ = -dirZ * gizmo::kNavLinkArrowLength;
+                const float side = gizmo::kNavLinkArrowLength * gizmo::kNavLinkArrowSpread;
+                lines_.AddLine(tip, { tip.x + backX - dirZ * side, tip.y, tip.z + backZ + dirX * side }, gizmo::kNavLink);
+                lines_.AddLine(tip, { tip.x + backX + dirZ * side, tip.y, tip.z + backZ - dirX * side }, gizmo::kNavLink);
+            };
+            arrowAt(b, dx / length, dz / length);
+            if (spec.bidirectional != 0) {
+                arrowAt(a, -dx / length, -dz / length);
             }
         });
 }

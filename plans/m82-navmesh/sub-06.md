@@ -1,7 +1,7 @@
 # sub-06: NavMeshModifier とエリアコスト
 
 - 依存: sub-03 (sub-05 の後に直列で回す。TileCache の更新経路を共有するため)
-- 状態: OK (コミット待ち)
+- 状態: OK (commit d05f179)
 - 往復: 1
 
 ## やること

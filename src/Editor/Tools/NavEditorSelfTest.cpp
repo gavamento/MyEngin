@@ -179,6 +179,32 @@ bool RunNavEditorSelfTest()
         undo.ClearAll();
     }
 
+    // ---- 1a2b. Create -> 3D Object -> NavMesh Link (Undo / Redo、M82h) ----
+    {
+        const GameObject created = RecordCreate(ctx, selection, undo, "Create NavMesh Link",
+                                                [&] { return CreateNavMeshLink(ctx, "NavMesh Link"); });
+        world.ApplyStructuralChanges();
+        const uint64_t fid = scene.EnsureFileId(created.Id());
+        const NavMeshLinkComponent* c = world.GetComponent<NavMeshLinkComponent>(created.Id());
+        check(c != nullptr && c->bidirectional && c->area == 2 && c->traversal == navlinktraversal::kJump,
+              "Create: the entity has a NavMeshLink component (a bidirectional Jump link in area 2)");
+        undo.Undo(scene, selection);
+        world.ApplyStructuralChanges();
+        check(!scene.FindByFileId(fid), "Undo: the created Link is removed");
+        undo.Redo(scene, selection);
+        world.ApplyStructuralChanges();
+        {
+            GameObject back = scene.FindByFileId(fid);
+            check(static_cast<bool>(back) && world.GetComponent<NavMeshLinkComponent>(back.Id()) != nullptr,
+                  "Redo: the Link and its component come back");
+            if (back) {
+                back.Destroy();
+                world.ApplyStructuralChanges();
+            }
+        }
+        undo.ClearAll();
+    }
+
     // ---- 1a3. エリア名 (project_settings.json の navAreas、M82g): 他のキーを壊さず保存・読み戻せる。0〜2 は固定名 ----
     {
         const fs::path dir = root / L"areas";

@@ -39,12 +39,12 @@ constexpr ExpectedHash kExpected[] = {
     {"crowd.A.tick50", 0x6B7BE00C2A223B9Aull},
     {"crowd.A.tick100", 0x4646CDB4886EBF22ull},
     {"crowd.A.allTicks", 0x7857BC4286F8F4D4ull},
-    {"capture.A.store", 0x7ACDCC5314884736ull},
+    {"capture.A.store", 0xE79010D24BBDF24Bull},
     {"capture.A.crowd", 0x51EC1B9B13A804EDull},
     {"crowd.B.tick50", 0x098AB522DD4B0E68ull},
     {"crowd.B.tick100", 0x41BED8471BA8DCD3ull},
     {"crowd.B.allTicks", 0x45E44EAD88AF5893ull},
-    {"capture.B.store", 0xA0A4001609A5BCE7ull},
+    {"capture.B.store", 0x81E7A8451EDEEA62ull},
     {"capture.B.crowd", 0x689873A2F994E35Eull},
 };
 

@@ -67,7 +67,7 @@ namespace mye {
 namespace {
 
 constexpr uint32_t kStateMagic = 0x3153564Eu; // "NVS1"
-constexpr uint32_t kStateVersion = 3; // v2: 障害物に yaw / v3: 障害物にエリア (塗り替え)
+constexpr uint32_t kStateVersion = 4; // v2: 障害物に yaw / v3: 障害物にエリア (塗り替え) / v4: Off-Mesh Link
 constexpr uint32_t kCrowdMagic = 0x31574F52u; // "ROW1"
 constexpr int kCrowdMaxPath = 256;            // dtCrowd の m_maxPathResult (MAX_PATH_RES)
 constexpr int kUpdateGuard = 4096;            // dtTileCache::update の暴走防止
@@ -75,6 +75,8 @@ constexpr int kUpdateGuard = 4096;            // dtTileCache::update の暴走�
 // (DT_MAX_TOUCHED_TILES)。8 件を超えて積むと tile 更新が黙って落ちるので、8 件ごとに処理する
 constexpr int kMaxQueuedRequests = 8;
 constexpr int kMaxLayersPerTile = 32;
+// 状態の読み込みで受け付ける Link の本数の上限 (壊れた blob が巨大な確保をさせないための歯止め)
+constexpr uint32_t kMaxSavedLinks = 4096;
 // NavTileStore::Generation の発番。store をまたいで一意にする (表示側が別の store の同じ番号と取り違えない)
 std::atomic<uint64_t> gGenerationSequence{0};
 
@@ -134,6 +136,15 @@ uint64_t HashMeshTile(const dtNavMesh& nav, const dtMeshTile& tile, bool include
             }
         }
         h = HashValue(h, static_cast<uint32_t>(0xFFFFFFFFu)); // 連鎖の区切り
+    }
+    for (int i = 0; i < hd.offMeshConCount; ++i) {
+        const dtOffMeshConnection& c = tile.offMeshCons[i];
+        h = HashPod(h, c.pos, sizeof(c.pos));
+        h = HashValue(h, c.rad);
+        h = HashValue(h, c.poly);
+        h = HashValue(h, c.flags);
+        h = HashValue(h, c.side);
+        h = HashValue(h, c.userId);
     }
     for (int i = 0; i < hd.detailMeshCount; ++i) {
         const dtPolyDetail& d = tile.detailMeshes[i];
@@ -237,6 +248,45 @@ void NavMeshProcess::process(struct dtNavMeshCreateParams* params, unsigned char
         polyFlags[i] = (area == kNavAreaNotWalkable || area >= kNavAreaCountMax) ? 0 : static_cast<uint16_t>(1u << area);
     }
     rebuilt.push_back({params->tileX, params->tileY, params->tileLayer});
+
+    // Off-Mesh Link。入口がこのタイルの範囲に入るものだけを dtCreateNavMeshData がタイルに持つ
+    const size_t count = links != nullptr ? links->size() : 0;
+    if (count == 0) {
+        return;
+    }
+    conVerts_.resize(count * 6);
+    conRad_.resize(count);
+    conFlags_.resize(count);
+    conAreas_.resize(count);
+    conDir_.resize(count);
+    conUserId_.resize(count);
+    // 層の高さの範囲は地面の天面をセルの高さで量子化した値で、地面ぴったりの y の入口が範囲を僅かに外れて落ちることがある。
+    // 登れる段差 + 1 セル以内の外れは範囲の端へ寄せる (入口の頂点は後で最寄りのポリゴン上の点へ吸着される)
+    const float yTolerance = params->walkableClimb + params->ch;
+    for (size_t i = 0; i < count; ++i) {
+        const NavLinkSpec& link = (*links)[i];
+        float* verts = &conVerts_[i * 6];
+        std::memcpy(verts, link.start, sizeof(float) * 3);
+        std::memcpy(verts + 3, link.end, sizeof(float) * 3);
+        if (verts[1] < params->bmin[1] && verts[1] >= params->bmin[1] - yTolerance) {
+            verts[1] = params->bmin[1];
+        } else if (verts[1] > params->bmax[1] && verts[1] <= params->bmax[1] + yTolerance) {
+            verts[1] = params->bmax[1];
+        }
+        conRad_[i] = link.radius;
+        const int area = (std::min)(static_cast<int>(link.area), kNavAreaCountMax - 1);
+        conAreas_[i] = static_cast<unsigned char>(area);
+        conFlags_[i] = area == kNavAreaNotWalkable ? 0 : static_cast<unsigned short>(1u << area);
+        conDir_[i] = link.bidirectional != 0 ? DT_OFFMESH_CON_BIDIR : 0;
+        conUserId_[i] = link.userId;
+    }
+    params->offMeshConVerts = conVerts_.data();
+    params->offMeshConRad = conRad_.data();
+    params->offMeshConFlags = conFlags_.data();
+    params->offMeshConAreas = conAreas_.data();
+    params->offMeshConDir = conDir_.data();
+    params->offMeshConUserID = conUserId_.data();
+    params->offMeshConCount = static_cast<int>(count);
 }
 
 uint8_t NavAreaToLayerArea(int area)
@@ -266,6 +316,7 @@ bool NavTileStore::Init(const NavTileStoreConfig& config)
         return false;
     }
     config_ = config;
+    process_.links = &links_;
     nav_ = dtAllocNavMesh();
     cache_ = dtAllocTileCache();
     if (!nav_ || !cache_) {
@@ -546,6 +597,142 @@ bool NavTileStore::RemoveObstacle(uint64_t key)
     return true;
 }
 
+namespace {
+
+// 2 本の Link が同じか。exact = false なら入口・出口の動きが kLinkMoveThreshold 以内を同じとみなす
+bool SameLink(const NavLinkSpec& a, const NavLinkSpec& b, bool exact)
+{
+    if (a.key != b.key || a.radius != b.radius || a.bidirectional != b.bidirectional || a.area != b.area
+        || a.userId != b.userId) {
+        return false;
+    }
+    for (int i = 0; i < 3; ++i) {
+        if (exact ? (a.start[i] != b.start[i] || a.end[i] != b.end[i])
+                  : (std::fabs(a.start[i] - b.start[i]) > kLinkMoveThreshold
+                     || std::fabs(a.end[i] - b.end[i]) > kLinkMoveThreshold)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ContainsSameLink(const std::vector<NavLinkSpec>& list, const NavLinkSpec& link, bool exact)
+{
+    const auto it = std::lower_bound(list.begin(), list.end(), link.key,
+                                     [](const NavLinkSpec& l, uint64_t k) { return l.key < k; });
+    return it != list.end() && SameLink(*it, link, exact);
+}
+
+} // namespace
+
+bool NavTileStore::RebuildColumnsOfLinks(const std::vector<NavLinkSpec>& before, const std::vector<NavLinkSpec>& after)
+{
+    // 入口を持つタイル列 (dtCreateNavMeshData は入口の側のタイルにだけ Link を持つ)。前後で違う Link の入口のある列を作り直す
+    const float tileSpan = static_cast<float>(config_.cache.width) * config_.cache.cs;
+    std::vector<std::pair<int, int>> columns;
+    const auto addColumn = [&](const NavLinkSpec& link) {
+        const int tx = static_cast<int>(std::floor((link.start[0] - config_.cache.orig[0]) / tileSpan));
+        const int ty = static_cast<int>(std::floor((link.start[2] - config_.cache.orig[2]) / tileSpan));
+        columns.push_back({ ty, tx });
+    };
+    for (const NavLinkSpec& link : before) {
+        if (!ContainsSameLink(after, link, true)) {
+            addColumn(link);
+        }
+    }
+    for (const NavLinkSpec& link : after) {
+        if (!ContainsSameLink(before, link, true)) {
+            addColumn(link);
+        }
+    }
+    std::sort(columns.begin(), columns.end());
+    columns.erase(std::unique(columns.begin(), columns.end()), columns.end());
+    bool ok = true;
+    for (const auto& column : columns) {
+        if (dtStatusFailed(cache_->buildNavMeshTilesAt(column.second, column.first, nav_))) {
+            ok = false;
+        }
+    }
+    return ok;
+}
+
+int NavTileStore::ReplaceLinks(const std::vector<NavLinkSpec>& wanted)
+{
+    if (!cache_) {
+        return -1;
+    }
+    // 動きが閾値以内の Link は前回の値を残す (毎 tick の小さな揺れで、保存した状態とずれたり作り直したりしない)
+    std::vector<NavLinkSpec> next;
+    next.reserve(wanted.size());
+    int changed = 0;
+    for (const NavLinkSpec& link : wanted) {
+        const auto it = std::lower_bound(links_.begin(), links_.end(), link.key,
+                                         [](const NavLinkSpec& l, uint64_t k) { return l.key < k; });
+        if (it != links_.end() && SameLink(*it, link, false)) {
+            next.push_back(*it);
+        } else {
+            next.push_back(link);
+            ++changed;
+        }
+    }
+    for (const NavLinkSpec& link : links_) {
+        // 外れた Link (別の値へ変わった Link は上で数え済み)
+        const auto it = std::lower_bound(next.begin(), next.end(), link.key,
+                                         [](const NavLinkSpec& l, uint64_t k) { return l.key < k; });
+        if (it == next.end() || it->key != link.key) {
+            ++changed;
+        }
+    }
+    if (changed == 0) {
+        return 0;
+    }
+    if (!FlushUpdates()) {
+        return -1;
+    }
+    const std::vector<NavLinkSpec> before = std::move(links_);
+    links_ = std::move(next);
+    return RebuildColumnsOfLinks(before, links_) ? changed : -1;
+}
+
+int NavTileStore::ConnectedLinkCount() const
+{
+    const dtNavMesh* nav = nav_;
+    int count = 0;
+    for (int i = 0; nav != nullptr && i < nav->getMaxTiles(); ++i) {
+        const dtMeshTile* tile = nav->getTile(i);
+        if (tile == nullptr || tile->header == nullptr) {
+            continue;
+        }
+        for (int c = 0; c < tile->header->offMeshConCount; ++c) {
+            // 入口の側 (edge 0) と出口の側 (edge 1) の両方が歩行面につながったものだけを数える
+            bool hasStart = false;
+            bool hasEnd = false;
+            const dtPoly& poly = tile->polys[tile->offMeshCons[c].poly];
+            for (unsigned int li = poly.firstLink; li != DT_NULL_LINK; li = tile->links[li].next) {
+                hasStart = hasStart || tile->links[li].edge == 0;
+                hasEnd = hasEnd || tile->links[li].edge == 1;
+            }
+            count += hasStart && hasEnd ? 1 : 0;
+        }
+    }
+    return count;
+}
+
+uint64_t NavTileStore::HashLinks() const
+{
+    uint64_t h = kNavFnvSeed;
+    for (const NavLinkSpec& l : links_) {
+        h = HashValue(h, l.key);
+        h = NavFnv1a(h, l.start, sizeof(l.start));
+        h = NavFnv1a(h, l.end, sizeof(l.end));
+        h = HashValue(h, l.radius);
+        h = HashValue(h, l.bidirectional);
+        h = HashValue(h, l.area);
+        h = HashValue(h, l.userId);
+    }
+    return h;
+}
+
 bool NavTileStore::ReplaceTileLayers(int tx, int ty, const std::vector<std::vector<uint8_t>>& layers)
 {
     return ReplaceGroup(tx, ty, layers, std::vector<uint8_t>(layers.size(), 0));
@@ -717,6 +904,16 @@ void NavTileStore::SaveState(NavByteWriter& w, bool includeBaseLayers) const
         w.Pod(o.yaw);
         w.Pod(o.area);
     }
+    w.Pod(static_cast<uint32_t>(links_.size()));
+    for (const NavLinkSpec& l : links_) {
+        w.Pod(l.key);
+        w.Bytes(l.start, sizeof(l.start));
+        w.Bytes(l.end, sizeof(l.end));
+        w.Pod(l.radius);
+        w.Pod(l.bidirectional);
+        w.Pod(l.area);
+        w.Pod(l.userId);
+    }
 }
 
 bool NavTileStore::LoadState(NavByteReader& r)
@@ -774,8 +971,36 @@ bool NavTileStore::LoadState(NavByteReader& r)
         }
     }
 
+    uint32_t linkCount = 0;
+    if (!r.Pod(linkCount) || linkCount > kMaxSavedLinks) {
+        return false;
+    }
+    std::vector<NavLinkSpec> savedLinks(linkCount);
+    for (NavLinkSpec& l : savedLinks) {
+        if (!r.Pod(l.key) || !r.Bytes(l.start, sizeof(l.start)) || !r.Bytes(l.end, sizeof(l.end)) || !r.Pod(l.radius)
+            || !r.Pod(l.bidirectional) || !r.Pod(l.area) || !r.Pod(l.userId) || l.area >= kNavAreaCountMax) {
+            return false;
+        }
+    }
+    for (size_t i = 1; i < savedLinks.size(); ++i) {
+        if (savedLinks[i - 1].key >= savedLinks[i].key) {
+            return false; // key 昇順・重複なし
+        }
+    }
+
     bool dirty = false;
     bool ok = FlushUpdates();
+
+    // Link: 層を入れ替えるタイル (下の ReplaceGroup) も新しい Link で作るよう、先に差し替える。
+    // 入口の列の作り直しは障害物の復元の後に行う
+    const std::vector<NavLinkSpec> oldLinks = links_;
+    bool sameLinks = oldLinks.size() == savedLinks.size();
+    for (size_t i = 0; sameLinks && i < oldLinks.size(); ++i) {
+        sameLinks = SameLink(oldLinks[i], savedLinks[i], true);
+    }
+    if (!sameLinks) {
+        links_ = savedLinks;
+    }
 
     // (ty, tx) の組を現在と保存の和集合で、キー順に処理する
     std::vector<std::pair<int, int>> groups;
@@ -858,6 +1083,14 @@ bool NavTileStore::LoadState(NavByteReader& r)
             obstacles_.push_back(o);
         }
         ok = FlushUpdates() && ok;
+        dirty = true;
+    }
+
+    if (!sameLinks) {
+        ok = FlushUpdates() && ok;
+        if (!RebuildColumnsOfLinks(oldLinks, links_)) {
+            return false;
+        }
         dirty = true;
     }
 

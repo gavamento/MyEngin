@@ -476,6 +476,13 @@ const dtObstacleAvoidanceParams* dtCrowd::getObstacleAvoidanceParams(const int i
 	return 0;
 }
 
+const dtCrowdAgentAnimation* dtCrowd::getAgentAnimation(const int idx) const
+{
+	if (idx < 0 || idx >= m_maxAgents)
+		return 0;
+	return &m_agentAnims[idx];
+}
+
 int dtCrowd::getAgentCount() const
 {
 	return m_maxAgents;
@@ -1409,41 +1416,18 @@ void dtCrowd::update(const float dt, dtCrowdAgentDebugInfo* debug)
 
 	}
 	
-	// Update agents using off-mesh connection.
+	// MYE-PATCH(M82h): Off-Mesh Link の渡りは dtCrowd の外 (NavSystem) が持つ。ここでは補間も OFFMESH の解除もせず、
+	// 渡っている間は速度だけ止める。位置と解除 (ag->state = WALKING) は呼び出し側が行う。
 	for (int i = 0; i < nagents; ++i)
 	{
 		dtCrowdAgent* ag = agents[i];
 		const int idx = (int)(ag - m_agents);
 		dtCrowdAgentAnimation* anim = &m_agentAnims[idx];
-		if (!anim->active)
-			continue;
-		
-
-		anim->t += dt;
-		if (anim->t > anim->tmax)
+		if (ag->state != DT_CROWDAGENT_STATE_OFFMESH)
 		{
-			// Reset animation
 			anim->active = false;
-			// Prepare agent for walking.
-			ag->state = DT_CROWDAGENT_STATE_WALKING;
 			continue;
 		}
-		
-		// Update position
-		const float ta = anim->tmax*0.15f;
-		const float tb = anim->tmax;
-		if (anim->t < ta)
-		{
-			const float u = tween(anim->t, 0.0, ta);
-			dtVlerp(ag->npos, anim->initPos, anim->startPos, u);
-		}
-		else
-		{
-			const float u = tween(anim->t, ta, tb);
-			dtVlerp(ag->npos, anim->startPos, anim->endPos, u);
-		}
-			
-		// Update velocity.
 		dtVset(ag->vel, 0,0,0);
 		dtVset(ag->dvel, 0,0,0);
 	}

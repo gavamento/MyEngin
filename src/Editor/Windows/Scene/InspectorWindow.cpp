@@ -28,6 +28,7 @@
 #include "Editor/Project/PartTagNames.h"
 #include "Editor/Project/PhysicsLayerNames.h"
 #include "Editor/Project/NavAreaNames.h"
+#include "Engine/Engine/Navigation/NavSystem.h" // NavCheckLinkPlacement (Link の置き方の検査)
 #include "Editor/SourceControl/ScmHint.h" // M66i: タグ名の保存直後に status を取り直させる
 #include "Engine/Engine/Scene/TagNames.h" // 汎用タグの名前表 (タグ欄のドロップダウン)
 #include "Engine/Engine/Scene/Tags.h" // 汎用タグの読み書き (Tags::OwnMask / SetOwnMask)
@@ -1243,6 +1244,37 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
             }
         }
     }
+    // M82h: Link のエリア名と、使われない / 片方向 / Manual の注意書き
+    if (std::strcmp(desc.name, "NavMeshLink") == 0 && !tg.multi) {
+        const auto* link = ctx.scene->GetWorld().GetComponent<NavMeshLinkComponent>(tg.e);
+        if (link != nullptr) {
+            NavAreaNames& areaNames = NavAreaNames::Get();
+            areaNames.Load(ctx.assetsRoot);
+            const int area = (std::min)((std::max)(link->area, 0), kNavAreaCount - 1);
+            ImGui::TextDisabled(Tr(StrId::Insp_NavLinkArea), area, areaNames.Name(area));
+            ImGui::PushTextWrapPos(0.0f);
+            if (area == kNavAreaNotWalkable) {
+                ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_NavLinkBlocked));
+            }
+            const auto* linkMatrix = ctx.scene->GetWorld().GetComponent<WorldMatrixComponent>(tg.e);
+            NavLinkSpec placed;
+            if (linkMatrix != nullptr && NavMakeLinkSpec(*link, linkMatrix->value.m, tg.e, placed)) {
+                const NavLinkPlacement placement = NavCheckLinkPlacement(ctx.scene->GetWorld(), placed);
+                if (placement == NavLinkPlacement::NoSurface) {
+                    ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_NavLinkNoSurface));
+                } else if (placement == NavLinkPlacement::ExitTooFar) {
+                    ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_NavLinkExitFar));
+                }
+            }
+            if (!link->bidirectional) {
+                ImGui::TextDisabled("%s", Tr(StrId::Insp_NavLinkOneWay));
+            }
+            if (link->traversal == navlinktraversal::kManual) {
+                ImGui::TextDisabled("%s", Tr(StrId::Insp_NavLinkManual));
+            }
+            ImGui::PopTextWrapPos();
+        }
+    }
     // RT の実効値。RayTracing を持つ物はその節に、持たない物は描画される節 (MeshRenderer /
     // Terrain) に 1 回だけ出す。マルチ選択では出さない (物ごとに違いうるため)
     const bool hasRt = world.GetComponent<RayTracingComponent>(tg.e) != nullptr;
@@ -1693,6 +1725,10 @@ void InspectorWindow::DrawNavMeshAgentNotes(EngineContext& ctx, Selection& selec
     const int status = agent->status >= 0 && agent->status < 7 ? agent->status : navagentstatus::kInactive;
     ImGui::TextDisabled(Tr(StrId::Insp_NavAgentStatus), names[status], agent->remainingDistance,
                         agent->pathPartial ? Tr(StrId::Insp_NavAgentPartial) : "");
+    if (agent->status == navagentstatus::kOnLink) {
+        ImGui::TextDisabled(Tr(StrId::Insp_NavLinkCrossing), agent->linkStart.x, agent->linkStart.y, agent->linkStart.z,
+                            agent->linkEnd.x, agent->linkEnd.y, agent->linkEnd.z);
+    }
 
     // 歩けるエリア (areaMask)。エリア 1 (歩行不可) は常に歩けないので出さない。名前は project_settings.json の navAreas
     if (ImGui::TreeNode(Tr(StrId::Insp_NavAreaMask))) {

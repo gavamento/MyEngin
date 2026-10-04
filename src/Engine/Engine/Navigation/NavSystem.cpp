@@ -52,6 +52,13 @@ constexpr uint32_t kPathArrivedColor = 0x80C0FFFFu;
 constexpr uint32_t kPathNoPathColor = 0xFF4040FFu;
 constexpr uint32_t kObstacleColor = 0xFF9030FFu;
 constexpr uint32_t kModifierColor = 0xC070FFFFu; // エリアを塗り替える箱 (SceneView のギズモと同じ紫)
+constexpr uint32_t kLinkColor = 0x40FFC0FFu;     // Off-Mesh Link (SceneView のギズモと同じ緑)
+constexpr float kLinkArrowLength = 0.35f;
+constexpr float kLinkArrowSpread = 0.4f;         // 矢尻の開き (長さに対する横の比)
+// Link の吸着半径の下限 (m)。width が小さすぎても歩行面の端の数 cm の差で入口が外れないように
+constexpr float kLinkMinRadius = 0.05f;
+// 渡りの 1 フェーズの長さの上限 (tick)。速度が極端に小さい Link で整数があふれないための歯止め
+constexpr int kLinkMaxTicks = 60 * 600;
 
 // dtCrowd の容量 (Surface ごと)。超えた Agent はエンティティキーの後ろから Inactive
 constexpr int kCrowdCapacity = 128;
@@ -258,7 +265,11 @@ bool ParseSnapshot(const uint8_t* data, size_t size, std::vector<SnapshotSurface
             if (!r.Pod(index) || index >= static_cast<uint32_t>(kCrowdCapacity) || static_cast<int64_t>(index) <= previous
                 || !r.Pod(slot.entity.index) || !r.Pod(slot.entity.generation) || !r.Pod(slot.requested)
                 || !r.Pod(slot.destInvalid) || !r.Pod(slot.arrived) || !r.Pod(slot.stuck) || !r.Pod(slot.noProgressTicks)
-                || !r.Pod(slot.bestRemaining) || !r.Bytes(slot.requestedDest, sizeof(slot.requestedDest))) {
+                || !r.Pod(slot.bestRemaining) || !r.Bytes(slot.requestedDest, sizeof(slot.requestedDest))
+                || !r.Pod(slot.linkPhase) || !r.Pod(slot.linkMode) || !r.Pod(slot.linkTick) || !r.Pod(slot.linkTicks)
+                || !r.Pod(slot.linkHeight) || !r.Pod(slot.linkSpeed) || !r.Bytes(slot.linkFrom, sizeof(slot.linkFrom))
+                || !r.Bytes(slot.linkStart, sizeof(slot.linkStart)) || !r.Bytes(slot.linkEnd, sizeof(slot.linkEnd))
+                || slot.linkPhase > 3) {
                 return false;
             }
             previous = index;
@@ -291,6 +302,15 @@ void WriteSlots(NavByteWriter& w, const std::vector<NavAgentSlot>& slots)
         w.Pod(slot.noProgressTicks);
         w.Pod(slot.bestRemaining);
         w.Bytes(slot.requestedDest, sizeof(slot.requestedDest));
+        w.Pod(slot.linkPhase);
+        w.Pod(slot.linkMode);
+        w.Pod(slot.linkTick);
+        w.Pod(slot.linkTicks);
+        w.Pod(slot.linkHeight);
+        w.Pod(slot.linkSpeed);
+        w.Bytes(slot.linkFrom, sizeof(slot.linkFrom));
+        w.Bytes(slot.linkStart, sizeof(slot.linkStart));
+        w.Bytes(slot.linkEnd, sizeof(slot.linkEnd));
     }
 }
 
@@ -473,7 +493,195 @@ int ApplyDiff(NavTileStore& store, const std::vector<NavObstacleSpec>& wanted, c
     return failures;
 }
 
+// 進行方向 (mx, mz) へ向ける (親が無いときだけ。親付きの向きは親の回転と合成されるので触らない)
+void TurnToward(LocalTransform& transform, const NavMeshAgentComponent& agent, bool rooted, float mx, float mz, float dt)
+{
+    const float speed2 = mx * mx + mz * mz;
+    if (!rooted || agent.angularSpeedDeg <= 0.0f || speed2 <= kMinTurnSpeed * kMinTurnSpeed) {
+        return;
+    }
+    const float current = YawOf(transform.rotation);
+    const float target = std::atan2(mx, mz);
+    const float maxStep = agent.angularSpeedDeg * (kPi / 180.0f) * dt;
+    const float delta = (std::max)(-maxStep, (std::min)(maxStep, WrapPi(target - current)));
+    const float yaw = current + delta;
+    transform.rotation = { 0.0f, std::sin(yaw * 0.5f), 0.0f, std::cos(yaw * 0.5f) };
+}
+
+float Distance3(const float* a, const float* b)
+{
+    return Length3(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+
+// 距離を速さ x dt で割った tick 数 (切り上げ、1..kLinkMaxTicks)
+int TicksFor(float distance, float speed, float dt)
+{
+    const float step = (std::max)(speed, 0.01f) * dt;
+    const float ticks = std::ceil(distance / step);
+    if (!(ticks >= 1.0f)) {
+        return 1;
+    }
+    return ticks > static_cast<float>(kLinkMaxTicks) ? kLinkMaxTicks : static_cast<int>(ticks);
+}
+
+void Lerp3(const float* a, const float* b, float u, float (&out)[3])
+{
+    for (int i = 0; i < 3; ++i) {
+        out[i] = a[i] + (b[i] - a[i]) * u;
+    }
+}
+
+// Agent 1 体分の渡りを 1 tick 進め、この tick の足元の位置を out に返す。渡り終えたら finished = true (位置は出口)
+void AdvanceLink(NavAgentSlot& slot, NavMeshAgentComponent& agent, float dt, float (&out)[3], bool& finished)
+{
+    finished = false;
+    ++slot.linkTick;
+    if (slot.linkPhase == 1) {
+        const float u = (std::min)(1.0f, static_cast<float>(slot.linkTick) / static_cast<float>((std::max)(slot.linkTicks, 1)));
+        Lerp3(slot.linkFrom, slot.linkStart, u, out);
+        if (slot.linkTick >= slot.linkTicks) {
+            slot.linkTick = 0;
+            if (slot.linkMode == navlinktraversal::kManual) {
+                slot.linkPhase = 3;
+                slot.linkTicks = 0;
+            } else {
+                slot.linkPhase = 2;
+                slot.linkTicks = TicksFor(Distance3(slot.linkStart, slot.linkEnd), slot.linkSpeed, dt);
+            }
+        }
+    } else if (slot.linkPhase == 2) {
+        const float u = (std::min)(1.0f, static_cast<float>(slot.linkTick) / static_cast<float>((std::max)(slot.linkTicks, 1)));
+        Lerp3(slot.linkStart, slot.linkEnd, u, out);
+        if (slot.linkMode == navlinktraversal::kJump) {
+            out[1] += slot.linkHeight * 4.0f * u * (1.0f - u);
+        }
+        if (slot.linkTick >= slot.linkTicks) {
+            finished = true;
+            std::memcpy(out, slot.linkEnd, sizeof(out));
+        }
+    } else {
+        std::memcpy(out, slot.linkStart, sizeof(out));
+        if (agent.linkComplete) {
+            agent.linkComplete = false;
+            finished = true;
+            std::memcpy(out, slot.linkEnd, sizeof(out));
+        }
+    }
+}
+
 } // namespace
+
+uint64_t NavLinkKey(EntityID entity)
+{
+    return NavObstacleKey(entity);
+}
+
+bool NavMakeLinkSpec(const NavMeshLinkComponent& link, const float (&m)[4][4], EntityID entity, NavLinkSpec& out)
+{
+    out = NavLinkSpec{};
+    float start[3];
+    float end[3];
+    TransformPoint(m, link.start.x, link.start.y, link.start.z, start);
+    TransformPoint(m, link.end.x, link.end.y, link.end.z, end);
+    for (int i = 0; i < 3; ++i) {
+        if (!std::isfinite(start[i]) || !std::isfinite(end[i])) {
+            return false;
+        }
+    }
+    if (Distance3(start, end) < kLinkMinRadius) {
+        return false;
+    }
+    const float sx = Length3(m[0][0], m[0][1], m[0][2]);
+    const float sz = Length3(m[2][0], m[2][1], m[2][2]);
+    const float radius = 0.5f * std::fabs(link.width) * (std::max)(sx, sz);
+    if (!std::isfinite(radius)) {
+        return false;
+    }
+    out.key = NavLinkKey(entity);
+    std::memcpy(out.start, start, sizeof(start));
+    std::memcpy(out.end, end, sizeof(end));
+    out.radius = (std::max)(radius, kLinkMinRadius);
+    out.bidirectional = link.bidirectional ? 1 : 0;
+    out.area = static_cast<uint8_t>((std::min)((std::max)(link.area, 0), kNavAreaCount - 1));
+    out.userId = entity.index;
+    return true;
+}
+
+NavLinkPlacement NavCheckLinkPlacement(World& world, const NavLinkSpec& link)
+{
+    const ComponentTypeId req[] = { NavMeshSurfaceComponent::sTypeId };
+    NavLinkPlacement result = NavLinkPlacement::NoSurface;
+    bool found = false;
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            float lo[3];
+            float hi[3];
+            if (found || !IsEntityActive(world, e) || !SurfaceWorldBounds(world, e, lo, hi)) {
+                continue;
+            }
+            bool inside = true;
+            for (int i = 0; i < 3; ++i) {
+                inside = inside && link.start[i] >= lo[i] && link.start[i] <= hi[i];
+            }
+            if (!inside) {
+                continue;
+            }
+            found = true;
+            const auto* comp = world.GetComponent<NavMeshSurfaceComponent>(e);
+            const float span = static_cast<float>(comp->tileSize) * NavResolveCellSize(*comp).cellSize;
+            const auto tileOf = [&](const float* p, int axis) {
+                return static_cast<int>(std::floor((p[axis] - lo[axis]) / span));
+            };
+            const bool far = std::abs(tileOf(link.end, 0) - tileOf(link.start, 0)) > 1
+                || std::abs(tileOf(link.end, 2) - tileOf(link.start, 2)) > 1;
+            result = far ? NavLinkPlacement::ExitTooFar : NavLinkPlacement::Ok;
+        }
+    });
+    return result;
+}
+
+void NavCollectLinkSpecs(World& world, std::vector<NavLinkSpec>& out)
+{
+    out.clear();
+    const ComponentTypeId req[] = { NavMeshLinkComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int li = arch.FindTypeIndex(NavMeshLinkComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (!IsEntityActive(world, e)) {
+                continue;
+            }
+            float m[4][4];
+            NavLinkSpec spec;
+            const auto* link = static_cast<const NavMeshLinkComponent*>(arch.GetPtr(li, row));
+            if (EntityMatrix(world, e, m) && NavMakeLinkSpec(*link, m, e, spec)) {
+                out.push_back(spec);
+            }
+        }
+    });
+    std::sort(out.begin(), out.end(), [](const NavLinkSpec& a, const NavLinkSpec& b) { return a.key < b.key; });
+}
+
+void NavFilterLinksToSurface(World& world, EntityID surface, const std::vector<NavLinkSpec>& all,
+                             std::vector<NavLinkSpec>& out)
+{
+    out.clear();
+    float surfaceMin[3] = {};
+    float surfaceMax[3] = {};
+    if (!SurfaceWorldBounds(world, surface, surfaceMin, surfaceMax)) {
+        return;
+    }
+    for (const NavLinkSpec& link : all) {
+        bool inside = true;
+        for (int i = 0; i < 3; ++i) {
+            inside = inside && link.start[i] >= surfaceMin[i] && link.start[i] <= surfaceMax[i];
+        }
+        if (inside) {
+            out.push_back(link);
+        }
+    }
+}
 
 uint64_t NavObstacleKey(EntityID entity)
 {
@@ -756,6 +964,7 @@ void NavSystem::SyncObstacles(World& world)
 {
     stats_.obstacleUs = 0.0;
     stats_.obstacleChanges = 0;
+    stats_.linkChanges = 0;
     bool anyLoaded = false;
     for (const NavSurfaceRuntime& surface : surfaces_) {
         anyLoaded = anyLoaded || surface.state == NavSurfaceState::Loaded;
@@ -786,10 +995,13 @@ void NavSystem::SyncObstacles(World& world)
               [](const NavObstacleSpec& a, const NavObstacleSpec& b) { return a.key < b.key; });
     // Modifier (エリアの塗り替え) も同じ store の一覧に入る。キーの最上位ビットで Obstacle と区別する
     NavCollectModifierSpecs(world, wantedModifiers_);
+    // Link (Off-Mesh Link)。入口を持つタイル列だけを作り直す。Obstacle / Modifier と同じ Commit にまとめる
+    NavCollectLinkSpecs(world, wantedLinks_);
 
     // Surface ごとに、store が持つ障害物 (これも復元済みの状態) と突き合わせる。NavSystem 自身は前回の記録を持たないので、
     // restore 直後でも二重に足さず消し忘れない
     int failures = 0;
+    bool anyCommit = false;
     for (NavSurfaceRuntime& surface : surfaces_) {
         if (surface.state != NavSurfaceState::Loaded) {
             continue;
@@ -804,20 +1016,50 @@ void NavSystem::SyncObstacles(World& world)
         DiffSpecs(store, wantedModifiersHere_, true, paintDiff);
         const size_t changes = carveDiff.removeKeys.size() + carveDiff.addIndices.size() + paintDiff.removeKeys.size()
             + paintDiff.addIndices.size();
-        if (changes == 0) {
+        NavFilterLinksToSurface(world, surface.entity, wantedLinks_, wantedLinksHere_);
+        if (changes == 0 && wantedLinksHere_.empty() && store.LinkCount() == 0) {
             continue;
         }
-        // 撤去 -> 追加 -> Commit の順で、同じ tick 内に確定する
+        // 撤去 -> 追加 -> Link -> Commit の順で、同じ tick 内に確定する
         const auto t0 = std::chrono::steady_clock::now();
         failures += ApplyDiff(store, wantedHere_, SpecDiff{ carveDiff.removeKeys, {} });
         failures += ApplyDiff(store, wantedModifiersHere_, SpecDiff{ paintDiff.removeKeys, {} });
         failures += ApplyDiff(store, wantedHere_, SpecDiff{ {}, carveDiff.addIndices });
         failures += ApplyDiff(store, wantedModifiersHere_, SpecDiff{ {}, paintDiff.addIndices });
+        const int linkChanges = store.ReplaceLinks(wantedLinksHere_);
+        if (linkChanges < 0) {
+            ++failures;
+        }
+        if (changes == 0 && linkChanges <= 0) {
+            continue;
+        }
         if (!store.Commit()) {
             ++failures;
         }
         stats_.obstacleUs += std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
         stats_.obstacleChanges += static_cast<int>(changes);
+        stats_.linkChanges += (std::max)(linkChanges, 0);
+        anyCommit = true;
+    }
+    // 入口か出口が歩行面につながらない Link (歩行面が無い・出口が 2 タイル以上離れている) は使われない。
+    // タイルを作り直した tick にだけ数え直し、数が変わったときに 1 回警告する
+    if (anyCommit) {
+        int disconnected = 0;
+        for (const NavSurfaceRuntime& surface : surfaces_) {
+            if (surface.state == NavSurfaceState::Loaded) {
+                disconnected += surface.store->LinkCount() - surface.store->ConnectedLinkCount();
+            }
+        }
+        stats_.linkDisconnected = disconnected;
+        if (disconnected != linkDisconnected_) {
+            if (disconnected > 0) {
+                ++stats_.linkWarnings;
+                MYE_LOG_WARN("[nav] %d link(s) are not connected to the navigation mesh at the entrance or the exit "
+                             "(no walkable surface there, or the exit is 2 or more tiles away) and are not used",
+                             disconnected);
+            }
+            linkDisconnected_ = disconnected;
+        }
     }
     stats_.maxObstacleUs = (std::max)(stats_.maxObstacleUs, stats_.obstacleUs);
     // 失敗は容量超過 (maxObstacles) など。毎 tick 再試行されるので、数が変わったときだけ警告する
@@ -1190,6 +1432,20 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
         NavAgentSlot& slot = surface.slots[static_cast<size_t>(a.slot)];
         const dtCrowdAgent* ag = crowd.getAgent(a.slot);
 
+        // dtCrowd が Off-Mesh Link の入口に着いた (OFFMESH に入った) Agent は、ここから NavSystem が渡す
+        if (ag->state == DT_CROWDAGENT_STATE_OFFMESH && slot.linkPhase == 0) {
+            BeginLink(world, surface, a.slot, agent, dt);
+        }
+        if (slot.linkPhase != 0) {
+            agent.status = navagentstatus::kOnLink;
+            agent.remainingDistance = dtVdist(ag->npos, slot.linkEnd);
+            agent.pathPartial = ag->partial;
+            a.cc->moveInput = { 0.0f, 0.0f, 0.0f }; // 位置は物理の後に PostPhysics が上書きする
+            TurnToward(*a.transform, agent, a.rooted, slot.linkEnd[0] - slot.linkStart[0],
+                       slot.linkEnd[2] - slot.linkStart[2], dt);
+            continue;
+        }
+
         // 状態
         int status = navagentstatus::kIdle;
         float remaining = 0.0f;
@@ -1268,15 +1524,156 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
         const bool halted = slot.stuck != 0;
         a.cc->moveInput = halted ? DirectX::XMFLOAT3{ 0.0f, 0.0f, 0.0f } : DirectX::XMFLOAT3{ mx, 0.0f, mz };
 
-        // 進行方向へ向ける (親が無いときだけ。親付きの向きは親の回転と合成されるので触らない)
-        const float speed2 = halted ? 0.0f : mx * mx + mz * mz;
-        if (a.rooted && agent.angularSpeedDeg > 0.0f && speed2 > kMinTurnSpeed * kMinTurnSpeed) {
-            const float current = YawOf(a.transform->rotation);
-            const float target = std::atan2(mx, mz);
-            const float maxStep = agent.angularSpeedDeg * (kPi / 180.0f) * dt;
-            const float delta = (std::max)(-maxStep, (std::min)(maxStep, WrapPi(target - current)));
-            const float yaw = current + delta;
-            a.transform->rotation = { 0.0f, std::sin(yaw * 0.5f), 0.0f, std::cos(yaw * 0.5f) };
+        // 進行方向へ向ける
+        if (!halted) {
+            TurnToward(*a.transform, agent, a.rooted, mx, mz, dt);
+        }
+    }
+}
+
+void NavSystem::BeginLink(World& world, NavSurfaceRuntime& surface, int slotIndex, NavMeshAgentComponent& agent,
+                          float dt) const
+{
+    NavAgentSlot& slot = surface.slots[static_cast<size_t>(slotIndex)];
+    dtCrowd& crowd = *surface.crowd;
+    dtCrowdAgent* ag = crowd.getEditableAgent(slotIndex);
+    const dtCrowdAgentAnimation* anim = crowd.getAgentAnimation(slotIndex);
+    if (anim == nullptr || !anim->active) {
+        ag->state = DT_CROWDAGENT_STATE_WALKING; // 渡り先の記録が無い (起きないはずの状態)。歩行へ戻して経路を引き直させる
+        return;
+    }
+    slot.linkMode = static_cast<uint8_t>(navlinktraversal::kLinear);
+    slot.linkHeight = 0.0f;
+    slot.linkSpeed = (std::max)(agent.speed, 0.01f);
+    // Link の渡り方。入口の dtOffMeshConnection に残した userId (= エンティティの index) からコンポーネントを引く
+    const dtOffMeshConnection* con = surface.store->NavMesh()->getOffMeshConnectionByRef(anim->polyRef);
+    if (con != nullptr) {
+        const ComponentTypeId req[] = { NavMeshLinkComponent::sTypeId };
+        bool found = false;
+        world.ForEachArchetype(req, [&](Archetype& arch) {
+            const int li = arch.FindTypeIndex(NavMeshLinkComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count() && !found; ++row) {
+                if (arch.EntityAt(row).index != con->userId) {
+                    continue;
+                }
+                const auto* link = static_cast<const NavMeshLinkComponent*>(arch.GetPtr(li, row));
+                slot.linkMode = static_cast<uint8_t>((std::min)((std::max)(link->traversal, 0), static_cast<int>(navlinktraversal::kManual)));
+                slot.linkHeight = (std::max)(link->jumpHeight, 0.0f);
+                slot.linkSpeed = (std::max)(link->traversalSpeed, 0.01f);
+                found = true;
+            }
+        });
+    }
+    std::memcpy(slot.linkFrom, anim->initPos, sizeof(slot.linkFrom));
+    std::memcpy(slot.linkStart, anim->startPos, sizeof(slot.linkStart));
+    std::memcpy(slot.linkEnd, anim->endPos, sizeof(slot.linkEnd));
+    slot.linkTick = 0;
+    slot.linkPhase = 1;
+    slot.linkTicks = TicksFor(Distance3(slot.linkFrom, slot.linkStart), (std::max)(agent.speed, 0.01f), dt);
+    agent.linkComplete = false;
+    agent.linkStart = { slot.linkStart[0], slot.linkStart[1], slot.linkStart[2] };
+    agent.linkEnd = { slot.linkEnd[0], slot.linkEnd[1], slot.linkEnd[2] };
+    static const char* const kTraversalNames[] = { "Linear", "Jump", "Manual" };
+    if (logCrossings_) {
+        MYE_LOG_INFO("[nav] agent '%s' starts crossing a %s link: (%.2f, %.2f, %.2f) -> (%.2f, %.2f, %.2f)",
+                     world.GetName(slot.entity), kTraversalNames[slot.linkMode], slot.linkStart[0], slot.linkStart[1],
+                     slot.linkStart[2], slot.linkEnd[0], slot.linkEnd[1], slot.linkEnd[2]);
+    }
+}
+
+// 渡り終えた Agent を、渡り始めに保存した出口 (exitPos) で歩行へ戻す。渡っている間に Link が消えた・動いた・Surface が変わった
+// ときは、corridor の古い polyRef (Off-Mesh のポリゴン) が無効になっているので使わない:
+// 出口の最寄り点へ corridor を置き直し、目的地を要求し直させる。最寄り点が無ければ crowd から外す (次の Update が
+// ナビメッシュの外の Agent として扱う)
+void NavSystem::FinishLink(NavSurfaceRuntime& surface, int slotIndex, const NavMeshAgentComponent& agent, const float* exitPos)
+{
+    NavAgentSlot& slot = surface.slots[static_cast<size_t>(slotIndex)];
+    dtCrowd& crowd = *surface.crowd;
+    dtCrowdAgent* ag = crowd.getEditableAgent(slotIndex);
+    const float placeH = (std::max)(kPlaceHorizontalScale * agent.radius, kPlaceHorizontalMin);
+    const float placeExt[3] = { placeH, kPlaceVertical, placeH };
+    dtPolyRef ref = 0;
+    float nearest[3] = {};
+    surface.query->findNearestPoly(exitPos, placeExt, crowd.getFilter(ag->params.queryFilterType), &ref, nearest);
+    if (ref == 0 || !std::isfinite(nearest[0]) || !std::isfinite(nearest[1]) || !std::isfinite(nearest[2])) {
+        crowd.removeAgent(slotIndex);
+        slot = NavAgentSlot{};
+        return;
+    }
+    ag->corridor.reset(ref, nearest);
+    dtVcopy(ag->npos, nearest);
+    dtVset(ag->vel, 0.0f, 0.0f, 0.0f);
+    dtVset(ag->dvel, 0.0f, 0.0f, 0.0f);
+    dtVset(ag->nvel, 0.0f, 0.0f, 0.0f);
+    dtVset(ag->disp, 0.0f, 0.0f, 0.0f);
+    ag->boundary.reset();
+    ag->nneis = 0;
+    ag->ncorners = 0;
+    ag->partial = false;
+    ag->state = DT_CROWDAGENT_STATE_WALKING;
+    crowd.resetMoveTarget(slotIndex);
+    slot.linkPhase = 0;
+    slot.linkTick = 0;
+    slot.linkTicks = 0;
+    slot.requested = 0; // 次の Update が目的地を出口から引き直す
+    slot.arrived = 0;
+    slot.destInvalid = 0;
+    ResetStuck(slot);
+}
+
+void NavSystem::PostPhysics(World& world, float dt)
+{
+    for (NavSurfaceRuntime& surface : surfaces_) {
+        if (surface.state != NavSurfaceState::Loaded) {
+            continue;
+        }
+        for (int slotIndex = 0; slotIndex < kCrowdCapacity; ++slotIndex) {
+            NavAgentSlot& slot = surface.slots[static_cast<size_t>(slotIndex)];
+            if (slot.entity == kNullEntity || slot.linkPhase == 0) {
+                continue;
+            }
+            auto* agent = world.GetComponent<NavMeshAgentComponent>(slot.entity);
+            auto* cc = world.GetComponent<CharacterControllerComponent>(slot.entity);
+            auto* transform = world.GetComponent<LocalTransform>(slot.entity);
+            if (agent == nullptr || cc == nullptr || transform == nullptr) {
+                continue; // 次の Update が外す
+            }
+            float feet[3];
+            bool finished = false;
+            AdvanceLink(slot, *agent, dt, feet, finished);
+
+            // 足元 -> カプセルの中心 (CC の寸法規約と同じ) -> LocalTransform。親があれば親の逆行列でローカルへ戻す
+            const EntityID parent = world.GetParent(slot.entity);
+            const auto* parentMatrix = parent == kNullEntity ? nullptr : world.GetComponent<WorldMatrixComponent>(parent);
+            float sx = transform->scale.x;
+            float sy = transform->scale.y;
+            float sz = transform->scale.z;
+            if (parent != kNullEntity) {
+                const auto* wm = world.GetComponent<WorldMatrixComponent>(slot.entity);
+                if (wm != nullptr) {
+                    sx = Length3(wm->value.m[0][0], wm->value.m[0][1], wm->value.m[0][2]);
+                    sy = Length3(wm->value.m[1][0], wm->value.m[1][1], wm->value.m[1][2]);
+                    sz = Length3(wm->value.m[2][0], wm->value.m[2][1], wm->value.m[2][2]);
+                }
+            }
+            const float centerY = feet[1] + CapsuleHalfHeight(*cc, sx, sy, sz);
+            if (parent == kNullEntity) {
+                transform->position = { feet[0], centerY, feet[2] };
+            } else if (parentMatrix != nullptr) {
+                const DirectX::XMMATRIX inverse = DirectX::XMMatrixInverse(nullptr, DirectX::XMLoadFloat4x4(&parentMatrix->value));
+                DirectX::XMFLOAT3 local;
+                DirectX::XMStoreFloat3(&local, DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(feet[0], centerY, feet[2], 0.0f), inverse));
+                transform->position = local;
+            }
+
+            dtCrowdAgent* ag = surface.crowd->getEditableAgent(slotIndex);
+            const float invDt = dt > 0.0f ? 1.0f / dt : 0.0f;
+            cc->velocity = finished ? DirectX::XMFLOAT3{ 0.0f, 0.0f, 0.0f }
+                                    : DirectX::XMFLOAT3{ (feet[0] - ag->npos[0]) * invDt, 0.0f, (feet[2] - ag->npos[2]) * invDt };
+            std::memcpy(ag->npos, feet, sizeof(feet));
+            if (finished) {
+                FinishLink(surface, slotIndex, *agent, feet);
+            }
         }
     }
 }
@@ -1286,6 +1683,7 @@ void NavSystem::Reset()
     surfaces_.clear();
     loadedKeys_.clear();
     obstacleFailures_ = 0;
+    linkDisconnected_ = 0;
     stats_ = NavSystemStats{};
 }
 
@@ -1301,6 +1699,9 @@ void NavSystem::AppendDebugLines(World& world, std::vector<DebugLineCmd>& out) c
         }
         if (comp->drawObstacles) {
             AppendObstacleLines(*surface.store, out);
+        }
+        if (comp->drawLinks) {
+            AppendLinkLines(*surface.store, out);
         }
         if (!comp->drawAgentPaths) {
             continue;
@@ -1326,6 +1727,36 @@ void NavSystem::AppendDebugLines(World& world, std::vector<DebugLineCmd>& out) c
             }
             const float top[3] = { slot.requestedDest[0], slot.requestedDest[1] + 1.0f, slot.requestedDest[2] };
             AddLine(out, slot.requestedDest, top, color);
+        }
+    }
+}
+
+void NavSystem::AppendLinkLines(const NavTileStore& store, std::vector<DebugLineCmd>& out)
+{
+    for (int i = 0; i < store.LinkCount(); ++i) {
+        const NavLinkSpec& l = store.LinkAt(i);
+        AddLine(out, l.start, l.end, kLinkColor);
+        // 矢尻: 向きの先端 (片方向は出口だけ、双方向は両端) に、線の後ろへ開く 2 本
+        const float dx = l.end[0] - l.start[0];
+        const float dz = l.end[2] - l.start[2];
+        const float length = Length3(dx, 0.0f, dz);
+        if (length < 1.0e-4f) {
+            continue;
+        }
+        const float ux = dx / length;
+        const float uz = dz / length;
+        const auto arrowAt = [&](const float* tip, float dirX, float dirZ) {
+            const float backX = -dirX * kLinkArrowLength;
+            const float backZ = -dirZ * kLinkArrowLength;
+            const float side = kLinkArrowLength * kLinkArrowSpread;
+            const float left[3] = { tip[0] + backX - dirZ * side, tip[1], tip[2] + backZ + dirX * side };
+            const float right[3] = { tip[0] + backX + dirZ * side, tip[1], tip[2] + backZ - dirX * side };
+            AddLine(out, tip, left, kLinkColor);
+            AddLine(out, tip, right, kLinkColor);
+        };
+        arrowAt(l.end, ux, uz);
+        if (l.bidirectional != 0) {
+            arrowAt(l.start, -ux, -uz);
         }
     }
 }
@@ -1529,6 +1960,9 @@ uint64_t NavSystem::StateHash() const
         WriteSlots(w, surface.slots);
         w.Pod(surface.store->HashLayers());
         w.Pod(surface.store->HashObstacles());
+        if (surface.store->LinkCount() > 0) {
+            w.Pod(surface.store->HashLinks()); // Link の無い Surface のハッシュは M82g のまま
+        }
         NavSaveCrowd(*surface.crowd, w); // 途中状態は tick 境界に残らない (PATCHES.md)。失敗してもハッシュは決定的
         hash = NavFnv1a(hash, w.Data().data(), w.Size());
     }

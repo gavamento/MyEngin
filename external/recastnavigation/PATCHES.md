@@ -41,10 +41,22 @@
   呼び出し側が与える `priority` (エンティティキー) を使う。
 - 確認方法: `NavAgentSelfTest` の Modifier 項目 (経路が高コスト域を避ける / 外すと戻る / 保存 -> 復元 -> 連続実行一致)。
 
+## 4. DetourCrowd: Off-Mesh Link の渡りを dtCrowd の外へ出す (M82h、NavMeshLink)
+
+- 場所: `DetourCrowd\Source\DetourCrowd.cpp` (`dtCrowd::update` 末尾の「Update agents using off-mesh connection」ループ、`getAgentAnimation`)、
+  `DetourCrowd\Include\DetourCrowd.h` (`getAgentAnimation` の宣言)
+- 内容: 元のループは OFFMESH の Agent の位置を `m_agentAnims` の時刻で補間し、`tmax` を超えたら歩行へ戻す。これを、
+  OFFMESH の間は速度を 0 にするだけ (位置も状態も触らない) に差し替えた。OFFMESH に入る処理 (`moveOverOffmeshConnection` で
+  corridor を出口へ進める) は元のまま。`getAgentAnimation(idx)` は、OFFMESH に入った update の startPos / endPos / polyRef を
+  読み取り専用で公開する。
+- 理由: `m_agentAnims` は private で保存できず、dtCrowd の補間は tick をまたぐ。渡りの状態 (フェーズ・経過 tick・入口・出口) を
+  NavSystem の Nav 節 (スナップショット対象) に持ち、Linear / Jump / Manual の動きを自前で決める。
+- 影響: Link を使わない Crowd の結果は変わらない (このループは OFFMESH の Agent にしか効かない)。
+- 確認方法: `NavAgentSelfTest` の Link 項目 (3 種の渡り、渡りの途中で撮った状態の復元 -> 連続実行一致、毎 tick の 撮影 -> 復元 -> 再撮影)。
+
 ## パッチを当てなかったもの (後続サブへの注意)
 
-- `dtCrowd::m_agentAnims` (Off-Mesh Link を `dtCrowd` 自身が渡るときのアニメ状態) は private で、保存していない。
-  M82 は Link の渡りをアプリ側 (sub-07) で行うので `dtCrowd` のアニメは使わない前提。使うなら friend 追加が要る。
+- `dtCrowd::m_agentAnims` は保存していない。Link の渡りは NavSystem が持ち (パッチ 4)、dtCrowd のアニメは使わない。
 - `dtNavMeshQuery::findRandomPoint` 系の `frand` は引数なしの関数ポインタ (`float (*)()`)。コンテキストを渡せないので、
   呼び出し中だけ有効な静的ポインタ (World の Pcg32) 経由にする。
 - `DebugUtils\Source\RecastDump.cpp` は `FILE` を使うのでビルド対象に入れていない (`build\Engine.vcxproj`)。

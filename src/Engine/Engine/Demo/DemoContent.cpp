@@ -4501,6 +4501,17 @@ void BuildNavShowcaseScene(EngineContext& ctx)
         }
     }
 
+    // M82h: 床から孤島 (登れない高さ 3 m) の上へ跳ぶ Jump の Link。双方向なので、300 tick の NavDemoDriver の
+    // 目的地の戻しで島の上の Agent が跳び降りる。ベイクには入らず、NavSystem が tick の頭にタイルへ差し込む
+    {
+        GameObject link = s.CreateGameObject("NavLink");
+        auto* nl = link.AddComponent<NavMeshLinkComponent>();
+        nl->start = { 1.5f, 0.0f, 5.0f };
+        nl->end = { 1.5f, 3.0f, 6.8f };
+        nl->traversal = navlinktraversal::kJump;
+        nl->jumpHeight = 1.0f;
+    }
+
     // ベイクして登録する。入力収集はワールド行列を読むので Transform を一度確定させる
     w.ApplyStructuralChanges();
     TransformSystem transforms;

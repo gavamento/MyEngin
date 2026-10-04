@@ -86,6 +86,13 @@ GameObject CreateNavMeshModifier(EngineContext& ctx, const char* name)
     return obj;
 }
 
+GameObject CreateNavMeshLink(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    obj.AddComponent<NavMeshLinkComponent>(); // 既定は x 方向に 2 m の双方向 Jump (Components.h)
+    return obj;
+}
+
 GameObject CreateDirectionalLight(EngineContext& ctx, const char* name)
 {
     GameObject obj = ctx.scene->CreateGameObjectTracked(name);
@@ -361,6 +368,8 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
                    &CreateNavMeshObstacle); // M82f
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_NavMeshModifier), "NavMesh Modifier",
                    &CreateNavMeshModifier); // M82g
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_NavMeshLink), "NavMesh Link",
+                   &CreateNavMeshLink); // M82h
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(Tr(StrId::Create_Light))) {

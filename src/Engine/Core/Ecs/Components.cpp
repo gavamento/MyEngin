@@ -1422,6 +1422,7 @@ void RegisterBuiltinComponents()
                                                          "derive the cell size from agent radius, max climb and max slope so the slope setting actually works")),
         MYE_JP("ナビメッシュの塗りを描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawNavMeshFill, Bool, kFieldNoHash)),
         MYE_JP("障害物を描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawObstacles, Bool, kFieldNoHash)),
+        MYE_JP("リンクを描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawLinks, Bool, kFieldNoHash)),
     });
 #undef MYE_NAV_AREA_COST
 
@@ -1446,6 +1447,10 @@ void RegisterBuiltinComponents()
         MYE_JP("部分経路", MYE_FIELD_FLAGS(NavMeshAgentComponent, pathPartial, Bool, kFieldReadOnly)),
         MYE_JP("歩けるエリア", MYE_FIELD_TIP(NavMeshAgentComponent, areaMask, UInt32,
                                              "bit i = may walk area i; the cost of each area is set on the surface")),
+        MYE_JP("リンク完了", MYE_FIELD_TIP(NavMeshAgentComponent, linkComplete, Bool,
+                                           "write true while the agent waits at a Manual link to let it finish crossing")),
+        MYE_JP("リンクの入口", MYE_FIELD_FLAGS(NavMeshAgentComponent, linkStart, Float3, kFieldReadOnly)),
+        MYE_JP("リンクの出口", MYE_FIELD_FLAGS(NavMeshAgentComponent, linkEnd, Float3, kFieldReadOnly)),
     });
 
     // M82f: NavMesh Obstacle (TypeId=73、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変
@@ -1464,6 +1469,19 @@ void RegisterBuiltinComponents()
         MYE_JP("中心", MYE_FIELD(NavMeshModifierComponent, center, Float3)),
         MYE_JP("大きさ", MYE_FIELD(NavMeshModifierComponent, size, Float3)),
         MYE_JP("エリア", MYE_FIELD_RANGE(NavMeshModifierComponent, area, Int32, 0.0f, 15.0f)),
+    });
+
+    // M82h: NavMesh Link (TypeId=75、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変
+    RegisterComponent<NavMeshLinkComponent>("NavMeshLink", {
+        MYE_JP("入口", MYE_FIELD_TIP(NavMeshLinkComponent, start, Float3, "link entrance in this entity's local space")),
+        MYE_JP("出口", MYE_FIELD_TIP(NavMeshLinkComponent, end, Float3, "link exit in this entity's local space")),
+        MYE_JP("幅", MYE_FIELD_RANGE(NavMeshLinkComponent, width, Float, 0.1f, 20.0f)),
+        MYE_JP("双方向", MYE_FIELD_TIP(NavMeshLinkComponent, bidirectional, Bool,
+                                       "off = agents only go from the entrance to the exit")),
+        MYE_JP("エリア", MYE_FIELD_RANGE(NavMeshLinkComponent, area, Int32, 0.0f, 15.0f)),
+        MYE_JP("渡り方", MYE_FIELD_TIP(NavMeshLinkComponent, traversal, Int32, "0 = Linear, 1 = Jump, 2 = Manual")),
+        MYE_JP("渡る速さ", MYE_FIELD_RANGE(NavMeshLinkComponent, traversalSpeed, Float, 0.1f, 50.0f)),
+        MYE_JP("ジャンプの高さ", MYE_FIELD_RANGE(NavMeshLinkComponent, jumpHeight, Float, 0.0f, 20.0f)),
     });
 }
 

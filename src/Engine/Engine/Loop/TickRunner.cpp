@@ -390,6 +390,7 @@ void RunOneTick(TickServices& ts)
     // 走査だけで何もしない (RNG もハッシュも触らない)
     if (stepSim && ts.navSystem != nullptr) {
         MYE_PROFILE_SCOPE("nav");
+        ts.navSystem->SetCrossingLogEnabled(!ts.resim); // 再シムでは渡り開始のログを重ねない
         ts.navSystem->Update(scene.GetWorld(), ctx.fixedDt);
     }
     // ---- アニメーション (フェーズ 3.5): スクリプト後・Transform 前に LocalTransform を確定 ----
@@ -427,6 +428,10 @@ void RunOneTick(TickServices& ts)
         // ソリッド接触ペアを受け取り CollisionSystem へ渡す (M28c OnCollision 配信)
         physicsSystem.Update(scene.GetWorld(), ctx.fixedDt, &solidContacts, ts.xpbd,
                              anyDestructibles ? &fractureShapeImpulses : nullptr);
+        // M82h: NavMeshLink を渡っている Agent の位置と CC.velocity は物理の後に nav が上書きする (Transform の前)
+        if (ts.navSystem != nullptr) {
+            ts.navSystem->PostPhysics(scene.GetWorld(), ctx.fixedDt);
+        }
         // v14 GetContactInfo (M59k): ここから先 (OnCollision* / LateUpdate) だけが読める。
         // stepSim が false の tick は繋がないまま = ポーズ中は常に「接触なし」が返る
         scriptHost.SetTickContacts(&solidContacts);

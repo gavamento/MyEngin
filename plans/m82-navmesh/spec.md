@@ -74,7 +74,7 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 | `NavMeshAgentComponent` | `agentTypeId` / `speed`・`acceleration`・`angularSpeedDeg`・`stoppingDistance` / `radius`・`height` (回避用) / `areaMask` u32 (sub-06 で末尾追加) / `avoidanceQuality` 0..3 (0=回避なし) / `destination` Float3・`hasDestination` / 実行状態 (`status`: Idle / Moving / Arrived / NoPath / OnLink / Inactive / Stuck (sub-05、2. #20)、`remainingDistance`、`pathPartial`) | 対象 |
 | `NavMeshObstacleComponent` | `shape` (Box / Cylinder) / `center`・`size` (Box)・`radius`・`height` (Cylinder) / `carve` bool (false は何もしない。dtCrowd には任意形状の動く障害物を回避する口が無く、Unity の『carve しない = 回避だけ』を再現できない。Inspector に注記する) | 対象 |
 | `NavMeshModifierComponent` | ローカル AABB (`center`・`size`) / `area` (0..15)。**ベイクには焼き込まず**、実行時に TileCache の層へ塗る (Recast パッチ 3 の paint。Obstacle と同じ tick 境界の同期更新)。編集中の表示も同じ関数で重ねる。重なりは entity キーの大きい方が勝つ。エリア 1 (NotWalkable) にした範囲は NavMesh の外と同じ扱い (sub-06 で確定。当初の `affects` は意味が曖昧なので削除) | 対象 |
-| `NavMeshLinkComponent` | `start`・`end` (ローカル) / `width` / `bidirectional` / `area` / `traversal` (Linear / Jump / Manual) / `traversalSpeed`・`jumpHeight` | 対象 |
+| `NavMeshLinkComponent` | `start`・`end` (ローカル) / `width` / `bidirectional` / `area` / `traversal` (Linear / Jump / Manual) / `traversalSpeed`・`jumpHeight`。**.mnav に焼き込まず**、World から差分で TileCache のタイルへ Off-Mesh Connection として差し込む (Modifier と同じ流儀)。出口は入口のタイルと同じか、隣のタイルまで (Detour の制約)。つながらない Link は WARN + Inspector の警告を出す。渡っている途中で Link が消えた・動いた場合は、渡り始めに保存した出口まで渡り切ってから NavMesh へ戻す。出口の最寄り点で経路を引き直し、最寄り点も無ければ NavMesh の外の扱い (目的地ありなら NoPath、無ければ Idle) にする (sub-07 round 2)。Agent 側には `linkComplete` (Manual の完了通知) と、`linkStart`・`linkEnd` (読み取り専用) を持つ | 対象 |
 
 - エリア: 0 = Walkable (コスト 1)、1 = NotWalkable、2 = Jump (Link の既定)、3〜15 = ユーザー定義。名前は `project_settings.json` (表示のみ)、コストは Surface の `areaCosts`。
 - **Tick の位置**: TickRunner の フェーズ 3.4 (音響 + AgentSystem) の後、3.5 (アニメーション) の前に独立した `if (stepSim)` ブロックで `NavSystem::Update` (AgentSystem は `ts.acoustic` ゲートの中なので相乗りしない)。順序は (1) Obstacle / Modifier / Link のコンポーネント差分を TileCache へ反映し、`update` を**全部終わるまで**同期で回す (2) Agent をエンティティキー (entity.index、同値は generation) 順に dtCrowd と同期 (CC の実位置を crowd 側へ書き戻す) (3) `dtCrowd::update(1/60)` (4) 望む速度を CC.moveInput へ、状態を Agent へ書く。物理 (3.6) の後に Link 渡り中の Agent の位置を上書きする。
@@ -86,7 +86,7 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 ### 4.2 データ・保存形式・互換性
 
 - 新 TypeId 5 個を**末尾 append** (2. #3)。シーン (`kDocVersion=4`) は変えない (型名保存なので新型の追加は互換)。
-- `.mnav`: 版付きバイナリ (`.mfrac` と同じ Serialize / Deserialize、境界検査、同じ入力から同じバイト)。中身 = ベイク設定 + 入力ハッシュ + TileCache の圧縮層 (圧縮器は**無圧縮の自作** `dtTileCacheCompressor`、FastLZ を入れない) + Link のベイク時スナップ (Modifier は焼き込まない、4.1)。保存先 `assets\NavMesh\<Surface名>_<入力ハッシュ16桁>.mnav`、`.meta` で GUID、`AssetType::NavMesh`。ビルド (配布物) へは `BuildSettingsWindow.cpp:208-210` の `assets\` 丸ごとコピーで入る (:253 の一覧はクック物専用で対象外。sub-02 VERDICT で訂正)。
+- `.mnav`: 版付きバイナリ (`.mfrac` と同じ Serialize / Deserialize、境界検査、同じ入力から同じバイト)。中身 = ベイク設定 + 入力ハッシュ + TileCache の圧縮層 (圧縮器は**無圧縮の自作** `dtTileCacheCompressor`、FastLZ を入れない) 。Link と Modifier は .mnav に入れない (どちらも実行時のオーバーレイ、4.1)。保存先 `assets\NavMesh\<Surface名>_<入力ハッシュ16桁>.mnav`、`.meta` で GUID、`AssetType::NavMesh`。ビルド (配布物) へは `BuildSettingsWindow.cpp:208-210` の `assets\` 丸ごとコピーで入る (:253 の一覧はクック物専用で対象外。sub-02 VERDICT で訂正)。
 - 読み込み: `NavSystem::Update` (stepSim の tick、フェーズ 3.4b) が Surface の (entity, navAsset) の変化を見て遅延ロードする (2. #17)。
 - SimSnapshot: Nav 節の書式を変えるサブは、そのたびに `kSimSnapshotVersion` を上げる (旧 blob を明示的に拒否する。sub-10 で 26、sub-05 で 27)。Nav 節を追加し `kSimSnapshotVersion` 24 → 25 (sub-01 の結論で節の中身を決める。節が要らない結論なら bump しない)。
 - ABI: 1 回だけ bump (2. #14)。最小の関数: `NavSetDestination` / `NavStop` / `NavGetAgentState` / `NavFindPath` (コーナー列を呼び出し側バッファへ) / `NavSamplePosition` (最寄り点) / `NavRaycast` / `NavFindRandomPoint` (半径内、World RNG)。全部 POD + C ABI、`Interop.cs` 位置ミラー、`check_rules.ps1` の版表を更新。
@@ -179,6 +179,13 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 ## 8. 変更履歴
 
 (確定後の変更のみ)
+
+- 2026-10-04 / 出所: coder SELF_EVAL sub-07 round 2 (planner VERDICT OK)
+  - 4.1: 渡りの終端で出口が NavMesh に載らないときの状態を、Inactive ではなく既存の『NavMesh の外』の扱い (NoPath / Idle) にした。Inactive は『動かせない理由』(CC 無し・Surface 無し・容量超過) 専用のまま残す。渡り終えるたびに経路を 1 回引き直す。出口に床が無いことは編集中には分からないので、実行時の WARN だけで知らせる (Inspector に出すのは、静的に分かる『入口が Surface の外』と『出口が 2 タイル以上離れる』の 2 種)。
+
+- 2026-10-04 / 出所: coder SELF_EVAL sub-07 round 1 (planner VERDICT REWORK)
+  - 4.1 / 4.2: Link を .mnav に入れない (coder の逸脱を採用。Modifier と同じ理由で、持ち主をコンポーネントだけにする)。出口のタイル制約と、つながらないときの警告を明記した。渡っている途中で Link が消えた・動いたときの振る舞いを定義した。
+  - Recast パッチ 4 (dtCrowd の Off-Mesh の補間を止め、渡りは NavSystem が持つ。spec 4.4 の『Off-Mesh を dtCrowd 自身に渡らせない』どおり)。kSimSnapshotVersion 29 / NavTileStore の状態 v4。
 
 - 2026-10-04 / 出所: coder SELF_EVAL sub-06 round 1 (planner VERDICT OK)
   - 4.1 / 4.2: Modifier はベイクに焼き込まず、実行時のオーバーレイ (TileCache の paint、Recast パッチ 3) だけで反映する (coder の逸脱を採用)。理由: 焼き込むと、実行時に動かす・消すときに元のエリアへ戻せない。編集中も同じ関数で見える。将来の再ベイク (F1〜F5) とも衝突しない。`affects` フィールドは意味が曖昧だったので仕様から削除した。

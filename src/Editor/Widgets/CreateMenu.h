@@ -24,6 +24,7 @@ GameObject CreateCapsule(EngineContext& ctx, const char* name);
 GameObject CreateNavMeshSurface(EngineContext& ctx, const char* name);   // M82b
 GameObject CreateNavMeshObstacle(EngineContext& ctx, const char* name);  // M82f
 GameObject CreateNavMeshModifier(EngineContext& ctx, const char* name);  // M82g
+GameObject CreateNavMeshLink(EngineContext& ctx, const char* name);      // M82h
 GameObject CreateDirectionalLight(EngineContext& ctx, const char* name);
 GameObject CreatePointLight(EngineContext& ctx, const char* name);
 GameObject CreateSpotLight(EngineContext& ctx, const char* name);

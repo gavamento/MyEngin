@@ -19,6 +19,7 @@ class World;
 struct NavMeshAgentComponent;
 struct NavMeshObstacleComponent;
 struct NavMeshModifierComponent;
+struct NavMeshLinkComponent;
 struct CharacterControllerComponent;
 struct LocalTransform;
 
@@ -39,6 +40,16 @@ struct NavAgentSlot {
     int32_t noProgressTicks = 0;   // 最良の残り距離を縮められていない tick 数
     float bestRemaining = -1.0f;   // 進捗の基準にしている残り距離。負 = 未設定
     float requestedDest[3] = {};
+    // ---- Off-Mesh Link の渡り (dtCrowd は OFFMESH 状態で止めておき、補間は NavSystem が持つ) ----
+    uint8_t linkPhase = 0;         // 0 = 渡っていない / 1 = 入口へ近づく / 2 = 渡る / 3 = Manual の完了待ち
+    uint8_t linkMode = 0;          // navlinktraversal
+    int32_t linkTick = 0;          // 現在のフェーズで経過した tick
+    int32_t linkTicks = 0;         // 現在のフェーズの長さ (tick)。完了待ちでは 0
+    float linkHeight = 0.0f;       // Jump の弧の高さ
+    float linkSpeed = 0.0f;        // 渡る速さ (m/s)
+    float linkFrom[3] = {};        // 近づく前の位置
+    float linkStart[3] = {};       // 入口
+    float linkEnd[3] = {};         // 出口
 };
 
 // NavMeshObstacle の形をワールドの NavObstacleSpec にする。m は行ベクトル規約の 4x4 ワールド行列 (行 3 が平行移動)。
@@ -58,6 +69,28 @@ uint64_t NavModifierKey(EntityID entity);
 // area は 0..15 に丸める。寸法が非有限・0 以下なら false
 bool NavMakeModifierSpec(const NavMeshModifierComponent& modifier, const float (&m)[4][4], uint64_t key,
                          NavObstacleSpec& out);
+
+// エンティティキーから Link のキーを作る。キー順 == (index, generation) 順。Link だけの一覧なので Obstacle のキーと衝突しない
+uint64_t NavLinkKey(EntityID entity);
+
+// NavMeshLink をワールドの NavLinkSpec にする。m は行ベクトル規約の 4x4 ワールド行列。
+// 吸着半径は width の半分に水平方向の拡大を掛けたもの。座標が非有限、入口と出口が同じ点なら false (その Link は無いものとして扱う)
+bool NavMakeLinkSpec(const NavMeshLinkComponent& link, const float (&m)[4][4], EntityID entity, NavLinkSpec& out);
+
+// Link の置き方の静的な検査 (ナビメッシュを読み込まなくても分かる分)。Inspector と SelfTest が使う
+enum class NavLinkPlacement : uint8_t {
+    Ok,
+    NoSurface,   // 入口がどの Surface の範囲にも入らない (ベイクされない所)
+    ExitTooFar,  // 出口が入口のタイルから 2 枚以上離れている (Detour は同じか隣のタイルまでしかつなげない)
+};
+NavLinkPlacement NavCheckLinkPlacement(World& world, const NavLinkSpec& link);
+
+// World の有効な NavMeshLink を key 昇順に集める (out は上書き)
+void NavCollectLinkSpecs(World& world, std::vector<NavLinkSpec>& out);
+
+// all のうち、入口が Surface のベイク範囲 (ワールド AABB) に入るものだけを out に入れる (順序は保つ)
+void NavFilterLinksToSurface(World& world, EntityID surface, const std::vector<NavLinkSpec>& all,
+                             std::vector<NavLinkSpec>& out);
 
 // World の有効な NavMeshModifier を key 昇順に集める (out は上書き)。配置は NavSystem の Obstacle と同じ規則
 void NavCollectModifierSpecs(World& world, std::vector<NavObstacleSpec>& out);
@@ -101,6 +134,9 @@ struct NavSystemStats {
     double obstacleUs = 0.0;       // 直近の障害物の同期 (TileCache の更新 + Commit)。変更が無い tick は 0
     double maxObstacleUs = 0.0;    // Reset 以降の最大
     int obstacleChanges = 0;       // 直近の同期で足した / 外した障害物の数
+    int linkChanges = 0;           // 直近の同期で足した / 外した / 動かした Link の数
+    int linkDisconnected = 0;      // 入口か出口が歩行面につながっていない Link の数 (タイルを作り直すたびに数え直す)
+    int linkWarnings = 0;          // 「つながらない Link」の警告を出した回数 (Reset 以降)
 };
 
 // Surface の .mnav を読み込んで dtNavMesh を持ち、NavMeshAgent を dtCrowd で歩かせる。
@@ -118,6 +154,13 @@ public:
 
     // 旧シーンの NavMesh を捨てる (シーン遷移)。次の Update が読み直す
     void Reset();
+
+    // 渡り開始のログを出すか。再シム (ロールバック・巻き戻しの再実行) では TickRunner が false にして重複を避ける
+    void SetCrossingLogEnabled(bool enable) { logCrossings_ = enable; }
+
+    // 物理 (フェーズ 3.6) の後、Transform の前に呼ぶ。Link を渡っている Agent の位置と CC.velocity を上書きし、
+    // 渡り終えたら dtCrowd の OFFMESH を解く。渡っている間 CC.moveInput は 0 (Update が書く)
+    void PostPhysics(World& world, float dt);
 
     // drawAgentPaths の立った Surface の Agent の経路線を out へ足す。描画レーン (sim 状態に触れない)。
     // ナビメッシュ自体の輪郭・塗りは NavDebugView (NavDebugDraw.h) が持つ
@@ -167,6 +210,9 @@ private:
     void SyncSurfaces(World& world);
     void SyncObstacles(World& world);
     static void AppendObstacleLines(const NavTileStore& store, std::vector<DebugLineCmd>& out);
+    static void AppendLinkLines(const NavTileStore& store, std::vector<DebugLineCmd>& out);
+    void BeginLink(World& world, NavSurfaceRuntime& surface, int slotIndex, NavMeshAgentComponent& agent, float dt) const;
+    static void FinishLink(NavSurfaceRuntime& surface, int slotIndex, const NavMeshAgentComponent& agent, const float* exitPos);
     void CollectAgents(World& world);
     void UpdateSurface(World& world, size_t surfaceIndex, float dt);
 
@@ -179,6 +225,10 @@ private:
     std::vector<NavObstacleSpec> wantedHere_;      // ...そのうち 1 つの Surface の範囲と重なるもの
     std::vector<NavObstacleSpec> wantedModifiers_;     // SyncObstacles の作業用 (Modifier)
     std::vector<NavObstacleSpec> wantedModifiersHere_; // ...そのうち 1 つの Surface の範囲と重なるもの
+    std::vector<NavLinkSpec> wantedLinks_;             // SyncObstacles の作業用 (Link)
+    std::vector<NavLinkSpec> wantedLinksHere_;         // ...そのうち 1 つの Surface の範囲に入口があるもの
+    int linkDisconnected_ = 0;                         // 直近のログに出した「入口か出口がナビメッシュにつながらない Link」の数
+    bool logCrossings_ = true;
     std::vector<uint32_t> filterMasks_;            // UpdateSurface の作業用: dtCrowd の filter 番号 -> areaMask (昇順・重複なし)
     bool filterOverflowWarned_ = false;
     int obstacleFailures_ = 0;                    // 直近のログに出した失敗数 (同じ警告を毎 tick 出さない)
