@@ -2,7 +2,7 @@
 
 ベース: v1.6.0 (`6dc1667f580357e8a2154c28b7867bea7e8ad3a7`)。パッチは `MYE-PATCH(M82a)` というコメントで探せる。
 `Debug` / `Release` / `Server.exe` のハッシュ不一致は出なかった (`NavDeterminismSelfTest`)。
-下の 2 件は**ビット一致のためではなく、状態の保存・復元のため**のパッチ。
+下の 4 件のうち、1・2 は**ビット一致のためではなく、状態の保存・復元のため**のパッチ。3 は動的な障害物でエリアを塗り替えるため、4 は Off-Mesh Link の渡りを NavSystem が持つためのパッチ。
 
 ## 1. DetourCrowd.cpp: `MAX_ITERS_PER_UPDATE` を 100 から実質無制限へ
 
@@ -57,7 +57,7 @@
 ## パッチを当てなかったもの (後続サブへの注意)
 
 - `dtCrowd::m_agentAnims` は保存していない。Link の渡りは NavSystem が持ち (パッチ 4)、dtCrowd のアニメは使わない。
-- `dtNavMeshQuery::findRandomPoint` 系の `frand` は引数なしの関数ポインタ (`float (*)()`)。コンテキストを渡せないので、
-  呼び出し中だけ有効な静的ポインタ (World の Pcg32) 経由にする。
+- `dtNavMeshQuery::findRandomPoint` 系は使っていない (`frand` は引数なしの関数ポインタでコンテキストを渡せない)。
+  ランダムな点は `NavSystem::QueryRandomPoint` が World の Pcg32 から円内の点を選び、`findNearestPoly` で吸着して作る。
 - `DebugUtils\Source\RecastDump.cpp` は `FILE` を使うのでビルド対象に入れていない (`build\Engine.vcxproj`)。
 - Recast / Detour に `rand()` / `time` 系の呼び出しは無い (grep で確認、2026-10-03)。乱数は `frand` 引数だけ。

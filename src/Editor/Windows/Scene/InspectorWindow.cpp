@@ -582,6 +582,8 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     // M80j (sub-10 round 2): Play 中は「生成」を押しても .mfrac は書かれるが Stop で子ごと
     // 消える (Play はシーンをスナップショットに戻す) ので、DrawDestructibleNotes が読む
     inPlayMode_ = inPlayMode;
+    // ナビメッシュのベイク結果は選択・ウィンドウの開閉に関係なく確定する (取りこぼすと .mnav も SceneView も古いまま)
+    CommitReadyNavBakes(ctx, selection, undo);
     if (!open) {
         return;
     }
@@ -1805,8 +1807,41 @@ void InspectorWindow::DrawNavMeshAgentNotes(EngineContext& ctx, Selection& selec
     }
 }
 
+void InspectorWindow::CommitReadyNavBakes(EngineContext& ctx, Selection& selection, UndoStack& undo)
+{
+    World& world = ctx.scene->GetWorld();
+    for (const uint64_t fid : navBakeService_.ReadyIds()) {
+        NavBakeResult result;
+        if (!navBakeService_.TakeResult(fid, result)) {
+            continue;
+        }
+        const GameObject go = ctx.scene->FindByFileId(fid);
+        const EntityID e = go ? go.Id() : kNullEntity;
+        if (!world.IsAlive(e)) {
+            MYE_LOG_WARN("[nav] a bake finished but its NavMeshSurface no longer exists; the result is discarded");
+            continue;
+        }
+        NavBakeOutcome outcome;
+        outcome.status = result.output.status;
+        outcome.message = result.output.message;
+        outcome.triangleCount = result.output.data.inputTriangleCount;
+        outcome.elapsedMs = static_cast<int>(result.elapsedMs);
+        if (result.output.status == NavBakeStatus::Ok && !CommitNavBake(ctx, selection, undo, e, fid, result.output)) {
+            outcome.status = NavBakeStatus::Failed;
+            outcome.message = "failed to write the .mnav asset";
+        }
+        if (outcome.status == NavBakeStatus::Failed || outcome.status == NavBakeStatus::Empty) {
+            MYE_LOG_ERROR("[nav] bake failed for '%s': %s", world.GetName(e), outcome.message.c_str());
+        }
+        navBakeOutcomes_[fid] = std::move(outcome);
+        if (const auto* comp = world.GetComponent<NavMeshSurfaceComponent>(e)) {
+            navSummaryCache_.erase(comp->navAsset.value); // 同じ名前のファイルを書き直した場合に読み直す
+        }
+    }
+}
+
 // M82b: NavMeshSurface 節の末尾。ベイクの確定 (メインスレッド限定の .mnav 保存・AssetDatabase 登録・Undo) は
-// CommitNavBake (NavBakeCommit.h) が持つ — ImGui に触れない純粋なロジックなので SelfTest からも呼べる
+// CommitNavBake (NavBakeCommit.h) が持つ (結果の取り込みは CommitReadyNavBakes) — ImGui に触れない純粋なロジックなので SelfTest からも呼べる
 void InspectorWindow::DrawNavMeshSurfaceNotes(EngineContext& ctx, Selection& selection, UndoStack& undo,
                                               const InspectorTargets& tg)
 {
@@ -1814,31 +1849,6 @@ void InspectorWindow::DrawNavMeshSurfaceNotes(EngineContext& ctx, Selection& sel
     const auto* comp = world.GetComponent<NavMeshSurfaceComponent>(tg.e);
     if (comp == nullptr) {
         return;
-    }
-
-    if (navBakeService_.GetState(tg.fid) == NavBakeJobState::Ready) {
-        NavBakeResult result;
-        if (navBakeService_.TakeResult(tg.fid, result)) {
-            NavBakeOutcome outcome;
-            outcome.status = result.output.status;
-            outcome.message = result.output.message;
-            outcome.triangleCount = result.output.data.inputTriangleCount;
-            outcome.elapsedMs = static_cast<int>(result.elapsedMs);
-            if (result.output.status == NavBakeStatus::Ok
-                && !CommitNavBake(ctx, selection, undo, tg.e, tg.fid, result.output)) {
-                outcome.status = NavBakeStatus::Failed;
-                outcome.message = "failed to write the .mnav asset";
-            }
-            if (outcome.status == NavBakeStatus::Failed || outcome.status == NavBakeStatus::Empty) {
-                MYE_LOG_ERROR("[nav] bake failed for '%s': %s", world.GetName(tg.e), outcome.message.c_str());
-            }
-            navBakeOutcomes_[tg.fid] = std::move(outcome);
-            comp = world.GetComponent<NavMeshSurfaceComponent>(tg.e); // 構造変更で動きうるので取り直す
-            if (comp == nullptr) {
-                return;
-            }
-            navSummaryCache_.erase(comp->navAsset.value); // 同じ名前のファイルを書き直した場合に読み直す
-        }
     }
 
     ImGui::Separator();

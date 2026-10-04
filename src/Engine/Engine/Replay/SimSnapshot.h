@@ -117,6 +117,9 @@ bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out);
 
 // 戻す: blob を検証してから一括で差し替える。失敗時は**何も書き換えない**
 // (途中まで復元された世界が一番たちが悪い)。
+// 唯一の例外: World を差し替えた後の Nav 節の適用 (.mnav の読み込みなど) は World が要るので事前に検証できない。
+// その失敗では false を返すが World は復元済みで、失敗した Surface だけが Failed (ナビゲーション無効) になる。
+// 呼び出し側は false を「巻き戻し失敗」として扱い、続けて再シムしてはいけない
 // refs 側に無い節は読み捨てる = 撮影時より少ない構成へも戻せる
 bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size);
 

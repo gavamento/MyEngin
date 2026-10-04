@@ -1421,15 +1421,13 @@ bool RunNavAgentSelfTest()
                 partialCases += agent->pathPartial ? 1 : 0;
                 if (agent->status == navagentstatus::kStuck) {
                     ++stuckCases;
-                    // 止まっている: CC への入力は 0 で、位置は動かない
-                    const auto* cc = sim.GetWorld().GetComponent<CharacterControllerComponent>(walker);
+                    // 止めない: 段差を登れず位置は進まないが、目的地が同じ間は Stuck のまま押し続ける
                     const float x0 = lt->position.x;
                     for (int i = 0; i < 30; ++i) {
                         sim.Step();
                     }
-                    ck.Check(cc->moveInput.x == 0.0f && cc->moveInput.z == 0.0f && std::fabs(lt->position.x - x0) < 0.01f
-                                 && agent->status == navagentstatus::kStuck,
-                             "Stuck の Agent は止まっていて、目的地が同じ間は Stuck のまま");
+                    ck.Check(std::fabs(lt->position.x - x0) < 0.01f && agent->status == navagentstatus::kStuck,
+                             "Stuck の Agent は登れない段差の前に留まり、目的地が同じ間は Stuck のまま");
                     // 目的地を変えると解除されて新しい目的地へ歩く
                     sim.GetWorld().GetComponent<NavMeshAgentComponent>(walker)->destination = { -6.0f, 0.0f, 4.0f };
                     for (int i = 0; i < 600; ++i) {
@@ -1453,7 +1451,7 @@ bool RunNavAgentSelfTest()
             const float dest[3] = { 8.0f, 0.0f, 0.0f };
             const EntityID walker = AddAgent(scene, "Pusher", -8.0f, 0.0f, 0.0f, dest, true);
             ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(詰まり) 壁を置く前の床をベイクできる");
-            AddBox(scene, "LateWall", 0.0f, 1.0f, 0.0f, 0.5f, 1.0f, 13.0f);
+            const EntityID lateWall = AddBox(scene, "LateWall", 0.0f, 1.0f, 0.0f, 0.5f, 1.0f, 13.0f).Id();
             scene.GetWorld().ApplyStructuralChanges();
             Sim sim(scene);
             for (int i = 0; i < 600; ++i) {
@@ -1464,6 +1462,83 @@ bool RunNavAgentSelfTest()
                          agent->remainingDistance);
             ck.Check(agent->status == navagentstatus::kStuck && !agent->pathPartial && agent->remainingDistance > 5.0f,
                      "完全な経路の途中を塞がれて押し合う Agent は Stuck (部分経路ではない、終点から遠い)");
+            // 塞ぎを消すと、止まっていなかった Agent が Moving へ戻って到着する
+            scene.GetWorld().DestroyEntity(lateWall);
+            scene.GetWorld().ApplyStructuralChanges();
+            bool movedAgain = false;
+            for (int i = 0; i < 900; ++i) {
+                sim.Step();
+                movedAgain = movedAgain || agent->status == navagentstatus::kMoving;
+            }
+            ck.Check(movedAgain && agent->status == navagentstatus::kArrived,
+                     "塞ぎを消すと Stuck -> Moving -> Arrived (止めずに押し続けていたので目的地を変えなくても進む)");
+        }
+
+        // 同じ目的地へ向かう N 体 (回避あり = 既定): 目的地の手前で渋滞しても全員がいずれ Arrived になる
+        for (const int count : { 2, 4, 8 }) {
+            Scene scene;
+            AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+            const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+            const float dest[3] = { 8.0f, 0.0f, 0.0f };
+            std::vector<EntityID> crowdAgents;
+            for (int i = 0; i < count; ++i) {
+                const float z = (static_cast<float>(i) - 0.5f * static_cast<float>(count - 1)) * 0.9f;
+                crowdAgents.push_back(AddAgent(scene, "Crowd", -8.0f, 0.0f, z, dest, true));
+            }
+            ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(渋滞) 開けた床をベイクできる");
+            Sim sim(scene);
+            for (int i = 0; i < 1500; ++i) {
+                sim.Step();
+            }
+            int arrivedCount = 0;
+            for (const EntityID id : crowdAgents) {
+                arrivedCount += sim.GetWorld().GetComponent<NavMeshAgentComponent>(id)->status == navagentstatus::kArrived ? 1 : 0;
+            }
+            MYE_LOG_INFO("  [jam] %d agents: %d arrived", count, arrivedCount);
+            for (const EntityID id : crowdAgents) {
+                const auto* a = sim.GetWorld().GetComponent<NavMeshAgentComponent>(id);
+                const auto* t = sim.GetWorld().GetComponent<LocalTransform>(id);
+                MYE_LOG_INFO("  [jam]   status %d remaining %.3f at (%.2f, %.2f)", a->status, a->remainingDistance, t->position.x, t->position.z);
+            }
+            ck.Check(arrivedCount == count, "同じ目的地へ向かう N 体 (2 / 4 / 8、回避あり) は全員 Arrived になる (Stuck で恒久停止しない)");
+        }
+
+        // 渋滞の最中 (まだ着いていない) で撮って戻すと、連続実行と一致する (noProgressTicks / stuck を含む)
+        {
+            Scene scene;
+            AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+            const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+            const float dest[3] = { 8.0f, 0.0f, 0.0f };
+            for (int i = 0; i < 4; ++i) {
+                AddAgent(scene, "Crowd", -8.0f, 0.0f, (static_cast<float>(i) - 1.5f) * 0.9f, dest, true);
+            }
+            ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(渋滞の復元) 開けた床をベイクできる");
+            Sim sim(scene);
+            SimRefs refs;
+            refs.scene = &scene;
+            refs.nav = &sim.nav;
+            uint64_t tickRef = 0;
+            refs.tickIndex = &tickRef;
+            constexpr int kWarmTicks = 330; // 目的地の手前で止まり始める頃
+            constexpr int kAheadTicks = 300;
+            for (int i = 0; i < kWarmTicks; ++i) {
+                sim.Step();
+            }
+            tickRef = sim.tick;
+            std::vector<std::byte> blob;
+            ck.Check(CaptureSimSnapshot(refs, blob), "(渋滞の復元) 渋滞の最中に撮影できる");
+            std::vector<uint64_t> continuous;
+            for (int i = 0; i < kAheadTicks; ++i) {
+                sim.Step();
+                continuous.push_back(WorldHashOf(sim, &sim.nav));
+            }
+            ck.Check(RestoreSimSnapshot(refs, blob.data(), blob.size()), "(渋滞の復元) 巻き戻せる");
+            bool same = true;
+            for (int i = 0; i < kAheadTicks; ++i) {
+                sim.Step();
+                same = same && WorldHashOf(sim, &sim.nav) == continuous[static_cast<size_t>(i)];
+            }
+            ck.Check(same, "渋滞の最中から復元して進めた毎 tick のハッシュが連続実行と一致する");
         }
     }
 

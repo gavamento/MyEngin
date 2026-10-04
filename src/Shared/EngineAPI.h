@@ -712,7 +712,7 @@ struct MyeEngineApi {
     //   NavMeshAgent のフィールドを書く (Get/SetComponentField と同じ。tick の頭の NavSystem が拾う)。
 
     // NavSetDestination: Agent の目的地を書いて歩かせる (destination + hasDestination)。NavMeshAgent 非所持は 0。
-    //   同じ値の再設定は経路を引き直さない (Stuck / Arrived からは目的地が変わるまで復帰しない)
+    //   同じ値の再設定は経路を引き直さない (Arrived からは目的地が変わるまで復帰しない。Stuck は押し続け、前進が戻れば Moving、渋滞なら Arrived になる)
     int (*NavSetDestination)(void* engine, MyeEntityId entity, MyeVec3 destination);
     // NavStop: 目的地を外して止める (hasDestination = 0)。NavMeshAgent 非所持は 0
     int (*NavStop)(void* engine, MyeEntityId entity);

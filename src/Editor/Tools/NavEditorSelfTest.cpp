@@ -356,6 +356,8 @@ bool RunNavEditorSelfTest()
         service.Request(fid, std::move(again));
         service.Cancel(fid);
         check(WaitReady(service, fid), "cancel: the worker still reaches Ready in finite time");
+        // 選択に関係なく結果を確定するための走査: Ready な id だけが出る (InspectorWindow::CommitReadyNavBakes)
+        check(service.ReadyIds() == std::vector<uint64_t>{ fid }, "service: ReadyIds lists the finished job (and only it)");
         NavBakeResult cancelled;
         check(service.TakeResult(fid, cancelled)
                   && (cancelled.output.status == NavBakeStatus::Cancelled || cancelled.output.status == NavBakeStatus::Ok),

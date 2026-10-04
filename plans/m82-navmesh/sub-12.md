@@ -1,8 +1,8 @@
 # sub-12: 同じ目的地の渋滞を到着として扱い、Stuck で止めない + レビューの小さな指摘
 
 - 依存: sub-11
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (コミット待ち)
+- 往復: 1
 
 ## 背景
 review-1 #1 (major、planner 宛 = 仕様の穴): 同じ目的地へ向かう複数の Agent が、既定の回避 (avoidanceQuality 2) のままだと Stuck で恒久停止する。
@@ -61,4 +61,37 @@ spec 4.1 を、次の 2 点に改めた。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-12 (round 1)
+実装:
+  - NavSystem.cpp:UpdateSurface — Stuck を止めない (stuck 時の crowd 目標解除と moveInput=0 を廃止。status は計算し直し、WARN は入った tick に 1 回)。前進が戻ると Moving。noProgressTicks は kStuckTicks で頭打ち (毎 tick 判定するため)
+  - NavSystem.cpp:IsJamArrival (新規メンバ) — (a) remaining <= max(arriveDistance, 2 x radius) (b) 同じ目的地 (差 <= arriveDistance) で Arrived の Agent に水平距離 <= (半径の和) x 2 で接している。wanted (キー順) を走査するので決定的で、同じ tick に先に着いた Agent も使う (連鎖は 1 tick 内)
+  - NavSystem.cpp:進捗判定 — 「遠ざかったら基準を取り直す」を「基準から半径以上」に変更 (kStuckRebaseRadiusScale)。渋滞で ±7.5 cm 揺れる Agent が永遠に Moving のまま 8 体中 1 体残った (実測) ため
+  - NavAgentSelfTest.cpp — 2/4/8 体 全員 Arrived、塞ぎ消去で Stuck -> Moving -> Arrived、渋滞中の撮影 -> 復元 -> 毎 tick ハッシュ一致。旧 Stuck 試験の「moveInput 0」を「位置が進まず Stuck のまま」へ
+  - #4: (ii) を選択。.mnav の読み込みは差し替え後の World が要り事前検証できない (書式は ValidateSnapshot で事前検証済み)。SimSnapshot.h/.cpp と EngineLoop.cpp:SeekTo のコメントに「Nav 節の失敗だけ World 差し替え後に false」を明記 (挙動は不変)
+  - #5: InspectorWindow::CommitReadyNavBakes (新規) を OnImGui の先頭 (open の判定より前) で毎フレーム呼ぶ。NavBakeService::ReadyIds (新規) で Ready を走査。Surface が消えていれば WARN して結果を捨てる。DrawNavMeshSurfaceNotes 内の取り込みは削除。NavEditorSelfTest に ReadyIds の検査を 1 件
+  - #6: Components.h/.cpp、NavSystem.h、PATCHES.md (4 件・frand の現状)、EngineAPI.h:715 のコメントを更新
+  - #7/8: ADR-023 (Stuck の節、警告 0 の言い方、限界の節)、engine_spec.md 10.9、engine-feature-guide 9.4
+仕様との差分:
+  - [追加] 進捗判定の再基準を「半径以上遠ざかったとき」に狭めた (spec 4.1 は「遠ざかったら取り直す」) — 渋滞の揺れで 8 体中 1 体が Moving のまま残るため
+  - [追加] (b) の「接している」を半径の和の 2 倍とした (spec は「半径の和 + 余裕」) — 実測で dtCrowd の分離が 1.07 m (接触 0.6 m) 離した。名前付き定数 kJamTouchScale
+  - [追加] Surface が消えたベイク結果は WARN して捨てる
+  - [未実装] #5 の「別エンティティを選んだまま確定」の GUI での実操作確認 (InspectorWindow は SelfTest で駆動できない)。ReadyIds と CommitNavBake は SelfTest 済み
+検証:
+  - Debug / Release Editor.exe --selftest → Nav 系 (NavDeterminism / NavSurface / NavEditor / NavAgent) ALL PASS、[jam] 2/4/8 体 全員 Arrived。exit 1 は既知の Source control 2 件のみ
+  - Debug / Release Server.exe --selftest → exit 0、同じ Nav 系 PASS
+  - tools\check_rules.ps1 → 0 error 0 warning。両構成ビルドの警告・エラー出力なし
+  - tools
+eplay_verify.bat → 全 15 ジョブ PASS (nav を含む)。期待ハッシュの焼き直しなし (Nav 節の書式は不変、kSimSnapshotVersion 29 のまま)
+  - tools\shot_verify.bat → nav PASS。既知 5 枚は値が不変 (parts 198/3625、joints 208/137、acoustic_forward 83/596、acoustic_deferred 82/594、fracture_after 150/192)
+自己採点 (1-5):
+  仕様適合: 4 — 受け入れ条件 20 を実測で満たす。定数 2 点を実測で調整した (差分欄)
+  正しさ: 4 — 2/4/8 体・塞ぎ消去・復元一致を確認。実ゲームの渋滞は未検証
+  コード品質: 4 — 判定を IsJamArrival に切り出し、定数に名前を付けた
+  テスト: 4 — 3 種の SelfTest を足した。#5 は GUI 操作で確認していない
+不安・質問:
+  - 再基準を狭めたことで、迂回の始まりが半径未満の経路延長だと停滞として数えられる (60 tick 縮まなければ Stuck 表示。止めないので害は表示のみ)
+触ったファイル: src/Engine/Engine/Navigation/NavSystem.cpp, NavSystem.h, NavAgentSelfTest.cpp, src/Engine/Engine/Replay/SimSnapshot.cpp, SimSnapshot.h, src/Engine/Engine/Loop/EngineLoop.cpp, src/Engine/Core/Ecs/Components.h, Components.cpp, src/Shared/EngineAPI.h, src/Editor/Tools/NavBakeService.h, NavBakeService.cpp, NavEditorSelfTest.cpp, src/Editor/Windows/Scene/InspectorWindow.h, InspectorWindow.cpp, external/recastnavigation/PATCHES.md, docs/adr/ADR-023-navmesh.md, engine_spec.md, docs/engine-feature-guide.md, plans/m82-navmesh/sub-12.md
+申し送り: なし
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-10-04)。定数の調整 2 点 (接触 = 半径の和 × 2、取り直し = radius 以上) を spec 4.1 に反映した。#4 は案 (ii) を承認。should: #5 の GUI での確認 (ベイク中に別のエンティティを選ぶ、Inspector のタブを閉じる) は reviewer が行う。取り込みは Inspector の OnImGui の先頭なので、Inspector そのものが描かれない構成で確定するかも見ること。

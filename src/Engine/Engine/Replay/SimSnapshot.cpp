@@ -551,7 +551,7 @@ bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
     }
     // ★World は**最後**に置く。復元は「小さい節を全部一時領域へ読み切ってから
     //   World::SnapshotRead (それ自体が全読み後に一括差し替え) を呼ぶ」順で走るので、
-    //   どこで失敗しても現世界に手が付いていない状態で戻れる
+    //   World の差し替え前の失敗では現世界に手が付かない (差し替え後の Nav 節の失敗だけ例外。RestoreSimSnapshot 参照)
     refs.scene->GetWorld().SnapshotWrite(w);
     return true;
 }

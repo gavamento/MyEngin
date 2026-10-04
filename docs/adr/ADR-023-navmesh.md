@@ -228,9 +228,14 @@ planner はユーザーに聞けない環境で裁定し、ユーザーが後か
   部分経路の `Arrived` は、終点まで max(stoppingDistance, radius) 以内で前進が 60 tick 止まったときに確定する。完全な経路より
   1 秒遅れる (dtCrowd の位置が終点の数 cm〜0.12 m 手前で止まるため。原因は dtPathCorridor の位置の置き方と見ているが追跡していない)。
   既知の限界として受け入れた。即時に確定したければ「終点の近くで速度 0」を見る形で足せる。
-- **Stuck** (`status = 6`): `Moving` の残り距離が **60 tick** の間に基準から max(radius/4, 1 cm) 以上縮まなければ止め、WARN を 1 回出す。
-  基準より遠ざかったときは基準を取り直す。目的地の変更・取り消し・到着で解除する。完全な経路の途中と、部分経路の終点から遠い所だけ
-  に使い、部分経路の終点の近くで止まるのは到着として扱う。理由: Recast の段差判定は cellHeight の整数セルで、NavMesh の登れる高さと
+- **Stuck** (`status = 6`): `Moving` の残り距離が **60 tick** の間に基準から max(radius/4, 1 cm) 以上縮まなければ `Stuck` と表示し、
+  WARN を 1 回出す。**止めない**: crowd の目標と移動入力は保ち、押し続ける。前進が戻れば (基準から 1 回でも縮む・遠ざかる) `Moving` へ戻る。
+  前進が止まっている Agent は、次のどちらかなら `Arrived` にする (レビュー round 1 #1: 同じ目的地へ向かう複数の Agent が目的地の手前で
+  渋滞し、回避ありだと全員が恒久停止していた)。(a) 残り距離が max(stoppingDistance, 2 × radius) 以内。(b) 同じ目的地
+  (差 ≤ stoppingDistance) で既に `Arrived` の Agent に、中心の水平距離が半径の和の 2 倍以内 (渋滞では dtCrowd の分離が接触より広く離す) で接している。(b) は連鎖するので N 体が
+  全員いずれ `Arrived` になる。判定はキー順で、同じ tick に先に着いた Agent も後続の判定に使う (連鎖は 1 tick で伸びる)。
+  部分経路の終点の近くで止まるのも到着として扱う。Stuck のまま残るのは、完全な経路の途中を塞がれて押し合う Agent (塞ぎを消せば
+  `Moving` → `Arrived`)。理由: Recast の段差判定は cellHeight の整数セルで、NavMesh の登れる高さと
   CC の `stepOffset` に 1 セル未満のずれが残る (決定 8)。縁で押し続ける Agent を「理由が分からない無応答」にしない (AGENTS.md 3.4)。
   定数の妥当性を実ゲームの渋滞で確かめてはいない (三校は AgentBrain を使うので当面影響しない)。
 - `targetPathqRef` は tick の末に `DT_PATHQ_INVALID` に正規化する。`dtPathQueue` の連番は復元すると 1 から始まるので、そのままでは
@@ -397,7 +402,7 @@ planner はユーザーに聞けない環境で裁定し、ユーザーが後か
 - acoustic の golden は Agent Eye の乗り上がりを写さない (決定 8)。
 - 半透明の塗りの CI (WARP) での一致は未確認 (決定 9)。
 - `NavFindRandomPoint` の点は center とつながっているとは限らない (決定 12)。
-- Stuck の定数 (60 tick、radius/4) は実ゲームの渋滞で検証していない。
+- Stuck / 渋滞到着の定数 (60 tick、radius/4、2 × radius、半径の和の 2 倍、再基準の radius) は、2 / 4 / 8 体の SelfTest 以外の実ゲームの渋滞で検証していない。
 - Link の出口がタイルを 2 つ以上離れる場合はつながらない (Detour の制約)。
 
 ## 検証結果
@@ -419,7 +424,7 @@ M82j の時点 (2026-10-04、HEAD `d8ff284` + 文書のみの変更) で全体�
 
 ### ビルド警告
 
-`replay_verify.bat` 内の通常ビルド (Debug / Release) は警告 0。`/p:MyeWarnAsError=true` を付けたビルドは **Debug / Release とも**
+`replay_verify.bat` 内の通常ビルド (Debug / Release) で、M82 のファイルから出る警告は 0 (既存の `ProjectComputeRunnerSelfTest.cpp` の C4127 は通常ビルドでも 14 件出る)。`/p:MyeWarnAsError=true` を付けたビルドは **Debug / Release とも**
 `src\Engine\Renderer\Compute\ProjectComputeRunnerSelfTest.cpp` の C4127 (7 件、条件式が定数) で `Engine.vcxproj` が落ち、後続のプロジェクトまで進まない。
 このファイルは M82 の範囲外 (着手前の HEAD から同じ、`plans\m75-ugui.md` の M75g の記録でも既知)。
 CI は `MYE_MSBUILD_ARGS=/p:MyeWarnAsError=true` を使うので、このファイルが直るまで現状では CI のビルドが落ちる。

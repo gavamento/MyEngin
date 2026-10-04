@@ -110,6 +110,8 @@ private:
     // M82b: NavMeshSurface 節の末尾 (Bake / Clear・進捗・結果の要約)。
     // DrawComponentNotes から desc.name == "NavMeshSurface" のときだけ呼ばれる。
     // ベイクが Ready になっていればここで確定させる (.mnav 保存 + 参照の設定 = 1 Undo)
+    // 完了したベイクを選択に関係なく確定する (.mnav の保存・参照の設定・Undo)。OnImGui が毎フレーム呼ぶ
+    void CommitReadyNavBakes(EngineContext& ctx, Selection& selection, UndoStack& undo);
     void DrawNavMeshSurfaceNotes(EngineContext& ctx, Selection& selection, UndoStack& undo,
                                  const InspectorTargets& tg);
     // M82c: NavMeshAgent 節の末尾 (実行状態の表示と、CC 無し・Rigidbody・AgentBrain 併用・寸法不整合の警告)

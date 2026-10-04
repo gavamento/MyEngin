@@ -242,7 +242,7 @@ Recast Navigation (v1.6.0、`external/recastnavigation/`) を取り込んだ汎�
 
 Create → 3D Object に 4 項目 (NavMesh Surface / Obstacle / Modifier / Link) があり、Add Component で NavMeshAgent を足すと CharacterController も一緒に付きます。NavMesh は編集中も Play 中も SceneView に半透明のエリア色と輪郭線で出ます。CharacterController には `stepOffset` (既定 0.3、Transform の `|scale.y|` 倍) が加わり、設定した高さまでの段差を速度に関係なく登ります。
 
-制約: 静的ジオメトリの実行時の再ベイクは未実装です (壊れる壁は Obstacle で表す)。部分経路の到着は完全な経路より 60 tick (1 秒) 遅れます。ABI の `NavFindRandomPoint` が返す点は中心とつながっているとは限りません。
+制約: 静的ジオメトリの実行時の再ベイクは未実装です (壊れる壁は Obstacle で表す)。部分経路の到着は完全な経路より 60 tick (1 秒) 遅れます。同じ目的地へ向かう Agent が渋滞したときも、前進が 60 tick 止まった Agent は目的地の近く、または到着済みの Agent に接していれば Arrived になります。Stuck は表示と通知だけで、Agent は止まらず押し続け、前進が戻れば Moving に戻ります。ABI の `NavFindRandomPoint` が返す点は中心とつながっているとは限りません。
 
 根拠: [NavSystem.h](C:/HAL/MyEngin/src/Engine/Engine/Navigation/NavSystem.h)、[NavTileCacheSupport.h](C:/HAL/MyEngin/src/Engine/Engine/Navigation/NavTileCacheSupport.h)、[ADR-023](C:/HAL/MyEngin/docs/adr/ADR-023-navmesh.md)。
 

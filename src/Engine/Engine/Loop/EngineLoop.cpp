@@ -1028,6 +1028,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             const std::vector<std::byte>* blob = timeTravel.SnapshotAtOrBefore(target, snapTick);
             if (blob == nullptr
                 || !RestoreSimSnapshot(simRefs, blob->data(), blob->size())) {
+                // Nav 節の失敗だけは World が差し替わった後に false になる (SimSnapshot.h)。Failed のまま再シムへ進まない
                 MYE_LOG_ERROR("[timetravel] no restorable snapshot at or before tick %llu",
                               static_cast<unsigned long long>(target));
                 rep.outcome = SeekOutcome::Failed;

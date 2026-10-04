@@ -12,6 +12,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include "Engine/Engine/Navigation/NavBake.h"
 
@@ -46,6 +47,8 @@ public:
     void Cancel(uint64_t id);
     // Ready な結果を取り出す (呼ぶと None に戻る)
     bool TakeResult(uint64_t id, NavBakeResult& out);
+    // Ready な結果を持つ id (昇順)。選択に関係なく結果を確定するための走査用
+    std::vector<uint64_t> ReadyIds() const;
 
     void Shutdown();
 

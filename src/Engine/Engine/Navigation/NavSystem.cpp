@@ -86,6 +86,11 @@ constexpr float kDestVertical = 2.0f;
 constexpr int kStuckTicks = 60;
 constexpr float kStuckProgressRadiusScale = 0.25f;
 constexpr float kStuckMinProgress = 0.01f;
+constexpr float kStuckRebaseRadiusScale = 1.0f;
+// 前進が止まった Agent を到着とみなす距離 (radius の倍率) と、到着済みの Agent に「接している」とみなす中心間距離 (半径の和の倍率)。
+// 渋滞では dtCrowd の分離が Agent を接触より広く (半径の和の 1.5 倍前後) 離すので、接触距離そのままでは連鎖が切れる
+constexpr float kJamArriveRadiusScale = 2.0f;
+constexpr float kJamTouchScale = 2.0f;
 // 部分経路の終点からこの距離 (radius の倍率) 以内で前進が止まったら Arrived とみなす。
 // CC は NavMesh の縁の手前で止まる (カプセルの接触・skinWidth) ので、終点までの残りが stoppingDistance を割れないことがある
 constexpr float kPartialArriveRadiusScale = 1.0f;
@@ -1455,10 +1460,6 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
             status = navagentstatus::kIdle;
         } else if (slot.destInvalid != 0 || ag->state == DT_CROWDAGENT_STATE_INVALID) {
             status = navagentstatus::kNoPath;
-        } else if (slot.stuck != 0) {
-            status = navagentstatus::kStuck; // 目的地が変わるまで保持 (止めた時点の残り距離を見せ続ける)
-            remaining = agent.remainingDistance;
-            partial = agent.pathPartial;
         } else if (slot.arrived != 0) {
             status = navagentstatus::kArrived;
             partial = agent.pathPartial;
@@ -1492,26 +1493,40 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
                 status = navagentstatus::kArrived;
             } else {
                 status = navagentstatus::kMoving;
-                // 詰まり検出: 残り距離が基準から半径の 1/4 以上動かない tick が続いたら止める。
-                // 基準より遠ざかった (経路が変わった) ときも基準を取り直す = 迂回の始まりを詰まりと見なさない
+                // 詰まり検出: 残り距離が基準から半径の 1/4 以上動かない tick が続いたら Stuck と表示する (止めない)。
+                // 基準より半径以上遠ざかった (経路が変わった) ときは基準を取り直す = 迂回の始まりを詰まりと見なさない。
+                // それ未満の揺れ (渋滞で押し合う Agent) は進捗にも迂回にも数えない。前進が戻れば Moving へ戻る
                 const float progress = (std::max)(agent.radius * kStuckProgressRadiusScale, kStuckMinProgress);
-                if (slot.bestRemaining < 0.0f || std::fabs(remaining - slot.bestRemaining) >= progress) {
+                if (slot.bestRemaining < 0.0f || slot.bestRemaining - remaining >= progress
+                    || remaining - slot.bestRemaining >= agent.radius * kStuckRebaseRadiusScale) {
                     slot.bestRemaining = remaining;
                     slot.noProgressTicks = 0;
-                } else if (++slot.noProgressTicks >= kStuckTicks && ag->partial && endReached
-                           && toEnd <= (std::max)(arriveDistance, agent.radius * kPartialArriveRadiusScale)) {
-                    // 部分経路の終点 (届く限りの最寄り) の近くで前進が止まった = 到着。CC の停止位置は NavMesh の縁と数 cm ずれる
-                    slot.arrived = 1;
-                    ResetStuck(slot);
-                    crowd.resetMoveTarget(a.slot);
-                    status = navagentstatus::kArrived;
-                    partial = true;
-                } else if (slot.noProgressTicks >= kStuckTicks) {
-                    slot.stuck = 1;
-                    crowd.resetMoveTarget(a.slot);
-                    status = navagentstatus::kStuck;
-                    MYE_LOG_WARN("[nav] agent '%s' is stuck: its path did not get shorter for %d ticks (%.2f m left)",
-                                 world.GetName(a.entity), kStuckTicks, remaining);
+                    slot.stuck = 0;
+                } else {
+                    if (slot.noProgressTicks < kStuckTicks) {
+                        ++slot.noProgressTicks;
+                    }
+                    if (slot.noProgressTicks >= kStuckTicks) {
+                        const bool partialEnd = ag->partial && endReached
+                                                && toEnd <= (std::max)(arriveDistance, agent.radius * kPartialArriveRadiusScale);
+                        if (partialEnd || IsJamArrival(surface, wanted, agent, a.slot, remaining, arriveDistance)) {
+                            // 部分経路の終点 (届く限りの最寄り) の近く、または同じ目的地の渋滞の中で前進が止まった = 到着。
+                            // CC の停止位置は NavMesh の縁と数 cm ずれる
+                            slot.arrived = 1;
+                            ResetStuck(slot);
+                            crowd.resetMoveTarget(a.slot);
+                            status = navagentstatus::kArrived;
+                            partial = partialEnd;
+                        } else {
+                            // Stuck は表示と通知だけ。目標と移動入力は保ち、押し続ける
+                            status = navagentstatus::kStuck;
+                            if (slot.stuck == 0) {
+                                slot.stuck = 1;
+                                MYE_LOG_WARN("[nav] agent '%s' is stuck: its path did not get shorter for %d ticks (%.2f m left)",
+                                             world.GetName(a.entity), kStuckTicks, remaining);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1522,14 +1537,41 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
         // 移動入力。crowd が今 tick に進めた変位 (速度の積分 + 衝突の押し戻し) をそのまま CC に歩かせる
         const float mx = (ag->npos[0] - a.synced[0]) * invDt;
         const float mz = (ag->npos[2] - a.synced[2]) * invDt;
-        const bool halted = slot.stuck != 0;
-        a.cc->moveInput = halted ? DirectX::XMFLOAT3{ 0.0f, 0.0f, 0.0f } : DirectX::XMFLOAT3{ mx, 0.0f, mz };
+        a.cc->moveInput = { mx, 0.0f, mz };
 
         // 進行方向へ向ける
-        if (!halted) {
-            TurnToward(*a.transform, agent, a.rooted, mx, mz, dt);
+        TurnToward(*a.transform, agent, a.rooted, mx, mz, dt);
+    }
+}
+
+bool NavSystem::IsJamArrival(const NavSurfaceRuntime& surface, const std::vector<int>& wanted,
+                             const NavMeshAgentComponent& agent, int slotIndex, float remaining, float arriveDistance) const
+{
+    // (a) 目的地の近く
+    if (remaining <= (std::max)(arriveDistance, agent.radius * kJamArriveRadiusScale)) {
+        return true;
+    }
+    // (b) 同じ目的地で到着済みの Agent に接している。wanted はキー順なので結果は決定的で、
+    // 同じ tick に先に到着した Agent も見える (連鎖は 1 tick で伸びる)
+    const NavAgentSlot& slot = surface.slots[static_cast<size_t>(slotIndex)];
+    const float* pos = surface.crowd->getAgent(slotIndex)->npos;
+    for (const int idx : wanted) {
+        const AgentRef& other = agents_[static_cast<size_t>(idx)];
+        if (other.slot < 0 || other.slot == slotIndex || other.inactiveReason != kReasonNone) {
+            continue;
+        }
+        const NavAgentSlot& otherSlot = surface.slots[static_cast<size_t>(other.slot)];
+        if (otherSlot.arrived == 0 || otherSlot.requested == 0 || otherSlot.linkPhase != 0
+            || Distance3(otherSlot.requestedDest, slot.requestedDest) > arriveDistance) {
+            continue;
+        }
+        const float* otherPos = surface.crowd->getAgent(other.slot)->npos;
+        const float touch = (agent.radius + other.agent->radius) * kJamTouchScale;
+        if (dtVdist2DSqr(pos, otherPos) <= touch * touch) {
+            return true;
         }
     }
+    return false;
 }
 
 void NavSystem::BeginLink(World& world, NavSurfaceRuntime& surface, int slotIndex, NavMeshAgentComponent& agent,

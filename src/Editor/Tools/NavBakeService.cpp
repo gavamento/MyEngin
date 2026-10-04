@@ -91,6 +91,18 @@ void NavBakeService::Cancel(uint64_t id)
     }
 }
 
+std::vector<uint64_t> NavBakeService::ReadyIds() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<uint64_t> ids;
+    for (const auto& [id, job] : jobs_) {
+        if (job->state == NavBakeJobState::Ready) {
+            ids.push_back(id);
+        }
+    }
+    return ids;
+}
+
 bool NavBakeService::TakeResult(uint64_t id, NavBakeResult& out)
 {
     std::lock_guard<std::mutex> lock(mutex_);

@@ -79,7 +79,7 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 - エリア: 0 = Walkable (コスト 1)、1 = NotWalkable、2 = Jump (Link の既定)、3〜15 = ユーザー定義。名前は `project_settings.json` (表示のみ)、コストは Surface の `areaCosts`。
 - **Tick の位置**: TickRunner の フェーズ 3.4 (音響 + AgentSystem) の後、3.5 (アニメーション) の前に独立した `if (stepSim)` ブロックで `NavSystem::Update` (AgentSystem は `ts.acoustic` ゲートの中なので相乗りしない)。順序は (1) Obstacle / Modifier / Link のコンポーネント差分を TileCache へ反映し、`update` を**全部終わるまで**同期で回す (2) Agent をエンティティキー (entity.index、同値は generation) 順に dtCrowd と同期 (CC の実位置を crowd 側へ書き戻す) (3) `dtCrowd::update(1/60)` (4) 望む速度を CC.moveInput へ、状態を Agent へ書く。物理 (3.6) の後に Link 渡り中の Agent の位置を上書きする。
 - **AgentBrain との共存**: 同じエンティティに AgentBrain と NavMeshAgent があれば、moveInput は後に走る NavSystem が勝つ (feature guide 9.3 の「後に走る AI が優先」と同じ規則) + インスペクタ警告。
-- 目的地まで完全な経路が無ければ、dtCrowd の部分経路 (最寄りの到達可能点まで) で動き、着いたら `Arrived` + `pathPartial = true`。部分経路の終点は CC では届かない位置になりうる (NavMesh の縁と CC の停止位置の差) ので、部分経路のときは『終点の近くで前進が止まった』も到着として扱い、`Stuck` にはしない (sub-05 round 2)。`Stuck` は**表示と通知だけで、Agent を止めない** (review-1 #1 で変更): `Moving` の残り距離が 60 tick の間に基準から max(radius/4, 1 cm) 以上縮まなければ `Stuck` にして WARN を 1 回出す。dtCrowd の移動目標と moveInput はそのまま押し続け、前進が戻れば `Moving` へ自動で戻る。**目的地の渋滞は到着として扱う**: 前進が 60 tick 止まり、(a) 残り距離が max(stoppingDistance, 2 × radius) 以内、または (b) 同じ目的地 (差 ≤ stoppingDistance) で既に `Arrived` の Agent に接している (中心距離 ≤ 半径の和 + 余裕) なら `Arrived` にする。(b) は連鎖するので、N 体が同じ目的地へ向かっても全員がいずれ `Arrived` になる。判定は Agent のエンティティキー順に行い、決定的にする。
+- 目的地まで完全な経路が無ければ、dtCrowd の部分経路 (最寄りの到達可能点まで) で動き、着いたら `Arrived` + `pathPartial = true`。部分経路の終点は CC では届かない位置になりうる (NavMesh の縁と CC の停止位置の差) ので、部分経路のときは『終点の近くで前進が止まった』も到着として扱い、`Stuck` にはしない (sub-05 round 2)。`Stuck` は**表示と通知だけで、Agent を止めない** (review-1 #1 で変更): `Moving` の残り距離が 60 tick の間に基準から max(radius/4, 1 cm) 以上縮まなければ `Stuck` にして WARN を 1 回出す。dtCrowd の移動目標と moveInput はそのまま押し続け、前進が戻れば `Moving` へ自動で戻る。**目的地の渋滞は到着として扱う**: 前進が 60 tick 止まり、(a) 残り距離が max(stoppingDistance, 2 × radius) 以内、または (b) 同じ目的地 (差 ≤ stoppingDistance) で既に `Arrived` の Agent に接している (水平の中心距離 ≤ 半径の和 × 2。dtCrowd の分離が到着済みの Agent との間を広く空けるため。実測で決めた) なら `Arrived` にする。前進の基準は、基準から radius 以上遠ざかったときにだけ取り直す (渋滞の揺れでカウンタが戻り続けないように)。(b) は連鎖するので、N 体が同じ目的地へ向かっても全員がいずれ `Arrived` になる。判定は Agent のエンティティキー順に行い、決定的にする。
 - 乱数: `findRandomPoint` 系の `frand` は `World::Rng()` (Pcg32) 経由。Agent が居ないときは引かない。
 - エッジケース: Surface が無い / アセット未ベイク / `agentTypeId` に合う Surface が無い → Agent は `Inactive` で止まる (落ちない、ログは状態が変わった tick に 1 回)。アセット読み込み失敗 → その Surface だけ無効、他は動く。dtCrowd の容量 (既定 128、Surface ごと) を超えた Agent は entity キー順で後ろから `Inactive`。
 
@@ -183,6 +183,10 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 ## 8. 変更履歴
 
 (確定後の変更のみ)
+
+- 2026-10-04 / 出所: coder SELF_EVAL sub-12 round 1 (planner VERDICT OK)
+  - 4.1: 渋滞の到着の『接している』を『半径の和 × 2』に、前進の基準の取り直しを『radius 以上遠ざかったとき』にした。2 / 4 / 8 体の実測に合わせて調整した値で、実ゲームの渋滞では未検証 (ADR-023 の既知の限界)。同じ tick 内で到着が連鎖する。
+  - review-1 #4: Nav 節の失敗だけは、World を差し替えた後に false を返すことを明記した (案 (ii)。.mnav の読み込みに差し替え後の World が要るので、事前には検証できない)。
 
 - 2026-10-04 / 出所: coder SELF_EVAL sub-11 round 1 (planner VERDICT OK)
   - 4.2 / 4.3: 歩行面の高さは TileCache の層のセルの高さから求める (`NavTileStore::SampleSurfaceHeight`、方式 (a))。ABI クエリの出口 (`SnapToSurface`) と表示の適応分割で使う。sim の状態・ハッシュ・.mnav の形式は不変。詳細メッシュ (b) は採らない (Recast に層から作る口が無く、全ハッシュの焼き直しになるため)。

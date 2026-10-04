@@ -1877,7 +1877,7 @@ struct RayTracingComponent {
 };
 
 // ---- NavMesh Surface (M82b) ----
-// エリア ID は 0..15。0 = 歩行可 (コスト 1)、1 = 歩行不可、2 = Jump。コストの使い道は M82f
+// エリア ID は 0..15。0 = 歩行可 (コスト 1)、1 = 歩行不可、2 = Jump。areaCosts は Surface のエリアごとのコスト
 inline constexpr int32_t kNavAreaCount = 16;
 
 // ナビメッシュのベイク範囲と設定。ベイク結果 (.mnav) は navAsset が GUID で指す。
@@ -1917,7 +1917,7 @@ enum : int32_t {
     kNoPath = 3,   // 始点か目的地がナビメッシュに乗らない / 経路探索の失敗
     kOnLink = 4,
     kInactive = 5, // 動かせない (CC が無い・Surface が無い・容量超過など)
-    kStuck = 6,    // 経路の残りを一定 tick 縮められず止めた。目的地を変えると解除 (M82f)
+    kStuck = 6,    // 経路の残りを一定 tick 縮められない (表示と通知だけ。押し続け、前進が戻れば Moving)
 };
 } // namespace navagentstatus
 
@@ -1961,7 +1961,7 @@ enum : int32_t {
 // ナビメッシュを動的に切り抜く障害物 (M82f)。carve が立っていると NavSystem が tick 頭に TileCache へ
 // 追加・移動・撤去し、その tick の Agent の経路から新しいタイルを使う。carve が倒れていると何もしない
 // (Unity の carve=false は回避専用だが、dtCrowd には動く障害物の回避が無いので対象外)。
-// 形はエンティティのワールド変換に従う: Box は回転後のワールド AABB で切り抜く (傾けても軸平行に外接)、
+// 形はエンティティのワールド変換に従う: Box は y 軸まわりの回転だけなら回転した箱のまま、傾いていれば回転後の AABB で切り抜く、
 // Cylinder は y 軸まわりの回転を無視し、radius は max(|sx|, |sz|)・height は |sy| 倍する。
 // hash 対象 (全フィールド)
 struct NavMeshObstacleComponent {

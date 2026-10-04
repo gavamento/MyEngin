@@ -37,7 +37,7 @@ struct NavAgentSlot {
     uint8_t requested = 0;         // requestedDest を crowd へ要求済み (到達不能として記録した場合も 1)
     uint8_t destInvalid = 0;       // 目的地の近くにナビメッシュが無かった
     uint8_t arrived = 0;           // 到着して crowd の目標を外した
-    uint8_t stuck = 0;             // 詰まり検出で止めた (目的地が変わるまで)
+    uint8_t stuck = 0;             // 前進が止まっている (通知済み。前進が戻れば 0 へ)
     int32_t noProgressTicks = 0;   // 最良の残り距離を縮められていない tick 数
     float bestRemaining = -1.0f;   // 進捗の基準にしている残り距離。負 = 未設定
     float requestedDest[3] = {};
@@ -54,7 +54,7 @@ struct NavAgentSlot {
 };
 
 // NavMeshObstacle の形をワールドの NavObstacleSpec にする。m は行ベクトル規約の 4x4 ワールド行列 (行 3 が平行移動)。
-// Box は回転後の AABB、Cylinder は y 回転を無視した底面中心・半径 (max(|sx|, |sz|) 倍)・高さ (|sy| 倍)。
+// Box は y 回転だけなら回転箱、傾いていれば回転後の AABB、Cylinder は y 回転を無視した底面中心・半径 (max(|sx|, |sz|) 倍)・高さ (|sy| 倍)。
 // 寸法が非有限・0 以下なら false (その障害物は無いものとして扱う)
 bool NavMakeObstacleSpec(const NavMeshObstacleComponent& obstacle, const float (&m)[4][4], uint64_t key,
                          NavObstacleSpec& out);
@@ -245,6 +245,10 @@ private:
     void SyncObstacles(World& world);
     static void AppendObstacleLines(const NavTileStore& store, std::vector<DebugLineCmd>& out);
     static void AppendLinkLines(const NavTileStore& store, std::vector<DebugLineCmd>& out);
+    // 前進が止まった Agent の到着判定 (渋滞): 目的地の近く、または同じ目的地で到着済みの Agent に接している。
+    // wanted は UpdateSurface のキー順の Agent 一覧。同じ tick に先に到着した Agent も後続の判定に使う
+    bool IsJamArrival(const NavSurfaceRuntime& surface, const std::vector<int>& wanted, const NavMeshAgentComponent& agent,
+                      int slotIndex, float remaining, float arriveDistance) const;
     void BeginLink(World& world, NavSurfaceRuntime& surface, int slotIndex, NavMeshAgentComponent& agent, float dt) const;
     static void FinishLink(NavSurfaceRuntime& surface, int slotIndex, const NavMeshAgentComponent& agent, const float* exitPos);
     void CollectAgents(World& world);

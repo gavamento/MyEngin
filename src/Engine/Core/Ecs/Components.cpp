@@ -1386,8 +1386,8 @@ void RegisterBuiltinComponents()
     }, kComponentNoHash | kComponentUiAux);
 
     // M82b: NavMesh Surface (TypeId=71、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変。
-    // 設定値と navAsset は hash 対象。表示フラグだけ kFieldNoHash。areaCosts は M82f の UI ができるまで
-    // Inspector に出さない (保存・ハッシュ・スクリプトからの読み書きは有効)
+    // 設定値と navAsset は hash 対象。表示フラグだけ kFieldNoHash。areaCosts は
+    // Inspector の専用ツリーで編集する (保存・ハッシュ・スクリプトからの読み書きも有効)
 #define MYE_NAV_AREA_COST(i)                                                                      \
     ::mye::FieldDesc{ .name = "areaCost" #i, .type = ::mye::FieldType::Float,                      \
                       .offset = static_cast<uint32_t>(offsetof(NavMeshSurfaceComponent, areaCosts) \

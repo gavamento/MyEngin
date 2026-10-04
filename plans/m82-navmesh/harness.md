@@ -17,8 +17,8 @@
 | sub-07 | OK | 2 | ade6b23 | NavMeshLink (M82h) |
 | sub-08 | OK | 1 | d8ff284 | スクリプト API、ABI bump (M82i) |
 | sub-09 | OK | 2 | 4e0d7e5 | ADR-023 / 文書 / 全体検証 (M82j) |
-| sub-11 | 実装中 | 0 | | 高さを歩行面に合わせる (塗り・輪郭・クエリの y) (M82k、review-1 #2 #3) |
-| sub-12 | 未着手 | 0 | | 同じ目的地の渋滞を到着扱い + レビューの小さな指摘 (M82l、review-1 #1 #4〜#7) |
+| sub-11 | OK | 1 | e145a66 | 高さを歩行面に合わせる (塗り・輪郭・クエリの y) (M82k、review-1 #2 #3) |
+| sub-12 | 実装中 | 0 | | 同じ目的地の渋滞を到着扱い + レビューの小さな指摘 (M82l、review-1 #1 #4〜#7) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -69,5 +69,6 @@
 - (planner 2026-10-04 sub-09 VERDICT round 1 = REWORK、文書だけ) ADR の古い記述を 2 か所直す。R9: `/p:MyeWarnAsError=true` は Release でも落ちる (CI の MYE_MSBUILD_ARGS では Debug / Release とも通らない。M82 の範囲外の別件)。作業ファイルに cache の s09_*.log が追加された
 - (planner 2026-10-04 REVIEW_RESPONSE round 1) #1 (渋滞で Stuck のまま止まる) と #3 (クエリの y の誤差) を仕様の穴として認めた。sub-11 (高さ、#2 #3) → sub-12 (Stuck と到着、#4〜#7) を新設 (M82k / M82l)。#1 と #3 の裁定は `[ユーザーに聞ける]`
 - (planner 2026-10-04 sub-11 VERDICT OK) 高さは方式 (a) で、ハッシュは不変。reviewer が見ること: 編集中の SceneView で、段差の天面と坂が塗られているか (スクショ未取得)。既知の限界: 台の中の取り残された床が NavFindRandomPoint の候補に混ざりうる。作業ファイルに %TEMP% の s11 が追加された
+- (planner 2026-10-04 sub-12 VERDICT OK) review-1 の指摘はすべて対応した。reviewer の round 2 で見ること: #5 のベイク結果の確定 (別の選択、Inspector を閉じた構成)、渋滞の到着の定数が実ゲーム相当でも妥当か (任意)
 - (planner) 削除の承認待ちの作業ファイル: `C:\HAL\MyEngin\cache\s10\` (26 MB) と `C:\HAL\MyEngin\cache\base10_rel\` (37 MB)。round 2 で着手前の基準として再利用できるので、sub-10 が OK になるまで残す
 - (planner) sub-01 の結論 (復元方式 a/b/c) で sub-03 以降の SimSnapshot の形が決まる。sub-01 の VERDICT 時に spec 4.4 を確定させる

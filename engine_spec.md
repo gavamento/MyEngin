@@ -2424,7 +2424,10 @@ boundary. Debug, Release and `Server.exe` produce identical hashes (`--nav-demo`
 **Character step-up.** `CharacterController.stepOffset` (default 0.3, multiplied by `|scale.y|`) climbs a step of up to
 that height regardless of speed. The Surface picks `cellSize` / `cellHeight` from the agent size and slope limit so
 `maxSlopeDeg` and `maxClimb` take effect as written; the NavMesh step limit can still exceed `maxClimb` by less than
-one cell, and the remaining mismatch is caught by `Stuck` (no progress for 60 ticks).
+one cell, and the remaining mismatch is shown as `Stuck` (no progress for 60 ticks). `Stuck` is a display and a one-time
+WARN only: the Agent keeps pushing and returns to `Moving` when progress resumes. An Agent whose progress has stopped
+becomes `Arrived` when it is within max(`stoppingDistance`, 2 x `radius`) of the destination, or touches an Agent that
+already `Arrived` at the same destination (chained in entity-key order), so a crowd sent to one point all arrives.
 
 **Display.** The mesh is drawn as a translucent area-coloured fill plus outline by `NavDebugView` on the render-frame
 side, so it appears while editing and while playing through one path. Fill and outline follow the walkable surface
