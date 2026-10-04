@@ -51,7 +51,8 @@ bool CommitFractureBake(EngineContext& ctx, Selection& selection, UndoStack& und
                         const std::vector<std::string>& pieceBoneNames)
 {
     World& world = ctx.scene->GetWorld();
-    if (!world.IsAlive(root)) {
+    // BeginRecord は進行中の記録を捨てる。ドラッグ中は何も書かず、呼び出し側が次のフレームで再試行する
+    if (undo.IsRecording() || !world.IsAlive(root)) {
         return false;
     }
     auto* comp = world.GetComponent<DestructibleComponent>(root);

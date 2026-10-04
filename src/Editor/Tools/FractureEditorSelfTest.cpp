@@ -479,6 +479,37 @@ bool RunFractureEditorSelfTest()
                   "(re-baking after Undo would point at the same .mfrac since the input is unchanged)");
         }
 
+        // 複数フレームの記録 (ドラッグ) の途中で焼きが完了しても、記録を壊さず記録の後に確定する
+        {
+            undo.Undo(s, sel);
+            s.GetWorld().ApplyStructuralChanges();
+            GameObject block = s.CreateGameObjectTracked("EditorSelfTestDragBlock");
+            block.SetLocalPosition(3.0f, 0.0f, 0.0f);
+            const uint64_t blockFid = s.EnsureFileId(block.Id());
+            auto blockX = [&]() { return s.GetWorld().GetComponent<LocalTransform>(block.Id())->position.x; };
+            auto fractureAssetIsNull = [&]() {
+                const auto* d = s.GetWorld().GetComponent<DestructibleComponent>(box.Id());
+                return d != nullptr && d->fractureAsset.IsNull();
+            };
+            undo.BeginRecord("Move Block", sel);
+            undo.CaptureBefore(s, blockFid);
+            block.SetLocalPosition(7.0f, 0.0f, 0.0f);
+            check(!CommitFractureBake(ctx, sel, undo, box.Id(), fid, req, bakeResult),
+                  "mid-record: a commit is deferred while an Undo record is open");
+            check(undo.IsRecording() && fractureAssetIsNull(),
+                  "mid-record: the drag's record stays open and nothing is written");
+            undo.CaptureAfter(s, blockFid);
+            undo.EndRecord(sel);
+            check(CommitFractureBake(ctx, sel, undo, box.Id(), fid, req, bakeResult) && !fractureAssetIsNull(),
+                  "mid-record: the commit succeeds once the record is closed");
+            undo.Undo(s, sel);
+            s.GetWorld().ApplyStructuralChanges();
+            check(fractureAssetIsNull() && blockX() > 6.9f, "mid-record: Undo 1 reverts only the bake");
+            undo.Undo(s, sel);
+            s.GetWorld().ApplyStructuralChanges();
+            check(blockX() < 3.1f, "mid-record: Undo 2 reverts the drag");
+        }
+
         fracturelib::Install(nullptr);
     }
 

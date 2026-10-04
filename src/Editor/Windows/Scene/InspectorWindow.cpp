@@ -1640,6 +1640,10 @@ void InspectorWindow::DrawDestructibleNotes(EngineContext& ctx, Selection& selec
 void InspectorWindow::CommitFractureBakeResult(EngineContext& ctx, Selection& selection, UndoStack& undo,
                                                const InspectorTargets& tg)
 {
+    // ギズモ等の複数フレームの Undo 記録中は確定を持ち越す (結果は Ready のまま残り、記録が閉じたフレームで取り込む)
+    if (undo.IsRecording()) {
+        return;
+    }
     FractureBakeRequest req;
     FractureBakeResult result;
     std::vector<std::string> pieceBoneNames; // M80j: スキンのときだけ非空
