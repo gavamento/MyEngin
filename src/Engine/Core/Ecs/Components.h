@@ -1903,6 +1903,7 @@ struct NavMeshSurfaceComponent {
     bool drawAgentPaths = true;  // この Surface の Agent の経路 (コリドーの角) の描画 (kFieldNoHash、M82c)
     bool autoCellSize = true;    // true: セルを agentRadius / maxClimb / maxSlopeDeg から決める (NavResolveCellSize)
     bool drawNavMeshFill = true; // 半透明の塗りの描画 (kFieldNoHash、M82e)
+    bool drawObstacles = true;   // 実行時に NavMesh を切り抜いている障害物の枠線の描画 (kFieldNoHash、M82f)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -1915,6 +1916,7 @@ enum : int32_t {
     kNoPath = 3,   // 始点か目的地がナビメッシュに乗らない / 経路探索の失敗
     kOnLink = 4,
     kInactive = 5, // 動かせない (CC が無い・Surface が無い・容量超過など)
+    kStuck = 6,    // 経路の残りを一定 tick 縮められず止めた。目的地を変えると解除 (M82f)
 };
 } // namespace navagentstatus
 
@@ -1938,6 +1940,31 @@ struct NavMeshAgentComponent {
     int32_t status = navagentstatus::kIdle;
     float remainingDistance = 0.0f; // 経路に沿った残りの距離の見積り
     bool pathPartial = false;       // 目的地まで届かず、届く限りの最寄りへ向かっている
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+
+// NavMeshObstacle の形 (shape)
+namespace navobstacleshape {
+enum : int32_t {
+    kBox = 0,
+    kCylinder = 1,
+};
+} // namespace navobstacleshape
+
+// ナビメッシュを動的に切り抜く障害物 (M82f)。carve が立っていると NavSystem が tick 頭に TileCache へ
+// 追加・移動・撤去し、その tick の Agent の経路から新しいタイルを使う。carve が倒れていると何もしない
+// (Unity の carve=false は回避専用だが、dtCrowd には動く障害物の回避が無いので対象外)。
+// 形はエンティティのワールド変換に従う: Box は回転後のワールド AABB で切り抜く (傾けても軸平行に外接)、
+// Cylinder は y 軸まわりの回転を無視し、radius は max(|sx|, |sz|)・height は |sy| 倍する。
+// hash 対象 (全フィールド)
+struct NavMeshObstacleComponent {
+    int32_t shape = navobstacleshape::kBox;
+    DirectX::XMFLOAT3 center = { 0.0f, 0.0f, 0.0f };  // ローカル中心
+    DirectX::XMFLOAT3 size = { 1.0f, 1.0f, 1.0f };    // Box の寸法
+    float radius = 0.5f;                              // Cylinder
+    float height = 1.0f;                              // Cylinder (中心から上下に半分ずつ)
+    bool carve = true;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

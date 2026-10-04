@@ -17,6 +17,7 @@ namespace mye {
 
 class World;
 struct NavMeshAgentComponent;
+struct NavMeshObstacleComponent;
 struct CharacterControllerComponent;
 struct LocalTransform;
 
@@ -33,8 +34,20 @@ struct NavAgentSlot {
     uint8_t requested = 0;         // requestedDest を crowd へ要求済み (到達不能として記録した場合も 1)
     uint8_t destInvalid = 0;       // 目的地の近くにナビメッシュが無かった
     uint8_t arrived = 0;           // 到着して crowd の目標を外した
+    uint8_t stuck = 0;             // 詰まり検出で止めた (目的地が変わるまで)
+    int32_t noProgressTicks = 0;   // 最良の残り距離を縮められていない tick 数
+    float bestRemaining = -1.0f;   // 進捗の基準にしている残り距離。負 = 未設定
     float requestedDest[3] = {};
 };
+
+// NavMeshObstacle の形をワールドの NavObstacleSpec にする。m は行ベクトル規約の 4x4 ワールド行列 (行 3 が平行移動)。
+// Box は回転後の AABB、Cylinder は y 回転を無視した底面中心・半径 (max(|sx|, |sz|) 倍)・高さ (|sy| 倍)。
+// 寸法が非有限・0 以下なら false (その障害物は無いものとして扱う)
+bool NavMakeObstacleSpec(const NavMeshObstacleComponent& obstacle, const float (&m)[4][4], uint64_t key,
+                         NavObstacleSpec& out);
+
+// エンティティキーから障害物のキーを作る。キー順 == (index, generation) 順
+uint64_t NavObstacleKey(EntityID entity);
 
 struct NavQueryDeleter {
     void operator()(dtNavMeshQuery* query) const;
@@ -64,6 +77,9 @@ struct NavSystemStats {
     double updateUs = 0.0;      // 直近の Update 全体
     double crowdUpdateUs = 0.0; // 直近の dtCrowd::update の合計
     double maxCrowdUpdateUs = 0.0; // Reset 以降の最大
+    double obstacleUs = 0.0;       // 直近の障害物の同期 (TileCache の更新 + Commit)。変更が無い tick は 0
+    double maxObstacleUs = 0.0;    // Reset 以降の最大
+    int obstacleChanges = 0;       // 直近の同期で足した / 外した障害物の数
 };
 
 // Surface の .mnav を読み込んで dtNavMesh を持ち、NavMeshAgent を dtCrowd で歩かせる。
@@ -74,7 +90,8 @@ struct NavSystemStats {
 class NavSystem {
 public:
     // tick ごとに呼ぶ (stepSim の中、物理より前)。Surface の構成 (エンティティ・navAsset) が
-    // 変わっていたら読み直し、Agent を crowd と同期して dt だけ進め、CharacterController.moveInput を書く。
+    // 変わっていたら読み直し、NavMeshObstacle の増減・移動を TileCache へ同期確定し (Commit)、
+    // Agent を crowd と同期して dt だけ進め、CharacterController.moveInput を書く。
     // .mnav の読み込みはメインスレッド専用 (ファイル I/O + ログ)
     void Update(World& world, float dt);
 
@@ -127,6 +144,8 @@ private:
     void ScanSurfaceKeys(World& world);
     bool SurfaceKeysChanged() const;
     void SyncSurfaces(World& world);
+    void SyncObstacles(World& world);
+    static void AppendObstacleLines(const NavTileStore& store, std::vector<DebugLineCmd>& out);
     void CollectAgents(World& world);
     void UpdateSurface(World& world, size_t surfaceIndex, float dt);
 
@@ -135,6 +154,9 @@ private:
     std::vector<Key> scanKeys_; // Update の作業用 (毎 tick の確保を避ける)
     std::vector<AgentRef> agents_;
     std::vector<std::vector<int>> wantedPerSurface_;
+    std::vector<NavObstacleSpec> wantedObstacles_; // SyncObstacles の作業用
+    std::vector<NavObstacleSpec> wantedHere_;      // ...そのうち 1 つの Surface の範囲と重なるもの
+    int obstacleFailures_ = 0;                     // 直近のログに出した失敗数 (同じ警告を毎 tick 出さない)
     NavSystemStats stats_;
 };
 

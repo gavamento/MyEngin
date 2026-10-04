@@ -11,27 +11,34 @@
 #include "Engine/Core/Ecs/EntityID.h"
 #include "Engine/Engine/Rendering/DebugDraw.h"
 
+class dtNavMesh;
+
 namespace mye {
 
 class World;
+class NavSystem;
+class NavTileStore;
 
 // .mnav から表示用の三角形と線を作って持つ。NavSystem (sim) とは独立で、tick を回さない編集中の
 // SceneView でも使える。World と .mnav を読むだけで sim 状態・ハッシュには触れない。
-// 描画フレームごとに Refresh を呼ぶ。Surface の構成 (エンティティ・navAsset・表示フラグ) が
-// 前回と同じなら何も作り直さない。作り直すのは構成が変わったフレームだけ
+// 描画フレームごとに Refresh を呼ぶ。Surface の構成 (エンティティ・navAsset・表示フラグ・NavSystem の
+// ナビメッシュの世代) が前回と同じなら何も作り直さない。作り直すのは構成が変わったフレームだけ。
+// 編集中は .mnav から組み、Play 中は NavSystem が持つ実行時のナビメッシュ (Obstacle で切り抜いた後) から組む
 class NavDebugView {
 public:
     struct Stats {
         uint32_t refreshCount = 0;  // Refresh を呼んだ回数
         uint32_t rebuildCount = 0;  // 三角形・線を作り直した回数
         uint32_t loadCount = 0;     // .mnav を読んで表示用に組んだ回数 (Surface 1 つにつき 1)
+        uint32_t liveCount = 0;     // NavSystem のナビメッシュから組んだ回数 (世代が変わるたびに 1)
         double lastRebuildUs = 0.0; // 直近の作り直しの所要時間 (.mnav の読み込みを含む)
         int lastTriangles = 0;
         int lastLines = 0;
     };
 
-    // メインスレッド専用 (.mnav の読み込みとログ)
-    void Refresh(World& world);
+    // メインスレッド専用 (.mnav の読み込みとログ)。nav が非 null (sim を回している間) で、その Surface が
+    // 読み込み済みなら NavSystem のナビメッシュを読み取って使う (.mnav を二重に読まず、Obstacle の切り抜きも映る)
+    void Refresh(World& world, const NavSystem* nav = nullptr);
 
     // 旧シーンの分を捨てる
     void Reset();
@@ -53,23 +60,27 @@ private:
         EntityID entity;
         uint64_t assetGuid = 0;
         uint8_t flags = 0;
+        uint64_t generation = 0;                 // 0 = .mnav から組む。非 0 = NavSystem の store の世代
+        const NavTileStore* live = nullptr;      // generation != 0 のときの組み元 (Refresh の間だけ有効)
         bool operator==(const Key& o) const
         {
-            return entity == o.entity && assetGuid == o.assetGuid && flags == o.flags;
+            return entity == o.entity && assetGuid == o.assetGuid && flags == o.flags && generation == o.generation;
         }
     };
 
-    // Surface 1 つ分の表示用ジオメトリ。(entity, assetGuid) が同じ間は使い回す
+    // Surface 1 つ分の表示用ジオメトリ。(entity, assetGuid, generation) が同じ間は使い回す
     struct Geometry {
         EntityID entity;
         uint64_t assetGuid = 0;
+        uint64_t generation = 0;
         bool loaded = false;
         std::vector<DebugFillVertex> fill;
         std::vector<DebugLineCmd> outline;
         std::vector<DebugLineCmd> tileBounds;
     };
 
-    void ScanKeys(World& world);
+    void ScanKeys(World& world, const NavSystem* nav);
+    static void BuildFromMesh(Geometry& g, const dtNavMesh& mesh);
     void Rebuild(World& world);
     Geometry& GeometryFor(World& world, const Key& key);
 

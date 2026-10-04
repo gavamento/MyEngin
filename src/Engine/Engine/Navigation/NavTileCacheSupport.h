@@ -96,6 +96,17 @@ public:
     std::vector<NavTileKey> rebuilt;
 };
 
+// 障害物 1 つの記録 (形 + キー)。type は
+//   DT_OBSTACLE_BOX          : v = min xyz, max xyz (軸平行)
+//   DT_OBSTACLE_ORIENTED_BOX : v = 中心 xyz, 半寸法 xyz、yaw = y 軸まわりの回転 (ラジアン)
+//   DT_OBSTACLE_CYLINDER     : v = 底面中心 xyz, 半径, 高さ, 未使用
+struct NavObstacleSpec {
+    uint64_t key = 0;
+    uint8_t type = 0;
+    float v[6] = {};
+    float yaw = 0.0f;
+};
+
 struct NavTileStoreConfig {
     dtTileCacheParams cache{};
     dtNavMeshParams mesh{};
@@ -127,6 +138,7 @@ public:
 
     // 障害物。key は呼び出し側の決定的なキー (エンティティキー)。dtNavMesh への反映は Commit()
     bool AddBoxObstacle(uint64_t key, const float* bmin, const float* bmax);
+    bool AddOrientedBoxObstacle(uint64_t key, const float* center, const float* halfExtents, float yawRadians);
     bool AddCylinderObstacle(uint64_t key, const float* pos, float radius, float height);
     bool RemoveObstacle(uint64_t key);
 
@@ -149,6 +161,12 @@ public:
     dtTileCache* TileCache() { return cache_; }
     int LayerCount() const { return static_cast<int>(entries_.size()); }
     int ObstacleCount() const { return static_cast<int>(obstacles_.size()); }
+    // キー昇順 (0 <= index < ObstacleCount())。Add / Remove / LoadState で並びが変わる
+    const NavObstacleSpec& ObstacleAt(int index) const { return obstacles_[static_cast<size_t>(index)]; }
+    uint64_t HashObstacles() const;
+    // dtNavMesh が作り直されるたびに、プロセス内で一意な新しい値になる (0 = まだ組んでいない)。表示側が作り直しの要否を
+    // 判断する鍵で、sim の状態ではない (ハッシュにもスナップショットにも入らない)
+    uint64_t Generation() const { return generation_; }
     uint32_t SaltOfSlot(int slot) const { return slotSalt_[static_cast<size_t>(slot)]; }
     uint32_t SaltBits() const { return saltBits_; }
 
@@ -167,10 +185,7 @@ private:
         uint64_t hash = 0;
         std::vector<uint8_t> blob;
     };
-    struct ObstacleEntry {
-        uint64_t key = 0;
-        uint8_t type = 0;
-        float v[6] = {};
+    struct ObstacleEntry : NavObstacleSpec {
         dtObstacleRef ref = 0;
     };
     struct SavedLayer {
@@ -191,7 +206,7 @@ private:
     bool QueueObstacle(ObstacleEntry& entry);
     bool QueueObstacleRemoval(dtObstacleRef ref);
     void BumpSalt(int slot);
-    void ConsumeRebuilt(bool bump);
+    bool ConsumeRebuilt(bool bump); // 作り直し・有無の変化が 1 つでもあれば true
     bool Canonicalize();
     bool ReplaceGroup(int tx, int ty, const std::vector<std::vector<uint8_t>>& layers,
                       const std::vector<uint8_t>& baseFlags);
@@ -204,6 +219,7 @@ private:
     dtTileCache* cache_ = nullptr;
     uint32_t saltBits_ = 0;
     bool canonicalize_ = true;
+    uint64_t generation_ = 0;
     int queuedRequests_ = 0;
     std::vector<LayerEntry> entries_;
     std::vector<BaseBlob> baseBlobs_;

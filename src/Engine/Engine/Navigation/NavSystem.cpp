@@ -16,6 +16,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Navigation/NavBakeInput.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {
@@ -49,6 +50,7 @@ constexpr float kPathLift = 0.03f;
 constexpr uint32_t kPathMovingColor = 0x60FF60FFu;
 constexpr uint32_t kPathArrivedColor = 0x80C0FFFFu;
 constexpr uint32_t kPathNoPathColor = 0xFF4040FFu;
+constexpr uint32_t kObstacleColor = 0xFF9030FFu;
 
 // dtCrowd の容量 (Surface ごと)。超えた Agent はエンティティキーの後ろから Inactive
 constexpr int kCrowdCapacity = 128;
@@ -70,6 +72,23 @@ constexpr float kPlaceHorizontalMin = 0.6f;
 constexpr float kPlaceVertical = 1.0f;
 constexpr float kDestHorizontal = 1.0f;
 constexpr float kDestVertical = 2.0f;
+
+// 詰まり検出: 経路の残り距離を kStuckTicks の間に max(半径 x 係数, 下限) 以上縮められない Moving の Agent を止める
+constexpr int kStuckTicks = 60;
+constexpr float kStuckProgressRadiusScale = 0.25f;
+constexpr float kStuckMinProgress = 0.01f;
+// 部分経路の終点からこの距離 (radius の倍率) 以内で前進が止まったら Arrived とみなす。
+// CC は NavMesh の縁の手前で止まる (カプセルの接触・skinWidth) ので、終点までの残りが stoppingDistance を割れないことがある
+constexpr float kPartialArriveRadiusScale = 1.0f;
+// 動いた障害物を作り直す閾値 (m)。これ以下の動きは TileCache を触らない (毎 tick 動く物体で全タイルを入れ直さない)
+constexpr float kObstacleMoveThreshold = 0.05f;
+constexpr int kCylinderSegments = 16;
+// 回転した動きの閾値 (ラジアン)。半寸法 2.5 m の箱の端で約 5 cm
+constexpr float kObstacleYawThreshold = 0.02f;
+// ワールド行列が「y 軸まわりの回転 + 拡大」とみなせる傾きの許容 (行の長さに対する比)。超えると外接 AABB で切る
+constexpr float kObstacleTiltEpsilon = 1.0e-3f;
+// dtTileCache が回転箱の範囲に使う係数 (DetourTileCache.cpp の getObstacleBounds と同じ)
+constexpr float kOrientedBoxReach = 1.41f;
 
 constexpr uint32_t kSnapshotMagic = 0x3156414Eu; // 'NAV1'
 constexpr uint32_t kMaxSnapshotSurfaces = 4096;
@@ -107,6 +126,14 @@ void AddLine(std::vector<DebugLineCmd>& out, const float* a, const float* b, uin
     cmd.bz = b[2];
     cmd.rgba = rgba;
     out.push_back(cmd);
+}
+
+// 目的地の変更・到着・取り消しで、詰まりの記録を初期化する
+void ResetStuck(NavAgentSlot& slot)
+{
+    slot.stuck = 0;
+    slot.noProgressTicks = 0;
+    slot.bestRemaining = -1.0f;
 }
 
 bool KeyLess(const EntityID& a, const EntityID& b)
@@ -229,7 +256,8 @@ bool ParseSnapshot(const uint8_t* data, size_t size, std::vector<SnapshotSurface
             NavAgentSlot slot;
             if (!r.Pod(index) || index >= static_cast<uint32_t>(kCrowdCapacity) || static_cast<int64_t>(index) <= previous
                 || !r.Pod(slot.entity.index) || !r.Pod(slot.entity.generation) || !r.Pod(slot.requested)
-                || !r.Pod(slot.destInvalid) || !r.Pod(slot.arrived) || !r.Bytes(slot.requestedDest, sizeof(slot.requestedDest))) {
+                || !r.Pod(slot.destInvalid) || !r.Pod(slot.arrived) || !r.Pod(slot.stuck) || !r.Pod(slot.noProgressTicks)
+                || !r.Pod(slot.bestRemaining) || !r.Bytes(slot.requestedDest, sizeof(slot.requestedDest))) {
                 return false;
             }
             previous = index;
@@ -258,6 +286,9 @@ void WriteSlots(NavByteWriter& w, const std::vector<NavAgentSlot>& slots)
         w.Pod(slot.requested);
         w.Pod(slot.destInvalid);
         w.Pod(slot.arrived);
+        w.Pod(slot.stuck);
+        w.Pod(slot.noProgressTicks);
+        w.Pod(slot.bestRemaining);
         w.Bytes(slot.requestedDest, sizeof(slot.requestedDest));
     }
 }
@@ -268,7 +299,173 @@ void WriteBlock(NavByteWriter& w, const NavByteWriter& block)
     w.Bytes(block.Data().data(), block.Size());
 }
 
+// LocalTransform から行ベクトル規約のワールド行列 (親が無い前提)。TransformSystem の行列と同じ向きで、スカラーだけで組む
+void MatrixOfRootTransform(const LocalTransform& t, float (&m)[4][4])
+{
+    const float x = t.rotation.x;
+    const float y = t.rotation.y;
+    const float z = t.rotation.z;
+    const float w = t.rotation.w;
+    const float r[3][3] = {
+        { 1.0f - 2.0f * (y * y + z * z), 2.0f * (x * y - w * z), 2.0f * (x * z + w * y) },
+        { 2.0f * (x * y + w * z), 1.0f - 2.0f * (x * x + z * z), 2.0f * (y * z - w * x) },
+        { 2.0f * (x * z - w * y), 2.0f * (y * z + w * x), 1.0f - 2.0f * (x * x + y * y) },
+    };
+    const float s[3] = { t.scale.x, t.scale.y, t.scale.z };
+    for (int j = 0; j < 3; ++j) {
+        // 行 j = 基底 e_j を拡大して回した像 = R の列 j に s_j を掛けたもの
+        for (int i = 0; i < 3; ++i) {
+            m[j][i] = s[j] * r[i][j];
+        }
+        m[j][3] = 0.0f;
+    }
+    m[3][0] = t.position.x;
+    m[3][1] = t.position.y;
+    m[3][2] = t.position.z;
+    m[3][3] = 1.0f;
+}
+
+void TransformPoint(const float (&m)[4][4], float x, float y, float z, float (&out)[3])
+{
+    for (int i = 0; i < 3; ++i) {
+        out[i] = x * m[0][i] + y * m[1][i] + z * m[2][i] + m[3][i];
+    }
+}
+
+bool IsFinitePositive(float v)
+{
+    return std::isfinite(v) && v > 0.0f;
+}
+
+// 障害物の形 (type, v) が前回と閾値以内に同じか
+bool SameObstacleShape(const NavObstacleSpec& a, const NavObstacleSpec& b)
+{
+    if (a.type != b.type || std::fabs(a.yaw - b.yaw) > kObstacleYawThreshold) {
+        return false;
+    }
+    for (int i = 0; i < 6; ++i) {
+        if (std::fabs(a.v[i] - b.v[i]) > kObstacleMoveThreshold) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// 障害物の外接 AABB (Surface の範囲との重なり判定用)
+void ObstacleBounds(const NavObstacleSpec& o, float (&lo)[3], float (&hi)[3])
+{
+    if (o.type == DT_OBSTACLE_CYLINDER) {
+        lo[0] = o.v[0] - o.v[3];
+        lo[1] = o.v[1];
+        lo[2] = o.v[2] - o.v[3];
+        hi[0] = o.v[0] + o.v[3];
+        hi[1] = o.v[1] + o.v[4];
+        hi[2] = o.v[2] + o.v[3];
+    } else if (o.type == DT_OBSTACLE_ORIENTED_BOX) {
+        const float reach = kOrientedBoxReach * (std::max)(o.v[3], o.v[5]);
+        lo[0] = o.v[0] - reach;
+        lo[1] = o.v[1] - o.v[4];
+        lo[2] = o.v[2] - reach;
+        hi[0] = o.v[0] + reach;
+        hi[1] = o.v[1] + o.v[4];
+        hi[2] = o.v[2] + reach;
+    } else {
+        for (int i = 0; i < 3; ++i) {
+            lo[i] = o.v[i];
+            hi[i] = o.v[3 + i];
+        }
+    }
+}
+
 } // namespace
+
+uint64_t NavObstacleKey(EntityID entity)
+{
+    return (static_cast<uint64_t>(entity.index) << 32) | static_cast<uint64_t>(entity.generation);
+}
+
+bool NavMakeObstacleSpec(const NavMeshObstacleComponent& obstacle, const float (&m)[4][4], uint64_t key,
+                         NavObstacleSpec& out)
+{
+    out = NavObstacleSpec{};
+    out.key = key;
+    if (obstacle.shape == navobstacleshape::kCylinder) {
+        if (!IsFinitePositive(obstacle.radius) || !IsFinitePositive(obstacle.height)) {
+            return false;
+        }
+        float center[3];
+        TransformPoint(m, obstacle.center.x, obstacle.center.y, obstacle.center.z, center);
+        const float sx = Length3(m[0][0], m[0][1], m[0][2]);
+        const float sy = Length3(m[1][0], m[1][1], m[1][2]);
+        const float sz = Length3(m[2][0], m[2][1], m[2][2]);
+        const float radius = obstacle.radius * (std::max)(sx, sz);
+        const float height = obstacle.height * sy;
+        if (!std::isfinite(center[0]) || !std::isfinite(center[1]) || !std::isfinite(center[2]) || !IsFinitePositive(radius)
+            || !IsFinitePositive(height)) {
+            return false;
+        }
+        out.type = DT_OBSTACLE_CYLINDER;
+        out.v[0] = center[0];
+        out.v[1] = center[1] - height * 0.5f;
+        out.v[2] = center[2];
+        out.v[3] = radius;
+        out.v[4] = height;
+        return true;
+    }
+    const float hx = std::fabs(obstacle.size.x) * 0.5f;
+    const float hy = std::fabs(obstacle.size.y) * 0.5f;
+    const float hz = std::fabs(obstacle.size.z) * 0.5f;
+    if (!IsFinitePositive(hx) || !IsFinitePositive(hy) || !IsFinitePositive(hz)) {
+        return false;
+    }
+    // y 軸まわりの回転だけなら、実形のまま回転箱で切る (dtTileCache::addBoxObstacle の yaw 版)
+    const float len0 = Length3(m[0][0], m[0][1], m[0][2]);
+    const float len1 = Length3(m[1][0], m[1][1], m[1][2]);
+    const float len2 = Length3(m[2][0], m[2][1], m[2][2]);
+    const bool pureYaw = std::fabs(m[1][0]) <= kObstacleTiltEpsilon * len1 && std::fabs(m[1][2]) <= kObstacleTiltEpsilon * len1
+        && std::fabs(m[0][1]) <= kObstacleTiltEpsilon * len0 && std::fabs(m[2][1]) <= kObstacleTiltEpsilon * len2;
+    if (pureYaw) {
+        float center[3];
+        TransformPoint(m, obstacle.center.x, obstacle.center.y, obstacle.center.z, center);
+        const float half[3] = { hx * len0, hy * len1, hz * len2 };
+        const float yaw = std::atan2(-m[0][2], m[0][0]);
+        for (int i = 0; i < 3; ++i) {
+            if (!std::isfinite(center[i]) || !IsFinitePositive(half[i])) {
+                return false;
+            }
+        }
+        if (!std::isfinite(yaw)) {
+            return false;
+        }
+        out.type = DT_OBSTACLE_ORIENTED_BOX;
+        for (int i = 0; i < 3; ++i) {
+            out.v[i] = center[i];
+            out.v[3 + i] = half[i];
+        }
+        out.yaw = yaw;
+        return true;
+    }
+    float lo[3] = {};
+    float hi[3] = {};
+    for (int corner = 0; corner < 8; ++corner) {
+        float p[3];
+        TransformPoint(m, obstacle.center.x + ((corner & 1) ? hx : -hx), obstacle.center.y + ((corner & 2) ? hy : -hy),
+                       obstacle.center.z + ((corner & 4) ? hz : -hz), p);
+        for (int i = 0; i < 3; ++i) {
+            if (!std::isfinite(p[i])) {
+                return false;
+            }
+            lo[i] = corner == 0 ? p[i] : (std::min)(lo[i], p[i]);
+            hi[i] = corner == 0 ? p[i] : (std::max)(hi[i], p[i]);
+        }
+    }
+    out.type = DT_OBSTACLE_BOX;
+    for (int i = 0; i < 3; ++i) {
+        out.v[i] = lo[i];
+        out.v[3 + i] = hi[i];
+    }
+    return true;
+}
 
 void NavSystem::Load(NavSurfaceRuntime& surface, const char* name)
 {
@@ -383,6 +580,144 @@ void NavSystem::SyncSurfaces(World& world)
     }
 }
 
+void NavSystem::SyncObstacles(World& world)
+{
+    stats_.obstacleUs = 0.0;
+    stats_.obstacleChanges = 0;
+    bool anyLoaded = false;
+    for (const NavSurfaceRuntime& surface : surfaces_) {
+        anyLoaded = anyLoaded || surface.state == NavSurfaceState::Loaded;
+    }
+    if (!anyLoaded) {
+        return;
+    }
+
+    // 欲しい障害物 (carve が立ち、形が有効なもの) をキー順に並べる。配置は LocalTransform (親が無い) か前 tick の WorldMatrix
+    wantedObstacles_.clear();
+    const ComponentTypeId req[] = { NavMeshObstacleComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int oi = arch.FindTypeIndex(NavMeshObstacleComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            const auto* obstacle = static_cast<const NavMeshObstacleComponent*>(arch.GetPtr(oi, row));
+            if (!obstacle->carve || !IsEntityActive(world, e)) {
+                continue;
+            }
+            float m[4][4];
+            const auto* local = world.GetComponent<LocalTransform>(e);
+            if (local != nullptr && world.GetParent(e) == kNullEntity) {
+                MatrixOfRootTransform(*local, m);
+            } else if (const auto* wm = world.GetComponent<WorldMatrixComponent>(e)) {
+                std::memcpy(m, wm->value.m, sizeof(m));
+            } else {
+                continue;
+            }
+            NavObstacleSpec spec;
+            if (NavMakeObstacleSpec(*obstacle, m, NavObstacleKey(e), spec)) {
+                wantedObstacles_.push_back(spec);
+            }
+        }
+    });
+    std::sort(wantedObstacles_.begin(), wantedObstacles_.end(),
+              [](const NavObstacleSpec& a, const NavObstacleSpec& b) { return a.key < b.key; });
+
+    // Surface ごとに、store が持つ障害物 (これも復元済みの状態) と突き合わせる。NavSystem 自身は前回の記録を持たないので、
+    // restore 直後でも二重に足さず消し忘れない
+    int failures = 0;
+    for (NavSurfaceRuntime& surface : surfaces_) {
+        if (surface.state != NavSurfaceState::Loaded) {
+            continue;
+        }
+        NavTileStore& store = *surface.store;
+        // この Surface の範囲 (ベイクと同じ計算) と重なる障害物だけを付ける。範囲外は容量 (maxObstacles) を食うだけ
+        wantedHere_.clear();
+        float surfaceMin[3] = {};
+        float surfaceMax[3] = {};
+        bool hasBounds = false;
+        const auto* surfaceComp = world.GetComponent<NavMeshSurfaceComponent>(surface.entity);
+        const auto* surfaceMatrix = world.GetComponent<WorldMatrixComponent>(surface.entity);
+        if (surfaceComp != nullptr && surfaceMatrix != nullptr) {
+            const NavBakeConfig bake = NavMakeBakeConfig(*surfaceComp, surfaceMatrix->value);
+            std::memcpy(surfaceMin, bake.boundsMin, sizeof(surfaceMin));
+            std::memcpy(surfaceMax, bake.boundsMax, sizeof(surfaceMax));
+            hasBounds = true;
+        }
+        for (const NavObstacleSpec& spec : wantedObstacles_) {
+            float lo[3];
+            float hi[3];
+            ObstacleBounds(spec, lo, hi);
+            bool overlap = true;
+            for (int i = 0; hasBounds && i < 3; ++i) {
+                overlap = overlap && lo[i] <= surfaceMax[i] && hi[i] >= surfaceMin[i];
+            }
+            if (overlap) {
+                wantedHere_.push_back(spec);
+            }
+        }
+        std::vector<uint64_t> removeKeys;
+        std::vector<size_t> addIndices;
+        const int have = store.ObstacleCount();
+        int si = 0;
+        size_t wi = 0;
+        while (si < have || wi < wantedHere_.size()) {
+            const bool storeLeft = si < have;
+            const bool wantLeft = wi < wantedHere_.size();
+            const uint64_t storeKey = storeLeft ? store.ObstacleAt(si).key : 0;
+            const uint64_t wantKey = wantLeft ? wantedHere_[wi].key : 0;
+            if (storeLeft && (!wantLeft || storeKey < wantKey)) {
+                removeKeys.push_back(storeKey);
+                ++si;
+            } else if (wantLeft && (!storeLeft || wantKey < storeKey)) {
+                addIndices.push_back(wi);
+                ++wi;
+            } else {
+                if (!SameObstacleShape(store.ObstacleAt(si), wantedHere_[wi])) {
+                    removeKeys.push_back(storeKey);
+                    addIndices.push_back(wi);
+                }
+                ++si;
+                ++wi;
+            }
+        }
+        if (removeKeys.empty() && addIndices.empty()) {
+            continue;
+        }
+        const auto t0 = std::chrono::steady_clock::now();
+        for (const uint64_t key : removeKeys) {
+            if (!store.RemoveObstacle(key)) {
+                ++failures;
+            }
+        }
+        for (const size_t index : addIndices) {
+            const NavObstacleSpec& spec = wantedHere_[index];
+            bool added = false;
+            if (spec.type == DT_OBSTACLE_CYLINDER) {
+                added = store.AddCylinderObstacle(spec.key, spec.v, spec.v[3], spec.v[4]);
+            } else if (spec.type == DT_OBSTACLE_ORIENTED_BOX) {
+                added = store.AddOrientedBoxObstacle(spec.key, spec.v, spec.v + 3, spec.yaw);
+            } else {
+                added = store.AddBoxObstacle(spec.key, spec.v, spec.v + 3);
+            }
+            if (!added) {
+                ++failures;
+            }
+        }
+        if (!store.Commit()) {
+            ++failures;
+        }
+        stats_.obstacleUs += std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+        stats_.obstacleChanges += static_cast<int>(removeKeys.size() + addIndices.size());
+    }
+    stats_.maxObstacleUs = (std::max)(stats_.maxObstacleUs, stats_.obstacleUs);
+    // 失敗は容量超過 (maxObstacles) など。毎 tick 再試行されるので、数が変わったときだけ警告する
+    if (failures != obstacleFailures_) {
+        if (failures > 0) {
+            MYE_LOG_WARN("[nav] %d obstacle operation(s) failed (the TileCache may be full); retrying every tick", failures);
+        }
+        obstacleFailures_ = failures;
+    }
+}
+
 void NavSystem::CollectAgents(World& world)
 {
     agents_.clear();
@@ -412,6 +747,7 @@ void NavSystem::CollectAgents(World& world)
 void NavSystem::Update(World& world, float dt)
 {
     SyncSurfaces(world);
+    SyncObstacles(world);
     CollectAgents(world);
     bool anyOccupied = false;
     for (const NavSurfaceRuntime& surface : surfaces_) {
@@ -655,12 +991,14 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
             slot.requested = 0;
             slot.destInvalid = 0;
             slot.arrived = 0;
+            ResetStuck(slot);
         } else {
             const float dest[3] = { agent.destination.x, agent.destination.y, agent.destination.z };
             if (slot.requested == 0 || !SameBits(dest, slot.requestedDest)) {
                 slot.requested = 1;
                 slot.destInvalid = 0;
                 slot.arrived = 0;
+                ResetStuck(slot);
                 std::memcpy(slot.requestedDest, dest, sizeof(dest));
                 const float destExt[3] = { kDestHorizontal, kDestVertical, kDestHorizontal };
                 dtPolyRef ref = 0;
@@ -707,6 +1045,10 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
             status = navagentstatus::kIdle;
         } else if (slot.destInvalid != 0 || ag->state == DT_CROWDAGENT_STATE_INVALID) {
             status = navagentstatus::kNoPath;
+        } else if (slot.stuck != 0) {
+            status = navagentstatus::kStuck; // 目的地が変わるまで保持 (止めた時点の残り距離を見せ続ける)
+            remaining = agent.remainingDistance;
+            partial = agent.pathPartial;
         } else if (slot.arrived != 0) {
             status = navagentstatus::kArrived;
             partial = agent.pathPartial;
@@ -735,10 +1077,32 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
             const float arriveDistance = (std::max)(agent.stoppingDistance, kArriveEpsilon);
             if (ag->targetState == DT_CROWDAGENT_TARGET_VALID && endReached && toEnd <= arriveDistance) {
                 slot.arrived = 1;
+                ResetStuck(slot);
                 crowd.resetMoveTarget(a.slot);
                 status = navagentstatus::kArrived;
             } else {
                 status = navagentstatus::kMoving;
+                // 詰まり検出: 残り距離が基準から半径の 1/4 以上動かない tick が続いたら止める。
+                // 基準より遠ざかった (経路が変わった) ときも基準を取り直す = 迂回の始まりを詰まりと見なさない
+                const float progress = (std::max)(agent.radius * kStuckProgressRadiusScale, kStuckMinProgress);
+                if (slot.bestRemaining < 0.0f || std::fabs(remaining - slot.bestRemaining) >= progress) {
+                    slot.bestRemaining = remaining;
+                    slot.noProgressTicks = 0;
+                } else if (++slot.noProgressTicks >= kStuckTicks && ag->partial && endReached
+                           && toEnd <= (std::max)(arriveDistance, agent.radius * kPartialArriveRadiusScale)) {
+                    // 部分経路の終点 (届く限りの最寄り) の近くで前進が止まった = 到着。CC の停止位置は NavMesh の縁と数 cm ずれる
+                    slot.arrived = 1;
+                    ResetStuck(slot);
+                    crowd.resetMoveTarget(a.slot);
+                    status = navagentstatus::kArrived;
+                    partial = true;
+                } else if (slot.noProgressTicks >= kStuckTicks) {
+                    slot.stuck = 1;
+                    crowd.resetMoveTarget(a.slot);
+                    status = navagentstatus::kStuck;
+                    MYE_LOG_WARN("[nav] agent '%s' is stuck: its path did not get shorter for %d ticks (%.2f m left)",
+                                 world.GetName(a.entity), kStuckTicks, remaining);
+                }
             }
         }
         agent.status = status;
@@ -748,10 +1112,11 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
         // 移動入力。crowd が今 tick に進めた変位 (速度の積分 + 衝突の押し戻し) をそのまま CC に歩かせる
         const float mx = (ag->npos[0] - a.synced[0]) * invDt;
         const float mz = (ag->npos[2] - a.synced[2]) * invDt;
-        a.cc->moveInput = { mx, 0.0f, mz };
+        const bool halted = slot.stuck != 0;
+        a.cc->moveInput = halted ? DirectX::XMFLOAT3{ 0.0f, 0.0f, 0.0f } : DirectX::XMFLOAT3{ mx, 0.0f, mz };
 
         // 進行方向へ向ける (親が無いときだけ。親付きの向きは親の回転と合成されるので触らない)
-        const float speed2 = mx * mx + mz * mz;
+        const float speed2 = halted ? 0.0f : mx * mx + mz * mz;
         if (a.rooted && agent.angularSpeedDeg > 0.0f && speed2 > kMinTurnSpeed * kMinTurnSpeed) {
             const float current = YawOf(a.transform->rotation);
             const float target = std::atan2(mx, mz);
@@ -767,6 +1132,7 @@ void NavSystem::Reset()
 {
     surfaces_.clear();
     loadedKeys_.clear();
+    obstacleFailures_ = 0;
     stats_ = NavSystemStats{};
 }
 
@@ -779,6 +1145,9 @@ void NavSystem::AppendDebugLines(World& world, std::vector<DebugLineCmd>& out) c
         const auto* comp = world.GetComponent<NavMeshSurfaceComponent>(surface.entity);
         if (comp == nullptr) {
             continue;
+        }
+        if (comp->drawObstacles) {
+            AppendObstacleLines(*surface.store, out);
         }
         if (!comp->drawAgentPaths) {
             continue;
@@ -804,6 +1173,79 @@ void NavSystem::AppendDebugLines(World& world, std::vector<DebugLineCmd>& out) c
             }
             const float top[3] = { slot.requestedDest[0], slot.requestedDest[1] + 1.0f, slot.requestedDest[2] };
             AddLine(out, slot.requestedDest, top, color);
+        }
+    }
+}
+
+void NavSystem::AppendObstacleLines(const NavTileStore& store, std::vector<DebugLineCmd>& out)
+{
+    for (int i = 0; i < store.ObstacleCount(); ++i) {
+        const NavObstacleSpec& o = store.ObstacleAt(i);
+        auto line = [&](float ax, float ay, float az, float bx, float by, float bz) {
+            DebugLineCmd cmd;
+            cmd.ax = ax;
+            cmd.ay = ay;
+            cmd.az = az;
+            cmd.bx = bx;
+            cmd.by = by;
+            cmd.bz = bz;
+            cmd.rgba = kObstacleColor;
+            out.push_back(cmd);
+        };
+        if (o.type == DT_OBSTACLE_CYLINDER) {
+            const float r = o.v[3];
+            const float y0 = o.v[1];
+            const float y1 = o.v[1] + o.v[4];
+            for (int k = 0; k < kCylinderSegments; ++k) {
+                const float a0 = 2.0f * kPi * static_cast<float>(k) / static_cast<float>(kCylinderSegments);
+                const float a1 = 2.0f * kPi * static_cast<float>(k + 1) / static_cast<float>(kCylinderSegments);
+                const float x0 = o.v[0] + r * std::cos(a0);
+                const float z0 = o.v[2] + r * std::sin(a0);
+                const float x1 = o.v[0] + r * std::cos(a1);
+                const float z1 = o.v[2] + r * std::sin(a1);
+                line(x0, y0, z0, x1, y0, z1);
+                line(x0, y1, z0, x1, y1, z1);
+                if (k % 4 == 0) {
+                    line(x0, y0, z0, x0, y1, z0);
+                }
+            }
+        } else if (o.type == DT_OBSTACLE_ORIENTED_BOX) {
+            const float cs = std::cos(o.yaw);
+            const float sn = std::sin(o.yaw);
+            // 局所 x 軸 = (cos, 0, -sin)、局所 z 軸 = (sin, 0, cos)
+            float px[4];
+            float pz[4];
+            for (int k = 0; k < 4; ++k) {
+                const float lx = (k & 1) ? o.v[3] : -o.v[3];
+                const float lz = (k & 2) ? o.v[5] : -o.v[5];
+                px[k] = o.v[0] + lx * cs + lz * sn;
+                pz[k] = o.v[2] - lx * sn + lz * cs;
+            }
+            const int ring[4] = { 0, 1, 3, 2 };
+            const float y0 = o.v[1] - o.v[4];
+            const float y1 = o.v[1] + o.v[4];
+            for (int k = 0; k < 4; ++k) {
+                const int a = ring[k];
+                const int b = ring[(k + 1) % 4];
+                line(px[a], y0, pz[a], px[b], y0, pz[b]);
+                line(px[a], y1, pz[a], px[b], y1, pz[b]);
+                line(px[a], y0, pz[a], px[a], y1, pz[a]);
+            }
+        } else {
+            const float* lo = o.v;
+            const float* hi = o.v + 3;
+            for (int k = 0; k < 4; ++k) {
+                const float x0 = (k & 1) ? hi[0] : lo[0];
+                const float z0 = (k & 2) ? hi[2] : lo[2];
+                line(x0, lo[1], z0, x0, hi[1], z0); // 縦の 4 本
+            }
+            for (int level = 0; level < 2; ++level) {
+                const float y = level == 0 ? lo[1] : hi[1];
+                line(lo[0], y, lo[2], hi[0], y, lo[2]);
+                line(hi[0], y, lo[2], hi[0], y, hi[2]);
+                line(hi[0], y, hi[2], lo[0], y, hi[2]);
+                line(lo[0], y, hi[2], lo[0], y, lo[2]);
+            }
         }
     }
 }
@@ -933,7 +1375,7 @@ uint64_t NavSystem::StateHash() const
         w.Pod(surface.entity.generation);
         WriteSlots(w, surface.slots);
         w.Pod(surface.store->HashLayers());
-        w.Pod(static_cast<uint32_t>(surface.store->ObstacleCount()));
+        w.Pod(surface.store->HashObstacles());
         NavSaveCrowd(*surface.crowd, w); // 途中状態は tick 境界に残らない (PATCHES.md)。失敗してもハッシュは決定的
         hash = NavFnv1a(hash, w.Data().data(), w.Size());
     }

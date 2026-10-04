@@ -1421,6 +1421,7 @@ void RegisterBuiltinComponents()
         MYE_JP("セルの大きさを自動で決める", MYE_FIELD_TIP(NavMeshSurfaceComponent, autoCellSize, Bool,
                                                          "derive the cell size from agent radius, max climb and max slope so the slope setting actually works")),
         MYE_JP("ナビメッシュの塗りを描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawNavMeshFill, Bool, kFieldNoHash)),
+        MYE_JP("障害物を描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawObstacles, Bool, kFieldNoHash)),
     });
 #undef MYE_NAV_AREA_COST
 
@@ -1443,6 +1444,17 @@ void RegisterBuiltinComponents()
         MYE_JP("状態", MYE_FIELD_FLAGS(NavMeshAgentComponent, status, Int32, kFieldReadOnly)),
         MYE_JP("残り距離", MYE_FIELD_FLAGS(NavMeshAgentComponent, remainingDistance, Float, kFieldReadOnly)),
         MYE_JP("部分経路", MYE_FIELD_FLAGS(NavMeshAgentComponent, pathPartial, Bool, kFieldReadOnly)),
+    });
+
+    // M82f: NavMesh Obstacle (TypeId=73、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変
+    RegisterComponent<NavMeshObstacleComponent>("NavMeshObstacle", {
+        MYE_JP("形", MYE_FIELD_TIP(NavMeshObstacleComponent, shape, Int32, "0 = Box, 1 = Cylinder")),
+        MYE_JP("中心", MYE_FIELD(NavMeshObstacleComponent, center, Float3)),
+        MYE_JP("大きさ (Box)", MYE_FIELD(NavMeshObstacleComponent, size, Float3)),
+        MYE_JP("半径 (Cylinder)", MYE_FIELD_RANGE(NavMeshObstacleComponent, radius, Float, 0.01f, 50.0f)),
+        MYE_JP("高さ (Cylinder)", MYE_FIELD_RANGE(NavMeshObstacleComponent, height, Float, 0.01f, 50.0f)),
+        MYE_JP("ナビメッシュを切り抜く", MYE_FIELD_TIP(NavMeshObstacleComponent, carve, Bool,
+                                                       "cut the navigation mesh; off = the obstacle does nothing")),
     });
 }
 

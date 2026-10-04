@@ -16,6 +16,7 @@
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Navigation/NavMeshAsset.h"
+#include "Engine/Engine/Navigation/NavSystem.h"
 
 namespace mye {
 
@@ -28,6 +29,9 @@ constexpr float kLineLift = 0.03f;
 constexpr float kFillAlpha = 0.38f;
 // DebugUtils が外周を太い線 (2.5)、内側の辺を細い線 (1.5) で描くことを見分けに使う
 constexpr float kBoundaryWidthMin = 2.0f;
+
+// 表示の作り直しを毎回ログに出す回数 (以降は 2 の冪の回だけ)
+constexpr uint32_t kLogAlways = 8;
 
 // 0xRRGGBBAA (DebugLineCmd と同じ並び)
 constexpr uint32_t kBoundaryColor = 0x40E8FFFFu;
@@ -151,7 +155,7 @@ void AddRect(std::vector<DebugLineCmd>& out, const float* bmin, const float* bma
 
 } // namespace
 
-void NavDebugView::ScanKeys(World& world)
+void NavDebugView::ScanKeys(World& world, const NavSystem* nav)
 {
     scanKeys_.clear();
     const ComponentTypeId req[] = { NavMeshSurfaceComponent::sTypeId };
@@ -166,6 +170,16 @@ void NavDebugView::ScanKeys(World& world)
             Key key;
             key.entity = e;
             key.assetGuid = surface->navAsset.value;
+            if (nav != nullptr) {
+                // sim が読み込み済みの Surface は、その実行時のナビメッシュ (世代が変わるたびに作り直す)
+                for (const NavSurfaceRuntime& rt : nav->Surfaces()) {
+                    if (rt.state == NavSurfaceState::Loaded && rt.entity == e && rt.assetGuid == key.assetGuid) {
+                        key.generation = rt.store->Generation();
+                        key.live = rt.store.get();
+                        break;
+                    }
+                }
+            }
             key.flags = static_cast<uint8_t>((surface->drawNavMesh ? kOutline : 0)
                                              | (surface->drawNavMeshFill ? kFill : 0)
                                              | (surface->drawTileBounds ? kTileBounds : 0));
@@ -177,16 +191,35 @@ void NavDebugView::ScanKeys(World& world)
               [](const Key& a, const Key& b) { return KeyLess(a.entity, b.entity); });
 }
 
+void NavDebugView::BuildFromMesh(Geometry& g, const dtNavMesh& mesh)
+{
+    for (int i = 0; i < mesh.getMaxTiles(); ++i) {
+        const dtMeshTile* tile = mesh.getTile(i);
+        if (tile != nullptr && tile->header != nullptr) {
+            AddRect(g.tileBounds, tile->header->bmin, tile->header->bmax);
+        }
+    }
+    GeometryCollector collector(g.fill, g.outline);
+    duDebugDrawNavMesh(&collector, mesh, 0);
+    g.loaded = true;
+}
+
 NavDebugView::Geometry& NavDebugView::GeometryFor(World& world, const Key& key)
 {
     for (Geometry& g : geometries_) {
-        if (g.entity == key.entity && g.assetGuid == key.assetGuid) {
+        if (g.entity == key.entity && g.assetGuid == key.assetGuid && g.generation == key.generation) {
             return g;
         }
     }
     Geometry& g = geometries_.emplace_back();
     g.entity = key.entity;
     g.assetGuid = key.assetGuid;
+    g.generation = key.generation;
+    if (key.live != nullptr) {
+        ++stats_.liveCount;
+        BuildFromMesh(g, *static_cast<const NavTileStore*>(key.live)->NavMesh());
+        return g;
+    }
     ++stats_.loadCount;
 
     const char* name = world.GetName(key.entity);
@@ -197,16 +230,7 @@ NavDebugView::Geometry& NavDebugView::GeometryFor(World& world, const Key& key)
                      static_cast<unsigned long long>(key.assetGuid));
         return g;
     }
-    const dtNavMesh& mesh = *store->NavMesh();
-    for (int i = 0; i < mesh.getMaxTiles(); ++i) {
-        const dtMeshTile* tile = mesh.getTile(i);
-        if (tile != nullptr && tile->header != nullptr) {
-            AddRect(g.tileBounds, tile->header->bmin, tile->header->bmax);
-        }
-    }
-    GeometryCollector collector(g.fill, g.outline);
-    duDebugDrawNavMesh(&collector, mesh, 0);
-    g.loaded = true;
+    BuildFromMesh(g, *store->NavMesh());
     return g;
 }
 
@@ -218,7 +242,8 @@ void NavDebugView::Rebuild(World& world)
     geometries_.erase(std::remove_if(geometries_.begin(), geometries_.end(),
                                      [this](const Geometry& g) {
                                          return std::none_of(scanKeys_.begin(), scanKeys_.end(), [&g](const Key& k) {
-                                             return k.entity == g.entity && k.assetGuid == g.assetGuid;
+                                             return k.entity == g.entity && k.assetGuid == g.assetGuid
+                                                 && k.generation == g.generation;
                                          });
                                      }),
                       geometries_.end());
@@ -246,14 +271,19 @@ void NavDebugView::Rebuild(World& world)
     stats_.lastRebuildUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
     stats_.lastTriangles = static_cast<int>(fill_.size() / 3);
     stats_.lastLines = static_cast<int>(lines_.size());
-    MYE_LOG_INFO("[nav] debug view rebuilt (#%u): %zu surface(s), %d triangles, %d lines, %.2f ms", stats_.rebuildCount,
-                 keys_.size(), stats_.lastTriangles, stats_.lastLines, stats_.lastRebuildUs / 1000.0);
+    // 動く障害物で毎フレーム作り直す場合にログを埋めないよう、最初の数回と 2 の冪の回だけ出す (回数は Stats に残る)
+    const uint32_t n = stats_.rebuildCount;
+    if (n <= kLogAlways || (n & (n - 1)) == 0) {
+        MYE_LOG_INFO("[nav] debug view rebuilt (#%u, %u from .mnav, %u from the live navmesh): %zu surface(s), %d triangles, %d lines, %.2f ms",
+                     n, stats_.loadCount, stats_.liveCount, keys_.size(), stats_.lastTriangles, stats_.lastLines,
+                     stats_.lastRebuildUs / 1000.0);
+    }
 }
 
-void NavDebugView::Refresh(World& world)
+void NavDebugView::Refresh(World& world, const NavSystem* nav)
 {
     ++stats_.refreshCount;
-    ScanKeys(world);
+    ScanKeys(world, nav);
     if (scanKeys_ == keys_) {
         return;
     }

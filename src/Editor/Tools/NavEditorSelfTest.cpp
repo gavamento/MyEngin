@@ -123,6 +123,32 @@ bool RunNavEditorSelfTest()
         undo.ClearAll();
     }
 
+    // ---- 1a. Create -> 3D Object -> NavMesh Obstacle (Undo / Redo、M82f) ----
+    {
+        const GameObject created = RecordCreate(ctx, selection, undo, "Create NavMesh Obstacle",
+                                                [&] { return CreateNavMeshObstacle(ctx, "NavMesh Obstacle"); });
+        world.ApplyStructuralChanges();
+        const uint64_t fid = scene.EnsureFileId(created.Id());
+        const NavMeshObstacleComponent* c = world.GetComponent<NavMeshObstacleComponent>(created.Id());
+        check(c != nullptr && c->carve && c->shape == navobstacleshape::kBox && c->size.x == 1.0f,
+              "Create: the entity has a NavMeshObstacle component (a 1 m box that carves)");
+        undo.Undo(scene, selection);
+        world.ApplyStructuralChanges();
+        check(!scene.FindByFileId(fid), "Undo: the created Obstacle is removed");
+        undo.Redo(scene, selection);
+        world.ApplyStructuralChanges();
+        {
+            GameObject back = scene.FindByFileId(fid);
+            check(static_cast<bool>(back) && world.GetComponent<NavMeshObstacleComponent>(back.Id()) != nullptr,
+                  "Redo: the Obstacle and its component come back");
+            if (back) {
+                back.Destroy();
+                world.ApplyStructuralChanges();
+            }
+        }
+        undo.ClearAll();
+    }
+
     // ---- 1b. Add Component: NavMeshAgent を足すと CharacterController も同じ 1 Undo で付く (M82c) ----
     {
         GameObject target = scene.CreateGameObjectTracked("AgentTarget");

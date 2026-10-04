@@ -6,6 +6,7 @@
 #include "Engine/Engine/Navigation/NavTileCacheSupport.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <utility>
@@ -66,7 +67,7 @@ namespace mye {
 namespace {
 
 constexpr uint32_t kStateMagic = 0x3153564Eu; // "NVS1"
-constexpr uint32_t kStateVersion = 1;
+constexpr uint32_t kStateVersion = 2; // v2: 障害物に yaw
 constexpr uint32_t kCrowdMagic = 0x31574F52u; // "ROW1"
 constexpr int kCrowdMaxPath = 256;            // dtCrowd の m_maxPathResult (MAX_PATH_RES)
 constexpr int kUpdateGuard = 4096;            // dtTileCache::update の暴走防止
@@ -74,6 +75,8 @@ constexpr int kUpdateGuard = 4096;            // dtTileCache::update の暴走�
 // (DT_MAX_TOUCHED_TILES)。8 件を超えて積むと tile 更新が黙って落ちるので、8 件ごとに処理する
 constexpr int kMaxQueuedRequests = 8;
 constexpr int kMaxLayersPerTile = 32;
+// NavTileStore::Generation の発番。store をまたいで一意にする (表示側が別の store の同じ番号と取り違えない)
+std::atomic<uint64_t> gGenerationSequence{0};
 
 uint64_t HashPod(uint64_t h, const void* p, size_t n) { return NavFnv1a(h, p, n); }
 
@@ -420,9 +423,14 @@ bool NavTileStore::QueueObstacle(ObstacleEntry& entry)
     if (queuedRequests_ >= kMaxQueuedRequests && !FlushUpdates()) {
         return false;
     }
-    const dtStatus st = entry.type == DT_OBSTACLE_CYLINDER
-        ? cache_->addObstacle(entry.v, entry.v[3], entry.v[4], &entry.ref)
-        : cache_->addBoxObstacle(entry.v, entry.v + 3, &entry.ref);
+    dtStatus st = DT_FAILURE;
+    if (entry.type == DT_OBSTACLE_CYLINDER) {
+        st = cache_->addObstacle(entry.v, entry.v[3], entry.v[4], &entry.ref);
+    } else if (entry.type == DT_OBSTACLE_ORIENTED_BOX) {
+        st = cache_->addBoxObstacle(entry.v, entry.v + 3, entry.yaw, &entry.ref);
+    } else {
+        st = cache_->addBoxObstacle(entry.v, entry.v + 3, &entry.ref);
+    }
     if (dtStatusFailed(st)) {
         return false;
     }
@@ -449,6 +457,26 @@ bool NavTileStore::AddBoxObstacle(uint64_t key, const float* bmin, const float* 
     e.type = DT_OBSTACLE_BOX;
     std::memcpy(e.v, bmin, sizeof(float) * 3);
     std::memcpy(e.v + 3, bmax, sizeof(float) * 3);
+    const auto it = std::lower_bound(obstacles_.begin(), obstacles_.end(), key,
+        [](const ObstacleEntry& o, uint64_t k) { return o.key < k; });
+    if (it != obstacles_.end() && it->key == key) {
+        return false;
+    }
+    if (!QueueObstacle(e)) {
+        return false;
+    }
+    obstacles_.insert(it, e);
+    return true;
+}
+
+bool NavTileStore::AddOrientedBoxObstacle(uint64_t key, const float* center, const float* halfExtents, float yawRadians)
+{
+    ObstacleEntry e;
+    e.key = key;
+    e.type = DT_OBSTACLE_ORIENTED_BOX;
+    std::memcpy(e.v, center, sizeof(float) * 3);
+    std::memcpy(e.v + 3, halfExtents, sizeof(float) * 3);
+    e.yaw = yawRadians;
     const auto it = std::lower_bound(obstacles_.begin(), obstacles_.end(), key,
         [](const ObstacleEntry& o, uint64_t k) { return o.key < k; });
     if (it != obstacles_.end() && it->key == key) {
@@ -555,8 +583,9 @@ bool NavTileStore::ReplaceGroup(int tx, int ty, const std::vector<std::vector<ui
     return true;
 }
 
-void NavTileStore::ConsumeRebuilt(bool bump)
+bool NavTileStore::ConsumeRebuilt(bool bump)
 {
+    bool anyChange = false;
     std::vector<uint8_t> changed(entries_.size(), 0);
     for (const NavTileKey& k : process_.rebuilt) {
         const int idx = FindEntry(k.tx, k.ty, k.layer);
@@ -568,11 +597,15 @@ void NavTileStore::ConsumeRebuilt(bool bump)
     for (size_t i = 0; i < entries_.size(); ++i) {
         LayerEntry& e = entries_[i];
         const bool present = nav_->getTileAt(e.tx, e.ty, e.layer) != nullptr;
-        if (bump && (changed[i] || present != e.navPresent)) {
-            BumpSalt(e.navSlot);
+        if (changed[i] || present != e.navPresent) {
+            anyChange = true;
+            if (bump) {
+                BumpSalt(e.navSlot);
+            }
         }
         e.navPresent = present;
     }
+    return anyChange;
 }
 
 bool NavTileStore::Canonicalize()
@@ -617,13 +650,17 @@ bool NavTileStore::Canonicalize()
             ok = false;
         }
     }
+    generation_ = ++gGenerationSequence;
     return ok;
 }
 
 bool NavTileStore::Commit()
 {
     bool ok = FlushUpdates();
-    ConsumeRebuilt(true);
+    // どのタイルも作り直されず、有無も変わらなければ dtNavMesh は前回の正規化のまま (入れ直しても同じ形になる)
+    if (!ConsumeRebuilt(true)) {
+        return ok;
+    }
     return Canonicalize() && ok;
 }
 
@@ -654,6 +691,7 @@ void NavTileStore::SaveState(NavByteWriter& w, bool includeBaseLayers) const
         w.Pod(o.key);
         w.Pod(o.type);
         w.Bytes(o.v, sizeof(o.v));
+        w.Pod(o.yaw);
     }
 }
 
@@ -706,7 +744,7 @@ bool NavTileStore::LoadState(NavByteReader& r)
     }
     std::vector<ObstacleEntry> savedObstacles(obstacleCount);
     for (ObstacleEntry& o : savedObstacles) {
-        if (!r.Pod(o.key) || !r.Pod(o.type) || !r.Bytes(o.v, sizeof(o.v))) {
+        if (!r.Pod(o.key) || !r.Pod(o.type) || !r.Bytes(o.v, sizeof(o.v)) || !r.Pod(o.yaw)) {
             return false;
         }
     }
@@ -776,7 +814,8 @@ bool NavTileStore::LoadState(NavByteReader& r)
     bool sameObstacles = savedObstacles.size() == obstacles_.size();
     for (size_t i = 0; sameObstacles && i < savedObstacles.size(); ++i) {
         sameObstacles = savedObstacles[i].key == obstacles_[i].key && savedObstacles[i].type == obstacles_[i].type
-            && std::memcmp(savedObstacles[i].v, obstacles_[i].v, sizeof(float) * 6) == 0;
+            && std::memcmp(savedObstacles[i].v, obstacles_[i].v, sizeof(float) * 6) == 0
+            && std::memcmp(&savedObstacles[i].yaw, &obstacles_[i].yaw, sizeof(float)) == 0;
     }
     if (!sameObstacles) {
         for (const ObstacleEntry& o : obstacles_) {
@@ -868,7 +907,19 @@ uint64_t NavTileStore::HashLayers() const
         h = HashValue(h, e.tx);
         h = HashValue(h, e.ty);
         h = HashValue(h, e.layer);
-        h = NavFnv1a(h, e.blob.data(), e.blob.size());
+        h = HashValue(h, e.hash); // 層の中身の FNV (登録時に計算済み)。毎 tick 全バイトを畳まない
+    }
+    return h;
+}
+
+uint64_t NavTileStore::HashObstacles() const
+{
+    uint64_t h = kNavFnvSeed;
+    for (const ObstacleEntry& o : obstacles_) {
+        h = HashValue(h, o.key);
+        h = HashValue(h, o.type);
+        h = NavFnv1a(h, o.v, sizeof(o.v));
+        h = HashValue(h, o.yaw);
     }
     return h;
 }

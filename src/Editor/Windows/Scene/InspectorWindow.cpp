@@ -1214,6 +1214,15 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
     if (std::strcmp(desc.name, "NavMeshSurface") == 0 && !tg.multi) {
         DrawNavMeshSurfaceNotes(ctx, selection, undo, tg);
     }
+    // M82f: Obstacle の切り抜き無効の注意
+    if (std::strcmp(desc.name, "NavMeshObstacle") == 0 && !tg.multi) {
+        const auto* obstacle = ctx.scene->GetWorld().GetComponent<NavMeshObstacleComponent>(tg.e);
+        if (obstacle != nullptr && !obstacle->carve) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_NavObstacleNoCarve));
+            ImGui::PopTextWrapPos();
+        }
+    }
     // M82c: Agent の実行状態と警告。状態は sim が書く値の読み取り表示なのでマルチ選択では出さない
     if (std::strcmp(desc.name, "NavMeshAgent") == 0 && !tg.multi) {
         DrawNavMeshAgentNotes(ctx, tg);
@@ -1618,9 +1627,9 @@ const InspectorWindow::NavAssetSummary& InspectorWindow::GetNavAssetSummary(uint
         return it->second;
     }
     NavAssetSummary summary;
-    const std::wstring path = assetguid::ResolvePath(guid);
+    // メモリ上にだけ登録された資産 (--nav-demo) もファイルの資産も、LoadByGuid が同じ順で引く (NavSystem の読み込みと同じ判定)
     NavMeshAsset::Data data;
-    if (!path.empty() && NavMeshAsset::Load(path, data)) {
+    if (NavMeshAsset::LoadByGuid(guid, data)) {
         NavTileStore store;
         if (NavMeshAsset::BuildStore(data, store)) {
             const dtNavMesh* nav = store.NavMesh();
@@ -1632,8 +1641,17 @@ const InspectorWindow::NavAssetSummary& InspectorWindow::GetNavAssetSummary(uint
                 }
             }
             summary.layers = static_cast<int>(data.layers.size());
+            const std::wstring path = assetguid::ResolvePath(guid);
             std::error_code ec;
-            summary.kilobytes = static_cast<int>(std::filesystem::file_size(path, ec) / 1024);
+            std::vector<uint8_t> bytes;
+            size_t size = 0;
+            if (!path.empty() && std::filesystem::exists(path, ec)) {
+                size = static_cast<size_t>(std::filesystem::file_size(path, ec));
+            } else {
+                NavMeshAsset::Serialize(data, bytes);
+                size = bytes.size();
+            }
+            summary.kilobytes = static_cast<int>(size / 1024);
             summary.loadable = true;
         }
     }
@@ -1653,8 +1671,9 @@ void InspectorWindow::DrawNavMeshAgentNotes(EngineContext& ctx, const InspectorT
     ImGui::Separator();
     const char* names[] = { Tr(StrId::Insp_NavSt_Idle),     Tr(StrId::Insp_NavSt_Moving),
                             Tr(StrId::Insp_NavSt_Arrived),  Tr(StrId::Insp_NavSt_NoPath),
-                            Tr(StrId::Insp_NavSt_OnLink),   Tr(StrId::Insp_NavSt_Inactive) };
-    const int status = agent->status >= 0 && agent->status < 6 ? agent->status : navagentstatus::kInactive;
+                            Tr(StrId::Insp_NavSt_OnLink),   Tr(StrId::Insp_NavSt_Inactive),
+                            Tr(StrId::Insp_NavSt_Stuck) };
+    const int status = agent->status >= 0 && agent->status < 7 ? agent->status : navagentstatus::kInactive;
     ImGui::TextDisabled(Tr(StrId::Insp_NavAgentStatus), names[status], agent->remainingDistance,
                         agent->pathPartial ? Tr(StrId::Insp_NavAgentPartial) : "");
 

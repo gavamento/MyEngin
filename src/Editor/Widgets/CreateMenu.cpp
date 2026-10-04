@@ -72,6 +72,13 @@ GameObject CreateNavMeshSurface(EngineContext& ctx, const char* name)
     return obj;
 }
 
+GameObject CreateNavMeshObstacle(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    obj.AddComponent<NavMeshObstacleComponent>(); // 既定は 1 m の箱で carve あり (Components.h)
+    return obj;
+}
+
 GameObject CreateDirectionalLight(EngineContext& ctx, const char* name)
 {
     GameObject obj = ctx.scene->CreateGameObjectTracked(name);
@@ -343,6 +350,8 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
         ImGui::Separator();
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_NavMeshSurface), "NavMesh Surface",
                    &CreateNavMeshSurface); // M82b
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_NavMeshObstacle), "NavMesh Obstacle",
+                   &CreateNavMeshObstacle); // M82f
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(Tr(StrId::Create_Light))) {

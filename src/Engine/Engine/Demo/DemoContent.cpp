@@ -4467,6 +4467,25 @@ void BuildNavShowcaseScene(EngineContext& ctx)
         mr->material = agentColors[colorIndex++ % 6];
     }
 
+    // M82f: 実行時に NavMesh を切り抜く障害物。NavObstacleDriver (GameLogic) が tick で撤去・移動・再設置する。
+    // 出発点の近くに置き、Agent の経路を迂回させる。コライダーを持たないのでベイクには入らない
+    {
+        GameObject obstacle = s.CreateGameObject("NavObstacle");
+        obstacle.SetLocalPosition(-7.0f, 1.0f, -1.0f);
+        auto* ob = obstacle.AddComponent<NavMeshObstacleComponent>();
+        ob->size = { 1.0f, 2.0f, 4.0f };
+        const ComponentTypeId obstacleDriver = ComponentRegistry::Get().FindByName("NavObstacleDriver");
+        if (obstacleDriver != kInvalidComponentType) {
+            w.AddComponentRaw(obstacle.Id(), obstacleDriver);
+        }
+        GameObject body = s.CreateGameObject("Body");
+        body.SetParent(obstacle);
+        body.SetLocalScale(ob->size.x, ob->size.y, ob->size.z);
+        auto* mr = body.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr("navdemo_wall") };
+    }
+
     // ベイクして登録する。入力収集はワールド行列を読むので Transform を一度確定させる
     w.ApplyStructuralChanges();
     TransformSystem transforms;

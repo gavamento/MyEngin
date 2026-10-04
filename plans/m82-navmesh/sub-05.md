@@ -1,8 +1,8 @@
 # sub-05: NavMeshObstacle (TileCache の切り抜き)
 
 - 依存: sub-03 (sub-04 の後に直列で回す。どちらも `--nav-demo` と golden `nav` を触るため)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (コミット待ち)
+- 往復: 2
 
 ## やること
 spec 4.1 (Obstacle、Tick の順序 (1))。
@@ -37,4 +37,25 @@ spec 4.1 (Obstacle、Tick の順序 (1))。
 
 ## 実装メモ (coder が追記)
 
+### round 1 (SELF_EVAL の要点)
+- Obstacle: `NavMeshObstacleComponent` (TypeId 73、末尾 append)。`NavSystem::SyncObstacles` が SyncSurfaces の直後に、carve の立った Obstacle のワールド形 (`NavMakeObstacleSpec`) を store の障害物 (キー順、復元済みの状態そのもの) と突き合わせ、外す → 付ける → `Commit`。NavSystem 自身は前回の記録を持たない = restore 直後でも二重追加・消し忘れが起きない。
+- 判断: `carve=false` は何もしない (dtCrowd に動く障害物の回避が無いため)。Box は回転後の外接 AABB、Cylinder は y 回転を無視。動きの閾値は 5 cm (`kObstacleMoveThreshold`)。障害物は読み込み済みの全 Surface に付ける (範囲外のものは TileCache に触れない)。
+- 計測 (324 タイル、障害物 8 個を毎 tick 動かす): Release 平均 857 us / 最悪 1258 us、うち dtNavMesh の入れ直し (正規化) 約 266 us。Debug は平均 4239 us。`Commit` は作り直されたタイルが無い tick では入れ直さない (中身は同じ形になるため)。履歴依存を消す性質は復元一致の SelfTest で確認。最適化はこれ以上不要と判断。
+- Stuck: `NavAgentSlot` に `stuck` / `noProgressTicks` / `bestRemaining` を追加 (Nav 節に入る)。60 tick の間、残り距離が基準から max(radius/4, 1 cm) 以上動かなければ止める (基準より遠ざかったときも基準を取り直す)。目的地の変更・取り消し・到着で解除。status は末尾に `kStuck = 6`。
+- 表示: `NavTileStore::Generation` (プロセス内で一意) を鍵に、`NavDebugView::Refresh(world, nav)` が Play 中は NavSystem のナビメッシュから作り直す。編集中は従来どおり .mnav。Inspector の誤警告は `LoadByGuid` 判定に直した。
+- `RestoreSimSnapshot` は Nav 節の `ApplySnapshot` の戻り値を最後に返す (World は戻せないので他の外部状態は当て切る)。
+- `--nav-demo` に Obstacle (tick 150 で carve を倒す、210 で z+5 へ動かして戻す: `NavObstacleDriver`) を足し、golden `tests\golden
+av.png` だけを撮り直した。
+- 検証: Debug / Release ビルド警告 0、`--selftest` 両構成 (Nav 系 ALL PASS、既知の FAIL は Source control 2 件のみ)、Server.exe --selftest PASS、`replay_verify.bat` 15 ジョブ全 PASS、`shot_verify.bat` は既知 5 枚のみ FAIL (数値は着手前と同一) で nav は PASS、`check_rules.ps1` 0。
+
+### round 2 (SELF_EVAL の要点)
+- #1 部分経路: 前進が 60 tick 止まり、`ag->partial` かつ終点まで radius (`kPartialArriveRadiusScale` = 1.0) 以内なら `Arrived` + `pathPartial` (WARN なし)。Stuck は完全な経路の途中、または部分経路の終点から遠い所だけ。0.12 m の原因: crowd 自身の位置が終点 (1.55) の手前 1.428 で速度 0 になる (CC の停止位置ではない。crowd x 1.428 = CC x 1.43)。経路の終点は最寄り点の問い合わせ結果で、dtPathCorridor が位置を置けるポリゴンの縁と数 cm ずれる、という見立て (未追跡)。
+- #2 `kSimSnapshotVersion` 26 → 27。AcousticAudioSelfTest の期待値を追随 (SimSnapshotSelfTest は version-1 で自動追随)。
+- #4 障害物は Surface のワールド AABB (`NavMakeBakeConfig`) と重なる Surface にだけ付ける。#5 y 回転だけの箱は `addBoxObstacle(center, half, yaw)` (store の type = ORIENTED_BOX、状態の保存形式 v2 と HashObstacles に yaw)、x/z に傾いた箱は外接 AABB。
+- 試験の注意: `findNearestPoly` は穴の縁のポリゴンも拾うので、`HasPolyAt` は最寄り点が 5 cm 以内のときだけ「歩ける」とする。
+- 再焼き: ヤード E1F88B1FFFF5635C、NavDeterminism capture.A/B.store (Debug = Release 一致)。golden nav だけ撮り直し。画像: cache\s05\inspector_obstacle.png (Inspector の Obstacle 節、carve=true)。carve=false の注意書きと Stuck の表示は画像未取得。
+- 検証: 両構成ビルド警告 0、Debug / Release の Editor --selftest (FAIL は Source control 2 件のみ)、Server.exe --selftest 両構成 PASS、replay_verify 15 ジョブ PASS、shot_verify は既知 5 枚のみ FAIL、check_rules 0。
+
 ## フィードバック履歴
+- round 1: VERDICT REWORK (planner、2026-10-04)。must: (1) 部分経路の終点の近くで止まった Agent を Stuck ではなく Arrived + pathPartial にする (spec 4.1) (2) Nav 節の書式変更に合わせて kSimSnapshotVersion を 26 → 27 にする (3) ハッシュを焼き直した後のビルドで Debug の selftest を通しで流し直す。should: Obstacle を付ける Surface をワールド AABB で絞る / y 回転した Box を `addBoxObstacle(center, halfExtents, yRadians)` (vendor 版にある) で切り抜く / Inspector の Obstacle 節の画像を撮る。採用した点: carve=false は何もしない、5 cm の閾値、状態を持たない突き合わせ、Generation による表示の作り直し、HashLayers を層ハッシュで畳む、Stuck で基準を取り直す方式。
+- round 2: VERDICT OK (planner、2026-10-04)。must 1〜3 と should 4・5 は解消。should 6 は一部 (carve=false の注意書きと Stuck の表示の画像が無い) → reviewer。既知の限界として受け入れた点: 部分経路の Arrived は無進捗の 60 tick を待ってから確定する (1 秒遅れる)。終点の 0.12 m のずれは dtCrowd 側で、原因は見立てまで。どちらも ADR に書く (sub-09)。

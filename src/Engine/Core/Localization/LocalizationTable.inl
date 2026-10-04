@@ -850,6 +850,7 @@ MYE_STR(Create_Quad,          "Quad",              "クアッド")
 MYE_STR(Create_Cylinder,      "Cylinder",          "シリンダー")
 MYE_STR(Create_Capsule,       "Capsule",           "カプセル")
 MYE_STR(Create_NavMeshSurface, "NavMesh Surface",  "ナビメッシュサーフェス") // M82b
+MYE_STR(Create_NavMeshObstacle, "NavMesh Obstacle", "ナビメッシュ障害物") // M82f
 MYE_STR(Create_Light,         "Light",             "ライト")
 MYE_STR(Create_DirLight,      "Directional Light", "平行光")
 MYE_STR(Create_PointLight,    "Point Light",       "ポイントライト")
@@ -1825,6 +1826,7 @@ MYE_STR(Insp_NavSt_Arrived,    "Arrived",  "到着")
 MYE_STR(Insp_NavSt_NoPath,     "No path",  "経路なし")
 MYE_STR(Insp_NavSt_OnLink,     "On link",  "リンク通過中")
 MYE_STR(Insp_NavSt_Inactive,   "Inactive", "停止中")
+MYE_STR(Insp_NavSt_Stuck,      "Stuck",    "詰まり")
 MYE_STR(Insp_NavAgentNoCc,     "Needs a CharacterController: the agent stays inactive without it.",
                                "CharacterController が必要です。無いとエージェントは動きません")
 MYE_STR(Insp_NavAgentRigidbody, "A Rigidbody disables the CharacterController: the agent stays inactive.",
@@ -1837,6 +1839,10 @@ MYE_STR(Insp_NavAgentTooBig,   "The agent or its CharacterController is larger t
                                "エージェントまたは CharacterController がベイクしたナビメッシュより大きい (半径 %.2f / 高さ %.2f) ため、壁に食い込む場合があります")
 MYE_STR(Insp_NavAgentStepLow,  "CharacterController step (stepOffset x scale.y = %.2f m) is below the surface's Max Climb (%.2f m): paths can cross steps this agent cannot climb.",
                                "CharacterController の登れる段差 (%.2f m) が Surface の登れる段差 (%.2f m) より低いため、登れない段差を越える経路が作られます")
+
+// ---- M82f: NavMesh Obstacle ----
+MYE_STR(Insp_NavObstacleNoCarve, "Carve is off: this obstacle does not change the navigation mesh.",
+                               "切り抜きが無効です。この障害物はナビメッシュを変えません")
 
 // ---- M82d: NavMesh Surface のセルサイズと実効の坂の上限 ----
 MYE_STR(Insp_NavCellAuto,      "auto",   "自動")

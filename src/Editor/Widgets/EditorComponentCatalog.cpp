@@ -99,6 +99,7 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         // M82b: ナビメッシュ。ベイクした歩行面を持つ Surface (Agent / Obstacle 等は M82c 以降)
         { "NavMeshSurface", { ICON_FA_ROUTE, "Navigation", "ナビメッシュサーフェス" } },
         { "NavMeshAgent", { ICON_FA_PERSON_WALKING, "Navigation", "ナビメッシュエージェント" } }, // M82c
+        { "NavMeshObstacle", { ICON_FA_BAN, "Navigation", "ナビメッシュ障害物" } }, // M82f
     };
     return t;
 }

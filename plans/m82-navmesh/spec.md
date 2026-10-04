@@ -72,14 +72,14 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 |---|---|---|
 | `NavMeshSurfaceComponent` | `agentTypeId` int / ベイク範囲 `center`・`size` (ローカル AABB) / `agentRadius` 0.3・`agentHeight` 1.8・`maxClimb` 0.3 (sub-10)・`maxSlopeDeg` 45 / `cellSize`・`cellHeight`・`tileSize` / `autoCellSize` (既定 on、sub-10) / `collectLayerMask` / `areaCosts[16]` / `navAsset` AssetID / 表示フラグ (kFieldNoHash) | 対象 |
 | `NavMeshAgentComponent` | `agentTypeId` / `speed`・`acceleration`・`angularSpeedDeg`・`stoppingDistance` / `radius`・`height` (回避用) / `areaMask` u32 (sub-06 で末尾追加) / `avoidanceQuality` 0..3 (0=回避なし) / `destination` Float3・`hasDestination` / 実行状態 (`status`: Idle / Moving / Arrived / NoPath / OnLink / Inactive / Stuck (sub-05、2. #20)、`remainingDistance`、`pathPartial`) | 対象 |
-| `NavMeshObstacleComponent` | `shape` (Box / Cylinder) / `center`・`size` (Box)・`radius`・`height` (Cylinder) / `carve` bool | 対象 |
+| `NavMeshObstacleComponent` | `shape` (Box / Cylinder) / `center`・`size` (Box)・`radius`・`height` (Cylinder) / `carve` bool (false は何もしない。dtCrowd には任意形状の動く障害物を回避する口が無く、Unity の『carve しない = 回避だけ』を再現できない。Inspector に注記する) | 対象 |
 | `NavMeshModifierComponent` | ローカル AABB / `area` (0..15) / `affects` (ベイク時に反映、実行時は Obstacle と同じ TileCache の area 書き換え) | 対象 |
 | `NavMeshLinkComponent` | `start`・`end` (ローカル) / `width` / `bidirectional` / `area` / `traversal` (Linear / Jump / Manual) / `traversalSpeed`・`jumpHeight` | 対象 |
 
 - エリア: 0 = Walkable (コスト 1)、1 = NotWalkable、2 = Jump (Link の既定)、3〜15 = ユーザー定義。名前は `project_settings.json` (表示のみ)、コストは Surface の `areaCosts`。
 - **Tick の位置**: TickRunner の フェーズ 3.4 (音響 + AgentSystem) の後、3.5 (アニメーション) の前に独立した `if (stepSim)` ブロックで `NavSystem::Update` (AgentSystem は `ts.acoustic` ゲートの中なので相乗りしない)。順序は (1) Obstacle / Modifier / Link のコンポーネント差分を TileCache へ反映し、`update` を**全部終わるまで**同期で回す (2) Agent をエンティティキー (entity.index、同値は generation) 順に dtCrowd と同期 (CC の実位置を crowd 側へ書き戻す) (3) `dtCrowd::update(1/60)` (4) 望む速度を CC.moveInput へ、状態を Agent へ書く。物理 (3.6) の後に Link 渡り中の Agent の位置を上書きする。
 - **AgentBrain との共存**: 同じエンティティに AgentBrain と NavMeshAgent があれば、moveInput は後に走る NavSystem が勝つ (feature guide 9.3 の「後に走る AI が優先」と同じ規則) + インスペクタ警告。
-- 目的地まで完全な経路が無ければ、dtCrowd の部分経路 (最寄りの到達可能点まで) で動き、着いたら `Arrived` + `pathPartial = true`。目的地も始点も NavMesh に乗らない (最寄り点が見つからない) ときだけ `NoPath`。
+- 目的地まで完全な経路が無ければ、dtCrowd の部分経路 (最寄りの到達可能点まで) で動き、着いたら `Arrived` + `pathPartial = true`。部分経路の終点は CC では届かない位置になりうる (NavMesh の縁と CC の停止位置の差) ので、部分経路のときは『終点の近くで前進が止まった』も到着として扱い、`Stuck` にはしない (sub-05 round 2)。`Stuck` (sub-05) は、完全な経路の途中で前進できない場合と、部分経路の終点から遠い所で前進できない場合に使う: `Moving` の残り距離が 60 tick の間に基準から max(radius/4, 1 cm) 以上動かなければ止め、WARN を 1 回出す。目的地の変更・取り消し・到着で解除する。目的地も始点も NavMesh に乗らない (最寄り点が見つからない) ときだけ `NoPath`。
 - 乱数: `findRandomPoint` 系の `frand` は `World::Rng()` (Pcg32) 経由。Agent が居ないときは引かない。
 - エッジケース: Surface が無い / アセット未ベイク / `agentTypeId` に合う Surface が無い → Agent は `Inactive` で止まる (落ちない、ログは状態が変わった tick に 1 回)。アセット読み込み失敗 → その Surface だけ無効、他は動く。dtCrowd の容量 (既定 128、Surface ごと) を超えた Agent は entity キー順で後ろから `Inactive`。
 
@@ -88,7 +88,7 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 - 新 TypeId 5 個を**末尾 append** (2. #3)。シーン (`kDocVersion=4`) は変えない (型名保存なので新型の追加は互換)。
 - `.mnav`: 版付きバイナリ (`.mfrac` と同じ Serialize / Deserialize、境界検査、同じ入力から同じバイト)。中身 = ベイク設定 + 入力ハッシュ + TileCache の圧縮層 (圧縮器は**無圧縮の自作** `dtTileCacheCompressor`、FastLZ を入れない) + Link / Modifier のベイク時スナップ。保存先 `assets\NavMesh\<Surface名>_<入力ハッシュ16桁>.mnav`、`.meta` で GUID、`AssetType::NavMesh`。ビルド (配布物) へは `BuildSettingsWindow.cpp:208-210` の `assets\` 丸ごとコピーで入る (:253 の一覧はクック物専用で対象外。sub-02 VERDICT で訂正)。
 - 読み込み: `NavSystem::Update` (stepSim の tick、フェーズ 3.4b) が Surface の (entity, navAsset) の変化を見て遅延ロードする (2. #17)。
-- SimSnapshot: Nav 節を追加し `kSimSnapshotVersion` 24 → 25 (sub-01 の結論で節の中身を決める。節が要らない結論なら bump しない)。
+- SimSnapshot: Nav 節の書式を変えるサブは、そのたびに `kSimSnapshotVersion` を上げる (旧 blob を明示的に拒否する。sub-10 で 26、sub-05 で 27)。Nav 節を追加し `kSimSnapshotVersion` 24 → 25 (sub-01 の結論で節の中身を決める。節が要らない結論なら bump しない)。
 - ABI: 1 回だけ bump (2. #14)。最小の関数: `NavSetDestination` / `NavStop` / `NavGetAgentState` / `NavFindPath` (コーナー列を呼び出し側バッファへ) / `NavSamplePosition` (最寄り点) / `NavRaycast` / `NavFindRandomPoint` (半径内、World RNG)。全部 POD + C ABI、`Interop.cs` 位置ミラー、`check_rules.ps1` の版表を更新。
 
 ### 4.3 UI / ビジュアル
@@ -179,6 +179,15 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 ## 8. 変更履歴
 
 (確定後の変更のみ)
+
+- 2026-10-04 / 出所: coder SELF_EVAL sub-05 round 2 (planner VERDICT OK)
+  - 4.1 の補足 (既知の限界): 部分経路の到着は、終点まで max(stoppingDistance, radius) 以内で前進が 60 tick 止まったときに確定する。完全な経路より 1 秒遅れる。dtCrowd の位置が部分経路の終点の数 cm〜0.12 m 手前で止まるため (原因は dtPathCorridor の位置の置き方と見ているが、追跡していない)。即時に確定するのは、要望が出たら『終点の近くで速度 0』を見る形で足す。
+  - y 回転だけの Box は DT_OBSTACLE_ORIENTED_BOX で実形のまま切り抜く。Obstacle は、ワールド AABB が重なる Surface にだけ付ける。NavTileStore の状態の保存形式は v2、kSimSnapshotVersion は 27。
+
+- 2026-10-04 / 出所: coder SELF_EVAL sub-05 round 1 (planner VERDICT REWORK)
+  - 4.1: 部分経路の到着と `Stuck` の使い分けを明記した。sub-05 round 1 では、部分経路の終点の 0.12 m 手前で止まる Agent が `Stuck` になり、4.1 の『Arrived + pathPartial』と食い違っていた。
+  - 4.1: `carve=false` は何もしない (coder の判断を採用し、理由を表に書いた)。
+  - 4.2: Nav 節の slots の書式を変えたら `kSimSnapshotVersion` を上げる (sub-10 の『黙って割れるより明示的に拒否』と同じ方針)。sub-05 で 26 → 27。
 
 - 2026-10-04 / 出所: coder SELF_EVAL sub-04 round 1 (planner VERDICT OK)
   - 4.3: NavMesh 本体の表示を『sim → 描画の三角形レーン』から『描画フレーム側の NavDebugView』に変更 (coder の逸脱を採用)。理由: 編集中の表示 (2. #18) と Play 中の表示が 1 経路になる。sub-02 で NavSystem にあった輪郭線もこちらへ移った。代わりに、実行時の TileCache の変更 (Obstacle など) は NavDebugView から見えない。反映は sub-05 の やること 8 に追加。

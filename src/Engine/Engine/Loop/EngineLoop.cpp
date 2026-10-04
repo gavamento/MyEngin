@@ -2735,7 +2735,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             renderSystem.debugLines = &debugLines; // v7 DebugDrawLine (M37)
             // M82e: 表示用のナビメッシュはフレームごとに最新にする (Surface が無ければ走査だけ)。
             // OnRenderViews の前に置く = 編集中の SceneView も Bake 直後の絵になる
-            navDebugView.Refresh(scene.GetWorld());
+            // sim を回している間 (Play / Runtime) は NavSystem の実行時のナビメッシュから組む (Obstacle の切り抜きが映る)。
+            // 編集中は NavSystem に前回の Play の状態が残りうるので渡さず、.mnav から組む
+            navDebugView.Refresh(scene.GetWorld(), ctx.simulateScripts ? &navSystem : nullptr);
             renderSystem.navView = &navDebugView;
 
             app.OnRenderViews(ctx); // エディタの SceneView / GameView (独自 RT)

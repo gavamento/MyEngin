@@ -28,6 +28,9 @@
     <ClCompile Include="..\src\GameLogic\Scripts\NavDemoDriver.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\NavObstacleDriver.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\GameLogic\Scripts\NetDuelDemo.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>

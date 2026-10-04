@@ -23,6 +23,7 @@
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Animation/Parts.h"
 #include "Engine/Engine/Navigation/NavBakeInput.h" // M82e: Surface の範囲箱 (NavMakeBakeConfig)
+#include "Engine/Engine/Navigation/NavSystem.h"    // M82f: Obstacle の形 (NavMakeObstacleSpec)
 #include "Engine/Engine/Physics/Collider/ConvexHull.h" // M60f: shape=5 のワイヤ表示
 #include "Engine/Engine/Acoustic/AcousticDebugDraw.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsDebugDraw.h"
@@ -409,6 +410,9 @@ constexpr uint32_t kPartBone = 0xF060C0FFu;   // 部位: ボーン追従あり (
 constexpr uint32_t kPartStatic = 0x8080A0FFu; // 部位: 静的ソケット (くすんだ青灰)
 constexpr uint32_t kProbeBox = 0x60C0FFFFu;   // 反射プローブ (水色)
 constexpr uint32_t kNavSurface = 0x30D8C0FFu; // NavMeshSurface のベイク範囲 (青緑)
+constexpr uint32_t kNavObstacle = 0xFF9030FFu;    // NavMeshObstacle の切り抜く形 (橙。NavSystem の実行時の枠線と同じ)
+constexpr uint32_t kNavObstacleOff = 0x808080FFu; // carve が無効な Obstacle (灰)
+constexpr int kNavObstacleSegments = 16;
 constexpr uint32_t kSelection = 0xFFA030FFu;  // 選択アウトライン
 
 constexpr float kLightMarkerRadius = 0.3f;
@@ -472,6 +476,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         DrawPartBoundsGizmos(world);
         DrawReflectionProbeGizmos(world);
         DrawNavSurfaceGizmos(world);
+        DrawNavObstacleGizmos(world);
     }
 
     DrawSelectionOutline(ctx, world, selection);
@@ -831,6 +836,43 @@ void SceneViewWindow::DrawNavSurfaceGizmos(World& world)
             const NavBakeConfig bake = NavMakeBakeConfig(surface, wm);
             lines_.AddAABB({ bake.boundsMin[0], bake.boundsMin[1], bake.boundsMin[2] },
                            { bake.boundsMax[0], bake.boundsMax[1], bake.boundsMax[2] }, gizmo::kNavSurface);
+        });
+}
+
+// NavMeshObstacle の切り抜く形 (M82f)。NavSystem が実際に切る形 (NavMakeObstacleSpec) をそのまま描く =
+// 回転した Box は外接 AABB になる。ギズモと切り抜きがずれない
+void SceneViewWindow::DrawNavObstacleGizmos(World& world)
+{
+    ForEachWithWorldMatrix<NavMeshObstacleComponent>(
+        world, [&](const NavMeshObstacleComponent& obstacle, const XMFLOAT4X4& wm, EntityID) {
+            NavObstacleSpec spec;
+            if (!NavMakeObstacleSpec(obstacle, wm.m, 0, spec)) {
+                return;
+            }
+            const uint32_t color = obstacle.carve ? gizmo::kNavObstacle : gizmo::kNavObstacleOff;
+            if (spec.type == DT_OBSTACLE_BOX) {
+                lines_.AddAABB({ spec.v[0], spec.v[1], spec.v[2] }, { spec.v[3], spec.v[4], spec.v[5] }, color);
+                return;
+            }
+            if (spec.type == DT_OBSTACLE_ORIENTED_BOX) {
+                XMFLOAT4X4 boxWorld;
+                XMStoreFloat4x4(&boxWorld, XMMatrixRotationY(spec.yaw) * XMMatrixTranslation(spec.v[0], spec.v[1], spec.v[2]));
+                lines_.AddWireBox(boxWorld, { spec.v[3], spec.v[4], spec.v[5] }, color);
+                return;
+            }
+            const float y0 = spec.v[1];
+            const float y1 = spec.v[1] + spec.v[4];
+            for (int k = 0; k < gizmo::kNavObstacleSegments; ++k) {
+                const float a0 = 6.2831853f * static_cast<float>(k) / static_cast<float>(gizmo::kNavObstacleSegments);
+                const float a1 = 6.2831853f * static_cast<float>(k + 1) / static_cast<float>(gizmo::kNavObstacleSegments);
+                const XMFLOAT3 p0 = { spec.v[0] + spec.v[3] * std::cos(a0), y0, spec.v[2] + spec.v[3] * std::sin(a0) };
+                const XMFLOAT3 p1 = { spec.v[0] + spec.v[3] * std::cos(a1), y0, spec.v[2] + spec.v[3] * std::sin(a1) };
+                lines_.AddLine(p0, p1, color);
+                lines_.AddLine({ p0.x, y1, p0.z }, { p1.x, y1, p1.z }, color);
+                if (k % 4 == 0) {
+                    lines_.AddLine(p0, { p0.x, y1, p0.z }, color);
+                }
+            }
         });
 }
 

@@ -646,10 +646,10 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     refs.scene->SetSourcePath(std::move(scene.sourcePath));
     refs.scene->ReplaceOverridesTable(std::move(scene.overrides));
     refs.scene->InvalidateFileIdCache(); // 派生物 (EntityID が総入れ替えされたので必ず)
-    if (refs.nav != nullptr) {
-        // ★World を差し替えた後・次の Update の前。Surface の .mnav を読み込んでから状態を当てる
-        refs.nav->ApplySnapshot(refs.scene->GetWorld(), navBlock.data(), navBlock.size());
-    }
+    // ★World を差し替えた後・次の Update の前。Surface の .mnav を読み込んでから状態を当てる。
+    // 失敗しても World は戻せないので残りの外部状態は当て切り、最後に false で知らせる
+    const bool navApplied =
+        refs.nav == nullptr || refs.nav->ApplySnapshot(refs.scene->GetWorld(), navBlock.data(), navBlock.size());
 
     if (refs.particles != nullptr) {
         refs.particles->PoolsForSnapshot() = std::move(pools);
@@ -685,7 +685,7 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     if (refs.tickIndex != nullptr) {
         *refs.tickIndex = tick;
     }
-    return true;
+    return navApplied;
 }
 
 bool PeekSimSnapshotTick(const std::byte* data, size_t size, uint64_t& outTick)

@@ -49,6 +49,7 @@
     <ClCompile Include="..\src\GameLogic\Scripts\FractureDamageProbe.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\LocalPlayerDemo.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\NavDemoDriver.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\NavObstacleDriver.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\NetDuelDemo.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\NetEventProbe.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\NetHudDemo.cpp" />

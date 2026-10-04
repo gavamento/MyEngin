@@ -1,7 +1,7 @@
 # sub-04: NavMesh の半透明の塗り (エリア色) と golden `nav`
 
 - 依存: sub-10 (sub-03 の後に sub-10 を挟む)
-- 状態: OK (コミット待ち)
+- 状態: OK (commit 4c88d83)
 - 往復: 1
 
 ## やること

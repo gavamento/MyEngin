@@ -39,7 +39,7 @@ struct NavBakeOutput {
     int tileCount = 0;   // 層が 1 枚以上あるタイルの数
 };
 
-// 障害物の最大数 (dtTileCacheParams::maxObstacles)。M82e で Obstacle が使う
+// 障害物の最大数 (dtTileCacheParams::maxObstacles)。Surface ごと。NavMeshObstacle が使う
 inline constexpr int kNavMaxObstacles = 128;
 
 // Surface 1 つのベイクに必要な入力。World から取り出し済みなので、以降は World に触れずに焼ける

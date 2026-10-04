@@ -17,6 +17,7 @@
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Navigation/NavBake.h"
+#include "Engine/Engine/Navigation/NavDebugDraw.h"
 #include "Engine/Engine/Navigation/NavMeshAsset.h"
 #include "Engine/Engine/Navigation/NavSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
@@ -33,11 +34,12 @@ constexpr float kDt = 1.0f / 60.0f;
 constexpr float kStepHeight = 0.3f;        // 庭の段差 = Surface.maxClimb の既定ちょうど (CC.stepOffset の既定とも同じ)
 constexpr float kOverStepHeight = 0.35f;   // maxClimb を 5 cm 超える段差。経路にならない
 constexpr float kRampDeg = 30.0f;          // 庭の坂。既定の Surface (maxSlopeDeg 45) で登れる
+constexpr float kOnMeshTolerance = 0.05f; // HasPolyAt: 最寄り点がこの距離以内なら、その点はナビメッシュの上
 constexpr uint64_t kYardGuid = 0x4E41564147454E31ull;  // メモリ登録の GUID (ファイルを作らない)
 constexpr uint64_t kOpenGuid = 0x4E41564147454E32ull;
 constexpr uint64_t kFieldGuid = 0x4E41564147454E33ull;
 // Debug で採取し、Release で同じ値になることを確認して焼く (docs\adr\ADR-023-navmesh.md)
-constexpr uint64_t kExpectedYardHash = 0x2ABC7F449D843943ull;
+constexpr uint64_t kExpectedYardHash = 0xE1F88B1FFFF5635Cull;
 
 struct Checker {
     int failCount = 0;
@@ -221,6 +223,82 @@ double MicrosSince(std::chrono::steady_clock::time_point t0)
     return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
 }
 
+// 箱の障害物 (carve あり)。中心 (x, y, z)、寸法 (sx, sy, sz)
+EntityID AddBoxObstacle(Scene& scene, float x, float y, float z, float sx, float sy, float sz)
+{
+    GameObject go = scene.CreateGameObjectTracked("Obstacle");
+    go.SetLocalPosition(x, y, z);
+    auto* ob = go.AddComponent<NavMeshObstacleComponent>();
+    ob->size = { sx, sy, sz };
+    return go.Id();
+}
+
+EntityID AddCylinderObstacle(Scene& scene, float x, float y, float z, float radius, float height)
+{
+    GameObject go = scene.CreateGameObjectTracked("Obstacle");
+    go.SetLocalPosition(x, y, z);
+    auto* ob = go.AddComponent<NavMeshObstacleComponent>();
+    ob->shape = navobstacleshape::kCylinder;
+    ob->radius = radius;
+    ob->height = height;
+    return go.Id();
+}
+
+// 障害物の中心の足元に、ナビメッシュのポリゴンがあるか (切り抜かれていれば無い)
+bool HasPolyAt(NavSystem& nav, float x, float y, float z)
+{
+    if (nav.Surfaces().empty() || nav.Surfaces()[0].state != NavSurfaceState::Loaded) {
+        return false;
+    }
+    const float center[3] = { x, y, z };
+    const float extents[3] = { 0.3f, 1.0f, 0.3f };
+    dtQueryFilter filter;
+    filter.setIncludeFlags(kNavFlagWalk);
+    dtPolyRef ref = 0;
+    float nearest[3] = {};
+    nav.Surfaces()[0].query->findNearestPoly(center, extents, &filter, &ref, nearest);
+    // findNearestPoly は範囲と外接箱が重なる凸ポリゴンの最寄り点を返す (穴の縁のポリゴンも拾う)。点そのものが歩けるかを見る
+    const float dx = nearest[0] - x;
+    const float dz = nearest[2] - z;
+    return ref != 0 && dx * dx + dz * dz < kOnMeshTolerance * kOnMeshTolerance;
+}
+
+// 障害物の出し入れを tick で決める台本 (連続実行と復元後の実行が同じ操作を同じ tick に受けるように)
+struct ObstacleScript {
+    EntityID box;      // tick 40 に出る箱
+    EntityID cylinder; // tick 90 に出る円柱
+    void Apply(Sim& sim, uint64_t tick)
+    {
+        World& world = sim.GetWorld();
+        Scene& scene = sim.scene;
+        switch (tick) {
+        case 40:
+            box = AddBoxObstacle(scene, -5.0f, 1.0f, 0.0f, 1.0f, 2.0f, 6.0f);
+            world.ApplyStructuralChanges();
+            break;
+        case 90:
+            cylinder = AddCylinderObstacle(scene, -2.0f, 1.0f, -5.0f, 1.0f, 2.0f);
+            world.ApplyStructuralChanges();
+            break;
+        case 140:
+            world.GetComponent<LocalTransform>(box)->position.z += 3.0f; // 動かす = 外して付け直す
+            break;
+        case 190:
+            world.GetComponent<NavMeshObstacleComponent>(cylinder)->carve = false;
+            break;
+        case 240:
+            world.DestroyEntity(box);
+            world.ApplyStructuralChanges();
+            break;
+        case 290:
+            world.GetComponent<NavMeshObstacleComponent>(cylinder)->carve = true;
+            break;
+        default:
+            break;
+        }
+    }
+};
+
 } // namespace
 
 bool RunNavAgentSelfTest()
@@ -291,10 +369,11 @@ bool RunNavAgentSelfTest()
         const auto* curberLt = world.GetComponent<LocalTransform>(curber);
         MYE_LOG_INFO("  [yard] curber status %d pathPartial %d at (%.2f, %.2f, %.2f)", curberAgent->status,
                      curberAgent->pathPartial ? 1 : 0, curberLt->position.x, curberLt->position.y - 0.9f, curberLt->position.z);
-        // 台の縁に最も近い届く点が複数あり得る (台の中心を狙うと四辺が同距離) ので、着く先ではなく「部分経路になる」「登らない」を見る
-        ck.Check(curberAgent->pathPartial && curberAgent->status != navagentstatus::kNoPath
+        // 台の縁に最も近い届く点が複数あり得る (台の中心を狙うと四辺が同距離) ので、着く先ではなく「部分経路になる」「登らない」を見る。
+        // 部分経路の終点の近くで前進が止まった Agent は、Moving のまま押し続けず Arrived + pathPartial になる (spec 4.1)
+        ck.Check(curberAgent->pathPartial && curberAgent->status == navagentstatus::kArrived
                      && curberLt->position.y - 0.9f < 0.2f,
-                 "maxClimb を 5 cm 超える台の上の目的地は経路にならない (部分経路になり、台には登らない)");
+                 "maxClimb を 5 cm 超える台の上の目的地は経路にならず (部分経路)、台には登らず、縁で Arrived + pathPartial になる");
 
         const auto* lostAgent = world.GetComponent<NavMeshAgentComponent>(lost);
         ck.Check(lostAgent->status == navagentstatus::kNoPath, "ナビメッシュの外の目的地は NoPath");
@@ -636,6 +715,408 @@ bool RunNavAgentSelfTest()
         MYE_LOG_INFO("  [perf] Nav section %zu bytes; capture %.1f us (without Nav section %.1f us, snapshot %zu -> %zu bytes); restore %.1f us",
                      navOnly.Size(), captureWith, captureWithout, withoutNav.size(), withNav.size(), restoreWith);
         (void)onCrowd;
+    }
+
+    // ---- 6. Obstacle: 経路上に置くと迂回し、外すと元の経路へ戻る (置いた tick のうちに TileCache が確定する) ----
+    {
+        // 床の上を (-8, 0, 0) から (8, 0, 0) へ歩く。x = 0 に z = -4..4 の壁。
+        // mode 0 = 障害物なし / 1 = 最初からあり、tick 20 で外す / 2 = tick 20 で置く
+        float crossingZ[3] = {};
+        for (int mode = 0; mode < 3; ++mode) {
+            Scene scene;
+            AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+            const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+            const float dest[3] = { 8.0f, 0.0f, 0.0f };
+            const EntityID walker = AddAgent(scene, "Walker", -8.0f, 0.0f, 0.0f, dest, true);
+            EntityID wall = kNullEntity;
+            if (mode == 1) {
+                wall = AddBoxObstacle(scene, 0.0f, 1.0f, 0.0f, 1.0f, 2.0f, 8.0f);
+            }
+            ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(障害物) 開けた床をベイクできる");
+            Sim sim(scene);
+            World& world = sim.GetWorld();
+            bool crossed = false;
+            for (int i = 0; i < 900; ++i) {
+                if (i == 20 && mode == 1) {
+                    world.GetComponent<NavMeshObstacleComponent>(wall)->carve = false;
+                } else if (i == 20 && mode == 2) {
+                    wall = AddBoxObstacle(scene, 0.0f, 1.0f, 0.0f, 1.0f, 2.0f, 8.0f);
+                    world.ApplyStructuralChanges();
+                }
+                sim.Step();
+                if (i == 0 && mode == 1) {
+                    ck.Check(sim.nav.Surfaces()[0].store->ObstacleCount() == 1 && !HasPolyAt(sim.nav, 0.0f, 0.0f, 0.0f),
+                             "障害物を置いた tick のうちにナビメッシュが切り抜かれる (中心にポリゴンが無い)");
+                }
+                if (i == 20 && mode == 1) {
+                    ck.Check(sim.nav.Surfaces()[0].store->ObstacleCount() == 0 && HasPolyAt(sim.nav, 0.0f, 0.0f, 0.0f),
+                             "carve を倒した tick のうちに切り抜きが戻る (中心にポリゴンがある)");
+                }
+                if (i == 20 && mode == 2) {
+                    ck.Check(sim.nav.Surfaces()[0].store->ObstacleCount() == 1 && !HasPolyAt(sim.nav, 0.0f, 0.0f, 0.0f),
+                             "歩いている途中で置いた障害物も同じ tick のうちに切り抜く");
+                }
+                const auto* lt = world.GetComponent<LocalTransform>(walker);
+                if (!crossed && lt->position.x >= 0.0f) {
+                    crossed = true;
+                    crossingZ[mode] = std::fabs(lt->position.z);
+                }
+            }
+            const auto* agent = world.GetComponent<NavMeshAgentComponent>(walker);
+            const auto* lt = world.GetComponent<LocalTransform>(walker);
+            MYE_LOG_INFO("  [obstacle] mode %d: crossed x=0 at |z| %.2f; final status %d at (%.2f, %.2f)", mode, crossingZ[mode],
+                         agent->status, lt->position.x, lt->position.z);
+            ck.Check(agent->status == navagentstatus::kArrived && !agent->pathPartial && lt->position.x > 7.0f,
+                     mode == 0 ? "(障害物なし) 目的地へ着く" : mode == 1 ? "(外した後) 目的地へ着く" : "(置いた後) 迂回して目的地へ着く");
+        }
+        ck.Check(crossingZ[0] < 1.0f, "障害物が無ければ真っすぐ x = 0 を横切る (|z| < 1)");
+        ck.Check(crossingZ[1] < 1.5f, "障害物を外すと元の経路 (真っすぐ) へ戻る (|z| < 1.5)");
+        ck.Check(crossingZ[2] > 3.5f, "経路上に障害物を置くと壁の端を回り込む (|z| > 3.5)");
+    }
+
+    // ---- 6b. 表示 (NavDebugView): Play 中は NavSystem のナビメッシュから組み、Obstacle の切り抜きが映る。世代が変わったときだけ作り直す ----
+    {
+        Scene scene;
+        AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+        const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+        const EntityID wall = AddBoxObstacle(scene, 0.0f, 1.0f, 0.0f, 4.0f, 2.0f, 4.0f);
+        scene.GetWorld().GetComponent<NavMeshObstacleComponent>(wall)->carve = false;
+        ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(表示) 開けた床をベイクできる");
+        Sim sim(scene);
+        World& world = sim.GetWorld();
+        sim.Step();
+        NavDebugView view;
+        view.Refresh(world, &sim.nav);
+        const int flatTriangles = view.GetStats().lastTriangles;
+        ck.Check(view.GetStats().rebuildCount == 1 && view.GetStats().liveCount == 1 && view.GetStats().loadCount == 0,
+                 "(表示) sim が読み込み済みの Surface は NavSystem から組む (.mnav を読み直さない)");
+        view.Refresh(world, &sim.nav);
+        sim.Step();
+        view.Refresh(world, &sim.nav);
+        ck.Check(view.GetStats().rebuildCount == 1, "(表示) ナビメッシュが変わらない間は作り直さない");
+        world.GetComponent<NavMeshObstacleComponent>(wall)->carve = true;
+        sim.Step();
+        view.Refresh(world, &sim.nav);
+        MYE_LOG_INFO("  [view] triangles: %d flat, %d with a 4 x 4 m hole", flatTriangles, view.GetStats().lastTriangles);
+        ck.Check(view.GetStats().rebuildCount == 2 && view.GetStats().liveCount == 2 && view.GetStats().loadCount == 0
+                     && view.GetStats().lastTriangles != flatTriangles,
+                 "(表示) Obstacle で切り抜かれた tick の次の Refresh だけ作り直し、穴が映る");
+        view.Refresh(world, &sim.nav);
+        ck.Check(view.GetStats().rebuildCount == 2, "(表示) 切り抜いた後も、変わらなければ作り直さない");
+        view.Refresh(world, nullptr);
+        ck.Check(view.GetStats().rebuildCount == 3 && view.GetStats().loadCount == 1
+                     && view.GetStats().lastTriangles == flatTriangles,
+                 "(表示) 編集中 (NavSystem を渡さない) は .mnav から組み、切り抜き前の形に戻る");
+    }
+
+    // ---- 6c. 形と付ける Surface: y 回転した箱は実形のまま切り、Surface の範囲外の障害物は TileCache に入れない ----
+    {
+        Scene scene;
+        AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+        const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+        const EntityID slab = AddBoxObstacle(scene, 0.0f, 1.0f, 0.0f, 1.0f, 2.0f, 8.0f);
+        constexpr float kQuarterPi = 0.78539816f;
+        scene.GetWorld().GetComponent<LocalTransform>(slab)->rotation = { 0.0f, std::sin(kQuarterPi * 0.5f), 0.0f, std::cos(kQuarterPi * 0.5f) };
+        const EntityID faraway = AddBoxObstacle(scene, 100.0f, 1.0f, 0.0f, 1.0f, 2.0f, 1.0f);
+        ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(形) 開けた床をベイクできる");
+        Sim sim(scene);
+        sim.Step();
+        const NavTileStore& store = *sim.nav.Surfaces()[0].store;
+        ck.Check(store.ObstacleCount() == 1 && store.ObstacleAt(0).type == DT_OBSTACLE_ORIENTED_BOX
+                     && std::fabs(std::fabs(store.ObstacleAt(0).yaw) - kQuarterPi) < 0.01f,
+                 "(形) y 回転した箱は回転箱 (yaw 45 度) として入り、Surface の範囲外の障害物は入らない");
+        {
+            const NavObstacleSpec& o = store.ObstacleAt(0);
+            MYE_LOG_INFO("  [shape] spec type %d v (%.2f %.2f %.2f | %.2f %.2f %.2f) yaw %.3f", o.type, o.v[0], o.v[1],
+                         o.v[2], o.v[3], o.v[4], o.v[5], o.yaw);
+        }
+        const bool a = HasPolyAt(sim.nav, 2.0f, 0.0f, 2.0f);
+        const bool b = HasPolyAt(sim.nav, 2.0f, 0.0f, -2.0f);
+        MYE_LOG_INFO("  [shape] yaw %.3f: poly at (2,2) %d, (2,-2) %d, (-2,2) %d, (-2,-2) %d, (0,0) %d, (0,3.5) %d", store.ObstacleAt(0).yaw,
+                     a ? 1 : 0, b ? 1 : 0, HasPolyAt(sim.nav, -2.0f, 0.0f, 2.0f) ? 1 : 0, HasPolyAt(sim.nav, -2.0f, 0.0f, -2.0f) ? 1 : 0,
+                     HasPolyAt(sim.nav, 0.0f, 0.0f, 0.0f) ? 1 : 0, HasPolyAt(sim.nav, 0.0f, 0.0f, 3.5f) ? 1 : 0);
+        ck.Check(a != b, "(形) 長い対角線の上だけが切り抜かれ、外接 AABB の隅 (反対の対角線) は残る");
+        scene.GetWorld().GetComponent<LocalTransform>(faraway)->position.x = 3.0f;
+        sim.Step();
+        ck.Check(store.ObstacleCount() == 2, "(形) 範囲内へ動かした障害物は次の tick で入る");
+        // x / z の傾きは外接 AABB で切る
+        scene.GetWorld().GetComponent<LocalTransform>(slab)->rotation = { std::sin(0.1f), 0.0f, 0.0f, std::cos(0.1f) };
+        sim.Step();
+        bool hasAabb = false;
+        for (int i = 0; i < store.ObstacleCount(); ++i) {
+            hasAabb = hasAabb || store.ObstacleAt(i).type == DT_OBSTACLE_BOX;
+        }
+        ck.Check(hasAabb, "(形) x 軸まわりに傾いた箱は外接 AABB で切る");
+    }
+
+    {
+        // 回転なしの回転箱 (yaw 0): 長辺 (z) の上だけが切り抜かれる
+        Scene scene;
+        AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+        const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+        AddBoxObstacle(scene, 0.0f, 1.0f, 0.0f, 1.0f, 2.0f, 8.0f);
+        ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(形) 開けた床をベイクできる");
+        Sim sim(scene);
+        sim.Step();
+        const NavTileStore& store = *sim.nav.Surfaces()[0].store;
+        MYE_LOG_INFO("  [shape] yaw 0: type %d; poly at (0,0) %d, (0,3) %d, (2,0) %d", store.ObstacleAt(0).type, HasPolyAt(sim.nav, 0.0f, 0.0f, 0.0f) ? 1 : 0,
+                     HasPolyAt(sim.nav, 0.0f, 0.0f, 3.0f) ? 1 : 0, HasPolyAt(sim.nav, 2.0f, 0.0f, 0.0f) ? 1 : 0);
+        ck.Check(!HasPolyAt(sim.nav, 0.0f, 0.0f, 0.0f) && !HasPolyAt(sim.nav, 0.0f, 0.0f, 3.0f) && HasPolyAt(sim.nav, 2.0f, 0.0f, 0.0f),
+                 "(形) 回転なしの回転箱は長辺の上だけを切り抜く");
+    }
+
+    // ---- 7. Obstacle の SimSnapshot: 追加・移動・撤去の途中で撮って、空の NavSystem / 元の NavSystem へ復元して連続実行と一致 ----
+    {
+        Scene scene;
+        const Yard yard = BuildYard(scene);
+        const float toPlatform[3] = { 9.4f, yard.platformTop, 0.0f };
+        const float toIsland[3] = { 0.0f, 3.0f, 8.0f };
+        const float toWest[3] = { -10.0f, 0.0f, 0.0f };
+        for (int i = 0; i < 4; ++i) {
+            const float z = -7.0f + 4.0f * static_cast<float>(i);
+            AddAgent(scene, "Walker", -9.0f, 0.0f, z, i == 0 ? toPlatform : i == 1 ? toIsland : toWest, true, 1 + i % 3);
+        }
+        BakeSurface(scene, yard.surface, kYardGuid, nullptr);
+
+        Sim sim(scene);
+        ObstacleScript script;
+        SimRefs refs;
+        refs.scene = &scene;
+        refs.nav = &sim.nav;
+        uint64_t tickRef = 0;
+        refs.tickIndex = &tickRef;
+
+        constexpr int kWarm = 120; // 箱 (40) と円柱 (90) が出た後、箱の移動 (140) の前
+        constexpr int kAhead = 330;
+        for (int i = 0; i < kWarm; ++i) {
+            script.Apply(sim, sim.tick);
+            sim.Step();
+        }
+        tickRef = sim.tick;
+        ck.Check(sim.nav.Surfaces()[0].store->ObstacleCount() == 2, "(復元) 箱と円柱の 2 つが TileCache に入っている");
+        std::vector<std::byte> blob;
+        ck.Check(CaptureSimSnapshot(refs, blob), "(復元) 障害物がある状態で撮影できる");
+
+        std::vector<uint64_t> continuous;
+        std::vector<int> continuousCounts;
+        for (int i = 0; i < kAhead; ++i) {
+            script.Apply(sim, sim.tick);
+            sim.Step();
+            continuous.push_back(WorldHashOf(sim, &sim.nav));
+            continuousCounts.push_back(sim.nav.Surfaces()[0].store->ObstacleCount());
+        }
+        ck.Check(continuousCounts.back() == 1, "(復元) 連続実行の終わりでは円柱だけが残る (箱は撤去済み)");
+
+        // 空の NavSystem へ復元
+        Sim restored(scene);
+        restored.tick = kWarm;
+        SimRefs refs2 = refs;
+        refs2.nav = &restored.nav;
+        uint64_t tick2 = 0;
+        refs2.tickIndex = &tick2;
+        ck.Check(RestoreSimSnapshot(refs2, blob.data(), blob.size()), "(復元) 空の NavSystem へ復元できる (戻り値 true)");
+        const NavTileStore& restoredStore = *restored.nav.Surfaces()[0].store;
+        const bool keysOk = restoredStore.ObstacleCount() == 2
+            && restoredStore.ObstacleAt(0).key == NavObstacleKey(script.box) && restoredStore.ObstacleAt(1).key == NavObstacleKey(script.cylinder);
+        ck.Check(keysOk, "(復元) 復元直後の store の障害物のキーが Obstacle コンポーネントの Entity と対応している");
+        std::vector<std::byte> again;
+        CaptureSimSnapshot(refs2, again);
+        ck.Check(again == blob, "(復元) 復元直後の再撮影が元の blob とバイト一致 (障害物を含む)");
+        bool same = true;
+        bool countsSame = true;
+        for (int i = 0; i < kAhead; ++i) {
+            script.Apply(restored, restored.tick);
+            restored.Step();
+            if (i == 0) {
+                ck.Check(restored.nav.Surfaces()[0].store->ObstacleCount() == 2,
+                         "(復元) 復元直後の Update が障害物を二重に足さない");
+            }
+            same = same && WorldHashOf(restored, &restored.nav) == continuous[static_cast<size_t>(i)];
+            countsSame = countsSame && restored.nav.Surfaces()[0].store->ObstacleCount() == continuousCounts[static_cast<size_t>(i)];
+        }
+        ck.Check(same, "(復元) 空の NavSystem から 330 tick (移動・撤去・carve の切り替えの Commit を含む) の毎 tick ハッシュが連続実行と一致");
+        ck.Check(countsSame, "(復元) 毎 tick の障害物数が連続実行と同じ (消し忘れ・二重追加なし)");
+
+        // 元の NavSystem (障害物が撤去された状態) へ巻き戻す。store の障害物が復元され、Update が整合させる
+        ck.Check(RestoreSimSnapshot(refs, blob.data(), blob.size()), "(復元) 障害物が変わった後の元の NavSystem へ巻き戻せる");
+        ck.Check(sim.nav.Surfaces()[0].store->ObstacleCount() == 2, "(復元) 巻き戻すと撤去済みの箱が TileCache へ戻る");
+        sim.tick = kWarm;
+        bool replay = true;
+        for (int i = 0; i < kAhead; ++i) {
+            script.Apply(sim, sim.tick);
+            sim.Step();
+            replay = replay && WorldHashOf(sim, &sim.nav) == continuous[static_cast<size_t>(i)];
+        }
+        ck.Check(replay, "(復元) 元の NavSystem で巻き戻して再実行しても連続実行と一致する");
+
+        // 毎 tick 撮る -> 戻す -> 撮る が障害物の出入りの間も崩れない
+        bool stable = true;
+        sim.tick = kWarm;
+        RestoreSimSnapshot(refs, blob.data(), blob.size());
+        for (int i = 0; i < kAhead && stable; ++i) {
+            script.Apply(sim, sim.tick);
+            sim.Step();
+            std::vector<std::byte> b1;
+            std::vector<std::byte> b2;
+            CaptureSimSnapshot(refs, b1);
+            RestoreSimSnapshot(refs, b1.data(), b1.size());
+            CaptureSimSnapshot(refs, b2);
+            stable = b1 == b2;
+        }
+        ck.Check(stable, "(復元) 障害物の出入りの間も tick ごとの 撮影 -> 復元 -> 再撮影 が一致し続ける");
+    }
+
+    // ---- 8. TileCache の更新時間: 数百タイルのナビメッシュで、障害物を毎 tick 動かす ----
+    {
+        Scene scene;
+        AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 85.0f, 0.5f, 85.0f);
+        const EntityID surface = AddSurface(scene, 86.0f, 86.0f);
+        {
+            auto* sf = scene.GetWorld().GetComponent<NavMeshSurfaceComponent>(surface);
+            sf->autoCellSize = false; // セル 0.3 / タイル 32 セル = 9.6 m: 170 m 四方で 324 枚
+            sf->cellSize = 0.3f;
+            sf->cellHeight = 0.2f;
+            sf->tileSize = 32;
+        }
+        constexpr int kMovers = 8;
+        std::vector<EntityID> movers;
+        for (int i = 0; i < kMovers; ++i) {
+            movers.push_back(AddBoxObstacle(scene, -60.0f + 15.0f * static_cast<float>(i), 1.0f, -20.0f + 5.0f * static_cast<float>(i),
+                                            2.0f, 2.0f, 2.0f));
+        }
+        const float dest[3] = { 30.0f, 0.0f, 30.0f };
+        AddAgent(scene, "Walker", -30.0f, 0.0f, -30.0f, dest, true); // 載っている Agent がいる状態の時間を測る
+        ck.Check(BakeSurface(scene, surface, kFieldGuid + 100, nullptr), "(計測) 170 m 四方の床をベイクできる");
+        Sim sim(scene);
+        sim.Step(); // 初回の追加
+        const NavSurfaceRuntime& rt = sim.nav.Surfaces()[0];
+        MYE_LOG_INFO("  [perf] obstacle bench: %d tiles, %d layers, %d polygons, %d obstacles", rt.tileCount, rt.layerCount,
+                     rt.polyCount, rt.store->ObstacleCount());
+        ck.Check(rt.tileCount >= 300 && rt.store->ObstacleCount() == kMovers, "(計測) 300 枚以上のタイルと 8 つの障害物");
+        double sumUs = 0.0;
+        double worstUs = 0.0;
+        int measured = 0;
+        bool allMoved = true;
+        constexpr int kBenchTicks = 60;
+        for (int i = 0; i < kBenchTicks; ++i) {
+            for (const EntityID e : movers) {
+                scene.GetWorld().GetComponent<LocalTransform>(e)->position.x += (i & 1) ? -0.2f : 0.2f; // 閾値 (5 cm) を超える動きを毎 tick
+            }
+            sim.Step();
+            const double us = sim.nav.Stats().obstacleUs;
+            allMoved = allMoved && sim.nav.Stats().obstacleChanges == 2 * kMovers;
+            sumUs += us;
+            worstUs = std::max(worstUs, us);
+            ++measured;
+        }
+        ck.Check(allMoved, "(計測) 毎 tick 全部の障害物が外れて付く");
+        MYE_LOG_INFO("  [perf] obstacle sync (8 obstacles moved every tick, %d tiles): avg %.0f us, worst %.0f us per tick",
+                     rt.tileCount, sumUs / measured, worstUs);
+        // 内訳: dtNavMesh の入れ直し (履歴依存を消す正規化) を止めた場合の時間。差が Commit の O(全タイル) の分
+        rt.store->SetCanonicalize(false);
+        double sumRawUs = 0.0;
+        for (int i = 0; i < kBenchTicks; ++i) {
+            for (const EntityID e : movers) {
+                scene.GetWorld().GetComponent<LocalTransform>(e)->position.x += (i & 1) ? -0.2f : 0.2f;
+            }
+            sim.Step();
+            sumRawUs += sim.nav.Stats().obstacleUs;
+        }
+        rt.store->SetCanonicalize(true);
+        MYE_LOG_INFO("  [perf] ...of which the full tile re-insertion (canonicalize) takes about %.0f us per tick (%.0f us without it)",
+                     (sumUs - sumRawUs) / kBenchTicks, sumRawUs / kBenchTicks);
+        // 動かさない tick は TileCache に触らない
+        sim.Step();
+        ck.Check(sim.nav.Stats().obstacleChanges == 0 && sim.nav.Stats().obstacleUs == 0.0,
+                 "(計測) 障害物が動かない tick は TileCache を触らない");
+        // 閾値以下の動きは無視される
+        const uint64_t before = rt.store->HashObstacles();
+        scene.GetWorld().GetComponent<LocalTransform>(movers[0])->position.x += 0.02f;
+        sim.Step();
+        ck.Check(rt.store->HashObstacles() == before && sim.nav.Stats().obstacleChanges == 0,
+                 "(計測) 閾値 (5 cm) 以下の動きは TileCache を作り直さない");
+    }
+
+    // ---- 9. 詰まり検出 (Stuck): NavMesh は繋がっているのに CC が登れない段差で、Moving のまま押し続けない ----
+    {
+        // maxClimb (0.3) を 1 セル未満だけ超える台。ボクセルの量子化で NavMesh は繋がり、CC (stepOffset 0.3) は登れない。
+        // 地面とのボクセル境界のずれと台の高さを振って、Stuck になる組み合わせがあることを確かめる
+        int stuckCases = 0;
+        int partialCases = 0;
+        for (const float yShift : { 0.0f, 0.0125f, 0.025f, 0.0375f }) {
+            for (const float deckHeight : { 0.31f, 0.33f, 0.35f }) {
+                Scene scene;
+                AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+                AddBox(scene, "Deck", 4.0f, deckHeight * 0.5f, 0.0f, 2.0f, deckHeight * 0.5f, 12.0f); // 全幅の台 (x 2..6)
+                const EntityID surface = AddSurface(scene, 13.0f, 13.0f, 45.0f, yShift);
+                const float dest[3] = { 5.0f, deckHeight, 0.0f };
+                const EntityID walker = AddAgent(scene, "DeckWalker", -6.0f, 0.0f, 0.0f, dest, true);
+                ck.Check(BakeSurface(scene, surface, kYardGuid + 3, nullptr), "(詰まり) 台の庭をベイクできる");
+                Sim sim(scene);
+                for (int i = 0; i < 900; ++i) {
+                    sim.Step();
+                }
+                const auto* agent = sim.GetWorld().GetComponent<NavMeshAgentComponent>(walker);
+                const auto* lt = sim.GetWorld().GetComponent<LocalTransform>(walker);
+                {
+                    const dtCrowdAgent* crowdAgent = sim.nav.Surfaces()[0].crowd->getAgent(0);
+                    const float* endCorner = crowdAgent->ncorners > 0 ? &crowdAgent->cornerVerts[(crowdAgent->ncorners - 1) * 3] : crowdAgent->npos;
+                    MYE_LOG_INFO("  [stuck] yShift %.4f deck %.2f: status %d pathPartial %d at (%.2f, %.2f), remaining %.3f, path end x %.2f (corners %d, flags %d), crowd x %.3f vel %.3f",
+                                 yShift, deckHeight, agent->status, agent->pathPartial ? 1 : 0, lt->position.x,
+                                 lt->position.y - 0.9f, agent->remainingDistance, endCorner[0], crowdAgent->ncorners,
+                                 crowdAgent->ncorners > 0 ? crowdAgent->cornerFlags[crowdAgent->ncorners - 1] : -1,
+                                 crowdAgent->npos[0], crowdAgent->vel[0]);
+                }
+                // 完全な経路の途中 (台の上へ繋がっているのに登れない) は Stuck、部分経路の終点の近くは Arrived
+                ck.Check(agent->status == (agent->pathPartial ? navagentstatus::kArrived : navagentstatus::kStuck),
+                         "台の縁で Moving のまま押し続けない (完全な経路の途中なら Stuck、部分経路の終点付近なら Arrived + pathPartial)");
+                partialCases += agent->pathPartial ? 1 : 0;
+                if (agent->status == navagentstatus::kStuck) {
+                    ++stuckCases;
+                    // 止まっている: CC への入力は 0 で、位置は動かない
+                    const auto* cc = sim.GetWorld().GetComponent<CharacterControllerComponent>(walker);
+                    const float x0 = lt->position.x;
+                    for (int i = 0; i < 30; ++i) {
+                        sim.Step();
+                    }
+                    ck.Check(cc->moveInput.x == 0.0f && cc->moveInput.z == 0.0f && std::fabs(lt->position.x - x0) < 0.01f
+                                 && agent->status == navagentstatus::kStuck,
+                             "Stuck の Agent は止まっていて、目的地が同じ間は Stuck のまま");
+                    // 目的地を変えると解除されて新しい目的地へ歩く
+                    sim.GetWorld().GetComponent<NavMeshAgentComponent>(walker)->destination = { -6.0f, 0.0f, 4.0f };
+                    for (int i = 0; i < 600; ++i) {
+                        sim.Step();
+                    }
+                    const auto* back = sim.GetWorld().GetComponent<NavMeshAgentComponent>(walker);
+                    ck.Check(back->status == navagentstatus::kArrived && std::fabs(lt->position.z - 4.0f) < 0.4f,
+                             "目的地を変えると Stuck が解除されて新しい目的地へ着く");
+                }
+            }
+        }
+        MYE_LOG_INFO("  [stuck] %d of 12 combinations ended in Stuck, %d ended as a partial path (Arrived)", stuckCases, partialCases);
+        ck.Check(stuckCases > 0 && partialCases > 0,
+                 "量子化のずれで繋がる登れない台 (Stuck) と、繋がらない台 (部分経路で Arrived) の両方がある");
+
+        // 経路の途中を塞いで押し合わせる: ベイク後に床の幅いっぱいの壁 (ナビメッシュには無い) を置く。経路は完全なまま前へ進めない
+        {
+            Scene scene;
+            AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+            const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+            const float dest[3] = { 8.0f, 0.0f, 0.0f };
+            const EntityID walker = AddAgent(scene, "Pusher", -8.0f, 0.0f, 0.0f, dest, true);
+            ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(詰まり) 壁を置く前の床をベイクできる");
+            AddBox(scene, "LateWall", 0.0f, 1.0f, 0.0f, 0.5f, 1.0f, 13.0f);
+            scene.GetWorld().ApplyStructuralChanges();
+            Sim sim(scene);
+            for (int i = 0; i < 600; ++i) {
+                sim.Step();
+            }
+            const auto* agent = sim.GetWorld().GetComponent<NavMeshAgentComponent>(walker);
+            MYE_LOG_INFO("  [stuck] pusher: status %d pathPartial %d remaining %.2f", agent->status, agent->pathPartial ? 1 : 0,
+                         agent->remainingDistance);
+            ck.Check(agent->status == navagentstatus::kStuck && !agent->pathPartial && agent->remainingDistance > 5.0f,
+                     "完全な経路の途中を塞がれて押し合う Agent は Stuck (部分経路ではない、終点から遠い)");
+        }
     }
 
     ck.Check(kExpectedYardHash == 0 || yardHashAtEnd == kExpectedYardHash,
