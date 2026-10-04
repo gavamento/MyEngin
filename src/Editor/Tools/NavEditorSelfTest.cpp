@@ -8,11 +8,15 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "Editor/Project/NavAreaNames.h"
 #include "Editor/Scene/ComponentDependencies.h"
 #include "Editor/Scene/Selection.h"
 #include "Editor/Tools/NavBakeCommit.h"
@@ -147,6 +151,58 @@ bool RunNavEditorSelfTest()
             }
         }
         undo.ClearAll();
+    }
+
+    // ---- 1a2. Create -> 3D Object -> NavMesh Modifier (Undo / Redo、M82g) ----
+    {
+        const GameObject created = RecordCreate(ctx, selection, undo, "Create NavMesh Modifier",
+                                                [&] { return CreateNavMeshModifier(ctx, "NavMesh Modifier"); });
+        world.ApplyStructuralChanges();
+        const uint64_t fid = scene.EnsureFileId(created.Id());
+        const NavMeshModifierComponent* c = world.GetComponent<NavMeshModifierComponent>(created.Id());
+        check(c != nullptr && c->area == 3 && c->size.x == 2.0f,
+              "Create: the entity has a NavMeshModifier component (a 2 m box painting area 3)");
+        undo.Undo(scene, selection);
+        world.ApplyStructuralChanges();
+        check(!scene.FindByFileId(fid), "Undo: the created Modifier is removed");
+        undo.Redo(scene, selection);
+        world.ApplyStructuralChanges();
+        {
+            GameObject back = scene.FindByFileId(fid);
+            check(static_cast<bool>(back) && world.GetComponent<NavMeshModifierComponent>(back.Id()) != nullptr,
+                  "Redo: the Modifier and its component come back");
+            if (back) {
+                back.Destroy();
+                world.ApplyStructuralChanges();
+            }
+        }
+        undo.ClearAll();
+    }
+
+    // ---- 1a3. エリア名 (project_settings.json の navAreas、M82g): 他のキーを壊さず保存・読み戻せる。0〜2 は固定名 ----
+    {
+        const fs::path dir = root / L"areas";
+        fs::create_directories(dir, ec);
+        {
+            std::ofstream out(dir / L"project_settings.json");
+            out << "{\"physicsLayers\": [\"Mine\"]}\n";
+        }
+        NavAreaNames& names = NavAreaNames::Get();
+        names.Load(dir.wstring(), true);
+        check(std::strcmp(names.Name(0), "Walkable") == 0 && std::strcmp(names.Name(1), "Not Walkable") == 0
+                  && std::strcmp(names.Name(2), "Jump") == 0 && std::strcmp(names.Name(3), "Area 3") == 0,
+              "NavAreaNames: no navAreas key -> fixed names for 0..2 and 'Area N' for the rest");
+        std::snprintf(names.EditBuffer(3), NavAreaNames::kNameCapacity, "Mud");
+        std::snprintf(names.EditBuffer(0), NavAreaNames::kNameCapacity, "Hacked"); // 固定名は保存しても読み戻されない
+        check(names.DiffersFromDisk(), "NavAreaNames: an edited name is an unsaved change");
+        check(names.Save(dir.wstring()), "NavAreaNames: Save succeeds");
+        names.Load(dir.wstring(), true);
+        std::ifstream in(dir / L"project_settings.json");
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        check(std::strcmp(names.Name(3), "Mud") == 0 && std::strcmp(names.Name(0), "Walkable") == 0
+                  && text.find("physicsLayers") != std::string::npos && !names.DiffersFromDisk(),
+              "NavAreaNames: the saved name is read back, the fixed name stays, other keys survive, no unsaved change");
+        names.Load(L"", true); // 後続の画面が一時フォルダを見ないように戻す
     }
 
     // ---- 1b. Add Component: NavMeshAgent を足すと CharacterController も同じ 1 Undo で付く (M82c) ----

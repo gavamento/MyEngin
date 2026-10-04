@@ -81,6 +81,9 @@
     <ClCompile Include="..\src\Editor\Asset\AssetPreviewCache.cpp">
       <Filter>Asset</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Project\NavAreaNames.cpp">
+      <Filter>Project</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Project\PartTagNames.cpp">
       <Filter>Project</Filter>
     </ClCompile>
@@ -293,6 +296,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Editor\Asset\AssetPreviewCache.h">
       <Filter>Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Project\NavAreaNames.h">
+      <Filter>Project</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Project\PartTagNames.h">
       <Filter>Project</Filter>

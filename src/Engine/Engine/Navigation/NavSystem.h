@@ -18,6 +18,7 @@ namespace mye {
 class World;
 struct NavMeshAgentComponent;
 struct NavMeshObstacleComponent;
+struct NavMeshModifierComponent;
 struct CharacterControllerComponent;
 struct LocalTransform;
 
@@ -48,6 +49,26 @@ bool NavMakeObstacleSpec(const NavMeshObstacleComponent& obstacle, const float (
 
 // エンティティキーから障害物のキーを作る。キー順 == (index, generation) 順
 uint64_t NavObstacleKey(EntityID entity);
+
+// NavMeshModifier の store 上のキー。Obstacle と同じ store の一覧に入るので、同じエンティティでも衝突しないよう
+// 最上位ビットを立てる (index は 2^31 未満)。キー順 == (index, generation) 順は Modifier どうしの間で保たれる
+uint64_t NavModifierKey(EntityID entity);
+
+// NavMeshModifier の箱をワールドの NavObstacleSpec (area 付き) にする。箱の扱いは NavMakeObstacleSpec の Box と同じ。
+// area は 0..15 に丸める。寸法が非有限・0 以下なら false
+bool NavMakeModifierSpec(const NavMeshModifierComponent& modifier, const float (&m)[4][4], uint64_t key,
+                         NavObstacleSpec& out);
+
+// World の有効な NavMeshModifier を key 昇順に集める (out は上書き)。配置は NavSystem の Obstacle と同じ規則
+void NavCollectModifierSpecs(World& world, std::vector<NavObstacleSpec>& out);
+
+// all のうち、Surface のベイク範囲 (ワールド AABB) と重なるものだけを out に入れる (順序は保つ)
+void NavFilterSpecsToSurface(World& world, EntityID surface, const std::vector<NavObstacleSpec>& all,
+                             std::vector<NavObstacleSpec>& out);
+
+// store の塗り替え (Modifier) を wanted に合わせ、変えたら Commit まで済ませる。差分が無ければ何もしない。
+// 編集中の表示 (NavDebugView) と NavSystem が同じ関数で適用する。戻り値は変えた数 (失敗は failures に加算)
+int NavApplyModifiers(NavTileStore& store, const std::vector<NavObstacleSpec>& wanted, int& failures);
 
 struct NavQueryDeleter {
     void operator()(dtNavMeshQuery* query) const;
@@ -156,7 +177,11 @@ private:
     std::vector<std::vector<int>> wantedPerSurface_;
     std::vector<NavObstacleSpec> wantedObstacles_; // SyncObstacles の作業用
     std::vector<NavObstacleSpec> wantedHere_;      // ...そのうち 1 つの Surface の範囲と重なるもの
-    int obstacleFailures_ = 0;                     // 直近のログに出した失敗数 (同じ警告を毎 tick 出さない)
+    std::vector<NavObstacleSpec> wantedModifiers_;     // SyncObstacles の作業用 (Modifier)
+    std::vector<NavObstacleSpec> wantedModifiersHere_; // ...そのうち 1 つの Surface の範囲と重なるもの
+    std::vector<uint32_t> filterMasks_;            // UpdateSurface の作業用: dtCrowd の filter 番号 -> areaMask (昇順・重複なし)
+    bool filterOverflowWarned_ = false;
+    int obstacleFailures_ = 0;                    // 直近のログに出した失敗数 (同じ警告を毎 tick 出さない)
     NavSystemStats stats_;
 };
 

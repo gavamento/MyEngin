@@ -31,6 +31,24 @@ static bool contains(const dtCompressedTileRef* a, const int n, const dtCompress
 	return false;
 }
 
+// MYE-PATCH(M82g): 元の buildNavMeshTile の障害物ごとの塗り分けを関数に切り出し、areaId を引数にした
+static void markObstacleArea(dtTileCacheLayer& layer, const float* orig, const float cs, const float ch,
+							 const dtTileCacheObstacle* ob, const unsigned char areaId)
+{
+	if (ob->type == DT_OBSTACLE_CYLINDER)
+	{
+		dtMarkCylinderArea(layer, orig, cs, ch, ob->cylinder.pos, ob->cylinder.radius, ob->cylinder.height, areaId);
+	}
+	else if (ob->type == DT_OBSTACLE_BOX)
+	{
+		dtMarkBoxArea(layer, orig, cs, ch, ob->box.bmin, ob->box.bmax, areaId);
+	}
+	else if (ob->type == DT_OBSTACLE_ORIENTED_BOX)
+	{
+		dtMarkBoxArea(layer, orig, cs, ch, ob->orientedBox.center, ob->orientedBox.halfExtents, ob->orientedBox.rotAux, areaId);
+	}
+}
+
 inline int computeTileHash(int x, int y, const int mask)
 {
 	const unsigned int h1 = 0x8da6b343; // Large multiplicative constants;
@@ -464,6 +482,19 @@ dtStatus dtTileCache::addBoxObstacle(const float* center, const float* halfExten
 	return DT_SUCCESS;
 }
 
+dtStatus dtTileCache::setObstaclePaint(const dtObstacleRef ref, const unsigned char areaId, const unsigned long long priority)
+{
+	// MYE-PATCH(M82g)
+	const dtTileCacheObstacle* found = getObstacleByRef(ref);
+	if (!found || found->state != DT_OBSTACLE_PROCESSING)
+		return DT_FAILURE | DT_INVALID_PARAM;
+	dtTileCacheObstacle* ob = &m_obstacles[found - m_obstacles];
+	ob->paint = 1;
+	ob->areaId = areaId;
+	ob->priority = priority;
+	return DT_SUCCESS;
+}
+
 dtStatus dtTileCache::removeObstacle(const dtObstacleRef ref)
 {
 	if (!ref)
@@ -678,29 +709,45 @@ dtStatus dtTileCache::buildNavMeshTile(const dtCompressedTileRef ref, dtNavMesh*
 	if (dtStatusFailed(status))
 		return status;
 	
+	// MYE-PATCH(M82g): 先にエリアの塗り替え (paint) を priority 昇順で、そのあとに切り抜きを行う。
+	// 切り抜きは常に勝ち、塗り替え同士は priority の大きい方が勝つ (スロット番号に依らない)。
+	{
+		unsigned long long lastPriority = 0;
+		int lastIndex = -1;
+		for (;;)
+		{
+			int best = -1;
+			for (int i = 0; i < m_params.maxObstacles; ++i)
+			{
+				const dtTileCacheObstacle* ob = &m_obstacles[i];
+				if (!ob->paint || ob->state == DT_OBSTACLE_EMPTY || ob->state == DT_OBSTACLE_REMOVING)
+					continue;
+				if (!contains(ob->touched, ob->ntouched, ref))
+					continue;
+				// (priority, index) が直前に塗ったものより大きい中で最小のもの
+				if (lastIndex >= 0 && (ob->priority < lastPriority || (ob->priority == lastPriority && i <= lastIndex)))
+					continue;
+				if (best < 0 || ob->priority < m_obstacles[best].priority)
+					best = i;
+			}
+			if (best < 0)
+				break;
+			const dtTileCacheObstacle* ob = &m_obstacles[best];
+			lastPriority = ob->priority;
+			lastIndex = best;
+			markObstacleArea(*bc.layer, tile->header->bmin, m_params.cs, m_params.ch, ob, ob->areaId);
+		}
+	}
+
 	// Rasterize obstacles.
 	for (int i = 0; i < m_params.maxObstacles; ++i)
 	{
 		const dtTileCacheObstacle* ob = &m_obstacles[i];
-		if (ob->state == DT_OBSTACLE_EMPTY || ob->state == DT_OBSTACLE_REMOVING)
+		if (ob->paint || ob->state == DT_OBSTACLE_EMPTY || ob->state == DT_OBSTACLE_REMOVING)
 			continue;
 		if (contains(ob->touched, ob->ntouched, ref))
 		{
-			if (ob->type == DT_OBSTACLE_CYLINDER)
-			{
-				dtMarkCylinderArea(*bc.layer, tile->header->bmin, m_params.cs, m_params.ch,
-							    ob->cylinder.pos, ob->cylinder.radius, ob->cylinder.height, 0);
-			}
-			else if (ob->type == DT_OBSTACLE_BOX)
-			{
-				dtMarkBoxArea(*bc.layer, tile->header->bmin, m_params.cs, m_params.ch,
-					ob->box.bmin, ob->box.bmax, 0);
-			}
-			else if (ob->type == DT_OBSTACLE_ORIENTED_BOX)
-			{
-				dtMarkBoxArea(*bc.layer, tile->header->bmin, m_params.cs, m_params.ch,
-					ob->orientedBox.center, ob->orientedBox.halfExtents, ob->orientedBox.rotAux, 0);
-			}
+			markObstacleArea(*bc.layer, tile->header->bmin, m_params.cs, m_params.ch, ob, 0);
 		}
 	}
 	

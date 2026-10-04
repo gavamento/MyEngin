@@ -27,6 +27,7 @@
 #include "Editor/Widgets/EditorComponentCatalog.h"
 #include "Editor/Project/PartTagNames.h"
 #include "Editor/Project/PhysicsLayerNames.h"
+#include "Editor/Project/NavAreaNames.h"
 #include "Editor/SourceControl/ScmHint.h" // M66i: タグ名の保存直後に status を取り直させる
 #include "Engine/Engine/Scene/TagNames.h" // 汎用タグの名前表 (タグ欄のドロップダウン)
 #include "Engine/Engine/Scene/Tags.h" // 汎用タグの読み書き (Tags::OwnMask / SetOwnMask)
@@ -1225,7 +1226,22 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
     }
     // M82c: Agent の実行状態と警告。状態は sim が書く値の読み取り表示なのでマルチ選択では出さない
     if (std::strcmp(desc.name, "NavMeshAgent") == 0 && !tg.multi) {
-        DrawNavMeshAgentNotes(ctx, tg);
+        DrawNavMeshAgentNotes(ctx, selection, undo, tg);
+    }
+    // M82g: Modifier のエリア名 (番号だけでは分からない)。1 は歩行不可 = 範囲が歩けなくなることを添える
+    if (std::strcmp(desc.name, "NavMeshModifier") == 0 && !tg.multi) {
+        const auto* modifier = ctx.scene->GetWorld().GetComponent<NavMeshModifierComponent>(tg.e);
+        if (modifier != nullptr) {
+            NavAreaNames& areaNames = NavAreaNames::Get();
+            areaNames.Load(ctx.assetsRoot);
+            const int area = (std::min)((std::max)(modifier->area, 0), kNavAreaCount - 1);
+            ImGui::TextDisabled(Tr(StrId::Insp_NavModifierArea), area, areaNames.Name(area));
+            if (area == kNavAreaNotWalkable) {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("%s", Tr(StrId::Insp_NavModifierBlocks));
+                ImGui::PopTextWrapPos();
+            }
+        }
     }
     // RT の実効値。RayTracing を持つ物はその節に、持たない物は描画される節 (MeshRenderer /
     // Terrain) に 1 回だけ出す。マルチ選択では出さない (物ごとに違いうるため)
@@ -1661,7 +1677,8 @@ const InspectorWindow::NavAssetSummary& InspectorWindow::GetNavAssetSummary(uint
 // M82c: NavMeshAgent 節の末尾。状態は NavSystem が毎 tick 書く値 (編集中は前回の Play の値のまま)。
 // 警告は「動かない / 食い込む」原因になる組み合わせだけ: CC 無し、Rigidbody で CC 無効、Surface 無し、
 // ベイク寸法より大きい (ベイクの寸法は Surface のコンポーネントが持つ = CC と共有できない、M82 spec 2. #6)
-void InspectorWindow::DrawNavMeshAgentNotes(EngineContext& ctx, const InspectorTargets& tg)
+void InspectorWindow::DrawNavMeshAgentNotes(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                            const InspectorTargets& tg)
 {
     World& world = ctx.scene->GetWorld();
     const auto* agent = world.GetComponent<NavMeshAgentComponent>(tg.e);
@@ -1676,6 +1693,29 @@ void InspectorWindow::DrawNavMeshAgentNotes(EngineContext& ctx, const InspectorT
     const int status = agent->status >= 0 && agent->status < 7 ? agent->status : navagentstatus::kInactive;
     ImGui::TextDisabled(Tr(StrId::Insp_NavAgentStatus), names[status], agent->remainingDistance,
                         agent->pathPartial ? Tr(StrId::Insp_NavAgentPartial) : "");
+
+    // 歩けるエリア (areaMask)。エリア 1 (歩行不可) は常に歩けないので出さない。名前は project_settings.json の navAreas
+    if (ImGui::TreeNode(Tr(StrId::Insp_NavAreaMask))) {
+        NavAreaNames& areaNames = NavAreaNames::Get();
+        areaNames.Load(ctx.assetsRoot);
+        for (int i = 0; i < kNavAreaCount; ++i) {
+            if (i == kNavAreaNotWalkable) {
+                continue;
+            }
+            bool allowed = (agent->areaMask & (1u << i)) != 0;
+            ImGui::PushID(i);
+            if (ImGui::Checkbox(areaNames.Name(i), &allowed)) {
+                const uint32_t bit = 1u << i;
+                undo.Record("Edit Agent Area Mask", *ctx.scene, selection, tg.fid, UndoStack::StructuralChanges::None, [&] {
+                    if (auto* editable = world.GetComponent<NavMeshAgentComponent>(tg.e)) {
+                        editable->areaMask = allowed ? (editable->areaMask | bit) : (editable->areaMask & ~bit);
+                    }
+                });
+            }
+            ImGui::PopID();
+        }
+        ImGui::TreePop();
+    }
 
     const auto* cc = world.GetComponent<CharacterControllerComponent>(tg.e);
     if (cc == nullptr) {
@@ -1780,6 +1820,39 @@ void InspectorWindow::DrawNavMeshSurfaceNotes(EngineContext& ctx, Selection& sel
                                NavEffectiveSlopeLimitDeg(*comp, cellSize.cellSize));
         }
         ImGui::PopTextWrapPos();
+    }
+    // エリアのコスト (1 = 既定、大きいほど避ける)。エリア 1 (歩行不可) は通れないので行を出さない
+    if (ImGui::TreeNode(Tr(StrId::Insp_NavAreaCosts))) {
+        NavAreaNames& areaNames = NavAreaNames::Get();
+        areaNames.Load(ctx.assetsRoot);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_NavAreaCostHint));
+        ImGui::PopTextWrapPos();
+        for (int i = 0; i < kNavAreaCount; ++i) {
+            if (i == kNavAreaNotWalkable) {
+                continue;
+            }
+            float cost = comp->areaCosts[i];
+            ImGui::PushID(i);
+            ImGui::SetNextItemWidth(120.0f);
+            const bool changed = ImGui::DragFloat(areaNames.Name(i), &cost, 0.1f, 1.0f, 1000.0f, "%.1f");
+            // ドラッグ 1 回を 1 エントリにまとめる (つかんだ瞬間に撮り、離したときに確定)
+            if (ImGui::IsItemActivated() && !undo.IsRecording()) {
+                undo.BeginRecord("Edit Area Cost", selection);
+                undo.CaptureBefore(*ctx.scene, tg.fid);
+            }
+            if (changed) {
+                if (auto* editable = world.GetComponent<NavMeshSurfaceComponent>(tg.e)) {
+                    editable->areaCosts[i] = (std::max)(1.0f, cost);
+                }
+            }
+            if (ImGui::IsItemDeactivated() && undo.IsRecording()) {
+                undo.CaptureAfter(*ctx.scene, tg.fid);
+                undo.EndRecord(selection);
+            }
+            ImGui::PopID();
+        }
+        ImGui::TreePop();
     }
     const NavBakeJobState state = navBakeService_.GetState(tg.fid);
     if (state == NavBakeJobState::Baking) {

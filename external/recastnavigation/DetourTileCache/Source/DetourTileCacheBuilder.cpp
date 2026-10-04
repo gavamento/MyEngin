@@ -2002,7 +2002,9 @@ dtStatus dtMarkCylinderArea(dtTileCacheLayer& layer, const float* orig, const fl
 			const int y = layer.heights[x+z*w];
 			if (y < miny || y > maxy)
 				continue;
-			layer.areas[x+z*w] = areaId;
+			// MYE-PATCH(M82g): areaId != 0 の塗り替えは、通行不可のセル (侵食・切り抜き済み) を復活させない
+			if (areaId == DT_TILECACHE_NULL_AREA || layer.areas[x+z*w] != DT_TILECACHE_NULL_AREA)
+				layer.areas[x+z*w] = areaId;
 		}
 	}
 
@@ -2041,7 +2043,9 @@ dtStatus dtMarkBoxArea(dtTileCacheLayer& layer, const float* orig, const float c
 			const int y = layer.heights[x+z*w];
 			if (y < miny || y > maxy)
 				continue;
-			layer.areas[x+z*w] = areaId;
+			// MYE-PATCH(M82g): areaId != 0 の塗り替えは、通行不可のセル (侵食・切り抜き済み) を復活させない
+			if (areaId == DT_TILECACHE_NULL_AREA || layer.areas[x+z*w] != DT_TILECACHE_NULL_AREA)
+				layer.areas[x+z*w] = areaId;
 		}
 	}
 
@@ -2095,7 +2099,9 @@ dtStatus dtMarkBoxArea(dtTileCacheLayer& layer, const float* orig, const float c
 			const int y = layer.heights[x+z*w];
 			if (y < miny || y > maxy)
 				continue;
-			layer.areas[x+z*w] = areaId;
+			// MYE-PATCH(M82g): areaId != 0 の塗り替えは、通行不可のセル (侵食・切り抜き済み) を復活させない
+			if (areaId == DT_TILECACHE_NULL_AREA || layer.areas[x+z*w] != DT_TILECACHE_NULL_AREA)
+				layer.areas[x+z*w] = areaId;
 		}
 	}
 

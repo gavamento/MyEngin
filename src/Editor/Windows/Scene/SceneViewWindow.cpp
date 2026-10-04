@@ -413,6 +413,7 @@ constexpr uint32_t kNavSurface = 0x30D8C0FFu; // NavMeshSurface のベイク範�
 constexpr uint32_t kNavObstacle = 0xFF9030FFu;    // NavMeshObstacle の切り抜く形 (橙。NavSystem の実行時の枠線と同じ)
 constexpr uint32_t kNavObstacleOff = 0x808080FFu; // carve が無効な Obstacle (灰)
 constexpr int kNavObstacleSegments = 16;
+constexpr uint32_t kNavModifier = 0xC070FFFFu;    // NavMeshModifier の塗る箱 (紫)
 constexpr uint32_t kSelection = 0xFFA030FFu;  // 選択アウトライン
 
 constexpr float kLightMarkerRadius = 0.3f;
@@ -477,6 +478,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         DrawReflectionProbeGizmos(world);
         DrawNavSurfaceGizmos(world);
         DrawNavObstacleGizmos(world);
+        DrawNavModifierGizmos(world);
     }
 
     DrawSelectionOutline(ctx, world, selection);
@@ -872,6 +874,25 @@ void SceneViewWindow::DrawNavObstacleGizmos(World& world)
                 if (k % 4 == 0) {
                     lines_.AddLine(p0, { p0.x, y1, p0.z }, color);
                 }
+            }
+        });
+}
+
+// NavMeshModifier の箱 (M82g)。NavSystem が実際に塗る形 (NavMakeModifierSpec) をそのまま描く
+void SceneViewWindow::DrawNavModifierGizmos(World& world)
+{
+    ForEachWithWorldMatrix<NavMeshModifierComponent>(
+        world, [&](const NavMeshModifierComponent& modifier, const XMFLOAT4X4& wm, EntityID) {
+            NavObstacleSpec spec;
+            if (!NavMakeModifierSpec(modifier, wm.m, 0, spec)) {
+                return;
+            }
+            if (spec.type == DT_OBSTACLE_ORIENTED_BOX) {
+                XMFLOAT4X4 boxWorld;
+                XMStoreFloat4x4(&boxWorld, XMMatrixRotationY(spec.yaw) * XMMatrixTranslation(spec.v[0], spec.v[1], spec.v[2]));
+                lines_.AddWireBox(boxWorld, { spec.v[3], spec.v[4], spec.v[5] }, gizmo::kNavModifier);
+            } else {
+                lines_.AddAABB({ spec.v[0], spec.v[1], spec.v[2] }, { spec.v[3], spec.v[4], spec.v[5] }, gizmo::kNavModifier);
             }
         });
 }

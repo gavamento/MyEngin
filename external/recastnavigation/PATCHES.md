@@ -28,6 +28,19 @@
   (軌道のハッシュは割れなかった = 試験ジオメトリでは境界が結果を変えない。キャッシュが古い状態の保存は
   バイト比較でだけ守られている)。
 
+## 3. DetourTileCache: 障害物を「エリアの塗り替え」にできるようにする (M82g、NavMeshModifier)
+
+- 場所: `DetourTileCache\Include\DetourTileCache.h` (`dtTileCacheObstacle` に `priority` / `areaId` / `paint`、`setObstaclePaint`)、
+  `DetourTileCache\Source\DetourTileCache.cpp` (`setObstaclePaint`、`buildNavMeshTile` の障害物ループ)、
+  `DetourTileCache\Source\DetourTileCacheBuilder.cpp` (`dtMarkCylinderArea` / `dtMarkBoxArea` 2 種)
+- 内容: `paint` の立った障害物は切り抜かず、範囲内の層セルのエリアを `areaId` にする。`buildNavMeshTile` は先に paint を
+  `priority` 昇順で塗り、そのあとに従来の切り抜き (エリア 0) を行う。`dtMark*` は `areaId != 0` のとき通行不可のセルを復活させない。
+  `paint` を立てない既存の使い方 (切り抜き) の結果は変わらない。
+- 理由: Modifier を実行時に動かす / 外すとき、層 (ベイク結果) へ焼き込むと元のエリアに戻せない。障害物と同じく層の上の
+  オーバーレイにして、タイルを作り直すたびに塗る。障害物のスロット番号は追加・撤去の履歴で決まるので、塗り順には
+  呼び出し側が与える `priority` (エンティティキー) を使う。
+- 確認方法: `NavAgentSelfTest` の Modifier 項目 (経路が高コスト域を避ける / 外すと戻る / 保存 -> 復元 -> 連続実行一致)。
+
 ## パッチを当てなかったもの (後続サブへの注意)
 
 - `dtCrowd::m_agentAnims` (Off-Mesh Link を `dtCrowd` 自身が渡るときのアニメ状態) は private で、保存していない。

@@ -438,6 +438,10 @@ MYE_STR(PrjSet_FontMetricsUnchanged, "%s is already up to date (%u glyphs).",
 MYE_STR(PrjSet_FontMetricsFailed, "Could not cook font metrics: %s", "計測表を作成できませんでした: %s")
 MYE_STR(PrjSet_PhysicsLayers, "Physics Layers",      "物理レイヤー")
 MYE_STR(PrjSet_SaveLayers,    "Save Layers",         "レイヤーを保存")
+MYE_STR(PrjSet_NavAreas,      "NavMesh Areas",       "ナビメッシュのエリア") // M82g
+MYE_STR(PrjSet_SaveNavAreas,  "Save Areas",          "エリアを保存")
+MYE_STR(PrjSet_NavAreaHint,   "Display names only (the sim uses area numbers). 0 to 2 are fixed.",
+                              "表示名のみ (sim はエリア番号を使う)。0〜2 は固定名")
 MYE_STR(PrjSet_Shortcuts,     "Shortcuts",           "ショートカット")
 MYE_STR(PrjSet_ColAction,     "Action###action",     "操作###action")
 MYE_STR(PrjSet_ColKey,        "Key###key",           "キー###key")
@@ -851,6 +855,7 @@ MYE_STR(Create_Cylinder,      "Cylinder",          "シリンダー")
 MYE_STR(Create_Capsule,       "Capsule",           "カプセル")
 MYE_STR(Create_NavMeshSurface, "NavMesh Surface",  "ナビメッシュサーフェス") // M82b
 MYE_STR(Create_NavMeshObstacle, "NavMesh Obstacle", "ナビメッシュ障害物") // M82f
+MYE_STR(Create_NavMeshModifier, "NavMesh Modifier", "ナビメッシュモディファイア") // M82g
 MYE_STR(Create_Light,         "Light",             "ライト")
 MYE_STR(Create_DirLight,      "Directional Light", "平行光")
 MYE_STR(Create_PointLight,    "Point Light",       "ポイントライト")
@@ -1843,6 +1848,15 @@ MYE_STR(Insp_NavAgentStepLow,  "CharacterController step (stepOffset x scale.y =
 // ---- M82f: NavMesh Obstacle ----
 MYE_STR(Insp_NavObstacleNoCarve, "Carve is off: this obstacle does not change the navigation mesh.",
                                "切り抜きが無効です。この障害物はナビメッシュを変えません")
+
+// ---- M82g: NavMesh Modifier とエリア ----
+MYE_STR(Insp_NavModifierArea,  "Area %d: %s", "エリア %d: %s")
+MYE_STR(Insp_NavModifierBlocks, "Area 1 is Not Walkable: the box makes this part of the navigation mesh impassable.",
+                               "エリア 1 は歩行不可です。この箱の範囲はナビメッシュ上で通れなくなります")
+MYE_STR(Insp_NavAreaCosts,     "Area costs",  "エリアのコスト")
+MYE_STR(Insp_NavAreaCostHint,  "1 = normal. Agents avoid areas with a higher cost; area names come from Project Settings.",
+                               "1 が標準。高いほどエージェントが避けます。エリア名はプロジェクト設定で変えられます")
+MYE_STR(Insp_NavAreaMask,      "Walkable areas", "歩けるエリア")
 
 // ---- M82d: NavMesh Surface のセルサイズと実効の坂の上限 ----
 MYE_STR(Insp_NavCellAuto,      "auto",   "自動")

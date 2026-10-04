@@ -77,6 +77,11 @@ struct dtTileCacheObstacle
 	unsigned char ntouched;
 	unsigned char npending;
 	dtTileCacheObstacle* next;
+	// MYE-PATCH(M82g): paint != 0 の障害物は切り抜かず、範囲内の歩ける層セルのエリアを areaId にする (NavMeshModifier)。
+	// 同じセルに重なる paint は priority の昇順に塗る (障害物のスロット番号は追加の履歴で変わるので順序に使わない)
+	unsigned long long priority;
+	unsigned char areaId;
+	unsigned char paint;
 };
 
 struct dtTileCacheParams
@@ -142,8 +147,12 @@ public:
 	// Box obstacle: can be rotated in Y.
 	dtStatus addBoxObstacle(const float* center, const float* halfExtents, const float yRadians, dtObstacleRef* result);
 	
+	// MYE-PATCH(M82g): 追加直後 (update の前) の障害物を、切り抜きではなくエリアの塗り替えにする。
+	// areaId は層のエリア (0 = 通行不可 / 63 = 既定の歩行可)。0 以外は通行不可のセルを復活させない
+	dtStatus setObstaclePaint(const dtObstacleRef ref, const unsigned char areaId, const unsigned long long priority);
+
 	dtStatus removeObstacle(const dtObstacleRef ref);
-	
+
 	dtStatus queryTiles(const float* bmin, const float* bmax,
 						dtCompressedTileRef* results, int* resultCount, const int maxResults) const;
 	

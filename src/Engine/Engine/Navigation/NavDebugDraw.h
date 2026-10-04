@@ -61,10 +61,12 @@ private:
         uint64_t assetGuid = 0;
         uint8_t flags = 0;
         uint64_t generation = 0;                 // 0 = .mnav から組む。非 0 = NavSystem の store の世代
+        uint64_t modifierHash = 0;               // .mnav から組むときの、この Surface に重なる NavMeshModifier の形とエリアのハッシュ
         const NavTileStore* live = nullptr;      // generation != 0 のときの組み元 (Refresh の間だけ有効)
         bool operator==(const Key& o) const
         {
-            return entity == o.entity && assetGuid == o.assetGuid && flags == o.flags && generation == o.generation;
+            return entity == o.entity && assetGuid == o.assetGuid && flags == o.flags && generation == o.generation
+                && modifierHash == o.modifierHash;
         }
     };
 
@@ -73,6 +75,7 @@ private:
         EntityID entity;
         uint64_t assetGuid = 0;
         uint64_t generation = 0;
+        uint64_t modifierHash = 0;
         bool loaded = false;
         std::vector<DebugFillVertex> fill;
         std::vector<DebugLineCmd> outline;

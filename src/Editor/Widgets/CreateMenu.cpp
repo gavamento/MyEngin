@@ -79,6 +79,13 @@ GameObject CreateNavMeshObstacle(EngineContext& ctx, const char* name)
     return obj;
 }
 
+GameObject CreateNavMeshModifier(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    obj.AddComponent<NavMeshModifierComponent>(); // 既定は 2 m の箱でエリア 3 (Components.h)
+    return obj;
+}
+
 GameObject CreateDirectionalLight(EngineContext& ctx, const char* name)
 {
     GameObject obj = ctx.scene->CreateGameObjectTracked(name);
@@ -352,6 +359,8 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
                    &CreateNavMeshSurface); // M82b
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_NavMeshObstacle), "NavMesh Obstacle",
                    &CreateNavMeshObstacle); // M82f
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_NavMeshModifier), "NavMesh Modifier",
+                   &CreateNavMeshModifier); // M82g
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(Tr(StrId::Create_Light))) {

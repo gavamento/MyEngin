@@ -51,6 +51,7 @@ constexpr uint32_t kPathMovingColor = 0x60FF60FFu;
 constexpr uint32_t kPathArrivedColor = 0x80C0FFFFu;
 constexpr uint32_t kPathNoPathColor = 0xFF4040FFu;
 constexpr uint32_t kObstacleColor = 0xFF9030FFu;
+constexpr uint32_t kModifierColor = 0xC070FFFFu; // エリアを塗り替える箱 (SceneView のギズモと同じ紫)
 
 // dtCrowd の容量 (Surface ごと)。超えた Agent はエンティティキーの後ろから Inactive
 constexpr int kCrowdCapacity = 128;
@@ -340,7 +341,7 @@ bool IsFinitePositive(float v)
 // 障害物の形 (type, v) が前回と閾値以内に同じか
 bool SameObstacleShape(const NavObstacleSpec& a, const NavObstacleSpec& b)
 {
-    if (a.type != b.type || std::fabs(a.yaw - b.yaw) > kObstacleYawThreshold) {
+    if (a.type != b.type || a.area != b.area || std::fabs(a.yaw - b.yaw) > kObstacleYawThreshold) {
         return false;
     }
     for (int i = 0; i < 6; ++i) {
@@ -377,11 +378,182 @@ void ObstacleBounds(const NavObstacleSpec& o, float (&lo)[3], float (&hi)[3])
     }
 }
 
+// エンティティのワールド行列。配置は LocalTransform (親が無い) か前 tick の WorldMatrix
+bool EntityMatrix(World& world, EntityID e, float (&m)[4][4])
+{
+    const auto* local = world.GetComponent<LocalTransform>(e);
+    if (local != nullptr && world.GetParent(e) == kNullEntity) {
+        MatrixOfRootTransform(*local, m);
+        return true;
+    }
+    if (const auto* wm = world.GetComponent<WorldMatrixComponent>(e)) {
+        std::memcpy(m, wm->value.m, sizeof(m));
+        return true;
+    }
+    return false;
+}
+
+// Surface のベイク範囲 (ベイクと同じ計算)。Transform が無ければ false
+bool SurfaceWorldBounds(World& world, EntityID surface, float (&lo)[3], float (&hi)[3])
+{
+    const auto* comp = world.GetComponent<NavMeshSurfaceComponent>(surface);
+    const auto* matrix = world.GetComponent<WorldMatrixComponent>(surface);
+    if (comp == nullptr || matrix == nullptr) {
+        return false;
+    }
+    const NavBakeConfig bake = NavMakeBakeConfig(*comp, matrix->value);
+    std::memcpy(lo, bake.boundsMin, sizeof(lo));
+    std::memcpy(hi, bake.boundsMax, sizeof(hi));
+    return true;
+}
+
+// store の障害物 (paint = false: 切り抜き / true: 塗り替え) を wanted (key 昇順) と突き合わせた差分。
+// store の一覧は key 昇順なので、種類で絞っても昇順のまま
+struct SpecDiff {
+    std::vector<uint64_t> removeKeys;
+    std::vector<size_t> addIndices;
+};
+
+void DiffSpecs(const NavTileStore& store, const std::vector<NavObstacleSpec>& wanted, bool paint, SpecDiff& diff)
+{
+    const int have = store.ObstacleCount();
+    int si = 0;
+    size_t wi = 0;
+    for (;;) {
+        while (si < have && (store.ObstacleAt(si).area != kNavNoPaint) != paint) {
+            ++si;
+        }
+        const bool storeLeft = si < have;
+        const bool wantLeft = wi < wanted.size();
+        if (!storeLeft && !wantLeft) {
+            return;
+        }
+        const uint64_t storeKey = storeLeft ? store.ObstacleAt(si).key : 0;
+        const uint64_t wantKey = wantLeft ? wanted[wi].key : 0;
+        if (storeLeft && (!wantLeft || storeKey < wantKey)) {
+            diff.removeKeys.push_back(storeKey);
+            ++si;
+        } else if (wantLeft && (!storeLeft || wantKey < storeKey)) {
+            diff.addIndices.push_back(wi);
+            ++wi;
+        } else {
+            if (!SameObstacleShape(store.ObstacleAt(si), wanted[wi])) {
+                diff.removeKeys.push_back(storeKey);
+                diff.addIndices.push_back(wi);
+            }
+            ++si;
+            ++wi;
+        }
+    }
+}
+
+// 差分を store へ積む (Commit は呼び出し側)。失敗した操作の数を返す
+int ApplyDiff(NavTileStore& store, const std::vector<NavObstacleSpec>& wanted, const SpecDiff& diff)
+{
+    int failures = 0;
+    for (const uint64_t key : diff.removeKeys) {
+        if (!store.RemoveObstacle(key)) {
+            ++failures;
+        }
+    }
+    for (const size_t index : diff.addIndices) {
+        const NavObstacleSpec& spec = wanted[index];
+        bool added = false;
+        if (spec.type == DT_OBSTACLE_CYLINDER) {
+            added = store.AddCylinderObstacle(spec.key, spec.v, spec.v[3], spec.v[4], spec.area);
+        } else if (spec.type == DT_OBSTACLE_ORIENTED_BOX) {
+            added = store.AddOrientedBoxObstacle(spec.key, spec.v, spec.v + 3, spec.yaw, spec.area);
+        } else {
+            added = store.AddBoxObstacle(spec.key, spec.v, spec.v + 3, spec.area);
+        }
+        if (!added) {
+            ++failures;
+        }
+    }
+    return failures;
+}
+
 } // namespace
 
 uint64_t NavObstacleKey(EntityID entity)
 {
     return (static_cast<uint64_t>(entity.index) << 32) | static_cast<uint64_t>(entity.generation);
+}
+
+uint64_t NavModifierKey(EntityID entity)
+{
+    return NavObstacleKey(entity) | (1ull << 63);
+}
+
+bool NavMakeModifierSpec(const NavMeshModifierComponent& modifier, const float (&m)[4][4], uint64_t key,
+                         NavObstacleSpec& out)
+{
+    NavMeshObstacleComponent box;
+    box.shape = navobstacleshape::kBox;
+    box.center = modifier.center;
+    box.size = modifier.size;
+    if (!NavMakeObstacleSpec(box, m, key, out)) {
+        return false;
+    }
+    out.area = static_cast<uint8_t>((std::min)((std::max)(modifier.area, 0), kNavAreaCount - 1));
+    return true;
+}
+
+void NavCollectModifierSpecs(World& world, std::vector<NavObstacleSpec>& out)
+{
+    out.clear();
+    const ComponentTypeId req[] = { NavMeshModifierComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int mi = arch.FindTypeIndex(NavMeshModifierComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (!IsEntityActive(world, e)) {
+                continue;
+            }
+            float m[4][4];
+            NavObstacleSpec spec;
+            const auto* modifier = static_cast<const NavMeshModifierComponent*>(arch.GetPtr(mi, row));
+            if (EntityMatrix(world, e, m) && NavMakeModifierSpec(*modifier, m, NavModifierKey(e), spec)) {
+                out.push_back(spec);
+            }
+        }
+    });
+    std::sort(out.begin(), out.end(), [](const NavObstacleSpec& a, const NavObstacleSpec& b) { return a.key < b.key; });
+}
+
+void NavFilterSpecsToSurface(World& world, EntityID surface, const std::vector<NavObstacleSpec>& all,
+                             std::vector<NavObstacleSpec>& out)
+{
+    out.clear();
+    float surfaceMin[3] = {};
+    float surfaceMax[3] = {};
+    const bool hasBounds = SurfaceWorldBounds(world, surface, surfaceMin, surfaceMax);
+    for (const NavObstacleSpec& spec : all) {
+        float lo[3];
+        float hi[3];
+        ObstacleBounds(spec, lo, hi);
+        bool overlap = true;
+        for (int i = 0; hasBounds && i < 3; ++i) {
+            overlap = overlap && lo[i] <= surfaceMax[i] && hi[i] >= surfaceMin[i];
+        }
+        if (overlap) {
+            out.push_back(spec);
+        }
+    }
+}
+
+int NavApplyModifiers(NavTileStore& store, const std::vector<NavObstacleSpec>& wanted, int& failures)
+{
+    SpecDiff diff;
+    DiffSpecs(store, wanted, true, diff);
+    if (diff.removeKeys.empty() && diff.addIndices.empty()) {
+        return 0;
+    }
+    failures += ApplyDiff(store, wanted, diff);
+    if (!store.Commit()) {
+        ++failures;
+    }
+    return static_cast<int>(diff.removeKeys.size() + diff.addIndices.size());
 }
 
 bool NavMakeObstacleSpec(const NavMeshObstacleComponent& obstacle, const float (&m)[4][4], uint64_t key,
@@ -592,7 +764,7 @@ void NavSystem::SyncObstacles(World& world)
         return;
     }
 
-    // 欲しい障害物 (carve が立ち、形が有効なもの) をキー順に並べる。配置は LocalTransform (親が無い) か前 tick の WorldMatrix
+    // 欲しい障害物 (carve が立ち、形が有効なもの) をキー順に並べる
     wantedObstacles_.clear();
     const ComponentTypeId req[] = { NavMeshObstacleComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
@@ -604,22 +776,16 @@ void NavSystem::SyncObstacles(World& world)
                 continue;
             }
             float m[4][4];
-            const auto* local = world.GetComponent<LocalTransform>(e);
-            if (local != nullptr && world.GetParent(e) == kNullEntity) {
-                MatrixOfRootTransform(*local, m);
-            } else if (const auto* wm = world.GetComponent<WorldMatrixComponent>(e)) {
-                std::memcpy(m, wm->value.m, sizeof(m));
-            } else {
-                continue;
-            }
             NavObstacleSpec spec;
-            if (NavMakeObstacleSpec(*obstacle, m, NavObstacleKey(e), spec)) {
+            if (EntityMatrix(world, e, m) && NavMakeObstacleSpec(*obstacle, m, NavObstacleKey(e), spec)) {
                 wantedObstacles_.push_back(spec);
             }
         }
     });
     std::sort(wantedObstacles_.begin(), wantedObstacles_.end(),
               [](const NavObstacleSpec& a, const NavObstacleSpec& b) { return a.key < b.key; });
+    // Modifier (エリアの塗り替え) も同じ store の一覧に入る。キーの最上位ビットで Obstacle と区別する
+    NavCollectModifierSpecs(world, wantedModifiers_);
 
     // Surface ごとに、store が持つ障害物 (これも復元済みの状態) と突き合わせる。NavSystem 自身は前回の記録を持たないので、
     // restore 直後でも二重に足さず消し忘れない
@@ -629,84 +795,29 @@ void NavSystem::SyncObstacles(World& world)
             continue;
         }
         NavTileStore& store = *surface.store;
-        // この Surface の範囲 (ベイクと同じ計算) と重なる障害物だけを付ける。範囲外は容量 (maxObstacles) を食うだけ
-        wantedHere_.clear();
-        float surfaceMin[3] = {};
-        float surfaceMax[3] = {};
-        bool hasBounds = false;
-        const auto* surfaceComp = world.GetComponent<NavMeshSurfaceComponent>(surface.entity);
-        const auto* surfaceMatrix = world.GetComponent<WorldMatrixComponent>(surface.entity);
-        if (surfaceComp != nullptr && surfaceMatrix != nullptr) {
-            const NavBakeConfig bake = NavMakeBakeConfig(*surfaceComp, surfaceMatrix->value);
-            std::memcpy(surfaceMin, bake.boundsMin, sizeof(surfaceMin));
-            std::memcpy(surfaceMax, bake.boundsMax, sizeof(surfaceMax));
-            hasBounds = true;
-        }
-        for (const NavObstacleSpec& spec : wantedObstacles_) {
-            float lo[3];
-            float hi[3];
-            ObstacleBounds(spec, lo, hi);
-            bool overlap = true;
-            for (int i = 0; hasBounds && i < 3; ++i) {
-                overlap = overlap && lo[i] <= surfaceMax[i] && hi[i] >= surfaceMin[i];
-            }
-            if (overlap) {
-                wantedHere_.push_back(spec);
-            }
-        }
-        std::vector<uint64_t> removeKeys;
-        std::vector<size_t> addIndices;
-        const int have = store.ObstacleCount();
-        int si = 0;
-        size_t wi = 0;
-        while (si < have || wi < wantedHere_.size()) {
-            const bool storeLeft = si < have;
-            const bool wantLeft = wi < wantedHere_.size();
-            const uint64_t storeKey = storeLeft ? store.ObstacleAt(si).key : 0;
-            const uint64_t wantKey = wantLeft ? wantedHere_[wi].key : 0;
-            if (storeLeft && (!wantLeft || storeKey < wantKey)) {
-                removeKeys.push_back(storeKey);
-                ++si;
-            } else if (wantLeft && (!storeLeft || wantKey < storeKey)) {
-                addIndices.push_back(wi);
-                ++wi;
-            } else {
-                if (!SameObstacleShape(store.ObstacleAt(si), wantedHere_[wi])) {
-                    removeKeys.push_back(storeKey);
-                    addIndices.push_back(wi);
-                }
-                ++si;
-                ++wi;
-            }
-        }
-        if (removeKeys.empty() && addIndices.empty()) {
+        // この Surface の範囲 (ベイクと同じ計算) と重なるものだけを付ける。範囲外は容量 (maxObstacles) を食うだけ
+        NavFilterSpecsToSurface(world, surface.entity, wantedObstacles_, wantedHere_);
+        NavFilterSpecsToSurface(world, surface.entity, wantedModifiers_, wantedModifiersHere_);
+        SpecDiff carveDiff;
+        SpecDiff paintDiff;
+        DiffSpecs(store, wantedHere_, false, carveDiff);
+        DiffSpecs(store, wantedModifiersHere_, true, paintDiff);
+        const size_t changes = carveDiff.removeKeys.size() + carveDiff.addIndices.size() + paintDiff.removeKeys.size()
+            + paintDiff.addIndices.size();
+        if (changes == 0) {
             continue;
         }
+        // 撤去 -> 追加 -> Commit の順で、同じ tick 内に確定する
         const auto t0 = std::chrono::steady_clock::now();
-        for (const uint64_t key : removeKeys) {
-            if (!store.RemoveObstacle(key)) {
-                ++failures;
-            }
-        }
-        for (const size_t index : addIndices) {
-            const NavObstacleSpec& spec = wantedHere_[index];
-            bool added = false;
-            if (spec.type == DT_OBSTACLE_CYLINDER) {
-                added = store.AddCylinderObstacle(spec.key, spec.v, spec.v[3], spec.v[4]);
-            } else if (spec.type == DT_OBSTACLE_ORIENTED_BOX) {
-                added = store.AddOrientedBoxObstacle(spec.key, spec.v, spec.v + 3, spec.yaw);
-            } else {
-                added = store.AddBoxObstacle(spec.key, spec.v, spec.v + 3);
-            }
-            if (!added) {
-                ++failures;
-            }
-        }
+        failures += ApplyDiff(store, wantedHere_, SpecDiff{ carveDiff.removeKeys, {} });
+        failures += ApplyDiff(store, wantedModifiersHere_, SpecDiff{ paintDiff.removeKeys, {} });
+        failures += ApplyDiff(store, wantedHere_, SpecDiff{ {}, carveDiff.addIndices });
+        failures += ApplyDiff(store, wantedModifiersHere_, SpecDiff{ {}, paintDiff.addIndices });
         if (!store.Commit()) {
             ++failures;
         }
         stats_.obstacleUs += std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
-        stats_.obstacleChanges += static_cast<int>(removeKeys.size() + addIndices.size());
+        stats_.obstacleChanges += static_cast<int>(changes);
     }
     stats_.maxObstacleUs = (std::max)(stats_.maxObstacleUs, stats_.obstacleUs);
     // 失敗は容量超過 (maxObstacles) など。毎 tick 再試行されるので、数が変わったときだけ警告する
@@ -830,13 +941,45 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
     dtCrowd& crowd = *surface.crowd;
     dtNavMeshQuery& query = *surface.query;
 
+    // dtCrowd の filter は Agent の areaMask ごとに 1 つ (種類は areaMask の昇順 = World だけで決まる)。
+    // 16 種を超える areaMask は最後の filter を共有する (その Agent は他の Agent の mask で歩く)
+    filterMasks_.clear();
+    for (const int idx : wanted) {
+        filterMasks_.push_back(agents_[static_cast<size_t>(idx)].agent->areaMask & kNavFlagAllAreas);
+    }
+    std::sort(filterMasks_.begin(), filterMasks_.end());
+    filterMasks_.erase(std::unique(filterMasks_.begin(), filterMasks_.end()), filterMasks_.end());
+    if (filterMasks_.size() > static_cast<size_t>(DT_CROWD_MAX_QUERY_FILTER_TYPE)) {
+        if (!filterOverflowWarned_) {
+            MYE_LOG_WARN("[nav] surface '%s': more than %d distinct agent area masks; the rest share the last filter",
+                         world.GetName(surface.entity), DT_CROWD_MAX_QUERY_FILTER_TYPE);
+            filterOverflowWarned_ = true;
+        }
+        filterMasks_.resize(static_cast<size_t>(DT_CROWD_MAX_QUERY_FILTER_TYPE));
+    }
+    if (filterMasks_.empty()) {
+        filterMasks_.push_back(kNavFlagAllAreas);
+    }
     // エリアのコスト (Surface のコンポーネントから毎 tick 写す。インスペクタでの変更がそのまま効く)
-    dtQueryFilter* filter = crowd.getEditableFilter(0);
-    if (const auto* sc = world.GetComponent<NavMeshSurfaceComponent>(surface.entity)) {
-        for (int i = 0; i < kNavAreaCount; ++i) {
-            filter->setAreaCost(i, (std::max)(1.0f, sc->areaCosts[i]));
+    const auto* surfaceComp = world.GetComponent<NavMeshSurfaceComponent>(surface.entity);
+    bool costsRaised = false;
+    for (int i = 0; surfaceComp != nullptr && i < kNavAreaCount; ++i) {
+        costsRaised = costsRaised || surfaceComp->areaCosts[i] > 1.0f;
+    }
+    for (size_t f = 0; f < filterMasks_.size(); ++f) {
+        dtQueryFilter* filter = crowd.getEditableFilter(static_cast<int>(f));
+        filter->setIncludeFlags(static_cast<unsigned short>(filterMasks_[f]));
+        filter->setExcludeFlags(0);
+        for (int i = 0; surfaceComp != nullptr && i < kNavAreaCount; ++i) {
+            filter->setAreaCost(i, (std::max)(1.0f, surfaceComp->areaCosts[i]));
         }
     }
+    // Agent の areaMask に対応する filter の番号
+    const auto filterIndexOf = [&](const NavMeshAgentComponent& agent) {
+        const uint32_t mask = agent.areaMask & kNavFlagAllAreas;
+        const auto it = std::lower_bound(filterMasks_.begin(), filterMasks_.end(), mask);
+        return it == filterMasks_.end() ? static_cast<int>(filterMasks_.size()) - 1 : static_cast<int>(it - filterMasks_.begin());
+    };
 
     // ---- 外れた Agent をスロットから外す (スロット番号の昇順) ----
     for (int slotIndex = 0; slotIndex < kCrowdCapacity; ++slotIndex) {
@@ -890,6 +1033,8 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
         }
         const float placeH = (std::max)(kPlaceHorizontalScale * agent.radius, kPlaceHorizontalMin);
         const float placeExt[3] = { placeH, kPlaceVertical, placeH };
+        const int filterIndex = filterIndexOf(agent);
+        const dtQueryFilter* filter = crowd.getFilter(filterIndex);
         if (slotIndex < 0) {
             dtPolyRef ref = 0;
             float nearest[3] = {};
@@ -908,6 +1053,7 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
             params.height = (std::max)(0.01f, agent.height);
             params.maxAcceleration = (std::max)(0.01f, agent.acceleration);
             params.maxSpeed = (std::max)(0.0f, agent.speed);
+            params.queryFilterType = static_cast<unsigned char>(filterIndex);
             slotIndex = crowd.addAgent(nearest, &params);
             if (slotIndex < 0) {
                 a.inactiveReason = kReasonCapacity;
@@ -928,6 +1074,8 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
         NavMeshAgentComponent& agent = *a.agent;
         NavAgentSlot& slot = surface.slots[static_cast<size_t>(a.slot)];
         dtCrowdAgent* ag = crowd.getEditableAgent(a.slot);
+        const int filterIndex = filterIndexOf(agent);
+        const dtQueryFilter* filter = crowd.getFilter(filterIndex);
 
         // 設定は毎 tick 写す (インスペクタやスクリプトの変更がそのまま効く)
         const int quality = (std::min)((std::max)(agent.avoidanceQuality, 0), 3);
@@ -941,12 +1089,17 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
         params.collisionQueryRange = quality > 0 ? params.radius * 12.0f : kNoAvoidanceQueryRange;
         params.pathOptimizationRange = params.radius * 30.0f;
         params.separationWeight = 2.0f;
-        params.updateFlags = DT_CROWD_ANTICIPATE_TURNS | DT_CROWD_OPTIMIZE_VIS | DT_CROWD_OPTIMIZE_TOPO;
+        params.updateFlags = DT_CROWD_ANTICIPATE_TURNS | DT_CROWD_OPTIMIZE_TOPO;
+        if (!costsRaised) {
+            // 視線による経路の近道は raycast で行われ、エリアのコストを見ない (高コストの帯を突っ切る近道を取る)。
+            // コストを上げたエリアがある Surface では使わない
+            params.updateFlags |= DT_CROWD_OPTIMIZE_VIS;
+        }
         if (quality > 0) {
             params.updateFlags |= DT_CROWD_OBSTACLE_AVOIDANCE | DT_CROWD_SEPARATION;
         }
         params.obstacleAvoidanceType = static_cast<unsigned char>(quality);
-        params.queryFilterType = 0;
+        params.queryFilterType = static_cast<unsigned char>(filterIndex);
         crowd.updateAgentParameters(a.slot, &params);
 
         // CC の実位置を crowd へ書き戻す。歩いた分は corridor を動かし、瞬間移動 / 無効状態からの復帰は置き直す
@@ -1189,7 +1342,7 @@ void NavSystem::AppendObstacleLines(const NavTileStore& store, std::vector<Debug
             cmd.bx = bx;
             cmd.by = by;
             cmd.bz = bz;
-            cmd.rgba = kObstacleColor;
+            cmd.rgba = o.area == kNavNoPaint ? kObstacleColor : kModifierColor;
             out.push_back(cmd);
         };
         if (o.type == DT_OBSTACLE_CYLINDER) {

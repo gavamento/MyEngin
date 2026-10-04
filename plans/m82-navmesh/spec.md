@@ -73,7 +73,7 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 | `NavMeshSurfaceComponent` | `agentTypeId` int / ベイク範囲 `center`・`size` (ローカル AABB) / `agentRadius` 0.3・`agentHeight` 1.8・`maxClimb` 0.3 (sub-10)・`maxSlopeDeg` 45 / `cellSize`・`cellHeight`・`tileSize` / `autoCellSize` (既定 on、sub-10) / `collectLayerMask` / `areaCosts[16]` / `navAsset` AssetID / 表示フラグ (kFieldNoHash) | 対象 |
 | `NavMeshAgentComponent` | `agentTypeId` / `speed`・`acceleration`・`angularSpeedDeg`・`stoppingDistance` / `radius`・`height` (回避用) / `areaMask` u32 (sub-06 で末尾追加) / `avoidanceQuality` 0..3 (0=回避なし) / `destination` Float3・`hasDestination` / 実行状態 (`status`: Idle / Moving / Arrived / NoPath / OnLink / Inactive / Stuck (sub-05、2. #20)、`remainingDistance`、`pathPartial`) | 対象 |
 | `NavMeshObstacleComponent` | `shape` (Box / Cylinder) / `center`・`size` (Box)・`radius`・`height` (Cylinder) / `carve` bool (false は何もしない。dtCrowd には任意形状の動く障害物を回避する口が無く、Unity の『carve しない = 回避だけ』を再現できない。Inspector に注記する) | 対象 |
-| `NavMeshModifierComponent` | ローカル AABB / `area` (0..15) / `affects` (ベイク時に反映、実行時は Obstacle と同じ TileCache の area 書き換え) | 対象 |
+| `NavMeshModifierComponent` | ローカル AABB (`center`・`size`) / `area` (0..15)。**ベイクには焼き込まず**、実行時に TileCache の層へ塗る (Recast パッチ 3 の paint。Obstacle と同じ tick 境界の同期更新)。編集中の表示も同じ関数で重ねる。重なりは entity キーの大きい方が勝つ。エリア 1 (NotWalkable) にした範囲は NavMesh の外と同じ扱い (sub-06 で確定。当初の `affects` は意味が曖昧なので削除) | 対象 |
 | `NavMeshLinkComponent` | `start`・`end` (ローカル) / `width` / `bidirectional` / `area` / `traversal` (Linear / Jump / Manual) / `traversalSpeed`・`jumpHeight` | 対象 |
 
 - エリア: 0 = Walkable (コスト 1)、1 = NotWalkable、2 = Jump (Link の既定)、3〜15 = ユーザー定義。名前は `project_settings.json` (表示のみ)、コストは Surface の `areaCosts`。
@@ -86,7 +86,7 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 ### 4.2 データ・保存形式・互換性
 
 - 新 TypeId 5 個を**末尾 append** (2. #3)。シーン (`kDocVersion=4`) は変えない (型名保存なので新型の追加は互換)。
-- `.mnav`: 版付きバイナリ (`.mfrac` と同じ Serialize / Deserialize、境界検査、同じ入力から同じバイト)。中身 = ベイク設定 + 入力ハッシュ + TileCache の圧縮層 (圧縮器は**無圧縮の自作** `dtTileCacheCompressor`、FastLZ を入れない) + Link / Modifier のベイク時スナップ。保存先 `assets\NavMesh\<Surface名>_<入力ハッシュ16桁>.mnav`、`.meta` で GUID、`AssetType::NavMesh`。ビルド (配布物) へは `BuildSettingsWindow.cpp:208-210` の `assets\` 丸ごとコピーで入る (:253 の一覧はクック物専用で対象外。sub-02 VERDICT で訂正)。
+- `.mnav`: 版付きバイナリ (`.mfrac` と同じ Serialize / Deserialize、境界検査、同じ入力から同じバイト)。中身 = ベイク設定 + 入力ハッシュ + TileCache の圧縮層 (圧縮器は**無圧縮の自作** `dtTileCacheCompressor`、FastLZ を入れない) + Link のベイク時スナップ (Modifier は焼き込まない、4.1)。保存先 `assets\NavMesh\<Surface名>_<入力ハッシュ16桁>.mnav`、`.meta` で GUID、`AssetType::NavMesh`。ビルド (配布物) へは `BuildSettingsWindow.cpp:208-210` の `assets\` 丸ごとコピーで入る (:253 の一覧はクック物専用で対象外。sub-02 VERDICT で訂正)。
 - 読み込み: `NavSystem::Update` (stepSim の tick、フェーズ 3.4b) が Surface の (entity, navAsset) の変化を見て遅延ロードする (2. #17)。
 - SimSnapshot: Nav 節の書式を変えるサブは、そのたびに `kSimSnapshotVersion` を上げる (旧 blob を明示的に拒否する。sub-10 で 26、sub-05 で 27)。Nav 節を追加し `kSimSnapshotVersion` 24 → 25 (sub-01 の結論で節の中身を決める。節が要らない結論なら bump しない)。
 - ABI: 1 回だけ bump (2. #14)。最小の関数: `NavSetDestination` / `NavStop` / `NavGetAgentState` / `NavFindPath` (コーナー列を呼び出し側バッファへ) / `NavSamplePosition` (最寄り点) / `NavRaycast` / `NavFindRandomPoint` (半径内、World RNG)。全部 POD + C ABI、`Interop.cs` 位置ミラー、`check_rules.ps1` の版表を更新。
@@ -179,6 +179,11 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 ## 8. 変更履歴
 
 (確定後の変更のみ)
+
+- 2026-10-04 / 出所: coder SELF_EVAL sub-06 round 1 (planner VERDICT OK)
+  - 4.1 / 4.2: Modifier はベイクに焼き込まず、実行時のオーバーレイ (TileCache の paint、Recast パッチ 3) だけで反映する (coder の逸脱を採用)。理由: 焼き込むと、実行時に動かす・消すときに元のエリアへ戻せない。編集中も同じ関数で見える。将来の再ベイク (F1〜F5) とも衝突しない。`affects` フィールドは意味が曖昧だったので仕様から削除した。
+  - 4.1: コストを 1 より上げたエリアがある Surface では、dtCrowd の DT_CROWD_OPTIMIZE_VIS を外す (視線の近道がエリアコストを見ずに高コストの帯を突っ切るため。実測あり)。既定 (全コスト 1) の Surface は従来どおり。ポリゴンのフラグは 1 << area (エリア 1 は 0)。areaMask の種類が 16 を超えたら最後の filter を共有し、警告を 1 回出す。
+  - kSimSnapshotVersion 28、NavTileStore の状態 v3 (障害物に area)。
 
 - 2026-10-04 / 出所: coder SELF_EVAL sub-05 round 2 (planner VERDICT OK)
   - 4.1 の補足 (既知の限界): 部分経路の到着は、終点まで max(stoppingDistance, radius) 以内で前進が 60 tick 止まったときに確定する。完全な経路より 1 秒遅れる。dtCrowd の位置が部分経路の終点の数 cm〜0.12 m 手前で止まるため (原因は dtPathCorridor の位置の置き方と見ているが、追跡していない)。即時に確定するのは、要望が出たら『終点の近くで速度 0』を見る形で足す。

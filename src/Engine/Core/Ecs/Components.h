@@ -1940,6 +1940,7 @@ struct NavMeshAgentComponent {
     int32_t status = navagentstatus::kIdle;
     float remainingDistance = 0.0f; // 経路に沿った残りの距離の見積り
     bool pathPartial = false;       // 目的地まで届かず、届く限りの最寄りへ向かっている
+    uint32_t areaMask = 0xFFFFFFFFu; // 歩いてよいエリアの集合 (ビット i = エリア i、M82g)。0 = どこも歩けない
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -1965,6 +1966,18 @@ struct NavMeshObstacleComponent {
     float radius = 0.5f;                              // Cylinder
     float height = 1.0f;                              // Cylinder (中心から上下に半分ずつ)
     bool carve = true;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ナビメッシュの範囲内のエリアを書き換える箱 (M82g)。ベイクには焼き込まず、NavSystem が毎 tick の状態を
+// TileCache の層の上へ塗る (Obstacle と同じ tick 境界の同期確定)。動かす・外す・増やすがそのまま効き、
+// 同じセルに重なれば entity キーの大きい方が勝つ。形はワールド変換に従う (y 回転だけなら実形、傾けると外接 AABB)。
+// area 0 = 歩行可 / 1 = 歩行不可 (その範囲は歩けなくなる) / 2 = Jump / 3..15 = ユーザー定義。
+// hash 対象 (全フィールド)
+struct NavMeshModifierComponent {
+    DirectX::XMFLOAT3 center = { 0.0f, 0.0f, 0.0f };  // ローカル中心
+    DirectX::XMFLOAT3 size = { 2.0f, 2.0f, 2.0f };
+    int32_t area = 3;                                 // 0..15
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

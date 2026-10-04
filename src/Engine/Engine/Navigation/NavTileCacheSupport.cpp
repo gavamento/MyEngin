@@ -67,7 +67,7 @@ namespace mye {
 namespace {
 
 constexpr uint32_t kStateMagic = 0x3153564Eu; // "NVS1"
-constexpr uint32_t kStateVersion = 2; // v2: 障害物に yaw
+constexpr uint32_t kStateVersion = 3; // v2: 障害物に yaw / v3: 障害物にエリア (塗り替え)
 constexpr uint32_t kCrowdMagic = 0x31574F52u; // "ROW1"
 constexpr int kCrowdMaxPath = 256;            // dtCrowd の m_maxPathResult (MAX_PATH_RES)
 constexpr int kUpdateGuard = 4096;            // dtTileCache::update の暴走防止
@@ -233,9 +233,21 @@ void NavMeshProcess::process(struct dtNavMeshCreateParams* params, unsigned char
         if (polyAreas[i] == DT_TILECACHE_WALKABLE_AREA) {
             polyAreas[i] = kNavAreaWalkable;
         }
-        polyFlags[i] = polyAreas[i] == kNavAreaNotWalkable ? 0 : kNavFlagWalk;
+        const int area = polyAreas[i];
+        polyFlags[i] = (area == kNavAreaNotWalkable || area >= kNavAreaCountMax) ? 0 : static_cast<uint16_t>(1u << area);
     }
     rebuilt.push_back({params->tileX, params->tileY, params->tileLayer});
+}
+
+uint8_t NavAreaToLayerArea(int area)
+{
+    if (area <= kNavAreaWalkable) {
+        return DT_TILECACHE_WALKABLE_AREA;
+    }
+    if (area == kNavAreaNotWalkable) {
+        return DT_TILECACHE_NULL_AREA;
+    }
+    return static_cast<uint8_t>((std::min)(area, kNavAreaCountMax - 1));
 }
 
 // ---------------------------------------------------------------------------------
@@ -435,6 +447,13 @@ bool NavTileStore::QueueObstacle(ObstacleEntry& entry)
         return false;
     }
     ++queuedRequests_;
+    if (entry.area != kNavNoPaint
+        && dtStatusFailed(cache_->setObstaclePaint(entry.ref, NavAreaToLayerArea(entry.area), entry.key))) {
+        // 塗り替えにできなかった障害物は切り抜きになってしまうので、追加ごと取り消す
+        cache_->removeObstacle(entry.ref);
+        ++queuedRequests_;
+        return false;
+    }
     return true;
 }
 
@@ -450,10 +469,11 @@ bool NavTileStore::QueueObstacleRemoval(dtObstacleRef ref)
     return true;
 }
 
-bool NavTileStore::AddBoxObstacle(uint64_t key, const float* bmin, const float* bmax)
+bool NavTileStore::AddBoxObstacle(uint64_t key, const float* bmin, const float* bmax, uint8_t area)
 {
     ObstacleEntry e;
     e.key = key;
+    e.area = area;
     e.type = DT_OBSTACLE_BOX;
     std::memcpy(e.v, bmin, sizeof(float) * 3);
     std::memcpy(e.v + 3, bmax, sizeof(float) * 3);
@@ -469,10 +489,12 @@ bool NavTileStore::AddBoxObstacle(uint64_t key, const float* bmin, const float* 
     return true;
 }
 
-bool NavTileStore::AddOrientedBoxObstacle(uint64_t key, const float* center, const float* halfExtents, float yawRadians)
+bool NavTileStore::AddOrientedBoxObstacle(uint64_t key, const float* center, const float* halfExtents, float yawRadians,
+                                           uint8_t area)
 {
     ObstacleEntry e;
     e.key = key;
+    e.area = area;
     e.type = DT_OBSTACLE_ORIENTED_BOX;
     std::memcpy(e.v, center, sizeof(float) * 3);
     std::memcpy(e.v + 3, halfExtents, sizeof(float) * 3);
@@ -489,10 +511,11 @@ bool NavTileStore::AddOrientedBoxObstacle(uint64_t key, const float* center, con
     return true;
 }
 
-bool NavTileStore::AddCylinderObstacle(uint64_t key, const float* pos, float radius, float height)
+bool NavTileStore::AddCylinderObstacle(uint64_t key, const float* pos, float radius, float height, uint8_t area)
 {
     ObstacleEntry e;
     e.key = key;
+    e.area = area;
     e.type = DT_OBSTACLE_CYLINDER;
     std::memcpy(e.v, pos, sizeof(float) * 3);
     e.v[3] = radius;
@@ -692,6 +715,7 @@ void NavTileStore::SaveState(NavByteWriter& w, bool includeBaseLayers) const
         w.Pod(o.type);
         w.Bytes(o.v, sizeof(o.v));
         w.Pod(o.yaw);
+        w.Pod(o.area);
     }
 }
 
@@ -744,7 +768,8 @@ bool NavTileStore::LoadState(NavByteReader& r)
     }
     std::vector<ObstacleEntry> savedObstacles(obstacleCount);
     for (ObstacleEntry& o : savedObstacles) {
-        if (!r.Pod(o.key) || !r.Pod(o.type) || !r.Bytes(o.v, sizeof(o.v)) || !r.Pod(o.yaw)) {
+        if (!r.Pod(o.key) || !r.Pod(o.type) || !r.Bytes(o.v, sizeof(o.v)) || !r.Pod(o.yaw) || !r.Pod(o.area)
+            || (o.area != kNavNoPaint && o.area >= kNavAreaCountMax)) {
             return false;
         }
     }
@@ -815,7 +840,8 @@ bool NavTileStore::LoadState(NavByteReader& r)
     for (size_t i = 0; sameObstacles && i < savedObstacles.size(); ++i) {
         sameObstacles = savedObstacles[i].key == obstacles_[i].key && savedObstacles[i].type == obstacles_[i].type
             && std::memcmp(savedObstacles[i].v, obstacles_[i].v, sizeof(float) * 6) == 0
-            && std::memcmp(&savedObstacles[i].yaw, &obstacles_[i].yaw, sizeof(float)) == 0;
+            && std::memcmp(&savedObstacles[i].yaw, &obstacles_[i].yaw, sizeof(float)) == 0
+            && savedObstacles[i].area == obstacles_[i].area;
     }
     if (!sameObstacles) {
         for (const ObstacleEntry& o : obstacles_) {
@@ -920,6 +946,7 @@ uint64_t NavTileStore::HashObstacles() const
         h = HashValue(h, o.type);
         h = NavFnv1a(h, o.v, sizeof(o.v));
         h = HashValue(h, o.yaw);
+        h = HashValue(h, o.area);
     }
     return h;
 }

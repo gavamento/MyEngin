@@ -10,6 +10,7 @@
 #include "Editor/Project/PartTagNames.h"
 #include "Engine/Engine/Scene/TagNames.h" // 汎用タグの名前表
 #include "Editor/Project/PhysicsLayerNames.h"
+#include "Editor/Project/NavAreaNames.h"
 #include "Editor/App/ShortcutHub.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Localization/Localization.h"
@@ -208,6 +209,36 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
             if (ln.Save(ctx.assetsRoot)) {
                 ln.Load(ctx.assetsRoot, true);
                 scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json"); // M66i
+            }
+        }
+    }
+
+    // ---- NavMesh エリア名 (M82g、assets\project_settings.json の navAreas。表示専用) ----
+    if (ImGui::CollapsingHeader(Tr(StrId::PrjSet_NavAreas))) {
+        NavAreaNames& an = NavAreaNames::Get();
+        an.Load(ctx.assetsRoot);
+        ImGui::TextDisabled("%s", Tr(StrId::PrjSet_NavAreaHint));
+        for (int i = 0; i < NavAreaNames::kCount; ++i) {
+            ImGui::PushID(1000 + i);
+            ImGui::SetNextItemWidth(160.0f);
+            char label[16];
+            std::snprintf(label, sizeof(label), "%2d", i);
+            if (NavAreaNames::IsFixed(i)) {
+                ImGui::BeginDisabled();
+            }
+            ImGui::InputText(label, an.EditBuffer(i), NavAreaNames::kNameCapacity);
+            if (NavAreaNames::IsFixed(i)) {
+                ImGui::EndDisabled();
+            }
+            ImGui::PopID();
+            if ((i % 2) == 0) {
+                ImGui::SameLine(240.0f);
+            }
+        }
+        if (ImGui::Button(Tr(StrId::PrjSet_SaveNavAreas))) {
+            if (an.Save(ctx.assetsRoot)) {
+                an.Load(ctx.assetsRoot, true);
+                scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json");
             }
         }
     }
@@ -564,7 +595,8 @@ bool InputActionsDifferFromDisk(const std::wstring& assetsRoot, const InputActio
 
 bool ProjectSettingsWindow::HasUnsavedChanges() const
 {
-    if (PhysicsLayerNames::Get().DiffersFromDisk() || PartTagNames::Get().DiffersFromDisk()
+    if (PhysicsLayerNames::Get().DiffersFromDisk() || NavAreaNames::Get().DiffersFromDisk()
+        || PartTagNames::Get().DiffersFromDisk()
         || TagNames::Get().DiffersFromDisk()) {
         return true;
     }

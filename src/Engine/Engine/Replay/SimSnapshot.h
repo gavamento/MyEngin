@@ -107,7 +107,8 @@ struct SimRefs {
 // v25 (M82c): NAV 節 (NavSystem の差し替え分・dtCrowd・スロット表) を SES 節の後・World 節の前に追加。NavMeshAgent コンポーネント
 // v26 (M82d): CharacterControllerComponent へ stepOffset、NavMeshSurfaceComponent へ autoCellSize (World 節のカラム生バイト)
 // v27 (M82f): Nav 節の slots に stuck / noProgressTicks / bestRemaining、障害物に yaw。NavMeshObstacleComponent と Surface.drawObstacles (World 節のカラム生バイト)
-inline constexpr uint32_t kSimSnapshotVersion = 27;
+// v28 (M82g): Nav 節の障害物にエリア (NavMeshModifier の塗り替え)。NavMeshModifierComponent と NavMeshAgentComponent.areaMask (World 節のカラム生バイト)
+inline constexpr uint32_t kSimSnapshotVersion = 28;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

@@ -45,6 +45,7 @@
     <ClCompile Include="..\src\Editor\Asset\AssetOps.cpp" />
     <ClCompile Include="..\src\Editor\Asset\AssetOpsSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Asset\AssetPreviewCache.cpp" />
+    <ClCompile Include="..\src\Editor\Project\NavAreaNames.cpp" />
     <ClCompile Include="..\src\Editor\Project\PartTagNames.cpp" />
     <ClCompile Include="..\src\Editor\Project\PhysicsLayerNames.cpp" />
     <ClCompile Include="..\src\Editor\Project\ProjectManager.cpp" />
@@ -116,6 +117,7 @@
     <ClInclude Include="..\src\Editor\Asset\AssetOps.h" />
     <ClInclude Include="..\src\Editor\Asset\AssetOpsSelfTest.h" />
     <ClInclude Include="..\src\Editor\Asset\AssetPreviewCache.h" />
+    <ClInclude Include="..\src\Editor\Project\NavAreaNames.h" />
     <ClInclude Include="..\src\Editor\Project\PartTagNames.h" />
     <ClInclude Include="..\src\Editor\Project\PhysicsLayerNames.h" />
     <ClInclude Include="..\src\Editor\Project\ProjectManager.h" />

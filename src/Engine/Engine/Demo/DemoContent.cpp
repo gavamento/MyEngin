@@ -4486,6 +4486,21 @@ void BuildNavShowcaseScene(EngineContext& ctx)
         mr->material = AssetID{ HashStr("navdemo_wall") };
     }
 
+    // M82g: エリア 3 (高コスト) の帯。NavModifierDriver (GameLogic) が tick で動かし・歩行不可にし・戻す。
+    // 左の Agent 群の進路にかぶせ、迂回させる。Obstacle と同様コライダーを持たないのでベイクには入らない
+    {
+        GameObject zone = s.CreateGameObject("NavModifier");
+        zone.SetLocalPosition(-1.0f, 1.0f, 2.0f);
+        auto* mod = zone.AddComponent<NavMeshModifierComponent>();
+        mod->size = { 3.0f, 2.0f, 6.0f };
+        mod->area = 3;
+        surfaceGo.GetComponent<NavMeshSurfaceComponent>()->areaCosts[3] = 8.0f;
+        const ComponentTypeId modifierDriver = ComponentRegistry::Get().FindByName("NavModifierDriver");
+        if (modifierDriver != kInvalidComponentType) {
+            w.AddComponentRaw(zone.Id(), modifierDriver);
+        }
+    }
+
     // ベイクして登録する。入力収集はワールド行列を読むので Transform を一度確定させる
     w.ApplyStructuralChanges();
     TransformSystem transforms;

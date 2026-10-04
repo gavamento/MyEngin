@@ -1,8 +1,8 @@
 # sub-06: NavMeshModifier とエリアコスト
 
 - 依存: sub-03 (sub-05 の後に直列で回す。TileCache の更新経路を共有するため)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (コミット待ち)
+- 往復: 1
 
 ## やること
 spec 2. #10、4.1 (Modifier、エリア)。
@@ -30,4 +30,16 @@ spec 2. #10、4.1 (Modifier、エリア)。
 
 ## 実装メモ (coder が追記)
 
+### round 1 (SELF_EVAL の写し)
+- 方式: Modifier は**ベイクに焼き込まず**、Obstacle と同じく層 (ベイク結果) の上のオーバーレイにした。DetourTileCache に patch 3 (`PATCHES.md`)
+  を当て、障害物に「切り抜きではなくエリアの塗り替え (paint)」を持たせた。`NavSystem::SyncObstacles` が毎 tick、Obstacle と Modifier を
+  store の一覧 (キー順、Modifier は最上位ビット付きキー) と突き合わせ、撤去 -> 追加 -> Commit を 1 回で確定する。
+- エリア: poly flag は 1 << area (エリア 1 だけ 0)、層では エリア 0 <-> 63 / 1 <-> 0 (通行不可) / k <-> k。Agent は areaMask ごとに dtCrowd の
+  filter を割り当て (昇順、16 種まで)、コストは Surface.areaCosts を毎 tick 全 filter へ写す。
+- 画像: `plans\m82-navmesh\screenshots\sub-06_*.png` (Inspector の Modifier 節 / Surface のエリアコスト表 / Agent の歩けるエリア / Runtime の nav)。
+- 再焼きしたもの: NavAgentSelfTest の庭ハッシュ 5D708FD4EEC92492 (Agent に areaMask が増えて hash 対象が変わった)、NavDeterminism の
+  capture.A.store 7ACDCC5314884736 / capture.B.store A0A4001609A5BCE7 (store の状態書式 v3 = 障害物に area 1 byte)。mesh / query / crowd の
+  ハッシュは不変 = patch 3 は切り抜きの結果を変えていない。いずれも Debug = Release 一致。golden は nav.png だけ (hand capture)。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-10-04)。ベイク時の焼き込みをやめたこと (spec 4.1)、パッチ 3、OPTIMIZE_VIS を外すこと、エリア 1 の範囲 = NavMesh の外、`affects` の削除を承認。should: Inspector のエリアコストのドラッグ 1 回 = 1 Undo と、ProjectSettings のエリア名の画面は手で操作していない → reviewer が観察する。

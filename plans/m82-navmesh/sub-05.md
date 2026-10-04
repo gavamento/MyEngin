@@ -1,7 +1,7 @@
 # sub-05: NavMeshObstacle (TileCache の切り抜き)
 
 - 依存: sub-03 (sub-04 の後に直列で回す。どちらも `--nav-demo` と golden `nav` を触るため)
-- 状態: OK (コミット待ち)
+- 状態: OK (commit a7de835)
 - 往復: 2
 
 ## やること

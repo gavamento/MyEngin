@@ -158,6 +158,10 @@ void AddRect(std::vector<DebugLineCmd>& out, const float* bmin, const float* bma
 void NavDebugView::ScanKeys(World& world, const NavSystem* nav)
 {
     scanKeys_.clear();
+    // 編集中の表示にも NavMeshModifier のエリアを映す。Modifier が無いシーンでは空のまま (確保しない)
+    std::vector<NavObstacleSpec> modifiers;
+    std::vector<NavObstacleSpec> modifiersHere;
+    NavCollectModifierSpecs(world, modifiers);
     const ComponentTypeId req[] = { NavMeshSurfaceComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
         const int si = arch.FindTypeIndex(NavMeshSurfaceComponent::sTypeId);
@@ -179,6 +183,18 @@ void NavDebugView::ScanKeys(World& world, const NavSystem* nav)
                         break;
                     }
                 }
+            }
+            if (key.live == nullptr && !modifiers.empty()) {
+                NavFilterSpecsToSurface(world, e, modifiers, modifiersHere);
+                uint64_t h = kNavFnvSeed;
+                for (const NavObstacleSpec& spec : modifiersHere) {
+                    h = NavFnv1a(h, &spec.key, sizeof(spec.key));
+                    h = NavFnv1a(h, &spec.type, sizeof(spec.type));
+                    h = NavFnv1a(h, spec.v, sizeof(spec.v));
+                    h = NavFnv1a(h, &spec.yaw, sizeof(spec.yaw));
+                    h = NavFnv1a(h, &spec.area, sizeof(spec.area));
+                }
+                key.modifierHash = modifiersHere.empty() ? 0 : h;
             }
             key.flags = static_cast<uint8_t>((surface->drawNavMesh ? kOutline : 0)
                                              | (surface->drawNavMeshFill ? kFill : 0)
@@ -207,7 +223,8 @@ void NavDebugView::BuildFromMesh(Geometry& g, const dtNavMesh& mesh)
 NavDebugView::Geometry& NavDebugView::GeometryFor(World& world, const Key& key)
 {
     for (Geometry& g : geometries_) {
-        if (g.entity == key.entity && g.assetGuid == key.assetGuid && g.generation == key.generation) {
+        if (g.entity == key.entity && g.assetGuid == key.assetGuid && g.generation == key.generation
+            && g.modifierHash == key.modifierHash) {
             return g;
         }
     }
@@ -215,6 +232,7 @@ NavDebugView::Geometry& NavDebugView::GeometryFor(World& world, const Key& key)
     g.entity = key.entity;
     g.assetGuid = key.assetGuid;
     g.generation = key.generation;
+    g.modifierHash = key.modifierHash;
     if (key.live != nullptr) {
         ++stats_.liveCount;
         BuildFromMesh(g, *static_cast<const NavTileStore*>(key.live)->NavMesh());
@@ -230,6 +248,19 @@ NavDebugView::Geometry& NavDebugView::GeometryFor(World& world, const Key& key)
                      static_cast<unsigned long long>(key.assetGuid));
         return g;
     }
+    if (key.modifierHash != 0) {
+        // 編集中: .mnav に NavMeshModifier を重ねた姿を見せる (Play 中の NavSystem と同じ関数・同じ塗り方)
+        std::vector<NavObstacleSpec> modifiers;
+        std::vector<NavObstacleSpec> modifiersHere;
+        NavCollectModifierSpecs(world, modifiers);
+        NavFilterSpecsToSurface(world, key.entity, modifiers, modifiersHere);
+        int failures = 0;
+        NavApplyModifiers(*store, modifiersHere, failures);
+        if (failures > 0) {
+            MYE_LOG_WARN("[nav] surface '%s': %d modifier(s) could not be applied to the displayed navigation mesh", name,
+                         failures);
+        }
+    }
     BuildFromMesh(g, *store->NavMesh());
     return g;
 }
@@ -243,7 +274,7 @@ void NavDebugView::Rebuild(World& world)
                                      [this](const Geometry& g) {
                                          return std::none_of(scanKeys_.begin(), scanKeys_.end(), [&g](const Key& k) {
                                              return k.entity == g.entity && k.assetGuid == g.assetGuid
-                                                 && k.generation == g.generation;
+                                                 && k.generation == g.generation && k.modifierHash == g.modifierHash;
                                          });
                                      }),
                       geometries_.end());

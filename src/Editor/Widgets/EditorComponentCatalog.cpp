@@ -100,6 +100,7 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "NavMeshSurface", { ICON_FA_ROUTE, "Navigation", "ナビメッシュサーフェス" } },
         { "NavMeshAgent", { ICON_FA_PERSON_WALKING, "Navigation", "ナビメッシュエージェント" } }, // M82c
         { "NavMeshObstacle", { ICON_FA_BAN, "Navigation", "ナビメッシュ障害物" } }, // M82f
+        { "NavMeshModifier", { ICON_FA_PAINT_ROLLER, "Navigation", "ナビメッシュモディファイア" } }, // M82g
     };
     return t;
 }

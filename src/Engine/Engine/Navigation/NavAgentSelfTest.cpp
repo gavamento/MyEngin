@@ -39,7 +39,7 @@ constexpr uint64_t kYardGuid = 0x4E41564147454E31ull;  // メモリ登録の GUI
 constexpr uint64_t kOpenGuid = 0x4E41564147454E32ull;
 constexpr uint64_t kFieldGuid = 0x4E41564147454E33ull;
 // Debug で採取し、Release で同じ値になることを確認して焼く (docs\adr\ADR-023-navmesh.md)
-constexpr uint64_t kExpectedYardHash = 0xE1F88B1FFFF5635Cull;
+constexpr uint64_t kExpectedYardHash = 0x5D708FD4EEC92492ull;
 
 struct Checker {
     int failCount = 0;
@@ -292,6 +292,74 @@ struct ObstacleScript {
             break;
         case 290:
             world.GetComponent<NavMeshObstacleComponent>(cylinder)->carve = true;
+            break;
+        default:
+            break;
+        }
+    }
+};
+
+// 箱の Modifier。中心 (x, y, z)、寸法 (sx, sy, sz)、エリア
+EntityID AddModifier(Scene& scene, float x, float y, float z, float sx, float sy, float sz, int area)
+{
+    GameObject go = scene.CreateGameObjectTracked("Modifier");
+    go.SetLocalPosition(x, y, z);
+    auto* modifier = go.AddComponent<NavMeshModifierComponent>();
+    modifier->size = { sx, sy, sz };
+    modifier->area = area;
+    return go.Id();
+}
+
+// 点の足元のポリゴンのエリア。ナビメッシュが無い / 点がナビメッシュの外なら -1
+int AreaAt(NavSystem& nav, float x, float y, float z)
+{
+    if (nav.Surfaces().empty() || nav.Surfaces()[0].state != NavSurfaceState::Loaded) {
+        return -1;
+    }
+    const float center[3] = { x, y, z };
+    const float extents[3] = { 0.3f, 1.0f, 0.3f };
+    dtQueryFilter filter;
+    filter.setIncludeFlags(kNavFlagAllAreas);
+    dtPolyRef ref = 0;
+    float nearest[3] = {};
+    nav.Surfaces()[0].query->findNearestPoly(center, extents, &filter, &ref, nearest);
+    const float dx = nearest[0] - x;
+    const float dz = nearest[2] - z;
+    unsigned char area = 0;
+    if (ref == 0 || dx * dx + dz * dz >= kOnMeshTolerance * kOnMeshTolerance
+        || dtStatusFailed(nav.Surfaces()[0].store->NavMesh()->getPolyArea(ref, &area))) {
+        return -1;
+    }
+    return area;
+}
+
+// Modifier の編集を tick で決める台本 (連続実行と復元後の実行が同じ操作を同じ tick に受けるように)。
+// a と b は重なる 2 つの箱で、最初はどちらもエリア 0 (何も変えない)
+struct ModifierScript {
+    EntityID a = kNullEntity;
+    EntityID b = kNullEntity;
+    void Apply(Sim& sim, uint64_t tick)
+    {
+        World& world = sim.GetWorld();
+        switch (tick) {
+        case 30:
+            world.GetComponent<NavMeshModifierComponent>(b)->area = 4; // 後から作った b を先に塗り替える
+            break;
+        case 80:
+            world.GetComponent<NavMeshModifierComponent>(a)->area = 3;
+            break;
+        case 130:
+            world.GetComponent<LocalTransform>(b)->position.x += 6.0f; // 動かす = 外して付け直す
+            break;
+        case 180:
+            world.GetComponent<NavMeshModifierComponent>(a)->area = 1; // 歩行不可
+            break;
+        case 230:
+            world.DestroyEntity(b);
+            world.ApplyStructuralChanges();
+            break;
+        case 280:
+            world.GetComponent<NavMeshModifierComponent>(a)->area = 5;
             break;
         default:
             break;
@@ -1117,6 +1185,283 @@ bool RunNavAgentSelfTest()
             ck.Check(agent->status == navagentstatus::kStuck && !agent->pathPartial && agent->remainingDistance > 5.0f,
                      "完全な経路の途中を塞がれて押し合う Agent は Stuck (部分経路ではない、終点から遠い)");
         }
+    }
+
+    // ---- 10. Modifier: エリアのコストと areaMask で経路が変わる。実行時に足す・消すと同じ tick で塗り直される ----
+    {
+        // 床の上を (-8, 0, 0) から (8, 0, 0) へ歩く。x = 0 の帯 (幅 2 m、z = -4..4) に Modifier。
+        // mode 0 = Modifier なし / 1 = エリア 3 のコスト 20 / 2 = コスト 1 (突っ切る) / 3 = コスト 1 だが areaMask がエリア 3 を除く /
+        // 4 = コスト 20 で tick 20 に Modifier を消す / 5 = エリア 1 (歩行不可)
+        float crossingZ[6] = {};
+        for (int mode = 0; mode < 6; ++mode) {
+            Scene scene;
+            AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+            const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+            const float dest[3] = { 8.0f, 0.0f, 0.0f };
+            const EntityID walker = AddAgent(scene, "Walker", -8.0f, 0.0f, 0.0f, dest, true);
+            EntityID zone = kNullEntity;
+            if (mode != 0) {
+                zone = AddModifier(scene, 0.0f, 1.0f, 0.0f, 2.0f, 2.0f, 8.0f, mode == 5 ? 1 : 3);
+            }
+            World& world = scene.GetWorld();
+            world.GetComponent<NavMeshSurfaceComponent>(surface)->areaCosts[3] = (mode == 1 || mode == 4) ? 20.0f : 1.0f;
+            if (mode == 3) {
+                world.GetComponent<NavMeshAgentComponent>(walker)->areaMask = 0xFFFFFFFFu & ~(1u << 3);
+            }
+            ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(Modifier) 開けた床をベイクできる");
+            Sim sim(scene);
+            bool crossed = false;
+            for (int i = 0; i < 900; ++i) {
+                if (i == 20 && mode == 4) {
+                    world.DestroyEntity(zone);
+                    world.ApplyStructuralChanges();
+                }
+                sim.Step();
+                if (i == 0 && mode != 0 && mode != 5) {
+                    ck.Check(AreaAt(sim.nav, 0.0f, 0.0f, 0.0f) == 3 && AreaAt(sim.nav, -4.0f, 0.0f, 0.0f) == 0,
+                             "Modifier のある最初の tick のうちに、箱の中だけがエリア 3 になる");
+                }
+                if (i == 0 && mode == 5) {
+                    ck.Check(!HasPolyAt(sim.nav, 0.0f, 0.0f, 0.0f) && HasPolyAt(sim.nav, -4.0f, 0.0f, 0.0f),
+                             "エリア 1 (歩行不可) の Modifier の中にはポリゴンが無い (外には残る)");
+                }
+                if (i == 20 && mode == 4) {
+                    ck.Check(AreaAt(sim.nav, 0.0f, 0.0f, 0.0f) == 0 && sim.nav.Surfaces()[0].store->ObstacleCount() == 0,
+                             "Modifier を消した tick のうちにエリアが元に戻る");
+                }
+                const auto* lt = world.GetComponent<LocalTransform>(walker);
+                if (!crossed && lt->position.x >= 0.0f) {
+                    crossed = true;
+                    crossingZ[mode] = std::fabs(lt->position.z);
+                }
+            }
+            const auto* agent = world.GetComponent<NavMeshAgentComponent>(walker);
+            const auto* lt = world.GetComponent<LocalTransform>(walker);
+            MYE_LOG_INFO("  [modifier] mode %d: crossed x=0 at |z| %.2f; final status %d at (%.2f, %.2f)", mode, crossingZ[mode],
+                         agent->status, lt->position.x, lt->position.z);
+            ck.Check(agent->status == navagentstatus::kArrived && !agent->pathPartial && lt->position.x > 7.0f,
+                     "(Modifier) 目的地へ着く");
+        }
+        ck.Check(crossingZ[0] < 1.0f, "Modifier が無ければ真っすぐ x = 0 を横切る (|z| < 1)");
+        ck.Check(crossingZ[1] > 3.5f, "コスト 20 の Modifier の帯は避けて端を回り込む (|z| > 3.5)");
+        ck.Check(crossingZ[2] < 1.5f, "コストを 1 に下げると帯を突っ切る (|z| < 1.5)");
+        ck.Check(crossingZ[3] > 3.5f, "コスト 1 でも areaMask がエリア 3 を除けば帯を通らず回り込む (|z| > 3.5)");
+        ck.Check(crossingZ[4] < 2.0f, "Modifier を消すと元の経路 (真っすぐ) へ戻る (|z| < 2)");
+        ck.Check(crossingZ[5] > 3.5f, "エリア 1 (歩行不可) の帯は通れず回り込む (|z| > 3.5)");
+    }
+
+    // ---- 10b. 重なる Modifier は entity キーの大きい方が勝つ (store へ入れた順に依らない) / 動かす・消すで塗り直される ----
+    {
+        Scene scene;
+        AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+        const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+        const EntityID a = AddModifier(scene, 0.0f, 1.0f, 0.0f, 4.0f, 2.0f, 4.0f, 0); // x = -2..2
+        const EntityID b = AddModifier(scene, 1.0f, 1.0f, 0.0f, 4.0f, 2.0f, 4.0f, 0); // x = -1..3 (キーが大きい)
+        ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(重なり) 開けた床をベイクできる");
+        Sim sim(scene);
+        World& world = sim.GetWorld();
+        sim.Step();
+        ck.Check(sim.nav.Surfaces()[0].store->ObstacleCount() == 2 && AreaAt(sim.nav, 0.5f, 0.0f, 0.0f) == 0,
+                 "(重なり) エリア 0 の Modifier は何も変えない (どちらも TileCache には入る)");
+        world.GetComponent<NavMeshModifierComponent>(b)->area = 4; // b を先に store へ入れ直す
+        sim.Step();
+        world.GetComponent<NavMeshModifierComponent>(a)->area = 3; // a は後
+        sim.Step();
+        ck.Check(AreaAt(sim.nav, -1.5f, 0.0f, 0.0f) == 3 && AreaAt(sim.nav, 0.5f, 0.0f, 0.0f) == 4
+                     && AreaAt(sim.nav, 2.5f, 0.0f, 0.0f) == 4,
+                 "(重なり) 重なった所は後から store へ入った a ではなくキーの大きい b (エリア 4) になる");
+        world.GetComponent<LocalTransform>(b)->position.x += 10.0f;
+        sim.Step();
+        ck.Check(AreaAt(sim.nav, 0.5f, 0.0f, 0.0f) == 3 && AreaAt(sim.nav, 2.5f, 0.0f, 0.0f) == 0
+                     && AreaAt(sim.nav, 11.5f, 0.0f, 0.0f) == 4,
+                 "(重なり) b を動かした tick のうちに、元の場所は a のエリア 3 / b だけだった所は 0 に戻り、移動先がエリア 4 になる");
+        world.DestroyEntity(a);
+        world.ApplyStructuralChanges();
+        sim.Step();
+        ck.Check(AreaAt(sim.nav, 0.5f, 0.0f, 0.0f) == 0 && sim.nav.Surfaces()[0].store->ObstacleCount() == 1,
+                 "(重なり) a を消した tick のうちに 0 に戻る");
+        // Surface の範囲外の Modifier は TileCache に入れない
+        AddModifier(scene, 100.0f, 1.0f, 0.0f, 2.0f, 2.0f, 2.0f, 3);
+        world.ApplyStructuralChanges();
+        sim.Step();
+        ck.Check(sim.nav.Surfaces()[0].store->ObstacleCount() == 1, "(重なり) Surface の範囲外の Modifier は TileCache に入らない");
+    }
+
+    // ---- 10c. 同時に違う areaMask の Agent が居ても、それぞれの mask で経路を取る ----
+    {
+        Scene scene;
+        AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+        const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+        AddModifier(scene, 0.0f, 1.0f, 0.0f, 2.0f, 2.0f, 8.0f, 3);
+        const float destFree[3] = { 8.0f, 0.0f, -2.0f };
+        const float destShy[3] = { 8.0f, 0.0f, 2.0f };
+        const float destOutside[3] = { 8.0f, 0.0f, 7.0f };
+        const EntityID free = AddAgent(scene, "Free", -8.0f, 0.0f, -2.0f, destFree, true);
+        const EntityID shy = AddAgent(scene, "Shy", -8.0f, 0.0f, 2.0f, destShy, true);
+        const EntityID shy2 = AddAgent(scene, "Shy2", -8.0f, 0.0f, 7.0f, destOutside, true);
+        World& world = scene.GetWorld();
+        world.GetComponent<NavMeshSurfaceComponent>(surface)->areaCosts[3] = 1.0f;
+        world.GetComponent<NavMeshAgentComponent>(shy)->areaMask = 0xFFFFFFFFu & ~(1u << 3);
+        world.GetComponent<NavMeshAgentComponent>(shy2)->areaMask = 0xFFFFu & ~(1u << 3); // 上位ビットが違っても同じ集合 (filter は 1 つ)
+        ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(mask) 開けた床をベイクできる");
+        Sim sim(scene);
+        float crossFree = -1.0f;
+        float crossShy = -1.0f;
+        for (int i = 0; i < 900; ++i) {
+            sim.Step();
+            const auto* f = world.GetComponent<LocalTransform>(free);
+            const auto* s = world.GetComponent<LocalTransform>(shy);
+            if (crossFree < 0.0f && f->position.x >= 0.0f) {
+                crossFree = std::fabs(f->position.z);
+            }
+            if (crossShy < 0.0f && s->position.x >= 0.0f) {
+                crossShy = std::fabs(s->position.z);
+            }
+        }
+        MYE_LOG_INFO("  [mask] Free crossed x=0 at |z| %.2f, Shy at |z| %.2f", crossFree, crossShy);
+        ck.Check(world.GetComponent<NavMeshAgentComponent>(free)->status == navagentstatus::kArrived
+                     && world.GetComponent<NavMeshAgentComponent>(shy)->status == navagentstatus::kArrived
+                     && world.GetComponent<NavMeshAgentComponent>(shy2)->status == navagentstatus::kArrived,
+                 "(mask) mask の違う Agent がどれも着く");
+        ck.Check(crossShy > 3.5f, "(mask) エリア 3 を除いた Agent は帯を避ける");
+        ck.Check(crossFree < 3.0f, "(mask) 同じ Surface の全エリア可の Agent は帯を突っ切る (filter を使い回していない)");
+    }
+
+    // ---- 10d. Modifier の SimSnapshot: 追加・移動・歩行不可・消去の途中で撮り、空の NavSystem / 元の NavSystem へ復元して連続実行と一致 ----
+    {
+        Scene scene;
+        AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+        const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+        ModifierScript script;
+        script.a = AddModifier(scene, 0.0f, 1.0f, 0.0f, 4.0f, 2.0f, 8.0f, 0);
+        script.b = AddModifier(scene, 1.0f, 1.0f, 0.0f, 4.0f, 2.0f, 8.0f, 0);
+        const float dests[3][3] = { { 8.0f, 0.0f, 0.0f }, { 8.0f, 0.0f, 4.0f }, { 8.0f, 0.0f, -4.0f } };
+        for (int i = 0; i < 3; ++i) {
+            const EntityID walker = AddAgent(scene, "Walker", -9.0f, 0.0f, -4.0f + 4.0f * static_cast<float>(i), dests[i], true, 1 + i);
+            if (i == 1) {
+                scene.GetWorld().GetComponent<NavMeshAgentComponent>(walker)->areaMask = 0xFFFFFFFFu & ~(1u << 3);
+            }
+        }
+        scene.GetWorld().GetComponent<NavMeshSurfaceComponent>(surface)->areaCosts[3] = 6.0f;
+        scene.GetWorld().GetComponent<NavMeshSurfaceComponent>(surface)->areaCosts[4] = 6.0f;
+        scene.GetWorld().GetComponent<NavMeshSurfaceComponent>(surface)->areaCosts[5] = 3.0f;
+        ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(Modifier 復元) 開けた床をベイクできる");
+
+        Sim sim(scene);
+        SimRefs refs;
+        refs.scene = &scene;
+        refs.nav = &sim.nav;
+        uint64_t tickRef = 0;
+        refs.tickIndex = &tickRef;
+
+        constexpr int kWarm = 100; // b が 4 (30)、a が 3 (80) になった後、b の移動 (130) の前
+        constexpr int kAhead = 280;
+        for (int i = 0; i < kWarm; ++i) {
+            script.Apply(sim, sim.tick);
+            sim.Step();
+        }
+        tickRef = sim.tick;
+        ck.Check(sim.nav.Surfaces()[0].store->ObstacleCount() == 2 && AreaAt(sim.nav, 0.5f, 0.0f, 0.0f) == 4,
+                 "(Modifier 復元) 2 つの Modifier が TileCache に入り、重なりは b のエリア 4");
+        std::vector<std::byte> blob;
+        ck.Check(CaptureSimSnapshot(refs, blob), "(Modifier 復元) Modifier がある状態で撮影できる");
+
+        std::vector<uint64_t> continuous;
+        std::vector<int> continuousCounts;
+        for (int i = 0; i < kAhead; ++i) {
+            script.Apply(sim, sim.tick);
+            sim.Step();
+            continuous.push_back(WorldHashOf(sim, &sim.nav));
+            continuousCounts.push_back(sim.nav.Surfaces()[0].store->ObstacleCount());
+        }
+        ck.Check(continuousCounts.back() == 1 && AreaAt(sim.nav, 0.0f, 0.0f, 0.0f) == 5,
+                 "(Modifier 復元) 連続実行の終わりでは a だけが残り、エリア 5 になっている");
+
+        Sim restored(scene);
+        restored.tick = kWarm;
+        SimRefs refs2 = refs;
+        refs2.nav = &restored.nav;
+        uint64_t tick2 = 0;
+        refs2.tickIndex = &tick2;
+        ck.Check(RestoreSimSnapshot(refs2, blob.data(), blob.size()), "(Modifier 復元) 空の NavSystem へ復元できる (戻り値 true)");
+        const NavTileStore& restoredStore = *restored.nav.Surfaces()[0].store;
+        ck.Check(restoredStore.ObstacleCount() == 2 && restoredStore.ObstacleAt(0).key == NavModifierKey(script.a)
+                     && restoredStore.ObstacleAt(1).key == NavModifierKey(script.b) && AreaAt(restored.nav, 0.5f, 0.0f, 0.0f) == 4,
+                 "(Modifier 復元) 復元直後の store の Modifier のキーとエリアが元と同じ");
+        std::vector<std::byte> again;
+        CaptureSimSnapshot(refs2, again);
+        ck.Check(again == blob, "(Modifier 復元) 復元直後の再撮影が元の blob とバイト一致");
+        bool same = true;
+        bool countsSame = true;
+        for (int i = 0; i < kAhead; ++i) {
+            script.Apply(restored, restored.tick);
+            restored.Step();
+            if (i == 0) {
+                ck.Check(restored.nav.Surfaces()[0].store->ObstacleCount() == 2,
+                         "(Modifier 復元) 復元直後の Update が Modifier を二重に足さない");
+            }
+            same = same && WorldHashOf(restored, &restored.nav) == continuous[static_cast<size_t>(i)];
+            countsSame = countsSame && restored.nav.Surfaces()[0].store->ObstacleCount() == continuousCounts[static_cast<size_t>(i)];
+        }
+        ck.Check(same, "(Modifier 復元) 空の NavSystem から 280 tick (移動・歩行不可・消去を含む) の毎 tick ハッシュが連続実行と一致");
+        ck.Check(countsSame, "(Modifier 復元) 毎 tick の Modifier 数が連続実行と同じ (消し忘れ・二重追加なし)");
+
+        ck.Check(RestoreSimSnapshot(refs, blob.data(), blob.size()), "(Modifier 復元) Modifier が変わった後の元の NavSystem へ巻き戻せる");
+        sim.tick = kWarm;
+        bool replay = true;
+        for (int i = 0; i < kAhead; ++i) {
+            script.Apply(sim, sim.tick);
+            sim.Step();
+            replay = replay && WorldHashOf(sim, &sim.nav) == continuous[static_cast<size_t>(i)];
+        }
+        ck.Check(replay, "(Modifier 復元) 元の NavSystem で巻き戻して再実行しても連続実行と一致する");
+
+        bool stable = true;
+        sim.tick = kWarm;
+        RestoreSimSnapshot(refs, blob.data(), blob.size());
+        for (int i = 0; i < kAhead && stable; ++i) {
+            script.Apply(sim, sim.tick);
+            sim.Step();
+            std::vector<std::byte> b1;
+            std::vector<std::byte> b2;
+            CaptureSimSnapshot(refs, b1);
+            RestoreSimSnapshot(refs, b1.data(), b1.size());
+            CaptureSimSnapshot(refs, b2);
+            stable = b1 == b2;
+        }
+        ck.Check(stable, "(Modifier 復元) Modifier の編集の間も tick ごとの 撮影 -> 復元 -> 再撮影 が一致し続ける");
+    }
+
+    // ---- 10e. 編集中の表示 (NavDebugView、NavSystem を渡さない): .mnav に Modifier を重ねた姿を、エリア色で映す ----
+    {
+        Scene scene;
+        AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+        const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+        ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(Modifier 表示) 開けた床をベイクできる");
+        World& world = scene.GetWorld();
+        NavDebugView view;
+        view.Refresh(world, nullptr);
+        const int flatTriangles = view.GetStats().lastTriangles;
+        const EntityID zone = AddModifier(scene, 0.0f, 1.0f, 0.0f, 4.0f, 2.0f, 4.0f, 3);
+        world.ApplyStructuralChanges();
+        view.Refresh(world, nullptr);
+        bool hasAreaColor = false;
+        for (const DebugFillVertex& v : view.FillVertices()) {
+            hasAreaColor = hasAreaColor || (std::fabs(v.r - 120.0f / 255.0f) < 0.02f && std::fabs(v.g - 220.0f / 255.0f) < 0.02f
+                                            && std::fabs(v.b - 70.0f / 255.0f) < 0.02f);
+        }
+        ck.Check(view.GetStats().rebuildCount == 2 && view.GetStats().lastTriangles != flatTriangles && hasAreaColor,
+                 "(Modifier 表示) 編集中も Modifier の範囲がエリア 3 の色で映る (作り直しは Modifier を足したフレームだけ)");
+        view.Refresh(world, nullptr);
+        ck.Check(view.GetStats().rebuildCount == 2, "(Modifier 表示) 変わらなければ作り直さない");
+        world.GetComponent<LocalTransform>(zone)->position.x += 3.0f;
+        view.Refresh(world, nullptr);
+        ck.Check(view.GetStats().rebuildCount == 3, "(Modifier 表示) Modifier を動かすと作り直す");
+        world.DestroyEntity(zone);
+        world.ApplyStructuralChanges();
+        view.Refresh(world, nullptr);
+        ck.Check(view.GetStats().rebuildCount == 4 && view.GetStats().lastTriangles == flatTriangles,
+                 "(Modifier 表示) Modifier を消すと元の形に戻る");
     }
 
     ck.Check(kExpectedYardHash == 0 || yardHashAtEnd == kExpectedYardHash,

@@ -1444,6 +1444,8 @@ void RegisterBuiltinComponents()
         MYE_JP("状態", MYE_FIELD_FLAGS(NavMeshAgentComponent, status, Int32, kFieldReadOnly)),
         MYE_JP("残り距離", MYE_FIELD_FLAGS(NavMeshAgentComponent, remainingDistance, Float, kFieldReadOnly)),
         MYE_JP("部分経路", MYE_FIELD_FLAGS(NavMeshAgentComponent, pathPartial, Bool, kFieldReadOnly)),
+        MYE_JP("歩けるエリア", MYE_FIELD_TIP(NavMeshAgentComponent, areaMask, UInt32,
+                                             "bit i = may walk area i; the cost of each area is set on the surface")),
     });
 
     // M82f: NavMesh Obstacle (TypeId=73、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変
@@ -1455,6 +1457,13 @@ void RegisterBuiltinComponents()
         MYE_JP("高さ (Cylinder)", MYE_FIELD_RANGE(NavMeshObstacleComponent, height, Float, 0.01f, 50.0f)),
         MYE_JP("ナビメッシュを切り抜く", MYE_FIELD_TIP(NavMeshObstacleComponent, carve, Bool,
                                                        "cut the navigation mesh; off = the obstacle does nothing")),
+    });
+
+    // M82g: NavMesh Modifier (TypeId=74、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変
+    RegisterComponent<NavMeshModifierComponent>("NavMeshModifier", {
+        MYE_JP("中心", MYE_FIELD(NavMeshModifierComponent, center, Float3)),
+        MYE_JP("大きさ", MYE_FIELD(NavMeshModifierComponent, size, Float3)),
+        MYE_JP("エリア", MYE_FIELD_RANGE(NavMeshModifierComponent, area, Int32, 0.0f, 15.0f)),
     });
 }
 

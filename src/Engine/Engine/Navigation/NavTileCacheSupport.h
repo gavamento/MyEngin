@@ -22,7 +22,18 @@ namespace mye {
 // NavMeshProcess が 63 -> kNavAreaWalkable へ写す。
 constexpr uint8_t kNavAreaWalkable = 0;
 constexpr uint8_t kNavAreaNotWalkable = 1;
+constexpr int kNavAreaCountMax = 16;
+// ポリゴンのフラグはエリア i が 1 << i (歩行不可のエリア 1 だけ 0 = どの filter にも通らない)。
+// エリア 0 のフラグが 0x01 なので、エリア 0 だけのナビメッシュは従来の kNavFlagWalk と同じ
 constexpr uint16_t kNavFlagWalk = 0x01;
+constexpr uint16_t kNavFlagAllAreas = 0xFFFF;
+
+// NavObstacleSpec.area の「塗り替えではなく切り抜き」を表す値
+constexpr uint8_t kNavNoPaint = 0xFF;
+
+// エリア ID (0..15) <-> TileCache の層のエリア値。層では 0 = 通行不可、63 = 既定の歩行可なので
+// エリア 0 <-> 63、エリア 1 (歩行不可) <-> 0、エリア k (2..15) <-> k
+uint8_t NavAreaToLayerArea(int area);
 
 constexpr uint64_t kNavFnvSeed = 14695981039346656037ull;
 
@@ -100,11 +111,13 @@ public:
 //   DT_OBSTACLE_BOX          : v = min xyz, max xyz (軸平行)
 //   DT_OBSTACLE_ORIENTED_BOX : v = 中心 xyz, 半寸法 xyz、yaw = y 軸まわりの回転 (ラジアン)
 //   DT_OBSTACLE_CYLINDER     : v = 底面中心 xyz, 半径, 高さ, 未使用
+// area が kNavNoPaint 以外なら切り抜きではなくエリア (0..15) の塗り替え (NavMeshModifier)
 struct NavObstacleSpec {
     uint64_t key = 0;
     uint8_t type = 0;
     float v[6] = {};
     float yaw = 0.0f;
+    uint8_t area = kNavNoPaint;
 };
 
 struct NavTileStoreConfig {
@@ -137,9 +150,11 @@ public:
     bool ReplaceTileLayers(int tx, int ty, const std::vector<std::vector<uint8_t>>& layers);
 
     // 障害物。key は呼び出し側の決定的なキー (エンティティキー)。dtNavMesh への反映は Commit()
-    bool AddBoxObstacle(uint64_t key, const float* bmin, const float* bmax);
-    bool AddOrientedBoxObstacle(uint64_t key, const float* center, const float* halfExtents, float yawRadians);
-    bool AddCylinderObstacle(uint64_t key, const float* pos, float radius, float height);
+    // area が kNavNoPaint 以外なら切り抜かず、範囲のエリアを area にする (key の昇順に塗り、大きい方が勝つ)
+    bool AddBoxObstacle(uint64_t key, const float* bmin, const float* bmax, uint8_t area = kNavNoPaint);
+    bool AddOrientedBoxObstacle(uint64_t key, const float* center, const float* halfExtents, float yawRadians,
+                                uint8_t area = kNavNoPaint);
+    bool AddCylinderObstacle(uint64_t key, const float* pos, float radius, float height, uint8_t area = kNavNoPaint);
     bool RemoveObstacle(uint64_t key);
 
     // tick 境界の同期確定: 要求を全部処理して dtNavMesh を正規化する
