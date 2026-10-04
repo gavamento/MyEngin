@@ -1835,3 +1835,15 @@ MYE_STR(Insp_NavAgentNoSurface, "No NavMeshSurface has this agent type id.",
                                "このエージェント種別の NavMeshSurface がありません")
 MYE_STR(Insp_NavAgentTooBig,   "The agent or its CharacterController is larger than the baked navigation mesh (radius %.2f / height %.2f): it may clip walls.",
                                "エージェントまたは CharacterController がベイクしたナビメッシュより大きい (半径 %.2f / 高さ %.2f) ため、壁に食い込む場合があります")
+MYE_STR(Insp_NavAgentStepLow,  "CharacterController step (stepOffset x scale.y = %.2f m) is below the surface's Max Climb (%.2f m): paths can cross steps this agent cannot climb.",
+                               "CharacterController の登れる段差 (%.2f m) が Surface の登れる段差 (%.2f m) より低いため、登れない段差を越える経路が作られます")
+
+// ---- M82d: NavMesh Surface のセルサイズと実効の坂の上限 ----
+MYE_STR(Insp_NavCellAuto,      "auto",   "自動")
+MYE_STR(Insp_NavCellManual,    "manual", "手動")
+MYE_STR(Insp_NavCellInfo,      "Cell size: %.3f m, height: %.3f m (%s) / effective max slope: %.1f deg",
+                               "セルの大きさ: %.3f m、高さ: %.3f m (%s) / 実効の傾斜上限: %.1f 度")
+MYE_STR(Insp_NavCellAtMinimum, "The cell size hit its minimum (0.05 m), so the effective max slope is below the setting. Raise Max Climb or Agent Radius, or lower Max Slope.",
+                               "セルの大きさが下限 (0.05 m) に当たったため、実効の傾斜上限が設定を下回っています。登れる段差かエージェント半径を上げるか、登れる傾斜を下げてください")
+MYE_STR(Insp_NavSlopeUnreachable, "Max Slope (%.0f deg) is above the effective limit (%.1f deg): steeper slopes are not walkable. Enable Auto Cell Size, raise Max Climb, or shrink the cell size.",
+                               "登れる傾斜 (%.0f 度) が実効の上限 (%.1f 度) を超えています。それより急な坂は歩けません。セルの大きさの自動決定を有効にするか、登れる段差を上げるか、セルを小さくしてください")

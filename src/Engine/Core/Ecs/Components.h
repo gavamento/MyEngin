@@ -761,6 +761,7 @@ struct CharacterControllerComponent {
     DirectX::XMFLOAT3 velocity = { 0.0f, 0.0f, 0.0f };  // y=重力積分状態、x/z=前 tick の実効速度
     float jumpSpeed = 0.0f; // >0 なら次 tick 接地時に vy=jumpSpeed (接地可否に関わらず消費)
     bool isGrounded = false; // 前 tick の接地判定 (読み取り専用)
+    float stepOffset = 0.3f; // 接地中に登る段差の高さ (m)。実効値は x |scale.y| (height と同じ)。0 = 登らない。既定は Unity と同じ
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -1888,11 +1889,11 @@ struct NavMeshSurfaceComponent {
     DirectX::XMFLOAT3 size = { 20.0f, 10.0f, 20.0f };
     float agentRadius = 0.3f;
     float agentHeight = 1.8f;
-    float maxClimb = 0.1f;       // CC が低速 (1.5 m/s) でも越えられる 0.15 m の内側 (NavAgentSelfTest の実測)
-    float maxSlopeDeg = 45.0f;   // ★Recast の ledge 判定は 2 * cellSize * tan(傾斜) > maxClimb の面を捨てるので、実効の上限は maxClimb とセル幅にも縛られる
-    float cellSize = 0.3f;
+    float maxClimb = 0.3f;       // 登れる段差 (m)。CC.stepOffset の既定と揃える。Agent の CC は stepOffset がこれ以上必要
+    float maxSlopeDeg = 45.0f;   // 設定値。実効の上限は atan(maxClimb / (2 * cellSize)) にも縛られる (autoCellSize が揃える)
+    float cellSize = 0.3f;       // autoCellSize が false のときだけ使う
     float cellHeight = 0.1f;
-    int32_t tileSize = 32;       // 1 タイルの一辺 (セル数)
+    int32_t tileSize = 48;       // 1 タイルの一辺 (セル数)。既定のセル 0.15 m で 20 x 20 m が 3 x 3 枚 (旧 32 は 5 x 5 枚で遅く大きい)
     uint32_t collectLayerMask = 0xFFFFFFFFu; // 入力にするコライダーのレイヤー集合
     float areaCosts[kNavAreaCount] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
                                        1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
@@ -1900,6 +1901,7 @@ struct NavMeshSurfaceComponent {
     bool drawNavMesh = true;     // 輪郭と範囲の描画 (kFieldNoHash)
     bool drawTileBounds = false; // タイル境界の描画 (kFieldNoHash)
     bool drawAgentPaths = true;  // この Surface の Agent の経路 (コリドーの角) の描画 (kFieldNoHash、M82c)
+    bool autoCellSize = true;    // true: セルを agentRadius / maxClimb / maxSlopeDeg から決める (NavResolveCellSize)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

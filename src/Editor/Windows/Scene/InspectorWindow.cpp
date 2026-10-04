@@ -1695,6 +1695,19 @@ void InspectorWindow::DrawNavMeshAgentNotes(EngineContext& ctx, const InspectorT
         ImGui::TextColored(themeColor::Warning, Tr(StrId::Insp_NavAgentTooBig), surface->agentRadius,
                            surface->agentHeight);
     }
+    // 経路はあるのに CC が登れない段差 (M82d)
+    const auto* worldMatrix = world.GetComponent<WorldMatrixComponent>(tg.e);
+    float worldScaleY = 1.0f; // 実効の段差 = stepOffset x |scale.y| (PhysicsSystem と同じ)
+    if (worldMatrix != nullptr) {
+        const auto& m = worldMatrix->value;
+        worldScaleY = std::sqrt(m._21 * m._21 + m._22 * m._22 + m._23 * m._23);
+    }
+    if (cc != nullptr && NavAgentStepBelowClimb(*cc, worldScaleY, *surface)) {
+        ImGui::PushTextWrapPos(0.0f); // 長い警告がパネル幅で切れないように折り返す
+        ImGui::TextColored(themeColor::Warning, Tr(StrId::Insp_NavAgentStepLow), cc->stepOffset * worldScaleY,
+                           surface->maxClimb);
+        ImGui::PopTextWrapPos();
+    }
 }
 
 // M82b: NavMeshSurface 節の末尾。ベイクの確定 (メインスレッド限定の .mnav 保存・AssetDatabase 登録・Undo) は
@@ -1734,6 +1747,21 @@ void InspectorWindow::DrawNavMeshSurfaceNotes(EngineContext& ctx, Selection& sel
     }
 
     ImGui::Separator();
+    // 実際に使うセルの大きさと実効の傾斜上限 (M82d)
+    {
+        const NavCellSize cellSize = NavResolveCellSize(*comp);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled(Tr(StrId::Insp_NavCellInfo), cellSize.cellSize, cellSize.cellHeight,
+                            Tr(comp->autoCellSize ? StrId::Insp_NavCellAuto : StrId::Insp_NavCellManual),
+                            NavEffectiveSlopeLimitDeg(*comp, cellSize.cellSize));
+        if (cellSize.clampedToMinimum) {
+            ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_NavCellAtMinimum));
+        } else if (NavSurfaceSlopeUnreachable(*comp)) {
+            ImGui::TextColored(themeColor::Warning, Tr(StrId::Insp_NavSlopeUnreachable), comp->maxSlopeDeg,
+                               NavEffectiveSlopeLimitDeg(*comp, cellSize.cellSize));
+        }
+        ImGui::PopTextWrapPos();
+    }
     const NavBakeJobState state = navBakeService_.GetState(tg.fid);
     if (state == NavBakeJobState::Baking) {
         int done = 0;
@@ -1953,7 +1981,13 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
                                 const std::vector<void*>& comps)
 {
     void* p = static_cast<uint8_t*>(comp) + field.offset;
-    const bool readOnly = (field.flags & kFieldReadOnly) != 0;
+    bool readOnly = (field.flags & kFieldReadOnly) != 0;
+    // autoCellSize が true の Surface では cellSize / cellHeight は使われない (M82d): 無効表示にする
+    if (std::strcmp(componentName, "NavMeshSurface") == 0
+        && (std::strcmp(field.name, "cellSize") == 0 || std::strcmp(field.name, "cellHeight") == 0)
+        && static_cast<const NavMeshSurfaceComponent*>(comp)->autoCellSize) {
+        readOnly = true;
+    }
     if (readOnly) {
         ImGui::BeginDisabled();
     }

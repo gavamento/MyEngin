@@ -1,6 +1,8 @@
 #include "Engine/Engine/Replay/SimSnapshotSelfTest.h"
 
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -226,6 +228,19 @@ bool RunSimSnapshotSelfTest()
     std::vector<std::byte> garbage = blob;
     garbage[0] = static_cast<std::byte>(0x00);
     check(!RestoreSimSnapshot(refs, garbage.data(), garbage.size()), "bad magic is rejected");
+
+    // 旧版の blob (コンポーネントのカラム生バイトが今と違う) は読み捨てずに拒否する。
+    // 版は magic の直後の U32 (リトルエンディアン)。黙って復元するとカラム幅がずれて世界が壊れる
+    std::vector<std::byte> oldVersion = blob;
+    const uint32_t previousVersion = kSimSnapshotVersion - 1;
+    std::memcpy(oldVersion.data() + sizeof(uint32_t), &previousVersion, sizeof(previousVersion));
+    check(!RestoreSimSnapshot(refs, oldVersion.data(), oldVersion.size()),
+          "a blob from the previous snapshot version is rejected (logs 'incompatible blob')");
+    uint64_t oldTick = 0;
+    check(!PeekSimSnapshotTick(oldVersion.data(), oldVersion.size(), oldTick),
+          "peeking a blob of the previous snapshot version fails");
+    check(HashWorld(w, {nullptr, &scene.Time(), &scene.Persist()}) == hashBefore,
+          "rejecting an old-version blob leaves the world untouched");
 
     if (failCount == 0) {
         MYE_LOG_INFO("==== SimSnapshot self test: ALL PASS (blob %zu bytes) ====", blob.size());

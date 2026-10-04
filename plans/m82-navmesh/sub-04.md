@@ -1,6 +1,6 @@
 # sub-04: NavMesh の半透明の塗り (エリア色) と golden `nav`
 
-- 依存: sub-03
+- 依存: sub-10 (sub-03 の後に sub-10 を挟む)
 - 状態: 未着手
 - 往復: 0
 
@@ -16,7 +16,7 @@ spec 2. #13 (Q4 のユーザー回答で範囲入り)、4.3 (塗り)、受け入
 3. 表示切り替えに「塗り」を足す (Surface のインスペクタ。既定 on)。Runtime でも出せる。
 3b. (sub-02 VERDICT、spec 2. #18 / 4.3) **編集中 (非 Play) の SceneView にも塗り + 輪郭を出す**。sim の tick (`NavSystem::Update` は stepSim でしか走らない) に頼らない表示専用の読み込み / 線の作り方を足す (例: Editor が持つ表示用の NavSystem か、Engine 側の「.mnav → 描画用の線・三角形」関数を Editor から呼ぶ)。Bake の完了直後に Play せず表示が更新されること。sim 状態・ハッシュには触れない。
 3c. **Surface の範囲箱ギズモ** (spec 4.3、`center` / `size` のローカル AABB を SceneView に描く。既存のギズモ描画箇所に合わせる)。sub-02 で割り当て漏れだった分。
-3d. (sub-03 VERDICT、spec 2. #19) Surface のインスペクタに**実効の最大傾斜** atan(maxClimb / (2·cellSize)) を表示し、`maxSlopeDeg` がそれを超えたら警告 (en / ja)。sub-03 の `Components.h` の maxSlopeDeg コメントと食い違わないこと。Agent の経路線 (毎 tick 作り直す) を golden `nav` に含めるかはこのサブで決めて理由を書く (sub-03 申し送り)。
+3d. Agent の経路線 (毎 tick 作り直す) を golden `nav` に含めるかはこのサブで決めて理由を書く (sub-03 申し送り)。実効の坂上限の表示は sub-10 へ移した。
 4. **golden `nav`**: `--nav-demo` の固定 tick を NavMesh の塗り + 輪郭 + Agent 経路の表示ありで撮る golden を `tests\golden\` に追加し `tools\shot_verify.bat` に載せる。既存 golden の作り方 (撮影構成、許容差、CI の WARP でのスキップ条件 `MYE_SHOT_SKIP_*`) に合わせ、WARP と実 GPU で半透明の混合が割れるなら既存の前例どおり許容差かスキップを決めて理由を書く。
 
 ## やらないこと (このサブでは)

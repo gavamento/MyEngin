@@ -885,6 +885,132 @@ bool RunPhysicsSelfTest()
               "character: blocked by wall at face minus radius");
     }
 
+    // ---- (20b) CharacterController: 段差登り (stepOffset、M82d) ----
+    {
+        // 高さ h の段へ速度 speed で正面から歩く。段の手前 (x=3) を 1 m 越えたら (x>=4) 判定
+        auto climbs = [&](float h, float speed, float stepOffset, float slopeLimitDeg) {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 20.0f, 0.5f, 5.0f);
+            MakeGround(s, "Step", 6.0f, h * 0.5f, 0, 3.0f, h * 0.5f, 5.0f); // 前面 x=3
+            GameObject ch = s.CreateGameObjectTracked("Stepper");
+            ch.SetLocalPosition(0, 0.9f, 0);
+            ch.AddComponent<CharacterControllerComponent>();
+            auto* cc = ch.GetComponent<CharacterControllerComponent>();
+            cc->stepOffset = stepOffset;
+            cc->slopeLimitDeg = slopeLimitDeg;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* lt = ch.GetComponent<LocalTransform>();
+            for (int i = 0; i < 90; ++i) {
+                phys.Update(s.GetWorld(), kDt); // 着地
+            }
+            cc->moveInput.x = speed;
+            for (int i = 0; i < 1200 && lt->position.x < 4.0f; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            return lt->position.x >= 4.0f && lt->position.y > 0.9f + h - 0.05f && cc->isGrounded;
+        };
+        const CharacterControllerComponent defaults;
+        check(std::fabs(defaults.stepOffset - 0.3f) < 1e-6f, "character: stepOffset defaults to 0.3 (Unity)");
+        bool allSpeeds = true;
+        for (const float v : { 0.5f, 1.0f, 1.5f, 3.5f, 6.0f }) {
+            allSpeeds = allSpeeds && climbs(0.3f, v, 0.3f, 45.0f);
+        }
+        check(allSpeeds, "character: climbs a step of exactly stepOffset at 0.5..6 m/s");
+        bool overBlocked = true;
+        for (const float v : { 0.5f, 1.5f, 3.5f }) {
+            overBlocked = overBlocked && !climbs(0.35f, v, 0.3f, 45.0f);
+        }
+        check(overBlocked, "character: does not climb a step 5 cm above stepOffset");
+        check(climbs(0.2f, 1.0f, 0.2f, 45.0f) && !climbs(0.25f, 1.0f, 0.2f, 45.0f),
+              "character: the limit follows stepOffset (0.2 climbs 0.2, not 0.25)");
+        check(!climbs(0.3f, 1.0f, 0.0f, 45.0f), "character: stepOffset 0 never steps (a 0.3 m step blocks)");
+        check(!climbs(0.3f, 1.0f, -1.0f, 45.0f), "character: negative stepOffset behaves as 0");
+        check(climbs(0.3f, 1.0f, 99.0f, 45.0f), "character: a huge stepOffset is clamped to the capsule height (still steps 0.3)");
+        check(!climbs(1.0f, 1.0f, 0.3f, 45.0f), "character: a 1 m wall is not a step");
+    }
+    {
+        // stepOffset は height と同じく Y スケールを掛ける (Unity と同じ): scale.y 2 の CC は stepOffset x 2 まで登る
+        auto climbsScaled = [&](float h, float scaleY) {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 20.0f, 0.5f, 5.0f);
+            MakeGround(s, "Step", 6.0f, h * 0.5f, 0, 3.0f, h * 0.5f, 5.0f);
+            GameObject ch = s.CreateGameObjectTracked("Giant");
+            ch.SetLocalScale(1.0f, scaleY, 1.0f);
+            ch.SetLocalPosition(0, 0.9f * scaleY, 0); // 全高 1.8 x scaleY (半径は scale.x/z で 0.3 のまま)
+            ch.AddComponent<CharacterControllerComponent>();
+            s.GetWorld().ApplyStructuralChanges();
+            auto* cc = ch.GetComponent<CharacterControllerComponent>();
+            auto* lt = ch.GetComponent<LocalTransform>();
+            for (int i = 0; i < 90; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            cc->moveInput.x = 1.0f;
+            for (int i = 0; i < 1200 && lt->position.x < 4.0f; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            return lt->position.x >= 4.0f && lt->position.y > 0.9f * scaleY + h - 0.05f && cc->isGrounded;
+        };
+        check(climbsScaled(0.6f, 2.0f), "character: scale.y 2 climbs a step of stepOffset x 2 (0.6)");
+        check(!climbsScaled(0.65f, 2.0f), "character: scale.y 2 does not climb 5 cm above stepOffset x 2");
+        check(!climbsScaled(0.35f, 1.0f) && climbsScaled(0.15f, 0.5f) && !climbsScaled(0.2f, 0.5f),
+              "character: scale.y 0.5 climbs 0.15 but not 0.2 (the limit shrinks with the scale)");
+    }
+    {
+        // 登る tick の前進は velocity に数えない: どの tick も水平 velocity が moveInput の速さを超えない
+        for (const float speed : { 0.5f, 3.5f }) {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 20.0f, 0.5f, 5.0f);
+            MakeGround(s, "Step", 6.0f, 0.15f, 0, 3.0f, 0.15f, 5.0f);
+            GameObject ch = s.CreateGameObjectTracked("Stepper");
+            ch.SetLocalPosition(0, 0.9f, 0);
+            ch.AddComponent<CharacterControllerComponent>();
+            s.GetWorld().ApplyStructuralChanges();
+            auto* cc = ch.GetComponent<CharacterControllerComponent>();
+            auto* lt = ch.GetComponent<LocalTransform>();
+            for (int i = 0; i < 90; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            cc->moveInput.x = speed;
+            float maxVelocity = 0.0f;
+            float climbMove = 0.0f; // 登った tick の実際の水平移動 (m)
+            for (int i = 0; i < 1200 && lt->position.x < 4.0f; ++i) {
+                const float x0 = lt->position.x;
+                const float y0 = lt->position.y;
+                phys.Update(s.GetWorld(), kDt);
+                maxVelocity = std::max(maxVelocity, std::fabs(cc->velocity.x));
+                if (lt->position.y - y0 > 0.1f) {
+                    climbMove = lt->position.x - x0;
+                }
+            }
+            MYE_LOG_INFO("  [phys] step climb at %.1f m/s: climbing tick moved %.3f m (walk %.4f m), max velocity.x %.2f m/s",
+                         speed, climbMove, speed * kDt, maxVelocity);
+            check(lt->position.x >= 4.0f && maxVelocity <= speed * 1.001f,
+                  "character: the forward move of a step-up tick is not counted in velocity");
+        }
+    }
+    {
+        // 上面が slopeLimit を超える面へは登らない: 60° の坂の下端が高さ 0.25 m に浮いている
+        Scene s;
+        MakeGround(s, "G", 0, -0.5f, 0, 20.0f, 0.5f, 5.0f);
+        MakeStaticBoxRot(s, "Steep", 4.0f, 0.5f, 0, 1.0f, 0.1f, 5.0f, { 0, 0, 0.5f, 0.8660254f });
+        GameObject ch = s.CreateGameObjectTracked("Stepper");
+        ch.SetLocalPosition(0, 0.9f, 0);
+        ch.AddComponent<CharacterControllerComponent>();
+        s.GetWorld().ApplyStructuralChanges();
+        auto* cc = ch.GetComponent<CharacterControllerComponent>();
+        auto* lt = ch.GetComponent<LocalTransform>();
+        for (int i = 0; i < 90; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        cc->moveInput.x = 1.0f;
+        float maxY = lt->position.y;
+        for (int i = 0; i < 300; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+            maxY = std::max(maxY, lt->position.y);
+        }
+        check(maxY < 0.9f + 0.05f, "character: does not step onto a face steeper than slopeLimitDeg");
+    }
+
     // ---- (21) CharacterController: 30° 斜面は登れる / 60° 斜面は y 非増加 ----
     {
         Scene s;

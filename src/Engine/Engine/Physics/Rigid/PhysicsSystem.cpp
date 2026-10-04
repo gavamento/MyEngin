@@ -1233,11 +1233,116 @@ struct CharBody {
     WorldFrame frame;              // 親フレーム (収集時固定)
     float px = 0, py = 0, pz = 0;  // tick 頭のワールド位置
     float radius = 0, halfSeg = 0; // ワールドスケール適用済みのカプセル寸法
+    float stepHeight = 0;          // 登れる段差 (stepOffset x |scale.y|、ワールド m)。0 以下 = 段差登りなし
     int32_t layer = 0;             // 衝突レイヤー (M36a、併用 Collider から。無ければ既定)
     uint32_t mask = 0xFFFFFFFFu;
 };
 
 constexpr int kCharPushPasses = 4; // 固定パス数 (収束早期終了はしない = 決定論)
+
+// 段差登り (M82d) の定数
+constexpr float kStepSkin = 0.002f;     // 探索用カプセルの半径の縮み。接地直後の 0 深度接触を重なりと誤判定しない
+constexpr float kStepLandProbe = 0.005f; // 着地面の法線を測るために探索姿勢から押し込む量
+constexpr float kStepHeightTol = 0.005f; // 段差の上面が stepOffset ちょうどのとき浮動小数点誤差で落とさない余裕
+constexpr float kStepMinRise = 0.02f;    // これ以下の凹凸は通常の押し出しに任せる
+constexpr int kStepAdvanceTries = 5;     // 遮られた歩幅を超えて前へ出す試行回数 (半径の 1/4 刻み)
+constexpr int kStepBisectIters = 12;     // 着地高さの二分探索の回数 (固定 = 決定論)
+
+// 段差登り。接地中に水平移動 (dirX,dirZ は単位ベクトル、len は今 tick の歩幅) が遮られたときだけ呼ぶ。
+// 「stepHeight だけ持ち上げる → 前へ出す → 真下へ着地点を探す」を、前へ出す量を歩幅から半径まで
+// 増やしながら試す。足を載せるのに必要なぶんだけ前へ出る = 低速でも 1 tick で登れる。
+// 着地面の法線が登れる傾斜 (cosSlope 以上) で、接触点の高さが足元から stepHeight 以内のときだけ成功。
+// 戻り値 true なら (outX,outY,outZ) が登った後のカプセル中心
+bool TryCharStepUp(const std::vector<Body>& bodies, const CharBody& c, float cosSlope, float dirX,
+                   float dirZ, float len, float& outX, float& outY, float& outZ)
+{
+    auto overlapsAny = [&](const ShapePose& p) {
+        for (const Body& obs : bodies) {
+            if (!obs.solid || obs.entity.index == c.entity.index) {
+                continue;
+            }
+            if (!shapes::CanCollide(c.layer, c.mask, obs.layer, obs.mask)) {
+                continue;
+            }
+            if (shapes::Overlap(p, obs.pose)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    ShapePose p;
+    p.shape = collidershape::kCapsule;
+    p.identityRot = 1;
+    p.radius = c.radius - kStepSkin;
+    p.halfSeg = c.halfSeg;
+    const float feetY = c.py - c.halfSeg - c.radius;
+    const float raisedY = c.py + c.stepHeight;
+    // 持ち上げた位置が天井に塞がれていれば登れない
+    p.px = c.px;
+    p.py = raisedY;
+    p.pz = c.pz;
+    if (overlapsAny(p)) {
+        return false;
+    }
+    for (int k = 0; k < kStepAdvanceTries; ++k) {
+        const float adv = len + static_cast<float>(k) * (c.radius * 0.25f);
+        p.px = c.px + dirX * adv;
+        p.pz = c.pz + dirZ * adv;
+        p.py = raisedY;
+        if (overlapsAny(p)) {
+            break; // 持ち上げた高さでも壁がある。これ以上前へ出すと薄い壁を抜けるので打ち切る
+        }
+        // 真下へ着地点を探す。下端は足元より少し下 (床があれば必ず重なる) に置く
+        float lo = c.py - 0.01f;
+        float hi = raisedY;
+        p.py = lo;
+        if (!overlapsAny(p)) {
+            continue; // 足場なし
+        }
+        for (int i = 0; i < kStepBisectIters; ++i) {
+            const float mid = 0.5f * (lo + hi);
+            p.py = mid;
+            if (overlapsAny(p)) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        // 着地面: 少し押し込んだ姿勢 (本来の半径) で重なる障害物のうち最も上向きの法線を採る
+        ShapePose q = p;
+        q.radius = c.radius;
+        q.py = hi - kStepLandProbe;
+        const Body* support = nullptr;
+        float supportNy = -2.0f;
+        for (const Body& obs : bodies) {
+            if (!obs.solid || obs.entity.index == c.entity.index) {
+                continue;
+            }
+            if (!shapes::CanCollide(c.layer, c.mask, obs.layer, obs.mask)) {
+                continue;
+            }
+            float nx, ny, nz, depth;
+            if (shapes::Collide(q, obs.pose, nx, ny, nz, depth) && ny > supportNy) {
+                supportNy = ny;
+                support = &obs;
+            }
+        }
+        if (support == nullptr || supportNy < cosSlope) {
+            continue;
+        }
+        float qx, qy, qz;
+        shapes::ClosestPointOnShape(support->pose, p.px, hi - c.halfSeg, p.pz, qx, qy, qz);
+        const float riseOfSurface = qy - feetY;
+        if (riseOfSurface <= kStepMinRise || riseOfSurface > c.stepHeight + kStepHeightTol) {
+            continue;
+        }
+        outX = p.px;
+        outY = hi;
+        outZ = p.pz;
+        return true;
+    }
+    return false;
+}
 
 // move-then-depenetrate: 変位を一括適用してから固定パス × 障害物 index 昇順で押し出す。
 // スイープしないため 1 tick で薄い壁を大きく越える速度 (v·dt > 壁厚) では貫通し得るが、
@@ -1311,6 +1416,30 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
                 }
             }
         }
+        // 段差登り (M82d): 前 tick に接地していて、水平移動が半分以上遮られたときだけ試す。
+        // stepOffset 0 のキャラ・ジャンプ tick・遮られていない tick は上の経路の結果をそのまま使う
+        float stepSpeedCap = -1.0f; // 段差を登った tick の水平 velocity の上限 (m/s)。負 = 登っていない
+        if (c.stepHeight > 0.0f && c.cc->isGrounded && c.cc->jumpSpeed <= 0.0f) {
+            const float mx = c.cc->moveInput.x;
+            const float mz = c.cc->moveInput.z;
+            const float speed = std::sqrt(mx * mx + mz * mz);
+            if (speed > 0.0f) {
+                const float dirX = mx / speed;
+                const float dirZ = mz / speed;
+                const float len = speed * dt;
+                const float progress = (pose.px - c.px) * dirX + (pose.pz - c.pz) * dirZ;
+                float sx, sy, sz;
+                if (progress < 0.5f * len
+                    && TryCharStepUp(bodies, c, cosSlope, dirX, dirZ, len, sx, sy, sz)) {
+                    pose.px = sx;
+                    pose.py = sy;
+                    pose.pz = sz;
+                    grounded = true;
+                    vy = 0.0f;
+                    stepSpeedCap = speed;
+                }
+            }
+        }
         // ジャンプ: 接地時のみ発火。接地可否に関わらず消費 (バッファリング無し = 予測可能)
         if (c.cc->jumpSpeed > 0.0f) {
             if (grounded) {
@@ -1323,6 +1452,15 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
         c.cc->velocity.x = (pose.px - c.px) * invDt;
         c.cc->velocity.y = vy;
         c.cc->velocity.z = (pose.pz - c.pz) * invDt;
+        if (stepSpeedCap >= 0.0f) {
+            // 登りのために前へ出した分は移動速度に数えない (足音の歩幅やアニメーションが velocity を読む)
+            const float horizontal = std::sqrt(c.cc->velocity.x * c.cc->velocity.x + c.cc->velocity.z * c.cc->velocity.z);
+            if (horizontal > stepSpeedCap && horizontal > 0.0f) {
+                const float k = stepSpeedCap / horizontal;
+                c.cc->velocity.x *= k;
+                c.cc->velocity.z *= k;
+            }
+        }
         c.cc->isGrounded = grounded;
         if (c.frame.identity) {
             c.lt->position = { pose.px, pose.py, pose.pz };
@@ -1656,6 +1794,11 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             const float wh = c.cc->height * 0.5f * asy;
             c.radius = wr;
             c.halfSeg = (wh > wr) ? (wh - wr) : 0.0f;
+            // 段差は height と同じ Y スケール (親を含むワールド) を掛ける。縦の長さなので radius の水平 max 規則は使わない。
+            // 全高を上限にし、負・NaN は 0 = 登らない
+            c.stepHeight = (c.cc->stepOffset > 0.0f)
+                ? std::min(c.cc->stepOffset * asy, 2.0f * (c.halfSeg + c.radius))
+                : 0.0f;
             // M36a: 併用 Collider があればそのレイヤー/マスクを CC の判定にも使う
             if (const auto* ccol = world.GetComponent<ColliderComponent>(e)) {
                 c.layer = ccol->layer;

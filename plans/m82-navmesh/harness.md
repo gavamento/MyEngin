@@ -9,13 +9,14 @@
 |---|---|---|---|---|
 | sub-01 | OK | 1 | 9944784 | Recast vendor + ビット一致・復元方式の試作 (M82a) |
 | sub-02 | OK | 1 | b310244 | NavMeshSurface + .mnav ベイク + 輪郭描画 (M82b) |
-| sub-03 | 実装中 | 0 | | NavMeshAgent + dtCrowd + SimSnapshot (M82c) |
-| sub-04 | 未着手 | 0 | | 半透明の塗り + golden nav (M82d) |
-| sub-05 | 未着手 | 0 | | NavMeshObstacle (M82e) |
-| sub-06 | 未着手 | 0 | | NavMeshModifier + エリアコスト (M82f) |
-| sub-07 | 未着手 | 0 | | NavMeshLink (M82g) |
-| sub-08 | 未着手 | 0 | | スクリプト API、ABI bump (M82h) |
-| sub-09 | 未着手 | 0 | | ADR-023 / 文書 / 全体検証 (M82i) |
+| sub-03 | OK | 1 | aa677a6 | NavMeshAgent + dtCrowd + SimSnapshot (M82c) |
+| sub-10 | OK | 2 | (M82d) | CC の stepOffset + セルサイズ自動決定で傾斜・段差を設定どおりに (M82d、sub-03 の次に実行) |
+| sub-04 | 未着手 | 0 | | 半透明の塗り + golden nav (M82e) |
+| sub-05 | 未着手 | 0 | | NavMeshObstacle (M82f) |
+| sub-06 | 未着手 | 0 | | NavMeshModifier + エリアコスト (M82g) |
+| sub-07 | 未着手 | 0 | | NavMeshLink (M82h) |
+| sub-08 | 未着手 | 0 | | スクリプト API、ABI bump (M82i) |
+| sub-09 | 未着手 | 0 | | ADR-023 / 文書 / 全体検証 (M82j) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -33,6 +34,10 @@
 - Q4 NavMesh の表示: **線に加え、Unity のような半透明の塗りも付ける** (planner 裁定から変更)
 - Q5 スクリプト API は M82 に入れる (sub-07、裁定どおり)
 - (2026-10-03、司会経由で回答) spec 2. #18: NavMesh の表示を編集中 (非 Play) の SceneView にも出す (裁定どおり)。範囲箱ギズモと一緒に sub-04 で実装
+- (2026-10-03、司会経由で回答) spec 2. #19 坂の実効上限 (既定で約 9 度): planner の裁定「制約として受け入れる」を**覆した**。回答原文「あるける最大傾斜や階段の高さを変更できるように」。仕様への落とし込みは planner (PLAN 補足)
+- (2026-10-03、司会経由で回答) CharacterController.stepOffset の既定: planner の裁定「既定 0、既存の CC は不変」を**覆して Unity と同じ 0.3**。既存シーンの CC も段差を登るようになる
+- (2026-10-04、司会経由で回答) spec 2. #20 段差の量子化ずれ: autoCellSize で cellHeight も自動 (既定 0.05) + 残りは sub-05 の Stuck 検出で受ける (裁定どおり)
+- (2026-10-04、司会経由で回答) spec 2. #21 stepOffset の拡大縮小: planner の裁定「掛けない (ワールド m)」を**覆して Unity と同じく scale を掛ける**。acoustic デモの拡大した敵 (scale.y 1.6) が 0.45 m の板に乗り上がり、acoustic の replay 基準と golden が動くことを受け入れる
 - エンジンのバージョン変更 (0.6.8.22) は `b1920a7` で単独コミット済み (harness のサブとは無関係)
 
 ## 申し送り (セッション跨ぎ)
@@ -43,4 +48,11 @@
 - (planner 2026-10-03 Q 回答反映) Q1 → spec 4.4 F1〜F5 + 受け入れ条件 18 (再ベイクは作らず差し込み口だけ)。Q4 → 塗りの sub-04 を挿入し旧 sub-04〜08 を sub-05〜09 (M82e〜M82i) へ繰り下げ、受け入れ条件 17・golden `nav`
 - (planner 2026-10-03 sub-02 VERDICT) `.mnav` は NavSystem::Update の遅延ロードを採用 (spec 2. #17)、sub-03 の restore は読み込みを先に済ませる。編集中の SceneView 表示と Surface の範囲箱ギズモを sub-04 へ追加 (spec 2. #18、`[ユーザーに聞ける]`)。reviewer 向け: Editor GUI (Play 中の輪郭 / Bake ボタン) は未観測、Server/client net self test の 1 回限りの FAIL (V1、tick 270 の .rep) は未再現
 - (planner 2026-10-03 sub-03 VERDICT) 坂の実効上限 atan(maxClimb/(2·cellSize)) (既定で約 9 度) は spec 2. #19 で「制約として受け入れ + インスペクタで表示・警告 (sub-04)」と裁定、`[ユーザーに聞ける]`。areaMask は sub-06 1b、Obstacle の restore 検証は sub-05 3b、ADR に書く事実は sub-09 へ。build\GameLogic.vcxproj(.filters) は NavDemoDriver.cpp を含むのでステージ必須。cache\ の scratch (nb.ps1 等) は git 管理外で残置 (削除は承認が要る)
+- (planner 2026-10-03 ユーザー回答「あるける最大傾斜や階段の高さを変更できるように」の反映) sub-10 を新設 (CC `stepOffset` + Surface のセルサイズ自動決定)。実行順は sub-03 → sub-10 → sub-04 →…、コミット接頭辞は sub-10 = M82d、sub-04〜09 = M82e〜M82j に振り直し (サブ進捗表のメモ欄の接頭辞は司会が更新)。CC の既定 stepOffset = 0 は planner 裁定 `[ユーザーに聞ける]`
+- (planner 2026-10-03 ユーザー回答「stepOffset 既定 = Unity と同じ 0.3」の反映) spec 2. #5 / 受け入れ条件 11・19 / sub-10 (1b 切り分け、1c .rep、1d 外部プロジェクト) を更新。外部プロジェクトの目視 (三校 / HAL Collector で 0.3 m 以下の物に乗り上がって困る箇所) はユーザー作業で sub-10 の合否外 — sub-10 完了後に `plans\m82-navmesh\sub-10-external-check.md` を渡して聞く。ユーザー指示で coder はまだ起動しない
+- (planner 2026-10-04 sub-10 VERDICT round 1 = REWORK) must: cellHeight の自動決定 (spec 2. #20)。詰まり検出 (Stuck) は sub-05 の 7 へ。stepOffset はワールド m (spec 2. #21)。#20 / #21 は `[ユーザーに聞ける]`
+- (planner) 外部プロジェクトの既存問題 (M82 の範囲外、着手前 HEAD から同じ): 三校の `tools\verify.bat` は shot の golden 不一致と『敵が巡回を出ない』の 2 件で FAIL する。三校と HAL Collector の `cache\GameLogic.dll` は v22 のままで、エンジン v23 では読み込めなかった。sub-10 の coder が三校の `cache\GameLogic.dll` (git 管理外) を焼き直した (司会の指示の範囲外。ユーザーへの報告は司会)
+- (planner 2026-10-04) stepOffset は |scale.y| 倍 (ユーザー回答、spec 2. #21)。そのため `--acoustic-demo` の Agent Eye が衝撃板に乗るようになる。acoustic_forward / acoustic_deferred の golden は着手前から FAIL しているので、M82 では撮り直さない。将来撮り直すときは、この挙動の変化も含まれることを確認すること
+- (planner 2026-10-04 sub-10 VERDICT round 2 = OK) reviewer が見ること: 段差を登る tick の見た目の跳び (0.13〜0.16 m / tick)、Inspector の Surface 行に折り返しを足した後の画像 (`cache\s10\insp_surface3.png`、未確認)。acoustic の golden は Agent Eye の乗り上がりを守らない (撮影の範囲に写らない)。作業ファイルに `cache\probe0_rel\` が追加された
+- (planner) 削除の承認待ちの作業ファイル: `C:\HAL\MyEngin\cache\s10\` (26 MB) と `C:\HAL\MyEngin\cache\base10_rel\` (37 MB)。round 2 で着手前の基準として再利用できるので、sub-10 が OK になるまで残す
 - (planner) sub-01 の結論 (復元方式 a/b/c) で sub-03 以降の SimSnapshot の形が決まる。sub-01 の VERDICT 時に spec 4.4 を確定させる

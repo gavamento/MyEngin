@@ -15,6 +15,8 @@ spec 4.1 (Obstacle、Tick の順序 (1))。
 5. `--nav-demo` に Obstacle の出し入れ (tick で決まる) を足し、`nav` ジョブを録り直す。
 6. TileCache 更新の所要時間を SelfTest のログに出す。**`NavTileStore::Commit` は変更のたびに全タイルを入れ直す (O(全タイル)、sub-01 の決定)** ので、数百タイル + 障害物を毎 tick 動かす条件で計測する。重ければ最適化してよいが、「キー順・スロット順に入れ直して dtNavMesh の履歴依存を消す」性質を保ち、復元一致の SelfTest で確かめる。
 
+7. (sub-10 VERDICT、spec 2. #20) **詰まり検出**: `Moving` の Agent が、経路の残り距離を一定 tick (名前付き定数。例: 60 tick) の間に一定量 (例: radius の 1/4) 以上縮められなかったら、`Stuck` (新しい状態。status の値を末尾に追加) にして止め、変わった tick に 1 回 WARN を出す。目的地を変えたら解除する。原因は 2 つある: NavMesh と CC の段差判定の量子化のずれ (残りは 1 セル未満)、Obstacle で塞がれた後の押し合い。SelfTest: maxClimb + 1 セル未満の台に向かう Agent が `Stuck` になること。決定論 (tick 数で判定、時間は使わない) と、Nav 節の restore 後一致 (詰まりのカウンタは Agent のコンポーネントか Nav 節に持たせる)。
+
 ## やらないこと (このサブでは)
 - Modifier / Link / ABI
 

@@ -105,7 +105,8 @@ struct SimRefs {
 // v23: WaterWaveComponent へ surfaceMaterial (M79e) と timeTicks (浮力と水面の時計) を末尾追加
 // v24 (M81b): SES 節 (SessionLanes) を ACU 節の後・World 節の前に追加
 // v25 (M82c): NAV 節 (NavSystem の差し替え分・dtCrowd・スロット表) を SES 節の後・World 節の前に追加。NavMeshAgent コンポーネント
-inline constexpr uint32_t kSimSnapshotVersion = 25;
+// v26 (M82d): CharacterControllerComponent へ stepOffset、NavMeshSurfaceComponent へ autoCellSize (World 節のカラム生バイト)
+inline constexpr uint32_t kSimSnapshotVersion = 26;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

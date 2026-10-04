@@ -6,10 +6,13 @@
 #include "Engine/Engine/Navigation/NavSurfaceSelfTest.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -96,6 +99,8 @@ EntityID BuildScene(Scene& scene, bool includeExcluded)
     auto* comp = surface.AddComponent<NavMeshSurfaceComponent>();
     comp->center = { 0.0f, 1.0f, 0.0f };
     comp->size = { 20.0f, 6.0f, 20.0f };
+    comp->autoCellSize = false; // 期待ハッシュを固定するため、ベイク方式が変わっていないことの基準に旧設定を使う
+    comp->maxClimb = 0.1f;
     comp->cellSize = 0.5f;
     comp->cellHeight = 0.2f;
     comp->tileSize = 32;
@@ -220,6 +225,50 @@ bool RunNavSurfaceSelfTest()
     }
     ck.Check(bake.data.inputHash == NavComputeInputHash(inputs.config, inputs.soup),
              "資産が入力ハッシュを持つ");
+
+    // ---- 2b. セルサイズの自動決定 (M82d): 実際に使った値が入力ハッシュに入る ----
+    {
+        NavMeshSurfaceComponent def;
+        const NavCellSize defCell = NavResolveCellSize(def);
+        ck.Check(std::fabs(defCell.cellSize - 0.15f) < 1e-6f && !defCell.clampedToMinimum,
+                 "既定の Surface は agentRadius / 2 = maxClimb / (2 tan 45) = 0.15 m のセルになる");
+        ck.Check(std::fabs(defCell.cellHeight - 0.05f) < 1e-4f
+                     && std::floor(def.maxClimb / defCell.cellHeight) == 6.0f,
+                 "...セルの高さは min(cs / 2, maxClimb / 6) = 0.05 m で、maxClimb がちょうど 6 セル");
+        ck.Check(std::fabs(NavEffectiveSlopeLimitDeg(def, defCell.cellSize) - 45.0f) < 0.01f && !NavSurfaceSlopeUnreachable(def),
+                 "...実効の坂の上限は 45 度で、maxSlopeDeg 45 は警告にならない");
+
+        NavMeshSurfaceComponent steep = def;
+        steep.maxSlopeDeg = 60.0f;
+        const NavCellSize steepCell = NavResolveCellSize(steep);
+        ck.Check(steepCell.cellSize < defCell.cellSize && std::fabs(NavEffectiveSlopeLimitDeg(steep, steepCell.cellSize) - 60.0f) < 0.01f,
+                 "maxSlopeDeg を 60 度にするとセルが細かくなり、実効の上限が 60 度に届く");
+
+        NavMeshSurfaceComponent floorHit = def;
+        floorHit.maxSlopeDeg = 80.0f;
+        floorHit.maxClimb = 0.1f;
+        const NavCellSize floorCell = NavResolveCellSize(floorHit);
+        ck.Check(floorCell.clampedToMinimum && floorCell.cellSize == kNavMinCellSize && NavSurfaceSlopeUnreachable(floorHit),
+                 "セルが下限 (0.05 m) に当たると実効の上限が設定を下回り、警告になる");
+
+        NavMeshSurfaceComponent manual = def;
+        manual.autoCellSize = false;
+        manual.cellSize = 0.3f;
+        ck.Check(NavResolveCellSize(manual).cellSize == 0.3f && NavSurfaceSlopeUnreachable(manual),
+                 "autoCellSize を切ると cellSize をそのまま使い、実効の上限 (26.6 度) を超える maxSlopeDeg は警告になる");
+
+        DirectX::XMFLOAT4X4 identity;
+        DirectX::XMStoreFloat4x4(&identity, DirectX::XMMatrixIdentity());
+        NavMeshSurfaceComponent asManual = def;
+        asManual.autoCellSize = false;
+        asManual.cellSize = defCell.cellSize;
+        asManual.cellHeight = defCell.cellHeight;
+        const uint64_t hAuto = NavComputeInputHash(NavMakeBakeConfig(def, identity), inputs.soup);
+        const uint64_t hManual = NavComputeInputHash(NavMakeBakeConfig(asManual, identity), inputs.soup);
+        const uint64_t hSteep = NavComputeInputHash(NavMakeBakeConfig(steep, identity), inputs.soup);
+        ck.Check(hAuto == hManual, "自動で決まったセルと同じ値を手動で指定した Surface は同じ入力ハッシュ (使った値だけがハッシュに入る)");
+        ck.Check(hAuto != hSteep, "自動決定の結果が変わる設定 (maxSlopeDeg 60) は別の入力ハッシュ");
+    }
 
     // 層はタイル単位の関数の結果そのもの (実行時の再ベイクが同じ関数を呼べる)
     {
@@ -380,6 +429,7 @@ bool RunNavSurfaceSelfTest()
             GameObject sf = shapeScene.CreateGameObjectTracked("Surface");
             auto* surf = sf.AddComponent<NavMeshSurfaceComponent>();
             surf->size = { 14.0f, 4.0f, 14.0f };
+            surf->autoCellSize = false;
             surf->cellSize = 0.25f;
             surf->cellHeight = 0.1f;
             surf->tileSize = 64;
@@ -421,6 +471,48 @@ bool RunNavSurfaceSelfTest()
                      && rc->areaCosts[7] == 3.5f && rc->areaCosts[0] == 1.0f && rc->collectLayerMask == 0x0000FF0Fu
                      && rc->size.x == 20.0f && rc->tileSize == 32,
                  "保存 -> 読み込みで設定値・navAsset・エリアコストが戻る");
+
+        // 旧シーン互換 (M82d): 末尾に足したフィールド (CC.stepOffset / Surface.autoCellSize) が無いデータは
+        // 構造体の既定値 (0.3 / true) で読まれる。書いた値が戻ることも確かめ、キーの綴りが合っていることを保証する
+        {
+            Scene withValues;
+            GameObject walker = withValues.CreateGameObjectTracked("Walker");
+            walker.AddComponent<CharacterControllerComponent>()->stepOffset = 0.45f;
+            GameObject flat = withValues.CreateGameObjectTracked("FlatSurface");
+            flat.AddComponent<NavMeshSurfaceComponent>()->autoCellSize = false;
+            const std::wstring valuesPath = (dir / L"new_fields.scene.json").wstring();
+            ck.Check(SceneSerializer::SaveToFile(withValues, valuesPath), "stepOffset / autoCellSize を含むシーンを保存できる");
+            Scene back2;
+            SceneSerializer::LoadFromFile(back2, valuesPath);
+            const auto* ccBack = back2.GetWorld().GetComponent<CharacterControllerComponent>(back2.Find("Walker").Id());
+            const auto* sfBack = back2.GetWorld().GetComponent<NavMeshSurfaceComponent>(back2.Find("FlatSurface").Id());
+            ck.Check(ccBack != nullptr && ccBack->stepOffset == 0.45f && sfBack != nullptr && !sfBack->autoCellSize,
+                     "stepOffset / autoCellSize は保存 -> 読み込みで戻る");
+
+            std::string text;
+            {
+                std::ifstream in(valuesPath, std::ios::binary);
+                text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            }
+            const auto rename = [&text](const char* key, const char* replacement) {
+                for (size_t at = text.find(key); at != std::string::npos; at = text.find(key, at)) {
+                    text.replace(at, std::strlen(key), replacement);
+                }
+            };
+            rename("\"stepOffset\"", "\"stepOffsetGone\"");
+            rename("\"autoCellSize\"", "\"autoCellSizeGone\"");
+            const std::wstring oldPath = (dir / L"old_scene.scene.json").wstring();
+            {
+                std::ofstream out(oldPath, std::ios::binary | std::ios::trunc);
+                out.write(text.data(), static_cast<std::streamsize>(text.size()));
+            }
+            Scene oldScene;
+            SceneSerializer::LoadFromFile(oldScene, oldPath);
+            const auto* ccOld = oldScene.GetWorld().GetComponent<CharacterControllerComponent>(oldScene.Find("Walker").Id());
+            const auto* sfOld = oldScene.GetWorld().GetComponent<NavMeshSurfaceComponent>(oldScene.Find("FlatSurface").Id());
+            ck.Check(ccOld != nullptr && ccOld->stepOffset == 0.3f && sfOld != nullptr && sfOld->autoCellSize,
+                     "旧シーン (stepOffset / autoCellSize が無い) は 0.3 / true で読まれる");
+        }
 
         // 表示フラグはハッシュ対象外、設定値と navAsset は対象
         const uint64_t base = HashWorld(saved.GetWorld());

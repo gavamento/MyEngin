@@ -24,6 +24,7 @@
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 #include "Engine/Engine/Navigation/NavBake.h"
+#include "Engine/Engine/Navigation/NavBakeInput.h"
 #include "Engine/Engine/Navigation/NavMeshAsset.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
@@ -161,6 +162,36 @@ bool RunNavEditorSelfTest()
         undo.ClearAll();
     }
 
+    // ---- 1b. インスペクタの警告の判定 (M82d): 段差と坂の設定が効かない組み合わせ ----
+    {
+        CharacterControllerComponent cc;
+        NavMeshSurfaceComponent sf;
+        check(!NavAgentStepBelowClimb(cc, 1.0f, sf), "warning: default CharacterController.stepOffset (0.3) covers the default Max Climb (0.3)");
+        cc.stepOffset = 0.1f;
+        check(NavAgentStepBelowClimb(cc, 1.0f, sf), "warning: stepOffset below Max Climb is reported");
+        check(!NavAgentStepBelowClimb(cc, 3.0f, sf), "warning: the effective step is stepOffset x scale.y (0.1 x 3 covers 0.3)");
+        cc.stepOffset = 0.3f;
+        check(NavAgentStepBelowClimb(cc, 0.5f, sf), "warning: a half-height character cannot climb 0.3 (effective 0.15)");
+        cc.stepOffset = 0.0f;
+        check(NavAgentStepBelowClimb(cc, 1.0f, sf), "warning: stepOffset 0 is reported");
+        sf.maxClimb = 0.0f;
+        check(!NavAgentStepBelowClimb(cc, 1.0f, sf), "warning: Max Climb 0 needs no step");
+
+        NavMeshSurfaceComponent slope;
+        check(!NavSurfaceSlopeUnreachable(slope), "warning: default Surface settings reach their own max slope");
+        slope.maxSlopeDeg = 60.0f;
+        check(!NavSurfaceSlopeUnreachable(slope), "warning: auto cell size follows a steeper Max Slope");
+        slope.autoCellSize = false;
+        check(NavSurfaceSlopeUnreachable(slope), "warning: manual cell size 0.3 cannot reach 60 degrees");
+        slope.cellSize = 0.05f;
+        check(!NavSurfaceSlopeUnreachable(slope), "warning: a fine manual cell size reaches 60 degrees again");
+        slope.autoCellSize = true;
+        slope.maxSlopeDeg = 85.0f;
+        slope.maxClimb = 0.1f;
+        check(NavSurfaceSlopeUnreachable(slope) && NavResolveCellSize(slope).clampedToMinimum,
+              "warning: a cell size clamped to the minimum cannot reach 85 degrees");
+    }
+
     // ---- 2. Bake -> Commit -> Undo / Redo -> Clear ----
     GameObject ground = scene.CreateGameObjectTracked("Ground");
     ground.SetLocalPosition(0.0f, -0.5f, 0.0f);
@@ -181,6 +212,7 @@ bool RunNavEditorSelfTest()
         auto* s = surface.AddComponent<NavMeshSurfaceComponent>();
         s->center = { 0.0f, 1.0f, 0.0f };
         s->size = { 20.0f, 6.0f, 20.0f };
+        s->autoCellSize = false; // バイト一致の検査が目的なので軽い粗いセルのまま
         s->cellSize = 0.5f;
         s->cellHeight = 0.2f;
     }

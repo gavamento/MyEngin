@@ -400,11 +400,90 @@ void NavCollectTriangles(World& world, const float* boundsMin, const float* boun
     }
 }
 
+namespace {
+
+constexpr float kRadiansToDegrees = 57.2957795f;
+constexpr float kDegreesToRadians = 0.0174532925f;
+// tan が 0 に近い傾斜 (ほぼ水平) では式が発散する。この角度以下は半径側の上限だけを使う
+constexpr float kMinSlopeDegForCellSize = 0.5f;
+// 実効の坂の上限との比較に許す余裕 (度)。45 度ちょうどの設定が浮動小数点誤差で警告にならないように
+constexpr float kSlopeWarnToleranceDeg = 0.5f;
+constexpr float kClimbCompareTolerance = 1e-4f;
+
+// Recast に渡る段差 (m)。walkableClimb はセルの高さの整数倍に切り捨てられる
+float QuantizedClimb(const NavMeshSurfaceComponent& surface, float cellHeight)
+{
+    if (!(cellHeight > 0.0f) || !(surface.maxClimb > 0.0f)) {
+        return 0.0f;
+    }
+    return std::floor(surface.maxClimb / cellHeight) * cellHeight;
+}
+
+// 自動のとき段差を何セルで表すか。Recast は段差を cellHeight の整数倍で比べるので、細かいほど
+// 「maxClimb をわずかに超える段差」の接続が減る。6 セルなら誤差は 1/6 (0.3 m で 5 cm)
+constexpr float kAutoClimbCells = 6.0f;
+// maxClimb / 6 が浮動小数点で 5.9999995 になり floor で 5 セルに落ちるのを避ける余裕
+constexpr float kAutoClimbRoundingGuard = 0.9999f;
+// cellHeight の下限。Surface.cellHeight の最小値と同じ (これより細かいとボクセルの高さ方向が破綻する)
+constexpr float kNavMinCellHeight = 0.02f;
+
+} // namespace
+
+NavCellSize NavResolveCellSize(const NavMeshSurfaceComponent& surface)
+{
+    NavCellSize out;
+    if (!surface.autoCellSize) {
+        out.cellSize = surface.cellSize;
+        out.cellHeight = surface.cellHeight;
+        return out;
+    }
+    float cs = surface.agentRadius * 0.5f;
+    if (surface.maxSlopeDeg > kMinSlopeDegForCellSize) {
+        const float tanSlope = std::tan((std::min)(surface.maxSlopeDeg, 89.0f) * kDegreesToRadians);
+        cs = (std::min)(cs, surface.maxClimb / (2.0f * tanSlope));
+    }
+    if (cs < kNavMinCellSize) {
+        cs = kNavMinCellSize;
+        out.clampedToMinimum = true;
+    }
+    out.cellSize = cs;
+    // 目標の高さ: cs の半分と maxClimb の 1/6 の細かいほう。maxClimb がちょうど整数セルになるよう分割数へ丸める
+    const float targetHeight = (std::max)(kNavMinCellHeight, (std::min)(cs * 0.5f, surface.maxClimb / kAutoClimbCells));
+    if (surface.maxClimb > 0.0f) {
+        const float cells = (std::max)(1.0f, std::ceil(surface.maxClimb / targetHeight - 1e-3f));
+        out.cellHeight = (std::max)(kNavMinCellHeight, surface.maxClimb / cells * kAutoClimbRoundingGuard);
+    } else {
+        out.cellHeight = kNavMinCellHeight;
+    }
+    return out;
+}
+
+float NavEffectiveSlopeLimitDeg(const NavMeshSurfaceComponent& surface, float cellSize)
+{
+    if (!(cellSize > 0.0f)) {
+        return 0.0f;
+    }
+    return std::atan(QuantizedClimb(surface, NavResolveCellSize(surface).cellHeight) / (2.0f * cellSize)) * kRadiansToDegrees;
+}
+
+bool NavSurfaceSlopeUnreachable(const NavMeshSurfaceComponent& surface)
+{
+    const NavCellSize cs = NavResolveCellSize(surface);
+    return surface.maxSlopeDeg > NavEffectiveSlopeLimitDeg(surface, cs.cellSize) + kSlopeWarnToleranceDeg;
+}
+
+bool NavAgentStepBelowClimb(const CharacterControllerComponent& cc, float worldScaleY,
+                            const NavMeshSurfaceComponent& surface)
+{
+    return cc.stepOffset * std::fabs(worldScaleY) + kClimbCompareTolerance < surface.maxClimb;
+}
+
 NavBakeConfig NavMakeBakeConfig(const NavMeshSurfaceComponent& surface, const DirectX::XMFLOAT4X4& wm)
 {
     NavBakeConfig c;
-    c.cellSize = surface.cellSize;
-    c.cellHeight = surface.cellHeight;
+    const NavCellSize resolved = NavResolveCellSize(surface);
+    c.cellSize = resolved.cellSize;
+    c.cellHeight = resolved.cellHeight;
     c.tileSize = surface.tileSize;
     c.agentHeight = surface.agentHeight;
     c.agentRadius = surface.agentRadius;

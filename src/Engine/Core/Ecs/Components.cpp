@@ -357,6 +357,7 @@ void RegisterBuiltinComponents()
         MYE_JP("速度", MYE_FIELD_FLAGS(CharacterControllerComponent, velocity, Float3, kFieldReadOnly)),
         MYE_JP("ジャンプ速度", MYE_FIELD_FLAGS(CharacterControllerComponent, jumpSpeed, Float, kFieldHidden)),
         MYE_JP("接地している", MYE_FIELD_FLAGS(CharacterControllerComponent, isGrounded, Bool, kFieldReadOnly)),
+        MYE_JP("登れる段差", MYE_FIELD_RANGE(CharacterControllerComponent, stepOffset, Float, 0.0f, 5.0f)),
     });
 
     // M29c: スプライト/トレイル/3D テキスト。描画専用なので **kComponentNoHash**。
@@ -1417,6 +1418,8 @@ void RegisterBuiltinComponents()
         MYE_JP("ナビメッシュを描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawNavMesh, Bool, kFieldNoHash)),
         MYE_JP("タイル境界を描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawTileBounds, Bool, kFieldNoHash)),
         MYE_JP("エージェントの経路を描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawAgentPaths, Bool, kFieldNoHash)),
+        MYE_JP("セルの大きさを自動で決める", MYE_FIELD_TIP(NavMeshSurfaceComponent, autoCellSize, Bool,
+                                                         "derive the cell size from agent radius, max climb and max slope so the slope setting actually works")),
     });
 #undef MYE_NAV_AREA_COST
 

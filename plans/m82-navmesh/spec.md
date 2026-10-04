@@ -21,8 +21,10 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 | 2 | dtCrowd / dtTileCache / dtNavMesh の内部状態が ECS の外にある | SimSnapshot は「外部状態は blob で持つ (粒子 / XPBD / 衝突ペア)」か「導出値なので restore で無効化 (AcousticField::Invalidate)」の 2 流儀 (`SimSnapshot.cpp:504-617`)。replay_verify は **毎 tick capture→restore→recapture の blob 比較** (`--snapshot-stress 37`、`EngineLoop.cpp:2125`)、ロールバックは **毎 tick capture** (`NetRollback.cpp:100`、約 148 KB) | — (技術判断) | sub-01 の試作で決める。要件は 4.4 の N1〜N4。**polyRef の salt が tile の追加削除履歴に依存する**ので、「コンポーネントから作り直す」だけでは経路コリドーが復元できない。候補は 4.4 に列挙 |
 | 3 | TypeId 71 は M75h (InputField) の予約と衝突しないか | TypeId は登録順 (`ComponentRegistry.h:49-51`)。シーンは型名で保存 (`SceneSerializer.cpp:127,144`)、TypeId が入るのは SimSnapshot blob と .rep (使い捨てで毎回録り直す、`Components.cpp:38-41`) だけ | — | **末尾 append。番号は登録コミット時点の末尾から** (M75h より先なら 71〜75、InputField は 76 にずれる)。`plans\m75-ugui.md` の「InputField は 71」に注記を足す。予約は不要 |
 | 4 | `AcousticNav.h:22-24`「NavMesh を作らないのが判断の前提」と衝突 | この前提は「音響 AI の移動を音の伝播と同じ占有配列から出す」局所判断で、エンジン全体の禁止ではない (`plans\hushed-rippling-beacon.md:55` は M65 の判断) | 事前計画で ADR に整理と決定 | ADR-023 を新設し「音響ナビ = 聞こえた所へ行く特殊解、NavMesh = 汎用移動」と役割を分ける。AgentBrain は従来どおり AcousticNav を使う (共存) |
-| 5 | CharacterController に段差 (step offset) が無い | `CharacterControllerComponent` (`Components.h:754-765`) は radius / height / slopeLimitDeg / skinWidth のみ。Physics 配下に step 処理なし | — | CC は**変えない**。Surface の `maxClimb` は CC が実際に越えられる高さを sub-03 で実測して既定値にする (仮置き 0.1 m)。「経路はあるのに登れない」は SelfTest の階段で検出する。**sub-03 の実測**: CC は 1.5 m/s で 0.15 m、3.5 m/s で 0.25 m まで登れる (0.20 m は低速で止まる) → 既定 0.1 m を確定 |
-| 19 | 坂の上限は `maxSlopeDeg` で決まるか (sub-03 coder の不安 1) | Recast の `rcFilterLedgeSpans` は隣接セルの高低差の幅が `walkableClimb` を超えるスパンを捨て、`rcBuildCompactHeightfield` の隣接接続も高低差 ≤ `walkableClimb`。実効の坂上限 ≈ atan(maxClimb / (2·cellSize)) で、既定 (0.1 / 0.3) は約 9 度。15 度の坂でポリゴンが途切れ部分経路になることを sub-03 で再現。CC は 0.15 m までしか登れず (#5) maxClimb を上げられない | `[ユーザーに聞ける]` (planner 裁定) | **(a) 制約として受け入れ、見えるようにする**: 既定値は変えない (maxClimb 0.1 / cellSize 0.3 / maxSlopeDeg 45)。Surface のインスペクタに実効の最大傾斜を表示し、`maxSlopeDeg` がそれを超えたら警告 (sub-04)。受け入れ条件 6 の坂は「実効上限以下」に読み替え。却下: (b) Recast のパッチ = ledge 判定だけでなく隣接接続も walkableClimb に縛られ、ボクセル上で段差と坂を区別する情報が無いので意味論ごと変える深い改造になる (c) 既定 cellSize 0.2 = 約 14 度にしかならずベイク量 2.25 倍。根本解は CC に step offset を足して maxClimb を上げること (スコープ外、#5) |
+| 5 | CharacterController に段差 (step offset) が無い | `CharacterControllerComponent` (`Components.h:754-765`) は radius / height / slopeLimitDeg / skinWidth のみ。`SolveCharacters` (`PhysicsSystem.cpp:1247`) に step 処理なし。sub-03 の実測: 登れる段差が速度しだい (1.5 m/s で 0.15 m、3.5 m/s で 0.25 m) | 2026-10-03 ユーザー: 「あるける最大傾斜や階段の高さを変更できるように」(planner の当初の結論「CC は変えない」を覆した)。既定値は「Unity と同じ 0.3」(planner の裁定「既定 0 で既存不変」を覆した) | **CC に `stepOffset` を末尾追加し、速度に関係なくその高さまで登る** (sub-10)。**既定 0.3** (Unity と同じ)。フィールドの無い旧シーンの CC も 0.3 で読まれ、段差を登るようになる。既存デモと外部プロジェクト (三校 / HAL Collector) の挙動が変わることを受け入れ、受け入れ条件 11 を緩める (変化が stepOffset だけによることを sub-10 の手順で切り分けて示す)。planner の反対意見 (記録のみ): 既存ゲームの挙動が予告なく変わり、既存デモの tick ハッシュ列の連続性が切れる。Surface の `maxClimb` 既定は 0.3 (sub-03 で一度確定した 0.1 を変更) |
+| 19 | 坂の上限は `maxSlopeDeg` で決まるか (sub-03 coder の不安 1) | Recast の `rcFilterLedgeSpans` は隣接セルの高低差の幅が `walkableClimb` を超えるスパンを捨て、`rcBuildCompactHeightfield` の隣接接続も高低差 ≤ `walkableClimb`。実効の坂上限 ≈ atan(maxClimb / (2·cellSize))、旧既定 (0.1 / 0.3) で約 9 度。15 度の坂で途切れることを sub-03 で再現 | 2026-10-03 ユーザー: 「あるける最大傾斜や階段の高さを変更できるように」(planner の裁定 (a)「制約として受け入れる」を覆した) | **`maxSlopeDeg` が設定どおり効くようにする** (sub-10): Surface に `autoCellSize` (既定 on) を足し、ベイクのセルサイズを cs = min(agentRadius/2, maxClimb / (2·tan(maxSlopeDeg))) で決める (下限あり、下限に当たったら警告)。既定値どうしで cs 0.15・実効上限 45 度。インスペクタに実際の cs と実効の坂上限を表示。却下: Recast のパッチ (ボクセル上で坂と段差を区別する情報が無く、意味論ごと変わる)、既定 cellSize を固定値で細かくするだけ (maxClimb / maxSlopeDeg を変えるたびに手で合わせる必要があり「変更できる」にならない) |
+| 20 | NavMesh の段差判定と CC の段差判定の量子化のずれ (sub-10 coder の不安 1) | Recast は段差を `cellHeight` の整数セルで比べる (`walkableClimb = floor(maxClimb / ch)`)。地面の天面がボクセル境界にあると、maxClimb + 1 セル未満の段差も接続される。sub-10 の庭では cellHeight 0.1 で 0.35 m の台が接続され、CC (stepOffset 0.3) は登れずに Agent が縁で `Moving` のまま押し続けた | `[ユーザーに聞ける]` (planner 裁定) | **ずれを 1 セル未満に抑え、残りは詰まり検出で受ける**: (1) `autoCellSize` のときは cellHeight も自動で決める: ch = min(cs / 2, maxClimb / 6)。既定では 0.05 で、ずれは 5 cm 未満 (sub-10 round 2) (2) 前進できない Agent を一定 tick 後に止める詰まり検出 (sub-05) (3) ADR に「NavMesh の段差上限は maxClimb から最大 1 セル超えうる」と書く。却下: NavMesh 側を 1 セル控えめにする = 0.3 ちょうどの段差が繋がらなくなり、受け入れ条件 6 の『maxClimb の段差を越える』が成り立たない。Inspector への注記だけ = Agent が無言で止まり続ける (AGENTS.md 3.4 の『理由が分からない無応答』) |
+| 21 | CC の `stepOffset` に Transform の scale を掛けるか (sub-10 coder の不安 2) | radius / height には scale が掛かる (`PhysicsSystem.cpp:1782-1783`: radius × max(|sx|, |sz|)、height × |sy|)。stepOffset に掛けると、acoustic デモの Agent Eye (scale.y 1.6) の実効段差が 0.48 m になり、衝撃板 (天面 0.45) に乗り上がる。tick 26 で着手前と割れることを実測した | 2026-10-04 ユーザー: 「する (Unity と同じ)」(planner の裁定『掛けない』を覆した。acoustic の replay 基準と golden が動くことを承知のうえ) | **掛ける。height と同じ規則で、実効の段差 = stepOffset × |scale.y| (ワールドの scale、親を含む)**。段差は縦の長さなので、縦の量である height と揃える (radius の水平 max 規則は使わない)。上限は実効の全高 (height × |scale.y|)。0 以下と NaN は登らない。Agent の警告 (`stepOffset < maxClimb`) も実効値で比べる。planner の反対意見 (記録のみ): 見た目の拡大で登れる高さが変わるのは予想しにくい。acoustic デモの挙動が変わる |
 | 6 | 「エージェント半径・高さ・最大段差・最大傾斜は CharacterController と共有」(事前計画) | CC の radius は Transform scale が掛かる (`Components.h:749-753`)。NavMesh は 1 つのエージェント寸法でしかベイクできない (Recast の walkableRadius 等はベイク時定数) | — | Surface が自分のベイク寸法を持つ (既定は CC の既定 0.3 / 1.8 / 45°)。Agent と CC の寸法が Surface を超えるとインスペクタに警告。「同じ値を参照」はベイク時定数なので不可能、と記録 |
 | 7 | 動的更新の範囲。「タイル再ベイク」は実行時にジオメトリを再ラスタライズすることまで含むか | DetourTileCache の再構築は「ベイク済みの層 + 障害物」からタイルを作り直す (ジオメトリは読まない)。ジオメトリの再ラスタライズは Recast 本体を sim で回すことになり、決定論の面積が倍になる。M80 の破壊は FracturePiece に分かれる (`FractureSystem.h`) | Q1: 「再ベイクなしでよいが、将来再ベイクを入れることを考慮して設計すること」 | **静的ジオメトリの実行時再ベイクは実装しない**。壊れる壁は Obstacle を付けて消す運用。ただし**将来差し込める設計を必須にする** (4.4 の「将来の実行時再ベイクへの備え」F1〜F5、受け入れ条件 18) |
 | 8 | Agent は CC 必須か、Transform を直接動かしてもよいか | 事前計画は CC.moveInput 経由。Unity の NavMeshAgent は既定で Transform を直接動かす。Rigidbody があると CC は無効 (`Components.h:743`) | Q2: CC 必須 (裁定どおり) | **CC 必須**。CC が無い / Rigidbody で無効の Agent は動かさず、インスペクタとログに警告 (Add Component 時に CC が無ければ CC も足す)。重力・接地・衝突を CC に任せられ、経路と物理の二重管理を作らない |
@@ -49,12 +51,12 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
   - デバッグ描画 (線 + 半透明の塗り)、golden `nav`、Create → 3D Object の 4 項目、インスペクタ
   - 将来の実行時再ベイクを差し込める設計 (タイル単位の差し替え口、Engine 層のベイク関数、再ベイクと両立する復元方式。再ベイク自体は作らない)
   - スクリプト API (ABI bump 1 回、C# ミラー)
+  - CharacterController の `stepOffset` (段差を速度に関係なく登る) と、Surface のセルサイズ自動決定で `maxSlopeDeg` / `maxClimb` を設定どおりに効かせる (2. #5 / #19、sub-10)
   - SelfTest、replay_verify の `nav` ジョブ、ADR-023、engine_spec / feature guide の追記
 - やらない (明示的に外したもの):
   - 自前 A* (事前計画で却下済み)
   - 静的ジオメトリの実行時再ラスタライズの**実装** (Q1。差し込み口だけ作る)
   - CC 無しで Transform を直接動かすモード (Q2)
-  - CharacterController への step offset 追加 (2. #5)
   - Agent ごとのエリアコスト上書き、Height Mesh、NavMesh の複数タイプ自動合成
   - 知覚 (M-B)、ビヘイビアツリー (M-C)
 - 後回し:
@@ -68,8 +70,8 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 
 | コンポーネント | 主なフィールド | hash |
 |---|---|---|
-| `NavMeshSurfaceComponent` | `agentTypeId` int / ベイク範囲 `center`・`size` (ローカル AABB) / `agentRadius` 0.3・`agentHeight` 1.8・`maxClimb` (仮 0.1)・`maxSlopeDeg` 45 / `cellSize`・`cellHeight`・`tileSize` / `collectLayerMask` / `areaCosts[16]` / `navAsset` AssetID / 表示フラグ (kFieldNoHash) | 対象 |
-| `NavMeshAgentComponent` | `agentTypeId` / `speed`・`acceleration`・`angularSpeedDeg`・`stoppingDistance` / `radius`・`height` (回避用) / `areaMask` u32 (sub-06 で末尾追加) / `avoidanceQuality` 0..3 (0=回避なし) / `destination` Float3・`hasDestination` / 実行状態 (`status`: Idle / Moving / Arrived / NoPath / OnLink / Inactive、`remainingDistance`、`pathPartial`) | 対象 |
+| `NavMeshSurfaceComponent` | `agentTypeId` int / ベイク範囲 `center`・`size` (ローカル AABB) / `agentRadius` 0.3・`agentHeight` 1.8・`maxClimb` 0.3 (sub-10)・`maxSlopeDeg` 45 / `cellSize`・`cellHeight`・`tileSize` / `autoCellSize` (既定 on、sub-10) / `collectLayerMask` / `areaCosts[16]` / `navAsset` AssetID / 表示フラグ (kFieldNoHash) | 対象 |
+| `NavMeshAgentComponent` | `agentTypeId` / `speed`・`acceleration`・`angularSpeedDeg`・`stoppingDistance` / `radius`・`height` (回避用) / `areaMask` u32 (sub-06 で末尾追加) / `avoidanceQuality` 0..3 (0=回避なし) / `destination` Float3・`hasDestination` / 実行状態 (`status`: Idle / Moving / Arrived / NoPath / OnLink / Inactive / Stuck (sub-05、2. #20)、`remainingDistance`、`pathPartial`) | 対象 |
 | `NavMeshObstacleComponent` | `shape` (Box / Cylinder) / `center`・`size` (Box)・`radius`・`height` (Cylinder) / `carve` bool | 対象 |
 | `NavMeshModifierComponent` | ローカル AABB / `area` (0..15) / `affects` (ベイク時に反映、実行時は Obstacle と同じ TileCache の area 書き換え) | 対象 |
 | `NavMeshLinkComponent` | `start`・`end` (ローカル) / `width` / `bidirectional` / `area` / `traversal` (Linear / Jump / Manual) / `traversalSpeed`・`jumpHeight` | 対象 |
@@ -128,12 +130,12 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 3. N2・N3 を満たす復元方式が決まり、ADR-023 に「採用方式・却下案と理由・capture に足した時間 (µs / tick)」が書かれている。— SelfTest (連続実行 vs restore 再開のハッシュ一致) + ADR
 4. Create → 3D Object の 4 項目で、コンポーネント付きエンティティが作られ Undo / Redo できる。— SelfTest または `--screenshot` で目視
 5. Surface の Bake で `.mnav` が作られて GUID で参照され、Clear で外れる。同じ入力のベイクはバイト一致 (Debug / Release)。Runtime.exe でシーンを開くと NavMesh がロードされる。— SelfTest + Runtime 実行ログ
-6. Agent が目的地へ、段差 (`maxClimb` 以下)・坂 (`maxSlopeDeg` と実効上限 atan(maxClimb / (2·cellSize)) の小さい方以下、2. #19) を越えて到達し、`Arrived` になる。届かない目的地は `NoPath` か部分経路で止まる。CC が無い Agent は `Inactive`。— SelfTest
+6. Agent が目的地へ、段差 (`maxClimb` 以下、CC の `stepOffset` ≥ `maxClimb`)・坂 (`maxSlopeDeg` 以下。既定設定で 30 度以上を含む、2. #19) を越えて到達し、`Arrived` になる。届かない目的地は `NoPath` か部分経路で止まる。CC が無い Agent は `Inactive`。— SelfTest
 7. 2 体以上の Agent がすれ違いで重ならない (回避あり) / 回避なしでは重なりうる。— SelfTest (距離の最小値)
 8. Obstacle (carve) を経路上に置くと同じ tick 内に TileCache が確定し、その tick の Agent が迂回する。消すと元に戻る。— SelfTest
 9. Modifier のエリアとコストで経路が変わる (高コスト域を避ける)。`areaMask` で通れないエリアを避ける。— SelfTest
 10. Link の Linear / Jump / Manual がそれぞれ渡れる (Manual は完了通知まで止まる)。片方向の Link は逆向きに使われない。— SelfTest
-11. NavMesh 系コンポーネントが無いシーンでは、既存の replay_verify 全ジョブと golden (`shot_verify`) が変わらない。— `tools\replay_verify.bat` / `tools\shot_verify.bat`
+11. NavMesh 系コンポーネントが無いシーンでは、既存の replay_verify 全ジョブが PASS し、golden (`shot_verify`) が変わらない。**例外 (sub-10、2. #5 / #21)**: CharacterController を含むシーン (`--acoustic-demo` / `--nav-demo`、外部プロジェクト) は、CC の既定 `stepOffset` 0.3 (scale.y 倍) による挙動の変化だけを認める。`--acoustic-demo` は、拡大した Agent Eye (scale.y 1.6、実効 0.48 m) が衝撃板 (0.45 m) に乗り上がることで変わる。これはユーザーが承知のうえで受け入れた (2026-10-04)。条件は sub-10 の「既存への影響の切り分け」: (i) 全 CC の `stepOffset` を 0 に強制した実行が、着手前 HEAD と CC の状態 (位置・速度・接地) で全 tick 一致する (ii) 0.3 での差は CC を持つエンティティから始まる (最初に割れる tick とエンティティを記録)。golden の `--update` を認めるのはこの条件を満たした画像だけ。着手前から FAIL している 5 枚 (parts / joints / acoustic_forward / acoustic_deferred / fracture_after) は sub-10 では `--update` しない (別の原因の FAIL を塗り潰さない)。— `tools\replay_verify.bat` / `tools\shot_verify.bat`
 12. replay_verify に `nav` ジョブ (`--nav-demo`: Agent 数体・Obstacle の出し入れ・Link・Modifier を含む) が追加され、Debug / Release / Server.exe と snapshot stress で PASS。— `tools\replay_verify.bat`
 13. デバッグ描画 (NavMesh 輪郭・Link・Obstacle・Agent 経路) が Editor と Runtime で出る。— `--nav-demo --screenshot` の画像
 14. ABI の新関数が C++ (GameLogic) と C# から呼べて、版と slot 数が `check_rules.ps1` と一致。— `check_rules.ps1` + C# は temp プローブで実走 (C# レーンは replay 被覆外)
@@ -141,6 +143,7 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 16. ADR-023 (将来の再ベイクの差し込み方を含む)、`engine_spec.md` の NavMesh 節、`docs\engine-feature-guide.md` 9.3 の書き換え、`AcousticNav.h` のコメントの整理、`plans\m75-ugui.md` の TypeId / ABI 番号の注記。— 差分レビュー
 17. NavMesh が半透明のエリア色で塗られ、輪郭線と一緒に Editor と Runtime で出る。床と Z ファイトしない。NavMesh 不変の tick で三角形を作り直さない。golden `nav` が `shot_verify` で PASS。— `Runtime.exe --nav-demo --screenshot` + ログ + `tools\shot_verify.bat`
 18. 将来の実行時再ベイクの差し込み口 (4.4 F1〜F5) がある: (a) タイル差し替え後の保存 → 復元 → 連続実行一致の SelfTest (b) Engine 層の入力収集 + タイルベイク関数を Editor 無しの SelfTest から呼んで、エディタのベイクと同じバイトが出る (c) ADR-023 に再ベイクの足し方 (どの関数を、どのタイミングで呼ぶか) が書かれている。— SelfTest + ADR
+19. CC の `stepOffset` = h で、高さ h の段差を速度 (0.5 m/s 以上) に関係なく登り、h + 0.05 m は登らない。既定は 0.3 (Unity と同じ)。`stepOffset` を 0 にした CC は着手前と同じ挙動 (CC の状態列が一致)。Surface のインスペクタに実際のセルサイズと実効の坂上限が出て、設定がそれを超えると警告。— PhysicsSelfTest / NavAgentSelfTest / NavEditorSelfTest / replay_verify
 
 ## 6. サブ分割
 
@@ -149,14 +152,15 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 | sub-01 | Recast の vendor と決定論・復元方式の試作 (タイル差し替え込み) | なし | 1, 2, 3, 18 (a) | `M82a: Recast Navigation を vendor し、ベイク・経路・TileCache・Crowd のビット一致と復元方式を実測する` |
 | sub-02 | NavMeshSurface とベイク (.mnav) + 輪郭のデバッグ描画 | sub-01 | 4 (Surface), 5, 13 (輪郭), 15, 18 (b) | `M82b: NavMeshSurface と .mnav ベイク — エディタで Bake / Clear、Runtime でロード` |
 | sub-03 | NavMeshAgent と dtCrowd の移動 + SimSnapshot の Nav 節 + `nav` ジョブ | sub-02 | 3 (実装側), 6, 7, 11, 12 (Agent のみ), 13 (経路) | `M82c: NavMeshAgent — dtCrowd で経路追従と回避、CC.moveInput 駆動、スナップショット対応` |
-| sub-04 | NavMesh の半透明の塗り (エリア色) と golden `nav` | sub-03 | 13, 17 | `M82d: NavMesh を半透明のエリア色で塗る — 三角形のデバッグ描画レーンと golden nav` |
-| sub-05 | NavMeshObstacle (TileCache の切り抜き) | sub-03 (sub-04 の後に直列) | 4 (Obstacle), 8, 12 (Obstacle 追加) | `M82e: NavMeshObstacle — TileCache の切り抜きを tick 境界で同期確定` |
-| sub-06 | NavMeshModifier とエリアコスト | sub-03 (sub-05 の後に直列) | 4 (Modifier), 9 | `M82f: NavMeshModifier とエリアコスト — ベイク時と実行時のエリア書き換え` |
-| sub-07 | NavMeshLink (Off-Mesh Link の渡り) | sub-06 | 4 (Link), 10, 12 (Link 追加) | `M82g: NavMeshLink — Off-Mesh Link を Linear / Jump / Manual で渡る` |
-| sub-08 | スクリプト API (ABI bump + C# ミラー) | sub-07 | 14 | `M82h: NavMesh のスクリプト API (ABI vNN)` |
-| sub-09 | 文書と全体検証 | sub-08 | 11, 12, 15, 16, 17, 18 (c) | `M82i: NavMesh の ADR-023 と仕様書・機能ガイドを更新し、全体検証を通す` |
+| sub-10 | 歩ける最大傾斜と段差の高さを設定どおりに効かせる (CC `stepOffset` + セルサイズ自動決定) | sub-03 | 6 (坂・段差), 11, 19 | `M82d: CharacterController に stepOffset を足し、NavMesh の最大傾斜と段差を設定どおりに効かせる` |
+| sub-04 | NavMesh の半透明の塗り (エリア色) と golden `nav` | sub-10 | 13, 17 | `M82e: NavMesh を半透明のエリア色で塗る — 三角形のデバッグ描画レーンと golden nav` |
+| sub-05 | NavMeshObstacle (TileCache の切り抜き) | sub-03 (sub-04 の後に直列) | 4 (Obstacle), 8, 12 (Obstacle 追加) | `M82f: NavMeshObstacle — TileCache の切り抜きを tick 境界で同期確定` |
+| sub-06 | NavMeshModifier とエリアコスト | sub-03 (sub-05 の後に直列) | 4 (Modifier), 9 | `M82g: NavMeshModifier とエリアコスト — ベイク時と実行時のエリア書き換え` |
+| sub-07 | NavMeshLink (Off-Mesh Link の渡り) | sub-06 | 4 (Link), 10, 12 (Link 追加) | `M82h: NavMeshLink — Off-Mesh Link を Linear / Jump / Manual で渡る` |
+| sub-08 | スクリプト API (ABI bump + C# ミラー) | sub-07 | 14 | `M82i: NavMesh のスクリプト API (ABI vNN)` |
+| sub-09 | 文書と全体検証 | sub-08 | 11, 12, 15, 16, 17, 18 (c) | `M82j: NavMesh の ADR-023 と仕様書・機能ガイドを更新し、全体検証を通す` |
 
-sub-04〜sub-06 は依存上どれも sub-03 の後だが、`--nav-demo` / golden `nav` / TileCache の更新経路を共有するので**直列で回す**。sub-07 は sub-06 のエリア (Jump) を使う。
+**実行順は sub-03 → sub-10 → sub-04 → … → sub-09** (sub-10 はユーザー回答で後から足したので番号が飛ぶ。コミット接頭辞は実行順に M82d〜M82j)。sub-04〜sub-06 は依存上どれも sub-03 の後だが、`--nav-demo` / golden `nav` / TileCache の更新経路を共有するので**直列で回す**。sub-07 は sub-06 のエリア (Jump) を使う。
 
 ## 7. 未決事項・リスク
 
@@ -165,7 +169,8 @@ sub-04〜sub-06 は依存上どれも sub-03 の後だが、`--nav-demo` / golde
 - R8. F3 の `maxTiles` / `maxPolys` を大きく取ると ref の salt 桁が減る。sub-01 で桁配分と巡回までの差し替え回数を数値で出す。
 - R1. ビット一致が取れない箇所が Recast 本体の深部 (例: `rcRasterizeTriangles` のクリップ、`dtObstacleAvoidanceQuery` のサンプリング) にあるとパッチ範囲が広がる (+1〜3 サブ)。sub-01 で判明させる。
 - R2. (解消、sub-01) 復元方式は (b')。残るのは Commit が O(全タイル) であること — sub-05 で数百タイル・障害物を毎 tick 動かす条件で計測し、必要なら最適化 (履歴依存を消す性質は保つ)。
-- R3. CC が越えられる段差の実値 (2. #5)。sub-03 で測って `maxClimb` の既定を決める。
+- R3. (解消、sub-03 実測 → sub-10) CC は `stepOffset` で段差を登る。`maxClimb` 既定 0.3。
+- R10. セルサイズ自動決定で既定の cs が 0.3 → 0.15 になり、ベイク量が約 4 倍・タイルの実寸が半分になる。sub-10 で既定範囲のベイク時間とタイル数を測り、`tileSize` の既定を決める。
 - R4. (解消、sub-01) 経路要求は同じ update で完走させるパッチで途中状態を無くした。代わりに重い経路が 1 tick に集中しうる — sub-03 で最悪 tick の時間を計測し、問題なら**要求数 (件数) で**絞る (時間で絞ると決定論が崩れる)。
 - R9. `/p:MyeWarnAsError=true` が HEAD (`ProjectComputeRunnerSelfTest.cpp` の C4127) で失敗する = CI の設定 (`ci.yml` の `MYE_MSBUILD_ARGS`) では現状ビルドが落ちる。M82 の範囲外。
 - R5. ABI 番号は M75h と先着順。sub-07 着手時に `EngineAPI.h` の現在版を確認する。
@@ -174,6 +179,30 @@ sub-04〜sub-06 は依存上どれも sub-03 の後だが、`--nav-demo` / golde
 ## 8. 変更履歴
 
 (確定後の変更のみ)
+
+- 2026-10-04 / 出所: coder SELF_EVAL sub-10 round 2 (planner VERDICT OK)
+  - 2. #20 の補足: cellHeight の自動値は、目標 max(0.02, min(cs/2, maxClimb/6)) を『maxClimb がちょうど整数セルになる分割数』に丸め、×0.9999 で floor の落とし穴を避ける。単純な maxClimb/6 では急な坂の設定で 1 セル欠ける (60 度が 56 度) のを SelfTest で検出したため。
+  - 既知の限界: 段差を登る tick に、位置が 1 tick で 0.13〜0.16 m 前へ出る (velocity は moveInput の速さで頭打ち)。acoustic_forward / acoustic_deferred の golden は、Agent Eye の乗り上がりを画面に写さない (着手前とバイト一致)。どちらも ADR-023 に記録する (sub-09)。
+
+- 2026-10-04 / 出所: ユーザー (司会経由、sub-10 VERDICT の `[ユーザーに聞ける]` 2 件への回答)
+  - 2. #20: 裁定どおり (cellHeight を自動で細かくし、残りは Stuck で受ける)。
+  - 2. #21: 「stepOffset を拡大縮小する (Unity と同じ)」。planner の裁定を撤回し、height と同じ |scale.y| 倍に変更。受け入れ条件 11 の例外に acoustic の変化を明記。sub-10 の round 2 の指摘に追加。
+
+- 2026-10-04 / 出所: coder SELF_EVAL sub-10 round 1 (planner VERDICT)
+  - 2. #20 (新設): 段差の量子化のずれ。`autoCellSize` で cellHeight も自動にする (sub-10 round 2)。詰まり検出は sub-05 に追加。`[ユーザーに聞ける]`
+  - 2. #21 (新設): stepOffset はワールド m で、scale を掛けない (coder の判断を採用)。`[ユーザーに聞ける]`
+  - 4.1: Surface の `tileSize` 既定を 32 → 48 に変えた (sub-10 の計測: cs 0.15 で 3×3 タイル・5.0 ms・63 KB が最速かつ最小)。
+
+- 2026-10-03 / 出所: ユーザー (司会経由。CC の `stepOffset` 既定値の `[ユーザーに聞ける]` への回答「Unity と同じ 0.3」)
+  - 2. #5: 既定を 0 → 0.3 に変更 (planner の裁定を撤回、反対意見は 2. #5 に記録)。フィールドの無い旧シーンの CC も 0.3 で読まれる。
+  - 受け入れ条件 11: CC を含むシーンの変化は、stepOffset だけが原因と切り分けた場合に限って認める形に緩めた。19 の「既定 0 は不変」を「0 にした CC は不変」に変更。
+  - sub-10: NavMeshAgent 用の 0.3 の特別扱いを削除 (既定が 0.3 になったため)。「既存への影響の切り分け」「外部プロジェクトの確認」「.rep の扱い」の節を追加。
+  - 外部プロジェクトのデータ (シーン・golden) は、MyEngine の作業では書き換えない (更新はユーザーの判断)。
+
+- 2026-10-03 / 出所: ユーザー (司会経由、spec 2. #19 の `[ユーザーに聞ける]` への回答「あるける最大傾斜や階段の高さを変更できるように」)
+  - 解釈: 「階段の高さ」= CC が実際に越えられる段差を設定で変えられること、「最大傾斜」= `maxSlopeDeg` が ledge 判定に食われず設定どおりに効くこと。どちらも「値は既に Surface にあるが効いていない」ので、効かせる側を直す。
+  - 2. #5 / #19 の結論を差し替え (CC は変えない → `stepOffset` を足す、制約として受け入れる → セルサイズ自動決定)。3. スコープの「やらない」から step offset を外し「やる」へ。受け入れ条件 6 を元の趣旨 (maxSlopeDeg 以下) に戻し、19 を新設。
+  - **sub-10 を新設**し、sub-03 と sub-04 の間で実行する (sub-04 の依存を sub-10 へ)。コミット接頭辞を実行順に振り直し (sub-10 = M82d、sub-04〜09 = M82e〜M82j)。sub-04 の 3d (実効の坂上限の表示) は sub-10 へ移した。R3 を解消、R10 を追加。
 
 - 2026-10-03 / 出所: coder SELF_EVAL sub-03 round 1 (planner VERDICT)
   - 2. #5: CC の登れる段差の実測値を記録し、maxClimb 既定 0.1 m を確定。

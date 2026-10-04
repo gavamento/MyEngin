@@ -30,13 +30,14 @@ namespace mye {
 namespace {
 
 constexpr float kDt = 1.0f / 60.0f;
-constexpr float kStepHeight = 0.1f;        // 庭の段差。CC が低速 (1.5 m/s) でも越えられる高さ (MeasureClimb の実測)
-constexpr float kSurfaceMaxClimb = 0.1f;   // NavMeshSurfaceComponent::maxClimb の既定と同じ
+constexpr float kStepHeight = 0.3f;        // 庭の段差 = Surface.maxClimb の既定ちょうど (CC.stepOffset の既定とも同じ)
+constexpr float kOverStepHeight = 0.35f;   // maxClimb を 5 cm 超える段差。経路にならない
+constexpr float kRampDeg = 30.0f;          // 庭の坂。既定の Surface (maxSlopeDeg 45) で登れる
 constexpr uint64_t kYardGuid = 0x4E41564147454E31ull;  // メモリ登録の GUID (ファイルを作らない)
 constexpr uint64_t kOpenGuid = 0x4E41564147454E32ull;
 constexpr uint64_t kFieldGuid = 0x4E41564147454E33ull;
 // Debug で採取し、Release で同じ値になることを確認して焼く (docs\adr\ADR-023-navmesh.md)
-constexpr uint64_t kExpectedYardHash = 0xD97085D12C7C561Cull;
+constexpr uint64_t kExpectedYardHash = 0x2ABC7F449D843943ull;
 
 struct Checker {
     int failCount = 0;
@@ -61,16 +62,15 @@ GameObject AddBox(Scene& scene, const char* name, float x, float y, float z, flo
     return go;
 }
 
-EntityID AddSurface(Scene& scene, float halfX, float halfZ, float maxClimb)
+// 既定の Surface 設定 (autoCellSize / maxClimb 0.3 / maxSlopeDeg 45 / tileSize)。範囲だけ庭に合わせる
+// yShift: 範囲の Y をずらす量。地面の天面とボクセル境界の位置関係を変えて段差の量子化を確かめるため
+EntityID AddSurface(Scene& scene, float halfX, float halfZ, float maxSlopeDeg = 45.0f, float yShift = 0.0f)
 {
     GameObject go = scene.CreateGameObjectTracked("Surface");
     auto* sf = go.AddComponent<NavMeshSurfaceComponent>();
-    sf->center = { 0.0f, 3.0f, 0.0f };
+    sf->center = { 0.0f, 3.0f + yShift, 0.0f };
     sf->size = { halfX * 2.0f, 10.0f, halfZ * 2.0f };
-    sf->cellSize = 0.2f;
-    sf->cellHeight = 0.1f;
-    sf->tileSize = 40;
-    sf->maxClimb = maxClimb;
+    sf->maxSlopeDeg = maxSlopeDeg;
     return go.Id();
 }
 
@@ -139,26 +139,32 @@ struct Yard {
     float platformTop = 0.0f;
 };
 
-Yard BuildYard(Scene& scene)
+// 長さ 4 m・厚さ 0.2 m の坂 (下端の上面が地面から 0.2 * cos 浮く) と、その先の台。台の上面の高さを返す
+float AddRampAndPlatform(Scene& scene, float angleDeg)
 {
     constexpr float kPi = 3.14159265f;
-    AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
-    // x = -5.5..-2.5 を覆う低い台 (全幅): 渡るには段差を 2 回越える
-    AddBox(scene, "Step", -4.0f, kStepHeight * 0.5f, 0.0f, 1.5f, kStepHeight * 0.5f, 12.0f);
-    // 10 度の坂 (下端が地面に接する) と、その先の台。傾斜の上限は maxClimb とセル幅で決まる:
-    // Recast の ledge 判定は隣のセルの高低差が walkableClimb を超える面を捨てるので、2 * cellSize * tan(傾斜) <= maxClimb が要る
-    constexpr float kAngle = 10.0f * kPi / 180.0f;
-    const float s = std::sin(kAngle);
-    const float c = std::cos(kAngle);
+    const float angle = angleDeg * kPi / 180.0f;
+    const float s = std::sin(angle);
+    const float c = std::cos(angle);
     GameObject ramp = AddBox(scene, "Ramp", 4.0f + 2.0f * c + 0.1f * s, 2.0f * s - 0.1f * c, 0.0f, 2.0f, 0.1f, 3.0f);
-    ramp.GetComponent<LocalTransform>()->rotation = { 0.0f, 0.0f, std::sin(kAngle * 0.5f), std::cos(kAngle * 0.5f) };
-    const float platformTop = 2.0f * s + 0.1f * c + (2.0f * s - 0.1f * c);
-    AddBox(scene, "Platform", 9.4f, platformTop * 0.5f, 0.0f, 1.6f, platformTop * 0.5f, 3.0f);
+    ramp.GetComponent<LocalTransform>()->rotation = { 0.0f, 0.0f, std::sin(angle * 0.5f), std::cos(angle * 0.5f) };
+    const float platformTop = 4.0f * s;
+    AddBox(scene, "Platform", 9.0f, platformTop * 0.5f, 0.0f, 1.8f, platformTop * 0.5f, 3.0f);
+    return platformTop;
+}
+
+Yard BuildYard(Scene& scene)
+{
+    AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+    // x = -5.5..-2.5 を覆う低い台 (全幅): 渡るには maxClimb ちょうどの段差を 2 回越える
+    AddBox(scene, "Step", -4.0f, kStepHeight * 0.5f, 0.0f, 1.5f, kStepHeight * 0.5f, 12.0f);
+    Yard yard;
+    yard.platformTop = AddRampAndPlatform(scene, kRampDeg);
     // 登れない高さの孤島
     AddBox(scene, "Island", 0.0f, 1.5f, 8.0f, 2.0f, 1.5f, 2.0f);
-    Yard yard;
-    yard.surface = AddSurface(scene, 13.0f, 13.0f, kSurfaceMaxClimb);
-    yard.platformTop = platformTop;
+    // maxClimb を 5 cm 超える低い台 (CC の stepOffset でも登れない高さ)
+    AddBox(scene, "Deck", 6.0f, kOverStepHeight * 0.5f, -9.0f, 1.5f, kOverStepHeight * 0.5f, 1.5f);
+    yard.surface = AddSurface(scene, 13.0f, 13.0f);
     return yard;
 }
 
@@ -169,9 +175,9 @@ float DistXZ(const LocalTransform& a, const LocalTransform& b)
     return std::sqrt(dx * dx + dz * dz);
 }
 
-// CC が真正面から登れる段差の高さを測る。moveInput で直進させ、段の上に乗ったかを見る。
+// CC (stepOffset を指定) が真正面から登れる段差の高さを測る。moveInput で直進させ、段の上に乗ったかを見る。
 // 戻り値は登れた最大の高さ (候補の中で)
-float MeasureClimb(float speed, Checker* ck, bool logTable)
+float MeasureClimb(float speed, float stepOffset, bool logTable)
 {
     const float candidates[] = { 0.05f, 0.10f, 0.15f, 0.20f, 0.25f, 0.30f, 0.35f, 0.40f, 0.50f };
     float best = 0.0f;
@@ -181,28 +187,27 @@ float MeasureClimb(float speed, Checker* ck, bool logTable)
         AddBox(scene, "Step", 6.0f, h * 0.5f, 0.0f, 3.0f, h * 0.5f, 5.0f); // 前面 x = 3
         GameObject ch = scene.CreateGameObjectTracked("Char");
         ch.SetLocalPosition(0.0f, 0.9f, 0.0f);
-        ch.AddComponent<CharacterControllerComponent>();
+        ch.AddComponent<CharacterControllerComponent>()->stepOffset = stepOffset;
         scene.GetWorld().ApplyStructuralChanges();
         PhysicsSystem physics;
         TransformSystem transforms;
         auto* cc = ch.GetComponent<CharacterControllerComponent>();
         auto* lt = ch.GetComponent<LocalTransform>();
         // 段の前面 (x = 3) を 1 m 越えたところで止める (台の端 x = 9 から落ちた結果を見ない)
-        for (int i = 0; i < 300 && lt->position.x < 4.0f; ++i) {
+        for (int i = 0; i < 1200 && lt->position.x < 4.0f; ++i) { // 0.5 m/s でも段の手前から着く長さ
             cc->moveInput = { speed, 0.0f, 0.0f };
             physics.Update(scene.GetWorld(), kDt);
             transforms.Update(scene.GetWorld());
         }
         const bool climbed = lt->position.x >= 4.0f && lt->position.y > 0.9f + h - 0.05f;
         if (logTable) {
-            MYE_LOG_INFO("  [climb] speed %.1f m/s step %.2f m -> x %.2f y(feet) %.3f : %s", speed, h, lt->position.x,
-                         lt->position.y - 0.9f, climbed ? "climbed" : "blocked");
+            MYE_LOG_INFO("  [climb] stepOffset %.2f speed %.1f m/s step %.2f m -> x %.2f y(feet) %.3f : %s", stepOffset,
+                         speed, h, lt->position.x, lt->position.y - 0.9f, climbed ? "climbed" : "blocked");
         }
         if (climbed) {
             best = std::max(best, h);
         }
     }
-    (void)ck;
     return best;
 }
 
@@ -223,13 +228,20 @@ bool RunNavAgentSelfTest()
     MYE_LOG_INFO("==== NavAgent (dtCrowd / CC / SimSnapshot Nav section) self test ====");
     Checker ck;
 
-    // ---- 0. CC が越えられる段差 (Surface.maxClimb の既定値の根拠) ----
+    // ---- 0. CC が越えられる段差 (Surface.maxClimb の既定値と CC.stepOffset の既定値が揃っていること) ----
     {
-        const float climb35 = MeasureClimb(3.5f, &ck, true);
-        const float climb15 = MeasureClimb(1.5f, &ck, true);
-        MYE_LOG_INFO("  [climb] max climbable step: %.2f m at 3.5 m/s, %.2f m at 1.5 m/s", climb35, climb15);
-        ck.Check(climb35 >= kStepHeight && climb15 >= kStepHeight,
-                 "CharacterController は kStepHeight の段差を歩き速度の範囲で越えられる (テストの前提)");
+        const CharacterControllerComponent ccDefault;
+        const NavMeshSurfaceComponent surfaceDefault;
+        ck.Check(ccDefault.stepOffset == surfaceDefault.maxClimb, "CC.stepOffset の既定 == Surface.maxClimb の既定 (0.3)");
+        const float climb35 = MeasureClimb(3.5f, ccDefault.stepOffset, true);
+        const float climb15 = MeasureClimb(1.5f, ccDefault.stepOffset, true);
+        const float climbSlow = MeasureClimb(0.5f, ccDefault.stepOffset, false);
+        MYE_LOG_INFO("  [climb] max climbable step: %.2f m at 3.5 m/s, %.2f m at 1.5 m/s, %.2f m at 0.5 m/s", climb35,
+                     climb15, climbSlow);
+        ck.Check(climb35 >= kStepHeight && climb15 >= kStepHeight && climbSlow >= kStepHeight,
+                 "既定の CC は maxClimb ちょうどの段差を速度によらず越える (テストの前提)");
+        ck.Check(climb35 < kOverStepHeight + 0.01f && climb15 < kOverStepHeight + 0.01f && climbSlow < kOverStepHeight + 0.01f,
+                 "...maxClimb を 5 cm 超える段差は越えない");
     }
 
     // ---- 1. 庭: 段差・坂・孤島・NoPath・Inactive・Idle ----
@@ -245,6 +257,8 @@ bool RunNavAgentSelfTest()
         const EntityID lost = AddAgent(scene, "Lost", -9.0f, 0.0f, 0.0f, farAway, true);
         const EntityID noBody = AddAgent(scene, "NoBody", -9.0f, 0.0f, 9.0f, toPlatform, false);
         const EntityID idle = AddAgent(scene, "Idle", -9.0f, 0.0f, -9.0f, nullptr, true);
+        const float toDeck[3] = { 6.0f, kOverStepHeight, -9.0f };
+        const EntityID curber = AddAgent(scene, "Curber", -9.0f, 0.0f, -11.0f, toDeck, true);
         ck.Check(BakeSurface(scene, yard.surface, kYardGuid, nullptr), "庭をベイクできる");
 
         Sim sim(scene);
@@ -272,6 +286,15 @@ bool RunNavAgentSelfTest()
                  "登れない孤島の上の目的地は部分経路で、届く限りの最寄りに着く (Arrived + pathPartial)");
         ck.Check(islanderLt->position.y - 0.9f < 0.2f && DistXZ(*islanderLt, *world.GetComponent<LocalTransform>(idle)) > 1.0f,
                  "...孤島の上には登っていない");
+
+        const auto* curberAgent = world.GetComponent<NavMeshAgentComponent>(curber);
+        const auto* curberLt = world.GetComponent<LocalTransform>(curber);
+        MYE_LOG_INFO("  [yard] curber status %d pathPartial %d at (%.2f, %.2f, %.2f)", curberAgent->status,
+                     curberAgent->pathPartial ? 1 : 0, curberLt->position.x, curberLt->position.y - 0.9f, curberLt->position.z);
+        // 台の縁に最も近い届く点が複数あり得る (台の中心を狙うと四辺が同距離) ので、着く先ではなく「部分経路になる」「登らない」を見る
+        ck.Check(curberAgent->pathPartial && curberAgent->status != navagentstatus::kNoPath
+                     && curberLt->position.y - 0.9f < 0.2f,
+                 "maxClimb を 5 cm 超える台の上の目的地は経路にならない (部分経路になり、台には登らない)");
 
         const auto* lostAgent = world.GetComponent<NavMeshAgentComponent>(lost);
         ck.Check(lostAgent->status == navagentstatus::kNoPath, "ナビメッシュの外の目的地は NoPath");
@@ -323,6 +346,63 @@ bool RunNavAgentSelfTest()
                      static_cast<unsigned long long>(yardHashAtEnd));
     }
 
+    // ---- 1b. 登れる傾斜の設定が効く: 既定 (45 度) なら 30 度の坂を越え、20 度に下げるとその坂は経路から外れる ----
+    for (const float maxSlopeDeg : { 45.0f, 20.0f }) {
+        Scene scene;
+        AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+        const float platformTop = AddRampAndPlatform(scene, kRampDeg);
+        const EntityID surface = AddSurface(scene, 13.0f, 13.0f, maxSlopeDeg);
+        const float toPlatform[3] = { 9.0f, platformTop, 0.0f };
+        const EntityID walker = AddAgent(scene, "SlopeWalker", 1.0f, 0.0f, 0.0f, toPlatform, true);
+        ck.Check(BakeSurface(scene, surface, kYardGuid + 1, nullptr), "(傾斜の設定) 坂の庭をベイクできる");
+        Sim sim(scene);
+        for (int i = 0; i < 900; ++i) {
+            sim.Step();
+        }
+        const auto* agent = sim.GetWorld().GetComponent<NavMeshAgentComponent>(walker);
+        const auto* lt = sim.GetWorld().GetComponent<LocalTransform>(walker);
+        MYE_LOG_INFO("  [slope] maxSlopeDeg %.0f: status %d pathPartial %d at (%.2f, %.2f, %.2f)", maxSlopeDeg, agent->status,
+                     agent->pathPartial ? 1 : 0, lt->position.x, lt->position.y - 0.9f, lt->position.z);
+        if (maxSlopeDeg > 30.0f) {
+            ck.Check(agent->status == navagentstatus::kArrived && !agent->pathPartial
+                         && std::fabs(lt->position.y - 0.9f - platformTop) < 0.15f,
+                     "既定の Surface (maxSlopeDeg 45) と CC (stepOffset 0.3) で 30 度の坂を越えて台の上へ着く");
+        } else {
+            ck.Check(agent->status == navagentstatus::kArrived && agent->pathPartial && lt->position.y - 0.9f < 0.4f,
+                     "maxSlopeDeg を 20 度に下げると 30 度の坂は経路から外れる (部分経路で地面に留まる)");
+        }
+    }
+
+    // ---- 1c. 段差の量子化: 地面の天面がボクセル境界ちょうど / 半セルずれの両方で、maxClimb ちょうどは越え +5 cm は越えない ----
+    for (const float yShift : { 0.0f, 0.025f }) {
+        for (const float deckHeight : { 0.3f, kOverStepHeight }) {
+            Scene scene;
+            AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+            AddBox(scene, "Deck", 4.0f, deckHeight * 0.5f, 0.0f, 2.0f, deckHeight * 0.5f, 12.0f); // 全幅の台 (x 2..6)
+            const EntityID surface = AddSurface(scene, 13.0f, 13.0f, 45.0f, yShift);
+            const float dest[3] = { 5.0f, deckHeight, 0.0f };
+            const EntityID walker = AddAgent(scene, "DeckWalker", -6.0f, 0.0f, 0.0f, dest, true);
+            ck.Check(BakeSurface(scene, surface, kYardGuid + 2, nullptr), "(量子化) 台の庭をベイクできる");
+            Sim sim(scene);
+            for (int i = 0; i < 900; ++i) {
+                sim.Step();
+            }
+            const auto* agent = sim.GetWorld().GetComponent<NavMeshAgentComponent>(walker);
+            const auto* lt = sim.GetWorld().GetComponent<LocalTransform>(walker);
+            const float feetY = lt->position.y - 0.9f;
+            MYE_LOG_INFO("  [quantize] yShift %.3f deck %.2f: status %d pathPartial %d at (%.2f, %.2f, %.2f)", yShift,
+                         deckHeight, agent->status, agent->pathPartial ? 1 : 0, lt->position.x, feetY, lt->position.z);
+            char msg[160];
+            if (deckHeight <= 0.31f) {
+                std::snprintf(msg, sizeof(msg), "地面の天面とボクセル境界のずれ %.3f m: maxClimb ちょうどの台の上へ着く", yShift);
+                ck.Check(agent->status == navagentstatus::kArrived && !agent->pathPartial && std::fabs(feetY - deckHeight) < 0.1f, msg);
+            } else {
+                std::snprintf(msg, sizeof(msg), "地面の天面とボクセル境界のずれ %.3f m: maxClimb+5cm の台は経路にならない (部分経路、登らない)", yShift);
+                ck.Check(agent->pathPartial && agent->status != navagentstatus::kNoPath && feetY < 0.1f, msg);
+            }
+        }
+    }
+
     // ---- 2. すれ違い ----
     {
         float minWith = 1e9f;
@@ -330,7 +410,7 @@ bool RunNavAgentSelfTest()
         for (int quality = 2; quality >= 0; quality -= 2) {
             Scene scene;
             AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
-            const EntityID surface = AddSurface(scene, 13.0f, 13.0f, kSurfaceMaxClimb);
+            const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
             const float toB[3] = { 6.0f, 0.0f, 0.0f };
             const float toA[3] = { -6.0f, 0.0f, 0.0f };
             const EntityID a = AddAgent(scene, "A", -6.0f, 0.0f, 0.05f, toB, true, quality);
@@ -493,7 +573,7 @@ bool RunNavAgentSelfTest()
     {
         Scene scene;
         AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
-        const EntityID surface = AddSurface(scene, 13.0f, 13.0f, kSurfaceMaxClimb);
+        const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
         std::vector<EntityID> agents;
         constexpr int kAgents = 130;
         for (int i = 0; i < kAgents; ++i) {

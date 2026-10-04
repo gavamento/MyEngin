@@ -4408,10 +4408,10 @@ void BuildNavShowcaseScene(EngineContext& ctx)
         return go;
     };
 
-    // 庭の形状。NavAgentSelfTest の庭と同じ構成 (傾斜の上限は maxClimb とセル幅で決まる: Components.h)
+    // 庭の形状。NavAgentSelfTest の庭と同じ構成。段差は Surface の maxClimb ちょうど (0.3 m)、坂は 30 度
     constexpr float kPi = 3.14159265f;
-    constexpr float kStepHeight = 0.1f;
-    constexpr float kRampDeg = 10.0f;
+    constexpr float kStepHeight = 0.3f;
+    constexpr float kRampDeg = 30.0f;
     addBlock("Floor", { 0.0f, -0.5f, 0.0f }, { 12.0f, 0.5f, 12.0f }, "navdemo_floor");
     addBlock("Step", { -4.0f, kStepHeight * 0.5f, 0.0f }, { 1.5f, kStepHeight * 0.5f, 12.0f }, "navdemo_block");
     const float rampAngle = kRampDeg * kPi / 180.0f;
@@ -4421,7 +4421,7 @@ void BuildNavShowcaseScene(EngineContext& ctx)
     addBlock("Ramp", { 4.0f + 2.0f * cs + 0.1f * sn, 2.0f * sn - 0.1f * cs, 0.0f }, { 2.0f, 0.1f, 3.0f },
              "navdemo_block", &rampRotation);
     const float platformTop = 4.0f * sn;
-    addBlock("Platform", { 9.4f, platformTop * 0.5f, 0.0f }, { 1.6f, platformTop * 0.5f, 3.0f }, "navdemo_block");
+    addBlock("Platform", { 9.0f, platformTop * 0.5f, 0.0f }, { 1.8f, platformTop * 0.5f, 3.0f }, "navdemo_block");
     addBlock("Island", { 0.0f, 1.5f, 8.0f }, { 2.0f, 1.5f, 2.0f }, "navdemo_wall"); // 登れない高さ
     addBlock("WallA", { 1.0f, 1.0f, -6.0f }, { 0.4f, 1.0f, 3.0f }, "navdemo_wall");
     addBlock("WallB", { 6.0f, 1.0f, 8.0f }, { 3.0f, 1.0f, 0.4f }, "navdemo_wall");
@@ -4431,9 +4431,6 @@ void BuildNavShowcaseScene(EngineContext& ctx)
         auto* sf = surfaceGo.AddComponent<NavMeshSurfaceComponent>();
         sf->center = { 0.0f, 3.0f, 0.0f };
         sf->size = { 26.0f, 10.0f, 26.0f };
-        sf->cellSize = 0.2f;
-        sf->cellHeight = 0.1f;
-        sf->tileSize = 40;
     }
 
     // Agent。左端に並べ、東の台 / 孤島 / 北東 / 南東 / 反対側の隅へ向かう。
