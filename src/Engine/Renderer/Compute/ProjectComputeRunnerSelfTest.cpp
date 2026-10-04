@@ -14,10 +14,12 @@ namespace {
 
 int g_failCount = 0;
 
-// テスト判定マクロ
+// テスト判定マクロ。cond が定数式 (constexpr の計算の確認) でも C4127 にならないよう、
+// 非 const の bool に受けてから分岐する
 #define CS_CHECK(cond)                                                                  \
     do {                                                                                \
-        if (cond) {                                                                     \
+        bool csCheckPassed = (cond);                                                    \
+        if (csCheckPassed) {                                                            \
             MYE_LOG_INFO("  PASS: %s", #cond);                                         \
         } else {                                                                        \
             MYE_LOG_ERROR("  FAIL: %s (%s:%d)", #cond, __FILE__, __LINE__);             \
