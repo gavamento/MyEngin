@@ -91,6 +91,8 @@ constexpr float kStuckRebaseRadiusScale = 1.0f;
 // 渋滞では dtCrowd の分離が Agent を接触より広く (半径の和の 1.5 倍前後) 離すので、接触距離そのままでは連鎖が切れる
 constexpr float kJamArriveRadiusScale = 2.0f;
 constexpr float kJamTouchScale = 2.0f;
+// 渋滞の後続が「前の Agent に接している」とみなす中心間距離 (半径の和の倍率)。回避が強いと列の間隔が開く
+constexpr float kJamFollowTouchScale = 3.0f;
 // 部分経路の終点からこの距離 (radius の倍率) 以内で前進が止まったら Arrived とみなす。
 // CC は NavMesh の縁の手前で止まる (カプセルの接触・skinWidth) ので、終点までの残りが stoppingDistance を割れないことがある
 constexpr float kPartialArriveRadiusScale = 1.0f;
@@ -1517,6 +1519,9 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
                             crowd.resetMoveTarget(a.slot);
                             status = navagentstatus::kArrived;
                             partial = partialEnd;
+                        } else if (IsBehindJamLeader(surface, wanted, agent, a.slot, remaining, arriveDistance)) {
+                            // 列の後続: 前の Agent が動けば進める。詰まりの原因は先頭にあるので、Moving のまま WARN も出さない
+                            slot.stuck = 0;
                         } else {
                             // Stuck は表示と通知だけ。目標と移動入力は保ち、押し続ける
                             status = navagentstatus::kStuck;
@@ -1567,6 +1572,34 @@ bool NavSystem::IsJamArrival(const NavSurfaceRuntime& surface, const std::vector
         }
         const float* otherPos = surface.crowd->getAgent(other.slot)->npos;
         const float touch = (agent.radius + other.agent->radius) * kJamTouchScale;
+        if (dtVdist2DSqr(pos, otherPos) <= touch * touch) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool NavSystem::IsBehindJamLeader(const NavSurfaceRuntime& surface, const std::vector<int>& wanted,
+                                  const NavMeshAgentComponent& agent, int slotIndex, float remaining,
+                                  float arriveDistance) const
+{
+    const NavAgentSlot& slot = surface.slots[static_cast<size_t>(slotIndex)];
+    const float* pos = surface.crowd->getAgent(slotIndex)->npos;
+    for (const int idx : wanted) {
+        const AgentRef& other = agents_[static_cast<size_t>(idx)];
+        if (other.slot < 0 || other.slot == slotIndex || other.inactiveReason != kReasonNone) {
+            continue;
+        }
+        const NavAgentSlot& otherSlot = surface.slots[static_cast<size_t>(other.slot)];
+        // 自分より残り距離が短い (= 前にいる) Agent だけが対象。厳密に短いものに限るので、互いに待つ循環は起きない
+        if (!other.agent->hasDestination || otherSlot.requested == 0 || otherSlot.linkPhase != 0
+            || (other.agent->status != navagentstatus::kMoving && other.agent->status != navagentstatus::kStuck)
+            || !(other.agent->remainingDistance < remaining)
+            || Distance3(otherSlot.requestedDest, slot.requestedDest) > arriveDistance) {
+            continue;
+        }
+        const float* otherPos = surface.crowd->getAgent(other.slot)->npos;
+        const float touch = (agent.radius + other.agent->radius) * kJamFollowTouchScale;
         if (dtVdist2DSqr(pos, otherPos) <= touch * touch) {
             return true;
         }

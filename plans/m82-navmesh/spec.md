@@ -79,7 +79,7 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 - エリア: 0 = Walkable (コスト 1)、1 = NotWalkable、2 = Jump (Link の既定)、3〜15 = ユーザー定義。名前は `project_settings.json` (表示のみ)、コストは Surface の `areaCosts`。
 - **Tick の位置**: TickRunner の フェーズ 3.4 (音響 + AgentSystem) の後、3.5 (アニメーション) の前に独立した `if (stepSim)` ブロックで `NavSystem::Update` (AgentSystem は `ts.acoustic` ゲートの中なので相乗りしない)。順序は (1) Obstacle / Modifier / Link のコンポーネント差分を TileCache へ反映し、`update` を**全部終わるまで**同期で回す (2) Agent をエンティティキー (entity.index、同値は generation) 順に dtCrowd と同期 (CC の実位置を crowd 側へ書き戻す) (3) `dtCrowd::update(1/60)` (4) 望む速度を CC.moveInput へ、状態を Agent へ書く。物理 (3.6) の後に Link 渡り中の Agent の位置を上書きする。
 - **AgentBrain との共存**: 同じエンティティに AgentBrain と NavMeshAgent があれば、moveInput は後に走る NavSystem が勝つ (feature guide 9.3 の「後に走る AI が優先」と同じ規則) + インスペクタ警告。
-- 目的地まで完全な経路が無ければ、dtCrowd の部分経路 (最寄りの到達可能点まで) で動き、着いたら `Arrived` + `pathPartial = true`。部分経路の終点は CC では届かない位置になりうる (NavMesh の縁と CC の停止位置の差) ので、部分経路のときは『終点の近くで前進が止まった』も到着として扱い、`Stuck` にはしない (sub-05 round 2)。`Stuck` は**表示と通知だけで、Agent を止めない** (review-1 #1 で変更): `Moving` の残り距離が 60 tick の間に基準から max(radius/4, 1 cm) 以上縮まなければ `Stuck` にして WARN を 1 回出す。dtCrowd の移動目標と moveInput はそのまま押し続け、前進が戻れば `Moving` へ自動で戻る。**目的地の渋滞は到着として扱う**: 前進が 60 tick 止まり、(a) 残り距離が max(stoppingDistance, 2 × radius) 以内、または (b) 同じ目的地 (差 ≤ stoppingDistance) で既に `Arrived` の Agent に接している (水平の中心距離 ≤ 半径の和 × 2。dtCrowd の分離が到着済みの Agent との間を広く空けるため。実測で決めた) なら `Arrived` にする。前進の基準は、基準から radius 以上遠ざかったときにだけ取り直す (渋滞の揺れでカウンタが戻り続けないように)。(b) は連鎖するので、N 体が同じ目的地へ向かっても全員がいずれ `Arrived` になる。判定は Agent のエンティティキー順に行い、決定的にする。
+- 目的地まで完全な経路が無ければ、dtCrowd の部分経路 (最寄りの到達可能点まで) で動き、着いたら `Arrived` + `pathPartial = true`。部分経路の終点は CC では届かない位置になりうる (NavMesh の縁と CC の停止位置の差) ので、部分経路のときは『終点の近くで前進が止まった』も到着として扱い、`Stuck` にはしない (sub-05 round 2)。`Stuck` は**表示と通知だけで、Agent を止めない** (review-1 #1 で変更): `Moving` の残り距離が 60 tick の間に基準から max(radius/4, 1 cm) 以上縮まなければ `Stuck` にして WARN を 1 回出す。dtCrowd の移動目標と moveInput はそのまま押し続け、前進が戻れば `Moving` へ自動で戻る。**目的地の渋滞は到着として扱う**: 前進が 60 tick 止まり、(a) 残り距離が max(stoppingDistance, 2 × radius) 以内、または (b) 同じ目的地 (差 ≤ stoppingDistance) で既に `Arrived` の Agent に接している (水平の中心距離 ≤ 半径の和 × 2。dtCrowd の分離が到着済みの Agent との間を広く空けるため。実測で決めた) なら `Arrived` にする。**渋滞の後続は Stuck にしない**: 同じ目的地へ向かう、自分より残り距離が短い Agent に接している (水平の中心距離 ≤ 半径の和 × 3。到着の接触 × 2 より広い。回避 3 の渋滞で間隔が 2 倍を超えて開くため。実測で決めた) 間は、前進が止まっても `Moving` のまま WARN も出さない。列の先頭が塞がれたときは、先頭だけが Stuck になる (review-2 #9、sub-13)。前進の基準は、基準から radius 以上遠ざかったときにだけ取り直す (渋滞の揺れでカウンタが戻り続けないように)。(b) は連鎖するので、N 体が同じ目的地へ向かっても全員がいずれ `Arrived` になる。判定は Agent のエンティティキー順に行い、決定的にする。
 - 乱数: `findRandomPoint` 系の `frand` は `World::Rng()` (Pcg32) 経由。Agent が居ないときは引かない。
 - エッジケース: Surface が無い / アセット未ベイク / `agentTypeId` に合う Surface が無い → Agent は `Inactive` で止まる (落ちない、ログは状態が変わった tick に 1 回)。アセット読み込み失敗 → その Surface だけ無効、他は動く。dtCrowd の容量 (既定 128、Surface ごと) を超えた Agent は entity キー順で後ろから `Inactive`。
 
@@ -163,6 +163,7 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 | sub-09 | 文書と全体検証 | sub-08 | 11, 12, 15, 16, 17, 18 (c) | `M82j: NavMesh の ADR-023 と仕様書・機能ガイドを更新し、全体検証を通す` |
 | sub-11 | NavMesh の高さを歩行面に合わせる (塗り・輪郭・ABI クエリの y) | sub-09 | 21 | `M82k: NavMesh の高さを歩行面に合わせる — 段差と坂で塗りとクエリの y がずれない` |
 | sub-12 | 渋滞を到着として扱い、Stuck で止めない + レビューの小さな指摘 | sub-11 | 20 | `M82l: 同じ目的地の渋滞を到着として扱い、Stuck で止めない — レビュー指摘の修正` |
+| sub-13 | ベイクの確定が Undo の記録に割り込まない + 渋滞の後続で Stuck を出さない | sub-12 | 20 | `M82m: NavMesh のベイク確定を Undo の記録中は持ち越す、渋滞の後続で Stuck を出さない` |
 
 レビュー round 1 の修正は sub-11 → sub-12 の順 (どちらも NavSystem と golden `nav` を触るので直列)。**実行順は sub-03 → sub-10 → sub-04 → … → sub-09** (sub-10 はユーザー回答で後から足したので番号が飛ぶ。コミット接頭辞は実行順に M82d〜M82j)。sub-04〜sub-06 は依存上どれも sub-03 の後だが、`--nav-demo` / golden `nav` / TileCache の更新経路を共有するので**直列で回す**。sub-07 は sub-06 のエリア (Jump) を使う。
 
@@ -183,6 +184,19 @@ What-if 分岐、ロールバック) を壊さないこと。既存の AI 移動
 ## 8. 変更履歴
 
 (確定後の変更のみ)
+
+- 2026-10-04 / 出所: coder SELF_EVAL sub-13 round 1 (planner VERDICT OK)
+  - 4.1: 後続の接触距離を、到着用 (× 2) とは別の定数 × 3 にした。『先頭だけ Stuck』は、開けた床で先頭が入れ替わるため『同時に Stuck になるのは最大 1 体、最後尾はならない』で検証した。
+
+- 2026-10-04 / 出所: reviewer round 2 (REVIEW FAIL)、planner の REVIEW_RESPONSE
+  - #9 (minor、planner 宛、認める): 4.1 に『渋滞の後続は Stuck にしない』を追加した。注意を引く WARN が、最後には自然に解ける渋滞で出るのは、本当の詰まりの通知を埋もれさせる (AGENTS.md 3.2 の観測可能性)。ADR に限界として書くだけにはしない。sub-13 で実装する。
+  - #8 (major、coder 宛): 仕様側には問題が無い (1 Undo で確定する規則は正しく、sub-12 の実装が Undo の記録との重なりを見ていなかった)。sub-13 で直す。
+  - round 3 (最後) の線引き: 直すのは #8 と #9 だけ。次のものは**既知の限界**として M82 では直さない。
+    - GUI の手操作の未確認項目: エリアコストのドラッグ = 1 Undo、Project Settings のエリア名、Link の警告 2 種、Stuck の Inspector 表示、登る tick の跳び。test_checklists.md の M82 節で、ユーザーが手動で確認する。
+    - 段差の縁のギザギザした帯 (ADR 決定 13)。
+    - 渋滞の到着の定数が実ゲームでは未検証であること。
+    - 台の中に取り残される床。
+    - `FractureBakeService::Pump` (M80) にある同じ形の Undo の割り込み (別件)。
 
 - 2026-10-04 / 出所: coder SELF_EVAL sub-12 round 1 (planner VERDICT OK)
   - 4.1: 渋滞の到着の『接している』を『半径の和 × 2』に、前進の基準の取り直しを『radius 以上遠ざかったとき』にした。2 / 4 / 8 体の実測に合わせて調整した値で、実ゲームの渋滞では未検証 (ADR-023 の既知の限界)。同じ tick 内で到着が連鎖する。

@@ -34,6 +34,10 @@ bool CommitNavBake(EngineContext& ctx, Selection& selection, UndoStack& undo, En
                    const NavBakeOutput& output)
 {
     World& world = ctx.scene->GetWorld();
+    // BeginRecord は進行中の記録を捨てる。ドラッグ中は何も書かず、呼び出し側が次のフレームで再試行する
+    if (undo.IsRecording()) {
+        return false;
+    }
     if (output.status != NavBakeStatus::Ok || !world.IsAlive(surface)) {
         return false;
     }
@@ -63,7 +67,7 @@ bool CommitNavBake(EngineContext& ctx, Selection& selection, UndoStack& undo, En
 bool ClearNavBake(EngineContext& ctx, Selection& selection, UndoStack& undo, EntityID surface, uint64_t fid)
 {
     World& world = ctx.scene->GetWorld();
-    if (!world.IsAlive(surface)) {
+    if (undo.IsRecording() || !world.IsAlive(surface)) { // 記録中は進行中の記録を壊すので何もしない
         return false;
     }
     auto* comp = world.GetComponent<NavMeshSurfaceComponent>(surface);

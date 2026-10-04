@@ -18,12 +18,14 @@
 | sub-08 | OK | 1 | d8ff284 | スクリプト API、ABI bump (M82i) |
 | sub-09 | OK | 2 | 4e0d7e5 | ADR-023 / 文書 / 全体検証 (M82j) |
 | sub-11 | OK | 1 | e145a66 | 高さを歩行面に合わせる (塗り・輪郭・クエリの y) (M82k、review-1 #2 #3) |
-| sub-12 | 実装中 | 0 | | 同じ目的地の渋滞を到着扱い + レビューの小さな指摘 (M82l、review-1 #1 #4〜#7) |
+| sub-12 | OK | 1 | 55b2367 | 同じ目的地の渋滞を到着扱い + レビューの小さな指摘 (M82l、review-1 #1 #4〜#7) |
+| sub-13 | 実装中 | 0 | | ベイク確定を Undo 記録中は持ち越す + 渋滞の後続で Stuck を出さない (M82m、review-2 #8 #9) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
 | 1 | FAIL | 3/4/3/4 | major 2 (同じ目的地で Stuck / 塗りの高さ)、minor 5 (review-1.md) |
+| 2 | FAIL | 4/3/4/4 | major 1 (#8 ベイク確定が進行中の Undo 記録に割り込む)、minor 1 (#9 渋滞中の一時的な Stuck WARN)。round 1 の 7 件は解消 (review-2.md) |
 
 ## ユーザー判断
 - (2026-10-03、事前の計画セッションで確定) NavMesh は Recast Navigation を vendor して使う。自前 A* への置き換えはしない
@@ -70,5 +72,7 @@
 - (planner 2026-10-04 REVIEW_RESPONSE round 1) #1 (渋滞で Stuck のまま止まる) と #3 (クエリの y の誤差) を仕様の穴として認めた。sub-11 (高さ、#2 #3) → sub-12 (Stuck と到着、#4〜#7) を新設 (M82k / M82l)。#1 と #3 の裁定は `[ユーザーに聞ける]`
 - (planner 2026-10-04 sub-11 VERDICT OK) 高さは方式 (a) で、ハッシュは不変。reviewer が見ること: 編集中の SceneView で、段差の天面と坂が塗られているか (スクショ未取得)。既知の限界: 台の中の取り残された床が NavFindRandomPoint の候補に混ざりうる。作業ファイルに %TEMP% の s11 が追加された
 - (planner 2026-10-04 sub-12 VERDICT OK) review-1 の指摘はすべて対応した。reviewer の round 2 で見ること: #5 のベイク結果の確定 (別の選択、Inspector を閉じた構成)、渋滞の到着の定数が実ゲーム相当でも妥当か (任意)
+- (planner 2026-10-04 REVIEW_RESPONSE round 2) #8 と #9 を sub-13 (M82m) で直す。round 3 で見る範囲は #8 / #9 の消込だけで、ほかは spec 8. の線引きどおり既知の限界とする。別件: `FractureBakeService::Pump` (M80) にも、Undo の記録を割り込む同じ形がある (M82 の範囲外。ユーザーへ報告する)
+- (planner 2026-10-04 sub-13 VERDICT OK) review-2 の #8 / #9 に対応した。reviewer の round 3 (最後) で見るのは、#8 / #9 の消込と、既存のものを壊していないことだけ (spec 8. の線引き)
 - (planner) 削除の承認待ちの作業ファイル: `C:\HAL\MyEngin\cache\s10\` (26 MB) と `C:\HAL\MyEngin\cache\base10_rel\` (37 MB)。round 2 で着手前の基準として再利用できるので、sub-10 が OK になるまで残す
 - (planner) sub-01 の結論 (復元方式 a/b/c) で sub-03 以降の SimSnapshot の形が決まる。sub-01 の VERDICT 時に spec 4.4 を確定させる

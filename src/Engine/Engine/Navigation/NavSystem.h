@@ -249,6 +249,10 @@ private:
     // wanted は UpdateSurface のキー順の Agent 一覧。同じ tick に先に到着した Agent も後続の判定に使う
     bool IsJamArrival(const NavSurfaceRuntime& surface, const std::vector<int>& wanted, const NavMeshAgentComponent& agent,
                       int slotIndex, float remaining, float arriveDistance) const;
+    // 前進が止まった Agent が、同じ目的地へ向かう「自分より残り距離が短い」Agent に接しているか (渋滞の後続)。
+    // 後続は Stuck にしない。先頭 (前に誰もいない Agent) だけが詰まりの原因として Stuck になる
+    bool IsBehindJamLeader(const NavSurfaceRuntime& surface, const std::vector<int>& wanted, const NavMeshAgentComponent& agent,
+                           int slotIndex, float remaining, float arriveDistance) const;
     void BeginLink(World& world, NavSurfaceRuntime& surface, int slotIndex, NavMeshAgentComponent& agent, float dt) const;
     static void FinishLink(NavSurfaceRuntime& surface, int slotIndex, const NavMeshAgentComponent& agent, const float* exitPos);
     void CollectAgents(World& world);

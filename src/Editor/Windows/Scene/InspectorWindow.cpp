@@ -1809,6 +1809,10 @@ void InspectorWindow::DrawNavMeshAgentNotes(EngineContext& ctx, Selection& selec
 
 void InspectorWindow::CommitReadyNavBakes(EngineContext& ctx, Selection& selection, UndoStack& undo)
 {
+    // ドラッグなど複数フレームの Undo 記録中は確定を持ち越す (結果は Ready のまま残り、記録が閉じたフレームで取り込む)
+    if (undo.IsRecording()) {
+        return;
+    }
     World& world = ctx.scene->GetWorld();
     for (const uint64_t fid : navBakeService_.ReadyIds()) {
         NavBakeResult result;

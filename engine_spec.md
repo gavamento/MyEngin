@@ -2428,6 +2428,8 @@ one cell, and the remaining mismatch is shown as `Stuck` (no progress for 60 tic
 WARN only: the Agent keeps pushing and returns to `Moving` when progress resumes. An Agent whose progress has stopped
 becomes `Arrived` when it is within max(`stoppingDistance`, 2 x `radius`) of the destination, or touches an Agent that
 already `Arrived` at the same destination (chained in entity-key order), so a crowd sent to one point all arrives.
+An Agent that touches (within 3 x the sum of radii) a nearer Agent heading to the same destination stays `Moving` and logs no WARN;
+only the head of a blocked queue becomes `Stuck`.
 
 **Display.** The mesh is drawn as a translucent area-coloured fill plus outline by `NavDebugView` on the render-frame
 side, so it appears while editing and while playing through one path. Fill and outline follow the walkable surface

@@ -405,6 +405,33 @@ bool RunNavEditorSelfTest()
         check(!CommitNavBake(ctx, selection, undo, surface.Id(), fid, failed), "commit: a failed bake is refused");
     }
 
+    // ---- 3. 複数フレームの記録 (ドラッグ) の途中でベイクが完了しても、記録を壊さず記録の後に確定する ----
+    {
+        check(ClearNavBake(ctx, selection, undo, surface.Id(), fid), "mid-record: set up an unbaked surface");
+        const uint64_t blockFid = scene.EnsureFileId(block.Id());
+        auto blockX = [&]() { return world.GetComponent<LocalTransform>(block.Id())->position.x; };
+        undo.BeginRecord("Move Block", selection);
+        undo.CaptureBefore(scene, blockFid);
+        block.SetLocalPosition(7.0f, 1.0f, 0.0f);
+        check(!CommitNavBake(ctx, selection, undo, surface.Id(), fid, result.output),
+              "mid-record: a commit is deferred while an Undo record is open");
+        check(!ClearNavBake(ctx, selection, undo, surface.Id(), fid), "mid-record: a clear is deferred too");
+        check(undo.IsRecording(), "mid-record: the drag's record is still open");
+        undo.CaptureAfter(scene, blockFid);
+        undo.EndRecord(selection);
+        check(CommitNavBake(ctx, selection, undo, surface.Id(), fid, result.output),
+              "mid-record: the commit succeeds once the record is closed");
+        auto navAssetIsNull = [&]() {
+            const auto* s = world.GetComponent<NavMeshSurfaceComponent>(surface.Id());
+            return s != nullptr && s->navAsset.IsNull();
+        };
+        check(!navAssetIsNull(), "mid-record: the bake is applied after the drag");
+        undo.Undo(scene, selection);
+        check(navAssetIsNull() && blockX() > 6.9f, "mid-record: Undo 1 reverts only the bake");
+        undo.Undo(scene, selection);
+        check(blockX() < 3.1f, "mid-record: Undo 2 reverts the drag");
+    }
+
     service.Shutdown();
     fs::remove_all(root, ec);
     if (failCount == 0) {

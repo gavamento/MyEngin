@@ -1474,8 +1474,48 @@ bool RunNavAgentSelfTest()
                      "塞ぎを消すと Stuck -> Moving -> Arrived (止めずに押し続けていたので目的地を変えなくても進む)");
         }
 
+        // 塞がれた列: 先頭だけが Stuck、すぐ後ろに接している後続は Moving のまま
+        {
+            Scene scene;
+            AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 0.6f); // 幅 1.2 m = 一列にしか並べない廊下
+            const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+            const float dest[3] = { 8.0f, 0.0f, 0.0f };
+            const EntityID lead = AddAgent(scene, "Lead", -6.0f, 0.0f, 0.0f, dest, true);
+            const EntityID mid = AddAgent(scene, "Mid", -6.8f, 0.0f, 0.0f, dest, true);
+            const EntityID tail = AddAgent(scene, "Tail", -7.6f, 0.0f, 0.0f, dest, true);
+            ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(塞がれた列) 壁を置く前の床をベイクできる");
+            AddBox(scene, "LateWall", 0.0f, 1.0f, 0.0f, 0.5f, 1.0f, 13.0f);
+            scene.GetWorld().ApplyStructuralChanges();
+            Sim sim(scene);
+            int maxStuckAtOnce = 0; // 同時に Stuck の Agent 数の最大 (先頭 1 体だけのはず)
+            int tailStuckTicks = 0;
+            int anyStuckTicks = 0;
+            for (int i = 0; i < 900; ++i) {
+                sim.Step();
+                World& w = sim.GetWorld();
+                int stuckNow = 0;
+                for (const EntityID id : { lead, mid, tail }) {
+                    stuckNow += w.GetComponent<NavMeshAgentComponent>(id)->status == navagentstatus::kStuck ? 1 : 0;
+                }
+                maxStuckAtOnce = (std::max)(maxStuckAtOnce, stuckNow);
+                anyStuckTicks += stuckNow > 0 ? 1 : 0;
+                tailStuckTicks += w.GetComponent<NavMeshAgentComponent>(tail)->status == navagentstatus::kStuck ? 1 : 0;
+            }
+            for (const EntityID id : { lead, mid, tail }) {
+                const auto* a = sim.GetWorld().GetComponent<NavMeshAgentComponent>(id);
+                const auto* t = sim.GetWorld().GetComponent<LocalTransform>(id);
+                MYE_LOG_INFO("  [queue]   status %d remaining %.3f at (%.2f, %.2f)", a->status, a->remainingDistance, t->position.x, t->position.z);
+            }
+            MYE_LOG_INFO("  [queue] stuck ticks %d, max stuck at once %d, tail stuck ticks %d", anyStuckTicks, maxStuckAtOnce, tailStuckTicks);
+            ck.Check(anyStuckTicks > 0, "塞がれた列では、前に仲間のいない先頭が Stuck になる");
+            ck.Check(maxStuckAtOnce == 1, "塞がれた列で同時に Stuck になるのは先頭の 1 体だけ (後続は Moving のまま)");
+            ck.Check(tailStuckTicks == 0, "塞がれた列の最後尾は Stuck にならない");
+        }
+
         // 同じ目的地へ向かう N 体 (回避あり = 既定): 目的地の手前で渋滞しても全員がいずれ Arrived になる
-        for (const int count : { 2, 4, 8 }) {
+        struct JamCase { int count; int avoidance; };
+        for (const JamCase jam : { JamCase{ 2, 2 }, JamCase{ 4, 2 }, JamCase{ 8, 2 }, JamCase{ 8, 3 } }) {
+            const int count = jam.count;
             Scene scene;
             AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
             const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
@@ -1483,18 +1523,23 @@ bool RunNavAgentSelfTest()
             std::vector<EntityID> crowdAgents;
             for (int i = 0; i < count; ++i) {
                 const float z = (static_cast<float>(i) - 0.5f * static_cast<float>(count - 1)) * 0.9f;
-                crowdAgents.push_back(AddAgent(scene, "Crowd", -8.0f, 0.0f, z, dest, true));
+                crowdAgents.push_back(AddAgent(scene, "Crowd", -8.0f, 0.0f, z, dest, true, jam.avoidance));
             }
             ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(渋滞) 開けた床をベイクできる");
             Sim sim(scene);
+            int stuckAgentTicks = 0; // Stuck (= WARN の元) になった Agent の延べ数
             for (int i = 0; i < 1500; ++i) {
                 sim.Step();
+                for (const EntityID id : crowdAgents) {
+                    stuckAgentTicks += sim.GetWorld().GetComponent<NavMeshAgentComponent>(id)->status == navagentstatus::kStuck ? 1 : 0;
+                }
             }
+            ck.Check(stuckAgentTicks == 0, "渋滞の後続は Stuck にならない (途中の Stuck / WARN が 0)");
             int arrivedCount = 0;
             for (const EntityID id : crowdAgents) {
                 arrivedCount += sim.GetWorld().GetComponent<NavMeshAgentComponent>(id)->status == navagentstatus::kArrived ? 1 : 0;
             }
-            MYE_LOG_INFO("  [jam] %d agents: %d arrived", count, arrivedCount);
+            MYE_LOG_INFO("  [jam] %d agents (avoidance %d): %d arrived, stuck agent-ticks %d", count, jam.avoidance, arrivedCount, stuckAgentTicks);
             for (const EntityID id : crowdAgents) {
                 const auto* a = sim.GetWorld().GetComponent<NavMeshAgentComponent>(id);
                 const auto* t = sim.GetWorld().GetComponent<LocalTransform>(id);
