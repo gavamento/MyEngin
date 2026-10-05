@@ -1847,3 +1847,7 @@ MYE_STR(Insp_NavCellAtMinimum, "The cell size hit its minimum (0.05 m), so the e
                                "セルの大きさが下限 (0.05 m) に当たったため、実効の傾斜上限が設定を下回っています。登れる段差かエージェント半径を上げるか、登れる傾斜を下げてください")
 MYE_STR(Insp_NavSlopeUnreachable, "Max Slope (%.0f deg) is above the effective limit (%.1f deg): steeper slopes are not walkable. Enable Auto Cell Size, raise Max Climb, or shrink the cell size.",
                                "登れる傾斜 (%.0f 度) が実効の上限 (%.1f 度) を超えています。それより急な坂は歩けません。セルの大きさの自動決定を有効にするか、登れる段差を上げるか、セルを小さくしてください")
+MYE_STR(Insp_EditCollider, "Edit collider", "コライダーを編集")
+MYE_STR(Insp_EditColliderUnsupported, "Select one sphere, box or capsule to edit.", "球・箱・カプセルを持つオブジェクトを1つ選択してください。")
+MYE_STR(SceneView_EditingCollider, "Editing collider", "コライダー編集中")
+MYE_STR(SceneView_SphereRotation, "Sphere rotation has no effect.", "球の回転操作は無効です。")

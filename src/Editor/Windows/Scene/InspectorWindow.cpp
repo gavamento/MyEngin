@@ -914,6 +914,21 @@ void InspectorWindow::DrawComponent(EngineContext& ctx, Selection& selection, Un
             return;
         }
         if (comp) {
+            if (std::strcmp(desc.name, "Collider") == 0) {
+                const auto& collider = *static_cast<const ColliderComponent*>(comp);
+                const bool supported = selection.ids.size() == 1
+                    && collider.shape >= collidershape::kSphere
+                    && collider.shape <= collidershape::kCapsule;
+                bool editing = selection.colliderEditFileId == selection.primary;
+                ImGui::BeginDisabled(!supported);
+                if (ImGui::Checkbox(Tr(StrId::Insp_EditCollider), &editing)) {
+                    selection.colliderEditFileId = editing ? selection.primary : 0;
+                }
+                ImGui::EndDisabled();
+                if (!supported) {
+                    ImGui::TextWrapped("%s", Tr(StrId::Insp_EditColliderUnsupported));
+                }
+            }
             DrawComponentFields(ctx, selection, undo, tg, row, comp);
         }
         DrawComponentNotes(ctx, selection, undo, tg, row);
@@ -1003,11 +1018,36 @@ void InspectorWindow::DrawComponentFields(EngineContext& ctx, Selection& selecti
         if (f.flags & kFieldHidden) {
             continue;
         }
+        if (std::strcmp(desc.name, "Collider") == 0) {
+            const auto& collider = *static_cast<const ColliderComponent*>(comp);
+            if ((std::strcmp(f.name, "center") == 0 || std::strcmp(f.name, "rotation") == 0)
+                && (collider.shape < collidershape::kSphere || collider.shape > collidershape::kCapsule)) {
+                continue;
+            }
+            if (std::strcmp(f.name, "rotation") == 0 && collider.shape == collidershape::kSphere) {
+                continue;
+            }
+        }
         if (isJoint && !JointFieldApplies(jointType, f.name)) {
             continue;
         }
         const bool changed =
             DrawField(ctx, desc.name, comp, f, e, selection, undo, row.fids, row.comps);
+        if (changed && std::strcmp(desc.name, "Collider") == 0
+            && (std::strcmp(f.name, "radius") == 0 || std::strcmp(f.name, "height") == 0
+                || std::strcmp(f.name, "halfExtents") == 0)) {
+            constexpr float kMinSize = 0.0001f;
+            for (void* value : row.comps) {
+                auto& collider = *static_cast<ColliderComponent*>(value);
+                collider.radius = (std::max)(kMinSize, collider.radius);
+                collider.halfExtents.x = (std::max)(kMinSize, collider.halfExtents.x);
+                collider.halfExtents.y = (std::max)(kMinSize, collider.halfExtents.y);
+                collider.halfExtents.z = (std::max)(kMinSize, collider.halfExtents.z);
+                if (collider.shape == collidershape::kCapsule) {
+                    collider.height = (std::max)(2 * collider.radius, collider.height);
+                }
+            }
+        }
         // マルチ選択: primary で編集した値をフィールド単位で他対象へ伝播
         // (バイトコピー — POD リフレクション型のみなので安全)
         if (changed && row.comps.size() > 1 && !(f.flags & kFieldReadOnly)

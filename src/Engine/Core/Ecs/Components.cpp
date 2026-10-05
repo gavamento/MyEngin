@@ -177,6 +177,8 @@ void RegisterBuiltinComponents()
         // PhysicsSelfTest の [phys] body ビットパターン照合が見る (ワールドハッシュ値は変わるため)
         MYE_JP("物理マテリアル", MYE_FIELD(ColliderComponent, physMaterial, AssetRef)),
         MYE_JP("材料の上書き", MYE_FIELD(ColliderComponent, materialOverrideBits, UInt32)),
+        MYE_JP("中心", MYE_FIELD(ColliderComponent, center, Float3)),
+        MYE_JP("回転", MYE_FIELD(ColliderComponent, rotation, Quat)),
     });
 
     // M10: 無ければ有効扱い

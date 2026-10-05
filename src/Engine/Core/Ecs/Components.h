@@ -235,6 +235,8 @@ struct ColliderComponent {
     // 未割当なら従来と同じメモリを同じ経路で読む = 既存シーンはビット同一
     AssetID physMaterial = {};         // .physmat.json (PhysMatLibrary のキー。空 = 未割当)
     uint32_t materialOverrideBits = 0; // kPhysMatOverride* の集合 (立てたビットは材料より既存フィールドが勝つ)
+    DirectX::XMFLOAT3 center = { 0, 0, 0 }; // オブジェクト原点からのローカル位置
+    DirectX::XMFLOAT4 rotation = { 0, 0, 0, 1 }; // 基本形状のローカル姿勢
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
