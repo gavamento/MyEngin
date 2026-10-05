@@ -1878,6 +1878,24 @@ ShapePose MakePose(const ColliderComponent& col, const DirectX::XMFLOAT3& positi
         }
     }
     ApplyScaledExtents(p, col, std::fabs(scale.x), std::fabs(scale.y), std::fabs(scale.z));
+    if (col.shape <= collidershape::kCapsule) {
+        if (col.center.x != 0 || col.center.y != 0 || col.center.z != 0) {
+            float ox = 0, oy = 0, oz = 0;
+            LocalToWorld(p, col.center.x * scale.x, col.center.y * scale.y,
+                         col.center.z * scale.z, ox, oy, oz);
+            p.px += ox; p.py += oy; p.pz += oz;
+        }
+        if (col.rotation.x != 0 || col.rotation.y != 0 || col.rotation.z != 0
+            || col.rotation.w != 1) {
+            ColliderComponent local{};
+            const ShapePose r = MakePose(local, { 0, 0, 0 }, col.rotation, { 1, 1, 1 });
+            ShapePose base = p;
+            LocalToWorld(base, r.bx[0], r.bx[1], r.bx[2], p.bx[0], p.bx[1], p.bx[2]);
+            LocalToWorld(base, r.by[0], r.by[1], r.by[2], p.by[0], p.by[1], p.by[2]);
+            LocalToWorld(base, r.bz[0], r.bz[1], r.bz[2], p.bz[0], p.bz[1], p.bz[2]);
+            p.identityRot = 0;
+        }
+    }
     return p;
 }
 
@@ -1914,6 +1932,23 @@ ShapePose MakePoseFromMatrix(const ColliderComponent& col, const DirectX::XMFLOA
         ? 1
         : 0;
     ApplyScaledExtents(p, col, sx, sy, sz);
+    if (col.shape <= collidershape::kCapsule) {
+        if (col.center.x != 0 || col.center.y != 0 || col.center.z != 0) {
+            p.px += col.center.x * wm._11 + col.center.y * wm._21 + col.center.z * wm._31;
+            p.py += col.center.x * wm._12 + col.center.y * wm._22 + col.center.z * wm._32;
+            p.pz += col.center.x * wm._13 + col.center.y * wm._23 + col.center.z * wm._33;
+        }
+        if (col.rotation.x != 0 || col.rotation.y != 0 || col.rotation.z != 0
+            || col.rotation.w != 1) {
+            ColliderComponent local{};
+            const ShapePose r = MakePose(local, { 0, 0, 0 }, col.rotation, { 1, 1, 1 });
+            const ShapePose base = p;
+            LocalToWorld(base, r.bx[0], r.bx[1], r.bx[2], p.bx[0], p.bx[1], p.bx[2]);
+            LocalToWorld(base, r.by[0], r.by[1], r.by[2], p.by[0], p.by[1], p.by[2]);
+            LocalToWorld(base, r.bz[0], r.bz[1], r.bz[2], p.bz[0], p.bz[1], p.bz[2]);
+            p.identityRot = 0;
+        }
+    }
     return p;
 }
 

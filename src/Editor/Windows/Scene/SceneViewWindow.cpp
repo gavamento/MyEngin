@@ -484,6 +484,11 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         DrawNavObstacleGizmos(world);
         DrawNavModifierGizmos(world);
         DrawNavLinkGizmos(world);
+    } else if (selection.colliderEditFileId != 0 && selection.colliderEditFileId == selection.primary) {
+        const GameObject selected = ctx.scene->FindByFileId(selection.primary);
+        if (selected) {
+            DrawColliderGizmos(world, selected.Id());
+        }
     }
 
     DrawSelectionOutline(ctx, world, selection);
@@ -492,9 +497,12 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
 
 // コライダー (球 / OBB / カプセル、M28a)。寸法・基底は物理と同じ
 // shapes::MakePoseFromMatrix から取る = ギズモと判定のズレを構造的に防ぐ
-void SceneViewWindow::DrawColliderGizmos(World& world)
+void SceneViewWindow::DrawColliderGizmos(World& world, EntityID only)
 {
-    ForEachWithWorldMatrix<ColliderComponent>(world, [&](const ColliderComponent& col, const XMFLOAT4X4& wm, EntityID) {
+    ForEachWithWorldMatrix<ColliderComponent>(world, [&](const ColliderComponent& col, const XMFLOAT4X4& wm, EntityID entity) {
+        if (!only.IsNull() && entity != only) {
+            return;
+        }
         const ShapePose pose = shapes::MakePoseFromMatrix(col, wm);
         const XMFLOAT3 pos = { pose.px, pose.py, pose.pz };
         if (col.shape == collidershape::kSphere) {
@@ -1148,8 +1156,11 @@ void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoSt
                                 float rectW, float rectH)
 {
     World& world = ctx.scene->GetWorld();
-    if (gizmoActive_ && selection.primary != gizmoFileId_) {
-        undo.CancelRecord();
+    const bool colliderRequested = selection.colliderEditFileId != 0
+        && selection.colliderEditFileId == selection.primary && selection.ids.size() == 1;
+    if (gizmoActive_ && (selection.primary != gizmoFileId_ || gizmoCollider_ != colliderRequested)) {
+        undo.CaptureAfter(*ctx.scene, gizmoFileId_);
+        undo.EndRecord(selection);
         gizmoActive_ = false;
         gizmoFileId_ = 0;
         gizmoBlockedUntilRelease_ = true;
@@ -1157,7 +1168,8 @@ void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoSt
     GameObject sel = ctx.scene->FindByFileId(selection.primary);
     if (!sel) {
         if (gizmoActive_) {
-            undo.CancelRecord();
+            undo.CaptureAfter(*ctx.scene, gizmoFileId_);
+            undo.EndRecord(selection);
             gizmoActive_ = false;
             gizmoFileId_ = 0;
             gizmoBlockedUntilRelease_ = true;
@@ -1169,7 +1181,8 @@ void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoSt
     auto* lt = world.GetComponent<LocalTransform>(e);
     if (!wm || !lt) {
         if (gizmoActive_) {
-            undo.CancelRecord();
+            undo.CaptureAfter(*ctx.scene, gizmoFileId_);
+            undo.EndRecord(selection);
             gizmoActive_ = false;
             gizmoFileId_ = 0;
             gizmoBlockedUntilRelease_ = true;
@@ -1182,6 +1195,47 @@ void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoSt
     ImGuizmo::SetRect(rectX, rectY, rectW, rectH);
 
     XMFLOAT4X4 worldM = wm->value; // 現在のワールド行列 (前フレームの transform 更新結果)
+    auto* collider = world.GetComponent<ColliderComponent>(e);
+    const bool colliderEditing = colliderRequested && collider
+        && collider->shape >= collidershape::kSphere && collider->shape <= collidershape::kCapsule;
+    if (colliderRequested && !colliderEditing) {
+        selection.colliderEditFileId = 0;
+        if (gizmoActive_) {
+            undo.CaptureAfter(*ctx.scene, gizmoFileId_);
+            undo.EndRecord(selection);
+            gizmoActive_ = false;
+            gizmoFileId_ = 0;
+            gizmoBlockedUntilRelease_ = true;
+        }
+        return;
+    }
+    XMFLOAT3 shapeSize = { 1, 1, 1 };
+    if (colliderEditing) {
+        ImGui::GetWindowDrawList()->AddText(ImVec2(rectX + 12, rectY + rectH - 28),
+            IM_COL32(64, 208, 64, 255), Tr(StrId::SceneView_EditingCollider));
+        if (collider->shape == collidershape::kSphere && gizmoOp_ == ImGuizmo::ROTATE) {
+            if (gizmoActive_) {
+                undo.CaptureAfter(*ctx.scene, gizmoFileId_);
+                undo.EndRecord(selection);
+                gizmoActive_ = false;
+                gizmoFileId_ = 0;
+                gizmoBlockedUntilRelease_ = true;
+            }
+            ImGui::GetWindowDrawList()->AddText(ImVec2(rectX + 12, rectY + rectH - 48),
+                IM_COL32(220, 220, 220, 255), Tr(StrId::SceneView_SphereRotation));
+            return;
+        }
+        const ShapePose pose = shapes::MakePoseFromMatrix(*collider, wm->value);
+        constexpr float kMinSize = 0.0001f;
+        shapeSize = collider->shape == collidershape::kBox
+            ? XMFLOAT3{ std::max(pose.hx, kMinSize), std::max(pose.hy, kMinSize), std::max(pose.hz, kMinSize) }
+            : XMFLOAT3{ std::max(pose.radius, kMinSize),
+                std::max(pose.radius + pose.halfSeg, kMinSize), std::max(pose.radius, kMinSize) };
+        worldM = { pose.bx[0] * shapeSize.x, pose.bx[1] * shapeSize.x, pose.bx[2] * shapeSize.x, 0,
+                   pose.by[0] * shapeSize.y, pose.by[1] * shapeSize.y, pose.by[2] * shapeSize.y, 0,
+                   pose.bz[0] * shapeSize.z, pose.bz[1] * shapeSize.z, pose.bz[2] * shapeSize.z, 0,
+                   pose.px, pose.py, pose.pz, 1 };
+    }
 
     // スナップ (Ctrl 押下時。量は editor_settings)
     const bool snap = ImGui::GetIO().KeyCtrl;
@@ -1193,7 +1247,7 @@ void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoSt
     }
 
     const bool used = ImGuizmo::Manipulate(&lastView_.m[0][0], &lastProj_.m[0][0], gizmoOp_,
-                                           gizmoMode_, &worldM.m[0][0], nullptr,
+                                           colliderEditing && gizmoOp_ == ImGuizmo::SCALE ? ImGuizmo::LOCAL : gizmoMode_, &worldM.m[0][0], nullptr,
                                            snap ? snapVals : nullptr);
     const bool using_ = ImGuizmo::IsUsing();
     if (!ImGui::IsMouseDown(0)) {
@@ -1204,13 +1258,54 @@ void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoSt
     if (using_ && !gizmoActive_ && !gizmoBlockedUntilRelease_) {
         gizmoActive_ = true;
         gizmoFileId_ = selection.primary;
-        undo.BeginRecord("Gizmo", selection);
+        gizmoCollider_ = colliderEditing;
+        undo.BeginRecord(colliderEditing ? "Collider Gizmo" : "Gizmo", selection);
         undo.CaptureBefore(*ctx.scene, selection.primary);
     }
 
     if (used && gizmoActive_) {
         // ワールド行列 → ローカル行列 (親があれば親ワールドの逆行列を掛ける)
-        WriteWorldToLocal(world, e, *lt, worldM);
+        if (!colliderEditing) {
+            WriteWorldToLocal(world, e, *lt, worldM);
+        } else {
+            XMVECTOR size{}, rotation{}, position{};
+            if (XMMatrixDecompose(&size, &rotation, &position, XMLoadFloat4x4(&worldM))) {
+                if (gizmoOp_ == ImGuizmo::TRANSLATE) {
+                    XMVECTOR determinant{};
+                    const XMMATRIX inverse = XMMatrixInverse(&determinant, XMLoadFloat4x4(&wm->value));
+                    if (std::fabs(XMVectorGetX(determinant)) > 1e-12f) {
+                        XMStoreFloat3(&collider->center, XMVector3TransformCoord(position, inverse));
+                    }
+                } else if (gizmoOp_ == ImGuizmo::ROTATE) {
+                    XMVECTOR ownerSize{}, ownerRotation{}, ownerPosition{};
+                    if (XMMatrixDecompose(&ownerSize, &ownerRotation, &ownerPosition, XMLoadFloat4x4(&wm->value))) {
+                        XMStoreFloat4(&collider->rotation, XMQuaternionNormalize(
+                            XMQuaternionMultiply(rotation, XMQuaternionInverse(ownerRotation))));
+                    }
+                } else if (gizmoOp_ == ImGuizmo::SCALE) {
+                    constexpr float kMinSize = 0.0001f;
+                    XMFLOAT3 editedSize{};
+                    XMStoreFloat3(&editedSize, size);
+                    const float rx = std::fabs(editedSize.x) / shapeSize.x;
+                    const float ry = std::fabs(editedSize.y) / shapeSize.y;
+                    const float rz = std::fabs(editedSize.z) / shapeSize.z;
+                    auto strongest = [](float a, float b) {
+                        return std::fabs(a - 1) >= std::fabs(b - 1) ? a : b;
+                    };
+                    if (collider->shape == collidershape::kBox) {
+                        collider->halfExtents = { std::max(kMinSize, collider->halfExtents.x * rx),
+                            std::max(kMinSize, collider->halfExtents.y * ry), std::max(kMinSize, collider->halfExtents.z * rz) };
+                    } else {
+                        const float radial = collider->shape == collidershape::kSphere
+                            ? strongest(strongest(rx, ry), rz) : strongest(rx, rz);
+                        collider->radius = std::max(kMinSize, collider->radius * radial);
+                        if (collider->shape == collidershape::kCapsule) {
+                            collider->height = std::max(2 * collider->radius, collider->height * ry);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ドラッグ終了 (falling edge): after を撮って 1 エントリ確定
@@ -1667,15 +1762,30 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     // ならない — ドラッグしたままビューの外でボタンを離す / タブを閉じる経路があり、
     // 記録が開いたままだと以降の編集が全部そのエントリに巻き込まれる
     ClosePilotRecord(ctx, selection, undo);
+    auto closeGizmo = [&] {
+        if (gizmoActive_) {
+            undo.CaptureAfter(*ctx.scene, gizmoFileId_);
+            undo.EndRecord(selection);
+            gizmoActive_ = false;
+            gizmoFileId_ = 0;
+            gizmoBlockedUntilRelease_ = true;
+        }
+    };
+    if (gizmoActive_ && (!ImGui::IsMouseDown(0) || selection.primary != gizmoFileId_
+        || (gizmoCollider_ && selection.colliderEditFileId != gizmoFileId_))) {
+        closeGizmo();
+    }
 
     shownLastFrame_ = false; // 下で Begin が「見えている」を返したときだけ立てる
     if (!open) {
+        closeGizmo();
         return;
     }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     const bool visible = ImGui::Begin(Tr(StrId::Win_Scene), &open);
     ImGui::PopStyleVar();
     if (!visible) {
+        closeGizmo();
         ImGui::End();
         return;
     }
@@ -1739,7 +1849,8 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     if (selection.primary != 0 && !terrainBrush_) {
         DrawGizmo(ctx, selection, undo, settings, imgPos.x, imgPos.y, avail.x, avail.y);
     } else if (gizmoActive_) {
-        undo.CancelRecord();
+        undo.CaptureAfter(*ctx.scene, gizmoFileId_);
+        undo.EndRecord(selection);
         gizmoActive_ = false;
         gizmoFileId_ = 0;
         gizmoBlockedUntilRelease_ = true;

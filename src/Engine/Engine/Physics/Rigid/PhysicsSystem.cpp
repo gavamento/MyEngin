@@ -190,6 +190,7 @@ struct Body {
     bool solid = false;            // 衝突解決に参加するか (isTrigger==0)
     bool freezeRot = true;         // 回転積分・角応答をしない (静的 / kinematic / freezeRotation)
     ShapePose pose;                // 形状 + 作業用ワールド位置 (pose.px/py/pz をソルバが更新)
+    XMFLOAT3 colliderOffset = {}; // 剛体原点と形状中心を分離する
     XMFLOAT3 scale = { 1, 1, 1 };  // ワールドスケール (pose 再構築用)
     float qx = 0, qy = 0, qz = 0, qw = 1; // 作業用姿勢 (ワールド)
     float vx = 0, vy = 0, vz = 0;  // 作業用速度 (ワールド)
@@ -249,8 +250,30 @@ struct Body {
     WorldFrame frame;
 };
 
-// bodies は収集後に entity.index 昇順へソート済み → 二分探索。generation まで一致したときだけ当たり
-// (同じ index を再利用した別エンティティを掴まないため)。見つからなければ -1
+void SetBodyShape(Body& b, const ColliderComponent& col, const XMFLOAT3& pos,
+                  const XMFLOAT4& rot, const XMFLOAT3& scale)
+{
+    b.pose = shapes::MakePose(col, pos, rot, scale);
+    b.colliderOffset = {};
+    if (col.shape <= collidershape::kCapsule
+        && (col.center.x != 0 || col.center.y != 0 || col.center.z != 0)) {
+        b.colliderOffset = { b.pose.px - pos.x, b.pose.py - pos.y, b.pose.pz - pos.z };
+        b.pose.px = pos.x; b.pose.py = pos.y; b.pose.pz = pos.z;
+    }
+}
+
+ShapePose BodyCollisionPose(const Body& b)
+{
+    ShapePose pose = b.pose;
+    if (b.colliderOffset.x != 0 || b.colliderOffset.y != 0 || b.colliderOffset.z != 0) {
+        pose.px += b.colliderOffset.x;
+        pose.py += b.colliderOffset.y;
+        pose.pz += b.colliderOffset.z;
+    }
+    return pose;
+}
+
+// bodies は収集後に entity.index 昇順へソート済み。generationも一致する対象だけ返す。
 int32_t FindBodyIndex(const std::vector<Body>& bodies, EntityID e)
 {
     auto it = std::lower_bound(bodies.begin(), bodies.end(), e.index,
@@ -1025,7 +1048,7 @@ void ApplyPoseRotation(Body& b, float ex, float ey, float ez)
     if (b.col) {
         const XMFLOAT3 pos = { b.pose.px, b.pose.py, b.pose.pz };
         const XMFLOAT4 rot = { b.qx, b.qy, b.qz, b.qw };
-        b.pose = shapes::MakePose(*b.col, pos, rot, b.scale);
+        SetBodyShape(b, *b.col, pos, rot, b.scale);
     }
 }
 
@@ -1754,7 +1777,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             XMFLOAT4 wrot;
             XMFLOAT3 wscale;
             ApplyFrame(f, *lt, wpos, wrot, wscale);
-            b.pose = shapes::MakePose(*col, wpos, wrot, wscale);
+            SetBodyShape(b, *col, wpos, wrot, wscale);
             bodies.push_back(b);
         }
     });
@@ -1888,6 +1911,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                                           { 0.0f, 0.0f, 0.0f, 1.0f }, body->scale);
                 e.col = body->col;
                 e.vol = ShapeVolumeWorld(*body->col, body->scale.x, body->scale.y, body->scale.z);
+                e.cx = e.pose.px; e.cy = e.pose.py; e.cz = e.pose.pz;
                 FillConvexShapeMass(e, body->scale.x, body->scale.y, body->scale.z);
                 shapeMassBuf.push_back(e);
             }
@@ -1899,9 +1923,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                                           { cs.sx, cs.sy, cs.sz });
                 e.col = cs.col;
                 e.vol = ShapeVolumeWorld(*cs.col, cs.sx, cs.sy, cs.sz);
-                e.cx = cs.lpx;
-                e.cy = cs.lpy;
-                e.cz = cs.lpz;
+                e.cx = e.pose.px;
+                e.cy = e.pose.py;
+                e.cz = e.pose.pz;
                 FillConvexShapeMass(e, cs.sx, cs.sy, cs.sz);
                 shapeMassBuf.push_back(e);
             }
@@ -2271,7 +2295,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     //   **ownShape で判定する** — pose.shape を見ると球 (既定) として当たってしまう
     auto forEachShape = [&compoundShapes](const Body& b, auto&& fn) {
         if (b.ownShape) {
-            fn(b.pose);
+            fn(BodyCollisionPose(b));
         }
         for (int k = 0; k < b.subCount; ++k) {
             fn(compoundShapes[static_cast<size_t>(b.subFirst + k)].pose);
@@ -2305,7 +2329,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     //   シグネチャを変えずに別関数として足す (反復順序と対象は完全に同じ)
     auto forEachShapeEntity = [&compoundShapes](const Body& b, auto&& fn) {
         if (b.ownShape) {
-            fn(b.pose, b.entity);
+            fn(BodyCollisionPose(b), b.entity);
         }
         for (int k = 0; k < b.subCount; ++k) {
             const CompoundShape& cs = compoundShapes[static_cast<size_t>(b.subFirst + k)];
@@ -2591,7 +2615,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             if (b.col) {
                 const XMFLOAT3 pos = { b.pose.px, b.pose.py, b.pose.pz };
                 const XMFLOAT4 rot = { b.qx, b.qy, b.qz, b.qw };
-                b.pose = shapes::MakePose(*b.col, pos, rot, b.scale);
+                SetBodyShape(b, *b.col, pos, rot, b.scale);
             }
             // M60e: 子形状のワールド姿勢を親から組み直す (収集時に畳んだローカル配置から)
             for (int k = 0; k < b.subCount; ++k) {
@@ -4542,13 +4566,14 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 const float dx = mvx * invMv, dy = mvy * invMv, dz = mvz * invMv;
                 // 掃引した外接球が占める領域の AABB。相手 AABB と重ならなければ
                 // 当たり得ないので落としてよい (保守的 = 結果を変えない枝刈り)
-                const float ex = A.pose.px + mvx, ey = A.pose.py + mvy, ez = A.pose.pz + mvz;
-                const float sMinX = ((A.pose.px < ex) ? A.pose.px : ex) - R;
-                const float sMaxX = ((A.pose.px > ex) ? A.pose.px : ex) + R;
-                const float sMinY = ((A.pose.py < ey) ? A.pose.py : ey) - R;
-                const float sMaxY = ((A.pose.py > ey) ? A.pose.py : ey) + R;
-                const float sMinZ = ((A.pose.pz < ez) ? A.pose.pz : ez) - R;
-                const float sMaxZ = ((A.pose.pz > ez) ? A.pose.pz : ez) + R;
+                const ShapePose sweepPose = BodyCollisionPose(A);
+                const float ex = sweepPose.px + mvx, ey = sweepPose.py + mvy, ez = sweepPose.pz + mvz;
+                const float sMinX = ((sweepPose.px < ex) ? sweepPose.px : ex) - R;
+                const float sMaxX = ((sweepPose.px > ex) ? sweepPose.px : ex) + R;
+                const float sMinY = ((sweepPose.py < ey) ? sweepPose.py : ey) - R;
+                const float sMaxY = ((sweepPose.py > ey) ? sweepPose.py : ey) + R;
+                const float sMinZ = ((sweepPose.pz < ez) ? sweepPose.pz : ez) - R;
+                const float sMaxZ = ((sweepPose.pz > ez) ? sweepPose.pz : ez) + R;
                 float bestT = mv;
                 bool hit = false;
                 size_t hitJ = 0;
@@ -4571,13 +4596,13 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                         }
                     }
                     float tminX, tminY, tminZ, tmaxX, tmaxY, tmaxZ;
-                    shapes::ComputeAabb(B.pose, tminX, tminY, tminZ, tmaxX, tmaxY, tmaxZ);
+                    shapes::ComputeAabb(BodyCollisionPose(B), tminX, tminY, tminZ, tmaxX, tmaxY, tmaxZ);
                     if (tmaxX < sMinX || tminX > sMaxX || tmaxY < sMinY || tminY > sMaxY
                         || tmaxZ < sMinZ || tminZ > sMaxZ) {
                         continue;
                     }
                     float t, nx, ny, nz, cpx, cpy, cpz;
-                    if (!CcdSweepTarget(B.pose, A.pose.px, A.pose.py, A.pose.pz, dx, dy, dz, R,
+                    if (!CcdSweepTarget(BodyCollisionPose(B), sweepPose.px, sweepPose.py, sweepPose.pz, dx, dy, dz, R,
                                         bestT, t, nx, ny, nz, cpx, cpy, cpz)) {
                         continue;
                     }

@@ -15,6 +15,7 @@ namespace mye {
 struct Selection {
     std::vector<uint64_t> ids; // 選択中の fileId 群 (選択順)
     uint64_t primary = 0;      // アクティブ = Inspector 表示対象 / 範囲選択の起点 (0 = 無し)
+    uint64_t colliderEditFileId = 0; // Editor専用。対象がprimaryと一致するときだけ有効
     std::wstring assetPath;    // 選択中アセットの絶対パス (空 = アセット非選択、M40c)
 
     bool Empty() const { return ids.empty(); }
@@ -26,6 +27,7 @@ struct Selection {
 
     void Clear()
     {
+        colliderEditFileId = 0;
         ids.clear();
         primary = 0;
         assetPath.clear();
@@ -34,6 +36,7 @@ struct Selection {
     // アセット単一選択 (AssetBrowser タイルクリック、M40c)
     void SelectAsset(std::wstring path)
     {
+        colliderEditFileId = 0;
         ids.clear();
         primary = 0;
         assetPath = std::move(path);
@@ -42,6 +45,9 @@ struct Selection {
     // 単一選択 (通常クリック)
     void SelectOnly(uint64_t fid)
     {
+        if (fid != primary) {
+            colliderEditFileId = 0;
+        }
         ids.clear();
         if (fid != 0) {
             ids.push_back(fid);
@@ -56,6 +62,7 @@ struct Selection {
         if (fid == 0) {
             return;
         }
+        colliderEditFileId = 0;
         if (!Contains(fid)) {
             ids.push_back(fid);
         }
@@ -65,6 +72,7 @@ struct Selection {
 
     void Remove(uint64_t fid)
     {
+        colliderEditFileId = 0;
         ids.erase(std::remove(ids.begin(), ids.end(), fid), ids.end());
         if (primary == fid) {
             primary = ids.empty() ? 0 : ids.back();
@@ -84,6 +92,7 @@ struct Selection {
     // Undo/Redo 用の一括設定
     void Set(std::vector<uint64_t> newIds, uint64_t newPrimary)
     {
+        colliderEditFileId = 0;
         ids = std::move(newIds);
         primary = newPrimary;
         assetPath.clear();

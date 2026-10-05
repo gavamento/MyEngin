@@ -45,7 +45,7 @@ public:
 private:
     void BuildOverlays(EngineContext& ctx, Selection& selection);
     // BuildOverlays が同じ順に呼ぶギズモ (showGizmos_ のときだけ)。どれも lines_ へ線を積むだけ
-    void DrawColliderGizmos(World& world);
+    void DrawColliderGizmos(World& world, EntityID only = kNullEntity);
     void DrawLightGizmos(World& world);
     void DrawCameraGizmos(EngineContext& ctx, World& world);
     void DrawEmitterGizmos(World& world);
@@ -121,6 +121,7 @@ private:
     bool orthographic_ = false;
     bool gizmoActive_ = false; // Undo transient 記録中 (ドラッグ全体で 1 エントリ)
     uint64_t gizmoFileId_ = 0;
+    bool gizmoCollider_ = false;
     bool gizmoBlockedUntilRelease_ = false;
     bool camSpeedDirty_ = false; // RMB+ホイールで速度変更中 (RMB リリース時に settings.Save)
     bool showGrid_ = true;
