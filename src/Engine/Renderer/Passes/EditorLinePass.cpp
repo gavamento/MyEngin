@@ -10,6 +10,34 @@ using Microsoft::WRL::ComPtr;
 
 namespace mye {
 
+namespace {
+// 深度テストありの線を面より手前へ寄せる量。メッシュの辺に重なる線 (コライダー等) が
+// 面と Z ファイティングして点線になるのを防ぐ。
+// ラスタライザの DepthBias は使わない: 線プリミティブでは傾斜項が効かず、
+// 線と隣接面の深度差 (= 面の傾き依存) を吸収できない
+constexpr float kPerspectivePullRatio = 0.002f; // 透視: 視点からの距離の 0.2% だけ視点側へ
+constexpr float kOrthoPullDistance = 0.05f;     // 平行投影: 視線方向へ一定距離 (ワールド単位)
+
+// 視点空間で頂点を視点側へ寄せる行列を view と proj の間に挟んだ viewProj (転置済み) を作る。
+// 透視は視点を中心に一様縮小 = 画面上の位置は変わらず深度だけが手前になる。
+// 平行投影は縮小すると位置がずれるので z だけ平行移動する
+XMFLOAT4X4 MakeViewProj(const XMFLOAT4X4& view, const XMFLOAT4X4& proj, bool pullTowardEye)
+{
+    XMMATRIX pull = XMMatrixIdentity();
+    if (pullTowardEye) {
+        const bool orthographic = proj._44 != 0.0f;
+        pull = orthographic ? XMMatrixTranslation(0.0f, 0.0f, -kOrthoPullDistance)
+                            : XMMatrixScaling(1.0f - kPerspectivePullRatio,
+                                              1.0f - kPerspectivePullRatio,
+                                              1.0f - kPerspectivePullRatio);
+    }
+    XMFLOAT4X4 viewProj;
+    XMStoreFloat4x4(&viewProj, XMMatrixTranspose(XMLoadFloat4x4(&view) * pull
+                                                 * XMLoadFloat4x4(&proj)));
+    return viewProj;
+}
+} // namespace
+
 XMFLOAT4 EditorLinePass::Unpack(uint32_t rgba)
 {
     return XMFLOAT4(((rgba >> 24) & 0xFF) / 255.0f, ((rgba >> 16) & 0xFF) / 255.0f,
@@ -34,6 +62,10 @@ bool EditorLinePass::Init(GraphicsDevice& device, ShaderManager& shaders)
     rd.FillMode = D3D11_FILL_SOLID;
     rd.CullMode = D3D11_CULL_NONE;
     rd.DepthClipEnable = TRUE;
+    // RT はシングルサンプルで、線はポストプロセス (FXAA/TAA) の後に描くため、ここで
+    // 線の AA をかけないと浅い角度の線が 1px の段になる。α 被覆で出るので blend_ が前提
+    rd.MultisampleEnable = FALSE;
+    rd.AntialiasedLineEnable = TRUE;
     if (FAILED(dev->CreateRasterizerState(&rd, raster_.GetAddressOf()))) {
         return false;
     }
@@ -268,14 +300,14 @@ void EditorLinePass::Render(GraphicsDevice& device, ShaderManager& shaders,
     vp.MaxDepth = 1.0f;
     dc->RSSetViewports(1, &vp);
 
-    XMFLOAT4X4 viewProj;
-    XMStoreFloat4x4(&viewProj,
-                    XMMatrixTranspose(XMMatrixMultiply(XMLoadFloat4x4(&view), XMLoadFloat4x4(&proj))));
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
-    if (SUCCEEDED(dc->Map(cb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-        memcpy(mapped.pData, &viewProj, sizeof(viewProj));
-        dc->Unmap(cb_.Get(), 0);
-    }
+    auto uploadViewProj = [&](bool pullTowardEye) {
+        const XMFLOAT4X4 viewProj = MakeViewProj(view, proj, pullTowardEye);
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        if (SUCCEEDED(dc->Map(cb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+            memcpy(mapped.pData, &viewProj, sizeof(viewProj));
+            dc->Unmap(cb_.Get(), 0);
+        }
+    };
     ID3D11Buffer* cbs[1] = { cb_.Get() };
     dc->VSSetConstantBuffers(0, 1, cbs);
     dc->RSSetState(raster_.Get());
@@ -285,8 +317,11 @@ void EditorLinePass::Render(GraphicsDevice& device, ShaderManager& shaders,
     dc->VSSetShader(prog->vs.Get(), nullptr, 0);
     dc->PSSetShader(prog->ps.Get(), nullptr, 0);
 
+    // 最前面の線は深度を見ないので寄せない (画面位置を正確に保つ)
+    uploadViewProj(true);
     dc->OMSetDepthStencilState(depthOn_.Get(), 0);
     PushVerts(depthTested_, dc, device);
+    uploadViewProj(false);
     dc->OMSetDepthStencilState(depthOff_.Get(), 0);
     PushVerts(onTop_, dc, device);
 }
