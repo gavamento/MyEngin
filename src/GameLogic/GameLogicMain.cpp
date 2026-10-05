@@ -14,6 +14,8 @@ extern "C" __declspec(dllexport) const MyeScriptModule* GameLogic_GetModule(cons
     mod.apiVersion = MYE_API_VERSION;
     mod.scripts = mye_script_detail::Registry().data();
     mod.scriptCount = static_cast<uint32_t>(mye_script_detail::Registry().size());
+    mod.btTasks = mye_script_detail::BtTaskRegistry().data();
+    mod.btTaskCount = static_cast<uint32_t>(mye_script_detail::BtTaskRegistry().size());
     return &mod;
 }
 

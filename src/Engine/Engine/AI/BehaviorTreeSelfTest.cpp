@@ -29,6 +29,7 @@
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
 #include "Engine/Engine/AI/BehaviorTreeSystem.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
+#include "Engine/Engine/AI/BtTaskRegistry.h"
 #include "Engine/Engine/Animation/Animation.h"
 #include "Engine/Engine/Animation/AnimatorController.h"
 #include "Engine/Engine/Demo/DemoContent.h"
@@ -45,7 +46,14 @@
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Scene/Tags.h"
 #include "Engine/Engine/Scene/TransformSystem.h"
+#include "Engine/Engine/Script/EngineApiTable.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Shared/ScriptAPI.h"
+
+#include <Windows.h>
+// windef.h の near / far マクロがこのファイルの変数名 (near / far) を壊すので外す
+#undef near
+#undef far
 
 namespace fs = std::filesystem;
 
@@ -563,6 +571,108 @@ EntityID AddWalker(Scene& scene, uint64_t tree, float x, float z, const char* na
     go.AddComponent<NavMeshAgentComponent>();
     go.AddComponent<BehaviorTreeComponent>()->tree = AssetID{ tree };
     return go.Id();
+}
+
+
+// ---- C++ タスク (ABI v27) の試験用タスク ----
+// GameLogic.dll の BtProbeTask と同じ形 (REGISTER_BT_TASK の MakeBtTaskDesc を通す)。DLL を介さずに手で登録表へ入れる
+
+struct ProbeLog {
+    int starts = 0;
+    int ticks = 0;
+    int aborts = 0;
+    int32_t abortedAtTicks = -1;
+    int32_t unregisteredSeen = -1; // OnTick が読んだ FIELDS に無いメンバの値 (0 へ戻るはず)
+    int restartResult = -1;        // OnTick が呼んだ BtRestart の戻り値
+};
+ProbeLog gProbe;
+
+void WriteBbInt(const MyeBtTaskContext& ctx, const char* key, int32_t v)
+{
+    MyeBbValue value = {};
+    value.type = MYE_BB_INT;
+    value.isSet = 1;
+    value.i = v;
+    ctx.api->BtSetBlackboard(ctx.api->engine, ctx.self, MyeNameHash(key), &value);
+}
+
+struct SelfProbeTask {
+    int32_t targetTicks = 3;
+    int32_t outcome = MYE_BT_SUCCESS;
+    int32_t ticks = 0;
+    float speed = 1.5f;
+    int32_t restartAt = 0;
+    bool enabled = true;
+    char label[64] = {};
+    int32_t unregistered = 0; // FIELDS に書かない (毎回 0 へ戻る)
+
+    int32_t OnStart(MyeBtTaskContext&)
+    {
+        ++gProbe.starts;
+        ticks = 0;
+        unregistered = 77;
+        return MYE_BT_RUNNING;
+    }
+    int32_t OnTick(MyeBtTaskContext& ctx)
+    {
+        ++gProbe.ticks;
+        ++ticks;
+        gProbe.unregisteredSeen = unregistered;
+        WriteBbInt(ctx, "ticks", ticks);
+        if (restartAt > 0 && ticks == restartAt) {
+            gProbe.restartResult = ctx.api->BtRestart(ctx.api->engine, ctx.self);
+            return MYE_BT_RUNNING;
+        }
+        return ticks >= targetTicks ? outcome : MYE_BT_RUNNING;
+    }
+    void OnAbort(MyeBtTaskContext&)
+    {
+        ++gProbe.aborts;
+        gProbe.abortedAtTicks = ticks;
+    }
+};
+
+const MyeScriptField kProbeFields[] = {
+    { "targetTicks", MYE_FIELD_INT32, static_cast<uint32_t>(offsetof(SelfProbeTask, targetTicks)), nullptr, 0.0f, 0.0f },
+    { "outcome", MYE_FIELD_INT32, static_cast<uint32_t>(offsetof(SelfProbeTask, outcome)), nullptr, 0.0f, 0.0f },
+    { "ticks", MYE_FIELD_INT32, static_cast<uint32_t>(offsetof(SelfProbeTask, ticks)), nullptr, 0.0f, 0.0f },
+    { "speed", MYE_FIELD_FLOAT, static_cast<uint32_t>(offsetof(SelfProbeTask, speed)), nullptr, 0.0f, 0.0f },
+    { "restartAt", MYE_FIELD_INT32, static_cast<uint32_t>(offsetof(SelfProbeTask, restartAt)), nullptr, 0.0f, 0.0f },
+    { "enabled", MYE_FIELD_BOOL, static_cast<uint32_t>(offsetof(SelfProbeTask, enabled)), nullptr, 0.0f, 0.0f },
+    { "label", MYE_FIELD_STRING64, static_cast<uint32_t>(offsetof(SelfProbeTask, label)), nullptr, 0.0f, 0.0f },
+};
+constexpr uint32_t kProbeFieldCount = sizeof(kProbeFields) / sizeof(kProbeFields[0]);
+
+MyeBtTaskDesc ProbeDesc(uint32_t fieldCount = kProbeFieldCount, const char* name = "SelfProbe")
+{
+    return mye_script_detail::MakeBtTaskDesc<SelfProbeTask>(name, kProbeFields, fieldCount);
+}
+
+json CppTaskNode(int id, const char* task, json fields = json())
+{
+    json n = Node(id, "CppTask", {}, json{ { "task", task } });
+    if (!fields.is_null()) {
+        n["fields"] = std::move(fields);
+    }
+    return n;
+}
+
+// ABI テーブル (BuildEngineApi) と、その引き先の BT。GameLogic.dll が受け取るものと同じ関数ポインタを引く
+struct AbiRig {
+    ScriptApiContext ctx;
+    MyeEngineApi api = {};
+    void Bind(BehaviorTreeSystem& bt, Scene& scene, const ControllerLibrary* controllers = nullptr)
+    {
+        ctx.scene = &scene;
+        ctx.behaviorTree = &bt;
+        ctx.controllers = controllers;
+        BuildEngineApi(api, &ctx);
+    }
+};
+
+MyeEntityId ToMye(EntityID e)
+{
+    return MyeEntityId{ e.index, e.generation };
 }
 
 } // namespace
@@ -4165,6 +4275,476 @@ bool RunBehaviorTreeSelfTest()
             ck.Check(source >= 0 && target >= 0 && tree.DisplayedIdOf(source, parent) == 1 && tree.DisplayedIdOf(target, parent) == 2
                          && tree.DisplayedIdOf(target, sub) == 1 && tree.DisplayedIdOf(source, sub) == -1,
                      "ライブ表示の対応: 部分木の中の葉は、親の木では SubTree ノード (2)、部分木の木では元の id (1) へ戻り、親の Decorator ノードは部分木の木には無い");
+        }
+    }
+
+    // ---- 16. ABI v27 と C++ タスク (M85k) ----
+    {
+        const uint64_t board = RegisterBoard(lib, L"abi_bb",
+                                             Board({ BbKey("ticks", "Int"), BbKey("N", "Int"), BbKey("Flag", "Bool"), BbKey("F", "Float"),
+                                                     BbKey("V", "Vector"), BbKey("E", "Entity"), BbKey("Go", "Bool") }));
+        const json task4 = CppTaskNode(0, "SelfProbe", json{ { "targetTicks", 4 }, { "speed", 2.5 }, { "label", "hello" }, { "enabled", false } });
+        const auto readState = [](Sim& sim, EntityID e, SelfProbeTask& out) {
+            const BtInstance* inst = sim.bt.FindInstance(e);
+            const BtNodeDef& node = inst->tree->nodes[static_cast<size_t>(inst->tree->rootIndex)];
+            std::memcpy(&out, inst->extra.data() + node.extraOffset + sizeof(BtCppTaskHeader), sizeof(SelfProbeTask));
+        };
+        const auto bbInt = [](Sim& sim, EntityID e, const char* key, int32_t& out) {
+            BbType type = BbType::Bool;
+            BbValue value;
+            const bool found = sim.bt.GetBlackboardValue(e, HashStr(key), type, value);
+            out = value.i;
+            return found && value.isSet != 0;
+        };
+
+        // 登録表: 上限を超えるタスクは取り込まない・名前順・同名は先頭
+        {
+            BtTaskRegistry registry;
+            MyeBtTaskDesc big = ProbeDesc(kProbeFieldCount, "Big");
+            big.stateSize = kBtCppTaskMaxStateBytes + 4;
+            MyeBtTaskDesc badField = ProbeDesc(kProbeFieldCount, "BadField");
+            MyeScriptField outside[] = { { "x", MYE_FIELD_FLOAT, static_cast<uint32_t>(sizeof(SelfProbeTask)), nullptr, 0.0f, 0.0f } };
+            badField.fields = outside;
+            badField.fieldCount = 1;
+            MyeBtTaskDesc zeta = ProbeDesc(kProbeFieldCount, "Zeta");
+            MyeBtTaskDesc alpha = ProbeDesc(kProbeFieldCount, "Alpha");
+            MyeBtTaskDesc dup = ProbeDesc(kProbeFieldCount, "Alpha");
+            dup.layoutHash = 1;
+            const MyeBtTaskDesc descs[] = { zeta, big, alpha, badField, dup };
+            registry.Update(nullptr, descs, 5);
+            const std::vector<const BtTaskType*> names = registry.Enumerate();
+            ck.Check(names.size() == 2 && names[0]->name == "Alpha" && names[1]->name == "Zeta" && registry.Find("Big") == nullptr
+                         && registry.Find("BadField") == nullptr && registry.Find("Alpha")->layoutHash == alpha.layoutHash,
+                     "C++ タスクの登録表: 状態が上限を超える / 状態からはみ出すフィールドを持つタスクは取り込まず、名前順で、同名は先頭が勝つ");
+            registry.Update(nullptr, &zeta, 1);
+            ck.Check(registry.Find("Alpha") == nullptr && registry.Find("Zeta") != nullptr, "更新すると今回の DLL に無い名前は登録から外れる");
+            registry.Clear();
+            ck.Check(registry.Enumerate().empty(), "Clear で全部外れる");
+        }
+
+        // .bt.json: CppTask の往復と防波堤
+        {
+            BehaviorTreeAsset a;
+            BehaviorTreeAsset b;
+            json child = task4;
+            child["id"] = 1;
+            const json j = Tree(0, { Node(0, "Sequence", { 1 }), child }, board);
+            ck.Check(BehaviorTreeLibrary::FromJson(j, a) && BehaviorTreeLibrary::FromJson(BehaviorTreeLibrary::ToJson(a), b)
+                         && BehaviorTreeLibrary::ToJson(a) == BehaviorTreeLibrary::ToJson(b)
+                         && a.nodes[1].kind == BtNodeKind::CppTask && a.nodes[1].params[btcpptaskparam::kTask].s == "SelfProbe"
+                         && a.nodes[1].taskFields["targetTicks"] == 4 && a.nodes[1].taskFields["label"] == "hello"
+                         && BehaviorTreeLibrary::ToJson(a)["nodes"][1]["fields"]["speed"] == 2.5,
+                     "CppTask の JSON (task と fields) が往復で変わらない");
+            ck.Check(!Loads(Tree(0, { CppTaskNode(0, "SelfProbe", json::array({ 1, 2 })) })), "fields がオブジェクトでなければ読み込み失敗");
+            ck.Check(!Loads(Tree(0, { CppTaskNode(0, "SelfProbe", json{ { "nested", json{ { "a", 1 } } } }) })), "fields の値がオブジェクトなら読み込み失敗");
+            ck.Check(!Loads(Tree(0, { CppTaskNode(0, "SelfProbe", json{ { "text", std::string(kBtMaxTaskFieldTextBytes + 1, 'x') } }) })),
+                     "fields の文字列が長すぎれば読み込み失敗");
+            ck.Check(Loads(Tree(0, { CppTaskNode(0, "NoSuchTask") })), "登録に無い名前の CppTask も木としては読める (実行時に Failure)");
+        }
+
+        // 実行: fields が既定値に重なり、OnStart / OnTick / 終了と BB (ABI) が動く。Abort で終わらないので OnAbort は呼ばれない
+        {
+            Sim sim;
+            AbiRig rig;
+            rig.Bind(sim.bt, sim.scene);
+            const MyeBtTaskDesc desc = ProbeDesc();
+            sim.bt.Tasks().Update(&rig.api, &desc, 1);
+            gProbe = ProbeLog{};
+            const EntityID e = sim.AddTreeEntity(RegisterTree(lib, L"cpp_run", Tree(0, { task4 }, board)));
+            sim.Step();
+            SelfProbeTask state;
+            readState(sim, e, state);
+            ck.Check(state.targetTicks == 4 && state.speed == 2.5f && !state.enabled && std::strcmp(state.label, "hello") == 0
+                         && state.outcome == MYE_BT_SUCCESS && gProbe.starts == 1,
+                     "CppTask: 入った tick に既定値へ fields の値が重なって OnStart が呼ばれる");
+            sim.Step();
+            readState(sim, e, state);
+            int32_t ticksBb = 0;
+            ck.Check(state.ticks == 1 && gProbe.unregisteredSeen == 0 && bbInt(sim, e, "ticks", ticksBb) && ticksBb == 1,
+                     "OnTick の状態が追加状態へ残る。FIELDS に無いメンバは 0 へ戻り、OnTick からの BtSetBlackboard が BB へ届く");
+            sim.Step();
+            sim.Step();
+            sim.Step();
+            ck.Check(sim.Status(e) == kSucceeded && gProbe.ticks == 4 && gProbe.aborts == 0 && bbInt(sim, e, "ticks", ticksBb) && ticksBb == 4
+                         && sim.NodeState(e, 0)->active == 0,
+                     "targetTicks (fields の 4) 回目の OnTick で Success。終了では OnAbort を呼ばず、状態は初期値へ戻る");
+            sim.Step();
+            ck.Check(sim.Status(e) == kRunning && gProbe.starts == 2, "根が終わった次の tick に OnStart からやり直す");
+        }
+        {
+            Sim sim;
+            AbiRig rig;
+            rig.Bind(sim.bt, sim.scene);
+            const MyeBtTaskDesc desc = ProbeDesc();
+            sim.bt.Tasks().Update(&rig.api, &desc, 1);
+            const EntityID e = sim.AddTreeEntity(RegisterTree(lib, L"cpp_default", Tree(0, { CppTaskNode(0, "SelfProbe") }, board)));
+            ck.Check(Is(Run(sim, e, 5), { kRunning, kRunning, kRunning, kSucceeded, kRunning }), "fields が無ければ construct の既定値 (targetTicks 3) で動く");
+        }
+
+        // 保存 -> 復元 -> 連続実行: タスクの状態と BT 表のハッシュが毎 tick 一致する
+        {
+            const uint64_t guid = RegisterTree(
+                lib, L"cpp_snap", Tree(0, { Node(0, "Sequence", { 1, 2 }), CppTaskNode(1, "SelfProbe", json{ { "targetTicks", 9 } }), Wait(2, 3) }, board));
+            Sim sim;
+            AbiRig rig;
+            rig.Bind(sim.bt, sim.scene);
+            const MyeBtTaskDesc desc = ProbeDesc();
+            sim.bt.Tasks().Update(&rig.api, &desc, 1);
+            const EntityID e = sim.AddTreeEntity(guid);
+            for (int i = 0; i < 6; ++i) {
+                sim.Step();
+            }
+            std::vector<std::byte> bytes;
+            ByteWriter writer(bytes);
+            sim.bt.SaveSnapshot(writer);
+            const uint64_t startTick = sim.tick;
+            std::vector<uint64_t> hashes;
+            std::vector<int32_t> statuses;
+            for (int i = 0; i < 30; ++i) {
+                sim.Step();
+                hashes.push_back(sim.bt.StateHash());
+                statuses.push_back(sim.Status(e));
+            }
+            BehaviorTreeSystem second;
+            AbiRig rigSecond;
+            rigSecond.Bind(second, sim.scene);
+            second.Tasks().Update(&rigSecond.api, &desc, 1);
+            BtSnapshot parsed;
+            ByteReader reader(bytes.data(), bytes.size());
+            const bool read = BehaviorTreeSystem::ReadSnapshot(reader, parsed);
+            second.ApplySnapshot(sim.GetWorld(), std::move(parsed));
+            bool same = read && second.FindInstance(e) != nullptr;
+            for (int i = 0; i < 30 && same; ++i) {
+                const uint64_t tick = startTick + static_cast<uint64_t>(i);
+                second.DeliverPending(tick);
+                second.Update(sim.GetWorld(), tick, nullptr);
+                sim.GetWorld().ApplyStructuralChanges();
+                same = second.StateHash() == hashes[static_cast<size_t>(i)] && sim.Status(e) == statuses[static_cast<size_t>(i)];
+            }
+            ck.Check(same && hashes.front() != hashes.back(), "C++ タスクの状態 (OnTick の途中・終了・やり直し) が保存 -> 復元 -> 連続実行で毎 tick 一致する");
+        }
+
+        // ホットリロード: layoutHash が変わると、実行中の木は OnAbort を呼ばずに状態を捨てて根からやり直す
+        {
+            Sim sim;
+            AbiRig rig;
+            rig.Bind(sim.bt, sim.scene);
+            const MyeBtTaskDesc v1 = ProbeDesc();
+            sim.bt.Tasks().Update(&rig.api, &v1, 1);
+            gProbe = ProbeLog{};
+            const EntityID e = sim.AddTreeEntity(RegisterTree(lib, L"cpp_reload", Tree(0, { CppTaskNode(0, "SelfProbe", json{ { "targetTicks", 100 } }) }, board)));
+            for (int i = 0; i < 4; ++i) {
+                sim.Step();
+            }
+            const uint64_t logFrom = logging::TotalWritten();
+            const MyeBtTaskDesc same = ProbeDesc(); // 同じレイアウトの再登録 (DLL の再ビルドで関数だけ変わった)
+            sim.bt.Tasks().Update(&rig.api, &same, 1);
+            sim.Step();
+            SelfProbeTask state;
+            readState(sim, e, state);
+            ck.Check(gProbe.starts == 1 && state.ticks == 4 && CountWarnings(logFrom, "changed its layout") == 0,
+                     "ホットリロードでレイアウトが同じなら実行中のタスクの状態を保つ (やり直さない)");
+            const MyeBtTaskDesc v2 = ProbeDesc(kProbeFieldCount - 2); // enabled / label を FIELDS から外した版 = layoutHash が変わる
+            ck.Check(v2.layoutHash != v1.layoutHash, "(前提) FIELDS を変えると layoutHash が変わる");
+            sim.bt.Tasks().Update(&rig.api, &v2, 1);
+            sim.Step();
+            readState(sim, e, state);
+            ck.Check(gProbe.aborts == 0 && gProbe.starts == 2 && state.ticks == 0 && sim.Status(e) == kRunning
+                         && CountWarnings(logFrom, "changed its layout") == 1,
+                     "layoutHash が変わると OnAbort を呼ばずに状態を捨て、根から OnStart し直す (警告 1 回)");
+            sim.Step();
+            ck.Check(gProbe.starts == 2 && gProbe.ticks == 5, "やり直した後は新しいレイアウトで続きを動く (やり直した tick は OnStart だけ、次の tick から OnTick)");
+        }
+
+        // DLL から消えた名前: Failure + 警告は名前ごとに 1 回。戻れば動き、再び消えれば警告を出し直す
+        {
+            Sim sim;
+            AbiRig rig;
+            rig.Bind(sim.bt, sim.scene);
+            const MyeBtTaskDesc desc = ProbeDesc();
+            sim.bt.Tasks().Update(&rig.api, &desc, 1);
+            gProbe = ProbeLog{};
+            const EntityID e = sim.AddTreeEntity(RegisterTree(lib, L"cpp_gone", Tree(0, { CppTaskNode(0, "SelfProbe", json{ { "targetTicks", 100 } }) }, board)));
+            sim.Step();
+            sim.Step();
+            const uint64_t logFrom = logging::TotalWritten();
+            sim.bt.Tasks().Update(&rig.api, nullptr, 0);
+            const std::vector<int32_t> statuses = Run(sim, e, 5);
+            ck.Check(std::count(statuses.begin(), statuses.end(), kFailed) == 5, "登録から消えた名前の CppTask は毎 tick Failure");
+            ck.Check(CountWarnings(logFrom, "is not registered") == 1 && gProbe.aborts == 0, "警告は 1 回だけで、関数が無いので OnAbort は呼ばない");
+            sim.bt.Tasks().Update(&rig.api, &desc, 1);
+            sim.Step();
+            sim.Step();
+            ck.Check(sim.Status(e) == kRunning && gProbe.starts == 2, "名前が戻れば次の tick から動く");
+            const uint64_t secondLog = logging::TotalWritten();
+            sim.bt.Tasks().Update(&rig.api, nullptr, 0);
+            Run(sim, e, 3);
+            ck.Check(CountWarnings(secondLog, "is not registered") == 1, "もう一度消えたときは警告を出し直す");
+        }
+
+        // Abort: Decorator に止められたときだけ OnAbort が呼ばれる
+        {
+            Sim sim;
+            AbiRig rig;
+            rig.Bind(sim.bt, sim.scene);
+            const MyeBtTaskDesc desc = ProbeDesc();
+            sim.bt.Tasks().Update(&rig.api, &desc, 1);
+            gProbe = ProbeLog{};
+            const EntityID e = sim.AddTreeEntity(
+                RegisterTree(lib, L"cpp_abort", Tree(0, { Decorated(CppTaskNode(0, "SelfProbe", json{ { "targetTicks", 100 } }), { Timeout(3) }) }, board)));
+            const std::vector<int32_t> statuses = Run(sim, e, 8);
+            ck.Check(std::find(statuses.begin(), statuses.end(), kFailed) != statuses.end() && gProbe.aborts >= 1 && gProbe.abortedAtTicks >= 1,
+                     "Timeout に止められると OnAbort が呼ばれ (その時点の状態つき)、木は Failure になる");
+        }
+
+        // ABI: BtRestart (タスクの中から / 外から)
+        {
+            Sim sim;
+            AbiRig rig;
+            rig.Bind(sim.bt, sim.scene);
+            const MyeBtTaskDesc desc = ProbeDesc();
+            sim.bt.Tasks().Update(&rig.api, &desc, 1);
+            gProbe = ProbeLog{};
+            const EntityID e = sim.AddTreeEntity(
+                RegisterTree(lib, L"cpp_restart", Tree(0, { CppTaskNode(0, "SelfProbe", json{ { "targetTicks", 100 }, { "restartAt", 2 } }) }, board)));
+            const std::vector<int32_t> statuses = Run(sim, e, 3);
+            ck.Check(Is(statuses, { kRunning, kRunning, kRunning }) && gProbe.restartResult == 1 && gProbe.aborts == 1 && gProbe.abortedAtTicks == 2,
+                     "BtRestart をタスクの中から呼ぶと、そのタスクが返った後に Abort して根からやり直す (OnAbort が呼ばれる)");
+            sim.Step();
+            ck.Check(gProbe.starts == 2 && sim.Status(e) == kRunning, "やり直した次の tick に OnStart し直す");
+        }
+        {
+            Sim sim;
+            AbiRig rig;
+            rig.Bind(sim.bt, sim.scene);
+            const MyeBtTaskDesc desc = ProbeDesc();
+            sim.bt.Tasks().Update(&rig.api, &desc, 1);
+            gProbe = ProbeLog{};
+            const EntityID outside = sim.AddTreeEntity(
+                RegisterTree(lib, L"cpp_restart2", Tree(0, { CppTaskNode(0, "SelfProbe", json{ { "targetTicks", 100 } }) }, board)), "Outside");
+            sim.Step();
+            sim.Step();
+            sim.Step();
+            const int ok = rig.api.BtRestart(rig.api.engine, ToMye(outside));
+            ck.Check(ok == 1 && gProbe.aborts == 1, "BtRestart を外 (スクリプト層) から呼ぶとその場で Abort する");
+            sim.Step();
+            ck.Check(sim.Status(outside) == kRunning && gProbe.starts == 2, "外から呼んだ後は次の tick に OnStart し直す");
+            const EntityID bare = sim.scene.CreateGameObjectTracked("NoTree").Id();
+            ck.Check(rig.api.BtRestart(rig.api.engine, ToMye(bare)) == 0, "BtRestart: 木の無いエンティティは 0");
+        }
+
+        // ABI: ブラックボードの読み書き
+        {
+            Sim sim;
+            AbiRig rig;
+            rig.Bind(sim.bt, sim.scene);
+            const EntityID e = sim.AddTreeEntity(RegisterTree(lib, L"abi_bb_tree", Tree(0, { Wait(0, 1000) }, board)));
+            sim.Step();
+            const auto get = [&](const char* key, MyeBbValue& out) { return rig.api.BtGetBlackboard(rig.api.engine, ToMye(e), MyeNameHash(key), &out); };
+            const auto set = [&](const char* key, MyeBbValue value) { return rig.api.BtSetBlackboard(rig.api.engine, ToMye(e), MyeNameHash(key), &value); };
+            ck.Check(MyeNameHash("Alert") == HashStr("Alert") && MyeNameHash("") == HashStr(""), "(前提) MyeNameHash は HashStr と同じ");
+            MyeBbValue v = {};
+            ck.Check(get("N", v) == 1 && v.type == MYE_BB_INT && v.isSet == 0, "BtGetBlackboard: 未設定のキーは isSet = 0 で読める");
+            MyeBbValue n = {};
+            n.type = MYE_BB_INT;
+            n.isSet = 1;
+            n.i = 42;
+            ck.Check(set("N", n) == 1 && get("N", v) == 1 && v.isSet == 1 && v.i == 42, "BtSetBlackboard: Int を書いて読み返せる");
+            MyeBbValue wrong = n;
+            wrong.type = MYE_BB_FLOAT;
+            wrong.f = 1.0f;
+            ck.Check(set("N", wrong) == 0 && get("N", v) == 1 && v.i == 42, "型がキーと違う書き込みは 0 で何も変えない");
+            ck.Check(set("NoSuchKey", n) == 0 && get("NoSuchKey", v) == 0, "無いキーは 0");
+            MyeBbValue flag = {};
+            flag.type = MYE_BB_BOOL;
+            flag.isSet = 1;
+            flag.b = 5;
+            ck.Check(set("Flag", flag) == 1 && get("Flag", v) == 1 && v.b == 1, "Bool は b != 0 を真 (1) として保つ");
+            MyeBbValue f = {};
+            f.type = MYE_BB_FLOAT;
+            f.isSet = 1;
+            f.f = 2.5f;
+            MyeBbValue bad = f;
+            bad.f = std::numeric_limits<float>::quiet_NaN();
+            ck.Check(set("F", f) == 1 && set("F", bad) == 0 && get("F", v) == 1 && v.f == 2.5f, "Float の NaN は拒む (前の値のまま)");
+            MyeBbValue vec = {};
+            vec.type = MYE_BB_VECTOR;
+            vec.isSet = 1;
+            vec.vec3 = { 1.0f, 2.0f, 3.0f };
+            ck.Check(set("V", vec) == 1 && get("V", v) == 1 && v.vec3.x == 1.0f && v.vec3.y == 2.0f && v.vec3.z == 3.0f, "Vector を書いて読み返せる");
+            MyeBbValue entity = {};
+            entity.type = MYE_BB_ENTITY;
+            entity.isSet = 1;
+            entity.entity = ToMye(e);
+            ck.Check(set("E", entity) == 1 && get("E", v) == 1 && v.entity.index == e.index && v.entity.generation == e.generation, "Entity を書いて読み返せる");
+            MyeBbValue cleared = entity;
+            cleared.isSet = 0;
+            ck.Check(set("E", cleared) == 1 && get("E", v) == 1 && v.isSet == 0 && v.entity.index == kNullEntity.index, "isSet = 0 は未設定に戻す");
+            const EntityID noTree = sim.scene.CreateGameObjectTracked("NoTree").Id();
+            ck.Check(rig.api.BtGetBlackboard(rig.api.engine, ToMye(noTree), MyeNameHash("N"), &v) == 0
+                         && rig.api.BtSetBlackboard(rig.api.engine, ToMye(noTree), MyeNameHash("N"), &n) == 0,
+                     "木のインスタンスが無いエンティティは 0");
+            ck.Check(rig.api.BtGetBlackboard(rig.api.engine, ToMye(e), MyeNameHash("N"), nullptr) == 0
+                         && rig.api.BtSetBlackboard(rig.api.engine, ToMye(e), MyeNameHash("N"), nullptr) == 0,
+                     "null のポインタは 0 (落ちない)");
+            AbiRig bare; // 引き先を接続していないテーブルは 0
+            bare.Bind(sim.bt, sim.scene);
+            bare.ctx.behaviorTree = nullptr;
+            ck.Check(bare.api.BtGetBlackboard(bare.api.engine, ToMye(e), MyeNameHash("N"), &v) == 0 && bare.api.BtRestart(bare.api.engine, ToMye(e)) == 0
+                         && bare.api.BtEventCount(bare.api.engine, ToMye(e)) == 0,
+                     "BT を接続していないテーブルのスロットは 0");
+        }
+
+        // ABI: Update (フェーズ 3) から書いた BB は同じ tick の監視に反映され、LateUpdate から書いた値は次の tick
+        {
+            Sim sim;
+            AbiRig rig;
+            rig.Bind(sim.bt, sim.scene);
+            const uint64_t guid = RegisterTree(
+                lib, L"abi_phase",
+                Tree(0, { Node(0, "Selector", { 1, 2 }), Decorated(Wait(1, 1000), { BbCond("Go", "IsSet", "LowerPriority") }), Wait(2, 1000) }, board));
+            const auto setGo = [&](EntityID e, bool on) {
+                MyeBbValue go = {};
+                go.type = MYE_BB_BOOL;
+                go.isSet = on ? 1 : 0;
+                go.b = on ? 1 : 0;
+                return rig.api.BtSetBlackboard(rig.api.engine, ToMye(e), MyeNameHash("Go"), &go);
+            };
+            const EntityID early = sim.AddTreeEntity(guid, "Early");
+            const EntityID late = sim.AddTreeEntity(guid, "Late");
+            sim.Step();
+            sim.Step();
+            ck.Check(sim.Comp(early)->activeNodeId == 2 && sim.Comp(late)->activeNodeId == 2, "(前提) 監視の条件が偽の間は右の兄弟 (2) が動く");
+            sim.beforeBt = [&] { setGo(early, true); }; // スクリプトの Update (BT の前) から書く
+            sim.Step();
+            sim.beforeBt = nullptr;
+            ck.Check(sim.Comp(early)->activeNodeId == 1, "Update から書いた BB は同じ tick の BT フェーズで監視に反映される");
+            ck.Check(setGo(late, true) == 1 && sim.Comp(late)->activeNodeId == 2, "LateUpdate (BT の後) から書いた BB は、その tick の木には反映されない");
+            sim.Step();
+            ck.Check(sim.Comp(late)->activeNodeId == 1, "LateUpdate から書いた値は次の tick に反映される");
+        }
+
+        // ABI: イベントは tick N に送った分を tick N+1 の頭に配る
+        {
+            Sim sim;
+            AbiRig rig;
+            rig.Bind(sim.bt, sim.scene);
+            const uint64_t guid = RegisterTree(lib, L"abi_event", Tree(0, { Wait(0, 1000) }, board));
+            const EntityID a = sim.AddTreeEntity(guid, "A");
+            const EntityID b = sim.AddTreeEntity(guid, "B");
+            sim.Step();
+            rig.ctx.tickIndex = sim.tick; // これから走る tick (T)
+            MyeBtEventPayload payload = {};
+            payload.vec3 = { 1.0f, 2.0f, 3.0f };
+            payload.value = 4.5f;
+            payload.intValue = 7;
+            const uint64_t nameHash = MyeNameHash("Ping");
+            const int sentTargeted = rig.api.BtSendEvent(rig.api.engine, ToMye(a), ToMye(a), nameHash, &payload);
+            const int sentAll = rig.api.BtSendEvent(rig.api.engine, ToMye(a), ToMye(kNullEntity), nameHash, nullptr);
+            const auto countOf = [&](EntityID e) { return rig.api.BtEventCount(rig.api.engine, ToMye(e)); };
+            ck.Check(sentTargeted == 1 && sentAll == 1 && countOf(a) == 0, "BtSendEvent: 送った tick のうちには読めない (配るのは次の tick)");
+            sim.Step(); // tick T
+            ck.Check(countOf(a) == 0 && countOf(b) == 0, "送った tick (T) の頭の配達には含まれない");
+            sim.Step(); // tick T + 1
+            MyeBtEvent first = {};
+            MyeBtEvent second = {};
+            MyeBtEvent none = {};
+            ck.Check(countOf(a) == 2 && countOf(b) == 1, "tick T + 1: 自分宛て + 全体宛てが読める (A は 2、B は全体宛ての 1)");
+            ck.Check(rig.api.BtGetEvent(rig.api.engine, ToMye(a), 0, &first) == 1 && rig.api.BtGetEvent(rig.api.engine, ToMye(a), 1, &second) == 1
+                         && rig.api.BtGetEvent(rig.api.engine, ToMye(a), 2, &none) == 0 && rig.api.BtGetEvent(rig.api.engine, ToMye(a), -1, &none) == 0,
+                     "BtGetEvent: 範囲外の index は 0");
+            ck.Check(first.nameHash == nameHash && first.sender.index == a.index && first.target.index == a.index && first.vec3.y == 2.0f
+                         && first.value == 4.5f && first.intValue == 7 && first.seq == 0 && second.seq == 1 && second.target.index == kNullEntity.index
+                         && second.value == 0.0f && second.intValue == 0,
+                     "配送順 (送信順) と中身 (宛先・ペイロード) が合う。payload が null なら 0");
+            sim.Step(); // tick T + 2
+            ck.Check(countOf(a) == 0 && countOf(b) == 0, "読める期間は配られた tick の中だけ");
+
+            const uint64_t flood = logging::TotalWritten();
+            rig.ctx.tickIndex = sim.tick;
+            int accepted = 0;
+            for (int i = 0; i < kBtMaxEventsPerTick + 4; ++i) {
+                accepted += rig.api.BtSendEvent(rig.api.engine, ToMye(a), ToMye(kNullEntity), nameHash, nullptr);
+            }
+            ck.Check(accepted == kBtMaxEventsPerTick && CountWarnings(flood, "event queue") == 1, "配送待ちが上限 (256) を超えた分は 0 を返して捨てる (警告 1 回)");
+        }
+
+        // ABI: AnimatorPlay はステート名のハッシュで引く (PlayAnimation と同じ AnimatorPlay を呼ぶ)
+        {
+            ControllerLibrary ctrlLib;
+            ControllerAsset controller;
+            controller.states.push_back({ "Idle", "", 0, 1, 1 });
+            controller.states.push_back({ "Slash", "", 0, 1, 1 });
+            const uint64_t ctrlHash = ctrlLib.Register(L"selftest\\ai\\abi.controller.json", controller);
+            Sim sim;
+            AbiRig rig;
+            rig.Bind(sim.bt, sim.scene, &ctrlLib);
+            GameObject go = sim.scene.CreateGameObjectTracked("Actor");
+            go.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ ctrlHash };
+            const EntityID actor = go.Id();
+            const EntityID plain = sim.scene.CreateGameObjectTracked("Plain").Id();
+            sim.GetWorld().ApplyStructuralChanges();
+            const AnimatorControllerComponent* animator = sim.GetWorld().GetComponent<AnimatorControllerComponent>(actor);
+            ck.Check(rig.api.AnimatorPlay(rig.api.engine, ToMye(actor), MyeNameHash("Slash"), 0) == 1 && animator->currentState == 1 && animator->transitionTo == -1,
+                     "AnimatorPlay (duration 0): 即切り替える");
+            ck.Check(rig.api.AnimatorPlay(rig.api.engine, ToMye(actor), MyeNameHash("Idle"), 6) == 1 && animator->currentState == 1 && animator->transitionTo == 0
+                         && animator->transitionDuration == 6,
+                     "AnimatorPlay (duration 6): 今のポーズからの遷移を始める");
+            ck.Check(rig.api.AnimatorPlay(rig.api.engine, ToMye(actor), MyeNameHash("NoSuchState"), 0) == 0
+                         && rig.api.AnimatorPlay(rig.api.engine, ToMye(plain), MyeNameHash("Idle"), 0) == 0,
+                     "名前が無い / Animator が無いエンティティは 0");
+            AbiRig noLib;
+            noLib.Bind(sim.bt, sim.scene, nullptr);
+            ck.Check(noLib.api.AnimatorPlay(noLib.api.engine, ToMye(actor), MyeNameHash("Idle"), 0) == 0, "controller の引き先が無ければ 0");
+        }
+
+        // GameLogic.dll の BtProbeTask (REGISTER_BT_TASK): 実際の DLL の記述子・関数テーブルを通す。DLL が無い環境では飛ばす
+        {
+            const std::wstring dllPath = GetExecutableDir() + L"\\GameLogic.dll";
+            HMODULE module = fs::exists(dllPath) ? LoadLibraryW(dllPath.c_str()) : nullptr;
+            const auto getModule = module != nullptr ? reinterpret_cast<MyeGetModuleFn>(GetProcAddress(module, "GameLogic_GetModule")) : nullptr;
+            if (getModule == nullptr) {
+                MYE_LOG_WARN("[behaviortree selftest] GameLogic.dll is not available - the BtProbeTask check is skipped");
+            } else {
+                const uint64_t probeBoard = RegisterBoard(
+                    lib, L"abi_dll_bb",
+                    Board({ BbKey("probeTicks", "Int"), BbKey("probeStarts", "Int"), BbKey("probeAbortedAt", "Int"), WithEventName(BbKey("done", "Bool"), "BtProbeDone") }));
+                {
+                    Sim sim;
+                    AbiRig rig;
+                    rig.Bind(sim.bt, sim.scene);
+                    const MyeScriptModule* mod = getModule(&rig.api);
+                    const bool versionOk = mod != nullptr && mod->apiVersion == MYE_API_VERSION;
+                    if (versionOk) {
+                        sim.bt.Tasks().Update(&rig.api, mod->btTasks, mod->btTaskCount);
+                    }
+                    const BtTaskType* probe = sim.bt.Tasks().Find("BtProbeTask");
+                    ck.Check(versionOk && probe != nullptr && probe->fields.size() == 3 && probe->stateSize == 12, "GameLogic.dll の BtProbeTask が登録表に載る (3 フィールド・12 バイト)");
+                    if (probe != nullptr) {
+                        const EntityID e = sim.AddTreeEntity(RegisterTree(lib, L"abi_dll_tree",
+                                                                           Tree(0, { CppTaskNode(0, "BtProbeTask", json{ { "targetTicks", 3 } }) }, probeBoard)));
+                        sim.beforeBt = [&] { rig.ctx.tickIndex = sim.tick; };
+                        const std::vector<int32_t> statuses = Run(sim, e, 5);
+                        int32_t value = 0;
+                        const auto bb = [&](const char* key) { return bbInt(sim, e, key, value) ? value : -1; };
+                        ck.Check(Is(statuses, { kRunning, kRunning, kRunning, kSucceeded, kRunning }) && bb("probeTicks") == 3 && bb("probeStarts") == 2,
+                                 "DLL のタスク: OnStart / OnTick (3 回で Success) と、DLL 内から呼んだ BtGetBlackboard / BtSetBlackboard が動く");
+                        BbType type = BbType::Bool;
+                        BbValue done;
+                        sim.bt.GetBlackboardValue(e, HashStr("done"), type, done);
+                        ck.Check(done.isSet == 1 && done.i == 1, "DLL のタスクが BtSendEvent で自分宛てに送ったイベントが次の tick に配られ、eventName のキーへ届く");
+
+                        const EntityID aborted = sim.AddTreeEntity(
+                            RegisterTree(lib, L"abi_dll_abort", Tree(0, { Decorated(CppTaskNode(0, "BtProbeTask", json{ { "targetTicks", 100 } }), { Timeout(3) }) }, probeBoard)),
+                            "Aborted");
+                        Run(sim, aborted, 6);
+                        ck.Check(bbInt(sim, aborted, "probeAbortedAt", value) && value >= 1, "DLL のタスクの OnAbort (Timeout に止められた) が呼ばれ、BB へ残る");
+                    }
+                    sim.beforeBt = nullptr;
+                    sim.bt.Tasks().Clear(); // DLL を解放する前に関数ポインタを外す
+                }
+                FreeLibrary(module);
+            }
         }
     }
 

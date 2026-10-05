@@ -71,10 +71,50 @@ struct MyeScriptDesc {
                     float impulse);
 };
 
+// BT タスクの戻り値 (BtResult と同値)
+enum MyeBtStatus {
+    MYE_BT_RUNNING = 0,
+    MYE_BT_SUCCESS = 1,
+    MYE_BT_FAILURE = 2,
+};
+
+// BT タスクのコールバックに渡されるコンテキスト (POD)。状態 (T) は第 1 引数で渡る
+struct MyeBtTaskContext {
+    float dt;                    // 固定 dt
+    uint64_t tickIndex;
+    MyeEntityId self;            // この木の持ち主 (BehaviorTreeComponent を付けたエンティティ)
+    const MyeEngineApi* api;
+};
+
+// BT の C++ タスク 1 種。状態 (stateSize バイト) は木のノードのインスタンスごとにエンジンの BT 表が持つ。
+// 入るたびに construct で既定値にし、.bt.json のノードの "fields" の値を名前で上書きしてから onStart を呼ぶ。
+// ★stateSize の上限は 112 バイト (超えたタスクは登録されず、そのノードは Failure)。
+// ★状態のバイト列は BT 節とワールドハッシュに入るので、FIELDS に書かないメンバとパディングは呼ぶたびに 0 へ戻る
+//   (Debug / Release でパディングの中身が違ってもハッシュが割れないように)。保ちたい値は全部 FIELDS に書く。
+// ★layoutHash が変わった (ホットリロードでフィールドが変わった) 実行中の木は、OnAbort を呼ばずに状態を捨てて根からやり直す
+struct MyeBtTaskDesc {
+    const char* name;
+    uint32_t stateSize;
+    uint32_t stateAlign;
+    uint64_t layoutHash;         // MyeScriptDesc と同じ (name,type,offset) 列の FNV-1a
+    const MyeScriptField* fields;
+    uint32_t fieldCount;
+    void (*construct)(void* dst);
+    // 入った tick に 1 回。null なら入った tick に onTick を呼ぶ。戻り値は MyeBtStatus
+    int32_t (*onStart)(void* state, MyeBtTaskContext* ctx);
+    // 入った次の tick から毎 tick。null なら Running のまま
+    int32_t (*onTick)(void* state, MyeBtTaskContext* ctx);
+    // Abort されたとき (Success / Failure で終わったときは呼ばない)。null 可
+    void (*onAbort)(void* state, MyeBtTaskContext* ctx);
+};
+
 struct MyeScriptModule {
     uint32_t apiVersion; // MYE_API_VERSION と一致しなければロード拒否
     uint32_t scriptCount;
     const MyeScriptDesc* scripts;
+    // v27 (M85k) 末尾追加
+    uint32_t btTaskCount;
+    const MyeBtTaskDesc* btTasks;
 };
 
 // GameLogic.dll がエクスポートするエントリポイントの型

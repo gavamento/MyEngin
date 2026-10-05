@@ -589,6 +589,37 @@ bool BehaviorTreeEditModel::SetParam(int32_t id, int paramIndex, const BtParamVa
     return true;
 }
 
+bool BehaviorTreeEditModel::SetTaskField(int32_t id, const std::string& name, const nlohmann::json& value)
+{
+    const int index = FindIndex(id);
+    if (index < 0 || name.empty() || name.size() > kBbMaxNameBytes || value.is_null()) {
+        return false;
+    }
+    BtNodeDef& node = asset_.nodes[static_cast<size_t>(index)];
+    if (node.kind != BtNodeKind::CppTask) {
+        return false;
+    }
+    // 保存できる形 (数・真偽・短い文字列・数の短い配列) だけ受ける。LinkAsset / FromJson と同じ上限
+    const bool plain = value.is_number() || value.is_boolean() || (value.is_string() && value.get<std::string>().size() <= kBtMaxTaskFieldTextBytes)
+                       || (value.is_array() && value.size() <= 16
+                           && std::all_of(value.begin(), value.end(), [](const nlohmann::json& element) { return element.is_number(); }));
+    if (!plain) {
+        return false;
+    }
+    if (node.taskFields.is_object() && node.taskFields.contains(name) && node.taskFields[name] == value) {
+        return false;
+    }
+    if (!node.taskFields.is_object()) {
+        node.taskFields = nlohmann::json::object();
+    }
+    if (!node.taskFields.contains(name) && node.taskFields.size() >= kBtMaxTaskFieldEntries) {
+        return false;
+    }
+    node.taskFields[name] = value;
+    Touch();
+    return true;
+}
+
 bool BehaviorTreeEditModel::SetKey(int32_t id, int keyIndex, const std::string& name)
 {
     const int index = FindIndex(id);

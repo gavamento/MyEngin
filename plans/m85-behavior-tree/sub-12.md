@@ -6,9 +6,12 @@
 
 ## やること
 - `MyeScript.cs` に糖衣: `GetBlackboard*` / `SetBlackboard*` / `SendEvent` / `ReceivedEvents` (BtEventCount / BtGetEvent) / `PlayAnimation` (AnimatorPlay) / `RestartBehaviorTree`。
-- C# の BT タスク: `[BtTask]` 属性の基底クラス (`OnStart` / `OnTick` / `OnAbort`、戻り値 Running / Success / Failure)。ManagedHost にタスクの一覧と呼び出し口を足す (`ManagedHost.cpp:340-390` の vtable の流儀)。`.bt.json` のノード `CsTask` (クラス名)。
+- C# の BT タスク: `[BtTask]` 属性の基底クラス (`OnStart` / `OnTick` / `OnAbort`、戻り値 Running / Success / Failure)。ManagedHost にタスクの一覧と呼び出し口を足す (`ManagedHost.cpp:340-390` の vtable の流儀)。`.bt.json` のノード `CsTask` (クラス名は CppTask の task と同じく `params.class` の String パラメータ。sub-11 VERDICT)。
 - C# レーンが止まる場面 (`TickRunner.cpp:333-341` の runManaged が偽: 記録・検証・Net・再シム) では CsTask は即 Failure + 1 回警告 (spec 2. #8)。BT 窓の検査に「C# タスクを含む = 決定論の保証外」の警告 (sub-09 の枠を埋める)、Inspector の BehaviorTreeComponent 欄にも同じ警告。
 - C# タスクのインスタンスは managed 側に置く (World の外)。巻き戻し後のリセットは既存の C# スクリプトと同じ扱い (`SimSnapshot.h:39-46`)。
+
+- (sub-11 VERDICT より) C# の位置ミラー (sub-11) の実走確認もこのサブの一時プローブで行う (7 スロットを C# から 1 回ずつ呼ぶ)。
+- (sub-11 VERDICT より) C++ タスクの状態の正規化 (`BtTaskCanonicalizeState`) を一時的に外すと、パディングを持つ状態型のテストが FAIL することを 1 回確かめる変異試験 (テストが無ければ 1 項目足す)。
 
 ## やらないこと (このサブでは)
 - C# タスクの状態の決定論化 (保証外のまま)

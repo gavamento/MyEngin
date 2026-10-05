@@ -16,6 +16,7 @@
 #include "Engine/Core/Util/ByteIo.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
+#include "Engine/Engine/AI/BtTaskRegistry.h"
 
 namespace mye {
 
@@ -125,6 +126,19 @@ public:
     int EventCount(EntityID self) const;
     bool GetEvent(EntityID self, int index, BtEvent& out) const;
 
+    // ---- ABI v27 (BtGetBlackboard / BtSetBlackboard / BtRestart) ----
+    // キーは名前の HashStr (MyeNameHash と同じ)。BT のインスタンスが無い・キーが無いは false。
+    // Update の中 (C++ タスクのコールバック) からも呼べる: 動いている最中のインスタンスも、処理済み / 未処理のインスタンスも引ける
+    bool GetBlackboardValue(EntityID entity, uint64_t keyHash, BbType& type, BbValue& out) const;
+    // 型が違う・非有限の Float / Vector は false (何も書かない)。isSet = 0 は未設定に戻す
+    bool SetBlackboardValue(EntityID entity, uint64_t keyHash, BbType type, const BbValue& value);
+    // 木を Abort して根からやり直す (BB は保つ)。entity の木のタスクの中から呼んだときは、そのタスクが返った後に行う。インスタンスが無ければ false
+    bool Restart(World& world, uint64_t tick, EntityID entity);
+
+    // C++ タスクの登録表 (ScriptHost が LoadModule のたびに更新する。BT エディタのパラメータ欄も引く)
+    BtTaskRegistry& Tasks() { return tasks_; }
+    const BtTaskRegistry& Tasks() const { return tasks_; }
+
     // Abort を受けたノードの id を Abort の順に積む先 (検査用。sim 状態ではない)。null = 記録しない
     void SetAbortTrace(std::vector<int32_t>* sink) { abortTrace_ = sink; }
 
@@ -158,9 +172,13 @@ private:
     void SaveInstances(ByteWriter& w) const;
     void SavePending(ByteWriter& w) const;
 
-    // owner 1 体の同期と実行。表に残すなら true
+    // owner 1 体の同期と実行。表に残すなら true。実行中の間は inst を ABI から引ける (current_)
     bool StepOwner(World& world, uint64_t tick, const NavSystem* nav, const ControllerLibrary* controllers, const AnimationLibrary* clips,
                    EntityID owner, BtInstance& inst);
+    bool StepOwnerBody(World& world, uint64_t tick, const NavSystem* nav, const ControllerLibrary* controllers,
+                       const AnimationLibrary* clips, EntityID owner, BtInstance& inst);
+    // entity のインスタンス (書き込める)。Update の最中は、動いている最中のもの・処理済み (next) ・未処理の表の残りの順に探す
+    BtInstance* Locate(EntityID entity) const;
 
     // 登録された木 (GUID) を実行用に展開した結果 (SubTree の取り込み済み)。作り直しは IsCurrent で決める。木の中身だけで決まるキャッシュで、sim 状態ではない
     std::shared_ptr<const BehaviorTreeAsset> ResolveTree(uint64_t guid);
@@ -170,6 +188,14 @@ private:
     std::vector<BtEvent> delivered_;    // 直近の Update が配った分 (配送順)。次の Update で捨てる。sim 状態ではない
     bool eventOverflowWarned_ = false;  // ログだけ。sim 状態ではない
     std::vector<int32_t>* abortTrace_ = nullptr;
+    BtTaskRegistry tasks_;              // 実行に使う登録表。sim 状態ではない (中身は GameLogic.dll の記述子)
+    // ---- Update の最中だけ有効 (ABI から in-flight のインスタンスを引くための印。sim 状態ではない) ----
+    BtInstance* current_ = nullptr;                  // StepOwner が動かしているインスタンス
+    std::vector<BtInstance>* updateNext_ = nullptr;  // 処理済みのインスタンス (キー昇順)
+    const size_t* updateOldAt_ = nullptr;            // instances_ の未処理の先頭
+    bool restartRequested_ = false;                  // current_ の木のタスクが BtRestart を呼んだ
+    std::set<std::string> warnedTasks_;              // 「C++ タスクが登録に無い」を警告済みの名前 (ログだけ)
+    uint64_t warnedTasksGeneration_ = 0;
     std::unordered_map<uint64_t, std::shared_ptr<BtExpansion>> expansions_; // 引くだけ (走査しない)
     std::set<uint64_t> warnedMissing_;  // 「木が見つからない」を警告済みの GUID (ログだけ。sim 状態ではない)
     std::set<std::pair<uint64_t, int>> warnedEntityInit_; // 無効な Entity キーの初期値を警告済みの (エンティティ, 組の添字) (ログだけ)

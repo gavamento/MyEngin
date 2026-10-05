@@ -17,6 +17,7 @@
 namespace mye {
 
 struct EngineContext;
+class BtTaskRegistry;
 struct Selection;
 
 // BT 窓。編集するのは BehaviorTreeEditModel (ImGui に依存しない) で、この窓はそれを描き、マウスとキーを操作へ変える。
@@ -118,6 +119,9 @@ private:
     bool DrawBoardKey(int index); // 消すよう求められたら true
     void CreateBoard();
     void DrawNodeProperties(int32_t id);
+    // CppTask のタスク名の選択欄と、そのタスクのフィールド (登録表の記述子から自動生成)
+    void DrawTaskPicker(int32_t id, const BtNodeDef& node);
+    void DrawTaskFields(int32_t id);
     bool DrawParam(const BtParamDesc& desc, BtParamValue& value);
     // BB のキーの選択欄。accepts を満たす型のキーだけ並べる。選んだ名前を chosen へ (空 = 未指定)。選んだら true
     bool DrawKeyCombo(const char* label, const std::string& current, bool allowNone, const std::function<bool(BbType)>& accepts,
@@ -129,6 +133,7 @@ private:
     void FinishWidgetGesture(); // 触っている欄が無くなったら、まとめていた操作を閉じる
 
     void RefreshLive(EngineContext& ctx, const Selection& selection);
+    const BtTaskRegistry* tasks_ = nullptr; // CppTask の登録表 (OnImGui のたびに EngineContext から取り直す)
     void DrawLiveBar();
     void DrawLiveAbort(ImDrawList* dl, const CanvasStyle& style);
     void DrawCanvas();

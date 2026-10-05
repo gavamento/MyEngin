@@ -162,6 +162,8 @@ void WireScriptServices(ScriptHost& scriptHost, ManagedHost& managedHost,
     managedHost.SetDevelopmentRun(developmentRun);
     scriptHost.SetNavSystem(s.nav);
     managedHost.SetNavSystem(s.nav);
+    scriptHost.SetBehaviorTree(s.behaviorTree, s.controllers);
+    managedHost.SetBehaviorTree(s.behaviorTree, s.controllers);
 }
 
 void InitSimAssets(AssetDatabase& assetDatabase, InputActions& inputActions,

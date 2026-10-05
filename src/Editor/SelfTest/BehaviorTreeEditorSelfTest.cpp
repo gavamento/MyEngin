@@ -792,6 +792,36 @@ bool RunBehaviorTreeEditorSelfTest()
         check(unloaded.Inspect().empty(), "読み込んでいないモデルの検査は空");
     }
 
+    // ---- 12. CppTask のフィールド (M85k): 保存 -> 読み直しで残り、Undo で戻る ----
+    {
+        BehaviorTreeEditModel m;
+        m.BindLibraries(&trees, &boards);
+        m.Load(RegisterEmpty(trees, root / L"cpptask.bt.json"));
+        const int32_t task = m.AddNode(BtNodeKind::CppTask, 0.0f, 0.0f);
+        const int32_t wait = m.AddNode(BtNodeKind::Wait, 0.0f, 100.0f);
+        BtParamValue name;
+        name.s = "ProbeTask";
+        check(task >= 0 && m.SetParam(task, btcpptaskparam::kTask, name) && m.FindNode(task)->params[btcpptaskparam::kTask].s == "ProbeTask",
+              "CppTask のタスク名は String のパラメータとして編集できる");
+        check(m.SetTaskField(task, "targetTicks", nlohmann::json(7)) && m.SetTaskField(task, "label", nlohmann::json("go"))
+                  && m.FindNode(task)->taskFields["targetTicks"] == 7,
+              "SetTaskField: フィールドの値を名前で書ける");
+        check(!m.SetTaskField(task, "targetTicks", nlohmann::json(7)) && !m.SetTaskField(task, "x", nlohmann::json::object())
+                  && !m.SetTaskField(task, "", nlohmann::json(1)) && !m.SetTaskField(wait, "ticks", nlohmann::json(1)),
+              "同じ値・オブジェクト・空の名前・CppTask でないノードは false");
+        check(m.Undo() && m.FindNode(task)->taskFields.contains("targetTicks") && !m.FindNode(task)->taskFields.contains("label")
+                  && m.Undo() && m.FindNode(task)->taskFields.is_null(),
+              "Undo でフィールドの変更が 1 つずつ戻る");
+        check(m.Redo() && m.Redo() && m.FindNode(task)->taskFields["label"] == "go", "Redo でやり直せる");
+        check(m.Save() == BtSaveResult::Ok, "CppTask を含む木を保存できる");
+        BehaviorTreeEditModel again;
+        again.BindLibraries(&trees, &boards);
+        const auto reloaded = trees.GetShared(BehaviorTreeLibrary::HashForPath((root / L"cpptask.bt.json").wstring()));
+        check(again.Load(reloaded) && again.FindNode(task) != nullptr && again.FindNode(task)->params[btcpptaskparam::kTask].s == "ProbeTask"
+                  && again.FindNode(task)->taskFields["targetTicks"] == 7 && again.FindNode(task)->taskFields["label"] == "go",
+              "保存した木を読み直すとタスク名とフィールドが残っている");
+    }
+
     fs::remove_all(root, ec);
 
     if (failCount == 0) {

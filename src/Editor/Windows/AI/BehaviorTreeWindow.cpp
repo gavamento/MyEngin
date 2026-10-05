@@ -21,6 +21,7 @@
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Engine/AI/BehaviorTreeSystem.h"
+#include "Engine/Engine/AI/BtTaskRegistry.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
 #include "Engine/Engine/Loop/EngineLoop.h"   // EngineContext (ライブ表示の読み先)
@@ -331,6 +332,7 @@ void BehaviorTreeWindow::OnImGui(EngineContext& ctx, const Selection& selection)
         ImGui::End();
         return;
     }
+    tasks_ = ctx.behaviorTree != nullptr ? &ctx.behaviorTree->Tasks() : nullptr;
     BehaviorTreeLibrary* trees = behaviortree::Library();
     model_.BindLibraries(trees, blackboard::Library());
     if (trees == nullptr) {
@@ -792,6 +794,101 @@ bool BehaviorTreeWindow::DrawParam(const BtParamDesc& desc, BtParamValue& value)
     return changed;
 }
 
+// CppTask のタスク名。登録表にあるタスクから選ぶ (登録に無い名前も今の値として見える)
+void BehaviorTreeWindow::DrawTaskPicker(int32_t id, const BtNodeDef& node)
+{
+    const std::string current = node.params[btcpptaskparam::kTask].s;
+    char preview[96] = {};
+    if (current.empty()) {
+        std::snprintf(preview, sizeof(preview), "%s", Tr(StrId::Bt_BlackboardNone));
+    } else if (tasks_->Find(current) == nullptr) {
+        std::snprintf(preview, sizeof(preview), "%s (%s)", current.c_str(), Tr(StrId::Bt_TaskMissing));
+    } else {
+        std::snprintf(preview, sizeof(preview), "%s", current.c_str());
+    }
+    if (ImGui::BeginCombo("task", preview)) {
+        for (const BtTaskType* task : tasks_->Enumerate()) {
+            if (ImGui::Selectable(task->name.c_str(), task->name == current)) {
+                BtParamValue value;
+                value.s = task->name;
+                model_.SetParam(id, btcpptaskparam::kTask, value);
+            }
+        }
+        ImGui::EndCombo();
+    }
+}
+
+// CppTask のフィールド欄。登録表の記述子から作り、値は .bt.json の "fields" に名前で入る。
+// 状態を既定値 + 今の fields から組み立てて ImGui で直接編集し、変えた欄だけ書き戻す
+void BehaviorTreeWindow::DrawTaskFields(int32_t id)
+{
+    const BtNodeDef* node = model_.FindNode(id);
+    if (node == nullptr || tasks_ == nullptr) {
+        return;
+    }
+    const std::string name = node->params[btcpptaskparam::kTask].s;
+    const BtTaskType* task = name.empty() ? nullptr : tasks_->Find(name);
+    ImGui::Separator();
+    ImGui::TextUnformatted(Tr(StrId::Bt_TaskFields));
+    if (task == nullptr) {
+        ImGui::TextDisabled("%s (%s)", name.empty() ? Tr(StrId::Bt_KeyNone) : name.c_str(), Tr(StrId::Bt_TaskMissing));
+        return;
+    }
+    alignas(16) uint8_t state[kBtCppTaskMaxStateBytes] = {};
+    BtTaskInitState(*task, node->taskFields, state);
+    for (size_t f = 0; f < task->fields.size(); ++f) {
+        const BtTaskField& field = task->fields[f];
+        const char* label = field.displayName.empty() ? field.name.c_str() : field.displayName.c_str();
+        uint8_t* at = state + field.offset;
+        const bool ranged = field.rangeMin != field.rangeMax;
+        bool changed = false;
+        ImGui::PushID(static_cast<int>(f));
+        switch (field.type) {
+        case MYE_FIELD_FLOAT:
+            changed = ranged ? ImGui::SliderFloat(label, reinterpret_cast<float*>(at), field.rangeMin, field.rangeMax)
+                             : ImGui::DragFloat(label, reinterpret_cast<float*>(at), 0.05f);
+            break;
+        case MYE_FIELD_INT32:
+            changed = ranged ? ImGui::SliderInt(label, reinterpret_cast<int*>(at), static_cast<int>(field.rangeMin), static_cast<int>(field.rangeMax))
+                             : ImGui::DragInt(label, reinterpret_cast<int*>(at));
+            break;
+        case MYE_FIELD_UINT32: {
+            changed = ImGui::InputScalar(label, ImGuiDataType_U32, at);
+            break;
+        }
+        case MYE_FIELD_BOOL: changed = ImGui::Checkbox(label, reinterpret_cast<bool*>(at)); break;
+        case MYE_FIELD_FLOAT2: changed = ImGui::DragFloat2(label, reinterpret_cast<float*>(at), 0.05f); break;
+        case MYE_FIELD_FLOAT3: changed = ImGui::DragFloat3(label, reinterpret_cast<float*>(at), 0.05f); break;
+        case MYE_FIELD_FLOAT4:
+        case MYE_FIELD_QUAT: changed = ImGui::DragFloat4(label, reinterpret_cast<float*>(at), 0.05f); break;
+        case MYE_FIELD_COLOR: changed = ImGui::ColorEdit4(label, reinterpret_cast<float*>(at)); break;
+        case MYE_FIELD_STRING64: changed = ImGui::InputText(label, reinterpret_cast<char*>(at), 64); break;
+        case MYE_FIELD_STRING256: changed = ImGui::InputText(label, reinterpret_cast<char*>(at), 256); break;
+        case MYE_FIELD_UINT64:
+        case MYE_FIELD_ASSETREF: {
+            char buf[24] = {};
+            uint64_t value = 0;
+            std::memcpy(&value, at, sizeof(value));
+            if (value != 0) {
+                std::snprintf(buf, sizeof(buf), "%llx", static_cast<unsigned long long>(value));
+            }
+            if (ImGui::InputText(label, buf, sizeof(buf), ImGuiInputTextFlags_CharsHexadecimal)) {
+                value = std::strtoull(buf, nullptr, 16);
+                std::memcpy(at, &value, sizeof(value));
+                changed = true;
+            }
+            break;
+        }
+        default: ImGui::TextDisabled("%s (%s)", label, Tr(StrId::Bt_TaskFieldFixed)); break; // EntityRef / Float4x4: ファイルへ書けない
+        }
+        if (changed) {
+            const nlohmann::json value = BtTaskReadField(field, state);
+            CommitEdit(true, [&] { model_.SetTaskField(id, field.name, value); });
+        }
+        ImGui::PopID();
+    }
+}
+
 void BehaviorTreeWindow::DrawNodeProperties(int32_t id)
 {
     const BtNodeDef* node = model_.FindNode(id);
@@ -876,9 +973,22 @@ void BehaviorTreeWindow::DrawNodeProperties(int32_t id)
                 ImGui::PopID();
                 continue;
             }
+            if (node->kind == BtNodeKind::CppTask && i == btcpptaskparam::kTask && tasks_ != nullptr && !tasks_->Enumerate().empty()) {
+                DrawTaskPicker(id, *node);
+                ImGui::PopID();
+                continue;
+            }
             BtParamValue value = node->params[static_cast<size_t>(i)];
             CommitEdit(DrawParam(desc, value), [&] { model_.SetParam(id, i, value); });
             ImGui::PopID();
+        }
+    }
+    if (node->kind == BtNodeKind::CppTask) {
+        DrawTaskFields(id);
+        node = model_.FindNode(id); // 編集で木のコピーが組み替わることがある
+        if (node == nullptr) {
+            ImGui::PopID();
+            return;
         }
     }
 

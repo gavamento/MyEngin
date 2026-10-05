@@ -137,6 +137,8 @@ public:
     // ---- パラメータ・キー・Decorator ----
     // 範囲外の値は丸める。値が変わらなければ false (dirty は立てない)。型に合わない値 (長すぎる文字列・非有限の Float) は false
     bool SetParam(int32_t id, int paramIndex, const BtParamValue& value);
+    // CppTask のフィールド (.bt.json の "fields")。値は BtTaskReadField が作る JSON。同じ値・CppTask でないノード・保存できない形は false
+    bool SetTaskField(int32_t id, const std::string& name, const nlohmann::json& value);
     // BB のキー名。空 = 未指定。63 バイトを超えれば false
     bool SetKey(int32_t id, int keyIndex, const std::string& name);
     // Decorator を末尾に足して添字を返す。-1 = 上限 (kBtMaxDecoratorsPerNode) か、BlackboardCondition なのに BB にキーが無い

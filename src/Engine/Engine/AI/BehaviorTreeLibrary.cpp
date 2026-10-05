@@ -16,6 +16,7 @@
 #include "Engine/Core/Asset/AssetKeyResolver.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
+#include "Engine/Engine/AI/BtTaskRegistry.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace fs = std::filesystem;
@@ -118,6 +119,11 @@ const BtParamDesc kPatrolParams[] = {
     { "failOnStuck", BtParamType::Bool, 0.0f, 0.0f, 1.0f, nullptr, 0 },
 };
 
+// btcpptaskparam の並びと同じ
+const BtParamDesc kCppTaskParams[] = {
+    { "task", BtParamType::String, 0.0f, 0.0f, 0.0f, nullptr, 0 },
+};
+
 const char* const kTargetKeyNames[] = { "target" };
 const char* const kPatrolKeyNames[] = { "route" };
 const char* const kSendEventKeyNames[] = { "target", "vector" };
@@ -151,7 +157,9 @@ const BtNodeTypeInfo kNodeTypes[] = {
     { BtNodeKind::SubTree, "SubTree", BtNodeCategory::Tree, 0, 1, kSubTreeParams, 1, nullptr, 0, 0 },
     { BtNodeKind::Patrol, "Patrol", BtNodeCategory::Task, 0, 0, kPatrolParams, 2, kPatrolKeyNames, 1,
       static_cast<int>(sizeof(BtPatrolState)) },
+    { BtNodeKind::CppTask, "CppTask", BtNodeCategory::Task, 0, 0, kCppTaskParams, 1, nullptr, 0, kBtCppTaskExtraBytes },
 };
+static_assert(kBtCppTaskExtraBytes <= kBtMaxExtraBytesPerNode, "CppTask の追加状態は 1 ノードの上限に収まる");
 static_assert(sizeof(kNodeTypes) / sizeof(kNodeTypes[0]) == static_cast<size_t>(BtNodeKind::Count),
               "kNodeTypes を BtNodeKind の全値ぶん並べる");
 
@@ -379,6 +387,43 @@ bool ReadDecorator(const json& j, BtDecoratorDef& out)
         out.key = j["key"].get<std::string>();
     }
     return ReadParamList(info->params, info->paramCount, j, out.params);
+}
+
+// taskFields の値 1 つが保存できる形か (数・真偽・短い文字列・数の短い配列)。型の照合は実行時に登録表が行う
+bool IsPlainTaskFieldValue(const json& value)
+{
+    if (value.is_number() || value.is_boolean()) {
+        return true;
+    }
+    if (value.is_string()) {
+        return value.get<std::string>().size() <= kBtMaxTaskFieldTextBytes;
+    }
+    if (value.is_array() && value.size() <= 16) {
+        return std::all_of(value.begin(), value.end(), [](const json& element) { return element.is_number(); });
+    }
+    return false;
+}
+
+// CppTask の "fields" を読む。無ければ空。オブジェクトでない・値が保存できない形・多すぎるは false
+bool ReadTaskFields(const json& owner, json& out)
+{
+    out = json();
+    if (!owner.contains("fields")) {
+        return true;
+    }
+    const json& fields = owner["fields"];
+    if (!fields.is_object() || fields.size() > kBtMaxTaskFieldEntries) {
+        return false;
+    }
+    for (auto it = fields.begin(); it != fields.end(); ++it) {
+        if (!IsPlainTaskFieldValue(it.value())) {
+            return false;
+        }
+    }
+    if (!fields.empty()) {
+        out = fields;
+    }
+    return true;
 }
 
 // 親が Selector でない BlackboardCondition の LowerPriority / Both は実行時に Self になる。読み込み時にだけ知らせる
@@ -793,6 +838,9 @@ json BehaviorTreeLibrary::ToJson(const BehaviorTreeAsset& asset)
             }
             n["keys"] = std::move(keys);
         }
+        if (node.kind == BtNodeKind::CppTask && node.taskFields.is_object() && !node.taskFields.empty()) {
+            n["fields"] = node.taskFields;
+        }
         json decorators = json::array();
         for (const BtDecoratorDef& deco : node.decorators) {
             const BtDecoratorTypeInfo& decoInfo = BtDecoratorTypeOf(deco.kind);
@@ -850,6 +898,9 @@ bool BehaviorTreeLibrary::FromJson(const json& j, BehaviorTreeAsset& out)
             node.id = n["id"].get<int32_t>();
             node.kind = info->kind;
             if (!ReadParamList(info->params, info->paramCount, n, node.params) || !ReadKeyList(*info, n, node.keys)) {
+                return false;
+            }
+            if (info->kind == BtNodeKind::CppTask && !ReadTaskFields(n, node.taskFields)) {
                 return false;
             }
             if (n.contains("decorators")) {

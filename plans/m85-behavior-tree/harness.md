@@ -16,8 +16,8 @@
 | sub-07 | OK | 1 | 74b7557 | TypeId 79 PatrolRoute、snapshot v38 | 巡回ルート |
 | sub-08 | OK | 1 | 2f86efb | BT 窓 (1) + Entity キーの初期値、snapshot v39 | BT 窓 (1) |
 | sub-09 | OK | 1 | 8bef16c | Undo・BB パネル・検査・ReloadHub の同一内容スキップ | BT 窓 (2) Undo・BB 編集・検査 |
-| sub-10 | OK | 1 | (このコミット) | ライブ表示・Abort 矢印・デバッグ線 | BT 窓 (3) ライブ表示 |
-| sub-11 | 未着手 | 0 | | ABI v27 |
+| sub-10 | OK | 1 | 20a9f43 | ライブ表示・Abort 矢印・デバッグ線 | BT 窓 (3) ライブ表示 |
+| sub-11 | OK | 1 | (このコミット) | ABI v27 = 158、C++ タスク、snapshot v39 のまま | ABI v27 |
 | sub-12 | 未着手 | 0 | | C# タスク |
 | sub-13 | 未着手 | 0 | | --bt-demo・replay_verify・golden |
 | sub-14 | 未着手 | 0 | | ADR-025 と全体検証 |
@@ -71,6 +71,12 @@
 - (sub-10) sub-07 should#1 (記録を閉じる処理の集約) は条件に当たらず閉じた。
 - (sub-10 → sub-11) activeNodeId は展開後の実行木の id。ABI と文書に明記し、DisplayedIdOf は必要になるまで ABI に出さない (sub-11.md 反映済み)。ABI の bump は M85 でこの 1 回だけ (v27)。
 - (sub-10 → sub-13) --bt-demo に drawDebug = true の BehaviorTreeComponent を 1 体入れておくと撮りやすい。
+- (sub-11 VERDICT should#1) sub-12 で BtTaskCanonicalizeState を一時的に外し、パディングを持つ状態型のテストが FAIL することを確かめる (無ければテストを足す)。
+- (sub-11 VERDICT should#2) sub-12 の一時プローブで ABI v27 の 7 スロットを C# から 1 回ずつ呼ぶ。
+- (sub-11 VERDICT nit#3) sub-12 で C# タスクの欄を撮るとき、BT 窓の CppTask 欄 (タスク名の選択・フィールド欄) も撮る。
+- (sub-11) CsTask は params.class (String) で CppTask の params.task と揃える。Interop.cs には 7 スロットと MyeBbValue / MyeBtEventPayload / MyeBtEvent のミラーだけ (糖衣は sub-12)。ManagedHost::SetBehaviorTree あり。
+- (sub-11 → 完了報告) 外部プロジェクト (HAL Collector / 三校) の GameLogic.dll は ABI v27 で再ビルドが要る。ユーザーに伝える。
+- (sub-11 → sub-13) GameLogic の BtProbeTask (fields: targetTicks / outcome / ticks) をデモから使える。
 - (sub-07 → sub-14) ADR-025: Patrol は入るたびに最近傍点から、親付きルートは前 tick の WorldMatrix。
 - (sub-06 → sub-14) ADR-025 の既知の限界: SubTree は平らな展開・上限 1024・部分木の根の LowerPriority は Self 扱い・BB 継承なし・遷移中の AnimatorPlay はブレンド途中のポーズから飛ぶ。
 - (sub-04 VERDICT nit#1) BehaviorTreeSelfTest の診断ログ `[search] stuck ...` は、1 回の実行で 1〜2 行なら残す。tick ごとなら 1 行にまとめるか削除。sub-05 でついでに判断。

@@ -104,6 +104,13 @@ public:
     // v24: ナビメッシュのクエリの引き先 (ScriptHost と同じ規約)
     void SetNavSystem(NavSystem* nav) { apiCtx_.nav = nav; }
 
+    // v27: BT の ABI の引き先 (ScriptHost と同じ規約。C# タスクは sub-12)
+    void SetBehaviorTree(BehaviorTreeSystem* bt, const ControllerLibrary* controllers)
+    {
+        apiCtx_.behaviorTree = bt;
+        apiCtx_.controllers = controllers;
+    }
+
     // v14 (M59k): 今 tick の接触列を繋ぐ / 外す (ScriptHost と同じ規約)
     void SetTickContacts(const std::vector<SolidContact>* contacts) { apiCtx_.contacts = contacts; }
 

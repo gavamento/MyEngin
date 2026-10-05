@@ -81,6 +81,8 @@ struct RunCtx {
     BehaviorTreeSystem* events = nullptr; // SendEvent の積み先。null = 積めない (SendEvent は Failure)
     const ControllerLibrary* controllers = nullptr; // PlayAnimation のステート名の引き先。null = PlayAnimation は Failure
     const AnimationLibrary* clips = nullptr;        // PlayAnimation の waitForEnd のクリップの長さの引き先。null = 待たない
+    const BtTaskRegistry* tasks = nullptr;          // CppTask の引き先。null = CppTask は Failure (Abort の OnAbort も呼ばない)
+    std::set<std::string>* warnedTasks = nullptr;   // 「登録に無い C++ タスク」を警告済みの名前。null = 警告しない
     int steps = 0;
     bool stepLimitHit = false;
     bool aborted = false; // 実行中のノードを 1 つでも Abort した
@@ -255,9 +257,55 @@ void ReleaseRotateTo(RunCtx& c, const BtNodeDef& node)
     }
 }
 
+// C++ タスクのコンテキスト。api はタスクを登録した ScriptHost のテーブル
+MyeBtTaskContext TaskContextOf(const RunCtx& c)
+{
+    MyeBtTaskContext ctx = {};
+    ctx.dt = kBtTickSeconds;
+    ctx.tickIndex = c.tick;
+    ctx.self = MyeEntityId{ c.inst.entity.index, c.inst.entity.generation };
+    ctx.api = c.tasks != nullptr ? c.tasks->Api() : nullptr;
+    return ctx;
+}
+
+// 追加状態の領域 (BtCppTaskHeader + 状態)。領域が足りなければ nullptr (復元直後の不整合な表で範囲外を読まない)
+uint8_t* CppTaskRegion(BtInstance& inst, const BtNodeDef& node)
+{
+    if (node.extraOffset < 0 || static_cast<size_t>(node.extraOffset) + kBtCppTaskExtraBytes > inst.extra.size()) {
+        return nullptr;
+    }
+    return inst.extra.data() + node.extraOffset;
+}
+
+// タスクが入ったときの layoutHash / stateSize が今の登録と同じか (ホットリロードでフィールドが変わっていれば false)
+bool CppTaskLayoutCurrent(const BtCppTaskHeader& header, const BtTaskType& task)
+{
+    return header.layoutHash == task.layoutHash && header.stateSize == task.stateSize;
+}
+
+// CppTask の後始末。Abort のときだけ OnAbort を呼ぶ (Success / Failure で終わったときは呼ばない)。
+// 登録に無い・layoutHash が変わったタスクの状態は今の関数に渡せないので、呼ばずに捨てる
+void ReleaseCppTask(RunCtx& c, const BtNodeDef& node, bool byAbort)
+{
+    uint8_t* region = CppTaskRegion(c.inst, node);
+    if (!byAbort || region == nullptr || c.tasks == nullptr) {
+        return;
+    }
+    const BtTaskType* task = c.tasks->Find(node.params[btcpptaskparam::kTask].s);
+    BtCppTaskHeader header;
+    std::memcpy(&header, region, sizeof(header));
+    if (task == nullptr || task->onAbort == nullptr || !CppTaskLayoutCurrent(header, *task)) {
+        return;
+    }
+    alignas(16) uint8_t state[kBtCppTaskMaxStateBytes] = {};
+    std::memcpy(state, region + sizeof(BtCppTaskHeader), task->stateSize);
+    MyeBtTaskContext ctx = TaskContextOf(c);
+    task->onAbort(state, &ctx);
+}
+
 // 入っていた本体が外へ書いたもの (Agent の目的地・navFilter・updateRotation) を元へ戻し、追加状態を消す。
-// 終了 (Success / Failure) と Abort の両方がここを通る
-void ReleaseBody(RunCtx& c, int32_t index)
+// 終了 (Success / Failure) と Abort の両方がここを通る (byAbort = Abort のとき)
+void ReleaseBody(RunCtx& c, int32_t index, bool byAbort)
 {
     const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
     switch (node.kind) {
@@ -265,6 +313,7 @@ void ReleaseBody(RunCtx& c, int32_t index)
     case BtNodeKind::RotateTo: ReleaseRotateTo(c, node); break;
     case BtNodeKind::SearchArea: ReleaseSearchArea(c); break;
     case BtNodeKind::Patrol: ReleasePatrol(c); break;
+    case BtNodeKind::CppTask: ReleaseCppTask(c, node, byAbort); break;
     default: break;
     }
     const int extraBytes = BtNodeTypeOf(node.kind).extraStateBytes;
@@ -317,7 +366,7 @@ void AbortNode(RunCtx& c, int32_t index)
         c.abortTrace->push_back(node.id);
     }
     if (c.inst.nodes[static_cast<size_t>(index)].active != 0) {
-        ReleaseBody(c, index); // ノード固有の後始末 (MoveTo の停止など)。子孫の後・Decorator の後始末の前
+        ReleaseBody(c, index, true); // ノード固有の後始末 (MoveTo の停止など)。子孫の後・Decorator の後始末の前
     }
     FinishDecorators(c, node);
     Finish(c.inst.nodes[static_cast<size_t>(index)]);
@@ -336,7 +385,7 @@ void AbortBody(RunCtx& c, int32_t index)
         if (c.abortTrace != nullptr) {
             c.abortTrace->push_back(node.id);
         }
-        ReleaseBody(c, index);
+        ReleaseBody(c, index, true);
         Finish(state);
         c.aborted = true;
     }
@@ -436,7 +485,7 @@ float HorizontalDistance(const float* a, const float* b)
 // 本体の終わり方 (Success / Failure)。後始末をして状態を初期値へ戻す
 BtResult EndBody(RunCtx& c, int32_t index, BtResult result)
 {
-    ReleaseBody(c, index);
+    ReleaseBody(c, index, false);
     Finish(c.inst.nodes[static_cast<size_t>(index)]);
     return result;
 }
@@ -1177,6 +1226,61 @@ BtResult VisitSubTree(RunCtx& c, int32_t index)
     return result;
 }
 
+BtResult TaskResultOf(int32_t status)
+{
+    switch (status) {
+    case MYE_BT_RUNNING: return BtResult::Running;
+    case MYE_BT_SUCCESS: return BtResult::Success;
+    default: return BtResult::Failure; // 範囲外の値は Failure
+    }
+}
+
+// CppTask: REGISTER_BT_TASK で登録したタスクを動かす。入った tick に状態を既定値にして "fields" の値を重ね、OnStart (無ければ OnTick) を
+// 呼び、以降は毎 tick OnTick。状態は呼ぶ前後で追加状態の領域へ写す。登録に無い名前は Failure (警告は名前ごとに 1 回)。
+// layoutHash が変わった実行中のタスクは StepOwnerBody が先に木ごとやり直すので、ここへは来ない
+BtResult VisitCppTask(RunCtx& c, int32_t index)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    BtNodeState& state = c.inst.nodes[static_cast<size_t>(index)];
+    const bool starting = state.active == 0;
+    const std::string& name = node.params[btcpptaskparam::kTask].s;
+    const BtTaskType* task = (c.tasks != nullptr && !name.empty()) ? c.tasks->Find(name) : nullptr;
+    uint8_t* region = CppTaskRegion(c.inst, node);
+    if (task == nullptr || region == nullptr) {
+        if (c.warnedTasks != nullptr && c.warnedTasks->insert(name).second) {
+            MYE_LOG_WARN("[behaviortree] C++ task '%s' is not registered (GameLogic.dll has no such task); the node fails",
+                         name.c_str());
+        }
+        return starting ? BtResult::Failure : EndBody(c, index, BtResult::Failure);
+    }
+
+    alignas(16) uint8_t buffer[kBtCppTaskMaxStateBytes] = {};
+    MyeBtTaskContext ctx = TaskContextOf(c);
+    int32_t status = MYE_BT_RUNNING;
+    if (starting) {
+        BtTaskInitState(*task, node.taskFields, buffer);
+        state.active = 1;
+        BtCppTaskHeader header;
+        header.layoutHash = task->layoutHash;
+        header.stateSize = task->stateSize;
+        std::memcpy(region, &header, sizeof(header));
+        auto first = task->onStart != nullptr ? task->onStart : task->onTick;
+        if (first != nullptr) {
+            status = first(buffer, &ctx);
+        }
+    } else {
+        std::memcpy(buffer, region + sizeof(BtCppTaskHeader), task->stateSize);
+        if (task->onTick != nullptr) {
+            status = task->onTick(buffer, &ctx);
+        }
+    }
+    // コールバックの中で表が組み替わることはない (BtRestart は返った後に行う) ので region は有効なまま
+    BtTaskCanonicalizeState(*task, buffer);
+    std::memcpy(region + sizeof(BtCppTaskHeader), buffer, task->stateSize);
+    const BtResult result = TaskResultOf(status);
+    return result == BtResult::Running ? result : EndBody(c, index, result);
+}
+
 BtResult VisitBody(RunCtx& c, int32_t index)
 {
     switch (c.tree.nodes[static_cast<size_t>(index)].kind) {
@@ -1196,6 +1300,7 @@ BtResult VisitBody(RunCtx& c, int32_t index)
     case BtNodeKind::PlayAnimation: return VisitPlayAnimation(c, index);
     case BtNodeKind::SubTree: return VisitSubTree(c, index);
     case BtNodeKind::Patrol: return VisitPatrol(c, index);
+    case BtNodeKind::CppTask: return VisitCppTask(c, index);
     case BtNodeKind::Count: break;
     }
     return BtResult::Failure;
@@ -1481,14 +1586,38 @@ void ApplyEntityInitials(World& world, const BehaviorTreeComponent& comp, BtInst
 }
 
 // inst の木に対して根から Abort する。Abort したノードがあれば true
-bool AbortTree(World& world, uint64_t tick, std::vector<int32_t>* abortTrace, BtInstance& inst)
+bool AbortTree(World& world, uint64_t tick, std::vector<int32_t>* abortTrace, const BtTaskRegistry* tasks, BtInstance& inst)
 {
     if (!inst.tree || inst.tree->rootIndex < 0 || !AnyNodeActive(inst)) {
         return false;
     }
     RunCtx ctx{ world, inst, *inst.tree, tick, abortTrace, nullptr };
+    ctx.tasks = tasks;
     AbortNode(ctx, inst.tree->rootIndex);
     return ctx.aborted;
+}
+
+// 動いている CppTask のうち、入ったときの layoutHash / stateSize が今の登録と違うもの (ホットリロードでフィールドが変わった) があるか。
+// 登録から消えたタスクは数えない (そのノードは Visit が Failure にする)
+bool AnyCppTaskLayoutStale(const BtInstance& inst, const BtTaskRegistry& tasks)
+{
+    if (!inst.tree) {
+        return false;
+    }
+    for (size_t i = 0; i < inst.tree->nodes.size(); ++i) {
+        const BtNodeDef& node = inst.tree->nodes[i];
+        if (node.kind != BtNodeKind::CppTask || inst.nodes[i].active == 0 || node.extraOffset < 0
+            || static_cast<size_t>(node.extraOffset) + sizeof(BtCppTaskHeader) > inst.extra.size()) {
+            continue;
+        }
+        const BtTaskType* task = tasks.Find(node.params[btcpptaskparam::kTask].s);
+        BtCppTaskHeader header;
+        std::memcpy(&header, inst.extra.data() + node.extraOffset, sizeof(header));
+        if (task != nullptr && !CppTaskLayoutCurrent(header, *task)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // 配られたイベントのうち inst 宛て (自分 or 全体) を、eventName が一致するキーへ書く。配送順に書くので同じキーなら最後が勝つ。
@@ -1548,6 +1677,120 @@ const BtInstance* BehaviorTreeSystem::FindInstance(EntityID entity) const
     const auto it = std::lower_bound(instances_.begin(), instances_.end(), entity,
                                      [](const BtInstance& inst, EntityID key) { return KeyLess(inst.entity, key); });
     return it != instances_.end() && it->entity == entity ? &*it : nullptr;
+}
+
+namespace {
+
+// キー昇順の表から entity を探す。[first, last) の範囲だけ見る。無ければ nullptr
+BtInstance* FindInSorted(std::vector<BtInstance>& list, size_t first, size_t last, EntityID entity)
+{
+    const auto begin = list.begin() + static_cast<std::ptrdiff_t>(first);
+    const auto end = list.begin() + static_cast<std::ptrdiff_t>(last);
+    const auto it = std::lower_bound(begin, end, entity, [](const BtInstance& inst, EntityID key) { return KeyLess(inst.entity, key); });
+    return it != end && it->entity == entity ? &*it : nullptr;
+}
+
+// ブラックボードのキーを名前のハッシュで引く。無ければ -1
+int FindBbKeyByHash(const BtInstance& inst, uint64_t keyHash)
+{
+    if (!inst.blackboardAsset) {
+        return -1;
+    }
+    const std::vector<BbKeyDef>& keys = inst.blackboardAsset->keys;
+    for (size_t k = 0; k < keys.size() && k < inst.blackboard.size(); ++k) {
+        if (HashStr(keys[k].name) == keyHash) {
+            return static_cast<int>(k);
+        }
+    }
+    return -1;
+}
+
+} // namespace
+
+BtInstance* BehaviorTreeSystem::Locate(EntityID entity) const
+{
+    if (current_ != nullptr && current_->entity == entity) {
+        return current_;
+    }
+    // const のメソッドから書ける形で返す。表の中身は sim 状態だが、ここは持ち主の BehaviorTreeSystem の読み書きの口
+    auto& table = const_cast<std::vector<BtInstance>&>(instances_);
+    if (updateNext_ != nullptr && updateOldAt_ != nullptr) {
+        if (BtInstance* done = FindInSorted(*updateNext_, 0, updateNext_->size(), entity)) {
+            return done;
+        }
+        // 未処理の残り。動いている最中のインスタンスの古い置き場 (move 済み) は oldAt より前なので見ない
+        return FindInSorted(table, *updateOldAt_, table.size(), entity);
+    }
+    return FindInSorted(table, 0, table.size(), entity);
+}
+
+bool BehaviorTreeSystem::GetBlackboardValue(EntityID entity, uint64_t keyHash, BbType& type, BbValue& out) const
+{
+    const BtInstance* inst = Locate(entity);
+    if (inst == nullptr) {
+        return false;
+    }
+    const int key = FindBbKeyByHash(*inst, keyHash);
+    if (key < 0) {
+        return false;
+    }
+    type = inst->blackboardAsset->keys[static_cast<size_t>(key)].type;
+    out = inst->blackboard[static_cast<size_t>(key)];
+    return true;
+}
+
+bool BehaviorTreeSystem::SetBlackboardValue(EntityID entity, uint64_t keyHash, BbType type, const BbValue& value)
+{
+    BtInstance* inst = Locate(entity);
+    if (inst == nullptr) {
+        return false;
+    }
+    const int key = FindBbKeyByHash(*inst, keyHash);
+    if (key < 0 || inst->blackboardAsset->keys[static_cast<size_t>(key)].type != type) {
+        return false;
+    }
+    BbValue written;
+    if (value.isSet != 0) {
+        written.isSet = 1;
+        switch (type) {
+        case BbType::Bool: written.i = value.i != 0 ? 1 : 0; break;
+        case BbType::Int: written.i = value.i; break;
+        case BbType::Float:
+            if (!std::isfinite(value.f)) {
+                return false;
+            }
+            written.f = value.f;
+            break;
+        case BbType::Vector:
+            if (!std::isfinite(value.v[0]) || !std::isfinite(value.v[1]) || !std::isfinite(value.v[2])) {
+                return false;
+            }
+            std::memcpy(written.v, value.v, sizeof(written.v));
+            break;
+        case BbType::Entity: written.entity = value.entity; break;
+        }
+    }
+    inst->blackboard[static_cast<size_t>(key)] = written;
+    return true;
+}
+
+bool BehaviorTreeSystem::Restart(World& world, uint64_t tick, EntityID entity)
+{
+    BtInstance* inst = Locate(entity);
+    if (inst == nullptr || !inst->tree) {
+        return false;
+    }
+    if (inst == current_) {
+        restartRequested_ = true; // 動いているタスクの中から: 返った後に StepOwnerBody が Abort する
+        return true;
+    }
+    if (AbortTree(world, tick, abortTrace_, &tasks_, *inst)) {
+        if (BehaviorTreeComponent* comp = world.GetComponent<BehaviorTreeComponent>(entity)) {
+            comp->lastAbortTick = TickToField(tick);
+        }
+    }
+    inst->rootStatus = btroot::kRunning;
+    return true;
 }
 
 void BehaviorTreeSystem::Reset()
@@ -1649,11 +1892,25 @@ void BehaviorTreeSystem::Update(World& world, uint64_t tick, const NavSystem* na
     std::vector<BtInstance> next;
     next.reserve(owners.size());
     size_t oldAt = 0;
+    // C++ タスクのコールバックが ABI (BtSetBlackboard など) で他のエンティティの木を引けるよう、処理済みと未処理の境を公開しておく
+    struct UpdateScope {
+        BehaviorTreeSystem& self;
+        UpdateScope(BehaviorTreeSystem& s, std::vector<BtInstance>* next, const size_t* oldAt) : self(s)
+        {
+            self.updateNext_ = next;
+            self.updateOldAt_ = oldAt;
+        }
+        ~UpdateScope()
+        {
+            self.updateNext_ = nullptr;
+            self.updateOldAt_ = nullptr;
+        }
+    } updateScope(*this, &next, &oldAt);
     // コンポーネントが外れたエンティティの表を落とす。エンティティが生きていれば、木が Agent へ書いたもの
     // (目的地・navFilter・updateRotation) を戻すために先に Abort する (消えたエンティティには戻す先が無い)
     const auto dropInstance = [&](BtInstance& dropped) {
         if (world.IsAlive(dropped.entity)) {
-            AbortTree(world, tick, abortTrace_, dropped);
+            AbortTree(world, tick, abortTrace_, &tasks_, dropped);
         }
     };
     for (const EntityID owner : owners) {
@@ -1694,6 +1951,22 @@ std::shared_ptr<const BehaviorTreeAsset> BehaviorTreeSystem::ResolveTree(uint64_
 bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, const NavSystem* nav, const ControllerLibrary* controllers,
                                    const AnimationLibrary* clips, EntityID owner, BtInstance& inst)
 {
+    // 登録表が更新されたら、消えた C++ タスクの警告を出し直せるようにする
+    if (warnedTasksGeneration_ != tasks_.Generation()) {
+        warnedTasksGeneration_ = tasks_.Generation();
+        warnedTasks_.clear();
+    }
+    current_ = &inst;
+    restartRequested_ = false;
+    const bool keep = StepOwnerBody(world, tick, nav, controllers, clips, owner, inst);
+    current_ = nullptr;
+    restartRequested_ = false;
+    return keep;
+}
+
+bool BehaviorTreeSystem::StepOwnerBody(World& world, uint64_t tick, const NavSystem* nav, const ControllerLibrary* controllers,
+                                       const AnimationLibrary* clips, EntityID owner, BtInstance& inst)
+{
     BehaviorTreeComponent* comp = world.GetComponent<BehaviorTreeComponent>(owner);
     bool hasInstance = !inst.entity.IsNull();
 
@@ -1714,7 +1987,7 @@ bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, const NavSystem*
         const bool treeChanged = inst.treeGuid != guid || inst.tree != tree;
         const bool bbChanged = inst.treeGuid != guid || inst.blackboardAsset != bbAsset;
         if (treeChanged || bbChanged) {
-            if (AbortTree(world, tick, abortTrace_, inst)) {
+            if (AbortTree(world, tick, abortTrace_, &tasks_, inst)) {
                 comp->lastAbortTick = TickToField(tick);
             }
             if (tree && !bbMissing) {
@@ -1749,7 +2022,7 @@ bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, const NavSystem*
             comp->activeNodeId = -1;
             return false;
         }
-        if (AbortTree(world, tick, abortTrace_, inst)) {
+        if (AbortTree(world, tick, abortTrace_, &tasks_, inst)) {
             comp->lastAbortTick = TickToField(tick);
         }
         inst.rootStatus = btroot::kRunning;
@@ -1784,11 +2057,27 @@ bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, const NavSystem*
         inst.rootStatus = btroot::kRunning;
     }
 
+    // ホットリロードで C++ タスクのフィールドが変わった (layoutHash / stateSize が入ったときと違う) 木は、古い状態を今の関数へ
+    // 渡せないので、OnAbort を呼ばずにそのタスクの状態を捨て、他のノードは Abort して根からやり直す
+    if (AnyCppTaskLayoutStale(inst, tasks_)) {
+        MYE_LOG_WARN("[behaviortree] '%s': a C++ task changed its layout (hot reload); the tree restarts from the root", world.GetName(owner));
+        if (AbortTree(world, tick, abortTrace_, &tasks_, inst)) {
+            comp->lastAbortTick = TickToField(tick);
+        }
+        inst.rootStatus = btroot::kRunning;
+    }
+
     // 配られたイベントの BB 反映は Abort の監視より前 (spec 4.1.1 の (1))
     ApplyEventsToBlackboard(inst, delivered_);
-    RunCtx ctx{ world, inst, *tree, tick, abortTrace_, nav, this, controllers, clips };
+    RunCtx ctx{ world, inst, *tree, tick, abortTrace_, nav, this, controllers, clips, &tasks_, &warnedTasks_ };
     MonitorNode(ctx, tree->rootIndex);
-    const BtResult result = Visit(ctx, tree->rootIndex);
+    BtResult result = Visit(ctx, tree->rootIndex);
+    if (restartRequested_) {
+        // 木のタスクが BtRestart を呼んだ。タスクが返った後にここで Abort して根からやり直す (BB は保つ)
+        restartRequested_ = false;
+        AbortNode(ctx, tree->rootIndex);
+        result = BtResult::Running;
+    }
     if (result != BtResult::Running) {
         inst.rootStatus = result == BtResult::Success ? btroot::kSucceeded : btroot::kFailed;
     }

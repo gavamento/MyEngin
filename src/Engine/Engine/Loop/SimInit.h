@@ -25,6 +25,8 @@ class Scene;
 class ScriptHost;
 class ManagedHost;
 class NavSystem;
+class BehaviorTreeSystem;
+class ControllerLibrary;
 class DllReloader;
 class AssetDatabase;
 class InputActions;
@@ -91,6 +93,8 @@ struct SimSharedServices {
     CursorLockState* cursorLock = nullptr;
     int* pendingLoadPersistSlot = nullptr;
     WindowModeState* windowMode = nullptr;
+    BehaviorTreeSystem* behaviorTree = nullptr; // v27: BtGetBlackboard 等の引き先と、C++ タスクの登録先
+    const ControllerLibrary* controllers = nullptr; // v27: AnimatorPlay のステート名の引き先
     NavSystem* nav = nullptr; // v24: NavFindPath 等のクエリの引き先 (v26 の NavWarp / NavSetPath は書き換える)。null = 該当スロットが 0 を返す
 };
 void WireScriptServices(ScriptHost& scriptHost, ManagedHost& managedHost,

@@ -149,6 +149,42 @@ namespace MyeScripting
         public float Distance;  // 吸着した始点から Point までの距離 [m]
     }
 
+    // v27 (M85k): ブラックボードの値 (EngineAPI.h の MyeBbValue と同一レイアウト、40 バイト)。
+    // Type: 0 Bool / 1 Int / 2 Float / 3 Vector / 4 Entity。使う欄は Type で決まる。IsSet = 0 は未設定
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MyeBbValue
+    {
+        public int Type;
+        public int IsSet;
+        public int B;
+        public int I;
+        public float F;
+        public MyeVec3 Vec3;
+        public MyeEntityId Entity;
+    }
+
+    // v27: BtSendEvent のペイロード (EngineAPI.h の MyeBtEventPayload と同一レイアウト)
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MyeBtEventPayload
+    {
+        public MyeVec3 Vec3;
+        public float Value;
+        public int IntValue;
+    }
+
+    // v27: BtGetEvent の出力 (EngineAPI.h の MyeBtEvent と同一レイアウト、48 バイト)
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MyeBtEvent
+    {
+        public ulong NameHash;
+        public MyeEntityId Sender;
+        public MyeEntityId Target;   // 無効なハンドル = 全体宛て
+        public MyeVec3 Vec3;
+        public float Value;
+        public int IntValue;
+        public uint Seq;
+    }
+
     // v16 (M70c): GetUIRect の出力。**キャンバス座標** (基準 1920x1080、M70b)
     [StructLayout(LayoutKind.Sequential)]
     internal struct MyeUIRect
@@ -353,6 +389,15 @@ namespace MyeScripting
         public delegate* unmanaged<void*, int, MyeVec3, MyeVec3, uint, ulong, MyeVec3*, int> NavSamplePositionFiltered;
         public delegate* unmanaged<void*, int, MyeVec3, MyeVec3, uint, ulong, MyeNavRaycastHit*, int> NavRaycastFiltered;
         public delegate* unmanaged<void*, int, MyeVec3, float, uint, ulong, MyeVec3*, int> NavFindRandomPointFiltered;
+        // ---- v27 (M85k): ビヘイビアツリー ----
+        // ★ラッパは足さない — C# の BT タスクと糖衣は sub-12。位置ミラーのために並べるだけ
+        public delegate* unmanaged<void*, MyeEntityId, ulong, MyeBbValue*, int> BtGetBlackboard;
+        public delegate* unmanaged<void*, MyeEntityId, ulong, MyeBbValue*, int> BtSetBlackboard;
+        public delegate* unmanaged<void*, MyeEntityId, MyeEntityId, ulong, MyeBtEventPayload*, int> BtSendEvent;
+        public delegate* unmanaged<void*, MyeEntityId, int> BtEventCount;
+        public delegate* unmanaged<void*, MyeEntityId, int, MyeBtEvent*, int> BtGetEvent;
+        public delegate* unmanaged<void*, MyeEntityId, ulong, int, int> AnimatorPlay;
+        public delegate* unmanaged<void*, MyeEntityId, int> BtRestart;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。

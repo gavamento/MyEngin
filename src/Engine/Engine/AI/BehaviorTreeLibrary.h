@@ -41,6 +41,7 @@ enum class BtNodeKind : uint8_t {
     PlayAnimation,
     SubTree,
     Patrol,
+    CppTask, // GameLogic.dll の REGISTER_BT_TASK で登録した C++ のタスク (BtTaskRegistry が名前で引く)
     Count,
 };
 
@@ -77,7 +78,7 @@ struct BtParamDesc {
 constexpr int kBtUnlimitedChildren = -1;
 
 constexpr float kBtValueLimit = 1.0e9f;      // Int / Float パラメータの値の範囲 (int32 へ収まる)
-constexpr int kBtMaxExtraBytesPerNode = 64;  // 1 ノードの種類別の追加状態の上限
+constexpr int kBtMaxExtraBytesPerNode = 128; // 1 ノードの種類別の追加状態の上限 (CppTask が最大)
 constexpr int kBtMaxExtraBytes = kBtMaxNodes * kBtMaxExtraBytesPerNode;
 
 // MoveTo の追加状態 (BT 節に生バイトで入る。パディングを持たない 24 バイト)
@@ -311,6 +312,15 @@ enum : int {
 };
 } // namespace btpatrolkey
 
+// CppTask の params の並び。タスク自身のフィールドは params ではなくノードの taskFields (JSON) に名前で持つ
+namespace btcpptaskparam {
+enum : int {
+    kTask = 0, // String。REGISTER_BT_TASK のタスク名。空・登録に無い名前は Failure
+};
+} // namespace btcpptaskparam
+constexpr size_t kBtMaxTaskFieldEntries = 32;   // taskFields のエントリ数の上限 (REGISTER_BT_TASK のフィールド数と同じ)
+constexpr size_t kBtMaxTaskFieldTextBytes = 255; // taskFields の文字列値の長さの上限 (String256 に入る)
+
 // ブラックボードのキーを持つノードの "keys" の並び
 namespace btnodekey {
 enum : int {
@@ -397,6 +407,7 @@ struct BtNodeDef {
     std::vector<BtParamValue> params;    // 種類の params と同じ長さ・同じ並び
     std::vector<std::string> keys;       // 種類の keyNames と同じ長さ・同じ並び。空文字 = 未指定 (実行時は Failure)
     std::vector<BtDecoratorDef> decorators; // 上から順に評価する (最初が一番外側)
+    nlohmann::json taskFields;           // CppTask だけ: タスクのフィールドの値 ({ "<名前>": 値 })。入るたびに既定値へ重ねる。空 = 全部既定
     std::vector<int32_t> childIds;       // 左から右 = 優先順
     float pos[2] = {};                   // エディタの表示位置 (実行には使わない)
 

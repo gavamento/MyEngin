@@ -43,7 +43,9 @@
 // v26 (M84d2): NavMesh の続き — NavWarp / NavCalculatePath / NavSetPath と、.navfilter.json を渡せるクエリ 4 本
 //             (NavFindPathFiltered / NavSamplePositionFiltered / NavRaycastFiltered / NavFindRandomPointFiltered。
 //             既存スロットの引数は変えない規則なので別スロット)。PerceptionCanSee の次の 7 本
-#define MYE_API_VERSION 26u
+// v27 (M85k): ビヘイビアツリー — BtGetBlackboard / BtSetBlackboard / BtSendEvent / BtEventCount / BtGetEvent /
+//             AnimatorPlay / BtRestart (NavFindRandomPointFiltered の次の 7 本) + MyeScriptModule 末尾の btTaskCount / btTasks
+#define MYE_API_VERSION 27u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -162,6 +164,45 @@ struct MyeNavRaycastHit {
     MyeVec3 point;   // 止まった点 (hit = 0 なら to)
     MyeVec3 normal;  // 壁の法線 (水平。hit = 0 なら 0)
     float distance;  // from を吸着した点から point までの距離 [m]
+};
+
+// v27 (M85k) ブラックボードのキーの型 (BbType と同値)
+enum MyeBbType {
+    MYE_BB_BOOL = 0,
+    MYE_BB_INT = 1,
+    MYE_BB_FLOAT = 2,
+    MYE_BB_VECTOR = 3,
+    MYE_BB_ENTITY = 4,
+};
+
+// v27 BtGetBlackboard の出力 / BtSetBlackboard の入力。使う欄は type で決まる (Bool = b、Int = i、Float = f、
+// Vector = vec3、Entity = entity)。isSet = 0 は「未設定」で、他の欄は 0 のまま
+struct MyeBbValue {
+    int32_t type;      // MyeBbType
+    int32_t isSet;
+    int32_t b;
+    int32_t i;
+    float f;
+    MyeVec3 vec3;
+    MyeEntityId entity;
+};
+
+// v27 BtSendEvent のペイロード (BT の SendEvent ノードと同じ 3 つ)
+struct MyeBtEventPayload {
+    MyeVec3 vec3;
+    float value;
+    int32_t intValue;
+};
+
+// v27 BtGetEvent の出力。tick の頭に配られた 1 件 (配送順 = 送信元のキー -> 送信順)
+struct MyeBtEvent {
+    uint64_t nameHash;   // イベント名の FNV-1a 64bit (MyeNameHash と同じ)
+    MyeEntityId sender;
+    MyeEntityId target;  // 無効なハンドル = 全体宛て
+    MyeVec3 vec3;
+    float value;
+    int32_t intValue;
+    uint32_t seq;        // 送信順
 };
 
 struct MyeEngineApi {
@@ -824,6 +865,32 @@ struct MyeEngineApi {
                               uint64_t navFilter, MyeNavRaycastHit* out);
     int (*NavFindRandomPointFiltered)(void* engine, int32_t agentTypeId, MyeVec3 center, float radius, uint32_t areaMask,
                                       uint64_t navFilter, MyeVec3* out);
+
+    // ---- v27 (M85k): ビヘイビアツリー ----
+    // ★BB は BehaviorTreeComponent 1 個につき 1 つ (その木のインスタンスが持つ sim 状態)。キーは名前の FNV-1a 64bit
+    //   (MyeNameHash) で引く。Update (フェーズ 3) から書いた値は同じ tick の BT フェーズの Abort の監視に反映され、
+    //   LateUpdate から書いた値は次の tick。BT のインスタンスがまだ無い (BehaviorTreeComponent を付けた最初の tick の
+    //   スクリプトより前) / 木が引けないエンティティは 0 を返して何も書かない。
+    // ★イベントは tick N に送った分が tick N+1 の頭 (スクリプトの Update より前) に配られる。
+
+    // BtGetBlackboard: キーの値を out へ書いて 1。キーが無い / BT のインスタンスが無いなら 0 (out は触らない)
+    int (*BtGetBlackboard)(void* engine, MyeEntityId entity, uint64_t keyHash, MyeBbValue* out);
+    // BtSetBlackboard: キーへ書いて 1。value->type がキーの型と違う / キーが無い / インスタンスが無い / 非有限の Float・Vector は 0。
+    //   value->isSet = 0 は「未設定に戻す」。Bool は b != 0 を真とする
+    int (*BtSetBlackboard)(void* engine, MyeEntityId entity, uint64_t keyHash, const MyeBbValue* value);
+    // BtSendEvent: nameHash のイベントを積んで 1 (target が無効なハンドル = 全体宛て、payload が null = 全部 0)。
+    //   配送待ちが上限 (256) を超えて捨てられたら 0
+    int (*BtSendEvent)(void* engine, MyeEntityId sender, MyeEntityId target, uint64_t nameHash,
+                       const MyeBtEventPayload* payload);
+    // BtEventCount / BtGetEvent: この tick の頭に配られた分のうち self 宛て + 全体宛て。index が範囲外なら 0 (out は触らない)
+    int32_t (*BtEventCount)(void* engine, MyeEntityId self);
+    int (*BtGetEvent)(void* engine, MyeEntityId self, int32_t index, MyeBtEvent* out);
+    // AnimatorPlay: Animator のステート (名前の FNV-1a 64bit) へ強制的に移す。durationTicks > 0 は今のポーズからその tick 数で
+    //   混ぜ、0 以下は即切り替え。Animator / controller / ステート名が無ければ 0
+    int (*AnimatorPlay)(void* engine, MyeEntityId entity, uint64_t stateNameHash, int32_t durationTicks);
+    // BtRestart: 走っている木を Abort して根からやり直す (BB は保つ)。自分の木のタスクから呼んだときは、そのタスクが返った
+    //   後に Abort する。インスタンスが無ければ 0
+    int (*BtRestart)(void* engine, MyeEntityId entity);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

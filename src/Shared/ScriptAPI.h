@@ -214,6 +214,69 @@ struct Registrar {
     explicit Registrar(const MyeScriptDesc& d) { Registry().push_back(d); }
 };
 
+// ---- BT タスク (v27、M85k) ----
+// 使い方: int32_t OnStart(MyeBtTaskContext& ctx); int32_t OnTick(MyeBtTaskContext& ctx); void OnAbort(MyeBtTaskContext& ctx);
+//         戻り値は MyeBtStatus (MYE_BT_RUNNING / MYE_BT_SUCCESS / MYE_BT_FAILURE)
+
+inline std::vector<MyeBtTaskDesc>& BtTaskRegistry()
+{
+    static std::vector<MyeBtTaskDesc> registry;
+    return registry;
+}
+
+template <typename T>
+int32_t (*GetBtStartFn())(void*, MyeBtTaskContext*)
+{
+    if constexpr (requires(T t, MyeBtTaskContext& c) { t.OnStart(c); }) {
+        return [](void* s, MyeBtTaskContext* c) -> int32_t { return static_cast<int32_t>(static_cast<T*>(s)->OnStart(*c)); };
+    } else {
+        return nullptr;
+    }
+}
+
+template <typename T>
+int32_t (*GetBtTickFn())(void*, MyeBtTaskContext*)
+{
+    if constexpr (requires(T t, MyeBtTaskContext& c) { t.OnTick(c); }) {
+        return [](void* s, MyeBtTaskContext* c) -> int32_t { return static_cast<int32_t>(static_cast<T*>(s)->OnTick(*c)); };
+    } else {
+        return nullptr;
+    }
+}
+
+template <typename T>
+void (*GetBtAbortFn())(void*, MyeBtTaskContext*)
+{
+    if constexpr (requires(T t, MyeBtTaskContext& c) { t.OnAbort(c); }) {
+        return [](void* s, MyeBtTaskContext* c) { static_cast<T*>(s)->OnAbort(*c); };
+    } else {
+        return nullptr;
+    }
+}
+
+template <typename T>
+MyeBtTaskDesc MakeBtTaskDesc(const char* name, const MyeScriptField* fields, uint32_t fieldCount)
+{
+    static_assert(std::is_trivially_copyable_v<T>, "BT task state must be trivially copyable (POD fields only)");
+    static_assert(alignof(T) <= 16, "BT task state alignment must be <= 16");
+    MyeBtTaskDesc d = {};
+    d.name = name;
+    d.stateSize = sizeof(T);
+    d.stateAlign = alignof(T);
+    d.fields = fields;
+    d.fieldCount = fieldCount;
+    d.layoutHash = LayoutHash(fields, fieldCount);
+    d.construct = [](void* dst) { new (dst) T(); };
+    d.onStart = GetBtStartFn<T>();
+    d.onTick = GetBtTickFn<T>();
+    d.onAbort = GetBtAbortFn<T>();
+    return d;
+}
+
+struct BtTaskRegistrar {
+    explicit BtTaskRegistrar(const MyeBtTaskDesc& d) { BtTaskRegistry().push_back(d); }
+};
+
 } // namespace mye_script_detail
 
 // ---- フィールド列挙マクロ (最大 32 個。/Zc:preprocessor 必須) ----
@@ -308,6 +371,18 @@ struct Registrar {
 #define REGISTER_SCRIPT_NO_FIELDS(T)                                                             \
     static const ::mye_script_detail::Registrar T##_mye_registrar(                               \
         ::mye_script_detail::MakeDesc<T>(#T, nullptr, 0))
+
+// BT のタスク (v27)。フィールドは REGISTER_SCRIPT と同じ書き方で、BT エディタのノードのパラメータになる。
+// T の状態は木のノードのインスタンスごとにエンジンが持つ (BT 節に入る = 巻き戻しとリプレイの被覆内)
+#define REGISTER_BT_TASK(T, ...)                                                                 \
+    static const MyeScriptField T##_mye_bt_fields[] = { MYE_SF_FOREACH(T, __VA_ARGS__) };        \
+    static const ::mye_script_detail::BtTaskRegistrar T##_mye_bt_registrar(                      \
+        ::mye_script_detail::MakeBtTaskDesc<T>(#T, T##_mye_bt_fields,                            \
+                                               (uint32_t)(sizeof(T##_mye_bt_fields) / sizeof(MyeScriptField))))
+
+#define REGISTER_BT_TASK_NO_FIELDS(T)                                                            \
+    static const ::mye_script_detail::BtTaskRegistrar T##_mye_bt_registrar(                      \
+        ::mye_script_detail::MakeBtTaskDesc<T>(#T, nullptr, 0))
 
 // ---- スクリプト用ユーティリティ (DLL 内で完結。境界は越えない) ----
 

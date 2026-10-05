@@ -6,6 +6,8 @@
 
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Util/Hash.h"
+#include "Engine/Engine/AI/BehaviorTreeSystem.h" // v27 (M85k): BB / イベント / BtRestart の引き先
+#include "Engine/Engine/Animation/AnimatorController.h" // v27: AnimatorPlay
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Audio/Playback/AudioSystem.h" // HashBusName (バス名ハッシュの規則は 1 本だけ)
@@ -1477,6 +1479,107 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     out.NavSamplePositionFiltered = &NavQuerySamplePosition;
     out.NavRaycastFiltered = &NavQueryRaycast;
     out.NavFindRandomPointFiltered = &NavQueryRandomPoint;
+
+    // ---- v27 (M85k): ビヘイビアツリー。実体は BehaviorTreeSystem (状態は BT 表 = sim 状態) ----
+    static_assert(static_cast<int>(MYE_BB_BOOL) == static_cast<int>(BbType::Bool) && static_cast<int>(MYE_BB_INT) == static_cast<int>(BbType::Int)
+                      && static_cast<int>(MYE_BB_FLOAT) == static_cast<int>(BbType::Float)
+                      && static_cast<int>(MYE_BB_VECTOR) == static_cast<int>(BbType::Vector)
+                      && static_cast<int>(MYE_BB_ENTITY) == static_cast<int>(BbType::Entity),
+                  "MyeBbType は BbType と同値");
+    out.BtGetBlackboard = [](void* engine, MyeEntityId entity, uint64_t keyHash, MyeBbValue* out) -> int {
+        const BehaviorTreeSystem* bt = Ctx(engine)->behaviorTree;
+        BbType type = BbType::Bool;
+        BbValue value;
+        if (bt == nullptr || out == nullptr || !bt->GetBlackboardValue(ToEngine(entity), keyHash, type, value)) {
+            return 0;
+        }
+        *out = MyeBbValue{};
+        out->type = static_cast<int32_t>(type);
+        out->isSet = value.isSet != 0 ? 1 : 0;
+        if (value.isSet != 0) {
+            switch (type) {
+            case BbType::Bool: out->b = value.i != 0 ? 1 : 0; break;
+            case BbType::Int: out->i = value.i; break;
+            case BbType::Float: out->f = value.f; break;
+            case BbType::Vector: out->vec3 = { value.v[0], value.v[1], value.v[2] }; break;
+            case BbType::Entity: out->entity = ToShared(value.entity); break;
+            }
+        } else {
+            out->entity = ToShared(kNullEntity);
+        }
+        return 1;
+    };
+    out.BtSetBlackboard = [](void* engine, MyeEntityId entity, uint64_t keyHash, const MyeBbValue* in) -> int {
+        BehaviorTreeSystem* bt = Ctx(engine)->behaviorTree;
+        if (bt == nullptr || in == nullptr || in->type < MYE_BB_BOOL || in->type > MYE_BB_ENTITY) {
+            return 0;
+        }
+        BbValue value;
+        value.isSet = in->isSet != 0 ? 1 : 0;
+        switch (static_cast<BbType>(in->type)) {
+        case BbType::Bool: value.i = in->b != 0 ? 1 : 0; break;
+        case BbType::Int: value.i = in->i; break;
+        case BbType::Float: value.f = in->f; break;
+        case BbType::Vector:
+            value.v[0] = in->vec3.x;
+            value.v[1] = in->vec3.y;
+            value.v[2] = in->vec3.z;
+            break;
+        case BbType::Entity: value.entity = ToEngine(in->entity); break;
+        }
+        return bt->SetBlackboardValue(ToEngine(entity), keyHash, static_cast<BbType>(in->type), value) ? 1 : 0;
+    };
+    out.BtSendEvent = [](void* engine, MyeEntityId sender, MyeEntityId target, uint64_t nameHash,
+                         const MyeBtEventPayload* payload) -> int {
+        BehaviorTreeSystem* bt = Ctx(engine)->behaviorTree;
+        if (bt == nullptr) {
+            return 0;
+        }
+        const float vec3[3] = { payload != nullptr ? payload->vec3.x : 0.0f, payload != nullptr ? payload->vec3.y : 0.0f,
+                                payload != nullptr ? payload->vec3.z : 0.0f };
+        return bt->SendEvent(Ctx(engine)->tickIndex, ToEngine(sender), ToEngine(target), nameHash, vec3,
+                             payload != nullptr ? payload->value : 0.0f, payload != nullptr ? payload->intValue : 0)
+                   ? 1
+                   : 0;
+    };
+    out.BtEventCount = [](void* engine, MyeEntityId self) -> int32_t {
+        const BehaviorTreeSystem* bt = Ctx(engine)->behaviorTree;
+        return bt != nullptr ? bt->EventCount(ToEngine(self)) : 0;
+    };
+    out.BtGetEvent = [](void* engine, MyeEntityId self, int32_t index, MyeBtEvent* out) -> int {
+        const BehaviorTreeSystem* bt = Ctx(engine)->behaviorTree;
+        BtEvent event;
+        if (bt == nullptr || out == nullptr || index < 0 || !bt->GetEvent(ToEngine(self), index, event)) {
+            return 0;
+        }
+        out->nameHash = event.nameHash;
+        out->sender = ToShared(event.sender);
+        out->target = ToShared(event.target);
+        out->vec3 = { event.vec3[0], event.vec3[1], event.vec3[2] };
+        out->value = event.value;
+        out->intValue = event.intValue;
+        out->seq = event.seq;
+        return 1;
+    };
+    out.AnimatorPlay = [](void* engine, MyeEntityId entity, uint64_t stateNameHash, int32_t durationTicks) -> int {
+        const ControllerLibrary* controllers = Ctx(engine)->controllers;
+        World& world = Sc(engine)->GetWorld();
+        const auto* animator = world.GetComponent<AnimatorControllerComponent>(ToEngine(entity));
+        const ControllerAsset* controller = (controllers != nullptr && animator != nullptr) ? controllers->Get(animator->controller.value) : nullptr;
+        if (controller == nullptr) {
+            return 0;
+        }
+        for (size_t s = 0; s < controller->states.size(); ++s) { // 同名が複数なら先頭 (FindControllerState と同じ)
+            if (HashStr(controller->states[s].name) == stateNameHash) {
+                return AnimatorPlay(world, ToEngine(entity), static_cast<int32_t>(s), durationTicks, *controllers) ? 1 : 0;
+            }
+        }
+        return 0;
+    };
+    out.BtRestart = [](void* engine, MyeEntityId entity) -> int {
+        BehaviorTreeSystem* bt = Ctx(engine)->behaviorTree;
+        return bt != nullptr && bt->Restart(Sc(engine)->GetWorld(), Ctx(engine)->tickIndex, ToEngine(entity)) ? 1 : 0;
+    };
 }
 
 } // namespace mye

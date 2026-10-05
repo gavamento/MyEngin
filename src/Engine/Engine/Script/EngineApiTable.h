@@ -17,6 +17,8 @@ class GraphicsDevice;   // v21
 class ShaderManager;    // v21
 class TextureLibrary;   // v21
 class NavSystem;        // v24
+class BehaviorTreeSystem; // v27
+class ControllerLibrary;  // v27
 
 // パッド振動の目標値 (v12、M51h)。スロットはここへ書くだけで、実際の XInputSetState は
 // EngineLoop がフレーム末 (出力レーン) に適用する — record/verify 中とフォーカス喪失中は
@@ -147,6 +149,10 @@ struct ScriptApiContext {
     // v24: Nav* のクエリの引き先。null 時は Nav* スロットが 0 を返す。
     // v26: NavWarp / NavSetPath はその場で crowd を書き換えるので const ではない
     NavSystem* nav = nullptr;
+    // v27: BtGetBlackboard / BtSetBlackboard / BtSendEvent / BtEventCount / BtGetEvent / BtRestart の引き先。null 時は各スロットが 0 を返す
+    BehaviorTreeSystem* behaviorTree = nullptr;
+    // v27: AnimatorPlay のステート名の引き先 (読むだけ)。null 時は AnimatorPlay が 0 を返す
+    const ControllerLibrary* controllers = nullptr;
 };
 
 // out に MyeEngineApi (engine = ctx) を構築する。ctx の生存は呼び出し側が管理する。

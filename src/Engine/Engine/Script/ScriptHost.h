@@ -14,6 +14,8 @@
 namespace mye {
 
 class Scene;
+class BehaviorTreeSystem;
+class ControllerLibrary;
 
 // MyeScriptField (DLL 側の 1 フィールド) → FieldDesc (エンジン側のリフレクション)。
 // 名前・型・オフセットに加えて **v16 の表示メタデータ (displayName / rangeMin / rangeMax)**
@@ -83,6 +85,9 @@ public:
     // v24: ナビメッシュのクエリの引き先 (NavSystem は EngineLoop / HeadlessSim の所有)。起動時に 1 回
     void SetNavSystem(NavSystem* nav) { apiCtx_.nav = nav; }
 
+    // v27: BT の ABI の引き先と、C++ タスクの登録先 (bt->Tasks())。読み込み済みの DLL のタスクもここで渡す。起動時に 1 回
+    void SetBehaviorTree(BehaviorTreeSystem* bt, const ControllerLibrary* controllers);
+
     // v14 (M59k): 今 tick の接触列を繋ぐ / 外す。**毎 tick 呼ぶ** —
     // TickRunner が tick 頭で nullptr、物理 Update の直後に実体を渡す。
     // これで GetContactInfo が読めるのは「今 tick の物理が書いた列」だけになる
@@ -132,6 +137,8 @@ private:
     void RunPhase(Phase phase);
     void BuildApiTable();
     ScriptType* FindType(const char* name);
+    // 読み込み済みの DLL の BT タスクを BT の登録表へ写す (DLL・BT のどちらが先に用意されてもよい)
+    void PublishBtTasks();
 
     Scene* scene_ = nullptr;
     void* module_ = nullptr; // HMODULE (現行 DLL)
@@ -141,6 +148,9 @@ private:
     // Start 済みインスタンス。キーは (エンティティ, スクリプト型) の組 (M64b)。
     // std::set = 走査順が決定論 (SimSnapshot がそのまま書ける)
     std::set<ScriptStartedKey> started_;
+    // 現行 DLL の BT タスクの記述子 (DLL 内を指す。登録表へ写した後は登録表が名前・フィールドをコピーして持つ)
+    std::vector<MyeBtTaskDesc> btTasks_;
+    BehaviorTreeSystem* behaviorTree_ = nullptr;
 
     // tick コンテキスト
     InputSnapshot input_ = {};

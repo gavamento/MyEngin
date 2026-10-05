@@ -11,6 +11,7 @@
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/AI/BehaviorTreeSystem.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Script/EngineApiTable.h"
@@ -154,8 +155,29 @@ void ScriptHost::Init(Scene* scene)
     BuildApiTable();
 }
 
+void ScriptHost::SetBehaviorTree(BehaviorTreeSystem* bt, const ControllerLibrary* controllers)
+{
+    apiCtx_.behaviorTree = bt;
+    apiCtx_.controllers = controllers;
+    behaviorTree_ = bt;
+    PublishBtTasks();
+}
+
+void ScriptHost::PublishBtTasks()
+{
+    if (behaviorTree_ != nullptr) {
+        behaviorTree_->Tasks().Update(&api_, btTasks_.data(), static_cast<uint32_t>(btTasks_.size()));
+    }
+}
+
 void ScriptHost::Shutdown()
 {
+    // 登録表の関数ポインタは DLL 内を指すので、解放の前に外す
+    if (behaviorTree_ != nullptr) {
+        behaviorTree_->Tasks().Clear();
+        behaviorTree_ = nullptr;
+    }
+    btTasks_.clear();
     if (module_) {
         FreeLibrary(static_cast<HMODULE>(module_));
         module_ = nullptr;
@@ -304,6 +326,10 @@ bool ScriptHost::LoadModule(const std::wstring& dllPath)
             }
         }
     }
+
+    // BT の C++ タスク: 登録表を新 DLL の記述子へ差し替える (旧 DLL の関数ポインタを外してから旧 DLL を解放する)
+    btTasks_.assign(mod->btTasks, mod->btTasks + mod->btTaskCount);
+    PublishBtTasks();
 
     // 旧 DLL を解放 (関数テーブルは全て差し替え済み。フェーズ 2 = スクリプト非実行中)
     if (module_) {

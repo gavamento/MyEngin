@@ -1654,6 +1654,8 @@ bool WriteGeneratedMain(const std::wstring& path)
          "    mod.apiVersion = MYE_API_VERSION;\n"
          "    mod.scripts = mye_script_detail::Registry().data();\n"
          "    mod.scriptCount = static_cast<uint32_t>(mye_script_detail::Registry().size());\n"
+         "    mod.btTasks = mye_script_detail::BtTaskRegistry().data();\n"
+         "    mod.btTaskCount = static_cast<uint32_t>(mye_script_detail::BtTaskRegistry().size());\n"
          "    return &mod;\n"
          "}\n"
          "\n"

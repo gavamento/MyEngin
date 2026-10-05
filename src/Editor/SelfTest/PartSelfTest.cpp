@@ -175,8 +175,13 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 26u,
-              "abi: the table reports v26");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 27u,
+              "abi: the table reports v27");
+        // v27 (M85k): ビヘイビアツリー。呼んだ結果は BehaviorTreeSelfTest が見る (ここは充填のみ)
+        check(api.BtGetBlackboard != nullptr && api.BtSetBlackboard != nullptr && api.BtSendEvent != nullptr
+                  && api.BtEventCount != nullptr && api.BtGetEvent != nullptr && api.AnimatorPlay != nullptr
+                  && api.BtRestart != nullptr,
+              "abi: the v27 behavior tree slots are filled in");
         // v26 (M84d2): NavMesh の続き。呼んだ結果は NavAgentSelfTest が見る (ここは充填のみ)
         check(api.NavWarp != nullptr && api.NavCalculatePath != nullptr && api.NavSetPath != nullptr
                   && api.NavFindPathFiltered != nullptr && api.NavSamplePositionFiltered != nullptr
