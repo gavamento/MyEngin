@@ -11,6 +11,7 @@
   2. [BB: lastKnownPos IsSet、abort LowerPriority] 捜索 (SearchArea usePrediction、Timeout、終わったら ClearBlackboard lastKnownPos)
   3. 巡回 (Patrol)
   と、FindNearestTarget で target / lastKnownPos を書く仕組み (見失ったら target を Clear する部分木、または Parallel の背景)。発見時に SendEvent で僚機へ知らせ、僚機は BB の eventName で反応する。GameLogic の C++ タスクを 1 つ使う (replay 被覆の確認)。**RotateTo を少なくとも 1 回通す** (std::sin / cos / atan2 を使うので、Debug / Release / Server のビット一致を replay_verify で確かめる。sub-03 VERDICT)。
+- ルートは `BehaviorTreeComponent` の Entity キーの初期値 (spec 2. #20) で割り当てる。C++ / ABI で BB を書く経路 (sub-11) もデモの僚機で 1 回使う。
 - ドライバがプレイヤー役を「見つかる → 壁の裏へ逃げる → 離れる」順に動かし、巡回 → 発見 → 追跡 → 見失う → 捜索 → 巡回へ戻る、が 1 回の実行に入る tick 長 (目安 900 tick) にする。各段階の開始 tick をログに出す (BT の状態遷移ログ)。
 - replay_verify に `bt` ジョブ (`tools\replay_verify.bat` の 4 か所: ジョブ一覧 `:82`、`:job_bt`、`:failed` の診断、`:diagnose` の一覧)。
 - shot_verify に golden `bt` (`tools\shot_verify.bat`、frame は追跡か捜索が見える tick、`MYE_SHOT_SKIP_BT`)。`tests\golden\bt.png` を `--update` で作る (bt だけ)。

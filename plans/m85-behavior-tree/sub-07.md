@@ -1,8 +1,8 @@
 # sub-07: 巡回ルート — PatrolRoute コンポーネント・ギズモ編集・Patrol タスク
 
 - 依存: sub-06 (MoveTo を使う。BehaviorTreeSystem と snapshot の版を触るので直列)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (M85g としてコミット、ハッシュは台帳)
+- 往復: 1
 
 ## やること
 - `PatrolRouteComponent` (TypeId = 登録時点の末尾 + 1。79 の見込み): spec 4.1.10。点 32 個の固定長、ローカル座標、waitTicks、pointCount、mode。Inspector で点の追加・削除・上下移動 (Undo に乗る通常のフィールド編集)。`kSimSnapshotVersion` +1。
@@ -27,4 +27,10 @@
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-07 (round 1)
+- 実装: PatrolRouteComponent (TypeId = AIStimulusSource + 2 = 79、末尾 append、点の欄は kFieldHidden でシーン保存・ハッシュには入る) / snapshot v38 / BT の Patrol ノード (Task、route キー + acceptanceRadius + failOnStuck、追加状態 BtPatrolState 16 バイト) / Inspector の点の一覧 (追加・削除・上下・待ち、1 操作 1 Undo) / SceneView のギズモ (点の球・線・向きの矢印・番号、点クリックで選んで移動ギズモ、1 ドラッグ 1 Undo) / PatrolRouteEdit (Inspector とギズモが共有する純関数) / assets\ai\patrol_only.bt.json + patrol.bb.json (+ .meta)
+- 検証: Debug / Release ビルド 0 警告、Editor --selftest Debug (1 回目 5 件 = Fracture 3 + net V1 2 の既知 flake、2 回目以降 0)・Release 0、Debug Server --selftest 0、check_rules 0、replay_verify PASS (golden 撮り直しなし)
+- 詳細は SELF_EVAL (司会への返信) を参照
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner)。初回も最近傍 (spec 2. #19)、点クリック優先、専用 UI の Undo を承認。BB の Entity キーの割り当て手段は sub-08 へ (spec 2. #20)。GUI 実操作の目視は sub-08 の回へ

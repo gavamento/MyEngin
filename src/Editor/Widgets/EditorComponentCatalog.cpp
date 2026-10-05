@@ -106,6 +106,7 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "AIPerception", { ICON_FA_EYE, "AI", "AI 知覚" } },
         { "AIStimulusSource", { ICON_FA_BULLSEYE, "AI", "AI 刺激源" } },
         { "BehaviorTree", { ICON_FA_SITEMAP, "AI", "ビヘイビアツリー" } }, // M85
+        { "PatrolRoute", { ICON_FA_SHOE_PRINTS, "AI", "巡回ルート" } }, // M85g
     };
     return t;
 }

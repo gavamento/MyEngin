@@ -186,6 +186,12 @@
     <ClCompile Include="..\src\Editor\Tools\NavEditorSelfTest.cpp">
       <Filter>Tools</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\PatrolRouteEdit.cpp">
+      <Filter>Tools</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.cpp">
+      <Filter>Tools</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Undo\UndoSelfTest.cpp">
       <Filter>Undo</Filter>
     </ClCompile>
@@ -409,6 +415,12 @@
       <Filter>Tools</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\NavEditorSelfTest.h">
+      <Filter>Tools</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\PatrolRouteEdit.h">
+      <Filter>Tools</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.h">
       <Filter>Tools</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Undo\UndoSelfTest.h">

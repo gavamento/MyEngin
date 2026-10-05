@@ -12,8 +12,8 @@
 | sub-03 | OK | 1 | 6a8bd5b | Task 4 種 (MoveTo に failOnStuck、既定 false) |
 | sub-04 | OK | 2 | 3f8ad39 | round 1 REWORK: SearchArea に failOnStuck。snapshot v36 | AI ノード 4 種 |
 | sub-05 | OK | 2 | 16fa216 | round 1 REWORK: 配達を tick 頭へ・replay_verify。snapshot v37 | 汎用イベントキューと SendEvent |
-| sub-06 | OK | 1 | (このコミット) | SubTree は平らな展開、snapshot v37 のまま | AnimatorPlay / PlayAnimation / SubTree |
-| sub-07 | 未着手 | 0 | | 巡回ルート |
+| sub-06 | OK | 1 | 7367737 | SubTree は平らな展開、snapshot v37 のまま | AnimatorPlay / PlayAnimation / SubTree |
+| sub-07 | OK | 1 | (このコミット) | TypeId 79 PatrolRoute、snapshot v38 | 巡回ルート |
 | sub-08 | 未着手 | 0 | | BT 窓 (1) |
 | sub-09 | 未着手 | 0 | | BT 窓 (2) Undo・BB 編集・検査 |
 | sub-10 | 未着手 | 0 | | BT 窓 (3) ライブ表示 |
@@ -33,6 +33,8 @@
 - (2026-10-05) BT 無しの巡回 = 作らない (裁定どおり)
 - (2026-10-05) ノードの表示位置 = .bt.json に入れる (裁定どおり)
 - (2026-10-05) 上記を反映して spec 確定、sub-01 から着手してよい
+- (2026-10-06) Patrol の開始点 = 入るたびに一番近い点から (初回も同じ)。spec 2. #19 の裁定どおり
+- (2026-10-06) BB の Entity キーの埋め方 = BehaviorTreeComponent に「Entity キーの初期値」4 組、Inspector で選ぶ (sub-08、snapshot +1)。spec 2. #20 の裁定どおり
 - (2026-10-05) SearchArea / Patrol の詰まり = MoveTo と同じ名前・同じ意味の failOnStuck (既定 false、true でノード全体 Failure)。spec 2. #18 の planner 裁定どおり
 
 ## 申し送り (セッション跨ぎ)
@@ -56,6 +58,9 @@
 - 既知 flake: sub-06 Debug 1 回目 5 件 (Fracture 3 + net V1 2)、2 回目 0。
 - (sub-06 VERDICT should#1) 部分木アセットを ReloadHub で読み直したとき、取り込んでいる親の木で動くエンティティが「Abort → 根からやり直し」(spec 4.1.9) になることを、sub-07 の SELF_EVAL に 1 行で書く。既存テスト「取り込み元の再登録」が見ていなければ sub-07 で 1 項目足す。
 - (sub-06 coder) 展開後の実行木は BehaviorTreeSystem::FindInstance(e)->tree。部分木のノード id は連番で振り直し → sub-10 は (GUID, 元の id) の導出値で表示 (sub-10.md 反映済み)、sub-11 は activeNodeId が展開後の id であることを明記するか対応表を通すか決める。Update(world, tick, nav, controllers, clips)。AnimatorPlay(world, e, stateIndex, duration, controllers) -> bool。
+- (sub-07 VERDICT should#1) DrawGizmo / HandlePatrolRoute / OnImGui の「記録を閉じる」処理が 3 か所。sub-10 で 4 か所目を足すなら集約する。
+- (sub-07) sub-08 の範囲に spec 2. #20 (Entity キーの初期値 4 組、snapshot v39 見込み) と GUI 実操作の目視 (sub-01 / sub-07 の持ち越し、sub-08.md に列挙) が加わった。spec 2. #19 / #20 の [ユーザーに聞ける] 印は、ユーザー回答 (裁定どおり) を受けて planner が確定に直す。
+- (sub-07 → sub-14) ADR-025: Patrol は入るたびに最近傍点から、親付きルートは前 tick の WorldMatrix。
 - (sub-06 → sub-14) ADR-025 の既知の限界: SubTree は平らな展開・上限 1024・部分木の根の LowerPriority は Self 扱い・BB 継承なし・遷移中の AnimatorPlay はブレンド途中のポーズから飛ぶ。
 - (sub-04 VERDICT nit#1) BehaviorTreeSelfTest の診断ログ `[search] stuck ...` は、1 回の実行で 1〜2 行なら残す。tick ごとなら 1 行にまとめるか削除。sub-05 でついでに判断。
 - (sub-04 coder) BehaviorTreeSystem::Update(world, tick, nav) — 第 3 引数 NavSystem*。BtParamType::Mask (64 ビット、16 進) と BtNodeCategory::Ai は sub-08 のパラメータ欄・パレットで扱いが要る。SearchArea のパラメータは 4 項目 (usePrediction / radius / pointCount / failOnStuck)。名乗らない音を選んだら Entity キーは空にする (承認済み)。

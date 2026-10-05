@@ -1,0 +1,11 @@
+{
+  "engine": "MyEngine",
+  "blackboard": 1,
+  "name": "patrol",
+  "keys": [
+    {
+      "name": "route",
+      "type": "Entity"
+    }
+  ]
+}

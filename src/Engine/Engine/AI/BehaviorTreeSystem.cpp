@@ -205,6 +205,15 @@ void ReleaseSearchArea(RunCtx& c)
     }
 }
 
+// Patrol の後始末: 目的地を倒して止める (次の点・向きの状態は ReleaseBody が 0 へ戻す)
+void ReleasePatrol(RunCtx& c)
+{
+    NavMeshAgentComponent* agent = c.world.GetComponent<NavMeshAgentComponent>(c.inst.entity);
+    if (agent != nullptr) {
+        agent->hasDestination = false;
+    }
+}
+
 // RotateTo の後始末: 預かった updateRotation を戻す
 void ReleaseRotateTo(RunCtx& c, const BtNodeDef& node)
 {
@@ -224,6 +233,7 @@ void ReleaseBody(RunCtx& c, int32_t index)
     case BtNodeKind::MoveTo: ReleaseMoveTo(c, node); break;
     case BtNodeKind::RotateTo: ReleaseRotateTo(c, node); break;
     case BtNodeKind::SearchArea: ReleaseSearchArea(c); break;
+    case BtNodeKind::Patrol: ReleasePatrol(c); break;
     default: break;
     }
     const int extraBytes = BtNodeTypeOf(node.kind).extraStateBytes;
@@ -884,6 +894,163 @@ BtResult VisitSearchArea(RunCtx& c, int32_t index)
     return BtResult::Running;
 }
 
+// ルートのエンティティと PatrolRoute。キーが Entity 型で、生きていて、点が 1 つ以上ある PatrolRoute を持つときだけ返す
+const PatrolRouteComponent* ResolveRoute(RunCtx& c, const BtNodeDef& node, EntityID& routeEntity)
+{
+    const BbValue* value = FindBbOfType(c, node.keys[btpatrolkey::kRoute], BbType::Entity);
+    if (value == nullptr || value->isSet == 0 || !c.world.IsAlive(value->entity)) {
+        return nullptr;
+    }
+    const PatrolRouteComponent* route = c.world.GetComponent<PatrolRouteComponent>(value->entity);
+    if (route == nullptr || route->pointCount <= 0) {
+        return nullptr;
+    }
+    routeEntity = value->entity;
+    return route;
+}
+
+// ルートの点のワールド位置 (ワールド行列 x ローカル座標)。親が無ければ LocalTransform から組む
+// (WorldMatrix は 1 tick 遅れで、置いた直後の tick が古い値になるため。WorldPositionOf と同じ規則)。得られなければ false
+bool PatrolPointWorld(RunCtx& c, EntityID routeEntity, const PatrolRouteComponent& route, int32_t index, float (&out)[3])
+{
+    DirectX::XMFLOAT4X4 matrix;
+    if (c.world.GetParent(routeEntity) == kNullEntity) {
+        const LocalTransform* transform = c.world.GetComponent<LocalTransform>(routeEntity);
+        if (transform == nullptr) {
+            return false;
+        }
+        DirectX::XMStoreFloat4x4(&matrix,
+                                 DirectX::XMMatrixScaling(transform->scale.x, transform->scale.y, transform->scale.z)
+                                     * DirectX::XMMatrixRotationQuaternion(DirectX::XMLoadFloat4(&transform->rotation))
+                                     * DirectX::XMMatrixTranslation(transform->position.x, transform->position.y, transform->position.z));
+    } else {
+        const WorldMatrixComponent* world = c.world.GetComponent<WorldMatrixComponent>(routeEntity);
+        if (world == nullptr) {
+            return false;
+        }
+        matrix = world->value;
+    }
+    const DirectX::XMFLOAT3& p = route.points[index];
+    out[0] = p.x * matrix.m[0][0] + p.y * matrix.m[1][0] + p.z * matrix.m[2][0] + matrix.m[3][0];
+    out[1] = p.x * matrix.m[0][1] + p.y * matrix.m[1][1] + p.z * matrix.m[2][1] + matrix.m[3][1];
+    out[2] = p.x * matrix.m[0][2] + p.y * matrix.m[1][2] + p.z * matrix.m[2][2] + matrix.m[3][2];
+    return true;
+}
+
+// 点 index の次の点。Loop は一周、PingPong は端で折り返す (点が 1 つなら動かない)。Once は最後の点の先を呼び出し側が打ち切る
+int32_t NextPatrolIndex(int32_t mode, int32_t count, int32_t index, int32_t& direction)
+{
+    if (mode == patrolmode::kPingPong) {
+        if (count <= 1) {
+            return 0;
+        }
+        int32_t next = index + direction;
+        if (next < 0 || next >= count) {
+            direction = -direction;
+            next = index + direction;
+        }
+        return next;
+    }
+    return (index + 1) % count;
+}
+
+// Patrol: ルートの点を順に回る。入るたびに (Abort からの復帰も) 今いる位置から水平に一番近い点から始める (同距離は index 小)。
+// 点へ向かい (Arrived・acceptanceRadius 内)、点の waitTicks を待ってから次の点へ。Once は最後の点で待ち終えたら Success、
+// Loop / PingPong は終わらない。ルートが無い・点が 0 個・NavMeshAgent が無い・届かない (NoPath) は Failure、Stuck は failOnStuck 次第。
+// 1 tick に進めるのは 1 段 (着く → 待つ → 次を書く を同じ tick に重ねない)。目的地を書いた tick は status を読まない
+BtResult VisitPatrol(RunCtx& c, int32_t index)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    BtNodeState& state = c.inst.nodes[static_cast<size_t>(index)];
+    const bool starting = state.active == 0;
+    NavMeshAgentComponent* agent = c.world.GetComponent<NavMeshAgentComponent>(c.inst.entity);
+    EntityID routeEntity = kNullEntity;
+    const PatrolRouteComponent* route = ResolveRoute(c, node, routeEntity);
+    float self[3] = {};
+    if (agent == nullptr || route == nullptr || !WorldPositionOf(c.world, c.inst.entity, self)) {
+        return starting ? BtResult::Failure : EndBody(c, index, BtResult::Failure);
+    }
+    const int32_t count = (std::min)(route->pointCount, kMaxPatrolPoints);
+    const float acceptance = node.params[btpatrolparam::kAcceptanceRadius].f;
+
+    BtPatrolState patrol;
+    if (starting) {
+        int32_t best = -1;
+        float bestDistance = 0.0f;
+        for (int32_t i = 0; i < count; ++i) {
+            float point[3] = {};
+            if (!PatrolPointWorld(c, routeEntity, *route, i, point)) {
+                return BtResult::Failure;
+            }
+            const float distance = HorizontalDistance(self, point);
+            if (best < 0 || distance < bestDistance) {
+                best = i;
+                bestDistance = distance;
+            }
+        }
+        patrol.nextIndex = best;
+        state.active = 1;
+    } else {
+        patrol = LoadExtra<BtPatrolState>(c, node);
+    }
+    if (patrol.nextIndex < 0 || patrol.nextIndex >= count) {
+        return EndBody(c, index, BtResult::Failure); // 実行中にルートの点が減った
+    }
+
+    float target[3] = {};
+    if (!PatrolPointWorld(c, routeEntity, *route, patrol.nextIndex, target)) {
+        return EndBody(c, index, BtResult::Failure);
+    }
+    const auto writeDestination = [&](const float* point) {
+        agent->destination = { point[0], point[1], point[2] };
+        agent->hasDestination = true;
+    };
+
+    if (patrol.phase == btpatrolphase::kMoving) {
+        bool arrived = HorizontalDistance(self, target) <= acceptance;
+        if (!starting && !arrived) {
+            switch (agent->status) {
+            case navagentstatus::kArrived: arrived = true; break;
+            case navagentstatus::kNoPath:
+            case navagentstatus::kInactive: return EndBody(c, index, BtResult::Failure);
+            case navagentstatus::kStuck:
+                if (node.params[btpatrolparam::kFailOnStuck].i != 0) {
+                    return EndBody(c, index, BtResult::Failure);
+                }
+                break;
+            default: break;
+            }
+        }
+        if (!arrived) {
+            if (starting) {
+                writeDestination(target);
+            }
+            StoreExtra(c, node, patrol);
+            return BtResult::Running;
+        }
+        patrol.phase = btpatrolphase::kWaiting;
+        patrol.waitRemaining = (std::max)(route->waitTicks[patrol.nextIndex], 0);
+    } else {
+        --patrol.waitRemaining;
+    }
+    if (patrol.waitRemaining > 0) {
+        StoreExtra(c, node, patrol);
+        return BtResult::Running;
+    }
+
+    if (route->mode == patrolmode::kOnce && patrol.nextIndex == count - 1) {
+        return EndBody(c, index, BtResult::Success);
+    }
+    patrol.nextIndex = NextPatrolIndex(route->mode, count, patrol.nextIndex, patrol.direction);
+    patrol.phase = btpatrolphase::kMoving;
+    PatrolPointWorld(c, routeEntity, *route, patrol.nextIndex, target);
+    if (HorizontalDistance(self, target) > acceptance) {
+        writeDestination(target);
+    }
+    StoreExtra(c, node, patrol);
+    return BtResult::Running;
+}
+
 // SendEvent: イベントを積んで Success (配るのは次の tick)。名前が空・宛先の Entity が読めない・ペイロードの Vector が
 // 読めない (キーを指定したのに未設定 / 型違い) は Failure。キューが溢れて捨てられても Success (警告は SendEvent が出す)
 BtResult VisitSendEvent(RunCtx& c, int32_t index)
@@ -997,6 +1164,7 @@ BtResult VisitBody(RunCtx& c, int32_t index)
     case BtNodeKind::SendEvent: return VisitSendEvent(c, index);
     case BtNodeKind::PlayAnimation: return VisitPlayAnimation(c, index);
     case BtNodeKind::SubTree: return VisitSubTree(c, index);
+    case BtNodeKind::Patrol: return VisitPatrol(c, index);
     case BtNodeKind::Count: break;
     }
     return BtResult::Failure;

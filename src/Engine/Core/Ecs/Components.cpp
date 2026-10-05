@@ -1590,6 +1590,30 @@ void RegisterBuiltinComponents()
         MYE_JP("実行中のノード", MYE_FIELD_FLAGS(BehaviorTreeComponent, activeNodeId, Int32, kFieldReadOnly)),
         MYE_JP("最後の Abort の tick", MYE_FIELD_FLAGS(BehaviorTreeComponent, lastAbortTick, Int32, kFieldReadOnly)),
     });
+
+    // M85g: Patrol Route (TypeId=79、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変。
+    // 点は Inspector の専用表示 (追加・削除・並べ替え) と SceneView のギズモで編集するので、個別の欄は隠す (保存とハッシュには入る)
+#define MYE_PATROL_POINT(i)                                                                                  \
+    ::mye::FieldDesc{ .name = "point" #i, .type = ::mye::FieldType::Float3,                                  \
+                      .offset = static_cast<uint32_t>(offsetof(PatrolRouteComponent, points) + (i) * sizeof(DirectX::XMFLOAT3)), \
+                      .flags = ::mye::kFieldHidden },                                                        \
+    ::mye::FieldDesc{ .name = "wait" #i, .type = ::mye::FieldType::Int32,                                    \
+                      .offset = static_cast<uint32_t>(offsetof(PatrolRouteComponent, waitTicks) + (i) * sizeof(int32_t)), \
+                      .flags = ::mye::kFieldHidden }
+    static_assert(kMaxPatrolPoints == 32, "MYE_PATROL_POINT の並びを kMaxPatrolPoints に合わせる");
+    RegisterComponent<PatrolRouteComponent>("PatrolRoute", {
+        MYE_JP("モード", MYE_FIELD_TIP(PatrolRouteComponent, mode, Int32, "0 = Loop, 1 = PingPong, 2 = Once")),
+        MYE_FIELD_FLAGS(PatrolRouteComponent, pointCount, Int32, kFieldHidden),
+        MYE_PATROL_POINT(0), MYE_PATROL_POINT(1), MYE_PATROL_POINT(2), MYE_PATROL_POINT(3),
+        MYE_PATROL_POINT(4), MYE_PATROL_POINT(5), MYE_PATROL_POINT(6), MYE_PATROL_POINT(7),
+        MYE_PATROL_POINT(8), MYE_PATROL_POINT(9), MYE_PATROL_POINT(10), MYE_PATROL_POINT(11),
+        MYE_PATROL_POINT(12), MYE_PATROL_POINT(13), MYE_PATROL_POINT(14), MYE_PATROL_POINT(15),
+        MYE_PATROL_POINT(16), MYE_PATROL_POINT(17), MYE_PATROL_POINT(18), MYE_PATROL_POINT(19),
+        MYE_PATROL_POINT(20), MYE_PATROL_POINT(21), MYE_PATROL_POINT(22), MYE_PATROL_POINT(23),
+        MYE_PATROL_POINT(24), MYE_PATROL_POINT(25), MYE_PATROL_POINT(26), MYE_PATROL_POINT(27),
+        MYE_PATROL_POINT(28), MYE_PATROL_POINT(29), MYE_PATROL_POINT(30), MYE_PATROL_POINT(31),
+    });
+#undef MYE_PATROL_POINT
 }
 
 } // namespace mye

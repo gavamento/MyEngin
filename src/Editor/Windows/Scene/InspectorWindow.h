@@ -118,6 +118,8 @@ private:
                                  const InspectorTargets& tg);
     // M82c: NavMeshAgent 節の末尾 (実行状態の表示と、CC 無し・Rigidbody・AgentBrain 併用・寸法不整合の警告)
     void DrawNavMeshAgentNotes(EngineContext& ctx, Selection& selection, UndoStack& undo, const InspectorTargets& tg);
+    // M85g: PatrolRoute 節の末尾 (点の一覧と追加・削除・上下。点の欄は隠してあり、編集は 1 操作 1 Undo)
+    void DrawPatrolRouteNotes(EngineContext& ctx, Selection& selection, UndoStack& undo, const InspectorTargets& tg);
     // 6 面ボタン 1 個ぶんの本体。sub-06 と同じ MakeModalShotPlay を呼ぶ (2 本目の規則を書かない)
     void FireModalPreviewFace(EngineContext& ctx, const InspectorTargets& tg,
                               const ModalSoundComponent& comp, const ModalFeatureMap& fm,

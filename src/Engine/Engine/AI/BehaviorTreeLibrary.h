@@ -40,6 +40,7 @@ enum class BtNodeKind : uint8_t {
     SendEvent,
     PlayAnimation,
     SubTree,
+    Patrol,
     Count,
 };
 
@@ -120,6 +121,21 @@ struct BtSearchAreaState {
     uint32_t phase = btsearchphase::kToOrigin;
 };
 static_assert(sizeof(BtSearchAreaState) == 32, "BtSearchAreaState はパディングなしの 32 バイト (BT 節の生バイトに入る)");
+
+// Patrol の追加状態 (BT 節に生バイトで入る。パディングを持たない 16 バイト)
+namespace btpatrolphase {
+enum : uint32_t {
+    kMoving = 0,  // nextIndex の点へ向かっている
+    kWaiting = 1, // nextIndex の点に着いて待っている
+};
+} // namespace btpatrolphase
+struct BtPatrolState {
+    int32_t nextIndex = 0;       // 今向かっている (待っている) 点
+    int32_t direction = 1;       // PingPong の進む向き (+1 / -1)
+    int32_t waitRemaining = 0;   // 待ちの残り tick (kWaiting のとき)
+    uint32_t phase = btpatrolphase::kMoving;
+};
+static_assert(sizeof(BtPatrolState) == 16, "BtPatrolState はパディングなしの 16 バイト (BT 節の生バイトに入る)");
 
 struct BtNodeTypeInfo {
     BtNodeKind kind;
@@ -281,6 +297,19 @@ enum : int {
     kTree = 0, // Guid。取り込む .bt.json。0 = 参照なし (Failure)
 };
 } // namespace btsubtreeparam
+
+// Patrol の params / keys の並び
+namespace btpatrolparam {
+enum : int {
+    kAcceptanceRadius = 0, // この水平距離 (m) 以内で点に着いたとみなす
+    kFailOnStuck = 1,      // Stuck になった tick にノード全体を Failure (false なら Running のまま。MoveTo と同じ意味)
+};
+} // namespace btpatrolparam
+namespace btpatrolkey {
+enum : int {
+    kRoute = 0, // Entity。PatrolRouteComponent を持つエンティティ
+};
+} // namespace btpatrolkey
 
 // ブラックボードのキーを持つノードの "keys" の並び
 namespace btnodekey {

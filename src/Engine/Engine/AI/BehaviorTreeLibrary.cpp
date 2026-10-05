@@ -112,7 +112,14 @@ const BtParamDesc kSubTreeParams[] = {
     { "tree", BtParamType::Guid, 0.0f, 0.0f, 0.0f, nullptr, 0 },
 };
 
+// btpatrolparam の並びと同じ
+const BtParamDesc kPatrolParams[] = {
+    { "acceptanceRadius", BtParamType::Float, 0.5f, 0.0f, kBtMaxRadius, nullptr, 0 },
+    { "failOnStuck", BtParamType::Bool, 0.0f, 0.0f, 1.0f, nullptr, 0 },
+};
+
 const char* const kTargetKeyNames[] = { "target" };
+const char* const kPatrolKeyNames[] = { "route" };
 const char* const kSendEventKeyNames[] = { "target", "vector" };
 const char* const kFindRandomPointKeyNames[] = { "center", "result" };
 const char* const kFindNearestTargetKeyNames[] = { "target", "position" };
@@ -142,6 +149,8 @@ const BtNodeTypeInfo kNodeTypes[] = {
     { BtNodeKind::PlayAnimation, "PlayAnimation", BtNodeCategory::Gameplay, 0, 0, kPlayAnimationParams, 3, nullptr, 0, 0 },
     // ファイルの SubTree は子を持たない。子 1 つ (取り込んだ部分木の根) は BtExpandSubTrees が実行用の木にだけ作る
     { BtNodeKind::SubTree, "SubTree", BtNodeCategory::Tree, 0, 1, kSubTreeParams, 1, nullptr, 0, 0 },
+    { BtNodeKind::Patrol, "Patrol", BtNodeCategory::Task, 0, 0, kPatrolParams, 2, kPatrolKeyNames, 1,
+      static_cast<int>(sizeof(BtPatrolState)) },
 };
 static_assert(sizeof(kNodeTypes) / sizeof(kNodeTypes[0]) == static_cast<size_t>(BtNodeKind::Count),
               "kNodeTypes を BtNodeKind の全値ぶん並べる");

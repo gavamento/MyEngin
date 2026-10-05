@@ -2150,6 +2150,27 @@ struct BehaviorTreeComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+constexpr int kMaxPatrolPoints = 32; // PatrolRouteComponent の点の数の上限
+
+// PatrolRouteComponent.mode
+namespace patrolmode {
+enum : int32_t {
+    kLoop = 0,     // 最後の点の次は最初の点
+    kPingPong = 1, // 端で折り返す
+    kOnce = 2,     // 最後の点で待ち終えたら終わる
+};
+} // namespace patrolmode
+
+// 巡回ルート (M85、BT の Patrol タスクが読む)。点はこのエンティティのローカル座標で、ワールド位置は
+// エンティティのワールド行列 x 点。「次の点」は巡回する側 (Patrol ノード) の状態で、ここには持たない
+struct PatrolRouteComponent {
+    int32_t mode = patrolmode::kLoop;
+    int32_t pointCount = 0;          // points / waitTicks の先頭から有効な件数 (0..kMaxPatrolPoints)
+    DirectX::XMFLOAT3 points[kMaxPatrolPoints] = {};
+    int32_t waitTicks[kMaxPatrolPoints] = {}; // 点に着いてから次へ向かうまでの待ち (tick)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

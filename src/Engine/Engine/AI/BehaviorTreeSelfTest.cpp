@@ -2208,6 +2208,427 @@ bool RunBehaviorTreeSelfTest()
                      "追加状態の長さが木と合わない保存は警告して初期状態からやり直す");
         }
 
+        // ---- 14. Patrol (M85g) ----
+        {
+            const uint64_t patrolBoard =
+                RegisterBoard(lib, L"patrol_bb", Board({ BbKey("Route", "Entity"), BbKey("Alarm", "Bool", true) }));
+            constexpr int kPatrolNode = 2; // 下の木の Patrol ノードの id
+            struct PatrolPoint {
+                float x;
+                float z;
+                int wait;
+            };
+            const auto patrolNode = [](int id, bool failOnStuck = false) {
+                return WithKeys(Node(id, "Patrol", {}, json{ { "acceptanceRadius", 0.5 }, { "failOnStuck", failOnStuck } }), json{ { "route", "Route" } });
+            };
+            // Surface が読み込まれる前の数 tick (Agent が Inactive) を避けるため、先に 5 tick 待ってから Patrol
+            const uint64_t plainTree =
+                RegisterTree(lib, L"patrol_plain", Tree(0, { Node(0, "Sequence", { 1, 2 }), Wait(1, 5), patrolNode(2) }, patrolBoard));
+            const auto makePatrolField = [&](uint64_t treeGuid, int32_t mode, const std::vector<PatrolPoint>& points, std::unique_ptr<Field>& f,
+                                             EntityID& route) {
+                makeField(treeGuid, f);
+                GameObject routeObject = f->scene.CreateGameObjectTracked("Route");
+                auto* component = routeObject.AddComponent<PatrolRouteComponent>();
+                component->mode = mode;
+                component->pointCount = static_cast<int32_t>(points.size());
+                for (size_t i = 0; i < points.size(); ++i) {
+                    component->points[i] = { points[i].x, 0.0f, points[i].z };
+                    component->waitTicks[i] = points[i].wait;
+                }
+                f->scene.GetWorld().ApplyStructuralChanges();
+                route = routeObject.Id();
+            };
+            const auto setRoute = [](NavSim& sim, EntityID walker, EntityID route) {
+                sim.Mutable(walker)->blackboard[0] = BbValue{ 1, 0, 0.0f, { 0.0f, 0.0f, 0.0f }, route };
+            };
+            const auto patrolStateOf = [](NavSim& sim, EntityID e, BtPatrolState& out) {
+                const BtInstance* inst = sim.bt->FindInstance(e);
+                if (inst == nullptr || !inst->tree) {
+                    return false;
+                }
+                const int index = inst->tree->FindNode(kPatrolNode);
+                if (index < 0 || inst->nodes[static_cast<size_t>(index)].active == 0) {
+                    return false;
+                }
+                std::memcpy(&out, inst->extra.data() + inst->tree->nodes[static_cast<size_t>(index)].extraOffset, sizeof(out));
+                return true;
+            };
+            // 向かっている点が変わるたびに記録する。waitSeen = その点で待ちに入ったと観測した tick (待ち 0 の点は 0)
+            struct PatrolVisit {
+                int32_t index;
+                uint64_t firstTick;
+                uint64_t waitSeen;
+            };
+            const auto follow = [&](NavSim& sim, EntityID walker, size_t wantVisits, int maxTicks, std::vector<PatrolVisit>& visits) {
+                visits.clear();
+                for (int i = 0; i < maxTicks && visits.size() < wantVisits; ++i) {
+                    sim.Step();
+                    BtPatrolState state;
+                    if (!patrolStateOf(sim, walker, state)) {
+                        continue;
+                    }
+                    const uint64_t now = sim.tick - 1;
+                    if (visits.empty() || visits.back().index != state.nextIndex) {
+                        visits.push_back({ state.nextIndex, now, 0 });
+                    }
+                    if (state.phase == btpatrolphase::kWaiting && visits.back().waitSeen == 0) {
+                        visits.back().waitSeen = now;
+                    }
+                }
+            };
+            const auto indices = [](const std::vector<PatrolVisit>& visits) {
+                std::vector<int32_t> out;
+                for (const PatrolVisit& v : visits) {
+                    out.push_back(v.index);
+                }
+                return out;
+            };
+            // 4 m 四方の小さな経路 (床の中。Agent は (-6, 0) から始まり、一番近い点は 0)
+            const std::vector<PatrolPoint> square = { { -6.0f, -3.0f, 10 }, { -2.0f, -3.0f, 0 }, { -2.0f, 1.0f, 20 } };
+
+            // ---- Loop: 一周して戻る / 待ち時間 ----
+            {
+                std::unique_ptr<Field> f;
+                EntityID route;
+                makePatrolField(plainTree, patrolmode::kLoop, square, f, route);
+                NavSim sim(f->scene);
+                sim.Step();
+                setRoute(sim, f->walker, route);
+                std::vector<PatrolVisit> visits;
+                follow(sim, f->walker, 6, 2400, visits);
+                const std::vector<int32_t> got = indices(visits);
+                ck.Check(got == std::vector<int32_t>{ 0, 1, 2, 0, 1, 2 }, "Patrol Loop: 最後の点の次は最初の点へ戻り、0 -> 1 -> 2 -> 0 -> 1 -> 2 と回る");
+                ck.Check(visits.size() >= 4 && visits[0].waitSeen != 0 && visits[1].firstTick - visits[0].waitSeen == 10 && visits[1].waitSeen == 0
+                             && visits[2].waitSeen != 0 && visits[3].firstTick - visits[2].waitSeen == 20,
+                         "Patrol: 点に着いてから waitTicks (10 / 0 / 20) の tick 後に次の点へ向かい始める (待ち 0 は待たない)");
+                ck.Check(sim.Agent(f->walker)->hasDestination && sim.Comp(f->walker)->status == kRunning, "Patrol Loop: 終わらず Running のまま目的地を持つ");
+            }
+
+            // ---- PingPong: 端で折り返す ----
+            {
+                std::unique_ptr<Field> f;
+                EntityID route;
+                makePatrolField(plainTree, patrolmode::kPingPong, { { -6.0f, -3.0f, 0 }, { -2.0f, -3.0f, 0 }, { -2.0f, 1.0f, 0 } }, f, route);
+                NavSim sim(f->scene);
+                sim.Step();
+                setRoute(sim, f->walker, route);
+                std::vector<PatrolVisit> visits;
+                follow(sim, f->walker, 8, 3000, visits);
+                ck.Check(indices(visits) == std::vector<int32_t>{ 0, 1, 2, 1, 0, 1, 2, 1 }, "Patrol PingPong: 端で折り返して 0 -> 1 -> 2 -> 1 -> 0 -> 1 -> 2 -> 1 と往復する");
+            }
+
+            // ---- Once: 最後の点で待ち終えたら Success ----
+            {
+                std::unique_ptr<Field> f;
+                EntityID route;
+                makePatrolField(plainTree, patrolmode::kOnce, { { -6.0f, -3.0f, 0 }, { -2.0f, -3.0f, 0 }, { -2.0f, 1.0f, 15 } }, f, route);
+                NavSim sim(f->scene);
+                sim.Step();
+                setRoute(sim, f->walker, route);
+                std::vector<PatrolVisit> visits;
+                follow(sim, f->walker, 3, 2400, visits);
+                uint64_t lastWait = 0;
+                uint64_t doneTick = 0;
+                for (int i = 0; i < 600 && doneTick == 0; ++i) {
+                    sim.Step();
+                    BtPatrolState state;
+                    if (lastWait == 0 && patrolStateOf(sim, f->walker, state) && state.phase == btpatrolphase::kWaiting && state.nextIndex == 2) {
+                        lastWait = sim.tick - 1; // 最後の点に着いた tick
+                    }
+                    if (sim.Comp(f->walker)->status == kSucceeded) {
+                        doneTick = sim.tick - 1;
+                    }
+                }
+                ck.Check(indices(visits) == std::vector<int32_t>{ 0, 1, 2 } && lastWait != 0 && doneTick == lastWait + 15 && !sim.Agent(f->walker)->hasDestination,
+                         "Patrol Once: 最後の点で waitTicks (15) 待ち終えた tick に Success、目的地は倒れる");
+            }
+
+            // ---- ルートが使えなければ Failure ----
+            {
+                const auto firstFailure = [&](NavSim& sim, EntityID walker, int maxTicks) {
+                    for (int i = 0; i < maxTicks; ++i) {
+                        sim.Step();
+                        if (sim.Comp(walker)->status == kFailed) {
+                            return sim.tick - 1;
+                        }
+                    }
+                    return static_cast<uint64_t>(0);
+                };
+                {
+                    std::unique_ptr<Field> f;
+                    EntityID route;
+                    makePatrolField(plainTree, patrolmode::kLoop, {}, f, route); // 点が 0 個
+                    NavSim sim(f->scene);
+                    sim.Step();
+                    setRoute(sim, f->walker, route);
+                    ck.Check(firstFailure(sim, f->walker, 20) == 6 && !sim.Agent(f->walker)->hasDestination, "Patrol: 点が 0 個のルートは Failure (目的地は書かない)");
+                }
+                {
+                    std::unique_ptr<Field> f;
+                    EntityID route;
+                    makePatrolField(plainTree, patrolmode::kLoop, square, f, route);
+                    NavSim sim(f->scene);
+                    sim.Step(); // Route キーは未設定のまま
+                    ck.Check(firstFailure(sim, f->walker, 20) == 6 && !sim.Agent(f->walker)->hasDestination, "Patrol: Route キーが未設定なら Failure");
+                }
+                {
+                    std::unique_ptr<Field> f;
+                    EntityID route;
+                    makePatrolField(plainTree, patrolmode::kLoop, square, f, route);
+                    NavSim sim(f->scene);
+                    sim.Step();
+                    setRoute(sim, f->walker, f->walker); // PatrolRoute を持たないエンティティ
+                    ck.Check(firstFailure(sim, f->walker, 20) == 6, "Patrol: Route が PatrolRoute を持たないエンティティなら Failure");
+                }
+                {
+                    std::unique_ptr<Field> f;
+                    EntityID route;
+                    makePatrolField(plainTree, patrolmode::kLoop, square, f, route);
+                    NavSim sim(f->scene);
+                    sim.Step();
+                    setRoute(sim, f->walker, route);
+                    f->scene.GetWorld().DestroyEntity(route);
+                    f->scene.GetWorld().ApplyStructuralChanges();
+                    ck.Check(firstFailure(sim, f->walker, 20) == 6, "Patrol: ルートのエンティティが消えていたら Failure");
+                }
+                {
+                    const uint64_t noAgent = plainTree;
+                    Scene scene;
+                    BehaviorTreeSystem bt;
+                    GameObject go = scene.CreateGameObjectTracked("NoAgent");
+                    go.AddComponent<BehaviorTreeComponent>()->tree = AssetID{ noAgent };
+                    GameObject routeObject = scene.CreateGameObjectTracked("Route");
+                    auto* component = routeObject.AddComponent<PatrolRouteComponent>();
+                    component->pointCount = 1;
+                    scene.GetWorld().ApplyStructuralChanges();
+                    bt.Update(scene.GetWorld(), 1, nullptr);
+                    const_cast<BtInstance*>(bt.FindInstance(go.Id()))->blackboard[0] = BbValue{ 1, 0, 0.0f, { 0.0f, 0.0f, 0.0f }, routeObject.Id() };
+                    bool failed = false;
+                    for (uint64_t t = 2; t < 20 && !failed; ++t) {
+                        bt.Update(scene.GetWorld(), t, nullptr);
+                        failed = scene.GetWorld().GetComponent<BehaviorTreeComponent>(go.Id())->status == kFailed;
+                    }
+                    ck.Check(failed, "Patrol: NavMeshAgent が無ければ Failure");
+                }
+            }
+
+            // ---- 同じルートを 2 体が別々の進み具合で共有する ----
+            {
+                std::unique_ptr<Field> f;
+                EntityID route;
+                makePatrolField(plainTree, patrolmode::kLoop, { { -6.0f, -3.0f, 0 }, { -2.0f, -3.0f, 0 }, { 4.0f, 3.0f, 0 } }, f, route);
+                const EntityID second = AddWalker(f->scene, plainTree, 3.0f, 2.0f, "Walker2");
+                f->scene.GetWorld().ApplyStructuralChanges();
+                NavSim sim(f->scene);
+                sim.Step();
+                setRoute(sim, f->walker, route);
+                setRoute(sim, second, route);
+                std::vector<PatrolVisit> a;
+                std::vector<PatrolVisit> b;
+                for (int i = 0; i < 700; ++i) {
+                    sim.Step();
+                    for (const auto& who : { std::pair<EntityID, std::vector<PatrolVisit>*>{ f->walker, &a }, std::pair<EntityID, std::vector<PatrolVisit>*>{ second, &b } }) {
+                        BtPatrolState state;
+                        if (patrolStateOf(sim, who.first, state) && (who.second->empty() || who.second->back().index != state.nextIndex)) {
+                            who.second->push_back({ state.nextIndex, sim.tick - 1, 0 });
+                        }
+                    }
+                }
+                const std::vector<int32_t> ia = indices(a);
+                const std::vector<int32_t> ib = indices(b);
+                MYE_LOG_INFO("  [patrol] shared route: walker A visits %zu, walker B visits %zu", ia.size(), ib.size());
+                ck.Check(ia.size() >= 2 && ib.size() >= 2 && ia[0] == 0 && ib[0] == 2 && ia[1] == 1 && ib[1] == 0,
+                         "Patrol: 同じルートを 2 体が共有し、それぞれ今いる位置の一番近い点 (0 と 2) から別々の順で進む");
+                ck.Check(sim.GetWorld().GetComponent<PatrolRouteComponent>(route)->pointCount == 3, "Patrol: ルートのコンポーネントには進み具合を書かない");
+            }
+
+            // ---- 一番近い点 (同距離は index 小) ----
+            {
+                std::unique_ptr<Field> f;
+                EntityID route;
+                makePatrolField(plainTree, patrolmode::kLoop, { { 4.0f, 2.0f, 0 }, { -4.0f, 2.0f, 0 } }, f, route);
+                NavSim sim(f->scene);
+                sim.Step();
+                sim.Pos(f->walker)->position = { 0.0f, 0.9f, 2.0f }; // 2 つの点から同じ距離
+                setRoute(sim, f->walker, route);
+                std::vector<PatrolVisit> visits;
+                follow(sim, f->walker, 1, 40, visits);
+                ck.Check(visits.size() == 1 && visits[0].index == 0, "Patrol: 同距離の点が複数あるときは index の小さい方から始める");
+            }
+
+            // ---- Abort の後は一番近い点から ----
+            {
+                std::vector<int32_t> trace;
+                const uint64_t abortTree = RegisterTree(
+                    lib, L"patrol_abort",
+                    Tree(0, { Node(0, "Selector", { 1, 3 }), Decorated(Node(1, "Sequence", { 4, 2 }), { BbCond("Alarm", "IsSet", "Both") }),
+                              patrolNode(2), Wait(3, 5000), Wait(4, 5) },
+                         patrolBoard));
+                std::unique_ptr<Field> f;
+                EntityID route;
+                makePatrolField(abortTree, patrolmode::kLoop, square, f, route);
+                NavSim sim(f->scene);
+                sim.Step();
+                setRoute(sim, f->walker, route);
+                sim.bt->SetAbortTrace(&trace);
+                std::vector<PatrolVisit> visits;
+                follow(sim, f->walker, 2, 1500, visits); // 点 0 に着いて待ち、点 1 へ向かっている
+                const bool onTheWay = visits.size() == 2 && visits[1].index == 1 && sim.Agent(f->walker)->hasDestination;
+                sim.Mutable(f->walker)->blackboard[1].i = 0; // Alarm を倒す = Self の Abort
+                sim.Step();
+                BtPatrolState dead;
+                const bool stopped = !sim.Agent(f->walker)->hasDestination && !patrolStateOf(sim, f->walker, dead) && trace.size() >= 2 && trace.front() == kPatrolNode;
+                for (int i = 0; i < 60; ++i) {
+                    sim.Step();
+                }
+                sim.Pos(f->walker)->position = { -2.0f, 0.9f, 2.0f }; // 点 2 (-2, 1) のすぐそば。点 1 への道の途中ではない
+                sim.Mutable(f->walker)->blackboard[1].i = 1; // Alarm を戻す = LowerPriority で Wait を Abort して入り直す
+                BtPatrolState back;
+                bool restarted = false;
+                for (int i = 0; i < 30 && !restarted; ++i) {
+                    sim.Step();
+                    restarted = patrolStateOf(sim, f->walker, back);
+                }
+                sim.bt->SetAbortTrace(nullptr);
+                ck.Check(onTheWay && stopped && restarted && back.nextIndex == 2,
+                         "Patrol: Abort で目的地を倒して止まり、戻ってきたら (点 1 へ向かっていたのに) 今の位置から一番近い点 2 から再開する");
+            }
+
+            // ---- failOnStuck: ベイク後に置いた壁で塞がれる (MoveTo / SearchArea と同じ壁) ----
+            for (int failOnStuck = 0; failOnStuck < 2; ++failOnStuck) {
+                const uint64_t guid = RegisterTree(
+                    lib, failOnStuck != 0 ? L"patrol_stuck_fail" : L"patrol_stuck_wait",
+                    Tree(0, { Node(0, "Selector", { 1, 3 }), Node(1, "Sequence", { 4, 2 }), patrolNode(2, failOnStuck != 0), Wait(3, 5000), Wait(4, 5) },
+                         patrolBoard));
+                std::unique_ptr<Field> f;
+                EntityID route;
+                makePatrolField(guid, patrolmode::kLoop, { { 6.0f, 0.0f, 0 }, { 6.0f, 4.0f, 0 } }, f, route);
+                GameObject wall = f->scene.CreateGameObjectTracked("LateWall");
+                wall.SetLocalPosition(0.0f, 1.0f, 0.0f);
+                auto* collider = wall.AddComponent<ColliderComponent>();
+                collider->shape = collidershape::kBox;
+                collider->halfExtents = { 0.5f, 1.0f, 13.0f };
+                f->scene.GetWorld().ApplyStructuralChanges();
+                NavSim sim(f->scene);
+                sim.Step();
+                setRoute(sim, f->walker, route);
+                bool sawStuck = false;
+                bool failed = false;
+                for (int i = 0; i < 700; ++i) {
+                    sim.Step();
+                    sawStuck = sawStuck || sim.Agent(f->walker)->status == navagentstatus::kStuck;
+                    failed = failed || sim.Comp(f->walker)->activeNodeId == 3;
+                }
+                const bool destination = sim.Agent(f->walker)->hasDestination;
+                const int32_t active = sim.Comp(f->walker)->activeNodeId;
+                MYE_LOG_INFO("  [patrol] stuck %d: sawStuck %d failed %d dest %d active %d", failOnStuck, sawStuck ? 1 : 0, failed ? 1 : 0, destination ? 1 : 0, active);
+                if (failOnStuck == 0) {
+                    ck.Check(sawStuck && !failed && destination && active == kPatrolNode, "Patrol: failOnStuck = false (既定) は Stuck の間も Running のまま");
+                } else {
+                    ck.Check(sawStuck && failed && !destination && active == 3,
+                             "Patrol: failOnStuck = true は Stuck になった tick に Failure、目的地を倒して次の枝へ移る");
+                }
+            }
+
+            // ---- アセット: 往復と既定値 ----
+            {
+                BehaviorTreeAsset a;
+                BehaviorTreeAsset b;
+                const json source = Tree(0, { patrolNode(0, true) }, patrolBoard);
+                const bool loaded = BehaviorTreeLibrary::FromJson(source, a);
+                const bool again = loaded && BehaviorTreeLibrary::FromJson(BehaviorTreeLibrary::ToJson(a), b);
+                ck.Check(loaded && again && BehaviorTreeLibrary::ToJson(a) == BehaviorTreeLibrary::ToJson(b) && a.nodes[0].params[btpatrolparam::kFailOnStuck].i == 1
+                             && a.nodes[0].keys[btpatrolkey::kRoute] == "Route" && a.extraStateBytes == static_cast<int32_t>(sizeof(BtPatrolState)),
+                         "Patrol の JSON が往復で変わらず、failOnStuck と route キーと追加状態の大きさが読める");
+                BehaviorTreeAsset defaults;
+                ck.Check(BehaviorTreeLibrary::FromJson(Tree(0, { Node(0, "Patrol") }), defaults) && defaults.nodes[0].params[btpatrolparam::kFailOnStuck].i == 0
+                             && defaults.nodes[0].params[btpatrolparam::kAcceptanceRadius].f == 0.5f,
+                         "Patrol の既定は failOnStuck = false・acceptanceRadius = 0.5");
+            }
+
+            // ---- 同梱の assets\ai (patrol_only.bt.json / patrol.bb.json) が読めて、Patrol 1 個の木になっている ----
+            {
+                const fs::path btPath = L"assets/ai/patrol_only.bt.json";
+                const fs::path bbPath = L"assets/ai/patrol.bb.json";
+                std::error_code ec;
+                if (fs::exists(btPath, ec) && fs::exists(bbPath, ec)) {
+                    std::ifstream btFile(btPath, std::ios::binary);
+                    std::ifstream bbFile(bbPath, std::ios::binary);
+                    BehaviorTreeAsset shippedTree;
+                    BlackboardAsset shippedBoard;
+                    const bool ok = BehaviorTreeLibrary::FromJson(json::parse(btFile, nullptr, false), shippedTree)
+                                    && BlackboardLibrary::FromJson(json::parse(bbFile, nullptr, false), shippedBoard);
+                    ck.Check(ok && shippedTree.nodes.size() == 1 && shippedTree.nodes[0].kind == BtNodeKind::Patrol && shippedBoard.keys.size() == 1
+                                 && shippedBoard.keys[0].type == BbType::Entity && shippedBoard.FindKey(shippedTree.nodes[0].keys[btpatrolkey::kRoute]) == 0,
+                             "同梱の patrol_only.bt.json は Patrol 1 個の木で、patrol.bb.json の Entity キー route を指す");
+                } else {
+                    MYE_LOG_INFO("  SKIP: assets/ai が作業ディレクトリに無いので同梱アセットの検査を飛ばす");
+                }
+            }
+
+            // ---- 巡回の途中 (待ち中・移動中) で保存 -> 復元 -> 連続実行と毎 tick のハッシュが一致 ----
+            {
+                const auto patrolRoundTrip = [&](const char* label, bool freshBt, const std::function<bool(const BtPatrolState&)>& atCapture) {
+                    std::unique_ptr<Field> f;
+                    EntityID route;
+                    makePatrolField(plainTree, patrolmode::kPingPong, { { -6.0f, -3.0f, 0 }, { -2.0f, -3.0f, 30 }, { -2.0f, 1.0f, 0 } }, f, route);
+                    NavSim sim(f->scene);
+                    sim.Step();
+                    setRoute(sim, f->walker, route);
+                    SimRefs refs;
+                    refs.scene = &f->scene;
+                    refs.nav = &sim.nav;
+                    refs.behaviorTree = sim.bt;
+                    uint64_t tickRef = 0;
+                    refs.tickIndex = &tickRef;
+                    bool captured = false;
+                    for (int i = 0; i < 1500 && !captured; ++i) {
+                        sim.Step();
+                        BtPatrolState state;
+                        captured = patrolStateOf(sim, f->walker, state) && atCapture(state);
+                    }
+                    if (!captured) {
+                        ck.Check(false, label);
+                        return;
+                    }
+                    tickRef = sim.tick;
+                    std::vector<std::byte> blob;
+                    const bool ok = CaptureSimSnapshot(refs, blob);
+                    BtPatrolState atState;
+                    patrolStateOf(sim, f->walker, atState);
+                    const uint64_t startTick = sim.tick;
+                    constexpr int kAhead = 500;
+                    std::vector<uint64_t> continuous;
+                    for (int i = 0; i < kAhead; ++i) {
+                        sim.Step();
+                        continuous.push_back(HashWorld(f->scene.GetWorld(), refs.HashSources()));
+                    }
+                    BehaviorTreeSystem fresh;
+                    if (freshBt) {
+                        sim.bt = &fresh;
+                        refs.behaviorTree = &fresh;
+                    }
+                    bool same = ok && RestoreSimSnapshot(refs, blob.data(), blob.size());
+                    BtPatrolState restored;
+                    const bool restoredSame = same && patrolStateOf(sim, f->walker, restored) && restored.nextIndex == atState.nextIndex
+                                              && restored.phase == atState.phase && restored.waitRemaining == atState.waitRemaining
+                                              && restored.direction == atState.direction;
+                    sim.tick = startTick;
+                    for (int i = 0; i < kAhead && same; ++i) {
+                        sim.Step();
+                        same = HashWorld(f->scene.GetWorld(), refs.HashSources()) == continuous[static_cast<size_t>(i)];
+                    }
+                    ck.Check(same && restoredSame && continuous.front() != continuous.back(), label);
+                };
+                patrolRoundTrip("Patrol の待ち中 (点 1 で waitTicks 30 の途中) で保存 -> 復元 -> 連続実行と毎 tick のハッシュが一致", false,
+                                [](const BtPatrolState& s) { return s.phase == btpatrolphase::kWaiting && s.nextIndex == 1 && s.waitRemaining == 20; });
+                patrolRoundTrip("Patrol の待ち中で保存 -> 新しい BehaviorTreeSystem へ復元 -> 連続実行と毎 tick のハッシュが一致", true,
+                                [](const BtPatrolState& s) { return s.phase == btpatrolphase::kWaiting && s.nextIndex == 1 && s.waitRemaining == 20; });
+                patrolRoundTrip("Patrol の移動中 (PingPong の折り返し後の向き -1) で保存 -> 復元 -> 連続実行と毎 tick のハッシュが一致", true,
+                                [](const BtPatrolState& s) { return s.phase == btpatrolphase::kMoving && s.direction == -1 && s.nextIndex == 1; });
+            }
+        }
+
         // ---- 13. AI ノード 4 種 (M85d) ----
         {
             const uint64_t aiBoard = RegisterBoard(
@@ -3410,9 +3831,15 @@ bool RunBehaviorTreeSelfTest()
             sim.Step();
             bbOf(sim, e, kN) = BbValue{ 1, 42, 0.0f, { 0.0f, 0.0f, 0.0f }, kNullEntity };
             const bool waiting = sim.Status(e) == kRunning;
+            const int32_t subWaitId = waitIdOf(sim, e, 1000);
+            std::vector<int32_t> trace;
+            sim.bt.SetAbortTrace(&trace);
             RegisterTree(lib, L"sub_reload", Tree(0, { setN(0, 9) }, board));
             sim.Step();
+            sim.bt.SetAbortTrace(nullptr);
             ck.Check(waiting && sim.Status(e) == kSucceeded && bbOf(sim, e, kN).i == 9, "取り込み元の木が読み直されたら、親の木は新しい部分木で最初からやり直す");
+            ck.Check(trace.size() == 3 && trace.front() == subWaitId && trace.back() == 0 && sim.Comp(e)->lastAbortTick == static_cast<int32_t>(sim.LastTick()),
+                     "取り込み元の木が読み直されたら、取り込んでいる親の木で動くエンティティは古い形のまま深い方から Abort され (lastAbortTick が立つ)、根からやり直す");
         }
         {
             // 取り込み元が後から登録されたら、次の tick に取り込まれる

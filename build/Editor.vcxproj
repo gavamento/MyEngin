@@ -80,6 +80,8 @@
     <ClCompile Include="..\src\Editor\Tools\NavBakeCommit.cpp" />
     <ClCompile Include="..\src\Editor\Tools\NavBakeService.cpp" />
     <ClCompile Include="..\src\Editor\Tools\NavEditorSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\PatrolRouteEdit.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Undo\UndoSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Undo\UndoStack.cpp" />
     <ClCompile Include="..\src\Editor\Widgets\CreateMenu.cpp" />
@@ -155,6 +157,8 @@
     <ClInclude Include="..\src\Editor\Tools\NavBakeCommit.h" />
     <ClInclude Include="..\src\Editor\Tools\NavBakeService.h" />
     <ClInclude Include="..\src\Editor\Tools\NavEditorSelfTest.h" />
+    <ClInclude Include="..\src\Editor\Tools\PatrolRouteEdit.h" />
+    <ClInclude Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.h" />
     <ClInclude Include="..\src\Editor\Undo\UndoSelfTest.h" />
     <ClInclude Include="..\src\Editor\Undo\UndoStack.h" />
     <ClInclude Include="..\src\Editor\Widgets\CreateMenu.h" />

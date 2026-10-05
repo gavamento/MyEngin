@@ -13,6 +13,9 @@
 - 位置を持たないノード (手書きの .bt.json) は読み込み時に自動整列。
 - 文字列は en / ja。
 
+- (sub-07 VERDICT で追加、spec 2. #20) `BehaviorTreeComponent` に Entity キーの初期値 4 組 (`bbEntityKey[4]` String64 + `bbEntityValue[4]` EntityRef、末尾 append、snapshot +1、`AcousticAudioSelfTest.cpp` の版も) を足し、木を始める / やり直すときに BB へ書く (名前が BB に無い・型が Entity でない組は無視して 1 回警告)。Inspector はキー名を BB の Entity キーから選ぶコンボと EntityRef の欄。`assetsi\patrol_only.bt.json` をルートのエンティティを割り当てるだけで動くことを BehaviorTreeSelfTest で確かめる。replay_verify を回す (コンポーネントの形が変わるため)。
+- (sub-01 / sub-07 からの持ち越し) この回の画面確認で、次の GUI 実操作も目視して SELF_EVAL に書く: Create メニュー 2 項目・型フィルタ・タイルの語・Inspector の tree ピッカー、Runtime.exe の実起動、SceneView の巡回点のクリック選択 → ドラッグ → Ctrl+Z 1 回で戻る、Esc で変形ギズモへ戻る、Inspector の点の編集・上下・削除・追加の Undo。
+
 ## やらないこと (このサブでは)
 - Undo / Redo、Blackboard パネル、検査エラー (sub-09)、ライブ表示 (sub-10)
 

@@ -9,6 +9,7 @@
 #include "Editor/App/EditorSettings.h"
 #include "Editor/Widgets/EditorWidgets.h"
 #include "Editor/Scene/Selection.h"
+#include "Editor/Tools/PatrolRouteEdit.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Localization/Localization.h"
@@ -418,6 +419,13 @@ constexpr uint32_t kNavLink = 0x40FFC0FFu;        // NavMeshLink の入口・出
 constexpr float kNavLinkEndRadius = 0.15f;
 constexpr float kNavLinkArrowLength = 0.35f;
 constexpr float kNavLinkArrowSpread = 0.4f;
+constexpr uint32_t kPatrolRoute = 0xF0A030FFu;         // PatrolRoute の点と線 (橙)
+constexpr uint32_t kPatrolPointSelected = 0xFFFF60FFu; // ドラッグ対象に選んでいる点 (黄)
+constexpr float kPatrolPointRadius = 0.25f;
+constexpr float kPatrolPointSelectedRadius = 0.35f;
+constexpr float kPatrolArrowLength = 0.45f;
+constexpr float kPatrolArrowSpread = 0.4f;
+constexpr float kPatrolPickRadiusPx = 14.0f;           // 点のクリック判定半径
 constexpr uint32_t kSightNear = 0xF0F060FFu;     // AIPerception の見える距離 (黄)
 constexpr uint32_t kSightLose = 0x908040FFu;     // 見失う距離 (くすんだ黄)
 constexpr uint32_t kHearing = 0x60B0FFFFu;       // 聞こえる距離 (水色)
@@ -489,6 +497,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         DrawNavObstacleGizmos(world);
         DrawNavModifierGizmos(world);
         DrawNavLinkGizmos(world);
+        DrawPatrolRouteGizmos(ctx, world, selection);
         DrawPerceptionGizmos(ctx, world, selection);
     } else if (selection.colliderEditFileId != 0 && selection.colliderEditFileId == selection.primary) {
         const GameObject selected = ctx.scene->FindByFileId(selection.primary);
@@ -951,6 +960,59 @@ void SceneViewWindow::DrawNavLinkGizmos(World& world)
         });
 }
 
+// PatrolRoute (M85g)。選択中のルートだけ。点は球、点の間は線、各区間の中ほどに進む向きの矢印。
+// Loop は最後の点から最初の点へ戻る線も引き、PingPong は戻る向きの矢印も付ける (Once は戻らない)
+void SceneViewWindow::DrawPatrolRouteGizmos(EngineContext& ctx, World& world, const Selection& selection)
+{
+    for (const uint64_t fid : selection.ids) {
+        const GameObject sel = ctx.scene->FindByFileId(fid);
+        if (!sel) {
+            continue;
+        }
+        const auto* route = world.GetComponent<PatrolRouteComponent>(sel.Id());
+        const auto* wmc = world.GetComponent<WorldMatrixComponent>(sel.Id());
+        if (route == nullptr || wmc == nullptr) {
+            continue;
+        }
+        const int count = std::clamp(route->pointCount, 0, kMaxPatrolPoints);
+        XMFLOAT3 points[kMaxPatrolPoints];
+        for (int i = 0; i < count; ++i) {
+            points[i] = PatrolPointLocalToWorld(wmc->value, route->points[i]);
+            const bool picked = fid == patrolFileId_ && i == patrolPoint_;
+            lines_.AddWireSphere(points[i], picked ? gizmo::kPatrolPointSelectedRadius : gizmo::kPatrolPointRadius,
+                                 picked ? gizmo::kPatrolPointSelected : gizmo::kPatrolRoute);
+        }
+        const auto segment = [&](const XMFLOAT3& from, const XMFLOAT3& to, bool backward) {
+            lines_.AddLine(from, to, gizmo::kPatrolRoute);
+            const float dx = to.x - from.x;
+            const float dz = to.z - from.z;
+            const float length = std::sqrt(dx * dx + dz * dz);
+            if (length < 1.0e-4f) {
+                return; // 真上・真下への線は水平の向きが定まらない
+            }
+            const auto arrowAt = [&](float t, float dirX, float dirZ) {
+                const XMFLOAT3 tip = { from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, from.z + (to.z - from.z) * t };
+                const float backX = -dirX * gizmo::kPatrolArrowLength;
+                const float backZ = -dirZ * gizmo::kPatrolArrowLength;
+                const float side = gizmo::kPatrolArrowLength * gizmo::kPatrolArrowSpread;
+                lines_.AddLine(tip, { tip.x + backX - dirZ * side, tip.y, tip.z + backZ + dirX * side }, gizmo::kPatrolRoute);
+                lines_.AddLine(tip, { tip.x + backX + dirZ * side, tip.y, tip.z + backZ - dirX * side }, gizmo::kPatrolRoute);
+            };
+            arrowAt(backward ? 0.65f : 0.6f, dx / length, dz / length);
+            if (backward) {
+                arrowAt(0.35f, -dx / length, -dz / length);
+            }
+        };
+        const bool pingPong = route->mode == patrolmode::kPingPong;
+        for (int i = 0; i + 1 < count; ++i) {
+            segment(points[i], points[i + 1], pingPong);
+        }
+        if (route->mode == patrolmode::kLoop && count >= 3) {
+            segment(points[count - 1], points[0], false);
+        }
+    }
+}
+
 // AIPerception の視野と聴覚 (M83)。**選択中の 1 体だけ** (全員に描くと扇形で埋まる)。
 // 目と前方は PerceptionSystem と同じ規則 (位置 + (0, eyeHeight, 0)、ワールド行列の +Z) で、
 // 視野は目の高さの水平面に描く (上下の視野角も同じ全角だが、平面の扇形で読めれば足りる)
@@ -1230,6 +1292,126 @@ void SceneViewWindow::DrawCameraPreview(const ImVec2& imgPos, const ImVec2& size
     dl->AddText(ImVec2(tl.x, tl.y - titleH), IM_COL32(0xD8, 0xE0, 0xE8, 0xFF), title.c_str());
 }
 
+bool SceneViewWindow::HandlePatrolRoute(EngineContext& ctx, Selection& selection, UndoStack& undo, const EditorSettings& settings,
+                                        float rectX, float rectY, float rectW, float rectH, bool& clickConsumed)
+{
+    clickConsumed = false;
+    World& world = ctx.scene->GetWorld();
+    const auto closeRecord = [&] {
+        if (gizmoActive_) {
+            undo.CaptureAfter(*ctx.scene, gizmoFileId_);
+            undo.EndRecord(selection);
+            gizmoActive_ = false;
+            gizmoFileId_ = 0;
+            gizmoBlockedUntilRelease_ = true;
+        }
+    };
+    const GameObject sel = selection.ids.size() == 1 && showGizmos_ && rt_.IsValid() ? ctx.scene->FindByFileId(selection.primary) : GameObject{};
+    PatrolRouteComponent* route = sel ? world.GetComponent<PatrolRouteComponent>(sel.Id()) : nullptr;
+    const WorldMatrixComponent* wm = sel ? world.GetComponent<WorldMatrixComponent>(sel.Id()) : nullptr;
+    const int count = route != nullptr ? std::clamp(route->pointCount, 0, kMaxPatrolPoints) : 0;
+    if (route == nullptr || wm == nullptr || count == 0) {
+        patrolPoint_ = -1;
+        if (gizmoPatrol_) {
+            closeRecord();
+        }
+        return false;
+    }
+    if (patrolFileId_ != selection.primary) {
+        patrolFileId_ = selection.primary;
+        patrolPoint_ = -1;
+    }
+    if (patrolPoint_ >= count) {
+        patrolPoint_ = -1; // Inspector で点が減った
+    }
+
+    // 番号と、クリックに最も近い点
+    const ImGuiIO& io = ImGui::GetIO();
+    const XMMATRIX vp = XMMatrixMultiply(XMLoadFloat4x4(&lastView_), XMLoadFloat4x4(&lastProj_));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    int nearest = -1;
+    float nearestDist2 = gizmo::kPatrolPickRadiusPx * gizmo::kPatrolPickRadiusPx;
+    for (int i = 0; i < count; ++i) {
+        const XMFLOAT3 at = PatrolPointLocalToWorld(wm->value, route->points[i]);
+        const XMVECTOR clip = XMVector4Transform(XMVectorSet(at.x, at.y, at.z, 1.0f), vp);
+        const float w = XMVectorGetW(clip);
+        if (w <= 0.01f) {
+            continue; // カメラ後方
+        }
+        const ImVec2 sp(rectX + (XMVectorGetX(clip) / w * 0.5f + 0.5f) * rectW, rectY + (0.5f - XMVectorGetY(clip) / w * 0.5f) * rectH);
+        char label[16];
+        std::snprintf(label, sizeof(label), "%d", i);
+        const ImVec2 labelPos(sp.x + 8.0f, sp.y - 20.0f);
+        dl->AddText(ImVec2(labelPos.x + 1.0f, labelPos.y + 1.0f), IM_COL32(0, 0, 0, 200), label);
+        dl->AddText(labelPos, i == patrolPoint_ ? IM_COL32(0xFF, 0xFF, 0x60, 0xFF) : IM_COL32(0xF0, 0xA0, 0x30, 0xFF), label);
+        const float dx = io.MousePos.x - sp.x;
+        const float dy = io.MousePos.y - sp.y;
+        if (dx * dx + dy * dy < nearestDist2) {
+            nearestDist2 = dx * dx + dy * dy;
+            nearest = i;
+        }
+    }
+    // 変形ギズモの上でも点が優先 (最初の点がエンティティの原点と重なりがちで、先に ImGuizmo の判定を見ると掴めない)
+    if (nearest >= 0 && ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsUsing() && !io.KeyAlt
+        && !terrainBrush_) {
+        closeRecord();
+        patrolPoint_ = nearest;
+        clickConsumed = true;
+    }
+    if (patrolPoint_ >= 0 && ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        closeRecord();
+        patrolPoint_ = -1;
+    }
+    if (patrolPoint_ < 0) {
+        if (gizmoPatrol_) {
+            closeRecord();
+        }
+        return false;
+    }
+
+    // 選んだ点を ImGuizmo の移動ギズモで動かす。ドラッグ開始で before、終了で after = 1 ドラッグ 1 Undo (DrawGizmo と同じ流儀)
+    if (gizmoActive_ && !gizmoPatrol_) {
+        closeRecord();
+    }
+    ImGuizmo::SetOrthographic(orthographic_);
+    ImGuizmo::SetDrawlist();
+    ImGuizmo::SetRect(rectX, rectY, rectW, rectH);
+    const XMFLOAT3 pointWorld = PatrolPointLocalToWorld(wm->value, route->points[patrolPoint_]);
+    XMFLOAT4X4 gizmoMatrix;
+    XMStoreFloat4x4(&gizmoMatrix, XMMatrixTranslation(pointWorld.x, pointWorld.y, pointWorld.z));
+    const bool snap = io.KeyCtrl;
+    const float snapValues[3] = { settings.snapTranslate, settings.snapTranslate, settings.snapTranslate };
+    const bool used = ImGuizmo::Manipulate(&lastView_.m[0][0], &lastProj_.m[0][0], ImGuizmo::TRANSLATE, ImGuizmo::WORLD,
+                                           &gizmoMatrix.m[0][0], nullptr, snap ? snapValues : nullptr);
+    const bool using_ = ImGuizmo::IsUsing();
+    if (!ImGui::IsMouseDown(0)) {
+        gizmoBlockedUntilRelease_ = false;
+    }
+    if (using_ && !gizmoActive_ && !gizmoBlockedUntilRelease_) {
+        gizmoActive_ = true;
+        gizmoFileId_ = selection.primary;
+        gizmoCollider_ = false;
+        gizmoPatrol_ = true;
+        undo.BeginRecord("Patrol Point Gizmo", selection);
+        undo.CaptureBefore(*ctx.scene, selection.primary);
+    }
+    if (used && gizmoActive_) {
+        XMFLOAT3 local = {};
+        if (PatrolPointWorldToLocal(wm->value, { gizmoMatrix._41, gizmoMatrix._42, gizmoMatrix._43 }, local)) {
+            route->points[patrolPoint_] = local;
+        }
+    }
+    if (!using_ && gizmoActive_) {
+        gizmoActive_ = false;
+        undo.CaptureAfter(*ctx.scene, gizmoFileId_);
+        undo.EndRecord(selection);
+        gizmoFileId_ = 0;
+    }
+    ImGui::GetWindowDrawList()->AddText(ImVec2(rectX + 12, rectY + rectH - 28), IM_COL32(0xFF, 0xFF, 0x60, 0xFF),
+                                        Tr(StrId::SceneView_EditingPatrolPoint));
+    return true;
+}
+
 void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoStack& undo,
                                 const EditorSettings& settings, float rectX, float rectY,
                                 float rectW, float rectH)
@@ -1237,7 +1419,7 @@ void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoSt
     World& world = ctx.scene->GetWorld();
     const bool colliderRequested = selection.colliderEditFileId != 0
         && selection.colliderEditFileId == selection.primary && selection.ids.size() == 1;
-    if (gizmoActive_ && (selection.primary != gizmoFileId_ || gizmoCollider_ != colliderRequested)) {
+    if (gizmoActive_ && (selection.primary != gizmoFileId_ || gizmoCollider_ != colliderRequested || gizmoPatrol_)) {
         undo.CaptureAfter(*ctx.scene, gizmoFileId_);
         undo.EndRecord(selection);
         gizmoActive_ = false;
@@ -1338,6 +1520,7 @@ void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoSt
         gizmoActive_ = true;
         gizmoFileId_ = selection.primary;
         gizmoCollider_ = colliderEditing;
+        gizmoPatrol_ = false;
         undo.BeginRecord(colliderEditing ? "Collider Gizmo" : "Gizmo", selection);
         undo.CaptureBefore(*ctx.scene, selection.primary);
     }
@@ -1925,8 +2108,11 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     const bool brushConsumed = HandleTerrainBrush(ctx, selection, undo, imgPos, avail);
 
     // ギズモ (ImGui 描画レイヤ — シーン RT/backbuffer には焼き込まれない)
+    bool patrolClicked = false;
     if (selection.primary != 0 && !terrainBrush_) {
-        DrawGizmo(ctx, selection, undo, settings, imgPos.x, imgPos.y, avail.x, avail.y);
+        if (!HandlePatrolRoute(ctx, selection, undo, settings, imgPos.x, imgPos.y, avail.x, avail.y, patrolClicked)) {
+            DrawGizmo(ctx, selection, undo, settings, imgPos.x, imgPos.y, avail.x, avail.y);
+        }
     } else if (gizmoActive_) {
         undo.CaptureAfter(*ctx.scene, gizmoFileId_);
         undo.EndRecord(selection);
@@ -1938,7 +2124,7 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     // ---- ビルボードアイコン (M40b): カメラ/ライト/エミッタ位置に FA アイコンを重ねる。
     //      GPU パス不要 (ImGui drawlist に world→screen 投影) + クリックで選択 ----
     const ImGuiIO& io = ImGui::GetIO();
-    bool iconClicked = brushConsumed; // ブラシが左ボタンを掴んでいる間は選択させない
+    bool iconClicked = brushConsumed || patrolClicked; // ブラシが左ボタンを掴んでいる間・巡回点をクリックした間は選択させない
     if (showGizmos_ && rt_.IsValid()) {
         World& world = ctx.scene->GetWorld();
         const XMMATRIX vp =

@@ -19,6 +19,7 @@
 #include "Editor/Widgets/EditorWidgets.h"
 #include "Editor/Tools/FractureBakeCommit.h" // M80i: 焼き成功結果の確定 (.mfrac 保存・登録・Undo)
 #include "Editor/Tools/NavBakeCommit.h"      // M82b: ベイク結果の確定 (.mnav 保存・参照の設定・Undo)
+#include "Editor/Tools/PatrolRouteEdit.h"    // M85g: 巡回ルートの点の追加・削除・入れ替え
 #include "Engine/Engine/Navigation/NavMeshAsset.h"
 #include "Engine/Core/Asset/AssetGuidResolver.h"
 #include "Engine/Core/Asset/AssetKeyResolver.h" // M80j: guid:// 登録名 → クック元パス (スキンの骨ウェイト取得)
@@ -1296,6 +1297,10 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
             ImGui::PopTextWrapPos();
         }
     }
+    // M85g: 巡回ルートの点の編集。マルチ選択では出さない (点の並びは 1 つのルートに対する編集)
+    if (std::strcmp(desc.name, "PatrolRoute") == 0 && !tg.multi) {
+        DrawPatrolRouteNotes(ctx, selection, undo, tg);
+    }
     // M83: 知覚している相手の一覧 (PerceptionSystem が毎 tick 書く値の読み取り表示) と設定の注意
     if (std::strcmp(desc.name, "AIPerception") == 0 && !tg.multi) {
         const auto* perc = world.GetComponent<AIPerceptionComponent>(tg.e);
@@ -1837,6 +1842,96 @@ const InspectorWindow::NavAssetSummary& InspectorWindow::GetNavAssetSummary(uint
 // M82c: NavMeshAgent 節の末尾。状態は NavSystem が毎 tick 書く値 (編集中は前回の Play の値のまま)。
 // 警告は「動かない / 食い込む」原因になる組み合わせだけ: CC 無し、Rigidbody で CC 無効、Surface 無し、
 // ベイク寸法より大きい (ベイクの寸法は Surface のコンポーネントが持つ = CC と共有できない、M82 spec 2. #6)
+void InspectorWindow::DrawPatrolRouteNotes(EngineContext& ctx, Selection& selection, UndoStack& undo, const InspectorTargets& tg)
+{
+    constexpr int32_t kMaxWaitTicks = 216000; // BT のパラメータの tick 数の上限 (kBtMaxTicksParam) と同じ
+    World& world = ctx.scene->GetWorld();
+    PatrolRouteComponent* route = world.GetComponent<PatrolRouteComponent>(tg.e);
+    if (route == nullptr) {
+        return;
+    }
+    ImGui::Separator();
+    const int count = (std::min)((std::max)(route->pointCount, 0), kMaxPatrolPoints);
+    ImGui::TextDisabled("%s: %d / %d", Tr(StrId::Insp_PatrolPoints), count, kMaxPatrolPoints);
+    if (count == 0) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_PatrolNoPoints));
+        ImGui::PopTextWrapPos();
+    }
+
+    int removeIndex = -1;
+    int moveIndex = -1;
+    int moveDelta = 0;
+    for (int i = 0; i < count; ++i) {
+        ImGui::PushID(i);
+        ImGui::Text("%d", i);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(130.0f);
+        ImGui::DragFloat3("##pos", &route->points[i].x, 0.05f);
+        HandleEditUndo(ctx, selection, undo, tg.fid, "Edit Patrol Point");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(40.0f);
+        ImGui::DragInt("##wait", &route->waitTicks[i], 1.0f, 0, kMaxWaitTicks);
+        HandleEditUndo(ctx, selection, undo, tg.fid, "Edit Patrol Wait");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", Tr(StrId::Insp_PatrolWait));
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(i == 0);
+        if (ImGui::SmallButton(ICON_FA_ARROW_UP "##up")) {
+            moveIndex = i;
+            moveDelta = -1;
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("%s", Tr(StrId::Insp_PatrolUp));
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(i == count - 1);
+        if (ImGui::SmallButton(ICON_FA_ARROW_DOWN "##down")) {
+            moveIndex = i;
+            moveDelta = 1;
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("%s", Tr(StrId::Insp_PatrolDown));
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton(ICON_FA_XMARK "##remove")) {
+            removeIndex = i;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", Tr(StrId::Insp_PatrolRemove));
+        }
+        ImGui::PopID();
+    }
+
+    const auto edit = [&](const char* label, auto&& mutate) {
+        undo.Record(label, *ctx.scene, selection, tg.fid, UndoStack::StructuralChanges::None, [&] {
+            if (auto* editable = world.GetComponent<PatrolRouteComponent>(tg.e)) {
+                mutate(*editable);
+            }
+        });
+    };
+    if (removeIndex >= 0) {
+        edit("Remove Patrol Point", [&](PatrolRouteComponent& r) { PatrolRouteRemovePoint(r, removeIndex); });
+    } else if (moveIndex >= 0) {
+        edit("Move Patrol Point", [&](PatrolRouteComponent& r) { PatrolRouteMovePoint(r, moveIndex, moveDelta); });
+    }
+    ImGui::BeginDisabled(count >= kMaxPatrolPoints);
+    if (ImGui::Button(Tr(StrId::Insp_PatrolAdd))) {
+        edit("Add Patrol Point", [](PatrolRouteComponent& r) { PatrolRouteAddPoint(r); });
+    }
+    ImGui::EndDisabled();
+    if (count >= kMaxPatrolPoints) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_PatrolFull));
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", Tr(StrId::Insp_PatrolHint));
+    ImGui::PopTextWrapPos();
+}
+
 void InspectorWindow::DrawNavMeshAgentNotes(EngineContext& ctx, Selection& selection, UndoStack& undo,
                                             const InspectorTargets& tg)
 {

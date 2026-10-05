@@ -1,0 +1,26 @@
+{
+  "engine": "MyEngine",
+  "behaviortree": 1,
+  "name": "patrol_only",
+  "blackboard": "c3a1f08d5b27e640",
+  "root": 0,
+  "nodes": [
+    {
+      "id": 0,
+      "type": "Patrol",
+      "params": {
+        "acceptanceRadius": 0.5,
+        "failOnStuck": false
+      },
+      "keys": {
+        "route": "route"
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        0.0,
+        0.0
+      ]
+    }
+  ]
+}

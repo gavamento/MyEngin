@@ -63,12 +63,18 @@ private:
     void DrawNavObstacleGizmos(World& world); // M82f: Obstacle の切り抜く形
     void DrawNavModifierGizmos(World& world); // M82g: Modifier の塗る箱
     void DrawNavLinkGizmos(World& world);     // M82h: Link の入口・出口・矢印
+    // M85g: 選択中の PatrolRoute の点の球・線・向きの矢印 (番号は ImGui 側 = HandlePatrolRoute)
+    void DrawPatrolRouteGizmos(EngineContext& ctx, World& world, const Selection& selection);
     // M83: 選択中の AIPerception の視野 (扇形: 見える距離と見失う距離)・聞こえる距離の円・目の位置
     void DrawPerceptionGizmos(EngineContext& ctx, World& world, const Selection& selection);
     void DrawSelectionOutline(EngineContext& ctx, World& world, const Selection& selection);
     // 分岐のゴースト (M72e、SceneViewGhost.cpp): 非ライブの分岐を同じ tick のワイヤ箱 + トレイルで重ねる
     void BuildGhostOverlay(EngineContext& ctx);
     void DrawToolbar(EditorSettings& settings);
+    // M85g: 選択中の PatrolRoute の点の番号・クリック選択・ドラッグ移動 (ドラッグ 1 回 = 1 Undo)。
+    // 点を選んでいる間は true を返す (呼び出し側はエンティティの変形ギズモを出さない)。点をクリックしたら clickConsumed が true
+    bool HandlePatrolRoute(EngineContext& ctx, Selection& selection, UndoStack& undo, const EditorSettings& settings,
+                           float rectX, float rectY, float rectW, float rectH, bool& clickConsumed);
     void DrawGizmo(EngineContext& ctx, Selection& selection, UndoStack& undo,
                    const EditorSettings& settings, float rectX, float rectY, float rectW,
                    float rectH);
@@ -124,6 +130,9 @@ private:
     bool gizmoActive_ = false; // Undo transient 記録中 (ドラッグ全体で 1 エントリ)
     uint64_t gizmoFileId_ = 0;
     bool gizmoCollider_ = false;
+    bool gizmoPatrol_ = false; // 記録中のドラッグが巡回点のもの
+    int patrolPoint_ = -1;     // ドラッグで動かすために選んでいる巡回点 (-1 = 無し)
+    uint64_t patrolFileId_ = 0; // patrolPoint_ を選んだときのエンティティ (選択が変わったら捨てる)
     bool gizmoBlockedUntilRelease_ = false;
     bool camSpeedDirty_ = false; // RMB+ホイールで速度変更中 (RMB リリース時に settings.Save)
     bool showGrid_ = true;

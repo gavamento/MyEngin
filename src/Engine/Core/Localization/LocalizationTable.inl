@@ -1278,6 +1278,15 @@ MYE_STR(Insp_BtAssetMissing,  "The tree or its blackboard is not registered (the
                               "木またはそのブラックボードが登録されていません (ファイルが無いか、読み込みに失敗しました)")
 MYE_STR(Insp_BtAgentBrain,    "AgentBrain on the same entity also writes CharacterController.moveInput. A behavior tree moves the entity only through NavMeshAgent; remove one of the two.",
                               "同じエンティティの AgentBrain も CharacterController.moveInput を書きます。ビヘイビアツリーは NavMeshAgent 経由でだけ動かすので、どちらかを外してください")
+MYE_STR(Insp_PatrolPoints,    "Points", "点")
+MYE_STR(Insp_PatrolNoPoints,  "(no points: a Patrol task using this route fails)", "(点がありません。このルートを使う Patrol タスクは Failure になります)")
+MYE_STR(Insp_PatrolAdd,       "Add point###patrol_add", "点を追加###patrol_add")
+MYE_STR(Insp_PatrolFull,      "(up to 32 points)", "(点は 32 個まで)")
+MYE_STR(Insp_PatrolWait,      "wait (ticks)", "待ち (tick)")
+MYE_STR(Insp_PatrolUp,        "Up", "上へ")
+MYE_STR(Insp_PatrolDown,      "Down", "下へ")
+MYE_STR(Insp_PatrolRemove,    "Remove", "削除")
+MYE_STR(Insp_PatrolHint,      "Select this entity in the Scene view, click a point, then drag it. The route moves with this entity.", "シーンビューでこのエンティティを選び、点をクリックしてドラッグすると動かせます。ルートはこのエンティティと一緒に動きます")
 MYE_STR(Log_WritePostShaderFail, "could not write post shader: %s",
                                   "ポストシェーダを書き出せません: %s")
 MYE_STR(Log_CreatedPostShader,   "created post shader: %s",
@@ -1945,6 +1954,7 @@ MYE_STR(Insp_EditCollider, "Edit collider", "コライダーを編集")
 MYE_STR(Insp_EditColliderUnsupported, "Select one sphere, box or capsule to edit.", "球・箱・カプセルを持つオブジェクトを1つ選択してください。")
 MYE_STR(SceneView_EditingCollider, "Editing collider", "コライダー編集中")
 MYE_STR(SceneView_SphereRotation, "Sphere rotation has no effect.", "球の回転操作は無効です。")
+MYE_STR(SceneView_EditingPatrolPoint, "Editing patrol point (Esc: back to the entity gizmo)", "巡回点を編集中 (Esc でエンティティのギズモへ戻る)")
 
 // ---- M83: AI の知覚 ----
 MYE_STR(Insp_PercPerceived,    "Perceived", "知覚している相手")
