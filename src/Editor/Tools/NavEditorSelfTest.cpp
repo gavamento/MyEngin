@@ -16,6 +16,7 @@
 #include <thread>
 #include <vector>
 
+#include "Editor/Project/NavAgentTypes.h"
 #include "Editor/Project/NavAreaNames.h"
 #include "Editor/Scene/ComponentDependencies.h"
 #include "Editor/Scene/Selection.h"
@@ -229,6 +230,49 @@ bool RunNavEditorSelfTest()
                   && text.find("physicsLayers") != std::string::npos && !names.DiffersFromDisk(),
               "NavAreaNames: the saved name is read back, the fixed name stays, other keys survive, no unsaved change");
         names.Load(L"", true); // 後続の画面が一時フォルダを見ないように戻す
+    }
+
+    // ---- 1a4. Agent Type の表 (project_settings.json の navAgentTypes、M84a) ----
+    // id 0 は常にあって消せない、id は消しても詰めない、他のキーを壊さず保存・読み戻せる、重複・負の id は捨てる、
+    // 型を写すと Surface の 4 つの寸法だけが変わる
+    {
+        const fs::path dir = root / L"agentTypes";
+        fs::create_directories(dir, ec);
+        {
+            std::ofstream out(dir / L"project_settings.json");
+            out << "{\"navAreas\": [], \"navAgentTypes\": [{\"id\": 3, \"name\": \"Big\", \"radius\": 1.0},"
+                   " {\"id\": 3, \"name\": \"Dup\"}, {\"id\": -1, \"name\": \"Neg\"}]}\n";
+        }
+        NavAgentTypes& types = NavAgentTypes::Get();
+        types.Load(dir.wstring(), true);
+        check(types.Count() == 2 && types.At(0).id == 0 && std::strcmp(types.At(0).name, "Humanoid") == 0
+                  && types.Find(3) != nullptr && std::strcmp(types.Find(3)->name, "Big") == 0
+                  && types.Find(3)->radius == 1.0f && types.Find(3)->height == 1.8f,
+              "NavAgentTypes: id 0 is added when missing, duplicate / negative ids are dropped, missing sizes take defaults");
+        check(!types.Remove(types.IndexOf(0)), "NavAgentTypes: id 0 cannot be removed");
+        const int added = types.Add();
+        check(added >= 0 && types.At(added).id == 4, "NavAgentTypes: a new type takes the largest id + 1");
+        types.EditAt(added).maxClimb = 0.5f;
+        check(types.Remove(types.IndexOf(3)) && types.Find(4) != nullptr,
+              "NavAgentTypes: removing a type keeps the other ids");
+        check(types.DiffersFromDisk(), "NavAgentTypes: edits are unsaved changes");
+        check(types.Save(dir.wstring()), "NavAgentTypes: Save succeeds");
+        types.Load(dir.wstring(), true);
+        std::ifstream in(dir / L"project_settings.json");
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        check(types.Count() == 2 && types.Find(4) != nullptr && types.Find(4)->maxClimb == 0.5f
+                  && types.Find(3) == nullptr && text.find("navAreas") != std::string::npos
+                  && !types.DiffersFromDisk(),
+              "NavAgentTypes: the saved table is read back, other keys survive, no unsaved change");
+
+        NavMeshSurfaceComponent surface;
+        surface.cellSize = 0.7f;
+        const NavAgentType& big = *types.Find(4);
+        check(!NavSurfaceMatchesAgentType(surface, big), "NavAgentTypes: a different size does not match");
+        NavApplyAgentType(surface, big);
+        check(NavSurfaceMatchesAgentType(surface, big) && surface.maxClimb == 0.5f && surface.cellSize == 0.7f,
+              "NavAgentTypes: applying a type copies only the four agent sizes");
+        types.Load(L"", true); // 後続の画面が一時フォルダを見ないように戻す
     }
 
     // ---- 1b. Add Component: NavMeshAgent を足すと CharacterController も同じ 1 Undo で付く (M82c) ----

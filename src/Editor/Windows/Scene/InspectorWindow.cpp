@@ -28,6 +28,7 @@
 #include "Editor/Project/PartTagNames.h"
 #include "Editor/Project/PhysicsLayerNames.h"
 #include "Editor/Project/NavAreaNames.h"
+#include "Editor/Project/NavAgentTypes.h"
 #include "Engine/Engine/Navigation/NavSystem.h" // NavCheckLinkPlacement (Link の置き方の検査)
 #include "Editor/SourceControl/ScmHint.h" // M66i: タグ名の保存直後に status を取り直させる
 #include "Engine/Engine/Scene/TagNames.h" // 汎用タグの名前表 (タグ欄のドロップダウン)
@@ -1062,6 +1063,14 @@ void InspectorWindow::DrawComponentFields(EngineContext& ctx, Selection& selecti
                             static_cast<const uint8_t*>(comp) + f.offset, sz);
             }
         }
+        // M84a: Surface の型を選んだら、その型の寸法を写す (伝播の後なので全対象に。CaptureAfter より前なので同じ Undo)
+        if (changed && std::strcmp(desc.name, "NavMeshSurface") == 0 && std::strcmp(f.name, "agentTypeId") == 0) {
+            if (const NavAgentType* type = NavAgentTypes::Get().Find(static_cast<const NavMeshSurfaceComponent*>(comp)->agentTypeId)) {
+                for (void* value : row.comps) {
+                    NavApplyAgentType(*static_cast<NavMeshSurfaceComponent*>(value), *type);
+                }
+            }
+        }
         // 参照ピッカー / 衝突マスク (M36a) はポップアップ内で自前 Undo を記録するので除外
         const bool ownUndo = f.type == FieldType::AssetRef
             || f.type == FieldType::EntityRef
@@ -1784,6 +1793,10 @@ const InspectorWindow::NavAssetSummary& InspectorWindow::GetNavAssetSummary(uint
                 }
             }
             summary.layers = static_cast<int>(data.layers.size());
+            summary.agentRadius = data.config.agentRadius;
+            summary.agentHeight = data.config.agentHeight;
+            summary.maxClimb = data.config.agentMaxClimb;
+            summary.maxSlopeDeg = data.config.agentMaxSlopeDeg;
             const std::wstring path = assetguid::ResolvePath(guid);
             std::error_code ec;
             std::vector<uint8_t> bytes;
@@ -1949,6 +1962,17 @@ void InspectorWindow::DrawNavMeshSurfaceNotes(EngineContext& ctx, Selection& sel
     }
 
     ImGui::Separator();
+    // Agent Type との食い違い (M84a)。Project Settings を変えても開いているシーンは自動では変えない
+    NavAgentTypes& agentTypes = NavAgentTypes::Get();
+    agentTypes.Load(ctx.assetsRoot);
+    const NavAgentType* agentType = agentTypes.Find(comp->agentTypeId);
+    ImGui::PushTextWrapPos(0.0f);
+    if (agentType == nullptr) {
+        ImGui::TextColored(themeColor::Warning, Tr(StrId::Insp_NavAgentTypeMissing), comp->agentTypeId);
+    } else if (!NavSurfaceMatchesAgentType(*comp, *agentType)) {
+        ImGui::TextColored(themeColor::Warning, Tr(StrId::Insp_NavAgentTypeDiffers), agentType->name);
+    }
+    ImGui::PopTextWrapPos();
     // 実際に使うセルの大きさと実効の傾斜上限 (M82d)
     {
         const NavCellSize cellSize = NavResolveCellSize(*comp);
@@ -2018,6 +2042,17 @@ void InspectorWindow::DrawNavMeshSurfaceNotes(EngineContext& ctx, Selection& sel
         if (summary.loadable) {
             ImGui::Text(Tr(StrId::Insp_NavStateReady), summary.tiles, summary.layers, summary.polygons,
                         summary.kilobytes);
+            // 焼いた寸法 (.mnav の設定) と今の寸法の食い違い。Bake で写す予定の型の寸法とも比べる
+            const float wantRadius = agentType != nullptr ? agentType->radius : comp->agentRadius;
+            const float wantHeight = agentType != nullptr ? agentType->height : comp->agentHeight;
+            const float wantClimb = agentType != nullptr ? agentType->maxClimb : comp->maxClimb;
+            const float wantSlope = agentType != nullptr ? agentType->maxSlopeDeg : comp->maxSlopeDeg;
+            if (summary.agentRadius != wantRadius || summary.agentHeight != wantHeight
+                || summary.maxClimb != wantClimb || summary.maxSlopeDeg != wantSlope) {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_NavNeedsRebake));
+                ImGui::PopTextWrapPos();
+            }
         } else {
             ImGui::TextColored(themeColor::Error, "%s", Tr(StrId::Insp_NavStateBroken));
         }
@@ -2043,6 +2078,15 @@ void InspectorWindow::DrawNavMeshSurfaceNotes(EngineContext& ctx, Selection& sel
     const char* disableReason = inPlayMode_ ? Tr(StrId::Insp_NavPlayModeDisabled) : nullptr;
     ImGui::BeginDisabled(disableReason != nullptr);
     if (ImGui::Button(Tr(StrId::Insp_NavBake))) {
+        // 型の寸法を写してから焼く (M84a)。写しは 1 つの Undo
+        if (agentType != nullptr && !NavSurfaceMatchesAgentType(*comp, *agentType) && !undo.IsRecording()) {
+            const NavAgentType type = *agentType;
+            undo.Record("Apply Agent Type", *ctx.scene, selection, tg.fid, UndoStack::StructuralChanges::None, [&] {
+                if (auto* editable = world.GetComponent<NavMeshSurfaceComponent>(tg.e)) {
+                    NavApplyAgentType(*editable, type);
+                }
+            });
+        }
         NavBakeInputs inputs;
         if (NavPrepareBakeInputs(world, tg.e, inputs)) {
             navBakeService_.Request(tg.fid, std::move(inputs));
@@ -2223,6 +2267,16 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
         && static_cast<const NavMeshSurfaceComponent*>(comp)->autoCellSize) {
         readOnly = true;
     }
+    // ベイク寸法は Agent Type の写し (M84a)。表にある型なら Project Settings でだけ変える
+    if (std::strcmp(componentName, "NavMeshSurface") == 0
+        && (std::strcmp(field.name, "agentRadius") == 0 || std::strcmp(field.name, "agentHeight") == 0
+            || std::strcmp(field.name, "maxClimb") == 0 || std::strcmp(field.name, "maxSlopeDeg") == 0)) {
+        NavAgentTypes& types = NavAgentTypes::Get();
+        types.Load(ctx.assetsRoot);
+        if (types.Find(static_cast<const NavMeshSurfaceComponent*>(comp)->agentTypeId) != nullptr) {
+            readOnly = true;
+        }
+    }
     if (readOnly) {
         ImGui::BeginDisabled();
     }
@@ -2274,6 +2328,33 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
             changed = ImGui::Combo(label, &v, labels, PhysicsLayerNames::kCount);
             if (changed) {
                 *static_cast<int*>(p) = v;
+            }
+        } else if (componentName
+                   && (std::strcmp(componentName, "NavMeshSurface") == 0
+                       || std::strcmp(componentName, "NavMeshAgent") == 0)
+                   && std::strcmp(field.name, "agentTypeId") == 0) {
+            // M84a: Agent Type は Project Settings の表から名前で選ぶ。表に無い id はそのまま保つ
+            // (別プロジェクトのシーンを開いたときに黙って 0 へ潰さない) ため、末尾に「未定義の id」の項目を足して選択中にする。
+            // Combo を使うのは、終わった後の項目状態が Combo 自身になり、呼び出し側の HandleEditUndoMulti がそのまま効くから
+            NavAgentTypes& types = NavAgentTypes::Get();
+            types.Load(ctx.assetsRoot);
+            int& v = *static_cast<int*>(p);
+            const char* labels[NavAgentTypes::kMaxTypes + 1];
+            for (int i = 0; i < types.Count(); ++i) {
+                labels[i] = types.At(i).name;
+            }
+            int count = types.Count();
+            int index = types.IndexOf(v);
+            char undefinedLabel[48];
+            if (index < 0) {
+                std::snprintf(undefinedLabel, sizeof(undefinedLabel), Tr(StrId::Insp_NavAgentTypeUndefined), v);
+                labels[count] = undefinedLabel;
+                index = count;
+                ++count;
+            }
+            if (ImGui::Combo(label, &index, labels, count) && index < types.Count() && types.At(index).id != v) {
+                v = types.At(index).id;
+                changed = true;
             }
         } else if (const EnumFieldLabels* ef = FindEnumLabels(componentName, field.name)) {
             int v = *static_cast<int*>(p);

@@ -442,6 +442,17 @@ MYE_STR(PrjSet_NavAreas,      "NavMesh Areas",       "ナビメッシュのエ�
 MYE_STR(PrjSet_SaveNavAreas,  "Save Areas",          "エリアを保存")
 MYE_STR(PrjSet_NavAreaHint,   "Display names only (the sim uses area numbers). 0 to 2 are fixed.",
                               "表示名のみ (sim はエリア番号を使う)。0〜2 は固定名")
+MYE_STR(PrjSet_NavAgentTypes, "NavMesh Agent Types", "ナビメッシュのエージェント種別") // M84a
+MYE_STR(PrjSet_NavAgentHint,  "A NavMeshSurface copies these sizes when you pick its type and when you bake. Id 0 cannot be removed.",
+                              "NavMeshSurface は種別を選んだときと Bake のときにこの寸法を写します。id 0 は消せません")
+MYE_STR(PrjSet_ColAgentName,  "Name###agentName",    "名前###agentName")
+MYE_STR(PrjSet_ColAgentRadius, "Radius###agentRadius", "半径###agentRadius")
+MYE_STR(PrjSet_ColAgentHeight, "Height###agentHeight", "高さ###agentHeight")
+MYE_STR(PrjSet_ColAgentClimb, "Max Climb###agentClimb", "登れる段差###agentClimb")
+MYE_STR(PrjSet_ColAgentSlope, "Max Slope###agentSlope", "登れる傾斜###agentSlope")
+MYE_STR(PrjSet_AddNavAgent,   "Add Agent Type",      "種別を追加")
+MYE_STR(PrjSet_RemoveNavAgent, "Remove###removeAgent", "削除###removeAgent")
+MYE_STR(PrjSet_SaveNavAgents, "Save Agent Types",    "エージェント種別を保存")
 MYE_STR(PrjSet_Shortcuts,     "Shortcuts",           "ショートカット")
 MYE_STR(PrjSet_ColAction,     "Action###action",     "操作###action")
 MYE_STR(PrjSet_ColKey,        "Key###key",           "キー###key")
@@ -1839,6 +1850,13 @@ MYE_STR(Insp_NavAgentRigidbody, "A Rigidbody disables the CharacterController: t
                                "Rigidbody があると CharacterController が無効になり、エージェントは動きません")
 MYE_STR(Insp_NavAgentBrain,    "AgentBrain also writes CharacterController.moveInput; the NavMeshAgent runs later and wins.",
                                "AgentBrain も CharacterController.moveInput を書きます。後に走る NavMeshAgent が勝ちます")
+MYE_STR(Insp_NavAgentTypeUndefined, "(undefined id %d)", "(未定義の id %d)") // M84a
+MYE_STR(Insp_NavAgentTypeMissing, "Agent type id %d is not defined in Project Settings.",
+                               "エージェント種別 id %d は Project Settings にありません")
+MYE_STR(Insp_NavAgentTypeDiffers, "The agent size differs from the type '%s' in Project Settings. Bake copies the type's size.",
+                               "エージェントの寸法が Project Settings の種別「%s」と違います。Bake で種別の寸法を写します")
+MYE_STR(Insp_NavNeedsRebake,   "The agent size changed after the last bake: bake again.",
+                               "前回のベイクの後にエージェントの寸法が変わりました。もう一度ベイクしてください")
 MYE_STR(Insp_NavAgentNoSurface, "No NavMeshSurface has this agent type id.",
                                "このエージェント種別の NavMeshSurface がありません")
 MYE_STR(Insp_NavAgentTooBig,   "The agent or its CharacterController is larger than the baked navigation mesh (radius %.2f / height %.2f): it may clip walls.",

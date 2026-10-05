@@ -11,6 +11,7 @@
 #include "Engine/Engine/Scene/TagNames.h" // 汎用タグの名前表
 #include "Editor/Project/PhysicsLayerNames.h"
 #include "Editor/Project/NavAreaNames.h"
+#include "Editor/Project/NavAgentTypes.h"
 #include "Editor/App/ShortcutHub.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Localization/Localization.h"
@@ -238,6 +239,75 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
         if (ImGui::Button(Tr(StrId::PrjSet_SaveNavAreas))) {
             if (an.Save(ctx.assetsRoot)) {
                 an.Load(ctx.assetsRoot, true);
+                scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json");
+            }
+        }
+    }
+
+    // ---- NavMesh の Agent Type (M84a、assets\project_settings.json の navAgentTypes) ----
+    // sim は Surface に写した寸法しか見ない。ここを変えても開いているシーンは変わらず、Surface の Inspector が食い違いを出す
+    if (ImGui::CollapsingHeader(Tr(StrId::PrjSet_NavAgentTypes))) {
+        NavAgentTypes& types = NavAgentTypes::Get();
+        types.Load(ctx.assetsRoot);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", Tr(StrId::PrjSet_NavAgentHint));
+        ImGui::PopTextWrapPos();
+        int removeIndex = -1;
+        constexpr ImGuiTableFlags kAgentTableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+            | ImGuiTableFlags_SizingStretchProp;
+        if (ImGui::BeginTable("##navAgentTypes", 7, kAgentTableFlags)) {
+            ImGui::TableSetupColumn("id", ImGuiTableColumnFlags_WidthFixed, 24.0f);
+            ImGui::TableSetupColumn(Tr(StrId::PrjSet_ColAgentName));
+            ImGui::TableSetupColumn(Tr(StrId::PrjSet_ColAgentRadius));
+            ImGui::TableSetupColumn(Tr(StrId::PrjSet_ColAgentHeight));
+            ImGui::TableSetupColumn(Tr(StrId::PrjSet_ColAgentClimb));
+            ImGui::TableSetupColumn(Tr(StrId::PrjSet_ColAgentSlope));
+            ImGui::TableSetupColumn("##remove", ImGuiTableColumnFlags_WidthFixed, 56.0f);
+            ImGui::TableHeadersRow();
+            for (int i = 0; i < types.Count(); ++i) {
+                NavAgentType& t = types.EditAt(i);
+                ImGui::PushID(t.id);
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("%d", t.id);
+                ImGui::TableNextColumn();
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                ImGui::InputText("##name", t.name, sizeof(t.name));
+                // 範囲は Components.cpp の NavMeshSurface の登録と揃える
+                ImGui::TableNextColumn();
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                ImGui::DragFloat("##radius", &t.radius, 0.01f, 0.05f, 5.0f, "%.2f");
+                ImGui::TableNextColumn();
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                ImGui::DragFloat("##height", &t.height, 0.01f, 0.2f, 10.0f, "%.2f");
+                ImGui::TableNextColumn();
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                ImGui::DragFloat("##climb", &t.maxClimb, 0.01f, 0.0f, 5.0f, "%.2f");
+                ImGui::TableNextColumn();
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                ImGui::DragFloat("##slope", &t.maxSlopeDeg, 0.5f, 0.0f, 89.0f, "%.1f");
+                ImGui::TableNextColumn();
+                ImGui::BeginDisabled(t.id == 0);
+                if (ImGui::SmallButton(Tr(StrId::PrjSet_RemoveNavAgent))) {
+                    removeIndex = i; // 表を回し終えてから消す
+                }
+                ImGui::EndDisabled();
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        if (removeIndex >= 0) {
+            types.Remove(removeIndex);
+        }
+        ImGui::BeginDisabled(types.Count() >= NavAgentTypes::kMaxTypes);
+        if (ImGui::Button(Tr(StrId::PrjSet_AddNavAgent))) {
+            types.Add();
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button(Tr(StrId::PrjSet_SaveNavAgents))) {
+            if (types.Save(ctx.assetsRoot)) {
+                types.Load(ctx.assetsRoot, true);
                 scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json");
             }
         }
@@ -596,6 +666,7 @@ bool InputActionsDifferFromDisk(const std::wstring& assetsRoot, const InputActio
 bool ProjectSettingsWindow::HasUnsavedChanges() const
 {
     if (PhysicsLayerNames::Get().DiffersFromDisk() || NavAreaNames::Get().DiffersFromDisk()
+        || NavAgentTypes::Get().DiffersFromDisk()
         || PartTagNames::Get().DiffersFromDisk()
         || TagNames::Get().DiffersFromDisk()) {
         return true;

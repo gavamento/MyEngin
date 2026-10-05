@@ -312,6 +312,11 @@ private:
         int layers = 0;
         int polygons = 0;
         int kilobytes = 0;
+        // 焼いたときの寸法 (.mnav の設定、M84a の「再ベイクが必要」の判定用)
+        float agentRadius = 0.0f;
+        float agentHeight = 0.0f;
+        float maxClimb = 0.0f;
+        float maxSlopeDeg = 0.0f;
     };
     std::unordered_map<uint64_t, NavAssetSummary> navSummaryCache_;
     const NavAssetSummary& GetNavAssetSummary(uint64_t guid);
