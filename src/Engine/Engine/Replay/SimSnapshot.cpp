@@ -532,7 +532,8 @@ void WriteBt(ByteWriter& w, const BehaviorTreeSystem* bt)
     if (bt != nullptr) {
         bt->SaveSnapshot(w);
     } else {
-        w.Count(0);
+        w.Count(0); // 木の表
+        w.Count(0); // イベントの配送待ち
     }
 }
 

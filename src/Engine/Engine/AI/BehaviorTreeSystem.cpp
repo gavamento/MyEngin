@@ -59,6 +59,7 @@ constexpr float kSearchSnapVertical = 4.0f;
 // BT 節の 1 要素あたりの最小バイト数 (ByteReader::Count が残りバイトで件数を検証するのに使う)
 constexpr size_t kBbValueBytes = sizeof(uint8_t) + sizeof(int32_t) + sizeof(float) + 3 * sizeof(float) + 2 * sizeof(uint32_t);
 constexpr size_t kNodeStateBytes = 2 * sizeof(uint8_t) + 2 * sizeof(int32_t);
+constexpr size_t kEventBytes = 2 * sizeof(uint64_t) + 4 * sizeof(uint32_t) + 4 * sizeof(float) + sizeof(int32_t) + sizeof(uint32_t);
 constexpr size_t kInstanceMinBytes = 2 * sizeof(uint32_t) + sizeof(uint64_t) + sizeof(uint8_t) + 3 * sizeof(uint64_t);
 
 bool KeyLess(EntityID a, EntityID b)
@@ -74,6 +75,7 @@ struct RunCtx {
     uint64_t tick;
     std::vector<int32_t>* abortTrace;
     const NavSystem* nav; // null = ナビメッシュを引けない (FindRandomPoint / SearchArea は Failure)
+    BehaviorTreeSystem* events = nullptr; // SendEvent の積み先。null = 積めない (SendEvent は Failure)
     int steps = 0;
     bool stepLimitHit = false;
     bool aborted = false; // 実行中のノードを 1 つでも Abort した
@@ -878,6 +880,38 @@ BtResult VisitSearchArea(RunCtx& c, int32_t index)
     return BtResult::Running;
 }
 
+// SendEvent: イベントを積んで Success (配るのは次の tick)。名前が空・宛先の Entity が読めない・ペイロードの Vector が
+// 読めない (キーを指定したのに未設定 / 型違い) は Failure。キューが溢れて捨てられても Success (警告は SendEvent が出す)
+BtResult VisitSendEvent(RunCtx& c, int32_t index)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    const std::string& name = node.params[btsendparam::kEventName].s;
+    if (name.empty() || c.events == nullptr) {
+        return BtResult::Failure;
+    }
+    EntityID target = kNullEntity;
+    switch (node.params[btsendparam::kTarget].i) {
+    case btsendtarget::kSelf: target = c.inst.entity; break;
+    case btsendtarget::kEntity: {
+        const BbValue* value = FindBbOfType(c, node.keys[btsendkey::kTarget], BbType::Entity);
+        if (value == nullptr || value->isSet == 0 || !c.world.IsAlive(value->entity)) {
+            return BtResult::Failure;
+        }
+        target = value->entity;
+        break;
+    }
+    default: break; // 全体宛て
+    }
+    float vec3[3] = {};
+    const std::string& vectorKey = node.keys[btsendkey::kVector];
+    if (!vectorKey.empty() && !ReadVectorKey(c, vectorKey, vec3)) {
+        return BtResult::Failure;
+    }
+    c.events->SendEvent(c.tick, c.inst.entity, target, BtEventNameHash(name), vec3, node.params[btsendparam::kFloatValue].f,
+                        node.params[btsendparam::kIntValue].i);
+    return BtResult::Success;
+}
+
 BtResult VisitBody(RunCtx& c, int32_t index)
 {
     switch (c.tree.nodes[static_cast<size_t>(index)].kind) {
@@ -893,6 +927,7 @@ BtResult VisitBody(RunCtx& c, int32_t index)
     case BtNodeKind::FindNearestTarget: return VisitFindNearestTarget(c, index);
     case BtNodeKind::SearchArea: return VisitSearchArea(c, index);
     case BtNodeKind::FindTarget: return VisitFindTarget(c, index);
+    case BtNodeKind::SendEvent: return VisitSendEvent(c, index);
     case BtNodeKind::Count: break;
     }
     return BtResult::Failure;
@@ -1170,6 +1205,42 @@ bool AbortTree(World& world, uint64_t tick, std::vector<int32_t>* abortTrace, Bt
     return ctx.aborted;
 }
 
+// 配られたイベントのうち inst 宛て (自分 or 全体) を、eventName が一致するキーへ書く。配送順に書くので同じキーなら最後が勝つ。
+// 型ごとの書き方は spec 4.1.6。送信元の無い (null) イベントの Entity キーは未設定にする
+void ApplyEventsToBlackboard(BtInstance& inst, const std::vector<BtEvent>& delivered)
+{
+    if (delivered.empty() || !inst.blackboardAsset) {
+        return;
+    }
+    const std::vector<BbKeyDef>& keys = inst.blackboardAsset->keys;
+    for (const BtEvent& event : delivered) {
+        if (!event.target.IsNull() && !(event.target == inst.entity)) {
+            continue;
+        }
+        for (size_t k = 0; k < keys.size() && k < inst.blackboard.size(); ++k) {
+            if (keys[k].eventName.empty() || BtEventNameHash(keys[k].eventName) != event.nameHash) {
+                continue;
+            }
+            BbValue value;
+            value.isSet = 1;
+            switch (keys[k].type) {
+            case BbType::Bool: value.i = 1; break;
+            case BbType::Int: value.i = event.intValue; break;
+            case BbType::Float: value.f = event.value; break;
+            case BbType::Vector: std::memcpy(value.v, event.vec3, sizeof(value.v)); break;
+            case BbType::Entity:
+                if (event.sender.IsNull()) {
+                    value.isSet = 0;
+                } else {
+                    value.entity = event.sender;
+                }
+                break;
+            }
+            inst.blackboard[k] = value;
+        }
+    }
+}
+
 void WriteEntity(ByteWriter& w, EntityID e)
 {
     w.U32(e.index);
@@ -1196,7 +1267,78 @@ const BtInstance* BehaviorTreeSystem::FindInstance(EntityID entity) const
 void BehaviorTreeSystem::Reset()
 {
     instances_.clear();
+    pending_.clear();
+    delivered_.clear();
+    eventOverflowWarned_ = false;
     warnedMissing_.clear();
+}
+
+bool BehaviorTreeSystem::SendEvent(uint64_t tick, EntityID sender, EntityID target, uint64_t nameHash, const float (&vec3)[3],
+                                   float value, int32_t intValue)
+{
+    if (pending_.size() >= static_cast<size_t>(kBtMaxEventsPerTick)) {
+        if (!eventOverflowWarned_) {
+            eventOverflowWarned_ = true;
+            MYE_LOG_WARN("[behaviortree] event queue is full (%d per tick); the rest are dropped", kBtMaxEventsPerTick);
+        }
+        return false;
+    }
+    BtEvent event;
+    event.nameHash = nameHash;
+    event.sender = sender;
+    event.target = target;
+    std::memcpy(event.vec3, vec3, sizeof(event.vec3));
+    event.value = value;
+    event.intValue = intValue;
+    event.seq = static_cast<uint32_t>(pending_.size());
+    event.sentTick = tick;
+    pending_.push_back(event);
+    return true;
+}
+
+int BehaviorTreeSystem::EventCount(EntityID self) const
+{
+    int count = 0;
+    for (const BtEvent& event : delivered_) {
+        if (event.target.IsNull() || event.target == self) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool BehaviorTreeSystem::GetEvent(EntityID self, int index, BtEvent& out) const
+{
+    int seen = 0;
+    for (const BtEvent& event : delivered_) {
+        if (event.target.IsNull() || event.target == self) {
+            if (seen++ == index) {
+                out = event;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// tick より前に積まれた分を配達済みへ移す (前の配達済みはここで捨てる)。配送順 = 送信元キー → seq。
+// 同じ tick に積んだ分は残して次の tick に回し、seq は 0 から振り直す
+void BehaviorTreeSystem::DeliverPending(uint64_t tick)
+{
+    delivered_.clear();
+    if (pending_.empty()) {
+        return;
+    }
+    const auto boundary = std::stable_partition(pending_.begin(), pending_.end(),
+                                                [tick](const BtEvent& e) { return e.sentTick < tick; });
+    delivered_.assign(pending_.begin(), boundary);
+    pending_.erase(pending_.begin(), boundary);
+    for (size_t i = 0; i < pending_.size(); ++i) {
+        pending_[i].seq = static_cast<uint32_t>(i);
+    }
+    std::sort(delivered_.begin(), delivered_.end(), [](const BtEvent& a, const BtEvent& b) {
+        return a.sender == b.sender ? a.seq < b.seq : KeyLess(a.sender, b.sender);
+    });
 }
 
 void BehaviorTreeSystem::Update(World& world, uint64_t tick, const NavSystem* nav)
@@ -1338,7 +1480,9 @@ bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, const NavSystem*
         inst.rootStatus = btroot::kRunning;
     }
 
-    RunCtx ctx{ world, inst, *tree, tick, abortTrace_, nav };
+    // 配られたイベントの BB 反映は Abort の監視より前 (spec 4.1.1 の (1))
+    ApplyEventsToBlackboard(inst, delivered_);
+    RunCtx ctx{ world, inst, *tree, tick, abortTrace_, nav, this };
     MonitorNode(ctx, tree->rootIndex);
     const BtResult result = Visit(ctx, tree->rootIndex);
     if (result != BtResult::Running) {
@@ -1360,6 +1504,29 @@ bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, const NavSystem*
 }
 
 void BehaviorTreeSystem::SaveSnapshot(ByteWriter& w) const
+{
+    SaveInstances(w);
+    SavePending(w);
+}
+
+void BehaviorTreeSystem::SavePending(ByteWriter& w) const
+{
+    w.Count(pending_.size());
+    for (const BtEvent& event : pending_) {
+        w.U64(event.nameHash);
+        WriteEntity(w, event.sender);
+        WriteEntity(w, event.target);
+        w.F32(event.vec3[0]);
+        w.F32(event.vec3[1]);
+        w.F32(event.vec3[2]);
+        w.F32(event.value);
+        w.I32(event.intValue);
+        w.U32(event.seq);
+        w.U64(event.sentTick);
+    }
+}
+
+void BehaviorTreeSystem::SaveInstances(ByteWriter& w) const
 {
     w.Count(instances_.size());
     for (const BtInstance& inst : instances_) {
@@ -1444,6 +1611,35 @@ bool BehaviorTreeSystem::ReadSnapshot(ByteReader& r, BtSnapshot& out)
         }
         out.instances.push_back(std::move(inst));
     }
+    if (!r.Ok()) {
+        return false;
+    }
+
+    // 配送待ち。seq は 0 から連番 (積むときも配るときもそう振る)
+    out.pending.clear();
+    const size_t eventCount = r.Count(kEventBytes);
+    if (eventCount > static_cast<size_t>(kBtMaxEventsPerTick)) {
+        r.Fail();
+        return false;
+    }
+    out.pending.reserve(eventCount);
+    for (size_t i = 0; i < eventCount && r.Ok(); ++i) {
+        BtEvent event;
+        event.nameHash = r.U64();
+        event.sender = ReadEntity(r);
+        event.target = ReadEntity(r);
+        event.vec3[0] = r.F32();
+        event.vec3[1] = r.F32();
+        event.vec3[2] = r.F32();
+        event.value = r.F32();
+        event.intValue = r.I32();
+        event.seq = r.U32();
+        event.sentTick = r.U64();
+        if (event.seq != static_cast<uint32_t>(i)) {
+            r.Fail();
+        }
+        out.pending.push_back(event);
+    }
     return r.Ok();
 }
 
@@ -1482,13 +1678,18 @@ void BehaviorTreeSystem::ApplySnapshot(World& world, BtSnapshot&& snapshot)
         restored.push_back(std::move(inst));
     }
     instances_ = std::move(restored);
+    pending_ = std::move(snapshot.pending);
+    delivered_.clear(); // 配った分はスナップショットに入らない (撮るのは tick 末)
 }
 
 uint64_t BehaviorTreeSystem::StateHash() const
 {
     std::vector<std::byte> bytes;
     ByteWriter w(bytes);
-    SaveSnapshot(w);
+    SaveInstances(w);
+    if (!pending_.empty()) {
+        SavePending(w); // 配送待ちが空なら何も足さない (イベントを使わないシーンのハッシュは変わらない)
+    }
     return HashBytes(bytes.data(), bytes.size());
 }
 

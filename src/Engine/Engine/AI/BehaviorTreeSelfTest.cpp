@@ -243,6 +243,8 @@ struct Sim {
     Scene scene;
     BehaviorTreeSystem bt;
     uint64_t tick = 1;
+    bool paused = false;                  // true: stepSim が偽の tick (配達も Update もしない)
+    std::function<void()> beforeBt;       // 配達の後・BT の Update の前に呼ぶ (スクリプト層の代わり)
 
     World& GetWorld() { return scene.GetWorld(); }
 
@@ -255,7 +257,13 @@ struct Sim {
 
     void Step()
     {
-        bt.Update(GetWorld(), tick, nullptr);
+        if (!paused) {
+            bt.DeliverPending(tick); // TickRunner と同じ: tick の頭 (スクリプト層より前)
+            if (beforeBt) {
+                beforeBt();
+            }
+            bt.Update(GetWorld(), tick, nullptr);
+        }
         GetWorld().ApplyStructuralChanges();
         ++tick;
     }
@@ -420,6 +428,29 @@ json FindTargetNode(int id, double radius, bool enemies, bool neutrals, bool fri
                     json{ { "target", target } });
 }
 
+// ---- イベント (M85e) の部品 ----
+
+json WithEventName(json key, const char* eventName)
+{
+    key["eventName"] = eventName;
+    return key;
+}
+
+json SendEv(int id, const char* eventName, const char* target, int intValue = 0, double floatValue = 0.0,
+            const char* targetKey = nullptr, const char* vectorKey = nullptr)
+{
+    json keys = json::object();
+    if (targetKey != nullptr) {
+        keys["target"] = targetKey;
+    }
+    if (vectorKey != nullptr) {
+        keys["vector"] = vectorKey;
+    }
+    return WithKeys(Node(id, "SendEvent", {},
+                         json{ { "eventName", eventName }, { "target", target }, { "floatValue", floatValue }, { "intValue", intValue } }),
+                    std::move(keys));
+}
+
 float YawDegOf(const DirectX::XMFLOAT4& q)
 {
     return 2.0f * std::atan2(q.y, q.w) * (180.0f / 3.14159265f);
@@ -452,6 +483,7 @@ struct NavSim {
         if (perceive) {
             perception.Update(GetWorld(), tick, kDt, contacts); // フェーズ 3.4a (BT の前)。AIPerception が無ければ何もしない
         }
+        bt->DeliverPending(tick);
         bt->Update(GetWorld(), tick, &nav);
         nav.Update(GetWorld(), kDt);
         physics.Update(GetWorld(), kDt);
@@ -965,6 +997,7 @@ bool RunBehaviorTreeSelfTest()
         };
         uint64_t tick = 1;
         const auto step = [&](BehaviorTreeSystem& bt) {
+            bt.DeliverPending(tick);
             bt.Update(scene.GetWorld(), tick, nullptr);
             drive(bt, tick);
             scene.GetWorld().ApplyStructuralChanges();
@@ -1040,6 +1073,7 @@ bool RunBehaviorTreeSelfTest()
                 w.Count(extraCount); // 種類別の追加状態 (生バイト、ここでは中身を持たない)
                 w.Raw(std::vector<uint8_t>(extraCount, 0).data(), extraCount);
             }
+            w.Count(0); // 配送待ち 0 件
             return out;
         };
         const auto accepts = [&](const std::vector<std::byte>& data) {
@@ -1474,6 +1508,7 @@ bool RunBehaviorTreeSelfTest()
             refs.tickIndex = &tickRef;
             uint64_t tick = 1;
             const auto step = [&](BehaviorTreeSystem& bt) {
+                bt.DeliverPending(tick);
                 bt.Update(scene.GetWorld(), tick, nullptr);
                 for (size_t i = 0; i < agents.size(); ++i) {
                     BtInstance* inst = const_cast<BtInstance*>(bt.FindInstance(agents[i]));
@@ -2664,6 +2699,378 @@ bool RunBehaviorTreeSelfTest()
                               });
                 }
             }
+        }
+    }
+
+    // ---- 10. 汎用イベントキューと SendEvent (M85e) ----
+    {
+        // キー: 0 Alert(Bool, alert) / 1 Who(Entity, alert) / 2 Count(Int, count) / 3 Pos(Vector, ping) / 4 Power(Float, ping)
+        //       5 Quiet(Int, eventName なし) / 6 Peer(Entity) / 7 Dir(Vector)
+        enum { kAlert = 0, kWho = 1, kCount = 2, kPos = 3, kPower = 4, kQuiet = 5, kPeer = 6, kDir = 7 };
+        const json boardJson = Board({ WithEventName(BbKey("Alert", "Bool"), "alert"), WithEventName(BbKey("Who", "Entity"), "alert"),
+                                       WithEventName(BbKey("Count", "Int"), "count"), WithEventName(BbKey("Pos", "Vector"), "ping"),
+                                       WithEventName(BbKey("Power", "Float"), "ping"), BbKey("Quiet", "Int"), BbKey("Peer", "Entity"),
+                                       BbKey("Dir", "Vector") });
+        const uint64_t board = RegisterBoard(lib, L"events", boardJson);
+        const uint64_t idle = RegisterTree(lib, L"ev_idle", Tree(0, { Wait(0, 1000) }, board));
+        static constexpr float kNoVector[3] = {};
+        const auto bbOf = [](Sim& sim, EntityID e, int key) -> const BbValue& { return sim.bt.FindInstance(e)->blackboard[static_cast<size_t>(key)]; };
+        const auto toEntity = [&](Sim& sim, EntityID sender, EntityID target, const char* name, int intValue, float value = 0.0f,
+                                  const float (&vec)[3] = kNoVector) {
+            return sim.bt.SendEvent(sim.tick, sender, target, BtEventNameHash(name), vec, value, intValue);
+        };
+
+        // JSON: eventName の往復と防波堤
+        {
+            BlackboardAsset a;
+            BlackboardAsset b;
+            ck.Check(BlackboardLibrary::FromJson(boardJson, a) && a.keys[kAlert].eventName == "alert" && a.keys[kQuiet].eventName.empty()
+                         && BlackboardLibrary::FromJson(BlackboardLibrary::ToJson(a), b) && BlackboardLibrary::ToJson(a) == BlackboardLibrary::ToJson(b),
+                     "ブラックボードの eventName が往復で変わらない");
+            const json sendTree = Tree(0, { SendEv(0, "ping", "Entity", 3, 1.5, "Peer", "Dir") }, board);
+            BehaviorTreeAsset ta;
+            BehaviorTreeAsset tb;
+            ck.Check(BehaviorTreeLibrary::FromJson(sendTree, ta) && BehaviorTreeLibrary::FromJson(BehaviorTreeLibrary::ToJson(ta), tb)
+                         && BehaviorTreeLibrary::ToJson(ta) == BehaviorTreeLibrary::ToJson(tb)
+                         && ta.nodes[0].params[btsendparam::kEventName].s == "ping"
+                         && ta.nodes[0].params[btsendparam::kTarget].i == btsendtarget::kEntity && ta.nodes[0].keys[btsendkey::kVector] == "Dir",
+                     "SendEvent の JSON が往復で変わらない (イベント名は文字列パラメータ)");
+            ck.Check(!Loads(Tree(0, { SendEv(0, std::string(kBbMaxNameBytes + 1, 'x').c_str(), "All") })), "長すぎるイベント名は読み込み失敗");
+            ck.Check(!Loads(Tree(0, { SendEv(0, "ping", "Everyone") })), "未知の宛先は読み込み失敗");
+        }
+
+        // tick N に積んだ分は tick N+1 に届く (BT フェーズより前 = スクリプト層で積んでも、後で積んでも)
+        {
+            Sim sim;
+            const EntityID e1 = sim.AddTreeEntity(idle, "E1");
+            const EntityID e2 = sim.AddTreeEntity(idle, "E2");
+            const EntityID s = sim.AddTreeEntity(idle, "S");
+            sim.Step();
+            const float v[3] = { 1.0f, 2.0f, 3.0f };
+            toEntity(sim, s, e1, "ping", 7, 2.5f, v); // tick 2 の BT フェーズより前
+            sim.Step();                               // tick 2
+            const bool notYet = bbOf(sim, e1, kPos).isSet == 0 && sim.bt.EventCount(e1) == 0 && sim.bt.PendingEventCount() == 1;
+            sim.Step(); // tick 3
+            const BbValue& pos = bbOf(sim, e1, kPos);
+            BtEvent got;
+            const bool read = sim.bt.GetEvent(e1, 0, got);
+            ck.Check(notYet && pos.isSet == 1 && pos.v[0] == 1.0f && pos.v[1] == 2.0f && pos.v[2] == 3.0f && bbOf(sim, e1, kPower).f == 2.5f
+                         && bbOf(sim, e2, kPos).isSet == 0 && sim.bt.EventCount(e1) == 1 && sim.bt.EventCount(e2) == 0 && read
+                         && got.sender == s && got.intValue == 7 && sim.bt.PendingEventCount() == 0,
+                     "tick N に (BT フェーズより前で) 積んだ分は tick N+1 に宛先だけへ届き、Vector / Float が BB へ入る");
+            sim.Step(); // tick 4
+            ck.Check(sim.bt.EventCount(e1) == 0 && bbOf(sim, e1, kPos).isSet == 1, "配った分は次の tick で捨てられ、BB の値は残る");
+            const float none[3] = {};
+            sim.bt.SendEvent(sim.LastTick(), s, e1, BtEventNameHash("count"), none, 0.0f, 11); // tick 4 の BT フェーズの後
+            sim.Step();                                                                         // tick 5
+            ck.Check(bbOf(sim, e1, kCount).isSet == 1 && bbOf(sim, e1, kCount).i == 11, "BT フェーズの後で積んだ分も次の tick に届く");
+        }
+
+        // 配達は tick の頭: BT より前の層 (スクリプト) から読め、同じ tick に BB へも入る。一時停止中は配らない
+        {
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(idle, "E");
+            const EntityID s = sim.AddTreeEntity(idle, "S");
+            sim.Step();
+            int seenBeforeBt = -1;
+            BtEvent seen;
+            bool readOk = false;
+            bool bbSetBeforeBt = true;
+            sim.beforeBt = [&] {
+                seenBeforeBt = sim.bt.EventCount(e);
+                readOk = sim.bt.GetEvent(e, 0, seen);
+                bbSetBeforeBt = bbOf(sim, e, kCount).isSet != 0;
+            };
+            toEntity(sim, s, e, "count", 5); // tick 2
+            sim.Step();                      // tick 2: まだ読めない
+            const bool notYet = seenBeforeBt == 0 && !readOk;
+            sim.Step();                      // tick 3: BT より前で読める。BB はまだ (反映は BT フェーズ)
+            const bool readEarly = seenBeforeBt == 1 && readOk && seen.sender == s && seen.intValue == 5 && !bbSetBeforeBt;
+            ck.Check(notYet && readEarly && bbOf(sim, e, kCount).i == 5,
+                     "tick N に送った分を tick N+1 の BT より前の層から読め、同じ tick の BT フェーズで BB へも反映される");
+            sim.beforeBt = nullptr;
+
+            toEntity(sim, s, e, "count", 8); // tick 4 に積む
+            sim.paused = true;
+            sim.Step();                      // tick 4: 一時停止
+            sim.Step();                      // tick 5: 一時停止 (配達しない)
+            const bool heldWhilePaused = sim.bt.PendingEventCount() == 1 && bbOf(sim, e, kCount).i == 5;
+            sim.paused = false;
+            sim.Step();                      // tick 6: 再開、配送待ちが配られる
+            ck.Check(heldWhilePaused && bbOf(sim, e, kCount).i == 8 && sim.bt.PendingEventCount() == 0,
+                     "一時停止中の tick は配達せず、配送待ちはそのまま残って再開した tick に配られる");
+        }
+
+        // 型ごとの書き方: Bool = true / Entity = sender、同じイベント名のキーは全部書く、eventName の無いキーは書かない
+        {
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(idle, "E");
+            const EntityID s = sim.AddTreeEntity(idle, "S");
+            sim.Step();
+            toEntity(sim, s, e, "alert", 0);
+            sim.Step();
+            sim.Step();
+            ck.Check(bbOf(sim, e, kAlert).isSet == 1 && bbOf(sim, e, kAlert).i == 1 && bbOf(sim, e, kWho).isSet == 1 && bbOf(sim, e, kWho).entity == s
+                         && bbOf(sim, e, kQuiet).isSet == 0,
+                     "Bool = true、Entity = 送信元。同じ eventName のキーは両方書き、eventName の無いキーは触らない");
+        }
+
+        // 配送順 = 送信元キー → 送信順。同じキーへは最後が勝つ
+        {
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(idle, "E");
+            const EntityID a = sim.AddTreeEntity(idle, "A");
+            const EntityID b = sim.AddTreeEntity(idle, "B");
+            sim.Step();
+            ck.Check(a.index < b.index, "(前提) A のキーは B より小さい");
+            toEntity(sim, b, e, "count", 20); // 送信順は B が先
+            toEntity(sim, a, e, "count", 10);
+            toEntity(sim, a, e, "count", 11);
+            sim.Step();
+            sim.Step();
+            BtEvent e0;
+            BtEvent e1;
+            BtEvent e2;
+            const bool read = sim.bt.GetEvent(e, 0, e0) && sim.bt.GetEvent(e, 1, e1) && sim.bt.GetEvent(e, 2, e2) && !sim.bt.GetEvent(e, 3, e0);
+            ck.Check(read && e0.sender == a && e0.intValue == 10 && e1.sender == a && e1.intValue == 11 && e2.sender == b && e2.intValue == 20,
+                     "配送順は送信元の entity キー、同じ送信元では送信順 (B が先に送っても A の 2 件が先)");
+            ck.Check(bbOf(sim, e, kCount).i == 20, "同じ tick の複数は配送順の最後が勝つ (送信順の最後ではなく B の 20)");
+        }
+
+        // 宛先: 自分宛ては宛先だけ、全体宛ては全員 (送信元自身を含む)
+        {
+            Sim sim;
+            const EntityID e1 = sim.AddTreeEntity(idle, "E1");
+            const EntityID e2 = sim.AddTreeEntity(idle, "E2");
+            sim.Step();
+            toEntity(sim, e1, kNullEntity, "count", 2); // 全体宛て
+            toEntity(sim, e2, e1, "count", 5);          // E1 だけ
+            sim.Step();
+            sim.Step();
+            ck.Check(sim.bt.EventCount(e1) == 2 && sim.bt.EventCount(e2) == 1 && bbOf(sim, e2, kCount).i == 2 && bbOf(sim, e1, kCount).i == 5,
+                     "全体宛ては宛先を問わず届き、個別宛ては宛先だけに届く (E1: 全体 + 個別 = 2 件、E2: 全体 1 件)");
+        }
+
+        // 上限: 256 件で溢れた分を捨て、警告は最初の 1 回だけ
+        {
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(idle, "E");
+            sim.Step();
+            const uint64_t logFrom = logging::TotalWritten();
+            int accepted = 0;
+            for (int i = 0; i < kBtMaxEventsPerTick + 44; ++i) {
+                accepted += toEntity(sim, e, kNullEntity, "count", i) ? 1 : 0;
+            }
+            sim.Step();
+            sim.Step();
+            const int delivered = sim.bt.EventCount(e);
+            for (int i = 0; i < kBtMaxEventsPerTick + 1; ++i) {
+                toEntity(sim, e, kNullEntity, "count", i);
+            }
+            ck.Check(accepted == kBtMaxEventsPerTick && delivered == kBtMaxEventsPerTick && bbOf(sim, e, kCount).i == kBtMaxEventsPerTick - 1
+                         && sim.bt.PendingEventCount() == kBtMaxEventsPerTick && CountWarnings(logFrom, "event queue") == 1,
+                     "1 tick の上限は 256 件で、溢れた分は捨てて警告は 1 回だけ (最初の 256 件が残る)");
+        }
+
+        // BB 反映でも LowerPriority の Abort が起きる (反映は監視より前なので、届いた tick に同じ tick で切り替わる)
+        {
+            Sim sim;
+            std::vector<int32_t> trace;
+            sim.bt.SetAbortTrace(&trace);
+            const uint64_t tree = RegisterTree(
+                lib, L"ev_abort",
+                Tree(0, { Node(0, "Selector", { 1, 2 }), Decorated(Wait(1, 100), { BbCond("Alert", "IsSet", "LowerPriority") }), Wait(2, 100) }, board));
+            const EntityID e = sim.AddTreeEntity(tree, "E");
+            const EntityID s = sim.AddTreeEntity(idle, "S");
+            sim.Step();
+            sim.Step();
+            const int32_t before = sim.Comp(e)->activeNodeId;
+            toEntity(sim, s, e, "alert", 0);
+            sim.Step(); // 積んだ tick: まだ右
+            const int32_t sameTick = sim.Comp(e)->activeNodeId;
+            const bool noAbortYet = trace.empty();
+            sim.Step(); // 次の tick: 届いて BB が書かれ、同じ tick の監視で右を Abort
+            ck.Check(before == 2 && sameTick == 2 && noAbortYet && sim.Comp(e)->activeNodeId == 1 && trace == std::vector<int32_t>{ 2 },
+                     "イベントが届いて BB が書かれると、その tick の監視で LowerPriority の Abort が起きる (積んだ tick ではまだ)");
+        }
+
+        // SendEvent ノード
+        {
+            const uint64_t allTree = RegisterTree(lib, L"ev_send_all",
+                                                  Tree(0, { Node(0, "Sequence", { 1, 2 }), SendEv(1, "count", "All", 42), Wait(2, 1000) }, board));
+            Sim sim;
+            const EntityID s = sim.AddTreeEntity(allTree, "S");
+            const EntityID r = sim.AddTreeEntity(idle, "R");
+            sim.Step();
+            const bool sentOnly = sim.bt.PendingEventCount() == 1 && bbOf(sim, r, kCount).isSet == 0;
+            sim.Step();
+            ck.Check(sentOnly && bbOf(sim, r, kCount).i == 42 && bbOf(sim, s, kCount).i == 42 && sim.bt.PendingEventCount() == 0
+                         && sim.Comp(s)->activeNodeId == 2,
+                     "SendEvent (全体宛て): 積んで即 Success、次の tick に全員の BB へ届く");
+        }
+        {
+            const uint64_t selfTree = RegisterTree(lib, L"ev_send_self",
+                                                   Tree(0, { Node(0, "Sequence", { 1, 2 }), SendEv(1, "count", "Self", 9), Wait(2, 1000) }, board));
+            Sim sim;
+            const EntityID s = sim.AddTreeEntity(selfTree, "S");
+            const EntityID r = sim.AddTreeEntity(idle, "R");
+            sim.Step();
+            sim.Step();
+            ck.Check(bbOf(sim, s, kCount).i == 9 && bbOf(sim, r, kCount).isSet == 0, "SendEvent (自分宛て): 自分だけに届く");
+        }
+        {
+            const uint64_t entityTree = RegisterTree(
+                lib, L"ev_send_entity",
+                Tree(0, { Node(0, "Sequence", { 1, 2, 3 }), Wait(1, 3), SendEv(2, "ping", "Entity", 0, 2.5, "Peer", "Dir"), Wait(3, 1000) }, board));
+            Sim sim;
+            const EntityID s = sim.AddTreeEntity(entityTree, "S");
+            const EntityID r = sim.AddTreeEntity(idle, "R");
+            const EntityID other = sim.AddTreeEntity(idle, "Other");
+            sim.Step();
+            sim.Mutable(s)->blackboard[kPeer] = BbValue{ 1, 0, 0.0f, { 0.0f, 0.0f, 0.0f }, r };
+            sim.Mutable(s)->blackboard[kDir] = BbValue{ 1, 0, 0.0f, { 4.0f, 5.0f, 6.0f }, kNullEntity };
+            for (int i = 0; i < 12; ++i) {
+                sim.Step();
+            }
+            const BbValue& pos = bbOf(sim, r, kPos);
+            ck.Check(pos.isSet == 1 && pos.v[0] == 4.0f && pos.v[1] == 5.0f && pos.v[2] == 6.0f && bbOf(sim, r, kPower).f == 2.5f
+                         && bbOf(sim, other, kPos).isSet == 0 && bbOf(sim, s, kPos).isSet == 0,
+                     "SendEvent (Entity 宛て): Entity キーの相手だけに、Vector キーの値と Float 定数が届く");
+        }
+        {
+            // Failure: 名前が空 / Entity キーが未設定 / Vector キーを指定して未設定
+            const auto failsWith = [&](const json& send, const wchar_t* name) {
+                Sim sim;
+                const EntityID e = sim.AddTreeEntity(RegisterTree(lib, name, Tree(0, { send }, board)), "E");
+                sim.Step();
+                return sim.Status(e) == kFailed && sim.bt.PendingEventCount() == 0;
+            };
+            ck.Check(failsWith(SendEv(0, "", "All"), L"ev_fail_name") && failsWith(SendEv(0, "ping", "Entity", 0, 0.0, "Peer"), L"ev_fail_peer")
+                         && failsWith(SendEv(0, "ping", "All", 0, 0.0, nullptr, "Dir"), L"ev_fail_dir"),
+                     "SendEvent: 名前が空・宛先の Entity が未設定・指定した Vector キーが未設定は Failure で何も積まない");
+        }
+
+        // 配送待ちが空ならハッシュは変わらない / 配送待ちがあるとき表が空でもハッシュに入る
+        {
+            Sim quiet;
+            Sim noisy;
+            quiet.AddTreeEntity(idle, "E");
+            const EntityID e = noisy.AddTreeEntity(idle, "E");
+            quiet.Step();
+            noisy.Step();
+            const uint64_t baseline = quiet.bt.StateHash();
+            ck.Check(baseline == noisy.bt.StateHash(), "(前提) 同じ木・同じ tick の 2 つの表は同じハッシュ");
+            noisy.bt.SendEvent(noisy.LastTick(), e, kNullEntity, BtEventNameHash("unmapped"), kNoVector, 0.0f, 0);
+            const bool pendingChanges = noisy.bt.StateHash() != baseline;
+            quiet.Step();
+            noisy.Step();
+            ck.Check(pendingChanges && quiet.bt.StateHash() == noisy.bt.StateHash(),
+                     "配送待ちはハッシュに入り、配り終えて空に戻ればイベントの無い表とハッシュが一致する");
+            Sim empty;
+            ck.Check(!empty.bt.HasHashableState(), "(前提) 木もイベントも無ければ畳むものが無い");
+            empty.bt.SendEvent(empty.tick, kNullEntity, kNullEntity, BtEventNameHash("x"), kNoVector, 0.0f, 0);
+            const bool whilePending = empty.bt.HasHashableState();
+            empty.Step();
+            empty.Step();
+            ck.Check(whilePending && !empty.bt.HasHashableState(), "木が無くても配送待ちの間は畳み、配り終えれば何も畳まない");
+        }
+
+        // 配送待ちの途中で保存 → 復元 → 連続実行と毎 tick のハッシュが一致 (配った分は保存しない)
+        {
+            const uint64_t reactive = RegisterTree(
+                lib, L"ev_reactive",
+                Tree(0, { Node(0, "Selector", { 1, 2 }), Decorated(Wait(1, 400), { BbCond("Alert", "IsSet", "LowerPriority") }), Wait(2, 400) }, board));
+            const uint64_t talker = RegisterTree(
+                lib, L"ev_talker", Tree(0, { Node(0, "Sequence", { 1, 2, 3 }), Wait(1, 8), SendEv(2, "alert", "All", 3), Wait(3, 1000) }, board));
+            Scene scene;
+            BehaviorTreeSystem first;
+            GameObject receiverObject = scene.CreateGameObjectTracked("Receiver");
+            receiverObject.AddComponent<BehaviorTreeComponent>()->tree = AssetID{ reactive };
+            GameObject talkerObject = scene.CreateGameObjectTracked("Talker");
+            talkerObject.AddComponent<BehaviorTreeComponent>()->tree = AssetID{ talker };
+            const EntityID receiver = receiverObject.Id();
+            scene.GetWorld().ApplyStructuralChanges();
+
+            SimRefs refs;
+            refs.scene = &scene;
+            refs.behaviorTree = &first;
+            uint64_t tickRef = 0;
+            refs.tickIndex = &tickRef;
+            uint64_t tick = 1;
+            const auto step = [&](BehaviorTreeSystem& bt) {
+                bt.DeliverPending(tick);
+                bt.Update(scene.GetWorld(), tick, nullptr);
+                scene.GetWorld().ApplyStructuralChanges();
+                ++tick;
+            };
+            for (int i = 0; i < 60 && first.PendingEventCount() == 0; ++i) {
+                step(first);
+            }
+            tickRef = tick;
+            std::vector<std::byte> blob;
+            const bool captured = CaptureSimSnapshot(refs, blob) && first.PendingEventCount() == 1;
+            ck.Check(captured, "(前提) イベントが配送待ちの tick 末で撮影できる");
+
+            const uint64_t startTick = tick;
+            std::vector<uint64_t> continuous;
+            std::vector<int32_t> activeAfter;
+            for (int i = 0; i < 12; ++i) {
+                step(first);
+                continuous.push_back(HashWorld(scene.GetWorld(), refs.HashSources()));
+                activeAfter.push_back(scene.GetWorld().GetComponent<BehaviorTreeComponent>(receiver)->activeNodeId);
+            }
+            ck.Check(activeAfter.front() == 1 && first.PendingEventCount() == 0,
+                     "(前提) 連続実行では次の tick にイベントが届いて Abort が起き、配送待ちが空になる");
+
+            BehaviorTreeSystem second;
+            SimRefs refsSecond = refs;
+            refsSecond.behaviorTree = &second;
+            ck.Check(RestoreSimSnapshot(refsSecond, blob.data(), blob.size()) && second.PendingEventCount() == 1 && second.EventCount(receiver) == 0,
+                     "配送待ちが復元され、配った分は空");
+            tick = startTick;
+            bool same = true;
+            bool sameActive = true;
+            for (int i = 0; i < 12; ++i) {
+                step(second);
+                same = same && HashWorld(scene.GetWorld(), refsSecond.HashSources()) == continuous[static_cast<size_t>(i)];
+                sameActive = sameActive && scene.GetWorld().GetComponent<BehaviorTreeComponent>(receiver)->activeNodeId == activeAfter[static_cast<size_t>(i)];
+            }
+            ck.Check(same && sameActive && second.StateHash() == first.StateHash(),
+                     "配送待ちで保存 → 復元 → 12 tick の毎 tick のハッシュと実行中ノードが連続実行と一致 (イベントの BB 反映と Abort を含む)");
+        }
+
+        // 壊れた配送待ちの節は拒否する
+        {
+            const auto pendingBlob = [](uint64_t count, uint32_t seqOffset, uint32_t eventCount = 0) {
+                std::vector<std::byte> out;
+                ByteWriter w(out);
+                w.Count(0); // 木の表は空
+                w.Count(count);
+                for (uint32_t i = 0; i < eventCount; ++i) {
+                    w.U64(1);
+                    w.U32(1);
+                    w.U32(0);
+                    w.U32(0);
+                    w.U32(0);
+                    for (int f = 0; f < 4; ++f) {
+                        w.F32(0.0f);
+                    }
+                    w.I32(0);
+                    w.U32(i + seqOffset);
+                    w.U64(1);
+                }
+                return out;
+            };
+            const auto accepts = [](const std::vector<std::byte>& data) {
+                ByteReader r(data.data(), data.size());
+                BtSnapshot parsed;
+                return BehaviorTreeSystem::ReadSnapshot(r, parsed);
+            };
+            ck.Check(accepts(pendingBlob(2, 0, 2)), "(前提) 作った配送待ちは読める");
+            ck.Check(!accepts(pendingBlob(2, 1, 2)), "seq が 0 から連番でない配送待ちは拒否する");
+            ck.Check(!accepts(pendingBlob(2, 0, 1)), "件数より中身が短い配送待ちは拒否する");
+            ck.Check(!accepts(pendingBlob(static_cast<uint64_t>(kBtMaxEventsPerTick) + 1, 0, kBtMaxEventsPerTick + 1)),
+                     "上限を超える件数の配送待ちは拒否する");
         }
     }
 

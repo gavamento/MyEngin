@@ -7,10 +7,12 @@
 #include <cstdint>
 #include <memory>
 #include <set>
+#include <string_view>
 #include <vector>
 
 #include "Engine/Core/Ecs/EntityID.h"
 #include "Engine/Core/Util/ByteIo.h"
+#include "Engine/Core/Util/Hash.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
 
 namespace mye {
@@ -52,9 +54,30 @@ struct BtInstance {
     bool stepLimitWarned = false;
 };
 
+constexpr int kBtMaxEventsPerTick = 256; // 配送待ちの上限 (溢れた分は捨てて 1 回だけ警告)
+
+// 汎用イベント 1 件 (sim 状態。配送待ちは BT 節とハッシュに入る)。target が null = 全体宛て
+struct BtEvent {
+    uint64_t nameHash = 0;            // BtEventNameHash(名前)
+    EntityID sender = kNullEntity;
+    EntityID target = kNullEntity;
+    float vec3[3] = {};
+    float value = 0.0f;
+    int32_t intValue = 0;
+    uint32_t seq = 0;                 // 配送待ちの中の送信順 (0 から連番。配るときに送信元キーと組で並べ替える)
+    uint64_t sentTick = 0;            // 送った tick。これより後の tick の BT フェーズ冒頭で配る
+};
+
+// イベント名のハッシュ (.bb.json の eventName・SendEvent の eventName と ABI が同じ値で突き合わせる)
+inline uint64_t BtEventNameHash(std::string_view name)
+{
+    return HashStr(name);
+}
+
 // BT 節の読み値。木はまだ引いていない (World を差し替えた後に ApplySnapshot が引く)
 struct BtSnapshot {
     std::vector<BtInstance> instances;
+    std::vector<BtEvent> pending;
 };
 
 // BehaviorTreeComponent を持つエンティティの木を毎 tick 進める。
@@ -70,6 +93,21 @@ public:
     // 旧シーンの状態を捨てる (シーン遷移)
     void Reset();
 
+    // ---- 汎用イベントキュー (spec 4.1.6) ----
+    // tick に積んだ分は tick より後の Update の冒頭で配る (同じ tick のスクリプト層・BT のどこで積んでも次の tick)。
+    // 上限 kBtMaxEventsPerTick を超えた分は捨てて false (警告は最初の 1 回だけ)。target が null = 全体宛て
+    bool SendEvent(uint64_t tick, EntityID sender, EntityID target, uint64_t nameHash, const float (&vec3)[3], float value,
+                   int32_t intValue);
+    // tick の頭 (スクリプト層より前、stepSim の中) に 1 回呼ぶ。tick より前に積まれた分を配達済みへ移し、前の配達済みを捨てる。
+    // 一時停止中は呼ばない (配送待ちは残る)。BT の Update は配達済みを BB へ反映するだけ
+    void DeliverPending(uint64_t tick);
+    // 配送待ちの件数 (検査用)
+    int PendingEventCount() const { return static_cast<int>(pending_.size()); }
+    // 直近の Update が配った分のうち self 宛て + 全体宛て (配送順 = 送信元キー → 送信順)。次の Update の冒頭で入れ替わる。
+    // 配った分は BT 節に入らない (復元後は空)
+    int EventCount(EntityID self) const;
+    bool GetEvent(EntityID self, int index, BtEvent& out) const;
+
     // Abort を受けたノードの id を Abort の順に積む先 (検査用。sim 状態ではない)。null = 記録しない
     void SetAbortTrace(std::vector<int32_t>* sink) { abortTrace_ = sink; }
 
@@ -83,7 +121,8 @@ public:
 
     // ---- ワールドハッシュ ----
     // 表に 1 件でもあれば true。false なら WorldHasher は BT を何も畳まない
-    bool HasHashableState() const { return !instances_.empty(); }
+    // (配送待ちのイベントだけがあるときも true)
+    bool HasHashableState() const { return !instances_.empty() || !pending_.empty(); }
     uint64_t StateHash() const;
     int InstanceCount() const { return static_cast<int>(instances_.size()); }
 
@@ -92,10 +131,16 @@ public:
     const BtInstance* FindInstance(EntityID entity) const;
 
 private:
+    void SaveInstances(ByteWriter& w) const;
+    void SavePending(ByteWriter& w) const;
+
     // owner 1 体の同期と実行。表に残すなら true
     bool StepOwner(World& world, uint64_t tick, const NavSystem* nav, EntityID owner, BtInstance& inst);
 
     std::vector<BtInstance> instances_; // エンティティキー昇順
+    std::vector<BtEvent> pending_;      // 配送待ち (送信順 = seq 順)。sim 状態
+    std::vector<BtEvent> delivered_;    // 直近の Update が配った分 (配送順)。次の Update で捨てる。sim 状態ではない
+    bool eventOverflowWarned_ = false;  // ログだけ。sim 状態ではない
     std::vector<int32_t>* abortTrace_ = nullptr;
     std::set<uint64_t> warnedMissing_;  // 「木が見つからない」を警告済みの GUID (ログだけ。sim 状態ではない)
 };

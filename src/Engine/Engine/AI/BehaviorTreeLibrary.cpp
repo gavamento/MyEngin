@@ -92,7 +92,18 @@ const BtParamDesc kFindTargetParams[] = {
     { "tagMask", BtParamType::Mask, 0.0f, 0.0f, 0.0f, nullptr, 0 },
 };
 
+const char* const kSendTargetNames[] = { "Self", "All", "Entity" };
+
+// btsendparam の並びと同じ
+const BtParamDesc kSendEventParams[] = {
+    { "eventName", BtParamType::String, 0.0f, 0.0f, 0.0f, nullptr, 0 },
+    { "target", BtParamType::Enum, static_cast<float>(btsendtarget::kAll), 0.0f, 2.0f, kSendTargetNames, 3 },
+    { "floatValue", BtParamType::Float, 0.0f, -kBtValueLimit, kBtValueLimit, nullptr, 0 },
+    { "intValue", BtParamType::Int, 0.0f, -kBtValueLimit, kBtValueLimit, nullptr, 0 },
+};
+
 const char* const kTargetKeyNames[] = { "target" };
+const char* const kSendEventKeyNames[] = { "target", "vector" };
 const char* const kFindRandomPointKeyNames[] = { "center", "result" };
 const char* const kFindNearestTargetKeyNames[] = { "target", "position" };
 const char* const kSearchAreaKeyNames[] = { "origin", "endTarget" };
@@ -117,6 +128,7 @@ const BtNodeTypeInfo kNodeTypes[] = {
     { BtNodeKind::SearchArea, "SearchArea", BtNodeCategory::Ai, 0, 0, kSearchAreaParams, 4, kSearchAreaKeyNames, 2,
       static_cast<int>(sizeof(BtSearchAreaState)) },
     { BtNodeKind::FindTarget, "FindTarget", BtNodeCategory::Ai, 0, 0, kFindTargetParams, 5, kTargetKeyNames, 1, 0 },
+    { BtNodeKind::SendEvent, "SendEvent", BtNodeCategory::Task, 0, 0, kSendEventParams, 4, kSendEventKeyNames, 2, 0 },
 };
 static_assert(sizeof(kNodeTypes) / sizeof(kNodeTypes[0]) == static_cast<size_t>(BtNodeKind::Count),
               "kNodeTypes を BtNodeKind の全値ぶん並べる");
@@ -181,6 +193,8 @@ BtParamValue DefaultParam(const BtParamDesc& desc)
         value.f = desc.defaultValue;
     } else if (desc.type == BtParamType::Guid || desc.type == BtParamType::Mask) {
         value.u = 0;
+    } else if (desc.type == BtParamType::String) {
+        value.s.clear();
     } else {
         value.i = static_cast<int32_t>(desc.defaultValue);
     }
@@ -231,6 +245,13 @@ bool ReadParam(const BtParamDesc& desc, const json& j, BtParamValue& out)
         out.u = std::strtoull(hex.c_str(), &end, 16);
         return end != nullptr && *end == '\0' && hex.size() <= 16;
     }
+    case BtParamType::String: {
+        if (!j.is_string() || j.get<std::string>().size() > kBbMaxNameBytes) {
+            return false;
+        }
+        out.s = j.get<std::string>();
+        return true;
+    }
     case BtParamType::Enum: {
         if (!j.is_string()) {
             return false;
@@ -256,6 +277,7 @@ json WriteParam(const BtParamDesc& desc, const BtParamValue& value)
     case BtParamType::Bool: return value.i != 0;
     case BtParamType::Guid:
     case BtParamType::Mask: return value.u != 0 ? GuidToHex(value.u) : std::string();
+    case BtParamType::String: return value.s;
     case BtParamType::Enum:
         return desc.enumNames[(std::clamp)(value.i, 0, desc.enumCount - 1)];
     }
@@ -413,6 +435,12 @@ bool BtLinkAsset(BehaviorTreeAsset& asset)
         }
         for (const std::string& key : node.keys) {
             if (key.size() > kBbMaxNameBytes) {
+                return false;
+            }
+        }
+        const BtNodeTypeInfo& typeInfo = BtNodeTypeOf(node.kind);
+        for (int p = 0; p < typeInfo.paramCount; ++p) {
+            if (typeInfo.params[p].type == BtParamType::String && node.params[static_cast<size_t>(p)].s.size() > kBbMaxNameBytes) {
                 return false;
             }
         }

@@ -325,6 +325,12 @@ void RunOneTick(TickServices& ts)
     // シーン遷移も常時実行。Advance() は accum を進める副作用があるので
     // sim が走る tick に 1 回だけ呼ぶ (編集中に呼ぶと Play 開始時の位相がずれる)
     const bool stepSim = ctx.simulateScripts && scene.Time().Advance();
+    // ---- BT のイベントの配達 (M85e): スクリプト層より前 ----
+    // tick N に積まれた分を tick N+1 の頭で配る。こうしないと BT より前に走るスクリプトが読めない。
+    // 一時停止中 (stepSim が偽) は配らない (配送待ちは残る)
+    if (stepSim && ts.behaviorTree != nullptr) {
+        ts.behaviorTree->DeliverPending(ctx.tickIndex);
+    }
     // ---- フェーズ 3: スクリプト層 Start → Update ----
     const bool runScripts = ctx.simulateScripts && scriptHost.IsLoaded();
     if (runScripts) {

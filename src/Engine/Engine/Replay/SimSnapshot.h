@@ -122,7 +122,8 @@ struct SimRefs {
 // v34 (M85a): BT 節 (BehaviorTreeSystem の表) を NAV 節の後・World 節の前に追加。BehaviorTreeComponent (World 節のカラム生バイト)
 // v35 (M85c): BT 節の各エンティティの末尾に、種類別の追加状態 (MoveTo / RotateTo の保存値など) の生バイト列を追加
 // v36 (M85d): SearchArea の追加状態 (BtSearchAreaState = 起点・今の点・残り個数・段階) が BT 節の追加状態の生バイトに入る
-inline constexpr uint32_t kSimSnapshotVersion = 36;
+// v37 (M85e): BT 節の末尾にイベントの配送待ち (BtEvent の列。0 件でも件数は書く)
+inline constexpr uint32_t kSimSnapshotVersion = 37;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

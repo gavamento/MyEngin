@@ -135,7 +135,9 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 - 受け手:
   - BT: `.bb.json` のキーに `eventName` を書いておくと、その名前のイベントが自分宛て (または全体) に届いたら、そのキーへ書く (Bool = true、Entity = sender、Vector = vec3、Float = float、Int = int32)。同じ tick に複数届いたら配送順の最後が勝つ。書いた後は Abort の監視でそのまま反応する。
   - C++ / C#: ABI `BtEventCount(engine, self)` / `BtGetEvent(engine, self, index, out)` で「tick N+1 に自分宛て + 全体に配られたもの」を読む (`NetGetSystemEvent` と同じ形)。読める期間は tick N+1 の中だけ。
-- 配送待ち (tick N に積まれた分) は tick 境界をまたぐので **BT 節に入れる**。配った分は tick N+1 の末で捨てる (スナップショットは tick 末なので入らない)。
+- **配達の時点は tick の頭** (TickRunner のフェーズ 3 = スクリプトの Update より前、`stepSim` のゲートの中)。こうしないと BT より前に走る C++ / C# の Update が tick N+1 の配達分を読めない (sub-05 VERDICT)。BT は同じ tick のフェーズ 3.4a2 で配達済みの分を BB へ反映する。一時停止中 (stepSim が偽) の tick は配達しない (配送待ちは残る)。
+- 配送待ち (tick N に積まれた分) は tick 境界をまたぐので **BT 節に入れる**。配達済みの分は tick N+1 の中だけ有効で、次の配達で入れ替わる。tick 末のスナップショットには入らない (復元後は空 = 次の配達で入れ替わるので、tick の中で読む限り連続実行と同じ)。
+- 宛先・名前が正しくキューが溢れて捨てられた場合も、SendEvent ノードは Success (送りっぱなしの意味。警告 1 回で分かる)。
 - イベントが 1 件も無い tick にハッシュは何も変わらない (中身ゲート)。
 
 #### 4.1.7 C++ タスク / C# タスク
@@ -253,6 +255,7 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 
 (確定後の変更のみ)
 
+- 2026-10-05 (sub-05 VERDICT): イベントの配達を「BT フェーズの冒頭」から「tick の頭 (スクリプトの Update より前)」へ変更 (4.1.6)。BtEvent に sentTick、BtParamType::String (63 バイト) を追加。上限 256 は積む時点の先着で数える。溢れても SendEvent は Success。送信は BehaviorTreeSystem のメンバ関数 (所有者経由、ABI は sub-11)
 - 2026-10-05 (sub-04 VERDICT): SearchArea と Patrol に `failOnStuck` (既定 false) を追加 (2. #18)。FindNearestTarget で名乗らない音を選んだら Entity キーは未設定に戻し Vector だけ書く。BtParamType::Mask (64 ビット、16 進) を追加。BehaviorTreeSystem::Update は NavSystem を受け取る。FindNearestTarget の既定は 4 感覚とも true・currentlySensedOnly false、FindTarget の既定は radius 15・敵のみ・tagMask 0。SearchArea の吸着は水平 2 m / 垂直 4 m、着いた判定は水平 0.5 m、点の生成失敗はその点を消費して次の tick、「見えた」は同じ tick の percepts の視覚ビットで判定
 - 2026-10-05 (sub-03 VERDICT): ノード JSON に `keys` (BB キー名の欄、種類表の keyNames) と GUID 型のパラメータ (16 進文字列) を追加。MoveTo の距離は水平 (XZ)、最初から acceptanceRadius 内なら Agent に書かず Success、目的地を書いた tick は status を読まない (SearchArea / Patrol も同じ規則)、observeTarget の既定 true、acceptanceRadius の既定 0.5。RotateTo は角速度 0 かつ Agent も 0 以下なら 360。SetBlackboard の Copy は同型・設定済みのみ。BehaviorTreeComponent が外れたら表を落とす前に Abort。種類ごとの追加状態 (BtNodeTypeInfo::extraStateBytes) を導入し snapshot v35。spec 7. の「同じ地点への MoveTo」のリスクは NavSystem 無変更で解消
 - 2026-10-05 (sub-02 VERDICT): Decorator の細部を確定 — 条件は入るとき 1 回だけ評価 (Repeat の周回では再評価しない)、Timeout は「入った tick + ticks」で切れ同じ tick に子が終われば終わりが優先、Repeat の内側の Timeout は周回ごと、Cooldown は終了 / Abort の tick + ticks から入れる、未設定・型違いの大小比較は偽、LowerPriority は偽→真に変わった tick だけ働く (OnResultChange)、条件偽で入らなかったノードは Abort の記録なし、根のやり直しで Decorator の状態 (Cooldown の計時) は残す。監視 (4.1.1 の (2)) は手数の上限に数えない。Decorator の JSON は `{"type","key","params"}`、1 ノード 8 個まで

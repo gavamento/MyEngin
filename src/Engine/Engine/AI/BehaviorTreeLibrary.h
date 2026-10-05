@@ -36,6 +36,7 @@ enum class BtNodeKind : uint8_t {
     FindNearestTarget,
     SearchArea,
     FindTarget,
+    SendEvent,
     Count,
 };
 
@@ -53,6 +54,7 @@ enum class BtParamType : uint8_t {
     Enum, // 値は enumNames の添字、ファイルには名前で保存する
     Guid, // アセット参照 (.navfilter.json など)。値は BtParamValue::u、ファイルには 16 桁の 16 進で保存する。0 = 参照なし
     Mask, // 64 ビットのビット集合 (タグの AND マスクなど)。値・保存形式は Guid と同じ (u / 16 桁の 16 進)。0 = 条件なし
+    String, // 文字列 (イベント名など)。値は BtParamValue::s、kBbMaxNameBytes バイトまで。空 = 未指定
 };
 
 // ノードのパラメータ 1 つの記述。エディタ (パラメータ欄) と読み書き (範囲の丸め) が同じ表を引く
@@ -134,7 +136,8 @@ const BtNodeTypeInfo* BtFindNodeType(const std::string& name); // 無ければ n
 struct BtParamValue {
     int32_t i = 0;
     float f = 0.0f;
-    uint64_t u = 0; // Guid
+    uint64_t u = 0; // Guid / Mask
+    std::string s;  // String
 };
 
 // MoveTo の params の並び
@@ -234,6 +237,29 @@ enum : int {
     kTarget = 0, // Entity。書く先
 };
 } // namespace btfindtargetkey
+
+// SendEvent の params / keys の並び
+namespace btsendparam {
+enum : int {
+    kEventName = 0, // String。空なら Failure
+    kTarget = 1,    // btsendtarget
+    kFloatValue = 2,
+    kIntValue = 3,
+};
+} // namespace btsendparam
+namespace btsendtarget {
+enum : int32_t {
+    kSelf = 0,   // 自分宛て
+    kAll = 1,    // 全体宛て (target = null)
+    kEntity = 2, // key "target" の Entity 宛て
+};
+} // namespace btsendtarget
+namespace btsendkey {
+enum : int {
+    kTarget = 0, // Entity。宛先が Entity のとき
+    kVector = 1, // Vector。ペイロード (空 = 0 ベクトル)
+};
+} // namespace btsendkey
 
 // ブラックボードのキーを持つノードの "keys" の並び
 namespace btnodekey {

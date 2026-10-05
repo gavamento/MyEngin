@@ -10,8 +10,8 @@
 | sub-01 | OK | 1 | a5f7ab1 | BT の核 (.bt/.bb・コンポーネント・実行器・Composite・Wait・BT 節)。snapshot v34、TypeId 78 |
 | sub-02 | OK | 1 | 24cc318 | Decorator 5 種と Abort |
 | sub-03 | OK | 1 | 6a8bd5b | Task 4 種 (MoveTo に failOnStuck、既定 false) |
-| sub-04 | OK | 2 | (このコミット) | round 1 REWORK: SearchArea に failOnStuck。snapshot v36 | AI ノード 4 種 |
-| sub-05 | 未着手 | 0 | | 汎用イベントキューと SendEvent |
+| sub-04 | OK | 2 | 3f8ad39 | round 1 REWORK: SearchArea に failOnStuck。snapshot v36 | AI ノード 4 種 |
+| sub-05 | OK | 2 | (このコミット) | round 1 REWORK: 配達を tick 頭へ・replay_verify。snapshot v37 | 汎用イベントキューと SendEvent |
 | sub-06 | 未着手 | 0 | | AnimatorPlay / PlayAnimation / SubTree |
 | sub-07 | 未着手 | 0 | | 巡回ルート |
 | sub-08 | 未着手 | 0 | | BT 窓 (1) |
@@ -48,7 +48,11 @@
 - (sub-03 VERDICT nit#2) YawOf / WrapPi を NavSystem から BT へ複製済み。sub-07 で 3 か所目が要るなら共有の数学ヘッダへ移すか coder が判断。
 - (sub-03 VERDICT nit#3) 親付き Agent への RotateTo は未検証 → ADR-025 (sub-14) に既知の限界として書く。
 - (sub-03 coder) 追加状態は BtNodeTypeInfo::extraStateBytes + BtNodeDef::extraOffset + BtInstance::extra。構造体はパディングなし 4/8 バイト揃え、足したら snapshot +1 (sub-04 で v36 見込み)。後始末は ReleaseBody の switch に足す。MoveTo 相当を内部で使うノード (SearchArea / Patrol) も「目的地を書いた tick は status を読まない」。ノードのキー名は BtNodeTypeInfo::keyNames、JSON は "keys"。BT 系ファイルは LF。
-- 既知 flake の回数: sub-01 1 回目 5 件 / sub-02 0 件 / sub-03 1 回目 4 件 (2 回目 0) / sub-04 0 件。
+- 既知 flake の回数: sub-01 1 回目 5 件 / sub-02 0 件 / sub-03 1 回目 4 件 (2 回目 0) / sub-04 0 件 / sub-05 round 1 の途中 2 件 (net V1)、最終 0 件。
+- (sub-05 VERDICT nit#1) sub-06 で BehaviorTreeSelfTest.cpp を触るとき、配達 (DeliverPending) を Update の中へ戻すと新テスト (a) が FAIL することを 1 回確かめ、SELF_EVAL に書く (確かめた後は戻す)。
+- (sub-05 coder) イベントの配達は TickRunner のフェーズ 3 直前 (stepSim の中) で DeliverPending、BT の Update は BB への反映だけ。sub-11 の ABI は BehaviorTreeSystem::SendEvent(tick, ...) へ engine の tickIndex を渡す。sub-08 は BtParamType::String (イベント名) を扱う、SendEvent のキー欄は target / vector。
+- (sub-05) Debug 中にユーザーが見たアサートのダイアログは別件 `plans\selftest-crt-dialog.md` (M85 の範囲外)。
+- (sub-05 planner) sub-06: SubTree の入れ子状態を BT 節に足すなら v38。MonitorNode の分割は coder 判断。
 - (sub-04 VERDICT nit#1) BehaviorTreeSelfTest の診断ログ `[search] stuck ...` は、1 回の実行で 1〜2 行なら残す。tick ごとなら 1 行にまとめるか削除。sub-05 でついでに判断。
 - (sub-04 coder) BehaviorTreeSystem::Update(world, tick, nav) — 第 3 引数 NavSystem*。BtParamType::Mask (64 ビット、16 進) と BtNodeCategory::Ai は sub-08 のパラメータ欄・パレットで扱いが要る。SearchArea のパラメータは 4 項目 (usePrediction / radius / pointCount / failOnStuck)。名乗らない音を選んだら Entity キーは空にする (承認済み)。
 - (sub-02 VERDICT) snapshot は v34 のまま承認。sub-03 (種類ごとの追加状態) で kSimSnapshotVersion 35 にする。UE 対応の未検証点 (Loop の Failure 抜け、Cooldown の Abort 後計時) は ADR-025 (sub-14) に列挙。ADR-025 は下書き (sub-14 で確定)。
