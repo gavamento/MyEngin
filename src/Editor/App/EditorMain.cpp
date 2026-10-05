@@ -129,6 +129,9 @@ void AttachParentConsole()
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
     AttachParentConsole();
+    // --selftest などのヘッドレス経路は EngineLoop (InstallCrashHandler) を通らないので、
+    // ここで Debug CRT のダイアログを止めておく。止めないと失敗がダイアログ待ちになり終了コードが返らない
+    mye::SuppressCrtDialogs();
 
     mye::EngineConfig config;
     config.title = L"MyEngine Editor";

@@ -147,6 +147,12 @@ struct CrashHandlerConfig {
     bool streamedReplay = false;
 };
 
+// CRT のアサート / エラーと abort・未処理例外をモーダルダイアログにせず、stderr と終了コードで返す
+// (デバッガが付いているときの報告先はダイアログのまま)。InstallCrashHandler も中で呼ぶ。
+// それより前に走るヘッドレス経路 (Editor.exe --selftest など) がダイアログ待ちで止まり、
+// 呼び出し側から失敗を検知できなくなるのを防ぐため、プロセスの先頭で単独でも呼ぶ
+void SuppressCrtDialogs();
+
 // 4 経路のハンドラを設置する。2 回目以降の Install は設定の差し替えとして扱う
 void InstallCrashHandler(const CrashHandlerConfig& config);
 void UninstallCrashHandler();

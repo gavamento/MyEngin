@@ -1,6 +1,7 @@
 #include "Engine/Platform/CrashHandler.h"
 
 #include <crtdbg.h>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -597,6 +598,46 @@ bool CrashWriteFileRaw(const wchar_t* path, const void* data, size_t size)
     return ok;
 }
 
+namespace {
+
+// InstallCrashHandler より前 (= バンドルの置き場所が決まる前) の不正パラメータ。
+// 何が起きたかを stderr に 1 行出して、ダイアログを出さずに終了コード 3 で落ちる
+void EarlyInvalidParamHandlerFn(const wchar_t* expression, const wchar_t* function, const wchar_t* file,
+                                unsigned int line, uintptr_t)
+{
+    fwprintf(stderr, L"[crt] invalid parameter: %ls  expr=%ls  at %ls:%u -> exit 3\n",
+             function != nullptr ? function : L"(unknown function)",
+             expression != nullptr ? expression : L"(none)",
+             file != nullptr ? file : L"(no file)", line);
+    fflush(stderr);
+    TerminateProcess(GetCurrentProcess(), 3);
+}
+
+} // namespace
+
+void SuppressCrtDialogs()
+{
+    // abort() のダイアログを出さない (bat から回している検証が止まるため)
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    // ★Debug CRT は不正パラメータで**先にアサートを報告してから**ハンドラを呼ぶ。
+    //   既定の報告先はモーダルダイアログなので、そこで止まると
+    //   _set_invalid_parameter_handler は永遠に呼ばれない = Debug ではこの経路が
+    //   実質死んでいる (実測: Runtime.exe が固まってバンドルが出なかった)。
+    //   デバッガが付いていないときだけ報告先を落として、ハンドラまで到達させる。
+    //   ※Release では crtdbg.h がこの 2 本を no-op マクロにするので #ifdef は要らない
+    //     (規則 1: _DEBUG でロジックを分岐しない)
+    if (IsDebuggerPresent() == FALSE) {
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_DEBUG | _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+        _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_DEBUG | _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+        // 未処理例外の WER ダイアログも出さない (InstallCrashHandler 後は UnhandledFilter が先に終わらせる)
+        SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    }
+    // 既定のハンドラ (_invoke_watson) は WER へ渡すので、終了コードで分かる簡易版に差し替える
+    _set_invalid_parameter_handler(EarlyInvalidParamHandlerFn);
+}
+
 void InstallCrashHandler(const CrashHandlerConfig& config)
 {
     CopyW(g_crashRoot, kPathMax, config.crashRoot.c_str());
@@ -628,22 +669,9 @@ void InstallCrashHandler(const CrashHandlerConfig& config)
     g_prevFilter = SetUnhandledExceptionFilter(UnhandledFilter);
     g_prevTerminate = std::set_terminate(TerminateHandlerFn);
     _set_purecall_handler(PureCallHandlerFn);
+    SuppressCrtDialogs();
+    // SuppressCrtDialogs の簡易ハンドラをバンドルを書く本物で置き換える
     _set_invalid_parameter_handler(InvalidParamHandlerFn);
-    // abort() のダイアログを出さない (bat から回している検証が止まるため)
-    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
-    // ★Debug CRT は不正パラメータで**先にアサートを報告してから**ハンドラを呼ぶ。
-    //   既定の報告先はモーダルダイアログなので、そこで止まると
-    //   _set_invalid_parameter_handler は永遠に呼ばれない = Debug ではこの経路が
-    //   実質死んでいる (実測: Runtime.exe が固まってバンドルが出なかった)。
-    //   デバッガが付いていないときだけ報告先を落として、ハンドラまで到達させる。
-    //   ※Release では crtdbg.h がこの 2 本を no-op マクロにするので #ifdef は要らない
-    //     (規則 1: _DEBUG でロジックを分岐しない)
-    if (IsDebuggerPresent() == FALSE) {
-        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_DEBUG | _CRTDBG_MODE_FILE);
-        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
-        _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_DEBUG | _CRTDBG_MODE_FILE);
-        _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
-    }
     g_installed = true;
 
     MYE_LOG_INFO("[crash] handler installed (build %s, git %s) -> %s\\crash\\",
