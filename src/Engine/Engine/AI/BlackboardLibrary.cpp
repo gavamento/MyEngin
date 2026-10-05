@@ -129,8 +129,11 @@ uint64_t BlackboardLibrary::Register(const std::wstring& path, BlackboardAsset a
     return hash;
 }
 
-uint64_t BlackboardLibrary::LoadFromFile(const std::wstring& path)
+uint64_t BlackboardLibrary::LoadFromFile(const std::wstring& path, bool* outUnchanged)
 {
+    if (outUnchanged != nullptr) {
+        *outUnchanged = false;
+    }
     std::ifstream f(fs::path(path), std::ios::binary);
     if (!f) {
         return 0;
@@ -148,6 +151,20 @@ uint64_t BlackboardLibrary::LoadFromFile(const std::wstring& path)
         return 0;
     }
     asset.name = NameFromPath(path);
+    if (outUnchanged != nullptr) {
+        const uint64_t hash = HashForPath(path);
+        const auto it = assets_.find(hash);
+        if (it != assets_.end() && NormalizePathKey(it->second->path) == NormalizePathKey(path)) {
+            // ReloadHub は正規化 (小文字) 済みのパスで読むので、名前の大文字小文字の違いは同じ内容とみなす
+            nlohmann::json existing = ToJson(*it->second);
+            nlohmann::json fresh = ToJson(asset);
+            existing["name"] = fresh["name"];
+            if (existing == fresh) {
+                *outUnchanged = true;
+                return hash;
+            }
+        }
+    }
     return Register(path, std::move(asset));
 }
 

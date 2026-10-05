@@ -1,8 +1,8 @@
 # sub-09: BT 窓 (2) — Undo / Redo、Blackboard 編集、検査エラー
 
 - 依存: sub-08
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (M85i としてコミット、ハッシュは台帳)
+- 往復: 1
 
 ## やること
 - Undo / Redo (spec 4.3): 窓の中の独自スタック。方式は「操作の前後でアセット全体 (BT と BB) の JSON を持つ」単純なもの (シーンの `UndoStack` は使わない、`UndoStack.h:25-33` はシーン専用)。1 操作 = 1 段 (ドラッグは離した時に確定、パラメータは編集確定時)。Ctrl+Z / Ctrl+Y は BT 窓がフォーカスを持つときだけ (シーンの Undo と取り合わない)。上限 128 段。保存しても履歴は消さない。
@@ -33,4 +33,9 @@
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-09 (round 1)
+- 実装: モデル層 (`BehaviorTreeEditModel`) に Undo / Redo (128 段、操作前後の状態コピー、ジェスチャ)・BB の作業用コピーと編集 (追加 / 削除 / 改名の追従 / 型 / 初期値 / eventName / 新規作成 / 保存)・検査 `Inspect()` を追加。窓は DrawCanvas を入力 / 描画 / メニューに分け (CanvasView で座標変換を共有)、Undo / Redo ボタンと Ctrl+Z / Ctrl+Y、BB パネル、赤枠と検査一覧を追加。Engine 側は `BehaviorTreeLibrary` / `BlackboardLibrary` の `LoadFromFile(path, &unchanged)` と ReloadHub の「内容が同じなら置き換えない」。
+- 検証: Debug / Release ビルド 0 警告、Editor `--selftest` Debug / Release 0 件 (Debug 1 回目に既知 flake の Fracture weight cache 3 件)、Debug Server `--selftest` 0 件、check_rules 0 件、replay_verify 16 ジョブ PASS (最後の変更後に再実行)。画面は一時プローブ + 実マウス / キー入力で確認 (詳細は司会への SELF_EVAL)。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner)。Undo の保持方式 (コピー) の逸脱を承認 (spec 8.)。ReloadHub の同一内容スキップは変異テストと GUI ログで確認、replay_verify 全 PASS。BB 共有時の追従範囲と KeyRequired の定義を承認、限界は sub-14 の ADR へ

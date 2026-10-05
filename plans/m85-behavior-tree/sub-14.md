@@ -9,6 +9,8 @@
 - `engine_spec.md` (BT / BB / イベントキュー / PatrolRoute / ABI v27 の表 / snapshot v の履歴)、`docs\engine-feature-guide.md` (BT の使い方: 木を作る → BB → コンポーネント → デバッグ)、`docs\test_checklists.md` (BT の手動確認項目)、`docs\history\api-scripting-tools.md` (sub-11 で書いた分の見直し)、`plans\ai-roadmap-m83-m86.md` の進捗表 (M85 完了、M85 で計画から変えたこと)。AGENTS.md / CLAUDE.md に番号の記載があれば追従。
 - 全体検証: AGENTS.md 7 章の広範な変更の一式。
 
+- (sub-01〜sub-09 の VERDICT から) ADR-025 の既知の限界・未検証に必ず入れるもの: UE の規則は記憶ベースで未照合 (Loop / Cooldown の Abort 時を含む)、同距離タイブレークのテストの検出力、親付き Agent の RotateTo、遷移中の AnimatorPlay のポーズの飛び、SubTree の平らな展開 (1024 上限・根の LowerPriority は Self)、Patrol は入るたびに最近傍、ReloadHub が置き換えると登録のパス・名前が小文字になる、BB のキー改名・削除は編集中の木だけ追従 (ほかの木・Entity キー初期値は追従しない)。
+
 ## やらないこと (このサブでは)
 - コードの変更 (検証で見つかった不具合は SELF_EVAL に書き、planner が差し戻し先を決める)
 

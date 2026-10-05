@@ -466,7 +466,9 @@ class BehaviorTreeLibrary {
 public:
     static uint64_t HashForPath(const std::wstring& path);
 
-    uint64_t LoadFromFile(const std::wstring& path); // 失敗時 0
+    // 失敗時 0。outUnchanged を渡すと、登録済みと内容が同じなら置き換えず *outUnchanged = true
+    // (走っている木の無用なやり直しを避ける。ReloadHub が使う)
+    uint64_t LoadFromFile(const std::wstring& path, bool* outUnchanged = nullptr);
     uint64_t Register(const std::wstring& path, BehaviorTreeAsset asset); // 返り値 = hash。同じ GUID なら置き換える
 
     // 置き換わった後も、実行中のエンティティが古い木を持ち続けて後始末できるよう shared_ptr で渡す。

@@ -488,8 +488,12 @@ ReloadHub::ReloadResult ReloadHub::ReloadBehaviorTree(const std::wstring& path)
     if (bt == nullptr || !bt->Contains(BehaviorTreeLibrary::HashForPath(path))) {
         return ReloadResult::Skipped;
     }
-    if (bt->LoadFromFile(path) == 0) {
+    bool unchanged = false;
+    if (bt->LoadFromFile(path, &unchanged) == 0) {
         return ReloadResult::Retry;
+    }
+    if (unchanged) {
+        return ReloadResult::Skipped; // 窓の保存が直接登録した直後の再読込など。置き換えると走っている木が無駄にやり直す
     }
     MYE_LOG_INFO("[reload] behavior tree reloaded: %s", WideToUtf8(path).c_str());
     return ReloadResult::Reloaded;
@@ -502,8 +506,12 @@ ReloadHub::ReloadResult ReloadHub::ReloadBlackboard(const std::wstring& path)
     if (bb == nullptr || !bb->Contains(BlackboardLibrary::HashForPath(path))) {
         return ReloadResult::Skipped;
     }
-    if (bb->LoadFromFile(path) == 0) {
+    bool unchanged = false;
+    if (bb->LoadFromFile(path, &unchanged) == 0) {
         return ReloadResult::Retry;
+    }
+    if (unchanged) {
+        return ReloadResult::Skipped; // 内容が同じなら置き換えない (BT の ReloadBehaviorTree と同じ理由)
     }
     MYE_LOG_INFO("[reload] blackboard reloaded: %s", WideToUtf8(path).c_str());
     return ReloadResult::Reloaded;

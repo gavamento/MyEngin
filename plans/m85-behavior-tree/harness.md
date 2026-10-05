@@ -14,8 +14,8 @@
 | sub-05 | OK | 2 | 16fa216 | round 1 REWORK: 配達を tick 頭へ・replay_verify。snapshot v37 | 汎用イベントキューと SendEvent |
 | sub-06 | OK | 1 | 7367737 | SubTree は平らな展開、snapshot v37 のまま | AnimatorPlay / PlayAnimation / SubTree |
 | sub-07 | OK | 1 | 74b7557 | TypeId 79 PatrolRoute、snapshot v38 | 巡回ルート |
-| sub-08 | OK | 1 | (このコミット) | BT 窓 (1) + Entity キーの初期値、snapshot v39 | BT 窓 (1) |
-| sub-09 | 未着手 | 0 | | BT 窓 (2) Undo・BB 編集・検査 |
+| sub-08 | OK | 1 | 2f86efb | BT 窓 (1) + Entity キーの初期値、snapshot v39 | BT 窓 (1) |
+| sub-09 | OK | 1 | (このコミット) | Undo・BB パネル・検査・ReloadHub の同一内容スキップ | BT 窓 (2) Undo・BB 編集・検査 |
 | sub-10 | 未着手 | 0 | | BT 窓 (3) ライブ表示 |
 | sub-11 | 未着手 | 0 | | ABI v27 |
 | sub-12 | 未着手 | 0 | | C# タスク |
@@ -64,6 +64,9 @@
 - (sub-08 VERDICT should#2) sub-09 の最初に BehaviorTreeWindow.cpp の DrawCanvas を入力・描画・メニューに分ける。
 - (sub-08 coder) Undo は「ドラッグは押した時点で撮り離して確定、パラメータは編集確定でまとめる」。Delete / Ctrl+Z / Ctrl+Y は BT 窓フォーカス中だけ窓が握る (SetKeyOwner)。dirty は Undo で保存時の内容へ戻ったら消す。キー参照の型違いも検査で拾う。画面確認の道具は scratchpad の ui.ps1 (実マウス・キー入力・キャプチャ)。
 - 既知 flake: sub-07 / sub-08 とも Debug 1 回目 5 件、2 回目以降 0。
+- (sub-09 VERDICT nit#1) BB パネルの文字欄は textSlot_ 共有。sub-10 で現在値表示を足すとき、編集中の欄と表示が混ざらないことを確かめる。
+- (sub-09 coder → sub-10) 座標変換は BehaviorTreeWindow の CanvasView (view_) と HitTest。ライブ表示は DrawNodes に重ねるか後に呼ぶ。CanvasStyle に色を足せる。BB の現在値は DrawBoardKey に足せる。ジェスチャは gestureOwner_ に合わせる。ADR-025 に積む既知の限界の一覧は sub-14.md にある。
+- 既知 flake: sub-09 Debug 1 回目 Fracture 3 件 (net V1 0)、2 回目以降 0。
 - (sub-07 → sub-14) ADR-025: Patrol は入るたびに最近傍点から、親付きルートは前 tick の WorldMatrix。
 - (sub-06 → sub-14) ADR-025 の既知の限界: SubTree は平らな展開・上限 1024・部分木の根の LowerPriority は Self 扱い・BB 継承なし・遷移中の AnimatorPlay はブレンド途中のポーズから飛ぶ。
 - (sub-04 VERDICT nit#1) BehaviorTreeSelfTest の診断ログ `[search] stuck ...` は、1 回の実行で 1〜2 行なら残す。tick ごとなら 1 行にまとめるか削除。sub-05 でついでに判断。

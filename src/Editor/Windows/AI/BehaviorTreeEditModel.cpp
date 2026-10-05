@@ -15,6 +15,42 @@ namespace mye {
 
 namespace {
 
+std::string DumpAsset(const BehaviorTreeAsset& asset)
+{
+    return BehaviorTreeLibrary::ToJson(asset).dump();
+}
+
+std::string DumpBoard(const BlackboardAsset& board)
+{
+    return BlackboardLibrary::ToJson(board).dump();
+}
+
+// キー欄 keyIndex が空だと実行時に Failure になる (必須) か。空でも動く欄 (任意) は検査しない
+bool KeyRequired(const BtNodeDef& node, int keyIndex)
+{
+    const auto param = [&node](int index) { return static_cast<size_t>(index) < node.params.size() ? node.params[static_cast<size_t>(index)].i : 0; };
+    switch (node.kind) {
+    case BtNodeKind::SetBlackboard:
+        return keyIndex == btnodekey::kTarget || param(btsetparam::kSource) == btsetparam::kCopy;
+    case BtNodeKind::FindRandomPoint:
+        return keyIndex == btrandomkey::kResult;
+    case BtNodeKind::FindNearestTarget:
+        return keyIndex == btnearestkey::kTarget;
+    case BtNodeKind::SearchArea:
+        return keyIndex == btsearchkey::kOrigin ? param(btsearchparam::kUsePrediction) == 0 : param(btsearchparam::kUsePrediction) != 0;
+    case BtNodeKind::SendEvent:
+        return keyIndex == btsendkey::kTarget && param(btsendparam::kTarget) == btsendtarget::kEntity;
+    case BtNodeKind::MoveTo:
+    case BtNodeKind::RotateTo:
+    case BtNodeKind::ClearBlackboard:
+    case BtNodeKind::FindTarget:
+    case BtNodeKind::Patrol:
+        return true;
+    default:
+        return false;
+    }
+}
+
 BtParamValue DefaultValueOf(const BtParamDesc& desc)
 {
     BtParamValue value;
@@ -88,7 +124,6 @@ bool BehaviorTreeEditModel::Load(std::shared_ptr<const BehaviorTreeAsset> regist
     asset_ = *registered;
     registered_ = std::move(registered);
     loaded_ = true;
-    dirty_ = false;
     // 位置を持たない木 (手書きの .bt.json は pos が 0 のまま) は、箱が 1 か所に積み重ならないよう整列する
     const bool noPositions = asset_.nodes.size() > 1
         && std::all_of(asset_.nodes.begin(), asset_.nodes.end(), [this](const BtNodeDef& node) {
@@ -97,15 +132,60 @@ bool BehaviorTreeEditModel::Load(std::shared_ptr<const BehaviorTreeAsset> regist
     if (noPositions) {
         LayoutAll();
     }
+    savedBtJson_ = DumpAsset(asset_);
+    undo_.clear();
+    redo_.clear();
+    gesture_ = false;
+    gesturePushed_ = false;
+    LoadBoardFromRegistry();
+    committed_ = Capture();
+    ++revision_;
+    btDirtyValid_ = false;
     return true;
 }
 
 void BehaviorTreeEditModel::Clear()
 {
     asset_ = BehaviorTreeAsset{};
+    board_ = BlackboardAsset{};
+    boardLoaded_ = false;
+    boardRegistered_.reset();
     registered_.reset();
+    savedBtJson_.clear();
+    savedBoardJson_.clear();
+    undo_.clear();
+    redo_.clear();
+    committed_ = EditSnapshot{};
+    gesture_ = false;
+    gesturePushed_ = false;
     loaded_ = false;
-    dirty_ = false;
+    ++revision_;
+    btDirtyValid_ = false;
+    boardDirtyValid_ = false;
+}
+
+bool BehaviorTreeEditModel::Dirty() const
+{
+    if (!loaded_) {
+        return false;
+    }
+    if (!btDirtyValid_) {
+        btDirty_ = DumpAsset(asset_) != savedBtJson_;
+        btDirtyValid_ = true;
+    }
+    return btDirty_;
+}
+
+bool BehaviorTreeEditModel::BoardDirty() const
+{
+    if (!boardLoaded_) {
+        return false;
+    }
+    if (!boardDirtyValid_) {
+        boardDirty_ = DumpBoard(board_) != savedBoardJson_;
+        boardDirtyValid_ = true;
+    }
+    return boardDirty_;
 }
 
 bool BehaviorTreeEditModel::IsRegistered() const
@@ -149,11 +229,6 @@ int BehaviorTreeEditModel::ChildOrderOf(int32_t id) const
     }
     const std::vector<int32_t>& kids = FindNode(parentId)->childIds;
     return static_cast<int>(std::find(kids.begin(), kids.end(), id) - kids.begin());
-}
-
-const BlackboardAsset* BehaviorTreeEditModel::Board() const
-{
-    return boards_ != nullptr && asset_.blackboard != 0 ? boards_->Get(asset_.blackboard) : nullptr;
 }
 
 int BehaviorTreeEditModel::MaxChildren(BtNodeKind kind)
@@ -637,8 +712,384 @@ bool BehaviorTreeEditModel::SetBlackboard(uint64_t guid)
         return false;
     }
     asset_.blackboard = guid;
+    LoadBoardFromRegistry();
     Touch();
     return true;
+}
+
+// ---- Undo / Redo ----
+
+void BehaviorTreeEditModel::Touch()
+{
+    ++revision_;
+    btDirtyValid_ = false;
+    boardDirtyValid_ = false;
+    redo_.clear();
+    if (gesture_) {
+        if (!gesturePushed_) {
+            PushUndo(committed_);
+            gesturePushed_ = true;
+        }
+        return;
+    }
+    PushUndo(committed_);
+    committed_ = Capture();
+}
+
+BehaviorTreeEditModel::EditSnapshot BehaviorTreeEditModel::Capture() const
+{
+    EditSnapshot snapshot;
+    snapshot.asset = asset_;
+    snapshot.board = board_;
+    snapshot.boardLoaded = boardLoaded_;
+    return snapshot;
+}
+
+void BehaviorTreeEditModel::Restore(EditSnapshot&& snapshot)
+{
+    asset_ = std::move(snapshot.asset);
+    board_ = std::move(snapshot.board);
+    boardLoaded_ = snapshot.boardLoaded;
+    BindBoardRegistered(boardLoaded_ && boards_ != nullptr ? boards_->GetShared(board_.hash) : nullptr);
+    committed_ = Capture();
+    ++revision_;
+    btDirtyValid_ = false;
+    boardDirtyValid_ = false;
+}
+
+void BehaviorTreeEditModel::PushUndo(const EditSnapshot& snapshot)
+{
+    undo_.push_back(snapshot);
+    while (undo_.size() > kBtMaxUndoSteps) {
+        undo_.pop_front();
+    }
+}
+
+bool BehaviorTreeEditModel::Undo()
+{
+    if (!loaded_ || !CanUndo()) {
+        return false;
+    }
+    redo_.push_back(Capture());
+    EditSnapshot snapshot = std::move(undo_.back());
+    undo_.pop_back();
+    Restore(std::move(snapshot));
+    return true;
+}
+
+bool BehaviorTreeEditModel::Redo()
+{
+    if (!loaded_ || !CanRedo()) {
+        return false;
+    }
+    PushUndo(Capture());
+    EditSnapshot snapshot = std::move(redo_.back());
+    redo_.pop_back();
+    Restore(std::move(snapshot));
+    return true;
+}
+
+bool BehaviorTreeEditModel::BeginGesture()
+{
+    if (gesture_) {
+        return false;
+    }
+    gesture_ = true;
+    gesturePushed_ = false;
+    return true;
+}
+
+void BehaviorTreeEditModel::EndGesture()
+{
+    if (!gesture_) {
+        return;
+    }
+    if (gesturePushed_) {
+        committed_ = Capture();
+    }
+    gesture_ = false;
+    gesturePushed_ = false;
+}
+
+// ---- Blackboard ----
+
+void BehaviorTreeEditModel::BindBoardRegistered(std::shared_ptr<const BlackboardAsset> registered)
+{
+    boardRegistered_ = std::move(registered);
+    savedBoardJson_ = boardRegistered_ ? DumpBoard(*boardRegistered_) : std::string();
+    boardDirtyValid_ = false;
+}
+
+void BehaviorTreeEditModel::LoadBoardFromRegistry()
+{
+    std::shared_ptr<const BlackboardAsset> registered
+        = boards_ != nullptr && asset_.blackboard != 0 ? boards_->GetShared(asset_.blackboard) : nullptr;
+    board_ = registered ? *registered : BlackboardAsset{};
+    boardLoaded_ = registered != nullptr;
+    BindBoardRegistered(std::move(registered));
+}
+
+void BehaviorTreeEditModel::SyncBoardWithRegistry()
+{
+    if (!loaded_ || boards_ == nullptr || gesture_) {
+        return;
+    }
+    std::shared_ptr<const BlackboardAsset> registered = asset_.blackboard != 0 ? boards_->GetShared(asset_.blackboard) : nullptr;
+    if (registered == boardRegistered_ || BoardDirty()) {
+        return; // 変わっていない / 未保存の編集を守る
+    }
+    board_ = registered ? *registered : BlackboardAsset{};
+    boardLoaded_ = registered != nullptr;
+    BindBoardRegistered(std::move(registered));
+    committed_ = Capture();
+    ++revision_;
+}
+
+void BehaviorTreeEditModel::RenameKeyReferences(const std::string& from, const std::string& to)
+{
+    for (BtNodeDef& node : asset_.nodes) {
+        for (std::string& key : node.keys) {
+            if (key == from) {
+                key = to;
+            }
+        }
+        for (BtDecoratorDef& deco : node.decorators) {
+            if (BtDecoratorTypeOf(deco.kind).hasKey && deco.key == from) {
+                deco.key = to;
+            }
+        }
+    }
+}
+
+int BehaviorTreeEditModel::AddBoardKey(BbType type)
+{
+    if (!boardLoaded_ || board_.keys.size() >= static_cast<size_t>(kBbMaxKeys)) {
+        return -1;
+    }
+    std::string name = "NewKey";
+    for (int n = 1; board_.FindKey(name) >= 0; ++n) {
+        name = "NewKey" + std::to_string(n);
+    }
+    BbKeyDef key;
+    key.name = name;
+    key.type = type;
+    board_.keys.push_back(std::move(key));
+    Touch();
+    return static_cast<int>(board_.keys.size()) - 1;
+}
+
+bool BehaviorTreeEditModel::RemoveBoardKey(int index)
+{
+    if (!boardLoaded_ || index < 0 || static_cast<size_t>(index) >= board_.keys.size()) {
+        return false;
+    }
+    const std::string name = board_.keys[static_cast<size_t>(index)].name;
+    board_.keys.erase(board_.keys.begin() + index);
+    for (BtNodeDef& node : asset_.nodes) {
+        for (std::string& key : node.keys) {
+            if (key == name) {
+                key.clear();
+            }
+        }
+    }
+    Touch();
+    return true;
+}
+
+bool BehaviorTreeEditModel::RenameBoardKey(int index, const std::string& name)
+{
+    if (!boardLoaded_ || index < 0 || static_cast<size_t>(index) >= board_.keys.size() || name.empty() || name.size() > kBbMaxNameBytes) {
+        return false;
+    }
+    BbKeyDef& key = board_.keys[static_cast<size_t>(index)];
+    if (key.name == name || board_.FindKey(name) >= 0) {
+        return false;
+    }
+    const std::string from = key.name;
+    key.name = name;
+    RenameKeyReferences(from, name);
+    Touch();
+    return true;
+}
+
+bool BehaviorTreeEditModel::SetBoardKeyType(int index, BbType type)
+{
+    if (!boardLoaded_ || index < 0 || static_cast<size_t>(index) >= board_.keys.size() || board_.keys[static_cast<size_t>(index)].type == type) {
+        return false;
+    }
+    BbKeyDef& key = board_.keys[static_cast<size_t>(index)];
+    key.type = type;
+    key.initial = BbValue{};
+    Touch();
+    return true;
+}
+
+bool BehaviorTreeEditModel::SetBoardKeyInitial(int index, const BbValue& value)
+{
+    if (!boardLoaded_ || index < 0 || static_cast<size_t>(index) >= board_.keys.size()) {
+        return false;
+    }
+    BbKeyDef& key = board_.keys[static_cast<size_t>(index)];
+    BbValue normalized;
+    if (value.isSet != 0) {
+        normalized.isSet = 1;
+        switch (key.type) {
+        case BbType::Bool: normalized.i = value.i != 0 ? 1 : 0; break;
+        case BbType::Int: normalized.i = value.i; break;
+        case BbType::Float:
+            if (!std::isfinite(value.f)) {
+                return false;
+            }
+            normalized.f = value.f;
+            break;
+        case BbType::Vector:
+            for (int axis = 0; axis < 3; ++axis) {
+                if (!std::isfinite(value.v[axis])) {
+                    return false;
+                }
+                normalized.v[axis] = value.v[axis];
+            }
+            break;
+        case BbType::Entity:
+            return false; // エンティティはアセットから指せない
+        }
+    }
+    const BbValue& old = key.initial;
+    const bool same = old.isSet == normalized.isSet && old.i == normalized.i && old.f == normalized.f && old.v[0] == normalized.v[0]
+                      && old.v[1] == normalized.v[1] && old.v[2] == normalized.v[2];
+    if (same) {
+        return false;
+    }
+    key.initial = normalized;
+    Touch();
+    return true;
+}
+
+bool BehaviorTreeEditModel::SetBoardKeyEventName(int index, const std::string& eventName)
+{
+    if (!boardLoaded_ || index < 0 || static_cast<size_t>(index) >= board_.keys.size() || eventName.size() > kBbMaxNameBytes
+        || board_.keys[static_cast<size_t>(index)].eventName == eventName) {
+        return false;
+    }
+    board_.keys[static_cast<size_t>(index)].eventName = eventName;
+    Touch();
+    return true;
+}
+
+uint64_t BehaviorTreeEditModel::CreateBoardFile(const std::wstring& path)
+{
+    if (boards_ == nullptr) {
+        return 0;
+    }
+    BlackboardAsset empty;
+    if (!WriteFileReplacing(path, BlackboardLibrary::ToJson(empty).dump(2))) {
+        return 0;
+    }
+    return boards_->LoadFromFile(path);
+}
+
+BtSaveResult BehaviorTreeEditModel::SaveBoard()
+{
+    if (!boardLoaded_ || boards_ == nullptr) {
+        return BtSaveResult::NotLoaded;
+    }
+    if (!WriteFileReplacing(board_.path, BlackboardLibrary::ToJson(board_).dump(2))) {
+        return BtSaveResult::WriteFailed;
+    }
+    const uint64_t hash = boards_->Register(board_.path, board_);
+    BindBoardRegistered(boards_->GetShared(hash));
+    return BtSaveResult::Ok;
+}
+
+// ---- 検査 ----
+
+bool BehaviorTreeEditModel::IsTaskKind(BtNodeKind kind)
+{
+    const BtNodeCategory category = BtNodeTypeOf(kind).category;
+    return category == BtNodeCategory::Task || category == BtNodeCategory::Ai || category == BtNodeCategory::Gameplay;
+}
+
+std::vector<BtIssue> BehaviorTreeEditModel::Inspect() const
+{
+    std::vector<BtIssue> issues;
+    if (!loaded_) {
+        return issues;
+    }
+    std::unordered_map<int32_t, int32_t> parentOf; // 子 -> 親 (childIds が正本)
+    for (const BtNodeDef& node : asset_.nodes) {
+        for (const int32_t child : node.childIds) {
+            parentOf[child] = node.id;
+        }
+    }
+    const BlackboardAsset* board = Board();
+    const auto add = [&issues](BtIssueKind kind, BtIssueSeverity severity, int32_t nodeId, int decoratorIndex = -1, int keyIndex = -1, int32_t otherId = -1) {
+        BtIssue issue;
+        issue.kind = kind;
+        issue.severity = severity;
+        issue.nodeId = nodeId;
+        issue.decoratorIndex = decoratorIndex;
+        issue.keyIndex = keyIndex;
+        issue.otherId = otherId;
+        issues.push_back(issue);
+    };
+    // 名前 name が BB にあり、(typed のとき) 型がその欄に合うか。required のとき空は未設定
+    const auto checkKey = [&](const BtNodeDef& node, const std::string& name, bool required, int decoratorIndex, int keyIndex, bool typed) {
+        if (name.empty()) {
+            if (required) {
+                add(BtIssueKind::KeyUnset, BtIssueSeverity::Error, node.id, decoratorIndex, keyIndex);
+            }
+            return;
+        }
+        const int found = board != nullptr ? board->FindKey(name) : -1;
+        if (found < 0) {
+            add(BtIssueKind::KeyMissing, BtIssueSeverity::Error, node.id, decoratorIndex, keyIndex);
+        } else if (typed && !KeyAccepts(node.kind, keyIndex, board->keys[static_cast<size_t>(found)].type)) {
+            add(BtIssueKind::KeyTypeMismatch, BtIssueSeverity::Error, node.id, decoratorIndex, keyIndex);
+        }
+    };
+
+    for (const BtNodeDef& node : asset_.nodes) {
+        const BtNodeTypeInfo& info = BtNodeTypeOf(node.kind);
+        const int count = static_cast<int>(node.childIds.size());
+        if (count < info.minChildren || count > MaxChildren(node.kind)) {
+            add(BtIssueKind::ChildCount, BtIssueSeverity::Error, node.id);
+        }
+        if (node.kind == BtNodeKind::SimpleParallel && !node.childIds.empty()) {
+            const BtNodeDef* mainChild = FindNode(node.childIds.front());
+            if (mainChild != nullptr && !IsTaskKind(mainChild->kind)) {
+                add(BtIssueKind::ParallelMainNotTask, BtIssueSeverity::Error, node.id, -1, -1, mainChild->id);
+            }
+        }
+        for (size_t d = 0; d < node.decorators.size(); ++d) {
+            const BtDecoratorDef& deco = node.decorators[d];
+            const BtDecoratorTypeInfo& decoInfo = BtDecoratorTypeOf(deco.kind);
+            if (deco.kind == BtDecoratorKind::BlackboardCondition && static_cast<size_t>(btbbparam::kAbort) < deco.params.size()) {
+                const int32_t abortMode = deco.params[btbbparam::kAbort].i;
+                const auto parent = parentOf.find(node.id);
+                if ((abortMode == btabort::kLowerPriority || abortMode == btabort::kBoth) && parent != parentOf.end()
+                    && FindNode(parent->second)->kind != BtNodeKind::Selector) {
+                    add(BtIssueKind::LowerPriorityParent, BtIssueSeverity::Error, node.id, static_cast<int>(d));
+                }
+            }
+            if (decoInfo.hasKey) {
+                checkKey(node, deco.key, true, static_cast<int>(d), -1, /*typed=*/false);
+            }
+        }
+        for (int i = 0; i < info.keyCount && static_cast<size_t>(i) < node.keys.size(); ++i) {
+            checkKey(node, node.keys[static_cast<size_t>(i)], KeyRequired(node, i), -1, i, /*typed=*/true);
+        }
+        if (node.kind == BtNodeKind::SubTree && static_cast<size_t>(btsubtreeparam::kTree) < node.params.size()) {
+            // 取り込めない条件は BtExpandSubTrees と同じ (未指定・未登録・根なし・BB 違い)
+            const uint64_t guid = node.params[btsubtreeparam::kTree].u;
+            const BehaviorTreeAsset* sub = guid != 0 && trees_ != nullptr ? trees_->Get(guid) : nullptr;
+            if (sub == nullptr || sub->rootId < 0) {
+                add(BtIssueKind::SubTreeUnresolved, BtIssueSeverity::Warning, node.id);
+            } else if (sub->blackboard != asset_.blackboard) {
+                add(BtIssueKind::SubTreeBoardMismatch, BtIssueSeverity::Error, node.id);
+            }
+        }
+    }
+    return issues;
 }
 
 // ---- 保存 ----
@@ -687,7 +1138,8 @@ BtSaveResult BehaviorTreeEditModel::Save(BtSaveCheck* blocked)
         const uint64_t hash = trees_->Register(linked.path, linked);
         registered_ = trees_->GetShared(hash);
     }
-    dirty_ = false;
+    savedBtJson_ = DumpAsset(asset_);
+    btDirtyValid_ = false;
     return BtSaveResult::Ok;
 }
 

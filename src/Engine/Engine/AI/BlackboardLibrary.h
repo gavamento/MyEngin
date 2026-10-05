@@ -71,7 +71,8 @@ class BlackboardLibrary {
 public:
     static uint64_t HashForPath(const std::wstring& path);
 
-    uint64_t LoadFromFile(const std::wstring& path); // 失敗時 0
+    // 失敗時 0。outUnchanged を渡すと、登録済みと内容が同じなら置き換えず *outUnchanged = true
+    uint64_t LoadFromFile(const std::wstring& path, bool* outUnchanged = nullptr);
     uint64_t Register(const std::wstring& path, BlackboardAsset asset); // 返り値 = hash
 
     // Register で置き換わった後も、実行中の BT が古い定義を持ち続けられるよう shared_ptr で渡す

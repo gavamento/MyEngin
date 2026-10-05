@@ -18,6 +18,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
+#include "Engine/Platform/PathUtil.h"
 
 namespace fs = std::filesystem;
 
@@ -60,6 +61,40 @@ std::vector<int32_t> ChildrenOf(const BehaviorTreeEditModel& model, int32_t id)
 {
     const BtNodeDef* node = model.FindNode(id);
     return node != nullptr ? node->childIds : std::vector<int32_t>{};
+}
+
+// 木と編集中の BB を 1 本の文字列にする (Undo の往復が元のバイト列に戻るかの比較用)
+std::string DumpState(const BehaviorTreeEditModel& model)
+{
+    std::string text = BehaviorTreeLibrary::ToJson(model.Asset()).dump();
+    if (model.Board() != nullptr) {
+        text += BlackboardLibrary::ToJson(*model.Board()).dump();
+    }
+    return text;
+}
+
+// Undo できる限り戻した段数
+int UndoAll(BehaviorTreeEditModel& model)
+{
+    int steps = 0;
+    while (model.Undo()) {
+        ++steps;
+    }
+    return steps;
+}
+
+int RedoAll(BehaviorTreeEditModel& model)
+{
+    int steps = 0;
+    while (model.Redo()) {
+        ++steps;
+    }
+    return steps;
+}
+
+bool HasIssue(const std::vector<BtIssue>& issues, BtIssueKind kind, int32_t nodeId)
+{
+    return std::any_of(issues.begin(), issues.end(), [&](const BtIssue& i) { return i.kind == kind && i.nodeId == nodeId; });
 }
 
 bool ReadJsonFile(const fs::path& path, json& out)
@@ -420,6 +455,341 @@ bool RunBehaviorTreeEditorSelfTest()
               "MoveSubtree は子孫を同じだけ動かし、親・兄弟は動かさない");
         check(ChildrenOf(m, top) == std::vector<int32_t>{ b, a }, "サブツリーが兄弟を追い越すと順序が入れ替わる");
         check(!m.MoveSubtree(a, 0.0f, 0.0f) && !m.MoveNode(a, m.FindNode(a)->pos[0], m.FindNode(a)->pos[1]), "動きが無ければ false");
+    }
+
+    // ---- 9. Undo / Redo: 全部戻すと元のバイト列、やり直すと後の状態 ----
+    {
+        BehaviorTreeEditModel m;
+        m.BindLibraries(&trees, &boards);
+        m.Load(RegisterEmpty(trees, root / L"undo.bt.json"));
+        const std::string original = DumpState(m);
+        check(!m.CanUndo() && !m.CanRedo() && !m.Undo() && !m.Redo(), "読み込み直後は Undo も Redo もできない");
+        const int32_t top = m.AddNode(BtNodeKind::Selector, 200.0f, 0.0f);
+        const int32_t waitA = m.AddNode(BtNodeKind::Wait, 100.0f, 120.0f);
+        const int32_t waitB = m.AddNode(BtNodeKind::Wait, 300.0f, 120.0f);
+        m.Connect(top, waitA);
+        m.Connect(top, waitB);
+        m.MoveNode(waitA, 400.0f, 120.0f);
+        m.SetParam(waitA, 0, IntValue(99));
+        m.AddDecorator(waitB, BtDecoratorKind::Invert);
+        m.Remove(waitB, BtRemoveMode::WithDescendants);
+        const std::string afterAll = DumpState(m);
+        check(m.CanUndo() && !m.CanRedo() && m.Dirty(), "操作のあとは Undo できて、Redo はできない");
+        const int undone = UndoAll(m);
+        check(undone == 9 && DumpState(m) == original && !m.Dirty(),
+              "追加 3 + 接続 2 + 移動 + パラメータ + Decorator + 削除の 9 操作 = 9 段。全部戻すと元のバイト列と一致し、dirty も消える");
+        check(m.CanRedo() && !m.CanUndo(), "全部戻すと Redo だけできる");
+        check(RedoAll(m) == 9 && DumpState(m) == afterAll && m.Dirty(), "全部やり直すと、操作後の状態にバイト列まで一致する");
+        UndoAll(m);
+        m.AddNode(BtNodeKind::Sequence, 0.0f, 0.0f);
+        check(!m.CanRedo(), "新しい操作をすると Redo の履歴は捨てる");
+        check(!m.Connect(99, 98) && !m.SetParam(99, 0, IntValue(1)) && UndoAll(m) == 1, "失敗した操作は履歴に積まない (戻せるのは追加の 1 段だけ)");
+    }
+
+    // ---- 9b. ジェスチャ: 複数回の変更を 1 段にする ----
+    {
+        BehaviorTreeEditModel m;
+        m.BindLibraries(&trees, &boards);
+        m.Load(RegisterEmpty(trees, root / L"gesture.bt.json"));
+        const int32_t node = m.AddNode(BtNodeKind::Wait, 0.0f, 0.0f);
+        const std::string before = DumpState(m);
+        check(m.BeginGesture() && !m.BeginGesture() && m.InGesture(), "ジェスチャは開く。開いている間にもう一度開いても何もしない");
+        for (int i = 1; i <= 20; ++i) {
+            m.MoveSubtree(node, 5.0f, 1.0f);
+        }
+        check(!m.CanUndo() && !m.Undo(), "ジェスチャの途中は Undo / Redo を受けない");
+        m.EndGesture();
+        check(!m.InGesture() && m.FindNode(node)->pos[0] == 100.0f, "20 回の移動が反映されている");
+        check(m.Undo() && DumpState(m) == before, "ジェスチャ 1 回 (20 回の移動) は 1 段で、戻すと開く前の状態");
+        check(m.Undo() && m.Asset().nodes.empty(), "その前の段は追加 (ジェスチャが余計な段を積んでいない)");
+        check(!m.CanUndo(), "段はこれで全部");
+        // 何も変えなかったジェスチャは段を積まない
+        m.Redo();
+        m.Redo();
+        m.BeginGesture();
+        m.EndGesture();
+        check(m.Undo() && m.FindNode(node)->pos[0] == 0.0f, "変更の無いジェスチャは段を積まない (直前の段が戻る)");
+    }
+
+    // ---- 9c. 保存時の内容へ戻ったら dirty が消える。履歴は保存で消えない ----
+    {
+        BehaviorTreeEditModel m;
+        m.BindLibraries(&trees, &boards);
+        m.Load(RegisterEmpty(trees, root / L"savedirty.bt.json"));
+        m.AddNode(BtNodeKind::Wait, 12.3f, 45.6f);
+        check(m.Save() == BtSaveResult::Ok && !m.Dirty(), "(前提) 保存すると dirty が消える");
+        {
+            // 窓の保存の直後に ReloadHub が同じファイルを読み直しても、登録を置き換えない (走っている木が 2 回やり直さない)
+            const std::shared_ptr<const BehaviorTreeAsset> registered = trees.GetShared(BehaviorTreeLibrary::HashForPath((root / L"savedirty.bt.json").wstring()));
+            bool unchanged = false;
+            check(trees.LoadFromFile(NormalizePathKey((root / L"savedirty.bt.json").wstring()), &unchanged) != 0 && unchanged
+                      && trees.GetShared(BehaviorTreeLibrary::HashForPath((root / L"savedirty.bt.json").wstring())) == registered,
+                  "窓が保存したファイルの読み直し (小数の位置を含む) は登録と同じ内容と判定され、置き換えない");
+        }
+        const int32_t extra = m.AddNode(BtNodeKind::Wait, 50.0f, 0.0f);
+        check(m.Dirty(), "保存のあとの編集で dirty");
+        check(m.Undo() && !m.Dirty() && m.FindNode(extra) == nullptr, "Undo で保存時の内容へ戻ると dirty が消える");
+        check(m.Redo() && m.Dirty(), "Redo で保存後の内容へ進むと dirty");
+        m.Undo();
+        check(m.Undo() && m.Dirty(), "保存より前へ戻ると dirty (保存しても履歴は消えない)");
+        // ドラッグして元の位置へ戻した場合も内容は同じ (dirty にならない)
+        m.Redo();
+        const int32_t only = m.Asset().nodes[0].id;
+        m.BeginGesture();
+        m.MoveNode(only, 10.0f, 10.0f);
+        m.MoveNode(only, 12.3f, 45.6f);
+        m.EndGesture();
+        check(!m.Dirty(), "ドラッグして元の位置へ戻すと、内容が保存時と同じなので dirty ではない");
+    }
+
+    // ---- 9d. Undo は 128 段まで ----
+    {
+        BehaviorTreeEditModel m;
+        m.BindLibraries(&trees, &boards);
+        m.Load(RegisterEmpty(trees, root / L"limit.bt.json"));
+        for (size_t i = 0; i < kBtMaxUndoSteps + 20; ++i) {
+            m.AddNode(BtNodeKind::Wait, static_cast<float>(i), 0.0f);
+        }
+        check(UndoAll(m) == static_cast<int>(kBtMaxUndoSteps) && m.Asset().nodes.size() == 20, "128 段を超えた古い履歴は捨てる (戻せるのは 128 段)");
+    }
+
+    // ---- 9e. 保存できない途中の状態も戻せる (JSON 経由ではなくコピーで持つ理由) ----
+    {
+        BehaviorTreeEditModel m;
+        m.BindLibraries(&trees, &boards);
+        m.Load(RegisterEmpty(trees, root / L"midstate.bt.json"));
+        const int32_t parallel = m.AddNode(BtNodeKind::SimpleParallel, 0.0f, 0.0f);
+        const int32_t a = m.AddNode(BtNodeKind::Wait, 0.0f, 100.0f);
+        m.Connect(parallel, a); // 子 1 つの SimpleParallel (保存できない)
+        check(m.CheckSavable().problem == BtSaveProblem::ChildCount, "(前提) 子 1 つの SimpleParallel は保存できない状態");
+        const std::string broken = DumpState(m);
+        m.AddNode(BtNodeKind::Wait, 100.0f, 100.0f);
+        check(m.Undo() && DumpState(m) == broken && m.CheckSavable().problem == BtSaveProblem::ChildCount, "保存できない途中の状態へも Undo で戻れる");
+        check(m.Redo() && m.Asset().nodes.size() == 3, "Redo で進める");
+    }
+
+    // ---- 10. Blackboard の編集と追従、Undo ----
+    {
+        BlackboardAsset boardAsset;
+        BbKeyDef goal;
+        goal.name = "Goal";
+        goal.type = BbType::Vector;
+        BbKeyDef alarm;
+        alarm.name = "Alarm";
+        alarm.type = BbType::Bool;
+        boardAsset.keys = { goal, alarm };
+        const fs::path boardPath = root / L"edit.bb.json";
+        {
+            std::ofstream f(boardPath, std::ios::binary);
+            f << BlackboardLibrary::ToJson(boardAsset).dump(2);
+        }
+        const uint64_t boardGuid = boards.LoadFromFile(boardPath.wstring());
+        BehaviorTreeEditModel m;
+        m.BindLibraries(&trees, &boards);
+        m.Load(RegisterEmpty(trees, root / L"board.bt.json"));
+        check(m.Board() == nullptr && m.AddBoardKey(BbType::Bool) == -1, "BB を使っていない木では BB の操作を受けない");
+        const int32_t top = m.AddNode(BtNodeKind::Selector, 100.0f, 0.0f);
+        const int32_t move = m.AddNode(BtNodeKind::MoveTo, 100.0f, 100.0f);
+        m.Connect(top, move);
+        check(m.SetBlackboard(boardGuid) && m.Board() != nullptr && m.Board()->keys.size() == 2 && !m.BoardDirty(), "BB を割り当てると作業用コピーを読む。BB の dirty は偽");
+        m.SetKey(move, btnodekey::kTarget, "Goal");
+        const int deco = m.AddDecorator(move, BtDecoratorKind::BlackboardCondition);
+        m.SetDecoratorKey(move, deco, "Goal");
+        const std::string beforeRename = DumpState(m);
+
+        check(m.RenameBoardKey(0, "Destination") && m.Board()->keys[0].name == "Destination" && m.FindNode(move)->keys[0] == "Destination"
+                  && m.FindNode(move)->decorators[0].key == "Destination" && m.BoardDirty() && m.Dirty(),
+              "キーの改名: BT のノードのキー欄と Decorator のキーが同じ操作で追従し、木と BB の両方が dirty");
+        check(!m.RenameBoardKey(0, "Alarm") && !m.RenameBoardKey(0, "") && !m.RenameBoardKey(0, std::string(64, 'k')) && !m.RenameBoardKey(5, "x"),
+              "重複・空・長すぎる名前・存在しないキーへの改名は拒む");
+        check(m.Undo() && DumpState(m) == beforeRename && !m.BoardDirty(), "改名の Undo 1 回で、BB と BT のキー参照が元のバイト列へ戻る");
+        m.Redo();
+
+        // 型・初期値・eventName
+        BbValue init;
+        init.isSet = 1;
+        init.v[0] = 1.0f;
+        init.v[1] = 2.0f;
+        init.v[2] = 3.0f;
+        check(m.SetBoardKeyInitial(0, init) && m.Board()->keys[0].initial.isSet == 1 && !m.SetBoardKeyInitial(0, init), "Vector の初期値を書ける。同じ値は変更なし");
+        BbValue bad = init;
+        bad.v[1] = std::nanf("");
+        check(!m.SetBoardKeyInitial(0, bad), "非有限の初期値は拒む");
+        check(m.SetBoardKeyType(0, BbType::Entity) && m.Board()->keys[0].initial.isSet == 0, "型を変えると初期値は「なし」へ戻る");
+        BbValue entityInit;
+        entityInit.isSet = 1;
+        check(!m.SetBoardKeyInitial(0, entityInit), "Entity のキーはアセットから指せないので初期値を拒む");
+        check(m.SetBoardKeyEventName(1, "alarm") && m.Board()->keys[1].eventName == "alarm" && !m.SetBoardKeyEventName(1, "alarm")
+                  && !m.SetBoardKeyEventName(1, std::string(64, 'e')),
+              "eventName を書ける。同じ値・長すぎる名前は拒む");
+        const int added = m.AddBoardKey(BbType::Float);
+        const int addedAgain = m.AddBoardKey(BbType::Int);
+        check(added == 2 && addedAgain == 3 && m.Board()->keys[2].name == "NewKey" && m.Board()->keys[3].name == "NewKey1", "キーの追加は重ならない名前で付く");
+
+        // 削除: ノードのキー欄は未指定へ、Decorator は名前を残す
+        const std::string beforeRemove = DumpState(m);
+        check(m.RemoveBoardKey(0) && m.Board()->FindKey("Destination") < 0 && m.FindNode(move)->keys[0].empty() && m.FindNode(move)->decorators[0].key == "Destination",
+              "キーの削除: ノードのキー欄は未指定になり、Decorator のキーは名前を残す");
+        check(HasIssue(m.Inspect(), BtIssueKind::KeyUnset, move) && HasIssue(m.Inspect(), BtIssueKind::KeyMissing, move), "削除のあと、未設定と「BB に無い」が検査に出る");
+        check(m.Undo() && DumpState(m) == beforeRemove, "削除の Undo で、BB のキーとノードのキー欄が元に戻る");
+
+        // 保存
+        check(m.BoardDirty() && m.SaveBoard() == BtSaveResult::Ok && !m.BoardDirty(), "BB を保存すると BoardDirty が消える");
+        json fromDisk;
+        BlackboardAsset reread;
+        check(ReadJsonFile(boardPath, fromDisk) && BlackboardLibrary::FromJson(fromDisk, reread) && reread.keys.size() == 4 && reread.keys[0].name == "Destination"
+                  && reread.keys[1].eventName == "alarm",
+              "保存した BB ファイルを読み直すと、キー・型・eventName が編集どおり");
+        check(boards.GetShared(boardGuid)->keys.size() == 4, "保存は BB ライブラリへ直接登録する");
+        m.RenameBoardKey(1, "Siren");
+        check(m.BoardDirty() && m.Undo() && !m.BoardDirty(), "保存のあとの編集を Undo で保存時の内容へ戻すと BoardDirty が消える");
+
+        // BB の外部の置き換え: 未保存の編集が無ければ読み直し、あれば守る
+        m.SyncBoardWithRegistry();
+        BlackboardAsset external = *boards.GetShared(boardGuid);
+        external.keys.push_back(BbKeyDef{ "External", BbType::Int, BbValue{}, std::string() });
+        boards.Register(boardPath.wstring(), external);
+        m.SyncBoardWithRegistry();
+        check(m.Board()->FindKey("External") >= 0 && !m.BoardDirty(), "BB が外で置き換わり、未保存の編集が無ければ読み直す");
+        m.RenameBoardKey(1, "Siren");
+        BlackboardAsset external2 = *boards.GetShared(boardGuid);
+        external2.keys.push_back(BbKeyDef{ "External2", BbType::Int, BbValue{}, std::string() });
+        boards.Register(boardPath.wstring(), external2);
+        m.SyncBoardWithRegistry();
+        check(m.Board()->FindKey("External2") < 0 && m.Board()->FindKey("Siren") >= 0, "未保存の BB の編集があるときは、外の置き換えで上書きしない");
+        m.Undo();
+
+        // 新規 BB: 作って割り当てる (割り当ては Undo の 1 段)
+        const fs::path newPath = root / L"fresh.bb.json";
+        const uint64_t newGuid = m.CreateBoardFile(newPath.wstring());
+        check(newGuid != 0 && fs::exists(newPath, ec) && boards.Contains(newGuid), "新規 BB のファイルを作って登録できる");
+        check(m.SetBlackboard(newGuid) && m.Board() != nullptr && m.Board()->keys.empty() && m.AddBoardKey(BbType::Bool) == 0, "新規 BB を木に割り当てると、キーを足せる");
+        check(m.Undo() && m.Board() != nullptr && m.Board()->keys.empty() && m.Undo() && m.Board()->FindKey("Alarm") >= 0 && m.Asset().blackboard == boardGuid,
+              "割り当ての Undo で元の BB (作業用コピーごと) へ戻る");
+    }
+
+    // ---- 11. 検査エラー ----
+    {
+        BlackboardAsset boardAsset;
+        BbKeyDef vec;
+        vec.name = "Goal";
+        vec.type = BbType::Vector;
+        BbKeyDef flag;
+        flag.name = "Flag";
+        flag.type = BbType::Bool;
+        BbKeyDef who;
+        who.name = "Who";
+        who.type = BbType::Entity;
+        boardAsset.keys = { vec, flag, who };
+        const uint64_t boardGuid = boards.Register((root / L"inspect.bb.json").wstring(), boardAsset);
+        BlackboardAsset otherBoard;
+        const uint64_t otherGuid = boards.Register((root / L"other.bb.json").wstring(), otherBoard);
+
+        BehaviorTreeEditModel m;
+        m.BindLibraries(&trees, &boards);
+        m.Load(RegisterEmpty(trees, root / L"inspect.bt.json"));
+        m.SetBlackboard(boardGuid);
+        const int32_t top = m.AddNode(BtNodeKind::Selector, 300.0f, 0.0f);
+        const int32_t seq = m.AddNode(BtNodeKind::Sequence, 100.0f, 100.0f);
+        const int32_t parallel = m.AddNode(BtNodeKind::SimpleParallel, 500.0f, 100.0f);
+        const int32_t goodMove = m.AddNode(BtNodeKind::MoveTo, 100.0f, 200.0f);
+        m.Connect(top, seq);
+        m.Connect(top, parallel);
+        m.Connect(seq, goodMove);
+        m.SetKey(goodMove, btnodekey::kTarget, "Goal");
+        const int32_t waitMain = m.AddNode(BtNodeKind::Wait, 450.0f, 200.0f);
+        const int32_t waitBack = m.AddNode(BtNodeKind::Wait, 600.0f, 200.0f);
+        m.Connect(parallel, waitMain);
+        m.Connect(parallel, waitBack);
+        check(m.Inspect().empty(), "問題の無い木 (キーの型が合う MoveTo、Task を左に置いた SimpleParallel) は検査に何も出ない");
+
+        // 子の数
+        const int32_t lonelyParallel = m.AddNode(BtNodeKind::SimpleParallel, 800.0f, 100.0f);
+        m.Connect(top, lonelyParallel);
+        m.Connect(lonelyParallel, m.AddNode(BtNodeKind::Wait, 800.0f, 200.0f));
+        check(HasIssue(m.Inspect(), BtIssueKind::ChildCount, lonelyParallel), "子の数の違反 (子 1 つの SimpleParallel)");
+        m.Remove(lonelyParallel, BtRemoveMode::WithDescendants);
+
+        // SimpleParallel の左が Task でない
+        const int32_t badLeft = m.AddNode(BtNodeKind::Sequence, 0.0f, 300.0f);
+        m.Connect(parallel, badLeft); // 3 つ目は拒まれる。先に右を外す
+        m.Disconnect(waitMain);
+        check(m.Connect(parallel, badLeft) && m.FindNode(parallel)->childIds.front() == badLeft, "(前提) x が一番左の Sequence が SimpleParallel の左 (メイン) になる");
+        m.MoveNode(badLeft, 450.0f, 300.0f);
+        check(HasIssue(m.Inspect(), BtIssueKind::ParallelMainNotTask, parallel), "SimpleParallel の左が Task でない (Composite)");
+        m.Remove(badLeft, BtRemoveMode::WithDescendants);
+        m.Connect(parallel, waitMain);
+        check(m.Inspect().empty(), "(前提) 直すと検査は空");
+
+        // LowerPriority / Both の位置
+        const int deco = m.AddDecorator(goodMove, BtDecoratorKind::BlackboardCondition);
+        m.SetDecoratorKey(goodMove, deco, "Flag");
+        m.SetDecoratorParam(goodMove, deco, btbbparam::kAbort, IntValue(btabort::kLowerPriority));
+        check(HasIssue(m.Inspect(), BtIssueKind::LowerPriorityParent, goodMove), "親が Sequence の LowerPriority は検査エラー");
+        m.SetDecoratorParam(goodMove, deco, btbbparam::kAbort, IntValue(btabort::kBoth));
+        check(HasIssue(m.Inspect(), BtIssueKind::LowerPriorityParent, goodMove), "親が Sequence の Both も検査エラー");
+        m.SetDecoratorParam(goodMove, deco, btbbparam::kAbort, IntValue(btabort::kSelf));
+        check(m.Inspect().empty(), "Self なら親が Sequence でもよい");
+        const int selectorDeco = m.AddDecorator(seq, BtDecoratorKind::BlackboardCondition);
+        m.SetDecoratorKey(seq, selectorDeco, "Flag");
+        m.SetDecoratorParam(seq, selectorDeco, btbbparam::kAbort, IntValue(btabort::kLowerPriority));
+        check(!HasIssue(m.Inspect(), BtIssueKind::LowerPriorityParent, seq), "親が Selector の LowerPriority は問題なし");
+        m.RemoveDecorator(seq, selectorDeco);
+        m.RemoveDecorator(goodMove, deco);
+
+        // キー: 未設定・無い・型違い
+        const int32_t unsetMove = m.AddNode(BtNodeKind::MoveTo, 0.0f, 400.0f);
+        check(HasIssue(m.Inspect(), BtIssueKind::KeyUnset, unsetMove), "必須のキー欄が空 (MoveTo の target) は未設定");
+        m.SetKey(unsetMove, btnodekey::kTarget, "Nope");
+        check(HasIssue(m.Inspect(), BtIssueKind::KeyMissing, unsetMove), "BB に無い名前を指す");
+        m.SetKey(unsetMove, btnodekey::kTarget, "Flag");
+        check(HasIssue(m.Inspect(), BtIssueKind::KeyTypeMismatch, unsetMove), "型が合わないキー (MoveTo の target に Bool) は型違い (手書きの木に残る型違いも拾う)");
+        m.SetKey(unsetMove, btnodekey::kTarget, "Who");
+        check(!HasIssue(m.Inspect(), BtIssueKind::KeyTypeMismatch, unsetMove) && !HasIssue(m.Inspect(), BtIssueKind::KeyUnset, unsetMove), "Entity は MoveTo の target に使える");
+        const int32_t findRandom = m.AddNode(BtNodeKind::FindRandomPoint, 0.0f, 500.0f);
+        m.SetKey(findRandom, btrandomkey::kResult, "Goal");
+        check(!HasIssue(m.Inspect(), BtIssueKind::KeyUnset, findRandom), "任意のキー欄 (FindRandomPoint の center) が空でも問題なし");
+        const int32_t decoWait = m.AddNode(BtNodeKind::Wait, 0.0f, 600.0f);
+        const int d2 = m.AddDecorator(decoWait, BtDecoratorKind::BlackboardCondition);
+        m.SetDecoratorKey(decoWait, d2, "Flag");
+        m.RenameBoardKey(1, "Renamed"); // 追従する
+        check(!HasIssue(m.Inspect(), BtIssueKind::KeyMissing, decoWait), "BB のキーの改名に Decorator のキーが追従して検査に出ない");
+        m.RemoveBoardKey(1);
+        check(HasIssue(m.Inspect(), BtIssueKind::KeyMissing, decoWait), "BB のキーを消すと、Decorator のキー参照が「BB に無い」として出る");
+
+        // BB を外すと全部「無い」
+        m.SetBlackboard(0);
+        check(HasIssue(m.Inspect(), BtIssueKind::KeyMissing, goodMove), "BB を使わない木のキー参照は「BB に無い」");
+        m.SetBlackboard(boardGuid);
+
+        // SubTree
+        const int32_t sub = m.AddNode(BtNodeKind::SubTree, 900.0f, 200.0f);
+        check(HasIssue(m.Inspect(), BtIssueKind::SubTreeUnresolved, sub) && m.Inspect().back().severity == BtIssueSeverity::Warning,
+              "取り込む木が未指定の SubTree は警告");
+        BehaviorTreeAsset subAsset;
+        BtNodeDef subRoot;
+        subRoot.id = 0;
+        subRoot.kind = BtNodeKind::Wait;
+        subRoot.params = { IntValue(10), FloatValue(0.0f) };
+        subAsset.nodes.push_back(subRoot);
+        subAsset.rootId = 0;
+        subAsset.blackboard = otherGuid;
+        const uint64_t subGuid = trees.Register((root / L"sub.bt.json").wstring(), subAsset);
+        BtParamValue guidValue;
+        guidValue.u = subGuid;
+        m.SetParam(sub, btsubtreeparam::kTree, guidValue);
+        check(HasIssue(m.Inspect(), BtIssueKind::SubTreeBoardMismatch, sub), "取り込む木の BB が違う SubTree は検査エラー (BtExpandSubTrees が Failure にする条件)");
+        subAsset.blackboard = boardGuid;
+        trees.Register((root / L"sub.bt.json").wstring(), subAsset);
+        check(!HasIssue(m.Inspect(), BtIssueKind::SubTreeBoardMismatch, sub) && !HasIssue(m.Inspect(), BtIssueKind::SubTreeUnresolved, sub), "BB が同じなら問題なし");
+        subAsset.rootId = -1;
+        trees.Register((root / L"sub.bt.json").wstring(), subAsset);
+        check(HasIssue(m.Inspect(), BtIssueKind::SubTreeUnresolved, sub), "根の無い木を取り込む SubTree は警告");
+
+        // 検査は保存を止めない
+        check(!m.Inspect().empty() && m.CheckSavable().problem == BtSaveProblem::None, "検査エラーがあっても保存はできる (止めるのは CheckSavable だけ)");
+        BehaviorTreeEditModel unloaded;
+        check(unloaded.Inspect().empty(), "読み込んでいないモデルの検査は空");
     }
 
     fs::remove_all(root, ec);

@@ -10,9 +10,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <unordered_map>
 #include <vector>
 
+#include "Editor/Asset/AssetOps.h"         // MakeUniqueAssetPath (新規 BB のファイル名)
 #include "Editor/SourceControl/ScmHint.h" // 保存直後に status を取り直させる
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
@@ -20,7 +22,7 @@
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/ImGui/ImGuiTheme.h" // themeColor
-#include "imgui_internal.h"                    // SetKeyOwner (Delete キーを握る)
+#include "imgui_internal.h"                    // SetKeyOwner (Delete / Ctrl+Z / Ctrl+Y を握る)
 
 namespace mye {
 
@@ -36,6 +38,8 @@ constexpr float kPinHitRadius = 9.0f;        // 点を掴める半径 (px)
 constexpr float kNodeDragThreshold = 3.0f;   // これ以上動かすまでクリックとして扱う (px)
 constexpr float kGridSpacing = 64.0f;        // 背景の格子 (グラフ座標)
 constexpr float kFitMargin = 40.0f;          // 全体表示の余白 (px)
+constexpr float kIssuePanelHeight = 130.0f;  // キャンバスの下の検査一覧の高さ (px)
+constexpr int kIssueRefreshFrames = 30;      // 木が変わらなくても検査をやり直す間隔 (取り込む木の登録が外で変わる場合の追従)
 constexpr float kMinTextPixels = 7.0f;       // これより小さい文字は描かない
 constexpr const char* kPaletteDragType = "MYE_BT_NODE_KIND";
 
@@ -177,7 +181,7 @@ void BehaviorTreeWindow::RequestOpen(uint64_t guid)
         open = true; // 開いている木をもう一度開いても、編集中の内容を読み直さない
         return;
     }
-    if (model_.IsLoaded() && model_.Dirty()) {
+    if (model_.IsLoaded() && (model_.Dirty() || model_.BoardDirty())) {
         pendingGuid_ = guid;
         openModal_ = true;
         return;
@@ -197,6 +201,9 @@ void BehaviorTreeWindow::OpenGuid(uint64_t guid)
     }
     selected_ = -1;
     drag_ = DragMode::None;
+    gestureOwner_ = GestureOwner::None;
+    textSlot_ = -1;
+    issuesValid_ = false;
     needFit_ = true;
     status_ = StatusKind::None;
     open = true;
@@ -239,6 +246,65 @@ void BehaviorTreeWindow::DoSave()
     }
 }
 
+void BehaviorTreeWindow::DoSaveBoard()
+{
+    const BlackboardAsset* board = model_.Board();
+    if (board == nullptr) {
+        return;
+    }
+    const std::wstring path = board->path;
+    const std::string name = board->name + ".bb.json";
+    switch (model_.SaveBoard()) {
+    case BtSaveResult::Ok:
+        status_ = StatusKind::BoardSaved;
+        statusText_ = name;
+        scmhint::Changed(path);
+        break;
+    case BtSaveResult::WriteFailed:
+        status_ = StatusKind::BoardSaveFailed;
+        break;
+    case BtSaveResult::NotLoaded:
+    case BtSaveResult::Blocked:
+        break;
+    }
+}
+
+// ドラッグ中などでまとめている操作があるときは受け付けない (途中の状態へ戻さない)
+void BehaviorTreeWindow::DoUndo()
+{
+    if (drag_ == DragMode::None && model_.Undo()) {
+        status_ = StatusKind::None;
+    }
+}
+
+void BehaviorTreeWindow::DoRedo()
+{
+    if (drag_ == DragMode::None && model_.Redo()) {
+        status_ = StatusKind::None;
+    }
+}
+
+// パラメータ欄のドラッグ・文字入力は、触っている間 1 つの操作 (Undo の 1 段) にまとめる。
+// 触っている欄が無くなった (ImGui のアクティブな項目が無い) フレームで閉じる
+void BehaviorTreeWindow::CommitEdit(bool changed, const std::function<void()>& apply)
+{
+    if (!changed) {
+        return;
+    }
+    if (gestureOwner_ == GestureOwner::None && model_.BeginGesture()) {
+        gestureOwner_ = GestureOwner::Widget;
+    }
+    apply();
+}
+
+void BehaviorTreeWindow::FinishWidgetGesture()
+{
+    if (gestureOwner_ == GestureOwner::Widget && !ImGui::IsAnyItemActive()) {
+        model_.EndGesture();
+        gestureOwner_ = GestureOwner::None;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 窓
 // ---------------------------------------------------------------------------
@@ -261,7 +327,9 @@ void BehaviorTreeWindow::OnImGui()
         ImGui::End();
         return;
     }
+    FinishWidgetGesture();
     ReloadFromRegistry();
+    model_.SyncBoardWithRegistry();
     if (selected_ >= 0 && model_.FindNode(selected_) == nullptr) {
         selected_ = -1;
     }
@@ -269,13 +337,23 @@ void BehaviorTreeWindow::OnImGui()
         drag_ = DragMode::None;
         dragNode_ = -1;
     }
+    // ノードのドラッグが何かの理由で途切れたら、まとめていた操作を閉じる
+    if (gestureOwner_ == GestureOwner::Canvas && drag_ != DragMode::Node) {
+        model_.EndGesture();
+        gestureOwner_ = GestureOwner::None;
+    }
+    RefreshIssues();
 
     DrawToolbar();
     ImGui::Separator();
     DrawLeftPanel();
     ImGui::SameLine();
+    ImGui::BeginGroup();
     DrawCanvas();
+    DrawIssuePanel();
+    ImGui::EndGroup();
     DrawUnsavedModal();
+    FinishWidgetGesture();
     ImGui::End();
 }
 
@@ -299,6 +377,24 @@ void BehaviorTreeWindow::DrawToolbar()
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
+    ImGui::BeginDisabled(!model_.CanUndo());
+    if (ImGui::Button(Tr(StrId::Bt_Undo))) {
+        DoUndo();
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("%s", Tr(StrId::Bt_UndoTip));
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!model_.CanRedo());
+    if (ImGui::Button(Tr(StrId::Bt_Redo))) {
+        DoRedo();
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("%s", Tr(StrId::Bt_RedoTip));
+    }
+    ImGui::SameLine();
     ImGui::BeginDisabled(!model_.IsLoaded());
     if (ImGui::Button(Tr(StrId::Bt_AutoLayout))) {
         model_.AutoLayout();
@@ -320,6 +416,10 @@ void BehaviorTreeWindow::DrawToolbar()
         if (model_.Dirty()) {
             ImGui::SameLine();
             ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Bt_Unsaved));
+        }
+        if (model_.BoardDirty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Bt_BoardUnsaved));
         }
     }
 
@@ -345,6 +445,13 @@ void BehaviorTreeWindow::DrawToolbar()
         std::snprintf(text, sizeof(text), Tr(StrId::Bt_LoadFailed), statusText_.c_str());
         ImGui::TextColored(themeColor::Error, "%s", text);
         break;
+    case StatusKind::BoardSaved:
+        std::snprintf(text, sizeof(text), Tr(StrId::Bt_BoardSaved), statusText_.c_str());
+        ImGui::TextColored(themeColor::Success, "%s", text);
+        break;
+    case StatusKind::BoardSaveFailed:
+        ImGui::TextColored(themeColor::Error, "%s", Tr(StrId::Bt_BoardSaveFailed));
+        break;
     }
     if (model_.IsLoaded() && model_.Dirty() && !model_.IsRegistered()) {
         ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Bt_ExternalChange));
@@ -364,8 +471,13 @@ void BehaviorTreeWindow::DrawUnsavedModal()
     std::snprintf(text, sizeof(text), Tr(StrId::Bt_ModalBody), model_.Asset().name.c_str());
     ImGui::TextUnformatted(text);
     if (ImGui::Button(Tr(StrId::Bt_ModalSave))) {
-        DoSave();
-        if (!model_.Dirty()) {
+        if (model_.Dirty()) {
+            DoSave();
+        }
+        if (model_.BoardDirty()) {
+            DoSaveBoard();
+        }
+        if (!model_.Dirty() && !model_.BoardDirty()) {
             OpenGuid(pendingGuid_);
             ImGui::CloseCurrentPopup();
         }
@@ -454,6 +566,7 @@ void BehaviorTreeWindow::DrawProperties()
         ImGui::PopTextWrapPos();
     } else {
         DrawTreeSettings();
+        DrawBoardPanel();
         if (selected_ >= 0) {
             ImGui::Separator();
             DrawNodeProperties(selected_);
@@ -738,21 +851,20 @@ void BehaviorTreeWindow::DrawNodeProperties(int32_t id)
                 && std::strcmp(info.params[i + 2].name, "vectorZ") == 0) {
                 float v[3] = { node->params[static_cast<size_t>(i)].f, node->params[static_cast<size_t>(i) + 1].f,
                                node->params[static_cast<size_t>(i) + 2].f };
-                if (ImGui::DragFloat3("vector", v, 0.05f, desc.minValue, desc.maxValue)) {
+                const int firstParam = i;
+                CommitEdit(ImGui::DragFloat3("vector", v, 0.05f, desc.minValue, desc.maxValue), [&] {
                     for (int axis = 0; axis < 3; ++axis) {
                         BtParamValue value;
                         value.f = v[axis];
-                        model_.SetParam(id, i + axis, value);
+                        model_.SetParam(id, firstParam + axis, value);
                     }
-                }
+                });
                 i += 2;
                 ImGui::PopID();
                 continue;
             }
             BtParamValue value = node->params[static_cast<size_t>(i)];
-            if (DrawParam(desc, value)) {
-                model_.SetParam(id, i, value);
-            }
+            CommitEdit(DrawParam(desc, value), [&] { model_.SetParam(id, i, value); });
             ImGui::PopID();
         }
     }
@@ -807,9 +919,7 @@ void BehaviorTreeWindow::DrawNodeProperties(int32_t id)
                 }
                 ImGui::PushID(p);
                 BtParamValue value = deco.params[static_cast<size_t>(p)];
-                if (DrawParam(decoInfo.params[p], value)) {
-                    model_.SetDecoratorParam(id, d, p, value);
-                }
+                CommitEdit(DrawParam(decoInfo.params[p], value), [&] { model_.SetDecoratorParam(id, d, p, value); });
                 ImGui::PopID();
             }
             ImGui::TreePop();
@@ -844,6 +954,162 @@ void BehaviorTreeWindow::DrawNodeProperties(int32_t id)
     ImGui::PopID();
 }
 
+// 編集が確定したときだけ committed へ入れて true を返す文字欄。入力の途中の文字列 (空・重複した名前など) を
+// 操作として積まないよう、確定まで textBuf_ に持つ
+bool BehaviorTreeWindow::DrawCommitText(const char* label, const std::string& current, int slot, std::string& committed)
+{
+    if (textSlot_ != slot) {
+        std::snprintf(textBuf_, sizeof(textBuf_), "%s", current.c_str());
+    }
+    ImGui::InputText(label, textBuf_, sizeof(textBuf_));
+    if (ImGui::IsItemActivated()) {
+        textSlot_ = slot;
+    }
+    bool done = false;
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        committed = textBuf_;
+        done = true;
+    }
+    if (ImGui::IsItemDeactivated()) {
+        textSlot_ = -1;
+    }
+    return done;
+}
+
+void BehaviorTreeWindow::CreateBoard()
+{
+    if (!model_.IsLoaded()) {
+        return;
+    }
+    const std::wstring dir = std::filesystem::path(model_.Asset().path).parent_path().wstring();
+    const std::wstring path = MakeUniqueAssetPath(dir, Utf8ToWide(model_.Asset().name) + L".bb.json");
+    const uint64_t guid = model_.CreateBoardFile(path);
+    if (guid == 0) {
+        status_ = StatusKind::BoardSaveFailed;
+        return;
+    }
+    scmhint::Changed(path);
+    model_.SetBlackboard(guid); // 使う BB の切り替えは Undo の 1 段 (作ったファイルは Undo では消えない)
+}
+
+void BehaviorTreeWindow::DrawBoardPanel()
+{
+    ImGui::SetNextItemOpen(true, ImGuiCond_FirstUseEver);
+    if (!ImGui::CollapsingHeader(Tr(StrId::Bt_BoardPanel))) {
+        return;
+    }
+    ImGui::PushID("btboard");
+    if (ImGui::Button(Tr(StrId::Bt_NewBoard))) {
+        CreateBoard();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", Tr(StrId::Bt_NewBoardTip));
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!model_.BoardDirty());
+    if (ImGui::Button(Tr(StrId::Bt_SaveBoard))) {
+        DoSaveBoard();
+    }
+    ImGui::EndDisabled();
+    const BlackboardAsset* board = model_.Board();
+    if (board == nullptr) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", Tr(StrId::Bt_BoardNoBoard));
+        ImGui::PopTextWrapPos();
+        ImGui::PopID();
+        return;
+    }
+    ImGui::TextDisabled("%s.bb.json", board->name.c_str());
+    int removeIndex = -1;
+    for (int i = 0; i < static_cast<int>(board->keys.size()); ++i) {
+        if (DrawBoardKey(i)) {
+            removeIndex = i;
+        }
+    }
+    if (removeIndex >= 0) {
+        model_.RemoveBoardKey(removeIndex);
+    }
+    ImGui::BeginDisabled(board->keys.size() >= static_cast<size_t>(kBbMaxKeys));
+    if (ImGui::Button(Tr(StrId::Bt_AddKey))) {
+        model_.AddBoardKey(BbType::Bool);
+    }
+    ImGui::EndDisabled();
+    ImGui::PopID();
+}
+
+// キー 1 つ (名前・型・初期値・eventName)。消すよう求められたら true
+bool BehaviorTreeWindow::DrawBoardKey(int index)
+{
+    const BlackboardAsset* board = model_.Board();
+    const BbKeyDef key = board->keys[static_cast<size_t>(index)]; // 操作で作業用コピーが変わるので値で持つ
+    bool remove = false;
+    ImGui::PushID(index);
+    char header[160];
+    std::snprintf(header, sizeof(header), "%s  (%s)", key.name.c_str(), BbTypeName(key.type));
+    const ImGuiTreeNodeFlags flags = board->keys.size() <= 4 ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None;
+    if (ImGui::TreeNodeEx("##bbkey", flags, "%s", header)) {
+        std::string committed;
+        if (DrawCommitText(Tr(StrId::Bt_KeyName), key.name, index * 2, committed)) {
+            model_.RenameBoardKey(index, committed);
+        }
+        if (ImGui::BeginCombo(Tr(StrId::Bt_KeyType), BbTypeName(key.type))) {
+            for (const BbType type : { BbType::Bool, BbType::Int, BbType::Float, BbType::Vector, BbType::Entity }) {
+                if (ImGui::Selectable(BbTypeName(type), type == key.type)) {
+                    model_.SetBoardKeyType(index, type);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (key.type == BbType::Entity) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", Tr(StrId::Bt_KeyEntityNoInitial));
+            ImGui::PopTextWrapPos();
+        } else {
+            BbValue value = key.initial;
+            bool hasInitial = value.isSet != 0;
+            if (ImGui::Checkbox("##hasinitial", &hasInitial)) {
+                value.isSet = hasInitial ? 1 : 0;
+                CommitEdit(true, [&] { model_.SetBoardKeyInitial(index, value); });
+            }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!hasInitial);
+            bool changed = false;
+            switch (key.type) {
+            case BbType::Bool: {
+                bool b = value.i != 0;
+                changed = ImGui::Checkbox(Tr(StrId::Bt_KeyInitial), &b);
+                value.i = b ? 1 : 0;
+                break;
+            }
+            case BbType::Int: changed = ImGui::DragInt(Tr(StrId::Bt_KeyInitial), &value.i, 1.0f); break;
+            case BbType::Float: changed = ImGui::DragFloat(Tr(StrId::Bt_KeyInitial), &value.f, 0.05f); break;
+            case BbType::Vector: changed = ImGui::DragFloat3(Tr(StrId::Bt_KeyInitial), value.v, 0.05f); break;
+            case BbType::Entity: break;
+            }
+            ImGui::EndDisabled();
+            if (changed) {
+                value.isSet = 1;
+            }
+            CommitEdit(changed, [&] { model_.SetBoardKeyInitial(index, value); });
+        }
+        if (DrawCommitText(Tr(StrId::Bt_KeyEventName), key.eventName, index * 2 + 1, committed)) {
+            model_.SetBoardKeyEventName(index, committed);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", Tr(StrId::Bt_KeyEventNameTip));
+        }
+        if (ImGui::SmallButton(Tr(StrId::Bt_Remove))) {
+            remove = true;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", Tr(StrId::Bt_KeyRemoveTip));
+        }
+        ImGui::TreePop();
+    }
+    ImGui::PopID();
+    return remove;
+}
+
 void BehaviorTreeWindow::AddNodeAt(BtNodeKind kind, float gx, float gy)
 {
     const int32_t id = model_.AddNode(kind, gx, gy);
@@ -866,16 +1132,16 @@ void BehaviorTreeWindow::DeleteSelected(BtRemoveMode mode)
 
 ImVec2 BehaviorTreeWindow::CanvasCenterGraph() const
 {
-    return ImVec2((canvasSize_.x * 0.5f - pan_.x) / zoom_, (canvasSize_.y * 0.5f - pan_.y) / zoom_);
+    return view_.ToGraph(ImVec2(view_.min.x + view_.size.x * 0.5f, view_.min.y + view_.size.y * 0.5f));
 }
 
-void BehaviorTreeWindow::FitView(const ImVec2& canvasSize)
+void BehaviorTreeWindow::FitView()
 {
     needFit_ = false;
     const std::vector<BtNodeDef>& nodes = model_.Asset().nodes;
     if (nodes.empty()) {
-        pan_ = ImVec2(kFitMargin, kFitMargin);
-        zoom_ = 1.0f;
+        view_.pan = ImVec2(kFitMargin, kFitMargin);
+        view_.zoom = 1.0f;
         return;
     }
     float minX = nodes[0].pos[0];
@@ -890,145 +1156,206 @@ void BehaviorTreeWindow::FitView(const ImVec2& canvasSize)
     }
     const float width = (std::max)(maxX - minX, 1.0f);
     const float height = (std::max)(maxY - minY, 1.0f);
-    zoom_ = (std::clamp)((std::min)((canvasSize.x - kFitMargin * 2.0f) / width, (canvasSize.y - kFitMargin * 2.0f) / height), kMinZoom, 1.0f);
-    pan_.x = (canvasSize.x - width * zoom_) * 0.5f - minX * zoom_;
-    pan_.y = kFitMargin - minY * zoom_;
+    view_.zoom = (std::clamp)((std::min)((view_.size.x - kFitMargin * 2.0f) / width, (view_.size.y - kFitMargin * 2.0f) / height), kMinZoom, 1.0f);
+    view_.pan.x = (view_.size.x - width * view_.zoom) * 0.5f - minX * view_.zoom;
+    view_.pan.y = kFitMargin - minY * view_.zoom;
 }
+
+// 選んで、キャンバスの中央へ持ってくる (検査一覧のクリック)
+void BehaviorTreeWindow::FocusNode(int32_t id)
+{
+    const BtNodeDef* node = model_.FindNode(id);
+    if (node == nullptr) {
+        return;
+    }
+    selected_ = id;
+    view_.pan.x = view_.size.x * 0.5f - (node->pos[0] + kBtNodeWidth * 0.5f) * view_.zoom;
+    view_.pan.y = view_.size.y * 0.5f - (node->pos[1] + BehaviorTreeEditModel::NodeHeight(*node) * 0.5f) * view_.zoom;
+}
+
+BehaviorTreeWindow::Hit BehaviorTreeWindow::HitTest(const ImVec2& p) const
+{
+    Hit hit;
+    const std::vector<BtNodeDef>& nodes = model_.Asset().nodes;
+    const float pinHit = (std::max)(kPinHitRadius, kPinRadius * view_.zoom + 3.0f);
+    for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
+        if (BehaviorTreeEditModel::MaxChildren(it->kind) == 0) {
+            continue;
+        }
+        ImVec2 mn;
+        ImVec2 mx;
+        view_.RectOf(*it, mn, mx);
+        const float dx = p.x - (mn.x + mx.x) * 0.5f;
+        const float dy = p.y - mx.y;
+        if (dx * dx + dy * dy <= pinHit * pinHit) {
+            hit.node = it->id;
+            hit.outputPin = true;
+            return hit;
+        }
+    }
+    for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
+        ImVec2 mn;
+        ImVec2 mx;
+        view_.RectOf(*it, mn, mx);
+        if (p.x >= mn.x && p.x <= mx.x && p.y >= mn.y && p.y <= mx.y) {
+            hit.node = it->id;
+            return hit;
+        }
+    }
+    return hit;
+}
+
+BehaviorTreeWindow::CanvasStyle BehaviorTreeWindow::MakeStyle() const
+{
+    CanvasStyle style;
+    style.fontSize = ImGui::GetFontSize() * view_.zoom;
+    style.drawText = style.fontSize >= kMinTextPixels;
+    style.rounding = 4.0f * view_.zoom;
+    style.pinRadius = (std::max)(kPinRadius * view_.zoom, 3.0f);
+    style.text = ImGui::GetColorU32(ImGuiCol_Text);
+    style.dim = ImGui::GetColorU32(ImGuiCol_Text, 0.65f);
+    style.line = ImGui::GetColorU32(ImGuiCol_Text, 0.55f);
+    style.accent = ImGui::GetColorU32(themeColor::Accent);
+    style.root = ImGui::GetColorU32(themeColor::Success);
+    style.orphan = ImGui::GetColorU32(themeColor::Warning);
+    style.error = ImGui::GetColorU32(themeColor::Error);
+    style.warning = ImGui::GetColorU32(themeColor::Warning);
+    return style;
+}
+
+// 検査をやり直す (木か BB が変わったとき、または一定フレームごと)
+void BehaviorTreeWindow::RefreshIssues()
+{
+    const bool due = !issuesValid_ || issuesRevision_ != model_.Revision() || ImGui::GetFrameCount() % kIssueRefreshFrames == 0;
+    if (!due) {
+        return;
+    }
+    issues_ = model_.Inspect();
+    issueSeverityOfNode_.clear();
+    for (const BtIssue& issue : issues_) {
+        BtIssueSeverity& severity = issueSeverityOfNode_.try_emplace(issue.nodeId, BtIssueSeverity::Warning).first->second;
+        if (issue.severity == BtIssueSeverity::Error) {
+            severity = BtIssueSeverity::Error;
+        }
+    }
+    issuesRevision_ = model_.Revision();
+    issuesValid_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// キャンバス: 入力 (HandleCanvasInput / HandleKeys) -> 描画 (Draw*) -> メニュー (DrawCanvasMenus)
+// ---------------------------------------------------------------------------
 
 void BehaviorTreeWindow::DrawCanvas()
 {
     ImGuiIO& io = ImGui::GetIO();
-    ImGui::BeginChild("##btcanvas", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders,
+    ImGui::BeginChild("##btcanvas", ImVec2(0.0f, -kIssuePanelHeight), ImGuiChildFlags_Borders,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove);
-    const ImVec2 canvasMin = ImGui::GetCursorScreenPos();
-    ImVec2 canvasSize = ImGui::GetContentRegionAvail();
-    canvasSize.x = (std::max)(canvasSize.x, 50.0f);
-    canvasSize.y = (std::max)(canvasSize.y, 50.0f);
-    canvasMin_ = canvasMin;
-    canvasSize_ = canvasSize;
-    const ImVec2 canvasMax(canvasMin.x + canvasSize.x, canvasMin.y + canvasSize.y);
+    view_.min = ImGui::GetCursorScreenPos();
+    view_.size = ImGui::GetContentRegionAvail();
+    view_.size.x = (std::max)(view_.size.x, 50.0f);
+    view_.size.y = (std::max)(view_.size.y, 50.0f);
+    const ImVec2 canvasMax(view_.min.x + view_.size.x, view_.min.y + view_.size.y);
     if (needFit_ && model_.IsLoaded()) {
-        FitView(canvasSize);
+        FitView();
     }
+    RefreshIssues();
 
-    ImGui::InvisibleButton("##btcanvasbtn", canvasSize,
+    ImGui::InvisibleButton("##btcanvasbtn", view_.size,
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     const bool hovered = ImGui::IsItemHovered();
-    const bool loaded = model_.IsLoaded();
-
-    const auto toScreen = [&](float gx, float gy) { return ImVec2(canvasMin.x + pan_.x + gx * zoom_, canvasMin.y + pan_.y + gy * zoom_); };
-    const auto toGraph = [&](const ImVec2& p) { return ImVec2((p.x - canvasMin.x - pan_.x) / zoom_, (p.y - canvasMin.y - pan_.y) / zoom_); };
 
     // パレットからのドロップ
-    if (loaded && ImGui::BeginDragDropTarget()) {
+    if (model_.IsLoaded() && ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kPaletteDragType)) {
             const int32_t kindIndex = *static_cast<const int32_t*>(payload->Data);
             if (kindIndex >= 0 && kindIndex < static_cast<int32_t>(BtNodeKind::Count)) {
-                const ImVec2 g = toGraph(io.MousePos);
+                const ImVec2 g = view_.ToGraph(io.MousePos);
                 AddNodeAt(static_cast<BtNodeKind>(kindIndex), g.x - kBtNodeWidth * 0.5f, g.y);
             }
         }
         ImGui::EndDragDropTarget();
     }
 
-    // ---- ズーム (カーソルの下のグラフ座標を動かさない) ----
-    if (loaded && hovered && io.MouseWheel != 0.0f && drag_ != DragMode::Connect) {
-        const ImVec2 before = toGraph(io.MousePos);
-        zoom_ = (std::clamp)(zoom_ * std::pow(kZoomStep, io.MouseWheel), kMinZoom, kMaxZoom);
-        pan_.x = io.MousePos.x - canvasMin.x - before.x * zoom_;
-        pan_.y = io.MousePos.y - canvasMin.y - before.y * zoom_;
+    const MenuRequest menu = HandleCanvasInput(hovered);
+    HandleKeys();
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->PushClipRect(view_.min, canvasMax, true);
+    dl->AddRectFilled(view_.min, canvasMax, ImGui::GetColorU32(ImGuiCol_ChildBg));
+    DrawGrid(dl);
+    const CanvasStyle style = MakeStyle();
+    const Hit hover = (model_.IsLoaded() && hovered && drag_ == DragMode::None) ? HitTest(io.MousePos) : Hit{};
+    DrawEdges(dl, style);
+    DrawConnectPreview(dl, style);
+    DrawNodes(dl, style, hover);
+    dl->PopClipRect();
+
+    DrawCanvasMenus(menu);
+    ImGui::EndChild();
+}
+
+BehaviorTreeWindow::MenuRequest BehaviorTreeWindow::HandleCanvasInput(bool hovered)
+{
+    MenuRequest request;
+    if (!model_.IsLoaded()) {
+        return request;
+    }
+    ImGuiIO& io = ImGui::GetIO();
+
+    // ズーム (カーソルの下のグラフ座標を動かさない)
+    if (hovered && io.MouseWheel != 0.0f && drag_ != DragMode::Connect) {
+        const ImVec2 before = view_.ToGraph(io.MousePos);
+        view_.zoom = (std::clamp)(view_.zoom * std::pow(kZoomStep, io.MouseWheel), kMinZoom, kMaxZoom);
+        view_.pan.x = io.MousePos.x - view_.min.x - before.x * view_.zoom;
+        view_.pan.y = io.MousePos.y - view_.min.y - before.y * view_.zoom;
     }
 
-    const std::vector<BtNodeDef>& nodes = model_.Asset().nodes;
-    const float nodeW = kBtNodeWidth * zoom_;
-    const auto rectOf = [&](const BtNodeDef& node, ImVec2& outMin, ImVec2& outMax) {
-        outMin = toScreen(node.pos[0], node.pos[1]);
-        outMax = ImVec2(outMin.x + nodeW, outMin.y + BehaviorTreeEditModel::NodeHeight(node) * zoom_);
-    };
-
-    // 親の id (描画と点の判定用)。childIds が正本
-    std::unordered_map<int32_t, int32_t> parentOf;
-    for (const BtNodeDef& node : nodes) {
-        for (const int32_t child : node.childIds) {
-            parentOf[child] = node.id;
-        }
-    }
-
-    // ---- 当たり判定 ----
-    struct Hit {
-        int32_t node = -1;
-        bool outputPin = false;
-    };
-    const auto hitTest = [&](const ImVec2& p) {
-        Hit hit;
-        const float pinHit = (std::max)(kPinHitRadius, kPinRadius * zoom_ + 3.0f);
-        for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
-            if (BehaviorTreeEditModel::MaxChildren(it->kind) == 0) {
-                continue;
-            }
-            ImVec2 mn;
-            ImVec2 mx;
-            rectOf(*it, mn, mx);
-            const float dx = p.x - (mn.x + mx.x) * 0.5f;
-            const float dy = p.y - mx.y;
-            if (dx * dx + dy * dy <= pinHit * pinHit) {
-                hit.node = it->id;
-                hit.outputPin = true;
-                return hit;
-            }
-        }
-        for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
-            ImVec2 mn;
-            ImVec2 mx;
-            rectOf(*it, mn, mx);
-            if (p.x >= mn.x && p.x <= mx.x && p.y >= mn.y && p.y <= mx.y) {
-                hit.node = it->id;
-                return hit;
-            }
-        }
-        return hit;
-    };
-
-    // ---- マウス操作 ----
-    bool openNodeMenu = false;
-    bool openCanvasMenu = false;
-    if (loaded && hovered) {
+    if (hovered) {
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle) || (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::IsKeyDown(ImGuiKey_Space))) {
             drag_ = DragMode::Pan;
         } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-            const Hit hit = hitTest(io.MousePos);
+            const Hit hit = HitTest(io.MousePos);
             selected_ = hit.node;
             dragNode_ = hit.node;
             if (hit.node >= 0) {
                 drag_ = hit.outputPin ? DragMode::Connect : DragMode::Node;
+                if (drag_ == DragMode::Node && gestureOwner_ == GestureOwner::None && model_.BeginGesture()) {
+                    gestureOwner_ = GestureOwner::Canvas; // 押してから離すまでの移動を Undo の 1 段にする
+                }
             }
         } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-            const Hit hit = hitTest(io.MousePos);
-            contextGraphPos_ = toGraph(io.MousePos);
+            const Hit hit = HitTest(io.MousePos);
+            contextGraphPos_ = view_.ToGraph(io.MousePos);
             if (hit.node >= 0) {
                 selected_ = hit.node;
                 contextNode_ = hit.node;
-                openNodeMenu = true;
+                request.node = true;
             } else {
-                openCanvasMenu = true;
+                request.canvas = true;
             }
         }
     }
+
     if (drag_ == DragMode::Pan) {
         if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) || ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-            pan_.x += io.MouseDelta.x;
-            pan_.y += io.MouseDelta.y;
+            view_.pan.x += io.MouseDelta.x;
+            view_.pan.y += io.MouseDelta.y;
         } else {
             drag_ = DragMode::None;
         }
     } else if (drag_ == DragMode::Node) {
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             drag_ = DragMode::None;
+            if (gestureOwner_ == GestureOwner::Canvas) {
+                model_.EndGesture();
+                gestureOwner_ = GestureOwner::None;
+            }
         } else if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, kNodeDragThreshold)) {
-            model_.MoveSubtree(dragNode_, io.MouseDelta.x / zoom_, io.MouseDelta.y / zoom_);
+            model_.MoveSubtree(dragNode_, io.MouseDelta.x / view_.zoom, io.MouseDelta.y / view_.zoom);
         }
     } else if (drag_ == DragMode::Connect && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        const Hit hit = hitTest(io.MousePos);
+        const Hit hit = HitTest(io.MousePos);
         if (hit.node >= 0 && hit.node != dragNode_) {
             if (model_.Connect(dragNode_, hit.node)) {
                 selected_ = hit.node;
@@ -1036,56 +1363,62 @@ void BehaviorTreeWindow::DrawCanvas()
         }
         drag_ = DragMode::None;
     }
+    return request;
+}
 
-    // Delete: 選んでいるノードを消す (Shift で子ごと)。Editor 全体のショートカットも同じキーで選択エンティティを消すので、
-    // この窓が focus を持つ間はキーを握る (握らないとシーンのエンティティまで消える)
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !io.WantTextInput) {
-        const ImGuiID deleteOwner = ImGui::GetID("##btdelete");
-        ImGui::SetKeyOwner(ImGuiKey_Delete, deleteOwner, ImGuiInputFlags_LockUntilRelease);
-        if (loaded && selected_ >= 0 && ImGui::IsKeyPressed(ImGuiKey_Delete, ImGuiInputFlags_None, deleteOwner)) {
-            DeleteSelected(io.KeyShift ? BtRemoveMode::WithDescendants : BtRemoveMode::KeepChildren);
+// Delete / Ctrl+Z / Ctrl+Y: Editor 全体のショートカットも同じキーでシーンを操作する (エンティティの削除・シーンの Undo)。
+// この窓が focus を持つ間はキーを握る (握らないとシーン側まで動く)。窓の外にフォーカスがあるときは握らない
+void BehaviorTreeWindow::HandleKeys()
+{
+    ImGuiIO& io = ImGui::GetIO();
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || io.WantTextInput) {
+        return;
+    }
+    const ImGuiID owner = ImGui::GetID("##btkeys");
+    ImGui::SetKeyOwner(ImGuiKey_Delete, owner, ImGuiInputFlags_LockUntilRelease);
+    ImGui::SetKeyOwner(ImGuiKey_Z, owner, ImGuiInputFlags_LockUntilRelease);
+    ImGui::SetKeyOwner(ImGuiKey_Y, owner, ImGuiInputFlags_LockUntilRelease);
+    if (!model_.IsLoaded()) {
+        return;
+    }
+    if (selected_ >= 0 && ImGui::IsKeyPressed(ImGuiKey_Delete, ImGuiInputFlags_None, owner)) {
+        DeleteSelected(io.KeyShift ? BtRemoveMode::WithDescendants : BtRemoveMode::KeepChildren);
+    }
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, ImGuiInputFlags_Repeat, owner)) {
+        if (io.KeyShift) {
+            DoRedo();
+        } else {
+            DoUndo();
         }
     }
-
-    // ---- 描画 ----
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->PushClipRect(canvasMin, canvasMax, true);
-    dl->AddRectFilled(canvasMin, canvasMax, ImGui::GetColorU32(ImGuiCol_ChildBg));
-    {
-        // 背景の格子 (拡大縮小・移動が見て分かる目印)
-        const ImU32 gridColor = ImGui::GetColorU32(ImGuiCol_Border, 0.35f);
-        const float step = kGridSpacing * zoom_;
-        const float startX = canvasMin.x + std::fmod(pan_.x, step);
-        const float startY = canvasMin.y + std::fmod(pan_.y, step);
-        for (float x = startX; x < canvasMax.x; x += step) {
-            dl->AddLine(ImVec2(x, canvasMin.y), ImVec2(x, canvasMax.y), gridColor);
-        }
-        for (float y = startY; y < canvasMax.y; y += step) {
-            dl->AddLine(ImVec2(canvasMin.x, y), ImVec2(canvasMax.x, y), gridColor);
-        }
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, ImGuiInputFlags_Repeat, owner)) {
+        DoRedo();
     }
+}
 
-    const Hit hoverHit = (loaded && hovered && drag_ == DragMode::None) ? hitTest(io.MousePos) : Hit{};
-    const float fontSize = ImGui::GetFontSize() * zoom_;
-    const bool drawText = fontSize >= kMinTextPixels;
-    const ImU32 textColor = ImGui::GetColorU32(ImGuiCol_Text);
-    const ImU32 dimColor = ImGui::GetColorU32(ImGuiCol_Text, 0.65f);
-    const ImU32 lineColor = ImGui::GetColorU32(ImGuiCol_Text, 0.55f);
-    const ImU32 accentColor = ImGui::GetColorU32(themeColor::Accent);
-    const ImU32 rootColor = ImGui::GetColorU32(themeColor::Success);
-    const ImU32 orphanColor = ImGui::GetColorU32(themeColor::Warning);
-    const float rounding = 4.0f * zoom_;
-    const float pinRadius = (std::max)(kPinRadius * zoom_, 3.0f);
-    const auto addText = [&](const ImVec2& pos, ImU32 color, const char* text, const ImVec2& clipMin, const ImVec2& clipMax, float size) {
-        const ImVec4 clip(clipMin.x, clipMin.y, clipMax.x, clipMax.y);
-        dl->AddText(nullptr, size, pos, color, text, nullptr, 0.0f, &clip);
-    };
+void BehaviorTreeWindow::DrawGrid(ImDrawList* dl)
+{
+    // 背景の格子 (拡大縮小・移動が見て分かる目印)
+    const ImVec2 canvasMax(view_.min.x + view_.size.x, view_.min.y + view_.size.y);
+    const ImU32 gridColor = ImGui::GetColorU32(ImGuiCol_Border, 0.35f);
+    const float step = kGridSpacing * view_.zoom;
+    const float startX = view_.min.x + std::fmod(view_.pan.x, step);
+    const float startY = view_.min.y + std::fmod(view_.pan.y, step);
+    for (float x = startX; x < canvasMax.x; x += step) {
+        dl->AddLine(ImVec2(x, view_.min.y), ImVec2(x, canvasMax.y), gridColor);
+    }
+    for (float y = startY; y < canvasMax.y; y += step) {
+        dl->AddLine(ImVec2(view_.min.x, y), ImVec2(canvasMax.x, y), gridColor);
+    }
+}
 
-    // 接続線 (親の下の点 -> 子の上の中央)。子の順序の番号を子の上に付ける
-    for (const BtNodeDef& parent : nodes) {
+// 接続線 (親の下の点 -> 子の上の中央)。子の順序の番号を子の上に付ける
+void BehaviorTreeWindow::DrawEdges(ImDrawList* dl, const CanvasStyle& style)
+{
+    for (const BtNodeDef& parent : model_.Asset().nodes) {
         ImVec2 parentMin;
         ImVec2 parentMax;
-        rectOf(parent, parentMin, parentMax);
+        view_.RectOf(parent, parentMin, parentMax);
         const ImVec2 from((parentMin.x + parentMax.x) * 0.5f, parentMax.y);
         for (size_t order = 0; order < parent.childIds.size(); ++order) {
             const BtNodeDef* child = model_.FindNode(parent.childIds[order]);
@@ -1094,93 +1427,123 @@ void BehaviorTreeWindow::DrawCanvas()
             }
             ImVec2 childMin;
             ImVec2 childMax;
-            rectOf(*child, childMin, childMax);
+            view_.RectOf(*child, childMin, childMax);
             const ImVec2 to((childMin.x + childMax.x) * 0.5f, childMin.y);
-            const float reach = (std::max)(24.0f * zoom_, std::fabs(to.y - from.y) * 0.5f);
-            dl->AddBezierCubic(from, ImVec2(from.x, from.y + reach), ImVec2(to.x, to.y - reach), to, lineColor, (std::max)(1.5f * zoom_, 1.0f));
-            if (drawText) {
+            const float reach = (std::max)(24.0f * view_.zoom, std::fabs(to.y - from.y) * 0.5f);
+            dl->AddBezierCubic(from, ImVec2(from.x, from.y + reach), ImVec2(to.x, to.y - reach), to, style.line, (std::max)(1.5f * view_.zoom, 1.0f));
+            if (style.drawText) {
                 char number[16];
                 std::snprintf(number, sizeof(number), "%d", static_cast<int>(order) + 1);
-                const float badge = fontSize * 0.75f;
+                const float badge = style.fontSize * 0.75f;
                 const ImVec2 center(to.x - badge * 1.4f, to.y - badge * 0.9f);
                 dl->AddCircleFilled(center, badge, ImGui::GetColorU32(ImGuiCol_PopupBg));
-                dl->AddCircle(center, badge, lineColor);
+                dl->AddCircle(center, badge, style.line);
                 const ImVec2 textSize = ImGui::CalcTextSize(number);
-                dl->AddText(nullptr, fontSize * 0.85f, ImVec2(center.x - textSize.x * 0.5f * zoom_ * 0.85f, center.y - fontSize * 0.42f), textColor, number);
+                dl->AddText(nullptr, style.fontSize * 0.85f, ImVec2(center.x - textSize.x * 0.5f * view_.zoom * 0.85f, center.y - style.fontSize * 0.42f), style.text, number);
             }
         }
     }
+}
 
-    // 接続のプレビュー
-    if (drag_ == DragMode::Connect) {
-        if (const BtNodeDef* source = model_.FindNode(dragNode_)) {
-            ImVec2 mn;
-            ImVec2 mx;
-            rectOf(*source, mn, mx);
-            const ImVec2 from((mn.x + mx.x) * 0.5f, mx.y);
-            const Hit target = hitTest(io.MousePos);
-            const bool valid = target.node >= 0 && target.node != dragNode_;
-            dl->AddLine(from, io.MousePos, valid ? accentColor : lineColor, 2.0f);
+void BehaviorTreeWindow::DrawConnectPreview(ImDrawList* dl, const CanvasStyle& style)
+{
+    if (drag_ != DragMode::Connect) {
+        return;
+    }
+    const BtNodeDef* source = model_.FindNode(dragNode_);
+    if (source == nullptr) {
+        return;
+    }
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    ImVec2 mn;
+    ImVec2 mx;
+    view_.RectOf(*source, mn, mx);
+    const ImVec2 from((mn.x + mx.x) * 0.5f, mx.y);
+    const Hit target = HitTest(mouse);
+    const bool valid = target.node >= 0 && target.node != dragNode_;
+    dl->AddLine(from, mouse, valid ? style.accent : style.line, 2.0f);
+}
+
+void BehaviorTreeWindow::DrawNodes(ImDrawList* dl, const CanvasStyle& style, const Hit& hover)
+{
+    const std::vector<BtNodeDef>& nodes = model_.Asset().nodes;
+    // 親の有無 (根でも子でもないノードを注意色で描く)。childIds が正本
+    std::unordered_map<int32_t, int32_t> parentOf;
+    for (const BtNodeDef& node : nodes) {
+        for (const int32_t child : node.childIds) {
+            parentOf[child] = node.id;
         }
     }
+    const auto addText = [&](const ImVec2& pos, ImU32 color, const char* text, const ImVec2& clipMin, const ImVec2& clipMax, float size) {
+        const ImVec4 clip(clipMin.x, clipMin.y, clipMax.x, clipMax.y);
+        dl->AddText(nullptr, size, pos, color, text, nullptr, 0.0f, &clip);
+    };
 
     for (const BtNodeDef& node : nodes) {
         const BtNodeTypeInfo& info = BtNodeTypeOf(node.kind);
         ImVec2 mn;
         ImVec2 mx;
-        rectOf(node, mn, mx);
-        const float bandH = kBtDecoratorBandHeight * zoom_;
+        view_.RectOf(node, mn, mx);
+        const float bandH = kBtDecoratorBandHeight * view_.zoom;
         const float bodyTop = mn.y + bandH * static_cast<float>(node.decorators.size());
         const bool isSelected = node.id == selected_;
         const bool isRoot = node.id == model_.RootId();
         const bool isOrphan = !isRoot && parentOf.find(node.id) == parentOf.end();
 
-        dl->AddRectFilled(mn, mx, ImGui::GetColorU32(ImGuiCol_FrameBg), rounding);
+        dl->AddRectFilled(mn, mx, ImGui::GetColorU32(ImGuiCol_FrameBg), style.rounding);
         // Decorator の帯 (上から評価する順に積む)
         for (size_t d = 0; d < node.decorators.size(); ++d) {
             const ImVec2 bandMin(mn.x, mn.y + bandH * static_cast<float>(d));
             const ImVec2 bandMax(mx.x, bandMin.y + bandH);
-            dl->AddRectFilled(bandMin, bandMax, DecoratorColor(), d == 0 ? rounding : 0.0f, d == 0 ? ImDrawFlags_RoundCornersTop : ImDrawFlags_RoundCornersNone);
+            dl->AddRectFilled(bandMin, bandMax, DecoratorColor(), d == 0 ? style.rounding : 0.0f, d == 0 ? ImDrawFlags_RoundCornersTop : ImDrawFlags_RoundCornersNone);
             dl->AddLine(ImVec2(bandMin.x, bandMax.y), ImVec2(bandMax.x, bandMax.y), ImGui::GetColorU32(ImGuiCol_Border));
-            if (drawText) {
+            if (style.drawText) {
                 const std::string text = DecoratorSummary(node.decorators[d]);
-                addText(ImVec2(bandMin.x + 6.0f * zoom_, bandMin.y + (bandH - fontSize * 0.85f) * 0.5f), textColor, text.c_str(),
-                        bandMin, bandMax, fontSize * 0.85f);
+                addText(ImVec2(bandMin.x + 6.0f * view_.zoom, bandMin.y + (bandH - style.fontSize * 0.85f) * 0.5f), style.text, text.c_str(),
+                        bandMin, bandMax, style.fontSize * 0.85f);
             }
         }
         // 本体
-        dl->AddRectFilled(ImVec2(mn.x, bodyTop), mx, CategoryColor(info.category), rounding,
+        dl->AddRectFilled(ImVec2(mn.x, bodyTop), mx, CategoryColor(info.category), style.rounding,
                           node.decorators.empty() ? ImDrawFlags_RoundCornersAll : ImDrawFlags_RoundCornersBottom);
-        if (drawText) {
+        if (style.drawText) {
             const ImVec2 bodyMin(mn.x, bodyTop);
-            addText(ImVec2(mn.x + 8.0f * zoom_, bodyTop + 6.0f * zoom_), textColor, info.name, bodyMin, mx, fontSize);
+            addText(ImVec2(mn.x + 8.0f * view_.zoom, bodyTop + 6.0f * view_.zoom), style.text, info.name, bodyMin, mx, style.fontSize);
             char idText[16];
             std::snprintf(idText, sizeof(idText), "#%d", node.id);
             const std::string summary = NodeSummary(node);
-            addText(ImVec2(mn.x + 8.0f * zoom_, bodyTop + 6.0f * zoom_ + fontSize * 1.25f), dimColor,
-                    summary.empty() ? idText : summary.c_str(), bodyMin, mx, fontSize * 0.85f);
+            addText(ImVec2(mn.x + 8.0f * view_.zoom, bodyTop + 6.0f * view_.zoom + style.fontSize * 1.25f), style.dim,
+                    summary.empty() ? idText : summary.c_str(), bodyMin, mx, style.fontSize * 0.85f);
         }
         // 枠: 選択 = アクセント、根 = 成功色、親なしの根でないもの = 注意色
-        const ImU32 border = isSelected ? accentColor : isRoot ? rootColor : isOrphan ? orphanColor : ImGui::GetColorU32(ImGuiCol_Border);
-        dl->AddRect(mn, mx, border, rounding, isSelected ? 2.5f : (isRoot || isOrphan) ? 1.5f : 1.0f);
+        const ImU32 border = isSelected ? style.accent : isRoot ? style.root : isOrphan ? style.orphan : ImGui::GetColorU32(ImGuiCol_Border);
+        dl->AddRect(mn, mx, border, style.rounding, isSelected ? 2.5f : (isRoot || isOrphan) ? 1.5f : 1.0f);
+        // 検査に引っかかったノードは外側に赤 (エラー) / 橙 (警告) の枠を重ねる
+        const auto issue = issueSeverityOfNode_.find(node.id);
+        if (issue != issueSeverityOfNode_.end()) {
+            const float gap = 3.0f;
+            dl->AddRect(ImVec2(mn.x - gap, mn.y - gap), ImVec2(mx.x + gap, mx.y + gap),
+                        issue->second == BtIssueSeverity::Error ? style.error : style.warning, style.rounding + gap, 2.0f);
+        }
         // 点 (上 = 入力、下 = 出力)
         if (!isRoot) {
-            dl->AddCircleFilled(ImVec2((mn.x + mx.x) * 0.5f, mn.y), pinRadius, ImGui::GetColorU32(ImGuiCol_PopupBg));
-            dl->AddCircle(ImVec2((mn.x + mx.x) * 0.5f, mn.y), pinRadius, lineColor);
+            dl->AddCircleFilled(ImVec2((mn.x + mx.x) * 0.5f, mn.y), style.pinRadius, ImGui::GetColorU32(ImGuiCol_PopupBg));
+            dl->AddCircle(ImVec2((mn.x + mx.x) * 0.5f, mn.y), style.pinRadius, style.line);
         }
         if (BehaviorTreeEditModel::MaxChildren(node.kind) > 0) {
             const ImVec2 pin((mn.x + mx.x) * 0.5f, mx.y);
-            const bool pinHot = hoverHit.outputPin && hoverHit.node == node.id;
-            dl->AddCircleFilled(pin, pinRadius, pinHot ? accentColor : lineColor);
+            const bool pinHot = hover.outputPin && hover.node == node.id;
+            dl->AddCircleFilled(pin, style.pinRadius, pinHot ? style.accent : style.line);
         }
     }
-    dl->PopClipRect();
+}
 
-    // ---- 右クリックのメニュー ----
-    if (openNodeMenu) {
+void BehaviorTreeWindow::DrawCanvasMenus(const MenuRequest& request)
+{
+    if (request.node) {
         ImGui::OpenPopup("##btnodemenu");
     }
-    if (openCanvasMenu) {
+    if (request.canvas) {
         ImGui::OpenPopup("##btcanvasmenu");
     }
     if (ImGui::BeginPopup("##btnodemenu")) {
@@ -1218,6 +1581,67 @@ void BehaviorTreeWindow::DrawCanvas()
             ImGui::EndMenu();
         }
         ImGui::EndPopup();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 検査一覧 (キャンバスの下)
+// ---------------------------------------------------------------------------
+
+void BehaviorTreeWindow::DrawIssuePanel()
+{
+    ImGui::BeginChild("##btissues", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
+    if (!model_.IsLoaded()) {
+        ImGui::EndChild();
+        return;
+    }
+    int errors = 0;
+    int warnings = 0;
+    for (const BtIssue& issue : issues_) {
+        (issue.severity == BtIssueSeverity::Error ? errors : warnings) += 1;
+    }
+    char title[96];
+    std::snprintf(title, sizeof(title), Tr(StrId::Bt_IssuesTitle), errors, warnings);
+    ImGui::TextColored(errors > 0 ? themeColor::Error : warnings > 0 ? themeColor::Warning : themeColor::Success, "%s", title);
+    if (issues_.empty()) {
+        ImGui::TextDisabled("%s", Tr(StrId::Bt_IssuesNone));
+    }
+    for (size_t i = 0; i < issues_.size(); ++i) {
+        const BtIssue& issue = issues_[i];
+        const BtNodeDef* node = model_.FindNode(issue.nodeId);
+        if (node == nullptr) {
+            continue;
+        }
+        const char* kindName = BtNodeTypeOf(node->kind).name;
+        char slot[64] = {};
+        if (issue.decoratorIndex >= 0) {
+            std::snprintf(slot, sizeof(slot), Tr(StrId::Bt_IssueDecoratorSlot), issue.decoratorIndex + 1);
+        } else if (issue.keyIndex >= 0) {
+            std::snprintf(slot, sizeof(slot), "%s", BtNodeTypeOf(node->kind).keyNames[issue.keyIndex]);
+        }
+        char text[256] = {};
+        switch (issue.kind) {
+        case BtIssueKind::ChildCount: std::snprintf(text, sizeof(text), Tr(StrId::Bt_IssueChildCount), kindName, node->id); break;
+        case BtIssueKind::ParallelMainNotTask: std::snprintf(text, sizeof(text), Tr(StrId::Bt_IssueParallelMain), kindName, node->id, issue.otherId); break;
+        case BtIssueKind::LowerPriorityParent: std::snprintf(text, sizeof(text), Tr(StrId::Bt_IssueLowerPriority), kindName, node->id); break;
+        case BtIssueKind::SubTreeBoardMismatch: std::snprintf(text, sizeof(text), Tr(StrId::Bt_IssueSubTreeBoard), kindName, node->id); break;
+        case BtIssueKind::SubTreeUnresolved: std::snprintf(text, sizeof(text), Tr(StrId::Bt_IssueSubTreeUnresolved), kindName, node->id); break;
+        case BtIssueKind::KeyUnset: std::snprintf(text, sizeof(text), Tr(StrId::Bt_IssueKeyUnset), kindName, node->id, slot); break;
+        case BtIssueKind::KeyMissing: std::snprintf(text, sizeof(text), Tr(StrId::Bt_IssueKeyMissing), kindName, node->id, slot); break;
+        case BtIssueKind::KeyTypeMismatch: std::snprintf(text, sizeof(text), Tr(StrId::Bt_IssueKeyType), kindName, node->id, slot); break;
+        case BtIssueKind::CSharpTask: std::snprintf(text, sizeof(text), Tr(StrId::Bt_IssueCSharp), kindName, node->id); break;
+        }
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::PushStyleColor(ImGuiCol_Text, issue.severity == BtIssueSeverity::Error ? themeColor::Error : themeColor::Warning);
+        const bool clicked = ImGui::Selectable(text, issue.nodeId == selected_);
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", Tr(StrId::Bt_IssueJumpTip));
+        }
+        ImGui::PopID();
+        if (clicked) {
+            FocusNode(issue.nodeId);
+        }
     }
     ImGui::EndChild();
 }
