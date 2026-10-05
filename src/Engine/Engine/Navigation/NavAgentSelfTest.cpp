@@ -46,7 +46,7 @@ constexpr uint64_t kRavineGuid = 0x4E41564147454E34ull;
 constexpr uint64_t kApiGuid = 0x4E41564147454E35ull;  // スクリプト API のテストの庭
 // Debug で採取し、Release で同じ値になることを確認して焼く (docs\adr\ADR-023-navmesh.md)。
 // 0f659f3 (Collider へ center / rotation を追加 = 庭の床・段差のハッシュ対象が増えた) で値が変わったので焼き直した
-constexpr uint64_t kExpectedYardHash = 0xB4CBC9957F973C40ull; // M84c: NavMeshAgent.navFilter を足した
+constexpr uint64_t kExpectedYardHash = 0xE29E9A3ACDF94C74ull; // M84d: NavMeshAgent の細かい制御を足した
 
 struct Checker {
     int failCount = 0;
@@ -2584,6 +2584,294 @@ bool RunNavAgentSelfTest()
         ck.Check(world.GetComponent<LocalTransform>(walker)->position.x > 2.0f
                      && !world.GetComponent<NavMeshAgentComponent>(walker)->linkComplete,
                  "(API Link) 通知すると出口へ移る");
+    }
+
+    // ---- 13. 細かい制御 (M84d): isStopped / autoBraking / avoidancePriority / separationWeight / updatePosition・Rotation / Warp ----
+    // 平らな広場 (kOpenGuid) を毎回作る。Agent は x = -6 から x = +6 へ歩く
+    const auto buildOpen = [](Scene& scene) {
+        AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+        const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+        return surface;
+    };
+    const float toEast[3] = { 6.0f, 0.0f, 0.0f };
+    const float toWest[3] = { -6.0f, 0.0f, 0.0f };
+    const auto speedXZ = [](const DirectX::XMFLOAT3& v) { return std::sqrt(v.x * v.x + v.z * v.z); };
+
+    // 13a. isStopped: 目的地を保ったまま減速して止まり、Stuck にならない。外すと歩き直して着く
+    {
+        Scene scene;
+        const EntityID surface = buildOpen(scene);
+        const EntityID walker = AddAgent(scene, "Stopper", -6.0f, 0.0f, 0.0f, toEast, true);
+        BakeSurface(scene, surface, kOpenGuid, nullptr);
+        Sim sim(scene);
+        World& world = sim.GetWorld();
+        for (int i = 0; i < 60; ++i) {
+            sim.Step();
+        }
+        world.GetComponent<NavMeshAgentComponent>(walker)->isStopped = true;
+        for (int i = 0; i < 90; ++i) {
+            sim.Step();
+        }
+        const float xStopped = world.GetComponent<LocalTransform>(walker)->position.x;
+        for (int i = 0; i < 90; ++i) { // kStuckTicks (60) を超えて止めておく
+            sim.Step();
+        }
+        const auto* agent = world.GetComponent<NavMeshAgentComponent>(walker);
+        const float drift = std::fabs(world.GetComponent<LocalTransform>(walker)->position.x - xStopped);
+        MYE_LOG_INFO("  [stop] stopped at x %.2f, drift %.4f m over 90 ticks, status %d, desired speed %.3f", xStopped, drift,
+                     agent->status, speedXZ(agent->desiredVelocity));
+        ck.Check(drift < 0.01f && speedXZ(agent->desiredVelocity) < 0.01f, "(M84d) isStopped で減速して止まる");
+        ck.Check(agent->status == navagentstatus::kMoving && agent->hasDestination,
+                 "(M84d) ...止まっている間も目的地を保ち、Stuck にならない (Moving)");
+        world.GetComponent<NavMeshAgentComponent>(walker)->isStopped = false;
+        for (int i = 0; i < 600; ++i) {
+            sim.Step();
+        }
+        ck.Check(world.GetComponent<NavMeshAgentComponent>(walker)->status == navagentstatus::kArrived
+                     && world.GetComponent<LocalTransform>(walker)->position.x > 5.5f,
+                 "(M84d) ...isStopped を外すと歩き直して着く");
+    }
+
+    // 13b. autoBraking: 終点の手前 0.3 m での望む速度。既定は減速し、false なら最高速度のまま
+    {
+        float speedAt[2] = { -1.0f, -1.0f };
+        for (int braking = 1; braking >= 0; --braking) {
+            Scene scene;
+            const EntityID surface = buildOpen(scene);
+            const EntityID walker = AddAgent(scene, "Braker", -6.0f, 0.0f, 0.0f, toEast, true);
+            BakeSurface(scene, surface, kOpenGuid, nullptr);
+            Sim sim(scene);
+            World& world = sim.GetWorld();
+            world.GetComponent<NavMeshAgentComponent>(walker)->autoBraking = braking != 0;
+            for (int i = 0; i < 600 && speedAt[braking] < 0.0f; ++i) {
+                sim.Step();
+                if (6.0f - world.GetComponent<LocalTransform>(walker)->position.x < 0.3f) {
+                    speedAt[braking] = speedXZ(world.GetComponent<NavMeshAgentComponent>(walker)->desiredVelocity);
+                }
+            }
+        }
+        MYE_LOG_INFO("  [brake] desired speed 0.3 m before the end: autoBraking %.2f m/s, without %.2f m/s (max 3.5)",
+                     speedAt[1], speedAt[0]);
+        ck.Check(speedAt[1] >= 0.0f && speedAt[1] < 0.7f * 3.5f, "(M84d) autoBraking (既定) は終点の手前で減速する");
+        ck.Check(speedAt[0] > 0.95f * 3.5f, "(M84d) autoBraking = false なら終点の手前でも最高速度のまま");
+    }
+
+    // 13c. avoidancePriority: 正面からのすれ違いで、優先度の高い (値の小さい) 側ほど横へ避けない。
+    // 同じ値どうしは値によらずビット一致の軌跡 (分担が厳密に 0.5)
+    {
+        struct PassRun {
+            float devA = 0.0f; // 開始時の z からの横のずれの最大
+            float devB = 0.0f;
+            bool arrived = false;
+            DirectX::XMFLOAT3 endA = {};
+            DirectX::XMFLOAT3 endB = {};
+        };
+        const auto runPass = [&](int priorityA, int priorityB) {
+            Scene scene;
+            const EntityID surface = buildOpen(scene);
+            const EntityID a = AddAgent(scene, "A", -6.0f, 0.0f, 0.05f, toEast, true);
+            const EntityID b = AddAgent(scene, "B", 6.0f, 0.0f, -0.05f, toWest, true);
+            BakeSurface(scene, surface, kOpenGuid, nullptr);
+            Sim sim(scene);
+            World& world = sim.GetWorld();
+            world.GetComponent<NavMeshAgentComponent>(a)->avoidancePriority = priorityA;
+            world.GetComponent<NavMeshAgentComponent>(b)->avoidancePriority = priorityB;
+            PassRun run;
+            for (int i = 0; i < 600; ++i) {
+                sim.Step();
+                run.devA = std::max(run.devA, std::fabs(world.GetComponent<LocalTransform>(a)->position.z - 0.05f));
+                run.devB = std::max(run.devB, std::fabs(world.GetComponent<LocalTransform>(b)->position.z + 0.05f));
+            }
+            run.arrived = world.GetComponent<NavMeshAgentComponent>(a)->status == navagentstatus::kArrived
+                          && world.GetComponent<NavMeshAgentComponent>(b)->status == navagentstatus::kArrived;
+            run.endA = world.GetComponent<LocalTransform>(a)->position;
+            run.endB = world.GetComponent<LocalTransform>(b)->position;
+            return run;
+        };
+        const PassRun equal = runPass(50, 50);
+        const PassRun equalZero = runPass(0, 0);
+        const PassRun weighted = runPass(0, 99);
+        MYE_LOG_INFO("  [priority] equal: dev A %.3f B %.3f / A=0 B=99: dev A %.3f B %.3f", equal.devA, equal.devB,
+                     weighted.devA, weighted.devB);
+        ck.Check(equal.arrived && weighted.arrived, "(M84d) 優先度を変えても、すれ違った 2 体とも着く");
+        ck.Check(weighted.devA < weighted.devB && weighted.devA < equal.devA,
+                 "(M84d) 優先度の高い A (0) は B (99) より横へ避けず、同じ優先度のときより避けない");
+        ck.Check(std::memcmp(&equal.endA, &equalZero.endA, sizeof(equal.endA)) == 0
+                     && std::memcmp(&equal.endB, &equalZero.endB, sizeof(equal.endB)) == 0,
+                 "(M84d) 同じ優先度どうし (50/50 と 0/0) の軌跡はビット一致 (分担 0.5 = 元の dtCrowd)");
+    }
+
+    // 13d. 設定が dtCrowd へ写る (separationWeight・優先度の丸め・autoBraking のフラグ・isStopped の回避外し)
+    {
+        Scene scene;
+        const EntityID surface = buildOpen(scene);
+        const EntityID walker = AddAgent(scene, "Params", -6.0f, 0.0f, 0.0f, toEast, true);
+        BakeSurface(scene, surface, kOpenGuid, nullptr);
+        Sim sim(scene);
+        auto* agent = sim.GetWorld().GetComponent<NavMeshAgentComponent>(walker);
+        agent->separationWeight = 5.0f;
+        agent->avoidancePriority = 250;
+        agent->autoBraking = false;
+        agent->isStopped = true;
+        sim.Step();
+        const NavSurfaceRuntime& rt = sim.nav.Surfaces()[0];
+        int slotIndex = -1;
+        for (int k = 0; k < static_cast<int>(rt.slots.size()); ++k) {
+            slotIndex = rt.slots[static_cast<size_t>(k)].entity == walker ? k : slotIndex;
+        }
+        const dtCrowdAgentParams& p = rt.crowd->getAgent(slotIndex < 0 ? 0 : slotIndex)->params;
+        ck.Check(slotIndex >= 0 && p.separationWeight == 5.0f && p.avoidancePriority == 99
+                     && (p.updateFlags & DT_CROWD_NO_AUTO_BRAKING) != 0 && (p.updateFlags & DT_CROWD_OBSTACLE_AVOIDANCE) == 0
+                     && p.maxSpeed == 0.0f,
+                 "(M84d) separationWeight・優先度 (99 に丸める)・ブレーキなし・停止中の回避外しが dtCrowd へ写る");
+    }
+
+    // 13e. updatePosition / updateRotation = false: Nav は moveInput と回転を書かず、desiredVelocity を公開するだけ。
+    // それを書き手が moveInput へ写す (ルートモーションの代わり) と、crowd は実位置から取り直して着く
+    {
+        Scene scene;
+        const EntityID surface = buildOpen(scene);
+        const EntityID walker = AddAgent(scene, "Manual", -6.0f, 0.0f, 0.0f, toEast, true);
+        BakeSurface(scene, surface, kOpenGuid, nullptr);
+        Sim sim(scene);
+        World& world = sim.GetWorld();
+        auto* agent = world.GetComponent<NavMeshAgentComponent>(walker);
+        agent->updatePosition = false;
+        agent->updateRotation = false;
+        const DirectX::XMFLOAT4 rotation0 = world.GetComponent<LocalTransform>(walker)->rotation;
+        for (int i = 0; i < 30; ++i) {
+            sim.Step();
+        }
+        agent = world.GetComponent<NavMeshAgentComponent>(walker);
+        const auto* cc = world.GetComponent<CharacterControllerComponent>(walker);
+        const float x30 = world.GetComponent<LocalTransform>(walker)->position.x;
+        MYE_LOG_INFO("  [manual] after 30 ticks: x %.3f, moveInput (%.2f, %.2f), desired (%.2f, %.2f), next x %.3f", x30,
+                     cc->moveInput.x, cc->moveInput.z, agent->desiredVelocity.x, agent->desiredVelocity.z,
+                     agent->nextPosition.x);
+        ck.Check(std::fabs(x30 - (-6.0f)) < 0.01f && cc->moveInput.x == 0.0f && cc->moveInput.z == 0.0f,
+                 "(M84d) updatePosition = false では moveInput を書かず、Agent は動かない");
+        ck.Check(agent->desiredVelocity.x > 1.0f && agent->nextPosition.x > x30,
+                 "(M84d) ...desiredVelocity は目的地へ向き、nextPosition は Nav が進めたかった位置");
+        for (int i = 0; i < 600; ++i) {
+            const auto* cur = world.GetComponent<NavMeshAgentComponent>(walker);
+            world.GetComponent<CharacterControllerComponent>(walker)->moveInput = cur->desiredVelocity;
+            sim.Step();
+        }
+        const DirectX::XMFLOAT4 rotationEnd = world.GetComponent<LocalTransform>(walker)->rotation;
+        ck.Check(world.GetComponent<NavMeshAgentComponent>(walker)->status == navagentstatus::kArrived
+                     && world.GetComponent<LocalTransform>(walker)->position.x > 5.5f,
+                 "(M84d) ...desiredVelocity を自分で moveInput へ写すと着く (crowd は実位置から取り直す)");
+        ck.Check(std::memcmp(&rotation0, &rotationEnd, sizeof(rotation0)) == 0, "(M84d) updateRotation = false では回転しない");
+    }
+
+    // 13f. Warp: 近くのナビメッシュ上の点へ瞬間移動し、目的地を保って新しい位置から歩き直す。ナビメッシュの外へは失敗する
+    {
+        Scene scene;
+        const EntityID surface = buildOpen(scene);
+        const EntityID walker = AddAgent(scene, "Warper", -6.0f, 0.0f, 0.0f, toEast, true);
+        BakeSurface(scene, surface, kOpenGuid, nullptr);
+        Sim sim(scene);
+        World& world = sim.GetWorld();
+        const float beforeLoad[3] = { 0.0f, 0.0f, 5.0f };
+        ck.Check(!sim.nav.Warp(world, walker, beforeLoad), "(M84d) Warp: Surface を読み込む前 (最初の Update より前) は失敗する");
+        for (int i = 0; i < 30; ++i) {
+            sim.Step();
+        }
+        // 2 m 未満の Warp (瞬間移動の検出に引っかからない距離) で横へずらす
+        const LocalTransform before = *world.GetComponent<LocalTransform>(walker);
+        const float sideways[3] = { before.position.x, 0.0f, 1.0f };
+        ck.Check(sim.nav.Warp(world, walker, sideways), "(M84d) Warp: ナビメッシュ上の点へは成功する");
+        const LocalTransform& warped = *world.GetComponent<LocalTransform>(walker);
+        ck.Check(std::fabs(warped.position.z - 1.0f) < 0.05f && std::fabs(warped.position.y - 0.9f) < 0.1f,
+                 "(M84d) ...Transform が新しい足元 (カプセルの中心 = 足元 + 0.9) へ移る");
+        sim.Step();
+        ck.Check(std::fabs(world.GetComponent<LocalTransform>(walker)->position.z - 1.0f) < 0.1f,
+                 "(M84d) ...次の tick も元の位置へ引き戻されない (crowd もその場で置き直した)");
+        const float offMesh[3] = { 0.0f, 0.0f, 60.0f };
+        const DirectX::XMFLOAT3 kept = world.GetComponent<LocalTransform>(walker)->position;
+        ck.Check(!sim.nav.Warp(world, walker, offMesh)
+                     && std::memcmp(&kept, &world.GetComponent<LocalTransform>(walker)->position, sizeof(kept)) == 0,
+                 "(M84d) Warp: 近くにナビメッシュが無ければ失敗し、何も書かない");
+        for (int i = 0; i < 600; ++i) {
+            sim.Step();
+        }
+        const auto* lt = world.GetComponent<LocalTransform>(walker);
+        ck.Check(world.GetComponent<NavMeshAgentComponent>(walker)->status == navagentstatus::kArrived
+                     && std::fabs(lt->position.x - 6.0f) < 0.4f && std::fabs(lt->position.z) < 0.4f,
+                 "(M84d) ...Warp の後も目的地を保ち、新しい位置から歩いて着く");
+    }
+
+    // 13g. SimSnapshot: 優先度・ブレーキ・停止・Warp を混ぜた台本の途中で撮り、空の NavSystem へ復元して連続実行と一致
+    {
+        Scene scene;
+        const EntityID surface = buildOpen(scene);
+        std::vector<EntityID> walkers;
+        for (int i = 0; i < 6; ++i) {
+            const float z = -5.0f + 2.0f * static_cast<float>(i);
+            const bool east = (i % 2) == 0;
+            walkers.push_back(AddAgent(scene, "Mixed", east ? -6.0f : 6.0f, 0.0f, z * 0.3f, east ? toEast : toWest, true));
+        }
+        BakeSurface(scene, surface, kOpenGuid, nullptr);
+        // tick で決まる操作 (連続実行と復元後の実行が同じ操作を同じ tick に受ける)
+        const auto script = [&](Sim& s) {
+            World& w = s.GetWorld();
+            if (s.tick == 0) {
+                for (size_t i = 0; i < walkers.size(); ++i) {
+                    auto* ag = w.GetComponent<NavMeshAgentComponent>(walkers[i]);
+                    ag->avoidancePriority = static_cast<int32_t>(i * 19);
+                    ag->autoBraking = (i % 3) != 0;
+                    ag->separationWeight = 1.0f + static_cast<float>(i);
+                }
+            }
+            if (s.tick == 100) {
+                w.GetComponent<NavMeshAgentComponent>(walkers[1])->isStopped = true;
+            }
+            if (s.tick == 160) {
+                const float to[3] = { 0.0f, 0.0f, -4.0f };
+                s.nav.Warp(w, walkers[2], to);
+            }
+            if (s.tick == 200) {
+                w.GetComponent<NavMeshAgentComponent>(walkers[1])->isStopped = false;
+            }
+        };
+        Sim sim(scene);
+        SimRefs refs;
+        refs.scene = &scene;
+        refs.nav = &sim.nav;
+        uint64_t tickRef = 0;
+        refs.tickIndex = &tickRef;
+        constexpr int kWarm = 130;
+        constexpr int kAhead = 300;
+        for (int i = 0; i < kWarm; ++i) {
+            script(sim);
+            sim.Step();
+        }
+        tickRef = sim.tick;
+        std::vector<std::byte> blob;
+        ck.Check(CaptureSimSnapshot(refs, blob), "(M84d) 停止中の Agent を含む状態を撮影できる");
+        std::vector<uint64_t> continuous;
+        for (int i = 0; i < kAhead; ++i) {
+            script(sim);
+            sim.Step();
+            continuous.push_back(WorldHashOf(sim, &sim.nav));
+        }
+        Sim restored(scene);
+        restored.tick = kWarm;
+        SimRefs refs2 = refs;
+        refs2.nav = &restored.nav;
+        uint64_t tick2 = 0;
+        refs2.tickIndex = &tick2;
+        ck.Check(RestoreSimSnapshot(refs2, blob.data(), blob.size()), "(M84d) 空の NavSystem へ復元できる");
+        std::vector<std::byte> again;
+        CaptureSimSnapshot(refs2, again);
+        ck.Check(again == blob, "(M84d) 復元直後の再撮影が元の blob とバイト一致 (crowd の avoidancePriority を含む)");
+        bool same = true;
+        for (int i = 0; i < kAhead; ++i) {
+            script(restored);
+            restored.Step();
+            same = same && WorldHashOf(restored, &restored.nav) == continuous[static_cast<size_t>(i)];
+        }
+        ck.Check(same, "(M84d) 復元して 300 tick (停止の解除・Warp を含む) 進めた毎 tick のハッシュが連続実行と一致");
     }
 
     ck.Check(kExpectedYardHash == 0 || yardHashAtEnd == kExpectedYardHash,

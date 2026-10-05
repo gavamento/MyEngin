@@ -76,6 +76,8 @@ constexpr float kArriveEpsilon = 0.05f;
 constexpr float kMinTurnSpeed = 0.05f;
 constexpr float kPi = 3.14159265358979f;
 constexpr float kNoAvoidanceQueryRange = 0.01f;
+// avoidancePriority の上限 (Unity と同じ 0..99)
+constexpr int kMaxAvoidancePriority = 99;
 // Agent を crowd に載せる / 目的地を探す近傍 (半径の倍率・固定の高さ幅、m)
 constexpr float kPlaceHorizontalScale = 2.0f;
 constexpr float kPlaceHorizontalMin = 0.6f;
@@ -200,6 +202,52 @@ float CapsuleHalfHeight(const CharacterControllerComponent& cc, float scaleX, fl
     const float radius = cc.radius * (std::max)(std::fabs(scaleX), std::fabs(scaleZ));
     const float half = cc.height * 0.5f * std::fabs(scaleY);
     return (std::max)(half, radius);
+}
+
+// crowd の Agent を ref / pos へ置き直し、速度・近傍・角・目標を捨てる (瞬間移動・Link の出口・Warp)
+void PlaceCrowdAgent(dtCrowd& crowd, int slotIndex, dtPolyRef ref, const float* pos)
+{
+    dtCrowdAgent* ag = crowd.getEditableAgent(slotIndex);
+    ag->corridor.reset(ref, pos);
+    dtVcopy(ag->npos, pos);
+    dtVset(ag->vel, 0.0f, 0.0f, 0.0f);
+    dtVset(ag->dvel, 0.0f, 0.0f, 0.0f);
+    dtVset(ag->nvel, 0.0f, 0.0f, 0.0f);
+    dtVset(ag->disp, 0.0f, 0.0f, 0.0f);
+    ag->boundary.reset();
+    ag->nneis = 0;
+    ag->ncorners = 0;
+    ag->partial = false;
+    ag->state = DT_CROWDAGENT_STATE_WALKING;
+    crowd.resetMoveTarget(slotIndex);
+}
+
+// 足元 (ワールド) にカプセルの中心が来るよう LocalTransform を書く (CC の寸法規約と同じ)。親があれば親の逆行列でローカルへ戻す
+void WriteFeetToTransform(World& world, EntityID entity, LocalTransform& transform, const CharacterControllerComponent& cc,
+                          const float* feet)
+{
+    const EntityID parent = world.GetParent(entity);
+    const auto* parentMatrix = parent == kNullEntity ? nullptr : world.GetComponent<WorldMatrixComponent>(parent);
+    float sx = transform.scale.x;
+    float sy = transform.scale.y;
+    float sz = transform.scale.z;
+    if (parent != kNullEntity) {
+        const auto* wm = world.GetComponent<WorldMatrixComponent>(entity);
+        if (wm != nullptr) {
+            sx = Length3(wm->value.m[0][0], wm->value.m[0][1], wm->value.m[0][2]);
+            sy = Length3(wm->value.m[1][0], wm->value.m[1][1], wm->value.m[1][2]);
+            sz = Length3(wm->value.m[2][0], wm->value.m[2][1], wm->value.m[2][2]);
+        }
+    }
+    const float centerY = feet[1] + CapsuleHalfHeight(cc, sx, sy, sz);
+    if (parent == kNullEntity) {
+        transform.position = { feet[0], centerY, feet[2] };
+    } else if (parentMatrix != nullptr) {
+        const DirectX::XMMATRIX inverse = DirectX::XMMatrixInverse(nullptr, DirectX::XMLoadFloat4x4(&parentMatrix->value));
+        DirectX::XMFLOAT3 local;
+        DirectX::XMStoreFloat3(&local, DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(feet[0], centerY, feet[2], 0.0f), inverse));
+        transform.position = local;
+    }
 }
 
 // y 軸まわりの向き (ラジアン)。+Z を向いた状態が 0
@@ -1178,6 +1226,7 @@ void NavSystem::Update(World& world, float dt)
         agent.status = navagentstatus::kInactive;
         agent.remainingDistance = 0.0f;
         agent.pathPartial = false;
+        agent.desiredVelocity = { 0.0f, 0.0f, 0.0f };
     }
 
     int onCrowd = 0;
@@ -1312,6 +1361,7 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
                 agent.status = agent.hasDestination ? navagentstatus::kNoPath : navagentstatus::kIdle;
                 agent.remainingDistance = 0.0f;
                 agent.pathPartial = false;
+                agent.desiredVelocity = { 0.0f, 0.0f, 0.0f };
                 a.slot = -1;
                 continue;
             }
@@ -1351,20 +1401,30 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
         params.radius = (std::max)(0.01f, agent.radius);
         params.height = (std::max)(0.01f, agent.height);
         params.maxAcceleration = (std::max)(0.01f, agent.acceleration);
-        params.maxSpeed = (std::max)(0.0f, agent.speed);
+        // isStopped は経路を保ったまま望む速度を 0 にする (加速度に従って減速する)
+        params.maxSpeed = agent.isStopped ? 0.0f : (std::max)(0.0f, agent.speed);
         // 回避なし (0) は近傍を探さない: dtCrowd の衝突解決 (押し戻し) は DT_CROWD_SEPARATION と無関係に近傍全員へ働くので、
         // 範囲を潰さないと「すり抜ける」にならない
         params.collisionQueryRange = quality > 0 ? params.radius * 12.0f : kNoAvoidanceQueryRange;
         params.pathOptimizationRange = params.radius * 30.0f;
-        params.separationWeight = 2.0f;
+        params.separationWeight = (std::max)(0.0f, agent.separationWeight);
+        params.avoidancePriority = static_cast<unsigned char>((std::min)((std::max)(agent.avoidancePriority, 0), kMaxAvoidancePriority));
         params.updateFlags = DT_CROWD_ANTICIPATE_TURNS | DT_CROWD_OPTIMIZE_TOPO;
+        if (!agent.autoBraking) {
+            params.updateFlags |= DT_CROWD_NO_AUTO_BRAKING;
+        }
         if (!costsRaised) {
             // 視線による経路の近道は raycast で行われ、エリアのコストを見ない (高コストの帯を突っ切る近道を取る)。
             // コストを上げたエリアがある Surface では使わない
             params.updateFlags |= DT_CROWD_OPTIMIZE_VIS;
         }
         if (quality > 0) {
-            params.updateFlags |= DT_CROWD_OBSTACLE_AVOIDANCE | DT_CROWD_SEPARATION;
+            params.updateFlags |= DT_CROWD_SEPARATION;
+            // 最高速度 0 の速度サンプリングは 1 / vmax が FLT_MAX になり、どの候補も選ばれない。
+            // 止まっている間は回避を外し、望む速度 0 をそのまま使う (押し戻しは近傍の範囲で働く)
+            if (!agent.isStopped) {
+                params.updateFlags |= DT_CROWD_OBSTACLE_AVOIDANCE;
+            }
         }
         params.obstacleAvoidanceType = static_cast<unsigned char>(quality);
         params.queryFilterType = static_cast<unsigned char>(filterIndex);
@@ -1380,18 +1440,7 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
             float nearest[3] = {};
             query.findNearestPoly(a.feet, placeExt, filter, &ref, nearest);
             if (ref != 0) {
-                ag->corridor.reset(ref, nearest);
-                dtVcopy(ag->npos, nearest);
-                dtVset(ag->vel, 0.0f, 0.0f, 0.0f);
-                dtVset(ag->dvel, 0.0f, 0.0f, 0.0f);
-                dtVset(ag->nvel, 0.0f, 0.0f, 0.0f);
-                dtVset(ag->disp, 0.0f, 0.0f, 0.0f);
-                ag->boundary.reset();
-                ag->nneis = 0;
-                ag->ncorners = 0;
-                ag->partial = false;
-                ag->state = DT_CROWDAGENT_STATE_WALKING;
-                crowd.resetMoveTarget(a.slot);
+                PlaceCrowdAgent(crowd, a.slot, ref, nearest);
                 slot.requested = 0;
                 slot.arrived = 0;
                 slot.destInvalid = 0;
@@ -1466,9 +1515,14 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
             agent.status = navagentstatus::kOnLink;
             agent.remainingDistance = dtVdist(ag->npos, slot.linkEnd);
             agent.pathPartial = ag->partial;
+            agent.desiredVelocity = { 0.0f, 0.0f, 0.0f };
+            agent.nextPosition = { ag->npos[0], ag->npos[1], ag->npos[2] };
+            // 渡りは updatePosition に関わらず NavSystem が動かす (切ると Link の上で止まったままになる)
             a.cc->moveInput = { 0.0f, 0.0f, 0.0f }; // 位置は物理の後に PostPhysics が上書きする
-            TurnToward(*a.transform, agent, a.rooted, slot.linkEnd[0] - slot.linkStart[0],
-                       slot.linkEnd[2] - slot.linkStart[2], dt);
+            if (agent.updateRotation) {
+                TurnToward(*a.transform, agent, a.rooted, slot.linkEnd[0] - slot.linkStart[0],
+                           slot.linkEnd[2] - slot.linkStart[2], dt);
+            }
             continue;
         }
 
@@ -1511,6 +1565,10 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
                 ResetStuck(slot);
                 crowd.resetMoveTarget(a.slot);
                 status = navagentstatus::kArrived;
+            } else if (agent.isStopped) {
+                // 自分で止めている間は前進しないのが正しい。詰まりとは数えず、再開したら基準を取り直す
+                status = navagentstatus::kMoving;
+                ResetStuck(slot);
             } else {
                 status = navagentstatus::kMoving;
                 // 詰まり検出: 残り距離が基準から半径の 1/4 以上動かない tick が続いたら Stuck と表示する (止めない)。
@@ -1557,13 +1615,21 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
         agent.remainingDistance = remaining;
         agent.pathPartial = partial;
 
-        // 移動入力。crowd が今 tick に進めた変位 (速度の積分 + 衝突の押し戻し) をそのまま CC に歩かせる
+        agent.desiredVelocity = { ag->nvel[0], ag->nvel[1], ag->nvel[2] };
+        agent.nextPosition = { ag->npos[0], ag->npos[1], ag->npos[2] };
+
+        // 移動入力。crowd が今 tick に進めた変位 (速度の積分 + 衝突の押し戻し) をそのまま CC に歩かせる。
+        // updatePosition = false なら moveInput は書き手 (ルートモーション・スクリプト) のもの。crowd は次の tick に実位置から取り直す
         const float mx = (ag->npos[0] - a.synced[0]) * invDt;
         const float mz = (ag->npos[2] - a.synced[2]) * invDt;
-        a.cc->moveInput = { mx, 0.0f, mz };
+        if (agent.updatePosition) {
+            a.cc->moveInput = { mx, 0.0f, mz };
+        }
 
         // 進行方向へ向ける
-        TurnToward(*a.transform, agent, a.rooted, mx, mz, dt);
+        if (agent.updateRotation) {
+            TurnToward(*a.transform, agent, a.rooted, mx, mz, dt);
+        }
     }
 }
 
@@ -1694,18 +1760,7 @@ void NavSystem::FinishLink(NavSurfaceRuntime& surface, int slotIndex, const NavM
         slot = NavAgentSlot{};
         return;
     }
-    ag->corridor.reset(ref, nearest);
-    dtVcopy(ag->npos, nearest);
-    dtVset(ag->vel, 0.0f, 0.0f, 0.0f);
-    dtVset(ag->dvel, 0.0f, 0.0f, 0.0f);
-    dtVset(ag->nvel, 0.0f, 0.0f, 0.0f);
-    dtVset(ag->disp, 0.0f, 0.0f, 0.0f);
-    ag->boundary.reset();
-    ag->nneis = 0;
-    ag->ncorners = 0;
-    ag->partial = false;
-    ag->state = DT_CROWDAGENT_STATE_WALKING;
-    crowd.resetMoveTarget(slotIndex);
+    PlaceCrowdAgent(crowd, slotIndex, ref, nearest);
     slot.linkPhase = 0;
     slot.linkTick = 0;
     slot.linkTicks = 0;
@@ -1736,29 +1791,7 @@ void NavSystem::PostPhysics(World& world, float dt)
             bool finished = false;
             AdvanceLink(slot, *agent, dt, feet, finished);
 
-            // 足元 -> カプセルの中心 (CC の寸法規約と同じ) -> LocalTransform。親があれば親の逆行列でローカルへ戻す
-            const EntityID parent = world.GetParent(slot.entity);
-            const auto* parentMatrix = parent == kNullEntity ? nullptr : world.GetComponent<WorldMatrixComponent>(parent);
-            float sx = transform->scale.x;
-            float sy = transform->scale.y;
-            float sz = transform->scale.z;
-            if (parent != kNullEntity) {
-                const auto* wm = world.GetComponent<WorldMatrixComponent>(slot.entity);
-                if (wm != nullptr) {
-                    sx = Length3(wm->value.m[0][0], wm->value.m[0][1], wm->value.m[0][2]);
-                    sy = Length3(wm->value.m[1][0], wm->value.m[1][1], wm->value.m[1][2]);
-                    sz = Length3(wm->value.m[2][0], wm->value.m[2][1], wm->value.m[2][2]);
-                }
-            }
-            const float centerY = feet[1] + CapsuleHalfHeight(*cc, sx, sy, sz);
-            if (parent == kNullEntity) {
-                transform->position = { feet[0], centerY, feet[2] };
-            } else if (parentMatrix != nullptr) {
-                const DirectX::XMMATRIX inverse = DirectX::XMMatrixInverse(nullptr, DirectX::XMLoadFloat4x4(&parentMatrix->value));
-                DirectX::XMFLOAT3 local;
-                DirectX::XMStoreFloat3(&local, DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(feet[0], centerY, feet[2], 0.0f), inverse));
-                transform->position = local;
-            }
+            WriteFeetToTransform(world, slot.entity, *transform, *cc, feet);
 
             dtCrowdAgent* ag = surface.crowd->getEditableAgent(slotIndex);
             const float invDt = dt > 0.0f ? 1.0f / dt : 0.0f;
@@ -2021,6 +2054,54 @@ bool NavSystem::CompleteLink(World& world, EntityID entity) const
         }
     }
     return false;
+}
+
+bool NavSystem::Warp(World& world, EntityID entity, const float* position)
+{
+    auto* agent = world.GetComponent<NavMeshAgentComponent>(entity);
+    auto* cc = world.GetComponent<CharacterControllerComponent>(entity);
+    auto* transform = world.GetComponent<LocalTransform>(entity);
+    if (agent == nullptr || cc == nullptr || transform == nullptr || !AllFinite(position, 3)) {
+        return false;
+    }
+    dtQueryFilter filter;
+    const NavSurfaceRuntime* found = ResolveQuerySurface(world, agent->agentTypeId, agent->areaMask & kNavFlagAllAreas,
+                                                         agent->navFilter.value, filter);
+    if (found == nullptr) {
+        return false;
+    }
+    NavSurfaceRuntime& surface = surfaces_[static_cast<size_t>(found - surfaces_.data())];
+    const float placeH = (std::max)(kPlaceHorizontalScale * agent->radius, kPlaceHorizontalMin);
+    const float placeExt[3] = { placeH, kPlaceVertical, placeH };
+    dtPolyRef ref = 0;
+    float feet[3] = {};
+    surface.query->findNearestPoly(position, placeExt, &filter, &ref, feet);
+    if (ref == 0 || !AllFinite(feet, 3)) {
+        return false;
+    }
+    SnapToSurface(*surface.store, feet);
+
+    WriteFeetToTransform(world, entity, *transform, *cc, feet);
+    cc->velocity = { 0.0f, 0.0f, 0.0f };
+    cc->moveInput = { 0.0f, 0.0f, 0.0f };
+    agent->linkComplete = false;
+    agent->desiredVelocity = { 0.0f, 0.0f, 0.0f };
+    agent->nextPosition = { feet[0], feet[1], feet[2] };
+
+    // crowd に載っていれば、ここで置き直す (次の Update の瞬間移動の判定は 2 m 未満の Warp を拾えない)。
+    // 渡りの途中なら渡りを捨てる。目的地は保ち、次の Update が新しい位置から引き直す
+    for (int slotIndex = 0; slotIndex < kCrowdCapacity; ++slotIndex) {
+        NavAgentSlot& slot = surface.slots[static_cast<size_t>(slotIndex)];
+        if (slot.entity != entity) {
+            continue;
+        }
+        PlaceCrowdAgent(*surface.crowd, slotIndex, ref, feet);
+        NavAgentSlot fresh;
+        fresh.entity = entity;
+        slot = fresh;
+        break;
+    }
+    return true;
 }
 
 void NavSystem::Reset()

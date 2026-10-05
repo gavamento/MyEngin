@@ -26,6 +26,7 @@ struct dtObstacleCircle
 	float dvel[3];			///< Velocity of the obstacle
 	float rad;				///< Radius of the obstacle
 	float dp[3], np[3];		///< Use for side selection during sampling.
+	float share;			///< MYE-PATCH(M84d): この障害物を避ける自分の分担 (0..1、0.5 = 互いに半分ずつ)
 };
 
 struct dtObstacleSegment
@@ -104,8 +105,9 @@ public:
 	
 	void reset();
 
+	// MYE-PATCH(M84d): share = この円を避ける自分の分担 (0.5 = 元の挙動)
 	void addCircle(const float* pos, const float rad,
-				   const float* vel, const float* dvel);
+				   const float* vel, const float* dvel, const float share = 0.5f);
 				   
 	void addSegment(const float* p, const float* q);
 

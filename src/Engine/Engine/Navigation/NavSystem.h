@@ -221,6 +221,11 @@ public:
                           uint64_t navFilter, Pcg32& rng, float* outPoint) const;
     // Manual の Link で止まっている (入口へ近づく途中を含む) Agent に完了を通知する。該当しなければ false
     bool CompleteLink(World& world, EntityID agent) const;
+    // Agent を position の最寄りのナビメッシュ上の点へ瞬間移動させる (Unity の NavMeshAgent.Warp、M84d)。
+    // LocalTransform と CC の速度を書き、crowd に載っていればその場で置き直す (渡りの途中なら渡りを捨てる)。
+    // 目的地は保ち、次の Update が新しい位置から経路を引き直す。
+    // Agent・CC・Transform が無い、乗る Surface が未読み込み、近くにナビメッシュが無いときは false (何も書かない)
+    bool Warp(World& world, EntityID agent, const float* position);
 
     const std::vector<NavSurfaceRuntime>& Surfaces() const { return surfaces_; }
     const NavSystemStats& Stats() const { return stats_; }

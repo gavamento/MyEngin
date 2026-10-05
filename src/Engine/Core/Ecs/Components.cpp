@@ -1455,6 +1455,18 @@ void RegisterBuiltinComponents()
         MYE_JP("リンクの出口", MYE_FIELD_FLAGS(NavMeshAgentComponent, linkEnd, Float3, kFieldReadOnly)),
         MYE_JP("エリアのフィルタ", MYE_FIELD_TIP(NavMeshAgentComponent, navFilter, AssetRef,
                                                  ".navfilter.json: overrides the surface's area costs and excludes areas (M84c)")),
+        MYE_JP("停止中", MYE_FIELD_TIP(NavMeshAgentComponent, isStopped, Bool,
+                                       "keeps the destination and path but decelerates to a stop")),
+        MYE_JP("自動ブレーキ", MYE_FIELD_TIP(NavMeshAgentComponent, autoBraking, Bool,
+                                             "slow down before the end of the path; off = arrive at full speed")),
+        MYE_JP("回避の優先度", MYE_FIELD_RANGE(NavMeshAgentComponent, avoidancePriority, Int32, 0.0f, 99.0f)),
+        MYE_JP("分離の強さ", MYE_FIELD_RANGE(NavMeshAgentComponent, separationWeight, Float, 0.0f, 20.0f)),
+        MYE_JP("位置を更新", MYE_FIELD_TIP(NavMeshAgentComponent, updatePosition, Bool,
+                                           "off = do not write CharacterController.moveInput; move it yourself from desiredVelocity")),
+        MYE_JP("回転を更新", MYE_FIELD_TIP(NavMeshAgentComponent, updateRotation, Bool,
+                                           "off = do not turn toward the moving direction")),
+        MYE_JP("望む速度", MYE_FIELD_FLAGS(NavMeshAgentComponent, desiredVelocity, Float3, kFieldReadOnly)),
+        MYE_JP("次の位置", MYE_FIELD_FLAGS(NavMeshAgentComponent, nextPosition, Float3, kFieldReadOnly)),
     });
 
     // M82f: NavMesh Obstacle (TypeId=73、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変

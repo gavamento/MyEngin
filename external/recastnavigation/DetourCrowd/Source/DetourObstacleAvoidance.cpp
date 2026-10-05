@@ -251,14 +251,15 @@ void dtObstacleAvoidanceQuery::reset()
 }
 
 void dtObstacleAvoidanceQuery::addCircle(const float* pos, const float rad,
-										 const float* vel, const float* dvel)
+										 const float* vel, const float* dvel, const float share)
 {
 	if (m_ncircles >= m_maxCircles)
 		return;
-		
+
 	dtObstacleCircle* cir = &m_circles[m_ncircles++];
 	dtVcopy(cir->p, pos);
 	cir->rad = rad;
+	cir->share = share;
 	dtVcopy(cir->vel, vel);
 	dtVcopy(cir->dvel, dvel);
 }
@@ -367,7 +368,11 @@ float dtObstacleAvoidanceQuery::processSample(const float* vcand, const float cs
 			// Avoid more when overlapped.
 			htmin = -htmin * 0.5f;
 		}
-		
+
+		// MYE-PATCH(M84d): 分担の小さい側 (優先度の高い Agent) ほど衝突までの時間を長く見積もり、避ける量を減らす。
+		// share = 0.5 で元と同じ (2 * 0.5 = 1 で割る)
+		htmin /= 2.0f * cir->share;
+
 		if (htmin >= 0.0f)
 		{
 			// The closest obstacle is somewhere ahead of us, keep track of nearest obstacle.

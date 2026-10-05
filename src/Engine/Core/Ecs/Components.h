@@ -1950,6 +1950,15 @@ struct NavMeshAgentComponent {
     DirectX::XMFLOAT3 linkEnd = { 0.0f, 0.0f, 0.0f };   // 同じく出口
     // ---- エリアのフィルタ (M84c) ----
     AssetID navFilter = {}; // .navfilter.json。Surface の areaCosts を上書きし、通れないエリアを足す (null = Surface のまま)
+    // ---- 細かい制御 (M84d、Unity の NavMeshAgent と同じ意味) ----
+    bool isStopped = false;          // 目的地と経路を保ったまま、加速度に従って減速して止まる (Stuck にはならない)
+    bool autoBraking = true;         // 経路の終点の手前 (半径の 2 倍) で減速する。false なら最高速度のまま着く
+    int32_t avoidancePriority = 50;  // 0..99。小さいほど優先: 近傍との組で避ける量を (自分+1) : (相手+1) で分ける
+    float separationWeight = 2.0f;   // 近傍の Agent から離れようとする強さ (回避の品質 1 以上で効く)
+    bool updatePosition = true;      // false: moveInput を書かない (ルートモーション・スクリプトが desiredVelocity を見て動かす)
+    bool updateRotation = true;      // false: 進行方向へ回さない
+    DirectX::XMFLOAT3 desiredVelocity = { 0.0f, 0.0f, 0.0f }; // 回避後の望む速度 (kFieldReadOnly)
+    DirectX::XMFLOAT3 nextPosition = { 0.0f, 0.0f, 0.0f };    // Nav がこの tick に進めた足元の位置 (ワールド。kFieldReadOnly)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

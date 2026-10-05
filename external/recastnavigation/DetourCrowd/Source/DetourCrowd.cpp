@@ -103,6 +103,15 @@ static float getDistanceToGoal(const dtCrowdAgent* ag, const float range)
 	return range;
 }
 
+// MYE-PATCH(M84d): ag が nei を避ける分担 (0..1)。優先度は小さいほど重要で、重要な側ほど分担が小さい。
+// 同じ優先度なら厳密に 0.5 (整数どうしの x / 2x) になり、元の dtCrowd と同じ結果になる
+static float avoidanceShare(const dtCrowdAgent* ag, const dtCrowdAgent* nei)
+{
+	const float a = (float)ag->params.avoidancePriority + 1.0f;
+	const float b = (float)nei->params.avoidancePriority + 1.0f;
+	return a / (a + b);
+}
+
 static void calcSmoothSteerDirection(const dtCrowdAgent* ag, float* dir)
 {
 	if (!ag->ncorners)
@@ -1211,7 +1220,9 @@ void dtCrowd::update(const float dt, dtCrowdAgentDebugInfo* debug)
 			
 			// Calculate speed scale, which tells the agent to slowdown at the end of the path.
 			const float slowDownRadius = ag->params.radius*2;	// TODO: make less hacky.
-			const float speedScale = getDistanceToGoal(ag, slowDownRadius) / slowDownRadius;
+			// MYE-PATCH(M84d): DT_CROWD_NO_AUTO_BRAKING なら減速しない
+			const float speedScale = (ag->params.updateFlags & DT_CROWD_NO_AUTO_BRAKING)
+										 ? 1.0f : getDistanceToGoal(ag, slowDownRadius) / slowDownRadius;
 				
 			ag->desiredSpeed = ag->params.maxSpeed;
 			dtVscale(dvel, dvel, ag->desiredSpeed * speedScale);
@@ -1241,7 +1252,8 @@ void dtCrowd::update(const float dt, dtCrowdAgentDebugInfo* debug)
 				if (distSqr > dtSqr(separationDist))
 					continue;
 				const float dist = dtMathSqrtf(distSqr);
-				const float weight = separationWeight * (1.0f - dtSqr(dist*invSeparationDist));
+				// MYE-PATCH(M84d): 分担で重み付け (同じ優先度なら 2 * 0.5 = 1 倍)
+				const float weight = separationWeight * (2.0f * avoidanceShare(ag, nei)) * (1.0f - dtSqr(dist*invSeparationDist));
 				
 				dtVmad(disp, disp, diff, weight/dist);
 				w += 1.0f;
@@ -1279,7 +1291,8 @@ void dtCrowd::update(const float dt, dtCrowdAgentDebugInfo* debug)
 			for (int j = 0; j < ag->nneis; ++j)
 			{
 				const dtCrowdAgent* nei = &m_agents[ag->neis[j].idx];
-				m_obstacleQuery->addCircle(nei->npos, nei->params.radius, nei->vel, nei->dvel);
+				m_obstacleQuery->addCircle(nei->npos, nei->params.radius, nei->vel, nei->dvel,
+										   avoidanceShare(ag, nei)); // MYE-PATCH(M84d)
 			}
 
 			// Append neighbour segments as obstacles.
@@ -1367,11 +1380,12 @@ void dtCrowd::update(const float dt, dtCrowdAgentDebugInfo* debug)
 						dtVset(diff, -ag->dvel[2],0,ag->dvel[0]);
 					else
 						dtVset(diff, ag->dvel[2],0,-ag->dvel[0]);
-					pen = 0.01f;
+					pen = 0.01f * (2.0f * avoidanceShare(ag, nei)); // MYE-PATCH(M84d)
 				}
 				else
 				{
-					pen = (1.0f/dist) * (pen*0.5f) * COLLISION_RESOLVE_FACTOR;
+					// MYE-PATCH(M84d): 重なりを半分ずつではなく分担の比で押し戻す (同じ優先度なら 0.5 = 元と同じ)
+					pen = (1.0f/dist) * (pen*avoidanceShare(ag, nei)) * COLLISION_RESOLVE_FACTOR;
 				}
 				
 				dtVmad(ag->disp, ag->disp, diff, pen);			

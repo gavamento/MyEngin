@@ -96,6 +96,10 @@ struct dtCrowdAgentParams
 	/// The index of the query filter used by this agent.
 	unsigned char queryFilterType;
 
+	/// MYE-PATCH(M84d): 回避の優先度 (0..99、小さいほど優先)。近傍との組で分担 (pA+1)/((pA+1)+(pB+1)) を求め、
+	/// 回避・分離・押し戻しの量に掛ける。同じ値どうしは分担 0.5 = 元の dtCrowd と同じ
+	unsigned char avoidancePriority;
+
 	/// User defined data attached to the agent.
 	void* userData;
 };
@@ -188,7 +192,8 @@ enum UpdateFlags
 	DT_CROWD_OBSTACLE_AVOIDANCE = 2,
 	DT_CROWD_SEPARATION = 4,
 	DT_CROWD_OPTIMIZE_VIS = 8,			///< Use #dtPathCorridor::optimizePathVisibility() to optimize the agent path.
-	DT_CROWD_OPTIMIZE_TOPO = 16 		///< Use dtPathCorridor::optimizePathTopology() to optimize the agent path.
+	DT_CROWD_OPTIMIZE_TOPO = 16, 		///< Use dtPathCorridor::optimizePathTopology() to optimize the agent path.
+	DT_CROWD_NO_AUTO_BRAKING = 32		///< MYE-PATCH(M84d): 経路の終点の手前で減速しない (Unity の autoBraking = false)
 };
 
 struct dtCrowdAgentDebugInfo

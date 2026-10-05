@@ -2,7 +2,7 @@
 
 ベース: v1.6.0 (`6dc1667f580357e8a2154c28b7867bea7e8ad3a7`)。パッチは `MYE-PATCH(M82a)` というコメントで探せる。
 `Debug` / `Release` / `Server.exe` のハッシュ不一致は出なかった (`NavDeterminismSelfTest`)。
-下の 4 件のうち、1・2 は**ビット一致のためではなく、状態の保存・復元のため**のパッチ。3 は動的な障害物でエリアを塗り替えるため、4 は Off-Mesh Link の渡りを NavSystem が持つためのパッチ。
+下の 6 件のうち、1・2 は**ビット一致のためではなく、状態の保存・復元のため**のパッチ。3 は動的な障害物でエリアを塗り替えるため、4 は Off-Mesh Link の渡りを NavSystem が持つため、5・6 は NavMeshAgent の細かい制御 (M84d) のためのパッチ。
 
 ## 1. DetourCrowd.cpp: `MAX_ITERS_PER_UPDATE` を 100 から実質無制限へ
 
@@ -53,6 +53,30 @@
   NavSystem の Nav 節 (スナップショット対象) に持ち、Linear / Jump / Manual の動きを自前で決める。
 - 影響: Link を使わない Crowd の結果は変わらない (このループは OFFMESH の Agent にしか効かない)。
 - 確認方法: `NavAgentSelfTest` の Link 項目 (3 種の渡り、渡りの途中で撮った状態の復元 -> 連続実行一致、毎 tick の 撮影 -> 復元 -> 再撮影)。
+
+## 5. DetourCrowd: 終点の手前の減速を切るフラグ `DT_CROWD_NO_AUTO_BRAKING` (M84d、autoBraking)
+
+- 場所: `DetourCrowd\Include\DetourCrowd.h` (`UpdateFlags` に `DT_CROWD_NO_AUTO_BRAKING = 32`)、
+  `DetourCrowd\Source\DetourCrowd.cpp` (`dtCrowd::update` の「Calculate steering」の `speedScale`)
+- 内容: フラグが立った Agent は `speedScale` を 1 にする (半径の 2 倍の距離からの減速をしない)。
+- 理由: Unity の `NavMeshAgent.autoBraking = false` (巡回で経由点を速度を落とさず通る) に当たる設定が dtCrowd に無い。
+- 影響: フラグを立てない Agent の結果は変わらない。
+- 確認方法: `NavAgentSelfTest` 13b (終点の手前 0.3 m の望む速度: 既定 2.09 m/s、フラグあり 3.50 m/s)。
+
+## 6. DetourCrowd: 回避の優先度 `avoidancePriority` で避ける量を重み付けする (M84d)
+
+- 場所: `DetourCrowd\Include\DetourCrowd.h` (`dtCrowdAgentParams::avoidancePriority`)、
+  `DetourCrowd\Source\DetourCrowd.cpp` (`avoidanceShare`、分離・回避の円・押し戻しの 3 か所)、
+  `DetourCrowd\Include\DetourObstacleAvoidance.h` / `Source\DetourObstacleAvoidance.cpp` (`dtObstacleCircle::share`、`addCircle` の引数、`processSample`)
+- 内容: Agent の組 (自分 A、近傍 B) ごとに分担 `share = (pA+1) / ((pA+1)+(pB+1))` を求める (優先度は 0..99、小さいほど重要)。
+  分離の重みに `2 * share` を掛け、回避の円との衝突までの時間を `2 * share` で割り、押し戻しの量を半分ずつから `share` の比にする。
+  Unity は「優先度の高い側は低い側を無視する」だが、両方が分担に応じて避ける重み付けを採った (2026-10-05 ユーザー回答)。
+- 理由: dtCrowd には Agent の優先度が無い。
+- 影響: 同じ優先度どうしは `share` が厳密に 0.5 (整数の x / 2x) で、掛ける係数がちょうど 1 になるので、元の dtCrowd とビット一致する。
+  `dtCrowdAgentParams` は NavSystem が `memset` してから埋めるので、優先度を使わない呼び出しは全員 0 = 元の挙動。
+  crowd の保存 (`NavSaveCrowd` / `NavLoadCrowd`) にこのフィールドを足した。
+- 確認方法: `NavAgentSelfTest` 13c (A=0 / B=99 の正面すれ違いで横のずれ A 0.049 m / B 1.138 m、同じ優先度は 0.693 m ずつ。
+  50/50 と 0/0 の軌跡がビット一致)。`NavDeterminismSelfTest` の軌跡のハッシュ (`crowd.*.tick*`) は不変で、保存バイト列 (`capture.*.crowd`) だけが変わった。
 
 ## パッチを当てなかったもの (後続サブへの注意)
 

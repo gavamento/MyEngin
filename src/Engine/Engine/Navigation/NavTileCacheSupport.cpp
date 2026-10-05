@@ -1528,6 +1528,7 @@ bool NavSaveCrowd(dtCrowd& crowd, NavByteWriter& w)
         w.Pod(p.updateFlags);
         w.Pod(p.obstacleAvoidanceType);
         w.Pod(p.queryFilterType);
+        w.Pod(p.avoidancePriority); // M84d
         w.Pod(static_cast<int32_t>(ag->ncorners));
         w.Bytes(ag->cornerVerts, sizeof(float) * 3 * static_cast<size_t>(ag->ncorners));
         w.Bytes(ag->cornerFlags, static_cast<size_t>(ag->ncorners));
@@ -1617,7 +1618,8 @@ bool NavLoadCrowd(dtCrowd& crowd, NavByteReader& r)
             || !r.Bytes(ag->vel, sizeof(float) * 3) || !r.Pod(p.radius) || !r.Pod(p.height)
             || !r.Pod(p.maxAcceleration) || !r.Pod(p.maxSpeed) || !r.Pod(p.collisionQueryRange)
             || !r.Pod(p.pathOptimizationRange) || !r.Pod(p.separationWeight) || !r.Pod(p.updateFlags)
-            || !r.Pod(p.obstacleAvoidanceType) || !r.Pod(p.queryFilterType) || !r.Pod(ncorners) || ncorners < 0
+            || !r.Pod(p.obstacleAvoidanceType) || !r.Pod(p.queryFilterType) || !r.Pod(p.avoidancePriority)
+            || !r.Pod(ncorners) || ncorners < 0
             || ncorners > DT_CROWDAGENT_MAX_CORNERS) {
             return false;
         }
