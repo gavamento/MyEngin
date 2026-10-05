@@ -38,7 +38,9 @@
 // v23 (M81f): 専用サーバのレーン状態・playerId・参加/離脱イベント (NetLaneMask 以降の 5 本)
 // v24 (M82i): NavMesh — NavSetDestination / NavStop / NavGetAgentState / NavFindPath / NavSamplePosition /
 //             NavRaycast / NavFindRandomPoint / NavCompleteLink (NetGetSystemEvent の次の 8 本)
-#define MYE_API_VERSION 24u
+// v25 (M83b): AI の知覚 — PerceptionReportNoise / PerceptionReportDamage / PerceptionGetCount / PerceptionGet /
+//             PerceptionCanSee (NavCompleteLink の次の 5 本)
+#define MYE_API_VERSION 25u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -122,6 +124,19 @@ struct MyeNavAgentState {
     float remainingDistance; // 経路に沿った残りの距離の見積り [m]
     int32_t pathPartial;     // 1 = 目的地まで届かず、届く限りの最寄りへ向かっている
     MyeVec3 velocity;        // CharacterController.velocity (CC が無ければ 0)
+};
+
+// v25 (M83b) PerceptionGet の出力。AIPerception の知覚している相手 1 件 (AIPercept と同じ並び、64 バイト)。
+// senses のビット: 1 視覚 / 2 聴覚 / 4 ダメージ / 8 接触
+struct MyePercept {
+    MyeEntityId target;      // 相手。名乗らない音は無効なハンドル (index = 0xFFFFFFFF)
+    uint64_t lastSensedTick; // 最後に知覚した tick
+    uint32_t currentSenses;  // この tick に知覚した感覚 (0 = 記憶だけ)
+    uint32_t lastSenses;     // 最後に知覚した tick の感覚
+    MyeVec3 lastSensedPos;   // 最後に知覚した位置
+    float strength;          // 最後に知覚した強さ
+    MyeVec3 velocity;        // 視覚で続けて見た位置から求めた速度
+    MyeVec3 predictedPos;    // 見失った後の予測位置 (見えている間は lastSensedPos)
 };
 
 // v24 (M82i) NavRaycast の出力
@@ -741,6 +756,27 @@ struct MyeEngineApi {
     // NavCompleteLink: Manual の Link で止まっている (入口へ近づく途中を含む) Agent に完了を通知し、出口へ渡らせる
     //   (NavMeshAgent.linkComplete = 1)。該当しなければ 0 (何も書かない)
     int (*NavCompleteLink)(void* engine, MyeEntityId entity);
+
+    // ---- v25 (M83b): AI の知覚 ----
+    // ★結果 (PerceptionGet) は知覚のフェーズ (スクリプトの後・ナビメッシュの前) が書いた値 = スクリプトの Update が
+    //   読むのは前の tick の結果。報告 (ReportNoise / ReportDamage) は受け手の保留欄に溜まり、次の知覚のフェーズで
+    //   消費される (LateUpdate や OnCollision から報告してもよい)。全部 sim 状態として決定的。
+
+    // PerceptionReportNoise: pos で音を鳴らす (UE の ReportNoiseEvent)。hearingMode = Distance の AIPerception が、
+    //   目との距離で減衰した音量 loudness * (1 - 距離 / range) が hearingRange 以内・hearingThreshold 以上なら聞く。
+    //   instigator は鳴らした者 (陣営の判定と、知覚の相手になる。無効なハンドル可)。戻り値は聞こえた数。
+    //   Acoustic モードの AIPerception には届かない (音響の波は AcousticEmitter で立てる)
+    int (*PerceptionReportNoise)(void* engine, MyeVec3 pos, float loudness, float range, MyeEntityId instigator);
+    // PerceptionReportDamage: victim が instigator から amount のダメージを受けたと知らせる (UE の ReportDamageEvent)。
+    //   見えていなくても攻撃者 (の位置。分からなければ hitPos) を知覚する。victim に AIPerception が無ければ 0
+    int (*PerceptionReportDamage)(void* engine, MyeEntityId victim, MyeEntityId instigator, float amount, MyeVec3 hitPos);
+    // PerceptionGetCount: observer が知覚している相手の数 (0..8)。AIPerception 非所持は 0
+    int32_t (*PerceptionGetCount)(void* engine, MyeEntityId observer);
+    // PerceptionGet: index 番目 (相手のエンティティキー順) を out へ書いて 1。範囲外・非所持は 0 (out は触らない)
+    int (*PerceptionGet)(void* engine, MyeEntityId observer, int32_t index, MyePercept* out);
+    // PerceptionCanSee: observer から target が今見えるか (陣営・距離・視野角・視線。結果へは書かない)。
+    //   target に AIStimulusSource が無ければ 0
+    int (*PerceptionCanSee)(void* engine, MyeEntityId observer, MyeEntityId target);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

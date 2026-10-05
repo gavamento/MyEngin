@@ -1485,6 +1485,75 @@ void RegisterBuiltinComponents()
         MYE_JP("渡る速さ", MYE_FIELD_RANGE(NavMeshLinkComponent, traversalSpeed, Float, 0.1f, 50.0f)),
         MYE_JP("ジャンプの高さ", MYE_FIELD_RANGE(NavMeshLinkComponent, jumpHeight, Float, 0.0f, 20.0f)),
     });
+
+    // M83a: AI Perception (末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変。
+    // 結果 (percepts) と保留欄は PerceptionSystem が書く sim 状態なので hash 対象のまま隠す
+    // (一覧は Inspector の専用表示で出す)
+#define MYE_PERCEPT_FIELD(i, member, ftype)                                                              \
+    ::mye::FieldDesc{ .name = "percept" #i "_" #member, .type = ::mye::FieldType::ftype,                  \
+                      .offset = static_cast<uint32_t>(offsetof(AIPerceptionComponent, percepts)           \
+                                                      + (i) * sizeof(AIPercept) + offsetof(AIPercept, member)), \
+                      .flags = ::mye::kFieldHidden | ::mye::kFieldReadOnly }
+#define MYE_PERCEPT_SLOT(i)                                                                          \
+    MYE_PERCEPT_FIELD(i, target, EntityRef), MYE_PERCEPT_FIELD(i, lastSensedTick, UInt64),            \
+        MYE_PERCEPT_FIELD(i, currentSenses, UInt32), MYE_PERCEPT_FIELD(i, lastSenses, UInt32),        \
+        MYE_PERCEPT_FIELD(i, lastSensedPos, Float3), MYE_PERCEPT_FIELD(i, strength, Float),           \
+        MYE_PERCEPT_FIELD(i, velocity, Float3), MYE_PERCEPT_FIELD(i, predictedPos, Float3)
+    static_assert(kMaxPercepts == 8, "MYE_PERCEPT_SLOT の並びを kMaxPercepts に合わせる");
+    RegisterComponent<AIPerceptionComponent>("AIPerception", {
+        MYE_JP("視覚", MYE_FIELD(AIPerceptionComponent, sightEnabled, Bool)),
+        MYE_JP("聴覚", MYE_FIELD(AIPerceptionComponent, hearingEnabled, Bool)),
+        MYE_JP("ダメージ", MYE_FIELD_TIP(AIPerceptionComponent, damageEnabled, Bool,
+                                         "perceive whoever damaged this entity (ReportDamage), even when unseen")),
+        MYE_JP("接触", MYE_FIELD_TIP(AIPerceptionComponent, touchEnabled, Bool,
+                                     "perceive whoever touches this entity")),
+        MYE_JP("見える距離", MYE_FIELD_RANGE(AIPerceptionComponent, sightRadius, Float, 0.0f, 500.0f)),
+        MYE_JP("見失う距離", MYE_FIELD_TIP(AIPerceptionComponent, loseSightRadius, Float,
+                                           "a target already in sight is kept until it is farther than this")),
+        MYE_JP("視野角 (度)", MYE_FIELD_RANGE(AIPerceptionComponent, fovDeg, Float, 0.0f, 360.0f)),
+        MYE_JP("目の高さ", MYE_FIELD_RANGE(AIPerceptionComponent, eyeHeight, Float, -10.0f, 20.0f)),
+        MYE_JP("必ず気付く距離", MYE_FIELD_TIP(AIPerceptionComponent, autoSuccessRange, Float,
+                                               "within this distance targets are seen regardless of angle and walls")),
+        MYE_JP("視線を遮るレイヤー", MYE_FIELD_TIP(AIPerceptionComponent, losLayerMask, UInt32,
+                                                   "colliders on these layers block the line of sight")),
+        MYE_JP("聴覚の方式", MYE_FIELD_TIP(AIPerceptionComponent, hearingMode, Int32,
+                                           "0 = Distance (ReportNoise by distance), 1 = Acoustic (sounds that reach this entity's AcousticListener)")),
+        MYE_JP("聞こえる距離", MYE_FIELD_RANGE(AIPerceptionComponent, hearingRange, Float, 0.0f, 500.0f)),
+        MYE_JP("聞こえる音量", MYE_FIELD_TIP(AIPerceptionComponent, hearingThreshold, Float,
+                                             "sounds quieter than this after falloff are not heard")),
+        MYE_JP("陣営", MYE_FIELD_RANGE(AIPerceptionComponent, faction, Int32, 0.0f, static_cast<float>(kMaxFactions - 1))),
+        MYE_JP("敵の陣営", MYE_FIELD_TIP(AIPerceptionComponent, hostileMask, UInt32,
+                                         "bit i = faction i is hostile; the own faction is always friendly")),
+        MYE_JP("敵に気付く", MYE_FIELD(AIPerceptionComponent, detectEnemies, Bool)),
+        MYE_JP("中立に気付く", MYE_FIELD(AIPerceptionComponent, detectNeutrals, Bool)),
+        MYE_JP("味方に気付く", MYE_FIELD(AIPerceptionComponent, detectFriendlies, Bool)),
+        MYE_JP("所属の無い音も聞く", MYE_FIELD_TIP(AIPerceptionComponent, hearUnaffiliated, Bool,
+                                                   "hear sounds made by entities without AIStimulusSource (thrown stones, impacts)")),
+        MYE_JP("忘れるまで (tick)", MYE_FIELD_RANGE(AIPerceptionComponent, forgetTicks, Int32, 0.0f, 36000.0f)),
+        MYE_JP("予測する長さ (tick)", MYE_FIELD_RANGE(AIPerceptionComponent, predictionTicks, Int32, 0.0f, 3600.0f)),
+        MYE_JP("デバッグ表示", MYE_FIELD_FLAGS(AIPerceptionComponent, drawDebug, Bool, kFieldNoHash)),
+        MYE_JP("知覚している数", MYE_FIELD_FLAGS(AIPerceptionComponent, perceivedCount, Int32, kFieldReadOnly)),
+        MYE_JP("見えている数", MYE_FIELD_FLAGS(AIPerceptionComponent, seenCount, Int32, kFieldReadOnly)),
+        MYE_PERCEPT_SLOT(0), MYE_PERCEPT_SLOT(1), MYE_PERCEPT_SLOT(2), MYE_PERCEPT_SLOT(3),
+        MYE_PERCEPT_SLOT(4), MYE_PERCEPT_SLOT(5), MYE_PERCEPT_SLOT(6), MYE_PERCEPT_SLOT(7),
+        MYE_FIELD_FLAGS(AIPerceptionComponent, pendingNoiseSource, EntityRef, kFieldHidden | kFieldReadOnly),
+        MYE_FIELD_FLAGS(AIPerceptionComponent, pendingNoisePos, Float3, kFieldHidden | kFieldReadOnly),
+        MYE_FIELD_FLAGS(AIPerceptionComponent, pendingNoiseStrength, Float, kFieldHidden | kFieldReadOnly),
+        MYE_FIELD_FLAGS(AIPerceptionComponent, pendingDamageSource, EntityRef, kFieldHidden | kFieldReadOnly),
+        MYE_FIELD_FLAGS(AIPerceptionComponent, pendingDamagePos, Float3, kFieldHidden | kFieldReadOnly),
+        MYE_FIELD_FLAGS(AIPerceptionComponent, pendingDamageAmount, Float, kFieldHidden | kFieldReadOnly),
+    });
+#undef MYE_PERCEPT_SLOT
+#undef MYE_PERCEPT_FIELD
+
+    // M83a: AI Stimulus Source (末尾 append)。知覚される側
+    RegisterComponent<AIStimulusSourceComponent>("AIStimulusSource", {
+        MYE_JP("陣営", MYE_FIELD_RANGE(AIStimulusSourceComponent, faction, Int32, 0.0f, static_cast<float>(kMaxFactions - 1))),
+        MYE_JP("見られる点の高さ", MYE_FIELD_RANGE(AIStimulusSourceComponent, targetHeight, Float, -10.0f, 20.0f)),
+        MYE_JP("見られる", MYE_FIELD(AIStimulusSourceComponent, sightEnabled, Bool)),
+        MYE_JP("音を聞かれる", MYE_FIELD(AIStimulusSourceComponent, hearingEnabled, Bool)),
+        MYE_JP("触れて気付かれる", MYE_FIELD(AIStimulusSourceComponent, touchEnabled, Bool)),
+    });
 }
 
 } // namespace mye

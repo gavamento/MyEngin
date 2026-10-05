@@ -18,6 +18,7 @@
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AgentSystem.h" // M65f: 敵の思考 (フェーズ 3.4 の後半)
 #include "Engine/Engine/Navigation/NavSystem.h" // M82b: ナビメッシュ (フェーズ 3.4 と 3.5 の間)
+#include "Engine/Engine/Perception/PerceptionSystem.h" // M83: 知覚 (フェーズ 3.4a)
 #include "Engine/Engine/Audio/Spatial/AcousticAudio.h" // ResolveWaveShotSound (鳴る波の音の選択)
 #include "Engine/Engine/Audio/Playback/AudioMixer.h"
 #include "Engine/Engine/Audio/Playback/AudioSourceSystem.h"
@@ -385,6 +386,14 @@ void RunOneTick(TickServices& ts)
             ts.acoustic->UpdateFrontPreview(ctx.tickIndex);
         }
     }
+    // ---- 知覚 (フェーズ 3.4a、M83): 音響の後・ナビメッシュの前 ----
+    // 音響の後 = Acoustic モードの耳が同じ tick に届いた音を読める。ナビメッシュの前 = 知覚を読んで目的地を
+    // 書く AI (M85 の BT) が同じ tick に歩き出せる。音響のゲート (ts.acoustic) とは独立 (音響ボリュームが
+    // 無いシーンでも視覚は動く)。AIPerception が無いシーンでは走査だけで何もしない。
+    // ★読む solidContacts は前 tick の物理の出力 (音響の衝撃音と同じ)
+    if (stepSim && ts.perception != nullptr) {
+        ts.perception->Update(scene.GetWorld(), ctx.tickIndex, ctx.fixedDt, solidContacts);
+    }
     // ---- ナビメッシュ (フェーズ 3.4b、M82b): 音響 + AgentSystem の後・アニメの前 ----
     // AgentSystem は ts.acoustic のゲートの中なので相乗りしない。Surface が無いシーンでは
     // 走査だけで何もしない (RNG もハッシュも触らない)
@@ -485,6 +494,10 @@ void RunOneTick(TickServices& ts)
             // 線は読み込み時に作ってあるので、ここは写すだけ
             if (ts.navSystem != nullptr) {
                 ts.navSystem->AppendDebugLines(scene.GetWorld(), debugLines);
+            }
+            // 知覚の線 (M83)。表示は AIPerception ごとの drawDebug (NoHash) で決まる
+            if (ts.perception != nullptr) {
+                ts.perception->AppendDebugLines(scene.GetWorld(), debugLines);
             }
         }
     }

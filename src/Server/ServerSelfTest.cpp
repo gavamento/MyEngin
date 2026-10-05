@@ -25,6 +25,7 @@
 #include "Engine/Engine/Loop/SimInit.h"
 #include "Engine/Engine/Navigation/NavDeterminismSelfTest.h"
 #include "Engine/Engine/Navigation/NavAgentSelfTest.h"
+#include "Engine/Engine/Perception/PerceptionSelfTest.h"
 #include "Engine/Engine/Navigation/NavSurfaceSelfTest.h"
 #include "Engine/Engine/Net/ServerSession.h"
 #include "Engine/Engine/Replay/Replay.h"
@@ -652,6 +653,7 @@ bool RunServerSelfTest()
     check(RunNavDeterminismSelfTest(), "NavMesh: Recast のビット一致と状態の復元");
     check(RunNavSurfaceSelfTest(), "NavMesh: Surface のベイク・.mnav・読み込み");
     check(RunNavAgentSelfTest(), "NavMesh: Agent・dtCrowd・SimSnapshot の Nav 節");
+    check(RunPerceptionSelfTest(), "知覚: 視覚・聴覚・ダメージ・接触・予測");
 
     if (failCount == 0) {
         MYE_LOG_INFO("Server self test: ALL PASS");

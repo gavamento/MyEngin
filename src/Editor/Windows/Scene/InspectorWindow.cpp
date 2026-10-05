@@ -1271,6 +1271,55 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
     if (std::strcmp(desc.name, "NavMeshAgent") == 0 && !tg.multi) {
         DrawNavMeshAgentNotes(ctx, selection, undo, tg);
     }
+    // M83: 知覚している相手の一覧 (PerceptionSystem が毎 tick 書く値の読み取り表示) と設定の注意
+    if (std::strcmp(desc.name, "AIPerception") == 0 && !tg.multi) {
+        const auto* perc = world.GetComponent<AIPerceptionComponent>(tg.e);
+        if (perc != nullptr) {
+            ImGui::Separator();
+            ImGui::PushTextWrapPos(0.0f);
+            if (perc->hearingEnabled && perc->hearingMode == hearingmode::kAcoustic
+                && world.GetComponent<AcousticListenerComponent>(tg.e) == nullptr) {
+                ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_PercNoEar));
+            }
+            const int count = (std::min)((std::max)(perc->perceivedCount, 0), kMaxPercepts);
+            if (count == 0) {
+                ImGui::TextDisabled("%s", Tr(StrId::Insp_PercNone));
+                ImGui::TextDisabled("%s", Tr(StrId::Insp_PercNoStimulus));
+            } else {
+                ImGui::TextDisabled("%s: %d (%s %d)", Tr(StrId::Insp_PercPerceived), count, Tr(StrId::Insp_PercInSight),
+                                    perc->seenCount);
+            }
+            const struct {
+                uint32_t bit;
+                StrId label;
+            } kSenseNames[] = { { perceptionsense::kSight, StrId::Insp_PercSight },
+                                { perceptionsense::kHearing, StrId::Insp_PercHearing },
+                                { perceptionsense::kDamage, StrId::Insp_PercDamage },
+                                { perceptionsense::kTouch, StrId::Insp_PercTouch } };
+            for (int i = 0; i < count; ++i) {
+                const AIPercept& q = perc->percepts[i];
+                const auto* name = q.target.IsNull() ? nullptr : world.GetComponent<NameComponent>(q.target);
+                std::string senses;
+                for (const auto& s : kSenseNames) {
+                    if ((q.lastSenses & s.bit) != 0) {
+                        senses += senses.empty() ? "" : ", ";
+                        senses += Tr(s.label);
+                    }
+                }
+                const long long ago = ctx.tickIndex >= q.lastSensedTick
+                    ? static_cast<long long>(ctx.tickIndex - q.lastSensedTick) : 0;
+                const ImVec4 color = q.currentSenses != 0 ? themeColor::Success : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+                ImGui::TextColored(color, "%s [%s] (%.1f, %.1f, %.1f) %lld %s", name != nullptr ? name->value : Tr(StrId::Insp_PercUnknown),
+                                   senses.c_str(), q.lastSensedPos.x, q.lastSensedPos.y, q.lastSensedPos.z, ago,
+                                   Tr(StrId::Insp_PercTicksAgo));
+                if (q.currentSenses == 0) {
+                    ImGui::TextDisabled("    %s (%.1f, %.1f, %.1f)", Tr(StrId::Insp_PercPredicted), q.predictedPos.x,
+                                        q.predictedPos.y, q.predictedPos.z);
+                }
+            }
+            ImGui::PopTextWrapPos();
+        }
+    }
     // M82g: Modifier のエリア名 (番号だけでは分からない)。1 は歩行不可 = 範囲が歩けなくなることを添える
     if (std::strcmp(desc.name, "NavMeshModifier") == 0 && !tg.multi) {
         const auto* modifier = ctx.scene->GetWorld().GetComponent<NavMeshModifierComponent>(tg.e);

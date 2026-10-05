@@ -109,7 +109,8 @@ struct SimRefs {
 // v27 (M82f): Nav 節の slots に stuck / noProgressTicks / bestRemaining、障害物に yaw。NavMeshObstacleComponent と Surface.drawObstacles (World 節のカラム生バイト)
 // v28 (M82g): Nav 節の障害物にエリア (NavMeshModifier の塗り替え)。NavMeshModifierComponent と NavMeshAgentComponent.areaMask (World 節のカラム生バイト)
 // v29 (M82h): Nav 節の slots に Link の渡り (linkPhase 以下)、store の状態に Off-Mesh Link。NavMeshLinkComponent / NavMeshAgentComponent.linkComplete・linkStart・linkEnd / Surface.drawLinks (World 節のカラム生バイト)
-inline constexpr uint32_t kSimSnapshotVersion = 29;
+// v30 (M83a): AIPerceptionComponent / AIStimulusSourceComponent (World 節のカラム生バイト)
+inline constexpr uint32_t kSimSnapshotVersion = 30;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

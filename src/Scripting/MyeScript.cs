@@ -551,6 +551,26 @@ namespace MyeScripting
         // 自分が Manual の Link で止まっているとき、完了を通知して出口へ渡らせる
         protected bool NavCompleteLink() => Engine.NavCompleteLink(SelfId);
 
+        // ---- AI の知覚 (v25、M83b) ----
+        // 結果は前の tick の知覚のフェーズが書いた値。Senses のビットは PerceptionSense* を使う
+        protected const uint PerceptionSenseSight = 1u;
+        protected const uint PerceptionSenseHearing = 2u;
+        protected const uint PerceptionSenseDamage = 4u;
+        protected const uint PerceptionSenseTouch = 8u;
+        // 自分が鳴らした音として pos で音を鳴らす。戻り値は聞こえた AIPerception の数
+        protected int ReportNoise(MyeVec3 pos, float loudness, float range)
+            => Engine.PerceptionReportNoise(pos, loudness, range, SelfId);
+        // victim へ自分からのダメージを知らせる (victim が見えていない相手でも自分に気付く)
+        protected static bool ReportDamage(MyeEntity victim, MyeEntity instigator, float amount, MyeVec3 hitPos)
+            => Engine.PerceptionReportDamage(victim.Id, instigator.Id, amount, hitPos);
+        // 自分 (AIPerception) が知覚している相手の数と、その index 番目
+        protected int PerceivedCount() => Engine.PerceptionGetCount(SelfId);
+        protected bool GetPercept(int index, out MyePercept percept) => Engine.PerceptionGet(SelfId, index, out percept);
+        // 知覚の相手を MyeEntity で (名乗らない音なら無効なエンティティ)
+        protected static MyeEntity PerceptTarget(in MyePercept percept) => new MyeEntity(percept.Target);
+        // 自分から target が今見えるか
+        protected bool CanSee(MyeEntity target) => Engine.PerceptionCanSee(SelfId, target.Id);
+
         // ---- ライフサイクル (すべて任意オーバーライド) ----
         public virtual void Start() { }
         public virtual void Update(float dt) { }

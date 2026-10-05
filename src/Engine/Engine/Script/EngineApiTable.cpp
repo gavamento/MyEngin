@@ -13,6 +13,7 @@
 #include "Engine/Engine/Physics/Fracture/FractureSystem.h" // v22 (M80l): ApplyFractureDamage
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Navigation/NavSystem.h" // v24 (M82i): Nav* のクエリ
+#include "Engine/Engine/Perception/PerceptionSystem.h" // v25 (M83b): 知覚の報告と即時の視認判定
 #include "Engine/Engine/Net/NetRuntime.h" // v13 Net* の参照先 POD (M52i)
 #include "Engine/Engine/Session/SessionTypes.h" // v23 (M81f): NetLane* / NetSystemEvent* の参照先
 #include "Engine/Engine/Animation/Parts.h" // v9 部位クエリ (M48h)
@@ -1378,6 +1379,41 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     out.NavCompleteLink = [](void* engine, MyeEntityId entity) -> int {
         const NavSystem* nav = Ctx(engine)->nav;
         return nav != nullptr && nav->CompleteLink(Sc(engine)->GetWorld(), ToEngine(entity)) ? 1 : 0;
+    };
+
+    // ---- v25 (M83b): AI の知覚。実体は PerceptionSystem.cpp (状態は AIPerception コンポーネント) ----
+    out.PerceptionReportNoise = [](void* engine, MyeVec3 pos, float loudness, float range, MyeEntityId instigator) -> int {
+        const float p[3] = { pos.x, pos.y, pos.z };
+        return PerceptionReportNoise(Sc(engine)->GetWorld(), p, loudness, range, ToEngine(instigator));
+    };
+    out.PerceptionReportDamage = [](void* engine, MyeEntityId victim, MyeEntityId instigator, float amount,
+                                    MyeVec3 hitPos) -> int {
+        const float p[3] = { hitPos.x, hitPos.y, hitPos.z };
+        return PerceptionReportDamage(Sc(engine)->GetWorld(), ToEngine(victim), ToEngine(instigator), amount, p) ? 1 : 0;
+    };
+    out.PerceptionGetCount = [](void* engine, MyeEntityId observer) -> int32_t {
+        const auto* perc = Sc(engine)->GetWorld().GetComponent<AIPerceptionComponent>(ToEngine(observer));
+        return perc != nullptr ? (std::min)((std::max)(perc->perceivedCount, 0), kMaxPercepts) : 0;
+    };
+    out.PerceptionGet = [](void* engine, MyeEntityId observer, int32_t index, MyePercept* out) -> int {
+        const auto* perc = Sc(engine)->GetWorld().GetComponent<AIPerceptionComponent>(ToEngine(observer));
+        if (perc == nullptr || out == nullptr || index < 0 || index >= (std::min)(perc->perceivedCount, kMaxPercepts)) {
+            return 0;
+        }
+        static_assert(sizeof(MyePercept) == sizeof(AIPercept), "MyePercept は AIPercept と同じ並び");
+        const AIPercept& q = perc->percepts[index];
+        out->target = { q.target.index, q.target.generation };
+        out->lastSensedTick = q.lastSensedTick;
+        out->currentSenses = q.currentSenses;
+        out->lastSenses = q.lastSenses;
+        out->lastSensedPos = { q.lastSensedPos.x, q.lastSensedPos.y, q.lastSensedPos.z };
+        out->strength = q.strength;
+        out->velocity = { q.velocity.x, q.velocity.y, q.velocity.z };
+        out->predictedPos = { q.predictedPos.x, q.predictedPos.y, q.predictedPos.z };
+        return 1;
+    };
+    out.PerceptionCanSee = [](void* engine, MyeEntityId observer, MyeEntityId target) -> int {
+        return PerceptionCanSee(Sc(engine)->GetWorld(), ToEngine(observer), ToEngine(target), Ctx(engine)->tickIndex) ? 1 : 0;
     };
 }
 

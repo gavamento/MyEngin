@@ -70,6 +70,9 @@
     <Filter Include="Engine\Particles">
       <UniqueIdentifier>{DCDC7B06-EF20-69BD-0BF7-3CA3702AC5ED}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Perception">
+      <UniqueIdentifier>{7C4471DA-B8DF-221A-2130-41FF7EB08068}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Physics">
       <UniqueIdentifier>{B8A7D7DC-13E1-39DC-133A-8490218AA135}</UniqueIdentifier>
     </Filter>
@@ -557,6 +560,12 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSystem.cpp">
       <Filter>Engine\Particles</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Perception\PerceptionSelfTest.cpp">
+      <Filter>Engine\Perception</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Perception\PerceptionSystem.cpp">
+      <Filter>Engine\Perception</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\ConvexColliderLibrary.cpp">
       <Filter>Engine\Physics\Collider</Filter>
@@ -1394,6 +1403,12 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Particles\ParticleSystem.h">
       <Filter>Engine\Particles</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Perception\PerceptionSelfTest.h">
+      <Filter>Engine\Perception</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Perception\PerceptionSystem.h">
+      <Filter>Engine\Perception</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\ConvexColliderLibrary.h">
       <Filter>Engine\Physics\Collider</Filter>

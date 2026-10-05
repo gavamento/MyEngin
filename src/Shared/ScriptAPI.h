@@ -1054,6 +1054,39 @@ inline bool MyeNavCompleteLink(const MyeUpdateContext& ctx, MyeEntityId agent)
     return ctx.api->NavCompleteLink(ctx.api->engine, agent) != 0;
 }
 
+// ---- v25 (M83b): AI の知覚 ----
+// 結果は前の tick の知覚のフェーズが書いた値。senses のビット
+constexpr uint32_t kMyePerceptionSight = 1u;
+constexpr uint32_t kMyePerceptionHearing = 2u;
+constexpr uint32_t kMyePerceptionDamage = 4u;
+constexpr uint32_t kMyePerceptionTouch = 8u;
+// pos で音を鳴らす (hearingMode = Distance の AIPerception が距離の減衰で聞く)。戻り値は聞こえた数
+inline int MyePerceptionReportNoise(const MyeUpdateContext& ctx, MyeVec3 pos, float loudness, float range,
+                                    MyeEntityId instigator)
+{
+    return ctx.api->PerceptionReportNoise(ctx.api->engine, pos, loudness, range, instigator);
+}
+// victim が instigator から amount のダメージを受けたと知らせる (見えなくても攻撃者を知覚する)
+inline bool MyePerceptionReportDamage(const MyeUpdateContext& ctx, MyeEntityId victim, MyeEntityId instigator,
+                                      float amount, MyeVec3 hitPos)
+{
+    return ctx.api->PerceptionReportDamage(ctx.api->engine, victim, instigator, amount, hitPos) != 0;
+}
+// observer が知覚している相手の数 (0..8) と、index 番目 (相手のエンティティキー順)
+inline int32_t MyePerceptionGetCount(const MyeUpdateContext& ctx, MyeEntityId observer)
+{
+    return ctx.api->PerceptionGetCount(ctx.api->engine, observer);
+}
+inline bool MyePerceptionGet(const MyeUpdateContext& ctx, MyeEntityId observer, int32_t index, MyePercept& out)
+{
+    return ctx.api->PerceptionGet(ctx.api->engine, observer, index, &out) != 0;
+}
+// observer から target が今見えるか (結果へは書かない)
+inline bool MyePerceptionCanSee(const MyeUpdateContext& ctx, MyeEntityId observer, MyeEntityId target)
+{
+    return ctx.api->PerceptionCanSee(ctx.api->engine, observer, target) != 0;
+}
+
 // レーン指定のアクション/軸。**これは決定論の内側** (記録済み入力の純関数) なので
 // sim 状態へそのまま書いてよい。player は 0..kMaxPlayers-1、範囲外は 0
 inline bool MyeActionHeldFor(const MyeUpdateContext& ctx, const char* name, uint32_t player)

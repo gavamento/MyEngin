@@ -246,6 +246,23 @@ Create → 3D Object に 4 項目 (NavMesh Surface / Obstacle / Modifier / Link)
 
 根拠: [NavSystem.h](C:/HAL/MyEngin/src/Engine/Engine/Navigation/NavSystem.h)、[NavTileCacheSupport.h](C:/HAL/MyEngin/src/Engine/Engine/Navigation/NavTileCacheSupport.h)、[ADR-023](C:/HAL/MyEngin/docs/adr/ADR-023-navmesh.md)。
 
+### 9.5 AI の知覚 (視覚・聴覚・ダメージ・接触、M83)
+
+キャラクターに AIPerception を付けると、どこまで見えるか・どんな音が聞こえるかを設定できます。見られる側 (プレイヤーなど) には AIStimulusSource を付けます。付いていない物は見えません。設計判断は [ADR-024](docs/adr/ADR-024-ai-perception.md)、仕様は `engine_spec.md` 10.10 を参照してください。
+
+| 感覚 | 設定と振る舞い |
+|---|---|
+| 視覚 | 見える距離・見失う距離・視野角・目の高さ・必ず気付く距離・視線を遮るレイヤー。壁 (トリガー以外のコライダー) の陰は見えない |
+| 聴覚 | Distance: スクリプトの `ReportNoise` を距離で減衰させて判定。Acoustic: 同じエンティティの AcousticListener に届いた音 (足音・衝撃音・AcousticEmitter) を聞く |
+| ダメージ | スクリプトの `ReportDamage` で、見えていない攻撃者にも気付く |
+| 接触 | 触れた相手 (コライダーの接触、または CharacterController どうしの重なり) に気付く |
+
+陣営は番号 (0〜31) で、同じ陣営は味方、`hostileMask` のビットが立つ陣営は敵、それ以外は中立です。既定では敵だけに気付きます。知覚した相手は最大 8 件、`forgetTicks` の間覚えていて、見失った相手は最後の速度から予測位置を出します。SceneView では選択中の AIPerception の視野 (扇形) と聞こえる距離 (円) が見え、Play 中は見えている相手への線と、見失った相手の最後の位置・予測位置が出ます。Inspector には知覚している相手の一覧が出ます。スクリプトからは ABI v25 の `PerceptionGet` などで結果を読めます。デモは `--perception-demo` です。
+
+制約: 視線は目から相手の 1 点への 1 本だけで、体の一部だけ見える状態は判定しません。1 体が 1 tick に確かめる視線は近い順に 16 本までです。予測は直線です。音響の敵 (AgentBrain) は従来のセンサーのままで、知覚を使う行動はビヘイビアツリー (別マイルストーン) で組みます。
+
+根拠: [PerceptionSystem.h](C:/HAL/MyEngin/src/Engine/Engine/Perception/PerceptionSystem.h)、[ADR-024](C:/HAL/MyEngin/docs/adr/ADR-024-ai-perception.md)。
+
 ## 10. 入力・ゲーム内 UI・ゲーム進行
 
 キーボード、マウス、ホイール、生マウスデルタ、ゲームパッド、振動、カーソルロックを扱います。InputActions でボタンと軸を名前付きアクションへ対応付け、held / pressed / released を固定 tick で評価します。複数の入力レーンを持ち、ローカルプレイヤーとネット対戦の入力を扱います。

@@ -418,6 +418,11 @@ constexpr uint32_t kNavLink = 0x40FFC0FFu;        // NavMeshLink の入口・出
 constexpr float kNavLinkEndRadius = 0.15f;
 constexpr float kNavLinkArrowLength = 0.35f;
 constexpr float kNavLinkArrowSpread = 0.4f;
+constexpr uint32_t kSightNear = 0xF0F060FFu;     // AIPerception の見える距離 (黄)
+constexpr uint32_t kSightLose = 0x908040FFu;     // 見失う距離 (くすんだ黄)
+constexpr uint32_t kHearing = 0x60B0FFFFu;       // 聞こえる距離 (水色)
+constexpr int kPerceptionArcSegments = 32;       // 全周を描くときの分割数 (扇形は角度に比例して減らす)
+constexpr float kEyeMarkerRadius = 0.12f;
 constexpr uint32_t kSelection = 0xFFA030FFu;  // 選択アウトライン
 
 constexpr float kLightMarkerRadius = 0.3f;
@@ -484,6 +489,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         DrawNavObstacleGizmos(world);
         DrawNavModifierGizmos(world);
         DrawNavLinkGizmos(world);
+        DrawPerceptionGizmos(ctx, world, selection);
     } else if (selection.colliderEditFileId != 0 && selection.colliderEditFileId == selection.primary) {
         const GameObject selected = ctx.scene->FindByFileId(selection.primary);
         if (selected) {
@@ -943,6 +949,79 @@ void SceneViewWindow::DrawNavLinkGizmos(World& world)
                 arrowAt(a, -dx / length, -dz / length);
             }
         });
+}
+
+// AIPerception の視野と聴覚 (M83)。**選択中の 1 体だけ** (全員に描くと扇形で埋まる)。
+// 目と前方は PerceptionSystem と同じ規則 (位置 + (0, eyeHeight, 0)、ワールド行列の +Z) で、
+// 視野は目の高さの水平面に描く (上下の視野角も同じ全角だが、平面の扇形で読めれば足りる)
+void SceneViewWindow::DrawPerceptionGizmos(EngineContext& ctx, World& world, const Selection& selection)
+{
+    const GameObject sel = ctx.scene->FindByFileId(selection.primary);
+    if (!sel) {
+        return;
+    }
+    const auto* perc = world.GetComponent<AIPerceptionComponent>(sel.Id());
+    const auto* wmc = world.GetComponent<WorldMatrixComponent>(sel.Id());
+    if (perc == nullptr || wmc == nullptr) {
+        return;
+    }
+    const XMFLOAT4X4& wm = wmc->value;
+    const XMFLOAT3 eye = { wm._41, wm._42 + perc->eyeHeight, wm._43 };
+    lines_.AddWireSphere(eye, gizmo::kEyeMarkerRadius, gizmo::kSightNear);
+
+    // 前方の水平成分の角度 (真上・真下を向いていたら +Z とみなす)
+    float fx = wm._31, fz = wm._33;
+    const float fl = std::sqrt(fx * fx + fz * fz);
+    if (fl < 1.0e-6f) {
+        fx = 0.0f;
+        fz = 1.0f;
+    } else {
+        fx /= fl;
+        fz /= fl;
+    }
+    const float heading = std::atan2(fx, fz); // +Z = 0、+X = 90 度
+    const float fov = std::clamp(perc->fovDeg, 0.0f, 360.0f) * 0.017453292f;
+    const bool fullCircle = perc->fovDeg >= 360.0f;
+    const auto pointAt = [&](float radius, float angle) {
+        return XMFLOAT3{ eye.x + std::sin(angle) * radius, eye.y, eye.z + std::cos(angle) * radius };
+    };
+    const auto arc = [&](float radius, float from, float span, uint32_t color) {
+        const int segments =
+            std::max(2, static_cast<int>(std::ceil(gizmo::kPerceptionArcSegments * span / 6.2831853f)));
+        for (int k = 0; k < segments; ++k) {
+            const float a0 = from + span * static_cast<float>(k) / static_cast<float>(segments);
+            const float a1 = from + span * static_cast<float>(k + 1) / static_cast<float>(segments);
+            lines_.AddLine(pointAt(radius, a0), pointAt(radius, a1), color);
+        }
+    };
+
+    if (perc->sightEnabled) {
+        const float sightR = std::max(perc->sightRadius, 0.0f);
+        const float loseR = std::max(perc->loseSightRadius, sightR);
+        if (fullCircle) {
+            arc(sightR, 0.0f, 6.2831853f, gizmo::kSightNear);
+            if (loseR > sightR) {
+                arc(loseR, 0.0f, 6.2831853f, gizmo::kSightLose);
+            }
+        } else if (fov > 0.0f) {
+            const float from = heading - fov * 0.5f;
+            arc(sightR, from, fov, gizmo::kSightNear);
+            lines_.AddLine(eye, pointAt(sightR, from), gizmo::kSightNear);
+            lines_.AddLine(eye, pointAt(sightR, from + fov), gizmo::kSightNear);
+            if (loseR > sightR) {
+                arc(loseR, from, fov, gizmo::kSightLose);
+                lines_.AddLine(pointAt(sightR, from), pointAt(loseR, from), gizmo::kSightLose);
+                lines_.AddLine(pointAt(sightR, from + fov), pointAt(loseR, from + fov), gizmo::kSightLose);
+            }
+        }
+        if (perc->autoSuccessRange > 0.0f) {
+            arc(perc->autoSuccessRange, 0.0f, 6.2831853f, gizmo::kSightNear);
+        }
+    }
+    // 聞こえる距離。Acoustic モードは壁の回り込みで決まるので、上限としての円を同じ色で描く
+    if (perc->hearingEnabled && perc->hearingRange > 0.0f) {
+        arc(perc->hearingRange, 0.0f, 6.2831853f, gizmo::kHearing);
+    }
 }
 
 // 選択アウトライン (常時最前面)。メッシュがあればその AABB、無ければ単位箱

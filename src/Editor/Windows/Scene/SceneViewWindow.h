@@ -63,6 +63,8 @@ private:
     void DrawNavObstacleGizmos(World& world); // M82f: Obstacle の切り抜く形
     void DrawNavModifierGizmos(World& world); // M82g: Modifier の塗る箱
     void DrawNavLinkGizmos(World& world);     // M82h: Link の入口・出口・矢印
+    // M83: 選択中の AIPerception の視野 (扇形: 見える距離と見失う距離)・聞こえる距離の円・目の位置
+    void DrawPerceptionGizmos(EngineContext& ctx, World& world, const Selection& selection);
     void DrawSelectionOutline(EngineContext& ctx, World& world, const Selection& selection);
     // 分岐のゴースト (M72e、SceneViewGhost.cpp): 非ライブの分岐を同じ tick のワイヤ箱 + トレイルで重ねる
     void BuildGhostOverlay(EngineContext& ctx);

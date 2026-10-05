@@ -102,6 +102,9 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "NavMeshObstacle", { ICON_FA_BAN, "Navigation", "ナビメッシュ障害物" } }, // M82f
         { "NavMeshModifier", { ICON_FA_PAINT_ROLLER, "Navigation", "ナビメッシュモディファイア" } }, // M82g
         { "NavMeshLink", { ICON_FA_LINK, "Navigation", "ナビメッシュリンク" } }, // M82h
+        // M83: AI の知覚
+        { "AIPerception", { ICON_FA_EYE, "AI", "AI 知覚" } },
+        { "AIStimulusSource", { ICON_FA_BULLSEYE, "AI", "AI 刺激源" } },
     };
     return t;
 }

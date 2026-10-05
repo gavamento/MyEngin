@@ -2454,6 +2454,43 @@ ADR-023 ("将来の実行時再ベイクの足し方").
 **Known limits.** Static geometry is baked in the editor only (a breakable wall is an Obstacle). A partial path
 reports `Arrived` 60 ticks late. The translucent fill is unverified on the CI WARP adapter.
 
+### 10.10 AI Perception (M83)
+
+**What it does.** A character with `AIPerception` sees, hears, feels damage and touch, remembers what it perceived and
+predicts where a lost target went. Targets carry `AIStimulusSource`. Decisions and measurements are in
+[docs/adr/ADR-024-ai-perception.md](docs/adr/ADR-024-ai-perception.md).
+
+**Components** (TypeIds 76-77, appended; hash-relevant except `drawDebug`):
+
+| Component | Role |
+|---|---|
+| `AIPerception` (76) | Sight (`sightRadius`, `loseSightRadius`, `fovDeg` full angle, `eyeHeight` world metres above the entity, `autoSuccessRange`, `losLayerMask`), hearing (`hearingMode` Distance / Acoustic, `hearingRange`, `hearingThreshold`), damage / touch switches, faction (`faction` 0-31, `hostileMask`, detect enemies / neutrals / friendlies), `forgetTicks`, `predictionTicks`. Results: up to 8 `percepts` (target, current and last senses, last position and tick, strength, velocity, predicted position) sorted by target entity key, plus `perceivedCount` / `seenCount`. Pending noise / damage reports are also fields |
+| `AIStimulusSource` (77) | `faction`, the height of the point that is seen, and whether it can be seen / heard / touched. Entities without it are never seen |
+
+**Rules.** Forward is the world matrix +Z; the eye is the position + (0, `eyeHeight`, 0). Faction attitude: same faction =
+friendly, a set bit in `hostileMask` = hostile, otherwise neutral. A target already seen last tick is kept until
+`loseSightRadius`. Line of sight casts one ray from the eye to the target point against non-trigger colliders on
+`losLayerMask`, ignoring the observer's own body (itself, ancestors, descendants) and the target's body; at most 16 rays
+per observer per tick, nearest first (count-based so every machine gives the same result). Distance hearing judges
+`PerceptionReportNoise` at the call by `loudness * (1 - distance / range)`; Acoustic hearing reads the same entity's
+`AcousticListener` for sounds the acoustic field delivered this tick. Damage (`PerceptionReportDamage`) is not filtered
+by faction. Touch = the previous tick's solid contacts between the two bodies, or overlapping CharacterController
+capsules. One noise and one damage per observer per tick are kept (the strongest, earliest on ties). Velocity comes from
+two sightings at most 10 ticks apart; `predictedPos = lastSensedPos + velocity * min(age, predictionTicks) * dt`.
+
+**Tick position and state.** `PerceptionSystem::Update` runs at phase 3.4a (after acoustics, before NavMesh), reading the
+previous tick's world matrices, gated only by `stepSim`. The system holds no state: results and pending reports live in
+the component, so the World section of `SimSnapshot` (version 30) carries everything and no extra section exists. A
+scene with no `AIPerception` leaves the RNG and the world hash unchanged. `--perception-demo` is covered by
+`replay_verify` (Debug / Release / `Server.exe`, snapshot stress) and the golden `perception`.
+
+**Scripting (ABI v25).** `PerceptionReportNoise`, `PerceptionReportDamage`, `PerceptionGetCount`, `PerceptionGet`
+(`MyePercept`, same 64-byte layout as `AIPercept`), `PerceptionCanSee` (immediate check, writes nothing). Scripts read
+the results written by the previous tick's perception phase.
+
+**Known limits.** Sight is a cone with one ray to one point (no partial visibility). Prediction is a straight line. The
+SceneView gizmo draws the cone on the horizontal plane at eye height. `AgentBrain` still uses its own sensors.
+
 ---
 
 ## 11. Debug/Release Consistency Policy

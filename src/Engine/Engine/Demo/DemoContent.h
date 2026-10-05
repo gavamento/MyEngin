@@ -253,4 +253,9 @@ void BuildFractureShowcaseScene(EngineContext& ctx);
 //   GameLogic の NavDemoDriver が 300 tick で目的地を出発点へ切り替える (固定 tick で決まる)
 void BuildNavShowcaseScene(EngineContext& ctx);
 
+// M83: 知覚のショーケース (--perception-demo)。柱のある広場を侵入者が四角く歩き、見張り 3 体が
+// 視覚・遮蔽・接触・聴覚 (ReportNoise)・ダメージ (ReportDamage) で気付いて振り向く。
+// 侵入者と見張りの動きは GameLogic の PerceptionDemoIntruder / PerceptionDemoGuard (固定 tick で決まる)
+void BuildPerceptionShowcaseScene(EngineContext& ctx);
+
 } // namespace mye

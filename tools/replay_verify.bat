@@ -79,10 +79,10 @@ if exist cache\replay_logs rd /s /q cache\replay_logs
 echo === parallel verification: 10 scene chains + time travel x2 + what-if x2 + rule check ===
 rem ★Entry は空白なし相対パスで渡す (人間/CI が bat を叩くのと同じ呼び形に固定。
 rem   バッチ読取りの罠と chcp 437 の理由は runner 冒頭のコメント参照)
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,perception,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 10 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav) + snapshot round-trip + time travel + rule check
+echo [PASS] replay consistency (Debug/Release, 11 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav + perception) + snapshot round-trip + time travel + rule check
 exit /b 0
 
 rem ---------------------------------------------------------------- :failed
@@ -130,6 +130,10 @@ if exist cache\golden_fracture.rep.mismatch.txt (
 if exist cache\golden_nav.rep.mismatch.txt (
     set DIAGFOUND=1
     call :diagnose "cache\golden_nav.rep" "--nav-demo"
+)
+if exist cache\golden_perception.rep.mismatch.txt (
+    set DIAGFOUND=1
+    call :diagnose "cache\golden_perception.rep" "--perception-demo"
 )
 if "%DIAGFOUND%"=="0" echo [diag] no mismatch markers - failures happened before any hash comparison, see the job logs above
 echo [FAIL] replay verification
@@ -292,6 +296,16 @@ if exist cache\nav_showcase.scene.json del /q cache\nav_showcase.scene.json
 call :chain cache\golden_nav.rep "--nav-demo" "--nav-demo"
 exit /b %ERRORLEVEL%
 
+rem ---- 知覚 (M83)。侵入者が柱のある広場を四角く歩き、見張り 3 体が視覚・遮蔽・接触・聴覚・ダメージで気付いて
+rem 振り向く。侵入者の移動と ReportNoise / ReportDamage は GameLogic の PerceptionDemoIntruder、振り向きは
+rem PerceptionDemoGuard (PerceptionGet の結果を LocalTransform と登録フィールドへ書き戻す) — ABI v25 の
+rem Debug/Release divergence もこのジョブで検知する。知覚の状態は全部 AIPerception コンポーネントにあるので、
+rem snapshot stress は World 節の往復だけで足りることもここで確かめる
+:job_perception
+if exist cache\perception_showcase.scene.json del /q cache\perception_showcase.scene.json
+call :chain cache\golden_perception.rep "--perception-demo" "--perception-demo"
+exit /b %ERRORLEVEL%
+
 rem ---- タイムトラベルの巻き戻し (M52e) ----
 rem 「T まで進める → T-K へ戻す → 記録入力で T まで再シム → 元の T とハッシュ一致」を
 rem 複数の K で実走し、続けて「スクラブ中は tick が止まる」「再開すると分岐して未来を捨てる」
@@ -372,7 +386,8 @@ rem ---------------------------------------------------------------- :diagnose
 rem 失敗した照合の「どのフィールドが割れたか」を出す (M52a)。
 rem   %1 = .rep パス / %2 = シーン切替の追加引数 ("" / "--parts-demo" / "--flow-demo" /
 rem                        "--local-demo" / "--physics-demo" / "--joint-demo" /
-rem                        "--acoustic-demo" / "--ui-demo --ui-demo-input" / "--fracture-demo" / "--nav-demo")
+rem                        "--acoustic-demo" / "--ui-demo --ui-demo-input" / "--fracture-demo" / "--nav-demo" /
+rem                        "--perception-demo")
 rem 失敗側のダンプは EngineLoop が MISMATCH 時に自動で残しているので、
 rem ここでは期待側 (= その .rep を録ったのと同じコマンド) を撮り直して突き合わせる
 :diagnose

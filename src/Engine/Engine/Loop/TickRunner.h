@@ -26,6 +26,7 @@ class XpbdBackend;
 class AcousticField;
 class AgentSystem;
 class NavSystem;
+class PerceptionSystem;
 class TransformSystem;
 class CollisionSystem;
 class ParticleSystem;
@@ -97,6 +98,10 @@ struct TickServices {
     // M82b: ナビメッシュ (.mnav の読み込みと輪郭の描画)。フェーズ 3.4 の後・アニメの前に Update する。
     // null = 回さない (World 単体の selftest 経路)
     NavSystem* navSystem = nullptr;
+    // M83: AI の知覚。フェーズ 3.4 (音響) の後・3.4b (ナビメッシュ) の前に Update する。
+    // 状態は AIPerception コンポーネントにあるので、スナップショットとハッシュの束 (SimRefs / SimSources) には入らない。
+    // null = 回さない (World 単体の selftest 経路)
+    PerceptionSystem* perception = nullptr;
     TransformSystem* transformSystem = nullptr;
     CollisionSystem* collisionSystem = nullptr;
     ParticleSystem* particleSystem = nullptr;

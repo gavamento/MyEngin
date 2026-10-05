@@ -1887,3 +1887,20 @@ MYE_STR(Insp_EditCollider, "Edit collider", "コライダーを編集")
 MYE_STR(Insp_EditColliderUnsupported, "Select one sphere, box or capsule to edit.", "球・箱・カプセルを持つオブジェクトを1つ選択してください。")
 MYE_STR(SceneView_EditingCollider, "Editing collider", "コライダー編集中")
 MYE_STR(SceneView_SphereRotation, "Sphere rotation has no effect.", "球の回転操作は無効です。")
+
+// ---- M83: AI の知覚 ----
+MYE_STR(Insp_PercPerceived,    "Perceived", "知覚している相手")
+MYE_STR(Insp_PercInSight,      "in sight", "見えている")
+MYE_STR(Insp_PercNone,         "Nothing perceived. The list is written while playing.",
+                               "知覚している相手はいません。一覧は Play 中に更新されます")
+MYE_STR(Insp_PercUnknown,      "(unknown source)", "(名乗らない音源)")
+MYE_STR(Insp_PercTicksAgo,     "ticks ago", "tick 前")
+MYE_STR(Insp_PercSight,        "sight", "視覚")
+MYE_STR(Insp_PercHearing,      "hearing", "聴覚")
+MYE_STR(Insp_PercDamage,       "damage", "ダメージ")
+MYE_STR(Insp_PercTouch,        "touch", "接触")
+MYE_STR(Insp_PercPredicted,    "predicted", "予測位置")
+MYE_STR(Insp_PercNoEar,        "Hearing mode is Acoustic but this entity has no AcousticListener: it hears nothing.",
+                               "聴覚の方式が Acoustic ですが、このエンティティに AcousticListener がありません。何も聞こえません")
+MYE_STR(Insp_PercNoStimulus,   "Only entities with AIStimulusSource can be seen or touched. Add one to the player and other targets.",
+                               "見たり触れたりできるのは AIStimulusSource を持つエンティティだけです。プレイヤーなどの相手に付けてください")

@@ -52,6 +52,12 @@
     <ClCompile Include="..\src\GameLogic\Scripts\PartRaycastDemo.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\PerceptionDemoGuard.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\PerceptionDemoIntruder.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\GameLogic\Scripts\PlayerController.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>

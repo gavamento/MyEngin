@@ -101,6 +101,21 @@ namespace MyeScripting
         public MyeVec3 Velocity;        // CharacterController.velocity
     }
 
+    // v25 (M83b): PerceptionGet の出力 (EngineAPI.h の MyePercept と同一レイアウト、64 バイト)
+    // Senses のビット: 1 視覚 / 2 聴覚 / 4 ダメージ / 8 接触
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MyePercept
+    {
+        public MyeEntityId Target;     // 相手。名乗らない音は無効なハンドル
+        public ulong LastSensedTick;   // 最後に知覚した tick
+        public uint CurrentSenses;     // この tick に知覚した感覚 (0 = 記憶だけ)
+        public uint LastSenses;        // 最後に知覚した tick の感覚
+        public MyeVec3 LastSensedPos;  // 最後に知覚した位置
+        public float Strength;         // 最後に知覚した強さ
+        public MyeVec3 Velocity;       // 視覚で続けて見た位置から求めた速度
+        public MyeVec3 PredictedPos;   // 見失った後の予測位置
+    }
+
     // v24 (M82i): NavRaycast の出力 (EngineAPI.h の MyeNavRaycastHit と同一レイアウト)
     [StructLayout(LayoutKind.Sequential)]
     public struct MyeNavRaycastHit
@@ -301,6 +316,12 @@ namespace MyeScripting
         public delegate* unmanaged<void*, int, MyeVec3, MyeVec3, uint, MyeNavRaycastHit*, int> NavRaycast;
         public delegate* unmanaged<void*, int, MyeVec3, float, uint, MyeVec3*, int> NavFindRandomPoint;
         public delegate* unmanaged<void*, MyeEntityId, int> NavCompleteLink;
+        // ---- v25 (M83b): AI の知覚 ----
+        public delegate* unmanaged<void*, MyeVec3, float, float, MyeEntityId, int> PerceptionReportNoise;
+        public delegate* unmanaged<void*, MyeEntityId, MyeEntityId, float, MyeVec3, int> PerceptionReportDamage;
+        public delegate* unmanaged<void*, MyeEntityId, int> PerceptionGetCount;
+        public delegate* unmanaged<void*, MyeEntityId, int, MyePercept*, int> PerceptionGet;
+        public delegate* unmanaged<void*, MyeEntityId, MyeEntityId, int> PerceptionCanSee;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -1224,5 +1245,29 @@ namespace MyeScripting
         // Manual の Link で止まっている Agent に完了を通知する
         public static bool NavCompleteLink(MyeEntityId entity)
             => _api != null && _api->NavCompleteLink(_api->Engine, entity) != 0;
+
+        // ---- v25 (M83b): AI の知覚。結果は前の tick の知覚のフェーズが書いた値 ----
+        // pos で音を鳴らす (hearingMode = Distance の AIPerception が距離の減衰で聞く)。戻り値は聞こえた数
+        public static int PerceptionReportNoise(MyeVec3 pos, float loudness, float range, MyeEntityId instigator)
+            => _api != null ? _api->PerceptionReportNoise(_api->Engine, pos, loudness, range, instigator) : 0;
+        // victim が instigator から amount のダメージを受けたと知らせる (見えなくても攻撃者を知覚する)
+        public static bool PerceptionReportDamage(MyeEntityId victim, MyeEntityId instigator, float amount, MyeVec3 hitPos)
+            => _api != null && _api->PerceptionReportDamage(_api->Engine, victim, instigator, amount, hitPos) != 0;
+        // observer が知覚している相手の数 (0..8)
+        public static int PerceptionGetCount(MyeEntityId observer)
+            => _api != null ? _api->PerceptionGetCount(_api->Engine, observer) : 0;
+        // index 番目 (相手のエンティティキー順)
+        public static bool PerceptionGet(MyeEntityId observer, int index, out MyePercept percept)
+        {
+            percept = default;
+            if (_api == null) return false;
+            fixed (MyePercept* p = &percept)
+            {
+                return _api->PerceptionGet(_api->Engine, observer, index, p) != 0;
+            }
+        }
+        // observer から target が今見えるか (結果へは書かない)
+        public static bool PerceptionCanSee(MyeEntityId observer, MyeEntityId target)
+            => _api != null && _api->PerceptionCanSee(_api->Engine, observer, target) != 0;
     }
 }

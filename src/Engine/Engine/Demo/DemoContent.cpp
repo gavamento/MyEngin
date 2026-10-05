@@ -4531,4 +4531,135 @@ void BuildNavShowcaseScene(EngineContext& ctx)
     w.GetComponent<NavMeshSurfaceComponent>(surfaceGo.Id())->navAsset = AssetID{ kNavDemoGuid };
 }
 
+// M83: --perception-demo。柱のある広場を侵入者が四角く歩き、見張り 3 体が知覚する。
+//   Guard A: 正面に侵入者のルートがあり、柱の陰では見失う (視覚・遮蔽・見失う距離・予測)
+//   Guard B: ルートの脇に背を向けて立ち、tick 240 ごろ横を通り過ぎる侵入者に触れられて気付く (接触)
+//   Guard C: ルートに背を向けて立ち、足音 (ReportNoise) と tick 360 の攻撃 (ReportDamage) で気付く (聴覚・ダメージ)
+// 侵入者の移動・音・攻撃は PerceptionDemoIntruder、見張りが知覚した方へ向くのは PerceptionDemoGuard (どちらも GameLogic)。
+// GameLogic.dll が無い構成 (ヘッドレスの selftest など) では誰も動かず、Guard A が最初の位置の侵入者を見るだけ
+void BuildPerceptionShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    World& w = s.GetWorld();
+    RenderResources& res = *ctx.resources;
+    s.SetName("perception_showcase");
+
+    auto makeMat = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = AssetID{ HashStr("forward_lit") };
+        m.texture = res.textures.White();
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    makeMat("percdemo_floor", 0.30f, 0.32f, 0.36f);
+    makeMat("percdemo_pillar", 0.55f, 0.52f, 0.48f);
+    const AssetID intruderMat = makeMat("percdemo_intruder", 0.95f, 0.75f, 0.25f);
+    const AssetID guardMat = makeMat("percdemo_guard", 0.35f, 0.55f, 0.90f);
+    const AssetID noseMat = makeMat("percdemo_nose", 0.90f, 0.30f, 0.30f);
+    const AssetID cube = res.meshes.Cube();
+
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    camera.SetLocalPosition(0.0f, 22.0f, -20.0f);
+    camera.SetLocalRotationEuler(50.0f, 0.0f, 0.0f);
+
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(50.0f, -30.0f, 0.0f);
+
+    {
+        GameObject envGo = s.CreateGameObject("Environment");
+        auto* env = envGo.AddComponent<PhysicsEnvironmentComponent>();
+        env->gravity = { 0.0f, -9.81f, 0.0f };
+    }
+
+    auto addBlock = [&](const char* name, DirectX::XMFLOAT3 center, DirectX::XMFLOAT3 half, const char* material) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(center.x, center.y, center.z);
+        go.SetLocalScale(half.x * 2.0f, half.y * 2.0f, half.z * 2.0f);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr(material) };
+        auto* col = go.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kBox;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        return go;
+    };
+    addBlock("Floor", { 0.0f, -0.5f, 0.0f }, { 15.0f, 0.5f, 15.0f }, "percdemo_floor");
+    addBlock("Pillar", { 0.0f, 1.5f, -4.0f }, { 1.0f, 1.5f, 1.0f }, "percdemo_pillar");
+    addBlock("Pillar 2", { -4.0f, 1.5f, 4.0f }, { 0.8f, 1.5f, 0.8f }, "percdemo_pillar");
+
+    // CC の中心は足元から 0.9 m 上 (既定の高さ 1.8)。目と見られる点は中心からの高さで書く
+    constexpr float kCcHalfHeight = 0.9f;
+    auto addCapsuleBody = [&](GameObject owner, AssetID material, bool nose) {
+        GameObject body = s.CreateGameObject("Body");
+        body.SetParent(owner);
+        body.SetLocalScale(0.6f, 0.9f, 0.6f);
+        auto* mr = body.AddComponent<MeshRendererComponent>();
+        mr->mesh = res.meshes.Capsule();
+        mr->material = material;
+        if (nose) {
+            // 前 (+Z) を示す鼻。見張りがどちらを向いているかが絵で分かる
+            GameObject tip = s.CreateGameObject("Nose");
+            tip.SetParent(owner);
+            tip.SetLocalPosition(0.0f, 0.7f, 0.35f);
+            tip.SetLocalScale(0.15f, 0.15f, 0.3f);
+            auto* nmr = tip.AddComponent<MeshRendererComponent>();
+            nmr->mesh = cube;
+            nmr->material = noseMat;
+        }
+    };
+
+    // 侵入者 (プレイヤー役)。陣営 0
+    {
+        GameObject intruder = s.CreateGameObject("Intruder");
+        intruder.SetLocalPosition(-8.0f, kCcHalfHeight, -8.0f);
+        intruder.AddComponent<CharacterControllerComponent>();
+        auto* src = intruder.AddComponent<AIStimulusSourceComponent>();
+        src->faction = 0;
+        src->targetHeight = 0.6f;
+        const ComponentTypeId driver = ComponentRegistry::Get().FindByName("PerceptionDemoIntruder");
+        if (driver != kInvalidComponentType) {
+            w.AddComponentRaw(intruder.Id(), driver);
+        }
+        addCapsuleBody(intruder, intruderMat, false);
+    }
+
+    // 見張り。陣営 1 (仲間どうしは知覚しない)。yaw 0 = +Z を向く
+    struct GuardSpec {
+        const char* name;
+        DirectX::XMFLOAT3 pos;
+        float yawDeg;
+    };
+    const GuardSpec guards[] = {
+        { "Guard A", { 0.0f, kCcHalfHeight, -12.0f }, 0.0f },
+        { "Guard B", { 2.0f, kCcHalfHeight, -8.6f }, 180.0f }, // ルートの 0.6 m 脇でルートに背を向ける
+        { "Guard C", { -12.0f, kCcHalfHeight, 0.0f }, -90.0f },
+    };
+    const ComponentTypeId guardDriver = ComponentRegistry::Get().FindByName("PerceptionDemoGuard");
+    for (const GuardSpec& g : guards) {
+        GameObject guard = s.CreateGameObject(g.name);
+        guard.SetLocalPosition(g.pos.x, g.pos.y, g.pos.z);
+        guard.SetLocalRotationEuler(0.0f, g.yawDeg, 0.0f);
+        guard.AddComponent<CharacterControllerComponent>();
+        auto* p = guard.AddComponent<AIPerceptionComponent>();
+        p->eyeHeight = 0.7f;
+        p->sightRadius = 14.0f;
+        p->loseSightRadius = 17.0f;
+        p->fovDeg = 90.0f;
+        p->hearingRange = 22.0f;
+        p->faction = 1;
+        p->hostileMask = 1u << 0;
+        p->forgetTicks = 300;
+        p->predictionTicks = 90;
+        auto* src = guard.AddComponent<AIStimulusSourceComponent>();
+        src->faction = 1;
+        src->targetHeight = 0.6f;
+        if (guardDriver != kInvalidComponentType) {
+            w.AddComponentRaw(guard.Id(), guardDriver);
+        }
+        addCapsuleBody(guard, guardMat, true);
+    }
+}
+
 } // namespace mye

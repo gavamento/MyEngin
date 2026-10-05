@@ -54,6 +54,8 @@ const ShowcaseDef kShowcases[] = {
       &BuildPlain<&BuildFractureShowcaseScene>, false }, // M80f
     { L"--nav-demo", false, L"cache\\nav_showcase.scene.json", nullptr, &BuildPlain<&BuildNavShowcaseScene>,
       false }, // M82c
+    { L"--perception-demo", false, L"cache\\perception_showcase.scene.json", nullptr,
+      &BuildPlain<&BuildPerceptionShowcaseScene>, false }, // M83
 };
 
 } // namespace

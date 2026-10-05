@@ -136,6 +136,8 @@
     <ClCompile Include="..\src\Engine\Engine\Particles\GpuParticleBackend.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Perception\PerceptionSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Perception\PerceptionSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\ConvexColliderLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\ConvexCollision.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\ConvexHull.cpp" />
@@ -415,6 +417,8 @@
     <ClInclude Include="..\src\Engine\Engine\Particles\ParticleCurves.h" />
     <ClInclude Include="..\src\Engine\Engine\Particles\ParticleSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Particles\ParticleSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\Perception\PerceptionSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Perception\PerceptionSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\ConvexColliderLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\ConvexCollision.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\ConvexHull.h" />

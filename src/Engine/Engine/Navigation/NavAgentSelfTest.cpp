@@ -43,8 +43,9 @@ constexpr uint64_t kOpenGuid = 0x4E41564147454E32ull;
 constexpr uint64_t kFieldGuid = 0x4E41564147454E33ull;
 constexpr uint64_t kRavineGuid = 0x4E41564147454E34ull;
 constexpr uint64_t kApiGuid = 0x4E41564147454E35ull;  // スクリプト API のテストの庭
-// Debug で採取し、Release で同じ値になることを確認して焼く (docs\adr\ADR-023-navmesh.md)
-constexpr uint64_t kExpectedYardHash = 0x1AB952061BC96FF8ull;
+// Debug で採取し、Release で同じ値になることを確認して焼く (docs\adr\ADR-023-navmesh.md)。
+// 0f659f3 (Collider へ center / rotation を追加 = 庭の床・段差のハッシュ対象が増えた) で値が変わったので焼き直した
+constexpr uint64_t kExpectedYardHash = 0xFECB095AB373213Bull;
 
 struct Checker {
     int failCount = 0;

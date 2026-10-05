@@ -2013,6 +2013,99 @@ struct NavMeshLinkComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 知覚 (M83、UE の AIPerception 相当) ----
+
+// 知覚の感覚 (ビット)。AIPercept の currentSenses / lastSenses に立つ
+namespace perceptionsense {
+enum : uint32_t {
+    kSight = 1u << 0,
+    kHearing = 1u << 1,
+    kDamage = 1u << 2,
+    kTouch = 1u << 3,
+};
+} // namespace perceptionsense
+
+// 聴覚の判定方式 (hearingMode)
+namespace hearingmode {
+enum : int32_t {
+    kDistance = 0, // ReportNoise を距離の減衰で判定する (壁を見ない)
+    kAcoustic = 1, // 同じエンティティの AcousticListener に届いた音を聞く (壁の回り込み・遮蔽は音響に任せる)
+};
+} // namespace hearingmode
+
+inline constexpr int32_t kMaxPercepts = 8;
+inline constexpr int32_t kMaxFactions = 32;
+
+// 知覚している相手 1 件。PerceptionSystem だけが書く。パディングが出ないよう 8 バイト境界で並べてある (64 バイト)
+struct AIPercept {
+    EntityID target = kNullEntity;  // 相手。名乗らない音 (instigator 無し) は kNullEntity の 1 件にまとめる
+    uint64_t lastSensedTick = 0;    // 最後に知覚した tick (有効なのは先頭 perceivedCount 件だけ)
+    uint32_t currentSenses = 0;     // この tick に知覚した感覚 (perceptionsense のビット)
+    uint32_t lastSenses = 0;        // 最後に知覚した tick の感覚
+    DirectX::XMFLOAT3 lastSensedPos = { 0.0f, 0.0f, 0.0f }; // 最後に知覚した位置 (視覚 = 見られる点、聴覚 = 音の位置)
+    float strength = 0.0f;          // 最後に知覚した強さ (視覚 1 - 距離/半径、聴覚 減衰後の音量、ダメージ 量、接触 1)
+    DirectX::XMFLOAT3 velocity = { 0.0f, 0.0f, 0.0f };      // 視覚で続けて見た位置から求めた速度 (予測用)
+    DirectX::XMFLOAT3 predictedPos = { 0.0f, 0.0f, 0.0f };  // 見失った後の予測位置 (見えている間は lastSensedPos)
+};
+
+// 見る・聞く側 (M83)。PerceptionSystem が毎 tick 結果 (percepts) を書く。
+// 前方 = エンティティのワールド行列の +Z、目 = ワールド位置 + (0, eyeHeight, 0)。
+// 見えるのは AIStimulusSource を持つ相手だけで、陣営 (faction) と hostileMask で敵・味方・中立を分ける。
+// 結果と保留欄は sim 状態 (hash 対象・スナップショットは World 節)
+struct AIPerceptionComponent {
+    // ---- 視覚 ----
+    bool sightEnabled = true;
+    bool hearingEnabled = true;
+    bool damageEnabled = true;
+    bool touchEnabled = true;
+    float sightRadius = 15.0f;       // 見つける距離
+    float loseSightRadius = 18.0f;   // 見えている相手を見失う距離 (sightRadius 未満なら sightRadius として扱う)
+    float fovDeg = 90.0f;            // 視野角 (全角)
+    float eyeHeight = 1.6f;          // 目の高さ (ワールド m、scale を掛けない)
+    float autoSuccessRange = 0.5f;   // この距離以内は角度と遮蔽に関係なく見える
+    uint32_t losLayerMask = 0xFFFFFFFFu; // 視線を遮るコライダーのレイヤー
+    // ---- 聴覚 ----
+    int32_t hearingMode = hearingmode::kDistance;
+    float hearingRange = 20.0f;      // この距離より遠い音は聞こえない
+    float hearingThreshold = 0.05f;  // 減衰後の音量がこれ未満なら聞こえない
+    // ---- 陣営 ----
+    int32_t faction = 1;             // 自分の陣営 (0..31)。既定はプレイヤー (AIStimulusSource の既定 0) の敵
+    uint32_t hostileMask = 0xFFFFFFFFu; // bit i = 陣営 i は敵。自分の陣営は常に味方
+    bool detectEnemies = true;
+    bool detectNeutrals = false;
+    bool detectFriendlies = false;
+    bool hearUnaffiliated = true;    // AIStimulusSource を持たない音源 (投げた石など) の音も聞く
+    // ---- 記憶と予測 ----
+    int32_t forgetTicks = 600;       // 最後に知覚してからこの tick が過ぎた相手を忘れる
+    int32_t predictionTicks = 60;    // 見失った後、最後の速度で何 tick 先まで予測するか
+    bool drawDebug = true;           // Play 中に視線・最後の位置・予測位置の線を描く (kFieldNoHash)
+    // ---- 結果 (PerceptionSystem が書く、読み取り専用) ----
+    int32_t perceivedCount = 0;      // percepts の先頭から有効な件数
+    int32_t seenCount = 0;           // この tick に見えている相手の数
+    AIPercept percepts[kMaxPercepts] = {};
+    // ---- 保留欄 (ReportNoise / ReportDamage が書き、次の Update が消費する) ----
+    // 1 tick に届く音・ダメージは強い 1 件だけ残す (同じ強さなら先に届いた方)。スクリプトの LateUpdate や
+    // OnCollision から報告しても取りこぼさないよう、報告はコンポーネントに溜めて次の Update で読む
+    EntityID pendingNoiseSource = kNullEntity;
+    DirectX::XMFLOAT3 pendingNoisePos = { 0.0f, 0.0f, 0.0f };
+    float pendingNoiseStrength = 0.0f; // 0 = 保留なし
+    EntityID pendingDamageSource = kNullEntity;
+    DirectX::XMFLOAT3 pendingDamagePos = { 0.0f, 0.0f, 0.0f };
+    float pendingDamageAmount = 0.0f;  // 0 = 保留なし
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// 知覚される側 (M83、UE の AIPerceptionStimuliSource)。付いていないエンティティは見えない。
+// プレイヤーにも付ける。陣営は AIPerception.faction と同じ番号空間
+struct AIStimulusSourceComponent {
+    int32_t faction = 0;             // 0..31。既定 0 = プレイヤー
+    float targetHeight = 1.0f;       // 見られる点の高さ (ワールド m、エンティティ位置から上へ)
+    bool sightEnabled = true;        // 見られる
+    bool hearingEnabled = true;      // 自分が出した音が聞かれる
+    bool touchEnabled = true;        // 触れたら気付かれる
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

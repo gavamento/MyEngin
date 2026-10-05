@@ -19,6 +19,7 @@
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AgentSystem.h"
 #include "Engine/Engine/Navigation/NavSystem.h"
+#include "Engine/Engine/Perception/PerceptionSystem.h"
 #include "Engine/Engine/Animation/Animation.h"
 #include "Engine/Engine/Animation/AnimatorController.h"
 #include "Engine/Engine/Animation/PartFollowSystem.h"
@@ -110,6 +111,7 @@ struct HeadlessSim::Impl : IEngineApp {
     AcousticField acoustic;
     AgentSystem agentSystem;
     NavSystem navSystem; // M82b
+    PerceptionSystem perceptionSystem; // M83
     std::vector<SolidContact> solidContacts;
     PrefabLibrary prefabLibrary;
     AnimationLibrary animLibrary;
@@ -189,6 +191,7 @@ void HeadlessSim::Impl::BuildTickServices(int netRole)
     ts.acoustic = &acoustic;
     ts.agentSystem = &agentSystem;
     ts.navSystem = &navSystem; // M82b
+    ts.perception = &perceptionSystem; // M83
     ts.transformSystem = &transformSystem;
     ts.collisionSystem = &collisionSystem;
     ts.particleSystem = &particleSystem;

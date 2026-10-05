@@ -25,6 +25,7 @@
 #include "Engine/Engine/Acoustic/AgentSystem.h" // M65f: 敵の思考 (実体はここが持つ)
 #include "Engine/Engine/Navigation/NavDebugDraw.h" // M82e: ナビメッシュの塗り・輪郭
 #include "Engine/Engine/Navigation/NavSystem.h" // M82b: ナビメッシュ (実体はここが持つ)
+#include "Engine/Engine/Perception/PerceptionSystem.h" // M83: 知覚
 #include "Engine/Engine/Audio/Playback/AudioMixer.h"
 #include "Engine/Engine/Audio/Playback/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/Playback/AudioSystem.h"
@@ -161,6 +162,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // M82e: ナビメッシュの表示用ジオメトリ (塗り・輪郭)。sim ではなく描画フレームごとに更新する出力レーン。
     // tick を回さない編集中の SceneView にも出すため NavSystem とは別に持つ
     NavDebugView navDebugView;
+    // M83: AI の知覚。状態は AIPerception コンポーネントにあり、ここは持たない (3 点セット契約の対象外)
+    PerceptionSystem perceptionSystem;
     std::vector<SolidContact> solidContacts; // 物理→衝突イベントの tick 内受け渡し (M28c)
     PrefabLibrary prefabLibrary;
     AnimationLibrary animLibrary;
@@ -886,6 +889,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.acoustic = &acoustic; // M65a
     tickServices.agentSystem = &agentSystem; // M65f
     tickServices.navSystem = &navSystem; // M82b
+    tickServices.perception = &perceptionSystem; // M83
     tickServices.transformSystem = &transformSystem;
     tickServices.collisionSystem = &collisionSystem;
     tickServices.particleSystem = &particleSystem;

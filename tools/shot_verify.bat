@@ -431,6 +431,19 @@ call :shot nav --nav-demo
 set SHOT=%SHOTBASE% --no-fxaa
 :skip_nav
 
+rem ---- 29 枚目 (M83): 知覚のショーケース。**AIPerception の実行時デバッグ線の唯一のピクセル被覆**。
+rem      見張りから見えている侵入者への視線 (緑) と、見失った相手の最後の位置 (黄の十字)・予測位置 (橙) を固定する。
+rem ★frame 120 で撮る。侵入者 (PerceptionDemoIntruder) が歩き出し、見張り (PerceptionDemoGuard) が足音で振り向いた後。
+rem   GameLogic.dll が要る (nav の NavDemoDriver と違い、120 tick の絵にスクリプトが効く)。sim は固定 tick の決定論
+rem ★線だけの絵なので tol=3 の CI 判定に載せる。ランナーで赤くなったら MYE_SHOT_SKIP_PERCEPTION を立てる
+if defined MYE_SHOT_SKIP_PERCEPTION goto :skip_perception
+set PERC_SCENE=cache\perception_showcase.scene.json
+if exist %PERC_SCENE% del /q %PERC_SCENE%
+set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 123 --shot-frame 120 --no-fxaa
+call :shot perception --perception-demo
+set SHOT=%SHOTBASE% --no-fxaa
+:skip_perception
+
 echo.
 if %UPDATE%==1 (
     echo [shot_verify] golden updated in %GOLDEN% - review the images before committing

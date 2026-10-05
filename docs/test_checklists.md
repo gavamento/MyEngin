@@ -377,3 +377,15 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 ### 回帰 (M82j)
 
 - [ ] 外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は ABI v24 で再ビルドが要る (古い DLL は読み込みを拒否される)
+
+## M83: AI の知覚 (AIPerception)
+
+自動検証は `Editor.exe --selftest` / `Server.exe --selftest` (PerceptionSelfTest)、`tools\replay_verify.bat` の `perception` ジョブ、
+`tools\shot_verify.bat` の golden `perception`。下は画面と実操作で確かめる項目 (設計: `docs\adr\ADR-024-ai-perception.md`)。
+
+- [ ] Add Component の AI カテゴリに「AI 知覚」「AI 刺激源」がある
+- [ ] AIPerception を選ぶと、SceneView に視野の扇形 (見える距離と見失う距離の 2 本の弧)・必ず気付く距離の円・聞こえる距離の円・目の印が出る。視野角や距離を変えると扇形が追随する。選択を外すと消える
+- [ ] `Editor.exe --perception-demo` で Play すると、見張りが侵入者に気付いて振り向き、見えている間は緑の線、見失うと黄の十字 (最後の位置) と橙の線 (予測位置) が出る。柱の陰に入ると見失う
+- [ ] Play 中の見張りの Inspector に「知覚している相手」の一覧が出て、感覚 (視覚・聴覚・ダメージ・接触) と何 tick 前かが更新される。名乗らない音は「(名乗らない音源)」
+- [ ] 聴覚の方式を Acoustic にして AcousticListener を付けないと、Inspector に警告が出る
+- [ ] 外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は ABI v25 で再ビルドが要る (古い DLL は読み込みを拒否される)
