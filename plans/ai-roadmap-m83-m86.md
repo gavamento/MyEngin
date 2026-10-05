@@ -5,9 +5,11 @@
 
 ## 進捗
 
+再開手順: この表の最初の未着手から始める。着手時に `Components.cpp` の末尾 TypeId (M83 後 77) と `EngineAPI.h` の版 (M83 後 v25 = 144)、`kSimSnapshotVersion` (M83 後 30) を確認する。
+
 | マイルストーン | 状態 | コミット | メモ |
 |---|---|---|---|
-| M83 知覚 | 実装済み | M83a〜 | ADR-024。ABI v25 = 144、TypeId 76 AIPerception / 77 AIStimulusSource、kSimSnapshotVersion 30 |
+| M83 知覚 | 完了 (2026-10-05) | ade5d68 | ADR-024。ABI v25 = 144、TypeId 76 AIPerception / 77 AIStimulusSource、kSimSnapshotVersion 30 |
 | M84 NavMesh 拡張 | 未着手 | | |
 | M85 ビヘイビアツリー | 未着手 | | |
 | M86 Smart Objects | 未着手 | | |
