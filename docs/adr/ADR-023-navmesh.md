@@ -2,6 +2,8 @@
 
 - 状態: **確定** (2026-10-04、M82a〜M82j)。方式と計測値は M82a の試作で確定し、M82b〜M82i の実装で
   各決定を足した。全体検証の結果は末尾の「検証結果」。
+- 改訂: 2026-10-05 (M84a〜M84e、NavMesh の拡張)。決定 6 の「複数の Surface」を決定 14 で置き換え、決定 14 を足した。
+  計画は `plans\ai-roadmap-m83-m86.md` の「M84 で決めたこと」。
 - 出所: 依頼「ナビメッシュの実装」。仕様は `plans\m82-navmesh\spec.md`、事前計画は
   `C:\Users\akita\.claude\plans\imperative-scribbling-shore.md` の M-A。
 - 試作の実体: `src\Engine\Engine\Navigation\NavTileCacheSupport.{h,cpp}` と
@@ -208,8 +210,9 @@ planner はユーザーに聞けない環境で裁定し、ユーザーが後か
   Update が読み直して復元状態を上書きしない)。
 - **Presence gate**: NavMesh 系コンポーネントが無いシーンでは、RNG・ワールドハッシュ・SimSnapshot の Nav 節の中身が
   どれも変わらない (節自体は空で書く)。NavMesh が World の RNG を引くのは `NavFindRandomPoint` だけ (決定 12)。
-- **複数の Surface と容量**: 同じ `agentTypeId` の Surface が複数あればエンティティキーの小さい方が勝つ (警告つき)。
-  dtCrowd の容量は Surface ごとに 128 体で、超えた Agent はキー順の後ろから `Inactive` になる。
+- **複数の Surface と容量**: ~~同じ `agentTypeId` の Surface が複数あればエンティティキーの小さい方が勝つ (警告つき)。~~
+  M84b で、同じ `agentTypeId` の Surface はまとめて 1 つのナビメッシュに焼くように改めた (決定 14 の B)。
+  dtCrowd の容量はナビメッシュ (グループ) ごとに 128 体で、超えた Agent はキー順の後ろから `Inactive` になる。
 
 ## 決定 7: Agent は最初から dtCrowd、CharacterController 必須
 
@@ -329,7 +332,7 @@ planner はユーザーに聞けない環境で裁定し、ユーザーが後か
 
 - 渡り方は Linear / Jump / Manual の 3 種 (梯子・ドアは Linear に速度と種別ラベルを付けて表す)。Manual は止まって状態を公開し、
   スクリプトが `NavCompleteLink` で完了を通知する。
-- **Link は `.mnav` に入れない**。Modifier と同じ理由で持ち主をコンポーネントだけにし、World から差分で TileCache のタイルへ
+- **Link は `.mnav` に入れない** (手置きの NavMeshLink の話。ベイクで自動生成した Link は焼く、決定 14 の E)。Modifier と同じ理由で持ち主をコンポーネントだけにし、World から差分で TileCache のタイルへ
   Off-Mesh Connection として差し込む (入口を持つタイル列だけ作り直し、Obstacle / Modifier と同じ `Commit` にまとめる)。
 - **制約**: 出口は入口のタイルと同じか隣まで (Detour の制約)。つながらない Link は WARN + Inspector の警告。入口の y を床へ寄せる処理がある。
 - **Recast パッチ 4**: `dtCrowd::update` の Off-Mesh の補間 (`m_agentAnims`) を止め、OFFMESH の間は速度 0 にするだけにした。渡りは NavSystem が
@@ -353,7 +356,7 @@ planner はユーザーに聞けない環境で裁定し、ユーザーが後か
 - クエリは前の tick の状態を見る (決定 7)。書く 3 本 (`NavSetDestination` / `NavStop` / `NavCompleteLink`) は `NavMeshAgent` のフィールドを書き、
   tick の頭の NavSystem が拾う。
 - **外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は版が合わず読み込みを拒否される**。再ビルドが要る。
-- M75h (InputField) の ABI は v25 になる (`plans\m75-ugui.md` に注記)。
+- その後の版: v25 = 144 (M83、知覚、ADR-024)、v26 = 151 (M84d2、決定 14 の D)。M75h (InputField) は v27 以降になる。
 
 ## 決定 13: 歩行面の高さは層のセルの高さで補う (詳細メッシュは作らない)
 
@@ -382,6 +385,77 @@ planner はユーザーに聞けない環境で裁定し、ユーザーが後か
   試作は (a) だけ行い、(b) は構築していない。(b) の実測は無く、上の 2 点は実装前の見積もり。
 - 却下: ポリゴンの頂点の高さだけを補正する。段差の天面は 1 枚のポリゴンの内側にあり、頂点では天面の高さが分からない。
 
+## 決定 14: NavMesh の拡張 (M84、2026-10-05)
+
+範囲はユーザーが UE / Unity の機能を見比べて選んだ。入れなかったもの (実行時の再ベイク、Obstacle の強化、Smart Link、
+ベイク入力の選び方、AI デバッガ / EQS / 経路テスト / Nav Invoker) は 2 回聞いて選ばれなかった。
+
+### A. Agent Type の表 (M84a)
+
+- `project_settings.json` の `navAgentTypes` (名前・半径・高さ・段差・傾斜・飛び降りの高さ・飛び越えの距離、最大 16、id 0 は固定) を
+  Project Settings で編集する (`src\Editor\Project\NavAgentTypes.h`、エディタ専用)。Unity の Agent Types / UE の Supported Agents に当たる。
+- **sim は Surface に写した値だけを見る**。project_settings はシーンとリプレイの外にある (決定 11 のエリアコストと同じ理由)。
+  型を選んだときと Bake のときに Surface へ写し、表にある型なら Surface 側の寸法は Inspector で読み取り専用にする。
+  表を変えても開いているシーンは変わらず、Inspector が「型との食い違い」「焼いた後に寸法が変わった」を警告する。
+- Agent の radius / height は Agent 自身の値のまま (Unity と同じ)。
+
+### B. Surface の接続 (M84b、UE 式)
+
+- **同じ `agentTypeId` の有効な Surface をまとめて 1 つのナビメッシュに焼く**。UE は Agent ごとにナビメッシュを 1 つ持ち、
+  複数の NavMeshBoundsVolume の範囲を合わせて焼く。計画の「Unity と同じ」は誤りで、Unity は別の Surface を自動ではつながず
+  NavMesh Link を要求する。ユーザーは UE 式を選んだ。
+- グループ = 同じ型の有効な Surface (`NavCollectSurfaceGroups`)。leader (エンティティキー最小) のセル・タイル・エリアコストと
+  `navAsset` をグループ全体に使い、実行時に読み込むのも leader だけ。Nav 節の書式は変えていない。
+- ベイクの範囲は全 Surface を合わせた AABB で、歩行面は Surface の箱の中だけに切り詰める (`kNavBakeVersion` 2。単独の Surface でも
+  端のタイルが範囲の外へはみ出さなくなった)。三角形は Surface ごとの `collectLayerMask` で集め、1 コライダーは 1 回。
+- Obstacle / Modifier / Link は、グループのどの Surface の範囲に入っても効く。Bake / Clear はグループの全 Surface に 1 Undo で効き、
+  `.mnav` の名前は Agent Type の名前。
+
+### C. エリアのコストを Agent・クエリごとに (M84c)
+
+- `.navfilter.json` (UE の NavigationQueryFilter): エリアごとの「コストの上書き (0 = Surface のまま、1..1000)」と「通らない」のビット。
+  計画の「コスト倍率」ではなく Unity / UE と同じ**上書き**にした。
+- 資産の扱いは `.physmat.json` と同じ (`NavFilterLibrary` を GUID で引く、起動時の走査・ReloadHub・Inspector で編集)。
+  中身はワールドハッシュに入れず、provenance の contentHash が守る。見つからないフィルタは「無し」として扱い 1 回警告する。
+- Agent に `navFilter` (AssetRef) を末尾追加 (`kSimSnapshotVersion` 31)。dtCrowd のフィルタは (areaMask, navFilter) の組ごとに割り当て、
+  16 種 (`DT_CROWD_MAX_QUERY_FILTER_TYPE`) を超えたら最後を共有する (決定 11 の溢れ処理を組へ広げた)。
+
+### D. Agent の細かい制御と ABI v26 (M84d1 / M84d2)
+
+- Agent に `isStopped` / `autoBraking` / `avoidancePriority` / `separationWeight` / `updatePosition` / `updateRotation` と、
+  読み取り専用の `desiredVelocity` / `nextPosition` を末尾追加 (`kSimSnapshotVersion` 32)。
+- `isStopped` は経路を保ったまま最高速度 0 で減速し、Stuck に数えない。最高速度 0 では回避の速度サンプリングが `1 / vmax` で破綻するので、
+  止まっている間はサンプリングを外す。
+- `updatePosition = false` は `moveInput` を書かず、crowd は毎 tick 実位置から取り直す (ユーザー選択)。Unity のように `nextPosition` が
+  実位置から離れたまま進むことはしない。ルートモーションやスクリプトで動かす用途。
+- `avoidancePriority` は Unity の「高い側は低い側を無視する」ではなく、分離・回避・押し戻しの分担の重み付けにした (ユーザー選択、
+  **Recast パッチ 6**。同じ優先度どうしは元の Recast とビット一致)。`autoBraking = false` は **Recast パッチ 5** (`DT_CROWD_NO_AUTO_BRAKING`)。
+- Warp は一度きりのフィールドではなく `NavSystem::Warp` (その場で Transform と crowd を置き直し、目的地を保って引き直す)。
+  `CalculatePath` は Agent の今の位置から経路を引いて `NavAgentPath` (ポリゴン 256 + 角 256) に返し、`SetPath` はそれを回廊へ直接入れる
+  (引き直さない)。ポリゴンが古い (タイルの作り直し)・種別違い・渡りの途中の経路は拒否する。
+- **ABI v26 = 151** (v25 = 144 から 7 本): `NavWarp` / `NavCalculatePath` / `NavSetPath` / `NavFindPathFiltered` / `NavSamplePositionFiltered` /
+  `NavRaycastFiltered` / `NavFindRandomPointFiltered`。既存スロットのシグネチャを変えない規則 (EngineAPI.h 冒頭) に従い、navFilter 付きの
+  クエリは別スロットにした。Warp / SetPath は ABI からその場で crowd を書き換える (要求の列にすると LateUpdate から呼んだ分が tick を
+  またいで残り、スナップショットに入れる必要が出るため)。POD は `MyeNavPath` (4112 バイト)。細かい制御のフィールドは汎用の
+  フィールド ABI で読み書きし、専用スロットは作らない。`--nav-demo` の `NavDemoDriver` が tick 150〜420 で v26 を使う (replay_verify の被覆)。
+
+### E. Link の自動生成 (M84e、Unity の Generate Links)
+
+- ベイクの最後に、層から組んだナビメッシュの外周の辺 (隣のポリゴンもタイルをまたぐ接続も無い辺) を 0.5 m 以上の間隔で調べる (`NavLinkGen.cpp`)。
+  - 飛び降り: 辺の外側の下に、`maxClimb` より低く `dropHeight` 以内の歩行面がある。一方通行。
+  - 飛び越え: 辺の外側の水平 `jumpDistance` (縁から縁の隙間) 以内に、高さの差が `maxClimb` 以内の歩行面がある (いちばん近い面だけ)。双方向。
+  - 捨てる候補: 途中がベイク入力の三角形に当たる (腰の高さの線分。手すり・壁・柱の向こう)、ナビメッシュ上を歩いて Link の長さの 2 倍以内で着く。
+  - 入口・出口とも 1 m (または半径 x 4) 以内の候補は 1 本にまとめる。1 回のベイクで最大 4096 本。
+- **`dropHeight` / `jumpDistance` は Agent Type の表に持ち Surface へ写す** (跳べる距離はキャラの能力なので型ごと)。生成の on/off と、生成した Link の
+  渡り方 (Linear / Jump / Manual・速さ・弧の高さ) は Surface で指定する (ユーザー選択)。渡り方はベイクに入らず、渡り始めに leader の Surface から読む。
+  物ごとの除外 (Unity の OffMeshLink Generation フラグ) は入れていない (ユーザー選択)。エリアは 2 (Jump) 固定。
+- **生成した Link は `.mnav` に焼く** (形式 2、形式 1 も読める)。決定 11 の「Link は焼かない」は手置きの Link の話で、こちらはベイクの導出値なので
+  別物。`key` / `userId` の最上位ビットで手置きと区別し、NavSystem が毎 tick の Link の一覧で手置きの後ろへ足す。store の状態とハッシュは
+  手置きと同じ経路を通る。ポリゴンの上限 (`maxPolysPerTile`) は Link を入れた後の数で決める。
+- 生成を切った Surface は、生成の値を入力ハッシュに混ぜない (既存の `.mnav` を焼き直さずに使える)。`kNavBakeVersion` は上げていない。
+- Surface に 6 フィールドを末尾追加 (`kSimSnapshotVersion` 33)。ABI は変えていない。生成した `.mnav` のバイト列は Debug / Release で一致する
+  (NavAgentSelfTest 14 節の期待ハッシュ)。
+
 ## 除外した案
 
 | 案 | 理由 |
@@ -395,6 +469,11 @@ planner はユーザーに聞けない環境で裁定し、ユーザーが後か
 | `project_settings.json` にエリアコスト | sim 入力がシーン・リプレイの外に出る (決定 11) |
 | Modifier / Link をベイクに焼き込む | 実行時に動かす・消すときに戻せない (決定 11) |
 | tick レーンに塗りを積む | 編集中と Play 中で表示経路が割れる (決定 9) |
+| Surface の接続を Unity 式 (Link を要求する) | 同じ型の範囲を合わせて焼く UE 式をユーザーが選んだ (決定 14 の B) |
+| `.navfilter.json` をコストの倍率にする | Unity / UE と同じ上書きにした (決定 14 の C) |
+| `avoidancePriority` を Unity 式 (高い側は無視) にする | 重み付けをユーザーが選んだ (決定 14 の D) |
+| navFilter を既存のクエリのスロットへ引数で足す | 既存スロットのシグネチャを変えない ABI の規則に反する。別スロットにした (決定 14 の D) |
+| Agent Type の表を sim から直接読む | project_settings はシーンとリプレイの外。Surface へ写す (決定 14 の A) |
 
 ## 既知の限界
 
@@ -408,6 +487,9 @@ planner はユーザーに聞けない環境で裁定し、ユーザーが後か
 - `NavFindRandomPoint` の点は center とつながっているとは限らない (決定 12)。
 - Stuck / 渋滞到着の定数 (60 tick、radius/4、2 × radius、半径の和の 2 倍、再基準の radius) は、2 / 4 / 8 体の SelfTest 以外の実ゲームの渋滞で検証していない。
 - Link の出口がタイルを 2 つ以上離れる場合はつながらない (Detour の制約)。
+- 自動生成の Link は、縁の真下の飛び降りと同じ高さへの飛び越えだけを作る。隙間の先の低い床へ飛ぶ (飛び越え + 飛び降り) は作らない。
+  物ごとに生成を外す指定は無い (決定 14 の E)。生成した Link を渡っている途中のスナップショット復元は、手置きの Link の試験 (11c) と同じ経路だが専用の試験は無い。
+- `CalculatePath` / `SetPath` の経路は固定長 (ポリゴン 256・角 256) で、超える経路は切れる (決定 14 の D)。
 
 ## 検証結果
 
@@ -425,6 +507,15 @@ M82j の時点 (2026-10-04、HEAD `d8ff284` + 文書のみの変更) で全体�
 - 受け入れ条件 18 (c): このドキュメントの「将来の実行時再ベイクの足し方」。
 - 画面での確認 (エディタで Create -> 4 項目 -> Bake -> 再生 -> Agent が歩く) は、各サブで `--screenshot` と SelfTest (`NavEditorSelfTest`) で
   確認した分のみ。M82j では撮り直していない。手で操作する項目は `docs\test_checklists.md` の「M82」にまとめた。
+
+### M84 の全体検証 (2026-10-05、HEAD `d9e08a6` + 文書のみの変更)
+
+| 検証 | 結果 |
+|---|---|
+| `Editor.exe --selftest` (Debug / Release) | 全件 PASS (終了コード 0)。NavSurface / NavAgent の期待ハッシュ 3 件 (`.mnav` 形式 2・庭のワールドハッシュ・生成した Link の `.mnav`) は Debug で採り Release で一致 |
+| `Server.exe --selftest` (Debug / Release) | 全件 PASS (終了コード 0) |
+| `toolseplay_verify.bat` | 全 16 ジョブ PASS (140 s)。`nav` ジョブは ABI v26 の `NavDemoDriver` を含む。静的規則 0 error / 0 warning |
+| `tools\shot_verify.bat` | FAIL 6 枚。5 枚は M82j と同じ (parts 198/3625、joints 208/137、acoustic_forward 83/596、acoustic_deferred 82/594、fracture_after 150/192)。**`nav` が 214/21664 で新たに FAIL**。差は線 (輪郭・経路・Link) の上だけで、M83 より前のコミット `f6c7bef` (EditorLinePass の線を AntialiasedLine + 面の手前へずらす) と合う。M84b の切り詰めの寄与は切り分けていない。golden は更新していない |
 
 ### ビルド警告
 

@@ -10,7 +10,7 @@
 | マイルストーン | 状態 | コミット | メモ |
 |---|---|---|---|
 | M83 知覚 | 完了 (2026-10-05) | ade5d68 | ADR-024。ABI v25 = 144、TypeId 76 AIPerception / 77 AIStimulusSource、kSimSnapshotVersion 30 |
-| M84 NavMesh 拡張 | 着手 (2026-10-05) | | 下の「M84 で決めたこと」 |
+| M84 NavMesh 拡張 | 完了 (2026-10-05) | 5fb170f..d9e08a6 + 文書 | 下の「M84 で決めたこと」。ADR-023 決定 14、ABI v26 = 151、kSimSnapshotVersion 33 |
 | M85 ビヘイビアツリー | 未着手 | | |
 | M86 Smart Objects | 未着手 | | |
 

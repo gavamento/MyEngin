@@ -378,6 +378,20 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 
 - [ ] 外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は ABI v24 で再ビルドが要る (古い DLL は読み込みを拒否される)
 
+## M84: NavMesh の拡張
+
+自動検証は `Editor.exe --selftest` / `Server.exe --selftest` (NavSurface / NavAgent の M84 の節)、`tools\replay_verify.bat` の `nav` ジョブ
+(`NavDemoDriver` が ABI v26 を使う)。下は画面と実操作で確かめる項目 (設計: `docs\adr\ADR-023-navmesh.md` の決定 14)。
+
+- [ ] Project Settings の「NavMesh の Agent Type」で種別を足す・消す・保存できる。飛び降りの高さ・飛び越えの距離の列がある。id 0 は消せない
+- [ ] Surface / Agent の種別を名前で選べる。表にある種別の Surface は寸法 (飛び降り・飛び越えを含む) が読み取り専用で、表を変えると Inspector に食い違いの警告が出る
+- [ ] 同じ種別の Surface を 2 つ並べて Bake すると両方に同じ `.mnav` が付き、Surface をまたいで Agent が歩く。Clear も両方に 1 Undo で効く
+- [ ] `.navfilter.json` を作って Inspector でエリアのコストと「通らない」を編集でき、Agent に付けると経路が変わる
+- [ ] Agent の isStopped を Play 中に切り替えると止まって再開する。updatePosition を切ると Agent が動かず、desiredVelocity が更新される
+- [ ] Surface の「リンクを自動生成」を入れて Bake すると、段の縁と隙間にオレンジの Link が描かれ、Inspector に本数が出る。段の上の Agent が飛び降りる
+- [ ] 生成の設定や飛び降りの高さを変えると Inspector に「もう一度ベイク」の警告が出る。生成したリンクの渡り方は Bake し直さなくても効く
+- [ ] 外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は ABI v26 で再ビルドが要る
+
 ## M83: AI の知覚 (AIPerception)
 
 自動検証は `Editor.exe --selftest` / `Server.exe --selftest` (PerceptionSelfTest)、`tools\replay_verify.bat` の `perception` ジョブ、

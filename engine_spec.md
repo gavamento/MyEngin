@@ -2389,7 +2389,7 @@ against the wall's pre-break (in a kinematic case, infinite) mass, so a bullet s
 the same tick the wall starts to come apart, and the departing pieces start from that tick's
 rest/kinematic velocity rather than inheriting a share of the impact.
 
-### 10.9 NavMesh (M82)
+### 10.9 NavMesh (M82, extended in M84)
 
 **What it does.** A designer drops a `NavMeshSurface` over the level, presses Bake, and `NavMeshAgent`s walk to a
 destination over steps and slopes, around obstacles and each other, and across jump points. Recast Navigation
@@ -2401,11 +2401,40 @@ section records what future work needs to know.
 
 | Component | Role |
 |---|---|
-| `NavMeshSurface` (71) | Bake box, agent size (`agentRadius`, `agentHeight`, `maxClimb` 0.3, `maxSlopeDeg` 45), `autoCellSize` (on by default), `tileSize` 48, `areaCosts[16]`, `navAsset` (`.mnav` GUID). One `dtNavMesh` per Surface; an Agent uses the Surface with its `agentTypeId` (lowest entity key wins, with a warning) |
-| `NavMeshAgent` (72) | `destination`, `speed`, `areaMask`, `avoidanceQuality` 0-3; runtime `status` (Idle / Moving / Arrived / NoPath / OnLink / Inactive / Stuck), `remainingDistance`, `pathPartial`. Requires a `CharacterController` (else `Inactive`) |
+| `NavMeshSurface` (71) | Bake box, agent size (`agentRadius`, `agentHeight`, `maxClimb` 0.3, `maxSlopeDeg` 45), `autoCellSize` (on by default), `tileSize` 48, `areaCosts[16]`, `navAsset` (`.mnav` GUID), link generation (`generateLinks`, `dropHeight`, `jumpDistance`, and the traversal / speed / jump height used by the generated links). All enabled Surfaces with the same `agentTypeId` form one group baked into one `dtNavMesh` (M84b) |
+| `NavMeshAgent` (72) | `destination`, `speed`, `areaMask`, `navFilter` (`.navfilter.json`), `avoidanceQuality` 0-3, `isStopped`, `autoBraking`, `avoidancePriority`, `separationWeight`, `updatePosition`, `updateRotation`; runtime `status` (Idle / Moving / Arrived / NoPath / OnLink / Inactive / Stuck), `remainingDistance`, `pathPartial`, `desiredVelocity`, `nextPosition`. Requires a `CharacterController` (else `Inactive`) |
 | `NavMeshObstacle` (73) | Box / Cylinder carved out of the mesh in the same tick. `carve = false` does nothing |
 | `NavMeshModifier` (74) | Box that repaints the area at run time (not baked) |
 | `NavMeshLink` (75) | Off-Mesh Link: Linear / Jump / Manual traversal; not baked into the `.mnav` |
+
+**Agent Types and Surface groups (M84a / M84b).** `project_settings.json` holds `navAgentTypes` (name, radius, height,
+max climb, max slope, drop height, jump distance; up to 16, id 0 fixed), edited in Project Settings. The simulation
+never reads it: the editor copies the sizes into the Surface when the type is picked and again on Bake, and the
+Inspector warns when they differ. Surfaces of one type are grouped UE-style: the leader (lowest entity key) supplies
+cell / tile / cost settings and the `navAsset`, the bake covers the union of the boxes, and walkable cells are clipped
+to the boxes (`kNavBakeVersion` 2). Only the leader's `.mnav` is loaded at run time; Obstacles, Modifiers and Links
+apply when they are inside any box of the group.
+
+**Query filters (M84c).** A `.navfilter.json` asset overrides the per-area cost (0 = keep the Surface cost, 1..1000)
+and can exclude areas, like UE's NavigationQueryFilter. An Agent references one by `navFilter`; `dtCrowd` filters are
+allocated per (areaMask, navFilter) pair, up to 16 (the last is shared beyond that). The file content is outside the
+world hash and protected by the provenance content hash, like `.physmat.json`.
+
+**Agent control (M84d).** `isStopped` keeps the path and decelerates to speed 0 (not counted as Stuck);
+`autoBraking = false` and `avoidancePriority` (a weighting of the separation / avoidance share; equal priorities
+match upstream bit for bit) are Recast patches 5 and 6. `updatePosition = false` stops writing `moveInput` and the
+crowd re-reads the real position every tick. `NavSystem::Warp` moves the Transform and the crowd agent in place;
+`CalculatePath` returns a fixed-size path (256 polygons + 256 corners) and `SetPath` installs it without re-planning,
+refusing stale or foreign paths and paths during a crossing.
+
+**Link generation (M84e).** With `generateLinks` on, the bake walks the boundary edges of the baked mesh and adds
+one-way drop links (a lower surface below the edge, deeper than `maxClimb` and within `dropHeight`) and two-way jump
+links (a surface across a gap of at most `jumpDistance`, edge to edge, within `maxClimb` in height). Candidates
+blocked by input geometry at waist height, or reachable on foot within twice the link length, are dropped; nearby
+candidates are merged; at most 4096 per bake. Generated links are stored in the `.mnav` (format 2; format 1 still
+loads) and marked by the top bit of `key` / `userId`; `NavSystem` appends them to the hand-placed links every tick,
+so they share the TileCache, snapshot and hash path. Their traversal is read from the leader Surface when a crossing
+starts (no re-bake needed). With generation off, the bake input hash is unchanged.
 
 **Tick position.** `NavSystem::Update` runs in the fixed-tick loop after acoustics + `AgentSystem` and before
 animation (own `if (stepSim)` block): (1) lazy-load `.mnav` when a Surface's (entity, asset) changes (2) apply
@@ -2414,7 +2443,7 @@ order (4) `dtCrowd::update(1/60)` (5) write the desired velocity into `CC.moveIn
 `NavSystem::PostPhysics` runs after physics (3.6) and overwrites the position of Agents that are crossing a Link.
 A scene with no NavMesh component leaves the RNG, the world hash and the snapshot Nav section unchanged.
 
-**Snapshot.** `SimSnapshot` has a Nav section (`kSimSnapshotVersion` 29): `NavTileStore` state (replaced layers,
+**Snapshot.** `SimSnapshot` has a Nav section (`kSimSnapshotVersion` 29 when it was added; 33 after M84): `NavTileStore` state (replaced layers,
 obstacles / modifiers / links, slot table, per-slot salts; state version 4), every `dtCrowd` agent including its
 `dtLocalBoundary`, and the Link-crossing state in `NavAgentSlot`. Restoring rebuilds `dtNavMesh` from the layers and
 re-adds every tile in key order, because `dtNavMesh` link order depends on `addTile` / `removeTile` history. Path
@@ -2440,7 +2469,10 @@ real height; the triangles are split only where the plane and the layer differ b
 **Scripting (ABI v24).** `NavSetDestination`, `NavStop`, `NavGetAgentState` (agent state); `NavFindPath` (corner list,
 `outPartial`), `NavSamplePosition`, `NavRaycast`, `NavFindRandomPoint` (uniform in the circle via the world `Pcg32`, up to
 16 tries, snapped to the nearest polygon; consumes no RNG when there is no Surface or `radius <= 0`; the point is
-not guaranteed to be connected to the centre); `NavCompleteLink` (finishes a Manual Link). Queries read the state
+not guaranteed to be connected to the centre); `NavCompleteLink` (finishes a Manual Link). ABI v26 (M84d2) adds
+`NavWarp`, `NavCalculatePath`, `NavSetPath` (POD `MyeNavPath`, 4112 bytes) and `NavFindPathFiltered` /
+`NavSamplePositionFiltered` / `NavRaycastFiltered` / `NavFindRandomPointFiltered`, which take a `navFilter` GUID (0 =
+none, same result as the v24 slot). Warp and SetPath change the crowd immediately. Queries read the state
 confirmed by the previous tick's `NavSystem::Update`, so the first tick after loading a scene returns 0. The `y` of
 `NavSamplePosition`, the `NavFindPath` corners, the `NavRaycast` hit point and `NavFindRandomPoint` is the walkable surface
 height from the baked layers (`NavTileStore::SampleSurfaceHeight`), within 0.1 m on steps and slopes up to 45 degrees at the
@@ -2452,7 +2484,9 @@ default cell size; the polygon plane alone is off by 0.4 m. The polygon is still
 ADR-023 ("将来の実行時再ベイクの足し方").
 
 **Known limits.** Static geometry is baked in the editor only (a breakable wall is an Obstacle). A partial path
-reports `Arrived` 60 ticks late. The translucent fill is unverified on the CI WARP adapter.
+reports `Arrived` 60 ticks late. The translucent fill is unverified on the CI WARP adapter. Generated links only
+cover a drop straight below an edge and a jump to the same height (no jump-then-drop), and cannot be excluded per
+object. `CalculatePath` paths longer than 256 polygons are cut.
 
 ### 10.10 AI Perception (M83)
 
@@ -3183,8 +3217,13 @@ particle RNG stream — and the goldens do not move.
 **Scripting (ABI v24, M82i).** `MYE_API_VERSION` 24, 131 → 139 slots, appended after `NetGetSystemEvent`:
 `NavSetDestination`, `NavStop`, `NavGetAgentState`, `NavFindPath`, `NavSamplePosition`, `NavRaycast`,
 `NavFindRandomPoint`, `NavCompleteLink` (semantics in §10.9). **A `GameLogic.dll` built for `apiVersion` 23
-is refused by a v24 engine; external projects (Sanko, HAL Collector) must rebuild.** The next ABI bump
-(M75h, InputField) is v25.
+is refused by a v24 engine; external projects (Sanko, HAL Collector) must rebuild.**
+
+**Scripting (ABI v25, M83 / v26, M84d2).** v25 = 144 slots adds the AI Perception functions (§10.10). v26 = 151 slots
+appends, after `PerceptionCanSee`, `NavWarp`, `NavCalculatePath`, `NavSetPath`, `NavFindPathFiltered`,
+`NavSamplePositionFiltered`, `NavRaycastFiltered`, `NavFindRandomPointFiltered` (§10.9). Existing slot signatures are
+never changed, so the filtered queries are new slots. Each bump makes older `GameLogic.dll` files refuse to load.
+The next ABI bump (M75h, InputField) is v27.
 
 **Verification.** `Editor.exe --selftest` runs the Session suite and the in-process server/client suite
 (one server and three clients over a seeded fake transport: missed deadline, late join, drop → reconnect,
