@@ -437,6 +437,17 @@ int BehaviorTreeAsset::FindNode(int32_t id) const
     return -1;
 }
 
+int32_t BehaviorTreeAsset::DisplayedIdOf(int32_t index, uint64_t displayedTree) const
+{
+    for (int32_t at = index; at >= 0 && static_cast<size_t>(at) < nodes.size(); at = nodes[static_cast<size_t>(at)].parent) {
+        const BtNodeDef& node = nodes[static_cast<size_t>(at)];
+        if (OriginTreeOf(node) == displayedTree) {
+            return OriginIdOf(node);
+        }
+    }
+    return -1;
+}
+
 bool BtLinkAsset(BehaviorTreeAsset& asset)
 {
     const size_t count = asset.nodes.size();
@@ -586,6 +597,8 @@ int32_t AppendSubTreeNodes(ExpandWork& work, const BehaviorTreeAsset& src)
     for (const int32_t at : order) {
         BtNodeDef node = src.nodes[static_cast<size_t>(at)];
         node.id = newIdOf[static_cast<size_t>(at)];
+        node.originTree = src.hash;
+        node.originId = src.nodes[static_cast<size_t>(at)].id;
         node.childIds.clear();
         for (const int32_t child : src.nodes[static_cast<size_t>(at)].children) {
             node.childIds.push_back(newIdOf[static_cast<size_t>(child)]);

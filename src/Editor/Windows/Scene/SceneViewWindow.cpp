@@ -12,6 +12,8 @@
 #include "Editor/Tools/PatrolRouteEdit.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Ecs/Components.h"
+#include "Engine/Engine/AI/BehaviorTreeLibrary.h" // M85j: 実行中のタスク名
+#include "Engine/Engine/AI/BehaviorTreeSystem.h"
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Platform/PathUtil.h"
@@ -419,6 +421,7 @@ constexpr uint32_t kNavLink = 0x40FFC0FFu;        // NavMeshLink の入口・出
 constexpr float kNavLinkEndRadius = 0.15f;
 constexpr float kNavLinkArrowLength = 0.35f;
 constexpr float kNavLinkArrowSpread = 0.4f;
+constexpr float kBtLabelHeight = 2.2f;                // 実行中のタスク名を出す、足元からの高さ (m)
 constexpr uint32_t kPatrolRoute = 0xF0A030FFu;         // PatrolRoute の点と線 (橙)
 constexpr uint32_t kPatrolPointSelected = 0xFFFF60FFu; // ドラッグ対象に選んでいる点 (黄)
 constexpr float kPatrolPointRadius = 0.25f;
@@ -1292,6 +1295,43 @@ void SceneViewWindow::DrawCameraPreview(const ImVec2& imgPos, const ImVec2& size
     dl->AddText(ImVec2(tl.x, tl.y - titleH), IM_COL32(0xD8, 0xE0, 0xE8, 0xFF), title.c_str());
 }
 
+void SceneViewWindow::DrawBehaviorTreeLabels(EngineContext& ctx, World& world, float rectX, float rectY, float rectW, float rectH)
+{
+    if (ctx.behaviorTree == nullptr) {
+        return;
+    }
+    const XMMATRIX vp = XMMatrixMultiply(XMLoadFloat4x4(&lastView_), XMLoadFloat4x4(&lastProj_));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ComponentTypeId req[] = { BehaviorTreeComponent::sTypeId, WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int bi = arch.FindTypeIndex(BehaviorTreeComponent::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const auto* comp = static_cast<const BehaviorTreeComponent*>(arch.GetPtr(bi, row));
+            if (!comp->drawDebug || comp->activeNodeId < 0) {
+                continue;
+            }
+            const BtInstance* inst = ctx.behaviorTree->FindInstance(arch.EntityAt(row));
+            const int nodeIndex = inst != nullptr && inst->tree ? inst->tree->FindNode(comp->activeNodeId) : -1;
+            if (nodeIndex < 0) {
+                continue;
+            }
+            const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+            const XMVECTOR clip = XMVector4Transform(XMVectorSet(wm._41, wm._42 + gizmo::kBtLabelHeight, wm._43, 1.0f), vp);
+            const float w = XMVectorGetW(clip);
+            if (w <= 0.01f) {
+                continue; // カメラ後方
+            }
+            const ImVec2 sp(rectX + (XMVectorGetX(clip) / w * 0.5f + 0.5f) * rectW, rectY + (0.5f - XMVectorGetY(clip) / w * 0.5f) * rectH);
+            const char* name = BtNodeTypeOf(inst->tree->nodes[static_cast<size_t>(nodeIndex)].kind).name;
+            const ImVec2 size = ImGui::CalcTextSize(name);
+            const ImVec2 pos(sp.x - size.x * 0.5f, sp.y - size.y);
+            dl->AddRectFilled(ImVec2(pos.x - 3.0f, pos.y - 1.0f), ImVec2(pos.x + size.x + 3.0f, pos.y + size.y + 1.0f), IM_COL32(20, 24, 28, 190), 3.0f);
+            dl->AddText(pos, IM_COL32(0x60, 0xFF, 0x80, 0xFF), name);
+        }
+    });
+}
+
 bool SceneViewWindow::HandlePatrolRoute(EngineContext& ctx, Selection& selection, UndoStack& undo, const EditorSettings& settings,
                                         float rectX, float rectY, float rectW, float rectH, bool& clickConsumed)
 {
@@ -2129,6 +2169,7 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         World& world = ctx.scene->GetWorld();
         const XMMATRIX vp =
             XMMatrixMultiply(XMLoadFloat4x4(&lastView_), XMLoadFloat4x4(&lastProj_));
+        DrawBehaviorTreeLabels(ctx, world, imgPos.x, imgPos.y, avail.x, avail.y);
         ImDrawList* dl = ImGui::GetWindowDrawList();
         struct IconHit {
             float dist2;

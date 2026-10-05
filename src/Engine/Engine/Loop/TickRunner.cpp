@@ -513,6 +513,10 @@ void RunOneTick(TickServices& ts)
             if (ts.perception != nullptr) {
                 ts.perception->AppendDebugLines(scene.GetWorld(), debugLines);
             }
+            // ビヘイビアツリーの目的地・SearchArea・巡回の点 (M85j)。表示は BehaviorTreeComponent ごとの drawDebug (NoHash) で決まる
+            if (ts.behaviorTree != nullptr) {
+                ts.behaviorTree->AppendDebugLines(scene.GetWorld(), debugLines);
+            }
         }
     }
     // ---- フェーズ 5: スクリプト層 LateUpdate ----

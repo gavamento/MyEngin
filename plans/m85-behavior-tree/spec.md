@@ -257,6 +257,7 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 
 (確定後の変更のみ)
 
+- 2026-10-06 (sub-10 VERDICT): Abort の矢印は Decorator 起点 (Self / LowerPriority / Timeout) だけ記録し、SimpleParallel の Immediate の停止は矢印にしない。記録は表示専用で BT 節・ハッシュに入れない (巻き戻し直後は矢印が空)。EngineContext に読み取り専用の BehaviorTreeSystem を追加。実行中タスク名は SceneView の ImGui 文字 (ギズモ表示が on のとき)。ライブの id は展開後の id を DisplayedIdOf で窓の木の id へ戻す
 - 2026-10-06 (sub-09 VERDICT): Undo は「アセット全体の JSON」ではなく操作前後の BT / BB のコピー (保存できない途中の状態へも戻すため)、未保存の印は保存時の JSON との比較。BB のキー削除で BlackboardCondition のキー名は残して KeyMissing の検査にかける。必須のキー欄の定義 (KeyRequired) と検査の重さ (SubTree の未指定・未登録・根なしは警告、BB 違いはエラー、検査は保存を止めない) を coder の定義で確定。BB のキー改名・削除は編集中の木にだけ追従し、同じ BB を使うほかの木と BehaviorTreeComponent の Entity キー初期値は追従しない (既知の限界、ADR-025)。ReloadHub は内容が同じなら置き換えない
 - 2026-10-06 (sub-08 VERDICT): 2. #19 / #20 はユーザー回答で確定。BT 窓にフォーカスがある間は Delete (と sub-09 の Ctrl+Z / Ctrl+Y) を窓が握る。「子を残す」削除は子を親なしの根として残す (Delete = 子を残す、Shift+Delete = 子ごと)。ノードのドラッグは子孫ごと、兄弟の順序は動かしたときだけ x で並べ直す (読み込み時は触らない)。保存は CheckSavable を通った木だけ。Git ゲートに BehaviorTreeDirty を追加。保存の直接登録と ReloadHub の再読込で木が 2 回やり直す件は sub-09 で「内容が登録済みと同じなら置き換えない」にする
 - 2026-10-06 (sub-07 VERDICT): Patrol は入るたびに一番近い点から (2. #19)。親付きルートは前 tick の WorldMatrix。`BehaviorTreeComponent` に Entity キーの初期値 4 組を足す (2. #20、sub-08)。点のクリックは変形ギズモより優先、Inspector の点は専用 UI (1 操作 1 Undo)

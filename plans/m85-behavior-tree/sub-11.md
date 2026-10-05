@@ -14,6 +14,8 @@
 - C# の位置ミラー (`Interop.cs:166-356`)、`check_rules.ps1:676` の版表 (`27 = 151 + n`)、`docs\history\api-scripting-tools.md`、`EngineAPI.h` の版履歴コメント。
 - GameLogic にテスト用の C++ タスク (例 `BtProbeTask`、状態に tick 数を数える) を置き、`BehaviorTreeSelfTest` から使う (既存のスクリプトを SelfTest から使う前例に合わせる。無ければ Engine 内でモジュール記述子を手で組んで試す)。
 
+- (sub-10 VERDICT より) `BehaviorTreeComponent::activeNodeId` は SubTree 展開後の実行木の id。ABI / 文書ではそう明記する (元の木の id が要る呼び出し側向けの変換は作らない。必要になったら DisplayedIdOf を ABI に出す)。
+
 ## やらないこと (このサブでは)
 - C# の BT タスクと糖衣 (sub-12)、デモ (sub-13)
 

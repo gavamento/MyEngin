@@ -19,6 +19,7 @@
 #include "Engine/Engine/Animation/AnimatorController.h"
 #include "Engine/Engine/Navigation/NavSystem.h"
 #include "Engine/Engine/Perception/PerceptionSystem.h"
+#include "Engine/Engine/Rendering/DebugDraw.h"
 #include "Engine/Engine/Scene/Tags.h"
 
 namespace mye {
@@ -110,6 +111,36 @@ bool NodeActive(const BtInstance& inst, const BehaviorTreeAsset& tree, int32_t i
         }
     }
     return false;
+}
+
+// at から実行中の子を左から辿った一番深いノードの id。at が入っていなければ -1
+int32_t ActiveLeafIdFrom(const BtInstance& inst, const BehaviorTreeAsset& tree, int32_t at)
+{
+    if (at < 0 || !NodeActive(inst, tree, at)) {
+        return -1;
+    }
+    for (;;) {
+        int32_t next = -1;
+        for (const int32_t child : tree.nodes[static_cast<size_t>(at)].children) {
+            if (NodeActive(inst, tree, child)) {
+                next = child;
+                break;
+            }
+        }
+        if (next < 0) {
+            return tree.nodes[static_cast<size_t>(at)].id;
+        }
+        at = next;
+    }
+}
+
+// Decorator (source) が target の部分木を止めたことを表示用に残す。止める前に呼ぶ (止めると実行中の葉が分からなくなる)
+void RecordDecoratorAbort(RunCtx& c, const BtNodeDef& source, int32_t stoppedIndex)
+{
+    const int32_t leaf = ActiveLeafIdFrom(c.inst, c.tree, stoppedIndex);
+    if (leaf >= 0) {
+        c.inst.lastAbort = BtAbortRecord{ c.tick, source.id, leaf };
+    }
 }
 
 // ---- 種類別の追加状態と、ノードが外の世界 (Agent) へ書いたものの後始末 ----
@@ -911,11 +942,11 @@ const PatrolRouteComponent* ResolveRoute(RunCtx& c, const BtNodeDef& node, Entit
 
 // ルートの点のワールド位置 (ワールド行列 x ローカル座標)。親が無ければ LocalTransform から組む
 // (WorldMatrix は 1 tick 遅れで、置いた直後の tick が古い値になるため。WorldPositionOf と同じ規則)。得られなければ false
-bool PatrolPointWorld(RunCtx& c, EntityID routeEntity, const PatrolRouteComponent& route, int32_t index, float (&out)[3])
+bool PatrolPointWorld(World& world, EntityID routeEntity, const PatrolRouteComponent& route, int32_t index, float (&out)[3])
 {
     DirectX::XMFLOAT4X4 matrix;
-    if (c.world.GetParent(routeEntity) == kNullEntity) {
-        const LocalTransform* transform = c.world.GetComponent<LocalTransform>(routeEntity);
+    if (world.GetParent(routeEntity) == kNullEntity) {
+        const LocalTransform* transform = world.GetComponent<LocalTransform>(routeEntity);
         if (transform == nullptr) {
             return false;
         }
@@ -924,11 +955,11 @@ bool PatrolPointWorld(RunCtx& c, EntityID routeEntity, const PatrolRouteComponen
                                      * DirectX::XMMatrixRotationQuaternion(DirectX::XMLoadFloat4(&transform->rotation))
                                      * DirectX::XMMatrixTranslation(transform->position.x, transform->position.y, transform->position.z));
     } else {
-        const WorldMatrixComponent* world = c.world.GetComponent<WorldMatrixComponent>(routeEntity);
-        if (world == nullptr) {
+        const WorldMatrixComponent* worldMatrix = world.GetComponent<WorldMatrixComponent>(routeEntity);
+        if (worldMatrix == nullptr) {
             return false;
         }
-        matrix = world->value;
+        matrix = worldMatrix->value;
     }
     const DirectX::XMFLOAT3& p = route.points[index];
     out[0] = p.x * matrix.m[0][0] + p.y * matrix.m[1][0] + p.z * matrix.m[2][0] + matrix.m[3][0];
@@ -979,7 +1010,7 @@ BtResult VisitPatrol(RunCtx& c, int32_t index)
         float bestDistance = 0.0f;
         for (int32_t i = 0; i < count; ++i) {
             float point[3] = {};
-            if (!PatrolPointWorld(c, routeEntity, *route, i, point)) {
+            if (!PatrolPointWorld(c.world, routeEntity, *route, i, point)) {
                 return BtResult::Failure;
             }
             const float distance = HorizontalDistance(self, point);
@@ -998,7 +1029,7 @@ BtResult VisitPatrol(RunCtx& c, int32_t index)
     }
 
     float target[3] = {};
-    if (!PatrolPointWorld(c, routeEntity, *route, patrol.nextIndex, target)) {
+    if (!PatrolPointWorld(c.world, routeEntity, *route, patrol.nextIndex, target)) {
         return EndBody(c, index, BtResult::Failure);
     }
     const auto writeDestination = [&](const float* point) {
@@ -1043,7 +1074,7 @@ BtResult VisitPatrol(RunCtx& c, int32_t index)
     }
     patrol.nextIndex = NextPatrolIndex(route->mode, count, patrol.nextIndex, patrol.direction);
     patrol.phase = btpatrolphase::kMoving;
-    PatrolPointWorld(c, routeEntity, *route, patrol.nextIndex, target);
+    PatrolPointWorld(c.world, routeEntity, *route, patrol.nextIndex, target);
     if (HorizontalDistance(self, target) > acceptance) {
         writeDestination(target);
     }
@@ -1263,6 +1294,7 @@ BtResult RunLevel(RunCtx& c, int32_t index, size_t level)
         // 打ち切る tick に子がまだ終わっていなければ Abort して Failure (その tick に終わるなら終わりを優先する)
         const BtResult result = RunLevel(c, index, level + 1);
         if (result == BtResult::Running && c.tick >= static_cast<uint64_t>(slot.counter)) {
+            RecordDecoratorAbort(c, node, index);
             AbortBody(c, index);
             return BtResult::Failure;
         }
@@ -1347,6 +1379,7 @@ void MonitorNode(RunCtx& c, int32_t index)
             const bool now = EvalBlackboardCondition(c, deco);
             SlotOf(c, deco).phase = now ? 1 : 0;
             if (!now) {
+                RecordDecoratorAbort(c, node, index);
                 AbortNode(c, index);
                 return;
             }
@@ -1375,6 +1408,7 @@ void MonitorNode(RunCtx& c, int32_t index)
                 }
             }
             if (fired) {
+                RecordDecoratorAbort(c, sibling, node.children[static_cast<size_t>(state.child)]);
                 AbortNode(c, node.children[static_cast<size_t>(state.child)]);
                 state.child = k;
                 break;
@@ -1389,23 +1423,7 @@ void MonitorNode(RunCtx& c, int32_t index)
 // 実行中の一番深いノードの id。何も実行していなければ -1
 int32_t ActiveLeafId(const BtInstance& inst, const BehaviorTreeAsset& tree)
 {
-    int32_t at = tree.rootIndex;
-    if (at < 0 || !NodeActive(inst, tree, at)) {
-        return -1;
-    }
-    for (;;) {
-        int32_t next = -1;
-        for (const int32_t child : tree.nodes[static_cast<size_t>(at)].children) {
-            if (NodeActive(inst, tree, child)) {
-                next = child;
-                break;
-            }
-        }
-        if (next < 0) {
-            return tree.nodes[static_cast<size_t>(at)].id;
-        }
-        at = next;
-    }
+    return ActiveLeafIdFrom(inst, tree, tree.rootIndex);
 }
 
 bool AnyNodeActive(const BtInstance& inst)
@@ -1787,6 +1805,133 @@ bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, const NavSystem*
         comp->lastAbortTick = TickToField(tick);
     }
     return true;
+}
+
+void BehaviorTreeSystem::ActiveNodeIndices(const BtInstance& inst, std::vector<int32_t>& out)
+{
+    if (!inst.tree || inst.nodes.size() < inst.tree->nodes.size()) {
+        return;
+    }
+    for (size_t i = 0; i < inst.tree->nodes.size(); ++i) {
+        if (NodeActive(inst, *inst.tree, static_cast<int32_t>(i))) {
+            out.push_back(static_cast<int32_t>(i));
+        }
+    }
+}
+
+namespace {
+
+// 追加状態を読む (領域が足りなければ false。復元直後の不整合な表で範囲外を読まない)
+template <typename T>
+bool ReadExtra(const BtInstance& inst, const BtNodeDef& node, T& out)
+{
+    if (node.extraOffset < 0 || static_cast<size_t>(node.extraOffset) + sizeof(T) > inst.extra.size()) {
+        return false;
+    }
+    std::memcpy(&out, inst.extra.data() + node.extraOffset, sizeof(T));
+    return true;
+}
+
+// Patrol ノードの route キーが指す、生きているエンティティ。読めなければ kNullEntity
+EntityID PatrolRouteEntityOf(World& world, const BtInstance& inst, const BtNodeDef& node)
+{
+    if (!inst.blackboardAsset || node.keys.size() <= static_cast<size_t>(btpatrolkey::kRoute)) {
+        return kNullEntity;
+    }
+    const int key = inst.blackboardAsset->FindKey(node.keys[btpatrolkey::kRoute]);
+    if (key < 0 || static_cast<size_t>(key) >= inst.blackboard.size()
+        || inst.blackboardAsset->keys[static_cast<size_t>(key)].type != BbType::Entity) {
+        return kNullEntity;
+    }
+    const BbValue& value = inst.blackboard[static_cast<size_t>(key)];
+    return value.isSet != 0 && world.IsAlive(value.entity) ? value.entity : kNullEntity;
+}
+
+} // namespace
+
+void BehaviorTreeSystem::AppendDebugLines(World& world, std::vector<DebugLineCmd>& out) const
+{
+    // ナビメッシュの塗り (水色) と、選択中の Agent の経路線 (淡い黄緑) に埋もれない色
+    constexpr uint32_t kMoveColor = 0xFF58F0FFu;   // MoveTo の目的地への線 (桃)
+    constexpr uint32_t kSearchColor = 0xFF9A20FFu; // SearchArea の起点・円・今の点 (橙)
+    constexpr uint32_t kPatrolColor = 0xFFF050FFu; // Patrol の向かっている点 (黄)
+    constexpr float kMark = 0.2f;
+    constexpr float kPatrolMark = 0.45f;
+    constexpr float kPatrolStake = 1.2f;
+    constexpr int kRingSegments = 24;
+    const auto cross = [&out](const float* c, float size, uint32_t rgba) {
+        out.push_back({ c[0] - size, c[1], c[2], c[0] + size, c[1], c[2], rgba });
+        out.push_back({ c[0], c[1] - size, c[2], c[0], c[1] + size, c[2], rgba });
+        out.push_back({ c[0], c[1], c[2] - size, c[0], c[1], c[2] + size, rgba });
+    };
+    const auto line = [&out](const float* a, const float* b, uint32_t rgba) {
+        out.push_back({ a[0], a[1], a[2], b[0], b[1], b[2], rgba });
+    };
+    for (const BtInstance& inst : instances_) {
+        if (!inst.tree || !world.IsAlive(inst.entity) || inst.nodes.size() < inst.tree->nodes.size()) {
+            continue;
+        }
+        const BehaviorTreeComponent* comp = world.GetComponent<BehaviorTreeComponent>(inst.entity);
+        const NavMeshAgentComponent* agent = world.GetComponent<NavMeshAgentComponent>(inst.entity);
+        float self[3] = {};
+        if (comp == nullptr || !comp->drawDebug || !WorldPositionOf(world, inst.entity, self)) {
+            continue;
+        }
+        const float destination[3] = { agent != nullptr ? agent->destination.x : 0.0f, agent != nullptr ? agent->destination.y : 0.0f,
+                                       agent != nullptr ? agent->destination.z : 0.0f };
+        const bool hasDestination = agent != nullptr && agent->hasDestination;
+        for (size_t i = 0; i < inst.tree->nodes.size(); ++i) {
+            if (inst.nodes[i].active == 0) {
+                continue;
+            }
+            const BtNodeDef& node = inst.tree->nodes[i];
+            switch (node.kind) {
+            case BtNodeKind::MoveTo:
+                if (hasDestination) {
+                    line(self, destination, kMoveColor);
+                    cross(destination, kMark, kMoveColor);
+                }
+                break;
+            case BtNodeKind::SearchArea: {
+                BtSearchAreaState search;
+                if (!ReadExtra(inst, node, search)) {
+                    break;
+                }
+                cross(search.origin, kMark, kSearchColor);
+                const float radius = node.params[btsearchparam::kRadius].f;
+                for (int k = 0; k < kRingSegments; ++k) {
+                    const float a0 = 2.0f * kPi * static_cast<float>(k) / kRingSegments;
+                    const float a1 = 2.0f * kPi * static_cast<float>(k + 1) / kRingSegments;
+                    const float from[3] = { search.origin[0] + std::cos(a0) * radius, search.origin[1], search.origin[2] + std::sin(a0) * radius };
+                    const float to[3] = { search.origin[0] + std::cos(a1) * radius, search.origin[1], search.origin[2] + std::sin(a1) * radius };
+                    line(from, to, kSearchColor);
+                }
+                cross(search.current, kMark * 1.5f, kSearchColor);
+                if (hasDestination) {
+                    line(self, destination, kSearchColor);
+                }
+                break;
+            }
+            case BtNodeKind::Patrol: {
+                BtPatrolState patrol;
+                const EntityID routeEntity = PatrolRouteEntityOf(world, inst, node);
+                const PatrolRouteComponent* route = routeEntity.IsNull() ? nullptr : world.GetComponent<PatrolRouteComponent>(routeEntity);
+                float point[3] = {};
+                if (route == nullptr || !ReadExtra(inst, node, patrol) || patrol.nextIndex < 0
+                    || patrol.nextIndex >= (std::min)(route->pointCount, kMaxPatrolPoints)
+                    || !PatrolPointWorld(world, routeEntity, *route, patrol.nextIndex, point)) {
+                    break;
+                }
+                line(self, point, kPatrolColor);
+                cross(point, kPatrolMark, kPatrolColor);
+                const float top[3] = { point[0], point[1] + kPatrolStake, point[2] };
+                line(point, top, kPatrolColor);
+                break;
+            }
+            default: break;
+            }
+        }
+    }
 }
 
 void BehaviorTreeSystem::SaveSnapshot(ByteWriter& w) const

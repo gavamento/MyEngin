@@ -591,6 +591,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 有効化はエディタ (Play/Stop) か CLI プローブが行う。ここでは器を持つだけ
     TimeTravel timeTravel;
     ctx.timeTravel = &timeTravel;
+    ctx.behaviorTree = &behaviorTreeSystem;
     if (config.timeTravelProbeTicks > 0 || config.whatIfProbeTicks > 0) {
         timeTravel.SetEnabled(true);
     }

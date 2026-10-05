@@ -32,6 +32,7 @@ class SoundLibrary;
 class MixerLibrary;
 class InputActions;
 class TimeTravel;
+class BehaviorTreeSystem;
 struct RenderResources;
 struct NetRuntimeInfo;
 
@@ -444,6 +445,8 @@ struct EngineContext {
     // エディタは「Play で有効化 → タイムライン窓から RequestSeek」しか触らない
     // (Restore と再シムはここでは起きない = 途中の状態を UI に見せない)
     TimeTravel* timeTravel = nullptr;
+    // ビヘイビアツリーの実行状態 (M85j)。BT 窓と SceneView のライブ表示が**読むだけ** (書き込み禁止)
+    const BehaviorTreeSystem* behaviorTree = nullptr;
     // ネットセッションの状態 (M52i)。EngineLoop が毎フレーム 1 回書く読み取り専用の POD。
     // null = このビルド/実行ではネットを張っていない。
     // ★中身はすべて機種依存 (自分がどちら側か / ping / ロールバック回数)。

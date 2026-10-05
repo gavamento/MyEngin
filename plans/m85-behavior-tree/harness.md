@@ -15,8 +15,8 @@
 | sub-06 | OK | 1 | 7367737 | SubTree は平らな展開、snapshot v37 のまま | AnimatorPlay / PlayAnimation / SubTree |
 | sub-07 | OK | 1 | 74b7557 | TypeId 79 PatrolRoute、snapshot v38 | 巡回ルート |
 | sub-08 | OK | 1 | 2f86efb | BT 窓 (1) + Entity キーの初期値、snapshot v39 | BT 窓 (1) |
-| sub-09 | OK | 1 | (このコミット) | Undo・BB パネル・検査・ReloadHub の同一内容スキップ | BT 窓 (2) Undo・BB 編集・検査 |
-| sub-10 | 未着手 | 0 | | BT 窓 (3) ライブ表示 |
+| sub-09 | OK | 1 | 8bef16c | Undo・BB パネル・検査・ReloadHub の同一内容スキップ | BT 窓 (2) Undo・BB 編集・検査 |
+| sub-10 | OK | 1 | (このコミット) | ライブ表示・Abort 矢印・デバッグ線 | BT 窓 (3) ライブ表示 |
 | sub-11 | 未着手 | 0 | | ABI v27 |
 | sub-12 | 未着手 | 0 | | C# タスク |
 | sub-13 | 未着手 | 0 | | --bt-demo・replay_verify・golden |
@@ -67,6 +67,10 @@
 - (sub-09 VERDICT nit#1) BB パネルの文字欄は textSlot_ 共有。sub-10 で現在値表示を足すとき、編集中の欄と表示が混ざらないことを確かめる。
 - (sub-09 coder → sub-10) 座標変換は BehaviorTreeWindow の CanvasView (view_) と HitTest。ライブ表示は DrawNodes に重ねるか後に呼ぶ。CanvasStyle に色を足せる。BB の現在値は DrawBoardKey に足せる。ジェスチャは gestureOwner_ に合わせる。ADR-025 に積む既知の限界の一覧は sub-14.md にある。
 - 既知 flake: sub-09 Debug 1 回目 Fracture 3 件 (net V1 0)、2 回目以降 0。
+- (sub-10 VERDICT nit#1) SceneView の実行中タスク名の高さ 2.2 m・文字色が名前付き定数でなければ gizmo 名前空間の定数へ。次に SceneViewWindow.cpp を触るサブで。
+- (sub-10) sub-07 should#1 (記録を閉じる処理の集約) は条件に当たらず閉じた。
+- (sub-10 → sub-11) activeNodeId は展開後の実行木の id。ABI と文書に明記し、DisplayedIdOf は必要になるまで ABI に出さない (sub-11.md 反映済み)。ABI の bump は M85 でこの 1 回だけ (v27)。
+- (sub-10 → sub-13) --bt-demo に drawDebug = true の BehaviorTreeComponent を 1 体入れておくと撮りやすい。
 - (sub-07 → sub-14) ADR-025: Patrol は入るたびに最近傍点から、親付きルートは前 tick の WorldMatrix。
 - (sub-06 → sub-14) ADR-025 の既知の限界: SubTree は平らな展開・上限 1024・部分木の根の LowerPriority は Self 扱い・BB 継承なし・遷移中の AnimatorPlay はブレンド途中のポーズから飛ぶ。
 - (sub-04 VERDICT nit#1) BehaviorTreeSelfTest の診断ログ `[search] stuck ...` は、1 回の実行で 1〜2 行なら残す。tick ごとなら 1 行にまとめるか削除。sub-05 でついでに判断。

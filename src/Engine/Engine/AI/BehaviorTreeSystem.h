@@ -25,6 +25,7 @@ class ControllerLibrary;
 class AnimationLibrary;
 struct BehaviorTreeAsset;
 struct BtExpansion;
+struct DebugLineCmd;
 
 // BtInstance::rootStatus。根が終わった tick の結果で、次の tick に根からやり直す
 namespace btroot {
@@ -44,6 +45,14 @@ struct BtNodeState {
     int32_t counter = 0;  // Wait: 残り tick / SimpleParallel: メインの結果 (1 = Success, 2 = Failure) / Cooldown: 入れるようになる tick / Repeat: 終えた回数 / Timeout: 打ち切る tick
 };
 
+// 直前の Abort (表示専用)。どのノードの Decorator が、どの実行中のタスクを止めたか。id は実行木 (BtInstance::tree) の id。
+// sourceId < 0 = 記録なし。BT 節・ハッシュには入れない (巻き戻した後は空から)
+struct BtAbortRecord {
+    uint64_t tick = 0;
+    int32_t sourceId = -1; // Decorator の付いたノード
+    int32_t targetId = -1; // 止められた部分木の中で実行中だった一番深いノード
+};
+
 // 木を動かしているエンティティ 1 体ぶんの状態。BehaviorTreeComponent 1 個につき 1 つ
 struct BtInstance {
     EntityID entity = kNullEntity;
@@ -57,6 +66,7 @@ struct BtInstance {
     std::shared_ptr<const BehaviorTreeAsset> tree;
     std::shared_ptr<const BlackboardAsset> blackboardAsset; // 木が BB を使わなければ null
     bool stepLimitWarned = false;
+    BtAbortRecord lastAbort;
 };
 
 constexpr int kBtMaxEventsPerTick = 256; // 配送待ちの上限 (溢れた分は捨てて 1 回だけ警告)
@@ -117,6 +127,13 @@ public:
 
     // Abort を受けたノードの id を Abort の順に積む先 (検査用。sim 状態ではない)。null = 記録しない
     void SetAbortTrace(std::vector<int32_t>* sink) { abortTrace_ = sink; }
+
+    // ---- ライブ表示 (BT 窓・SceneView。読むだけ) ----
+    // 入っていて終わっていないノード (Decorator だけが動いている間も含む) の inst.tree->nodes の添字を、添字順に out へ足す
+    static void ActiveNodeIndices(const BtInstance& inst, std::vector<int32_t>& out);
+    // BehaviorTreeComponent.drawDebug が立ったエンティティについて、実行中の MoveTo / SearchArea / Patrol の目的地などを out へ足す
+    // (出力レーン。sim 状態には触れない)
+    void AppendDebugLines(World& world, std::vector<DebugLineCmd>& out) const;
 
     // ---- SimSnapshot の BT 節 ----
     void SaveSnapshot(ByteWriter& w) const;

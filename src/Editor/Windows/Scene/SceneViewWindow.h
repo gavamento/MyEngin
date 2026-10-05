@@ -71,6 +71,8 @@ private:
     // 分岐のゴースト (M72e、SceneViewGhost.cpp): 非ライブの分岐を同じ tick のワイヤ箱 + トレイルで重ねる
     void BuildGhostOverlay(EngineContext& ctx);
     void DrawToolbar(EditorSettings& settings);
+    // M85j: drawDebug が立った BehaviorTreeComponent の頭上に、実行中のタスク名を重ねる (描画専用。線は BehaviorTreeSystem::AppendDebugLines)
+    void DrawBehaviorTreeLabels(EngineContext& ctx, World& world, float rectX, float rectY, float rectW, float rectH);
     // M85g: 選択中の PatrolRoute の点の番号・クリック選択・ドラッグ移動 (ドラッグ 1 回 = 1 Undo)。
     // 点を選んでいる間は true を返す (呼び出し側はエンティティの変形ギズモを出さない)。点をクリックしたら clickConsumed が true
     bool HandlePatrolRoute(EngineContext& ctx, Selection& selection, UndoStack& undo, const EditorSettings& settings,

@@ -8,6 +8,7 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "Editor/Windows/AI/BehaviorTreeEditModel.h"
@@ -15,13 +16,17 @@
 
 namespace mye {
 
+struct EngineContext;
+struct Selection;
+
 // BT 窓。編集するのは BehaviorTreeEditModel (ImGui に依存しない) で、この窓はそれを描き、マウスとキーを操作へ変える。
-// 保存は BehaviorTreeLibrary へ直接登録する (ReloadHub の再読込を待たない)。ライブ表示は後続のサブで足す
+// 保存は BehaviorTreeLibrary へ直接登録する (ReloadHub の再読込を待たない)。
+// ライブ表示: 選んだエンティティの実行状態を毎フレーム BehaviorTreeSystem から取り直して重ねる (Play 中もタイムラインの巻き戻し中も同じ)
 class BehaviorTreeWindow {
 public:
     bool open = false; // ツール窓なので既定は非表示 (Window メニューか .bt.json のダブルクリックで開く)
 
-    void OnImGui();
+    void OnImGui(EngineContext& ctx, const Selection& selection);
 
     // Asset Browser で .bt.json がダブルクリックされたとき。未登録なら読み込んで登録する。
     // 今の木に未保存の変更があれば、確認 (保存して開く / 捨てて開く / キャンセル) を挟む
@@ -51,6 +56,22 @@ private:
             outMin = ToScreen(node.pos[0], node.pos[1]);
             outMax = ImVec2(outMin.x + kBtNodeWidth * zoom, outMin.y + BehaviorTreeEditModel::NodeHeight(node) * zoom);
         }
+    };
+
+    // ライブ表示の読み値 (1 フレームぶん。実行状態の持ち主は BehaviorTreeSystem で、ここは持たない)。
+    // id は表示中の木 (model_) の id。SubTree の展開で振り直された実行木の id は、元の木の (GUID, 元の id) を通して戻してある
+    struct LiveView {
+        bool hasEntity = false;          // 選んだエンティティが BehaviorTreeComponent を持つ
+        bool running = false;            // 実行状態が引けた (Play 中・巻き戻し中)
+        bool otherTree = false;          // 表示中の木はそのエンティティの木でも取り込んでいる部分木でもない
+        uint64_t entityTree = 0;         // BehaviorTreeComponent.tree
+        std::string entityName;
+        std::unordered_set<int32_t> runningIds; // 実行中のノード (緑の太枠)
+        std::unordered_set<int32_t> insideIds;  // 取り込んだ部分木の中で実行中の SubTree ノード
+        int32_t abortFrom = -1;          // 直前の Abort: Decorator の付いたノード
+        int32_t abortTo = -1;            // 止められたタスク (abortFrom と同じなら矢印でなく枠)
+        float abortAlpha = 0.0f;         // 1 -> 0 (30 tick で薄れる)。0 = 出さない
+        std::vector<std::string> boardValues; // BB パネルのキーの添字 -> 現在値の文字列。空 = 出さない
     };
 
     // マウスの下にあるもの
@@ -107,6 +128,9 @@ private:
     void CommitEdit(bool changed, const std::function<void()>& apply);
     void FinishWidgetGesture(); // 触っている欄が無くなったら、まとめていた操作を閉じる
 
+    void RefreshLive(EngineContext& ctx, const Selection& selection);
+    void DrawLiveBar();
+    void DrawLiveAbort(ImDrawList* dl, const CanvasStyle& style);
     void DrawCanvas();
     void DrawIssuePanel();
     MenuRequest HandleCanvasInput(bool hovered);
@@ -136,6 +160,8 @@ private:
     int32_t contextNode_ = -1;
     ImVec2 contextGraphPos_ = ImVec2(0.0f, 0.0f);
     GestureOwner gestureOwner_ = GestureOwner::None;
+
+    LiveView live_;
 
     // 検査 (model_.Inspect の結果。木が変わったときだけ作り直す)
     std::vector<BtIssue> issues_;

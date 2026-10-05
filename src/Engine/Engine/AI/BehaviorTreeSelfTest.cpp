@@ -38,6 +38,7 @@
 #include "Engine/Engine/Navigation/NavSystem.h"
 #include "Engine/Engine/Perception/PerceptionSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
+#include "Engine/Engine/Rendering/DebugDraw.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene/GameObject.h"
@@ -1953,6 +1954,43 @@ bool RunBehaviorTreeSelfTest()
             ck.Check(walking && stoppedAtOnce && trace == std::vector<int32_t>{ 2, 1 } && agent->status == navagentstatus::kIdle
                          && std::fabs(sim.Pos(f->walker)->position.x - xAfter) < 0.01f && sim.Comp(f->walker)->activeNodeId == 3,
                      "MoveTo: Abort で目的地を倒して Agent が止まり (後始末は子が先)、navFilter も戻る");
+        }
+
+        // ---- ライブ表示の読み口 (M85j): MoveTo のデバッグ線と、Abort の記録 ----
+        {
+            const uint64_t guid = RegisterTree(
+                lib, L"move_live",
+                Tree(0, { Node(0, "Selector", { 1, 3 }), Decorated(Node(1, "Sequence", { 2 }), { BbCond("Alarm", "IsSet", "Self") }),
+                          MoveTo(2, "Goal", 0.0, false, false, kFilterA), Wait(3, 5000) },
+                     board));
+            std::unique_ptr<Field> f;
+            makeField(guid, f);
+            NavSim sim(f->scene);
+            for (int i = 0; i < 40; ++i) {
+                sim.Step();
+            }
+            std::vector<DebugLineCmd> off;
+            sim.bt->AppendDebugLines(sim.GetWorld(), off); // drawDebug が偽の間は何も積まない
+            sim.Comp(f->walker)->drawDebug = true;
+            const uint64_t hashBefore = sim.bt->StateHash();
+            std::vector<DebugLineCmd> on;
+            sim.bt->AppendDebugLines(sim.GetWorld(), on);
+            const NavMeshAgentComponent* agent = sim.Agent(f->walker);
+            bool toDestination = false;
+            for (const DebugLineCmd& line : on) {
+                toDestination = toDestination
+                                || (std::fabs(line.bx - agent->destination.x) < 1e-4f && std::fabs(line.bz - agent->destination.z) < 1e-4f
+                                    && std::fabs(line.ax - sim.Pos(f->walker)->position.x) < 1e-4f);
+            }
+            ck.Check(off.empty() && !on.empty() && toDestination && sim.bt->StateHash() == hashBefore,
+                     "デバッグ線: drawDebug が真のときだけ、歩いている MoveTo の目的地へ自分から線を引く (sim のハッシュは変わらない)");
+            sim.Mutable(f->walker)->blackboard[3].i = 0; // Alarm を倒す = Self の Abort
+            sim.Step();
+            const BtAbortRecord& record = sim.bt->FindInstance(f->walker)->lastAbort;
+            std::vector<DebugLineCmd> after;
+            sim.bt->AppendDebugLines(sim.GetWorld(), after);
+            ck.Check(record.sourceId == 1 && record.targetId == 2 && record.tick == sim.tick - 1 && after.empty(),
+                     "Abort の記録: Self の Abort が Decorator の付いたノード (1) と止めた MoveTo (2) を残し、止まった後は線も消える");
         }
 
         // ---- 実行中にコンポーネントが外れても戻す ----
@@ -4012,6 +4050,121 @@ bool RunBehaviorTreeSelfTest()
             }
             ck.Check(same && sameActive && continuous.front() != continuous.back() && second.StateHash() == first.StateHash(),
                      "SubTree の途中で保存 → 復元 → 150 tick の毎 tick のハッシュと実行中ノードが連続実行と一致 (部分木の Abort を含む)");
+        }
+    }
+
+    // ---- 15. ライブ表示の読み口 (M85j) ----
+    {
+        const uint64_t board = RegisterBoard(lib, L"live_bb", Board({ BbKey("Flag", "Bool", true) }));
+        const auto setFlag = [](Sim& sim, EntityID e, bool on) { sim.Mutable(e)->blackboard[0].i = on ? 1 : 0; };
+        {
+            // Self: Decorator の付いたノードと、止められた実行中の葉を残す。BT 節には入らず、復元後は空
+            const uint64_t guid = RegisterTree(
+                lib, L"live_self",
+                Tree(0, { Node(0, "Selector", { 1, 3 }), Decorated(Node(1, "Sequence", { 2 }), { BbCond("Flag", "IsSet", "Self") }), Wait(2, 100),
+                          Wait(3, 100) },
+                     board));
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(guid);
+            sim.Step();
+            const bool none = sim.bt.FindInstance(e)->lastAbort.sourceId < 0;
+            setFlag(sim, e, false);
+            sim.Step();
+            const BtAbortRecord record = sim.bt.FindInstance(e)->lastAbort;
+            ck.Check(none && record.sourceId == 1 && record.targetId == 2 && record.tick == sim.LastTick() && sim.Comp(e)->activeNodeId == 3,
+                     "Abort の記録: Self は Decorator の付いたノード (1) と止められた葉 (2) を、止めた tick と一緒に残す");
+
+            std::vector<int32_t> active;
+            BehaviorTreeSystem::ActiveNodeIndices(*sim.bt.FindInstance(e), active);
+            ck.Check(Is(active, { 0, 3 }), "実行中ノードの列: 入っていて終わっていないノードだけが添字順に並ぶ (Abort 後は根と 3)");
+
+            const uint64_t hashWith = sim.bt.StateHash();
+            std::vector<std::byte> bytes;
+            ByteWriter writer(bytes);
+            sim.bt.SaveSnapshot(writer);
+            BtSnapshot parsed;
+            ByteReader reader(bytes.data(), bytes.size());
+            const bool read = BehaviorTreeSystem::ReadSnapshot(reader, parsed);
+            sim.bt.ApplySnapshot(sim.GetWorld(), std::move(parsed));
+            const BtInstance* restored = sim.bt.FindInstance(e);
+            ck.Check(read && restored != nullptr && restored->lastAbort.sourceId < 0 && sim.bt.StateHash() == hashWith,
+                     "Abort の記録は BT 節にもハッシュにも入らない (復元すると空で、ハッシュは記録の有無で変わらない)");
+        }
+        {
+            // LowerPriority: 優先側の兄弟 (1) が、止められた右の葉 (2) を指す
+            const uint64_t guid = RegisterTree(
+                lib, L"live_lower",
+                Tree(0, { Node(0, "Selector", { 1, 2 }), Decorated(Wait(1, 100), { BbCond("Flag", "IsSet", "LowerPriority") }), Wait(2, 100) },
+                     RegisterBoard(lib, L"live_bb_off", Board({ BbKey("Flag", "Bool", false) }))));
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(guid);
+            sim.Step();
+            sim.Step();
+            setFlag(sim, e, true);
+            sim.Step();
+            const BtAbortRecord record = sim.bt.FindInstance(e)->lastAbort;
+            ck.Check(record.sourceId == 1 && record.targetId == 2 && record.tick == sim.LastTick(),
+                     "Abort の記録: LowerPriority は条件が真になった兄弟 (1) から、止められた右の葉 (2) へ");
+        }
+        {
+            // Timeout: 打ち切った Decorator のノード自身 (葉なので source = target)
+            const uint64_t guid = RegisterTree(lib, L"live_timeout", Tree(0, { Decorated(Wait(0, 100), { Timeout(3) }) }));
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(guid);
+            Run(sim, e, 6);
+            const BtAbortRecord record = sim.bt.FindInstance(e)->lastAbort;
+            ck.Check(record.sourceId == 0 && record.targetId == 0 && record.tick > 0, "Abort の記録: Timeout は打ち切ったノード自身を指す");
+        }
+        {
+            // SubTree の展開: 実行木の id は振り直されるが、元の木の (GUID, 元の id) へ戻せる
+            const uint64_t sub = RegisterTree(lib, L"live_sub", Tree(0, { Node(0, "Sequence", { 1 }), Wait(1, 100) }));
+            const uint64_t parent = RegisterTree(lib, L"live_parent", Tree(0, { Node(0, "Sequence", { 1, 2 }), SubTreeNode(1, sub), Wait(2, 5) }));
+            const uint64_t plain = RegisterTree(lib, L"live_plain", Tree(0, { Wait(0, 100) }));
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(parent);
+            const EntityID p = sim.AddTreeEntity(plain);
+            sim.Step();
+            const BehaviorTreeAsset& tree = *sim.bt.FindInstance(e)->tree;
+            int fromSub = 0;
+            int fromParent = 0;
+            bool idsKept = true;
+            for (const BtNodeDef& node : tree.nodes) {
+                if (tree.OriginTreeOf(node) == sub) {
+                    ++fromSub;
+                    idsKept = idsKept && node.id != tree.OriginIdOf(node) && (tree.OriginIdOf(node) == 0 || tree.OriginIdOf(node) == 1);
+                } else if (tree.OriginTreeOf(node) == parent) {
+                    ++fromParent;
+                    idsKept = idsKept && node.id == tree.OriginIdOf(node);
+                }
+            }
+            std::vector<int32_t> active;
+            BehaviorTreeSystem::ActiveNodeIndices(*sim.bt.FindInstance(e), active);
+            const BehaviorTreeAsset& plainTree = *sim.bt.FindInstance(p)->tree;
+            ck.Check(fromSub == 2 && fromParent == 3 && idsKept && active.size() == 4
+                         && plainTree.OriginTreeOf(plainTree.nodes[0]) == plain && plainTree.OriginIdOf(plainTree.nodes[0]) == 0,
+                     "SubTree の展開: 部分木のノードは (部分木の GUID, 元の id) へ、親のノードは (親の GUID, 同じ id) へ戻せる (展開しない木は自分自身)");
+        }
+        {
+            // 親の LowerPriority が部分木の中で動いているものを止めた記録を、親の木・部分木の木のどちらの id へも戻せる
+            const uint64_t flagOff = RegisterBoard(lib, L"live_bb_off2", Board({ BbKey("Flag", "Bool", false) }));
+            const uint64_t sub = RegisterTree(lib, L"live_sub2", Tree(0, { Node(0, "Sequence", { 1 }), Wait(1, 100) }, flagOff));
+            const uint64_t parent = RegisterTree(
+                lib, L"live_parent2",
+                Tree(0, { Node(0, "Selector", { 1, 2 }), Decorated(Wait(1, 100), { BbCond("Flag", "IsSet", "LowerPriority") }), SubTreeNode(2, sub) },
+                     flagOff));
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(parent);
+            sim.Step();
+            sim.Step();
+            setFlag(sim, e, true);
+            sim.Step();
+            const BtInstance* inst = sim.bt.FindInstance(e);
+            const BehaviorTreeAsset& tree = *inst->tree;
+            const int source = tree.FindNode(inst->lastAbort.sourceId);
+            const int target = tree.FindNode(inst->lastAbort.targetId);
+            ck.Check(source >= 0 && target >= 0 && tree.DisplayedIdOf(source, parent) == 1 && tree.DisplayedIdOf(target, parent) == 2
+                         && tree.DisplayedIdOf(target, sub) == 1 && tree.DisplayedIdOf(source, sub) == -1,
+                     "ライブ表示の対応: 部分木の中の葉は、親の木では SubTree ノード (2)、部分木の木では元の id (1) へ戻り、親の Decorator ノードは部分木の木には無い");
         }
     }
 

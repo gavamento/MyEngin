@@ -404,6 +404,10 @@ struct BtNodeDef {
     std::vector<int32_t> children;       // nodes の添字
     int32_t parent = -1;                 // nodes の添字。根と、どこにもつながっていないノードは -1
     int32_t extraOffset = 0;             // BtInstance::extra の中のこのノードの追加状態の先頭 (extraStateBytes が 0 の種類は使わない)
+    // SubTree の展開 (BtExpandSubTrees) が写したノードだけ: 写し元の木の GUID と、その木の中での元の id。0 = この木自身のノード
+    // (id が元の id)。ライブ表示が実行木の id を元の木へ戻すための表で、BT 節・ハッシュ・ファイルには入れない
+    uint64_t originTree = 0;
+    int32_t originId = -1;
 };
 
 // ビヘイビアツリー 1 本。値はワールドハッシュに入れない (ファイルの中身は provenance の contentHash が守る。
@@ -423,6 +427,13 @@ struct BehaviorTreeAsset {
 
     // id からノードの添字。無ければ -1
     int FindNode(int32_t id) const;
+
+    // 展開後の木 (BtExpansion::tree) のノードが、元のどの木のどの id か。展開していない木・源の木自身のノードは (hash, id)
+    uint64_t OriginTreeOf(const BtNodeDef& node) const { return node.originTree != 0 ? node.originTree : hash; }
+    int32_t OriginIdOf(const BtNodeDef& node) const { return node.originTree != 0 ? node.originId : node.id; }
+    // nodes[index] を displayedTree の木のノード id へ戻す。displayedTree の木に属さないノードは、その木の中の一番近い祖先
+    // (= 部分木を取り込んでいる SubTree ノード) へ寄せる。どの祖先も属さなければ -1。ライブ表示が実行木の id を窓の木へ戻すのに使う
+    int32_t DisplayedIdOf(int32_t index, uint64_t displayedTree) const;
 };
 
 // childIds から children / parent / rootIndex を作り、木として成り立つか検査する。

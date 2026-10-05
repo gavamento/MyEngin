@@ -15,11 +15,18 @@
 #include <vector>
 
 #include "Editor/Asset/AssetOps.h"         // MakeUniqueAssetPath (新規 BB のファイル名)
+#include "Editor/Scene/Selection.h"
 #include "Editor/SourceControl/ScmHint.h" // 保存直後に status を取り直させる
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Ecs/World.h"
 #include "Engine/Core/Localization/Localization.h"
+#include "Engine/Engine/AI/BehaviorTreeSystem.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
+#include "Engine/Engine/Loop/EngineLoop.h"   // EngineContext (ライブ表示の読み先)
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
+#include "Engine/Engine/Scene/GameObject.h"
+#include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/ImGui/ImGuiTheme.h" // themeColor
 #include "imgui_internal.h"                    // SetKeyOwner (Delete / Ctrl+Z / Ctrl+Y を握る)
@@ -42,6 +49,10 @@ constexpr float kIssuePanelHeight = 130.0f;  // キャンバスの下の検査�
 constexpr int kIssueRefreshFrames = 30;      // 木が変わらなくても検査をやり直す間隔 (取り込む木の登録が外で変わる場合の追従)
 constexpr float kMinTextPixels = 7.0f;       // これより小さい文字は描かない
 constexpr const char* kPaletteDragType = "MYE_BT_NODE_KIND";
+constexpr uint64_t kAbortFadeTicks = 30;     // Abort の矢印が消えるまでの tick 数
+constexpr ImU32 kLiveColor = IM_COL32(70, 230, 100, 255);  // 実行中のノードの太枠 (緑)
+constexpr ImU32 kLiveFill = IM_COL32(70, 230, 100, 40);
+constexpr int kAbortRgb[3] = { 255, 150, 40 };              // Abort の矢印 (橙。透明度だけ薄れる)
 
 ImU32 FromHsv(float hue, float saturation, float value, float alpha = 1.0f)
 {
@@ -309,7 +320,7 @@ void BehaviorTreeWindow::FinishWidgetGesture()
 // 窓
 // ---------------------------------------------------------------------------
 
-void BehaviorTreeWindow::OnImGui()
+void BehaviorTreeWindow::OnImGui(EngineContext& ctx, const Selection& selection)
 {
     if (!open) {
         return;
@@ -343,12 +354,14 @@ void BehaviorTreeWindow::OnImGui()
         gestureOwner_ = GestureOwner::None;
     }
     RefreshIssues();
+    RefreshLive(ctx, selection);
 
     DrawToolbar();
     ImGui::Separator();
     DrawLeftPanel();
     ImGui::SameLine();
     ImGui::BeginGroup();
+    DrawLiveBar();
     DrawCanvas();
     DrawIssuePanel();
     ImGui::EndGroup();
@@ -1044,8 +1057,10 @@ bool BehaviorTreeWindow::DrawBoardKey(int index)
     const BbKeyDef key = board->keys[static_cast<size_t>(index)]; // 操作で作業用コピーが変わるので値で持つ
     bool remove = false;
     ImGui::PushID(index);
-    char header[160];
-    std::snprintf(header, sizeof(header), "%s  (%s)", key.name.c_str(), BbTypeName(key.type));
+    char header[256];
+    const bool hasLive = static_cast<size_t>(index) < live_.boardValues.size() && !live_.boardValues[static_cast<size_t>(index)].empty();
+    std::snprintf(header, sizeof(header), "%s  (%s)%s%s", key.name.c_str(), BbTypeName(key.type), hasLive ? "  =  " : "",
+                  hasLive ? live_.boardValues[static_cast<size_t>(index)].c_str() : "");
     const ImGuiTreeNodeFlags flags = board->keys.size() <= 4 ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None;
     if (ImGui::TreeNodeEx("##bbkey", flags, "%s", header)) {
         std::string committed;
@@ -1246,6 +1261,174 @@ void BehaviorTreeWindow::RefreshIssues()
 // キャンバス: 入力 (HandleCanvasInput / HandleKeys) -> 描画 (Draw*) -> メニュー (DrawCanvasMenus)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// ライブ表示
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// BB の値を 1 行の文字列にする (未設定は「(未設定)」)
+std::string FormatBbValue(World& world, const BbValue& value, BbType type)
+{
+    if (value.isSet == 0) {
+        return Tr(StrId::Bt_LiveUnset);
+    }
+    char text[96];
+    switch (type) {
+    case BbType::Bool: return value.i != 0 ? "true" : "false";
+    case BbType::Int: std::snprintf(text, sizeof(text), "%d", value.i); return text;
+    case BbType::Float: std::snprintf(text, sizeof(text), "%.2f", value.f); return text;
+    case BbType::Vector: std::snprintf(text, sizeof(text), "(%.2f, %.2f, %.2f)", value.v[0], value.v[1], value.v[2]); return text;
+    case BbType::Entity: {
+        if (!world.IsAlive(value.entity)) {
+            return Tr(StrId::Bt_LiveUnset);
+        }
+        const char* name = world.GetName(value.entity);
+        if (name != nullptr && name[0] != '\0') {
+            return name;
+        }
+        std::snprintf(text, sizeof(text), "#%u", value.entity.index);
+        return text;
+    }
+    }
+    return std::string();
+}
+
+} // namespace
+
+// 選んだエンティティの実行状態を BehaviorTreeSystem から取り直す。巻き戻した tick でも BT 節から復元された表がそのまま引ける
+void BehaviorTreeWindow::RefreshLive(EngineContext& ctx, const Selection& selection)
+{
+    live_ = LiveView{};
+    if (ctx.scene == nullptr) {
+        return;
+    }
+    const GameObject selected = ctx.scene->FindByFileId(selection.primary);
+    World& world = ctx.scene->GetWorld();
+    const BehaviorTreeComponent* comp = selected ? world.GetComponent<BehaviorTreeComponent>(selected.Id()) : nullptr;
+    if (comp == nullptr) {
+        return;
+    }
+    const uint64_t displayed = model_.IsLoaded() ? model_.Asset().hash : 0; // 何も開いていなければ「違う木」で、開くボタンを出す
+    live_.hasEntity = true;
+    live_.entityTree = comp->tree.value;
+    live_.entityName = world.GetName(selected.Id());
+    live_.otherTree = comp->tree.value != displayed;
+
+    const BtInstance* inst = ctx.behaviorTree != nullptr ? ctx.behaviorTree->FindInstance(selected.Id()) : nullptr;
+    if (inst == nullptr || !inst->tree) {
+        return;
+    }
+    live_.running = true;
+    const BehaviorTreeAsset& tree = *inst->tree;
+    for (const BtNodeDef& node : tree.nodes) {
+        if (tree.OriginTreeOf(node) == displayed) {
+            live_.otherTree = false; // 取り込んでいる部分木のアセットを開いている
+            break;
+        }
+    }
+
+    std::vector<int32_t> active;
+    BehaviorTreeSystem::ActiveNodeIndices(*inst, active);
+    std::vector<uint8_t> isActive(tree.nodes.size(), 0);
+    for (const int32_t index : active) {
+        isActive[static_cast<size_t>(index)] = 1;
+    }
+    for (const int32_t index : active) {
+        const BtNodeDef& node = tree.nodes[static_cast<size_t>(index)];
+        if (tree.OriginTreeOf(node) != displayed) {
+            continue;
+        }
+        live_.runningIds.insert(tree.OriginIdOf(node));
+        if (node.kind == BtNodeKind::SubTree && !node.children.empty() && isActive[static_cast<size_t>(node.children[0])] != 0) {
+            live_.insideIds.insert(tree.OriginIdOf(node));
+        }
+    }
+
+    const BtAbortRecord& abort = inst->lastAbort;
+    if (abort.sourceId >= 0) {
+        const uint64_t age = ctx.tickIndex >= abort.tick ? ctx.tickIndex - abort.tick : 0;
+        const int sourceIndex = tree.FindNode(abort.sourceId);
+        const int targetIndex = tree.FindNode(abort.targetId);
+        if (age < kAbortFadeTicks && sourceIndex >= 0 && targetIndex >= 0) {
+            live_.abortFrom = tree.DisplayedIdOf(sourceIndex, displayed);
+            live_.abortTo = tree.DisplayedIdOf(targetIndex, displayed);
+            live_.abortAlpha = 1.0f - static_cast<float>(age) / static_cast<float>(kAbortFadeTicks);
+        }
+    }
+
+    // BB の現在値 (パネルが見ている BB と実行中の BB が同じで、キーの名前と型が合うものだけ)
+    const BlackboardAsset* board = model_.Board();
+    if (board != nullptr && inst->blackboardAsset && inst->blackboardAsset->hash == board->hash) {
+        live_.boardValues.resize(board->keys.size());
+        for (size_t i = 0; i < board->keys.size(); ++i) {
+            if (i < inst->blackboard.size() && i < inst->blackboardAsset->keys.size()
+                && inst->blackboardAsset->keys[i].name == board->keys[i].name && inst->blackboardAsset->keys[i].type == board->keys[i].type) {
+                live_.boardValues[i] = FormatBbValue(world, inst->blackboard[i], board->keys[i].type);
+            }
+        }
+    }
+}
+
+void BehaviorTreeWindow::DrawLiveBar()
+{
+    if (!live_.hasEntity) {
+        return;
+    }
+    const std::string text = std::string(Tr(StrId::Bt_LiveLabel)) + ": " + live_.entityName + " - "
+                             + (live_.running ? Tr(StrId::Bt_LiveRunning) : Tr(StrId::Bt_LiveStopped));
+    ImGui::TextColored(live_.running ? themeColor::Success : themeColor::Warning, "%s", text.c_str());
+    if (live_.otherTree) {
+        ImGui::SameLine();
+        ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Bt_LiveOtherTree));
+        ImGui::SameLine();
+        const BehaviorTreeLibrary* trees = behaviortree::Library();
+        ImGui::BeginDisabled(live_.entityTree == 0 || trees == nullptr || !trees->Contains(live_.entityTree));
+        if (ImGui::SmallButton(Tr(StrId::Bt_LiveOpenTree))) {
+            RequestOpen(live_.entityTree);
+        }
+        ImGui::EndDisabled();
+    }
+}
+
+// 直前の Abort: Decorator の付いたノードから、止められたタスクへ橙の矢印。同じノードなら枠。30 tick で薄れる
+void BehaviorTreeWindow::DrawLiveAbort(ImDrawList* dl, const CanvasStyle& style)
+{
+    if (live_.abortAlpha <= 0.0f || live_.abortFrom < 0 || live_.abortTo < 0) {
+        return;
+    }
+    const BtNodeDef* from = model_.FindNode(live_.abortFrom);
+    const BtNodeDef* to = model_.FindNode(live_.abortTo);
+    if (from == nullptr || to == nullptr) {
+        return;
+    }
+    const ImU32 color = IM_COL32(kAbortRgb[0], kAbortRgb[1], kAbortRgb[2], static_cast<int>(255.0f * live_.abortAlpha));
+    const float thickness = (std::max)(2.5f * view_.zoom, 1.5f);
+    ImVec2 fromMin;
+    ImVec2 fromMax;
+    ImVec2 toMin;
+    ImVec2 toMax;
+    view_.RectOf(*from, fromMin, fromMax);
+    view_.RectOf(*to, toMin, toMax);
+    if (from == to) {
+        const float gap = 6.0f;
+        dl->AddRect(ImVec2(fromMin.x - gap, fromMin.y - gap), ImVec2(fromMax.x + gap, fromMax.y + gap), color, style.rounding + gap, thickness);
+        if (style.drawText) {
+            dl->AddText(nullptr, style.fontSize * 0.85f, ImVec2(fromMax.x + gap + 4.0f, fromMin.y), color, Tr(StrId::Bt_LiveAbort));
+        }
+        return;
+    }
+    const ImVec2 start(fromMax.x, (fromMin.y + fromMax.y) * 0.5f);
+    const ImVec2 end(toMax.x, (toMin.y + toMax.y) * 0.5f);
+    const float reach = 70.0f * view_.zoom + std::fabs(end.y - start.y) * 0.2f;
+    dl->AddBezierCubic(start, ImVec2(start.x + reach, start.y), ImVec2(end.x + reach, end.y), end, color, thickness);
+    const float head = (std::max)(9.0f * view_.zoom, 6.0f);
+    dl->AddTriangleFilled(end, ImVec2(end.x + head, end.y - head * 0.6f), ImVec2(end.x + head, end.y + head * 0.6f), color);
+    if (style.drawText) {
+        dl->AddText(nullptr, style.fontSize * 0.85f, ImVec2(start.x + 6.0f, start.y - style.fontSize), color, Tr(StrId::Bt_LiveAbort));
+    }
+}
+
 void BehaviorTreeWindow::DrawCanvas()
 {
     ImGuiIO& io = ImGui::GetIO();
@@ -1289,6 +1472,7 @@ void BehaviorTreeWindow::DrawCanvas()
     DrawEdges(dl, style);
     DrawConnectPreview(dl, style);
     DrawNodes(dl, style, hover);
+    DrawLiveAbort(dl, style);
     dl->PopClipRect();
 
     DrawCanvasMenus(menu);
@@ -1524,6 +1708,21 @@ void BehaviorTreeWindow::DrawNodes(ImDrawList* dl, const CanvasStyle& style, con
             const float gap = 3.0f;
             dl->AddRect(ImVec2(mn.x - gap, mn.y - gap), ImVec2(mx.x + gap, mx.y + gap),
                         issue->second == BtIssueSeverity::Error ? style.error : style.warning, style.rounding + gap, 2.0f);
+        }
+        // ライブ: 実行中のノードは緑の太枠と薄い塗り。取り込んだ部分木の中で実行中の SubTree ノードは箱の下に語を添える (SubTree は子を持たず、下は空いている)
+        if (live_.runningIds.count(node.id) != 0) {
+            const float gap = 2.0f;
+            dl->AddRectFilled(mn, mx, kLiveFill, style.rounding);
+            dl->AddRect(ImVec2(mn.x - gap, mn.y - gap), ImVec2(mx.x + gap, mx.y + gap), kLiveColor, style.rounding + gap, (std::max)(3.5f * view_.zoom, 2.0f));
+        }
+        if (style.drawText && live_.insideIds.count(node.id) != 0) {
+            const float size = style.fontSize * 0.8f;
+            const ImVec2 textPos(mn.x + 2.0f, mx.y + 4.0f * view_.zoom);
+            const ImVec2 textSize = ImGui::CalcTextSize(Tr(StrId::Bt_LiveInside));
+            const float scale = size / ImGui::GetFontSize();
+            dl->AddRectFilled(ImVec2(textPos.x - 2.0f, textPos.y), ImVec2(textPos.x + textSize.x * scale + 4.0f, textPos.y + size + 2.0f),
+                              ImGui::GetColorU32(ImGuiCol_PopupBg), 3.0f);
+            dl->AddText(nullptr, size, ImVec2(textPos.x, textPos.y + 1.0f), kLiveColor, Tr(StrId::Bt_LiveInside));
         }
         // 点 (上 = 入力、下 = 出力)
         if (!isRoot) {

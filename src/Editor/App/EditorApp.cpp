@@ -980,7 +980,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     if (std::wstring p = assetBrowser_.TakePendingOpenBehaviorTree(); !p.empty()) {
         behaviorTree_.OpenAsset(p);
     }
-    behaviorTree_.OnImGui();
+    behaviorTree_.OnImGui(ctx, selection_);
 
     // ピッキング自動テスト (--pick-test): 指定フレームでビュー中心を選択できるか検証
     if (pickTestFrame >= 0 && static_cast<int64_t>(ctx.frameIndex) == pickTestFrame) {
