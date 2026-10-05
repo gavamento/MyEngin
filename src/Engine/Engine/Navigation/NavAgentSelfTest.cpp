@@ -130,7 +130,7 @@ bool BakeSurface(Scene& scene, EntityID surface, uint64_t guid, int* polyCount)
     if (!NavPrepareBakeInputs(world, surface, in)) {
         return false;
     }
-    const NavBakeOutput out = NavBakeAsset(in.config, in.soup, nullptr);
+    const NavBakeOutput out = NavBakeAsset(in.config, in.soup, in.clipBoxes, nullptr);
     if (out.status != NavBakeStatus::Ok) {
         return false;
     }

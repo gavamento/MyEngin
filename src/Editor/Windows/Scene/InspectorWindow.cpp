@@ -1972,6 +1972,22 @@ void InspectorWindow::DrawNavMeshSurfaceNotes(EngineContext& ctx, Selection& sel
     } else if (!NavSurfaceMatchesAgentType(*comp, *agentType)) {
         ImGui::TextColored(themeColor::Warning, Tr(StrId::Insp_NavAgentTypeDiffers), agentType->name);
     }
+    // 同じ Agent Type の Surface はまとめて 1 つのナビメッシュになる (M84b)。leader の設定と .mnav を使う
+    NavSurfaceGroup group;
+    if (NavFindSurfaceGroup(world, tg.e, group) && group.members.size() > 1) {
+        ImGui::TextDisabled(Tr(StrId::Insp_NavGroupInfo), static_cast<int>(group.members.size()));
+        if (group.leader != tg.e) {
+            ImGui::TextDisabled(Tr(StrId::Insp_NavGroupLeader), world.GetName(group.leader));
+        }
+        const uint64_t leaderAsset = world.GetComponent<NavMeshSurfaceComponent>(group.leader)->navAsset.value;
+        bool shared = true;
+        for (const EntityID member : group.members) {
+            shared = shared && world.GetComponent<NavMeshSurfaceComponent>(member)->navAsset.value == leaderAsset;
+        }
+        if (!shared) {
+            ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_NavGroupStale));
+        }
+    }
     ImGui::PopTextWrapPos();
     // 実際に使うセルの大きさと実効の傾斜上限 (M82d)
     {

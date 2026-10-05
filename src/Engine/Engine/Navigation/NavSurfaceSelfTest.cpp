@@ -41,7 +41,7 @@ namespace mye {
 namespace {
 
 // 期待値は Debug で採取し、Release で同じ値になることを確認して焼く (docs\adr\ADR-023-navmesh.md)
-constexpr uint64_t kExpectedAssetHash = 0xA9EF6D223C161FE4ull;
+constexpr uint64_t kExpectedAssetHash = 0x17818EF048195584ull; // M84b: ベイク方式 2 (範囲の箱で切り詰め)
 constexpr float kNavTestDt = 1.0f / 60.0f;
 constexpr uint64_t kTestAssetGuid = 0x4E41564D45534831ull; // "NAVMESH1"
 
@@ -201,7 +201,7 @@ bool RunNavSurfaceSelfTest()
     // ---- 2. ベイク ----
     NavBakeControl control;
     const auto t0 = std::chrono::steady_clock::now();
-    NavBakeOutput bake = NavBakeAsset(inputs.config, inputs.soup, &control);
+    NavBakeOutput bake = NavBakeAsset(inputs.config, inputs.soup, inputs.clipBoxes, &control);
     const auto t1 = std::chrono::steady_clock::now();
     ck.Check(bake.status == NavBakeStatus::Ok, "ベイクが成功する");
     ck.Check(control.tilesDone.load() == control.tilesTotal.load() && control.tilesTotal.load() > 0,
@@ -213,7 +213,7 @@ bool RunNavSurfaceSelfTest()
 
     std::vector<uint8_t> bytes;
     NavMeshAsset::Serialize(bake.data, bytes);
-    NavBakeOutput bakeAgain = NavBakeAsset(inputs.config, inputs.soup, nullptr);
+    NavBakeOutput bakeAgain = NavBakeAsset(inputs.config, inputs.soup, inputs.clipBoxes, nullptr);
     std::vector<uint8_t> bytesAgain;
     NavMeshAsset::Serialize(bakeAgain.data, bytesAgain);
     ck.Check(bytes == bytesAgain, "同じ入力のベイクは同じバイト列");
@@ -224,7 +224,7 @@ bool RunNavSurfaceSelfTest()
         std::snprintf(msg, sizeof(msg), "asset ハッシュが期待値と一致");
         ck.Check(assetHash == kExpectedAssetHash, msg);
     }
-    ck.Check(bake.data.inputHash == NavComputeInputHash(inputs.config, inputs.soup),
+    ck.Check(bake.data.inputHash == NavComputeInputHash(inputs.config, inputs.soup, inputs.clipBoxes),
              "資産が入力ハッシュを持つ");
 
     // ---- 2b. セルサイズの自動決定 (M82d): 実際に使った値が入力ハッシュに入る ----
@@ -264,9 +264,9 @@ bool RunNavSurfaceSelfTest()
         asManual.autoCellSize = false;
         asManual.cellSize = defCell.cellSize;
         asManual.cellHeight = defCell.cellHeight;
-        const uint64_t hAuto = NavComputeInputHash(NavMakeBakeConfig(def, identity), inputs.soup);
-        const uint64_t hManual = NavComputeInputHash(NavMakeBakeConfig(asManual, identity), inputs.soup);
-        const uint64_t hSteep = NavComputeInputHash(NavMakeBakeConfig(steep, identity), inputs.soup);
+        const uint64_t hAuto = NavComputeInputHash(NavMakeBakeConfig(def, identity), inputs.soup, {});
+        const uint64_t hManual = NavComputeInputHash(NavMakeBakeConfig(asManual, identity), inputs.soup, {});
+        const uint64_t hSteep = NavComputeInputHash(NavMakeBakeConfig(steep, identity), inputs.soup, {});
         ck.Check(hAuto == hManual, "自動で決まったセルと同じ値を手動で指定した Surface は同じ入力ハッシュ (使った値だけがハッシュに入る)");
         ck.Check(hAuto != hSteep, "自動決定の結果が変わる設定 (maxSlopeDeg 60) は別の入力ハッシュ");
     }
@@ -278,7 +278,7 @@ bool RunNavSurfaceSelfTest()
         for (int ty = 0; ty < bake.data.tilesY && sameLayers; ++ty) {
             for (int tx = 0; tx < bake.data.tilesX && sameLayers; ++tx) {
                 std::vector<std::vector<uint8_t>> layers;
-                sameLayers = NavBakeTile(inputs.config, inputs.soup, tx, ty, layers);
+                sameLayers = NavBakeTile(inputs.config, inputs.soup, inputs.clipBoxes, tx, ty, layers);
                 for (const auto& blob : layers) {
                     sameLayers = sameLayers && cursor < bake.data.layers.size()
                         && bake.data.layers[cursor].blob == blob;
@@ -295,8 +295,9 @@ bool RunNavSurfaceSelfTest()
             for (int tx = 0; tx < bake.data.tilesX && sameAsUnfiltered; ++tx) {
                 std::vector<std::vector<uint8_t>> filtered;
                 std::vector<std::vector<uint8_t>> unfiltered;
-                sameAsUnfiltered = NavBakeTile(inputs.config, inputs.soup, tx, ty, filtered)
-                    && NavBakeTileLayers(inputs.config, inputs.soup.View(), tx, ty, unfiltered)
+                sameAsUnfiltered = NavBakeTile(inputs.config, inputs.soup, inputs.clipBoxes, tx, ty, filtered)
+                    && NavBakeTileLayers(inputs.config, inputs.soup.View(), tx, ty, unfiltered, inputs.clipBoxes.data(),
+                                         static_cast<int>(inputs.clipBoxes.size()))
                     && filtered == unfiltered;
             }
         }
@@ -307,10 +308,10 @@ bool RunNavSurfaceSelfTest()
     {
         NavBakeControl cancel;
         cancel.cancel.store(true);
-        ck.Check(NavBakeAsset(inputs.config, inputs.soup, &cancel).status == NavBakeStatus::Cancelled,
+        ck.Check(NavBakeAsset(inputs.config, inputs.soup, inputs.clipBoxes, &cancel).status == NavBakeStatus::Cancelled,
                  "キャンセルを受け付ける");
         NavTriangleSoup empty;
-        ck.Check(NavBakeAsset(inputs.config, empty, nullptr).status == NavBakeStatus::Empty,
+        ck.Check(NavBakeAsset(inputs.config, empty, {}, nullptr).status == NavBakeStatus::Empty,
                  "三角形が無いと Empty (落ちない)");
     }
 
@@ -443,7 +444,7 @@ bool RunNavSurfaceSelfTest()
             std::snprintf(msg, sizeof(msg), "%s コライダー: 三角形 %d 枚が入力に入る (期待 %d..%d)", c.name,
                           in.soup.TriangleCount(), c.minTris, c.maxTris);
             ck.Check(in.soup.TriangleCount() >= c.minTris && in.soup.TriangleCount() <= c.maxTris, msg);
-            const NavBakeOutput out = NavBakeAsset(in.config, in.soup, nullptr);
+            const NavBakeOutput out = NavBakeAsset(in.config, in.soup, in.clipBoxes, nullptr);
             std::snprintf(msg, sizeof(msg), "%s コライダー: 上面が歩ける面としてベイクされる (ポリゴン %d)", c.name,
                           out.polyCount);
             ck.Check(out.status == NavBakeStatus::Ok && out.polyCount > 0, msg);
@@ -615,6 +616,105 @@ bool RunNavSurfaceSelfTest()
         navBare.Update(bare.GetWorld(), kNavTestDt);
         ck.Check(navBare.Surfaces().empty(), "Surface が無いシーンでは何も持たない");
         assetguid::Install(nullptr, nullptr);
+    }
+
+    // ---- 6. Surface の接続 (M84b、UE 式): 同じ Agent Type の Surface は範囲を合わせて 1 つのナビメッシュに焼く ----
+    {
+        // 床は x = -15..15 に続いている。Surface は x の範囲 [aMin, aMax] と [bMin, bMax] だけを覆う
+        const auto buildPair = [](Scene& s, float aMin, float aMax, float bMin, float bMax, int typeB, EntityID& a,
+                                  EntityID& b) {
+            AddBox(s, "Ground", 0.0f, -0.5f, 0.0f, 15.0f, 0.5f, 4.0f, false, false);
+            const auto addSurface = [&](const char* name, float xMin, float xMax, int type) {
+                GameObject go = s.CreateGameObjectTracked(name);
+                go.SetLocalPosition((xMin + xMax) * 0.5f, 0.0f, 0.0f);
+                auto* comp = go.AddComponent<NavMeshSurfaceComponent>();
+                comp->agentTypeId = type;
+                comp->center = { 0.0f, 1.0f, 0.0f };
+                comp->size = { xMax - xMin, 6.0f, 8.0f };
+                comp->autoCellSize = false;
+                comp->cellSize = 0.3f;
+                comp->tileSize = 32;
+                return go.Id();
+            };
+            a = addSurface("SurfaceA", aMin, aMax, 0);
+            b = addSurface("SurfaceB", bMin, bMax, typeB);
+            s.GetWorld().ApplyStructuralChanges();
+            TransformSystem transforms;
+            transforms.Update(s.GetWorld());
+        };
+        // 経路が届くか (start / end がナビメッシュに乗るかも返す)。bakeFrom の Surface のグループを焼く
+        const auto bakeAndPath = [&](World& w, EntityID bakeFrom, const float* from, const float* to, bool* startOn,
+                                     bool* endOn, NavBakeInputs* inputsOut) {
+            NavBakeInputs in;
+            NavPrepareBakeInputs(w, bakeFrom, in);
+            const NavBakeOutput out = NavBakeAsset(in.config, in.soup, in.clipBoxes, nullptr);
+            if (inputsOut != nullptr) {
+                *inputsOut = in;
+            }
+            NavTileStore store;
+            if (out.status != NavBakeStatus::Ok || !NavMeshAsset::BuildStore(out.data, store)) {
+                *startOn = *endOn = false;
+                return false;
+            }
+            return PathReaches(store, from, to, startOn, endOn);
+        };
+        const float left[3] = { -8.0f, 0.0f, 0.0f };
+        const float right[3] = { 8.0f, 0.0f, 0.0f };
+        const float outside[3] = { 13.0f, 0.0f, 0.0f };
+        bool startOn = false;
+        bool endOn = false;
+
+        Scene touching;
+        EntityID a;
+        EntityID b;
+        buildPair(touching, -10.0f, 0.0f, 0.0f, 10.0f, 0, a, b);
+        std::vector<NavSurfaceGroup> groups;
+        NavCollectSurfaceGroups(touching.GetWorld(), groups);
+        ck.Check(groups.size() == 1 && groups[0].leader == a && groups[0].members.size() == 2 && groups[0].members[1] == b,
+                 "接続: 同じ種別の Surface は 1 つのグループで、leader はキーの小さい方");
+        NavBakeInputs pairInputs;
+        const bool reached = bakeAndPath(touching.GetWorld(), b, left, right, &startOn, &endOn, &pairInputs);
+        ck.Check(pairInputs.clipBoxes.size() == 2 && pairInputs.config.boundsMin[0] <= -10.0f
+                     && pairInputs.config.boundsMax[0] >= 10.0f,
+                 "接続: どの Surface から焼いてもグループ全体の範囲 (箱 2 つを合わせた AABB) を焼く");
+        ck.Check(reached, "接続: 接する 2 つの Surface をまたいで経路が届く");
+        bool outStart = false;
+        bool outEnd = false;
+        bakeAndPath(touching.GetWorld(), a, left, outside, &outStart, &outEnd, nullptr);
+        ck.Check(outStart && !outEnd, "接続: 床が続いていても、Surface の範囲の外は歩けない");
+
+        Scene gap;
+        buildPair(gap, -10.0f, -2.0f, 2.0f, 10.0f, 0, a, b);
+        const bool gapReached = bakeAndPath(gap.GetWorld(), a, left, right, &startOn, &endOn, nullptr);
+        ck.Check(startOn && endOn && !gapReached, "接続: 離れた 2 つの Surface の間 (どちらの範囲でもない床) は通れない");
+
+        Scene separate;
+        buildPair(separate, -10.0f, 0.0f, 0.0f, 10.0f, 1, a, b);
+        bakeAndPath(separate.GetWorld(), a, left, right, &startOn, &endOn, nullptr);
+        ck.Check(startOn && !endOn, "接続: 種別の違う Surface は別のナビメッシュ (相手の範囲は含まない)");
+
+        // NavSystem はグループの leader だけを読み込み、Obstacle はグループのどの範囲に入っても効く
+        NavBakeOutput pairBake = NavBakeAsset(pairInputs.config, pairInputs.soup, pairInputs.clipBoxes, nullptr);
+        constexpr uint64_t kPairGuid = 0x4E41564D45534833ull; // "NAVMESH3"
+        NavMeshAsset::RegisterInMemory(kPairGuid, pairBake.data);
+        World& tw = touching.GetWorld();
+        NavCollectSurfaceGroups(tw, groups);
+        for (const EntityID member : groups[0].members) {
+            tw.GetComponent<NavMeshSurfaceComponent>(member)->navAsset = AssetID{ kPairGuid };
+        }
+        NavSystem pairNav;
+        pairNav.Update(tw, kNavTestDt);
+        ck.Check(pairNav.Surfaces().size() == 1 && pairNav.Surfaces()[0].entity == groups[0].leader
+                     && pairNav.Surfaces()[0].state == NavSurfaceState::Loaded,
+                 "接続: NavSystem はグループの leader の .mnav だけを読み込む");
+        NavObstacleSpec onB;
+        onB.key = 1;
+        onB.type = DT_OBSTACLE_BOX;
+        const float onBBox[6] = { 6.0f, -1.0f, -1.0f, 7.0f, 1.0f, 1.0f };
+        std::memcpy(onB.v, onBBox, sizeof(onBBox));
+        std::vector<NavObstacleSpec> filtered;
+        NavFilterSpecsToSurface(tw, groups[0].leader, { onB }, filtered);
+        ck.Check(filtered.size() == 1, "接続: leader の範囲の外でも、グループの別の Surface の範囲にある障害物は付く");
     }
 
     fs::remove_all(dir, ec);

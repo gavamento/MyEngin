@@ -1349,8 +1349,40 @@ struct BakeScratch {
 
 } // namespace
 
+namespace {
+
+// 箱のどれにも入らない歩行面を歩けなくする (M84b)。フィルタの後・コンパクト化の前に呼ぶので、
+// 箱の縁は壁と同じく agentRadius だけ削られる。箱が重なる所・接する所には縁ができない
+void ClipWalkableToBoxes(rcHeightfield& solid, const NavBakeClipBox* boxes, int boxCount)
+{
+    for (int z = 0; z < solid.height; ++z) {
+        const float cz = solid.bmin[2] + (static_cast<float>(z) + 0.5f) * solid.cs;
+        for (int x = 0; x < solid.width; ++x) {
+            const float cx = solid.bmin[0] + (static_cast<float>(x) + 0.5f) * solid.cs;
+            for (rcSpan* span = solid.spans[x + z * solid.width]; span != nullptr; span = span->next) {
+                if (span->area == RC_NULL_AREA) {
+                    continue;
+                }
+                const float top = solid.bmin[1] + static_cast<float>(span->smax) * solid.ch;
+                bool inside = false;
+                for (int b = 0; b < boxCount && !inside; ++b) {
+                    const NavBakeClipBox& box = boxes[b];
+                    inside = cx >= box.boundsMin[0] && cx <= box.boundsMax[0] && cz >= box.boundsMin[2]
+                        && cz <= box.boundsMax[2] && top >= box.boundsMin[1] && top <= box.boundsMax[1];
+                }
+                if (!inside) {
+                    span->area = RC_NULL_AREA;
+                }
+            }
+        }
+    }
+}
+
+} // namespace
+
 bool NavBakeTileLayers(const NavBakeConfig& config, const NavTriangleInput& input, int tx, int ty,
-                       std::vector<std::vector<uint8_t>>& outLayers)
+                       std::vector<std::vector<uint8_t>>& outLayers, const NavBakeClipBox* clipBoxes,
+                       int clipBoxCount)
 {
     outLayers.clear();
     rcContext ctx(false);
@@ -1397,6 +1429,9 @@ bool NavBakeTileLayers(const NavBakeConfig& config, const NavTriangleInput& inpu
     rcFilterLowHangingWalkableObstacles(&ctx, cfg.walkableClimb, *s.solid);
     rcFilterLedgeSpans(&ctx, cfg.walkableHeight, cfg.walkableClimb, *s.solid);
     rcFilterWalkableLowHeightSpans(&ctx, cfg.walkableHeight, *s.solid);
+    if (clipBoxCount > 0) {
+        ClipWalkableToBoxes(*s.solid, clipBoxes, clipBoxCount);
+    }
 
     s.chf = rcAllocCompactHeightfield();
     if (!s.chf || !rcBuildCompactHeightfield(&ctx, cfg.walkableHeight, cfg.walkableClimb, *s.solid, *s.chf)) {

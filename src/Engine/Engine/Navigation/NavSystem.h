@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "Engine/Core/Ecs/EntityID.h"
+#include "Engine/Engine/Navigation/NavBakeInput.h"
 #include "Engine/Engine/Navigation/NavMeshAsset.h"
 #include "Engine/Engine/Rendering/DebugDraw.h"
 
@@ -261,6 +262,7 @@ private:
     std::vector<NavSurfaceRuntime> surfaces_;
     std::vector<Key> loadedKeys_;
     std::vector<Key> scanKeys_; // Update の作業用 (毎 tick の確保を避ける)
+    std::vector<NavSurfaceGroup> groups_; // ScanSurfaceKeys の作業用 (直近に数えたグループ)
     std::vector<AgentRef> agents_;
     std::vector<std::vector<int>> wantedPerSurface_;
     std::vector<NavObstacleSpec> wantedObstacles_; // SyncObstacles の作業用

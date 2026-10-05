@@ -54,22 +54,46 @@ void HashConfig(uint64_t& h, const NavBakeConfig& c)
 
 bool NavPrepareBakeInputs(World& world, EntityID surface, NavBakeInputs& out)
 {
-    const auto* comp = world.GetComponent<NavMeshSurfaceComponent>(surface);
-    if (comp == nullptr) {
+    if (world.GetComponent<NavMeshSurfaceComponent>(surface) == nullptr) {
         return false;
     }
-    DirectX::XMFLOAT4X4 worldMatrix;
-    DirectX::XMStoreFloat4x4(&worldMatrix, DirectX::XMMatrixIdentity());
-    if (const auto* wm = world.GetComponent<WorldMatrixComponent>(surface)) {
-        worldMatrix = wm->value;
+    // 無効な Surface はグループに入らない。単独で焼く (エディタで無効にした Surface の Bake を拒まない)
+    NavSurfaceGroup group;
+    if (!NavFindSurfaceGroup(world, surface, group)) {
+        group.leader = surface;
+        group.members = { surface };
     }
-    out.config = NavMakeBakeConfig(*comp, worldMatrix);
+    const auto matrixOf = [&](EntityID e) {
+        DirectX::XMFLOAT4X4 m;
+        DirectX::XMStoreFloat4x4(&m, DirectX::XMMatrixIdentity());
+        if (const auto* wm = world.GetComponent<WorldMatrixComponent>(e)) {
+            m = wm->value;
+        }
+        return m;
+    };
+    out.config = NavMakeBakeConfig(*world.GetComponent<NavMeshSurfaceComponent>(group.leader), matrixOf(group.leader));
+    out.clipBoxes.clear();
+    std::vector<NavCollectRange> ranges;
+    for (const EntityID member : group.members) {
+        const auto* comp = world.GetComponent<NavMeshSurfaceComponent>(member);
+        const NavBakeConfig range = NavMakeBakeConfig(*comp, matrixOf(member));
+        NavBakeClipBox& box = out.clipBoxes.emplace_back();
+        NavCollectRange& collect = ranges.emplace_back();
+        for (int i = 0; i < 3; ++i) {
+            box.boundsMin[i] = collect.boundsMin[i] = range.boundsMin[i];
+            box.boundsMax[i] = collect.boundsMax[i] = range.boundsMax[i];
+            out.config.boundsMin[i] = (std::min)(out.config.boundsMin[i], range.boundsMin[i]);
+            out.config.boundsMax[i] = (std::max)(out.config.boundsMax[i], range.boundsMax[i]);
+        }
+        collect.collectLayerMask = comp->collectLayerMask;
+    }
     out.soup = NavTriangleSoup{};
-    NavCollectTriangles(world, out.config.boundsMin, out.config.boundsMax, comp->collectLayerMask, out.soup);
+    NavCollectTriangles(world, ranges, out.soup);
     return true;
 }
 
-uint64_t NavComputeInputHash(const NavBakeConfig& config, const NavTriangleSoup& soup)
+uint64_t NavComputeInputHash(const NavBakeConfig& config, const NavTriangleSoup& soup,
+                             const std::vector<NavBakeClipBox>& clipBoxes)
 {
     uint64_t h = kNavFnvSeed;
     const uint32_t version = NavMeshAsset::kNavBakeVersion;
@@ -77,11 +101,15 @@ uint64_t NavComputeInputHash(const NavBakeConfig& config, const NavTriangleSoup&
     HashConfig(h, config);
     h = NavFnv1a(h, soup.verts.data(), soup.verts.size() * sizeof(float));
     h = NavFnv1a(h, soup.tris.data(), soup.tris.size() * sizeof(int));
+    for (const NavBakeClipBox& box : clipBoxes) {
+        h = NavFnv1a(h, box.boundsMin, sizeof(box.boundsMin));
+        h = NavFnv1a(h, box.boundsMax, sizeof(box.boundsMax));
+    }
     return h;
 }
 
-bool NavBakeTile(const NavBakeConfig& config, const NavTriangleSoup& soup, int tx, int ty,
-                 std::vector<std::vector<uint8_t>>& outLayers)
+bool NavBakeTile(const NavBakeConfig& config, const NavTriangleSoup& soup, const std::vector<NavBakeClipBox>& clipBoxes,
+                 int tx, int ty, std::vector<std::vector<uint8_t>>& outLayers)
 {
     // タイルの XZ 範囲 + 継ぎ目の余白。この外の三角形はこのタイルに影響しない
     const float tileSpan = static_cast<float>(config.tileSize) * config.cellSize;
@@ -104,10 +132,12 @@ bool NavBakeTile(const NavBakeConfig& config, const NavTriangleSoup& soup, int t
         }
         local.AddTriangle(v[0], v[1], v[2]);
     }
-    return NavBakeTileLayers(config, local.View(), tx, ty, outLayers);
+    return NavBakeTileLayers(config, local.View(), tx, ty, outLayers, clipBoxes.data(),
+                             static_cast<int>(clipBoxes.size()));
 }
 
-NavBakeOutput NavBakeAsset(const NavBakeConfig& config, const NavTriangleSoup& soup, NavBakeControl* control)
+NavBakeOutput NavBakeAsset(const NavBakeConfig& config, const NavTriangleSoup& soup,
+                           const std::vector<NavBakeClipBox>& clipBoxes, NavBakeControl* control)
 {
     NavBakeOutput out;
     int tilesX = 0;
@@ -126,7 +156,7 @@ NavBakeOutput NavBakeAsset(const NavBakeConfig& config, const NavTriangleSoup& s
 
     NavMeshAsset::Data& data = out.data;
     data.bakeVersion = NavMeshAsset::kNavBakeVersion;
-    data.inputHash = NavComputeInputHash(config, soup);
+    data.inputHash = NavComputeInputHash(config, soup, clipBoxes);
     data.config = config;
     data.tilesX = tilesX;
     data.tilesY = tilesY;
@@ -143,7 +173,7 @@ NavBakeOutput NavBakeAsset(const NavBakeConfig& config, const NavTriangleSoup& s
                 return out;
             }
             std::vector<std::vector<uint8_t>> layers;
-            if (!NavBakeTile(config, soup, tx, ty, layers)) {
+            if (!NavBakeTile(config, soup, clipBoxes, tx, ty, layers)) {
                 out.status = NavBakeStatus::Failed;
                 out.message = "the tile bake failed at tile (" + std::to_string(tx) + ", " + std::to_string(ty) + ")";
                 data = NavMeshAsset::Data{};

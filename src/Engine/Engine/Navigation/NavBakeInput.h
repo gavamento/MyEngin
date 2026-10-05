@@ -30,12 +30,33 @@ struct NavTriangleSoup {
 // 球・カプセルの分割数 (正八面体の 1 辺あたり)。値を変えるとベイク結果が変わるので kNavBakeVersion も上げる
 inline constexpr int kNavSphereSubdivisions = 4;
 
-// World から、boundsMin..boundsMax (ワールド AABB) と重なる静的コライダーの三角形を集める。
+// 三角形を集める範囲 1 つ (ワールド AABB) と、その範囲で集めるコライダーのレイヤー集合
+struct NavCollectRange {
+    float boundsMin[3] = {};
+    float boundsMax[3] = {};
+    uint32_t collectLayerMask = 0xFFFFFFFFu;
+};
+
+// World から、ranges のどれかと重なり (その範囲の collectLayerMask に入る) 静的コライダーの三角形を集める。
+// 1 つのコライダーは何個の範囲に入っても 1 回だけ出し、三角形は全範囲を合わせた AABB で選ぶ。
 // 選別は AcousticField::BakeOccupancy と同じ (Collider + WorldMatrix、Rigidbody / CharacterController 持ちと
-// トリガーを除く、collectLayerMask、非アクティブ除外)。順序は entity.index 昇順で、同じ World からは同じ並びになる。
+// トリガーを除く、非アクティブ除外)。順序は entity.index 昇順で、同じ World からは同じ並びになる。
 // 範囲はタイルの AABB でもよい (将来の実行時再ベイクの入口)。メインスレッド専用 (meshcol / terraincol / convexcol を引く)
-void NavCollectTriangles(World& world, const float* boundsMin, const float* boundsMax, uint32_t collectLayerMask,
-                         NavTriangleSoup& out);
+void NavCollectTriangles(World& world, const std::vector<NavCollectRange>& ranges, NavTriangleSoup& out);
+
+// 同じ agentTypeId の有効な Surface の集まり (M84b)。UE の「Agent ごとに 1 つのナビメッシュ」と同じく、
+// グループの Surface は範囲の指定で、全部を合わせて 1 つのナビメッシュに焼く。
+// leader (エンティティキー最小) の navAsset・セル・タイル・エリアのコストをグループ全体に使う
+struct NavSurfaceGroup {
+    int32_t agentTypeId = 0;
+    EntityID leader;
+    std::vector<EntityID> members; // キー順 (先頭が leader)
+};
+
+// World の有効な Surface をグループに分ける (out は leader のキー順)
+void NavCollectSurfaceGroups(World& world, std::vector<NavSurfaceGroup>& out);
+// surface が属するグループ。surface が無効、または Surface を持たなければ false
+bool NavFindSurfaceGroup(World& world, EntityID surface, NavSurfaceGroup& out);
 
 // セルサイズの下限 (m)。Surface.cellSize の最小値と同じ。これより細かくするとタイル数とベイク時間が跳ね上がる
 inline constexpr float kNavMinCellSize = 0.05f;

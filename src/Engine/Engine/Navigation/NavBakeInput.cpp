@@ -335,9 +335,21 @@ NavTriangleInput NavTriangleSoup::View() const
     return in;
 }
 
-void NavCollectTriangles(World& world, const float* boundsMin, const float* boundsMax, uint32_t collectLayerMask,
-                         NavTriangleSoup& out)
+void NavCollectTriangles(World& world, const std::vector<NavCollectRange>& ranges, NavTriangleSoup& out)
 {
+    if (ranges.empty()) {
+        return;
+    }
+    float boundsMin[3];
+    float boundsMax[3];
+    for (int i = 0; i < 3; ++i) {
+        boundsMin[i] = ranges[0].boundsMin[i];
+        boundsMax[i] = ranges[0].boundsMax[i];
+        for (const NavCollectRange& r : ranges) {
+            boundsMin[i] = (std::min)(boundsMin[i], r.boundsMin[i]);
+            boundsMax[i] = (std::max)(boundsMax[i], r.boundsMax[i]);
+        }
+    }
     std::vector<Candidate> candidates;
     const ComponentTypeId req[] = {ColliderComponent::sTypeId, WorldMatrixComponent::sTypeId};
     world.ForEachArchetype(req, [&](Archetype& arch) {
@@ -349,7 +361,7 @@ void NavCollectTriangles(World& world, const float* boundsMin, const float* boun
         const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
         for (uint32_t row = 0; row < arch.Count(); ++row) {
             const auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
-            if (col->isTrigger || !shapes::LayerHit(collectLayerMask, col->layer)) {
+            if (col->isTrigger) {
                 continue;
             }
             const EntityID e = arch.EntityAt(row);
@@ -372,7 +384,15 @@ void NavCollectTriangles(World& world, const float* boundsMin, const float* boun
         const ShapePose pose = shapes::MakePoseFromMatrix(c.col, c.wm);
         float minX = 0.0f, minY = 0.0f, minZ = 0.0f, maxX = 0.0f, maxY = 0.0f, maxZ = 0.0f;
         shapes::ComputeAabb(pose, minX, minY, minZ, maxX, maxY, maxZ);
-        if (!filter.OverlapsAabb(minX, minY, minZ, maxX, maxY, maxZ)) {
+        // どれかの範囲と重なり、その範囲のレイヤー集合に入るものだけ
+        bool wanted = false;
+        for (const NavCollectRange& r : ranges) {
+            wanted = wanted
+                || (shapes::LayerHit(r.collectLayerMask, c.col.layer) && minX <= r.boundsMax[0] && maxX >= r.boundsMin[0]
+                    && minY <= r.boundsMax[1] && maxY >= r.boundsMin[1] && minZ <= r.boundsMax[2]
+                    && maxZ >= r.boundsMin[2]);
+        }
+        if (!wanted) {
             continue;
         }
         switch (pose.shape) {
@@ -509,6 +529,69 @@ NavBakeConfig NavMakeBakeConfig(const NavMeshSurfaceComponent& surface, const Di
         c.boundsMax[k] = hi[k];
     }
     return c;
+}
+
+namespace {
+
+bool SurfaceKeyLess(const EntityID& a, const EntityID& b)
+{
+    return a.index != b.index ? a.index < b.index : a.generation < b.generation;
+}
+
+} // namespace
+
+void NavCollectSurfaceGroups(World& world, std::vector<NavSurfaceGroup>& out)
+{
+    out.clear();
+    struct Entry {
+        EntityID entity;
+        int32_t agentTypeId = 0;
+    };
+    std::vector<Entry> entries;
+    const ComponentTypeId req[] = { NavMeshSurfaceComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int si = arch.FindTypeIndex(NavMeshSurfaceComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (IsEntityActive(world, e)) {
+                entries.push_back({ e, static_cast<const NavMeshSurfaceComponent*>(arch.GetPtr(si, row))->agentTypeId });
+            }
+        }
+    });
+    // アーキタイプの列挙順は生成順に依るので、エンティティキー順に並べる。先に出た型ほど leader のキーが小さい
+    std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return SurfaceKeyLess(a.entity, b.entity); });
+    for (const Entry& entry : entries) {
+        NavSurfaceGroup* group = nullptr;
+        for (NavSurfaceGroup& g : out) {
+            if (g.agentTypeId == entry.agentTypeId) {
+                group = &g;
+                break;
+            }
+        }
+        if (group == nullptr) {
+            group = &out.emplace_back();
+            group->agentTypeId = entry.agentTypeId;
+            group->leader = entry.entity;
+        }
+        group->members.push_back(entry.entity);
+    }
+}
+
+bool NavFindSurfaceGroup(World& world, EntityID surface, NavSurfaceGroup& out)
+{
+    if (!world.IsAlive(surface) || world.GetComponent<NavMeshSurfaceComponent>(surface) == nullptr
+        || !IsEntityActive(world, surface)) {
+        return false;
+    }
+    std::vector<NavSurfaceGroup> groups;
+    NavCollectSurfaceGroups(world, groups);
+    for (NavSurfaceGroup& g : groups) {
+        if (std::find(g.members.begin(), g.members.end(), surface) != g.members.end()) {
+            out = std::move(g);
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace mye

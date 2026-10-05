@@ -309,10 +309,18 @@ struct NavTriangleInput {
     int triCount = 0;
 };
 
+// 歩いてよい範囲の箱 (ワールド AABB)。同じ Agent Type の Surface 1 つが 1 箱 (M84b)
+struct NavBakeClipBox {
+    float boundsMin[3] = {};
+    float boundsMax[3] = {};
+};
+
 // 入力から (tx, ty) 1 枚分のタイルの層を作る。層ごとのバイト列 (header 付き、無圧縮) を返す。
-// 空のタイルは 0 枚で成功。失敗なら false
+// clipBoxCount > 0 なら、どの箱にも入らない歩行面 (セルの中心の XZ と面の高さで判定) を歩けなくする。
+// 0 なら切らない (タイル格子の端は config の範囲を越えてはみ出す)。空のタイルは 0 枚で成功。失敗なら false
 bool NavBakeTileLayers(const NavBakeConfig& config, const NavTriangleInput& input, int tx, int ty,
-                       std::vector<std::vector<uint8_t>>& outLayers);
+                       std::vector<std::vector<uint8_t>>& outLayers, const NavBakeClipBox* clipBoxes = nullptr,
+                       int clipBoxCount = 0);
 
 void NavCalcTileGrid(const NavBakeConfig& config, int& outTilesX, int& outTilesY);
 

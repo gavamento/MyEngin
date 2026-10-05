@@ -42,26 +42,31 @@ struct NavBakeOutput {
 // 障害物の最大数 (dtTileCacheParams::maxObstacles)。Surface ごと。NavMeshObstacle が使う
 inline constexpr int kNavMaxObstacles = 128;
 
-// Surface 1 つのベイクに必要な入力。World から取り出し済みなので、以降は World に触れずに焼ける
+// Surface グループ 1 つのベイクに必要な入力。World から取り出し済みなので、以降は World に触れずに焼ける
 struct NavBakeInputs {
     NavBakeConfig config;
     NavTriangleSoup soup;
+    std::vector<NavBakeClipBox> clipBoxes; // グループの Surface の範囲 (エンティティキー順)。歩けるのはこの中だけ
 };
 
-// Surface エンティティの設定とワールド行列から、設定 (範囲はワールド AABB) と三角形を集める。
+// Surface が属するグループ (同じ agentTypeId の有効な Surface 全部、M84b) の設定・範囲・三角形を集める。
+// セル・タイル・寸法は代表 (NavFindSurfaceGroup の leader) の Surface から、範囲は全 Surface の AABB を合わせたもの。
+// 三角形は Surface ごとの collectLayerMask で、その Surface の範囲と重なるコライダーから集める (1 つのコライダーは 1 回)。
 // メインスレッド専用。エディタの Bake も、Editor 無しの SelfTest も、将来の実行時再ベイクも、ここから始める。
 // Surface コンポーネントが無ければ false
 bool NavPrepareBakeInputs(World& world, EntityID surface, NavBakeInputs& out);
 
-// 入力ハッシュ (保存名の 16 桁)。設定・三角形・ベイク方式の版から決まる
-uint64_t NavComputeInputHash(const NavBakeConfig& config, const NavTriangleSoup& soup);
+// 入力ハッシュ (保存名の 16 桁)。設定・三角形・範囲の箱・ベイク方式の版から決まる
+uint64_t NavComputeInputHash(const NavBakeConfig& config, const NavTriangleSoup& soup,
+                             const std::vector<NavBakeClipBox>& clipBoxes);
 
 // タイル 1 枚分: soup の中からこのタイルの範囲 (余白込み) に触れる三角形だけを選んで層にする。
-// 実行時の再ベイクもこの関数を呼ぶ (M82 spec 4.4 F2)
-bool NavBakeTile(const NavBakeConfig& config, const NavTriangleSoup& soup, int tx, int ty,
-                 std::vector<std::vector<uint8_t>>& outLayers);
+// clipBoxes が空でなければ、その外の歩行面を歩けなくする。実行時の再ベイクもこの関数を呼ぶ (M82 spec 4.4 F2)
+bool NavBakeTile(const NavBakeConfig& config, const NavTriangleSoup& soup, const std::vector<NavBakeClipBox>& clipBoxes,
+                 int tx, int ty, std::vector<std::vector<uint8_t>>& outLayers);
 
 // 全タイルを NavBakeTile で回して .mnav の中身を作る。World には触れない (ワーカースレッドから呼べる)
-NavBakeOutput NavBakeAsset(const NavBakeConfig& config, const NavTriangleSoup& soup, NavBakeControl* control);
+NavBakeOutput NavBakeAsset(const NavBakeConfig& config, const NavTriangleSoup& soup,
+                           const std::vector<NavBakeClipBox>& clipBoxes, NavBakeControl* control);
 
 } // namespace mye

@@ -22,11 +22,12 @@ class UndoStack;
 std::wstring NavBakeAssetPath(const std::wstring& assetsRoot, const std::string& surfaceName, uint64_t inputHash);
 
 // status が Ok のベイク結果を確定する: .mnav を書き、.meta を確定させて GUID を得て、
-// Surface.navAsset を書き換える (参照の設定は 1 Undo)。書き込み失敗・Surface が無い場合は false
+// surface のグループ (同じ agentTypeId の Surface、M84b) の全 Surface の navAsset を書き換える (参照の設定は 1 Undo)。
+// ファイル名は Agent Type の名前 (表に無ければ Surface の名前)。書き込み失敗・Surface が無い場合は false
 bool CommitNavBake(EngineContext& ctx, Selection& selection, UndoStack& undo, EntityID surface, uint64_t fid,
                    const NavBakeOutput& output);
 
-// Surface.navAsset を外す (1 Undo)。.mnav のファイルは消さない。参照が無ければ false
+// surface のグループの全 Surface の navAsset を外す (1 Undo)。.mnav のファイルは消さない。参照が 1 つも無ければ false
 bool ClearNavBake(EngineContext& ctx, Selection& selection, UndoStack& undo, EntityID surface, uint64_t fid);
 
 } // namespace mye

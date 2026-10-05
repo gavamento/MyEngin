@@ -435,6 +435,34 @@ bool SurfaceWorldBounds(World& world, EntityID surface, float (&lo)[3], float (&
     return true;
 }
 
+// surface が属するグループ (同じ agentTypeId の有効な Surface、M84b) の全 Surface の範囲。ベイクの範囲の箱と同じ。
+// グループに入らない (無効な) Surface はその Surface 自身の範囲だけ。範囲が取れなければ空
+void GroupWorldBounds(World& world, EntityID surface, std::vector<NavBakeClipBox>& out)
+{
+    out.clear();
+    NavSurfaceGroup group;
+    if (!NavFindSurfaceGroup(world, surface, group)) {
+        group.members = { surface };
+    }
+    for (const EntityID member : group.members) {
+        NavBakeClipBox box;
+        if (SurfaceWorldBounds(world, member, box.boundsMin, box.boundsMax)) {
+            out.push_back(box);
+        }
+    }
+}
+
+bool PointInBoxes(const float* p, const std::vector<NavBakeClipBox>& boxes)
+{
+    for (const NavBakeClipBox& box : boxes) {
+        if (p[0] >= box.boundsMin[0] && p[0] <= box.boundsMax[0] && p[1] >= box.boundsMin[1] && p[1] <= box.boundsMax[1]
+            && p[2] >= box.boundsMin[2] && p[2] <= box.boundsMax[2]) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // store の障害物 (paint = false: 切り抜き / true: 塗り替え) を wanted (key 昇順) と突き合わせた差分。
 // store の一覧は key 昇順なので、種類で絞っても昇順のまま
 struct SpecDiff {
@@ -617,36 +645,31 @@ bool NavMakeLinkSpec(const NavMeshLinkComponent& link, const float (&m)[4][4], E
 
 NavLinkPlacement NavCheckLinkPlacement(World& world, const NavLinkSpec& link)
 {
-    const ComponentTypeId req[] = { NavMeshSurfaceComponent::sTypeId };
-    NavLinkPlacement result = NavLinkPlacement::NoSurface;
-    bool found = false;
-    world.ForEachArchetype(req, [&](Archetype& arch) {
-        for (uint32_t row = 0; row < arch.Count(); ++row) {
-            const EntityID e = arch.EntityAt(row);
-            float lo[3];
-            float hi[3];
-            if (found || !IsEntityActive(world, e) || !SurfaceWorldBounds(world, e, lo, hi)) {
-                continue;
-            }
-            bool inside = true;
-            for (int i = 0; i < 3; ++i) {
-                inside = inside && link.start[i] >= lo[i] && link.start[i] <= hi[i];
-            }
-            if (!inside) {
-                continue;
-            }
-            found = true;
-            const auto* comp = world.GetComponent<NavMeshSurfaceComponent>(e);
-            const float span = static_cast<float>(comp->tileSize) * NavResolveCellSize(*comp).cellSize;
-            const auto tileOf = [&](const float* p, int axis) {
-                return static_cast<int>(std::floor((p[axis] - lo[axis]) / span));
-            };
-            const bool far = std::abs(tileOf(link.end, 0) - tileOf(link.start, 0)) > 1
-                || std::abs(tileOf(link.end, 2) - tileOf(link.start, 2)) > 1;
-            result = far ? NavLinkPlacement::ExitTooFar : NavLinkPlacement::Ok;
+    // 入口を範囲に含むグループ (leader のキー順で最初のもの) の、ベイクと同じタイル格子で測る
+    std::vector<NavSurfaceGroup> groups;
+    NavCollectSurfaceGroups(world, groups);
+    std::vector<NavBakeClipBox> boxes;
+    for (const NavSurfaceGroup& group : groups) {
+        GroupWorldBounds(world, group.leader, boxes);
+        if (!PointInBoxes(link.start, boxes)) {
+            continue;
         }
-    });
-    return result;
+        float origin[3] = { boxes[0].boundsMin[0], boxes[0].boundsMin[1], boxes[0].boundsMin[2] };
+        for (const NavBakeClipBox& box : boxes) {
+            for (int i = 0; i < 3; ++i) {
+                origin[i] = (std::min)(origin[i], box.boundsMin[i]);
+            }
+        }
+        const auto* comp = world.GetComponent<NavMeshSurfaceComponent>(group.leader);
+        const float span = static_cast<float>(comp->tileSize) * NavResolveCellSize(*comp).cellSize;
+        const auto tileOf = [&](const float* p, int axis) {
+            return static_cast<int>(std::floor((p[axis] - origin[axis]) / span));
+        };
+        const bool far = std::abs(tileOf(link.end, 0) - tileOf(link.start, 0)) > 1
+            || std::abs(tileOf(link.end, 2) - tileOf(link.start, 2)) > 1;
+        return far ? NavLinkPlacement::ExitTooFar : NavLinkPlacement::Ok;
+    }
+    return NavLinkPlacement::NoSurface;
 }
 
 void NavCollectLinkSpecs(World& world, std::vector<NavLinkSpec>& out)
@@ -675,17 +698,10 @@ void NavFilterLinksToSurface(World& world, EntityID surface, const std::vector<N
                              std::vector<NavLinkSpec>& out)
 {
     out.clear();
-    float surfaceMin[3] = {};
-    float surfaceMax[3] = {};
-    if (!SurfaceWorldBounds(world, surface, surfaceMin, surfaceMax)) {
-        return;
-    }
+    std::vector<NavBakeClipBox> boxes;
+    GroupWorldBounds(world, surface, boxes);
     for (const NavLinkSpec& link : all) {
-        bool inside = true;
-        for (int i = 0; i < 3; ++i) {
-            inside = inside && link.start[i] >= surfaceMin[i] && link.start[i] <= surfaceMax[i];
-        }
-        if (inside) {
+        if (PointInBoxes(link.start, boxes)) {
             out.push_back(link);
         }
     }
@@ -741,16 +757,17 @@ void NavFilterSpecsToSurface(World& world, EntityID surface, const std::vector<N
                              std::vector<NavObstacleSpec>& out)
 {
     out.clear();
-    float surfaceMin[3] = {};
-    float surfaceMax[3] = {};
-    const bool hasBounds = SurfaceWorldBounds(world, surface, surfaceMin, surfaceMax);
+    std::vector<NavBakeClipBox> boxes;
+    GroupWorldBounds(world, surface, boxes);
     for (const NavObstacleSpec& spec : all) {
         float lo[3];
         float hi[3];
         ObstacleBounds(spec, lo, hi);
-        bool overlap = true;
-        for (int i = 0; hasBounds && i < 3; ++i) {
-            overlap = overlap && lo[i] <= surfaceMax[i] && hi[i] >= surfaceMin[i];
+        bool overlap = boxes.empty(); // 範囲が取れない Surface は全部を付ける (M82 と同じ)
+        for (const NavBakeClipBox& box : boxes) {
+            overlap = overlap
+                || (lo[0] <= box.boundsMax[0] && hi[0] >= box.boundsMin[0] && lo[1] <= box.boundsMax[1]
+                    && hi[1] >= box.boundsMin[1] && lo[2] <= box.boundsMax[2] && hi[2] >= box.boundsMin[2]);
         }
         if (overlap) {
             out.push_back(spec);
@@ -910,22 +927,13 @@ void NavSystem::Load(NavSurfaceRuntime& surface, const char* name)
 
 void NavSystem::ScanSurfaceKeys(World& world)
 {
+    // 読み込むのはグループ (同じ agentTypeId の Surface、M84b) の leader だけ。グループの .mnav は 1 つで、
+    // 他の Surface は範囲の指定として Obstacle 等の絞り込みに効く。groups_ は leader のキー順
     scanKeys_.clear();
-    const ComponentTypeId req[] = { NavMeshSurfaceComponent::sTypeId };
-    world.ForEachArchetype(req, [&](Archetype& arch) {
-        const int si = arch.FindTypeIndex(NavMeshSurfaceComponent::sTypeId);
-        for (uint32_t row = 0; row < arch.Count(); ++row) {
-            const EntityID e = arch.EntityAt(row);
-            if (!IsEntityActive(world, e)) {
-                continue;
-            }
-            const auto* surface = static_cast<const NavMeshSurfaceComponent*>(arch.GetPtr(si, row));
-            scanKeys_.push_back({ e, surface->navAsset.value });
-        }
-    });
-    // アーキタイプの列挙順は生成順に依るので、エンティティキー順に並べる
-    std::sort(scanKeys_.begin(), scanKeys_.end(),
-              [](const Key& a, const Key& b) { return KeyLess(a.entity, b.entity); });
+    NavCollectSurfaceGroups(world, groups_);
+    for (const NavSurfaceGroup& group : groups_) {
+        scanKeys_.push_back({ group.leader, world.GetComponent<NavMeshSurfaceComponent>(group.leader)->navAsset.value });
+    }
 }
 
 bool NavSystem::SurfaceKeysChanged() const
@@ -954,15 +962,14 @@ void NavSystem::SyncSurfaces(World& world)
     }
     loadedKeys_ = scanKeys_;
 
-    // 同じ agentTypeId の Surface が複数あるとエンティティキーの小さい方が勝つ (Agent の割り当てと同じ規則)
-    for (size_t i = 0; i < surfaces_.size(); ++i) {
-        const auto* a = world.GetComponent<NavMeshSurfaceComponent>(surfaces_[i].entity);
-        for (size_t j = i + 1; a != nullptr && j < surfaces_.size(); ++j) {
-            const auto* b = world.GetComponent<NavMeshSurfaceComponent>(surfaces_[j].entity);
-            if (b != nullptr && a->agentTypeId == b->agentTypeId) {
-                MYE_LOG_WARN("[nav] surfaces '%s' and '%s' share agent type id %d; agents use the first one",
-                             world.GetName(surfaces_[i].entity), world.GetName(surfaces_[j].entity),
-                             static_cast<int>(a->agentTypeId));
+    // グループの Surface は同じ .mnav を指しているはず (エディタの Bake がまとめて設定する)。違えば焼き直しが要る
+    for (const NavSurfaceGroup& group : groups_) {
+        const uint64_t leaderAsset = world.GetComponent<NavMeshSurfaceComponent>(group.leader)->navAsset.value;
+        for (const EntityID member : group.members) {
+            if (world.GetComponent<NavMeshSurfaceComponent>(member)->navAsset.value != leaderAsset) {
+                MYE_LOG_WARN("[nav] surface '%s' (agent type id %d) does not share the navigation mesh of '%s'; "
+                             "bake the agent type again",
+                             world.GetName(member), static_cast<int>(group.agentTypeId), world.GetName(group.leader));
             }
         }
     }

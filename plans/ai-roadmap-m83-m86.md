@@ -22,6 +22,7 @@
 ### M84 で決めたこと
 
 - **Surface の接続は UE 式** (2026-10-05 ユーザー回答)。計画の「Unity と同じ」は誤り: Unity は別の Surface を自動でつながず、NavMesh Link を要求する。UE は Agent ごとにナビメッシュを 1 つ持ち、複数の NavMeshBoundsVolume の範囲を合わせて焼く。M84-B では、同じ Agent Type の Surface をすべて範囲の指定として扱い、それらを合わせた 1 つのナビメッシュとして焼く (Bake は Agent Type 単位、同じ型の Surface は同じ .mnav を共有する)
+- M84b の細部: グループ = 同じ agentTypeId の有効な Surface (`NavCollectSurfaceGroups`)。leader (エンティティキー最小) のセル・タイル・エリアのコストと navAsset をグループ全体に使い、実行時に読み込むのも leader だけ (Nav 節の書式は不変)。ベイクの範囲は全 Surface を合わせた AABB、歩行面は Surface の箱の中だけに切り詰める (`kNavBakeVersion` 2。単独の Surface でも端のタイルがはみ出さなくなった)。三角形は Surface ごとの collectLayerMask で集め、1 コライダー 1 回。.mnav の名前は Agent Type の名前。ADR-023 の決定 (Surface ごとに 1 つの dtNavMesh) の改訂は文書のサブでまとめて書く
 - M84a の Agent Type の表は `project_settings.json` の `navAgentTypes` (エディタ専用、`src\Editor\Project\NavAgentTypes.h`)。sim は Surface に写した寸法だけを見る。型を選ぶと写し、Project Settings 側の変更は Bake の時に写す (Inspector で食い違いを警告)。Agent の radius / height は Agent 自身の値のまま (Unity と同じ)
 
 ---

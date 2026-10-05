@@ -375,7 +375,7 @@ bool RunNavEditorSelfTest()
 
     NavBakeInputs inputs;
     check(NavPrepareBakeInputs(world, surface.Id(), inputs), "inputs: collected on the main thread");
-    NavBakeOutput direct = NavBakeAsset(inputs.config, inputs.soup, nullptr);
+    NavBakeOutput direct = NavBakeAsset(inputs.config, inputs.soup, inputs.clipBoxes, nullptr);
     std::vector<uint8_t> directBytes;
     NavMeshAsset::Serialize(direct.data, directBytes);
 
@@ -413,8 +413,9 @@ bool RunNavEditorSelfTest()
     {
         const auto* s = world.GetComponent<NavMeshSurfaceComponent>(surface.Id());
         check(s != nullptr && !s->navAsset.IsNull(), "commit: Surface.navAsset is set");
-        const std::wstring path = NavBakeAssetPath(ctx.assetsRoot, "Level Surface", result.output.data.inputHash);
-        check(fs::exists(path), "commit: the file lands at assets\\NavMesh\\<name>_<input hash>.mnav");
+        // 名前は Agent Type の名前 (M84b)。一時フォルダには表が無いので既定の Humanoid
+        const std::wstring path = NavBakeAssetPath(ctx.assetsRoot, "Humanoid", result.output.data.inputHash);
+        check(fs::exists(path), "commit: the file lands at assets\\NavMesh\\<agent type name>_<input hash>.mnav");
         check(ReadFileBytes(path) == workerBytes, "commit: the file is the bake's bytes as is");
         NavMeshAsset::Data loaded;
         check(NavMeshAsset::Load(path, loaded), "commit: the saved .mnav loads");
@@ -430,7 +431,7 @@ bool RunNavEditorSelfTest()
         const auto* s = world.GetComponent<NavMeshSurfaceComponent>(surface.Id());
         check(s != nullptr && !s->navAsset.IsNull(), "redo: restores the reference");
     }
-    const std::wstring savedPath = NavBakeAssetPath(ctx.assetsRoot, "Level Surface", result.output.data.inputHash);
+    const std::wstring savedPath = NavBakeAssetPath(ctx.assetsRoot, "Humanoid", result.output.data.inputHash);
     check(ClearNavBake(ctx, selection, undo, surface.Id(), fid), "clear: drops the reference");
     {
         const auto* s = world.GetComponent<NavMeshSurfaceComponent>(surface.Id());
@@ -447,6 +448,32 @@ bool RunNavEditorSelfTest()
         NavBakeOutput failed;
         failed.status = NavBakeStatus::Failed;
         check(!CommitNavBake(ctx, selection, undo, surface.Id(), fid, failed), "commit: a failed bake is refused");
+    }
+
+    // ---- 2b. 同じ Agent Type の Surface はグループ (M84b): 確定・解除はグループの全 Surface に 1 Undo で効く ----
+    {
+        GameObject second = scene.CreateGameObjectTracked("Second Surface");
+        second.SetLocalPosition(20.0f, 0.0f, 0.0f);
+        second.AddComponent<NavMeshSurfaceComponent>();
+        world.ApplyStructuralChanges();
+        transforms.Update(world);
+        const uint64_t secondFid = scene.EnsureFileId(second.Id());
+        const auto assetOf = [&](EntityID e) { return world.GetComponent<NavMeshSurfaceComponent>(e)->navAsset.value; };
+        check(ClearNavBake(ctx, selection, undo, surface.Id(), fid) && assetOf(surface.Id()) == 0,
+              "group: start from an unbaked group");
+        check(CommitNavBake(ctx, selection, undo, second.Id(), secondFid, result.output)
+                  && assetOf(second.Id()) != 0 && assetOf(surface.Id()) == assetOf(second.Id()),
+              "group: committing from one surface sets the same .mnav on every surface of the agent type");
+        undo.Undo(scene, selection);
+        check(assetOf(surface.Id()) == 0 && assetOf(second.Id()) == 0, "group: one Undo resets every surface");
+        undo.Redo(scene, selection);
+        check(ClearNavBake(ctx, selection, undo, second.Id(), secondFid) && assetOf(surface.Id()) == 0
+                  && assetOf(second.Id()) == 0,
+              "group: clearing from one surface drops the reference on every surface");
+        undo.Undo(scene, selection); // 以降の節のために、最初の Surface を焼いた状態へ戻す
+        second.Destroy();
+        world.ApplyStructuralChanges();
+        undo.ClearAll();
     }
 
     // ---- 3. 複数フレームの記録 (ドラッグ) の途中でベイクが完了しても、記録を壊さず記録の後に確定する ----

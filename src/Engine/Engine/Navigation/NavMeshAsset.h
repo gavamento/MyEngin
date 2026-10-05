@@ -18,8 +18,9 @@ inline constexpr const wchar_t* kNavExt = L".mnav";
 inline constexpr uint32_t kVersion = 1;
 
 // ベイク方式の版。ベイクの結果が変わる変更 (入力収集・Recast 設定・球の分割数) をしたら上げる。
-// 入力ハッシュに混ぜるので、版が違えば別ファイルになる
-inline constexpr uint32_t kNavBakeVersion = 1;
+// 入力ハッシュに混ぜるので、版が違えば別ファイルになる。
+// 2 (M84b): 歩行面を Surface の範囲の箱の中に切り詰める (それまでは端のタイルが範囲の外へはみ出した)
+inline constexpr uint32_t kNavBakeVersion = 2;
 
 // TileCache の層 1 枚 (header 付き、無圧縮のバイト列)
 struct LayerRecord {

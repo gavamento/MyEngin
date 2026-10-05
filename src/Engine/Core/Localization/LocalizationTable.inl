@@ -1855,6 +1855,12 @@ MYE_STR(Insp_NavAgentTypeMissing, "Agent type id %d is not defined in Project Se
                                "エージェント種別 id %d は Project Settings にありません")
 MYE_STR(Insp_NavAgentTypeDiffers, "The agent size differs from the type '%s' in Project Settings. Bake copies the type's size.",
                                "エージェントの寸法が Project Settings の種別「%s」と違います。Bake で種別の寸法を写します")
+MYE_STR(Insp_NavGroupInfo,     "%d surfaces have this agent type: they are baked together into one navigation mesh.",
+                               "この種別の Surface は %d 個あり、まとめて 1 つのナビメッシュとして焼きます") // M84b
+MYE_STR(Insp_NavGroupLeader,   "Cell, tile and area costs come from '%s', the first surface of this agent type.",
+                               "セル・タイル・エリアのコストは、この種別の最初の Surface「%s」の値を使います")
+MYE_STR(Insp_NavGroupStale,    "The surfaces of this agent type do not share one navigation mesh: bake again.",
+                               "この種別の Surface が同じナビメッシュを指していません。もう一度ベイクしてください")
 MYE_STR(Insp_NavNeedsRebake,   "The agent size changed after the last bake: bake again.",
                                "前回のベイクの後にエージェントの寸法が変わりました。もう一度ベイクしてください")
 MYE_STR(Insp_NavAgentNoSurface, "No NavMeshSurface has this agent type id.",

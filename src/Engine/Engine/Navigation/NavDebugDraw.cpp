@@ -311,49 +311,49 @@ void NavDebugView::ScanKeys(World& world, const NavSystem* nav)
     std::vector<NavObstacleSpec> modifiers;
     std::vector<NavObstacleSpec> modifiersHere;
     NavCollectModifierSpecs(world, modifiers);
-    const ComponentTypeId req[] = { NavMeshSurfaceComponent::sTypeId };
-    world.ForEachArchetype(req, [&](Archetype& arch) {
-        const int si = arch.FindTypeIndex(NavMeshSurfaceComponent::sTypeId);
-        for (uint32_t row = 0; row < arch.Count(); ++row) {
-            const auto* surface = static_cast<const NavMeshSurfaceComponent*>(arch.GetPtr(si, row));
-            const EntityID e = arch.EntityAt(row);
-            if (surface->navAsset.value == 0 || !IsEntityActive(world, e)) {
-                continue;
-            }
-            Key key;
-            key.entity = e;
-            key.assetGuid = surface->navAsset.value;
-            if (nav != nullptr) {
-                // sim が読み込み済みの Surface は、その実行時のナビメッシュ (世代が変わるたびに作り直す)
-                for (const NavSurfaceRuntime& rt : nav->Surfaces()) {
-                    if (rt.state == NavSurfaceState::Loaded && rt.entity == e && rt.assetGuid == key.assetGuid) {
-                        key.generation = rt.store->Generation();
-                        key.live = rt.store.get();
-                        break;
-                    }
-                }
-            }
-            if (key.live == nullptr && !modifiers.empty()) {
-                NavFilterSpecsToSurface(world, e, modifiers, modifiersHere);
-                uint64_t h = kNavFnvSeed;
-                for (const NavObstacleSpec& spec : modifiersHere) {
-                    h = NavFnv1a(h, &spec.key, sizeof(spec.key));
-                    h = NavFnv1a(h, &spec.type, sizeof(spec.type));
-                    h = NavFnv1a(h, spec.v, sizeof(spec.v));
-                    h = NavFnv1a(h, &spec.yaw, sizeof(spec.yaw));
-                    h = NavFnv1a(h, &spec.area, sizeof(spec.area));
-                }
-                key.modifierHash = modifiersHere.empty() ? 0 : h;
-            }
-            key.flags = static_cast<uint8_t>((surface->drawNavMesh ? kOutline : 0)
-                                             | (surface->drawNavMeshFill ? kFill : 0)
-                                             | (surface->drawTileBounds ? kTileBounds : 0));
-            scanKeys_.push_back(key);
+    // グループ (同じ agentTypeId の Surface、M84b) ごとに leader の .mnav を 1 回だけ出す。NavSystem の読み込みと同じ規則。
+    // 表示フラグはグループのどれかの Surface で立っていれば有効 (選んでいる Surface が leader でなくても切り替えられる)
+    std::vector<NavSurfaceGroup> groups;
+    NavCollectSurfaceGroups(world, groups);
+    for (const NavSurfaceGroup& group : groups) {
+        const EntityID e = group.leader;
+        const auto* surface = world.GetComponent<NavMeshSurfaceComponent>(e);
+        if (surface->navAsset.value == 0) {
+            continue;
         }
-    });
-    // アーキタイプの列挙順は生成順に依るので、エンティティキー順に並べる
-    std::sort(scanKeys_.begin(), scanKeys_.end(),
-              [](const Key& a, const Key& b) { return KeyLess(a.entity, b.entity); });
+        Key key;
+        key.entity = e;
+        key.assetGuid = surface->navAsset.value;
+        if (nav != nullptr) {
+            // sim が読み込み済みの Surface は、その実行時のナビメッシュ (世代が変わるたびに作り直す)
+            for (const NavSurfaceRuntime& rt : nav->Surfaces()) {
+                if (rt.state == NavSurfaceState::Loaded && rt.entity == e && rt.assetGuid == key.assetGuid) {
+                    key.generation = rt.store->Generation();
+                    key.live = rt.store.get();
+                    break;
+                }
+            }
+        }
+        if (key.live == nullptr && !modifiers.empty()) {
+            NavFilterSpecsToSurface(world, e, modifiers, modifiersHere);
+            uint64_t h = kNavFnvSeed;
+            for (const NavObstacleSpec& spec : modifiersHere) {
+                h = NavFnv1a(h, &spec.key, sizeof(spec.key));
+                h = NavFnv1a(h, &spec.type, sizeof(spec.type));
+                h = NavFnv1a(h, spec.v, sizeof(spec.v));
+                h = NavFnv1a(h, &spec.yaw, sizeof(spec.yaw));
+                h = NavFnv1a(h, &spec.area, sizeof(spec.area));
+            }
+            key.modifierHash = modifiersHere.empty() ? 0 : h;
+        }
+        key.flags = 0;
+        for (const EntityID member : group.members) {
+            const auto* m = world.GetComponent<NavMeshSurfaceComponent>(member);
+            key.flags |= static_cast<uint8_t>((m->drawNavMesh ? kOutline : 0) | (m->drawNavMeshFill ? kFill : 0)
+                                              | (m->drawTileBounds ? kTileBounds : 0));
+        }
+        scanKeys_.push_back(key);
+    }
 }
 
 void NavDebugView::BuildFromMesh(Geometry& g, const NavTileStore& store)

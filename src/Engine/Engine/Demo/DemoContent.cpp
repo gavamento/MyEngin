@@ -4522,7 +4522,7 @@ void BuildNavShowcaseScene(EngineContext& ctx)
         MYE_LOG_ERROR("[nav-demo] cannot collect the bake input");
         return;
     }
-    NavBakeOutput baked = NavBakeAsset(inputs.config, inputs.soup, nullptr);
+    NavBakeOutput baked = NavBakeAsset(inputs.config, inputs.soup, inputs.clipBoxes, nullptr);
     if (baked.status != NavBakeStatus::Ok) {
         MYE_LOG_ERROR("[nav-demo] bake failed: %s", baked.message.c_str());
         return;

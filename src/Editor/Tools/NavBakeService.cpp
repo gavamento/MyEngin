@@ -135,7 +135,7 @@ void NavBakeService::WorkerLoop()
         }
         // 重い処理は mutex の外。job は shared_ptr なので、途中で jobs_ から外れても生きている
         const auto begin = std::chrono::steady_clock::now();
-        job->result.output = NavBakeAsset(job->inputs.config, job->inputs.soup, &job->control);
+        job->result.output = NavBakeAsset(job->inputs.config, job->inputs.soup, job->inputs.clipBoxes, &job->control);
         job->result.elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
         std::lock_guard<std::mutex> lock(mutex_);
         job->state = NavBakeJobState::Ready;
