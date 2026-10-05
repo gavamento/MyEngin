@@ -550,6 +550,25 @@ namespace MyeScripting
             => Engine.NavFindRandomPoint(agentTypeId, center, radius, areaMask, out point);
         // 自分が Manual の Link で止まっているとき、完了を通知して出口へ渡らせる
         protected bool NavCompleteLink() => Engine.NavCompleteLink(SelfId);
+        // (v26、M84d2) 自分を pos の最寄りのナビメッシュ上の点へ瞬間移動させる (目的地は保つ)
+        protected bool NavWarp(MyeVec3 pos) => Engine.NavWarp(SelfId, pos);
+        // 自分の今の位置から target への経路を引く (歩かせない) / その経路で歩かせる (Unity の CalculatePath / SetPath)。
+        // 細かい制御 (isStopped など) は NavMeshAgent のフィールドなので GetField / SetField で読み書きする
+        protected bool NavCalculatePath(MyeVec3 target, ref MyeNavPath path) => Engine.NavCalculatePath(SelfId, target, ref path);
+        protected bool NavSetPath(ref MyeNavPath path) => Engine.NavSetPath(SelfId, ref path);
+        // クエリ 4 種の .navfilter.json 付き (navFilter は資産の GUID、0 = 無し)
+        protected static int NavFindPath(int agentTypeId, MyeVec3 from, MyeVec3 to, MyeVec3[] corners, out bool partial,
+                                         uint areaMask, ulong navFilter)
+            => Engine.NavFindPathFiltered(agentTypeId, from, to, areaMask, navFilter, corners, out partial);
+        protected static bool NavSamplePosition(int agentTypeId, MyeVec3 pos, MyeVec3 extents, out MyeVec3 point,
+                                                uint areaMask, ulong navFilter)
+            => Engine.NavSamplePositionFiltered(agentTypeId, pos, extents, areaMask, navFilter, out point);
+        protected static bool NavRaycast(int agentTypeId, MyeVec3 from, MyeVec3 to, out MyeNavRaycastHit hit,
+                                         uint areaMask, ulong navFilter)
+            => Engine.NavRaycastFiltered(agentTypeId, from, to, areaMask, navFilter, out hit);
+        protected static bool NavFindRandomPoint(int agentTypeId, MyeVec3 center, float radius, out MyeVec3 point,
+                                                 uint areaMask, ulong navFilter)
+            => Engine.NavFindRandomPointFiltered(agentTypeId, center, radius, areaMask, navFilter, out point);
 
         // ---- AI の知覚 (v25、M83b) ----
         // 結果は前の tick の知覚のフェーズが書いた値。Senses のビットは PerceptionSense* を使う

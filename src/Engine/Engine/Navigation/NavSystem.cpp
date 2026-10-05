@@ -1836,6 +1836,38 @@ bool AllFinite(const float* v, int count)
     return true;
 }
 
+// startRef / startPt から endRef / endPt への回廊 (polys、最大 kQueryMaxPathPolys) と、その角 (corners、最大 maxCorners、歩行面に吸着) を求める。
+// 回廊が目的地のポリゴンまで届かなければ、回廊の最後のポリゴン上の最寄り点を終点にして partial を立てる (dtCrowd と同じ)。
+// endPt はその終点で上書きする。戻り値は角の数 (0 = 失敗)
+int FindCorridorAndCorners(const NavSurfaceRuntime& surface, const dtQueryFilter& filter, dtPolyRef startRef, const float* startPt,
+                           dtPolyRef endRef, float* endPt, dtPolyRef* polys, int& polyCount, bool& partial, float* corners,
+                           int maxCorners)
+{
+    const dtNavMeshQuery& query = *surface.query;
+    polyCount = 0;
+    const dtStatus pathStatus = query.findPath(startRef, endRef, startPt, endPt, &filter, polys, &polyCount, kQueryMaxPathPolys);
+    if (dtStatusFailed(pathStatus) || polyCount <= 0) {
+        return 0;
+    }
+    partial = dtStatusDetail(pathStatus, DT_PARTIAL_RESULT) || polys[polyCount - 1] != endRef;
+    if (polys[polyCount - 1] != endRef) {
+        float closest[3] = {};
+        if (dtStatusFailed(query.closestPointOnPoly(polys[polyCount - 1], endPt, closest, nullptr))) {
+            return 0;
+        }
+        dtVcopy(endPt, closest);
+    }
+    int cornerCount = 0;
+    if (dtStatusFailed(query.findStraightPath(startPt, endPt, polys, polyCount, corners, nullptr, nullptr, &cornerCount, maxCorners))
+        || cornerCount <= 0) {
+        return 0;
+    }
+    for (int i = 0; i < cornerCount; ++i) {
+        SnapToSurface(*surface.store, &corners[i * 3]);
+    }
+    return cornerCount;
+}
+
 } // namespace
 
 void NavConfigureQueryFilter(dtQueryFilter& filter, const NavMeshSurfaceComponent* surface, uint32_t areaMask,
@@ -1901,27 +1933,12 @@ int NavSystem::QueryFindPath(World& world, int agentTypeId, const float* from, c
     }
     dtPolyRef polys[kQueryMaxPathPolys];
     int polyCount = 0;
-    const dtStatus pathStatus = query.findPath(startRef, endRef, startPt, endPt, &filter, polys, &polyCount, kQueryMaxPathPolys);
-    if (dtStatusFailed(pathStatus) || polyCount <= 0) {
-        return 0;
-    }
-    // 回廊が目的地のポリゴンまで届かなければ、回廊の最後のポリゴン上の最寄り点を終点にする (dtCrowd と同じ)
-    bool partial = dtStatusDetail(pathStatus, DT_PARTIAL_RESULT) || polys[polyCount - 1] != endRef;
-    if (polys[polyCount - 1] != endRef) {
-        float closest[3] = {};
-        if (dtStatusFailed(query.closestPointOnPoly(polys[polyCount - 1], endPt, closest, nullptr))) {
-            return 0;
-        }
-        dtVcopy(endPt, closest);
-    }
-    const int cap = (std::min)(maxCorners, kQueryMaxCorners);
+    bool partial = false;
     float straight[kQueryMaxCorners * 3];
-    int cornerCount = 0;
-    if (dtStatusFailed(query.findStraightPath(startPt, endPt, polys, polyCount, straight, nullptr, nullptr, &cornerCount, cap)) || cornerCount <= 0) {
+    const int cornerCount = FindCorridorAndCorners(*surface, filter, startRef, startPt, endRef, endPt, polys, polyCount,
+                                                   partial, straight, (std::min)(maxCorners, kQueryMaxCorners));
+    if (cornerCount <= 0) {
         return 0;
-    }
-    for (int i = 0; i < cornerCount; ++i) {
-        SnapToSurface(*surface->store, &straight[i * 3]);
     }
     std::memcpy(outCorners, straight, sizeof(float) * 3 * static_cast<size_t>(cornerCount));
     if (outPartial != nullptr) {
@@ -2090,17 +2107,133 @@ bool NavSystem::Warp(World& world, EntityID entity, const float* position)
 
     // crowd に載っていれば、ここで置き直す (次の Update の瞬間移動の判定は 2 m 未満の Warp を拾えない)。
     // 渡りの途中なら渡りを捨てる。目的地は保ち、次の Update が新しい位置から引き直す
-    for (int slotIndex = 0; slotIndex < kCrowdCapacity; ++slotIndex) {
-        NavAgentSlot& slot = surface.slots[static_cast<size_t>(slotIndex)];
-        if (slot.entity != entity) {
-            continue;
-        }
+    const int slotIndex = FindAgentSlot(surface, entity);
+    if (slotIndex >= 0) {
         PlaceCrowdAgent(*surface.crowd, slotIndex, ref, feet);
         NavAgentSlot fresh;
         fresh.entity = entity;
-        slot = fresh;
-        break;
+        surface.slots[static_cast<size_t>(slotIndex)] = fresh;
     }
+    return true;
+}
+
+int NavSystem::FindAgentSlot(const NavSurfaceRuntime& surface, EntityID entity)
+{
+    for (int slotIndex = 0; slotIndex < kCrowdCapacity; ++slotIndex) {
+        if (surface.slots[static_cast<size_t>(slotIndex)].entity == entity) {
+            return slotIndex;
+        }
+    }
+    return -1;
+}
+
+bool NavSystem::CalculatePath(World& world, EntityID entity, const float* target, NavAgentPath& out) const
+{
+    static_assert(sizeof(dtPolyRef) == sizeof(uint32_t), "NavAgentPath.polys は 32bit の dtPolyRef (DT_POLYREF64 は使わない)");
+    const auto* agent = world.GetComponent<NavMeshAgentComponent>(entity);
+    if (agent == nullptr || !AllFinite(target, 3)) {
+        return false;
+    }
+    dtQueryFilter filter;
+    const NavSurfaceRuntime* surface = ResolveQuerySurface(world, agent->agentTypeId, agent->areaMask & kNavFlagAllAreas,
+                                                           agent->navFilter.value, filter);
+    if (surface == nullptr) {
+        return false;
+    }
+    // 始点は crowd の今の位置と回廊の先頭 (SetPath がこの先頭を経路の中に探す)。載っていない・渡りの途中は失敗
+    const int slotIndex = FindAgentSlot(*surface, entity);
+    if (slotIndex < 0 || surface->slots[static_cast<size_t>(slotIndex)].linkPhase != 0) {
+        return false;
+    }
+    const dtCrowdAgent* ag = surface->crowd->getAgent(slotIndex);
+    if (ag->state != DT_CROWDAGENT_STATE_WALKING) {
+        return false;
+    }
+    const float ext[3] = { kDestHorizontal, kDestVertical, kDestHorizontal };
+    dtPolyRef endRef = 0;
+    float endPt[3] = {};
+    surface->query->findNearestPoly(target, ext, &filter, &endRef, endPt);
+    if (endRef == 0) {
+        return false;
+    }
+    dtPolyRef polys[kQueryMaxPathPolys];
+    int polyCount = 0;
+    bool partial = false;
+    const int cornerCount = FindCorridorAndCorners(*surface, filter, ag->corridor.getFirstPoly(), ag->npos, endRef, endPt, polys,
+                                                   polyCount, partial, out.corners, kNavPathMaxCorners);
+    if (cornerCount <= 0) {
+        out.status = navpathstatus::kInvalid;
+        return false;
+    }
+    out.status = partial ? navpathstatus::kPartial : navpathstatus::kComplete;
+    out.agentTypeId = agent->agentTypeId;
+    out.polyCount = polyCount;
+    out.cornerCount = cornerCount;
+    std::memcpy(out.end, endPt, sizeof(out.end));
+    std::memcpy(out.polys, polys, sizeof(dtPolyRef) * static_cast<size_t>(polyCount));
+    return true;
+}
+
+bool NavSystem::SetPath(World& world, EntityID entity, const NavAgentPath& path)
+{
+    auto* agent = world.GetComponent<NavMeshAgentComponent>(entity);
+    if (agent == nullptr || (path.status != navpathstatus::kComplete && path.status != navpathstatus::kPartial)
+        || path.polyCount <= 0 || path.polyCount > kNavPathMaxPolys || path.agentTypeId != agent->agentTypeId
+        || !AllFinite(path.end, 3)) {
+        return false;
+    }
+    dtQueryFilter filter;
+    const NavSurfaceRuntime* found = ResolveQuerySurface(world, agent->agentTypeId, agent->areaMask & kNavFlagAllAreas,
+                                                         agent->navFilter.value, filter);
+    if (found == nullptr) {
+        return false;
+    }
+    NavSurfaceRuntime& surface = surfaces_[static_cast<size_t>(found - surfaces_.data())];
+    const int slotIndex = FindAgentSlot(surface, entity);
+    if (slotIndex < 0) {
+        return false;
+    }
+    NavAgentSlot& slot = surface.slots[static_cast<size_t>(slotIndex)];
+    dtCrowdAgent* ag = surface.crowd->getEditableAgent(slotIndex);
+    if (slot.linkPhase != 0 || ag->state != DT_CROWDAGENT_STATE_WALKING) {
+        return false;
+    }
+    // 経路を引いた後にタイルが作り直された (Obstacle・Modifier) なら、古い ref は salt で弾かれる。
+    // 回廊は Agent の今のポリゴンから始まる必要があるので、経路の中にそれを探し、手前 (もう通り過ぎた分) を落とす
+    const dtNavMesh* mesh = surface.query->getAttachedNavMesh();
+    const dtPolyRef* polys = reinterpret_cast<const dtPolyRef*>(path.polys);
+    int first = -1;
+    for (int i = 0; i < path.polyCount; ++i) {
+        if (!mesh->isValidPolyRef(polys[i])) {
+            return false;
+        }
+        if (first < 0 && polys[i] == ag->corridor.getFirstPoly()) {
+            first = i;
+        }
+    }
+    if (first < 0) {
+        return false;
+    }
+    ag->corridor.setCorridor(path.end, polys + first, path.polyCount - first);
+    // dtCrowd の目標を「経路は手元にある」状態にする (requestMoveTarget を通さない = 経路を引き直さない)。
+    // 経路が後で通れなくなれば dtCrowd の再計画が targetRef / targetPos へ引き直す
+    ag->targetRef = polys[path.polyCount - 1];
+    dtVcopy(ag->targetPos, path.end);
+    ag->targetState = DT_CROWDAGENT_TARGET_VALID;
+    ag->targetReplan = false;
+    ag->targetReplanTime = 0.0f;
+    ag->targetPathqRef = DT_PATHQ_INVALID;
+    ag->partial = path.status == navpathstatus::kPartial;
+    ag->ncorners = 0;
+    // 目的地は経路の終点。次の Update は同じ目的地を要求済みとして扱い、引き直さない
+    agent->destination = { path.end[0], path.end[1], path.end[2] };
+    agent->hasDestination = true;
+    agent->pathPartial = ag->partial;
+    slot.requested = 1;
+    slot.destInvalid = 0;
+    slot.arrived = 0;
+    ResetStuck(slot);
+    std::memcpy(slot.requestedDest, path.end, sizeof(slot.requestedDest));
     return true;
 }
 

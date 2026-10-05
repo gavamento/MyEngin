@@ -144,8 +144,9 @@ struct ScriptApiContext {
     GraphicsDevice*   graphicsDevice = nullptr;
     ShaderManager*    shaderManager  = nullptr;
     TextureLibrary*   textureLibrary = nullptr;
-    // v24: Nav* のクエリの引き先。null 時は Nav* スロットが 0 を返す
-    const NavSystem* nav = nullptr;
+    // v24: Nav* のクエリの引き先。null 時は Nav* スロットが 0 を返す。
+    // v26: NavWarp / NavSetPath はその場で crowd を書き換えるので const ではない
+    NavSystem* nav = nullptr;
 };
 
 // out に MyeEngineApi (engine = ctx) を構築する。ctx の生存は呼び出し側が管理する。

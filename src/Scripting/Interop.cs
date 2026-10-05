@@ -116,6 +116,29 @@ namespace MyeScripting
         public MyeVec3 PredictedPos;   // 見失った後の予測位置
     }
 
+    // v26 (M84d2): NavCalculatePath の出力 / NavSetPath の入力 (EngineAPI.h の MyeNavPath と同一レイアウト、4112 バイト)。
+    // Unity の NavMeshPath。ポリゴン列は不透明 (NavSetPath に渡すためだけ)。角は Corner(i) で読む
+    [StructLayout(LayoutKind.Sequential)]
+    public unsafe struct MyeNavPath
+    {
+        public const int MaxPolys = 256;
+        public const int MaxCorners = 256;
+        public int Status;       // 0 = 無効 / 1 = 目的地まで届く / 2 = 部分経路
+        public int AgentTypeId;
+        public int PolyCount;
+        public int CornerCount;
+        public MyeVec3 End;      // 終点 (部分経路なら届く限りの最寄り)
+        internal fixed uint Polys[MaxPolys];
+        internal fixed float Corners[MaxCorners * 3];
+
+        // i 番目の角 (0 = Agent の位置)。範囲外は 0
+        public MyeVec3 Corner(int i)
+        {
+            if (i < 0 || i >= CornerCount || i >= MaxCorners) return MyeVec3.Zero;
+            return new MyeVec3(Corners[i * 3], Corners[i * 3 + 1], Corners[i * 3 + 2]);
+        }
+    }
+
     // v24 (M82i): NavRaycast の出力 (EngineAPI.h の MyeNavRaycastHit と同一レイアウト)
     [StructLayout(LayoutKind.Sequential)]
     public struct MyeNavRaycastHit
@@ -322,6 +345,14 @@ namespace MyeScripting
         public delegate* unmanaged<void*, MyeEntityId, int> PerceptionGetCount;
         public delegate* unmanaged<void*, MyeEntityId, int, MyePercept*, int> PerceptionGet;
         public delegate* unmanaged<void*, MyeEntityId, MyeEntityId, int> PerceptionCanSee;
+        // ---- v26 (M84d2): NavMesh の続き ----
+        public delegate* unmanaged<void*, MyeEntityId, MyeVec3, int> NavWarp;
+        public delegate* unmanaged<void*, MyeEntityId, MyeVec3, MyeNavPath*, int> NavCalculatePath;
+        public delegate* unmanaged<void*, MyeEntityId, MyeNavPath*, int> NavSetPath;
+        public delegate* unmanaged<void*, int, MyeVec3, MyeVec3, uint, ulong, MyeVec3*, int, int*, int> NavFindPathFiltered;
+        public delegate* unmanaged<void*, int, MyeVec3, MyeVec3, uint, ulong, MyeVec3*, int> NavSamplePositionFiltered;
+        public delegate* unmanaged<void*, int, MyeVec3, MyeVec3, uint, ulong, MyeNavRaycastHit*, int> NavRaycastFiltered;
+        public delegate* unmanaged<void*, int, MyeVec3, float, uint, ulong, MyeVec3*, int> NavFindRandomPointFiltered;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -1245,6 +1276,82 @@ namespace MyeScripting
         // Manual の Link で止まっている Agent に完了を通知する
         public static bool NavCompleteLink(MyeEntityId entity)
             => _api != null && _api->NavCompleteLink(_api->Engine, entity) != 0;
+
+        // ---- v26 (M84d2): NavMesh の続き ----
+        // pos の最寄りのナビメッシュ上の点へ瞬間移動させる (目的地は保つ)
+        public static bool NavWarp(MyeEntityId entity, MyeVec3 pos)
+            => _api != null && _api->NavWarp(_api->Engine, entity, pos) != 0;
+
+        // Agent の今の位置から target への経路を引く (歩かせない)
+        public static bool NavCalculatePath(MyeEntityId entity, MyeVec3 target, ref MyeNavPath path)
+        {
+            path.Status = 0;
+            if (_api == null) return false;
+            fixed (MyeNavPath* p = &path)
+            {
+                return _api->NavCalculatePath(_api->Engine, entity, target, p) != 0;
+            }
+        }
+
+        // path を経路にして歩かせる (引いた後に離れた / タイルが作り直されたなら false)
+        public static bool NavSetPath(MyeEntityId entity, ref MyeNavPath path)
+        {
+            if (_api == null) return false;
+            fixed (MyeNavPath* p = &path)
+            {
+                return _api->NavSetPath(_api->Engine, entity, p) != 0;
+            }
+        }
+
+        // クエリ 4 種の .navfilter.json 付き (navFilter は資産の GUID、0 = 無し)
+        public static int NavFindPathFiltered(int agentTypeId, MyeVec3 from, MyeVec3 to, uint areaMask, ulong navFilter,
+                                              MyeVec3[] corners, out bool partial)
+        {
+            partial = false;
+            if (_api == null || corners == null || corners.Length == 0) return 0;
+            int part = 0;
+            int count;
+            fixed (MyeVec3* p = corners)
+            {
+                count = _api->NavFindPathFiltered(_api->Engine, agentTypeId, from, to, areaMask, navFilter, p,
+                                                  corners.Length, &part);
+            }
+            partial = part != 0;
+            return count;
+        }
+
+        public static bool NavSamplePositionFiltered(int agentTypeId, MyeVec3 pos, MyeVec3 extents, uint areaMask,
+                                                     ulong navFilter, out MyeVec3 point)
+        {
+            point = MyeVec3.Zero;
+            if (_api == null) return false;
+            fixed (MyeVec3* p = &point)
+            {
+                return _api->NavSamplePositionFiltered(_api->Engine, agentTypeId, pos, extents, areaMask, navFilter, p) != 0;
+            }
+        }
+
+        public static bool NavRaycastFiltered(int agentTypeId, MyeVec3 from, MyeVec3 to, uint areaMask, ulong navFilter,
+                                              out MyeNavRaycastHit hit)
+        {
+            hit = default;
+            if (_api == null) return false;
+            fixed (MyeNavRaycastHit* p = &hit)
+            {
+                return _api->NavRaycastFiltered(_api->Engine, agentTypeId, from, to, areaMask, navFilter, p) != 0;
+            }
+        }
+
+        public static bool NavFindRandomPointFiltered(int agentTypeId, MyeVec3 center, float radius, uint areaMask,
+                                                      ulong navFilter, out MyeVec3 point)
+        {
+            point = MyeVec3.Zero;
+            if (_api == null) return false;
+            fixed (MyeVec3* p = &point)
+            {
+                return _api->NavFindRandomPointFiltered(_api->Engine, agentTypeId, center, radius, areaMask, navFilter, p) != 0;
+            }
+        }
 
         // ---- v25 (M83b): AI の知覚。結果は前の tick の知覚のフェーズが書いた値 ----
         // pos で音を鳴らす (hearingMode = Distance の AIPerception が距離の減衰で聞く)。戻り値は聞こえた数

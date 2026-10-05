@@ -22,6 +22,12 @@ struct NavDemoDriver : Script<NavDemoDriver> {
     int32_t rayHit = 0;        // NavRaycast が壁で止まったか
     MyeVec3 randomPoint = {};  // NavFindRandomPoint の点 (World の RNG)
     int32_t stateStatus = -1;  // NavGetAgentState の status
+    // ABI v26 (M84d2) の結果。120 tick の撮影 (shot_verify の nav) より後で呼び、同じく sim 状態へ書き戻す
+    int32_t filteredCorners = 0; // NavFindPathFiltered (navFilter 0) の角の数 = cornerCount と同じはず
+    int32_t calcStatus = -1;     // NavCalculatePath の status
+    int32_t calcCorners = 0;     // 同・角の数
+    int32_t setPathOk = 0;       // NavSetPath を受け付けたか
+    int32_t warpOk = 0;          // NavWarp を受け付けたか
 
     void Update(MyeUpdateContext& ctx)
     {
@@ -70,6 +76,29 @@ struct NavDemoDriver : Script<NavDemoDriver> {
             if (MyeNavGetAgentState(ctx, ctx.self, state)) {
                 stateStatus = state.status;
             }
+            filteredCorners = MyeNavFindPathFiltered(ctx, 0, feet, farCorner, kAllAreas, 0, corners, 32, partial);
+        }
+
+        // v26: 細かい制御 (汎用フィールド) と経路の受け渡し・瞬間移動。Agent ごとに出発点の z で値を変える
+        constexpr uint64_t fPriority = MyeNameHash("avoidancePriority");
+        constexpr uint64_t fStopped = MyeNameHash("isStopped");
+        if (ctx.tickIndex == 150) {
+            const int32_t priority = static_cast<int32_t>(home.z + 10.0f) * 5;
+            MyeSetField(ctx, ctx.self, comp, fPriority, priority);
+        }
+        if (ctx.tickIndex == 180) {
+            MyeNavPath path = {};
+            if (MyeNavCalculatePath(ctx, ctx.self, { 10.0f, 0.0f, -9.0f }, path)) {
+                calcStatus = path.status;
+                calcCorners = path.cornerCount;
+                setPathOk = MyeNavSetPath(ctx, ctx.self, path) ? 1 : 0;
+            }
+        }
+        if (ctx.tickIndex == 240 || ctx.tickIndex == 270) {
+            MyeSetField(ctx, ctx.self, comp, fStopped, ctx.tickIndex == 240);
+        }
+        if (ctx.tickIndex == 420) {
+            warpOk = MyeNavWarp(ctx, ctx.self, { home.x + 1.0f, home.y, home.z }) ? 1 : 0;
         }
         // 同じ値の再設定は経路を引き直さない (汎用フィールドの書き込みと同じ結果になるはず)
         if (ctx.tickIndex == kSwitchTick) {
@@ -79,4 +108,5 @@ struct NavDemoDriver : Script<NavDemoDriver> {
 };
 REGISTER_SCRIPT(NavDemoDriver,
                 FIELDS(MYE_F_JP(switched, "切り替え回数"), MYE_F_JP(lastRemaining, "直近の残り距離"), home, homeSet,
-                       cornerCount, pathPartial, sampleY, rayHit, randomPoint, stateStatus));
+                       cornerCount, pathPartial, sampleY, rayHit, randomPoint, stateStatus, filteredCorners, calcStatus,
+                       calcCorners, setPathOk, warpOk));

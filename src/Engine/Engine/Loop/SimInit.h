@@ -87,7 +87,7 @@ struct SimSharedServices {
     CursorLockState* cursorLock = nullptr;
     int* pendingLoadPersistSlot = nullptr;
     WindowModeState* windowMode = nullptr;
-    const NavSystem* nav = nullptr; // v24: NavFindPath 等のクエリの引き先。null = 該当スロットが 0 を返す
+    NavSystem* nav = nullptr; // v24: NavFindPath 等のクエリの引き先 (v26 の NavWarp / NavSetPath は書き換える)。null = 該当スロットが 0 を返す
 };
 void WireScriptServices(ScriptHost& scriptHost, ManagedHost& managedHost,
                         const SimSharedServices& services, bool developmentRun);

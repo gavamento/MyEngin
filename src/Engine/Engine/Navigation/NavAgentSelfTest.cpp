@@ -2586,6 +2586,135 @@ bool RunNavAgentSelfTest()
                  "(API Link) 通知すると出口へ移る");
     }
 
+    // ---- 12c. スクリプト API (ABI v26、M84d2): Warp / CalculatePath / SetPath と、フィルタ付きのクエリ 4 本 ----
+    {
+        NavFilterLibrary library;
+        NavFilterLibrary* const installed = navfilter::Library();
+        navfilter::Install(&library);
+        NavAreaFilter excluding;
+        excluding.excludedAreas = 1u << 3;
+        const uint64_t excludingGuid = library.Register(L"c:\\nav_selftest\\ApiExcluding.navfilter.json", excluding);
+
+        Scene scene;
+        AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+        const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+        AddModifier(scene, 0.0f, 1.0f, 0.0f, 4.0f, 2.0f, 8.0f, 3); // エリア 3 の帯 (x = -2..2、z = -4..4)
+        const EntityID walker = AddAgent(scene, "PathWalker", -8.0f, 0.0f, 6.0f, nullptr, true);
+        ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(API v26) 帯のある床をベイクできる");
+        Sim sim(scene);
+        World& world = sim.GetWorld();
+        ScriptApiContext sctx;
+        sctx.scene = &scene;
+        sctx.nav = &sim.nav;
+        MyeEngineApi api;
+        BuildEngineApi(api, &sctx);
+        const MyeEntityId walkerId = ToShared(walker);
+        static MyeNavPath path; // 4 KB
+        path.status = 7;
+        ck.Check(api.NavCalculatePath(api.engine, walkerId, { 8.0f, 0.0f, 6.0f }, &path) == 0 && path.status == 0
+                     && api.NavWarp(api.engine, walkerId, { 0.0f, 0.0f, 6.0f }) == 0,
+                 "(API v26) Surface の読み込み前は NavCalculatePath (status = 0) / NavWarp が 0");
+        for (int i = 0; i < 3; ++i) {
+            sim.Step();
+        }
+
+        // フィルタ付きのクエリ: navFilter 0 は v24 の版と同じ結果、除外のフィルタは帯を避ける
+        const MyeVec3 west = { -8.0f, 0.0f, 0.0f };
+        const MyeVec3 east = { 8.0f, 0.0f, 0.0f };
+        MyeVec3 plainCorners[32] = {};
+        MyeVec3 zeroCorners[32] = {};
+        MyeVec3 exclCorners[32] = {};
+        int32_t partial = -1;
+        const int32_t nPlain = api.NavFindPath(api.engine, 0, west, east, 0xFFFFFFFFu, plainCorners, 32, &partial);
+        const int32_t nZero = api.NavFindPathFiltered(api.engine, 0, west, east, 0xFFFFFFFFu, 0, zeroCorners, 32, &partial);
+        const int32_t nExcl = api.NavFindPathFiltered(api.engine, 0, west, east, 0xFFFFFFFFu, excludingGuid, exclCorners, 32, &partial);
+        float zExcl = 0.0f;
+        for (int i = 0; i < nExcl; ++i) {
+            zExcl = (std::max)(zExcl, std::fabs(exclCorners[i].z));
+        }
+        ck.Check(nPlain >= 2 && nZero == nPlain && std::memcmp(plainCorners, zeroCorners, sizeof(MyeVec3) * 32) == 0,
+                 "(API v26) NavFindPathFiltered: navFilter 0 は NavFindPath と同じ角");
+        ck.Check(nExcl >= 3 && zExcl > 3.5f && partial == 0, "(API v26) NavFindPathFiltered: 除外のフィルタで帯の外を回る");
+        MyeVec3 sampled = {};
+        ck.Check(api.NavSamplePositionFiltered(api.engine, 0, { 0.0f, 0.0f, 0.0f }, { 1.0f, 2.0f, 1.0f }, 0xFFFFFFFFu, 0, &sampled) == 1
+                     && api.NavSamplePositionFiltered(api.engine, 0, { 0.0f, 0.0f, 0.0f }, { 1.0f, 2.0f, 1.0f }, 0xFFFFFFFFu,
+                                                      excludingGuid, &sampled) == 0,
+                 "(API v26) NavSamplePositionFiltered: 帯の真ん中は、除外のフィルタでは範囲内にナビメッシュが無い");
+        MyeNavRaycastHit hit = {};
+        const int rayPlain = api.NavRaycastFiltered(api.engine, 0, west, east, 0xFFFFFFFFu, 0, &hit);
+        const int plainHit = hit.hit;
+        const int rayExcl = api.NavRaycastFiltered(api.engine, 0, west, east, 0xFFFFFFFFu, excludingGuid, &hit);
+        ck.Check(rayPlain == 1 && plainHit == 0 && rayExcl == 1 && hit.hit == 1 && hit.point.x < -1.5f,
+                 "(API v26) NavRaycastFiltered: 除外のフィルタでは帯の手前で止まる");
+        MyeVec3 randomPoint = {};
+        const int randomOk = api.NavFindRandomPointFiltered(api.engine, 0, { 0.0f, 0.0f, 6.0f }, 1.5f, 0xFFFFFFFFu, excludingGuid,
+                                                            &randomPoint);
+        ck.Check(randomOk == 1 && std::fabs(randomPoint.z - 6.0f) <= 1.51f,
+                 "(API v26) NavFindRandomPointFiltered: 帯の外の円では点が見つかる");
+
+        // CalculatePath: 歩かせずに経路を返す
+        const MyeVec3 target = { 8.0f, 0.0f, 6.0f };
+        ck.Check(api.NavCalculatePath(api.engine, walkerId, target, &path) == 1 && path.status == 1 && path.agentTypeId == 0
+                     && path.polyCount >= 1 && path.cornerCount >= 2 && std::fabs(path.corners[0].x - (-8.0f)) < 0.1f
+                     && std::fabs(path.end.x - 8.0f) < 0.05f && std::fabs(path.end.z - 6.0f) < 0.05f,
+                 "(API v26) NavCalculatePath: Agent の位置から目的地までの経路 (status 1、先頭の角は Agent の位置)");
+        sim.Step();
+        ck.Check(!world.GetComponent<NavMeshAgentComponent>(walker)->hasDestination
+                     && std::fabs(world.GetComponent<LocalTransform>(walker)->position.x - (-8.0f)) < 0.01f,
+                 "(API v26) ...NavCalculatePath だけでは歩かない");
+
+        // SetPath の拒否
+        static MyeNavPath bad;
+        bad = path;
+        bad.agentTypeId = 3;
+        const int rejectType = api.NavSetPath(api.engine, walkerId, &bad);
+        bad = path;
+        bad.status = 0;
+        const int rejectStatus = api.NavSetPath(api.engine, walkerId, &bad);
+        bad = path;
+        bad.polyCount = 0;
+        const int rejectEmpty = api.NavSetPath(api.engine, walkerId, &bad);
+        ck.Check(rejectType == 0 && rejectStatus == 0 && rejectEmpty == 0 && api.NavSetPath(api.engine, walkerId, nullptr) == 0
+                     && !world.GetComponent<NavMeshAgentComponent>(walker)->hasDestination,
+                 "(API v26) NavSetPath: 種別違い / status 0 / 空 / null は 0 で、何も変えない");
+
+        // SetPath: 経路を引き直さずに歩かせ、目的地は経路の終点になる
+        ck.Check(api.NavSetPath(api.engine, walkerId, &path) == 1, "(API v26) NavSetPath: 引いた経路を受け付ける");
+        const auto* agent = world.GetComponent<NavMeshAgentComponent>(walker);
+        ck.Check(agent->hasDestination && agent->destination.x == path.end.x && agent->destination.z == path.end.z,
+                 "(API v26) ...目的地は経路の終点");
+        for (int i = 0; i < 600; ++i) {
+            sim.Step();
+        }
+        const auto* lt = world.GetComponent<LocalTransform>(walker);
+        ck.Check(world.GetComponent<NavMeshAgentComponent>(walker)->status == navagentstatus::kArrived
+                     && std::fabs(lt->position.x - 8.0f) < 0.4f && std::fabs(lt->position.z - 6.0f) < 0.4f,
+                 "(API v26) ...その経路で歩いて着く");
+
+        // 経路の回廊に今のポリゴンが無い (引いた後に遠くへ離れた) と拒否する
+        bad = path;
+        bad.polyCount = 1; // 出発点のポリゴンだけ
+        MYE_LOG_INFO("  [api v26] path polys %d, corners %d", static_cast<int>(path.polyCount), static_cast<int>(path.cornerCount));
+        ck.Check(path.polyCount > 1 && api.NavSetPath(api.engine, walkerId, &bad) == 0,
+                 "(API v26) NavSetPath: 回廊に Agent の今のポリゴンが無ければ 0");
+
+        // タイルが作り直されたら (Obstacle) 古い経路は拒否する
+        ck.Check(api.NavCalculatePath(api.engine, walkerId, { -8.0f, 0.0f, 6.0f }, &path) == 1, "(API v26) 帰りの経路を引ける");
+        AddBoxObstacle(scene, 0.0f, 1.0f, 6.0f, 1.0f, 2.0f, 2.0f);
+        world.ApplyStructuralChanges();
+        sim.Step();
+        ck.Check(api.NavSetPath(api.engine, walkerId, &path) == 0,
+                 "(API v26) NavSetPath: 引いた後に Obstacle でタイルが作り直されると、古い経路は 0");
+
+        // Warp
+        ck.Check(api.NavWarp(api.engine, walkerId, { 0.0f, 0.0f, -8.0f }) == 1
+                     && std::fabs(world.GetComponent<LocalTransform>(walker)->position.z - (-8.0f)) < 0.05f,
+                 "(API v26) NavWarp: 指定した点へ移る");
+        ck.Check(api.NavWarp(api.engine, walkerId, { 50.0f, 0.0f, 0.0f }) == 0 && api.NavWarp(api.engine, ToShared(surface), { 0.0f, 0.0f, 0.0f }) == 0,
+                 "(API v26) NavWarp: ナビメッシュの外 / Agent ではないエンティティは 0");
+        navfilter::Install(installed);
+    }
+
     // ---- 13. 細かい制御 (M84d): isStopped / autoBraking / avoidancePriority / separationWeight / updatePosition・Rotation / Warp ----
     // 平らな広場 (kOpenGuid) を毎回作る。Agent は x = -6 から x = +6 へ歩く
     const auto buildOpen = [](Scene& scene) {

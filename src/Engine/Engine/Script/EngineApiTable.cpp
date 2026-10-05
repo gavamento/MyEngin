@@ -92,6 +92,91 @@ SessionLanes LanesOf(void* engine)
     return DefaultLanesFor(c->playerCount);
 }
 
+// ---- Nav* のクエリ 4 種の実体 (v24 の版は navFilter = 0 で、v26 の ...Filtered はそのまま呼ぶ) ----
+static_assert(sizeof(MyeVec3) == sizeof(float) * 3, "MyeVec3 は float 3 つ (Navigation の float[3] へ書く)");
+static_assert(sizeof(MyeNavPath) == sizeof(NavAgentPath) && offsetof(MyeNavPath, end) == offsetof(NavAgentPath, end)
+                  && offsetof(MyeNavPath, polys) == offsetof(NavAgentPath, polys)
+                  && offsetof(MyeNavPath, corners) == offsetof(NavAgentPath, corners)
+                  && MYE_NAV_PATH_MAX_POLYS == kNavPathMaxPolys && MYE_NAV_PATH_MAX_CORNERS == kNavPathMaxCorners,
+              "MyeNavPath は NavAgentPath と同じ並び");
+
+int32_t NavQueryFindPath(void* engine, int32_t agentTypeId, MyeVec3 from, MyeVec3 to, uint32_t areaMask, uint64_t navFilter,
+                         MyeVec3* outCorners, int32_t maxCorners, int32_t* outPartial)
+{
+    if (outPartial != nullptr) {
+        *outPartial = 0;
+    }
+    const NavSystem* nav = Ctx(engine)->nav;
+    if (nav == nullptr || outCorners == nullptr || maxCorners <= 0) {
+        return 0;
+    }
+    const float f[3] = { from.x, from.y, from.z };
+    const float t[3] = { to.x, to.y, to.z };
+    bool partial = false;
+    const int count = nav->QueryFindPath(Sc(engine)->GetWorld(), agentTypeId, f, t, areaMask, navFilter,
+                                         reinterpret_cast<float*>(outCorners), maxCorners, &partial);
+    if (count > 0 && outPartial != nullptr) {
+        *outPartial = partial ? 1 : 0;
+    }
+    return count;
+}
+
+int NavQuerySamplePosition(void* engine, int32_t agentTypeId, MyeVec3 pos, MyeVec3 extents, uint32_t areaMask,
+                           uint64_t navFilter, MyeVec3* out)
+{
+    const NavSystem* nav = Ctx(engine)->nav;
+    if (nav == nullptr || out == nullptr) {
+        return 0;
+    }
+    const float p[3] = { pos.x, pos.y, pos.z };
+    const float e[3] = { extents.x, extents.y, extents.z };
+    float r[3] = {};
+    if (!nav->QuerySamplePosition(Sc(engine)->GetWorld(), agentTypeId, p, e, areaMask, navFilter, r)) {
+        return 0;
+    }
+    *out = { r[0], r[1], r[2] };
+    return 1;
+}
+
+int NavQueryRaycast(void* engine, int32_t agentTypeId, MyeVec3 from, MyeVec3 to, uint32_t areaMask, uint64_t navFilter,
+                    MyeNavRaycastHit* out)
+{
+    const NavSystem* nav = Ctx(engine)->nav;
+    if (nav == nullptr) {
+        return 0;
+    }
+    const float f[3] = { from.x, from.y, from.z };
+    const float t[3] = { to.x, to.y, to.z };
+    NavRaycastResult r;
+    if (!nav->QueryRaycast(Sc(engine)->GetWorld(), agentTypeId, f, t, areaMask, navFilter, r)) {
+        return 0;
+    }
+    if (out != nullptr) {
+        out->hit = r.hit ? 1 : 0;
+        out->point = { r.point[0], r.point[1], r.point[2] };
+        out->normal = { r.normal[0], r.normal[1], r.normal[2] };
+        out->distance = r.distance;
+    }
+    return 1;
+}
+
+int NavQueryRandomPoint(void* engine, int32_t agentTypeId, MyeVec3 center, float radius, uint32_t areaMask,
+                        uint64_t navFilter, MyeVec3* out)
+{
+    const NavSystem* nav = Ctx(engine)->nav;
+    if (nav == nullptr || out == nullptr) {
+        return 0;
+    }
+    World& world = Sc(engine)->GetWorld();
+    const float c[3] = { center.x, center.y, center.z };
+    float r[3] = {};
+    if (!nav->QueryRandomPoint(world, agentTypeId, c, radius, areaMask, navFilter, world.Rng(), r)) {
+        return 0;
+    }
+    *out = { r[0], r[1], r[2] };
+    return 1;
+}
+
 } // namespace
 
 // engine ポインタは常に ScriptApiContext*。キャプチャなしラムダ → 関数ポインタ変換で
@@ -1306,75 +1391,22 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         }
         return 1;
     };
+    // クエリ 4 種は v24 の版 (navFilter = 0) と v26 の ...Filtered が同じ実装 (NavQuery* 下の関数) を通る
     out.NavFindPath = [](void* engine, int32_t agentTypeId, MyeVec3 from, MyeVec3 to, uint32_t areaMask,
                          MyeVec3* outCorners, int32_t maxCorners, int32_t* outPartial) -> int32_t {
-        if (outPartial != nullptr) {
-            *outPartial = 0;
-        }
-        const NavSystem* nav = Ctx(engine)->nav;
-        if (nav == nullptr || outCorners == nullptr || maxCorners <= 0) {
-            return 0;
-        }
-        static_assert(sizeof(MyeVec3) == sizeof(float) * 3, "MyeVec3 は float 3 つ (Navigation の float[3] へ書く)");
-        const float f[3] = { from.x, from.y, from.z };
-        const float t[3] = { to.x, to.y, to.z };
-        bool partial = false;
-        const int count = nav->QueryFindPath(Sc(engine)->GetWorld(), agentTypeId, f, t, areaMask, 0,
-                                             reinterpret_cast<float*>(outCorners), maxCorners, &partial);
-        if (count > 0 && outPartial != nullptr) {
-            *outPartial = partial ? 1 : 0;
-        }
-        return count;
+        return NavQueryFindPath(engine, agentTypeId, from, to, areaMask, 0, outCorners, maxCorners, outPartial);
     };
     out.NavSamplePosition = [](void* engine, int32_t agentTypeId, MyeVec3 pos, MyeVec3 extents, uint32_t areaMask,
                                MyeVec3* out) -> int {
-        const NavSystem* nav = Ctx(engine)->nav;
-        if (nav == nullptr || out == nullptr) {
-            return 0;
-        }
-        const float p[3] = { pos.x, pos.y, pos.z };
-        const float e[3] = { extents.x, extents.y, extents.z };
-        float r[3] = {};
-        if (!nav->QuerySamplePosition(Sc(engine)->GetWorld(), agentTypeId, p, e, areaMask, 0, r)) {
-            return 0;
-        }
-        *out = { r[0], r[1], r[2] };
-        return 1;
+        return NavQuerySamplePosition(engine, agentTypeId, pos, extents, areaMask, 0, out);
     };
     out.NavRaycast = [](void* engine, int32_t agentTypeId, MyeVec3 from, MyeVec3 to, uint32_t areaMask,
                         MyeNavRaycastHit* out) -> int {
-        const NavSystem* nav = Ctx(engine)->nav;
-        if (nav == nullptr) {
-            return 0;
-        }
-        const float f[3] = { from.x, from.y, from.z };
-        const float t[3] = { to.x, to.y, to.z };
-        NavRaycastResult r;
-        if (!nav->QueryRaycast(Sc(engine)->GetWorld(), agentTypeId, f, t, areaMask, 0, r)) {
-            return 0;
-        }
-        if (out != nullptr) {
-            out->hit = r.hit ? 1 : 0;
-            out->point = { r.point[0], r.point[1], r.point[2] };
-            out->normal = { r.normal[0], r.normal[1], r.normal[2] };
-            out->distance = r.distance;
-        }
-        return 1;
+        return NavQueryRaycast(engine, agentTypeId, from, to, areaMask, 0, out);
     };
     out.NavFindRandomPoint = [](void* engine, int32_t agentTypeId, MyeVec3 center, float radius, uint32_t areaMask,
                                 MyeVec3* out) -> int {
-        const NavSystem* nav = Ctx(engine)->nav;
-        if (nav == nullptr || out == nullptr) {
-            return 0;
-        }
-        World& world = Sc(engine)->GetWorld();
-        const float c[3] = { center.x, center.y, center.z };
-        float r[3] = {};
-        if (!nav->QueryRandomPoint(world, agentTypeId, c, radius, areaMask, 0, world.Rng(), r)) {
-            return 0;
-        }
-        *out = { r[0], r[1], r[2] };
-        return 1;
+        return NavQueryRandomPoint(engine, agentTypeId, center, radius, areaMask, 0, out);
     };
     out.NavCompleteLink = [](void* engine, MyeEntityId entity) -> int {
         const NavSystem* nav = Ctx(engine)->nav;
@@ -1415,6 +1447,36 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     out.PerceptionCanSee = [](void* engine, MyeEntityId observer, MyeEntityId target) -> int {
         return PerceptionCanSee(Sc(engine)->GetWorld(), ToEngine(observer), ToEngine(target), Ctx(engine)->tickIndex) ? 1 : 0;
     };
+
+    // ---- v26 (M84d2): NavMesh の続き。Warp / SetPath は NavSystem がその場で crowd を書き換える ----
+    out.NavWarp = [](void* engine, MyeEntityId entity, MyeVec3 pos) -> int {
+        NavSystem* nav = Ctx(engine)->nav;
+        const float p[3] = { pos.x, pos.y, pos.z };
+        return nav != nullptr && nav->Warp(Sc(engine)->GetWorld(), ToEngine(entity), p) ? 1 : 0;
+    };
+    out.NavCalculatePath = [](void* engine, MyeEntityId entity, MyeVec3 target, MyeNavPath* out) -> int {
+        if (out == nullptr) {
+            return 0;
+        }
+        out->status = 0;
+        const NavSystem* nav = Ctx(engine)->nav;
+        if (nav == nullptr) {
+            return 0;
+        }
+        const float t[3] = { target.x, target.y, target.z };
+        return nav->CalculatePath(Sc(engine)->GetWorld(), ToEngine(entity), t, *reinterpret_cast<NavAgentPath*>(out)) ? 1 : 0;
+    };
+    out.NavSetPath = [](void* engine, MyeEntityId entity, const MyeNavPath* path) -> int {
+        NavSystem* nav = Ctx(engine)->nav;
+        return nav != nullptr && path != nullptr
+                       && nav->SetPath(Sc(engine)->GetWorld(), ToEngine(entity), *reinterpret_cast<const NavAgentPath*>(path))
+                   ? 1
+                   : 0;
+    };
+    out.NavFindPathFiltered = &NavQueryFindPath;
+    out.NavSamplePositionFiltered = &NavQuerySamplePosition;
+    out.NavRaycastFiltered = &NavQueryRaycast;
+    out.NavFindRandomPointFiltered = &NavQueryRandomPoint;
 }
 
 } // namespace mye

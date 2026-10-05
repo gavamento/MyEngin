@@ -102,7 +102,7 @@ public:
     void SetDevelopmentRun(bool on) { apiCtx_.developmentRun = on ? 1 : 0; }
 
     // v24: ナビメッシュのクエリの引き先 (ScriptHost と同じ規約)
-    void SetNavSystem(const NavSystem* nav) { apiCtx_.nav = nav; }
+    void SetNavSystem(NavSystem* nav) { apiCtx_.nav = nav; }
 
     // v14 (M59k): 今 tick の接触列を繋ぐ / 外す (ScriptHost と同じ規約)
     void SetTickContacts(const std::vector<SolidContact>* contacts) { apiCtx_.contacts = contacts; }

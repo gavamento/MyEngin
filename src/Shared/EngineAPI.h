@@ -40,7 +40,10 @@
 //             NavRaycast / NavFindRandomPoint / NavCompleteLink (NetGetSystemEvent の次の 8 本)
 // v25 (M83b): AI の知覚 — PerceptionReportNoise / PerceptionReportDamage / PerceptionGetCount / PerceptionGet /
 //             PerceptionCanSee (NavCompleteLink の次の 5 本)
-#define MYE_API_VERSION 25u
+// v26 (M84d2): NavMesh の続き — NavWarp / NavCalculatePath / NavSetPath と、.navfilter.json を渡せるクエリ 4 本
+//             (NavFindPathFiltered / NavSamplePositionFiltered / NavRaycastFiltered / NavFindRandomPointFiltered。
+//             既存スロットの引数は変えない規則なので別スロット)。PerceptionCanSee の次の 7 本
+#define MYE_API_VERSION 26u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -137,6 +140,20 @@ struct MyePercept {
     float strength;          // 最後に知覚した強さ
     MyeVec3 velocity;        // 視覚で続けて見た位置から求めた速度
     MyeVec3 predictedPos;    // 見失った後の予測位置 (見えている間は lastSensedPos)
+};
+
+// v26 (M84d2) NavCalculatePath の出力 / NavSetPath の入力 (Unity の NavMeshPath)。4112 バイト。
+// polys は Detour のポリゴン参照で中身は不透明 (NavSetPath に渡すためだけ)。corners は角 (先頭は Agent の位置)
+#define MYE_NAV_PATH_MAX_POLYS 256
+#define MYE_NAV_PATH_MAX_CORNERS 256
+struct MyeNavPath {
+    int32_t status;      // 0 = 無効 / 1 = 目的地まで届く / 2 = 部分経路 (届く限りの最寄りまで)
+    int32_t agentTypeId; // 経路を引いた Agent の種別 (違う種別の Agent には SetPath できない)
+    int32_t polyCount;
+    int32_t cornerCount;
+    MyeVec3 end;         // 終点 (部分経路なら届く限りの最寄り)
+    uint32_t polys[MYE_NAV_PATH_MAX_POLYS];
+    MyeVec3 corners[MYE_NAV_PATH_MAX_CORNERS];
 };
 
 // v24 (M82i) NavRaycast の出力
@@ -777,6 +794,36 @@ struct MyeEngineApi {
     // PerceptionCanSee: observer から target が今見えるか (陣営・距離・視野角・視線。結果へは書かない)。
     //   target に AIStimulusSource が無ければ 0
     int (*PerceptionCanSee)(void* engine, MyeEntityId observer, MyeEntityId target);
+
+    // ---- v26 (M84d2): NavMesh の続き ----
+    // ★Agent の細かい制御 (isStopped / autoBraking / avoidancePriority / separationWeight / updatePosition /
+    //   updateRotation、読み取り専用の desiredVelocity / nextPosition) は NavMeshAgent のフィールドなので
+    //   Get/SetComponentField で読み書きする。
+    // ★NavWarp / NavSetPath は呼んだその場で Agent と crowd を書き換える (tick のどこで呼んでも次の NavSystem の
+    //   更新がその状態から進める)。全部 sim 状態として決定的。
+
+    // NavWarp: pos の最寄りのナビメッシュ上の点 (水平 max(半径 x 2, 0.6) m・上下 1 m の範囲) へ Agent を瞬間移動させる
+    //   (Unity の Warp)。Transform と CC の速度を書き、渡りの途中なら渡りを捨てる。目的地は保ち、次の更新が引き直す。
+    //   NavMeshAgent / CC が無い、Surface が未読み込み、近くにナビメッシュが無いなら 0 (何も書かない)
+    int (*NavWarp)(void* engine, MyeEntityId entity, MyeVec3 pos);
+    // NavCalculatePath: Agent の今の位置から target への経路を、Agent の areaMask・navFilter で引いて out へ (歩かせない)。
+    //   Agent が crowd に載っていない (Surface の読み込み前・ナビメッシュの外) / 渡りの途中 / target の近く (1 m x 2 m) に
+    //   ナビメッシュが無い / 経路なしなら 0 (out->status = 0)
+    int (*NavCalculatePath)(void* engine, MyeEntityId entity, MyeVec3 target, MyeNavPath* out);
+    // NavSetPath: path をその Agent の経路にして歩かせる (Unity の SetPath)。目的地は path->end になり、経路は引き直さない。
+    //   path の回廊に Agent の今のポリゴンが無い (引いた後に離れた) / タイルが作り直されてポリゴンが古い (Obstacle・Modifier) /
+    //   種別が違う / 渡りの途中なら 0 (何も変えない)。そのときは NavSetDestination で引き直す
+    int (*NavSetPath)(void* engine, MyeEntityId entity, const MyeNavPath* path);
+    // ...Filtered: NavFindPath / NavSamplePosition / NavRaycast / NavFindRandomPoint に .navfilter.json の GUID
+    //   (navFilter、0 = 無し) を足したもの。エリアのコストを上書きし、通れないエリアを足す。読み込まれていない GUID は無しと同じ
+    int32_t (*NavFindPathFiltered)(void* engine, int32_t agentTypeId, MyeVec3 from, MyeVec3 to, uint32_t areaMask,
+                                   uint64_t navFilter, MyeVec3* outCorners, int32_t maxCorners, int32_t* outPartial);
+    int (*NavSamplePositionFiltered)(void* engine, int32_t agentTypeId, MyeVec3 pos, MyeVec3 extents, uint32_t areaMask,
+                                     uint64_t navFilter, MyeVec3* out);
+    int (*NavRaycastFiltered)(void* engine, int32_t agentTypeId, MyeVec3 from, MyeVec3 to, uint32_t areaMask,
+                              uint64_t navFilter, MyeNavRaycastHit* out);
+    int (*NavFindRandomPointFiltered)(void* engine, int32_t agentTypeId, MyeVec3 center, float radius, uint32_t areaMask,
+                                      uint64_t navFilter, MyeVec3* out);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

@@ -175,8 +175,13 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 25u,
-              "abi: the table reports v25");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 26u,
+              "abi: the table reports v26");
+        // v26 (M84d2): NavMesh の続き。呼んだ結果は NavAgentSelfTest が見る (ここは充填のみ)
+        check(api.NavWarp != nullptr && api.NavCalculatePath != nullptr && api.NavSetPath != nullptr
+                  && api.NavFindPathFiltered != nullptr && api.NavSamplePositionFiltered != nullptr
+                  && api.NavRaycastFiltered != nullptr && api.NavFindRandomPointFiltered != nullptr,
+              "abi: the v26 nav slots are filled in");
         // v25 (M83b): 知覚。呼んだ結果は PerceptionSelfTest が見る (ここは充填のみ)
         check(api.PerceptionReportNoise != nullptr && api.PerceptionReportDamage != nullptr
                   && api.PerceptionGetCount != nullptr && api.PerceptionGet != nullptr && api.PerceptionCanSee != nullptr,

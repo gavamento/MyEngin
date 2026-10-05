@@ -1054,6 +1054,49 @@ inline bool MyeNavCompleteLink(const MyeUpdateContext& ctx, MyeEntityId agent)
     return ctx.api->NavCompleteLink(ctx.api->engine, agent) != 0;
 }
 
+// ---- v26 (M84d2): NavMesh の続き ----
+// pos の最寄りのナビメッシュ上の点へ瞬間移動させる (目的地は保つ)。近くにナビメッシュが無ければ false
+inline bool MyeNavWarp(const MyeUpdateContext& ctx, MyeEntityId agent, MyeVec3 pos)
+{
+    return ctx.api->NavWarp(ctx.api->engine, agent, pos) != 0;
+}
+// Agent の今の位置から target への経路を引く (歩かせない)。MyeNavPath は 4 KB あるので部材などに置く
+inline bool MyeNavCalculatePath(const MyeUpdateContext& ctx, MyeEntityId agent, MyeVec3 target, MyeNavPath& out)
+{
+    return ctx.api->NavCalculatePath(ctx.api->engine, agent, target, &out) != 0;
+}
+// path を経路にして歩かせる。引いた後に離れた / タイルが作り直されたなら false (NavSetDestination で引き直す)
+inline bool MyeNavSetPath(const MyeUpdateContext& ctx, MyeEntityId agent, const MyeNavPath& path)
+{
+    return ctx.api->NavSetPath(ctx.api->engine, agent, &path) != 0;
+}
+// クエリ 4 種の .navfilter.json 付き (navFilter は資産の GUID、0 = 無し)
+inline int32_t MyeNavFindPathFiltered(const MyeUpdateContext& ctx, int32_t agentTypeId, MyeVec3 from, MyeVec3 to,
+                                      uint32_t areaMask, uint64_t navFilter, MyeVec3* outCorners, int32_t maxCorners,
+                                      bool& outPartial)
+{
+    int32_t partial = 0;
+    const int32_t count = ctx.api->NavFindPathFiltered(ctx.api->engine, agentTypeId, from, to, areaMask, navFilter,
+                                                       outCorners, maxCorners, &partial);
+    outPartial = partial != 0;
+    return count;
+}
+inline bool MyeNavSamplePositionFiltered(const MyeUpdateContext& ctx, int32_t agentTypeId, MyeVec3 pos, MyeVec3 extents,
+                                         uint32_t areaMask, uint64_t navFilter, MyeVec3& out)
+{
+    return ctx.api->NavSamplePositionFiltered(ctx.api->engine, agentTypeId, pos, extents, areaMask, navFilter, &out) != 0;
+}
+inline bool MyeNavRaycastFiltered(const MyeUpdateContext& ctx, int32_t agentTypeId, MyeVec3 from, MyeVec3 to,
+                                  uint32_t areaMask, uint64_t navFilter, MyeNavRaycastHit& out)
+{
+    return ctx.api->NavRaycastFiltered(ctx.api->engine, agentTypeId, from, to, areaMask, navFilter, &out) != 0;
+}
+inline bool MyeNavFindRandomPointFiltered(const MyeUpdateContext& ctx, int32_t agentTypeId, MyeVec3 center, float radius,
+                                          uint32_t areaMask, uint64_t navFilter, MyeVec3& out)
+{
+    return ctx.api->NavFindRandomPointFiltered(ctx.api->engine, agentTypeId, center, radius, areaMask, navFilter, &out) != 0;
+}
+
 // ---- v25 (M83b): AI の知覚 ----
 // 結果は前の tick の知覚のフェーズが書いた値。senses のビット
 constexpr uint32_t kMyePerceptionSight = 1u;

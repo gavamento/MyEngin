@@ -148,6 +148,27 @@ struct NavSystemStats {
     int linkWarnings = 0;          // 「つながらない Link」の警告を出した回数 (Reset 以降)
 };
 
+// CalculatePath が返す経路 (Unity の NavMeshPath、M84d)。polys は Detour のポリゴン参照 (不透明) で、SetPath に渡すためだけのもの。
+// ABI の MyeNavPath と同じ並び (EngineApiTable.cpp の static_assert)
+constexpr int kNavPathMaxPolys = 256;
+constexpr int kNavPathMaxCorners = 256;
+namespace navpathstatus {
+enum : int32_t {
+    kInvalid = 0,
+    kComplete = 1, // 目的地まで届く
+    kPartial = 2,  // 届かず、届く限りの最寄りまで
+};
+} // namespace navpathstatus
+struct NavAgentPath {
+    int32_t status = navpathstatus::kInvalid;
+    int32_t agentTypeId = 0;
+    int32_t polyCount = 0;
+    int32_t cornerCount = 0;
+    float end[3] = {};                            // 経路の終点 (部分経路なら届く限りの最寄り)
+    uint32_t polys[kNavPathMaxPolys] = {};        // 回廊 (先頭は経路を引いたときの Agent のポリゴン)
+    float corners[kNavPathMaxCorners * 3] = {};   // 角 (先頭は Agent の位置、歩行面の高さに吸着)
+};
+
 // QueryRaycast の結果。hit = ナビメッシュの縁 (壁・歩けないエリア) で止まった。止まらなければ point = to
 struct NavRaycastResult {
     bool hit = false;
@@ -226,6 +247,13 @@ public:
     // 目的地は保ち、次の Update が新しい位置から経路を引き直す。
     // Agent・CC・Transform が無い、乗る Surface が未読み込み、近くにナビメッシュが無いときは false (何も書かない)
     bool Warp(World& world, EntityID agent, const float* position);
+    // Agent の今の位置 (crowd の位置と回廊の先頭) から target への経路を、Agent の areaMask・navFilter で引く (Unity の CalculatePath)。
+    // 歩かせはしない。Agent が crowd に載っていない・渡りの途中・target の近くにナビメッシュが無い・経路なしは false (out.status = 0)
+    bool CalculatePath(World& world, EntityID agent, const float* target, NavAgentPath& out) const;
+    // path を Agent の経路にして歩かせる (Unity の SetPath)。経路を引き直さず、目的地は path.end になる。
+    // path の回廊に Agent の今のポリゴンが無い (経路を引いた後に離れた)、ポリゴンが古い (タイルが作り直された)、
+    // agentTypeId が違う、Agent が crowd に載っていない・渡りの途中なら false (何も変えない)
+    bool SetPath(World& world, EntityID agent, const NavAgentPath& path);
 
     const std::vector<NavSurfaceRuntime>& Surfaces() const { return surfaces_; }
     const NavSystemStats& Stats() const { return stats_; }
@@ -254,6 +282,8 @@ private:
     };
 
     static void Load(NavSurfaceRuntime& surface, const char* name);
+    // surface の crowd で entity が載っているスロット。無ければ -1
+    static int FindAgentSlot(const NavSurfaceRuntime& surface, EntityID entity);
     void ScanSurfaceKeys(World& world);
     bool SurfaceKeysChanged() const;
     void SyncSurfaces(World& world);
