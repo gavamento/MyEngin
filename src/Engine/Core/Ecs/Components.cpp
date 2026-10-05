@@ -1425,6 +1425,16 @@ void RegisterBuiltinComponents()
         MYE_JP("ナビメッシュの塗りを描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawNavMeshFill, Bool, kFieldNoHash)),
         MYE_JP("障害物を描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawObstacles, Bool, kFieldNoHash)),
         MYE_JP("リンクを描く", MYE_FIELD_FLAGS(NavMeshSurfaceComponent, drawLinks, Bool, kFieldNoHash)),
+        // M84e: Link の自動生成 (末尾 append)
+        MYE_JP("リンクを自動生成", MYE_FIELD_TIP(NavMeshSurfaceComponent, generateLinks, Bool,
+                                                 "bake drop-down and jump-across links along the navmesh edges")),
+        MYE_JP("飛び降りの高さ", MYE_FIELD_RANGE(NavMeshSurfaceComponent, dropHeight, Float, 0.0f, 20.0f)),
+        MYE_JP("飛び越えの距離", MYE_FIELD_RANGE(NavMeshSurfaceComponent, jumpDistance, Float, 0.0f, 20.0f)),
+        MYE_JP("生成リンクの渡り方", MYE_FIELD_TIP(NavMeshSurfaceComponent, generatedLinkTraversal, Int32,
+                                                   "0 = Linear, 1 = Jump, 2 = Manual (no rebake needed)")),
+        MYE_JP("生成リンクを渡る速さ", MYE_FIELD_RANGE(NavMeshSurfaceComponent, generatedLinkSpeed, Float, 0.1f, 50.0f)),
+        MYE_JP("生成リンクのジャンプの高さ",
+               MYE_FIELD_RANGE(NavMeshSurfaceComponent, generatedLinkJumpHeight, Float, 0.0f, 20.0f)),
     });
 #undef MYE_NAV_AREA_COST
 

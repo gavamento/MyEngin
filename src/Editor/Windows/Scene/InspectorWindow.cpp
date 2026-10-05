@@ -1797,6 +1797,10 @@ const InspectorWindow::NavAssetSummary& InspectorWindow::GetNavAssetSummary(uint
             summary.agentHeight = data.config.agentHeight;
             summary.maxClimb = data.config.agentMaxClimb;
             summary.maxSlopeDeg = data.config.agentMaxSlopeDeg;
+            summary.generateLinks = data.config.generateLinks != 0;
+            summary.dropHeight = data.config.linkDropHeight;
+            summary.jumpDistance = data.config.linkJumpDistance;
+            summary.generatedLinks = static_cast<int>(data.links.size());
             const std::wstring path = assetguid::ResolvePath(guid);
             std::error_code ec;
             std::vector<uint8_t> bytes;
@@ -2063,8 +2067,16 @@ void InspectorWindow::DrawNavMeshSurfaceNotes(EngineContext& ctx, Selection& sel
             const float wantHeight = agentType != nullptr ? agentType->height : comp->agentHeight;
             const float wantClimb = agentType != nullptr ? agentType->maxClimb : comp->maxClimb;
             const float wantSlope = agentType != nullptr ? agentType->maxSlopeDeg : comp->maxSlopeDeg;
+            const float wantDrop = agentType != nullptr ? agentType->dropHeight : comp->dropHeight;
+            const float wantJump = agentType != nullptr ? agentType->jumpDistance : comp->jumpDistance;
+            if (summary.generateLinks) {
+                ImGui::Text(Tr(StrId::Insp_NavGeneratedLinks), summary.generatedLinks);
+            }
+            // 生成の値は生成を入れた資産でだけ比べる (切った資産は値を焼いていない)
+            const bool linksChanged = summary.generateLinks != comp->generateLinks
+                || (comp->generateLinks && (summary.dropHeight != wantDrop || summary.jumpDistance != wantJump));
             if (summary.agentRadius != wantRadius || summary.agentHeight != wantHeight
-                || summary.maxClimb != wantClimb || summary.maxSlopeDeg != wantSlope) {
+                || summary.maxClimb != wantClimb || summary.maxSlopeDeg != wantSlope || linksChanged) {
                 ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_NavNeedsRebake));
                 ImGui::PopTextWrapPos();
@@ -2286,7 +2298,8 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
     // ベイク寸法は Agent Type の写し (M84a)。表にある型なら Project Settings でだけ変える
     if (std::strcmp(componentName, "NavMeshSurface") == 0
         && (std::strcmp(field.name, "agentRadius") == 0 || std::strcmp(field.name, "agentHeight") == 0
-            || std::strcmp(field.name, "maxClimb") == 0 || std::strcmp(field.name, "maxSlopeDeg") == 0)) {
+            || std::strcmp(field.name, "maxClimb") == 0 || std::strcmp(field.name, "maxSlopeDeg") == 0
+            || std::strcmp(field.name, "dropHeight") == 0 || std::strcmp(field.name, "jumpDistance") == 0)) {
         NavAgentTypes& types = NavAgentTypes::Get();
         types.Load(ctx.assetsRoot);
         if (types.Find(static_cast<const NavMeshSurfaceComponent*>(comp)->agentTypeId) != nullptr) {

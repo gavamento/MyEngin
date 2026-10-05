@@ -121,6 +121,7 @@
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavDebugDraw.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavDeterminismSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavFilterLibrary.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Navigation\NavLinkGen.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavMeshAsset.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavSurfaceSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavSystem.cpp" />
@@ -399,6 +400,7 @@
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavDebugDraw.h" />
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavDeterminismSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavFilterLibrary.h" />
+    <ClInclude Include="..\src\Engine\Engine\Navigation\NavLinkGen.h" />
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavMeshAsset.h" />
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavSurfaceSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavSystem.h" />

@@ -1882,6 +1882,15 @@ struct RayTracingComponent {
 // エリア ID は 0..15。0 = 歩行可 (コスト 1)、1 = 歩行不可、2 = Jump。areaCosts は Surface のエリアごとのコスト
 inline constexpr int32_t kNavAreaCount = 16;
 
+// NavMeshLink の渡り方 (traversal)
+namespace navlinktraversal {
+enum : int32_t {
+    kLinear = 0, // 入口から出口へ一定速度の直線
+    kJump = 1,   // 放物線 (頂点が jumpHeight だけ高い)
+    kManual = 2, // 入口で止まり、Agent.linkComplete が立つまで待つ (status = OnLink)
+};
+} // namespace navlinktraversal
+
 // ナビメッシュのベイク範囲と設定。ベイク結果 (.mnav) は navAsset が GUID で指す。
 // hash 対象 = 設定値と navAsset。表示フラグだけ kFieldNoHash (描画専用)。
 // ベイク寸法 (agentRadius 等) はベイク時の定数で、実行時の CharacterController とは別物 (M82 spec 2. #6)
@@ -1907,6 +1916,15 @@ struct NavMeshSurfaceComponent {
     bool drawNavMeshFill = true; // 半透明の塗りの描画 (kFieldNoHash、M82e)
     bool drawObstacles = true;   // 実行時に NavMesh を切り抜いている障害物の枠線の描画 (kFieldNoHash、M82f)
     bool drawLinks = true;       // NavMeshLink の線 (入口 -> 出口と矢印) の描画 (kFieldNoHash、M82h)
+    // ---- Link の自動生成 (M84e、Unity の Generate Links) ----
+    // ベイクの最後にナビメッシュの外周を調べ、飛び降り・飛び越えの Link を .mnav に焼く。グループ (M84b) では leader の値を使う
+    bool generateLinks = false;
+    float dropHeight = 2.0f;     // 飛び降りられる高さ (m)。Agent Type の写し
+    float jumpDistance = 1.0f;   // 飛び越えられる隙間の幅 (m、縁から縁)。Agent Type の写し
+    // 生成した Link の渡り方。ベイクには入らず、渡り始めに読む (変えても再ベイクは要らない)
+    int32_t generatedLinkTraversal = navlinktraversal::kJump;
+    float generatedLinkSpeed = 3.5f;
+    float generatedLinkJumpHeight = 0.5f;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -1998,15 +2016,6 @@ struct NavMeshModifierComponent {
     int32_t area = 3;                                 // 0..15
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
-
-// NavMeshLink の渡り方 (traversal)
-namespace navlinktraversal {
-enum : int32_t {
-    kLinear = 0, // 入口から出口へ一定速度の直線
-    kJump = 1,   // 放物線 (頂点が jumpHeight だけ高い)
-    kManual = 2, // 入口で止まり、Agent.linkComplete が立つまで待つ (status = OnLink)
-};
-} // namespace navlinktraversal
 
 // 離れた 2 点の歩行面をつなぐ Off-Mesh Link (M82h)。start / end はローカル座標 (エンティティの変換に従う)。
 // ベイクには入れず、NavSystem が毎 tick の状態を TileCache のタイルへ差し込む (Obstacle / Modifier と同じ tick 境界の同期確定)。

@@ -450,6 +450,8 @@ MYE_STR(PrjSet_ColAgentRadius, "Radius###agentRadius", "半径###agentRadius")
 MYE_STR(PrjSet_ColAgentHeight, "Height###agentHeight", "高さ###agentHeight")
 MYE_STR(PrjSet_ColAgentClimb, "Max Climb###agentClimb", "登れる段差###agentClimb")
 MYE_STR(PrjSet_ColAgentSlope, "Max Slope###agentSlope", "登れる傾斜###agentSlope")
+MYE_STR(PrjSet_ColAgentDrop,  "Drop Height###agentDrop", "飛び降りの高さ###agentDrop")
+MYE_STR(PrjSet_ColAgentJump,  "Jump Distance###agentJump", "飛び越えの距離###agentJump")
 MYE_STR(PrjSet_AddNavAgent,   "Add Agent Type",      "種別を追加")
 MYE_STR(PrjSet_RemoveNavAgent, "Remove###removeAgent", "削除###removeAgent")
 MYE_STR(PrjSet_SaveNavAgents, "Save Agent Types",    "エージェント種別を保存")
@@ -1875,8 +1877,10 @@ MYE_STR(Insp_NavGroupLeader,   "Cell, tile and area costs come from '%s', the fi
                                "セル・タイル・エリアのコストは、この種別の最初の Surface「%s」の値を使います")
 MYE_STR(Insp_NavGroupStale,    "The surfaces of this agent type do not share one navigation mesh: bake again.",
                                "この種別の Surface が同じナビメッシュを指していません。もう一度ベイクしてください")
-MYE_STR(Insp_NavNeedsRebake,   "The agent size changed after the last bake: bake again.",
-                               "前回のベイクの後にエージェントの寸法が変わりました。もう一度ベイクしてください")
+MYE_STR(Insp_NavNeedsRebake,   "The agent size or the link generation changed after the last bake: bake again.",
+                               "前回のベイクの後にエージェントの寸法かリンクの生成の設定が変わりました。もう一度ベイクしてください")
+MYE_STR(Insp_NavGeneratedLinks, "Generated links: %d",
+                               "自動生成したリンク: %d 本")
 MYE_STR(Insp_NavAgentNoSurface, "No NavMeshSurface has this agent type id.",
                                "このエージェント種別の NavMeshSurface がありません")
 MYE_STR(Insp_NavAgentTooBig,   "The agent or its CharacterController is larger than the baked navigation mesh (radius %.2f / height %.2f): it may clip walls.",

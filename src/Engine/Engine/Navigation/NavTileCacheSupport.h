@@ -114,6 +114,13 @@ struct NavLinkSpec {
     uint32_t userId = 0;       // dtOffMeshConnection::userId。渡るときに Link を引く鍵 (エンティティの index)
 };
 
+// ベイクで自動生成した Link (M84e) の key / userId の印。手置きの NavMeshLink (key = エンティティキー、userId = index) と
+// 重ならず、key 昇順では手置きの後ろに並ぶ。下位は .mnav の中の通し番号
+constexpr uint64_t kNavGeneratedLinkKeyBit = 1ull << 63;
+constexpr uint32_t kNavGeneratedLinkUserIdBit = 1u << 31;
+// 生成した Link のエリア (手置きの NavMeshLink の既定と同じ 2 = Jump)
+constexpr uint8_t kNavGeneratedLinkArea = 2;
+
 // 層からポリゴンメッシュを作るたびに呼ばれ、エリア ID -> フラグの写像と再構築したタイルの記録、
 // それと Off-Mesh Link の差し込みをする (dtCreateNavMeshData は入口がタイルの範囲に入る Link だけをそのタイルに持つ)
 class NavMeshProcess final : public dtTileCacheMeshProcess {
@@ -300,6 +307,10 @@ struct NavBakeConfig {
     int mergeRegionArea = 20;
     float boundsMin[3] = {};
     float boundsMax[3] = {};
+    // Link の自動生成 (M84e)。層のベイクには効かず、層を組んだ後の NavGenerateLinks が読む
+    int32_t generateLinks = 0;
+    float linkDropHeight = 0.0f;
+    float linkJumpDistance = 0.0f;
 };
 
 struct NavTriangleInput {

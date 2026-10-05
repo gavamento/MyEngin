@@ -8,6 +8,7 @@
 #include <algorithm>
 
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Navigation/NavLinkGen.h"
 
 namespace mye {
 namespace {
@@ -48,6 +49,11 @@ void HashConfig(uint64_t& h, const NavBakeConfig& c)
     const int32_t ints[] = { c.tileSize, c.minRegionArea, c.mergeRegionArea };
     h = NavFnv1a(h, floats, sizeof(floats));
     h = NavFnv1a(h, ints, sizeof(ints));
+    // 生成を切った設定は M84e より前と同じハッシュにする (既存の .mnav を焼き直さずに使える)
+    if (c.generateLinks != 0) {
+        const float linkFloats[] = { c.linkDropHeight, c.linkJumpDistance };
+        h = NavFnv1a(h, linkFloats, sizeof(linkFloats));
+    }
 }
 
 } // namespace
@@ -212,6 +218,21 @@ NavBakeOutput NavBakeAsset(const NavBakeConfig& config, const NavTriangleSoup& s
         data = NavMeshAsset::Data{};
         return out;
     }
+    // Link の自動生成 (M84e)。Link を入れる前のナビメッシュの外周を調べ、入れた後のポリゴン数で上限を決める
+    // (Off-Mesh Link は入口のタイルのポリゴン 1 枚になる)
+    if (!NavGenerateLinks(config, soup, *probe.NavMesh(), control != nullptr ? &control->cancel : nullptr, data.links)) {
+        out.status = NavBakeStatus::Cancelled;
+        out.message = "cancelled";
+        data = NavMeshAsset::Data{};
+        return out;
+    }
+    if (!data.links.empty() && (probe.ReplaceLinks(data.links) < 0 || !probe.Commit())) {
+        out.status = NavBakeStatus::Failed;
+        out.message = "the generated links could not be added to the navigation mesh";
+        data = NavMeshAsset::Data{};
+        return out;
+    }
+    out.linkCount = static_cast<int>(data.links.size());
     int maxPolys = 0;
     const dtNavMesh* probeMesh = probe.NavMesh();
     for (int i = 0; i < probeMesh->getMaxTiles(); ++i) {

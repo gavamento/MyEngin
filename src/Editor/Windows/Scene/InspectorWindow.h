@@ -324,6 +324,11 @@ private:
         float agentHeight = 0.0f;
         float maxClimb = 0.0f;
         float maxSlopeDeg = 0.0f;
+        // Link の自動生成 (M84e)。生成を切って焼いた資産は generateLinks = false
+        bool generateLinks = false;
+        float dropHeight = 0.0f;
+        float jumpDistance = 0.0f;
+        int generatedLinks = 0;
     };
     std::unordered_map<uint64_t, NavAssetSummary> navSummaryCache_;
     const NavAssetSummary& GetNavAssetSummary(uint64_t guid);

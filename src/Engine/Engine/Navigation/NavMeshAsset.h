@@ -15,7 +15,8 @@ namespace mye {
 namespace NavMeshAsset {
 
 inline constexpr const wchar_t* kNavExt = L".mnav";
-inline constexpr uint32_t kVersion = 1;
+// 2 (M84e): 設定に Link の自動生成の値、末尾に生成した Link。1 も読める (生成なし)
+inline constexpr uint32_t kVersion = 2;
 
 // ベイク方式の版。ベイクの結果が変わる変更 (入力収集・Recast 設定・球の分割数) をしたら上げる。
 // 入力ハッシュに混ぜるので、版が違えば別ファイルになる。
@@ -43,6 +44,9 @@ struct Data {
     int32_t maxObstacles = 0;
     int32_t inputTriangleCount = 0;
     std::vector<LayerRecord> layers; // (ty, tx, layer) 昇順
+    // ベイクで自動生成した Link (M84e)。key は kNavGeneratedLinkKeyBit | 通し番号で昇順。手置きの Link とは別に、
+    // NavSystem が毎 tick の Link の一覧へ足す
+    std::vector<NavLinkSpec> links;
 };
 
 // blob <-> 構造体。Deserialize は境界検査つきで、壊れた blob でも false を返すだけで落ちない
@@ -61,7 +65,8 @@ bool LoadByGuid(uint64_t guid, Data& out);
 // 資産から NavTileStore の設定を作る
 NavTileStoreConfig MakeStoreConfig(const Data& d);
 
-// 資産の層を NavTileStore へ入れて BuildAll まで進める。store は未 Init の空の状態であること
+// 資産の層を NavTileStore へ入れて BuildAll まで進め、生成した Link があれば差し込んで Commit する。
+// store は未 Init の空の状態であること
 bool BuildStore(const Data& d, NavTileStore& store);
 
 } // namespace NavMeshAsset

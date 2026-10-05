@@ -112,7 +112,9 @@ struct SimRefs {
 // v30 (M83a): AIPerceptionComponent / AIStimulusSourceComponent (World 節のカラム生バイト)
 // v31 (M84c): NavMeshAgentComponent.navFilter (World 節のカラム生バイト)
 // v32 (M84d): NavMeshAgentComponent の細かい制御 (isStopped 以下、World 節のカラム生バイト) と Nav 節の crowd に avoidancePriority
-inline constexpr uint32_t kSimSnapshotVersion = 32;
+// v33 (M84e): NavMeshSurfaceComponent の Link の自動生成 (generateLinks 以下、World 節のカラム生バイト)。
+//            生成した Link は store の Off-Mesh Link の一覧に入る (書式は v29 のまま)
+inline constexpr uint32_t kSimSnapshotVersion = 33;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

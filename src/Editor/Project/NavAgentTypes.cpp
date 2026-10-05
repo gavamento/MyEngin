@@ -38,12 +38,15 @@ void ClampType(NavAgentType& t)
     t.height = std::clamp(t.height, 0.2f, 10.0f);
     t.maxClimb = std::clamp(t.maxClimb, 0.0f, 5.0f);
     t.maxSlopeDeg = std::clamp(t.maxSlopeDeg, 0.0f, 89.0f);
+    t.dropHeight = std::clamp(t.dropHeight, 0.0f, 20.0f);
+    t.jumpDistance = std::clamp(t.jumpDistance, 0.0f, 20.0f);
 }
 
 bool SameType(const NavAgentType& a, const NavAgentType& b)
 {
     return a.id == b.id && std::strcmp(a.name, b.name) == 0 && a.radius == b.radius && a.height == b.height
-        && a.maxClimb == b.maxClimb && a.maxSlopeDeg == b.maxSlopeDeg;
+        && a.maxClimb == b.maxClimb && a.maxSlopeDeg == b.maxSlopeDeg && a.dropHeight == b.dropHeight
+        && a.jumpDistance == b.jumpDistance;
 }
 
 } // namespace
@@ -88,6 +91,8 @@ void NavAgentTypes::Load(const std::wstring& assetsRoot, bool force)
                     t.height = e.value("height", t.height);
                     t.maxClimb = e.value("maxClimb", t.maxClimb);
                     t.maxSlopeDeg = e.value("maxSlopeDeg", t.maxSlopeDeg);
+                    t.dropHeight = e.value("dropHeight", t.dropHeight);
+                    t.jumpDistance = e.value("jumpDistance", t.jumpDistance);
                     ClampType(t);
                     types_.push_back(t);
                 }
@@ -127,7 +132,9 @@ bool NavAgentTypes::Save(const std::wstring& assetsRoot) const
                         { "radius", t.radius },
                         { "height", t.height },
                         { "maxClimb", t.maxClimb },
-                        { "maxSlopeDeg", t.maxSlopeDeg } });
+                        { "maxSlopeDeg", t.maxSlopeDeg },
+                        { "dropHeight", t.dropHeight },
+                        { "jumpDistance", t.jumpDistance } });
     }
     j["navAgentTypes"] = arr;
     std::ofstream out(path);
@@ -203,7 +210,8 @@ bool NavAgentTypes::Remove(int index)
 bool NavSurfaceMatchesAgentType(const NavMeshSurfaceComponent& surface, const NavAgentType& type)
 {
     return surface.agentRadius == type.radius && surface.agentHeight == type.height
-        && surface.maxClimb == type.maxClimb && surface.maxSlopeDeg == type.maxSlopeDeg;
+        && surface.maxClimb == type.maxClimb && surface.maxSlopeDeg == type.maxSlopeDeg
+        && surface.dropHeight == type.dropHeight && surface.jumpDistance == type.jumpDistance;
 }
 
 void NavApplyAgentType(NavMeshSurfaceComponent& surface, const NavAgentType& type)
@@ -212,6 +220,8 @@ void NavApplyAgentType(NavMeshSurfaceComponent& surface, const NavAgentType& typ
     surface.agentHeight = type.height;
     surface.maxClimb = type.maxClimb;
     surface.maxSlopeDeg = type.maxSlopeDeg;
+    surface.dropHeight = type.dropHeight;
+    surface.jumpDistance = type.jumpDistance;
 }
 
 } // namespace mye

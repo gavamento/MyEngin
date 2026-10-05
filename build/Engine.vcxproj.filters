@@ -516,6 +516,9 @@
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavFilterLibrary.cpp">
       <Filter>Engine\Navigation</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Navigation\NavLinkGen.cpp">
+      <Filter>Engine\Navigation</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Navigation\NavMeshAsset.cpp">
       <Filter>Engine\Navigation</Filter>
     </ClCompile>
@@ -1348,6 +1351,9 @@
       <Filter>Engine\Navigation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavFilterLibrary.h">
+      <Filter>Engine\Navigation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Navigation\NavLinkGen.h">
       <Filter>Engine\Navigation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Navigation\NavMeshAsset.h">

@@ -37,6 +37,7 @@ struct NavBakeOutput {
     NavMeshAsset::Data data;
     int polyCount = 0;   // 結果の要約 (タイル 1 枚あたりの最大は maxPolysPerTile の元)
     int tileCount = 0;   // 層が 1 枚以上あるタイルの数
+    int linkCount = 0;   // 自動生成した Link の数 (M84e)
 };
 
 // 障害物の最大数 (dtTileCacheParams::maxObstacles)。Surface ごと。NavMeshObstacle が使う
@@ -65,7 +66,8 @@ uint64_t NavComputeInputHash(const NavBakeConfig& config, const NavTriangleSoup&
 bool NavBakeTile(const NavBakeConfig& config, const NavTriangleSoup& soup, const std::vector<NavBakeClipBox>& clipBoxes,
                  int tx, int ty, std::vector<std::vector<uint8_t>>& outLayers);
 
-// 全タイルを NavBakeTile で回して .mnav の中身を作る。World には触れない (ワーカースレッドから呼べる)
+// 全タイルを NavBakeTile で回して .mnav の中身を作る。config.generateLinks なら、組んだナビメッシュから Link を生成して
+// data.links に入れる (NavGenerateLinks)。World には触れない (ワーカースレッドから呼べる)
 NavBakeOutput NavBakeAsset(const NavBakeConfig& config, const NavTriangleSoup& soup,
                            const std::vector<NavBakeClipBox>& clipBoxes, NavBakeControl* control);
 

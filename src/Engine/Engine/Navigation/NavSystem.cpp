@@ -55,6 +55,7 @@ constexpr uint32_t kPathNoPathColor = 0xFF4040FFu;
 constexpr uint32_t kObstacleColor = 0xFF9030FFu;
 constexpr uint32_t kModifierColor = 0xC070FFFFu; // エリアを塗り替える箱 (SceneView のギズモと同じ紫)
 constexpr uint32_t kLinkColor = 0x40FFC0FFu;     // Off-Mesh Link (SceneView のギズモと同じ緑)
+constexpr uint32_t kGeneratedLinkColor = 0xFFC040FFu; // 自動生成した Link (M84e)。手置きと見分ける
 constexpr float kLinkArrowLength = 0.35f;
 constexpr float kLinkArrowSpread = 0.4f;         // 矢尻の開き (長さに対する横の比)
 // Link の吸着半径の下限 (m)。width が小さすぎても歩行面の端の数 cm の差で入口が外れないように
@@ -965,6 +966,7 @@ void NavSystem::Load(NavSurfaceRuntime& surface, const char* name)
         surface.polyCount += tile->header->polyCount;
     }
 
+    surface.generatedLinks = std::move(data.links);
     surface.store = std::move(store);
     surface.query = std::move(query);
     surface.crowd = std::move(crowd);
@@ -1081,6 +1083,8 @@ void NavSystem::SyncObstacles(World& world)
         const size_t changes = carveDiff.removeKeys.size() + carveDiff.addIndices.size() + paintDiff.removeKeys.size()
             + paintDiff.addIndices.size();
         NavFilterLinksToSurface(world, surface.entity, wantedLinks_, wantedLinksHere_);
+        // 自動生成の Link は key の最上位ビットが立っているので、足しても key 昇順のまま
+        wantedLinksHere_.insert(wantedLinksHere_.end(), surface.generatedLinks.begin(), surface.generatedLinks.end());
         if (changes == 0 && wantedLinksHere_.empty() && store.LinkCount() == 0) {
             continue;
         }
@@ -1707,7 +1711,15 @@ void NavSystem::BeginLink(World& world, NavSurfaceRuntime& surface, int slotInde
     slot.linkSpeed = (std::max)(agent.speed, 0.01f);
     // Link の渡り方。入口の dtOffMeshConnection に残した userId (= エンティティの index) からコンポーネントを引く
     const dtOffMeshConnection* con = surface.store->NavMesh()->getOffMeshConnectionByRef(anim->polyRef);
-    if (con != nullptr) {
+    if (con != nullptr && (con->userId & kNavGeneratedLinkUserIdBit) != 0) {
+        // 自動生成の Link (M84e) は Surface (グループの leader) の指定で渡る
+        if (const auto* comp = world.GetComponent<NavMeshSurfaceComponent>(surface.entity)) {
+            slot.linkMode = static_cast<uint8_t>(
+                (std::min)((std::max)(comp->generatedLinkTraversal, 0), static_cast<int>(navlinktraversal::kManual)));
+            slot.linkHeight = (std::max)(comp->generatedLinkJumpHeight, 0.0f);
+            slot.linkSpeed = (std::max)(comp->generatedLinkSpeed, 0.01f);
+        }
+    } else if (con != nullptr) {
         const ComponentTypeId req[] = { NavMeshLinkComponent::sTypeId };
         bool found = false;
         world.ForEachArchetype(req, [&](Archetype& arch) {
@@ -2294,7 +2306,8 @@ void NavSystem::AppendLinkLines(const NavTileStore& store, std::vector<DebugLine
 {
     for (int i = 0; i < store.LinkCount(); ++i) {
         const NavLinkSpec& l = store.LinkAt(i);
-        AddLine(out, l.start, l.end, kLinkColor);
+        const uint32_t color = (l.key & kNavGeneratedLinkKeyBit) != 0 ? kGeneratedLinkColor : kLinkColor;
+        AddLine(out, l.start, l.end, color);
         // 矢尻: 向きの先端 (片方向は出口だけ、双方向は両端) に、線の後ろへ開く 2 本
         const float dx = l.end[0] - l.start[0];
         const float dz = l.end[2] - l.start[2];
@@ -2310,8 +2323,8 @@ void NavSystem::AppendLinkLines(const NavTileStore& store, std::vector<DebugLine
             const float side = kLinkArrowLength * kLinkArrowSpread;
             const float left[3] = { tip[0] + backX - dirZ * side, tip[1], tip[2] + backZ + dirX * side };
             const float right[3] = { tip[0] + backX + dirZ * side, tip[1], tip[2] + backZ - dirX * side };
-            AddLine(out, tip, left, kLinkColor);
-            AddLine(out, tip, right, kLinkColor);
+            AddLine(out, tip, left, color);
+            AddLine(out, tip, right, color);
         };
         arrowAt(l.end, ux, uz);
         if (l.bidirectional != 0) {

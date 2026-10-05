@@ -31,6 +31,7 @@ constexpr uint32_t kMagic = static_cast<uint32_t>('M') | (static_cast<uint32_t>(
 constexpr int32_t kMaxTileGrid = 4096;
 constexpr int32_t kMaxLayers = 1 << 20;
 constexpr int32_t kMaxLayerBytes = 1 << 24;
+constexpr size_t kLinkRecordBytes = sizeof(uint64_t) + sizeof(float) * 7 + 2 + sizeof(uint32_t);
 
 std::map<uint64_t, Data>& MemoryAssets()
 {
@@ -61,6 +62,7 @@ bool ReadWholeFile(const std::wstring& path, std::vector<uint8_t>& out)
 
 void WriteConfig(ByteWriter& w, const NavBakeConfig& c)
 {
+    // 並びは形式 1 の後ろに形式 2 の値を足したもの
     w.F32(c.cellSize);
     w.F32(c.cellHeight);
     w.I32(c.tileSize);
@@ -78,9 +80,12 @@ void WriteConfig(ByteWriter& w, const NavBakeConfig& c)
     for (int i = 0; i < 3; ++i) {
         w.F32(c.boundsMax[i]);
     }
+    w.I32(c.generateLinks);
+    w.F32(c.linkDropHeight);
+    w.F32(c.linkJumpDistance);
 }
 
-void ReadConfig(ByteReader& r, NavBakeConfig& c)
+void ReadConfig(ByteReader& r, uint32_t version, NavBakeConfig& c)
 {
     c.cellSize = r.F32();
     c.cellHeight = r.F32();
@@ -99,13 +104,19 @@ void ReadConfig(ByteReader& r, NavBakeConfig& c)
     for (int i = 0; i < 3; ++i) {
         c.boundsMax[i] = r.F32();
     }
+    if (version >= 2) {
+        c.generateLinks = r.I32();
+        c.linkDropHeight = r.F32();
+        c.linkJumpDistance = r.F32();
+    }
 }
 
 bool ConfigIsSane(const NavBakeConfig& c)
 {
     const float values[] = { c.cellSize, c.cellHeight, c.agentHeight, c.agentRadius, c.agentMaxClimb,
                              c.agentMaxSlopeDeg, c.maxEdgeLen, c.maxSimplificationError, c.boundsMin[0],
-                             c.boundsMin[1], c.boundsMin[2], c.boundsMax[0], c.boundsMax[1], c.boundsMax[2] };
+                             c.boundsMin[1], c.boundsMin[2], c.boundsMax[0], c.boundsMax[1], c.boundsMax[2],
+                             c.linkDropHeight, c.linkJumpDistance };
     for (const float v : values) {
         if (!std::isfinite(v)) {
             return false;
@@ -138,6 +149,20 @@ void Serialize(const Data& d, std::vector<uint8_t>& out)
         w.I32(l.layer);
         w.Blob(l.blob.data(), l.blob.size());
     }
+    w.Count(d.links.size());
+    for (const NavLinkSpec& l : d.links) {
+        w.U64(l.key);
+        for (int i = 0; i < 3; ++i) {
+            w.F32(l.start[i]);
+        }
+        for (int i = 0; i < 3; ++i) {
+            w.F32(l.end[i]);
+        }
+        w.F32(l.radius);
+        w.U8(l.bidirectional);
+        w.U8(l.area);
+        w.U32(l.userId);
+    }
     out.assign(reinterpret_cast<const uint8_t*>(buf.data()),
                reinterpret_cast<const uint8_t*>(buf.data()) + buf.size());
 }
@@ -148,12 +173,12 @@ bool Deserialize(const std::vector<uint8_t>& in, Data& out)
     ByteReader r(reinterpret_cast<const std::byte*>(in.data()), in.size());
     const uint32_t magic = r.U32();
     const uint32_t version = r.U32();
-    if (!r.Ok() || magic != kMagic || version != kVersion) {
+    if (!r.Ok() || magic != kMagic || version < 1 || version > kVersion) {
         return false;
     }
     out.bakeVersion = r.U32();
     out.inputHash = r.U64();
-    ReadConfig(r, out.config);
+    ReadConfig(r, version, out.config);
     out.tilesX = r.I32();
     out.tilesY = r.I32();
     out.maxTiles = r.I32();
@@ -182,6 +207,37 @@ bool Deserialize(const std::vector<uint8_t>& in, Data& out)
         }
         l.blob.resize(bytes);
         r.Raw(l.blob.data(), bytes);
+    }
+    if (version >= 2) {
+        const size_t linkCount = r.Count(kLinkRecordBytes);
+        if (!r.Ok()) {
+            return false;
+        }
+        out.links.resize(linkCount);
+        for (size_t i = 0; i < linkCount; ++i) {
+            NavLinkSpec& l = out.links[i];
+            l.key = r.U64();
+            for (int k = 0; k < 3; ++k) {
+                l.start[k] = r.F32();
+            }
+            for (int k = 0; k < 3; ++k) {
+                l.end[k] = r.F32();
+            }
+            l.radius = r.F32();
+            l.bidirectional = r.U8();
+            l.area = r.U8();
+            l.userId = r.U32();
+            // 生成した Link だけが入る。印・昇順・有限の座標・エリアの範囲を確かめる (壊れた値を store へ渡さない)
+            bool finite = std::isfinite(l.radius);
+            for (int k = 0; k < 3; ++k) {
+                finite = finite && std::isfinite(l.start[k]) && std::isfinite(l.end[k]);
+            }
+            if (!r.Ok() || !finite || (l.key & kNavGeneratedLinkKeyBit) == 0
+                || (l.userId & kNavGeneratedLinkUserIdBit) == 0 || l.area >= kNavAreaCountMax
+                || (i > 0 && out.links[i - 1].key >= l.key)) {
+                return false;
+            }
+        }
     }
     if (!r.Ok() || r.Remaining() != 0) {
         return false; // 余りがある = 別形式 / 継ぎ足し。丸ごと捨てる
@@ -265,7 +321,10 @@ bool BuildStore(const Data& d, NavTileStore& store)
             return false;
         }
     }
-    return store.BuildAll();
+    if (!store.BuildAll()) {
+        return false;
+    }
+    return d.links.empty() || (store.ReplaceLinks(d.links) >= 0 && store.Commit());
 }
 
 } // namespace NavMeshAsset

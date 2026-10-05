@@ -509,6 +509,9 @@ NavBakeConfig NavMakeBakeConfig(const NavMeshSurfaceComponent& surface, const Di
     c.agentRadius = surface.agentRadius;
     c.agentMaxClimb = surface.maxClimb;
     c.agentMaxSlopeDeg = surface.maxSlopeDeg;
+    c.generateLinks = surface.generateLinks ? 1 : 0;
+    c.linkDropHeight = surface.dropHeight;
+    c.linkJumpDistance = surface.jumpDistance;
     // ローカル箱 8 隅をワールドへ送った AABB (Recast は軸平行の範囲しか焼けない)
     float lo[3] = {0.0f, 0.0f, 0.0f};
     float hi[3] = {0.0f, 0.0f, 0.0f};

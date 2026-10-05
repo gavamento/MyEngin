@@ -44,9 +44,12 @@ constexpr uint64_t kOpenGuid = 0x4E41564147454E32ull;
 constexpr uint64_t kFieldGuid = 0x4E41564147454E33ull;
 constexpr uint64_t kRavineGuid = 0x4E41564147454E34ull;
 constexpr uint64_t kApiGuid = 0x4E41564147454E35ull;  // スクリプト API のテストの庭
+constexpr uint64_t kLinkGenGuid = 0x4E41564147454E36ull; // Link の自動生成 (M84e)
+// 段と隙間の庭で生成した .mnav のバイト列のハッシュ (Debug で採取し Release で一致を確かめる、M82 の N4)
+constexpr uint64_t kExpectedLinkGenAssetHash = 0xACDD08E5A7CD26D0ull;
 // Debug で採取し、Release で同じ値になることを確認して焼く (docs\adr\ADR-023-navmesh.md)。
 // 0f659f3 (Collider へ center / rotation を追加 = 庭の床・段差のハッシュ対象が増えた) で値が変わったので焼き直した
-constexpr uint64_t kExpectedYardHash = 0xE29E9A3ACDF94C74ull; // M84d: NavMeshAgent の細かい制御を足した
+constexpr uint64_t kExpectedYardHash = 0x0964E3D5948168AAull; // M84e: NavMeshSurface に Link の自動生成を足した
 
 struct Checker {
     int failCount = 0;
@@ -472,6 +475,74 @@ struct LinkScript {
         }
     }
 };
+
+// Link の自動生成 (M84e) の庭。x = -10..-2 に高さ dropTop の段 (段の上の Agent は降りる以外に下へ行けない)、
+// x = -2..10 は gap の隙間を空けて 2 枚に割れた床 (x = 4 +- gap/2 が隙間)。wall なら隙間に高い壁を立てる
+EntityID BuildLinkYard(Scene& scene, float dropTop, float gap, bool wall)
+{
+    AddBox(scene, "Ledge", -6.0f, dropTop * 0.5f - 0.5f, 0.0f, 4.0f, dropTop * 0.5f + 0.5f, 4.0f);
+    const float gapLo = 4.0f - gap * 0.5f;
+    const float gapHi = 4.0f + gap * 0.5f;
+    AddBox(scene, "FloorA", (-2.0f + gapLo) * 0.5f, -0.5f, 0.0f, (gapLo + 2.0f) * 0.5f, 0.5f, 4.0f);
+    AddBox(scene, "FloorB", (gapHi + 10.0f) * 0.5f, -0.5f, 0.0f, (10.0f - gapHi) * 0.5f, 0.5f, 4.0f);
+    if (wall) {
+        AddBox(scene, "Wall", 4.0f, 1.0f, 0.0f, 0.05f, 2.0f, 4.0f);
+    }
+    return AddSurface(scene, 11.0f, 5.0f);
+}
+
+// Link の自動生成の設定
+void SetLinkGen(World& world, EntityID surface, bool generate, float dropHeight, float jumpDistance)
+{
+    auto* sf = world.GetComponent<NavMeshSurfaceComponent>(surface);
+    sf->generateLinks = generate;
+    sf->dropHeight = dropHeight;
+    sf->jumpDistance = jumpDistance;
+}
+
+// 1 体の Agent を start から dest へ ticks 回す (Surface は焼き済み)
+RavineRun RunLinkWalker(Scene& scene, const float* start, const float* dest, int ticks)
+{
+    const EntityID walker = AddAgent(scene, "Walker", start[0], start[1], start[2], dest, true);
+    scene.GetWorld().ApplyStructuralChanges();
+    Sim sim(scene);
+    World& world = sim.GetWorld();
+    RavineRun run;
+    for (int i = 0; i < ticks; ++i) {
+        sim.Step();
+        if (world.GetComponent<NavMeshAgentComponent>(walker)->status == navagentstatus::kOnLink) {
+            run.sawOnLink = true;
+            ++run.onLinkTicks;
+        }
+    }
+    const auto* agent = world.GetComponent<NavMeshAgentComponent>(walker);
+    const auto* lt = world.GetComponent<LocalTransform>(walker);
+    run.status = agent->status;
+    run.partial = agent->pathPartial;
+    run.x = lt->position.x;
+    run.z = lt->position.z;
+    return run;
+}
+
+// 庭を焼いて Surface に付ける (焼けなければ false)
+bool BakeLinkYard(Scene& scene, EntityID surface, NavBakeOutput& out)
+{
+    World& world = scene.GetWorld();
+    world.ApplyStructuralChanges();
+    TransformSystem transforms;
+    transforms.Update(world);
+    NavBakeInputs in;
+    if (!NavPrepareBakeInputs(world, surface, in)) {
+        return false;
+    }
+    out = NavBakeAsset(in.config, in.soup, in.clipBoxes, nullptr);
+    if (out.status != NavBakeStatus::Ok) {
+        return false;
+    }
+    NavMeshAsset::RegisterInMemory(kLinkGenGuid, out.data);
+    world.GetComponent<NavMeshSurfaceComponent>(surface)->navAsset = AssetID{ kLinkGenGuid };
+    return true;
+}
 
 } // namespace
 
@@ -3001,6 +3072,162 @@ bool RunNavAgentSelfTest()
             same = same && WorldHashOf(restored, &restored.nav) == continuous[static_cast<size_t>(i)];
         }
         ck.Check(same, "(M84d) 復元して 300 tick (停止の解除・Warp を含む) 進めた毎 tick のハッシュが連続実行と一致");
+    }
+
+    // ---- 14. Link の自動生成 (M84e): 段から飛び降り、隙間を飛び越える Link をベイクで作る ----
+    {
+        constexpr float kLedgeTop = 1.5f;
+        constexpr float kGap = 1.2f;
+        constexpr int kRunTicks = 900;
+        const float onLedge[3] = { -7.0f, kLedgeTop, 0.0f };
+        const float nearSide[3] = { 0.0f, 0.0f, 0.0f };
+        const float farSide[3] = { 8.0f, 0.0f, 0.0f };
+
+        // 段も隙間も渡れる設定。Link の向き・高さ・本数を確かめる
+        Scene scene;
+        const EntityID surface = BuildLinkYard(scene, kLedgeTop, kGap, false);
+        SetLinkGen(scene.GetWorld(), surface, true, 2.0f, 1.5f);
+        NavBakeOutput bake;
+        ck.Check(BakeLinkYard(scene, surface, bake), "(LinkGen) 段と隙間の庭を焼ける");
+        int drops = 0;
+        int jumps = 0;
+        bool shapesOk = true;
+        for (size_t i = 0; i < bake.data.links.size(); ++i) {
+            const NavLinkSpec& l = bake.data.links[i];
+            const bool isDrop = l.bidirectional == 0;
+            drops += isDrop ? 1 : 0;
+            jumps += isDrop ? 0 : 1;
+            MYE_LOG_INFO("  [linkgen] link %d: (%.2f, %.2f, %.2f) -> (%.2f, %.2f, %.2f) %s", static_cast<int>(i), l.start[0],
+                         l.start[1], l.start[2], l.end[0], l.end[1], l.end[2], isDrop ? "drop" : "jump");
+            const bool dropShape = std::fabs(l.start[1] - kLedgeTop) < 0.2f && std::fabs(l.end[1]) < 0.2f
+                && l.start[0] < -1.5f && l.end[0] > -2.0f;
+            const bool jumpShape = std::fabs(l.start[1]) < 0.2f && std::fabs(l.end[1]) < 0.2f
+                && std::fabs(std::fabs(l.end[0] - l.start[0]) - (kGap + 0.6f)) < 0.5f;
+            shapesOk = shapesOk && (isDrop ? dropShape : jumpShape) && l.key == (kNavGeneratedLinkKeyBit | i)
+                && l.userId == (kNavGeneratedLinkUserIdBit | static_cast<uint32_t>(i)) && l.area == kNavGeneratedLinkArea;
+        }
+        MYE_LOG_INFO("  [linkgen] %d drop link(s), %d jump link(s)", drops, jumps);
+        ck.Check(bake.linkCount == static_cast<int>(bake.data.links.size()) && drops >= 3 && drops <= 12 && jumps >= 3
+                     && jumps <= 12,
+                 "(LinkGen) 段の縁に一方通行の飛び降り、隙間に双方向の飛び越えが、縁の長さ (8 m) に見合う本数だけできる");
+        ck.Check(shapesOk, "(LinkGen) 飛び降りは段の上から下の床へ、飛び越えは隙間の両側の床を結び、key / userId に生成の印が立つ");
+
+        uint64_t assetHash = 0;
+        {
+            std::vector<uint8_t> blob;
+            NavMeshAsset::Serialize(bake.data, blob);
+            assetHash = NavFnv1a(kNavFnvSeed, blob.data(), blob.size());
+            NavMeshAsset::Data round;
+            bool same = NavMeshAsset::Deserialize(blob, round) && round.links.size() == bake.data.links.size()
+                && round.config.generateLinks == 1;
+            for (size_t i = 0; same && i < round.links.size(); ++i) {
+                same = std::memcmp(round.links[i].start, bake.data.links[i].start, sizeof(float) * 3) == 0
+                    && std::memcmp(round.links[i].end, bake.data.links[i].end, sizeof(float) * 3) == 0
+                    && round.links[i].key == bake.data.links[i].key;
+            }
+            ck.Check(same, "(LinkGen) .mnav の書き出し -> 読み込みで生成した Link がそのまま戻る");
+            // 最後の Link の記録 (key 8 + float 7 + 2 + userId 4 = 42 バイト) の key の最上位バイトを壊す
+            constexpr size_t kLinkRecordBytes = sizeof(uint64_t) + sizeof(float) * 7 + 2 + sizeof(uint32_t);
+            std::vector<uint8_t> broken = blob;
+            if (!bake.data.links.empty()) {
+                broken[broken.size() - kLinkRecordBytes + sizeof(uint64_t) - 1] ^= 0x80;
+            }
+            NavMeshAsset::Data rejected;
+            ck.Check(!bake.data.links.empty() && !NavMeshAsset::Deserialize(broken, rejected),
+                     "(LinkGen) 生成の印が無い Link を持つ .mnav は読まない");
+        }
+        MYE_LOG_INFO("  [linkgen] asset hash 0x%016llX", static_cast<unsigned long long>(assetHash));
+        ck.Check(kExpectedLinkGenAssetHash == 0 || assetHash == kExpectedLinkGenAssetHash,
+                 "(LinkGen) 生成した .mnav のバイト列が焼いた期待値と一致 (Debug / Release 一致)");
+
+        {
+            NavSystem nav;
+            nav.Update(scene.GetWorld(), kDt);
+            const NavTileStore* store = nav.Surfaces().empty() ? nullptr : nav.Surfaces()[0].store.get();
+            ck.Check(store != nullptr && store->LinkCount() == bake.linkCount && store->ConnectedLinkCount() == bake.linkCount,
+                     "(LinkGen) NavSystem が生成した Link を読み込み、全部の入口と出口が歩行面につながる");
+        }
+
+        const RavineRun down = RunLinkWalker(scene, onLedge, farSide, kRunTicks);
+        MYE_LOG_INFO("  [linkgen] ledge -> far: status %d onLink %d ticks, x %.2f", down.status, down.onLinkTicks, down.x);
+        ck.Check(down.sawOnLink && down.status == navagentstatus::kArrived && !down.partial && std::fabs(down.x - farSide[0]) < 0.4f,
+                 "(LinkGen) 段の上の Agent が飛び降り、隙間を飛び越えて向こうの床の目的地へ着く");
+
+        Scene upScene;
+        const EntityID upSurface = BuildLinkYard(upScene, kLedgeTop, kGap, false);
+        SetLinkGen(upScene.GetWorld(), upSurface, true, 2.0f, 1.5f);
+        NavBakeOutput upBake;
+        BakeLinkYard(upScene, upSurface, upBake);
+        const RavineRun up = RunLinkWalker(upScene, nearSide, onLedge, kRunTicks);
+        ck.Check(!up.sawOnLink && up.partial, "(LinkGen) 飛び降りの Link は一方通行 (下の床から段の上へは行けない)");
+        Scene backScene;
+        const EntityID backSurface = BuildLinkYard(backScene, kLedgeTop, kGap, false);
+        SetLinkGen(backScene.GetWorld(), backSurface, true, 2.0f, 1.5f);
+        NavBakeOutput backBake;
+        BakeLinkYard(backScene, backSurface, backBake);
+        const RavineRun back = RunLinkWalker(backScene, farSide, nearSide, kRunTicks);
+        ck.Check(back.sawOnLink && back.status == navagentstatus::kArrived && std::fabs(back.x - nearSide[0]) < 0.4f,
+                 "(LinkGen) 飛び越えの Link は双方向 (向こうの床からも戻れる)");
+
+        // 生成しない・届かない・壁がある: Link はできない
+        const auto linkCountOf = [&](bool wall, bool generate, float dropHeight, float jumpDistance) {
+            Scene s;
+            const EntityID sf = BuildLinkYard(s, kLedgeTop, kGap, wall);
+            SetLinkGen(s.GetWorld(), sf, generate, dropHeight, jumpDistance);
+            NavBakeOutput o;
+            return BakeLinkYard(s, sf, o) ? static_cast<int>(o.data.links.size()) : -1;
+        };
+        ck.Check(linkCountOf(false, false, 2.0f, 1.5f) == 0, "(LinkGen) generateLinks が切れていれば作らない");
+        ck.Check(linkCountOf(false, true, 1.0f, 0.0f) == 0, "(LinkGen) dropHeight (1 m) より高い段 (1.5 m) からは飛び降りない");
+        ck.Check(linkCountOf(false, true, 0.0f, 1.0f) == 0, "(LinkGen) jumpDistance (1 m) より広い隙間 (1.2 m) は飛び越えない");
+        ck.Check(linkCountOf(true, true, 0.0f, 1.5f) == 0, "(LinkGen) 隙間に高い壁があれば飛び越えない");
+        Scene offScene;
+        const EntityID offSurface = BuildLinkYard(offScene, kLedgeTop, kGap, false);
+        NavBakeOutput offBake;
+        BakeLinkYard(offScene, offSurface, offBake);
+        const RavineRun stuck = RunLinkWalker(offScene, onLedge, farSide, kRunTicks);
+        ck.Check(!stuck.sawOnLink && stuck.partial && stuck.x < -1.5f, "(LinkGen) 生成しなければ段の上の Agent は降りられない");
+
+        // 生成した Link の渡り方は Surface で指定する (ベイクし直さなくても渡り始めに読む)
+        Scene manualScene;
+        const EntityID manualSurface = BuildLinkYard(manualScene, kLedgeTop, kGap, false);
+        SetLinkGen(manualScene.GetWorld(), manualSurface, true, 2.0f, 0.0f);
+        NavBakeOutput manualBake;
+        BakeLinkYard(manualScene, manualSurface, manualBake);
+        manualScene.GetWorld().GetComponent<NavMeshSurfaceComponent>(manualSurface)->generatedLinkTraversal =
+            navlinktraversal::kManual;
+        const RavineRun held = RunLinkWalker(manualScene, onLedge, nearSide, 600);
+        ck.Check(held.sawOnLink && held.status == navagentstatus::kOnLink && held.onLinkTicks > 300,
+                 "(LinkGen) Surface の渡り方を Manual にすると、生成した Link の入口で完了の通知を待つ");
+
+        // 入力ハッシュ: 生成を切った設定は M84e 前と同じ (値を変えても動かない)、入れると値で変わる
+        NavBakeInputs in;
+        NavPrepareBakeInputs(offScene.GetWorld(), offSurface, in);
+        const uint64_t offHash = NavComputeInputHash(in.config, in.soup, in.clipBoxes);
+        in.config.linkDropHeight += 1.0f;
+        const uint64_t offChanged = NavComputeInputHash(in.config, in.soup, in.clipBoxes);
+        in.config.generateLinks = 1;
+        const uint64_t onHash = NavComputeInputHash(in.config, in.soup, in.clipBoxes);
+        in.config.linkDropHeight += 1.0f;
+        const uint64_t onChanged = NavComputeInputHash(in.config, in.soup, in.clipBoxes);
+        ck.Check(offHash == offChanged && onHash != offHash && onChanged != onHash,
+                 "(LinkGen) 入力ハッシュは生成を切っている間は生成の値に依らず、入れると値ごとに変わる");
+
+        // 形式 1 の .mnav (M84e 前) も読める: 形式 2 の書き出しから、設定の追加分 (12 バイト) と末尾の Link の件数を抜いて作る
+        std::vector<uint8_t> v2;
+        NavMeshAsset::Serialize(offBake.data, v2);
+        constexpr size_t kHeaderBytes = sizeof(uint32_t) * 3 + sizeof(uint64_t);
+        constexpr size_t kConfigV1Bytes = sizeof(float) * 14 + sizeof(int32_t) * 3;
+        constexpr size_t kConfigV2Extra = sizeof(int32_t) + sizeof(float) * 2;
+        std::vector<uint8_t> v1(v2.begin(), v2.end() - sizeof(uint64_t));
+        v1.erase(v1.begin() + kHeaderBytes + kConfigV1Bytes, v1.begin() + kHeaderBytes + kConfigV1Bytes + kConfigV2Extra);
+        const uint32_t formatOne = 1;
+        std::memcpy(v1.data() + sizeof(uint32_t), &formatOne, sizeof(formatOne));
+        NavMeshAsset::Data fromV1;
+        ck.Check(NavMeshAsset::Deserialize(v1, fromV1) && fromV1.layers.size() == offBake.data.layers.size()
+                     && fromV1.links.empty() && fromV1.config.generateLinks == 0
+                     && fromV1.config.boundsMax[2] == offBake.data.config.boundsMax[2],
+                 "(LinkGen) 形式 1 の .mnav も読める (Link なし)");
     }
 
     ck.Check(kExpectedYardHash == 0 || yardHashAtEnd == kExpectedYardHash,

@@ -20,6 +20,8 @@ struct NavAgentType {
     float height = 1.8f;
     float maxClimb = 0.3f;
     float maxSlopeDeg = 45.0f;
+    float dropHeight = 2.0f;   // Link の自動生成 (M84e) の飛び降りの高さ
+    float jumpDistance = 1.0f; // 同じく飛び越えの隙間の幅 (縁から縁)
 };
 
 // Agent Type の表 (M84a)。assets\project_settings.json の "navAgentTypes" 配列を読む。

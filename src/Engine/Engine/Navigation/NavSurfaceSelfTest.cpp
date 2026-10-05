@@ -41,7 +41,7 @@ namespace mye {
 namespace {
 
 // 期待値は Debug で採取し、Release で同じ値になることを確認して焼く (docs\adr\ADR-023-navmesh.md)
-constexpr uint64_t kExpectedAssetHash = 0x17818EF048195584ull; // M84b: ベイク方式 2 (範囲の箱で切り詰め)
+constexpr uint64_t kExpectedAssetHash = 0xFB40D91B9C69EC0Aull; // M84e: .mnav 形式 2 (層は M84b のまま)
 constexpr float kNavTestDt = 1.0f / 60.0f;
 constexpr uint64_t kTestAssetGuid = 0x4E41564D45534831ull; // "NAVMESH1"
 

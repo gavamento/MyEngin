@@ -128,6 +128,8 @@ struct NavSurfaceRuntime {
     std::unique_ptr<dtNavMeshQuery, NavQueryDeleter> query; // Agent の置き場所・目的地の最近点用
     std::unique_ptr<dtCrowd, NavCrowdDeleter> crowd;
     std::vector<NavAgentSlot> slots; // crowd の容量と同じ長さ
+    // .mnav に焼いた自動生成の Link (M84e、key 昇順)。毎 tick の Link の同期で手置きの Link の後ろへ足す
+    std::vector<NavLinkSpec> generatedLinks;
     int layerCount = 0;
     int tileCount = 0;
     int polyCount = 0;

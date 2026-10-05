@@ -255,13 +255,15 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
         int removeIndex = -1;
         constexpr ImGuiTableFlags kAgentTableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
             | ImGuiTableFlags_SizingStretchProp;
-        if (ImGui::BeginTable("##navAgentTypes", 7, kAgentTableFlags)) {
+        if (ImGui::BeginTable("##navAgentTypes", 9, kAgentTableFlags)) {
             ImGui::TableSetupColumn("id", ImGuiTableColumnFlags_WidthFixed, 24.0f);
             ImGui::TableSetupColumn(Tr(StrId::PrjSet_ColAgentName));
             ImGui::TableSetupColumn(Tr(StrId::PrjSet_ColAgentRadius));
             ImGui::TableSetupColumn(Tr(StrId::PrjSet_ColAgentHeight));
             ImGui::TableSetupColumn(Tr(StrId::PrjSet_ColAgentClimb));
             ImGui::TableSetupColumn(Tr(StrId::PrjSet_ColAgentSlope));
+            ImGui::TableSetupColumn(Tr(StrId::PrjSet_ColAgentDrop));
+            ImGui::TableSetupColumn(Tr(StrId::PrjSet_ColAgentJump));
             ImGui::TableSetupColumn("##remove", ImGuiTableColumnFlags_WidthFixed, 56.0f);
             ImGui::TableHeadersRow();
             for (int i = 0; i < types.Count(); ++i) {
@@ -286,6 +288,12 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
                 ImGui::TableNextColumn();
                 ImGui::SetNextItemWidth(-FLT_MIN);
                 ImGui::DragFloat("##slope", &t.maxSlopeDeg, 0.5f, 0.0f, 89.0f, "%.1f");
+                ImGui::TableNextColumn();
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                ImGui::DragFloat("##drop", &t.dropHeight, 0.01f, 0.0f, 20.0f, "%.2f");
+                ImGui::TableNextColumn();
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                ImGui::DragFloat("##jump", &t.jumpDistance, 0.01f, 0.0f, 20.0f, "%.2f");
                 ImGui::TableNextColumn();
                 ImGui::BeginDisabled(t.id == 0);
                 if (ImGui::SmallButton(Tr(StrId::PrjSet_RemoveNavAgent))) {
