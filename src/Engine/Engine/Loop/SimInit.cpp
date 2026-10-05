@@ -19,6 +19,8 @@
 #include "Engine/Engine/Physics/Fracture/FractureLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
+#include "Engine/Engine/AI/BehaviorTreeLibrary.h"
+#include "Engine/Engine/AI/BlackboardLibrary.h"
 #include "Engine/Engine/Schema/SchemaComponents.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Scene/TagNames.h"
@@ -71,6 +73,9 @@ void InstallSimLibraries(const SimLibraries& libs)
     terraincol::Install(libs.terrainColliders);
     // M84c: ナビのエリアのフィルタ (.navfilter.json)。physmat と同じく起動走査より前に注入する
     navfilter::Install(libs.navFilters);
+    // M85: ビヘイビアツリーとブラックボード (.bt.json / .bb.json)。同じく起動走査より前に注入する
+    behaviortree::Install(libs.behaviorTrees);
+    blackboard::Install(libs.blackboards);
 }
 
 void UninstallSimLibraries()
@@ -81,6 +86,8 @@ void UninstallSimLibraries()
     physmat::Install(nullptr);
     terraincol::Install(nullptr);
     navfilter::Install(nullptr);
+    behaviortree::Install(nullptr);
+    blackboard::Install(nullptr);
 }
 
 void InitSimProjectState(const std::wstring& assetsRoot)

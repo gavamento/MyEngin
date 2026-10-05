@@ -1280,6 +1280,22 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
     if (std::strcmp(desc.name, "NavMeshAgent") == 0 && !tg.multi) {
         DrawNavMeshAgentNotes(ctx, selection, undo, tg);
     }
+    // M85: ビヘイビアツリーの設定の注意 (AgentBrain との同居・木が引けない)。マルチ選択では出さない
+    if (std::strcmp(desc.name, "BehaviorTree") == 0 && !tg.multi) {
+        const auto* bt = world.GetComponent<BehaviorTreeComponent>(tg.e);
+        if (bt != nullptr) {
+            ImGui::PushTextWrapPos(0.0f);
+            if (bt->tree.IsNull()) {
+                ImGui::TextDisabled("%s", Tr(StrId::Insp_BtNoTree));
+            } else if (bt->status == btstatus::kAssetMissing) {
+                ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_BtAssetMissing));
+            }
+            if (world.GetComponent<AgentBrainComponent>(tg.e) != nullptr) {
+                ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_BtAgentBrain));
+            }
+            ImGui::PopTextWrapPos();
+        }
+    }
     // M83: 知覚している相手の一覧 (PerceptionSystem が毎 tick 書く値の読み取り表示) と設定の注意
     if (std::strcmp(desc.name, "AIPerception") == 0 && !tg.multi) {
         const auto* perc = world.GetComponent<AIPerceptionComponent>(tg.e);
@@ -4006,7 +4022,14 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
     // ディスクの走査はポップアップを開いている間だけ行う (毎フレーム assets 全体を再帰走査し、
     // .meta の無いファイルへ .meta を書き出していた)
     AssetType diskType = AssetType::Unknown;
-    if (fname.find("navfilter") != std::string::npos) {
+    if (fname == "tree") {
+        // M85: ビヘイビアツリー (BehaviorTree.tree)。"tex" など他の語には当たらない
+        if (BehaviorTreeLibrary* bt = behaviortree::Library()) {
+            for (const BehaviorTreeEntry& e : bt->Enumerate()) {
+                entries.push_back({ AssetID{ e.hash }, e.name });
+            }
+        }
+    } else if (fname.find("navfilter") != std::string::npos) {
         // M84c: ナビのエリアのフィルタ (NavMeshAgent.navFilter)
         if (NavFilterLibrary* nf = navfilter::Library()) {
             for (const NavFilterEntry& e : nf->Enumerate()) {

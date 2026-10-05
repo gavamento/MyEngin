@@ -81,6 +81,7 @@
 #include "Engine/Engine/Navigation/NavDeterminismSelfTest.h"
 #include "Engine/Engine/Navigation/NavAgentSelfTest.h"
 #include "Engine/Engine/Perception/PerceptionSelfTest.h"
+#include "Engine/Engine/AI/BehaviorTreeSelfTest.h"
 #include "Engine/Engine/Navigation/NavSurfaceSelfTest.h"
 #include "Editor/Tools/NavEditorSelfTest.h"
 #include "Engine/Platform/CrashHandler.h"
@@ -581,6 +582,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunNavEditorSelfTest();                 // M82b: Create / Bake / Clear の皮
         ok &= mye::RunNavAgentSelfTest();                  // M82c: Agent・dtCrowd・SimSnapshot の Nav 節
         ok &= mye::RunPerceptionSelfTest();                // M83: AI の知覚 (視覚・聴覚・ダメージ・接触・予測)
+        ok &= mye::RunBehaviorTreeSelfTest();              // M85: ビヘイビアツリー (アセット・Composite・BT 節)
         return ok ? 0 : 1;
     }
 

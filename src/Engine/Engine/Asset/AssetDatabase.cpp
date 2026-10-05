@@ -84,6 +84,12 @@ AssetType AssetDatabase::ClassifyPath(const std::wstring& path)
     if (EndsWith(s, ".navfilter.json")) {
         return AssetType::NavFilter;
     }
+    if (EndsWith(s, ".bt.json")) {
+        return AssetType::BehaviorTree;
+    }
+    if (EndsWith(s, ".bb.json")) {
+        return AssetType::Blackboard;
+    }
     if (EndsWith(s, ".fxstack.json")) {
         return AssetType::FxStack;
     }
@@ -153,6 +159,8 @@ const char* AssetDatabase::TypeName(AssetType t)
     case AssetType::Fracture: return "fracture";
     case AssetType::NavMesh: return "navmesh";
     case AssetType::NavFilter: return "navfilter";
+    case AssetType::BehaviorTree: return "behaviortree";
+    case AssetType::Blackboard: return "blackboard";
     case AssetType::Unknown:
     default: return "unknown";
     }
@@ -180,6 +188,8 @@ AssetType AssetDatabase::ParseTypeName(const std::string& s)
     if (s == "fracture") return AssetType::Fracture;
     if (s == "navmesh") return AssetType::NavMesh;
     if (s == "navfilter") return AssetType::NavFilter;
+    if (s == "behaviortree") return AssetType::BehaviorTree;
+    if (s == "blackboard") return AssetType::Blackboard;
     return AssetType::Unknown;
 }
 

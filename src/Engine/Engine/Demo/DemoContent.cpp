@@ -37,6 +37,8 @@
 #include "Engine/Engine/Physics/Fracture/FractureSkinBake.h" // M80j: スキン破壊の骨割り当て
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
+#include "Engine/Engine/AI/BehaviorTreeLibrary.h"
+#include "Engine/Engine/AI/BlackboardLibrary.h"
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Physics/Ragdoll/RagdollBuilder.h"
 #include "Engine/Engine/UI/UILayout.h" // M75a: 旧 anchor/x/y/w/h → RectTransform
@@ -3225,6 +3227,16 @@ void RegisterAssetLibraries(EngineContext& ctx)
             // M84c: ナビのエリアのフィルタ。所有は EngineLoop、navfilter:: で注入済み
             if (NavFilterLibrary* nf = navfilter::Library()) {
                 nf->LoadFromFile(p);
+            }
+        } else if (p.size() >= 8 && p.compare(p.size() - 8, 8, L".bt.json") == 0) {
+            // M85: ビヘイビアツリー。所有は EngineLoop / HeadlessSim、behaviortree:: で注入済み
+            if (BehaviorTreeLibrary* bt = behaviortree::Library()) {
+                bt->LoadFromFile(p);
+            }
+        } else if (p.size() >= 8 && p.compare(p.size() - 8, 8, L".bb.json") == 0) {
+            // M85: ブラックボード。同じく blackboard:: で注入済み
+            if (BlackboardLibrary* bb = blackboard::Library()) {
+                bb->LoadFromFile(p);
             }
         } else if (p.size() >= 13 && p.compare(p.size() - 13, 13, L".physmat.json") == 0) {
             // M59a1: 物理マテリアル。所有は EngineLoop、ここへは physmat:: で注入済み

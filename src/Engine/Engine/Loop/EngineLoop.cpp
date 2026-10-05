@@ -26,6 +26,9 @@
 #include "Engine/Engine/Navigation/NavDebugDraw.h" // M82e: ナビメッシュの塗り・輪郭
 #include "Engine/Engine/Navigation/NavSystem.h" // M82b: ナビメッシュ (実体はここが持つ)
 #include "Engine/Engine/Perception/PerceptionSystem.h" // M83: 知覚
+#include "Engine/Engine/AI/BehaviorTreeLibrary.h" // M85: ビヘイビアツリー (実体はここが持つ)
+#include "Engine/Engine/AI/BehaviorTreeSystem.h"
+#include "Engine/Engine/AI/BlackboardLibrary.h"
 #include "Engine/Engine/Audio/Playback/AudioMixer.h"
 #include "Engine/Engine/Audio/Playback/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/Playback/AudioSystem.h"
@@ -146,6 +149,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ModalSoundLibrary modalSounds; // Deep-Modal 推論 + .msfm クック (M76e)。sim には触れない
     PhysMatLibrary physMatLibrary;     // .physmat.json (M59a1)。sim の消費は M59a2 から
     NavFilterLibrary navFilterLibrary; // .navfilter.json (M84c)
+    BehaviorTreeLibrary behaviorTreeLibrary; // .bt.json (M85)
+    BlackboardLibrary blackboardLibrary;     // .bb.json (M85)
     TerrainColliderLibrary terrainColliders; // 地形コライダー (M59i)。**描画側とは別キャッシュ**
     // XPBD 変形体の粒子池 (M60'b)。ECS 外 sim 状態の 2 例目 — ハッシュ節 (SimSources) と
     // snapshot 節 (SimRefs) の両方へ必ず配線する (3 点セット契約)
@@ -166,6 +171,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     NavDebugView navDebugView;
     // M83: AI の知覚。状態は AIPerception コンポーネントにあり、ここは持たない (3 点セット契約の対象外)
     PerceptionSystem perceptionSystem;
+    // M85: ビヘイビアツリーの実行状態 (ブラックボード・ノードごとの状態)。ECS 外の sim 状態なので
+    // ハッシュ節 (SimSources) と snapshot 節 (SimRefs) の両方へ必ず配線する (3 点セット契約)
+    BehaviorTreeSystem behaviorTreeSystem;
     std::vector<SolidContact> solidContacts; // 物理→衝突イベントの tick 内受け渡し (M28c)
     PrefabLibrary prefabLibrary;
     AnimationLibrary animLibrary;
@@ -297,7 +305,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 破片資産 (.mfrac) の Clear() 後の再登録は呼び出し側が ReregisterAll() を呼ぶ責務
     // (現状の呼び出し元はまだ無い)
     InstallSimLibraries({ &resources, &meshColliders, &convexColliders, &fractureAssets,
-                          &physMatLibrary, &terrainColliders, &navFilterLibrary });
+                          &physMatLibrary, &terrainColliders, &navFilterLibrary, &behaviorTreeLibrary,
+                          &blackboardLibrary });
     // M76e: Deep-Modal 推論。CLI (--modal-backend) は綴りだけ検査済みで、未実装名
     // ("d3d11cs") への縮退はここ (SetBackendByName) が WARN 付きでやる。
     // .dmnet が無い (M76h 未実装/未生成) 環境では LoadModel が false を返すだけで、
@@ -570,6 +579,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     simRefs.xpbd = &xpbd; // M60'b: ハッシュ (SimSources) と対で撮る
     simRefs.acoustic = &acoustic; // M65a: 同上 (復元側が Invalidate も呼ぶ)
     simRefs.nav = &navSystem; // M82c: 同上 (dtCrowd・スロット表)
+    simRefs.behaviorTree = &behaviorTreeSystem; // M85: 同上 (ブラックボード・ノードごとの状態)
     simRefs.collision = &collisionSystem;
     simRefs.scripts = &scriptHost;
     simRefs.prevTickInput = prevTickInput;
@@ -892,6 +902,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.agentSystem = &agentSystem; // M65f
     tickServices.navSystem = &navSystem; // M82b
     tickServices.perception = &perceptionSystem; // M83
+    tickServices.behaviorTree = &behaviorTreeSystem; // M85
     tickServices.transformSystem = &transformSystem;
     tickServices.collisionSystem = &collisionSystem;
     tickServices.particleSystem = &particleSystem;

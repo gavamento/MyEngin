@@ -15,6 +15,7 @@
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Navigation/NavSystem.h"
+#include "Engine/Engine/AI/BehaviorTreeSystem.h"
 #include "Engine/Engine/Physics/Xpbd/XpbdBackend.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Script/ScriptHost.h"
@@ -22,12 +23,12 @@
 namespace mye {
 
 SimSources SimSourcesOf(Scene& scene, const CpuParticleBackend* particles, const XpbdBackend* xpbd,
-                        const AcousticField* acoustic, const NavSystem* nav)
+                        const AcousticField* acoustic, const NavSystem* nav, const BehaviorTreeSystem* behaviorTree)
 {
     // 並びは SimSources の member 順 (畳み込む順序は HashWorldImpl が決めるので、ここは関係ない)
     // SessionLanes はシステム入力を持つ記録のときだけ畳む (D10)。持たない記録のハッシュ列を動かさない
     const SessionLanes* lanes = scene.Lanes().systemInput != 0 ? &scene.Lanes() : nullptr;
-    return { particles, &scene.Time(), &scene.Persist(), xpbd, acoustic, &scene.UI(), lanes, nav };
+    return { particles, &scene.Time(), &scene.Persist(), xpbd, acoustic, &scene.UI(), lanes, nav, behaviorTree };
 }
 
 namespace {
@@ -43,6 +44,7 @@ constexpr uint32_t kXpbdMagic = 0x31425058u;  // 'XPB1' (M60'b)
 constexpr uint32_t kAcousticMagic = 0x31554341u; // 'ACU1' (M65a)
 constexpr uint32_t kSessionMagic = 0x31534553u;  // 'SES1' (M81b)
 constexpr uint32_t kNavMagic = 0x3156414Eu;      // 'NAV1' (M82c)
+constexpr uint32_t kBtMagic = 0x31305442u;       // 'BT01' (M85a)
 
 constexpr size_t kHeaderBytes = 4 * sizeof(uint32_t) + sizeof(uint64_t);
 
@@ -522,6 +524,31 @@ bool ReadNav(ByteReader& r, std::vector<uint8_t>& out)
     return true;
 }
 
+// ---- BT 節 (M85a) ----
+// BehaviorTreeSystem が無い構成 / BehaviorTree が 1 つも無いシーンでは「0 件」の短い節を書く (節は常にある)
+void WriteBt(ByteWriter& w, const BehaviorTreeSystem* bt)
+{
+    w.U32(kBtMagic);
+    if (bt != nullptr) {
+        bt->SaveSnapshot(w);
+    } else {
+        w.Count(0);
+    }
+}
+
+bool ReadBt(ByteReader& r, BtSnapshot& out)
+{
+    if (r.U32() != kBtMagic) {
+        MYE_LOG_ERROR("[snapshot] behavior tree section magic mismatch");
+        return false;
+    }
+    if (!BehaviorTreeSystem::ReadSnapshot(r, out)) {
+        MYE_LOG_ERROR("[snapshot] behavior tree section is corrupt");
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
@@ -549,6 +576,7 @@ bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
     if (!WriteNav(w, refs.nav)) { // M82c (v25)
         return false;
     }
+    WriteBt(w, refs.behaviorTree); // M85a (v34)
     // ★World は**最後**に置く。復元は「小さい節を全部一時領域へ読み切ってから
     //   World::SnapshotRead (それ自体が全読み後に一括差し替え) を呼ぶ」順で走るので、
     //   World の差し替え前の失敗では現世界に手が付かない (差し替え後の Nav 節の失敗だけ例外。RestoreSimSnapshot 参照)
@@ -627,6 +655,10 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     if (!ReadNav(r, navBlock)) { // M82c (v25)。refs.nav が無い構成では読み捨てる
         return false;
     }
+    BtSnapshot btSnapshot;
+    if (!ReadBt(r, btSnapshot)) { // M85a (v34)。refs.behaviorTree が無い構成では読み捨てる
+        return false;
+    }
     if (!r.Ok()) {
         MYE_LOG_ERROR("[snapshot] truncated blob");
         return false;
@@ -650,6 +682,9 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     // 失敗しても World は戻せないので残りの外部状態は当て切り、最後に false で知らせる
     const bool navApplied =
         refs.nav == nullptr || refs.nav->ApplySnapshot(refs.scene->GetWorld(), navBlock.data(), navBlock.size());
+    if (refs.behaviorTree != nullptr) {
+        refs.behaviorTree->ApplySnapshot(refs.scene->GetWorld(), std::move(btSnapshot)); // 失敗しない (戻せない木は初期状態から)
+    }
 
     if (refs.particles != nullptr) {
         refs.particles->PoolsForSnapshot() = std::move(pools);

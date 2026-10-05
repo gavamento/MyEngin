@@ -33,6 +33,8 @@ class ConvexColliderLibrary;
 class FractureLibrary;
 class PhysMatLibrary;
 class NavFilterLibrary;
+class BehaviorTreeLibrary;
+class BlackboardLibrary;
 class TerrainColliderLibrary;
 
 // EngineLoop::Run と HeadlessSim は GPU / 窓 / オーディオ以外の初期化を**この関数群で共有する**。
@@ -57,6 +59,8 @@ struct SimLibraries {
     PhysMatLibrary* physMat = nullptr;
     TerrainColliderLibrary* terrainColliders = nullptr;
     NavFilterLibrary* navFilters = nullptr; // M84c: .navfilter.json
+    BehaviorTreeLibrary* behaviorTrees = nullptr; // M85: .bt.json
+    BlackboardLibrary* blackboards = nullptr;     // M85: .bb.json
 };
 void InstallSimLibraries(const SimLibraries& libs);
 // 所有者が死ぬ前に必ず呼ぶ (注入したポインタをプロセス全体から外す)

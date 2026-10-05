@@ -19,6 +19,7 @@
 #include "Editor/Undo/UndoStack.h"
 #include "Editor/Windows/Asset/AssetBrowserWindow.h" // AssetTileLabel
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/AI/BehaviorTreeLibrary.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 #include "Engine/Engine/Scene/Prefab.h"
@@ -93,6 +94,8 @@ bool RunAssetOpsSelfTest()
             { L"existing.sound.json", &CreateSoundAsset },
             { L"existing.mixer.json", &CreateMixerAsset },
             { L"existing.physmat.json", &CreatePhysMatAsset },
+            { L"existing.bt.json", &CreateBehaviorTreeAsset },
+            { L"existing.bb.json", &CreateBlackboardAsset },
         };
         bool preserved = true;
         for (const auto& item : cases) {
@@ -134,6 +137,30 @@ bool RunAssetOpsSelfTest()
     WriteDummy(mixer);
     check(RenameAsset(ctx, mixer.wstring(), "game") == (root / L"game.mixer.json").wstring(),
           "rename keeps compound suffix (.mixer.json)");
+
+    // ---- (1b2) M85 の複合サフィックス (.bt.json / .bb.json): 作成 → 改名で拡張子が保たれる ----
+    {
+        const std::wstring treePath = CreateBehaviorTreeAsset(ctx, root.wstring(), "guard");
+        const std::wstring bbPath = CreateBlackboardAsset(ctx, root.wstring(), "guard");
+        check(treePath == (root / L"guard.bt.json").wstring() && bbPath == (root / L"guard.bb.json").wstring()
+                  && fs::exists(treePath, ec) && fs::exists(bbPath, ec),
+              "create behavior tree / blackboard writes the compound-suffix files");
+        check(RenameAsset(ctx, treePath, "watch") == (root / L"watch.bt.json").wstring(),
+              "rename keeps compound suffix (.bt.json)");
+        check(RenameAsset(ctx, bbPath, "watch") == (root / L"watch.bb.json").wstring(),
+              "rename keeps compound suffix (.bb.json)");
+        std::ifstream treeFile(root / L"watch.bt.json", std::ios::binary);
+        nlohmann::json treeJson;
+        bool parsed = true;
+        try {
+            treeFile >> treeJson;
+        } catch (const nlohmann::json::exception&) {
+            parsed = false;
+        }
+        BehaviorTreeAsset loaded;
+        check(parsed && BehaviorTreeLibrary::FromJson(treeJson, loaded) && loaded.nodes.size() == 1,
+              "a new behavior tree file is a valid tree (one root node)");
+    }
 
     // ---- (1c) M48d の複合サフィックス (.actor.json) ----
     const fs::path goblin = root / L"goblin.actor.json";
@@ -792,6 +819,8 @@ bool RunAssetOpsSelfTest()
             { L"assets/crate.prefab.json", "prefab" },
             { L"assets/walk.anim.json", "anim" },
             { L"assets/ice.physmat.json", "physmat" },
+            { L"assets/guard.bt.json", "bt" },
+            { L"assets/guard.bb.json", "bb" },
             { L"assets/red.mat.json", "mat" },
             { L"assets/hit.sound.json", "sound" },
             { L"assets/main.mixer.json", "mixer" },

@@ -19,6 +19,7 @@
 #include "Engine/Engine/Acoustic/AgentSystem.h" // M65f: 敵の思考 (フェーズ 3.4 の後半)
 #include "Engine/Engine/Navigation/NavSystem.h" // M82b: ナビメッシュ (フェーズ 3.4 と 3.5 の間)
 #include "Engine/Engine/Perception/PerceptionSystem.h" // M83: 知覚 (フェーズ 3.4a)
+#include "Engine/Engine/AI/BehaviorTreeSystem.h" // M85: ビヘイビアツリー (フェーズ 3.4a2)
 #include "Engine/Engine/Audio/Spatial/AcousticAudio.h" // ResolveWaveShotSound (鳴る波の音の選択)
 #include "Engine/Engine/Audio/Playback/AudioMixer.h"
 #include "Engine/Engine/Audio/Playback/AudioSourceSystem.h"
@@ -394,6 +395,13 @@ void RunOneTick(TickServices& ts)
     if (stepSim && ts.perception != nullptr) {
         ts.perception->Update(scene.GetWorld(), ctx.tickIndex, ctx.fixedDt, solidContacts);
     }
+    // ---- ビヘイビアツリー (フェーズ 3.4a2、M85): 知覚の後・ナビメッシュの前 ----
+    // 知覚の結果を読んで目的地を書くので、同じ tick に歩き出せる。BehaviorTree が無いシーンでは
+    // 走査だけで何もしない (RNG もハッシュも触らない)
+    if (stepSim && ts.behaviorTree != nullptr) {
+        MYE_PROFILE_SCOPE("behaviortree");
+        ts.behaviorTree->Update(scene.GetWorld(), ctx.tickIndex);
+    }
     // ---- ナビメッシュ (フェーズ 3.4b、M82b): 音響 + AgentSystem の後・アニメの前 ----
     // AgentSystem は ts.acoustic のゲートの中なので相乗りしない。Surface が無いシーンでは
     // 走査だけで何もしない (RNG もハッシュも触らない)
@@ -555,7 +563,8 @@ void RunOneTick(TickServices& ts)
     fractureSystem.ApplyDeferredLocals(scene.GetWorld());
 
     // ここから先の変異・ダンプ・記録・照合が撮るハッシュの源 (全部同じ束で撮る)
-    const SimSources hashSources = SimSourcesOf(scene, &particleSystem.Cpu(), ts.xpbd, ts.acoustic, ts.navSystem);
+    const SimSources hashSources =
+        SimSourcesOf(scene, &particleSystem.Cpu(), ts.xpbd, ts.acoustic, ts.navSystem, ts.behaviorTree);
 
     // ---- 意図的な状態の変異 (M52i、--net-poke-tick N) ----
     // desync 検出と診断チェーン (--rep-diff → --hash-diff) が本当に働くかは、
@@ -832,6 +841,9 @@ void RunOneTick(TickServices& ts)
             }
             if (ts.navSystem) {
                 ts.navSystem->Reset(); // M82b: 旧シーンのナビメッシュ。次の tick が新シーンの分を読む
+            }
+            if (ts.behaviorTree) {
+                ts.behaviorTree->Reset(); // M85: 旧シーンの木の実行状態 (EntityID が別シーンの別物になる)
             }
             vfxRenderer.Reset(); // M29c: トレイル点列も新シーンでリセット
             partFollowSystem.Reset(); // M48g: 旧シーンの warn 抑制を捨てる

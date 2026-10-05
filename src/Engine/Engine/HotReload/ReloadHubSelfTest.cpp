@@ -46,6 +46,8 @@ bool RunReloadHubSelfTest()
         { L"c:\\p\\assets\\audio\\impact\\glass.impact.json", ReloadKind::ImpactSound, 6 },
         { L"c:\\p\\assets\\audio\\default.mixer.json", ReloadKind::Mixer, 6 },
         { L"c:\\p\\assets\\physics\\metal.physmat.json", ReloadKind::PhysMat, 6 },
+        { L"c:\\p\\assets\\ai\\guard.bt.json", ReloadKind::BehaviorTree, 6 },
+        { L"c:\\p\\assets\\ai\\guard.bb.json", ReloadKind::Blackboard, 6 },
         { L"c:\\p\\assets\\deepmodal\\deepmodal.dmnet", ReloadKind::ModalNet, 6 },
         { L"c:\\p\\assets\\actors\\hero.actor.json", ReloadKind::Compose, 7 },
         { L"c:\\p\\assets\\prefabs\\door.prefab.json", ReloadKind::Compose, 7 },

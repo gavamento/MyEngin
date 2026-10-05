@@ -18,6 +18,7 @@
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Navigation/NavSystem.h"
+#include "Engine/Engine/AI/BehaviorTreeSystem.h"
 #include "Engine/Engine/Physics/Xpbd/XpbdBackend.h"
 #include "Engine/Platform/PathUtil.h"
 
@@ -382,6 +383,16 @@ uint64_t HashNavState(const NavSystem& nav, DumpCtx* d)
     return h;
 }
 
+// ビヘイビアツリーの実行状態 (M85)。表の全部を BehaviorTreeSystem::StateHash が 1 つの値にする。
+// ダンプには載っている木の数と合成値の 2 行だけ出す (どの木が割れたかは ECS 側の BehaviorTree 行で分かる)
+uint64_t HashBehaviorTreeState(const BehaviorTreeSystem& bt, DumpCtx* d)
+{
+    uint64_t h = kFnvOffset;
+    FoldU64(h, d, "BehaviorTree", "instances", static_cast<uint64_t>(bt.InstanceCount()));
+    FoldU64(h, d, "BehaviorTree", "stateHash", bt.StateHash());
+    return h;
+}
+
 // M51g: ゲームフロー状態 (決定台帳 5)。RNG の直後・パーティクルの前に畳み込む。
 // PersistStore は std::map = キー昇順走査 (挿入順に依存しない — selftest が固定)
 uint64_t HashGameFlow(uint64_t h, const TimeControl* time, const PersistStore* persist, DumpCtx* d)
@@ -550,6 +561,12 @@ uint64_t HashWorldImpl(World& world, const SimSources& src,
         const uint64_t nh = HashNavState(*src.nav, d);
         total = HashCombine(total, nh);
         EmitU64(d, "Nav", "#total", nh, total);
+    }
+    // ビヘイビアツリーの実行状態 (M85)。内容ゲート (理由は WorldHasher.h の SimSources::behaviorTree)
+    if (src.behaviorTree && src.behaviorTree->HasHashableState()) {
+        const uint64_t bh = HashBehaviorTreeState(*src.behaviorTree, d);
+        total = HashCombine(total, bh);
+        EmitU64(d, "BehaviorTree", "#total", bh, total);
     }
     return total;
 }

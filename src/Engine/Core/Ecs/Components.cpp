@@ -1578,6 +1578,18 @@ void RegisterBuiltinComponents()
         MYE_JP("音を聞かれる", MYE_FIELD(AIStimulusSourceComponent, hearingEnabled, Bool)),
         MYE_JP("触れて気付かれる", MYE_FIELD(AIStimulusSourceComponent, touchEnabled, Bool)),
     });
+
+    // M85a: Behavior Tree (TypeId=78、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変。
+    // 木の実行状態 (ブラックボード・ノードごとの状態) は BehaviorTreeSystem の表と SimSnapshot の BT 節にある
+    RegisterComponent<BehaviorTreeComponent>("BehaviorTree", {
+        MYE_JP("ビヘイビアツリー", MYE_FIELD_TIP(BehaviorTreeComponent, tree, AssetRef, ".bt.json to run")),
+        MYE_JP("有効", MYE_FIELD_TIP(BehaviorTreeComponent, enabled, Bool,
+                                     "off = stop (a running tree is aborted; the blackboard is kept)")),
+        MYE_JP("デバッグ表示", MYE_FIELD_FLAGS(BehaviorTreeComponent, drawDebug, Bool, kFieldNoHash)),
+        MYE_JP("状態", MYE_FIELD_FLAGS(BehaviorTreeComponent, status, Int32, kFieldReadOnly)),
+        MYE_JP("実行中のノード", MYE_FIELD_FLAGS(BehaviorTreeComponent, activeNodeId, Int32, kFieldReadOnly)),
+        MYE_JP("最後の Abort の tick", MYE_FIELD_FLAGS(BehaviorTreeComponent, lastAbortTick, Int32, kFieldReadOnly)),
+    });
 }
 
 } // namespace mye

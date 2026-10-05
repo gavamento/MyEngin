@@ -52,6 +52,10 @@
     <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticNav.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Acoustic\AcousticSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Acoustic\AgentSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\AI\BehaviorTreeLibrary.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\AI\BehaviorTreeSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\AI\BehaviorTreeSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\AI\BlackboardLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Animation\Animation.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Animation\AnimatorController.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Animation\AnimatorControllerSelfTest.cpp" />
@@ -326,6 +330,10 @@
     <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticNav.h" />
     <ClInclude Include="..\src\Engine\Engine\Acoustic\AcousticSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Acoustic\AgentSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\AI\BehaviorTreeLibrary.h" />
+    <ClInclude Include="..\src\Engine\Engine\AI\BehaviorTreeSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\AI\BehaviorTreeSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\AI\BlackboardLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation\Animation.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation\AnimatorController.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation\AnimatorControllerSelfTest.h" />

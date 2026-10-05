@@ -105,6 +105,7 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         // M83: AI の知覚
         { "AIPerception", { ICON_FA_EYE, "AI", "AI 知覚" } },
         { "AIStimulusSource", { ICON_FA_BULLSEYE, "AI", "AI 刺激源" } },
+        { "BehaviorTree", { ICON_FA_SITEMAP, "AI", "ビヘイビアツリー" } }, // M85
     };
     return t;
 }

@@ -27,6 +27,7 @@ class AcousticField;
 class AgentSystem;
 class NavSystem;
 class PerceptionSystem;
+class BehaviorTreeSystem;
 class TransformSystem;
 class CollisionSystem;
 class ParticleSystem;
@@ -102,6 +103,10 @@ struct TickServices {
     // 状態は AIPerception コンポーネントにあるので、スナップショットとハッシュの束 (SimRefs / SimSources) には入らない。
     // null = 回さない (World 単体の selftest 経路)
     PerceptionSystem* perception = nullptr;
+    // M85: ビヘイビアツリー。フェーズ 3.4a2 (知覚の後・3.4b ナビメッシュの前) に Update する。
+    // 実行状態は SimSnapshot の BT 節とワールドハッシュ (SimRefs / SimSources) に入る = SimRefs.behaviorTree と同じ実体を渡すこと。
+    // null = 回さない (World 単体の selftest 経路)
+    BehaviorTreeSystem* behaviorTree = nullptr;
     TransformSystem* transformSystem = nullptr;
     CollisionSystem* collisionSystem = nullptr;
     ParticleSystem* particleSystem = nullptr;

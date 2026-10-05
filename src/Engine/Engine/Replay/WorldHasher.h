@@ -13,6 +13,7 @@ class CpuParticleBackend;
 class XpbdBackend;
 class AcousticField;
 class NavSystem;
+class BehaviorTreeSystem;
 struct TimeControl;
 struct UIInteractionState;
 class PersistStore;
@@ -56,6 +57,9 @@ struct SimSources {
     // ★xpbd / acoustic と同じ**内容ゲート** (crowd に載っている Agent が 1 体も無ければ節ごと畳まない) —
     // NavMesh 系を使わないシーンのハッシュ列を 1 tick も動かさない。Agent のコンポーネント自体は ECS の通常経路で畳まれる
     const NavSystem* nav = nullptr;
+    // M85: ビヘイビアツリーの実行状態 (ブラックボード・ノードごとの状態)。★nav と同じ**内容ゲート**
+    // (表が空なら節ごと畳まない) — BehaviorTree を使わないシーンのハッシュ列を 1 tick も動かさない
+    const BehaviorTreeSystem* behaviorTree = nullptr;
 };
 
 uint64_t HashWorld(World& world, const SimSources& src = {});

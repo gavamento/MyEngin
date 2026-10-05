@@ -1,0 +1,27 @@
+# sub-14: 文書 (ADR-025) と全体検証
+
+- 依存: sub-13
+- 状態: 未着手
+- 往復: 0
+
+## やること
+- `docs\adr\ADR-025-behavior-tree.md` を確定: 実行モデル (UE 方式 + ポーリングの監視、却下: 毎 tick 根から / 即時コールバック)、状態の置き場所 (システムの表 + BT 節、却下: 全部コンポーネント = ADR-024 との違いの理由)、イベントキュー (tick N+1 配送、順序、上限)、C++ タスクの状態の扱い、C# タスクは保証外、手数の上限、SubTree と BB の一致、`.bt.json` の位置と contentHash、性能の計測値、UE との違いの一覧、既知の限界。
+- `engine_spec.md` (BT / BB / イベントキュー / PatrolRoute / ABI v27 の表 / snapshot v の履歴)、`docs\engine-feature-guide.md` (BT の使い方: 木を作る → BB → コンポーネント → デバッグ)、`docs\test_checklists.md` (BT の手動確認項目)、`docs\history\api-scripting-tools.md` (sub-11 で書いた分の見直し)、`plans\ai-roadmap-m83-m86.md` の進捗表 (M85 完了、M85 で計画から変えたこと)。AGENTS.md / CLAUDE.md に番号の記載があれば追従。
+- 全体検証: AGENTS.md 7 章の広範な変更の一式。
+
+## やらないこと (このサブでは)
+- コードの変更 (検証で見つかった不具合は SELF_EVAL に書き、planner が差し戻し先を決める)
+
+## 触る場所 (planner の見立て)
+- `docs\adr\ADR-025-behavior-tree.md`、`engine_spec.md`、`docs\engine-feature-guide.md`、`docs\test_checklists.md`、`docs\history\api-scripting-tools.md`、`plans\ai-roadmap-m83-m86.md`
+
+## 受け入れ条件 (このサブ)
+1. (spec 17) 上の文書が実装と一致 (番号: TypeId・ABI 版とスロット数・snapshot 版を実コードから引いて書く)。
+2. (spec 16) Debug / Release `/p:MyeWarnAsError=true` 0 警告、Editor `--selftest` 両構成・Server `--selftest` 新規 FAIL 0、`check_rules.ps1` 0、`replay_verify.bat` 全ジョブ PASS、`shot_verify.bat` (`nav` の既知 FAIL 以外 PASS)。結果を SELF_EVAL に。
+
+## 検証コマンド
+- `msbuild` Debug / Release、`bin\x64\Debug\Editor.exe --selftest`、`bin\x64\Release\Editor.exe --selftest`、`bin\x64\Release\Server.exe --selftest`、`tools\check_rules.ps1`、`tools\replay_verify.bat`、`tools\shot_verify.bat`
+
+## 実装メモ (coder が追記)
+
+## フィードバック履歴

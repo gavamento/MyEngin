@@ -13,6 +13,7 @@ class CpuParticleBackend;
 class XpbdBackend;
 class AcousticField;
 class NavSystem;
+class BehaviorTreeSystem;
 class CollisionSystem;
 class ScriptHost;
 
@@ -21,7 +22,8 @@ class ScriptHost;
 // 呼び出し側で波括弧初期化を手書きすると、項目を足したときに 1 か所だけ古いまま残る
 // (M70c: acoustic を 4 か所で渡し忘れ、波の出るシーンでだけ crash .rep が全 tick 割れた)
 SimSources SimSourcesOf(Scene& scene, const CpuParticleBackend* particles, const XpbdBackend* xpbd,
-                        const AcousticField* acoustic, const NavSystem* nav = nullptr);
+                        const AcousticField* acoustic, const NavSystem* nav = nullptr,
+                        const BehaviorTreeSystem* behaviorTree = nullptr);
 
 // sim レーンのスナップショット (M52d、決定台帳 1)。
 // 「ある tick の sim 状態を丸ごと保存し、後でビット同一に復元し、そこから同じ入力で
@@ -72,9 +74,12 @@ struct SimRefs {
     // .mnav から作り直す導出値。★RestoreSimSnapshot は World を差し替えた後に NavSystem::ApplySnapshot を呼ぶ
     // (Surface の .mnav を先に読み込んでから状態を当てる = 空の NavSystem へ復元しても次の Update が読み直さない)
     NavSystem* nav = nullptr;
+    // M85: ビヘイビアツリーの実行状態 (ブラックボード・ノードごとの状態)。復元は World を差し替えた後
+    // (BehaviorTreeComponent が残っているエンティティだけ表へ戻す)。ハッシュと対で撮る (3 点セット契約)
+    BehaviorTreeSystem* behaviorTree = nullptr;
 
     // この束で撮るワールドハッシュの源 (SimSourcesOf)。scene は非 null が前提
-    SimSources HashSources() const { return SimSourcesOf(*scene, particles, xpbd, acoustic, nav); }
+    SimSources HashSources() const { return SimSourcesOf(*scene, particles, xpbd, acoustic, nav, behaviorTree); }
 };
 
 // blob の形式版。**.rep の版とは独立** (M52a 申し送り 7 と同じ規約) —
@@ -114,7 +119,8 @@ struct SimRefs {
 // v32 (M84d): NavMeshAgentComponent の細かい制御 (isStopped 以下、World 節のカラム生バイト) と Nav 節の crowd に avoidancePriority
 // v33 (M84e): NavMeshSurfaceComponent の Link の自動生成 (generateLinks 以下、World 節のカラム生バイト)。
 //            生成した Link は store の Off-Mesh Link の一覧に入る (書式は v29 のまま)
-inline constexpr uint32_t kSimSnapshotVersion = 33;
+// v34 (M85a): BT 節 (BehaviorTreeSystem の表) を NAV 節の後・World 節の前に追加。BehaviorTreeComponent (World 節のカラム生バイト)
+inline constexpr uint32_t kSimSnapshotVersion = 34;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

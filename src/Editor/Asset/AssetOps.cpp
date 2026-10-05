@@ -40,6 +40,8 @@
 #include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h" // M59a1: .physmat.json の生成/登録
 #include "Engine/Engine/Navigation/NavFilterLibrary.h" // M84c: .navfilter.json の生成/登録
+#include "Engine/Engine/AI/BehaviorTreeLibrary.h"      // M85: .bt.json / .bb.json の生成/登録
+#include "Engine/Engine/AI/BlackboardLibrary.h"
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Rendering/RenderSystem.h" // M58f: 地形ブラシ Undo 後のチャンク再構築
 #include "Engine/Engine/Scene/Scene.h"
@@ -210,13 +212,62 @@ std::wstring CreateNavFilterAsset(EngineContext& ctx, const std::wstring& dir, c
     return path;
 }
 
+// 新規の木は根に Selector を 1 つ置いた形で作る (空の木は何も実行しない)
+std::wstring CreateBehaviorTreeAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
+{
+    (void)ctx; // 署名は他の Create* と揃える
+    const std::string safe = SanitizeFileName(name, "New BehaviorTree");
+    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".bt.json";
+    if (fs::exists(path)) {
+        return {};
+    }
+    BehaviorTreeAsset tree;
+    tree.name = safe;
+    BtNodeDef root;
+    root.id = 0;
+    root.kind = BtNodeKind::Selector;
+    tree.nodes.push_back(root);
+    tree.rootId = root.id;
+    if (!WriteNewAssetFile(path, BehaviorTreeLibrary::ToJson(tree).dump(2))) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteBehaviorTreeFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    // 生成直後に登録 -> BehaviorTree.tree の参照ピッカーで即使える
+    if (BehaviorTreeLibrary* bt = behaviortree::Library()) {
+        bt->LoadFromFile(path);
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedBehaviorTree), WideToUtf8(path).c_str());
+    return path;
+}
+
+std::wstring CreateBlackboardAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
+{
+    (void)ctx; // 署名は他の Create* と揃える
+    const std::string safe = SanitizeFileName(name, "New Blackboard");
+    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".bb.json";
+    if (fs::exists(path)) {
+        return {};
+    }
+    BlackboardAsset asset;
+    asset.name = safe;
+    if (!WriteNewAssetFile(path, BlackboardLibrary::ToJson(asset).dump(2))) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteBlackboardFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    if (BlackboardLibrary* bb = blackboard::Library()) {
+        bb->LoadFromFile(path);
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedBlackboard), WideToUtf8(path).c_str());
+    return path;
+}
+
 void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstring& suffix)
 {
     static const std::wstring kCompound[] = {L".scene.json",  L".prefab.json", L".actor.json",
                                              L".anim.json",   L".mat.json",    L".controller.json",
                                              L".sound.json",  L".mixer.json",  L".physmat.json",
                                              L".fxstack.json", L".post.hlsl",  L".cs.hlsl",
-                                             L".navfilter.json"};
+                                             L".navfilter.json", L".bt.json",  L".bb.json"};
     for (const std::wstring& c : kCompound) {
         if (filename.size() > c.size() &&
             filename.compare(filename.size() - c.size(), c.size(), c) == 0) {

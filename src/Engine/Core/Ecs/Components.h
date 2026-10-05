@@ -2126,6 +2126,30 @@ struct AIStimulusSourceComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// BehaviorTreeComponent.status
+namespace btstatus {
+enum : int32_t {
+    kIdle = 0,         // 動いていない (無効、または根が無い)
+    kRunning = 1,
+    kSucceeded = 2,    // 根が Success で終わった tick。次の tick に根からやり直す
+    kFailed = 3,       // 根が Failure で終わった tick。同上
+    kAssetMissing = 4, // tree の GUID が未登録 (木が読めなかった)
+};
+} // namespace btstatus
+
+// ビヘイビアツリーで動くエンティティ (M85、UE の BehaviorTreeComponent + Blackboard)。
+// 木と実行状態 (ブラックボード・実行中のノード) は BehaviorTreeSystem が表で持ち、BT 節に入る。
+// ここにあるのは設定と、システムが毎 tick 写す表示用の値 (読み取り専用だが sim 状態なので hash 対象)
+struct BehaviorTreeComponent {
+    AssetID tree = {};               // .bt.json
+    bool enabled = true;             // false の間は止まる (実行中なら Abort。ブラックボードは保つ)
+    bool drawDebug = false;          // SceneView に実行中のタスク名などを出す (描画専用、NoHash)
+    int32_t status = btstatus::kIdle;
+    int32_t activeNodeId = -1;       // 実行中の一番深いノードの id。-1 = 無し
+    int32_t lastAbortTick = -1;      // 最後にノードを Abort した tick。-1 = まだ無い
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

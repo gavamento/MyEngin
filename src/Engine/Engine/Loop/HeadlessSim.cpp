@@ -20,6 +20,9 @@
 #include "Engine/Engine/Acoustic/AgentSystem.h"
 #include "Engine/Engine/Navigation/NavSystem.h"
 #include "Engine/Engine/Perception/PerceptionSystem.h"
+#include "Engine/Engine/AI/BehaviorTreeLibrary.h"
+#include "Engine/Engine/AI/BehaviorTreeSystem.h"
+#include "Engine/Engine/AI/BlackboardLibrary.h"
 #include "Engine/Engine/Animation/Animation.h"
 #include "Engine/Engine/Animation/AnimatorController.h"
 #include "Engine/Engine/Animation/PartFollowSystem.h"
@@ -109,11 +112,14 @@ struct HeadlessSim::Impl : IEngineApp {
     PhysMatLibrary physMatLibrary;
     TerrainColliderLibrary terrainColliders;
     NavFilterLibrary navFilterLibrary;
+    BehaviorTreeLibrary behaviorTreeLibrary; // M85
+    BlackboardLibrary blackboardLibrary;     // M85
     XpbdBackend xpbd;
     AcousticField acoustic;
     AgentSystem agentSystem;
     NavSystem navSystem; // M82b
     PerceptionSystem perceptionSystem; // M83
+    BehaviorTreeSystem behaviorTreeSystem; // M85
     std::vector<SolidContact> solidContacts;
     PrefabLibrary prefabLibrary;
     AnimationLibrary animLibrary;
@@ -194,6 +200,7 @@ void HeadlessSim::Impl::BuildTickServices(int netRole)
     ts.agentSystem = &agentSystem;
     ts.navSystem = &navSystem; // M82b
     ts.perception = &perceptionSystem; // M83
+    ts.behaviorTree = &behaviorTreeSystem; // M85
     ts.transformSystem = &transformSystem;
     ts.collisionSystem = &collisionSystem;
     ts.particleSystem = &particleSystem;
@@ -256,7 +263,8 @@ void HeadlessSim::Activate()
 {
     Impl& m = *impl_;
     InstallSimLibraries({ &m.resources, &m.meshColliders, &m.convexColliders, &m.fractureAssets,
-                          &m.physMatLibrary, &m.terrainColliders, &m.navFilterLibrary });
+                          &m.physMatLibrary, &m.terrainColliders, &m.navFilterLibrary, &m.behaviorTreeLibrary,
+                          &m.blackboardLibrary });
     m.assetDatabase.InstallAsKeyResolver();
     SceneSerializer::SetManagedHost(&m.managedHost);
 }
@@ -285,7 +293,8 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     // ---- GPU 系を除いた sim 側の起動手順 (EngineLoop::Run と同じ順、SimInit.h) ----
     m.resources.InitHeadless();
     InstallSimLibraries({ &m.resources, &m.meshColliders, &m.convexColliders, &m.fractureAssets,
-                          &m.physMatLibrary, &m.terrainColliders, &m.navFilterLibrary });
+                          &m.physMatLibrary, &m.terrainColliders, &m.navFilterLibrary, &m.behaviorTreeLibrary,
+                          &m.blackboardLibrary });
     // ParticleSystem::Init の代わり: CPU / GPU バックエンドの選択だけ project_settings.json から決める
     m.particleSystem.LoadSettings(m.assetsRoot + L"\\project_settings.json");
     InitSimProjectState(m.assetsRoot);
@@ -358,6 +367,7 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     m.simRefs.xpbd = &m.xpbd;
     m.simRefs.acoustic = &m.acoustic;
     m.simRefs.nav = &m.navSystem; // M82c
+    m.simRefs.behaviorTree = &m.behaviorTreeSystem; // M85
     m.simRefs.collision = &m.collisionSystem;
     m.simRefs.scripts = &m.scriptHost;
     m.simRefs.prevTickInput = m.prevTickInput;

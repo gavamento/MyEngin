@@ -89,9 +89,13 @@ bool RunAssetDatabaseSelfTest()
           ".mnav is classified as the navmesh asset type");
     check(AssetDatabase::ClassifyPath(L"x\\Crawler.navfilter.json") == AssetType::NavFilter,
           ".navfilter.json is classified as the navigation area filter type");
+    check(AssetDatabase::ClassifyPath(L"x\\Patrol.bt.json") == AssetType::BehaviorTree,
+          ".bt.json is classified as the behavior tree type");
+    check(AssetDatabase::ClassifyPath(L"x\\Patrol.bb.json") == AssetType::Blackboard,
+          ".bb.json is classified as the blackboard type");
     for (AssetType t : { AssetType::Actor, AssetType::Prefab, AssetType::Sound, AssetType::Mixer,
                          AssetType::Schema, AssetType::PhysMat, AssetType::Fracture, AssetType::NavMesh,
-                         AssetType::NavFilter }) {
+                         AssetType::NavFilter, AssetType::BehaviorTree, AssetType::Blackboard }) {
         check(AssetDatabase::ParseTypeName(AssetDatabase::TypeName(t)) == t,
               "asset type name round-trips through .meta");
     }

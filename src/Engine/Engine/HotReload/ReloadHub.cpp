@@ -15,6 +15,8 @@
 #include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
+#include "Engine/Engine/AI/BehaviorTreeLibrary.h"
+#include "Engine/Engine/AI/BlackboardLibrary.h"
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Scene/SceneSerializer.h"
@@ -65,6 +67,8 @@ constexpr AssetKindRow kAssetKinds[] = {
     { L".mixer.json", ReloadKind::Mixer, 6 },
     { L".physmat.json", ReloadKind::PhysMat, 6 },
     { L".navfilter.json", ReloadKind::NavFilter, 6 },
+    { L".bt.json", ReloadKind::BehaviorTree, 6 },
+    { L".bb.json", ReloadKind::Blackboard, 6 },
     { L".dmnet", ReloadKind::ModalNet, 6 }, // M76e。.sound.json 等と同格 (誰も参照していない)
     { PrefabLibrary::kActorSuffix, ReloadKind::Compose, 7 },
     { PrefabLibrary::kPrefabSuffix, ReloadKind::Compose, 7 },
@@ -284,6 +288,12 @@ void ReloadHub::HandleChange(const std::wstring& normPath, int attempt)
     case ReloadKind::NavFilter:
         result = ReloadNavFilter(normPath);
         break;
+    case ReloadKind::BehaviorTree:
+        result = ReloadBehaviorTree(normPath);
+        break;
+    case ReloadKind::Blackboard:
+        result = ReloadBlackboard(normPath);
+        break;
     case ReloadKind::ModalNet:
         result = ReloadModalNet(normPath);
         break;
@@ -468,6 +478,34 @@ ReloadHub::ReloadResult ReloadHub::ReloadNavFilter(const std::wstring& path)
         return ReloadResult::Retry;
     }
     MYE_LOG_INFO("[reload] navfilter reloaded: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// 登録済みなら読み直す (M85)。実行中の木は次の tick に Abort され、同じ木の根から (ブラックボードは保ったまま) やり直す
+ReloadHub::ReloadResult ReloadHub::ReloadBehaviorTree(const std::wstring& path)
+{
+    BehaviorTreeLibrary* bt = behaviortree::Library();
+    if (bt == nullptr || !bt->Contains(BehaviorTreeLibrary::HashForPath(path))) {
+        return ReloadResult::Skipped;
+    }
+    if (bt->LoadFromFile(path) == 0) {
+        return ReloadResult::Retry;
+    }
+    MYE_LOG_INFO("[reload] behavior tree reloaded: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// 登録済みなら読み直す (M85)。この定義を使う木のブラックボードは次の tick に初期値へ戻る
+ReloadHub::ReloadResult ReloadHub::ReloadBlackboard(const std::wstring& path)
+{
+    BlackboardLibrary* bb = blackboard::Library();
+    if (bb == nullptr || !bb->Contains(BlackboardLibrary::HashForPath(path))) {
+        return ReloadResult::Skipped;
+    }
+    if (bb->LoadFromFile(path) == 0) {
+        return ReloadResult::Retry;
+    }
+    MYE_LOG_INFO("[reload] blackboard reloaded: %s", WideToUtf8(path).c_str());
     return ReloadResult::Reloaded;
 }
 

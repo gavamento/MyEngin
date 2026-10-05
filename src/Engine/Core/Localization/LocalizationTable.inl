@@ -1262,6 +1262,22 @@ MYE_STR(Insp_NavFilterColArea, "Area###area",        "エリア###area")
 MYE_STR(Insp_NavFilterColOverride, "Override###override", "上書き###override")
 MYE_STR(Insp_NavFilterColCost, "Cost###cost",        "コスト###cost")
 MYE_STR(Insp_NavFilterColExclude, "Exclude###exclude", "通らない###exclude")
+// ---- ビヘイビアツリー (M85) ----
+MYE_STR(Asset_BehaviorTree,   "Behavior Tree",       "ビヘイビアツリー")
+MYE_STR(Asset_Blackboard,     "Blackboard",          "ブラックボード")
+MYE_STR(Log_WriteBehaviorTreeFail, "could not write behavior tree: %s",
+                              "ビヘイビアツリーを書き出せません: %s")
+MYE_STR(Log_CreatedBehaviorTree, "created behavior tree: %s",
+                              "ビヘイビアツリーを作成しました: %s")
+MYE_STR(Log_WriteBlackboardFail, "could not write blackboard: %s",
+                              "ブラックボードを書き出せません: %s")
+MYE_STR(Log_CreatedBlackboard, "created blackboard: %s",
+                              "ブラックボードを作成しました: %s")
+MYE_STR(Insp_BtNoTree,        "(no behavior tree assigned)", "(ビヘイビアツリーが未設定です)")
+MYE_STR(Insp_BtAssetMissing,  "The tree or its blackboard is not registered (the file is missing or failed to load).",
+                              "木またはそのブラックボードが登録されていません (ファイルが無いか、読み込みに失敗しました)")
+MYE_STR(Insp_BtAgentBrain,    "AgentBrain on the same entity also writes CharacterController.moveInput. A behavior tree moves the entity only through NavMeshAgent; remove one of the two.",
+                              "同じエンティティの AgentBrain も CharacterController.moveInput を書きます。ビヘイビアツリーは NavMeshAgent 経由でだけ動かすので、どちらかを外してください")
 MYE_STR(Log_WritePostShaderFail, "could not write post shader: %s",
                                   "ポストシェーダを書き出せません: %s")
 MYE_STR(Log_CreatedPostShader,   "created post shader: %s",

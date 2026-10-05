@@ -32,6 +32,8 @@ enum class AssetType : int32_t {
     Fracture,   // .mfrac (M80c — 破壊の破片資産。Voronoi 分割済みメッシュ・凸包)
     NavMesh,    // .mnav (M82b — ナビメッシュのベイク結果。TileCache の層)
     NavFilter,  // .navfilter.json (M84c — ナビのエリアのフィルタ。Agent / クエリのエリアのコストと通行可否)
+    BehaviorTree, // .bt.json (M85 — ビヘイビアツリー)
+    Blackboard,   // .bb.json (M85 — ビヘイビアツリーのブラックボードのキー定義)
 };
 
 // アセット 1 件のサイドカー情報 (<asset>.meta に JSON で保存)。

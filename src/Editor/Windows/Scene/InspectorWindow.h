@@ -18,6 +18,7 @@
 #include "Engine/Engine/Loop/EngineLoop.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
+#include "Engine/Engine/AI/BehaviorTreeLibrary.h"
 #include "Engine/Renderer/Device/GpuResources.h" // MeshVertex (M80p: スキン破壊のウェイト照会キャッシュ)
 #include "Engine/Renderer/PostFx/FxStackAsset.h"     // M78c: fxstack アセット編集状態
 #include "Engine/Renderer/Shader/ProjectShaderProperties.h"  // M78c r2: スキーマ駆動 Inspector
