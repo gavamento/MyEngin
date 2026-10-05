@@ -36,6 +36,7 @@
 #include "Engine/Engine/Physics/Fracture/FractureLibrary.h"
 #include "Engine/Engine/Physics/Collider/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
+#include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/Physics/Xpbd/XpbdBackend.h" // M60'b: 変形体の粒子池
 #include "Engine/Engine/Physics/Collider/TerrainColliderLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
@@ -144,6 +145,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     FractureLibrary fractureAssets; // 破片資産 (.mfrac) の読み込み + メッシュ/凸包登録 (M80c)
     ModalSoundLibrary modalSounds; // Deep-Modal 推論 + .msfm クック (M76e)。sim には触れない
     PhysMatLibrary physMatLibrary;     // .physmat.json (M59a1)。sim の消費は M59a2 から
+    NavFilterLibrary navFilterLibrary; // .navfilter.json (M84c)
     TerrainColliderLibrary terrainColliders; // 地形コライダー (M59i)。**描画側とは別キャッシュ**
     // XPBD 変形体の粒子池 (M60'b)。ECS 外 sim 状態の 2 例目 — ハッシュ節 (SimSources) と
     // snapshot 節 (SimRefs) の両方へ必ず配線する (3 点セット契約)
@@ -295,7 +297,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 破片資産 (.mfrac) の Clear() 後の再登録は呼び出し側が ReregisterAll() を呼ぶ責務
     // (現状の呼び出し元はまだ無い)
     InstallSimLibraries({ &resources, &meshColliders, &convexColliders, &fractureAssets,
-                          &physMatLibrary, &terrainColliders });
+                          &physMatLibrary, &terrainColliders, &navFilterLibrary });
     // M76e: Deep-Modal 推論。CLI (--modal-backend) は綴りだけ検査済みで、未実装名
     // ("d3d11cs") への縮退はここ (SetBackendByName) が WARN 付きでやる。
     // .dmnet が無い (M76h 未実装/未生成) 環境では LoadModel が false を返すだけで、

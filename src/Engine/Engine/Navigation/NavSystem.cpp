@@ -18,6 +18,7 @@
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Core/Util/Random.h"
 #include "Engine/Engine/Navigation/NavBakeInput.h"
+#include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {
@@ -1198,44 +1199,54 @@ void NavSystem::UpdateSurface(World& world, size_t surfaceIndex, float dt)
     dtCrowd& crowd = *surface.crowd;
     dtNavMeshQuery& query = *surface.query;
 
-    // dtCrowd の filter は Agent の areaMask ごとに 1 つ (種類は areaMask の昇順 = World だけで決まる)。
-    // 16 種を超える areaMask は最後の filter を共有する (その Agent は他の Agent の mask で歩く)
-    filterMasks_.clear();
+    // dtCrowd の filter は Agent の (areaMask, navFilter) の組ごとに 1 つ (種類は組の昇順 = World だけで決まる)。
+    // 16 種を超える組は最後の filter を共有する (その Agent は他の Agent の filter で歩く)
+    filterKeys_.clear();
     for (const int idx : wanted) {
-        filterMasks_.push_back(agents_[static_cast<size_t>(idx)].agent->areaMask & kNavFlagAllAreas);
+        const NavMeshAgentComponent& agent = *agents_[static_cast<size_t>(idx)].agent;
+        filterKeys_.push_back({ agent.areaMask & kNavFlagAllAreas, agent.navFilter.value });
+        // 見つからないフィルタ資産はフィルタ無しで歩く。警告は資産ごとに 1 回
+        if (agent.navFilter.value != 0 && navfilter::Resolve(agent.navFilter) == nullptr
+            && std::find(missingFilters_.begin(), missingFilters_.end(), agent.navFilter.value) == missingFilters_.end()) {
+            missingFilters_.push_back(agent.navFilter.value);
+            MYE_LOG_WARN("[nav] navigation area filter %016llx is not loaded; agents using it walk without it",
+                         static_cast<unsigned long long>(agent.navFilter.value));
+        }
     }
-    std::sort(filterMasks_.begin(), filterMasks_.end());
-    filterMasks_.erase(std::unique(filterMasks_.begin(), filterMasks_.end()), filterMasks_.end());
-    if (filterMasks_.size() > static_cast<size_t>(DT_CROWD_MAX_QUERY_FILTER_TYPE)) {
+    std::sort(filterKeys_.begin(), filterKeys_.end());
+    filterKeys_.erase(std::unique(filterKeys_.begin(), filterKeys_.end()), filterKeys_.end());
+    if (filterKeys_.size() > static_cast<size_t>(DT_CROWD_MAX_QUERY_FILTER_TYPE)) {
         if (!filterOverflowWarned_) {
-            MYE_LOG_WARN("[nav] surface '%s': more than %d distinct agent area masks; the rest share the last filter",
+            MYE_LOG_WARN("[nav] surface '%s': more than %d distinct agent area masks / filters; the rest share the last filter",
                          world.GetName(surface.entity), DT_CROWD_MAX_QUERY_FILTER_TYPE);
             filterOverflowWarned_ = true;
         }
-        filterMasks_.resize(static_cast<size_t>(DT_CROWD_MAX_QUERY_FILTER_TYPE));
+        filterKeys_.resize(static_cast<size_t>(DT_CROWD_MAX_QUERY_FILTER_TYPE));
     }
-    if (filterMasks_.empty()) {
-        filterMasks_.push_back(kNavFlagAllAreas);
+    if (filterKeys_.empty()) {
+        filterKeys_.push_back({ kNavFlagAllAreas, 0 });
     }
-    // エリアのコスト (Surface のコンポーネントから毎 tick 写す。インスペクタでの変更がそのまま効く)
+    // エリアのコスト (Surface のコンポーネントとフィルタ資産から毎 tick 写す。インスペクタでの変更がそのまま効く)
     const auto* surfaceComp = world.GetComponent<NavMeshSurfaceComponent>(surface.entity);
     bool costsRaised = false;
     for (int i = 0; surfaceComp != nullptr && i < kNavAreaCount; ++i) {
         costsRaised = costsRaised || surfaceComp->areaCosts[i] > 1.0f;
     }
-    for (size_t f = 0; f < filterMasks_.size(); ++f) {
-        dtQueryFilter* filter = crowd.getEditableFilter(static_cast<int>(f));
-        filter->setIncludeFlags(static_cast<unsigned short>(filterMasks_[f]));
-        filter->setExcludeFlags(0);
-        for (int i = 0; surfaceComp != nullptr && i < kNavAreaCount; ++i) {
-            filter->setAreaCost(i, (std::max)(1.0f, surfaceComp->areaCosts[i]));
+    for (size_t f = 0; f < filterKeys_.size(); ++f) {
+        NavConfigureQueryFilter(*crowd.getEditableFilter(static_cast<int>(f)), surfaceComp, filterKeys_[f].areaMask,
+                                filterKeys_[f].navFilter);
+        if (const NavAreaFilter* af = navfilter::Resolve(filterKeys_[f].navFilter)) {
+            for (int i = 0; i < kNavAreaCount; ++i) {
+                costsRaised = costsRaised || af->areaCosts[i] > 1.0f;
+            }
         }
     }
-    // Agent の areaMask に対応する filter の番号
+    // Agent の (areaMask, navFilter) に対応する filter の番号
     const auto filterIndexOf = [&](const NavMeshAgentComponent& agent) {
-        const uint32_t mask = agent.areaMask & kNavFlagAllAreas;
-        const auto it = std::lower_bound(filterMasks_.begin(), filterMasks_.end(), mask);
-        return it == filterMasks_.end() ? static_cast<int>(filterMasks_.size()) - 1 : static_cast<int>(it - filterMasks_.begin());
+        const FilterKey key{ agent.areaMask & kNavFlagAllAreas, agent.navFilter.value };
+        const auto it = std::lower_bound(filterKeys_.begin(), filterKeys_.end(), key);
+        return it == filterKeys_.end() || !(*it == key) ? static_cast<int>(filterKeys_.size()) - 1
+                                                         : static_cast<int>(it - filterKeys_.begin());
     };
 
     // ---- 外れた Agent をスロットから外す (スロット番号の昇順) ----
@@ -1794,8 +1805,27 @@ bool AllFinite(const float* v, int count)
 
 } // namespace
 
+void NavConfigureQueryFilter(dtQueryFilter& filter, const NavMeshSurfaceComponent* surface, uint32_t areaMask,
+                             uint64_t navFilter)
+{
+    const NavAreaFilter* areaFilter = navfilter::Resolve(navFilter);
+    uint32_t include = areaMask & kNavFlagAllAreas;
+    if (areaFilter != nullptr) {
+        include &= ~areaFilter->excludedAreas;
+    }
+    filter.setIncludeFlags(static_cast<unsigned short>(include));
+    filter.setExcludeFlags(0);
+    for (int i = 0; i < kNavAreaCount; ++i) {
+        float cost = surface != nullptr ? (std::max)(1.0f, surface->areaCosts[i]) : 1.0f;
+        if (areaFilter != nullptr && areaFilter->areaCosts[i] > 0.0f) {
+            cost = areaFilter->areaCosts[i];
+        }
+        filter.setAreaCost(i, cost);
+    }
+}
+
 const NavSurfaceRuntime* NavSystem::ResolveQuerySurface(World& world, int agentTypeId, uint32_t areaMask,
-                                                        dtQueryFilter& filter) const
+                                                        uint64_t navFilter, dtQueryFilter& filter) const
 {
     for (const NavSurfaceRuntime& surface : surfaces_) {
         const auto* sc = world.GetComponent<NavMeshSurfaceComponent>(surface.entity);
@@ -1805,18 +1835,14 @@ const NavSurfaceRuntime* NavSystem::ResolveQuerySurface(World& world, int agentT
         if (surface.state != NavSurfaceState::Loaded || surface.query == nullptr) {
             return nullptr;
         }
-        filter.setIncludeFlags(static_cast<unsigned short>(areaMask & kNavFlagAllAreas));
-        filter.setExcludeFlags(0);
-        for (int i = 0; i < kNavAreaCount; ++i) {
-            filter.setAreaCost(i, (std::max)(1.0f, sc->areaCosts[i]));
-        }
+        NavConfigureQueryFilter(filter, sc, areaMask, navFilter);
         return &surface;
     }
     return nullptr;
 }
 
 int NavSystem::QueryFindPath(World& world, int agentTypeId, const float* from, const float* to, uint32_t areaMask,
-                             float* outCorners, int maxCorners, bool* outPartial) const
+                             uint64_t navFilter, float* outCorners, int maxCorners, bool* outPartial) const
 {
     if (outPartial != nullptr) {
         *outPartial = false;
@@ -1825,7 +1851,7 @@ int NavSystem::QueryFindPath(World& world, int agentTypeId, const float* from, c
         return 0;
     }
     dtQueryFilter filter;
-    const NavSurfaceRuntime* surface = ResolveQuerySurface(world, agentTypeId, areaMask, filter);
+    const NavSurfaceRuntime* surface = ResolveQuerySurface(world, agentTypeId, areaMask, navFilter, filter);
     if (surface == nullptr) {
         return 0;
     }
@@ -1872,13 +1898,13 @@ int NavSystem::QueryFindPath(World& world, int agentTypeId, const float* from, c
 }
 
 bool NavSystem::QuerySamplePosition(World& world, int agentTypeId, const float* pos, const float* extents, uint32_t areaMask,
-                                    float* outPoint) const
+                                    uint64_t navFilter, float* outPoint) const
 {
     if (outPoint == nullptr || !AllFinite(pos, 3) || !AllFinite(extents, 3)) {
         return false;
     }
     dtQueryFilter filter;
-    const NavSurfaceRuntime* surface = ResolveQuerySurface(world, agentTypeId, areaMask, filter);
+    const NavSurfaceRuntime* surface = ResolveQuerySurface(world, agentTypeId, areaMask, navFilter, filter);
     if (surface == nullptr) {
         return false;
     }
@@ -1895,13 +1921,13 @@ bool NavSystem::QuerySamplePosition(World& world, int agentTypeId, const float* 
 }
 
 bool NavSystem::QueryRaycast(World& world, int agentTypeId, const float* from, const float* to, uint32_t areaMask,
-                             NavRaycastResult& out) const
+                             uint64_t navFilter, NavRaycastResult& out) const
 {
     if (!AllFinite(from, 3) || !AllFinite(to, 3)) {
         return false;
     }
     dtQueryFilter filter;
-    const NavSurfaceRuntime* surface = ResolveQuerySurface(world, agentTypeId, areaMask, filter);
+    const NavSurfaceRuntime* surface = ResolveQuerySurface(world, agentTypeId, areaMask, navFilter, filter);
     if (surface == nullptr) {
         return false;
     }
@@ -1936,14 +1962,14 @@ bool NavSystem::QueryRaycast(World& world, int agentTypeId, const float* from, c
     return true;
 }
 
-bool NavSystem::QueryRandomPoint(World& world, int agentTypeId, const float* center, float radius, uint32_t areaMask, Pcg32& rng,
-                                 float* outPoint) const
+bool NavSystem::QueryRandomPoint(World& world, int agentTypeId, const float* center, float radius, uint32_t areaMask,
+                                 uint64_t navFilter, Pcg32& rng, float* outPoint) const
 {
     if (outPoint == nullptr || !AllFinite(center, 3) || !std::isfinite(radius) || radius <= 0.0f) {
         return false;
     }
     dtQueryFilter filter;
-    const NavSurfaceRuntime* surface = ResolveQuerySurface(world, agentTypeId, areaMask, filter);
+    const NavSurfaceRuntime* surface = ResolveQuerySurface(world, agentTypeId, areaMask, navFilter, filter);
     if (surface == nullptr) {
         return false;
     }

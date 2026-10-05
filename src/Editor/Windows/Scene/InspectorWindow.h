@@ -17,6 +17,7 @@
 #include "Engine/Engine/Audio/Playback/SoundAsset.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
+#include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Renderer/Device/GpuResources.h" // MeshVertex (M80p: スキン破壊のウェイト照会キャッシュ)
 #include "Engine/Renderer/PostFx/FxStackAsset.h"     // M78c: fxstack アセット編集状態
 #include "Engine/Renderer/Shader/ProjectShaderProperties.h"  // M78c r2: スキーマ駆動 Inspector
@@ -223,6 +224,12 @@ private:
     bool physMatEditValid_ = false;
     void LoadPhysMatEdit(const std::wstring& path);
     void DrawPhysMatInspector(const std::wstring& path);
+
+    // ナビのエリアのフィルタの編集キャッシュ (M84c)。物理マテリアルと同じくアセット編集は UndoStack 対象外
+    NavAreaFilter navFilterEdit_;
+    bool navFilterEditValid_ = false;
+    void LoadNavFilterEdit(const std::wstring& path);
+    void DrawNavFilterInspector(EngineContext& ctx, const std::wstring& path);
 
     // fxstack インスペクタの編集キャッシュ (M78c)。*.fxstack.json のパス別インメモリ編集。
     // アセット編集は UndoStack 対象外 (マテリアル / サウンドと同じ規約)

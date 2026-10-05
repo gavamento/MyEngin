@@ -36,6 +36,7 @@
 #include "Engine/Engine/Physics/Fracture/FractureLibrary.h" // M80f: メモリ上焼きの登録口
 #include "Engine/Engine/Physics/Fracture/FractureSkinBake.h" // M80j: スキン破壊の骨割り当て
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
+#include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Physics/Ragdoll/RagdollBuilder.h"
 #include "Engine/Engine/UI/UILayout.h" // M75a: 旧 anchor/x/y/w/h → RectTransform
@@ -3219,6 +3220,11 @@ void RegisterAssetLibraries(EngineContext& ctx)
         } else if (p.size() >= 11 && p.compare(p.size() - 11, 11, L".mixer.json") == 0) {
             if (ctx.mixers) {
                 ctx.mixers->LoadFromFile(p); // M45d: ミキサー (適用は走査後にまとめて)
+            }
+        } else if (p.size() >= 15 && p.compare(p.size() - 15, 15, L".navfilter.json") == 0) {
+            // M84c: ナビのエリアのフィルタ。所有は EngineLoop、navfilter:: で注入済み
+            if (NavFilterLibrary* nf = navfilter::Library()) {
+                nf->LoadFromFile(p);
             }
         } else if (p.size() >= 13 && p.compare(p.size() - 13, 13, L".physmat.json") == 0) {
             // M59a1: 物理マテリアル。所有は EngineLoop、ここへは physmat:: で注入済み

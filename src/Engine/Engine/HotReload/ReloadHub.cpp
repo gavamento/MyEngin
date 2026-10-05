@@ -14,6 +14,7 @@
 #include "Engine/Engine/Modal/ModalSoundLibrary.h"
 #include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
+#include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Scene/SceneSerializer.h"
@@ -63,6 +64,7 @@ constexpr AssetKindRow kAssetKinds[] = {
     { L".impact.json", ReloadKind::ImpactSound, 6 }, // ImpactSynth。.sound.json と同格 (誰も参照していない)
     { L".mixer.json", ReloadKind::Mixer, 6 },
     { L".physmat.json", ReloadKind::PhysMat, 6 },
+    { L".navfilter.json", ReloadKind::NavFilter, 6 },
     { L".dmnet", ReloadKind::ModalNet, 6 }, // M76e。.sound.json 等と同格 (誰も参照していない)
     { PrefabLibrary::kActorSuffix, ReloadKind::Compose, 7 },
     { PrefabLibrary::kPrefabSuffix, ReloadKind::Compose, 7 },
@@ -279,6 +281,9 @@ void ReloadHub::HandleChange(const std::wstring& normPath, int attempt)
     case ReloadKind::PhysMat:
         result = ReloadPhysMat(normPath);
         break;
+    case ReloadKind::NavFilter:
+        result = ReloadNavFilter(normPath);
+        break;
     case ReloadKind::ModalNet:
         result = ReloadModalNet(normPath);
         break;
@@ -449,6 +454,20 @@ ReloadHub::ReloadResult ReloadHub::ReloadPhysMat(const std::wstring& path)
         return ReloadResult::Retry;
     }
     MYE_LOG_INFO("[reload] physmat reloaded: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// 登録済みなら読み直す (M84c)。physmat と同じく sim を変える資産クラス (Agent の経路のコストが変わる)
+ReloadHub::ReloadResult ReloadHub::ReloadNavFilter(const std::wstring& path)
+{
+    NavFilterLibrary* nf = navfilter::Library();
+    if (nf == nullptr || !nf->Contains(NavFilterLibrary::HashForPath(path))) {
+        return ReloadResult::Skipped;
+    }
+    if (nf->LoadFromFile(path) == 0) {
+        return ReloadResult::Retry;
+    }
+    MYE_LOG_INFO("[reload] navfilter reloaded: %s", WideToUtf8(path).c_str());
     return ReloadResult::Reloaded;
 }
 

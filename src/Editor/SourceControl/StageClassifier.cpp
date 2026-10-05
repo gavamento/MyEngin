@@ -78,7 +78,7 @@ bool IsReloadableAsset(const std::string& path)
     static const char* const kExact[] = {
         ".hlsl", ".hlsli", ".png",  ".tga",  ".jpg",         ".jpeg",
         ".dds",  ".wav",   ".ogg",  ".glb",  ".gltf",        ".fbx",
-        ".mat.json", ".anim.json", ".sound.json", ".mixer.json", ".physmat.json",
+        ".mat.json", ".anim.json", ".sound.json", ".mixer.json", ".physmat.json", ".navfilter.json",
         ".actor.json", ".prefab.json",
     };
     for (const char* suffix : kExact) {

@@ -19,6 +19,7 @@
 #include "Engine/Core/Util/Random.h"
 #include "Engine/Engine/Navigation/NavBake.h"
 #include "Engine/Engine/Navigation/NavDebugDraw.h"
+#include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/Navigation/NavMeshAsset.h"
 #include "Engine/Engine/Navigation/NavSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
@@ -45,7 +46,7 @@ constexpr uint64_t kRavineGuid = 0x4E41564147454E34ull;
 constexpr uint64_t kApiGuid = 0x4E41564147454E35ull;  // スクリプト API のテストの庭
 // Debug で採取し、Release で同じ値になることを確認して焼く (docs\adr\ADR-023-navmesh.md)。
 // 0f659f3 (Collider へ center / rotation を追加 = 庭の床・段差のハッシュ対象が増えた) で値が変わったので焼き直した
-constexpr uint64_t kExpectedYardHash = 0xFECB095AB373213Bull;
+constexpr uint64_t kExpectedYardHash = 0xB4CBC9957F973C40ull; // M84c: NavMeshAgent.navFilter を足した
 
 struct Checker {
     int failCount = 0;
@@ -1016,7 +1017,7 @@ bool RunNavAgentSelfTest()
                 const float pos[3] = { x, expectY + 0.4f, z };
                 const float ext[3] = { 0.5f, 1.5f, 0.5f };
                 float out[3] = {};
-                if (!sim.nav.QuerySamplePosition(world, 0, pos, ext, 0xFFFFFFFFu, out)) {
+                if (!sim.nav.QuerySamplePosition(world, 0, pos, ext, 0xFFFFFFFFu, 0, out)) {
                     sampleOk = false;
                     continue;
                 }
@@ -1041,7 +1042,7 @@ bool RunNavAgentSelfTest()
             const float to[3] = { 5.5f, 1.5f * rampSlope, 0.0f };
             float corners[32 * 3] = {};
             bool partial = false;
-            const int n = sim.nav.QueryFindPath(world, 0, from, to, 0xFFFFFFFFu, corners, 32, &partial);
+            const int n = sim.nav.QueryFindPath(world, 0, from, to, 0xFFFFFFFFu, 0, corners, 32, &partial);
             float worst = 0.0f;
             int measured = 0;
             for (int i = 0; i < n; ++i) {
@@ -1068,7 +1069,7 @@ bool RunNavAgentSelfTest()
                 const float from[3] = { x, expectY, 0.0f };
                 const float to[3] = { x, expectY, 20.0f };
                 NavRaycastResult hit;
-                if (!sim.nav.QueryRaycast(world, 0, from, to, 0xFFFFFFFFu, hit) || !hit.hit) {
+                if (!sim.nav.QueryRaycast(world, 0, from, to, 0xFFFFFFFFu, 0, hit) || !hit.hit) {
                     hitsOk = false;
                     continue;
                 }
@@ -1090,7 +1091,7 @@ bool RunNavAgentSelfTest()
                 const float center[3] = { cx, centerY, 0.0f };
                 for (int i = 0; i < 40; ++i) {
                     float out[3] = {};
-                    if (!sim.nav.QueryRandomPoint(world, 0, center, 1.0f, 0xFFFFFFFFu, rng, out)) {
+                    if (!sim.nav.QueryRandomPoint(world, 0, center, 1.0f, 0xFFFFFFFFu, 0, rng, out)) {
                         continue;
                     }
                     float expectY = 0.0f;
@@ -1726,6 +1727,99 @@ bool RunNavAgentSelfTest()
                  "(mask) mask の違う Agent がどれも着く");
         ck.Check(crossShy > 3.5f, "(mask) エリア 3 を除いた Agent は帯を避ける");
         ck.Check(crossFree < 3.0f, "(mask) 同じ Surface の全エリア可の Agent は帯を突っ切る (filter を使い回していない)");
+    }
+
+    // ---- 10f. エリアのフィルタ (.navfilter.json、M84c): Surface のコストを上書きし、通れないエリアを足す ----
+    {
+        // JSON の往復と防波堤
+        NavAreaFilter src;
+        src.areaCosts[3] = 20.0f;
+        src.areaCosts[4] = 0.5f;               // 1 未満の上書きは 1 に上げる
+        src.areaCosts[5] = std::nanf("");      // 非有限は「上書きしない」
+        src.excludedAreas = (1u << 6) | (1u << 20); // 16 ビットの外は捨てる
+        NavAreaFilter back;
+        ck.Check(NavFilterLibrary::FromJson(NavFilterLibrary::ToJson(src), back) && back.areaCosts[3] == 20.0f
+                     && back.areaCosts[4] == 1.0f && back.areaCosts[5] == 0.0f && back.areaCosts[0] == 0.0f
+                     && back.excludedAreas == (1u << 6),
+                 "(filter) JSON の往復で値が保たれ、1 未満のコストは 1、非有限は上書きなし、16 ビットの外の除外は捨てる");
+        NavAreaFilter notFilter;
+        ck.Check(!NavFilterLibrary::FromJson(nlohmann::json{ { "physmat", 1 } }, notFilter),
+                 "(filter) navfilter キーの無い JSON はフィルタとして読まない");
+
+        NavFilterLibrary library;
+        NavFilterLibrary* const installed = navfilter::Library(); // エディタ本体が注入したものは最後に戻す
+        navfilter::Install(&library);
+        NavAreaFilter costly;
+        costly.areaCosts[3] = 20.0f;
+        NavAreaFilter excluding;
+        excluding.excludedAreas = 1u << 3;
+        const uint64_t costlyGuid = library.Register(L"c:\\nav_selftest\\Costly.navfilter.json", costly);
+        const uint64_t excludingGuid = library.Register(L"c:\\nav_selftest\\Excluding.navfilter.json", excluding);
+        constexpr uint64_t kMissingFilterGuid = 0x4E415646494C5421ull; // 登録しない GUID
+
+        Scene scene;
+        AddBox(scene, "Ground", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 12.0f);
+        const EntityID surface = AddSurface(scene, 13.0f, 13.0f);
+        AddModifier(scene, 0.0f, 1.0f, 0.0f, 2.0f, 2.0f, 8.0f, 3);
+        // 帯は z = -4..4。突っ切る 2 体は帯の中央寄り (|z| <= 1.5) を真っすぐ歩く
+        const float destPlain[3] = { 8.0f, 0.0f, 0.0f };
+        const float destCostly[3] = { 8.0f, 0.0f, 1.5f };
+        const float destExcluding[3] = { 8.0f, 0.0f, 3.0f };
+        const float destMissing[3] = { 8.0f, 0.0f, -1.5f };
+        const EntityID plain = AddAgent(scene, "Plain", -8.0f, 0.0f, 0.0f, destPlain, true);
+        const EntityID costlyAgent = AddAgent(scene, "Costly", -8.0f, 0.0f, 1.5f, destCostly, true);
+        const EntityID excludingAgent = AddAgent(scene, "Excluding", -8.0f, 0.0f, 3.0f, destExcluding, true);
+        const EntityID missingAgent = AddAgent(scene, "Missing", -8.0f, 0.0f, -1.5f, destMissing, true);
+        World& world = scene.GetWorld();
+        world.GetComponent<NavMeshSurfaceComponent>(surface)->areaCosts[3] = 1.0f;
+        world.GetComponent<NavMeshAgentComponent>(costlyAgent)->navFilter = AssetID{ costlyGuid };
+        world.GetComponent<NavMeshAgentComponent>(excludingAgent)->navFilter = AssetID{ excludingGuid };
+        world.GetComponent<NavMeshAgentComponent>(missingAgent)->navFilter = AssetID{ kMissingFilterGuid };
+        ck.Check(BakeSurface(scene, surface, kOpenGuid, nullptr), "(filter) 開けた床をベイクできる");
+        Sim sim(scene);
+        const EntityID walkers[4] = { plain, costlyAgent, excludingAgent, missingAgent };
+        float cross[4] = { -1.0f, -1.0f, -1.0f, -1.0f };
+        for (int i = 0; i < 900; ++i) {
+            sim.Step();
+            for (int k = 0; k < 4; ++k) {
+                const auto* lt = world.GetComponent<LocalTransform>(walkers[k]);
+                if (cross[k] < 0.0f && lt->position.x >= 0.0f) {
+                    cross[k] = std::fabs(lt->position.z);
+                }
+            }
+        }
+        MYE_LOG_INFO("  [filter] crossed x=0 at |z|: plain %.2f, costly %.2f, excluding %.2f, missing %.2f", cross[0],
+                     cross[1], cross[2], cross[3]);
+        bool allArrived = true;
+        for (const EntityID w : walkers) {
+            allArrived = allArrived && world.GetComponent<NavMeshAgentComponent>(w)->status == navagentstatus::kArrived;
+        }
+        ck.Check(allArrived, "(filter) フィルタの違う Agent がどれも着く");
+        // 帯の端は |z| = 4。突っ切る側は互いを避けて少し寄るので、帯の中 (端から Agent の半径ぶん内側) で判定する
+        ck.Check(cross[0] < 3.5f && cross[3] < 3.5f,
+                 "(filter) フィルタ無しと、見つからないフィルタの Agent は Surface のコスト 1 のまま帯を突っ切る");
+        ck.Check(cross[1] > 3.5f, "(filter) フィルタでエリア 3 のコストを 20 に上書きした Agent は帯を避ける");
+        ck.Check(cross[2] > 3.5f, "(filter) フィルタでエリア 3 を通らないにした Agent は、areaMask が全エリア可でも帯を避ける");
+
+        // クエリも同じ規則: 除外のフィルタを渡すと、経路の角が帯の外を回る
+        const float from[3] = { -8.0f, 0.0f, 0.0f };
+        const float to[3] = { 8.0f, 0.0f, 0.0f };
+        float corners[3 * 32] = {};
+        bool partial = false;
+        const auto maxAbsZ = [&](int n) {
+            float z = 0.0f;
+            for (int c = 0; c < n; ++c) {
+                z = (std::max)(z, std::fabs(corners[c * 3 + 2]));
+            }
+            return z;
+        };
+        const int nPlain = sim.nav.QueryFindPath(world, 0, from, to, 0xFFFFFFFFu, 0, corners, 32, &partial);
+        const float zPlain = maxAbsZ(nPlain);
+        const int nExcl = sim.nav.QueryFindPath(world, 0, from, to, 0xFFFFFFFFu, excludingGuid, corners, 32, &partial);
+        const float zExcl = maxAbsZ(nExcl);
+        ck.Check(nPlain >= 2 && nExcl >= 2 && zPlain < 1.0f && zExcl > 3.5f,
+                 "(filter) QueryFindPath にフィルタを渡すと、除外したエリアを避けた経路になる");
+        navfilter::Install(installed);
     }
 
     // ---- 10d. Modifier の SimSnapshot: 追加・移動・歩行不可・消去の途中で撮り、空の NavSystem / 元の NavSystem へ復元して連続実行と一致 ----

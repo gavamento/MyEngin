@@ -224,6 +224,7 @@ const char* FileTypeIcon(const wchar_t* path)
     case AssetType::FxStack: return ICON_FA_LAYER_GROUP;
     case AssetType::Fracture: return ICON_FA_BURST;
     case AssetType::NavMesh: return ICON_FA_ROUTE;
+    case AssetType::NavFilter: return ICON_FA_FILTER;
     default: break;
     }
     // エンジンのアセット種別に無いもの (ソースコード・文書・動画など) は末尾の拡張子で引く

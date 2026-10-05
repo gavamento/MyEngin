@@ -1246,6 +1246,20 @@ MYE_STR(Log_WritePhysMatFail, "could not write physics material: %s",
                               "物理マテリアルを書き出せません: %s")
 MYE_STR(Log_CreatedPhysMat,   "created physics material: %s",
                               "物理マテリアルを作成しました: %s")
+// ---- ナビのエリアのフィルタ (M84c) ----
+MYE_STR(Asset_NavFilter,      "NavMesh Area Filter", "ナビのエリアフィルタ")
+MYE_STR(Log_WriteNavFilterFail, "could not write navigation area filter: %s",
+                              "エリアフィルタを書き出せません: %s")
+MYE_STR(Log_CreatedNavFilter, "created navigation area filter: %s",
+                              "エリアフィルタを作成しました: %s")
+MYE_STR(Insp_NavFilterFailed, "(navigation area filter parse failed)",
+                              "(エリアフィルタの読み込みに失敗)")
+MYE_STR(Insp_NavFilterHint,   "Agents and queries that use this filter take these costs instead of the surface's. Areas that are not overridden keep the surface's cost; excluded areas are never walked.",
+                              "このフィルタを使う Agent とクエリだけ、Surface のエリアのコストをこの値で上書きします。上書きしないエリアは Surface のコストのまま、「通らない」エリアは歩きません")
+MYE_STR(Insp_NavFilterColArea, "Area###area",        "エリア###area")
+MYE_STR(Insp_NavFilterColOverride, "Override###override", "上書き###override")
+MYE_STR(Insp_NavFilterColCost, "Cost###cost",        "コスト###cost")
+MYE_STR(Insp_NavFilterColExclude, "Exclude###exclude", "通らない###exclude")
 MYE_STR(Log_WritePostShaderFail, "could not write post shader: %s",
                                   "ポストシェーダを書き出せません: %s")
 MYE_STR(Log_CreatedPostShader,   "created post shader: %s",

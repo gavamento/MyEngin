@@ -39,6 +39,8 @@ std::wstring CreateMixerAsset(EngineContext& ctx, const std::wstring& dir,
                               const std::string& name);                            // .mixer.json
 std::wstring CreatePhysMatAsset(EngineContext& ctx, const std::wstring& dir,
                                 const std::string& name);                          // .physmat.json (M59a1)
+std::wstring CreateNavFilterAsset(EngineContext& ctx, const std::wstring& dir,
+                                  const std::string& name);                        // .navfilter.json (M84c)
 // M78: プロジェクトポスト／コンピュート／fxstack (HLSL は assetsRoot\shaders 固定)
 std::wstring CreatePostShaderAsset(EngineContext& ctx, const std::wstring& dir,
                                  const std::string& name);   // *.post.hlsl (dir = Browser カレント)

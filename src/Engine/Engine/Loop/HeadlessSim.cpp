@@ -41,6 +41,7 @@
 #include "Engine/Engine/Physics/Fracture/FractureSystem.h"
 #include "Engine/Engine/Physics/Rigid/CollisionSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
+#include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Engine/Physics/Xpbd/XpbdBackend.h"
 #include "Engine/Engine/Replay/Replay.h"
@@ -107,6 +108,7 @@ struct HeadlessSim::Impl : IEngineApp {
     FractureLibrary fractureAssets;
     PhysMatLibrary physMatLibrary;
     TerrainColliderLibrary terrainColliders;
+    NavFilterLibrary navFilterLibrary;
     XpbdBackend xpbd;
     AcousticField acoustic;
     AgentSystem agentSystem;
@@ -254,7 +256,7 @@ void HeadlessSim::Activate()
 {
     Impl& m = *impl_;
     InstallSimLibraries({ &m.resources, &m.meshColliders, &m.convexColliders, &m.fractureAssets,
-                          &m.physMatLibrary, &m.terrainColliders });
+                          &m.physMatLibrary, &m.terrainColliders, &m.navFilterLibrary });
     m.assetDatabase.InstallAsKeyResolver();
     SceneSerializer::SetManagedHost(&m.managedHost);
 }
@@ -283,7 +285,7 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     // ---- GPU 系を除いた sim 側の起動手順 (EngineLoop::Run と同じ順、SimInit.h) ----
     m.resources.InitHeadless();
     InstallSimLibraries({ &m.resources, &m.meshColliders, &m.convexColliders, &m.fractureAssets,
-                          &m.physMatLibrary, &m.terrainColliders });
+                          &m.physMatLibrary, &m.terrainColliders, &m.navFilterLibrary });
     // ParticleSystem::Init の代わり: CPU / GPU バックエンドの選択だけ project_settings.json から決める
     m.particleSystem.LoadSettings(m.assetsRoot + L"\\project_settings.json");
     InitSimProjectState(m.assetsRoot);

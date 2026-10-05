@@ -1948,6 +1948,8 @@ struct NavMeshAgentComponent {
     bool linkComplete = false;       // Manual の Link で止まっている間に true を書くと、出口へ移って渡り終える (NavSystem が false に戻す)
     DirectX::XMFLOAT3 linkStart = { 0.0f, 0.0f, 0.0f }; // 渡っている Link の入口 (ワールド。kFieldReadOnly、渡っていない間は前回の値)
     DirectX::XMFLOAT3 linkEnd = { 0.0f, 0.0f, 0.0f };   // 同じく出口
+    // ---- エリアのフィルタ (M84c) ----
+    AssetID navFilter = {}; // .navfilter.json。Surface の areaCosts を上書きし、通れないエリアを足す (null = Surface のまま)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

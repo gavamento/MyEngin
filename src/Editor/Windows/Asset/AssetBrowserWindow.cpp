@@ -56,6 +56,7 @@ enum CreateKind {
     kCreateMixer,
     kCreateActor,
     kCreatePhysMat, // M59a1
+    kCreateNavFilter, // M84c
     kCreatePostShader,
     kCreateComputeShader,
     kCreateSurfaceShader, // M79 sub-04
@@ -86,6 +87,7 @@ constexpr TypeFilterEntry kTypeFilters[] = {
     { AssetType::Schema, StrId::Type_Schema },
     { AssetType::Terrain, StrId::Terrain_AssetType },
     { AssetType::PhysMat, StrId::Asset_PhysMat }, // M59a1
+    { AssetType::NavFilter, StrId::Asset_NavFilter }, // M84c
     { AssetType::FxStack, StrId::Type_FxStack },
 };
 
@@ -155,6 +157,8 @@ const char* TileLabel(AssetType type, const std::wstring& ext, const std::wstrin
         return "anim";
     case AssetType::PhysMat:
         return "physmat"; // .physmat.json (M59a1)
+    case AssetType::NavFilter:
+        return "navfilter"; // .navfilter.json (M84c)
     case AssetType::Material:
         return "mat";
     case AssetType::Sound:
@@ -809,6 +813,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             if (ImGui::MenuItem(Tr(StrId::Asset_Sound))) { beginCreate(kCreateSound, "New Sound"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_Mixer))) { beginCreate(kCreateMixer, "New Mixer"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_PhysMat))) { beginCreate(kCreatePhysMat, "New PhysMat"); }
+            if (ImGui::MenuItem(Tr(StrId::Asset_NavFilter))) { beginCreate(kCreateNavFilter, "New NavFilter"); }
             if (ImGui::BeginMenu(Tr(StrId::Asset_ShaderMenu))) {
                 if (ImGui::MenuItem(Tr(StrId::Asset_PostShader))) {
                     beginCreate(kCreatePostShader, "New Post");
@@ -1028,6 +1033,10 @@ void AssetBrowserWindow::DoCreate(EngineContext& ctx, UndoStack& undo,
         break;
     case kCreatePhysMat: // M59a1
         created = CreatePhysMatAsset(ctx, current_, name);
+        RecordAssetCreated(undo, created);
+        break;
+    case kCreateNavFilter: // M84c
+        created = CreateNavFilterAsset(ctx, current_, name);
         RecordAssetCreated(undo, created);
         break;
     case kCreatePostShader:

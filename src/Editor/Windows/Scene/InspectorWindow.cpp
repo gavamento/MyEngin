@@ -2789,6 +2789,9 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
         if (type == AssetType::PhysMat) {
             LoadPhysMatEdit(path); // M59a1
         }
+        if (type == AssetType::NavFilter) {
+            LoadNavFilterEdit(path); // M84c
+        }
         if (type == AssetType::FxStack) {
             LoadFxStackEdit(path); // M78c
         }
@@ -2835,6 +2838,11 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
 
     if (type == AssetType::PhysMat) {
         DrawPhysMatInspector(path); // M59a1
+        return;
+    }
+
+    if (type == AssetType::NavFilter) {
+        DrawNavFilterInspector(ctx, path); // M84c
         return;
     }
 
@@ -3543,6 +3551,101 @@ void InspectorWindow::DrawPhysMatInspector(const std::wstring& path)
     }
 }
 
+void InspectorWindow::LoadNavFilterEdit(const std::wstring& path)
+{
+    navFilterEdit_ = NavAreaFilter{};
+    navFilterEditValid_ = false;
+    std::ifstream f(std::filesystem::path(path), std::ios::binary);
+    if (!f) {
+        return;
+    }
+    nlohmann::json root;
+    try {
+        f >> root;
+    } catch (const nlohmann::json::exception&) {
+        return;
+    }
+    navFilterEditValid_ = NavFilterLibrary::FromJson(root, navFilterEdit_); // 読み値は Sanitize 済み
+}
+
+// M84c: エリアごとに「上書きするか・コスト・通らないか」の表。エリア 1 (歩行不可) はもともと通れないので出さない
+void InspectorWindow::DrawNavFilterInspector(EngineContext& ctx, const std::wstring& path)
+{
+    namespace fs = std::filesystem;
+    if (!navFilterEditValid_) {
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_NavFilterFailed));
+        return;
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", Tr(StrId::Insp_NavFilterHint));
+    ImGui::PopTextWrapPos();
+    NavAreaNames& areaNames = NavAreaNames::Get();
+    areaNames.Load(ctx.assetsRoot);
+    constexpr ImGuiTableFlags kTableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+        | ImGuiTableFlags_SizingStretchProp;
+    if (ImGui::BeginTable("##navFilterAreas", 4, kTableFlags)) {
+        ImGui::TableSetupColumn(Tr(StrId::Insp_NavFilterColArea));
+        ImGui::TableSetupColumn(Tr(StrId::Insp_NavFilterColOverride), ImGuiTableColumnFlags_WidthFixed, 64.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Insp_NavFilterColCost));
+        ImGui::TableSetupColumn(Tr(StrId::Insp_NavFilterColExclude), ImGuiTableColumnFlags_WidthFixed, 72.0f);
+        ImGui::TableHeadersRow();
+        for (int i = 0; i < NavAreaFilter::kAreaCount; ++i) {
+            if (i == kNavAreaNotWalkable) {
+                continue;
+            }
+            float& cost = navFilterEdit_.areaCosts[i];
+            ImGui::PushID(i);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(areaNames.Name(i));
+            ImGui::TableNextColumn();
+            bool overridden = cost > 0.0f;
+            if (ImGui::Checkbox("##override", &overridden)) {
+                cost = overridden ? 1.0f : 0.0f; // 0 = Surface のコストのまま
+            }
+            ImGui::TableNextColumn();
+            ImGui::BeginDisabled(!overridden);
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            float shown = overridden ? cost : 1.0f;
+            if (ImGui::DragFloat("##cost", &shown, 0.1f, 1.0f, 1000.0f, "%.1f") && overridden) {
+                cost = (std::max)(1.0f, shown);
+            }
+            ImGui::EndDisabled();
+            ImGui::TableNextColumn();
+            bool excluded = ((navFilterEdit_.excludedAreas >> i) & 1u) != 0u;
+            if (ImGui::Checkbox("##exclude", &excluded)) {
+                navFilterEdit_.excludedAreas ^= 1u << i;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::Separator();
+    if (ImGui::Button(Tr(StrId::Common_Save), ImVec2(90, 0))) {
+        if (navFilterEdit_.name.empty()) {
+            navFilterEdit_.name = WideToUtf8(fs::path(path).stem().stem().wstring()); // "x.navfilter.json" -> "x"
+        }
+        NavFilterLibrary::Sanitize(navFilterEdit_);
+        std::ofstream out(fs::path(path), std::ios::binary);
+        if (out) {
+            out << NavFilterLibrary::ToJson(navFilterEdit_).dump(2);
+            out.close();
+            // 同じ GUID のまま読み直す (参照側は GUID なので次の tick から効く)
+            if (NavFilterLibrary* nf = navfilter::Library()) {
+                nf->LoadFromFile(path);
+            }
+            MYE_LOG_INFO("navfilter saved: %s", WideToUtf8(path).c_str());
+        } else {
+            MYE_LOG_ERROR("could not write navfilter: %s", WideToUtf8(path).c_str());
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(Tr(StrId::Insp_Revert), ImVec2(90, 0))) {
+        LoadNavFilterEdit(path);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // M79 sub-04: Properties スキーマ取得・ウィジェット描画の共通化 (fxstack / マテリアル)
 // ---------------------------------------------------------------------------
@@ -3890,7 +3993,14 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
     // ディスクの走査はポップアップを開いている間だけ行う (毎フレーム assets 全体を再帰走査し、
     // .meta の無いファイルへ .meta を書き出していた)
     AssetType diskType = AssetType::Unknown;
-    if (fname.find("physmat") != std::string::npos) {
+    if (fname.find("navfilter") != std::string::npos) {
+        // M84c: ナビのエリアのフィルタ (NavMeshAgent.navFilter)
+        if (NavFilterLibrary* nf = navfilter::Library()) {
+            for (const NavFilterEntry& e : nf->Enumerate()) {
+                entries.push_back({ AssetID{ e.hash }, e.name });
+            }
+        }
+    } else if (fname.find("physmat") != std::string::npos) {
         // M59a1: 物理マテリアル (M59a2 の Collider.physMaterial 等)。
         // ★"material" より**先に**見ること。小文字化した "physmaterial" は "material" を
         //   含むので、順序を誤ると MaterialLibrary と取り違えたまま気付けない

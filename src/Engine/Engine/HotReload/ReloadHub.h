@@ -65,6 +65,7 @@ enum class ReloadKind : uint8_t {
     ImpactSound, // .impact.json
     Mixer,       // .mixer.json
     PhysMat,     // .physmat.json
+    NavFilter,   // .navfilter.json (M84c)
     Compose,     // .actor.json / .prefab.json
     Scene,       // .scene.json と、それ以外の .json (開いているシーンなら拡張子を問わない)
     ModalNet,    // .dmnet (M76e: Deep-Modal の学習済みネット)
@@ -126,6 +127,7 @@ private:
     ReloadResult ReloadImpactSound(const std::wstring& path);
     ReloadResult ReloadMixer(const std::wstring& path);
     ReloadResult ReloadPhysMat(const std::wstring& path);
+    ReloadResult ReloadNavFilter(const std::wstring& path);
     ReloadResult ReloadModalNet(const std::wstring& path);
     ReloadResult ReloadCompose(const std::wstring& path);
     ReloadResult ReloadActiveScene(const std::wstring& path);

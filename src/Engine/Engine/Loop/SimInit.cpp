@@ -18,6 +18,7 @@
 #include "Engine/Engine/Physics/Collider/TerrainColliderLibrary.h"
 #include "Engine/Engine/Physics/Fracture/FractureLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
+#include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/Schema/SchemaComponents.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Scene/TagNames.h"
@@ -68,6 +69,8 @@ void InstallSimLibraries(const SimLibraries& libs)
     // M59i: 地形コライダー (Collider.shape=4)。描画の TerrainSystem とは別に sim 用の
     // 地形データを持つ — 描画のキャッシュを読むと「絵を出したかどうか」で sim が変わる
     terraincol::Install(libs.terrainColliders);
+    // M84c: ナビのエリアのフィルタ (.navfilter.json)。physmat と同じく起動走査より前に注入する
+    navfilter::Install(libs.navFilters);
 }
 
 void UninstallSimLibraries()
@@ -77,6 +80,7 @@ void UninstallSimLibraries()
     fracturelib::Install(nullptr);
     physmat::Install(nullptr);
     terraincol::Install(nullptr);
+    navfilter::Install(nullptr);
 }
 
 void InitSimProjectState(const std::wstring& assetsRoot)

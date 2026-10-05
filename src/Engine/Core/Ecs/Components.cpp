@@ -1453,6 +1453,8 @@ void RegisterBuiltinComponents()
                                            "write true while the agent waits at a Manual link to let it finish crossing")),
         MYE_JP("リンクの入口", MYE_FIELD_FLAGS(NavMeshAgentComponent, linkStart, Float3, kFieldReadOnly)),
         MYE_JP("リンクの出口", MYE_FIELD_FLAGS(NavMeshAgentComponent, linkEnd, Float3, kFieldReadOnly)),
+        MYE_JP("エリアのフィルタ", MYE_FIELD_TIP(NavMeshAgentComponent, navFilter, AssetRef,
+                                                 ".navfilter.json: overrides the surface's area costs and excludes areas (M84c)")),
     });
 
     // M82f: NavMesh Obstacle (TypeId=73、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変

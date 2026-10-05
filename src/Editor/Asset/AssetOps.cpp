@@ -39,6 +39,7 @@
 #include "Engine/Engine/Asset/FbxLoader.h"
 #include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h" // M59a1: .physmat.json の生成/登録
+#include "Engine/Engine/Navigation/NavFilterLibrary.h" // M84c: .navfilter.json の生成/登録
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Rendering/RenderSystem.h" // M58f: 地形ブラシ Undo 後のチャンク再構築
 #include "Engine/Engine/Scene/Scene.h"
@@ -187,12 +188,35 @@ std::vector<DiskAssetCandidate> CollectDiskAssetCandidates(const std::wstring& a
     return out;
 }
 
+std::wstring CreateNavFilterAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
+{
+    (void)ctx; // 署名は他の Create* と揃える
+    const std::string safe = SanitizeFileName(name, "New NavFilter");
+    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".navfilter.json";
+    if (fs::exists(path)) {
+        return {};
+    }
+    NavAreaFilter filter;
+    filter.name = safe;
+    if (!WriteNewAssetFile(path, NavFilterLibrary::ToJson(filter).dump(2))) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteNavFilterFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    // 生成直後に登録 -> NavMeshAgent.navFilter の参照ピッカーで即使える
+    if (NavFilterLibrary* nf = navfilter::Library()) {
+        nf->LoadFromFile(path);
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedNavFilter), WideToUtf8(path).c_str());
+    return path;
+}
+
 void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstring& suffix)
 {
     static const std::wstring kCompound[] = {L".scene.json",  L".prefab.json", L".actor.json",
                                              L".anim.json",   L".mat.json",    L".controller.json",
                                              L".sound.json",  L".mixer.json",  L".physmat.json",
-                                             L".fxstack.json", L".post.hlsl",  L".cs.hlsl"};
+                                             L".fxstack.json", L".post.hlsl",  L".cs.hlsl",
+                                             L".navfilter.json"};
     for (const std::wstring& c : kCompound) {
         if (filename.size() > c.size() &&
             filename.compare(filename.size() - c.size(), c.size(), c) == 0) {

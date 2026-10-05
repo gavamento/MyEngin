@@ -87,8 +87,11 @@ bool RunAssetDatabaseSelfTest()
           ".mfrac is classified as the fracture asset type");
     check(AssetDatabase::ClassifyPath(L"x\\Level.mnav") == AssetType::NavMesh,
           ".mnav is classified as the navmesh asset type");
+    check(AssetDatabase::ClassifyPath(L"x\\Crawler.navfilter.json") == AssetType::NavFilter,
+          ".navfilter.json is classified as the navigation area filter type");
     for (AssetType t : { AssetType::Actor, AssetType::Prefab, AssetType::Sound, AssetType::Mixer,
-                         AssetType::Schema, AssetType::PhysMat, AssetType::Fracture, AssetType::NavMesh }) {
+                         AssetType::Schema, AssetType::PhysMat, AssetType::Fracture, AssetType::NavMesh,
+                         AssetType::NavFilter }) {
         check(AssetDatabase::ParseTypeName(AssetDatabase::TypeName(t)) == t,
               "asset type name round-trips through .meta");
     }

@@ -19,6 +19,7 @@ namespace mye {
 class World;
 class Pcg32;
 struct NavMeshAgentComponent;
+struct NavMeshSurfaceComponent;
 struct NavMeshObstacleComponent;
 struct NavMeshModifierComponent;
 struct NavMeshLinkComponent;
@@ -53,6 +54,12 @@ struct NavAgentSlot {
     float linkStart[3] = {};       // 入口
     float linkEnd[3] = {};         // 出口
 };
+
+// filter を組む (Agent の dtCrowd とクエリで同じ規則、M84c)。通れるエリア = areaMask から navFilter の excludedAreas を除いたもの、
+// コスト = navFilter の上書き (> 0) か、無ければ surface の areaCosts (surface が null なら 1)。
+// navFilter が 0 か、ライブラリに無ければフィルタ無しと同じ
+void NavConfigureQueryFilter(dtQueryFilter& filter, const NavMeshSurfaceComponent* surface, uint32_t areaMask,
+                             uint64_t navFilter);
 
 // NavMeshObstacle の形をワールドの NavObstacleSpec にする。m は行ベクトル規約の 4x4 ワールド行列 (行 3 が平行移動)。
 // Box は y 回転だけなら回転箱、傾いていれば回転後の AABB、Cylinder は y 回転を無視した底面中心・半径 (max(|sx|, |sz|) 倍)・高さ (|sy| 倍)。
@@ -195,22 +202,23 @@ public:
     // ---- スクリプト API (ABI v24) のクエリ ----
     // 読み取り専用 (sim 状態を変えない)。対象は agentTypeId が合う最初の Surface (Agent の割り当てと同じ規則)。
     // 通れるエリアは areaMask と、その Surface の areaCosts (Agent と同じ filter)。
+    // navFilter (.navfilter.json の GUID、0 = 無し) はコストを上書きし、通れないエリアを足す (M84c、NavConfigureQueryFilter)。
     // Surface が未読み込み (最初の tick の Update より前を含む) なら全部失敗を返す
     // 始点・終点を 1 m x 2 m の近傍でナビメッシュへ吸着して経路を引き、角を out へ書く (先頭は吸着した始点)。
     // 届かない目的地は届く限りの最寄りまで (outPartial = true)。戻り値は書いた角の数 (0 = 失敗)
     int QueryFindPath(World& world, int agentTypeId, const float* from, const float* to, uint32_t areaMask,
-                      float* outCorners, int maxCorners, bool* outPartial) const;
+                      uint64_t navFilter, float* outCorners, int maxCorners, bool* outPartial) const;
     // pos の最寄りのナビメッシュ上の点 (extents は半径の箱)。見つからなければ false
     bool QuerySamplePosition(World& world, int agentTypeId, const float* pos, const float* extents, uint32_t areaMask,
-                             float* outPoint) const;
+                             uint64_t navFilter, float* outPoint) const;
     // ナビメッシュ上を from から to へ歩く線が壁で止まるか。from がナビメッシュに乗らなければ false (out は触らない)
     bool QueryRaycast(World& world, int agentTypeId, const float* from, const float* to, uint32_t areaMask,
-                      NavRaycastResult& out) const;
+                      uint64_t navFilter, NavRaycastResult& out) const;
     // center を中心とする半径 radius の円の中から一様に選んだ点のうち、ナビメッシュに乗るもの (最大 16 回試す)。
     // rng は呼び出し側の World の RNG。Surface なし / center の近傍にナビメッシュなし / radius が不正のときは rng を引かない。
     // center からつながっているかは見ない
-    bool QueryRandomPoint(World& world, int agentTypeId, const float* center, float radius, uint32_t areaMask, Pcg32& rng,
-                          float* outPoint) const;
+    bool QueryRandomPoint(World& world, int agentTypeId, const float* center, float radius, uint32_t areaMask,
+                          uint64_t navFilter, Pcg32& rng, float* outPoint) const;
     // Manual の Link で止まっている (入口へ近づく途中を含む) Agent に完了を通知する。該当しなければ false
     bool CompleteLink(World& world, EntityID agent) const;
 
@@ -218,8 +226,9 @@ public:
     const NavSystemStats& Stats() const { return stats_; }
 
 private:
-    // agentTypeId の Surface (最初の 1 つ) を返し、filter を areaMask と Surface の areaCosts で組む。Loaded でなければ null
-    const NavSurfaceRuntime* ResolveQuerySurface(World& world, int agentTypeId, uint32_t areaMask, dtQueryFilter& filter) const;
+    // agentTypeId の Surface (最初の 1 つ) を返し、filter を areaMask・Surface の areaCosts・navFilter で組む。Loaded でなければ null
+    const NavSurfaceRuntime* ResolveQuerySurface(World& world, int agentTypeId, uint32_t areaMask, uint64_t navFilter,
+                                                 dtQueryFilter& filter) const;
 
     struct Key {
         EntityID entity;
@@ -273,7 +282,18 @@ private:
     std::vector<NavLinkSpec> wantedLinksHere_;         // ...そのうち 1 つの Surface の範囲に入口があるもの
     int linkDisconnected_ = 0;                         // 直近のログに出した「入口か出口がナビメッシュにつながらない Link」の数
     bool logCrossings_ = true;
-    std::vector<uint32_t> filterMasks_;            // UpdateSurface の作業用: dtCrowd の filter 番号 -> areaMask (昇順・重複なし)
+    // dtCrowd の filter 1 つの元 (M84c: areaMask とフィルタ資産の組)
+    struct FilterKey {
+        uint32_t areaMask = 0;
+        uint64_t navFilter = 0;
+        bool operator==(const FilterKey& o) const { return areaMask == o.areaMask && navFilter == o.navFilter; }
+        bool operator<(const FilterKey& o) const
+        {
+            return areaMask != o.areaMask ? areaMask < o.areaMask : navFilter < o.navFilter;
+        }
+    };
+    std::vector<FilterKey> filterKeys_;            // UpdateSurface の作業用: dtCrowd の filter 番号 -> 組 (昇順・重複なし)
+    std::vector<uint64_t> missingFilters_;         // 見つからないと警告済みのフィルタ資産 (同じ警告を毎 tick 出さない)
     bool filterOverflowWarned_ = false;
     int obstacleFailures_ = 0;                    // 直近のログに出した失敗数 (同じ警告を毎 tick 出さない)
     NavSystemStats stats_;

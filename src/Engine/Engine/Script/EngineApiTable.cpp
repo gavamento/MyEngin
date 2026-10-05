@@ -1319,7 +1319,7 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         const float f[3] = { from.x, from.y, from.z };
         const float t[3] = { to.x, to.y, to.z };
         bool partial = false;
-        const int count = nav->QueryFindPath(Sc(engine)->GetWorld(), agentTypeId, f, t, areaMask,
+        const int count = nav->QueryFindPath(Sc(engine)->GetWorld(), agentTypeId, f, t, areaMask, 0,
                                              reinterpret_cast<float*>(outCorners), maxCorners, &partial);
         if (count > 0 && outPartial != nullptr) {
             *outPartial = partial ? 1 : 0;
@@ -1335,7 +1335,7 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         const float p[3] = { pos.x, pos.y, pos.z };
         const float e[3] = { extents.x, extents.y, extents.z };
         float r[3] = {};
-        if (!nav->QuerySamplePosition(Sc(engine)->GetWorld(), agentTypeId, p, e, areaMask, r)) {
+        if (!nav->QuerySamplePosition(Sc(engine)->GetWorld(), agentTypeId, p, e, areaMask, 0, r)) {
             return 0;
         }
         *out = { r[0], r[1], r[2] };
@@ -1350,7 +1350,7 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         const float f[3] = { from.x, from.y, from.z };
         const float t[3] = { to.x, to.y, to.z };
         NavRaycastResult r;
-        if (!nav->QueryRaycast(Sc(engine)->GetWorld(), agentTypeId, f, t, areaMask, r)) {
+        if (!nav->QueryRaycast(Sc(engine)->GetWorld(), agentTypeId, f, t, areaMask, 0, r)) {
             return 0;
         }
         if (out != nullptr) {
@@ -1370,7 +1370,7 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         World& world = Sc(engine)->GetWorld();
         const float c[3] = { center.x, center.y, center.z };
         float r[3] = {};
-        if (!nav->QueryRandomPoint(world, agentTypeId, c, radius, areaMask, world.Rng(), r)) {
+        if (!nav->QueryRandomPoint(world, agentTypeId, c, radius, areaMask, 0, world.Rng(), r)) {
             return 0;
         }
         *out = { r[0], r[1], r[2] };
