@@ -124,6 +124,11 @@ const BtParamDesc kCppTaskParams[] = {
     { "task", BtParamType::String, 0.0f, 0.0f, 0.0f, nullptr, 0 },
 };
 
+// btcstaskparam の並びと同じ
+const BtParamDesc kCsTaskParams[] = {
+    { "class", BtParamType::String, 0.0f, 0.0f, 0.0f, nullptr, 0 },
+};
+
 const char* const kTargetKeyNames[] = { "target" };
 const char* const kPatrolKeyNames[] = { "route" };
 const char* const kSendEventKeyNames[] = { "target", "vector" };
@@ -158,6 +163,7 @@ const BtNodeTypeInfo kNodeTypes[] = {
     { BtNodeKind::Patrol, "Patrol", BtNodeCategory::Task, 0, 0, kPatrolParams, 2, kPatrolKeyNames, 1,
       static_cast<int>(sizeof(BtPatrolState)) },
     { BtNodeKind::CppTask, "CppTask", BtNodeCategory::Task, 0, 0, kCppTaskParams, 1, nullptr, 0, kBtCppTaskExtraBytes },
+    { BtNodeKind::CsTask, "CsTask", BtNodeCategory::Task, 0, 0, kCsTaskParams, 1, nullptr, 0, 0 },
 };
 static_assert(kBtCppTaskExtraBytes <= kBtMaxExtraBytesPerNode, "CppTask の追加状態は 1 ノードの上限に収まる");
 static_assert(sizeof(kNodeTypes) / sizeof(kNodeTypes[0]) == static_cast<size_t>(BtNodeKind::Count),
@@ -705,6 +711,32 @@ bool BtExpansion::IsCurrent(const BehaviorTreeLibrary& library, const std::share
         return false;
     }
     return std::all_of(deps.begin(), deps.end(), [&library](const BtSubTreeDep& dep) { return library.GetShared(dep.guid) == dep.asset; });
+}
+
+namespace {
+
+bool UsesCsTaskAt(const BehaviorTreeLibrary& library, const BehaviorTreeAsset& asset, int depth)
+{
+    for (const BtNodeDef& node : asset.nodes) {
+        if (node.kind == BtNodeKind::CsTask) {
+            return true;
+        }
+        if (node.kind == BtNodeKind::SubTree && depth < kBtMaxSubTreeDepth
+            && static_cast<size_t>(btsubtreeparam::kTree) < node.params.size()) {
+            const BehaviorTreeAsset* sub = library.Get(node.params[btsubtreeparam::kTree].u);
+            if (sub != nullptr && sub != &asset && UsesCsTaskAt(library, *sub, depth + 1)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+bool BtAssetUsesCsTask(const BehaviorTreeLibrary& library, const BehaviorTreeAsset& asset)
+{
+    return UsesCsTaskAt(library, asset, 0);
 }
 
 BtExpansion BtExpandSubTrees(const BehaviorTreeLibrary& library, std::shared_ptr<const BehaviorTreeAsset> source)

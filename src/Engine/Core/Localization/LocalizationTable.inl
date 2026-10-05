@@ -1278,6 +1278,8 @@ MYE_STR(Insp_BtAssetMissing,  "The tree or its blackboard is not registered (the
                               "木またはそのブラックボードが登録されていません (ファイルが無いか、読み込みに失敗しました)")
 MYE_STR(Insp_BtAgentBrain,    "AgentBrain on the same entity also writes CharacterController.moveInput. A behavior tree moves the entity only through NavMeshAgent; remove one of the two.",
                               "同じエンティティの AgentBrain も CharacterController.moveInput を書きます。ビヘイビアツリーは NavMeshAgent 経由でだけ動かすので、どちらかを外してください")
+MYE_STR(Insp_BtCSharp,        "This tree contains a C# task, so it is outside the determinism guarantee. The C# task fails while recording or verifying a replay, in network play, and during a rewind re-simulation.",
+                              "この木は C# のタスクを含むので決定論の保証外です。リプレイの記録・検証中、ネット対戦中、巻き戻しの再シミュレーション中は C# タスクが Failure になります")
 MYE_STR(Insp_PatrolPoints,    "Points", "点")
 MYE_STR(Insp_PatrolNoPoints,  "(no points: a Patrol task using this route fails)", "(点がありません。このルートを使う Patrol タスクは Failure になります)")
 MYE_STR(Insp_PatrolAdd,       "Add point###patrol_add", "点を追加###patrol_add")

@@ -1109,6 +1109,9 @@ std::vector<BtIssue> BehaviorTreeEditModel::Inspect() const
         for (int i = 0; i < info.keyCount && static_cast<size_t>(i) < node.keys.size(); ++i) {
             checkKey(node, node.keys[static_cast<size_t>(i)], KeyRequired(node, i), -1, i, /*typed=*/true);
         }
+        if (node.kind == BtNodeKind::CsTask) {
+            add(BtIssueKind::CSharpTask, BtIssueSeverity::Warning, node.id);
+        }
         if (node.kind == BtNodeKind::SubTree && static_cast<size_t>(btsubtreeparam::kTree) < node.params.size()) {
             // 取り込めない条件は BtExpandSubTrees と同じ (未指定・未登録・根なし・BB 違い)
             const uint64_t guid = node.params[btsubtreeparam::kTree].u;
@@ -1117,6 +1120,8 @@ std::vector<BtIssue> BehaviorTreeEditModel::Inspect() const
                 add(BtIssueKind::SubTreeUnresolved, BtIssueSeverity::Warning, node.id);
             } else if (sub->blackboard != asset_.blackboard) {
                 add(BtIssueKind::SubTreeBoardMismatch, BtIssueSeverity::Error, node.id);
+            } else if (BtAssetUsesCsTask(*trees_, *sub)) {
+                add(BtIssueKind::CSharpTask, BtIssueSeverity::Warning, node.id);
             }
         }
     }

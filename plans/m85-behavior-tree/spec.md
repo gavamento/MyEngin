@@ -41,6 +41,7 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 | 18 | 移動を含む SearchArea / Patrol が Stuck のとき | ユーザーは MoveTo に「詰まったら Failure にするか」のチェックボックス (2. #17) を選んだ。SearchArea / Patrol も内部で同じ移動をするので、同じ問題 (詰まり続けると終わらない) を持つ | 裁定どおり (2026-10-05 ユーザー回答「MoveTo と同じチェック」、司会経由) | **同じ名前・同じ意味の `failOnStuck` (既定 false) を SearchArea と Patrol にも持たせる** (true ならノード全体が Failure)。却下: SearchArea だけ「詰まった点を飛ばして次の点へ」(捜索としては便利だが、同じ名前のチェックボックスが種類ごとに違う意味になる) |
 | 19 | Patrol を初めて始めるとき、点 0 からか一番近い点からか | ノードの状態は終了・Abort で消えるので、初回と復帰を区別するには持ち越しの状態が要る | 裁定どおり (2026-10-06 ユーザー回答、司会経由) | **入るたびに一番近い点から** (初回も同じ。同距離は index 小)。却下: 初回だけ点 0 (持ち越しの状態と snapshot の書式変更が要り、置いた位置が点 0 から遠いと最初に引き返す) |
 | 20 | BB の Entity キー (Patrol の route、追う相手の初期値など) をシーンの物で埋める手段が無い。`.bb.json` の初期値はアセットなのでシーンのエンティティを指せない。このままでは `patrol_only.bt.json` がコード無しで動かず、2. #10 の「BT 無しの巡回は Patrol 1 個の木で足りる」が成り立たない | sub-07 SELF_EVAL | 裁定どおり (2026-10-06 ユーザー回答、司会経由) | **`BehaviorTreeComponent` に「Entity キーの初期値」を固定 4 組 (`bbEntityKey[4]` = キー名 String64、`bbEntityValue[4]` = EntityRef) 持たせ、木を始める / やり直すときに BB へ書く** (UE で Pawn ごとに BB を初期化するのと同じ役)。Inspector では BB の Entity キーを選ぶ欄にする。sub-08 で入れる (snapshot +1)。却下: Patrol の route 未設定時に自分の PatrolRoute を使う (ルートの共有ができず Patrol 専用の抜け道になる)、ABI でしか書けないまま (コード無しで巡回できない) |
+| 21 | C# タスクにも C++ タスクと同じ「ノードごとのフィールド」と、BT 窓のクラスのピッカーが要るか | spec 4.1.7 の C# 側は `[BtTask]` のクラスだけを求めていた。C# タスクは決定論の保証外で、値は C# のコードか BB で渡せる。ピッカーには ManagedHost にタスク一覧の問い合わせを足す必要がある | planner 裁定 (sub-12 VERDICT) `[ユーザーに聞ける]` | **M85 では作らない (後回し)**。クラス名は FullName の手入力、実行時に無ければ Failure + 警告、パラメータは BB で渡す。却下: M85 内で足す (サブが 1 本増える。C# レーンは replay の被覆外で、主用途の C++ タスクには両方ある) |
 | 16 | Animator の窓が「位置を保存しない・Undo 無し・パン/ズーム無し」なので、それを手本に BT エディタを作ると同じ穴が残る | `AnimatorControllerWindow.cpp:25-37` (位置はメモリだけ)、Undo 無し、`NoScrollbar | NoMove` | — | BT エディタは新規の窓。位置の保存・窓内の Undo (アセット全体の JSON を前後で持つ単純な方式)・パンとズームを持つ。Animator 窓は直さない |
 
 ## 3. スコープ
@@ -65,6 +66,7 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
   - Animator の `defaultState` 未適用の修正、Animator 窓の改修
   - `AgentBrain` の変更 (共存のまま)
 - 後回し:
+  - C# タスクのフィールド (CppTask の fields 相当) と BT 窓の C# クラスのピッカー (sub-12 VERDICT、2. #21)
   - Smart Objects のノード (M86)
   - BT の実行時のホットリロードで「実行中の位置を保ったまま差し替える」こと (M85 では木を最初からやり直す、4.1.9)
 
@@ -257,6 +259,7 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 
 (確定後の変更のみ)
 
+- 2026-10-06 (sub-12 VERDICT): C# タスクは `params.class` (FullName) だけ、フィールドとピッカーは後回し (2. #21)。C# レーンの有無は毎 tick TickRunner が runManaged と同じ門で渡す。C# タスクのインスタンスは managed 側で (index, generation, ノード) ごと、Success / Failure / 例外・リロード・シーン遷移で捨てる。MyeManagedVTable の末尾に BtTask を足したが EngineAPI の版は変えない (MyeScripting.dll は exe と同時にビルドされる)
 - 2026-10-06 (sub-11 VERDICT): ABI v27 = 158 (7 スロット)。CppTask の task 名は params へ、状態は 112 バイト上限の固定長、FIELDS 以外は 0 に戻す。OnStart が無ければ入った tick に OnTick、OnTick が無ければ Running、範囲外の戻り値は Failure。BT 節のバイト形式は不変なので snapshot は v39 のまま。BtRestart を自分の木のタスクから呼ぶと返った後に Abort
 - 2026-10-06 (sub-10 VERDICT): Abort の矢印は Decorator 起点 (Self / LowerPriority / Timeout) だけ記録し、SimpleParallel の Immediate の停止は矢印にしない。記録は表示専用で BT 節・ハッシュに入れない (巻き戻し直後は矢印が空)。EngineContext に読み取り専用の BehaviorTreeSystem を追加。実行中タスク名は SceneView の ImGui 文字 (ギズモ表示が on のとき)。ライブの id は展開後の id を DisplayedIdOf で窓の木の id へ戻す
 - 2026-10-06 (sub-09 VERDICT): Undo は「アセット全体の JSON」ではなく操作前後の BT / BB のコピー (保存できない途中の状態へも戻すため)、未保存の印は保存時の JSON との比較。BB のキー削除で BlackboardCondition のキー名は残して KeyMissing の検査にかける。必須のキー欄の定義 (KeyRequired) と検査の重さ (SubTree の未指定・未登録・根なしは警告、BB 違いはエラー、検査は保存を止めない) を coder の定義で確定。BB のキー改名・削除は編集中の木にだけ追従し、同じ BB を使うほかの木と BehaviorTreeComponent の Entity キー初期値は追従しない (既知の限界、ADR-025)。ReloadHub は内容が同じなら置き換えない

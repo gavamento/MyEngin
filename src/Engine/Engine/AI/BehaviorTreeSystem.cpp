@@ -82,7 +82,8 @@ struct RunCtx {
     const ControllerLibrary* controllers = nullptr; // PlayAnimation のステート名の引き先。null = PlayAnimation は Failure
     const AnimationLibrary* clips = nullptr;        // PlayAnimation の waitForEnd のクリップの長さの引き先。null = 待たない
     const BtTaskRegistry* tasks = nullptr;          // CppTask の引き先。null = CppTask は Failure (Abort の OnAbort も呼ばない)
-    std::set<std::string>* warnedTasks = nullptr;   // 「登録に無い C++ タスク」を警告済みの名前。null = 警告しない
+    std::set<std::string>* warnedTasks = nullptr;   // 「登録に無い C++ タスク」「動けない C# タスク」を警告済みの名前。null = 警告しない
+    BtManagedTaskLane* lane = nullptr;              // CsTask の引き先。null = CsTask は Failure (Abort の OnAbort も呼ばない)
     int steps = 0;
     bool stepLimitHit = false;
     bool aborted = false; // 実行中のノードを 1 つでも Abort した
@@ -303,6 +304,15 @@ void ReleaseCppTask(RunCtx& c, const BtNodeDef& node, bool byAbort)
     task->onAbort(state, &ctx);
 }
 
+// CsTask の後始末。Abort のときだけ OnAbort を呼ぶ (C# のインスタンスは Success / Failure で返った時点で捨てられている)
+void ReleaseCsTask(RunCtx& c, const BtNodeDef& node, int32_t index, bool byAbort)
+{
+    const std::string& name = node.params[btcstaskparam::kClass].s;
+    if (byAbort && c.lane != nullptr && !name.empty()) {
+        c.lane->RunTask(c.inst.entity, index, name, btmanagedphase::kAbort, c.tick);
+    }
+}
+
 // 入っていた本体が外へ書いたもの (Agent の目的地・navFilter・updateRotation) を元へ戻し、追加状態を消す。
 // 終了 (Success / Failure) と Abort の両方がここを通る (byAbort = Abort のとき)
 void ReleaseBody(RunCtx& c, int32_t index, bool byAbort)
@@ -314,6 +324,7 @@ void ReleaseBody(RunCtx& c, int32_t index, bool byAbort)
     case BtNodeKind::SearchArea: ReleaseSearchArea(c); break;
     case BtNodeKind::Patrol: ReleasePatrol(c); break;
     case BtNodeKind::CppTask: ReleaseCppTask(c, node, byAbort); break;
+    case BtNodeKind::CsTask: ReleaseCsTask(c, node, index, byAbort); break;
     default: break;
     }
     const int extraBytes = BtNodeTypeOf(node.kind).extraStateBytes;
@@ -1281,6 +1292,35 @@ BtResult VisitCppTask(RunCtx& c, int32_t index)
     return result == BtResult::Running ? result : EndBody(c, index, result);
 }
 
+// CsTask: [BtTask] を付けた C# のクラスを動かす。インスタンスは managed 側 (World の外) が持ち、BT 表には「入っている」印だけが残る。
+// C# レーンが止まっている (lane が null)・クラス名が空・クラスが無い間は Failure (警告は 1 回)。決定論の保証外
+BtResult VisitCsTask(RunCtx& c, int32_t index)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    BtNodeState& state = c.inst.nodes[static_cast<size_t>(index)];
+    const bool starting = state.active == 0;
+    const std::string& name = node.params[btcstaskparam::kClass].s;
+    const auto fail = [&](const char* warnKey, const char* message) {
+        if (c.warnedTasks != nullptr && c.warnedTasks->insert(warnKey).second) {
+            MYE_LOG_WARN("[behaviortree] C# task '%s': %s; the node fails", name.c_str(), message);
+        }
+        return starting ? BtResult::Failure : EndBody(c, index, BtResult::Failure);
+    };
+    if (name.empty()) {
+        return fail("cs:", "no class name");
+    }
+    if (c.lane == nullptr) {
+        return fail("cs:@lane", "the C# lane is not running (recording / verifying / network / re-simulation / no .NET)");
+    }
+    const int32_t status = c.lane->RunTask(c.inst.entity, index, name, starting ? btmanagedphase::kEnter : btmanagedphase::kTick, c.tick);
+    if (status == kBtManagedUnknownClass) {
+        return fail(("cs:" + name).c_str(), "no [BtTask] class with that name in the C# scripts");
+    }
+    state.active = 1;
+    const BtResult result = TaskResultOf(status);
+    return result == BtResult::Running ? result : EndBody(c, index, result);
+}
+
 BtResult VisitBody(RunCtx& c, int32_t index)
 {
     switch (c.tree.nodes[static_cast<size_t>(index)].kind) {
@@ -1301,6 +1341,7 @@ BtResult VisitBody(RunCtx& c, int32_t index)
     case BtNodeKind::SubTree: return VisitSubTree(c, index);
     case BtNodeKind::Patrol: return VisitPatrol(c, index);
     case BtNodeKind::CppTask: return VisitCppTask(c, index);
+    case BtNodeKind::CsTask: return VisitCsTask(c, index);
     case BtNodeKind::Count: break;
     }
     return BtResult::Failure;
@@ -1586,13 +1627,15 @@ void ApplyEntityInitials(World& world, const BehaviorTreeComponent& comp, BtInst
 }
 
 // inst の木に対して根から Abort する。Abort したノードがあれば true
-bool AbortTree(World& world, uint64_t tick, std::vector<int32_t>* abortTrace, const BtTaskRegistry* tasks, BtInstance& inst)
+bool AbortTree(World& world, uint64_t tick, std::vector<int32_t>* abortTrace, const BtTaskRegistry* tasks, BtManagedTaskLane* lane,
+               BtInstance& inst)
 {
     if (!inst.tree || inst.tree->rootIndex < 0 || !AnyNodeActive(inst)) {
         return false;
     }
     RunCtx ctx{ world, inst, *inst.tree, tick, abortTrace, nullptr };
     ctx.tasks = tasks;
+    ctx.lane = lane;
     AbortNode(ctx, inst.tree->rootIndex);
     return ctx.aborted;
 }
@@ -1784,7 +1827,7 @@ bool BehaviorTreeSystem::Restart(World& world, uint64_t tick, EntityID entity)
         restartRequested_ = true; // 動いているタスクの中から: 返った後に StepOwnerBody が Abort する
         return true;
     }
-    if (AbortTree(world, tick, abortTrace_, &tasks_, *inst)) {
+    if (AbortTree(world, tick, abortTrace_, &tasks_, lane_, *inst)) {
         if (BehaviorTreeComponent* comp = world.GetComponent<BehaviorTreeComponent>(entity)) {
             comp->lastAbortTick = TickToField(tick);
         }
@@ -1910,7 +1953,7 @@ void BehaviorTreeSystem::Update(World& world, uint64_t tick, const NavSystem* na
     // (目的地・navFilter・updateRotation) を戻すために先に Abort する (消えたエンティティには戻す先が無い)
     const auto dropInstance = [&](BtInstance& dropped) {
         if (world.IsAlive(dropped.entity)) {
-            AbortTree(world, tick, abortTrace_, &tasks_, dropped);
+            AbortTree(world, tick, abortTrace_, &tasks_, lane_, dropped);
         }
     };
     for (const EntityID owner : owners) {
@@ -1987,7 +2030,7 @@ bool BehaviorTreeSystem::StepOwnerBody(World& world, uint64_t tick, const NavSys
         const bool treeChanged = inst.treeGuid != guid || inst.tree != tree;
         const bool bbChanged = inst.treeGuid != guid || inst.blackboardAsset != bbAsset;
         if (treeChanged || bbChanged) {
-            if (AbortTree(world, tick, abortTrace_, &tasks_, inst)) {
+            if (AbortTree(world, tick, abortTrace_, &tasks_, lane_, inst)) {
                 comp->lastAbortTick = TickToField(tick);
             }
             if (tree && !bbMissing) {
@@ -2022,7 +2065,7 @@ bool BehaviorTreeSystem::StepOwnerBody(World& world, uint64_t tick, const NavSys
             comp->activeNodeId = -1;
             return false;
         }
-        if (AbortTree(world, tick, abortTrace_, &tasks_, inst)) {
+        if (AbortTree(world, tick, abortTrace_, &tasks_, lane_, inst)) {
             comp->lastAbortTick = TickToField(tick);
         }
         inst.rootStatus = btroot::kRunning;
@@ -2061,7 +2104,7 @@ bool BehaviorTreeSystem::StepOwnerBody(World& world, uint64_t tick, const NavSys
     // 渡せないので、OnAbort を呼ばずにそのタスクの状態を捨て、他のノードは Abort して根からやり直す
     if (AnyCppTaskLayoutStale(inst, tasks_)) {
         MYE_LOG_WARN("[behaviortree] '%s': a C++ task changed its layout (hot reload); the tree restarts from the root", world.GetName(owner));
-        if (AbortTree(world, tick, abortTrace_, &tasks_, inst)) {
+        if (AbortTree(world, tick, abortTrace_, &tasks_, lane_, inst)) {
             comp->lastAbortTick = TickToField(tick);
         }
         inst.rootStatus = btroot::kRunning;
@@ -2069,7 +2112,7 @@ bool BehaviorTreeSystem::StepOwnerBody(World& world, uint64_t tick, const NavSys
 
     // 配られたイベントの BB 反映は Abort の監視より前 (spec 4.1.1 の (1))
     ApplyEventsToBlackboard(inst, delivered_);
-    RunCtx ctx{ world, inst, *tree, tick, abortTrace_, nav, this, controllers, clips, &tasks_, &warnedTasks_ };
+    RunCtx ctx{ world, inst, *tree, tick, abortTrace_, nav, this, controllers, clips, &tasks_, &warnedTasks_, lane_ };
     MonitorNode(ctx, tree->rootIndex);
     BtResult result = Visit(ctx, tree->rootIndex);
     if (restartRequested_) {

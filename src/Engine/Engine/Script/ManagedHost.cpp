@@ -449,6 +449,14 @@ void ManagedHost::DispatchBreak(EntityID root, EntityID piece, MyeVec3 point, fl
     }
 }
 
+int32_t ManagedHost::RunTask(EntityID owner, int32_t nodeIndex, const std::string& className, int32_t phase, uint64_t tick)
+{
+    if (!ready_ || vt_.BtTask == nullptr) {
+        return kBtManagedUnknownClass;
+    }
+    return vt_.BtTask(ToShared(owner), nodeIndex, className.c_str(), phase, tick);
+}
+
 bool ManagedHost::IsManagedComponent(ComponentTypeId t) const { return FindByComponent(t) != nullptr; }
 
 const std::vector<ManagedHost::ManagedFieldInfo>*

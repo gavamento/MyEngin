@@ -34,7 +34,7 @@ enum class BtIssueKind : uint8_t {
     KeyUnset,             // 必要なキー欄が空
     KeyMissing,           // BB に無い名前を指している (BB 未設定を含む)
     KeyTypeMismatch,      // キーの型がこの欄に合わない
-    CSharpTask,           // C# のタスクを含む (決定論の保証外)。C# タスクのノード種が入るまで出ない
+    CSharpTask,           // CsTask ノード、または C# のタスクを含む木を取り込む SubTree (決定論の保証外。警告)
 };
 
 enum class BtIssueSeverity : uint8_t { Warning, Error };

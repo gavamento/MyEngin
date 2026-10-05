@@ -8,6 +8,7 @@
 
 #include "Engine/Core/Ecs/EntityID.h"
 #include "Engine/Core/Ecs/Reflection.h" // FieldType
+#include "Engine/Engine/AI/BtManagedTaskLane.h"
 #include "Engine/Engine/Script/EngineApiTable.h"
 #include "Engine/Engine/Script/ScriptKeys.h" // ScriptStartedKey (C++ ホストと同じキー)
 #include "Engine/Platform/Input.h"
@@ -39,12 +40,15 @@ struct MyeManagedVTable {
     void (*InvokeCollision)(int32_t handle, MyeEntityId other, int32_t kind, MyeVec3 normal);
     // v22 (M80l) 末尾追加。piece = 分かれた塊のリーダー、point/impulse は荷重最大の破片
     void (*InvokeBreak)(int32_t handle, MyeEntityId piece, MyeVec3 point, float impulse);
+    // v27 (M85l) 末尾追加。BT の C# タスク 1 手。phase: 0=enter 1=tick 2=abort (btmanagedphase)。
+    // 戻り値: 0=Running 1=Success 2=Failure、-1=その名前のクラスが無い
+    int32_t (*BtTask)(MyeEntityId self, int32_t nodeIndex, const char* classNameUtf8, int32_t phase, uint64_t tick);
 };
 
 // CoreCLR (.NET 8) をホストし、C# スクリプト (MyeScripting.dll + Roslyn) を駆動する。
 // 既存の C++ ScriptHost とは独立。C# は決定論 sim から分離した別レーンで動く
 // (リプレイ記録/検証中は走らせない。ワールドハッシュ対象外 = kComponentNoHash)。
-class ManagedHost {
+class ManagedHost final : public BtManagedTaskLane {
 public:
     // exeDir\MyeScripting.dll と .runtimeconfig.json を探してホスト起動。
     // 成功で true。失敗してもエンジンは継続する (C# スクリプトが使えないだけ)。
@@ -126,6 +130,10 @@ public:
             ResetHandles();
         }
     }
+
+    // BT の C# タスク (BtManagedTaskLane)。BehaviorTreeSystem が C# レーンの走る tick だけ呼ぶ。
+    // 旧 MyeScripting.dll (BtTask スロット未設定) は kBtManagedUnknownClass
+    int32_t RunTask(EntityID owner, int32_t nodeIndex, const std::string& className, int32_t phase, uint64_t tick) override;
 
     // 毎 tick、フェーズ 3/5 で呼ぶ (Play 中かつ非リプレイ時のみ)
     void SetTickContext(const InputSnapshot& input, uint64_t tickIndex, float dt, uint32_t playerCount);

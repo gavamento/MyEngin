@@ -648,6 +648,62 @@ MyeBtTaskDesc ProbeDesc(uint32_t fieldCount = kProbeFieldCount, const char* name
     return mye_script_detail::MakeBtTaskDesc<SelfProbeTask>(name, kProbeFields, fieldCount);
 }
 
+// パディングを持つ状態型 (flag と value の間の 3 バイト)。OnTick がそこへゴミを書いても BT 表 (ハッシュ対象) に残らないことを見る
+struct PaddedProbeTask {
+    bool flag = true;
+    int32_t value = 2;
+
+    int32_t OnTick(MyeBtTaskContext&)
+    {
+        reinterpret_cast<uint8_t*>(this)[offsetof(PaddedProbeTask, flag) + 1] = 0xCD;
+        return MYE_BT_RUNNING;
+    }
+};
+
+const MyeScriptField kPaddedFields[] = {
+    { "flag", MYE_FIELD_BOOL, static_cast<uint32_t>(offsetof(PaddedProbeTask, flag)), nullptr, 0.0f, 0.0f },
+    { "value", MYE_FIELD_INT32, static_cast<uint32_t>(offsetof(PaddedProbeTask, value)), nullptr, 0.0f, 0.0f },
+};
+
+// CsTask の引き先の代役 (本物は ManagedHost)。enter で 1、tick のたびに +1 数え、runningTicks を超えたら Success を返す。
+// 呼ばれ方 (phase と owner と node) を記録する。unknownClass が真なら「そのクラスが無い」を返す
+class StubLane final : public BtManagedTaskLane {
+public:
+    int32_t runningTicks = 2;
+    bool unknownClass = false;
+    std::vector<int32_t> phases;
+    std::vector<int32_t> nodes;
+    std::vector<EntityID> owners;
+    std::string lastClass;
+
+    int32_t RunTask(EntityID owner, int32_t nodeIndex, const std::string& className, int32_t phase, uint64_t) override
+    {
+        phases.push_back(phase);
+        nodes.push_back(nodeIndex);
+        owners.push_back(owner);
+        lastClass = className;
+        if (unknownClass) {
+            return kBtManagedUnknownClass;
+        }
+        if (phase == btmanagedphase::kEnter) {
+            count_ = 1;
+        } else if (phase == btmanagedphase::kTick) {
+            ++count_;
+        } else {
+            return MYE_BT_FAILURE;
+        }
+        return count_ > runningTicks ? MYE_BT_SUCCESS : MYE_BT_RUNNING;
+    }
+
+private:
+    int count_ = 0;
+};
+
+json CsTaskNode(int id, const char* className)
+{
+    return Node(id, "CsTask", {}, json{ { "class", className } });
+}
+
 json CppTaskNode(int id, const char* task, json fields = json())
 {
     json n = Node(id, "CppTask", {}, json{ { "task", task } });
@@ -4495,6 +4551,103 @@ bool RunBehaviorTreeSelfTest()
             const std::vector<int32_t> statuses = Run(sim, e, 8);
             ck.Check(std::find(statuses.begin(), statuses.end(), kFailed) != statuses.end() && gProbe.aborts >= 1 && gProbe.abortedAtTicks >= 1,
                      "Timeout に止められると OnAbort が呼ばれ (その時点の状態つき)、木は Failure になる");
+        }
+
+        // 状態のパディング: 登録フィールドに入らないバイトはコールバックの後に 0 へ戻る (Debug / Release でハッシュが割れないように)
+        {
+            Sim sim;
+            AbiRig rig;
+            rig.Bind(sim.bt, sim.scene);
+            const MyeBtTaskDesc desc = mye_script_detail::MakeBtTaskDesc<PaddedProbeTask>("PaddedProbe", kPaddedFields, 2);
+            sim.bt.Tasks().Update(&rig.api, &desc, 1);
+            const EntityID e = sim.AddTreeEntity(RegisterTree(lib, L"cpp_padded", Tree(0, { CppTaskNode(0, "PaddedProbe") }, board)));
+            Run(sim, e, 3);
+            const BtInstance* inst = sim.bt.FindInstance(e);
+            const BtNodeDef& node = inst->tree->nodes[0];
+            const uint8_t* state = inst->extra.data() + node.extraOffset + sizeof(BtCppTaskHeader);
+            const size_t padding = offsetof(PaddedProbeTask, flag) + 1;
+            ck.Check(sim.Status(e) == kRunning && state[padding] == 0 && state[padding + 1] == 0 && state[padding + 2] == 0,
+                     "状態のパディングへ OnTick が書いたゴミは追加状態に残らない (BtTaskCanonicalizeState)");
+        }
+
+        // CsTask (C# タスク): 引き先 (C# レーン) が無い間は Failure + 警告 1 回、あれば enter → tick → Success、Abort で abort が呼ばれる
+        {
+            ck.Check(Loads(Tree(0, { CsTaskNode(0, "MyGame.Chase") })), "CsTask は params.class だけで読める (クラスの有無は実行時に引く)");
+            BehaviorTreeAsset a;
+            BehaviorTreeAsset b;
+            ck.Check(BehaviorTreeLibrary::FromJson(Tree(0, { CsTaskNode(0, "MyGame.Chase") }, board), a)
+                         && BehaviorTreeLibrary::FromJson(BehaviorTreeLibrary::ToJson(a), b) && BehaviorTreeLibrary::ToJson(a) == BehaviorTreeLibrary::ToJson(b)
+                         && a.nodes[0].kind == BtNodeKind::CsTask && a.nodes[0].params[btcstaskparam::kClass].s == "MyGame.Chase",
+                     "CsTask の JSON (class) が往復で変わらない");
+            const uint64_t csGuid = RegisterTree(lib, L"cs_uses", Tree(0, { CsTaskNode(0, "MyGame.Chase") }, board));
+            const uint64_t plainGuid = RegisterTree(lib, L"cs_plain", Tree(0, { Wait(0, 1) }, board));
+            const uint64_t viaSubGuid = RegisterTree(lib, L"cs_via_sub", Tree(0, { SubTreeNode(0, csGuid) }, board));
+            ck.Check(BtAssetUsesCsTask(lib.trees, *lib.trees.Get(csGuid)) && !BtAssetUsesCsTask(lib.trees, *lib.trees.Get(plainGuid))
+                         && BtAssetUsesCsTask(lib.trees, *lib.trees.Get(viaSubGuid)),
+                     "BtAssetUsesCsTask: CsTask を持つ木と、SubTree 経由で取り込む木は真、持たない木は偽");
+        }
+        {
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(RegisterTree(lib, L"cs_nolane", Tree(0, { CsTaskNode(0, "MyGame.Chase") }, board)));
+            const uint64_t logFrom = logging::TotalWritten();
+            const std::vector<int32_t> statuses = Run(sim, e, 5);
+            ck.Check(std::count(statuses.begin(), statuses.end(), kFailed) == 5, "C# レーンが無い (記録・検証・Net・再シム) 間の CsTask は毎 tick Failure");
+            ck.Check(CountWarnings(logFrom, "C# lane is not running") == 1, "その警告は 1 回だけ");
+        }
+        {
+            Sim sim;
+            StubLane lane;
+            sim.bt.SetManagedLane(&lane);
+            const EntityID e = sim.AddTreeEntity(RegisterTree(lib, L"cs_run", Tree(0, { CsTaskNode(0, "MyGame.Chase") }, board)));
+            const std::vector<int32_t> statuses = Run(sim, e, 4);
+            ck.Check(Is(statuses, { kRunning, kRunning, kSucceeded, kRunning }) && lane.lastClass == "MyGame.Chase",
+                     "CsTask: 入って Running → Running → Success、根は次の tick からやり直す");
+            ck.Check(lane.phases == std::vector<int32_t>({ btmanagedphase::kEnter, btmanagedphase::kTick, btmanagedphase::kTick, btmanagedphase::kEnter })
+                         && lane.nodes.front() == 0 && lane.owners.front() == e,
+                     "enter / tick / tick / (やり直して) enter の順で、owner と木のノードの添字が渡る。Success で終わるときは abort を呼ばない");
+        }
+        {
+            Sim sim;
+            StubLane lane;
+            lane.runningTicks = 100;
+            sim.bt.SetManagedLane(&lane);
+            const EntityID e = sim.AddTreeEntity(
+                RegisterTree(lib, L"cs_abort", Tree(0, { Decorated(CsTaskNode(0, "MyGame.Chase"), { Timeout(3) }) }, board)));
+            const std::vector<int32_t> statuses = Run(sim, e, 5);
+            const auto aborts = std::count(lane.phases.begin(), lane.phases.end(), btmanagedphase::kAbort);
+            ck.Check(std::find(statuses.begin(), statuses.end(), kFailed) != statuses.end() && aborts == 1,
+                     "Timeout に止められると abort が 1 回だけ呼ばれる");
+        }
+        {
+            Sim sim;
+            StubLane lane;
+            lane.runningTicks = 100;
+            sim.bt.SetManagedLane(&lane);
+            const EntityID e = sim.AddTreeEntity(RegisterTree(lib, L"cs_stop", Tree(0, { CsTaskNode(0, "MyGame.Chase") }, board)));
+            Run(sim, e, 2);
+            sim.bt.SetManagedLane(nullptr); // 動いている最中に C# レーンが止まる (再シムなど)
+            sim.Step();
+            ck.Check(sim.Status(e) == kFailed && std::count(lane.phases.begin(), lane.phases.end(), btmanagedphase::kAbort) == 0,
+                     "動いている最中にレーンが止まると CsTask は Failure になる (止まったレーンへは abort を呼ばない)");
+        }
+        {
+            Sim sim;
+            StubLane lane;
+            lane.unknownClass = true;
+            sim.bt.SetManagedLane(&lane);
+            const EntityID e = sim.AddTreeEntity(RegisterTree(lib, L"cs_unknown", Tree(0, { CsTaskNode(0, "MyGame.NoSuch") }, board)));
+            const uint64_t logFrom = logging::TotalWritten();
+            const std::vector<int32_t> statuses = Run(sim, e, 4);
+            ck.Check(std::count(statuses.begin(), statuses.end(), kFailed) == 4 && CountWarnings(logFrom, "no [BtTask] class") == 1,
+                     "C# スクリプトに無いクラス名の CsTask は Failure で、警告は名前ごとに 1 回");
+        }
+        {
+            Sim sim;
+            StubLane lane;
+            sim.bt.SetManagedLane(&lane);
+            const EntityID e = sim.AddTreeEntity(RegisterTree(lib, L"cs_noname", Tree(0, { CsTaskNode(0, "") }, board)));
+            const std::vector<int32_t> statuses = Run(sim, e, 2);
+            ck.Check(std::count(statuses.begin(), statuses.end(), kFailed) == 2 && lane.phases.empty(), "クラス名が空の CsTask は C# を呼ばずに Failure");
         }
 
         // ABI: BtRestart (タスクの中から / 外から)

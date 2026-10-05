@@ -28,6 +28,10 @@ namespace MyeScripting
         // リロード跨ぎのフィールド永続: (typeFullName, entity.index, entity.gen) -> フィールド JSON
         private readonly Dictionary<(string, uint, uint), string> _persist =
             new Dictionary<(string, uint, uint), string>();
+        // BT の C# タスク (ノード CsTask)。クラスは [BtTask] を付けた MyeBtTask 派生 (FullName で引く)。
+        // インスタンスは (owner の index, generation, 木のノードの添字) ごとに 1 つ。ネイティブの BT 表には入らない (決定論の保証外)
+        private readonly Dictionary<string, Type> _btTaskTypes = new Dictionary<string, Type>(StringComparer.Ordinal);
+        private readonly Dictionary<(uint, uint, int), MyeBtTask> _btTasks = new Dictionary<(uint, uint, int), MyeBtTask>();
         private int _nextHandle = 1;
         private int _reloadCounter = 0;
 
@@ -162,11 +166,25 @@ namespace MyeScripting
             _instances.Clear();
             _fieldCache.Clear();
             _types.Clear();
+            // 古い ALC の型を掴んだままだと Unload が終わらないので、タスクのインスタンスも捨てる (動いていた分は次の tick に OnStart からやり直す)
+            _btTasks.Clear();
+            _btTaskTypes.Clear();
             foreach (var t in allTypes)
             {
                 if (typeof(MyeScript).IsAssignableFrom(t) && !t.IsAbstract)
                 {
                     _types.Add(t);
+                }
+                else if (typeof(MyeBtTask).IsAssignableFrom(t) && !t.IsAbstract)
+                {
+                    if (t.IsDefined(typeof(BtTaskAttribute), false))
+                    {
+                        _btTaskTypes[t.FullName] = t;
+                    }
+                    else
+                    {
+                        Engine.Log("[csharp] " + t.FullName + " derives MyeBtTask but has no [BtTask]; ignored", 2);
+                    }
                 }
             }
             _types.Sort((a, b) => string.CompareOrdinal(a.FullName, b.FullName));
@@ -175,7 +193,8 @@ namespace MyeScripting
             _alc = newAlc;
             old?.Unload();
 
-            Engine.Log("[csharp] compiled " + sources.Count + " file(s), " + _types.Count + " script type(s)");
+            Engine.Log("[csharp] compiled " + sources.Count + " file(s), " + _types.Count + " script type(s), "
+                       + _btTaskTypes.Count + " BT task type(s)");
             return _types.Count;
         }
 
@@ -303,11 +322,64 @@ namespace MyeScripting
             }
         }
 
+        // BT の C# タスクを 1 手進める。phase: 0 = enter (新しいインスタンスで OnStart)、1 = tick (OnTick。インスタンスが無ければ
+        // enter と同じ = リロード後の再開)、2 = abort (OnAbort して捨てる)。戻り値は MyeBtStatus、-1 = そのクラスが無い。
+        // Success / Failure と例外 (Failure) でインスタンスを捨てる
+        private int RunBtTask(MyeEntityId owner, int nodeIndex, string className, int phase, ulong tick)
+        {
+            if (!_btTaskTypes.TryGetValue(className, out var type)) return -1;
+            var key = (owner.Index, owner.Generation, nodeIndex);
+            MyeBtTask task = null;
+            try
+            {
+                if (phase == 2)
+                {
+                    if (_btTasks.Remove(key, out task))
+                    {
+                        task.Tick = tick;
+                        task.OnAbort();
+                    }
+                    return (int)MyeBtStatus.Failure;
+                }
+                bool starting = phase == 0 || !_btTasks.TryGetValue(key, out task);
+                if (starting)
+                {
+                    // ノードに入るたびに掃除する: 木ごと消えた (エンティティ破棄) タスクのインスタンスの取りこぼしを落とす
+                    if (phase == 0) DropDeadBtTasks();
+                    task = (MyeBtTask)Activator.CreateInstance(type);
+                    task.SelfId = owner;
+                    _btTasks[key] = task;
+                }
+                task.Tick = tick;
+                var status = starting ? task.OnStart() : task.OnTick();
+                if (status != MyeBtStatus.Running) _btTasks.Remove(key);
+                return (int)status;
+            }
+            catch (Exception ex)
+            {
+                _btTasks.Remove(key);
+                Engine.Log("[csharp] BT task " + className + (phase == 2 ? ".OnAbort" : "") + " threw: " + ex.Message, 3);
+                return (int)MyeBtStatus.Failure;
+            }
+        }
+
+        private void DropDeadBtTasks()
+        {
+            List<(uint, uint, int)> dead = null;
+            foreach (var kv in _btTasks)
+            {
+                if (!Engine.IsAlive(kv.Value.SelfId)) (dead ??= new List<(uint, uint, int)>()).Add(kv.Key);
+            }
+            if (dead == null) return;
+            foreach (var key in dead) _btTasks.Remove(key);
+        }
+
         private static string PhaseName(int p) => p == 0 ? "Start" : (p == 1 ? "Update" : "LateUpdate");
 
         private void ResetInstances()
         {
             _instances.Clear();
+            _btTasks.Clear(); // シーン遷移: 旧シーンの木のタスク (エンティティが別物になる)
         }
 
         // ======================= フィールド (Inspector) =======================
@@ -525,6 +597,13 @@ namespace MyeScripting
 
         [UnmanagedCallersOnly]
         public static void NativeInvokeCollision(int handle, MyeEntityId other, int kind, MyeVec3 normal) => Inst.InvokeCollision(handle, other, kind, normal);
+
+        [UnmanagedCallersOnly]
+        public static int NativeBtTask(MyeEntityId owner, int nodeIndex, byte* classUtf8, int phase, ulong tick)
+        {
+            try { return Inst.RunBtTask(owner, nodeIndex, Marshal.PtrToStringUTF8((IntPtr)classUtf8) ?? "", phase, tick); }
+            catch (Exception ex) { Engine.Log("[csharp] BtTask error: " + ex.Message, 3); return (int)MyeBtStatus.Failure; }
+        }
 
         [UnmanagedCallersOnly]
         public static void NativeInvokeBreak(int handle, MyeEntityId piece, MyeVec3 point, float impulse) => Inst.InvokeBreak(handle, piece, point, impulse);

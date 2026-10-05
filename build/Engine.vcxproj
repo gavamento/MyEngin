@@ -335,6 +335,7 @@
     <ClInclude Include="..\src\Engine\Engine\AI\BehaviorTreeSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\AI\BehaviorTreeSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\AI\BlackboardLibrary.h" />
+    <ClInclude Include="..\src\Engine\Engine\AI\BtManagedTaskLane.h" />
     <ClInclude Include="..\src\Engine\Engine\AI\BtTaskRegistry.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation\Animation.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation\AnimatorController.h" />

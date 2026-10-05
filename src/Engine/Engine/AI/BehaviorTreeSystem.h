@@ -16,6 +16,7 @@
 #include "Engine/Core/Util/ByteIo.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
+#include "Engine/Engine/AI/BtManagedTaskLane.h"
 #include "Engine/Engine/AI/BtTaskRegistry.h"
 
 namespace mye {
@@ -139,6 +140,10 @@ public:
     BtTaskRegistry& Tasks() { return tasks_; }
     const BtTaskRegistry& Tasks() const { return tasks_; }
 
+    // C# タスク (CsTask) の引き先。C# レーンが走る tick だけ非 null にする (TickRunner が毎 tick 決める)。
+    // null の間の CsTask は Failure + 警告 1 回 (記録・検証・Net・再シムで C# レーンは止まる)。所有しない
+    void SetManagedLane(BtManagedTaskLane* lane) { lane_ = lane; }
+
     // Abort を受けたノードの id を Abort の順に積む先 (検査用。sim 状態ではない)。null = 記録しない
     void SetAbortTrace(std::vector<int32_t>* sink) { abortTrace_ = sink; }
 
@@ -189,6 +194,7 @@ private:
     bool eventOverflowWarned_ = false;  // ログだけ。sim 状態ではない
     std::vector<int32_t>* abortTrace_ = nullptr;
     BtTaskRegistry tasks_;              // 実行に使う登録表。sim 状態ではない (中身は GameLogic.dll の記述子)
+    BtManagedTaskLane* lane_ = nullptr; // CsTask の引き先。sim 状態ではない
     // ---- Update の最中だけ有効 (ABI から in-flight のインスタンスを引くための印。sim 状態ではない) ----
     BtInstance* current_ = nullptr;                  // StepOwner が動かしているインスタンス
     std::vector<BtInstance>* updateNext_ = nullptr;  // 処理済みのインスタンス (キー昇順)

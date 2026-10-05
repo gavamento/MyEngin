@@ -1295,6 +1295,11 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
             if (world.GetComponent<AgentBrainComponent>(tg.e) != nullptr) {
                 ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_BtAgentBrain));
             }
+            const BehaviorTreeLibrary* trees = behaviortree::Library();
+            const BehaviorTreeAsset* tree = (trees != nullptr && !bt->tree.IsNull()) ? trees->Get(bt->tree.value) : nullptr;
+            if (tree != nullptr && BtAssetUsesCsTask(*trees, *tree)) {
+                ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_BtCSharp));
+            }
             ImGui::TextDisabled("%s", Tr(StrId::Insp_BtEntityKeysHint));
             ImGui::PopTextWrapPos();
         }

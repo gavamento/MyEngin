@@ -390,7 +390,6 @@ namespace MyeScripting
         public delegate* unmanaged<void*, int, MyeVec3, MyeVec3, uint, ulong, MyeNavRaycastHit*, int> NavRaycastFiltered;
         public delegate* unmanaged<void*, int, MyeVec3, float, uint, ulong, MyeVec3*, int> NavFindRandomPointFiltered;
         // ---- v27 (M85k): ビヘイビアツリー ----
-        // ★ラッパは足さない — C# の BT タスクと糖衣は sub-12。位置ミラーのために並べるだけ
         public delegate* unmanaged<void*, MyeEntityId, ulong, MyeBbValue*, int> BtGetBlackboard;
         public delegate* unmanaged<void*, MyeEntityId, ulong, MyeBbValue*, int> BtSetBlackboard;
         public delegate* unmanaged<void*, MyeEntityId, MyeEntityId, ulong, MyeBtEventPayload*, int> BtSendEvent;
@@ -423,6 +422,9 @@ namespace MyeScripting
         public delegate* unmanaged<int, MyeEntityId, int, MyeVec3, void> InvokeCollision;
         // v22 (M80l) 末尾追加。piece = 分かれた塊のリーダー、point/impulse は荷重最大の破片
         public delegate* unmanaged<int, MyeEntityId, MyeVec3, float, void> InvokeBreak;
+        // v27 (M85l) 末尾追加。BT の C# タスク 1 手 (phase: 0=enter 1=tick 2=abort)。
+        // 戻り値: 0=Running 1=Success 2=Failure、-1=その名前のクラスが無い
+        public delegate* unmanaged<MyeEntityId, int, byte*, int, ulong, int> BtTask;
     }
 
     // native → managed の起動引数 (ManagedHost.cpp の MyeBootstrapArgs と一致)
@@ -1421,5 +1423,47 @@ namespace MyeScripting
         // observer から target が今見えるか (結果へは書かない)
         public static bool PerceptionCanSee(MyeEntityId observer, MyeEntityId target)
             => _api != null && _api->PerceptionCanSee(_api->Engine, observer, target) != 0;
+
+        // ---- v27 (M85l): ビヘイビアツリー。キーは NameHash(名前)。イベントは tick N に送った分が tick N+1 の頭に配られる ----
+        public static bool BtGetBlackboard(MyeEntityId entity, ulong keyHash, out MyeBbValue value)
+        {
+            value = default;
+            if (_api == null) return false;
+            fixed (MyeBbValue* p = &value)
+            {
+                return _api->BtGetBlackboard(_api->Engine, entity, keyHash, p) != 0;
+            }
+        }
+        public static bool BtSetBlackboard(MyeEntityId entity, ulong keyHash, in MyeBbValue value)
+        {
+            if (_api == null) return false;
+            fixed (MyeBbValue* p = &value)
+            {
+                return _api->BtSetBlackboard(_api->Engine, entity, keyHash, p) != 0;
+            }
+        }
+        public static bool BtSendEvent(MyeEntityId sender, MyeEntityId target, ulong nameHash, in MyeBtEventPayload payload)
+        {
+            if (_api == null) return false;
+            fixed (MyeBtEventPayload* p = &payload)
+            {
+                return _api->BtSendEvent(_api->Engine, sender, target, nameHash, p) != 0;
+            }
+        }
+        public static int BtEventCount(MyeEntityId self)
+            => _api != null ? _api->BtEventCount(_api->Engine, self) : 0;
+        public static bool BtGetEvent(MyeEntityId self, int index, out MyeBtEvent ev)
+        {
+            ev = default;
+            if (_api == null) return false;
+            fixed (MyeBtEvent* p = &ev)
+            {
+                return _api->BtGetEvent(_api->Engine, self, index, p) != 0;
+            }
+        }
+        public static bool AnimatorPlay(MyeEntityId entity, ulong stateNameHash, int durationTicks)
+            => _api != null && _api->AnimatorPlay(_api->Engine, entity, stateNameHash, durationTicks) != 0;
+        public static bool BtRestart(MyeEntityId entity)
+            => _api != null && _api->BtRestart(_api->Engine, entity) != 0;
     }
 }

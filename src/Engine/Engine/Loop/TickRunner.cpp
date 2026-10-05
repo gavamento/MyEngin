@@ -331,17 +331,21 @@ void RunOneTick(TickServices& ts)
     if (stepSim && ts.behaviorTree != nullptr) {
         ts.behaviorTree->DeliverPending(ctx.tickIndex);
     }
+    // C# スクリプト層 (別レーン): 記録/検証/ネット中は走らせない → 純 C++ 決定論を保持。
+    // 再シム (M52e) でも同じ — C# の状態はスナップショットに入っておらず巻き戻らないので、
+    // ここで走らせると「戻せない側だけが余分に進む」= どのみち世界が割れる
+    const bool runManaged = ctx.simulateScripts && managedHost.IsReady()
+        && !Recording() && !Verifying() && !Networked() && !ts.resim;
+    // BT の C# タスクも同じ門を通る (止まっている間の CsTask は Failure)。C++ スクリプトが呼ぶ BtRestart の Abort より前に決める
+    if (ts.behaviorTree != nullptr) {
+        ts.behaviorTree->SetManagedLane(runManaged ? &managedHost : nullptr);
+    }
     // ---- フェーズ 3: スクリプト層 Start → Update ----
     const bool runScripts = ctx.simulateScripts && scriptHost.IsLoaded();
     if (runScripts) {
         scriptHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt, ctx.playerCount);
         scriptHost.RunStartAndUpdate();
     }
-    // C# スクリプト層 (別レーン): 記録/検証/ネット中は走らせない → 純 C++ 決定論を保持。
-    // 再シム (M52e) でも同じ — C# の状態はスナップショットに入っておらず巻き戻らないので、
-    // ここで走らせると「戻せない側だけが余分に進む」= どのみち世界が割れる
-    const bool runManaged = ctx.simulateScripts && managedHost.IsReady()
-        && !Recording() && !Verifying() && !Networked() && !ts.resim;
     if (runManaged) {
         managedHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt, ctx.playerCount);
         managedHost.RunStartAndUpdate();

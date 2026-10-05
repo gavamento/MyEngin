@@ -17,8 +17,8 @@
 | sub-08 | OK | 1 | 2f86efb | BT 窓 (1) + Entity キーの初期値、snapshot v39 | BT 窓 (1) |
 | sub-09 | OK | 1 | 8bef16c | Undo・BB パネル・検査・ReloadHub の同一内容スキップ | BT 窓 (2) Undo・BB 編集・検査 |
 | sub-10 | OK | 1 | 20a9f43 | ライブ表示・Abort 矢印・デバッグ線 | BT 窓 (3) ライブ表示 |
-| sub-11 | OK | 1 | (このコミット) | ABI v27 = 158、C++ タスク、snapshot v39 のまま | ABI v27 |
-| sub-12 | 未着手 | 0 | | C# タスク |
+| sub-11 | OK | 1 | e16bd96 | ABI v27 = 158、C++ タスク、snapshot v39 のまま | ABI v27 |
+| sub-12 | OK | 1 | (このコミット) | C# タスクと糖衣 | C# タスク |
 | sub-13 | 未着手 | 0 | | --bt-demo・replay_verify・golden |
 | sub-14 | 未着手 | 0 | | ADR-025 と全体検証 |
 
@@ -35,6 +35,7 @@
 - (2026-10-05) 上記を反映して spec 確定、sub-01 から着手してよい
 - (2026-10-06) Patrol の開始点 = 入るたびに一番近い点から (初回も同じ)。spec 2. #19 の裁定どおり
 - (2026-10-06) BB の Entity キーの埋め方 = BehaviorTreeComponent に「Entity キーの初期値」4 組、Inspector で選ぶ (sub-08、snapshot +1)。spec 2. #20 の裁定どおり
+- (2026-10-06) C# タスクのノードごとのフィールド欄と BT 窓の C# クラスのピッカー = **M85 で作る** (spec 2. #21 の planner 裁定「後回し」から変更。サブが 1 本増える)
 - (2026-10-05) SearchArea / Patrol の詰まり = MoveTo と同じ名前・同じ意味の failOnStuck (既定 false、true でノード全体 Failure)。spec 2. #18 の planner 裁定どおり
 
 ## 申し送り (セッション跨ぎ)
@@ -77,6 +78,7 @@
 - (sub-11) CsTask は params.class (String) で CppTask の params.task と揃える。Interop.cs には 7 スロットと MyeBbValue / MyeBtEventPayload / MyeBtEvent のミラーだけ (糖衣は sub-12)。ManagedHost::SetBehaviorTree あり。
 - (sub-11 → 完了報告) 外部プロジェクト (HAL Collector / 三校) の GameLogic.dll は ABI v27 で再ビルドが要る。ユーザーに伝える。
 - (sub-11 → sub-13) GameLogic の BtProbeTask (fields: targetTicks / outcome / ticks) をデモから使える。
+- (sub-12) CsTask を含む木を replay_verify の対象シーンに入れない (C# レーンは被覆外)。MyeManagedVTable の BtTask は Engine と MyeScripting.dll の内部契約 (EngineAPI の版は不変)。
 - (sub-07 → sub-14) ADR-025: Patrol は入るたびに最近傍点から、親付きルートは前 tick の WorldMatrix。
 - (sub-06 → sub-14) ADR-025 の既知の限界: SubTree は平らな展開・上限 1024・部分木の根の LowerPriority は Self 扱い・BB 継承なし・遷移中の AnimatorPlay はブレンド途中のポーズから飛ぶ。
 - (sub-04 VERDICT nit#1) BehaviorTreeSelfTest の診断ログ `[search] stuck ...` は、1 回の実行で 1〜2 行なら残す。tick ごとなら 1 行にまとめるか削除。sub-05 でついでに判断。

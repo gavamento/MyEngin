@@ -1161,6 +1161,9 @@
     <ClInclude Include="..\src\Engine\Engine\AI\BlackboardLibrary.h">
       <Filter>Engine\AI</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\AI\BtManagedTaskLane.h">
+      <Filter>Engine\AI</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\AI\BtTaskRegistry.h">
       <Filter>Engine\AI</Filter>
     </ClInclude>

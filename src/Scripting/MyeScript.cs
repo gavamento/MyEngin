@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+
 namespace MyeScripting
 {
     // gamepad ボタンマスク (Shared/EngineAPI.h の MyePadButton と同値 = XINPUT_GAMEPAD_*)
@@ -125,6 +128,162 @@ namespace MyeScripting
             => Engine.TryGetFieldString(Id, compHash, fieldHash, out value);
         public bool SetFieldString(ulong compHash, ulong fieldHash, string value)
             => Engine.SetFieldString(Id, compHash, fieldHash, value);
+
+        // ---- ビヘイビアツリー (v27、M85l) ----
+        // ブラックボード (BB) はこのエンティティの BehaviorTree の BB。キーは名前。BehaviorTree が無い・キーが無い・
+        // 型が違う・未設定のときは Get は false (value は既定値)、Set は false。Entity キーは生きているエンティティだけ有効
+        public bool GetBlackboardBool(string key, out bool value)
+        {
+            value = false;
+            if (!TryGetBlackboard(key, 0, out var v)) return false;
+            value = v.B != 0;
+            return true;
+        }
+        public bool GetBlackboardInt(string key, out int value)
+        {
+            value = 0;
+            if (!TryGetBlackboard(key, 1, out var v)) return false;
+            value = v.I;
+            return true;
+        }
+        public bool GetBlackboardFloat(string key, out float value)
+        {
+            value = 0f;
+            if (!TryGetBlackboard(key, 2, out var v)) return false;
+            value = v.F;
+            return true;
+        }
+        public bool GetBlackboardVector(string key, out MyeVec3 value)
+        {
+            value = default;
+            if (!TryGetBlackboard(key, 3, out var v)) return false;
+            value = v.Vec3;
+            return true;
+        }
+        public bool GetBlackboardEntity(string key, out MyeEntity value)
+        {
+            value = default;
+            if (!TryGetBlackboard(key, 4, out var v)) return false;
+            value = new MyeEntity(v.Entity);
+            return true;
+        }
+        // 値の型がキーの型と違う・非有限の Float / Vector は false (何も書かない)
+        public bool SetBlackboardBool(string key, bool value)
+            => Engine.BtSetBlackboard(Id, Engine.NameHash(key), new MyeBbValue { Type = 0, IsSet = 1, B = value ? 1 : 0 });
+        public bool SetBlackboardInt(string key, int value)
+            => Engine.BtSetBlackboard(Id, Engine.NameHash(key), new MyeBbValue { Type = 1, IsSet = 1, I = value });
+        public bool SetBlackboardFloat(string key, float value)
+            => Engine.BtSetBlackboard(Id, Engine.NameHash(key), new MyeBbValue { Type = 2, IsSet = 1, F = value });
+        public bool SetBlackboardVector(string key, MyeVec3 value)
+            => Engine.BtSetBlackboard(Id, Engine.NameHash(key), new MyeBbValue { Type = 3, IsSet = 1, Vec3 = value });
+        public bool SetBlackboardEntity(string key, MyeEntity value)
+            => Engine.BtSetBlackboard(Id, Engine.NameHash(key), new MyeBbValue { Type = 4, IsSet = 1, Entity = value.Id });
+        // キーを未設定へ戻す (BB のキーの型は変わらない)
+        public bool ClearBlackboard(string key)
+        {
+            ulong hash = Engine.NameHash(key);
+            if (!Engine.BtGetBlackboard(Id, hash, out var v)) return false;
+            return Engine.BtSetBlackboard(Id, hash, new MyeBbValue { Type = v.Type, IsSet = 0 });
+        }
+
+        private bool TryGetBlackboard(string key, int type, out MyeBbValue value)
+            => Engine.BtGetBlackboard(Id, Engine.NameHash(key), out value) && value.Type == type && value.IsSet != 0;
+
+        // このエンティティを送り元としてイベントを積む。tick N に送った分は tick N+1 の頭に配られる
+        // (BT の受け取り・他スクリプトの ReceivedEvents から見える)。target = 宛先のエンティティ。
+        // 配送待ちが上限 (256) を超えて捨てられたら false
+        public bool SendEvent(string name, MyeEntity target, MyeVec3 vector = default, float value = 0f, int intValue = 0)
+            => Engine.BtSendEvent(Id, target.Id, Engine.NameHash(name),
+                                  new MyeBtEventPayload { Vec3 = vector, Value = value, IntValue = intValue });
+        // 全体宛て (宛先を持たない) のイベント
+        public bool BroadcastEvent(string name, MyeVec3 vector = default, float value = 0f, int intValue = 0)
+            => Engine.BtSendEvent(Id, MyeEntityId.Null, Engine.NameHash(name),
+                                  new MyeBtEventPayload { Vec3 = vector, Value = value, IntValue = intValue });
+
+        // この tick の頭に配られたイベントのうち、このエンティティ宛て + 全体宛て (読めるのはその tick の中だけ)
+        public MyeReceivedEvent[] ReceivedEvents()
+        {
+            int count = Engine.BtEventCount(Id);
+            if (count <= 0) return Array.Empty<MyeReceivedEvent>();
+            var list = new List<MyeReceivedEvent>(count);
+            for (int i = 0; i < count; i++)
+            {
+                if (!Engine.BtGetEvent(Id, i, out var ev)) break;
+                list.Add(new MyeReceivedEvent(ev));
+            }
+            return list.ToArray();
+        }
+
+        // Animator のステートへ強制的に移る。durationTicks > 0 は今のポーズからその tick 数で混ぜ、0 以下は即切り替え。
+        // Animator・コントローラ・ステート名が無ければ false
+        public bool PlayAnimation(string stateName, int durationTicks = 0)
+            => Engine.AnimatorPlay(Id, Engine.NameHash(stateName), durationTicks);
+
+        // 走っている木を Abort して根からやり直す (BB は保つ)。BehaviorTree が無ければ false
+        public bool RestartBehaviorTree() => Engine.BtRestart(Id);
+    }
+
+    // 配られたイベント 1 件 (MyeEntity.ReceivedEvents)。名前は Is で比べる
+    public readonly struct MyeReceivedEvent
+    {
+        public readonly ulong NameHash;
+        public readonly MyeEntity Sender;
+        public readonly MyeEntity Target;
+        // 全体宛て (宛先を持たない) のとき true。Target は使えない
+        public readonly bool IsBroadcast;
+        public readonly MyeVec3 Vector;
+        public readonly float Value;
+        public readonly int IntValue;
+
+        internal MyeReceivedEvent(in MyeBtEvent ev)
+        {
+            NameHash = ev.NameHash;
+            Sender = new MyeEntity(ev.Sender);
+            Target = new MyeEntity(ev.Target);
+            IsBroadcast = ev.Target.IsNull;
+            Vector = ev.Vec3;
+            Value = ev.Value;
+            IntValue = ev.IntValue;
+        }
+
+        public bool Is(string name) => NameHash == Engine.NameHash(name);
+    }
+
+    // BT のタスクの結果。値は MyeBtStatus (ScriptTypes.h) と同じ
+    public enum MyeBtStatus
+    {
+        Running = 0,
+        Success = 1,
+        Failure = 2,
+    }
+
+    // BT の C# タスクに付ける印。MyeBtTask 派生で abstract でないクラスが、BT のノード CsTask の params.class
+    // (クラスの FullName) で引かれる
+    [AttributeUsage(AttributeTargets.Class)]
+    public sealed class BtTaskAttribute : Attribute
+    {
+    }
+
+    // BT の C# タスクの基底 (ノード CsTask)。ノードに入った tick に新しいインスタンスで OnStart、以降は毎 tick OnTick。
+    // Success / Failure を返すとインスタンスは捨てられる。Abort されると OnAbort (その後に捨てる)。
+    // ★決定論の保証外: インスタンスは World の外にあり、巻き戻しでは戻らない。C# レーンが止まる場面
+    //   (リプレイの記録・検証・ネット・再シム) では、このタスクのノードは即 Failure になる。
+    //   BB やイベントは Self.GetBlackboardFloat / Self.SendEvent など (MyeEntity の糖衣) で使う
+    public abstract class MyeBtTask
+    {
+        internal MyeEntityId SelfId;
+
+        // この木を持つエンティティ
+        public MyeEntity Self => new MyeEntity(SelfId);
+        // 今の sim tick 番号
+        public ulong Tick { get; internal set; }
+
+        protected void Log(string message) => Engine.Log(message);
+
+        // 既定は OnTick と同じ (C++ の REGISTER_BT_TASK と同じ)
+        public virtual MyeBtStatus OnStart() => OnTick();
+        public abstract MyeBtStatus OnTick();
+        public virtual void OnAbort() { }
     }
 
     // Transform ハンドル。get/set は毎回エンジンの ECS を読み書きする。
@@ -589,6 +748,28 @@ namespace MyeScripting
         protected static MyeEntity PerceptTarget(in MyePercept percept) => new MyeEntity(percept.Target);
         // 自分から target が今見えるか
         protected bool CanSee(MyeEntity target) => Engine.PerceptionCanSee(SelfId, target.Id);
+
+        // ---- ビヘイビアツリー (v27、M85l)。自分 (Self) の BehaviorTree への糖衣。詳細は MyeEntity の同名メソッド ----
+        protected bool GetBlackboardBool(string key, out bool value) => Self.GetBlackboardBool(key, out value);
+        protected bool GetBlackboardInt(string key, out int value) => Self.GetBlackboardInt(key, out value);
+        protected bool GetBlackboardFloat(string key, out float value) => Self.GetBlackboardFloat(key, out value);
+        protected bool GetBlackboardVector(string key, out MyeVec3 value) => Self.GetBlackboardVector(key, out value);
+        protected bool GetBlackboardEntity(string key, out MyeEntity value) => Self.GetBlackboardEntity(key, out value);
+        protected bool SetBlackboardBool(string key, bool value) => Self.SetBlackboardBool(key, value);
+        protected bool SetBlackboardInt(string key, int value) => Self.SetBlackboardInt(key, value);
+        protected bool SetBlackboardFloat(string key, float value) => Self.SetBlackboardFloat(key, value);
+        protected bool SetBlackboardVector(string key, MyeVec3 value) => Self.SetBlackboardVector(key, value);
+        protected bool SetBlackboardEntity(string key, MyeEntity value) => Self.SetBlackboardEntity(key, value);
+        protected bool ClearBlackboard(string key) => Self.ClearBlackboard(key);
+        // 自分を送り元としてイベントを積む (tick N に送った分は tick N+1 の頭に配られる)
+        protected bool SendEvent(string name, MyeEntity target, MyeVec3 vector = default, float value = 0f, int intValue = 0)
+            => Self.SendEvent(name, target, vector, value, intValue);
+        protected bool BroadcastEvent(string name, MyeVec3 vector = default, float value = 0f, int intValue = 0)
+            => Self.BroadcastEvent(name, vector, value, intValue);
+        // この tick の頭に配られた、自分宛て + 全体宛てのイベント
+        protected MyeReceivedEvent[] ReceivedEvents() => Self.ReceivedEvents();
+        protected bool PlayAnimation(string stateName, int durationTicks = 0) => Self.PlayAnimation(stateName, durationTicks);
+        protected bool RestartBehaviorTree() => Self.RestartBehaviorTree();
 
         // ---- ライフサイクル (すべて任意オーバーライド) ----
         public virtual void Start() { }

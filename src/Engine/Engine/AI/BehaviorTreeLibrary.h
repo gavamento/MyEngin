@@ -42,6 +42,7 @@ enum class BtNodeKind : uint8_t {
     SubTree,
     Patrol,
     CppTask, // GameLogic.dll の REGISTER_BT_TASK で登録した C++ のタスク (BtTaskRegistry が名前で引く)
+    CsTask,  // [BtTask] を付けた C# のクラス (BtManagedTaskLane が名前で引く)。決定論の保証外
     Count,
 };
 
@@ -318,6 +319,12 @@ enum : int {
     kTask = 0, // String。REGISTER_BT_TASK のタスク名。空・登録に無い名前は Failure
 };
 } // namespace btcpptaskparam
+// CsTask の params の並び。C# のクラスの FullName を持つ (CppTask の task と同じ形)
+namespace btcstaskparam {
+enum : int {
+    kClass = 0, // String。[BtTask] を付けた C# クラスの名前。空・見つからない名前・C# レーンが止まっている間は Failure
+};
+} // namespace btcstaskparam
 constexpr size_t kBtMaxTaskFieldEntries = 32;   // taskFields のエントリ数の上限 (REGISTER_BT_TASK のフィールド数と同じ)
 constexpr size_t kBtMaxTaskFieldTextBytes = 255; // taskFields の文字列値の長さの上限 (String256 に入る)
 
@@ -477,6 +484,10 @@ struct BtExpansion {
 // 取り込んだノードの id は source の最大 id より後ろへ連番で振り直す (部分木の元の id は実行木には残らない)。
 // 結果は assets の中身だけで決まる (決定論)
 BtExpansion BtExpandSubTrees(const BehaviorTreeLibrary& library, std::shared_ptr<const BehaviorTreeAsset> source);
+
+// asset が CsTask を持つか。SubTree で取り込む木 (入れ子は kBtMaxSubTreeDepth 段まで) も見る。
+// C# タスクを含む木は決定論の保証外 (BT 窓の検査と Inspector の警告が使う)
+bool BtAssetUsesCsTask(const BehaviorTreeLibrary& library, const BehaviorTreeAsset& asset);
 
 struct BehaviorTreeEntry {
     uint64_t hash = 0;
