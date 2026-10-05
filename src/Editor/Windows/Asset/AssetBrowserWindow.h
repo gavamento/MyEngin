@@ -20,7 +20,7 @@ const char* AssetTileLabel(const std::wstring& path);
 // assets/ をフォルダツリー + ファイルグリッドで表示。テクスチャはサムネイル、
 // 他は拡張子アイコン。ダブルクリックは種類ごと:
 //   構成アセット (.actor.json / .prefab.json) はミニシーン編集 (M48k)、
-//   .mat / .anim / .sound は選択エンティティへ割り当て、.mixer は Audio Mixer を開く、
+//   .mat / .anim / .sound は選択エンティティへ割り当て、.mixer は Audio Mixer を、.bt.json は Behavior Tree 窓を開く、
 //   .wav / .ogg は試聴、.scene.json は開く (EditorApp が dirty ガード経由でロード)、
 //   それ以外は OS 既定アプリで開く。
 class AssetBrowserWindow {
@@ -62,6 +62,14 @@ public:
         return r;
     }
 
+    // ダブルクリックされた .bt.json のパス (空 = なし)。EditorApp が BT 窓で開く (M85h)
+    std::wstring TakePendingOpenBehaviorTree()
+    {
+        std::wstring p;
+        p.swap(pendingOpenBehaviorTree_);
+        return p;
+    }
+
     // [Rebuild Scripts] が押されたか (M66e)。**窓は起動しない** —
     // EditorApp が StartGameLogicBuild でハンドルを持ち、走っている間は
     // 書き込み系 git 操作のゲートを閉じる (GateBlocker::ScriptBuildRunning)
@@ -92,6 +100,7 @@ private:
     std::wstring current_; // 表示中フォルダ (絶対パス)
     std::wstring pendingOpenScene_; // ダブルクリックされたシーン (TakePendingOpenScene で消費)
     std::wstring pendingOpenActor_; // ダブルクリックされた構成アセット (M48k)
+    std::wstring pendingOpenBehaviorTree_; // ダブルクリックされた .bt.json (M85h)
     bool openMixerRequest_ = false; // .mixer.json をダブルクリックした (M45d)
     bool rebuildScriptsRequest_ = false; // [Rebuild Scripts] (M66e。起動は EditorApp)
     // D&D 移動 (M30b)。描画中の fs 変更 (iterator 破壊) を避けるためフレーム末に実行する

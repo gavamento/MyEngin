@@ -113,6 +113,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Particle Settings", &particleSettings_.open },
                     { "Sound Generator", &soundGen_.open },
                     { "Audio Mixer", &audioMixer_.open },
+                    { "Behavior Tree", &behaviorTree_.open },
                     { "Project Settings", &projectSettings_.open },
                     { "Build Settings", &buildSettings_.open },
                     { "Stats", &showStats_ } });
@@ -339,6 +340,7 @@ void EditorApp::OnStart(EngineContext& ctx)
             in.animationDirty = animation_.HasUnsavedChanges();
             in.controllerDirty = animatorController_.HasUnsavedChanges();
             in.mixerDirty = audioMixer_.HasUnsavedChanges();
+            in.behaviorTreeDirty = behaviorTree_.HasUnsavedChanges();
             in.projectSettingsDirty = projectSettings_.HasUnsavedChanges();
             return ComputeBlockers(in);
         };
@@ -974,6 +976,11 @@ void EditorApp::OnImGui(EngineContext& ctx)
         audioMixer_.FocusOnActive();
     }
     audioMixer_.OnImGui(ctx);
+    // Asset Browser で .bt.json がダブルクリックされたら BT 窓で開く (M85h)
+    if (std::wstring p = assetBrowser_.TakePendingOpenBehaviorTree(); !p.empty()) {
+        behaviorTree_.OpenAsset(p);
+    }
+    behaviorTree_.OnImGui();
 
     // ピッキング自動テスト (--pick-test): 指定フレームでビュー中心を選択できるか検証
     if (pickTestFrame >= 0 && static_cast<int64_t>(ctx.frameIndex) == pickTestFrame) {
@@ -1496,6 +1503,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem(Tr(StrId::Win_ParticleSettings), nullptr, &particleSettings_.open);
         ImGui::MenuItem(Tr(StrId::Win_SoundGenerator), nullptr, &soundGen_.open);
         ImGui::MenuItem(Tr(StrId::Win_AudioMixer), nullptr, &audioMixer_.open);
+        ImGui::MenuItem(Tr(StrId::Win_BehaviorTree), nullptr, &behaviorTree_.open);
         ImGui::Separator();
         ImGui::MenuItem(Tr(StrId::Win_ProjectSettings), nullptr, &projectSettings_.open);
         ImGui::MenuItem(Tr(StrId::Win_BuildSettings), nullptr, &buildSettings_.open);
@@ -1833,12 +1841,14 @@ GateInputs EditorApp::BuildGateInputs(EngineContext& ctx)
         d.animation = animation_.HasUnsavedChanges();
         d.controller = animatorController_.HasUnsavedChanges();
         d.mixer = audioMixer_.HasUnsavedChanges();
+        d.behaviorTree = behaviorTree_.HasUnsavedChanges();
         d.projectSettings = projectSettings_.HasUnsavedChanges();
         return d;
     });
     in.animationDirty = dirty.animation;
     in.controllerDirty = dirty.controller;
     in.mixerDirty = dirty.mixer;
+    in.behaviorTreeDirty = dirty.behaviorTree;
     in.projectSettingsDirty = dirty.projectSettings;
     return in;
 }
@@ -1878,6 +1888,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Assets", bottomRight);
     ImGui::DockBuilderDockWindow("Animation", bottom);
     ImGui::DockBuilderDockWindow("Animator", bottom);
+    ImGui::DockBuilderDockWindow("Behavior Tree", center); // 広いキャンバスが要るので中央 (閉じている間はタブを作らない)
     ImGui::DockBuilderDockWindow("Scene", center);
     ImGui::DockBuilderDockWindow("Game", center);
     // ★束の既定タブを明示する。ImGui は「最後に足されたタブ」を選ぶので、

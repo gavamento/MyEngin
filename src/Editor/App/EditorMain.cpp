@@ -85,6 +85,7 @@
 #include "Engine/Engine/Navigation/NavSurfaceSelfTest.h"
 #include "Editor/Tools/NavEditorSelfTest.h"
 #include "Editor/Tools/PatrolRouteEditSelfTest.h"
+#include "Editor/SelfTest/BehaviorTreeEditorSelfTest.h"
 #include "Engine/Platform/CrashHandler.h"
 #include "Engine/Platform/InputActionsSelfTest.h"
 #include "Engine/Platform/PathUtil.h"
@@ -588,6 +589,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunPerceptionSelfTest();                // M83: AI の知覚 (視覚・聴覚・ダメージ・接触・予測)
         ok &= mye::RunBehaviorTreeSelfTest();              // M85: ビヘイビアツリー (アセット・Composite・BT 節)
         ok &= mye::RunPatrolRouteEditSelfTest();           // M85g: 巡回ルートの点の編集と Undo
+        ok &= mye::RunBehaviorTreeEditorSelfTest();        // M85h: BT 窓のモデル層 (追加・接続・削除・保存)
         return ok ? 0 : 1;
     }
 

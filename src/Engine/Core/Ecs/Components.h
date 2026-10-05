@@ -2137,6 +2137,9 @@ enum : int32_t {
 };
 } // namespace btstatus
 
+constexpr int kBtEntityInitialCount = 4;  // BehaviorTreeComponent の Entity キーの初期値の組の数
+constexpr int kBtEntityKeyBytes = 64;     // その key 名の領域 (String64。BB のキー名は 63 バイトまで)
+
 // ビヘイビアツリーで動くエンティティ (M85、UE の BehaviorTreeComponent + Blackboard)。
 // 木と実行状態 (ブラックボード・実行中のノード) は BehaviorTreeSystem が表で持ち、BT 節に入る。
 // ここにあるのは設定と、システムが毎 tick 写す表示用の値 (読み取り専用だが sim 状態なので hash 対象)
@@ -2147,6 +2150,10 @@ struct BehaviorTreeComponent {
     int32_t status = btstatus::kIdle;
     int32_t activeNodeId = -1;       // 実行中の一番深いノードの id。-1 = 無し
     int32_t lastAbortTick = -1;      // 最後にノードを Abort した tick。-1 = まだ無い
+    // Entity キーの初期値 (木を始める / やり直すときにブラックボードへ書く)。キー名が BB に無い・Entity 型でない組、
+    // 値が null の組は書かない (.bb.json の初期値はアセットなのでシーンのエンティティを指せない代わり)
+    char bbEntityKey[kBtEntityInitialCount][kBtEntityKeyBytes] = {};
+    EntityID bbEntityValue[kBtEntityInitialCount] = {};
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

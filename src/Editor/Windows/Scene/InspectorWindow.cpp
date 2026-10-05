@@ -20,6 +20,7 @@
 #include "Editor/Tools/FractureBakeCommit.h" // M80i: 焼き成功結果の確定 (.mfrac 保存・登録・Undo)
 #include "Editor/Tools/NavBakeCommit.h"      // M82b: ベイク結果の確定 (.mnav 保存・参照の設定・Undo)
 #include "Editor/Tools/PatrolRouteEdit.h"    // M85g: 巡回ルートの点の追加・削除・入れ替え
+#include "Engine/Engine/AI/BlackboardLibrary.h"
 #include "Engine/Engine/Navigation/NavMeshAsset.h"
 #include "Engine/Core/Asset/AssetGuidResolver.h"
 #include "Engine/Core/Asset/AssetKeyResolver.h" // M80j: guid:// 登録名 → クック元パス (スキンの骨ウェイト取得)
@@ -1294,6 +1295,7 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
             if (world.GetComponent<AgentBrainComponent>(tg.e) != nullptr) {
                 ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_BtAgentBrain));
             }
+            ImGui::TextDisabled("%s", Tr(StrId::Insp_BtEntityKeysHint));
             ImGui::PopTextWrapPos();
         }
     }
@@ -2832,6 +2834,54 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
                 // v1 規約: 骨追従の部位は供給元の直子。破っていると実行時に黙って skip される
                 if (joint[0] != '\0' && w.GetParent(entity) != src) {
                     ImGui::TextDisabled("%s", Tr(StrId::Insp_PartNotChild));
+                }
+            }
+        } else if (componentName && std::strcmp(componentName, "BehaviorTree") == 0
+                   && std::strncmp(field.name, "bbEntityKey", 11) == 0) {
+            // M85h: Entity キーの初期値のキー名は、木が使う BB の Entity キーから選ぶ。
+            // 木 / BB が引けないときは自由入力にフォールバックする (既に入っている名前を消させない)
+            char* key = static_cast<char*>(p);
+            const auto* bt = static_cast<const BehaviorTreeComponent*>(comp);
+            BehaviorTreeLibrary* trees = behaviortree::Library();
+            BlackboardLibrary* boards = blackboard::Library();
+            const BehaviorTreeAsset* tree = trees != nullptr ? trees->Get(bt->tree.value) : nullptr;
+            const BlackboardAsset* board = (tree != nullptr && boards != nullptr) ? boards->Get(tree->blackboard) : nullptr;
+            if (board == nullptr) {
+                changed = ImGui::InputText(label, key, 64);
+                if (changed) {
+                    ZeroStringTail(key, 64);
+                }
+                if (std::strcmp(field.name, "bbEntityKey0") == 0) {
+                    ImGui::TextDisabled("%s", Tr(StrId::Insp_BtEntityKeyNoBoard)); // 4 組とも同じ理由なので先頭の 1 回だけ
+                }
+            } else {
+                char preview[160];
+                const int found = board->FindKey(key);
+                if (key[0] == '\0') {
+                    std::snprintf(preview, sizeof(preview), "%s", Tr(StrId::Insp_BtEntityKeyNone));
+                } else if (found >= 0 && board->keys[static_cast<size_t>(found)].type == BbType::Entity) {
+                    std::snprintf(preview, sizeof(preview), "%s", key);
+                } else {
+                    std::snprintf(preview, sizeof(preview), Tr(StrId::Insp_BtEntityKeyMissing), key);
+                }
+                if (ImGui::BeginCombo(label, preview)) {
+                    if (ImGui::Selectable(Tr(StrId::Insp_BtEntityKeyNone), key[0] == '\0')) {
+                        std::memset(key, 0, 64); // 生バイトが hash 対象なので末尾までゼロ埋め
+                        changed = true;
+                    }
+                    for (size_t i = 0; i < board->keys.size(); ++i) {
+                        if (board->keys[i].type != BbType::Entity) {
+                            continue;
+                        }
+                        ImGui::PushID(static_cast<int>(i));
+                        if (ImGui::Selectable(board->keys[i].name.c_str(), board->keys[i].name == key)) {
+                            std::memset(key, 0, 64);
+                            std::snprintf(key, 64, "%s", board->keys[i].name.c_str());
+                            changed = true;
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndCombo();
                 }
             }
         } else {

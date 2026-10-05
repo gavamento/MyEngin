@@ -33,6 +33,7 @@ enum class GateBlocker : uint8_t {
     AnimationDirty,       // Animation 窓の編集が未保存
     ControllerDirty,      // Animator Controller 窓の編集が未保存
     MixerDirty,           // Audio Mixer 窓の編集が未保存
+    BehaviorTreeDirty,    // Behavior Tree 窓の編集が未保存
     ProjectSettingsDirty, // Project Settings の編集が未保存
     Playing,              // 再生中 / ポーズ中
     NetActive,            // ネットセッション中
@@ -45,13 +46,14 @@ enum class GateBlocker : uint8_t {
 };
 
 // ComputeBlockers の入力。**bool だけ**にしてあるのは、判定そのものを純関数にして
-// セルフテストから 13 種を 1 つずつ立てられるようにするため
+// セルフテストから全種を 1 つずつ立てられるようにするため
 struct GateInputs {
     bool sceneDirty = false;
     bool actorEdit = false;
     bool animationDirty = false;
     bool controllerDirty = false;
     bool mixerDirty = false;
+    bool behaviorTreeDirty = false;
     bool projectSettingsDirty = false;
     bool playing = false;
     bool netActive = false;
@@ -93,6 +95,7 @@ struct DocumentDirty {
     bool animation = false;
     bool controller = false;
     bool mixer = false;
+    bool behaviorTree = false;
     bool projectSettings = false;
 };
 

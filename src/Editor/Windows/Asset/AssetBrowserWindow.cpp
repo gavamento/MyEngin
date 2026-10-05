@@ -577,6 +577,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         const bool isSound = type == AssetType::Sound;
         const bool isMixer = type == AssetType::Mixer;
         const bool isClip = type == AssetType::Audio; // 素の音声ファイル (.wav / .ogg)
+        const bool isBehaviorTree = type == AssetType::BehaviorTree;
 
         if (i % cols != 0) {
             ImGui::SameLine();
@@ -771,6 +772,9 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                         MYE_LOG_WARN("could not load mixer: %s", WideToUtf8(path).c_str());
                     }
                 }
+            } else if (isBehaviorTree) {
+                // .bt.json は BT 窓で開く (登録と未保存の確認は窓側。EditorApp が窓へ渡す)
+                pendingOpenBehaviorTree_ = path;
             } else if (isClip) {
                 // .wav / .ogg をその場で試聴 (OS の既定プレイヤーは開かない)
                 if (ctx.audio) {

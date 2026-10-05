@@ -9,6 +9,7 @@
 #include <set>
 #include <unordered_map>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "Engine/Core/Ecs/EntityID.h"
@@ -154,6 +155,7 @@ private:
     std::vector<int32_t>* abortTrace_ = nullptr;
     std::unordered_map<uint64_t, std::shared_ptr<BtExpansion>> expansions_; // 引くだけ (走査しない)
     std::set<uint64_t> warnedMissing_;  // 「木が見つからない」を警告済みの GUID (ログだけ。sim 状態ではない)
+    std::set<std::pair<uint64_t, int>> warnedEntityInit_; // 無効な Entity キーの初期値を警告済みの (エンティティ, 組の添字) (ログだけ)
 };
 
 } // namespace mye

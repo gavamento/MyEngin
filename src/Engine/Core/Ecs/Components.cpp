@@ -1581,6 +1581,18 @@ void RegisterBuiltinComponents()
 
     // M85a: Behavior Tree (TypeId=78、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変。
     // 木の実行状態 (ブラックボード・ノードごとの状態) は BehaviorTreeSystem の表と SimSnapshot の BT 節にある
+    // M85h: Entity キーの初期値 4 組 (bbEntityKey / bbEntityValue) を末尾 append (snapshot v39)。
+    // 配列の添字ごとに名前を付ける (Inspector は key の欄を BB の Entity キーのコンボにする)
+#define MYE_BT_ENTITY_INITIAL(i)                                                                              \
+    ::mye::WithJp(::mye::FieldDesc{ .name = "bbEntityKey" #i, .type = ::mye::FieldType::String64,             \
+                                    .offset = static_cast<uint32_t>(offsetof(BehaviorTreeComponent, bbEntityKey) + (i) * kBtEntityKeyBytes), \
+                                    .tooltip = "blackboard Entity key to fill when the tree starts" },        \
+                  "Entity キー " #i),                                                                          \
+    ::mye::WithJp(::mye::FieldDesc{ .name = "bbEntityValue" #i, .type = ::mye::FieldType::EntityRef,         \
+                                    .offset = static_cast<uint32_t>(offsetof(BehaviorTreeComponent, bbEntityValue) + (i) * sizeof(EntityID)), \
+                                    .tooltip = "the entity written to that key (empty = leave it as it is)" }, \
+                  "Entity キーの値 " #i)
+    static_assert(kBtEntityInitialCount == 4, "MYE_BT_ENTITY_INITIAL の並びを kBtEntityInitialCount に合わせる");
     RegisterComponent<BehaviorTreeComponent>("BehaviorTree", {
         MYE_JP("ビヘイビアツリー", MYE_FIELD_TIP(BehaviorTreeComponent, tree, AssetRef, ".bt.json to run")),
         MYE_JP("有効", MYE_FIELD_TIP(BehaviorTreeComponent, enabled, Bool,
@@ -1589,7 +1601,9 @@ void RegisterBuiltinComponents()
         MYE_JP("状態", MYE_FIELD_FLAGS(BehaviorTreeComponent, status, Int32, kFieldReadOnly)),
         MYE_JP("実行中のノード", MYE_FIELD_FLAGS(BehaviorTreeComponent, activeNodeId, Int32, kFieldReadOnly)),
         MYE_JP("最後の Abort の tick", MYE_FIELD_FLAGS(BehaviorTreeComponent, lastAbortTick, Int32, kFieldReadOnly)),
+        MYE_BT_ENTITY_INITIAL(0), MYE_BT_ENTITY_INITIAL(1), MYE_BT_ENTITY_INITIAL(2), MYE_BT_ENTITY_INITIAL(3),
     });
+#undef MYE_BT_ENTITY_INITIAL
 
     // M85g: Patrol Route (TypeId=79、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変。
     // 点は Inspector の専用表示 (追加・削除・並べ替え) と SceneView のギズモで編集するので、個別の欄は隠す (保存とハッシュには入る)

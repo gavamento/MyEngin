@@ -1,8 +1,8 @@
 # sub-08: BT 窓 (1) — キャンバス・配置・接続・パラメータ・保存・Asset Browser から開く
 
 - 依存: sub-07
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (M85h としてコミット、ハッシュは台帳)
+- 往復: 1
 
 ## やること
 - 新しい窓 `src\Editor\Windows\AI\BehaviorTreeWindow.{h,cpp}` (spec 4.3)。Window メニュー、レイアウトの一覧 (`EditorApp.cpp:98-118`)、`.bt.json` のダブルクリック (`AssetBrowserWindow.cpp:692-783` に分岐、ミキサーの `openMixerRequest_` / `TakeOpenMixerRequest` の流儀、`EditorApp.cpp:973-975`)。
@@ -35,4 +35,10 @@
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-08 (round 1)
+- 実装: モデル層 `src\Editor\Windows\AI\BehaviorTreeEditModel.{h,cpp}` (ImGui 非依存。追加・接続・切断・x 順の並べ直し・削除 (子ごと / 子を残す)・根の付け替え・移動 (MoveNode / MoveSubtree)・整列・パラメータ / キー / Decorator の編集・保存 = 検査 -> WriteFileReplacing -> `BehaviorTreeLibrary::Register` で直接反映)、窓 `BehaviorTreeWindow.{h,cpp}` (キャンバス = パン / ズーム 0.25〜2.0 / 箱 + Decorator の帯 + 接続線 + 子の番号 / パレット = 種類表から分類ごとに自動 / パラメータ欄 = 記述子から自動 / 未保存の印と確認モーダル)、`BehaviorTreeEditorSelfTest`、Window メニュー・レイアウト一覧・ドック、Asset Browser のダブルクリック、Git ゲート `GateBlocker::BehaviorTreeDirty`、spec 2. #20 (`BehaviorTreeComponent` の Entity キー初期値 4 組、snapshot v39、Inspector のキーのコンボ)。
+- 検証: Debug / Release ビルド 0 警告、Editor `--selftest` Debug (3 回走らせて最終 0 件) / Release 0 件、Debug Server `--selftest` 0 件、check_rules 0 件、replay_verify 16 ジョブ PASS。画面は一時プローブ + 実マウス操作で確認 (詳細は SELF_EVAL)。
+- 詳細は司会への SELF_EVAL を参照
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner)。#20 の Entity キー初期値、GUI の持ち越し目視 (sub-01 / sub-07) をすべて確認。Delete の握り方・削除の解釈・x の並べ直し・Git ゲートを承認。2 回やり直し・Undo の束ね・未保存の印・DrawCanvas の分割は sub-09 へ

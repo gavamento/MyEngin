@@ -851,9 +851,9 @@ bool RunSourceControlSelfTest()
         check(client.PendingCount() == 0, "OpInFlight: nothing is left waiting");
     }
 
-    // ---- (e) ゲートの阻害要因を全列挙 (spec §4.1 の 13 種) ----
+    // ---- (e) ゲートの阻害要因を全列挙 (spec §4.1 の 13 種 + M85h の BehaviorTreeDirty) ----
     {
-        // 1 つずつ立てて「その 1 件だけ」が返ること。表の 13 行を機械的に舐める
+        // 1 つずつ立てて「その 1 件だけ」が返ること。表の全行を機械的に舐める
         struct Row {
             const char* name;
             bool GateInputs::*field;
@@ -865,6 +865,7 @@ bool RunSourceControlSelfTest()
             { "AnimationDirty", &GateInputs::animationDirty, GateBlocker::AnimationDirty },
             { "ControllerDirty", &GateInputs::controllerDirty, GateBlocker::ControllerDirty },
             { "MixerDirty", &GateInputs::mixerDirty, GateBlocker::MixerDirty },
+            { "BehaviorTreeDirty", &GateInputs::behaviorTreeDirty, GateBlocker::BehaviorTreeDirty },
             { "ProjectSettingsDirty", &GateInputs::projectSettingsDirty,
               GateBlocker::ProjectSettingsDirty },
             { "Playing", &GateInputs::playing, GateBlocker::Playing },
@@ -897,7 +898,7 @@ bool RunSourceControlSelfTest()
                 allSingles = false;
             }
         }
-        check(allSingles, "gate: each of the 13 conditions maps to exactly one reason with text");
+        check(allSingles, "gate: each condition maps to exactly one reason with text");
 
         // 複合: **全件が列挙順で**返る (最初の 1 件で止めない)
         GateInputs many;

@@ -33,6 +33,7 @@
 #include "Editor/Windows/Project/SourceControlWindow.h"
 #include "Editor/Windows/Asset/SearchWindow.h"
 #include "Editor/Windows/Audio/AudioMixerWindow.h"
+#include "Editor/Windows/AI/BehaviorTreeWindow.h"
 #include "Editor/Windows/Audio/SoundGenWindow.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 #include "Engine/Engine/Scene/GameObject.h"
@@ -196,6 +197,7 @@ private:
     BuildSettingsWindow buildSettings_;
     SoundGenWindow soundGen_;
     AudioMixerWindow audioMixer_;
+    BehaviorTreeWindow behaviorTree_;
     AssetPreviewCache preview_; // AssetBrowser のメッシュ/プレハブサムネイル (M27d)
 
     // ---- 反射プローブのベイク (M56e) ----

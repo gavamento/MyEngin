@@ -13,8 +13,8 @@
 | sub-04 | OK | 2 | 3f8ad39 | round 1 REWORK: SearchArea に failOnStuck。snapshot v36 | AI ノード 4 種 |
 | sub-05 | OK | 2 | 16fa216 | round 1 REWORK: 配達を tick 頭へ・replay_verify。snapshot v37 | 汎用イベントキューと SendEvent |
 | sub-06 | OK | 1 | 7367737 | SubTree は平らな展開、snapshot v37 のまま | AnimatorPlay / PlayAnimation / SubTree |
-| sub-07 | OK | 1 | (このコミット) | TypeId 79 PatrolRoute、snapshot v38 | 巡回ルート |
-| sub-08 | 未着手 | 0 | | BT 窓 (1) |
+| sub-07 | OK | 1 | 74b7557 | TypeId 79 PatrolRoute、snapshot v38 | 巡回ルート |
+| sub-08 | OK | 1 | (このコミット) | BT 窓 (1) + Entity キーの初期値、snapshot v39 | BT 窓 (1) |
 | sub-09 | 未着手 | 0 | | BT 窓 (2) Undo・BB 編集・検査 |
 | sub-10 | 未着手 | 0 | | BT 窓 (3) ライブ表示 |
 | sub-11 | 未着手 | 0 | | ABI v27 |
@@ -60,6 +60,10 @@
 - (sub-06 coder) 展開後の実行木は BehaviorTreeSystem::FindInstance(e)->tree。部分木のノード id は連番で振り直し → sub-10 は (GUID, 元の id) の導出値で表示 (sub-10.md 反映済み)、sub-11 は activeNodeId が展開後の id であることを明記するか対応表を通すか決める。Update(world, tick, nav, controllers, clips)。AnimatorPlay(world, e, stateIndex, duration, controllers) -> bool。
 - (sub-07 VERDICT should#1) DrawGizmo / HandlePatrolRoute / OnImGui の「記録を閉じる」処理が 3 か所。sub-10 で 4 か所目を足すなら集約する。
 - (sub-07) sub-08 の範囲に spec 2. #20 (Entity キーの初期値 4 組、snapshot v39 見込み) と GUI 実操作の目視 (sub-01 / sub-07 の持ち越し、sub-08.md に列挙) が加わった。spec 2. #19 / #20 の [ユーザーに聞ける] 印は、ユーザー回答 (裁定どおり) を受けて planner が確定に直す。
+- (sub-08 VERDICT should#1) 保存直後に ReloadHub が同じ内容を読み直して木が 2 回やり直す → sub-09 で ReloadBehaviorTree / ReloadBlackboard を「内容が同じなら置き換えない」に直す (ReloadHubSelfTest を検証に入れる)。
+- (sub-08 VERDICT should#2) sub-09 の最初に BehaviorTreeWindow.cpp の DrawCanvas を入力・描画・メニューに分ける。
+- (sub-08 coder) Undo は「ドラッグは押した時点で撮り離して確定、パラメータは編集確定でまとめる」。Delete / Ctrl+Z / Ctrl+Y は BT 窓フォーカス中だけ窓が握る (SetKeyOwner)。dirty は Undo で保存時の内容へ戻ったら消す。キー参照の型違いも検査で拾う。画面確認の道具は scratchpad の ui.ps1 (実マウス・キー入力・キャプチャ)。
+- 既知 flake: sub-07 / sub-08 とも Debug 1 回目 5 件、2 回目以降 0。
 - (sub-07 → sub-14) ADR-025: Patrol は入るたびに最近傍点から、親付きルートは前 tick の WorldMatrix。
 - (sub-06 → sub-14) ADR-025 の既知の限界: SubTree は平らな展開・上限 1024・部分木の根の LowerPriority は Self 扱い・BB 継承なし・遷移中の AnimatorPlay はブレンド途中のポーズから飛ぶ。
 - (sub-04 VERDICT nit#1) BehaviorTreeSelfTest の診断ログ `[search] stuck ...` は、1 回の実行で 1〜2 行なら残す。tick ごとなら 1 行にまとめるか削除。sub-05 でついでに判断。

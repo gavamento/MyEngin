@@ -31,6 +31,9 @@
     <Filter Include="Windows">
       <UniqueIdentifier>{BD808CBF-0BAB-73DA-16EE-0B0A085E97ED}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Windows\AI">
+      <UniqueIdentifier>{0A69FD45-4D12-597A-9D8C-28A6EFD15C3E}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Windows\Animation">
       <UniqueIdentifier>{B9251E7D-D0F1-7A1E-09D7-20B8AC2D22A4}</UniqueIdentifier>
     </Filter>
@@ -116,6 +119,9 @@
     </ClCompile>
     <ClCompile Include="..\src\Editor\Scene\PlayModeController.cpp">
       <Filter>Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.cpp">
+      <Filter>SelfTest</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\DecalSelfTest.cpp">
       <Filter>SelfTest</Filter>
@@ -215,6 +221,12 @@
     </ClCompile>
     <ClCompile Include="..\src\Editor\Widgets\ToastCenter.cpp">
       <Filter>Widgets</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\AI\BehaviorTreeEditModel.cpp">
+      <Filter>Windows\AI</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\AI\BehaviorTreeWindow.cpp">
+      <Filter>Windows\AI</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Animation\AnimationWindow.cpp">
       <Filter>Windows\Animation</Filter>
@@ -345,6 +357,9 @@
     <ClInclude Include="..\src\Editor\Scene\Selection.h">
       <Filter>Scene</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\DecalSelfTest.h">
       <Filter>SelfTest</Filter>
     </ClInclude>
@@ -446,6 +461,12 @@
     </ClInclude>
     <ClInclude Include="..\src\Editor\Widgets\ToastCenter.h">
       <Filter>Widgets</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\AI\BehaviorTreeEditModel.h">
+      <Filter>Windows\AI</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\AI\BehaviorTreeWindow.h">
+      <Filter>Windows\AI</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Animation\AnimationWindow.h">
       <Filter>Windows\Animation</Filter>

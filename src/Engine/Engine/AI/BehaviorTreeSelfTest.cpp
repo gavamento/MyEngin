@@ -2566,6 +2566,104 @@ bool RunBehaviorTreeSelfTest()
                 }
             }
 
+            // ---- Entity キーの初期値 (spec 2. #20): コンポーネントへルートを割り当てるだけで BB に入り、巡回する ----
+            {
+                const auto setInitial = [](Field& field, int slot, const char* key, EntityID value) {
+                    auto* component = field.scene.GetWorld().GetComponent<BehaviorTreeComponent>(field.walker);
+                    std::snprintf(component->bbEntityKey[slot], kBtEntityKeyBytes, "%s", key);
+                    component->bbEntityValue[slot] = value;
+                };
+                const auto routeKeyOf = [](NavSim& sim, EntityID e, size_t key) {
+                    const BtInstance* inst = sim.bt->FindInstance(e);
+                    return inst != nullptr && key < inst->blackboard.size() ? inst->blackboard[key] : BbValue{};
+                };
+                // 木を始めた tick に書かれ、setRoute 無しで Loop が 0 -> 1 -> 2 と回る
+                {
+                    std::unique_ptr<Field> f;
+                    EntityID route;
+                    makePatrolField(plainTree, patrolmode::kLoop, square, f, route);
+                    setInitial(*f, 0, "Route", route);
+                    NavSim sim(f->scene);
+                    sim.Step();
+                    const BbValue written = routeKeyOf(sim, f->walker, 0);
+                    ck.Check(written.isSet == 1 && written.entity == route, "Entity キーの初期値: 木を始めた tick に BB の Route キーへ書かれる");
+                    std::vector<PatrolVisit> visits;
+                    follow(sim, f->walker, 4, 2400, visits);
+                    ck.Check(indices(visits) == std::vector<int32_t>{ 0, 1, 2, 0 }, "Entity キーの初期値: コードで BB を書かなくても Patrol が回る");
+                }
+                // 名前が BB に無い・Entity 型でない・値が null の組は書かない。無効な組の警告は 1 組につき 1 回
+                {
+                    std::unique_ptr<Field> f;
+                    EntityID route;
+                    makePatrolField(plainTree, patrolmode::kLoop, square, f, route);
+                    setInitial(*f, 0, "Nothing", route);  // BB に無い名前
+                    setInitial(*f, 1, "Alarm", route);    // Bool のキー
+                    setInitial(*f, 2, "Route", kNullEntity); // 値が null
+                    const uint64_t before = logging::TotalWritten();
+                    NavSim sim(f->scene);
+                    for (int i = 0; i < 5; ++i) {
+                        sim.Step();
+                    }
+                    const BbValue alarm = routeKeyOf(sim, f->walker, 1);
+                    ck.Check(routeKeyOf(sim, f->walker, 0).isSet == 0 && alarm.isSet == 1 && alarm.i == 1 && alarm.entity.IsNull(),
+                             "Entity キーの初期値: 無効な組 (名前が無い・Entity でない・null) は書かず、BB の初期値のまま");
+                    ck.Check(CountWarnings(before, "initial Entity key") == 2, "Entity キーの初期値: 無効な組は 1 組につき警告 1 回 (null の値は黙って飛ばす)");
+                }
+                // 同梱の patrol_only.bt.json を、ルートのエンティティを割り当てるだけで動かす
+                {
+                    // 同梱ファイルの中身を使う。登録のキー (GUID) は試験の環境で変わるので、木が指す BB の GUID だけ登録後の値へ差し替える
+                    std::ifstream btFile(L"assets/ai/patrol_only.bt.json", std::ios::binary);
+                    std::ifstream bbFile(L"assets/ai/patrol.bb.json", std::ios::binary);
+                    json shippedTree = json::parse(btFile, nullptr, false);
+                    BlackboardAsset shippedBoard;
+                    uint64_t boardGuid = 0;
+                    uint64_t treeGuid = 0;
+                    if (!shippedTree.is_discarded() && BlackboardLibrary::FromJson(json::parse(bbFile, nullptr, false), shippedBoard)) {
+                        boardGuid = lib.boards.Register(BoardPath(L"patrol_shipped"), std::move(shippedBoard));
+                        shippedTree["blackboard"] = GuidHex(boardGuid);
+                        treeGuid = RegisterTree(lib, L"patrol_shipped", shippedTree);
+                    }
+                    if (boardGuid != 0 && treeGuid != 0) {
+                        std::unique_ptr<Field> f;
+                        EntityID route;
+                        makePatrolField(treeGuid, patrolmode::kLoop, square, f, route);
+                        setInitial(*f, 0, "route", route);
+                        NavSim sim(f->scene);
+                        for (int i = 0; i < 20; ++i) {
+                            sim.Step(); // Surface が読み込まれる前の Agent は Inactive。目的地が立つまで少し回す
+                        }
+                        const bool moving = sim.Comp(f->walker)->status == kRunning && sim.Agent(f->walker)->hasDestination;
+                        ck.Check(moving, "同梱の patrol_only.bt.json は、BehaviorTree の Entity キーの初期値へルートを割り当てるだけで巡回する");
+                    } else {
+                        MYE_LOG_INFO("  SKIP: assets/ai が作業ディレクトリに無いので patrol_only の実走を飛ばす");
+                    }
+                }
+                // 保存 -> 復元で、書かれた値が戻る (初期値は復元のときに再び書かれない = 保存された値が勝つ)
+                {
+                    std::unique_ptr<Field> f;
+                    EntityID route;
+                    makePatrolField(plainTree, patrolmode::kLoop, square, f, route);
+                    setInitial(*f, 0, "Route", route);
+                    NavSim sim(f->scene);
+                    sim.Step();
+                    sim.Step();
+                    const BtInstance* inst = sim.bt->FindInstance(f->walker);
+                    std::vector<std::byte> bytes;
+                    ByteWriter w(bytes);
+                    sim.bt->SaveSnapshot(w);
+                    ByteReader r(bytes.data(), bytes.size());
+                    BtSnapshot snapshot;
+                    const bool read = inst != nullptr && BehaviorTreeSystem::ReadSnapshot(r, snapshot);
+                    BehaviorTreeSystem restoredBt;
+                    if (read) {
+                        restoredBt.ApplySnapshot(f->scene.GetWorld(), std::move(snapshot));
+                    }
+                    const BtInstance* back = restoredBt.FindInstance(f->walker);
+                    ck.Check(read && back != nullptr && back->blackboard.size() == 2 && back->blackboard[0].entity == route && restoredBt.StateHash() == sim.bt->StateHash(),
+                             "Entity キーの初期値: 保存 -> 復元で BB の値が戻り、ハッシュが一致する");
+                }
+            }
+
             // ---- 巡回の途中 (待ち中・移動中) で保存 -> 復元 -> 連続実行と毎 tick のハッシュが一致 ----
             {
                 const auto patrolRoundTrip = [&](const char* label, bool freshBt, const std::function<bool(const BtPatrolState&)>& atCapture) {

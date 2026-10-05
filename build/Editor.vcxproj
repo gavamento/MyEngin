@@ -57,6 +57,7 @@
     <ClCompile Include="..\src\Editor\Scene\ComponentClipboard.cpp" />
     <ClCompile Include="..\src\Editor\Scene\ComponentDependencies.cpp" />
     <ClCompile Include="..\src\Editor\Scene\PlayModeController.cpp" />
+    <ClCompile Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\DecalSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\GameFlowSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\HzbSelfTest.cpp" />
@@ -90,6 +91,8 @@
     <ClCompile Include="..\src\Editor\Widgets\EditorWidgets.cpp" />
     <ClCompile Include="..\src\Editor\Widgets\StatusBar.cpp" />
     <ClCompile Include="..\src\Editor\Widgets\ToastCenter.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\AI\BehaviorTreeEditModel.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\AI\BehaviorTreeWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Animation\AnimationWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.cpp" />
@@ -133,6 +136,7 @@
     <ClInclude Include="..\src\Editor\Scene\ComponentDependencies.h" />
     <ClInclude Include="..\src\Editor\Scene\PlayModeController.h" />
     <ClInclude Include="..\src\Editor\Scene\Selection.h" />
+    <ClInclude Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\DecalSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\GameFlowSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\HzbSelfTest.h" />
@@ -167,6 +171,8 @@
     <ClInclude Include="..\src\Editor\Widgets\EditorWidgets.h" />
     <ClInclude Include="..\src\Editor\Widgets\StatusBar.h" />
     <ClInclude Include="..\src\Editor\Widgets\ToastCenter.h" />
+    <ClInclude Include="..\src\Editor\Windows\AI\BehaviorTreeEditModel.h" />
+    <ClInclude Include="..\src\Editor\Windows\AI\BehaviorTreeWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Animation\AnimationWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.h" />

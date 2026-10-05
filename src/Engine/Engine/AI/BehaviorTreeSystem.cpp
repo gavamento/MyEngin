@@ -1431,6 +1431,37 @@ void InitBlackboard(BtInstance& inst)
     }
 }
 
+// BehaviorTreeComponent の Entity キーの初期値を BB へ書く。BB に無い名前・Entity 型でないキー・null の値の組は書かない
+// (無効な組は warnedEntityInit に載せて、同じ組の警告を 1 回に抑える)
+void ApplyEntityInitials(World& world, const BehaviorTreeComponent& comp, BtInstance& inst,
+                         std::set<std::pair<uint64_t, int>>& warnedEntityInit)
+{
+    if (!inst.blackboardAsset) {
+        return;
+    }
+    for (int i = 0; i < kBtEntityInitialCount; ++i) {
+        const size_t length = strnlen(comp.bbEntityKey[i], kBtEntityKeyBytes);
+        if (length == 0 || comp.bbEntityValue[i].IsNull()) {
+            continue;
+        }
+        const std::string name(comp.bbEntityKey[i], length);
+        const int key = inst.blackboardAsset->FindKey(name);
+        if (key < 0 || inst.blackboardAsset->keys[static_cast<size_t>(key)].type != BbType::Entity
+            || static_cast<size_t>(key) >= inst.blackboard.size()) {
+            const uint64_t owner = (static_cast<uint64_t>(inst.entity.index) << 32) | inst.entity.generation;
+            if (warnedEntityInit.insert({ owner, i }).second) {
+                MYE_LOG_WARN("[behaviortree] '%s': initial Entity key '%s' is not an Entity key of the blackboard; ignored",
+                             world.GetName(inst.entity), name.c_str());
+            }
+            continue;
+        }
+        BbValue value;
+        value.isSet = 1;
+        value.entity = comp.bbEntityValue[i];
+        inst.blackboard[static_cast<size_t>(key)] = value;
+    }
+}
+
 // inst の木に対して根から Abort する。Abort したノードがあれば true
 bool AbortTree(World& world, uint64_t tick, std::vector<int32_t>* abortTrace, BtInstance& inst)
 {
@@ -1508,6 +1539,7 @@ void BehaviorTreeSystem::Reset()
     delivered_.clear();
     eventOverflowWarned_ = false;
     warnedMissing_.clear();
+    warnedEntityInit_.clear();
 }
 
 bool BehaviorTreeSystem::SendEvent(uint64_t tick, EntityID sender, EntityID target, uint64_t nameHash, const float (&vec3)[3],
@@ -1676,6 +1708,7 @@ bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, const NavSystem*
                 if (bbChanged) {
                     InitBlackboard(inst);
                 }
+                ApplyEntityInitials(world, *comp, inst, warnedEntityInit_); // 木のやり直しでも初期値を書き直す
             } else {
                 hasInstance = false;
             }
@@ -1715,6 +1748,7 @@ bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, const NavSystem*
         inst.blackboardAsset = bbAsset;
         ResetNodes(inst);
         InitBlackboard(inst);
+        ApplyEntityInitials(world, *comp, inst, warnedEntityInit_);
     }
     inst.entity = owner;
 
@@ -1924,6 +1958,9 @@ void BehaviorTreeSystem::ApplySnapshot(World& world, BtSnapshot&& snapshot)
                          world.GetName(inst.entity));
             ResetNodes(inst);
             InitBlackboard(inst);
+            if (const auto* comp = world.GetComponent<BehaviorTreeComponent>(inst.entity)) {
+                ApplyEntityInitials(world, *comp, inst, warnedEntityInit_);
+            }
             inst.rootStatus = btroot::kRunning;
         }
         restored.push_back(std::move(inst));
