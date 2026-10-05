@@ -117,8 +117,15 @@ bool RunSourceControlSelfTest()
                   && CollabOpKindOf(collabop::kCommitDiff) == CollabOpKind::Read
                   && CollabOpKindOf(collabop::kActionExecute) == CollabOpKind::Write,
               "context actions: previews time out safely; execution never times out");
+        // projectRoot が空だと Start は通知の配線より前に NoProject で返り、下の DispatchLine が誰にも届かない。
+        // (2) の remote_changed と同じく、DLL の無い実在のフォルダを渡して配線だけ張らせる
         SourceControlSession scm;
-        scm.Start(L"", L"", false, 0);
+        std::error_code sec;
+        const fs::path noDll = fs::temp_directory_path() / L"mye_scm_no_dll";
+        fs::create_directories(noDll, sec);
+        scm.Start(noDll.wstring(), noDll.wstring(), false, 0);
+        check(scm.State() == Unavailable::NoService,
+              "operation: a session without the dll is NoService (but still wired)");
         scm.Client().DispatchLine("{\"event\":\"status_changed\",\"status\":{\"entries\":[],\"operation\":\"cherry-pick\"}}");
         check(scm.MergeInProgress() && scm.Operation() == "cherry-pick",
               "external cherry-pick state closes the normal write gate");
