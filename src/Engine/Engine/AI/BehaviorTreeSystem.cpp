@@ -6,6 +6,8 @@
 #include "Engine/Engine/AI/BehaviorTreeSystem.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
@@ -41,10 +43,17 @@ constexpr uint8_t kParallelMainDone = 1u << 0;
 constexpr int32_t kParallelMainSuccess = 1;
 constexpr int32_t kParallelMainFailure = 2;
 
+// 固定 60 Hz の 1 tick の秒数 (BehaviorTreeSystem::Update は dt を受け取らない)
+constexpr float kBtTickSeconds = 1.0f / 60.0f;
+constexpr float kPi = 3.14159265f;
+constexpr float kObserveMoveDistance = 0.5f;    // observeTarget が目的地を書き直す目標の移動量 (m)
+constexpr float kDefaultAngularSpeedDeg = 360.0f; // RotateTo の角速度の既定 (度/秒。Agent も無い / 0 のとき)
+constexpr float kMinFacingDistance = 1.0e-4f;   // これ以下の水平距離では向きが定まらない (m)
+
 // BT 節の 1 要素あたりの最小バイト数 (ByteReader::Count が残りバイトで件数を検証するのに使う)
 constexpr size_t kBbValueBytes = sizeof(uint8_t) + sizeof(int32_t) + sizeof(float) + 3 * sizeof(float) + 2 * sizeof(uint32_t);
 constexpr size_t kNodeStateBytes = 2 * sizeof(uint8_t) + 2 * sizeof(int32_t);
-constexpr size_t kInstanceMinBytes = 2 * sizeof(uint32_t) + sizeof(uint64_t) + sizeof(uint8_t) + 2 * sizeof(uint64_t);
+constexpr size_t kInstanceMinBytes = 2 * sizeof(uint32_t) + sizeof(uint64_t) + sizeof(uint8_t) + 3 * sizeof(uint64_t);
 
 bool KeyLess(EntityID a, EntityID b)
 {
@@ -90,6 +99,116 @@ bool NodeActive(const BtInstance& inst, const BehaviorTreeAsset& tree, int32_t i
     return false;
 }
 
+// ---- 種類別の追加状態と、ノードが外の世界 (Agent) へ書いたものの後始末 ----
+
+template <typename T>
+T LoadExtra(const RunCtx& c, const BtNodeDef& node)
+{
+    T value{};
+    std::memcpy(&value, c.inst.extra.data() + node.extraOffset, sizeof(T));
+    return value;
+}
+
+template <typename T>
+void StoreExtra(RunCtx& c, const BtNodeDef& node, const T& value)
+{
+    std::memcpy(c.inst.extra.data() + node.extraOffset, &value, sizeof(T));
+}
+
+// ワールド位置。親が無ければ LocalTransform (Nav の足元と同じ)、あれば前 tick の WorldMatrix
+bool WorldPositionOf(World& world, EntityID entity, float (&out)[3])
+{
+    if (world.GetParent(entity) == kNullEntity) {
+        const LocalTransform* transform = world.GetComponent<LocalTransform>(entity);
+        if (transform == nullptr) {
+            return false;
+        }
+        out[0] = transform->position.x;
+        out[1] = transform->position.y;
+        out[2] = transform->position.z;
+        return true;
+    }
+    const WorldMatrixComponent* matrix = world.GetComponent<WorldMatrixComponent>(entity);
+    if (matrix == nullptr) {
+        return false;
+    }
+    out[0] = matrix->value.m[3][0];
+    out[1] = matrix->value.m[3][1];
+    out[2] = matrix->value.m[3][2];
+    return true;
+}
+
+// キー名のブラックボードの値。BB が無い・名前が空・キーが無ければ nullptr。型は type へ返す
+BbValue* FindBb(RunCtx& c, const std::string& name, BbType& type)
+{
+    if (!c.inst.blackboardAsset || name.empty()) {
+        return nullptr;
+    }
+    const int key = c.inst.blackboardAsset->FindKey(name);
+    if (key < 0 || static_cast<size_t>(key) >= c.inst.blackboard.size()) {
+        return nullptr;
+    }
+    type = c.inst.blackboardAsset->keys[static_cast<size_t>(key)].type;
+    return &c.inst.blackboard[static_cast<size_t>(key)];
+}
+
+// MoveTo / RotateTo の目標の位置。Vector は書かれた値、Entity は生きているもののワールド位置。得られなければ false
+bool ResolveTarget(RunCtx& c, const BtNodeDef& node, float (&out)[3])
+{
+    BbType type = BbType::Bool;
+    const BbValue* value = FindBb(c, node.keys[btnodekey::kTarget], type);
+    if (value == nullptr || value->isSet == 0) {
+        return false;
+    }
+    if (type == BbType::Vector) {
+        out[0] = value->v[0];
+        out[1] = value->v[1];
+        out[2] = value->v[2];
+        return true;
+    }
+    return type == BbType::Entity && c.world.IsAlive(value->entity) && WorldPositionOf(c.world, value->entity, out);
+}
+
+// MoveTo の後始末: 目的地を倒して止め、差し替えた navFilter を戻す
+void ReleaseMoveTo(RunCtx& c, const BtNodeDef& node)
+{
+    NavMeshAgentComponent* agent = c.world.GetComponent<NavMeshAgentComponent>(c.inst.entity);
+    if (agent == nullptr) {
+        return;
+    }
+    agent->hasDestination = false;
+    const BtMoveToState state = LoadExtra<BtMoveToState>(c, node);
+    if ((state.flags & btmovetoflag::kNavFilterSwapped) != 0) {
+        agent->navFilter = AssetID{ state.savedNavFilter };
+    }
+}
+
+// RotateTo の後始末: 預かった updateRotation を戻す
+void ReleaseRotateTo(RunCtx& c, const BtNodeDef& node)
+{
+    NavMeshAgentComponent* agent = c.world.GetComponent<NavMeshAgentComponent>(c.inst.entity);
+    const BtRotateToState state = LoadExtra<BtRotateToState>(c, node);
+    if (agent != nullptr && (state.flags & btrotatetoflag::kAgentHandled) != 0) {
+        agent->updateRotation = (state.flags & btrotatetoflag::kSavedUpdateRotation) != 0;
+    }
+}
+
+// 入っていた本体が外へ書いたもの (Agent の目的地・navFilter・updateRotation) を元へ戻し、追加状態を消す。
+// 終了 (Success / Failure) と Abort の両方がここを通る
+void ReleaseBody(RunCtx& c, int32_t index)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    switch (node.kind) {
+    case BtNodeKind::MoveTo: ReleaseMoveTo(c, node); break;
+    case BtNodeKind::RotateTo: ReleaseRotateTo(c, node); break;
+    default: break;
+    }
+    const int extraBytes = BtNodeTypeOf(node.kind).extraStateBytes;
+    if (extraBytes > 0) {
+        std::memset(c.inst.extra.data() + node.extraOffset, 0, static_cast<size_t>(extraBytes));
+    }
+}
+
 // 入るときの Decorator の初期化 (Repeat の周回ごとにも内側の分をやり直す)
 void ArmDecorator(RunCtx& c, const BtDecoratorDef& deco)
 {
@@ -133,6 +252,9 @@ void AbortNode(RunCtx& c, int32_t index)
     if (c.abortTrace != nullptr) {
         c.abortTrace->push_back(node.id);
     }
+    if (c.inst.nodes[static_cast<size_t>(index)].active != 0) {
+        ReleaseBody(c, index); // ノード固有の後始末 (MoveTo の停止など)。子孫の後・Decorator の後始末の前
+    }
     FinishDecorators(c, node);
     Finish(c.inst.nodes[static_cast<size_t>(index)]);
     c.aborted = true;
@@ -150,6 +272,7 @@ void AbortBody(RunCtx& c, int32_t index)
         if (c.abortTrace != nullptr) {
             c.abortTrace->push_back(node.id);
         }
+        ReleaseBody(c, index);
         Finish(state);
         c.aborted = true;
     }
@@ -239,6 +362,214 @@ BtResult VisitWait(RunCtx& c, int32_t index)
     return BtResult::Running;
 }
 
+float HorizontalDistance(const float* a, const float* b)
+{
+    const float dx = a[0] - b[0];
+    const float dz = a[2] - b[2];
+    return std::sqrt(dx * dx + dz * dz);
+}
+
+// 本体の終わり方 (Success / Failure)。後始末をして状態を初期値へ戻す
+BtResult EndBody(RunCtx& c, int32_t index, BtResult result)
+{
+    ReleaseBody(c, index);
+    Finish(c.inst.nodes[static_cast<size_t>(index)]);
+    return result;
+}
+
+// MoveTo: 目標へ NavMeshAgent を歩かせる。目標 (BB のキー) が Vector / Entity、NavMeshAgent が無ければ Failure。
+// 目的地を書いた tick の Nav はまだ走っていないので、その tick は status を読まない (前の目的地の Arrived が残っている)
+BtResult VisitMoveTo(RunCtx& c, int32_t index)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    BtNodeState& state = c.inst.nodes[static_cast<size_t>(index)];
+    const bool starting = state.active == 0;
+    NavMeshAgentComponent* agent = c.world.GetComponent<NavMeshAgentComponent>(c.inst.entity);
+    float target[3] = {};
+    float self[3] = {};
+    if (agent == nullptr || !ResolveTarget(c, node, target) || !WorldPositionOf(c.world, c.inst.entity, self)) {
+        return starting ? BtResult::Failure : EndBody(c, index, BtResult::Failure);
+    }
+    const float acceptance = node.params[btmoveparam::kAcceptanceRadius].f;
+    const auto writeDestination = [&]() {
+        agent->destination = { target[0], target[1], target[2] };
+        agent->hasDestination = true;
+    };
+
+    if (starting) {
+        if (HorizontalDistance(self, target) <= acceptance) {
+            return BtResult::Success; // もう着いている。Agent には何も書かない
+        }
+        BtMoveToState moveState;
+        const uint64_t filter = node.params[btmoveparam::kNavFilter].u;
+        if (filter != 0) {
+            moveState.savedNavFilter = agent->navFilter.value;
+            moveState.flags |= btmovetoflag::kNavFilterSwapped;
+            agent->navFilter = AssetID{ filter };
+        }
+        std::memcpy(moveState.lastTarget, target, sizeof(target));
+        StoreExtra(c, node, moveState);
+        writeDestination();
+        state.active = 1;
+        return BtResult::Running;
+    }
+
+    BtMoveToState moveState = LoadExtra<BtMoveToState>(c, node);
+    const float moved = std::sqrt((target[0] - moveState.lastTarget[0]) * (target[0] - moveState.lastTarget[0])
+                                  + (target[1] - moveState.lastTarget[1]) * (target[1] - moveState.lastTarget[1])
+                                  + (target[2] - moveState.lastTarget[2]) * (target[2] - moveState.lastTarget[2]));
+    const bool rewrote = node.params[btmoveparam::kObserveTarget].i != 0 && moved >= kObserveMoveDistance;
+    if (rewrote) {
+        std::memcpy(moveState.lastTarget, target, sizeof(target));
+        StoreExtra(c, node, moveState);
+        writeDestination();
+    }
+    if (HorizontalDistance(self, target) <= acceptance) {
+        return EndBody(c, index, BtResult::Success);
+    }
+    if (rewrote) {
+        return BtResult::Running;
+    }
+    switch (agent->status) {
+    case navagentstatus::kArrived: return EndBody(c, index, BtResult::Success);
+    case navagentstatus::kNoPath:
+    case navagentstatus::kInactive: return EndBody(c, index, BtResult::Failure);
+    case navagentstatus::kStuck:
+        return node.params[btmoveparam::kFailOnStuck].i != 0 ? EndBody(c, index, BtResult::Failure) : BtResult::Running;
+    default: return BtResult::Running;
+    }
+}
+
+// y 軸まわりの向き (ラジアン)。+Z を向いた状態が 0 (NavSystem の TurnToward と同じ定義)
+float YawOf(const DirectX::XMFLOAT4& q)
+{
+    const float fx = 2.0f * (q.x * q.z + q.w * q.y);
+    const float fz = 1.0f - 2.0f * (q.x * q.x + q.y * q.y);
+    return fx == 0.0f && fz == 0.0f ? 0.0f : std::atan2(fx, fz);
+}
+
+float WrapPi(float a)
+{
+    while (a > kPi) {
+        a -= 2.0f * kPi;
+    }
+    while (a < -kPi) {
+        a += 2.0f * kPi;
+    }
+    return a;
+}
+
+// RotateTo: 目標の方向へ LocalTransform を y 軸まわりに回す。実行中は Agent の updateRotation を預かって false にする。
+// 親付きの向きは親の回転と合成されるので考慮しない (Nav の TurnToward と同じ割り切り)
+BtResult VisitRotateTo(RunCtx& c, int32_t index)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    BtNodeState& state = c.inst.nodes[static_cast<size_t>(index)];
+    const bool starting = state.active == 0;
+    LocalTransform* transform = c.world.GetComponent<LocalTransform>(c.inst.entity);
+    NavMeshAgentComponent* agent = c.world.GetComponent<NavMeshAgentComponent>(c.inst.entity);
+    float target[3] = {};
+    float self[3] = {};
+    if (transform == nullptr || !ResolveTarget(c, node, target) || !WorldPositionOf(c.world, c.inst.entity, self)) {
+        return starting ? BtResult::Failure : EndBody(c, index, BtResult::Failure);
+    }
+    if (starting) {
+        BtRotateToState rotateState;
+        if (agent != nullptr) {
+            rotateState.flags = btrotatetoflag::kAgentHandled
+                                | (agent->updateRotation ? btrotatetoflag::kSavedUpdateRotation : 0u);
+            agent->updateRotation = false;
+        }
+        StoreExtra(c, node, rotateState);
+        state.active = 1;
+    }
+
+    const float dx = target[0] - self[0];
+    const float dz = target[2] - self[2];
+    if (dx * dx + dz * dz <= kMinFacingDistance * kMinFacingDistance) {
+        return EndBody(c, index, BtResult::Success); // 真上 / 同じ位置は向きが定まらない
+    }
+    float speedDeg = node.params[btrotateparam::kAngularSpeedDeg].f;
+    if (speedDeg <= 0.0f) {
+        speedDeg = agent != nullptr && agent->angularSpeedDeg > 0.0f ? agent->angularSpeedDeg : kDefaultAngularSpeedDeg;
+    }
+    const float tolerance = node.params[btrotateparam::kToleranceDeg].f * (kPi / 180.0f);
+    const float current = YawOf(transform->rotation);
+    const float delta = WrapPi(std::atan2(dx, dz) - current);
+    float remaining = std::fabs(delta);
+    if (remaining > tolerance) {
+        const float step = (std::min)(remaining, speedDeg * (kPi / 180.0f) * kBtTickSeconds);
+        const float yaw = current + (delta > 0.0f ? step : -step);
+        transform->rotation = { 0.0f, std::sin(yaw * 0.5f), 0.0f, std::cos(yaw * 0.5f) };
+        remaining -= step;
+    }
+    return remaining <= tolerance ? EndBody(c, index, BtResult::Success) : BtResult::Running;
+}
+
+// SetBlackboard: key へ値を書いて Success。型に合わない source・コピー元が無い / 未設定 / 型違いは Failure
+BtResult VisitSetBlackboard(RunCtx& c, int32_t index)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    BbType type = BbType::Bool;
+    BbValue* destination = FindBb(c, node.keys[btnodekey::kTarget], type);
+    if (destination == nullptr) {
+        return BtResult::Failure;
+    }
+    BbValue value;
+    value.isSet = 1;
+    switch (node.params[btsetparam::kSource].i) {
+    case btsetparam::kCopy: {
+        BbType sourceType = BbType::Bool;
+        const BbValue* source = FindBb(c, node.keys[btnodekey::kSourceKey], sourceType);
+        if (source == nullptr || sourceType != type || source->isSet == 0) {
+            return BtResult::Failure;
+        }
+        value = *source;
+        break;
+    }
+    case btsetparam::kSelf:
+        if (type == BbType::Entity) {
+            value.entity = c.inst.entity;
+        } else if (type == BbType::Vector) {
+            float position[3] = {};
+            if (!WorldPositionOf(c.world, c.inst.entity, position)) {
+                return BtResult::Failure;
+            }
+            std::memcpy(value.v, position, sizeof(position));
+        } else {
+            return BtResult::Failure;
+        }
+        break;
+    default: // 定数
+        switch (type) {
+        case BbType::Bool: value.i = node.params[btsetparam::kBoolValue].i != 0 ? 1 : 0; break;
+        case BbType::Int: value.i = node.params[btsetparam::kIntValue].i; break;
+        case BbType::Float: value.f = node.params[btsetparam::kFloatValue].f; break;
+        case BbType::Vector:
+            value.v[0] = node.params[btsetparam::kVectorX].f;
+            value.v[1] = node.params[btsetparam::kVectorY].f;
+            value.v[2] = node.params[btsetparam::kVectorZ].f;
+            break;
+        case BbType::Entity: return BtResult::Failure; // 定数のハンドルは無い (空にするのは ClearBlackboard)
+        }
+        break;
+    }
+    *destination = value;
+    return BtResult::Success;
+}
+
+// ClearBlackboard: key を未設定へ戻して Success。キーが無ければ Failure
+BtResult VisitClearBlackboard(RunCtx& c, int32_t index)
+{
+    BbType type = BbType::Bool;
+    BbValue* destination = FindBb(c, c.tree.nodes[static_cast<size_t>(index)].keys[btnodekey::kTarget], type);
+    if (destination == nullptr) {
+        return BtResult::Failure;
+    }
+    *destination = BbValue{};
+    return BtResult::Success;
+}
+
 BtResult VisitBody(RunCtx& c, int32_t index)
 {
     switch (c.tree.nodes[static_cast<size_t>(index)].kind) {
@@ -246,6 +577,10 @@ BtResult VisitBody(RunCtx& c, int32_t index)
     case BtNodeKind::Sequence: return VisitSequenceOrSelector(c, index, false);
     case BtNodeKind::SimpleParallel: return VisitSimpleParallel(c, index);
     case BtNodeKind::Wait: return VisitWait(c, index);
+    case BtNodeKind::MoveTo: return VisitMoveTo(c, index);
+    case BtNodeKind::RotateTo: return VisitRotateTo(c, index);
+    case BtNodeKind::SetBlackboard: return VisitSetBlackboard(c, index);
+    case BtNodeKind::ClearBlackboard: return VisitClearBlackboard(c, index);
     case BtNodeKind::Count: break;
     }
     return BtResult::Failure;
@@ -498,6 +833,7 @@ bool AnyNodeActive(const BtInstance& inst)
 void ResetNodes(BtInstance& inst)
 {
     inst.nodes.assign(static_cast<size_t>(inst.tree->stateSlotCount), BtNodeState{});
+    inst.extra.assign(static_cast<size_t>(inst.tree->extraStateBytes), 0);
 }
 
 // ブラックボードを初期値にする。BB を使わない木は空
@@ -571,8 +907,16 @@ void BehaviorTreeSystem::Update(World& world, uint64_t tick)
     std::vector<BtInstance> next;
     next.reserve(owners.size());
     size_t oldAt = 0;
+    // コンポーネントが外れたエンティティの表を落とす。エンティティが生きていれば、木が Agent へ書いたもの
+    // (目的地・navFilter・updateRotation) を戻すために先に Abort する (消えたエンティティには戻す先が無い)
+    const auto dropInstance = [&](BtInstance& dropped) {
+        if (world.IsAlive(dropped.entity)) {
+            AbortTree(world, tick, abortTrace_, dropped);
+        }
+    };
     for (const EntityID owner : owners) {
         while (oldAt < instances_.size() && KeyLess(instances_[oldAt].entity, owner)) {
+            dropInstance(instances_[oldAt]);
             ++oldAt;
         }
         BtInstance inst;
@@ -583,6 +927,9 @@ void BehaviorTreeSystem::Update(World& world, uint64_t tick)
         if (StepOwner(world, tick, owner, inst)) {
             next.push_back(std::move(inst));
         }
+    }
+    for (; oldAt < instances_.size(); ++oldAt) {
+        dropInstance(instances_[oldAt]);
     }
     instances_ = std::move(next);
 }
@@ -675,6 +1022,7 @@ bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, EntityID owner, 
     // Decorator の欄 (Cooldown の計時・BlackboardCondition の最後の結果) は残す
     if (inst.rootStatus != btroot::kRunning) {
         std::fill_n(inst.nodes.begin(), tree->nodes.size(), BtNodeState{});
+        std::fill(inst.extra.begin(), inst.extra.end(), static_cast<uint8_t>(0));
         inst.rootStatus = btroot::kRunning;
     }
 
@@ -723,6 +1071,7 @@ void BehaviorTreeSystem::SaveSnapshot(ByteWriter& w) const
             w.I32(state.child);
             w.I32(state.counter);
         }
+        w.Blob(inst.extra.data(), inst.extra.size()); // 種類別の追加状態 (生バイト)
     }
 }
 
@@ -769,6 +1118,13 @@ bool BehaviorTreeSystem::ReadSnapshot(ByteReader& r, BtSnapshot& out)
                 r.Fail();
             }
         }
+        const size_t extraCount = r.Count(sizeof(uint8_t));
+        if (extraCount > static_cast<size_t>(kBtMaxExtraBytes)) {
+            r.Fail();
+            break;
+        }
+        inst.extra.resize(extraCount);
+        r.Raw(inst.extra.data(), extraCount);
         // 表はエンティティキー昇順で、同じキーは 2 つ無い (実行器の merge 走査の前提)
         const bool ordered = out.instances.empty() || KeyLess(out.instances.back().entity, inst.entity);
         if (inst.entity.IsNull() || inst.rootStatus > btroot::kFailed || !ordered) {
@@ -803,7 +1159,8 @@ void BehaviorTreeSystem::ApplySnapshot(World& world, BtSnapshot&& snapshot)
         inst.tree = std::move(tree);
         inst.blackboardAsset = std::move(bbAsset);
         const size_t bbKeys = inst.blackboardAsset ? inst.blackboardAsset->keys.size() : 0;
-        if (inst.nodes.size() != static_cast<size_t>(inst.tree->stateSlotCount) || inst.blackboard.size() != bbKeys) {
+        if (inst.nodes.size() != static_cast<size_t>(inst.tree->stateSlotCount) || inst.blackboard.size() != bbKeys
+            || inst.extra.size() != static_cast<size_t>(inst.tree->extraStateBytes)) {
             MYE_LOG_WARN("[behaviortree] '%s': the saved state does not fit the registered tree; restarting it",
                          world.GetName(inst.entity));
             ResetNodes(inst);

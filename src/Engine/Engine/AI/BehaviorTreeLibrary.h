@@ -28,6 +28,10 @@ enum class BtNodeKind : uint8_t {
     Sequence,
     SimpleParallel,
     Wait,
+    MoveTo,
+    RotateTo,
+    SetBlackboard,
+    ClearBlackboard,
     Count,
 };
 
@@ -42,6 +46,7 @@ enum class BtParamType : uint8_t {
     Float,
     Bool,
     Enum, // 値は enumNames の添字、ファイルには名前で保存する
+    Guid, // アセット参照 (.navfilter.json など)。値は BtParamValue::u、ファイルには 16 桁の 16 進で保存する。0 = 参照なし
 };
 
 // ノードのパラメータ 1 つの記述。エディタ (パラメータ欄) と読み書き (範囲の丸め) が同じ表を引く
@@ -57,6 +62,35 @@ struct BtParamDesc {
 
 constexpr int kBtUnlimitedChildren = -1;
 
+constexpr float kBtValueLimit = 1.0e9f;      // Int / Float パラメータの値の範囲 (int32 へ収まる)
+constexpr int kBtMaxExtraBytesPerNode = 64;  // 1 ノードの種類別の追加状態の上限
+constexpr int kBtMaxExtraBytes = kBtMaxNodes * kBtMaxExtraBytesPerNode;
+
+// MoveTo の追加状態 (BT 節に生バイトで入る。パディングを持たない 24 バイト)
+namespace btmovetoflag {
+enum : uint32_t {
+    kNavFilterSwapped = 1u << 0, // Agent の navFilter を差し替えた (savedNavFilter が元の値)
+};
+} // namespace btmovetoflag
+struct BtMoveToState {
+    uint64_t savedNavFilter = 0;         // 差し替える前の navFilter
+    float lastTarget[3] = {};            // 最後に目的地へ書いた目標の位置 (observeTarget の比較元)
+    uint32_t flags = 0;
+};
+static_assert(sizeof(BtMoveToState) == 24, "BtMoveToState はパディングなしの 24 バイト (BT 節の生バイトに入る)");
+
+// RotateTo の追加状態 (BT 節に生バイトで入る)
+namespace btrotatetoflag {
+enum : uint32_t {
+    kSavedUpdateRotation = 1u << 0, // 入る前の Agent の updateRotation (終わったらこの値へ戻す)
+    kAgentHandled = 1u << 1,        // 入るとき Agent が居て updateRotation を預かった (居なければ戻すものも無い)
+};
+} // namespace btrotatetoflag
+struct BtRotateToState {
+    uint32_t flags = 0;
+};
+static_assert(sizeof(BtRotateToState) == 4, "BtRotateToState はパディングなしの 4 バイト (BT 節の生バイトに入る)");
+
 struct BtNodeTypeInfo {
     BtNodeKind kind;
     const char* name;                    // ファイルの "type"
@@ -65,6 +99,9 @@ struct BtNodeTypeInfo {
     int maxChildren;                     // kBtUnlimitedChildren = 上限なし
     const BtParamDesc* params;
     int paramCount;
+    const char* const* keyNames;         // ブラックボードのキー名を持つ欄の名前 ("keys" の項目名)。無ければ nullptr
+    int keyCount;
+    int extraStateBytes;                 // この種類が実行中に持つ追加状態のバイト数 (0 = BtNodeState だけ)。ノードごとに固定長の領域が付く
 };
 
 const BtNodeTypeInfo& BtNodeTypeOf(BtNodeKind kind);
@@ -74,7 +111,52 @@ const BtNodeTypeInfo* BtFindNodeType(const std::string& name); // 無ければ n
 struct BtParamValue {
     int32_t i = 0;
     float f = 0.0f;
+    uint64_t u = 0; // Guid
 };
+
+// MoveTo の params の並び
+namespace btmoveparam {
+enum : int {
+    kAcceptanceRadius = 0, // この水平距離 (m) 以内で Success
+    kObserveTarget = 1,    // 目標が動いたら目的地を書き直す
+    kFailOnStuck = 2,      // Stuck になった tick に Failure (false なら Running のまま)
+    kNavFilter = 3,        // 実行中だけ Agent の navFilter を差し替える (0 = Agent のまま)
+};
+} // namespace btmoveparam
+
+// RotateTo の params の並び
+namespace btrotateparam {
+enum : int {
+    kAngularSpeedDeg = 0, // 0 = Agent の値 (Agent も無ければ 360)
+    kToleranceDeg = 1,
+};
+} // namespace btrotateparam
+
+// SetBlackboard の params の並びと source
+namespace btsetparam {
+enum : int {
+    kSource = 0,
+    kBoolValue = 1,
+    kIntValue = 2,
+    kFloatValue = 3,
+    kVectorX = 4,
+    kVectorY = 5,
+    kVectorZ = 6,
+};
+enum : int32_t {
+    kConstant = 0, // 定数 (Bool / Int / Float / Vector)
+    kSelf = 1,     // 自分 (Entity) / 自分のワールド位置 (Vector)
+    kCopy = 2,     // sourceKey の値
+};
+} // namespace btsetparam
+
+// ブラックボードのキーを持つノードの "keys" の並び
+namespace btnodekey {
+enum : int {
+    kTarget = 0,    // MoveTo / RotateTo の目標、SetBlackboard / ClearBlackboard の書く先 (name は種類ごと)
+    kSourceKey = 1, // SetBlackboard の source = Copy のときのコピー元
+};
+} // namespace btnodekey
 
 // SimpleParallel の finishMode
 namespace btparallelfinish {
@@ -152,13 +234,15 @@ struct BtNodeDef {
     int32_t id = 0;                      // ファイル内で一意 (>= 0)。ライブ表示と ABI の「実行中ノード」はこの値
     BtNodeKind kind = BtNodeKind::Selector;
     std::vector<BtParamValue> params;    // 種類の params と同じ長さ・同じ並び
+    std::vector<std::string> keys;       // 種類の keyNames と同じ長さ・同じ並び。空文字 = 未指定 (実行時は Failure)
     std::vector<BtDecoratorDef> decorators; // 上から順に評価する (最初が一番外側)
     std::vector<int32_t> childIds;       // 左から右 = 優先順
     float pos[2] = {};                   // エディタの表示位置 (実行には使わない)
 
-    // ---- BtLinkAsset が childIds から作る導出値 ----
+    // ---- BtLinkAsset が作る導出値 ----
     std::vector<int32_t> children;       // nodes の添字
     int32_t parent = -1;                 // nodes の添字。根と、どこにもつながっていないノードは -1
+    int32_t extraOffset = 0;             // BtInstance::extra の中のこのノードの追加状態の先頭 (extraStateBytes が 0 の種類は使わない)
 };
 
 // ビヘイビアツリー 1 本。値はワールドハッシュに入れない (ファイルの中身は provenance の contentHash が守る。
@@ -174,6 +258,7 @@ struct BehaviorTreeAsset {
     // ---- BtLinkAsset が作る導出値 ----
     int32_t rootIndex = -1;              // nodes の添字
     int32_t stateSlotCount = 0;          // 実行状態 (BtNodeState) の欄の数。先頭がノードごと (nodes と同じ添字)、続いて Decorator ごと
+    int32_t extraStateBytes = 0;         // 種類別の追加状態 (BtInstance::extra) の合計バイト数
 
     // id からノードの添字。無ければ -1
     int FindNode(int32_t id) const;

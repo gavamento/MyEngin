@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -14,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -28,10 +30,15 @@
 #include "Engine/Engine/AI/BlackboardLibrary.h"
 #include "Engine/Engine/Demo/DemoContent.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Navigation/NavBake.h"
+#include "Engine/Engine/Navigation/NavMeshAsset.h"
+#include "Engine/Engine/Navigation/NavSystem.h"
+#include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/Scene/TransformSystem.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace fs = std::filesystem;
@@ -329,6 +336,129 @@ json PerfTree()
     nodes.push_back(Wait(tail, 3));
     nodes.insert(nodes.begin(), Node(0, "Sequence", rootChildren));
     return Tree(0, nodes);
+}
+
+// ---- Task 4 種 (M85c) の部品 ----
+
+json WithKeys(json node, json keys)
+{
+    node["keys"] = std::move(keys);
+    return node;
+}
+
+json MoveTo(int id, const char* key, double radius = 0.5, bool observe = true, bool failOnStuck = false, uint64_t navFilter = 0)
+{
+    return WithKeys(Node(id, "MoveTo", {}, json{ { "acceptanceRadius", radius }, { "observeTarget", observe },
+                                                  { "failOnStuck", failOnStuck },
+                                                  { "navFilter", navFilter != 0 ? GuidHex(navFilter) : std::string() } }),
+                    json{ { "target", key } });
+}
+
+json RotateTo(int id, const char* key, double speedDeg, double toleranceDeg)
+{
+    return WithKeys(Node(id, "RotateTo", {}, json{ { "angularSpeedDeg", speedDeg }, { "toleranceDeg", toleranceDeg } }),
+                    json{ { "target", key } });
+}
+
+json SetBb(int id, const char* key, const char* source, json params = json::object(), const char* sourceKey = nullptr)
+{
+    params["source"] = source;
+    json keys = json{ { "key", key } };
+    if (sourceKey != nullptr) {
+        keys["sourceKey"] = sourceKey;
+    }
+    return WithKeys(Node(id, "SetBlackboard", {}, std::move(params)), std::move(keys));
+}
+
+json ClearBb(int id, const char* key)
+{
+    return WithKeys(Node(id, "ClearBlackboard"), json{ { "key", key } });
+}
+
+float YawDegOf(const DirectX::XMFLOAT4& q)
+{
+    return 2.0f * std::atan2(q.y, q.w) * (180.0f / 3.14159265f);
+}
+
+float HorizontalGap(const LocalTransform& a, float x, float z)
+{
+    return std::sqrt((a.position.x - x) * (a.position.x - x) + (a.position.z - z) * (a.position.z - z));
+}
+
+// BT -> Nav -> 物理 -> Nav 後処理 -> Transform の順に回す最小の tick (フェーズ 3.4a2 -> 3.4b -> 3.6 -> 4)
+struct NavSim {
+    explicit NavSim(Scene& s) : scene(s) {}
+    Scene& scene;
+    BehaviorTreeSystem ownBt;
+    BehaviorTreeSystem* bt = &ownBt;
+    NavSystem nav;
+    PhysicsSystem physics;
+    TransformSystem transforms;
+    uint64_t tick = 1;
+
+    static constexpr float kDt = 1.0f / 60.0f;
+
+    World& GetWorld() { return scene.GetWorld(); }
+    void Step()
+    {
+        bt->Update(GetWorld(), tick);
+        nav.Update(GetWorld(), kDt);
+        physics.Update(GetWorld(), kDt);
+        nav.PostPhysics(GetWorld(), kDt);
+        transforms.Update(GetWorld());
+        GetWorld().ApplyStructuralChanges();
+        ++tick;
+    }
+    BtInstance* Mutable(EntityID e) { return const_cast<BtInstance*>(bt->FindInstance(e)); }
+    NavMeshAgentComponent* Agent(EntityID e) { return GetWorld().GetComponent<NavMeshAgentComponent>(e); }
+    LocalTransform* Pos(EntityID e) { return GetWorld().GetComponent<LocalTransform>(e); }
+    BehaviorTreeComponent* Comp(EntityID e) { return GetWorld().GetComponent<BehaviorTreeComponent>(e); }
+};
+
+constexpr uint64_t kFieldNavGuid = 0x42544E4156463031ull; // メモリ登録のナビメッシュ (ファイルを作らない)
+
+// 24 x 24 m の床と、それを覆う Surface。ナビメッシュは最初の 1 回だけ焼き、以降は同じものを参照する
+// (壁などベイク後に足す物は、物理にだけ効いてナビメッシュには無い = Agent は経路どおり進んで押し合う)
+bool BuildField(Scene& scene, bool& baked)
+{
+    GameObject ground = scene.CreateGameObjectTracked("Ground");
+    ground.SetLocalPosition(0.0f, -0.5f, 0.0f);
+    auto* collider = ground.AddComponent<ColliderComponent>();
+    collider->shape = collidershape::kBox;
+    collider->halfExtents = { 12.0f, 0.5f, 12.0f };
+    GameObject surfaceObject = scene.CreateGameObjectTracked("Surface");
+    auto* surface = surfaceObject.AddComponent<NavMeshSurfaceComponent>();
+    surface->center = { 0.0f, 3.0f, 0.0f };
+    surface->size = { 26.0f, 10.0f, 26.0f };
+    World& world = scene.GetWorld();
+    if (!baked) {
+        world.ApplyStructuralChanges();
+        TransformSystem transforms;
+        transforms.Update(world);
+        NavBakeInputs in;
+        if (!NavPrepareBakeInputs(world, surfaceObject.Id(), in)) {
+            return false;
+        }
+        const NavBakeOutput out = NavBakeAsset(in.config, in.soup, in.clipBoxes, nullptr);
+        if (out.status != NavBakeStatus::Ok) {
+            return false;
+        }
+        NavMeshAsset::RegisterInMemory(kFieldNavGuid, out.data);
+        baked = true;
+    }
+    world.GetComponent<NavMeshSurfaceComponent>(surfaceObject.Id())->navAsset = AssetID{ kFieldNavGuid };
+    return true;
+}
+
+// 立っている Agent (CC のカプセルは足元 y = 0)。木を持つ
+EntityID AddWalker(Scene& scene, uint64_t tree, float x, float z, const char* name = "Walker")
+{
+    GameObject go = scene.CreateGameObjectTracked(name);
+    go.SetLocalPosition(x, 0.9f, z);
+    go.AddComponent<CharacterControllerComponent>();
+    go.AddComponent<NavMeshAgentComponent>();
+    go.AddComponent<BehaviorTreeComponent>()->tree = AssetID{ tree };
+    return go.Id();
 }
 
 } // namespace
@@ -840,7 +970,7 @@ bool RunBehaviorTreeSelfTest()
         ByteReader truncated(bytes.data(), bytes.size() - 3);
         BtSnapshot junk;
         ck.Check(!BehaviorTreeSystem::ReadSnapshot(truncated, junk), "途中で切れた BT 節は拒否する");
-        const auto craft = [](uint32_t firstIndex, uint32_t secondIndex, uint8_t rootStatus, uint8_t active) {
+        const auto craft = [](uint32_t firstIndex, uint32_t secondIndex, uint8_t rootStatus, uint8_t active, uint64_t extraCount = 0) {
             std::vector<std::byte> out;
             ByteWriter w(out);
             w.Count(2);
@@ -856,6 +986,8 @@ bool RunBehaviorTreeSelfTest()
                 w.U8(0);
                 w.I32(0);
                 w.I32(0);
+                w.Count(extraCount); // 種類別の追加状態 (生バイト、ここでは中身を持たない)
+                w.Raw(std::vector<uint8_t>(extraCount, 0).data(), extraCount);
             }
             return out;
         };
@@ -867,6 +999,8 @@ bool RunBehaviorTreeSelfTest()
         ck.Check(accepts(craft(1, 2, 0, 1)), "(前提) 作った BT 節は読める");
         ck.Check(!accepts(craft(2, 1, 0, 1)) && !accepts(craft(2, 2, 0, 1)), "エンティティキーが昇順でない・重複する BT 節は拒否する");
         ck.Check(!accepts(craft(1, 2, 3, 1)) && !accepts(craft(1, 2, 0, 2)), "範囲外の rootStatus / active を持つ BT 節は拒否する");
+        ck.Check(accepts(craft(1, 2, 0, 1, 24)) && !accepts(craft(1, 2, 0, 1, static_cast<uint64_t>(kBtMaxExtraBytes) + 1)),
+                 "種類別の追加状態は上限まで読め、上限を超える長さの BT 節は拒否する");
     }
 
     // ---- 9. Decorator と Abort (M85b) ----
@@ -1351,6 +1485,589 @@ bool RunBehaviorTreeSelfTest()
                       return inst.nodes[static_cast<size_t>(slotOf(asset, 2, 1))].counter == 1;
                   });
     }
+    // ---- 12. Task 4 種 (M85c): アセット ----
+    {
+        const uint64_t kFilter = 0xABCD1234ull;
+        const json full = Tree(0, { Node(0, "Sequence", { 1, 2, 3, 4, 5 }), MoveTo(1, "Goal", 1.5, false, true, kFilter),
+                                    RotateTo(2, "Goal", 90.0, 2.0), SetBb(3, "Flag", "Constant", json{ { "boolValue", true } }),
+                                    SetBb(4, "Home2", "Copy", json::object(), "Home"), ClearBb(5, "Home") });
+        BehaviorTreeAsset a;
+        BehaviorTreeAsset b;
+        const bool loaded = BehaviorTreeLibrary::FromJson(full, a);
+        ck.Check(loaded && BehaviorTreeLibrary::FromJson(BehaviorTreeLibrary::ToJson(a), b)
+                     && BehaviorTreeLibrary::ToJson(a) == BehaviorTreeLibrary::ToJson(b),
+                 "Task 4 種の JSON が往復で変わらない (キー・Guid・列挙を含む)");
+        ck.Check(loaded && a.nodes[1].params[btmoveparam::kAcceptanceRadius].f == 1.5f && a.nodes[1].params[btmoveparam::kObserveTarget].i == 0
+                     && a.nodes[1].params[btmoveparam::kFailOnStuck].i == 1 && a.nodes[1].params[btmoveparam::kNavFilter].u == kFilter
+                     && a.nodes[1].keys.size() == 1 && a.nodes[1].keys[0] == "Goal" && a.nodes[3].params[btsetparam::kBoolValue].i == 1
+                     && a.nodes[4].params[btsetparam::kSource].i == btsetparam::kCopy && a.nodes[4].keys[btnodekey::kSourceKey] == "Home",
+                 "MoveTo / SetBlackboard のパラメータとキー名が読める");
+        ck.Check(loaded && a.extraStateBytes == static_cast<int32_t>(sizeof(BtMoveToState) + sizeof(BtRotateToState))
+                     && a.nodes[1].extraOffset == 0 && a.nodes[2].extraOffset == static_cast<int32_t>(sizeof(BtMoveToState)),
+                 "種類別の追加状態はノードの並びに固定長の領域が割り当てられる (MoveTo 24 + RotateTo 4)");
+        BehaviorTreeAsset defaults;
+        ck.Check(BehaviorTreeLibrary::FromJson(Tree(0, { WithKeys(Node(0, "MoveTo"), json::object()) }), defaults)
+                     && defaults.nodes[0].params[btmoveparam::kFailOnStuck].i == 0 && defaults.nodes[0].params[btmoveparam::kObserveTarget].i == 1
+                     && defaults.nodes[0].params[btmoveparam::kNavFilter].u == 0 && defaults.nodes[0].keys[0].empty(),
+                 "MoveTo の既定は failOnStuck = false・observeTarget = true・navFilter なし");
+        ck.Check(!Loads(Tree(0, { WithKeys(Node(0, "MoveTo"), json{ { "target", 5 } }) })), "文字列でないキー名は読み込み失敗");
+        ck.Check(!Loads(Tree(0, { WithKeys(Node(0, "MoveTo"), json{ { "target", std::string(kBbMaxNameBytes + 1, 'k') } }) })),
+                 "長すぎるキー名は読み込み失敗");
+        ck.Check(!Loads(Tree(0, { SetBb(0, "Flag", "Weird") })), "未知の source は読み込み失敗");
+        ck.Check(!Loads(Tree(0, { Node(0, "MoveTo", {}, json{ { "navFilter", 5 } }) })), "文字列でない navFilter は読み込み失敗");
+        ck.Check(!Loads(Tree(0, { Node(0, "MoveTo", {}, json{ { "navFilter", "not-hex" } }) })), "16 進でない navFilter は読み込み失敗");
+        BehaviorTreeAsset clamped;
+        ck.Check(BehaviorTreeLibrary::FromJson(Tree(0, { RotateTo(0, "Goal", 99999.0, 999.0) }), clamped)
+                     && clamped.nodes[0].params[btrotateparam::kAngularSpeedDeg].f == 3600.0f
+                     && clamped.nodes[0].params[btrotateparam::kToleranceDeg].f == 180.0f,
+                 "RotateTo の範囲外の角度は範囲へ丸める");
+    }
+
+    // ---- 12. Task 4 種 (M85c): SetBlackboard / ClearBlackboard ----
+    {
+        const uint64_t board = RegisterBoard(
+            lib, L"set_bb",
+            Board({ BbKey("Flag", "Bool"), BbKey("Count", "Int", 5), BbKey("Speed", "Float"), BbKey("Home", "Vector"),
+                    BbKey("Foe", "Entity"), BbKey("Spot", "Vector"), BbKey("Count2", "Int"), BbKey("Foe2", "Entity"),
+                    BbKey("Home2", "Vector"), BbKey("Blank", "Vector") }));
+        const uint64_t guid = RegisterTree(
+            lib, L"set_all",
+            Tree(0, { Node(0, "Sequence", { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }),
+                      SetBb(1, "Flag", "Constant", json{ { "boolValue", true } }), SetBb(2, "Count", "Constant", json{ { "intValue", 42 } }),
+                      SetBb(3, "Speed", "Constant", json{ { "floatValue", 2.5 } }),
+                      SetBb(4, "Home", "Constant", json{ { "vectorX", 1.0 }, { "vectorY", 2.0 }, { "vectorZ", 3.0 } }),
+                      SetBb(5, "Foe", "Self"), SetBb(6, "Spot", "Self"), SetBb(7, "Count2", "Copy", json::object(), "Count"),
+                      SetBb(8, "Foe2", "Copy", json::object(), "Foe"), SetBb(9, "Home2", "Copy", json::object(), "Home"),
+                      ClearBb(10, "Count") },
+                 board));
+        Sim sim;
+        const EntityID e = sim.AddTreeEntity(guid, "Setter");
+        sim.GetWorld().GetComponent<LocalTransform>(e)->position = { 4.0f, 5.0f, 6.0f };
+        sim.Step();
+        const BtInstance* inst = sim.bt.FindInstance(e);
+        const auto value = [&](int key) -> const BbValue& { return inst->blackboard[static_cast<size_t>(key)]; };
+        ck.Check(sim.Status(e) == kSucceeded && value(0).isSet == 1 && value(0).i == 1 && value(2).isSet == 1 && value(2).f == 2.5f
+                     && value(3).v[0] == 1.0f && value(3).v[1] == 2.0f && value(3).v[2] == 3.0f,
+                 "SetBlackboard: Bool / Float / Vector の定数を書いて 1 tick で Success");
+        ck.Check(value(4).isSet == 1 && value(4).entity == e && value(5).isSet == 1 && value(5).v[0] == 4.0f && value(5).v[1] == 5.0f
+                     && value(5).v[2] == 6.0f,
+                 "SetBlackboard: Self は Entity = 自分、Vector = 自分のワールド位置");
+        ck.Check(value(6).isSet == 1 && value(6).i == 42 && value(7).entity == e && value(8).v[2] == 3.0f,
+                 "SetBlackboard: Copy は Int / Entity / Vector のコピー元の値を写す");
+        ck.Check(value(1).isSet == 0 && value(1).i == 0, "ClearBlackboard: キーが未設定へ戻る (値も 0)");
+
+        // 1 tick 動かして Failure になることを確かめ、そのときのブラックボードを返す
+        const auto failsWith = [&](const char* name, const json& node, const char* what) {
+            const uint64_t g = RegisterTree(lib, std::wstring(L"set_fail_").append(std::wstring(name, name + std::strlen(name))).c_str(),
+                                            Tree(0, { node }, board));
+            Sim s;
+            const EntityID f = s.AddTreeEntity(g);
+            s.Step();
+            ck.Check(s.Status(f) == kFailed, what);
+            const BtInstance* failed = s.bt.FindInstance(f);
+            return failed != nullptr ? failed->blackboard : std::vector<BbValue>{};
+        };
+        const std::vector<BbValue> constEntity = failsWith("const_entity", SetBb(0, "Foe", "Constant"), "SetBlackboard: Entity へ定数は書けず Failure");
+        ck.Check(constEntity.size() == 10 && constEntity[4].isSet == 0, "Failure のとき書き先は変わらない");
+        failsWith("copy_unset", SetBb(0, "Home2", "Copy", json::object(), "Blank"), "SetBlackboard: 未設定のキーからのコピーは Failure");
+        const std::vector<BbValue> mismatch =
+            failsWith("copy_type", SetBb(0, "Count", "Copy", json::object(), "Speed"), "SetBlackboard: 型の違うキーからのコピーは Failure");
+        ck.Check(mismatch.size() == 10 && mismatch[1].i == 5, "型違いで Failure のとき書き先の初期値が残る");
+        failsWith("self_int", SetBb(0, "Count", "Self"), "SetBlackboard: Int へ Self は Failure");
+        failsWith("no_key", SetBb(0, "Nope", "Constant"), "SetBlackboard: 無いキーは Failure");
+        failsWith("clear_no_key", ClearBb(0, "Nope"), "ClearBlackboard: 無いキーは Failure");
+        failsWith("empty_key", SetBb(0, "", "Constant"), "SetBlackboard: キー名が空 (未指定) は Failure");
+    }
+
+    // ---- 12. Task 4 種 (M85c): RotateTo ----
+    {
+        const uint64_t board = RegisterBoard(lib, L"rot_bb", Board({ BbKey("Goal", "Vector", json::array({ 10.0, 0.0, 0.0 })),
+                                                                     BbKey("Look", "Entity"), BbKey("Flag", "Bool", true) }));
+        const auto spawn = [](Sim& sim, uint64_t tree, bool withAgent, float agentSpeedDeg) {
+            GameObject go = sim.scene.CreateGameObjectTracked("Rotor");
+            go.AddComponent<BehaviorTreeComponent>()->tree = AssetID{ tree };
+            if (withAgent) {
+                go.AddComponent<NavMeshAgentComponent>()->angularSpeedDeg = agentSpeedDeg;
+            }
+            return go.Id();
+        };
+        // 目標は +X (= y 軸まわり +90 度)。成功までの tick 数と、そのときの向きを返す
+        const auto rotate = [&](const wchar_t* name, double speed, bool withAgent, float agentSpeedDeg, int& ticks, float& yawDeg, bool& updateRotationWhileRunning) {
+            const uint64_t guid = RegisterTree(lib, name, Tree(0, { RotateTo(0, "Goal", speed, 1.0) }, board));
+            Sim sim;
+            const EntityID e = spawn(sim, guid, withAgent, agentSpeedDeg);
+            ticks = 0;
+            updateRotationWhileRunning = true;
+            for (int i = 1; i <= 200; ++i) {
+                sim.Step();
+                if (withAgent && i == 3) {
+                    updateRotationWhileRunning = sim.GetWorld().GetComponent<NavMeshAgentComponent>(e)->updateRotation;
+                }
+                if (sim.Status(e) == kSucceeded) {
+                    ticks = i;
+                    break;
+                }
+            }
+            yawDeg = YawDegOf(sim.GetWorld().GetComponent<LocalTransform>(e)->rotation);
+            return e;
+        };
+        int ticks = 0;
+        float yaw = 0.0f;
+        bool running = true;
+        rotate(L"rot_90", 90.0, false, 0.0f, ticks, yaw, running);
+        ck.Check(ticks >= 59 && ticks <= 61 && std::fabs(yaw - 90.0f) <= 1.01f,
+                 "RotateTo: 90 度/秒で 90 度回り、許容 1 度以内で約 60 tick に Success");
+        rotate(L"rot_agent", 0.0, true, 180.0f, ticks, yaw, running);
+        ck.Check(ticks >= 29 && ticks <= 31 && std::fabs(yaw - 90.0f) <= 1.01f && !running,
+                 "RotateTo: angularSpeedDeg = 0 は Agent の値 (180) を使い、実行中の updateRotation は false");
+        rotate(L"rot_default", 0.0, false, 0.0f, ticks, yaw, running);
+        ck.Check(ticks >= 14 && ticks <= 16, "RotateTo: angularSpeedDeg = 0 で Agent も無ければ 360 度/秒");
+        rotate(L"rot_zero_agent", 0.0, true, 0.0f, ticks, yaw, running);
+        ck.Check(ticks >= 14 && ticks <= 16, "RotateTo: Agent の角速度が 0 のときも 360 度/秒 (終わらない RotateTo を作らない)");
+
+        // 終了で updateRotation が元の値へ戻る (true だった Agent も false だった Agent も)
+        for (const bool original : { true, false }) {
+            const uint64_t guid = RegisterTree(lib, L"rot_restore", Tree(0, { RotateTo(0, "Goal", 360.0, 1.0) }, board));
+            Sim sim;
+            const EntityID e = spawn(sim, guid, true, 360.0f);
+            sim.GetWorld().GetComponent<NavMeshAgentComponent>(e)->updateRotation = original;
+            for (int i = 0; i < 20 && sim.Status(e) != kSucceeded; ++i) {
+                sim.Step();
+            }
+            ck.Check(sim.Status(e) == kSucceeded && sim.GetWorld().GetComponent<NavMeshAgentComponent>(e)->updateRotation == original,
+                     original ? "RotateTo: 終了で updateRotation (true) が戻る" : "RotateTo: 終了で updateRotation (false) が戻る");
+        }
+
+        // Abort でも戻り、向きはそこで止まる
+        {
+            std::vector<int32_t> trace;
+            const uint64_t guid = RegisterTree(
+                lib, L"rot_abort",
+                Tree(0, { Node(0, "Selector", { 1, 3 }), Decorated(Node(1, "Sequence", { 2 }), { BbCond("Flag", "IsSet", "Self") }),
+                          RotateTo(2, "Goal", 10.0, 1.0), Wait(3, 1000) },
+                     board));
+            Sim sim;
+            sim.bt.SetAbortTrace(&trace);
+            const EntityID e = spawn(sim, guid, true, 360.0f);
+            for (int i = 0; i < 6; ++i) {
+                sim.Step();
+            }
+            const bool heldDuring = !sim.GetWorld().GetComponent<NavMeshAgentComponent>(e)->updateRotation;
+            const float yawAtAbort = YawDegOf(sim.GetWorld().GetComponent<LocalTransform>(e)->rotation);
+            sim.Mutable(e)->blackboard[2].i = 0;
+            sim.Step();
+            const float yawAfter = YawDegOf(sim.GetWorld().GetComponent<LocalTransform>(e)->rotation);
+            for (int i = 0; i < 10; ++i) {
+                sim.Step();
+            }
+            ck.Check(heldDuring && sim.GetWorld().GetComponent<NavMeshAgentComponent>(e)->updateRotation && trace == std::vector<int32_t>{ 2, 1 }
+                         && std::fabs(YawDegOf(sim.GetWorld().GetComponent<LocalTransform>(e)->rotation) - yawAfter) < 0.001f && yawAtAbort > 0.5f
+                         && yawAfter < 5.0f,
+                     "RotateTo: Abort で updateRotation が戻り (後始末は子が先)、向きはそこで止まる");
+        }
+
+        // 目標が Entity (-X 側 = -90 度)。目標が未設定の間は Failure、書いてから回る
+        {
+            const uint64_t guid = RegisterTree(lib, L"rot_entity", Tree(0, { RotateTo(0, "Look", 360.0, 1.0) }, board));
+            Sim sim;
+            const EntityID e = spawn(sim, guid, false, 0.0f);
+            sim.Step();
+            const bool failedUnset = sim.Status(e) == kFailed;
+            GameObject target = sim.scene.CreateGameObjectTracked("Look");
+            target.SetLocalPosition(-10.0f, 0.0f, 0.0f);
+            sim.Step(); // BB はこの tick に作られた後
+            sim.Mutable(e)->blackboard[1] = BbValue{ 1, 0, 0.0f, { 0.0f, 0.0f, 0.0f }, target.Id() };
+            for (int i = 0; i < 30 && sim.Status(e) != kSucceeded; ++i) {
+                sim.Step();
+            }
+            ck.Check(failedUnset && sim.Status(e) == kSucceeded
+                         && std::fabs(YawDegOf(sim.GetWorld().GetComponent<LocalTransform>(e)->rotation) + 90.0f) <= 1.01f,
+                     "RotateTo: 目標 (Entity) が未設定なら Failure、書くとその方向へ回る");
+        }
+    }
+
+    // ---- 12. Task 4 種 (M85c): MoveTo (NavMesh の固定ジオメトリ) ----
+    bool fieldBaked = false;
+    {
+        constexpr uint64_t kFilterA = 0x1111AAAAull; // MoveTo が実行中だけ差し込む navFilter (未登録の GUID でも Nav は Surface のまま歩く)
+        constexpr uint64_t kFilterOriginal = 0x2222BBBBull;
+        const uint64_t board = RegisterBoard(
+            lib, L"move_bb",
+            Board({ BbKey("Goal", "Vector", json::array({ 6.0, 0.0, 0.0 })), BbKey("Far", "Vector", json::array({ 40.0, 0.0, 0.0 })),
+                    BbKey("Quarry", "Entity"), BbKey("Alarm", "Bool", true), BbKey("Alert", "Bool", false), BbKey("AlertOn", "Bool", true),
+                    BbKey("Block", "Bool", false), BbKey("Home", "Vector", json::array({ -6.0, 0.0, 3.0 })), BbKey("Tmp", "Vector") }));
+        {
+            Scene probe; // 先にナビメッシュを 1 回焼く (以降の場面は同じものを参照する)
+            BuildField(probe, fieldBaked);
+        }
+        ck.Check(fieldBaked, "(前提) 24 x 24 m の床のナビメッシュを焼ける");
+
+        // 1 つの場面を作る: 床 + Surface + Agent。Agent は (-6, 0, 0) に立つ
+        struct Field {
+            Scene scene;
+            EntityID walker;
+        };
+        const auto makeField = [&](uint64_t tree, std::unique_ptr<Field>& out) {
+            out = std::make_unique<Field>();
+            BuildField(out->scene, fieldBaked);
+            out->walker = AddWalker(out->scene, tree, -6.0f, 0.0f);
+            out->scene.GetWorld().ApplyStructuralChanges();
+        };
+        const auto runUntil = [](NavSim& sim, EntityID e, int32_t status, int maxTicks) {
+            for (int i = 0; i < maxTicks; ++i) {
+                sim.Step();
+                if (sim.Comp(e)->status == status) {
+                    return sim.tick - 1;
+                }
+            }
+            return static_cast<uint64_t>(0);
+        };
+
+        // ---- Arrived で Success / 同じ地点へ 2 回 ----
+        uint64_t firstArrival = 0;
+        {
+            const uint64_t guid = RegisterTree(lib, L"move_arrive", Tree(0, { MoveTo(0, "Goal", 0.0, false) }, board));
+            std::unique_ptr<Field> f;
+            makeField(guid, f);
+            NavSim sim(f->scene);
+            firstArrival = runUntil(sim, f->walker, kSucceeded, 900);
+            const NavMeshAgentComponent* agent = sim.Agent(f->walker);
+            ck.Check(firstArrival != 0 && !agent->hasDestination && HorizontalGap(*sim.Pos(f->walker), 6.0f, 0.0f) < 0.4f,
+                     "MoveTo: Agent が Arrived になると Success、目的地は倒れて Goal の近くにいる");
+            // 到着済みの Agent へ同じ地点をもう 1 回 (根のやり直し = Nav が hasDestination の偽を 1 tick 見る場合)
+            const uint64_t second = runUntil(sim, f->walker, kSucceeded, 300);
+            MYE_LOG_INFO("  [move] same-point twice (root restart): first Success at tick %llu, second after %llu ticks",
+                         static_cast<unsigned long long>(firstArrival), static_cast<unsigned long long>(second - firstArrival));
+            ck.Check(second != 0 && second - firstArrival <= 60, "MoveTo: 到着済みの Agent への同じ地点の 2 回目も再探索されて Success で終わる");
+        }
+        {
+            // 同じ tick の中で続けて同じ地点 (Nav は hasDestination の偽を見ない)
+            const uint64_t guid = RegisterTree(lib, L"move_twice",
+                                               Tree(0, { Node(0, "Sequence", { 1, 2 }), MoveTo(1, "Goal", 0.0, false), MoveTo(2, "Goal", 0.0, false) }, board));
+            std::unique_ptr<Field> f;
+            makeField(guid, f);
+            NavSim sim(f->scene);
+            const uint64_t both = runUntil(sim, f->walker, kSucceeded, 900);
+            MYE_LOG_INFO("  [move] same-point twice (same tick): both MoveTo done at tick %llu (single MoveTo: %llu)",
+                         static_cast<unsigned long long>(both), static_cast<unsigned long long>(firstArrival));
+            ck.Check(both != 0 && both >= firstArrival && both - firstArrival <= 5,
+                     "MoveTo: 同じ tick の中で続けて同じ地点へ出しても 2 つ目が Success で終わる");
+        }
+
+        // ---- 届かない目的地 (ナビメッシュの外) ----
+        {
+            const uint64_t guid = RegisterTree(lib, L"move_nopath", Tree(0, { MoveTo(0, "Far", 0.5, false) }, board));
+            std::unique_ptr<Field> f;
+            makeField(guid, f);
+            NavSim sim(f->scene);
+            const uint64_t failedAt = runUntil(sim, f->walker, kFailed, 60);
+            ck.Check(failedAt != 0 && !sim.Agent(f->walker)->hasDestination, "MoveTo: ナビメッシュの外の目的地 (NoPath) は Failure で、目的地を倒す");
+        }
+
+        // ---- 目標が無い / Agent が無い ----
+        {
+            const uint64_t guid = RegisterTree(lib, L"move_notarget", Tree(0, { MoveTo(0, "Quarry", 0.5, false) }, board));
+            std::unique_ptr<Field> f;
+            makeField(guid, f);
+            NavSim sim(f->scene);
+            sim.Step();
+            ck.Check(sim.Comp(f->walker)->status == kFailed && !sim.Agent(f->walker)->hasDestination,
+                     "MoveTo: 目標 (Entity) が未設定なら Failure、Agent には何も書かない");
+            const uint64_t noAgent = RegisterTree(lib, L"move_noagent", Tree(0, { MoveTo(0, "Goal", 0.5, false) }, board));
+            Sim bare;
+            const EntityID e = bare.AddTreeEntity(noAgent);
+            bare.Step();
+            ck.Check(bare.Status(e) == kFailed, "MoveTo: NavMeshAgent が無ければ Failure");
+        }
+
+        // ---- 近くにいれば歩かず Success / acceptanceRadius で途中でも Success ----
+        {
+            const uint64_t near = RegisterTree(lib, L"move_near", Tree(0, { MoveTo(0, "Goal", 20.0, false) }, board));
+            std::unique_ptr<Field> f;
+            makeField(near, f);
+            NavSim sim(f->scene);
+            sim.Step();
+            ck.Check(sim.Comp(f->walker)->status == kSucceeded && !sim.Agent(f->walker)->hasDestination,
+                     "MoveTo: 最初から acceptanceRadius の内側なら Agent に何も書かずに Success");
+
+            const uint64_t early = RegisterTree(lib, L"move_early", Tree(0, { MoveTo(0, "Goal", 1.5, false) }, board));
+            std::unique_ptr<Field> g;
+            makeField(early, g);
+            NavSim walk(g->scene);
+            const uint64_t at = runUntil(walk, g->walker, kSucceeded, 900);
+            const float gap = HorizontalGap(*walk.Pos(g->walker), 6.0f, 0.0f);
+            ck.Check(at != 0 && at < firstArrival && gap > 1.3f && gap <= 1.51f && !walk.Agent(g->walker)->hasDestination,
+                     "MoveTo: acceptanceRadius (1.5 m) に入った tick に Success、Agent は止まる (Arrived を待たない)");
+        }
+
+        // ---- navFilter の差し替えと戻し ----
+        {
+            const uint64_t guid = RegisterTree(lib, L"move_filter", Tree(0, { MoveTo(0, "Goal", 0.0, false, false, kFilterA) }, board));
+            std::unique_ptr<Field> f;
+            makeField(guid, f);
+            f->scene.GetWorld().GetComponent<NavMeshAgentComponent>(f->walker)->navFilter = AssetID{ kFilterOriginal };
+            NavSim sim(f->scene);
+            for (int i = 0; i < 30; ++i) {
+                sim.Step();
+            }
+            const bool swapped = sim.Agent(f->walker)->navFilter.value == kFilterA;
+            const uint64_t done = runUntil(sim, f->walker, kSucceeded, 900);
+            ck.Check(swapped && done != 0 && sim.Agent(f->walker)->navFilter.value == kFilterOriginal,
+                     "MoveTo: navFilter は実行中だけ差し替わり、Success で元の値へ戻る");
+        }
+
+        // ---- Abort で Agent が止まる (後始末は子が先、navFilter も戻る) ----
+        {
+            std::vector<int32_t> trace;
+            const uint64_t guid = RegisterTree(
+                lib, L"move_abort",
+                Tree(0, { Node(0, "Selector", { 1, 3 }), Decorated(Node(1, "Sequence", { 2 }), { BbCond("Alarm", "IsSet", "Self") }),
+                          MoveTo(2, "Goal", 0.0, false, false, kFilterA), Wait(3, 5000) },
+                     board));
+            std::unique_ptr<Field> f;
+            makeField(guid, f);
+            f->scene.GetWorld().GetComponent<NavMeshAgentComponent>(f->walker)->navFilter = AssetID{ kFilterOriginal };
+            NavSim sim(f->scene);
+            sim.bt->SetAbortTrace(&trace);
+            for (int i = 0; i < 40; ++i) {
+                sim.Step();
+            }
+            const NavMeshAgentComponent* agent = sim.Agent(f->walker);
+            const bool walking = agent->hasDestination && agent->status == navagentstatus::kMoving && sim.Pos(f->walker)->position.x > -5.9f;
+            sim.Mutable(f->walker)->blackboard[3].i = 0; // Alarm を倒す = Self の Abort
+            sim.Step();
+            const bool stoppedAtOnce = !agent->hasDestination && agent->navFilter.value == kFilterOriginal;
+            for (int i = 0; i < 60; ++i) { // 加速度で減速しきるまで
+                sim.Step();
+            }
+            const float xAfter = sim.Pos(f->walker)->position.x;
+            for (int i = 0; i < 60; ++i) {
+                sim.Step();
+            }
+            ck.Check(walking && stoppedAtOnce && trace == std::vector<int32_t>{ 2, 1 } && agent->status == navagentstatus::kIdle
+                         && std::fabs(sim.Pos(f->walker)->position.x - xAfter) < 0.01f && sim.Comp(f->walker)->activeNodeId == 3,
+                     "MoveTo: Abort で目的地を倒して Agent が止まり (後始末は子が先)、navFilter も戻る");
+        }
+
+        // ---- 実行中にコンポーネントが外れても戻す ----
+        {
+            const uint64_t guid = RegisterTree(lib, L"move_detach", Tree(0, { MoveTo(0, "Goal", 0.0, false, false, kFilterA) }, board));
+            std::unique_ptr<Field> f;
+            makeField(guid, f);
+            f->scene.GetWorld().GetComponent<NavMeshAgentComponent>(f->walker)->navFilter = AssetID{ kFilterOriginal };
+            NavSim sim(f->scene);
+            for (int i = 0; i < 20; ++i) {
+                sim.Step();
+            }
+            const bool running = sim.Agent(f->walker)->hasDestination && sim.Agent(f->walker)->navFilter.value == kFilterA;
+            sim.GetWorld().RemoveComponent<BehaviorTreeComponent>(f->walker);
+            sim.GetWorld().ApplyStructuralChanges();
+            sim.Step();
+            ck.Check(running && !sim.Agent(f->walker)->hasDestination && sim.Agent(f->walker)->navFilter.value == kFilterOriginal
+                         && sim.bt->InstanceCount() == 0,
+                     "MoveTo: 実行中に BehaviorTree コンポーネントが外れると、Agent の目的地と navFilter を戻してから表を捨てる");
+        }
+
+        // ---- LowerPriority: 偽 -> 真で MoveTo を Abort して止める / 真のままなら Abort しない ----
+        {
+            std::vector<int32_t> trace;
+            const uint64_t guid = RegisterTree(
+                lib, L"move_lower",
+                Tree(0, { Node(0, "Selector", { 1, 2 }), Decorated(Node(1, "Sequence", { 4 }), { BbCond("Alert", "IsSet", "LowerPriority") }),
+                          Node(2, "Sequence", { 3 }), MoveTo(3, "Goal", 0.0, false), Wait(4, 5000) },
+                     board));
+            std::unique_ptr<Field> f;
+            makeField(guid, f);
+            NavSim sim(f->scene);
+            sim.bt->SetAbortTrace(&trace);
+            for (int i = 0; i < 40; ++i) {
+                sim.Step();
+            }
+            const bool walking = sim.Agent(f->walker)->hasDestination && sim.Comp(f->walker)->activeNodeId == 3 && trace.empty();
+            sim.Mutable(f->walker)->blackboard[4].i = 1; // Alert が偽 -> 真
+            sim.Step();
+            ck.Check(walking && !sim.Agent(f->walker)->hasDestination && trace == std::vector<int32_t>{ 3, 2 } && sim.Comp(f->walker)->activeNodeId == 4,
+                     "LowerPriority: 条件が偽から真へ変わると、優先度の低い MoveTo を Abort して (子が先に) 止め、高い側へ移る");
+        }
+        {
+            std::vector<int32_t> trace;
+            const uint64_t guid = RegisterTree(
+                lib, L"move_lower_steady",
+                Tree(0, { Node(0, "Selector", { 1, 2 }), Decorated(Node(1, "Sequence", { 4 }), { BbCond("AlertOn", "IsSet", "LowerPriority") }),
+                          Node(2, "Sequence", { 3 }), MoveTo(3, "Goal", 0.0, false), Node(4, "Selector") },
+                     board));
+            std::unique_ptr<Field> f;
+            makeField(guid, f);
+            NavSim sim(f->scene);
+            sim.bt->SetAbortTrace(&trace);
+            const uint64_t done = runUntil(sim, f->walker, kSucceeded, 900);
+            ck.Check(done != 0 && trace.empty(),
+                     "LowerPriority: 条件が真のままで高い側がすぐ失敗する木では、MoveTo を Abort せず最後まで歩く (変化した tick だけ働く)");
+        }
+
+        // ---- Stuck: ベイク後に置いた壁で経路が塞がれる (経路は完全なまま前へ進めない) ----
+        const auto stuckRun = [&](bool failOnStuck, bool& sawStuck, bool& failed, bool& destinationAtEnd, int32_t& statusAtEnd, int32_t& activeAtEnd) {
+            const uint64_t guid = RegisterTree(
+                lib, failOnStuck ? L"move_stuck_fail" : L"move_stuck_wait",
+                Tree(0, { Node(0, "Selector", { 1, 3 }), Node(1, "Sequence", { 2 }), MoveTo(2, "Goal", 0.0, false, failOnStuck), Wait(3, 5000) }, board));
+            std::unique_ptr<Field> f;
+            makeField(guid, f);
+            GameObject wall = f->scene.CreateGameObjectTracked("LateWall");
+            wall.SetLocalPosition(0.0f, 1.0f, 0.0f);
+            auto* collider = wall.AddComponent<ColliderComponent>();
+            collider->shape = collidershape::kBox;
+            collider->halfExtents = { 0.5f, 1.0f, 13.0f };
+            f->scene.GetWorld().ApplyStructuralChanges();
+            NavSim sim(f->scene);
+            sawStuck = false;
+            failed = false;
+            for (int i = 0; i < 700; ++i) {
+                sim.Step();
+                sawStuck = sawStuck || sim.Agent(f->walker)->status == navagentstatus::kStuck;
+                failed = failed || sim.Comp(f->walker)->activeNodeId == 3;
+            }
+            destinationAtEnd = sim.Agent(f->walker)->hasDestination;
+            statusAtEnd = sim.Agent(f->walker)->status;
+            activeAtEnd = sim.Comp(f->walker)->activeNodeId;
+        };
+        {
+            bool sawStuck = false;
+            bool failed = false;
+            bool destination = false;
+            int32_t status = 0;
+            int32_t active = 0;
+            stuckRun(false, sawStuck, failed, destination, status, active);
+            MYE_LOG_INFO("  [move] failOnStuck = false: sawStuck %d, failed %d, hasDestination %d, nav status %d, active node %d",
+                         sawStuck ? 1 : 0, failed ? 1 : 0, destination ? 1 : 0, status, active);
+            ck.Check(sawStuck && !failed && destination && status == navagentstatus::kStuck && active == 2,
+                     "MoveTo: failOnStuck = false (既定) は Stuck の間も Running のまま押し続ける");
+            stuckRun(true, sawStuck, failed, destination, status, active);
+            MYE_LOG_INFO("  [move] failOnStuck = true: sawStuck %d, failed %d, hasDestination %d, nav status %d, active node %d",
+                         sawStuck ? 1 : 0, failed ? 1 : 0, destination ? 1 : 0, status, active);
+            ck.Check(sawStuck && failed && !destination && status == navagentstatus::kIdle && active == 3,
+                     "MoveTo: failOnStuck = true は Stuck になった tick に Failure、目的地を倒して Agent が止まり、次の枝へ移る");
+        }
+
+        // ---- observeTarget: 動く Entity を追う / 追わない ----
+        {
+            const auto chase = [&](bool observe, float& destZ, float& runnerZ) {
+                const uint64_t guid = RegisterTree(lib, observe ? L"move_observe" : L"move_fixed",
+                                                   Tree(0, { MoveTo(0, "Quarry", 0.0, observe) }, board));
+                std::unique_ptr<Field> f;
+                makeField(guid, f);
+                GameObject runner = f->scene.CreateGameObjectTracked("Runner");
+                runner.SetLocalPosition(6.0f, 0.0f, -6.0f);
+                f->scene.GetWorld().ApplyStructuralChanges();
+                NavSim sim(f->scene);
+                sim.Step(); // 表を作る (Quarry は未設定で Failure)
+                sim.Mutable(f->walker)->blackboard[2] = BbValue{ 1, 0, 0.0f, { 0.0f, 0.0f, 0.0f }, runner.Id() };
+                for (int i = 0; i < 150; ++i) {
+                    sim.Pos(runner.Id())->position.z = -6.0f + 0.08f * static_cast<float>(i);
+                    sim.Step();
+                }
+                destZ = sim.Agent(f->walker)->destination.z;
+                runnerZ = sim.Pos(runner.Id())->position.z;
+            };
+            float destZ = 0.0f;
+            float runnerZ = 0.0f;
+            chase(true, destZ, runnerZ);
+            MYE_LOG_INFO("  [move] observeTarget = true: destination z %.2f, runner z %.2f", destZ, runnerZ);
+            ck.Check(std::fabs(destZ - runnerZ) < 0.7f && runnerZ > 3.0f, "MoveTo: observeTarget は動く Entity の位置へ目的地を書き直して追う");
+            chase(false, destZ, runnerZ);
+            MYE_LOG_INFO("  [move] observeTarget = false: destination z %.2f, runner z %.2f", destZ, runnerZ);
+            ck.Check(destZ < -5.0f && runnerZ - destZ > 6.0f, "MoveTo: observeTarget = false は最初の位置へ向かい続け、書き直さない");
+        }
+
+        // ---- 保存 -> 復元 -> 連続実行 (Nav 節と BT 節の両方) ----
+        {
+            const uint64_t guid = RegisterTree(
+                lib, L"move_snap",
+                Tree(0, { Node(0, "Sequence", { 1, 2, 3, 4, 5 }), MoveTo(1, "Goal", 0.2, true, false, kFilterA),
+                          RotateTo(2, "Home", 45.0, 1.0), SetBb(3, "Tmp", "Copy", json::object(), "Goal"),
+                          SetBb(4, "Goal", "Copy", json::object(), "Home"), SetBb(5, "Home", "Copy", json::object(), "Tmp") },
+                     board));
+            const auto roundTrip = [&](const char* label, bool freshBt, const std::function<bool(const BtInstance&, uint64_t)>& atCapture) {
+                std::unique_ptr<Field> f;
+                makeField(guid, f);
+                NavSim sim(f->scene);
+                SimRefs refs;
+                refs.scene = &f->scene;
+                refs.nav = &sim.nav;
+                refs.behaviorTree = sim.bt;
+                uint64_t tickRef = 0;
+                refs.tickIndex = &tickRef;
+                bool captured = false;
+                for (int i = 0; i < 1200 && !captured; ++i) {
+                    sim.Step();
+                    const BtInstance* inst = sim.bt->FindInstance(f->walker);
+                    captured = inst != nullptr && atCapture(*inst, sim.tick);
+                }
+                if (!captured) {
+                    ck.Check(false, label);
+                    return;
+                }
+                tickRef = sim.tick;
+                std::vector<std::byte> blob;
+                const bool ok = CaptureSimSnapshot(refs, blob);
+                const BtInstance* at = sim.bt->FindInstance(f->walker);
+                const bool extraNonZero = at != nullptr && std::any_of(at->extra.begin(), at->extra.end(), [](uint8_t b) { return b != 0; });
+                const uint64_t startTick = sim.tick;
+                constexpr int kAhead = 400;
+                std::vector<uint64_t> continuous;
+                for (int i = 0; i < kAhead; ++i) {
+                    sim.Step();
+                    continuous.push_back(HashWorld(f->scene.GetWorld(), refs.HashSources()));
+                }
+                BehaviorTreeSystem fresh; // 新しいシステム (空の表) へ復元する場合
+                if (freshBt) {
+                    sim.bt = &fresh;
+                    refs.behaviorTree = &fresh;
+                }
+                bool same = ok && RestoreSimSnapshot(refs, blob.data(), blob.size());
+                sim.tick = startTick;
+                for (int i = 0; i < kAhead && same; ++i) {
+                    sim.Step();
+                    same = HashWorld(f->scene.GetWorld(), refs.HashSources()) == continuous[static_cast<size_t>(i)];
+                }
+                ck.Check(same && extraNonZero && continuous.front() != continuous.back(), label);
+            };
+            roundTrip("MoveTo の途中 (navFilter 差し替え中) で保存 → 復元 → 連続実行と毎 tick のハッシュが一致 (Nav 節と BT 節)", false,
+                      [](const BtInstance& inst, uint64_t tick) { return tick > 60 && inst.nodes[1].active != 0; });
+            roundTrip("MoveTo の途中で保存 → 新しい BehaviorTreeSystem へ復元 → 連続実行と毎 tick のハッシュが一致", true,
+                      [](const BtInstance& inst, uint64_t tick) { return tick > 90 && inst.nodes[1].active != 0; });
+            roundTrip("RotateTo の途中 (updateRotation を預かっている間) で保存 → 復元 → 連続実行と毎 tick のハッシュが一致", false,
+                      [](const BtInstance& inst, uint64_t) { return inst.nodes[2].active != 0; });
+            roundTrip("RotateTo の途中で保存 → 新しい BehaviorTreeSystem へ復元 → 連続実行と毎 tick のハッシュが一致", true,
+                      [](const BtInstance& inst, uint64_t) { return inst.nodes[2].active != 0; });
+        }
+
+        // ---- 追加状態の長さが木と合わない保存は、その木を初期状態からやり直す ----
+        {
+            const uint64_t guid = RegisterTree(lib, L"move_mismatch", Tree(0, { MoveTo(0, "Goal", 0.0, false) }, board));
+            std::unique_ptr<Field> f;
+            makeField(guid, f);
+            NavSim sim(f->scene);
+            for (int i = 0; i < 20; ++i) {
+                sim.Step();
+            }
+            std::vector<std::byte> bytes;
+            ByteWriter writer(bytes);
+            sim.bt->SaveSnapshot(writer);
+            BtSnapshot parsed;
+            ByteReader reader(bytes.data(), bytes.size());
+            const bool read = BehaviorTreeSystem::ReadSnapshot(reader, parsed) && parsed.instances.size() == 1;
+            if (read) {
+                parsed.instances[0].extra.resize(parsed.instances[0].extra.size() + 4, 0);
+            }
+            const uint64_t logFrom = logging::TotalWritten();
+            sim.bt->ApplySnapshot(f->scene.GetWorld(), std::move(parsed));
+            const BtInstance* restored = sim.bt->FindInstance(f->walker);
+            ck.Check(read && restored != nullptr && restored->extra.size() == sizeof(BtMoveToState) && restored->nodes[0].active == 0
+                         && CountWarnings(logFrom, "does not fit") == 1,
+                     "追加状態の長さが木と合わない保存は警告して初期状態からやり直す");
+        }
+    }
+
     // ---- 8. 計測: 100 体 x 30 ノード ----
     {
         Sim sim;

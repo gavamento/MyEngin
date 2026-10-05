@@ -161,7 +161,7 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 
 ### 4.2 データ・保存形式・互換性
 
-- `.bt.json`: `{ "engine": "MyEngine", "behaviortree": 1, "blackboard": "<bb の GUID>", "root": <node id>, "nodes": [ { "id", "type", "params": {...}, "decorators": [ {...} ], "children": [id...], "pos": [x, y] } ] }`。種類キー必須 (`NavFilterLibrary.cpp:120-147` と同じ)。読み込みで Sanitize (未知の type・壊れた参照・循環は読み込み失敗として扱い、そのアセットは未登録 = AssetMissing)。
+- `.bt.json`: `{ "engine": "MyEngine", "behaviortree": 1, "blackboard": "<bb の GUID>", "root": <node id>, "nodes": [ { "id", "type", "params": {...}, "decorators": [ {...} ], "children": [id...], "keys": { "<種類表のキー欄名>": "<BB のキー名>" }, "pos": [x, y] } ] }` (`keys` は sub-03 で追加。空文字 = 未指定で実行時 Failure)。種類キー必須 (`NavFilterLibrary.cpp:120-147` と同じ)。読み込みで Sanitize (未知の type・壊れた参照・循環は読み込み失敗として扱い、そのアセットは未登録 = AssetMissing)。
 - `.bb.json`: `{ "engine": "MyEngine", "blackboard": 1, "keys": [ { "name", "type", "initial"?, "eventName"? } ] }`。
 - 追加の手順はナビフィルタ (M84c) と同じ 24 か所 (AssetType の末尾追加 `BehaviorTree` / `Blackboard`、ClassifyPath、TypeName、kCompound、SimLibraries、EngineLoop / HeadlessSim、起動走査、ReloadHub、StageClassifier、DrawAssetRef、Create メニュー、アイコン、文字列、SelfTest)。
 - コンポーネント:
@@ -252,6 +252,7 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 
 (確定後の変更のみ)
 
+- 2026-10-05 (sub-03 VERDICT): ノード JSON に `keys` (BB キー名の欄、種類表の keyNames) と GUID 型のパラメータ (16 進文字列) を追加。MoveTo の距離は水平 (XZ)、最初から acceptanceRadius 内なら Agent に書かず Success、目的地を書いた tick は status を読まない (SearchArea / Patrol も同じ規則)、observeTarget の既定 true、acceptanceRadius の既定 0.5。RotateTo は角速度 0 かつ Agent も 0 以下なら 360。SetBlackboard の Copy は同型・設定済みのみ。BehaviorTreeComponent が外れたら表を落とす前に Abort。種類ごとの追加状態 (BtNodeTypeInfo::extraStateBytes) を導入し snapshot v35。spec 7. の「同じ地点への MoveTo」のリスクは NavSystem 無変更で解消
 - 2026-10-05 (sub-02 VERDICT): Decorator の細部を確定 — 条件は入るとき 1 回だけ評価 (Repeat の周回では再評価しない)、Timeout は「入った tick + ticks」で切れ同じ tick に子が終われば終わりが優先、Repeat の内側の Timeout は周回ごと、Cooldown は終了 / Abort の tick + ticks から入れる、未設定・型違いの大小比較は偽、LowerPriority は偽→真に変わった tick だけ働く (OnResultChange)、条件偽で入らなかったノードは Abort の記録なし、根のやり直しで Decorator の状態 (Cooldown の計時) は残す。監視 (4.1.1 の (2)) は手数の上限に数えない。Decorator の JSON は `{"type","key","params"}`、1 ノード 8 個まで
 - 2026-10-05 (sub-01 VERDICT): SearchArea の点は事前に列で持たず、向かい始める時に 1 つずつ生成する (状態を固定長にするため、pointCount 上限 32)。ノードの追加状態は種類ごとの固定長領域 (sub-03 で導入) に置く。sub-01 が足した上限 (ノード 1024・深さ 64・tick パラメータ 216000) を仕様として承認
 - 2026-10-05 (ユーザー回答、司会経由): MoveTo の Stuck の扱いを「常に Running」から「パラメータ `failOnStuck` (既定 false) で選ぶ」へ変更。4.1.3・2. #17・受け入れ条件 6・sub-03 を更新。ほか 4 件 (2. #1 / #9 / #10、4.1.1 の根のやり直し) は裁定どおりで確定

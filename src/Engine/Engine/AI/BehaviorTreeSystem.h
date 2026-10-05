@@ -43,6 +43,7 @@ struct BtInstance {
     uint8_t rootStatus = btroot::kRunning;
     std::vector<BbValue> blackboard;  // 木の BB 定義のキーと同じ並び・同じ長さ
     std::vector<BtNodeState> nodes;   // 木の stateSlotCount と同じ長さ
+    std::vector<uint8_t> extra;       // 種類別の追加状態 (BtNodeTypeInfo::extraStateBytes)。木の extraStateBytes と同じ長さ。ノードごとの位置は BtNodeDef::extraOffset
 
     // ---- 実行時だけ (BT 節に入れない。復元後は ApplySnapshot が引き直す) ----
     std::shared_ptr<const BehaviorTreeAsset> tree;

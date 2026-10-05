@@ -120,7 +120,8 @@ struct SimRefs {
 // v33 (M84e): NavMeshSurfaceComponent の Link の自動生成 (generateLinks 以下、World 節のカラム生バイト)。
 //            生成した Link は store の Off-Mesh Link の一覧に入る (書式は v29 のまま)
 // v34 (M85a): BT 節 (BehaviorTreeSystem の表) を NAV 節の後・World 節の前に追加。BehaviorTreeComponent (World 節のカラム生バイト)
-inline constexpr uint32_t kSimSnapshotVersion = 34;
+// v35 (M85c): BT 節の各エンティティの末尾に、種類別の追加状態 (MoveTo / RotateTo の保存値など) の生バイト列を追加
+inline constexpr uint32_t kSimSnapshotVersion = 35;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ
