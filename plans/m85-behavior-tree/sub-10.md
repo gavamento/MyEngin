@@ -10,6 +10,8 @@
 - 選んだエンティティの木と窓で開いている木が違うときは「表示中の木と違う」と出し、ワンクリックでその木を開く。
 - SceneView のデバッグ線 (`drawDebug`、NoHash): MoveTo の目的地への線、SearchArea の点、Patrol の向かっている点、頭上に実行中のタスク名 (知覚の `AppendDebugLines` の流儀、`TickRunner.cpp:481-502`)。
 
+- (sub-06 VERDICT で追加) SubTree は実行時に平らに展開され、部分木のノード id は振り直される (`BehaviorTreeSystem::FindInstance(e)->tree` が実行木)。展開時に各ノードへ「由来の木の GUID と元の id」(導出値、BT 節・ハッシュには入れない) を持たせ、BT 窓は (1) 親の木を開いているときは SubTree ノードを「中で実行中」として強調、(2) 部分木のアセットを開いているときは元の id で強調する。Abort の矢印も同じ対応表を通す。
+
 ## やらないこと (このサブでは)
 - What-if の非ライブ分岐の表示 (spec 3. やらない)
 

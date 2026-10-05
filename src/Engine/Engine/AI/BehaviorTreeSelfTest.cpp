@@ -29,6 +29,8 @@
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
 #include "Engine/Engine/AI/BehaviorTreeSystem.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
+#include "Engine/Engine/Animation/Animation.h"
+#include "Engine/Engine/Animation/AnimatorController.h"
 #include "Engine/Engine/Demo/DemoContent.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 #include "Engine/Engine/Navigation/NavBake.h"
@@ -245,6 +247,9 @@ struct Sim {
     uint64_t tick = 1;
     bool paused = false;                  // true: stepSim が偽の tick (配達も Update もしない)
     std::function<void()> beforeBt;       // 配達の後・BT の Update の前に呼ぶ (スクリプト層の代わり)
+    const ControllerLibrary* controllers = nullptr; // PlayAnimation の引き先 (null = 渡さない)
+    const AnimationLibrary* clips = nullptr;
+    AnimatorControllerSystem* animator = nullptr;   // 非 null なら BT の後に Animator を進める (TickRunner のフェーズ順)
 
     World& GetWorld() { return scene.GetWorld(); }
 
@@ -262,7 +267,10 @@ struct Sim {
             if (beforeBt) {
                 beforeBt();
             }
-            bt.Update(GetWorld(), tick, nullptr);
+            bt.Update(GetWorld(), tick, nullptr, controllers, clips);
+            if (animator != nullptr && controllers != nullptr && clips != nullptr) {
+                animator->Update(GetWorld(), *controllers, *clips);
+            }
         }
         GetWorld().ApplyStructuralChanges();
         ++tick;
@@ -426,6 +434,18 @@ json FindTargetNode(int id, double radius, bool enemies, bool neutrals, bool fri
                          json{ { "radius", radius }, { "enemies", enemies }, { "neutrals", neutrals }, { "friendlies", friendlies },
                                { "tagMask", tagMask != 0 ? GuidHex(tagMask) : std::string() } }),
                     json{ { "target", target } });
+}
+
+// ---- PlayAnimation / SubTree (M85f) の部品 ----
+
+json PlayAnim(int id, const char* state, int durationTicks, bool waitForEnd)
+{
+    return Node(id, "PlayAnimation", {}, json{ { "state", state }, { "durationTicks", durationTicks }, { "waitForEnd", waitForEnd } });
+}
+
+json SubTreeNode(int id, uint64_t tree)
+{
+    return Node(id, "SubTree", {}, json{ { "tree", tree != 0 ? GuidHex(tree) : std::string() } });
 }
 
 // ---- イベント (M85e) の部品 ----
@@ -3071,6 +3091,402 @@ bool RunBehaviorTreeSelfTest()
             ck.Check(!accepts(pendingBlob(2, 0, 1)), "件数より中身が短い配送待ちは拒否する");
             ck.Check(!accepts(pendingBlob(static_cast<uint64_t>(kBtMaxEventsPerTick) + 1, 0, kBtMaxEventsPerTick + 1)),
                      "上限を超える件数の配送待ちは拒否する");
+        }
+    }
+
+    // ---- 13. PlayAnimation と SubTree (M85f) ----
+    {
+        // アセット: 往復・防波堤
+        {
+            BehaviorTreeAsset a;
+            BehaviorTreeAsset b;
+            const json j = Tree(0, { Node(0, "Sequence", { 1, 2 }), PlayAnim(1, "Slash", 6, true), SubTreeNode(2, 0xABCDull) });
+            ck.Check(BehaviorTreeLibrary::FromJson(j, a) && BehaviorTreeLibrary::FromJson(BehaviorTreeLibrary::ToJson(a), b)
+                         && BehaviorTreeLibrary::ToJson(a) == BehaviorTreeLibrary::ToJson(b)
+                         && a.nodes[1].params[btplayparam::kState].s == "Slash" && a.nodes[1].params[btplayparam::kDurationTicks].i == 6
+                         && a.nodes[1].params[btplayparam::kWaitForEnd].i == 1 && a.nodes[2].params[btsubtreeparam::kTree].u == 0xABCDull,
+                     "PlayAnimation / SubTree の JSON が往復で変わらない");
+            ck.Check(!Loads(Tree(0, { Node(0, "SubTree", { 1 }, json{ { "tree", GuidHex(1) } }), Wait(1, 3) })),
+                     "ファイルの SubTree に子を付けると読み込み失敗 (子は実行用の木にだけ付く)");
+            ck.Check(!Loads(Tree(0, { Node(0, "PlayAnimation", {}, json{ { "state", std::string(kBbMaxNameBytes + 1, 'x') } }) })),
+                     "長すぎるステート名は読み込み失敗");
+        }
+
+        // ---- PlayAnimation ----
+        // ステート 0 Idle (60 tick) / 1 Slash (20 tick, 等速) / 2 Fast (20 tick, 2 倍速 = 10 tick) / 3 Bare (クリップなし)
+        AnimationLibrary clipLib;
+        const auto makeClip = [&](const wchar_t* path, int32_t length) {
+            AnimationClipAsset clip;
+            clip.lengthTicks = length;
+            return clipLib.Register(path, clip);
+        };
+        const uint64_t idleClip = makeClip(L"selftest\\ai\\idle.anim.json", 60);
+        const uint64_t slashClip = makeClip(L"selftest\\ai\\slash.anim.json", 20);
+        ControllerLibrary ctrlLib;
+        ControllerAsset controller;
+        controller.states.push_back({ "Idle", "", idleClip, 1, 1 });
+        controller.states.push_back({ "Slash", "", slashClip, 1, 1 });
+        controller.states.push_back({ "Fast", "", slashClip, 2, 1 });
+        controller.states.push_back({ "Bare", "", 0, 1, 1 });
+        const uint64_t ctrlHash = ctrlLib.Register(L"selftest\\ai\\anim.controller.json", controller);
+        AnimatorControllerSystem animatorSystem;
+        const auto wire = [&](Sim& sim) {
+            sim.controllers = &ctrlLib;
+            sim.clips = &clipLib;
+            sim.animator = &animatorSystem;
+        };
+        const auto addActor = [&](Sim& sim, uint64_t tree, bool withAnimator) {
+            GameObject go = sim.scene.CreateGameObjectTracked("Actor");
+            go.AddComponent<BehaviorTreeComponent>()->tree = AssetID{ tree };
+            if (withAnimator) {
+                go.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ ctrlHash };
+            }
+            sim.GetWorld().ApplyStructuralChanges();
+            return go.Id();
+        };
+        const auto animOf = [](Sim& sim, EntityID e) { return sim.GetWorld().GetComponent<AnimatorControllerComponent>(e); };
+
+        {
+            Sim sim;
+            wire(sim);
+            const EntityID e = addActor(sim, RegisterTree(lib, L"play_now", Tree(0, { PlayAnim(0, "Slash", 0, false) })), true);
+            sim.Step();
+            ck.Check(sim.Status(e) == kSucceeded && animOf(sim, e)->currentState == 1 && animOf(sim, e)->transitionTo == -1,
+                     "PlayAnimation (durationTicks 0, 待たない): 即切り替えて即 Success");
+        }
+        {
+            Sim sim;
+            wire(sim);
+            // 後ろに Wait を付けて、Play を毎 tick やり直さないようにする
+            const EntityID e = addActor(
+                sim, RegisterTree(lib, L"play_blend", Tree(0, { Node(0, "Sequence", { 1, 2 }), PlayAnim(1, "Slash", 6, false), Wait(2, 1000) })), true);
+            sim.Step();
+            const AnimatorControllerComponent* animator = animOf(sim, e);
+            ck.Check(sim.Comp(e)->activeNodeId == 2 && animator->currentState == 0 && animator->transitionTo == 1 && animator->transitionDuration == 6,
+                     "PlayAnimation (durationTicks 6, 待たない): 遷移を始めて即 Success (次の兄弟へ進む)");
+            for (int i = 0; i < 6; ++i) {
+                sim.Step();
+            }
+            ck.Check(animator->currentState == 1 && animator->transitionTo == -1, "遷移は durationTicks 後に完了する");
+        }
+        {
+            // waitForEnd: BT が Success を返す tick = クリップが 1 周して先頭へ戻った tick (loop のクリップでも 1 周)
+            const auto lap = [&](const wchar_t* name, const char* state, int expectedTicks) {
+                Sim sim;
+                wire(sim);
+                const EntityID e = addActor(sim, RegisterTree(lib, name, Tree(0, { PlayAnim(0, state, 0, true) })), true);
+                std::vector<int32_t> timeBeforeBt;
+                sim.beforeBt = [&] { timeBeforeBt.push_back(animOf(sim, e)->stateTimeTicks); };
+                const std::vector<int32_t> statuses = Run(sim, e, expectedTicks + 2);
+                const size_t finish = static_cast<size_t>(expectedTicks); // 0 始まりの添字 = expectedTicks + 1 tick 目
+                bool runsUntil = true;
+                for (size_t i = 0; i < finish; ++i) {
+                    runsUntil = runsUntil && statuses[i] == kRunning;
+                }
+                return runsUntil && statuses[finish] == kSucceeded && statuses[finish + 1] == kRunning && timeBeforeBt[finish] == 0
+                       && timeBeforeBt[finish - 1] != 0;
+            };
+            ck.Check(lap(L"play_lap", "Slash", 20),
+                     "PlayAnimation (waitForEnd): 長さ 20 のクリップは入った tick から 20 tick 後に Success、その tick にクリップが先頭へ戻る");
+            ck.Check(lap(L"play_lap_fast", "Fast", 10), "PlayAnimation (waitForEnd): 2 倍速のステートは 10 tick で 1 周");
+        }
+        {
+            Sim sim;
+            wire(sim);
+            const EntityID e = addActor(sim, RegisterTree(lib, L"play_bare", Tree(0, { PlayAnim(0, "Bare", 0, true) })), true);
+            sim.Step();
+            ck.Check(sim.Status(e) == kSucceeded && animOf(sim, e)->currentState == 3,
+                     "クリップの無いステートは待つものが無いので waitForEnd でも即 Success");
+        }
+        {
+            // Failure: 名前が無い・空・Animator なし・controller を引けない構成。Animator の状態は何も変えない
+            const auto failsAndKeeps = [&](const char* state, bool withAnimator, bool wired, const wchar_t* name) {
+                Sim sim;
+                if (wired) {
+                    wire(sim);
+                }
+                const EntityID e = addActor(sim, RegisterTree(lib, name, Tree(0, { PlayAnim(0, state, 0, true) })), withAnimator);
+                sim.Step();
+                const AnimatorControllerComponent* animator = animOf(sim, e);
+                return sim.Status(e) == kFailed
+                       && (animator == nullptr || (animator->currentState == 0 && animator->transitionTo == -1 && animator->stateTimeTicks <= 1));
+            };
+            ck.Check(failsAndKeeps("Nope", true, true, L"play_fail_name") && failsAndKeeps("", true, true, L"play_fail_empty")
+                         && failsAndKeeps("Slash", false, true, L"play_fail_noanim") && failsAndKeeps("Slash", true, false, L"play_fail_nolib"),
+                     "PlayAnimation: ステート名が無い・空・Animator なし・controller の引き先なしは Failure で Animator を変えない");
+        }
+
+        // ---- SubTree ----
+        // BB のキー: 0 N (Int) / 1 Alert (Bool) / 2 Run (Bool, 初期 true) / 3 Never (Bool)
+        const uint64_t board = RegisterBoard(
+            lib, L"sub_bb", Board({ BbKey("N", "Int"), BbKey("Alert", "Bool"), BbKey("Run", "Bool", true), BbKey("Never", "Bool") }));
+        const uint64_t otherBoard = RegisterBoard(lib, L"sub_bb_other", Board({ BbKey("N", "Int") }));
+        enum { kN = 0, kAlert = 1, kRun = 2 };
+        const auto setN = [](int id, int value) { return SetBb(id, "N", "Constant", json{ { "intValue", value } }); };
+        const auto bbOf = [](Sim& sim, EntityID e, int key) -> BbValue& { return sim.Mutable(e)->blackboard[static_cast<size_t>(key)]; };
+        const auto waitIdOf = [](Sim& sim, EntityID e, int ticks) {
+            for (const BtNodeDef& node : sim.bt.FindInstance(e)->tree->nodes) {
+                if (node.kind == BtNodeKind::Wait && node.params[0].i == ticks) {
+                    return node.id;
+                }
+            }
+            return -1;
+        };
+        const auto guidOf = [](const wchar_t* name) { return BehaviorTreeLibrary::HashForPath(TreePath(name)); };
+
+        {
+            // BB の共有と、実行用の木が呼び出し側のノード表へ平らに取り込まれること
+            const uint64_t sub = RegisterTree(lib, L"sub_set", Tree(0, { setN(0, 7) }, board));
+            const uint64_t parent = RegisterTree(lib, L"sub_parent", Tree(0, { Node(0, "Sequence", { 1, 2 }), SubTreeNode(1, sub), Wait(2, 1000) }, board));
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(parent);
+            sim.Step();
+            const BtInstance* inst = sim.bt.FindInstance(e);
+            ck.Check(sim.Status(e) == kRunning && inst->blackboard.size() == 4 && inst->blackboard[kN].isSet == 1 && inst->blackboard[kN].i == 7
+                         && inst->tree->nodes.size() == 4 && lib.trees.Get(parent)->nodes.size() == 3,
+                     "SubTree: 部分木は親の BB をそのまま使い (キーの数は親のまま)、書いた値が親から見える");
+        }
+        {
+            // 結果の伝播 / SubTree ノードの Decorator
+            const uint64_t failing = RegisterTree(lib, L"sub_fail", Tree(0, { Decorated(Wait(0, 1), { BbCond("Never", "IsSet") }) }, board));
+            const uint64_t sub = guidOf(L"sub_set");
+            const uint64_t selector = RegisterTree(lib, L"sub_sel", Tree(0, { Node(0, "Selector", { 1, 2 }), SubTreeNode(1, failing), setN(2, 3) }, board));
+            const uint64_t guarded = RegisterTree(lib, L"sub_guard", Tree(0, { Decorated(SubTreeNode(0, sub), { BbCond("Never", "IsSet") }) }, board));
+            Sim sim;
+            const EntityID s = sim.AddTreeEntity(selector, "S");
+            const EntityID g = sim.AddTreeEntity(guarded, "G");
+            sim.Step();
+            ck.Check(sim.Status(s) == kSucceeded && bbOf(sim, s, kN).i == 3, "SubTree: 部分木の Failure が親へ返り、次の兄弟へ進む");
+            ck.Check(sim.Status(g) == kFailed && bbOf(sim, g, kN).isSet == 0, "SubTree ノード自身の Decorator が偽なら部分木に入らず Failure");
+        }
+        {
+            // 同じ木を 2 か所で使っても状態は別 (3 tick + 3 tick)
+            const uint64_t three = RegisterTree(lib, L"sub_three", Tree(0, { Wait(0, 3) }));
+            const uint64_t twice = RegisterTree(lib, L"sub_twice", Tree(0, { Node(0, "Sequence", { 1, 2 }), SubTreeNode(1, three), SubTreeNode(2, three) }));
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(twice);
+            const std::vector<int32_t> got = Run(sim, e, 8);
+            ck.Check(Is(got, { kRunning, kRunning, kRunning, kRunning, kRunning, kRunning, kSucceeded, kRunning }),
+                     "SubTree: 同じ木を 2 か所で使うと別々の状態で順に動く (3 + 3 tick)");
+        }
+        {
+            // 取り込めない SubTree は実行時 Failure。警告は取り込みのとき 1 回ずつ (体の数・tick の数に依らない)
+            const uint64_t mismatch = RegisterTree(lib, L"sub_other", Tree(0, { setN(0, 5) }, otherBoard));
+            const uint64_t noBoard = RegisterTree(lib, L"sub_noboard", Tree(0, { Wait(0, 0) }));
+            const uint64_t parent = RegisterTree(
+                lib, L"sub_unusable",
+                Tree(0, { Node(0, "Selector", { 1, 2, 3, 4, 5 }), SubTreeNode(1, mismatch), SubTreeNode(2, noBoard), SubTreeNode(3, 0),
+                          SubTreeNode(4, 0xDEADBEEFull), setN(5, 3) },
+                     board));
+            const uint64_t before = logging::TotalWritten();
+            Sim sim;
+            const EntityID a = sim.AddTreeEntity(parent, "A");
+            const EntityID b = sim.AddTreeEntity(parent, "B");
+            for (int i = 0; i < 3; ++i) {
+                sim.Step();
+            }
+            ck.Check(bbOf(sim, a, kN).i == 3 && bbOf(sim, b, kN).i == 3 && CountWarnings(before, "SubTree cannot be used") == 4
+                         && CountWarnings(before, "blackboard differs") == 2,
+                     "SubTree: BB が違う・BB なしの子・未指定・未登録は Failure で、理由ごとに 1 回ずつだけ警告");
+        }
+        {
+            // 入れ子の段数: 8 段までは動き、9 段目の SubTree は Failure + 警告
+            const auto chain = [&](int length, const wchar_t* prefix) {
+                const auto name = [&](int i) { return std::wstring(prefix) + L"_" + std::to_wstring(i); };
+                for (int i = 0; i < length; ++i) {
+                    RegisterTree(lib, name(i).c_str(), Tree(0, { SubTreeNode(0, guidOf(name(i + 1).c_str())) }));
+                }
+                RegisterTree(lib, name(length).c_str(), Tree(0, { Wait(0, 0) }));
+                return guidOf(name(0).c_str());
+            };
+            const uint64_t ok8 = chain(kBtMaxSubTreeDepth, L"chain_ok");
+            const uint64_t over9 = chain(kBtMaxSubTreeDepth + 1, L"chain_over");
+            const uint64_t before = logging::TotalWritten();
+            Sim sim;
+            const EntityID a = sim.AddTreeEntity(ok8, "Ok");
+            const EntityID b = sim.AddTreeEntity(over9, "Over");
+            sim.Step();
+            ck.Check(sim.Status(a) == kSucceeded && sim.bt.FindInstance(a)->tree->nodes.size() == static_cast<size_t>(kBtMaxSubTreeDepth) + 1,
+                     "SubTree: 入れ子 8 段は最後まで取り込まれて Success");
+            ck.Check(sim.Status(b) == kFailed && CountWarnings(before, "nested deeper") == 1, "SubTree: 9 段目は Failure + 警告 1 回");
+        }
+        {
+            // 自分自身を含む循環は入れ子の上限で止まる (元の木 + 取り込み 8 回 = 9 個 x 2 ノード)
+            const uint64_t self = guidOf(L"sub_rec");
+            RegisterTree(lib, L"sub_rec", Tree(0, { Node(0, "Sequence", { 1 }), SubTreeNode(1, self) }));
+            const uint64_t before = logging::TotalWritten();
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(self);
+            for (int i = 0; i < 3; ++i) {
+                sim.Step();
+            }
+            ck.Check(sim.Status(e) == kFailed && sim.bt.FindInstance(e)->tree->nodes.size() == 2u * (kBtMaxSubTreeDepth + 1)
+                         && CountWarnings(before, "nested deeper") == 1,
+                     "SubTree: 自分自身を取り込む循環は入れ子の上限で止まり、Failure + 警告 1 回");
+        }
+        {
+            // 取り込み後がノード数の上限を超える木は、どの SubTree も取り込まない (Failure + 警告)。収まるなら取り込む。
+            // 木の中身: Selector / SubTree / Wait + どこにもつながらないノード (読み込みは通る)
+            const uint64_t leaf = RegisterTree(lib, L"sub_big_leaf", Tree(0, { Wait(0, 0) }));
+            const auto big = [&](int total, const wchar_t* name) {
+                std::vector<json> nodes{ Node(0, "Selector", { 1, 2 }), SubTreeNode(1, leaf), Wait(2, 1000) };
+                for (int i = 3; i < total; ++i) {
+                    nodes.push_back(Wait(i, 1));
+                }
+                return RegisterTree(lib, name, Tree(0, nodes));
+            };
+            const uint64_t tooBig = big(kBtMaxNodes, L"sub_big_over");
+            const uint64_t fits = big(kBtMaxNodes - 1, L"sub_big_fit");
+            const uint64_t before = logging::TotalWritten();
+            Sim sim;
+            const EntityID over = sim.AddTreeEntity(tooBig, "Over");
+            const EntityID fit = sim.AddTreeEntity(fits, "Fit");
+            sim.Step();
+            ck.Check(tooBig != 0 && fits != 0 && sim.Status(over) == kRunning && sim.bt.FindInstance(over)->tree == lib.trees.GetShared(tooBig)
+                         && CountWarnings(before, "too large") == 1,
+                     "SubTree: 取り込むとノード数の上限を超える木は全部を取り込まず (SubTree は Failure)、警告 1 回");
+            ck.Check(sim.Status(fit) == kSucceeded && sim.bt.FindInstance(fit)->tree->nodes.size() == static_cast<size_t>(kBtMaxNodes),
+                     "SubTree: 取り込んでちょうど上限に収まる木は取り込まれる");
+        }
+
+        // 部分木の中の Abort は親の木の監視に入る (spec 4.1.1 の優先順)
+        {
+            // (a) 部分木の中の LowerPriority
+            const uint64_t sub = RegisterTree(lib, L"sub_lp",
+                                              Tree(0, { Node(0, "Selector", { 1, 2 }), Decorated(Wait(1, 1001), { BbCond("Alert", "IsSet", "LowerPriority") }), Wait(2, 1002) }, board));
+            const uint64_t parent = RegisterTree(lib, L"sub_lp_parent", Tree(0, { Node(0, "Sequence", { 1 }), SubTreeNode(1, sub) }, board));
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(parent);
+            std::vector<int32_t> trace;
+            sim.bt.SetAbortTrace(&trace);
+            sim.Step();
+            const bool lowRunning = sim.Comp(e)->activeNodeId == waitIdOf(sim, e, 1002);
+            bbOf(sim, e, kAlert) = BbValue{ 1, 1, 0.0f, { 0.0f, 0.0f, 0.0f }, kNullEntity };
+            sim.Step();
+            ck.Check(lowRunning && sim.Comp(e)->activeNodeId == waitIdOf(sim, e, 1001) && Is(trace, { waitIdOf(sim, e, 1002) }),
+                     "部分木の中の LowerPriority が、部分木の中の右の兄弟を Abort して左から入り直す");
+            sim.bt.SetAbortTrace(nullptr);
+        }
+        {
+            // (b) SubTree ノードに付けた Self の Decorator: 部分木の中身は深い方から Abort され、SubTree ノードが最後
+            const uint64_t sub = RegisterTree(lib, L"sub_self", Tree(0, { Node(0, "Sequence", { 1 }), Wait(1, 1003) }, board));
+            const uint64_t parent = RegisterTree(lib, L"sub_self_parent", Tree(7, { Decorated(SubTreeNode(7, sub), { BbCond("Run", "IsSet", "Self") }) }, board));
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(parent);
+            std::vector<int32_t> trace;
+            sim.bt.SetAbortTrace(&trace);
+            sim.Step();
+            const bool running = sim.Status(e) == kRunning && sim.Comp(e)->activeNodeId == waitIdOf(sim, e, 1003);
+            bbOf(sim, e, kRun).isSet = 0;
+            sim.Step();
+            ck.Check(running && trace.size() == 3 && trace[0] == waitIdOf(sim, e, 1003) && trace[2] == 7 && sim.Status(e) == kFailed,
+                     "SubTree ノードの Self Abort: 部分木の中身を深い方から Abort し、SubTree ノードが最後 (Failure)");
+            sim.bt.SetAbortTrace(nullptr);
+        }
+        {
+            // (c) 親の Selector の LowerPriority が、SubTree の中で動いているものを Abort する (深い方から → SubTree ノード)
+            const uint64_t sub = RegisterTree(lib, L"sub_run", Tree(0, { Node(0, "Sequence", { 1 }), Wait(1, 1005) }, board));
+            const uint64_t parent = RegisterTree(
+                lib, L"sub_lp2_parent",
+                Tree(0, { Node(0, "Selector", { 1, 2 }), Decorated(Wait(1, 1004), { BbCond("Alert", "IsSet", "LowerPriority") }), SubTreeNode(2, sub) }, board));
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(parent);
+            std::vector<int32_t> trace;
+            sim.bt.SetAbortTrace(&trace);
+            sim.Step();
+            const bool inSub = sim.Comp(e)->activeNodeId == waitIdOf(sim, e, 1005);
+            bbOf(sim, e, kAlert) = BbValue{ 1, 1, 0.0f, { 0.0f, 0.0f, 0.0f }, kNullEntity };
+            sim.Step();
+            ck.Check(inSub && trace.size() == 3 && trace[0] == waitIdOf(sim, e, 1005) && trace[2] == 2 && sim.Comp(e)->activeNodeId == waitIdOf(sim, e, 1004),
+                     "親の LowerPriority が SubTree の中で動いているものを深い方から Abort して左の兄弟へ入り直す");
+            sim.bt.SetAbortTrace(nullptr);
+        }
+        {
+            // 取り込み元が読み直されたら実行中の木は作り直し (BB は保つ)。実行中だった部分木は Abort される
+            const uint64_t sub = RegisterTree(lib, L"sub_reload", Tree(0, { Wait(0, 1000) }, board));
+            const uint64_t parent = RegisterTree(lib, L"sub_reload_parent", Tree(0, { Node(0, "Sequence", { 1 }), SubTreeNode(1, sub) }, board));
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(parent);
+            sim.Step();
+            bbOf(sim, e, kN) = BbValue{ 1, 42, 0.0f, { 0.0f, 0.0f, 0.0f }, kNullEntity };
+            const bool waiting = sim.Status(e) == kRunning;
+            RegisterTree(lib, L"sub_reload", Tree(0, { setN(0, 9) }, board));
+            sim.Step();
+            ck.Check(waiting && sim.Status(e) == kSucceeded && bbOf(sim, e, kN).i == 9, "取り込み元の木が読み直されたら、親の木は新しい部分木で最初からやり直す");
+        }
+        {
+            // 取り込み元が後から登録されたら、次の tick に取り込まれる
+            const uint64_t late = guidOf(L"sub_late");
+            const uint64_t parent = RegisterTree(lib, L"sub_late_parent", Tree(0, { SubTreeNode(0, late) }));
+            const uint64_t before = logging::TotalWritten();
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(parent);
+            sim.Step();
+            const bool failedFirst = sim.Status(e) == kFailed && CountWarnings(before, "not registered") == 1;
+            RegisterTree(lib, L"sub_late", Tree(0, { Wait(0, 0) }));
+            sim.Step();
+            sim.Step();
+            ck.Check(failedFirst && sim.Status(e) == kSucceeded, "未登録だった取り込み元を登録すると、親の木が取り込み直して動く");
+        }
+
+        // 取り込みの途中 (2 段入れ子 + 部分木の中の Abort) で保存 → 復元 → 連続実行と毎 tick のハッシュが一致
+        {
+            const uint64_t inner = RegisterTree(lib, L"snap_inner",
+                                                Tree(0, { Node(0, "Selector", { 1, 2 }), Decorated(Wait(1, 40), { BbCond("Alert", "IsSet", "LowerPriority") }), Wait(2, 50) }, board));
+            const uint64_t middle = RegisterTree(lib, L"snap_mid", Tree(0, { Node(0, "Sequence", { 1, 2, 3 }), Wait(1, 5), SubTreeNode(2, inner), setN(3, 4) }, board));
+            const uint64_t top = RegisterTree(lib, L"snap_top", Tree(0, { Node(0, "Sequence", { 1, 2 }), SubTreeNode(1, middle), Wait(2, 10) }, board));
+            Scene scene;
+            BehaviorTreeSystem first;
+            GameObject go = scene.CreateGameObjectTracked("Agent");
+            go.AddComponent<BehaviorTreeComponent>()->tree = AssetID{ top };
+            const EntityID agent = go.Id();
+            scene.GetWorld().ApplyStructuralChanges();
+            SimRefs refs;
+            refs.scene = &scene;
+            refs.behaviorTree = &first;
+            uint64_t tickRef = 0;
+            refs.tickIndex = &tickRef;
+            uint64_t tick = 1;
+            const auto step = [&](BehaviorTreeSystem& bt) {
+                bt.DeliverPending(tick);
+                bt.Update(scene.GetWorld(), tick, nullptr);
+                BtInstance* inst = const_cast<BtInstance*>(bt.FindInstance(agent));
+                if (inst != nullptr && !inst->blackboard.empty()) {
+                    inst->blackboard[kAlert].i = (tick / 9) % 2 == 0 ? 0 : 1; // Alert を周期的に反転する
+                    inst->blackboard[kAlert].isSet = 1;
+                }
+                scene.GetWorld().ApplyStructuralChanges();
+                ++tick;
+            };
+            for (int i = 0; i < 8; ++i) {
+                step(first); // Wait(5) を終えて内側の Selector の中にいる
+            }
+            tickRef = tick;
+            std::vector<std::byte> blob;
+            const bool captured = CaptureSimSnapshot(refs, blob) && first.FindInstance(agent)->tree->nodes.size() == 10;
+            ck.Check(captured, "(前提) 2 段入れ子の SubTree の途中で撮影できる (展開後 10 ノード)");
+
+            const uint64_t startTick = tick;
+            std::vector<uint64_t> continuous;
+            std::vector<int32_t> activeAfter;
+            for (int i = 0; i < 150; ++i) {
+                step(first);
+                continuous.push_back(HashWorld(scene.GetWorld(), refs.HashSources()));
+                activeAfter.push_back(scene.GetWorld().GetComponent<BehaviorTreeComponent>(agent)->activeNodeId);
+            }
+            BehaviorTreeSystem second;
+            SimRefs refsSecond = refs;
+            refsSecond.behaviorTree = &second;
+            bool same = captured && RestoreSimSnapshot(refsSecond, blob.data(), blob.size());
+            tick = startTick;
+            bool sameActive = true;
+            for (int i = 0; i < 150 && same; ++i) {
+                step(second);
+                same = HashWorld(scene.GetWorld(), refsSecond.HashSources()) == continuous[static_cast<size_t>(i)];
+                sameActive = sameActive && scene.GetWorld().GetComponent<BehaviorTreeComponent>(agent)->activeNodeId == activeAfter[static_cast<size_t>(i)];
+            }
+            ck.Check(same && sameActive && continuous.front() != continuous.back() && second.StateHash() == first.StateHash(),
+                     "SubTree の途中で保存 → 復元 → 150 tick の毎 tick のハッシュと実行中ノードが連続実行と一致 (部分木の Abort を含む)");
         }
     }
 

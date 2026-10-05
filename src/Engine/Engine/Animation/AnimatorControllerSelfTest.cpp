@@ -1,6 +1,7 @@
 #include "Engine/Engine/Animation/AnimatorControllerSelfTest.h"
 
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 #include "nlohmann/json.hpp"
@@ -198,6 +199,61 @@ bool RunAnimatorControllerSelfTest()
         check(rewritten["states"][0]["clip"].is_string()
                   && rewritten["states"][0]["clip"].get<std::string>() == "idle.anim.json",
               "unresolved clip keeps legacy path on save");
+    }
+
+    // ---- (M85f) AnimatorPlay: 遷移開始 / 即切り替え / 拒否 / 名前引き ----
+    {
+        check(FindControllerState(ca, "Walk") == 1 && FindControllerState(ca, "Idle") == 0
+                  && FindControllerState(ca, "Run") == -1 && FindControllerState(ca, "") == -1,
+              "FindControllerState: by name, -1 when missing");
+
+        Scene s;
+        GameObject go = buildScene(s);
+        World& world = s.GetWorld();
+        auto* acc = go.GetComponent<AnimatorControllerComponent>();
+        for (int i = 0; i < 5; ++i) {
+            sys.Update(world, ctrlLib, animLib);
+        }
+        const EntityID e = go.Id();
+
+        // 遷移: 立てた値が既存の遷移 (Update の 1.) と同じ形で、duration tick 後に currentState が替わる
+        check(AnimatorPlay(world, e, 1, 8, ctrlLib), "AnimatorPlay duration>0 accepted");
+        check(acc->transitionTo == 1 && acc->transitionTick == 0 && acc->transitionDuration == 8 && acc->transitionToTime == 0
+                  && acc->currentState == 0,
+              "AnimatorPlay duration>0 starts a transition without touching currentState");
+        for (int i = 0; i < 7; ++i) {
+            sys.Update(world, ctrlLib, animLib);
+        }
+        check(acc->currentState == 0 && acc->transitionTo == 1, "still blending 1 tick before the end");
+        sys.Update(world, ctrlLib, animLib);
+        check(acc->currentState == 1 && acc->transitionTo == -1 && acc->stateTimeTicks == 8,
+              "transition completes after durationTicks (target time = durationTicks)");
+
+        // 遷移中の再要求は遷移先だけ差し替えて混ぜ直す
+        acc->params[0] = 1; // Walk の間は Walk → Idle の条件 (param <= 0) を偽に保つ
+        check(AnimatorPlay(world, e, 0, 10, ctrlLib), "AnimatorPlay to Idle");
+        sys.Update(world, ctrlLib, animLib);
+        sys.Update(world, ctrlLib, animLib);
+        check(AnimatorPlay(world, e, 1, 4, ctrlLib) && acc->transitionTo == 1 && acc->transitionTick == 0 && acc->transitionDuration == 4
+                  && acc->currentState == 1,
+              "AnimatorPlay during a transition retargets and restarts the blend");
+
+        // 即切り替え: duration 0 は currentState を替えて再生位置・遷移を捨てる
+        check(AnimatorPlay(world, e, 0, 0, ctrlLib), "AnimatorPlay duration 0 accepted");
+        check(acc->currentState == 0 && acc->stateTimeTicks == 0 && acc->transitionTo == -1 && acc->transitionTick == 0
+                  && acc->transitionDuration == 0 && acc->transitionToTime == 0,
+              "AnimatorPlay duration 0 switches immediately and clears the transition");
+
+        // 拒否: 範囲外 / Animator なし / controller 未登録。何も変えない
+        const AnimatorControllerComponent before = *acc;
+        check(!AnimatorPlay(world, e, 2, 8, ctrlLib) && !AnimatorPlay(world, e, -1, 0, ctrlLib)
+                  && std::memcmp(&before, acc, sizeof(before)) == 0,
+              "AnimatorPlay rejects an out-of-range state and leaves the component untouched");
+        GameObject bare = s.CreateGameObjectTracked("Bare");
+        world.ApplyStructuralChanges();
+        check(!AnimatorPlay(world, bare.Id(), 0, 0, ctrlLib), "AnimatorPlay rejects an entity without an Animator");
+        ControllerLibrary emptyLib;
+        check(!AnimatorPlay(world, e, 0, 0, emptyLib), "AnimatorPlay rejects an unregistered controller");
     }
 
     if (failCount == 0) {

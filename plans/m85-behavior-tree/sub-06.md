@@ -1,8 +1,8 @@
 # sub-06: AnimatorPlay と PlayAnimation、SubTree
 
 - 依存: sub-05
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (M85f としてコミット、ハッシュは台帳)
+- 往復: 1
 
 ## やること
 - Engine に `AnimatorPlay(World&, EntityID, int32_t stateIndex, int32_t durationTicks)` を足す (`src\Engine\Engine\Animation\AnimatorController.{h,cpp}`)。duration > 0 = `transitionTo` / `transitionTick` / `transitionDuration` / `transitionToTime` を立てて遷移開始 (既存の遷移の評価と同じ式で混ぜる、`AnimatorController.cpp:283-370`)、0 = `currentState` を即切り替えて `stateTimeTicks = 0`。名前 → index の引き方 (`ControllerAsset::states[].name`) も関数にする。
@@ -27,4 +27,13 @@
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-06 (round 1)
+- AnimatorPlay / FindControllerState (AnimatorController.{h,cpp}) と PlayAnimation ノード。
+- SubTree は実行木の「平らな展開」(BtExpandSubTrees、BehaviorTreeLibrary.cpp)。部分木のノードを呼び出し側の表へ写し、id は元の最大 id の後ろへ連番で振り直す。BtInstance は 1 つのまま = snapshot v37 のまま (版は上げていない)。部分木の Decorator は親の木の MonitorNode にそのまま入る。
+- 展開結果は BehaviorTreeSystem::expansions_ (GUID 引き) にキャッシュし、BtExpansion::IsCurrent (登録の shared_ptr の同一性) で作り直す。
+- BehaviorTreeSystem::Update に controllers / clips を末尾の既定引数で追加 (TickRunner が渡す)。
+- 検証: Debug / Release ビルド 0 警告、Editor --selftest Debug (1 回目 Fracture 3 + net V1 2 の既知 flake、2 回目 0) / Release 0、Server Debug --selftest 0、check_rules 0 / 0。
+- nit 確認: 配達を Update の中へ戻すと BT selftest が 2 件 FAIL (配達は tick の頭の項目と、その前提の項目)。確認後に戻した。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner)。平らな展開・AnimatorPlay の引数追加・waitForEnd の数え方・遷移中の再要求を承認 (spec 8.)。ライブ表示の id 対応は sub-10 へ

@@ -11,8 +11,8 @@
 | sub-02 | OK | 1 | 24cc318 | Decorator 5 種と Abort |
 | sub-03 | OK | 1 | 6a8bd5b | Task 4 種 (MoveTo に failOnStuck、既定 false) |
 | sub-04 | OK | 2 | 3f8ad39 | round 1 REWORK: SearchArea に failOnStuck。snapshot v36 | AI ノード 4 種 |
-| sub-05 | OK | 2 | (このコミット) | round 1 REWORK: 配達を tick 頭へ・replay_verify。snapshot v37 | 汎用イベントキューと SendEvent |
-| sub-06 | 未着手 | 0 | | AnimatorPlay / PlayAnimation / SubTree |
+| sub-05 | OK | 2 | 16fa216 | round 1 REWORK: 配達を tick 頭へ・replay_verify。snapshot v37 | 汎用イベントキューと SendEvent |
+| sub-06 | OK | 1 | (このコミット) | SubTree は平らな展開、snapshot v37 のまま | AnimatorPlay / PlayAnimation / SubTree |
 | sub-07 | 未着手 | 0 | | 巡回ルート |
 | sub-08 | 未着手 | 0 | | BT 窓 (1) |
 | sub-09 | 未着手 | 0 | | BT 窓 (2) Undo・BB 編集・検査 |
@@ -51,8 +51,12 @@
 - 既知 flake の回数: sub-01 1 回目 5 件 / sub-02 0 件 / sub-03 1 回目 4 件 (2 回目 0) / sub-04 0 件 / sub-05 round 1 の途中 2 件 (net V1)、最終 0 件。
 - (sub-05 VERDICT nit#1) sub-06 で BehaviorTreeSelfTest.cpp を触るとき、配達 (DeliverPending) を Update の中へ戻すと新テスト (a) が FAIL することを 1 回確かめ、SELF_EVAL に書く (確かめた後は戻す)。
 - (sub-05 coder) イベントの配達は TickRunner のフェーズ 3 直前 (stepSim の中) で DeliverPending、BT の Update は BB への反映だけ。sub-11 の ABI は BehaviorTreeSystem::SendEvent(tick, ...) へ engine の tickIndex を渡す。sub-08 は BtParamType::String (イベント名) を扱う、SendEvent のキー欄は target / vector。
-- (sub-05) Debug 中にユーザーが見たアサートのダイアログは別件 `plans\selftest-crt-dialog.md` (M85 の範囲外)。
-- (sub-05 planner) sub-06: SubTree の入れ子状態を BT 節に足すなら v38。MonitorNode の分割は coder 判断。
+- (sub-05) Debug 中にユーザーが見たアサートのダイアログは別件 `plans\selftest-crt-dialog.md` (M85 の範囲外)。司会が 1c8a69e で対応済み: Editor.exe は先頭で SuppressCrtDialogs() を呼ぶので、Debug の selftest でアサートに当たるとダイアログなしで stderr に出て 0 以外で終わる。
+- (sub-05 planner) sub-06: SubTree の入れ子状態を BT 節に足すなら v38。MonitorNode の分割は coder 判断。→ sub-06 は平らな展開で v37 のまま、MonitorNode は分けず。
+- 既知 flake: sub-06 Debug 1 回目 5 件 (Fracture 3 + net V1 2)、2 回目 0。
+- (sub-06 VERDICT should#1) 部分木アセットを ReloadHub で読み直したとき、取り込んでいる親の木で動くエンティティが「Abort → 根からやり直し」(spec 4.1.9) になることを、sub-07 の SELF_EVAL に 1 行で書く。既存テスト「取り込み元の再登録」が見ていなければ sub-07 で 1 項目足す。
+- (sub-06 coder) 展開後の実行木は BehaviorTreeSystem::FindInstance(e)->tree。部分木のノード id は連番で振り直し → sub-10 は (GUID, 元の id) の導出値で表示 (sub-10.md 反映済み)、sub-11 は activeNodeId が展開後の id であることを明記するか対応表を通すか決める。Update(world, tick, nav, controllers, clips)。AnimatorPlay(world, e, stateIndex, duration, controllers) -> bool。
+- (sub-06 → sub-14) ADR-025 の既知の限界: SubTree は平らな展開・上限 1024・部分木の根の LowerPriority は Self 扱い・BB 継承なし・遷移中の AnimatorPlay はブレンド途中のポーズから飛ぶ。
 - (sub-04 VERDICT nit#1) BehaviorTreeSelfTest の診断ログ `[search] stuck ...` は、1 回の実行で 1〜2 行なら残す。tick ごとなら 1 行にまとめるか削除。sub-05 でついでに判断。
 - (sub-04 coder) BehaviorTreeSystem::Update(world, tick, nav) — 第 3 引数 NavSystem*。BtParamType::Mask (64 ビット、16 進) と BtNodeCategory::Ai は sub-08 のパラメータ欄・パレットで扱いが要る。SearchArea のパラメータは 4 項目 (usePrediction / radius / pointCount / failOnStuck)。名乗らない音を選んだら Entity キーは空にする (承認済み)。
 - (sub-02 VERDICT) snapshot は v34 のまま承認。sub-03 (種類ごとの追加状態) で kSimSnapshotVersion 35 にする。UE 対応の未検証点 (Loop の Failure 抜け、Cooldown の Abort 後計時) は ADR-025 (sub-14) に列挙。ADR-025 は下書き (sub-14 で確定)。

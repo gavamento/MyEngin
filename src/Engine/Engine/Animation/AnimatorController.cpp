@@ -278,6 +278,43 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
     return true;
 }
 
+int32_t FindControllerState(const ControllerAsset& controller, const std::string& name)
+{
+    for (size_t i = 0; i < controller.states.size(); ++i) {
+        if (controller.states[i].name == name) {
+            return static_cast<int32_t>(i);
+        }
+    }
+    return -1;
+}
+
+bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t durationTicks, const ControllerLibrary& controllers)
+{
+    AnimatorControllerComponent* c = world.GetComponent<AnimatorControllerComponent>(entity);
+    if (c == nullptr) {
+        return false;
+    }
+    const ControllerAsset* ctrl = controllers.Get(c->controller.value);
+    if (ctrl == nullptr || stateIndex < 0 || stateIndex >= static_cast<int32_t>(ctrl->states.size())) {
+        return false;
+    }
+    if (durationTicks > 0) {
+        // 既存の遷移 (Update の 1.) と同じ値の立て方。混ぜる元 (currentState / stateTimeTicks) は触らない
+        c->transitionTo = stateIndex;
+        c->transitionTick = 0;
+        c->transitionDuration = durationTicks;
+        c->transitionToTime = 0;
+        return true;
+    }
+    c->currentState = stateIndex;
+    c->stateTimeTicks = 0;
+    c->transitionTo = -1;
+    c->transitionTick = 0;
+    c->transitionDuration = 0;
+    c->transitionToTime = 0;
+    return true;
+}
+
 // ==== AnimatorControllerSystem ====
 
 void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& controllers,

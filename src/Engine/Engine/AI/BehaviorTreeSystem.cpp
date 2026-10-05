@@ -15,6 +15,8 @@
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Util/Random.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
+#include "Engine/Engine/Animation/Animation.h"
+#include "Engine/Engine/Animation/AnimatorController.h"
 #include "Engine/Engine/Navigation/NavSystem.h"
 #include "Engine/Engine/Perception/PerceptionSystem.h"
 #include "Engine/Engine/Scene/Tags.h"
@@ -76,6 +78,8 @@ struct RunCtx {
     std::vector<int32_t>* abortTrace;
     const NavSystem* nav; // null = ナビメッシュを引けない (FindRandomPoint / SearchArea は Failure)
     BehaviorTreeSystem* events = nullptr; // SendEvent の積み先。null = 積めない (SendEvent は Failure)
+    const ControllerLibrary* controllers = nullptr; // PlayAnimation のステート名の引き先。null = PlayAnimation は Failure
+    const AnimationLibrary* clips = nullptr;        // PlayAnimation の waitForEnd のクリップの長さの引き先。null = 待たない
     int steps = 0;
     bool stepLimitHit = false;
     bool aborted = false; // 実行中のノードを 1 つでも Abort した
@@ -912,6 +916,69 @@ BtResult VisitSendEvent(RunCtx& c, int32_t index)
     return BtResult::Success;
 }
 
+// ステートのクリップが 1 周するのにかかる tick 数。クリップが無い・長さ 0 は 0 (待つものが無い)
+int32_t PlayLengthTicks(const RunCtx& c, const ControllerState& stateDef)
+{
+    const AnimationClipAsset* clip = c.clips != nullptr ? c.clips->Get(stateDef.clipHash) : nullptr;
+    if (clip == nullptr || clip->lengthTicks <= 0) {
+        return 0;
+    }
+    const int32_t speed = (std::max)(stateDef.speed, 1); // 停止・逆再生のステートは 1 周が来ないので等速とみなす
+    return (clip->lengthTicks + speed - 1) / speed;
+}
+
+// PlayAnimation: Animator のステートへ AnimatorPlay で遷移を始める。Animator・controller・ステート名のどれかが無ければ Failure。
+// waitForEnd なら入った tick から数えてクリップ 1 周ぶんの tick 後に Success (Wait と同じ数え方)、でなければ即 Success。
+// Abort しても再生は止めない (Animator には戻すものが無い)
+BtResult VisitPlayAnimation(RunCtx& c, int32_t index)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    BtNodeState& state = c.inst.nodes[static_cast<size_t>(index)];
+    if (state.active != 0) {
+        --state.counter;
+        if (state.counter <= 0) {
+            Finish(state);
+            return BtResult::Success;
+        }
+        return BtResult::Running;
+    }
+    const std::string& name = node.params[btplayparam::kState].s;
+    const AnimatorControllerComponent* animator = c.world.GetComponent<AnimatorControllerComponent>(c.inst.entity);
+    const ControllerAsset* controller =
+        (animator != nullptr && c.controllers != nullptr) ? c.controllers->Get(animator->controller.value) : nullptr;
+    const int32_t stateIndex = (controller != nullptr && !name.empty()) ? FindControllerState(*controller, name) : -1;
+    if (stateIndex < 0
+        || !AnimatorPlay(c.world, c.inst.entity, stateIndex, node.params[btplayparam::kDurationTicks].i, *c.controllers)) {
+        return BtResult::Failure;
+    }
+    if (node.params[btplayparam::kWaitForEnd].i == 0) {
+        return BtResult::Success;
+    }
+    const int32_t waitTicks = PlayLengthTicks(c, controller->states[static_cast<size_t>(stateIndex)]);
+    if (waitTicks <= 0) {
+        return BtResult::Success;
+    }
+    state.active = 1;
+    state.counter = waitTicks;
+    return BtResult::Running;
+}
+
+// SubTree: 取り込まれた部分木 (子 1 つ) を訪れて結果をそのまま返す。子が無い = 取り込めなかった (BtExpandSubTrees が警告済み) ので Failure
+BtResult VisitSubTree(RunCtx& c, int32_t index)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    BtNodeState& state = c.inst.nodes[static_cast<size_t>(index)];
+    if (node.children.empty()) {
+        return BtResult::Failure;
+    }
+    state.active = 1;
+    const BtResult result = Visit(c, node.children[0]);
+    if (result != BtResult::Running) {
+        Finish(state);
+    }
+    return result;
+}
+
 BtResult VisitBody(RunCtx& c, int32_t index)
 {
     switch (c.tree.nodes[static_cast<size_t>(index)].kind) {
@@ -928,6 +995,8 @@ BtResult VisitBody(RunCtx& c, int32_t index)
     case BtNodeKind::SearchArea: return VisitSearchArea(c, index);
     case BtNodeKind::FindTarget: return VisitFindTarget(c, index);
     case BtNodeKind::SendEvent: return VisitSendEvent(c, index);
+    case BtNodeKind::PlayAnimation: return VisitPlayAnimation(c, index);
+    case BtNodeKind::SubTree: return VisitSubTree(c, index);
     case BtNodeKind::Count: break;
     }
     return BtResult::Failure;
@@ -1341,7 +1410,8 @@ void BehaviorTreeSystem::DeliverPending(uint64_t tick)
     });
 }
 
-void BehaviorTreeSystem::Update(World& world, uint64_t tick, const NavSystem* nav)
+void BehaviorTreeSystem::Update(World& world, uint64_t tick, const NavSystem* nav, const ControllerLibrary* controllers,
+                                const AnimationLibrary* clips)
 {
     std::vector<EntityID> owners;
     {
@@ -1378,7 +1448,7 @@ void BehaviorTreeSystem::Update(World& world, uint64_t tick, const NavSystem* na
             inst = std::move(instances_[oldAt]);
             ++oldAt;
         }
-        if (StepOwner(world, tick, nav, owner, inst)) {
+        if (StepOwner(world, tick, nav, controllers, clips, owner, inst)) {
             next.push_back(std::move(inst));
         }
     }
@@ -1388,17 +1458,31 @@ void BehaviorTreeSystem::Update(World& world, uint64_t tick, const NavSystem* na
     instances_ = std::move(next);
 }
 
-bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, const NavSystem* nav, EntityID owner, BtInstance& inst)
+std::shared_ptr<const BehaviorTreeAsset> BehaviorTreeSystem::ResolveTree(uint64_t guid)
+{
+    const BehaviorTreeLibrary* library = behaviortree::Library();
+    std::shared_ptr<const BehaviorTreeAsset> registered = (library != nullptr && guid != 0) ? library->GetShared(guid) : nullptr;
+    if (!registered) {
+        expansions_.erase(guid);
+        return nullptr;
+    }
+    std::shared_ptr<BtExpansion>& entry = expansions_[guid];
+    if (!entry || !entry->IsCurrent(*library, registered)) {
+        entry = std::make_shared<BtExpansion>(BtExpandSubTrees(*library, std::move(registered)));
+    }
+    return entry->tree;
+}
+
+bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, const NavSystem* nav, const ControllerLibrary* controllers,
+                                   const AnimationLibrary* clips, EntityID owner, BtInstance& inst)
 {
     BehaviorTreeComponent* comp = world.GetComponent<BehaviorTreeComponent>(owner);
     bool hasInstance = !inst.entity.IsNull();
 
     // 木と BB を引く (置き換えられたものは shared_ptr の同一性で分かる)
     const uint64_t guid = comp->tree.value;
-    BehaviorTreeLibrary* library = behaviortree::Library();
     BlackboardLibrary* bbLibrary = blackboard::Library();
-    std::shared_ptr<const BehaviorTreeAsset> tree =
-        (library != nullptr && guid != 0) ? library->GetShared(guid) : nullptr;
+    std::shared_ptr<const BehaviorTreeAsset> tree = ResolveTree(guid); // SubTree を取り込み済みの木
     std::shared_ptr<const BlackboardAsset> bbAsset;
     bool bbMissing = false;
     if (tree && tree->blackboard != 0) {
@@ -1482,7 +1566,7 @@ bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, const NavSystem*
 
     // 配られたイベントの BB 反映は Abort の監視より前 (spec 4.1.1 の (1))
     ApplyEventsToBlackboard(inst, delivered_);
-    RunCtx ctx{ world, inst, *tree, tick, abortTrace_, nav, this };
+    RunCtx ctx{ world, inst, *tree, tick, abortTrace_, nav, this, controllers, clips };
     MonitorNode(ctx, tree->rootIndex);
     const BtResult result = Visit(ctx, tree->rootIndex);
     if (result != BtResult::Running) {
@@ -1645,7 +1729,6 @@ bool BehaviorTreeSystem::ReadSnapshot(ByteReader& r, BtSnapshot& out)
 
 void BehaviorTreeSystem::ApplySnapshot(World& world, BtSnapshot&& snapshot)
 {
-    BehaviorTreeLibrary* library = behaviortree::Library();
     BlackboardLibrary* bbLibrary = blackboard::Library();
     std::vector<BtInstance> restored;
     restored.reserve(snapshot.instances.size());
@@ -1653,7 +1736,7 @@ void BehaviorTreeSystem::ApplySnapshot(World& world, BtSnapshot&& snapshot)
         if (!world.IsAlive(inst.entity) || !world.HasComponent(inst.entity, BehaviorTreeComponent::sTypeId)) {
             continue;
         }
-        std::shared_ptr<const BehaviorTreeAsset> tree = library != nullptr ? library->GetShared(inst.treeGuid) : nullptr;
+        std::shared_ptr<const BehaviorTreeAsset> tree = ResolveTree(inst.treeGuid);
         if (!tree) {
             continue;
         }

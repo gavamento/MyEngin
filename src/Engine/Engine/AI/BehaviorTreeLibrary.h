@@ -21,6 +21,7 @@ constexpr int kBtMaxTicksParam = 216000; // tick 数のパラメータの上限 
 constexpr int kBtMaxRepeatCount = 100000; // Repeat の回数の上限
 constexpr int kBtMaxDecoratorsPerNode = 8; // 1 ノードに付けられる Decorator の数の上限
 constexpr int kBtMaxStateSlots = kBtMaxNodes * (1 + kBtMaxDecoratorsPerNode); // 実行状態の欄の数の上限 (ノード 1 + Decorator 1 つにつき 1 欄)
+constexpr int kBtMaxSubTreeDepth = 8;  // SubTree の入れ子の段数の上限 (9 段目の SubTree は Failure)
 
 // ノードの種類。値は btNodeTypes の添字で、ファイルには名前で保存する (並べ替えても保存形式は変わらない)
 enum class BtNodeKind : uint8_t {
@@ -37,6 +38,8 @@ enum class BtNodeKind : uint8_t {
     SearchArea,
     FindTarget,
     SendEvent,
+    PlayAnimation,
+    SubTree,
     Count,
 };
 
@@ -45,6 +48,8 @@ enum class BtNodeCategory : uint8_t {
     Composite,
     Task,
     Ai, // 知覚・ナビメッシュを引いてブラックボードへ書くノード (FindRandomPoint など)
+    Gameplay, // 外の仕組み (Animator・イベントキュー) へ働きかけるノード
+    Tree,     // 別の木を取り込むノード (SubTree)
 };
 
 enum class BtParamType : uint8_t {
@@ -261,6 +266,22 @@ enum : int {
 };
 } // namespace btsendkey
 
+// PlayAnimation の params の並び
+namespace btplayparam {
+enum : int {
+    kState = 0,         // String。Animator Controller のステート名。空・見つからなければ Failure
+    kDurationTicks = 1, // 遷移の長さ (tick)。0 = 即切り替え
+    kWaitForEnd = 2,    // 真ならそのステートのクリップが 1 周するまで Running
+};
+} // namespace btplayparam
+
+// SubTree の params の並び
+namespace btsubtreeparam {
+enum : int {
+    kTree = 0, // Guid。取り込む .bt.json。0 = 参照なし (Failure)
+};
+} // namespace btsubtreeparam
+
 // ブラックボードのキーを持つノードの "keys" の並び
 namespace btnodekey {
 enum : int {
@@ -379,6 +400,32 @@ struct BehaviorTreeAsset {
 // 成り立たない (id の重複・存在しない子・子の数の違反・親が 2 つ・循環・深すぎ・根に親がある) なら false。
 // BehaviorTreeLibrary::FromJson とエディタの保存前の検査が使う
 bool BtLinkAsset(BehaviorTreeAsset& asset);
+
+class BehaviorTreeLibrary;
+
+// 取り込み元の木 1 つの参照。登録が置き換わった・新しく登録された・消えたことを shared_ptr の同一性で検出する (null = 未登録だった)
+struct BtSubTreeDep {
+    uint64_t guid = 0;
+    std::shared_ptr<const BehaviorTreeAsset> asset;
+};
+
+// 実行用に SubTree を取り込み終えた木。実行器は SubTree の部分木を呼び出し側の木のノード表へ平らに写して 1 本の木として動かす
+// (欄は 1 つの BtInstance に収まり、部分木の Decorator も呼び出し側の Abort の監視にそのまま加わる)
+struct BtExpansion {
+    std::shared_ptr<const BehaviorTreeAsset> source; // 展開前の木 (登録されているもの)
+    std::shared_ptr<const BehaviorTreeAsset> tree;   // 実行する木。SubTree が 1 つも無ければ source そのもの
+    std::vector<BtSubTreeDep> deps;                  // 引いた部分木 (引いた順)
+
+    // source と deps が今のライブラリの登録と全部同じなら true (false なら作り直す)
+    bool IsCurrent(const BehaviorTreeLibrary& library, const std::shared_ptr<const BehaviorTreeAsset>& registered) const;
+};
+
+// source の SubTree ノードへ部分木を取り込む。取り込めない SubTree (未指定・未登録・BB 違い・入れ子が kBtMaxSubTreeDepth を超える・
+// 根なし) は子なしのまま残し (実行時 Failure)、理由を 1 回警告する。取り込み後がノード数・深さの上限を超えるときは
+// 全部を取り込まずに source そのまま (全 SubTree が Failure) にする。
+// 取り込んだノードの id は source の最大 id より後ろへ連番で振り直す (部分木の元の id は実行木には残らない)。
+// 結果は assets の中身だけで決まる (決定論)
+BtExpansion BtExpandSubTrees(const BehaviorTreeLibrary& library, std::shared_ptr<const BehaviorTreeAsset> source);
 
 struct BehaviorTreeEntry {
     uint64_t hash = 0;

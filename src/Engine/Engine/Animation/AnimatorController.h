@@ -6,6 +6,8 @@
 
 #include "nlohmann/json.hpp"
 
+#include "Engine/Core/Ecs/EntityID.h"
+
 namespace mye {
 
 class World;
@@ -80,6 +82,15 @@ public:
 private:
     std::unordered_map<uint64_t, ControllerAsset> controllers_;
 };
+
+// state 名から index を引く。無ければ -1 (同名が複数なら先頭)
+int32_t FindControllerState(const ControllerAsset& controller, const std::string& name);
+
+// entity の Animator を stateIndex のステートへ強制的に移す (BT の PlayAnimation 用)。
+// durationTicks > 0: 今のポーズからその tick 数で混ぜる遷移を始める (遷移中なら遷移先だけを差し替えて混ぜ直す)。
+// 0 以下: currentState を即切り替えて再生位置を 0 に戻し、遷移を捨てる。
+// Animator が無い・controller が未登録・stateIndex が範囲外なら何も変えず false
+bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t durationTicks, const ControllerLibrary& controllers);
 
 // AnimatorControllerComponent を評価してポーズを適用し、状態/遷移を進める (M22)。
 // AnimatorControllerComponent 非存在シーンでは完全 no-op (既存シーンのリプレイ不変)。

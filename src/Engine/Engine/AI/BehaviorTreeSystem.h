@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <set>
+#include <unordered_map>
 #include <string_view>
 #include <vector>
 
@@ -19,7 +20,10 @@ namespace mye {
 
 class World;
 class NavSystem;
+class ControllerLibrary;
+class AnimationLibrary;
 struct BehaviorTreeAsset;
+struct BtExpansion;
 
 // BtInstance::rootStatus。根が終わった tick の結果で、次の tick に根からやり直す
 namespace btroot {
@@ -87,8 +91,10 @@ struct BtSnapshot {
 class BehaviorTreeSystem {
 public:
     // tick ごとに呼ぶ (stepSim の中、知覚の後・ナビメッシュの前)。エンティティキー順に 1 体ずつ最後まで進める。
-    // nav は FindRandomPoint / SearchArea の問い合わせ先 (読むだけ)。null の間はそれらのノードが Failure
-    void Update(World& world, uint64_t tick, const NavSystem* nav);
+    // nav は FindRandomPoint / SearchArea の問い合わせ先 (読むだけ)。null の間はそれらのノードが Failure。
+    // controllers / clips は PlayAnimation のステート名とクリップの長さの引き先 (読むだけ)。null の間は PlayAnimation が Failure
+    void Update(World& world, uint64_t tick, const NavSystem* nav, const ControllerLibrary* controllers = nullptr,
+                const AnimationLibrary* clips = nullptr);
 
     // 旧シーンの状態を捨てる (シーン遷移)
     void Reset();
@@ -135,13 +141,18 @@ private:
     void SavePending(ByteWriter& w) const;
 
     // owner 1 体の同期と実行。表に残すなら true
-    bool StepOwner(World& world, uint64_t tick, const NavSystem* nav, EntityID owner, BtInstance& inst);
+    bool StepOwner(World& world, uint64_t tick, const NavSystem* nav, const ControllerLibrary* controllers, const AnimationLibrary* clips,
+                   EntityID owner, BtInstance& inst);
+
+    // 登録された木 (GUID) を実行用に展開した結果 (SubTree の取り込み済み)。作り直しは IsCurrent で決める。木の中身だけで決まるキャッシュで、sim 状態ではない
+    std::shared_ptr<const BehaviorTreeAsset> ResolveTree(uint64_t guid);
 
     std::vector<BtInstance> instances_; // エンティティキー昇順
     std::vector<BtEvent> pending_;      // 配送待ち (送信順 = seq 順)。sim 状態
     std::vector<BtEvent> delivered_;    // 直近の Update が配った分 (配送順)。次の Update で捨てる。sim 状態ではない
     bool eventOverflowWarned_ = false;  // ログだけ。sim 状態ではない
     std::vector<int32_t>* abortTrace_ = nullptr;
+    std::unordered_map<uint64_t, std::shared_ptr<BtExpansion>> expansions_; // 引くだけ (走査しない)
     std::set<uint64_t> warnedMissing_;  // 「木が見つからない」を警告済みの GUID (ログだけ。sim 状態ではない)
 };
 

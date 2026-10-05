@@ -102,6 +102,16 @@ const BtParamDesc kSendEventParams[] = {
     { "intValue", BtParamType::Int, 0.0f, -kBtValueLimit, kBtValueLimit, nullptr, 0 },
 };
 
+// btplayparam / btsubtreeparam の並びと同じ
+const BtParamDesc kPlayAnimationParams[] = {
+    { "state", BtParamType::String, 0.0f, 0.0f, 0.0f, nullptr, 0 },
+    { "durationTicks", BtParamType::Int, 8.0f, 0.0f, static_cast<float>(kBtMaxTicksParam), nullptr, 0 },
+    { "waitForEnd", BtParamType::Bool, 0.0f, 0.0f, 1.0f, nullptr, 0 },
+};
+const BtParamDesc kSubTreeParams[] = {
+    { "tree", BtParamType::Guid, 0.0f, 0.0f, 0.0f, nullptr, 0 },
+};
+
 const char* const kTargetKeyNames[] = { "target" };
 const char* const kSendEventKeyNames[] = { "target", "vector" };
 const char* const kFindRandomPointKeyNames[] = { "center", "result" };
@@ -128,7 +138,10 @@ const BtNodeTypeInfo kNodeTypes[] = {
     { BtNodeKind::SearchArea, "SearchArea", BtNodeCategory::Ai, 0, 0, kSearchAreaParams, 4, kSearchAreaKeyNames, 2,
       static_cast<int>(sizeof(BtSearchAreaState)) },
     { BtNodeKind::FindTarget, "FindTarget", BtNodeCategory::Ai, 0, 0, kFindTargetParams, 5, kTargetKeyNames, 1, 0 },
-    { BtNodeKind::SendEvent, "SendEvent", BtNodeCategory::Task, 0, 0, kSendEventParams, 4, kSendEventKeyNames, 2, 0 },
+    { BtNodeKind::SendEvent, "SendEvent", BtNodeCategory::Gameplay, 0, 0, kSendEventParams, 4, kSendEventKeyNames, 2, 0 },
+    { BtNodeKind::PlayAnimation, "PlayAnimation", BtNodeCategory::Gameplay, 0, 0, kPlayAnimationParams, 3, nullptr, 0, 0 },
+    // ファイルの SubTree は子を持たない。子 1 つ (取り込んだ部分木の根) は BtExpandSubTrees が実行用の木にだけ作る
+    { BtNodeKind::SubTree, "SubTree", BtNodeCategory::Tree, 0, 1, kSubTreeParams, 1, nullptr, 0, 0 },
 };
 static_assert(sizeof(kNodeTypes) / sizeof(kNodeTypes[0]) == static_cast<size_t>(BtNodeKind::Count),
               "kNodeTypes を BtNodeKind の全値ぶん並べる");
@@ -527,6 +540,133 @@ bool BtLinkAsset(BehaviorTreeAsset& asset)
     return true;
 }
 
+namespace {
+
+// 実行用の木の組み立て作業
+struct ExpandWork {
+    const BehaviorTreeLibrary& library;
+    BtExpansion& result;
+    BehaviorTreeAsset& out;   // 組み立て中の実行用の木 (nodes は source の写しに部分木を足していく)
+    int64_t nextId;
+    bool overflow = false;    // ノード数・id が上限を超えた (全体を諦める)
+};
+
+void WarnSubTree(const BehaviorTreeAsset& source, int32_t nodeId, const char* reason)
+{
+    MYE_LOG_WARN("[behaviortree] '%s' node %d: SubTree cannot be used (%s); it fails when run", source.name.c_str(), nodeId, reason);
+}
+
+// src の根から届くノードを前順で out へ足す。id は連番で振り直し、子の参照も振り直した id へ向ける。足した根の id を返す
+int32_t AppendSubTreeNodes(ExpandWork& work, const BehaviorTreeAsset& src)
+{
+    std::vector<int32_t> order; // 前順
+    std::vector<int32_t> stack{ src.rootIndex };
+    while (!stack.empty()) {
+        const int32_t at = stack.back();
+        stack.pop_back();
+        order.push_back(at);
+        const std::vector<int32_t>& children = src.nodes[static_cast<size_t>(at)].children;
+        for (auto it = children.rbegin(); it != children.rend(); ++it) {
+            stack.push_back(*it);
+        }
+    }
+    std::vector<int32_t> newIdOf(src.nodes.size(), -1);
+    for (const int32_t at : order) {
+        newIdOf[static_cast<size_t>(at)] = static_cast<int32_t>(work.nextId++);
+    }
+    for (const int32_t at : order) {
+        BtNodeDef node = src.nodes[static_cast<size_t>(at)];
+        node.id = newIdOf[static_cast<size_t>(at)];
+        node.childIds.clear();
+        for (const int32_t child : src.nodes[static_cast<size_t>(at)].children) {
+            node.childIds.push_back(newIdOf[static_cast<size_t>(child)]);
+        }
+        node.children.clear();
+        node.parent = -1;
+        work.out.nodes.push_back(std::move(node));
+    }
+    return newIdOf[static_cast<size_t>(src.rootIndex)];
+}
+
+// out.nodes の [begin, end) にある SubTree へ部分木を取り込む。level = この範囲の木が何段目の入れ子か (source = 0)
+void ResolveSubTrees(ExpandWork& work, const BehaviorTreeAsset& source, size_t begin, size_t end, int level)
+{
+    for (size_t i = begin; i < end && !work.overflow; ++i) {
+        if (work.out.nodes[i].kind != BtNodeKind::SubTree) {
+            continue;
+        }
+        const int32_t nodeId = work.out.nodes[i].id;
+        const uint64_t guid = work.out.nodes[i].params[btsubtreeparam::kTree].u;
+        if (guid == 0) {
+            WarnSubTree(source, nodeId, "no tree is set");
+            continue;
+        }
+        if (level + 1 > kBtMaxSubTreeDepth) {
+            WarnSubTree(source, nodeId, "nested deeper than the limit");
+            continue;
+        }
+        std::shared_ptr<const BehaviorTreeAsset> sub = work.library.GetShared(guid);
+        work.result.deps.push_back(BtSubTreeDep{ guid, sub });
+        if (!sub) {
+            WarnSubTree(source, nodeId, "the tree is not registered");
+            continue;
+        }
+        if (sub->blackboard != source.blackboard) {
+            WarnSubTree(source, nodeId, "its blackboard differs from the parent's");
+            continue;
+        }
+        if (sub->rootIndex < 0) {
+            WarnSubTree(source, nodeId, "the tree has no root");
+            continue;
+        }
+        const size_t firstNew = work.out.nodes.size();
+        const int32_t rootId = AppendSubTreeNodes(work, *sub);
+        if (work.out.nodes.size() > static_cast<size_t>(kBtMaxNodes) || work.nextId > INT32_MAX) {
+            work.overflow = true;
+            return;
+        }
+        work.out.nodes[i].childIds = { rootId };
+        ResolveSubTrees(work, source, firstNew, work.out.nodes.size(), level + 1);
+    }
+}
+
+} // namespace
+
+bool BtExpansion::IsCurrent(const BehaviorTreeLibrary& library, const std::shared_ptr<const BehaviorTreeAsset>& registered) const
+{
+    if (source != registered) {
+        return false;
+    }
+    return std::all_of(deps.begin(), deps.end(), [&library](const BtSubTreeDep& dep) { return library.GetShared(dep.guid) == dep.asset; });
+}
+
+BtExpansion BtExpandSubTrees(const BehaviorTreeLibrary& library, std::shared_ptr<const BehaviorTreeAsset> source)
+{
+    BtExpansion result;
+    result.source = source;
+    result.tree = source;
+    const bool hasSubTree = std::any_of(source->nodes.begin(), source->nodes.end(),
+                                        [](const BtNodeDef& node) { return node.kind == BtNodeKind::SubTree; });
+    if (!hasSubTree) {
+        return result;
+    }
+
+    BehaviorTreeAsset expanded = *source;
+    int64_t maxId = 0;
+    for (const BtNodeDef& node : source->nodes) {
+        maxId = (std::max)(maxId, static_cast<int64_t>(node.id));
+    }
+    ExpandWork work{ library, result, expanded, maxId + 1 };
+    ResolveSubTrees(work, *source, 0, source->nodes.size(), 0);
+    if (work.overflow || !BtLinkAsset(expanded)) {
+        MYE_LOG_WARN("[behaviortree] '%s': the SubTrees make the tree too large or too deep; none of them is expanded (they fail when run)",
+                     source->name.c_str());
+        return result; // tree = source のまま。deps は残すので、部分木が小さく直れば作り直される
+    }
+    result.tree = std::make_shared<const BehaviorTreeAsset>(std::move(expanded));
+    return result;
+}
+
 uint64_t BehaviorTreeLibrary::HashForPath(const std::wstring& path)
 {
     // 移動 / リネーム済みの資産は .meta の GUID がキー (NavFilterLibrary と同じ)
@@ -708,6 +848,11 @@ bool BehaviorTreeLibrary::FromJson(const json& j, BehaviorTreeAsset& out)
     }
     if (!BtLinkAsset(asset)) {
         return false;
+    }
+    for (const BtNodeDef& node : asset.nodes) {
+        if (node.kind == BtNodeKind::SubTree && !node.childIds.empty()) {
+            return false; // ファイルの SubTree は子を持たない (子は実行用の木にだけ付く)
+        }
     }
     WarnIgnoredLowerPriority(asset);
     out =std::move(asset);
