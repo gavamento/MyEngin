@@ -18,6 +18,17 @@ namespace mye {
 
 namespace {
 
+int32_t TickToField(uint64_t tick)
+{
+    return static_cast<int32_t>((std::min)(tick, static_cast<uint64_t>(INT32_MAX)));
+}
+
+// tick から ticks 後の tick (int32 へ丸める)
+int32_t TickToFieldAt(uint64_t tick, int32_t ticks)
+{
+    return TickToField(tick + static_cast<uint64_t>(ticks));
+}
+
 // 1 ノードの訪問の結果
 enum class BtResult : uint8_t {
     Running,
@@ -45,6 +56,8 @@ struct RunCtx {
     World& world;
     BtInstance& inst;
     const BehaviorTreeAsset& tree;
+    uint64_t tick;
+    std::vector<int32_t>* abortTrace;
     int steps = 0;
     bool stepLimitHit = false;
     bool aborted = false; // 実行中のノードを 1 つでも Abort した
@@ -58,18 +71,88 @@ void Finish(BtNodeState& state)
     state = BtNodeState{};
 }
 
-// 実行中のノードとその子孫を Abort する。子孫が先 (深い方から)。ノード固有の後始末は種類ごとにここへ足す
+BtNodeState& SlotOf(RunCtx& c, const BtDecoratorDef& deco)
+{
+    return c.inst.nodes[static_cast<size_t>(deco.slot)];
+}
+
+// ノードに入っているか。本体が動いている間に加えて、Decorator だけが動いている間 (Repeat の周回の切れ目など) も含む
+bool NodeActive(const BtInstance& inst, const BehaviorTreeAsset& tree, int32_t index)
+{
+    if (inst.nodes[static_cast<size_t>(index)].active != 0) {
+        return true;
+    }
+    for (const BtDecoratorDef& deco : tree.nodes[static_cast<size_t>(index)].decorators) {
+        if (inst.nodes[static_cast<size_t>(deco.slot)].active != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// 入るときの Decorator の初期化 (Repeat の周回ごとにも内側の分をやり直す)
+void ArmDecorator(RunCtx& c, const BtDecoratorDef& deco)
+{
+    BtNodeState& slot = SlotOf(c, deco);
+    slot.active = 1;
+    switch (deco.kind) {
+    case BtDecoratorKind::Repeat: slot.counter = 0; break;
+    case BtDecoratorKind::Timeout: slot.counter = TickToFieldAt(c.tick, deco.params[0].i); break;
+    default: break; // Cooldown の counter は前回の終了から持ち越す。BlackboardCondition の phase は入る前の評価で書いてある
+    }
+}
+
+// ノードを抜けた (終了でも Abort でも) ときの Decorator の後始末。Cooldown はここで計時を始める。
+// BlackboardCondition の phase (最後の結果) は監視の比較に要るので残す
+void FinishDecorators(RunCtx& c, const BtNodeDef& node)
+{
+    for (const BtDecoratorDef& deco : node.decorators) {
+        BtNodeState& slot = SlotOf(c, deco);
+        switch (deco.kind) {
+        case BtDecoratorKind::Cooldown:
+            slot = BtNodeState{};
+            slot.counter = TickToFieldAt(c.tick, deco.params[0].i);
+            break;
+        case BtDecoratorKind::BlackboardCondition: slot.active = 0; break;
+        default: Finish(slot); break;
+        }
+    }
+}
+
+// 実行中のノードとその子孫を Abort する。子孫が先 (深い方から)。
+// ノード固有の後始末 (MoveTo の停止など) は子孫の後・FinishDecorators と Finish の前でここへ足す
 void AbortNode(RunCtx& c, int32_t index)
 {
-    BtNodeState& state = c.inst.nodes[static_cast<size_t>(index)];
-    if (state.active == 0) {
+    if (!NodeActive(c.inst, c.tree, index)) {
         return;
     }
-    for (const int32_t child : c.tree.nodes[static_cast<size_t>(index)].children) {
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    for (const int32_t child : node.children) {
         AbortNode(c, child);
     }
-    Finish(state);
+    if (c.abortTrace != nullptr) {
+        c.abortTrace->push_back(node.id);
+    }
+    FinishDecorators(c, node);
+    Finish(c.inst.nodes[static_cast<size_t>(index)]);
     c.aborted = true;
+}
+
+// Decorator は残して、ノード本体とその子孫だけを Abort する (Timeout の打ち切り用)
+void AbortBody(RunCtx& c, int32_t index)
+{
+    BtNodeState& state = c.inst.nodes[static_cast<size_t>(index)];
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    for (const int32_t child : node.children) {
+        AbortNode(c, child);
+    }
+    if (state.active != 0) {
+        if (c.abortTrace != nullptr) {
+            c.abortTrace->push_back(node.id);
+        }
+        Finish(state);
+        c.aborted = true;
+    }
 }
 
 // Selector: 最初に Success した子で Success、全部 Failure で Failure。
@@ -156,13 +239,8 @@ BtResult VisitWait(RunCtx& c, int32_t index)
     return BtResult::Running;
 }
 
-BtResult Visit(RunCtx& c, int32_t index)
+BtResult VisitBody(RunCtx& c, int32_t index)
 {
-    if (c.steps >= kBtMaxStepsPerTick) {
-        c.stepLimitHit = true; // 手を付けずに Running で返す。入っていないノードは次の tick に親が入り直す
-        return BtResult::Running;
-    }
-    ++c.steps;
     switch (c.tree.nodes[static_cast<size_t>(index)].kind) {
     case BtNodeKind::Selector: return VisitSequenceOrSelector(c, index, true);
     case BtNodeKind::Sequence: return VisitSequenceOrSelector(c, index, false);
@@ -173,17 +251,233 @@ BtResult Visit(RunCtx& c, int32_t index)
     return BtResult::Failure;
 }
 
+// BlackboardCondition の今の真偽。キーが無い・BB が無い・未設定のまま大小を比べる・Vector / Entity の大小比較は偽。
+// IsSet: Bool は true、Entity は生きているハンドル、Vector / Int / Float は値が書かれている
+bool EvalBlackboardCondition(const RunCtx& c, const BtDecoratorDef& deco)
+{
+    if (!c.inst.blackboardAsset) {
+        return false;
+    }
+    const int key = c.inst.blackboardAsset->FindKey(deco.key);
+    if (key < 0 || static_cast<size_t>(key) >= c.inst.blackboard.size()) {
+        return false;
+    }
+    const BbType type = c.inst.blackboardAsset->keys[static_cast<size_t>(key)].type;
+    const BbValue& value = c.inst.blackboard[static_cast<size_t>(key)];
+    const bool isSet = value.isSet != 0;
+    bool truthy = isSet;
+    if (type == BbType::Bool) {
+        truthy = isSet && value.i != 0;
+    } else if (type == BbType::Entity) {
+        truthy = isSet && c.world.IsAlive(value.entity);
+    }
+    const int32_t query = deco.params[btbbparam::kQuery].i;
+    if (query == btquery::kIsSet) {
+        return truthy;
+    }
+    if (query == btquery::kIsNotSet) {
+        return !truthy;
+    }
+    if (!isSet || type == BbType::Vector || type == BbType::Entity) {
+        return false;
+    }
+    const auto compare = [query](auto lhs, auto rhs) {
+        switch (query) {
+        case btquery::kEqual: return lhs == rhs;
+        case btquery::kNotEqual: return lhs != rhs;
+        case btquery::kLess: return lhs < rhs;
+        case btquery::kLessEqual: return lhs <= rhs;
+        case btquery::kGreater: return lhs > rhs;
+        case btquery::kGreaterEqual: return lhs >= rhs;
+        default: return false;
+        }
+    };
+    return type == BbType::Float ? compare(value.f, deco.params[btbbparam::kFloatValue].f)
+                                 : compare(value.i, deco.params[btbbparam::kIntValue].i);
+}
+
+// 入れる条件になる Decorator (BlackboardCondition / Cooldown) の今の真偽。それ以外は常に真
+bool EvalCondition(const RunCtx& c, const BtDecoratorDef& deco)
+{
+    switch (deco.kind) {
+    case BtDecoratorKind::BlackboardCondition: return EvalBlackboardCondition(c, deco);
+    case BtDecoratorKind::Cooldown: return c.tick >= static_cast<uint64_t>(c.inst.nodes[static_cast<size_t>(deco.slot)].counter);
+    default: return true;
+    }
+}
+
+bool AllConditionsPass(const RunCtx& c, const BtNodeDef& node)
+{
+    return std::all_of(node.decorators.begin(), node.decorators.end(),
+                       [&c](const BtDecoratorDef& deco) { return EvalCondition(c, deco); });
+}
+
+// ノードに入れるか。全部評価する (打ち切らない) — BlackboardCondition の最後の結果を必ず更新するため
+bool CheckEntry(RunCtx& c, const BtNodeDef& node)
+{
+    bool pass = true;
+    for (const BtDecoratorDef& deco : node.decorators) {
+        const bool ok = EvalCondition(c, deco);
+        if (deco.kind == BtDecoratorKind::BlackboardCondition) {
+            SlotOf(c, deco).phase = ok ? 1 : 0;
+        }
+        pass = pass && ok;
+    }
+    return pass;
+}
+
+// level 番目より内側の Decorator と本体を進める。外側から順に包む (最初の Decorator が一番外側)
+BtResult RunLevel(RunCtx& c, int32_t index, size_t level)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    if (level >= node.decorators.size()) {
+        return VisitBody(c, index);
+    }
+    const BtDecoratorDef& deco = node.decorators[level];
+    BtNodeState& slot = SlotOf(c, deco);
+    switch (deco.kind) {
+    case BtDecoratorKind::Invert: {
+        const BtResult result = RunLevel(c, index, level + 1);
+        return result == BtResult::Running ? result : (result == BtResult::Success ? BtResult::Failure : BtResult::Success);
+    }
+    case BtDecoratorKind::Timeout: {
+        // 打ち切る tick に子がまだ終わっていなければ Abort して Failure (その tick に終わるなら終わりを優先する)
+        const BtResult result = RunLevel(c, index, level + 1);
+        if (result == BtResult::Running && c.tick >= static_cast<uint64_t>(slot.counter)) {
+            AbortBody(c, index);
+            return BtResult::Failure;
+        }
+        return result;
+    }
+    case BtDecoratorKind::Repeat: {
+        const int32_t count = deco.params[0].i; // 0 = 無限
+        for (;;) {
+            const BtResult result = RunLevel(c, index, level + 1);
+            if (result != BtResult::Success) {
+                return result; // Running のまま待つか、Failure で抜ける
+            }
+            ++slot.counter;
+            if (count > 0 && slot.counter >= count) {
+                return BtResult::Success;
+            }
+            // 次の周回。1 周ごとに手数を 1 つ使い、上限なら次の tick に続ける
+            if (c.steps >= kBtMaxStepsPerTick) {
+                c.stepLimitHit = true;
+                return BtResult::Running;
+            }
+            ++c.steps;
+            for (size_t inner = level + 1; inner < node.decorators.size(); ++inner) {
+                ArmDecorator(c, node.decorators[inner]);
+            }
+        }
+    }
+    case BtDecoratorKind::BlackboardCondition:
+    case BtDecoratorKind::Cooldown:
+    case BtDecoratorKind::Count: break; // 条件は入るときに評価済み
+    }
+    return RunLevel(c, index, level + 1);
+}
+
+// Decorator の付いたノードの訪問。入るときに条件を評価し、偽なら状態に触れず Failure
+BtResult VisitDecorated(RunCtx& c, int32_t index)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    if (!NodeActive(c.inst, c.tree, index)) {
+        if (!CheckEntry(c, node)) {
+            return BtResult::Failure;
+        }
+        for (const BtDecoratorDef& deco : node.decorators) {
+            ArmDecorator(c, deco);
+        }
+    }
+    const BtResult result = RunLevel(c, index, 0);
+    if (result != BtResult::Running) {
+        FinishDecorators(c, node);
+    }
+    return result;
+}
+
+BtResult Visit(RunCtx& c, int32_t index)
+{
+    if (c.steps >= kBtMaxStepsPerTick) {
+        c.stepLimitHit = true; // 手を付けずに Running で返す。入っていないノードは次の tick に親が入り直す
+        return BtResult::Running;
+    }
+    ++c.steps;
+    return c.tree.nodes[static_cast<size_t>(index)].decorators.empty() ? VisitBody(c, index) : VisitDecorated(c, index);
+}
+
+// BlackboardCondition の abort がこのノードの部分木に効くか。LowerPriority / Both は親が Selector のときだけ兄弟へ効き、
+// そうでなければ Self として扱う
+bool ObservesSelf(const BtNodeDef& node, const BehaviorTreeAsset& tree, int32_t abort)
+{
+    const bool parentIsSelector = node.parent >= 0 && tree.nodes[static_cast<size_t>(node.parent)].kind == BtNodeKind::Selector;
+    return abort == btabort::kSelf || abort == btabort::kBoth || (abort == btabort::kLowerPriority && !parentIsSelector);
+}
+
+// 毎 tick の監視 (木の前順)。条件の変化で Abort を決める。Abort しただけで、結果は同じ tick の Visit が返す
+// (Self で止めたノードは入り直し → 条件が偽で Failure、LowerPriority で戻した Selector は優先側の子から入り直す)
+void MonitorNode(RunCtx& c, int32_t index)
+{
+    if (!NodeActive(c.inst, c.tree, index)) {
+        return;
+    }
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    for (const BtDecoratorDef& deco : node.decorators) {
+        if (deco.kind == BtDecoratorKind::BlackboardCondition && ObservesSelf(node, c.tree, deco.params[btbbparam::kAbort].i)) {
+            const bool now = EvalBlackboardCondition(c, deco);
+            SlotOf(c, deco).phase = now ? 1 : 0;
+            if (!now) {
+                AbortNode(c, index);
+                return;
+            }
+        }
+    }
+    if (node.kind == BtNodeKind::Selector) {
+        // 実行中の子より左 (優先度が高い) の子の条件が偽から真へ変わったら、右の実行中の子を Abort してそこから入り直す
+        BtNodeState& state = c.inst.nodes[static_cast<size_t>(index)];
+        for (int32_t k = 0; k < state.child && static_cast<size_t>(k) < node.children.size(); ++k) {
+            const BtNodeDef& sibling = c.tree.nodes[static_cast<size_t>(node.children[static_cast<size_t>(k)])];
+            bool fired = false;
+            for (const BtDecoratorDef& deco : sibling.decorators) {
+                const int32_t abort = deco.kind == BtDecoratorKind::BlackboardCondition ? deco.params[btbbparam::kAbort].i : btabort::kNone;
+                if (abort != btabort::kLowerPriority && abort != btabort::kBoth) {
+                    continue;
+                }
+                BtNodeState& slot = SlotOf(c, deco);
+                const bool now = EvalBlackboardCondition(c, deco);
+                const bool was = slot.phase != 0;
+                if (now && !was && !AllConditionsPass(c, sibling)) {
+                    continue; // 他の条件が通らない間は変化を見送る (通ったときに改めて変化として拾う)
+                }
+                slot.phase = now ? 1 : 0;
+                if (now && !was) {
+                    fired = true;
+                }
+            }
+            if (fired) {
+                AbortNode(c, node.children[static_cast<size_t>(state.child)]);
+                state.child = k;
+                break;
+            }
+        }
+    }
+    for (const int32_t child : node.children) {
+        MonitorNode(c, child);
+    }
+}
+
 // 実行中の一番深いノードの id。何も実行していなければ -1
 int32_t ActiveLeafId(const BtInstance& inst, const BehaviorTreeAsset& tree)
 {
     int32_t at = tree.rootIndex;
-    if (at < 0 || inst.nodes[static_cast<size_t>(at)].active == 0) {
+    if (at < 0 || !NodeActive(inst, tree, at)) {
         return -1;
     }
     for (;;) {
         int32_t next = -1;
         for (const int32_t child : tree.nodes[static_cast<size_t>(at)].children) {
-            if (inst.nodes[static_cast<size_t>(child)].active != 0) {
+            if (NodeActive(inst, tree, child)) {
                 next = child;
                 break;
             }
@@ -218,19 +512,14 @@ void InitBlackboard(BtInstance& inst)
 }
 
 // inst の木に対して根から Abort する。Abort したノードがあれば true
-bool AbortTree(World& world, BtInstance& inst)
+bool AbortTree(World& world, uint64_t tick, std::vector<int32_t>* abortTrace, BtInstance& inst)
 {
     if (!inst.tree || inst.tree->rootIndex < 0 || !AnyNodeActive(inst)) {
         return false;
     }
-    RunCtx ctx{ world, inst, *inst.tree };
+    RunCtx ctx{ world, inst, *inst.tree, tick, abortTrace };
     AbortNode(ctx, inst.tree->rootIndex);
     return ctx.aborted;
-}
-
-int32_t TickToField(uint64_t tick)
-{
-    return static_cast<int32_t>((std::min)(tick, static_cast<uint64_t>(INT32_MAX)));
 }
 
 void WriteEntity(ByteWriter& w, EntityID e)
@@ -322,7 +611,7 @@ bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, EntityID owner, 
         const bool treeChanged = inst.treeGuid != guid || inst.tree != tree;
         const bool bbChanged = inst.treeGuid != guid || inst.blackboardAsset != bbAsset;
         if (treeChanged || bbChanged) {
-            if (AbortTree(world, inst)) {
+            if (AbortTree(world, tick, abortTrace_, inst)) {
                 comp->lastAbortTick = TickToField(tick);
             }
             if (tree && !bbMissing) {
@@ -356,7 +645,7 @@ bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, EntityID owner, 
             comp->activeNodeId = -1;
             return false;
         }
-        if (AbortTree(world, inst)) {
+        if (AbortTree(world, tick, abortTrace_, inst)) {
             comp->lastAbortTick = TickToField(tick);
         }
         inst.rootStatus = btroot::kRunning;
@@ -383,12 +672,14 @@ bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, EntityID owner, 
     }
 
     // 根が終わった次の tick: 根からやり直す
+    // Decorator の欄 (Cooldown の計時・BlackboardCondition の最後の結果) は残す
     if (inst.rootStatus != btroot::kRunning) {
-        ResetNodes(inst);
+        std::fill_n(inst.nodes.begin(), tree->nodes.size(), BtNodeState{});
         inst.rootStatus = btroot::kRunning;
     }
 
-    RunCtx ctx{ world, inst, *tree };
+    RunCtx ctx{ world, inst, *tree, tick, abortTrace_ };
+    MonitorNode(ctx, tree->rootIndex);
     const BtResult result = Visit(ctx, tree->rootIndex);
     if (result != BtResult::Running) {
         inst.rootStatus = result == BtResult::Success ? btroot::kSucceeded : btroot::kFailed;
@@ -464,7 +755,7 @@ bool BehaviorTreeSystem::ReadSnapshot(ByteReader& r, BtSnapshot& out)
             }
         }
         const size_t nodeCount = r.Count(kNodeStateBytes);
-        if (nodeCount > static_cast<size_t>(kBtMaxNodes)) {
+        if (nodeCount > static_cast<size_t>(kBtMaxStateSlots)) {
             r.Fail();
             break;
         }

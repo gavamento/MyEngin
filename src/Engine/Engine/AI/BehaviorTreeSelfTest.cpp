@@ -10,8 +10,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -98,6 +100,48 @@ json Wait(int id, int ticks, int deviation = 0)
 json Parallel(int id, int mainChild, int backgroundChild, const char* finishMode)
 {
     return Node(id, "SimpleParallel", { mainChild, backgroundChild }, json{ { "finishMode", finishMode } });
+}
+
+json Deco(const char* type, json params = json::object(), const char* key = nullptr)
+{
+    json d;
+    d["type"] = type;
+    if (key != nullptr) {
+        d["key"] = key;
+    }
+    d["params"] = std::move(params);
+    return d;
+}
+
+json BbCond(const char* key, const char* query, const char* abort = "None", int intValue = 0, double floatValue = 0.0)
+{
+    return Deco("BlackboardCondition",
+                json{ { "query", query }, { "abort", abort }, { "intValue", intValue }, { "floatValue", floatValue } }, key);
+}
+
+json Cooldown(int ticks)
+{
+    return Deco("Cooldown", json{ { "ticks", ticks } });
+}
+
+json Repeat(int count)
+{
+    return Deco("Repeat", json{ { "count", count } });
+}
+
+json Timeout(int ticks)
+{
+    return Deco("Timeout", json{ { "ticks", ticks } });
+}
+
+// ノードに Decorator を付ける (上から順 = 外側から順)
+json Decorated(json node, const std::vector<json>& decorators)
+{
+    node["decorators"] = json::array();
+    for (const json& d : decorators) {
+        node["decorators"].push_back(d);
+    }
+    return node;
 }
 
 std::string GuidHex(uint64_t guid)
@@ -237,6 +281,26 @@ bool Is(const std::vector<int32_t>& got, std::initializer_list<int32_t> want)
     return std::equal(got.begin(), got.end(), want.begin(), want.end());
 }
 
+// from 以降に出た警告のうち、本文に needle を含むものの数
+int CountWarnings(uint64_t from, const char* needle)
+{
+    uint64_t cursor = from;
+    LogEntry entries[64];
+    int count = 0;
+    for (;;) {
+        const size_t got = logging::ReadSince(cursor, entries, 64);
+        if (got == 0) {
+            break;
+        }
+        for (size_t i = 0; i < got; ++i) {
+            if (entries[i].level == LogLevel::Warn && std::strstr(entries[i].message, needle) != nullptr) {
+                ++count;
+            }
+        }
+    }
+    return count;
+}
+
 // 100 体 x 30 ノードの計測用の木。Sequence の根の下に 4 群 (各 7 ノード) と末尾の Wait を置く
 json PerfTree()
 {
@@ -314,9 +378,7 @@ bool RunBehaviorTreeSelfTest()
                  "未知の列挙名は読み込み失敗");
         ck.Check(!Loads(Tree(0, { Node(0, "Wait", {}, json{ { "ticks", "ten" } }) })), "型の違うパラメータは読み込み失敗");
         {
-            json withDecorator = Tree(0, { Node(0, "Selector") });
-            withDecorator["nodes"][0]["decorators"].push_back(json{ { "type", "Cooldown" } });
-            ck.Check(!Loads(withDecorator), "未登録の Decorator は読み込み失敗");
+            ck.Check(!Loads(Tree(0, { Decorated(Node(0, "Selector"), { Deco("Teleport") }) })), "未知の Decorator は読み込み失敗");
         }
         BehaviorTreeAsset clamped;
         ck.Check(BehaviorTreeLibrary::FromJson(Tree(0, { Wait(0, -5, 99999999) }), clamped)
@@ -807,6 +869,488 @@ bool RunBehaviorTreeSelfTest()
         ck.Check(!accepts(craft(1, 2, 3, 1)) && !accepts(craft(1, 2, 0, 2)), "範囲外の rootStatus / active を持つ BT 節は拒否する");
     }
 
+    // ---- 9. Decorator と Abort (M85b) ----
+    {
+        const json full = Tree(0, { Decorated(Node(0, "Selector", { 1, 2 }), { Cooldown(30), Repeat(0), Timeout(9) }),
+                                    Decorated(Wait(1, 5), { BbCond("Flag", "GreaterEqual", "Both", 12, 2.5), Deco("Invert") }), Wait(2, 3) });
+        BehaviorTreeAsset a;
+        BehaviorTreeAsset b;
+        const bool loaded = BehaviorTreeLibrary::FromJson(full, a);
+        ck.Check(loaded && BehaviorTreeLibrary::FromJson(BehaviorTreeLibrary::ToJson(a), b)
+                     && BehaviorTreeLibrary::ToJson(a) == BehaviorTreeLibrary::ToJson(b),
+                 "Decorator 付きの木の JSON が往復で変わらない");
+        ck.Check(loaded && a.nodes[0].decorators.size() == 3 && a.nodes[1].decorators.size() == 2
+                     && a.nodes[1].decorators[0].key == "Flag"
+                     && a.nodes[1].decorators[0].params[btbbparam::kQuery].i == btquery::kGreaterEqual
+                     && a.nodes[1].decorators[0].params[btbbparam::kAbort].i == btabort::kBoth
+                     && a.nodes[1].decorators[0].params[btbbparam::kIntValue].i == 12
+                     && a.nodes[1].decorators[0].params[btbbparam::kFloatValue].f == 2.5f
+                     && a.nodes[0].decorators[2].params[0].i == 9,
+                 "Decorator の種類・キー・パラメータが読める");
+        ck.Check(loaded && a.stateSlotCount == 3 + 5 && a.nodes[0].decorators[0].slot == 3 && a.nodes[1].decorators[1].slot == 7,
+                 "実行状態の欄はノード数に Decorator の数を足した数 (ノードの後ろに Decorator が並ぶ)");
+        ck.Check(!Loads(Tree(0, { Decorated(Wait(0, 3), { Deco("BlackboardCondition", json::object()) }) })),
+                 "BlackboardCondition にキー名が無ければ読み込み失敗");
+        ck.Check(!Loads(Tree(0, { Decorated(Wait(0, 3), { Deco("BlackboardCondition", json::object(), "") }) }))
+                     && !Loads(Tree(0, { Decorated(Wait(0, 3), { Deco("BlackboardCondition", json::object(), std::string(64, 'x').c_str()) }) })),
+                 "空・長すぎるキー名は読み込み失敗");
+        ck.Check(Loads(Tree(0, { Decorated(Wait(0, 3), { Cooldown(-1) }) }))
+                     && !Loads(Tree(0, { Decorated(Wait(0, 3), { Deco("Cooldown", json{ { "ticks", "soon" } }) }) })),
+                 "型の違う Decorator のパラメータは読み込み失敗");
+        BehaviorTreeAsset clamped;
+        ck.Check(BehaviorTreeLibrary::FromJson(Tree(0, { Decorated(Wait(0, 3), { Timeout(0), Repeat(-4) }) }), clamped)
+                     && clamped.nodes[0].decorators[0].params[0].i == 1 && clamped.nodes[0].decorators[1].params[0].i == 0,
+                 "範囲外の Decorator のパラメータは範囲へ丸める (Timeout は 1 以上)");
+        std::vector<json> crowded;
+        for (int i = 0; i <= kBtMaxDecoratorsPerNode; ++i) {
+            crowded.push_back(Deco("Invert"));
+        }
+        ck.Check(!Loads(Tree(0, { Decorated(Wait(0, 3), crowded) })), "1 ノードの Decorator の数の上限を超えると読み込み失敗");
+    }
+
+    {
+        const uint64_t board = RegisterBoard(
+            lib, L"deco_bb",
+            Board({ BbKey("Flag", "Bool", false), BbKey("Count", "Int", 7), BbKey("Score", "Float", 1.5),
+                    BbKey("Home", "Vector", json::array({ 1.0, 2.0, 3.0 })), BbKey("Target", "Entity"), BbKey("Blank", "Int") }));
+        enum { kFlag, kCount, kScore, kHome, kTarget, kBlank };
+
+        // 空の Sequence (Success) に Decorator を 1 つ付けた木を 1 tick 動かし、BB を書き換えてもう 1 tick 動かした結果。
+        // 根が終わった次の tick は根からやり直すので、2 tick 目は書き換えた値で評価される
+        const auto probe = [&](const std::vector<json>& decorators, const std::function<void(Sim&, BtInstance&)>& edit) {
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(
+                RegisterTree(lib, L"deco_probe", Tree(0, { Decorated(Node(0, "Sequence"), decorators) }, board)));
+            sim.Step();
+            if (edit) {
+                edit(sim, *sim.Mutable(e));
+            }
+            sim.Step();
+            return sim.Status(e);
+        };
+        const auto passes = [&](const json& cond, const std::function<void(Sim&, BtInstance&)>& edit = nullptr) {
+            return probe({ cond }, edit) == kSucceeded;
+        };
+        ck.Check(!passes(BbCond("Flag", "IsSet")) && passes(BbCond("Flag", "IsNotSet"))
+                     && passes(BbCond("Flag", "IsSet"), [](Sim&, BtInstance& i) { i.blackboard[kFlag].i = 1; }),
+                 "BlackboardCondition: Bool は true のとき IsSet");
+        ck.Check(passes(BbCond("Count", "Equal", "None", 7)) && !passes(BbCond("Count", "NotEqual", "None", 7))
+                     && passes(BbCond("Count", "Less", "None", 8)) && !passes(BbCond("Count", "Less", "None", 7))
+                     && passes(BbCond("Count", "LessEqual", "None", 7)) && !passes(BbCond("Count", "Greater", "None", 7))
+                     && passes(BbCond("Count", "Greater", "None", 6)) && passes(BbCond("Count", "GreaterEqual", "None", 7)),
+                 "BlackboardCondition: Int の 6 つの比較");
+        ck.Check(passes(BbCond("Score", "Greater", "None", 0, 1.0)) && !passes(BbCond("Score", "Less", "None", 0, 1.5))
+                     && passes(BbCond("Score", "Equal", "None", 0, 1.5)),
+                 "BlackboardCondition: Float は floatValue と比べる");
+        ck.Check(!passes(BbCond("Blank", "IsSet")) && passes(BbCond("Blank", "IsNotSet")) && !passes(BbCond("Blank", "Equal", "None", 0))
+                     && !passes(BbCond("Blank", "NotEqual", "None", 1)),
+                 "BlackboardCondition: 未設定の値は IsNotSet だけが真 (大小の比較は偽)");
+        ck.Check(passes(BbCond("Home", "IsSet")) && !passes(BbCond("Home", "Equal", "None", 0))
+                     && !passes(BbCond("Home", "IsNotSet")),
+                 "BlackboardCondition: Vector は書かれていれば IsSet");
+        ck.Check(!passes(BbCond("Nothing", "IsNotSet")) && !passes(BbCond("Nothing", "IsSet")), "BlackboardCondition: 無いキーは常に偽");
+        {
+            EntityID alive = kNullEntity;
+            EntityID dead = kNullEntity;
+            const auto withTarget = [&](EntityID& target) {
+                return [&target](Sim& sim, BtInstance& inst) {
+                    if (target.IsNull()) {
+                        target = sim.scene.CreateGameObjectTracked("Target").Id();
+                        sim.GetWorld().ApplyStructuralChanges();
+                    }
+                    inst.blackboard[kTarget].isSet = 1;
+                    inst.blackboard[kTarget].entity = target;
+                };
+            };
+            const bool aliveIsSet = passes(BbCond("Target", "IsSet"), withTarget(alive));
+            const bool deadIsSet = passes(BbCond("Target", "IsSet"), [&](Sim& sim, BtInstance& inst) {
+                const EntityID doomed = sim.scene.CreateGameObjectTracked("Doomed").Id();
+                sim.GetWorld().ApplyStructuralChanges();
+                sim.GetWorld().DestroyEntity(doomed);
+                sim.GetWorld().ApplyStructuralChanges();
+                inst.blackboard[kTarget].isSet = 1;
+                inst.blackboard[kTarget].entity = doomed;
+                dead = doomed;
+            });
+            ck.Check(!dead.IsNull() && aliveIsSet && !deadIsSet && !passes(BbCond("Target", "IsSet")) && passes(BbCond("Target", "IsNotSet")),
+                     "BlackboardCondition: Entity は生きているハンドルのときだけ IsSet");
+        }
+        ck.Check(probe({ BbCond("Count", "Equal", "None", 7), BbCond("Flag", "IsSet") }, nullptr) == kFailed
+                     && probe({ BbCond("Count", "Equal", "None", 7), BbCond("Flag", "IsSet") },
+                              [](Sim&, BtInstance& i) { i.blackboard[kFlag].i = 1; }) == kSucceeded,
+                 "条件の Decorator が 2 つあれば両方が真のときだけ入れる");
+
+        // 偽の条件ではノードに入らない (状態に触れず Failure)
+        {
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(RegisterTree(
+                lib, L"deco_blocked", Tree(0, { Decorated(Wait(0, 5), { BbCond("Flag", "IsSet") }) }, board)));
+            sim.Step();
+            const BtNodeState* wait = sim.NodeState(e, 0);
+            ck.Check(sim.Status(e) == kFailed && wait != nullptr && wait->active == 0 && sim.Comp(e)->lastAbortTick == -1,
+                     "条件が偽なら入らずに Failure (Abort ではない)");
+            sim.Mutable(e)->blackboard[kFlag].i = 1;
+            ck.Check(Is(Run(sim, e, 3), { kRunning, kRunning, kRunning }), "条件が真になると次の tick の入り直しで入る");
+        }
+    }
+
+    {
+        // Invert
+        Sim sim;
+        const EntityID a = sim.AddTreeEntity(RegisterTree(lib, L"inv_a", Tree(0, { Decorated(Node(0, "Sequence"), { Deco("Invert") }) })));
+        const EntityID b = sim.AddTreeEntity(RegisterTree(lib, L"inv_b", Tree(0, { Decorated(Node(0, "Selector"), { Deco("Invert") }) })));
+        const EntityID c = sim.AddTreeEntity(RegisterTree(lib, L"inv_c", Tree(0, { Decorated(Wait(0, 5), { Deco("Invert") }) })));
+        const EntityID d = sim.AddTreeEntity(RegisterTree(lib, L"inv_d", Tree(0, { Decorated(Node(0, "Sequence"), { Deco("Invert"), Deco("Invert") }) })));
+        sim.Step();
+        ck.Check(sim.Status(a) == kFailed && sim.Status(b) == kSucceeded && sim.Status(c) == kRunning && sim.Status(d) == kSucceeded,
+                 "Invert: Success と Failure を入れ替え、Running はそのまま (2 重なら元に戻る)");
+    }
+
+    {
+        // Cooldown: 終わった tick から ticks の間は入れない
+        Sim sim;
+        const EntityID e = sim.AddTreeEntity(RegisterTree(
+            lib, L"cooldown", Tree(0, { Node(0, "Selector", { 1 }), Decorated(Wait(1, 2), { Cooldown(5) }) })));
+        ck.Check(Is(Run(sim, e, 9), { kRunning, kRunning, kSucceeded, kFailed, kFailed, kFailed, kFailed, kRunning, kRunning }),
+                 "Cooldown: Success で終わった tick から 5 tick は入れず (Failure)、明けると入る");
+    }
+    {
+        Sim sim;
+        const EntityID e = sim.AddTreeEntity(RegisterTree(
+            lib, L"cooldown_failure", Tree(0, { Node(0, "Selector", { 1 }), Decorated(Node(1, "Selector"), { Cooldown(3) }) })));
+        // 空の Selector は入った tick に Failure で終わる (= 終了なので計時が始まる)。tick 1 に入って終わり、tick 2・3 は入れず、tick 4 に入り直す
+        sim.Step();
+        const int32_t first = sim.Status(e);
+        sim.Step();
+        ck.Check(first == kFailed && sim.Status(e) == kFailed
+                     && sim.bt.FindInstance(e)->nodes[2].counter == 4,
+                 "Cooldown: Failure で終わっても計時が始まる (入れるようになる tick = 終了 tick + ticks)");
+    }
+    {
+        // Cooldown は Abort でも計時を始める
+        const uint64_t board = RegisterBoard(lib, L"cooldown_bb", Board({ BbKey("Flag", "Bool", true) }));
+        Sim sim;
+        const EntityID e = sim.AddTreeEntity(RegisterTree(
+            lib, L"cooldown_abort",
+            Tree(0, { Node(0, "Selector", { 1, 2 }), Decorated(Wait(1, 100), { BbCond("Flag", "IsSet", "Self"), Cooldown(6) }), Wait(2, 2) }, board)));
+        sim.Step();
+        const int32_t leafBefore = sim.Comp(e)->activeNodeId;
+        sim.Mutable(e)->blackboard[0].i = 0;
+        sim.Step(); // tick 2: Abort (計時 tick 2 + 6 = 8)、B (Wait 2) に入る
+        sim.Mutable(e)->blackboard[0].i = 1;
+        const int32_t leafAfterAbort = sim.Comp(e)->activeNodeId;
+        std::vector<int32_t> leaves;
+        for (int i = 0; i < 6; ++i) {
+            sim.Step(); // tick 3..8
+            leaves.push_back(sim.Comp(e)->activeNodeId);
+        }
+        // tick 3: B。tick 4: B が終わって根が Success (実行中なし = -1)。tick 5: 根からやり直し、条件は真だが Cooldown 中 (5 < 8) なので B。
+        // tick 7: B が終わる。tick 8: Cooldown が明けて A へ入る
+        ck.Check(leafBefore == 1 && leafAfterAbort == 2 && leaves == std::vector<int32_t>{ 2, -1, 2, 2, -1, 1 },
+                 "Cooldown: Abort された tick からも計時が始まり、明けるまで条件が真でも入れない");
+    }
+
+    {
+        // Repeat
+        Sim sim;
+        const EntityID e = sim.AddTreeEntity(RegisterTree(lib, L"repeat3", Tree(0, { Decorated(Wait(0, 2), { Repeat(3) }) })));
+        ck.Check(Is(Run(sim, e, 8), { kRunning, kRunning, kRunning, kRunning, kRunning, kRunning, kSucceeded, kRunning }),
+                 "Repeat 3: 子が 3 回 Success したら Success (終わった tick に次の周回へ入る)");
+    }
+    {
+        Sim sim;
+        const EntityID e = sim.AddTreeEntity(RegisterTree(
+            lib, L"repeat_inf", Tree(0, { Decorated(Node(0, "Sequence", { 1 }), { Repeat(0) }), Wait(1, 1) })));
+        std::vector<int32_t> got = Run(sim, e, 30);
+        ck.Check(std::all_of(got.begin(), got.end(), [](int32_t s) { return s == kRunning; }) && sim.Comp(e)->activeNodeId == 1,
+                 "Repeat 0 = 無限: Success し続けても終わらず Running のまま");
+    }
+    {
+        Sim sim;
+        const EntityID e = sim.AddTreeEntity(RegisterTree(
+            lib, L"repeat_fail",
+            Tree(0, { Decorated(Node(0, "Sequence", { 1, 2 }), { Repeat(0) }), Wait(1, 1), Node(2, "Selector") })));
+        ck.Check(Is(Run(sim, e, 4), { kRunning, kFailed, kRunning, kFailed }), "Repeat: 子が Failure したら Failure で抜ける (無限でも)");
+    }
+    {
+        Sim sim;
+        const EntityID e = sim.AddTreeEntity(RegisterTree(
+            lib, L"repeat_timeout", Tree(0, { Decorated(Wait(0, 2), { Repeat(0), Timeout(5) }) })));
+        // Timeout は周回ごとに掛け直す: Wait 2 は 3 tick で終わるので、5 tick の Timeout は一度も切れない
+        std::vector<int32_t> got = Run(sim, e, 20);
+        ck.Check(std::all_of(got.begin(), got.end(), [](int32_t s) { return s == kRunning; }), "Repeat の内側の Timeout は周回ごとに計り直す");
+    }
+
+    {
+        // Timeout
+        Sim sim;
+        std::vector<int32_t> trace;
+        sim.bt.SetAbortTrace(&trace);
+        const EntityID e = sim.AddTreeEntity(RegisterTree(
+            lib, L"timeout", Tree(0, { Decorated(Node(0, "Sequence", { 1 }), { Timeout(5) }), Wait(1, 100) })));
+        const std::vector<int32_t> got = Run(sim, e, 7);
+        ck.Check(Is(got, { kRunning, kRunning, kRunning, kRunning, kRunning, kFailed, kRunning }) && trace == std::vector<int32_t>{ 1, 0 }
+                     && sim.Comp(e)->lastAbortTick == 6,
+                 "Timeout: 5 tick 経っても子が終わらなければ子を Abort (OnAbort は子が先) して Failure");
+        Sim quick;
+        const EntityID q = quick.AddTreeEntity(RegisterTree(
+            lib, L"timeout_quick", Tree(0, { Decorated(Node(0, "Sequence", { 1 }), { Timeout(5) }), Wait(1, 2) })));
+        ck.Check(Is(Run(quick, q, 4), { kRunning, kRunning, kSucceeded, kRunning }) && quick.Comp(q)->lastAbortTick == -1,
+                 "Timeout: 間に合えば普通に終わる (Abort しない)");
+        Sim tie;
+        const EntityID t = tie.AddTreeEntity(RegisterTree(
+            lib, L"timeout_tie", Tree(0, { Decorated(Wait(0, 5), { Timeout(5) }) })));
+        ck.Check(Is(Run(tie, t, 6), { kRunning, kRunning, kRunning, kRunning, kRunning, kSucceeded }),
+                 "Timeout: 切れる tick に子が終わるなら終わりを優先する");
+    }
+
+    {
+        // Abort 4 種
+        const uint64_t board = RegisterBoard(lib, L"abort_bb", Board({ BbKey("Flag", "Bool", false) }));
+        const auto setFlag = [](Sim& sim, EntityID e, bool on) { sim.Mutable(e)->blackboard[0].i = on ? 1 : 0; };
+
+        // Self: 部分木が実行中に条件が偽になったら、子孫から順に Abort して Failure、右の兄弟へ進む
+        const auto selfTree = [&](const char* mode, const wchar_t* name) {
+            return RegisterTree(
+                lib, name,
+                Tree(0, { Node(0, "Selector", { 1, 4 }),
+                          Decorated(Node(1, "Sequence", { 2 }), { BbCond("Flag", "IsSet", mode) }),
+                          Node(2, "Sequence", { 3 }), Wait(3, 100), Wait(4, 100) },
+                     board));
+        };
+        {
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(selfTree("Self", L"abort_self"));
+            sim.Step();
+            const int32_t before = sim.Comp(e)->activeNodeId; // Flag = false なので最初から右の兄弟 (4)
+            setFlag(sim, e, true);
+            sim.Step();
+            sim.Step();
+            const int32_t entered = sim.Comp(e)->activeNodeId;
+            ck.Check(before == 4 && entered == 4, "(前提) 条件が真になっても Self は右の兄弟を止めない");
+        }
+        {
+            Sim sim;
+            std::vector<int32_t> trace;
+            sim.bt.SetAbortTrace(&trace);
+            const uint64_t guid = selfTree("Self", L"abort_self2");
+            const EntityID e = sim.AddTreeEntity(guid);
+            // 初期値が false なので、表を作らせてから true にして入り直す
+            sim.Step();
+            setFlag(sim, e, true);
+            sim.GetWorld().GetComponent<BehaviorTreeComponent>(e)->enabled = false; // Abort して根へ戻す
+            sim.Step();
+            sim.GetWorld().GetComponent<BehaviorTreeComponent>(e)->enabled = true;
+            trace.clear();
+            sim.Step(); // Flag = true で入り直す → 1 > 2 > 3 が実行中
+            const int32_t running = sim.Comp(e)->activeNodeId;
+            setFlag(sim, e, false);
+            sim.Step();
+            ck.Check(running == 3 && sim.Comp(e)->activeNodeId == 4 && trace == std::vector<int32_t>{ 3, 2, 1 }
+                         && sim.Comp(e)->lastAbortTick == static_cast<int32_t>(sim.LastTick()),
+                     "Abort Self: 条件が偽になった tick に子孫から順に (深い方から) Abort され、右の兄弟へ進む");
+        }
+        {
+            Sim sim;
+            const EntityID e = sim.AddTreeEntity(selfTree("None", L"abort_none"));
+            sim.Step();
+            setFlag(sim, e, true);
+            sim.GetWorld().GetComponent<BehaviorTreeComponent>(e)->enabled = false;
+            sim.Step();
+            sim.GetWorld().GetComponent<BehaviorTreeComponent>(e)->enabled = true;
+            sim.Step();
+            setFlag(sim, e, false);
+            sim.Step();
+            ck.Check(sim.Comp(e)->activeNodeId == 3, "Abort None: 入った後に条件が偽になっても部分木は止まらない");
+        }
+
+        // LowerPriority: 左の兄弟の条件が真になったら右の実行中の子を Abort して左から実行し直す
+        const auto lowerTree = [&](const char* mode, const wchar_t* name) {
+            return RegisterTree(
+                lib, name,
+                Tree(0, { Node(0, "Selector", { 1, 2 }), Decorated(Wait(1, 100), { BbCond("Flag", "IsSet", mode) }), Wait(2, 100) }, board));
+        };
+        {
+            Sim sim;
+            std::vector<int32_t> trace;
+            sim.bt.SetAbortTrace(&trace);
+            const EntityID e = sim.AddTreeEntity(lowerTree("LowerPriority", L"abort_lower"));
+            sim.Step();
+            sim.Step();
+            const int32_t before = sim.Comp(e)->activeNodeId; // 条件が偽なので右 (2)
+            setFlag(sim, e, true);
+            sim.Step();
+            const int32_t after = sim.Comp(e)->activeNodeId;
+            const std::vector<int32_t> abortedRight = trace;
+            setFlag(sim, e, false);
+            sim.Step();
+            ck.Check(before == 2 && after == 1 && abortedRight == std::vector<int32_t>{ 2 } && sim.Comp(e)->activeNodeId == 1,
+                     "Abort LowerPriority: 条件が真になった tick に右の兄弟が止まって左が走る (走り出した後に偽になっても Self ではない)");
+        }
+        {
+            // 左の子が入っても Failure で終わる木で、条件が真のまま変わらないなら右を止めない (変化のときだけ働く)
+            Sim sim;
+            std::vector<int32_t> trace;
+            sim.bt.SetAbortTrace(&trace);
+            const uint64_t guid = RegisterTree(
+                lib, L"abort_lower_stable",
+                Tree(0, { Node(0, "Selector", { 1, 2 }), Decorated(Node(1, "Selector"), { BbCond("Flag", "IsNotSet", "LowerPriority") }), Wait(2, 100) },
+                     board));
+            const EntityID e = sim.AddTreeEntity(guid);
+            const std::vector<int32_t> got = Run(sim, e, 6);
+            ck.Check(std::all_of(got.begin(), got.end(), [](int32_t s) { return s == kRunning; }) && sim.Comp(e)->activeNodeId == 2 && trace.empty(),
+                     "Abort LowerPriority: 条件が真のまま変わらなければ (左の子は Failure で終わる) 右の子を止め続けない");
+        }
+        {
+            Sim sim;
+            std::vector<int32_t> trace;
+            sim.bt.SetAbortTrace(&trace);
+            const EntityID e = sim.AddTreeEntity(lowerTree("Both", L"abort_both"));
+            sim.Step();
+            const int32_t before = sim.Comp(e)->activeNodeId;
+            setFlag(sim, e, true);
+            sim.Step();
+            const int32_t up = sim.Comp(e)->activeNodeId;
+            const std::vector<int32_t> afterUp = trace;
+            setFlag(sim, e, false);
+            sim.Step();
+            ck.Check(before == 2 && up == 1 && afterUp == std::vector<int32_t>{ 2 } && sim.Comp(e)->activeNodeId == 2
+                         && trace == std::vector<int32_t>{ 2, 1 },
+                     "Abort Both: 条件が真で右を止めて左が走り、偽になれば左を止めて右へ戻る");
+        }
+        {
+            // 親が Sequence の LowerPriority は Self として働く
+            Sim sim;
+            std::vector<int32_t> trace;
+            sim.bt.SetAbortTrace(&trace);
+            const uint64_t guid = RegisterTree(
+                lib, L"abort_lower_in_sequence",
+                Tree(0, { Node(0, "Sequence", { 1 }), Decorated(Wait(1, 100), { BbCond("Flag", "IsSet", "LowerPriority") }) }, board));
+            const EntityID e = sim.AddTreeEntity(guid);
+            sim.Step();
+            const int32_t status0 = sim.Status(e);
+            ck.Check(status0 == kFailed, "(前提) 親が Sequence で条件が偽の間は子に入れず Failure");
+            setFlag(sim, e, true);
+            sim.Step(); // 根からやり直して入る
+            const int32_t leaf = sim.Comp(e)->activeNodeId;
+            setFlag(sim, e, false);
+            sim.Step();
+            ck.Check(leaf == 1 && sim.Status(e) == kFailed && trace == std::vector<int32_t>{ 1 },
+                     "親が Selector でない LowerPriority は Self として働く (偽になったら子を Abort して Failure)");
+        }
+    }
+
+    // ---- 10. 手数の上限 (Repeat 無限 + 即 Success) ----
+    {
+        Sim sim;
+        const EntityID e = sim.AddTreeEntity(RegisterTree(
+            lib, L"repeat_runaway", Tree(0, { Decorated(Node(0, "Sequence"), { Repeat(0) }) })));
+        const uint64_t logFrom = logging::TotalWritten();
+        sim.Step();
+        const int32_t first = sim.Status(e);
+        const bool partway = sim.bt.FindInstance(e) != nullptr && sim.bt.FindInstance(e)->nodes[1].active != 0;
+        sim.Step();
+        sim.Step();
+        ck.Check(first == kRunning && partway && sim.Status(e) == kRunning && CountWarnings(logFrom, "step limit") == 1,
+                 "Repeat 無限 + 即 Success の木は 1 tick 256 手で止まって次の tick に続き、警告は 1 回だけ");
+        Sim finite;
+        const EntityID f = finite.AddTreeEntity(RegisterTree(
+            lib, L"repeat_300", Tree(0, { Decorated(Node(0, "Sequence"), { Repeat(300) }) })));
+        finite.Step();
+        const int32_t partial = finite.Status(f);
+        finite.Step();
+        ck.Check(partial == kRunning && finite.Status(f) == kSucceeded, "有限の Repeat も手数の上限をまたいで続きから終わる");
+    }
+
+    // ---- 11. Decorator の途中状態の保存 / 復元 ----
+    {
+        const uint64_t board = RegisterBoard(lib, L"deco_snap_bb", Board({ BbKey("Flag", "Bool", false), BbKey("Count", "Int", 0) }));
+        const uint64_t guid = RegisterTree(
+            lib, L"deco_snap",
+            Tree(0, { Node(0, "Selector", { 1, 2, 5 }),
+                      Decorated(Wait(1, 30), { BbCond("Flag", "IsSet", "Both") }),
+                      Decorated(Node(2, "Sequence", { 3 }), { Cooldown(15), Repeat(2) }), Wait(3, 4, 1),
+                      Decorated(Node(5, "Sequence", { 6 }), { Timeout(10) }), Wait(6, 40) },
+                 board));
+        const auto roundTrip = [&](const char* label, const std::function<bool(const BehaviorTreeSystem&, const BehaviorTreeAsset&, uint64_t)>& atCapture) {
+            Scene scene;
+            BehaviorTreeSystem first;
+            std::vector<EntityID> agents;
+            for (int i = 0; i < 3; ++i) {
+                GameObject go = scene.CreateGameObjectTracked("Agent");
+                go.AddComponent<BehaviorTreeComponent>()->tree = AssetID{ guid };
+                agents.push_back(go.Id());
+            }
+            scene.GetWorld().ApplyStructuralChanges();
+            SimRefs refs;
+            refs.scene = &scene;
+            refs.behaviorTree = &first;
+            uint64_t tickRef = 0;
+            refs.tickIndex = &tickRef;
+            uint64_t tick = 1;
+            const auto step = [&](BehaviorTreeSystem& bt) {
+                bt.Update(scene.GetWorld(), tick);
+                for (size_t i = 0; i < agents.size(); ++i) {
+                    BtInstance* inst = const_cast<BtInstance*>(bt.FindInstance(agents[i]));
+                    if (inst != nullptr && !inst->blackboard.empty()) {
+                        inst->blackboard[0].i = ((tick + i * 5) / 17) % 2 == 0 ? 0 : 1; // Flag を周期的に反転する
+                        inst->blackboard[0].isSet = 1;
+                    }
+                }
+                scene.GetWorld().ApplyStructuralChanges();
+                ++tick;
+            };
+            const BehaviorTreeAsset* asset = behaviortree::Library()->Get(guid);
+            bool captured = false;
+            for (int i = 0; i < 400 && !captured; ++i) {
+                step(first);
+                captured = atCapture(first, *asset, tick);
+            }
+            if (!captured) {
+                ck.Check(false, label);
+                return;
+            }
+            tickRef = tick;
+            std::vector<std::byte> blob;
+            const bool ok = CaptureSimSnapshot(refs, blob);
+            const uint64_t startTick = tick;
+            std::vector<uint64_t> continuous;
+            for (int i = 0; i < 120; ++i) {
+                step(first);
+                continuous.push_back(HashWorld(scene.GetWorld(), refs.HashSources()));
+            }
+            BehaviorTreeSystem second;
+            SimRefs refsSecond = refs;
+            refsSecond.behaviorTree = &second;
+            bool same = ok && RestoreSimSnapshot(refsSecond, blob.data(), blob.size());
+            tick = startTick;
+            for (int i = 0; i < 120 && same; ++i) {
+                step(second);
+                same = HashWorld(scene.GetWorld(), refsSecond.HashSources()) == continuous[static_cast<size_t>(i)];
+            }
+            ck.Check(same && continuous.front() != continuous.back(), label);
+        };
+        const auto slotOf = [](const BehaviorTreeAsset& asset, int32_t nodeId, size_t decoIndex) {
+            return asset.nodes[static_cast<size_t>(asset.FindNode(nodeId))].decorators[decoIndex].slot;
+        };
+        roundTrip("Cooldown の計時の途中 (入れない間) で保存 → 復元 → 連続実行と毎 tick のハッシュが一致",
+                  [&](const BehaviorTreeSystem& bt, const BehaviorTreeAsset& asset, uint64_t tick) {
+                      const BtInstance& inst = bt.Instances().front();
+                      return static_cast<uint64_t>(inst.nodes[static_cast<size_t>(slotOf(asset, 2, 0))].counter) > tick + 3
+                             && inst.nodes[static_cast<size_t>(slotOf(asset, 2, 0))].active == 0;
+                  });
+        roundTrip("Timeout の計時の途中で保存 → 復元 → 連続実行と毎 tick のハッシュが一致",
+                  [&](const BehaviorTreeSystem& bt, const BehaviorTreeAsset& asset, uint64_t tick) {
+                      const BtInstance& inst = bt.Instances().front();
+                      const BtNodeState& timeout = inst.nodes[static_cast<size_t>(slotOf(asset, 5, 0))];
+                      return timeout.active != 0 && static_cast<uint64_t>(timeout.counter) > tick + 3;
+                  });
+        roundTrip("Repeat の周回の途中で保存 → 復元 → 連続実行と毎 tick のハッシュが一致",
+                  [&](const BehaviorTreeSystem& bt, const BehaviorTreeAsset& asset, uint64_t) {
+                      const BtInstance& inst = bt.Instances().front();
+                      return inst.nodes[static_cast<size_t>(slotOf(asset, 2, 1))].counter == 1;
+                  });
+    }
     // ---- 8. 計測: 100 体 x 30 ノード ----
     {
         Sim sim;

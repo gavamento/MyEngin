@@ -7,8 +7,8 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 | 着手 | 0 | | BT の核 (.bt/.bb・コンポーネント・実行器・Composite・Wait・BT 節) |
-| sub-02 | 未着手 | 0 | | Decorator 5 種と Abort |
+| sub-01 | OK | 1 | a5f7ab1 | BT の核 (.bt/.bb・コンポーネント・実行器・Composite・Wait・BT 節)。snapshot v34、TypeId 78 |
+| sub-02 | OK | 1 | (このコミット) | Decorator 5 種と Abort |
 | sub-03 | 未着手 | 0 | | Task 4 種 (MoveTo に failOnStuck、既定 false) |
 | sub-04 | 未着手 | 0 | | AI ノード 4 種 |
 | sub-05 | 未着手 | 0 | | 汎用イベントキューと SendEvent |
@@ -35,5 +35,14 @@
 - (2026-10-05) 上記を反映して spec 確定、sub-01 から着手してよい
 
 ## 申し送り (セッション跨ぎ)
+- (sub-01 VERDICT should#1) sub-08 で一時プローブの `--screenshot` を撮る回に、sub-01 の未確認 4 点 (Create メニュー 2 項目 / 型フィルタ・タイルの語 / Inspector の tree ピッカーと注意表示 / Runtime.exe 実起動) も目視して SELF_EVAL に書く。
+- (sub-01 VERDICT nit#2) Debug selftest の 1 回目に既知 flake 5 件 (Fracture weight cache 3 / net V1 LoadPersist・LoadGame 2) が再び出たら回数を記録する (原因調査は範囲外)。
+- (sub-01 coder → sub-02) Decorator は BtNodeDef に足し、BtLinkAsset が stateSlotCount を数える。評価は各 Visit* の入口と、毎 tick の StepOwner の Visit(root) の前。AbortNode は子孫が先、ノード固有の後始末は Finish(state) の前。ActiveLeafId は active な子を左から探す。
+- (sub-01 coder) tools\gen_project_files.ps1 は pwsh で実行する (PS 5.1 は構文エラー)。build\Engine.vcxproj(.filters) はコミット対象。
+- (sub-01 coder) 表のキーは (index, generation)。World::Clear が世代を進めるので Play 開始/終了で前の表は自然に落ちる。
+- (sub-02 VERDICT should#1) sub-03 で MoveTo の Abort 停止を試すとき、LowerPriority の変化検出 (偽→真) と Abort 後始末の順序 (深い方から) を一時的に壊すと該当テストが FAIL することを 1 回確かめ、SELF_EVAL に書く。
+- (sub-02 VERDICT nit#2) MonitorNode の LowerPriority 部が長い。sub-06 で SubTree が監視に加わる前に分けるか coder が判断してよい。
+- (sub-02 coder) 欄の並びは [ノード 0..N-1][Decorator (ノード順)]。sub-10 のライブ表示は BtDecoratorDef::slot を引く。本体の Abort 後始末 (MoveTo 停止など) は AbortNode / AbortBody の「ノード固有の後始末」の位置へ。SetAbortTrace が順序検査に使える。監視は BlackboardCondition の abort != None だけで、Task が書いた BB 値は次の tick の監視で反映。
+- (sub-02 VERDICT) snapshot は v34 のまま承認。sub-03 (種類ごとの追加状態) で kSimSnapshotVersion 35 にする。UE 対応の未検証点 (Loop の Failure 抜け、Cooldown の Abort 後計時) は ADR-025 (sub-14) に列挙。ADR-025 は下書き (sub-14 で確定)。
 - ロードマップ (`plans\ai-roadmap-m83-m86.md`) には「harness は使わず直接実装」とあるが、2026-10-05 にユーザーが `/harness M85の実装` を明示したのでハーネスで回す。
 - (planner 2026-10-05) spec.md 確定 (planner 裁定)・sub-01〜14 を作成。番号の見込み: TypeId 78 BehaviorTree (sub-01) / 79 PatrolRoute (sub-07)、snapshot v34 (sub-01) から各サブで +1、ABI は sub-11 で 1 回だけ v27。調べた事実の要点は spec 2. の表に file:line 付き。

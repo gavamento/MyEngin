@@ -27,13 +27,13 @@ enum : uint8_t {
 };
 } // namespace btroot
 
-// ノード 1 つの実行状態。ノードの種類ごとに使い方が違う (BehaviorTreeSystem.cpp の各 Visit が正本)。
+// 実行状態の欄 1 つ。ノードごと・Decorator ごとに 1 欄 (BtDecoratorDef::slot)。種類ごとに使い方が違う (BehaviorTreeSystem.cpp が正本)。
 // 固定長の POD で、BT 節とハッシュに入る。欄を足すときは kSimSnapshotVersion を上げる
 struct BtNodeState {
-    uint8_t active = 0;   // 入って、まだ終わっていない。子孫が 1 つでも active ならこれも 1
-    uint8_t phase = 0;    // SimpleParallel: bit0 = メインが終わった
+    uint8_t active = 0;   // 入って、まだ終わっていない。子孫が 1 つでも active ならこれも 1。Decorator 欄は付いたノードが入っている間 1
+    uint8_t phase = 0;    // SimpleParallel: bit0 = メインが終わった / BlackboardCondition: 最後に評価した結果 (1 = 真)
     int32_t child = 0;    // Selector / Sequence: 今の子 (BtNodeDef::children の添字)
-    int32_t counter = 0;  // Wait: 残り tick / SimpleParallel: メインの結果 (1 = Success, 2 = Failure)
+    int32_t counter = 0;  // Wait: 残り tick / SimpleParallel: メインの結果 (1 = Success, 2 = Failure) / Cooldown: 入れるようになる tick / Repeat: 終えた回数 / Timeout: 打ち切る tick
 };
 
 // 木を動かしているエンティティ 1 体ぶんの状態。BehaviorTreeComponent 1 個につき 1 つ
@@ -67,6 +67,9 @@ public:
     // 旧シーンの状態を捨てる (シーン遷移)
     void Reset();
 
+    // Abort を受けたノードの id を Abort の順に積む先 (検査用。sim 状態ではない)。null = 記録しない
+    void SetAbortTrace(std::vector<int32_t>* sink) { abortTrace_ = sink; }
+
     // ---- SimSnapshot の BT 節 ----
     void SaveSnapshot(ByteWriter& w) const;
     // 検証つきで読む。壊れた blob (件数・範囲・キー順の不正) は false で out は不定
@@ -90,6 +93,7 @@ private:
     bool StepOwner(World& world, uint64_t tick, EntityID owner, BtInstance& inst);
 
     std::vector<BtInstance> instances_; // エンティティキー昇順
+    std::vector<int32_t>* abortTrace_ = nullptr;
     std::set<uint64_t> warnedMissing_;  // 「木が見つからない」を警告済みの GUID (ログだけ。sim 状態ではない)
 };
 

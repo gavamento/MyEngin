@@ -252,5 +252,6 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 
 (確定後の変更のみ)
 
+- 2026-10-05 (sub-02 VERDICT): Decorator の細部を確定 — 条件は入るとき 1 回だけ評価 (Repeat の周回では再評価しない)、Timeout は「入った tick + ticks」で切れ同じ tick に子が終われば終わりが優先、Repeat の内側の Timeout は周回ごと、Cooldown は終了 / Abort の tick + ticks から入れる、未設定・型違いの大小比較は偽、LowerPriority は偽→真に変わった tick だけ働く (OnResultChange)、条件偽で入らなかったノードは Abort の記録なし、根のやり直しで Decorator の状態 (Cooldown の計時) は残す。監視 (4.1.1 の (2)) は手数の上限に数えない。Decorator の JSON は `{"type","key","params"}`、1 ノード 8 個まで
 - 2026-10-05 (sub-01 VERDICT): SearchArea の点は事前に列で持たず、向かい始める時に 1 つずつ生成する (状態を固定長にするため、pointCount 上限 32)。ノードの追加状態は種類ごとの固定長領域 (sub-03 で導入) に置く。sub-01 が足した上限 (ノード 1024・深さ 64・tick パラメータ 216000) を仕様として承認
 - 2026-10-05 (ユーザー回答、司会経由): MoveTo の Stuck の扱いを「常に Running」から「パラメータ `failOnStuck` (既定 false) で選ぶ」へ変更。4.1.3・2. #17・受け入れ条件 6・sub-03 を更新。ほか 4 件 (2. #1 / #9 / #10、4.1.1 の根のやり直し) は裁定どおりで確定

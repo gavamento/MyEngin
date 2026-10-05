@@ -18,6 +18,9 @@ constexpr int kBtMaxNodes = 1024;  // 1 アセットのノード数の上限
 constexpr int kBtMaxDepth = 64;    // 根からの深さの上限 (実行器は再帰で降りるのでスタックを守る)
 constexpr int kBtMaxStepsPerTick = 256; // 1 体 1 tick のノード訪問の手数の上限 (超えたらその tick はそこで止めて次の tick に続ける)
 constexpr int kBtMaxTicksParam = 216000; // tick 数のパラメータの上限 (60 Hz で 1 時間)
+constexpr int kBtMaxRepeatCount = 100000; // Repeat の回数の上限
+constexpr int kBtMaxDecoratorsPerNode = 8; // 1 ノードに付けられる Decorator の数の上限
+constexpr int kBtMaxStateSlots = kBtMaxNodes * (1 + kBtMaxDecoratorsPerNode); // 実行状態の欄の数の上限 (ノード 1 + Decorator 1 つにつき 1 欄)
 
 // ノードの種類。値は btNodeTypes の添字で、ファイルには名前で保存する (並べ替えても保存形式は変わらない)
 enum class BtNodeKind : uint8_t {
@@ -81,10 +84,75 @@ enum : int32_t {
 };
 } // namespace btparallelfinish
 
+// Decorator の種類 (UE の Decorators に相当)。値は btDecoratorTypes の添字で、ファイルには名前で保存する
+enum class BtDecoratorKind : uint8_t {
+    BlackboardCondition,
+    Invert,
+    Cooldown,
+    Repeat,
+    Timeout,
+    Count,
+};
+
+struct BtDecoratorTypeInfo {
+    BtDecoratorKind kind;
+    const char* name;                    // ファイルの "type"
+    const BtParamDesc* params;
+    int paramCount;
+    bool hasKey;                         // ブラックボードのキー名を持つ (BlackboardCondition だけ)
+};
+
+const BtDecoratorTypeInfo& BtDecoratorTypeOf(BtDecoratorKind kind);
+const BtDecoratorTypeInfo* BtFindDecoratorType(const std::string& name); // 無ければ nullptr
+
+// BlackboardCondition の params の並び
+namespace btbbparam {
+enum : int {
+    kQuery = 0,
+    kIntValue = 1,   // Bool / Int のキーと比べる値
+    kFloatValue = 2, // Float のキーと比べる値
+    kAbort = 3,
+};
+} // namespace btbbparam
+
+// BlackboardCondition の query
+namespace btquery {
+enum : int32_t {
+    kIsSet,
+    kIsNotSet,
+    kEqual,
+    kNotEqual,
+    kLess,
+    kLessEqual,
+    kGreater,
+    kGreaterEqual,
+};
+} // namespace btquery
+
+// BlackboardCondition の abort (UE の Observer Aborts。OnResultChange のみ)
+namespace btabort {
+enum : int32_t {
+    kNone,
+    kSelf,
+    kLowerPriority,
+    kBoth,
+};
+} // namespace btabort
+
+struct BtDecoratorDef {
+    BtDecoratorKind kind = BtDecoratorKind::Invert;
+    std::string key;                     // hasKey の種類だけ。ブラックボードのキー名
+    std::vector<BtParamValue> params;    // 種類の params と同じ長さ・同じ並び
+
+    // ---- BtLinkAsset が作る導出値 ----
+    int32_t slot = -1;                   // 実行状態 (BtInstance::nodes) の欄の添字
+};
+
 struct BtNodeDef {
     int32_t id = 0;                      // ファイル内で一意 (>= 0)。ライブ表示と ABI の「実行中ノード」はこの値
     BtNodeKind kind = BtNodeKind::Selector;
     std::vector<BtParamValue> params;    // 種類の params と同じ長さ・同じ並び
+    std::vector<BtDecoratorDef> decorators; // 上から順に評価する (最初が一番外側)
     std::vector<int32_t> childIds;       // 左から右 = 優先順
     float pos[2] = {};                   // エディタの表示位置 (実行には使わない)
 
@@ -105,7 +173,7 @@ struct BehaviorTreeAsset {
 
     // ---- BtLinkAsset が作る導出値 ----
     int32_t rootIndex = -1;              // nodes の添字
-    int32_t stateSlotCount = 0;          // 実行状態 (BtNodeState) の欄の数。今はノード数と同じ
+    int32_t stateSlotCount = 0;          // 実行状態 (BtNodeState) の欄の数。先頭がノードごと (nodes と同じ添字)、続いて Decorator ごと
 
     // id からノードの添字。無ければ -1
     int FindNode(int32_t id) const;

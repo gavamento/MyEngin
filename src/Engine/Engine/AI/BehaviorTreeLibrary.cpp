@@ -15,6 +15,7 @@
 
 #include "Engine/Core/Asset/AssetKeyResolver.h"
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/AI/BlackboardLibrary.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace fs = std::filesystem;
@@ -46,6 +47,42 @@ const BtNodeTypeInfo kNodeTypes[] = {
 };
 static_assert(sizeof(kNodeTypes) / sizeof(kNodeTypes[0]) == static_cast<size_t>(BtNodeKind::Count),
               "kNodeTypes を BtNodeKind の全値ぶん並べる");
+
+const char* const kQueryNames[] = { "IsSet", "IsNotSet", "Equal", "NotEqual", "Less", "LessEqual", "Greater", "GreaterEqual" };
+const char* const kAbortNames[] = { "None", "Self", "LowerPriority", "Both" };
+
+constexpr float kBbCompareLimit = 1.0e9f; // 比べる値の範囲 (int32 へ収まる)
+
+// btbbparam の並びと同じ
+const BtParamDesc kBlackboardConditionParams[] = {
+    { "query", BtParamType::Enum, static_cast<float>(btquery::kIsSet), 0.0f, 7.0f, kQueryNames, 8 },
+    { "intValue", BtParamType::Int, 0.0f, -kBbCompareLimit, kBbCompareLimit, nullptr, 0 },
+    { "floatValue", BtParamType::Float, 0.0f, -kBbCompareLimit, kBbCompareLimit, nullptr, 0 },
+    { "abort", BtParamType::Enum, static_cast<float>(btabort::kNone), 0.0f, 3.0f, kAbortNames, 4 },
+};
+
+const BtParamDesc kCooldownParams[] = {
+    { "ticks", BtParamType::Int, 60.0f, 0.0f, static_cast<float>(kBtMaxTicksParam), nullptr, 0 },
+};
+
+const BtParamDesc kRepeatParams[] = {
+    { "count", BtParamType::Int, 2.0f, 0.0f, static_cast<float>(kBtMaxRepeatCount), nullptr, 0 }, // 0 = 無限
+};
+
+const BtParamDesc kTimeoutParams[] = {
+    { "ticks", BtParamType::Int, 60.0f, 1.0f, static_cast<float>(kBtMaxTicksParam), nullptr, 0 },
+};
+
+// BtDecoratorKind の並びと同じ順に並べる
+const BtDecoratorTypeInfo kDecoratorTypes[] = {
+    { BtDecoratorKind::BlackboardCondition, "BlackboardCondition", kBlackboardConditionParams, 4, true },
+    { BtDecoratorKind::Invert, "Invert", nullptr, 0, false },
+    { BtDecoratorKind::Cooldown, "Cooldown", kCooldownParams, 1, false },
+    { BtDecoratorKind::Repeat, "Repeat", kRepeatParams, 1, false },
+    { BtDecoratorKind::Timeout, "Timeout", kTimeoutParams, 1, false },
+};
+static_assert(sizeof(kDecoratorTypes) / sizeof(kDecoratorTypes[0]) == static_cast<size_t>(BtDecoratorKind::Count),
+              "kDecoratorTypes を BtDecoratorKind の全値ぶん並べる");
 
 std::string NameFromPath(const std::wstring& path)
 {
@@ -134,7 +171,87 @@ json WriteParam(const BtParamDesc& desc, const BtParamValue& value)
     return nullptr;
 }
 
+// "params" オブジェクトを descs の並びで読む。無い項目は既定値。1 つでも読めなければ false
+bool ReadParamList(const BtParamDesc* descs, int count, const json& owner, std::vector<BtParamValue>& out)
+{
+    out.clear();
+    for (int i = 0; i < count; ++i) {
+        out.push_back(DefaultParam(descs[i]));
+    }
+    if (!owner.contains("params")) {
+        return true;
+    }
+    const json& params = owner["params"];
+    if (!params.is_object()) {
+        return false;
+    }
+    for (int i = 0; i < count; ++i) {
+        if (params.contains(descs[i].name) && !ReadParam(descs[i], params[descs[i].name], out[static_cast<size_t>(i)])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+json WriteParamList(const BtParamDesc* descs, int count, const std::vector<BtParamValue>& values)
+{
+    json params = json::object();
+    for (int i = 0; i < count && static_cast<size_t>(i) < values.size(); ++i) {
+        params[descs[i].name] = WriteParam(descs[i], values[static_cast<size_t>(i)]);
+    }
+    return params;
+}
+
+bool ReadDecorator(const json& j, BtDecoratorDef& out)
+{
+    if (!j.is_object() || !j.contains("type") || !j["type"].is_string()) {
+        return false;
+    }
+    const BtDecoratorTypeInfo* info = BtFindDecoratorType(j["type"].get<std::string>());
+    if (info == nullptr) {
+        return false; // 未知の Decorator
+    }
+    out = BtDecoratorDef{};
+    out.kind = info->kind;
+    if (info->hasKey) {
+        if (!j.contains("key") || !j["key"].is_string()) {
+            return false;
+        }
+        out.key = j["key"].get<std::string>();
+    }
+    return ReadParamList(info->params, info->paramCount, j, out.params);
+}
+
+// 親が Selector でない BlackboardCondition の LowerPriority / Both は実行時に Self になる。読み込み時にだけ知らせる
+void WarnIgnoredLowerPriority(const BehaviorTreeAsset& asset)
+{
+    for (const BtNodeDef& node : asset.nodes) {
+        const bool parentIsSelector = node.parent >= 0 && asset.nodes[static_cast<size_t>(node.parent)].kind == BtNodeKind::Selector;
+        for (const BtDecoratorDef& deco : node.decorators) {
+            const int32_t abort = deco.kind == BtDecoratorKind::BlackboardCondition ? deco.params[btbbparam::kAbort].i : btabort::kNone;
+            if ((abort == btabort::kLowerPriority || abort == btabort::kBoth) && !parentIsSelector) {
+                MYE_LOG_WARN("[behaviortree] node %d: LowerPriority / Both only works under a Selector; treated as Self", node.id);
+            }
+        }
+    }
+}
+
 } // namespace
+
+const BtDecoratorTypeInfo& BtDecoratorTypeOf(BtDecoratorKind kind)
+{
+    return kDecoratorTypes[static_cast<size_t>(kind)];
+}
+
+const BtDecoratorTypeInfo* BtFindDecoratorType(const std::string& name)
+{
+    for (const BtDecoratorTypeInfo& info : kDecoratorTypes) {
+        if (name == info.name) {
+            return &info;
+        }
+    }
+    return nullptr;
+}
 
 const BtNodeTypeInfo& BtNodeTypeOf(BtNodeKind kind)
 {
@@ -174,8 +291,19 @@ bool BtLinkAsset(BehaviorTreeAsset& asset)
     for (size_t i = 0; i < count; ++i) {
         const BtNodeDef& node = asset.nodes[i];
         if (node.id < 0 || static_cast<size_t>(node.kind) >= static_cast<size_t>(BtNodeKind::Count)
-            || node.params.size() != static_cast<size_t>(BtNodeTypeOf(node.kind).paramCount)) {
+            || node.params.size() != static_cast<size_t>(BtNodeTypeOf(node.kind).paramCount)
+            || node.decorators.size() > static_cast<size_t>(kBtMaxDecoratorsPerNode)) {
             return false;
+        }
+        for (const BtDecoratorDef& deco : node.decorators) {
+            if (static_cast<size_t>(deco.kind) >= static_cast<size_t>(BtDecoratorKind::Count)) {
+                return false;
+            }
+            const BtDecoratorTypeInfo& info = BtDecoratorTypeOf(deco.kind);
+            const bool keyOk = info.hasKey ? !deco.key.empty() && deco.key.size() <= kBbMaxNameBytes : deco.key.empty();
+            if (!keyOk || deco.params.size() != static_cast<size_t>(info.paramCount)) {
+                return false;
+            }
         }
         byId.emplace_back(node.id, static_cast<int32_t>(i));
     }
@@ -231,12 +359,17 @@ bool BtLinkAsset(BehaviorTreeAsset& asset)
         }
     }
 
+    // 実行状態の欄: 先頭 count 個がノード、続いて Decorator を (ノードの並び, 上から) の順に 1 つずつ
+    int32_t nextSlot = static_cast<int32_t>(count);
     for (size_t i = 0; i < count; ++i) {
         asset.nodes[i].children = std::move(children[i]);
         asset.nodes[i].parent = parent[i];
+        for (BtDecoratorDef& deco : asset.nodes[i].decorators) {
+            deco.slot = nextSlot++;
+        }
     }
     asset.rootIndex = rootIndex;
-    asset.stateSlotCount = static_cast<int32_t>(count);
+    asset.stateSlotCount = nextSlot;
     return true;
 }
 
@@ -319,12 +452,19 @@ json BehaviorTreeLibrary::ToJson(const BehaviorTreeAsset& asset)
         json n;
         n["id"] = node.id;
         n["type"] = info.name;
-        json params = json::object();
-        for (int i = 0; i < info.paramCount && static_cast<size_t>(i) < node.params.size(); ++i) {
-            params[info.params[i].name] = WriteParam(info.params[i], node.params[static_cast<size_t>(i)]);
+        n["params"] = WriteParamList(info.params, info.paramCount, node.params);
+        json decorators = json::array();
+        for (const BtDecoratorDef& deco : node.decorators) {
+            const BtDecoratorTypeInfo& decoInfo = BtDecoratorTypeOf(deco.kind);
+            json d;
+            d["type"] = decoInfo.name;
+            if (decoInfo.hasKey) {
+                d["key"] = deco.key;
+            }
+            d["params"] = WriteParamList(decoInfo.params, decoInfo.paramCount, deco.params);
+            decorators.push_back(std::move(d));
         }
-        n["params"] = std::move(params);
-        n["decorators"] = json::array();
+        n["decorators"] = std::move(decorators);
         n["children"] = node.childIds;
         n["pos"] = json::array({ node.pos[0], node.pos[1] });
         nodes.push_back(std::move(n));
@@ -369,24 +509,19 @@ bool BehaviorTreeLibrary::FromJson(const json& j, BehaviorTreeAsset& out)
             BtNodeDef node;
             node.id = n["id"].get<int32_t>();
             node.kind = info->kind;
-            for (int i = 0; i < info->paramCount; ++i) {
-                node.params.push_back(DefaultParam(info->params[i]));
-            }
-            if (n.contains("params")) {
-                if (!n["params"].is_object()) {
-                    return false;
-                }
-                for (int i = 0; i < info->paramCount; ++i) {
-                    if (n["params"].contains(info->params[i].name)
-                        && !ReadParam(info->params[i], n["params"][info->params[i].name], node.params[static_cast<size_t>(i)])) {
-                        return false;
-                    }
-                }
+            if (!ReadParamList(info->params, info->paramCount, n, node.params)) {
+                return false;
             }
             if (n.contains("decorators")) {
-                // この版に Decorator の種類は無い。あるなら未知の type と同じく読めない
-                if (!n["decorators"].is_array() || !n["decorators"].empty()) {
+                if (!n["decorators"].is_array() || n["decorators"].size() > static_cast<size_t>(kBtMaxDecoratorsPerNode)) {
                     return false;
+                }
+                for (const json& decoJson : n["decorators"]) {
+                    BtDecoratorDef deco;
+                    if (!ReadDecorator(decoJson, deco)) {
+                        return false; // 未知の Decorator・型の違うパラメータ・キー名なし
+                    }
+                    node.decorators.push_back(std::move(deco));
                 }
             }
             if (n.contains("children")) {
@@ -413,7 +548,8 @@ bool BehaviorTreeLibrary::FromJson(const json& j, BehaviorTreeAsset& out)
     if (!BtLinkAsset(asset)) {
         return false;
     }
-    out = std::move(asset);
+    WarnIgnoredLowerPriority(asset);
+    out =std::move(asset);
     return true;
 }
 
