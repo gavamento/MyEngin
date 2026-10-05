@@ -400,7 +400,7 @@ void RunOneTick(TickServices& ts)
     // 走査だけで何もしない (RNG もハッシュも触らない)
     if (stepSim && ts.behaviorTree != nullptr) {
         MYE_PROFILE_SCOPE("behaviortree");
-        ts.behaviorTree->Update(scene.GetWorld(), ctx.tickIndex);
+        ts.behaviorTree->Update(scene.GetWorld(), ctx.tickIndex, ts.navSystem);
     }
     // ---- ナビメッシュ (フェーズ 3.4b、M82b): 音響 + AgentSystem の後・アニメの前 ----
     // AgentSystem は ts.acoustic のゲートの中なので相乗りしない。Surface が無いシーンでは

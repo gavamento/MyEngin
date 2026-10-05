@@ -38,6 +38,7 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 | 14 | BT が NavMeshAgent と AgentBrain の両方と同じエンティティで動いたら? | `moveInput` を書くのは NavSystem と AgentBrain。Inspector に既に警告がある (`InspectorWindow.cpp:1874-1875`) | — | BT は `moveInput` を書かない (Nav 経由だけ)。MoveTo / RotateTo / Patrol / SearchArea は NavMeshAgent が無ければ即 Failure。BT と AgentBrain の同居も Inspector に警告を出す |
 | 15 | ライブ表示でリプレイ / What-if の再生中も見せられるか | TimeTravel は同じ World へ `RestoreSimSnapshot` して再シムする。毎フレーム ctx.scene から取り直す窓は巻き戻した tick の状態を出せる (Animator 窓が前例)。What-if の分岐側は World として読めない (`TimeTravel.h:85-90`) | — | BT 節が復元されるので、BT 窓が毎フレーム BehaviorTreeSystem を引けばタイムライン操作中も正しく出る。**What-if の分岐 (非ライブ側) の BT 表示はやらない** (ロードマップの「What-if の再生中も」は、ライブ側へ分岐を採用した後に見えることで満たす)。 |
 | 17 | MoveTo が Stuck のとき Failure にするか | NavSystem の Stuck は「経路の残りを一定 tick 縮められない」表示と通知だけで、押し続けて前進が戻れば Moving に戻る (`Components.h:1940`)。M82l で同じ目的地の渋滞を Stuck にしないよう直した経緯がある。UE の MoveTo は詰まっても失敗しない | **ユーザー回答 (2026-10-05)**: 「MoveToにチェックボックスで詰まった時にFailureするかを選ばせる」(planner 裁定の「常に Running」は不採用) | MoveTo のパラメータ `failOnStuck` (bool) をノードごとに選ぶ。**既定は false** — UE と同じで、一時的な渋滞や押し合いで追跡が途切れない方が安全側。既存の木 (まだ無い) やデモで明示しなければ従来の想定どおりになる。true は「詰まったら別の行動へ切り替えたい」木で使う |
+| 18 | 移動を含む SearchArea / Patrol が Stuck のとき | ユーザーは MoveTo に「詰まったら Failure にするか」のチェックボックス (2. #17) を選んだ。SearchArea / Patrol も内部で同じ移動をするので、同じ問題 (詰まり続けると終わらない) を持つ | 裁定どおり (2026-10-05 ユーザー回答「MoveTo と同じチェック」、司会経由) | **同じ名前・同じ意味の `failOnStuck` (既定 false) を SearchArea と Patrol にも持たせる** (true ならノード全体が Failure)。却下: SearchArea だけ「詰まった点を飛ばして次の点へ」(捜索としては便利だが、同じ名前のチェックボックスが種類ごとに違う意味になる) |
 | 16 | Animator の窓が「位置を保存しない・Undo 無し・パン/ズーム無し」なので、それを手本に BT エディタを作ると同じ穴が残る | `AnimatorControllerWindow.cpp:25-37` (位置はメモリだけ)、Undo 無し、`NoScrollbar | NoMove` | — | BT エディタは新規の窓。位置の保存・窓内の Undo (アセット全体の JSON を前後で持つ単純な方式)・パンとズームを持つ。Animator 窓は直さない |
 
 ## 3. スコープ
@@ -116,7 +117,7 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 |---|---|---|
 | FindRandomPoint | 中心 (自分 / Vector キー)、radius、出力 Vector キー | `NavSystem::QueryRandomPoint` (`NavSystem.h:243`、World::Rng) で到達可能な点を出して Success。見つからなければ Failure |
 | FindNearestTarget | sense マスク (Sight/Hearing/Damage/Touch)、currentlySensedOnly (bool)、出力 Entity キー、出力 Vector キー (最後の位置、任意) | 自分の `AIPerception.percepts` から条件に合う相手のうち一番近い (`lastSensedPos` までの距離、同距離は entity キー小) を選ぶ。名乗らない音 (target が null) は Entity キーへは書けないので Vector 出力だけに使う。無ければ Failure |
-| SearchArea | 起点 key (Vector。既定は FindNearestTarget が書いた最後の位置)、usePrediction (bool。真なら知覚の `predictedPos` を起点に)、radius、pointCount、検索の終了キー (Entity。この相手が今見えたら Success) | 起点へ MoveTo → 起点の radius 内の到達可能点を pointCount 個 (上限 32) 順に回る。点は列で持たず、向かい始める時に 1 つずつ FindRandomPoint と同じ方法で生成する。途中で対象が視覚で見えたら Success、全部回ったら Failure。予測位置はナビメッシュへ吸着 (`QuerySamplePosition`) してから使う |
+| SearchArea | 起点 key (Vector。既定は FindNearestTarget が書いた最後の位置)、usePrediction (bool。真なら知覚の `predictedPos` を起点に)、radius、pointCount、検索の終了キー (Entity。この相手が今見えたら Success)、failOnStuck (bool、既定 false。MoveTo と同じ意味、2. #17) | 起点へ MoveTo → 起点の radius 内の到達可能点を pointCount 個 (上限 32) 順に回る。点は列で持たず、向かい始める時に 1 つずつ FindRandomPoint と同じ方法で生成する。途中で対象が視覚で見えたら Success、全部回ったら Failure。予測位置はナビメッシュへ吸着 (`QuerySamplePosition`) してから使う。Stuck は failOnStuck が false なら Running のまま、true ならその tick に Failure (目的地を倒して止める) |
 | FindTarget | 範囲 radius、陣営の条件 (敵 / 中立 / 味方のビット、自分の `AIPerception` の態度判定 `PerceptionAttitudeOf` を使う)、タグの条件 (`TagComponent.mask` の AND マスク)、出力 Entity キー | `AIStimulusSource` を持つ有効なエンティティから条件に合う一番近いもの (同距離は entity キー小) を選ぶ。移動しない。知覚 (見えているか) は問わない。無ければ Failure |
 
 #### 4.1.5 Gameplay / Tree / Patrol
@@ -124,7 +125,7 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 - PlayAnimation: state 名、durationTicks、waitForEnd (bool)。`AnimatorPlay` で遷移を始め、waitForEnd ならそのステートのクリップが 1 周するまで Running、でなければ即 Success。Animator が無い・名前が無い → Failure。
 - SendEvent: イベント名、宛先 (Entity キー / 自分 / 全体)、ペイロード (Vector キー / Float 定数 / Int 定数)。積んで即 Success (4.1.6)。
 - SubTree: BT アセット。**同じ BB アセット**でなければエディタで検査エラー・実行時は Failure。親の BB をそのまま使う。入れ子は 8 段まで (超えたら Failure + 警告。自分自身を含む循環もこれで止まる)。
-- Patrol: route キー (Entity。`PatrolRouteComponent` を持つエンティティ)、acceptanceRadius。現在の点へ MoveTo → 点の waitTicks だけ待つ → 次の点へ。Loop は無限に Running、PingPong は端で折り返して無限、Once は最後の点で待ち終えたら Success。Abort されて戻ったら一番近い点から (2. #11)。
+- Patrol: route キー (Entity。`PatrolRouteComponent` を持つエンティティ)、acceptanceRadius、failOnStuck (bool、既定 false。MoveTo と同じ意味、2. #17)。現在の点へ MoveTo → 点の waitTicks だけ待つ → 次の点へ。Loop は無限に Running、PingPong は端で折り返して無限、Once は最後の点で待ち終えたら Success。Abort されて戻ったら一番近い点から (2. #11)。
 
 #### 4.1.6 汎用イベントキュー
 
@@ -252,6 +253,7 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 
 (確定後の変更のみ)
 
+- 2026-10-05 (sub-04 VERDICT): SearchArea と Patrol に `failOnStuck` (既定 false) を追加 (2. #18)。FindNearestTarget で名乗らない音を選んだら Entity キーは未設定に戻し Vector だけ書く。BtParamType::Mask (64 ビット、16 進) を追加。BehaviorTreeSystem::Update は NavSystem を受け取る。FindNearestTarget の既定は 4 感覚とも true・currentlySensedOnly false、FindTarget の既定は radius 15・敵のみ・tagMask 0。SearchArea の吸着は水平 2 m / 垂直 4 m、着いた判定は水平 0.5 m、点の生成失敗はその点を消費して次の tick、「見えた」は同じ tick の percepts の視覚ビットで判定
 - 2026-10-05 (sub-03 VERDICT): ノード JSON に `keys` (BB キー名の欄、種類表の keyNames) と GUID 型のパラメータ (16 進文字列) を追加。MoveTo の距離は水平 (XZ)、最初から acceptanceRadius 内なら Agent に書かず Success、目的地を書いた tick は status を読まない (SearchArea / Patrol も同じ規則)、observeTarget の既定 true、acceptanceRadius の既定 0.5。RotateTo は角速度 0 かつ Agent も 0 以下なら 360。SetBlackboard の Copy は同型・設定済みのみ。BehaviorTreeComponent が外れたら表を落とす前に Abort。種類ごとの追加状態 (BtNodeTypeInfo::extraStateBytes) を導入し snapshot v35。spec 7. の「同じ地点への MoveTo」のリスクは NavSystem 無変更で解消
 - 2026-10-05 (sub-02 VERDICT): Decorator の細部を確定 — 条件は入るとき 1 回だけ評価 (Repeat の周回では再評価しない)、Timeout は「入った tick + ticks」で切れ同じ tick に子が終われば終わりが優先、Repeat の内側の Timeout は周回ごと、Cooldown は終了 / Abort の tick + ticks から入れる、未設定・型違いの大小比較は偽、LowerPriority は偽→真に変わった tick だけ働く (OnResultChange)、条件偽で入らなかったノードは Abort の記録なし、根のやり直しで Decorator の状態 (Cooldown の計時) は残す。監視 (4.1.1 の (2)) は手数の上限に数えない。Decorator の JSON は `{"type","key","params"}`、1 ノード 8 個まで
 - 2026-10-05 (sub-01 VERDICT): SearchArea の点は事前に列で持たず、向かい始める時に 1 つずつ生成する (状態を固定長にするため、pointCount 上限 32)。ノードの追加状態は種類ごとの固定長領域 (sub-03 で導入) に置く。sub-01 が足した上限 (ノード 1024・深さ 64・tick パラメータ 216000) を仕様として承認

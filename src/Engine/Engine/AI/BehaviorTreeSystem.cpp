@@ -15,6 +15,9 @@
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Util/Random.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
+#include "Engine/Engine/Navigation/NavSystem.h"
+#include "Engine/Engine/Perception/PerceptionSystem.h"
+#include "Engine/Engine/Scene/Tags.h"
 
 namespace mye {
 
@@ -49,6 +52,9 @@ constexpr float kPi = 3.14159265f;
 constexpr float kObserveMoveDistance = 0.5f;    // observeTarget が目的地を書き直す目標の移動量 (m)
 constexpr float kDefaultAngularSpeedDeg = 360.0f; // RotateTo の角速度の既定 (度/秒。Agent も無い / 0 のとき)
 constexpr float kMinFacingDistance = 1.0e-4f;   // これ以下の水平距離では向きが定まらない (m)
+constexpr float kSearchAcceptanceRadius = 0.5f; // SearchArea が点に着いたとみなす水平距離 (m)
+constexpr float kSearchSnapHorizontal = 2.0f;   // SearchArea の起点をナビメッシュへ吸着する範囲 (m)
+constexpr float kSearchSnapVertical = 4.0f;
 
 // BT 節の 1 要素あたりの最小バイト数 (ByteReader::Count が残りバイトで件数を検証するのに使う)
 constexpr size_t kBbValueBytes = sizeof(uint8_t) + sizeof(int32_t) + sizeof(float) + 3 * sizeof(float) + 2 * sizeof(uint32_t);
@@ -67,6 +73,7 @@ struct RunCtx {
     const BehaviorTreeAsset& tree;
     uint64_t tick;
     std::vector<int32_t>* abortTrace;
+    const NavSystem* nav; // null = ナビメッシュを引けない (FindRandomPoint / SearchArea は Failure)
     int steps = 0;
     bool stepLimitHit = false;
     bool aborted = false; // 実行中のノードを 1 つでも Abort した
@@ -183,6 +190,15 @@ void ReleaseMoveTo(RunCtx& c, const BtNodeDef& node)
     }
 }
 
+// SearchArea の後始末: 目的地を倒して止める (点の状態は ReleaseBody が 0 へ戻す)
+void ReleaseSearchArea(RunCtx& c)
+{
+    NavMeshAgentComponent* agent = c.world.GetComponent<NavMeshAgentComponent>(c.inst.entity);
+    if (agent != nullptr) {
+        agent->hasDestination = false;
+    }
+}
+
 // RotateTo の後始末: 預かった updateRotation を戻す
 void ReleaseRotateTo(RunCtx& c, const BtNodeDef& node)
 {
@@ -201,6 +217,7 @@ void ReleaseBody(RunCtx& c, int32_t index)
     switch (node.kind) {
     case BtNodeKind::MoveTo: ReleaseMoveTo(c, node); break;
     case BtNodeKind::RotateTo: ReleaseRotateTo(c, node); break;
+    case BtNodeKind::SearchArea: ReleaseSearchArea(c); break;
     default: break;
     }
     const int extraBytes = BtNodeTypeOf(node.kind).extraStateBytes;
@@ -570,6 +587,297 @@ BtResult VisitClearBlackboard(RunCtx& c, int32_t index)
     return BtResult::Success;
 }
 
+// ---- AI ノード 4 種 (M85d) ----
+
+// key の名前の Vector が書かれていればその値を out へ。BB が無い・名前が空・型違い・未設定は false
+bool ReadVectorKey(RunCtx& c, const std::string& name, float (&out)[3])
+{
+    BbType type = BbType::Bool;
+    const BbValue* value = FindBb(c, name, type);
+    if (value == nullptr || type != BbType::Vector || value->isSet == 0) {
+        return false;
+    }
+    std::memcpy(out, value->v, sizeof(out));
+    return true;
+}
+
+// key が wanted 型のキーなら書き先の値を返す。無い・型違いは nullptr
+BbValue* FindBbOfType(RunCtx& c, const std::string& name, BbType wanted)
+{
+    BbType type = BbType::Bool;
+    BbValue* value = FindBb(c, name, type);
+    return value != nullptr && type == wanted ? value : nullptr;
+}
+
+float DistanceSquared3(const float* a, const float* b)
+{
+    const float dx = a[0] - b[0];
+    const float dy = a[1] - b[1];
+    const float dz = a[2] - b[2];
+    return dx * dx + dy * dy + dz * dz;
+}
+
+// 距離の小さい順、同じなら entity キーの小さい順
+bool CloserThan(float distance, EntityID entity, float bestDistance, EntityID bestEntity)
+{
+    return distance < bestDistance || (distance == bestDistance && KeyLess(entity, bestEntity));
+}
+
+// FindRandomPoint: 中心 (自分 / Vector キー) の radius 内でナビメッシュに乗る点を Vector キーへ書く。
+// Nav・NavMeshAgent・書き先・中心のどれかが無い、点が見つからないときは Failure
+BtResult VisitFindRandomPoint(RunCtx& c, int32_t index)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    const NavMeshAgentComponent* agent = c.world.GetComponent<NavMeshAgentComponent>(c.inst.entity);
+    BbValue* result = FindBbOfType(c, node.keys[btrandomkey::kResult], BbType::Vector);
+    if (c.nav == nullptr || agent == nullptr || result == nullptr) {
+        return BtResult::Failure;
+    }
+    float center[3] = {};
+    const std::string& centerKey = node.keys[btrandomkey::kCenter];
+    if (centerKey.empty() ? !WorldPositionOf(c.world, c.inst.entity, center) : !ReadVectorKey(c, centerKey, center)) {
+        return BtResult::Failure;
+    }
+    float point[3] = {};
+    if (!c.nav->QueryRandomPoint(c.world, agent->agentTypeId, center, node.params[btrandomparam::kRadius].f, agent->areaMask,
+                                 agent->navFilter.value, c.world.Rng(), point)) {
+        return BtResult::Failure;
+    }
+    *result = BbValue{};
+    result->isSet = 1;
+    std::memcpy(result->v, point, sizeof(point));
+    return BtResult::Success;
+}
+
+// FindNearestTarget: 自分の percepts のうち sense に合う相手で lastSensedPos が一番近いものを書く。
+// 同じ tick の知覚の結果を読む (BT はフェーズ 3.4a2 = 知覚の後)。名乗らない音 (target = null) は Entity キーを空にして Vector だけ書く
+BtResult VisitFindNearestTarget(RunCtx& c, int32_t index)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    const AIPerceptionComponent* perception = c.world.GetComponent<AIPerceptionComponent>(c.inst.entity);
+    BbValue* targetOut = FindBbOfType(c, node.keys[btnearestkey::kTarget], BbType::Entity);
+    const std::string& positionKey = node.keys[btnearestkey::kPosition];
+    BbValue* positionOut = positionKey.empty() ? nullptr : FindBbOfType(c, positionKey, BbType::Vector);
+    float self[3] = {};
+    if (perception == nullptr || targetOut == nullptr || (!positionKey.empty() && positionOut == nullptr)
+        || !WorldPositionOf(c.world, c.inst.entity, self)) {
+        return BtResult::Failure;
+    }
+    uint32_t senseMask = 0;
+    senseMask |= node.params[btnearestparam::kSight].i != 0 ? perceptionsense::kSight : 0u;
+    senseMask |= node.params[btnearestparam::kHearing].i != 0 ? perceptionsense::kHearing : 0u;
+    senseMask |= node.params[btnearestparam::kDamage].i != 0 ? perceptionsense::kDamage : 0u;
+    senseMask |= node.params[btnearestparam::kTouch].i != 0 ? perceptionsense::kTouch : 0u;
+    const bool currentOnly = node.params[btnearestparam::kCurrentOnly].i != 0;
+
+    const AIPercept* best = nullptr;
+    float bestDistance = 0.0f;
+    const int32_t count = (std::min)(perception->perceivedCount, kMaxPercepts);
+    for (int32_t i = 0; i < count; ++i) {
+        const AIPercept& percept = perception->percepts[i];
+        const uint32_t senses = currentOnly ? percept.currentSenses : percept.lastSenses;
+        if ((senses & senseMask) == 0 || (!percept.target.IsNull() && !c.world.IsAlive(percept.target))) {
+            continue;
+        }
+        const float sensedAt[3] = { percept.lastSensedPos.x, percept.lastSensedPos.y, percept.lastSensedPos.z };
+        const float distance = DistanceSquared3(self, sensedAt);
+        if (best == nullptr || CloserThan(distance, percept.target, bestDistance, best->target)) {
+            best = &percept;
+            bestDistance = distance;
+        }
+    }
+    if (best == nullptr) {
+        return BtResult::Failure;
+    }
+    *targetOut = BbValue{};
+    if (!best->target.IsNull()) {
+        targetOut->isSet = 1;
+        targetOut->entity = best->target;
+    }
+    if (positionOut != nullptr) {
+        *positionOut = BbValue{};
+        positionOut->isSet = 1;
+        positionOut->v[0] = best->lastSensedPos.x;
+        positionOut->v[1] = best->lastSensedPos.y;
+        positionOut->v[2] = best->lastSensedPos.z;
+    }
+    return BtResult::Success;
+}
+
+// FindTarget: AIStimulusSource を持つ有効なエンティティのうち、陣営 (自分の AIPerception の態度)・タグ・範囲に合う一番近いものを書く。
+// 見えているかは問わない。自分は除く
+BtResult VisitFindTarget(RunCtx& c, int32_t index)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    const AIPerceptionComponent* perception = c.world.GetComponent<AIPerceptionComponent>(c.inst.entity);
+    BbValue* targetOut = FindBbOfType(c, node.keys[btfindtargetkey::kTarget], BbType::Entity);
+    float self[3] = {};
+    if (perception == nullptr || targetOut == nullptr || !WorldPositionOf(c.world, c.inst.entity, self)) {
+        return BtResult::Failure;
+    }
+    const float radius = node.params[btfindtargetparam::kRadius].f;
+    const uint64_t tagMask = node.params[btfindtargetparam::kTagMask].u;
+    std::vector<std::pair<EntityID, int32_t>> sources; // (相手, 陣営)
+    {
+        const ComponentTypeId req[] = { AIStimulusSourceComponent::sTypeId };
+        c.world.ForEachArchetype(req, [&](Archetype& arch) {
+            const int sourceIndex = arch.FindTypeIndex(AIStimulusSourceComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const auto* source = static_cast<const AIStimulusSourceComponent*>(arch.GetPtr(sourceIndex, row));
+                sources.emplace_back(arch.EntityAt(row), source->faction);
+            }
+        });
+    }
+    EntityID best = kNullEntity;
+    float bestDistance = 0.0f;
+    for (const auto& [entity, faction] : sources) {
+        if (entity == c.inst.entity || !IsEntityActive(c.world, entity)) {
+            continue;
+        }
+        bool allowed = false;
+        switch (PerceptionAttitudeOf(*perception, faction)) {
+        case PerceptionAttitude::Hostile: allowed = node.params[btfindtargetparam::kEnemies].i != 0; break;
+        case PerceptionAttitude::Neutral: allowed = node.params[btfindtargetparam::kNeutrals].i != 0; break;
+        case PerceptionAttitude::Friendly: allowed = node.params[btfindtargetparam::kFriendlies].i != 0; break;
+        }
+        float at[3] = {};
+        if (!allowed || !Tags::PassesFilter(Tags::OwnMask(c.world, entity), tagMask) || !WorldPositionOf(c.world, entity, at)) {
+            continue;
+        }
+        const float distance = DistanceSquared3(self, at);
+        if (distance > radius * radius) {
+            continue;
+        }
+        if (best.IsNull() || CloserThan(distance, entity, bestDistance, best)) {
+            best = entity;
+            bestDistance = distance;
+        }
+    }
+    if (best.IsNull()) {
+        return BtResult::Failure;
+    }
+    *targetOut = BbValue{};
+    targetOut->isSet = 1;
+    targetOut->entity = best;
+    return BtResult::Success;
+}
+
+// 自分の知覚の中の target の項目。無ければ nullptr
+const AIPercept* FindPercept(const RunCtx& c, EntityID target)
+{
+    const AIPerceptionComponent* perception = c.world.GetComponent<AIPerceptionComponent>(c.inst.entity);
+    if (perception == nullptr || target.IsNull()) {
+        return nullptr;
+    }
+    const int32_t count = (std::min)(perception->perceivedCount, kMaxPercepts);
+    for (int32_t i = 0; i < count; ++i) {
+        if (perception->percepts[i].target == target) {
+            return &perception->percepts[i];
+        }
+    }
+    return nullptr;
+}
+
+// SearchArea: 起点 (吸着済み) へ向かい、着いたら起点の radius 内の点を pointCount 個順に回る。
+// 点は向かい始める時に 1 つずつ FindRandomPoint と同じ方法で生成する (RNG もその時に引く = 状態は固定長)。
+// 終了キーの相手が今視覚で見えたら Success、全部回ったら Failure。起点が引けない・届かない (NoPath) は Failure、
+// 回る点が届かない・見つからないときはその点を飛ばす。目的地を書いた tick は status を読まない
+BtResult VisitSearchArea(RunCtx& c, int32_t index)
+{
+    const BtNodeDef& node = c.tree.nodes[static_cast<size_t>(index)];
+    BtNodeState& state = c.inst.nodes[static_cast<size_t>(index)];
+    const bool starting = state.active == 0;
+    const auto finish = [&](BtResult result) { return starting ? result : EndBody(c, index, result); };
+    NavMeshAgentComponent* agent = c.world.GetComponent<NavMeshAgentComponent>(c.inst.entity);
+    float self[3] = {};
+    if (c.nav == nullptr || agent == nullptr || !WorldPositionOf(c.world, c.inst.entity, self)) {
+        return finish(BtResult::Failure);
+    }
+
+    EntityID endTarget = kNullEntity;
+    const BbValue* endValue = FindBbOfType(c, node.keys[btsearchkey::kEndTarget], BbType::Entity);
+    if (endValue != nullptr && endValue->isSet != 0 && c.world.IsAlive(endValue->entity)) {
+        endTarget = endValue->entity;
+    }
+    const AIPercept* endPercept = FindPercept(c, endTarget);
+    if (endPercept != nullptr && (endPercept->currentSenses & perceptionsense::kSight) != 0) {
+        return finish(BtResult::Success);
+    }
+
+    BtSearchAreaState search;
+    if (starting) {
+        float raw[3] = {};
+        bool haveOrigin = false;
+        if (node.params[btsearchparam::kUsePrediction].i != 0 && endPercept != nullptr) {
+            raw[0] = endPercept->predictedPos.x;
+            raw[1] = endPercept->predictedPos.y;
+            raw[2] = endPercept->predictedPos.z;
+            haveOrigin = true;
+        }
+        haveOrigin = haveOrigin || ReadVectorKey(c, node.keys[btsearchkey::kOrigin], raw);
+        const float extents[3] = { kSearchSnapHorizontal, kSearchSnapVertical, kSearchSnapHorizontal };
+        if (!haveOrigin
+            || !c.nav->QuerySamplePosition(c.world, agent->agentTypeId, raw, extents, agent->areaMask, agent->navFilter.value,
+                                           search.origin)) {
+            return BtResult::Failure;
+        }
+        std::memcpy(search.current, search.origin, sizeof(search.origin));
+        search.remaining = node.params[btsearchparam::kPointCount].i;
+        search.phase = btsearchphase::kToOrigin;
+        state.active = 1;
+    } else {
+        search = LoadExtra<BtSearchAreaState>(c, node);
+    }
+
+    // 今向かっている点に着いたか。status は前の tick に目的地を書いたときだけ読める (始めた tick は読まない)
+    bool arrived = HorizontalDistance(self, search.current) <= kSearchAcceptanceRadius;
+    if (!starting && !arrived) {
+        switch (agent->status) {
+        case navagentstatus::kArrived: arrived = true; break;
+        case navagentstatus::kNoPath:
+        case navagentstatus::kInactive:
+            if (search.phase == btsearchphase::kToOrigin) {
+                return EndBody(c, index, BtResult::Failure);
+            }
+            arrived = true; // 届かない点は飛ばす
+            break;
+        case navagentstatus::kStuck:
+            if (node.params[btsearchparam::kFailOnStuck].i != 0) {
+                return EndBody(c, index, BtResult::Failure);
+            }
+            break;
+        default: break;
+        }
+    }
+    const auto writeDestination = [&](const float* point) {
+        agent->destination = { point[0], point[1], point[2] };
+        agent->hasDestination = true;
+    };
+    if (!arrived) {
+        if (starting) {
+            writeDestination(search.current);
+        }
+        StoreExtra(c, node, search);
+        return BtResult::Running;
+    }
+
+    if (search.phase == btsearchphase::kToPoint && search.remaining <= 0) {
+        return EndBody(c, index, BtResult::Failure); // 回り切った
+    }
+    search.phase = btsearchphase::kToPoint;
+    --search.remaining;
+    float point[3] = {};
+    if (c.nav->QueryRandomPoint(c.world, agent->agentTypeId, search.origin, node.params[btsearchparam::kRadius].f, agent->areaMask,
+                                agent->navFilter.value, c.world.Rng(), point)) {
+        std::memcpy(search.current, point, sizeof(point));
+        writeDestination(point);
+    } else if (search.remaining <= 0) {
+        return EndBody(c, index, BtResult::Failure); // 最後の点が見つからない
+    }
+    StoreExtra(c, node, search);
+    return BtResult::Running;
+}
+
 BtResult VisitBody(RunCtx& c, int32_t index)
 {
     switch (c.tree.nodes[static_cast<size_t>(index)].kind) {
@@ -581,6 +889,10 @@ BtResult VisitBody(RunCtx& c, int32_t index)
     case BtNodeKind::RotateTo: return VisitRotateTo(c, index);
     case BtNodeKind::SetBlackboard: return VisitSetBlackboard(c, index);
     case BtNodeKind::ClearBlackboard: return VisitClearBlackboard(c, index);
+    case BtNodeKind::FindRandomPoint: return VisitFindRandomPoint(c, index);
+    case BtNodeKind::FindNearestTarget: return VisitFindNearestTarget(c, index);
+    case BtNodeKind::SearchArea: return VisitSearchArea(c, index);
+    case BtNodeKind::FindTarget: return VisitFindTarget(c, index);
     case BtNodeKind::Count: break;
     }
     return BtResult::Failure;
@@ -853,7 +1165,7 @@ bool AbortTree(World& world, uint64_t tick, std::vector<int32_t>* abortTrace, Bt
     if (!inst.tree || inst.tree->rootIndex < 0 || !AnyNodeActive(inst)) {
         return false;
     }
-    RunCtx ctx{ world, inst, *inst.tree, tick, abortTrace };
+    RunCtx ctx{ world, inst, *inst.tree, tick, abortTrace, nullptr };
     AbortNode(ctx, inst.tree->rootIndex);
     return ctx.aborted;
 }
@@ -887,7 +1199,7 @@ void BehaviorTreeSystem::Reset()
     warnedMissing_.clear();
 }
 
-void BehaviorTreeSystem::Update(World& world, uint64_t tick)
+void BehaviorTreeSystem::Update(World& world, uint64_t tick, const NavSystem* nav)
 {
     std::vector<EntityID> owners;
     {
@@ -924,7 +1236,7 @@ void BehaviorTreeSystem::Update(World& world, uint64_t tick)
             inst = std::move(instances_[oldAt]);
             ++oldAt;
         }
-        if (StepOwner(world, tick, owner, inst)) {
+        if (StepOwner(world, tick, nav, owner, inst)) {
             next.push_back(std::move(inst));
         }
     }
@@ -934,7 +1246,7 @@ void BehaviorTreeSystem::Update(World& world, uint64_t tick)
     instances_ = std::move(next);
 }
 
-bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, EntityID owner, BtInstance& inst)
+bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, const NavSystem* nav, EntityID owner, BtInstance& inst)
 {
     BehaviorTreeComponent* comp = world.GetComponent<BehaviorTreeComponent>(owner);
     bool hasInstance = !inst.entity.IsNull();
@@ -1026,7 +1338,7 @@ bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, EntityID owner, 
         inst.rootStatus = btroot::kRunning;
     }
 
-    RunCtx ctx{ world, inst, *tree, tick, abortTrace_ };
+    RunCtx ctx{ world, inst, *tree, tick, abortTrace_, nav };
     MonitorNode(ctx, tree->rootIndex);
     const BtResult result = Visit(ctx, tree->rootIndex);
     if (result != BtResult::Running) {

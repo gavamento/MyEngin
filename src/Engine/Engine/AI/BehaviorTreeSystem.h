@@ -16,6 +16,7 @@
 namespace mye {
 
 class World;
+class NavSystem;
 struct BehaviorTreeAsset;
 
 // BtInstance::rootStatus。根が終わった tick の結果で、次の tick に根からやり直す
@@ -62,8 +63,9 @@ struct BtSnapshot {
 // 存在ゲート: BehaviorTreeComponent が 1 つも無く、表も空なら走査だけで何もしない (RNG もハッシュも触らない)
 class BehaviorTreeSystem {
 public:
-    // tick ごとに呼ぶ (stepSim の中、知覚の後・ナビメッシュの前)。エンティティキー順に 1 体ずつ最後まで進める
-    void Update(World& world, uint64_t tick);
+    // tick ごとに呼ぶ (stepSim の中、知覚の後・ナビメッシュの前)。エンティティキー順に 1 体ずつ最後まで進める。
+    // nav は FindRandomPoint / SearchArea の問い合わせ先 (読むだけ)。null の間はそれらのノードが Failure
+    void Update(World& world, uint64_t tick, const NavSystem* nav);
 
     // 旧シーンの状態を捨てる (シーン遷移)
     void Reset();
@@ -91,7 +93,7 @@ public:
 
 private:
     // owner 1 体の同期と実行。表に残すなら true
-    bool StepOwner(World& world, uint64_t tick, EntityID owner, BtInstance& inst);
+    bool StepOwner(World& world, uint64_t tick, const NavSystem* nav, EntityID owner, BtInstance& inst);
 
     std::vector<BtInstance> instances_; // エンティティキー昇順
     std::vector<int32_t>* abortTrace_ = nullptr;

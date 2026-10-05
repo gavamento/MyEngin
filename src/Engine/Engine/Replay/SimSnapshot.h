@@ -121,7 +121,8 @@ struct SimRefs {
 //            生成した Link は store の Off-Mesh Link の一覧に入る (書式は v29 のまま)
 // v34 (M85a): BT 節 (BehaviorTreeSystem の表) を NAV 節の後・World 節の前に追加。BehaviorTreeComponent (World 節のカラム生バイト)
 // v35 (M85c): BT 節の各エンティティの末尾に、種類別の追加状態 (MoveTo / RotateTo の保存値など) の生バイト列を追加
-inline constexpr uint32_t kSimSnapshotVersion = 35;
+// v36 (M85d): SearchArea の追加状態 (BtSearchAreaState = 起点・今の点・残り個数・段階) が BT 節の追加状態の生バイトに入る
+inline constexpr uint32_t kSimSnapshotVersion = 36;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

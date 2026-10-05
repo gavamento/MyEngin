@@ -32,6 +32,10 @@ enum class BtNodeKind : uint8_t {
     RotateTo,
     SetBlackboard,
     ClearBlackboard,
+    FindRandomPoint,
+    FindNearestTarget,
+    SearchArea,
+    FindTarget,
     Count,
 };
 
@@ -39,6 +43,7 @@ enum class BtNodeKind : uint8_t {
 enum class BtNodeCategory : uint8_t {
     Composite,
     Task,
+    Ai, // 知覚・ナビメッシュを引いてブラックボードへ書くノード (FindRandomPoint など)
 };
 
 enum class BtParamType : uint8_t {
@@ -47,6 +52,7 @@ enum class BtParamType : uint8_t {
     Bool,
     Enum, // 値は enumNames の添字、ファイルには名前で保存する
     Guid, // アセット参照 (.navfilter.json など)。値は BtParamValue::u、ファイルには 16 桁の 16 進で保存する。0 = 参照なし
+    Mask, // 64 ビットのビット集合 (タグの AND マスクなど)。値・保存形式は Guid と同じ (u / 16 桁の 16 進)。0 = 条件なし
 };
 
 // ノードのパラメータ 1 つの記述。エディタ (パラメータ欄) と読み書き (範囲の丸め) が同じ表を引く
@@ -90,6 +96,23 @@ struct BtRotateToState {
     uint32_t flags = 0;
 };
 static_assert(sizeof(BtRotateToState) == 4, "BtRotateToState はパディングなしの 4 バイト (BT 節の生バイトに入る)");
+
+constexpr int kBtMaxSearchPoints = 32; // SearchArea が回る点の数の上限 (点は列で持たず 1 つずつ生成するので状態は固定長)
+
+// SearchArea の追加状態 (BT 節に生バイトで入る。パディングを持たない 32 バイト)。点の列は持たない
+namespace btsearchphase {
+enum : uint32_t {
+    kToOrigin = 0, // 起点へ向かっている
+    kToPoint = 1,  // 起点の周りの点へ向かっている
+};
+} // namespace btsearchphase
+struct BtSearchAreaState {
+    float origin[3] = {};     // 吸着済みの起点
+    float current[3] = {};    // 今向かっている点 (起点のときは origin と同じ)
+    int32_t remaining = 0;    // まだ生成していない点の数
+    uint32_t phase = btsearchphase::kToOrigin;
+};
+static_assert(sizeof(BtSearchAreaState) == 32, "BtSearchAreaState はパディングなしの 32 バイト (BT 節の生バイトに入る)");
 
 struct BtNodeTypeInfo {
     BtNodeKind kind;
@@ -149,6 +172,68 @@ enum : int32_t {
     kCopy = 2,     // sourceKey の値
 };
 } // namespace btsetparam
+
+// FindRandomPoint の params / keys の並び
+namespace btrandomparam {
+enum : int {
+    kRadius = 0,
+};
+} // namespace btrandomparam
+namespace btrandomkey {
+enum : int {
+    kCenter = 0, // Vector。空 = 自分の位置
+    kResult = 1, // Vector。書く先
+};
+} // namespace btrandomkey
+
+// FindNearestTarget の params / keys の並び
+namespace btnearestparam {
+enum : int {
+    kSight = 0,
+    kHearing = 1,
+    kDamage = 2,
+    kTouch = 3,
+    kCurrentOnly = 4, // 真なら今この tick に知覚している相手だけ
+};
+} // namespace btnearestparam
+namespace btnearestkey {
+enum : int {
+    kTarget = 0,   // Entity。書く先
+    kPosition = 1, // Vector。最後に知覚した位置を書く先 (任意)
+};
+} // namespace btnearestkey
+
+// SearchArea の params / keys の並び
+namespace btsearchparam {
+enum : int {
+    kUsePrediction = 0, // 真なら終了キーの相手の知覚の predictedPos を起点にする (無ければ origin キー)
+    kRadius = 1,
+    kPointCount = 2,
+    kFailOnStuck = 3,   // Stuck になった tick にノード全体を Failure (false なら Running のまま。MoveTo と同じ意味)
+};
+} // namespace btsearchparam
+namespace btsearchkey {
+enum : int {
+    kOrigin = 0, // Vector。起点
+    kEndTarget = 1, // Entity。この相手が視覚で見えたら Success (空 = 見ない)
+};
+} // namespace btsearchkey
+
+// FindTarget の params / keys の並び
+namespace btfindtargetparam {
+enum : int {
+    kRadius = 0,
+    kEnemies = 1,
+    kNeutrals = 2,
+    kFriendlies = 3,
+    kTagMask = 4, // 0 = タグの条件なし。非 0 なら TagComponent.mask がどれか 1 ビットでも持つ相手だけ
+};
+} // namespace btfindtargetparam
+namespace btfindtargetkey {
+enum : int {
+    kTarget = 0, // Entity。書く先
+};
+} // namespace btfindtargetkey
 
 // ブラックボードのキーを持つノードの "keys" の並び
 namespace btnodekey {

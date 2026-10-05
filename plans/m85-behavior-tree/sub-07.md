@@ -7,7 +7,7 @@
 ## やること
 - `PatrolRouteComponent` (TypeId = 登録時点の末尾 + 1。79 の見込み): spec 4.1.10。点 32 個の固定長、ローカル座標、waitTicks、pointCount、mode。Inspector で点の追加・削除・上下移動 (Undo に乗る通常のフィールド編集)。`kSimSnapshotVersion` +1。
 - SceneView のギズモ (選択中): 点の球・線・向きの矢印・番号。点のドラッグ移動 (1 ドラッグ = 1 Undo。手本は M82e のコライダーの独立ギズモ編集 `0f659f3` と NavMeshObstacle の描画 `SceneViewWindow.cpp:878-890`)。定数は `gizmo` 名前空間。
-- Patrol タスク (spec 4.1.5 / 2. #11): 次の点 index と PingPong の向きをノードのインスタンス状態 (BT 節) に。Abort 後の再開は一番近い点 (同距離は index 小)。ルートのエンティティが無い / 点が 0 個なら Failure。
+- Patrol タスク (spec 4.1.5 / 2. #11 / 2. #18。`failOnStuck` を MoveTo と同じ意味で持つ): 次の点 index と PingPong の向きをノードのインスタンス状態 (BT 節) に。Abort 後の再開は一番近い点 (同距離は index 小)。ルートのエンティティが無い / 点が 0 個なら Failure。
 - 最小の巡回 BT `assets\ai\patrol_only.bt.json` + `assets\ai\patrol.bb.json` (spec 2. #10。デモ sub-13 でも使う)。
 
 ## やらないこと (このサブでは)

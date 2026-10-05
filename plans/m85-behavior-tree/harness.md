@@ -9,8 +9,8 @@
 |---|---|---|---|---|
 | sub-01 | OK | 1 | a5f7ab1 | BT の核 (.bt/.bb・コンポーネント・実行器・Composite・Wait・BT 節)。snapshot v34、TypeId 78 |
 | sub-02 | OK | 1 | 24cc318 | Decorator 5 種と Abort |
-| sub-03 | OK | 1 | (このコミット) | Task 4 種 (MoveTo に failOnStuck、既定 false) |
-| sub-04 | 未着手 | 0 | | AI ノード 4 種 |
+| sub-03 | OK | 1 | 6a8bd5b | Task 4 種 (MoveTo に failOnStuck、既定 false) |
+| sub-04 | OK | 2 | (このコミット) | round 1 REWORK: SearchArea に failOnStuck。snapshot v36 | AI ノード 4 種 |
 | sub-05 | 未着手 | 0 | | 汎用イベントキューと SendEvent |
 | sub-06 | 未着手 | 0 | | AnimatorPlay / PlayAnimation / SubTree |
 | sub-07 | 未着手 | 0 | | 巡回ルート |
@@ -33,6 +33,7 @@
 - (2026-10-05) BT 無しの巡回 = 作らない (裁定どおり)
 - (2026-10-05) ノードの表示位置 = .bt.json に入れる (裁定どおり)
 - (2026-10-05) 上記を反映して spec 確定、sub-01 から着手してよい
+- (2026-10-05) SearchArea / Patrol の詰まり = MoveTo と同じ名前・同じ意味の failOnStuck (既定 false、true でノード全体 Failure)。spec 2. #18 の planner 裁定どおり
 
 ## 申し送り (セッション跨ぎ)
 - (sub-01 VERDICT should#1) sub-08 で一時プローブの `--screenshot` を撮る回に、sub-01 の未確認 4 点 (Create メニュー 2 項目 / 型フィルタ・タイルの語 / Inspector の tree ピッカーと注意表示 / Runtime.exe 実起動) も目視して SELF_EVAL に書く。
@@ -47,7 +48,9 @@
 - (sub-03 VERDICT nit#2) YawOf / WrapPi を NavSystem から BT へ複製済み。sub-07 で 3 か所目が要るなら共有の数学ヘッダへ移すか coder が判断。
 - (sub-03 VERDICT nit#3) 親付き Agent への RotateTo は未検証 → ADR-025 (sub-14) に既知の限界として書く。
 - (sub-03 coder) 追加状態は BtNodeTypeInfo::extraStateBytes + BtNodeDef::extraOffset + BtInstance::extra。構造体はパディングなし 4/8 バイト揃え、足したら snapshot +1 (sub-04 で v36 見込み)。後始末は ReleaseBody の switch に足す。MoveTo 相当を内部で使うノード (SearchArea / Patrol) も「目的地を書いた tick は status を読まない」。ノードのキー名は BtNodeTypeInfo::keyNames、JSON は "keys"。BT 系ファイルは LF。
-- 既知 flake の回数: sub-01 1 回目 5 件 / sub-02 0 件 / sub-03 1 回目 4 件 (2 回目 0)。
+- 既知 flake の回数: sub-01 1 回目 5 件 / sub-02 0 件 / sub-03 1 回目 4 件 (2 回目 0) / sub-04 0 件。
+- (sub-04 VERDICT nit#1) BehaviorTreeSelfTest の診断ログ `[search] stuck ...` は、1 回の実行で 1〜2 行なら残す。tick ごとなら 1 行にまとめるか削除。sub-05 でついでに判断。
+- (sub-04 coder) BehaviorTreeSystem::Update(world, tick, nav) — 第 3 引数 NavSystem*。BtParamType::Mask (64 ビット、16 進) と BtNodeCategory::Ai は sub-08 のパラメータ欄・パレットで扱いが要る。SearchArea のパラメータは 4 項目 (usePrediction / radius / pointCount / failOnStuck)。名乗らない音を選んだら Entity キーは空にする (承認済み)。
 - (sub-02 VERDICT) snapshot は v34 のまま承認。sub-03 (種類ごとの追加状態) で kSimSnapshotVersion 35 にする。UE 対応の未検証点 (Loop の Failure 抜け、Cooldown の Abort 後計時) は ADR-025 (sub-14) に列挙。ADR-025 は下書き (sub-14 で確定)。
 - ロードマップ (`plans\ai-roadmap-m83-m86.md`) には「harness は使わず直接実装」とあるが、2026-10-05 にユーザーが `/harness M85の実装` を明示したのでハーネスで回す。
 - (planner 2026-10-05) spec.md 確定 (planner 裁定)・sub-01〜14 を作成。番号の見込み: TypeId 78 BehaviorTree (sub-01) / 79 PatrolRoute (sub-07)、snapshot v34 (sub-01) から各サブで +1、ABI は sub-11 で 1 回だけ v27。調べた事実の要点は spec 2. の表に file:line 付き。

@@ -6,6 +6,7 @@
 #include "Engine/Engine/AI/BehaviorTreeSelfTest.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -33,11 +34,13 @@
 #include "Engine/Engine/Navigation/NavBake.h"
 #include "Engine/Engine/Navigation/NavMeshAsset.h"
 #include "Engine/Engine/Navigation/NavSystem.h"
+#include "Engine/Engine/Perception/PerceptionSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/Scene/Tags.h"
 #include "Engine/Engine/Scene/TransformSystem.h"
 #include "Engine/Platform/PathUtil.h"
 
@@ -252,7 +255,7 @@ struct Sim {
 
     void Step()
     {
-        bt.Update(GetWorld(), tick);
+        bt.Update(GetWorld(), tick, nullptr);
         GetWorld().ApplyStructuralChanges();
         ++tick;
     }
@@ -375,6 +378,48 @@ json ClearBb(int id, const char* key)
     return WithKeys(Node(id, "ClearBlackboard"), json{ { "key", key } });
 }
 
+// ---- AI ノード 4 種 (M85d) の部品 ----
+
+json FindRandom(int id, const char* center, const char* result, double radius)
+{
+    json keys = json{ { "result", result } };
+    if (center != nullptr) {
+        keys["center"] = center;
+    }
+    return WithKeys(Node(id, "FindRandomPoint", {}, json{ { "radius", radius } }), std::move(keys));
+}
+
+json FindNearest(int id, bool sight, bool hearing, bool damage, bool touch, bool currentOnly, const char* target,
+                 const char* position = nullptr)
+{
+    json keys = json{ { "target", target } };
+    if (position != nullptr) {
+        keys["position"] = position;
+    }
+    return WithKeys(Node(id, "FindNearestTarget", {},
+                         json{ { "sight", sight }, { "hearing", hearing }, { "damage", damage }, { "touch", touch },
+                               { "currentlySensedOnly", currentOnly } }),
+                    std::move(keys));
+}
+
+json Search(int id, const char* origin, const char* endTarget, bool usePrediction, double radius, int points, bool failOnStuck = false)
+{
+    json keys = json{ { "origin", origin } };
+    if (endTarget != nullptr) {
+        keys["endTarget"] = endTarget;
+    }
+    return WithKeys(Node(id, "SearchArea", {}, json{ { "usePrediction", usePrediction }, { "radius", radius }, { "pointCount", points }, { "failOnStuck", failOnStuck } }),
+                    std::move(keys));
+}
+
+json FindTargetNode(int id, double radius, bool enemies, bool neutrals, bool friendlies, uint64_t tagMask, const char* target)
+{
+    return WithKeys(Node(id, "FindTarget", {},
+                         json{ { "radius", radius }, { "enemies", enemies }, { "neutrals", neutrals }, { "friendlies", friendlies },
+                               { "tagMask", tagMask != 0 ? GuidHex(tagMask) : std::string() } }),
+                    json{ { "target", target } });
+}
+
 float YawDegOf(const DirectX::XMFLOAT4& q)
 {
     return 2.0f * std::atan2(q.y, q.w) * (180.0f / 3.14159265f);
@@ -394,6 +439,9 @@ struct NavSim {
     NavSystem nav;
     PhysicsSystem physics;
     TransformSystem transforms;
+    PerceptionSystem perception;
+    std::vector<SolidContact> contacts;
+    bool perceive = true; // false: 知覚を回さない (percepts を手で書く試験用)
     uint64_t tick = 1;
 
     static constexpr float kDt = 1.0f / 60.0f;
@@ -401,7 +449,10 @@ struct NavSim {
     World& GetWorld() { return scene.GetWorld(); }
     void Step()
     {
-        bt->Update(GetWorld(), tick);
+        if (perceive) {
+            perception.Update(GetWorld(), tick, kDt, contacts); // フェーズ 3.4a (BT の前)。AIPerception が無ければ何もしない
+        }
+        bt->Update(GetWorld(), tick, &nav);
         nav.Update(GetWorld(), kDt);
         physics.Update(GetWorld(), kDt);
         nav.PostPhysics(GetWorld(), kDt);
@@ -914,7 +965,7 @@ bool RunBehaviorTreeSelfTest()
         };
         uint64_t tick = 1;
         const auto step = [&](BehaviorTreeSystem& bt) {
-            bt.Update(scene.GetWorld(), tick);
+            bt.Update(scene.GetWorld(), tick, nullptr);
             drive(bt, tick);
             scene.GetWorld().ApplyStructuralChanges();
             ++tick;
@@ -1423,7 +1474,7 @@ bool RunBehaviorTreeSelfTest()
             refs.tickIndex = &tickRef;
             uint64_t tick = 1;
             const auto step = [&](BehaviorTreeSystem& bt) {
-                bt.Update(scene.GetWorld(), tick);
+                bt.Update(scene.GetWorld(), tick, nullptr);
                 for (size_t i = 0; i < agents.size(); ++i) {
                     BtInstance* inst = const_cast<BtInstance*>(bt.FindInstance(agents[i]));
                     if (inst != nullptr && !inst->blackboard.empty()) {
@@ -1948,6 +1999,40 @@ bool RunBehaviorTreeSelfTest()
                      "MoveTo: failOnStuck = true は Stuck になった tick に Failure、目的地を倒して Agent が止まり、次の枝へ移る");
         }
 
+        // ---- SearchArea の Stuck (MoveTo と同じ壁): failOnStuck の false は Running のまま、true は Failure で目的地を倒す ----
+        for (int failOnStuck = 0; failOnStuck < 2; ++failOnStuck) {
+            const uint64_t guid = RegisterTree(
+                lib, failOnStuck != 0 ? L"search_stuck_fail" : L"search_stuck_wait",
+                Tree(0, { Node(0, "Selector", { 1, 3 }), Node(1, "Sequence", { 4, 2 }), Wait(4, 5), // 最初の数 tick は Surface が未読み込みで Failure になるので待つ
+                          Search(2, "Goal", nullptr, false, 3.0, 2, failOnStuck != 0), Wait(3, 5000) },
+                     board));
+            std::unique_ptr<Field> f;
+            makeField(guid, f);
+            GameObject wall = f->scene.CreateGameObjectTracked("LateWall");
+            wall.SetLocalPosition(0.0f, 1.0f, 0.0f);
+            auto* collider = wall.AddComponent<ColliderComponent>();
+            collider->shape = collidershape::kBox;
+            collider->halfExtents = { 0.5f, 1.0f, 13.0f };
+            f->scene.GetWorld().ApplyStructuralChanges();
+            NavSim sim(f->scene);
+            bool sawStuck = false;
+            bool failed = false;
+            for (int i = 0; i < 700; ++i) {
+                sim.Step();
+                sawStuck = sawStuck || sim.Agent(f->walker)->status == navagentstatus::kStuck;
+                failed = failed || sim.Comp(f->walker)->activeNodeId == 3;
+            }
+            const bool destination = sim.Agent(f->walker)->hasDestination;
+            const int32_t active = sim.Comp(f->walker)->activeNodeId;
+            MYE_LOG_INFO("  [search] stuck %d: sawStuck %d failed %d dest %d active %d nav %d", failOnStuck, sawStuck, failed, destination, active, sim.Agent(f->walker)->status);
+            if (failOnStuck == 0) {
+                ck.Check(sawStuck && !failed && destination && active == 2, "SearchArea: failOnStuck = false (既定) は Stuck の間も Running のまま");
+            } else {
+                ck.Check(sawStuck && failed && !destination && active == 3,
+                         "SearchArea: failOnStuck = true は Stuck になった tick に Failure、目的地を倒して次の枝へ移る");
+            }
+        }
+
         // ---- observeTarget: 動く Entity を追う / 追わない ----
         {
             const auto chase = [&](bool observe, float& destZ, float& runnerZ) {
@@ -1978,6 +2063,52 @@ bool RunBehaviorTreeSelfTest()
             ck.Check(destZ < -5.0f && runnerZ - destZ > 6.0f, "MoveTo: observeTarget = false は最初の位置へ向かい続け、書き直さない");
         }
 
+        // 木 treeGuid の 1 体を保存 → 復元 → 連続実行と比べる (Nav 節と BT 節の両方)。atCapture が true を返した tick で撮る
+        const auto roundTrip = [&](const char* label, uint64_t treeGuid, bool freshBt, const std::function<bool(const BtInstance&, uint64_t)>& atCapture) {
+            std::unique_ptr<Field> f;
+            makeField(treeGuid, f);
+            NavSim sim(f->scene);
+            SimRefs refs;
+            refs.scene = &f->scene;
+            refs.nav = &sim.nav;
+            refs.behaviorTree = sim.bt;
+            uint64_t tickRef = 0;
+            refs.tickIndex = &tickRef;
+            bool captured = false;
+            for (int i = 0; i < 1200 && !captured; ++i) {
+                sim.Step();
+                const BtInstance* inst = sim.bt->FindInstance(f->walker);
+                captured = inst != nullptr && atCapture(*inst, sim.tick);
+            }
+            if (!captured) {
+                ck.Check(false, label);
+                return;
+            }
+            tickRef = sim.tick;
+            std::vector<std::byte> blob;
+            const bool ok = CaptureSimSnapshot(refs, blob);
+            const BtInstance* at = sim.bt->FindInstance(f->walker);
+            const bool extraNonZero = at != nullptr && std::any_of(at->extra.begin(), at->extra.end(), [](uint8_t b) { return b != 0; });
+            const uint64_t startTick = sim.tick;
+            constexpr int kAhead = 400;
+            std::vector<uint64_t> continuous;
+            for (int i = 0; i < kAhead; ++i) {
+                sim.Step();
+                continuous.push_back(HashWorld(f->scene.GetWorld(), refs.HashSources()));
+            }
+            BehaviorTreeSystem fresh; // 新しいシステム (空の表) へ復元する場合
+            if (freshBt) {
+                sim.bt = &fresh;
+                refs.behaviorTree = &fresh;
+            }
+            bool same = ok && RestoreSimSnapshot(refs, blob.data(), blob.size());
+            sim.tick = startTick;
+            for (int i = 0; i < kAhead && same; ++i) {
+                sim.Step();
+                same = HashWorld(f->scene.GetWorld(), refs.HashSources()) == continuous[static_cast<size_t>(i)];
+            }
+            ck.Check(same && extraNonZero && continuous.front() != continuous.back(), label);
+        };
         // ---- 保存 -> 復元 -> 連続実行 (Nav 節と BT 節の両方) ----
         {
             const uint64_t guid = RegisterTree(
@@ -1986,58 +2117,13 @@ bool RunBehaviorTreeSelfTest()
                           RotateTo(2, "Home", 45.0, 1.0), SetBb(3, "Tmp", "Copy", json::object(), "Goal"),
                           SetBb(4, "Goal", "Copy", json::object(), "Home"), SetBb(5, "Home", "Copy", json::object(), "Tmp") },
                      board));
-            const auto roundTrip = [&](const char* label, bool freshBt, const std::function<bool(const BtInstance&, uint64_t)>& atCapture) {
-                std::unique_ptr<Field> f;
-                makeField(guid, f);
-                NavSim sim(f->scene);
-                SimRefs refs;
-                refs.scene = &f->scene;
-                refs.nav = &sim.nav;
-                refs.behaviorTree = sim.bt;
-                uint64_t tickRef = 0;
-                refs.tickIndex = &tickRef;
-                bool captured = false;
-                for (int i = 0; i < 1200 && !captured; ++i) {
-                    sim.Step();
-                    const BtInstance* inst = sim.bt->FindInstance(f->walker);
-                    captured = inst != nullptr && atCapture(*inst, sim.tick);
-                }
-                if (!captured) {
-                    ck.Check(false, label);
-                    return;
-                }
-                tickRef = sim.tick;
-                std::vector<std::byte> blob;
-                const bool ok = CaptureSimSnapshot(refs, blob);
-                const BtInstance* at = sim.bt->FindInstance(f->walker);
-                const bool extraNonZero = at != nullptr && std::any_of(at->extra.begin(), at->extra.end(), [](uint8_t b) { return b != 0; });
-                const uint64_t startTick = sim.tick;
-                constexpr int kAhead = 400;
-                std::vector<uint64_t> continuous;
-                for (int i = 0; i < kAhead; ++i) {
-                    sim.Step();
-                    continuous.push_back(HashWorld(f->scene.GetWorld(), refs.HashSources()));
-                }
-                BehaviorTreeSystem fresh; // 新しいシステム (空の表) へ復元する場合
-                if (freshBt) {
-                    sim.bt = &fresh;
-                    refs.behaviorTree = &fresh;
-                }
-                bool same = ok && RestoreSimSnapshot(refs, blob.data(), blob.size());
-                sim.tick = startTick;
-                for (int i = 0; i < kAhead && same; ++i) {
-                    sim.Step();
-                    same = HashWorld(f->scene.GetWorld(), refs.HashSources()) == continuous[static_cast<size_t>(i)];
-                }
-                ck.Check(same && extraNonZero && continuous.front() != continuous.back(), label);
-            };
-            roundTrip("MoveTo の途中 (navFilter 差し替え中) で保存 → 復元 → 連続実行と毎 tick のハッシュが一致 (Nav 節と BT 節)", false,
+            roundTrip("MoveTo の途中 (navFilter 差し替え中) で保存 → 復元 → 連続実行と毎 tick のハッシュが一致 (Nav 節と BT 節)", guid, false,
                       [](const BtInstance& inst, uint64_t tick) { return tick > 60 && inst.nodes[1].active != 0; });
-            roundTrip("MoveTo の途中で保存 → 新しい BehaviorTreeSystem へ復元 → 連続実行と毎 tick のハッシュが一致", true,
+            roundTrip("MoveTo の途中で保存 → 新しい BehaviorTreeSystem へ復元 → 連続実行と毎 tick のハッシュが一致", guid, true,
                       [](const BtInstance& inst, uint64_t tick) { return tick > 90 && inst.nodes[1].active != 0; });
-            roundTrip("RotateTo の途中 (updateRotation を預かっている間) で保存 → 復元 → 連続実行と毎 tick のハッシュが一致", false,
+            roundTrip("RotateTo の途中 (updateRotation を預かっている間) で保存 → 復元 → 連続実行と毎 tick のハッシュが一致", guid, false,
                       [](const BtInstance& inst, uint64_t) { return inst.nodes[2].active != 0; });
-            roundTrip("RotateTo の途中で保存 → 新しい BehaviorTreeSystem へ復元 → 連続実行と毎 tick のハッシュが一致", true,
+            roundTrip("RotateTo の途中で保存 → 新しい BehaviorTreeSystem へ復元 → 連続実行と毎 tick のハッシュが一致", guid, true,
                       [](const BtInstance& inst, uint64_t) { return inst.nodes[2].active != 0; });
         }
 
@@ -2066,6 +2152,519 @@ bool RunBehaviorTreeSelfTest()
                          && CountWarnings(logFrom, "does not fit") == 1,
                      "追加状態の長さが木と合わない保存は警告して初期状態からやり直す");
         }
+
+        // ---- 13. AI ノード 4 種 (M85d) ----
+        {
+            const uint64_t aiBoard = RegisterBoard(
+                lib, L"ai_bb",
+                Board({ BbKey("Target", "Entity"), BbKey("Pos", "Vector"), BbKey("Quarry", "Entity"),
+                        BbKey("Last", "Vector", json::array({ 6.0, 0.0, 6.0 })), BbKey("Rand", "Vector"), BbKey("Unset", "Vector"),
+                        BbKey("Center", "Vector", json::array({ -6.0, 0.0, 6.0 })),
+                        BbKey("FarOrigin", "Vector", json::array({ 40.0, 0.0, 0.0 })) }));
+            const auto bbOf = [](NavSim& sim, EntityID e, const char* name) -> const BbValue* {
+                const BtInstance* inst = sim.bt->FindInstance(e);
+                if (inst == nullptr || !inst->blackboardAsset) {
+                    return nullptr;
+                }
+                const int key = inst->blackboardAsset->FindKey(name);
+                return key >= 0 ? &inst->blackboard[static_cast<size_t>(key)] : nullptr;
+            };
+            const auto setBbEntity = [&](NavSim& sim, EntityID owner, const char* name, EntityID value) {
+                const BbValue* slot = bbOf(sim, owner, name);
+                if (slot != nullptr) {
+                    BbValue* writable = const_cast<BbValue*>(slot);
+                    writable->isSet = 1;
+                    writable->entity = value;
+                }
+            };
+            struct AiRun {
+                std::unique_ptr<Field> f;
+                std::unique_ptr<NavSim> sim;
+            };
+            // 見る側 = 歩く Agent (-6, 0, 0)。+Z を向く。陣営 1 で、陣営 0 だけが敵
+            const auto makeRun = [&](uint64_t tree, float fovDeg, AiRun& run) {
+                makeField(tree, run.f);
+                World& world = run.f->scene.GetWorld();
+                auto* perception = world.AddComponent<AIPerceptionComponent>(run.f->walker);
+                perception->fovDeg = fovDeg;
+                perception->sightRadius = 12.0f;
+                perception->loseSightRadius = 14.0f;
+                perception->hostileMask = 1u; // 陣営 0 だけが敵。陣営 2 は中立
+                world.ApplyStructuralChanges();
+                run.sim = std::make_unique<NavSim>(run.f->scene);
+            };
+            const auto addStimulus = [](Scene& scene, float x, float z, int faction, const char* name) {
+                GameObject go = scene.CreateGameObjectTracked(name);
+                go.SetLocalPosition(x, 0.9f, z);
+                auto* source = go.AddComponent<AIStimulusSourceComponent>();
+                source->faction = faction;
+                source->targetHeight = 1.6f; // 目の高さ (0.9 + 1.6) と合わせて視線を水平にする
+                return go.Id();
+            };
+            const auto stepN = [](NavSim& sim, int ticks) {
+                for (int i = 0; i < ticks; ++i) {
+                    sim.Step();
+                }
+            };
+            const auto horizontalFrom = [](const BbValue* v, float x, float z) {
+                return std::sqrt((v->v[0] - x) * (v->v[0] - x) + (v->v[2] - z) * (v->v[2] - z));
+            };
+
+            // ---- アセット: 4 種の往復・範囲の丸め・タグの 64 ビットマスク ----
+            {
+                const uint64_t tagMask = 0x8000000000000001ull;
+                json j = Tree(0, { Node(0, "Sequence", { 1, 2, 3, 4 }), FindRandom(1, "Home", "Out", 7.5),
+                                   FindNearest(2, true, false, true, false, true, "T", "P"), Search(3, "O", "E", true, 3.0, 5),
+                                   FindTargetNode(4, 20.0, true, false, true, tagMask, "T") });
+                BehaviorTreeAsset asset;
+                const bool loaded = BehaviorTreeLibrary::FromJson(j, asset);
+                const json again = loaded ? BehaviorTreeLibrary::ToJson(asset) : json();
+                BehaviorTreeAsset second;
+                const bool reloaded = loaded && BehaviorTreeLibrary::FromJson(again, second);
+                ck.Check(loaded && reloaded && BehaviorTreeLibrary::ToJson(second) == again, "AI ノード 4 種は書き出して読み直しても同じ");
+                const BtNodeDef* findTarget = loaded ? &asset.nodes[static_cast<size_t>(asset.FindNode(4))] : nullptr;
+                const BtNodeDef* search = loaded ? &asset.nodes[static_cast<size_t>(asset.FindNode(3))] : nullptr;
+                ck.Check(findTarget != nullptr && findTarget->params[btfindtargetparam::kTagMask].u == tagMask
+                             && findTarget->keys[btfindtargetkey::kTarget] == "T",
+                         "FindTarget の tagMask は 64 ビットのまま保存される (最上位ビットも)");
+                ck.Check(search != nullptr && search->keys[btsearchkey::kOrigin] == "O" && search->keys[btsearchkey::kEndTarget] == "E"
+                             && search->params[btsearchparam::kPointCount].i == 5 && search->params[btsearchparam::kUsePrediction].i == 1,
+                         "SearchArea の keys と params を読める");
+                json clamped = Tree(0, { Search(0, "O", nullptr, false, 3.0, 99) });
+                json low = Tree(0, { Search(0, "O", nullptr, false, 3.0, 0) });
+                BehaviorTreeAsset hi;
+                BehaviorTreeAsset lo;
+                ck.Check(BehaviorTreeLibrary::FromJson(clamped, hi) && hi.nodes[0].params[btsearchparam::kPointCount].i == kBtMaxSearchPoints
+                             && BehaviorTreeLibrary::FromJson(low, lo) && lo.nodes[0].params[btsearchparam::kPointCount].i == 1,
+                         "SearchArea の pointCount は 1 〜 32 へ丸める");
+                json bad = Tree(0, { Node(0, "FindTarget", {}, json{ { "tagMask", "zz" } }) });
+                ck.Check(!Loads(bad), "壊れた tagMask (16 進でない) は読み込みを拒否する");
+                ck.Check(BtNodeTypeOf(BtNodeKind::SearchArea).extraStateBytes == static_cast<int>(sizeof(BtSearchAreaState))
+                             && BtNodeTypeOf(BtNodeKind::FindTarget).category == BtNodeCategory::Ai,
+                         "SearchArea だけが追加状態を持ち、4 種とも AI 分類");
+            }
+
+            // ---- FindRandomPoint ----
+            {
+                const auto collect = [&](uint64_t guid, std::vector<float>& xz, int& successes, int32_t& lastStatus) {
+                    AiRun run;
+                    makeRun(guid, 90.0f, run);
+                    stepN(*run.sim, 5);
+                    successes = 0;
+                    for (int i = 0; i < 8; ++i) {
+                        run.sim->Step();
+                        lastStatus = run.sim->Comp(run.f->walker)->status;
+                        const BbValue* rand = bbOf(*run.sim, run.f->walker, "Rand");
+                        if (lastStatus == kSucceeded && rand != nullptr && rand->isSet != 0) {
+                            ++successes;
+                            xz.push_back(rand->v[0]);
+                            xz.push_back(rand->v[2]);
+                        }
+                    }
+                };
+                const uint64_t selfTree = RegisterTree(lib, L"ai_random_self", Tree(0, { FindRandom(0, nullptr, "Rand", 4.0) }, aiBoard));
+                std::vector<float> first;
+                std::vector<float> second;
+                int successesA = 0;
+                int successesB = 0;
+                int32_t statusA = 0;
+                int32_t statusB = 0;
+                collect(selfTree, first, successesA, statusA);
+                collect(selfTree, second, successesB, statusB);
+                bool inside = !first.empty();
+                bool distinct = false;
+                for (size_t i = 0; i + 1 < first.size(); i += 2) {
+                    inside = inside && std::hypot(first[i] + 6.0f, first[i + 1]) <= 4.001f;
+                    distinct = distinct || first[i] != first[0] || first[i + 1] != first[1];
+                }
+                ck.Check(successesA == 8 && inside && distinct, "FindRandomPoint: 自分を中心に半径内の点を毎回書いて Success (点は tick ごとに変わる)");
+                ck.Check(first == second && successesB == 8, "FindRandomPoint: 同じ条件から同じ点列 (World の RNG だけを使う)");
+                const uint64_t keyTree = RegisterTree(lib, L"ai_random_key", Tree(0, { FindRandom(0, "Center", "Rand", 3.0) }, aiBoard));
+                std::vector<float> viaKey;
+                collect(keyTree, viaKey, successesA, statusA);
+                bool nearCenter = !viaKey.empty();
+                for (size_t i = 0; i + 1 < viaKey.size(); i += 2) {
+                    nearCenter = nearCenter && std::hypot(viaKey[i] + 6.0f, viaKey[i + 1] - 6.0f) <= 3.001f;
+                }
+                ck.Check(successesA == 8 && nearCenter, "FindRandomPoint: 中心を Vector キーで指すと、その点の半径内に出る");
+                const auto failsWith = [&](const char* label, const json& node) {
+                    const uint64_t guid = RegisterTree(lib, L"ai_random_fail", Tree(0, { node }, aiBoard));
+                    std::vector<float> none;
+                    int successes = 0;
+                    int32_t status = 0;
+                    collect(guid, none, successes, status);
+                    ck.Check(successes == 0 && status == kFailed, label);
+                };
+                failsWith("FindRandomPoint: 半径 0 は Failure", FindRandom(0, nullptr, "Rand", 0.0));
+                failsWith("FindRandomPoint: 書き先が Vector でないキーなら Failure", FindRandom(0, nullptr, "Target", 4.0));
+                failsWith("FindRandomPoint: 中心のキーが未設定なら Failure", FindRandom(0, "Unset", "Rand", 4.0));
+                failsWith("FindRandomPoint: 中心のキーが無ければ Failure", FindRandom(0, "NoSuchKey", "Rand", 4.0));
+                {
+                    // NavMeshAgent の無い木 (同じ場面の別エンティティ) と、ナビメッシュの外の中心
+                    std::unique_ptr<Field> f;
+                    makeField(selfTree, f);
+                    GameObject bare = f->scene.CreateGameObjectTracked("Bare");
+                    bare.AddComponent<BehaviorTreeComponent>()->tree = AssetID{ selfTree };
+                    const uint64_t farTree = RegisterTree(lib, L"ai_random_far", Tree(0, { FindRandom(0, "FarOrigin", "Rand", 3.0) }, aiBoard));
+                    GameObject farOne = f->scene.CreateGameObjectTracked("FarOne");
+                    farOne.SetLocalPosition(0.0f, 0.9f, 0.0f);
+                    farOne.AddComponent<CharacterControllerComponent>();
+                    farOne.AddComponent<NavMeshAgentComponent>();
+                    farOne.AddComponent<BehaviorTreeComponent>()->tree = AssetID{ farTree };
+                    f->scene.GetWorld().ApplyStructuralChanges();
+                    NavSim sim(f->scene);
+                    stepN(sim, 8);
+                    ck.Check(sim.Comp(bare.Id())->status == kFailed && sim.Comp(f->walker)->status == kSucceeded
+                                 && sim.Comp(farOne.Id())->status == kFailed,
+                             "FindRandomPoint: NavMeshAgent が無いと Failure、ナビメッシュの外の中心でも Failure (同じ場面の Agent は Success)");
+                }
+                {
+                    // Surface の無い場面 (ナビメッシュが読めない) は Failure
+                    Scene bareScene;
+                    const EntityID walker = AddWalker(bareScene, selfTree, 0.0f, 0.0f);
+                    bareScene.GetWorld().ApplyStructuralChanges();
+                    NavSim sim(bareScene);
+                    stepN(sim, 5);
+                    ck.Check(sim.Comp(walker)->status == kFailed, "FindRandomPoint: Surface の無い場面では Failure");
+                }
+            }
+
+            // ---- FindNearestTarget ----
+            {
+                const auto nearestTree = [&](const wchar_t* name, bool sight, bool hearing, bool damage, bool touch, bool currentOnly,
+                                             const char* target = "Target") {
+                    return RegisterTree(lib, name, Tree(0, { FindNearest(0, sight, hearing, damage, touch, currentOnly, target, "Pos") }, aiBoard));
+                };
+                const uint64_t allSenses = nearestTree(L"ai_nearest_all", true, true, true, true, false);
+                {
+                    AiRun run;
+                    makeRun(allSenses, 90.0f, run);
+                    const EntityID far = addStimulus(run.f->scene, -3.0f, 4.0f, 0, "Far");   // 距離 5
+                    const EntityID near = addStimulus(run.f->scene, -6.0f, 3.0f, 0, "Near"); // 距離 3
+                    run.f->scene.GetWorld().ApplyStructuralChanges();
+                    stepN(*run.sim, 4);
+                    const BbValue* target = bbOf(*run.sim, run.f->walker, "Target");
+                    const BbValue* pos = bbOf(*run.sim, run.f->walker, "Pos");
+                    ck.Check(run.sim->Comp(run.f->walker)->status == kSucceeded && target->isSet != 0 && target->entity == near
+                                 && far != near && horizontalFrom(pos, -6.0f, 3.0f) < 0.01f,
+                             "FindNearestTarget: 見えている相手のうち lastSensedPos が一番近いものを選び、位置も書く");
+                }
+                {
+                    // 同距離 (どちらも 5 m): entity キーの小さい方。作る順を入れ替えても index の小さい方
+                    bool smallerWins = true;
+                    for (int order = 0; order < 2; ++order) {
+                        AiRun run;
+                        makeRun(allSenses, 90.0f, run);
+                        const EntityID a = addStimulus(run.f->scene, order == 0 ? -3.0f : -9.0f, 4.0f, 0, "TieA");
+                        const EntityID b = addStimulus(run.f->scene, order == 0 ? -9.0f : -3.0f, 4.0f, 0, "TieB");
+                        run.f->scene.GetWorld().ApplyStructuralChanges();
+                        stepN(*run.sim, 4);
+                        const BbValue* target = bbOf(*run.sim, run.f->walker, "Target");
+                        smallerWins = smallerWins && target->isSet != 0 && target->entity.index == (std::min)(a.index, b.index);
+                    }
+                    ck.Check(smallerWins, "FindNearestTarget: 同じ距離なら entity キーの小さい方 (作る順を入れ替えても)");
+                }
+                const auto noiseRun = [&](uint64_t tree, bool named, EntityID& chosenOut, EntityID& frontOut, EntityID& behindOut,
+                                          bool& positionOk, bool& entityCleared, int32_t& status) {
+                    AiRun run;
+                    makeRun(tree, 90.0f, run);
+                    frontOut = addStimulus(run.f->scene, -6.0f, 3.0f, 0, "Front");
+                    behindOut = addStimulus(run.f->scene, -6.0f, -5.0f, 0, "Behind");
+                    run.f->scene.GetWorld().ApplyStructuralChanges();
+                    stepN(*run.sim, 3);
+                    setBbEntity(*run.sim, run.f->walker, "Target", run.f->walker); // 書き換わったか見るための目印
+                    const float noisePos[3] = { -6.0f, 0.9f, named ? -5.0f : -4.0f };
+                    PerceptionReportNoise(run.f->scene.GetWorld(), noisePos, 1.0f, 20.0f, named ? behindOut : kNullEntity);
+                    run.sim->Step(); // 報告と同じ tick の BT が結果を読む (知覚 → BT の順)
+                    const BbValue* target = bbOf(*run.sim, run.f->walker, "Target");
+                    const BbValue* pos = bbOf(*run.sim, run.f->walker, "Pos");
+                    status = run.sim->Comp(run.f->walker)->status;
+                    chosenOut = target->isSet != 0 ? target->entity : kNullEntity;
+                    entityCleared = target->isSet == 0;
+                    positionOk = horizontalFrom(pos, noisePos[0], noisePos[2]) < 0.01f;
+                };
+                EntityID chosen;
+                EntityID front;
+                EntityID behind;
+                bool positionOk = false;
+                bool cleared = false;
+                int32_t status = 0;
+                noiseRun(nearestTree(L"ai_nearest_hear", false, true, false, false, false), true, chosen, front, behind, positionOk, cleared, status);
+                ck.Check(status == kSucceeded && chosen == behind && positionOk, "FindNearestTarget: 聴覚だけを許すと、見えている相手ではなく音の主を選ぶ (同じ tick の知覚)");
+                noiseRun(nearestTree(L"ai_nearest_sight", true, false, false, false, false), true, chosen, front, behind, positionOk, cleared, status);
+                ck.Check(status == kSucceeded && chosen == front, "FindNearestTarget: 視覚だけを許すと、音の主は選ばない");
+                noiseRun(nearestTree(L"ai_nearest_unnamed", false, true, false, false, false), false, chosen, front, behind, positionOk, cleared, status);
+                ck.Check(status == kSucceeded && cleared && positionOk,
+                         "FindNearestTarget: 名乗らない音 (target = null) は Vector だけ書き、Entity キーは空にして Success");
+
+                // 今知覚している相手だけ / 記憶も含む
+                for (int currentOnly = 0; currentOnly < 2; ++currentOnly) {
+                    AiRun run;
+                    makeRun(nearestTree(currentOnly != 0 ? L"ai_nearest_current" : L"ai_nearest_memory", true, false, false, false, currentOnly != 0),
+                            90.0f, run);
+                    const EntityID quarry = addStimulus(run.f->scene, -6.0f, 3.0f, 0, "Quarry");
+                    run.f->scene.GetWorld().ApplyStructuralChanges();
+                    stepN(*run.sim, 4);
+                    const bool seenFirst = run.sim->Comp(run.f->walker)->status == kSucceeded;
+                    run.f->scene.GetWorld().GetComponent<LocalTransform>(quarry)->position = { -6.0f, 0.9f, -8.0f }; // 背後へ
+                    stepN(*run.sim, 4);
+                    const int32_t later = run.sim->Comp(run.f->walker)->status;
+                    ck.Check(seenFirst && later == (currentOnly != 0 ? kFailed : kSucceeded),
+                             currentOnly != 0 ? "FindNearestTarget: currentlySensedOnly = true は、見失った相手 (記憶だけ) を選ばない"
+                                              : "FindNearestTarget: currentlySensedOnly = false は、見失った相手も記憶から選ぶ");
+                }
+                {
+                    AiRun run;
+                    makeRun(allSenses, 90.0f, run);
+                    stepN(*run.sim, 4);
+                    const BbValue* target = bbOf(*run.sim, run.f->walker, "Target");
+                    ck.Check(run.sim->Comp(run.f->walker)->status == kFailed && target->isSet == 0, "FindNearestTarget: 何も知覚していなければ Failure で、何も書かない");
+                }
+                {
+                    AiRun run;
+                    makeRun(nearestTree(L"ai_nearest_badkey", true, true, true, true, false, "Pos"), 90.0f, run);
+                    addStimulus(run.f->scene, -6.0f, 3.0f, 0, "Visible");
+                    run.f->scene.GetWorld().ApplyStructuralChanges();
+                    stepN(*run.sim, 4);
+                    ck.Check(run.sim->Comp(run.f->walker)->status == kFailed, "FindNearestTarget: 書き先が Entity でないキーなら Failure");
+                }
+            }
+
+            // ---- FindTarget ----
+            {
+                struct Scene13 {
+                    EntityID enemyBehind, enemyTieFront, enemyFar, neutralNear, friendlyNearest;
+                };
+                const auto runFind = [&](const wchar_t* name, const json& node, Scene13& ids, const std::function<void(AiRun&, Scene13&)>& tweak,
+                                         EntityID& chosen, int32_t& status) {
+                    const uint64_t guid = RegisterTree(lib, name, Tree(0, { node }, aiBoard));
+                    AiRun run;
+                    makeRun(guid, 90.0f, run);
+                    Scene& scene = run.f->scene;
+                    // 自分も AIStimulusSource を持つ (自分は選ばれない)。陣営 1 = 味方
+                    auto* self = scene.GetWorld().AddComponent<AIStimulusSourceComponent>(run.f->walker);
+                    self->faction = 1;
+                    ids.enemyBehind = addStimulus(scene, -6.0f, -6.0f, 0, "EnemyBehind");   // 距離 6 (背後 = 見えない)
+                    ids.enemyTieFront = addStimulus(scene, -6.0f, 6.0f, 0, "EnemyTie");     // 距離 6 (同距離)
+                    ids.enemyFar = addStimulus(scene, -6.0f, 8.0f, 0, "EnemyFar");          // 距離 8
+                    ids.neutralNear = addStimulus(scene, -6.0f, 4.0f, 2, "Neutral");        // 距離 4
+                    ids.friendlyNearest = addStimulus(scene, -6.0f, 2.0f, 1, "Friendly");   // 距離 2
+                    scene.GetWorld().ApplyStructuralChanges();
+                    if (tweak) {
+                        tweak(run, ids);
+                        scene.GetWorld().ApplyStructuralChanges();
+                    }
+                    stepN(*run.sim, 3);
+                    const BbValue* target = bbOf(*run.sim, run.f->walker, "Target");
+                    status = run.sim->Comp(run.f->walker)->status;
+                    chosen = target->isSet != 0 ? target->entity : kNullEntity;
+                };
+                Scene13 ids;
+                EntityID chosen;
+                int32_t status = 0;
+                runFind(L"ai_ft_enemy", FindTargetNode(0, 15.0, true, false, false, 0, "Target"), ids, nullptr, chosen, status);
+                ck.Check(status == kSucceeded && chosen.index == (std::min)(ids.enemyBehind.index, ids.enemyTieFront.index),
+                         "FindTarget: 敵だけ (同距離の 2 体は entity キーの小さい方、背後で見えていなくても選ぶ)");
+                runFind(L"ai_ft_neutral", FindTargetNode(0, 15.0, false, true, false, 0, "Target"), ids, nullptr, chosen, status);
+                ck.Check(status == kSucceeded && chosen == ids.neutralNear, "FindTarget: 中立だけ");
+                runFind(L"ai_ft_friend", FindTargetNode(0, 15.0, false, false, true, 0, "Target"), ids, nullptr, chosen, status);
+                ck.Check(status == kSucceeded && chosen == ids.friendlyNearest, "FindTarget: 味方だけ (自分は除く)");
+                runFind(L"ai_ft_all", FindTargetNode(0, 15.0, true, true, true, 0, "Target"), ids, nullptr, chosen, status);
+                ck.Check(status == kSucceeded && chosen == ids.friendlyNearest, "FindTarget: 全部許すと一番近い相手");
+                runFind(L"ai_ft_none", FindTargetNode(0, 15.0, false, false, false, 0, "Target"), ids, nullptr, chosen, status);
+                ck.Check(status == kFailed && chosen.IsNull(), "FindTarget: どの態度も許さなければ Failure");
+                runFind(L"ai_ft_range", FindTargetNode(0, 5.0, true, false, false, 0, "Target"), ids, nullptr, chosen, status);
+                ck.Check(status == kFailed && chosen.IsNull(), "FindTarget: 範囲 (5 m) に敵が居なければ Failure で、何も書かない");
+                runFind(L"ai_ft_tag", FindTargetNode(0, 15.0, true, false, false, Tags::BitOf(3), "Target"), ids,
+                        [](AiRun& run, Scene13& s) { Tags::SetOwnMask(run.f->scene.GetWorld(), s.enemyFar, Tags::BitOf(3)); }, chosen, status);
+                ck.Check(status == kSucceeded && chosen == ids.enemyFar, "FindTarget: タグのマスクに合う相手だけから選ぶ (近い敵がタグ無しなら飛ばす)");
+                runFind(L"ai_ft_tag_any", FindTargetNode(0, 15.0, true, false, false, Tags::BitOf(3) | Tags::BitOf(5), "Target"), ids,
+                        [](AiRun& run, Scene13& s) {
+                            Tags::SetOwnMask(run.f->scene.GetWorld(), s.enemyFar, Tags::BitOf(5));
+                            Tags::SetOwnMask(run.f->scene.GetWorld(), s.enemyBehind, Tags::BitOf(4));
+                        },
+                        chosen, status);
+                ck.Check(status == kSucceeded && chosen == ids.enemyFar, "FindTarget: タグはマスクのどれか 1 ビットを持てばよい (AND)");
+                runFind(L"ai_ft_inactive", FindTargetNode(0, 15.0, true, false, false, 0, "Target"), ids,
+                        [](AiRun& run, Scene13& s) {
+                            World& world = run.f->scene.GetWorld();
+                            for (const EntityID e : { s.enemyBehind, s.enemyTieFront }) {
+                                world.AddComponent<ActiveComponent>(e)->enabled = false;
+                            }
+                        },
+                        chosen, status);
+                ck.Check(status == kSucceeded && chosen == ids.enemyFar, "FindTarget: 無効なエンティティは選ばない");
+                runFind(L"ai_ft_noperception", FindTargetNode(0, 15.0, true, true, true, 0, "Target"), ids,
+                        [](AiRun& run, Scene13&) { run.f->scene.GetWorld().RemoveComponent<AIPerceptionComponent>(run.f->walker); }, chosen, status);
+                ck.Check(status == kFailed, "FindTarget: 自分に AIPerception が無ければ態度が決まらず Failure");
+            }
+
+            // ---- SearchArea ----
+            {
+                // 点ごとに Agent の目的地を記録しながら、status が until になるまで回す
+                struct Tour {
+                    std::vector<std::array<float, 3>> destinations;
+                    int32_t finalStatus = 0;
+                    uint64_t endedAt = 0;
+                    bool destinationCleared = false;
+                };
+                const auto tour = [&](AiRun& run, int32_t until, int maxTicks, Tour& out) {
+                    NavSim& sim = *run.sim;
+                    for (int i = 0; i < maxTicks; ++i) {
+                        sim.Step();
+                        const NavMeshAgentComponent* agent = sim.Agent(run.f->walker);
+                        const int32_t status = sim.Comp(run.f->walker)->status;
+                        if (agent->hasDestination) {
+                            const std::array<float, 3> dest = { agent->destination.x, agent->destination.y, agent->destination.z };
+                            if (out.destinations.empty() || out.destinations.back() != dest) {
+                                out.destinations.push_back(dest);
+                            }
+                        }
+                        if (status == until) {
+                            out.finalStatus = status;
+                            out.endedAt = sim.tick - 1;
+                            out.destinationCleared = !agent->hasDestination;
+                            return;
+                        }
+                    }
+                    out.finalStatus = sim.Comp(run.f->walker)->status;
+                };
+                {
+                    AiRun run;
+                    makeRun(RegisterTree(lib, L"ai_search_tour", Tree(0, { Search(0, "Last", nullptr, false, 4.0, 3) }, aiBoard)), 90.0f, run);
+                    Tour t;
+                    run.sim->Step(); // 最初の tick は Surface が未読み込みで Failure になる (Nav の Update の前)
+                    tour(run, kFailed, 2400, t);
+                    bool within = t.destinations.size() == 4;
+                    for (size_t i = 1; i < t.destinations.size(); ++i) {
+                        within = within && std::hypot(t.destinations[i][0] - 6.0f, t.destinations[i][2] - 6.0f) <= 4.6f;
+                    }
+                    MYE_LOG_INFO("  [search] destinations %zu, ended at tick %llu", t.destinations.size(), static_cast<unsigned long long>(t.endedAt));
+                    ck.Check(t.finalStatus == kFailed && t.destinationCleared && within && !t.destinations.empty()
+                                 && std::hypot(t.destinations[0][0] - 6.0f, t.destinations[0][2] - 6.0f) < 0.6f,
+                             "SearchArea: 起点へ向かい、半径内の点を pointCount 個順に回り、回り切ったら Failure (目的地は倒れる)");
+                }
+                const uint64_t seekTree = RegisterTree(lib, L"ai_search_seek", Tree(0, { Search(0, "Last", "Quarry", false, 4.0, 3) }, aiBoard));
+                const auto makeSeeker = [&](AiRun& run, bool quarrySet) {
+                    makeRun(seekTree, 360.0f, run);
+                    AIPerceptionComponent* perception = run.f->scene.GetWorld().GetComponent<AIPerceptionComponent>(run.f->walker);
+                    perception->sightRadius = 8.0f;
+                    perception->loseSightRadius = 9.0f;
+                    const EntityID quarry = addStimulus(run.f->scene, 6.0f, 9.0f, 0, "Quarry");
+                    run.f->scene.GetWorld().ApplyStructuralChanges();
+                    run.sim->Step();
+                    if (quarrySet) {
+                        setBbEntity(*run.sim, run.f->walker, "Quarry", quarry);
+                    }
+                };
+                {
+                    AiRun run;
+                    makeSeeker(run, true);
+                    Tour t;
+                    tour(run, kSucceeded, 900, t);
+                    const LocalTransform* at = run.sim->Pos(run.f->walker);
+                    ck.Check(t.finalStatus == kSucceeded && t.destinationCleared && at->position.x < 5.5f,
+                             "SearchArea: 終了キーの相手が視覚で見えたら、起点へ着く前でも Success (目的地は倒れる)");
+                }
+                {
+                    AiRun run;
+                    makeSeeker(run, false);
+                    Tour t;
+                    tour(run, kSucceeded, 100, t);
+                    ck.Check(t.finalStatus == kRunning, "SearchArea: 終了キーが未設定なら見えても終わらず、そのまま探し続ける");
+                }
+                {
+                    // 予測位置の吸着: 起点キーは使わず、終了キーの相手の predictedPos (ナビメッシュの上空) を床へ吸着して向かう
+                    const uint64_t predictTree =
+                        RegisterTree(lib, L"ai_search_predict", Tree(0, { Search(0, "Center", "Quarry", true, 3.0, 2) }, aiBoard));
+                    for (int withPercept = 0; withPercept < 2; ++withPercept) {
+                        AiRun run;
+                        makeRun(predictTree, 90.0f, run);
+                        run.sim->perceive = false;
+                        const EntityID quarry = addStimulus(run.f->scene, -10.0f, -10.0f, 0, "Quarry");
+                        run.f->scene.GetWorld().ApplyStructuralChanges();
+                        run.sim->Step();
+                        setBbEntity(*run.sim, run.f->walker, "Quarry", quarry);
+                        if (withPercept != 0) {
+                            AIPerceptionComponent* perception = run.f->scene.GetWorld().GetComponent<AIPerceptionComponent>(run.f->walker);
+                            AIPercept& percept = perception->percepts[0];
+                            percept.target = quarry;
+                            percept.lastSenses = perceptionsense::kSight;
+                            percept.lastSensedPos = { 6.0f, 3.0f, 6.0f };
+                            percept.predictedPos = { 6.0f, 3.0f, 6.0f };
+                            perception->perceivedCount = 1;
+                        }
+                        float destination[3] = {};
+                        bool written = false;
+                        for (int i = 0; i < 20 && !written; ++i) {
+                            run.sim->Step();
+                            const NavMeshAgentComponent* agent = run.sim->Agent(run.f->walker);
+                            if (agent->hasDestination) {
+                                written = true;
+                                destination[0] = agent->destination.x;
+                                destination[1] = agent->destination.y;
+                                destination[2] = agent->destination.z;
+                            }
+                        }
+                        const float expectX = withPercept != 0 ? 6.0f : -6.0f;
+                        ck.Check(written && std::hypot(destination[0] - expectX, destination[2] - 6.0f) < 0.6f && destination[1] < 1.0f,
+                                 withPercept != 0 ? "SearchArea: usePrediction は predictedPos を起点にし、ナビメッシュの床へ吸着する (上空 3 m の予測位置が床に降りる)"
+                                                  : "SearchArea: usePrediction でも終了キーの相手の知覚が無ければ起点キーを使う");
+                    }
+                }
+                {
+                    const auto failsFast = [&](const wchar_t* name, const char* origin, const char* label) {
+                        AiRun run;
+                        makeRun(RegisterTree(lib, name, Tree(0, { Search(0, origin, nullptr, false, 4.0, 3) }, aiBoard)), 90.0f, run);
+                        bool everWalked = false;
+                        for (int i = 0; i < 10; ++i) {
+                            run.sim->Step();
+                            everWalked = everWalked || run.sim->Agent(run.f->walker)->hasDestination;
+                        }
+                        ck.Check(!everWalked && run.sim->Comp(run.f->walker)->status == kFailed, label);
+                    };
+                    failsFast(L"ai_search_unset", "Unset", "SearchArea: 起点のキーが未設定なら歩かず Failure");
+                    failsFast(L"ai_search_far", "FarOrigin", "SearchArea: 起点がナビメッシュの外 (吸着できない) なら歩かず Failure");
+                }
+                {
+                    // Abort (Timeout) で Agent が止まる
+                    const uint64_t guid = RegisterTree(
+                        lib, L"ai_search_timeout",
+                        Tree(0, { Decorated(Search(0, "Last", nullptr, false, 4.0, 3), { Timeout(90) }) }, aiBoard));
+                    AiRun run;
+                    makeRun(guid, 90.0f, run);
+                    Tour t;
+                    run.sim->Step(); // 最初の tick は Surface が未読み込みで Failure になる
+                    tour(run, kFailed, 300, t);
+                    const BtInstance* inst = run.sim->bt->FindInstance(run.f->walker);
+                    const bool extraZero = inst != nullptr && std::all_of(inst->extra.begin(), inst->extra.end(), [](uint8_t b) { return b == 0; });
+                    ck.Check(t.finalStatus == kFailed && t.destinationCleared && extraZero && t.endedAt > 80 && t.endedAt < 150,
+                             "SearchArea: Timeout で Abort されると Agent の目的地を倒し、追加状態も 0 へ戻す");
+                }
+                {
+                    const uint64_t guid = RegisterTree(lib, L"ai_search_snap", Tree(0, { Search(0, "Last", nullptr, false, 5.0, 6) }, aiBoard));
+                    const auto searchState = [](const BtInstance& inst) {
+                        BtSearchAreaState st;
+                        std::memcpy(&st, inst.extra.data(), sizeof(st));
+                        return st;
+                    };
+                    roundTrip("SearchArea の途中 (点を向かっている間・残り 3) で保存 → 復元 → 連続実行と毎 tick のハッシュが一致 (RNG を含む)", guid, false,
+                              [&](const BtInstance& inst, uint64_t) {
+                                  return inst.nodes[0].active != 0 && searchState(inst).phase == btsearchphase::kToPoint
+                                         && searchState(inst).remaining == 3;
+                              });
+                    roundTrip("SearchArea の途中で保存 → 新しい BehaviorTreeSystem へ復元 → 連続実行と毎 tick のハッシュが一致", guid, true,
+                              [&](const BtInstance& inst, uint64_t) {
+                                  return inst.nodes[0].active != 0 && searchState(inst).phase == btsearchphase::kToPoint
+                                         && searchState(inst).remaining == 2;
+                              });
+                    roundTrip("SearchArea の起点へ向かっている間で保存 → 復元 → 連続実行と毎 tick のハッシュが一致", guid, false,
+                              [&](const BtInstance& inst, uint64_t tick) {
+                                  return tick > 30 && inst.nodes[0].active != 0 && searchState(inst).phase == btsearchphase::kToOrigin;
+                              });
+                }
+            }
+        }
     }
 
     // ---- 8. 計測: 100 体 x 30 ノード ----
@@ -2084,7 +2683,7 @@ bool RunBehaviorTreeSelfTest()
         uint64_t hashSink = 0; // StateHash の呼び出しが最適化で消えないよう結果を使う
         for (int i = 0; i < kTicks; ++i) {
             const auto t0 = std::chrono::steady_clock::now();
-            sim.bt.Update(sim.GetWorld(), sim.tick++);
+            sim.bt.Update(sim.GetWorld(), sim.tick++, nullptr);
             const auto t1 = std::chrono::steady_clock::now();
             hashSink ^= sim.bt.StateHash();
             const auto t2 = std::chrono::steady_clock::now();

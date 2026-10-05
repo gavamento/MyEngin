@@ -67,7 +67,35 @@ const BtParamDesc kSetBlackboardParams[] = {
     { "vectorZ", BtParamType::Float, 0.0f, -kBtValueLimit, kBtValueLimit, nullptr, 0 },
 };
 
+// btrandomparam / btnearestparam / btsearchparam / btfindtargetparam の並びと同じ
+const BtParamDesc kFindRandomPointParams[] = {
+    { "radius", BtParamType::Float, 10.0f, 0.0f, kBtMaxRadius, nullptr, 0 },
+};
+const BtParamDesc kFindNearestTargetParams[] = {
+    { "sight", BtParamType::Bool, 1.0f, 0.0f, 1.0f, nullptr, 0 },
+    { "hearing", BtParamType::Bool, 1.0f, 0.0f, 1.0f, nullptr, 0 },
+    { "damage", BtParamType::Bool, 1.0f, 0.0f, 1.0f, nullptr, 0 },
+    { "touch", BtParamType::Bool, 1.0f, 0.0f, 1.0f, nullptr, 0 },
+    { "currentlySensedOnly", BtParamType::Bool, 0.0f, 0.0f, 1.0f, nullptr, 0 },
+};
+const BtParamDesc kSearchAreaParams[] = {
+    { "usePrediction", BtParamType::Bool, 0.0f, 0.0f, 1.0f, nullptr, 0 },
+    { "radius", BtParamType::Float, 5.0f, 0.0f, kBtMaxRadius, nullptr, 0 },
+    { "pointCount", BtParamType::Int, 4.0f, 1.0f, static_cast<float>(kBtMaxSearchPoints), nullptr, 0 },
+    { "failOnStuck", BtParamType::Bool, 0.0f, 0.0f, 1.0f, nullptr, 0 },
+};
+const BtParamDesc kFindTargetParams[] = {
+    { "radius", BtParamType::Float, 15.0f, 0.0f, kBtMaxRadius, nullptr, 0 },
+    { "enemies", BtParamType::Bool, 1.0f, 0.0f, 1.0f, nullptr, 0 },
+    { "neutrals", BtParamType::Bool, 0.0f, 0.0f, 1.0f, nullptr, 0 },
+    { "friendlies", BtParamType::Bool, 0.0f, 0.0f, 1.0f, nullptr, 0 },
+    { "tagMask", BtParamType::Mask, 0.0f, 0.0f, 0.0f, nullptr, 0 },
+};
+
 const char* const kTargetKeyNames[] = { "target" };
+const char* const kFindRandomPointKeyNames[] = { "center", "result" };
+const char* const kFindNearestTargetKeyNames[] = { "target", "position" };
+const char* const kSearchAreaKeyNames[] = { "origin", "endTarget" };
 const char* const kSetBlackboardKeyNames[] = { "key", "sourceKey" };
 const char* const kClearBlackboardKeyNames[] = { "key" };
 
@@ -83,6 +111,12 @@ const BtNodeTypeInfo kNodeTypes[] = {
       static_cast<int>(sizeof(BtRotateToState)) },
     { BtNodeKind::SetBlackboard, "SetBlackboard", BtNodeCategory::Task, 0, 0, kSetBlackboardParams, 7, kSetBlackboardKeyNames, 2, 0 },
     { BtNodeKind::ClearBlackboard, "ClearBlackboard", BtNodeCategory::Task, 0, 0, nullptr, 0, kClearBlackboardKeyNames, 1, 0 },
+    { BtNodeKind::FindRandomPoint, "FindRandomPoint", BtNodeCategory::Ai, 0, 0, kFindRandomPointParams, 1, kFindRandomPointKeyNames, 2, 0 },
+    { BtNodeKind::FindNearestTarget, "FindNearestTarget", BtNodeCategory::Ai, 0, 0, kFindNearestTargetParams, 5,
+      kFindNearestTargetKeyNames, 2, 0 },
+    { BtNodeKind::SearchArea, "SearchArea", BtNodeCategory::Ai, 0, 0, kSearchAreaParams, 4, kSearchAreaKeyNames, 2,
+      static_cast<int>(sizeof(BtSearchAreaState)) },
+    { BtNodeKind::FindTarget, "FindTarget", BtNodeCategory::Ai, 0, 0, kFindTargetParams, 5, kTargetKeyNames, 1, 0 },
 };
 static_assert(sizeof(kNodeTypes) / sizeof(kNodeTypes[0]) == static_cast<size_t>(BtNodeKind::Count),
               "kNodeTypes を BtNodeKind の全値ぶん並べる");
@@ -145,7 +179,7 @@ BtParamValue DefaultParam(const BtParamDesc& desc)
     BtParamValue value;
     if (desc.type == BtParamType::Float) {
         value.f = desc.defaultValue;
-    } else if (desc.type == BtParamType::Guid) {
+    } else if (desc.type == BtParamType::Guid || desc.type == BtParamType::Mask) {
         value.u = 0;
     } else {
         value.i = static_cast<int32_t>(desc.defaultValue);
@@ -183,7 +217,8 @@ bool ReadParam(const BtParamDesc& desc, const json& j, BtParamValue& out)
         }
         out.i = j.get<bool>() ? 1 : 0;
         return true;
-    case BtParamType::Guid: {
+    case BtParamType::Guid:
+    case BtParamType::Mask: {
         if (!j.is_string()) {
             return false;
         }
@@ -219,7 +254,8 @@ json WriteParam(const BtParamDesc& desc, const BtParamValue& value)
     case BtParamType::Int: return value.i;
     case BtParamType::Float: return value.f;
     case BtParamType::Bool: return value.i != 0;
-    case BtParamType::Guid: return value.u != 0 ? GuidToHex(value.u) : std::string();
+    case BtParamType::Guid:
+    case BtParamType::Mask: return value.u != 0 ? GuidToHex(value.u) : std::string();
     case BtParamType::Enum:
         return desc.enumNames[(std::clamp)(value.i, 0, desc.enumCount - 1)];
     }
