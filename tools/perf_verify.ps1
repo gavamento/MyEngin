@@ -37,7 +37,9 @@ function Measure-Commit([string]$sha, [string]$label) {
     & git archive --format=zip "--output=$archive" $sha
     if ($LASTEXITCODE -ne 0) { throw "git archive failed: $sha" }
     Expand-Archive -LiteralPath $archive -DestinationPath $source
-    if (-not (Test-Path (Join-Path $source 'src\Engine\Engine\PerfBenchmark.cpp'))) {
+    # 62fa9ac のフォルダ整理より前のコミットも比較元にできるよう、旧パスも見る
+    $benchmarkSources = @('src\Engine\Engine\App\PerfBenchmark.cpp', 'src\Engine\Engine\PerfBenchmark.cpp')
+    if (-not ($benchmarkSources | Where-Object { Test-Path (Join-Path $source $_) })) {
         return $false
     }
     & $msbuild (Join-Path $source 'build\Editor.vcxproj') /p:Configuration=Release /p:Platform=x64 /m /v:minimal /nologo | Out-Host
