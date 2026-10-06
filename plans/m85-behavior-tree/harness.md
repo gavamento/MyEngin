@@ -85,7 +85,7 @@
 - (sub-14 VERDICT nit#1) test_checklists.md の M84 節の v26 の行を v27 に書き換えている。各節は「その時点の版」を残すほうが揃う (M84 節を v26 に戻し、M85 節に「外部 GameLogic.dll は v27 = 158 で再ビルド」を 1 行)。受け入れには影響しない minor。
 - (sub-14 VERDICT nit#2) golden bt は sub-14 では間接判定 (sub-13 で maxDiff 0 を 2 回直接確認済み)。
 - (sub-14) Update の性能は Release 37.5 µs (sub-01 は 17 µs、基準 0.5 ms)。
-- **review round 1 (PASS) の残り minor (未対応)**:
+- **review round 1 (PASS) の残り minor (2026-10-06 に 3 件とも解消: 1 と 3 = `678d2c2` (文書)、2 = `b9c50cd`。2 の回帰テストは足していない — 失敗条件は WorldMatrix / LocalTransform が無いことで、どちらも全エンティティが持つ基本コンポーネントなので公開 API から作れない)**:
   1. [planner] spec 4.1.9 は「再有効化時に BB を初期値にして根から」だが、実装は BB を保ったまま根から (BehaviorTreeSystem.cpp:2064-2089、テスト BehaviorTreeSelfTest.cpp:1553-1558)。実装を正として spec 4.1.9 と ADR-025 決定 5 に 1 行足すのが reviewer の提案。
   2. [coder] VisitPatrol の次の点へ進むとき PatrolPointWorld の失敗を見ていない (BehaviorTreeSystem.cpp:1137)。親付きルートに WorldMatrix が無いときだけ。失敗なら EndBody(Failure)。
   3. [coder] test_checklists.md の M84 節の v26 → v27 書き換え (sub-14 nit#1) が未解消。
@@ -93,7 +93,18 @@
   - 未再実行: C# タスクの実走 (受け入れ 14 / 18)、SceneView の実マウス操作。
 - **別件 (M85 の範囲外、ユーザーへ報告)**:
   - (a) replay_verify の並列 cold cook で起動中に未処理 C++ 例外 (0xE06D7363、tick 0) / 9 分無反応が 1 回ずつ出た (sub-13 の 2 回目、nav の Release 検証と flow の Debug 検証)。crash bundle `bin\x64\Release\crash\20261006_111539` (minidump あり)。RVA → file:line は未特定。
+    - **2026-10-06 ダンプを解析 (原因は断定できていない)**。確認できた事実: 例外を投げたのは Editor.exe 自身 (ThrowInfo の image base が Editor.exe)。例外オブジェクトは `_What` が Editor.exe の静的文字列・`_DoFree` = 0 で、`std::bad_alloc` 系の形。処理中のファイルは `underground_lab_v01\Lab_Corridor.fbx` (スタックに UTF-16 で残っている。直前のログは Lab_Bench.fbx の登録)。スタックの戻りアドレスは、ほぼ同じソースの別ビルドの PDB で `EditorApp.cpp:144 → DemoContent.cpp:2744 / 230 → FbxLoader.cpp:642 → ModelCook.cpp:254 → CookedCache.cpp:194 → PathUtil.cpp:42` 付近に解決する (クラッシュ時のビルドは dirty で再現できず、レイアウトが数 KB ずれているので行番号は目安)。
+    - クックの読み込み側 (`CookedCache::ReadValidated` / `ModelCook::Deserialize`) は件数を残量で検算していて、壊れたファイルで巨大確保になる経路は見当たらない。イベントログにメモリ枯渇 (System 2004) の記録は無い。2026-10-06 午後に同じ並列コールドクック (17 ジョブ) を 1 回回したが再現しなかった。
+    - **最有力の説明はコミット (仮想メモリ) の一時的な不足** (推論。再現はしていない)。実測: `Editor.exe --nav-demo --replay-verify` 1 プロセスの private bytes のピークは、GPU 描画で約 2.2 GB、`--warp` で約 1.35 GB (クックのキャッシュ有無でほぼ変わらない)。`run_parallel.ps1` の並列度は論理コア数 (この PC は 12) なので、起動直後に約 26 GB (GPU) / 16 GB (WARP) を同時に要求する。この PC の空きコミットは 8.6〜9.2 GB (RAM 24 GB、ページファイルはシステム管理で伸長中に確保が失敗しうる)。小さな確保 (パス文字列) で bad_alloc が出ていること、同じ回に「9 分無反応」が出ていることと整合する。
+    - 対策の候補 (未実施、ユーザー判断): `run_parallel.ps1` の並列度を「論理コア数」と「空きコミット ÷ 1 ジョブぶん」の小さい方にする / ローカルでも `MYE_EXTRA_ARGS=--warp --no-audio` で回す / `MYE_REPLAY_JOBS` を手で下げる。
   - (b) golden の既存 FAIL 6 枚 (HEAD 3d20b33 の clean でも同数値): nav 214/21664、parts 198/3625、joints 208/137、acoustic_forward 83/596、acoustic_deferred 82/594、fracture_after 150/192。更新するかはユーザー判断。
+    - **2026-10-06 原因を断定 (6 枚とも「意図した変更が入ったのに golden を更新していなかった」。回帰ではない)**。方法は「原因のコミットだけを戻して撮り、golden と tol=0 で比べる」:
+      - parts: `cb1f424` (スキンメッシュのシャドウマップ描画、9/17)。`shadow_depth_skinned.hlsl` をバインドポーズへ戻すだけで maxDiff=0。それまでの golden はバインドポーズの影が焼かれた絵だった
+      - nav: `f6c7bef` (線描画の Z ファイトと AA、10/05)。このコミットを戻すと maxDiff=0
+      - fracture_after: `2b70027` (破壊物理演算修正、9/30)。このコミットを戻すと maxDiff=0
+      - joints: `2b70027` と `cb1f424` の両方。両方戻すと maxDiff=0 (物理だけ戻すと 38 画素、影だけ戻すと 548 画素残る)
+      - acoustic_forward / acoustic_deferred: `c47fd5e` (AcousticNav の「登らない」規則、9/13)。別ツリーで順にビルドして撮ると、golden を更新した `5af95e4` と `aaffa41` では maxDiff=0、`c47fd5e` で今日と同じ 640 / 731 画素 (tol=0) に変わる
+    - CI の履歴とも一致する: acoustic は 9/13 から、parts / joints は 9/18 から落ちている (`gh run view --log-failed`)。CI だけで落ちる 2 枚は別件 — `ui_probe_720p` は 1024x768 のランナーで窓が 1028 に縮むサイズ不一致 (Win32Window の WM_GETMINMAXINFO で解消)、`ui_widgets` (219/20) はランナーの絵を見てから判断する
   - (c) ユーザー要望 (2026-10-06): replay_verify を音なし・最背面で回したい。音は MYE_EXTRA_ARGS=--no-audio で対応可。最背面は CLI オプション (--background: SW_SHOWNOACTIVATE + HWND_BOTTOM) の追加を提案中 (返事待ち)。
 - (sub-07 → sub-14) ADR-025: Patrol は入るたびに最近傍点から、親付きルートは前 tick の WorldMatrix。
 - (sub-06 → sub-14) ADR-025 の既知の限界: SubTree は平らな展開・上限 1024・部分木の根の LowerPriority は Self 扱い・BB 継承なし・遷移中の AnimatorPlay はブレンド途中のポーズから飛ぶ。

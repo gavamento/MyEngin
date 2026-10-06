@@ -64,5 +64,6 @@
 - (司会 2026-10-02) ユーザー判断 D18: 到着余裕の目標は案 (a) 適応目標 = clamp(1 tick + 2σ, 1 tick, 6 tick) (planner 裁定どおり)
 - (司会 2026-10-02) ユーザー指示: 全サブ (sub-12・review round 2 の修正まで) が終わったら、M81 全体のまとめを **Notion の活動記録に 1 ページとして** 書く (M81a〜i のまとめはチャットで提示済み、Notion 未保存)
 - (司会 2026-10-02) sub-12 OK。server_verify ケース A は Debug WARP クライアント 2 台の CPU 奪い合いで不安定になるため、クライアント窓を 640x360・client 2 の記録を 30 秒にしている (検証環境の措置、エンジン挙動は不変)。review round 2 でケース A が揺れたらまずこれを疑う
+- (2026-10-06) 下の残 minor 2 件は `38d114e` で解消。(1) = 警告文から往復時間の推定値を外し、CPU の奪い合いでも同じ遅れになると併記 / (2) = `check_late_subst` に参加クライアント数を渡し、レーンの行の本数と "cannot keep up" 0 回を合否に追加 (server_verify ケース A で確認)。実疎通ログの未確定点 (ProcessEnding の到達、RemovePlayerSession 未呼び出し、R-11、R-12) は手つかず。
 - (司会 2026-10-02) review round 2 PASS。残 minor: (1) V15 の "cannot keep up" WARN が遅れの原因を往復時間と断定する (同 PC の WARP の CPU 奪い合いでも出る。server_verify B で "about 1759 ms" に対し実 RTT 70〜95ms)。サーバ側 RTT 推定の併記か文面修正。(2) server_verify A の R5 判定で、一度も待たれなかったレーン (V15 状態) は行が出ず黙って外れる → 参加クライアント数ぶんのレーン行と "cannot keep up" 0 を合否に。合否外の観察: ケース B (20% ロス) は Debug WARP の CPU 奪い合いで late-subst 44%
 - (司会) sub-08 の前に直すべき blocker は無い。M81h の実疎通はユーザーの準備ができ次第 docs\gamelift-anywhere.md の手順で
