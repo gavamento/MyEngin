@@ -229,6 +229,17 @@ bool RunNavEditorSelfTest()
         check(std::strcmp(names.Name(3), "Mud") == 0 && std::strcmp(names.Name(0), "Walkable") == 0
                   && text.find("physicsLayers") != std::string::npos && !names.DiffersFromDisk(),
               "NavAreaNames: the saved name is read back, the fixed name stays, other keys survive, no unsaved change");
+        // 壊れたファイルへは保存しない (空から書き直すと physicsLayers などが消える)
+        {
+            std::ofstream out(dir / L"project_settings.json", std::ios::binary | std::ios::trunc);
+            out << "{\"physicsLayers\": [\"Mine\"";
+        }
+        std::snprintf(names.EditBuffer(4), NavAreaNames::kNameCapacity, "Ice");
+        const bool refused = !names.Save(dir.wstring());
+        std::ifstream brokenIn(dir / L"project_settings.json", std::ios::binary);
+        const std::string brokenText((std::istreambuf_iterator<char>(brokenIn)), std::istreambuf_iterator<char>());
+        check(refused && brokenText == "{\"physicsLayers\": [\"Mine\"",
+              "NavAreaNames: Save refuses a corrupt project_settings.json and leaves it untouched");
         names.Load(L"", true); // 後続の画面が一時フォルダを見ないように戻す
     }
 

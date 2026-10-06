@@ -6,6 +6,7 @@
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/App/ProjectSettingsFile.h"
 #include "Engine/Platform/PathUtil.h"
 
 #include "nlohmann/json.hpp"
@@ -129,33 +130,18 @@ void ParticleSystem::LoadSettings(const std::wstring& settingsPath)
     }
 }
 
-void ParticleSystem::SaveSettings() const
+bool ParticleSystem::SaveSettings() const
 {
     if (settingsPath_.empty()) {
-        return; // Init も LoadSettings も通っていない (ヘッドレスのテスト等)
+        return false; // Init も LoadSettings も通っていない (ヘッドレスのテスト等)
     }
     // 既存の設定を保持しつつ particleBackend のみ更新 (マージ保存)。
     // ★旧 3 キーが残っていても**消さない** — 消すと「Project Settings を一度開いて
     //   保存しただけ」で共有ファイルに 3 行の削除差分が出る。読む人が誰もいない
     //   死んだキーなので、放っておくのが最も安い
-    nlohmann::json root;
-    {
-        std::ifstream f(std::filesystem::path(settingsPath_), std::ios::binary);
-        if (f) {
-            try {
-                f >> root;
-            } catch (...) {
-                root = nlohmann::json::object();
-            }
-        }
-    }
-    root["particleBackend"] = (active_ == ParticleBackendKind::Gpu) ? "gpu" : "cpu";
-
-    std::ofstream f(std::filesystem::path(settingsPath_), std::ios::binary);
-    if (f) {
-        const std::string text = root.dump(2);
-        f.write(text.data(), static_cast<std::streamsize>(text.size()));
-    }
+    const char* backend = (active_ == ParticleBackendKind::Gpu) ? "gpu" : "cpu";
+    return UpdateProjectSettingsFile(settingsPath_,
+                                     [backend](nlohmann::json& root) { root["particleBackend"] = backend; });
 }
 
 } // namespace mye

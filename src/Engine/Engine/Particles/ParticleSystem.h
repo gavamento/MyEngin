@@ -68,7 +68,7 @@ public:
     //   セルフテストの唯一の入口だから (D3D デバイスが要らない部分をテストできる形にしておく)。
     //   Save の呼び出し元は Project Settings 窓 1 箇所だけに保つこと
     void LoadSettings(const std::wstring& settingsPath);
-    void SaveSettings() const;
+    bool SaveSettings() const; // 書けなかった / 既存ファイルが壊れていて触らなかった = false
 
 private:
     // スクリプト/エディタ起因の pendingBurst を全エミッタでクリアする (両バックエンドが読んだ後)

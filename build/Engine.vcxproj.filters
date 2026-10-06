@@ -363,6 +363,12 @@
     <ClCompile Include="..\src\Engine\Engine\App\Project.cpp">
       <Filter>Engine\App</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\App\ProjectSettingsFile.cpp">
+      <Filter>Engine\App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\App\ProjectSettingsFileSelfTest.cpp">
+      <Filter>Engine\App</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Asset\AssetDatabase.cpp">
       <Filter>Engine\Asset</Filter>
     </ClCompile>
@@ -1201,6 +1207,12 @@
       <Filter>Engine\App</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\App\Project.h">
+      <Filter>Engine\App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\App\ProjectSettingsFile.h">
+      <Filter>Engine\App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\App\ProjectSettingsFileSelfTest.h">
       <Filter>Engine\App</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Asset\AssetDatabase.h">

@@ -74,6 +74,7 @@
 #include "Engine/Engine/HotReload/ReloadHubSelfTest.h"
 #include "Engine/Engine/App/EngineCli.h"
 #include "Engine/Engine/App/EngineCliSelfTest.h"
+#include "Engine/Engine/App/ProjectSettingsFileSelfTest.h"
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
 #include "Engine/Engine/Replay/CrashRingSelfTest.h"
 #include "Engine/Engine/Session/SessionSelfTest.h"
@@ -567,6 +568,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunTagSelfTest();               // 汎用タグ / RT のタグフィルタ / シェーダキャッシュ
         ok &= mye::RunWaterWaveSelfTest();         // 三角関数 (Gerstner波) による水面波
         ok &= mye::RunEngineCliSelfTest();         // 両 Main 共通の CLI フラグ表
+        ok &= mye::RunProjectSettingsFileSelfTest(); // project_settings.json: 他キーの保持 / 壊れたファイルは上書きしない
         ok &= mye::RunProjectShaderPropertiesSelfTest();  // M78a: Properties DSL パース/パック
         ok &= mye::RunProjectEffectRunnerSelfTest();      // M78b: ポスト挿入点・ソート
         ok &= mye::RunFxStackSelfTest();                  // M78c: fxstack ロード/保存

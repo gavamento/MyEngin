@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/App/ProjectSettingsFile.h"
 
 namespace mye {
 namespace uilayout {
@@ -14,7 +15,7 @@ namespace {
 
 std::wstring SettingsPath(const std::wstring& assetsRoot)
 {
-    return assetsRoot + L"\\project_settings.json";
+    return ProjectSettingsPath(assetsRoot);
 }
 
 bool InRange(int v)
@@ -80,30 +81,14 @@ bool SaveProjectUiSettings(const std::wstring& assetsRoot, const ProjectUiSettin
     if (assetsRoot.empty() || !InRange(settings.referenceW) || !InRange(settings.referenceH)) {
         return false;
     }
-    const std::wstring path = SettingsPath(assetsRoot);
-    nlohmann::json root = nlohmann::json::object();
-    {
-        std::ifstream f(std::filesystem::path(path), std::ios::binary);
-        if (f) {
-            try {
-                f >> root;
-            } catch (...) {
-                root = nlohmann::json::object();
-            }
-            if (!root.is_object()) {
-                root = nlohmann::json::object();
-            }
+    return UpdateProjectSettingsFile(SettingsPath(assetsRoot), [&settings](nlohmann::json& root) {
+        // "ui" がオブジェクト以外で置かれていると、下の添字アクセスが例外を投げる
+        if (!root.contains("ui") || !root["ui"].is_object()) {
+            root["ui"] = nlohmann::json::object();
         }
-    }
-    root["ui"]["referenceW"] = settings.referenceW;
-    root["ui"]["referenceH"] = settings.referenceH;
-    std::ofstream f(std::filesystem::path(path), std::ios::binary);
-    if (!f) {
-        return false;
-    }
-    const std::string text = root.dump(2);
-    f.write(text.data(), static_cast<std::streamsize>(text.size()));
-    return static_cast<bool>(f);
+        root["ui"]["referenceW"] = settings.referenceW;
+        root["ui"]["referenceH"] = settings.referenceH;
+    });
 }
 
 } // namespace uilayout

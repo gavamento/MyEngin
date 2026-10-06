@@ -7,6 +7,7 @@
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Animation/Parts.h"
+#include "Engine/Engine/App/ProjectSettingsFile.h"
 
 #include "nlohmann/json.hpp"
 
@@ -71,32 +72,14 @@ void PartTagNames::Load(const std::wstring& assetsRoot, bool force)
 
 bool PartTagNames::Save(const std::wstring& assetsRoot) const
 {
-    const std::filesystem::path path(assetsRoot + L"\\project_settings.json");
-    json j = json::object();
-    {
-        // 既存キー (physicsLayers / particle 設定) を保存で破壊しない read-modify-write
-        std::ifstream f(path);
-        if (f) {
-            try {
-                f >> j;
-            } catch (const json::exception&) {
-                j = json::object();
-            }
-        }
-    }
     json arr = json::array();
     for (int i = 0; i < count_; ++i) {
         if (names_[i][0] != '\0') {
             arr.push_back(std::string(names_[i])); // 空欄は落とす (= 行を消す操作になる)
         }
     }
-    j["partTags"] = arr;
-    std::ofstream out(path);
-    if (!out) {
-        return false;
-    }
-    out << j.dump(2) << "\n";
-    return true;
+    return UpdateProjectSettingsFile(ProjectSettingsPath(assetsRoot),
+                                     [&arr](json& j) { j["partTags"] = std::move(arr); });
 }
 
 void PartTagNames::SetCount(int n)

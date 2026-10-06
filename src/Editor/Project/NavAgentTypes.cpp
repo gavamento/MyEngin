@@ -13,6 +13,7 @@
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
+#include "Engine/Engine/App/ProjectSettingsFile.h"
 
 #include "nlohmann/json.hpp"
 
@@ -112,19 +113,6 @@ void NavAgentTypes::Load(const std::wstring& assetsRoot, bool force)
 
 bool NavAgentTypes::Save(const std::wstring& assetsRoot) const
 {
-    const std::filesystem::path path(assetsRoot + L"\\project_settings.json");
-    json j = json::object();
-    {
-        // 既存キー (物理レイヤー名・エリア名等) を保存で破壊しない read-modify-write
-        std::ifstream f(path);
-        if (f) {
-            try {
-                f >> j;
-            } catch (const json::exception&) {
-                j = json::object();
-            }
-        }
-    }
     json arr = json::array();
     for (const NavAgentType& t : types_) {
         arr.push_back({ { "id", t.id },
@@ -136,13 +124,8 @@ bool NavAgentTypes::Save(const std::wstring& assetsRoot) const
                         { "dropHeight", t.dropHeight },
                         { "jumpDistance", t.jumpDistance } });
     }
-    j["navAgentTypes"] = arr;
-    std::ofstream out(path);
-    if (!out) {
-        return false;
-    }
-    out << j.dump(2) << "\n";
-    return true;
+    return UpdateProjectSettingsFile(ProjectSettingsPath(assetsRoot),
+                                     [&arr](json& j) { j["navAgentTypes"] = std::move(arr); });
 }
 
 bool NavAgentTypes::DiffersFromDisk() const

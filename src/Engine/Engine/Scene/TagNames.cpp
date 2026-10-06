@@ -11,6 +11,7 @@
 #include <fstream>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/App/ProjectSettingsFile.h"
 
 #include "nlohmann/json.hpp"
 
@@ -36,17 +37,11 @@ json ReadSettings(const std::wstring& assetsRoot)
     }
 }
 
-// 他キーを壊さずに 1 キーだけ差し替えて書く (PhysicsLayerNames::Save と同じ read-modify-write)
+// 他キーを壊さずに 1 キーだけ差し替えて書く
 bool WriteSettingsKey(const std::wstring& assetsRoot, const char* key, json value)
 {
-    json j = ReadSettings(assetsRoot);
-    j[key] = std::move(value);
-    std::ofstream out(std::filesystem::path(assetsRoot + L"\\project_settings.json"));
-    if (!out) {
-        return false;
-    }
-    out << j.dump(2) << "\n";
-    return true;
+    return UpdateProjectSettingsFile(ProjectSettingsPath(assetsRoot),
+                                     [&](json& j) { j[key] = std::move(value); });
 }
 
 // タグ番号の配列 → ビット集合。範囲外・非整数の要素は黙って落とす (手で壊した設定で起動を止めない)

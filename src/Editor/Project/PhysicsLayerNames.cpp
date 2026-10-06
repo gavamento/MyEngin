@@ -6,6 +6,7 @@
 #include <fstream>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/App/ProjectSettingsFile.h"
 
 #include "nlohmann/json.hpp"
 
@@ -53,30 +54,12 @@ void PhysicsLayerNames::Load(const std::wstring& assetsRoot, bool force)
 
 bool PhysicsLayerNames::Save(const std::wstring& assetsRoot) const
 {
-    const std::filesystem::path path(assetsRoot + L"\\project_settings.json");
-    json j = json::object();
-    {
-        // 既存キー (particle 設定等) を保存で破壊しない read-modify-write
-        std::ifstream f(path);
-        if (f) {
-            try {
-                f >> j;
-            } catch (const json::exception&) {
-                j = json::object();
-            }
-        }
-    }
     json arr = json::array();
     for (int i = 0; i < kCount; ++i) {
         arr.push_back(std::string(names_[i]));
     }
-    j["physicsLayers"] = arr;
-    std::ofstream out(path);
-    if (!out) {
-        return false;
-    }
-    out << j.dump(2) << "\n";
-    return true;
+    return UpdateProjectSettingsFile(ProjectSettingsPath(assetsRoot),
+                                     [&arr](json& j) { j["physicsLayers"] = std::move(arr); });
 }
 
 bool PhysicsLayerNames::DiffersFromDisk() const

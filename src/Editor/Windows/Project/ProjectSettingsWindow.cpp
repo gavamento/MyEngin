@@ -78,9 +78,10 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
                 particleSaved_ = false; // 保存済みの表示と食い違う値になった
             }
             if (ImGui::Button(Tr(StrId::PrjSet_SaveParticles))) {
-                ctx.particles->SaveSettings();
-                particleSaved_ = true;
-                scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json"); // M66i
+                if (ctx.particles->SaveSettings()) {
+                    particleSaved_ = true;
+                    scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json"); // M66i
+                }
             }
             ImGui::TextDisabled("%s", Tr(StrId::PrjSet_ParticleNote));
             if (particleSaved_) {
