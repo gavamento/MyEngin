@@ -111,6 +111,9 @@ fn fixture() -> (PathBuf, State) {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     git(&dir, &["init", "-q", "-b", "main"]);
+    // The assertions below compare working-tree bytes. A global core.autocrlf=true
+    // (the default on GitHub's Windows runners) would make revert / abort check files out as CRLF.
+    git(&dir, &["config", "core.autocrlf", "false"]);
     git(&dir, &["config", "user.name", "Context Test"]);
     git(&dir, &["config", "user.email", "context@example.invalid"]);
     write(&dir, "file.txt", b"original\n");
