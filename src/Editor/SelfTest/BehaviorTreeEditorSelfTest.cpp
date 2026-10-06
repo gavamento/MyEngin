@@ -822,6 +822,68 @@ bool RunBehaviorTreeEditorSelfTest()
               "保存した木を読み直すとタスク名とフィールドが残っている");
     }
 
+    // ---- 13. CsTask のクラスとフィールド (M85 sub-12b): クラスの変更は 1 段、検査、保存 -> 読み直し ----
+    {
+        BehaviorTreeEditModel m;
+        m.BindLibraries(&trees, &boards);
+        m.Load(RegisterEmpty(trees, root / L"cstask.bt.json"));
+        const int32_t task = m.AddNode(BtNodeKind::CsTask, 0.0f, 0.0f);
+        const int32_t wait = m.AddNode(BtNodeKind::Wait, 0.0f, 100.0f);
+        check(task >= 0 && m.SetCsTaskClass(task, "Game.Chase", { "count", "label" })
+                  && m.FindNode(task)->params[btcstaskparam::kClass].s == "Game.Chase",
+              "SetCsTaskClass: クラス名を書ける");
+        check(m.SetTaskField(task, "count", nlohmann::json(3)) && m.SetTaskField(task, "label", nlohmann::json("go"))
+                  && m.SetTaskField(task, "speed", nlohmann::json(1.5)) && m.SetTaskField(task, "offset", nlohmann::json::array({ 1, 2, 3 })),
+              "CsTask にも SetTaskField でフィールドを書ける");
+        check(!m.SetTaskField(wait, "ticks", nlohmann::json(1)) && !m.SetCsTaskClass(wait, "Game.Chase", {})
+                  && !m.SetCsTaskClass(task, std::string(kBbMaxNameBytes + 1, 'x'), {}) && !m.SetCsTaskClass(-1, "Game.Chase", {}),
+              "フィールドを持たない種類・長すぎるクラス名・存在しない id は false");
+        check(!m.SetCsTaskClass(task, "Game.Chase", { "count", "label", "speed", "offset" }), "クラスもフィールドも変わらなければ false");
+
+        const uint64_t before = m.Revision();
+        check(m.SetCsTaskClass(task, "Game.Flee", { "count" }) && m.FindNode(task)->params[btcstaskparam::kClass].s == "Game.Flee"
+                  && m.FindNode(task)->taskFields.size() == 1 && m.FindNode(task)->taskFields.contains("count") && m.Revision() == before + 1,
+              "クラスを変えると、新しいクラスに無いフィールドの値が消える (1 回の変更)");
+        check(m.Undo() && m.FindNode(task)->params[btcstaskparam::kClass].s == "Game.Chase" && m.FindNode(task)->taskFields.size() == 4
+                  && m.FindNode(task)->taskFields["speed"] == 1.5,
+              "Undo 1 回でクラスと消えたフィールドが戻る");
+        check(m.Redo() && m.FindNode(task)->params[btcstaskparam::kClass].s == "Game.Flee" && m.FindNode(task)->taskFields.size() == 1,
+              "Redo でクラスの変更とフィールドの削除が 1 回でやり直せる");
+        check(m.SetCsTaskClass(task, "Game.Flee", {}) && m.FindNode(task)->taskFields.is_null(), "全部無いクラスへ変えると fields は空になる (null)");
+        check(m.Undo() && m.FindNode(task)->taskFields.size() == 1, "それも Undo 1 回で戻る");
+
+        // 検査: 記述子に無い名前・型違いの値は警告 (保存は止めない)
+        const std::vector<BtManagedTaskClass> classes = {
+            { "Game.Flee", { { "count", BtManagedFieldType::Int, nlohmann::json(0) }, { "label", BtManagedFieldType::String, nlohmann::json("") } } },
+        };
+        check(!HasIssue(m.Inspect(), BtIssueKind::CSharpField, task), "C# の一覧を繋いでいなければフィールドは検査しない");
+        m.BindManagedTasks(&classes);
+        check(!HasIssue(m.Inspect(), BtIssueKind::CSharpField, task) && HasIssue(m.Inspect(), BtIssueKind::CSharpTask, task),
+              "一覧に合うフィールドだけなら CSharpField は出ない (CSharpTask の警告は残る)");
+        m.SetTaskField(task, "speed", nlohmann::json(2.0));
+        std::vector<BtIssue> issues = m.Inspect();
+        const auto field = std::find_if(issues.begin(), issues.end(), [task](const BtIssue& i) { return i.kind == BtIssueKind::CSharpField && i.nodeId == task; });
+        check(field != issues.end() && field->fieldName == "speed" && field->severity == BtIssueSeverity::Warning, "記述子に無いフィールド名は警告 (名前つき)");
+        m.SetTaskField(task, "count", nlohmann::json("many"));
+        const std::vector<BtIssue> typed = m.Inspect();
+        check(std::count_if(typed.begin(), typed.end(), [](const BtIssue& i) { return i.kind == BtIssueKind::CSharpField; }) == 2,
+              "型に合わない値も警告 (count が文字列)");
+        check(m.CheckSavable().problem == BtSaveProblem::None, "フィールドの警告は保存を止めない");
+        m.SetCsTaskClass(task, "Game.Unknown", { "count", "speed" });
+        check(!HasIssue(m.Inspect(), BtIssueKind::CSharpField, task), "一覧に無いクラスのフィールドは検査しない (クラス自体が見つからない扱い)");
+        m.SetCsTaskClass(task, "Game.Flee", { "count", "speed" });
+        m.SetTaskField(task, "count", nlohmann::json(4));
+        m.BindManagedTasks(nullptr);
+
+        check(m.Save() == BtSaveResult::Ok, "CsTask を含む木を保存できる");
+        BehaviorTreeEditModel again;
+        again.BindLibraries(&trees, &boards);
+        const auto reloaded = trees.GetShared(BehaviorTreeLibrary::HashForPath((root / L"cstask.bt.json").wstring()));
+        check(again.Load(reloaded) && again.FindNode(task) != nullptr && again.FindNode(task)->params[btcstaskparam::kClass].s == "Game.Flee"
+                  && again.FindNode(task)->taskFields["count"] == 4 && again.FindNode(task)->taskFields["speed"] == 2.0,
+              "保存した木を読み直すとクラスとフィールドが残っている");
+    }
+
     fs::remove_all(root, ec);
 
     if (failCount == 0) {

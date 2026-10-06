@@ -410,7 +410,7 @@ bool IsPlainTaskFieldValue(const json& value)
     return false;
 }
 
-// CppTask の "fields" を読む。無ければ空。オブジェクトでない・値が保存できない形・多すぎるは false
+// "fields" を読む (CppTask / CsTask)。無ければ空。オブジェクトでない・値が保存できない形・多すぎるは false
 bool ReadTaskFields(const json& owner, json& out)
 {
     out = json();
@@ -870,7 +870,7 @@ json BehaviorTreeLibrary::ToJson(const BehaviorTreeAsset& asset)
             }
             n["keys"] = std::move(keys);
         }
-        if (node.kind == BtNodeKind::CppTask && node.taskFields.is_object() && !node.taskFields.empty()) {
+        if (BtKindHasTaskFields(node.kind) && node.taskFields.is_object() && !node.taskFields.empty()) {
             n["fields"] = node.taskFields;
         }
         json decorators = json::array();
@@ -932,7 +932,7 @@ bool BehaviorTreeLibrary::FromJson(const json& j, BehaviorTreeAsset& out)
             if (!ReadParamList(info->params, info->paramCount, n, node.params) || !ReadKeyList(*info, n, node.keys)) {
                 return false;
             }
-            if (info->kind == BtNodeKind::CppTask && !ReadTaskFields(n, node.taskFields)) {
+            if (BtKindHasTaskFields(info->kind) && !ReadTaskFields(n, node.taskFields)) {
                 return false;
             }
             if (n.contains("decorators")) {

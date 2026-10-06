@@ -18,8 +18,9 @@
 | sub-09 | OK | 1 | 8bef16c | Undo・BB パネル・検査・ReloadHub の同一内容スキップ | BT 窓 (2) Undo・BB 編集・検査 |
 | sub-10 | OK | 1 | 20a9f43 | ライブ表示・Abort 矢印・デバッグ線 | BT 窓 (3) ライブ表示 |
 | sub-11 | OK | 1 | e16bd96 | ABI v27 = 158、C++ タスク、snapshot v39 のまま | ABI v27 |
-| sub-12 | OK | 1 | (このコミット) | C# タスクと糖衣 | C# タスク |
-| sub-13 | 未着手 | 0 | | --bt-demo・replay_verify・golden |
+| sub-12 | OK | 1 | eec835e | C# タスクと糖衣 | C# タスク |
+| sub-12b | OK | 1 | (このコミット) | C# タスクの fields とクラスのピッカー (ユーザー判断で新設) |
+| sub-13 | 未着手 | 0 | | 依存を sub-12b へ | --bt-demo・replay_verify・golden |
 | sub-14 | 未着手 | 0 | | ADR-025 と全体検証 |
 
 ## レビュー

@@ -1,6 +1,6 @@
 # sub-13: デモ `--bt-demo`、replay_verify `bt`、golden `bt`
 
-- 依存: sub-12
+- 依存: sub-12b
 - 状態: 未着手
 - 往復: 0
 

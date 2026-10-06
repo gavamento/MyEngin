@@ -34,6 +34,7 @@ namespace MyeScripting
             vt->InvokeCollision = &ScriptRuntime.NativeInvokeCollision;
             vt->InvokeBreak = &ScriptRuntime.NativeInvokeBreak;
             vt->BtTask = &ScriptRuntime.NativeBtTask;
+            vt->BtTaskCatalog = &ScriptRuntime.NativeBtTaskCatalog;
 
             Engine.Log("[csharp] managed runtime ready (.NET " + Environment.Version + ")");
             return 0;

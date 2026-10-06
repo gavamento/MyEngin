@@ -41,8 +41,12 @@ struct MyeManagedVTable {
     // v22 (M80l) 末尾追加。piece = 分かれた塊のリーダー、point/impulse は荷重最大の破片
     void (*InvokeBreak)(int32_t handle, MyeEntityId piece, MyeVec3 point, float impulse);
     // v27 (M85l) 末尾追加。BT の C# タスク 1 手。phase: 0=enter 1=tick 2=abort (btmanagedphase)。
+    // fieldsUtf8: インスタンスを作った直後、OnStart の前に書くフィールドの JSON (空文字 = なし。作らない呼び出しでは読まない)。
     // 戻り値: 0=Running 1=Success 2=Failure、-1=その名前のクラスが無い
-    int32_t (*BtTask)(MyeEntityId self, int32_t nodeIndex, const char* classNameUtf8, int32_t phase, uint64_t tick);
+    int32_t (*BtTask)(MyeEntityId self, int32_t nodeIndex, const char* classNameUtf8, int32_t phase, uint64_t tick,
+                      const char* fieldsUtf8);
+    // [BtTask] クラスの一覧 (JSON UTF-8)。buf に収まる分だけ書き (終端の NUL 込み)、全体の長さ (バイト、NUL を含まない) を返す。bufLen = 0 で長さだけ測れる
+    int32_t (*BtTaskCatalog)(char* buf, int32_t bufLen);
 };
 
 // CoreCLR (.NET 8) をホストし、C# スクリプト (MyeScripting.dll + Roslyn) を駆動する。
@@ -133,7 +137,14 @@ public:
 
     // BT の C# タスク (BtManagedTaskLane)。BehaviorTreeSystem が C# レーンの走る tick だけ呼ぶ。
     // 旧 MyeScripting.dll (BtTask スロット未設定) は kBtManagedUnknownClass
-    int32_t RunTask(EntityID owner, int32_t nodeIndex, const std::string& className, int32_t phase, uint64_t tick) override;
+    int32_t RunTask(EntityID owner, int32_t nodeIndex, const std::string& className, int32_t phase, uint64_t tick,
+                    const std::string& fieldsJson) override;
+
+    // [BtTask] クラスの一覧 (BT 窓のピッカーとフィールド欄用)。C# が読み込まれていない・旧 MyeScripting.dll のときは空。
+    // CompileScripts が成功するたびに作り直す (呼ぶたびに取り直さない)。参照は次の CompileScripts まで有効
+    const std::vector<BtManagedTaskClass>& BtTaskClasses();
+    // CompileScripts が成功した回数。BT 窓が一覧の取り直しを判断する
+    uint32_t ReloadGeneration() const { return reloadGeneration_; }
 
     // 毎 tick、フェーズ 3/5 で呼ぶ (Play 中かつ非リプレイ時のみ)
     void SetTickContext(const InputSnapshot& input, uint64_t tickIndex, float dt, uint32_t playerCount);
@@ -185,6 +196,9 @@ private:
     const CsType* FindByComponent(ComponentTypeId t) const;
 
     bool ready_ = false;
+    uint32_t reloadGeneration_ = 0;
+    std::vector<BtManagedTaskClass> btTaskClasses_; // BtTaskClasses のキャッシュ
+    uint32_t btTaskClassesGeneration_ = UINT32_MAX; // キャッシュを作ったときの世代 (UINT32_MAX = 未作成)
     void* hostfxrLib_ = nullptr; // HMODULE
     void* ctx_ = nullptr;        // hostfxr_handle
     Scene* scene_ = nullptr;

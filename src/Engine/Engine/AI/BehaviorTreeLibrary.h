@@ -328,6 +328,12 @@ enum : int {
 constexpr size_t kBtMaxTaskFieldEntries = 32;   // taskFields のエントリ数の上限 (REGISTER_BT_TASK のフィールド数と同じ)
 constexpr size_t kBtMaxTaskFieldTextBytes = 255; // taskFields の文字列値の長さの上限 (String256 に入る)
 
+// ノードごとのフィールド ("fields") を持つ種類。CppTask は登録表、CsTask は C# の [BtTask] クラスの記述子が型を決める
+constexpr bool BtKindHasTaskFields(BtNodeKind kind)
+{
+    return kind == BtNodeKind::CppTask || kind == BtNodeKind::CsTask;
+}
+
 // ブラックボードのキーを持つノードの "keys" の並び
 namespace btnodekey {
 enum : int {
@@ -414,7 +420,7 @@ struct BtNodeDef {
     std::vector<BtParamValue> params;    // 種類の params と同じ長さ・同じ並び
     std::vector<std::string> keys;       // 種類の keyNames と同じ長さ・同じ並び。空文字 = 未指定 (実行時は Failure)
     std::vector<BtDecoratorDef> decorators; // 上から順に評価する (最初が一番外側)
-    nlohmann::json taskFields;           // CppTask だけ: タスクのフィールドの値 ({ "<名前>": 値 })。入るたびに既定値へ重ねる。空 = 全部既定
+    nlohmann::json taskFields;           // CppTask / CsTask だけ: タスクのフィールドの値 ({ "<名前>": 値 })。入るたびに既定値へ重ねる。空 = 全部既定
     std::vector<int32_t> childIds;       // 左から右 = 優先順
     float pos[2] = {};                   // エディタの表示位置 (実行には使わない)
 

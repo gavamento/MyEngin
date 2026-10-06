@@ -32,6 +32,8 @@ namespace MyeScripting
         // インスタンスは (owner の index, generation, 木のノードの添字) ごとに 1 つ。ネイティブの BT 表には入らない (決定論の保証外)
         private readonly Dictionary<string, Type> _btTaskTypes = new Dictionary<string, Type>(StringComparer.Ordinal);
         private readonly Dictionary<(uint, uint, int), MyeBtTask> _btTasks = new Dictionary<(uint, uint, int), MyeBtTask>();
+        private readonly HashSet<(string, string)> _btFieldWarned = new HashSet<(string, string)>(); // (クラス, フィールド) ごとに 1 回だけ警告
+        private string _btCatalog; // BtTaskCatalog の結果 (リロードで作り直す)
         private int _nextHandle = 1;
         private int _reloadCounter = 0;
 
@@ -169,6 +171,8 @@ namespace MyeScripting
             // 古い ALC の型を掴んだままだと Unload が終わらないので、タスクのインスタンスも捨てる (動いていた分は次の tick に OnStart からやり直す)
             _btTasks.Clear();
             _btTaskTypes.Clear();
+            _btFieldWarned.Clear();
+            _btCatalog = null;
             foreach (var t in allTypes)
             {
                 if (typeof(MyeScript).IsAssignableFrom(t) && !t.IsAbstract)
@@ -325,7 +329,7 @@ namespace MyeScripting
         // BT の C# タスクを 1 手進める。phase: 0 = enter (新しいインスタンスで OnStart)、1 = tick (OnTick。インスタンスが無ければ
         // enter と同じ = リロード後の再開)、2 = abort (OnAbort して捨てる)。戻り値は MyeBtStatus、-1 = そのクラスが無い。
         // Success / Failure と例外 (Failure) でインスタンスを捨てる
-        private int RunBtTask(MyeEntityId owner, int nodeIndex, string className, int phase, ulong tick)
+        private int RunBtTask(MyeEntityId owner, int nodeIndex, string className, int phase, ulong tick, string fieldsJson)
         {
             if (!_btTaskTypes.TryGetValue(className, out var type)) return -1;
             var key = (owner.Index, owner.Generation, nodeIndex);
@@ -348,6 +352,7 @@ namespace MyeScripting
                     if (phase == 0) DropDeadBtTasks();
                     task = (MyeBtTask)Activator.CreateInstance(type);
                     task.SelfId = owner;
+                    ApplyBtFields(task, className, fieldsJson);
                     _btTasks[key] = task;
                 }
                 task.Tick = tick;
@@ -361,6 +366,126 @@ namespace MyeScripting
                 Engine.Log("[csharp] BT task " + className + (phase == 2 ? ".OnAbort" : "") + " threw: " + ex.Message, 3);
                 return (int)MyeBtStatus.Failure;
             }
+        }
+
+        // ---- BT の C# タスクのフィールド (ノードの "fields" と、BT 窓のフィールド欄の記述子) ----
+
+        // BT 窓に出せるフィールドの型名。それ以外の型は一覧に出さない
+        private static string BtFieldTypeName(Type t)
+        {
+            if (t == typeof(bool)) return "bool";
+            if (t == typeof(int)) return "int";
+            if (t == typeof(float)) return "float";
+            if (t == typeof(string)) return "string";
+            if (t == typeof(MyeVec3)) return "vec3";
+            return null;
+        }
+
+        private static FieldInfo[] BtFieldsOf(Type t)
+        {
+            return t.GetFields(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(f => !f.IsInitOnly && BtFieldTypeName(f.FieldType) != null)
+                    .OrderBy(f => f.Name, StringComparer.Ordinal)
+                    .ToArray();
+        }
+
+        // 値を JSON にする。Json が書けない NaN / 無限大は 0
+        private static JsonNode BtFieldToJson(object value, string typeName)
+        {
+            switch (typeName)
+            {
+                case "bool": return JsonValue.Create((bool)value);
+                case "int": return JsonValue.Create((int)value);
+                case "float": { float f = (float)value; return JsonValue.Create(float.IsFinite(f) ? f : 0f); }
+                case "string": return JsonValue.Create((string)value ?? string.Empty);
+                default:
+                {
+                    var v = (MyeVec3)value;
+                    float Finite(float x) => float.IsFinite(x) ? x : 0f;
+                    return new JsonArray(JsonValue.Create(Finite(v.X)), JsonValue.Create(Finite(v.Y)), JsonValue.Create(Finite(v.Z)));
+                }
+            }
+        }
+
+        // [BtTask] クラスの一覧 (JSON)。クラスごとに FullName と、フィールドの (名前, 型, 既定値)。
+        // 既定値はインスタンスを 1 つ作って読む。作れないクラスは型の既定値 (0 / false / "")
+        private string BtTaskCatalog()
+        {
+            if (_btCatalog != null) return _btCatalog;
+            var classes = new JsonArray();
+            foreach (var kv in _btTaskTypes.OrderBy(k => k.Key, StringComparer.Ordinal))
+            {
+                object sample = null;
+                try { sample = Activator.CreateInstance(kv.Value); }
+                catch (Exception ex) { Engine.Log("[csharp] BT task " + kv.Key + " could not be instantiated for its field defaults: " + ex.Message, 2); }
+                var fields = new JsonArray();
+                foreach (var f in BtFieldsOf(kv.Value))
+                {
+                    string typeName = BtFieldTypeName(f.FieldType);
+                    object value = sample != null ? f.GetValue(sample) : null;
+                    if (value == null && f.FieldType.IsValueType) value = Activator.CreateInstance(f.FieldType);
+                    fields.Add(new JsonObject
+                    {
+                        ["name"] = f.Name,
+                        ["type"] = typeName,
+                        ["default"] = BtFieldToJson(value, typeName),
+                    });
+                }
+                classes.Add(new JsonObject { ["class"] = kv.Key, ["fields"] = fields });
+            }
+            _btCatalog = classes.ToJsonString();
+            return _btCatalog;
+        }
+
+        private void WarnBtField(string className, string field, string message)
+        {
+            if (!_btFieldWarned.Add((className, field))) return;
+            Engine.Log("[csharp] BT task " + className + " field '" + field + "': " + message + "; the value is ignored", 2);
+        }
+
+        // ノードの "fields" (JSON オブジェクト) を、作った直後のインスタンスのフィールドへ書く。
+        // 名前が無い・型が違う値は書かない (警告は (クラス, フィールド) ごとに 1 回)
+        private void ApplyBtFields(MyeBtTask task, string className, string fieldsJson)
+        {
+            if (string.IsNullOrEmpty(fieldsJson)) return;
+            JsonObject obj;
+            try { obj = JsonNode.Parse(fieldsJson) as JsonObject; }
+            catch { return; }
+            if (obj == null) return;
+            var fields = BtFieldsOf(task.GetType());
+            foreach (var kv in obj)
+            {
+                var f = fields.FirstOrDefault(x => x.Name == kv.Key);
+                if (f == null) { WarnBtField(className, kv.Key, "no such public field (bool / int / float / string / MyeVec3)"); continue; }
+                if (!TryReadBtField(kv.Value, f.FieldType, out var value)) { WarnBtField(className, kv.Key, "the value does not fit the field type"); continue; }
+                f.SetValue(task, value);
+            }
+        }
+
+        private static bool TryReadBtField(JsonNode node, Type type, out object value)
+        {
+            value = null;
+            if (type == typeof(MyeVec3))
+            {
+                if (node is not JsonArray a || a.Count != 3) return false;
+                var c = new float[3];
+                for (int i = 0; i < 3; i++)
+                {
+                    if (!(a[i] is JsonValue jv) || !jv.TryGetValue<double>(out var d)) return false;
+                    c[i] = (float)d;
+                }
+                value = new MyeVec3(c[0], c[1], c[2]);
+                return true;
+            }
+            if (node is not JsonValue v) return false;
+            if (type == typeof(bool)) { if (!v.TryGetValue<bool>(out var b)) return false; value = b; return true; }
+            if (type == typeof(string)) { if (!v.TryGetValue<string>(out var s)) return false; value = s; return true; }
+            if (!v.TryGetValue<double>(out var n)) return false;
+            if (type == typeof(float)) { value = (float)n; return true; }
+            // int: 3.0 のような整数値の小数も受ける (JSON の数は整数・小数の区別を保証しない)
+            if (n != Math.Floor(n) || n < int.MinValue || n > int.MaxValue) return false;
+            value = (int)n;
+            return true;
         }
 
         private void DropDeadBtTasks()
@@ -599,10 +724,21 @@ namespace MyeScripting
         public static void NativeInvokeCollision(int handle, MyeEntityId other, int kind, MyeVec3 normal) => Inst.InvokeCollision(handle, other, kind, normal);
 
         [UnmanagedCallersOnly]
-        public static int NativeBtTask(MyeEntityId owner, int nodeIndex, byte* classUtf8, int phase, ulong tick)
+        public static int NativeBtTask(MyeEntityId owner, int nodeIndex, byte* classUtf8, int phase, ulong tick, byte* fieldsUtf8)
         {
-            try { return Inst.RunBtTask(owner, nodeIndex, Marshal.PtrToStringUTF8((IntPtr)classUtf8) ?? "", phase, tick); }
+            try
+            {
+                return Inst.RunBtTask(owner, nodeIndex, Marshal.PtrToStringUTF8((IntPtr)classUtf8) ?? "", phase, tick,
+                                      Marshal.PtrToStringUTF8((IntPtr)fieldsUtf8) ?? "");
+            }
             catch (Exception ex) { Engine.Log("[csharp] BtTask error: " + ex.Message, 3); return (int)MyeBtStatus.Failure; }
+        }
+
+        [UnmanagedCallersOnly]
+        public static int NativeBtTaskCatalog(byte* buf, int bufLen)
+        {
+            try { return WriteUtf8(Inst.BtTaskCatalog(), buf, bufLen); }
+            catch (Exception ex) { Engine.Log("[csharp] BtTaskCatalog error: " + ex.Message, 3); return 0; }
         }
 
         [UnmanagedCallersOnly]

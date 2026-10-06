@@ -596,7 +596,7 @@ bool BehaviorTreeEditModel::SetTaskField(int32_t id, const std::string& name, co
         return false;
     }
     BtNodeDef& node = asset_.nodes[static_cast<size_t>(index)];
-    if (node.kind != BtNodeKind::CppTask) {
+    if (!BtKindHasTaskFields(node.kind)) {
         return false;
     }
     // 保存できる形 (数・真偽・短い文字列・数の短い配列) だけ受ける。LinkAsset / FromJson と同じ上限
@@ -616,6 +616,45 @@ bool BehaviorTreeEditModel::SetTaskField(int32_t id, const std::string& name, co
         return false;
     }
     node.taskFields[name] = value;
+    Touch();
+    return true;
+}
+
+bool BehaviorTreeEditModel::SetCsTaskClass(int32_t id, const std::string& className, const std::vector<std::string>& keepFields)
+{
+    const int index = FindIndex(id);
+    if (index < 0) {
+        return false;
+    }
+    BtNodeDef& node = asset_.nodes[static_cast<size_t>(index)];
+    if (node.kind != BtNodeKind::CsTask) {
+        return false;
+    }
+    BtParamValue requested;
+    requested.s = className;
+    const BtNodeTypeInfo& info = BtNodeTypeOf(node.kind);
+    BtParamValue normalized;
+    if (!NormalizeParam(info.params[btcstaskparam::kClass], requested, normalized)) {
+        return false;
+    }
+    bool changed = !SameParam(info.params[btcstaskparam::kClass], normalized, node.params[btcstaskparam::kClass]);
+    if (node.taskFields.is_object()) {
+        for (auto it = node.taskFields.begin(); it != node.taskFields.end();) {
+            if (std::find(keepFields.begin(), keepFields.end(), it.key()) == keepFields.end()) {
+                it = node.taskFields.erase(it);
+                changed = true;
+            } else {
+                ++it;
+            }
+        }
+        if (node.taskFields.empty()) {
+            node.taskFields = nlohmann::json();
+        }
+    }
+    if (!changed) {
+        return false;
+    }
+    node.params[btcstaskparam::kClass] = std::move(normalized);
     Touch();
     return true;
 }
@@ -1111,6 +1150,20 @@ std::vector<BtIssue> BehaviorTreeEditModel::Inspect() const
         }
         if (node.kind == BtNodeKind::CsTask) {
             add(BtIssueKind::CSharpTask, BtIssueSeverity::Warning, node.id);
+            const std::string& className = node.params[btcstaskparam::kClass].s;
+            const auto classIt = managedTasks_ == nullptr ? std::vector<BtManagedTaskClass>::const_iterator()
+                                                          : std::find_if(managedTasks_->begin(), managedTasks_->end(),
+                                                                         [&className](const BtManagedTaskClass& c) { return c.name == className; });
+            if (managedTasks_ != nullptr && classIt != managedTasks_->end() && node.taskFields.is_object()) {
+                for (auto it = node.taskFields.begin(); it != node.taskFields.end(); ++it) {
+                    const auto fieldIt = std::find_if(classIt->fields.begin(), classIt->fields.end(),
+                                                      [&it](const BtManagedTaskField& f) { return f.name == it.key(); });
+                    if (fieldIt == classIt->fields.end() || !BtManagedFieldAccepts(fieldIt->type, it.value())) {
+                        add(BtIssueKind::CSharpField, BtIssueSeverity::Warning, node.id);
+                        issues.back().fieldName = it.key();
+                    }
+                }
+            }
         }
         if (node.kind == BtNodeKind::SubTree && static_cast<size_t>(btsubtreeparam::kTree) < node.params.size()) {
             // 取り込めない条件は BtExpandSubTrees と同じ (未指定・未登録・根なし・BB 違い)

@@ -675,9 +675,12 @@ public:
     std::vector<int32_t> nodes;
     std::vector<EntityID> owners;
     std::string lastClass;
+    std::vector<std::string> fields; // 呼び出しごとに渡った fieldsJson
 
-    int32_t RunTask(EntityID owner, int32_t nodeIndex, const std::string& className, int32_t phase, uint64_t) override
+    int32_t RunTask(EntityID owner, int32_t nodeIndex, const std::string& className, int32_t phase, uint64_t,
+                    const std::string& fieldsJson) override
     {
+        fields.push_back(fieldsJson);
         phases.push_back(phase);
         nodes.push_back(nodeIndex);
         owners.push_back(owner);
@@ -699,9 +702,13 @@ private:
     int count_ = 0;
 };
 
-json CsTaskNode(int id, const char* className)
+json CsTaskNode(int id, const char* className, json fields = json())
 {
-    return Node(id, "CsTask", {}, json{ { "class", className } });
+    json n = Node(id, "CsTask", {}, json{ { "class", className } });
+    if (!fields.is_null()) {
+        n["fields"] = std::move(fields);
+    }
+    return n;
 }
 
 json CppTaskNode(int id, const char* task, json fields = json())
@@ -4648,6 +4655,56 @@ bool RunBehaviorTreeSelfTest()
             const EntityID e = sim.AddTreeEntity(RegisterTree(lib, L"cs_noname", Tree(0, { CsTaskNode(0, "") }, board)));
             const std::vector<int32_t> statuses = Run(sim, e, 2);
             ck.Check(std::count(statuses.begin(), statuses.end(), kFailed) == 2 && lane.phases.empty(), "クラス名が空の CsTask は C# を呼ばずに Failure");
+        }
+
+        // CsTask の fields: JSON の往復・防波堤 (CppTask と同じ)・レーンへ渡る内容
+        {
+            const json fields = json{ { "count", 3 }, { "speed", 1.5 }, { "alert", true }, { "label", "hi" }, { "offset", json::array({ 1.0, 2.0, 3.0 }) } };
+            BehaviorTreeAsset a;
+            BehaviorTreeAsset b;
+            ck.Check(BehaviorTreeLibrary::FromJson(Tree(0, { CsTaskNode(0, "MyGame.Chase", fields) }, board), a)
+                         && BehaviorTreeLibrary::FromJson(BehaviorTreeLibrary::ToJson(a), b)
+                         && BehaviorTreeLibrary::ToJson(a) == BehaviorTreeLibrary::ToJson(b) && a.nodes[0].taskFields == fields
+                         && BehaviorTreeLibrary::ToJson(a)["nodes"][0]["fields"] == fields,
+                     "CsTask の fields が JSON の往復で変わらない (5 つの型)");
+            BehaviorTreeAsset empty;
+            ck.Check(BehaviorTreeLibrary::FromJson(Tree(0, { CsTaskNode(0, "MyGame.Chase") }, board), empty)
+                         && !BehaviorTreeLibrary::ToJson(empty)["nodes"][0].contains("fields"),
+                     "fields が無い CsTask は書き出しにも fields を出さない");
+            ck.Check(!Loads(Tree(0, { CsTaskNode(0, "MyGame.Chase", json::array({ 1 })) })), "CsTask: fields がオブジェクトでなければ読み込み失敗");
+            ck.Check(!Loads(Tree(0, { CsTaskNode(0, "MyGame.Chase", json{ { "nested", json{ { "a", 1 } } } }) })), "CsTask: fields の値がオブジェクトなら読み込み失敗");
+            ck.Check(!Loads(Tree(0, { CsTaskNode(0, "MyGame.Chase", json{ { "text", std::string(kBtMaxTaskFieldTextBytes + 1, 'x') } }) })),
+                     "CsTask: fields の文字列が長すぎれば読み込み失敗");
+            json many = json::object();
+            for (size_t i = 0; i <= kBtMaxTaskFieldEntries; ++i) {
+                many["f" + std::to_string(i)] = 1;
+            }
+            ck.Check(!Loads(Tree(0, { CsTaskNode(0, "MyGame.Chase", many) })), "CsTask: fields が 32 エントリを超えれば読み込み失敗");
+            ck.Check(!Loads(Tree(0, { CsTaskNode(0, "MyGame.Chase", json{ { "v", json::array({ "a" }) } }) })), "CsTask: fields の配列の要素が数でなければ読み込み失敗");
+            ck.Check(!BtKindHasTaskFields(BtNodeKind::Wait) && BtKindHasTaskFields(BtNodeKind::CppTask) && BtKindHasTaskFields(BtNodeKind::CsTask),
+                     "fields を持つ種類は CppTask と CsTask だけ");
+
+            Sim sim;
+            StubLane lane;
+            lane.runningTicks = 1;
+            sim.bt.SetManagedLane(&lane);
+            const EntityID e = sim.AddTreeEntity(RegisterTree(lib, L"cs_fields", Tree(0, { CsTaskNode(0, "MyGame.Chase", fields) }, board)));
+            Run(sim, e, 2);
+            ck.Check(lane.fields.size() == 2 && json::parse(lane.fields[0]) == fields && json::parse(lane.fields[1]) == fields,
+                     "レーンの enter / tick に fields の JSON が渡る (ノードの fields そのまま)");
+            Sim plainSim;
+            StubLane plainLane;
+            plainSim.bt.SetManagedLane(&plainLane);
+            const EntityID plain = plainSim.AddTreeEntity(RegisterTree(lib, L"cs_nofields", Tree(0, { CsTaskNode(0, "MyGame.Chase") }, board)));
+            Run(plainSim, plain, 1);
+            ck.Check(plainLane.fields.size() == 1 && plainLane.fields[0].empty(), "fields が無い CsTask は空文字を渡す");
+            ck.Check(BtManagedFieldAccepts(BtManagedFieldType::Int, 3) && BtManagedFieldAccepts(BtManagedFieldType::Int, 3.0)
+                         && !BtManagedFieldAccepts(BtManagedFieldType::Int, 3.5) && !BtManagedFieldAccepts(BtManagedFieldType::Int, 3e10)
+                         && !BtManagedFieldAccepts(BtManagedFieldType::Int, "3") && BtManagedFieldAccepts(BtManagedFieldType::Float, 2)
+                         && !BtManagedFieldAccepts(BtManagedFieldType::Bool, 1) && BtManagedFieldAccepts(BtManagedFieldType::String, "x")
+                         && BtManagedFieldAccepts(BtManagedFieldType::Vector3, json::array({ 1, 2, 3 }))
+                         && !BtManagedFieldAccepts(BtManagedFieldType::Vector3, json::array({ 1, 2 })),
+                     "BtManagedFieldAccepts: 型ごとの受け入れ規則 (int は整数値のみ、Vector3 は数 3 つ)");
         }
 
         // ABI: BtRestart (タスクの中から / 外から)

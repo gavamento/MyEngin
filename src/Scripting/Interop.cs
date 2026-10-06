@@ -424,7 +424,10 @@ namespace MyeScripting
         public delegate* unmanaged<int, MyeEntityId, MyeVec3, float, void> InvokeBreak;
         // v27 (M85l) 末尾追加。BT の C# タスク 1 手 (phase: 0=enter 1=tick 2=abort)。
         // 戻り値: 0=Running 1=Success 2=Failure、-1=その名前のクラスが無い
-        public delegate* unmanaged<MyeEntityId, int, byte*, int, ulong, int> BtTask;
+        // 6 つ目の引数 = インスタンスを作った直後に書くフィールドの JSON (空文字 = なし)
+        public delegate* unmanaged<MyeEntityId, int, byte*, int, ulong, byte*, int> BtTask;
+        // [BtTask] クラスの一覧 (JSON UTF-8)。buf に収まる分だけ書き (終端の NUL 込み)、全体のバイト数 (NUL を含まない) を返す (bufLen = 0 で長さだけ)
+        public delegate* unmanaged<byte*, int, int> BtTaskCatalog;
     }
 
     // native → managed の起動引数 (ManagedHost.cpp の MyeBootstrapArgs と一致)

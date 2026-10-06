@@ -41,7 +41,7 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 | 18 | 移動を含む SearchArea / Patrol が Stuck のとき | ユーザーは MoveTo に「詰まったら Failure にするか」のチェックボックス (2. #17) を選んだ。SearchArea / Patrol も内部で同じ移動をするので、同じ問題 (詰まり続けると終わらない) を持つ | 裁定どおり (2026-10-05 ユーザー回答「MoveTo と同じチェック」、司会経由) | **同じ名前・同じ意味の `failOnStuck` (既定 false) を SearchArea と Patrol にも持たせる** (true ならノード全体が Failure)。却下: SearchArea だけ「詰まった点を飛ばして次の点へ」(捜索としては便利だが、同じ名前のチェックボックスが種類ごとに違う意味になる) |
 | 19 | Patrol を初めて始めるとき、点 0 からか一番近い点からか | ノードの状態は終了・Abort で消えるので、初回と復帰を区別するには持ち越しの状態が要る | 裁定どおり (2026-10-06 ユーザー回答、司会経由) | **入るたびに一番近い点から** (初回も同じ。同距離は index 小)。却下: 初回だけ点 0 (持ち越しの状態と snapshot の書式変更が要り、置いた位置が点 0 から遠いと最初に引き返す) |
 | 20 | BB の Entity キー (Patrol の route、追う相手の初期値など) をシーンの物で埋める手段が無い。`.bb.json` の初期値はアセットなのでシーンのエンティティを指せない。このままでは `patrol_only.bt.json` がコード無しで動かず、2. #10 の「BT 無しの巡回は Patrol 1 個の木で足りる」が成り立たない | sub-07 SELF_EVAL | 裁定どおり (2026-10-06 ユーザー回答、司会経由) | **`BehaviorTreeComponent` に「Entity キーの初期値」を固定 4 組 (`bbEntityKey[4]` = キー名 String64、`bbEntityValue[4]` = EntityRef) 持たせ、木を始める / やり直すときに BB へ書く** (UE で Pawn ごとに BB を初期化するのと同じ役)。Inspector では BB の Entity キーを選ぶ欄にする。sub-08 で入れる (snapshot +1)。却下: Patrol の route 未設定時に自分の PatrolRoute を使う (ルートの共有ができず Patrol 専用の抜け道になる)、ABI でしか書けないまま (コード無しで巡回できない) |
-| 21 | C# タスクにも C++ タスクと同じ「ノードごとのフィールド」と、BT 窓のクラスのピッカーが要るか | spec 4.1.7 の C# 側は `[BtTask]` のクラスだけを求めていた。C# タスクは決定論の保証外で、値は C# のコードか BB で渡せる。ピッカーには ManagedHost にタスク一覧の問い合わせを足す必要がある | planner 裁定 (sub-12 VERDICT) `[ユーザーに聞ける]` | **M85 では作らない (後回し)**。クラス名は FullName の手入力、実行時に無ければ Failure + 警告、パラメータは BB で渡す。却下: M85 内で足す (サブが 1 本増える。C# レーンは replay の被覆外で、主用途の C++ タスクには両方ある) |
+| 21 | C# タスクにも C++ タスクと同じ「ノードごとのフィールド」と、BT 窓のクラスのピッカーが要るか | spec 4.1.7 の C# 側は `[BtTask]` のクラスだけを求めていた。C# タスクは決定論の保証外で、値は C# のコードか BB で渡せる。ピッカーには ManagedHost にタスク一覧の問い合わせを足す必要がある | **ユーザー回答 (2026-10-06)「M85 で作る」**(planner 裁定の「後回し」は不採用) | **sub-12b で作る**: ManagedHost に C# タスクの一覧 (クラス名とフィールドの記述子) の問い合わせ、`.bt.json` の CsTask に CppTask と同じ `"fields"`、入ったときにフィールドの値を C# のインスタンスへ書く、BT 窓のクラスのピッカーとフィールド欄 (Undo に乗る)。C# が読み込まれていないときは文字入力に戻る。決定論の保証外であることは変わらない |
 | 16 | Animator の窓が「位置を保存しない・Undo 無し・パン/ズーム無し」なので、それを手本に BT エディタを作ると同じ穴が残る | `AnimatorControllerWindow.cpp:25-37` (位置はメモリだけ)、Undo 無し、`NoScrollbar | NoMove` | — | BT エディタは新規の窓。位置の保存・窓内の Undo (アセット全体の JSON を前後で持つ単純な方式)・パンとズームを持つ。Animator 窓は直さない |
 
 ## 3. スコープ
@@ -66,7 +66,6 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
   - Animator の `defaultState` 未適用の修正、Animator 窓の改修
   - `AgentBrain` の変更 (共存のまま)
 - 後回し:
-  - C# タスクのフィールド (CppTask の fields 相当) と BT 窓の C# クラスのピッカー (sub-12 VERDICT、2. #21)
   - Smart Objects のノード (M86)
   - BT の実行時のホットリロードで「実行中の位置を保ったまま差し替える」こと (M85 では木を最初からやり直す、4.1.9)
 
@@ -147,7 +146,7 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 #### 4.1.7 C++ タスク / C# タスク
 
 - C++: `REGISTER_BT_TASK(T, FIELDS(...))`。T は POD (trivially copyable、align ≤ 16)。`int32_t OnStart(MyeBtTaskContext&)` / `int32_t OnTick(MyeBtTaskContext&)` / `void OnAbort(MyeBtTaskContext&)` を持てる (戻り値 = Running / Success / Failure)。状態はノードのインスタンスごとに BT 表が持ち、BT 節に入る。`.bt.json` のノードは `{ "type": "CppTask", "params": { "task": "<名前>" }, "fields": {...} }` (sub-11 で task を params へ。C# タスクも同じ形で `params.class`)。状態 T は 112 バイトまで (ノードの追加状態は固定 128 バイト = ヘッダ 16 + 状態)、FIELDS に書かないメンバとパディングはコールバックの前後で 0 に戻る (ハッシュの一致のため)。ホットリロードは `REGISTER_SCRIPT` と同じく名前で引き直し、layoutHash が変わったら実行中のその木を最初からやり直す。DLL に無い名前は Failure + 1 回警告。
-- C#: `[BtTask]` 属性のクラス (`MyeScript.cs` に基底)。C# レーンが止まる場面では即 Failure (2. #8)。
+- C#: `[BtTask]` 属性のクラス (`MyeScript.cs` に基底)。C# レーンが止まる場面では即 Failure (2. #8)。ノードは `{ "type": "CsTask", "params": { "class": "<FullName>" }, "fields": {...} }`。フィールドは `[BtTask]` クラスの public なインスタンスフィールドのうち bool / int / float / string / Vector3 相当 (MyeVec3) のもの。インスタンスを作った直後 (OnStart の前) に `fields` の値を書く。名前が無い・型が違う値は書かずに 1 回警告 (2. #21、sub-12b)。
 
 #### 4.1.8 Blackboard
 
@@ -223,6 +222,7 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 15. `--bt-demo`: 敵が巡回 → プレイヤーを発見して追う → 見失うと予測位置を捜索 → 諦めて巡回へ戻る、を 1 回の実行で通る (ログで各段階の tick を出す) — replay_verify の `bt` ジョブ (Debug / Release / Server.exe / snapshot stress) PASS、shot_verify の golden `bt` (既知の `nav` の FAIL は f6c7bef 起因として別扱い)。
 16. Editor `--selftest` (Debug / Release)・Server `--selftest` で新しい FAIL 0。`/p:MyeWarnAsError=true` で 0 警告。`tools\check_rules.ps1` 0。
 17. 文書: ADR-025 (実行モデル・状態の置き場所・イベントキュー・C# の保証外・性能の計測値・却下案)、engine_spec、engine-feature-guide、test_checklists、ロードマップの進捗表。
+18. C# タスクのフィールドとクラスのピッカー (2. #21): BT 窓で C# クラスを一覧から選べ、フィールド欄の編集が `.bt.json` の `fields` に保存され Undo / Redo に乗り、Play で C# のインスタンスへ値が届く。C# が読み込まれていないときは文字入力に戻る — `BehaviorTreeEditorSelfTest` (モデル層の fields の往復と Undo) + 一時プローブの実走ログ + 画像。
 
 ## 6. サブ分割
 
@@ -240,7 +240,8 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 | sub-10 | BT 窓 (3): ライブ表示とタイムライン操作中の表示、SceneView のデバッグ線 | sub-09 | 12, 16 | `M85j: BT エディタのライブ表示 (Play 中と巻き戻し中)` |
 | sub-11 | ABI v27: C++ タスク・BB・イベント・AnimatorPlay、C# ミラー | sub-10 | 13, 16 | `M85k: BT のスクリプト API と C++ タスク (ABI v27 = 151+n)` |
 | sub-12 | C# タスクと C# の糖衣 | sub-11 | 14, 16 | `M85l: BT の C# タスクとイベント受信 (決定論の保証外)` |
-| sub-13 | デモ `--bt-demo`、replay_verify `bt`、golden `bt` | sub-12 | 15, 16 | `M85m: BT のデモ (巡回・発見・追跡・捜索) と replay_verify / shot_verify` |
+| sub-12b | C# タスクのフィールドと BT 窓のクラスのピッカー | sub-12 | 18, 16 | `M85l2: BT の C# タスクのフィールドとクラスのピッカー` |
+| sub-13 | デモ `--bt-demo`、replay_verify `bt`、golden `bt` | sub-12b | 15, 16 | `M85m: BT のデモ (巡回・発見・追跡・捜索) と replay_verify / shot_verify` |
 | sub-14 | 文書と全体検証 | sub-13 | 16, 17 | `M85n: ビヘイビアツリーの文書 (ADR-025) と全体検証` |
 
 (ロードマップの 15 サブから: Wait を sub-01 へ (Composite を試す葉が要る)、グラフエディタ 4 本を 3 本へ、C++ Task とイベント受信を ABI の 1 本へまとめた)
@@ -259,6 +260,8 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 
 (確定後の変更のみ)
 
+- 2026-10-06 (sub-12b VERDICT): C# タスクの fields の JSON は enter と tick の毎回レーンへ渡す (C# のリロードで作り直したインスタンスにも値を入れるため)。一覧は MyeManagedVTable 末尾の BtTaskCatalog (内部契約、EngineAPI の版は不変)、Editor は EngineContext::managedHost から引く。[BtTask] クラスが 0 件のときも文字入力。JSON の整数値の小数は int フィールドに書ける
+- 2026-10-06 (ユーザー回答、司会経由): 2. #21 を「M85 で作る」へ。sub-12b を新設 (sub-12 の後・sub-13 の前)、受け入れ条件 18 を追加、4.1.7 に C# の fields を追記、3. の後回しから外した
 - 2026-10-06 (sub-12 VERDICT): C# タスクは `params.class` (FullName) だけ、フィールドとピッカーは後回し (2. #21)。C# レーンの有無は毎 tick TickRunner が runManaged と同じ門で渡す。C# タスクのインスタンスは managed 側で (index, generation, ノード) ごと、Success / Failure / 例外・リロード・シーン遷移で捨てる。MyeManagedVTable の末尾に BtTask を足したが EngineAPI の版は変えない (MyeScripting.dll は exe と同時にビルドされる)
 - 2026-10-06 (sub-11 VERDICT): ABI v27 = 158 (7 スロット)。CppTask の task 名は params へ、状態は 112 バイト上限の固定長、FIELDS 以外は 0 に戻す。OnStart が無ければ入った tick に OnTick、OnTick が無ければ Running、範囲外の戻り値は Failure。BT 節のバイト形式は不変なので snapshot は v39 のまま。BtRestart を自分の木のタスクから呼ぶと返った後に Abort
 - 2026-10-06 (sub-10 VERDICT): Abort の矢印は Decorator 起点 (Self / LowerPriority / Timeout) だけ記録し、SimpleParallel の Immediate の停止は矢印にしない。記録は表示専用で BT 節・ハッシュに入れない (巻き戻し直後は矢印が空)。EngineContext に読み取り専用の BehaviorTreeSystem を追加。実行中タスク名は SceneView の ImGui 文字 (ギズモ表示が on のとき)。ライブの id は展開後の id を DisplayedIdOf で窓の木の id へ戻す

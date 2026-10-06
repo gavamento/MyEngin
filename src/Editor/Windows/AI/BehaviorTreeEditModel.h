@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
+#include "Engine/Engine/AI/BtManagedTaskLane.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
 
 namespace mye {
@@ -35,6 +36,7 @@ enum class BtIssueKind : uint8_t {
     KeyMissing,           // BB に無い名前を指している (BB 未設定を含む)
     KeyTypeMismatch,      // キーの型がこの欄に合わない
     CSharpTask,           // CsTask ノード、または C# のタスクを含む木を取り込む SubTree (決定論の保証外。警告)
+    CSharpField,          // CsTask の fields が、そのクラスの記述子に無い名前か、型に合わない値 (実行時は書かれず警告。fieldName = その名前)
 };
 
 enum class BtIssueSeverity : uint8_t { Warning, Error };
@@ -46,6 +48,7 @@ struct BtIssue {
     int decoratorIndex = -1; // Decorator のキーの問題のときその添字。-1 = ノード本体
     int keyIndex = -1;       // キー欄の問題のときその添字
     int32_t otherId = -1;    // 関連するもう一つのノード (ParallelMainNotTask の左の子)
+    std::string fieldName;   // CSharpField の問題のフィールド名
 };
 
 // ノードの削除の仕方
@@ -137,8 +140,11 @@ public:
     // ---- パラメータ・キー・Decorator ----
     // 範囲外の値は丸める。値が変わらなければ false (dirty は立てない)。型に合わない値 (長すぎる文字列・非有限の Float) は false
     bool SetParam(int32_t id, int paramIndex, const BtParamValue& value);
-    // CppTask のフィールド (.bt.json の "fields")。値は BtTaskReadField が作る JSON。同じ値・CppTask でないノード・保存できない形は false
+    // CppTask / CsTask のフィールド (.bt.json の "fields")。CppTask の値は BtTaskReadField が作る JSON。同じ値・フィールドを持たない種類のノード・保存できない形は false
     bool SetTaskField(int32_t id, const std::string& name, const nlohmann::json& value);
+    // CsTask のクラスを変える。keepFields に無い名前の fields は同じ 1 操作で消す (新しいクラスに無いフィールド)。
+    // クラスも fields も変わらなければ false
+    bool SetCsTaskClass(int32_t id, const std::string& className, const std::vector<std::string>& keepFields);
     // BB のキー名。空 = 未指定。63 バイトを超えれば false
     bool SetKey(int32_t id, int keyIndex, const std::string& name);
     // Decorator を末尾に足して添字を返す。-1 = 上限 (kBtMaxDecoratorsPerNode) か、BlackboardCondition なのに BB にキーが無い
@@ -183,6 +189,10 @@ public:
     bool BeginGesture();
     void EndGesture();
     bool InGesture() const { return gesture_; }
+
+    // C# タスクの記述子の一覧 (ManagedHost::BtTaskClasses)。null = C# が読み込まれていない (CsTask のフィールドは検査しない)。
+    // 窓が毎フレーム繋ぎ直す。所有しない
+    void BindManagedTasks(const std::vector<BtManagedTaskClass>* classes) { managedTasks_ = classes; }
 
     // ---- 検査 ----
     // 木と BB を調べた結果 (ノード順。保存は止めない)。窓が赤枠と一覧に使う
@@ -236,6 +246,7 @@ private:
     mutable bool boardDirty_ = false;
     bool boardLoaded_ = false;
     std::shared_ptr<const BehaviorTreeAsset> registered_; // load / save したときの登録 (同一性の比較用)
+    const std::vector<BtManagedTaskClass>* managedTasks_ = nullptr;
     BehaviorTreeLibrary* trees_ = nullptr;
     BlackboardLibrary* boards_ = nullptr;
     bool loaded_ = false;

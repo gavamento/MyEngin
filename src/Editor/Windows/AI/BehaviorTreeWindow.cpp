@@ -26,6 +26,7 @@
 #include "Engine/Engine/AI/BlackboardLibrary.h"
 #include "Engine/Engine/Loop/EngineLoop.h"   // EngineContext (ライブ表示の読み先)
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
+#include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Platform/PathUtil.h"
@@ -333,6 +334,8 @@ void BehaviorTreeWindow::OnImGui(EngineContext& ctx, const Selection& selection)
         return;
     }
     tasks_ = ctx.behaviorTree != nullptr ? &ctx.behaviorTree->Tasks() : nullptr;
+    managedTasks_ = ctx.managedHost != nullptr && ctx.managedHost->IsReady() ? &ctx.managedHost->BtTaskClasses() : nullptr;
+    model_.BindManagedTasks(managedTasks_);
     BehaviorTreeLibrary* trees = behaviortree::Library();
     model_.BindLibraries(trees, blackboard::Library());
     if (trees == nullptr) {
@@ -889,6 +892,117 @@ void BehaviorTreeWindow::DrawTaskFields(int32_t id)
     }
 }
 
+// CsTask のクラス名。C# の [BtTask] クラスから選ぶ (一覧に無い名前も今の値として見える)。
+// クラスを変えると、新しいクラスに無いフィールドの値は同じ 1 操作で消える
+void BehaviorTreeWindow::DrawCsTaskPicker(int32_t id, const BtNodeDef& node)
+{
+    const std::string current = node.params[btcstaskparam::kClass].s;
+    const auto found = [this](const std::string& name) {
+        return std::find_if(managedTasks_->begin(), managedTasks_->end(), [&name](const BtManagedTaskClass& c) { return c.name == name; });
+    };
+    char preview[160] = {};
+    if (current.empty()) {
+        std::snprintf(preview, sizeof(preview), "%s", Tr(StrId::Bt_BlackboardNone));
+    } else if (found(current) == managedTasks_->end()) {
+        std::snprintf(preview, sizeof(preview), "%s (%s)", current.c_str(), Tr(StrId::Bt_CsNotFound));
+    } else {
+        std::snprintf(preview, sizeof(preview), "%s", current.c_str());
+    }
+    if (ImGui::BeginCombo("class", preview)) {
+        for (const BtManagedTaskClass& entry : *managedTasks_) {
+            if (ImGui::Selectable(entry.name.c_str(), entry.name == current)) {
+                std::vector<std::string> keep;
+                for (const BtManagedTaskField& field : entry.fields) {
+                    keep.push_back(field.name);
+                }
+                model_.SetCsTaskClass(id, entry.name, keep);
+            }
+        }
+        ImGui::EndCombo();
+    }
+}
+
+// CsTask のフィールド欄。C# の記述子 (名前・型・既定値) から作り、値は .bt.json の "fields" に名前で入る。
+// 値が無い・型に合わない欄は既定値を出す (書き戻すのは触った欄だけ)
+void BehaviorTreeWindow::DrawCsTaskFields(int32_t id)
+{
+    const BtNodeDef* node = model_.FindNode(id);
+    if (node == nullptr || managedTasks_ == nullptr) {
+        return;
+    }
+    const std::string name = node->params[btcstaskparam::kClass].s;
+    const auto classIt = std::find_if(managedTasks_->begin(), managedTasks_->end(), [&name](const BtManagedTaskClass& c) { return c.name == name; });
+    ImGui::Separator();
+    ImGui::TextUnformatted(Tr(StrId::Bt_CsFields));
+    if (classIt == managedTasks_->end()) {
+        ImGui::TextDisabled("%s (%s)", name.empty() ? Tr(StrId::Bt_KeyNone) : name.c_str(), Tr(StrId::Bt_CsClassMissing));
+        return;
+    }
+    for (size_t f = 0; f < classIt->fields.size(); ++f) {
+        const BtManagedTaskField& field = classIt->fields[f];
+        const char* label = field.name.c_str();
+        nlohmann::json value = field.defaultValue;
+        if (node->taskFields.is_object() && node->taskFields.contains(field.name)
+            && BtManagedFieldAccepts(field.type, node->taskFields[field.name])) {
+            value = node->taskFields[field.name];
+        }
+        bool changed = false;
+        ImGui::PushID(static_cast<int>(f));
+        switch (field.type) {
+        case BtManagedFieldType::Bool: {
+            bool v = value.is_boolean() && value.get<bool>();
+            if (ImGui::Checkbox(label, &v)) {
+                value = v;
+                changed = true;
+            }
+            break;
+        }
+        case BtManagedFieldType::Int: {
+            int v = value.is_number() ? static_cast<int>(value.get<double>()) : 0;
+            if (ImGui::DragInt(label, &v)) {
+                value = v;
+                changed = true;
+            }
+            break;
+        }
+        case BtManagedFieldType::Float: {
+            float v = value.is_number() ? value.get<float>() : 0.0f;
+            if (ImGui::DragFloat(label, &v, 0.05f)) {
+                value = v;
+                changed = true;
+            }
+            break;
+        }
+        case BtManagedFieldType::String: {
+            char buf[kBtMaxTaskFieldTextBytes + 1] = {};
+            if (value.is_string()) {
+                std::snprintf(buf, sizeof(buf), "%s", value.get<std::string>().c_str());
+            }
+            if (ImGui::InputText(label, buf, sizeof(buf))) {
+                value = std::string(buf);
+                changed = true;
+            }
+            break;
+        }
+        case BtManagedFieldType::Vector3: {
+            float v[3] = {};
+            for (size_t axis = 0; axis < 3 && value.is_array() && axis < value.size(); ++axis) {
+                v[axis] = value[axis].get<float>();
+            }
+            if (ImGui::DragFloat3(label, v, 0.05f)) {
+                value = nlohmann::json::array({ v[0], v[1], v[2] });
+                changed = true;
+            }
+            break;
+        }
+        }
+        if (changed) {
+            CommitEdit(true, [&] { model_.SetTaskField(id, field.name, value); });
+        }
+        ImGui::PopID();
+    }
+}
+
 void BehaviorTreeWindow::DrawNodeProperties(int32_t id)
 {
     const BtNodeDef* node = model_.FindNode(id);
@@ -978,13 +1092,22 @@ void BehaviorTreeWindow::DrawNodeProperties(int32_t id)
                 ImGui::PopID();
                 continue;
             }
+            if (node->kind == BtNodeKind::CsTask && i == btcstaskparam::kClass && managedTasks_ != nullptr && !managedTasks_->empty()) {
+                DrawCsTaskPicker(id, *node);
+                ImGui::PopID();
+                continue;
+            }
             BtParamValue value = node->params[static_cast<size_t>(i)];
             CommitEdit(DrawParam(desc, value), [&] { model_.SetParam(id, i, value); });
             ImGui::PopID();
         }
     }
-    if (node->kind == BtNodeKind::CppTask) {
-        DrawTaskFields(id);
+    if (node->kind == BtNodeKind::CppTask || node->kind == BtNodeKind::CsTask) {
+        if (node->kind == BtNodeKind::CppTask) {
+            DrawTaskFields(id);
+        } else {
+            DrawCsTaskFields(id);
+        }
         node = model_.FindNode(id); // 編集で木のコピーが組み替わることがある
         if (node == nullptr) {
             ImGui::PopID();
@@ -1939,6 +2062,7 @@ void BehaviorTreeWindow::DrawIssuePanel()
         case BtIssueKind::KeyMissing: std::snprintf(text, sizeof(text), Tr(StrId::Bt_IssueKeyMissing), kindName, node->id, slot); break;
         case BtIssueKind::KeyTypeMismatch: std::snprintf(text, sizeof(text), Tr(StrId::Bt_IssueKeyType), kindName, node->id, slot); break;
         case BtIssueKind::CSharpTask: std::snprintf(text, sizeof(text), Tr(StrId::Bt_IssueCSharp), kindName, node->id); break;
+        case BtIssueKind::CSharpField: std::snprintf(text, sizeof(text), Tr(StrId::Bt_IssueCsField), kindName, node->id, issue.fieldName.c_str()); break;
         }
         ImGui::PushID(static_cast<int>(i));
         ImGui::PushStyleColor(ImGuiCol_Text, issue.severity == BtIssueSeverity::Error ? themeColor::Error : themeColor::Warning);

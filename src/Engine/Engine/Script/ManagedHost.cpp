@@ -321,6 +321,7 @@ bool ManagedHost::CompileScripts(const std::wstring& scriptsDir)
     }
     RegisterTypes();
     ResetHandles(); // リロード: 既存コンポーネントを再インスタンス化させる
+    ++reloadGeneration_;
     MYE_LOG_INFO("[csharp] %d script type(s) available", static_cast<int>(n));
     return true;
 }
@@ -449,12 +450,74 @@ void ManagedHost::DispatchBreak(EntityID root, EntityID piece, MyeVec3 point, fl
     }
 }
 
-int32_t ManagedHost::RunTask(EntityID owner, int32_t nodeIndex, const std::string& className, int32_t phase, uint64_t tick)
+int32_t ManagedHost::RunTask(EntityID owner, int32_t nodeIndex, const std::string& className, int32_t phase, uint64_t tick,
+                             const std::string& fieldsJson)
 {
     if (!ready_ || vt_.BtTask == nullptr) {
         return kBtManagedUnknownClass;
     }
-    return vt_.BtTask(ToShared(owner), nodeIndex, className.c_str(), phase, tick);
+    return vt_.BtTask(ToShared(owner), nodeIndex, className.c_str(), phase, tick, fieldsJson.c_str());
+}
+
+const std::vector<BtManagedTaskClass>& ManagedHost::BtTaskClasses()
+{
+    if (!ready_ || vt_.BtTaskCatalog == nullptr) {
+        btTaskClasses_.clear();
+        btTaskClassesGeneration_ = UINT32_MAX;
+        return btTaskClasses_;
+    }
+    if (btTaskClassesGeneration_ == reloadGeneration_) {
+        return btTaskClasses_;
+    }
+    btTaskClasses_.clear();
+    btTaskClassesGeneration_ = reloadGeneration_;
+    const int32_t length = vt_.BtTaskCatalog(nullptr, 0);
+    if (length <= 0) {
+        return btTaskClasses_;
+    }
+    // managed 側は終端の NUL も書くので 1 バイト多く渡す
+    std::string text(static_cast<size_t>(length) + 1, '\0');
+    if (vt_.BtTaskCatalog(text.data(), length + 1) != length) {
+        return btTaskClasses_;
+    }
+    text.resize(static_cast<size_t>(length));
+    const nlohmann::json root = nlohmann::json::parse(text, nullptr, false);
+    if (!root.is_array()) {
+        return btTaskClasses_;
+    }
+    for (const nlohmann::json& c : root) {
+        if (!c.is_object() || !c.contains("class") || !c["class"].is_string() || !c.contains("fields") || !c["fields"].is_array()) {
+            continue;
+        }
+        BtManagedTaskClass entry;
+        entry.name = c["class"].get<std::string>();
+        for (const nlohmann::json& f : c["fields"]) {
+            if (!f.is_object() || !f.contains("name") || !f["name"].is_string() || !f.contains("type") || !f["type"].is_string()
+                || !f.contains("default")) {
+                continue;
+            }
+            const std::string type = f["type"].get<std::string>();
+            BtManagedTaskField field;
+            field.name = f["name"].get<std::string>();
+            field.defaultValue = f["default"];
+            if (type == "bool") {
+                field.type = BtManagedFieldType::Bool;
+            } else if (type == "int") {
+                field.type = BtManagedFieldType::Int;
+            } else if (type == "float") {
+                field.type = BtManagedFieldType::Float;
+            } else if (type == "string") {
+                field.type = BtManagedFieldType::String;
+            } else if (type == "vec3") {
+                field.type = BtManagedFieldType::Vector3;
+            } else {
+                continue;
+            }
+            entry.fields.push_back(std::move(field));
+        }
+        btTaskClasses_.push_back(std::move(entry));
+    }
+    return btTaskClasses_;
 }
 
 bool ManagedHost::IsManagedComponent(ComponentTypeId t) const { return FindByComponent(t) != nullptr; }

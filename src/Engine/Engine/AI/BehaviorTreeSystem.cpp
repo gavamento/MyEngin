@@ -309,7 +309,7 @@ void ReleaseCsTask(RunCtx& c, const BtNodeDef& node, int32_t index, bool byAbort
 {
     const std::string& name = node.params[btcstaskparam::kClass].s;
     if (byAbort && c.lane != nullptr && !name.empty()) {
-        c.lane->RunTask(c.inst.entity, index, name, btmanagedphase::kAbort, c.tick);
+        c.lane->RunTask(c.inst.entity, index, name, btmanagedphase::kAbort, c.tick, std::string());
     }
 }
 
@@ -1312,7 +1312,10 @@ BtResult VisitCsTask(RunCtx& c, int32_t index)
     if (c.lane == nullptr) {
         return fail("cs:@lane", "the C# lane is not running (recording / verifying / network / re-simulation / no .NET)");
     }
-    const int32_t status = c.lane->RunTask(c.inst.entity, index, name, starting ? btmanagedphase::kEnter : btmanagedphase::kTick, c.tick);
+    // fields は毎回渡す。C# 側はインスタンスを作るとき (入った tick と、リロード後の作り直し) だけ使う
+    const std::string fieldsJson = node.taskFields.is_object() && !node.taskFields.empty() ? node.taskFields.dump() : std::string();
+    const int32_t status = c.lane->RunTask(c.inst.entity, index, name, starting ? btmanagedphase::kEnter : btmanagedphase::kTick, c.tick,
+                                           fieldsJson);
     if (status == kBtManagedUnknownClass) {
         return fail(("cs:" + name).c_str(), "no [BtTask] class with that name in the C# scripts");
     }
