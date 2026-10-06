@@ -15,7 +15,8 @@
 #   ジョブ側の echo を ASCII に限定してあるのもこのため (日本語 echo は 437 で化ける)。
 # - 出力は <LogDir>\<name>.log へ隔離し、全ジョブ完了後に投入順で全文流す —
 #   並列でも CI ログが「順番に読める」形を保つ。実行中は start/done の 1 行だけ。
-# - 並列度の既定は論理コア数。MYE_REPLAY_JOBS 環境変数で上書きできる。
+# - 並列度の既定は「論理コア数」と「空きコミット ÷ 1 ジョブぶん」の小さい方。
+#   MYE_REPLAY_JOBS 環境変数を指定すると、その値をそのまま使う。
 # - exit 0 = 全ジョブ成功。1 本でも非 0 (SEH の負値含む) なら exit 1。
 #   途中で失敗しても残りは最後まで回す — CI で全体像が一度に見えることを優先する。
 param(
@@ -43,7 +44,23 @@ if ($names.Count -eq 0) {
 }
 
 $maxParallel = [Environment]::ProcessorCount
-if ($env:MYE_REPLAY_JOBS) { $maxParallel = [int]$env:MYE_REPLAY_JOBS }
+if ($env:MYE_REPLAY_JOBS) {
+    $maxParallel = [int]$env:MYE_REPLAY_JOBS
+} else {
+    # 空きコミット (仮想メモリ) でも上限を掛ける。1 ジョブ = Editor 1 プロセスで、private bytes の
+    # ピークは GPU 描画で約 2.2 GB、--warp で約 1.35 GB。論理コア数ぶんを同時に立ち上げると、
+    # 空きが少ない PC では確保に失敗し、起動中に bad_alloc で落ちたり長時間固まったりする
+    $jobCommitMB = if ($env:MYE_EXTRA_ARGS -match '--warp') { 1400 } else { 2300 }
+    $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+    if ($os) {
+        $freeCommitMB = [int64]$os.FreeVirtualMemory / 1024
+        $byMemory = [Math]::Max(1, [int][Math]::Floor($freeCommitMB / $jobCommitMB))
+        if ($byMemory -lt $maxParallel) {
+            Write-Host ("[parallel] free commit is {0:N1} GB: running {1} jobs at a time instead of {2} (set MYE_REPLAY_JOBS to override)" -f ($freeCommitMB / 1024), $byMemory, $maxParallel)
+            $maxParallel = $byMemory
+        }
+    }
+}
 if ($maxParallel -lt 1) { $maxParallel = 1 }
 
 New-Item -ItemType Directory -Force $LogDir | Out-Null
