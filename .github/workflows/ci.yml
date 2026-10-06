@@ -53,6 +53,10 @@
 #                      開発機とランナーで WARP の版が違う以上、この形は tol をいくつに
 #                      しても守れない (上げると本物の RT 回帰も一緒に見逃す)。
 #                      ローカルでは maxDiff=0 のビット一致なので降格で検出力は落ちない
+#   MYE_SHOT_SKIP_UI_WIDGETS … スクショ 25 枚目 (--ui-demo = 明示 Canvas と Canvas Scaler) を飛ばす。
+#                      矩形の右端がちょうど画素の中心に乗る列があり、その 1 列を塗るかどうかが
+#                      WARP の版で反転する。ランナーでは白い縦線 20 画素が背景色になる
+#                      (maxDiff=219、9/13 から同じ画素)。tol では守れない
 #
 # ★MYE_SHOT_SKIP_ACOUSTIC (スクショ 18/19 枚目、M65e) は**わざと立てていない**。
 #   波面は整数チャンファ距離 = 機種非依存、残光の符号化は sqrt (IEEE-754 で正しく
@@ -99,6 +103,7 @@ jobs:
       MYE_SHOT_SKIP_FOG: 1
       MYE_SHOT_SKIP_PARTICLE: 1
       MYE_SHOT_SKIP_RT: 1
+      MYE_SHOT_SKIP_UI_WIDGETS: 1
       MYE_COLLAB_REQUIRED: 1
     steps:
       - uses: actions/checkout@v4

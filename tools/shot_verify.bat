@@ -396,9 +396,14 @@ rem      4 隅の箱はどれも自分のキャンバス単位で 300x150 で、
 rem      Expand / Shrink / Match 0.5 で実寸が変わる。中央下の 2 枚は Canvas の sortOrder が要素の
 rem      order より先に効くこと (order -100 の方が手前に出る) を固定する。
 rem ★Layout / ウィジェット (M75e〜h) もこのシーンに載っている (名前が ui_widgets なのはそのため)。
-rem   tol=3 の CI 判定に載せる — 23/24 枚目と
-rem   同じく不透明クアッドと内蔵フォントの貼り付けだけで、分岐で増幅する演算が無い
+rem ★ローカル限定。CI は MYE_SHOT_SKIP_UI_WIDGETS=1 で飛ばす。
+rem   23/24 枚目と同じ不透明クアッドだが、Canvas Scaler の倍率が半端なので矩形の右端が
+rem   ちょうど画素の中心に乗る列があり、その 1 列を塗るかどうかが WARP の版で反転する
+rem   (ランナーでは x=322 / 642 / 647 の白い縦線 20 画素が背景色になる。maxDiff=219 で
+rem   tol では守れない = SSR / RT を外したのと同じ形)。ローカルでは maxDiff=0
+if defined MYE_SHOT_SKIP_UI_WIDGETS goto :skip_ui_widgets
 call :shot ui_widgets --ui-demo
+:skip_ui_widgets
 
 rem ---- 26/27 枚目 (M80h): 破壊ショーケース。壊れる前 (frame 3、既定の撮り方) と、
 rem      割れて破片が飛び散った後 (frame 120、physics/joints/fog/particle/acoustic と同じ
