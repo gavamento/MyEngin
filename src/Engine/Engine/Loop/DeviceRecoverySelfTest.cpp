@@ -15,6 +15,8 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
+#include "nlohmann/json.hpp"
+
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
@@ -23,7 +25,9 @@
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/Device/GraphicsDevice.h"
+#include "Engine/Renderer/Shader/ShaderManager.h"
 
 namespace mye {
 
@@ -373,6 +377,97 @@ void CheckAssetRecovery(const CheckFn& check)
     device.Shutdown();
 }
 
+// サーフェスマテリアル (*.surface) の perMaterialGpuCB が復旧後に作り直され、中身 (パック済みの値) が
+// 復旧前と同じになること
+void CheckSurfaceMaterialRecovery(const CheckFn& check)
+{
+    namespace fs = std::filesystem;
+    const std::wstring engineShaderDir = FindEngineShaderDir();
+    if (engineShaderDir.empty()) {
+        check(false, "engine shader dir found for the surface material recovery test");
+        return;
+    }
+    std::error_code ec;
+    const fs::path dir = fs::temp_directory_path(ec) / L"mye_device_recovery_surface_selftest";
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    {
+        std::ofstream f(dir / L"DevRec.surface.hlsl", std::ios::binary | std::ios::trunc);
+        f << R"HLSL(
+/*@MyEngineProperties
+_Amp ("Amp", Range(0,1)) = 0.2
+_Tint ("Tint", Color) = (1,1,1,1)
+@*/
+#include "MyEngineSurface.hlsli"
+cbuffer MyEnginePerMaterial { float4 _Tint; float _Amp; };
+struct VSIn { float3 pos : POSITION; };
+struct VSOut { float4 pos : SV_Position; };
+VSOut VSMain(VSIn v) { VSOut o; float3 p = v.pos; p.y += _Amp;
+    o.pos = mul(mul(float4(p, 1.0f), gWorld), gViewProj); return o; }
+float4 PSMain(VSOut i) : SV_Target { return _Tint; }
+)HLSL";
+    }
+    nlohmann::json mat;
+    mat["engine"] = "MyEngine";
+    mat["material"] = 1;
+    mat["shader"] = "DevRec.surface";
+    mat["baseColor"] = nlohmann::json::array({ 1.0, 1.0, 1.0, 1.0 });
+    mat["properties"] = { { "_Amp", 0.7 }, { "_Tint", nlohmann::json::array({ 0.25, 0.5, 0.75, 1.0 }) } };
+    const fs::path matPath = dir / L"DevRec.mat.json";
+    {
+        std::ofstream f(matPath, std::ios::binary | std::ios::trunc);
+        f << mat.dump(2);
+    }
+
+    GraphicsDevice device;
+    if (!device.Init(true)) {
+        check(false, "WARP device creation for the surface material recovery test");
+        return;
+    }
+    ShaderManager shaders;
+    check(shaders.Init(device, { dir.wstring(), engineShaderDir }), "surface recovery: shader manager init");
+    RenderResources res;
+    res.Init(device);
+    const AssetID matId = res.materials.LoadFromFile(matPath.wstring(), res.textures, dir.wstring());
+    SurfaceMaterialState* before = res.materials.GetOrBuildSurfaceState(matId, shaders, res.textures, device);
+    std::vector<uint8_t> cbBefore;
+    const bool readBefore = before != nullptr && before->ready && before->perMaterialGpuCB
+        && ReadBuffer(device, before->perMaterialGpuCB.Get(), cbBefore);
+    check(readBefore, "surface recovery: the material builds a GPU CB before the recovery");
+    const std::vector<uint8_t> packedBefore = before != nullptr ? before->perMaterialCB : std::vector<uint8_t>();
+
+    res.ReleaseGpu();
+    shaders.ReleaseGpu();
+    check(before != nullptr && !before->perMaterialGpuCB, "surface recovery: the GPU CB is released");
+    const DeviceRecycleResult recycled = RecycleDevice(device, 1, 0);
+    check(recycled.status == DeviceRecycleStatus::Ok, "surface recovery: old device released (gate passes)");
+    check(shaders.RecreateAll(device) == 0, "surface recovery: shaders recreated");
+    res.RecreateGpu(device);
+
+    SurfaceMaterialState* after = res.materials.GetOrBuildSurfaceState(matId, shaders, res.textures, device);
+    std::vector<uint8_t> cbAfter;
+    check(after != nullptr && after->ready && after->perMaterialGpuCB
+              && ReadBuffer(device, after->perMaterialGpuCB.Get(), cbAfter),
+          "surface recovery: the GPU CB is recreated on the new device");
+    check(readBefore && cbBefore == cbAfter, "surface recovery: the CB contents are identical");
+    check(after != nullptr && after->perMaterialCB == packedBefore, "surface recovery: the CPU-side pack is identical");
+
+    // 作り直しに失敗したメッシュ (vb / ib 無し) は描画側へ出ない (Get は CPU データのため残る)
+    {
+        const AssetID cube = res.meshes.Cube();
+        Mesh* mesh = res.meshes.Get(cube);
+        check(mesh != nullptr && res.meshes.GetDrawable(cube) == mesh, "a mesh with buffers is drawable");
+        if (mesh != nullptr) {
+            mesh->vb.Reset();
+            check(res.meshes.Get(cube) == mesh && res.meshes.GetDrawable(cube) == nullptr,
+                  "a mesh without buffers is skipped by the draw paths");
+        }
+    }
+
+    device.Shutdown();
+    fs::remove_all(dir, ec);
+}
+
 // 旧デバイスの子オブジェクトとして握らせるための小さな定数バッファ
 bool CreateProbeBuffer(GraphicsDevice& device, Microsoft::WRL::ComPtr<ID3D11Buffer>& out)
 {
@@ -436,6 +531,7 @@ bool RunDeviceRecoverySelfTest()
     device.Shutdown();
 
     CheckAssetRecovery(check);
+    CheckSurfaceMaterialRecovery(check);
 
     MYE_LOG_INFO("DeviceRecovery self test: %s", failCount == 0 ? "ALL PASS" : "FAILED");
     return failCount == 0;

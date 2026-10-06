@@ -93,6 +93,8 @@ public:
     // BakedProbe → シェーダへ渡す非所有ポインタ束 (BRDF LUT はプローブ間で 1 枚共有)
     EnvMaps MapsFor(const BakedProbe& p) { return env_.MapsFor(p.env); }
     void Shutdown();
+    // デバイス復旧 (M88): 専用 RenderSystem・IBL・深度を手放す。設定値 (clearColor / assetsRoot) は残す
+    void ReleaseGpu();
 
     // 直近 Bake の CPU 壁時計 (ms)。GPU の完了待ちはしていないので「投げ終わるまで」の値
     float LastBakeCpuMs() const { return lastBakeMs_; }

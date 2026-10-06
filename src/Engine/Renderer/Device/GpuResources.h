@@ -95,6 +95,8 @@ public:
     AssetID Register(std::string_view name, std::span<const MeshVertex> vertices,
                      std::span<const uint32_t> indices);
     Mesh* Get(AssetID id);
+    // 描画用: vb / ib が無い (復旧で作り直せなかった) メッシュは nullptr = 呼び出し側の「メッシュ無し」と同じ扱い
+    Mesh* GetDrawable(AssetID id);
     // 登録名の逆引き (未登録は nullptr)。モデル由来なら "guid://<16hex>#mesh0#prim0" (M74a) —
     // M60f の凸包クックが「この AssetID の元ファイルはどれか」を知る唯一の手段
     const std::string* NameOf(AssetID id) const;

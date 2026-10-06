@@ -9,6 +9,7 @@
 #include <string>
 
 #include "Engine/Core/Util/Hash.h"
+#include "Engine/Engine/Loop/DeviceRecovery.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Script/EngineApiTable.h"
 #include "Engine/Renderer/Compute/ComputeAbiRunner.h"
@@ -117,6 +118,24 @@ bool RunComputeAbiSelfTest()
           "unknown texture name returns 0");
 
     Check(api.DispatchCompute(api.engine, kShader, 1, 1, 1) == 1, "DispatchCompute succeeds");
+
+    // デバイス消失からの復旧 (M88): ハンドルと desc を保ったまま GPU 側だけ作り直し、Dispatch が通る
+    {
+        runner.ReleaseGpu();
+        textures.ReleaseGpu();
+        shaders.ReleaseGpu();
+        const DeviceRecycleResult recycled = RecycleDevice(device, 1, 0);
+        Check(recycled.status == DeviceRecycleStatus::Ok, "recovery: old device released (gate passes)");
+        textures.RecreateGpu(device);
+        Check(shaders.RecreateAll(device) == 0, "recovery: shaders recreated");
+        Check(runner.RecreateGpu(device.Device()) == 0, "recovery: compute buffers recreated");
+        Check(api.SetComputeBuffer(api.engine, kShader, "gOut", outBuf) == 1,
+              "recovery: same handle still binds (UAV)");
+        Check(api.SetComputeBuffer(api.engine, kShader, "gIn", inBuf) == 1,
+              "recovery: same handle still binds (SRV)");
+        Check(api.DispatchCompute(api.engine, kShader, 1, 1, 1) == 1, "recovery: DispatchCompute succeeds");
+    }
+
     Check(api.DispatchCompute(api.engine, "no_such_shader.cs", 1, 1, 1) == 0,
           "unknown shader dispatch returns 0");
     Check(api.DispatchCompute(api.engine, nullptr, 1, 1, 1) == 0, "null shader dispatch returns 0");

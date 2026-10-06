@@ -221,6 +221,8 @@ uint64_t ComputeAbiRunner::CreateBuffer(ID3D11Device* dev,
     }
     slot.generation = gen;
     slot.live = true;
+    slot.count = count;
+    slot.stride = stride;
     return MakeHandle(gen, idx);
 }
 
@@ -505,6 +507,35 @@ void ComputeAbiRunner::Shutdown()
     }
     freeList_.clear();
     shaderStates_.clear();
+}
+
+void ComputeAbiRunner::ReleaseGpu()
+{
+    for (uint32_t i = 0; i < slotCount_; ++i)
+    {
+        bufSlots_[i].buf.Reset();
+        bufSlots_[i].srv.Reset();
+        bufSlots_[i].uav.Reset();
+    }
+}
+
+int ComputeAbiRunner::RecreateGpu(ID3D11Device* dev)
+{
+    int failed = 0;
+    for (uint32_t i = 0; i < slotCount_; ++i)
+    {
+        BufferSlot& slot = bufSlots_[i];
+        if (!slot.live) continue;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>* pUav =
+            slot.hasUav ? std::addressof(slot.uav) : nullptr;
+        if (!gpubuf::CreateStructured(dev, slot.stride, slot.count, nullptr, 0,
+                                      slot.buf, pUav, std::addressof(slot.srv)))
+        {
+            MYE_LOG_ERROR("ComputeAbiRunner: 復旧で StructuredBuffer を作れない (slot=%u)。", i);
+            ++failed;
+        }
+    }
+    return failed;
 }
 
 } // namespace mye

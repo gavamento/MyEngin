@@ -269,6 +269,11 @@ bool RtPasses::Init(GraphicsDevice& device, ShaderManager& shaders)
 
 void RtPasses::Shutdown()
 {
+    for (GpuTimer* t : { &debugTimer_, &giTimer_, &temporalTimer_, &svgfTimer_, &shadowTimer_,
+                         &shadowFilterTimer_, &reflTimer_, &reflTemporalTimer_, &reflSvgfTimer_,
+                         &restirTimer_ }) {
+        t->Release();
+    }
     debugRt_.Release();
     giRt_.Release();
     reflRt_.Release();

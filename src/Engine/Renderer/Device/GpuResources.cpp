@@ -235,6 +235,12 @@ Mesh* MeshLibrary::Get(AssetID id)
     return (it != meshes_.end()) ? &it->second : nullptr;
 }
 
+Mesh* MeshLibrary::GetDrawable(AssetID id)
+{
+    Mesh* mesh = Get(id);
+    return (mesh != nullptr && mesh->vb && mesh->ib) ? mesh : nullptr;
+}
+
 const std::string* MeshLibrary::NameOf(AssetID id) const
 {
     const auto it = names_.find(id.value);

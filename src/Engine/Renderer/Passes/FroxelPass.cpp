@@ -125,6 +125,9 @@ void FroxelPass::Shutdown()
         h.write = 0;
         h.hasLast = false;
     }
+    timer_.Release();
+    temporalTimer_.Release();
+    integrateTimer_.Release();
     shadowSampler_.Reset();
     linearClamp_.Reset();
     postCb_.Reset();

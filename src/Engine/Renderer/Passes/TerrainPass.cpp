@@ -90,7 +90,7 @@ void TerrainPass::Draw(GraphicsDevice& device, ShaderProgram* prog, const Render
     };
 
     for (const TerrainRenderItem& item : view.terrain->items) {
-        Mesh* mesh = resources.meshes.Get(item.mesh);
+        Mesh* mesh = resources.meshes.GetDrawable(item.mesh);
         if (mesh == nullptr) {
             continue;
         }

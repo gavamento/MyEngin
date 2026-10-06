@@ -1770,6 +1770,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                      static_cast<unsigned long long>(ctx.frameIndex));
 
         app.OnDeviceLost(ctx);
+        // 焼き済みプローブは GPU テクスチャだけなので捨てて、復旧後に同じ入力から焼き直す
+        // (ディスクへの書き戻しはしない)。--probe-bake-all で焼いていたときだけ再ベイクする
+        const bool reBakeProbes = !probeArray.probes.empty();
+        renderSystem.reflectionProbes = nullptr;
+        probeArray.Clear();
+        if (probeBaker) {
+            probeBaker->ReleaseGpu();
+        }
+        computeAbi.ReleaseGpu();
         vfxRenderer.Shutdown();
         uiRenderer.Shutdown();
         particleSystem.ReleaseGpu();
@@ -1816,6 +1825,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             uiRenderer.Init(device, shaderManager, assetsRoot, config.fontEmbedded);
             vfxRenderer.Init(device, shaderManager, &uiRenderer);
             particleSystem.RecreateGpu(device, shaderManager);
+            const int computeFailed = computeAbi.RecreateGpu(device.Device());
+            if (computeFailed > 0) {
+                MYE_LOG_ERROR("[device] %d compute buffer(s) could not be recreated", computeFailed);
+            }
+            if (reBakeProbes && probeBaker
+                && probeBaker->BakeAll(scene.GetWorld(), device, forwardPath, shaderManager,
+                                       resources, probeArray)) {
+                renderSystem.reflectionProbes = &probeArray.set;
+            }
             app.OnDeviceRestored(ctx);
         } else {
             fail.failure = DeviceFatalInfo::Failure::RebuildFailed;

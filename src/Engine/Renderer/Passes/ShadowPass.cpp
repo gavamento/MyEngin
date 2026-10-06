@@ -196,7 +196,7 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
         canInstance_.resize(queue.opaque.size());
         for (size_t i = 0; i < queue.opaque.size(); ++i) {
             const RenderItem& it = queue.opaque[i];
-            canInstance_[i] = (it.bones == nullptr && resources.meshes.Get(it.mesh)) ? 1 : 0;
+            canInstance_[i] = (it.bones == nullptr && resources.meshes.GetDrawable(it.mesh)) ? 1 : 0;
             // M79 sub-03: サーフェスマテリアルは影エントリ (下のループ) で個別に描くので、
             // 深度専用シェーダのインスタンス run には混ぜない
             if (canInstance_[i]) {
@@ -288,7 +288,7 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
         size_t nextRun = 0;
         for (size_t idx = 0; idx < queue.opaque.size(); ++idx) {
             const RenderItem& item = queue.opaque[idx];
-            Mesh* mesh = resources.meshes.Get(item.mesh);
+            Mesh* mesh = resources.meshes.GetDrawable(item.mesh);
             if (!mesh) {
                 continue;
             }

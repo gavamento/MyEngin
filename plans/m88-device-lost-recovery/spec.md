@@ -187,6 +187,7 @@ Recovering ──(再作成失敗 / ゲート不合格 / 連続消失)──> Fa
 - R2 シェーダの再コンパイル時間。キャッシュ (ShaderManager) から引けない場合、復旧に数秒〜数十秒。所要時間を記録し、許容外なら planner へ。
 - R3 compute の中身はゼロから。GameLogic が「一度だけ初期化した GPU バッファ」に依存していると復旧後に結果が変わる。描画専用の用途に限られている前提 (sim がそれを読まないこと) を sub-04 で確認する。sim が読み戻しているなら決定性違反の既存問題として planner へ報告 (今回の修正範囲外)。
 - R4 非同期テクスチャ読み込みワーカー (`TextureLibrary::AsyncWorker`) が D3D オブジェクトを作っている場合、復旧前の排出が必須。
+- K1 (既知の差、範囲外) `--probe-bake-all --deferred` で、同じ実行の中で BakeAll を 2 回走らせると deferred の絵が変わる (sub-04 で発見、原因は未特定)。M88 では直さない。別件として台帳の申し送りへ。
 - R5 ImGui の ImTextureID を保持している箇所 (エディタ内 8 箇所程度の cast) が古い SRV を握ると参照数ゲートで検出される — これは想定どおりの動作で、sub-05 で潰す。
 
 ## 8. 変更履歴
@@ -211,3 +212,9 @@ Recovering ──(再作成失敗 / ゲート不合格 / 連続消失)──> Fa
   - 作り直しに失敗したアセットは、既存の読み込み失敗と同じ代替 (テクスチャは White、メッシュはログを出して描画を飛ばす) で続行し、Fatal にはしない。メッシュの vb/ib が null のときに描画経路が安全かどうかは sub-04 で確認する。
   - SkinnedModelLibrary は GPU を持たないので対象外 (棚卸しの訂正)。
   - Surface マテリアルの CB の作り直しは、sub-04 の描画確認 (surface を使うシーン) で検証する。
+- 2026-10-07 (coder SELF_EVAL sub-04 round 1):
+  - 受け入れ 6 の比較条件を「履歴依存の要素 (TAA / froxel・RT の時間フィルタ / GPU 粒子) を無効にした条件で tol=0」と確定した。これらを有効にしたときの不一致 (maxDiff 1 前後、GPU 粒子の再発生) は spec 3.「やらない」どおりの想定内の差とする。
+  - 受け入れ 7 は、リポジトリに `*.surface` を使うシーンが無いため SelfTest (CB の作り直しと中身の一致) で満たしたとみなす。
+  - 受け入れ 10 は分割する。Runtime 分は golden rep に `--simulate-device-lost 1` を付けた実行で満たした (疑似消失は tick 600 本が終わる前に発火させる必要があるので、小さいフレーム番号を使う)。Editor.exe を使う 4 job (chain / time-travel / what-if) は sub-05 の受け入れへ移す。
+  - 既知の差 (直さない): `--probe-bake-all --deferred` で復旧後に BakeAll し直すと絵が一致しない (maxDiff 17〜21)。ベイクを消失後へずらすと一致するので、復旧の不具合ではなく「同じ実行で BakeAll を 2 回走らせると deferred の結果が変わる」ベイカー側の既存の性質と判断した。CLI の単発診断専用の経路なので M88 の範囲外とし、7. に記録する。エディタのプローブは sub-05 で「シーン読み込みと同じ扱い」で戻すこととし、その確認を sub-05 に追加した。
+  - 設計上の知見: 遅延で伸びる GPU バッファの容量カウンタ (UIRenderer / VfxRenderer の vbCapacity_) は Shutdown で 0 に戻さなければならない。CPU 側の履歴 (VfxRenderer の trails_) は Shutdown で消してはいけない。ADR-026 に書く。

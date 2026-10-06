@@ -114,6 +114,7 @@ void UIRenderer::Shutdown()
 {
     cb_.Reset();
     vb_.Reset();
+    vbCapacity_ = 0; // 0 に戻さないと復旧後に vb_ 無しで Map する
     sampler_.Reset();
     samplerLinear_.Reset();
     blend_.Reset();

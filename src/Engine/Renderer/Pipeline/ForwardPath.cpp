@@ -410,7 +410,7 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
             if (can) {
                 Material* m = resources.materials.Get(it.material);
                 can = m && m->shader.value == litShader_.value
-                    && resources.meshes.Get(it.mesh) != nullptr;
+                    && resources.meshes.GetDrawable(it.mesh) != nullptr;
             }
             canInstance_[i] = can ? 1 : 0;
         }
@@ -532,7 +532,7 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
             const MeshInstanceRun& run = (*runs)[nextRun];
             ++nextRun;
             Material* mat = resources.materials.Get(item.material);
-            Mesh* mesh = resources.meshes.Get(item.mesh);
+            Mesh* mesh = resources.meshes.GetDrawable(item.mesh);
             ShaderProgram* prog = shaders.Get(litInstancedShader_);
             if (litInstancedShader_.value != boundShader) {
                 dc->IASetInputLayout(prog->inputLayout.Get());
@@ -558,7 +558,7 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
         if (!mat) {
             continue;
         }
-        Mesh* mesh = resources.meshes.Get(item.mesh);
+        Mesh* mesh = resources.meshes.GetDrawable(item.mesh);
         if (!mesh) {
             continue;
         }

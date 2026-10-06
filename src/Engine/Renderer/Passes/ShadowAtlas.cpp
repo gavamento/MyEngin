@@ -167,7 +167,7 @@ void ShadowAtlas::Render(GraphicsDevice& device, ShaderManager& shaders, const R
         canInstance_.resize(queue.opaque.size());
         for (size_t i = 0; i < queue.opaque.size(); ++i) {
             const RenderItem& it = queue.opaque[i];
-            canInstance_[i] = (it.bones == nullptr && resources.meshes.Get(it.mesh)) ? 1 : 0;
+            canInstance_[i] = (it.bones == nullptr && resources.meshes.GetDrawable(it.mesh)) ? 1 : 0;
         }
         BuildInstanceRuns(queue.opaque, canInstance_, runs_, worlds_);
         if (worlds_.empty() || !instanceBuf_.Upload(device, worlds_)) {
@@ -183,7 +183,7 @@ void ShadowAtlas::Render(GraphicsDevice& device, ShaderManager& shaders, const R
     itemMax_.assign(itemCount, XMFLOAT3{ 0.0f, 0.0f, 0.0f });
     for (size_t i = 0; i < itemCount; ++i) {
         const RenderItem& it = queue.opaque[i];
-        const Mesh* mesh = resources.meshes.Get(it.mesh);
+        const Mesh* mesh = resources.meshes.GetDrawable(it.mesh);
         if (!mesh) {
             continue; // 描画ループ側で弾かれる (AABB は使われない)
         }
@@ -258,7 +258,7 @@ void ShadowAtlas::Render(GraphicsDevice& device, ShaderManager& shaders, const R
         size_t nextRun = 0;
         for (size_t idx = 0; idx < queue.opaque.size(); ++idx) {
             const RenderItem& item = queue.opaque[idx];
-            Mesh* mesh = resources.meshes.Get(item.mesh);
+            Mesh* mesh = resources.meshes.GetDrawable(item.mesh);
             if (!mesh) {
                 continue;
             }

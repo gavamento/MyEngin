@@ -75,6 +75,13 @@ public:
     // 未解放バッファを WARN して全リソースを解放する
     void Shutdown();
 
+    // デバイス復旧 (M88): GPU 側だけ手放す。ハンドル・世代・desc・per-shader 状態は残す
+    void ReleaseGpu();
+
+    // 生きているバッファを同じハンドル・同じ desc・ゼロ内容で作り直す。作れなかった数を返す
+    // (作れなかったスロットは live のまま GPU 無し = Dispatch 側が無効バインドとして扱う)
+    int RecreateGpu(ID3D11Device* dev);
+
 private:
     // ---------------------------------------------------------------------------
     // バッファスロット
@@ -87,6 +94,8 @@ private:
         uint32_t generation = 0; // 0 は未発行。解放しても戻さない
         bool     live       = false;
         bool     hasUav     = false;
+        uint32_t count      = 0; // 復旧時に同じ desc で作り直すため保持する
+        uint32_t stride     = 0;
     };
 
     // ---------------------------------------------------------------------------

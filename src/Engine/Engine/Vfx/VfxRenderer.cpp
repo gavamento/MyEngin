@@ -194,12 +194,13 @@ void VfxRenderer::Shutdown()
 {
     cb_.Reset();
     vb_.Reset();
+    vbCapacity_ = 0; // 0 に戻さないと復旧後に vb_ 無しで Map する
     samplerLinear_.Reset();
     samplerPoint_.Reset();
     blend_.Reset();
     depthReadOnly_.Reset();
     raster_.Reset();
-    trails_.Reset();
+    // trails_ は CPU 側の履歴で GPU を持たないので、デバイス復旧をまたいで残す
     verts_.clear();
     batches_.clear();
     scratch_.clear();

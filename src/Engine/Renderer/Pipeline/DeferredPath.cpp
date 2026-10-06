@@ -910,7 +910,7 @@ void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view
         for (size_t i = 0; i < queue.opaque.size(); ++i) {
             const RenderItem& it = queue.opaque[i];
             canInstance_[i] = (it.bones == nullptr && resources.materials.Get(it.material)
-                               && resources.meshes.Get(it.mesh))
+                               && resources.meshes.GetDrawable(it.mesh))
                 ? 1
                 : 0;
             // M79 sub-03: サーフェスマテリアルは GBuffer 不参加 (下のループで除外) なので
@@ -948,7 +948,7 @@ void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view
     for (size_t idx = 0; idx < queue.opaque.size(); ++idx) {
         const RenderItem& item = queue.opaque[idx];
         Material* mat = resources.materials.Get(item.material);
-        Mesh* mesh = resources.meshes.Get(item.mesh);
+        Mesh* mesh = resources.meshes.GetDrawable(item.mesh);
         if (!mat || !mesh) {
             continue;
         }
@@ -1507,7 +1507,7 @@ void DeferredPath::RenderSurfaceForward(GraphicsDevice& device, const RenderView
     for (const size_t idx : f.surfaceOpaqueIdx) {
         const RenderItem& item = queue.opaque[idx];
         Material* mat = resources.materials.Get(item.material);
-        Mesh* mesh = resources.meshes.Get(item.mesh);
+        Mesh* mesh = resources.meshes.GetDrawable(item.mesh);
         if (!mat || !mesh) {
             continue;
         }
@@ -1633,7 +1633,7 @@ void DeferredPath::RenderTransparent(GraphicsDevice& device, const RenderView& v
         MeshBindState bound; // 不透明パスとはシェーダもスロットも違うので、張ったものの記憶は持ち越さない
         for (const RenderItem& item : queue.transparent) {
             Material* mat = resources.materials.Get(item.material);
-            Mesh* mesh = resources.meshes.Get(item.mesh);
+            Mesh* mesh = resources.meshes.GetDrawable(item.mesh);
             if (!mat || !mesh) {
                 continue;
             }

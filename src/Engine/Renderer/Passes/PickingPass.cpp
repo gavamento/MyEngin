@@ -168,7 +168,7 @@ EntityID PickingPass::Pick(GraphicsDevice& device, World& world, ShaderManager& 
         const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
         for (uint32_t row = 0; row < arch.Count(); ++row) {
             const auto* mr = static_cast<const MeshRendererComponent*>(arch.GetPtr(mi, row));
-            Mesh* mesh = resources.meshes.Get(mr->mesh);
+            Mesh* mesh = resources.meshes.GetDrawable(mr->mesh);
             if (!mesh) {
                 continue;
             }

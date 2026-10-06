@@ -32,6 +32,10 @@
 3. (spec 13) TDR 手順が test_checklists.md にある。
 4. (spec 15) ADR-026。
 5. (spec 14) selftest (Debug/Release)、check_rules、replay_verify。
+6. (sub-04 から移管、spec 10 の残り) `MYE_EXTRA_ARGS="--simulate-device-lost 1"` 付きの `tools\replay_verify.bat` が 17 job すべて一致すること (Editor.exe を使う chain / time-travel / what-if を含む)。
+7. EditorApp の `probeSet_` (ReflectionProbeArray) と `reflectionProbes` を OnDeviceLost で手放し、復旧後はシーン読み込み時と同じ扱いで戻す (焼いたものがディスクにあれば読み直す。ディスクへは書かない)。焼いたプローブを持つシーンで、消失ありと無しのスクショが一致すること (履歴無効の条件で)。
+8. エディタ側で描画に `meshes.Get` を使っている箇所 (SceneView 等) を `MeshLibrary::GetDrawable` に置き換える (sub-04 で追加した、vb/ib が null のメッシュを読み飛ばす入口)。
+9. ADR-026 には、spec 8. の sub-04 の知見 (容量カウンタは Shutdown で 0 に戻す / CPU 側の履歴は消さない) と、既知の差 K1 を含める。
 
 ## 検証コマンド
 - MSBuild Debug|x64 / Release|x64

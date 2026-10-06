@@ -387,6 +387,14 @@ void ProbeBaker::Shutdown()
     depthTex_.Reset();
 }
 
+void ProbeBaker::ReleaseGpu()
+{
+    render_.ReleaseGpu();
+    env_ = EnvMapBaker();
+    depthDsv_.Reset();
+    depthTex_.Reset();
+}
+
 bool ProbeReadFaces(GraphicsDevice& device, const BakedProbe& probe, std::vector<float>& rgb,
                     int& size)
 {
