@@ -3,16 +3,30 @@
 #include "Engine/Core/Diagnostics/Check.h"
 #include "Engine/Core/Diagnostics/Log.h"
 
+#include <algorithm>
+
 #include <Windows.h>
 
 namespace mye {
 namespace {
 
 constexpr const wchar_t* kClassName = L"MyEngineWindowClass";
+constexpr LONG kMaxTrackSize = 16384; // 窓の外形の上限 (D3D11 のテクスチャ上限と同じ)
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     Win32Window* window = reinterpret_cast<Win32Window*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+
+    // 既定の上限は仮想画面 + 枠なので、小さいデスクトップでは要求より小さい窓が黙って作られる
+    // (1024x768 の画面で --width 1280 が 1028 になり、スクリーンショットの大きさが変わる)。
+    // WM_NCCREATE より先に届くので、window が取れる前のここで処理する
+    if (msg == WM_GETMINMAXINFO) {
+        const LRESULT result = DefWindowProcW(hwnd, msg, wparam, lparam);
+        MINMAXINFO* info = reinterpret_cast<MINMAXINFO*>(lparam);
+        info->ptMaxTrackSize.x = (std::max)(info->ptMaxTrackSize.x, kMaxTrackSize);
+        info->ptMaxTrackSize.y = (std::max)(info->ptMaxTrackSize.y, kMaxTrackSize);
+        return result;
+    }
 
     if (msg == WM_NCCREATE) {
         const CREATESTRUCTW* cs = reinterpret_cast<CREATESTRUCTW*>(lparam);
