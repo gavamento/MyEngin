@@ -512,6 +512,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         // ok &= を使い先行失敗があっても全テストを必ず実行する
         // (末尾 append された M78a/b が && 短絡で到達しない問題への対処)。
         // 末尾への append 規約 (統合契約の予約 7) は維持する。
+        //
+        // 一時フォルダをこのプロセス専用にする。各テストは temp_directory_path() 直下に固定名の
+        // フォルダを作って消すので、Debug と Release を同時に回すと互いの作業フォルダを消し合う
+        std::error_code tempEc;
+        const std::filesystem::path selftestTemp = std::filesystem::temp_directory_path(tempEc)
+            / (L"mye_selftest_" + std::to_wstring(GetCurrentProcessId()));
+        std::filesystem::create_directories(selftestTemp, tempEc);
+        if (!tempEc) {
+            SetEnvironmentVariableW(L"TMP", selftestTemp.c_str());
+            SetEnvironmentVariableW(L"TEMP", selftestTemp.c_str());
+        }
         bool ok = true;
         ok &= mye::RunEcsSelfTest();
         ok &= mye::RunSceneSerializerSelfTest();
@@ -592,6 +603,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunBehaviorTreeSelfTest();              // M85: ビヘイビアツリー (アセット・Composite・BT 節)
         ok &= mye::RunPatrolRouteEditSelfTest();           // M85g: 巡回ルートの点の編集と Undo
         ok &= mye::RunBehaviorTreeEditorSelfTest();        // M85h: BT 窓のモデル層 (追加・接続・削除・保存)
+        if (!tempEc) {
+            std::filesystem::remove_all(selftestTemp, tempEc);
+        }
         return ok ? 0 : 1;
     }
 
