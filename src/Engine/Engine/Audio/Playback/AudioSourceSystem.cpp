@@ -650,6 +650,10 @@ void AudioSourceSystem::Update(World& world, AudioSystem& audio, const SoundLibr
                                  static_cast<double>(acProbe_.valid ? acProbe_.openness : 0.0f),
                                  static_cast<double>(roomT_));
                 }
+            } else {
+                // 調整卓が無い tick は Bypass。平滑化の状態を残すと、戻ってきた tick に
+                // 古い gain / lpf から滑り出す (目標へスナップしない)
+                st.shape = {};
             }
 
             audio.SetVoiceVolume(st.voice, desc.volume);

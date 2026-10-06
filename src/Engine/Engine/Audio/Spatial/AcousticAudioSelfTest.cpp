@@ -937,6 +937,64 @@ bool RunAcousticAudioSelfTest()
               "T21: a Detour shot adds detourWet to the reverb send");
     }
 
+    // ---- (T22) roomProbeM だけを変えたら、場を焼き直さずに開放度だけ引き直す ----
+    {
+        AcousticField field;
+        field.DebugSetGrid(maze, MakeLMaze(maze));
+        const AudioVec3 l = CellCenter(maze, 20, 0, 2); // L 字の角 (半径で開放度が変わる場所)
+        AcousticAudioComponent wide = kDefault;
+        wide.roomProbeM = 8.0f;
+        AcousticAudioComponent narrow = kDefault;
+        narrow.roomProbeM = 1.0f;
+
+        AcousticProbe probe;
+        (void)UpdateAcousticProbe(field, wide, l, probe);
+        const float wideOpenness = probe.openness;
+        const bool rebuilt = UpdateAcousticProbe(field, narrow, l, probe);
+        AcousticProbe fresh;
+        (void)UpdateAcousticProbe(field, narrow, l, fresh);
+        check(!rebuilt, "T22: changing only roomProbeM does not rebuild the listener field");
+        check(probe.openness == fresh.openness && fresh.openness != wideOpenness,
+              "T22: openness follows the new roomProbeM exactly as a fresh probe would");
+        if (!(probe.openness == fresh.openness && fresh.openness != wideOpenness)) {
+            MYE_LOG_ERROR("  T22: wide=%.4f updated=%.4f fresh=%.4f", static_cast<double>(wideOpenness),
+                          static_cast<double>(probe.openness), static_cast<double>(fresh.openness));
+        }
+    }
+
+    // ---- (T23) セル数の予算で probeMaxRing が縮む経路 ----
+    // 既定のボリュームでは 1 度も効かないので、予算を超える大きさの自由空間で固定する
+    {
+        AcousticGridDesc big;
+        const bool gridOk = acoustic::MakeGridDesc(80, 48, 80, 0.5f, 0.0f, 0.0f, 0.0f, big);
+        check(gridOk && big.CellCount() > kProbeCellBudget, "T23: the test grid is larger than the probe budget");
+        if (gridOk) {
+            AcousticField field;
+            field.DebugSetGrid(big, std::vector<uint8_t>(static_cast<size_t>(big.CellCount()), 0u));
+            AcousticAudioComponent comp = kDefault;
+            comp.probeMaxRing = 96;
+            const AudioVec3 l = CellCenter(big, 1, 1, 1);
+            AcousticProbe probe;
+            const bool built = UpdateAcousticProbe(field, comp, l, probe);
+            check(built && probe.valid && probe.requestRing == 96 && probe.maxRing == 48 && probe.budgetWarned
+                      && probe.BoxCells() <= kProbeCellBudget,
+                  "T23: ring 96 is halved to 48 to fit the budget, and the warning flag is set");
+
+            AudioSpatial nearIo = MakeSpatial();
+            AudioSpatial farIo = MakeSpatial();
+            float nearGain = -1.0f;
+            float farGain = -1.0f;
+            AcousticShapeInfo nearInfo;
+            AcousticShapeInfo farInfo;
+            ShapeAcousticSpatial(field, probe, comp, l, CellCenter(big, 20, 1, 1), nearIo, nearGain, nullptr, 1.0f,
+                                 &nearInfo);
+            ShapeAcousticSpatial(field, probe, comp, l, CellCenter(big, 75, 1, 75), farIo, farGain, nullptr, 1.0f,
+                                 &farInfo);
+            check(nearInfo.cls == AcousticPathClass::Direct && farInfo.cls == AcousticPathClass::Occluded,
+                  "T23: a source inside the shrunken box is Direct, one beyond it falls back to Occluded");
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Acoustic audio self test: ALL PASS ====");
         return true;

@@ -73,6 +73,7 @@ struct AcousticProbe {
     uint64_t signature = 0;             // AcousticField::StaticSignature() の写し
     AcousticGridDesc grid;              // 焼いたときのグリッド (SameGrid で比較)
     float openness = 0.0f;              // 開放度 0..1 (M68b の残響が読む)
+    float opennessProbeM = 0.0f;        // openness を計算したときの roomProbeM (変わったら引き直す)
     bool budgetWarned = false;          // 予算警告は 1 回だけ
 
     int64_t BoxCells() const

@@ -238,7 +238,13 @@ bool UpdateAcousticProbe(const AcousticField& field, const AcousticAudioComponen
     const int32_t want = std::clamp(comp.probeMaxRing, 1, 256);
     if (io.valid && io.ox == cx && io.oy == cy && io.oz == cz && io.requestRing == want
         && io.signature == field.StaticSignature() && acoustic::SameGrid(io.grid, g)) {
-        return false; // 入力が 1 つも変わっていない = 焼き直す意味が無い
+        // 場は焼き直さない。開放度だけは焼いた場から引き直せるので、Inspector で roomProbeM を
+        // 動かした結果がその場で残響に出る
+        if (io.opennessProbeM != comp.roomProbeM) {
+            io.openness = ComputeOpenness(io, comp.roomProbeM, g.cellSize);
+            io.opennessProbeM = comp.roomProbeM;
+        }
+        return false;
     }
 
     // ★予算に収める。グリッド全体より小さい箱にしかならないので、既定ボリュームでは
@@ -265,6 +271,7 @@ bool UpdateAcousticProbe(const AcousticField& field, const AcousticAudioComponen
     io.grid = g;
     io.valid = true;
     io.openness = ComputeOpenness(io, comp.roomProbeM, g.cellSize);
+    io.opennessProbeM = comp.roomProbeM;
     return true;
 }
 

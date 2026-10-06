@@ -113,6 +113,8 @@ Grid / HasVolume / Occupancy / IsSolid / StaticSignature / DebugSetGrid`、`Wave
   一切 include しない。include の向きは Engine/Audio → Engine/Acoustic の一方向)。
 - 開放度 (S13): `R = round(roomProbeM / cellSize) · kFaceCost`。`openness = |{dist ≤ R}| / |{閉形式 chamfer ≤ R かつグリッド内}|`
   (分母 0 なら 0)。再構築時に 1 回計算し probe に保持。
+  **`roomProbeM` だけが変わったときは、場を焼き直さずに開放度だけを引き直す** (焼いた場から計算できるため。
+  Inspector で動かした結果がその場で残響に出る。review-1 minor 2 の解消、テスト T22)。
 
 #### 4.1.2 分類と整形 (`ShapeAcousticSpatial`、純関数 1 本)
 
