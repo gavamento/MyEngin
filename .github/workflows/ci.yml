@@ -153,14 +153,17 @@ jobs:
 
       # ⑤ 配布パッケージのスモーク。GUI の「ビルドを作成」と同一パイプラインを
       #    CLI で回す (M51j)。成否は終了コードに載る (M52b)
+      #    ★--package-boot は必須。このリポジトリの既定デモはメモリ上で組み立てるので
+      #      assets\scenes\main.scene.json が無く、起動シーンを指定しないと段 4 が
+      #      "boot scene not found" で失敗する (M80q で無いときは失敗にした)
       - name: package smoke (Release)
         shell: cmd
-        run: bin\x64\Release\Editor.exe --package cache\dist_ci %MYE_EXTRA_ARGS%
+        run: bin\x64\Release\Editor.exe --package cache\dist_ci --package-boot ui_probe.scene.json %MYE_EXTRA_ARGS%
 
       - name: package contents
         shell: pwsh
         run: |
-          $need = @('Runtime.exe', 'GameLogic.dll', 'assets\shaders', 'assets\scenes', 'assets\content_manifest.json')
+          $need = @('Runtime.exe', 'GameLogic.dll', 'assets\shaders', 'assets\scenes', 'assets\scenes\main.scene.json', 'assets\content_manifest.json')
           $missing = $need | Where-Object { -not (Test-Path "cache\dist_ci\$_") }
           if ($missing) { throw "package is missing: $($missing -join ', ')" }
           # M66a: 配布物に開発用の道具とリポジトリを混ぜない。--package は明示コピーなので
