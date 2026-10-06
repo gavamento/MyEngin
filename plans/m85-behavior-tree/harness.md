@@ -2,7 +2,7 @@
 
 - 依頼原文: M85の実装
 - 開始: 2026-10-05 / 基点コミット: baf29bf0632d5daccd2b0f8496513c704b7d1237
-- フェーズ: 実装
+- フェーズ: 完了
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
@@ -21,11 +21,12 @@
 | sub-12 | OK | 1 | eec835e | C# タスクと糖衣 | C# タスク |
 | sub-12b | OK | 1 | 3d20b33 | C# タスクの fields とクラスのピッカー (ユーザー判断で新設) |
 | sub-13 | OK | 1 | bcdf04f | --bt-demo、replay_verify bt、golden bt | --bt-demo・replay_verify・golden |
-| sub-14 | OK | 1 | (このコミット) | ADR-025 確定・文書・全体検証 | ADR-025 と全体検証 |
+| sub-14 | OK | 1 | e47b6c8 | ADR-025 確定・文書・全体検証 | ADR-025 と全体検証 |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
+| 1 | PASS | 4/4/4/4 | minor 3 件 (申し送りへ) |
 
 ## ユーザー判断
 - (2026-10-05) BT の実行状態 = BehaviorTreeSystem の表 + SimSnapshot の BT 節 + ハッシュ (planner 裁定どおり)
@@ -84,6 +85,12 @@
 - (sub-14 VERDICT nit#1) test_checklists.md の M84 節の v26 の行を v27 に書き換えている。各節は「その時点の版」を残すほうが揃う (M84 節を v26 に戻し、M85 節に「外部 GameLogic.dll は v27 = 158 で再ビルド」を 1 行)。受け入れには影響しない minor。
 - (sub-14 VERDICT nit#2) golden bt は sub-14 では間接判定 (sub-13 で maxDiff 0 を 2 回直接確認済み)。
 - (sub-14) Update の性能は Release 37.5 µs (sub-01 は 17 µs、基準 0.5 ms)。
+- **review round 1 (PASS) の残り minor (未対応)**:
+  1. [planner] spec 4.1.9 は「再有効化時に BB を初期値にして根から」だが、実装は BB を保ったまま根から (BehaviorTreeSystem.cpp:2064-2089、テスト BehaviorTreeSelfTest.cpp:1553-1558)。実装を正として spec 4.1.9 と ADR-025 決定 5 に 1 行足すのが reviewer の提案。
+  2. [coder] VisitPatrol の次の点へ進むとき PatrolPointWorld の失敗を見ていない (BehaviorTreeSystem.cpp:1137)。親付きルートに WorldMatrix が無いときだけ。失敗なら EndBody(Failure)。
+  3. [coder] test_checklists.md の M84 節の v26 → v27 書き換え (sub-14 nit#1) が未解消。
+  - reviewer が UE 公式で照合: Observer Aborts 4 種・Simple Parallel・Time Limit・OnResultChange は一致。Loop の Failure 抜け・背景のやり直し・根の再開 tick は未確認のまま。
+  - 未再実行: C# タスクの実走 (受け入れ 14 / 18)、SceneView の実マウス操作。
 - **別件 (M85 の範囲外、ユーザーへ報告)**:
   - (a) replay_verify の並列 cold cook で起動中に未処理 C++ 例外 (0xE06D7363、tick 0) / 9 分無反応が 1 回ずつ出た (sub-13 の 2 回目、nav の Release 検証と flow の Debug 検証)。crash bundle `bin\x64\Release\crash\20261006_111539` (minidump あり)。RVA → file:line は未特定。
   - (b) golden の既存 FAIL 6 枚 (HEAD 3d20b33 の clean でも同数値): nav 214/21664、parts 198/3625、joints 208/137、acoustic_forward 83/596、acoustic_deferred 82/594、fracture_after 150/192。更新するかはユーザー判断。
