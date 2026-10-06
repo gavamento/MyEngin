@@ -5,13 +5,13 @@
 
 ## 進捗
 
-再開手順: この表の最初の未着手から始める。着手時に `Components.cpp` の末尾 TypeId (M83 後 77) と `EngineAPI.h` の版 (M83 後 v25 = 144)、`kSimSnapshotVersion` (M83 後 30) を確認する。
+再開手順: この表の最初の未着手から始める。着手時に `Components.cpp` の末尾 TypeId (M85 後 79) と `EngineAPI.h` の版 (M85 後 v27 = 158)、`kSimSnapshotVersion` (M85 後 39) を確認する。
 
 | マイルストーン | 状態 | コミット | メモ |
 |---|---|---|---|
 | M83 知覚 | 完了 (2026-10-05) | ade5d68 | ADR-024。ABI v25 = 144、TypeId 76 AIPerception / 77 AIStimulusSource、kSimSnapshotVersion 30 |
 | M84 NavMesh 拡張 | 完了 (2026-10-05) | 5fb170f..d9e08a6 + 文書 | 下の「M84 で決めたこと」。ADR-023 決定 14、ABI v26 = 151、kSimSnapshotVersion 33 |
-| M85 ビヘイビアツリー | 未着手 | | |
+| M85 ビヘイビアツリー | 完了 (2026-10-06、harness) | a5f7ab1..bcdf04f + 文書 | 下の「M85 で決めたこと」。ADR-025、ABI v27 = 158、TypeId 78 BehaviorTree / 79 PatrolRoute、kSimSnapshotVersion 39 |
 | M86 Smart Objects | 未着手 | | |
 
 ### M83 で計画から変えたこと
@@ -28,6 +28,22 @@
 - M84d2 の細部: ABI v26 = 151 (PerceptionCanSee の次に NavWarp / NavCalculatePath / NavSetPath / NavFindPathFiltered / NavSamplePositionFiltered / NavRaycastFiltered / NavFindRandomPointFiltered)。クエリの navFilter は「既存スロットのシグネチャを変えない」規則 (EngineAPI.h 冒頭) に従い別スロットにした (M84c 時点の「引数を足す」案は誤り)。Warp / SetPath は ABI からその場で crowd を書き換える (要求の列にすると LateUpdate から呼んだ分が tick をまたいで残り、スナップショットに入れる必要が出るため)。MyeNavPath は 4112 バイト (ポリゴン 256 + 角 256)。細かい制御は汎用フィールド ABI で読み書きし、専用スロットは作らない。--nav-demo の NavDemoDriver が tick 150〜420 で v26 を使う (replay_verify の被覆)
 - M84e の方針 (2026-10-05 ユーザー回答 3 点): `dropHeight` / `jumpDistance` は Agent Type の表に持ち、Surface へ写す (M84a と同じ)。生成した Link の渡り方 (Linear / Jump / Manual・速さ・弧の高さ) は Surface で指定し、その Surface (グループの leader) から生成した Link すべてに使う。除外の指定は Surface の on/off だけ (Modifier には足さない)。実装 (M84e): `NavLinkGen.cpp`。外周の辺を 0.5 m 以上の間隔で調べ、途中が三角形に当たる候補と、歩いて Link の 2 倍以内で着く候補を捨て、入口・出口とも 1 m (または半径 x 4) 以内の候補を 1 本にまとめる。生成した Link は key / userId の最上位ビットで手置きと区別し、エリアは 2 (Jump) 固定。kSimSnapshotVersion 33。生成はベイクの最後にナビメッシュの外周の辺を調べて行い、結果は .mnav (形式 2) に保存する。生成を切った Surface の入力ハッシュは変えない (既存の .mnav をそのまま使える)
 - M84a の Agent Type の表は `project_settings.json` の `navAgentTypes` (エディタ専用、`src\Editor\Project\NavAgentTypes.h`)。sim は Surface に写した寸法だけを見る。型を選ぶと写し、Project Settings 側の変更は Bake の時に写す (Inspector で食い違いを警告)。Agent の radius / height は Agent 自身の値のまま (Unity と同じ)
+
+### M85 で決めたこと
+
+M85 は 2026-10-05 にユーザーが `/harness M85の実装` を明示したので、上の「harness は使わず」の例外としてハーネスで回した (台帳 `plans\m85-behavior-tree\harness.md`、仕様 `spec.md`、サブ sub-01〜14)。
+
+- **実行状態は BehaviorTreeSystem の表 + SimSnapshot の BT 節 + ハッシュ** (計画どおり)。ADR-024 の「全部コンポーネント」とは別で、理由は ADR-025 決定 1。Abort の監視はコールバックでなく毎 tick のポーリング。根が終わったら次の tick から根へ
+- **計画から変えた点** (2026-10-05〜06 ユーザー回答):
+  - MoveTo / SearchArea / Patrol に `failOnStuck` (既定 false、true で Failure)。計画は「詰まったら Running のまま」だった
+  - Patrol は入るたびに一番近い点から。BT 無しの巡回は作らない (Patrol 1 個の木で足りる)
+  - BehaviorTreeComponent に「Entity キーの初期値」4 組 (シーンのエンティティを BB へ入れる手段。snapshot v39)
+  - C# タスクにも C++ と同じ「ノードごとの fields」と BT 窓のクラスのピッカーを作った (計画は後回し。サブが 1 本増えた: sub-12b)
+  - ノードの位置は `.bt.json` に入れる (見た目だけの変更でも provenance の contentHash が変わる)
+- 番号: TypeId 78 BehaviorTree / 79 PatrolRoute、ABI v27 = 158 (BtGetBlackboard / BtSetBlackboard / BtSendEvent / BtEventCount / BtGetEvent / AnimatorPlay / BtRestart + MyeScriptModule の btTaskCount / btTasks)、snapshot v34 → v39 (サブごとに +1)。M75h (InputField) の ABI は v28 以降になる
+- SubTree は平らな展開 (1024 ノード・8 段)。C# タスクは決定論の保証外 (replay_verify の対象に入れない)。汎用イベントキュー (tick N に送り N+1 の頭に配る) と `AnimatorPlay` を足した
+- 外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は ABI v27 で再ビルドが要る
+- 既知の限界と未検証 (UE の規則を記憶ベースで書いて公式文書と照合していない点を含む) は ADR-025 の末尾に全部ある。残るユーザー判断: golden の既存 FAIL 6 枚の更新、replay_verify の起動時クラッシュの調査 (どちらも M85 の範囲外)
 
 ---
 

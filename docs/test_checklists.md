@@ -390,7 +390,7 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] Agent の isStopped を Play 中に切り替えると止まって再開する。updatePosition を切ると Agent が動かず、desiredVelocity が更新される
 - [ ] Surface の「リンクを自動生成」を入れて Bake すると、段の縁と隙間にオレンジの Link が描かれ、Inspector に本数が出る。段の上の Agent が飛び降りる
 - [ ] 生成の設定や飛び降りの高さを変えると Inspector に「もう一度ベイク」の警告が出る。生成したリンクの渡り方は Bake し直さなくても効く
-- [ ] 外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は ABI v26 で再ビルドが要る
+- [ ] 外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は ABI v27 = 158 スロット (M85 で v26 = 151 から上がった) で再ビルドが要る
 
 ## M83: AI の知覚 (AIPerception)
 
@@ -403,3 +403,50 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] Play 中の見張りの Inspector に「知覚している相手」の一覧が出て、感覚 (視覚・聴覚・ダメージ・接触) と何 tick 前かが更新される。名乗らない音は「(名乗らない音源)」
 - [ ] 聴覚の方式を Acoustic にして AcousticListener を付けないと、Inspector に警告が出る
 - [ ] 外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は ABI v25 で再ビルドが要る (古い DLL は読み込みを拒否される)
+
+## M85: ビヘイビアツリー (BT + Blackboard + 巡回ルート)
+
+自動検証は `Editor.exe --selftest` / `Server.exe --selftest` (BehaviorTreeSelfTest)、`tools\replay_verify.bat` の `bt` ジョブ
+(Debug / Release / `Server.exe`、snapshot stress)、`tools\shot_verify.bat` の golden `bt`。下は画面と実操作で確かめる項目
+(設計: `docs\adr\ADR-025-behavior-tree.md`)。
+
+### デモ `--bt-demo`
+
+- [ ] `Editor.exe --bt-demo` で Play すると、見張り A / B が次の 5 段階を順に踏む (ログと動きで確認。`stage` が BB に書かれる)
+  1. 巡回: ルートの点を順に歩き、点で待つ
+  2. 発見: 侵入者に気付いて振り向く (A が僚機 B へイベントを送り、B も警戒する)
+  3. 追跡: 侵入者へ向かって走る
+  4. 見失う: 侵入者が見えなくなり、`target` が外れる
+  5. 捜索 → 巡回へ戻る: 最後の位置 / 予測位置の周りを回り、見つからなければ巡回に戻る
+- [ ] ログの段階の tick が毎回同じ (巡回 → 発見 → 追跡 → 見失う → 捜索 → 巡回へ戻る)
+
+### BT 窓のライブ表示 (Play 中)
+
+- [ ] Play 中に Guard A (`drawDebug` が立っている) を選んで `guard.bt.json` を開くと、ヘッダに実行中の状態が出る
+- [ ] 実行中のノードが緑の太枠で追従し、巡回から追跡へ切り替わる瞬間に Abort したノードから橙の矢印が出て、約 30 tick で薄れる
+- [ ] BB パネルに現在値 (`target` / `lastKnownPos` / `route` / `buddy` / `stage`) が出て、編集中の欄と表示が混ざらない
+- [ ] SceneView に MoveTo の目的地・SearchArea の点・実行中のタスク名が出る (`drawDebug`)
+- [ ] タイムラインを巻き戻すと、巻き戻した tick の実行中ノードと BB の値が出る (巻き戻し直後は Abort の矢印が空でよい)
+- [ ] SubTree (`guard_sense.bt.json`) を含む木で、実行中の枠が部分木のノードにも付く (元の id で表示される)
+
+### BT 窓の編集
+
+- [ ] Asset Browser の作成メニューで「ビヘイビアツリー」「ブラックボード」を作れ、`.bt.json` のダブルクリックで窓が開く。Window メニューからも開く
+- [ ] パレットからノードを置き、親の下端から子の上端へドラッグで接続できる。子の順序は x 座標の左から (番号が出る)
+- [ ] ドラッグ 1 回・パラメータの編集確定 1 回が Undo 1 段。Ctrl+Z / Ctrl+Y と Delete は窓がフォーカスを持つときだけ効く
+- [ ] BB パネルでキーを追加・削除・改名・型変更でき、編集中の木のキー参照が追従する (ほかの木は追従しない)
+- [ ] 検査エラー (SubTree の BB 不一致、LowerPriority の位置、SimpleParallel の左がタスクでない、未設定のキー参照、子の数) がノードの赤枠と一覧に出る
+- [ ] 保存すると未保存の印が消え、保存直後にエンティティの木が 2 回やり直されない
+- [ ] CppTask のタスク名のピッカーとフィールド欄、CsTask のクラスのピッカーとフィールド欄が使える。C# タスクを含む木は「決定論の保証外」の警告が出る
+
+### 巡回ルートと Inspector
+
+- [ ] PatrolRoute を選ぶと、SceneView に点の球・点の間の線・向きの矢印・番号が出る。点をドラッグで動かせ、1 ドラッグ = 1 Undo
+- [ ] Inspector で点の追加・削除・並べ替えができる
+- [ ] BehaviorTree の Inspector で「Entity キーの初期値」(4 組) を選べ、Play 開始時にその Entity が BB に入る
+- [ ] BehaviorTree と AgentBrain を同じエンティティに付けると警告が出る
+
+### 回帰
+
+- [ ] `activeNodeId` は SubTree を展開した後の実行木の id である (SubTree を含む木ではアセット上の id と一致しない)
+- [ ] 外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は ABI v27 で再ビルドが要る (古い DLL は読み込みを拒否される)

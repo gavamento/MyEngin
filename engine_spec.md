@@ -2525,6 +2525,56 @@ the results written by the previous tick's perception phase.
 **Known limits.** Sight is a cone with one ray to one point (no partial visibility). Prediction is a straight line. The
 SceneView gizmo draws the cone on the horizontal plane at eye height. `AgentBrain` still uses its own sensors.
 
+### 10.11 Behavior Tree (M85)
+
+**What it does.** A `BehaviorTree` component runs a `.bt.json` tree against a `.bb.json` Blackboard, in the shape of Unreal's
+Behavior Tree: the running node is kept between ticks and Decorators with an Abort mode interrupt it. Decisions, the
+differences from Unreal and the list of known limits and unverified points are in
+[docs/adr/ADR-025-behavior-tree.md](docs/adr/ADR-025-behavior-tree.md).
+
+**Assets.** `.bt.json` (nodes, parameters, Decorators, children, and each node's editor position) and `.bb.json` (keys of type
+Bool / Int / Float / Vector / Entity, optional initial value and `eventName`, up to 64 keys). A tree references one
+Blackboard by GUID. Because positions live in the tree file, a layout-only edit also changes the provenance content hash.
+
+**Nodes.** Composite: Selector, Sequence, SimpleParallel (Immediate / Delayed). Decorator (stacked on a node, up to 8):
+BlackboardCondition (Abort None / Self / LowerPriority / Both; the last two only under a Selector), Invert, Cooldown, Repeat,
+Timeout. Task: MoveTo (`failOnStuck`), Wait, RotateTo, SetBlackboard, ClearBlackboard. AI: FindRandomPoint, FindNearestTarget,
+SearchArea, FindTarget. Gameplay: PlayAnimation, SendEvent. Tree: SubTree. Patrol. Custom: CppTask, CsTask. A tree has up to
+1024 nodes and depth 64.
+
+**Components** (TypeIds 78-79, appended): `BehaviorTree` (78: `tree`, `enabled`, `drawDebug`, four Entity-key initial values,
+read-only `status`, `activeNodeId`, `lastAbortTick`) and `PatrolRoute` (79: up to 32 local-space points with a wait time each,
+mode Loop / PingPong / Once). `activeNodeId` is the id in the **executed tree after SubTrees are expanded**, which equals the
+asset id only for trees without SubTree.
+
+**Tick position and state.** `BehaviorTreeSystem::Update` runs at phase 3.4a2 (after perception, before NavMesh), entities in
+key order. A tree that finishes restarts on the next tick. At most 256 node visits per entity per tick
+(`kBtMaxStepsPerTick`, a count rather than time so every machine agrees). Abort conditions are polled at the start of each
+tick instead of reacting to Blackboard writes. Runtime state is a system table, carried by the `'BT01'` section of
+`SimSnapshot` (`kSimSnapshotVersion` 34 when added, 39 after M85), included in the hash only when a BT exists, so scenes
+without one are unchanged. `AgentBrain` is untouched and may coexist (the Inspector warns).
+
+**Event queue.** An event sent at tick N (BT `SendEvent` node or `BtSendEvent`) is delivered at the start of tick N+1, ordered
+by sender entity key then send order, at most 256 per tick; a Blackboard key with `eventName` receives it, and scripts read
+it with `BtEventCount` / `BtGetEvent`.
+
+**Tasks from code.** C++: `REGISTER_BT_TASK(T, FIELDS(...))` with a POD state of up to 112 bytes held in the BT table (inside
+the snapshot, hash and replay coverage). C#: a class marked `[BtTask]`; it is outside the determinism guarantee, runs only
+on the C# lane (never in record / verify / Net / re-simulation, where it returns Failure) and the editor says so.
+
+**Scripting (ABI v27).** See the ABI section: Blackboard read / write by name hash, event send / read, `AnimatorPlay`
+(force an Animator state, optionally blended over a number of ticks), `BtRestart`.
+
+**Editor.** The Behavior Tree window (opened by double-clicking a `.bt.json`): node palette, canvas with pan and zoom, a
+Blackboard panel, an Undo stack of its own, validation errors on the nodes, and a live view while playing or scrubbing the
+timeline (running path, last Abort arrow, Blackboard values). With `drawDebug`, SceneView shows MoveTo destinations,
+SearchArea points and the running task name. The demo is `--bt-demo` (patrol, spot, chase, search, return), covered by the
+`bt` job of `replay_verify` (Debug / Release / `Server.exe`, snapshot stress) and the golden `bt`.
+
+**Known limits.** SubTree is expanded flat (1024-node limit, same Blackboard required), Patrol always resumes at the nearest
+point, the Unreal rules the design follows were written from memory and not checked against the documentation, and the
+full list is in ADR-025.
+
 ---
 
 ## 11. Debug/Release Consistency Policy
@@ -3223,7 +3273,11 @@ is refused by a v24 engine; external projects (Sanko, HAL Collector) must rebuil
 appends, after `PerceptionCanSee`, `NavWarp`, `NavCalculatePath`, `NavSetPath`, `NavFindPathFiltered`,
 `NavSamplePositionFiltered`, `NavRaycastFiltered`, `NavFindRandomPointFiltered` (§10.9). Existing slot signatures are
 never changed, so the filtered queries are new slots. Each bump makes older `GameLogic.dll` files refuse to load.
-The next ABI bump (M75h, InputField) is v27.
+**Scripting (ABI v27, M85k).** `MYE_API_VERSION` 27, 151 → 158 slots, appended after `NavFindRandomPointFiltered`:
+`BtGetBlackboard`, `BtSetBlackboard`, `BtSendEvent`, `BtEventCount`, `BtGetEvent`, `AnimatorPlay`, `BtRestart` (§10.11). `MyeScriptModule`
+gains `btTaskCount` / `btTasks` at its end (C++ behavior-tree tasks registered with `REGISTER_BT_TASK`). A `GameLogic.dll`
+built for `apiVersion` 26 is refused by a v27 engine; external projects (Sanko, HAL Collector) must rebuild. The next ABI
+bump (M75h, InputField) is v28.
 
 **Verification.** `Editor.exe --selftest` runs the Session suite and the in-process server/client suite
 (one server and three clients over a seeded fake transport: missed deadline, late join, drop → reconnect,
@@ -3334,7 +3388,9 @@ ADR-018 time-travel branches (what-if replay) / ADR-019 GUID-keyed model sub-ass
 ADR-020 Deep-Modal impact synthesis (§10.7) /
 **ADR-021 pre-baked destructible fracture** (§10.8) /
 **ADR-022 dedicated server (input-confirming) and hosting abstraction** (§11.5) /
-**ADR-023 NavMesh (Recast Navigation) and determinism** (§10.9).
+**ADR-023 NavMesh (Recast Navigation) and determinism** (§10.9) /
+**ADR-024 AI perception: state in components** (§10.10) /
+**ADR-025 behavior tree: execution state in a system table** (§10.11).
 
 ---
 

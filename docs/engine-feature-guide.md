@@ -265,6 +265,41 @@ Create → 3D Object に 4 項目 (NavMesh Surface / Obstacle / Modifier / Link)
 
 根拠: [PerceptionSystem.h](C:/HAL/MyEngin/src/Engine/Engine/Perception/PerceptionSystem.h)、[ADR-024](C:/HAL/MyEngin/docs/adr/ADR-024-ai-perception.md)。
 
+### 9.6 ビヘイビアツリー (BT + Blackboard、M85)
+
+「見張る → 見つけたら追う → 見失ったら探す → 巡回へ戻る」のような判断を、コードを書かずにアセットで組めます。実行中のノードを持ち続け、条件が変わると Abort で割り込む UE 方式です。
+
+**使い方 (木を作る → ブラックボード → コンポーネント → デバッグ)**
+
+1. **木を作る**: Asset Browser の作成メニューで「ビヘイビアツリー」と「ブラックボード」を作ります (`.bt.json` / `.bb.json`)。`.bt.json` をダブルクリックすると BT 窓が開きます。パレットからノードをドラッグで置き、親の下端から子の上端へドラッグでつなぎます。子の順序は x 座標の左から (番号が出ます)。
+2. **ブラックボード**: BT 窓の BB パネルで、キー (Bool / Int / Float / Vector / Entity、最大 64) の追加・改名・型・初期値・`eventName` を編集します。木は参照する `.bb.json` を 1 つ持ちます。SubTree は親と同じ BB でなければなりません。
+3. **コンポーネント**: 動かしたいエンティティに BehaviorTree を付け、`tree` に木を選びます。Entity 型のキー (巡回ルートや追う相手など) をシーンの物で埋めるには、Inspector の「Entity キーの初期値」(4 組まで) を使います。巡回は PatrolRoute を付けたエンティティを作り、点を SceneView でドラッグして置きます。移動系のノードは NavMeshAgent が要ります。
+4. **デバッグ**: Play 中 (タイムラインの巻き戻し中も) に BT を持つエンティティを選ぶと、BT 窓に実行中の経路 (緑の太枠)、直前に Abort したノードからの矢印 (橙、30 tick で薄れる)、BB の現在値が出ます。`drawDebug` を立てると SceneView に MoveTo の目的地・SearchArea の点・実行中のタスク名が出ます。保存した木は ReloadHub で読み直され、その木を使っているエンティティは Abort して根からやり直します (BB は保たれます)。
+
+**ノード**
+
+| 分類 | ノード |
+|---|---|
+| Composite | Selector、Sequence、SimpleParallel (左 = メインのタスク、右 = 背景。終わり方は Immediate / Delayed) |
+| Decorator | BlackboardCondition (Abort: None / Self / LowerPriority / Both。後ろ 2 つは親が Selector のときだけ)、Invert、Cooldown、Repeat、Timeout。1 ノードに 8 個まで |
+| Task | MoveTo (`failOnStuck` で詰まったら Failure)、Wait、RotateTo、SetBlackboard、ClearBlackboard |
+| AI | FindRandomPoint、FindNearestTarget (知覚の結果から)、SearchArea (予測位置の周りを捜索)、FindTarget |
+| Gameplay / Tree / 他 | PlayAnimation、SendEvent、SubTree (別の木を取り込む)、Patrol、CppTask、CsTask |
+
+時間はすべて tick です。根が終わると次の tick から根へ戻ります。Abort の監視は毎 tick の冒頭で全部評価するので、ブラックボードを書いた順序で結果が変わりません。1 体 1 tick の手数は 256 までで、超えるとそこで止めて警告します。
+
+**イベント**: SendEvent ノードまたはスクリプトの `BtSendEvent` で送ったイベントは**次の tick の頭**に、送り主のキー順に配られます (1 tick に 256 件まで)。BB のキーに `eventName` を書くと、その名前のイベントでキーが書かれ、Abort の監視にそのまま反応します。
+
+**activeNodeId と SubTree**: コンポーネントの `activeNodeId` は SubTree を**展開した後の実行木**の id です。SubTree を含む木では、アセット上の id と一致しません (BT 窓は元の id へ戻して表示します)。
+
+**コードから**: C++ は `REGISTER_BT_TASK(T, FIELDS(...))` でタスクを登録します (状態は POD で 112 バイトまで。`FIELDS` に書かないメンバはコールバックの前後で 0 に戻ります)。C# は `[BtTask]` を付けたクラスです。**C# のタスクは決定論の保証外**で、記録・検証・ネット・巻き戻しの再シムでは Failure になります (BT 窓と Inspector に警告が出ます)。ABI v27 の `BtGetBlackboard` / `BtSetBlackboard` / `BtSendEvent` / `BtEventCount` / `BtGetEvent` / `AnimatorPlay` / `BtRestart` が使えます。外部プロジェクトの `GameLogic.dll` は v27 で再ビルドが必要です。
+
+デモは `--bt-demo` です (巡回 → 発見 → 追跡 → 見失う → 捜索 → 巡回へ戻る)。
+
+制約: SubTree は平らに展開し (1024 ノード、入れ子 8 段まで)、部分木の根の LowerPriority は Self 扱いです。Patrol は入るたびに一番近い点から始めます。`.bt.json` にノードの位置を持つので、位置を動かしただけでも provenance の contentHash が変わります。UE の規則 (Loop・Cooldown・Simple Parallel など) は記憶に基づき、公式文書とは照合していません。完全な一覧は ADR-025 にあります。
+
+根拠: [BehaviorTreeSystem.h](C:/HAL/MyEngin/src/Engine/Engine/AI/BehaviorTreeSystem.h)、[BehaviorTreeLibrary.h](C:/HAL/MyEngin/src/Engine/Engine/AI/BehaviorTreeLibrary.h)、[ADR-025](C:/HAL/MyEngin/docs/adr/ADR-025-behavior-tree.md)。
+
 ## 10. 入力・ゲーム内 UI・ゲーム進行
 
 キーボード、マウス、ホイール、生マウスデルタ、ゲームパッド、振動、カーソルロックを扱います。InputActions でボタンと軸を名前付きアクションへ対応付け、held / pressed / released を固定 tick で評価します。複数の入力レーンを持ち、ローカルプレイヤーとネット対戦の入力を扱います。

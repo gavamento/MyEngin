@@ -20,8 +20,8 @@
 | sub-11 | OK | 1 | e16bd96 | ABI v27 = 158、C++ タスク、snapshot v39 のまま | ABI v27 |
 | sub-12 | OK | 1 | eec835e | C# タスクと糖衣 | C# タスク |
 | sub-12b | OK | 1 | 3d20b33 | C# タスクの fields とクラスのピッカー (ユーザー判断で新設) |
-| sub-13 | OK | 1 | (このコミット) | --bt-demo、replay_verify bt、golden bt | --bt-demo・replay_verify・golden |
-| sub-14 | 未着手 | 0 | | ADR-025 と全体検証 |
+| sub-13 | OK | 1 | bcdf04f | --bt-demo、replay_verify bt、golden bt | --bt-demo・replay_verify・golden |
+| sub-14 | OK | 1 | (このコミット) | ADR-025 確定・文書・全体検証 | ADR-025 と全体検証 |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -81,6 +81,9 @@
 - (sub-11 → sub-13) GameLogic の BtProbeTask (fields: targetTicks / outcome / ticks) をデモから使える。
 - (sub-12) CsTask を含む木を replay_verify の対象シーンに入れない (C# レーンは被覆外)。MyeManagedVTable の BtTask は Engine と MyeScripting.dll の内部契約 (EngineAPI の版は不変)。
 - (sub-13 VERDICT should#1) sub-14 で docs\test_checklists.md に --bt-demo の手動確認項目 (5 段階の観察と BT 窓のライブ表示) を足す。
+- (sub-14 VERDICT nit#1) test_checklists.md の M84 節の v26 の行を v27 に書き換えている。各節は「その時点の版」を残すほうが揃う (M84 節を v26 に戻し、M85 節に「外部 GameLogic.dll は v27 = 158 で再ビルド」を 1 行)。受け入れには影響しない minor。
+- (sub-14 VERDICT nit#2) golden bt は sub-14 では間接判定 (sub-13 で maxDiff 0 を 2 回直接確認済み)。
+- (sub-14) Update の性能は Release 37.5 µs (sub-01 は 17 µs、基準 0.5 ms)。
 - **別件 (M85 の範囲外、ユーザーへ報告)**:
   - (a) replay_verify の並列 cold cook で起動中に未処理 C++ 例外 (0xE06D7363、tick 0) / 9 分無反応が 1 回ずつ出た (sub-13 の 2 回目、nav の Release 検証と flow の Debug 検証)。crash bundle `bin\x64\Release\crash\20261006_111539` (minidump あり)。RVA → file:line は未特定。
   - (b) golden の既存 FAIL 6 枚 (HEAD 3d20b33 の clean でも同数値): nav 214/21664、parts 198/3625、joints 208/137、acoustic_forward 83/596、acoustic_deferred 82/594、fracture_after 150/192。更新するかはユーザー判断。
