@@ -1134,7 +1134,10 @@ BtResult VisitPatrol(RunCtx& c, int32_t index)
     }
     patrol.nextIndex = NextPatrolIndex(route->mode, count, patrol.nextIndex, patrol.direction);
     patrol.phase = btpatrolphase::kMoving;
-    PatrolPointWorld(c.world, routeEntity, *route, patrol.nextIndex, target);
+    // 入口と同じく失敗を見る。見ないと target が今いる点のまま残り、目的地を書かずに Running を返す
+    if (!PatrolPointWorld(c.world, routeEntity, *route, patrol.nextIndex, target)) {
+        return EndBody(c, index, BtResult::Failure);
+    }
     if (HorizontalDistance(self, target) > acceptance) {
         writeDestination(target);
     }
