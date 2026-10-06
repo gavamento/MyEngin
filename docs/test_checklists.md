@@ -390,7 +390,7 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] Agent の isStopped を Play 中に切り替えると止まって再開する。updatePosition を切ると Agent が動かず、desiredVelocity が更新される
 - [ ] Surface の「リンクを自動生成」を入れて Bake すると、段の縁と隙間にオレンジの Link が描かれ、Inspector に本数が出る。段の上の Agent が飛び降りる
 - [ ] 生成の設定や飛び降りの高さを変えると Inspector に「もう一度ベイク」の警告が出る。生成したリンクの渡り方は Bake し直さなくても効く
-- [ ] 外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は ABI v27 = 158 スロット (M85 で v26 = 151 から上がった) で再ビルドが要る
+- [ ] 外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は ABI v26 = 151 スロットで再ビルドが要る (その後 M85 で v27 = 158 に上がった。現在の要件は M85 節)
 
 ## M83: AI の知覚 (AIPerception)
 
