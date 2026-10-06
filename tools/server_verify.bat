@@ -226,11 +226,15 @@ for /f "tokens=*" %%L in ('findstr /c:"[server] lane " "%~2"') do echo   %~1 %%L
 for /f "tokens=*" %%L in ('findstr /c:"[server] forced resyncs:" "%~2"') do echo   %~1 %%L
 goto :eof
 
-rem %1 = ケース名 / %2 = サーバのログ / %3 = 許容する割合 ^(整数 %%^)。各レーンの late-subst が %3 %% 以下であること
+rem %1 = ケース名 / %2 = サーバのログ / %3 = 許容する割合 ^(整数 %%^) / %4 = 参加したクライアント数。
+rem 各レーンの late-subst が %3 %% 以下で、レーンの行が %4 本あり、"cannot keep up" の警告が出ていないこと。
+rem 一度も確定を待たれなかったレーンは行が出ないので、本数を数えないと黙って合格する
 :check_late_subst
 set LATESEEN=0
 set LATEOK=1
+set LATELINES=0
 for /f "tokens=*" %%L in ('findstr /c:"[server] lane " "%~2"') do (
+    set /a LATELINES+=1
     set "LL=%%L"
     echo   %~1 %%L
     set "PCTTXT=!LL:*late-subst =!"
@@ -250,7 +254,18 @@ if "!LATEOK!"=="0" (
     set /a FAILED+=1
     goto :eof
 )
-echo   late-subst within %~3 %% on every lane: ok
+if not "!LATELINES!"=="%~4" (
+    echo   [FAIL] %~1: expected %~4 per-lane late-subst lines but found !LATELINES! - a lane was never waited on - see %~2
+    set /a FAILED+=1
+    goto :eof
+)
+findstr /c:"cannot keep up" "%~2" >nul 2>&1
+if !ERRORLEVEL! EQU 0 (
+    echo   [FAIL] %~1: the server warned that a peer cannot keep up - see %~2
+    set /a FAILED+=1
+    goto :eof
+)
+echo   late-subst within %~3 %% on all %~4 lanes, no "cannot keep up" warning: ok
 goto :eof
 
 rem %1 = ケース名 / %2 = サーバのログ。サーバが強制した再同期 (クライアントの ack が履歴から溢れた) が 0 回
@@ -366,7 +381,7 @@ rem V6: 参加 tick から始まるクライアント .rep を単独で再生で
 call :check_client_rep A c1 cache\sv_A_c1.rep
 call :check_client_rep A c2 cache\sv_A_c2.rep
 rem V8 / R5: ロス 0 のケースは代替入力が 5%% 以下かつ強制再同期 0
-call :check_late_subst A cache\sv_A_server.log 5
+call :check_late_subst A cache\sv_A_server.log 5 2
 call :check_forced_resync A cache\sv_A_server.log
 rem V14: クライアントが自分から要求した再同期も 0 (ロス 0 で起きるなら不具合)
 call :check_client_resync A c1 cache\sv_A_c1.log cache\sv_A_c1.rs1.rep

@@ -217,11 +217,12 @@ void ServerSession::WarnIfUnreachable(Peer& p)
     const double tickMs = 1000.0 / static_cast<double>(kNetTickRateHz);
     const double limitMs = (kNetMaxSpeculationClient + cfg_.session.inputDelay) * tickMs;
     const double lateMs = -static_cast<double>(p.ringSum) / static_cast<double>(p.marginRingCount);
+    // 遅れは往復時間の推定には使えない。同じ PC で CPU を奪い合っているだけでも同じ遅れになる
     MYE_LOG_WARN("[server] peer %u (lane %d) cannot keep up: its inputs arrive %.0f ms after the deadline on average "
-                 "(%u of %u samples late). Round trip is about %.0f ms; the supported limit is about %.0f ms "
-                 "(speculation %u ticks + input delay %u ticks)",
-                 p.key, p.lane, lateMs, p.ringLate, p.marginRingCount, limitMs + (std::max)(0.0, lateMs), limitMs,
-                 kNetMaxSpeculationClient, cfg_.session.inputDelay);
+                 "(%u of %u samples late). A round trip above about %.0f ms (speculation %u ticks + input delay %u "
+                 "ticks) causes this, and so does a client or server too starved for CPU to hold the tick rate",
+                 p.key, p.lane, lateMs, p.ringLate, p.marginRingCount, limitMs, kNetMaxSpeculationClient,
+                 cfg_.session.inputDelay);
 }
 
 NetPacketHeader ServerSession::BaseHeader() const
