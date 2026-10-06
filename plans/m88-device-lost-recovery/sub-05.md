@@ -10,6 +10,7 @@
    - `AssetPreviewCache` (`rt_` とキャッシュ済みサムネイル。サムネイルは再生成待ちに戻す)
    - ImGui に渡している ImTextureID (アイコン・プレビュー・ビュー画像) を保持している箇所は、復旧後に取り直す
    - エディタ専用パス (`EditorLinePass` / `PickingPass` / `GhostMeshPass` / `NavFillPass` 等) が EngineLoop 側の復旧で未対応ならここで
+1b. `PickingPass::Shutdown` で解放されていない `blendOff_` を補完する。`ImGuiRenderer::ReleaseDevice / RecreateDevice` (sub-02 で実装したが未実走。ImGui 1.92 のフォントアトラス再作成が前提) をエディタで実走させ、フォントとアイコンが描かれることを確認する。sub-02 時点では、エディタの旧デバイス外部参照は 899。
 2. エディタのメニュー (既存のデバッグ系メニュー) に「デバイス消失を偽装」(Tr 日英、`###` 識別子を揃える)。
 3. ADR-026 `C:\HAL\MyEngin\docs\adr\ADR-026-device-lost-recovery.md`: プロセス内復旧を選んだ理由 (と自動再起動案を採らなかった理由)、Shutdown→Init 再利用、参照数ゲート、ABI を変えない理由、GPU 上の中身を復元しない理由、WARP へ落とさない理由。
 4. `C:\HAL\MyEngin\docs\test_checklists.md` に手動確認: (a) メニューの偽装で復旧、(b) `dxcap -forcetdr` (管理者 PowerShell、実機 GPU) での本物の TDR 復旧、(c) 失敗時の退避ファイルの確認。

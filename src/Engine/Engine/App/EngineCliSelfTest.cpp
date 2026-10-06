@@ -159,14 +159,26 @@ bool RunEngineCliSelfTest()
     // M88: 不正値は起動を止めずに無視する (既定の -1 = 無効のまま)
     r = RunParse({ L"--simulate-device-lost-fatal" });
     check(r.consumed == 1 && r.config.simulateDeviceLostFatal, "--simulate-device-lost-fatal");
+    r = RunParse({ L"--simulate-device-lost-drop-assets" });
+    check(r.consumed == 1 && r.config.simulateDeviceLostDropAssets, "--simulate-device-lost-drop-assets");
     r = RunParse({ L"--simulate-device-lost", L"30" });
-    check(r.consumed == 1 && r.config.simulateDeviceLostFrame == 30, "--simulate-device-lost N");
+    check(r.consumed == 1 && r.config.simulateDeviceLostFrames == std::vector<int64_t>{ 30 },
+          "--simulate-device-lost N");
+    r = RunParse({ L"--simulate-device-lost", L"90,30,60" });
+    check(r.consumed == 1 && r.config.simulateDeviceLostFrames == std::vector<int64_t>({ 30, 60, 90 }),
+          "--simulate-device-lost with a list is sorted");
     r = RunParse({ L"--simulate-device-lost", L"abc" });
-    check(r.consumed == 1 && r.errors == 0 && r.config.simulateDeviceLostFrame == def.simulateDeviceLostFrame,
+    check(r.consumed == 1 && r.errors == 0 && r.config.simulateDeviceLostFrames.empty(),
           "--simulate-device-lost with a non-number is ignored");
     r = RunParse({ L"--simulate-device-lost", L"-5" });
-    check(r.consumed == 1 && r.errors == 0 && r.config.simulateDeviceLostFrame == def.simulateDeviceLostFrame,
+    check(r.consumed == 1 && r.errors == 0 && r.config.simulateDeviceLostFrames.empty(),
           "--simulate-device-lost with a negative number is ignored");
+    r = RunParse({ L"--simulate-device-lost", L"30,x" });
+    check(r.consumed == 1 && r.errors == 0 && r.config.simulateDeviceLostFrames.empty(),
+          "--simulate-device-lost with a bad list element is ignored as a whole");
+    r = RunParse({ L"--simulate-device-lost", L"30," });
+    check(r.consumed == 1 && r.errors == 0 && r.config.simulateDeviceLostFrames.empty(),
+          "--simulate-device-lost with a trailing comma is ignored");
 
     // ---- 値を 1 つ取るフラグ ----
     r = RunParse({ L"--frames", L"123" });

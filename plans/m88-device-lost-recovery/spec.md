@@ -198,3 +198,9 @@ Recovering ──(再作成失敗 / ゲート不合格 / 連続消失)──> Fa
   - 4.1.5 終了コード: `kExitCodeDeviceLost = 6` に確定。
   - sub-01 受け入れ 4 の「Play 前状態の選択」は「Play 前の状態を選んで保存すること」の意。エディタの選択 (selection_) は退避対象外。
   - アセットのミニシーン編集中 (actorEdit_) は本シーンだけを退避し、編集中アセットは警告ログのみ (追加仕様として承認)。
+- 2026-10-07 (coder SELF_EVAL sub-02 round 1):
+  - R1 確定: 自前の参照を除いた旧デバイスの外部参照数の期待値は 0 (`kExpectedExternalDeviceRefs = 0`)。Debug/Release × HW/WARP の 4 通りで実測。
+  - R2 承認: 復旧の所要は Release 約 0.3 s、Debug 約 2.2 s。キャッシュ無しのとき (`--no-shader-cache`) の数秒も許容 (描画専用の一時停止で、sim は影響を受けない)。
+  - R4 回答: `TextureLibrary::AsyncWorker` は CPU デコードだけを行い、D3D オブジェクトはメインスレッドの `PollAsyncLoads` で作る。このため 4.1.1 手順 1 (ワーカーの排出) は不要とする。ただし、読み込み中のプレースホルダとの整合は sub-03 で確認する。
+  - サブ境界の移動: UI/VFX/粒子 (GPU 側のみ。CPU プールは保持)、RenderSystem の遅延パス群・RT・フロクセル・IBL・ユーザーポスト、組込みメッシュ/White を sub-02 へ前倒しした。sub-04 には compute runner、ProbeBaker/probeArray、RenderSystem 内の中身 (TAA 履歴等) の確認、Deferred を使うシーンでの描画確認、受け入れ 6/10/11 が残る。
+  - 検証専用 CLI `--simulate-device-lost-drop-assets` を暫定で認める。**sub-03 で削除する** (sub-03 の受け入れ条件に追加)。

@@ -11,6 +11,8 @@ class GraphicsDevice;
 class GpuTimer {
 public:
     bool Init(GraphicsDevice& device);
+    // クエリを手放して Init 前へ戻す (デバイス消失からの復旧、M88)。直近の計測値も捨てる
+    void Release();
     void Begin(GraphicsDevice& device);
     void End(GraphicsDevice& device);
 

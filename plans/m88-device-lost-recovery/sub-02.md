@@ -51,4 +51,11 @@ HW とローカルの `--warp` で行い、期待値 (検査用 1 のみ、に�
 
 ## 実装メモ (coder が追記)
 
+### round 1 (SELF_EVAL の要点)
+- R1 実測 (全所有者を手放した後の旧デバイス外部参照数、`GraphicsDevice::CountExternalDeviceRefs`): アセット無し構成で HW / WARP × Debug / Release の 4 通りとも 0 (期待値 `kExpectedExternalDeviceRefs = 0`)。取りこぼしが 1 つあると参照数に出ることも確認 (SelfTest で子バッファ 1 個を握らせると 1)。
+- R2 実測 (復旧所要): Release 255〜295 ms (うちデバイス 130〜180 ms、シェーダ 40〜50 ms)。Debug 約 2.2 s (うち UI フォント 1.9 s)。シェーダを `--no-shader-cache` で毎回コンパイルすると 6.2 s (空シーンのプログラム数)。
+- 空シーンの最小構成の作り方: 空のプロジェクトを作る (`<dir>\assets\scenes\empty.scene.json` に `assets\scenes\scene_b.scene.json` のコピー) → `Runtime.exe --project <dir> --scene <dir>\assets\scenes\empty.scene.json --frames 90 --no-audio --simulate-device-lost 30 --simulate-device-lost-drop-assets`。Runtime は起動時にデモ用のメッシュ (jdemo_wheel) とテクスチャ (vdemo_*) を無条件で登録するので、sub-03 までは `--simulate-device-lost-drop-assets` (検証専用) で捨てないと残参照 6 でゲート不合格になる。
+- 疑似消失の複数指定: `--simulate-device-lost 30,60,90` (昇順にソートされ、各フレームで 1 回ずつ発火)。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner)。前倒し (UI/VFX/粒子/RenderSystem/組込みメッシュ) と手順 1 の省略を承認し、spec 8. に記録。drop-assets フラグは sub-03 で削除する。新しく出た rule 7 の警告 (ShaderManager の programs_ 走査) は nit として申し送り。

@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Platform/Input.h"
@@ -373,12 +374,15 @@ struct EngineConfig {
     int crashTest = 0;            // CrashTestKind の生値 (Platform への依存を持ち込まない)
     int64_t crashTestTick = 120;  // --crash-at-tick N
 
-    // ---- デバイス消失の疑似発生 (M88、--simulate-device-lost <frame>) ----
-    // >= 0 のとき、その描画フレームの Present 判定で 1 回だけ「デバイスが消えた」ことにする
-    // (D3D11 には消失を即時に起こす API が無い。以降の経路は本物と同一)。負値 = 無効
-    int64_t simulateDeviceLostFrame = -1;
+    // ---- デバイス消失の疑似発生 (M88、--simulate-device-lost <frame>[,<frame>...]) ----
+    // 昇順の描画フレーム番号。各フレームの Present 判定で 1 回ずつ「デバイスが消えた」ことにする
+    // (D3D11 には消失を即時に起こす API が無い。以降の経路は本物と同一)。空 = 無効
+    std::vector<int64_t> simulateDeviceLostFrames;
     // --simulate-device-lost-fatal: 復旧を試みず致命停止へ進める (致命経路の自動テスト用)
     bool simulateDeviceLostFatal = false;
+    // --simulate-device-lost-drop-assets: 復旧の前に全メッシュ / テクスチャを捨てる (検証専用)。
+    // アセットの再作成が未対応のあいだ、アセットを使わないシーンで復旧の成功経路を通すための手段
+    bool simulateDeviceLostDropAssets = false;
 };
 
 // デバイス消失で続行できないときの終了コード (1 = 失敗 / 2 = 落とし損ね / 4 = desync / 5 = プローブと衝突しない値)
@@ -480,6 +484,11 @@ struct DeviceFatalInfo {
     int32_t presentHr = 0;       // 消失を検出した Present の HRESULT (0 = Present 以外で検出)
     int32_t removedReason = 0;   // GetDeviceRemovedReason の値 (疑似消失では 0)
     bool simulated = false;      // --simulate-device-lost による疑似消失
+    // 復旧を試みたが続行できなかった理由 (None = 復旧を試みていない)。以下は理由ごとの付帯情報
+    enum class Failure { None, StaleDeviceRefs, RecreateFailed, RebuildFailed, LostTooOften, SimulatedFatal };
+    Failure failure = Failure::None;
+    int32_t staleDeviceRefs = 0; // StaleDeviceRefs: 旧デバイスを握ったままの参照数
+    int32_t recreateAttempts = 0; // RecreateFailed: 試した回数
     bool interactive = true;     // false = 人が見ていない実行 (--frames / --screenshot / replay 等)。ダイアログを出さない
 };
 
@@ -491,6 +500,10 @@ public:
     virtual void OnRenderViews(EngineContext&) {} // フェーズ 6: 独自 RT への描画 (エディタの SceneView 等)
     virtual void OnImGui(EngineContext&) {}       // 描画フレーム毎 (spec 5.3 フェーズ 8)
     virtual void OnShutdown(EngineContext&) {}
+    // デバイス消失からの復旧 (M88)。Lost: アプリが持つ GPU オブジェクト (RT・ImTextureID 等) を
+    // 手放す。旧デバイスは使えない (D3D を呼んではいけない)。Restored: 新デバイスで作り直す
+    virtual void OnDeviceLost(EngineContext&) {}
+    virtual void OnDeviceRestored(EngineContext&) {}
     // デバイス消失から続行できないとき、ループを抜ける直前に 1 回だけ呼ばれる。
     // D3D は呼ばないこと (消えたデバイスへ投げない)。保存とユーザーへの通知だけを行う
     virtual void OnDeviceFatal(EngineContext&, const DeviceFatalInfo&) {}

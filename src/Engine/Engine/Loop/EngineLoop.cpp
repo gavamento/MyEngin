@@ -68,6 +68,7 @@
 #include "Engine/Engine/Schema/SchemaComponents.h"
 #include "Engine/Engine/Animation/PartFollowSystem.h"
 #include "Engine/Engine/Animation/SkinningSystem.h"
+#include "Engine/Engine/Loop/DeviceRecovery.h"
 #include "Engine/Engine/Loop/SimInit.h"
 #include "Engine/Engine/Loop/TickInputs.h"
 #include "Engine/Engine/Loop/TickRunner.h"
@@ -1752,10 +1753,112 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     uint8_t wiOverrideVk = 0;
     uint64_t wiDiffTick = 0;
 
+    // ---- デバイス消失からの復旧 (M88) ----
+    // 状態は Running / Lost の 2 つ (Recovering はフレーム頭の RecoverDevice 呼び出し中)。
+    // 検出はフレーム末、復旧は次フレーム頭 (PumpMessages の直後 = ホットリロードと同じセーフポイント)
+    bool deviceLost = false;
+    DeviceFatalInfo lostInfo;
+    DeviceLostLimiter lostLimiter;
+    size_t simulatedLostNext = 0; // config.simulateDeviceLostFrames のうち次に発火させるもの
+    // 全 GPU 所有者を終了順に手放し、新デバイスで起動順に作り直す。成功したら true。
+    // 失敗したら fail に理由を入れて false を返す (呼び出し側が致命停止へ進む)。
+    // ★sim (ECS・RNG・物理・スクリプト) には触れない。CPU 側のデータを持つ所有者は GPU 側だけを手放す
+    const auto RecoverDevice = [&](DeviceFatalInfo& fail) -> bool {
+        const double tStart = clock.Now();
+        const uint64_t hashBefore = HashWorld(scene.GetWorld(), simRefs.HashSources());
+        MYE_LOG_INFO("[device] recovery started (frame %llu)",
+                     static_cast<unsigned long long>(ctx.frameIndex));
+
+        app.OnDeviceLost(ctx);
+        vfxRenderer.Shutdown();
+        uiRenderer.Shutdown();
+        particleSystem.ReleaseGpu();
+        renderSystem.ReleaseGpu();
+        deferredPath.Shutdown();
+        forwardPath.Shutdown();
+        resources.ReleaseBuiltinGpu();
+        if (config.simulateDeviceLostDropAssets) {
+            resources.DiscardAssetsForTest();
+        }
+        shaderManager.ReleaseGpu();
+        imgui.ReleaseDevice();
+        swapChain.Shutdown();
+
+        const double tRelease = clock.Now();
+        const DeviceRecycleResult recycled = RecycleDevice(device);
+        if (recycled.status == DeviceRecycleStatus::StaleDeviceRefs) {
+            fail.failure = DeviceFatalInfo::Failure::StaleDeviceRefs;
+            fail.staleDeviceRefs = recycled.staleRefs;
+            return false;
+        }
+        if (recycled.status == DeviceRecycleStatus::RecreateFailed) {
+            fail.failure = DeviceFatalInfo::Failure::RecreateFailed;
+            fail.recreateAttempts = recycled.attempts;
+            return false;
+        }
+
+        const double tShader = clock.Now();
+        const double deviceMs = (tShader - tRelease) * 1000.0;
+        const bool rebuilt =
+            swapChain.Init(device, window.Hwnd(), window.Width(), window.Height())
+            && (!config.enableImGui || imgui.RecreateDevice(device));
+        const int shadersFailed = rebuilt ? shaderManager.RecreateAll(device) : 0;
+        const double shaderMs = (clock.Now() - tShader) * 1000.0;
+        MYE_LOG_INFO("[device] shaders recreated in %.1f ms (%d failed)", shaderMs, shadersFailed);
+        if (rebuilt) {
+            resources.RecreateBuiltins(device);
+        }
+        const bool rebuiltAll = rebuilt && forwardPath.Init(device, shaderManager)
+            && deferredPath.Init(device, shaderManager);
+        if (rebuiltAll) {
+            // 失敗しても継続する (UI / VFX / 粒子が出ないだけ) — 起動時と同じ扱い
+            uiRenderer.Init(device, shaderManager, assetsRoot, config.fontEmbedded);
+            vfxRenderer.Init(device, shaderManager, &uiRenderer);
+            particleSystem.RecreateGpu(device, shaderManager);
+            app.OnDeviceRestored(ctx);
+        } else {
+            fail.failure = DeviceFatalInfo::Failure::RebuildFailed;
+            return false;
+        }
+
+        const uint64_t hashAfter = HashWorld(scene.GetWorld(), simRefs.HashSources());
+        if (hashBefore != hashAfter) {
+            MYE_LOG_ERROR("[device] world hash changed across recovery (before=%016llX after=%016llX)",
+                          static_cast<unsigned long long>(hashBefore),
+                          static_cast<unsigned long long>(hashAfter));
+        }
+        MYE_LOG_INFO("[device] device recovered in %.1f ms (device %.1f ms, shaders %.1f ms; %d attempt(s), "
+                     "world hash %016llX unchanged=%d)",
+                     (clock.Now() - tStart) * 1000.0, deviceMs, shaderMs, recycled.attempts,
+                     static_cast<unsigned long long>(hashAfter), hashBefore == hashAfter ? 1 : 0);
+        return true;
+    };
+
     while (running) {
         // ---- フェーズ 1: 時間更新 / 入力取得 ----
         if (!window.PumpMessages()) {
             break;
+        }
+        if (deviceLost) {
+            // ---- 復旧 (Lost → Recovering → Running / Fatal) ----
+            // 復旧に失敗 / 打ち切りなら以降 D3D を呼ばずに致命停止する
+            deviceLost = false;
+            DeviceFatalInfo fail = lostInfo;
+            bool recovered = false;
+            if (config.simulateDeviceLostFatal && lostInfo.simulated) {
+                fail.failure = DeviceFatalInfo::Failure::SimulatedFatal;
+            } else if (!lostLimiter.RecordLoss(clock.Now())) {
+                fail.failure = DeviceFatalInfo::Failure::LostTooOften;
+            } else {
+                recovered = RecoverDevice(fail);
+            }
+            if (!recovered) {
+                MYE_LOG_ERROR("[device] cannot continue; stopping");
+                app.OnDeviceFatal(ctx, fail);
+                exitCode = kExitCodeDeviceLost;
+                running = false;
+                continue;
+            }
         }
         if (window.ConsumeResize()) {
             swapChain.Resize(window.Width(), window.Height());
@@ -2929,26 +3032,28 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         if (!deviceRemoved) {
             device.PumpDebugMessages(); // D3D 検証メッセージをログへ (Debug のみ)
         }
-        const bool simulatedLost = config.simulateDeviceLostFrame >= 0
-            && ctx.frameIndex >= static_cast<uint64_t>(config.simulateDeviceLostFrame);
+        // 疑似消失は各フレーム番号で 1 回ずつだけ発火する (復旧後に毎フレーム再発しない)
+        bool simulatedLost = false;
+        while (simulatedLostNext < config.simulateDeviceLostFrames.size()
+               && ctx.frameIndex >= static_cast<uint64_t>(config.simulateDeviceLostFrames[simulatedLostNext])) {
+            simulatedLost = true;
+            ++simulatedLostNext;
+        }
         if (deviceRemoved || simulatedLost) {
-            DeviceFatalInfo lost;
-            lost.simulated = simulatedLost && !deviceRemoved;
-            lost.presentHr = presentHr;
-            lost.removedReason = removedReason;
-            lost.interactive = config.maxFrames <= 0 && config.screenshotPath.empty()
+            lostInfo = DeviceFatalInfo();
+            lostInfo.simulated = simulatedLost && !deviceRemoved;
+            lostInfo.presentHr = presentHr;
+            lostInfo.removedReason = removedReason;
+            lostInfo.interactive = config.maxFrames <= 0 && config.screenshotPath.empty()
                 && config.replayRecordPath.empty() && config.replayVerifyPath.empty()
                 && config.timeTravelProbeTicks <= 0 && config.whatIfProbeTicks <= 0;
-            MYE_LOG_ERROR("[device] lost at frame %llu: present hr=0x%08lX, removed reason=0x%08lX%s; "
-                          "stopping",
+            MYE_LOG_ERROR("[device] lost at frame %llu: present hr=0x%08lX, removed reason=0x%08lX%s",
                           static_cast<unsigned long long>(ctx.frameIndex),
                           static_cast<unsigned long>(presentHr),
                           static_cast<unsigned long>(removedReason),
-                          lost.simulated ? " (simulated)" : "");
-            app.OnDeviceFatal(ctx, lost);
-            exitCode = kExitCodeDeviceLost;
-            running = false;
-            continue;
+                          lostInfo.simulated ? " (simulated)" : "");
+            // 次フレーム頭の復旧まで描画しない (このフレームの残りは何も無い)。tick は進める
+            deviceLost = true;
         }
 
         timings.frameMs = static_cast<float>(dt * 1000.0);

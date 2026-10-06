@@ -12,6 +12,18 @@ namespace mye {
 
 bool GraphicsDevice::Init(bool forceWarp)
 {
+    return CreateDevice(/*tryHardware=*/!forceWarp, /*tryWarp=*/true);
+}
+
+bool GraphicsDevice::Recreate()
+{
+    // 消失前と同じ種類だけを試す。WARP へ黙って落とすと「動いているが原因が分からない」状態になる
+    return CreateDevice(/*tryHardware=*/!warp_, /*tryWarp=*/warp_);
+}
+
+bool GraphicsDevice::CreateDevice(bool tryHardware, bool tryWarp)
+{
+    debugMsgCursor_ = 0;
     const UINT baseFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
     UINT debugFlag = 0;
 
@@ -39,11 +51,13 @@ bool GraphicsDevice::Init(bool forceWarp)
     // forceWarp (--warp) はハードウェアを試さない — 「CI と同じ絵で撮る」明示指定なので、
     // 黙って GPU へ戻ると golden スクショが撮影機ごとに変わってしまう
     const D3D_DRIVER_TYPE candidates[] = { D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP };
-    const int firstCandidate = forceWarp ? 1 : 0;
 
     HRESULT hr = E_FAIL;
-    for (int i = firstCandidate; i < static_cast<int>(std::size(candidates)); ++i) {
+    for (int i = 0; i < static_cast<int>(std::size(candidates)); ++i) {
         const bool isWarp = (candidates[i] == D3D_DRIVER_TYPE_WARP);
+        if (isWarp ? !tryWarp : !tryHardware) {
+            continue;
+        }
         UINT flags = baseFlags | debugFlag;
         hr = create(candidates[i], flags);
         if (FAILED(hr) && debugFlag != 0) {
@@ -140,6 +154,45 @@ void GraphicsDevice::PumpDebugMessages()
     }
     debugMsgCursor_ = count;
 #endif
+}
+
+int GraphicsDevice::CountExternalDeviceRefs() const
+{
+    if (!device_) {
+        return 0;
+    }
+    // AddRef の戻り値 = 現在の参照数。自分の device_ と今の AddRef の 2 本を引いたものが他者の保持数
+    const ULONG withProbe = device_->AddRef();
+    device_->Release();
+    return static_cast<int>(withProbe) - 2;
+}
+
+void GraphicsDevice::ReportLiveObjectsDetail()
+{
+#ifdef _DEBUG
+    if (!debugLayer_ || !device_) {
+        return;
+    }
+    Microsoft::WRL::ComPtr<ID3D11Debug> debug;
+    if (SUCCEEDED(device_.As(&debug))) {
+        debug->ReportLiveDeviceObjects(D3D11_RLDO_DETAIL | D3D11_RLDO_IGNORE_INTERNAL);
+    }
+    PumpDebugMessages(); // レポートは InfoQueue へも積まれる = ログから読める
+#endif
+}
+
+void GraphicsDevice::ReleaseContext()
+{
+    if (context_) {
+        context_->ClearState();
+        context_->Flush();
+    }
+    context_.Reset();
+}
+
+void GraphicsDevice::ReleaseDevice()
+{
+    device_.Reset();
 }
 
 void GraphicsDevice::Shutdown()

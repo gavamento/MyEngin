@@ -17,6 +17,7 @@ class ShaderManager;
 class SkyboxPass {
 public:
     bool Init(GraphicsDevice& device, ShaderManager& shaders);
+    void Shutdown(); // GPU オブジェクトを手放して Init 前へ戻す (デバイス復旧用、M88)
     // view.skyMode < 0 なら何もしない。RT/ビューポートは設定済み前提だが、
     // 深度テストが要るため RTV+DSV を自前で再バインドする (deferred のライトパス後は DSV 無し)
     void Render(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view);

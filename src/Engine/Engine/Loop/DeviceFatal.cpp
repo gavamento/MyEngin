@@ -35,6 +35,25 @@ std::wstring BuildDeviceFatalMessage(const DeviceFatalInfo& info, const std::wst
     }
     message += L"\n\n" + Utf8ToWide(Tr(StrId::DevLost_PresentLabel)) + L": " + HexResult(info.presentHr);
     message += L"\n" + Utf8ToWide(Tr(StrId::DevLost_RemovedLabel)) + L": " + HexResult(info.removedReason);
+    switch (info.failure) {
+    case DeviceFatalInfo::Failure::StaleDeviceRefs:
+        message += L"\n\n" + Utf8ToWide(Tr(StrId::DevLost_FailStale)) + L" " + std::to_wstring(info.staleDeviceRefs);
+        break;
+    case DeviceFatalInfo::Failure::RecreateFailed:
+        message += L"\n\n" + Utf8ToWide(Tr(StrId::DevLost_FailRecreate)) + L" " + std::to_wstring(info.recreateAttempts);
+        break;
+    case DeviceFatalInfo::Failure::RebuildFailed:
+        message += L"\n\n" + Utf8ToWide(Tr(StrId::DevLost_FailRebuild));
+        break;
+    case DeviceFatalInfo::Failure::LostTooOften:
+        message += L"\n\n" + Utf8ToWide(Tr(StrId::DevLost_FailTooOften));
+        break;
+    case DeviceFatalInfo::Failure::SimulatedFatal:
+        message += L"\n\n" + Utf8ToWide(Tr(StrId::DevLost_FailSimFatal));
+        break;
+    case DeviceFatalInfo::Failure::None:
+        break;
+    }
     if (!detail.empty()) {
         message += L"\n\n" + detail;
     }

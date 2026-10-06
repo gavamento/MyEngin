@@ -116,6 +116,10 @@ public:
                 const CameraOverride* cameraOverride = nullptr,
                 ParticleSystem* particles = nullptr, VfxRenderer* vfx = nullptr);
 
+    // デバイス消失からの復旧 (M88)。遅延 Init のパス群・RT・フロクセル・IBL・ユーザーポスト等の
+    // GPU オブジェクトを全部手放す。次の Render で必要なものから作り直される (履歴は初期状態から)
+    void ReleaseGpu();
+
     // ポストプロセス設定 (M16)。config / エディタから書き換え可能。全ビューポート共通。
     PostProcess::Settings postFxSettings;
     bool enablePostFx = true; // false で HDR 配管を丸ごとバイパス (従来の直描き)

@@ -73,6 +73,7 @@ bool ImGuiRenderer::Init(Win32Window& window, GraphicsDevice& device, const ImGu
     });
 
     initialized_ = true;
+    deviceBound_ = true;
     MYE_LOG_INFO("ImGui initialized (%s, docking)", IMGUI_VERSION);
     return true;
 }
@@ -82,10 +83,37 @@ void ImGuiRenderer::Shutdown()
     if (!initialized_) {
         return;
     }
-    ImGui_ImplDX11_Shutdown();
+    if (deviceBound_) {
+        ImGui_ImplDX11_Shutdown();
+    }
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
     initialized_ = false;
+    deviceBound_ = false;
+}
+
+void ImGuiRenderer::ReleaseDevice()
+{
+    if (!initialized_ || !deviceBound_) {
+        return;
+    }
+    // コンテキスト (ウィンドウ配置・スタイル・ini) は残し、D3D 側のバックエンドだけを畳む。
+    // フォントアトラスは次の NewFrame で新デバイスへ作り直される (1.92 の動的テクスチャ)
+    ImGui_ImplDX11_Shutdown();
+    deviceBound_ = false;
+}
+
+bool ImGuiRenderer::RecreateDevice(GraphicsDevice& device)
+{
+    if (!initialized_ || deviceBound_) {
+        return initialized_;
+    }
+    if (!ImGui_ImplDX11_Init(device.Device(), device.Context())) {
+        MYE_LOG_ERROR("ImGui_ImplDX11_Init failed (device recovery)");
+        return false;
+    }
+    deviceBound_ = true;
+    return true;
 }
 
 void ImGuiRenderer::BeginFrame()

@@ -19,6 +19,18 @@ public:
     bool Init(bool forceWarp = false);
     void Shutdown();
 
+    // ---- デバイス消失からの復旧 (M88) ----
+    // 消失前と同じ種類 (HW / WARP) で作り直す。**WARP へ自動フォールバックしない**
+    bool Recreate();
+    // 即時コンテキストを手放す (ClearState + Flush の後)。device は残す
+    void ReleaseContext();
+    // 全所有者が手放した後に、旧デバイスを他者が握っている参照数を返す (0 = 誰も握っていない)。
+    // 生の D3D 型を上へ出さないための整数。ReleaseDevice の前に呼ぶこと
+    int CountExternalDeviceRefs() const;
+    // デバッグレイヤが有効なら生存オブジェクトを詳細にログへ出す (診断のみ。状態は変えない)
+    void ReportLiveObjectsDetail();
+    void ReleaseDevice();
+
     ID3D11Device* Device() const { return device_.Get(); }
     ID3D11DeviceContext* Context() const { return context_.Get(); }
 
@@ -35,6 +47,8 @@ public:
     void PumpDebugMessages();
 
 private:
+    bool CreateDevice(bool tryHardware, bool tryWarp);
+
     Microsoft::WRL::ComPtr<ID3D11Device> device_;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> context_;
     std::string adapterName_;

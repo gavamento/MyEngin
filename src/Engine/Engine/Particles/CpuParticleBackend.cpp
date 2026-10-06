@@ -168,6 +168,12 @@ bool CpuParticleBackend::Init(GraphicsDevice& device, ShaderManager& shaders)
 void CpuParticleBackend::Shutdown()
 {
     pools_.clear();
+    ReleaseGpu();
+}
+
+void CpuParticleBackend::ReleaseGpu()
+{
+    instanceCapacity_ = 0;
     instanceBuffer_.Reset();
     instanceSRV_.Reset();
     renderCB_.Reset();

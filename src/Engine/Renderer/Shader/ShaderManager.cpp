@@ -513,6 +513,70 @@ SurfaceProgram* ShaderManager::GetSurface(AssetID id)
     return (it != surfacePrograms_.end()) ? &it->second : nullptr;
 }
 
+void ShaderManager::ReleaseGpu()
+{
+    for (AsyncCompile& a : async_) {
+        a.future.wait();
+    }
+    async_.clear();
+    for (AsyncSurfaceCompile& a : asyncSurface_) {
+        a.future.wait();
+    }
+    asyncSurface_.clear();
+    for (auto& entry : programs_) {
+        ShaderProgram& p = entry.second;
+        p.vs.Reset();
+        p.ps.Reset();
+        p.cs.Reset();
+        p.inputLayout.Reset();
+        p.valid = false;
+    }
+    for (auto& entry : surfacePrograms_) {
+        SurfaceProgram& p = entry.second;
+        p.colorVS.Reset();
+        p.colorPS.Reset();
+        p.colorInputLayout.Reset();
+        p.velocityVS.Reset();
+        p.velocityPS.Reset();
+        p.velocityInputLayout.Reset();
+        p.shadowVS.Reset();
+        p.shadowInputLayout.Reset();
+        p.valid = false;
+    }
+}
+
+int ShaderManager::RecreateAll(GraphicsDevice& device)
+{
+    device_ = &device;
+    int failed = 0;
+    for (auto& entry : programs_) {
+        ShaderProgram& slot = entry.second;
+        ShaderProgram fresh;
+        fresh.path = slot.path;
+        fresh.isCompute = slot.isCompute;
+        if (!CompileProgram(fresh.path, fresh)) {
+            MYE_LOG_ERROR("[device] shader recompile failed: %s", WideToUtf8(slot.path).c_str());
+            ++failed;
+            continue;
+        }
+        fresh.generation = slot.generation + 1;
+        slot = std::move(fresh);
+    }
+    for (auto& entry : surfacePrograms_) {
+        SurfaceProgram& slot = entry.second;
+        SurfaceProgram fresh;
+        fresh.path = slot.path;
+        if (!CompileSurfaceProgram(fresh.path, fresh, slot.generation)) {
+            MYE_LOG_ERROR("[device] surface shader recompile failed: %s",
+                          WideToUtf8(slot.path).c_str());
+            ++failed;
+            continue;
+        }
+        slot = std::move(fresh);
+    }
+    return failed;
+}
+
 bool ShaderManager::Recompile(AssetID id)
 {
     auto it = programs_.find(id.value);

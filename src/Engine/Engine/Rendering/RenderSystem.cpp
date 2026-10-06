@@ -2053,4 +2053,36 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
     }
 }
 
+void RenderSystem::ReleaseGpu()
+{
+    // 遅延 Init のパス群は既定構築した実体へ差し替える = Init 前の状態へ戻り、ComPtr が解放される。
+    // 設定値 (public のフィールド) と CPU 側の履歴 (prevVP_ 等) は触らない
+    postFx_ = PostProcess();
+    shadowPass_ = ShadowPass();
+    shadowAtlas_ = ShadowAtlas();
+    froxelPass_ = FroxelPass();
+    acousticPass_ = AcousticVolumePass();
+    linePass_ = EditorLinePass();
+    navFillPass_ = NavFillPass();
+    envBaker_ = EnvMapBaker();
+    rtScene_ = RtScene();
+    rtPasses_ = RtPasses();
+    terrainSystem_.Clear();
+    terrainList_ = TerrainDrawList();
+    waterData_ = WaterDrawData();
+    decalList_ = DecalDrawList();
+    for (ProjectEffectRunner& r : projectEffectRunner_) {
+        r = ProjectEffectRunner();
+    }
+    for (ProjectComputeRunner& r : projectComputeRunner_) {
+        r = ProjectComputeRunner();
+    }
+    for (int i = 0; i < 4; ++i) {
+        loadedFxStackId_[i] = {};
+        loadedFxStackStamp_[i] = 0;
+    }
+    skyLoadFailed_ = FailedTextureLoad();
+    lutLoadFailed_ = FailedTextureLoad();
+}
+
 } // namespace mye

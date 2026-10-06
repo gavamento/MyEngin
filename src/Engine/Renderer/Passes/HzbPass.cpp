@@ -82,6 +82,7 @@ void HzbPass::Shutdown()
     srv_.Reset();
     tex_.Reset();
     cb_.Reset();
+    timer_.Release();
     width_ = 0;
     height_ = 0;
     mipCount_ = 0;

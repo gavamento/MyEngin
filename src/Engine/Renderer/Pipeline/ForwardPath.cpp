@@ -207,14 +207,24 @@ void ForwardPath::Shutdown()
 {
     perFrameCB_.Reset();
     perObjectCB_.Reset();
+    materialCB_.Reset();
+    boneCB_.Reset();
     sampler_.Reset();
+    shadowSampler_.Reset();
+    iblSampler_.Reset();
     rasterizer_.Reset();
+    rasterizerWire_.Reset();
     rasterizerCullNone_.Reset();
     depthOpaque_.Reset();
     depthTransparent_.Reset();
     blendOpaque_.Reset();
     blendAlpha_.Reset();
     instanceBuf_.Reset();
+    surfacePerFrameCB_.Reset();
+    surfaceFrameCB_.Reset();
+    surfacePerObjectCB_.Reset();
+    surfaceWaterCB_.Reset();
+    skybox_.Shutdown();
     terrain_.Shutdown(); // M58c
     water_.Shutdown();
 }

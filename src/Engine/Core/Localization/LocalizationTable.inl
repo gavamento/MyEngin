@@ -2179,3 +2179,8 @@ MYE_STR(DevLost_RemovedLabel,  "Device removed reason", "デバイス消失の�
 MYE_STR(DevLost_SceneSaved,    "The scene you were editing was saved to this file (the original scene file was not changed):",
                                "編集中のシーンを次のファイルへ退避保存しました (元のシーンファイルは変更していません):")
 MYE_STR(DevLost_SaveFailed,    "The scene could not be saved:", "シーンを退避保存できませんでした:")
+MYE_STR(DevLost_FailStale,     "Recovery failed: old GPU objects are still in use (count):", "復旧に失敗しました: 旧デバイスのオブジェクトが残っています (個数):")
+MYE_STR(DevLost_FailRecreate,  "Recovery failed: a new graphics device could not be created (attempts):", "復旧に失敗しました: 新しいデバイスを作成できませんでした (試行回数):")
+MYE_STR(DevLost_FailRebuild,   "Recovery failed: graphics objects could not be rebuilt on the new device.", "復旧に失敗しました: 新しいデバイスで描画用オブジェクトを作り直せませんでした。")
+MYE_STR(DevLost_FailTooOften,  "Recovery was not attempted: the device was lost too many times in a short period.", "短時間にデバイス消失が続いたため、復旧を試みませんでした。")
+MYE_STR(DevLost_FailSimFatal,  "Recovery was skipped by --simulate-device-lost-fatal.", "--simulate-device-lost-fatal により復旧を行いませんでした。")

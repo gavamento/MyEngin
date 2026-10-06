@@ -64,6 +64,14 @@ public:
     bool Recompile(AssetID id);
 
     // ---- ホットリロード (engine_spec.md 8.1) ----
+    // ---- デバイス消失からの復旧 (M88) ----
+    // 全プログラムの D3D オブジェクトを手放す (AssetID・パス・世代は保持)。
+    // 進行中の非同期コンパイルは結果を捨てる (旧デバイスのオブジェクトを含むため)
+    void ReleaseGpu();
+    // 保持している全プログラムを device で作り直す (バイトコードキャッシュがあれば引く)。
+    // 成功したものは世代を +1 する (派生リソースを持つ側が作り直す合図)。戻り値 = 作れなかった数
+    int RecreateAll(GraphicsDevice& device);
+
     // 変更ファイル (正規化パス) に依存する全プログラムの再コンパイルを
     // バックグラウンドで開始する。include 依存グラフ (ShaderProgram::includes) を辿る。
     // M79 sub-02: SurfaceProgram (作者ファイル・MyEngineSurface.hlsli・

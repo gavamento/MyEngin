@@ -24,11 +24,17 @@ public:
     bool Init(Win32Window& window, GraphicsDevice& device, const ImGuiInitOptions& opts = {});
     void Shutdown();
 
+    // デバイス消失からの復旧 (M88)。DX11 バックエンドだけを手放す / 新デバイスへ繋ぎ直す。
+    // ImGui のコンテキストとウィンドウ側のバックエンドは残る (ドッキング配置を失わない)
+    void ReleaseDevice();
+    bool RecreateDevice(GraphicsDevice& device);
+
     void BeginFrame();
     void EndFrame(); // ImGui::Render + RenderDrawData (呼び出し前に RTV をバインドしておくこと)
 
 private:
     bool initialized_ = false;
+    bool deviceBound_ = false; // DX11 バックエンドが生きているか (ReleaseDevice 中は false)
     // io.IniFilename は文字列をコピーせずポインタを保持するだけなので、寿命をここで保証する
     std::string iniPathUtf8_;
 };

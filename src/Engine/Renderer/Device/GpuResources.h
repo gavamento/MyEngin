@@ -75,6 +75,11 @@ public:
         device_ = &device;
         RegisterBuiltinPrimitives();
     }
+    // デバイス消失からの復旧 (M88)。組込みプリミティブの GPU バッファだけを手放し、登録 ID を空に戻す
+    // (次の Init が同名で登録し直す = AssetID は不変)。組込み以外のメッシュには触れない
+    void ReleaseBuiltinGpu();
+    // 全メッシュを捨てる (検証専用: アセットを使わないシーンで復旧の成功経路を通すため)
+    void DiscardAll();
     // GPU デバイス無し (ヘッドレス Server) の初期化。CPU 側の positions / indices / AABB だけを
     // 持つ組込みプリミティブを Init と同じ集合・同じ順序で登録する
     void InitHeadless() { RegisterBuiltinPrimitives(); }
@@ -149,6 +154,10 @@ public:
                             bool srgb = false, bool mips = true);
     Texture* Get(AssetID id);
     AssetID White(); // 1x1 白 (遅延生成)
+    // デバイス消失からの復旧 (M88)。White だけを手放す (次の White() が作り直す)。他のテクスチャには触れない
+    void ReleaseBuiltinGpu();
+    // 全テクスチャを捨てる (検証専用)
+    void DiscardAll();
 
     // M23 非同期ロード: 即座に AssetID を返し、白のプレースホルダを cache に入れる。
     // CPU デコード (stb_image) はワーカースレッド、GPU 作成+差し替えは PollAsyncLoads
@@ -340,6 +349,27 @@ struct RenderResources {
     // ヘッドレス Server 用。組込みメッシュだけ CPU 側データで登録する (テクスチャは device 無しで
     // 素通しのまま)。sim が読む positions / indices / skinnedModels はこれで揃う
     void InitHeadless() { meshes.InitHeadless(); }
+
+    // デバイス消失からの復旧 (M88)。組込みメッシュ / White を手放す・新デバイスで作り直す。
+    // ★組込み以外 (ファイル由来など) は対象外 — 旧デバイスのオブジェクトが残るので、
+    //   復旧の参照数ゲートが不合格になる (sub-03 でこの範囲を広げる)
+    void ReleaseBuiltinGpu()
+    {
+        meshes.ReleaseBuiltinGpu();
+        textures.ReleaseBuiltinGpu();
+    }
+    // 検証専用 (--simulate-device-lost-drop-assets): 組込みを含む全メッシュ / テクスチャを捨てる。
+    // アセットの再作成 (M88c) が入るまで、アセットを使わないシーンで復旧の成功経路を通すための手段
+    void DiscardAssetsForTest()
+    {
+        meshes.DiscardAll();
+        textures.DiscardAll();
+    }
+    void RecreateBuiltins(GraphicsDevice& device)
+    {
+        Init(device);
+        textures.White();
+    }
 };
 
 } // namespace mye

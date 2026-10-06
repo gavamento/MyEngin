@@ -28,6 +28,9 @@ spec 4.2 の再生成レシピを `RenderResources` (`MeshLibrary` / `TextureLib
 3. ゲートの残参照数が sub-02 時点より減っていること (代表シーン、ログの数値を前後で記録)。アセットだけのシーン (メッシュ + テクスチャ + マテリアル、粒子/UI/RT なし) なら Runtime で復旧成功・ゲート合格。
 4. メモリ増の実測 (demo シーン + 三校の代表シーン 1 つ) を実装メモに記録。
 5. (spec 14) selftest (Debug/Release)、check_rules、replay_verify。
+6. 検証専用の `--simulate-device-lost-drop-assets` を丸ごと削除し (EngineConfig::simulateDeviceLostDropAssets、DiscardAssetsForTest / MeshLibrary::DiscardAll / TextureLibrary::DiscardAll、EngineLoop の呼び出し、EngineCli、EngineCliSelfTest)、フラグ無しの Runtime 空シーン (デモ資産あり) で復旧が成功し、ゲートが合格する (sub-02 時点の残参照は 6)。
+7. 既存の入口 `RenderResources::ReleaseBuiltinGpu / RecreateBuiltins` (sub-02) を、組込み以外のメッシュ・テクスチャ・マテリアルにも広げる。別の入口を並べない。
+8. 読み込み中の非同期テクスチャ (プレースホルダ) を抱えたまま復旧しても、完了後に正しいテクスチャへ差し替わる (R4)。
 
 ## 検証コマンド
 - MSBuild Debug|x64 / Release|x64

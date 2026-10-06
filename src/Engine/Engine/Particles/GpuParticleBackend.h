@@ -23,6 +23,8 @@ public:
     const char* Name() const override { return "GPU (Compute)"; }
     bool Init(GraphicsDevice& device, ShaderManager& shaders) override;
     void Shutdown() override;
+    // Shutdown と同じ。復旧用の名前 (GPU 上の粒子の中身は失われる、M88)
+    void ReleaseGpu() { Shutdown(); }
     void Reset() override;
     void Update(World& world, float dt) override;
     void Render(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,

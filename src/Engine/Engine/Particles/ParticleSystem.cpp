@@ -47,6 +47,22 @@ void ParticleSystem::Shutdown()
     gpu_.Shutdown();
 }
 
+void ParticleSystem::ReleaseGpu()
+{
+    cpu_.ReleaseGpu();
+    gpu_.ReleaseGpu();
+}
+
+bool ParticleSystem::RecreateGpu(GraphicsDevice& device, ShaderManager& shaders)
+{
+    const bool cpuOk = cpu_.Init(device, shaders);
+    const bool gpuOk = gpu_.Init(device, shaders);
+    if (!cpuOk || !gpuOk) {
+        MYE_LOG_ERROR("ParticleSystem: backend recreate failed (cpu=%d gpu=%d)", cpuOk, gpuOk);
+    }
+    return cpuOk && gpuOk;
+}
+
 void ParticleSystem::Update(World& world, float dt)
 {
     if (compareMode_) {

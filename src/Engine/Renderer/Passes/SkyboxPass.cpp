@@ -29,6 +29,16 @@ struct SkyCB {
 
 } // namespace
 
+void SkyboxPass::Shutdown()
+{
+    cb_.Reset();
+    depthReadOnly_.Reset();
+    blendOpaque_.Reset();
+    sampler_.Reset();
+    samplerPano_.Reset();
+    ready_ = false;
+}
+
 bool SkyboxPass::Init(GraphicsDevice& device, ShaderManager& shaders)
 {
     ID3D11Device* dev = device.Device();

@@ -21,6 +21,16 @@ bool GpuTimer::Init(GraphicsDevice& device)
     return true;
 }
 
+void GpuTimer::Release()
+{
+    for (Frame& f : frames_) {
+        f = Frame{};
+    }
+    current_ = 0;
+    skip_ = false;
+    lastMs_ = 0.0f;
+}
+
 void GpuTimer::Begin(GraphicsDevice& device)
 {
     Frame& f = frames_[current_];

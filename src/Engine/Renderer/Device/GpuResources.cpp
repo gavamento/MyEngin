@@ -236,6 +236,26 @@ std::vector<AssetEntry> MeshLibrary::Enumerate() const
     return EnumerateNames(names_);
 }
 
+void MeshLibrary::ReleaseBuiltinGpu()
+{
+    AssetID* ids[] = { &cube_, &sphere_, &plane_, &quad_, &cylinder_, &capsule_, &waterPlane_ };
+    for (AssetID* id : ids) {
+        auto it = meshes_.find(id->value);
+        if (it != meshes_.end()) {
+            it->second.vb.Reset();
+            it->second.ib.Reset();
+        }
+        *id = {};
+    }
+}
+
+void MeshLibrary::DiscardAll()
+{
+    meshes_.clear();
+    names_.clear();
+    cube_ = sphere_ = plane_ = quad_ = cylinder_ = capsule_ = waterPlane_ = {};
+}
+
 AssetID MeshLibrary::Cube()
 {
     if (!cube_.IsNull()) {
@@ -959,6 +979,22 @@ Texture* TextureLibrary::Get(AssetID id)
 {
     auto it = textures_.find(id.value);
     return (it != textures_.end()) ? &it->second : nullptr;
+}
+
+void TextureLibrary::ReleaseBuiltinGpu()
+{
+    if (!white_.IsNull()) {
+        textures_.erase(white_.value);
+        names_.erase(white_.value);
+        white_ = {};
+    }
+}
+
+void TextureLibrary::DiscardAll()
+{
+    textures_.clear();
+    names_.clear();
+    white_ = {};
 }
 
 AssetID TextureLibrary::White()

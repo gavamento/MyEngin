@@ -86,6 +86,7 @@ void SsrPass::Shutdown()
     blendAdd_.Reset();
     sceneCopy_.Reset();
     sceneCopySrv_.Reset();
+    timer_.Release();
     copyW_ = 0;
     copyH_ = 0;
     copyFormat_ = DXGI_FORMAT_UNKNOWN;

@@ -30,6 +30,10 @@ public:
     bool Init(GraphicsDevice& device, ShaderManager& shaders, const std::wstring& assetsRoot,
               int backendOverride = -1, int compareOverride = -1);
     void Shutdown();
+    // デバイス消失からの復旧 (M88)。Shutdown と違い **CPU 側のプール (sim 状態) と設定は残し**、
+    // GPU オブジェクトだけを手放す / 作り直す。GPU バックエンドのエミッタの中身は失われる
+    void ReleaseGpu();
+    bool RecreateGpu(GraphicsDevice& device, ShaderManager& shaders);
 
     void Update(World& world, float dt);                       // tick フェーズ 4
     void Render(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,

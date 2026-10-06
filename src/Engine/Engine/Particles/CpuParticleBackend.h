@@ -21,6 +21,8 @@ public:
     const char* Name() const override { return "CPU (SIMD)"; }
     bool Init(GraphicsDevice& device, ShaderManager& shaders) override;
     void Shutdown() override;
+    // GPU オブジェクトだけを手放す (プール = sim 状態は残す。デバイス消失からの復旧、M88)
+    void ReleaseGpu();
     void Reset() override;
     void Update(World& world, float dt) override;
     void Render(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,

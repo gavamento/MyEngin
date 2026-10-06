@@ -189,8 +189,11 @@ void GpuParticleBackend::Shutdown()
     blendAdditive_.Reset();
     blendAlpha_.Reset();
     depthNoWrite_.Reset();
+    sampler_.Reset();
     lightCB_.Reset();       // M63d
     shadowSampler_.Reset(); // M63d
+    collDepthSRV_.Reset();
+    timer_.Release();
 }
 
 void GpuParticleBackend::Reset()

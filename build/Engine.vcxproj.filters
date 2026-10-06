@@ -489,6 +489,12 @@
     <ClCompile Include="..\src\Engine\Engine\Loop\DeviceFatal.cpp">
       <Filter>Engine\Loop</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Loop\DeviceRecovery.cpp">
+      <Filter>Engine\Loop</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Loop\DeviceRecoverySelfTest.cpp">
+      <Filter>Engine\Loop</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Loop\EngineLoop.cpp">
       <Filter>Engine\Loop</Filter>
     </ClCompile>
@@ -1339,6 +1345,12 @@
       <Filter>Engine\HotReload</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Loop\DeviceFatal.h">
+      <Filter>Engine\Loop</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Loop\DeviceRecovery.h">
+      <Filter>Engine\Loop</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Loop\DeviceRecoverySelfTest.h">
       <Filter>Engine\Loop</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Loop\EngineLoop.h">

@@ -5,6 +5,8 @@
 - 往復: 0
 
 ## やること
+
+注 (2026-10-07、sub-02 の前倒しを反映): UI/VFX/粒子の GPU 側、RenderSystem の遅延パス群・RT・フロクセル・IBL・ユーザーポスト、組込みメッシュ/White は sub-02 で復旧対象に入った。このサブで新しく入れるのは、compute runner (ComputeAbiRunner。今は `computeAbi.Shutdown` を呼んでいない)、ProjectComputeRunner / ProjectEffectRunner、ProbeBaker / probeArray / EnvMapBaker、FroxelPass / RtPasses の GpuTimer の取りこぼし。前倒しした分は、下の一覧のうち「実シーンで動くことの確認」(受け入れ 1〜5) だけを行う。Deferred を使うシーンで描画を確認することも含める。
 Engine 層で GPU を持つ残りの所有者を復旧手順に加え、Runtime.exe (エディタ UI 無し) で代表シーンが復旧するところまで閉じる。
 
 対象 (planner の棚卸し。`ComPtr<ID3D11` を持つヘッダから。coder は漏れを確認する — 漏れはゲートが教える):

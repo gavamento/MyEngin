@@ -459,8 +459,12 @@ void DeferredPath::Shutdown()
     perObjectCB_.Reset();
     materialCB_.Reset();
     lightCB_.Reset();
+    boneCB_.Reset();
     sampler_.Reset();
+    shadowSampler_.Reset();
+    iblSampler_.Reset();
     rasterizer_.Reset();
+    rasterizerWire_.Reset();
     rasterizerCullNone_.Reset();
     depthOpaque_.Reset();
     depthDisabled_.Reset();
@@ -495,6 +499,7 @@ void DeferredPath::Shutdown()
     hzb_.Shutdown();
     hzbDebugCB_.Reset();
     ssr_.Shutdown(); // M56d
+    skybox_.Shutdown();
     terrain_.Shutdown(); // M58c
     water_.Shutdown();
     // M79 sub-03
