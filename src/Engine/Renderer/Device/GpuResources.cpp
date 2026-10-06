@@ -146,6 +146,16 @@ DXGI_FORMAT DdsResolveFormat(const DdsHeader& h, const DdsHeaderDx10* dx10, uint
     return DXGI_FORMAT_UNKNOWN;
 }
 
+// ファイル由来テクスチャの復旧レシピを書く (LoadFile / 非同期完了 / ReplaceFromFile の共通)
+void SetFileRecipe(TextureRecipe& recipe, const std::wstring& path, bool srgb, bool mips)
+{
+    recipe = {};
+    recipe.kind = TextureRecipe::Kind::File;
+    recipe.path = path;
+    recipe.srgb = srgb;
+    recipe.mips = mips;
+}
+
 constexpr uint32_t kDdsCaps2Cubemap = 0x200;         // DDSCAPS2_CUBEMAP
 constexpr uint32_t kDx10MiscTextureCube = 0x4;       // D3D11_RESOURCE_MISC_TEXTURECUBE
 
@@ -163,26 +173,10 @@ AssetID MeshLibrary::Register(std::string_view name, std::span<const MeshVertex>
     // Init 前 (ヘッドレス = --selftest 等、M48a) は GPU バッファを作らず CPU 側
     // (AABB / positions / indices) だけ登録する — ローダをウィンドウ / D3D 無しで通すため。
     // 実アプリは必ず Init 済みなのでこの分岐には入らない
-    if (device_) {
-        D3D11_BUFFER_DESC vbd = {};
-        vbd.ByteWidth = static_cast<UINT>(vertices.size_bytes());
-        vbd.Usage = D3D11_USAGE_IMMUTABLE;
-        vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-        D3D11_SUBRESOURCE_DATA vinit = { vertices.data(), 0, 0 };
-
-        D3D11_BUFFER_DESC ibd = {};
-        ibd.ByteWidth = static_cast<UINT>(indices.size_bytes());
-        ibd.Usage = D3D11_USAGE_IMMUTABLE;
-        ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
-        D3D11_SUBRESOURCE_DATA iinit = { indices.data(), 0, 0 };
-
-        ID3D11Device* dev = device_->Device();
-        if (FAILED(dev->CreateBuffer(&vbd, &vinit, mesh.vb.GetAddressOf()))
-            || FAILED(dev->CreateBuffer(&ibd, &iinit, mesh.ib.GetAddressOf()))) {
-            MYE_LOG_ERROR("mesh buffer creation failed: %.*s", static_cast<int>(name.size()),
-                          name.data());
-            return {};
-        }
+    if (device_ && !UploadBuffers(mesh, vertices, indices)) {
+        MYE_LOG_ERROR("mesh buffer creation failed: %.*s", static_cast<int>(name.size()),
+                      name.data());
+        return {};
     }
     mesh.indexCount = static_cast<uint32_t>(indices.size());
 
@@ -197,6 +191,22 @@ AssetID MeshLibrary::Register(std::string_view name, std::span<const MeshVertex>
         mesh.uvs.push_back(mv.uv);
     }
     mesh.indices.assign(indices.begin(), indices.end());
+
+    // M88: 復旧用のスキン属性。非スキン (全頂点で 0) は持たない
+    const auto isSkinned = [](const MeshVertex& v) {
+        return v.boneIndices[0] != 0 || v.boneIndices[1] != 0 || v.boneIndices[2] != 0
+            || v.boneIndices[3] != 0 || v.boneWeights.x != 0.0f || v.boneWeights.y != 0.0f
+            || v.boneWeights.z != 0.0f || v.boneWeights.w != 0.0f;
+    };
+    if (std::any_of(vertices.begin(), vertices.end(), isSkinned)) {
+        mesh.skin.reserve(vertices.size());
+        for (const MeshVertex& mv : vertices) {
+            MeshSkinVertex s;
+            std::memcpy(s.boneIndices, mv.boneIndices, sizeof(s.boneIndices));
+            s.boneWeights = mv.boneWeights;
+            mesh.skin.push_back(s);
+        }
+    }
 
     // ローカル AABB を頂点から計算 (M8: Focus/ピッキング/サムネイル)
     if (!vertices.empty()) {
@@ -236,24 +246,69 @@ std::vector<AssetEntry> MeshLibrary::Enumerate() const
     return EnumerateNames(names_);
 }
 
-void MeshLibrary::ReleaseBuiltinGpu()
+bool MeshLibrary::UploadBuffers(Mesh& mesh, std::span<const MeshVertex> vertices,
+                                std::span<const uint32_t> indices)
 {
-    AssetID* ids[] = { &cube_, &sphere_, &plane_, &quad_, &cylinder_, &capsule_, &waterPlane_ };
-    for (AssetID* id : ids) {
-        auto it = meshes_.find(id->value);
-        if (it != meshes_.end()) {
-            it->second.vb.Reset();
-            it->second.ib.Reset();
-        }
-        *id = {};
+    D3D11_BUFFER_DESC vbd = {};
+    vbd.ByteWidth = static_cast<UINT>(vertices.size_bytes());
+    vbd.Usage = D3D11_USAGE_IMMUTABLE;
+    vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA vinit = { vertices.data(), 0, 0 };
+
+    D3D11_BUFFER_DESC ibd = {};
+    ibd.ByteWidth = static_cast<UINT>(indices.size_bytes());
+    ibd.Usage = D3D11_USAGE_IMMUTABLE;
+    ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA iinit = { indices.data(), 0, 0 };
+
+    ID3D11Device* dev = device_->Device();
+    return SUCCEEDED(dev->CreateBuffer(&vbd, &vinit, mesh.vb.ReleaseAndGetAddressOf()))
+        && SUCCEEDED(dev->CreateBuffer(&ibd, &iinit, mesh.ib.ReleaseAndGetAddressOf()));
+}
+
+void MeshLibrary::ReleaseGpu()
+{
+    for (auto& entry : meshes_) {
+        entry.second.vb.Reset();
+        entry.second.ib.Reset();
     }
 }
 
-void MeshLibrary::DiscardAll()
+int MeshLibrary::RecreateGpu(GraphicsDevice& device)
 {
-    meshes_.clear();
-    names_.clear();
-    cube_ = sphere_ = plane_ = quad_ = cylinder_ = capsule_ = waterPlane_ = {};
+    device_ = &device;
+    // 失敗ログの順序を実行ごとに揃えるため ID 昇順で作る
+    std::vector<uint64_t> ids;
+    ids.reserve(meshes_.size());
+    for (const auto& entry : meshes_) {
+        ids.push_back(entry.first);
+    }
+    std::sort(ids.begin(), ids.end());
+
+    int failed = 0;
+    std::vector<MeshVertex> vertices;
+    for (const uint64_t id : ids) {
+        Mesh& mesh = meshes_[id];
+        // CPU 側 (positions / normals / uvs / skin) は読むだけ。書き換えない
+        vertices.assign(mesh.positions.size(), MeshVertex{});
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            vertices[i].position = mesh.positions[i];
+            vertices[i].normal = mesh.normals[i];
+            vertices[i].uv = mesh.uvs[i];
+            if (!mesh.skin.empty()) {
+                std::memcpy(vertices[i].boneIndices, mesh.skin[i].boneIndices,
+                            sizeof(vertices[i].boneIndices));
+                vertices[i].boneWeights = mesh.skin[i].boneWeights;
+            }
+        }
+        if (!UploadBuffers(mesh, vertices, mesh.indices)) {
+            const auto nameIt = names_.find(id);
+            MYE_LOG_ERROR("[device] mesh buffer recreation failed: %s",
+                          nameIt != names_.end() ? nameIt->second.c_str() : "(unnamed)");
+            ++failed;
+        }
+    }
+    return failed;
 }
 
 AssetID MeshLibrary::Cube()
@@ -589,34 +644,38 @@ AssetID TextureLibrary::LoadFile(const std::wstring& path, bool srgb)
     const bool effSrgb = (imp.srgb == 1) ? true : (imp.srgb == 2) ? false : srgb;
     const bool mips = imp.generateMips != 0;
 
-    const std::string utf8 = WideToUtf8(path);
     Texture t;
+    if (!LoadFileInto(t, path, effSrgb, mips)) {
+        return {};
+    }
+    textures_.emplace(id.value, std::move(t));
+    names_[id.value] = WideToUtf8(path);
+    SetFileRecipe(recipes_[id.value], path, effSrgb, mips);
+    return id;
+}
+
+bool TextureLibrary::LoadFileInto(Texture& t, const std::wstring& path, bool srgb, bool mips)
+{
+    const std::string utf8 = WideToUtf8(path);
     if (HasDdsExt(path)) {
         // M24: BCn/DDS は decode 不要 (GPU が直接サンプルする)。ヘッダを読んで直接テクスチャ化
         // (mips は DDS に焼成済みのため generateMips は非適用)
-        if (!LoadDdsInto(t, path, effSrgb)) {
-            return {};
-        }
-        textures_.emplace(id.value, std::move(t));
-        names_[id.value] = utf8;
-        return id;
+        return LoadDdsInto(t, path, srgb);
     }
     // M51j: DDS 一括クック済みの配布ビルド対応。**元画像が存在しないときだけ**、同名の
     // .dds を同じ AssetID で読む (開発環境ではソースが常にあるので挙動は 1 ビットも
-    // 変わらない)。srgb / mips は元パスの .meta で解決済み (effSrgb — .meta は配布へ残す)
+    // 変わらない)。srgb / mips は元パスの .meta で解決済み (.meta は配布へ残す)
     {
         std::error_code fbEc;
         if (!std::filesystem::exists(path, fbEc)) {
             const std::wstring sibling =
                 std::filesystem::path(path).replace_extension(L".dds").wstring();
             if (std::filesystem::exists(sibling, fbEc)) {
-                if (!LoadDdsInto(t, sibling, effSrgb)) {
-                    return {};
+                if (!LoadDdsInto(t, sibling, srgb)) {
+                    return false;
                 }
                 MYE_LOG_INFO("texture served from cooked dds: %s", utf8.c_str());
-                textures_.emplace(id.value, std::move(t));
-                names_[id.value] = utf8;
-                return id;
+                return true;
             }
         }
     }
@@ -624,17 +683,15 @@ AssetID TextureLibrary::LoadFile(const std::wstring& path, bool srgb)
     stbi_uc* pixels = stbi_load(utf8.c_str(), &w, &h, &comp, 4);
     if (!pixels) {
         MYE_LOG_ERROR("texture load failed: %s (%s)", utf8.c_str(), stbi_failure_reason());
-        return {};
+        return false;
     }
-    const bool ok = CreateFromPixels(t, pixels, w, h, effSrgb, mips);
+    const bool ok = CreateFromPixels(t, pixels, w, h, srgb, mips);
     stbi_image_free(pixels);
     if (!ok) {
         MYE_LOG_ERROR("texture creation failed: %s", utf8.c_str());
-        return {};
+        return false;
     }
-    textures_.emplace(id.value, std::move(t));
-    names_[id.value] = utf8;
-    return id;
+    return true;
 }
 
 // UNORM → 対応する _SRGB フォーマット (M38a)。sRGB 変種の無いもの (BC5=ノーマル等) はそのまま
@@ -878,14 +935,18 @@ void TextureLibrary::PollAsyncLoads()
         // M39b: 非同期経路 (サムネイル等) も .meta の srgb on を尊重する — 先勝ちキャッシュに
         // 非 sRGB で入ると 3D 側が色褪せるため。auto は従来どおり UNORM (ImGui 直表示向け)
         importmeta::TextureImportSettings imp;
+        std::wstring path;
         auto nameIt = names_.find(r.id);
         if (nameIt != names_.end()) {
-            importmeta::Resolve(Utf8ToWide(nameIt->second), imp);
+            path = Utf8ToWide(nameIt->second);
+            importmeta::Resolve(path, imp);
         }
         Texture t;
         if (CreateFromPixels(t, r.pixels.data(), r.w, r.h, imp.srgb == 1,
                              imp.generateMips != 0)) {
             textures_[r.id] = std::move(t); // プレースホルダを実体に差し替え
+            // 復旧で作り直せるようにする
+            SetFileRecipe(recipes_[r.id], path, imp.srgb == 1, imp.generateMips != 0);
         }
     }
 }
@@ -932,6 +993,12 @@ AssetID TextureLibrary::CreateFromEncoded(std::string_view name, const void* byt
     }
     textures_[id.value] = std::move(t);
     names_[id.value].assign(name);
+    TextureRecipe& recipe = recipes_[id.value];
+    recipe = {};
+    recipe.kind = TextureRecipe::Kind::Encoded;
+    recipe.bytes.assign(static_cast<const uint8_t*>(bytes),
+                        static_cast<const uint8_t*>(bytes) + size);
+    recipe.srgb = srgb;
     return id;
 }
 
@@ -948,6 +1015,12 @@ AssetID TextureLibrary::CreateSolid(std::string_view name, uint8_t r, uint8_t g,
     }
     textures_.emplace(id.value, std::move(t));
     names_[id.value].assign(name);
+    TextureRecipe& recipe = recipes_[id.value];
+    recipe = {};
+    recipe.kind = TextureRecipe::Kind::Rgba8;
+    recipe.bytes.assign(pixel, pixel + 4);
+    recipe.width = 1;
+    recipe.height = 1;
     return id;
 }
 
@@ -967,6 +1040,14 @@ AssetID TextureLibrary::CreateFromRgba8(std::string_view name, const uint8_t* rg
     }
     textures_.emplace(id.value, std::move(t));
     names_[id.value].assign(name);
+    TextureRecipe& recipe = recipes_[id.value];
+    recipe = {};
+    recipe.kind = TextureRecipe::Kind::Rgba8;
+    recipe.bytes.assign(rgba, rgba + static_cast<size_t>(w) * h * 4);
+    recipe.width = w;
+    recipe.height = h;
+    recipe.srgb = srgb;
+    recipe.mips = mips;
     return id;
 }
 
@@ -981,20 +1062,90 @@ Texture* TextureLibrary::Get(AssetID id)
     return (it != textures_.end()) ? &it->second : nullptr;
 }
 
-void TextureLibrary::ReleaseBuiltinGpu()
+void TextureLibrary::ReleaseGpu()
 {
-    if (!white_.IsNull()) {
-        textures_.erase(white_.value);
-        names_.erase(white_.value);
-        white_ = {};
+    for (auto& entry : textures_) {
+        entry.second.tex.Reset();
+        entry.second.srv.Reset();
     }
 }
 
-void TextureLibrary::DiscardAll()
+bool TextureLibrary::MakePlaceholder(Texture& out)
 {
-    textures_.clear();
-    names_.clear();
-    white_ = {};
+    Texture* white = Get(white_);
+    if (white == nullptr || white == &out || !white->srv) {
+        return false;
+    }
+    out.tex = white->tex; // 作成時のプレースホルダと同じく White を共有する
+    out.srv = white->srv;
+    out.width = 1;
+    out.height = 1;
+    out.srgb = false;
+    return true;
+}
+
+bool TextureLibrary::CreateFromRecipe(Texture& out, const TextureRecipe& recipe)
+{
+    switch (recipe.kind) {
+    case TextureRecipe::Kind::File:
+        return LoadFileInto(out, recipe.path, recipe.srgb, recipe.mips);
+    case TextureRecipe::Kind::Encoded: {
+        int w = 0, h = 0, comp = 0;
+        stbi_uc* pixels = stbi_load_from_memory(recipe.bytes.data(),
+                                                static_cast<int>(recipe.bytes.size()), &w, &h,
+                                                &comp, 4);
+        if (!pixels) {
+            return false;
+        }
+        const bool ok = CreateFromPixels(out, pixels, w, h, recipe.srgb);
+        stbi_image_free(pixels);
+        return ok;
+    }
+    case TextureRecipe::Kind::Rgba8:
+        return CreateFromPixels(out, recipe.bytes.data(), recipe.width, recipe.height,
+                                recipe.srgb, recipe.mips);
+    }
+    return false;
+}
+
+int TextureLibrary::RecreateGpu(GraphicsDevice& device)
+{
+    device_ = &device;
+    // プレースホルダは新しい White を共有するので、White を最初に作る。
+    // 失敗ログの順序を実行ごとに揃えるため ID 昇順で作る
+    std::vector<uint64_t> ids;
+    ids.reserve(textures_.size());
+    for (const auto& entry : textures_) {
+        if (entry.first != white_.value) {
+            ids.push_back(entry.first);
+        }
+    }
+    std::sort(ids.begin(), ids.end());
+    if (!white_.IsNull() && textures_.contains(white_.value)) {
+        ids.insert(ids.begin(), white_.value);
+    }
+
+    int failed = 0;
+    for (const uint64_t id : ids) {
+        Texture& slot = textures_[id];
+        const auto recipeIt = recipes_.find(id);
+        // 読み込み中 (pending_) はレシピが無く、完了時に PollAsyncLoads が実体へ差し替える
+        if (recipeIt != recipes_.end() && !pending_.contains(id)) {
+            Texture fresh;
+            if (CreateFromRecipe(fresh, recipeIt->second)) {
+                slot = std::move(fresh);
+                continue;
+            }
+            const auto nameIt = names_.find(id);
+            MYE_LOG_WARN("[device] texture recreation failed, using placeholder: %s",
+                         nameIt != names_.end() ? nameIt->second.c_str() : "(unnamed)");
+            ++failed;
+        }
+        if (!MakePlaceholder(slot)) {
+            ++failed;
+        }
+    }
+    return failed;
 }
 
 AssetID TextureLibrary::White()
@@ -1025,6 +1176,7 @@ bool TextureLibrary::ReplaceFromFile(AssetID id, const std::wstring& path)
         it->second = std::move(fresh);
         ++generations_[id.value];
         pending_.erase(id.value);
+        SetFileRecipe(recipes_[id.value], path, srgb, mips);
         return true;
     }
     const std::string utf8 = WideToUtf8(path);
@@ -1042,6 +1194,7 @@ bool TextureLibrary::ReplaceFromFile(AssetID id, const std::wstring& path)
     it->second = std::move(fresh); // AssetID は不変のまま実体を差し替え (spec 8.2)
     ++generations_[id.value];
     pending_.erase(id.value);
+    SetFileRecipe(recipes_[id.value], path, srgb, mips);
     return true;
 }
 
@@ -1476,6 +1629,17 @@ SurfaceMaterialState* MaterialLibrary::GetOrBuildSurfaceState(AssetID materialId
     st.builtFromRevision = src.revision;
     st.builtFromGeneration = gen;
     return &st;
+}
+
+void MaterialLibrary::ReleaseGpu()
+{
+    for (auto& entry : surfaceStates_) {
+        SurfaceMaterialState& st = entry.second;
+        st.perMaterialGpuCB.Reset();
+        // revision は 1 から振られる (nextSurfaceRevision_) ので 0 は不一致 = 次の
+        // GetOrBuildSurfaceState が必ず再パックして CB を作り直す
+        st.builtFromRevision = 0;
+    }
 }
 
 float MaterialLibrary::GetSurfaceBoundsPadding(AssetID materialId) const

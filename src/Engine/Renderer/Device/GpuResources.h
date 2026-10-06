@@ -38,6 +38,12 @@ struct MeshVertex {
     DirectX::XMFLOAT4 boneWeights = { 0, 0, 0, 0 }; // BLENDWEIGHT (R32G32B32A32_FLOAT)
 };
 
+// スキン用の頂点属性 (MeshVertex の boneIndices / boneWeights)。GPU 作り直しのための CPU 側レシピ
+struct MeshSkinVertex {
+    uint8_t boneIndices[4] = { 0, 0, 0, 0 };
+    DirectX::XMFLOAT4 boneWeights = { 0, 0, 0, 0 };
+};
+
 struct Mesh {
     Microsoft::WRL::ComPtr<ID3D11Buffer> vb;
     Microsoft::WRL::ComPtr<ID3D11Buffer> ib;
@@ -53,6 +59,9 @@ struct Mesh {
     // BLAS の三角形属性 (補間法線 / UV) をここから焼く。+20B/頂点
     std::vector<DirectX::XMFLOAT3> normals;
     std::vector<DirectX::XMFLOAT2> uvs;
+    // M88: デバイス復旧で vb を作り直す素材。positions / normals / uvs と合わせて MeshVertex 列を復元する。
+    // スキンの属性が全頂点で 0 のメッシュ (非スキン) は空のまま (頂点あたり 20B を持たない)
+    std::vector<MeshSkinVertex> skin;
 };
 
 // アセット列挙の 1 件 (Asset Browser / 参照ピッカー用、M8)。
@@ -75,11 +84,11 @@ public:
         device_ = &device;
         RegisterBuiltinPrimitives();
     }
-    // デバイス消失からの復旧 (M88)。組込みプリミティブの GPU バッファだけを手放し、登録 ID を空に戻す
-    // (次の Init が同名で登録し直す = AssetID は不変)。組込み以外のメッシュには触れない
-    void ReleaseBuiltinGpu();
-    // 全メッシュを捨てる (検証専用: アセットを使わないシーンで復旧の成功経路を通すため)
-    void DiscardAll();
+    // デバイス消失からの復旧 (M88)。全メッシュの GPU バッファだけを手放す。
+    // positions / indices / AABB などの CPU 側と AssetID は一切変えない
+    void ReleaseGpu();
+    // 新デバイスで全メッシュの vb / ib を CPU 側の素材から作り直す。作れなかったメッシュ数を返す
+    int RecreateGpu(GraphicsDevice& device);
     // GPU デバイス無し (ヘッドレス Server) の初期化。CPU 側の positions / indices / AABB だけを
     // 持つ組込みプリミティブを Init と同じ集合・同じ順序で登録する
     void InitHeadless() { RegisterBuiltinPrimitives(); }
@@ -103,6 +112,9 @@ public:
     std::vector<AssetEntry> Enumerate() const;
 
 private:
+    // vb / ib を作って mesh へ入れる。Register と復旧 (RecreateGpu) の共通の隘路
+    bool UploadBuffers(Mesh& mesh, std::span<const MeshVertex> vertices,
+                       std::span<const uint32_t> indices);
     void RegisterBuiltinPrimitives()
     {
         Cube();
@@ -135,6 +147,23 @@ struct Texture {
     bool srgb = false; // M38a: _SRGB フォーマットでロード済み (ホットリロードで維持)
 };
 
+// M88: テクスチャの GPU 側を作り直すための CPU 側レシピ (作成元ごと)。ファイル由来はパスだけを持ち、
+// 作り直しのときにディスクの現内容を読む (ホットリロードと同じ扱い)
+struct TextureRecipe {
+    enum class Kind : uint8_t {
+        File,    // path + srgb + mips
+        Encoded, // bytes = エンコード済み画像 (GLB 埋め込み等) + srgb
+        Rgba8,   // bytes = 生 RGBA8 (width x height) + srgb + mips。単色もここ
+    };
+    Kind kind = Kind::Rgba8;
+    std::wstring path;
+    std::vector<uint8_t> bytes;
+    int width = 0;
+    int height = 0;
+    bool srgb = false;
+    bool mips = true;
+};
+
 class TextureLibrary {
 public:
     void Init(GraphicsDevice& device) { device_ = &device; }
@@ -154,10 +183,12 @@ public:
                             bool srgb = false, bool mips = true);
     Texture* Get(AssetID id);
     AssetID White(); // 1x1 白 (遅延生成)
-    // デバイス消失からの復旧 (M88)。White だけを手放す (次の White() が作り直す)。他のテクスチャには触れない
-    void ReleaseBuiltinGpu();
-    // 全テクスチャを捨てる (検証専用)
-    void DiscardAll();
+    // デバイス消失からの復旧 (M88)。全テクスチャの GPU 側だけを手放す (エントリと AssetID は残す =
+    // Get() が返すポインタは有効なまま)
+    void ReleaseGpu();
+    // 新デバイスで全テクスチャをレシピから作り直す。読み込み中 (非同期) のものと作れなかったものは
+    // 新しい White を共有するプレースホルダにする。作れなかった数を返す
+    int RecreateGpu(GraphicsDevice& device);
 
     // M23 非同期ロード: 即座に AssetID を返し、白のプレースホルダを cache に入れる。
     // CPU デコード (stb_image) はワーカースレッド、GPU 作成+差し替えは PollAsyncLoads
@@ -185,11 +216,18 @@ private:
                           bool mips = true);
     bool LoadDdsInto(Texture& out, const std::wstring& path,
                      bool srgb = false); // M24: BCn/DDS (依存ゼロ)
+    // ファイル (DDS / 画像 / 配布用の同名 .dds) から作る。LoadFile と復旧の共通の隘路
+    bool LoadFileInto(Texture& out, const std::wstring& path, bool srgb, bool mips);
+    // レシピから GPU テクスチャを作る
+    bool CreateFromRecipe(Texture& out, const TextureRecipe& recipe);
+    // out を White 共有のプレースホルダにする (White が無ければ false)
+    bool MakePlaceholder(Texture& out);
     void EnsureWorker();
     void AsyncWorker();
 
     GraphicsDevice* device_ = nullptr;
     std::unordered_map<uint64_t, Texture> textures_;
+    std::unordered_map<uint64_t, TextureRecipe> recipes_; // レシピの無いエントリ = プレースホルダ
     std::unordered_map<uint64_t, std::string> names_;
     AssetID white_ = {};
 
@@ -303,6 +341,10 @@ public:
     SurfaceMaterialState* GetOrBuildSurfaceState(AssetID materialId, ShaderManager& shaders,
                                                  TextureLibrary& textures, GraphicsDevice& device);
 
+    // デバイス消失からの復旧 (M88)。サーフェスマテリアルの GPU 側 CB を手放し、次の
+    // GetOrBuildSurfaceState で CPU 側の perMaterialCB から作り直させる。Material 本体は GPU を持たない
+    void ReleaseGpu();
+
     // M79 sub-06: 視錐台カリング / CSM キャスター AABB 集約の余白 [m]。サーフェスでない
     // マテリアル (横テーブルに未登録) は 0 を返す — padding は非サーフェスに効かない (spec §4.1)。
     // ジョブ並列のカリングステージの中で呼ばないこと (直列のステージ 1 で解決してキャッシュする)
@@ -350,25 +392,20 @@ struct RenderResources {
     // 素通しのまま)。sim が読む positions / indices / skinnedModels はこれで揃う
     void InitHeadless() { meshes.InitHeadless(); }
 
-    // デバイス消失からの復旧 (M88)。組込みメッシュ / White を手放す・新デバイスで作り直す。
-    // ★組込み以外 (ファイル由来など) は対象外 — 旧デバイスのオブジェクトが残るので、
-    //   復旧の参照数ゲートが不合格になる (sub-03 でこの範囲を広げる)
-    void ReleaseBuiltinGpu()
+    // デバイス消失からの復旧 (M88)。メッシュ / テクスチャ / マテリアルの GPU 側だけを手放す・
+    // 新デバイスで作り直す。AssetID と CPU 側のデータ (sim が読む positions / indices など) は変えない。
+    // skinnedModels は GPU を持たない
+    void ReleaseGpu()
     {
-        meshes.ReleaseBuiltinGpu();
-        textures.ReleaseBuiltinGpu();
+        meshes.ReleaseGpu();
+        textures.ReleaseGpu();
+        materials.ReleaseGpu();
     }
-    // 検証専用 (--simulate-device-lost-drop-assets): 組込みを含む全メッシュ / テクスチャを捨てる。
-    // アセットの再作成 (M88c) が入るまで、アセットを使わないシーンで復旧の成功経路を通すための手段
-    void DiscardAssetsForTest()
+    // 作れなかったメッシュ / テクスチャの合計数を返す (0 = 全部成功)
+    int RecreateGpu(GraphicsDevice& device)
     {
-        meshes.DiscardAll();
-        textures.DiscardAll();
-    }
-    void RecreateBuiltins(GraphicsDevice& device)
-    {
-        Init(device);
-        textures.White();
+        const int failedTextures = textures.RecreateGpu(device);
+        return failedTextures + meshes.RecreateGpu(device);
     }
 };
 

@@ -50,6 +50,7 @@ AGENTS.md §3.4「一部の失敗で正常な機能まで使用不能にしな�
   - D3D12 化、マルチ GPU 切り替え
 - 後回し:
   - DLL/C# への `OnDeviceRestored` 通知 (要望が出たら ABI v28 で)
+  - 大きいテクスチャの段階的な作り直し (プレースホルダで先に復帰し、順に差し替える) / DDS クックによる復旧時間の短縮 (2026-10-07 sub-03 で既定デモが Release 約 4 s と判明。現状は許容)
 
 ## 4. 仕様
 
@@ -204,3 +205,9 @@ Recovering ──(再作成失敗 / ゲート不合格 / 連続消失)──> Fa
   - R4 回答: `TextureLibrary::AsyncWorker` は CPU デコードだけを行い、D3D オブジェクトはメインスレッドの `PollAsyncLoads` で作る。このため 4.1.1 手順 1 (ワーカーの排出) は不要とする。ただし、読み込み中のプレースホルダとの整合は sub-03 で確認する。
   - サブ境界の移動: UI/VFX/粒子 (GPU 側のみ。CPU プールは保持)、RenderSystem の遅延パス群・RT・フロクセル・IBL・ユーザーポスト、組込みメッシュ/White を sub-02 へ前倒しした。sub-04 には compute runner、ProbeBaker/probeArray、RenderSystem 内の中身 (TAA 履歴等) の確認、Deferred を使うシーンでの描画確認、受け入れ 6/10/11 が残る。
   - 検証専用 CLI `--simulate-device-lost-drop-assets` を暫定で認める。**sub-03 で削除する** (sub-03 の受け入れ条件に追加)。
+- 2026-10-07 (coder SELF_EVAL sub-03 round 1):
+  - 入口名を `RenderResources::ReleaseGpu / RecreateGpu` に確定した (組込み専用ではなくなったため)。単色テクスチャは Rgba8 レシピで表す。
+  - 4.1.1 / 4.4 復旧時間: テクスチャのデコードが支配的で、既定デモ (2048² PNG 56 枚) では Release 約 4 s・Debug 約 13 s かかる。**許容する。** TDR 自体が数秒画面を止めるうえ、sim は止まらず、ログに開始・完了・所要時間が出るので「理由の分からない無応答」には当たらない。代替案は採らなかった: デコード済み RGBA8 の保持は約 900 MB で非現実的。段階的な差し替えと DDS クックは後回し (3. 後回しへ追加)。
+  - 作り直しに失敗したアセットは、既存の読み込み失敗と同じ代替 (テクスチャは White、メッシュはログを出して描画を飛ばす) で続行し、Fatal にはしない。メッシュの vb/ib が null のときに描画経路が安全かどうかは sub-04 で確認する。
+  - SkinnedModelLibrary は GPU を持たないので対象外 (棚卸しの訂正)。
+  - Surface マテリアルの CB の作り直しは、sub-04 の描画確認 (surface を使うシーン) で検証する。

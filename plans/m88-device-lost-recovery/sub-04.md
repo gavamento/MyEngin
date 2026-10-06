@@ -35,6 +35,8 @@ R3 の確認: GameLogic / C# が compute の結果を sim へ読み戻してい�
 4. (spec 10) 既存の rep を検証再生する実行に `--simulate-device-lost` を足して一致。`tools\replay_verify.bat` 一致。
 5. (spec 11) compute を使うシーン/テストで復旧後の Dispatch がエラーなく動く。ABI 定義の差分なし。
 6. (spec 14) selftest (Debug/Release)、check_rules、replay_verify。
+7. (sub-03 から移管) surface マテリアル (`*.surface`) を使うシーンで復旧後に描画が一致し、`perMaterialGpuCB` が作り直されている。SelfTest でもスクショ比較でもよい。
+8. (sub-03 から移管) メッシュの作り直しに失敗した (vb/ib が null) ときに、Forward / Deferred / 影 / ピッキング以外のエンジン描画経路が落ちないことをコードで確認する。必要なら null を読み飛ばす処理を足す。
 
 ## 検証コマンド
 - MSBuild Debug|x64 / Release|x64

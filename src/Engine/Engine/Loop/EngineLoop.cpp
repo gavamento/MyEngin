@@ -1776,10 +1776,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         renderSystem.ReleaseGpu();
         deferredPath.Shutdown();
         forwardPath.Shutdown();
-        resources.ReleaseBuiltinGpu();
-        if (config.simulateDeviceLostDropAssets) {
-            resources.DiscardAssetsForTest();
-        }
+        resources.ReleaseGpu();
         shaderManager.ReleaseGpu();
         imgui.ReleaseDevice();
         swapChain.Shutdown();
@@ -1806,7 +1803,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         const double shaderMs = (clock.Now() - tShader) * 1000.0;
         MYE_LOG_INFO("[device] shaders recreated in %.1f ms (%d failed)", shaderMs, shadersFailed);
         if (rebuilt) {
-            resources.RecreateBuiltins(device);
+            // 作れなかったアセットは個別にログへ出る (白 / 描画欠けで続行する)
+            const double tAssets = clock.Now();
+            const int assetsFailed = resources.RecreateGpu(device);
+            MYE_LOG_INFO("[device] assets recreated in %.1f ms (%d failed)",
+                         (clock.Now() - tAssets) * 1000.0, assetsFailed);
         }
         const bool rebuiltAll = rebuilt && forwardPath.Init(device, shaderManager)
             && deferredPath.Init(device, shaderManager);

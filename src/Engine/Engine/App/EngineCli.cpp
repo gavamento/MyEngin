@@ -229,11 +229,6 @@ const CliFlag kEngineCliFlags[] = {
           a.c.simulateDeviceLostFatal = true;
           return true;
       } },
-    { L"--simulate-device-lost-drop-assets", CliValue::None,
-      [](CliArgs& a) {
-          a.c.simulateDeviceLostDropAssets = true;
-          return true;
-      } },
     { L"--exposure", CliValue::One,
       [](CliArgs& a) {
           a.c.postFxExposure = static_cast<float>(_wtof(a.v1));
