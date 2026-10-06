@@ -105,7 +105,7 @@
       - joints: `2b70027` と `cb1f424` の両方。両方戻すと maxDiff=0 (物理だけ戻すと 38 画素、影だけ戻すと 548 画素残る)
       - acoustic_forward / acoustic_deferred: `c47fd5e` (AcousticNav の「登らない」規則、9/13)。別ツリーで順にビルドして撮ると、golden を更新した `5af95e4` と `aaffa41` では maxDiff=0、`c47fd5e` で今日と同じ 640 / 731 画素 (tol=0) に変わる
     - **6 枚は `5896d06` で更新済み** (ユーザー承認。`shot_verify.bat --update` 後に `tests\golden` で変わったのはこの 6 枚だけ)。
-    - CI の履歴とも一致する: acoustic は 9/13 から、parts / joints は 9/18 から落ちている (`gh run view --log-failed`)。CI だけで落ちる 2 枚は別件 — `ui_probe_720p` は 1024x768 のランナーで窓が 1028 に縮むサイズ不一致 (Win32Window の WM_GETMINMAXINFO で解消)、`ui_widgets` (219/20) はランナーの絵を見てから判断する
+    - CI の履歴とも一致する: acoustic は 9/13 から、parts / joints は 9/18 から落ちている (`gh run view --log-failed`)。CI だけで落ちる 2 枚は別件 — `ui_probe_720p` は 1024x768 のランナーで窓が 1028 に縮むサイズ不一致 (Win32Window の WM_GETMINMAXINFO で解消)、`ui_widgets` (219/20) はランナーの絵を確認して CI から外した (`da3df20`、ユーザー決定): 違うのは白い縦 1 画素の線 20 画素 (x=322 / 642 / 647) で、矩形の右端が画素の中心に乗る列を塗るかどうかが WARP の版で反転する。原因そのものを直すなら UIRenderer で矩形の端を画素境界へ丸める (未着手、UI の見た目が変わる設計変更)
   - (c) ユーザー要望 (2026-10-06): replay_verify を音なし・最背面で回したい。音は MYE_EXTRA_ARGS=--no-audio で対応可。最背面は CLI オプション (--background: SW_SHOWNOACTIVATE + HWND_BOTTOM) の追加を提案中 (返事待ち)。
 - (sub-07 → sub-14) ADR-025: Patrol は入るたびに最近傍点から、親付きルートは前 tick の WorldMatrix。
 - (sub-06 → sub-14) ADR-025 の既知の限界: SubTree は平らな展開・上限 1024・部分木の根の LowerPriority は Self 扱い・BB 継承なし・遷移中の AnimatorPlay はブレンド途中のポーズから飛ぶ。
