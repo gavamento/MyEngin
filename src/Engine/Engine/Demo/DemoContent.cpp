@@ -4680,4 +4680,207 @@ void BuildPerceptionShowcaseScene(EngineContext& ctx)
     }
 }
 
+
+// M85: --bt-demo。壁のある広場を見張り 2 体 (NavMeshAgent + AIPerception + BehaviorTree + AnimatorController) が巡回し、
+// プレイヤー役が見張り A の視界へ入って見つかり、壁の向こうへ逃げて見失わせる。
+//   巡回 -> 発見 (僚機 B へ GuardAlert を送る) -> 追跡 -> 見失う -> 捜索 -> 巡回へ戻る、が 1 回の実行に入る
+// 木は assets\ai\guard.bt.json (+ guard.bb.json / guard_sense.bt.json)。A の巡回ルートは BehaviorTreeComponent の
+// Entity キーの初期値で、僚機 B のルートだけ GameLogic の BtDemoDriver が BtSetBlackboard (ABI v27) で渡す。
+// プレイヤー役の動きと段階のログは BtDemoDriver (GameLogic、固定 tick で決まる)。
+// GameLogic.dll が無い構成 (ヘッドレスの selftest など) では誰も動かず、B は巡回しない。C# のタスクは使わない (C# レーンは replay の被覆外)
+// ★ナビメッシュは --nav-demo と同じくメモリ上で焼いて登録する (`nav://bt-demo`)
+void BuildBtShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    World& w = s.GetWorld();
+    RenderResources& res = *ctx.resources;
+    s.SetName("bt_showcase");
+
+    // .meta の GUID (assets\ai\guard.bt.json.meta / guard.controller.json.meta)
+    constexpr uint64_t kGuardTreeGuid = 0x5d2e9a4c71b83f06ull;
+    constexpr uint64_t kAnimatorControllerGuid = 0xc91d4f27e6a05b83ull;
+
+    auto makeMat = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = AssetID{ HashStr("forward_lit") };
+        m.texture = res.textures.White();
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    makeMat("btdemo_floor", 0.30f, 0.32f, 0.36f);
+    makeMat("btdemo_wall", 0.45f, 0.30f, 0.28f);
+    const AssetID playerMat = makeMat("btdemo_player", 0.95f, 0.75f, 0.25f);
+    const AssetID guardMatA = makeMat("btdemo_guard_a", 0.35f, 0.55f, 0.90f);
+    const AssetID guardMatB = makeMat("btdemo_guard_b", 0.45f, 0.85f, 0.55f);
+    const AssetID noseMat = makeMat("btdemo_nose", 0.90f, 0.30f, 0.30f);
+    const AssetID routeMat = makeMat("btdemo_route", 0.90f, 0.90f, 0.30f);
+    const AssetID cube = res.meshes.Cube();
+
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    camera.SetLocalPosition(0.0f, 26.0f, -17.0f);
+    camera.SetLocalRotationEuler(58.0f, 0.0f, 0.0f);
+
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(50.0f, -30.0f, 0.0f);
+
+    {
+        GameObject envGo = s.CreateGameObject("Environment");
+        auto* env = envGo.AddComponent<PhysicsEnvironmentComponent>();
+        env->gravity = { 0.0f, -9.81f, 0.0f };
+    }
+
+    auto addBlock = [&](const char* name, DirectX::XMFLOAT3 center, DirectX::XMFLOAT3 half, const char* material) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(center.x, center.y, center.z);
+        go.SetLocalScale(half.x * 2.0f, half.y * 2.0f, half.z * 2.0f);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = AssetID{ HashStr(material) };
+        auto* col = go.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kBox;
+        col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        return go;
+    };
+    addBlock("Floor", { 0.0f, -0.5f, 0.0f }, { 14.0f, 0.5f, 14.0f }, "btdemo_floor");
+    // 東西に長い壁。西端 (x = -4) の手前だけが通り道で、南側の見張りの視線を北側から切る
+    addBlock("Wall", { 5.0f, 1.5f, 0.0f }, { 9.0f, 1.5f, 0.4f }, "btdemo_wall");
+
+    GameObject surfaceGo = s.CreateGameObject("NavMesh Surface");
+    {
+        auto* sf = surfaceGo.AddComponent<NavMeshSurfaceComponent>();
+        sf->center = { 0.0f, 3.0f, 0.0f };
+        sf->size = { 30.0f, 10.0f, 30.0f };
+    }
+
+    // CC の中心は足元から 0.9 m 上 (既定の高さ 1.8)
+    constexpr float kCcHalfHeight = 0.9f;
+    auto addCapsuleBody = [&](GameObject owner, AssetID material, bool nose) {
+        GameObject body = s.CreateGameObject("Body");
+        body.SetParent(owner);
+        body.SetLocalScale(0.6f, 0.9f, 0.6f);
+        auto* mr = body.AddComponent<MeshRendererComponent>();
+        mr->mesh = res.meshes.Capsule();
+        mr->material = material;
+        if (nose) {
+            // 前 (+Z) を示す鼻。見張りがどちらを向いているかが絵で分かる
+            GameObject tip = s.CreateGameObject("Nose");
+            tip.SetParent(owner);
+            tip.SetLocalPosition(0.0f, 0.7f, 0.35f);
+            tip.SetLocalScale(0.15f, 0.15f, 0.3f);
+            auto* nmr = tip.AddComponent<MeshRendererComponent>();
+            nmr->mesh = cube;
+            nmr->material = noseMat;
+        }
+    };
+
+    // 巡回ルート。点はエンティティのローカル座標で、ルートは原点に置くのでワールドと同じ
+    auto addRoute = [&](const char* name, std::initializer_list<DirectX::XMFLOAT3> points) {
+        GameObject route = s.CreateGameObject(name);
+        auto* pr = route.AddComponent<PatrolRouteComponent>();
+        pr->mode = patrolmode::kLoop;
+        pr->pointCount = static_cast<int32_t>(points.size());
+        int index = 0;
+        for (const DirectX::XMFLOAT3& p : points) {
+            pr->points[index] = p;
+            pr->waitTicks[index] = 20;
+            // 点の目印 (見た目だけ)
+            GameObject mark = s.CreateGameObject("Mark");
+            mark.SetParent(route);
+            mark.SetLocalPosition(p.x, 0.05f, p.z);
+            mark.SetLocalScale(0.5f, 0.1f, 0.5f);
+            auto* mmr = mark.AddComponent<MeshRendererComponent>();
+            mmr->mesh = cube;
+            mmr->material = routeMat;
+            ++index;
+        }
+        return route;
+    };
+    GameObject routeA = addRoute("Route A", { { -11.0f, 0.0f, -10.0f }, { -3.0f, 0.0f, -10.0f }, { -3.0f, 0.0f, -4.0f },
+                                              { -11.0f, 0.0f, -4.0f } });
+    addRoute("Route B", { { 11.0f, 0.0f, -10.0f }, { 11.0f, 0.0f, -4.0f }, { 5.0f, 0.0f, -4.0f }, { 5.0f, 0.0f, -10.0f } });
+
+    // 見張り。陣営 1、プレイヤー (陣営 0) だけが敵。B は視界を狭くして、A の知らせ (GuardAlert) で動く形にする
+    struct GuardSpec {
+        const char* name;
+        DirectX::XMFLOAT3 pos;
+        float sightRadius;
+        float loseSightRadius;
+        float fovDeg;
+        AssetID material;
+    };
+    const GuardSpec guards[] = {
+        { "Guard A", { -11.0f, kCcHalfHeight, -10.0f }, 12.0f, 14.0f, 120.0f, guardMatA },
+        { "Guard B", { 11.0f, kCcHalfHeight, -10.0f }, 6.0f, 8.0f, 90.0f, guardMatB },
+    };
+    std::vector<GameObject> guardObjects;
+    for (const GuardSpec& g : guards) {
+        GameObject guard = s.CreateGameObject(g.name);
+        guard.SetLocalPosition(g.pos.x, g.pos.y, g.pos.z);
+        guard.AddComponent<CharacterControllerComponent>();
+        auto* agent = guard.AddComponent<NavMeshAgentComponent>();
+        agent->avoidanceQuality = 1;
+        auto* p = guard.AddComponent<AIPerceptionComponent>();
+        p->eyeHeight = 0.7f;
+        p->sightRadius = g.sightRadius;
+        p->loseSightRadius = g.loseSightRadius;
+        p->fovDeg = g.fovDeg;
+        p->faction = 1;
+        p->hostileMask = 1u << 0;
+        p->forgetTicks = 300;
+        p->predictionTicks = 60;
+        guard.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ kAnimatorControllerGuid };
+        auto* bt = guard.AddComponent<BehaviorTreeComponent>();
+        bt->tree = AssetID{ kGuardTreeGuid };
+        bt->drawDebug = guardObjects.empty(); // 画面確認用に A だけ SceneView へ実行中のタスクを出す
+        addCapsuleBody(guard, g.material, true);
+        guardObjects.push_back(guard);
+    }
+    // Entity キーの初期値: A は route と buddy (= B)、B は buddy (= A)。B の route は BtDemoDriver が ABI で渡す
+    {
+        auto* btA = guardObjects[0].GetComponent<BehaviorTreeComponent>();
+        std::snprintf(btA->bbEntityKey[0], kBtEntityKeyBytes, "%s", "route");
+        btA->bbEntityValue[0] = routeA.Id();
+        std::snprintf(btA->bbEntityKey[1], kBtEntityKeyBytes, "%s", "buddy");
+        btA->bbEntityValue[1] = guardObjects[1].Id();
+        auto* btB = guardObjects[1].GetComponent<BehaviorTreeComponent>();
+        std::snprintf(btB->bbEntityKey[0], kBtEntityKeyBytes, "%s", "buddy");
+        btB->bbEntityValue[0] = guardObjects[0].Id();
+    }
+
+    // プレイヤー役。陣営 0。動きは BtDemoDriver
+    {
+        GameObject player = s.CreateGameObject("Player");
+        player.SetLocalPosition(-11.0f, kCcHalfHeight, 6.0f);
+        player.AddComponent<CharacterControllerComponent>();
+        auto* src = player.AddComponent<AIStimulusSourceComponent>();
+        src->faction = 0;
+        src->targetHeight = 0.6f;
+        const ComponentTypeId driver = ComponentRegistry::Get().FindByName("BtDemoDriver");
+        if (driver != kInvalidComponentType) {
+            w.AddComponentRaw(player.Id(), driver);
+        }
+        addCapsuleBody(player, playerMat, false);
+    }
+
+    // ベイクして登録する (入力収集はワールド行列を読むので Transform を一度確定させる)
+    w.ApplyStructuralChanges();
+    TransformSystem transforms;
+    transforms.Update(w);
+    NavBakeInputs inputs;
+    constexpr uint64_t kBtDemoNavGuid = HashStr("nav://bt-demo");
+    if (!NavPrepareBakeInputs(w, surfaceGo.Id(), inputs)) {
+        MYE_LOG_ERROR("[bt-demo] cannot collect the bake input");
+        return;
+    }
+    NavBakeOutput baked = NavBakeAsset(inputs.config, inputs.soup, inputs.clipBoxes, nullptr);
+    if (baked.status != NavBakeStatus::Ok) {
+        MYE_LOG_ERROR("[bt-demo] bake failed: %s", baked.message.c_str());
+        return;
+    }
+    NavMeshAsset::RegisterInMemory(kBtDemoNavGuid, std::move(baked.data));
+    w.GetComponent<NavMeshSurfaceComponent>(surfaceGo.Id())->navAsset = AssetID{ kBtDemoNavGuid };
+}
+
 } // namespace mye

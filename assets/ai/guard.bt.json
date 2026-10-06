@@ -1,0 +1,537 @@
+{
+  "engine": "MyEngine",
+  "behaviortree": 1,
+  "name": "guard",
+  "blackboard": "b84c17e0a93d52f1",
+  "root": 0,
+  "nodes": [
+    {
+      "id": 0,
+      "type": "Selector",
+      "params": {},
+      "decorators": [],
+      "children": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "pos": [
+        2050.0,
+        0.0
+      ]
+    },
+    {
+      "id": 1,
+      "type": "Sequence",
+      "params": {},
+      "decorators": [
+        {
+          "type": "BlackboardCondition",
+          "key": "target",
+          "params": {
+            "query": "IsSet",
+            "intValue": 0,
+            "floatValue": 0.0,
+            "abort": "LowerPriority"
+          }
+        }
+      ],
+      "children": [
+        5,
+        6,
+        7,
+        8,
+        9,
+        29,
+        10
+      ],
+      "pos": [
+        750.0,
+        140.0
+      ]
+    },
+    {
+      "id": 2,
+      "type": "Sequence",
+      "params": {},
+      "decorators": [
+        {
+          "type": "BlackboardCondition",
+          "key": "alertPos",
+          "params": {
+            "query": "IsSet",
+            "intValue": 0,
+            "floatValue": 0.0,
+            "abort": "LowerPriority"
+          }
+        }
+      ],
+      "children": [
+        15,
+        16
+      ],
+      "pos": [
+        1900.0,
+        140.0
+      ]
+    },
+    {
+      "id": 3,
+      "type": "Sequence",
+      "params": {},
+      "decorators": [
+        {
+          "type": "BlackboardCondition",
+          "key": "lastKnownPos",
+          "params": {
+            "query": "IsSet",
+            "intValue": 0,
+            "floatValue": 0.0,
+            "abort": "LowerPriority"
+          }
+        }
+      ],
+      "children": [
+        17,
+        18,
+        24
+      ],
+      "pos": [
+        2600.0,
+        140.0
+      ]
+    },
+    {
+      "id": 4,
+      "type": "Sequence",
+      "params": {},
+      "decorators": [],
+      "children": [
+        25,
+        26
+      ],
+      "pos": [
+        3350.0,
+        140.0
+      ]
+    },
+    {
+      "id": 5,
+      "type": "SetBlackboard",
+      "params": {
+        "source": "Constant",
+        "boolValue": false,
+        "intValue": 1,
+        "floatValue": 0.0,
+        "vectorX": 0.0,
+        "vectorY": 0.0,
+        "vectorZ": 0.0
+      },
+      "keys": {
+        "key": "stage",
+        "sourceKey": ""
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        0.0,
+        280.0
+      ]
+    },
+    {
+      "id": 6,
+      "type": "SendEvent",
+      "params": {
+        "eventName": "GuardAlert",
+        "target": "Entity",
+        "floatValue": 0.0,
+        "intValue": 0
+      },
+      "keys": {
+        "target": "buddy",
+        "vector": "lastKnownPos"
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        200.0,
+        280.0
+      ]
+    },
+    {
+      "id": 7,
+      "type": "Selector",
+      "params": {},
+      "decorators": [],
+      "children": [
+        11,
+        12
+      ],
+      "pos": [
+        500.0,
+        280.0
+      ]
+    },
+    {
+      "id": 8,
+      "type": "SetBlackboard",
+      "params": {
+        "source": "Constant",
+        "boolValue": false,
+        "intValue": 2,
+        "floatValue": 0.0,
+        "vectorX": 0.0,
+        "vectorY": 0.0,
+        "vectorZ": 0.0
+      },
+      "keys": {
+        "key": "stage",
+        "sourceKey": ""
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        800.0,
+        280.0
+      ]
+    },
+    {
+      "id": 9,
+      "type": "PlayAnimation",
+      "params": {
+        "state": "Walk",
+        "durationTicks": 8,
+        "waitForEnd": false
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        1000.0,
+        280.0
+      ]
+    },
+    {
+      "id": 10,
+      "type": "SimpleParallel",
+      "params": {
+        "finishMode": "Immediate"
+      },
+      "decorators": [],
+      "children": [
+        13,
+        14
+      ],
+      "pos": [
+        1500.0,
+        280.0
+      ]
+    },
+    {
+      "id": 11,
+      "type": "CppTask",
+      "params": {
+        "task": "BtProbeTask"
+      },
+      "fields": {
+        "targetTicks": 12
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        400.0,
+        420.0
+      ]
+    },
+    {
+      "id": 12,
+      "type": "Wait",
+      "params": {
+        "ticks": 12,
+        "randomDeviation": 0
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        600.0,
+        420.0
+      ]
+    },
+    {
+      "id": 13,
+      "type": "MoveTo",
+      "params": {
+        "acceptanceRadius": 1.5,
+        "observeTarget": true,
+        "failOnStuck": false,
+        "navFilter": ""
+      },
+      "keys": {
+        "target": "target"
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        1400.0,
+        420.0
+      ]
+    },
+    {
+      "id": 14,
+      "type": "SubTree",
+      "params": {
+        "tree": "2f6b3d90c4a187e5"
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        1600.0,
+        420.0
+      ]
+    },
+    {
+      "id": 15,
+      "type": "SetBlackboard",
+      "params": {
+        "source": "Copy",
+        "boolValue": false,
+        "intValue": 0,
+        "floatValue": 0.0,
+        "vectorX": 0.0,
+        "vectorY": 0.0,
+        "vectorZ": 0.0
+      },
+      "keys": {
+        "key": "lastKnownPos",
+        "sourceKey": "alertPos"
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        1800.0,
+        280.0
+      ]
+    },
+    {
+      "id": 16,
+      "type": "ClearBlackboard",
+      "params": {},
+      "keys": {
+        "key": "alertPos"
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        2000.0,
+        280.0
+      ]
+    },
+    {
+      "id": 17,
+      "type": "SetBlackboard",
+      "params": {
+        "source": "Constant",
+        "boolValue": false,
+        "intValue": 3,
+        "floatValue": 0.0,
+        "vectorX": 0.0,
+        "vectorY": 0.0,
+        "vectorZ": 0.0
+      },
+      "keys": {
+        "key": "stage",
+        "sourceKey": ""
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        2200.0,
+        280.0
+      ]
+    },
+    {
+      "id": 18,
+      "type": "Selector",
+      "params": {},
+      "decorators": [],
+      "children": [
+        19,
+        23
+      ],
+      "pos": [
+        2650.0,
+        280.0
+      ]
+    },
+    {
+      "id": 19,
+      "type": "SimpleParallel",
+      "params": {
+        "finishMode": "Immediate"
+      },
+      "decorators": [],
+      "children": [
+        20,
+        21
+      ],
+      "pos": [
+        2500.0,
+        420.0
+      ]
+    },
+    {
+      "id": 20,
+      "type": "SearchArea",
+      "params": {
+        "usePrediction": true,
+        "radius": 5.0,
+        "pointCount": 3,
+        "failOnStuck": false
+      },
+      "keys": {
+        "origin": "lastKnownPos",
+        "endTarget": "quarry"
+      },
+      "decorators": [
+        {
+          "type": "Timeout",
+          "params": {
+            "ticks": 240
+          }
+        }
+      ],
+      "children": [],
+      "pos": [
+        2400.0,
+        560.0
+      ]
+    },
+    {
+      "id": 21,
+      "type": "SubTree",
+      "params": {
+        "tree": "2f6b3d90c4a187e5"
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        2600.0,
+        560.0
+      ]
+    },
+    {
+      "id": 23,
+      "type": "Wait",
+      "params": {
+        "ticks": 1,
+        "randomDeviation": 0
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        2800.0,
+        420.0
+      ]
+    },
+    {
+      "id": 24,
+      "type": "ClearBlackboard",
+      "params": {},
+      "keys": {
+        "key": "lastKnownPos"
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        3000.0,
+        280.0
+      ]
+    },
+    {
+      "id": 25,
+      "type": "SetBlackboard",
+      "params": {
+        "source": "Constant",
+        "boolValue": false,
+        "intValue": 0,
+        "floatValue": 0.0,
+        "vectorX": 0.0,
+        "vectorY": 0.0,
+        "vectorZ": 0.0
+      },
+      "keys": {
+        "key": "stage",
+        "sourceKey": ""
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        3200.0,
+        280.0
+      ]
+    },
+    {
+      "id": 26,
+      "type": "SimpleParallel",
+      "params": {
+        "finishMode": "Immediate"
+      },
+      "decorators": [],
+      "children": [
+        27,
+        28
+      ],
+      "pos": [
+        3500.0,
+        280.0
+      ]
+    },
+    {
+      "id": 27,
+      "type": "Patrol",
+      "params": {
+        "acceptanceRadius": 0.5,
+        "failOnStuck": false
+      },
+      "keys": {
+        "route": "route"
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        3400.0,
+        420.0
+      ]
+    },
+    {
+      "id": 28,
+      "type": "SubTree",
+      "params": {
+        "tree": "2f6b3d90c4a187e5"
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        3600.0,
+        420.0
+      ]
+    },
+    {
+      "id": 29,
+      "type": "RotateTo",
+      "params": {
+        "angularSpeedDeg": 0.0,
+        "toleranceDeg": 5.0
+      },
+      "keys": {
+        "target": "target"
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        1200.0,
+        280.0
+      ]
+    }
+  ]
+}

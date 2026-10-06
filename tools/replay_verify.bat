@@ -76,13 +76,13 @@ rem 前回の失敗マーカーが残っていると :diagnose が古い tick �
 del /q cache\*.mismatch.txt 2>nul
 if exist cache\replay_logs rd /s /q cache\replay_logs
 
-echo === parallel verification: 10 scene chains + time travel x2 + what-if x2 + rule check ===
+echo === parallel verification: 12 scene chains + time travel x2 + what-if x2 + rule check ===
 rem ★Entry は空白なし相対パスで渡す (人間/CI が bat を叩くのと同じ呼び形に固定。
 rem   バッチ読取りの罠と chcp 437 の理由は runner 冒頭のコメント参照)
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,perception,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,perception,bt,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 11 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav + perception) + snapshot round-trip + time travel + rule check
+echo [PASS] replay consistency (Debug/Release, 12 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav + perception + bt) + snapshot round-trip + time travel + rule check
 exit /b 0
 
 rem ---------------------------------------------------------------- :failed
@@ -134,6 +134,10 @@ if exist cache\golden_nav.rep.mismatch.txt (
 if exist cache\golden_perception.rep.mismatch.txt (
     set DIAGFOUND=1
     call :diagnose "cache\golden_perception.rep" "--perception-demo"
+)
+if exist cache\golden_bt.rep.mismatch.txt (
+    set DIAGFOUND=1
+    call :diagnose "cache\golden_bt.rep" "--bt-demo"
 )
 if "%DIAGFOUND%"=="0" echo [diag] no mismatch markers - failures happened before any hash comparison, see the job logs above
 echo [FAIL] replay verification
@@ -306,6 +310,17 @@ if exist cache\perception_showcase.scene.json del /q cache\perception_showcase.s
 call :chain cache\golden_perception.rep "--perception-demo" "--perception-demo"
 exit /b %ERRORLEVEL%
 
+rem ---- ビヘイビアツリー (M85)。見張り 2 体 (NavMeshAgent + AIPerception + BehaviorTree + AnimatorController) が巡回し、
+rem プレイヤー役を見つけて追跡・見失って捜索・巡回へ戻る (assets\ai\guard.bt.json)。ナビメッシュはメモリ上で焼く (nav://bt-demo)。
+rem GameLogic の BtDemoDriver がプレイヤー役を動かし、見張り A の BB を BtGetBlackboard で読み、僚機 B の巡回ルートを
+rem BtSetBlackboard で渡す (ABI v27)、BtProbeTask (C++ のタスク) が発見の一拍を作り、RotateTo が std::sin / cos / atan2 を通る —
+rem Debug / Release / Server.exe でビット一致すること自体がそれらの構成間一致の証明になる。C# のタスクは入れない (C# レーンは被覆外)。
+rem snapshot stress は BT 節 (実行状態・BB・イベントの配送待ち) の往復も叩く
+:job_bt
+if exist cache\bt_showcase.scene.json del /q cache\bt_showcase.scene.json
+call :chain cache\golden_bt.rep "--bt-demo" "--bt-demo"
+exit /b %ERRORLEVEL%
+
 rem ---- タイムトラベルの巻き戻し (M52e) ----
 rem 「T まで進める → T-K へ戻す → 記録入力で T まで再シム → 元の T とハッシュ一致」を
 rem 複数の K で実走し、続けて「スクラブ中は tick が止まる」「再開すると分岐して未来を捨てる」
@@ -387,7 +402,7 @@ rem 失敗した照合の「どのフィールドが割れたか」を出す (M5
 rem   %1 = .rep パス / %2 = シーン切替の追加引数 ("" / "--parts-demo" / "--flow-demo" /
 rem                        "--local-demo" / "--physics-demo" / "--joint-demo" /
 rem                        "--acoustic-demo" / "--ui-demo --ui-demo-input" / "--fracture-demo" / "--nav-demo" /
-rem                        "--perception-demo")
+rem                        "--perception-demo" / "--bt-demo")
 rem 失敗側のダンプは EngineLoop が MISMATCH 時に自動で残しているので、
 rem ここでは期待側 (= その .rep を録ったのと同じコマンド) を撮り直して突き合わせる
 :diagnose

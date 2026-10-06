@@ -444,6 +444,20 @@ call :shot perception --perception-demo
 set SHOT=%SHOTBASE% --no-fxaa
 :skip_perception
 
+rem ---- 30 枚目 (M85): ビヘイビアツリーのショーケース。**BT のデバッグ線 (drawDebug の MoveTo 目的地・SearchArea の点・実行中タスク名) と
+rem      巡回ルートの目印の唯一のピクセル被覆**。見張り A がプレイヤー役を追いかけている最中の絵を固定する。
+rem ★frame 260 で撮る。BtDemoDriver (GameLogic.dll) が見張り A に見つかって逃げ、A が追跡へ入った後 (tick 208 から 308 が追跡)。
+rem   GameLogic.dll が要る。sim は固定 tick の決定論 (Debug / Release / Server でビット一致、replay_verify の bt ジョブ)
+rem ★保存済みが残っているとロード経路に落ちるので撮影前に消す (physics 等と同じ)。
+rem ★線と単色の塗りだけの絵なので tol=3 の CI 判定に載せる。ランナーで赤くなったら MYE_SHOT_SKIP_BT を立てる
+if defined MYE_SHOT_SKIP_BT goto :skip_bt
+set BT_SCENE=cache\bt_showcase.scene.json
+if exist %BT_SCENE% del /q %BT_SCENE%
+set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 263 --shot-frame 260 --no-fxaa
+call :shot bt --bt-demo
+set SHOT=%SHOTBASE% --no-fxaa
+:skip_bt
+
 echo.
 if %UPDATE%==1 (
     echo [shot_verify] golden updated in %GOLDEN% - review the images before committing
@@ -456,9 +470,9 @@ if not %FAILED%==0 (
     exit /b 1
 )
 if defined MYE_SHOT_SKIP_FXAA (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints/fog/particle/acoustic/nav/fracture_after at frame 120^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints/fog/particle/acoustic/nav/fracture_after at frame 120, bt at frame 260^)
 ) else (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints/fog/particle/acoustic/nav/fracture_after at frame 120 + rtrefl_restir at frame 40 + fxaa/taa/ssr/froxel/fog/particle/rt at tol=0^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints/fog/particle/acoustic/nav/fracture_after at frame 120, bt at frame 260 + rtrefl_restir at frame 40 + fxaa/taa/ssr/froxel/fog/particle/rt at tol=0^)
 )
 exit /b 0
 

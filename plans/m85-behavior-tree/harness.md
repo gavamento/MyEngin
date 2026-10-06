@@ -19,8 +19,8 @@
 | sub-10 | OK | 1 | 20a9f43 | ライブ表示・Abort 矢印・デバッグ線 | BT 窓 (3) ライブ表示 |
 | sub-11 | OK | 1 | e16bd96 | ABI v27 = 158、C++ タスク、snapshot v39 のまま | ABI v27 |
 | sub-12 | OK | 1 | eec835e | C# タスクと糖衣 | C# タスク |
-| sub-12b | OK | 1 | (このコミット) | C# タスクの fields とクラスのピッカー (ユーザー判断で新設) |
-| sub-13 | 未着手 | 0 | | 依存を sub-12b へ | --bt-demo・replay_verify・golden |
+| sub-12b | OK | 1 | 3d20b33 | C# タスクの fields とクラスのピッカー (ユーザー判断で新設) |
+| sub-13 | OK | 1 | (このコミット) | --bt-demo、replay_verify bt、golden bt | --bt-demo・replay_verify・golden |
 | sub-14 | 未着手 | 0 | | ADR-025 と全体検証 |
 
 ## レビュー
@@ -80,6 +80,11 @@
 - (sub-11 → 完了報告) 外部プロジェクト (HAL Collector / 三校) の GameLogic.dll は ABI v27 で再ビルドが要る。ユーザーに伝える。
 - (sub-11 → sub-13) GameLogic の BtProbeTask (fields: targetTicks / outcome / ticks) をデモから使える。
 - (sub-12) CsTask を含む木を replay_verify の対象シーンに入れない (C# レーンは被覆外)。MyeManagedVTable の BtTask は Engine と MyeScripting.dll の内部契約 (EngineAPI の版は不変)。
+- (sub-13 VERDICT should#1) sub-14 で docs\test_checklists.md に --bt-demo の手動確認項目 (5 段階の観察と BT 窓のライブ表示) を足す。
+- **別件 (M85 の範囲外、ユーザーへ報告)**:
+  - (a) replay_verify の並列 cold cook で起動中に未処理 C++ 例外 (0xE06D7363、tick 0) / 9 分無反応が 1 回ずつ出た (sub-13 の 2 回目、nav の Release 検証と flow の Debug 検証)。crash bundle `bin\x64\Release\crash\20261006_111539` (minidump あり)。RVA → file:line は未特定。
+  - (b) golden の既存 FAIL 6 枚 (HEAD 3d20b33 の clean でも同数値): nav 214/21664、parts 198/3625、joints 208/137、acoustic_forward 83/596、acoustic_deferred 82/594、fracture_after 150/192。更新するかはユーザー判断。
+  - (c) ユーザー要望 (2026-10-06): replay_verify を音なし・最背面で回したい。音は MYE_EXTRA_ARGS=--no-audio で対応可。最背面は CLI オプション (--background: SW_SHOWNOACTIVATE + HWND_BOTTOM) の追加を提案中 (返事待ち)。
 - (sub-07 → sub-14) ADR-025: Patrol は入るたびに最近傍点から、親付きルートは前 tick の WorldMatrix。
 - (sub-06 → sub-14) ADR-025 の既知の限界: SubTree は平らな展開・上限 1024・部分木の根の LowerPriority は Self 扱い・BB 継承なし・遷移中の AnimatorPlay はブレンド途中のポーズから飛ぶ。
 - (sub-04 VERDICT nit#1) BehaviorTreeSelfTest の診断ログ `[search] stuck ...` は、1 回の実行で 1〜2 行なら残す。tick ごとなら 1 行にまとめるか削除。sub-05 でついでに判断。

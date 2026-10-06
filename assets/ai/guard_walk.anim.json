@@ -1,0 +1,7 @@
+{
+  "engine": "MyEngine",
+  "anim": 1,
+  "name": "guard_walk",
+  "lengthTicks": 30,
+  "tracks": []
+}

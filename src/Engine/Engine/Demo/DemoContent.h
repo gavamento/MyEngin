@@ -258,4 +258,9 @@ void BuildNavShowcaseScene(EngineContext& ctx);
 // 侵入者と見張りの動きは GameLogic の PerceptionDemoIntruder / PerceptionDemoGuard (固定 tick で決まる)
 void BuildPerceptionShowcaseScene(EngineContext& ctx);
 
+// M85: ビヘイビアツリーのショーケース (--bt-demo)。壁のある広場を見張り 2 体が巡回し、プレイヤー役に気付いて追跡・捜索し、巡回へ戻る。
+// 木は assets\ai\guard.bt.json。プレイヤー役の動きと段階のログは GameLogic の BtDemoDriver (固定 tick で決まる)。
+// ★ナビメッシュは --nav-demo と同じくシーン構築時にメモリ上で焼いて登録する (`nav://bt-demo`)
+void BuildBtShowcaseScene(EngineContext& ctx);
+
 } // namespace mye

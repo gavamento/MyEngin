@@ -1,0 +1,49 @@
+{
+  "engine": "MyEngine",
+  "blackboard": 1,
+  "name": "guard",
+  "keys": [
+    {
+      "name": "target",
+      "type": "Entity"
+    },
+    {
+      "name": "quarry",
+      "type": "Entity"
+    },
+    {
+      "name": "lastKnownPos",
+      "type": "Vector"
+    },
+    {
+      "name": "route",
+      "type": "Entity"
+    },
+    {
+      "name": "buddy",
+      "type": "Entity"
+    },
+    {
+      "name": "alertPos",
+      "type": "Vector",
+      "eventName": "GuardAlert"
+    },
+    {
+      "name": "stage",
+      "type": "Int",
+      "initial": 0
+    },
+    {
+      "name": "probeStarts",
+      "type": "Int"
+    },
+    {
+      "name": "probeTicks",
+      "type": "Int"
+    },
+    {
+      "name": "probeAbortedAt",
+      "type": "Int"
+    }
+  ]
+}

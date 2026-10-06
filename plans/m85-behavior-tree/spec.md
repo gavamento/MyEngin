@@ -260,6 +260,7 @@ UE の Behavior Tree + Blackboard と同じ考え方で、**行動をアセッ�
 
 (確定後の変更のみ)
 
+- 2026-10-06 (sub-13 VERDICT): デモの段階は BB の `stage` (巡回 0 / 発見 1 / 追跡 2 / 捜索 3) と target の外れで判定、感知は SubTree guard_sense、警報は buddy 宛ての SendEvent、動きの無い guard.controller を新設、感知の先頭に Wait 3 (tick 0 の WorldMatrix が単位行列のため)、replay の TICKS は 600 のまま (5 段階は tick 400 までに収まる)。受け入れ 15 の golden の判定は `bt` のみ。HEAD 3d20b33 の clean な worktree でも FAIL する既存の golden 6 枚 (nav / parts / joints / acoustic_forward / acoustic_deferred / fracture_after) は M85 の範囲外
 - 2026-10-06 (sub-12b VERDICT): C# タスクの fields の JSON は enter と tick の毎回レーンへ渡す (C# のリロードで作り直したインスタンスにも値を入れるため)。一覧は MyeManagedVTable 末尾の BtTaskCatalog (内部契約、EngineAPI の版は不変)、Editor は EngineContext::managedHost から引く。[BtTask] クラスが 0 件のときも文字入力。JSON の整数値の小数は int フィールドに書ける
 - 2026-10-06 (ユーザー回答、司会経由): 2. #21 を「M85 で作る」へ。sub-12b を新設 (sub-12 の後・sub-13 の前)、受け入れ条件 18 を追加、4.1.7 に C# の fields を追記、3. の後回しから外した
 - 2026-10-06 (sub-12 VERDICT): C# タスクは `params.class` (FullName) だけ、フィールドとピッカーは後回し (2. #21)。C# レーンの有無は毎 tick TickRunner が runManaged と同じ門で渡す。C# タスクのインスタンスは managed 側で (index, generation, ノード) ごと、Success / Failure / 例外・リロード・シーン遷移で捨てる。MyeManagedVTable の末尾に BtTask を足したが EngineAPI の版は変えない (MyeScripting.dll は exe と同時にビルドされる)

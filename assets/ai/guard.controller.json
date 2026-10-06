@@ -1,0 +1,21 @@
+{
+  "engine": "MyEngine",
+  "controller": 1,
+  "defaultState": 0,
+  "parameters": [],
+  "states": [
+    {
+      "name": "Idle",
+      "clip": "guard_idle.anim.json",
+      "speed": 1,
+      "loop": 1
+    },
+    {
+      "name": "Walk",
+      "clip": "guard_walk.anim.json",
+      "speed": 1,
+      "loop": 1
+    }
+  ],
+  "transitions": []
+}

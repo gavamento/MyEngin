@@ -344,6 +344,11 @@ bool RunEngineCliSelfTest()
     check(navDemo != nullptr && FindShowcase(L"--nav-demo", false) == navDemo
               && ShowcaseScenePath(*navDemo, L"c:\\p\\assets") == L"cache\\nav_showcase.scene.json",
           "--nav-demo is offered to the Runtime and saves under cache");
+    // M85: --bt-demo も Runtime にも提供され、cache\ 側へ保存する
+    const ShowcaseDef* btDemo = FindShowcase(L"--bt-demo", true);
+    check(btDemo != nullptr && FindShowcase(L"--bt-demo", false) == btDemo
+              && ShowcaseScenePath(*btDemo, L"c:\\p\\assets") == L"cache\\bt_showcase.scene.json",
+          "--bt-demo is offered to the Runtime and saves under cache");
 
     MYE_LOG_INFO("Engine CLI self test: %s (%d failure(s))", failCount == 0 ? "OK" : "FAILED", failCount);
     return failCount == 0;

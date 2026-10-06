@@ -44,6 +44,7 @@
   <ItemGroup>
     <ClCompile Include="..\src\GameLogic\GameLogicMain.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\AudioDemo.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\BtDemoDriver.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\BtProbeTask.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\FlowGameDriver.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\FlowTitleDriver.cpp" />

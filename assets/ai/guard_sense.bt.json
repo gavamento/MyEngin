@@ -1,0 +1,158 @@
+{
+  "engine": "MyEngine",
+  "behaviortree": 1,
+  "name": "guard_sense",
+  "blackboard": "b84c17e0a93d52f1",
+  "root": 0,
+  "nodes": [
+    {
+      "id": 0,
+      "type": "Sequence",
+      "params": {},
+      "decorators": [],
+      "children": [
+        7,
+        8
+      ],
+      "pos": [
+        312.5,
+        0.0
+      ]
+    },
+    {
+      "id": 1,
+      "type": "Selector",
+      "params": {},
+      "decorators": [],
+      "children": [
+        3,
+        4
+      ],
+      "pos": [
+        450.0,
+        280.0
+      ]
+    },
+    {
+      "id": 2,
+      "type": "Wait",
+      "params": {
+        "ticks": 1,
+        "randomDeviation": 0
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        800.0,
+        280.0
+      ]
+    },
+    {
+      "id": 3,
+      "type": "Sequence",
+      "params": {},
+      "decorators": [],
+      "children": [
+        5,
+        6
+      ],
+      "pos": [
+        300.0,
+        420.0
+      ]
+    },
+    {
+      "id": 4,
+      "type": "ClearBlackboard",
+      "params": {},
+      "keys": {
+        "key": "target"
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        600.0,
+        420.0
+      ]
+    },
+    {
+      "id": 5,
+      "type": "FindNearestTarget",
+      "params": {
+        "sight": true,
+        "hearing": false,
+        "damage": false,
+        "touch": false,
+        "currentlySensedOnly": true
+      },
+      "keys": {
+        "target": "target",
+        "position": "lastKnownPos"
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        200.0,
+        560.0
+      ]
+    },
+    {
+      "id": 6,
+      "type": "SetBlackboard",
+      "params": {
+        "source": "Copy",
+        "boolValue": false,
+        "intValue": 0,
+        "floatValue": 0.0,
+        "vectorX": 0.0,
+        "vectorY": 0.0,
+        "vectorZ": 0.0
+      },
+      "keys": {
+        "key": "quarry",
+        "sourceKey": "target"
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        400.0,
+        560.0
+      ]
+    },
+    {
+      "id": 7,
+      "type": "Wait",
+      "params": {
+        "ticks": 3,
+        "randomDeviation": 0
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        0.0,
+        140.0
+      ]
+    },
+    {
+      "id": 8,
+      "type": "Sequence",
+      "params": {},
+      "decorators": [
+        {
+          "type": "Repeat",
+          "params": {
+            "count": 0
+          }
+        }
+      ],
+      "children": [
+        1,
+        2
+      ],
+      "pos": [
+        625.0,
+        140.0
+      ]
+    }
+  ]
+}
