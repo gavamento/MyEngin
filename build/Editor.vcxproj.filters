@@ -228,6 +228,9 @@
     <ClCompile Include="..\src\Editor\Windows\AI\BehaviorTreeWindow.cpp">
       <Filter>Windows\AI</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\AI\BtDisplayNames.cpp">
+      <Filter>Windows\AI</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Animation\AnimationWindow.cpp">
       <Filter>Windows\Animation</Filter>
     </ClCompile>
@@ -466,6 +469,9 @@
       <Filter>Windows\AI</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\AI\BehaviorTreeWindow.h">
+      <Filter>Windows\AI</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\AI\BtDisplayNames.h">
       <Filter>Windows\AI</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Animation\AnimationWindow.h">

@@ -93,6 +93,7 @@
     <ClCompile Include="..\src\Editor\Widgets\ToastCenter.cpp" />
     <ClCompile Include="..\src\Editor\Windows\AI\BehaviorTreeEditModel.cpp" />
     <ClCompile Include="..\src\Editor\Windows\AI\BehaviorTreeWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\AI\BtDisplayNames.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Animation\AnimationWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.cpp" />
@@ -173,6 +174,7 @@
     <ClInclude Include="..\src\Editor\Widgets\ToastCenter.h" />
     <ClInclude Include="..\src\Editor\Windows\AI\BehaviorTreeEditModel.h" />
     <ClInclude Include="..\src\Editor\Windows\AI\BehaviorTreeWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\AI\BtDisplayNames.h" />
     <ClInclude Include="..\src\Editor\Windows\Animation\AnimationWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.h" />

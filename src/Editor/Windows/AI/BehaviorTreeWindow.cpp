@@ -6,6 +6,7 @@
 #include "Editor/Windows/AI/BehaviorTreeWindow.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -17,6 +18,7 @@
 #include "Editor/Asset/AssetOps.h"         // MakeUniqueAssetPath (新規 BB のファイル名)
 #include "Editor/Scene/Selection.h"
 #include "Editor/SourceControl/ScmHint.h" // 保存直後に status を取り直させる
+#include "Editor/Windows/AI/BtDisplayNames.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Core/Localization/Localization.h"
@@ -105,7 +107,7 @@ std::string ParamText(const BtParamDesc& desc, const BtParamValue& value)
     case BtParamType::Int: std::snprintf(buf, sizeof(buf), "%d", value.i); return buf;
     case BtParamType::Float: std::snprintf(buf, sizeof(buf), "%.3g", value.f); return buf;
     case BtParamType::Bool: return value.i != 0 ? "true" : "false";
-    case BtParamType::Enum: return desc.enumNames[(std::clamp)(value.i, 0, desc.enumCount - 1)];
+    case BtParamType::Enum: return BtShortName(desc.enumNames[(std::clamp)(value.i, 0, desc.enumCount - 1)]);
     case BtParamType::Guid:
     case BtParamType::Mask:
         if (value.u == 0) {
@@ -125,11 +127,11 @@ std::string NodeSummary(const BtNodeDef& node)
     std::string text;
     for (int i = 0; i < info.keyCount && static_cast<size_t>(i) < node.keys.size(); ++i) {
         if (!node.keys[static_cast<size_t>(i)].empty()) {
-            text += (text.empty() ? "" : ", ") + std::string(info.keyNames[i]) + "=" + node.keys[static_cast<size_t>(i)];
+            text += (text.empty() ? "" : ", ") + BtShortName(info.keyNames[i]) + "=" + node.keys[static_cast<size_t>(i)];
         }
     }
     if (text.empty() && info.paramCount > 0 && !node.params.empty()) {
-        text = std::string(info.params[0].name) + "=" + ParamText(info.params[0], node.params[0]);
+        text = BtShortName(info.params[0].name) + "=" + ParamText(info.params[0], node.params[0]);
     }
     return text;
 }
@@ -138,7 +140,7 @@ std::string NodeSummary(const BtNodeDef& node)
 std::string DecoratorSummary(const BtDecoratorDef& deco)
 {
     const BtDecoratorTypeInfo& info = BtDecoratorTypeOf(deco.kind);
-    std::string text = info.name;
+    std::string text = BtShortName(info.name);
     if (info.hasKey) {
         text += " " + deco.key;
     }
@@ -546,7 +548,7 @@ void BehaviorTreeWindow::DrawPalette(float height)
             }
             ImGui::PushID(k);
             ImGui::BeginDisabled(!model_.IsLoaded());
-            if (ImGui::Selectable(info.name)) {
+            if (ImGui::Selectable(BtDisplayName(info.name))) {
                 const ImVec2 center = CanvasCenterGraph();
                 AddNodeAt(kind, center.x - kBtNodeWidth * 0.5f, center.y);
             }
@@ -554,7 +556,7 @@ void BehaviorTreeWindow::DrawPalette(float height)
             if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
                 const int32_t payload = k;
                 ImGui::SetDragDropPayload(kPaletteDragType, &payload, sizeof(payload));
-                ImGui::TextUnformatted(info.name);
+                ImGui::TextUnformatted(BtDisplayName(info.name));
                 ImGui::EndDragDropSource();
             }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -676,11 +678,12 @@ bool BehaviorTreeWindow::DrawKeyCombo(const char* label, const std::string& curr
 bool BehaviorTreeWindow::DrawParam(const BtParamDesc& desc, BtParamValue& value)
 {
     bool changed = false;
+    const std::string label = BtFieldLabel(desc.name);
     switch (desc.type) {
     case BtParamType::Int: {
         int v = value.i;
         const float range = desc.maxValue - desc.minValue;
-        if (ImGui::DragInt(desc.name, &v, (std::clamp)(range / 2000.0f, 1.0f, 100.0f), static_cast<int>(desc.minValue),
+        if (ImGui::DragInt(label.c_str(), &v, (std::clamp)(range / 2000.0f, 1.0f, 100.0f), static_cast<int>(desc.minValue),
                            static_cast<int>(desc.maxValue))) {
             value.i = v;
             changed = true;
@@ -690,7 +693,7 @@ bool BehaviorTreeWindow::DrawParam(const BtParamDesc& desc, BtParamValue& value)
     case BtParamType::Float: {
         float v = value.f;
         const float range = desc.maxValue - desc.minValue;
-        if (ImGui::DragFloat(desc.name, &v, (std::clamp)(range / 400.0f, 0.02f, 1.0f), desc.minValue, desc.maxValue, "%.3f")) {
+        if (ImGui::DragFloat(label.c_str(), &v, (std::clamp)(range / 400.0f, 0.02f, 1.0f), desc.minValue, desc.maxValue, "%.3f")) {
             value.f = v;
             changed = true;
         }
@@ -698,7 +701,7 @@ bool BehaviorTreeWindow::DrawParam(const BtParamDesc& desc, BtParamValue& value)
     }
     case BtParamType::Bool: {
         bool v = value.i != 0;
-        if (ImGui::Checkbox(desc.name, &v)) {
+        if (ImGui::Checkbox(label.c_str(), &v)) {
             value.i = v ? 1 : 0;
             changed = true;
         }
@@ -706,9 +709,9 @@ bool BehaviorTreeWindow::DrawParam(const BtParamDesc& desc, BtParamValue& value)
     }
     case BtParamType::Enum: {
         const int current = (std::clamp)(value.i, 0, desc.enumCount - 1);
-        if (ImGui::BeginCombo(desc.name, desc.enumNames[current])) {
+        if (ImGui::BeginCombo(label.c_str(), desc.enumNames[current])) {
             for (int i = 0; i < desc.enumCount; ++i) {
-                if (ImGui::Selectable(desc.enumNames[i], i == current)) {
+                if (ImGui::Selectable(BtDisplayName(desc.enumNames[i]), i == current)) {
                     value.i = i;
                     changed = true;
                 }
@@ -725,7 +728,7 @@ bool BehaviorTreeWindow::DrawParam(const BtParamDesc& desc, BtParamValue& value)
             if (value.u != 0) {
                 std::snprintf(buf, sizeof(buf), "%llx", static_cast<unsigned long long>(value.u));
             }
-            if (ImGui::InputText(desc.name, buf, sizeof(buf), ImGuiInputTextFlags_CharsHexadecimal)) {
+            if (ImGui::InputText(label.c_str(), buf, sizeof(buf), ImGuiInputTextFlags_CharsHexadecimal)) {
                 value.u = std::strtoull(buf, nullptr, 16);
                 changed = true;
             }
@@ -756,7 +759,7 @@ bool BehaviorTreeWindow::DrawParam(const BtParamDesc& desc, BtParamValue& value)
                 std::snprintf(preview, sizeof(preview), Tr(StrId::Bt_BlackboardMissing), static_cast<unsigned long long>(value.u));
             }
         }
-        if (ImGui::BeginCombo(desc.name, preview)) {
+        if (ImGui::BeginCombo(label.c_str(), preview)) {
             if (ImGui::Selectable(Tr(StrId::Bt_BlackboardNone), value.u == 0)) {
                 value.u = 0;
                 changed = true;
@@ -778,7 +781,7 @@ bool BehaviorTreeWindow::DrawParam(const BtParamDesc& desc, BtParamValue& value)
         if (value.u != 0) {
             std::snprintf(buf, sizeof(buf), "%llx", static_cast<unsigned long long>(value.u));
         }
-        if (ImGui::InputText(desc.name, buf, sizeof(buf), ImGuiInputTextFlags_CharsHexadecimal)) {
+        if (ImGui::InputText(label.c_str(), buf, sizeof(buf), ImGuiInputTextFlags_CharsHexadecimal)) {
             value.u = std::strtoull(buf, nullptr, 16);
             changed = true;
         }
@@ -787,7 +790,7 @@ bool BehaviorTreeWindow::DrawParam(const BtParamDesc& desc, BtParamValue& value)
     case BtParamType::String: {
         char buf[kBbMaxNameBytes + 1] = {};
         std::snprintf(buf, sizeof(buf), "%s", value.s.c_str());
-        if (ImGui::InputText(desc.name, buf, sizeof(buf))) {
+        if (ImGui::InputText(label.c_str(), buf, sizeof(buf))) {
             value.s = buf;
             changed = true;
         }
@@ -1011,7 +1014,7 @@ void BehaviorTreeWindow::DrawNodeProperties(int32_t id)
     }
     const BtNodeTypeInfo& info = BtNodeTypeOf(node->kind);
     ImGui::PushID(id);
-    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(CategoryColor(info.category)), "%s", info.name);
+    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(CategoryColor(info.category)), "%s", BtDisplayName(info.name));
     ImGui::SameLine();
     ImGui::TextDisabled("#%d", id);
 
@@ -1055,7 +1058,7 @@ void BehaviorTreeWindow::DrawNodeProperties(int32_t id)
             std::string chosen;
             ImGui::PushID(i);
             const BtNodeKind kind = node->kind;
-            if (DrawKeyCombo(info.keyNames[i], node->keys[static_cast<size_t>(i)], /*allowNone=*/true,
+            if (DrawKeyCombo(BtFieldLabel(info.keyNames[i]).c_str(), node->keys[static_cast<size_t>(i)], /*allowNone=*/true,
                              [kind, i](BbType type) { return BehaviorTreeEditModel::KeyAccepts(kind, i, type); }, chosen)) {
                 model_.SetKey(id, i, chosen);
             }
@@ -1076,7 +1079,7 @@ void BehaviorTreeWindow::DrawNodeProperties(int32_t id)
                 float v[3] = { node->params[static_cast<size_t>(i)].f, node->params[static_cast<size_t>(i) + 1].f,
                                node->params[static_cast<size_t>(i) + 2].f };
                 const int firstParam = i;
-                CommitEdit(ImGui::DragFloat3("vector", v, 0.05f, desc.minValue, desc.maxValue), [&] {
+                CommitEdit(ImGui::DragFloat3(BtFieldLabel("vector").c_str(), v, 0.05f, desc.minValue, desc.maxValue), [&] {
                     for (int axis = 0; axis < 3; ++axis) {
                         BtParamValue value;
                         value.f = v[axis];
@@ -1126,7 +1129,7 @@ void BehaviorTreeWindow::DrawNodeProperties(int32_t id)
         const BtDecoratorDef& deco = node->decorators[static_cast<size_t>(d)];
         const BtDecoratorTypeInfo& decoInfo = BtDecoratorTypeOf(deco.kind);
         ImGui::PushID(d);
-        if (ImGui::TreeNodeEx("##deco", ImGuiTreeNodeFlags_DefaultOpen, "%d. %s", d + 1, decoInfo.name)) {
+        if (ImGui::TreeNodeEx("##deco", ImGuiTreeNodeFlags_DefaultOpen, "%d. %s", d + 1, BtDisplayName(decoInfo.name))) {
             ImGui::BeginDisabled(d == 0);
             if (ImGui::SmallButton(Tr(StrId::Bt_Up))) {
                 moveFrom = d;
@@ -1146,7 +1149,7 @@ void BehaviorTreeWindow::DrawNodeProperties(int32_t id)
             }
             if (decoInfo.hasKey) {
                 std::string chosen;
-                if (DrawKeyCombo("key", deco.key, /*allowNone=*/false, [](BbType) { return true; }, chosen)) {
+                if (DrawKeyCombo(BtFieldLabel("key").c_str(), deco.key, /*allowNone=*/false, [](BbType) { return true; }, chosen)) {
                     model_.SetDecoratorKey(id, d, chosen);
                 }
             }
@@ -1187,7 +1190,7 @@ void BehaviorTreeWindow::DrawNodeProperties(int32_t id)
             const BtDecoratorTypeInfo& decoInfo = BtDecoratorTypeOf(kind);
             const bool needsKey = decoInfo.hasKey && (board == nullptr || board->keys.empty());
             ImGui::BeginDisabled(needsKey);
-            if (ImGui::Selectable(decoInfo.name)) {
+            if (ImGui::Selectable(BtDisplayName(decoInfo.name))) {
                 model_.AddDecorator(id, kind);
             }
             ImGui::EndDisabled();
@@ -1925,7 +1928,15 @@ void BehaviorTreeWindow::DrawNodes(ImDrawList* dl, const CanvasStyle& style, con
                           node.decorators.empty() ? ImDrawFlags_RoundCornersAll : ImDrawFlags_RoundCornersBottom);
         if (style.drawText) {
             const ImVec2 bodyMin(mn.x, bodyTop);
-            addText(ImVec2(mn.x + 8.0f * view_.zoom, bodyTop + 6.0f * view_.zoom), style.text, info.name, bodyMin, mx, style.fontSize);
+            const ImVec2 titlePos(mn.x + 8.0f * view_.zoom, bodyTop + 6.0f * view_.zoom);
+            const std::string title = BtShortName(info.name);
+            addText(titlePos, style.text, title.c_str(), bodyMin, mx, style.fontSize);
+            // 日本語 UI では識別子を薄く並べる (UE / Unity の資料や .bt.json と対応を取れるように)
+            if (title != info.name) {
+                const float titleW = ImGui::GetFont()->CalcTextSizeA(style.fontSize, FLT_MAX, 0.0f, title.c_str()).x;
+                addText(ImVec2(titlePos.x + titleW + 4.0f * view_.zoom, titlePos.y + style.fontSize * 0.1f), style.dim, info.name, bodyMin, mx,
+                        style.fontSize * 0.85f);
+            }
             char idText[16];
             std::snprintf(idText, sizeof(idText), "#%d", node.id);
             const std::string summary = NodeSummary(node);
@@ -2006,7 +2017,7 @@ void BehaviorTreeWindow::DrawCanvasMenus(const MenuRequest& request)
             }
             for (int k = 0; k < static_cast<int>(BtNodeKind::Count); ++k) {
                 const BtNodeKind kind = static_cast<BtNodeKind>(k);
-                if (BtNodeTypeOf(kind).category == category && ImGui::MenuItem(BtNodeTypeOf(kind).name)) {
+                if (BtNodeTypeOf(kind).category == category && ImGui::MenuItem(BtDisplayName(BtNodeTypeOf(kind).name))) {
                     AddNodeAt(kind, contextGraphPos_.x - kBtNodeWidth * 0.5f, contextGraphPos_.y);
                 }
             }
@@ -2044,12 +2055,12 @@ void BehaviorTreeWindow::DrawIssuePanel()
         if (node == nullptr) {
             continue;
         }
-        const char* kindName = BtNodeTypeOf(node->kind).name;
+        const char* kindName = BtDisplayName(BtNodeTypeOf(node->kind).name);
         char slot[64] = {};
         if (issue.decoratorIndex >= 0) {
             std::snprintf(slot, sizeof(slot), Tr(StrId::Bt_IssueDecoratorSlot), issue.decoratorIndex + 1);
         } else if (issue.keyIndex >= 0) {
-            std::snprintf(slot, sizeof(slot), "%s", BtNodeTypeOf(node->kind).keyNames[issue.keyIndex]);
+            std::snprintf(slot, sizeof(slot), "%s", BtShortName(BtNodeTypeOf(node->kind).keyNames[issue.keyIndex]).c_str());
         }
         char text[256] = {};
         switch (issue.kind) {

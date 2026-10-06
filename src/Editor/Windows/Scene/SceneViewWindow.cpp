@@ -10,6 +10,7 @@
 #include "Editor/Widgets/EditorWidgets.h"
 #include "Editor/Scene/Selection.h"
 #include "Editor/Tools/PatrolRouteEdit.h"
+#include "Editor/Windows/AI/BtDisplayNames.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h" // M85j: 実行中のタスク名
@@ -1323,7 +1324,7 @@ void SceneViewWindow::DrawBehaviorTreeLabels(EngineContext& ctx, World& world, f
                 continue; // カメラ後方
             }
             const ImVec2 sp(rectX + (XMVectorGetX(clip) / w * 0.5f + 0.5f) * rectW, rectY + (0.5f - XMVectorGetY(clip) / w * 0.5f) * rectH);
-            const char* name = BtNodeTypeOf(inst->tree->nodes[static_cast<size_t>(nodeIndex)].kind).name;
+            const char* name = BtDisplayName(BtNodeTypeOf(inst->tree->nodes[static_cast<size_t>(nodeIndex)].kind).name);
             const ImVec2 size = ImGui::CalcTextSize(name);
             const ImVec2 pos(sp.x - size.x * 0.5f, sp.y - size.y);
             dl->AddRectFilled(ImVec2(pos.x - 3.0f, pos.y - 1.0f), ImVec2(pos.x + size.x + 3.0f, pos.y + size.y + 1.0f), IM_COL32(20, 24, 28, 190), 3.0f);
