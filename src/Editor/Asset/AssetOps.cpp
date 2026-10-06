@@ -915,7 +915,7 @@ std::wstring CreateCppScript(EngineContext& ctx, const std::string& rawName)
     }
     f << t;
     MYE_LOG_INFO(Tr(StrId::Log_CreatedCpp), WideToUtf8(path).c_str());
-    MYE_LOG_INFO(Tr(StrId::Log_HintRebuildCpp));
+    MYE_LOG_INFO("%s", Tr(StrId::Log_HintRebuildCpp));
     return path;
 }
 
@@ -960,21 +960,21 @@ std::wstring CreateCSharpScript(EngineContext& ctx, const std::string& rawName)
     }
     f << t;
     MYE_LOG_INFO(Tr(StrId::Log_CreatedCs), WideToUtf8(path).c_str());
-    MYE_LOG_INFO(Tr(StrId::Log_HintCompileCs));
+    MYE_LOG_INFO("%s", Tr(StrId::Log_HintCompileCs));
     return path;
 }
 
 void CompileCSharpScripts(EngineContext& ctx)
 {
     if (!ctx.managedHost) {
-        MYE_LOG_WARN(Tr(StrId::Log_CsHostMissing));
+        MYE_LOG_WARN("%s", Tr(StrId::Log_CsHostMissing));
         return;
     }
     if (!ctx.managedHost->IsReady()) {
-        MYE_LOG_WARN(Tr(StrId::Log_CsHostNotReady));
+        MYE_LOG_WARN("%s", Tr(StrId::Log_CsHostNotReady));
         return;
     }
-    MYE_LOG_INFO(Tr(StrId::Log_CsCompiling));
+    MYE_LOG_INFO("%s", Tr(StrId::Log_CsCompiling));
     // スキーマ定数/アクセサを生成してからコンパイル (M50d)。Compile は assets\scripts を
     // 再帰収集するので Generated\ は追加設定ゼロで混ざる
     schema::WriteCSharpBindings(ctx.assetsRoot);
@@ -1034,7 +1034,7 @@ bool AssignMaterialToEntity(EngineContext& ctx, Selection& selection, UndoStack&
     }
     auto* mr = world.GetComponent<MeshRendererComponent>(target);
     if (!mr) {
-        MYE_LOG_WARN(Tr(StrId::Log_NoMeshRenderer));
+        MYE_LOG_WARN("%s", Tr(StrId::Log_NoMeshRenderer));
         return false;
     }
     // AssetBrowser ダブルクリック割当と同じ 1 Undo エントリ (選択は変えない)

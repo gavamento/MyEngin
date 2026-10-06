@@ -1,8 +1,13 @@
 # check_rules.ps1 — コーディング規則の静的検査 (engine_spec.md 11.2)
 # 実行: pwsh -File tools\check_rules.ps1  (違反があれば exit 1)
+# -SourceRoot: ソース走査型の規則 (1 / 2 / 7 / 8 / 10-a) が見るルートを差し替える。違反を仕込んだ
+#   フィクスチャで「正規表現が実際に当たるか」を確かめるためのもの (規則 1 と 7 は、当たらない
+#   正規表現のまま何か月も 0 件を返し続けていた)。リポジトリ固定パスを読む規則は影響を受けない
+param([string]$SourceRoot = '')
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $srcDirs = @("$repo\src")
+if ($SourceRoot -ne '') { $srcDirs = @($SourceRoot) }
 $errors = 0
 $warnings = 0
 
@@ -34,7 +39,7 @@ foreach ($f in Get-Sources) {
 $debugWhitelist = @('GraphicsDevice.cpp')
 foreach ($f in Get-Sources) {
     if ($debugWhitelist -contains $f.Name) { continue }
-    $hits = Select-String -Path $f.FullName -Pattern '#\s*if(def)?\s+.*\b(_DEBUG|NDEBUG)\b'
+    $hits = Select-String -Path $f.FullName -Pattern '#\s*(if|ifdef|ifndef|elif|elifdef|elifndef)\b.*\b(_DEBUG|NDEBUG)\b'
     foreach ($h in $hits) {
         Write-Host "ERROR [rule 1] $($h.Path):$($h.LineNumber): $($h.Line.Trim())"
         $script:errors++
@@ -60,12 +65,45 @@ foreach ($f in $buildFiles) {
     }
 }
 
-# 規則 7 (参考警告): unordered コンテナの range-for (順序がロジックに影響しないか要確認)
+# 規則 7 (参考警告): unordered コンテナの走査 (順序がロジックに影響しないか要確認)
+# 宣言から変数名を集め、その名前を range-for / begin() で回している行を拾う。
+# for 文に型名が現れる書き方だけを見ていた頃は `for (auto& kv : table_)` を 1 件も拾えなかった。
+# 名前を集める範囲はそのファイルと同名ヘッダだけ — 別ヘッダで宣言されたメンバの走査は拾えない
+$unorderedType = 'unordered_(?:map|set|multimap|multiset)\s*<.*>'
+function Get-UnorderedNames([string]$path) {
+    $names = @{}
+    if (-not (Test-Path -LiteralPath $path)) { return $names }
+    $types = @($unorderedType)
+    $lines = [System.IO.File]::ReadAllLines($path)
+    # using Alias = std::unordered_map<...>; で付けた別名の宣言も同じ扱いにする
+    foreach ($line in $lines) {
+        $code = ($line -split '//', 2)[0]
+        if ($code -match ('\busing\s+(\w+)\s*=.*' + $unorderedType)) { $types += ('\b' + $Matches[1] + '\b') }
+    }
+    $declRe = '(?:' + ($types -join '|') + ')\s*[&*]?\s*(\w+)\s*(?:;|=|\{|\(|,|\))'
+    foreach ($line in $lines) {
+        $code = ($line -split '//', 2)[0]
+        foreach ($m in [regex]::Matches($code, $declRe)) { $names[$m.Groups[1].Value] = $true }
+    }
+    return $names
+}
 foreach ($f in Get-Sources) {
-    $hits = Select-String -Path $f.FullName -Pattern 'for\s*\(.*:\s*\w*unordered_(map|set)'
-    foreach ($h in $hits) {
-        Write-Host "WARN  [rule 7] $($h.Path):$($h.LineNumber): unordered iteration (verify order-independence)"
-        $script:warnings++
+    $names = Get-UnorderedNames $f.FullName
+    if ($f.Extension -eq '.cpp') {
+        $header = Get-UnorderedNames ([System.IO.Path]::ChangeExtension($f.FullName, '.h'))
+        foreach ($k in $header.Keys) { $names[$k] = $true }
+    }
+    if ($names.Count -eq 0) { continue }
+    $alt = ($names.Keys | ForEach-Object { [regex]::Escape($_) }) -join '|'
+    $iterRe = 'for\s*\((?:[^;:]|::)*:(?!:)[^;]*\b(?:' + $alt + ')\b|\b(?:' + $alt + ')\s*(?:\.|->)\s*c?begin\s*\('
+    $lineNo = 0
+    foreach ($line in [System.IO.File]::ReadLines($f.FullName)) {
+        $lineNo++
+        $code = ($line -split '//', 2)[0]
+        if ($code -match $iterRe) {
+            Write-Host "WARN  [rule 7] $($f.FullName):${lineNo}: unordered iteration (verify order-independence)"
+            $script:warnings++
+        }
     }
 }
 
@@ -598,14 +636,19 @@ foreach ($g in $constGroups) {
 # 注: 日本語を含む行を読むので Select-String は使わない
 #     (Windows PowerShell 5.1 は BOM 無しファイルを ANSI として読み、マッチが不発になる)
 $trOnly = '(::)?(mye::)?Tr\s*\(\s*(::)?(mye::)?StrId::\w+\s*\)\s*\)'
+# ★要素ごとの括弧は必須。PowerShell は `,` が `+` より強く、括弧が無いと 2 要素が 1 本の文字列へ
+#   潰れて、どの行にも当たらない正規表現になる (M47b から実際にそうなっていた)
 $trFmtPatterns = @(
-    'ImGui::(?:Text|TextDisabled|TextWrapped|BulletText|LabelText|SetTooltip|SetItemTooltip)\s*\(\s*' + $trOnly,
-    'ImGui::TextColored\s*\([^,]+,\s*' + $trOnly
+    ('ImGui::(?:Text|TextDisabled|TextWrapped|BulletText|LabelText|SetTooltip|SetItemTooltip)\s*\(\s*' + $trOnly),
+    ('ImGui::TextColored\s*\([^,]+,\s*' + $trOnly)
 )
+# ログのマクロも printf。ImGui と違って書式を通さない版が無いので "%s" で渡す
+$trLogPattern = 'MYE_LOG_\w+\s*\(\s*' + $trOnly
 foreach ($f in Get-Sources) {
     foreach ($p in $trFmtPatterns) {
         Test-CodeLines $f $p 'rule 10' 'Tr() alone as a printf format - use TextUnformatted(Tr(x)) or Text("%s", Tr(x))'
     }
+    Test-CodeLines $f $trLogPattern 'rule 10' 'Tr() alone as a printf format - use MYE_LOG_X("%s", Tr(x))'
 }
 
 $tablePath = Join-Path $repo 'src\Engine\Core\Localization\LocalizationTable.inl'
