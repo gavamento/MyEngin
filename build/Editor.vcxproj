@@ -36,6 +36,7 @@
   <!-- BEGIN FILES (tools\gen_project_files.ps1 が再生成する。手編集しない) -->
   <ItemGroup>
     <ClCompile Include="..\src\Editor\App\ChildProcess.cpp" />
+    <ClCompile Include="..\src\Editor\App\DeviceLostRescue.cpp" />
     <ClCompile Include="..\src\Editor\App\DiskCompare.cpp" />
     <ClCompile Include="..\src\Editor\App\EditorApp.cpp" />
     <ClCompile Include="..\src\Editor\App\EditorGlobalSettings.cpp" />
@@ -59,6 +60,7 @@
     <ClCompile Include="..\src\Editor\Scene\PlayModeController.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\DecalSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\SelfTest\DeviceLostRescueSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\GameFlowSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\HzbSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\LightSelectionSelfTest.cpp" />
@@ -115,6 +117,7 @@
     <ClCompile Include="..\src\Editor\Windows\Scene\SceneViewGhost.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\SceneViewWindow.cpp" />
     <ClInclude Include="..\src\Editor\App\ChildProcess.h" />
+    <ClInclude Include="..\src\Editor\App\DeviceLostRescue.h" />
     <ClInclude Include="..\src\Editor\App\DiskCompare.h" />
     <ClInclude Include="..\src\Editor\App\EditorApp.h" />
     <ClInclude Include="..\src\Editor\App\EditorGlobalSettings.h" />
@@ -139,6 +142,7 @@
     <ClInclude Include="..\src\Editor\Scene\Selection.h" />
     <ClInclude Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\DecalSelfTest.h" />
+    <ClInclude Include="..\src\Editor\SelfTest\DeviceLostRescueSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\GameFlowSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\HzbSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\LightSelectionSelfTest.h" />

@@ -486,6 +486,9 @@
     <ClCompile Include="..\src\Engine\Engine\HotReload\ReloadHubSelfTest.cpp">
       <Filter>Engine\HotReload</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Loop\DeviceFatal.cpp">
+      <Filter>Engine\Loop</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Loop\EngineLoop.cpp">
       <Filter>Engine\Loop</Filter>
     </ClCompile>
@@ -1334,6 +1337,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHubSelfTest.h">
       <Filter>Engine\HotReload</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Loop\DeviceFatal.h">
+      <Filter>Engine\Loop</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Loop\EngineLoop.h">
       <Filter>Engine\Loop</Filter>

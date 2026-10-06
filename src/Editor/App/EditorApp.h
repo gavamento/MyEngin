@@ -55,6 +55,8 @@ public:
     // すると EditorApp の破棄 (= device.Shutdown の後) まで生き残る。
     // ★同じ問題は preview_ (AssetPreviewCache) にもあるが、そちらはここで解放していない
     void OnShutdown(EngineContext& ctx) override;
+    // デバイス消失で続行できないとき: 編集状態 (Play 中なら Play 前) を元ファイルと別に退避保存して理由を表示する
+    void OnDeviceFatal(EngineContext& ctx, const DeviceFatalInfo& info) override;
     // Game ビューの画像だけがゲームの画面 (2026-09-14。範囲外のクリックはゲームに渡さない)
     bool GameMouseArea(InputRect& out) override;
 

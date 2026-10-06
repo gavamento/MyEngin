@@ -2738,6 +2738,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             MYE_LOG_INFO("[render] path switched to %s", activePath->Name());
         }
 
+        HRESULT presentHr = S_OK;
         if (!window.IsMinimized()) {
             // ---- フェーズ 6: シーン描画 ----
             // ワールド行列は描画直前に一括更新 (LocalTransform の純関数なので sim 状態に影響しない)
@@ -2915,12 +2916,40 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     exitCode = 5;
                 }
             }
-            swapChain.Present(config.vsync);
+            presentHr = swapChain.Present(config.vsync);
         } else {
             Sleep(10); // 最小化中はスピンしない
         }
 
-        device.PumpDebugMessages(); // D3D 検証メッセージをログへ (Debug のみ)
+        // ---- デバイス消失の検出 (M88) ----
+        // 検出点は Present の HRESULT とフレーム末の GetDeviceRemovedReason の 2 つだけ。
+        // 消えた後は D3D を呼ばない (デバッグメッセージの回収も含む)
+        const int32_t removedReason = device.DeviceRemovedReason();
+        const bool deviceRemoved = SwapChain::IsDeviceLostResult(presentHr) || removedReason != 0;
+        if (!deviceRemoved) {
+            device.PumpDebugMessages(); // D3D 検証メッセージをログへ (Debug のみ)
+        }
+        const bool simulatedLost = config.simulateDeviceLostFrame >= 0
+            && ctx.frameIndex >= static_cast<uint64_t>(config.simulateDeviceLostFrame);
+        if (deviceRemoved || simulatedLost) {
+            DeviceFatalInfo lost;
+            lost.simulated = simulatedLost && !deviceRemoved;
+            lost.presentHr = presentHr;
+            lost.removedReason = removedReason;
+            lost.interactive = config.maxFrames <= 0 && config.screenshotPath.empty()
+                && config.replayRecordPath.empty() && config.replayVerifyPath.empty()
+                && config.timeTravelProbeTicks <= 0 && config.whatIfProbeTicks <= 0;
+            MYE_LOG_ERROR("[device] lost at frame %llu: present hr=0x%08lX, removed reason=0x%08lX%s; "
+                          "stopping",
+                          static_cast<unsigned long long>(ctx.frameIndex),
+                          static_cast<unsigned long>(presentHr),
+                          static_cast<unsigned long>(removedReason),
+                          lost.simulated ? " (simulated)" : "");
+            app.OnDeviceFatal(ctx, lost);
+            exitCode = kExitCodeDeviceLost;
+            running = false;
+            continue;
+        }
 
         timings.frameMs = static_cast<float>(dt * 1000.0);
         ctx.timings = timings;

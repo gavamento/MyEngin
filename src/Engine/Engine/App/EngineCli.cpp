@@ -195,6 +195,24 @@ const CliFlag kEngineCliFlags[] = {
     { L"--no-audio", CliValue::None, [](CliArgs& a) { a.c.audio = false; return true; } },
     // M52b: ソフトウェアラスタライザ固定 (CI / 撮影再現)
     { L"--warp", CliValue::None, [](CliArgs& a) { a.c.forceWarp = true; return true; } },
+    // M88: デバイス消失の疑似発生 (<frame> = 描画フレーム番号)。
+    // ★不正値 (非数・負) は起動を止めずにエラーを出して無視する — 検証フラグの綴り違いで本番の起動を落とさない
+    { L"--simulate-device-lost", CliValue::One,
+      [](CliArgs& a) {
+          wchar_t* end = nullptr;
+          const long long frame = _wcstoi64(a.v1, &end, 10);
+          if (end == a.v1 || *end != L'\0' || frame < 0) {
+              std::fwprintf(stderr, L"invalid --simulate-device-lost value (expected a frame number >= 0): ignored\n");
+              return true;
+          }
+          a.c.simulateDeviceLostFrame = frame;
+          return true;
+      } },
+    { L"--simulate-device-lost-fatal", CliValue::None,
+      [](CliArgs& a) {
+          a.c.simulateDeviceLostFatal = true;
+          return true;
+      } },
     { L"--exposure", CliValue::One,
       [](CliArgs& a) {
           a.c.postFxExposure = static_cast<float>(_wtof(a.v1));

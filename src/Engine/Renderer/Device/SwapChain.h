@@ -17,7 +17,10 @@ public:
     void Shutdown();
 
     void Resize(int width, int height);
-    void Present(bool vsync);
+    // Present の HRESULT をそのまま返す。消失の判定は IsDeviceLostResult
+    HRESULT Present(bool vsync);
+    // DXGI_ERROR_DEVICE_REMOVED / DXGI_ERROR_DEVICE_RESET か
+    static bool IsDeviceLostResult(HRESULT hr);
 
     ID3D11RenderTargetView* BackbufferRTV() const { return rtv_.Get(); }
     ID3D11DepthStencilView* DepthDSV() const { return dsv_.Get(); }

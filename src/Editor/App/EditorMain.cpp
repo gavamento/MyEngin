@@ -10,6 +10,7 @@
 #include "Editor/App/EditorApp.h"
 #include "Editor/App/EditorGlobalSettings.h"
 #include "Editor/Tools/FractureEditorSelfTest.h" // M80i: 破壊物 Inspector の焼き回り
+#include "Editor/SelfTest/DeviceLostRescueSelfTest.h"
 #include "Editor/SelfTest/GameFlowSelfTest.h"
 #include "Editor/SelfTest/PartSelfTest.h"
 #include "Editor/SelfTest/RagdollBuildSelfTest.h"
@@ -603,6 +604,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunBehaviorTreeSelfTest();              // M85: ビヘイビアツリー (アセット・Composite・BT 節)
         ok &= mye::RunPatrolRouteEditSelfTest();           // M85g: 巡回ルートの点の編集と Undo
         ok &= mye::RunBehaviorTreeEditorSelfTest();        // M85h: BT 窓のモデル層 (追加・接続・削除・保存)
+        ok &= mye::RunDeviceLostRescueSelfTest();          // M88a: デバイス消失時の退避保存
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }

@@ -182,13 +182,14 @@ bool SwapChain::SaveBackbufferPng(const std::wstring& path)
     return ok;
 }
 
-void SwapChain::Present(bool vsync)
+HRESULT SwapChain::Present(bool vsync)
 {
-    const HRESULT hr = swapChain_->Present(vsync ? 1 : 0, 0);
-    if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
-        MYE_LOG_ERROR("Present: device removed/reset (hr=0x%08lX, reason=0x%08lX)", hr,
-                      device_ ? device_->Device()->GetDeviceRemovedReason() : 0);
-    }
+    return swapChain_->Present(vsync ? 1 : 0, 0);
+}
+
+bool SwapChain::IsDeviceLostResult(HRESULT hr)
+{
+    return hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET;
 }
 
 } // namespace mye

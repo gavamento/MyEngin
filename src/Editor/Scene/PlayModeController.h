@@ -19,6 +19,9 @@ class PlayModeController {
 public:
     PlayState State() const { return state_; }
     bool InPlayMode() const { return state_ != PlayState::Editing; }
+    // Play 開始前のシーン文書 (編集状態)。Play 中でなければ nullptr。
+    // デバイス消失時の退避保存が、動いている世界ではなくこちらを書くために使う
+    const nlohmann::json* PrePlaySnapshot() const { return InPlayMode() ? &snapshot_ : nullptr; }
 
     void Play(Scene& scene);
     void Stop(Scene& scene);

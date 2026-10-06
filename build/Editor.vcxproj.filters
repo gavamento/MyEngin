@@ -57,6 +57,9 @@
     <ClCompile Include="..\src\Editor\App\ChildProcess.cpp">
       <Filter>App</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\App\DeviceLostRescue.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\App\DiskCompare.cpp">
       <Filter>App</Filter>
     </ClCompile>
@@ -124,6 +127,9 @@
       <Filter>SelfTest</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\DecalSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\DeviceLostRescueSelfTest.cpp">
       <Filter>SelfTest</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\GameFlowSelfTest.cpp">
@@ -294,6 +300,9 @@
     <ClInclude Include="..\src\Editor\App\ChildProcess.h">
       <Filter>App</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\App\DeviceLostRescue.h">
+      <Filter>App</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\App\DiskCompare.h">
       <Filter>App</Filter>
     </ClInclude>
@@ -364,6 +373,9 @@
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\DecalSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\DeviceLostRescueSelfTest.h">
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\GameFlowSelfTest.h">

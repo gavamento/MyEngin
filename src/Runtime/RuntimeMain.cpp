@@ -10,7 +10,9 @@
 #include "Engine/Engine/App/EngineCli.h"
 #include "Engine/Engine/Physics/Fracture/FractureSystem.h" // PreloadFractureAssets (シーンロード直後の破片資産先読み)
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
+#include "Engine/Engine/Loop/DeviceFatal.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Platform/Win32Window.h"
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/App/Project.h"
 #include "Engine/Engine/Replay/Replay.h"
@@ -66,6 +68,12 @@ public:
 
     // ランタイムは常時シミュレート (Editor の Play 相当)
     void OnTick(mye::EngineContext& ctx) override { ctx.simulateScripts = true; }
+
+    // Runtime は編集データを持たないので、理由の表示だけ行って終了する
+    void OnDeviceFatal(mye::EngineContext& ctx, const mye::DeviceFatalInfo& info) override
+    {
+        mye::ReportDeviceFatal(ctx.window != nullptr ? ctx.window->Hwnd() : nullptr, info, std::wstring());
+    }
 };
 
 } // namespace

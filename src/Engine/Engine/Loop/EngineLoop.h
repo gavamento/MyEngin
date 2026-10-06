@@ -372,7 +372,17 @@ struct EngineConfig {
     // 実際に落として確かめるしかない (M52a 申し送り 5 と同じ流儀)
     int crashTest = 0;            // CrashTestKind の生値 (Platform への依存を持ち込まない)
     int64_t crashTestTick = 120;  // --crash-at-tick N
+
+    // ---- デバイス消失の疑似発生 (M88、--simulate-device-lost <frame>) ----
+    // >= 0 のとき、その描画フレームの Present 判定で 1 回だけ「デバイスが消えた」ことにする
+    // (D3D11 には消失を即時に起こす API が無い。以降の経路は本物と同一)。負値 = 無効
+    int64_t simulateDeviceLostFrame = -1;
+    // --simulate-device-lost-fatal: 復旧を試みず致命停止へ進める (致命経路の自動テスト用)
+    bool simulateDeviceLostFatal = false;
 };
+
+// デバイス消失で続行できないときの終了コード (1 = 失敗 / 2 = 落とし損ね / 4 = desync / 5 = プローブと衝突しない値)
+constexpr int kExitCodeDeviceLost = 6;
 
 // フレーム計測 (Profiler ウィンドウ表示用)。EngineLoop が毎フレーム更新する
 struct FrameTimings {
@@ -465,6 +475,14 @@ struct EngineContext {
     bool netLeaveRequested = false;
 };
 
+// OnDeviceFatal へ渡す、デバイス消失の事実。HRESULT は生の値 (D3D 型を上へ出さない)
+struct DeviceFatalInfo {
+    int32_t presentHr = 0;       // 消失を検出した Present の HRESULT (0 = Present 以外で検出)
+    int32_t removedReason = 0;   // GetDeviceRemovedReason の値 (疑似消失では 0)
+    bool simulated = false;      // --simulate-device-lost による疑似消失
+    bool interactive = true;     // false = 人が見ていない実行 (--frames / --screenshot / replay 等)。ダイアログを出さない
+};
+
 class IEngineApp {
 public:
     virtual ~IEngineApp() = default;
@@ -473,6 +491,9 @@ public:
     virtual void OnRenderViews(EngineContext&) {} // フェーズ 6: 独自 RT への描画 (エディタの SceneView 等)
     virtual void OnImGui(EngineContext&) {}       // 描画フレーム毎 (spec 5.3 フェーズ 8)
     virtual void OnShutdown(EngineContext&) {}
+    // デバイス消失から続行できないとき、ループを抜ける直前に 1 回だけ呼ばれる。
+    // D3D は呼ばないこと (消えたデバイスへ投げない)。保存とユーザーへの通知だけを行う
+    virtual void OnDeviceFatal(EngineContext&, const DeviceFatalInfo&) {}
     // ゲームがマウスのクリックを受け取ってよい範囲 (2026-09-14)。false = 制限なし (Runtime)。
     // true を返すと、範囲の外にあるマウスのボタン / ホイールを入力レーン 0 から捨て
     // (Input::MaskMouseOutside)、カーソルロックもこの範囲の中央へ固定する。

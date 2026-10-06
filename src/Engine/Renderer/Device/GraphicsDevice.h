@@ -26,6 +26,10 @@ public:
     const std::string& AdapterName() const { return adapterName_; }
     bool IsWarp() const { return warp_; }
 
+    // ID3D11Device::GetDeviceRemovedReason の値 (HRESULT)。0 (S_OK) = 消失していない。
+    // 生の D3D 型を上へ出さないために整数で返す
+    long DeviceRemovedReason() const;
+
     // デバッグレイヤの InfoQueue に溜まった警告/エラーをエンジンログへ転送する
     // (デバッガ非接続でも D3D の検証結果を確認できる)。Release では何もしない
     void PumpDebugMessages();

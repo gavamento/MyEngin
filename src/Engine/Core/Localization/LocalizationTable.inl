@@ -2168,3 +2168,14 @@ MYE_STR(Insp_PercNoEar,        "Hearing mode is Acoustic but this entity has no 
                                "聴覚の方式が Acoustic ですが、このエンティティに AcousticListener がありません。何も聞こえません")
 MYE_STR(Insp_PercNoStimulus,   "Only entities with AIStimulusSource can be seen or touched. Add one to the player and other targets.",
                                "見たり触れたりできるのは AIStimulusSource を持つエンティティだけです。プレイヤーなどの相手に付けてください")
+
+// ---- M88: デバイス消失 (致命停止の通知。printf の書式には使わない) ----
+MYE_STR(DevLost_Title,         "Graphics device lost", "グラフィックスデバイスが失われました")
+MYE_STR(DevLost_Reason,        "The GPU device was removed or reset, so the application cannot continue and will close.",
+                               "GPU デバイスが削除またはリセットされたため、続行できません。アプリケーションを終了します。")
+MYE_STR(DevLost_Simulated,     "(simulated by --simulate-device-lost)", "(--simulate-device-lost による疑似発生です)")
+MYE_STR(DevLost_PresentLabel,  "Present result", "Present の結果")
+MYE_STR(DevLost_RemovedLabel,  "Device removed reason", "デバイス消失の理由")
+MYE_STR(DevLost_SceneSaved,    "The scene you were editing was saved to this file (the original scene file was not changed):",
+                               "編集中のシーンを次のファイルへ退避保存しました (元のシーンファイルは変更していません):")
+MYE_STR(DevLost_SaveFailed,    "The scene could not be saved:", "シーンを退避保存できませんでした:")

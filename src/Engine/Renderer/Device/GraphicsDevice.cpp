@@ -103,6 +103,11 @@ bool GraphicsDevice::Init(bool forceWarp)
     return true;
 }
 
+long GraphicsDevice::DeviceRemovedReason() const
+{
+    return device_ ? static_cast<long>(device_->GetDeviceRemovedReason()) : 0;
+}
+
 void GraphicsDevice::PumpDebugMessages()
 {
 #ifdef _DEBUG

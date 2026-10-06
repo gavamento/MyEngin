@@ -13,6 +13,7 @@
 
 #include "Editor/Asset/AssetOps.h"
 #include "Editor/App/ChildProcess.h"
+#include "Editor/App/DeviceLostRescue.h"
 #include "Editor/Widgets/CreateMenu.h"
 #include "Editor/App/EditorGlobalSettings.h"
 #include "Editor/Project/ProjectManager.h" // M66d: 段階 C の RelaunchSelfWithProject
@@ -26,6 +27,7 @@
 #include "Engine/Engine/Scene/EntityNaming.h"
 #include "Engine/Engine/Physics/Fracture/FractureSystem.h" // PreloadFractureAssets (シーンロード直後の破片資産先読み)
 #include "Engine/Engine/HotReload/DllReloader.h"
+#include "Engine/Engine/Loop/DeviceFatal.h"
 #include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Engine/Net/NetRuntime.h"
@@ -506,6 +508,38 @@ void EditorApp::OnShutdown(EngineContext& ctx)
     // M66b: destroy (worker を join) -> FreeLibrary。デバイス解放とは無関係だが、
     // ★プロセス終了任せにすると、走行中の worker のコードごとアンロードされうる
     scm_.Shutdown();
+}
+
+void EditorApp::OnDeviceFatal(EngineContext& ctx, const DeviceFatalInfo& info)
+{
+    // ★再生中の ctx.scene は動いている世界なので書かない。編集状態は Play 開始前のスナップショット。
+    //   元のシーンファイルは上書きせず、プロジェクト配下の crash\ へ別ファイルで書く
+    RescueSaveResult saved;
+    try {
+        nlohmann::json doc;
+        if (const nlohmann::json* prePlay = playMode_.PrePlaySnapshot()) {
+            doc = *prePlay;
+        } else if (ctx.scene != nullptr) {
+            doc = SceneSerializer::SaveToJson(*ctx.scene);
+        }
+        const std::wstring rootDir = ctx.projectRoot.empty() ? GetExecutableDir() : ctx.projectRoot;
+        saved = SaveRescueScene(doc, rootDir, RescueSceneName(scenePath_), RescueTimestamp());
+    } catch (const std::exception& ex) {
+        saved.error = ex.what();
+    }
+    if (actorEdit_) {
+        MYE_LOG_WARN("[device] the mini-scene being edited (%s) is not rescued; only the scene is",
+                     WideToUtf8(actorEdit_->path).c_str());
+    }
+
+    std::wstring detail;
+    if (saved.ok) {
+        detail = Utf8ToWide(Tr(StrId::DevLost_SceneSaved)) + L"\n" + saved.path;
+    } else {
+        MYE_LOG_ERROR("[device] scene rescue failed: %s", saved.error.c_str());
+        detail = Utf8ToWide(Tr(StrId::DevLost_SaveFailed)) + L" " + Utf8ToWide(saved.error);
+    }
+    ReportDeviceFatal(ctx.window != nullptr ? ctx.window->Hwnd() : nullptr, info, detail);
 }
 
 // 焼いた 6 面のサムネイル (M56e)。**Inspector ではなく専用の小窓**に出す。並びは十字 (ProbeWriteFacesPng と同一) で、
