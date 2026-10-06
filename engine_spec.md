@@ -557,7 +557,7 @@ were considered and **deliberately left out**. They are non-goals of v1, not ove
 |---|---|
 | **Ray-traced shadows for local lights** | The RT lane is default-off, and when this was written it was also excluded from the screenshot regression altogether (`tools\shot_verify.bat`: "the RT demo is too slow under WARP"), so the feature would have carried permanently zero automated coverage. **M67a showed that premise was half wrong**: the cost belongs to `--rt-demo` (the closed Cornell box, where every ray hits), not to the RT lane as such — `--render-demo --rt-refl` shoots in 11 s under WARP and is bit-identical run to run, so RT *reflection* and *GI* now have goldens. **RT shadows still have zero pixel coverage**, and the reason to leave them out is now the plainer one: the M54 shadow atlas produces the same image on a lane CI already exercises. The §6.4 v1 limitation "local lights cast no ray-traced shadows" therefore stands. |
 | **Diffuse SH probe grid** | Two implementations of diffuse ambient already exist (IBL irradiance, and RT diffuse GI + SVGF). An SH grid would be a third, lower in quality than the RT lane, and would require a whole bake infrastructure. M56 ships *specular* reflection probes only. |
-| **Terrain collision** | Terrain (M58) is a render-only lane: `TerrainComponent` is `kComponentNoHash` and nothing it does reaches the simulation. A heightfield collider would move terrain into the hashed lane, requiring a fifth scene pair in `tools\replay_verify.bat` and an ABI bump for height/normal queries. Deferred to M59. |
+| **Terrain collision** | Terrain (M58) is a render-only lane: `TerrainComponent` is `kComponentNoHash` and nothing it does reaches the simulation. A heightfield collider would move terrain into the hashed lane, requiring a fifth scene pair in `tools\replay_verify.bat` and an ABI bump for height/normal queries. Out of scope for M58 only: **M59i shipped it** as the static heightfield collider `collidershape::kTerrain`, which keeps its own copy of the terrain on the physics side. |
 
 ### 6.6 Decals (M56a, M56b)
 
@@ -3320,9 +3320,9 @@ Kept verbatim, because the completion criteria it set are still the ones the pro
 
 The order was intentional: implementing the reload foundation in M3 first accelerated subsequent particle development through dogfooding.
 
-### 12.2 What was actually built (M0-M70)
+### 12.2 What was actually built (M0-M85)
 
-**2026-07-19 → 2026-09-07, 283 commits.** The primary source is `git log`; the prefix on each
+**2026-07-19 → 2026-10-06, over 530 commits.** The primary source is `git log`; the prefix on each
 commit subject names the milestone. Grouped by system rather than by number, because the numbers
 interleave — several tracks ran in parallel and a few milestones were revisited weeks later.
 
@@ -3343,6 +3343,12 @@ interleave — several tracks ran in parallel and a few milestones were revisite
 | Determinism and verification | M6, M51, M52 | Replay hashing across Debug / Release plus static rule checks; sim indices, game flow, pause and time scale, save / load, staged packaging; field-level hash diffing, a `git bisect` wrapper, time travel, crash bundles that replay, **two-player P2P rollback netcode** (ADR-013); CI and pixel regression (ADR-014); **headless dedicated server** with late join, reconnect, `.rep` v9 and ABI v23 lane state, hosted locally or on GameLift Anywhere (M81, §11.5, ADR-022) |
 | Project system and source control | M26, M27, M33, M66 | `--project` and the project manager; editor theme and Japanese fonts; **Git for the project repository from inside the editor**, backed by an in-process Rust cdylib behind six C entry points (§14, ADR-015) |
 | Infrastructure | M25 | Job system (`ParallelFor` / `ParallelRanges`), used by the transform hierarchy and frustum culling |
+| Branch debugging | M72, M73 | Time-travel branches kept as lanes instead of discarded futures, ghosts of the branched future in the Scene View, input overrides, divergence drill-down to the first split tick (ADR-018); pause, seek and the reworked Timeline |
+| Asset identity | M74 | Sub-asset ids keyed by the `.meta` GUID so two clones at different paths resolve each other's models, plus the migration command for old ids (ADR-019) |
+| In-game UI (uGUI-style) | M75a-g | `RectTransform` split from `UIElement`; input recorded in game-surface pixels with a text queue; Canvas and three Canvas Scaler modes; font metric table assets so the sim measures text; Layout Group / LayoutElement / ContentSizeFitter; Selectable, Toggle, ToggleGroup, Slider; ScrollRect, Scrollbar, Dropdown. InputField and the Rect Tool are still open (§12.3) |
+| Modal impact sound | M76 | Deep-Modal: a modal synthesiser, a 32³ voxeliser, dataset generation and training tools, a `.dmnet` CPU inference backend, and the `ModalSound` component that turns collisions into synthesised impacts (ADR-020) |
+| Sky, water, project shaders | M77-M79 | Panorama skybox and IBL bake from 2D textures; Gerstner-wave water whose formula buoyancy shares; project post and compute effects with a Properties DSL and `.fxstack.json`; project surface shaders on both Forward and Deferred |
+| AI | M82-M85 | Recast-based NavMesh with bake, pathfinding, TileCache and Crowd held bit-identical (ADR-023); `AIPerception` sight and hearing (ADR-024); Agent Types, Surface grouping, filters and auto-generated links; **behaviour trees** with `.bt` / `.bb` assets, decorators, aborts, C# tasks and a node editor (ADR-025). ABI v24 → v27 = 158 slots |
 
 **A note on the numbering.** M17-M25 and M30-M31 have no commits of their own: they were finished
 before the repository was brought up to date and landed in two bundle commits (`M16-M25` and
@@ -3357,6 +3363,11 @@ to the physics roadmap.
 |---|---|
 | M60′ e-n (XPBD deformables) | **Paused.** a-d shipped (backend, solver core, rope, two-way attachment). The remaining ten sub-milestones — particle/world collision, cloth, soft bodies, plasticity, showcase — are unstarted, and rope still has no replay or screenshot coverage |
 | M61 / M62 (physics roadmap) | **Partially superseded.** The old roadmap reserved these numbers for fracture and for thermal / fluid / optical / electrical, but both numbers were later spent on the particle A-group expansion (see the numbering note above). Fracture itself shipped under its own number, M80 (§10.8); thermal / fluid / optical / electrical are still unstarted |
+| M75h-j (in-game UI) | **Unstarted.** InputField with its ABI bump and C# mirror, the Rect Tool with Game View → surface conversion, and the final `--ui-demo`, spec sections and ADR. Plan: `plans\m75-ugui.md` |
+| M86 (Smart Objects) | **Unstarted, designed.** `SmartObjectComponent` with slots, a reservation table in the snapshot and hash, four behaviour-tree nodes, one ABI bump. Plan: `plans\ai-roadmap-m83-m86.md` |
+| Engine MCP server (M87) | **Unstarted, design settled.** Engine index dump, a stdio JSON-RPC server with search / describe, structured verify jobs, notes. Plan: `plans\エンジンMCPサーバ.md` |
+| Animation depth, sequencer, LOD | **Unstarted.** Blend trees, two-bone IK, root motion and animation events; a tick-based sequencer; mesh LOD and GPU occlusion culling. Listed as next tasks when M70 closed; none has a plan file yet |
+| Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (now ABI v27, TypeId 79, ADR-025). Plan files that name a specific future number are stale on that point |
 | Dogfooding backlog | 5 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open (11 debug-draw log, 13 `builtin://wheel`, 17 CC ⇄ Rigidbody, 19 missing-`PhysicsEnvironment` warning, 20 script-to-script messaging). Each needs a new implementation surface; 20 needs the next ABI bump (`onMessage` on `MyeScriptDesc`) |
 
 ---

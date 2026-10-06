@@ -129,7 +129,7 @@ C# は `MyeScripting.dll` とその依存ファイル、Git は `MyeCollab.dll` 
 
 **未登録コンポーネントの JSON は保持して再保存する実装になっています。** 型が未登録のまま実行できるわけではありませんが、旧 README にあった「未登録なら保存で消える」という説明は現状には当てはまりません。
 
-スクリプト API の正本は [src/Shared/EngineAPI.h](src/Shared/EngineAPI.h) と [src/Shared/ScriptAPI.h](src/Shared/ScriptAPI.h) です。現行の `MYE_API_VERSION` は **21**。ABI を更新した場合は本体、ゲーム DLL、言語間ミラーの整合が必要です。
+スクリプト API の正本は [src/Shared/EngineAPI.h](src/Shared/EngineAPI.h) と [src/Shared/ScriptAPI.h](src/Shared/ScriptAPI.h) です。現行の `MYE_API_VERSION` は **27** (158 スロット)。ABI を更新した場合は本体、ゲーム DLL、言語間ミラーの整合が必要です。
 
 ### 描画・演出
 

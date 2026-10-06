@@ -1,6 +1,14 @@
-# エンジン MCP サーバ (M71) — 計画
+# エンジン MCP サーバ (M87) — 計画
 
 **現在地: 設計確定・未着手。コードは 1 行も書いていない。**
+
+**2026-10-06 追記 (番号と前提値の更新)**:
+- マイルストーン番号を M71 から **M87** へ振り直した。「M71a」は別の作業 (`07b8a1f` ABI v17 `GetSceneName`) が
+  先に使ったため。
+- 本文の数値 (ABI v16 / 110 スロット、436 フィールド、並列 10 ジョブ、component 45 / field 400 の下限) は
+  2026-09-08 時点のもの。**現在は ABI v27 = 158 スロット、`replay_verify.bat` は並列 17 ジョブ**。
+  §4.3 の下限チェックの値と §8-1 のサイズ見積もりは、着手時に数え直す。
+- §7 の「規則 13」は `check_rules.ps1` で Net / GameLift の include 境界が既に使っている。次の空き番号を使う。
 2026-09-08 の会話で「このエンジンに AI 用の MCP を用意する」案を詰め切った結果。
 姉妹メモ `plans\エンジン機能の自然言語検索.md` の §7「未決の判断」のうち、
 **S0 (索引) と S3 代替 (MCP) をこの計画が決着させる**。S1 (エディタ内検索パレット) と
@@ -13,7 +21,7 @@ S2 (埋め込みモデル) は据え置きで、この計画には含めない�
 1. この節と §3 の決定表を読む。設計の分岐は**すべて決着済み**なので、再検討しない。
 2. §9「却下した案」を読む。同じ案を再提案しないため。
 3. §8 の「着手前に実測すること」を先に潰す。3 つとも未確認で、結果次第で §5 の返却形が変わる。
-4. §7 のサブ分割の頭 (M71a) から着手する。1 サブ = 1 コミット = 1 セッション。
+4. §7 のサブ分割の頭 (M87a) から着手する。1 サブ = 1 コミット = 1 セッション。
 
 ---
 
@@ -56,7 +64,7 @@ HAL Collector の審査に効くのは決定論・リプレイ・音響の方で
 | notes | `<projectRoot>\.mye\notes\<topic>.md`、**追記のみ + タイムスタンプ**、**gitignore** | §6 |
 | 子プロセス | `CREATE_NO_WINDOW` で起動 | §3.1 |
 | CI | **一切入れない。`--selftest` にも入れない** | 無ければ「利用不可」に縮退するだけ (`MyeCollab.dll` と同じ) |
-| マイルストーン | M71 (M70 まで消化済み) | |
+| マイルストーン | M87 (計画時は M71。冒頭の追記を参照) | |
 
 ### 3.1 Rust に置くことで構造的に消える罠が 2 つある (この計画の隠れた利得)
 
@@ -231,12 +239,12 @@ AI が書いたものがレビューなしにリポへ溜まるのを防ぐ。
 
 | | 中身 | 触るもの |
 |---|---|---|
-| **M71a** | `Editor.exe --dump-index` + `tools\gen_engine_index.ps1` + `check_rules.ps1` の件数下限 | `EditorMain.cpp` (~50 行) / 新規 ps1 / check_rules.ps1 |
-| **M71b** | Rust crate 骨格 + stdio JSON-RPC + `search` / `describe` + `tools\mcp_verify.bat` + `tests\mcp\*.ndjson` | 新規 `tools\mcp\` |
-| **M71c** | `verify_job` (start / poll、`CREATE_NO_WINDOW`、`<name>.log` の構造化) | `tools\mcp\src\verify.rs` |
-| **M71d** | `note_read` / `note_append` + 規則 13 + パストラバーサル拒否の固定テスト | `tools\mcp\src\notes.rs` / check_rules.ps1 |
+| **M87a** | `Editor.exe --dump-index` + `tools\gen_engine_index.ps1` + `check_rules.ps1` の件数下限 | `EditorMain.cpp` (~50 行) / 新規 ps1 / check_rules.ps1 |
+| **M87b** | Rust crate 骨格 + stdio JSON-RPC + `search` / `describe` + `tools\mcp_verify.bat` + `tests\mcp\*.ndjson` | 新規 `tools\mcp\` |
+| **M87c** | `verify_job` (start / poll、`CREATE_NO_WINDOW`、`<name>.log` の構造化) | `tools\mcp\src\verify.rs` |
+| **M87d** | `note_read` / `note_append` + 規則 13 + パストラバーサル拒否の固定テスト | `tools\mcp\src\notes.rs` / check_rules.ps1 |
 
-**M71a は MCP なしで完結し、Claude Code が `cache\engine_index.json` を直接読めるので
+**M87a は MCP なしで完結し、Claude Code が `cache\engine_index.json` を直接読めるので
 単体で効果が出る**。ここで止めても損をしない順序にしてある。
 
 ---
@@ -272,5 +280,5 @@ AI が書いたものがレビューなしにリポへ溜まるのを防ぐ。
 
 - [ ] 着手時期 — 三校企画 (作業ツリーに未コミット 12 ファイル / +309 行) との優先度
 - [ ] 日英同義語表の粒度 — `LocalizationTable.inl` の 1269 行から機械生成するか、手書きの
-      小さな表を足すか。M71b で決める
+      小さな表を足すか。M87b で決める
 - [ ] `search` の `limit` 既定値 — §8-1 の実測後

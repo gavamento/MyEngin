@@ -79,6 +79,9 @@ M82 で NavMesh を作った (Recast、Surface / Agent / Obstacle / Modifier / L
 
 ## 番号の予約状況 (先着順)
 
+★下の 3 行は M83 着手前の値。**現在の値は冒頭の再開手順** (末尾 TypeId 79 / ABI v27 = 158 / `kSimSnapshotVersion` 39)。
+規則は変わらない: 番号は着手時の末尾から取る。M75h (InputField) と M86 のどちらが先でも、先に着手した側が次の番号を使う。
+
 - TypeId の末尾は 75 (NavMeshLink、`src\Engine\Core\Ecs\Components.cpp:1476`)。M75h の InputField は 76 に「予定」とあるが未登録。新しい型は**登録コミットの時点の末尾**から振る。
 - `kSimSnapshotVersion = 29` (`src\Engine\Engine\Replay\SimSnapshot.h:112`)。上げるときは `AcousticAudioSelfTest.cpp:129` の `== 29` も直す。
 - ABI は `MYE_API_VERSION 24` = 139 スロット (`src\Shared\EngineAPI.h:41`)。M75h が v25 を予定している。**各マイルストーンで bump は 1 回**にし、着手時点の次の番号を使う。外部プロジェクトの GameLogic.dll は bump のたびに再ビルドが要る。
@@ -228,7 +231,7 @@ UE5 の Smart Objects を手本にする。「使い方」を AI の側ではな
 2. BT ノード 4 種と Abort 時の解放
 3. スロットの振る舞い (SubTree / Animator のステート)
 4. ABI + C# + デモ (座る椅子・引くレバー) + replay_verify のジョブ
-5. 文書 (ADR-026) と全体検証
+5. 文書 (ADR。番号は着手時の次の空きで、現在の末尾は ADR-025) と全体検証
 
 ---
 
