@@ -483,6 +483,7 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 ### (c) 復旧できなかったときの退避ファイル
 
 - [ ] `Editor.exe --simulate-device-lost 60 --simulate-device-lost-fatal` で、メッセージボックスに理由と退避先の絶対パスが出る (`--frames` / `--screenshot` を付けた非対話実行ではログだけ)
+- [ ] `Editor.exe --frames 120 --simulate-device-lost 30 --simulate-device-lost-stale` (復旧の途中で旧デバイスの子を握らせ、参照数ゲート不合格 → 致命停止) が exit 6 で終わり、クラッシュも assert ダイアログも出ない (RecoverDevice で ImGui を畳んだ後に致命停止する経路。Debug / Release の両方)
 - [ ] 退避ファイル `<project>\crash\device_lost_<日時>\<シーン名>.scene.json` ができ、元のシーンファイルは変わっていない (更新日時が同じ)
 - [ ] 退避ファイルをエディタで開くと、消失時の編集状態 (配置したオブジェクト・未保存の変更) が復元される
 - [ ] Play 中に消失させた場合、退避されるのは Play 開始前の状態で、Play 中に動いた位置は入っていない

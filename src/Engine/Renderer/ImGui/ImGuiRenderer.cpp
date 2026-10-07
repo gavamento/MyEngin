@@ -74,6 +74,7 @@ bool ImGuiRenderer::Init(Win32Window& window, GraphicsDevice& device, const ImGu
 
     initialized_ = true;
     deviceBound_ = true;
+    win32Bound_ = true;
     hwnd_ = window.Hwnd();
     MYE_LOG_INFO("ImGui initialized (%s, docking)", IMGUI_VERSION);
     return true;
@@ -84,13 +85,17 @@ void ImGuiRenderer::Shutdown()
     if (!initialized_) {
         return;
     }
+    // 復旧の途中で止まると Win32 側だけ先に畳まれていることがある。生きている方だけを畳む
     if (deviceBound_) {
         ImGui_ImplDX11_Shutdown();
     }
-    ImGui_ImplWin32_Shutdown();
+    if (win32Bound_) {
+        ImGui_ImplWin32_Shutdown();
+    }
     ImGui::DestroyContext();
     initialized_ = false;
     deviceBound_ = false;
+    win32Bound_ = false;
 }
 
 void ImGuiRenderer::ReleaseDevice()
@@ -103,6 +108,7 @@ void ImGuiRenderer::ReleaseDevice()
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     deviceBound_ = false;
+    win32Bound_ = false;
 }
 
 bool ImGuiRenderer::RecreateDevice(GraphicsDevice& device)
@@ -114,9 +120,11 @@ bool ImGuiRenderer::RecreateDevice(GraphicsDevice& device)
         MYE_LOG_ERROR("ImGui_ImplWin32_Init failed (device recovery)");
         return false;
     }
+    win32Bound_ = true;
     if (!ImGui_ImplDX11_Init(device.Device(), device.Context())) {
         MYE_LOG_ERROR("ImGui_ImplDX11_Init failed (device recovery)");
         ImGui_ImplWin32_Shutdown();
+        win32Bound_ = false;
         return false;
     }
     deviceBound_ = true;

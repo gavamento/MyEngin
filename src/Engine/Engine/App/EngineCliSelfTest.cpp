@@ -159,6 +159,8 @@ bool RunEngineCliSelfTest()
     // M88: 不正値は起動を止めずに無視する (既定の -1 = 無効のまま)
     r = RunParse({ L"--simulate-device-lost-fatal" });
     check(r.consumed == 1 && r.config.simulateDeviceLostFatal, "--simulate-device-lost-fatal");
+    r = RunParse({ L"--simulate-device-lost-stale" });
+    check(r.consumed == 1 && r.config.simulateDeviceLostStale, "--simulate-device-lost-stale");
     r = RunParse({ L"--simulate-device-lost", L"30" });
     check(r.consumed == 1 && r.config.simulateDeviceLostFrames == std::vector<int64_t>{ 30 },
           "--simulate-device-lost N");

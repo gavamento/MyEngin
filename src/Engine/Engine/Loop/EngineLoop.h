@@ -380,6 +380,8 @@ struct EngineConfig {
     std::vector<int64_t> simulateDeviceLostFrames;
     // --simulate-device-lost-fatal: 復旧を試みず致命停止へ進める (致命経路の自動テスト用)
     bool simulateDeviceLostFatal = false;
+    // --simulate-device-lost-stale: 復旧の途中で旧デバイスの子を握らせ、参照数ゲート不合格 → 致命停止を通す
+    bool simulateDeviceLostStale = false;
 };
 
 // デバイス消失で続行できないときの終了コード (1 = 失敗 / 2 = 落とし損ね / 4 = desync / 5 = プローブと衝突しない値)

@@ -2,11 +2,13 @@
 
 - 状態: **確定** (2026-10-07、M88)
 - 出所: 依頼「A5の復旧まで実装」。計画は `plans\m88-device-lost-recovery\spec.md`。
-- 実体: `src\Engine\Engine\Loop\EngineLoop.cpp` の `RecoverDevice` (復旧手順) と `DeviceLostLimiter` / `DeviceFatalInfo`、
-  `src\Engine\Renderer\Device\GraphicsDevice.{h,cpp}` の `RecycleDevice` と旧デバイス参照数の測定、
+- 実体: `src\Engine\Engine\Loop\EngineLoop.cpp` の `RecoverDevice` (復旧手順)、
+  `src\Engine\Engine\Loop\EngineLoop.h` の `DeviceFatalInfo`、
+  `src\Engine\Engine\Loop\DeviceRecovery.{h,cpp}` の `RecycleDevice` と `DeviceLostLimiter`、
+  `src\Engine\Renderer\Device\GraphicsDevice.{h,cpp}` の旧デバイス参照数の測定、
   `src\Engine\Renderer\Device\GpuResources.{h,cpp}` の `RenderResources::ReleaseGpu / RecreateGpu`、
   エディタは `src\Editor\App\EditorApp.cpp` の `OnDeviceLost / OnDeviceRestored / OnDeviceFatal`。
-  検証は `DeviceRecoverySelfTest` と `--simulate-device-lost`。
+  検証は `DeviceRecoverySelfTest` と `--simulate-device-lost` / `--simulate-device-lost-fatal` / `--simulate-device-lost-stale`。
 - 番号: ABI v27 = 158 スロット、`kSimSnapshotVersion` 39、TypeId の追加なし (いずれも変更していない)。
 
 ## 背景

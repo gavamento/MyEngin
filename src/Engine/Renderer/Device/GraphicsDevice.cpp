@@ -192,11 +192,25 @@ void GraphicsDevice::ReleaseContext()
 
 void GraphicsDevice::ReleaseDevice()
 {
+    testHeldChild_.Reset();
     device_.Reset();
+}
+
+bool GraphicsDevice::HoldChildForTest()
+{
+    if (!device_) {
+        return false;
+    }
+    D3D11_BUFFER_DESC desc = {};
+    desc.ByteWidth = 16;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    return SUCCEEDED(device_->CreateBuffer(&desc, nullptr, testHeldChild_.ReleaseAndGetAddressOf()));
 }
 
 void GraphicsDevice::Shutdown()
 {
+    testHeldChild_.Reset();
     if (context_) {
         context_->ClearState();
         context_->Flush();

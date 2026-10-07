@@ -30,6 +30,9 @@ public:
     // デバッグレイヤが有効なら生存オブジェクトを詳細にログへ出す (診断のみ。状態は変えない)
     void ReportLiveObjectsDetail();
     void ReleaseDevice();
+    // 検証専用 (--simulate-device-lost-stale): 旧デバイスの子を 1 つ握り、参照数ゲートを不合格にする。
+    // Shutdown / ReleaseDevice で手放す。成功したら true
+    bool HoldChildForTest();
 
     ID3D11Device* Device() const { return device_.Get(); }
     ID3D11DeviceContext* Context() const { return context_.Get(); }
@@ -51,6 +54,7 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D11Device> device_;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> context_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> testHeldChild_; // HoldChildForTest の握り分
     std::string adapterName_;
     uint64_t debugMsgCursor_ = 0;
     bool debugLayer_ = false;

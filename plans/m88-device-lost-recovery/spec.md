@@ -112,7 +112,7 @@ Recovering ──(再作成失敗 / ゲート不合格 / 連続消失)──> Fa
   - 保存失敗は理由をログとメッセージに含めるが、終了は続行する。
 - メッセージボックス (Win32 `MessageBoxW`、所有窓はメインウィンドウ) で、理由 (HRESULT / removed reason / 疑似かどうか / ゲート不合格の残参照数)、退避ファイルの絶対パスを表示。文字列は `Tr()` (`C:\HAL\MyEngin\src\Engine\Core\Localization\Localization.h:32`) で日英両方を用意。`Tr()` の結果を書式文字列にしない。
 - `--selftest` / `--frames N` (EngineConfig::maxFrames) 等の非対話実行中は (既存の非対話判定に従い) メッセージボックスを出さず、ログだけ出す。
-- 終了コードは専用の非 0 値 (`kExitCodeDeviceLost`、既存の終了コードと衝突しない値) で終了する。終了処理は既存の Shutdown 列を通すが、GPU 解放の失敗で落ちないこと。
+- 終了コードは専用の非 0 値 (`kExitCodeDeviceLost`、既存の終了コードと衝突しない値) で終了する。終了処理は既存の Shutdown 列を通すが、GPU 解放の失敗で落ちないこと。復旧の途中で既に解放したサブシステム (ImGui のバックエンドなど) を二重に解放しないこと (review-1 #1)。
 
 ### 4.2 データ・保存形式・互換性
 
@@ -153,10 +153,11 @@ Recovering ──(再作成失敗 / ゲート不合格 / 連続消失)──> Fa
 9. 復旧の前後で World の状態ハッシュが一致する (復旧ルーチンの直前と直後で比較してログ/SelfTest で判定)。 — SelfTest または実行ログ
 10. 既存の replay を検証再生する実行に `--simulate-device-lost <frame>` を足しても検証が一致する。`tools\replay_verify.bat` が従来どおり一致する。 — 実行ログ + `tools\replay_verify.bat`
 11. GameLogic DLL / C# の compute ハンドルが復旧後も同じ値で使え (Dispatch がエラーにならない)、ABI バージョン・スロット数が変わっていない (v27 = 158)。 — compute を使うシーン/テストでの実行 + ABI 定義の差分なし
-12. 旧デバイスの子オブジェクトを意図的に 1 つ握らせた場合 (テスト専用の注入)、ゲートが不合格になり Fatal へ落ちる。 — SelfTest
+12. 旧デバイスの子オブジェクトを意図的に 1 つ握らせた場合 (テスト専用の注入)、ゲートが不合格になり Fatal へ落ちる。 — SelfTest。加えて (review-1 #1 で追加) 実ループで「復旧を試みた後に Fatal へ進む」経路を通し、Editor.exe `--frames N --simulate-device-lost 30` と注入で exit 6、退避ファイルあり、クラッシュも assert ダイアログも出ないこと (Debug / Release)。
 13. 本物の TDR (`dxcap -forcetdr`、管理者) で復旧することを、手順書どおりにユーザーが確認できる。手順が `C:\HAL\MyEngin\docs\test_checklists.md` に載っている。 — 文書 + ユーザーの手動確認 (未実施なら未検証として報告)
 14. `Editor.exe --selftest` (Debug/Release)、`tools\check_rules.ps1`、`tools\replay_verify.bat` が通る。 — コマンド
 15. ADR-026 (`C:\HAL\MyEngin\docs\adr\ADR-026-device-lost-recovery.md`) に「プロセス内復旧を選んだ理由 / 参照数ゲート / ABI を変えない理由 / やらないこと」が書かれている。 — 文書
+16. (2026-10-07 ユーザー判断 U5 で追加) 専用サーバのセッションに参加中のクライアントで疑似消失を起こし、復旧に `serverTimeoutMs` / `peerTimeoutMs` (3000 ms) を超える時間がかかっても、切断されない。具体的には次のすべてを満たす: サーバのログにそのレーンの timeout による切断が無い / クライアントが Failed にならず通常どおり終了する / サーバとクライアントの .rep が同じ tick 列を記録する / サーバの .rep の再生検証が一致する。同じケースを対策無しで実行すると切断で落ちることも、一度確認しておく。 — `tools\server_verify.bat` に追加するケース E (実走)
 
 ## 6. サブ分割
 
@@ -167,6 +168,7 @@ Recovering ──(再作成失敗 / ゲート不合格 / 連続消失)──> Fa
 | sub-03 | アセットの GPU 再アップロード (メッシュ/テクスチャ/マテリアル、ID 維持) | sub-02 | 9、14 (+6 の部分) | "M88c: デバイス復旧でメッシュ・テクスチャ・マテリアルを同じ ID のまま作り直す" |
 | sub-04 | エンジン層の残り (UI/VFX/粒子/RT/Probe/EnvMap/TAA/compute runner 等) と Runtime での復旧完了 | sub-03 | 5 (Runtime)、6、7、10、11、14 | "M88d: 粒子・レイトレ・プローブ・compute を復旧対象に加え、Runtime の復旧を完成させる" |
 | sub-05 | エディタ側の復旧 (ビュー RT・プレビュー・ImTextureID)、メニュー、ADR-026、手動 TDR 手順 | sub-04 | 5 (Editor)、8、13、14、15 | "M88e: エディタのビューとプレビューを復旧対象に加え、ADR-026 と TDR 確認手順を書く" |
+| sub-06 | 復旧中もクライアントのネット送受信を回し、専用サーバから切断されないようにする | sub-05 | 16、14 | "M88g: デバイス復旧中もクライアントの送受信を続け、専用サーバから切断されないようにする" |
 
 依存は一直線 (並列不可: 全サブが `EngineLoop::Run` の同じ区間を触る)。
 
@@ -188,6 +190,14 @@ Recovering ──(再作成失敗 / ゲート不合格 / 連続消失)──> Fa
 - R2 シェーダの再コンパイル時間。キャッシュ (ShaderManager) から引けない場合、復旧に数秒〜数十秒。所要時間を記録し、許容外なら planner へ。
 - R3 compute の中身はゼロから。GameLogic が「一度だけ初期化した GPU バッファ」に依存していると復旧後に結果が変わる。描画専用の用途に限られている前提 (sim がそれを読まないこと) を sub-04 で確認する。sim が読み戻しているなら決定性違反の既存問題として planner へ報告 (今回の修正範囲外)。
 - R4 非同期テクスチャ読み込みワーカー (`TextureLibrary::AsyncWorker`) が D3D オブジェクトを作っている場合、復旧前の排出が必須。
+- R6 (review-1 #3 → **2026-10-07 ユーザー判断 U5 で sub-06 として対応**。planner の裁定「後回し」は覆った)
+  - 問題: 専用サーバのセッション中に消失すると、同期復旧による停止 (実測約 4.5 s。デバイス再作成の再試行だけでも最大 10 × 500 ms) が、サーバ側の `peerTimeoutMs = 3000` (`C:\HAL\MyEngin\src\Engine\Engine\Net\ServerSession.h:63`、判定は `ServerSession.cpp:957`) とクライアント側の `serverTimeoutMs = 3000` (`ClientSession.h:37`、判定は `ClientSession.cpp:550`) を超えて切断される。
+  - 前提: サーバは別プロセスの `Server.exe` (`src\Server\`) で GPU を持たないので、消失するのはクライアント側 (Runtime.exe / Editor.exe のクライアント構成) だけ。
+  - 方式の裁定: **復旧している間だけ、ネットの送受信専用スレッドがクライアントのソケットとセッションを専有する**。中身は `Recv → ClientSession::OnPacket` と `ClientSession::Poll` を約 10 ms 間隔で回すことで、Poll が既存の keep-alive (`ClientSession.cpp:556` 付近。`keepAliveMs = 50` ごとに空の ClientInput を送る) と ack を送る。tick は回さない (`ClientSimRunner::Update` は呼ばない)。却下した案:
+    - (a) 復旧の段の間でポンプを回す案: 1 つの段で 3 s を超えるもの (デバイス再作成の再試行、既定デモのテクスチャのデコード直しで約 4 s) を覆えない。段の内部にフックを差し込むと、Renderer の深い所にネットの都合が入り込む。
+    - (b) 復旧中だけタイムアウトを延ばす案: サーバは別プロセスなので、延ばすには「止まります」を伝える新しいメッセージが要り、プロトコル変更と Server.exe の変更が必要になる。クライアント側だけ延ばしても、サーバが切る。
+    - (c) タイムアウトを常に長くする案: 本当の切断の検出が遅れ、M81 の既存の設計値を壊す。
+  - P2P (`NetSession`、`stallTimeoutMs = 20000`) は 4.5 s の停止に収まり、lockstep の相手が待つだけなので対象外。
 - K1 (既知の差、範囲外) `--probe-bake-all --deferred` で、同じ実行の中で BakeAll を 2 回走らせると deferred の絵が変わる (sub-04 で発見、原因は未特定)。M88 では直さない。別件として台帳の申し送りへ。
 - R5 ImGui の ImTextureID を保持している箇所 (エディタ内 8 箇所程度の cast) が古い SRV を握ると参照数ゲートで検出される — これは想定どおりの動作で、sub-05 で潰す。
 
@@ -221,4 +231,8 @@ Recovering ──(再作成失敗 / ゲート不合格 / 連続消失)──> Fa
   - (sub-05 round 1 で追記) CLI の誤記を訂正: `--maxFrames` は存在しない。正しくは `--frames N` (spec 4.1.5、sub-05 受け入れ 1)。
   - (sub-05 round 1 で追記) エディタの復旧を自動回帰にする件 (Editor.exe + 疑似消失 + img-diff のジョブ) は後回しとした。Release で 1 ジョブ数十秒かかるため。現状は DeviceRecoverySelfTest (ゲート・アセット・Surface・compute) と、replay_verify に疑似消失を付けた実行 (Editor.exe の 4 job を含む) で回帰を担保する。
   - (sub-05 round 1 で追記) メニューから疑似消失を要求する口 `EngineContext::requestSimulatedDeviceLost` を承認した。復旧時に ImGui の Win32 バックエンドも Init し直すことを承認した (DX11 の Shutdown がメインビューポートの PlatformUserData を捨てるため)。
-  - 設計上の知見: 遅延で伸びる GPU バッファの容量カウンタ (UIRenderer / VfxRenderer の vbCapacity_) は Shutdown で 0 に戻さなければならない。CPU 側の履歴 (VfxRenderer の trails_) は Shutdown で消してはいけない。ADR-026 に書く。
+  - 設計上の知見 (sub-04): 遅延で伸びる GPU バッファの容量カウンタ (UIRenderer / VfxRenderer の vbCapacity_) は Shutdown で 0 に戻さなければならない。CPU 側の履歴 (VfxRenderer の trails_) は Shutdown で消してはいけない。ADR-026 に書く。
+- 2026-10-07 (reviewer round 1):
+  - #1 (受け入れ 12 の穴として認める): 受け入れ 12 が SelfTest でゲートの判定だけを見ていたため、「復旧を試みた後に Fatal へ進む」実ループの経路 (ゲート不合格 / 再作成失敗 / 再構築失敗) が、どの検証にも入っていなかった。受け入れ 12 に実ループの条件を追加し、sub-05 へ差し戻す。仕様としては、4.1.5「Shutdown 列を通すが、GPU 解放の失敗で落ちないこと」に**部分的に解放済みのサブシステム (ImGui のバックエンドなど) を二重に解放しないこと**を含める。
+  - #3: ネットセッション中の復旧停止とタイムアウトの関係を R6 として記録し、後回しにした。
+- 2026-10-07 (ユーザー判断 U5): R6 を今回対応することになった。方式は「復旧中だけネット送受信専用スレッドを回す」(7. R6 に、却下した案と理由を記載)。受け入れ 16 と sub-06 を追加し、3. 後回しから外した。

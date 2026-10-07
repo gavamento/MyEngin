@@ -37,6 +37,10 @@
 8. エディタ側で描画に `meshes.Get` を使っている箇所 (SceneView 等) を `MeshLibrary::GetDrawable` に置き換える (sub-04 で追加した、vb/ib が null のメッシュを読み飛ばす入口)。
 9. ADR-026 には、spec 8. の sub-04 の知見 (容量カウンタは Shutdown で 0 に戻す / CPU 側の履歴は消さない) と、既知の差 K1 を含める。
 
+10. (review-1 #1) エディタで「復旧を試みた後に Fatal へ進む」と、終了処理で ImGui の Win32 バックエンドを二重に Shutdown して落ちる。これを直す。ImGuiRenderer が DX11 / Win32 それぞれのバックエンドの生死を別に持ち、Shutdown は生きている側だけを畳む。RecreateDevice が途中で失敗した分岐 (ImGuiRenderer.cpp:117-120) も同じ。他のサブシステムにも同じ二重解放の型があれば直す (RecoverDevice の各段で失敗したときの終了処理を一通り読む)。
+11. (review-1 #1、spec 受け入れ 12 の追加分) 検証専用の入口 (CLI でもテスト専用フックでもよい) を足し、RecoverDevice の途中で旧デバイスの子を握らせる。これで実ループのゲート不合格を起こし、Editor.exe `--frames N --simulate-device-lost 30` が Debug / Release とも exit 6、退避ファイルあり、クラッシュも IM_ASSERT ダイアログも出ないことを確かめる。可能なら再作成失敗の分岐も同じ入口で通す。test_checklists.md の (c) に、この経路の自動確認があることを書く。
+12. (review-1 #2) ADR-026 の「実体」欄のファイル名を直す。RecycleDevice / DeviceLostLimiter は `src\Engine\Engine\Loop\DeviceRecovery.{h,cpp}`、DeviceFatalInfo は `EngineLoop.h` にある。
+
 ## 検証コマンド
 - MSBuild Debug|x64 / Release|x64
 - `Editor.exe ... --simulate-device-lost 60 --screenshot ...` (PowerShell ツールから)
@@ -60,5 +64,13 @@
   - 受け入れ 6: `MYE_EXTRA_ARGS="--simulate-device-lost 1"` 付きの `tools\replay_verify.bat` → 17 job すべて PASS (Editor.exe の time-travel / what-if 4 job を含む。1361 s)。素の `replay_verify.bat` は、この変更で (フラグ無しの) 経路は何も変わらないので再走していない (sub-04 のコミット時点で 17 job PASS)。
 - メモ: sub-05.md の検証コマンドにある `--maxFrames` は存在しない CLI で、正しくは `--frames N` (未知の引数は黙って無視され、`--screenshot` と組むと Editor.exe が終了しない)。仕様側の誤記。
 
+### round 2 (FIX_REQUEST: REVIEW round 1)
+- #1: `ImGuiRenderer` に `win32Bound_` を追加。Init / RecreateDevice で立て、ReleaseDevice と RecreateDevice の DX11 失敗分岐で下ろし、Shutdown は `deviceBound_` / `win32Bound_` が立っている側だけ畳む。検証入口 `--simulate-device-lost-stale` (`EngineConfig::simulateDeviceLostStale`、`GraphicsDevice::HoldChildForTest`) を足し、RecoverDevice が imgui.ReleaseDevice した後・RecycleDevice の前に旧デバイスの子 (定数バッファ 1 個) を握らせる。CLI 解析は EngineCliSelfTest に 1 件追加。他の Shutdown (Vfx / Ui / Particle / Compute / Forward / Deferred / SwapChain / Device) は ComPtr の Reset と容量・ready の初期化だけで二重実行しても害が無いことを読んで確認し、上の実走 (RecoverDevice 後の致命停止で終了処理を全部通す) でも落ちないことを確認した。
+- #2: ADR-026 の実体欄を実際のファイルに直した。test_checklists の M88 (c) に `--simulate-device-lost-stale` の項目を追加。
+- 検証: Debug / Release MSBuild エラー 0。`Editor.exe --frames 120 --simulate-device-lost 30 --simulate-device-lost-stale` が Debug / Release とも exit 6、退避あり (bin\x64\<構成>\crash\ 配下)、クラッシュ・assert なし。`Editor.exe --selftest` Debug / Release exit 0。check_rules 0 error。`tools\replay_verify.bat` (フラグ無し) 17 job PASS。
+- 未実施: 修正前のコードで同じコマンドが落ちることの再現確認 (レビュー報告の根拠コードを信頼した)。
+
 ## フィードバック履歴
 - round 1: VERDICT OK (planner)。追加 3 件を承認した (requestSimulatedDeviceLost、ImGui の Win32 再 Init、EditorLinePass の容量リセット)。`--maxFrames` の誤記は spec / sub の両方で `--frames N` に直した。素の replay_verify を再走していない件はレビューで回収する。エディタの自動回帰は後回し。ユーザーの目視 3 項目 (メニュー偽装からの操作、本物の TDR、退避ファイルの再読込) と ImGui の ini・ドッキング状態の確認は未検証として残す。
+- review-1: 差し戻し (#1 major: 復旧を試みた後に Fatal へ進むと、ImGui の Win32 バックエンドを二重に Shutdown する / #2 minor: ADR-026 のファイル名)。受け入れ 10〜12 を追加した。spec 受け入れ 12 と 4.1.5 も更新した (planner)。
+- round 2 (review-1 の修正): VERDICT OK (planner)。win32Bound_ による二重 Shutdown の解消、`--simulate-device-lost-stale` による実ループの Fatal 経路 (Debug / Release で exit 6、退避あり、クラッシュ無し)、ADR のファイル名修正を確認した。修正前に落ちることの再現は未実施で、再作成失敗の分岐 (受け入れ 11 の「可能なら」) は通していない。どちらも nit。

@@ -1789,6 +1789,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         shaderManager.ReleaseGpu();
         imgui.ReleaseDevice();
         swapChain.Shutdown();
+        if (config.simulateDeviceLostStale && lostInfo.simulated) {
+            device.HoldChildForTest();
+        }
 
         const double tRelease = clock.Now();
         const DeviceRecycleResult recycled = RecycleDevice(device);
