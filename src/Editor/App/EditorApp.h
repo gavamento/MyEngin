@@ -55,6 +55,9 @@ public:
     // すると EditorApp の破棄 (= device.Shutdown の後) まで生き残る。
     // ★同じ問題は preview_ (AssetPreviewCache) にもあるが、そちらはここで解放していない
     void OnShutdown(EngineContext& ctx) override;
+    // デバイス復旧 (M88): ビュー RT・プレビュー・焼き済みプローブを手放し、復旧後に作り直す
+    void OnDeviceLost(EngineContext& ctx) override;
+    void OnDeviceRestored(EngineContext& ctx) override;
     // デバイス消失で続行できないとき: 編集状態 (Play 中なら Play 前) を元ファイルと別に退避保存して理由を表示する
     void OnDeviceFatal(EngineContext& ctx, const DeviceFatalInfo& info) override;
     // Game ビューの画像だけがゲームの画面 (2026-09-14。範囲外のクリックはゲームに渡さない)
@@ -216,6 +219,7 @@ private:
     //   GameView も同じ束を見る (AssetPreviewCache は別インスタンスなので影響しない)
     bool probeBakeAllRequested_ = false;
     ReflectionProbeArray probeSet_;
+    bool rebakeProbesAfterRestore_ = false; // 消失時に束を持っていた = 復旧後に焼き直す
     int probePreviewIndex_ = 0; // プレビュー窓に出す束の添字
     // true = プレビュー窓は「ここでベイク」の結果を出す。BakeAll で false になる
     bool probePreviewAdHoc_ = true;

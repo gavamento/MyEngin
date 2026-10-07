@@ -104,6 +104,7 @@ void EditorLinePass::Shutdown()
     depthTested_.clear();
     onTop_.clear();
     vb_.Reset();
+    vbCapacity_ = 0; // 残すと再 Init 後に vb_ が作り直されない
     cb_.Reset();
     raster_.Reset();
     depthOn_.Reset();

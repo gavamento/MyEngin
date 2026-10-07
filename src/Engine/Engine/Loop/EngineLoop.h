@@ -471,6 +471,9 @@ struct EngineContext {
     float fixedDt = 1.0f / 60.0f;
     FrameTimings timings;     // 前フレームの計測値
     bool requestExit = false;
+    // true にすると、このフレーム末にデバイス消失を偽装する (エディタのメニュー。CLI の --simulate-device-lost と同じ経路)。
+    // EngineLoop が読んだら false に戻す
+    bool requestSimulatedDeviceLost = false;
     // 専用サーバのクライアント構成で、エディタの Stop などが「セッションを抜ける」ことを要求する。
     // EngineLoop が Bye を送って tick を止める (プロセスは終わらない)。それ以外の構成では読まれない
     bool netLeaveRequested = false;

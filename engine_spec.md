@@ -961,6 +961,23 @@ the hash and blob layout changing.
 
 ---
 
+### 6.13 Device loss and recovery (M88)
+
+If the D3D11 device is removed or reset (driver TDR, driver update, an eGPU unplugged), `EngineLoop` detects it at exactly two
+points -- the `HRESULT` of `SwapChain::Present` and `GetDeviceRemovedReason()` at the end of the frame -- and stops issuing D3D
+calls for the rest of that frame. At the next frame start (the same safe point as hot reload) it releases every GPU owner in
+shutdown order, recreates the device with the same driver kind (HARDWARE or WARP, never a silent fall-back to WARP), and rebuilds in
+startup order. Assets keep their `AssetID` and CPU-side data (vertices, texture recipes) and only re-upload the GPU side. History that
+lives only on the GPU (TAA, froxel and RT temporal history, GPU particle state, compute buffer contents) restarts from its initial state.
+Simulation (ECS, RNG, physics, scripts, replay) is untouched, and the world hash is logged before and after.
+
+Before the old device is released, its external reference count must be 0; a non-zero count means some owner still holds a child
+object, and the loop stops instead of drawing with stale objects. Recovery gives up (the editor saves the pre-Play edit state under
+`crash\device_lost_<time>\` without overwriting the scene file, shows the reason, and exits with code 6) if the device cannot be
+created in 10 attempts 500 ms apart, or on the third loss within 60 seconds. `--simulate-device-lost <frame>[,...]`,
+`--simulate-device-lost-fatal` and the editor menu item exercise the same path as a real loss. The ABI is unchanged. See
+`docs/adr/ADR-026-device-lost-recovery.md`.
+
 ## 7. Particle System Specification
 
 ### 7.1 Requirements
@@ -3401,7 +3418,8 @@ ADR-020 Deep-Modal impact synthesis (§10.7) /
 **ADR-022 dedicated server (input-confirming) and hosting abstraction** (§11.5) /
 **ADR-023 NavMesh (Recast Navigation) and determinism** (§10.9) /
 **ADR-024 AI perception: state in components** (§10.10) /
-**ADR-025 behavior tree: execution state in a system table** (§10.11).
+**ADR-025 behavior tree: execution state in a system table** (§10.11) /
+**ADR-026 in-process GPU device-loss recovery** (§6.13).
 
 ---
 

@@ -61,7 +61,7 @@ void SceneViewWindow::BuildGhostOverlay(EngineContext& ctx)
             // ---- 同じ tick のメッシュ (M72i: 半透明の実メッシュ)。無ければワイヤ箱 ----
             XMFLOAT4X4 world;
             GhostTrack::ToMatrix(*k, world);
-            const Mesh* mesh = ctx.resources != nullptr ? ctx.resources->meshes.Get(t.mesh) : nullptr;
+            const Mesh* mesh = ctx.resources != nullptr ? ctx.resources->meshes.GetDrawable(t.mesh) : nullptr;
             if (mesh != nullptr) {
                 ghostMesh_.Add(mesh, world, WithAlpha(rgba, kMeshAlpha));
             } else {

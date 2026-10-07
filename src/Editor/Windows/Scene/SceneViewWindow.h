@@ -31,6 +31,8 @@ public:
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     void OnRenderViews(EngineContext& ctx, Selection& selection); // フェーズ 6: RT へ描画 + 補助線
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo, EditorSettings& settings);
+    // デバイス復旧 (M88): RT と遅延 Init のパスを手放す。次の OnRenderViews / ピック要求で作り直される
+    void ReleaseGpu();
 
     // ビュー中心をピッキングして選択する (自動テスト用 — --pick-test)。ヒットで true
     bool PickAtCenter(EngineContext& ctx, Selection& selection);

@@ -181,6 +181,16 @@ XMFLOAT3 MatrixScale(const XMFLOAT4X4& m)
 
 } // namespace
 
+void SceneViewWindow::ReleaseGpu()
+{
+    rt_.Release();
+    previewRt_.Release();
+    previewValid_ = false;
+    picking_.Shutdown();
+    lines_.Shutdown();
+    ghostMesh_.Shutdown();
+}
+
 void SceneViewWindow::OnRenderViews(EngineContext& ctx, Selection& selection)
 {
     // 視錐台ワイヤ / プレビュー窓の対象を先に決める (BuildOverlays が読む)。

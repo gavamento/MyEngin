@@ -24,8 +24,9 @@ public:
     bool Init(Win32Window& window, GraphicsDevice& device, const ImGuiInitOptions& opts = {});
     void Shutdown();
 
-    // デバイス消失からの復旧 (M88)。DX11 バックエンドだけを手放す / 新デバイスへ繋ぎ直す。
-    // ImGui のコンテキストとウィンドウ側のバックエンドは残る (ドッキング配置を失わない)
+    // デバイス消失からの復旧 (M88)。ImGui のコンテキスト (ドッキング配置・スタイル) は残し、
+    // バックエンドだけを畳んで繋ぎ直す。DX11 の Shutdown は DestroyPlatformWindows でメイン
+    // ビューポートの Win32 側データも破棄するため、Win32 も一緒に Init し直す
     void ReleaseDevice();
     bool RecreateDevice(GraphicsDevice& device);
 
@@ -34,6 +35,7 @@ public:
 
 private:
     bool initialized_ = false;
+    void* hwnd_ = nullptr;     // RecreateDevice が Win32 バックエンドを繋ぎ直すのに使う
     bool deviceBound_ = false; // DX11 バックエンドが生きているか (ReleaseDevice 中は false)
     // io.IniFilename は文字列をコピーせずポインタを保持するだけなので、寿命をここで保証する
     std::string iniPathUtf8_;

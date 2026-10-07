@@ -510,6 +510,41 @@ void EditorApp::OnShutdown(EngineContext& ctx)
     scm_.Shutdown();
 }
 
+void EditorApp::OnDeviceLost(EngineContext& ctx)
+{
+    // 束を握る参照を先に切る。ディスクへは書かない (焼き直しは復旧後)
+    rebakeProbesAfterRestore_ = !probeSet_.probes.empty();
+    if (ctx.renderSystem != nullptr) {
+        ctx.renderSystem->reflectionProbes = nullptr;
+    }
+    probeSet_.Clear();
+    probePreview_ = {};
+    probePreviewAdHoc_ = true;
+    probeBaker_.ReleaseGpu();
+    sceneView_.ReleaseGpu();
+    gameView_.ReleaseGpu();
+    preview_.ReleaseGpu();
+}
+
+void EditorApp::OnDeviceRestored(EngineContext& ctx)
+{
+    // ビュー RT とサムネイルは次の OnRenderViews / 要求で作り直される (サイズは窓が持っている)。
+    // 焼き済みプローブはシーン読み込み後に手で焼いたものと同じ入力から焼き直す
+    if (rebakeProbesAfterRestore_) {
+        rebakeProbesAfterRestore_ = false;
+        probeBaker_.assetsRoot = ctx.assetsRoot;
+        if (probeBaker_.BakeAll(ctx.scene->GetWorld(), *ctx.device, *ctx.renderPathForward,
+                                *ctx.shaders, *ctx.resources, probeSet_)) {
+            if (ctx.renderSystem != nullptr) {
+                ctx.renderSystem->reflectionProbes = &probeSet_.set;
+            }
+            probePreviewAdHoc_ = false;
+        } else {
+            toasts_.Notify(LogLevel::Warn, Tr(StrId::Probe_BakeAllFailed));
+        }
+    }
+}
+
 void EditorApp::OnDeviceFatal(EngineContext& ctx, const DeviceFatalInfo& info)
 {
     // ★再生中の ctx.scene は動いている世界なので書かない。編集状態は Play 開始前のスナップショット。
@@ -1314,6 +1349,10 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
                 probePreviewAdHoc_ = true;
             }
             ImGui::MenuItem(Tr(StrId::Probe_Preview), nullptr, &showProbePreview_);
+            // M88: GPU デバイス消失の偽装 (復旧経路の確認用)。押したフレーム末に消失扱いになる
+            if (ImGui::MenuItem(Tr(StrId::Menu_SimulateDeviceLost))) {
+                ctx.requestSimulatedDeviceLost = true;
+            }
             // M57e: ボリュメトリックフォグ (フロクセル)。CLI の --froxel と同じ元栓。
             // ★シーンカメラに CameraPostFx があれば **そちらの froxelOn が勝つ** (TAA と
             //   同じ規則) ので、ここを点けても効かないシーンがある

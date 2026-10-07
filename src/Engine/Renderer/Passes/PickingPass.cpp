@@ -92,6 +92,7 @@ void PickingPass::Shutdown()
     perObjectCB_.Reset();
     rasterizer_.Reset();
     depth_.Reset();
+    blendOff_.Reset();
     ready_ = false;
 }
 

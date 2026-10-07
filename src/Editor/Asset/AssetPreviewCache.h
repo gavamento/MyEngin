@@ -50,6 +50,8 @@ public:
     ID3D11ShaderResourceView* GetOrRequestMaterial(EngineContext& ctx, const Material& mat,
                                                    PreviewShape shape, uint64_t valueHash);
     void OnRenderViews(EngineContext& ctx);
+    // デバイス復旧 (M88): RT・専用 RenderSystem・生成済みサムネイルを手放す。サムネイルは要求され次第作り直す
+    void ReleaseGpu();
 
 private:
     struct Entry {

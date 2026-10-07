@@ -450,3 +450,40 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 
 - [ ] `activeNodeId` は SubTree を展開した後の実行木の id である (SubTree を含む木ではアセット上の id と一致しない)
 - [ ] 外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は ABI v27 で再ビルドが要る (古い DLL は読み込みを拒否される)
+
+## M88: GPU デバイス消失 (DEVICE_REMOVED / RESET) の復旧
+
+自動検証は `Editor.exe --selftest` (DeviceRecoverySelfTest: 参照数ゲート・アセット復旧・Surface マテリアル復旧・退避保存)、
+`tools\replay_verify.bat` (`MYE_EXTRA_ARGS="--simulate-device-lost 1"` 付きでも 17 job 一致)、`--simulate-device-lost` 付きの実行
+(設計: `docs\adr\ADR-026-device-lost-recovery.md`)。下は画面と実操作で確かめる項目。
+
+### (a) メニューの偽装で復旧する
+
+- [ ] `Editor.exe` を普通に起動し、View > Rendering > 「デバイス消失を偽装」を押す。数秒 (Release の既定デモで約 4 秒) 画面が止まった後、同じ見た目に戻る
+- [ ] 復旧後、Scene ビュー・Game ビュー・Hierarchy / Inspector / Asset Browser のフォントとアイコンが描かれ、ドッキング配置が変わっていない
+- [ ] 復旧後、Asset Browser のモデル / プレハブのサムネイルが再生成され、Inspector のマテリアルプレビューも出る
+- [ ] 復旧後、オブジェクトのクリック選択・ギズモの移動 (Undo / Redo を含む)・Play / Stop が使える
+- [ ] 反射プローブを焼いてあるシーンで偽装すると、復旧後に自動で焼き直され、プローブの反射が消失前と同じになる
+- [ ] Console に `[device] recovery started` → `old device external references: 0 (allowed 0)` → `device recovered in ... ms (... world hash ... unchanged=1)` が出る。`unchanged=0` や `cannot continue` は失敗
+- [ ] Play 中に偽装しても Play が続き、ゲームの状態 (位置・スコア) が飛ばない
+- [ ] 60 秒以内に 3 回続けて偽装すると、3 回目は復旧せずメッセージボックス (理由 + 退避ファイルの場所) を出して終了する (終了コード 6)
+
+### (b) 本物の TDR (`dxcap -forcetdr`)
+
+実機 GPU でだけ確かめられる。**管理者権限の PowerShell** で実行する (DirectX の `dxcap.exe` は Graphics Tools の機能: 設定 > アプリ > オプション機能 > 「グラフィックス ツール」)。
+
+1. `Editor.exe` を起動して、シーン (できればサムネイルや反射プローブがあるもの) を開いたままにする
+2. 管理者 PowerShell で `dxcap -forcetdr` を実行する (画面が数秒ちらつく)
+3. 期待する結果:
+   - [ ] エディタが落ちずに復旧し、(a) と同じ項目が満たされる。Console のログの `present hr=0x887A0005` (DEVICE_REMOVED) または `0x887A0007` (DEVICE_RESET) と `removed reason` の値が出ており、`(simulated)` は付かない
+   - [ ] 復旧直後にもう一度 `dxcap -forcetdr` を打ってもう一度復旧する
+   - [ ] 復旧後、ドライバが新デバイスを作れない期間があっても、再試行 (最大 10 回 × 500 ms。Console の `device recovered` の `N attempt(s)` で回数が分かる) で戻るか、戻らなければ (c) の退避と終了になる
+4. TDR が起きなかった場合 (設定やドライバで無効) は、(a) の偽装で代用したことを記録に残す。本物の TDR を確認できていない旨を書く
+
+### (c) 復旧できなかったときの退避ファイル
+
+- [ ] `Editor.exe --simulate-device-lost 60 --simulate-device-lost-fatal` で、メッセージボックスに理由と退避先の絶対パスが出る (`--frames` / `--screenshot` を付けた非対話実行ではログだけ)
+- [ ] 退避ファイル `<project>\crash\device_lost_<日時>\<シーン名>.scene.json` ができ、元のシーンファイルは変わっていない (更新日時が同じ)
+- [ ] 退避ファイルをエディタで開くと、消失時の編集状態 (配置したオブジェクト・未保存の変更) が復元される
+- [ ] Play 中に消失させた場合、退避されるのは Play 開始前の状態で、Play 中に動いた位置は入っていない
+- [ ] 終了コードが 6 で、以降に D3D のエラー (Debug のデバッグレイヤ) が出ていない

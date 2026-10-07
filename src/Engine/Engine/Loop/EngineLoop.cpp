@@ -3058,6 +3058,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             simulatedLost = true;
             ++simulatedLostNext;
         }
+        if (ctx.requestSimulatedDeviceLost) {
+            ctx.requestSimulatedDeviceLost = false;
+            simulatedLost = true;
+        }
         if (deviceRemoved || simulatedLost) {
             lostInfo = DeviceFatalInfo();
             lostInfo.simulated = simulatedLost && !deviceRemoved;

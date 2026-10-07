@@ -121,6 +121,15 @@ ID3D11ShaderResourceView* AssetPreviewCache::GetOrRequestMaterial(EngineContext&
     return Touch(ctx, key, stamp, e);
 }
 
+void AssetPreviewCache::ReleaseGpu()
+{
+    cache_.clear();
+    pending_.clear();
+    pendingSet_.clear();
+    rt_.Release();
+    previewRender_.ReleaseGpu();
+}
+
 void AssetPreviewCache::OnRenderViews(EngineContext& ctx)
 {
     if (pending_.empty()) {
@@ -251,7 +260,7 @@ bool AssetPreviewCache::RenderOne(EngineContext& ctx, const std::wstring& path, 
                 const EntityID e = arch.EntityAt(row);
                 auto* mr = world.GetComponent<MeshRendererComponent>(e);
                 auto* wm = world.GetComponent<WorldMatrixComponent>(e);
-                const Mesh* mesh = (mr && wm) ? ctx.resources->meshes.Get(mr->mesh) : nullptr;
+                const Mesh* mesh = (mr && wm) ? ctx.resources->meshes.GetDrawable(mr->mesh) : nullptr;
                 if (!mesh) {
                     continue;
                 }

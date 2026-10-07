@@ -2183,4 +2183,5 @@ MYE_STR(DevLost_FailStale,     "Recovery failed: old GPU objects are still in us
 MYE_STR(DevLost_FailRecreate,  "Recovery failed: a new graphics device could not be created (attempts):", "復旧に失敗しました: 新しいデバイスを作成できませんでした (試行回数):")
 MYE_STR(DevLost_FailRebuild,   "Recovery failed: graphics objects could not be rebuilt on the new device.", "復旧に失敗しました: 新しいデバイスで描画用オブジェクトを作り直せませんでした。")
 MYE_STR(DevLost_FailTooOften,  "Recovery was not attempted: the device was lost too many times in a short period.", "短時間にデバイス消失が続いたため、復旧を試みませんでした。")
+MYE_STR(Menu_SimulateDeviceLost, "Simulate Device Lost###Menu_SimulateDeviceLost", "デバイス消失を偽装###Menu_SimulateDeviceLost")
 MYE_STR(DevLost_FailSimFatal,  "Recovery was skipped by --simulate-device-lost-fatal.", "--simulate-device-lost-fatal により復旧を行いませんでした。")

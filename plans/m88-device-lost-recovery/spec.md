@@ -50,6 +50,7 @@ AGENTS.md §3.4「一部の失敗で正常な機能まで使用不能にしな�
   - D3D12 化、マルチ GPU 切り替え
 - 後回し:
   - DLL/C# への `OnDeviceRestored` 通知 (要望が出たら ABI v28 で)
+  - エディタ復旧の自動回帰ジョブ (Release の Editor.exe + `--simulate-device-lost` + img-diff)
   - 大きいテクスチャの段階的な作り直し (プレースホルダで先に復帰し、順に差し替える) / DDS クックによる復旧時間の短縮 (2026-10-07 sub-03 で既定デモが Release 約 4 s と判明。現状は許容)
 
 ## 4. 仕様
@@ -110,7 +111,7 @@ Recovering ──(再作成失敗 / ゲート不合格 / 連続消失)──> Fa
   - 開いているシーンの**編集状態** (Play 中なら Play 開始前の状態) を、元ファイルを上書きせずに退避ファイルへ保存する。退避先はプロジェクト配下の既存の書き出し用ディレクトリ規約に合わせ coder が決めて sub に記録する (例: `<Project>/Saved/DeviceLost/<シーン名>_<YYYYMMDD-HHMMSS>.scene.json`)。未保存変更が無くても保存する (再現用)。
   - 保存失敗は理由をログとメッセージに含めるが、終了は続行する。
 - メッセージボックス (Win32 `MessageBoxW`、所有窓はメインウィンドウ) で、理由 (HRESULT / removed reason / 疑似かどうか / ゲート不合格の残参照数)、退避ファイルの絶対パスを表示。文字列は `Tr()` (`C:\HAL\MyEngin\src\Engine\Core\Localization\Localization.h:32`) で日英両方を用意。`Tr()` の結果を書式文字列にしない。
-- `--selftest` / `--maxFrames` 等の非対話実行中は (既存の非対話判定に従い) メッセージボックスを出さず、ログだけ出す。
+- `--selftest` / `--frames N` (EngineConfig::maxFrames) 等の非対話実行中は (既存の非対話判定に従い) メッセージボックスを出さず、ログだけ出す。
 - 終了コードは専用の非 0 値 (`kExitCodeDeviceLost`、既存の終了コードと衝突しない値) で終了する。終了処理は既存の Shutdown 列を通すが、GPU 解放の失敗で落ちないこと。
 
 ### 4.2 データ・保存形式・互換性
@@ -217,4 +218,7 @@ Recovering ──(再作成失敗 / ゲート不合格 / 連続消失)──> Fa
   - 受け入れ 7 は、リポジトリに `*.surface` を使うシーンが無いため SelfTest (CB の作り直しと中身の一致) で満たしたとみなす。
   - 受け入れ 10 は分割する。Runtime 分は golden rep に `--simulate-device-lost 1` を付けた実行で満たした (疑似消失は tick 600 本が終わる前に発火させる必要があるので、小さいフレーム番号を使う)。Editor.exe を使う 4 job (chain / time-travel / what-if) は sub-05 の受け入れへ移す。
   - 既知の差 (直さない): `--probe-bake-all --deferred` で復旧後に BakeAll し直すと絵が一致しない (maxDiff 17〜21)。ベイクを消失後へずらすと一致するので、復旧の不具合ではなく「同じ実行で BakeAll を 2 回走らせると deferred の結果が変わる」ベイカー側の既存の性質と判断した。CLI の単発診断専用の経路なので M88 の範囲外とし、7. に記録する。エディタのプローブは sub-05 で「シーン読み込みと同じ扱い」で戻すこととし、その確認を sub-05 に追加した。
+  - (sub-05 round 1 で追記) CLI の誤記を訂正: `--maxFrames` は存在しない。正しくは `--frames N` (spec 4.1.5、sub-05 受け入れ 1)。
+  - (sub-05 round 1 で追記) エディタの復旧を自動回帰にする件 (Editor.exe + 疑似消失 + img-diff のジョブ) は後回しとした。Release で 1 ジョブ数十秒かかるため。現状は DeviceRecoverySelfTest (ゲート・アセット・Surface・compute) と、replay_verify に疑似消失を付けた実行 (Editor.exe の 4 job を含む) で回帰を担保する。
+  - (sub-05 round 1 で追記) メニューから疑似消失を要求する口 `EngineContext::requestSimulatedDeviceLost` を承認した。復旧時に ImGui の Win32 バックエンドも Init し直すことを承認した (DX11 の Shutdown がメインビューポートの PlatformUserData を捨てるため)。
   - 設計上の知見: 遅延で伸びる GPU バッファの容量カウンタ (UIRenderer / VfxRenderer の vbCapacity_) は Shutdown で 0 に戻さなければならない。CPU 側の履歴 (VfxRenderer の trails_) は Shutdown で消してはいけない。ADR-026 に書く。
