@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include <optional>
 
 #include "Engine/Core/Asset/AssetGuidResolver.h" // v8 PlayMusic の生クリップ経路 (GUID → 実パス)
 #include "Engine/Engine/Scene/TagNames.h" // 汎用タグ: 名前の表と RT の適用範囲
@@ -94,8 +95,12 @@
 #include "Engine/Renderer/Device/SwapChain.h"
 #include "Shared/EngineAPI.h" // MYE_API_VERSION (ネットのハンドシェイクで照合する)
 
+#include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <thread>
 
 #include <Windows.h>
 
@@ -115,6 +120,38 @@ constexpr uint32_t kNetStallWaitMs = 6;
 // 十分に大きな負値にしておけば、キャンバス座標へ正規化しても符号は変わらない
 constexpr int32_t kShotMouseX = -100000;
 constexpr int32_t kShotMouseY = -100000;
+
+// デバイス復旧で止まっている間、クライアントのネット送受信だけを回すスレッド (M88 / spec 7. R6)。
+// サーバの peerTimeoutMs とクライアントの serverTimeoutMs (どちらも 3 s) を、復旧の停止が超えるため。
+// ★生きている間 step が触る状態 (ソケット・ClientSession・受信バッファ) の所有者はこのスレッドだけで、
+//   構築から破棄 (join) までメインスレッドは触らない。ロックでは共有しない
+//   (受け渡しは thread の開始と join の happens-before だけ)。step は tick を回さず、sim・recorder・ECS に触れない
+class RecoveryNetPump
+{
+public:
+    explicit RecoveryNetPump(std::function<void()> step)
+        : thread_([this, step = std::move(step)]() {
+              while (!stop_.load(std::memory_order_acquire)) {
+                  step();
+                  std::this_thread::sleep_for(kIntervalMs);
+              }
+          })
+    {
+    }
+    // 成功でも致命停止でも例外でも、スコープを出るときに必ず join する
+    ~RecoveryNetPump()
+    {
+        stop_.store(true, std::memory_order_release);
+        thread_.join();
+    }
+    RecoveryNetPump(const RecoveryNetPump&) = delete;
+    RecoveryNetPump& operator=(const RecoveryNetPump&) = delete;
+
+private:
+    static constexpr std::chrono::milliseconds kIntervalMs{ 10 };
+    std::atomic<bool> stop_{ false };
+    std::thread thread_; // stop_ より後に宣言する (初期化順: スレッドが stop_ を読むため)
+};
 
 } // namespace
 
@@ -1642,6 +1679,19 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             running = false;
         }
     }
+    // ソケットに溜まったパケットをセッションへ渡す。ClientFrame と、復旧中のネット専用スレッド (RecoveryNetPump) で共有する
+    const auto ClientReceive = [&]() {
+        NetAddress from;
+        for (int i = 0; i < 512; ++i) {
+            const int n = clientSocket.Recv(clientRecvBuf.data(), clientRecvBuf.size(), from);
+            if (n <= 0) {
+                break;
+            }
+            if (from == clientServerAddr) {
+                clientSession.OnPacket(clientRecvBuf.data(), static_cast<size_t>(n), ClientNowMs());
+            }
+        }
+    };
     // 1 フレームに 1 回: 受信 → セッション駆動 → tick (ClientSimRunner::Update が Poll も呼ぶ) → 終了条件
     const auto ClientFrame = [&]() {
         if (!clientEnabled || clientDone || clientDropped || clientLeft || !running) {
@@ -1658,16 +1708,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             MYE_LOG_INFO("[client] left the session (Stop in the editor): Bye sent, the sim stops ticking");
             return;
         }
-        NetAddress from;
-        for (int i = 0; i < 512; ++i) {
-            const int n = clientSocket.Recv(clientRecvBuf.data(), clientRecvBuf.size(), from);
-            if (n <= 0) {
-                break;
-            }
-            if (from == clientServerAddr) {
-                clientSession.OnPacket(clientRecvBuf.data(), static_cast<size_t>(n), ClientNowMs());
-            }
-        }
+        ClientReceive();
         clientRunner.Update(ClientNowMs());
         if (clientSession.Running() && clientSession.MarginValid() && ClientNowMs() >= clientNextSyncLogMs) {
             // 定常状態で到着余裕が目標に収束しているかを実プロセスのログで確かめる (server_verify / 手動確認用)
@@ -1760,6 +1801,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     DeviceFatalInfo lostInfo;
     DeviceLostLimiter lostLimiter;
     size_t simulatedLostNext = 0; // config.simulateDeviceLostFrames のうち次に発火させるもの
+    bool simulatedLostAfterJoinFired = false;
     // 全 GPU 所有者を終了順に手放し、新デバイスで起動順に作り直す。成功したら true。
     // 失敗したら fail に理由を入れて false を返す (呼び出し側が致命停止へ進む)。
     // ★sim (ECS・RNG・物理・スクリプト) には触れない。CPU 側のデータを持つ所有者は GPU 側だけを手放す
@@ -1793,6 +1835,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             device.HoldChildForTest();
         }
 
+        if (config.simulateDeviceRecoveryDelayMs > 0) {
+            // 検証専用: 復旧の所要を延ばしてネットのタイムアウトを確実に越えさせる (描画側の実時間だけで sim に影響しない)
+            Sleep(static_cast<DWORD>(config.simulateDeviceRecoveryDelayMs));
+        }
         const double tRelease = clock.Now();
         const DeviceRecycleResult recycled = RecycleDevice(device);
         if (recycled.status == DeviceRecycleStatus::StaleDeviceRefs) {
@@ -1872,7 +1918,18 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             } else if (!lostLimiter.RecordLoss(clock.Now())) {
                 fail.failure = DeviceFatalInfo::Failure::LostTooOften;
             } else {
+                // セッションが生きているクライアントだけ、復旧の間ネット送受信を別スレッドで回して切断を避ける。
+                // pump のスコープ = ソケットとセッションの所有権をスレッドへ預ける期間 (復旧の成否によらず出口で join)
+                std::optional<RecoveryNetPump> netPump;
+                if (clientEnabled && clientSocket.IsOpen() && !clientDone && !clientDropped && !clientLeft) {
+                    netPump.emplace([&]() {
+                        ClientReceive();
+                        clientSession.Poll(ClientNowMs());
+                    });
+                    MYE_LOG_INFO("[device] client network pump started for the recovery");
+                }
                 recovered = RecoverDevice(fail);
+                netPump.reset();
             }
             if (!recovered) {
                 MYE_LOG_ERROR("[device] cannot continue; stopping");
@@ -3063,6 +3120,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         }
         if (ctx.requestSimulatedDeviceLost) {
             ctx.requestSimulatedDeviceLost = false;
+            simulatedLost = true;
+        }
+        // --simulate-device-lost-after-join: 参加後の sim tick で 1 回だけ。参加の時刻が実行ごとに違うので、フレーム番号では指せない
+        if (!simulatedLostAfterJoinFired && config.simulateDeviceLostAfterJoinTicks >= 0 && clientEnabled
+            && clientHasJoined && clientSession.Running()
+            && clientRunner.TickIndex()
+                >= clientFirstTick + static_cast<uint64_t>(config.simulateDeviceLostAfterJoinTicks)) {
+            simulatedLostAfterJoinFired = true;
             simulatedLost = true;
         }
         if (deviceRemoved || simulatedLost) {

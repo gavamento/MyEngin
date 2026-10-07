@@ -94,6 +94,34 @@ D3D11 にはデバイスを即時に消す API が無い。`Present` の判定�
   フレーム末に読んで消す。
 - `_DEBUG` / `NDEBUG` で分岐しない。sim に触れないので AGENTS.md §4.3 に抵触しない。
 - 本物の TDR は `dxcap -forcetdr` (管理者、実機 GPU) で人が確認する。手順は `docs\test_checklists.md` の M88。
+- ネットのタイムアウトを越える停止の検証用に `--simulate-device-lost-after-join <ticks>` (専用サーバのクライアントが参加した tick の
+  N tick 後に 1 回だけ消失を偽装する。参加の時刻は実行ごとに違い、フレーム番号では参加前に発火しうる) と
+  `--simulate-device-recovery-delay-ms <ms>` (デバイス再作成の前で眠る。WARP は復旧が 3 s 未満で終わりうるため) を持つ。どちらも不正値は無視する。
+
+## 決定 8: ネットセッション中の復旧は、送受信専用スレッドで切断を避ける
+
+専用サーバ (別プロセスの `Server.exe`、GPU を持たないので消えるのはクライアントだけ) のセッションに参加したクライアントが消失すると、
+同期復旧の停止 (既定デモで約 4.5 s、デバイス再作成の再試行だけで最大 10 × 500 ms) が、サーバの `peerTimeoutMs` とクライアントの
+`serverTimeoutMs` (どちらも 3000 ms) を超えて切断される。
+
+- 方式: 復旧の間 (`RecoverDevice` の呼び出しの前後。成功でも致命停止でも例外でも出口で join) だけ、`RecoveryNetPump` (`EngineLoop.cpp`) の
+  スレッドがクライアントのソケットと `ClientSession` を専有し、`Recv → OnPacket` と `Poll` を約 10 ms 間隔で回す。
+  `Poll` が既存の keep-alive (`keepAliveMs` = 50 ms) と ack を送る。受信処理は `ClientFrame` と共有する (`ClientReceive`)。
+- 排他はロックではなく所有権の受け渡し: スレッドの生存中、メインスレッドは `clientSocket` / `clientSession` / `clientRecvBuf` に触れない
+  (スレッドの開始と join が happens-before)。`OnPacket` / `Poll` が書くのは `ClientSession` 自身の状態と送信ラムダ (ソケットとロス注入の乱数) と
+  ログ (`MYE_LOG` は mutex 保護) だけで、sim・recorder・ECS・入力レーンには書かない。tick は回さない (`ClientSimRunner::Update` を呼ばない)。
+- 復旧後の最初の `ClientFrame` は、溜まった Confirmed (履歴 1024 tick > 約 12 s ぶん) を既存の追い付き経路で処理する。
+  止まっていた間にサーバが確定させた tick の入力は、サーバが代替入力で埋める (想定どおり。late-subst が増え、サーバに
+  `cannot keep up` の警告が 1 回出る)。確定した tick の .rep はサーバと一致する。
+- 却下した案:
+  - (a) 復旧の段の間でポンプを回す: 1 つの段で 3 s を超えるもの (デバイス再作成の再試行、既定デモのテクスチャのデコード直し) を覆えない。
+    段の内部にフックを差すと、Renderer の深い所にネットの都合が入る。
+  - (b) 復旧中だけタイムアウトを延ばす: サーバは別プロセスなので「止まります」を伝える新メッセージが要り、プロトコルと Server.exe の変更になる。
+    クライアント側だけ延ばしてもサーバが切る。
+  - (c) タイムアウトを常に長くする: 本当の切断の検出が遅れ、M81 の設計値を壊す。
+- 対象外: P2P (`NetSession`、`stallTimeoutMs` = 20 s) は 4.5 s の停止に収まり、lockstep の相手が待つだけ。
+- 検証: `tools\server_verify.bat` のケース E (Release サーバ + Release クライアント 2 本、片方だけ参加 120 tick 後に疑似消失 + 復旧 5000 ms 遅延)。
+  対策のスレッドを起動しない状態では、サーバのログに `peer 2 (player 2, lane 1) dropped: timeout`、クライアントに `session failed: server timeout` が出て終了コード 1 になることを確認してある。
 
 ## 既知の差と未対応
 

@@ -9,7 +9,7 @@ rem   を機械検証する。比較は --rep-diff --rep-diff-overlap (割れた
 rem
 rem   使い方:  tools\server_verify.bat [ticks] [cases]
 rem             ticks = クライアントが記録する確定 tick 数 (既定 600)
-rem             cases = 回すケースの文字 (既定 ABCD。例: B だけ)
+rem             cases = 回すケースの文字 (既定 ABCDE。例: B だけ)
 rem
 rem   ケース A: Debug サーバ + Debug x2 / ロス 0%%。合否に使う: (1) クライアント .rep を単独で --replay-verify して 0 でない
 rem             tick 数で PASS (開始 tick = 参加 tick の .rep の再生)、(2) late-subst (確定を待たれたレーン tick のうち代替入力に
@@ -28,6 +28,9 @@ rem   ケース D: Release サーバ + Release x4 / ロス 0%% -> サーバの t
 rem             ★負荷試験: 1 台の PC で WARP の Runtime 4 台が論理コアを奪い合うので、R3 の tick 時間 (4 ms 目標) も
 rem               late-subst も計測環境の制約を受ける。値を出すだけで合否には使わない (V8 / R5)
 rem
+rem   ケース E: Release サーバ + Release x2。片方だけ参加後に疑似消失 + 復旧を 5 s 遅らせ、復旧の停止がタイムアウト (3 s) を
+rem             越えても切断されず、.rep がサーバと一致し、サーバ .rep の再生検証が一致することを見る (M88 / spec 受け入れ 16)
+rem
 rem   ★ネット越しの値が sim へ入るのは確定入力 (レーン入力 + SystemInputTick) だけ。クライアントの予測・巻き戻し・
 rem     再同期が働いていても、確定した tick の .rep はサーバと 1 バイトも違わない、が中心の主張。
 rem   ★CI では回さない (UDP + 複数プロセス + 実時間。net_verify.bat と同じ理由)。論理の回帰は Editor.exe --selftest の
@@ -41,7 +44,7 @@ if "%~1"=="__bg" goto :bg
 
 set TICKS=600
 if not "%~1"=="" set TICKS=%~1
-set CASES=ABCD
+set CASES=ABCDE
 if not "%~2"=="" set CASES=%~2
 
 set DBG=bin\x64\Debug
@@ -64,13 +67,14 @@ if not "!CASES:A=!"=="!CASES!" call :case_A
 if not "!CASES:B=!"=="!CASES!" call :case_B
 if not "!CASES:C=!"=="!CASES!" call :case_C
 if not "!CASES:D=!"=="!CASES!" call :case_D
+if not "!CASES:E=!"=="!CASES!" call :case_E
 
 echo.
 if not %FAILED%==0 (
     echo [FAIL] server_verify: %FAILED% check^(s^) failed - logs: cache\sv_*.log
     exit /b 1
 )
-echo [PASS] server_verify ^(cases !CASES!: A 2 clients / B 3 mixed Debug-Release clients, 20%% loss, late join, drop + rejoin / C desync injection + resync / D 4 Release clients^) - logs: cache\sv_*.log
+echo [PASS] server_verify ^(cases !CASES!: A 2 clients / B 3 mixed Debug-Release clients, 20%% loss, late join, drop + rejoin / C desync injection + resync / D 4 Release clients / E device lost during the session, no timeout drop^) - logs: cache\sv_*.log
 exit /b 0
 
 rem -------------------------------------------------------------------- 部品
@@ -226,14 +230,18 @@ for /f "tokens=*" %%L in ('findstr /c:"[server] lane " "%~2"') do echo   %~1 %%L
 for /f "tokens=*" %%L in ('findstr /c:"[server] forced resyncs:" "%~2"') do echo   %~1 %%L
 goto :eof
 
-rem %1 = ケース名 / %2 = サーバのログ / %3 = 許容する割合 ^(整数 %%^) / %4 = 参加したクライアント数。
+rem %1 = ケース名 / %2 = サーバのログ / %3 = 許容する割合 ^(整数 %%^) / %4 = 判定するレーンの行数 / %5 = 判定から外すレーン番号 ^(省略可^)。
 rem 各レーンの late-subst が %3 %% 以下で、レーンの行が %4 本あり、"cannot keep up" の警告が出ていないこと。
 rem 一度も確定を待たれなかったレーンは行が出ないので、本数を数えないと黙って合格する
+rem %5 は、意図的に止めたレーン ^(ケース E の疑似消失 + 復旧の遅延で約 5 s 分の代替入力が出るのは想定どおり^) を外すための引数。
+rem 外したレーンも「行が出ていること」は %4 に含めず、止まっていない側のレーンだけを同じ上限で判定する
 :check_late_subst
 set LATESEEN=0
 set LATEOK=1
 set LATELINES=0
-for /f "tokens=*" %%L in ('findstr /c:"[server] lane " "%~2"') do (
+set "SKIPPAT=[server] lane none:"
+if not "%~5"=="" set "SKIPPAT=[server] lane %~5:"
+for /f "tokens=*" %%L in ('findstr /c:"[server] lane " "%~2" ^| findstr /v /c:"!SKIPPAT!"') do (
     set /a LATELINES+=1
     set "LL=%%L"
     echo   %~1 %%L
@@ -259,7 +267,13 @@ if not "!LATELINES!"=="%~4" (
     set /a FAILED+=1
     goto :eof
 )
-findstr /c:"cannot keep up" "%~2" >nul 2>&1
+rem %6 = "cannot keep up" の警告を許すレーン番号 ^(省略可。ケース E の止めたレーンだけ^)。
+rem   許す理由: そのレーンは疑似消失 + 復旧の遅延で約 5 s 以上入力を送れない。サーバの警告の「平均の遅れ」は停止の長さと同じ桁
+rem   ^(実測 4526 ms^) で、意図した停止の直接の結果。他のレーンの警告とケース A-D の警告は従来どおり FAIL。許した行は表示する
+set "SKIPWARN=(lane none) cannot keep up"
+if not "%~6"=="" set "SKIPWARN=(lane %~6) cannot keep up"
+for /f "tokens=*" %%L in ('findstr /c:"cannot keep up" "%~2" ^| findstr /c:"!SKIPWARN!"') do echo   許容: %%L
+findstr /c:"cannot keep up" "%~2" | findstr /v /c:"!SKIPWARN!" >nul 2>&1
 if !ERRORLEVEL! EQU 0 (
     echo   [FAIL] %~1: the server warned that a peer cannot keep up - see %~2
     set /a FAILED+=1
@@ -558,6 +572,73 @@ findstr /c:"exceeds the" cache\sv_D_server.log
 call :show_late_subst D cache\sv_D_server.log
 call :check_replays D cache\sv_D_server.rep
 exit /b 0
+
+rem -------------------------------------------------------------------- ケース E
+rem M88 (spec 受け入れ 16 / 7. R6): デバイス消失の復旧中も、クライアントが切断されないこと。
+rem Release サーバ + Release x2 (--warp)。client 2 だけ参加の 120 tick 後に疑似消失し、復旧の前で 5000 ms 眠る
+rem   (サーバの peerTimeoutMs と クライアントの serverTimeoutMs は 3000 ms)。復旧中はネット送受信専用スレッドが
+rem   Poll を回して keep-alive と ack を送るので、サーバは client 2 を切らない。判定:
+rem     (1) サーバのログに "dropped: timeout" が無い  (2) 両クライアントとサーバが終了コード 0 で終わる
+rem     (3) サーバと両クライアントの .rep の tick 列が一致  (4) サーバ .rep の再生検証が一致
+rem   client 2 が実際に復旧した (ログの "device recovered") ことも見る。復旧しなかった実行を PASS にしないため。
+:case_E
+set PORT=7825
+echo.
+echo === case E: device lost during the session ^(client 2: simulated loss + 5000 ms recovery delay^), Release server + 2 Release clients, port %PORT% ===
+call :launch "cache\sv_E_s.code" "%REL%\Server.exe %SRV_ARGS% --port %PORT% --exit-when-empty --server-timeout 400 --replay-record cache\sv_E_server.rep > cache\sv_E_server.log 2>&1"
+call :waitlog cache\sv_E_server.log "started: 4 lane" 120
+if not "!WAITOK!"=="1" (
+    echo   [FAIL] E: the server did not start - see cache\sv_E_server.log
+    set /a FAILED+=1
+    exit /b 0
+)
+rem client 1 は client 2 の停止と復帰を挟んで最後まで居る (全員が出るとサーバが終わるため)
+set /a E1T=%TICKS%*5
+set /a E2T=%TICKS%*2
+call :launch "cache\sv_E_1.code" "%REL%\Runtime.exe %CLI_ARGS% --width 640 --height 360 --net-connect 127.0.0.1:%PORT% --player-session-id p1 --replay-ticks !E1T! --replay-record cache\sv_E_c1.rep > cache\sv_E_c1.log 2>&1"
+call :wait_joined E c1
+call :launch "cache\sv_E_2.code" "%REL%\Runtime.exe %CLI_ARGS% --width 640 --height 360 --net-connect 127.0.0.1:%PORT% --player-session-id p2 --simulate-device-lost-after-join 120 --simulate-device-recovery-delay-ms 5000 --replay-ticks !E2T! --replay-record cache\sv_E_c2.rep > cache\sv_E_c2.log 2>&1"
+call :expect_exit E "client 2 lost and recovered" cache\sv_E_2.code 300
+call :expect_exit E "client 1" cache\sv_E_1.code 300
+call :expect_exit E "server" cache\sv_E_s.code 60
+call :check_scripts E
+findstr /c:"[device] device recovered" cache\sv_E_c2.log >nul 2>&1
+if !ERRORLEVEL! NEQ 0 (
+    echo   [FAIL] E: client 2 did not recover from the simulated device loss - see cache\sv_E_c2.log
+    set /a FAILED+=1
+) else (
+    for /f "tokens=*" %%L in ('findstr /c:"[device] device recovered" cache\sv_E_c2.log') do echo   client 2 %%L
+)
+findstr /c:"session failed" cache\sv_E_c1.log cache\sv_E_c2.log >nul 2>&1
+if !ERRORLEVEL! EQU 0 (
+    echo   [FAIL] E: a client session failed - see cache\sv_E_c1.log / cache\sv_E_c2.log
+    findstr /c:"session failed" cache\sv_E_c1.log cache\sv_E_c2.log
+    set /a FAILED+=1
+)
+findstr /c:"dropped: timeout" cache\sv_E_server.log >nul 2>&1
+if !ERRORLEVEL! EQU 0 (
+    echo   [FAIL] E: the server dropped a peer by timeout during the recovery - see cache\sv_E_server.log
+    findstr /c:"dropped:" cache\sv_E_server.log
+    set /a FAILED+=1
+) else (
+    echo   server dropped no peer by timeout: ok
+)
+call :check_agree E c1 cache\sv_E_server.rep cache\sv_E_c1.rep
+call :check_agree E c2 cache\sv_E_server.rep cache\sv_E_c2.rep
+call :check_replays E cache\sv_E_server.rep
+rem 止めたレーン ^(client 2 のレーン^) を外して、止まっていない client 1 のレーンだけを他のケースと同じ上限で見る
+call :get_lane cache\sv_E_c2.log E2LANE
+call :show_late_subst E cache\sv_E_server.log
+call :check_late_subst E cache\sv_E_server.log 5 1 !E2LANE! !E2LANE!
+exit /b 0
+
+rem %1 = ログ / %2 = 変数名。"joined: lane=L playerId=" の L を取る (最初の 1 行)
+:get_lane
+set "%~2="
+for /f "tokens=2 delims==" %%a in ('findstr /c:"joined: lane=" "%~1"') do (
+    if not defined %~2 for /f %%b in ("%%a") do set "%~2=%%b"
+)
+goto :eof
 
 rem ---------------------------------------------------------------------- :bg
 rem %2 = 終了コードの置き場 / %3 = 実行するコマンド行 (リダイレクト込み)

@@ -382,6 +382,10 @@ struct EngineConfig {
     bool simulateDeviceLostFatal = false;
     // --simulate-device-lost-stale: 復旧の途中で旧デバイスの子を握らせ、参照数ゲート不合格 → 致命停止を通す
     bool simulateDeviceLostStale = false;
+    // --simulate-device-lost-after-join <ticks>: 専用サーバのクライアントが参加した tick の N tick 後に 1 回だけ消失を偽装する。-1 = 無効
+    int64_t simulateDeviceLostAfterJoinTicks = -1;
+    // --simulate-device-recovery-delay-ms <ms>: 復旧のデバイス再作成の前で眠る (ネットのタイムアウトを越える検証用)。0 = 無効
+    int simulateDeviceRecoveryDelayMs = 0;
 };
 
 // デバイス消失で続行できないときの終了コード (1 = 失敗 / 2 = 落とし損ね / 4 = desync / 5 = プローブと衝突しない値)

@@ -234,6 +234,30 @@ const CliFlag kEngineCliFlags[] = {
           a.c.simulateDeviceLostStale = true;
           return true;
       } },
+    // M88: 専用サーバのセッション参加後 N tick で消失を 1 回偽装 / 復旧の所要を ms だけ延ばす (どちらも検証用)。
+    // 不正値 (非数・負・末尾ゴミ) は --simulate-device-lost と同じくエラーを出して無視する
+    { L"--simulate-device-lost-after-join", CliValue::One,
+      [](CliArgs& a) {
+          wchar_t* end = nullptr;
+          const long long ticks = _wcstoi64(a.v1, &end, 10);
+          if (end == a.v1 || *end != L'\0' || ticks < 0) {
+              std::fwprintf(stderr, L"invalid --simulate-device-lost-after-join value (expected tick count >= 0): ignored\n");
+              return true;
+          }
+          a.c.simulateDeviceLostAfterJoinTicks = ticks;
+          return true;
+      } },
+    { L"--simulate-device-recovery-delay-ms", CliValue::One,
+      [](CliArgs& a) {
+          wchar_t* end = nullptr;
+          const long ms = wcstol(a.v1, &end, 10);
+          if (end == a.v1 || *end != L'\0' || ms < 0 || ms > 600000) {
+              std::fwprintf(stderr, L"invalid --simulate-device-recovery-delay-ms value (expected 0..600000): ignored\n");
+              return true;
+          }
+          a.c.simulateDeviceRecoveryDelayMs = static_cast<int>(ms);
+          return true;
+      } },
     { L"--exposure", CliValue::One,
       [](CliArgs& a) {
           a.c.postFxExposure = static_cast<float>(_wtof(a.v1));

@@ -179,6 +179,22 @@ bool RunEngineCliSelfTest()
     r = RunParse({ L"--simulate-device-lost", L"30," });
     check(r.consumed == 1 && r.errors == 0 && r.config.simulateDeviceLostFrames.empty(),
           "--simulate-device-lost with a trailing comma is ignored");
+    r = RunParse({ L"--simulate-device-lost-after-join", L"120" });
+    check(r.consumed == 1 && r.config.simulateDeviceLostAfterJoinTicks == 120, "--simulate-device-lost-after-join N");
+    r = RunParse({ L"--simulate-device-lost-after-join", L"-1" });
+    check(r.consumed == 1 && r.errors == 0 && r.config.simulateDeviceLostAfterJoinTicks == -1,
+          "--simulate-device-lost-after-join with a negative number is ignored");
+    r = RunParse({ L"--simulate-device-lost-after-join", L"12x" });
+    check(r.consumed == 1 && r.errors == 0 && r.config.simulateDeviceLostAfterJoinTicks == -1,
+          "--simulate-device-lost-after-join with trailing garbage is ignored");
+    r = RunParse({ L"--simulate-device-recovery-delay-ms", L"5000" });
+    check(r.consumed == 1 && r.config.simulateDeviceRecoveryDelayMs == 5000, "--simulate-device-recovery-delay-ms N");
+    r = RunParse({ L"--simulate-device-recovery-delay-ms", L"abc" });
+    check(r.consumed == 1 && r.errors == 0 && r.config.simulateDeviceRecoveryDelayMs == 0,
+          "--simulate-device-recovery-delay-ms with a non-number is ignored");
+    r = RunParse({ L"--simulate-device-recovery-delay-ms", L"-5" });
+    check(r.consumed == 1 && r.errors == 0 && r.config.simulateDeviceRecoveryDelayMs == 0,
+          "--simulate-device-recovery-delay-ms with a negative number is ignored");
 
     // ---- 値を 1 つ取るフラグ ----
     r = RunParse({ L"--frames", L"123" });

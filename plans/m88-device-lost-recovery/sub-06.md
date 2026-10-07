@@ -46,6 +46,21 @@ spec 7. R6 の裁定どおりに実装する。
 - `tools\server_verify.bat` (UDP と複数プロセスを使うので CI では回らない。ローカルで実行し、ログ `cache\sv_E_*.log` の要点を実装メモに引用する)
 - `Editor.exe --selftest` (Debug / Release)、`tools\check_rules.ps1`、`tools\replay_verify.bat`
 
+### 判定の補足 (planner、round 1 の裁定)
+- ケース E で止めたレーンにだけ出るサーバの `cannot keep up` 警告は、意図して停止させたことの直接の結果 (平均の遅れ約 4.5 s が停止の長さと一致する) なので許容する。許容するのは**ケース E の、止めたレーンの警告だけ**。行に `peer N (lane <止めたレーン>)` を含むものに限る。他のレーンの警告と、ケース A〜D の警告は従来どおり FAIL とする。許容した行は bat の出力に「許容: ...」として表示し、黙って捨てない。
+- 入口名 `--simulate-device-lost-after-join <ticks>` (参加した tick からの相対) を承認する。
+
 ## 実装メモ (coder が追記)
 
+### round 1 (SELF_EVAL の要点)
+- 前提確認: `ClientSession::OnPacket` / `Poll` が書くのは ClientSession 自身の状態、送信ラムダ (ソケット + ロス注入の乱数)、`MYE_LOG` (Log.cpp は mutex 保護) だけ。コールバックは `send_` のみで recorder / ECS / 入力レーンには触れない。`ClientNowMs` は QueryPerformanceCounter の読みだけ。
+- 実装: `RecoveryNetPump` (EngineLoop.cpp 無名名前空間、RAII。`std::thread` + atomic 停止フラグ、約 10 ms 間隔)。`ClientReceive` を `ClientFrame` から切り出して共有。`RecoverDevice` 呼び出しを `std::optional<RecoveryNetPump>` で囲み、`clientEnabled && clientSocket.IsOpen() && !clientDone && !clientDropped && !clientLeft` のときだけ起動 (成功 / 失敗とも `reset()` で join)。
+- 検証入口: `--simulate-device-lost-after-join <ticks>` / `--simulate-device-recovery-delay-ms <ms>` (CLI + SelfTest)。
+- 対策無しの確認 (スレッド起動を `false &&` で一時的に止めて `server_verify.bat 600 E`、確認後に戻した): サーバのログ `[INFO ] [server] peer 2 (player 2, lane 1) dropped: timeout`、client 2 のログ `[ERROR] [client] session failed: server timeout`、client 2 の終了コード 1。
+- 対策有り: `server_verify.bat 600 E` で client 2 の復旧 (`device recovered in 11357.1 ms` = 5000 ms 遅延 + アセット再生成約 6.5 s) の間も `dropped: timeout` なし、両クライアントとサーバが終了コード 0、サーバ .rep と c1 / c2 の .rep は重なり区間で全 tick 一致、Debug/Release の Server/Runtime での再生検証 PASS。late-subst は止めたレーン 67.19% (約 12 s 停止の想定内)、止めていないレーン 0.13%、強制再同期 0。
+- ケース A〜D は同じ実行で PASS (上の server_verify 全体実行で A〜D の結果が従来どおり)。
+- 未解決: ケース E だけ、サーバが `peer 2 (lane 1) cannot keep up: its inputs arrive 4526 ms after the deadline on average (165 of 180 samples late)` を 1 回出し、`check_late_subst` の「警告なし」判定で FAIL する (判定は緩めていない)。
+
 ## フィードバック履歴
+- round 1: VERDICT REWORK (planner)。must 1 件: 受け入れ 1 (server_verify の全体 PASS) が未達。止めたレーンの `cannot keep up` 警告だけを許容する変更を承認した (上の「判定の補足」) ので、それを入れて ABCDE の全体 PASS を取り直す。実装本体 (ポンプ、入口 2 つ、対策無しで切断されることの確認) は承認。
+- round 2: VERDICT OK (planner)。server_verify を ABCDE の全体で実行して exit 0。許容した行は止めたレーンの 1 行だけで、「許容:」として表示されている。行の混ざりによる誤判定は無いことを目視で確認済み。ソースは round 1 から変わっていないので、ビルドと selftest の結果は round 1 のものを使う。round 2 の実装メモの追記が無いのは nit。
