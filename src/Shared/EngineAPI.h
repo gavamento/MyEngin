@@ -45,7 +45,9 @@
 //             既存スロットの引数は変えない規則なので別スロット)。PerceptionCanSee の次の 7 本
 // v27 (M85k): ビヘイビアツリー — BtGetBlackboard / BtSetBlackboard / BtSendEvent / BtEventCount / BtGetEvent /
 //             AnimatorPlay / BtRestart (NavFindRandomPointFiltered の次の 7 本) + MyeScriptModule 末尾の btTaskCount / btTasks
-#define MYE_API_VERSION 27u
+// v28 (M89c): Animator の型付きパラメータとステート — AnimatorSetFloat / AnimatorSetInt / AnimatorSetBool /
+//             AnimatorSetTrigger / AnimatorGetParam / AnimatorGetState (BtRestart の次の 6 本)
+#define MYE_API_VERSION 28u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -205,6 +207,33 @@ struct MyeBtEvent {
     uint32_t seq;        // 送信順
 };
 
+// v28 (M89c) Animator のパラメータの型 (ControllerParamType と同値)
+enum MyeAnimatorParamType {
+    MYE_ANIM_PARAM_INT = 0,
+    MYE_ANIM_PARAM_FLOAT = 1,
+    MYE_ANIM_PARAM_BOOL = 2,
+    MYE_ANIM_PARAM_TRIGGER = 3,
+};
+
+// v28 AnimatorGetParam の出力。Float は f、他は i (Bool / Trigger は 0 / 1)。使わない欄は 0
+struct MyeAnimatorParam {
+    int32_t type; // MyeAnimatorParamType
+    int32_t i;
+    float f;
+};
+
+// v28 AnimatorGetState の出力。時刻は tick (speed を掛けた後の再生位置)
+struct MyeAnimatorState {
+    uint64_t stateNameHash;        // 今のステート名の FNV-1a 64bit (MyeNameHash と同じ)
+    uint64_t transitionToNameHash; // 遷移先のステート名。遷移中でなければ 0
+    int32_t stateIndex;
+    int32_t stateTimeTicks;
+    int32_t transitionTo;          // 遷移先の index。-1 = 遷移していない
+    int32_t transitionTick;        // 遷移の経過 tick
+    int32_t transitionDuration;    // 遷移の全長 tick
+    int32_t transitionToTime;      // 遷移先の再生位置 tick
+};
+
 struct MyeEngineApi {
     uint32_t version; // MYE_API_VERSION
     void* engine;     // 不透明 (ScriptHost)。全関数の第 1 引数に渡す
@@ -330,7 +359,7 @@ struct MyeEngineApi {
     MyeEntityId (*FindByFileId)(void* engine, uint64_t fileId);
 
     // ---- Animator Controller パラメータ (v7)。hash 対象への決定論的書込 (M22 の回収) ----
-    int (*SetAnimatorParam)(void* engine, MyeEntityId id, int index, int value); // index 0..3
+    int (*SetAnimatorParam)(void* engine, MyeEntityId id, int index, int value); // index 0..15 (v28 から。型は見ない生のビット列)
     int (*GetAnimatorParam)(void* engine, MyeEntityId id, int index, int* out);
 
     // ---- 動的 UI (v7)。UIElement は NoHash の描画状態 → 毎 tick 書いても sim 安全 ----
@@ -891,6 +920,22 @@ struct MyeEngineApi {
     // BtRestart: 走っている木を Abort して根からやり直す (BB は保つ)。自分の木のタスクから呼んだときは、そのタスクが返った
     //   後に Abort する。インスタンスが無ければ 0
     int (*BtRestart)(void* engine, MyeEntityId entity);
+
+    // ---- v28 (M89c): Animator の型付きパラメータとステート ----
+    // ★パラメータは名前の FNV-1a 64bit (MyeNameHash) で引く。型は .controller.json の宣言で決まり、宣言と違う型の
+    //   Set は 0 を返して何も書かない (Animator / controller / 名前が無いときも 0)。書いた値は同じ tick のアニメの
+    //   フェーズ (スクリプトの Update より後) の遷移判定から効く。Trigger は条件に使った遷移が採用されると 0 に戻る
+    // AnimatorSetFloat: 非有限 (NaN / ±Inf) は 0
+    int (*AnimatorSetFloat)(void* engine, MyeEntityId entity, uint64_t paramNameHash, float value);
+    int (*AnimatorSetInt)(void* engine, MyeEntityId entity, uint64_t paramNameHash, int32_t value);
+    // AnimatorSetBool: value != 0 を真とする
+    int (*AnimatorSetBool)(void* engine, MyeEntityId entity, uint64_t paramNameHash, int32_t value);
+    // AnimatorSetTrigger: 1 を立てる (下ろすのは採用した遷移だけ)
+    int (*AnimatorSetTrigger)(void* engine, MyeEntityId entity, uint64_t paramNameHash);
+    // AnimatorGetParam: 型と値を out へ書いて 1。名前が無ければ 0 (out は触らない)
+    int (*AnimatorGetParam)(void* engine, MyeEntityId entity, uint64_t paramNameHash, MyeAnimatorParam* out);
+    // AnimatorGetState: 今のステートと遷移を out へ書いて 1。Animator / controller が無ければ 0 (out は触らない)
+    int (*AnimatorGetState)(void* engine, MyeEntityId entity, MyeAnimatorState* out);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

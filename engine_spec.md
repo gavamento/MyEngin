@@ -3293,8 +3293,13 @@ never changed, so the filtered queries are new slots. Each bump makes older `Gam
 **Scripting (ABI v27, M85k).** `MYE_API_VERSION` 27, 151 → 158 slots, appended after `NavFindRandomPointFiltered`:
 `BtGetBlackboard`, `BtSetBlackboard`, `BtSendEvent`, `BtEventCount`, `BtGetEvent`, `AnimatorPlay`, `BtRestart` (§10.11). `MyeScriptModule`
 gains `btTaskCount` / `btTasks` at its end (C++ behavior-tree tasks registered with `REGISTER_BT_TASK`). A `GameLogic.dll`
-built for `apiVersion` 26 is refused by a v27 engine; external projects (Sanko, HAL Collector) must rebuild. The next ABI
-bump (M75h, InputField) is v28.
+built for `apiVersion` 26 is refused by a v27 engine; external projects (Sanko, HAL Collector) must rebuild.
+**Scripting (ABI v28, M89c).** `MYE_API_VERSION` 28, 158 → 164 slots, appended after `BtRestart`: `AnimatorSetFloat`,
+`AnimatorSetInt`, `AnimatorSetBool`, `AnimatorSetTrigger`, `AnimatorGetParam`, `AnimatorGetState`. Parameters are looked up
+by the FNV-1a 64-bit hash of their name; a setter whose type differs from the `.controller.json` declaration returns 0 and
+writes nothing, and `AnimatorSetFloat` rejects non-finite values. The v7 `SetAnimatorParam` / `GetAnimatorParam` (index, raw
+bits) stay and now reach index 15. A `GameLogic.dll` built for `apiVersion` 27 is refused by a v28 engine; external projects
+must rebuild. The next ABI bump (M75h, InputField) is v29.
 
 **Verification.** `Editor.exe --selftest` runs the Session suite and the in-process server/client suite
 (one server and three clients over a seeded fake transport: missed deadline, late join, drop → reconnect,
@@ -3351,7 +3356,7 @@ interleave — several tracks ran in parallel and a few milestones were revisite
 | Rendering roadmap | M54-M58 | Local-light shadow atlas; TAA and screen-space velocity; decals; hierarchical Z-buffer; SSR; reflection probe capture and local probes; froxel volumetric fog; terrain assets, cook, LOD and collision |
 | Ray tracing | M46, M67 | Hybrid path tracing on `cs_5_0` with a hand-written BVH — diffuse GI, directional shadows, specular reflections, SVGF denoise (ADR-009); ReSTIR reflections and `ReflectionClass` (ADR-016), default off |
 | Particles and VFX | M5, M29, M32, M42, M61, M63 | CPU (SoA + SIMD) and GPU (compute) back ends with runtime switch and side-by-side comparison; Sprite / Trail / TextMesh; Skybox, Fog, per-camera post-process; bursts, gradients, flipbooks, `EffectComponent` lifecycle; scene depth SRV, soft particles, GPU bitonic sort, distortion; A-group and B-group expansions (rotation, lighting) |
-| Animation and skinning | M14, M18, M22, M89 | Animation clips, keyframe tracks and the Animation window; skeletal animation with GPU skinning (128-bone palette, glTF and FBX); Animator Controller with a node graph; skeletal poses as a pure-function pose program (ADR-027) — controller states drive skeletal clips by name (`.controller.json` v2 `"skel"`) on every `SkinnedMesh` in the subtree, demo `--anim-demo` |
+| Animation and skinning | M14, M18, M22, M89 | Animation clips, keyframe tracks and the Animation window; skeletal animation with GPU skinning (128-bone palette, glTF and FBX); Animator Controller with a node graph; skeletal poses as a pure-function pose program (ADR-027) — controller states drive skeletal clips by name (`.controller.json` v2 `"skel"`) on every `SkinnedMesh` in the subtree, demo `--anim-demo`; typed parameters (M89c): 16 slots declared as `int` / `float` / `bool` / `trigger` (float stored as its bit pattern, a trigger is reset when a transition that tests it is taken), ABI v28 setters by name |
 | Assets and prefabs | M13, M23, M24, M30, M36, M39-M41, M48-M50 | Prefabs; asset database with `.meta` GUIDs and async loading; BCn / DDS cook and ufbx FBX import; GUID key resolution that survives renames; collision layers and masks; component copy / paste / reset; static mesh colliders with a BVH; **compose assets (`.actor.json`, prefab 2.0)** with parts, sockets and structural overrides (ADR-011 / ADR-012) |
 | Scripting, ABI and input | M19, M21, M31, M34, M35, M37, M47, M64, M70 | Gamepad, XAudio2 and `LoadScene`; in-game UI; script drag-and-drop attach; Japanese in-game text with a dynamic glyph cache; `fillAmount`, 9-slice, focus navigation; ABI bundles; editor localisation (ADR-010); raw mouse look and cursor lock, `Active` propagating down the hierarchy; a **resolution-independent UI canvas** with engine-owned hit testing and focus (§6.11 / §6.12), lossless scene loading (§8.3), and Inspector metadata plus world-space and rotation getters for script fields (§5.2) |
 | Audio | M45 | Decode, voice pool, bus graph with dB faders and mute / solo, reverb presets, streaming music, a procedural synth window |

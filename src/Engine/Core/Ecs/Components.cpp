@@ -25,6 +25,20 @@ bool IsEntityActive(World& world, EntityID e)
     return true;
 }
 
+namespace {
+
+// AnimatorController の params[index] を 1 要素ずつ Int32 で登録する (配列フィールドの型が無いため)。
+// 型 (float 等) はコントローラのアセット側にあるので、ここではビット列として扱う
+FieldDesc AnimatorParamField(uint32_t index, const char* name, const char* jp)
+{
+    FieldDesc d{ name, FieldType::Int32,
+                 static_cast<uint32_t>(offsetof(AnimatorControllerComponent, params) + index * sizeof(int32_t)), kFieldNone };
+    d.tooltip = "raw bits; float parameters are stored as their IEEE-754 bit pattern";
+    return WithJp(d, jp);
+}
+
+} // namespace
+
 void RegisterBuiltinComponents()
 {
     static bool registered = false;
@@ -304,7 +318,7 @@ void RegisterBuiltinComponents()
     }, kComponentNoHash | kComponentUiAux);
 
     // M22: Animator Controller。LocalTransform を駆動するので **hash 対象** (kComponentNoHash 無し)。
-    // params[4] は配列なので手動 FieldDesc で各要素を Int32 登録する (hash + serialize + Inspector)
+    // params[16] は配列なので各要素を Int32 で登録する (hash + serialize + Inspector)
     RegisterComponent<AnimatorControllerComponent>("AnimatorController", {
         MYE_JP("コントローラ", MYE_FIELD(AnimatorControllerComponent, controller, AssetRef)),
         MYE_JP("現在のステート", MYE_FIELD_FLAGS(AnimatorControllerComponent, currentState, Int32, kFieldReadOnly)),
@@ -313,23 +327,25 @@ void RegisterBuiltinComponents()
         MYE_JP("遷移経過 (tick)", MYE_FIELD_FLAGS(AnimatorControllerComponent, transitionTick, Int32, kFieldReadOnly)),
         MYE_JP("遷移時間 (tick)", MYE_FIELD_FLAGS(AnimatorControllerComponent, transitionDuration, Int32, kFieldReadOnly)),
         MYE_JP("遷移先の再生位置", MYE_FIELD_FLAGS(AnimatorControllerComponent, transitionToTime, Int32, kFieldReadOnly)),
-        MYE_JP("パラメータ 0",
-               FieldDesc{ "param0", FieldType::Int32,
-                          static_cast<uint32_t>(offsetof(AnimatorControllerComponent, params) + 0 * sizeof(int32_t)),
-                          kFieldNone }),
-        MYE_JP("パラメータ 1",
-               FieldDesc{ "param1", FieldType::Int32,
-                          static_cast<uint32_t>(offsetof(AnimatorControllerComponent, params) + 1 * sizeof(int32_t)),
-                          kFieldNone }),
-        MYE_JP("パラメータ 2",
-               FieldDesc{ "param2", FieldType::Int32,
-                          static_cast<uint32_t>(offsetof(AnimatorControllerComponent, params) + 2 * sizeof(int32_t)),
-                          kFieldNone }),
-        MYE_JP("パラメータ 3",
-               FieldDesc{ "param3", FieldType::Int32,
-                          static_cast<uint32_t>(offsetof(AnimatorControllerComponent, params) + 3 * sizeof(int32_t)),
-                          kFieldNone }),
+        AnimatorParamField(0, "param0", "パラメータ 0"),
+        AnimatorParamField(1, "param1", "パラメータ 1"),
+        AnimatorParamField(2, "param2", "パラメータ 2"),
+        AnimatorParamField(3, "param3", "パラメータ 3"),
+        // M89c: 4 → 16 (末尾 append)。float 型のパラメータもビット列の Int32 として保存・ハッシュする
+        AnimatorParamField(4, "param4", "パラメータ 4"),
+        AnimatorParamField(5, "param5", "パラメータ 5"),
+        AnimatorParamField(6, "param6", "パラメータ 6"),
+        AnimatorParamField(7, "param7", "パラメータ 7"),
+        AnimatorParamField(8, "param8", "パラメータ 8"),
+        AnimatorParamField(9, "param9", "パラメータ 9"),
+        AnimatorParamField(10, "param10", "パラメータ 10"),
+        AnimatorParamField(11, "param11", "パラメータ 11"),
+        AnimatorParamField(12, "param12", "パラメータ 12"),
+        AnimatorParamField(13, "param13", "パラメータ 13"),
+        AnimatorParamField(14, "param14", "パラメータ 14"),
+        AnimatorParamField(15, "param15", "パラメータ 15"),
     });
+    static_assert(AnimatorControllerComponent::kMaxParams == 16, "上の param0..15 の並びを増減に合わせる");
 
     // M29a: 定常力。Rigidbody の velocity (hash 対象) を決定論的に駆動するので **hash 対象**。
     RegisterComponent<ConstantForceComponent>("ConstantForce", {

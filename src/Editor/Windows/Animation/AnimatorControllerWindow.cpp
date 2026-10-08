@@ -1,6 +1,7 @@
 #include "Editor/Windows/Animation/AnimatorControllerWindow.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -39,6 +40,55 @@ AnimatorControllerWindow::NodePositions(uint64_t h, size_t n)
 namespace {
 
 const char* kOps[] = { "gt", "ge", "lt", "le", "eq", "ne" };
+// ControllerParamType の並び (.controller.json の "type" と同じ綴り)
+const char* kParamTypes[] = { "int", "float", "bool", "trigger" };
+
+// 実行中の値を型に合わせて編集する (float はビット列で持つ)
+void DrawParamValue(ControllerParamType type, int32_t& raw)
+{
+    switch (type) {
+    case ControllerParamType::Int:
+        ImGui::InputInt("##v", &raw, 0);
+        break;
+    case ControllerParamType::Float: {
+        float value = std::bit_cast<float>(raw);
+        if (ImGui::DragFloat("##v", &value, 0.01f)) {
+            raw = std::bit_cast<int32_t>(value);
+        }
+        break;
+    }
+    case ControllerParamType::Bool:
+    case ControllerParamType::Trigger: {
+        bool value = raw != 0;
+        if (ImGui::Checkbox("##v", &value)) {
+            raw = value ? 1 : 0;
+        }
+        break;
+    }
+    }
+}
+
+// 条件が参照するパラメータを名前で選ぶ。宣言の無い index (旧アセット) も "#N" で表示して選び直せるようにする
+void DrawConditionParamCombo(const ControllerAsset& ctrl, int32_t& param)
+{
+    const int count = std::min(static_cast<int>(ctrl.parameters.size()), AnimatorControllerComponent::kMaxParams);
+    char current[64];
+    if (param >= 0 && param < count) {
+        snprintf(current, sizeof(current), "%s", ctrl.parameters[param].name.c_str());
+    } else {
+        snprintf(current, sizeof(current), "#%d", param);
+    }
+    if (ImGui::BeginCombo("##param", current)) {
+        for (int i = 0; i < count; ++i) {
+            ImGui::PushID(i);
+            if (ImGui::Selectable(ctrl.parameters[i].name.c_str(), i == param)) {
+                param = i;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+}
 
 // 遷移矢印 (a→b、b 側に矢じり)
 void DrawArrow(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 col, float thick)
@@ -129,12 +179,30 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
     ImGui::BeginChild("ctrl_left", ImVec2(260, 0), true);
     ImGui::TextUnformatted(Tr(StrId::Anim_ParamsLive));
     ImGui::Separator();
-    for (int i = 0; i < static_cast<int>(ctrl->parameters.size()) && i < 4; ++i) {
+    // 1 行 = 名前 (アセット) / 型 (アセット) / 値 (選択中エンティティの実行中の値)
+    constexpr int kMaxParams = AnimatorControllerComponent::kMaxParams;
+    for (int i = 0; i < static_cast<int>(ctrl->parameters.size()) && i < kMaxParams; ++i) {
+        ControllerParam& p = ctrl->parameters[i];
         ImGui::PushID(i);
-        ImGui::InputInt(ctrl->parameters[i].name.c_str(), &comp->params[i]);
+        char nameBuf[64];
+        snprintf(nameBuf, sizeof(nameBuf), "%s", p.name.c_str());
+        ImGui::SetNextItemWidth(92);
+        if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf))) {
+            p.name = nameBuf;
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(64);
+        int type = static_cast<int>(p.type);
+        if (ImGui::Combo("##type", &type, kParamTypes, IM_ARRAYSIZE(kParamTypes))) {
+            p.type = static_cast<ControllerParamType>(type);
+            comp->params[i] = 0; // ビット列の意味が変わるので値は 0 から
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1);
+        DrawParamValue(p.type, comp->params[i]);
         ImGui::PopID();
     }
-    if (ctrl->parameters.size() < 4 && ImGui::SmallButton(Tr(StrId::Anim_AddParam))) {
+    if (static_cast<int>(ctrl->parameters.size()) < kMaxParams && ImGui::SmallButton(Tr(StrId::Anim_AddParam))) {
         char nm[16];
         snprintf(nm, sizeof(nm), "param%zu", ctrl->parameters.size());
         ctrl->parameters.push_back({ nm });
@@ -274,17 +342,31 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
                 for (int ci = 0; ci < static_cast<int>(t.conditions.size()); ++ci) {
                     ControllerCondition& c = t.conditions[ci];
                     ImGui::PushID(ci);
-                    ImGui::SetNextItemWidth(60);
-                    ImGui::InputInt(Tr(StrId::Anim_Param), &c.param);
+                    ImGui::SetNextItemWidth(110);
+                    DrawConditionParamCombo(*ctrl, c.param);
                     ImGui::SameLine();
-                    ImGui::SetNextItemWidth(50);
-                    int op = static_cast<int>(c.op);
-                    if (ImGui::Combo("##op", &op, kOps, IM_ARRAYSIZE(kOps))) {
-                        c.op = static_cast<CondOp>(op);
+                    const ControllerParamType type = ControllerParamTypeAt(*ctrl, c.param);
+                    if (type == ControllerParamType::Trigger) {
+                        ImGui::TextDisabled("%s", Tr(StrId::Anim_TriggerCond)); // 演算と値は見ない
+                    } else {
+                        ImGui::SetNextItemWidth(50);
+                        int op = static_cast<int>(c.op);
+                        if (ImGui::Combo("##op", &op, kOps, IM_ARRAYSIZE(kOps))) {
+                            c.op = static_cast<CondOp>(op);
+                        }
+                        ImGui::SameLine();
+                        ImGui::SetNextItemWidth(70);
+                        if (type == ControllerParamType::Float) {
+                            ImGui::DragFloat(Tr(StrId::Anim_Val), &c.floatValue, 0.01f);
+                        } else if (type == ControllerParamType::Bool) {
+                            bool value = c.value != 0;
+                            if (ImGui::Checkbox(Tr(StrId::Anim_Val), &value)) {
+                                c.value = value ? 1 : 0;
+                            }
+                        } else {
+                            ImGui::InputInt(Tr(StrId::Anim_Val), &c.value);
+                        }
                     }
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(60);
-                    ImGui::InputInt(Tr(StrId::Anim_Val), &c.value);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("x")) {
                         t.conditions.erase(t.conditions.begin() + ci);

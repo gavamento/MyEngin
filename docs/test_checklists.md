@@ -504,3 +504,10 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] `Editor.exe --anim-demo` で Play すると、2 体 (左 = Y-up、右 = Z-up の素材) が同じ姿勢で Idle → Walk → Run → Attack → Idle と回り、切り替えの瞬間に飛ばずに混ざる
 - [ ] Walk / Run の間は足元の板 (Root) が前へ進み、1 周ごとに元の位置へ戻る (ルートモーションは M89j で入る。今はこれが正しい)
 - [ ] Animator Controller 窓で `anim_test.controller.json` を開いて保存しても、ステートの骨クリップ (`"skel"`) が消えない
+
+### 型付きパラメータ (M89c)
+
+- [ ] Animator Controller 窓の左の欄で、パラメータの名前・型 (int / float / bool / trigger) を変えられ、値の欄が型に合った部品 (整数 / ドラッグ / チェック) になる。16 個まで足せる
+- [ ] 遷移の条件でパラメータを名前で選べる。float は小数で比べ、bool はチェック、trigger は演算と値の欄が消えて「(立っていれば真)」と出る
+- [ ] Play 中に trigger のチェックを入れると、その trigger を条件に持つ遷移が始まった瞬間にチェックが外れる
+- [ ] 保存した `.controller.json` の `parameters` に `"type"` が入り、float の条件の `"value"` が小数で書かれる。型の無い古いファイルは int として開ける

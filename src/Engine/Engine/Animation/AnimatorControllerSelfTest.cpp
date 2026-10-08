@@ -1,7 +1,9 @@
 #include "Engine/Engine/Animation/AnimatorControllerSelfTest.h"
 
+#include <bit>
 #include <cmath>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "nlohmann/json.hpp"
@@ -15,7 +17,9 @@
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/Script/EngineApiTable.h" // M89c: ABI v28 の Animator* スロット
 #include "Engine/Core/Util/Hash.h"
+#include "Shared/ScriptAPI.h" // MyeNameHash
 #include "Engine/Renderer/Device/GpuResources.h"
 #include "Engine/Renderer/Mesh/Skeleton.h"
 
@@ -449,6 +453,193 @@ bool RunAnimatorControllerSelfTest()
         check(propBody.GetComponent<SkinnedMeshComponent>()->poseLayerCount == 0
                   && propBody.GetComponent<SkinnedMeshComponent>()->poseClaim == 0,
               "a property-only controller leaves SkinnedMesh on the legacy path");
+    }
+
+    // ---- (M89c) 型付きパラメータ: JSON / 型ごとの比較 / Trigger の消費 / ABI v28 ----
+    {
+        using PT = ControllerParamType;
+        const auto bitsOf = [](float f) { return std::bit_cast<int32_t>(f); };
+
+        // JSON: v1 (型なし) は Int。型と Float の比較値が往復する。17 個目以降の宣言は捨てる
+        {
+            ControllerAsset v1;
+            const json legacy = { { "states", json::array({ { { "name", "A" } } }) },
+                                  { "parameters", json::array({ { { "name", "speed" } } }) },
+                                  { "transitions", json::array({ { { "from", -1 }, { "to", 0 },
+                                                                  { "conditions", json::array({ { { "param", 0 }, { "op", "gt" }, { "value", 2 } } }) } } }) } };
+            check(ControllerLibrary::FromJson(legacy, v1) && v1.parameters.size() == 1 && v1.parameters[0].type == PT::Int
+                      && v1.transitions[0].conditions[0].value == 2,
+                  "M89c: a v1 parameter without a type reads as int (condition value stays an integer)");
+
+            ControllerAsset typed;
+            typed.states.push_back({ "A", "", 0, 1, 1 });
+            typed.parameters = { { "speed", PT::Float }, { "grounded", PT::Bool }, { "attack", PT::Trigger }, { "mode", PT::Int } };
+            ControllerTransition t;
+            t.conditions = { { 0, CondOp::Ge, 0, 0.75f }, { 1, CondOp::Eq, 1 }, { 2, CondOp::Gt, 0 }, { 3, CondOp::Ne, -4 } };
+            typed.transitions.push_back(t);
+            const json j = ControllerLibrary::ToJson(typed);
+            ControllerAsset back;
+            const bool parsed = ControllerLibrary::FromJson(j, back);
+            check(parsed && j["parameters"][0]["type"] == "float" && j["parameters"][2]["type"] == "trigger"
+                      && j["transitions"][0]["conditions"][0]["value"].is_number_float()
+                      && j["transitions"][0]["conditions"][3]["value"].is_number_integer(),
+                  "M89c: ToJson writes the type and a float value only for float parameters");
+            check(parsed && back.parameters.size() == 4 && back.parameters[0].type == PT::Float && back.parameters[1].type == PT::Bool
+                      && back.parameters[2].type == PT::Trigger && back.parameters[3].type == PT::Int
+                      && back.transitions[0].conditions[0].floatValue == 0.75f && back.transitions[0].conditions[3].value == -4,
+                  "M89c: typed parameters and condition values round-trip");
+
+            json many = j;
+            many["parameters"] = json::array();
+            for (int i = 0; i < AnimatorControllerComponent::kMaxParams + 1; ++i) {
+                many["parameters"].push_back({ { "name", "p" + std::to_string(i) }, { "type", "int" } });
+            }
+            ControllerAsset capped;
+            check(ControllerLibrary::FromJson(many, capped)
+                      && capped.parameters.size() == static_cast<size_t>(AnimatorControllerComponent::kMaxParams),
+                  "M89c: declarations beyond 16 are dropped (no value slot)");
+
+            ControllerAsset dup;
+            dup.parameters = { { "x", PT::Int }, { "x", PT::Float } };
+            check(FindControllerParam(typed, HashStr("attack")) == 2 && FindControllerParam(typed, HashStr("none")) == -1
+                      && FindControllerParam(dup, HashStr("x")) == 0 && ControllerParamTypeAt(typed, 9) == PT::Int
+                      && ControllerParamTypeAt(typed, -1) == PT::Int && ControllerParamTypeAt(typed, 99) == PT::Int,
+                  "M89c: FindControllerParam by name hash (first of duplicates), undeclared index is int");
+        }
+
+        // 遷移の評価: Float / Bool / Int (index 12) / Trigger。Trigger は採用した遷移だけが消費する
+        ControllerAsset tc;
+        tc.states = { { "Idle", "", 0, 1, 1 }, { "Walk", "", 0, 1, 1 }, { "Attack", "", 0, 1, 1 }, { "Jump", "", 0, 1, 1 },
+                      { "Combo", "", 0, 1, 1 } };
+        tc.parameters.resize(13);
+        for (size_t i = 0; i < tc.parameters.size(); ++i) {
+            tc.parameters[i] = { "unused" + std::to_string(i), PT::Int };
+        }
+        tc.parameters[0] = { "speed", PT::Float };
+        tc.parameters[1] = { "grounded", PT::Bool };
+        tc.parameters[2] = { "attack", PT::Trigger };
+        tc.parameters[3] = { "jump", PT::Trigger };
+        tc.parameters[12] = { "combo", PT::Int };
+        const auto addTransition = [&](int32_t from, int32_t to, std::vector<ControllerCondition> conds) {
+            ControllerTransition t;
+            t.from = from;
+            t.to = to;
+            t.duration = 2;
+            t.conditions = std::move(conds);
+            tc.transitions.push_back(std::move(t));
+        };
+        addTransition(0, 1, { { 0, CondOp::Gt, 0, 0.5f } });                 // Idle → Walk: speed > 0.5
+        addTransition(1, 2, { { 2, CondOp::Gt, 0 } });                       // Walk → Attack: attack
+        addTransition(2, 3, { { 3, CondOp::Gt, 0 }, { 1, CondOp::Eq, 1 } }); // Attack → Jump: jump かつ grounded
+        addTransition(3, 4, { { 12, CondOp::Ge, 3 } });                      // Jump → Combo: combo >= 3
+        const uint64_t tcHash = ctrlLib.Register(L"typed.controller.json", tc);
+
+        Scene s;
+        GameObject go = s.CreateGameObjectTracked("Typed");
+        go.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ tcHash };
+        s.GetWorld().ApplyStructuralChanges();
+        World& world = s.GetWorld();
+        auto* ac = go.GetComponent<AnimatorControllerComponent>();
+        const auto step = [&] { sys.Update(world, ctrlLib, animLib); };
+        const auto settle = [&] {
+            for (int i = 0; i < 4; ++i) {
+                step();
+            }
+        };
+
+        ac->params[0] = bitsOf(0.5f);
+        step();
+        check(ac->transitionTo == -1, "M89c: float condition speed > 0.5 is false at exactly 0.5");
+        ac->params[0] = bitsOf(0.625f);
+        step();
+        check(ac->transitionTo == 1, "M89c: float condition compares the float value, not the raw bits");
+        // 遷移中に立てた Trigger は、遷移の判定が走らないので残る
+        ac->params[2] = 1;
+        step();
+        check(ac->params[2] == 1, "M89c: a trigger set while no transition is evaluated stays set");
+        settle();
+        check(ac->currentState == 2 && ac->params[2] == 0, "M89c: the adopted transition consumes its trigger");
+
+        ac->params[3] = 1; // jump は立てたが grounded が偽 = 採用されない
+        settle();
+        check(ac->currentState == 2 && ac->params[3] == 1, "M89c: a trigger is not consumed when its transition is not adopted (bool false)");
+        ac->params[1] = 1;
+        settle();
+        check(ac->currentState == 3 && ac->params[3] == 0 && ac->params[1] == 1,
+              "M89c: bool condition true adopts the transition; only the trigger is consumed");
+        ac->params[12] = 2;
+        settle();
+        check(ac->currentState == 3, "M89c: int condition at index 12 (beyond the old 4) is evaluated (2 < 3)");
+        ac->params[12] = 3;
+        settle();
+        check(ac->currentState == 4, "M89c: int condition at index 12 adopts at combo >= 3");
+
+        // params[4..15] もハッシュに入る (シーン保存・replay の対象)
+        const uint64_t before = HashWorld(world);
+        ac->params[15] = 7;
+        check(HashWorld(world) != before, "M89c: params[15] is part of the world hash");
+        ac->params[15] = 0;
+
+        // ABI v28
+        ScriptApiContext apiCtx;
+        apiCtx.scene = &s;
+        apiCtx.controllers = &ctrlLib;
+        MyeEngineApi api = {};
+        BuildEngineApi(api, &apiCtx);
+        const MyeEntityId self = { go.Id().index, go.Id().generation };
+        const MyeEntityId bare = [&] {
+            const EntityID e = s.CreateGameObjectTracked("Bare").Id();
+            return MyeEntityId{ e.index, e.generation };
+        }();
+        world.ApplyStructuralChanges();
+        ac = go.GetComponent<AnimatorControllerComponent>();
+        check(MyeNameHash("speed") == HashStr("speed"), "M89c ABI: (premise) MyeNameHash == HashStr");
+        check(api.AnimatorSetFloat(api.engine, self, MyeNameHash("speed"), 1.25f) == 1 && ac->params[0] == bitsOf(1.25f),
+              "M89c ABI: AnimatorSetFloat writes the float bits");
+        const int32_t speedBits = ac->params[0];
+        check(api.AnimatorSetFloat(api.engine, self, MyeNameHash("speed"), std::nanf("")) == 0
+                  && api.AnimatorSetFloat(api.engine, self, MyeNameHash("speed"), INFINITY) == 0 && ac->params[0] == speedBits,
+              "M89c ABI: AnimatorSetFloat rejects non-finite values");
+        check(api.AnimatorSetInt(api.engine, self, MyeNameHash("speed"), 3) == 0 && api.AnimatorSetFloat(api.engine, self, MyeNameHash("combo"), 1.0f) == 0
+                  && api.AnimatorSetBool(api.engine, self, MyeNameHash("attack"), 1) == 0 && api.AnimatorSetTrigger(api.engine, self, MyeNameHash("grounded")) == 0
+                  && ac->params[0] == speedBits && ac->params[1] == 1 && ac->params[2] == 0 && ac->params[12] == 3,
+              "M89c ABI: a setter of the wrong type returns 0 and writes nothing");
+        check(api.AnimatorSetInt(api.engine, self, MyeNameHash("combo"), -9) == 1 && ac->params[12] == -9
+                  && api.AnimatorSetBool(api.engine, self, MyeNameHash("grounded"), 0) == 1 && ac->params[1] == 0
+                  && api.AnimatorSetBool(api.engine, self, MyeNameHash("grounded"), 5) == 1 && ac->params[1] == 1
+                  && api.AnimatorSetTrigger(api.engine, self, MyeNameHash("jump")) == 1 && ac->params[3] == 1,
+              "M89c ABI: SetInt / SetBool (normalized to 0/1) / SetTrigger write by name");
+        check(api.AnimatorSetInt(api.engine, self, MyeNameHash("nope"), 1) == 0 && api.AnimatorSetInt(api.engine, bare, MyeNameHash("combo"), 1) == 0,
+              "M89c ABI: unknown name / entity without an Animator returns 0");
+
+        MyeAnimatorParam p = {};
+        const bool gotFloat = api.AnimatorGetParam(api.engine, self, MyeNameHash("speed"), &p) == 1 && p.type == MYE_ANIM_PARAM_FLOAT && p.f == 1.25f && p.i == 0;
+        const bool gotInt = api.AnimatorGetParam(api.engine, self, MyeNameHash("combo"), &p) == 1 && p.type == MYE_ANIM_PARAM_INT && p.i == -9;
+        const bool gotTrigger = api.AnimatorGetParam(api.engine, self, MyeNameHash("jump"), &p) == 1 && p.type == MYE_ANIM_PARAM_TRIGGER && p.i == 1;
+        p = MyeAnimatorParam{ 77, 77, 77.0f };
+        const bool missUntouched = api.AnimatorGetParam(api.engine, self, MyeNameHash("nope"), &p) == 0 && p.type == 77;
+        check(gotFloat && gotInt && gotTrigger && missUntouched, "M89c ABI: AnimatorGetParam returns type and value; a miss leaves out untouched");
+
+        MyeAnimatorState st = {};
+        const bool gotState = api.AnimatorGetState(api.engine, self, &st) == 1;
+        check(gotState && st.stateIndex == 4 && st.stateNameHash == MyeNameHash("Combo") && st.transitionTo == -1
+                  && st.transitionToNameHash == 0 && st.stateTimeTicks == ac->stateTimeTicks,
+              "M89c ABI: AnimatorGetState reports the current state by index and name hash");
+        check(AnimatorPlay(world, go.Id(), 0, 5, ctrlLib) && api.AnimatorGetState(api.engine, self, &st) == 1 && st.transitionTo == 0
+                  && st.transitionToNameHash == MyeNameHash("Idle") && st.transitionDuration == 5,
+              "M89c ABI: AnimatorGetState reports an ongoing transition");
+        check(api.AnimatorGetState(api.engine, bare, &st) == 0, "M89c ABI: AnimatorGetState on an entity without an Animator returns 0");
+
+        check(api.SetAnimatorParam(api.engine, self, 15, 42) == 1 && ac->params[15] == 42 && api.SetAnimatorParam(api.engine, self, 16, 1) == 0,
+              "M89c ABI: the legacy SetAnimatorParam reaches index 15 and rejects 16");
+
+        ScriptApiContext noLibCtx;
+        noLibCtx.scene = &s;
+        MyeEngineApi noLib = {};
+        BuildEngineApi(noLib, &noLibCtx);
+        check(noLib.AnimatorSetInt(noLib.engine, self, MyeNameHash("combo"), 1) == 0 && noLib.AnimatorGetParam(noLib.engine, self, MyeNameHash("combo"), &p) == 0
+                  && noLib.AnimatorGetState(noLib.engine, self, &st) == 0,
+              "M89c ABI: without a controller library every animator slot returns 0");
     }
 
     if (failCount == 0) {

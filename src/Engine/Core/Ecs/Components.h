@@ -733,7 +733,10 @@ struct AnimatorControllerComponent {
     int32_t transitionTick = 0;      // 遷移経過 tick
     int32_t transitionDuration = 0;  // 遷移全長 tick
     int32_t transitionToTime = 0;    // 遷移先 state の再生位置 (tick)
-    int32_t params[4] = { 0, 0, 0, 0 }; // 整数パラメータ (遷移条件が index 0..3 を参照)
+    // パラメータ (遷移条件が index で参照)。型はコントローラのアセットが宣言する (M89c: int / float / bool / trigger)。
+    // float はビット列のまま入れる — 保存・ハッシュ・スナップショットが整数のまま扱えて、型を知らない経路でも値が変わらない
+    static constexpr int kMaxParams = 16;
+    int32_t params[kMaxParams] = {};
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

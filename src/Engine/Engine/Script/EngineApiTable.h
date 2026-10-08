@@ -151,7 +151,8 @@ struct ScriptApiContext {
     NavSystem* nav = nullptr;
     // v27: BtGetBlackboard / BtSetBlackboard / BtSendEvent / BtEventCount / BtGetEvent / BtRestart の引き先。null 時は各スロットが 0 を返す
     BehaviorTreeSystem* behaviorTree = nullptr;
-    // v27: AnimatorPlay のステート名の引き先 (読むだけ)。null 時は AnimatorPlay が 0 を返す
+    // v27: AnimatorPlay のステート名の引き先 (読むだけ)。null 時は AnimatorPlay が 0 を返す。
+    // v28: Animator* のパラメータ名・ステート名も同じ引き先 (null 時は 0)
     const ControllerLibrary* controllers = nullptr;
 };
 

@@ -15,11 +15,21 @@ class AnimationLibrary;
 class SkinnedModelLibrary;
 struct SkinnedModel;
 
-// 遷移条件の比較演算 (整数パラメータに対して。決定論)
+// 遷移条件の比較演算 (決定論)
 enum class CondOp : int32_t { Gt = 0, Ge = 1, Lt = 2, Le = 3, Eq = 4, Ne = 5 };
 
+// パラメータの型 (M89c)。値は AnimatorControllerComponent::params に int32 で入り、Float はビット列。
+// ★値は MyeAnimatorParamType (EngineAPI.h) と同じ
+enum class ControllerParamType : int32_t {
+    Int = 0,
+    Float = 1,
+    Bool = 2,    // 0 / 1
+    Trigger = 3, // 1 = 立っている。条件に使った遷移が採用された tick に 0 へ戻る (消費)
+};
+
 struct ControllerParam {
-    std::string name; // params index に対応 (0..3)
+    std::string name; // 並び順 = params の index (0..kMaxParams-1)
+    ControllerParamType type = ControllerParamType::Int; // v1 (型の無い) アセットは全部 Int
 };
 
 struct ControllerState {
@@ -36,10 +46,14 @@ struct ControllerState {
     uint64_t skelClipHash = 0; // HashStr(skelClip)。skelClip が空なら 0
 };
 
+// 比べ方は参照するパラメータの型で決まる (宣言の無い index は Int):
+// Int = params と value を op で / Float = params のビット列を float に戻して floatValue と op で /
+// Bool = (params != 0) と (value != 0) を op で / Trigger = params != 0 なら真 (op と値は見ない)
 struct ControllerCondition {
-    int32_t param = 0; // params index (0..3)
+    int32_t param = 0; // params index (0..kMaxParams-1)
     CondOp op = CondOp::Gt;
     int32_t value = 0;
+    float floatValue = 0.0f; // Float 型のパラメータと比べる値 (他の型では使わない)
 };
 
 struct ControllerTransition {
@@ -92,6 +106,18 @@ private:
 // state 名から index を引く。無ければ -1 (同名が複数なら先頭)
 int32_t FindControllerState(const ControllerAsset& controller, const std::string& name);
 
+// ---- 型付きパラメータ (M89c) ----
+// 名前の FNV-1a 64bit (HashStr) でパラメータの index を引く。同名が複数なら先頭。
+// kMaxParams 以降の宣言は値の置き場が無いので引かない。無ければ -1
+int32_t FindControllerParam(const ControllerAsset& controller, uint64_t nameHash);
+// index の型 (宣言が無ければ Int)
+ControllerParamType ControllerParamTypeAt(const ControllerAsset& controller, int32_t index);
+
+// entity の Animator のパラメータ (名前のハッシュ) へ bits を書く。宣言の型が type と違う /
+// Animator・controller・名前が無ければ何も変えず false。Bool / Trigger は bits != 0 を 1 に揃えて書く
+bool AnimatorSetParam(World& world, EntityID entity, uint64_t nameHash, ControllerParamType type, int32_t bits,
+                      const ControllerLibrary& controllers);
+
 // ---- 骨クリップの駆動 (M89b) ----
 // controller を持つ entity が駆動する SkinnedMesh を前順 (親 → 子を兄弟順) で out へ入れ直す。
 // 自分を含む部分木が対象で、別の AnimatorController を持つ子孫の部分木は、そちらが駆動するので含めない
@@ -117,6 +143,8 @@ bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t dur
 // AnimatorControllerComponent を評価してポーズを適用し、状態/遷移を進める (M22)。
 // AnimatorControllerComponent 非存在シーンでは完全 no-op (既存シーンのリプレイ不変)。
 // 時刻は tick、ブレンド係数は transitionTick/duration の整数比 → 決定論。
+// 遷移は宣言順に見て、最初に条件をすべて満たしたものを採用する。採用した遷移の条件が参照する
+// Trigger 型のパラメータはその場で 0 に戻す (M89c。採用されなかった遷移は消費しない)。
 //
 // 骨クリップ (M89b): 骨クリップを持つステートがあるコントローラは、時刻を進めた後に、駆動する
 // SkinnedMesh すべてへポーズプログラム (今のステート 1 層、遷移中は元と先の 2 層) を書いて

@@ -185,6 +185,33 @@ namespace MyeScripting
         public uint Seq;
     }
 
+    // v28 (M89c): AnimatorGetParam の出力 (EngineAPI.h の MyeAnimatorParam と同一レイアウト)。
+    // Type: 0 Int / 1 Float / 2 Bool / 3 Trigger。Float は F、他は I (Bool / Trigger は 0 / 1)
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MyeAnimatorParam
+    {
+        public int Type;
+        public int I;
+        public float F;
+    }
+
+    // v28 (M89c): AnimatorGetState の出力 (EngineAPI.h の MyeAnimatorState と同一レイアウト、40 バイト)。時刻は tick
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MyeAnimatorState
+    {
+        public ulong StateNameHash;        // 今のステート名の NameHash。名前と比べるときは IsIn を使う
+        public ulong TransitionToNameHash; // 遷移先のステート名の NameHash。遷移中でなければ 0
+        public int StateIndex;
+        public int StateTimeTicks;
+        public int TransitionTo;           // 遷移先の index。-1 = 遷移していない
+        public int TransitionTick;
+        public int TransitionDuration;
+        public int TransitionToTime;
+
+        public bool InTransition => TransitionTo >= 0;
+        public bool IsIn(string stateName) => StateNameHash == Engine.NameHash(stateName);
+    }
+
     // v16 (M70c): GetUIRect の出力。**キャンバス座標** (基準 1920x1080、M70b)
     [StructLayout(LayoutKind.Sequential)]
     internal struct MyeUIRect
@@ -397,6 +424,13 @@ namespace MyeScripting
         public delegate* unmanaged<void*, MyeEntityId, int, MyeBtEvent*, int> BtGetEvent;
         public delegate* unmanaged<void*, MyeEntityId, ulong, int, int> AnimatorPlay;
         public delegate* unmanaged<void*, MyeEntityId, int> BtRestart;
+        // ---- v28 (M89c): Animator の型付きパラメータとステート ----
+        public delegate* unmanaged<void*, MyeEntityId, ulong, float, int> AnimatorSetFloat;
+        public delegate* unmanaged<void*, MyeEntityId, ulong, int, int> AnimatorSetInt;
+        public delegate* unmanaged<void*, MyeEntityId, ulong, int, int> AnimatorSetBool;
+        public delegate* unmanaged<void*, MyeEntityId, ulong, int> AnimatorSetTrigger;
+        public delegate* unmanaged<void*, MyeEntityId, ulong, MyeAnimatorParam*, int> AnimatorGetParam;
+        public delegate* unmanaged<void*, MyeEntityId, MyeAnimatorState*, int> AnimatorGetState;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -1468,5 +1502,33 @@ namespace MyeScripting
             => _api != null && _api->AnimatorPlay(_api->Engine, entity, stateNameHash, durationTicks) != 0;
         public static bool BtRestart(MyeEntityId entity)
             => _api != null && _api->BtRestart(_api->Engine, entity) != 0;
+
+        // ---- v28 (M89c): Animator の型付きパラメータとステート。名前は NameHash(名前)。宣言と違う型の Set は false ----
+        public static bool AnimatorSetFloat(MyeEntityId entity, ulong paramNameHash, float value)
+            => _api != null && _api->AnimatorSetFloat(_api->Engine, entity, paramNameHash, value) != 0;
+        public static bool AnimatorSetInt(MyeEntityId entity, ulong paramNameHash, int value)
+            => _api != null && _api->AnimatorSetInt(_api->Engine, entity, paramNameHash, value) != 0;
+        public static bool AnimatorSetBool(MyeEntityId entity, ulong paramNameHash, bool value)
+            => _api != null && _api->AnimatorSetBool(_api->Engine, entity, paramNameHash, value ? 1 : 0) != 0;
+        public static bool AnimatorSetTrigger(MyeEntityId entity, ulong paramNameHash)
+            => _api != null && _api->AnimatorSetTrigger(_api->Engine, entity, paramNameHash) != 0;
+        public static bool AnimatorGetParam(MyeEntityId entity, ulong paramNameHash, out MyeAnimatorParam value)
+        {
+            value = default;
+            if (_api == null) return false;
+            fixed (MyeAnimatorParam* p = &value)
+            {
+                return _api->AnimatorGetParam(_api->Engine, entity, paramNameHash, p) != 0;
+            }
+        }
+        public static bool AnimatorGetState(MyeEntityId entity, out MyeAnimatorState state)
+        {
+            state = default;
+            if (_api == null) return false;
+            fixed (MyeAnimatorState* p = &state)
+            {
+                return _api->AnimatorGetState(_api->Engine, entity, p) != 0;
+            }
+        }
     }
 }

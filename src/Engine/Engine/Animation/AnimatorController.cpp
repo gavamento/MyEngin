@@ -1,6 +1,7 @@
 #include "Engine/Engine/Animation/AnimatorController.h"
 
 #include <algorithm>
+#include <bit>
 #include <filesystem>
 #include <fstream>
 
@@ -56,7 +57,27 @@ CondOp StrToOp(const std::string& s)
     return CondOp::Gt;
 }
 
-bool EvalCond(CondOp op, int32_t a, int32_t b)
+const char* ParamTypeToStr(ControllerParamType type)
+{
+    switch (type) {
+    case ControllerParamType::Int: return "int";
+    case ControllerParamType::Float: return "float";
+    case ControllerParamType::Bool: return "bool";
+    case ControllerParamType::Trigger: return "trigger";
+    }
+    return "int";
+}
+
+ControllerParamType StrToParamType(const std::string& s)
+{
+    if (s == "float") return ControllerParamType::Float;
+    if (s == "bool") return ControllerParamType::Bool;
+    if (s == "trigger") return ControllerParamType::Trigger;
+    return ControllerParamType::Int;
+}
+
+template <typename T>
+bool EvalCond(CondOp op, T a, T b)
 {
     switch (op) {
     case CondOp::Gt: return a > b;
@@ -69,17 +90,39 @@ bool EvalCond(CondOp op, int32_t a, int32_t b)
     return false;
 }
 
-bool AllConditionsMet(const ControllerTransition& t, const int32_t params[4])
+bool ConditionMet(const ControllerAsset& ctrl, const ControllerCondition& c, const int32_t* params)
+{
+    if (c.param < 0 || c.param >= AnimatorControllerComponent::kMaxParams) {
+        return false;
+    }
+    const int32_t raw = params[c.param];
+    switch (ControllerParamTypeAt(ctrl, c.param)) {
+    case ControllerParamType::Int: return EvalCond(c.op, raw, c.value);
+    case ControllerParamType::Float: return EvalCond(c.op, std::bit_cast<float>(raw), c.floatValue);
+    case ControllerParamType::Bool: return EvalCond(c.op, raw != 0 ? 1 : 0, c.value != 0 ? 1 : 0);
+    case ControllerParamType::Trigger: return raw != 0;
+    }
+    return false;
+}
+
+bool AllConditionsMet(const ControllerAsset& ctrl, const ControllerTransition& t, const int32_t* params)
 {
     for (const ControllerCondition& c : t.conditions) {
-        if (c.param < 0 || c.param >= 4) {
-            return false;
-        }
-        if (!EvalCond(c.op, params[c.param], c.value)) {
+        if (!ConditionMet(ctrl, c, params)) {
             return false;
         }
     }
     return true;
+}
+
+// 採用した遷移が条件に使った Trigger を下ろす (同じ Trigger を 2 回参照していても 0 にするだけ)
+void ConsumeTriggers(const ControllerAsset& ctrl, const ControllerTransition& t, int32_t* params)
+{
+    for (const ControllerCondition& c : t.conditions) {
+        if (ControllerParamTypeAt(ctrl, c.param) == ControllerParamType::Trigger) {
+            params[c.param] = 0; // ConditionMet が範囲を確かめ済み (採用 = 全条件が真)
+        }
+    }
 }
 
 // time を speed 分進める (loop で巻き戻し / 非 loop で末尾停止)
@@ -263,7 +306,7 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
     root["defaultState"] = c.defaultState;
     json params = json::array();
     for (const ControllerParam& p : c.parameters) {
-        params.push_back({ { "name", p.name } });
+        params.push_back({ { "name", p.name }, { "type", ParamTypeToStr(p.type) } });
     }
     root["parameters"] = std::move(params);
     json states = json::array();
@@ -290,7 +333,12 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
     for (const ControllerTransition& t : c.transitions) {
         json conds = json::array();
         for (const ControllerCondition& cc : t.conditions) {
-            conds.push_back({ { "param", cc.param }, { "op", OpToStr(cc.op) }, { "value", cc.value } });
+            // 値は参照先の型で書き分ける (Float は小数、他は整数)。Trigger は値を見ないが、形をそろえて書く
+            json value = cc.value;
+            if (ControllerParamTypeAt(c, cc.param) == ControllerParamType::Float) {
+                value = cc.floatValue;
+            }
+            conds.push_back({ { "param", cc.param }, { "op", OpToStr(cc.op) }, { "value", std::move(value) } });
         }
         trans.push_back({ { "from", t.from },
                           { "to", t.to },
@@ -316,7 +364,14 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
         for (const json& p : j["parameters"]) {
             ControllerParam cp;
             cp.name = p.value("name", std::string());
+            cp.type = StrToParamType(p.value("type", std::string("int"))); // M89c。無い = v1 = int
             out.parameters.push_back(std::move(cp));
+        }
+        if (out.parameters.size() > static_cast<size_t>(AnimatorControllerComponent::kMaxParams)) {
+            // 値の置き場 (params) が無い宣言は読まずに捨てる (後ろを黙って無視すると条件が常に偽になる)
+            MYE_LOG_WARN("[controller] %zu parameters declared; only the first %d are kept", out.parameters.size(),
+                         AnimatorControllerComponent::kMaxParams);
+            out.parameters.resize(static_cast<size_t>(AnimatorControllerComponent::kMaxParams));
         }
     }
     for (const json& s : j["states"]) {
@@ -353,7 +408,12 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
                     ControllerCondition cc;
                     cc.param = cj.value("param", 0);
                     cc.op = StrToOp(cj.value("op", std::string("gt")));
-                    cc.value = cj.value("value", 0);
+                    // 参照先が Float なら小数で読む (parameters は上で読み終えている)
+                    if (ControllerParamTypeAt(out, cc.param) == ControllerParamType::Float) {
+                        cc.floatValue = cj.value("value", 0.0f);
+                    } else {
+                        cc.value = cj.value("value", 0);
+                    }
                     ct.conditions.push_back(cc);
                 }
             }
@@ -371,6 +431,45 @@ int32_t FindControllerState(const ControllerAsset& controller, const std::string
         }
     }
     return -1;
+}
+
+int32_t FindControllerParam(const ControllerAsset& controller, uint64_t nameHash)
+{
+    const size_t n = std::min(controller.parameters.size(), static_cast<size_t>(AnimatorControllerComponent::kMaxParams));
+    for (size_t i = 0; i < n; ++i) {
+        if (HashStr(controller.parameters[i].name) == nameHash) {
+            return static_cast<int32_t>(i);
+        }
+    }
+    return -1;
+}
+
+ControllerParamType ControllerParamTypeAt(const ControllerAsset& controller, int32_t index)
+{
+    if (index < 0 || index >= AnimatorControllerComponent::kMaxParams
+        || index >= static_cast<int32_t>(controller.parameters.size())) {
+        return ControllerParamType::Int;
+    }
+    return controller.parameters[static_cast<size_t>(index)].type;
+}
+
+bool AnimatorSetParam(World& world, EntityID entity, uint64_t nameHash, ControllerParamType type, int32_t bits,
+                      const ControllerLibrary& controllers)
+{
+    AnimatorControllerComponent* c = world.GetComponent<AnimatorControllerComponent>(entity);
+    const ControllerAsset* ctrl = c != nullptr ? controllers.Get(c->controller.value) : nullptr;
+    if (ctrl == nullptr) {
+        return false;
+    }
+    const int32_t index = FindControllerParam(*ctrl, nameHash);
+    if (index < 0 || ctrl->parameters[static_cast<size_t>(index)].type != type) {
+        return false;
+    }
+    if (type == ControllerParamType::Bool || type == ControllerParamType::Trigger) {
+        bits = bits != 0 ? 1 : 0;
+    }
+    c->params[index] = bits;
+    return true;
 }
 
 void CollectDrivenSkinnedMeshes(World& world, EntityID controllerEntity, std::vector<EntityID>& out)
@@ -514,9 +613,10 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                             continue;
                         }
                     }
-                    if (!AllConditionsMet(t, c->params)) {
+                    if (!AllConditionsMet(*ctrl, t, c->params)) {
                         continue;
                     }
+                    ConsumeTriggers(*ctrl, t, c->params);
                     c->transitionTo = t.to;
                     c->transitionTick = 0;
                     c->transitionDuration = t.duration > 0 ? t.duration : 1;

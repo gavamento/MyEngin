@@ -1,13 +1,15 @@
 #include "Engine/Engine/Script/EngineApiTable.h"
 
 #include <algorithm> // v14 GetContactInfo (M59k): key 昇順列の二分探索
+#include <bit>       // v28 (M89c): float のパラメータはビット列で持つ
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Engine/AI/BehaviorTreeSystem.h" // v27 (M85k): BB / イベント / BtRestart の引き先
-#include "Engine/Engine/Animation/AnimatorController.h" // v27: AnimatorPlay
+#include "Engine/Engine/Animation/AnimatorController.h" // v27: AnimatorPlay / v28: 型付きパラメータ
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Audio/Playback/AudioSystem.h" // HashBusName (バス名ハッシュの規則は 1 本だけ)
@@ -498,13 +500,13 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     // ---- Animator Controller パラメータ (v7)。hash 対象への決定論的書込 (SetLocalPosition と同格) ----
     out.SetAnimatorParam = [](void* engine, MyeEntityId id, int index, int value) -> int {
         auto* ac = Sc(engine)->GetWorld().GetComponent<AnimatorControllerComponent>(ToEngine(id));
-        if (!ac || index < 0 || index >= 4) { return 0; }
+        if (!ac || index < 0 || index >= AnimatorControllerComponent::kMaxParams) { return 0; }
         ac->params[index] = value;
         return 1;
     };
     out.GetAnimatorParam = [](void* engine, MyeEntityId id, int index, int* outValue) -> int {
         auto* ac = Sc(engine)->GetWorld().GetComponent<AnimatorControllerComponent>(ToEngine(id));
-        if (!ac || index < 0 || index >= 4 || !outValue) { return 0; }
+        if (!ac || index < 0 || index >= AnimatorControllerComponent::kMaxParams || !outValue) { return 0; }
         *outValue = ac->params[index];
         return 1;
     };
@@ -1579,6 +1581,73 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     out.BtRestart = [](void* engine, MyeEntityId entity) -> int {
         BehaviorTreeSystem* bt = Ctx(engine)->behaviorTree;
         return bt != nullptr && bt->Restart(Sc(engine)->GetWorld(), Ctx(engine)->tickIndex, ToEngine(entity)) ? 1 : 0;
+    };
+
+    // ---- v28 (M89c): Animator の型付きパラメータとステート。controllers が null なら全部 0 ----
+    static constexpr auto setParam = [](void* engine, MyeEntityId entity, uint64_t nameHash, ControllerParamType type, int32_t bits) -> int {
+        const ControllerLibrary* controllers = Ctx(engine)->controllers;
+        return controllers != nullptr && AnimatorSetParam(Sc(engine)->GetWorld(), ToEngine(entity), nameHash, type, bits, *controllers) ? 1 : 0;
+    };
+    static_assert(MYE_ANIM_PARAM_FLOAT == static_cast<int>(ControllerParamType::Float)
+                      && MYE_ANIM_PARAM_TRIGGER == static_cast<int>(ControllerParamType::Trigger),
+                  "MyeAnimatorParamType と ControllerParamType の値をそろえる");
+    out.AnimatorSetFloat = [](void* engine, MyeEntityId entity, uint64_t nameHash, float value) -> int {
+        if (!std::isfinite(value)) {
+            return 0;
+        }
+        return setParam(engine, entity, nameHash, ControllerParamType::Float, std::bit_cast<int32_t>(value));
+    };
+    out.AnimatorSetInt = [](void* engine, MyeEntityId entity, uint64_t nameHash, int32_t value) -> int {
+        return setParam(engine, entity, nameHash, ControllerParamType::Int, value);
+    };
+    out.AnimatorSetBool = [](void* engine, MyeEntityId entity, uint64_t nameHash, int32_t value) -> int {
+        return setParam(engine, entity, nameHash, ControllerParamType::Bool, value);
+    };
+    out.AnimatorSetTrigger = [](void* engine, MyeEntityId entity, uint64_t nameHash) -> int {
+        return setParam(engine, entity, nameHash, ControllerParamType::Trigger, 1);
+    };
+    out.AnimatorGetParam = [](void* engine, MyeEntityId entity, uint64_t nameHash, MyeAnimatorParam* out) -> int {
+        const ControllerLibrary* controllers = Ctx(engine)->controllers;
+        const auto* animator = Sc(engine)->GetWorld().GetComponent<AnimatorControllerComponent>(ToEngine(entity));
+        const ControllerAsset* controller = (controllers != nullptr && animator != nullptr) ? controllers->Get(animator->controller.value) : nullptr;
+        const int32_t index = controller != nullptr ? FindControllerParam(*controller, nameHash) : -1;
+        if (out == nullptr || index < 0) {
+            return 0;
+        }
+        const ControllerParamType type = controller->parameters[static_cast<size_t>(index)].type;
+        const int32_t raw = animator->params[index];
+        *out = MyeAnimatorParam{};
+        out->type = static_cast<int32_t>(type);
+        switch (type) {
+        case ControllerParamType::Int: out->i = raw; break;
+        case ControllerParamType::Float: out->f = std::bit_cast<float>(raw); break;
+        case ControllerParamType::Bool:
+        case ControllerParamType::Trigger: out->i = raw != 0 ? 1 : 0; break;
+        }
+        return 1;
+    };
+    out.AnimatorGetState = [](void* engine, MyeEntityId entity, MyeAnimatorState* out) -> int {
+        const ControllerLibrary* controllers = Ctx(engine)->controllers;
+        const auto* animator = Sc(engine)->GetWorld().GetComponent<AnimatorControllerComponent>(ToEngine(entity));
+        const ControllerAsset* controller = (controllers != nullptr && animator != nullptr) ? controllers->Get(animator->controller.value) : nullptr;
+        if (out == nullptr || controller == nullptr) {
+            return 0;
+        }
+        const auto nameHashAt = [&](int32_t index) -> uint64_t {
+            return index >= 0 && index < static_cast<int32_t>(controller->states.size())
+                       ? HashStr(controller->states[static_cast<size_t>(index)].name)
+                       : 0;
+        };
+        *out = MyeAnimatorState{};
+        out->stateNameHash = nameHashAt(animator->currentState);
+        out->transitionToNameHash = animator->transitionTo >= 0 ? nameHashAt(animator->transitionTo) : 0;
+        out->stateIndex = animator->currentState;
+        out->stateTimeTicks = animator->stateTimeTicks;
+        out->transitionTo = animator->transitionTo;
+        out->transitionTick = animator->transitionTick;
+        out->transitionDuration = animator->transitionDuration;
+        out->transitionToTime = animator->transitionToTime;
+        return 1;
     };
 }
 

@@ -175,8 +175,12 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 27u,
-              "abi: the table reports v27");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 28u,
+              "abi: the table reports v28");
+        // v28 (M89c): Animator の型付きパラメータとステート。呼んだ結果は AnimatorControllerSelfTest が見る (ここは充填のみ)
+        check(api.AnimatorSetFloat != nullptr && api.AnimatorSetInt != nullptr && api.AnimatorSetBool != nullptr
+                  && api.AnimatorSetTrigger != nullptr && api.AnimatorGetParam != nullptr && api.AnimatorGetState != nullptr,
+              "abi: the v28 animator slots are filled in");
         // v27 (M85k): ビヘイビアツリー。呼んだ結果は BehaviorTreeSelfTest が見る (ここは充填のみ)
         check(api.BtGetBlackboard != nullptr && api.BtSetBlackboard != nullptr && api.BtSendEvent != nullptr
                   && api.BtEventCount != nullptr && api.BtGetEvent != nullptr && api.AnimatorPlay != nullptr

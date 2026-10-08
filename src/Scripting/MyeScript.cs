@@ -61,7 +61,7 @@ namespace MyeScripting
         public bool EmitterBurst(int count) => Engine.EmitterBurst(Id, count);
         public bool SetEmitterPlaying(bool playing) => Engine.SetEmitterPlaying(Id, playing);
         public bool RestartEffect() => Engine.RestartEffect(Id);
-        // Animator Controller のパラメータ (index 0..3)
+        // Animator Controller のパラメータを index (0..15) と生のビット列で読み書きする。名前と型で扱うなら SetAnimatorFloat 等
         public bool SetAnimatorParam(int index, int value) => Engine.SetAnimatorParam(Id, index, value);
         public int GetAnimatorParam(int index) => Engine.GetAnimatorParam(Id, index);
 
@@ -218,6 +218,37 @@ namespace MyeScripting
         // Animator・コントローラ・ステート名が無ければ false
         public bool PlayAnimation(string stateName, int durationTicks = 0)
             => Engine.AnimatorPlay(Id, Engine.NameHash(stateName), durationTicks);
+
+        // Animator のパラメータを名前で書く (M89c)。型は .controller.json の宣言で決まり、違う型・名前が無い・
+        // 非有限の float は false (何も書かない)。Trigger は条件に使った遷移が採用されると下りる
+        public bool SetAnimatorFloat(string name, float value) => Engine.AnimatorSetFloat(Id, Engine.NameHash(name), value);
+        public bool SetAnimatorInt(string name, int value) => Engine.AnimatorSetInt(Id, Engine.NameHash(name), value);
+        public bool SetAnimatorBool(string name, bool value) => Engine.AnimatorSetBool(Id, Engine.NameHash(name), value);
+        public bool SetAnimatorTrigger(string name) => Engine.AnimatorSetTrigger(Id, Engine.NameHash(name));
+        // 型が違う・名前が無ければ false (value は 0)。Trigger は GetAnimatorBool で読める
+        public bool GetAnimatorFloat(string name, out float value)
+        {
+            value = 0f;
+            if (!Engine.AnimatorGetParam(Id, Engine.NameHash(name), out var p) || p.Type != 1) return false;
+            value = p.F;
+            return true;
+        }
+        public bool GetAnimatorInt(string name, out int value)
+        {
+            value = 0;
+            if (!Engine.AnimatorGetParam(Id, Engine.NameHash(name), out var p) || p.Type != 0) return false;
+            value = p.I;
+            return true;
+        }
+        public bool GetAnimatorBool(string name, out bool value)
+        {
+            value = false;
+            if (!Engine.AnimatorGetParam(Id, Engine.NameHash(name), out var p) || (p.Type != 2 && p.Type != 3)) return false;
+            value = p.I != 0;
+            return true;
+        }
+        // 今のステートと遷移。Animator・コントローラが無ければ false
+        public bool GetAnimatorState(out MyeAnimatorState state) => Engine.AnimatorGetState(Id, out state);
 
         // 走っている木を Abort して根からやり直す (BB は保つ)。BehaviorTree が無ければ false
         public bool RestartBehaviorTree() => Engine.BtRestart(Id);

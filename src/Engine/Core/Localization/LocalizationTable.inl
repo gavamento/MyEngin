@@ -955,7 +955,7 @@ MYE_STR(Anim_From,            "from",         "遷移元")
 MYE_STR(Anim_To,              "to",           "遷移先")
 MYE_STR(Anim_Duration,        "duration",     "所要 tick")
 MYE_STR(Anim_HasExitTime,     "hasExitTime",  "終了待ち")
-MYE_STR(Anim_Param,           "param",        "パラメータ")
+MYE_STR(Anim_TriggerCond,     "(true while set)", "(立っていれば真)")
 MYE_STR(Anim_Val,             "val",          "値")
 MYE_STR(Anim_TransitionRow,   "-> %s (%d/%d)", "-> %s (%d/%d)")
 
