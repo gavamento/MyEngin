@@ -109,6 +109,25 @@ void ComputeJointLocalsBlended(const SkinnedModel& model, int clipA, float timeS
                                float timeSecB, float weightB,
                                std::vector<DirectX::XMMATRIX>& outLocals);
 
+// ---- 多層ブレンド (M89a) ----
+// ポーズプログラムの 1 層。重みは整数 (Q16 など、単位は呼び出し側が揃える) のまま渡す —
+// 層を畳むときの比 w_i / (w_0 + ... + w_i) を整数の和から作るため (float の累積を持たない)
+struct SkeletalLayer {
+    int32_t clip = -1;     // 範囲外はバインドポーズ
+    float timeSec = 0.0f;
+    int32_t weight = 0;    // 0 以下の層は評価しない
+};
+
+// 層を先頭から順に畳んだ局所行列 (joints.size() 個)。層 i は「ここまでの結果」と
+// w_i / (w_0 + ... + w_i) の比で混ぜる (T / S は線形、R は slerp)。2 層なら
+// ComputeJointLocalsBlended と同じ混ぜ方になる。順序で結果が変わるので層の並びも入力の一部。
+// ★重みが正の層が 1 枚だけなら ComputeJointLocals(clip, timeSec) をそのまま呼ぶ (ビット一致)。
+//   単一クリップのステートが旧経路と同じ絵になることを、この分岐で固定している。
+// 重みが正の層が無ければバインドポーズ。重みが正の層は先頭から kMaxSkeletalLayers 枚まで使う
+inline constexpr int32_t kMaxSkeletalLayers = 8;
+void ComputeJointLocalsLayered(const SkinnedModel& model, const SkeletalLayer* layers,
+                               int32_t layerCount, std::vector<DirectX::XMMATRIX>& outLocals);
+
 // locals (上の出力) から 1 ジョイントのグローバル行列。範囲外 index は恒等
 DirectX::XMMATRIX JointGlobalFromLocals(const SkinnedModel& model,
                                         const std::vector<DirectX::XMMATRIX>& locals,

@@ -172,6 +172,60 @@ void ComputeJointLocalsBlended(const SkinnedModel& model, int clipA, float timeS
     }
 }
 
+void ComputeJointLocalsLayered(const SkinnedModel& model, const SkeletalLayer* layers,
+                               int32_t layerCount, std::vector<XMMATRIX>& local)
+{
+    // 重み 0 の層は畳む前に落とす (残りが 1 枚なら旧経路と同じ関数へ委ねられるように)
+    const SkeletalLayer* live[kMaxSkeletalLayers] = {};
+    int32_t liveCount = 0;
+    for (int32_t i = 0; i < layerCount && liveCount < kMaxSkeletalLayers; ++i) {
+        if (layers[i].weight > 0) {
+            live[liveCount++] = &layers[i];
+        }
+    }
+    if (liveCount == 0) {
+        ComputeJointLocals(model, -1, 0.0f, local);
+        return;
+    }
+    if (liveCount == 1) {
+        ComputeJointLocals(model, live[0]->clip, live[0]->timeSec, local);
+        return;
+    }
+
+    // 層 i を混ぜる比 = w_i / (w_0 + ... + w_i)。和は int64 で持ち、float へは 1 回だけ変換する
+    float ratio[kMaxSkeletalLayers] = {};
+    int64_t accumulated = 0;
+    for (int32_t i = 0; i < liveCount; ++i) {
+        accumulated += live[i]->weight;
+        ratio[i] = static_cast<float>(static_cast<double>(live[i]->weight)
+                                      / static_cast<double>(accumulated));
+    }
+
+    const size_t n = model.joints.size();
+    local.resize(n);
+    for (size_t j = 0; j < n; ++j) {
+        const SkeletonJoint& jt = model.joints[j];
+        XMFLOAT3 t0, s0;
+        XMFLOAT4 r0;
+        SampleJointTrs(ClipOrNull(model, live[0]->clip), jt, j, live[0]->timeSec, t0, r0, s0);
+        XMVECTOR t = XMLoadFloat3(&t0);
+        XMVECTOR r = XMLoadFloat4(&r0);
+        XMVECTOR s = XMLoadFloat3(&s0);
+        for (int32_t i = 1; i < liveCount; ++i) {
+            XMFLOAT3 ti, si;
+            XMFLOAT4 ri;
+            SampleJointTrs(ClipOrNull(model, live[i]->clip), jt, j, live[i]->timeSec, ti, ri, si);
+            // 短い弧を通す理由は ComputeJointLocalsBlended と同じ (クリップ間でキーの符号が揃わない)
+            t = XMVectorLerp(t, XMLoadFloat3(&ti), ratio[i]);
+            r = XMQuaternionSlerp(r, XMLoadFloat4(&ri), ratio[i]);
+            s = XMVectorLerp(s, XMLoadFloat3(&si), ratio[i]);
+        }
+        // 行ベクトル規約: local = S * R * T (ComputeJointLocals と同じ積順)
+        local[j] = XMMatrixScalingFromVector(s) * XMMatrixRotationQuaternion(r) *
+                   XMMatrixTranslationFromVector(t);
+    }
+}
+
 // グローバル = local[j] * local[parent] * ... (親チェーンを上へ、順序非依存)
 XMMATRIX JointGlobalFromLocals(const SkinnedModel& model, const std::vector<XMMATRIX>& local,
                                int32_t jointIndex)

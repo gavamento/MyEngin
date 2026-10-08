@@ -1,5 +1,7 @@
 #include "Engine/Engine/Animation/SkinningSystem.h"
 
+#include <algorithm>
+
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Renderer/Device/GpuResources.h"
@@ -14,6 +16,17 @@ void SkinningSystem::Update(World& world, const RenderResources& resources)
         const int si = arch.FindTypeIndex(SkinnedMeshComponent::sTypeId);
         for (uint32_t row = 0; row < arch.Count(); ++row) {
             auto* sm = static_cast<SkinnedMeshComponent*>(arch.GetPtr(si, row));
+
+            // ---- ポーズプログラムの claim (M89a) ----
+            // この tick にコントローラが書いた = 時計はあちらが持つので旧経路は進めない。
+            // 駆動中の clip 直書きは無視する: 観測済みにしておかないと、駆動を外した tick に
+            // 遅れて「切り替え」として効いてしまう
+            if (sm->poseClaim != 0) {
+                sm->poseClaim = 0;
+                sm->observedClip = sm->clip;
+                continue;
+            }
+            sm->poseLayerCount = 0;
 
             // ---- clip の書き換え = 切り替え (M18 追補) ----
             // ★playing より先に見る。止めたまま clip を変えて再開したとき、再開の tick に
@@ -67,9 +80,70 @@ bool IsSkinFading(const SkinnedMeshComponent& sm)
     return sm.fadeTotal > 0 && sm.fadeElapsed < sm.fadeTotal;
 }
 
+namespace {
+
+// 壊れた値 (範囲外の層数) で配列の外を読まない
+int32_t ActivePoseLayers(const SkinnedMeshComponent& sm)
+{
+    return std::clamp(sm.poseLayerCount, 0, SkinnedMeshComponent::kMaxPoseLayers);
+}
+
+} // namespace
+
+bool UsesLocalsPath(const SkinnedMeshComponent& sm)
+{
+    return ActivePoseLayers(sm) > 0 || IsSkinFading(sm);
+}
+
+bool SamePoseInputs(const SkinnedMeshComponent& a, const SkinnedMeshComponent& b)
+{
+    const int32_t layers = ActivePoseLayers(a);
+    if (layers != ActivePoseLayers(b)) {
+        return false;
+    }
+    if (layers > 0) {
+        for (int32_t i = 0; i < layers; ++i) {
+            const SkinnedMeshComponent::PoseLayer& la = a.poseLayers[i];
+            const SkinnedMeshComponent::PoseLayer& lb = b.poseLayers[i];
+            if (la.clip != lb.clip || la.timeQ != lb.timeQ || la.weightQ != lb.weightQ) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if (a.clip != b.clip || a.timeTicks != b.timeTicks) {
+        return false;
+    }
+    const bool fading = IsSkinFading(a);
+    if (fading != IsSkinFading(b)) {
+        return false;
+    }
+    return !fading
+           || (a.fromClip == b.fromClip && a.fromTimeTicks == b.fromTimeTicks
+               && a.fadeElapsed == b.fadeElapsed && a.fadeTotal == b.fadeTotal);
+}
+
 void SampleSkinnedLocals(const SkinnedModel& model, const SkinnedMeshComponent& sm,
                          std::vector<DirectX::XMMATRIX>& outLocals)
 {
+    // ---- ポーズプログラム (M89a) ----
+    if (const int32_t layers = ActivePoseLayers(sm); layers > 0) {
+        static_assert(SkinnedMeshComponent::kMaxPoseLayers <= kMaxSkeletalLayers,
+                      "the sampler must accept every layer a pose program can hold");
+        // 秒 = timeQ / (60 * 256)。timeQ が 256 の倍数なら旧経路の timeTicks / 60.0f とビット一致する
+        // (分子と分母に同じ 2 の冪を掛けた商は、正しく丸めた結果が変わらない。|timeQ| < 2^24 の範囲)
+        constexpr float kTimeQPerSecond =
+            60.0f * static_cast<float>(SkinnedMeshComponent::kPoseTimeQPerTick);
+        SkeletalLayer program[SkinnedMeshComponent::kMaxPoseLayers] = {};
+        for (int32_t i = 0; i < layers; ++i) {
+            const SkinnedMeshComponent::PoseLayer& src = sm.poseLayers[i];
+            program[i].clip = src.clip;
+            program[i].timeSec = static_cast<float>(src.timeQ) / kTimeQPerSecond;
+            program[i].weight = src.weightQ;
+        }
+        ComputeJointLocalsLayered(model, program, layers, outLocals);
+        return;
+    }
     // 時刻式は M18 の RenderSystem と同一 (同じ tick で同じポーズ)
     const float timeSec = static_cast<float>(sm.timeTicks) / 60.0f;
     if (!IsSkinFading(sm)) {

@@ -3419,7 +3419,8 @@ ADR-020 Deep-Modal impact synthesis (§10.7) /
 **ADR-023 NavMesh (Recast Navigation) and determinism** (§10.9) /
 **ADR-024 AI perception: state in components** (§10.10) /
 **ADR-025 behavior tree: execution state in a system table** (§10.11) /
-**ADR-026 in-process GPU device-loss recovery** (§6.13).
+**ADR-026 in-process GPU device-loss recovery** (§6.13) /
+ADR-027 skeletal pose program (M89, in progress).
 
 ---
 

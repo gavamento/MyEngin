@@ -125,7 +125,8 @@ struct SimRefs {
 // v37 (M85e): BT 節の末尾にイベントの配送待ち (BtEvent の列。0 件でも件数は書く)
 // v38 (M85g): PatrolRouteComponent (World 節のカラム生バイト) と、Patrol の追加状態 (BtPatrolState = 次の点・向き・待ち・段階) が BT 節の追加状態の生バイトに入る
 // v39 (M85h): BehaviorTreeComponent に Entity キーの初期値 4 組 (bbEntityKey / bbEntityValue。World 節のカラム生バイト)
-inline constexpr uint32_t kSimSnapshotVersion = 39;
+// v40 (M89a): SkinnedMesh の末尾にポーズプログラム (poseLayerCount / poseClaim / poseLayers[8]。World 節のカラム生バイト)
+inline constexpr uint32_t kSimSnapshotVersion = 40;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

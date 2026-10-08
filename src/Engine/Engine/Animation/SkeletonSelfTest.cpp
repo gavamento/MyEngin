@@ -478,6 +478,171 @@ bool RunSkeletonSelfTest()
         }
     }
 
+    // ---- (10) ポーズプログラムの多層サンプラ (M89a) ----
+    auto bitEqual = [](const std::vector<XMMATRIX>& a, const std::vector<XMMATRIX>& b) {
+        bool same = a.size() == b.size();
+        for (size_t j = 0; same && j < a.size(); ++j) {
+            same = std::memcmp(&a[j], &b[j], sizeof(XMMATRIX)) == 0;
+        }
+        return same;
+    };
+    auto maxDev = [](const std::vector<XMMATRIX>& a, const std::vector<XMMATRIX>& b) {
+        if (a.size() != b.size()) {
+            return 1e9f;
+        }
+        float dev = 0.0f;
+        for (size_t j = 0; j < a.size(); ++j) {
+            dev = std::max(dev, MaxAbsDiff(ToF4x4(a[j]), ToF4x4(b[j])));
+        }
+        return dev;
+    };
+    {
+        // 重みが正の層が 1 枚 = ComputeJointLocals そのもの (単一クリップのステートが旧経路と同じ絵)。
+        // 重み 0 の層が前後に居ても落とされること、満杯でない重みでも同じことを一緒に見る
+        bool single = true;
+        bool program = true;
+        for (const LoadedSkin* skin : { &gltf, &fbx }) {
+            for (int clip : kClips) {
+                for (int tick : kTicks) {
+                    const float timeSec = static_cast<float>(tick) / 60.0f;
+                    std::vector<XMMATRIX> direct, layered;
+                    ComputeJointLocals(*skin->model, clip, timeSec, direct);
+                    const SkeletalLayer layers[] = { { 0, 0.3f, 0 },
+                                                     { clip, timeSec, 65536 },
+                                                     { 0, 0.7f, 0 } };
+                    ComputeJointLocalsLayered(*skin->model, layers, 3, layered);
+                    single &= bitEqual(direct, layered);
+
+                    // timeQ (1/256 tick) からの秒換算が timeTicks / 60.0f とビット一致すること
+                    SkinnedMeshComponent sm;
+                    sm.poseLayerCount = 1;
+                    sm.poseLayers[0] = { clip, tick * SkinnedMeshComponent::kPoseTimeQPerTick,
+                                         SkinnedMeshComponent::kPoseWeightOne };
+                    std::vector<XMMATRIX> sampled;
+                    SampleSkinnedLocals(*skin->model, sm, sampled);
+                    program &= bitEqual(direct, sampled);
+                }
+            }
+        }
+        check(single, "layered: one live layer is bit-identical to ComputeJointLocals "
+                      "(zero-weight layers are dropped)");
+        check(program, "layered: a 1-layer pose program samples bit-identically to the old "
+                       "timeTicks / 60 path");
+
+        // 重みが正の層が無ければバインドポーズ
+        std::vector<XMMATRIX> bind, none;
+        ComputeJointLocals(*fbx.model, -1, 0.0f, bind);
+        const SkeletalLayer zero[] = { { 0, 0.5f, 0 } };
+        ComputeJointLocalsLayered(*fbx.model, zero, 1, none);
+        check(bitEqual(bind, none), "layered: no live layer is the bind pose");
+    }
+    {
+        // 2 層 50/50: バインド (0 度) と clip 0 の末尾 (90 度) の間 = 45 度、縮まない ((8) と同じ設計値)
+        const SkeletalLayer half[] = { { -1, 0.0f, 32768 }, { 0, 1.0f, 32768 } };
+        std::vector<XMMATRIX> layered, blended;
+        ComputeJointLocalsLayered(*fbx.model, half, 2, layered);
+        const int32_t j2 = fbx.model->FindJointByName("Bone2");
+        bool mid = false;
+        if (j2 >= 0) {
+            const XMMATRIX g = JointGlobalFromLocals(*fbx.model, layered, j2);
+            const XMVECTOR yAxis = XMVector3TransformNormal(XMVectorSet(0, 1, 0, 0), g);
+            mid = std::fabs(XMVectorGetY(yAxis) - 0.70711f) < 2e-3f
+                  && std::fabs(XMVectorGetX(XMVector3Length(yAxis)) - 1.0f) < 2e-3f;
+        }
+        check(mid, "layered: two layers at 50/50 slerp to 45 deg without shrinking");
+
+        // 2 層は ComputeJointLocalsBlended と同じ混ぜ方 (比 w1 / (w0 + w1) = 0.25)
+        const SkeletalLayer quarter[] = { { -1, 0.0f, 49152 }, { 0, 1.0f, 16384 } };
+        ComputeJointLocalsLayered(*fbx.model, quarter, 2, layered);
+        ComputeJointLocalsBlended(*fbx.model, -1, 0.0f, 0, 1.0f, 0.25f, blended);
+        const float dev2 = maxDev(layered, blended);
+        MYE_LOG_INFO("  layered 2-layer vs Blended max deviation = %.8f", dev2);
+        check(dev2 < 1e-6f, "layered: two layers fold the same way as ComputeJointLocalsBlended");
+
+        // 同じポーズを 3 枚に割っても同じポーズ (比の作り方の検算。重みの合計 65536)
+        std::vector<XMMATRIX> direct;
+        ComputeJointLocals(*gltf.model, 0, 0.5f, direct);
+        const SkeletalLayer split[] = { { 0, 0.5f, 20000 }, { 0, 0.5f, 20000 }, { 0, 0.5f, 25536 } };
+        ComputeJointLocalsLayered(*gltf.model, split, 3, layered);
+        const float dev3 = maxDev(layered, direct);
+        MYE_LOG_INFO("  layered 3-way split of one pose max deviation = %.8f", dev3);
+        check(dev3 < 1e-5f, "layered: splitting one pose over three layers reproduces it");
+
+        // 層の並びとプログラムの評価が決定的 (同じ入力で 2 回評価してビット一致)
+        const SkeletalLayer three[] = { { 0, 0.2f, 30000 }, { -1, 0.0f, 10000 }, { 0, 0.9f, 25536 } };
+        std::vector<XMMATRIX> again;
+        ComputeJointLocalsLayered(*gltf.model, three, 3, layered);
+        ComputeJointLocalsLayered(*gltf.model, three, 3, again);
+        check(bitEqual(layered, again), "layered: repeated evaluation is bit-identical");
+    }
+    {
+        // 入口の判定と部位追従のキャッシュキー
+        SkinnedMeshComponent a, b;
+        check(!UsesLocalsPath(a), "entry: the old path without a fade uses the palette path");
+        a.fadeTotal = 4;
+        a.fadeElapsed = 1;
+        check(UsesLocalsPath(a), "entry: a fade uses the locals path");
+        a.fadeTotal = 0;
+        a.fadeElapsed = 0;
+        a.poseLayerCount = 1;
+        check(UsesLocalsPath(a), "entry: a pose program uses the locals path");
+        a.poseLayerCount = 0;
+
+        // 旧経路: 終わったフェードの残骸だけが違うなら同じポーズ
+        b.fromClip = 3;
+        b.fromTimeTicks = 17;
+        b.fadeTotal = 5;
+        b.fadeElapsed = 5;
+        check(SamePoseInputs(a, b), "key: leftovers of a finished fade do not split the key");
+        b = a;
+        b.timeTicks = 1;
+        check(!SamePoseInputs(a, b), "key: a different time is a different pose");
+
+        // プログラム: 層の数・中身で割れる。使っていない層の中身では割れない
+        a.poseLayerCount = 1;
+        a.poseLayers[0] = { 0, 256, 65536 };
+        b = a;
+        b.clip = 5;          // 駆動中は旧経路の欄を見ない
+        b.poseLayers[3] = { 2, 9, 9 };
+        check(SamePoseInputs(a, b), "key: a program ignores old-path fields and unused layers");
+        b.poseLayers[0].timeQ = 257;
+        check(!SamePoseInputs(a, b), "key: a different layer time is a different pose");
+        b = a;
+        b.poseLayerCount = 0;
+        check(!SamePoseInputs(a, b), "key: a program and the old path never share a key");
+    }
+    {
+        // claim 手順: 書かれた tick は旧経路の時計を止め、印を下ろす。書かれなくなった tick に旧経路へ戻る。
+        // 駆動中の clip 直書きは無視される (駆動を外した後にフェードとして遅れて効かない)
+        SkinnedMeshComponent* sm = FirstSkinnedComponent(fbxScene);
+        if (sm != nullptr && !fbx.model->clips.empty()) {
+            World& w = fbxScene.GetWorld();
+            SkinningSystem skinning;
+            sm->clip = -1; // 範囲外 = 旧経路の時計は進まない
+            sm->playing = true;
+            sm->loop = 1;
+            sm->fadeTicks = 8;
+            sm->fadeTotal = 0;
+            sm->fadeElapsed = 0;
+            sm->timeTicks = 10;
+            skinning.Update(w, resources);
+
+            sm->poseLayerCount = 1;
+            sm->poseLayers[0] = { 0, 0, SkinnedMeshComponent::kPoseWeightOne };
+            sm->poseClaim = 1;
+            sm->clip = 0; // 駆動中の直書き
+            skinning.Update(w, resources);
+            check(sm->poseClaim == 0 && sm->poseLayerCount == 1 && sm->timeTicks == 10
+                      && sm->observedClip == 0 && sm->fadeTotal == 0,
+                  "claim: a claimed tick keeps the program, lowers the flag and freezes the old clock");
+
+            skinning.Update(w, resources);
+            check(sm->poseLayerCount == 0 && sm->timeTicks == 11 && !IsSkinFading(*sm),
+                  "claim: an unclaimed tick drops the program and resumes the old path without a "
+                  "late fade");
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Skeleton self test: ALL PASS ====");
         return true;

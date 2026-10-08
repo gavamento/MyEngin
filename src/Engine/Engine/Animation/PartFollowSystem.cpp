@@ -120,25 +120,19 @@ void PartFollowSystem::Update(World& world, const RenderResources& resources)
         return; // Part 非使用シーンでは完全 no-op (= 既存シーンのリプレイ不変)
     }
 
-    // 2) (model, clip, timeTicks, フェード状態) 単位でジョイント局所行列をキャッシュする。
+    // 2) (model, ポーズの入力) 単位でジョイント局所行列をキャッシュする。
     //    ComputeJointGlobal は 1 回ごとに全ジョイントを再評価するので、部位ごとに呼ぶと
     //    O(部位数 × ジョイント数) になる (M48a の申し送り)
-    // ★フェードしていないときはフェード欄を 0 に揃えてから比べる — 終わったフェードの
-    //   残骸 (fromClip 等) が違うだけで、同じポーズのキャッシュが割れないように
+    // ★「同じポーズか」は SamePoseInputs に任せる (M89a) — ここで欄を並べ直すと、
+    //   ポーズの入力が増えたときにこのキーだけ古いまま残り、別ポーズを使い回す。
+    //   このループは LocalTransform しか書かないので SkinnedMesh へのポインタは失効しない
     struct PoseCache {
         const SkinnedModel* model = nullptr;
-        int clip = 0;
-        int timeTicks = 0;
-        int fromClip = 0;
-        int fromTimeTicks = 0;
-        int fadeElapsed = 0;
-        int fadeTotal = 0;
+        const SkinnedMeshComponent* sm = nullptr;
         std::vector<XMMATRIX> locals;
         bool SameKey(const PoseCache& o) const
         {
-            return model == o.model && clip == o.clip && timeTicks == o.timeTicks
-                   && fromClip == o.fromClip && fromTimeTicks == o.fromTimeTicks
-                   && fadeElapsed == o.fadeElapsed && fadeTotal == o.fadeTotal;
+            return model == o.model && SamePoseInputs(*sm, *o.sm);
         }
     };
     std::vector<PoseCache> poses;
@@ -191,14 +185,7 @@ void PartFollowSystem::Update(World& world, const RenderResources& resources)
 
         PoseCache key;
         key.model = model;
-        key.clip = sm->clip;
-        key.timeTicks = sm->timeTicks;
-        if (IsSkinFading(*sm)) {
-            key.fromClip = sm->fromClip;
-            key.fromTimeTicks = sm->fromTimeTicks;
-            key.fadeElapsed = sm->fadeElapsed;
-            key.fadeTotal = sm->fadeTotal;
-        }
+        key.sm = sm;
         // **index で持つこと** — push_back で vector が再確保されるとポインタは失効する
         size_t poseIdx = poses.size();
         for (size_t i = 0; i < poses.size(); ++i) {

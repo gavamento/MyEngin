@@ -313,6 +313,27 @@ struct SkinnedMeshComponent {
     int32_t fadeElapsed = 0;   // 経過 tick。重み = fadeElapsed / fadeTotal (整数の比)
     int32_t fadeTotal = 0;     // 開始時に確定したフェード長。0 = フェードしていない
     static constexpr int32_t kClipUnobserved = -2147483647 - 1;
+
+    // ---- ポーズプログラム (M89a) ----
+    // ポーズを決める純関数の入力一式。書くのは AnimatorController (と IK の解決段) だけで、
+    // 描画・部位追従・ラグドールは SampleSkinnedLocals を通してこれを評価する。
+    // フィールド登録しない = シーンに保存しない・Inspector に出ない。生バイトは snapshot に載る。
+    // ★poseLayerCount = 0 は旧経路 (clip / timeTicks / クロスフェード)。その経路は 1 命令も変えない。
+    // ★コントローラが駆動している間 (poseClaim が立っている tick) は clip への直書きを無視する
+    //   (SkinningSystem が observedClip を clip に揃えるので、駆動を外した後にも遅れて効かない)。
+    static constexpr int32_t kMaxPoseLayers = 8;
+    static constexpr int32_t kPoseTimeQPerTick = 256; // timeQ の単位 = 1/256 tick
+    static constexpr int32_t kPoseWeightOne = 65536;  // weightQ の合計はちょうどこの値 (Q16)
+    struct PoseLayer {
+        int32_t clip = -1;   // クリップ index。範囲外はバインドポーズ
+        int32_t timeQ = 0;   // サンプル時刻 (1/256 tick)
+        int32_t weightQ = 0; // 重み (Q16)。0 の層は評価しない
+    };
+    int32_t poseLayerCount = 0; // 0 = 旧経路。1..kMaxPoseLayers = poseLayers の先頭から有効
+    // その tick にコントローラがプログラムを書いた印。SkinningSystem が見て 0 に戻す
+    // (立っていれば旧経路の時計を進めない。立っていなければ poseLayerCount を 0 に戻す)
+    int32_t poseClaim = 0;
+    PoseLayer poseLayers[kMaxPoseLayers] = {};
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

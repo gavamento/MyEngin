@@ -1247,13 +1247,14 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                 // LocalTransform (= 剛体が置いた値)** から組む。入力が ECS 状態だけの
                 // 純関数なので、ビュー毎に Render() が呼ばれても同じ絵になる
                 // M18 追補: クロスフェード中は 2 クリップを混ぜた局所行列から組む。
-                // フェードしていない間は M18 の経路をそのまま通す (golden が動かない)
+                // M89a: ポーズプログラムが書かれていれば同じく局所行列から組む。
+                // どちらでもない間は M18 の経路をそのまま通す (golden が動かない)
                 if (const auto* rag = world.GetComponent<RagdollComponent>(c.e);
                     rag && rag->active) {
                     std::vector<XMMATRIX> locals;
                     SampleSkinnedLocals(*model, *sm, locals);
                     ragdoll::BuildBonePaletteFromLocals(world, c.e, *model, locals, palette);
-                } else if (IsSkinFading(*sm)) {
+                } else if (UsesLocalsPath(*sm)) {
                     std::vector<XMMATRIX> locals;
                     SampleSkinnedLocals(*model, *sm, locals);
                     ComputeBonePaletteWithOverrides(*model, locals, {}, {}, palette);
