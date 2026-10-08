@@ -151,6 +151,24 @@ DirectX::XMMATRIX JointGlobalFromLocals(const SkinnedModel& model,
                                         const std::vector<DirectX::XMMATRIX>& locals,
                                         int32_t jointIndex);
 
+// ---- 2 ボーン IK (M89l) ----
+// 1 本の鎖の目標。座標はすべてモデルのエンティティ空間 (= jointGlobal の空間)
+struct TwoBoneIkGoal {
+    int32_t endJoint = -1;                               // 先端。中間 = その親、根 = 中間の親
+    DirectX::XMFLOAT3 target = { 0.0f, 0.0f, 0.0f };     // 先端を置く位置
+    bool useRotation = false;                            // true: 先端の回転を targetRotation にする
+    DirectX::XMFLOAT4 targetRotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+    bool hasPole = false;                                // true: 中間を pole の側へ曲げる。false: 今の曲げ面のまま
+    DirectX::XMFLOAT3 pole = { 0.0f, 0.0f, 0.0f };
+    float weight = 1.0f;                                 // 0..1。0 は何もしない
+};
+// locals の 3 ジョイント (根・中間・先端) を、先端が goal.target に届くように回す (純関数、sqrt と四則のみ)。
+// 骨の長さは変えず、届かない距離は伸び切り / 縮み切りで止める (根から目標への直線上)。
+// 根と中間は「今の向き → 新しい向き」の最短の弧で回す (回転の作り方は半角公式。acos / atan2 は使わない)。
+// weight は目標を今の先端の位置から、曲げ面を今の面から pole の面へ、先端の回転を今の回転から、それぞれ線形に寄せる
+// (0 の近くで姿勢が飛ばない)。鎖が組めない (先端・中間に親が無い) / 骨の長さが 0 のときは何もしない
+void SolveTwoBoneIk(const SkinnedModel& model, const TwoBoneIkGoal& goal, std::vector<DirectX::XMMATRIX>& locals);
+
 // ---- ラグドール用のパレット構築 (M60g1) ----
 // `hasOverride[j]` が非 0 のジョイントは **`overrides[j]` をそのまま jointGlobal として使う**
 // (剛体が骨の代わりに姿勢を決めている)。残りは locals から階層合成で埋める。

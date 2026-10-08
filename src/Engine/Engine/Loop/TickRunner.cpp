@@ -31,6 +31,7 @@
 #include "Engine/Engine/Vfx/EffectSystem.h"
 #include "Engine/Engine/Physics/Fracture/FractureSystem.h" // M80g: 接着の破断・塊の分離
 #include "Engine/Engine/Animation/PartFollowSystem.h"
+#include "Engine/Engine/Animation/TwoBoneIkSystem.h"
 #include "Engine/Engine/Loop/PlayerInputSystem.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsDebugDraw.h"
@@ -222,6 +223,7 @@ void RunOneTick(TickServices& ts)
     ControllerLibrary& controllerLibrary = *ts.controllerLibrary;
     SkinningSystem& skinningSystem = *ts.skinningSystem;
     PartFollowSystem& partFollowSystem = *ts.partFollowSystem;
+    TwoBoneIkSystem& twoBoneIkSystem = *ts.twoBoneIkSystem;
     EffectSystem& effectSystem = *ts.effectSystem;
     PhysicsSystem& physicsSystem = *ts.physicsSystem;
     FractureSystem& fractureSystem = *ts.fractureSystem; // M80g
@@ -474,6 +476,9 @@ void RunOneTick(TickServices& ts)
         }
         // スケルタルアニメの時刻を進める (M18)。ポーズは非ハッシュなのでリプレイ不変
         skinningSystem.Update(scene.GetWorld(), resources);
+        // 2 ボーン IK の目標をメッシュの空間へ直してポーズ入力に書く (M89l)。部位追従より前 = 部位が IK 後の関節に付く。
+        // TwoBoneIK 非存在シーンでは poseIk を 0 本に保つだけ (SkinnedMesh は NoHash = リプレイ不変)
+        twoBoneIkSystem.Update(scene.GetWorld(), resources);
         // 部位のボーン追従 (M48g): 上で進めた timeTicks のポーズで LocalTransform を作る。
         // **skinning の直後・物理と TransformSystem の前**に置くこと — 同じ tick の
         // WorldMatrix に反映され、追従した部位のコライダ位置も同じ tick で確定する。
@@ -902,6 +907,7 @@ void RunOneTick(TickServices& ts)
             }
             vfxRenderer.Reset(); // M29c: トレイル点列も新シーンでリセット
             partFollowSystem.Reset(); // M48g: 旧シーンの warn 抑制を捨てる
+            twoBoneIkSystem.Reset();  // M89l: 同上
             fractureSystem.Reset(); // M80g: 旧シーンの検証キャッシュを捨てる
             // 次 tick の物理より前に新シーンの破片資産を先読みしておく (Editor/Runtime の
             // 起動ロードと同じ扱い)

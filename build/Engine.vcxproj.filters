@@ -348,6 +348,9 @@
     <ClCompile Include="..\src\Engine\Engine\Animation\SkinningSystem.cpp">
       <Filter>Engine\Animation</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Animation\TwoBoneIkSystem.cpp">
+      <Filter>Engine\Animation</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\App\DisplaySettings.cpp">
       <Filter>Engine\App</Filter>
     </ClCompile>
@@ -1201,6 +1204,9 @@
       <Filter>Engine\Animation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Animation\SkinningSystem.h">
+      <Filter>Engine\Animation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Animation\TwoBoneIkSystem.h">
       <Filter>Engine\Animation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\App\DisplaySettings.h">

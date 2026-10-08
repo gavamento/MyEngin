@@ -15,6 +15,7 @@
 #include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Animation/SkinningSystem.h"
+#include "Engine/Engine/Animation/TwoBoneIkSystem.h"
 #include "Engine/Engine/Scene/TransformSystem.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/Device/GpuResources.h"
@@ -772,6 +773,153 @@ bool RunSkeletonSelfTest()
             check(std::fabs(zLocalEnd._42 + 1.4f) < 1e-4f && std::fabs(zLocalEnd._43) < 1e-4f,
                   "anim_test (Z-up): the root's own translation runs along its parent's Y axis (up comes from the entity side)");
         }
+    }
+
+    // ---- (M89l) 2 ボーン IK: 届く / 届かない / pole / weight / 先端の回転 / 解決段 ----
+    {
+        // 脚: Hip (根、原点) → Knee (下へ 1) → Ankle (下へ 1) → Toe (前へ 0.2)。クリップ無し = バインドポーズ
+        SkinnedModel leg;
+        const char* names[] = { "Hip", "Knee", "Ankle", "Toe" };
+        const XMFLOAT3 offsets[] = { { 0.0f, 0.0f, 0.0f }, { 0.0f, -1.0f, 0.0f }, { 0.0f, -1.0f, 0.0f }, { 0.0f, 0.0f, 0.2f } };
+        for (int j = 0; j < 4; ++j) {
+            SkeletonJoint jt;
+            jt.parent = j - 1;
+            jt.name = names[j];
+            jt.bindT = offsets[j];
+            leg.joints.push_back(jt);
+        }
+        const auto pos = [&](const std::vector<XMMATRIX>& locals, int32_t j) {
+            const XMFLOAT4X4 g = ToF4x4(JointGlobalFromLocals(leg, locals, j));
+            return XMFLOAT3{ g._41, g._42, g._43 };
+        };
+        const auto dist = [](XMFLOAT3 a, XMFLOAT3 b) {
+            return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+        };
+        const auto near3 = [&](XMFLOAT3 a, XMFLOAT3 b, float tol) { return dist(a, b) < tol; };
+        const auto solve = [&](const TwoBoneIkGoal& goal) {
+            std::vector<XMMATRIX> locals;
+            ComputeJointLocals(leg, -1, 0.0f, locals);
+            SolveTwoBoneIk(leg, goal, locals);
+            return locals;
+        };
+        const auto lengthsKept = [&](const std::vector<XMMATRIX>& l) {
+            return std::fabs(dist(pos(l, 0), pos(l, 1)) - 1.0f) < 1e-4f && std::fabs(dist(pos(l, 1), pos(l, 2)) - 1.0f) < 1e-4f
+                   && std::fabs(dist(pos(l, 2), pos(l, 3)) - 0.2f) < 1e-4f;
+        };
+
+        TwoBoneIkGoal goal;
+        goal.endJoint = 2;
+        goal.target = { 0.5f, -1.5f, 0.3f };
+        goal.hasPole = true;
+        goal.pole = { 0.0f, -1.0f, 1.0f };
+        std::vector<XMMATRIX> l = solve(goal);
+        check(near3(pos(l, 2), goal.target, 1e-4f) && lengthsKept(l) && near3(pos(l, 0), { 0.0f, 0.0f, 0.0f }, 0.0f),
+              "IK (M89l): a reachable target is hit exactly, the root stays and every bone keeps its length");
+
+        goal.target = { 0.0f, -5.0f, 0.0f };
+        l = solve(goal);
+        check(near3(pos(l, 2), { 0.0f, -2.0f, 0.0f }, 1e-4f) && near3(pos(l, 1), { 0.0f, -1.0f, 0.0f }, 1e-4f),
+              "IK (M89l): an unreachable target stretches the chain straight toward it");
+
+        // 伸び切った脚を縮めると、膝は pole の側へ出る
+        goal.target = { 0.0f, -1.5f, 0.0f };
+        goal.pole = { 0.0f, -1.0f, 1.0f };
+        const XMFLOAT3 kneeFront = pos(solve(goal), 1);
+        goal.pole = { 0.0f, -1.0f, -1.0f };
+        const XMFLOAT3 kneeBack = pos(solve(goal), 1);
+        check(kneeFront.z > 0.5f && kneeBack.z < -0.5f && std::fabs(kneeFront.x) < 1e-4f,
+              "IK (M89l): the knee bends toward the pole hint");
+
+        // 曲がった脚 (pole 無し) を同じ面の中で縮めると、膝は同じ面・同じ側に残る
+        {
+            std::vector<XMMATRIX> bent;
+            ComputeJointLocals(leg, -1, 0.0f, bent);
+            bent[1] = XMMatrixMultiply(XMMatrixRotationX(0.5f), bent[1]); // 膝で曲げる (足首が YZ 面の中で動く)
+            const XMFLOAT3 kneeBefore = pos(bent, 1);
+            const XMFLOAT3 ankle = pos(bent, 2);
+            TwoBoneIkGoal noPole;
+            noPole.endJoint = 2;
+            noPole.target = { ankle.x * 0.9f, ankle.y * 0.9f, ankle.z * 0.9f };
+            SolveTwoBoneIk(leg, noPole, bent);
+            const XMFLOAT3 kneeAfter = pos(bent, 1);
+            check(near3(pos(bent, 2), noPole.target, 1e-4f) && std::fabs(kneeAfter.x) < 1e-5f && dist(kneeBefore, kneeAfter) < 0.3f,
+                  "IK (M89l): without a pole the limb keeps its current bend plane and side");
+        }
+
+        // weight: 0 は 1 ビットも変えない、0.5 は今の先端と目標の中点へ
+        goal.target = { 0.0f, -1.5f, 0.5f };
+        goal.pole = { 0.0f, -1.0f, 1.0f };
+        goal.weight = 0.0f;
+        std::vector<XMMATRIX> bind;
+        ComputeJointLocals(leg, -1, 0.0f, bind);
+        l = solve(goal);
+        check(std::memcmp(l.data(), bind.data(), sizeof(XMMATRIX) * l.size()) == 0,
+              "IK (M89l): weight 0 leaves the pose bit-identical");
+        goal.weight = 0.5f;
+        l = solve(goal);
+        check(near3(pos(l, 2), { 0.0f, -1.75f, 0.25f }, 1e-4f), "IK (M89l): weight 0.5 moves the end halfway to the target");
+
+        // 先端の回転 (mode 2)
+        goal.weight = 1.0f;
+        goal.useRotation = true;
+        XMStoreFloat4(&goal.targetRotation, XMQuaternionRotationAxis(XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f), 1.0f));
+        l = solve(goal);
+        {
+            XMVECTOR s, r, t;
+            XMMatrixDecompose(&s, &r, &t, JointGlobalFromLocals(leg, l, 2));
+            const float dp = std::fabs(XMVectorGetX(XMVector4Dot(r, XMLoadFloat4(&goal.targetRotation))));
+            check(dp > 1.0f - 1e-5f && near3(pos(l, 2), goal.target, 1e-4f) && lengthsKept(l),
+                  "IK (M89l): mode 2 also sets the end joint's rotation, and children (the toe) follow it");
+        }
+
+        // 鎖が組めない先端 (根・中間) と範囲外は何もしない
+        for (const int32_t end : { 0, 1, 9 }) {
+            TwoBoneIkGoal bad = goal;
+            bad.endJoint = end;
+            l = solve(bad);
+            check(std::memcmp(l.data(), bind.data(), sizeof(XMMATRIX) * l.size()) == 0,
+                  "IK (M89l): an end joint without a parent and grandparent (or out of range) is ignored");
+        }
+
+        // ---- 解決段 (TwoBoneIkSystem): 目標エンティティ → メッシュの空間、ラグドール、名前違い ----
+        RegisterBuiltinComponents();
+        RenderResources res;
+        const AssetID legId = res.skinnedModels.Register("selftest_ik_leg", SkinnedModel(leg));
+        Scene s;
+        World& world = s.GetWorld();
+        GameObject body = s.CreateGameObjectTracked("Body");
+        body.AddComponent<SkinnedMeshComponent>()->model = legId;
+        TwoBoneIKComponent* ik = body.AddComponent<TwoBoneIKComponent>();
+        GameObject target = s.CreateGameObjectTracked("Target");
+        world.ApplyStructuralChanges();
+        body.GetComponent<LocalTransform>()->position = { 2.0f, 0.0f, 0.0f };
+        target.GetComponent<LocalTransform>()->position = { 2.5f, -1.5f, 0.3f };
+        ik = body.GetComponent<TwoBoneIKComponent>();
+        std::memcpy(ik->chains[0].endJoint, "Ankle", sizeof("Ankle"));
+        ik->chains[0].mode = twoboneikmode::kPosition;
+        ik->chains[0].target = target.Id();
+        ik->chains[0].poleHint = { 0.0f, -1.0f, 1.0f };
+        TwoBoneIkSystem ikSystem;
+        ikSystem.Update(world, res);
+        const SkinnedMeshComponent* sm = body.GetComponent<SkinnedMeshComponent>();
+        std::vector<XMMATRIX> sampled;
+        SampleSkinnedLocals(leg, *sm, sampled);
+        check(sm->poseIkCount == 1 && sm->poseIk[0].endJoint == 2 && sm->poseIk[0].hasPole == 1 && UsesLocalsPath(*sm)
+                  && near3(pos(sampled, 2), { 0.5f, -1.5f, 0.3f }, 1e-4f),
+              "IK (M89l): the system puts the target entity's world position into the mesh's space and the pose reaches it");
+
+        ik->chains[1] = ik->chains[0];
+        std::memcpy(ik->chains[1].endJoint, "NoSuchJoint", sizeof("NoSuchJoint"));
+        ik->chains[2] = ik->chains[0];
+        ik->chains[2].weight = 0.0f;
+        ikSystem.Update(world, res);
+        check(sm->poseIkCount == 1, "IK (M89l): chains with an unknown joint or weight 0 are not written");
+
+        body.AddComponent<RagdollComponent>()->active = true;
+        world.ApplyStructuralChanges();
+        ikSystem.Update(world, res);
+        sm = body.GetComponent<SkinnedMeshComponent>();
+        check(sm->poseIkCount == 0 && !UsesLocalsPath(*sm), "IK (M89l): an active ragdoll turns IK off");
     }
 
     if (failCount == 0) {

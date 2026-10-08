@@ -134,7 +134,8 @@ struct SimRefs {
 //            SkinnedMesh の末尾に抜き取りの欄 (poseRootJoint / poseRootUp)。どちらも World 節のカラム生バイト
 // v46 (M89k): AnimatorControllerComponent の末尾にルートモーションのヨー (rootMotionDeltaRotation)、
 //            SkinnedMesh の末尾にひねりの抜き取り (poseRootYaw)。どちらも World 節のカラム生バイト
-inline constexpr uint32_t kSimSnapshotVersion = 46;
+// v47 (M89l): TwoBoneIKComponent (TypeId 80) と、SkinnedMesh の末尾に IK の鎖 (poseIkCount / poseIk[4])。World 節のカラム生バイト
+inline constexpr uint32_t kSimSnapshotVersion = 47;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

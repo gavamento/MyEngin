@@ -68,6 +68,7 @@
 #include "Engine/Engine/Schema/SchemaCodegen.h"
 #include "Engine/Engine/Schema/SchemaComponents.h"
 #include "Engine/Engine/Animation/PartFollowSystem.h"
+#include "Engine/Engine/Animation/TwoBoneIkSystem.h"
 #include "Engine/Engine/Animation/SkinningSystem.h"
 #include "Engine/Engine/Loop/DeviceRecovery.h"
 #include "Engine/Engine/Loop/SimInit.h"
@@ -221,6 +222,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     AssetDatabase assetDatabase;                // GUID/.meta サイドカー DB (M23)
     SkinningSystem skinningSystem; // スケルタルアニメの時刻進行 (M18)
     PartFollowSystem partFollowSystem; // 部位のボーン追従 (M48g)
+    TwoBoneIkSystem twoBoneIkSystem;   // 2 ボーン IK の目標の解決 (M89l)
     EffectSystem effectSystem;     // 合成エフェクトのライフサイクル (M32e)
     UIRenderer uiRenderer;         // ゲーム内 UI (M21、backbuffer/GameView への重ね描画)
     VfxRenderer vfxRenderer;       // Sprite/Trail/TextMesh (M29c、メッシュ後・パーティクル前)
@@ -934,6 +936,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.controllerLibrary = &controllerLibrary;
     tickServices.skinningSystem = &skinningSystem;
     tickServices.partFollowSystem = &partFollowSystem;
+    tickServices.twoBoneIkSystem = &twoBoneIkSystem;
     tickServices.effectSystem = &effectSystem;
     tickServices.physicsSystem = &physicsSystem;
     tickServices.fractureSystem = &fractureSystem; // M80g

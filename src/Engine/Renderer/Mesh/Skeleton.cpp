@@ -298,6 +298,147 @@ XMMATRIX JointGlobalFromLocals(const SkinnedModel& model, const std::vector<XMMA
     return global;
 }
 
+namespace {
+
+// ---- 2 ボーン IK の小道具 (M89l) ----
+// 長さがこれ未満の骨・距離は向きが決まらないので扱わない
+constexpr float kIkEpsilon = 1e-6f;
+
+XMVECTOR Normalize3OrZero(XMVECTOR v)
+{
+    const float len = XMVectorGetX(XMVector3Length(v));
+    return len > kIkEpsilon ? XMVectorScale(v, 1.0f / len) : XMVectorZero();
+}
+
+// v の dir (単位) に垂直な成分を正規化したもの。垂直な成分が無ければ 0
+XMVECTOR PerpendicularTo(XMVECTOR v, XMVECTOR dir)
+{
+    return Normalize3OrZero(XMVectorSubtract(v, XMVectorScale(dir, XMVectorGetX(XMVector3Dot(v, dir)))));
+}
+
+// u の向きを v の向きへ回す最短の弧の四元数。半角公式 (u×v, 1 + u·v) を正規化するので acos を使わない。
+// ちょうど逆向きは u に垂直な軸で 180 度
+XMVECTOR ShortestArc(XMVECTOR u, XMVECTOR v)
+{
+    u = Normalize3OrZero(u);
+    v = Normalize3OrZero(v);
+    const float d = XMVectorGetX(XMVector3Dot(u, v));
+    if (d < -0.999999f) {
+        XMVECTOR axis = XMVector3Cross(u, XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f));
+        if (XMVectorGetX(XMVector3LengthSq(axis)) < kIkEpsilon) {
+            axis = XMVector3Cross(u, XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
+        }
+        return XMVectorSetW(Normalize3OrZero(axis), 0.0f);
+    }
+    return XMQuaternionNormalize(XMVectorSetW(XMVector3Cross(u, v), 1.0f + d));
+}
+
+// グローバル行列 g を、自分の原点 (平行移動の行) を中心に q だけ回す (エンティティ空間で後から掛ける)
+XMMATRIX RotateAboutOwnOrigin(const XMMATRIX& g, XMVECTOR q)
+{
+    XMMATRIX out = XMMatrixMultiply(g, XMMatrixRotationQuaternion(q));
+    out.r[3] = g.r[3];
+    return out;
+}
+
+// 親のグローバル行列の逆 (ルートは恒等)。新しいグローバルを局所へ戻すのに使う
+XMMATRIX InverseParentGlobal(const SkinnedModel& model, const std::vector<XMMATRIX>& locals, int32_t joint)
+{
+    const int32_t parent = model.joints[static_cast<size_t>(joint)].parent;
+    if (parent < 0) {
+        return XMMatrixIdentity();
+    }
+    return XMMatrixInverse(nullptr, JointGlobalFromLocals(model, locals, parent));
+}
+
+} // namespace
+
+void SolveTwoBoneIk(const SkinnedModel& model, const TwoBoneIkGoal& goal, std::vector<XMMATRIX>& locals)
+{
+    // NaN の重みも何もしない側へ倒す
+    if (!(goal.weight > 0.0f) || locals.size() != model.joints.size()) {
+        return;
+    }
+    const float w = std::min(goal.weight, 1.0f);
+    const int32_t c = goal.endJoint;
+    if (c < 0 || static_cast<size_t>(c) >= locals.size()) {
+        return;
+    }
+    const int32_t b = model.joints[static_cast<size_t>(c)].parent;
+    if (b < 0) {
+        return;
+    }
+    const int32_t a = model.joints[static_cast<size_t>(b)].parent;
+    if (a < 0) {
+        return;
+    }
+    const XMMATRIX ga = JointGlobalFromLocals(model, locals, a);
+    const XMMATRIX gb = JointGlobalFromLocals(model, locals, b);
+    const XMMATRIX gc = JointGlobalFromLocals(model, locals, c);
+    const XMVECTOR pa = ga.r[3];
+    const XMVECTOR pb = gb.r[3];
+    const XMVECTOR pc = gc.r[3];
+    const float upperLen = XMVectorGetX(XMVector3Length(XMVectorSubtract(pb, pa)));
+    const float lowerLen = XMVectorGetX(XMVector3Length(XMVectorSubtract(pc, pb)));
+    if (upperLen < kIkEpsilon || lowerLen < kIkEpsilon) {
+        return;
+    }
+
+    // 目標は今の先端から weight だけ寄せる
+    const XMVECTOR target = XMVectorLerp(pc, XMVectorSetW(XMLoadFloat3(&goal.target), 1.0f), w);
+    const XMVECTOR toTarget = XMVectorSubtract(target, pa);
+    const float dist = XMVectorGetX(XMVector3Length(toTarget));
+    if (dist < kIkEpsilon) {
+        return;
+    }
+    const XMVECTOR dir = XMVectorScale(toTarget, 1.0f / dist);
+    // 届かない距離は伸び切り / 縮み切りで止める
+    const float reach = std::clamp(dist, std::fabs(upperLen - lowerLen), upperLen + lowerLen);
+    // 根 → 中間の、目標方向の成分と垂直な成分 (余弦定理を角度にせず長さのまま解く)
+    const float along = (upperLen * upperLen - lowerLen * lowerLen + reach * reach) / (2.0f * reach);
+    const float across = std::sqrt(std::max(upperLen * upperLen - along * along, 0.0f));
+
+    // 曲げる向き: 今の中間の側。pole があれば weight だけ pole の側へ寄せる
+    XMVECTOR bend = PerpendicularTo(XMVectorSubtract(pb, pa), dir);
+    if (goal.hasPole) {
+        const XMVECTOR poleSide =
+            PerpendicularTo(XMVectorSubtract(XMVectorSetW(XMLoadFloat3(&goal.pole), 1.0f), pa), dir);
+        bend = Normalize3OrZero(XMVectorLerp(bend, poleSide, w));
+    }
+    if (XMVectorGetX(XMVector3LengthSq(bend)) == 0.0f) {
+        // 伸び切った腕で pole も無い: 曲げる向きは決まらないので、目標方向に垂直な軸を 1 つ選ぶ
+        bend = PerpendicularTo(XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), dir);
+        if (XMVectorGetX(XMVector3LengthSq(bend)) == 0.0f) {
+            bend = PerpendicularTo(XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f), dir);
+        }
+    }
+    const XMVECTOR midGoal = XMVectorAdd(pa, XMVectorAdd(XMVectorScale(dir, along), XMVectorScale(bend, across)));
+    const XMVECTOR endGoal = XMVectorAdd(pa, XMVectorScale(dir, reach));
+
+    // 根: 中間が midGoal に来るように回す
+    const XMMATRIX gaNew = RotateAboutOwnOrigin(ga, ShortestArc(XMVectorSubtract(pb, pa), XMVectorSubtract(midGoal, pa)));
+    locals[static_cast<size_t>(a)] = XMMatrixMultiply(gaNew, InverseParentGlobal(model, locals, a));
+    // 中間: 回った後の先端が endGoal に来るように回す
+    const XMMATRIX gbMoved = XMMatrixMultiply(locals[static_cast<size_t>(b)], gaNew);
+    const XMMATRIX gcMoved = XMMatrixMultiply(locals[static_cast<size_t>(c)], gbMoved);
+    const XMMATRIX gbNew = RotateAboutOwnOrigin(
+        gbMoved, ShortestArc(XMVectorSubtract(gcMoved.r[3], gbMoved.r[3]), XMVectorSubtract(endGoal, gbMoved.r[3])));
+    locals[static_cast<size_t>(b)] = XMMatrixMultiply(gbNew, XMMatrixInverse(nullptr, gaNew));
+
+    // 先端の回転 (位置は中間が運ぶ。拡大はそのまま)
+    if (goal.useRotation) {
+        const XMMATRIX gcNew = XMMatrixMultiply(locals[static_cast<size_t>(c)], gbNew);
+        XMVECTOR scale, rotation, translation;
+        if (XMMatrixDecompose(&scale, &rotation, &translation, gcNew)) {
+            const XMVECTOR wanted =
+                XMQuaternionSlerp(rotation, XMQuaternionNormalize(XMLoadFloat4(&goal.targetRotation)), w);
+            const XMMATRIX gcWanted = XMMatrixScalingFromVector(scale) * XMMatrixRotationQuaternion(wanted)
+                                      * XMMatrixTranslationFromVector(translation);
+            locals[static_cast<size_t>(c)] = XMMatrixMultiply(gcWanted, XMMatrixInverse(nullptr, gbNew));
+        }
+    }
+}
+
 int32_t SkinnedModel::FindJointByName(std::string_view name) const
 {
     if (name.empty()) {

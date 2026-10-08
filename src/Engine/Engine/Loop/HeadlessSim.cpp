@@ -26,6 +26,7 @@
 #include "Engine/Engine/Animation/Animation.h"
 #include "Engine/Engine/Animation/AnimatorController.h"
 #include "Engine/Engine/Animation/PartFollowSystem.h"
+#include "Engine/Engine/Animation/TwoBoneIkSystem.h"
 #include "Engine/Engine/Animation/SkinningSystem.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
 #include "Engine/Engine/Audio/Playback/AudioMixer.h"
@@ -129,6 +130,7 @@ struct HeadlessSim::Impl : IEngineApp {
     AssetDatabase assetDatabase;
     SkinningSystem skinningSystem;
     PartFollowSystem partFollowSystem;
+    TwoBoneIkSystem twoBoneIkSystem;
     EffectSystem effectSystem;
     VfxRenderer vfxRenderer;
     AudioSystem audioSystem; // Init しない = 再生は no-op (--no-audio と同じ)
@@ -191,6 +193,7 @@ void HeadlessSim::Impl::BuildTickServices(int netRole)
     ts.controllerLibrary = &controllerLibrary;
     ts.skinningSystem = &skinningSystem;
     ts.partFollowSystem = &partFollowSystem;
+    ts.twoBoneIkSystem = &twoBoneIkSystem;
     ts.effectSystem = &effectSystem;
     ts.physicsSystem = &physicsSystem;
     ts.fractureSystem = &fractureSystem;

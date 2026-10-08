@@ -66,6 +66,7 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         // Animation
         { "Animator", { ICON_FA_FILM, "Animation", "アニメーター" } },
         { "AnimatorController", { ICON_FA_CIRCLE_NODES, "Animation", "アニメーターコントローラー" } },
+        { "TwoBoneIK", { ICON_FA_HAND, "Animation", "2 ボーン IK" } }, // M89l
         // VFX
         { "ParticleEmitter", { ICON_FA_FIRE, "VFX", "パーティクルエミッタ" } },
         { "SpriteRenderer", { ICON_FA_IMAGE, "VFX", "スプライトレンダラー" } },

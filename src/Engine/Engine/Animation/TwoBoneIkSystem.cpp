@@ -1,0 +1,130 @@
+// ============================================================================
+//                          TwoBoneIkSystem.cpp
+// ============================================================================
+// 2 ボーン IK の解決段 (M89l)。TwoBoneIKComponent → SkinnedMesh.poseIk。
+// ============================================================================
+#include "Engine/Engine/Animation/TwoBoneIkSystem.h"
+
+#include <cstring>
+#include <string_view>
+
+#include <DirectXMath.h>
+
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Ecs/World.h"
+#include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Mesh/Skeleton.h"
+
+namespace mye {
+
+namespace {
+
+using namespace DirectX;
+
+// entity のワールド行列を LocalTransform の連鎖 (この tick の値) から組む。TransformSystem と同じ S·R·T の積を
+// 子から根へ掛ける。WorldMatrix は物理と TransformSystem の後に書かれる前 tick の値なので使わない
+XMMATRIX ChainWorldMatrix(World& world, EntityID entity)
+{
+    XMMATRIX m = XMMatrixIdentity();
+    for (EntityID cur = entity; !cur.IsNull(); cur = world.GetParent(cur)) {
+        const LocalTransform* lt = world.GetComponent<LocalTransform>(cur);
+        if (lt == nullptr) {
+            break;
+        }
+        const XMMATRIX local = XMMatrixScaling(lt->scale.x, lt->scale.y, lt->scale.z)
+                               * XMMatrixRotationQuaternion(XMLoadFloat4(&lt->rotation))
+                               * XMMatrixTranslation(lt->position.x, lt->position.y, lt->position.z);
+        m = XMMatrixMultiply(m, local);
+    }
+    return m;
+}
+
+// 鎖の目標 (位置と回転) をメッシュのエンティティ空間で。目標のエンティティが無い / 消えていればワールドの値
+void ResolveGoal(World& world, const TwoBoneIKComponent::Chain& chain, const XMMATRIX& worldToMesh,
+                 SkinnedMeshComponent::PoseIkChain& out)
+{
+    XMMATRIX goal = XMMatrixRotationQuaternion(XMQuaternionNormalize(XMLoadFloat4(&chain.targetRotation)))
+                    * XMMatrixTranslation(chain.targetPosition.x, chain.targetPosition.y, chain.targetPosition.z);
+    if (!chain.target.IsNull() && world.IsAlive(chain.target)) {
+        goal = XMMatrixMultiply(goal, ChainWorldMatrix(world, chain.target));
+    }
+    goal = XMMatrixMultiply(goal, worldToMesh);
+    XMVECTOR scale, rotation, translation;
+    if (!XMMatrixDecompose(&scale, &rotation, &translation, goal)) {
+        // 拡大 0 の軸がある等で回転が取れない: 位置だけ使う
+        rotation = XMQuaternionIdentity();
+        translation = goal.r[3];
+    }
+    XMFLOAT3 t;
+    XMFLOAT4 r;
+    XMStoreFloat3(&t, translation);
+    XMStoreFloat4(&r, rotation);
+    out.target[0] = t.x;
+    out.target[1] = t.y;
+    out.target[2] = t.z;
+    out.rotation[0] = r.x;
+    out.rotation[1] = r.y;
+    out.rotation[2] = r.z;
+    out.rotation[3] = r.w;
+}
+
+} // namespace
+
+void TwoBoneIkSystem::Update(World& world, const RenderResources& resources)
+{
+    const ComponentTypeId req[] = { SkinnedMeshComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int si = arch.FindTypeIndex(SkinnedMeshComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            auto* sm = static_cast<SkinnedMeshComponent*>(arch.GetPtr(si, row));
+            const EntityID e = arch.EntityAt(row);
+            // 書かない本数ぶんも既定値へ戻す (snapshot の生バイトを入力だけで決まる形にしておく)
+            sm->poseIkCount = 0;
+            for (SkinnedMeshComponent::PoseIkChain& c : sm->poseIk) {
+                c = {};
+            }
+            const TwoBoneIKComponent* ik = world.GetComponent<TwoBoneIKComponent>(e);
+            if (ik == nullptr) {
+                continue;
+            }
+            // ラグドールの作動中は骨を物理が決める (IK で動かすと剛体と骨がずれる)
+            if (const RagdollComponent* rag = world.GetComponent<RagdollComponent>(e); rag != nullptr && rag->active) {
+                continue;
+            }
+            const SkinnedModel* model = resources.skinnedModels.Get(sm->model);
+            if (model == nullptr) {
+                continue;
+            }
+            const XMMATRIX worldToMesh = XMMatrixInverse(nullptr, ChainWorldMatrix(world, e));
+            for (int32_t i = 0; i < kMaxTwoBoneIkChains; ++i) {
+                const TwoBoneIKComponent::Chain& chain = ik->chains[i];
+                if (chain.mode == twoboneikmode::kOff || !(chain.weight > 0.0f)) {
+                    continue;
+                }
+                // 名前は 64 バイトの固定長。終端が無くても範囲の外は読まない
+                const std::string_view name(chain.endJoint, strnlen(chain.endJoint, sizeof(chain.endJoint)));
+                const int32_t joint = model->FindJointByName(name);
+                if (joint < 0) {
+                    if (warned_.insert((uint64_t(e.index) << 8) | uint64_t(i)).second) {
+                        MYE_LOG_WARN("[ik] '%s': chain %d end joint '%.*s' not found in the skinned model",
+                                     world.GetName(e), i, static_cast<int>(name.size()), name.data());
+                    }
+                    continue;
+                }
+                SkinnedMeshComponent::PoseIkChain& out = sm->poseIk[sm->poseIkCount++];
+                out.endJoint = joint;
+                out.useRotation = chain.mode == twoboneikmode::kPositionRotation ? 1 : 0;
+                out.weight = chain.weight;
+                ResolveGoal(world, chain, worldToMesh, out);
+                const bool hasPole = chain.poleHint.x != 0.0f || chain.poleHint.y != 0.0f || chain.poleHint.z != 0.0f;
+                out.hasPole = hasPole ? 1 : 0;
+                out.pole[0] = chain.poleHint.x;
+                out.pole[1] = chain.poleHint.y;
+                out.pole[2] = chain.poleHint.z;
+            }
+        }
+    });
+}
+
+} // namespace mye

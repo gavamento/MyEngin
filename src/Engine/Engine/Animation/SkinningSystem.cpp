@@ -96,6 +96,11 @@ int32_t ActivePoseLayers(const SkinnedMeshComponent& sm)
     return std::clamp(sm.poseLayerCount, 0, SkinnedMeshComponent::kMaxPoseLayers);
 }
 
+int32_t ActivePoseIkChains(const SkinnedMeshComponent& sm)
+{
+    return std::clamp(sm.poseIkCount, 0, SkinnedMeshComponent::kMaxPoseIkChains);
+}
+
 // ルートモーション (M89j): joint の移動の水平分をポーズから抜く。抜く量は層ごとの
 // 「サンプル時刻の移動 − クリップの先頭の移動」を重みの比で混ぜたもの (層の畳み方と同じ線形の混ぜ方)。
 // クリップの先頭を基準にするので、時刻 0 の姿勢は変わらず、1 周の間にルートが水平へずれていかない。
@@ -157,11 +162,26 @@ void StripRootMotion(const SkinnedModel& model, const SkeletalLayer* program, in
 
 bool UsesLocalsPath(const SkinnedMeshComponent& sm)
 {
-    return ActivePoseLayers(sm) > 0 || IsSkinFading(sm);
+    return ActivePoseLayers(sm) > 0 || IsSkinFading(sm) || ActivePoseIkChains(sm) > 0;
 }
 
 bool SamePoseInputs(const SkinnedMeshComponent& a, const SkinnedMeshComponent& b)
 {
+    // IK (M89l) はどの経路の上にも乗るので先に比べる
+    const int32_t ikChains = ActivePoseIkChains(a);
+    if (ikChains != ActivePoseIkChains(b)) {
+        return false;
+    }
+    for (int32_t i = 0; i < ikChains; ++i) {
+        const SkinnedMeshComponent::PoseIkChain& ia = a.poseIk[i];
+        const SkinnedMeshComponent::PoseIkChain& ib = b.poseIk[i];
+        if (ia.endJoint != ib.endJoint || ia.useRotation != ib.useRotation || ia.hasPole != ib.hasPole
+            || ia.weight != ib.weight || !std::equal(std::begin(ia.target), std::end(ia.target), std::begin(ib.target))
+            || !std::equal(std::begin(ia.rotation), std::end(ia.rotation), std::begin(ib.rotation))
+            || !std::equal(std::begin(ia.pole), std::end(ia.pole), std::begin(ib.pole))) {
+            return false;
+        }
+    }
     const int32_t layers = ActivePoseLayers(a);
     if (layers != ActivePoseLayers(b)) {
         return false;
@@ -200,8 +220,11 @@ void SampleSkinnedLocals(const SkinnedModel& model, const SkinnedMeshComponent& 
     SampleSkinnedLocalsInterpolated(model, sm, 1.0f, outLocals);
 }
 
-void SampleSkinnedLocalsInterpolated(const SkinnedModel& model, const SkinnedMeshComponent& sm,
-                                     float interpAlpha, std::vector<DirectX::XMMATRIX>& outLocals)
+namespace {
+
+// IK の前の、アニメだけのポーズ (プログラム / 旧経路のフェード / 旧経路の単独クリップ)
+void SampleAnimatedLocals(const SkinnedModel& model, const SkinnedMeshComponent& sm, float interpAlpha,
+                          std::vector<DirectX::XMMATRIX>& outLocals)
 {
     // ---- ポーズプログラム (M89a) ----
     if (const int32_t layers = ActivePoseLayers(sm); layers > 0) {
@@ -243,6 +266,33 @@ void SampleSkinnedLocalsInterpolated(const SkinnedModel& model, const SkinnedMes
     // 重みは整数の比から作る (float の累積を持たない = snapshot から戻しても同じ重み)
     const float weight = static_cast<float>(sm.fadeElapsed) / static_cast<float>(sm.fadeTotal);
     ComputeJointLocalsBlended(model, sm.fromClip, fromSec, sm.clip, timeSec, weight, outLocals);
+}
+
+// 2 ボーン IK (M89l): poseIk の鎖を書かれた順に解く (後の鎖は前の鎖の結果の上で解く)
+void ApplyPoseIk(const SkinnedModel& model, const SkinnedMeshComponent& sm, std::vector<DirectX::XMMATRIX>& locals)
+{
+    const int32_t count = ActivePoseIkChains(sm);
+    for (int32_t i = 0; i < count; ++i) {
+        const SkinnedMeshComponent::PoseIkChain& c = sm.poseIk[i];
+        TwoBoneIkGoal goal;
+        goal.endJoint = c.endJoint;
+        goal.target = { c.target[0], c.target[1], c.target[2] };
+        goal.useRotation = c.useRotation != 0;
+        goal.targetRotation = { c.rotation[0], c.rotation[1], c.rotation[2], c.rotation[3] };
+        goal.hasPole = c.hasPole != 0;
+        goal.pole = { c.pole[0], c.pole[1], c.pole[2] };
+        goal.weight = c.weight;
+        SolveTwoBoneIk(model, goal, locals);
+    }
+}
+
+} // namespace
+
+void SampleSkinnedLocalsInterpolated(const SkinnedModel& model, const SkinnedMeshComponent& sm,
+                                     float interpAlpha, std::vector<DirectX::XMMATRIX>& outLocals)
+{
+    SampleAnimatedLocals(model, sm, interpAlpha, outLocals);
+    ApplyPoseIk(model, sm, outLocals);
 }
 
 } // namespace mye

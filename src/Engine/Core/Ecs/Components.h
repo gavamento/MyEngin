@@ -352,6 +352,20 @@ struct SkinnedMeshComponent {
     // 1: poseRootJoint の回転のうち poseRootUp まわりのひねり (クリップの先頭からの変化、層ごとに重みで混ぜる) も
     // ポーズから抜く (向きはエンティティ側が回して受け取る)。0 = 抜かない (NavMeshAgent が向きを握っている等)
     int32_t poseRootYaw = 0;
+    // ---- 2 ボーン IK (M89l) ----
+    // TwoBoneIkSystem が毎 tick 書く (TwoBoneIKComponent が無い・ラグドール作動中は 0 本)。座標はこのエンティティの空間
+    struct PoseIkChain {
+        int32_t endJoint = -1;
+        int32_t useRotation = 0;
+        int32_t hasPole = 0;
+        float weight = 0.0f;
+        float target[3] = {};
+        float rotation[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+        float pole[3] = {};
+    };
+    static constexpr int kMaxPoseIkChains = 4;
+    int32_t poseIkCount = 0; // poseIk の先頭から有効な本数。1 本以上なら局所行列の経路 (UsesLocalsPath) を通る
+    PoseIkChain poseIk[kMaxPoseIkChains] = {};
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -2242,6 +2256,38 @@ struct PatrolRouteComponent {
     int32_t pointCount = 0;          // points / waitTicks の先頭から有効な件数 (0..kMaxPatrolPoints)
     DirectX::XMFLOAT3 points[kMaxPatrolPoints] = {};
     int32_t waitTicks[kMaxPatrolPoints] = {}; // 点に着いてから次へ向かうまでの待ち (tick)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+constexpr int kMaxTwoBoneIkChains = 4; // TwoBoneIKComponent の鎖の数 (両手・両足)
+
+// TwoBoneIKComponent の鎖の mode
+namespace twoboneikmode {
+enum : int32_t {
+    kOff = 0,
+    kPosition = 1,         // 先端の位置だけ合わせる
+    kPositionRotation = 2, // 先端の回転も目標の回転に合わせる
+};
+} // namespace twoboneikmode
+
+// 2 ボーン IK (M89l)。SkinnedMesh と同じエンティティに付ける。鎖ごとに先端ジョイントを名前で指し、
+// 中間 = その親、根 = 中間の親を回して先端を目標へ届かせる。TwoBoneIkSystem が毎 tick 目標をメッシュの空間へ直して
+// SkinnedMesh のポーズ入力 (poseIk) に書き、SampleSkinnedLocals の最後で解く (描画・部位追従が同じ姿勢を使う)。
+// ラグドールの作動中は解かない。hash 対象 (目標は sim の入力)。スクリプトは SetComponentField で鎖の欄を書く
+struct TwoBoneIKComponent {
+    struct Chain {
+        char endJoint[64] = {};        // 先端のジョイント名 (手首・足首)
+        int32_t mode = twoboneikmode::kOff;
+        // 目標: target が有効ならそのエンティティのローカル座標の点 targetPosition (と、そのワールド回転 × targetRotation)。
+        // 無効ならワールドの点 targetPosition (とワールド回転 targetRotation)
+        EntityID target = kNullEntity;
+        DirectX::XMFLOAT3 targetPosition = { 0.0f, 0.0f, 0.0f };
+        DirectX::XMFLOAT4 targetRotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        // 中間 (肘・膝) を曲げる側の点。このエンティティのローカル座標。(0, 0, 0) = 今のポーズの曲げ面のまま
+        DirectX::XMFLOAT3 poleHint = { 0.0f, 0.0f, 0.0f };
+        float weight = 1.0f; // 0..1
+    };
+    Chain chains[kMaxTwoBoneIkChains] = {};
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

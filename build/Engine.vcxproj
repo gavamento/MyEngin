@@ -64,6 +64,7 @@
     <ClCompile Include="..\src\Engine\Engine\Animation\Parts.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Animation\SkeletonSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Animation\SkinningSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Animation\TwoBoneIkSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\App\DisplaySettings.cpp" />
     <ClCompile Include="..\src\Engine\Engine\App\EngineCli.cpp" />
     <ClCompile Include="..\src\Engine\Engine\App\EngineCliSelfTest.cpp" />
@@ -349,6 +350,7 @@
     <ClInclude Include="..\src\Engine\Engine\Animation\Parts.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation\SkeletonSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation\SkinningSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\Animation\TwoBoneIkSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\App\DisplaySettings.h" />
     <ClInclude Include="..\src\Engine\Engine\App\EngineCli.h" />
     <ClInclude Include="..\src\Engine\Engine\App\EngineCliSelfTest.h" />

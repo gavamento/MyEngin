@@ -34,7 +34,7 @@ int32_t SkeletalClipTicks(const SkeletalClip& clip);
 // クロスフェード中か。中でなければポーズは clip 単独 (= M18 と同じ評価)
 bool IsSkinFading(const SkinnedMeshComponent& sm);
 
-// ポーズを SampleSkinnedLocals で組む必要があるか (M89a)。false なら clip 単独 = M18 と同じ評価で、
+// ポーズを SampleSkinnedLocals で組む必要があるか (M89a。IK の鎖があるときも M89l)。false なら clip 単独 = M18 と同じ評価で、
 // 描画はパレットを直接作る経路 (ComputeBonePalette) を通してよい
 bool UsesLocalsPath(const SkinnedMeshComponent& sm);
 
@@ -48,6 +48,7 @@ bool SamePoseInputs(const SkinnedMeshComponent& a, const SkinnedMeshComponent& b
 //   骨に付けた部位やラグドールの未駆動の骨だけが、切り替えの瞬間に飛ぶ。
 // poseLayerCount > 0 ならポーズプログラムの層を ComputeJointLocalsLayered で畳む (M89a)。
 // poseRootJoint >= 0 なら、そのジョイントの水平の移動を抜く (M89j のルートモーション。描画補間の時刻でも同じ式)。
+// poseIkCount > 0 なら、どの経路の結果にも最後に 2 ボーン IK の鎖を書かれた順に解く (M89l、SolveTwoBoneIk)。
 // 旧経路でフェードしていないときは ComputeJointLocals(model, clip, timeTicks / 60) そのもの (ビット一致)
 void SampleSkinnedLocals(const SkinnedModel& model, const SkinnedMeshComponent& sm,
                          std::vector<DirectX::XMMATRIX>& outLocals);

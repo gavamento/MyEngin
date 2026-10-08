@@ -1655,6 +1655,30 @@ void RegisterBuiltinComponents()
         MYE_PATROL_POINT(28), MYE_PATROL_POINT(29), MYE_PATROL_POINT(30), MYE_PATROL_POINT(31),
     });
 #undef MYE_PATROL_POINT
+
+    // M89l: 2 ボーン IK (TypeId=80、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変。
+    // 鎖の欄はスクリプトから SetComponentField で名前 (chain0Weight 等) を指して書く
+#define MYE_IK_FIELD(i, member, ftype, label, ...)                                                                    \
+    ::mye::WithJp(::mye::FieldDesc{ .name = "chain" #i #member, .type = ::mye::FieldType::ftype,                      \
+                                    .offset = static_cast<uint32_t>(offsetof(TwoBoneIKComponent, chains)             \
+                                                                    + (i) * sizeof(TwoBoneIKComponent::Chain)        \
+                                                                    + offsetof(TwoBoneIKComponent::Chain, member)), \
+                                    __VA_ARGS__ },                                                                    \
+                  "鎖 " #i " の" label)
+#define MYE_IK_CHAIN(i)                                                                                                \
+    MYE_IK_FIELD(i, endJoint, String64, "先端ジョイント", .tooltip = "end joint name (wrist / ankle); the middle is its parent, the root is the middle's parent"), \
+    MYE_IK_FIELD(i, mode, Int32, "モード", .tooltip = "0 = off, 1 = position, 2 = position + rotation"),               \
+    MYE_IK_FIELD(i, target, EntityRef, "目標", .tooltip = "target entity (none: targetPosition / targetRotation are in world space)"), \
+    MYE_IK_FIELD(i, targetPosition, Float3, "目標の位置", .tooltip = "in the target entity's local space, or world space without a target"), \
+    MYE_IK_FIELD(i, targetRotation, Quat, "目標の回転", .tooltip = "used by mode 2; relative to the target entity's rotation, or world"), \
+    MYE_IK_FIELD(i, poleHint, Float3, "曲げる側", .tooltip = "point the elbow / knee bends toward, in this entity's local space; (0, 0, 0) keeps the current bend"), \
+    MYE_IK_FIELD(i, weight, Float, "重み", .minVal = 0.0f, .maxVal = 1.0f)
+    static_assert(kMaxTwoBoneIkChains == 4, "MYE_IK_CHAIN の並びを kMaxTwoBoneIkChains に合わせる");
+    RegisterComponent<TwoBoneIKComponent>("TwoBoneIK", {
+        MYE_IK_CHAIN(0), MYE_IK_CHAIN(1), MYE_IK_CHAIN(2), MYE_IK_CHAIN(3),
+    });
+#undef MYE_IK_CHAIN
+#undef MYE_IK_FIELD
 }
 
 } // namespace mye

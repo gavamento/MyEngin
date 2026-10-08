@@ -18,6 +18,7 @@ class AnimatorControllerSystem;
 class ControllerLibrary;
 class SkinningSystem;
 class PartFollowSystem;
+class TwoBoneIkSystem;
 class EffectSystem;
 class PhysicsSystem;
 class FractureSystem;
@@ -82,6 +83,7 @@ struct TickServices {
     ControllerLibrary* controllerLibrary = nullptr;
     SkinningSystem* skinningSystem = nullptr;
     PartFollowSystem* partFollowSystem = nullptr;
+    TwoBoneIkSystem* twoBoneIkSystem = nullptr; // M89l
     EffectSystem* effectSystem = nullptr;
     PhysicsSystem* physicsSystem = nullptr;
     // M80g: 接着の破断・塊の分離。存在ゲート (Destructible が無いシーンは shapeImpulses も
