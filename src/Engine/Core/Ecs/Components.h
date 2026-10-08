@@ -348,6 +348,10 @@ struct SkinnedMeshComponent {
     // ワールドの上 (0, 1, 0) を poseRootJoint の親空間 (= このメッシュのエンティティ空間) へ戻した単位ベクトル。
     // LocalTransform の連鎖の回転だけから求める (スケールは見ない)
     float poseRootUp[3] = { 0.0f, 1.0f, 0.0f };
+    // ---- ルートモーションのヨー (M89k) ----
+    // 1: poseRootJoint の回転のうち poseRootUp まわりのひねり (クリップの先頭からの変化、層ごとに重みで混ぜる) も
+    // ポーズから抜く (向きはエンティティ側が回して受け取る)。0 = 抜かない (NavMeshAgent が向きを握っている等)
+    int32_t poseRootYaw = 0;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -770,6 +774,11 @@ struct AnimatorControllerComponent {
     // Rigidbody の水平速度 → CharacterController.moveInput → LocalTransform.position の順で最初に当たったもの。
     // ★毎 tick 上書きする (骨を駆動しない tick は 0 を書く)。false へ戻しても最後に書いた moveInput / 速度は残る
     bool applyRootMotion = false;
+    // ---- M89k 追加 (末尾 append): ルートモーションのヨー ----
+    // この tick のルートジョイントの、上まわりの回転 (ワールド、Y 軸まわりだけの四元数 (0, sin, 0, cos))。
+    // rootMotionVelocity と同じく毎 tick 書く。applyRootMotion なら LocalTransform.rotation へ掛ける
+    // (NavMeshAgent が updateRotation で向きを握っている間は回さず、ポーズのひねりも抜かない)
+    DirectX::XMFLOAT4 rootMotionDeltaRotation = { 0.0f, 0.0f, 0.0f, 1.0f };
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

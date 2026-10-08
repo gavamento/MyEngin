@@ -612,37 +612,142 @@ void WorldUpInEntitySpace(World& world, EntityID entity, float (&out)[3])
     }
 }
 
-// 1 層のこの tick のルートジョイントの移動 (ルートの親空間) を out へ重み付きで足す。
-// 区間 start → end のサンプルの差に、ループの折り返し wraps 回ぶんの 1 周の移動 (末尾 − 先頭) を足す
-void AddRootLayerDelta(const SkinnedModel& model, int32_t clip, int32_t joint, int32_t startQ, int32_t endQ,
-                       int64_t wraps, int32_t lengthTicks, int32_t weightQ, float (&out)[3])
+// ---- ルートモーションのヨー (M89k) ----
+// 上まわりのひねり (cos(θ/2), sin(θ/2)) = 四元数 (s·up, c)。同じ軸まわりなので積は複素数の積 (可換)
+struct Yaw {
+    float c = 1.0f;
+    float s = 0.0f;
+};
+Yaw YawFrom(const DirectX::XMFLOAT2& v)
 {
-    const DirectX::XMFLOAT3 a = SampleJointTranslation(model, clip, joint, static_cast<float>(startQ) / kTimeQPerSecond);
-    const DirectX::XMFLOAT3 b = SampleJointTranslation(model, clip, joint, static_cast<float>(endQ) / kTimeQPerSecond);
-    float d[3] = { b.x - a.x, b.y - a.y, b.z - a.z };
-    if (wraps != 0) {
-        const DirectX::XMFLOAT3 head = SampleJointTranslation(model, clip, joint, 0.0f);
-        const DirectX::XMFLOAT3 tail = SampleJointTranslation(
-            model, clip, joint, static_cast<float>(BlendSpanQ(lengthTicks)) / kTimeQPerSecond);
-        const float k = static_cast<float>(wraps);
-        d[0] += k * (tail.x - head.x);
-        d[1] += k * (tail.y - head.y);
-        d[2] += k * (tail.z - head.z);
-    }
-    const float w = static_cast<float>(weightQ) / static_cast<float>(kWeightOne);
-    out[0] += w * d[0];
-    out[1] += w * d[1];
-    out[2] += w * d[2];
+    return { v.x, v.y };
+}
+Yaw YawMul(const Yaw& a, const Yaw& b)
+{
+    return { a.c * b.c - a.s * b.s, a.c * b.s + a.s * b.c };
+}
+Yaw YawConj(const Yaw& a)
+{
+    return { a.c, -a.s };
 }
 
-// この tick のルートの移動 (主 SkinnedMesh のモデルで測る、ルートの親空間)。ポーズプログラムと同じ層・同じ時計・
-// 同じ重みで、層ごとの移動を重みで混ぜる。単一クリップは tick の時計 (折り返しは time の周回数)、
-// ブレンドツリーの子は位相 (折り返しは位相の周回数) から時刻を引く。非ループは端に張り付くので折り返さない
-void RootMotionDelta(const SkinnedModel& model, int32_t joint, const SkeletalSource* sources, int32_t count,
-                     float (&out)[3])
+// v を up まわりに yaw だけ回す。回らない (s == 0) なら v のまま (M89j の結果をビットも変えない)
+void RotateByYaw(const Yaw& yaw, const float (&up)[3], const float (&v)[3], float (&out)[3])
+{
+    if (yaw.s == 0.0f) {
+        out[0] = v[0];
+        out[1] = v[1];
+        out[2] = v[2];
+        return;
+    }
+    const float q[4] = { yaw.s * up[0], yaw.s * up[1], yaw.s * up[2], yaw.c };
+    RotateByQuat(q, v, out);
+}
+
+// 1 周の移動 c と 1 周のヨー z から、n 周 (n >= 0) の移動 Σ_{k<n} z^k·c と z^n を倍々で求める
+// (S(a+b) = S(a) + z^a·S(b))。1 tick で何周しても反復は高々 64 回
+void RepeatCycle(const Yaw& z, const float (&up)[3], const float (&c)[3], uint64_t n, float (&sum)[3], Yaw& power)
+{
+    sum[0] = sum[1] = sum[2] = 0.0f;
+    power = {};
+    float blockSum[3] = { c[0], c[1], c[2] };
+    Yaw blockPower = z;
+    for (; n != 0; n >>= 1) {
+        if ((n & 1u) != 0) {
+            float r[3];
+            RotateByYaw(power, up, blockSum, r);
+            for (int k = 0; k < 3; ++k) {
+                sum[k] += r[k];
+            }
+            power = YawMul(power, blockPower);
+        }
+        float r[3];
+        RotateByYaw(blockPower, up, blockSum, r);
+        for (int k = 0; k < 3; ++k) {
+            blockSum[k] += r[k];
+        }
+        blockPower = YawMul(blockPower, blockPower);
+    }
+}
+
+// 1 層のこの tick のルートジョイントの動き (ルートの親空間)
+struct RootLayerMotion {
+    float delta[3] = {};
+    Yaw yaw;
+};
+
+// 区間 start → end の動きに、ループの折り返し wraps 回ぶんの 1 周 (移動は末尾 − 先頭、ヨーは末尾のひねり) を足す。
+// followYaw (エンティティがヨーを受け取って回る) なら、クリップの座標での移動を区間の頭までに回ったぶん戻して
+// 今のエンティティの向きで表す。周をまたぐと、エンティティは 1 周ぶんのヨーだけ回った向きから次の周を始める
+RootLayerMotion RootLayerDelta(const SkinnedModel& model, int32_t clip, int32_t joint, const float (&up)[3],
+                               bool followYaw, int32_t startQ, int32_t endQ, int64_t wraps, int32_t lengthTicks)
+{
+    const float startSec = static_cast<float>(startQ) / kTimeQPerSecond;
+    const float endSec = static_cast<float>(endQ) / kTimeQPerSecond;
+    const DirectX::XMFLOAT3 a = SampleJointTranslation(model, clip, joint, startSec);
+    const DirectX::XMFLOAT3 b = SampleJointTranslation(model, clip, joint, endSec);
+    const Yaw za = YawFrom(SampleJointYaw(model, clip, joint, startSec, up));
+    const Yaw zb = YawFrom(SampleJointYaw(model, clip, joint, endSec, up));
+    RootLayerMotion m;
+    float d[3] = { b.x - a.x, b.y - a.y, b.z - a.z };
+    Yaw cycles; // 1 周のヨーの wraps 乗
+    if (wraps != 0) {
+        const float tailSec = static_cast<float>(BlendSpanQ(lengthTicks)) / kTimeQPerSecond;
+        const DirectX::XMFLOAT3 head = SampleJointTranslation(model, clip, joint, 0.0f);
+        const DirectX::XMFLOAT3 tail = SampleJointTranslation(model, clip, joint, tailSec);
+        const Yaw cycleYaw = YawFrom(SampleJointYaw(model, clip, joint, tailSec, up));
+        if (cycleYaw.s == 0.0f) {
+            // 1 周で向きが変わらない: 周ごとの移動は同じ向き (M89j と同じ式)
+            const float k = static_cast<float>(wraps);
+            d[0] += k * (tail.x - head.x);
+            d[1] += k * (tail.y - head.y);
+            d[2] += k * (tail.z - head.z);
+        } else {
+            // 移動 = Σ_{k=0}^{n-1} z^k·C + z^n·(b − head) − (a − head)。n < 0 の和は −z^n·Σ_{k<|n|} z^k·C
+            const float cycle[3] = { tail.x - head.x, tail.y - head.y, tail.z - head.z };
+            float sum[3];
+            Yaw power;
+            RepeatCycle(cycleYaw, up, cycle, static_cast<uint64_t>(wraps > 0 ? wraps : -wraps), sum, power);
+            if (wraps < 0) {
+                cycles = YawConj(power);
+                float r[3];
+                RotateByYaw(cycles, up, sum, r);
+                for (int k = 0; k < 3; ++k) {
+                    sum[k] = -r[k];
+                }
+            } else {
+                cycles = power;
+            }
+            const float last[3] = { b.x - head.x, b.y - head.y, b.z - head.z };
+            float lastRotated[3];
+            RotateByYaw(cycles, up, last, lastRotated);
+            d[0] = sum[0] + lastRotated[0] - (a.x - head.x);
+            d[1] = sum[1] + lastRotated[1] - (a.y - head.y);
+            d[2] = sum[2] + lastRotated[2] - (a.z - head.z);
+        }
+    }
+    m.yaw = YawMul(YawMul(cycles, zb), YawConj(za));
+    if (followYaw) {
+        RotateByYaw(YawConj(za), up, d, m.delta);
+    } else {
+        m.delta[0] = d[0];
+        m.delta[1] = d[1];
+        m.delta[2] = d[2];
+    }
+    return m;
+}
+
+// この tick のルートの移動とヨー (主 SkinnedMesh のモデルで測る、ルートの親空間)。ポーズプログラムと同じ層・同じ時計・
+// 同じ重みで、層ごとの動きを重みで混ぜる (移動は線形、ヨーは cos >= 0 にそろえた和を正規化 = nlerp)。
+// 単一クリップは tick の時計 (折り返しは time の周回数)、ブレンドツリーの子は位相 (折り返しは位相の周回数) から
+// 時刻を引く。非ループは端に張り付くので折り返さない。up はルートの親空間の上
+void RootMotionDelta(const SkinnedModel& model, int32_t joint, const float (&up)[3], bool followYaw,
+                     const SkeletalSource* sources, int32_t count, float (&out)[3], Yaw& outYaw)
 {
     constexpr int32_t kQ = SkinnedMeshComponent::kPoseTimeQPerTick;
     out[0] = out[1] = out[2] = 0.0f;
+    float yawC = 0.0f;
+    float yawS = 0.0f;
     for (int32_t i = 0; i < count; ++i) {
         const SkeletalSource& src = sources[i];
         const int32_t clip = model.FindClipByHash(src.clipHash);
@@ -654,15 +759,72 @@ void RootMotionDelta(const SkinnedModel& model, int32_t joint, const SkeletalSou
             continue;
         }
         const StateClock& clock = src.clock;
+        RootLayerMotion m;
         if (src.usesPhase) {
             const int64_t wraps = src.loop ? FloorDiv(int64_t(clock.prevPhase) + clock.phaseStep, int64_t(kPhaseCycle)) : 0;
-            AddRootLayerDelta(model, clip, joint, BlendPhaseToTimeQ(clock.prevPhase, ticks, src.loop),
-                              BlendPhaseToTimeQ(clock.phase, ticks, src.loop), wraps, ticks, src.weightQ, out);
+            m = RootLayerDelta(model, clip, joint, up, followYaw, BlendPhaseToTimeQ(clock.prevPhase, ticks, src.loop),
+                               BlendPhaseToTimeQ(clock.phase, ticks, src.loop), wraps, ticks);
         } else {
             // 単一クリップのステートの時計は主 SkinnedMesh の長さで回っている (ステートの長さと同じ)
             const int64_t wraps = src.loop ? FloorDiv(int64_t(clock.prevTime) + clock.timeStep, ticks) : 0;
-            AddRootLayerDelta(model, clip, joint, clock.prevTime * kQ, clock.time * kQ, wraps, ticks, src.weightQ, out);
+            m = RootLayerDelta(model, clip, joint, up, followYaw, clock.prevTime * kQ, clock.time * kQ, wraps, ticks);
         }
+        const float w = static_cast<float>(src.weightQ) / static_cast<float>(kWeightOne);
+        out[0] += w * m.delta[0];
+        out[1] += w * m.delta[1];
+        out[2] += w * m.delta[2];
+        // 同じ回転の (c, s) と (−c, −s) を混ぜると打ち消し合うので、短い弧 (c >= 0) にそろえてから足す
+        const float sign = m.yaw.c < 0.0f ? -1.0f : 1.0f;
+        yawC += w * sign * m.yaw.c;
+        yawS += w * sign * m.yaw.s;
+    }
+    outYaw = {};
+    if (yawS != 0.0f) {
+        const float len = std::sqrt(yawC * yawC + yawS * yawS);
+        outYaw = { yawC / len, yawS / len };
+    }
+}
+
+// ルートモーションのヨーでエンティティを回すか (= ポーズからひねりを抜くか)。NavMeshAgent が updateRotation で
+// 向きを握っている間は回さない (両方で回すと Nav の旋回と取り合う)。そのときポーズはクリップのひねりを残す
+bool RootYawFollows(World& world, EntityID entity, const AnimatorControllerComponent& c)
+{
+    if (!c.applyRootMotion) {
+        return false;
+    }
+    const NavMeshAgentComponent* agent = world.GetComponent<NavMeshAgentComponent>(entity);
+    return agent == nullptr || !agent->updateRotation;
+}
+
+// ワールドの Y 軸まわりのヨー yaw で entity の LocalTransform.rotation を回す。親があれば、ワールドの上を
+// 親空間へ戻した軸で回す (連鎖の回転の共役)。四元数は回した後に正規化する
+void ApplyRootYaw(World& world, EntityID entity, const Yaw& yaw)
+{
+    LocalTransform* lt = world.GetComponent<LocalTransform>(entity);
+    if (lt == nullptr || yaw.s == 0.0f) {
+        return;
+    }
+    float axis[3] = { 0.0f, 1.0f, 0.0f };
+    float s = yaw.s;
+    if (const EntityID parent = world.GetParent(entity); !parent.IsNull()) {
+        WorldUpInEntitySpace(world, parent, axis);
+        const ChainRotScale f = ComposeChain(world, parent);
+        if (f.s[0] * f.s[1] * f.s[2] < 0.0f) {
+            s = -s; // 鏡映した親の下では、同じワールドの回りが親空間では逆回りになる
+        }
+    }
+    // q' = q_yaw · q (親空間で後から回す)
+    const float ax = s * axis[0], ay = s * axis[1], az = s * axis[2], aw = yaw.c;
+    const float bx = lt->rotation.x, by = lt->rotation.y, bz = lt->rotation.z, bw = lt->rotation.w;
+    float q[4] = {
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+        aw * bw - ax * bx - ay * by - az * bz,
+    };
+    const float len = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+    if (len > 0.0f) {
+        lt->rotation = { q[0] / len, q[1] / len, q[2] / len, q[3] / len };
     }
 }
 
@@ -1611,7 +1773,9 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
 
             // 6. 骨のポーズプログラム (M89b)。進めた後の時刻で書く = 旧経路 (SkinningSystem が進めてから
             //    描画が読む) と同じ「その tick の終わりの姿勢」になる
-            //    applyRootMotion (M89j) ならメッシュごとに自分のモデルのルートジョイントの水平移動を抜かせる
+            //    applyRootMotion (M89j) ならメッシュごとに自分のモデルのルートジョイントの水平移動を抜かせる。
+            //    エンティティがヨーを受け取って回るなら (M89k) ひねりも抜かせる
+            const bool yawFollows = RootYawFollows(world, e, *c);
             SkeletalSource sources[kMaxSkeletalSources];
             int32_t sourceCount = 0;
             if (!driven_.empty()) {
@@ -1622,6 +1786,7 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                         const SkinnedModel* model = models != nullptr ? models->Get(sm->model) : nullptr;
                         WriteSkeletalProgram(*sm, model, sources, sourceCount);
                         sm->poseRootJoint = (c->applyRootMotion && model != nullptr) ? FindRootJoint(*model) : -1;
+                        sm->poseRootYaw = (sm->poseRootJoint >= 0 && yawFollows) ? 1 : 0;
                         if (sm->poseRootJoint >= 0) {
                             WorldUpInEntitySpace(world, m, sm->poseRootUp);
                         } else {
@@ -1640,20 +1805,36 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
 
             // 8. ルートモーション (M89j)。主 SkinnedMesh のモデルのルートジョイントの、この tick の移動を
             //    主 SkinnedMesh の LocalTransform の連鎖でワールドへ回し、水平分 (y を捨てる) を速度にする。
-            //    縦は捨てる (重力・接地は物理と CharacterController の担当)
+            //    縦は捨てる (重力・接地は物理と CharacterController の担当)。
+            //    ヨー (M89k) はルートの親空間の上まわりのひねりを測り、ワールドの Y 軸まわりとして書く。
+            //    移動は回す前の向きでワールドへ出す (この tick の移動は tick の頭の向きで歩いたぶん)
             float deltaWorld[3] = {};
+            Yaw yawWorld;
             const int32_t rootJoint = mainModel != nullptr ? FindRootJoint(*mainModel) : -1;
             if (sourceCount > 0 && rootJoint >= 0) {
+                const EntityID mainEntity = MainSkinnedEntity(driven_);
+                float up[3];
+                WorldUpInEntitySpace(world, mainEntity, up);
                 float deltaLocal[3];
-                RootMotionDelta(*mainModel, rootJoint, sources, sourceCount, deltaLocal);
-                const ChainRotScale f = ComposeChain(world, MainSkinnedEntity(driven_));
+                Yaw yawLocal;
+                RootMotionDelta(*mainModel, rootJoint, up, yawFollows, sources, sourceCount, deltaLocal, yawLocal);
+                const ChainRotScale f = ComposeChain(world, mainEntity);
                 const float scaled[3] = { deltaLocal[0] * f.s[0], deltaLocal[1] * f.s[1], deltaLocal[2] * f.s[2] };
                 RotateByQuat(f.q, scaled, deltaWorld);
                 deltaWorld[1] = 0.0f;
+                // 連鎖の回転は up をワールドの上へ移すので角度はそのまま。鏡映 (拡大の積が負) なら回りが逆になる
+                yawWorld = yawLocal;
+                if (f.s[0] * f.s[1] * f.s[2] < 0.0f) {
+                    yawWorld.s = -yawWorld.s;
+                }
             }
             c->rootMotionVelocity = { deltaWorld[0] * kTicksPerSecond, 0.0f, deltaWorld[2] * kTicksPerSecond };
+            c->rootMotionDeltaRotation = { 0.0f, yawWorld.s, 0.0f, yawWorld.c };
             if (c->applyRootMotion) {
                 ApplyRootMotion(world, e, deltaWorld, c->rootMotionVelocity);
+                if (yawFollows) {
+                    ApplyRootYaw(world, e, yawWorld);
+                }
             }
         }
     });

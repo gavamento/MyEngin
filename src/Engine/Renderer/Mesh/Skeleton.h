@@ -138,6 +138,13 @@ DirectX::XMFLOAT3 SampleJointTranslation(const SkinnedModel& model, int clip, in
 // ルートモーションを測るジョイント = 親を持たない最初のジョイント。無ければ -1。
 // ★FBX は非ジョイントの祖先もジョイントに含める (M48a) ので、そちらでは動かない祖先が選ばれる
 int32_t FindRootJoint(const SkinnedModel& model);
+// ---- ルートモーションのヨー (M89k) ----
+// clip を timeSec でサンプルした jointIndex の回転の、クリップの先頭 (時刻 0) からの変化 R(t)·R(0)⁻¹ のうち、
+// up (ジョイントの親空間の単位ベクトル) まわりのひねり (swing-twist の twist)。返り値は (cos(θ/2), sin(θ/2)) で
+// 四元数 (sin·up, cos) に当たり、cos >= 0 にそろえる (θ は -π..π)。sqrt と四則だけで求める。
+// 回らない (先頭と同じ回転・回転トラックが無い・範囲外) ときは (1, 0) ちょうど
+DirectX::XMFLOAT2 SampleJointYaw(const SkinnedModel& model, int clip, int32_t jointIndex, float timeSec,
+                                 const float (&up)[3]);
 
 // locals (上の出力) から 1 ジョイントのグローバル行列。範囲外 index は恒等
 DirectX::XMMATRIX JointGlobalFromLocals(const SkinnedModel& model,

@@ -351,7 +351,10 @@ void RegisterBuiltinComponents()
         MYE_JP("ルートモーションを適用", MYE_FIELD_TIP(AnimatorControllerComponent, applyRootMotion, Bool,
                                                          "move this entity by the root joint's horizontal motion "
                                                          "(NavMeshAgent with updatePosition off / Rigidbody / "
-                                                         "CharacterController / Transform) and remove it from the pose")),
+                                                         "CharacterController / Transform), turn it by the root's yaw "
+                                                         "(unless a NavMeshAgent has updateRotation on) and remove "
+                                                         "both from the pose")),
+        MYE_JP("ルートモーションの回転", MYE_FIELD_FLAGS(AnimatorControllerComponent, rootMotionDeltaRotation, Quat, kFieldReadOnly)),
     });
     static_assert(AnimatorControllerComponent::kMaxParams == 16, "上の param0..15 の並びを増減に合わせる");
 

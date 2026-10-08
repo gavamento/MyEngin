@@ -297,6 +297,12 @@ bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t dur
 // 駆動する各 SkinnedMesh のプログラムに poseRootJoint / poseRootUp を書いてポーズから水平分を抜かせる。
 // 上はメッシュごとに、そのエンティティの連鎖の回転の共役でワールドの上を戻して求める (Z-up のモデル対策)。
 // 物理より前に走るので、書いた速度・moveInput は同じ tick の物理が使う
+//
+// ヨー (M89k): 同じ層で、ルートジョイントの回転の「クリップの先頭からの変化」のうち上まわりのひねり (SampleJointYaw)
+// の、この tick の変化を測って混ぜ、ワールドの Y 軸まわりとして rootMotionDeltaRotation へ書く。
+// applyRootMotion で NavMeshAgent が updateRotation で向きを握っていなければ、LocalTransform.rotation へ掛け、
+// ポーズからひねりも抜かせ (poseRootYaw)、移動は区間の頭までに回ったぶん戻して今のエンティティの向きで表す
+// (曲がりながら歩くクリップで、回したエンティティの向きと移動の向きが二重に回らないように)
 class AnimatorControllerSystem {
 public:
     void Update(World& world, const ControllerLibrary& controllers, const AnimationLibrary& clips,

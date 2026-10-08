@@ -1471,6 +1471,143 @@ bool RunAnimatorControllerSelfTest()
             check(near3(v, -2.4f, 0.0f, 0.0f, 1e-3f) && near3(p, 0.0f, 0.0f, -0.02f, 1e-5f),
                   "M89j: under a rotated / scaled parent the velocity is in world space and the Transform moves in parent space");
         }
+
+        // ---- (M89k) ルートモーションのヨー ----
+        // 回らないクリップではヨーは恒等ちょうどで、エンティティの回転のビットも変えない
+        {
+            Scene s;
+            World& world = s.GetWorld();
+            Walker w = makeWalkerRig(s, yUp, false, true);
+            AnimatorControllerSystem rmSys;
+            bool identity = true;
+            for (int t = 0; t < 61; ++t) {
+                rmSys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+                const XMFLOAT4 d = w.actor.GetComponent<AnimatorControllerComponent>()->rootMotionDeltaRotation;
+                identity = identity && d.x == 0.0f && d.y == 0.0f && d.z == 0.0f && d.w == 1.0f;
+            }
+            const XMFLOAT4 r = w.actor.GetComponent<LocalTransform>()->rotation;
+            check(identity && r.x == 0.0f && r.y == 0.0f && r.z == 0.0f && r.w == 1.0f,
+                  "M89k: a clip without root rotation reports exactly no yaw and leaves the rotation bits alone");
+        }
+
+        // Turn: 1 周 (60 tick) でルートが上まわりに +90 度回り、モデル空間の前へ 1.2 m 進む (Y-up / Z-up)
+        const auto quatAbout = [](XMFLOAT3 axis, float deg) {
+            const float half = deg * 0.5f * 3.14159265f / 180.0f;
+            return XMFLOAT4{ axis.x * std::sin(half), axis.y * std::sin(half), axis.z * std::sin(half), std::cos(half) };
+        };
+        const auto makeTurner = [&](XMFLOAT3 upAxis, XMFLOAT3 step) {
+            SkinnedModel m = makeWalker(step, { 0.0f, 0.0f, 0.0f });
+            JointTrack& tr = m.clips[0].tracks[0];
+            tr.rTimes = { 0.0f, 0.5f, 1.0f };
+            tr.rVals = { quatAbout(upAxis, 0.0f), quatAbout(upAxis, 45.0f), quatAbout(upAxis, 90.0f) };
+            return m;
+        };
+        const AssetID turnY = res.skinnedModels.Register("selftest_rm_turn_y", makeTurner({ 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, -1.2f }));
+        const AssetID turnZ = res.skinnedModels.Register("selftest_rm_turn_z", makeTurner({ 0.0f, 0.0f, 1.0f }, { 0.0f, 1.2f, 0.0f }));
+        const auto near4 = [](const XMFLOAT4& a, const XMFLOAT4& b, float tol) {
+            // q と -q は同じ回転なので、b の符号を a にそろえてから成分ごとに比べる
+            const float sign = (a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w) < 0.0f ? -1.0f : 1.0f;
+            return std::fabs(a.x - sign * b.x) < tol && std::fabs(a.y - sign * b.y) < tol
+                   && std::fabs(a.z - sign * b.z) < tol && std::fabs(a.w - sign * b.w) < tol;
+        };
+        for (const bool zUpBody : { false, true }) {
+            Scene s;
+            World& world = s.GetWorld();
+            Walker w = makeWalkerRig(s, zUpBody ? turnZ : turnY, zUpBody, true);
+            AnimatorControllerSystem rmSys;
+            SkinningSystem skinning;
+            const char* tag = zUpBody ? " (Z-up body)" : "";
+            bool stepOk = true;
+            XMFLOAT3 halfCycle = {};
+            for (int t = 1; t <= 135; ++t) {
+                rmSys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+                skinning.Update(world, res);
+                const XMFLOAT4 d = w.actor.GetComponent<AnimatorControllerComponent>()->rootMotionDeltaRotation;
+                stepOk = stepOk && near4(d, quatAbout({ 0.0f, 1.0f, 0.0f }, 1.5f), 1e-6f) && d.y > 0.0f;
+                if (t == 30) {
+                    halfCycle = w.actor.GetComponent<LocalTransform>()->position;
+                }
+                if (t == 60) {
+                    check(near4(w.actor.GetComponent<LocalTransform>()->rotation, quatAbout({ 0.0f, 1.0f, 0.0f }, 90.0f), 1e-5f),
+                          (std::string("M89k: one cycle turns the entity +90 degrees about world Y") + tag).c_str());
+                }
+                if (t == 120) {
+                    // 2 周目はエンティティが 90 度回った向き (クリップの -Z = ワールドの -X) へ進む
+                    check(near3(w.actor.GetComponent<LocalTransform>()->position, -1.2f, 0.0f, -1.2f, 1e-3f),
+                          (std::string("M89k: after a wrap the next cycle walks in the turned direction") + tag).c_str());
+                }
+            }
+            check(stepOk, (std::string("M89k: rootMotionDeltaRotation is a steady +1.5 degrees per tick about world Y, "
+                                       "including the wrap ticks") + tag).c_str());
+            // 1 周目の途中は、回りながらでもワールドでの位置がクリップのルートの通り道 (前へ 0.6 m) に一致する
+            check(near3(halfCycle, 0.0f, 0.0f, -0.6f, 1e-4f),
+                  (std::string("M89k: within a cycle the entity follows the clip's root path (no double rotation)") + tag).c_str());
+            // 135 tick = 2 周と 15 tick: ポーズのルートはひねりが抜けて恒等の回転、水平は先頭に戻る
+            const SkinnedMeshComponent* sm = w.body.GetComponent<SkinnedMeshComponent>();
+            std::vector<XMMATRIX> locals;
+            SampleSkinnedLocals(*res.skinnedModels.Get(sm->model), *sm, locals);
+            XMFLOAT4X4 root;
+            XMStoreFloat4x4(&root, locals[0]);
+            const bool unrotated = std::fabs(root._11 - 1.0f) < 1e-5f && std::fabs(root._22 - 1.0f) < 1e-5f
+                                   && std::fabs(root._33 - 1.0f) < 1e-5f;
+            check(sm->poseRootYaw == 1 && unrotated && near3({ root._41, root._42, root._43 }, 0.0f, 0.0f, 0.0f, 1e-5f),
+                  (std::string("M89k: the pose has the root's yaw removed and stays at the clip start") + tag).c_str());
+        }
+
+        // NavMeshAgent が updateRotation で向きを握っている間は回さず、ポーズのひねりも残す (ヨーの値は出す)。
+        // updateRotation を切れば updatePosition 中でもヨーだけ受け取る
+        {
+            Scene s;
+            World& world = s.GetWorld();
+            Walker held = makeWalkerRig(s, turnY, false, true);
+            Walker free = makeWalkerRig(s, turnY, false, true);
+            held.actor.AddComponent<CharacterControllerComponent>();
+            held.actor.AddComponent<NavMeshAgentComponent>()->updatePosition = false;
+            free.actor.AddComponent<CharacterControllerComponent>();
+            free.actor.AddComponent<NavMeshAgentComponent>()->updateRotation = false;
+            world.ApplyStructuralChanges();
+            AnimatorControllerSystem rmSys;
+            for (int t = 0; t < 30; ++t) {
+                rmSys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+            }
+            const XMFLOAT4 r = held.actor.GetComponent<LocalTransform>()->rotation;
+            check(r.x == 0.0f && r.y == 0.0f && r.z == 0.0f && r.w == 1.0f
+                      && held.body.GetComponent<SkinnedMeshComponent>()->poseRootYaw == 0
+                      && near4(held.actor.GetComponent<AnimatorControllerComponent>()->rootMotionDeltaRotation,
+                               quatAbout({ 0.0f, 1.0f, 0.0f }, 1.5f), 1e-6f),
+                  "M89k: a NavMeshAgent with updateRotation keeps the facing; the pose keeps the turn and the yaw is still reported");
+            check(near4(free.actor.GetComponent<LocalTransform>()->rotation, quatAbout({ 0.0f, 1.0f, 0.0f }, 45.0f), 1e-5f)
+                      && free.body.GetComponent<SkinnedMeshComponent>()->poseRootYaw == 1,
+                  "M89k: with updateRotation off the entity turns by the yaw even while Nav holds the position");
+        }
+
+        // 親が傾いていても、ワールドの Y 軸まわりに回る (ワールドの上を親空間へ戻した軸で回す)
+        {
+            Scene s;
+            World& world = s.GetWorld();
+            GameObject parent = s.CreateGameObjectTracked("Parent");
+            // 体は X 軸 -90 度、親は X 軸 +90 度: 体のモデル空間の上 (Y) はワールドの上のまま、
+            // コントローラのエンティティの空間ではワールドの上が別の軸になる
+            Walker w = makeWalkerRig(s, turnY, true, true);
+            w.actor.SetParent(parent);
+            world.ApplyStructuralChanges();
+            const float h = std::sqrt(0.5f);
+            parent.GetComponent<LocalTransform>()->rotation = { h, 0.0f, 0.0f, h };
+            AnimatorControllerSystem rmSys;
+            for (int t = 0; t < 60; ++t) {
+                rmSys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+            }
+            // ワールドの回転 = 親 · 自分。ワールドの Y 90 度 · 親 になっているはず
+            const XMVECTOR parentQ = XMLoadFloat4(&parent.GetComponent<LocalTransform>()->rotation);
+            const XMVECTOR selfQ = XMLoadFloat4(&w.actor.GetComponent<LocalTransform>()->rotation);
+            XMFLOAT4 worldQ;
+            XMStoreFloat4(&worldQ, XMQuaternionMultiply(selfQ, parentQ));
+            const XMFLOAT4 yaw = quatAbout({ 0.0f, 1.0f, 0.0f }, 90.0f);
+            XMFLOAT4 expected;
+            XMStoreFloat4(&expected, XMQuaternionMultiply(parentQ, XMLoadFloat4(&yaw)));
+            check(near4(worldQ, expected, 1e-5f),
+                  "M89k: under a rotated parent the entity turns about world Y (the axis is taken back into parent space)");
+        }
     }
 
     if (failCount == 0) {

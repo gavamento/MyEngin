@@ -1,6 +1,7 @@
 #include "Engine/Renderer/Mesh/Skeleton.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "Engine/Core/Util/Hash.h"
 
@@ -249,6 +250,35 @@ int32_t FindRootJoint(const SkinnedModel& model)
         }
     }
     return -1;
+}
+
+XMFLOAT2 SampleJointYaw(const SkinnedModel& model, int clip, int32_t jointIndex, float timeSec, const float (&up)[3])
+{
+    if (jointIndex < 0 || static_cast<size_t>(jointIndex) >= model.joints.size()) {
+        return { 1.0f, 0.0f };
+    }
+    const size_t j = static_cast<size_t>(jointIndex);
+    const SkeletalClip* c = ClipOrNull(model, clip);
+    if (c == nullptr || j >= c->tracks.size()) {
+        return { 1.0f, 0.0f };
+    }
+    const JointTrack& tr = c->tracks[j];
+    const XMFLOAT4& bindR = model.joints[j].bindR;
+    const XMFLOAT4 a = SampleQuat(tr.rTimes, tr.rVals, timeSec, bindR);
+    const XMFLOAT4 h = SampleQuat(tr.rTimes, tr.rVals, 0.0f, bindR);
+    // q = a · conj(h) (Hamilton 積)。虚部は「同じ 2 積の差」の組で括る: a == h なら各組が 0 ちょうどになる
+    const float qw = a.w * h.w + a.x * h.x + a.y * h.y + a.z * h.z;
+    const float qx = (a.x * h.w - a.w * h.x) + (a.z * h.y - a.y * h.z);
+    const float qy = (a.y * h.w - a.w * h.y) + (a.x * h.z - a.z * h.x);
+    const float qz = (a.z * h.w - a.w * h.z) + (a.y * h.x - a.x * h.y);
+    const float along = qx * up[0] + qy * up[1] + qz * up[2];
+    if (along == 0.0f) {
+        return { 1.0f, 0.0f };
+    }
+    // twist = (along·up, qw) を正規化。up に垂直な 180 度の振りだけのときは along == 0 で上で返っている
+    const float len = std::sqrt(qw * qw + along * along);
+    const float sign = qw < 0.0f ? -1.0f : 1.0f;
+    return { sign * qw / len, sign * along / len };
 }
 
 // グローバル = local[j] * local[parent] * ... (親チェーンを上へ、順序非依存)
