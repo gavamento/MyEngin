@@ -100,6 +100,7 @@
     <ClCompile Include="..\src\Editor\Windows\Animation\AnimationPreviewWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Animation\AnimationWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Animation\ClipEventEdit.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Animation\ControllerStateEdit.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Asset\SearchWindow.cpp" />
@@ -186,6 +187,7 @@
     <ClInclude Include="..\src\Editor\Windows\Animation\AnimationPreviewWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Animation\AnimationWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Animation\ClipEventEdit.h" />
     <ClInclude Include="..\src\Editor\Windows\Animation\ControllerStateEdit.h" />
     <ClInclude Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Asset\SearchWindow.h" />

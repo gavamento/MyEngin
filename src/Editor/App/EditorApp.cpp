@@ -347,7 +347,8 @@ void EditorApp::OnStart(EngineContext& ctx)
         hooks.freshBlockers = [this, &ctx]() {
             auto in = BuildGateInputs(ctx);
             in.animationDirty = animation_.HasUnsavedChanges();
-            in.controllerDirty = animatorController_.HasUnsavedChanges();
+            // プレビュー窓もイベントを書き換える (M89o)
+            in.controllerDirty = animatorController_.HasUnsavedChanges() || animPreview_.HasUnsavedChanges();
             in.mixerDirty = audioMixer_.HasUnsavedChanges();
             in.behaviorTreeDirty = behaviorTree_.HasUnsavedChanges();
             in.projectSettingsDirty = projectSettings_.HasUnsavedChanges();
@@ -1923,7 +1924,7 @@ GateInputs EditorApp::BuildGateInputs(EngineContext& ctx)
     const DocumentDirty& dirty = gitTx_.CachedDirty([this]() {
         DocumentDirty d;
         d.animation = animation_.HasUnsavedChanges();
-        d.controller = animatorController_.HasUnsavedChanges();
+        d.controller = animatorController_.HasUnsavedChanges() || animPreview_.HasUnsavedChanges(); // M89o
         d.mixer = audioMixer_.HasUnsavedChanges();
         d.behaviorTree = behaviorTree_.HasUnsavedChanges();
         d.projectSettings = projectSettings_.HasUnsavedChanges();

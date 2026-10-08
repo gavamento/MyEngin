@@ -249,6 +249,9 @@
     <ClCompile Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.cpp">
       <Filter>Windows\Animation</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Animation\ClipEventEdit.cpp">
+      <Filter>Windows\Animation</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Animation\ControllerStateEdit.cpp">
       <Filter>Windows\Animation</Filter>
     </ClCompile>
@@ -505,6 +508,9 @@
       <Filter>Windows\Animation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.h">
+      <Filter>Windows\Animation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Animation\ClipEventEdit.h">
       <Filter>Windows\Animation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Animation\ControllerStateEdit.h">
