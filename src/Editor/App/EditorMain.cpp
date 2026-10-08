@@ -89,6 +89,7 @@
 #include "Editor/Tools/NavEditorSelfTest.h"
 #include "Editor/Tools/PatrolRouteEditSelfTest.h"
 #include "Editor/SelfTest/BehaviorTreeEditorSelfTest.h"
+#include "Editor/SelfTest/AnimatorControllerEditSelfTest.h"
 #include "Engine/Platform/CrashHandler.h"
 #include "Engine/Platform/InputActionsSelfTest.h"
 #include "Engine/Platform/PathUtil.h"
@@ -605,6 +606,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunBehaviorTreeSelfTest();              // M85: ビヘイビアツリー (アセット・Composite・BT 節)
         ok &= mye::RunPatrolRouteEditSelfTest();           // M85g: 巡回ルートの点の編集と Undo
         ok &= mye::RunBehaviorTreeEditorSelfTest();        // M85h: BT 窓のモデル層 (追加・接続・削除・保存)
+        ok &= mye::RunAnimatorControllerEditSelfTest();    // M89g: コントローラ窓の骨の駆動の編集
         ok &= mye::RunDeviceLostRescueSelfTest();          // M88a: デバイス消失時の退避保存
         ok &= mye::RunDeviceRecoverySelfTest();            // M88b: 復旧の連続消失制限と旧デバイス参照数ゲート
         if (!tempEc) {

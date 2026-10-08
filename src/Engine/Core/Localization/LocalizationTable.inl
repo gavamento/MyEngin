@@ -947,7 +947,7 @@ MYE_STR(Insp_ReverbSend,      "reverb send",      "リバーブ送り")
 MYE_STR(Insp_Revert,          "Revert",           "戻す")
 
 // ---- アニメーター: ノード/遷移の手書きラベル (M47b) ----
-MYE_STR(Anim_Clip,            "clip",         "クリップ")
+MYE_STR(Anim_Clip,            "property clip", "プロパティクリップ")
 MYE_STR(Anim_Name,            "name",         "名前")
 MYE_STR(Anim_Speed,           "speed",        "速度")
 MYE_STR(Anim_Loop,            "loop",         "ループ")
@@ -958,6 +958,24 @@ MYE_STR(Anim_HasExitTime,     "hasExitTime",  "終了待ち")
 MYE_STR(Anim_TriggerCond,     "(true while set)", "(立っていれば真)")
 MYE_STR(Anim_Val,             "val",          "値")
 MYE_STR(Anim_TransitionRow,   "-> %s (%d/%d)", "-> %s (%d/%d)")
+
+// ---- アニメーター: 骨の駆動とポーズの層 (M89g) ----
+MYE_STR(Anim_SkelKind,        "skeleton",          "骨の駆動")
+MYE_STR(Anim_SkelNone,        "none",              "なし")
+MYE_STR(Anim_SkelClip,        "single clip",       "クリップ 1 本")
+MYE_STR(Anim_SkelBlend1D,     "1D blend",          "1D ブレンド")
+MYE_STR(Anim_SkelBlend2D,     "2D blend",          "2D ブレンド")
+MYE_STR(Anim_SkelClipName,    "bone clip",         "骨クリップ")
+MYE_STR(Anim_NotInModel,      "(not in model)",    "(モデルに無い)")
+MYE_STR(Anim_NoSkinnedModel,  "(no skinned model under this entity)", "(この下に骨付きモデルがありません)")
+MYE_STR(Anim_BlendParam,      "param",             "パラメータ")
+MYE_STR(Anim_BlendParamX,     "x param",           "x のパラメータ")
+MYE_STR(Anim_BlendParamY,     "y param",           "y のパラメータ")
+MYE_STR(Anim_BlendChildren,   "children (clip / position / weight)", "子 (クリップ / 位置 / 重み)")
+MYE_STR(Anim_AddBlendChild,   "+ child",           "+ 子")
+MYE_STR(Anim_PoseLayers,      "Pose layers (live)", "ポーズの層 (実行中)")
+MYE_STR(Anim_LegacyPose,      "(not driven by the controller)", "(コントローラの駆動なし)")
+MYE_STR(Anim_Phase,           "phase",             "位相")
 
 // ---- アニメーション: 補足 (M47b) ----
 MYE_STR(Clip_TipPreview,      "Preview: scrub to see the pose (restored on exit).\n"

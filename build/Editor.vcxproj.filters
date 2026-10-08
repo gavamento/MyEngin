@@ -123,6 +123,9 @@
     <ClCompile Include="..\src\Editor\Scene\PlayModeController.cpp">
       <Filter>Scene</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\AnimatorControllerEditSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.cpp">
       <Filter>SelfTest</Filter>
     </ClCompile>
@@ -241,6 +244,9 @@
       <Filter>Windows\Animation</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.cpp">
+      <Filter>Windows\Animation</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Animation\ControllerStateEdit.cpp">
       <Filter>Windows\Animation</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.cpp">
@@ -369,6 +375,9 @@
     <ClInclude Include="..\src\Editor\Scene\Selection.h">
       <Filter>Scene</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\AnimatorControllerEditSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.h">
       <Filter>SelfTest</Filter>
     </ClInclude>
@@ -490,6 +499,9 @@
       <Filter>Windows\Animation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.h">
+      <Filter>Windows\Animation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Animation\ControllerStateEdit.h">
       <Filter>Windows\Animation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.h">

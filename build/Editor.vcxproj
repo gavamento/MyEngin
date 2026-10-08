@@ -58,6 +58,7 @@
     <ClCompile Include="..\src\Editor\Scene\ComponentClipboard.cpp" />
     <ClCompile Include="..\src\Editor\Scene\ComponentDependencies.cpp" />
     <ClCompile Include="..\src\Editor\Scene\PlayModeController.cpp" />
+    <ClCompile Include="..\src\Editor\SelfTest\AnimatorControllerEditSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\DecalSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\DeviceLostRescueSelfTest.cpp" />
@@ -98,6 +99,7 @@
     <ClCompile Include="..\src\Editor\Windows\AI\BtDisplayNames.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Animation\AnimationWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Animation\ControllerStateEdit.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Asset\SearchWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Audio\AudioMixerWindow.cpp" />
@@ -140,6 +142,7 @@
     <ClInclude Include="..\src\Editor\Scene\ComponentDependencies.h" />
     <ClInclude Include="..\src\Editor\Scene\PlayModeController.h" />
     <ClInclude Include="..\src\Editor\Scene\Selection.h" />
+    <ClInclude Include="..\src\Editor\SelfTest\AnimatorControllerEditSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\DecalSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\DeviceLostRescueSelfTest.h" />
@@ -181,6 +184,7 @@
     <ClInclude Include="..\src\Editor\Windows\AI\BtDisplayNames.h" />
     <ClInclude Include="..\src\Editor\Windows\Animation\AnimationWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Animation\ControllerStateEdit.h" />
     <ClInclude Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Asset\SearchWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Audio\AudioMixerWindow.h" />
