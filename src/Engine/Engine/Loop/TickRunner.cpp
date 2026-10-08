@@ -433,13 +433,43 @@ void RunOneTick(TickServices& ts)
         // LocalTransform を駆動するので hash 対象、決定論 (整数 tick・整数比ブレンド)
         // M89b: 骨クリップのステートは SkinnedMesh へポーズプログラムを書く (SkinningSystem より前)
         controllerSystem.Update(scene.GetWorld(), controllerLibrary, animLibrary, &resources.skinnedModels);
-        // M89h: アニメイベントはコントローラのエンティティ自身宛ての BT イベントにする (次の tick の冒頭で配られる)。
-        // 発火順 (エンティティの走査順 → 層 → 通った順) がそのまま送信順になる
-        if (ts.behaviorTree != nullptr) {
-            const float noVec[3] = {};
-            for (const AnimEventFired& ev : controllerSystem.FiredEvents()) {
-                ts.behaviorTree->SendEvent(ctx.tickIndex, ev.entity, ev.entity, ev.nameHash, noVec, ev.value,
-                                           ev.intValue);
+        // M89h / M89i: アニメイベントを kind ごとの受け手へ配る。発火順 (エンティティの走査順 → 層 → 通った順)
+        // がそのまま各キューへ積む順になる
+        for (const AnimEventFired& ev : controllerSystem.FiredEvents()) {
+            const ControllerClipEvent& def = *ev.def;
+            switch (ev.kind) {
+            case ClipEventKind::Script:
+                // コントローラのエンティティ自身宛ての BT イベント (次の tick の冒頭で配られる)。vec は発火位置。
+                // BT の無い構成 (World 単体の selftest) では配らない
+                if (ts.behaviorTree != nullptr) {
+                    ts.behaviorTree->SendEvent(ctx.tickIndex, ev.entity, ev.entity, ev.nameHash, ev.pos, ev.value,
+                                               ev.intValue);
+                }
+                break;
+            case ClipEventKind::Sound: {
+                // PlaySoundAt と同じ出力レーン (ハッシュ後に drain)。★ReserveAudioHandle は使わない — スクリプトの
+                // 再生ハンドルの採番列を変えないため。handle 0 = タグ無し (後から止める口が無いので要らない)
+                ScriptAudioEvent a;
+                a.op = ScriptAudioOp::PlayAtPoint;
+                a.key = def.assetHash;
+                a.pos = { ev.pos[0], ev.pos[1], ev.pos[2] };
+                a.a = def.volume;
+                a.b = def.pitch;
+                audioQueue.push_back(a);
+                break;
+            }
+            case ClipEventKind::Effect: {
+                // PlayEffect と同じ tick 末の生成 (sim 状態。親なしのワールド位置)
+                EffectSpawnRequest r;
+                r.prefabKey = def.asset;
+                r.pos = { ev.pos[0], ev.pos[1], ev.pos[2] };
+                effectQueue.push_back(std::move(r));
+                break;
+            }
+            case ClipEventKind::Noise:
+                // 聞き手の保留欄に書かれ、次の tick の知覚のフェーズで消費される
+                PerceptionReportNoise(scene.GetWorld(), ev.pos, def.loudness, def.range, ev.entity);
+                break;
             }
         }
         // スケルタルアニメの時刻を進める (M18)。ポーズは非ハッシュなのでリプレイ不変

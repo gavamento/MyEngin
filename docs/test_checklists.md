@@ -534,3 +534,11 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 
 - [ ] `"clipEvents":{"Walk":[{"tick":10,"name":"Step"}]}` を書いたコントローラをキャラに付け、同じキャラの BT に `eventName` = `Step` の待ちを置いて Play すると、Walk の 1 周ごとに 1 回だけ反応する
 - [ ] Animator Controller 窓で開いて保存しても `"clipEvents"` が消えない
+
+### エンジンが直接処理するアニメイベント (M89i)
+
+- [ ] `{"tick":10,"kind":"sound","sound":"<既存の音のキー>","joint":"<足のジョイント名>"}` で、Walk の 1 周ごとに足の位置から音が鳴る (左右に定位が動く)
+- [ ] `{"kind":"effect","prefab":"<既存のエフェクトのプレハブ>","joint":"<足>"}` で、足元にエフェクトが出る (キャラが歩いても 1 tick 遅れ程度で付いてくる)
+- [ ] `{"kind":"noise","loudness":1,"range":10}` を付けたキャラの近くに hearingMode = Distance の AIPerception を持つ見張りを置くと、足音で気付く
+- [ ] 音のキーを綴り間違えると、無音ではなく `[audio] unknown sound key` の警告が出る
+- [ ] 窓で開いて保存しても `kind` と種類別の欄 (`sound` / `prefab` / `loudness` など) と `joint` が残る

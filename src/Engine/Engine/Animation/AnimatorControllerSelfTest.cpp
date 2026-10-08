@@ -1090,7 +1090,7 @@ bool RunAnimatorControllerSelfTest()
         {
             const json j = json::parse(R"({"states":[{"name":"Idle","skel":{"clip":"Idle"}}],
                 "clipEvents":{"Idle":[{"tick":12,"name":"FootL","minWeight":0.5,"value":2.5,"int":7},
-                                      {"tick":3,"name":"Boom","kind":"sound"}]}})");
+                                      {"tick":3,"name":"Boom","kind":"bogus"}]}})");
             ControllerAsset a;
             const bool ok = ControllerLibrary::FromJson(j, a);
             check(ok && a.clipEvents.size() == 1 && a.clipEvents[0].clip == "Idle"
@@ -1241,6 +1241,88 @@ bool RunAnimatorControllerSelfTest()
         AnimatorPlay(world, actor.Id(), 0, 0, ctrlLib);
         esys.Update(world, ctrlLib, animLib, nullptr);
         check(esys.FiredEvents().empty(), "M89h: no skinned model library = no events");
+    }
+
+    // ---- (M89i) エンジンが直接処理するイベント: 種類別の欄の JSON / 発火位置 (ジョイント × WorldMatrix) ----
+    {
+        {
+            const json j = json::parse(R"({"states":[{"name":"Idle","skel":{"clip":"Idle"}}],
+                "clipEvents":{"Idle":[{"tick":1,"name":"Step","kind":"sound","sound":"footstep","volume":0.5,"pitch":1.25,"joint":"Foot"},
+                                      {"tick":2,"kind":"effect","prefab":"fx/dust"},
+                                      {"tick":3,"kind":"noise","loudness":2.0,"range":15.0,"joint":"Foot"},
+                                      {"tick":4,"name":"Hit"}]}})");
+            ControllerAsset a;
+            const bool ok = ControllerLibrary::FromJson(j, a) && a.clipEvents.size() == 1
+                            && a.clipEvents[0].events.size() == 4;
+            const auto matches = [](const ControllerAsset& c) {
+                const std::vector<ControllerClipEvent>& e = c.clipEvents[0].events;
+                return e[0].kind == ClipEventKind::Sound && e[0].asset == "footstep"
+                       && e[0].assetHash == HashStr("footstep") && e[0].volume == 0.5f && e[0].pitch == 1.25f
+                       && e[0].joint == "Foot" && e[1].kind == ClipEventKind::Effect && e[1].asset == "fx/dust"
+                       && e[1].joint.empty() && e[2].kind == ClipEventKind::Noise && e[2].loudness == 2.0f
+                       && e[2].range == 15.0f && e[3].kind == ClipEventKind::Script;
+            };
+            check(ok && matches(a), "M89i: sound / effect / noise events load their own fields (kind defaults to script)");
+            ControllerAsset back;
+            check(ok && ControllerLibrary::FromJson(ControllerLibrary::ToJson(a), back) && back.clipEvents.size() == 1
+                      && back.clipEvents[0].events.size() == 4 && matches(back),
+                  "M89i: kinds and their fields round-trip");
+        }
+
+        // ルート (原点) と子の Foot (ルートから +0.5 X) の 2 関節。トラックが空なのでバインドポーズ
+        SkinnedModel twoJoints = MakeNamedClipModel({ { "Idle", 1.0f } });
+        twoJoints.joints.resize(2);
+        twoJoints.joints[0].name = "Root";
+        twoJoints.joints[1].name = "Foot";
+        twoJoints.joints[1].parent = 0;
+        twoJoints.joints[1].bindT = { 0.5f, 0.0f, 0.0f };
+        twoJoints.clips[0].tracks.resize(2);
+        RenderResources res;
+        const AssetID model = res.skinnedModels.Register("selftest_event_pos", std::move(twoJoints));
+        ControllerAsset ctrl;
+        ctrl.states.push_back({ "Idle", "", 0, 1, 1, "Idle", HashStr("Idle") });
+        const auto event = [](ClipEventKind kind, const char* joint, const char* asset) {
+            ControllerClipEvent e;
+            e.kind = kind;
+            e.tick = 0;
+            e.joint = joint;
+            e.asset = asset;
+            e.assetHash = HashStr(asset);
+            return e;
+        };
+        ctrl.clipEvents.push_back({ "Idle", HashStr("Idle"),
+                                    { event(ClipEventKind::Sound, "Foot", "footstep"),
+                                      event(ClipEventKind::Noise, "", ""),
+                                      event(ClipEventKind::Effect, "NoSuchJoint", "fx/dust") } });
+        const uint64_t posCtrlHash = ctrlLib.Register(L"events_pos.controller.json", ctrl);
+
+        Scene s;
+        World& world = s.GetWorld();
+        GameObject actor = s.CreateGameObjectTracked("Actor");
+        actor.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ posCtrlHash };
+        actor.AddComponent<SkinnedMeshComponent>()->model = model;
+        if (actor.GetComponent<WorldMatrixComponent>() == nullptr) {
+            actor.AddComponent<WorldMatrixComponent>();
+        }
+        world.ApplyStructuralChanges();
+        // TransformSystem を回さずに WorldMatrix を直接置く (= 前 tick の確定値)。平行移動 (10, 2, -3)
+        WorldMatrixComponent* wm = actor.GetComponent<WorldMatrixComponent>();
+        wm->value._41 = 10.0f;
+        wm->value._42 = 2.0f;
+        wm->value._43 = -3.0f;
+        AnimatorControllerSystem esys;
+        esys.Update(world, ctrlLib, animLib, &res.skinnedModels); // 入った tick = 位置 0 が 3 件とも発火
+        const std::vector<AnimEventFired>& f = esys.FiredEvents();
+        const auto at = [](const AnimEventFired& e, float x, float y, float z) {
+            return std::fabs(e.pos[0] - x) < 1e-5f && std::fabs(e.pos[1] - y) < 1e-5f && std::fabs(e.pos[2] - z) < 1e-5f;
+        };
+        check(f.size() == 3 && f[0].kind == ClipEventKind::Sound && f[1].kind == ClipEventKind::Noise
+                  && f[2].kind == ClipEventKind::Effect && f[0].def != nullptr && f[0].def->assetHash == HashStr("footstep"),
+              "M89i: fired events carry their kind and definition, in declaration order at the same position");
+        check(f.size() == 3 && at(f[0], 10.5f, 2.0f, -3.0f),
+              "M89i: an event with a joint fires at jointGlobal x the skinned entity's WorldMatrix");
+        check(f.size() == 3 && at(f[1], 10.0f, 2.0f, -3.0f) && at(f[2], 10.0f, 2.0f, -3.0f),
+              "M89i: no joint / an unknown joint fires at the controller entity's position");
     }
 
     if (failCount == 0) {

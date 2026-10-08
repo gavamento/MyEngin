@@ -91,17 +91,33 @@ struct ControllerTransition {
     std::vector<ControllerCondition> conditions; // 全て満たせば遷移 (AND)
 };
 
+// アニメイベントの受け手 (M89i、JSON の "kind")。Script はスクリプト/BT が受け、残りはエンジンが直接処理する
+enum class ClipEventKind : int32_t {
+    Script = 0, // "script": コントローラのエンティティ自身宛ての BT イベント (BehaviorTreeSystem::SendEvent)
+    Sound,      // "sound": asset の音を位置で鳴らす (PlaySoundAt と同じ出力レーン)
+    Effect,     // "effect": asset のプレハブを位置に生成する (PlayEffect と同じ tick 末の生成 = sim 状態)
+    Noise,      // "noise": 位置で知覚の音を出す (PerceptionReportNoise。出した者はコントローラのエンティティ)
+};
+
 // アニメイベント 1 件 (M89h、.controller.json の "clipEvents":{"Walk":[{"tick":12,"name":"FootL",...}]})。
 // 骨クリップの中の位置に名前を付け、時計がそこを通った tick に発火する (規則は ClipEventPassDistance)。
-// 発火したイベントは BehaviorTreeSystem::SendEvent でコントローラのエンティティ自身へ送る
-// (BtEventCount / BtGetEvent と、BB の eventName で受ける)
+// 受け手は kind で決まる。Script は BtEventCount / BtGetEvent と、BB の eventName で受ける
 struct ControllerClipEvent {
     std::string name;
     uint64_t nameHash = 0;  // HashStr(name) = BtEventNameHash
     int32_t tick = 0;       // クリップの先頭からの位置 (tick)。0..クリップの長さ。外れた位置は発火しない
     float minWeight = 0.0f; // 層の重み (0..1) がこれ未満の tick は発火しない (遷移中・ブレンド中の絞り)
-    float value = 0.0f;     // BtEvent::value へそのまま渡す
-    int32_t intValue = 0;   // BtEvent::intValue へそのまま渡す
+    float value = 0.0f;     // Script: BtEvent::value へそのまま渡す
+    int32_t intValue = 0;   // Script: BtEvent::intValue へそのまま渡す
+    // ---- M89i ----
+    ClipEventKind kind = ClipEventKind::Script;
+    std::string joint;      // 位置を取るジョイントの名前 (主 SkinnedMesh のモデルで引く)。空・見つからなければエンティティの位置
+    std::string asset;      // Sound: 音のキー (JSON の "sound") / Effect: プレハブのキー (JSON の "prefab")
+    uint64_t assetHash = 0; // HashStr(asset) (Sound の ScriptAudioEvent::key)
+    float volume = 1.0f;    // Sound: 音量 (アセット既定への乗算)
+    float pitch = 1.0f;     // Sound: ピッチ (同上)
+    float loudness = 1.0f;  // Noise: 音の大きさ
+    float range = 10.0f;    // Noise: 届く距離 (m)
 };
 
 // 骨クリップ 1 本ぶんのイベント。クリップは名前で持つ (モデルごとに index が違ってよい。skelClip と同じ)
@@ -227,6 +243,14 @@ struct AnimEventFired {
     uint64_t nameHash = 0;
     float value = 0.0f;
     int32_t intValue = 0;
+    // ---- M89i ----
+    ClipEventKind kind = ClipEventKind::Script;
+    float pos[3] = {}; // 発火位置 (ワールド)。joint があれば JointGlobalFromLocals × 主 SkinnedMesh の WorldMatrix、
+                       // 無ければコントローラのエンティティの WorldMatrix の平行移動。WorldMatrix は TransformSystem の
+                       // 前に読むので前 tick の確定値 (1 tick 遅れ)。ポーズは今 tick に書いたプログラム
+    // 定義 (asset / volume などの種類別の欄)。ControllerLibrary の中を指すので、同じ tick のうちに読むこと
+    // (コントローラの差し替え・再読み込みの後は使えない)
+    const ControllerClipEvent* def = nullptr;
 };
 
 // entity の Animator を stateIndex のステートへ強制的に移す (BT の PlayAnimation 用)。
@@ -264,6 +288,7 @@ bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t dur
 // - 入った tick: 遷移先は遷移を始めて最初の進み、今のステートは AnimatorPlay の即切り替えと最初の tick (stateEntered)
 // - 長さは主 SkinnedMesh のモデルで引く。モデルが無ければ発火しない。非アクティブの間は時計と同じく止まる
 // - 順序はエンティティの走査順 → 層 → 通った順 (同じ位置ならイベントの並び順)
+// - 位置 (M89i) はプログラムを書いた後に求める (AnimEventFired::pos)。受け手への振り分けは呼び出し側 (TickRunner)
 class AnimatorControllerSystem {
 public:
     void Update(World& world, const ControllerLibrary& controllers, const AnimationLibrary& clips,

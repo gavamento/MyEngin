@@ -130,3 +130,19 @@ BT / ABI からは骨クリップを切り替えられなかった。M89 では�
 - 却下: 時刻 0 から進む tick を常に「入った tick」とみなす (状態を増やさない)。ループが 0 ちょうどへ折り返す速さ (speed 1 なら毎周) で
   位置 0 のイベントが 2 回鳴る。
 - 却下: 区間を `[old, new)` にして入った tick を自然に含める。発火がポーズ (進めた後の時刻) より 1 tick 遅れ、非ループの終端を別扱いにする必要がある。
+
+## 決定 10: エンジンが直接処理するイベントは既存の出口へ積み、位置は「ジョイント × 前 tick の WorldMatrix」で求める (M89i)
+
+- イベントに `kind` (`script` / `sound` / `effect` / `noise`) を持たせる。省略は `script` (M89h の定義はそのまま読める)。未知の kind は警告して読まない。
+  種類別の欄は `sound` (+ `volume` / `pitch`)、`prefab`、`loudness` / `range`。どの種類も `joint` (主 SkinnedMesh のモデルのジョイント名) で位置を指定できる。
+- 位置はプログラムを書いた後 (Update の最後) に、`JointGlobalFromLocals(今 tick のプログラムのポーズ) × 主 SkinnedMesh の WorldMatrix` の平行移動で求める
+  (部位ソケットと同じ式)。`joint` が空・見つからなければコントローラのエンティティの WorldMatrix の平行移動。WorldMatrix は TransformSystem の前に読むので
+  前 tick の確定値 (エンティティの移動ぶん 1 tick 遅れる。足音・土煙の用途では許容する)。
+- 振り分けは TickRunner が `FiredEvents()` の順に行う。AnimatorController は BT・オーディオ・知覚を知らない (決定 9 と同じ)。
+  - `script`: BT イベント。`vec` に発火位置を入れる (M89h では 0 だった)。
+  - `sound`: `ScriptAudioOp::PlayAtPoint` を出力レーン (ハッシュ後に drain) へ。`ReserveAudioHandle` は使わず handle 0 (= タグ無し)。
+    スクリプトの再生ハンドルの採番列を変えないため。止める口は要らない (ワンショット)。
+  - `effect`: `EffectSpawnRequest` (親なし、ワールド位置) を tick 末の生成へ。sim 状態なのでハッシュに入る。
+  - `noise`: `PerceptionReportNoise` を直接呼ぶ (出した者 = コントローラのエンティティ)。聞き手の保留欄に書かれ、次の tick の知覚で消費される。
+- 却下: ポーズを TransformSystem の後で引き直して今 tick の WorldMatrix を使う。発火 (フェーズ 3.5) と配る場所を分けることになり、BT のイベントだけ別の tick に積む順序の問題が出る。
+- 却下: 種類別の欄を `value` / `intValue` に詰め込む。意味がアセットごとに変わり、読めないデータになる。

@@ -35,6 +35,31 @@ std::string NameFromPath(const std::wstring& path)
     return name;
 }
 
+// アニメイベントの kind (M89i)
+const char* ClipEventKindToStr(ClipEventKind kind)
+{
+    switch (kind) {
+    case ClipEventKind::Script: return "script";
+    case ClipEventKind::Sound: return "sound";
+    case ClipEventKind::Effect: return "effect";
+    case ClipEventKind::Noise: return "noise";
+    }
+    return "script";
+}
+
+bool ClipEventKindFromStr(const std::string& s, ClipEventKind& out)
+{
+    const ClipEventKind kinds[] = { ClipEventKind::Script, ClipEventKind::Sound, ClipEventKind::Effect,
+                                    ClipEventKind::Noise };
+    for (ClipEventKind k : kinds) {
+        if (s == ClipEventKindToStr(k)) {
+            out = k;
+            return true;
+        }
+    }
+    return false;
+}
+
 const char* OpToStr(CondOp op)
 {
     switch (op) {
@@ -657,12 +682,33 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
             json& list = clipEvents[ce.clip];
             list = json::array();
             for (const ControllerClipEvent& ev : ce.events) {
-                list.push_back({ { "tick", ev.tick },
-                                 { "name", ev.name },
-                                 { "kind", "script" },
-                                 { "minWeight", ev.minWeight },
-                                 { "value", ev.value },
-                                 { "int", ev.intValue } });
+                // 種類ごとに使う欄だけを書く (M89i)
+                json e = { { "tick", ev.tick },
+                           { "name", ev.name },
+                           { "kind", ClipEventKindToStr(ev.kind) },
+                           { "minWeight", ev.minWeight } };
+                switch (ev.kind) {
+                case ClipEventKind::Script:
+                    e["value"] = ev.value;
+                    e["int"] = ev.intValue;
+                    break;
+                case ClipEventKind::Sound:
+                    e["sound"] = ev.asset;
+                    e["volume"] = ev.volume;
+                    e["pitch"] = ev.pitch;
+                    break;
+                case ClipEventKind::Effect:
+                    e["prefab"] = ev.asset;
+                    break;
+                case ClipEventKind::Noise:
+                    e["loudness"] = ev.loudness;
+                    e["range"] = ev.range;
+                    break;
+                }
+                if (!ev.joint.empty()) {
+                    e["joint"] = ev.joint;
+                }
+                list.push_back(std::move(e));
             }
         }
         root["clipEvents"] = std::move(clipEvents);
@@ -803,17 +849,28 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
             ce.clipHash = HashStr(clipName);
             for (const json& e : list) {
                 const std::string kind = e.value("kind", std::string("script"));
-                if (kind != "script") {
+                ControllerClipEvent ev;
+                if (!ClipEventKindFromStr(kind, ev.kind)) {
                     MYE_LOG_WARN("[controller] clip event kind '%s' is not supported; skipped", kind.c_str());
                     continue;
                 }
-                ControllerClipEvent ev;
                 ev.name = e.value("name", std::string());
                 ev.nameHash = HashStr(ev.name);
                 ev.tick = e.value("tick", 0);
                 ev.minWeight = e.value("minWeight", 0.0f);
                 ev.value = e.value("value", 0.0f);
                 ev.intValue = e.value("int", 0);
+                ev.joint = e.value("joint", std::string());
+                if (ev.kind == ClipEventKind::Sound) {
+                    ev.asset = e.value("sound", std::string());
+                } else if (ev.kind == ClipEventKind::Effect) {
+                    ev.asset = e.value("prefab", std::string());
+                }
+                ev.assetHash = HashStr(ev.asset);
+                ev.volume = e.value("volume", 1.0f);
+                ev.pitch = e.value("pitch", 1.0f);
+                ev.loudness = e.value("loudness", 1.0f);
+                ev.range = e.value("range", 10.0f);
                 ce.events.push_back(std::move(ev));
             }
             out.clipEvents.push_back(std::move(ce));
@@ -963,22 +1020,72 @@ void CollectDrivenSkinnedMeshes(World& world, EntityID controllerEntity, std::ve
 
 namespace {
 
-// driven (CollectDrivenSkinnedMeshes の結果) のうち entity index が最小の SkinnedMesh のモデル。
+// driven (CollectDrivenSkinnedMeshes の結果) のうち entity index が最小のもの (主 SkinnedMesh)。無ければ kNullEntity。
 // 走査順 (前順) ではなく index で選ぶのは、兄弟の並べ替えでステートの長さが変わらないようにするため
+EntityID MainSkinnedEntity(const std::vector<EntityID>& driven)
+{
+    EntityID main = kNullEntity;
+    for (EntityID e : driven) {
+        if (main == kNullEntity || e.index < main.index) {
+            main = e;
+        }
+    }
+    return main;
+}
+
+// 主 SkinnedMesh のモデル
 const SkinnedModel* MainModelOf(World& world, const std::vector<EntityID>& driven, const SkinnedModelLibrary* models)
 {
     if (models == nullptr) {
         return nullptr;
     }
-    const SkinnedMeshComponent* main = nullptr;
-    uint32_t mainIndex = 0;
-    for (EntityID e : driven) {
-        if (main == nullptr || e.index < mainIndex) {
-            main = world.GetComponent<SkinnedMeshComponent>(e);
-            mainIndex = e.index;
+    const EntityID main = MainSkinnedEntity(driven);
+    const SkinnedMeshComponent* sm = main != kNullEntity ? world.GetComponent<SkinnedMeshComponent>(main) : nullptr;
+    return sm != nullptr ? models->Get(sm->model) : nullptr;
+}
+
+// WorldMatrix の平行移動 (WorldMatrix が無ければ原点)
+void WorldTranslation(World& world, EntityID entity, float (&out)[3])
+{
+    const WorldMatrixComponent* wm = world.GetComponent<WorldMatrixComponent>(entity);
+    out[0] = wm != nullptr ? wm->value._41 : 0.0f;
+    out[1] = wm != nullptr ? wm->value._42 : 0.0f;
+    out[2] = wm != nullptr ? wm->value._43 : 0.0f;
+}
+
+// fired[first..] (1 つのコントローラが今 tick に発火させた分) の位置を埋める (M89i)。
+// joint のあるイベントは主 SkinnedMesh の今のポーズ (今 tick に書いたプログラム) を 1 回だけ組み、
+// JointGlobalFromLocals × 主 SkinnedMesh の WorldMatrix (部位ソケットと同じ式、M48a) の平行移動にする。
+// joint が空・モデルに無いジョイントは controllerEntity の WorldMatrix の平行移動
+void ResolveEventPositions(World& world, EntityID controllerEntity, const std::vector<EntityID>& driven,
+                           const SkinnedModelLibrary* models, std::vector<AnimEventFired>& fired, size_t first)
+{
+    float origin[3];
+    WorldTranslation(world, controllerEntity, origin);
+    const EntityID mainEntity = MainSkinnedEntity(driven);
+    const SkinnedMeshComponent* sm =
+        mainEntity != kNullEntity ? world.GetComponent<SkinnedMeshComponent>(mainEntity) : nullptr;
+    const SkinnedModel* model = (sm != nullptr && models != nullptr) ? models->Get(sm->model) : nullptr;
+    std::vector<DirectX::XMMATRIX> locals; // joint のあるイベントが発火したときだけ組む
+    for (size_t i = first; i < fired.size(); ++i) {
+        AnimEventFired& f = fired[i];
+        std::copy(std::begin(origin), std::end(origin), std::begin(f.pos));
+        const int32_t joint = (model != nullptr && !f.def->joint.empty()) ? model->FindJointByName(f.def->joint) : -1;
+        if (joint < 0) {
+            continue;
         }
+        if (locals.empty()) {
+            SampleSkinnedLocals(*model, *sm, locals);
+        }
+        const WorldMatrixComponent* wm = world.GetComponent<WorldMatrixComponent>(mainEntity);
+        const DirectX::XMMATRIX entityWorld =
+            wm != nullptr ? DirectX::XMLoadFloat4x4(&wm->value) : DirectX::XMMatrixIdentity();
+        DirectX::XMFLOAT4X4 g;
+        DirectX::XMStoreFloat4x4(&g, DirectX::XMMatrixMultiply(JointGlobalFromLocals(*model, locals, joint), entityWorld));
+        f.pos[0] = g._41;
+        f.pos[1] = g._42;
+        f.pos[2] = g._43;
     }
-    return main != nullptr ? models->Get(main->model) : nullptr;
 }
 
 const ControllerClipEvents* FindClipEvents(const ControllerAsset& ctrl, uint64_t clipHash)
@@ -1044,7 +1151,14 @@ void FireClipEvents(EntityID entity, const ControllerClipEvents& ce, int32_t len
     std::sort(passed.begin(), passed.end()); // 通った順、同じ位置はイベントの並び順
     for (const auto& [dist, index] : passed) {
         const ControllerClipEvent& ev = ce.events[static_cast<size_t>(index)];
-        fired.push_back({ entity, ev.nameHash, ev.value, ev.intValue });
+        AnimEventFired f;
+        f.entity = entity;
+        f.nameHash = ev.nameHash;
+        f.value = ev.value;
+        f.intValue = ev.intValue;
+        f.kind = ev.kind;
+        f.def = &ev; // 位置は ResolveEventPositions がプログラムを書いた後に埋める
+        fired.push_back(f);
     }
 }
 
@@ -1286,6 +1400,7 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
             }
 
             // 4. アニメイベント (M89h)。遷移を終える tick も、終える前の元と先で判定する (元は重み 0 で発火しない)
+            const size_t firstFired = fired_.size();
             if (mainModel != nullptr && !ctrl->clipEvents.empty()) {
                 const ControllerState& from = ctrl->states[static_cast<size_t>(c->currentState)];
                 int32_t fromWeightQ = static_cast<int32_t>(kWeightOne);
@@ -1339,6 +1454,11 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                         WriteSkeletalProgram(*sm, model, sources, count);
                     }
                 }
+            }
+
+            // 7. 発火したイベントの位置 (M89i)。ジョイントの位置は 6. で書いたプログラム (この tick の終わりの姿勢) で引く
+            if (fired_.size() > firstFired) {
+                ResolveEventPositions(world, e, driven_, models, fired_, firstFired);
             }
         }
     });
