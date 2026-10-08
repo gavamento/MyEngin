@@ -388,6 +388,11 @@ bool RunEngineCliSelfTest()
     check(btDemo != nullptr && FindShowcase(L"--bt-demo", false) == btDemo
               && ShowcaseScenePath(*btDemo, L"c:\\p\\assets") == L"cache\\bt_showcase.scene.json",
           "--bt-demo is offered to the Runtime and saves under cache");
+    // M89b: --anim-demo も Runtime にも提供され、cache\ 側へ保存する
+    const ShowcaseDef* animDemo = FindShowcase(L"--anim-demo", true);
+    check(animDemo != nullptr && FindShowcase(L"--anim-demo", false) == animDemo
+              && ShowcaseScenePath(*animDemo, L"c:\\p\\assets") == L"cache\\anim_showcase.scene.json",
+          "--anim-demo is offered to the Runtime and saves under cache");
 
     MYE_LOG_INFO("Engine CLI self test: %s (%d failure(s))", failCount == 0 ? "OK" : "FAILED", failCount);
     return failCount == 0;

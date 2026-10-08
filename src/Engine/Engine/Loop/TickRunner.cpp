@@ -410,7 +410,8 @@ void RunOneTick(TickServices& ts)
     // 走査だけで何もしない (RNG もハッシュも触らない)
     if (stepSim && ts.behaviorTree != nullptr) {
         MYE_PROFILE_SCOPE("behaviortree");
-        ts.behaviorTree->Update(scene.GetWorld(), ctx.tickIndex, ts.navSystem, &controllerLibrary, &animLibrary);
+        ts.behaviorTree->Update(scene.GetWorld(), ctx.tickIndex, ts.navSystem, &controllerLibrary, &animLibrary,
+                                &resources.skinnedModels);
     }
     // ---- ナビメッシュ (フェーズ 3.4b、M82b): 音響 + AgentSystem の後・アニメの前 ----
     // AgentSystem は ts.acoustic のゲートの中なので相乗りしない。Surface が無いシーンでは
@@ -430,7 +431,8 @@ void RunOneTick(TickServices& ts)
         animationSystem.Update(scene.GetWorld(), animLibrary);
         // Animator Controller (M22): ステートマシンでクリップを切替・ブレンド。
         // LocalTransform を駆動するので hash 対象、決定論 (整数 tick・整数比ブレンド)
-        controllerSystem.Update(scene.GetWorld(), controllerLibrary, animLibrary);
+        // M89b: 骨クリップのステートは SkinnedMesh へポーズプログラムを書く (SkinningSystem より前)
+        controllerSystem.Update(scene.GetWorld(), controllerLibrary, animLibrary, &resources.skinnedModels);
         // スケルタルアニメの時刻を進める (M18)。ポーズは非ハッシュなのでリプレイ不変
         skinningSystem.Update(scene.GetWorld(), resources);
         // 部位のボーン追従 (M48g): 上で進めた timeTicks のポーズで LocalTransform を作る。

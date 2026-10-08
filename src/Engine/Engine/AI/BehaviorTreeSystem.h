@@ -25,6 +25,7 @@ class World;
 class NavSystem;
 class ControllerLibrary;
 class AnimationLibrary;
+class SkinnedModelLibrary;
 struct BehaviorTreeAsset;
 struct BtExpansion;
 struct DebugLineCmd;
@@ -105,9 +106,10 @@ class BehaviorTreeSystem {
 public:
     // tick ごとに呼ぶ (stepSim の中、知覚の後・ナビメッシュの前)。エンティティキー順に 1 体ずつ最後まで進める。
     // nav は FindRandomPoint / SearchArea の問い合わせ先 (読むだけ)。null の間はそれらのノードが Failure。
-    // controllers / clips は PlayAnimation のステート名とクリップの長さの引き先 (読むだけ)。null の間は PlayAnimation が Failure
+    // controllers / clips は PlayAnimation のステート名とクリップの長さの引き先 (読むだけ)。null の間は PlayAnimation が Failure。
+    // skinnedModels は骨クリップのステートの長さの引き先 (M89b、ControllerStateLengthTicks)。null の間は骨クリップの長さが 0 (待たない)
     void Update(World& world, uint64_t tick, const NavSystem* nav, const ControllerLibrary* controllers = nullptr,
-                const AnimationLibrary* clips = nullptr);
+                const AnimationLibrary* clips = nullptr, const SkinnedModelLibrary* skinnedModels = nullptr);
 
     // 旧シーンの状態を捨てる (シーン遷移)
     void Reset();
@@ -179,9 +181,9 @@ private:
 
     // owner 1 体の同期と実行。表に残すなら true。実行中の間は inst を ABI から引ける (current_)
     bool StepOwner(World& world, uint64_t tick, const NavSystem* nav, const ControllerLibrary* controllers, const AnimationLibrary* clips,
-                   EntityID owner, BtInstance& inst);
+                   const SkinnedModelLibrary* skinnedModels, EntityID owner, BtInstance& inst);
     bool StepOwnerBody(World& world, uint64_t tick, const NavSystem* nav, const ControllerLibrary* controllers,
-                       const AnimationLibrary* clips, EntityID owner, BtInstance& inst);
+                       const AnimationLibrary* clips, const SkinnedModelLibrary* skinnedModels, EntityID owner, BtInstance& inst);
     // entity のインスタンス (書き込める)。Update の最中は、動いている最中のもの・処理済み (next) ・未処理の表の残りの順に探す
     BtInstance* Locate(EntityID entity) const;
 

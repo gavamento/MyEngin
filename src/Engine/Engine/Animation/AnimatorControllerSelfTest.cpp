@@ -11,9 +11,13 @@
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Animation/Animation.h"
 #include "Engine/Engine/Animation/AnimatorController.h"
+#include "Engine/Engine/Animation/SkinningSystem.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Core/Util/Hash.h"
+#include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Mesh/Skeleton.h"
 
 namespace mye {
 
@@ -46,6 +50,21 @@ uint64_t MakePosClip(AnimationLibrary& lib, const std::wstring& path, int length
     AnimationClipAsset clip;
     AnimationLibrary::FromJson(cj, clip);
     return lib.Register(path, clip);
+}
+
+// 1 ジョイントのスケルトンに、名前と長さ (秒) だけのクリップを並べる (トラックはバインド)
+SkinnedModel MakeNamedClipModel(std::initializer_list<std::pair<const char*, float>> clips)
+{
+    SkinnedModel model;
+    model.joints.resize(1);
+    for (const auto& [name, duration] : clips) {
+        SkeletalClip clip;
+        clip.name = name;
+        clip.duration = duration;
+        clip.tracks.resize(1);
+        model.clips.push_back(std::move(clip));
+    }
+    return model;
 }
 
 } // namespace
@@ -254,6 +273,182 @@ bool RunAnimatorControllerSelfTest()
         check(!AnimatorPlay(world, bare.Id(), 0, 0, ctrlLib), "AnimatorPlay rejects an entity without an Animator");
         ControllerLibrary emptyLib;
         check(!AnimatorPlay(world, e, 0, 0, emptyLib), "AnimatorPlay rejects an unregistered controller");
+    }
+
+    // ---- (M89b) 骨クリップ: v2 の JSON / 名前で引く / 部分木の駆動 / 長さ / 凍結 / 旧経路へ戻る ----
+    {
+        // A と B は同じ名前のクリップを違う index・違う長さで持つ。C は Walk を持たない
+        RenderResources res; // Init しない = GPU バッファを作らない
+        const AssetID modelA =
+            res.skinnedModels.Register("selftest_ctrl_a", MakeNamedClipModel({ { "Idle", 1.0f }, { "Walk", 0.5f } }));
+        const AssetID modelB =
+            res.skinnedModels.Register("selftest_ctrl_b", MakeNamedClipModel({ { "Walk", 0.75f }, { "Idle", 1.0f } }));
+        const AssetID modelC = res.skinnedModels.Register("selftest_ctrl_c", MakeNamedClipModel({ { "Idle", 1.0f } }));
+        const SkinnedModel* a = res.skinnedModels.Get(modelA);
+        const SkinnedModel* b = res.skinnedModels.Get(modelB);
+        check(a->FindClipByHash(HashStr("Walk")) == 1 && b->FindClipByHash(HashStr("Walk")) == 0
+                  && res.skinnedModels.Get(modelC)->FindClipByHash(HashStr("Walk")) == -1
+                  && a->FindClipByHash(HashStr("")) == -1,
+              "FindClipByHash: by name per model, -1 when missing");
+
+        ControllerAsset sk;
+        sk.states.push_back({ "Idle", "", 0, 1, 1, "Idle", HashStr("Idle") });
+        sk.states.push_back({ "Walk", "", 0, 1, 1, "Walk", HashStr("Walk") });
+        sk.states.push_back({ "Prop", "", idleH, 1, 1 }); // 骨クリップの無いステート
+        { // Idle → Walk (param0 == 1)
+            ControllerTransition t;
+            t.from = 0;
+            t.to = 1;
+            t.duration = 4;
+            t.conditions = { { 0, CondOp::Eq, 1 } };
+            sk.transitions.push_back(t);
+        }
+        { // Walk → Prop (param0 == 2、末尾で)
+            ControllerTransition t;
+            t.from = 1;
+            t.to = 2;
+            t.duration = 2;
+            t.hasExitTime = 1;
+            t.conditions = { { 0, CondOp::Eq, 2 } };
+            sk.transitions.push_back(t);
+        }
+        const uint64_t skHash = ctrlLib.Register(L"skel.controller.json", sk);
+
+        {
+            const json j = ControllerLibrary::ToJson(sk);
+            ControllerAsset back;
+            check(j["controller"] == 2 && j["states"][1]["skel"]["clip"] == "Walk" && !j["states"][2].contains("skel")
+                      && ControllerLibrary::FromJson(j, back) && back.states[1].skelClip == "Walk"
+                      && back.states[1].skelClipHash == HashStr("Walk") && back.states[2].skelClip.empty()
+                      && back.states[2].skelClipHash == 0,
+                  "v2 JSON: the skeletal clip round-trips by name; states without one omit the key");
+            json v1 = ControllerLibrary::ToJson(ca);
+            v1["controller"] = 1;
+            ControllerAsset old;
+            check(ControllerLibrary::FromJson(v1, old) && old.states.size() == 2 && old.states[0].skelClipHash == 0
+                      && old.states[0].clipHash == idleH,
+                  "v1 JSON (no skel) still loads as property-only states");
+        }
+
+        Scene s;
+        World& world = s.GetWorld();
+        GameObject actor = s.CreateGameObjectTracked("Actor");
+        actor.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ skHash };
+        const auto addBody = [&](const char* name, GameObject parent, AssetID model) {
+            GameObject go = s.CreateGameObjectTracked(name);
+            go.SetParent(parent);
+            go.AddComponent<SkinnedMeshComponent>()->model = model;
+            return go;
+        };
+        GameObject bodyA = addBody("BodyA", actor, modelA); // 最初に作る = entity index 最小 = 主 SkinnedMesh
+        GameObject bodyB = addBody("BodyB", actor, modelB);
+        GameObject bodyC = addBody("BodyC", actor, modelC);
+        GameObject rider = s.CreateGameObjectTracked("Rider");
+        rider.SetParent(actor);
+        rider.AddComponent<AnimatorControllerComponent>(); // controller 未設定 = 何もしないが、外側の駆動はここで止まる
+        GameObject riderBody = addBody("RiderBody", rider, modelA);
+        world.ApplyStructuralChanges();
+
+        std::vector<EntityID> driven;
+        CollectDrivenSkinnedMeshes(world, actor.Id(), driven);
+        check(driven.size() == 3 && driven[0] == bodyA.Id() && driven[1] == bodyB.Id() && driven[2] == bodyC.Id(),
+              "driven set: the subtree in pre-order, stopping at a nested AnimatorController");
+        check(MainSkinnedModel(world, actor.Id(), &res.skinnedModels) == a, "main SkinnedMesh = smallest entity index");
+        check(ControllerStateLengthTicks(sk.states[0], &animLib, a) == 60
+                  && ControllerStateLengthTicks(sk.states[1], &animLib, a) == 30
+                  && ControllerStateLengthTicks(sk.states[1], &animLib, b) == 45
+                  && ControllerStateLengthTicks(sk.states[1], &animLib, nullptr) == 0
+                  && ControllerStateLengthTicks(sk.states[2], &animLib, a) == 60,
+              "ControllerStateLengthTicks: skeletal length from the given model, else the property clip, else 0");
+
+        AnimatorControllerSystem skSys;
+        SkinningSystem skinning;
+        // 構造変更でアーキタイプが動くので、ポインタは毎回引き直す
+        const auto ac = [&] { return actor.GetComponent<AnimatorControllerComponent>(); };
+        const auto sm = [&](GameObject go) { return go.GetComponent<SkinnedMeshComponent>(); };
+        const auto step = [&] {
+            skSys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+            skinning.Update(world, res);
+        };
+
+        skSys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+        check(sm(bodyA)->poseLayerCount == 1 && sm(bodyA)->poseClaim == 1 && sm(bodyA)->poseLayers[0].clip == 0
+                  && sm(bodyA)->poseLayers[0].timeQ == 1 * SkinnedMeshComponent::kPoseTimeQPerTick
+                  && sm(bodyA)->poseLayers[0].weightQ == SkinnedMeshComponent::kPoseWeightOne && ac()->stateTimeTicks == 1,
+              "one state = one full-weight layer at the advanced time (timeQ = stateTimeTicks * 256)");
+        check(sm(bodyB)->poseClaim == 1 && sm(bodyB)->poseLayers[0].clip == 1 && sm(bodyC)->poseLayers[0].clip == 0,
+              "each mesh resolves the clip name against its own model");
+        check(sm(riderBody)->poseLayerCount == 0 && sm(riderBody)->poseClaim == 0,
+              "a nested AnimatorController's subtree is not driven by the outer one");
+        sm(bodyA)->clip = 1; // 駆動中の clip 直書きは無視される
+        skinning.Update(world, res);
+        check(sm(bodyA)->poseClaim == 0 && sm(bodyA)->poseLayerCount == 1 && sm(bodyA)->timeTicks == 0
+                  && sm(bodyA)->observedClip == 1,
+              "SkinningSystem consumes the claim without advancing the legacy clock");
+
+        for (int i = 0; i < 59; ++i) {
+            step();
+        }
+        check(ac()->stateTimeTicks == 0 && sm(bodyA)->poseLayers[0].timeQ == 0,
+              "the state loops at the main model's skeletal clip length (60 ticks)");
+
+        ac()->params[0] = 1;
+        step();
+        check(ac()->transitionTo == 1 && ac()->transitionTick == 1 && sm(bodyA)->poseLayerCount == 2
+                  && sm(bodyA)->poseLayers[0].clip == 0 && sm(bodyA)->poseLayers[1].clip == 1
+                  && sm(bodyA)->poseLayers[0].weightQ == 49152 && sm(bodyA)->poseLayers[1].weightQ == 16384
+                  && sm(bodyA)->poseLayers[1].timeQ == 256 && sm(bodyB)->poseLayers[0].clip == 1
+                  && sm(bodyB)->poseLayers[1].clip == 0,
+              "a transition writes from -> to layers with weights tick/duration in Q16 summing to 65536");
+        for (int i = 0; i < 3; ++i) {
+            step();
+        }
+        check(ac()->currentState == 1 && ac()->transitionTo == -1 && sm(bodyA)->poseLayerCount == 1
+                  && sm(bodyA)->poseLayers[0].clip == 1 && sm(bodyA)->poseLayers[0].timeQ == 4 * 256
+                  && sm(bodyA)->poseLayers[1].weightQ == 0,
+              "after the transition: one layer of the target state, the unused layer is cleared");
+
+        // 非アクティブの間は凍る (旧経路の時計も進まない)
+        actor.AddComponent<ActiveComponent>()->enabled = false;
+        world.ApplyStructuralChanges();
+        const int32_t frozenTime = ac()->stateTimeTicks;
+        const int32_t frozenQ = sm(bodyA)->poseLayers[0].timeQ;
+        for (int i = 0; i < 5; ++i) {
+            step();
+        }
+        check(ac()->stateTimeTicks == frozenTime && sm(bodyA)->poseLayerCount == 1
+                  && sm(bodyA)->poseLayers[0].timeQ == frozenQ && sm(bodyA)->timeTicks == 0,
+              "an inactive controller freezes its meshes: the claim is kept and neither clock advances");
+        actor.GetComponent<ActiveComponent>()->enabled = true;
+
+        // 末尾で抜ける遷移は主 SkinnedMesh の骨クリップの長さ (A の 30、B の 45 ではない) で判定する
+        ac()->params[0] = 2;
+        int32_t timeAtExit = -1;
+        for (int i = 0; i < 40 && ac()->transitionTo != 2; ++i) {
+            timeAtExit = ac()->stateTimeTicks;
+            step();
+        }
+        check(ac()->transitionTo == 2 && timeAtExit == 29,
+              "hasExitTime uses the main mesh's skeletal length (30 ticks), not another mesh's (45)");
+        check(sm(bodyA)->poseLayerCount == 1 && sm(bodyA)->poseLayers[0].clip == 1
+                  && sm(bodyA)->poseLayers[0].weightQ == SkinnedMeshComponent::kPoseWeightOne,
+              "a transition into a state without a skeletal clip keeps the skeletal side at full weight");
+        step();
+        step();
+        check(ac()->currentState == 2 && sm(bodyA)->poseLayerCount == 0 && sm(bodyA)->poseClaim == 0,
+              "a state without a skeletal clip stops writing: the mesh falls back to the legacy path");
+
+        // プロパティだけのコントローラは SkinnedMesh に触れない
+        Scene s2;
+        GameObject propActor = buildScene(s2);
+        GameObject propBody = s2.CreateGameObjectTracked("Body");
+        propBody.SetParent(propActor);
+        propBody.AddComponent<SkinnedMeshComponent>()->model = modelA;
+        s2.GetWorld().ApplyStructuralChanges();
+        skSys.Update(s2.GetWorld(), ctrlLib, animLib, &res.skinnedModels);
+        check(propBody.GetComponent<SkinnedMeshComponent>()->poseLayerCount == 0
+                  && propBody.GetComponent<SkinnedMeshComponent>()->poseClaim == 0,
+              "a property-only controller leaves SkinnedMesh on the legacy path");
     }
 
     if (failCount == 0) {

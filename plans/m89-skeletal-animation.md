@@ -94,6 +94,20 @@ AnimationSystem → **AnimatorControllerSystem** (遷移 → 時刻を進める 
 
 発火順はエンティティの走査順 → 層 → tick 順。ジョイントのワールド座標は `JointGlobalFromLocals × 前 tick の WorldMatrix` (1 tick 遅れは許容し、文書に書く)。
 
+### b の下調べの結果 (ルートジョイントの空間と上向き、2026-10-08)
+j (ルートモーション) の前提。確認は `SkeletonSelfTest` の M89b 節と、glTF の JSON の直読み。
+- **CesiumMan.glb**: ノード `Z_UP` (X 軸 -90 度の行列) → `Armature` (Z 軸 90 度) → ルートジョイント `Skeleton_torso_joint_1`。
+  `Z_UP` と `Armature` は非ジョイントなのでエンティティ側 (WorldMatrix) に載る。ルートの局所移動は親空間の **+Z が上** (高さ 0.64〜0.71)。
+  クリップは 1 本で名前が無い (`""`) ので名前では引けない。ルートは水平にはほぼ動かない (その場歩き)。
+- **skinned_beam.fbx**: FBX ローダは祖先閉包込みでジョイントを持ち、エンティティ側は恒等 (M48a の規約)。ルートの水平移動なし。
+- **anim_test.glb / anim_test_zup.glb**: ルートジョイント `Root` (index 0、parent -1) の局所移動は、Y-up 版で (0, 0, -1.4) / 周、
+  Z-up 版で (0, -1.4, 0) / 周 (前進が親空間の -Y 軸に出る。親空間の上は glTF の +Z = ローダの Z 反転後の **-Z**)。
+  どちらも `JointGlobal × entityWorld` ではワールド (0, 0, -1.4) で一致する (偏差 3.6e-7)。
+- 結論: ルートの親空間の上向きはモデルごとに違い、**エンティティ側の変換 (非ジョイント祖先の LocalTransform の連鎖) からしか分からない**。
+  j では「ワールドの上 (0,1,0) をルートの親空間へ戻した軸」を、逆行列を使わずに LocalTransform の連鎖の回転 (共役) で求める (計画どおり)。
+- 既知の制約 (ADR-027 決定 5): ステートの長さが骨クリップ (モデルの読み込み) に依存するので、モデルを読まない構成ではステートの時刻が進まない。
+  クック読み込み (`ModelCook.cpp`) も `SkinnedModelLibrary::Register` を通る (未確認点の解消)。`FindClipByHash` は表を持たず毎回ハッシュする。
+
 ## 主な変更ファイル
 - `C:\HAL\MyEngin\src\Engine\Core\Ecs\Components.h` / `Components.cpp` (SkinnedMesh の尾部、AnimatorController の拡張、TwoBoneIK)
 - `C:\HAL\MyEngin\src\Engine\Renderer\Mesh\Skeleton.h/.cpp` (`ComputeJointLocalsLayered`、`FindClipByHash`、IK ソルバ。**`ComputeJointLocals` と `ComputeJointLocalsBlended` には触らない**)

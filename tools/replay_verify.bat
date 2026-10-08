@@ -76,13 +76,13 @@ rem 前回の失敗マーカーが残っていると :diagnose が古い tick �
 del /q cache\*.mismatch.txt 2>nul
 if exist cache\replay_logs rd /s /q cache\replay_logs
 
-echo === parallel verification: 12 scene chains + time travel x2 + what-if x2 + rule check ===
+echo === parallel verification: 13 scene chains + time travel x2 + what-if x2 + rule check ===
 rem ★Entry は空白なし相対パスで渡す (人間/CI が bat を叩くのと同じ呼び形に固定。
 rem   バッチ読取りの罠と chcp 437 の理由は runner 冒頭のコメント参照)
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,perception,bt,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,perception,bt,anim,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 12 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav + perception + bt) + snapshot round-trip + time travel + rule check
+echo [PASS] replay consistency (Debug/Release, 13 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav + perception + bt + anim) + snapshot round-trip + time travel + rule check
 exit /b 0
 
 rem ---------------------------------------------------------------- :failed
@@ -138,6 +138,10 @@ if exist cache\golden_perception.rep.mismatch.txt (
 if exist cache\golden_bt.rep.mismatch.txt (
     set DIAGFOUND=1
     call :diagnose "cache\golden_bt.rep" "--bt-demo"
+)
+if exist cache\golden_anim.rep.mismatch.txt (
+    set DIAGFOUND=1
+    call :diagnose "cache\golden_anim.rep" "--anim-demo"
 )
 if "%DIAGFOUND%"=="0" echo [diag] no mismatch markers - failures happened before any hash comparison, see the job logs above
 echo [FAIL] replay verification
@@ -321,6 +325,17 @@ if exist cache\bt_showcase.scene.json del /q cache\bt_showcase.scene.json
 call :chain cache\golden_bt.rep "--bt-demo" "--bt-demo"
 exit /b %ERRORLEVEL%
 
+rem ---- 骨アニメ (M89)。生成素材 anim_test.glb (Y-up) / anim_test_zup.glb (Z-up) の 2 体を
+rem assets\anims\anim_test.controller.json が骨クリップで Idle -> Walk -> Run -> Attack と hasExitTime で回す。
+rem ステートの長さは骨クリップ (主 SkinnedMesh のモデル) から引くので、AnimatorController (ハッシュ対象) の
+rem 遷移の tick が「骨クリップの長さを Debug / Release / Server.exe が同じに読めたか」の検査になる。
+rem ポーズプログラム (SkinnedMesh の尾部) はハッシュに入らないが snapshot には載るので、stress がその往復を叩く。
+rem 以降の M89 のサブ (ブレンドツリー / イベント / ルートモーション / IK) もこのジョブに載せる
+:job_anim
+if exist cache\anim_showcase.scene.json del /q cache\anim_showcase.scene.json
+call :chain cache\golden_anim.rep "--anim-demo" "--anim-demo"
+exit /b %ERRORLEVEL%
+
 rem ---- タイムトラベルの巻き戻し (M52e) ----
 rem 「T まで進める → T-K へ戻す → 記録入力で T まで再シム → 元の T とハッシュ一致」を
 rem 複数の K で実走し、続けて「スクラブ中は tick が止まる」「再開すると分岐して未来を捨てる」
@@ -402,7 +417,7 @@ rem 失敗した照合の「どのフィールドが割れたか」を出す (M5
 rem   %1 = .rep パス / %2 = シーン切替の追加引数 ("" / "--parts-demo" / "--flow-demo" /
 rem                        "--local-demo" / "--physics-demo" / "--joint-demo" /
 rem                        "--acoustic-demo" / "--ui-demo --ui-demo-input" / "--fracture-demo" / "--nav-demo" /
-rem                        "--perception-demo" / "--bt-demo")
+rem                        "--perception-demo" / "--bt-demo" / "--anim-demo")
 rem 失敗側のダンプは EngineLoop が MISMATCH 時に自動で残しているので、
 rem ここでは期待側 (= その .rep を録ったのと同じコマンド) を撮り直して突き合わせる
 :diagnose

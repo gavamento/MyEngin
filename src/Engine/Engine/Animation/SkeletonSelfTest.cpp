@@ -1,5 +1,6 @@
 #include "Engine/Engine/Animation/SkeletonSelfTest.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -640,6 +641,85 @@ bool RunSkeletonSelfTest()
             check(sm->poseLayerCount == 0 && sm->timeTicks == 11 && !IsSkinFading(*sm),
                   "claim: an unclaimed tick drops the program and resumes the old path without a "
                   "late fade");
+        }
+    }
+
+    // ---- (M89b) 生成素材 anim_test.glb / anim_test_zup.glb (tools\gen_anim_test_gltf.ps1) ----
+    // 名前付きの 4 クリップが読めること、Y-up 版と Z-up 版がワールドで同じ姿勢になること、
+    // ルートの動きが「ルートの親空間 × エンティティの WorldMatrix」で水平に出ること (ルートモーションの下調べ)
+    {
+        Scene yScene;
+        Scene zScene;
+        const GameObject yRoot =
+            ModelLoader::Load(yScene, resources, shaders, assetsRoot + L"\\models\\anim_test.glb");
+        const GameObject zRoot =
+            ModelLoader::Load(zScene, resources, shaders, assetsRoot + L"\\models\\anim_test_zup.glb");
+        check(bool(yRoot) && bool(zRoot), "anim_test: both generated glTF files load headless");
+        yScene.GetWorld().ApplyStructuralChanges();
+        zScene.GetWorld().ApplyStructuralChanges();
+        transforms.Update(yScene.GetWorld());
+        transforms.Update(zScene.GetWorld());
+        const LoadedSkin ySkin = FindSkinned(yScene, resources);
+        const LoadedSkin zSkin = FindSkinned(zScene, resources);
+        check(ySkin.model != nullptr && zSkin.model != nullptr, "anim_test: both register a SkinnedModel");
+        if (ySkin.model != nullptr && zSkin.model != nullptr) {
+            const SkinnedModel& ym = *ySkin.model;
+            struct ClipSpec {
+                const char* name;
+                int32_t ticks;
+            };
+            const ClipSpec specs[] = { { "Idle", 120 }, { "Walk", 60 }, { "Run", 36 }, { "Attack", 48 } };
+            bool clipsOk = ym.joints.size() == 17 && zSkin.model->joints.size() == 17 && ym.clips.size() == 4;
+            for (const ClipSpec& c : specs) {
+                const int32_t yi = ym.FindClipByHash(HashStr(c.name));
+                const int32_t zi = zSkin.model->FindClipByHash(HashStr(c.name));
+                clipsOk = clipsOk && yi >= 0 && zi >= 0
+                          && SkeletalClipTicks(ym.clips[static_cast<size_t>(yi)]) == c.ticks
+                          && SkeletalClipTicks(zSkin.model->clips[static_cast<size_t>(zi)]) == c.ticks;
+            }
+            check(clipsOk && ym.joints[0].name == "Root" && ym.joints[0].parent == -1
+                      && ym.FindJointByName("Foot.L") >= 0,
+                  "anim_test: 17 joints (Root first), clips Idle/Walk/Run/Attack = 120/60/36/48 ticks by name");
+
+            // 全ジョイントのワールド位置 = JointGlobal * entityWorld が Y-up と Z-up で一致する
+            const auto worldJoint = [](const LoadedSkin& skin, int clip, float t, int32_t joint) {
+                const XMMATRIX m = XMMatrixMultiply(ComputeJointGlobal(*skin.model, clip, t, joint),
+                                                    XMLoadFloat4x4(&skin.entityWorld));
+                const XMFLOAT4X4 f = ToF4x4(m);
+                return XMFLOAT3{ f._41, f._42, f._43 };
+            };
+            float maxDiff = 0.0f;
+            for (const ClipSpec& c : specs) {
+                const int yi = ym.FindClipByHash(HashStr(c.name));
+                const int zi = zSkin.model->FindClipByHash(HashStr(c.name));
+                for (int tick : { 0, 7, 20 }) {
+                    const float t = static_cast<float>(tick) / 60.0f;
+                    for (int32_t j = 0; j < static_cast<int32_t>(ym.joints.size()); ++j) {
+                        const XMFLOAT3 a = worldJoint(ySkin, yi, t, j);
+                        const XMFLOAT3 b = worldJoint(zSkin, zi, t, j);
+                        maxDiff = (std::max)(maxDiff, (std::max)({ std::fabs(a.x - b.x), std::fabs(a.y - b.y),
+                                                                   std::fabs(a.z - b.z) }));
+                    }
+                }
+            }
+            MYE_LOG_INFO("  [anim_test] max world joint difference Y-up vs Z-up = %g", maxDiff);
+            check(maxDiff < 1e-4f, "anim_test: the Y-up and Z-up files pose identically in world space");
+
+            // ルートの 1 周の移動: ワールドで水平・正面 (エンジンの -Z、ローダの Z 反転) へ 1.4 m。
+            // Z-up 版ではルートの局所移動そのものは縦軸 (Y) に出る = 上向きはルートの親空間ではなく
+            // エンティティ側 (非ジョイント祖先の変換) から求める必要がある
+            const int yWalk = ym.FindClipByHash(HashStr("Walk"));
+            const int zWalk = zSkin.model->FindClipByHash(HashStr("Walk"));
+            const XMFLOAT3 y0 = worldJoint(ySkin, yWalk, 0.0f, 0);
+            const XMFLOAT3 y1 = worldJoint(ySkin, yWalk, 1.0f, 0);
+            const XMFLOAT3 z1 = worldJoint(zSkin, zWalk, 1.0f, 0);
+            const XMFLOAT4X4 zLocalEnd = ToF4x4(ComputeJointGlobal(*zSkin.model, zWalk, 1.0f, 0));
+            check(std::fabs(y1.x - y0.x) < 1e-5f && std::fabs(y1.y - y0.y) < 1e-5f
+                      && std::fabs((y1.z - y0.z) + 1.4f) < 1e-4f && std::fabs(z1.z + 1.4f) < 1e-4f
+                      && std::fabs(z1.y) < 1e-4f,
+                  "anim_test: one Walk cycle moves the root 1.4 m forward (-Z) and horizontally in world space");
+            check(std::fabs(zLocalEnd._42 + 1.4f) < 1e-4f && std::fabs(zLocalEnd._43) < 1e-4f,
+                  "anim_test (Z-up): the root's own translation runs along its parent's Y axis (up comes from the entity side)");
         }
     }
 

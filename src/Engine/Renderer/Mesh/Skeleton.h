@@ -50,6 +50,9 @@ struct SkinnedModel {
 
     // name のジョイント index (先頭一致・大小区別)。見つからない / 空名は -1 (M48a)
     int32_t FindJointByName(std::string_view name) const;
+    // HashStr(クリップ名) == nameHash のクリップ index (先頭一致)。見つからない / 無名のクリップは -1 (M89b)。
+    // コントローラは骨クリップを名前で参照する — 同じ名前のクリップが、モデルごとに違う index に居てよい
+    int32_t FindClipByHash(uint64_t nameHash) const;
 };
 
 // 列挙の 1 件 (参照ピッカー用)。GpuResources.h の AssetEntry は **このヘッダより下流**

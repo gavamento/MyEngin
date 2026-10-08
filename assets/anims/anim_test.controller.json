@@ -1,0 +1,42 @@
+{
+  "engine": "MyEngine",
+  "controller": 2,
+  "defaultState": 0,
+  "parameters": [],
+  "states": [
+    {
+      "name": "Idle",
+      "clip": "",
+      "speed": 1,
+      "loop": 1,
+      "skel": { "clip": "Idle" }
+    },
+    {
+      "name": "Walk",
+      "clip": "",
+      "speed": 1,
+      "loop": 1,
+      "skel": { "clip": "Walk" }
+    },
+    {
+      "name": "Run",
+      "clip": "",
+      "speed": 1,
+      "loop": 1,
+      "skel": { "clip": "Run" }
+    },
+    {
+      "name": "Attack",
+      "clip": "",
+      "speed": 1,
+      "loop": 0,
+      "skel": { "clip": "Attack" }
+    }
+  ],
+  "transitions": [
+    { "from": 0, "to": 1, "duration": 12, "hasExitTime": 1, "conditions": [] },
+    { "from": 1, "to": 2, "duration": 10, "hasExitTime": 1, "conditions": [] },
+    { "from": 2, "to": 3, "duration": 6, "hasExitTime": 1, "conditions": [] },
+    { "from": 3, "to": 0, "duration": 12, "hasExitTime": 1, "conditions": [] }
+  ]
+}

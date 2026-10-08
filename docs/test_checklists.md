@@ -492,3 +492,15 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 ### (d) 専用サーバのセッション中の復旧
 
 - [ ] `tools\server_verify.bat 600 E` (ケース E: 参加中のクライアントが疑似消失 + 復旧 5 s 遅延。サーバが timeout で切らず、クライアントが正常終了し、`.rep` がサーバと一致し、サーバ `.rep` の再生検証が一致する。UDP と複数プロセスを使うので CI では回らない)
+
+## M89: 骨アニメの深化
+
+自動検証は `Editor.exe --selftest` (AnimatorControllerSelfTest / SkeletonSelfTest / BehaviorTreeSelfTest)、`tools\replay_verify.bat` の
+`anim` ジョブ (Debug / Release / `Server.exe`、snapshot stress)。素材は `tools\gen_anim_test_gltf.ps1` が作る
+`assets\models\anim_test.glb` / `anim_test_zup.glb` (設計: `docs\adr\ADR-027-skeletal-pose-program.md`、計画: `plans\m89-skeletal-animation.md`)。
+
+### デモ `--anim-demo` (M89b)
+
+- [ ] `Editor.exe --anim-demo` で Play すると、2 体 (左 = Y-up、右 = Z-up の素材) が同じ姿勢で Idle → Walk → Run → Attack → Idle と回り、切り替えの瞬間に飛ばずに混ざる
+- [ ] Walk / Run の間は足元の板 (Root) が前へ進み、1 周ごとに元の位置へ戻る (ルートモーションは M89j で入る。今はこれが正しい)
+- [ ] Animator Controller 窓で `anim_test.controller.json` を開いて保存しても、ステートの骨クリップ (`"skel"`) が消えない

@@ -81,7 +81,8 @@ struct RunCtx {
     BehaviorTreeSystem* events = nullptr; // SendEvent の積み先。null = 積めない (SendEvent は Failure)
     const ControllerLibrary* controllers = nullptr; // PlayAnimation のステート名の引き先。null = PlayAnimation は Failure
     const AnimationLibrary* clips = nullptr;        // PlayAnimation の waitForEnd のクリップの長さの引き先。null = 待たない
-    const BtTaskRegistry* tasks = nullptr;          // CppTask の引き先。null = CppTask は Failure (Abort の OnAbort も呼ばない)
+    const SkinnedModelLibrary* skinnedModels = nullptr; // 同じく骨クリップの長さの引き先 (M89b)。null = 骨クリップは待たない
+    const BtTaskRegistry* tasks = nullptr;         // CppTask の引き先。null = CppTask は Failure (Abort の OnAbort も呼ばない)
     std::set<std::string>* warnedTasks = nullptr;   // 「登録に無い C++ タスク」「動けない C# タスク」を警告済みの名前。null = 警告しない
     BtManagedTaskLane* lane = nullptr;              // CsTask の引き先。null = CsTask は Failure (Abort の OnAbort も呼ばない)
     int steps = 0;
@@ -1177,15 +1178,17 @@ BtResult VisitSendEvent(RunCtx& c, int32_t index)
     return BtResult::Success;
 }
 
-// ステートのクリップが 1 周するのにかかる tick 数。クリップが無い・長さ 0 は 0 (待つものが無い)
+// ステートのクリップが 1 周するのにかかる tick 数。クリップが無い・長さ 0 は 0 (待つものが無い)。
+// 長さは Animator と同じ ControllerStateLengthTicks で引く (骨クリップなら主 SkinnedMesh のモデルの長さ、M89b)
 int32_t PlayLengthTicks(const RunCtx& c, const ControllerState& stateDef)
 {
-    const AnimationClipAsset* clip = c.clips != nullptr ? c.clips->Get(stateDef.clipHash) : nullptr;
-    if (clip == nullptr || clip->lengthTicks <= 0) {
+    const int32_t length =
+        ControllerStateLengthTicks(stateDef, c.clips, MainSkinnedModel(c.world, c.inst.entity, c.skinnedModels));
+    if (length <= 0) {
         return 0;
     }
     const int32_t speed = (std::max)(stateDef.speed, 1); // 停止・逆再生のステートは 1 周が来ないので等速とみなす
-    return (clip->lengthTicks + speed - 1) / speed;
+    return (length + speed - 1) / speed;
 }
 
 // PlayAnimation: Animator のステートへ AnimatorPlay で遷移を始める。Animator・controller・ステート名のどれかが無ければ Failure。
@@ -1921,7 +1924,7 @@ void BehaviorTreeSystem::DeliverPending(uint64_t tick)
 }
 
 void BehaviorTreeSystem::Update(World& world, uint64_t tick, const NavSystem* nav, const ControllerLibrary* controllers,
-                                const AnimationLibrary* clips)
+                                const AnimationLibrary* clips, const SkinnedModelLibrary* skinnedModels)
 {
     std::vector<EntityID> owners;
     {
@@ -1972,7 +1975,7 @@ void BehaviorTreeSystem::Update(World& world, uint64_t tick, const NavSystem* na
             inst = std::move(instances_[oldAt]);
             ++oldAt;
         }
-        if (StepOwner(world, tick, nav, controllers, clips, owner, inst)) {
+        if (StepOwner(world, tick, nav, controllers, clips, skinnedModels, owner, inst)) {
             next.push_back(std::move(inst));
         }
     }
@@ -1998,7 +2001,8 @@ std::shared_ptr<const BehaviorTreeAsset> BehaviorTreeSystem::ResolveTree(uint64_
 }
 
 bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, const NavSystem* nav, const ControllerLibrary* controllers,
-                                   const AnimationLibrary* clips, EntityID owner, BtInstance& inst)
+                                   const AnimationLibrary* clips, const SkinnedModelLibrary* skinnedModels, EntityID owner,
+                                   BtInstance& inst)
 {
     // 登録表が更新されたら、消えた C++ タスクの警告を出し直せるようにする
     if (warnedTasksGeneration_ != tasks_.Generation()) {
@@ -2007,14 +2011,15 @@ bool BehaviorTreeSystem::StepOwner(World& world, uint64_t tick, const NavSystem*
     }
     current_ = &inst;
     restartRequested_ = false;
-    const bool keep = StepOwnerBody(world, tick, nav, controllers, clips, owner, inst);
+    const bool keep = StepOwnerBody(world, tick, nav, controllers, clips, skinnedModels, owner, inst);
     current_ = nullptr;
     restartRequested_ = false;
     return keep;
 }
 
 bool BehaviorTreeSystem::StepOwnerBody(World& world, uint64_t tick, const NavSystem* nav, const ControllerLibrary* controllers,
-                                       const AnimationLibrary* clips, EntityID owner, BtInstance& inst)
+                                       const AnimationLibrary* clips, const SkinnedModelLibrary* skinnedModels, EntityID owner,
+                                       BtInstance& inst)
 {
     BehaviorTreeComponent* comp = world.GetComponent<BehaviorTreeComponent>(owner);
     bool hasInstance = !inst.entity.IsNull();
@@ -2118,7 +2123,7 @@ bool BehaviorTreeSystem::StepOwnerBody(World& world, uint64_t tick, const NavSys
 
     // 配られたイベントの BB 反映は Abort の監視より前 (spec 4.1.1 の (1))
     ApplyEventsToBlackboard(inst, delivered_);
-    RunCtx ctx{ world, inst, *tree, tick, abortTrace_, nav, this, controllers, clips, &tasks_, &warnedTasks_, lane_ };
+    RunCtx ctx{ world, inst, *tree, tick, abortTrace_, nav, this, controllers, clips, skinnedModels, &tasks_, &warnedTasks_, lane_ };
     MonitorNode(ctx, tree->rootIndex);
     BtResult result = Visit(ctx, tree->rootIndex);
     if (restartRequested_) {

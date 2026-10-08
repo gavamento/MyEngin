@@ -1,5 +1,6 @@
 #include "Engine/Engine/Animation/AnimatorController.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 
@@ -7,9 +8,12 @@
 #include "Engine/Core/Asset/AssetKeyResolver.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/HierarchyWalk.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Animation/Animation.h"
+#include "Engine/Engine/Animation/SkinningSystem.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/Mesh/Skeleton.h"
 
 namespace fs = std::filesystem;
 
@@ -90,6 +94,78 @@ void AdvanceStateTime(int32_t& time, int32_t speed, int32_t loop, int32_t length
     } else if (time < 0) {
         time = loop ? (((time % length) + length) % length) : 0;
     }
+}
+
+bool HasSkeletalStates(const ControllerAsset& controller)
+{
+    for (const ControllerState& st : controller.states) {
+        if (st.skelClipHash != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// ポーズプログラムの元になる 1 層 (ステートと再生位置と重み)
+struct SkeletalSource {
+    const ControllerState* state = nullptr;
+    int32_t timeTicks = 0;
+    int32_t weightQ = 0;
+};
+
+// 今の tick のプログラムの元を組む (時刻を進めた後の値で)。返り値 = 層数 (0..2)。
+// 遷移中は元 → 先の順に並べる (層を先頭から畳むので順序も入力の一部)。重みは
+// transitionTick / transitionDuration を Q16 に 1 回だけ切り捨て、残りを元へ回す = 和がちょうど kPoseWeightOne
+int32_t BuildSkeletalSources(const ControllerAsset& ctrl, const AnimatorControllerComponent& c,
+                             SkeletalSource (&out)[2])
+{
+    constexpr int64_t kOne = SkinnedMeshComponent::kPoseWeightOne;
+    const ControllerState& from = ctrl.states[static_cast<size_t>(c.currentState)];
+    const bool fromSkel = from.skelClipHash != 0;
+    if (c.transitionTo < 0) {
+        if (!fromSkel) {
+            return 0;
+        }
+        out[0] = { &from, c.stateTimeTicks, static_cast<int32_t>(kOne) };
+        return 1;
+    }
+    const ControllerState& to = ctrl.states[static_cast<size_t>(c.transitionTo)];
+    const bool toSkel = to.skelClipHash != 0;
+    if (!fromSkel && !toSkel) {
+        return 0;
+    }
+    if (!toSkel) {
+        out[0] = { &from, c.stateTimeTicks, static_cast<int32_t>(kOne) };
+        return 1;
+    }
+    if (!fromSkel) {
+        out[0] = { &to, c.transitionToTime, static_cast<int32_t>(kOne) };
+        return 1;
+    }
+    const int32_t duration = c.transitionDuration > 0 ? c.transitionDuration : 1;
+    const int64_t tick = std::clamp<int64_t>(c.transitionTick, 0, duration);
+    const int32_t toWeight = static_cast<int32_t>(tick * kOne / duration);
+    out[0] = { &from, c.stateTimeTicks, static_cast<int32_t>(kOne) - toWeight };
+    out[1] = { &to, c.transitionToTime, toWeight };
+    return 2;
+}
+
+void WriteSkeletalProgram(SkinnedMeshComponent& sm, const SkinnedModel* model, const SkeletalSource* sources,
+                          int32_t count)
+{
+    sm.poseLayerCount = count;
+    for (int32_t i = 0; i < count; ++i) {
+        SkinnedMeshComponent::PoseLayer& layer = sm.poseLayers[i];
+        // モデルが未登録・名前のクリップが無いモデルは -1 = バインドポーズ (層の数と重みは他のメッシュとそろえる)
+        layer.clip = model != nullptr ? model->FindClipByHash(sources[i].state->skelClipHash) : -1;
+        layer.timeQ = sources[i].timeTicks * SkinnedMeshComponent::kPoseTimeQPerTick;
+        layer.weightQ = sources[i].weightQ;
+    }
+    // 使っていない層は既定値に戻す (snapshot の生バイトを入力だけで決まる形にしておく)
+    for (int32_t i = count; i < SkinnedMeshComponent::kMaxPoseLayers; ++i) {
+        sm.poseLayers[i] = {};
+    }
+    sm.poseClaim = 1;
 }
 
 } // namespace
@@ -183,7 +259,7 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
 {
     json root;
     root["engine"] = "MyEngine";
-    root["controller"] = 1;
+    root["controller"] = 2; // v2 (M89b): ステートの "skel"。v1 はそのまま読める (無い = 骨を駆動しない)
     root["defaultState"] = c.defaultState;
     json params = json::array();
     for (const ControllerParam& p : c.parameters) {
@@ -200,10 +276,14 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
         } else {
             clip = s.clipPath;
         }
-        states.push_back({ { "name", s.name },
-                           { "clip", std::move(clip) },
-                           { "speed", s.speed },
-                           { "loop", s.loop } });
+        json st = { { "name", s.name },
+                    { "clip", std::move(clip) },
+                    { "speed", s.speed },
+                    { "loop", s.loop } };
+        if (!s.skelClip.empty()) {
+            st["skel"] = { { "clip", s.skelClip } };
+        }
+        states.push_back(std::move(st));
     }
     root["states"] = std::move(states);
     json trans = json::array();
@@ -254,6 +334,11 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
         }
         cs.speed = s.value("speed", 1);
         cs.loop = s.value("loop", 1);
+        // M89b: 骨クリップは名前で持つ (モデルごとに index が違ってよい)
+        if (s.contains("skel") && s["skel"].is_object()) {
+            cs.skelClip = s["skel"].value("clip", std::string());
+            cs.skelClipHash = cs.skelClip.empty() ? 0 : HashStr(cs.skelClip);
+        }
         out.states.push_back(std::move(cs));
     }
     if (j.contains("transitions") && j["transitions"].is_array()) {
@@ -288,6 +373,65 @@ int32_t FindControllerState(const ControllerAsset& controller, const std::string
     return -1;
 }
 
+void CollectDrivenSkinnedMeshes(World& world, EntityID controllerEntity, std::vector<EntityID>& out)
+{
+    out.clear();
+    ForEachInSubtree(world, controllerEntity, [&](EntityID e, uint32_t) {
+        if (e != controllerEntity && world.GetComponent<AnimatorControllerComponent>(e) != nullptr) {
+            return WalkStep::SkipChildren;
+        }
+        if (world.GetComponent<SkinnedMeshComponent>(e) != nullptr) {
+            out.push_back(e);
+        }
+        return WalkStep::Continue;
+    });
+}
+
+namespace {
+
+// driven (CollectDrivenSkinnedMeshes の結果) のうち entity index が最小の SkinnedMesh のモデル。
+// 走査順 (前順) ではなく index で選ぶのは、兄弟の並べ替えでステートの長さが変わらないようにするため
+const SkinnedModel* MainModelOf(World& world, const std::vector<EntityID>& driven, const SkinnedModelLibrary* models)
+{
+    if (models == nullptr) {
+        return nullptr;
+    }
+    const SkinnedMeshComponent* main = nullptr;
+    uint32_t mainIndex = 0;
+    for (EntityID e : driven) {
+        if (main == nullptr || e.index < mainIndex) {
+            main = world.GetComponent<SkinnedMeshComponent>(e);
+            mainIndex = e.index;
+        }
+    }
+    return main != nullptr ? models->Get(main->model) : nullptr;
+}
+
+} // namespace
+
+const SkinnedModel* MainSkinnedModel(World& world, EntityID controllerEntity, const SkinnedModelLibrary* models)
+{
+    if (models == nullptr) {
+        return nullptr;
+    }
+    std::vector<EntityID> driven;
+    CollectDrivenSkinnedMeshes(world, controllerEntity, driven);
+    return MainModelOf(world, driven, models);
+}
+
+int32_t ControllerStateLengthTicks(const ControllerState& state, const AnimationLibrary* clips,
+                                   const SkinnedModel* mainModel)
+{
+    if (state.skelClipHash != 0 && mainModel != nullptr) {
+        const int32_t clip = mainModel->FindClipByHash(state.skelClipHash);
+        if (clip >= 0) {
+            return SkeletalClipTicks(mainModel->clips[static_cast<size_t>(clip)]);
+        }
+    }
+    const AnimationClipAsset* cl = clips != nullptr ? clips->Get(state.clipHash) : nullptr;
+    return cl != nullptr ? cl->lengthTicks : 0;
+}
+
 bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t durationTicks, const ControllerLibrary& controllers)
 {
     AnimatorControllerComponent* c = world.GetComponent<AnimatorControllerComponent>(entity);
@@ -318,21 +462,38 @@ bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t dur
 // ==== AnimatorControllerSystem ====
 
 void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& controllers,
-                                      const AnimationLibrary& clips)
+                                      const AnimationLibrary& clips, const SkinnedModelLibrary* models)
 {
     const ComponentTypeId req[] = { AnimatorControllerComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
         const int ci = arch.FindTypeIndex(AnimatorControllerComponent::sTypeId);
         for (uint32_t row = 0; row < arch.Count(); ++row) {
             const EntityID e = arch.EntityAt(row);
-            if (!IsEntityActive(world, e)) {
-                continue;
-            }
             auto* c = static_cast<AnimatorControllerComponent*>(arch.GetPtr(ci, row));
             const ControllerAsset* ctrl = controllers.Get(c->controller.value);
             if (!ctrl || ctrl->states.empty()) {
                 continue;
             }
+            // 骨クリップを持たないコントローラは部分木を辿らない (M22 からの経路を 1 つも変えない)
+            const bool drivesSkeleton = HasSkeletalStates(*ctrl);
+            driven_.clear();
+            if (drivesSkeleton) {
+                CollectDrivenSkinnedMeshes(world, e, driven_);
+            }
+            if (!IsEntityActive(world, e)) {
+                // 凍らせる: 書いてあるプログラムをそのまま保たせる (時刻も層も進めない)
+                for (EntityID m : driven_) {
+                    SkinnedMeshComponent* sm = world.GetComponent<SkinnedMeshComponent>(m);
+                    if (sm->poseLayerCount > 0) {
+                        sm->poseClaim = 1;
+                    }
+                }
+                continue;
+            }
+            const SkinnedModel* mainModel = MainModelOf(world, driven_, models);
+            const auto stateLength = [&](int32_t index) {
+                return ControllerStateLengthTicks(ctrl->states[static_cast<size_t>(index)], &clips, mainModel);
+            };
             const int32_t nStates = static_cast<int32_t>(ctrl->states.size());
             if (c->currentState < 0 || c->currentState >= nStates) {
                 c->currentState = 0;
@@ -348,8 +509,7 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                         continue;
                     }
                     if (t.hasExitTime) {
-                        const AnimationClipAsset* cl = clips.Get(ctrl->states[c->currentState].clipHash);
-                        const int32_t len = cl ? cl->lengthTicks : 0;
+                        const int32_t len = stateLength(c->currentState);
                         if (!(len > 0 && c->stateTimeTicks >= len - 1)) {
                             continue;
                         }
@@ -385,13 +545,11 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                 ApplyClipPose(world, e, *clipA, c->stateTimeTicks);
             }
 
-            // 3. 時刻を進める
-            AdvanceStateTime(c->stateTimeTicks, sa.speed, sa.loop, clipA ? clipA->lengthTicks : 0);
+            // 3. 時刻を進める (骨クリップを持つステートは主 SkinnedMesh の骨クリップの長さで回す)
+            AdvanceStateTime(c->stateTimeTicks, sa.speed, sa.loop, stateLength(c->currentState));
             if (c->transitionTo >= 0) {
                 const ControllerState& sb = ctrl->states[c->transitionTo];
-                const AnimationClipAsset* clipB = clips.Get(sb.clipHash);
-                AdvanceStateTime(c->transitionToTime, sb.speed, sb.loop,
-                                 clipB ? clipB->lengthTicks : 0);
+                AdvanceStateTime(c->transitionToTime, sb.speed, sb.loop, stateLength(c->transitionTo));
                 ++c->transitionTick;
                 if (c->transitionTick >= c->transitionDuration) {
                     c->currentState = c->transitionTo;
@@ -400,6 +558,20 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                     c->transitionTick = 0;
                     c->transitionDuration = 0;
                     c->transitionToTime = 0;
+                }
+            }
+
+            // 4. 骨のポーズプログラム (M89b)。進めた後の時刻で書く = 旧経路 (SkinningSystem が進めてから
+            //    描画が読む) と同じ「その tick の終わりの姿勢」になる
+            if (!driven_.empty()) {
+                SkeletalSource sources[2];
+                const int32_t count = BuildSkeletalSources(*ctrl, *c, sources);
+                if (count > 0) {
+                    for (EntityID m : driven_) {
+                        SkinnedMeshComponent* sm = world.GetComponent<SkinnedMeshComponent>(m);
+                        const SkinnedModel* model = models != nullptr ? models->Get(sm->model) : nullptr;
+                        WriteSkeletalProgram(*sm, model, sources, count);
+                    }
                 }
             }
         }

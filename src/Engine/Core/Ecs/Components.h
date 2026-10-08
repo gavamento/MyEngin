@@ -724,6 +724,7 @@ struct UIDropdownItemComponent {
 // LocalTransform (ハッシュ対象) を駆動するので状態は決定論・**hash 対象** (kComponentNoHash を付けない)。
 // 時刻は tick、ブレンド係数は transitionTick/duration の整数比 → プラットフォーム非依存。
 // params は整数パラメータ (遷移条件が参照)。遷移中は transitionTo>=0。
+// 骨クリップを持つステート (M89b) は部分木の SkinnedMesh へポーズプログラムを書く (AnimatorController.h)。
 struct AnimatorControllerComponent {
     AssetID controller = {};         // .controller.json (ControllerLibrary のキー = パスハッシュ)
     int32_t currentState = 0;        // 現在の state index

@@ -62,9 +62,8 @@ void SkinningSystem::Update(World& world, const RenderResources& resources)
             if (!model || sm->clip < 0 || sm->clip >= static_cast<int>(model->clips.size())) {
                 continue;
             }
-            // クリップ長 (秒) → tick。60Hz 前提でループ (末尾で 0 に戻す)
-            const float durSec = model->clips[static_cast<size_t>(sm->clip)].duration;
-            const int durTicks = (durSec > 0.0f) ? static_cast<int>(durSec * 60.0f + 0.5f) : 0;
+            // 60Hz 前提でループ (末尾で 0 に戻す)
+            const int durTicks = SkeletalClipTicks(model->clips[static_cast<size_t>(sm->clip)]);
             sm->timeTicks += 1;
             if (durTicks > 0 && sm->timeTicks >= durTicks) {
                 // 一度きりは durTicks ちょうどで止める。サンプラは末尾キー以降をクランプするので
@@ -73,6 +72,11 @@ void SkinningSystem::Update(World& world, const RenderResources& resources)
             }
         }
     });
+}
+
+int32_t SkeletalClipTicks(const SkeletalClip& clip)
+{
+    return (clip.duration > 0.0f) ? static_cast<int32_t>(clip.duration * 60.0f + 0.5f) : 0;
 }
 
 bool IsSkinFading(const SkinnedMeshComponent& sm)

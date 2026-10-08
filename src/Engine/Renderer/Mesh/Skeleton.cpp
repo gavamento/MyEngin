@@ -256,6 +256,18 @@ int32_t SkinnedModel::FindJointByName(std::string_view name) const
     return -1;
 }
 
+int32_t SkinnedModel::FindClipByHash(uint64_t nameHash) const
+{
+    // クリップは高々十数本なので毎回ハッシュする。表を持たないので、Register を通らずに組んだ
+    // モデル (selftest の手組み) でも、クック済みから戻したモデルでも同じ答えになる
+    for (size_t c = 0; c < clips.size(); ++c) {
+        if (!clips[c].name.empty() && HashStr(clips[c].name) == nameHash) {
+            return static_cast<int32_t>(c);
+        }
+    }
+    return -1;
+}
+
 void ComputeBonePalette(const SkinnedModel& model, int clip, float timeSec,
                         std::vector<XMFLOAT4X4>& out)
 {

@@ -48,6 +48,7 @@
 #include "Engine/Engine/Scene/TransformSystem.h"
 #include "Engine/Engine/Script/EngineApiTable.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/Mesh/Skeleton.h"
 #include "Shared/ScriptAPI.h"
 
 #include <Windows.h>
@@ -258,6 +259,7 @@ struct Sim {
     std::function<void()> beforeBt;       // 配達の後・BT の Update の前に呼ぶ (スクリプト層の代わり)
     const ControllerLibrary* controllers = nullptr; // PlayAnimation の引き先 (null = 渡さない)
     const AnimationLibrary* clips = nullptr;
+    const SkinnedModelLibrary* skinnedModels = nullptr; // 骨クリップの長さの引き先 (M89b。BT と Animator の両方へ渡す)
     AnimatorControllerSystem* animator = nullptr;   // 非 null なら BT の後に Animator を進める (TickRunner のフェーズ順)
 
     World& GetWorld() { return scene.GetWorld(); }
@@ -276,9 +278,9 @@ struct Sim {
             if (beforeBt) {
                 beforeBt();
             }
-            bt.Update(GetWorld(), tick, nullptr, controllers, clips);
+            bt.Update(GetWorld(), tick, nullptr, controllers, clips, skinnedModels);
             if (animator != nullptr && controllers != nullptr && clips != nullptr) {
-                animator->Update(GetWorld(), *controllers, *clips);
+                animator->Update(GetWorld(), *controllers, *clips, skinnedModels);
             }
         }
         GetWorld().ApplyStructuralChanges();
@@ -3919,6 +3921,38 @@ bool RunBehaviorTreeSelfTest()
             ck.Check(lap(L"play_lap", "Slash", 20),
                      "PlayAnimation (waitForEnd): 長さ 20 のクリップは入った tick から 20 tick 後に Success、その tick にクリップが先頭へ戻る");
             ck.Check(lap(L"play_lap_fast", "Fast", 10), "PlayAnimation (waitForEnd): 2 倍速のステートは 10 tick で 1 周");
+        }
+        {
+            // M89b: 骨クリップのステートは主 SkinnedMesh のモデルの骨クリップの長さで待つ (Animator と同じ
+            // ControllerStateLengthTicks)。0.25 秒 = 15 tick。プロパティクリップ (Idle の 60 tick) へは落ちない
+            SkinnedModelLibrary models;
+            SkinnedModel model;
+            model.joints.resize(1);
+            model.clips.resize(1);
+            model.clips[0].name = "Swing";
+            model.clips[0].duration = 0.25f;
+            model.clips[0].tracks.resize(1);
+            const AssetID modelId = models.Register("selftest_bt_swing", std::move(model));
+            ControllerAsset skelController = controller;
+            skelController.states.push_back({ "Swing", "", idleClip, 1, 1, "Swing", HashStr("Swing") });
+            const uint64_t skelCtrlHash = ctrlLib.Register(L"selftest\\ai\\anim_skel.controller.json", skelController);
+
+            Sim sim;
+            wire(sim);
+            sim.skinnedModels = &models;
+            const EntityID e = addActor(sim, RegisterTree(lib, L"play_lap_skel", Tree(0, { PlayAnim(0, "Swing", 0, true) })), true);
+            animOf(sim, e)->controller = AssetID{ skelCtrlHash };
+            GameObject body = sim.scene.CreateGameObjectTracked("Body");
+            body.SetParent(GameObject(&sim.GetWorld(), e));
+            body.AddComponent<SkinnedMeshComponent>()->model = modelId;
+            sim.GetWorld().ApplyStructuralChanges();
+            const std::vector<int32_t> statuses = Run(sim, e, 17);
+            bool runsUntil = true;
+            for (size_t i = 0; i < 15; ++i) {
+                runsUntil = runsUntil && statuses[i] == kRunning;
+            }
+            ck.Check(runsUntil && statuses[15] == kSucceeded,
+                     "PlayAnimation (waitForEnd): 骨クリップのステートは骨クリップの長さ (15 tick) で Success");
         }
         {
             Sim sim;

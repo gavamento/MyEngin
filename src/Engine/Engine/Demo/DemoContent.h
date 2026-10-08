@@ -263,4 +263,10 @@ void BuildPerceptionShowcaseScene(EngineContext& ctx);
 // ★ナビメッシュは --nav-demo と同じくシーン構築時にメモリ上で焼いて登録する (`nav://bt-demo`)
 void BuildBtShowcaseScene(EngineContext& ctx);
 
+// M89b: 骨アニメのショーケース (--anim-demo)。tools\gen_anim_test_gltf.ps1 が作る anim_test.glb (Y-up) と
+// anim_test_zup.glb (Z-up) を並べ、assets\anims\anim_test.controller.json が骨クリップを
+// Idle -> Walk -> Run -> Attack -> Idle と hasExitTime で回す (入力もスクリプトも要らない = replay の anim ジョブ)。
+// ★Walk / Run は Root が前進するクリップなので、ルートモーション (M89j) までは 1 周ごとに元の位置へ戻って見える
+void BuildAnimShowcaseScene(EngineContext& ctx);
+
 } // namespace mye

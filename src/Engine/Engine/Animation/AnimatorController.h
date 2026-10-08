@@ -12,6 +12,8 @@ namespace mye {
 
 class World;
 class AnimationLibrary;
+class SkinnedModelLibrary;
+struct SkinnedModel;
 
 // 遷移条件の比較演算 (整数パラメータに対して。決定論)
 enum class CondOp : int32_t { Gt = 0, Ge = 1, Lt = 2, Le = 3, Eq = 4, Ne = 5 };
@@ -28,6 +30,10 @@ struct ControllerState {
     uint64_t clipHash = 0;  // 解決済み AnimationClip ハッシュ = GUID (AnimationLibrary のキー)
     int32_t speed = 1;      // 1 tick あたりの進み tick 数
     int32_t loop = 1;       // 0=末尾停止 1=ループ
+    // 骨クリップ (M89b、.controller.json v2 の "skel":{"clip":"Walk"})。SkinnedModel のクリップ名で、
+    // 駆動する SkinnedMesh ごとに FindClipByHash で index を引く。空 = 骨を駆動しないステート
+    std::string skelClip;
+    uint64_t skelClipHash = 0; // HashStr(skelClip)。skelClip が空なら 0
 };
 
 struct ControllerCondition {
@@ -86,6 +92,22 @@ private:
 // state 名から index を引く。無ければ -1 (同名が複数なら先頭)
 int32_t FindControllerState(const ControllerAsset& controller, const std::string& name);
 
+// ---- 骨クリップの駆動 (M89b) ----
+// controller を持つ entity が駆動する SkinnedMesh を前順 (親 → 子を兄弟順) で out へ入れ直す。
+// 自分を含む部分木が対象で、別の AnimatorController を持つ子孫の部分木は、そちらが駆動するので含めない
+void CollectDrivenSkinnedMeshes(World& world, EntityID controllerEntity, std::vector<EntityID>& out);
+
+// 主 SkinnedMesh のモデル = 上の集合のうち entity index が最小のもの。ステートの長さ (hasExitTime・
+// ループ・BT の waitForEnd) はこのモデルの骨クリップで決める。無い・モデルが未登録なら null
+const SkinnedModel* MainSkinnedModel(World& world, EntityID controllerEntity, const SkinnedModelLibrary* models);
+
+// ステートの 1 周の長さ (tick、speed では割らない)。骨クリップが mainModel から引ければその長さ
+// (SkeletalClipTicks)、引けなければプロパティクリップの lengthTicks、どちらも無ければ 0 (時刻が進まない)。
+// ★Animator と BT の PlayAnimation が同じこの関数を通す — 片方だけ骨の長さを知らないと、
+//   遷移の終わりと waitForEnd の終わりが食い違う
+int32_t ControllerStateLengthTicks(const ControllerState& state, const AnimationLibrary* clips,
+                                   const SkinnedModel* mainModel);
+
 // entity の Animator を stateIndex のステートへ強制的に移す (BT の PlayAnimation 用)。
 // durationTicks > 0: 今のポーズからその tick 数で混ぜる遷移を始める (遷移中なら遷移先だけを差し替えて混ぜ直す)。
 // 0 以下: currentState を即切り替えて再生位置を 0 に戻し、遷移を捨てる。
@@ -95,9 +117,22 @@ bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t dur
 // AnimatorControllerComponent を評価してポーズを適用し、状態/遷移を進める (M22)。
 // AnimatorControllerComponent 非存在シーンでは完全 no-op (既存シーンのリプレイ不変)。
 // 時刻は tick、ブレンド係数は transitionTick/duration の整数比 → 決定論。
+//
+// 骨クリップ (M89b): 骨クリップを持つステートがあるコントローラは、時刻を進めた後に、駆動する
+// SkinnedMesh すべてへポーズプログラム (今のステート 1 層、遷移中は元と先の 2 層) を書いて
+// poseClaim を立てる。SkinningSystem より前に呼ぶこと。
+// - 骨クリップの無いステートは層を出さない。遷移の片側だけが骨クリップを持つなら、そちらを重み満杯で出す。
+//   どちらも持たない tick は書かない = SkinnedMesh は旧経路 (clip / timeTicks) に戻る
+// - entity が非アクティブの間は、プログラムを持っている SkinnedMesh の claim だけを立てて凍らせる
+//   (旧経路の時計が裏で進んで、再びアクティブになった瞬間に別のポーズへ飛ばないため)
+// - models が null (または SkinnedMesh のモデルが未登録) なら骨クリップの長さは引けない (0 = 進まない)
 class AnimatorControllerSystem {
 public:
-    void Update(World& world, const ControllerLibrary& controllers, const AnimationLibrary& clips);
+    void Update(World& world, const ControllerLibrary& controllers, const AnimationLibrary& clips,
+                const SkinnedModelLibrary* models = nullptr);
+
+private:
+    std::vector<EntityID> driven_; // 走査用の作業領域 (sim 状態ではない)
 };
 
 } // namespace mye

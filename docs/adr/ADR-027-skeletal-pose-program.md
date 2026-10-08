@@ -47,3 +47,20 @@ BT / ABI からは骨クリップを切り替えられなかった。M89 では�
 
 部位追従のポーズキャッシュのキーは `SamePoseInputs` に任せる。キャッシュ側で欄を並べると、ポーズの入力を足したときに
 キーだけが古いまま残り、別のポーズを使い回す。ポーズの入力を足すときは `SampleSkinnedLocals` と `SamePoseInputs` を一緒に直す。
+
+## 決定 5: コントローラは骨クリップを名前で引き、部分木の SkinnedMesh をすべて駆動する (M89b)
+
+- ステートの骨クリップは `.controller.json` v2 の `"skel":{"clip":"Walk"}`。SkinnedModel のクリップ名で持ち、
+  SkinnedMesh ごとに `SkinnedModel::FindClipByHash` で index を引く。同じコントローラを、クリップの並びが違うモデルにも使える。
+  見つからないモデルの層は `clip = -1` (バインドポーズ) で、層の数と重みは他のメッシュとそろえる。
+- 駆動対象はコントローラの部分木の SkinnedMesh すべて (前順)。別の AnimatorController を持つ子孫の部分木は含めない。
+- ステートの長さ (ループ・hasExitTime・BT の waitForEnd) は **主 SkinnedMesh** (駆動対象のうち entity index 最小) のモデルの
+  骨クリップで決める (`ControllerStateLengthTicks`、`SkeletalClipTicks`)。走査順でなく index で選ぶのは、兄弟の並べ替えで
+  ステートの長さが変わらないようにするため。骨クリップの長さが引けなければプロパティクリップの長さへ落ちる。
+- プログラムは時刻を進めた後の値で書く (旧経路の「進めてから描画が読む」と同じ、その tick の終わりの姿勢)。
+  遷移中は元 → 先の 2 層で、先の重みは `transitionTick * 65536 / duration` (切り捨て)、残りが元。片側だけが骨クリップを
+  持つならそちらを重み満杯で出す。どちらも持たない tick は書かない = 旧経路へ戻る。
+- コントローラの entity が非アクティブの間は、プログラムを持つメッシュの claim だけを立てて凍らせる。
+- 既知の制約: ステートの長さが骨クリップ (= モデルの読み込み) に依存するので、モデルを読まない構成ではステートの時刻が
+  進まない。プロパティクリップ (AnimationLibrary) と同じ依存で、replay_verify の `anim` ジョブ (Server.exe を含む) で
+  全構成が同じ長さを読めることを確かめている。

@@ -9,6 +9,7 @@ namespace mye {
 class World;
 struct RenderResources;
 struct SkinnedModel;
+struct SkeletalClip;
 struct SkinnedMeshComponent;
 
 // スケルタルアニメの時刻を進めるシステム (M18)。tick フェーズで呼ぶ。
@@ -24,6 +25,11 @@ class SkinningSystem {
 public:
     void Update(World& world, const RenderResources& resources);
 };
+
+// 骨クリップの長さ (tick、60Hz)。秒を一度だけ四捨五入する。長さ 0 以下は 0 (M89b で切り出し)。
+// ★旧経路のループ・コントローラのステート長・BT の waitForEnd が同じ値を使う — 1 tick でもずれると
+//   ループの折り返しと終端の判定が食い違う
+int32_t SkeletalClipTicks(const SkeletalClip& clip);
 
 // クロスフェード中か。中でなければポーズは clip 単独 (= M18 と同じ評価)
 bool IsSkinFading(const SkinnedMeshComponent& sm);

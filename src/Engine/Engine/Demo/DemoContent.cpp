@@ -4883,4 +4883,59 @@ void BuildBtShowcaseScene(EngineContext& ctx)
     w.GetComponent<NavMeshSurfaceComponent>(surfaceGo.Id())->navAsset = AssetID{ kBtDemoNavGuid };
 }
 
+void BuildAnimShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+    s.SetName("anim_showcase");
+
+    // .meta の GUID (assets\anims\anim_test.controller.json.meta)
+    constexpr uint64_t kAnimTestControllerGuid = 0xb44c659f992d4a83ull;
+
+    Material floorMat;
+    floorMat.shader = AssetID{ HashStr("forward_lit") };
+    floorMat.texture = res.textures.White();
+    floorMat.baseColor = { 0.30f, 0.32f, 0.36f, 1.0f };
+    const AssetID floorMatId = res.materials.Register("animdemo_floor", floorMat);
+
+    // モデルの正面は glTF の +Z = エンジンの -Z (ローダが Z を反転する)。カメラは -Z 側から正面を見る
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    camera.SetLocalPosition(0.0f, 1.6f, -5.0f);
+    camera.SetLocalRotationEuler(8.0f, 0.0f, 0.0f);
+
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(50.0f, -30.0f, 0.0f);
+
+    GameObject floor = s.CreateGameObject("Floor");
+    floor.SetLocalPosition(0.0f, -0.05f, 0.0f);
+    floor.SetLocalScale(10.0f, 0.1f, 10.0f);
+    {
+        auto* mr = floor.AddComponent<MeshRendererComponent>();
+        mr->mesh = res.meshes.Cube();
+        mr->material = floorMatId;
+    }
+
+    // 同じコントローラで Y-up と Z-up の 2 体を回す (骨クリップを名前で引くので、どちらのモデルでも同じ)
+    struct ActorSpec {
+        const wchar_t* file;
+        float x;
+    };
+    const ActorSpec actors[] = {
+        { L"\\models\\anim_test.glb", -1.0f },
+        { L"\\models\\anim_test_zup.glb", 1.0f },
+    };
+    for (const ActorSpec& a : actors) {
+        GameObject actor = ModelLoader::Load(s, res, *ctx.shaders, ctx.assetsRoot + a.file);
+        if (!actor) {
+            MYE_LOG_ERROR("[anim-demo] %s could not be loaded (run tools\\gen_anim_test_gltf.ps1)",
+                          WideToUtf8(a.file).c_str());
+            continue;
+        }
+        actor.SetLocalPosition(a.x, 0.0f, 0.0f);
+        actor.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ kAnimTestControllerGuid };
+    }
+}
+
 } // namespace mye
