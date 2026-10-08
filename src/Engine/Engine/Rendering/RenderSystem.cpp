@@ -1255,8 +1255,10 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                     SampleSkinnedLocals(*model, *sm, locals);
                     ragdoll::BuildBonePaletteFromLocals(world, c.e, *model, locals, palette);
                 } else if (UsesLocalsPath(*sm)) {
+                    // M89f: ポーズプログラムの時刻は、ワールド行列と同じ条件 (interp) で前 tick と補間する。
+                    // ラグドールの枝は補間しない = 剛体が置いた部位 (tick 境界の値) と骨がずれないように
                     std::vector<XMMATRIX> locals;
-                    SampleSkinnedLocals(*model, *sm, locals);
+                    SampleSkinnedLocalsInterpolated(*model, *sm, interp ? interpAlpha : 1.0f, locals);
                     ComputeBonePaletteWithOverrides(*model, locals, {}, {}, palette);
                 } else {
                     ComputeBonePalette(*model, sm->clip, timeSec, palette);

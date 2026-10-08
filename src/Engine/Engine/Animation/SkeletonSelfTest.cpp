@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 #include <DirectXMath.h>
@@ -530,6 +531,53 @@ bool RunSkeletonSelfTest()
         check(program, "layered: a 1-layer pose program samples bit-identically to the old "
                        "timeTicks / 60 path");
 
+        // ---- (M89f) 描画補間: alpha = 1 は補間なしとビット一致 (決定的撮影の golden を動かさない)、
+        // alpha = 0 は前 tick の時刻、途中は prevTimeQ + stepQ * alpha の時刻で引いたのと同じ
+        {
+            constexpr int32_t kQ = SkinnedMeshComponent::kPoseTimeQPerTick;
+            const auto programAt = [&](int32_t timeQ) {
+                SkinnedMeshComponent at;
+                at.poseLayerCount = 2;
+                at.poseLayers[0] = { 0, timeQ, 40000 };
+                at.poseLayers[1] = { -1, 0, 25536 };
+                std::vector<XMMATRIX> out;
+                SampleSkinnedLocals(*gltf.model, at, out);
+                return out;
+            };
+            SkinnedMeshComponent sm;
+            sm.poseLayerCount = 2;
+            sm.poseLayers[0] = { 0, 11 * kQ, 40000, 10 * kQ, kQ };
+            sm.poseLayers[1] = { -1, 0, 25536 };
+            std::vector<XMMATRIX> exact, interp;
+            SampleSkinnedLocals(*gltf.model, sm, exact);
+            SampleSkinnedLocalsInterpolated(*gltf.model, sm, 1.0f, interp);
+            bool ok = bitEqual(exact, interp) && bitEqual(exact, programAt(11 * kQ));
+            SampleSkinnedLocalsInterpolated(*gltf.model, sm, std::numeric_limits<float>::quiet_NaN(), interp);
+            ok = ok && bitEqual(exact, interp);
+            check(ok, "interp: alpha = 1 (and NaN) samples exactly timeQ, bit-identical to SampleSkinnedLocals");
+
+            SampleSkinnedLocalsInterpolated(*gltf.model, sm, 0.0f, interp);
+            ok = bitEqual(interp, programAt(10 * kQ));
+            SampleSkinnedLocalsInterpolated(*gltf.model, sm, 0.5f, interp);
+            ok = ok && bitEqual(interp, programAt(10 * kQ + kQ / 2));
+            SampleSkinnedLocalsInterpolated(*gltf.model, sm, -3.0f, interp);
+            ok = ok && bitEqual(interp, programAt(10 * kQ));
+            check(ok, "interp: alpha 0 / 0.5 sample the previous tick / the midpoint; negative alpha clamps to 0");
+
+            sm.poseLayers[0].stepQ = 0;
+            SampleSkinnedLocalsInterpolated(*gltf.model, sm, 0.5f, interp);
+            check(bitEqual(exact, interp), "interp: a layer with stepQ = 0 is not interpolated (frozen / new state)");
+
+            // 旧経路は補間しない
+            SkinnedMeshComponent legacy;
+            legacy.clip = 0;
+            legacy.timeTicks = 7;
+            std::vector<XMMATRIX> legacyExact;
+            SampleSkinnedLocals(*gltf.model, legacy, legacyExact);
+            SampleSkinnedLocalsInterpolated(*gltf.model, legacy, 0.25f, interp);
+            check(bitEqual(legacyExact, interp), "interp: the legacy path (poseLayerCount = 0) ignores alpha");
+        }
+
         // 重みが正の層が無ければバインドポーズ
         std::vector<XMMATRIX> bind, none;
         ComputeJointLocals(*fbx.model, -1, 0.0f, bind);
@@ -606,6 +654,9 @@ bool RunSkeletonSelfTest()
         b.clip = 5;          // 駆動中は旧経路の欄を見ない
         b.poseLayers[3] = { 2, 9, 9 };
         check(SamePoseInputs(a, b), "key: a program ignores old-path fields and unused layers");
+        b.poseLayers[0].prevTimeQ = 100;
+        b.poseLayers[0].stepQ = 156;
+        check(SamePoseInputs(a, b), "key: the render-only interpolation fields (M89f) do not split the key");
         b.poseLayers[0].timeQ = 257;
         check(!SamePoseInputs(a, b), "key: a different layer time is a different pose");
         b = a;

@@ -128,7 +128,8 @@ struct SimRefs {
 // v40 (M89a): SkinnedMesh の末尾にポーズプログラム (poseLayerCount / poseClaim / poseLayers[8]。World 節のカラム生バイト)
 // v41 (M89c): AnimatorControllerComponent の params が 4 → 16 個 (World 節のカラム生バイト)
 // v42 (M89d): AnimatorControllerComponent の末尾にブレンドツリーの位相 (statePhase / transitionToPhase。World 節のカラム生バイト)
-inline constexpr uint32_t kSimSnapshotVersion = 42;
+// v43 (M89f): SkinnedMesh のポーズプログラムの層に描画補間の欄 (prevTimeQ / stepQ。World 節のカラム生バイト)
+inline constexpr uint32_t kSimSnapshotVersion = 43;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

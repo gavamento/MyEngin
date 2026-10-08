@@ -381,6 +381,8 @@ bool RunAnimatorControllerSelfTest()
                   && sm(bodyA)->poseLayers[0].timeQ == 1 * SkinnedMeshComponent::kPoseTimeQPerTick
                   && sm(bodyA)->poseLayers[0].weightQ == SkinnedMeshComponent::kPoseWeightOne && ac()->stateTimeTicks == 1,
               "one state = one full-weight layer at the advanced time (timeQ = stateTimeTicks * 256)");
+        check(sm(bodyA)->poseLayers[0].prevTimeQ == 0 && sm(bodyA)->poseLayers[0].stepQ == 256,
+              "M89f: a layer records the previous tick's time and this tick's step for render interpolation");
         check(sm(bodyB)->poseClaim == 1 && sm(bodyB)->poseLayers[0].clip == 1 && sm(bodyC)->poseLayers[0].clip == 0,
               "each mesh resolves the clip name against its own model");
         check(sm(riderBody)->poseLayerCount == 0 && sm(riderBody)->poseClaim == 0,
@@ -396,6 +398,8 @@ bool RunAnimatorControllerSelfTest()
         }
         check(ac()->stateTimeTicks == 0 && sm(bodyA)->poseLayers[0].timeQ == 0,
               "the state loops at the main model's skeletal clip length (60 ticks)");
+        check(sm(bodyA)->poseLayers[0].prevTimeQ == 59 * 256 && sm(bodyA)->poseLayers[0].stepQ == 256,
+              "M89f: across the loop wrap the step stays +1 tick (prev + step = the clip end, not a jump back)");
 
         ac()->params[0] = 1;
         step();
@@ -405,6 +409,9 @@ bool RunAnimatorControllerSelfTest()
                   && sm(bodyA)->poseLayers[1].timeQ == 256 && sm(bodyB)->poseLayers[0].clip == 1
                   && sm(bodyB)->poseLayers[1].clip == 0,
               "a transition writes from -> to layers with weights tick/duration in Q16 summing to 65536");
+        check(sm(bodyA)->poseLayers[1].prevTimeQ == 0 && sm(bodyA)->poseLayers[1].stepQ == 256
+                  && sm(bodyA)->poseLayers[0].prevTimeQ == 0 && sm(bodyA)->poseLayers[0].stepQ == 256,
+              "M89f: the target layer of a new transition interpolates from its start (0)");
         for (int i = 0; i < 3; ++i) {
             step();
         }
@@ -412,6 +419,9 @@ bool RunAnimatorControllerSelfTest()
                   && sm(bodyA)->poseLayers[0].clip == 1 && sm(bodyA)->poseLayers[0].timeQ == 4 * 256
                   && sm(bodyA)->poseLayers[1].weightQ == 0,
               "after the transition: one layer of the target state, the unused layer is cleared");
+        check(sm(bodyA)->poseLayers[0].prevTimeQ == 3 * 256 && sm(bodyA)->poseLayers[0].stepQ == 256
+                  && sm(bodyA)->poseLayers[1].stepQ == 0,
+              "M89f: on the completing tick the surviving layer keeps the target's clock (no jump)");
 
         // 非アクティブの間は凍る (旧経路の時計も進まない)
         actor.AddComponent<ActiveComponent>()->enabled = false;
@@ -424,6 +434,8 @@ bool RunAnimatorControllerSelfTest()
         check(ac()->stateTimeTicks == frozenTime && sm(bodyA)->poseLayerCount == 1
                   && sm(bodyA)->poseLayers[0].timeQ == frozenQ && sm(bodyA)->timeTicks == 0,
               "an inactive controller freezes its meshes: the claim is kept and neither clock advances");
+        check(sm(bodyA)->poseLayers[0].stepQ == 0 && sm(bodyA)->poseLayers[0].prevTimeQ == frozenQ,
+              "M89f: a frozen program is not interpolated (it would replay its last tick's motion every tick)");
         actor.GetComponent<ActiveComponent>()->enabled = true;
 
         // 末尾で抜ける遷移は主 SkinnedMesh の骨クリップの長さ (A の 30、B の 45 ではない) で判定する
@@ -818,13 +830,27 @@ bool RunAnimatorControllerSelfTest()
                   && smA()->poseLayers[2].weightQ == 0,
               "M89d: after the transition the phase carries over; two children at half weight");
         bool synced = true;
-        for (int i = 0; i < 30; ++i) {
+        // M89f: 各層の prevTimeQ は前 tick の timeQ、prevTimeQ + stepQ は今の timeQ (折り返した tick は 1 周先)
+        bool continuous = true;
+        bool wrapped = false;
+        for (int i = 0; i < 45; ++i) { // 1 周 = 45 tick なので、途中で位相の折り返しを 1 回踏む
+            const int32_t lastQ[2] = { smA()->poseLayers[0].timeQ, smA()->poseLayers[1].timeQ };
             step();
             const int32_t runQ = smA()->poseLayers[0].timeQ;
             const int32_t walkQ = smA()->poseLayers[1].timeQ;
             synced = synced && walkQ - 2 * runQ >= 0 && walkQ - 2 * runQ <= 1;
+            const int32_t spanQ[2] = { 30 * 256, 60 * 256 };
+            for (int k = 0; k < 2; ++k) {
+                const SkinnedMeshComponent::PoseLayer& la = smA()->poseLayers[k];
+                const int32_t end = la.prevTimeQ + la.stepQ;
+                wrapped = wrapped || end == la.timeQ + spanQ[k];
+                continuous = continuous && la.prevTimeQ == lastQ[k] && la.stepQ > 0
+                             && (end == la.timeQ || end == la.timeQ + spanQ[k]);
+            }
         }
         check(synced, "M89d: phase sync: Walk (60) is always at twice Run's (30) time");
+        check(continuous && wrapped,
+              "M89f: blend layers interpolate from the previous tick's time, unwrapping the phase wrap");
 
         // Move → Idle は位相が 1 周に達する tick にだけ抜ける
         ac()->params[1] = 1;
@@ -849,6 +875,8 @@ bool RunAnimatorControllerSelfTest()
         }
         check(ac()->statePhase == UINT32_MAX && smA()->poseLayers[0].timeQ == 30 * 256 && smA()->poseLayers[1].timeQ == 60 * 256,
               "M89d: a non-loop blend state stops at the end of every child");
+        check(smA()->poseLayers[0].stepQ == 0 && smA()->poseLayers[1].stepQ == 0,
+              "M89f: a non-loop blend state stuck at its end has no step (no interpolation past the end)");
 
         // 遷移の途中でコンポーネントを写した別シーンが、同じ続きを辿る (snapshot はこの生バイトを運ぶ)
         {

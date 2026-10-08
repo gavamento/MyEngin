@@ -328,6 +328,13 @@ struct SkinnedMeshComponent {
         int32_t clip = -1;   // クリップ index。範囲外はバインドポーズ
         int32_t timeQ = 0;   // サンプル時刻 (1/256 tick)
         int32_t weightQ = 0; // 重み (Q16)。0 の層は評価しない
+        // ---- 描画補間 (M89f) ----
+        // 描画だけが prevTimeQ + stepQ * interpAlpha で引く (alpha = 1 は timeQ そのもの)。
+        // sim・部位追従・ラグドールは読まない = ポーズの入力ではない (SamePoseInputs も見ない)。
+        // stepQ は折り返す前の進み: ループの折り返しでは prevTimeQ + stepQ がクリップの末尾を越え、
+        // サンプラのクランプで末尾のコマへ寄る (ループのクリップは末尾と先頭が同じ姿勢)
+        int32_t prevTimeQ = 0; // 前 tick のこの層の時刻 (1/256 tick)
+        int32_t stepQ = 0;     // この tick の進み (1/256 tick)。0 = 補間しない
     };
     int32_t poseLayerCount = 0; // 0 = 旧経路。1..kMaxPoseLayers = poseLayers の先頭から有効
     // その tick にコントローラがプログラムを書いた印。SkinningSystem が見て 0 に戻す

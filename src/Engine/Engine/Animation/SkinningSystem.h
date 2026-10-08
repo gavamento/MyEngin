@@ -51,4 +51,10 @@ bool SamePoseInputs(const SkinnedMeshComponent& a, const SkinnedMeshComponent& b
 void SampleSkinnedLocals(const SkinnedModel& model, const SkinnedMeshComponent& sm,
                          std::vector<DirectX::XMMATRIX>& outLocals);
 
+// 描画用 (M89f): ポーズプログラムの各層の時刻を前 tick と今の tick の間で interpAlpha 補間して引く。
+// alpha >= 1 は SampleSkinnedLocals そのもの (決定的撮影・編集中は alpha = 1 なので絵が変わらない)。
+// 旧経路 (poseLayerCount = 0) と重みは補間しない。★部位追従・ラグドールは使わない (sim の tick 境界の姿勢に付く)
+void SampleSkinnedLocalsInterpolated(const SkinnedModel& model, const SkinnedMeshComponent& sm,
+                                     float interpAlpha, std::vector<DirectX::XMMATRIX>& outLocals);
+
 } // namespace mye

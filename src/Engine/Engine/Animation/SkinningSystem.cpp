@@ -130,6 +130,12 @@ bool SamePoseInputs(const SkinnedMeshComponent& a, const SkinnedMeshComponent& b
 void SampleSkinnedLocals(const SkinnedModel& model, const SkinnedMeshComponent& sm,
                          std::vector<DirectX::XMMATRIX>& outLocals)
 {
+    SampleSkinnedLocalsInterpolated(model, sm, 1.0f, outLocals);
+}
+
+void SampleSkinnedLocalsInterpolated(const SkinnedModel& model, const SkinnedMeshComponent& sm,
+                                     float interpAlpha, std::vector<DirectX::XMMATRIX>& outLocals)
+{
     // ---- ポーズプログラム (M89a) ----
     if (const int32_t layers = ActivePoseLayers(sm); layers > 0) {
         static_assert(SkinnedMeshComponent::kMaxPoseLayers <= kMaxSkeletalLayers,
@@ -138,11 +144,20 @@ void SampleSkinnedLocals(const SkinnedModel& model, const SkinnedMeshComponent& 
         // (分子と分母に同じ 2 の冪を掛けた商は、正しく丸めた結果が変わらない。|timeQ| < 2^24 の範囲)
         constexpr float kTimeQPerSecond =
             60.0f * static_cast<float>(SkinnedMeshComponent::kPoseTimeQPerTick);
+        // NaN は補間しない側へ倒す (!(a < 1) は NaN でも真)
+        const bool interpolate = interpAlpha < 1.0f;
+        const float alpha = interpolate ? std::max(interpAlpha, 0.0f) : 1.0f;
         SkeletalLayer program[SkinnedMeshComponent::kMaxPoseLayers] = {};
         for (int32_t i = 0; i < layers; ++i) {
             const SkinnedMeshComponent::PoseLayer& src = sm.poseLayers[i];
             program[i].clip = src.clip;
-            program[i].timeSec = static_cast<float>(src.timeQ) / kTimeQPerSecond;
+            if (interpolate && src.stepQ != 0) {
+                // 描画専用なので float の積和でよい (sim の状態には戻らない)
+                program[i].timeSec = (static_cast<float>(src.prevTimeQ) + static_cast<float>(src.stepQ) * alpha)
+                                     / kTimeQPerSecond;
+            } else {
+                program[i].timeSec = static_cast<float>(src.timeQ) / kTimeQPerSecond;
+            }
             program[i].weight = src.weightQ;
         }
         ComputeJointLocalsLayered(model, program, layers, outLocals);

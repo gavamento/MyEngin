@@ -363,12 +363,22 @@ bool BlendExitReached(uint32_t phase, int64_t delta)
     return delta > 0 && static_cast<uint64_t>(phase) + static_cast<uint64_t>(delta) >= kPhaseCycle;
 }
 
+// 1 ステートの時計の、この tick の動き (M89f の描画補間用)。prev は進める前、step は折り返す前の進み。
+// ★step は sim では使わない (描画が前 tick の姿勢から滑らかに繋ぐためだけの値)
+struct StateClock {
+    int32_t time = 0;
+    int32_t prevTime = 0;
+    int32_t timeStep = 0;
+    uint32_t phase = 0;
+    uint32_t prevPhase = 0;
+    int64_t phaseStep = 0;
+};
+
 // ポーズプログラムの元になる 1 層 (骨クリップと再生位置と重み)
 struct SkeletalSource {
     uint64_t clipHash = 0;
     bool usesPhase = false; // true = ブレンドツリーの子 (位相をメッシュごとの長さで時刻にする)
-    int32_t timeTicks = 0;  // 単一クリップの再生位置
-    uint32_t phase = 0;     // ブレンドツリーの位相
+    StateClock clock;       // 単一クリップは time 系、ブレンドツリーの子は phase 系を使う
     int32_t loop = 1;
     int32_t weightQ = 0;
 };
@@ -379,17 +389,17 @@ static_assert(kMaxSkeletalSources <= SkinnedMeshComponent::kMaxPoseLayers,
 
 // 1 ステートぶんの層を out へ足す。stateWeightQ をステート内の子の重みで割り振る (端数は呼び出し側で直す)
 int32_t AppendStateSources(const ControllerAsset& ctrl, const ControllerState& st, const int32_t* params,
-                           int32_t timeTicks, uint32_t phase, int32_t stateWeightQ, SkeletalSource* out)
+                           const StateClock& clock, int32_t stateWeightQ, SkeletalSource* out)
 {
     if (st.blendType == ControllerBlendType::None) {
-        out[0] = { st.skelClipHash, false, timeTicks, 0, st.loop, stateWeightQ };
+        out[0] = { st.skelClipHash, false, clock, st.loop, stateWeightQ };
         return 1;
     }
     BlendChildWeight w[kMaxBlendLayers];
     const int32_t n = StateBlendWeights(ctrl, st, params, w);
     for (int32_t i = 0; i < n; ++i) {
         const int32_t weightQ = static_cast<int32_t>(int64_t(stateWeightQ) * w[i].weightQ / kWeightOne);
-        out[i] = { st.blendChildren[static_cast<size_t>(w[i].child)].clipHash, true, 0, phase, st.loop, weightQ };
+        out[i] = { st.blendChildren[static_cast<size_t>(w[i].child)].clipHash, true, clock, st.loop, weightQ };
     }
     return n;
 }
@@ -398,15 +408,16 @@ int32_t AppendStateSources(const ControllerAsset& ctrl, const ControllerState& s
 // 遷移中は元 → 先の順に並べる (層を先頭から畳むので順序も入力の一部)。ステートの重みは
 // transitionTick / transitionDuration を Q16 に 1 回だけ切り捨て、残りを元へ回す。ブレンドの子へ割り振った
 // 切り捨ての端数は最大重みの層 (同値なら先の層) に足す = 和はちょうど kPoseWeightOne
+// fromClock / toClock は currentState / transitionTo の時計 (この tick に進めた後の値と、その動き)
 int32_t BuildSkeletalSources(const ControllerAsset& ctrl, const AnimatorControllerComponent& c,
+                             const StateClock& fromClock, const StateClock& toClock,
                              SkeletalSource (&out)[kMaxSkeletalSources])
 {
     const ControllerState& from = ctrl.states[static_cast<size_t>(c.currentState)];
     const bool fromSkel = StateDrivesSkeleton(from);
     int32_t count = 0;
     const auto appendFrom = [&](int64_t weightQ) {
-        count += AppendStateSources(ctrl, from, c.params, c.stateTimeTicks, c.statePhase,
-                                    static_cast<int32_t>(weightQ), out + count);
+        count += AppendStateSources(ctrl, from, c.params, fromClock, static_cast<int32_t>(weightQ), out + count);
     };
     if (c.transitionTo < 0) {
         if (!fromSkel) {
@@ -417,8 +428,7 @@ int32_t BuildSkeletalSources(const ControllerAsset& ctrl, const AnimatorControll
         const ControllerState& to = ctrl.states[static_cast<size_t>(c.transitionTo)];
         const bool toSkel = StateDrivesSkeleton(to);
         const auto appendTo = [&](int64_t weightQ) {
-            count += AppendStateSources(ctrl, to, c.params, c.transitionToTime, c.transitionToPhase,
-                                        static_cast<int32_t>(weightQ), out + count);
+            count += AppendStateSources(ctrl, to, c.params, toClock, static_cast<int32_t>(weightQ), out + count);
         };
         if (!fromSkel && !toSkel) {
             return 0;
@@ -447,12 +457,27 @@ int32_t BuildSkeletalSources(const ControllerAsset& ctrl, const AnimatorControll
     return count;
 }
 
+// 長さ lengthTicks のクリップの 1 周を timeQ で表した値。timeQ (int32) に収まる長さに丸める
+// (約 38 時間。実際のクリップは届かない)
+int64_t BlendSpanQ(int32_t lengthTicks)
+{
+    return static_cast<int64_t>(std::min(lengthTicks, INT32_MAX / SkinnedMeshComponent::kPoseTimeQPerTick))
+           * SkinnedMeshComponent::kPoseTimeQPerTick;
+}
+
+int32_t ClampToInt32(int64_t v)
+{
+    return static_cast<int32_t>(std::clamp<int64_t>(v, INT32_MIN, INT32_MAX));
+}
+
 void WriteSkeletalProgram(SkinnedMeshComponent& sm, const SkinnedModel* model, const SkeletalSource* sources,
                           int32_t count)
 {
+    constexpr int32_t kQ = SkinnedMeshComponent::kPoseTimeQPerTick;
     sm.poseLayerCount = count;
     for (int32_t i = 0; i < count; ++i) {
         const SkeletalSource& src = sources[i];
+        const StateClock& clock = src.clock;
         SkinnedMeshComponent::PoseLayer& layer = sm.poseLayers[i];
         // モデルが未登録・名前のクリップが無いモデルは -1 = バインドポーズ (層の数と重みは他のメッシュとそろえる)
         layer.clip = model != nullptr ? model->FindClipByHash(src.clipHash) : -1;
@@ -460,9 +485,26 @@ void WriteSkeletalProgram(SkinnedMeshComponent& sm, const SkinnedModel* model, c
             // 位相はメッシュ自身のモデルでの長さで時刻にする (長さの違うモデルでも周がそろう)
             const int32_t ticks =
                 layer.clip >= 0 ? SkeletalClipTicks(model->clips[static_cast<size_t>(layer.clip)]) : 0;
-            layer.timeQ = BlendPhaseToTimeQ(src.phase, ticks, src.loop);
+            layer.timeQ = BlendPhaseToTimeQ(clock.phase, ticks, src.loop);
+            layer.prevTimeQ = BlendPhaseToTimeQ(clock.prevPhase, ticks, src.loop);
+            // 進みは時刻の差から取り (alpha = 1 の手前で timeQ にちょうど届く)、ループの折り返しだけ
+            // 位相の進む向きで 1 周ぶん足し戻す。1 tick で 1 周以上進む速さは描画の補間でも追わない
+            int64_t step = int64_t(layer.timeQ) - layer.prevTimeQ;
+            if (clock.phaseStep == 0) {
+                step = 0;
+            } else if (src.loop) {
+                const int64_t spanQ = BlendSpanQ(ticks);
+                if (clock.phaseStep > 0 && step < 0) {
+                    step += spanQ;
+                } else if (clock.phaseStep < 0 && step > 0) {
+                    step -= spanQ;
+                }
+            }
+            layer.stepQ = ClampToInt32(step);
         } else {
-            layer.timeQ = src.timeTicks * SkinnedMeshComponent::kPoseTimeQPerTick;
+            layer.timeQ = clock.time * kQ;
+            layer.prevTimeQ = clock.prevTime * kQ;
+            layer.stepQ = ClampToInt32(int64_t(clock.timeStep) * kQ);
         }
         layer.weightQ = src.weightQ;
     }
@@ -758,9 +800,7 @@ int32_t BlendPhaseToTimeQ(uint32_t phase, int32_t lengthTicks, int32_t loop)
     if (lengthTicks <= 0) {
         return 0;
     }
-    // timeQ (int32) に収まる長さに丸める (約 38 時間。実際のクリップは届かない)
-    const int64_t span = static_cast<int64_t>(std::min(lengthTicks, INT32_MAX / SkinnedMeshComponent::kPoseTimeQPerTick))
-                         * SkinnedMeshComponent::kPoseTimeQPerTick;
+    const int64_t span = BlendSpanQ(lengthTicks);
     if (!loop && phase == UINT32_MAX) {
         return static_cast<int32_t>(span);
     }
@@ -950,11 +990,16 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                 CollectDrivenSkinnedMeshes(world, e, driven_);
             }
             if (!IsEntityActive(world, e)) {
-                // 凍らせる: 書いてあるプログラムをそのまま保たせる (時刻も層も進めない)
+                // 凍らせる: 書いてあるプログラムをそのまま保たせる (時刻も層も進めない)。
+                // 描画補間の進みは 0 に落とす — 残すと、止まっている間も最後の tick の動きを毎 tick 繰り返して描く
                 for (EntityID m : driven_) {
                     SkinnedMeshComponent* sm = world.GetComponent<SkinnedMeshComponent>(m);
                     if (sm->poseLayerCount > 0) {
                         sm->poseClaim = 1;
+                        for (SkinnedMeshComponent::PoseLayer& layer : sm->poseLayers) {
+                            layer.prevTimeQ = layer.timeQ;
+                            layer.stepQ = 0;
+                        }
                     }
                 }
                 continue;
@@ -1029,20 +1074,32 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                 ApplyClipPose(world, e, *clipA, c->stateTimeTicks);
             }
 
-            // 3. 時刻を進める (骨クリップを持つステートは主 SkinnedMesh の骨クリップの長さで回す)
-            AdvanceStateTime(c->stateTimeTicks, sa.speed, sa.loop, stateLength(c->currentState));
-            if (isBlend(c->currentState)) {
-                c->statePhase = AdvanceBlendPhase(c->statePhase, phaseDelta(c->currentState), sa.loop);
-            }
-            if (c->transitionTo >= 0) {
-                const ControllerState& sb = ctrl->states[c->transitionTo];
-                AdvanceStateTime(c->transitionToTime, sb.speed, sb.loop, stateLength(c->transitionTo));
-                if (isBlend(c->transitionTo)) {
-                    c->transitionToPhase =
-                        AdvanceBlendPhase(c->transitionToPhase, phaseDelta(c->transitionTo), sb.loop);
+            // 3. 時刻を進める (骨クリップを持つステートは主 SkinnedMesh の骨クリップの長さで回す)。
+            //    進める前の値と折り返す前の進みを時計に残す (M89f の描画補間。sim はこれを読まない)
+            const auto advance = [&](int32_t index, int32_t& time, uint32_t& phase, StateClock& clock) {
+                const ControllerState& st = ctrl->states[static_cast<size_t>(index)];
+                const int32_t length = stateLength(index);
+                clock.prevTime = time;
+                clock.prevPhase = phase;
+                AdvanceStateTime(time, st.speed, st.loop, length);
+                // ループは折り返しても進みは speed のまま。非ループは末尾に張り付いた分を差で取る
+                clock.timeStep = (st.loop && length > 0) ? st.speed : time - clock.prevTime;
+                if (isBlend(index)) {
+                    const int64_t delta = phaseDelta(index);
+                    phase = AdvanceBlendPhase(phase, delta, st.loop);
+                    clock.phaseStep = st.loop ? delta : int64_t(phase) - clock.prevPhase;
                 }
+                clock.time = time;
+                clock.phase = phase;
+            };
+            StateClock fromClock;
+            StateClock toClock;
+            advance(c->currentState, c->stateTimeTicks, c->statePhase, fromClock);
+            if (c->transitionTo >= 0) {
+                advance(c->transitionTo, c->transitionToTime, c->transitionToPhase, toClock);
                 ++c->transitionTick;
                 if (c->transitionTick >= c->transitionDuration) {
+                    fromClock = toClock;
                     c->currentState = c->transitionTo;
                     c->stateTimeTicks = c->transitionToTime;
                     c->statePhase = c->transitionToPhase;
@@ -1058,7 +1115,7 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
             //    描画が読む) と同じ「その tick の終わりの姿勢」になる
             if (!driven_.empty()) {
                 SkeletalSource sources[kMaxSkeletalSources];
-                const int32_t count = BuildSkeletalSources(*ctrl, *c, sources);
+                const int32_t count = BuildSkeletalSources(*ctrl, *c, fromClock, toClock, sources);
                 if (count > 0) {
                     for (EntityID m : driven_) {
                         SkinnedMeshComponent* sm = world.GetComponent<SkinnedMeshComponent>(m);
