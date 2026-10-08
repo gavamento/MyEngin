@@ -146,6 +146,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool saveSceneOnStart = false;
     bool autoPlay = false;
     bool openTimeline = false; // M72c
+    bool openAnimPreview = false; // M89n
+    int32_t animPreviewTick = -1; // M89n
     float perfRate = 0.0f;
     const mye::ShowcaseDef* showcase = nullptr; // --*-demo (ShowcaseScenes.h。複数なら表の上の行)
     mye::ShowcaseOptions showcaseOptions;       // --terrain-lod DIST / --terrain-skirt D (M58e)
@@ -209,6 +211,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             // --modal-voxelize --list F --out DIR (M76b): 連鎖 (この下) は MSVC の入れ子上限
             // (C1061) に達しているので、--cook-font-metrics と同じく連鎖の**手前**で拾って
             // continue する (else-if を増やさない)
+            // --anim-preview NAME / --anim-preview-tick N (M89n): NAME を選んで骨アニメのプレビュー窓を開く。連鎖の手前で拾う
+            if (arg == L"--anim-preview" && i + 1 < argc) {
+                openAnimPreview = true;
+                selectName = mye::WideToUtf8(argv[++i]);
+                continue;
+            }
+            if (arg == L"--anim-preview-tick" && i + 1 < argc) {
+                animPreviewTick = _wtoi(argv[++i]);
+                continue;
+            }
             if (arg == L"--modal-voxelize") {
                 modalVoxelize = true;
                 continue;
@@ -647,6 +659,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.saveSceneOnStart = saveSceneOnStart;
     app.autoPlay = autoPlay;
     app.openTimeline = openTimeline;
+    app.openAnimPreview = openAnimPreview;
+    app.animPreviewTick = animPreviewTick;
     app.openNet = config.netRole != 0;
     app.serverClient = config.netRole == mye::EngineConfig::kNetRoleClient;
     app.showcase = showcase;

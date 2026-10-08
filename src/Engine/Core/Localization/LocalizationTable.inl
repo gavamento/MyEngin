@@ -28,6 +28,7 @@ MYE_STR(Win_Game,             "Game###Game",                           "ゲー�
 MYE_STR(Win_Assets,           "Assets###Assets",                       "アセット###Assets")
 MYE_STR(Win_Animation,        "Animation###Animation",                 "アニメーション###Animation")
 MYE_STR(Win_Animator,         "Animator###Animator",                   "アニメーター###Animator")
+MYE_STR(Win_AnimPreview,      "Animation Preview###AnimPreview",       "アニメプレビュー###AnimPreview")
 MYE_STR(Win_Search,           "Search###Search",                       "検索###Search")
 MYE_STR(Win_Profiler,         "Profiler###Profiler",                   "プロファイラー###Profiler")
 MYE_STR(Win_PerformanceCompare, "Performance Compare###Performance Compare",
@@ -976,6 +977,21 @@ MYE_STR(Anim_AddBlendChild,   "+ child",           "+ 子")
 MYE_STR(Anim_PoseLayers,      "Pose layers (live)", "ポーズの層 (実行中)")
 MYE_STR(Anim_LegacyPose,      "(not driven by the controller)", "(コントローラの駆動なし)")
 MYE_STR(Anim_Phase,           "phase",             "位相")
+// ---- 骨アニメのプレビュー窓 (M89n) ----
+MYE_STR(AnimPrev_NoTarget,    "Select a character with an Animator Controller or a Skinned Mesh.", "Animator Controller か Skinned Mesh を持つキャラを選んでください")
+MYE_STR(AnimPrev_Reload,      "Reload###animprev_reload", "読み直す###animprev_reload")
+MYE_STR(AnimPrev_ModeClip,    "Clip###animprev_mode_clip", "クリップ###animprev_mode_clip")
+MYE_STR(AnimPrev_ModeState,   "State###animprev_mode_state", "ステート###animprev_mode_state")
+MYE_STR(AnimPrev_Bones,       "Bones###animprev_bones", "骨###animprev_bones")
+MYE_STR(AnimPrev_NoClips,     "(the model has no named skeletal clips)", "(モデルに名前付きの骨クリップがありません)")
+MYE_STR(AnimPrev_Clip,        "Clip###animprev_clip", "クリップ###animprev_clip")
+MYE_STR(AnimPrev_NoStates,    "(no state drives the skeleton)", "(骨を駆動するステートがありません)")
+MYE_STR(AnimPrev_State,       "State###animprev_state", "ステート###animprev_state")
+MYE_STR(AnimPrev_ParamX,      "Blend X###animprev_x", "ブレンド X###animprev_x")
+MYE_STR(AnimPrev_ParamY,      "Blend Y###animprev_y", "ブレンド Y###animprev_y")
+MYE_STR(AnimPrev_Play,        "Play###animprev_play", "再生###animprev_play")
+MYE_STR(AnimPrev_Pause,       "Pause###animprev_pause", "一時停止###animprev_pause")
+MYE_STR(AnimPrev_Hint,        "Drag to orbit, wheel to zoom", "ドラッグで回転、ホイールで拡大縮小")
 
 // ---- アニメーション: 補足 (M47b) ----
 MYE_STR(Clip_TipPreview,      "Preview: scrub to see the pose (restored on exit).\n"

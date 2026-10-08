@@ -218,3 +218,20 @@ BT / ABI からは骨クリップを切り替えられなかった。M89 では�
   (前 tick の値で探すと、移動中は 1 tick 分の移動だけ足が遅れる)。当てる地面のコライダーは WorldMatrix (前 tick) のままで、静止した地面が前提。
 - 却下: 骨盤の下げ幅を前 tick から滑らかに追う。前 tick の値に依存する状態を持たない原則に反し、スナップショットから戻した直後に 1 tick 狂う。
   段差を越える瞬間は 1 tick で切り替わる (既知の制約)。
+## 決定 15: 骨アニメのプレビュー窓は選択中のキャラの SkinnedMesh を一時シーンへ写し、ポーズプログラムを書いて描く (M89n)
+
+- `AnimationPreviewWindow` は選択エンティティが駆動する SkinnedMesh (`CollectDrivenSkinnedMeshes`) を、根の空間へ直した
+  LocalTransform・MeshRenderer・SkinnedMesh の写しとして自分の Scene に置き、自分の RenderSystem / RenderTexture で描く
+  (AssetPreviewCache と同じ型。ポストプロセスと影は切り、sRGB の RT)。D3D の描画は `OnRenderViews` だけで行い、
+  デバイス消失では `ReleaseGpu` で捨てて次の描画で作り直す (M88、EditorApp::OnDeviceLost に登録)。
+- モデルのファイルから読み直さない: スキンのキーは .meta の GUID から作るので、登録済みのモデルから元のファイルへ戻れない。
+  キャラの写しならメッシュ・マテリアル・モデルの AssetID をそのまま共有できる。写し直しは選択が変わったとき・駆動する SkinnedMesh の
+  数が変わったとき・「読み直す」を押したときだけ (元のシーンの編集は自動では追わない)。
+- ポーズはエンジンと同じポーズプログラム (`poseLayers`) を窓が書く。クリップモードは名前付きの骨クリップ 1 本、ステートモードは
+  コントローラの骨を駆動するステート (クリップ 1 本、またはブレンドツリーを `ComputeBlendWeights` で混ぜて位相で揃える)。
+  ブレンドのパラメータと長さ (`ControllerStateLengthTicks`) は窓の中の値で上書きした写しで計算し、シーンのコンポーネントは書き換えない。
+  旧経路の時計・フェード・IK・ルートモーションは写しから外す (アニメそのものを見る窓)。
+- 骨は描画パスの線 (深度テストあり = メッシュに隠れる) ではなく、同じカメラで関節を画面へ写して ImGui の線で画像の上に重ねる。
+  イベントの印は最も重い層のクリップの `clipEvents` を、そのクリップの長さの割合でタイムラインに置く (ブレンドの子は位相を共有するので揃う)。
+- 撮影は `--anim-preview NAME` (NAME を `--select` と同じく選び、窓を開く) と `--anim-preview-tick N` (再生を止めてその tick)。
+  エディタ全体の `--screenshot` に写る。

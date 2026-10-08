@@ -105,6 +105,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Assets", &assetBrowser_.open },
                     { "Animation", &animation_.open },
                     { "Animator", &animatorController_.open },
+                    { "AnimPreview", &animPreview_.open },
                     { "Search", &search_.open },
                     { "Profiler", &profiler_.open },
                     { "Performance Compare", &performanceCompare_.open },
@@ -205,6 +206,12 @@ void EditorApp::OnStart(EngineContext& ctx)
     }
     if (openTimeline) {
         timeline_.open = true; // プローブの分岐レーンを --screenshot で撮れるように (M72c)
+    }
+    if (openAnimPreview) {
+        animPreview_.open = true; // 選択は --anim-preview の NAME を selectName として上で済んでいる
+        if (animPreviewTick >= 0) {
+            animPreview_.SetTick(animPreviewTick);
+        }
     }
     if (startDeferred) {
         ctx.renderPath = ctx.renderPathDeferred;
@@ -449,6 +456,7 @@ void EditorApp::OnRenderViews(EngineContext& ctx)
     }
     gameView_.OnRenderViews(ctx); // GameView は常に本シーン (編集モードでも実行結果を見せる)
     preview_.OnRenderViews(ctx);  // アセットサムネイル生成 (D3D 描画はこのフェーズのみ)
+    animPreview_.OnRenderViews(ctx); // 骨アニメのプレビュー (M89n)
 
     // ---- 反射プローブのベイク (M56e) ----
     // ★ここでしか焼かない (メニューのコールバックから直接呼ばない — 理由は EditorApp.h)。
@@ -524,6 +532,7 @@ void EditorApp::OnDeviceLost(EngineContext& ctx)
     sceneView_.ReleaseGpu();
     gameView_.ReleaseGpu();
     preview_.ReleaseGpu();
+    animPreview_.ReleaseGpu();
 }
 
 void EditorApp::OnDeviceRestored(EngineContext& ctx)
@@ -1027,6 +1036,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     }
     animation_.OnImGui(ctx, selection_, undo_);
     animatorController_.OnImGui(ctx, selection_);
+    animPreview_.OnImGui(ctx, selection_);
     search_.OnImGui(ctx, selection_);
     projectSettings_.OnImGui(ctx, settings_, shortcuts_);
     buildSettings_.OnImGui(ctx);
@@ -1566,6 +1576,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem(Tr(StrId::Win_Assets), nullptr, &assetBrowser_.open);
         ImGui::MenuItem(Tr(StrId::Win_Animation), nullptr, &animation_.open);
         ImGui::MenuItem(Tr(StrId::Win_Animator), nullptr, &animatorController_.open);
+        ImGui::MenuItem(Tr(StrId::Win_AnimPreview), nullptr, &animPreview_.open);
         ImGui::MenuItem(Tr(StrId::Win_Search), nullptr, &search_.open);
         ImGui::MenuItem(Tr(StrId::Win_Profiler), nullptr, &profiler_.open);
         ImGui::MenuItem(Tr(StrId::Win_PerformanceCompare), nullptr, &performanceCompare_.open);

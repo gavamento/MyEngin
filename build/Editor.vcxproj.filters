@@ -240,6 +240,9 @@
     <ClCompile Include="..\src\Editor\Windows\AI\BtDisplayNames.cpp">
       <Filter>Windows\AI</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Animation\AnimationPreviewWindow.cpp">
+      <Filter>Windows\Animation</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Animation\AnimationWindow.cpp">
       <Filter>Windows\Animation</Filter>
     </ClCompile>
@@ -494,6 +497,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\AI\BtDisplayNames.h">
       <Filter>Windows\AI</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Animation\AnimationPreviewWindow.h">
+      <Filter>Windows\Animation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Animation\AnimationWindow.h">
       <Filter>Windows\Animation</Filter>
