@@ -1365,8 +1365,9 @@ bool RunAnimatorControllerSelfTest()
             }
             return w;
         };
+        // tol = 0 は「ちょうど一致」(動かないこと・書かないことの確認に使う) なので <= で比べる
         const auto near3 = [](const XMFLOAT3& a, float x, float y, float z, float tol) {
-            return std::fabs(a.x - x) < tol && std::fabs(a.y - y) < tol && std::fabs(a.z - z) < tol;
+            return std::fabs(a.x - x) <= tol && std::fabs(a.y - y) <= tol && std::fabs(a.z - z) <= tol;
         };
 
         for (const bool zUpBody : { false, true }) {

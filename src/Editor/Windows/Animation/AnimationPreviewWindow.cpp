@@ -261,6 +261,8 @@ void AnimationPreviewWindow::OnImGui(EngineContext& ctx, Selection& selection)
     if (!open) {
         return;
     }
+    // 初回は画像の欄が見える大きさで開く (中身に合わせると操作の行だけの高さになり、画像が描かれない)
+    ImGui::SetNextWindowSize({ 560.0f, 620.0f }, ImGuiCond_FirstUseEver);
     if (!ImGui::Begin(Tr(StrId::Win_AnimPreview), &open)) {
         ImGui::End();
         return;

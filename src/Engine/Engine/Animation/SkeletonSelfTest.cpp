@@ -775,6 +775,65 @@ bool RunSkeletonSelfTest()
         }
     }
 
+    // ---- (M89p) glTF の STEP / CUBICSPLINE: 線形のキー列への展開と、生成素材 interp_test.glb ----
+    {
+        std::vector<float> outTimes;
+        std::vector<float> outVals;
+        const std::vector<float> times = { 0.0f, 0.5f, 1.0f };
+        const std::vector<float> vals = { 0.0f, 1.0f, 2.0f };
+        check(ExpandToLinearKeys(KeyInterpolation::Linear, times, vals, 1, false, 60.0f, outTimes, outVals)
+                  && outTimes == times && outVals == vals,
+              "interp: LINEAR keys are copied as they are");
+        check(ExpandToLinearKeys(KeyInterpolation::Step, times, vals, 1, false, 60.0f, outTimes, outVals)
+                  && outTimes == std::vector<float>({ 0.0f, 0.5f, 0.5f, 1.0f, 1.0f })
+                  && outVals == std::vector<float>({ 0.0f, 0.0f, 1.0f, 1.0f, 2.0f }),
+              "interp: STEP pairs the previous value and the new value at each later key's time");
+        check(!ExpandToLinearKeys(KeyInterpolation::CubicSpline, times, vals, 1, false, 60.0f, outTimes, outVals)
+                  && outTimes.empty() && outVals.empty(),
+              "interp: CUBICSPLINE with one value per key (needs three) fails and leaves nothing");
+        // [入り接線, 値, 出接線] x 2 キー、接線 0 = smoothstep。4 Hz なら 0 / 0.25 / 0.5 / 0.75 / 1
+        const std::vector<float> cubic = { 99.0f, 0.0f, 0.0f, 0.0f, 1.0f, 99.0f };
+        const bool cubicOk = ExpandToLinearKeys(KeyInterpolation::CubicSpline, { 0.0f, 1.0f }, cubic, 1, false, 4.0f,
+                                                outTimes, outVals);
+        check(cubicOk && outTimes == std::vector<float>({ 0.0f, 0.25f, 0.5f, 0.75f, 1.0f }) && outVals.size() == 5
+                  && outVals[0] == 0.0f && std::fabs(outVals[1] - 0.15625f) < 1e-6f && std::fabs(outVals[2] - 0.5f) < 1e-6f
+                  && outVals[4] == 1.0f,
+              "interp: CUBICSPLINE is resampled with the Hermite formula and keeps the key times and values");
+
+        Scene iScene;
+        const GameObject iRoot = ModelLoader::Load(iScene, resources, shaders, assetsRoot + L"\\models\\interp_test.glb");
+        iScene.GetWorld().ApplyStructuralChanges();
+        transforms.Update(iScene.GetWorld());
+        const LoadedSkin iSkin = FindSkinned(iScene, resources);
+        check(bool(iRoot) && iSkin.model != nullptr, "interp_test: the generated glTF loads headless with a SkinnedModel");
+        if (iSkin.model != nullptr) {
+            const SkinnedModel& m = *iSkin.model;
+            const int32_t step = m.FindClipByHash(HashStr("Step"));
+            const int32_t cub = m.FindClipByHash(HashStr("Cubic"));
+            check(step >= 0 && cub >= 0 && SkeletalClipTicks(m.clips[static_cast<size_t>(step)]) == 60
+                      && SkeletalClipTicks(m.clips[static_cast<size_t>(cub)]) == 60,
+                  "interp_test: clips Step / Cubic are 60 ticks long");
+            if (step >= 0 && cub >= 0) {
+                const auto boneAt = [&](int32_t clip, float t) { return ToF4x4(ComputeJointGlobal(m, clip, t, 0)); };
+                check(boneAt(step, 0.25f)._41 == 0.0f && boneAt(step, 0.49f)._41 == 0.0f && boneAt(step, 0.5f)._41 == 1.0f
+                          && boneAt(step, 0.75f)._41 == 1.0f && boneAt(step, 1.0f)._41 == 2.0f,
+                      "interp_test: STEP holds the previous value and switches exactly at the key time");
+                bool noTangentLeak = true;
+                for (int tick = 0; tick <= 60; ++tick) {
+                    const XMFLOAT4X4 g = boneAt(cub, static_cast<float>(tick) / 60.0f);
+                    noTangentLeak = noTangentLeak && g._41 >= -1e-6f && g._41 <= 1.0f + 1e-6f && std::fabs(g._42) < 1e-6f;
+                }
+                check(noTangentLeak, "interp_test: CUBICSPLINE never reads a tangent (99) as a value");
+                const XMFLOAT4X4 quarter = boneAt(cub, 0.25f);
+                const XMFLOAT4X4 half = boneAt(cub, 0.5f);
+                MYE_LOG_INFO("  [interp_test] cubic x(0.25) = %.6f, rot(0.5) = (%.6f, %.6f)", quarter._41, half._11, half._12);
+                check(std::fabs(quarter._41 - 0.15625f) < 1e-5f, "interp_test: CUBICSPLINE translation follows the Hermite curve (not linear 0.25)");
+                check(std::fabs(half._11 - 0.70710678f) < 1e-5f && std::fabs(std::fabs(half._12) - 0.70710678f) < 1e-5f,
+                      "interp_test: CUBICSPLINE rotation is normalized (45 degrees at the middle)");
+            }
+        }
+    }
+
     // ---- (M89l) 2 ボーン IK: 届く / 届かない / pole / weight / 先端の回転 / 解決段 ----
     {
         // 脚: Hip (根、原点) → Knee (下へ 1) → Ankle (下へ 1) → Toe (前へ 0.2)。クリップ無し = バインドポーズ
@@ -795,7 +854,8 @@ bool RunSkeletonSelfTest()
         const auto dist = [](XMFLOAT3 a, XMFLOAT3 b) {
             return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
         };
-        const auto near3 = [&](XMFLOAT3 a, XMFLOAT3 b, float tol) { return dist(a, b) < tol; };
+        // tol = 0 は「ちょうど一致」(根が動かないことの確認に使う) なので <= で比べる
+        const auto near3 = [&](XMFLOAT3 a, XMFLOAT3 b, float tol) { return dist(a, b) <= tol; };
         const auto solve = [&](const TwoBoneIkGoal& goal) {
             std::vector<XMMATRIX> locals;
             ComputeJointLocals(leg, -1, 0.0f, locals);
@@ -1002,7 +1062,8 @@ bool RunSkeletonSelfTest()
                   && std::fabs(y(l, 6) - 0.1f) < 1e-4f,
               "foot IK (M89m): each foot lands on its own step and the pelvis drops by the lower step");
 
-        count = run(-0.5f, 0.0f, 0.3f, false, l);
+        // 地面は探す範囲 (足元 ± groundProbe = 0.5) の内側に置く。-0.5 ちょうどはレイの終端で当たらない
+        count = run(-0.45f, 0.0f, 0.3f, false, l);
         check(std::fabs(y(l, 0) - 1.7f) < 1e-4f && std::fabs(y(l, 3) + 0.3f) < 1e-4f,
               "foot IK (M89m): the pelvis drop is capped by pelvisMaxDrop and the leg stretches as far as it reaches");
 
