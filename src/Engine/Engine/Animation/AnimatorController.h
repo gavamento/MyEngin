@@ -289,6 +289,14 @@ bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t dur
 // - 長さは主 SkinnedMesh のモデルで引く。モデルが無ければ発火しない。非アクティブの間は時計と同じく止まる
 // - 順序はエンティティの走査順 → 層 → 通った順 (同じ位置ならイベントの並び順)
 // - 位置 (M89i) はプログラムを書いた後に求める (AnimEventFired::pos)。受け手への振り分けは呼び出し側 (TickRunner)
+//
+// ルートモーション (M89j): プログラムと同じ層・時計・重みで、主 SkinnedMesh のモデルのルートジョイント
+// (FindRootJoint) のこの tick の移動を層ごとに測って混ぜる (ループの折り返しは周回数 × 1 周の移動を足す)。
+// 主 SkinnedMesh の LocalTransform の連鎖 (回転と拡大) でワールドへ回し、y を捨てて × 60 を rootMotionVelocity へ書く。
+// applyRootMotion なら、その速度でエンティティを動かし (適用先は AnimatorControllerComponent の注記)、
+// 駆動する各 SkinnedMesh のプログラムに poseRootJoint / poseRootUp を書いてポーズから水平分を抜かせる。
+// 上はメッシュごとに、そのエンティティの連鎖の回転の共役でワールドの上を戻して求める (Z-up のモデル対策)。
+// 物理より前に走るので、書いた速度・moveInput は同じ tick の物理が使う
 class AnimatorControllerSystem {
 public:
     void Update(World& world, const ControllerLibrary& controllers, const AnimationLibrary& clips,

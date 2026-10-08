@@ -226,6 +226,31 @@ void ComputeJointLocalsLayered(const SkinnedModel& model, const SkeletalLayer* l
     }
 }
 
+XMFLOAT3 SampleJointTranslation(const SkinnedModel& model, int clip, int32_t jointIndex, float timeSec)
+{
+    if (jointIndex < 0 || static_cast<size_t>(jointIndex) >= model.joints.size()) {
+        return { 0.0f, 0.0f, 0.0f };
+    }
+    const size_t j = static_cast<size_t>(jointIndex);
+    const SkeletalClip* c = ClipOrNull(model, clip);
+    const XMFLOAT3& bindT = model.joints[j].bindT;
+    if (c == nullptr || j >= c->tracks.size()) {
+        return bindT;
+    }
+    const JointTrack& tr = c->tracks[j];
+    return SampleVec3(tr.tTimes, tr.tVals, timeSec, bindT);
+}
+
+int32_t FindRootJoint(const SkinnedModel& model)
+{
+    for (size_t j = 0; j < model.joints.size(); ++j) {
+        if (model.joints[j].parent < 0) {
+            return static_cast<int32_t>(j);
+        }
+    }
+    return -1;
+}
+
 // グローバル = local[j] * local[parent] * ... (親チェーンを上へ、順序非依存)
 XMMATRIX JointGlobalFromLocals(const SkinnedModel& model, const std::vector<XMMATRIX>& local,
                                int32_t jointIndex)

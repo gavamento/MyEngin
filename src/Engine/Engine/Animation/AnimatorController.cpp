@@ -540,6 +540,173 @@ void WriteSkeletalProgram(SkinnedMeshComponent& sm, const SkinnedModel* model, c
     sm.poseClaim = 1;
 }
 
+// ---- ルートモーション (M89j) ----
+// 固定 tick の周波数 (1 tick の移動 × これ = m/s)。SkeletalClipTicks の 60 と同じ前提
+constexpr float kTicksPerSecond = 60.0f;
+// timeQ (1/256 tick) を秒にする。SampleSkinnedLocals と同じ式 (同じ時刻なら同じ値をサンプルする)
+constexpr float kTimeQPerSecond = kTicksPerSecond * static_cast<float>(SkinnedMeshComponent::kPoseTimeQPerTick);
+
+// 0 方向ではなく負の無限大方向へ丸める割り算 (逆再生の折り返しの回数)
+int64_t FloorDiv(int64_t a, int64_t b)
+{
+    const int64_t q = a / b;
+    return (a % b != 0 && ((a < 0) != (b < 0))) ? q - 1 : q;
+}
+
+// 単位クォータニオンでベクトルを回す (物理の QuatRotate と同じ式。DirectXMath の SIMD 経路を通さない)
+void RotateByQuat(const float (&q)[4], const float (&v)[3], float (&out)[3])
+{
+    const float tx = 2.0f * (q[1] * v[2] - q[2] * v[1]);
+    const float ty = 2.0f * (q[2] * v[0] - q[0] * v[2]);
+    const float tz = 2.0f * (q[0] * v[1] - q[1] * v[0]);
+    out[0] = v[0] + q[3] * tx + (q[1] * tz - q[2] * ty);
+    out[1] = v[1] + q[3] * ty + (q[2] * tx - q[0] * tz);
+    out[2] = v[2] + q[3] * tz + (q[0] * ty - q[1] * tx);
+}
+
+// entity から根までの LocalTransform の回転と拡大の合成。拡大は軸ごとの積で、回転との順序を無視する
+// (物理の ComposeParentFrame と同じ近似。シアーは扱わない)。WorldMatrix は前 tick の値なので使わない
+struct ChainRotScale {
+    float q[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    float s[3] = { 1.0f, 1.0f, 1.0f };
+};
+ChainRotScale ComposeChain(World& world, EntityID from)
+{
+    ChainRotScale f;
+    for (EntityID cur = from; !cur.IsNull(); cur = world.GetParent(cur)) {
+        const LocalTransform* lt = world.GetComponent<LocalTransform>(cur);
+        if (lt == nullptr) {
+            break;
+        }
+        // q' = q_lt * q (子の回転を先に当てる)
+        const float ax = lt->rotation.x, ay = lt->rotation.y, az = lt->rotation.z, aw = lt->rotation.w;
+        const float bx = f.q[0], by = f.q[1], bz = f.q[2], bw = f.q[3];
+        f.q[0] = aw * bx + ax * bw + ay * bz - az * by;
+        f.q[1] = aw * by - ax * bz + ay * bw + az * bx;
+        f.q[2] = aw * bz + ax * by - ay * bx + az * bw;
+        f.q[3] = aw * bw - ax * bx - ay * by - az * bz;
+        f.s[0] *= lt->scale.x;
+        f.s[1] *= lt->scale.y;
+        f.s[2] *= lt->scale.z;
+    }
+    return f;
+}
+
+// ワールドの上 (0, 1, 0) を entity の空間へ戻した単位ベクトル (連鎖の回転の共役で回す。逆行列は使わない)。
+// Z-up の glTF は非ジョイントの祖先 (Z_UP ノード) がエンティティ側に載るので、ここで初めて上が分かる
+void WorldUpInEntitySpace(World& world, EntityID entity, float (&out)[3])
+{
+    const ChainRotScale f = ComposeChain(world, entity);
+    const float conj[4] = { -f.q[0], -f.q[1], -f.q[2], f.q[3] };
+    const float up[3] = { 0.0f, 1.0f, 0.0f };
+    RotateByQuat(conj, up, out);
+    const float len = std::sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]);
+    if (len > 0.0f) {
+        out[0] /= len;
+        out[1] /= len;
+        out[2] /= len;
+    } else {
+        out[0] = 0.0f;
+        out[1] = 1.0f;
+        out[2] = 0.0f;
+    }
+}
+
+// 1 層のこの tick のルートジョイントの移動 (ルートの親空間) を out へ重み付きで足す。
+// 区間 start → end のサンプルの差に、ループの折り返し wraps 回ぶんの 1 周の移動 (末尾 − 先頭) を足す
+void AddRootLayerDelta(const SkinnedModel& model, int32_t clip, int32_t joint, int32_t startQ, int32_t endQ,
+                       int64_t wraps, int32_t lengthTicks, int32_t weightQ, float (&out)[3])
+{
+    const DirectX::XMFLOAT3 a = SampleJointTranslation(model, clip, joint, static_cast<float>(startQ) / kTimeQPerSecond);
+    const DirectX::XMFLOAT3 b = SampleJointTranslation(model, clip, joint, static_cast<float>(endQ) / kTimeQPerSecond);
+    float d[3] = { b.x - a.x, b.y - a.y, b.z - a.z };
+    if (wraps != 0) {
+        const DirectX::XMFLOAT3 head = SampleJointTranslation(model, clip, joint, 0.0f);
+        const DirectX::XMFLOAT3 tail = SampleJointTranslation(
+            model, clip, joint, static_cast<float>(BlendSpanQ(lengthTicks)) / kTimeQPerSecond);
+        const float k = static_cast<float>(wraps);
+        d[0] += k * (tail.x - head.x);
+        d[1] += k * (tail.y - head.y);
+        d[2] += k * (tail.z - head.z);
+    }
+    const float w = static_cast<float>(weightQ) / static_cast<float>(kWeightOne);
+    out[0] += w * d[0];
+    out[1] += w * d[1];
+    out[2] += w * d[2];
+}
+
+// この tick のルートの移動 (主 SkinnedMesh のモデルで測る、ルートの親空間)。ポーズプログラムと同じ層・同じ時計・
+// 同じ重みで、層ごとの移動を重みで混ぜる。単一クリップは tick の時計 (折り返しは time の周回数)、
+// ブレンドツリーの子は位相 (折り返しは位相の周回数) から時刻を引く。非ループは端に張り付くので折り返さない
+void RootMotionDelta(const SkinnedModel& model, int32_t joint, const SkeletalSource* sources, int32_t count,
+                     float (&out)[3])
+{
+    constexpr int32_t kQ = SkinnedMeshComponent::kPoseTimeQPerTick;
+    out[0] = out[1] = out[2] = 0.0f;
+    for (int32_t i = 0; i < count; ++i) {
+        const SkeletalSource& src = sources[i];
+        const int32_t clip = model.FindClipByHash(src.clipHash);
+        if (clip < 0 || src.weightQ <= 0) {
+            continue;
+        }
+        const int32_t ticks = SkeletalClipTicks(model.clips[static_cast<size_t>(clip)]);
+        if (ticks <= 0) {
+            continue;
+        }
+        const StateClock& clock = src.clock;
+        if (src.usesPhase) {
+            const int64_t wraps = src.loop ? FloorDiv(int64_t(clock.prevPhase) + clock.phaseStep, int64_t(kPhaseCycle)) : 0;
+            AddRootLayerDelta(model, clip, joint, BlendPhaseToTimeQ(clock.prevPhase, ticks, src.loop),
+                              BlendPhaseToTimeQ(clock.phase, ticks, src.loop), wraps, ticks, src.weightQ, out);
+        } else {
+            // 単一クリップのステートの時計は主 SkinnedMesh の長さで回っている (ステートの長さと同じ)
+            const int64_t wraps = src.loop ? FloorDiv(int64_t(clock.prevTime) + clock.timeStep, ticks) : 0;
+            AddRootLayerDelta(model, clip, joint, clock.prevTime * kQ, clock.time * kQ, wraps, ticks, src.weightQ, out);
+        }
+    }
+}
+
+// ルートモーションの水平の移動 deltaWorld (1 tick ぶん、ワールド) で entity を動かす (applyRootMotion の適用先、
+// AnimatorControllerComponent の注記の順)。速度で渡す先は velocity (m/s) を、LocalTransform は移動そのものを書く
+void ApplyRootMotion(World& world, EntityID entity, const float (&deltaWorld)[3], const DirectX::XMFLOAT3& velocity)
+{
+    if (const NavMeshAgentComponent* agent = world.GetComponent<NavMeshAgentComponent>(entity);
+        agent != nullptr && agent->updatePosition) {
+        return; // Nav が moveInput を書く。両方で動かすと速度が倍になる
+    }
+    if (RigidbodyComponent* rb = world.GetComponent<RigidbodyComponent>(entity)) {
+        if (!rb->isKinematic) {
+            // 縦 (重力・ジャンプ) は物理に任せる
+            rb->velocity.x = velocity.x;
+            rb->velocity.z = velocity.z;
+            return;
+        }
+        // kinematic は物理が積分しない。CharacterController も Rigidbody が居ると無効なので Transform へ
+    } else if (CharacterControllerComponent* cc = world.GetComponent<CharacterControllerComponent>(entity)) {
+        cc->moveInput.x = velocity.x;
+        cc->moveInput.z = velocity.z;
+        return;
+    }
+    LocalTransform* lt = world.GetComponent<LocalTransform>(entity);
+    if (lt == nullptr) {
+        return;
+    }
+    // 親があればワールドの移動を親空間へ戻す (回転の共役と拡大の割り算。拡大 0 の軸は動かさない)
+    float local[3] = { deltaWorld[0], deltaWorld[1], deltaWorld[2] };
+    if (const EntityID parent = world.GetParent(entity); !parent.IsNull()) {
+        const ChainRotScale f = ComposeChain(world, parent);
+        const float conj[4] = { -f.q[0], -f.q[1], -f.q[2], f.q[3] };
+        float r[3];
+        RotateByQuat(conj, deltaWorld, r);
+        for (int k = 0; k < 3; ++k) {
+            local[k] = f.s[k] != 0.0f ? r[k] / f.s[k] : 0.0f;
+        }
+    }
+    lt->position.x += local[0];
+    lt->position.y += local[1];
+    lt->position.z += local[2];
+}
+
 } // namespace
 
 // ==== ControllerLibrary ====
@@ -1444,14 +1611,24 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
 
             // 6. 骨のポーズプログラム (M89b)。進めた後の時刻で書く = 旧経路 (SkinningSystem が進めてから
             //    描画が読む) と同じ「その tick の終わりの姿勢」になる
+            //    applyRootMotion (M89j) ならメッシュごとに自分のモデルのルートジョイントの水平移動を抜かせる
+            SkeletalSource sources[kMaxSkeletalSources];
+            int32_t sourceCount = 0;
             if (!driven_.empty()) {
-                SkeletalSource sources[kMaxSkeletalSources];
-                const int32_t count = BuildSkeletalSources(*ctrl, *c, fromClock, toClock, sources);
-                if (count > 0) {
+                sourceCount = BuildSkeletalSources(*ctrl, *c, fromClock, toClock, sources);
+                if (sourceCount > 0) {
                     for (EntityID m : driven_) {
                         SkinnedMeshComponent* sm = world.GetComponent<SkinnedMeshComponent>(m);
                         const SkinnedModel* model = models != nullptr ? models->Get(sm->model) : nullptr;
-                        WriteSkeletalProgram(*sm, model, sources, count);
+                        WriteSkeletalProgram(*sm, model, sources, sourceCount);
+                        sm->poseRootJoint = (c->applyRootMotion && model != nullptr) ? FindRootJoint(*model) : -1;
+                        if (sm->poseRootJoint >= 0) {
+                            WorldUpInEntitySpace(world, m, sm->poseRootUp);
+                        } else {
+                            sm->poseRootUp[0] = 0.0f;
+                            sm->poseRootUp[1] = 1.0f;
+                            sm->poseRootUp[2] = 0.0f;
+                        }
                     }
                 }
             }
@@ -1459,6 +1636,24 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
             // 7. 発火したイベントの位置 (M89i)。ジョイントの位置は 6. で書いたプログラム (この tick の終わりの姿勢) で引く
             if (fired_.size() > firstFired) {
                 ResolveEventPositions(world, e, driven_, models, fired_, firstFired);
+            }
+
+            // 8. ルートモーション (M89j)。主 SkinnedMesh のモデルのルートジョイントの、この tick の移動を
+            //    主 SkinnedMesh の LocalTransform の連鎖でワールドへ回し、水平分 (y を捨てる) を速度にする。
+            //    縦は捨てる (重力・接地は物理と CharacterController の担当)
+            float deltaWorld[3] = {};
+            const int32_t rootJoint = mainModel != nullptr ? FindRootJoint(*mainModel) : -1;
+            if (sourceCount > 0 && rootJoint >= 0) {
+                float deltaLocal[3];
+                RootMotionDelta(*mainModel, rootJoint, sources, sourceCount, deltaLocal);
+                const ChainRotScale f = ComposeChain(world, MainSkinnedEntity(driven_));
+                const float scaled[3] = { deltaLocal[0] * f.s[0], deltaLocal[1] * f.s[1], deltaLocal[2] * f.s[2] };
+                RotateByQuat(f.q, scaled, deltaWorld);
+                deltaWorld[1] = 0.0f;
+            }
+            c->rootMotionVelocity = { deltaWorld[0] * kTicksPerSecond, 0.0f, deltaWorld[2] * kTicksPerSecond };
+            if (c->applyRootMotion) {
+                ApplyRootMotion(world, e, deltaWorld, c->rootMotionVelocity);
             }
         }
     });

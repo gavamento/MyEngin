@@ -1325,6 +1325,154 @@ bool RunAnimatorControllerSelfTest()
               "M89i: no joint / an unknown joint fires at the controller entity's position");
     }
 
+    // ---- (M89j) ルートモーション: 600 tick の移動量 / 折り返し / ポーズからの除去 / Z-up / 適用先 ----
+    {
+        using namespace DirectX;
+        // ルート 1 関節。Walk (60 tick) で 1 周にモデル空間の axis 方向へ 1.2 m 進み、upAxis 方向は 0.1 で一定
+        const auto makeWalker = [](XMFLOAT3 step, XMFLOAT3 lift) {
+            SkinnedModel m = MakeNamedClipModel({ { "Walk", 1.0f } });
+            m.joints[0].name = "Root";
+            JointTrack& tr = m.clips[0].tracks[0];
+            tr.tTimes = { 0.0f, 1.0f };
+            tr.tVals = { lift, { lift.x + step.x, lift.y + step.y, lift.z + step.z } };
+            return m;
+        };
+        RenderResources res;
+        const AssetID yUp = res.skinnedModels.Register("selftest_rm_y", makeWalker({ 0.0f, 0.0f, -1.2f }, { 0.0f, 0.1f, 0.0f }));
+        // Z-up: 前進がモデル空間の +Y に出て、上は +Z (メッシュのエンティティを X 軸 -90 度回して立てる)
+        const AssetID zUp = res.skinnedModels.Register("selftest_rm_z", makeWalker({ 0.0f, 1.2f, 0.0f }, { 0.0f, 0.0f, 0.1f }));
+        ControllerAsset ctrl;
+        ctrl.states.push_back({ "Walk", "", 0, 1, 1, "Walk", HashStr("Walk") });
+        const uint64_t rmHash = ctrlLib.Register(L"root_motion.controller.json", ctrl);
+
+        struct Walker {
+            GameObject actor;
+            GameObject body;
+        };
+        const auto makeWalkerRig = [&](Scene& s, AssetID model, bool zUpBody, bool apply) {
+            Walker w;
+            w.actor = s.CreateGameObjectTracked("Actor");
+            AnimatorControllerComponent* ac = w.actor.AddComponent<AnimatorControllerComponent>();
+            ac->controller = AssetID{ rmHash };
+            ac->applyRootMotion = apply;
+            w.body = s.CreateGameObjectTracked("Body");
+            w.body.SetParent(w.actor);
+            w.body.AddComponent<SkinnedMeshComponent>()->model = model;
+            s.GetWorld().ApplyStructuralChanges();
+            if (zUpBody) {
+                const float h = std::sqrt(0.5f);
+                w.body.GetComponent<LocalTransform>()->rotation = { -h, 0.0f, 0.0f, h };
+            }
+            return w;
+        };
+        const auto near3 = [](const XMFLOAT3& a, float x, float y, float z, float tol) {
+            return std::fabs(a.x - x) < tol && std::fabs(a.y - y) < tol && std::fabs(a.z - z) < tol;
+        };
+
+        for (const bool zUpBody : { false, true }) {
+            Scene s;
+            World& world = s.GetWorld();
+            Walker w = makeWalkerRig(s, zUpBody ? zUp : yUp, zUpBody, true);
+            AnimatorControllerSystem rmSys;
+            SkinningSystem skinning;
+            float sumZ = 0.0f;
+            bool velocityOk = true;
+            // 615 tick = 10 周と 15 tick (ポーズの除去は時刻 0 以外で見る)
+            for (int t = 0; t < 615; ++t) {
+                rmSys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+                skinning.Update(world, res);
+                const XMFLOAT3 v = w.actor.GetComponent<AnimatorControllerComponent>()->rootMotionVelocity;
+                velocityOk = velocityOk && near3(v, 0.0f, 0.0f, -1.2f, 1e-3f);
+                sumZ += v.z / 60.0f;
+            }
+            const char* tag = zUpBody ? " (Z-up body)" : "";
+            check(velocityOk, (std::string("M89j: rootMotionVelocity is a steady 1.2 m/s forward (-Z), including the "
+                                           "loop's wrap ticks") + tag).c_str());
+            const XMFLOAT3 p = w.actor.GetComponent<LocalTransform>()->position;
+            check(near3(p, 0.0f, 0.0f, -12.3f, 1e-2f) && std::fabs(p.z - sumZ) < 1e-3f,
+                  (std::string("M89j: 615 ticks move the Transform 10.25 cycles x 1.2 m = the sum of the per-tick deltas") + tag)
+                      .c_str());
+            const SkinnedMeshComponent* sm = w.body.GetComponent<SkinnedMeshComponent>();
+            std::vector<XMMATRIX> locals;
+            SampleSkinnedLocals(*res.skinnedModels.Get(sm->model), *sm, locals);
+            XMFLOAT4X4 root;
+            XMStoreFloat4x4(&root, locals[0]);
+            // 時刻 0 のルートの位置 (lift) に戻り、上向きの成分 (0.1) は残る
+            const bool stripped = zUpBody ? near3({ root._41, root._42, root._43 }, 0.0f, 0.0f, 0.1f, 1e-5f)
+                                          : near3({ root._41, root._42, root._43 }, 0.0f, 0.1f, 0.0f, 1e-5f);
+            check(sm->poseRootJoint == 0 && stripped,
+                  (std::string("M89j: the pose keeps the root at the clip start horizontally and keeps the vertical part") + tag)
+                      .c_str());
+        }
+
+        // applyRootMotion = false: 速度は出すが動かさず、ポーズからも抜かない
+        {
+            Scene s;
+            World& world = s.GetWorld();
+            Walker w = makeWalkerRig(s, yUp, false, false);
+            AnimatorControllerSystem rmSys;
+            for (int t = 0; t < 30; ++t) {
+                rmSys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+            }
+            const SkinnedMeshComponent* sm = w.body.GetComponent<SkinnedMeshComponent>();
+            check(near3(w.actor.GetComponent<AnimatorControllerComponent>()->rootMotionVelocity, 0.0f, 0.0f, -1.2f, 1e-3f)
+                      && near3(w.actor.GetComponent<LocalTransform>()->position, 0.0f, 0.0f, 0.0f, 0.0f)
+                      && sm->poseRootJoint == -1,
+                  "M89j: without applyRootMotion the velocity is reported but nothing moves and the pose keeps the motion");
+        }
+
+        // 適用先: Rigidbody (縦は残す) / CharacterController / NavMeshAgent が位置を握っている間は何もしない
+        {
+            Scene s;
+            World& world = s.GetWorld();
+            Walker rbRig = makeWalkerRig(s, yUp, false, true);
+            Walker ccRig = makeWalkerRig(s, yUp, false, true);
+            Walker navRig = makeWalkerRig(s, yUp, false, true);
+            Walker kinRig = makeWalkerRig(s, yUp, false, true);
+            rbRig.actor.AddComponent<RigidbodyComponent>()->velocity = { 5.0f, -2.0f, 5.0f };
+            ccRig.actor.AddComponent<CharacterControllerComponent>();
+            navRig.actor.AddComponent<CharacterControllerComponent>()->moveInput = { 3.0f, 0.0f, 3.0f };
+            navRig.actor.AddComponent<NavMeshAgentComponent>()->updatePosition = true;
+            kinRig.actor.AddComponent<RigidbodyComponent>()->isKinematic = true;
+            kinRig.actor.AddComponent<CharacterControllerComponent>();
+            world.ApplyStructuralChanges();
+            AnimatorControllerSystem rmSys;
+            rmSys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+            check(near3(rbRig.actor.GetComponent<RigidbodyComponent>()->velocity, 0.0f, -2.0f, -1.2f, 1e-3f)
+                      && near3(rbRig.actor.GetComponent<LocalTransform>()->position, 0.0f, 0.0f, 0.0f, 0.0f),
+                  "M89j: a dynamic Rigidbody gets the horizontal velocity and keeps its vertical velocity");
+            check(near3(ccRig.actor.GetComponent<CharacterControllerComponent>()->moveInput, 0.0f, 0.0f, -1.2f, 1e-3f),
+                  "M89j: a CharacterController gets the velocity as moveInput");
+            check(near3(navRig.actor.GetComponent<CharacterControllerComponent>()->moveInput, 3.0f, 0.0f, 3.0f, 0.0f)
+                      && near3(navRig.actor.GetComponent<LocalTransform>()->position, 0.0f, 0.0f, 0.0f, 0.0f),
+                  "M89j: a NavMeshAgent with updatePosition keeps control (root motion writes nothing)");
+            check(std::fabs(kinRig.actor.GetComponent<LocalTransform>()->position.z + 0.02f) < 1e-4f
+                      && near3(kinRig.actor.GetComponent<CharacterControllerComponent>()->moveInput, 0.0f, 0.0f, 0.0f, 0.0f),
+                  "M89j: a kinematic Rigidbody (which also disables the CharacterController) moves by the Transform");
+        }
+
+        // 親の回転・拡大の下でも、ワールドで正しい向き・長さだけ動く (親空間へ戻して足す)
+        {
+            Scene s;
+            World& world = s.GetWorld();
+            GameObject parent = s.CreateGameObjectTracked("Parent");
+            Walker w = makeWalkerRig(s, yUp, false, true);
+            w.actor.SetParent(parent);
+            world.ApplyStructuralChanges();
+            const float h = std::sqrt(0.5f);
+            LocalTransform* plt = parent.GetComponent<LocalTransform>();
+            plt->rotation = { 0.0f, h, 0.0f, h }; // Y 軸 90 度
+            plt->scale = { 2.0f, 2.0f, 2.0f };
+            AnimatorControllerSystem rmSys;
+            rmSys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+            // 体はワールドで 2 倍・Y 90 度回っている: モデルの -Z 0.02 m → ワールドでは 0.04 m、向きは -X
+            const XMFLOAT3 v = w.actor.GetComponent<AnimatorControllerComponent>()->rootMotionVelocity;
+            const XMFLOAT3 p = w.actor.GetComponent<LocalTransform>()->position;
+            check(near3(v, -2.4f, 0.0f, 0.0f, 1e-3f) && near3(p, 0.0f, 0.0f, -0.02f, 1e-5f),
+                  "M89j: under a rotated / scaled parent the velocity is in world space and the Transform moves in parent space");
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Animator Controller self test: ALL PASS ====");
         return true;

@@ -341,6 +341,13 @@ struct SkinnedMeshComponent {
     // (立っていれば旧経路の時計を進めない。立っていなければ poseLayerCount を 0 に戻す)
     int32_t poseClaim = 0;
     PoseLayer poseLayers[kMaxPoseLayers] = {};
+    // ---- ルートモーション (M89j) ----
+    // poseRootJoint のジョイントの移動のうち水平分 (層ごとの「今の時刻 − クリップの先頭」を重みで混ぜたもの) を
+    // ポーズから抜く (水平の移動はエンティティ側が速度で受け取る)。-1 = 抜かない
+    int32_t poseRootJoint = -1;
+    // ワールドの上 (0, 1, 0) を poseRootJoint の親空間 (= このメッシュのエンティティ空間) へ戻した単位ベクトル。
+    // LocalTransform の連鎖の回転だけから求める (スケールは見ない)
+    float poseRootUp[3] = { 0.0f, 1.0f, 0.0f };
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -754,6 +761,15 @@ struct AnimatorControllerComponent {
     // 最初の tick と AnimatorPlay の即切り替えで 1、進めたら 0。遷移先の入りは transitionTick == 0 で分かるので使わない。
     // ★時刻だけからは決められない (ループが 0 ちょうどへ折り返した次の tick と、入った tick がどちらも 0 から進む)
     int32_t stateEntered = 1;
+    // ---- M89j 追加 (末尾 append): ルートモーション (水平移動) ----
+    // 骨クリップのルートジョイントの動きを、主 SkinnedMesh のモデルで tick ごとに測った速度 (ワールド、y は常に 0)。
+    // applyRootMotion に関わらず毎 tick 書く (スクリプトが自分で動かすときに読む)。骨を駆動していない tick は 0
+    DirectX::XMFLOAT3 rootMotionVelocity = { 0.0f, 0.0f, 0.0f };
+    // true: 上の速度でこのエンティティを動かし、駆動する SkinnedMesh のポーズからルートの水平移動を抜く。
+    // 動かす先は NavMeshAgent (updatePosition が true の間は Nav が動かすので何もしない) → 非 kinematic の
+    // Rigidbody の水平速度 → CharacterController.moveInput → LocalTransform.position の順で最初に当たったもの。
+    // ★毎 tick 上書きする (骨を駆動しない tick は 0 を書く)。false へ戻しても最後に書いた moveInput / 速度は残る
+    bool applyRootMotion = false;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

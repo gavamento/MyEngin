@@ -130,7 +130,9 @@ struct SimRefs {
 // v42 (M89d): AnimatorControllerComponent の末尾にブレンドツリーの位相 (statePhase / transitionToPhase。World 節のカラム生バイト)
 // v43 (M89f): SkinnedMesh のポーズプログラムの層に描画補間の欄 (prevTimeQ / stepQ。World 節のカラム生バイト)
 // v44 (M89h): AnimatorControllerComponent の末尾にアニメイベントの stateEntered (World 節のカラム生バイト)
-inline constexpr uint32_t kSimSnapshotVersion = 44;
+// v45 (M89j): AnimatorControllerComponent の末尾にルートモーション (rootMotionVelocity / applyRootMotion)、
+//            SkinnedMesh の末尾に抜き取りの欄 (poseRootJoint / poseRootUp)。どちらも World 節のカラム生バイト
+inline constexpr uint32_t kSimSnapshotVersion = 45;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

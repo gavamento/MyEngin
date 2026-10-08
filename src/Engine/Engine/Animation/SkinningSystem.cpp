@@ -1,6 +1,7 @@
 #include "Engine/Engine/Animation/SkinningSystem.h"
 
 #include <algorithm>
+#include <iterator>
 
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
@@ -27,6 +28,7 @@ void SkinningSystem::Update(World& world, const RenderResources& resources)
                 continue;
             }
             sm->poseLayerCount = 0;
+            sm->poseRootJoint = -1; // ルートモーションの抜き取りもプログラムと一緒に外す (M89j)
 
             // ---- clip の書き換え = 切り替え (M18 追補) ----
             // ★playing より先に見る。止めたまま clip を変えて再開したとき、再開の tick に
@@ -92,6 +94,43 @@ int32_t ActivePoseLayers(const SkinnedMeshComponent& sm)
     return std::clamp(sm.poseLayerCount, 0, SkinnedMeshComponent::kMaxPoseLayers);
 }
 
+// ルートモーション (M89j): joint の移動の水平分をポーズから抜く。抜く量は層ごとの
+// 「サンプル時刻の移動 − クリップの先頭の移動」を重みの比で混ぜたもの (層の畳み方と同じ線形の混ぜ方)。
+// クリップの先頭を基準にするので、時刻 0 の姿勢は変わらず、1 周の間にルートが水平へずれていかない。
+// up はルートの親空間での上 (単位ベクトル)。縦の動き (上下の弾み) は残す
+void StripRootMotion(const SkinnedModel& model, const SkeletalLayer* program, int32_t layers, int32_t joint,
+                     const float (&up)[3], std::vector<DirectX::XMMATRIX>& locals)
+{
+    if (joint < 0 || static_cast<size_t>(joint) >= locals.size()) {
+        return;
+    }
+    int64_t weightSum = 0;
+    for (int32_t i = 0; i < layers; ++i) {
+        weightSum += std::max(program[i].weight, 0);
+    }
+    if (weightSum <= 0) {
+        return;
+    }
+    float d[3] = {};
+    for (int32_t i = 0; i < layers; ++i) {
+        if (program[i].weight <= 0) {
+            continue;
+        }
+        const float ratio =
+            static_cast<float>(static_cast<double>(program[i].weight) / static_cast<double>(weightSum));
+        const DirectX::XMFLOAT3 now = SampleJointTranslation(model, program[i].clip, joint, program[i].timeSec);
+        const DirectX::XMFLOAT3 start = SampleJointTranslation(model, program[i].clip, joint, 0.0f);
+        d[0] += ratio * (now.x - start.x);
+        d[1] += ratio * (now.y - start.y);
+        d[2] += ratio * (now.z - start.z);
+    }
+    const float along = d[0] * up[0] + d[1] * up[1] + d[2] * up[2];
+    const DirectX::XMVECTOR horizontal =
+        DirectX::XMVectorSet(d[0] - along * up[0], d[1] - along * up[1], d[2] - along * up[2], 0.0f);
+    DirectX::XMMATRIX& m = locals[static_cast<size_t>(joint)];
+    m.r[3] = DirectX::XMVectorSubtract(m.r[3], horizontal);
+}
+
 } // namespace
 
 bool UsesLocalsPath(const SkinnedMeshComponent& sm)
@@ -106,6 +145,11 @@ bool SamePoseInputs(const SkinnedMeshComponent& a, const SkinnedMeshComponent& b
         return false;
     }
     if (layers > 0) {
+        if (a.poseRootJoint != b.poseRootJoint
+            || (a.poseRootJoint >= 0
+                && !std::equal(std::begin(a.poseRootUp), std::end(a.poseRootUp), std::begin(b.poseRootUp)))) {
+            return false;
+        }
         for (int32_t i = 0; i < layers; ++i) {
             const SkinnedMeshComponent::PoseLayer& la = a.poseLayers[i];
             const SkinnedMeshComponent::PoseLayer& lb = b.poseLayers[i];
@@ -161,6 +205,9 @@ void SampleSkinnedLocalsInterpolated(const SkinnedModel& model, const SkinnedMes
             program[i].weight = src.weightQ;
         }
         ComputeJointLocalsLayered(model, program, layers, outLocals);
+        if (sm.poseRootJoint >= 0) {
+            StripRootMotion(model, program, layers, sm.poseRootJoint, sm.poseRootUp, outLocals);
+        }
         return;
     }
     // 時刻式は M18 の RenderSystem と同一 (同じ tick で同じポーズ)

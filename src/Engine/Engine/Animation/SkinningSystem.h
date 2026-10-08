@@ -47,6 +47,7 @@ bool SamePoseInputs(const SkinnedMeshComponent& a, const SkinnedMeshComponent& b
 // ★描画 / ラグドール / 部位追従の 3 者が必ずこれを通す — どれか 1 つだけフェードを知らないと、
 //   骨に付けた部位やラグドールの未駆動の骨だけが、切り替えの瞬間に飛ぶ。
 // poseLayerCount > 0 ならポーズプログラムの層を ComputeJointLocalsLayered で畳む (M89a)。
+// poseRootJoint >= 0 なら、そのジョイントの水平の移動を抜く (M89j のルートモーション。描画補間の時刻でも同じ式)。
 // 旧経路でフェードしていないときは ComputeJointLocals(model, clip, timeTicks / 60) そのもの (ビット一致)
 void SampleSkinnedLocals(const SkinnedModel& model, const SkinnedMeshComponent& sm,
                          std::vector<DirectX::XMMATRIX>& outLocals);

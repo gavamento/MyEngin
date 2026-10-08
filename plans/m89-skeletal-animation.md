@@ -69,7 +69,7 @@ AnimationSystem → **AnimatorControllerSystem** (遷移 → 時刻を進める 
 | **g** | コントローラ窓: ステートの種類 (Property/Skeletal/Blend1D/Blend2D)、骨クリップのピッカー、1D/2D の可視化、Play 中の層表示 | – | – | – |
 | **h** | アニメイベントの定義 (コントローラの `clipEvents`、クリップ名がキー) と発火規則 (下表)。`kind:"script"` は `BehaviorTreeSystem::SendEvent` に積み、既存の `BtEventCount/BtGetEvent` と BB の `eventName` で受ける (ABI 追加なし) (済: 入った tick を覚える `stateEntered` が要ったので v44、ADR-027 決定 9。出口は `AnimatorControllerSystem::FiredEvents()` を TickRunner が BT へ配る) | v44 | – | – |
 | **i** | エンジンが直接処理するイベント: `sound` → `ScriptAudioEvent PlayAtPoint` (出力レーン、`ReserveAudioHandle` は使わない)、`effect` → `EffectSpawnRequest`、`noise` → `PerceptionReportNoise` (済: 位置は任意の `joint` で `JointGlobalFromLocals × 主 SkinnedMesh の WorldMatrix`、無ければエンティティの位置。script の BT イベントの vec にも位置を入れた。ADR-027 決定 10。handle 0 は FindByTag が弾くので問題なし。テスト未実施 = 全サブ後にまとめて) | – | – | – |
-| **j** | ルートモーション (水平移動): 層ごとの ΔT を重み付きで合算 (折り返し対応)。上向きは LocalTransform の連鎖から算出 (Z-up 対策、逆行列は使わない)。ポーズからは水平分を除去する。適用先: NavAgent (`updatePosition=false` のとき `CC.moveInput`) / 非 kinematic Rigidbody の水平速度 / CC.moveInput / Transform。`applyRootMotion`、`rootMotionVelocity` | v45 (f が v43、h が v44 を使用) | – | – |
+| **j** | ルートモーション (水平移動): 層ごとの ΔT を重み付きで合算 (折り返し対応)。上向きは LocalTransform の連鎖から算出 (Z-up 対策、逆行列は使わない)。ポーズからは水平分を除去する。適用先: NavAgent (`updatePosition=false` のとき `CC.moveInput`) / 非 kinematic Rigidbody の水平速度 / CC.moveInput / Transform。`applyRootMotion`、`rootMotionVelocity` (済: 測るのは親の無い最初のジョイント、ポーズはクリップの先頭からの水平分を抜く、kinematic の Rigidbody は Transform へ。ADR-027 決定 11。テスト未実施 = 全サブ後にまとめて) | v45 (f が v43、h が v44 を使用) | – | – |
 | **k** | ルートモーションのヨー回転 (swing-twist、sqrt と四則のみ)。NavAgent の `updateRotation` と衝突するときは適用しない | – | – | – |
 | **l** | 2 ボーン IK: `TwoBoneIKComponent` (4 チェーン、endJoint 名、mode、target、poleHint、weight)。純関数ソルバを `SampleSkinnedLocals` の最後で呼ぶ (acos/atan2 を使わず半角公式)。ラグドール作動中は無効。スクリプトからは汎用の SetComponentField で指定する | v46 | – | **80** |
 | **m** | 足の接地: `FootIkSystem` が前 tick の WorldMatrix と `RaycastWorld` で目標を決め、骨盤を下げる (`pelvisMaxDrop`)。自分への当たりは除外 | – | – | – |
@@ -145,6 +145,6 @@ j (ルートモーション) の前提。確認は `SkeletonSelfTest` の M89b �
 - 各サブの開始時に、そのサブの未確認点を先に確かめる:
   - `handle=0` の PlayAtPoint が問題ないか (i)
   - クック読み込みも `SkinnedModelLibrary::Register` を通るか (b)
-  - kinematic Rigidbody の扱い (j)
+  - kinematic Rigidbody の扱い (j) → 物理は kinematic を積分しない (invMass 0) ので Transform へ書く。CC も Rigidbody が居ると無効なので同じく Transform
   - `ts.behaviorTree` が null になる構成があるか (h) → World 単体の selftest 経路だけ。null ならイベントは配らない (発火の判定は走る)
   - 描画補間で版上げが要るか (f) → 要った (層が生バイトで載るので v43。以降の j / l は 1 つずつずれる)

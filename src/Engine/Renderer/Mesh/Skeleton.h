@@ -131,6 +131,14 @@ inline constexpr int32_t kMaxSkeletalLayers = 8;
 void ComputeJointLocalsLayered(const SkinnedModel& model, const SkeletalLayer* layers,
                                int32_t layerCount, std::vector<DirectX::XMMATRIX>& outLocals);
 
+// ---- ルートモーション (M89j) ----
+// clip を timeSec でサンプルした jointIndex の局所の平行移動 (上の関数群と同じサンプラ、トラックが無ければ bindT)。
+// clip が範囲外は bindT、jointIndex が範囲外は 0
+DirectX::XMFLOAT3 SampleJointTranslation(const SkinnedModel& model, int clip, int32_t jointIndex, float timeSec);
+// ルートモーションを測るジョイント = 親を持たない最初のジョイント。無ければ -1。
+// ★FBX は非ジョイントの祖先もジョイントに含める (M48a) ので、そちらでは動かない祖先が選ばれる
+int32_t FindRootJoint(const SkinnedModel& model);
+
 // locals (上の出力) から 1 ジョイントのグローバル行列。範囲外 index は恒等
 DirectX::XMMATRIX JointGlobalFromLocals(const SkinnedModel& model,
                                         const std::vector<DirectX::XMMATRIX>& locals,

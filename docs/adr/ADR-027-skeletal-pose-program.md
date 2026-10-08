@@ -146,3 +146,25 @@ BT / ABI からは骨クリップを切り替えられなかった。M89 では�
   - `noise`: `PerceptionReportNoise` を直接呼ぶ (出した者 = コントローラのエンティティ)。聞き手の保留欄に書かれ、次の tick の知覚で消費される。
 - 却下: ポーズを TransformSystem の後で引き直して今 tick の WorldMatrix を使う。発火 (フェーズ 3.5) と配る場所を分けることになり、BT のイベントだけ別の tick に積む順序の問題が出る。
 - 却下: 種類別の欄を `value` / `intValue` に詰め込む。意味がアセットごとに変わり、読めないデータになる。
+## 決定 11: ルートモーションはプログラムと同じ層から速度を測り、適用先を 1 つ選んで毎 tick 書く (M89j)
+
+- 測るジョイントは主 SkinnedMesh のモデルの「親を持たない最初のジョイント」(`FindRootJoint`)。名前の指定は持たない。
+  FBX は非ジョイントの祖先もジョイントに含める (M48a) ので、動かない祖先が選ばれて速度は 0 になる (既知の制約)。
+- この tick の移動は、ポーズプログラムと同じ層・時計・重み (`BuildSkeletalSources` の結果) で、層ごとに
+  `T(今の時刻) − T(進める前の時刻)` をサンプルし、ループの折り返しには周回数 × `T(末尾) − T(先頭)` を足して重みで混ぜる。
+  周回数は単一クリップなら `floor((prevTime + timeStep) / L)`、ブレンドツリーの子なら位相の `floor((prevPhase + phaseStep) / 2^32)`。
+  プログラムの `stepQ` (描画用) は読まない。
+- ワールドへは主 SkinnedMesh の LocalTransform の連鎖 (回転の積と、軸ごとの拡大の積。物理の `ComposeParentFrame` と同じ近似) で回す。
+  WorldMatrix は前 tick の値なので使わない。y を捨て、× 60 を `rootMotionVelocity` (hash 対象) に書く。`applyRootMotion` に関わらず毎 tick 書く
+  (スクリプトが自分で動かすときに読める。Unity の deltaPosition に当たる)。
+- 適用先は 1 つ: NavMeshAgent が `updatePosition` で位置を握っている → 何もしない / 非 kinematic の Rigidbody → 水平速度 (縦は物理) /
+  CharacterController → `moveInput` / それ以外 (kinematic の Rigidbody を含む) → LocalTransform.position (親空間へ共役と割り算で戻す)。
+  物理より前 (フェーズ 3.5) に書くので、同じ tick の物理が使う。適用中は骨を駆動しない tick も 0 を書く — `moveInput` は保持される値なので、
+  書かない tick があると最後の速度で滑り続ける。
+- ポーズからは、駆動する各 SkinnedMesh のプログラムの `poseRootJoint` / `poseRootUp` (末尾 append、snapshot v45) を見て
+  `SampleSkinnedLocals` が水平分を抜く。抜く量は層ごとの `T(サンプル時刻) − T(クリップの先頭)` を重みの比で混ぜたもの
+  (時刻 0 の姿勢は変わらず、1 周の間にルートが水平へずれない)。上はメッシュごとに、そのエンティティの連鎖の回転の共役で
+  ワールドの上を戻して求める (Z-up の glTF は Z_UP ノードがエンティティ側に載る。b の下調べ)。縦の動き (弾み) は残す。
+  描画補間の時刻でも同じ式で抜くので、前進中に体が前後に震えない。部位追従のポーズキャッシュのキー (`SamePoseInputs`) にも入れる。
+- 却下: 前 tick のポーズからの差分で測る (前 tick のポーズに依存する処理は入れない原則に反し、スナップショットから戻した直後に 1 tick 狂う)。
+- 却下: 抜く基準をバインドポーズにする。先頭でルートがずれているクリップ (攻撃の踏み込みなど) が入った瞬間に飛ぶ。

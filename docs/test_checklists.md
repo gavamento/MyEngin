@@ -502,7 +502,7 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 ### デモ `--anim-demo` (M89b)
 
 - [ ] `Editor.exe --anim-demo` で Play すると、2 体 (左 = Y-up、右 = Z-up の素材) が同じ姿勢で Idle → Walk → Run → Attack → Idle と回り、切り替えの瞬間に飛ばずに混ざる
-- [ ] Walk / Run の間は足元の板 (Root) が前へ進み、1 周ごとに元の位置へ戻る (ルートモーションは M89j で入る。今はこれが正しい)
+- [ ] Walk / Run の間は足元の板 (Root) が前へ進み、1 周ごとに元の位置へ戻る (デモは applyRootMotion を切っている。入れたときは下の M89j 節)
 - [ ] Animator Controller 窓で `anim_test.controller.json` を開いて保存しても、ステートの骨クリップ (`"skel"`) が消えない
 
 ### 型付きパラメータ (M89c)
@@ -542,3 +542,11 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] `{"kind":"noise","loudness":1,"range":10}` を付けたキャラの近くに hearingMode = Distance の AIPerception を持つ見張りを置くと、足音で気付く
 - [ ] 音のキーを綴り間違えると、無音ではなく `[audio] unknown sound key` の警告が出る
 - [ ] 窓で開いて保存しても `kind` と種類別の欄 (`sound` / `prefab` / `loudness` など) と `joint` が残る
+
+### ルートモーション (M89j)
+
+- [ ] `Editor.exe --anim-demo` で 2 体の AnimatorController の「ルートモーションを適用」を入れて Play すると、Walk / Run の間は 2 体 (Y-up と Z-up) がそろって前へ進み、1 周ごとに引き戻されない (足が地面を滑らない)
+- [ ] 入れていない間も Inspector の「ルートモーションの速度」に Walk / Run の前進速度が出る (Idle は 0)
+- [ ] CharacterController を付けたキャラでは「移動入力」に速度が入り、壁に当たると止まる。Rigidbody を付けたキャラは落下 (縦の速度) が消えない
+- [ ] NavMeshAgent の「位置を更新」が入っている間は Nav だけが動かす (速度が倍にならない)。切るとアニメの歩幅で進む
+- [ ] 描画補間 (144Hz) でも、前進中のキャラの体が前後に震えない
