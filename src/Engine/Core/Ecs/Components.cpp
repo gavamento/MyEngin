@@ -346,6 +346,7 @@ void RegisterBuiltinComponents()
         AnimatorParamField(15, "param15", "パラメータ 15"),
         MYE_JP("ステートの位相", MYE_FIELD_FLAGS(AnimatorControllerComponent, statePhase, UInt32, kFieldReadOnly)),
         MYE_JP("遷移先の位相", MYE_FIELD_FLAGS(AnimatorControllerComponent, transitionToPhase, UInt32, kFieldReadOnly)),
+        MYE_JP("ステートに入った直後", MYE_FIELD_FLAGS(AnimatorControllerComponent, stateEntered, Int32, kFieldReadOnly)),
     });
     static_assert(AnimatorControllerComponent::kMaxParams == 16, "上の param0..15 の並びを増減に合わせる");
 

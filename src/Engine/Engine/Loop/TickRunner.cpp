@@ -433,6 +433,15 @@ void RunOneTick(TickServices& ts)
         // LocalTransform を駆動するので hash 対象、決定論 (整数 tick・整数比ブレンド)
         // M89b: 骨クリップのステートは SkinnedMesh へポーズプログラムを書く (SkinningSystem より前)
         controllerSystem.Update(scene.GetWorld(), controllerLibrary, animLibrary, &resources.skinnedModels);
+        // M89h: アニメイベントはコントローラのエンティティ自身宛ての BT イベントにする (次の tick の冒頭で配られる)。
+        // 発火順 (エンティティの走査順 → 層 → 通った順) がそのまま送信順になる
+        if (ts.behaviorTree != nullptr) {
+            const float noVec[3] = {};
+            for (const AnimEventFired& ev : controllerSystem.FiredEvents()) {
+                ts.behaviorTree->SendEvent(ctx.tickIndex, ev.entity, ev.entity, ev.nameHash, noVec, ev.value,
+                                           ev.intValue);
+            }
+        }
         // スケルタルアニメの時刻を進める (M18)。ポーズは非ハッシュなのでリプレイ不変
         skinningSystem.Update(scene.GetWorld(), resources);
         // 部位のボーン追従 (M48g): 上で進めた timeTicks のポーズで LocalTransform を作る。

@@ -67,11 +67,11 @@ AnimationSystem → **AnimatorControllerSystem** (遷移 → 時刻を進める 
 | **e** | 2D ブレンドツリー (Freeform Cartesian、gradient band、上位 4 本に絞る)。純関数 `ComputeBlendWeights` をプレビューと共有する | – | – | – |
 | **f** | 骨アニメの描画補間: プログラムに層ごとの前 tick 時刻を持たせ、`interpAlpha` (RenderSystem.h:137) でサンプル時刻を補間する。決定的撮影 (alpha=1) では今と一致すること。部位追従と sim は補間しない (済: 層に `prevTimeQ` / `stepQ`、ADR-027 決定 8) | v43 | – | – |
 | **g** | コントローラ窓: ステートの種類 (Property/Skeletal/Blend1D/Blend2D)、骨クリップのピッカー、1D/2D の可視化、Play 中の層表示 | – | – | – |
-| **h** | アニメイベントの定義 (コントローラの `clipEvents`、クリップ名がキー) と発火規則 (下表)。`kind:"script"` は `BehaviorTreeSystem::SendEvent` に積み、既存の `BtEventCount/BtGetEvent` と BB の `eventName` で受ける (ABI 追加なし) | – | – | – |
+| **h** | アニメイベントの定義 (コントローラの `clipEvents`、クリップ名がキー) と発火規則 (下表)。`kind:"script"` は `BehaviorTreeSystem::SendEvent` に積み、既存の `BtEventCount/BtGetEvent` と BB の `eventName` で受ける (ABI 追加なし) (済: 入った tick を覚える `stateEntered` が要ったので v44、ADR-027 決定 9。出口は `AnimatorControllerSystem::FiredEvents()` を TickRunner が BT へ配る) | v44 | – | – |
 | **i** | エンジンが直接処理するイベント: `sound` → `ScriptAudioEvent PlayAtPoint` (出力レーン、`ReserveAudioHandle` は使わない)、`effect` → `EffectSpawnRequest`、`noise` → `PerceptionReportNoise` | – | – | – |
-| **j** | ルートモーション (水平移動): 層ごとの ΔT を重み付きで合算 (折り返し対応)。上向きは LocalTransform の連鎖から算出 (Z-up 対策、逆行列は使わない)。ポーズからは水平分を除去する。適用先: NavAgent (`updatePosition=false` のとき `CC.moveInput`) / 非 kinematic Rigidbody の水平速度 / CC.moveInput / Transform。`applyRootMotion`、`rootMotionVelocity` | v44 (f が v43 を使用) | – | – |
+| **j** | ルートモーション (水平移動): 層ごとの ΔT を重み付きで合算 (折り返し対応)。上向きは LocalTransform の連鎖から算出 (Z-up 対策、逆行列は使わない)。ポーズからは水平分を除去する。適用先: NavAgent (`updatePosition=false` のとき `CC.moveInput`) / 非 kinematic Rigidbody の水平速度 / CC.moveInput / Transform。`applyRootMotion`、`rootMotionVelocity` | v45 (f が v43、h が v44 を使用) | – | – |
 | **k** | ルートモーションのヨー回転 (swing-twist、sqrt と四則のみ)。NavAgent の `updateRotation` と衝突するときは適用しない | – | – | – |
-| **l** | 2 ボーン IK: `TwoBoneIKComponent` (4 チェーン、endJoint 名、mode、target、poleHint、weight)。純関数ソルバを `SampleSkinnedLocals` の最後で呼ぶ (acos/atan2 を使わず半角公式)。ラグドール作動中は無効。スクリプトからは汎用の SetComponentField で指定する | v45 | – | **80** |
+| **l** | 2 ボーン IK: `TwoBoneIKComponent` (4 チェーン、endJoint 名、mode、target、poleHint、weight)。純関数ソルバを `SampleSkinnedLocals` の最後で呼ぶ (acos/atan2 を使わず半角公式)。ラグドール作動中は無効。スクリプトからは汎用の SetComponentField で指定する | v46 | – | **80** |
 | **m** | 足の接地: `FootIkSystem` が前 tick の WorldMatrix と `RaycastWorld` で目標を決め、骨盤を下げる (`pelvisMaxDrop`)。自分への当たりは除外 | – | – | – |
 | **n** | 骨アニメのプレビュー窓 `AnimationPreviewWindow` (AssetPreviewCache.cpp:151- の一時 Scene + RenderSystem + RenderTexture の型を流用)。クリップ/ステートモード、再生・スクラブ・±1 tick、ブレンド param スライダ、ボーンの線描画、イベント位置の印。`ReleaseGpu()` で M88 のデバイス復旧の対象に登録。`--anim-preview <名前> --anim-preview-tick N` で撮影 | – | – | – |
 | **o** | タイムライン上でイベントを編集 (追加・ドラッグ・削除・種類別の欄)、ルートモーション軌跡の表示 | – | – | – |
@@ -146,5 +146,5 @@ j (ルートモーション) の前提。確認は `SkeletonSelfTest` の M89b �
   - `handle=0` の PlayAtPoint が問題ないか (i)
   - クック読み込みも `SkinnedModelLibrary::Register` を通るか (b)
   - kinematic Rigidbody の扱い (j)
-  - `ts.behaviorTree` が null になる構成があるか (h)
+  - `ts.behaviorTree` が null になる構成があるか (h) → World 単体の selftest 経路だけ。null ならイベントは配らない (発火の判定は走る)
   - 描画補間で版上げが要るか (f) → 要った (層が生バイトで載るので v43。以降の j / l は 1 つずつずれる)

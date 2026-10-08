@@ -749,6 +749,11 @@ struct AnimatorControllerComponent {
     // ブレンドツリーでないステートでは使わない (0 のまま)
     uint32_t statePhase = 0;        // 現 state の位相
     uint32_t transitionToPhase = 0; // 遷移先 state の位相
+    // ---- M89h 追加 (末尾 append): アニメイベントの「ステートに入った tick」 ----
+    // 1 = 現 state の時刻をまだ 1 度も進めていない。次の進みは位置 0 のイベントも含めて発火する ([0, new])。
+    // 最初の tick と AnimatorPlay の即切り替えで 1、進めたら 0。遷移先の入りは transitionTick == 0 で分かるので使わない。
+    // ★時刻だけからは決められない (ループが 0 ちょうどへ折り返した次の tick と、入った tick がどちらも 0 から進む)
+    int32_t stateEntered = 1;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

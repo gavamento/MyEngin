@@ -647,6 +647,26 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
         states.push_back(std::move(st));
     }
     root["states"] = std::move(states);
+    if (!c.clipEvents.empty()) {
+        // M89h。クリップ名がキー。同名の 2 つ目以降は使われないので書かない
+        json clipEvents = json::object();
+        for (const ControllerClipEvents& ce : c.clipEvents) {
+            if (clipEvents.contains(ce.clip)) {
+                continue;
+            }
+            json& list = clipEvents[ce.clip];
+            list = json::array();
+            for (const ControllerClipEvent& ev : ce.events) {
+                list.push_back({ { "tick", ev.tick },
+                                 { "name", ev.name },
+                                 { "kind", "script" },
+                                 { "minWeight", ev.minWeight },
+                                 { "value", ev.value },
+                                 { "int", ev.intValue } });
+            }
+        }
+        root["clipEvents"] = std::move(clipEvents);
+    }
     json trans = json::array();
     for (const ControllerTransition& t : c.transitions) {
         json conds = json::array();
@@ -771,6 +791,34 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
             out.transitions.push_back(std::move(ct));
         }
     }
+    out.clipEvents.clear();
+    if (j.contains("clipEvents") && j["clipEvents"].is_object()) {
+        // M89h。オブジェクトのキー順 (nlohmann はキーの辞書順) で並ぶ
+        for (const auto& [clipName, list] : j["clipEvents"].items()) {
+            if (!list.is_array()) {
+                continue;
+            }
+            ControllerClipEvents ce;
+            ce.clip = clipName;
+            ce.clipHash = HashStr(clipName);
+            for (const json& e : list) {
+                const std::string kind = e.value("kind", std::string("script"));
+                if (kind != "script") {
+                    MYE_LOG_WARN("[controller] clip event kind '%s' is not supported; skipped", kind.c_str());
+                    continue;
+                }
+                ControllerClipEvent ev;
+                ev.name = e.value("name", std::string());
+                ev.nameHash = HashStr(ev.name);
+                ev.tick = e.value("tick", 0);
+                ev.minWeight = e.value("minWeight", 0.0f);
+                ev.value = e.value("value", 0.0f);
+                ev.intValue = e.value("int", 0);
+                ce.events.push_back(std::move(ev));
+            }
+            out.clipEvents.push_back(std::move(ce));
+        }
+    }
     return true;
 }
 
@@ -805,6 +853,34 @@ int32_t BlendPhaseToTimeQ(uint32_t phase, int32_t lengthTicks, int32_t loop)
         return static_cast<int32_t>(span);
     }
     return static_cast<int32_t>((static_cast<uint64_t>(phase) * static_cast<uint64_t>(span)) >> 32);
+}
+
+int64_t ClipEventPassDistance(int64_t pos, int64_t old, int64_t step, int64_t cycle, int32_t loop, bool entered)
+{
+    if (cycle <= 0 || pos < 0 || pos > cycle) {
+        return -1;
+    }
+    const int64_t span = step >= 0 ? step : -step;
+    if (!loop) {
+        // 時計は [0, cycle] に張り付くので、old + step が端を越えることはない
+        const int64_t dist = step >= 0 ? pos - old : old - pos;
+        if (dist == 0) {
+            return entered ? 0 : -1;
+        }
+        return (dist > 0 && dist <= span) ? dist : -1;
+    }
+    // 進む向きに測った old から pos までの距離 (0..cycle-1)。cycle ちょうどの pos は 0 に重なる
+    const int64_t p = pos % cycle;
+    const int64_t o = ((old % cycle) + cycle) % cycle;
+    const int64_t dist = (((step >= 0 ? p - o : o - p) % cycle) + cycle) % cycle;
+    if (dist == 0) {
+        // old ちょうど = 前の tick に通った位置。入った tick と、1 tick で 1 周以上するときだけ含める
+        if (entered) {
+            return 0;
+        }
+        return span >= cycle ? cycle : -1;
+    }
+    return (span >= cycle || dist <= span) ? dist : -1;
 }
 
 float ControllerParamAsFloat(const ControllerAsset& controller, int32_t index, const int32_t* params)
@@ -905,6 +981,109 @@ const SkinnedModel* MainModelOf(World& world, const std::vector<EntityID>& drive
     return main != nullptr ? models->Get(main->model) : nullptr;
 }
 
+const ControllerClipEvents* FindClipEvents(const ControllerAsset& ctrl, uint64_t clipHash)
+{
+    for (const ControllerClipEvents& ce : ctrl.clipEvents) {
+        if (ce.clipHash == clipHash) {
+            return &ce;
+        }
+    }
+    return nullptr;
+}
+
+// minWeight (0..1) を Q16 に 1 回だけ切り捨てる。NaN と負は 0 (絞らない)
+int32_t MinWeightQ(float minWeight)
+{
+    if (!(minWeight > 0.0f)) {
+        return 0;
+    }
+    return static_cast<int32_t>(std::min(minWeight, 1.0f) * static_cast<float>(kWeightOne));
+}
+
+// イベントの位置 (tick) を長さ lengthTicks のクリップの位相にする (ブレンドツリーの時計と同じ単位)。
+// ループは 1 周 = 2^32 (lengthTicks ちょうどは 2^32 = 0 と同じ位置)。非ループの末尾は位相が張り付く UINT32_MAX。
+// クリップの外は -1 (発火しない)
+int64_t EventPhase(int32_t tick, int32_t lengthTicks, int32_t loop)
+{
+    if (tick < 0 || tick > lengthTicks) {
+        return -1;
+    }
+    if (!loop && tick == lengthTicks) {
+        return int64_t(UINT32_MAX);
+    }
+    return (int64_t(tick) << 32) / lengthTicks;
+}
+
+// 1 層 (長さ lengthTicks のクリップを clock で回した) が通ったイベントを、通った順に fired へ足す
+void FireClipEvents(EntityID entity, const ControllerClipEvents& ce, int32_t lengthTicks, bool usesPhase,
+                    const StateClock& clock, int32_t loop, bool entered, int32_t weightQ,
+                    std::vector<std::pair<int64_t, int32_t>>& passed, std::vector<AnimEventFired>& fired)
+{
+    if (lengthTicks <= 0 || weightQ <= 0) {
+        return;
+    }
+    passed.clear();
+    for (size_t i = 0; i < ce.events.size(); ++i) {
+        const ControllerClipEvent& ev = ce.events[i];
+        if (weightQ < MinWeightQ(ev.minWeight)) {
+            continue;
+        }
+        int64_t dist = -1;
+        if (usesPhase) {
+            // 非ループの位相は 0..UINT32_MAX に張り付くので、端を含む [0, UINT32_MAX] を 1 周として見る
+            const int64_t cycle = loop ? int64_t(kPhaseCycle) : int64_t(UINT32_MAX);
+            dist = ClipEventPassDistance(EventPhase(ev.tick, lengthTicks, loop), clock.prevPhase, clock.phaseStep,
+                                         cycle, loop, entered);
+        } else {
+            dist = ClipEventPassDistance(ev.tick, clock.prevTime, clock.timeStep, lengthTicks, loop, entered);
+        }
+        if (dist >= 0) {
+            passed.push_back({ dist, static_cast<int32_t>(i) });
+        }
+    }
+    std::sort(passed.begin(), passed.end()); // 通った順、同じ位置はイベントの並び順
+    for (const auto& [dist, index] : passed) {
+        const ControllerClipEvent& ev = ce.events[static_cast<size_t>(index)];
+        fired.push_back({ entity, ev.nameHash, ev.value, ev.intValue });
+    }
+}
+
+// 1 ステートのイベント層。骨クリップ 1 本はその時計で、ブレンドツリーは最大重みの子 (同値なら index の小さい子)
+// 1 本だけを位相で判定する。長さは主 SkinnedMesh のモデルで引く
+void FireStateEvents(const ControllerAsset& ctrl, const ControllerState& st, const int32_t* params,
+                     const StateClock& clock, bool entered, int32_t stateWeightQ, const SkinnedModel& mainModel,
+                     EntityID entity, std::vector<std::pair<int64_t, int32_t>>& passed,
+                     std::vector<AnimEventFired>& fired)
+{
+    if (st.blendType == ControllerBlendType::None) {
+        const ControllerClipEvents* ce = st.skelClipHash != 0 ? FindClipEvents(ctrl, st.skelClipHash) : nullptr;
+        const int32_t clip = ce != nullptr ? mainModel.FindClipByHash(st.skelClipHash) : -1;
+        if (clip >= 0) {
+            FireClipEvents(entity, *ce, SkeletalClipTicks(mainModel.clips[static_cast<size_t>(clip)]), false, clock,
+                           st.loop, entered, stateWeightQ, passed, fired);
+        }
+        return;
+    }
+    BlendChildWeight w[kMaxBlendLayers];
+    const int32_t n = StateBlendWeights(ctrl, st, params, w);
+    if (n == 0) {
+        return;
+    }
+    int32_t top = 0; // w は子の index の昇順なので、最初に見つけた最大が index の小さい子
+    for (int32_t k = 1; k < n; ++k) {
+        if (w[k].weightQ > w[top].weightQ) {
+            top = k;
+        }
+    }
+    const ControllerBlendChild& child = st.blendChildren[static_cast<size_t>(w[top].child)];
+    const ControllerClipEvents* ce = FindClipEvents(ctrl, child.clipHash);
+    if (ce != nullptr) {
+        const int32_t weightQ = static_cast<int32_t>(int64_t(stateWeightQ) * w[top].weightQ / kWeightOne);
+        FireClipEvents(entity, *ce, BlendChildTicks(&mainModel, child), true, clock, st.loop, entered, weightQ, passed,
+                       fired);
+    }
+}
+
 } // namespace
 
 const SkinnedModel* MainSkinnedModel(World& world, EntityID controllerEntity, const SkinnedModelLibrary* models)
@@ -960,6 +1139,7 @@ bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t dur
     c->currentState = stateIndex;
     c->stateTimeTicks = 0;
     c->statePhase = 0;
+    c->stateEntered = 1;
     c->transitionTo = -1;
     c->transitionTick = 0;
     c->transitionDuration = 0;
@@ -973,6 +1153,7 @@ bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t dur
 void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& controllers,
                                       const AnimationLibrary& clips, const SkinnedModelLibrary* models)
 {
+    fired_.clear();
     const ComponentTypeId req[] = { AnimatorControllerComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
         const int ci = arch.FindTypeIndex(AnimatorControllerComponent::sTypeId);
@@ -1092,12 +1273,47 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                 clock.time = time;
                 clock.phase = phase;
             };
+            // 入った tick (M89h のイベント): 遷移先は遷移を始めて最初の進み、今のステートは stateEntered
+            const bool fromEntered = c->stateEntered != 0;
+            const bool toEntered = c->transitionTo >= 0 && c->transitionTick == 0;
             StateClock fromClock;
             StateClock toClock;
             advance(c->currentState, c->stateTimeTicks, c->statePhase, fromClock);
+            c->stateEntered = 0;
             if (c->transitionTo >= 0) {
                 advance(c->transitionTo, c->transitionToTime, c->transitionToPhase, toClock);
                 ++c->transitionTick;
+            }
+
+            // 4. アニメイベント (M89h)。遷移を終える tick も、終える前の元と先で判定する (元は重み 0 で発火しない)
+            if (mainModel != nullptr && !ctrl->clipEvents.empty()) {
+                const ControllerState& from = ctrl->states[static_cast<size_t>(c->currentState)];
+                int32_t fromWeightQ = static_cast<int32_t>(kWeightOne);
+                int32_t toWeightQ = 0;
+                if (c->transitionTo >= 0) {
+                    // ステートの重みは BuildSkeletalSources と同じ (片側だけが骨を駆動するならそちらが満杯)
+                    const bool fromSkel = StateDrivesSkeleton(from);
+                    const bool toSkel = StateDrivesSkeleton(ctrl->states[static_cast<size_t>(c->transitionTo)]);
+                    if (toSkel && !fromSkel) {
+                        fromWeightQ = 0;
+                        toWeightQ = static_cast<int32_t>(kWeightOne);
+                    } else if (toSkel) {
+                        const int32_t duration = c->transitionDuration > 0 ? c->transitionDuration : 1;
+                        const int64_t tick = std::clamp<int64_t>(c->transitionTick, 0, duration);
+                        toWeightQ = static_cast<int32_t>(tick * kWeightOne / duration);
+                        fromWeightQ = static_cast<int32_t>(kWeightOne) - toWeightQ;
+                    }
+                }
+                FireStateEvents(*ctrl, from, c->params, fromClock, fromEntered, fromWeightQ, *mainModel, e, passed_,
+                                fired_);
+                if (c->transitionTo >= 0) {
+                    FireStateEvents(*ctrl, ctrl->states[static_cast<size_t>(c->transitionTo)], c->params, toClock,
+                                    toEntered, toWeightQ, *mainModel, e, passed_, fired_);
+                }
+            }
+
+            // 5. 遷移を終える
+            if (c->transitionTo >= 0) {
                 if (c->transitionTick >= c->transitionDuration) {
                     fromClock = toClock;
                     c->currentState = c->transitionTo;
@@ -1111,7 +1327,7 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                 }
             }
 
-            // 4. 骨のポーズプログラム (M89b)。進めた後の時刻で書く = 旧経路 (SkinningSystem が進めてから
+            // 6. 骨のポーズプログラム (M89b)。進めた後の時刻で書く = 旧経路 (SkinningSystem が進めてから
             //    描画が読む) と同じ「その tick の終わりの姿勢」になる
             if (!driven_.empty()) {
                 SkeletalSource sources[kMaxSkeletalSources];

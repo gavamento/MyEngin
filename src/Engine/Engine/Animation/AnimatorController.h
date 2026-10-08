@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "nlohmann/json.hpp"
@@ -90,6 +91,26 @@ struct ControllerTransition {
     std::vector<ControllerCondition> conditions; // 全て満たせば遷移 (AND)
 };
 
+// アニメイベント 1 件 (M89h、.controller.json の "clipEvents":{"Walk":[{"tick":12,"name":"FootL",...}]})。
+// 骨クリップの中の位置に名前を付け、時計がそこを通った tick に発火する (規則は ClipEventPassDistance)。
+// 発火したイベントは BehaviorTreeSystem::SendEvent でコントローラのエンティティ自身へ送る
+// (BtEventCount / BtGetEvent と、BB の eventName で受ける)
+struct ControllerClipEvent {
+    std::string name;
+    uint64_t nameHash = 0;  // HashStr(name) = BtEventNameHash
+    int32_t tick = 0;       // クリップの先頭からの位置 (tick)。0..クリップの長さ。外れた位置は発火しない
+    float minWeight = 0.0f; // 層の重み (0..1) がこれ未満の tick は発火しない (遷移中・ブレンド中の絞り)
+    float value = 0.0f;     // BtEvent::value へそのまま渡す
+    int32_t intValue = 0;   // BtEvent::intValue へそのまま渡す
+};
+
+// 骨クリップ 1 本ぶんのイベント。クリップは名前で持つ (モデルごとに index が違ってよい。skelClip と同じ)
+struct ControllerClipEvents {
+    std::string clip;
+    uint64_t clipHash = 0; // HashStr(clip)
+    std::vector<ControllerClipEvent> events; // 並びは自由 (発火順は時計が通った順)
+};
+
 struct ControllerAsset {
     uint64_t hash = 0;
     std::string name;
@@ -98,6 +119,7 @@ struct ControllerAsset {
     std::vector<ControllerParam> parameters;
     std::vector<ControllerState> states;
     std::vector<ControllerTransition> transitions;
+    std::vector<ControllerClipEvents> clipEvents; // M89h。同じクリップ名が複数あれば先頭だけを使う
 };
 
 // 列挙 1 件 (AssetRef ピッカー / Asset Browser 用)
@@ -188,9 +210,28 @@ int32_t ControllerStateLengthTicks(const ControllerAsset& controller, const Cont
                                    const int32_t* params, const AnimationLibrary* clips,
                                    const SkinnedModel* mainModel);
 
+// ---- アニメイベント (M89h) ----
+// 時計が 1 tick に old から step 進んだとき (逆再生は step < 0)、位置 pos を通ったか。通っていれば old からの
+// 距離 (発火順のキー、0 以上)、通っていなければ -1。cycle はクリップ 1 周の長さ (時計と同じ単位)。
+// 区間は old を含まず old + step を含む (順再生 (old, new] / 逆再生 [new, old))。entered (ステートに入った tick)
+// は old も含める (= [0, new])。
+// - ループ: pos と old は cycle を法として見る (cycle ちょうどは 0 と同じ位置 = 1 周に 1 回)。
+//   |step| >= cycle (1 tick で 1 周以上) なら全位置が 1 回ずつ
+// - 非ループ: 位置は [0, cycle]。時計は端に張り付くので、終端は着いた tick に 1 回だけ入る
+// - cycle <= 0、範囲外の pos は -1
+int64_t ClipEventPassDistance(int64_t pos, int64_t old, int64_t step, int64_t cycle, int32_t loop, bool entered);
+
+// AnimatorControllerSystem::Update が発火させたイベント 1 件 (sim 状態ではない。同じ tick のうちに配る)
+struct AnimEventFired {
+    EntityID entity = kNullEntity; // コントローラを持つエンティティ
+    uint64_t nameHash = 0;
+    float value = 0.0f;
+    int32_t intValue = 0;
+};
+
 // entity の Animator を stateIndex のステートへ強制的に移す (BT の PlayAnimation 用)。
 // durationTicks > 0: 今のポーズからその tick 数で混ぜる遷移を始める (遷移中なら遷移先だけを差し替えて混ぜ直す)。
-// 0 以下: currentState を即切り替えて再生位置を 0 に戻し、遷移を捨てる。
+// 0 以下: currentState を即切り替えて再生位置を 0 に戻し、遷移を捨てる (次の進みが「入った tick」になる)。
 // Animator が無い・controller が未登録・stateIndex が範囲外なら何も変えず false
 bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t durationTicks, const ControllerLibrary& controllers);
 
@@ -214,13 +255,27 @@ bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t dur
 // 各 SkinnedMesh は自分のモデルでの子の長さで位相を時刻にする。遷移中は元と先の両方の子を出す (最大 8 層)。
 // hasExitTime は「次の進みで位相が 1 周に達する tick」で判定する (逆再生・長さ 0 では抜けない)。
 // stateTimeTicks も従来どおり ControllerStateLengthTicks の長さで進む (プロパティクリップと ABI の表示用)
+//
+// アニメイベント (M89h): 時刻を進めた後、clipEvents のうち時計が通った位置を FiredEvents() へ積む。
+// - 層 = 今のステート (遷移中は元 → 先の順)。骨クリップ 1 本のステートはその時計 (tick)、ブレンドツリーは
+//   最大重みの子 (同値なら index の小さい子) 1 本だけを位相で判定する (二重の足音を防ぐ)
+// - 層の重みはポーズプログラムと同じ (遷移の元と先は transitionTick / duration、ブレンドの子はステートの重み × 子の重み)。
+//   重み 0 の層 (遷移を終える tick の元など) と minWeight 未満は発火しない
+// - 入った tick: 遷移先は遷移を始めて最初の進み、今のステートは AnimatorPlay の即切り替えと最初の tick (stateEntered)
+// - 長さは主 SkinnedMesh のモデルで引く。モデルが無ければ発火しない。非アクティブの間は時計と同じく止まる
+// - 順序はエンティティの走査順 → 層 → 通った順 (同じ位置ならイベントの並び順)
 class AnimatorControllerSystem {
 public:
     void Update(World& world, const ControllerLibrary& controllers, const AnimationLibrary& clips,
                 const SkinnedModelLibrary* models = nullptr);
 
+    // 直近の Update が発火させたイベント (次の Update の冒頭で消える)
+    const std::vector<AnimEventFired>& FiredEvents() const { return fired_; }
+
 private:
-    std::vector<EntityID> driven_; // 走査用の作業領域 (sim 状態ではない)
+    std::vector<EntityID> driven_;       // 走査用の作業領域 (sim 状態ではない)
+    std::vector<AnimEventFired> fired_;  // 同上。呼び出し側が同じ tick に配る
+    std::vector<std::pair<int64_t, int32_t>> passed_; // 1 層で通ったイベント (距離, index) の作業領域
 };
 
 } // namespace mye

@@ -110,3 +110,23 @@ BT / ABI からは骨クリップを切り替えられなかった。M89 では�
 - 却下: 描画側で前 tick のポーズ (行列) を覚えて行列を補間する。前 tick のポーズに依存する処理を持たない原則 (背景) に反し、
   エンティティごとの履歴の寿命 (生成・破棄・snapshot) を別に管理することになる。
 - 却下: 前 tick の層の並びをまるごと持つ (層 16 本)。遷移の始まりで層が増減しても、層ごとに前の時刻を持てば足りる。
+
+## 決定 9: アニメイベントは「時計が 1 tick に通った区間」で判定し、入った tick だけを sim 状態で覚える (M89h)
+
+- 定義はコントローラの `clipEvents` (骨クリップの名前がキー、位置は tick)。モデルごとにクリップの index が違ってよい (決定 5 と同じ)。
+- 判定は純関数 `ClipEventPassDistance` 1 本。区間は old を含まず old + step を含む (順再生 `(old, new]`、逆再生 `[new, old)`)。
+  ループは cycle を法とし (末尾ちょうど = 先頭 = 1 周に 1 回)、1 tick で 1 周以上なら全位置を 1 回ずつ。非ループは端に張り付くので終端は 1 回。
+  返り値の「old からの距離」で層の中の発火順を決める (同じ位置はイベントの並び順)。
+- 入った tick は old (= 0) も含める。これは時刻だけからは決まらない — ループが 0 ちょうどへ折り返した次の tick と、
+  入った tick はどちらも「0 から進む」。そこで `AnimatorControllerComponent::stateEntered` (末尾 append) を足し、
+  最初の tick と `AnimatorPlay` の即切り替えで 1、進めたら 0 にする。遷移先は `transitionTick == 0` で分かるので使わない。
+  コンポーネントの並びが変わるので `kSimSnapshotVersion` を 44 に上げる (計画では j = v44、l = v45 だったものが 1 つずつずれる)。
+- 層と重みはポーズプログラムと同じ考え方: 今のステート (遷移中は元 → 先)。ブレンドツリーは最大重みの子 1 本だけを位相で判定する
+  (歩きと走りの足音が二重に鳴らない)。重みは遷移の `transitionTick / duration` × 子の重み。重み 0 の層 (遷移を終える tick の元) と
+  `minWeight` 未満は発火しない。長さは主 SkinnedMesh のモデルで引く (ステートの長さと同じ。モデルが無ければ発火しない)。
+- 出口は `AnimatorControllerSystem::FiredEvents()` (sim 状態ではない作業領域)。TickRunner が同じ tick に
+  `BehaviorTreeSystem::SendEvent` へ自分宛てで積み、次の tick の冒頭で配られる (`BtEventCount` / `BtGetEvent` / BB の `eventName`)。
+  AnimatorController は BT を知らない。エンジンが直接処理する種類 (sound / effect / noise) は M89i で同じ出口に足す。
+- 却下: 時刻 0 から進む tick を常に「入った tick」とみなす (状態を増やさない)。ループが 0 ちょうどへ折り返す速さ (speed 1 なら毎周) で
+  位置 0 のイベントが 2 回鳴る。
+- 却下: 区間を `[old, new)` にして入った tick を自然に含める。発火がポーズ (進めた後の時刻) より 1 tick 遅れ、非ループの終端を別扱いにする必要がある。

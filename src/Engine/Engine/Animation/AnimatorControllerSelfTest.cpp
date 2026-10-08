@@ -1037,6 +1037,212 @@ bool RunAnimatorControllerSelfTest()
               "M89e: y = 0.5 drives Idle + Fwd layers");
     }
 
+    // ---- (M89h) アニメイベント: 発火規則の表 / JSON / システム (入った tick・折り返し・遷移・minWeight・ブレンド) ----
+    {
+        // 発火規則の表 (計画の「イベントの発火規則」の全行)。返り値は old からの距離、-1 = 発火しない
+        struct PassRow {
+            int64_t pos, old, step, cycle;
+            int32_t loop;
+            bool entered;
+            int64_t expect;
+            const char* what;
+        };
+        const PassRow rows[] = {
+            { 5, 4, 1, 10, 1, false, 1, "forward: (old, new] includes new" },
+            { 4, 4, 1, 10, 1, false, -1, "forward: (old, new] excludes old" },
+            { 6, 4, 1, 10, 1, false, -1, "forward: beyond new" },
+            { 0, 0, 1, 10, 1, true, 0, "entered tick: [0, new] includes 0" },
+            { 1, 0, 1, 10, 1, true, 1, "entered tick: [0, new] includes new" },
+            { 0, 0, 1, 10, 1, false, -1, "not entered: 0 was passed by the previous tick" },
+            { 0, 0, 0, 10, 1, true, 0, "entered with speed 0: position 0 still fires once" },
+            { 3, 3, 0, 10, 1, false, -1, "speed 0: nothing" },
+            { 0, 9, 2, 10, 1, false, 1, "loop wrap: [0, new] side" },
+            { 1, 9, 2, 10, 1, false, 2, "loop wrap: new itself" },
+            { 2, 9, 2, 10, 1, false, -1, "loop wrap: beyond new" },
+            { 9, 9, 2, 10, 1, false, -1, "loop wrap: old excluded" },
+            { 10, 9, 2, 10, 1, false, 1, "loop wrap: L is the same position as 0 (once)" },
+            { 0, 9, 1, 10, 1, false, 1, "loop wrap landing exactly on 0 fires 0 on that tick" },
+            { 3, 7, 25, 10, 1, false, 6, "several cycles in one tick: every position once" },
+            { 7, 7, 25, 10, 1, false, 10, "several cycles in one tick: old itself once (one cycle away)" },
+            { 2, 3, -1, 10, 1, false, 1, "reverse: [new, old) includes new" },
+            { 3, 3, -1, 10, 1, false, -1, "reverse: [new, old) excludes old" },
+            { 9, 0, -2, 10, 1, false, 1, "reverse loop wrap: below 0 comes back from L" },
+            { 8, 0, -2, 10, 1, false, 2, "reverse loop wrap: new itself" },
+            { 10, 9, 1, 10, 0, false, 1, "non-loop end: the end tick once" },
+            { 10, 10, 0, 10, 0, false, -1, "non-loop stuck at the end: not again" },
+            { 0, 1, -1, 10, 0, false, 1, "non-loop reverse reaches 0 once" },
+            { 0, 0, 0, 10, 0, false, -1, "non-loop stuck at 0: not again" },
+            { 11, 9, 1, 10, 0, false, -1, "a position past the clip never fires" },
+            { 3, 2, 1, 0, 1, false, -1, "zero length never fires" },
+        };
+        bool tableOk = true;
+        for (const PassRow& r : rows) {
+            const int64_t got = ClipEventPassDistance(r.pos, r.old, r.step, r.cycle, r.loop, r.entered);
+            if (got != r.expect) {
+                MYE_LOG_ERROR("    event rule '%s': got %lld, expected %lld", r.what, static_cast<long long>(got),
+                              static_cast<long long>(r.expect));
+                tableOk = false;
+            }
+        }
+        check(tableOk, "M89h: ClipEventPassDistance matches every row of the firing-rule table");
+
+        // JSON: クリップ名がキー。未対応の kind は読まない
+        {
+            const json j = json::parse(R"({"states":[{"name":"Idle","skel":{"clip":"Idle"}}],
+                "clipEvents":{"Idle":[{"tick":12,"name":"FootL","minWeight":0.5,"value":2.5,"int":7},
+                                      {"tick":3,"name":"Boom","kind":"sound"}]}})");
+            ControllerAsset a;
+            const bool ok = ControllerLibrary::FromJson(j, a);
+            check(ok && a.clipEvents.size() == 1 && a.clipEvents[0].clip == "Idle"
+                      && a.clipEvents[0].clipHash == HashStr("Idle") && a.clipEvents[0].events.size() == 1
+                      && a.clipEvents[0].events[0].tick == 12 && a.clipEvents[0].events[0].nameHash == HashStr("FootL")
+                      && a.clipEvents[0].events[0].minWeight == 0.5f && a.clipEvents[0].events[0].value == 2.5f
+                      && a.clipEvents[0].events[0].intValue == 7,
+                  "M89h: clipEvents load by clip name (unsupported kinds are skipped)");
+            ControllerAsset back;
+            check(ok && ControllerLibrary::FromJson(ControllerLibrary::ToJson(a), back) && back.clipEvents.size() == 1
+                      && back.clipEvents[0].events.size() == 1 && back.clipEvents[0].events[0].name == "FootL"
+                      && back.clipEvents[0].events[0].intValue == 7,
+                  "M89h: clipEvents round-trip");
+            check(!ControllerLibrary::ToJson(ControllerAsset{}).contains("clipEvents"),
+                  "M89h: a controller without events omits the key");
+        }
+
+        RenderResources res;
+        const AssetID model =
+            res.skinnedModels.Register("selftest_events", MakeNamedClipModel({ { "Idle", 1.0f }, { "Walk", 0.5f } }));
+        ControllerAsset ev;
+        ev.states.push_back({ "Idle", "", 0, 1, 1, "Idle", HashStr("Idle") });
+        ev.states.push_back({ "Walk", "", 0, 1, 1, "Walk", HashStr("Walk") });
+        { // Idle → Walk (param0 == 1、4 tick で混ぜる)
+            ControllerTransition t;
+            t.from = 0;
+            t.to = 1;
+            t.duration = 4;
+            t.conditions = { { 0, CondOp::Eq, 1 } };
+            ev.transitions.push_back(t);
+        }
+        const auto event = [](const char* name, int32_t tick, float minWeight) {
+            ControllerClipEvent e;
+            e.name = name;
+            e.nameHash = HashStr(name);
+            e.tick = tick;
+            e.minWeight = minWeight;
+            return e;
+        };
+        ev.clipEvents.push_back({ "Idle", HashStr("Idle"), { event("Mid", 30, 0.0f), event("Start", 0, 0.0f) } });
+        ev.clipEvents.push_back(
+            { "Walk", HashStr("Walk"), { event("Early", 2, 0.75f), event("Late", 3, 0.75f), event("Step", 10, 0.0f) } });
+        const uint64_t evHash = ctrlLib.Register(L"events.controller.json", ev);
+
+        Scene s;
+        World& world = s.GetWorld();
+        GameObject actor = s.CreateGameObjectTracked("Actor");
+        actor.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ evHash };
+        actor.AddComponent<SkinnedMeshComponent>()->model = model;
+        world.ApplyStructuralChanges();
+        AnimatorControllerSystem esys;
+        const auto ac = [&] { return actor.GetComponent<AnimatorControllerComponent>(); };
+        const auto names = [&] {
+            std::vector<uint64_t> out;
+            for (const AnimEventFired& f : esys.FiredEvents()) {
+                out.push_back(f.nameHash);
+            }
+            return out;
+        };
+        const auto count = [&](int updates, const char* name) {
+            int n = 0;
+            for (int i = 0; i < updates; ++i) {
+                esys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+                for (uint64_t h : names()) {
+                    n += h == HashStr(name) ? 1 : 0;
+                }
+            }
+            return n;
+        };
+
+        esys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+        check(names() == std::vector<uint64_t>{ HashStr("Start") } && esys.FiredEvents()[0].entity == actor.Id()
+                  && ac()->stateEntered == 0,
+              "M89h: the first tick enters the default state and fires its position-0 event");
+        // 2..60 tick 目: 30 で Mid、60 で 59 → 0 に折り返して Start
+        check(count(28, "Mid") == 0 && count(1, "Mid") == 1 && ac()->stateTimeTicks == 30,
+              "M89h: an event fires on the tick whose new time reaches it");
+        check(count(30, "Start") == 1 && ac()->stateTimeTicks == 0, "M89h: the loop wrap onto 0 fires Start once");
+        check(count(1, "Start") == 0, "M89h: the tick after a wrap onto 0 does not fire Start again");
+
+        // 遷移: 先の Walk は入った tick から判定し、重みは transitionTick / 4。minWeight 0.75 は 3 tick 目から
+        ac()->params[0] = 1;
+        esys.Update(world, ctrlLib, animLib, &res.skinnedModels); // Walk 1 (重み 0.25)
+        const std::vector<uint64_t> w1 = names();
+        esys.Update(world, ctrlLib, animLib, &res.skinnedModels); // Walk 2 (重み 0.5)
+        const std::vector<uint64_t> w2 = names();
+        esys.Update(world, ctrlLib, animLib, &res.skinnedModels); // Walk 3 (重み 0.75)
+        const std::vector<uint64_t> w3 = names();
+        check(w1.empty() && w2.empty() && w3 == std::vector<uint64_t>{ HashStr("Late") },
+              "M89h: during a transition minWeight gates the target's events by the transition weight");
+        check(count(7, "Step") == 1 && ac()->currentState == 1 && ac()->stateTimeTicks == 10,
+              "M89h: after the transition the target keeps its clock and fires at full weight");
+
+        // AnimatorPlay の即切り替えは入った tick になる (位置 0 のイベントがもう一度鳴る)
+        AnimatorPlay(world, actor.Id(), 0, 0, ctrlLib);
+        check(ac()->stateEntered == 1 && count(1, "Start") == 1, "M89h: an instant AnimatorPlay re-enters the state");
+
+        // 遷移の元と先が同じ tick に両方発火し、順は元 → 先 (元 Idle の 30 と、先 Walk の 1。どちらも minWeight 0)
+        {
+            ControllerAsset both = ev;
+            both.clipEvents[1].events = { event("To", 1, 0.0f) };
+            both.clipEvents[0].events = { event("From", 30, 0.0f) };
+            const uint64_t bothHash = ctrlLib.Register(L"events_both.controller.json", both);
+            ac()->controller = AssetID{ bothHash };
+            AnimatorPlay(world, actor.Id(), 0, 0, ctrlLib);
+            ac()->params[0] = 0;
+            for (int i = 0; i < 29; ++i) {
+                esys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+            }
+            ac()->params[0] = 1; // 次の tick に遷移を始める = Idle は 29 → 30、Walk は 0 → 1
+            esys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+            check(names() == std::vector<uint64_t>{ HashStr("From"), HashStr("To") },
+                  "M89h: in a transition both states fire, from before to");
+            ac()->controller = AssetID{ evHash };
+        }
+
+        // ブレンドツリー: 最大重みの子だけが位相で発火する
+        {
+            ControllerAsset bt;
+            bt.parameters = { { "x", ControllerParamType::Float } };
+            ControllerState blend;
+            blend.name = "Move";
+            blend.blendType = ControllerBlendType::Blend1D;
+            blend.blendParam = 0;
+            blend.blendChildren.push_back({ "Idle", HashStr("Idle"), 0.0f });
+            blend.blendChildren.push_back({ "Walk", HashStr("Walk"), 1.0f });
+            bt.states.push_back(blend);
+            bt.clipEvents.push_back({ "Idle", HashStr("Idle"), { event("IdleHalf", 30, 0.0f) } });
+            bt.clipEvents.push_back({ "Walk", HashStr("Walk"), { event("WalkHalf", 15, 0.0f) } });
+            const uint64_t btHash = ctrlLib.Register(L"events_blend.controller.json", bt);
+            ac()->controller = AssetID{ btHash };
+            AnimatorPlay(world, actor.Id(), 0, 0, ctrlLib);
+            ac()->params[0] = std::bit_cast<int32_t>(0.25f); // Idle 0.75 / Walk 0.25、1 周 = 52.5 tick
+            int idleHalf = 0;
+            int walkHalf = 0;
+            for (int i = 0; i < 60; ++i) {
+                esys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+                for (uint64_t h : names()) {
+                    idleHalf += h == HashStr("IdleHalf") ? 1 : 0;
+                    walkHalf += h == HashStr("WalkHalf") ? 1 : 0;
+                }
+            }
+            check(idleHalf == 1 && walkHalf == 0,
+                  "M89h: a blend tree fires only its heaviest child's events, judged by phase (once per cycle)");
+        }
+
+        // モデルが無ければ長さが引けないので発火しない
+        AnimatorPlay(world, actor.Id(), 0, 0, ctrlLib);
+        esys.Update(world, ctrlLib, animLib, nullptr);
+        check(esys.FiredEvents().empty(), "M89h: no skinned model library = no events");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Animator Controller self test: ALL PASS ====");
         return true;
