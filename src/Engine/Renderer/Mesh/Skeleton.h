@@ -37,6 +37,25 @@ struct JointTrack {
     std::vector<DirectX::XMFLOAT3> sVals;
 };
 
+// 読み込み元のキーの補間 (glTF の sampler.interpolation)。JointTrack は線形しか持たないので、
+// 読み込み時に ExpandToLinearKeys で線形のキー列へ直す (M89p)
+enum class KeyInterpolation : int32_t {
+    Linear = 0,
+    Step,        // 次のキーまで前の値を保つ
+    CubicSpline, // エルミート。値は 1 キー 3 要素 (入り接線・値・出接線)
+};
+
+// times (秒、昇順) と raw (成分 comps 個ずつ) を、線形補間すると元の補間になる (近似する) キー列にする。
+//   - Linear: そのまま写す (従来の読み込みとビット一致)
+//   - Step: 2 つ目以降のキーの時刻に「前の値」と「その値」を並べる。FindSpan は同時刻なら後ろを取るので、
+//     キーの時刻ちょうどで新しい値に切り替わる (glTF の STEP と同じ)
+//   - CubicSpline: 区間ごとに 1/sampleHz 秒以下の刻みでエルミート補間を評価する (キーの時刻は必ず含む)。
+//     normalize なら各点を正規化する (回転。glTF 仕様の「補間後に正規化」)
+// raw の要素数が足りなければ false を返し、out は空にする
+bool ExpandToLinearKeys(KeyInterpolation interp, const std::vector<float>& times, const std::vector<float>& raw,
+                        int32_t comps, bool normalize, float sampleHz, std::vector<float>& outTimes,
+                        std::vector<float>& outVals);
+
 struct SkeletalClip {
     std::string name;
     float duration = 0.0f;          // 秒

@@ -32,7 +32,10 @@ namespace mye::CookedCache {
 // ローカル TRS が変わるので、AddSkin が焼いた旧 blob は「Spine 以下が原点へ潰れた」骨を
 // 持ったままになる。ヘッダ検証は blob の中身を見ない = 版でしか弾けず、bump しないと
 // 再パースされずに壊れた姿勢が再生され続ける (スキン付き FBX のみ影響)
-inline constexpr uint32_t kCookVersion = 4;
+// 5 = M89p: glTF の STEP / CUBICSPLINE のアニメを線形のキー列へ直して読むようになった。旧 blob の
+// スキンは CUBICSPLINE の接線を値として読んだクリップを持つので、版で弾いて読み直させる
+// (STEP / CUBICSPLINE を含むスキン付き glTF のみ影響。LINEAR だけのクリップは同じキーになる)
+inline constexpr uint32_t kCookVersion = 5;
 
 // M51j: 封印マーカー。cooked ディレクトリにこの名前のファイルがあると「配布ビルドの
 // 封印キャッシュ」として扱い、ReadValidated が srcPathKey / stat / 内容ハッシュ / deps の

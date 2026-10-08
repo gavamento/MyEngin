@@ -596,3 +596,10 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] Play 中に足したイベントが、その位置で発火する (BT の eventName / 音 / エフェクト)
 - [ ] 「ルートの軌跡」で、Walk / Run のルートの 1 周の道筋が緑の線で出て、今の位置に丸、イベントの位置に点が付く。Idle はほぼ 1 点
 - [ ] Z-up のモデル (`anim_test_zup.glb`) でも軌跡が水平に前へ伸びる
+
+### glTF の STEP / CUBICSPLINE (M89p)
+
+- [ ] STEP のクリップを持つ glTF が、キーの時刻ちょうどで値が切り替わって再生される (間で補間されない)
+- [ ] CUBICSPLINE のクリップを持つ glTF (Khronos の `InterpolationTest` など) が、接線を値と取り違えずに滑らかに再生される
+- [ ] LINEAR だけの既存のモデル (CesiumMan / `anim_test.glb`) の姿勢と replay のハッシュが変わらない
+- [ ] 版 5 への上げで古いクック済みキャッシュが読み直される (ログに再クック、姿勢が正しい)

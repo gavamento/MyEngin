@@ -17,6 +17,7 @@
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Mesh/Skeleton.h"
 #include "Engine/Renderer/Shader/ShaderManager.h"
 
 #include "cgltf/cgltf.h"
@@ -25,6 +26,9 @@ using namespace DirectX;
 
 namespace mye::ModelLoader {
 namespace {
+
+// CUBICSPLINE のキーを線形へ直す刻み (Hz)。sim がポーズを引く 1 tick (1/60 秒) と同じにし、tick の間は線形で足りるとする (M89p)
+constexpr float kCubicResampleHz = 60.0f;
 
 // cgltf の既定 reader は fopen(char*) を使うため、Windows では日本語を含む
 // 配布先パスを開けない。UTF-8 からワイドパスへ変換して開く。
@@ -303,29 +307,56 @@ AssetID LoadSkin(LoadContext& lc, const cgltf_data* data, const cgltf_skin* skin
                 cgltf_accessor_read_float(in, k, &times[k], 1);
                 dur = (times[k] > dur) ? times[k] : dur;
             }
+            int32_t comps = 0;
+            if (ch.target_path == cgltf_animation_path_type_translation
+                || ch.target_path == cgltf_animation_path_type_scale) {
+                comps = 3;
+            } else if (ch.target_path == cgltf_animation_path_type_rotation) {
+                comps = 4;
+            } else {
+                continue; // weights (モーフ) は骨アニメの対象外
+            }
+            // 出力アクセサを要素ごとにそのまま読む (CUBICSPLINE は 1 キー 3 要素)
+            std::vector<float> raw(val->count * static_cast<cgltf_size>(comps));
+            for (cgltf_size e = 0; e < val->count; ++e) {
+                cgltf_accessor_read_float(val, e, &raw[e * static_cast<cgltf_size>(comps)], static_cast<cgltf_size>(comps));
+            }
+            // JointTrack は線形補間しか持たないので、STEP / CUBICSPLINE は線形のキー列へ直す (M89p)。
+            // 刻みは sim の tick (60 Hz)。キーの時刻は保つ
+            KeyInterpolation interp = KeyInterpolation::Linear;
+            if (ch.sampler->interpolation == cgltf_interpolation_type_step) {
+                interp = KeyInterpolation::Step;
+            } else if (ch.sampler->interpolation == cgltf_interpolation_type_cubic_spline) {
+                interp = KeyInterpolation::CubicSpline;
+            }
+            std::vector<float> keyTimes;
+            std::vector<float> keyVals;
+            if (!ExpandToLinearKeys(interp, times, raw, comps, comps == 4, kCubicResampleHz, keyTimes, keyVals)) {
+                MYE_LOG_WARN("[model] animation '%s' channel %zu: output has too few values for its interpolation; skipped",
+                             clip.name.c_str(), static_cast<size_t>(ci));
+                continue;
+            }
+            const size_t outCount = keyTimes.size();
             JointTrack& tr = clip.tracks[static_cast<size_t>(jidx)];
             if (ch.target_path == cgltf_animation_path_type_translation) {
-                tr.tTimes = times;
-                tr.tVals.resize(kc);
-                for (cgltf_size k = 0; k < kc; ++k) {
-                    float v[3];
-                    cgltf_accessor_read_float(val, k, v, 3);
+                tr.tTimes = std::move(keyTimes);
+                tr.tVals.resize(outCount);
+                for (size_t k = 0; k < outCount; ++k) {
+                    const float* v = &keyVals[k * 3];
                     tr.tVals[k] = { v[0], v[1], -v[2] }; // Z 反転
                 }
             } else if (ch.target_path == cgltf_animation_path_type_rotation) {
-                tr.rTimes = times;
-                tr.rVals.resize(kc);
-                for (cgltf_size k = 0; k < kc; ++k) {
-                    float v[4];
-                    cgltf_accessor_read_float(val, k, v, 4);
+                tr.rTimes = std::move(keyTimes);
+                tr.rVals.resize(outCount);
+                for (size_t k = 0; k < outCount; ++k) {
+                    const float* v = &keyVals[k * 4];
                     tr.rVals[k] = { -v[0], -v[1], v[2], v[3] }; // クォータニオン Z 反転
                 }
-            } else if (ch.target_path == cgltf_animation_path_type_scale) {
-                tr.sTimes = times;
-                tr.sVals.resize(kc);
-                for (cgltf_size k = 0; k < kc; ++k) {
-                    float v[3];
-                    cgltf_accessor_read_float(val, k, v, 3);
+            } else {
+                tr.sTimes = std::move(keyTimes);
+                tr.sVals.resize(outCount);
+                for (size_t k = 0; k < outCount; ++k) {
+                    const float* v = &keyVals[k * 3];
                     tr.sVals[k] = { v[0], v[1], v[2] };
                 }
             }

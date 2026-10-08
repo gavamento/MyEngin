@@ -75,7 +75,7 @@ AnimationSystem → **AnimatorControllerSystem** (遷移 → 時刻を進める 
 | **m** | 足の接地: `FootIkSystem` が前 tick の WorldMatrix と `RaycastWorld` で目標を決め、骨盤を下げる (`pelvisMaxDrop`)。自分への当たりは除外 (済: TwoBoneIK の mode 3 として持ち、設定は末尾に足したので v48。足の位置はこの tick の連鎖で求める。RaycastWorld に除外の関数。ADR-027 決定 14。テスト未実施 = 全サブ後にまとめて) | v48 | – | – |
 | **n** | 骨アニメのプレビュー窓 `AnimationPreviewWindow` (AssetPreviewCache.cpp:151- の一時 Scene + RenderSystem + RenderTexture の型を流用)。クリップ/ステートモード、再生・スクラブ・±1 tick、ブレンド param スライダ、ボーンの線描画、イベント位置の印。`ReleaseGpu()` で M88 のデバイス復旧の対象に登録。`--anim-preview <名前> --anim-preview-tick N` で撮影 (済: 選択中のキャラの SkinnedMesh を一時シーンへ写して描く (モデルのファイルは GUID キーなので読み直せない)。骨は ImGui の線で重ねる。<名前> はエンティティ名。ADR-027 決定 15。撮影・目視は未実施 = 全サブ後にまとめて) | – | – | – |
 | **o** | タイムライン上でイベントを編集 (追加・ドラッグ・削除・種類別の欄)、ルートモーション軌跡の表示 (済: プレビュー窓のスライダの下の帯で、最も重い層のクリップのイベントを編集。操作は純関数 `ClipEventEdit`、保存と未保存の判定は窓に持つ。軌跡は `FindRootJoint` の 1 周の位置を結ぶ。ADR-027 決定 16。目視・テストは未実施 = 全サブ後にまとめて) | – | – | – |
-| **p** | (小) glTF ローダが STEP/CUBICSPLINE を読んでいない件 (ModelLoader.cpp:298-331): 少なくとも警告を出し、可能なら対応する | – | – | – |
+| **p** | (小) glTF ローダが STEP/CUBICSPLINE を読んでいない件 (ModelLoader.cpp:298-331): 少なくとも警告を出し、可能なら対応する (済: 対応した。トラックは線形のままで、読み込み時に `ExpandToLinearKeys` が STEP を同時刻の 2 キー、CUBICSPLINE を 60 Hz のエルミートの点列へ直す。LINEAR は従来とビット一致。値が足りないチャネルは警告して飛ばす。古いクック済み blob を弾くため `kCookVersion` 5。テスト未実施 = 全サブ後にまとめて) | – | – | – |
 
 依存関係: a→b→c→d→e→f→g、h は d の後、i は h の後、j は d の後、k は j の後、l は b の後、m は l と j の後、n は b の後 (ブレンド表示は e の後)、o は h と n の後。
 **最初に潰す不確実性**: a (プログラム方式と旧経路のビット一致の両立) と、b の下調べ (ルートの空間・上向きの求め方)。

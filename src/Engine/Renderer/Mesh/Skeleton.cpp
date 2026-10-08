@@ -38,6 +38,86 @@ std::vector<SkinnedModelEntry> SkinnedModelLibrary::Enumerate() const
     return out;
 }
 
+bool ExpandToLinearKeys(KeyInterpolation interp, const std::vector<float>& times, const std::vector<float>& raw,
+                        int32_t comps, bool normalize, float sampleHz, std::vector<float>& outTimes,
+                        std::vector<float>& outVals)
+{
+    outTimes.clear();
+    outVals.clear();
+    const size_t n = times.size();
+    const size_t c = static_cast<size_t>(comps);
+    const size_t perKey = interp == KeyInterpolation::CubicSpline ? 3 * c : c;
+    if (comps <= 0 || raw.size() < n * perKey) {
+        return false;
+    }
+    const auto push = [&](float t, const float* v) {
+        outTimes.push_back(t);
+        outVals.insert(outVals.end(), v, v + c);
+    };
+    switch (interp) {
+    case KeyInterpolation::Linear:
+        outTimes = times;
+        outVals.assign(raw.begin(), raw.begin() + static_cast<std::ptrdiff_t>(n * c));
+        return true;
+    case KeyInterpolation::Step:
+        for (size_t k = 0; k < n; ++k) {
+            if (k > 0) {
+                push(times[k], &raw[(k - 1) * c]);
+            }
+            push(times[k], &raw[k * c]);
+        }
+        return true;
+    case KeyInterpolation::CubicSpline:
+        break;
+    }
+    // CubicSpline: キー k の要素は [入り接線 a_k, 値 v_k, 出接線 b_k]。区間 [t0, t1] で s = (t - t0) / dt として
+    // p(s) = (2s³-3s²+1) v0 + (s³-2s²+s) dt b0 + (-2s³+3s²) v1 + (s³-s²) dt a1 (glTF 2.0 仕様 Appendix C)
+    std::vector<float> p(c);
+    const auto emit = [&](float t) {
+        if (normalize) {
+            float len2 = 0.0f;
+            for (size_t i = 0; i < c; ++i) {
+                len2 += p[i] * p[i];
+            }
+            if (len2 > 1e-12f) {
+                const float inv = 1.0f / std::sqrt(len2);
+                for (size_t i = 0; i < c; ++i) {
+                    p[i] *= inv;
+                }
+            }
+        }
+        push(t, p.data());
+    };
+    for (size_t k = 0; k < n; ++k) {
+        const float* v0 = &raw[k * perKey + c];
+        std::copy(v0, v0 + c, p.begin());
+        emit(times[k]);
+        if (k + 1 == n) {
+            break;
+        }
+        const float* b0 = &raw[k * perKey + 2 * c];
+        const float* a1 = &raw[(k + 1) * perKey];
+        const float* v1 = &raw[(k + 1) * perKey + c];
+        const float dt = times[k + 1] - times[k];
+        // 刻みは sampleHz 以下 (区間の中だけ。両端のキーは別に出す)。dt が 0 以下の区間は刻まない
+        const int32_t steps = dt > 0.0f ? std::max(static_cast<int32_t>(std::ceil(dt * sampleHz)), 1) : 1;
+        for (int32_t i = 1; i < steps; ++i) {
+            const float s = static_cast<float>(i) / static_cast<float>(steps);
+            const float s2 = s * s;
+            const float s3 = s2 * s;
+            const float h00 = 2.0f * s3 - 3.0f * s2 + 1.0f;
+            const float h10 = s3 - 2.0f * s2 + s;
+            const float h01 = -2.0f * s3 + 3.0f * s2;
+            const float h11 = s3 - s2;
+            for (size_t j = 0; j < c; ++j) {
+                p[j] = h00 * v0[j] + h10 * dt * b0[j] + h01 * v1[j] + h11 * dt * a1[j];
+            }
+            emit(times[k] + dt * s);
+        }
+    }
+    return true;
+}
+
 namespace {
 
 // times 昇順配列で t を挟む区間 [i0,i1] と補間係数 f を求める (範囲外はクランプ)

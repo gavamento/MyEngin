@@ -398,7 +398,7 @@ attenuate.
 | Particle rendering | Implemented | See Chapter 7 |
 | Shadow mapping | Implemented | 3-cascade CSM with PCF |
 | Post-processing | Implemented | HDR, bloom, tonemap, FXAA, TAA, DoF, motion blur, auto-exposure, LUT |
-| Skeletal animation | Implemented | 128-bone palette, glTF / FBX skinning |
+| Skeletal animation | Implemented | 128-bone palette, glTF / FBX skinning. glTF samplers may be LINEAR / STEP / CUBICSPLINE: tracks are linear only, so STEP becomes paired keys at the same time and CUBICSPLINE is resampled to 60 Hz with the Hermite formula at load (M89p, `ExpandToLinearKeys`; `kCookVersion` 5) |
 | Image-based lighting | Implemented | Irradiance + prefiltered specular + BRDF LUT |
 | Ray-traced secondary rays | Implemented | See §6.4 (default off) |
 | Decals (projector boxes) | Implemented | See §6.6. **Deferred path only** in v1 |
