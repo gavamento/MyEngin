@@ -168,6 +168,9 @@ struct TwoBoneIkGoal {
 // weight は目標を今の先端の位置から、曲げ面を今の面から pole の面へ、先端の回転を今の回転から、それぞれ線形に寄せる
 // (0 の近くで姿勢が飛ばない)。鎖が組めない (先端・中間に親が無い) / 骨の長さが 0 のときは何もしない
 void SolveTwoBoneIk(const SkinnedModel& model, const TwoBoneIkGoal& goal, std::vector<DirectX::XMMATRIX>& locals);
+// joint のグローバル位置を offset (エンティティ空間) だけずらす。子孫も一緒に動く (足の接地の骨盤、M89m)。範囲外は何もしない
+void OffsetJointGlobal(const SkinnedModel& model, int32_t joint, const DirectX::XMFLOAT3& offset,
+                       std::vector<DirectX::XMMATRIX>& locals);
 
 // ---- ラグドール用のパレット構築 (M60g1) ----
 // `hasOverride[j]` が非 0 のジョイントは **`overrides[j]` をそのまま jointGlobal として使う**

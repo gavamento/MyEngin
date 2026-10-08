@@ -162,14 +162,17 @@ void StripRootMotion(const SkinnedModel& model, const SkeletalLayer* program, in
 
 bool UsesLocalsPath(const SkinnedMeshComponent& sm)
 {
-    return ActivePoseLayers(sm) > 0 || IsSkinFading(sm) || ActivePoseIkChains(sm) > 0;
+    return ActivePoseLayers(sm) > 0 || IsSkinFading(sm) || ActivePoseIkChains(sm) > 0 || sm.poseIkPelvisJoint >= 0;
 }
 
 bool SamePoseInputs(const SkinnedMeshComponent& a, const SkinnedMeshComponent& b)
 {
     // IK (M89l) はどの経路の上にも乗るので先に比べる
     const int32_t ikChains = ActivePoseIkChains(a);
-    if (ikChains != ActivePoseIkChains(b)) {
+    if (ikChains != ActivePoseIkChains(b) || a.poseIkPelvisJoint != b.poseIkPelvisJoint
+        || (a.poseIkPelvisJoint >= 0
+            && !std::equal(std::begin(a.poseIkPelvisOffset), std::end(a.poseIkPelvisOffset),
+                           std::begin(b.poseIkPelvisOffset)))) {
         return false;
     }
     for (int32_t i = 0; i < ikChains; ++i) {
@@ -268,9 +271,14 @@ void SampleAnimatedLocals(const SkinnedModel& model, const SkinnedMeshComponent&
     ComputeJointLocalsBlended(model, sm.fromClip, fromSec, sm.clip, timeSec, weight, outLocals);
 }
 
-// 2 ボーン IK (M89l): poseIk の鎖を書かれた順に解く (後の鎖は前の鎖の結果の上で解く)
+// 2 ボーン IK (M89l): poseIk の鎖を書かれた順に解く (後の鎖は前の鎖の結果の上で解く)。
+// 足の接地 (M89m) の骨盤のずらしは鎖より先 (下げた骨盤から脚を伸ばす)
 void ApplyPoseIk(const SkinnedModel& model, const SkinnedMeshComponent& sm, std::vector<DirectX::XMMATRIX>& locals)
 {
+    if (sm.poseIkPelvisJoint >= 0) {
+        OffsetJointGlobal(model, sm.poseIkPelvisJoint,
+                          { sm.poseIkPelvisOffset[0], sm.poseIkPelvisOffset[1], sm.poseIkPelvisOffset[2] }, locals);
+    }
     const int32_t count = ActivePoseIkChains(sm);
     for (int32_t i = 0; i < count; ++i) {
         const SkinnedMeshComponent::PoseIkChain& c = sm.poseIk[i];

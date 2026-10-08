@@ -198,8 +198,10 @@ int SampleTerrainHeightWorld(World& world, float x, float z, float* outHeight,
 // 最近ヒットを outHit に書いて 1 を返す。ヒット無しで 0。走査は entity.index 昇順 (決定論)。
 // トリガー / ソリッドを問わず全コライダーが対象 (汎用空間クエリ)。WorldMatrix ベース。
 // mask (M36a): LayerHit(mask, collider.layer) のコライダーだけ対象。既定 = 全レイヤー = 従来。
+// skip (M89m): 非 null なら skip(world, entity, skipUser) が true のコライダーを収集段階で除く (足の接地が自分の体を除く)
+using RaycastSkipFn = bool (*)(World& world, EntityID entity, const void* user);
 int RaycastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float maxDist, MyeRaycastHit* outHit,
-                 uint32_t mask = 0xFFFFFFFFu);
+                 uint32_t mask = 0xFFFFFFFFu, RaycastSkipFn skip = nullptr, const void* skipUser = nullptr);
 
 // ---- 空間クエリ (M28c、ABI OverlapSphere/OverlapBox/SphereCast の実装本体) ----
 // Raycast と同じ収集規約: トリガー含む全コライダー対象、WorldMatrix ベース、

@@ -204,3 +204,17 @@ BT / ABI からは骨クリップを切り替えられなかった。M89 では�
   IK は前 tick の値が乗る (1 tick 遅れ。許容)。
 - 却下: ソルバを解決段で回して結果の局所行列を持つ。ポーズが時刻の純関数でなくなり、描画補間の時刻で引き直せない。
 - 却下: 目標をワールド座標のまま持ち、`SampleSkinnedLocals` で WorldMatrix を掛けて戻す。引数が増え、WorldMatrix は前 tick の値になる。
+## 決定 14: 足の接地は TwoBoneIK の mode 3 として持ち、解決段の最後に足首の目標と骨盤の下げ幅を決める (M89m)
+
+- 設定は新しいコンポーネントを作らず `TwoBoneIKComponent` に寄せた: 鎖の `mode = 3 (kGround)` と、末尾の `pelvisJoint` /
+  `pelvisMaxDrop` / `groundProbe` / `groundLayerMask` (snapshot v48)。足も 2 ボーンの鎖なので、先端の名前・pole・weight をそのまま使える。
+- `FootIkSystem` は `TwoBoneIkSystem` が持ち、通常の鎖を書いた後に呼ぶ (順序を 1 か所で固定する)。足首のアニメだけのポーズ (IK 前) の
+  ワールド位置を LocalTransform の連鎖 (この tick) で求め、足元の面 (メッシュのエンティティの原点の高さ) の ± `groundProbe` を真下へ
+  `RaycastWorld` で探す。足首はアニメの高さのまま地面の高さへずらす (振り上げた足は浮いたまま)。地面が足元の面より低い足があれば、
+  骨盤をその差 (`pelvisMaxDrop` まで) だけ下げる (`poseIkPelvisJoint` / `poseIkPelvisOffset`、鎖より先に `OffsetJointGlobal` で効かせる)。
+- 自分の体 (メッシュの祖先 = CharacterController のカプセル等、子孫 = 骨に付いた部位) のコライダーは、`RaycastWorld` に足した
+  除外の関数で収集段階から除く (既定は従来どおり)。
+- 計画は「前 tick の WorldMatrix で足の位置を決める」だったが、目標はこの tick の連鎖でメッシュの空間へ直すので、足の位置も同じ連鎖で求める
+  (前 tick の値で探すと、移動中は 1 tick 分の移動だけ足が遅れる)。当てる地面のコライダーは WorldMatrix (前 tick) のままで、静止した地面が前提。
+- 却下: 骨盤の下げ幅を前 tick から滑らかに追う。前 tick の値に依存する状態を持たない原則に反し、スナップショットから戻した直後に 1 tick 狂う。
+  段差を越える瞬間は 1 tick で切り替わる (既知の制約)。

@@ -922,6 +922,99 @@ bool RunSkeletonSelfTest()
         check(sm->poseIkCount == 0 && !UsesLocalsPath(*sm), "IK (M89l): an active ragdoll turns IK off");
     }
 
+    // ---- (M89m) 足の接地: 段差 / 骨盤の上限 / 自分の体を除く ----
+    {
+        RegisterBuiltinComponents();
+        // Pelvis (高さ 2) → 左右の Hip (±0.2) → Knee (下へ 1) → Ankle (下へ 1)。足首は足元の面 (y = 0) に立つ
+        SkinnedModel legs;
+        const auto add = [&](const char* name, int32_t parent, XMFLOAT3 t) {
+            SkeletonJoint jt;
+            jt.parent = parent;
+            jt.name = name;
+            jt.bindT = t;
+            legs.joints.push_back(jt);
+        };
+        add("Pelvis", -1, { 0.0f, 2.0f, 0.0f });
+        add("HipL", 0, { -0.2f, 0.0f, 0.0f });
+        add("KneeL", 1, { 0.0f, -1.0f, 0.0f });
+        add("AnkleL", 2, { 0.0f, -1.0f, 0.0f });
+        add("HipR", 0, { 0.2f, 0.0f, 0.0f });
+        add("KneeR", 4, { 0.0f, -1.0f, 0.0f });
+        add("AnkleR", 5, { 0.0f, -1.0f, 0.0f });
+        RenderResources res;
+        const AssetID legsId = res.skinnedModels.Register("selftest_foot_ik", SkinnedModel(legs));
+
+        struct Rig {
+            Scene scene;
+            GameObject body;
+        };
+        // groundL / groundR = 左右の足の下の箱の上面の高さ。shoe = 左足首のすぐ下に自分の子の箱 (地面にしてはいけない)
+        const auto run = [&](float groundL, float groundR, float maxDrop, bool shoe, std::vector<XMMATRIX>& out) {
+            Rig rig;
+            World& world = rig.scene.GetWorld();
+            rig.body = rig.scene.CreateGameObjectTracked("Body");
+            rig.body.AddComponent<SkinnedMeshComponent>()->model = legsId;
+            rig.body.AddComponent<TwoBoneIKComponent>();
+            const auto box = [&](const char* name, XMFLOAT3 center, XMFLOAT3 half) {
+                GameObject g = rig.scene.CreateGameObjectTracked(name);
+                ColliderComponent* col = g.AddComponent<ColliderComponent>();
+                col->shape = collidershape::kBox;
+                col->halfExtents = half;
+                if (g.GetComponent<WorldMatrixComponent>() == nullptr) {
+                    g.AddComponent<WorldMatrixComponent>();
+                }
+                world.ApplyStructuralChanges();
+                g.GetComponent<LocalTransform>()->position = center;
+                return g;
+            };
+            box("GroundL", { -0.2f, groundL - 0.5f, 0.0f }, { 0.1f, 0.5f, 0.5f });
+            box("GroundR", { 0.2f, groundR - 0.5f, 0.0f }, { 0.1f, 0.5f, 0.5f });
+            if (shoe) {
+                GameObject s = box("Shoe", { -0.2f, 0.2f, 0.0f }, { 0.05f, 0.1f, 0.05f });
+                s.SetParent(rig.body);
+                world.ApplyStructuralChanges();
+            }
+            TwoBoneIKComponent* ik = rig.body.GetComponent<TwoBoneIKComponent>();
+            std::memcpy(ik->chains[0].endJoint, "AnkleL", sizeof("AnkleL"));
+            std::memcpy(ik->chains[1].endJoint, "AnkleR", sizeof("AnkleR"));
+            for (int i = 0; i < 2; ++i) {
+                ik->chains[i].mode = twoboneikmode::kGround;
+                ik->chains[i].poleHint = { 0.0f, 1.0f, 1.0f }; // 膝は前へ
+            }
+            ik->pelvisMaxDrop = maxDrop;
+            transforms.Update(world); // レイは WorldMatrix のコライダーに当たる
+            TwoBoneIkSystem ikSystem;
+            ikSystem.Update(world, res);
+            const SkinnedMeshComponent* sm = rig.body.GetComponent<SkinnedMeshComponent>();
+            SampleSkinnedLocals(legs, *sm, out);
+            return sm->poseIkCount;
+        };
+        const auto y = [&](const std::vector<XMMATRIX>& l, int32_t j) {
+            return ToF4x4(JointGlobalFromLocals(legs, l, j))._42;
+        };
+        std::vector<XMMATRIX> l;
+        int32_t count = run(0.0f, 0.0f, 0.3f, false, l);
+        check(count == 2 && std::fabs(y(l, 0) - 2.0f) < 1e-5f && std::fabs(y(l, 3)) < 1e-4f && std::fabs(y(l, 6)) < 1e-4f,
+              "foot IK (M89m): on flat ground both feet stay put and the pelvis does not move");
+
+        count = run(-0.2f, 0.1f, 0.3f, false, l);
+        check(count == 2 && std::fabs(y(l, 0) - 1.8f) < 1e-4f && std::fabs(y(l, 3) + 0.2f) < 1e-4f
+                  && std::fabs(y(l, 6) - 0.1f) < 1e-4f,
+              "foot IK (M89m): each foot lands on its own step and the pelvis drops by the lower step");
+
+        count = run(-0.5f, 0.0f, 0.3f, false, l);
+        check(std::fabs(y(l, 0) - 1.7f) < 1e-4f && std::fabs(y(l, 3) + 0.3f) < 1e-4f,
+              "foot IK (M89m): the pelvis drop is capped by pelvisMaxDrop and the leg stretches as far as it reaches");
+
+        count = run(0.0f, 0.0f, 0.3f, true, l);
+        check(count == 2 && std::fabs(y(l, 3)) < 1e-4f,
+              "foot IK (M89m): colliders on the character itself (a child of the mesh) are not treated as ground");
+
+        count = run(-5.0f, 0.0f, 0.3f, false, l);
+        check(count == 1 && std::fabs(y(l, 0) - 2.0f) < 1e-5f && std::fabs(y(l, 3)) < 1e-4f,
+              "foot IK (M89m): a foot with no ground in range keeps the animation and does not lower the pelvis");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Skeleton self test: ALL PASS ====");
         return true;

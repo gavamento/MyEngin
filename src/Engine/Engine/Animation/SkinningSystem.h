@@ -49,6 +49,7 @@ bool SamePoseInputs(const SkinnedMeshComponent& a, const SkinnedMeshComponent& b
 // poseLayerCount > 0 ならポーズプログラムの層を ComputeJointLocalsLayered で畳む (M89a)。
 // poseRootJoint >= 0 なら、そのジョイントの水平の移動を抜く (M89j のルートモーション。描画補間の時刻でも同じ式)。
 // poseIkCount > 0 なら、どの経路の結果にも最後に 2 ボーン IK の鎖を書かれた順に解く (M89l、SolveTwoBoneIk)。
+// その前に poseIkPelvisJoint >= 0 なら骨盤をずらす (M89m の足の接地)。
 // 旧経路でフェードしていないときは ComputeJointLocals(model, clip, timeTicks / 60) そのもの (ビット一致)
 void SampleSkinnedLocals(const SkinnedModel& model, const SkinnedMeshComponent& sm,
                          std::vector<DirectX::XMMATRIX>& outLocals);

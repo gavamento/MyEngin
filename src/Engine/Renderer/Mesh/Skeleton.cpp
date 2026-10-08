@@ -439,6 +439,16 @@ void SolveTwoBoneIk(const SkinnedModel& model, const TwoBoneIkGoal& goal, std::v
     }
 }
 
+void OffsetJointGlobal(const SkinnedModel& model, int32_t joint, const XMFLOAT3& offset, std::vector<XMMATRIX>& locals)
+{
+    if (joint < 0 || static_cast<size_t>(joint) >= locals.size() || locals.size() != model.joints.size()) {
+        return;
+    }
+    XMMATRIX g = JointGlobalFromLocals(model, locals, joint);
+    g.r[3] = XMVectorAdd(g.r[3], XMVectorSet(offset.x, offset.y, offset.z, 0.0f));
+    locals[static_cast<size_t>(joint)] = XMMatrixMultiply(g, InverseParentGlobal(model, locals, joint));
+}
+
 int32_t SkinnedModel::FindJointByName(std::string_view name) const
 {
     if (name.empty()) {

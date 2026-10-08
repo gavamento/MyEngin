@@ -5425,7 +5425,7 @@ int SampleTerrainHeightWorld(World& world, float x, float z, float* outHeight, M
 }
 
 int RaycastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float maxDist, MyeRaycastHit* outHit,
-                 uint32_t mask)
+                 uint32_t mask, RaycastSkipFn skip, const void* skipUser)
 {
     // dir を正規化 (ゼロ長は無効)
     float dlen = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
@@ -5455,6 +5455,9 @@ int RaycastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float maxDist, MyeRa
             const auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
             if (!shapes::LayerHit(mask, col->layer)) {
                 continue; // M36a: マスク外レイヤーは収集段階で除外
+            }
+            if (skip != nullptr && skip(world, e, skipUser)) {
+                continue; // M89m: 呼び出し側が除く物 (自分の体など)
             }
             const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
             targets.push_back({ e, shapes::MakePoseFromMatrix(*col, wm->value) });

@@ -60,6 +60,7 @@
     <ClCompile Include="..\src\Engine\Engine\Animation\Animation.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Animation\AnimatorController.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Animation\AnimatorControllerSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Animation\FootIkSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Animation\PartFollowSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Animation\Parts.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Animation\SkeletonSelfTest.cpp" />
@@ -346,6 +347,7 @@
     <ClInclude Include="..\src\Engine\Engine\Animation\Animation.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation\AnimatorController.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation\AnimatorControllerSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Animation\FootIkSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation\PartFollowSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation\Parts.h" />
     <ClInclude Include="..\src\Engine\Engine\Animation\SkeletonSelfTest.h" />

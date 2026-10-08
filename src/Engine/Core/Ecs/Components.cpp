@@ -1667,7 +1667,7 @@ void RegisterBuiltinComponents()
                   "鎖 " #i " の" label)
 #define MYE_IK_CHAIN(i)                                                                                                \
     MYE_IK_FIELD(i, endJoint, String64, "先端ジョイント", .tooltip = "end joint name (wrist / ankle); the middle is its parent, the root is the middle's parent"), \
-    MYE_IK_FIELD(i, mode, Int32, "モード", .tooltip = "0 = off, 1 = position, 2 = position + rotation"),               \
+    MYE_IK_FIELD(i, mode, Int32, "モード", .tooltip = "0 = off, 1 = position, 2 = position + rotation, 3 = ground (foot placement)"), \
     MYE_IK_FIELD(i, target, EntityRef, "目標", .tooltip = "target entity (none: targetPosition / targetRotation are in world space)"), \
     MYE_IK_FIELD(i, targetPosition, Float3, "目標の位置", .tooltip = "in the target entity's local space, or world space without a target"), \
     MYE_IK_FIELD(i, targetRotation, Quat, "目標の回転", .tooltip = "used by mode 2; relative to the target entity's rotation, or world"), \
@@ -1676,6 +1676,14 @@ void RegisterBuiltinComponents()
     static_assert(kMaxTwoBoneIkChains == 4, "MYE_IK_CHAIN の並びを kMaxTwoBoneIkChains に合わせる");
     RegisterComponent<TwoBoneIKComponent>("TwoBoneIK", {
         MYE_IK_CHAIN(0), MYE_IK_CHAIN(1), MYE_IK_CHAIN(2), MYE_IK_CHAIN(3),
+        // M89m: 足の接地 (mode 3 の鎖が使う)
+        MYE_JP("骨盤ジョイント", MYE_FIELD_TIP(TwoBoneIKComponent, pelvisJoint, String64,
+                                               "joint lowered for ground chains (empty: the first joint without a parent)")),
+        MYE_JP("骨盤を下げる上限", MYE_FIELD_RANGE(TwoBoneIKComponent, pelvisMaxDrop, Float, 0.0f, 2.0f)),
+        MYE_JP("地面を探す範囲", MYE_FIELD_TIP(TwoBoneIKComponent, groundProbe, Float,
+                                              "ground chains search this far (m) above and below the entity's base")),
+        MYE_JP("地面のレイヤー", MYE_FIELD_TIP(TwoBoneIKComponent, groundLayerMask, UInt32,
+                                              "collider layers treated as ground (bit i = layer i)")),
     });
 #undef MYE_IK_CHAIN
 #undef MYE_IK_FIELD

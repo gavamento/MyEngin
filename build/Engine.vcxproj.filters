@@ -336,6 +336,9 @@
     <ClCompile Include="..\src\Engine\Engine\Animation\AnimatorControllerSelfTest.cpp">
       <Filter>Engine\Animation</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Animation\FootIkSystem.cpp">
+      <Filter>Engine\Animation</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Animation\PartFollowSystem.cpp">
       <Filter>Engine\Animation</Filter>
     </ClCompile>
@@ -1192,6 +1195,9 @@
       <Filter>Engine\Animation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Animation\AnimatorControllerSelfTest.h">
+      <Filter>Engine\Animation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Animation\FootIkSystem.h">
       <Filter>Engine\Animation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Animation\PartFollowSystem.h">

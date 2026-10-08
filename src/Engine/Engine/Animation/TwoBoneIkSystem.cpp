@@ -18,13 +18,9 @@
 
 namespace mye {
 
-namespace {
-
 using namespace DirectX;
 
-// entity のワールド行列を LocalTransform の連鎖 (この tick の値) から組む。TransformSystem と同じ S·R·T の積を
-// 子から根へ掛ける。WorldMatrix は物理と TransformSystem の後に書かれる前 tick の値なので使わない
-XMMATRIX ChainWorldMatrix(World& world, EntityID entity)
+XMMATRIX LocalChainWorldMatrix(World& world, EntityID entity)
 {
     XMMATRIX m = XMMatrixIdentity();
     for (EntityID cur = entity; !cur.IsNull(); cur = world.GetParent(cur)) {
@@ -40,6 +36,8 @@ XMMATRIX ChainWorldMatrix(World& world, EntityID entity)
     return m;
 }
 
+namespace {
+
 // 鎖の目標 (位置と回転) をメッシュのエンティティ空間で。目標のエンティティが無い / 消えていればワールドの値
 void ResolveGoal(World& world, const TwoBoneIKComponent::Chain& chain, const XMMATRIX& worldToMesh,
                  SkinnedMeshComponent::PoseIkChain& out)
@@ -47,7 +45,7 @@ void ResolveGoal(World& world, const TwoBoneIKComponent::Chain& chain, const XMM
     XMMATRIX goal = XMMatrixRotationQuaternion(XMQuaternionNormalize(XMLoadFloat4(&chain.targetRotation)))
                     * XMMatrixTranslation(chain.targetPosition.x, chain.targetPosition.y, chain.targetPosition.z);
     if (!chain.target.IsNull() && world.IsAlive(chain.target)) {
-        goal = XMMatrixMultiply(goal, ChainWorldMatrix(world, chain.target));
+        goal = XMMatrixMultiply(goal, LocalChainWorldMatrix(world, chain.target));
     }
     goal = XMMatrixMultiply(goal, worldToMesh);
     XMVECTOR scale, rotation, translation;
@@ -84,6 +82,8 @@ void TwoBoneIkSystem::Update(World& world, const RenderResources& resources)
             for (SkinnedMeshComponent::PoseIkChain& c : sm->poseIk) {
                 c = {};
             }
+            sm->poseIkPelvisJoint = -1;
+            sm->poseIkPelvisOffset[0] = sm->poseIkPelvisOffset[1] = sm->poseIkPelvisOffset[2] = 0.0f;
             const TwoBoneIKComponent* ik = world.GetComponent<TwoBoneIKComponent>(e);
             if (ik == nullptr) {
                 continue;
@@ -96,10 +96,10 @@ void TwoBoneIkSystem::Update(World& world, const RenderResources& resources)
             if (model == nullptr) {
                 continue;
             }
-            const XMMATRIX worldToMesh = XMMatrixInverse(nullptr, ChainWorldMatrix(world, e));
+            const XMMATRIX worldToMesh = XMMatrixInverse(nullptr, LocalChainWorldMatrix(world, e));
             for (int32_t i = 0; i < kMaxTwoBoneIkChains; ++i) {
                 const TwoBoneIKComponent::Chain& chain = ik->chains[i];
-                if (chain.mode == twoboneikmode::kOff || !(chain.weight > 0.0f)) {
+                if (chain.mode == twoboneikmode::kOff || chain.mode == twoboneikmode::kGround || !(chain.weight > 0.0f)) {
                     continue;
                 }
                 // 名前は 64 バイトの固定長。終端が無くても範囲の外は読まない
@@ -125,6 +125,7 @@ void TwoBoneIkSystem::Update(World& world, const RenderResources& resources)
             }
         }
     });
+    foot_.Update(world, resources);
 }
 
 } // namespace mye

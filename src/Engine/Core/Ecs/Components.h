@@ -366,6 +366,10 @@ struct SkinnedMeshComponent {
     static constexpr int kMaxPoseIkChains = 4;
     int32_t poseIkCount = 0; // poseIk の先頭から有効な本数。1 本以上なら局所行列の経路 (UsesLocalsPath) を通る
     PoseIkChain poseIk[kMaxPoseIkChains] = {};
+    // 足の接地 (M89m): 鎖を解く前に、このジョイントのグローバル位置を poseIkPelvisOffset (このエンティティの空間) だけずらす。
+    // -1 = ずらさない。FootIkSystem が毎 tick 書く
+    int32_t poseIkPelvisJoint = -1;
+    float poseIkPelvisOffset[3] = {};
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -2267,6 +2271,9 @@ enum : int32_t {
     kOff = 0,
     kPosition = 1,         // 先端の位置だけ合わせる
     kPositionRotation = 2, // 先端の回転も目標の回転に合わせる
+    // 足の接地 (M89m): 目標は使わず、先端の真下の地面へアニメの高さのまま置く (FootIkSystem)。
+    // 地面が足元の面より低い足があれば、骨盤を pelvisMaxDrop まで下げて届かせる
+    kGround = 3,
 };
 } // namespace twoboneikmode
 
@@ -2288,6 +2295,11 @@ struct TwoBoneIKComponent {
         float weight = 1.0f; // 0..1
     };
     Chain chains[kMaxTwoBoneIkChains] = {};
+    // ---- 足の接地 (M89m、mode = kGround の鎖だけが使う) ----
+    char pelvisJoint[64] = {};       // 下げる骨盤のジョイント名。空 = 親の無い最初のジョイント
+    float pelvisMaxDrop = 0.3f;      // 骨盤を下げる上限 (m、ワールド)
+    float groundProbe = 0.5f;        // 足元の面の上下この距離 (m) の範囲で地面を探す
+    uint32_t groundLayerMask = 0xFFFFFFFFu; // 地面として当てるコライダーのレイヤー
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
