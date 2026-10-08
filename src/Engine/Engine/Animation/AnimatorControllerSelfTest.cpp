@@ -3,6 +3,7 @@
 #include <bit>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -660,10 +661,10 @@ bool RunAnimatorControllerSelfTest()
         {
             BlendChildWeight w[kMaxBlendLayers];
             const auto is1 = [&](float x, int32_t child) {
-                return ComputeBlendWeights(move, x, w) == 1 && w[0].child == child && w[0].weightQ == kOne;
+                return ComputeBlendWeights(move, x, 0.0f, w) == 1 && w[0].child == child && w[0].weightQ == kOne;
             };
             const auto is2 = [&](float x, int32_t c0, int32_t q0, int32_t c1, int32_t q1) {
-                return ComputeBlendWeights(move, x, w) == 2 && w[0].child == c0 && w[0].weightQ == q0 && w[1].child == c1
+                return ComputeBlendWeights(move, x, 0.0f, w) == 2 && w[0].child == c0 && w[0].weightQ == q0 && w[1].child == c1
                        && w[1].weightQ == q1;
             };
             check(is1(-1.0f, 1) && is1(0.0f, 1) && is1(1.0f, 2) && is1(2.0f, 0) && is1(9.0f, 0),
@@ -675,7 +676,7 @@ bool RunAnimatorControllerSelfTest()
             check(is1(std::nanf(""), 1), "M89d: NaN selects the lowest threshold");
             bool sweepOk = true;
             for (int i = -100; i <= 500 && sweepOk; ++i) {
-                const int32_t n = ComputeBlendWeights(move, static_cast<float>(i) * 0.01f, w);
+                const int32_t n = ComputeBlendWeights(move, static_cast<float>(i) * 0.01f, 0.0f, w);
                 int32_t sum = 0;
                 for (int32_t k = 0; k < n; ++k) {
                     sweepOk = sweepOk && w[k].weightQ > 0 && (k == 0 || w[k].child > w[k - 1].child);
@@ -688,7 +689,7 @@ bool RunAnimatorControllerSelfTest()
             dup.blendChildren = { { "A", HashStr("A"), 1.0f }, { "B", HashStr("B"), 1.0f } };
             ControllerState empty = move;
             empty.blendChildren.clear();
-            check(ComputeBlendWeights(dup, 1.0f, w) == 1 && w[0].child == 0 && ComputeBlendWeights(empty, 1.0f, w) == 0
+            check(ComputeBlendWeights(dup, 1.0f, 0.0f, w) == 1 && w[0].child == 0 && ComputeBlendWeights(empty, 1.0f, 0.0f, w) == 0
                       && !StateDrivesSkeleton(empty) && StateDrivesSkeleton(move),
                   "M89d: equal thresholds pick the first child; a tree without children drives nothing");
             check(BlendPhaseToTimeQ(0, 60, 1) == 0 && BlendPhaseToTimeQ(0x80000000u, 60, 1) == 30 * 256
@@ -878,6 +879,134 @@ bool RunAnimatorControllerSelfTest()
         const uint64_t before = HashWorld(world);
         ac()->statePhase ^= 1u;
         check(HashWorld(world) != before, "M89d: statePhase is part of the world hash");
+    }
+
+    // ---- (M89e) 2D ブレンドツリー: 重み / 上位 4 本 / 異常値 / JSON / paramY の配線 ----
+    {
+        using PT = ControllerParamType;
+        const auto bitsOf = [](float f) { return std::bit_cast<int32_t>(f); };
+        constexpr int32_t kOne = SkinnedMeshComponent::kPoseWeightOne;
+        const auto child2 = [](const char* clip, float x, float y) {
+            ControllerBlendChild c;
+            c.clip = clip;
+            c.clipHash = HashStr(clip);
+            c.posX = x;
+            c.posY = y;
+            return c;
+        };
+
+        // 十字 + 中央。index 5 は index 1 と同じ位置 (使われないこと)
+        ControllerState cross;
+        cross.name = "Locomotion";
+        cross.blendType = ControllerBlendType::Blend2D;
+        cross.blendParam = 0;
+        cross.blendParamY = 1;
+        cross.blendChildren = { child2("Idle", 0.0f, 0.0f),  child2("Fwd", 0.0f, 1.0f),   child2("Back", 0.0f, -1.0f),
+                                child2("Left", -1.0f, 0.0f), child2("Right", 1.0f, 0.0f), child2("FwdDup", 0.0f, 1.0f) };
+        {
+            BlendChildWeight w[kMaxBlendLayers];
+            const auto is1 = [&](float x, float y, int32_t child) {
+                return ComputeBlendWeights(cross, x, y, w) == 1 && w[0].child == child && w[0].weightQ == kOne;
+            };
+            check(is1(0.0f, 0.0f, 0) && is1(0.0f, 1.0f, 1) && is1(0.0f, -1.0f, 2) && is1(-1.0f, 0.0f, 3) && is1(1.0f, 0.0f, 4),
+                  "M89e: at a child's position that child is at full weight (the duplicate never wins)");
+            check(ComputeBlendWeights(cross, 0.5f, 0.0f, w) == 2 && w[0].child == 0 && w[0].weightQ == 32768 && w[1].child == 4
+                      && w[1].weightQ == 32768,
+                  "M89e: halfway between Idle and Right mixes exactly those two (h = 0.5 / 0.5)");
+            check(ComputeBlendWeights(cross, 0.0f, 0.5f, w) == 2 && w[0].child == 0 && w[1].child == 1 && w[1].weightQ == 32768,
+                  "M89e: y moves toward Fwd (the duplicate at the same position stays out)");
+            check(is1(std::nanf(""), 0.0f, 0) && is1(0.0f, std::numeric_limits<float>::infinity(), 0),
+                  "M89e: a non-finite x or y gives child 0 at full weight");
+            bool sweepOk = true;
+            for (int iy = -20; iy <= 20 && sweepOk; ++iy) {
+                for (int ix = -20; ix <= 20 && sweepOk; ++ix) {
+                    const int32_t n = ComputeBlendWeights(cross, static_cast<float>(ix) * 0.1f, static_cast<float>(iy) * 0.1f, w);
+                    int32_t sum = 0;
+                    for (int32_t k = 0; k < n; ++k) {
+                        sweepOk = sweepOk && w[k].weightQ > 0 && w[k].child != 5 && (k == 0 || w[k].child > w[k - 1].child);
+                        sum += w[k].weightQ;
+                    }
+                    sweepOk = sweepOk && n >= 1 && n <= kMaxBlendLayers && sum == kOne;
+                }
+            }
+            check(sweepOk, "M89e: sweep -2..2 x -2..2: 1..4 children in index order, positive weights summing to exactly 65536");
+
+            // 六角形の中心では 6 本とも h ≈ 0.5 → 上位 4 本に絞る
+            ControllerState hex = cross;
+            hex.blendChildren = { child2("A", 1.0f, 0.0f),     child2("B", 0.5f, 0.875f),   child2("C", -0.5f, 0.875f),
+                                  child2("D", -1.0f, 0.0f),    child2("E", -0.5f, -0.875f), child2("F", 0.5f, -0.875f) };
+            int32_t hexSum = 0;
+            const int32_t hexN = ComputeBlendWeights(hex, 0.0f, 0.0f, w);
+            for (int32_t k = 0; k < hexN; ++k) {
+                hexSum += w[k].weightQ;
+            }
+            check(hexN == kMaxBlendLayers && hexSum == kOne, "M89e: more than 4 influential children are cut to the top 4");
+
+            ControllerState one = cross;
+            one.blendChildren = { child2("Solo", 3.0f, -2.0f) };
+            check(ComputeBlendWeights(one, -7.0f, 9.0f, w) == 1 && w[0].child == 0 && w[0].weightQ == kOne,
+                  "M89e: a single child is always at full weight");
+        }
+
+        // JSON
+        {
+            ControllerAsset ja;
+            ja.states.push_back(cross);
+            const json j = ControllerLibrary::ToJson(ja);
+            ControllerAsset back;
+            const bool parsed = ControllerLibrary::FromJson(j, back);
+            check(parsed && j["states"][0]["skel"]["blend2d"]["paramX"] == 0 && j["states"][0]["skel"]["blend2d"]["paramY"] == 1
+                      && j["states"][0]["skel"]["blend2d"]["children"][3]["x"] == -1.0f
+                      && back.states[0].blendType == ControllerBlendType::Blend2D && back.states[0].blendParamY == 1
+                      && back.states[0].blendChildren.size() == 6 && back.states[0].blendChildren[2].posY == -1.0f
+                      && back.states[0].blendChildren[4].clipHash == HashStr("Right"),
+                  "M89e: blend2d round-trips (paramX / paramY / child positions)");
+            json both = j;
+            both["states"][0]["skel"]["blend1d"] = { { "param", 2 }, { "children", json::array() } };
+            ControllerAsset bothBack;
+            check(ControllerLibrary::FromJson(both, bothBack) && bothBack.states[0].blendType == ControllerBlendType::Blend2D
+                      && bothBack.states[0].blendParam == 0,
+                  "M89e: blend2d wins over blend1d in the same skel object");
+        }
+
+        // システム: x と y の両方のパラメータが層と長さに届く
+        RenderResources res;
+        const AssetID model = res.skinnedModels.Register(
+            "selftest_blend2d", MakeNamedClipModel({ { "Idle", 1.0f }, { "Fwd", 1.0f }, { "Right", 0.5f } }));
+        const SkinnedModel* m = res.skinnedModels.Get(model);
+        ControllerAsset bc;
+        bc.parameters = { { "x", PT::Float }, { "y", PT::Float } };
+        bc.states.push_back(cross);
+        const uint64_t bcHash = ctrlLib.Register(L"blend2d.controller.json", bc);
+
+        Scene s;
+        World& world = s.GetWorld();
+        GameObject actor = s.CreateGameObjectTracked("Actor");
+        actor.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ bcHash };
+        actor.AddComponent<SkinnedMeshComponent>()->model = model;
+        world.ApplyStructuralChanges();
+        AnimatorControllerSystem bsys;
+        SkinningSystem skinning;
+        auto* ac = actor.GetComponent<AnimatorControllerComponent>();
+        ac->params[0] = bitsOf(0.5f);
+        ac->params[1] = bitsOf(0.0f);
+        check(ControllerStateLengthTicks(bc, bc.states[0], ac->params, &animLib, m) == 45,
+              "M89e: blend2d length = weighted mean (Idle 60 / Right 30 at x = 0.5)");
+        bsys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+        skinning.Update(world, res);
+        const SkinnedMeshComponent* sm = actor.GetComponent<SkinnedMeshComponent>();
+        check(sm->poseLayerCount == 2 && sm->poseLayers[0].clip == 0 && sm->poseLayers[0].weightQ == 32768
+                  && sm->poseLayers[1].clip == 2 && sm->poseLayers[1].weightQ == 32768,
+              "M89e: x = 0.5 drives Idle + Right layers");
+        ac->params[0] = bitsOf(0.0f);
+        ac->params[1] = bitsOf(0.5f);
+        check(ControllerStateLengthTicks(bc, bc.states[0], ac->params, &animLib, m) == 60,
+              "M89e: the y parameter reaches the length (Idle 60 / Fwd 60)");
+        bsys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+        skinning.Update(world, res);
+        check(sm->poseLayerCount == 2 && sm->poseLayers[0].clip == 0 && sm->poseLayers[1].clip == 1
+                  && sm->poseLayers[1].weightQ == 32768,
+              "M89e: y = 0.5 drives Idle + Fwd layers");
     }
 
     if (failCount == 0) {

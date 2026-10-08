@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 
@@ -153,6 +154,7 @@ const char* BlendTypeToStr(ControllerBlendType type)
 {
     switch (type) {
     case ControllerBlendType::Blend1D: return "blend1d";
+    case ControllerBlendType::Blend2D: return "blend2d";
     case ControllerBlendType::None: break;
     }
     return "";
@@ -177,6 +179,136 @@ void QuantizeWeights(const float* w, int32_t n, int32_t* q)
         }
     }
     q[largest] += static_cast<int32_t>(kWeightOne - sum);
+}
+
+// ステートの今のパラメータの値での子の重み (y は Blend2D だけが読む)
+int32_t StateBlendWeights(const ControllerAsset& ctrl, const ControllerState& st, const int32_t* params,
+                          BlendChildWeight (&out)[kMaxBlendLayers])
+{
+    const float x = ControllerParamAsFloat(ctrl, st.blendParam, params);
+    const float y = st.blendType == ControllerBlendType::Blend2D ? ControllerParamAsFloat(ctrl, st.blendParamY, params) : 0.0f;
+    return ComputeBlendWeights(st, x, y, out);
+}
+
+int32_t ComputeBlend1DWeights(const ControllerState& state, float x, BlendChildWeight (&out)[kMaxBlendLayers])
+{
+    const int32_t n = static_cast<int32_t>(state.blendChildren.size());
+    const auto threshold = [&](int32_t i) { return state.blendChildren[static_cast<size_t>(i)].threshold; };
+    // lo = x 以下で最大の閾値 / hi = x より大きい最小の閾値 (同じ閾値なら先の子)。NaN はどの比較も偽なので hi 側に入る
+    int32_t lo = -1;
+    int32_t hi = -1;
+    for (int32_t i = 0; i < n; ++i) {
+        if (threshold(i) <= x) {
+            if (lo < 0 || threshold(i) > threshold(lo)) {
+                lo = i;
+            }
+        } else if (hi < 0 || threshold(i) < threshold(hi)) {
+            hi = i;
+        }
+    }
+    if (lo < 0 || hi < 0) {
+        out[0] = { lo >= 0 ? lo : hi, static_cast<int32_t>(kWeightOne) };
+        return 1;
+    }
+    // threshold(lo) <= x < threshold(hi) なので分母は正、t は [0, 1)
+    const float t = (x - threshold(lo)) / (threshold(hi) - threshold(lo));
+    const int32_t first = std::min(lo, hi);
+    const int32_t second = std::max(lo, hi);
+    const float w[2] = { first == lo ? 1.0f - t : t, first == lo ? t : 1.0f - t };
+    int32_t q[2] = {};
+    QuantizeWeights(w, 2, q);
+    int32_t count = 0;
+    if (q[0] > 0) {
+        out[count++] = { first, q[0] };
+    }
+    if (q[1] > 0) {
+        out[count++] = { second, q[1] };
+    }
+    return count;
+}
+
+// Freeform Cartesian (gradient band、Johansen 2009 / Unity の 2D Freeform Cartesian と同じ式)。
+// 全体の Σh で正規化してから上位を選び直すのと、上位だけの比を取るのは同じ値になるので、上位 4 本の h だけを持つ
+// (子の数によらず作業領域が固定で、tick ごとの確保が無い)
+int32_t ComputeBlend2DWeights(const ControllerState& state, float x, float y, BlendChildWeight (&out)[kMaxBlendLayers])
+{
+    const int32_t n = static_cast<int32_t>(state.blendChildren.size());
+    if (!std::isfinite(x) || !std::isfinite(y)) {
+        out[0] = { 0, static_cast<int32_t>(kWeightOne) };
+        return 1;
+    }
+    int32_t topChild[kMaxBlendLayers] = {};
+    float topH[kMaxBlendLayers] = {};
+    int32_t topCount = 0;
+    for (int32_t i = 0; i < n; ++i) {
+        const ControllerBlendChild& ci = state.blendChildren[static_cast<size_t>(i)];
+        float h = 1.0f;
+        bool duplicate = false;
+        for (int32_t j = 0; j < n && !duplicate; ++j) {
+            if (j == i) {
+                continue;
+            }
+            const ControllerBlendChild& cj = state.blendChildren[static_cast<size_t>(j)];
+            const float dx = cj.posX - ci.posX;
+            const float dy = cj.posY - ci.posY;
+            const float lengthSq = dx * dx + dy * dy;
+            if (lengthSq == 0.0f) {
+                duplicate = j < i; // 同じ位置の子は先の子だけを使う (後の子は線分を作らない)
+                continue;
+            }
+            const float proj = ((x - ci.posX) * dx + (y - ci.posY) * dy) / lengthSq;
+            h = std::min(h, 1.0f - proj);
+        }
+        // 巨大な値であふれた NaN もここで 0 に落ちる
+        if (duplicate || !(h > 0.0f)) {
+            continue;
+        }
+        // h の降順 (同値なら先に見た = index の小さい子が前) に挿し、上位 kMaxBlendLayers 本だけ残す
+        int32_t at = topCount;
+        while (at > 0 && h > topH[at - 1]) {
+            --at;
+        }
+        if (at >= kMaxBlendLayers) {
+            continue;
+        }
+        const int32_t last = std::min(topCount, kMaxBlendLayers - 1);
+        for (int32_t k = last; k > at; --k) {
+            topChild[k] = topChild[k - 1];
+            topH[k] = topH[k - 1];
+        }
+        topChild[at] = i;
+        topH[at] = h;
+        topCount = std::min(topCount + 1, kMaxBlendLayers);
+    }
+    if (topCount == 0) {
+        // 有限の入力では最寄りの子の h が 1/2 以上になるので来ない (あふれた入力の保険)
+        out[0] = { 0, static_cast<int32_t>(kWeightOne) };
+        return 1;
+    }
+    // 出力は子の index の昇順 (端数の行き先「同値なら index の小さい子」もこの順で決まる)
+    for (int32_t a = 1; a < topCount; ++a) {
+        for (int32_t b = a; b > 0 && topChild[b] < topChild[b - 1]; --b) {
+            std::swap(topChild[b], topChild[b - 1]);
+            std::swap(topH[b], topH[b - 1]);
+        }
+    }
+    float sum = 0.0f;
+    for (int32_t k = 0; k < topCount; ++k) {
+        sum += topH[k];
+    }
+    float w[kMaxBlendLayers] = {};
+    for (int32_t k = 0; k < topCount; ++k) {
+        w[k] = topH[k] / sum;
+    }
+    int32_t q[kMaxBlendLayers] = {};
+    QuantizeWeights(w, topCount, q);
+    int32_t count = 0;
+    for (int32_t k = 0; k < topCount; ++k) {
+        if (q[k] > 0) {
+            out[count++] = { topChild[k], q[k] };
+        }
+    }
+    return count;
 }
 
 // 子のクリップの長さ (tick) を model で引く。モデルが無い・名前のクリップが無ければ 0
@@ -204,7 +336,7 @@ int64_t BlendPhaseDelta(const ControllerAsset& ctrl, const ControllerState& st, 
                         const SkinnedModel* mainModel)
 {
     BlendChildWeight w[kMaxBlendLayers];
-    const int32_t n = ComputeBlendWeights(st, ControllerParamAsFloat(ctrl, st.blendParam, params), w);
+    const int32_t n = StateBlendWeights(ctrl, st, params, w);
     const int64_t weightedTicks = BlendWeightedTicks(st, w, n, mainModel);
     if (weightedTicks <= 0) {
         return 0;
@@ -254,7 +386,7 @@ int32_t AppendStateSources(const ControllerAsset& ctrl, const ControllerState& s
         return 1;
     }
     BlendChildWeight w[kMaxBlendLayers];
-    const int32_t n = ComputeBlendWeights(st, ControllerParamAsFloat(ctrl, st.blendParam, params), w);
+    const int32_t n = StateBlendWeights(ctrl, st, params, w);
     for (int32_t i = 0; i < n; ++i) {
         const int32_t weightQ = static_cast<int32_t>(int64_t(stateWeightQ) * w[i].weightQ / kWeightOne);
         out[i] = { st.blendChildren[static_cast<size_t>(w[i].child)].clipHash, true, 0, phase, st.loop, weightQ };
@@ -453,7 +585,14 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
                     { "clip", std::move(clip) },
                     { "speed", s.speed },
                     { "loop", s.loop } };
-        if (s.blendType != ControllerBlendType::None) {
+        if (s.blendType == ControllerBlendType::Blend2D) {
+            json children = json::array();
+            for (const ControllerBlendChild& ch : s.blendChildren) {
+                children.push_back({ { "clip", ch.clip }, { "x", ch.posX }, { "y", ch.posY } });
+            }
+            st["skel"] = { { BlendTypeToStr(s.blendType),
+                             { { "paramX", s.blendParam }, { "paramY", s.blendParamY }, { "children", std::move(children) } } } };
+        } else if (s.blendType != ControllerBlendType::None) {
             json children = json::array();
             for (const ControllerBlendChild& ch : s.blendChildren) {
                 children.push_back({ { "clip", ch.clip }, { "threshold", ch.threshold } });
@@ -529,7 +668,23 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
         // M89b: 骨クリップは名前で持つ (モデルごとに index が違ってよい)
         if (s.contains("skel") && s["skel"].is_object()) {
             const json& skel = s["skel"];
-            if (skel.contains("blend1d") && skel["blend1d"].is_object()) {
+            if (skel.contains("blend2d") && skel["blend2d"].is_object()) {
+                // M89e: 2D ブレンドツリー。blend1d / "clip" より優先する
+                const json& blend = skel["blend2d"];
+                cs.blendType = ControllerBlendType::Blend2D;
+                cs.blendParam = blend.value("paramX", 0);
+                cs.blendParamY = blend.value("paramY", 0);
+                if (blend.contains("children") && blend["children"].is_array()) {
+                    for (const json& ch : blend["children"]) {
+                        ControllerBlendChild child;
+                        child.clip = ch.value("clip", std::string());
+                        child.clipHash = child.clip.empty() ? 0 : HashStr(child.clip);
+                        child.posX = ch.value("x", 0.0f);
+                        child.posY = ch.value("y", 0.0f);
+                        cs.blendChildren.push_back(std::move(child));
+                    }
+                }
+            } else if (skel.contains("blend1d") && skel["blend1d"].is_object()) {
                 // M89d: 1D ブレンドツリー。あれば "clip" より優先する
                 const json& blend = skel["blend1d"];
                 cs.blendType = ControllerBlendType::Blend1D;
@@ -585,44 +740,17 @@ bool StateDrivesSkeleton(const ControllerState& state)
     return state.skelClipHash != 0;
 }
 
-int32_t ComputeBlendWeights(const ControllerState& state, float x, BlendChildWeight (&out)[kMaxBlendLayers])
+int32_t ComputeBlendWeights(const ControllerState& state, float x, float y, BlendChildWeight (&out)[kMaxBlendLayers])
 {
-    const int32_t n = static_cast<int32_t>(state.blendChildren.size());
-    if (state.blendType != ControllerBlendType::Blend1D || n == 0) {
+    if (state.blendChildren.empty()) {
         return 0;
     }
-    const auto threshold = [&](int32_t i) { return state.blendChildren[static_cast<size_t>(i)].threshold; };
-    // lo = x 以下で最大の閾値 / hi = x より大きい最小の閾値 (同じ閾値なら先の子)。NaN はどの比較も偽なので hi 側に入る
-    int32_t lo = -1;
-    int32_t hi = -1;
-    for (int32_t i = 0; i < n; ++i) {
-        if (threshold(i) <= x) {
-            if (lo < 0 || threshold(i) > threshold(lo)) {
-                lo = i;
-            }
-        } else if (hi < 0 || threshold(i) < threshold(hi)) {
-            hi = i;
-        }
+    switch (state.blendType) {
+    case ControllerBlendType::Blend1D: return ComputeBlend1DWeights(state, x, out);
+    case ControllerBlendType::Blend2D: return ComputeBlend2DWeights(state, x, y, out);
+    case ControllerBlendType::None: break;
     }
-    if (lo < 0 || hi < 0) {
-        out[0] = { lo >= 0 ? lo : hi, static_cast<int32_t>(kWeightOne) };
-        return 1;
-    }
-    // threshold(lo) <= x < threshold(hi) なので分母は正、t は [0, 1)
-    const float t = (x - threshold(lo)) / (threshold(hi) - threshold(lo));
-    const int32_t first = std::min(lo, hi);
-    const int32_t second = std::max(lo, hi);
-    const float w[2] = { first == lo ? 1.0f - t : t, first == lo ? t : 1.0f - t };
-    int32_t q[2] = {};
-    QuantizeWeights(w, 2, q);
-    int32_t count = 0;
-    if (q[0] > 0) {
-        out[count++] = { first, q[0] };
-    }
-    if (q[1] > 0) {
-        out[count++] = { second, q[1] };
-    }
-    return count;
+    return 0;
 }
 
 int32_t BlendPhaseToTimeQ(uint32_t phase, int32_t lengthTicks, int32_t loop)
@@ -755,7 +883,7 @@ int32_t ControllerStateLengthTicks(const ControllerAsset& controller, const Cont
 {
     if (state.blendType != ControllerBlendType::None) {
         BlendChildWeight w[kMaxBlendLayers];
-        const int32_t n = ComputeBlendWeights(state, ControllerParamAsFloat(controller, state.blendParam, params), w);
+        const int32_t n = StateBlendWeights(controller, state, params, w);
         const int64_t weightedTicks = BlendWeightedTicks(state, w, n, mainModel);
         if (weightedTicks > 0) {
             return static_cast<int32_t>((weightedTicks + kWeightOne - 1) / kWeightOne);

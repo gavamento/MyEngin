@@ -36,6 +36,7 @@ struct ControllerParam {
 enum class ControllerBlendType : int32_t {
     None = 0,
     Blend1D = 1, // パラメータ 1 個の値で、閾値の隣り合う 2 本を区分線形に混ぜる
+    Blend2D = 2, // パラメータ 2 個の値 (x, y) で、子の位置から Freeform Cartesian (gradient band) で混ぜる (M89e)
 };
 
 // ブレンドツリーの子 1 本 (M89d)
@@ -43,6 +44,8 @@ struct ControllerBlendChild {
     std::string clip;      // 骨クリップの名前 (skelClip と同じく、駆動する SkinnedMesh ごとに名前で引く)
     uint64_t clipHash = 0; // HashStr(clip)。clip が空なら 0
     float threshold = 0.0f; // Blend1D: この子が重み満杯になるパラメータの値
+    float posX = 0.0f;      // Blend2D: この子が重み満杯になる (x, y)
+    float posY = 0.0f;
 };
 
 struct ControllerState {
@@ -57,10 +60,12 @@ struct ControllerState {
     // 駆動する SkinnedMesh ごとに FindClipByHash で index を引く。空 = 骨を駆動しないステート
     std::string skelClip;
     uint64_t skelClipHash = 0; // HashStr(skelClip)。skelClip が空なら 0
-    // ブレンドツリー (M89d、"skel":{"blend1d":{"param":0,"children":[...]}})。None 以外なら skelClip は使わない。
+    // ブレンドツリー (M89d、"skel":{"blend1d":{"param":0,"children":[...]}} /
+    // M89e、"skel":{"blend2d":{"paramX":0,"paramY":1,"children":[{"clip","x","y"}]}})。None 以外なら skelClip は使わない。
     // 子は位相 (AnimatorControllerComponent::statePhase) を共有して進む
     ControllerBlendType blendType = ControllerBlendType::None;
-    int32_t blendParam = 0; // 混ぜ具合を決めるパラメータの index。Float 以外の型は値を float にして使う
+    int32_t blendParam = 0;  // 混ぜ具合を決めるパラメータの index (Blend2D では x)。Float 以外の型は値を float にして使う
+    int32_t blendParamY = 0; // Blend2D の y のパラメータの index
     std::vector<ControllerBlendChild> blendChildren; // 並び順は自由 (閾値の昇順でなくてよい)
 };
 
@@ -153,18 +158,21 @@ void CollectDrivenSkinnedMeshes(World& world, EntityID controllerEntity, std::ve
 const SkinnedModel* MainSkinnedModel(World& world, EntityID controllerEntity, const SkinnedModelLibrary* models);
 
 // ---- ブレンドツリー (M89d) ----
-// 同時に混ぜる子の上限 (1D は 2 本まで。2D の上位 4 本に合わせた器)
+// 同時に混ぜる子の上限 (1D は 2 本まで、2D は上位 4 本)
 inline constexpr int32_t kMaxBlendLayers = 4;
 struct BlendChildWeight {
     int32_t child = -1;  // ControllerState::blendChildren の index
     int32_t weightQ = 0; // Q16 (SkinnedMeshComponent::kPoseWeightOne が満杯)
 };
-// パラメータの値 x での子の重み (純関数。プレビュー窓と共有する)。返り値 = out の件数 (0..kMaxBlendLayers)。
+// パラメータの値 (x, y) での子の重み (純関数。プレビュー窓と共有する)。返り値 = out の件数 (0..kMaxBlendLayers)。
 // 重みは float で 1 回だけ計算して Q16 へ切り捨て、端数を最大重みの子 (同値なら index の小さい子) に足す
-// = 和はちょうど 65536。重み 0 の子は出さない。out は子の index の昇順。
-// Blend1D: x 以下で最大の閾値の子と、x より大きい最小の閾値の子を区分線形に混ぜる (同じ閾値なら index の
-// 小さい子)。両端より外は端の子が満杯。NaN は最小の閾値の子。子が無ければ 0 件
-int32_t ComputeBlendWeights(const ControllerState& state, float x, BlendChildWeight (&out)[kMaxBlendLayers]);
+// = 和はちょうど 65536。重み 0 の子は出さない。out は子の index の昇順。子が無ければ 0 件。
+// Blend1D: y は見ない。x 以下で最大の閾値の子と、x より大きい最小の閾値の子を区分線形に混ぜる (同じ閾値なら
+// index の小さい子)。両端より外は端の子が満杯。NaN は最小の閾値の子
+// Blend2D: Freeform Cartesian の gradient band。子 i の影響 h_i = min_j (1 - (p - p_i)·(p_j - p_i) / |p_j - p_i|^2)
+// を 0 以上に切り、h の大きい上位 kMaxBlendLayers 本 (同値なら index の小さい子) を h の比で混ぜる。
+// 子の位置ちょうどではその子が満杯。先の子と同じ位置の子は使わない。x か y が有限でなければ index 0 の子が満杯
+int32_t ComputeBlendWeights(const ControllerState& state, float x, float y, BlendChildWeight (&out)[kMaxBlendLayers]);
 
 // 位相 phase (1 周 = 2^32) を長さ lengthTicks のクリップの時刻 (1/256 tick) にする。
 // 非ループ (loop == 0) で末尾に張り付いた位相 (UINT32_MAX) は lengthTicks ちょうど (単一クリップの末尾停止と同じ)
