@@ -6,7 +6,7 @@
   `src\Engine\Renderer\Mesh\Skeleton.{h,cpp}` の `ComputeJointLocalsLayered`、
   `src\Engine\Engine\Animation\SkinningSystem.{h,cpp}` の claim 手順・`UsesLocalsPath`・`SamePoseInputs`・`SampleSkinnedLocals`。
   検証は `SkeletonSelfTest` の (10)。
-- 番号: `kSimSnapshotVersion` 40。ABI と TypeId は変更なし。
+- 番号: `kSimSnapshotVersion` 40 (M89d の決定 6 で 42)。ABI と TypeId は変更なし。
 
 ## 背景
 
@@ -64,3 +64,17 @@ BT / ABI からは骨クリップを切り替えられなかった。M89 では�
 - 既知の制約: ステートの長さが骨クリップ (= モデルの読み込み) に依存するので、モデルを読まない構成ではステートの時刻が
   進まない。プロパティクリップ (AnimationLibrary) と同じ依存で、replay_verify の `anim` ジョブ (Server.exe を含む) で
   全構成が同じ長さを読めることを確かめている。
+
+## 決定 6: ブレンドツリーの子は 1 本の整数位相を共有する (M89d)
+
+- ブレンドツリーのステートの再生位置は時刻 (tick) ではなく `uint32` の位相 (1 周 = 2^32)。`AnimatorControllerComponent` の
+  末尾の `statePhase` / `transitionToPhase` に置く (フィールド登録 = 保存・ハッシュ対象、`kSimSnapshotVersion` 42)。
+  子の時刻は `timeQ = (phase · L_i · 256) >> 32` で、長さの違うクリップ (歩き 60 tick と走り 30 tick) が同じ周期でそろう
+  (足の接地がずれない)。`L_i` は各 SkinnedMesh が自分のモデルで引く。
+- 1 tick の進みは `Δ = speed · 2^48 / Σ(wQ_i · L_i)` (int64、L_i は主 SkinnedMesh のモデル)。混ぜた周期の長さに反比例する
+  ので、パラメータが動いても位相は飛ばない。ループは 2^32 で折り返し、非ループは 0..UINT32_MAX に張り付く
+  (張り付いた位相は各子の末尾ちょうど)。
+- 子の重みは float で 1 回だけ計算して Q16 へ切り捨て、端数を最大重みの子 (同値なら index の小さい子) に足す。
+  遷移中は ステートの重み × 子の重み を Q16 で切り捨て、端数を最大重みの層に足す。どちらも和はちょうど 65536。
+- 却下: 子ごとに別の時刻を持つ。状態が子の数だけ増え、長さの違う子の周期がずれる。
+- 却下: 位相を float (0..1) で持つ。進みの累積で丸め誤差が溜まり、ハッシュとスナップショットに float が入る。

@@ -32,6 +32,19 @@ struct ControllerParam {
     ControllerParamType type = ControllerParamType::Int; // v1 (型の無い) アセットは全部 Int
 };
 
+// ブレンドツリーの種類 (M89d)。None = 骨クリップ 1 本 (skelClip) か、骨を駆動しないステート
+enum class ControllerBlendType : int32_t {
+    None = 0,
+    Blend1D = 1, // パラメータ 1 個の値で、閾値の隣り合う 2 本を区分線形に混ぜる
+};
+
+// ブレンドツリーの子 1 本 (M89d)
+struct ControllerBlendChild {
+    std::string clip;      // 骨クリップの名前 (skelClip と同じく、駆動する SkinnedMesh ごとに名前で引く)
+    uint64_t clipHash = 0; // HashStr(clip)。clip が空なら 0
+    float threshold = 0.0f; // Blend1D: この子が重み満杯になるパラメータの値
+};
+
 struct ControllerState {
     std::string name;
     // 旧形式 (M39a 以前) の .anim.json 相対パス。読み込み後方互換のためだけに残る —
@@ -44,7 +57,15 @@ struct ControllerState {
     // 駆動する SkinnedMesh ごとに FindClipByHash で index を引く。空 = 骨を駆動しないステート
     std::string skelClip;
     uint64_t skelClipHash = 0; // HashStr(skelClip)。skelClip が空なら 0
+    // ブレンドツリー (M89d、"skel":{"blend1d":{"param":0,"children":[...]}})。None 以外なら skelClip は使わない。
+    // 子は位相 (AnimatorControllerComponent::statePhase) を共有して進む
+    ControllerBlendType blendType = ControllerBlendType::None;
+    int32_t blendParam = 0; // 混ぜ具合を決めるパラメータの index。Float 以外の型は値を float にして使う
+    std::vector<ControllerBlendChild> blendChildren; // 並び順は自由 (閾値の昇順でなくてよい)
 };
+
+// ステートが骨を駆動するか (骨クリップ 1 本、または子を持つブレンドツリー)
+bool StateDrivesSkeleton(const ControllerState& state);
 
 // 比べ方は参照するパラメータの型で決まる (宣言の無い index は Int):
 // Int = params と value を op で / Float = params のビット列を float に戻して floatValue と op で /
@@ -113,6 +134,10 @@ int32_t FindControllerParam(const ControllerAsset& controller, uint64_t nameHash
 // index の型 (宣言が無ければ Int)
 ControllerParamType ControllerParamTypeAt(const ControllerAsset& controller, int32_t index);
 
+// index のパラメータの値を float で読む (Float はビット列を戻す / Int はそのまま変換 / Bool・Trigger は 0 か 1)。
+// params が null・index が範囲外なら 0
+float ControllerParamAsFloat(const ControllerAsset& controller, int32_t index, const int32_t* params);
+
 // entity の Animator のパラメータ (名前のハッシュ) へ bits を書く。宣言の型が type と違う /
 // Animator・controller・名前が無ければ何も変えず false。Bool / Trigger は bits != 0 を 1 に揃えて書く
 bool AnimatorSetParam(World& world, EntityID entity, uint64_t nameHash, ControllerParamType type, int32_t bits,
@@ -127,11 +152,32 @@ void CollectDrivenSkinnedMeshes(World& world, EntityID controllerEntity, std::ve
 // ループ・BT の waitForEnd) はこのモデルの骨クリップで決める。無い・モデルが未登録なら null
 const SkinnedModel* MainSkinnedModel(World& world, EntityID controllerEntity, const SkinnedModelLibrary* models);
 
+// ---- ブレンドツリー (M89d) ----
+// 同時に混ぜる子の上限 (1D は 2 本まで。2D の上位 4 本に合わせた器)
+inline constexpr int32_t kMaxBlendLayers = 4;
+struct BlendChildWeight {
+    int32_t child = -1;  // ControllerState::blendChildren の index
+    int32_t weightQ = 0; // Q16 (SkinnedMeshComponent::kPoseWeightOne が満杯)
+};
+// パラメータの値 x での子の重み (純関数。プレビュー窓と共有する)。返り値 = out の件数 (0..kMaxBlendLayers)。
+// 重みは float で 1 回だけ計算して Q16 へ切り捨て、端数を最大重みの子 (同値なら index の小さい子) に足す
+// = 和はちょうど 65536。重み 0 の子は出さない。out は子の index の昇順。
+// Blend1D: x 以下で最大の閾値の子と、x より大きい最小の閾値の子を区分線形に混ぜる (同じ閾値なら index の
+// 小さい子)。両端より外は端の子が満杯。NaN は最小の閾値の子。子が無ければ 0 件
+int32_t ComputeBlendWeights(const ControllerState& state, float x, BlendChildWeight (&out)[kMaxBlendLayers]);
+
+// 位相 phase (1 周 = 2^32) を長さ lengthTicks のクリップの時刻 (1/256 tick) にする。
+// 非ループ (loop == 0) で末尾に張り付いた位相 (UINT32_MAX) は lengthTicks ちょうど (単一クリップの末尾停止と同じ)
+int32_t BlendPhaseToTimeQ(uint32_t phase, int32_t lengthTicks, int32_t loop);
+
 // ステートの 1 周の長さ (tick、speed では割らない)。骨クリップが mainModel から引ければその長さ
 // (SkeletalClipTicks)、引けなければプロパティクリップの lengthTicks、どちらも無ければ 0 (時刻が進まない)。
+// ブレンドツリーは params の今の値での子の長さの加重平均 (切り上げ)。子のクリップが 1 本も引けなければ
+// プロパティクリップへ落ちる。params が null なら値 0 とみなす。
 // ★Animator と BT の PlayAnimation が同じこの関数を通す — 片方だけ骨の長さを知らないと、
 //   遷移の終わりと waitForEnd の終わりが食い違う
-int32_t ControllerStateLengthTicks(const ControllerState& state, const AnimationLibrary* clips,
+int32_t ControllerStateLengthTicks(const ControllerAsset& controller, const ControllerState& state,
+                                   const int32_t* params, const AnimationLibrary* clips,
                                    const SkinnedModel* mainModel);
 
 // entity の Animator を stateIndex のステートへ強制的に移す (BT の PlayAnimation 用)。
@@ -154,6 +200,12 @@ bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t dur
 // - entity が非アクティブの間は、プログラムを持っている SkinnedMesh の claim だけを立てて凍らせる
 //   (旧経路の時計が裏で進んで、再びアクティブになった瞬間に別のポーズへ飛ばないため)
 // - models が null (または SkinnedMesh のモデルが未登録) なら骨クリップの長さは引けない (0 = 進まない)
+//
+// ブレンドツリー (M89d): 位相を 1 tick に Δ = speed·2^48 / Σ(wQ_i·L_i) 進める (L_i = 主 SkinnedMesh の
+// モデルでの子の長さ。ループは 2^32 で折り返し、非ループは 0..UINT32_MAX に張り付く)。層は子ごとに出し、
+// 各 SkinnedMesh は自分のモデルでの子の長さで位相を時刻にする。遷移中は元と先の両方の子を出す (最大 8 層)。
+// hasExitTime は「次の進みで位相が 1 周に達する tick」で判定する (逆再生・長さ 0 では抜けない)。
+// stateTimeTicks も従来どおり ControllerStateLengthTicks の長さで進む (プロパティクリップと ABI の表示用)
 class AnimatorControllerSystem {
 public:
     void Update(World& world, const ControllerLibrary& controllers, const AnimationLibrary& clips,

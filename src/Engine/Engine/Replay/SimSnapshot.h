@@ -127,7 +127,8 @@ struct SimRefs {
 // v39 (M85h): BehaviorTreeComponent に Entity キーの初期値 4 組 (bbEntityKey / bbEntityValue。World 節のカラム生バイト)
 // v40 (M89a): SkinnedMesh の末尾にポーズプログラム (poseLayerCount / poseClaim / poseLayers[8]。World 節のカラム生バイト)
 // v41 (M89c): AnimatorControllerComponent の params が 4 → 16 個 (World 節のカラム生バイト)
-inline constexpr uint32_t kSimSnapshotVersion = 41;
+// v42 (M89d): AnimatorControllerComponent の末尾にブレンドツリーの位相 (statePhase / transitionToPhase。World 節のカラム生バイト)
+inline constexpr uint32_t kSimSnapshotVersion = 42;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

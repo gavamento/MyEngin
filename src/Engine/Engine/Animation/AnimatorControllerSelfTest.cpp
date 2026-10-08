@@ -358,11 +358,11 @@ bool RunAnimatorControllerSelfTest()
         check(driven.size() == 3 && driven[0] == bodyA.Id() && driven[1] == bodyB.Id() && driven[2] == bodyC.Id(),
               "driven set: the subtree in pre-order, stopping at a nested AnimatorController");
         check(MainSkinnedModel(world, actor.Id(), &res.skinnedModels) == a, "main SkinnedMesh = smallest entity index");
-        check(ControllerStateLengthTicks(sk.states[0], &animLib, a) == 60
-                  && ControllerStateLengthTicks(sk.states[1], &animLib, a) == 30
-                  && ControllerStateLengthTicks(sk.states[1], &animLib, b) == 45
-                  && ControllerStateLengthTicks(sk.states[1], &animLib, nullptr) == 0
-                  && ControllerStateLengthTicks(sk.states[2], &animLib, a) == 60,
+        check(ControllerStateLengthTicks(sk, sk.states[0], nullptr, &animLib, a) == 60
+                  && ControllerStateLengthTicks(sk, sk.states[1], nullptr, &animLib, a) == 30
+                  && ControllerStateLengthTicks(sk, sk.states[1], nullptr, &animLib, b) == 45
+                  && ControllerStateLengthTicks(sk, sk.states[1], nullptr, &animLib, nullptr) == 0
+                  && ControllerStateLengthTicks(sk, sk.states[2], nullptr, &animLib, a) == 60,
               "ControllerStateLengthTicks: skeletal length from the given model, else the property clip, else 0");
 
         AnimatorControllerSystem skSys;
@@ -640,6 +640,244 @@ bool RunAnimatorControllerSelfTest()
         check(noLib.AnimatorSetInt(noLib.engine, self, MyeNameHash("combo"), 1) == 0 && noLib.AnimatorGetParam(noLib.engine, self, MyeNameHash("combo"), &p) == 0
                   && noLib.AnimatorGetState(noLib.engine, self, &st) == 0,
               "M89c ABI: without a controller library every animator slot returns 0");
+    }
+
+    // ---- (M89d) 1D ブレンドツリー: 重み / JSON / 位相同期 / 遷移 / hasExitTime / 非ループ / 再開 ----
+    {
+        using PT = ControllerParamType;
+        const auto bitsOf = [](float f) { return std::bit_cast<int32_t>(f); };
+        constexpr int32_t kOne = SkinnedMeshComponent::kPoseWeightOne;
+
+        // 子は閾値の昇順に並べない (index 0 = Run@2, 1 = Idle@0, 2 = Walk@1)
+        ControllerState move;
+        move.name = "Move";
+        move.blendType = ControllerBlendType::Blend1D;
+        move.blendParam = 0;
+        move.blendChildren = { { "Run", HashStr("Run"), 2.0f }, { "Idle", HashStr("Idle"), 0.0f },
+                               { "Walk", HashStr("Walk"), 1.0f } };
+
+        // 重み (純関数)
+        {
+            BlendChildWeight w[kMaxBlendLayers];
+            const auto is1 = [&](float x, int32_t child) {
+                return ComputeBlendWeights(move, x, w) == 1 && w[0].child == child && w[0].weightQ == kOne;
+            };
+            const auto is2 = [&](float x, int32_t c0, int32_t q0, int32_t c1, int32_t q1) {
+                return ComputeBlendWeights(move, x, w) == 2 && w[0].child == c0 && w[0].weightQ == q0 && w[1].child == c1
+                       && w[1].weightQ == q1;
+            };
+            check(is1(-1.0f, 1) && is1(0.0f, 1) && is1(1.0f, 2) && is1(2.0f, 0) && is1(9.0f, 0),
+                  "M89d: at a threshold or outside the ends, one child at full weight");
+            check(is2(0.5f, 1, 32768, 2, 32768) && is2(1.5f, 0, 32768, 2, 32768) && is2(0.25f, 1, 49152, 2, 16384),
+                  "M89d: between thresholds, the adjacent pair is mixed linearly (children in index order)");
+            check(is2(1.0f / 3.0f, 1, 43691, 2, 21845),
+                  "M89d: the truncation remainder goes to the heaviest child (43690 + 1)");
+            check(is1(std::nanf(""), 1), "M89d: NaN selects the lowest threshold");
+            bool sweepOk = true;
+            for (int i = -100; i <= 500 && sweepOk; ++i) {
+                const int32_t n = ComputeBlendWeights(move, static_cast<float>(i) * 0.01f, w);
+                int32_t sum = 0;
+                for (int32_t k = 0; k < n; ++k) {
+                    sweepOk = sweepOk && w[k].weightQ > 0 && (k == 0 || w[k].child > w[k - 1].child);
+                    sum += w[k].weightQ;
+                }
+                sweepOk = sweepOk && n >= 1 && n <= 2 && sum == kOne;
+            }
+            check(sweepOk, "M89d: sweep -1..5: 1 or 2 children, positive weights summing to exactly 65536");
+            ControllerState dup = move;
+            dup.blendChildren = { { "A", HashStr("A"), 1.0f }, { "B", HashStr("B"), 1.0f } };
+            ControllerState empty = move;
+            empty.blendChildren.clear();
+            check(ComputeBlendWeights(dup, 1.0f, w) == 1 && w[0].child == 0 && ComputeBlendWeights(empty, 1.0f, w) == 0
+                      && !StateDrivesSkeleton(empty) && StateDrivesSkeleton(move),
+                  "M89d: equal thresholds pick the first child; a tree without children drives nothing");
+            check(BlendPhaseToTimeQ(0, 60, 1) == 0 && BlendPhaseToTimeQ(0x80000000u, 60, 1) == 30 * 256
+                      && BlendPhaseToTimeQ(UINT32_MAX, 60, 1) == 60 * 256 - 1 && BlendPhaseToTimeQ(UINT32_MAX, 60, 0) == 60 * 256
+                      && BlendPhaseToTimeQ(0x80000000u, 0, 1) == 0,
+                  "M89d: phase -> timeQ (a stuck non-loop phase is exactly the end)");
+        }
+
+        // JSON
+        {
+            ControllerAsset ja;
+            ja.states.push_back(move);
+            const json j = ControllerLibrary::ToJson(ja);
+            ControllerAsset back;
+            const bool parsed = ControllerLibrary::FromJson(j, back);
+            check(parsed && j["states"][0]["skel"]["blend1d"]["param"] == 0
+                      && j["states"][0]["skel"]["blend1d"]["children"][0]["clip"] == "Run" && !j["states"][0]["skel"].contains("clip")
+                      && back.states[0].blendType == ControllerBlendType::Blend1D && back.states[0].blendChildren.size() == 3
+                      && back.states[0].blendChildren[1].clip == "Idle" && back.states[0].blendChildren[1].clipHash == HashStr("Idle")
+                      && back.states[0].blendChildren[0].threshold == 2.0f,
+                  "M89d: blend1d round-trips in the original child order");
+            json both = j;
+            both["states"][0]["skel"]["clip"] = "Walk";
+            ControllerAsset bothBack;
+            check(ControllerLibrary::FromJson(both, bothBack) && bothBack.states[0].blendType == ControllerBlendType::Blend1D
+                      && bothBack.states[0].skelClipHash == 0,
+                  "M89d: blend1d wins over a single clip in the same skel object");
+        }
+
+        // システム: Idle (骨 1 本) → Move (Walk/Run) → Idle、非ループの Once
+        RenderResources res;
+        const AssetID modelA = res.skinnedModels.Register(
+            "selftest_blend_a", MakeNamedClipModel({ { "Idle", 1.0f }, { "Walk", 1.0f }, { "Run", 0.5f } }));
+        const AssetID modelB =
+            res.skinnedModels.Register("selftest_blend_b", MakeNamedClipModel({ { "Run", 1.0f }, { "Walk", 2.0f } }));
+        const SkinnedModel* a = res.skinnedModels.Get(modelA);
+
+        ControllerAsset bc;
+        bc.parameters = { { "speed", PT::Float }, { "stop", PT::Bool } };
+        bc.states.push_back({ "Idle", "", 0, 1, 1, "Idle", HashStr("Idle") });
+        bc.states.push_back(move);
+        ControllerState once = move;
+        once.name = "Once";
+        once.loop = 0;
+        bc.states.push_back(once);
+        { // Idle → Move (speed > 0.5)
+            ControllerTransition t;
+            t.from = 0;
+            t.to = 1;
+            t.duration = 3;
+            t.conditions = { { 0, CondOp::Gt, 0, 0.5f } };
+            bc.transitions.push_back(t);
+        }
+        { // Move → Idle (stop、周の終わりで)
+            ControllerTransition t;
+            t.from = 1;
+            t.to = 0;
+            t.duration = 1;
+            t.hasExitTime = 1;
+            t.conditions = { { 1, CondOp::Eq, 1 } };
+            bc.transitions.push_back(t);
+        }
+        const uint64_t bcHash = ctrlLib.Register(L"blend.controller.json", bc);
+
+        struct Rig {
+            GameObject actor;
+            GameObject bodyA;
+            GameObject bodyB;
+        };
+        const auto makeRig = [&](Scene& s) {
+            Rig r;
+            r.actor = s.CreateGameObjectTracked("Actor");
+            r.actor.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ bcHash };
+            r.bodyA = s.CreateGameObjectTracked("BodyA"); // 主 SkinnedMesh
+            r.bodyA.SetParent(r.actor);
+            r.bodyA.AddComponent<SkinnedMeshComponent>()->model = modelA;
+            r.bodyB = s.CreateGameObjectTracked("BodyB");
+            r.bodyB.SetParent(r.actor);
+            r.bodyB.AddComponent<SkinnedMeshComponent>()->model = modelB;
+            s.GetWorld().ApplyStructuralChanges();
+            return r;
+        };
+        Scene s;
+        World& world = s.GetWorld();
+        Rig rig = makeRig(s);
+        AnimatorControllerSystem bsys;
+        SkinningSystem skinning;
+        const auto ac = [&] { return rig.actor.GetComponent<AnimatorControllerComponent>(); };
+        const auto smA = [&] { return rig.bodyA.GetComponent<SkinnedMeshComponent>(); };
+        const auto smB = [&] { return rig.bodyB.GetComponent<SkinnedMeshComponent>(); };
+        const auto step = [&] {
+            bsys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+            skinning.Update(world, res);
+        };
+        // Walk (60) と Run (30) を半々 = Σ(wQ·L) = 32768·90。Δ = 2^48 / Σ
+        constexpr uint32_t kDelta = 95443717u;
+        const auto timeQOf = [](uint32_t phase, int64_t ticks) {
+            return static_cast<int32_t>((static_cast<uint64_t>(phase) * static_cast<uint64_t>(ticks * 256)) >> 32);
+        };
+
+        step();
+        ac()->params[0] = bitsOf(1.5f);
+        check(ControllerStateLengthTicks(bc, bc.states[1], ac()->params, &animLib, a) == 45
+                  && ControllerStateLengthTicks(bc, bc.states[1], nullptr, &animLib, a) == 60
+                  && ControllerStateLengthTicks(bc, bc.states[1], ac()->params, &animLib, nullptr) == 0,
+              "M89d: blend length = weighted mean of the children at the current parameter (45 = (60+30)/2)");
+        step();
+        {
+            const SkinnedMeshComponent* m = smA();
+            const int32_t sum = m->poseLayers[0].weightQ + m->poseLayers[1].weightQ + m->poseLayers[2].weightQ;
+            check(ac()->transitionTo == 1 && ac()->transitionToPhase == kDelta && m->poseLayerCount == 3
+                      && m->poseLayers[0].clip == 0 && m->poseLayers[0].weightQ == 43692 && m->poseLayers[1].clip == 2
+                      && m->poseLayers[1].weightQ == 10922 && m->poseLayers[2].clip == 1 && m->poseLayers[2].weightQ == 10922
+                      && sum == kOne,
+                  "M89d: single -> blend transition: from layer + the target's children, remainder to the heaviest (sum 65536)");
+            check(m->poseLayers[1].timeQ == timeQOf(kDelta, 30) && m->poseLayers[2].timeQ == timeQOf(kDelta, 60)
+                      && smB()->poseLayers[0].clip == -1 && smB()->poseLayers[1].clip == 0
+                      && smB()->poseLayers[1].timeQ == timeQOf(kDelta, 60) && smB()->poseLayers[2].clip == 1
+                      && smB()->poseLayers[2].timeQ == timeQOf(kDelta, 120),
+                  "M89d: each mesh turns the shared phase into time with its own clip lengths");
+        }
+        step();
+        step();
+        check(ac()->currentState == 1 && ac()->transitionTo == -1 && ac()->statePhase == 3 * kDelta && ac()->transitionToPhase == 0
+                  && smA()->poseLayerCount == 2 && smA()->poseLayers[0].weightQ == 32768 && smA()->poseLayers[1].weightQ == 32768
+                  && smA()->poseLayers[2].weightQ == 0,
+              "M89d: after the transition the phase carries over; two children at half weight");
+        bool synced = true;
+        for (int i = 0; i < 30; ++i) {
+            step();
+            const int32_t runQ = smA()->poseLayers[0].timeQ;
+            const int32_t walkQ = smA()->poseLayers[1].timeQ;
+            synced = synced && walkQ - 2 * runQ >= 0 && walkQ - 2 * runQ <= 1;
+        }
+        check(synced, "M89d: phase sync: Walk (60) is always at twice Run's (30) time");
+
+        // Move → Idle は位相が 1 周に達する tick にだけ抜ける
+        ac()->params[1] = 1;
+        bool earlyOk = true;
+        bool exitOk = false;
+        for (int i = 0; i < 60; ++i) {
+            const uint64_t before = ac()->statePhase;
+            step();
+            if (ac()->currentState == 0) {
+                exitOk = before + kDelta >= (uint64_t(1) << 32);
+                break;
+            }
+            earlyOk = earlyOk && before + kDelta < (uint64_t(1) << 32);
+        }
+        check(earlyOk && exitOk && ac()->statePhase == 0 && smA()->poseLayerCount == 1 && smA()->poseLayers[0].clip == 0,
+              "M89d: hasExitTime leaves a blend state on the tick its phase completes a cycle");
+
+        // 非ループは末尾に張り付き、各子のクリップの末尾ちょうどを指す
+        check(AnimatorPlay(world, rig.actor.Id(), 2, 0, ctrlLib) && ac()->statePhase == 0, "M89d: AnimatorPlay resets the phase");
+        for (int i = 0; i < 50; ++i) {
+            step();
+        }
+        check(ac()->statePhase == UINT32_MAX && smA()->poseLayers[0].timeQ == 30 * 256 && smA()->poseLayers[1].timeQ == 60 * 256,
+              "M89d: a non-loop blend state stops at the end of every child");
+
+        // 遷移の途中でコンポーネントを写した別シーンが、同じ続きを辿る (snapshot はこの生バイトを運ぶ)
+        {
+            Scene s2;
+            Rig rig2 = makeRig(s2);
+            AnimatorControllerSystem sys2;
+            SkinningSystem skinning2;
+            AnimatorPlay(world, rig.actor.Id(), 0, 0, ctrlLib);
+            ac()->params[1] = 0;
+            ac()->params[0] = bitsOf(0.75f);
+            step();
+            step();
+            *rig2.actor.GetComponent<AnimatorControllerComponent>() = *ac();
+            bool same = true;
+            for (int i = 0; i < 20; ++i) {
+                ac()->params[0] = bitsOf(0.75f + 0.05f * static_cast<float>(i));
+                rig2.actor.GetComponent<AnimatorControllerComponent>()->params[0] = ac()->params[0];
+                step();
+                sys2.Update(s2.GetWorld(), ctrlLib, animLib, &res.skinnedModels);
+                skinning2.Update(s2.GetWorld(), res);
+                const SkinnedMeshComponent* m2 = rig2.bodyA.GetComponent<SkinnedMeshComponent>();
+                same = same && std::memcmp(ac(), rig2.actor.GetComponent<AnimatorControllerComponent>(), sizeof(AnimatorControllerComponent)) == 0
+                       && std::memcmp(smA()->poseLayers, m2->poseLayers, sizeof(m2->poseLayers)) == 0;
+            }
+            check(same, "M89d: resuming from a component copied mid-transition gives identical phases and programs");
+        }
+
+        const uint64_t before = HashWorld(world);
+        ac()->statePhase ^= 1u;
+        check(HashWorld(world) != before, "M89d: statePhase is part of the world hash");
     }
 
     if (failCount == 0) {

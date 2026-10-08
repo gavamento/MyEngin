@@ -737,6 +737,11 @@ struct AnimatorControllerComponent {
     // float はビット列のまま入れる — 保存・ハッシュ・スナップショットが整数のまま扱えて、型を知らない経路でも値が変わらない
     static constexpr int kMaxParams = 16;
     int32_t params[kMaxParams] = {};
+    // ---- M89d 追加 (末尾 append): ブレンドツリーのステートの再生位置 ----
+    // 1 周 = 2^32 の位相。子のクリップは長さが違っても同じ位相で進む (歩きと走りの足がそろう)。
+    // ブレンドツリーでないステートでは使わない (0 のまま)
+    uint32_t statePhase = 0;        // 現 state の位相
+    uint32_t transitionToPhase = 0; // 遷移先 state の位相
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

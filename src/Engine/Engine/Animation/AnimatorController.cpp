@@ -142,55 +142,177 @@ void AdvanceStateTime(int32_t& time, int32_t speed, int32_t loop, int32_t length
 bool HasSkeletalStates(const ControllerAsset& controller)
 {
     for (const ControllerState& st : controller.states) {
-        if (st.skelClipHash != 0) {
+        if (StateDrivesSkeleton(st)) {
             return true;
         }
     }
     return false;
 }
 
-// ポーズプログラムの元になる 1 層 (ステートと再生位置と重み)
+const char* BlendTypeToStr(ControllerBlendType type)
+{
+    switch (type) {
+    case ControllerBlendType::Blend1D: return "blend1d";
+    case ControllerBlendType::None: break;
+    }
+    return "";
+}
+
+constexpr int64_t kWeightOne = SkinnedMeshComponent::kPoseWeightOne;
+constexpr uint64_t kPhaseCycle = uint64_t(1) << 32; // 位相の 1 周
+// speed·2^48 が int64 に収まる上限。これを超える speed は丸める (1 tick に 3 万周を超える再生は意味を持たない)
+constexpr int32_t kMaxBlendSpeed = 32767;
+
+// float の重み (和 ≈ 1) を Q16 へ 1 回だけ切り捨て、端数を最大重みの要素 (同値なら先の要素) に足す = 和はちょうど kWeightOne
+void QuantizeWeights(const float* w, int32_t n, int32_t* q)
+{
+    int64_t sum = 0;
+    int32_t largest = 0;
+    for (int32_t i = 0; i < n; ++i) {
+        const float clamped = std::clamp(w[i], 0.0f, 1.0f);
+        q[i] = static_cast<int32_t>(clamped * static_cast<float>(kWeightOne));
+        sum += q[i];
+        if (w[i] > w[largest]) {
+            largest = i;
+        }
+    }
+    q[largest] += static_cast<int32_t>(kWeightOne - sum);
+}
+
+// 子のクリップの長さ (tick) を model で引く。モデルが無い・名前のクリップが無ければ 0
+int32_t BlendChildTicks(const SkinnedModel* model, const ControllerBlendChild& child)
+{
+    if (model == nullptr) {
+        return 0;
+    }
+    const int32_t clip = model->FindClipByHash(child.clipHash);
+    return clip >= 0 ? SkeletalClipTicks(model->clips[static_cast<size_t>(clip)]) : 0;
+}
+
+// Σ(wQ_i·L_i)。重みが Q16 なので、65536 で割ると混ぜた 1 周の長さ (tick) になる
+int64_t BlendWeightedTicks(const ControllerState& st, const BlendChildWeight* w, int32_t n, const SkinnedModel* model)
+{
+    int64_t sum = 0;
+    for (int32_t i = 0; i < n; ++i) {
+        sum += static_cast<int64_t>(w[i].weightQ) * BlendChildTicks(model, st.blendChildren[static_cast<size_t>(w[i].child)]);
+    }
+    return sum;
+}
+
+// ブレンドツリーのステートの 1 tick の位相の進み (今のパラメータの重みで)。長さが引けなければ 0
+int64_t BlendPhaseDelta(const ControllerAsset& ctrl, const ControllerState& st, const int32_t* params,
+                        const SkinnedModel* mainModel)
+{
+    BlendChildWeight w[kMaxBlendLayers];
+    const int32_t n = ComputeBlendWeights(st, ControllerParamAsFloat(ctrl, st.blendParam, params), w);
+    const int64_t weightedTicks = BlendWeightedTicks(st, w, n, mainModel);
+    if (weightedTicks <= 0) {
+        return 0;
+    }
+    // 2^32 (1 周) × 65536 (重みの満杯) / Σ(wQ·L) = 1 tick の進み。割り算は 0 方向への切り捨て
+    const int64_t speed = std::clamp(st.speed, -kMaxBlendSpeed, kMaxBlendSpeed);
+    return speed * (int64_t(1) << 48) / weightedTicks;
+}
+
+uint32_t AdvanceBlendPhase(uint32_t phase, int64_t delta, int32_t loop)
+{
+    if (loop) {
+        // 2^32 を法とする加算 = 折り返し (逆再生も同じ式)
+        return static_cast<uint32_t>(static_cast<uint64_t>(phase) + static_cast<uint64_t>(delta));
+    }
+    // 非ループは端に張り付く。1 周より大きい進みは結果を変えないので丸めて int64 のあふれを防ぐ
+    const int64_t step = std::clamp<int64_t>(delta, -int64_t(kPhaseCycle), int64_t(kPhaseCycle));
+    return static_cast<uint32_t>(std::clamp<int64_t>(int64_t(phase) + step, 0, int64_t(UINT32_MAX)));
+}
+
+// hasExitTime: 次の進みで位相が 1 周に達する = 今が周の最後の tick (単一クリップの time >= len - 1 に当たる)
+bool BlendExitReached(uint32_t phase, int64_t delta)
+{
+    return delta > 0 && static_cast<uint64_t>(phase) + static_cast<uint64_t>(delta) >= kPhaseCycle;
+}
+
+// ポーズプログラムの元になる 1 層 (骨クリップと再生位置と重み)
 struct SkeletalSource {
-    const ControllerState* state = nullptr;
-    int32_t timeTicks = 0;
+    uint64_t clipHash = 0;
+    bool usesPhase = false; // true = ブレンドツリーの子 (位相をメッシュごとの長さで時刻にする)
+    int32_t timeTicks = 0;  // 単一クリップの再生位置
+    uint32_t phase = 0;     // ブレンドツリーの位相
+    int32_t loop = 1;
     int32_t weightQ = 0;
 };
+// 遷移の元と先がどちらもブレンドツリーでも収まる
+constexpr int32_t kMaxSkeletalSources = 2 * kMaxBlendLayers;
+static_assert(kMaxSkeletalSources <= SkinnedMeshComponent::kMaxPoseLayers,
+              "a transition between two blend trees must fit in one pose program");
 
-// 今の tick のプログラムの元を組む (時刻を進めた後の値で)。返り値 = 層数 (0..2)。
-// 遷移中は元 → 先の順に並べる (層を先頭から畳むので順序も入力の一部)。重みは
-// transitionTick / transitionDuration を Q16 に 1 回だけ切り捨て、残りを元へ回す = 和がちょうど kPoseWeightOne
-int32_t BuildSkeletalSources(const ControllerAsset& ctrl, const AnimatorControllerComponent& c,
-                             SkeletalSource (&out)[2])
+// 1 ステートぶんの層を out へ足す。stateWeightQ をステート内の子の重みで割り振る (端数は呼び出し側で直す)
+int32_t AppendStateSources(const ControllerAsset& ctrl, const ControllerState& st, const int32_t* params,
+                           int32_t timeTicks, uint32_t phase, int32_t stateWeightQ, SkeletalSource* out)
 {
-    constexpr int64_t kOne = SkinnedMeshComponent::kPoseWeightOne;
+    if (st.blendType == ControllerBlendType::None) {
+        out[0] = { st.skelClipHash, false, timeTicks, 0, st.loop, stateWeightQ };
+        return 1;
+    }
+    BlendChildWeight w[kMaxBlendLayers];
+    const int32_t n = ComputeBlendWeights(st, ControllerParamAsFloat(ctrl, st.blendParam, params), w);
+    for (int32_t i = 0; i < n; ++i) {
+        const int32_t weightQ = static_cast<int32_t>(int64_t(stateWeightQ) * w[i].weightQ / kWeightOne);
+        out[i] = { st.blendChildren[static_cast<size_t>(w[i].child)].clipHash, true, 0, phase, st.loop, weightQ };
+    }
+    return n;
+}
+
+// 今の tick のプログラムの元を組む (時刻を進めた後の値で)。返り値 = 層数 (0..kMaxSkeletalSources)。
+// 遷移中は元 → 先の順に並べる (層を先頭から畳むので順序も入力の一部)。ステートの重みは
+// transitionTick / transitionDuration を Q16 に 1 回だけ切り捨て、残りを元へ回す。ブレンドの子へ割り振った
+// 切り捨ての端数は最大重みの層 (同値なら先の層) に足す = 和はちょうど kPoseWeightOne
+int32_t BuildSkeletalSources(const ControllerAsset& ctrl, const AnimatorControllerComponent& c,
+                             SkeletalSource (&out)[kMaxSkeletalSources])
+{
     const ControllerState& from = ctrl.states[static_cast<size_t>(c.currentState)];
-    const bool fromSkel = from.skelClipHash != 0;
+    const bool fromSkel = StateDrivesSkeleton(from);
+    int32_t count = 0;
+    const auto appendFrom = [&](int64_t weightQ) {
+        count += AppendStateSources(ctrl, from, c.params, c.stateTimeTicks, c.statePhase,
+                                    static_cast<int32_t>(weightQ), out + count);
+    };
     if (c.transitionTo < 0) {
         if (!fromSkel) {
             return 0;
         }
-        out[0] = { &from, c.stateTimeTicks, static_cast<int32_t>(kOne) };
-        return 1;
+        appendFrom(kWeightOne);
+    } else {
+        const ControllerState& to = ctrl.states[static_cast<size_t>(c.transitionTo)];
+        const bool toSkel = StateDrivesSkeleton(to);
+        const auto appendTo = [&](int64_t weightQ) {
+            count += AppendStateSources(ctrl, to, c.params, c.transitionToTime, c.transitionToPhase,
+                                        static_cast<int32_t>(weightQ), out + count);
+        };
+        if (!fromSkel && !toSkel) {
+            return 0;
+        }
+        if (!toSkel) {
+            appendFrom(kWeightOne);
+        } else if (!fromSkel) {
+            appendTo(kWeightOne);
+        } else {
+            const int32_t duration = c.transitionDuration > 0 ? c.transitionDuration : 1;
+            const int64_t tick = std::clamp<int64_t>(c.transitionTick, 0, duration);
+            const int64_t toWeight = tick * kWeightOne / duration;
+            appendFrom(kWeightOne - toWeight);
+            appendTo(toWeight);
+        }
     }
-    const ControllerState& to = ctrl.states[static_cast<size_t>(c.transitionTo)];
-    const bool toSkel = to.skelClipHash != 0;
-    if (!fromSkel && !toSkel) {
-        return 0;
+    int64_t sum = 0;
+    int32_t largest = 0;
+    for (int32_t i = 0; i < count; ++i) {
+        sum += out[i].weightQ;
+        if (out[i].weightQ > out[largest].weightQ) {
+            largest = i;
+        }
     }
-    if (!toSkel) {
-        out[0] = { &from, c.stateTimeTicks, static_cast<int32_t>(kOne) };
-        return 1;
-    }
-    if (!fromSkel) {
-        out[0] = { &to, c.transitionToTime, static_cast<int32_t>(kOne) };
-        return 1;
-    }
-    const int32_t duration = c.transitionDuration > 0 ? c.transitionDuration : 1;
-    const int64_t tick = std::clamp<int64_t>(c.transitionTick, 0, duration);
-    const int32_t toWeight = static_cast<int32_t>(tick * kOne / duration);
-    out[0] = { &from, c.stateTimeTicks, static_cast<int32_t>(kOne) - toWeight };
-    out[1] = { &to, c.transitionToTime, toWeight };
-    return 2;
+    out[largest].weightQ += static_cast<int32_t>(kWeightOne - sum);
+    return count;
 }
 
 void WriteSkeletalProgram(SkinnedMeshComponent& sm, const SkinnedModel* model, const SkeletalSource* sources,
@@ -198,11 +320,19 @@ void WriteSkeletalProgram(SkinnedMeshComponent& sm, const SkinnedModel* model, c
 {
     sm.poseLayerCount = count;
     for (int32_t i = 0; i < count; ++i) {
+        const SkeletalSource& src = sources[i];
         SkinnedMeshComponent::PoseLayer& layer = sm.poseLayers[i];
         // モデルが未登録・名前のクリップが無いモデルは -1 = バインドポーズ (層の数と重みは他のメッシュとそろえる)
-        layer.clip = model != nullptr ? model->FindClipByHash(sources[i].state->skelClipHash) : -1;
-        layer.timeQ = sources[i].timeTicks * SkinnedMeshComponent::kPoseTimeQPerTick;
-        layer.weightQ = sources[i].weightQ;
+        layer.clip = model != nullptr ? model->FindClipByHash(src.clipHash) : -1;
+        if (src.usesPhase) {
+            // 位相はメッシュ自身のモデルでの長さで時刻にする (長さの違うモデルでも周がそろう)
+            const int32_t ticks =
+                layer.clip >= 0 ? SkeletalClipTicks(model->clips[static_cast<size_t>(layer.clip)]) : 0;
+            layer.timeQ = BlendPhaseToTimeQ(src.phase, ticks, src.loop);
+        } else {
+            layer.timeQ = src.timeTicks * SkinnedMeshComponent::kPoseTimeQPerTick;
+        }
+        layer.weightQ = src.weightQ;
     }
     // 使っていない層は既定値に戻す (snapshot の生バイトを入力だけで決まる形にしておく)
     for (int32_t i = count; i < SkinnedMeshComponent::kMaxPoseLayers; ++i) {
@@ -323,7 +453,14 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
                     { "clip", std::move(clip) },
                     { "speed", s.speed },
                     { "loop", s.loop } };
-        if (!s.skelClip.empty()) {
+        if (s.blendType != ControllerBlendType::None) {
+            json children = json::array();
+            for (const ControllerBlendChild& ch : s.blendChildren) {
+                children.push_back({ { "clip", ch.clip }, { "threshold", ch.threshold } });
+            }
+            st["skel"] = { { BlendTypeToStr(s.blendType),
+                             { { "param", s.blendParam }, { "children", std::move(children) } } } };
+        } else if (!s.skelClip.empty()) {
             st["skel"] = { { "clip", s.skelClip } };
         }
         states.push_back(std::move(st));
@@ -391,8 +528,25 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
         cs.loop = s.value("loop", 1);
         // M89b: 骨クリップは名前で持つ (モデルごとに index が違ってよい)
         if (s.contains("skel") && s["skel"].is_object()) {
-            cs.skelClip = s["skel"].value("clip", std::string());
-            cs.skelClipHash = cs.skelClip.empty() ? 0 : HashStr(cs.skelClip);
+            const json& skel = s["skel"];
+            if (skel.contains("blend1d") && skel["blend1d"].is_object()) {
+                // M89d: 1D ブレンドツリー。あれば "clip" より優先する
+                const json& blend = skel["blend1d"];
+                cs.blendType = ControllerBlendType::Blend1D;
+                cs.blendParam = blend.value("param", 0);
+                if (blend.contains("children") && blend["children"].is_array()) {
+                    for (const json& ch : blend["children"]) {
+                        ControllerBlendChild child;
+                        child.clip = ch.value("clip", std::string());
+                        child.clipHash = child.clip.empty() ? 0 : HashStr(child.clip);
+                        child.threshold = ch.value("threshold", 0.0f);
+                        cs.blendChildren.push_back(std::move(child));
+                    }
+                }
+            } else {
+                cs.skelClip = skel.value("clip", std::string());
+                cs.skelClipHash = cs.skelClip.empty() ? 0 : HashStr(cs.skelClip);
+            }
         }
         out.states.push_back(std::move(cs));
     }
@@ -421,6 +575,83 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
         }
     }
     return true;
+}
+
+bool StateDrivesSkeleton(const ControllerState& state)
+{
+    if (state.blendType != ControllerBlendType::None) {
+        return !state.blendChildren.empty();
+    }
+    return state.skelClipHash != 0;
+}
+
+int32_t ComputeBlendWeights(const ControllerState& state, float x, BlendChildWeight (&out)[kMaxBlendLayers])
+{
+    const int32_t n = static_cast<int32_t>(state.blendChildren.size());
+    if (state.blendType != ControllerBlendType::Blend1D || n == 0) {
+        return 0;
+    }
+    const auto threshold = [&](int32_t i) { return state.blendChildren[static_cast<size_t>(i)].threshold; };
+    // lo = x 以下で最大の閾値 / hi = x より大きい最小の閾値 (同じ閾値なら先の子)。NaN はどの比較も偽なので hi 側に入る
+    int32_t lo = -1;
+    int32_t hi = -1;
+    for (int32_t i = 0; i < n; ++i) {
+        if (threshold(i) <= x) {
+            if (lo < 0 || threshold(i) > threshold(lo)) {
+                lo = i;
+            }
+        } else if (hi < 0 || threshold(i) < threshold(hi)) {
+            hi = i;
+        }
+    }
+    if (lo < 0 || hi < 0) {
+        out[0] = { lo >= 0 ? lo : hi, static_cast<int32_t>(kWeightOne) };
+        return 1;
+    }
+    // threshold(lo) <= x < threshold(hi) なので分母は正、t は [0, 1)
+    const float t = (x - threshold(lo)) / (threshold(hi) - threshold(lo));
+    const int32_t first = std::min(lo, hi);
+    const int32_t second = std::max(lo, hi);
+    const float w[2] = { first == lo ? 1.0f - t : t, first == lo ? t : 1.0f - t };
+    int32_t q[2] = {};
+    QuantizeWeights(w, 2, q);
+    int32_t count = 0;
+    if (q[0] > 0) {
+        out[count++] = { first, q[0] };
+    }
+    if (q[1] > 0) {
+        out[count++] = { second, q[1] };
+    }
+    return count;
+}
+
+int32_t BlendPhaseToTimeQ(uint32_t phase, int32_t lengthTicks, int32_t loop)
+{
+    if (lengthTicks <= 0) {
+        return 0;
+    }
+    // timeQ (int32) に収まる長さに丸める (約 38 時間。実際のクリップは届かない)
+    const int64_t span = static_cast<int64_t>(std::min(lengthTicks, INT32_MAX / SkinnedMeshComponent::kPoseTimeQPerTick))
+                         * SkinnedMeshComponent::kPoseTimeQPerTick;
+    if (!loop && phase == UINT32_MAX) {
+        return static_cast<int32_t>(span);
+    }
+    return static_cast<int32_t>((static_cast<uint64_t>(phase) * static_cast<uint64_t>(span)) >> 32);
+}
+
+float ControllerParamAsFloat(const ControllerAsset& controller, int32_t index, const int32_t* params)
+{
+    if (params == nullptr || index < 0 || index >= AnimatorControllerComponent::kMaxParams) {
+        return 0.0f;
+    }
+    const int32_t raw = params[index];
+    switch (ControllerParamTypeAt(controller, index)) {
+    case ControllerParamType::Int: return static_cast<float>(raw);
+    case ControllerParamType::Float: return std::bit_cast<float>(raw);
+    case ControllerParamType::Bool:
+    case ControllerParamType::Trigger: return raw != 0 ? 1.0f : 0.0f;
+    }
+    return 0.0f;
 }
 
 int32_t FindControllerState(const ControllerAsset& controller, const std::string& name)
@@ -518,10 +749,18 @@ const SkinnedModel* MainSkinnedModel(World& world, EntityID controllerEntity, co
     return MainModelOf(world, driven, models);
 }
 
-int32_t ControllerStateLengthTicks(const ControllerState& state, const AnimationLibrary* clips,
+int32_t ControllerStateLengthTicks(const ControllerAsset& controller, const ControllerState& state,
+                                   const int32_t* params, const AnimationLibrary* clips,
                                    const SkinnedModel* mainModel)
 {
-    if (state.skelClipHash != 0 && mainModel != nullptr) {
+    if (state.blendType != ControllerBlendType::None) {
+        BlendChildWeight w[kMaxBlendLayers];
+        const int32_t n = ComputeBlendWeights(state, ControllerParamAsFloat(controller, state.blendParam, params), w);
+        const int64_t weightedTicks = BlendWeightedTicks(state, w, n, mainModel);
+        if (weightedTicks > 0) {
+            return static_cast<int32_t>((weightedTicks + kWeightOne - 1) / kWeightOne);
+        }
+    } else if (state.skelClipHash != 0 && mainModel != nullptr) {
         const int32_t clip = mainModel->FindClipByHash(state.skelClipHash);
         if (clip >= 0) {
             return SkeletalClipTicks(mainModel->clips[static_cast<size_t>(clip)]);
@@ -547,14 +786,17 @@ bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t dur
         c->transitionTick = 0;
         c->transitionDuration = durationTicks;
         c->transitionToTime = 0;
+        c->transitionToPhase = 0;
         return true;
     }
     c->currentState = stateIndex;
     c->stateTimeTicks = 0;
+    c->statePhase = 0;
     c->transitionTo = -1;
     c->transitionTick = 0;
     c->transitionDuration = 0;
     c->transitionToTime = 0;
+    c->transitionToPhase = 0;
     return true;
 }
 
@@ -591,7 +833,14 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
             }
             const SkinnedModel* mainModel = MainModelOf(world, driven_, models);
             const auto stateLength = [&](int32_t index) {
-                return ControllerStateLengthTicks(ctrl->states[static_cast<size_t>(index)], &clips, mainModel);
+                return ControllerStateLengthTicks(*ctrl, ctrl->states[static_cast<size_t>(index)], c->params, &clips,
+                                                  mainModel);
+            };
+            const auto phaseDelta = [&](int32_t index) {
+                return BlendPhaseDelta(*ctrl, ctrl->states[static_cast<size_t>(index)], c->params, mainModel);
+            };
+            const auto isBlend = [&](int32_t index) {
+                return ctrl->states[static_cast<size_t>(index)].blendType != ControllerBlendType::None;
             };
             const int32_t nStates = static_cast<int32_t>(ctrl->states.size());
             if (c->currentState < 0 || c->currentState >= nStates) {
@@ -608,9 +857,15 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                         continue;
                     }
                     if (t.hasExitTime) {
-                        const int32_t len = stateLength(c->currentState);
-                        if (!(len > 0 && c->stateTimeTicks >= len - 1)) {
-                            continue;
+                        if (isBlend(c->currentState)) {
+                            if (!BlendExitReached(c->statePhase, phaseDelta(c->currentState))) {
+                                continue;
+                            }
+                        } else {
+                            const int32_t len = stateLength(c->currentState);
+                            if (!(len > 0 && c->stateTimeTicks >= len - 1)) {
+                                continue;
+                            }
                         }
                     }
                     if (!AllConditionsMet(*ctrl, t, c->params)) {
@@ -621,6 +876,7 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                     c->transitionTick = 0;
                     c->transitionDuration = t.duration > 0 ? t.duration : 1;
                     c->transitionToTime = 0;
+                    c->transitionToPhase = 0;
                     break;
                 }
             }
@@ -647,24 +903,33 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
 
             // 3. 時刻を進める (骨クリップを持つステートは主 SkinnedMesh の骨クリップの長さで回す)
             AdvanceStateTime(c->stateTimeTicks, sa.speed, sa.loop, stateLength(c->currentState));
+            if (isBlend(c->currentState)) {
+                c->statePhase = AdvanceBlendPhase(c->statePhase, phaseDelta(c->currentState), sa.loop);
+            }
             if (c->transitionTo >= 0) {
                 const ControllerState& sb = ctrl->states[c->transitionTo];
                 AdvanceStateTime(c->transitionToTime, sb.speed, sb.loop, stateLength(c->transitionTo));
+                if (isBlend(c->transitionTo)) {
+                    c->transitionToPhase =
+                        AdvanceBlendPhase(c->transitionToPhase, phaseDelta(c->transitionTo), sb.loop);
+                }
                 ++c->transitionTick;
                 if (c->transitionTick >= c->transitionDuration) {
                     c->currentState = c->transitionTo;
                     c->stateTimeTicks = c->transitionToTime;
+                    c->statePhase = c->transitionToPhase;
                     c->transitionTo = -1;
                     c->transitionTick = 0;
                     c->transitionDuration = 0;
                     c->transitionToTime = 0;
+                    c->transitionToPhase = 0;
                 }
             }
 
             // 4. 骨のポーズプログラム (M89b)。進めた後の時刻で書く = 旧経路 (SkinningSystem が進めてから
             //    描画が読む) と同じ「その tick の終わりの姿勢」になる
             if (!driven_.empty()) {
-                SkeletalSource sources[2];
+                SkeletalSource sources[kMaxSkeletalSources];
                 const int32_t count = BuildSkeletalSources(*ctrl, *c, sources);
                 if (count > 0) {
                     for (EntityID m : driven_) {

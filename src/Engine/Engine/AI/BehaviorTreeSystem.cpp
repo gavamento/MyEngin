@@ -1179,11 +1179,13 @@ BtResult VisitSendEvent(RunCtx& c, int32_t index)
 }
 
 // ステートのクリップが 1 周するのにかかる tick 数。クリップが無い・長さ 0 は 0 (待つものが無い)。
-// 長さは Animator と同じ ControllerStateLengthTicks で引く (骨クリップなら主 SkinnedMesh のモデルの長さ、M89b)
-int32_t PlayLengthTicks(const RunCtx& c, const ControllerState& stateDef)
+// 長さは Animator と同じ ControllerStateLengthTicks で引く (骨クリップなら主 SkinnedMesh のモデルの長さ、M89b。
+// ブレンドツリーは入った tick のパラメータでの加重平均、M89d)
+int32_t PlayLengthTicks(const RunCtx& c, const ControllerAsset& controller, const ControllerState& stateDef,
+                        const int32_t* params)
 {
-    const int32_t length =
-        ControllerStateLengthTicks(stateDef, c.clips, MainSkinnedModel(c.world, c.inst.entity, c.skinnedModels));
+    const int32_t length = ControllerStateLengthTicks(controller, stateDef, params, c.clips,
+                                                      MainSkinnedModel(c.world, c.inst.entity, c.skinnedModels));
     if (length <= 0) {
         return 0;
     }
@@ -1218,7 +1220,8 @@ BtResult VisitPlayAnimation(RunCtx& c, int32_t index)
     if (node.params[btplayparam::kWaitForEnd].i == 0) {
         return BtResult::Success;
     }
-    const int32_t waitTicks = PlayLengthTicks(c, controller->states[static_cast<size_t>(stateIndex)]);
+    const int32_t waitTicks =
+        PlayLengthTicks(c, *controller, controller->states[static_cast<size_t>(stateIndex)], animator->params);
     if (waitTicks <= 0) {
         return BtResult::Success;
     }

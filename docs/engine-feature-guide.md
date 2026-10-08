@@ -167,7 +167,7 @@ SSAO、TAA、SSR は Deferred に依存します。TAA は履歴を利用する�
 
 ### アニメーション
 
-フィールド単位のキーフレームを tick で評価します。Linear / Step 補間、四元数補間、再生・ループを扱います。AnimatorController は状態・遷移・条件・Exit Time・遷移ブレンド・Any State を持ちます。パラメータは 16 個までで、`.controller.json` で int / float / bool / trigger の型を宣言します (trigger は条件に使った遷移が採用されると下ります)。スクリプトからは ABI v28 の `AnimatorSetFloat` などで名前を指定して書きます。任意のカーブ編集や高度なブレンドツリーがあるとは説明しません。
+フィールド単位のキーフレームを tick で評価します。Linear / Step 補間、四元数補間、再生・ループを扱います。AnimatorController は状態・遷移・条件・Exit Time・遷移ブレンド・Any State を持ちます。パラメータは 16 個までで、`.controller.json` で int / float / bool / trigger の型を宣言します (trigger は条件に使った遷移が採用されると下ります)。スクリプトからは ABI v28 の `AnimatorSetFloat` などで名前を指定して書きます。骨クリップのステートは 1D ブレンドツリー (パラメータ 1 個の値で隣り合う 2 本を混ぜ、長さの違うクリップを同じ位相で進める) にできます。任意のカーブ編集や 2D ブレンドツリーがあるとは説明しません。
 
 スキンメッシュではスケルトンと骨行列によってメッシュを変形します。PartFollow で骨に部位を追従させ、ラグドールでは剛体から骨を逆駆動する経路があります。
 
