@@ -1,7 +1,7 @@
 # sub-10: review-1 の指摘を直す (統計の読み戻しの待ち、カット直後の LOD の画素差、小さい残り)
 
 - 依存: sub-08 (全サブのコミット後)
-- 状態: OK (コミット待ち)
+- 状態: OK (commit 9905ede)
 - 往復: 1
 - 出所: `plans/m90-render-optimization/review-1.md` の #1 #2 #4 #5 #6 #7 (coder 宛て)。#3 (planner 宛て) は下の「既定 ON の判断」に従う。
 

@@ -3,7 +3,7 @@
 - 依頼原文: メッシュ LOD と GPU オクルージョンカリング (Hi-Z を流用)などの軽量化手法をエンジンに実装したい。
 マルチスレッドなどのほかの軽量化なども
 - 開始: 2026-10-09 / 基点コミット: 3b30251c082095ae900a55eecf88ac9c4834c8d2
-- フェーズ: レビュー
+- フェーズ: 完了
 
 ## ユーザー判断 (策定前の AskUserQuestion、2026-10-09)
 - 範囲: 計測の土台 / メッシュ LOD / GPU オクルージョン / 影とスキンのカリング (全部)
@@ -27,12 +27,13 @@
 | sub-07 sim 並列化 (ADR-028) | OK | 2 | 3935904 | FootIk は並列化せず (ForEachArchetype 並行不可) |
 | sub-09 オクルージョン ON/OFF をプロジェクト設定に保存 | OK | 1 | 141885c | 依存 06 (2026-10-09 ユーザー要求で新規)。メニューの保存経路とツールチップは目視待ち |
 | sub-08 文書 + 全体検証 (ADR-029) | OK | 1 | be31dbd | 依存 03,06,07,09 |
-| sub-10 review-1 の修正 | OK | 1 | (このコミット) | 依存 08 (review-1 #1 #2 #4〜#7)。#2 は z-fight と断定し許容 |
+| sub-10 review-1 の修正 | OK | 1 | 9905ede | 依存 08 (review-1 #1 #2 #4〜#7)。#2 は z-fight と断定し許容 |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
 | 1 | FAIL | 3/3/4/3 | major 2 (#1 統計読み戻しの Map 待ち、#2 カット時 LOD 交線 11 画素)、minor 5 |
+| 2 | PASS | 4/4/4/4 | minor 2 (対話モードの cpuMs を出す口なし、TagSelfTest.cpp:304 の C4456) |
 
 順序: 01 → 02 → 03 → 04 → 05 → 06 → 07 → 09 → 08 (RenderSystem.cpp の同じ関数を触るので逐次)
 
@@ -53,3 +54,5 @@
 - (planner 2026-10-09、sub-09 VERDICT) should: EngineCliSelfTest は EngineLoop の `Load && cli` を書き写しているので、`ResolveOcclusionCulling(assetsRoot, cliFlag)` に出して共有するのが望ましい (本体の配線は Runtime dump で確認済み)。nit: TagNames.h の冒頭コメントが rendering.occlusionCulling を反映していない。エディタのメニュー保存経路 (scmhint::Changed 含む) とツールチップは未実走・目視待ち。--no-occlusion 起動中にメニューで選んだ値は保存される (CLI は起動中だけの上書き) — ADR-029 / engine_spec に書く。
 - (planner 2026-10-10、sub-08 VERDICT nit) `Menu_Occlusion` のラベル (LocalizationTable.inl:88) に「(Deferred)」が残る。sub-09 の should (`ResolveOcclusionCulling` 共有) と nit (TagNames.h 冒頭コメント) が未対応。目視待ち一覧は docs/test_checklists.md の M90 節。ON が不利なシーン (draw 千単位・メッシュ/材質ばらばら) は project_settings で OFF を案内、自動 OFF は後回し (spec §8)。ServerNet 一過性 FAIL は M90 と別件 (基点 3 回・HEAD 1 回とも PASS、CrashRoot 固定パスの取り合い仮説)。
 - (planner 2026-10-10、sub-10 VERDICT) review-1 #3: 修正後の既定 bench 1080p 実 GPU 10 回中央値で CPU 提出の増分 +0.064 ms (基準 0.5 ms 以下) → 既定 ON 継続、ユーザーに聞かない。#2 はカット時の z-fight (描画順) と断定し許容、カメラカットの口は足さない (ADR-029 §3-6)。nit: TagSelfTest.cpp:304 の C4456 (M90h 由来)、対話モードの CPU 提出時間を直接測る手段なし、LOD 付きテストの変異テスト未実施。
+- (review-2 PASS、2026-10-10) 残った minor: 対話 (DO_NOT_WAIT) 経路の cpuMs を出す手段なし (次に計測の口を触るとき検討)、TagSelfTest.cpp:304 の C4456 (変数名を変える)。既知の別件: Debug だけ知覚の並列が遅い、ServerNetSelfTest の一過性 FAIL、実 GPU の 51 画素揺れ。
+- 目視待ち (docs/test_checklists.md の M90 節): ProfilerWindow の新欄 / Rendering メニューのオクルージョン切替・保存・再起動後の保持・ツールチップ両言語 / Scene+Game 同時表示の統計と姿勢 / LOD のポップと法線・UV / URO のカクつき距離 / Inspector の LOD 設定 UI / --hzb-debug-max の見た目。
