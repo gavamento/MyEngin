@@ -209,6 +209,7 @@ tick の順序は `src\Engine\Engine\Loop\TickRunner.cpp:211` の `RunOneTick` (
 - (sub-04 で判明) スキンの保守的 AABB は実アセットでバインド高の 2.4〜2.9 倍と緩い (余白 = 最長辺の半分、根拠は IK / ブレンドの安全側で実測ではない)。画面端の判定が甘いだけで正しさには影響しない。詰めるのは計測で効果が見えてから (後回し)。
 - (sub-04 で判明) スキンは GPU オクルージョンの判定箱に載せない (常にフェーズ 1 で描く) を M90 の間は維持する。保守的 AABB を載せれば判定できるが、箱が IK で外へ出たときの欠けは影より目立つ。M90 の範囲外 (後回し)。
 - リスク: FootIk の `RaycastWorld` が並行読みで安全か未確認 (sub-07 で確認。駄目なら IK は外す)。
+  - (sub-07 で判明) 安全ではない: `RaycastWorld` は内部で `World::ForEachArchetype` を呼び、これは `iterationDepth_` の非アトミックな増減と `queryCache_` の充填をする。FootIk は外した (TwoBoneIk は並列)。**並列段で World を走査しない** (ADR-028)。IK と PartFollow の並列経路は replay のシーンに入らない (IK を含むシーンが無い / parts デモが小さく並列経路に入らない)。そのため SimParallelSelfTest (200 体、毎 tick ハッシュ) で押さえる。実シーンの A/B に入れるデモの追加は golden に響くので、M90 では足さない (後回し)。
 - 番号: ABI v28 / TypeId 80 / SimSnapshot v48 / kCookVersion 5 / ADR-027 (2026-10-09 に `EngineAPI.h:50`、`SimSnapshot.h:140`、`CookedCache.h:38`、`docs\adr\` で確認)。M90 は ABI・TypeId・snapshot を使わないので M75h の ABI v29 予定と衝突しない。使うのは kCookVersion 6、ADR-028 / 029。
 - Unity / UE の既存実装は記憶による照合で、一次資料 (公式ドキュメント) は planner の環境に Web が無く未確認。方式の根拠に効くのは「LOD はアセット単位のオプトインで段ごとの screen-size」(UE Static Mesh LOD / Unity 6 Mesh LOD)、「GPU 駆動のオクルージョンは 2 パス」(Nanite / Unity 6 GPU occlusion culling)、「URO は見た目だけ」(UE)。sub-02 / sub-05 の coder は着手時に公式ドキュメントで裏を取り、食い違えば「不安・質問」に出す。
 
@@ -243,3 +244,4 @@ tick の順序は `src\Engine\Engine\Loop\TickRunner.cpp:211` の `RunOneTick` (
 - 2026-10-09 ユーザー (sub-06 VERDICT の [聞] 2 件、司会経由):
   - オクルージョン: 「既定 ON で、設定で ON/OFF を切り替えられるように」。既存の口 (Rendering メニュー `Menu_Occlusion`、CLI `--no-occlusion`) はどちらも保存されず、ビルド後の Runtime には CLI しか無いので、要求を満たさないと判断した。RT のタグ規則 (`rayTracingTags`) の前例に合わせ、`project_settings.json` へ保存するサブ sub-09 を新設した (§4.1.4 / §4.3 / §6)。sub-08 の依存に sub-09 を足し、コミットの記号を M90h → M90i にずらした。プレイヤー向けのオプション画面と GameLogic の API は範囲外 (ABI を上げない、§2 #16)。
   - URO の描画履歴への依存: 「許す」。§7 の `[聞]` を確定に直した。
+- 2026-10-09 sub-07 round 1 (coder SELF_EVAL / planner VERDICT): FootIk を外したこと、IK / PartFollow の並列の被覆を selftest で持つことを §7 に記録した。Perception の視線コライダー表は、§4.1.7 どおり並列段の前に直列で確定させる (coder の `call_once` 案は採らない。並列段で World を走査するため)。

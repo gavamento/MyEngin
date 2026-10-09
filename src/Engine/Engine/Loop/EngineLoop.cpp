@@ -2841,6 +2841,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                              player.unverifiedTicks > 0
                                  ? " (plus in-flight tick(s) with no expected hash - crash bundle)"
                                  : "");
+                // ワーカーが実際に仕事をしたかの観測 (--no-jobs なら 0 / 0)。検証の合否には使わない
+                const jobs::JobSystem::Stats jobStats = jobs::System().GetStats();
+                MYE_LOG_INFO("[jobs] parallel batches %llu, chunks run by workers %llu",
+                             static_cast<unsigned long long>(jobStats.parallelBatches),
+                             static_cast<unsigned long long>(jobStats.workerChunks));
             } else {
                 MYE_LOG_ERROR("[replay] VERIFY FAIL: %s (verified %llu ticks)", verifyFailReason.c_str(),
                               static_cast<unsigned long long>(player.verifiedTicks));

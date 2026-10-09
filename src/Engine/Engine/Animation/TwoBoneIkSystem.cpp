@@ -7,12 +7,14 @@
 
 #include <cstring>
 #include <string_view>
+#include <vector>
 
 #include <DirectXMath.h>
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Core/Jobs/JobSystem.h"
 #include "Engine/Renderer/Device/GpuResources.h"
 #include "Engine/Renderer/Mesh/Skeleton.h"
 
@@ -37,6 +39,9 @@ XMMATRIX LocalChainWorldMatrix(World& world, EntityID entity)
 }
 
 namespace {
+
+// 並列化の最小単位 (SkinnedMesh の数)。1 体ぶんは行列の逆と鎖数本で軽い
+constexpr size_t kIkGrain = 64;
 
 // 鎖の目標 (位置と回転) をメッシュのエンティティ空間で。目標のエンティティが無い / 消えていればワールドの値
 void ResolveGoal(World& world, const TwoBoneIKComponent::Chain& chain, const XMMATRIX& worldToMesh,
@@ -71,12 +76,28 @@ void ResolveGoal(World& world, const TwoBoneIKComponent::Chain& chain, const XMM
 
 void TwoBoneIkSystem::Update(World& world, const RenderResources& resources)
 {
+    // 段 1 (直列): 対象の収集。アーキタイプの走査は World の内部状態 (反復の深さ・クエリキャッシュ) を
+    // 触るので並列段へ持ち込まない
+    struct Item {
+        SkinnedMeshComponent* sm;
+        EntityID entity;
+        uint32_t missingJointMask; // 先端ジョイントが見つからなかった鎖 (bit = 鎖の番号)。WARN は段 3 で出す
+    };
+    std::vector<Item> items;
     const ComponentTypeId req[] = { SkinnedMeshComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
         const int si = arch.FindTypeIndex(SkinnedMeshComponent::sTypeId);
         for (uint32_t row = 0; row < arch.Count(); ++row) {
-            auto* sm = static_cast<SkinnedMeshComponent*>(arch.GetPtr(si, row));
-            const EntityID e = arch.EntityAt(row);
+            items.push_back({ static_cast<SkinnedMeshComponent*>(arch.GetPtr(si, row)), arch.EntityAt(row), 0u });
+        }
+    });
+
+    // 段 2 (並列): 書くのは自分の SkinnedMesh.poseIk だけ。読むのは LocalTransform の連鎖と不変データ
+    jobs::System().ParallelRanges(items.size(), kIkGrain, [&](size_t begin, size_t end) {
+        for (size_t n = begin; n < end; ++n) {
+            Item& item = items[n];
+            SkinnedMeshComponent* sm = item.sm;
+            const EntityID e = item.entity;
             // 書かない本数ぶんも既定値へ戻す (snapshot の生バイトを入力だけで決まる形にしておく)
             sm->poseIkCount = 0;
             for (SkinnedMeshComponent::PoseIkChain& c : sm->poseIk) {
@@ -106,10 +127,7 @@ void TwoBoneIkSystem::Update(World& world, const RenderResources& resources)
                 const std::string_view name(chain.endJoint, strnlen(chain.endJoint, sizeof(chain.endJoint)));
                 const int32_t joint = model->FindJointByName(name);
                 if (joint < 0) {
-                    if (warned_.insert((uint64_t(e.index) << 8) | uint64_t(i)).second) {
-                        MYE_LOG_WARN("[ik] '%s': chain %d end joint '%.*s' not found in the skinned model",
-                                     world.GetName(e), i, static_cast<int>(name.size()), name.data());
-                    }
+                    item.missingJointMask |= 1u << i;
                     continue;
                 }
                 SkinnedMeshComponent::PoseIkChain& out = sm->poseIk[sm->poseIkCount++];
@@ -125,6 +143,25 @@ void TwoBoneIkSystem::Update(World& world, const RenderResources& resources)
             }
         }
     });
+
+    // 段 3 (直列): WARN と警告済み表は収集順 (= 従来の走査順) に反映する
+    for (const Item& item : items) {
+        if (item.missingJointMask == 0u) {
+            continue;
+        }
+        const TwoBoneIKComponent* ik = world.GetComponent<TwoBoneIKComponent>(item.entity);
+        for (int32_t i = 0; i < kMaxTwoBoneIkChains; ++i) {
+            if ((item.missingJointMask & (1u << i)) == 0u) {
+                continue;
+            }
+            if (warned_.insert((uint64_t(item.entity.index) << 8) | uint64_t(i)).second) {
+                const char* endJoint = ik->chains[i].endJoint;
+                const int nameLength = static_cast<int>(strnlen(endJoint, sizeof(ik->chains[i].endJoint)));
+                MYE_LOG_WARN("[ik] '%s': chain %d end joint '%.*s' not found in the skinned model",
+                             world.GetName(item.entity), i, nameLength, endJoint);
+            }
+        }
+    }
     foot_.Update(world, resources);
 }
 

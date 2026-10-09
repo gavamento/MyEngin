@@ -7,6 +7,7 @@
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Core/Jobs/JobSystem.h"
 #include "Engine/Engine/Particles/ParticleCurves.h"
 #include "Engine/Platform/Clock.h"
 #include "Engine/Renderer/Device/GpuResources.h"
@@ -17,6 +18,9 @@ using namespace DirectX;
 
 namespace mye {
 namespace {
+
+// 並列化するプール数の下限の単位 (これ以下は直列と同じ経路)
+constexpr size_t kPoolGrain = 2;
 
 struct ParticleInstance {
     XMFLOAT3 pos;
@@ -242,7 +246,7 @@ void CpuParticleBackend::SyncEmitters(World& world)
 
 void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterComponent& desc,
                                        const XMFLOAT3& origin, const ParticleEmitBasis& basis,
-                                       float dt)
+                                       float dt) const
 {
     // 放出計画 (playing/duration/loop/burst)。ageTicks/emitAccum を進める。
     // 既定エミッタ (duration=0, burst=0) では従来の emitAccum ロジックとビット同一に縮退する。
@@ -388,17 +392,18 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
 }
 
 void CpuParticleBackend::SimulateScalar(EmitterPool& pool, const XMFLOAT3& accel, float dt,
-                                        uint32_t begin, uint32_t end)
+                                        const TurbulenceParams& tp, uint32_t begin,
+                                        uint32_t end) const
 {
     // SIMD 本体とレーン毎に同一の演算列 (mul→add の順) — 結果はビット一致する
-    const float turb = turb_;
+    const float turb = tp.turb;
     // M61d: turbulenceMode=1 は位置ベースのカールノイズ場を加速度に使う。専用ループに分離し、
     // mode=0 の既存ループは 1 命令も変えない (既定エミッタのビット保存)。ノイズは位置と時間の
     // 純関数で pool.rng を消費しない — RNG 消費列は放出経路のまま不変。
     // このモードのプールは Simulate が常にスカラー経路へ落とすので SIMD 側の対応は不要
-    if (turbMode_ == 1) {
-        const float freq = noiseFreq_;
-        const float t = noiseTime_ * noiseSpeed_;
+    if (tp.mode == 1) {
+        const float freq = tp.noiseFreq;
+        const float t = tp.noiseTime * tp.noiseSpeed;
         for (uint32_t i = begin; i < end; ++i) {
             const DirectX::XMFLOAT3 curl = EvalCurlNoise(
                 { pool.px[i] * freq, pool.py[i] * freq, pool.pz[i] * freq }, t);
@@ -429,7 +434,8 @@ void CpuParticleBackend::SimulateScalar(EmitterPool& pool, const XMFLOAT3& accel
     }
 }
 
-void CpuParticleBackend::Simulate(EmitterPool& pool, const ParticleEmitterComponent& desc, float dt)
+void CpuParticleBackend::Simulate(EmitterPool& pool, const ParticleEmitterComponent& desc,
+                                  float dt) const
 {
     // M61g: simulationSpace=1 (ローカル) でも力場は一切変換しない — gravity/wind も
     // 渦/カールノイズも**ローカル系のベクトル/場として解釈する** (v1 仕様。エミッタが
@@ -437,21 +443,22 @@ void CpuParticleBackend::Simulate(EmitterPool& pool, const ParticleEmitterCompon
     // ワールド空間 (既定) の演算列はビット不変
     const XMFLOAT3 accel = { desc.gravity.x + desc.wind.x, desc.gravity.y + desc.wind.y,
                              desc.gravity.z + desc.wind.z };
-    turb_ = desc.turbulence;
+    TurbulenceParams tp;
+    tp.turb = desc.turbulence;
     // M61d: カールノイズ乱流のパラメータ (SimulateScalar が読む)。時間は pool.ageTicks 由来 —
     // EmitParticles の PlanParticleEmission が進めた後の値で、GPU 側 (Update の CB 充填) も
     // 同じ「Plan 後の ageTicks」を見る = パリティ一致。looping でウィンドウが巻き戻ると
     // ノイズ時間も巻き戻るが、sim 状態のみ由来なので決定論は保たれる
-    turbMode_ = desc.turbulenceMode;
-    noiseFreq_ = desc.noiseFrequency;
-    noiseSpeed_ = desc.noiseSpeed;
-    noiseTime_ = static_cast<float>(pool.ageTicks) * dt;
+    tp.mode = desc.turbulenceMode;
+    tp.noiseFreq = desc.noiseFrequency;
+    tp.noiseSpeed = desc.noiseSpeed;
+    tp.noiseTime = static_cast<float>(pool.ageTicks) * dt;
 
     // M61d: mode=1 はノイズ評価が粒子ごとの散在格子参照になり 4-wide 化しないため、プール単位で
     // スカラー経路へ落とす。desc 由来の分岐 = 全ビルド/全機種で同一判定 = 決定論 OK。
     // mode=0 は従来どおり SIMD (ビット不変)
     if (!simd_ || pool.alive < 8 || desc.turbulenceMode == 1) {
-        SimulateScalar(pool, accel, dt, 0, pool.alive);
+        SimulateScalar(pool, accel, dt, tp, 0, pool.alive);
         return;
     }
 
@@ -460,7 +467,7 @@ void CpuParticleBackend::Simulate(EmitterPool& pool, const ParticleEmitterCompon
     const __m128 gx4 = _mm_set1_ps(accel.x);
     const __m128 gy4 = _mm_set1_ps(accel.y);
     const __m128 gz4 = _mm_set1_ps(accel.z);
-    const __m128 turb4 = _mm_set1_ps(turb_);
+    const __m128 turb4 = _mm_set1_ps(tp.turb);
     const __m128 zero = _mm_setzero_ps();
 
     for (uint32_t i = 0; i < simdCount; i += 4) {
@@ -492,10 +499,10 @@ void CpuParticleBackend::Simulate(EmitterPool& pool, const ParticleEmitterCompon
         __m128 life4 = _mm_loadu_ps(&pool.life[i]);
         _mm_storeu_ps(&pool.life[i], _mm_sub_ps(life4, dt4));
     }
-    SimulateScalar(pool, accel, dt, simdCount, pool.alive); // 端数レーン
+    SimulateScalar(pool, accel, dt, tp, simdCount, pool.alive); // 端数レーン
 }
 
-void CpuParticleBackend::KillDead(EmitterPool& pool)
+void CpuParticleBackend::KillDead(EmitterPool& pool) const
 {
     uint32_t i = 0;
     while (i < pool.alive) {
@@ -523,6 +530,78 @@ void CpuParticleBackend::KillDead(EmitterPool& pool)
     }
 }
 
+void CpuParticleBackend::StepPool(EmitterPool& pool, const ParticleEmitterComponent& desc,
+                                  const XMFLOAT4X4& worldMatrix, float dt) const
+{
+    pool.descCache = desc; // 描画時に World を引かないためのコピー
+    // M61g: renderWorld は descCache と同じ「Render で World を引かないためのキャッシュ」
+    // (ハッシュ/スナップショット非対象)。simulationSpace=1 のプールだけが描画変換に使うが、
+    // 実行中の空間切り替えで即座に有効になるよう常時コピーする
+    pool.renderWorld = worldMatrix;
+    // M61g: ローカルシミュレーション空間 (simulationSpace=1) は SoA (px..vz) を
+    // エミッタのローカル系で保持する — 放出原点は常に (0,0,0) で、エミッタの移動・回転は
+    // sim に一切入らず、描画時の renderWorld 変換で全生存粒子が剛体追従する。
+    // prevOrigin 履歴もローカル原点で更新される (下の履歴更新は同じ origin 変数を使う) ため、
+    // サブフレーム補間の位置補間は自然に消え、部分 tick 前進だけがローカル座標で効く。
+    // ★実行中に simulationSpace を切り替えると生存粒子の座標解釈が変わって絵が跳ぶ — 仕様
+    //   (移行処理は書かない。切り替え直後の 1 tick は prevOrigin も旧空間の値のまま)
+    const bool localSpace = ParticleIsLocalSpace(desc);
+    const XMFLOAT3 origin = localSpace
+                                ? XMFLOAT3{ 0.0f, 0.0f, 0.0f }
+                                : XMFLOAT3{ worldMatrix._41, worldMatrix._42, worldMatrix._43 };
+    // M61b: 上 3x3 (回転*スケール) を放出に適用する。9 成分が厳密に恒等なら
+    // EmitParticles 内で従来経路に縮退 = 既存コンテンツのビット保存
+    // (M61g: ローカル空間は非恒等でも EmitParticles 内でスキップされる)
+    const ParticleEmitBasis basis = MakeParticleEmitBasis(worldMatrix);
+
+    // M61e: プリウォーム — プール誕生 tick (prewarmed==0 はここでしか真にならない) に、
+    // prewarmTime 秒ぶんの {放出→積分→消滅} を通常処理の前へ同一 tick 内で先回しする。
+    // origin は現在値固定 (prevOriginValid==0 のままなので M61c の補間・速度継承も
+    // 自然に無効 = 速度 0 扱い)。rng/ageTicks/emitAccum は普通に進む = sim 状態として
+    // ハッシュに乗り、どのビルドでも同じ回数だけ回るので決定論は保たれる。上限 600 tick
+    // (10 秒 @60Hz) は誤設定の巨大値が 1 tick を丸ごと食い潰す暴走ガード。snapshot 復元後は
+    // prewarmed==1 ごと復元されるため再トリガしない (selftest M61e 節で確認)。
+    // GPU 側 (RunEmitterTick) も同じ上限・同じ順序で先回しする
+    if (pool.prewarmed == 0 && desc.prewarmTime > 0.0f && desc.playing) {
+        const int prewarmTicks = std::min(600, static_cast<int>(desc.prewarmTime / dt));
+        for (int step = 0; step < prewarmTicks; ++step) {
+            EmitParticles(pool, desc, origin, basis, dt);
+            Simulate(pool, desc, dt);
+            KillDead(pool);
+        }
+    }
+
+    EmitParticles(pool, desc, origin, basis, dt);
+    Simulate(pool, desc, dt);
+    KillDead(pool);
+
+    // 描画専用バウンズ (ハッシュ非対象)。シム更新自体は可視性でスキップしない —
+    // プールはワールドハッシュ対象なので、更新カリングは即決定論違反になる
+    // (ParticlePoolVisible のコメント参照)。O(alive) の min/max 走査のみで分岐なし
+    pool.boundsValid = (pool.alive > 0);
+    if (pool.boundsValid) {
+        float mnx = pool.px[0], mxx = pool.px[0];
+        float mny = pool.py[0], mxy = pool.py[0];
+        float mnz = pool.pz[0], mxz = pool.pz[0];
+        float msz = pool.size0[0];
+        for (uint32_t i = 1; i < pool.alive; ++i) {
+            mnx = std::min(mnx, pool.px[i]); mxx = std::max(mxx, pool.px[i]);
+            mny = std::min(mny, pool.py[i]); mxy = std::max(mxy, pool.py[i]);
+            mnz = std::min(mnz, pool.pz[i]); mxz = std::max(mxz, pool.pz[i]);
+            msz = std::max(msz, pool.size0[i]);
+        }
+        pool.boundsMin = { mnx, mny, mnz };
+        pool.boundsMax = { mxx, mxy, mxz };
+        pool.maxSize0 = msz;
+    }
+
+    // M61a: 次 tick のための原点履歴 (消費は M61b/c: サブフレーム補間と速度継承)。
+    // prewarmed はプール誕生 tick の検出用 — ここで立てる前 (= 初回 Update の冒頭) だけ 0
+    pool.prevOrigin = origin;
+    pool.prevOriginValid = 1;
+    pool.prewarmed = 1;
+}
+
 void CpuParticleBackend::Update(World& world, float dt)
 {
     Clock timer;
@@ -530,6 +609,15 @@ void CpuParticleBackend::Update(World& world, float dt)
 
     SyncEmitters(world);
 
+    // 段 1 (直列): World を引く処理 (GetComponent / IsEntityActive) と凍結の判定をここで済ませる。
+    // 段 2 (並列) のワーカーは World に触らず、自分のプールだけを書く
+    struct PoolStep {
+        EmitterPool* pool;
+        const ParticleEmitterComponent* desc;
+        const XMFLOAT4X4* worldMatrix;
+    };
+    std::vector<PoolStep> steps;
+    steps.reserve(pools_.size());
     uint32_t aliveTotal = 0;
     for (EmitterPool& pool : pools_) {
         const auto* desc = world.GetComponent<ParticleEmitterComponent>(pool.owner);
@@ -549,75 +637,18 @@ void CpuParticleBackend::Update(World& world, float dt)
             aliveTotal += pool.alive; // 粒子は保持されたまま止まっている (統計は表示専用)
             continue;
         }
+        steps.push_back({ &pool, desc, &wm->value });
+    }
 
-        pool.descCache = *desc; // 描画時に World を引かないためのコピー
-        // M61g: renderWorld は descCache と同じ「Render で World を引かないためのキャッシュ」
-        // (ハッシュ/スナップショット非対象)。simulationSpace=1 のプールだけが描画変換に使うが、
-        // 実行中の空間切り替えで即座に有効になるよう常時コピーする
-        pool.renderWorld = wm->value;
-        // M61g: ローカルシミュレーション空間 (simulationSpace=1) は SoA (px..vz) を
-        // エミッタのローカル系で保持する — 放出原点は常に (0,0,0) で、エミッタの移動・回転は
-        // sim に一切入らず、描画時の renderWorld 変換で全生存粒子が剛体追従する。
-        // prevOrigin 履歴もローカル原点で更新される (下の履歴更新は同じ origin 変数を使う) ため、
-        // サブフレーム補間の位置補間は自然に消え、部分 tick 前進だけがローカル座標で効く。
-        // ★実行中に simulationSpace を切り替えると生存粒子の座標解釈が変わって絵が跳ぶ — 仕様
-        //   (移行処理は書かない。切り替え直後の 1 tick は prevOrigin も旧空間の値のまま)
-        const bool localSpace = ParticleIsLocalSpace(*desc);
-        const XMFLOAT3 origin = localSpace
-                                    ? XMFLOAT3{ 0.0f, 0.0f, 0.0f }
-                                    : XMFLOAT3{ wm->value._41, wm->value._42, wm->value._43 };
-        // M61b: 上 3x3 (回転*スケール) を放出に適用する。9 成分が厳密に恒等なら
-        // EmitParticles 内で従来経路に縮退 = 既存コンテンツのビット保存
-        // (M61g: ローカル空間は非恒等でも EmitParticles 内でスキップされる)
-        const ParticleEmitBasis basis = MakeParticleEmitBasis(wm->value);
-
-        // M61e: プリウォーム — プール誕生 tick (prewarmed==0 はここでしか真にならない) に、
-        // prewarmTime 秒ぶんの {放出→積分→消滅} を通常処理の前へ同一 tick 内で先回しする。
-        // origin は現在値固定 (prevOriginValid==0 のままなので M61c の補間・速度継承も
-        // 自然に無効 = 速度 0 扱い)。rng/ageTicks/emitAccum は普通に進む = sim 状態として
-        // ハッシュに乗り、どのビルドでも同じ回数だけ回るので決定論は保たれる。上限 600 tick
-        // (10 秒 @60Hz) は誤設定の巨大値が 1 tick を丸ごと食い潰す暴走ガード。snapshot 復元後は
-        // prewarmed==1 ごと復元されるため再トリガしない (selftest M61e 節で確認)。
-        // GPU 側 (RunEmitterTick) も同じ上限・同じ順序で先回しする
-        if (pool.prewarmed == 0 && desc->prewarmTime > 0.0f && desc->playing) {
-            const int prewarmTicks = std::min(600, static_cast<int>(desc->prewarmTime / dt));
-            for (int step = 0; step < prewarmTicks; ++step) {
-                EmitParticles(pool, *desc, origin, basis, dt);
-                Simulate(pool, *desc, dt);
-                KillDead(pool);
-            }
+    // プールは互いに独立 (RNG もプールごと、書くのは自分の SoA だけ)。結果はワーカー数に依存しない
+    jobs::System().ParallelRanges(steps.size(), kPoolGrain, [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            StepPool(*steps[i].pool, *steps[i].desc, *steps[i].worldMatrix, dt);
         }
-
-        EmitParticles(pool, *desc, origin, basis, dt);
-        Simulate(pool, *desc, dt);
-        KillDead(pool);
-
-        // 描画専用バウンズ (ハッシュ非対象)。シム更新自体は可視性でスキップしない —
-        // プールはワールドハッシュ対象なので、更新カリングは即決定論違反になる
-        // (ParticlePoolVisible のコメント参照)。O(alive) の min/max 走査のみで分岐なし
-        pool.boundsValid = (pool.alive > 0);
-        if (pool.boundsValid) {
-            float mnx = pool.px[0], mxx = pool.px[0];
-            float mny = pool.py[0], mxy = pool.py[0];
-            float mnz = pool.pz[0], mxz = pool.pz[0];
-            float msz = pool.size0[0];
-            for (uint32_t i = 1; i < pool.alive; ++i) {
-                mnx = std::min(mnx, pool.px[i]); mxx = std::max(mxx, pool.px[i]);
-                mny = std::min(mny, pool.py[i]); mxy = std::max(mxy, pool.py[i]);
-                mnz = std::min(mnz, pool.pz[i]); mxz = std::max(mxz, pool.pz[i]);
-                msz = std::max(msz, pool.size0[i]);
-            }
-            pool.boundsMin = { mnx, mny, mnz };
-            pool.boundsMax = { mxx, mxy, mxz };
-            pool.maxSize0 = msz;
-        }
-        aliveTotal += pool.alive;
-
-        // M61a: 次 tick のための原点履歴 (消費は M61b/c: サブフレーム補間と速度継承)。
-        // prewarmed はプール誕生 tick の検出用 — ここで立てる前 (= 初回 Update の冒頭) だけ 0
-        pool.prevOrigin = origin;
-        pool.prevOriginValid = 1;
-        pool.prewarmed = 1;
+    });
+    // 合算は pools_ (owner.index 昇順) の順
+    for (const PoolStep& step : steps) {
+        aliveTotal += step.pool->alive;
     }
 
     stats_.aliveTotal = aliveTotal;

@@ -522,6 +522,9 @@
     <ClCompile Include="..\src\Engine\Engine\Loop\SimInit.cpp">
       <Filter>Engine\Loop</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Loop\SimParallelSelfTest.cpp">
+      <Filter>Engine\Loop</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Loop\TickRunner.cpp">
       <Filter>Engine\Loop</Filter>
     </ClCompile>
@@ -1423,6 +1426,9 @@
       <Filter>Engine\Loop</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Loop\SimInit.h">
+      <Filter>Engine\Loop</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Loop\SimParallelSelfTest.h">
       <Filter>Engine\Loop</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Loop\TickInputs.h">

@@ -89,22 +89,28 @@ private:
     void SyncEmitters(World& world);
     // M61b: basis = ワールド行列の上 3x3 (回転*スケール)。恒等なら従来経路とビット同一
     void EmitParticles(EmitterPool& pool, const ParticleEmitterComponent& desc,
-                       const DirectX::XMFLOAT3& origin, const ParticleEmitBasis& basis, float dt);
-    void Simulate(EmitterPool& pool, const ParticleEmitterComponent& desc, float dt);
+                       const DirectX::XMFLOAT3& origin, const ParticleEmitBasis& basis, float dt) const;
+    // Simulate が組み、SimulateScalar が読む乱流のパラメータ。プールごとのローカル値で、
+    // メンバにしないのは StepPool をプール並列で走らせるため (共有 scratch を作らない)。
+    // noiseTime は pool.ageTicks * dt — sim 状態のみ由来で、実時間は絶対に混ぜない (決定論)
+    struct TurbulenceParams {
+        float turb = 0.0f;       // 渦の係数 (SIMD/スカラー共有)
+        int32_t mode = 0;        // 0=渦 (従来) 1=カールノイズ
+        float noiseFreq = 1.0f;
+        float noiseSpeed = 0.5f;
+        float noiseTime = 0.0f;
+    };
+    // 1 プールぶんの 1 tick (プリウォーム + 放出 + 積分 + 消滅 + バウンズ + 履歴)。
+    // 自分のプールと不変の入力だけを読み書きする = プール間で並列に呼べる
+    void StepPool(EmitterPool& pool, const ParticleEmitterComponent& desc,
+                  const DirectX::XMFLOAT4X4& worldMatrix, float dt) const;
+    void Simulate(EmitterPool& pool, const ParticleEmitterComponent& desc, float dt) const;
     void SimulateScalar(EmitterPool& pool, const DirectX::XMFLOAT3& accel, float dt,
-                        uint32_t begin, uint32_t end);
-    void KillDead(EmitterPool& pool);
+                        const TurbulenceParams& tp, uint32_t begin, uint32_t end) const;
+    void KillDead(EmitterPool& pool) const;
 
     std::vector<EmitterPool> pools_; // owner.index 昇順 (決定論)
     bool simd_ = true;
-    float turb_ = 0.0f; // Simulate 中の乱流係数 (SIMD/スカラー共有)
-    // M61d: カールノイズ乱流のパラメータ (turb_ と同じ「Simulate が設定し SimulateScalar が
-    // 読む」メンバ渡しパターン)。noiseTime_ は pool.ageTicks * dt — sim 状態のみ由来で、
-    // 実時間は絶対に混ぜない (決定論)
-    int32_t turbMode_ = 0;   // 0=渦 (従来) 1=カールノイズ
-    float noiseFreq_ = 1.0f;
-    float noiseSpeed_ = 0.5f;
-    float noiseTime_ = 0.0f;
     ParticleStats stats_;
     std::vector<uint32_t> orderScratch_; // 描画順ソート用 (描画専用)
     std::vector<uint8_t> visScratch_;    // プール毎の可視フラグ (Render 内のみ有効、描画専用)

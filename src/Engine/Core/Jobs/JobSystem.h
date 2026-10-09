@@ -21,6 +21,7 @@ namespace mye::jobs {
 //
 // 用途: TransformSystem (深度レベル毎)、フラスタムカリング等の「埋め込み並列」なシステムの広幅化。
 // sim 状態を書くレンジは互いに素な出力 (別エンティティ) であること。ネスト呼び出しは非対応。
+// sim の系を割ってよい条件と対象の一覧: docs\adr\ADR-028-sim-parallelism.md
 class JobSystem {
 public:
     void Init();     // ワーカー起動: min(16, cores-2)。0 以下なら直列専用
@@ -35,6 +36,17 @@ public:
 
     // [0,total) を連続レンジに分割し fn(begin,end) で並列処理する。戻り時 = 全完了。
     void ParallelRanges(size_t total, size_t grain, const std::function<void(size_t, size_t)>& fn);
+    // 実行の統計 (観測用。結果には効かない)。parallelBatches = ワーカーへ配った ParallelRanges の回数、
+    // workerChunks = そのうちワーカースレッドが処理した chunk 数 (呼出スレッドが処理した分は含まない)
+    struct Stats {
+        uint64_t parallelBatches = 0;
+        uint64_t workerChunks = 0;
+    };
+    Stats GetStats() const
+    {
+        return { parallelBatches_.load(std::memory_order_relaxed), workerChunks_.load(std::memory_order_relaxed) };
+    }
+
     // fn(i) を [0,total) で並列処理する (ParallelRanges の要素版ラッパ)。
     void ParallelFor(size_t total, size_t grain, const std::function<void(size_t)>& fn);
 
@@ -50,7 +62,7 @@ private:
     };
 
     void WorkerLoop();
-    void DrainChunks(const Batch& b); // バッチ b の chunk を CAS で消化
+    void DrainChunks(const Batch& b, bool onWorker); // バッチ b の chunk を CAS で消化
 
     std::vector<std::thread> workers_;
     std::mutex mutex_;
@@ -67,6 +79,8 @@ private:
     uint64_t batchGen_ = 0; // バッチ世代 (mutex_ 保護)
     bool stop_ = false;     // mutex_ 保護
     std::atomic<bool> enabled_{ true };
+    std::atomic<uint64_t> parallelBatches_{ 0 };
+    std::atomic<uint64_t> workerChunks_{ 0 };
 };
 
 // プロセス全体で共有する既定インスタンス (prof:: と同じ運用)。

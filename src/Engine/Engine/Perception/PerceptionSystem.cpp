@@ -12,6 +12,7 @@
 #include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Core/Jobs/JobSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Engine/Physics/Rigid/Shapes.h"
 
@@ -21,6 +22,8 @@ namespace {
 // 1 体が 1 tick に撃つ視線のレイの上限。距離と角度で絞った候補を近い順 (同距離はエンティティキー順) に撃ち、
 // 溢れた相手はその tick は見えない扱い。★時間ではなく件数で絞る = 機種によって結果が変わらない
 constexpr int kMaxLosRaysPerPerceiver = 16;
+// 並列化の最小単位 (知覚者数)。1 体ぶんが視線のレイ最大 16 本 x コライダー数で、それなりに重い
+constexpr size_t kPerceiverGrain = 2;
 // レイが相手の手前でこれ未満の距離に当たったものは遮蔽と見なさない (相手の表面ちょうどの数値誤差)
 constexpr float kLosEpsilon = 0.01f;
 // 接触の感覚: CharacterController どうしの水平距離が半径の和 + これ以下で、高さが重なれば触れている
@@ -558,16 +561,16 @@ void PerceptionSystem::Update(World& world, uint64_t tick, float dt, const std::
     }
 
     // ---- 視線を遮るコライダー (視覚の候補が出たときに 1 回だけ集める) ----
+    // World の走査 (ForEachArchetype) は並列段に持ち込めないので、視線の候補が出うる tick は直列段で集める。
+    // 条件は保守的 (視覚の知覚者がいて刺激がある)。実際にレイを撃ったかは並列段の後で見て stats_ に反映する
     std::vector<LosCollider> colliders;
-    bool collidersReady = false;
-    auto ensureColliders = [&]() {
-        if (collidersReady) {
-            return;
-        }
-        collidersReady = true;
+    bool anySight = false;
+    for (const Perceiver& p : perceivers) {
+        anySight = anySight || p.perception->sightEnabled;
+    }
+    if (anySight && !stimuli.empty()) {
         CollectLosColliders(world, colliders);
-        stats_.losColliders = static_cast<int>(colliders.size());
-    };
+    }
 
     // ---- 接触: 前の tick のソリッド接触 (キー = entity.index の対) を entity へ引く表 ----
     std::vector<std::pair<EntityID, EntityID>> touchPairs; // (触れた側の刺激源の持ち主, 触れられたコライダー)
@@ -601,175 +604,188 @@ void PerceptionSystem::Update(World& world, uint64_t tick, float dt, const std::
         }
     }
 
-    std::vector<SenseEvent> events;
-    std::vector<std::pair<float, int>> sightCandidates; // (距離, stimuli の添字)
-    std::vector<int> bestPriority(kMaxPercepts, 0);
-    for (Perceiver& p : perceivers) {
-        AIPerceptionComponent& perc = *p.perception;
-        int count = std::clamp(perc.perceivedCount, 0, kMaxPercepts);
-        for (int i = 0; i < count; ++i) {
-            perc.percepts[i].currentSenses = 0;
-        }
-        events.clear();
+    // 知覚者ごとに並列。各知覚者が書くのは自分の AIPerception だけで、他の知覚者・刺激源・
+    // コライダーは読み取りのみ。レイ数は知覚者ごとに数え、後段で添字順に合算する
+    std::vector<int> raysPerPerceiver(perceivers.size(), 0);
+    std::vector<uint8_t> firedRays(perceivers.size(), 0); // 知覚者がレイを撃つ段に入ったか
+    jobs::System().ParallelRanges(perceivers.size(), kPerceiverGrain, [&](size_t rangeBegin, size_t rangeEnd) {
+        std::vector<SenseEvent> events; // 以下の scratch はレンジごと (ワーカー間で共有しない)
+        std::vector<std::pair<float, int>> sightCandidates; // (距離, stimuli の添字)
+        std::vector<int> bestPriority(kMaxPercepts, 0);
+        for (size_t perceiverIndex = rangeBegin; perceiverIndex < rangeEnd; ++perceiverIndex) {
+            Perceiver& p = perceivers[perceiverIndex];
+            AIPerceptionComponent& perc = *p.perception;
+            int count = std::clamp(perc.perceivedCount, 0, kMaxPercepts);
+            for (int i = 0; i < count; ++i) {
+                perc.percepts[i].currentSenses = 0;
+            }
+            events.clear();
 
-        // ---- 視覚 ----
-        if (perc.sightEnabled && !stimuli.empty()) {
-            sightCandidates.clear();
-            for (int si = 0; si < static_cast<int>(stimuli.size()); ++si) {
-                const Stimulus& s = stimuli[si];
-                if (!s.source->sightEnabled || !Detects(world, p, s)) {
-                    continue;
+            // ---- 視覚 ----
+            if (perc.sightEnabled && !stimuli.empty()) {
+                sightCandidates.clear();
+                for (int si = 0; si < static_cast<int>(stimuli.size()); ++si) {
+                    const Stimulus& s = stimuli[si];
+                    if (!s.source->sightEnabled || !Detects(world, p, s)) {
+                        continue;
+                    }
+                    // 前の tick に見えていた相手は loseSightRadius まで追い続ける (UE の LoseSightRadius)
+                    const bool wasSeen = WasSeenLastTick(perc, s.entity, tick);
+                    float d = 0.0f;
+                    const int geometry = SightGeometry(perc, p, s, wasSeen, d);
+                    if (geometry == 2) {
+                        events.push_back({ s.entity, perceptionsense::kSight, s.point, SightStrength(perc, wasSeen, d) });
+                    } else if (geometry == 1) {
+                        sightCandidates.emplace_back(d, si);
+                    }
                 }
-                // 前の tick に見えていた相手は loseSightRadius まで追い続ける (UE の LoseSightRadius)
-                const bool wasSeen = WasSeenLastTick(perc, s.entity, tick);
-                float d = 0.0f;
-                const int geometry = SightGeometry(perc, p, s, wasSeen, d);
-                if (geometry == 2) {
-                    events.push_back({ s.entity, perceptionsense::kSight, s.point, SightStrength(perc, wasSeen, d) });
-                } else if (geometry == 1) {
-                    sightCandidates.emplace_back(d, si);
+                // 近い順 (同距離は stimuli の並び = エンティティキー順) に上限まで視線を確かめる
+                std::sort(sightCandidates.begin(), sightCandidates.end());
+                const int rays = std::min(static_cast<int>(sightCandidates.size()), kMaxLosRaysPerPerceiver);
+                if (rays > 0) {
+                    firedRays[perceiverIndex] = 1;
+                }
+                for (int k = 0; k < rays; ++k) {
+                    const float d = sightCandidates[k].first;
+                    const Stimulus& s = stimuli[sightCandidates[k].second];
+                    if (LineOfSight(world, colliders, p, s, d, perc.losLayerMask, raysPerPerceiver[perceiverIndex])) {
+                        events.push_back({ s.entity, perceptionsense::kSight, s.point,
+                                           SightStrength(perc, WasSeenLastTick(perc, s.entity, tick), d) });
+                    }
                 }
             }
-            // 近い順 (同距離は stimuli の並び = エンティティキー順) に上限まで視線を確かめる
-            std::sort(sightCandidates.begin(), sightCandidates.end());
-            const int rays = std::min(static_cast<int>(sightCandidates.size()), kMaxLosRaysPerPerceiver);
-            if (rays > 0) {
-                ensureColliders();
-            }
-            for (int k = 0; k < rays; ++k) {
-                const float d = sightCandidates[k].first;
-                const Stimulus& s = stimuli[sightCandidates[k].second];
-                if (LineOfSight(world, colliders, p, s, d, perc.losLayerMask, stats_.losRays)) {
-                    events.push_back({ s.entity, perceptionsense::kSight, s.point,
-                                       SightStrength(perc, WasSeenLastTick(perc, s.entity, tick), d) });
-                }
-            }
-        }
 
-        // ---- 聴覚 ----
-        if (perc.hearingEnabled) {
-            if (perc.hearingMode == hearingmode::kAcoustic) {
-                // 同じ tick に音響 (フェーズ 3.4) が耳へ配った音。★lastHeardTick == 0 は「まだ聞いていない」
-                if (p.ear != nullptr && p.ear->lastHeardTick != 0 && p.ear->lastHeardTick == tick
-                    && p.ear->lastLoudness >= perc.hearingThreshold) {
-                    const DirectX::XMFLOAT3& hp = p.ear->lastHeardPos;
-                    const float d = Length(hp.x - p.eye.x, hp.y - p.eye.y, hp.z - p.eye.z);
-                    EntityID src = p.ear->lastSourceEntity;
+            // ---- 聴覚 ----
+            if (perc.hearingEnabled) {
+                if (perc.hearingMode == hearingmode::kAcoustic) {
+                    // 同じ tick に音響 (フェーズ 3.4) が耳へ配った音。★lastHeardTick == 0 は「まだ聞いていない」
+                    if (p.ear != nullptr && p.ear->lastHeardTick != 0 && p.ear->lastHeardTick == tick
+                        && p.ear->lastLoudness >= perc.hearingThreshold) {
+                        const DirectX::XMFLOAT3& hp = p.ear->lastHeardPos;
+                        const float d = Length(hp.x - p.eye.x, hp.y - p.eye.y, hp.z - p.eye.z);
+                        EntityID src = p.ear->lastSourceEntity;
+                        if (!src.IsNull() && !world.IsAlive(src)) {
+                            src = kNullEntity;
+                        }
+                        const EntityID owner = src.IsNull() ? kNullEntity : FindStimulusOwner(world, src);
+                        const AIStimulusSourceComponent* ss =
+                            owner.IsNull() ? nullptr : world.GetComponent<AIStimulusSourceComponent>(owner);
+                        bool accept = d <= perc.hearingRange;
+                        if (accept && !src.IsNull() && IsAncestorOrSelf(world, p.entity, src)) {
+                            accept = false; // 自分の音
+                        }
+                        if (accept) {
+                            accept = (ss != nullptr)
+                                ? ss->hearingEnabled && PerceptionDetects(perc, PerceptionAttitudeOf(perc, ss->faction))
+                                : perc.hearUnaffiliated;
+                        }
+                        if (accept) {
+                            events.push_back({ owner.IsNull() ? src : owner, perceptionsense::kHearing,
+                                               { hp.x, hp.y, hp.z }, p.ear->lastLoudness });
+                        }
+                    }
+                } else if (perc.pendingNoiseStrength > 0.0f) {
+                    EntityID src = perc.pendingNoiseSource;
                     if (!src.IsNull() && !world.IsAlive(src)) {
                         src = kNullEntity;
                     }
-                    const EntityID owner = src.IsNull() ? kNullEntity : FindStimulusOwner(world, src);
-                    const AIStimulusSourceComponent* ss =
-                        owner.IsNull() ? nullptr : world.GetComponent<AIStimulusSourceComponent>(owner);
-                    bool accept = d <= perc.hearingRange;
-                    if (accept && !src.IsNull() && IsAncestorOrSelf(world, p.entity, src)) {
-                        accept = false; // 自分の音
-                    }
-                    if (accept) {
-                        accept = (ss != nullptr)
-                            ? ss->hearingEnabled && PerceptionDetects(perc, PerceptionAttitudeOf(perc, ss->faction))
-                            : perc.hearUnaffiliated;
-                    }
-                    if (accept) {
-                        events.push_back({ owner.IsNull() ? src : owner, perceptionsense::kHearing,
-                                           { hp.x, hp.y, hp.z }, p.ear->lastLoudness });
-                    }
+                    const DirectX::XMFLOAT3& np = perc.pendingNoisePos;
+                    events.push_back({ src, perceptionsense::kHearing, { np.x, np.y, np.z }, perc.pendingNoiseStrength });
                 }
-            } else if (perc.pendingNoiseStrength > 0.0f) {
-                EntityID src = perc.pendingNoiseSource;
+            }
+            perc.pendingNoiseStrength = 0.0f;
+            perc.pendingNoiseSource = kNullEntity;
+            perc.pendingNoisePos = { 0.0f, 0.0f, 0.0f };
+
+            // ---- ダメージ ----
+            if (perc.damageEnabled && perc.pendingDamageAmount > 0.0f) {
+                EntityID src = perc.pendingDamageSource;
                 if (!src.IsNull() && !world.IsAlive(src)) {
                     src = kNullEntity;
                 }
-                const DirectX::XMFLOAT3& np = perc.pendingNoisePos;
-                events.push_back({ src, perceptionsense::kHearing, { np.x, np.y, np.z }, perc.pendingNoiseStrength });
+                const DirectX::XMFLOAT3& dp = perc.pendingDamagePos;
+                events.push_back({ src, perceptionsense::kDamage, { dp.x, dp.y, dp.z }, perc.pendingDamageAmount });
             }
-        }
-        perc.pendingNoiseStrength = 0.0f;
-        perc.pendingNoiseSource = kNullEntity;
-        perc.pendingNoisePos = { 0.0f, 0.0f, 0.0f };
+            perc.pendingDamageAmount = 0.0f;
+            perc.pendingDamageSource = kNullEntity;
+            perc.pendingDamagePos = { 0.0f, 0.0f, 0.0f };
 
-        // ---- ダメージ ----
-        if (perc.damageEnabled && perc.pendingDamageAmount > 0.0f) {
-            EntityID src = perc.pendingDamageSource;
-            if (!src.IsNull() && !world.IsAlive(src)) {
-                src = kNullEntity;
-            }
-            const DirectX::XMFLOAT3& dp = perc.pendingDamagePos;
-            events.push_back({ src, perceptionsense::kDamage, { dp.x, dp.y, dp.z }, perc.pendingDamageAmount });
-        }
-        perc.pendingDamageAmount = 0.0f;
-        perc.pendingDamageSource = kNullEntity;
-        perc.pendingDamagePos = { 0.0f, 0.0f, 0.0f };
-
-        // ---- 接触 ----
-        if (perc.touchEnabled && !stimuli.empty()) {
-            for (const Stimulus& s : stimuli) {
-                if (!s.source->touchEnabled || !Detects(world, p, s)) {
-                    continue;
-                }
-                bool touching = false;
-                // (a) CharacterController どうしのカプセルが触れている (CC は物理の接触ペアに出ない)
-                if (p.cc != nullptr && s.cc != nullptr) {
-                    float plo = 0.0f, phi = 0.0f, pr = 0.0f, slo = 0.0f, shi = 0.0f, sr = 0.0f;
-                    CapsuleSpan(*p.cc, p.ccScaleY, p.ccScaleXZ, p.pos, plo, phi, pr);
-                    CapsuleSpan(*s.cc, s.ccScaleY, s.ccScaleXZ, s.pos, slo, shi, sr);
-                    const float dx = s.pos.x - p.pos.x, dz = s.pos.z - p.pos.z;
-                    const float reach = pr + sr + kTouchMargin;
-                    touching = (dx * dx + dz * dz <= reach * reach) && plo <= shi && slo <= phi;
-                }
-                // (b) 前の tick の物理のソリッド接触 (自分の体と相手の体のコライダーどうし)
-                for (size_t k = 0; !touching && k < touchPairs.size(); ++k) {
-                    const EntityID mine = touchPairs[k].second;
-                    const EntityID other = touchPairs[k].first;
-                    touching = IsAncestorOrSelf(world, p.entity, mine) && IsAncestorOrSelf(world, s.entity, other);
-                }
-                if (touching) {
-                    events.push_back({ s.entity, perceptionsense::kTouch, s.pos, 1.0f });
+            // ---- 接触 ----
+            if (perc.touchEnabled && !stimuli.empty()) {
+                for (const Stimulus& s : stimuli) {
+                    if (!s.source->touchEnabled || !Detects(world, p, s)) {
+                        continue;
+                    }
+                    bool touching = false;
+                    // (a) CharacterController どうしのカプセルが触れている (CC は物理の接触ペアに出ない)
+                    if (p.cc != nullptr && s.cc != nullptr) {
+                        float plo = 0.0f, phi = 0.0f, pr = 0.0f, slo = 0.0f, shi = 0.0f, sr = 0.0f;
+                        CapsuleSpan(*p.cc, p.ccScaleY, p.ccScaleXZ, p.pos, plo, phi, pr);
+                        CapsuleSpan(*s.cc, s.ccScaleY, s.ccScaleXZ, s.pos, slo, shi, sr);
+                        const float dx = s.pos.x - p.pos.x, dz = s.pos.z - p.pos.z;
+                        const float reach = pr + sr + kTouchMargin;
+                        touching = (dx * dx + dz * dz <= reach * reach) && plo <= shi && slo <= phi;
+                    }
+                    // (b) 前の tick の物理のソリッド接触 (自分の体と相手の体のコライダーどうし)
+                    for (size_t k = 0; !touching && k < touchPairs.size(); ++k) {
+                        const EntityID mine = touchPairs[k].second;
+                        const EntityID other = touchPairs[k].first;
+                        touching = IsAncestorOrSelf(world, p.entity, mine) && IsAncestorOrSelf(world, s.entity, other);
+                    }
+                    if (touching) {
+                        events.push_back({ s.entity, perceptionsense::kTouch, s.pos, 1.0f });
+                    }
                 }
             }
-        }
 
-        // ---- 反映 ----
-        std::fill(bestPriority.begin(), bestPriority.end(), 0);
-        for (const SenseEvent& ev : events) {
-            Merge(perc, count, ev, tick, dt, bestPriority);
-        }
+            // ---- 反映 ----
+            std::fill(bestPriority.begin(), bestPriority.end(), 0);
+            for (const SenseEvent& ev : events) {
+                Merge(perc, count, ev, tick, dt, bestPriority);
+            }
 
-        // ---- 忘却と予測 ----
-        int seen = 0;
-        int write = 0;
-        for (int i = 0; i < count; ++i) {
-            AIPercept q = perc.percepts[i];
-            const uint64_t age = (tick >= q.lastSensedTick) ? (tick - q.lastSensedTick) : 0;
-            const bool targetGone = !q.target.IsNull() && !world.IsAlive(q.target);
-            if (q.currentSenses == 0
-                && (targetGone || age > static_cast<uint64_t>(std::max(perc.forgetTicks, 0)))) {
-                continue; // 忘れる (消えた相手は即座に)
+            // ---- 忘却と予測 ----
+            int seen = 0;
+            int write = 0;
+            for (int i = 0; i < count; ++i) {
+                AIPercept q = perc.percepts[i];
+                const uint64_t age = (tick >= q.lastSensedTick) ? (tick - q.lastSensedTick) : 0;
+                const bool targetGone = !q.target.IsNull() && !world.IsAlive(q.target);
+                if (q.currentSenses == 0
+                    && (targetGone || age > static_cast<uint64_t>(std::max(perc.forgetTicks, 0)))) {
+                    continue; // 忘れる (消えた相手は即座に)
+                }
+                if ((q.currentSenses & perceptionsense::kSight) != 0) {
+                    ++seen;
+                    q.predictedPos = q.lastSensedPos;
+                } else {
+                    const uint64_t ahead = std::min<uint64_t>(age, static_cast<uint64_t>(std::max(perc.predictionTicks, 0)));
+                    const float t = static_cast<float>(ahead) * dt;
+                    q.predictedPos = { q.lastSensedPos.x + q.velocity.x * t, q.lastSensedPos.y + q.velocity.y * t,
+                                       q.lastSensedPos.z + q.velocity.z * t };
+                }
+                perc.percepts[write++] = q;
             }
-            if ((q.currentSenses & perceptionsense::kSight) != 0) {
-                ++seen;
-                q.predictedPos = q.lastSensedPos;
-            } else {
-                const uint64_t ahead = std::min<uint64_t>(age, static_cast<uint64_t>(std::max(perc.predictionTicks, 0)));
-                const float t = static_cast<float>(ahead) * dt;
-                q.predictedPos = { q.lastSensedPos.x + q.velocity.x * t, q.lastSensedPos.y + q.velocity.y * t,
-                                   q.lastSensedPos.z + q.velocity.z * t };
+            for (int i = write; i < kMaxPercepts; ++i) {
+                perc.percepts[i] = AIPercept{};
             }
-            perc.percepts[write++] = q;
+            // 並びはキー順 (名乗らない音 = kNullEntity が先頭)。スロットの埋まり方に結果を依存させない
+            std::sort(perc.percepts, perc.percepts + write, [](const AIPercept& a, const AIPercept& b) {
+                const bool an = a.target.IsNull(), bn = b.target.IsNull();
+                if (an != bn) {
+                    return an;
+                }
+                return KeyLess(a.target, b.target);
+            });
+            perc.perceivedCount = write;
+            perc.seenCount = seen;
         }
-        for (int i = write; i < kMaxPercepts; ++i) {
-            perc.percepts[i] = AIPercept{};
-        }
-        // 並びはキー順 (名乗らない音 = kNullEntity が先頭)。スロットの埋まり方に結果を依存させない
-        std::sort(perc.percepts, perc.percepts + write, [](const AIPercept& a, const AIPercept& b) {
-            const bool an = a.target.IsNull(), bn = b.target.IsNull();
-            if (an != bn) {
-                return an;
-            }
-            return KeyLess(a.target, b.target);
-        });
-        perc.perceivedCount = write;
-        perc.seenCount = seen;
+    });
+    if (std::find(firedRays.begin(), firedRays.end(), uint8_t(1)) != firedRays.end()) {
+        stats_.losColliders = static_cast<int>(colliders.size());
+    }
+    for (const int rays : raysPerPerceiver) {
+        stats_.losRays += rays;
     }
 
     stats_.updateUs =

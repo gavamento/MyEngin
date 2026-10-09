@@ -22,8 +22,8 @@
 | sub-03 オクルージョンを Forward へ + hzb-debug | OK | 2 | 24781ec | 前セッションの途中差分を引き継いで再開。受け入れ 2 の目視はユーザー待ち |
 | sub-04 影のカスケード別カリング + スキン AABB | OK | 2 | df7b1d3 | golden 3 枚更新 (画面外キャスターの影、planner 了承) |
 | sub-05 メッシュ LOD | OK | 1 | 29a775e | meshoptimizer v1.3、kCookVersion 6。LOD 見た目の目視はユーザー待ち |
-| sub-06 描画側並列化 + URO | OK | 2 | (このコミット) | URO 位相を fmix32 ハッシュへ (round 1 REWORK) |
-| sub-07 sim 並列化 (ADR-028) | 未着手 | 0 | | 依存 01 |
+| sub-06 描画側並列化 + URO | OK | 2 | d4e0211 | URO 位相を fmix32 ハッシュへ (round 1 REWORK) |
+| sub-07 sim 並列化 (ADR-028) | OK | 2 | (このコミット) | FootIk は並列化せず (ForEachArchetype 並行不可) |
 | sub-09 オクルージョン ON/OFF をプロジェクト設定に保存 | 未着手 | 0 | | 依存 06 (2026-10-09 ユーザー要求で新規) |
 | sub-08 文書 + 全体検証 (ADR-029) | 未着手 | 0 | | 依存 03,06,07,09 |
 
@@ -45,3 +45,5 @@
 - (coder sub-05 → sub-08) ADR-029 に .meta "lod" 形式、blob の並び、選択式 (screen-size × lodBias、ヒステリシス 10%)、溶接 + simplifyWithAttributes + LockBorder、硬い面の限界、--lod-bias / --lod-force、tools\gen_lod_test_gltf.ps1 を書く。engine_spec の kCookVersion を 6 へ。render_bench の cache\render_bench.scene.json が古いと LOD 球が出ない。
 - (planner 2026-10-09、sub-06 VERDICT nit) RenderSystem 経由のパレット統合 (確保 → 評価 → 画素) はスクショ A/B のみ。CollectDrawables が長い。実 GPU は run 間で 51 画素 maxDiff=1 揺れる (M90 前から、spec §7 別件) ので画素 A/B は WARP で。
 - (coder sub-06 → sub-08) ADR-029 に URO の表 (kUroTiers 5%/2%/0.8% → 1/2/4/8 tick)・位相 UroPhase (fmix32)・窓の再利用規則・キャッシュの鍵・cpuMs 節・--no-uro・--render-bench-unique-demo・ResetRenderHistory の契機を書く。オクルージョン ON の CPU 提出は unique 1500 個で OFF 0.84 → ON 1.45 ms (sub-08 で GPU ms と合わせ ADR へ)。
+- (planner 2026-10-09、sub-07 VERDICT nit) Debug だけ知覚の並列が直列より遅い (9.46 / 5.37 ms、Release は約 2 倍速い、原因未調査)。round 2 後の順序依存注入の再確認はしていない (検証路は不変)。ServerNet 一過性 FAIL は計 4 回。
+- (coder sub-07 → sub-08) 並列段で World を走査しない (ForEachArchetype / QueryArchetypes は並行不可、ADR-028)。engine_spec の sim 並列化の節と replay_verify の jobs A/B (`--job jobsab`、`[jobs]` PASS 行、JobSystem::GetStats) を書く。IK / PartFollow の実シーン A/B は M90 ではやらない (selftest のみ)。

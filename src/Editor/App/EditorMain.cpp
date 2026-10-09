@@ -50,6 +50,7 @@
 #include "Engine/Engine/Asset/AssetDatabaseSelfTest.h"
 #include "Engine/Engine/Audio/Playback/AudioSelfTest.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Loop/SimParallelSelfTest.h"
 #include "Engine/Engine/Particles/ParticleSelfTest.h"
 #include "Engine/Engine/Physics/Collider/ConvexSelfTest.h"
 #include "Engine/Engine/Physics/Fracture/FractureSelfTest.h"
@@ -557,6 +558,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunJobSystemSelfTest();
         ok &= mye::RunVfxSelfTest();
         ok &= mye::RunParticleSelfTest();
+        ok &= mye::RunSimParallelSelfTest();                // M90g: sim の並列化 (jobs あり / なし一致)
         ok &= mye::RunAssetOpsSelfTest();
         ok &= mye::RunFontSelfTest();
         ok &= mye::RunAudioSelfTest();

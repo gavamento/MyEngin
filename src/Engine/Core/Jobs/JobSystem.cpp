@@ -48,7 +48,7 @@ void JobSystem::Shutdown()
 // cursor_ が自分の区間を超えているのを見て抜けるだけで、次バッチの chunk は掴めない。
 // fetch_add ではなく CAS なのは、掴めない時にカーソルを進めない (= 次バッチの chunk を
 // 食い逃げしない) ため。
-void JobSystem::DrainChunks(const Batch& b)
+void JobSystem::DrainChunks(const Batch& b, bool onWorker)
 {
     if (b.fn == nullptr || b.chunkCount == 0) {
         return;
@@ -67,6 +67,9 @@ void JobSystem::DrainChunks(const Batch& b)
         const size_t begin = c * b.chunkSize;
         const size_t end = std::min(begin + b.chunkSize, b.total);
         (*b.fn)(begin, end);
+        if (onWorker) {
+            workerChunks_.fetch_add(1, std::memory_order_relaxed);
+        }
         doneChunks_.fetch_add(1, std::memory_order_release);
     }
 }
@@ -85,7 +88,7 @@ void JobSystem::WorkerLoop()
             }
             b = batch_; // ロック下でスナップショット (以後 batch_ は触らない)
         }
-        DrainChunks(b);
+        DrainChunks(b, true);
         // 完了を呼出スレッドへ通知 (mutex を一度取ることで lost-wakeup を防ぐ)
         {
             std::lock_guard<std::mutex> lk(mutex_);
@@ -113,6 +116,7 @@ void JobSystem::ParallelRanges(size_t total, size_t grain,
     // バッチ状態は mutex_ 下で確定する。ワーカーも mutex_ 下でコピーするので、
     // これらのフィールドにデータ競合は無い (素の書き込みにすると、drain 中のワーカーが
     // 破棄済みの fn を読んで落ちる)
+    parallelBatches_.fetch_add(1, std::memory_order_relaxed);
     Batch b;
     {
         std::lock_guard<std::mutex> lk(mutex_);
@@ -128,7 +132,7 @@ void JobSystem::ParallelRanges(size_t total, size_t grain,
     }
     cvWake_.notify_all();
 
-    DrainChunks(b); // 呼出スレッドも chunk を消化 (最低でも呼出スレッドが全部消化しきる)
+    DrainChunks(b, false); // 呼出スレッドも chunk を消化 (最低でも呼出スレッドが全部消化しきる)
 
     // 全 chunk 完了を待つ (バリア)
     {

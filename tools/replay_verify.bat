@@ -5,6 +5,7 @@ rem   2. 並列プールで下の -Jobs の全ジョブを回す (tools\run_para
 rem        - シーンごとのチェーン: record (Debug, --replay-fast) →
 rem          snapshot stress 付き verify (Debug) → verify (Release) →
 rem          ヘッドレス Server.exe (Release) の verify (M81a)
+rem        - jobs A/B (M90g): 直列 (--no-jobs) で録った .rep を jobs あり (ワーカー起動) で照合する
 rem        - タイムトラベルの巻き戻しと分岐 What-if (それぞれ Debug / Release)
 rem        - 静的規則チェック (check_rules.ps1)
 rem   3. 失敗時は mismatch マーカーの残ったシーンだけ :diagnose を直列で回す
@@ -76,13 +77,13 @@ rem 前回の失敗マーカーが残っていると :diagnose が古い tick �
 del /q cache\*.mismatch.txt 2>nul
 if exist cache\replay_logs rd /s /q cache\replay_logs
 
-echo === parallel verification: 13 scene chains + time travel x2 + what-if x2 + rule check ===
+echo === parallel verification: 13 scene chains + jobs A/B + time travel x2 + what-if x2 + rule check ===
 rem ★Entry は空白なし相対パスで渡す (人間/CI が bat を叩くのと同じ呼び形に固定。
 rem   バッチ読取りの罠と chcp 437 の理由は runner 冒頭のコメント参照)
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,perception,bt,anim,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,perception,bt,anim,jobsab,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 13 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav + perception + bt + anim) + snapshot round-trip + time travel + rule check
+echo [PASS] replay consistency (Debug/Release, 13 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav + perception + bt + anim) + snapshot round-trip + jobs A/B + time travel + rule check
 exit /b 0
 
 rem ---------------------------------------------------------------- :failed
@@ -143,6 +144,19 @@ if exist cache\golden_anim.rep.mismatch.txt (
     set DIAGFOUND=1
     call :diagnose "cache\golden_anim.rep" "--anim-demo"
 )
+rem jobs A/B: 期待側は直列で録り直す (記録と同じ --no-jobs)
+if exist cache\jobsab_particle.rep.mismatch.txt (
+    set DIAGFOUND=1
+    call :diagnose "cache\jobsab_particle.rep" "--particle-demo --particle-backend cpu --no-jobs"
+)
+if exist cache\jobsab_perception.rep.mismatch.txt (
+    set DIAGFOUND=1
+    call :diagnose "cache\jobsab_perception.rep" "--perception-demo --no-jobs"
+)
+if exist cache\jobsab_parts.rep.mismatch.txt (
+    set DIAGFOUND=1
+    call :diagnose "cache\jobsab_parts.rep" "--parts-demo --no-jobs"
+)
 if "%DIAGFOUND%"=="0" echo [diag] no mismatch markers - failures happened before any hash comparison, see the job logs above
 echo [FAIL] replay verification
 exit /b 1
@@ -172,6 +186,9 @@ if not exist cache\parts_showcase.scene.json (
     exit /b 1
 )
 call :chain cache\golden_parts.rep "--parts-demo" "--parts-demo"
+if errorlevel 1 exit /b 1
+rem 部位追従の jobs A/B (保存済みシーンを使うのでこのジョブの中で回す。別ジョブだとシーンの再生成と競合する)
+call :jobsab_one cache\jobsab_parts.rep "--parts-demo"
 exit /b %ERRORLEVEL%
 
 rem ---- ゲームフロー統合デモ (M51j) ----
@@ -336,6 +353,18 @@ if exist cache\anim_showcase.scene.json del /q cache\anim_showcase.scene.json
 call :chain cache\golden_anim.rep "--anim-demo" "--anim-demo"
 exit /b %ERRORLEVEL%
 
+rem ---- jobs A/B (M90g、ADR-028) ----
+rem sim の並列化 (CPU 粒子 / Perception / PartFollow / IK) が「直列と 1 ビットも違わない」ことの
+rem 実シーンでの証明。直列 (--no-jobs) で録った .rep を、ワーカーを起こした Debug / Release で
+rem 毎 tick のワールドハッシュと照合する。.rep のヘッダの jobs ビットは違うがハッシュ列は同一のはず
+rem (verify はヘッダの jobs ビットを見ない)。IK を含むシーンは無いので IK は SimParallelSelfTest が受け持つ。
+rem 部位追従のペアは :job_parts の中で回す (保存済みシーンの再生成と競合しないため)
+:job_jobsab
+call :jobsab_one cache\jobsab_particle.rep "--particle-demo --particle-backend cpu"
+if errorlevel 1 exit /b 1
+call :jobsab_one cache\jobsab_perception.rep "--perception-demo"
+exit /b %ERRORLEVEL%
+
 rem ---- タイムトラベルの巻き戻し (M52e) ----
 rem 「T まで進める → T-K へ戻す → 記録入力で T まで再シム → 元の T とハッシュ一致」を
 rem 複数の K で実走し、続けて「スクラブ中は tick が止まる」「再開すると分岐して未来を捨てる」
@@ -363,6 +392,29 @@ exit /b 0
 :job_rules
 pwsh -NoProfile -ExecutionPolicy Bypass -File tools\check_rules.ps1 || exit /b 1
 exit /b 0
+
+rem ---------------------------------------------------------------- :jobsab_one
+rem jobs A/B の 1 シーン。%1 = .rep パス / %2 = シーン引数 (record と verify で同じ)
+:jobsab_one
+setlocal
+set "AREP=%~1"
+set "AARG=%~2"
+echo === jobs A/B record %AREP% : Debug, serial (--no-jobs), %TICKS% ticks ===
+bin\x64\Debug\Editor.exe %AARG% --no-jobs --replay-record %AREP% --replay-ticks %TICKS% --replay-fast %MYE_EXTRA_ARGS% || (
+    echo [FAIL] jobs A/B record: %AREP%
+    endlocal & exit /b 1
+)
+echo === jobs A/B verify %AREP% : Debug, workers on ===
+bin\x64\Debug\Editor.exe %AARG% --replay-verify %AREP% %MYE_EXTRA_ARGS% || (
+    echo [FAIL] jobs A/B Debug verify: %AREP%
+    endlocal & exit /b 1
+)
+echo === jobs A/B verify %AREP% : Release, workers on ===
+bin\x64\Release\Editor.exe %AARG% --replay-verify %AREP% %MYE_EXTRA_ARGS% || (
+    echo [FAIL] jobs A/B Release verify: %AREP%
+    endlocal & exit /b 1
+)
+endlocal & exit /b 0
 
 rem ---------------------------------------------------------------- :chain
 rem 1 シーンぶんの record → stress 付き Debug verify → Release verify。

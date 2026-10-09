@@ -1,8 +1,8 @@
 # sub-07: sim の並列化 (CPU 粒子 / Perception / PartFollow / IK、jobs A/B ジョブ、ADR-028)
 
 - 依存: sub-01
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (コミット待ち)
+- 往復: 2
 
 ## やること
 spec §4.1.6、§4.1.7、§2 #12 #13。
@@ -43,4 +43,16 @@ spec §4.1.6、§4.1.7、§2 #12 #13。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-07 (round 1)
+- 実装: CpuParticleBackend (プール並列 `StepPool`、乱流 scratch をローカル化)、PerceptionSystem (知覚者並列、コライダー表は call_once)、PartFollowSystem (ポーズ評価と分解を並列)、TwoBoneIkSystem (収集 → 並列 → WARN を直列)、JobSystem に統計 (`GetStats`)、`SimParallelSelfTest` 新設、replay_verify.bat に jobs A/B (`jobsab` ジョブ + `parts` 内のペア)、`docs\adr\ADR-028-sim-parallelism.md`。
+- 差分: FootIk は外した (`RaycastWorld` が `ForEachArchetype` を呼び並行不可)。IK は replay のシーンが無く selftest のみ。PartFollow の replay A/B は小シーンで並列経路に入らない (batches 0)。Perception の grain は 2 (3 体のデモで割れるように)。視線コライダー表は事前確定ではなく call_once。
+- 検証: Debug/Release selftest exit 0、check_rules 0 error、replay_verify 全体 PASS、粒子へ順序依存を注入して jobsab が HASH MISMATCH (tick 3) で FAIL することを確認し戻した。
+- 参考値 (Release、selftest の 90 tick 平均、jobs あり / 直列): 粒子 0.114 / 0.270 ms、知覚 0.126 / 0.254 ms、IK + 部位追従 0.293 / 0.315 ms。Debug の知覚は 8.97 / 5.20 ms で並列の方が遅い。
+
 ## フィードバック履歴
+- round 1: VERDICT REWORK (planner、2026-10-09)
+  1. [must] Perception の視線コライダー表を、並列段の中で `std::call_once` を使って集めている (`PerceptionSystem.cpp:569-573` → `CollectLosColliders`、`:646` から呼ぶ)。これは並列段の中で World を走査することになる。coder 自身が FootIk を外した理由 (「`ForEachArchetype` は `iterationDepth_` の非アトミックな増減とクエリキャッシュ `queryCache_` の充填をするので並行不可」) と同じ操作を、ワーカーで走らせている。ほかのワーカーは同時に `Detects` / `LineOfSight` で World を読んでいる。今は競合する読み手が無いとしても、安全性が World の内部実装の偶然に乗っている。ADR-028 の規約 (並列段で World を走査しない) にも、spec §4.1.7 の「`ensureColliders()` をループの前で確定」にも反する。修正: 直列の前段で、保守的な条件 (視覚が有効な知覚者が 1 人以上いて、刺激が空でない) のときだけ `CollectLosColliders` を呼ぶ。並列段では、レンジごとに「レイを撃ったか」の bool だけを持つ。並列段の後で 1 つでも撃っていれば `stats_.losColliders` を更新する (従来の「集めなかった tick は stats_ を触らない」と同じ観測になる)。`std::call_once` と `once_flag` は消す。直したら、`--job jobsab`・replay_verify 全体・SimParallelSelfTest・両構成の selftest を取り直す。
+  2. [should] Debug だけ知覚の並列が遅い件 (8.97 / 5.20 ms) は、#1 の修正後に 1 回だけ測り直して報告する。遅いままでも合否には使わない (ms はゲートにしない、spec §2 #14)。原因の調査は不要。
+  - 差分の判定: FootIk を外した件は spec §4.1.7 の条件どおりなので採用。IK と PartFollow の並列経路の被覆を SimParallelSelfTest (200 体、毎 tick ハッシュ) で持つ件も採用。実シーンの A/B に入れるためにデモを足すと golden に響くので、M90 では足さない (spec §7)。受け入れ 1 の「並列化前の PASS」が未実施の件は採用。並列化前は直列同士の比較で自明であり、順序依存の注入で FAIL し、正常なコードで PASS する、で検証路の働きは示せている。Perception の grain 2、`JobSystem::GetStats`、PASS 行の `[jobs]` ログも採用。
+  - 不安・質問への回答: (a) IK / PartFollow の実シーン被覆は M90 では足さない (spec §7 に記録)。(b) Debug の速度は #2 のとおり。(c) ServerNet の一過性 FAIL は sub-08 やること 6 で基点と比べる (計 4 回)。
+- round 2: VERDICT OK (planner、2026-10-09)。#1 は解消した。`call_once` を消し、`CollectLosColliders` を並列段の前の直列段に移した (`PerceptionSystem.cpp:572`)。並列段は知覚者ごとに `firedRays` を立てるだけで、並列段の後に `stats_.losColliders` を更新する (`:610-646`、`:784`)。ADR-028 も実装に合わせた。jobsab / replay_verify 全体 / 両構成の selftest / check_rules をすべて取り直して PASS。#2: Debug の知覚の並列は 9.46 / 5.37 ms で遅いまま。原因は call_once ではなかった。ms はゲートにしないので参考値として記録するにとどめる (申し送り)。

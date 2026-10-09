@@ -121,6 +121,7 @@
     <ClCompile Include="..\src\Engine\Engine\Loop\HeadlessSim.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Loop\PlayerInputSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Loop\SimInit.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Loop\SimParallelSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Loop\TickRunner.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Modal\CpuModalBackend.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Modal\DmNet.cpp" />
@@ -422,6 +423,7 @@
     <ClInclude Include="..\src\Engine\Engine\Loop\HeadlessSim.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\PlayerInputSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\SimInit.h" />
+    <ClInclude Include="..\src\Engine\Engine\Loop\SimParallelSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\TickInputs.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\TickRunner.h" />
     <ClInclude Include="..\src\Engine\Engine\Modal\CpuModalBackend.h" />

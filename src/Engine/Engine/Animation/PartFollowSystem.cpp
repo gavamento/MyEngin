@@ -8,6 +8,7 @@
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Core/Jobs/JobSystem.h"
 #include "Engine/Engine/Animation/Parts.h"   // ResolvePartSource (Inspector と共用)
 #include "Engine/Engine/Physics/Ragdoll/Ragdoll.h" // M60g1: 駆動方向の判定 (物理・描画と共用)
 #include "Engine/Engine/Animation/SkinningSystem.h" // M18 追補: クロスフェード込みのポーズ (描画と共用)
@@ -18,6 +19,10 @@ using namespace DirectX;
 
 namespace mye {
 namespace {
+
+// 並列化の最小単位。ポーズの評価は骨数 x クリップのサンプルで重く、分解は 1 部位ぶんが小さい
+constexpr size_t kPoseGrain = 2;
+constexpr size_t kFollowGrain = 64;
 
 // 警告キー (entity index を上位、理由コードを下位に詰める)。ログ抑制専用
 enum class WarnKind : uint64_t { NotChild = 1, NoModel = 2, NoJoint = 3, NoSource = 4 };
@@ -137,6 +142,16 @@ void PartFollowSystem::Update(World& world, const RenderResources& resources)
     };
     std::vector<PoseCache> poses;
 
+    // 3) 直列の前段で「どの部位がどのポーズのどのジョイントを使うか」を確定する (警告・キャッシュ表・
+    //    World 引きはここだけ)。ポーズの評価と TRS への分解は書き込み先が部位ごとに別なので並列段へ回す
+    struct Follow {
+        LocalTransform* lt;
+        size_t poseIdx;
+        int32_t jointIndex;
+    };
+    std::vector<Follow> follows;
+    follows.reserve(jobs.size());
+
     for (const Job& job : jobs) {
         // ---- 供給元の解決 (M48i で Parts:: に 1 本化 — Inspector のジョイント一覧と同じ答え) ----
         const EntityID src = Parts::ResolvePartSource(world, job.part, job.source);
@@ -195,20 +210,33 @@ void PartFollowSystem::Update(World& world, const RenderResources& resources)
             }
         }
         if (poseIdx == poses.size()) {
-            // 評価は描画側 (RenderSystem) と同じ関数 — 同じ tick で同じポーズになる
-            SampleSkinnedLocals(*model, *sm, key.locals);
-            poses.push_back(std::move(key));
+            poses.push_back(std::move(key)); // locals は並列段で評価する
         }
 
-        // 部位が source の直子なので partLocal = jointGlobal でワールドが閉じる (ヘッダ参照)
         auto* lt = world.GetComponent<LocalTransform>(job.part);
         if (!lt) {
             continue;
         }
-        DecomposeRowMajorTRS(
-            JointGlobalFromLocals(*model, poses[poseIdx].locals, jointIndex),
-            lt->position, lt->rotation, lt->scale);
+        follows.push_back({ lt, poseIdx, jointIndex });
     }
+
+    // 4) ポーズの評価 (並列、ポーズごとに独立)。描画側 (RenderSystem) と同じ関数 — 同じ tick で同じポーズになる
+    jobs::System().ParallelRanges(poses.size(), kPoseGrain, [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            SampleSkinnedLocals(*poses[i].model, *poses[i].sm, poses[i].locals);
+        }
+    });
+
+    // 5) 部位が source の直子なので partLocal = jointGlobal でワールドが閉じる (ヘッダ参照)。
+    //    LocalTransform は部位ごとに別なので並列に書いてよい (ポーズ表は読むだけ)
+    jobs::System().ParallelRanges(follows.size(), kFollowGrain, [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            const Follow& f = follows[i];
+            const PoseCache& pose = poses[f.poseIdx];
+            DecomposeRowMajorTRS(JointGlobalFromLocals(*pose.model, pose.locals, f.jointIndex),
+                                 f.lt->position, f.lt->rotation, f.lt->scale);
+        }
+    });
 }
 
 } // namespace mye
