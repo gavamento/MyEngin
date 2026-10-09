@@ -193,6 +193,8 @@
     <ClCompile Include="..\src\Engine\Engine\Rendering\RenderStatsDump.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\RenderStatsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\RenderSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Rendering\ShadowCullSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Rendering\SkinBoundsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\TerrainSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\WaterWaveSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\CrashRing.cpp" />
@@ -263,6 +265,7 @@
     <ClCompile Include="..\src\Engine\Renderer\ImGui\ImGuiTheme.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Mesh\MeshInstancing.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Mesh\Skeleton.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Mesh\SkinBounds.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\AcousticVolumePass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\EditorLinePass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\EnvMapBaker.cpp" />
@@ -494,6 +497,8 @@
     <ClInclude Include="..\src\Engine\Engine\Rendering\RenderStatsDump.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\RenderStatsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\RenderSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\ShadowCullSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\SkinBoundsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\TerrainSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\WaterWaveSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\CrashRing.h" />
@@ -572,6 +577,7 @@
     <ClInclude Include="..\src\Engine\Renderer\Mesh\MeshBind.h" />
     <ClInclude Include="..\src\Engine\Renderer\Mesh\MeshInstancing.h" />
     <ClInclude Include="..\src\Engine\Renderer\Mesh\Skeleton.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Mesh\SkinBounds.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\AcousticVolumePass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\EditorLinePass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\EnvMapBaker.h" />

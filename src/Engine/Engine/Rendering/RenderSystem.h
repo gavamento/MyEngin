@@ -26,10 +26,13 @@
 #include "Engine/Renderer/Passes/SkyResolve.h" // FailedTextureLoad
 #include "Engine/Renderer/Passes/TerrainPass.h"
 #include "Engine/Renderer/Passes/WaterPass.h"
+#include "Engine/Renderer/Mesh/SkinBounds.h"
 
 namespace mye {
 
 class World;
+struct SkinnedMeshComponent;
+struct SkinnedModel;
 class GraphicsDevice;
 class IRenderPath;
 class ShaderManager;
@@ -343,8 +346,12 @@ private:
                             const CameraOverride* cameraOverride, FrameContext& f);
     void CollectLights(World& world, FrameContext& f);
     void CollectDrawables(World& world, RenderResources& resources, const FrameTarget& target, FrameContext& f);
-    void RenderCascadeShadows(GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
-                              FrameContext& f);
+    void RenderCascadeShadows(World& world, GraphicsDevice& device, ShaderManager& shaders,
+                              RenderResources& resources, FrameContext& f);
+    // スキンメッシュ 1 体のボーンパレットを評価する (本描画と影で共有。入力は ECS の状態だけの純関数)。
+    // interp = ワールド行列を前 tick と補間しているフレームか
+    void EvaluateSkinPalette(World& world, EntityID e, const SkinnedMeshComponent& sm,
+                             const SkinnedModel& model, bool interp, std::vector<DirectX::XMFLOAT4X4>& palette);
     void AllocateShadowAtlas(GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
                              FrameContext& f);
     void PrepareEnvironment(World& world, GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
@@ -409,6 +416,20 @@ private:
     std::deque<std::vector<DirectX::XMFLOAT4X4>> skinPalettes_;
     // kMaxBones 超過の切り捨てを警告済みのスキンモデル AssetID (毎フレーム WARN を出さないため)
     std::vector<uint64_t> boneOverflowWarned_;
+    // スキンの保守的 AABB (視錐台カリング用)。(モデル, メッシュ) ごとに最初に描くとき 1 回だけ計算する
+    SkinBoundsCache skinBounds_;
+    // ---- CSM のキャスター (カメラの視錐台で落とす前の全不透明)。収集 → カスケード別カリング → 描画 ----
+    struct ShadowCaster {
+        DirectX::XMFLOAT3 aabbMin = { 0.0f, 0.0f, 0.0f }; // ワールド AABB (bounded のときだけ有効)
+        DirectX::XMFLOAT3 aabbMax = { 0.0f, 0.0f, 0.0f };
+        int32_t queueIndex = -1;     // >= 0: 画面内。Sort 前の queue_.opaque の添字
+        int32_t offscreenIndex = -1; // >= 0: 画面外。offscreenCasters_ の添字
+        uint8_t bounded = 0;         // 0 = 箱が無い (水面プレート等)。全カスケードへ入れる
+    };
+    std::vector<ShadowCaster> shadowCasters_;
+    std::vector<uint8_t> shadowCasterMask_;       // shadowCasters_ と同じ並び。bit c = カスケード c に入る
+    std::vector<RenderItem> offscreenCasters_;  // 画面外のキャスター (スキンはカスケードに入ったときだけパレットを載せる)
+    RenderQueue cascadeQueues_[ShadowPass::kCascades]; // カスケードごとの描画リスト (ShadowPass が読む)
     // M44d: viewKey (1=runtime/2=SceneView/3=GameView) 毎の前フレーム viewProj。
     // 初フレーム/リサイズは valid=false → モーションブラー 0 (viewKey=0 は保存しない)
     struct PrevViewProj {

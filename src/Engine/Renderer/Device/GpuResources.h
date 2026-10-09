@@ -62,6 +62,9 @@ struct Mesh {
     // M88: デバイス復旧で vb を作り直す素材。positions / normals / uvs と合わせて MeshVertex 列を復元する。
     // スキンの属性が全頂点で 0 のメッシュ (非スキン) は空のまま (頂点あたり 20B を持たない)
     std::vector<MeshSkinVertex> skin;
+    // MeshLibrary::Register が振る登録の通番 (再登録で変わる。GPU の作り直しでは変わらない)。
+    // メッシュから派生したキャッシュ (スキンの保守的 AABB) の無効化に使う。0 = 未登録
+    uint64_t revision = 0;
 };
 
 // アセット列挙の 1 件 (Asset Browser / 参照ピッカー用、M8)。
@@ -130,6 +133,7 @@ private:
     GraphicsDevice* device_ = nullptr;
     std::unordered_map<uint64_t, Mesh> meshes_;
     std::unordered_map<uint64_t, std::string> names_;
+    uint64_t registerCount_ = 0; // Mesh::revision の出所
     AssetID cube_ = {};
     AssetID sphere_ = {};
     AssetID plane_ = {};

@@ -735,6 +735,12 @@
     <ClCompile Include="..\src\Engine\Engine\Rendering\RenderSystem.cpp">
       <Filter>Engine\Rendering</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\ShadowCullSelfTest.cpp">
+      <Filter>Engine\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\SkinBoundsSelfTest.cpp">
+      <Filter>Engine\Rendering</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Rendering\TerrainSystem.cpp">
       <Filter>Engine\Rendering</Filter>
     </ClCompile>
@@ -943,6 +949,9 @@
       <Filter>Renderer\Mesh</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Mesh\Skeleton.cpp">
+      <Filter>Renderer\Mesh</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Mesh\SkinBounds.cpp">
       <Filter>Renderer\Mesh</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Passes\AcousticVolumePass.cpp">
@@ -1638,6 +1647,12 @@
     <ClInclude Include="..\src\Engine\Engine\Rendering\RenderSystem.h">
       <Filter>Engine\Rendering</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\ShadowCullSelfTest.h">
+      <Filter>Engine\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\SkinBoundsSelfTest.h">
+      <Filter>Engine\Rendering</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Rendering\TerrainSystem.h">
       <Filter>Engine\Rendering</Filter>
     </ClInclude>
@@ -1870,6 +1885,9 @@
       <Filter>Renderer\Mesh</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Mesh\Skeleton.h">
+      <Filter>Renderer\Mesh</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Mesh\SkinBounds.h">
       <Filter>Renderer\Mesh</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Passes\AcousticVolumePass.h">

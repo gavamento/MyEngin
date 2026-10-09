@@ -47,6 +47,10 @@ void AppendStatsBody(std::string& out, const prof::RenderStats& s, const char* i
     AppendF(out, "%s\"shadowCascadeDraws\": ", indent);
     AppendIntArray(out, s.shadowCascadeDraws, prof::kRenderStatsCascadeSlots);
     out += ",\n";
+    AppendF(out, "%s\"shadowCasterCandidates\": %d,\n", indent, s.shadowCasterCandidates);
+    AppendF(out, "%s\"shadowCascadeCasters\": ", indent);
+    AppendIntArray(out, s.shadowCascadeCasters, prof::kRenderStatsCascadeSlots);
+    out += ",\n";
     AppendF(out, "%s\"lodDraws\": ", indent);
     AppendIntArray(out, s.lodDraws, prof::kRenderStatsLodSlots);
     out += ",\n";

@@ -224,6 +224,7 @@ AssetID MeshLibrary::Register(std::string_view name, std::span<const MeshVertex>
         mesh.aabbMax = hi;
     }
 
+    mesh.revision = ++registerCount_;
     meshes_[id.value] = std::move(mesh);
     names_[id.value].assign(name);
     return id;

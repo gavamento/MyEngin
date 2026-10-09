@@ -113,6 +113,10 @@ void AddRenderStats(const RenderStats& d)
         for (int i = 0; i < kRenderStatsCascadeSlots; ++i) {
             r.shadowCascadeDraws[i] += d.shadowCascadeDraws[i];
         }
+        r.shadowCasterCandidates += d.shadowCasterCandidates;
+        for (int i = 0; i < kRenderStatsCascadeSlots; ++i) {
+            r.shadowCascadeCasters[i] += d.shadowCascadeCasters[i];
+        }
         for (int i = 0; i < kRenderStatsLodSlots; ++i) {
             r.lodDraws[i] += d.lodDraws[i];
         }

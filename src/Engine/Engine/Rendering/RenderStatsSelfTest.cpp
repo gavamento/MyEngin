@@ -31,6 +31,10 @@ long long Fingerprint(const prof::RenderStats& s)
     for (int v : s.shadowCascadeDraws) {
         add(v);
     }
+    add(s.shadowCasterCandidates);
+    for (int v : s.shadowCascadeCasters) {
+        add(v);
+    }
     for (int v : s.lodDraws) {
         add(v);
     }
@@ -83,6 +87,8 @@ bool RunRenderStatsSelfTest()
     delta.drawCalls = 3;
     delta.triangles = 9;
     delta.lodDraws[1] = 2;
+    delta.shadowCasterCandidates = 4;
+    delta.shadowCascadeCasters[2] = 3;
     delta.paletteEvaluated = 5;
     delta.paletteReused = 6;
     delta.occlusionPhase1Draws = 7;
@@ -111,6 +117,9 @@ bool RunRenderStatsSelfTest()
           "draws are filed under the current viewKey (out of range -> 0)");
     check(prof::GetRenderStatsForView(3).lodDraws[1] == 2 && prof::GetRenderStatsForView(3).occluded == 9,
           "AddRenderStats fills the fields later sub-milestones use");
+    check(prof::GetRenderStatsForView(3).shadowCasterCandidates == 4
+              && prof::GetRenderStatsForView(3).shadowCascadeCasters[2] == 3,
+          "AddRenderStats carries the CSM caster counts");
     check(Fingerprint(prof::GetRenderStatsForView(99)) == 0, "an out-of-range view reads as empty");
 
     // ---- JSON ----
@@ -135,6 +144,7 @@ bool RunRenderStatsSelfTest()
     check(CountOf(a, "\"viewKey\"") == 4, "every view that drew appears once in views[]");
     check(a.find("\"occlusionPhase2Draws\": 8") != std::string::npos
               && a.find("\"shadowCascadeDraws\": [1, 1, 1]") != std::string::npos
+              && a.find("\"shadowCascadeCasters\": [0, 0, 3]") != std::string::npos
               && a.find("\"lodDraws\": [0, 2, 0, 0]") != std::string::npos,
           "the reserved fields and arrays are written in a fixed shape");
 

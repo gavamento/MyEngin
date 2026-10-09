@@ -39,6 +39,9 @@ struct RenderStats {
     int shadowDrawCalls = 0;
     int shadowTriangles = 0;
     int shadowCascadeDraws[kRenderStatsCascadeSlots] = {};
+    // CSM のキャスター: カスケード別のカリングに掛けた候補数と、カスケードごとに残った数
+    int shadowCasterCandidates = 0;
+    int shadowCascadeCasters[kRenderStatsCascadeSlots] = {};
     // 以降は後続サブが埋める欄 (欄と dump の形を先に固定してある)
     int lodDraws[kRenderStatsLodSlots] = {};
     int paletteEvaluated = 0;

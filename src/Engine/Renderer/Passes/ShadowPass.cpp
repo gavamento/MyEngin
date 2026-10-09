@@ -126,7 +126,9 @@ bool ShadowPass::Init(GraphicsDevice& device, ShaderManager& shaders, int resolu
     D3D11_RASTERIZER_DESC rd = {};
     rd.FillMode = D3D11_FILL_SOLID;
     rd.CullMode = D3D11_CULL_BACK;
-    rd.DepthClipEnable = TRUE;
+    // 深度クランプ (pancaking): 近平面より光源側の画面外キャスターも深度 0 に潰して書く。
+    // クリップすると影が消える。CSM 専用 (局所影アトラスは別のラスタライザ)
+    rd.DepthClipEnable = FALSE;
     rd.DepthBias = 800;
     rd.SlopeScaledDepthBias = 2.5f;
     rd.DepthBiasClamp = 0.0f;
@@ -173,12 +175,12 @@ bool ShadowPass::Init(GraphicsDevice& device, ShaderManager& shaders, int resolu
     return true;
 }
 
-void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const RenderQueue& queue,
+void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const RenderQueue* const* cascadeQueues,
                         RenderResources& resources, const XMFLOAT4X4* lightViewProjs, int count,
                         uint32_t viewFrameIndex, bool instancing, const WaterDrawData* water)
 {
     ShaderProgram* prog = shaders.Get(depthShader_);
-    if (!ready_ || !prog || !prog->valid || lightViewProjs == nullptr || count <= 0) {
+    if (!ready_ || !prog || !prog->valid || cascadeQueues == nullptr || lightViewProjs == nullptr || count <= 0) {
         return;
     }
     if (count > kCascades) {
@@ -186,32 +188,48 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
     }
     ID3D11DeviceContext* dc = device.Context();
 
-    // インスタンス run 検出 (M38f)。run とバッファ充填はカスケード間で共通なので 1 回だけ。
+    // インスタンス run 検出 (M38f)。run はカスケードごと、ワールド行列は全カスケード分を 1 本のバッファへ積む。
     // 判定は本描画パスと同じ (material,mesh) の連続 run — シャドウは material 無関係だが
     // ソートキー由来の境界をそのまま使う (保守的だが正しく、run 構築関数を共有できる)
-    runs_.clear();
+    for (std::vector<MeshInstanceRun>& r : runs_) {
+        r.clear();
+    }
     worlds_.clear();
     ShaderProgram* skinnedProg = shaders.Get(depthSkinnedShader_);
     ShaderProgram* instProg = shaders.Get(depthInstancedShader_);
     if (instancing && instProg && instProg->valid) {
-        canInstance_.resize(queue.opaque.size());
-        for (size_t i = 0; i < queue.opaque.size(); ++i) {
-            const RenderItem& it = queue.opaque[i];
-            canInstance_[i] = (it.bones == nullptr && resources.meshes.GetDrawable(it.mesh)) ? 1 : 0;
-            // M79 sub-03: サーフェスマテリアルは影エントリ (下のループ) で個別に描くので、
-            // 深度専用シェーダのインスタンス run には混ぜない
-            if (canInstance_[i]) {
-                SurfaceMaterialState* s = resources.materials.GetOrBuildSurfaceState(
-                    it.material, shaders, resources.textures, device);
-                if (s && s->isSurfaceShader) {
-                    canInstance_[i] = 0;
+        for (int c = 0; c < count; ++c) {
+            const std::vector<RenderItem>& items = cascadeQueues[c]->opaque;
+            canInstance_.resize(items.size());
+            for (size_t i = 0; i < items.size(); ++i) {
+                const RenderItem& it = items[i];
+                canInstance_[i] = (it.bones == nullptr && resources.meshes.GetDrawable(it.mesh)) ? 1 : 0;
+                // M79 sub-03: サーフェスマテリアルは影エントリ (下のループ) で個別に描くので、
+                // 深度専用シェーダのインスタンス run には混ぜない
+                if (canInstance_[i]) {
+                    SurfaceMaterialState* s = resources.materials.GetOrBuildSurfaceState(
+                        it.material, shaders, resources.textures, device);
+                    if (s && s->isSurfaceShader) {
+                        canInstance_[i] = 0;
+                    }
                 }
             }
+            BuildInstanceRuns(items, canInstance_, runs_[c], cascadeWorlds_);
+            const uint32_t base = static_cast<uint32_t>(worlds_.size());
+            for (MeshInstanceRun& run : runs_[c]) {
+                run.base += base;
+            }
+            worlds_.insert(worlds_.end(), cascadeWorlds_.begin(), cascadeWorlds_.end());
         }
-        BuildInstanceRuns(queue.opaque, canInstance_, runs_, worlds_);
         if (worlds_.empty() || !instanceBuf_.Upload(device, worlds_)) {
-            runs_.clear();
+            for (std::vector<MeshInstanceRun>& r : runs_) {
+                r.clear();
+            }
         }
+    }
+    bool haveRuns = false;
+    for (const std::vector<MeshInstanceRun>& r : runs_) {
+        haveRuns = haveRuns || !r.empty();
     }
 
     // M79 sub-03/sub-05: サーフェスの影エントリ用予約 CB (カスケード間で共通。理由はヘッダのコメント参照)
@@ -247,7 +265,7 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
     dc->PSSetShader(nullptr, nullptr, 0); // 深度のみ
     ID3D11Buffer* cbs[1] = { objectCB_.Get() };
     dc->VSSetConstantBuffers(0, 1, cbs);
-    if (!runs_.empty()) {
+    if (haveRuns) {
         ID3D11ShaderResourceView* isrv = instanceBuf_.SRV();
         dc->VSSetShaderResources(0, 1, &isrv);
     }
@@ -260,16 +278,18 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
     auto restoreFixedShadowSlots = [&]() {
         ID3D11Buffer* restoreCb[1] = { objectCB_.Get() };
         dc->VSSetConstantBuffers(0, 1, restoreCb);
-        ID3D11ShaderResourceView* restoreSrv = runs_.empty() ? nullptr : instanceBuf_.SRV();
+        ID3D11ShaderResourceView* restoreSrv = haveRuns ? instanceBuf_.SRV() : nullptr;
         dc->VSSetShaderResources(0, 1, &restoreSrv);
         // M79 sub-06: doubleSided (Cull None) はサーフェスの影エントリのときだけ張るので、
         // 次の非サーフェス (深度バイアス付き CULL_BACK 前提) へ必ず戻す
         dc->RSSetState(rasterizer_.Get());
     };
 
-    // M38d: カスケード毎にスライス DSV へ全不透明キャスターを描く
+    // M38d: カスケード毎にスライス DSV へそのカスケードのキャスターを描く
     uint64_t boundShader = depthShader_.value; // 上で prog を bind 済み
     for (int c = 0; c < count; ++c) {
+        const std::vector<RenderItem>& casters = cascadeQueues[c]->opaque;
+        const std::vector<MeshInstanceRun>& cascadeRuns = runs_[c];
         dc->OMSetRenderTargets(1, noRtv, dsv_[c].Get());
         dc->ClearDepthStencilView(dsv_[c].Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
         const XMMATRIX lvp = XMLoadFloat4x4(&lightViewProjs[c]);
@@ -287,8 +307,8 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
         }
         uint64_t boundMesh = 0;
         size_t nextRun = 0;
-        for (size_t idx = 0; idx < queue.opaque.size(); ++idx) {
-            const RenderItem& item = queue.opaque[idx];
+        for (size_t idx = 0; idx < casters.size(); ++idx) {
+            const RenderItem& item = casters[idx];
             Mesh* mesh = resources.meshes.GetDrawable(item.mesh);
             if (!mesh) {
                 continue;
@@ -354,8 +374,8 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
                 }
             }
             // インスタンス run の先頭なら一括描画 (M38f)
-            if (nextRun < runs_.size() && runs_[nextRun].first == idx) {
-                const MeshInstanceRun& run = runs_[nextRun];
+            if (nextRun < cascadeRuns.size() && cascadeRuns[nextRun].first == idx) {
+                const MeshInstanceRun& run = cascadeRuns[nextRun];
                 ++nextRun;
                 if (depthInstancedShader_.value != boundShader) {
                     dc->IASetInputLayout(instProg->inputLayout.Get());
@@ -423,7 +443,7 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
     timer_.End(device); // M54d
 
     // インスタンス SRV を外す (次フレームの Map と競合させない、M38f)
-    if (!runs_.empty()) {
+    if (haveRuns) {
         ID3D11ShaderResourceView* nullVsSrv = nullptr;
         dc->VSSetShaderResources(0, 1, &nullVsSrv);
     }

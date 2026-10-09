@@ -66,6 +66,9 @@ struct SkeletalClip {
 struct SkinnedModel {
     std::vector<SkeletonJoint> joints;
     std::vector<SkeletalClip> clips;
+    // SkinnedModelLibrary::Register が振る登録の通番 (再登録で変わる)。モデルから派生した
+    // キャッシュ (保守的 AABB) が古い中身を使い続けないための版。0 = 未登録
+    uint64_t revision = 0;
 
     // name のジョイント index (先頭一致・大小区別)。見つからない / 空名は -1 (M48a)
     int32_t FindJointByName(std::string_view name) const;
@@ -94,6 +97,7 @@ public:
 private:
     std::unordered_map<uint64_t, SkinnedModel> models_;
     std::unordered_map<uint64_t, std::string> names_; // 列挙用 (MeshLibrary と同じ流儀)
+    uint64_t registerCount_ = 0;                      // SkinnedModel::revision の出所
 };
 
 // clip を timeSec でサンプルして各ジョイントのローカル TRS を作り、階層を掛け合わせて

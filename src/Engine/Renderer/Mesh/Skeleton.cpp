@@ -12,6 +12,7 @@ namespace mye {
 AssetID SkinnedModelLibrary::Register(std::string_view name, SkinnedModel model)
 {
     const AssetID id{ HashStr(name) };
+    model.revision = ++registerCount_;
     models_[id.value] = std::move(model);
     names_[id.value] = std::string(name);
     return id;

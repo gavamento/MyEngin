@@ -17,8 +17,8 @@
 |---|---|---|---|---|
 | sub-01 計測の土台 | OK | 1 | 72ff316 | Debug selftest で ServerNetSelfTest が 1 回だけ一過性 FAIL (原因未断定) |
 | sub-02 GPU オクルージョン縦切り (Deferred) | OK | 1 | 1bd74ec | ServerNetSelfTest 一過性 FAIL 2 回目 |
-| sub-03 オクルージョンを Forward へ + hzb-debug | OK | 2 | (このコミット) | 前セッションの途中差分を引き継いで再開。受け入れ 2 の目視はユーザー待ち |
-| sub-04 影のカスケード別カリング + スキン AABB | 未着手 | 0 | | 依存 01 |
+| sub-03 オクルージョンを Forward へ + hzb-debug | OK | 2 | 24781ec | 前セッションの途中差分を引き継いで再開。受け入れ 2 の目視はユーザー待ち |
+| sub-04 影のカスケード別カリング + スキン AABB | OK | 2 | (このコミット) | golden 3 枚更新 (画面外キャスターの影、planner 了承) |
 | sub-05 メッシュ LOD | 未着手 | 0 | | 依存 01 |
 | sub-06 描画側並列化 + URO | 未着手 | 0 | | 依存 04,05 |
 | sub-07 sim 並列化 (ADR-028) | 未着手 | 0 | | 依存 01 |
@@ -36,3 +36,5 @@
 - (planner 2026-10-09) spec.md 確定 (planner 裁定)。AskUserQuestion が使えなかったので、spec §2 の `[聞]` 4 件 (#2 2 フェーズ / #5 LOD オプトイン / #9 URO は描画側 / #12 sim 並列化はアルゴリズムを変えない系だけ) と全体の確定確認を司会がユーザーへ。差し戻されたら planner が該当行と §6 を直す。
 - (planner 2026-10-09、sub-03 VERDICT nit) OcclusionSelfTest の Forward のサーフェス項目は ON/OFF 一致で間接確認のみ (プローブ色の直接検査なし)。selftest が `%TEMP%\mye_occlusion_selftest` を残す (次回開始時に remove_all で消える)。
 - (coder sub-03) `Runtime.exe --screenshot` 単体ではスクショ後に終了しない (M90 以前から、コード読みのみで確認)。`--frames N` か `--render-stats-dump` と併用する。`tools\gen_project_files.ps1` は pwsh で実行する。shot_verify がタイムアウトすると Runtime / Editor が残って exe をロックする。
+- (planner 2026-10-09、sub-04 VERDICT nit) `WorldAabbInFrustumNoNear` は `WorldAabbInFrustum` の複製。除外面を引数にして 1 本化する (sub-06 で FrustumCull.h を触るとき)。`RenderSystem::Render` を通した画面外スキンの影の画素テストは無い (一時シーンの目視のみ)。
+- (coder sub-04 → sub-06) カスケード判定は RenderCascadeShadows の直列ループ (CascadeCasterMask)。画面外スキンのパレットは入ったカスケードがあるときだけ毎回評価 (間引き未)。EvaluateSkinPalette が評価の唯一の入口。SkinBoundsCache::Get はステージ 1 (直列) でだけ呼ぶ。AllocateShadowAtlas (局所影) は画面内の queue_.opaque のみ。スキンは GPU オクルージョンの判定箱に載せない (M90 の間は据え置き)。

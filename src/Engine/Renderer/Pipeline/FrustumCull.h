@@ -90,13 +90,14 @@ inline bool AabbInFrustum(const Frustum& f, const DirectX::XMFLOAT4X4& m,
     return true;
 }
 
-// スキン付きメッシュの登録 AABB はバインドポーズの頂点だけを包み、アニメ後の頂点を
-// 包む保証がない。現在姿勢の bounds を持つまでは、誤って部位を消さないことを優先する。
+// スキン付きメッシュは、登録 AABB (バインドポーズの頂点) ではなく全姿勢を包む保守的 AABB
+// (SkinBounds.h) を lmin / lmax に渡す。箱を持てない物 (ラグドール作動中・箱を求められないモデル) は
+// alwaysVisible = true で、誤って部位を消さないことを優先して常に可視にする。
 inline bool RenderableInFrustum(const Frustum& f, const DirectX::XMFLOAT4X4& m,
                                 const DirectX::XMFLOAT3& lmin, const DirectX::XMFLOAT3& lmax,
-                                bool skinned, float worldPaddingM = 0.0f)
+                                bool alwaysVisible, float worldPaddingM = 0.0f)
 {
-    return skinned || AabbInFrustum(f, m, lmin, lmax, worldPaddingM);
+    return alwaysVisible || AabbInFrustum(f, m, lmin, lmax, worldPaddingM);
 }
 
 // 既に world 空間へ落ちている AABB が視錐台と交差するか (M54d)。
@@ -122,6 +123,52 @@ inline bool WorldAabbInFrustum(const Frustum& f, const DirectX::XMFLOAT3& wmin,
         }
     }
     return true;
+}
+
+// WorldAabbInFrustum から近平面 (planes[4]) を除いた判定。CSM のキャスター用: ライトの手前側に
+// 離れた物は近平面で落とさず (影は深度クランプで描く)、xy・遠平面の外だけを落とす
+inline bool WorldAabbInFrustumNoNear(const Frustum& f, const DirectX::XMFLOAT3& wmin,
+                                     const DirectX::XMFLOAT3& wmax)
+{
+    using DirectX::XMFLOAT3;
+    using DirectX::XMFLOAT4;
+    const XMFLOAT3 wc = { (wmin.x + wmax.x) * 0.5f, (wmin.y + wmax.y) * 0.5f,
+                          (wmin.z + wmax.z) * 0.5f };
+    const XMFLOAT3 we = { (wmax.x - wmin.x) * 0.5f, (wmax.y - wmin.y) * 0.5f,
+                          (wmax.z - wmin.z) * 0.5f };
+    for (int i = 0; i < 6; ++i) {
+        if (i == 4) {
+            continue;
+        }
+        const XMFLOAT4& p = f.planes[i];
+        const float px = wc.x + (p.x >= 0.0f ? we.x : -we.x);
+        const float py = wc.y + (p.y >= 0.0f ? we.y : -we.y);
+        const float pz = wc.z + (p.z >= 0.0f ? we.z : -we.z);
+        if (p.x * px + p.y * py + p.z * pz + p.w < 0.0f) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// CSM のキャスター 1 件が入るカスケードの集合 (bit c = カスケード c)。箱を持たない (bounded = false) 物は全部。
+// 判定は近平面を除く 5 面 (WorldAabbInFrustumNoNear)
+inline uint8_t CascadeCasterMask(const Frustum* cascadeFrusta, int count, bool bounded,
+                                 const DirectX::XMFLOAT3& wmin, const DirectX::XMFLOAT3& wmax)
+{
+    uint8_t mask = 0;
+    for (int c = 0; c < count; ++c) {
+        if (!bounded || WorldAabbInFrustumNoNear(cascadeFrusta[c], wmin, wmax)) {
+            mask = static_cast<uint8_t>(mask | (1u << c));
+        }
+    }
+    return mask;
+}
+
+// 画面外のスキンのパレットを評価するか: どれかのカスケードに入るときだけ
+inline bool OffscreenCasterNeedsPalette(uint8_t cascadeMask)
+{
+    return cascadeMask != 0;
 }
 
 // 視錐台の 8 隅をワールド空間で返す (SceneView のカメラワイヤ用)。

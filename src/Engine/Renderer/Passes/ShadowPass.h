@@ -28,15 +28,24 @@ public:
     bool Init(GraphicsDevice& device, ShaderManager& shaders, int resolution = 2048);
     bool IsReady() const { return ready_; }
 
-    // 不透明キューを各カスケードの lightViewProj (非転置、行ベクトル規約 world*view*proj) で
-    // シャドウ深度 (スライス c) へ描く。count は kCascades 以下。
+    // カスケード c のキャスター (cascadeQueues[c].opaque) を lightViewProj[c] (非転置、行ベクトル規約
+    // world*view*proj) でシャドウ深度 (スライス c) へ描く。count は kCascades 以下。
+    // cascadeQueues[c] は RenderQueue::Sort 済みであること (material → mesh の連続 run でインスタンシングする)。
     // viewFrameIndex = M79 sub-03: サーフェスの影エントリが読む gTime (viewFrameIndex/60) の出所。
     // instancing = 非スキン連続 run の一括描画を併用 (M38f)。
     // water = M79 sub-05: MyEngineWater (影エントリ専用 static gWaterTime の代入元)。
     // null / !active = 従来どおり全 0 (水面が無いシーンは 1 ビットも変わらない)
-    void Render(GraphicsDevice& device, ShaderManager& shaders, const RenderQueue& queue,
+    void Render(GraphicsDevice& device, ShaderManager& shaders, const RenderQueue* const* cascadeQueues,
                 RenderResources& resources, const DirectX::XMFLOAT4X4* lightViewProjs, int count,
                 uint32_t viewFrameIndex, bool instancing = true, const WaterDrawData* water = nullptr);
+    // 全カスケードに同じキューを描く形 (カスケード別のカリングをしない呼び出し側用)
+    void Render(GraphicsDevice& device, ShaderManager& shaders, const RenderQueue& queue,
+                RenderResources& resources, const DirectX::XMFLOAT4X4* lightViewProjs, int count,
+                uint32_t viewFrameIndex, bool instancing = true, const WaterDrawData* water = nullptr)
+    {
+        const RenderQueue* same[kCascades] = { &queue, &queue, &queue };
+        Render(device, shaders, same, resources, lightViewProjs, count, viewFrameIndex, instancing, water);
+    }
 
     ID3D11ShaderResourceView* SRV() const { return srv_.Get(); } // Texture2DArray (R32_FLOAT)
     int Resolution() const { return resolution_; }
@@ -51,12 +60,14 @@ private:
     // スキンメッシュ用。掛けないとバインドポーズの生ジオメトリが影に焼かれる
     // (shadow_depth_skinned.hlsl 冒頭に症状)
     AssetID depthSkinnedShader_ = {};
-    // ---- インスタンシング (M38f)。run はカスケード間で共通 (充填は 1 回) ----
+    // ---- インスタンシング (M38f)。run はカスケードごと、ワールド行列は全カスケード分を 1 本のバッファへ
+    //      (run.base はそのバッファ内の位置。充填は 1 回) ----
     AssetID depthInstancedShader_ = {};
     MeshInstanceBuffer instanceBuf_;
     std::vector<uint8_t> canInstance_; // フレーム毎スクラッチ
-    std::vector<MeshInstanceRun> runs_;
+    std::vector<MeshInstanceRun> runs_[kCascades];
     std::vector<DirectX::XMFLOAT4X4> worlds_;
+    std::vector<DirectX::XMFLOAT4X4> cascadeWorlds_; // BuildInstanceRuns の出力 (フレーム毎スクラッチ)
 
     Microsoft::WRL::ComPtr<ID3D11Texture2D> tex_; // ArraySize = kCascades
     Microsoft::WRL::ComPtr<ID3D11DepthStencilView> dsv_[kCascades]; // スライス毎

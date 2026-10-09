@@ -50,6 +50,11 @@ struct CullCand {
     // MaterialLibrary の横テーブル参照はステージ 1 (直列) で解決しておく — ステージ 2 は
     // ジョブ並列の純関数なので、その中でテーブルを引くと並列化の前提 (要素独立) が崩れる
     float boundsPadding = 0.0f;
+    // 視錐台判定に使うローカル AABB。非スキンはメッシュの AABB、スキンは全姿勢を包む保守的 AABB (SkinBounds.h)
+    XMFLOAT3 boundsMin = { 0.0f, 0.0f, 0.0f };
+    XMFLOAT3 boundsMax = { 0.0f, 0.0f, 0.0f };
+    // 箱で判定できない (ラグドール作動中・スキンの箱を求められない) = 常に可視
+    uint8_t alwaysVisible = 0;
 };
 
 constexpr size_t kCullGrain = 256; // これ未満は直列 (スレッド起動コスト回避)
@@ -460,6 +465,17 @@ void ComputeCascadeVPs(const XMFLOAT3& lightDir, const XMFLOAT3& sceneMin,
     }
 }
 
+// 最初の平行光の添字 (CSM の光)。無ければ -1
+int FindDirectionalLight(const SceneLightData& lights)
+{
+    for (int i = 0; i < lights.count; ++i) {
+        if (lights.lights[i].type == lighttype::kDirectional) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 } // namespace
 
 Texture* LoadTextureRememberingFailure(TextureLibrary& textures, AssetID id, const std::wstring& path,
@@ -572,7 +588,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     DecideTaaAndFroxel(world, path, target, cameraOverride, f);
     CollectLights(world, f);
     CollectDrawables(world, resources, target, f);
-    RenderCascadeShadows(device, shaders, resources, f);
+    RenderCascadeShadows(world, device, shaders, resources, f);
     AllocateShadowAtlas(device, shaders, resources, f);
     PrepareEnvironment(world, device, shaders, resources, target, cameraOverride, f);
     UpdateRtScene(device, shaders, resources, target, f);
@@ -887,6 +903,11 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     // ---- 収集 ----
     queue_.Clear();
     skinPalettes_.clear(); // スキンメッシュのボーンパレット (M18、フレーム毎に再構築)
+    // CSM のキャスター候補 (カメラの視錐台で落とす前の全不透明)。影を描かないフレームは集めない
+    shadowCasters_.clear();
+    offscreenCasters_.clear();
+    const bool collectShadowCasters = enableShadows && FindDirectionalLight(f.lights) >= 0;
+    int paletteEvaluated = 0; // このフレームに評価したボーンパレットの数 (統計)
     const XMMATRIX v = XMLoadFloat4x4(&view.view);
     // RT のどれかのレーン (か RT デバッグ表示) が on か。off のフレームは適用範囲を 1 回も
     // 判定しない (祖先を辿らない) — 既定の経路のコストと絵を RT 導入前のまま保つ
@@ -1096,6 +1117,11 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                     if (smat->transparent != 0) {
                         queue_.transparent.push_back(item);
                     } else {
+                        if (collectShadowCasters) {
+                            ShadowCaster sc; // 箱を持たない = 全カスケードへ (従来どおり常に影を落とす)
+                            sc.queueIndex = static_cast<int32_t>(queue_.opaque.size());
+                            shadowCasters_.push_back(sc);
+                        }
                         queue_.opaque.push_back(item);
                     }
                 }
@@ -1183,11 +1209,30 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             }
             // M79 sub-06: 余白はここ (直列ステージ) で MaterialLibrary の横テーブルから解決する。
             // 非サーフェスマテリアルは 0 を返すので既存の判定と 1 ビットも変わらない
-            cullCands.push_back({ e, mr->mesh, mr->material, worldMat,
-                                   resources.meshes.Get(mr->mesh), 0.0f, 1,
-                                   world.GetComponent<SkinnedMeshComponent>(e) != nullptr ? uint8_t{ 1 }
-                                                                                         : uint8_t{ 0 },
-                                   resources.materials.GetSurfaceBoundsPadding(mr->material) });
+            const Mesh* meshPtr = resources.meshes.Get(mr->mesh);
+            const auto* skinComp = world.GetComponent<SkinnedMeshComponent>(e);
+            CullCand cand{ e, mr->mesh, mr->material, worldMat, meshPtr, 0.0f, 1,
+                           skinComp != nullptr ? uint8_t{ 1 } : uint8_t{ 0 },
+                           resources.materials.GetSurfaceBoundsPadding(mr->material) };
+            if (meshPtr != nullptr) {
+                cand.boundsMin = meshPtr->aabbMin;
+                cand.boundsMax = meshPtr->aabbMax;
+            }
+            if (skinComp != nullptr) {
+                // スキンはバインドポーズの AABB が姿勢を包まないので、全姿勢を包む箱で判定する。
+                // ラグドールは骨がアニメと無関係に動く / 箱を求められないモデルは、従来どおり常に可視
+                const auto* rag = world.GetComponent<RagdollComponent>(e);
+                const SkinnedLocalAabb* box = (rag != nullptr && rag->active)
+                    ? nullptr
+                    : skinBounds_.Get(resources.skinnedModels, skinComp->model, resources.meshes, mr->mesh);
+                if (box != nullptr) {
+                    cand.boundsMin = box->min;
+                    cand.boundsMax = box->max;
+                } else {
+                    cand.alwaysVisible = 1;
+                }
+            }
+            cullCands.push_back(cand);
         }
     });
 
@@ -1195,17 +1240,15 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     jobs::System().ParallelRanges(cullCands.size(), kCullGrain, [&](size_t a, size_t b) {
         for (size_t i = a; i < b; ++i) {
             CullCand& c = cullCands[i];
-            // スキン付きメッシュの AABB はバインドポーズの頂点から作られており、現在の
-            // ボーン姿勢を包まない。これで落とすと、別メッシュになっている手・指などが
-            // アニメ中だけ消える。全クリップを包む bounds を持つまでは保守的に描画する。
-            if (cullEnabled && c.meshPtr
-                && !RenderableInFrustum(frustum, c.world, c.meshPtr->aabbMin, c.meshPtr->aabbMax,
-                                        c.skinned != 0, c.boundsPadding)) {
-                c.visible = 0;
-                continue;
-            }
+            // viewZ は画面外の影キャスターのソートキーにも使うので、落とす物にも先に求める
             const XMVECTOR posWS = XMVectorSet(c.world._41, c.world._42, c.world._43, 1);
             c.viewZ = XMVectorGetZ(XMVector3TransformCoord(posWS, v));
+            // スキンの箱は全クリップの全姿勢を包む (別メッシュの手・指がアニメ中に消えない)
+            if (cullEnabled && c.meshPtr
+                && !RenderableInFrustum(frustum, c.world, c.boundsMin, c.boundsMax, c.alwaysVisible != 0,
+                                        c.boundsPadding)) {
+                c.visible = 0;
+            }
         }
     });
 
@@ -1227,6 +1270,32 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         }
         if (!c.visible) {
             ++culledCount;
+            // 画面外でも影は画面へ落ちる: 不透明のキャスターは影の候補に残す (描くかはカスケード別の判定)
+            const Material* offMat = collectShadowCasters && c.meshPtr ? resources.materials.Get(c.material) : nullptr;
+            if (collectShadowCasters && c.meshPtr && !(offMat && offMat->transparent != 0)) {
+                RenderItem it;
+                it.mesh = c.mesh;
+                it.material = c.material;
+                it.entity = c.e;
+                it.world = c.world;
+                it.viewZ = c.viewZ;
+                ShadowCaster sc;
+                sc.offscreenIndex = static_cast<int32_t>(offscreenCasters_.size());
+                WorldAabb(c.world, c.boundsMin, c.boundsMax, sc.aabbMin, sc.aabbMax, c.boundsPadding);
+                sc.bounded = 1;
+                offscreenCasters_.push_back(it);
+                shadowCasters_.push_back(sc);
+                if (c.skinned != 0) {
+                    // スキンは以前は常に可視 = フィット AABB に入っていた。フィットを変えないために入れ続ける
+                    XMFLOAT3 bindMin, bindMax;
+                    WorldAabb(c.world, c.meshPtr->aabbMin, c.meshPtr->aabbMax, bindMin, bindMax, c.boundsPadding);
+                    sceneMin = { std::min(sceneMin.x, bindMin.x), std::min(sceneMin.y, bindMin.y),
+                                 std::min(sceneMin.z, bindMin.z) };
+                    sceneMax = { std::max(sceneMax.x, bindMax.x), std::max(sceneMax.y, bindMax.y),
+                                 std::max(sceneMax.z, bindMax.z) };
+                    hasScene = true;
+                }
+            }
             continue;
         }
         RenderItem item;
@@ -1255,40 +1324,8 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             if (const SkinnedModel* model = resources.skinnedModels.Get(sm->model)) {
                 skinPalettes_.emplace_back();
                 std::vector<XMFLOAT4X4>& palette = skinPalettes_.back();
-                const float timeSec = static_cast<float>(sm->timeTicks) / 60.0f;
-                // M60g1: ラグドールが作動中なら、骨の姿勢はアニメではなく**部位の
-                // LocalTransform (= 剛体が置いた値)** から組む。入力が ECS 状態だけの
-                // 純関数なので、ビュー毎に Render() が呼ばれても同じ絵になる
-                // M18 追補: クロスフェード中は 2 クリップを混ぜた局所行列から組む。
-                // M89a: ポーズプログラムが書かれていれば同じく局所行列から組む。
-                // どちらでもない間は M18 の経路をそのまま通す (golden が動かない)
-                if (const auto* rag = world.GetComponent<RagdollComponent>(c.e);
-                    rag && rag->active) {
-                    std::vector<XMMATRIX> locals;
-                    SampleSkinnedLocals(*model, *sm, locals);
-                    ragdoll::BuildBonePaletteFromLocals(world, c.e, *model, locals, palette);
-                } else if (UsesLocalsPath(*sm)) {
-                    // M89f: ポーズプログラムの時刻は、ワールド行列と同じ条件 (interp) で前 tick と補間する。
-                    // ラグドールの枝は補間しない = 剛体が置いた部位 (tick 境界の値) と骨がずれないように
-                    std::vector<XMMATRIX> locals;
-                    SampleSkinnedLocalsInterpolated(*model, *sm, interp ? interpAlpha : 1.0f, locals);
-                    ComputeBonePaletteWithOverrides(*model, locals, {}, {}, palette);
-                } else {
-                    ComputeBonePalette(*model, sm->clip, timeSec, palette);
-                }
-                if (palette.size() > static_cast<size_t>(kMaxBones)) {
-                    // 上限超過は切り捨て (シェーダの定数バッファが kMaxBones 固定のため)。
-                    // 黙って切ると姿勢が壊れた原因が追えないので model 毎に 1 回だけ WARN
-                    if (std::find(boneOverflowWarned_.begin(), boneOverflowWarned_.end(),
-                                  sm->model.value)
-                        == boneOverflowWarned_.end()) {
-                        boneOverflowWarned_.push_back(sm->model.value);
-                        MYE_LOG_WARN("skinned model has %zu bones, clamped to %d "
-                                     "(MYE_MAX_BONES): pose will be wrong for the extra bones",
-                                     palette.size(), kMaxBones);
-                    }
-                    palette.resize(static_cast<size_t>(kMaxBones));
-                }
+                EvaluateSkinPalette(world, c.e, *sm, *model, interp, palette);
+                ++paletteEvaluated;
                 item.bones = palette.data();
                 item.boneCount = static_cast<int32_t>(palette.size());
             }
@@ -1298,10 +1335,20 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         if (mat && mat->transparent != 0) {
             queue_.transparent.push_back(item);
         } else {
+            if (collectShadowCasters && c.meshPtr) {
+                // 影の候補は箱が持てれば AABB (ワールド) で、持てなければ全カスケードへ入れる
+                ShadowCaster sc;
+                sc.queueIndex = static_cast<int32_t>(queue_.opaque.size());
+                if (c.alwaysVisible == 0) {
+                    WorldAabb(c.world, c.boundsMin, c.boundsMax, sc.aabbMin, sc.aabbMax, c.boundsPadding);
+                    sc.bounded = 1;
+                }
+                shadowCasters_.push_back(sc);
+            }
             if (c.meshPtr) {
                 XMFLOAT3 wmin, wmax;
-                // M79 sub-06: 影のキャスターはこのカリング済みキューから取るので、
-                // CSM のフィット AABB もカリングと同じ余白で広げる。0 のときは従来と同じ AABB
+                // M79 sub-06: CSM のフィット AABB もカリングと同じ余白で広げる。
+                // 0 のときは従来と同じ AABB。スキンもバインドポーズの AABB のまま (フィットを変えない)
                 WorldAabb(c.world, c.meshPtr->aabbMin, c.meshPtr->aabbMax, wmin, wmax,
                          c.boundsPadding);
                 // GPU オクルージョンの判定箱。スキンは姿勢が AABB に収まる保証が無いので載せない (常に描く)
@@ -1320,11 +1367,55 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         }
     }
     prof::AddCulled(culledCount);
+    if (paletteEvaluated != 0) {
+        prof::RenderStats delta;
+        delta.paletteEvaluated = paletteEvaluated;
+        prof::AddRenderStats(delta);
+    }
+}
+
+// スキンメッシュ 1 体のボーンパレット。ポーズは描画専用 (SkinnedMeshComponent は kComponentNoHash)。
+// 入力は ECS の状態だけの純関数なので、ビュー毎に Render() が呼ばれても、本描画でも影でも同じ絵になる
+void RenderSystem::EvaluateSkinPalette(World& world, EntityID e, const SkinnedMeshComponent& sm,
+                                       const SkinnedModel& model, bool interp,
+                                       std::vector<XMFLOAT4X4>& palette)
+{
+    const float timeSec = static_cast<float>(sm.timeTicks) / 60.0f;
+    // M60g1: ラグドールが作動中なら、骨の姿勢はアニメではなく**部位の
+    // LocalTransform (= 剛体が置いた値)** から組む。
+    // M18 追補: クロスフェード中は 2 クリップを混ぜた局所行列から組む。
+    // M89a: ポーズプログラムが書かれていれば同じく局所行列から組む。
+    // どちらでもない間は M18 の経路をそのまま通す (golden が動かない)
+    if (const auto* rag = world.GetComponent<RagdollComponent>(e); rag && rag->active) {
+        std::vector<XMMATRIX> locals;
+        SampleSkinnedLocals(model, sm, locals);
+        ragdoll::BuildBonePaletteFromLocals(world, e, model, locals, palette);
+    } else if (UsesLocalsPath(sm)) {
+        // M89f: ポーズプログラムの時刻は、ワールド行列と同じ条件 (interp) で前 tick と補間する。
+        // ラグドールの枝は補間しない = 剛体が置いた部位 (tick 境界の値) と骨がずれないように
+        std::vector<XMMATRIX> locals;
+        SampleSkinnedLocalsInterpolated(model, sm, interp ? interpAlpha : 1.0f, locals);
+        ComputeBonePaletteWithOverrides(model, locals, {}, {}, palette);
+    } else {
+        ComputeBonePalette(model, sm.clip, timeSec, palette);
+    }
+    if (palette.size() > static_cast<size_t>(kMaxBones)) {
+        // 上限超過は切り捨て (シェーダの定数バッファが kMaxBones 固定のため)。
+        // 黙って切ると姿勢が壊れた原因が追えないので model 毎に 1 回だけ WARN
+        if (std::find(boneOverflowWarned_.begin(), boneOverflowWarned_.end(), sm.model.value)
+            == boneOverflowWarned_.end()) {
+            boneOverflowWarned_.push_back(sm.model.value);
+            MYE_LOG_WARN("skinned model has %zu bones, clamped to %d "
+                         "(MYE_MAX_BONES): pose will be wrong for the extra bones",
+                         palette.size(), kMaxBones);
+        }
+        palette.resize(static_cast<size_t>(kMaxBones));
+    }
 }
 
 // 平行光の CSM (M17 / M38d): 最初の平行光でシーンにフィットした 3 カスケードを描く
-void RenderSystem::RenderCascadeShadows(GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
-                                        FrameContext& f)
+void RenderSystem::RenderCascadeShadows(World& world, GraphicsDevice& device, ShaderManager& shaders,
+                                        RenderResources& resources, FrameContext& f)
 {
     RenderView& view = f.view;
     SceneLightData& lights = f.lights;
@@ -1336,13 +1427,7 @@ void RenderSystem::RenderCascadeShadows(GraphicsDevice& device, ShaderManager& s
     }
     view.shadowSRV = nullptr;
     if (enableShadows && shadowPass_.IsReady() && hasScene) {
-        int dirIdx = -1;
-        for (int i = 0; i < lights.count; ++i) {
-            if (lights.lights[i].type == lighttype::kDirectional) {
-                dirIdx = i;
-                break;
-            }
-        }
+        const int dirIdx = FindDirectionalLight(lights);
         if (dirIdx >= 0) {
             // M38d: カメラフィットの 3 カスケード (非 perspective はシーン全体×3 に縮退)
             XMFLOAT4X4 lightVPs[ShadowPass::kCascades];
@@ -1350,7 +1435,64 @@ void RenderSystem::RenderCascadeShadows(GraphicsDevice& device, ShaderManager& s
             ComputeCascadeVPs(lights.lights[dirIdx].direction, sceneMin, sceneMax, view,
                               shadowPass_.Resolution(), lightVPs, splits,
                               ShadowPass::kCascades);
-            shadowPass_.Render(device, shaders, queue_, resources, lightVPs,
+
+            // カスケードごとのキャスター判定: そのカスケードのライト直交視錐台と交わる物だけを描く。
+            // 候補はカメラの視錐台で落とす前の全不透明 (画面外の物の影も画面へ落ちる)。
+            // ライト側の奥行きは切らない: 近平面を除く 5 面で判定し、描画は深度クランプ (ShadowPass)
+            Frustum cascadeFrustum[ShadowPass::kCascades];
+            for (int c = 0; c < ShadowPass::kCascades; ++c) {
+                cascadeFrustum[c] = BuildFrustum(lightVPs[c]);
+            }
+            shadowCasterMask_.assign(shadowCasters_.size(), 0);
+            for (size_t i = 0; i < shadowCasters_.size(); ++i) {
+                const ShadowCaster& sc = shadowCasters_[i];
+                shadowCasterMask_[i] = CascadeCasterMask(cascadeFrustum, ShadowPass::kCascades, sc.bounded != 0,
+                                                         sc.aabbMin, sc.aabbMax);
+            }
+            // 画面外のスキンは、どれかのカスケードに入ったときだけパレットを評価する
+            const bool interp = prevWorld != nullptr && interpAlpha < 1.0f;
+            int paletteEvaluated = 0;
+            for (size_t i = 0; i < shadowCasters_.size(); ++i) {
+                const ShadowCaster& sc = shadowCasters_[i];
+                if (sc.offscreenIndex < 0 || !OffscreenCasterNeedsPalette(shadowCasterMask_[i])) {
+                    continue;
+                }
+                RenderItem& item = offscreenCasters_[static_cast<size_t>(sc.offscreenIndex)];
+                const auto* sm = world.GetComponent<SkinnedMeshComponent>(item.entity);
+                const SkinnedModel* model = sm != nullptr ? resources.skinnedModels.Get(sm->model) : nullptr;
+                if (model != nullptr) {
+                    skinPalettes_.emplace_back();
+                    std::vector<XMFLOAT4X4>& palette = skinPalettes_.back();
+                    EvaluateSkinPalette(world, item.entity, *sm, *model, interp, palette);
+                    ++paletteEvaluated;
+                    item.bones = palette.data();
+                    item.boneCount = static_cast<int32_t>(palette.size());
+                }
+            }
+            // 並びは本描画のキューと同じキー (material → mesh → 深度 → entity)。連続する同一メッシュを
+            // BuildInstanceRuns がインスタンシングする。深度だけなので並びは結果に効かない
+            prof::RenderStats delta;
+            delta.shadowCasterCandidates = static_cast<int>(shadowCasters_.size());
+            delta.paletteEvaluated = paletteEvaluated;
+            for (int c = 0; c < ShadowPass::kCascades; ++c) {
+                std::vector<RenderItem>& list = cascadeQueues_[c].opaque;
+                cascadeQueues_[c].Clear();
+                for (size_t i = 0; i < shadowCasters_.size(); ++i) {
+                    if ((shadowCasterMask_[i] & (1u << c)) == 0) {
+                        continue;
+                    }
+                    const ShadowCaster& sc = shadowCasters_[i];
+                    list.push_back(sc.queueIndex >= 0 ? queue_.opaque[static_cast<size_t>(sc.queueIndex)]
+                                                      : offscreenCasters_[static_cast<size_t>(sc.offscreenIndex)]);
+                }
+                cascadeQueues_[c].Sort();
+                delta.shadowCascadeCasters[c] = static_cast<int>(list.size());
+            }
+            prof::AddRenderStats(delta);
+
+            const RenderQueue* cascadeQueuePtrs[ShadowPass::kCascades] = { &cascadeQueues_[0], &cascadeQueues_[1],
+                                                                          &cascadeQueues_[2] };
+            shadowPass_.Render(device, shaders, cascadeQueuePtrs, resources, lightVPs,
                                ShadowPass::kCascades, view.viewFrameIndex, enableInstancing,
                                view.water); // M79 sub-05: MyEngineWater (影エントリ用)
             for (int c = 0; c < ShadowPass::kCascades; ++c) {
