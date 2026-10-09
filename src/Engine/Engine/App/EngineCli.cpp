@@ -297,6 +297,14 @@ const CliFlag kEngineCliFlags[] = {
     // GPU オクルージョンの切り替えと、render_bench のカメラカット (描画側の上書きだけ。sim には触れない)
     { L"--hzb-debug-max", CliValue::None, [](CliArgs& a) { a.c.hzbDebugMax = true; return true; } },
     { L"--no-occlusion", CliValue::None, [](CliArgs& a) { a.c.occlusionCulling = false; return true; } },
+    // メッシュ LOD の bias と強制段 (.meta で段を作ったモデルだけに効く)
+    { L"--lod-bias", CliValue::One,
+      [](CliArgs& a) {
+          const float bias = static_cast<float>(_wtof(a.v1));
+          a.c.lodBias = (bias > 0.0f) ? bias : 1.0f;
+          return true;
+      } },
+    { L"--lod-force", CliValue::One, [](CliArgs& a) { a.c.lodForce = _wtoi(a.v1); return true; } },
     { L"--render-bench-cut-frame", CliValue::One,
       [](CliArgs& a) { a.c.renderBenchCutFrame = _wtoi64(a.v1); return true; } },
     // M56d: SSR (Deferred のみ。HZB も一緒に組まれる)

@@ -163,22 +163,68 @@ constexpr uint32_t kDx10MiscTextureCube = 0x4;       // D3D11_RESOURCE_MISC_TEXT
 
 // ---------------------------------------------------------------- MeshLibrary
 
+namespace {
+
+// LOD の段表が lodIndices と矛盾していないか (段は ib の LOD0 の後ろに隙間なく並ぶ)
+bool LodLevelsConsistent(size_t lod0Count, size_t lodIndexCount, std::span<const MeshLodLevel> levels)
+{
+    size_t expectedStart = lod0Count;
+    for (const MeshLodLevel& level : levels) {
+        if (level.indexStart != expectedStart || level.indexCount == 0 || level.indexCount % 3 != 0) {
+            return false;
+        }
+        expectedStart += level.indexCount;
+    }
+    return expectedStart == lod0Count + lodIndexCount;
+}
+
+} // namespace
+
 AssetID MeshLibrary::Register(std::string_view name, std::span<const MeshVertex> vertices,
-                              std::span<const uint32_t> indices)
+                              std::span<const uint32_t> indices, std::span<const uint32_t> lodIndices,
+                              std::span<const MeshLodLevel> lodLevels)
 {
     // 同名の再登録は差し替え (モデルのホットリロード経路。AssetID は不変 = 参照透過)
     const AssetID id{ HashStr(name) };
+
+    // LOD の指定が矛盾していたら段なしで登録する (描画は LOD0 のまま続く)
+    if (!lodLevels.empty() && !LodLevelsConsistent(indices.size(), lodIndices.size(), lodLevels)) {
+        MYE_LOG_WARN("mesh LOD table is inconsistent, registering without LOD: %.*s",
+                     static_cast<int>(name.size()), name.data());
+        lodIndices = {};
+        lodLevels = {};
+    } else if (lodLevels.empty()) {
+        lodIndices = {};
+    }
 
     Mesh mesh;
     // Init 前 (ヘッドレス = --selftest 等、M48a) は GPU バッファを作らず CPU 側
     // (AABB / positions / indices) だけ登録する — ローダをウィンドウ / D3D 無しで通すため。
     // 実アプリは必ず Init 済みなのでこの分岐には入らない
-    if (device_ && !UploadBuffers(mesh, vertices, indices)) {
-        MYE_LOG_ERROR("mesh buffer creation failed: %.*s", static_cast<int>(name.size()),
-                      name.data());
-        return {};
+    if (device_) {
+        bool uploaded = false;
+        if (lodIndices.empty()) {
+            uploaded = UploadBuffers(mesh, vertices, indices);
+        } else {
+            std::vector<uint32_t> joined;
+            joined.reserve(indices.size() + lodIndices.size());
+            joined.insert(joined.end(), indices.begin(), indices.end());
+            joined.insert(joined.end(), lodIndices.begin(), lodIndices.end());
+            uploaded = UploadBuffers(mesh, vertices, joined);
+        }
+        if (!uploaded) {
+            MYE_LOG_ERROR("mesh buffer creation failed: %.*s", static_cast<int>(name.size()),
+                          name.data());
+            return {};
+        }
     }
     mesh.indexCount = static_cast<uint32_t>(indices.size());
+    if (!lodLevels.empty()) {
+        mesh.lods.reserve(lodLevels.size() + 1);
+        mesh.lods.push_back(MeshLodLevel{ 0, mesh.indexCount, 1.0f });
+        mesh.lods.insert(mesh.lods.end(), lodLevels.begin(), lodLevels.end());
+        mesh.lodIndices.assign(lodIndices.begin(), lodIndices.end());
+    }
 
     // M41: メッシュコライダー用 CPU コピー (位置 + インデックス)
     // M46a: レイトレのヒット属性用に法線 / UV も同じ頂点順で保持する
@@ -308,7 +354,14 @@ int MeshLibrary::RecreateGpu(GraphicsDevice& device)
                 vertices[i].boneWeights = mesh.skin[i].boneWeights;
             }
         }
-        if (!UploadBuffers(mesh, vertices, mesh.indices)) {
+        std::vector<uint32_t> joined; // 段ありは LOD0 + 粗い段を連結して作り直す
+        if (!mesh.lodIndices.empty()) {
+            joined.reserve(mesh.indices.size() + mesh.lodIndices.size());
+            joined.insert(joined.end(), mesh.indices.begin(), mesh.indices.end());
+            joined.insert(joined.end(), mesh.lodIndices.begin(), mesh.lodIndices.end());
+        }
+        if (!UploadBuffers(mesh, vertices, mesh.lodIndices.empty() ? std::span<const uint32_t>(mesh.indices)
+                                                                   : std::span<const uint32_t>(joined))) {
             const auto nameIt = names_.find(id);
             MYE_LOG_ERROR("[device] mesh buffer recreation failed: %s",
                           nameIt != names_.end() ? nameIt->second.c_str() : "(unnamed)");

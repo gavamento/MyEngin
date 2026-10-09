@@ -157,6 +157,7 @@ private:
     // アセットインスペクタの編集キャッシュ (M40c)。選択パスが変わったら .meta から再読込
     std::wstring assetEditPath_;
     importmeta::TextureImportSettings assetImportEdit_;
+    importmeta::ModelLodSettings assetLodEdit_; // モデルの LOD 設定 (M90e)
 
     // マテリアルインスペクタの編集キャッシュ (M40d)。.mat.json のスキーマ固定編集
     struct MaterialEditState {

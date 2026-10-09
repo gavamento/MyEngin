@@ -20,6 +20,7 @@
 #include "Engine/Engine/Rendering/ShadowCullSelfTest.h"
 #include "Engine/Engine/Rendering/SkinBoundsSelfTest.h"
 #include "Engine/Engine/Asset/CookedCacheSelfTest.h"
+#include "Engine/Engine/Asset/MeshLodSelfTest.h"
 #include "Engine/Engine/Asset/SubAssetKeySelfTest.h"
 #include "Engine/Engine/Asset/SubAssetMigration.h"
 #include "Engine/Engine/UI/UIFontMetricsCook.h" // M75d: --cook-font-metrics
@@ -629,6 +630,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunOcclusionSelfTest();                 // M90b: GPU オクルージョン (max-Z HZB・保守的判定・ON/OFF 画素一致)
         ok &= mye::RunShadowCullSelfTest();                // M90d: CSM のカスケード別判定 (近平面を除く 5 面・run 数)
         ok &= mye::RunSkinBoundsSelfTest();              // M90d: スキンの保守的 AABB (全クリップの全フレームを包む)
+        ok &= mye::RunMeshLodSelfTest();                 // M90e: メッシュ LOD (生成・クック・.meta・選択)
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }

@@ -18,6 +18,9 @@ static_assert(sizeof(MeshVertex) == 52, "MeshVertex layout changed -- bump kCook
 // M67: reflectionClass (int32) + 明示 pad を末尾 append して 56 → 64 (kCookVersion 1 → 2)
 static_assert(sizeof(Material) == 64, "Material layout changed -- bump kCookVersion");
 static_assert(sizeof(DirectX::XMFLOAT4X4) == 64, "XMFLOAT4X4 layout changed");
+// M90e: LOD 設定と段表も生バイトで書く (kCookVersion 6)
+static_assert(sizeof(importmeta::ModelLodSettings) == 28, "ModelLodSettings layout changed -- bump kCookVersion");
+static_assert(sizeof(MeshLodLevel) == 12, "MeshLodLevel layout changed -- bump kCookVersion");
 
 void Append(std::vector<uint8_t>& buf, const void* src, size_t n)
 {
@@ -108,14 +111,25 @@ void ModelCookData::AddTexture(uint8_t kind, bool srgb, std::string key,
 }
 
 void ModelCookData::AddMesh(std::string key, const std::vector<MeshVertex>& vertices,
-                            const std::vector<uint32_t>& indices)
+                            const std::vector<uint32_t>& indices, const MeshLodData& lod)
 {
     for (const CookedMesh& m : meshes) {
         if (m.key == key) {
             return;
         }
     }
-    meshes.push_back(CookedMesh{ std::move(key), vertices, indices });
+    meshes.push_back(CookedMesh{ std::move(key), vertices, indices, lod.indices, lod.levels });
+}
+
+AssetID RegisterMeshWithLods(RenderResources& resources, ModelCookData* cook, const std::string& key,
+                             const std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices,
+                             const importmeta::ModelLodSettings& settings)
+{
+    const MeshLodData lod = BuildMeshLods(key, vertices, indices, settings);
+    if (cook != nullptr) {
+        cook->AddMesh(key, vertices, indices, lod);
+    }
+    return resources.meshes.Register(key, vertices, indices, lod.indices, lod.levels);
 }
 
 void ModelCookData::AddMaterial(std::string key, const Material& mat)
@@ -152,6 +166,10 @@ std::vector<std::wstring> ModelCookData::ExternalDeps() const
 void Serialize(const ModelCookData& d, std::vector<uint8_t>& out)
 {
     out.clear();
+    // 先頭に LOD 設定。キャッシュの照合は中身を全部読む前に済ませられる
+    importmeta::ModelLodSettings lodSettings = d.lodSettings;
+    lodSettings.Normalize();
+    AppendPod(out, lodSettings);
     AppendPod(out, static_cast<uint32_t>(d.textures.size()));
     for (const CookedTexture& t : d.textures) {
         AppendPod(out, t.kind);
@@ -165,6 +183,8 @@ void Serialize(const ModelCookData& d, std::vector<uint8_t>& out)
         AppendStr(out, m.key);
         AppendVec(out, m.vertices);
         AppendVec(out, m.indices);
+        AppendVec(out, m.lodIndices);
+        AppendVec(out, m.lods);
     }
     AppendPod(out, static_cast<uint32_t>(d.materials.size()));
     for (const CookedMaterial& m : d.materials) {
@@ -204,8 +224,11 @@ bool Deserialize(const std::vector<uint8_t>& in, ModelCookData& out)
 {
     out = ModelCookData{};
     Reader r{ in.data(), in.size(), 0 };
+    if (!r.Pod(out.lodSettings)) {
+        return false;
+    }
 
-    // 最小直列化サイズ: texture = kind1+srgb1+key4+path4+bytes4 / mesh = key4+verts4+idx4 /
+    // 最小直列化サイズ: texture = kind1+srgb1+key4+path4+bytes4 / mesh = key4+verts4+idx4+lodIdx4+lods4 /
     // material = key4+Material / skin = key4+joints4+clips4 / joint = parent4+name4+行列+TRS /
     // clip = name4+dur4+tracks4 / track = 6 配列の長さ 4×6
     uint32_t n = 0;
@@ -221,12 +244,13 @@ bool Deserialize(const std::vector<uint8_t>& in, ModelCookData& out)
         }
         t.path = Utf8ToWide(pathUtf8);
     }
-    if (!r.Count(n, 12)) {
+    if (!r.Count(n, 20)) {
         return false;
     }
     out.meshes.resize(n);
     for (CookedMesh& m : out.meshes) {
-        if (!r.Str(m.key) || !r.Vec(m.vertices) || !r.Vec(m.indices)) {
+        if (!r.Str(m.key) || !r.Vec(m.vertices) || !r.Vec(m.indices) || !r.Vec(m.lodIndices)
+            || !r.Vec(m.lods)) {
             return false;
         }
     }
@@ -306,7 +330,7 @@ void Replay(RenderResources& resources, ShaderManager& shaders, const ModelCookD
         }
     }
     for (const CookedMesh& m : d.meshes) {
-        resources.meshes.Register(m.key, m.vertices, m.indices);
+        resources.meshes.Register(m.key, m.vertices, m.indices, m.lodIndices, m.lods);
     }
     for (const CookedMaterial& m : d.materials) {
         resources.materials.Register(m.key, m.mat);
@@ -330,6 +354,16 @@ bool TryReplayFromCache(RenderResources& resources, ShaderManager& shaders,
     if (!Deserialize(payload, d)) {
         MYE_LOG_WARN("[cook] corrupt model blob, recooking: %s", WideToUtf8(srcPath).c_str());
         return false;
+    }
+    // .meta の LOD 設定が blob を焼いたときと違えば再クックする。封印キャッシュ (配布物) は
+    // .meta が同伴しない / 検証を跳ばす契約なので blob をそのまま信じる
+    if (!CookedCache::Sealed()) {
+        importmeta::ModelLodSettings current;
+        importmeta::ResolveModelLod(srcPath, current);
+        if (!(current == d.lodSettings)) {
+            MYE_LOG_INFO("[cook] LOD settings changed, recooking: %s", WideToUtf8(srcPath).c_str());
+            return false;
+        }
     }
     Replay(resources, shaders, d);
     MYE_LOG_INFO("[cook] model cache hit: %s (%zu meshes, %zu materials, %zu skins)",

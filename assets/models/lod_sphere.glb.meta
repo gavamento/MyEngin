@@ -1,0 +1,11 @@
+{
+  "guid": "6c0d5e1a4b7f2093",
+  "lod": {
+    "levels": 3,
+    "ratio1": 0.5,
+    "ratio2": 0.25,
+    "ratio3": 0.125
+  },
+  "type": "model",
+  "version": 1
+}

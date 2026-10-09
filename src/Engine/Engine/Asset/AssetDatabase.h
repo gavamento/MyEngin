@@ -45,6 +45,7 @@ struct AssetMeta {
     int32_t version = 1;               // .meta フォーマットのバージョン
     std::wstring path;                 // 本体ファイルの実パス (.meta を除く)
     importmeta::TextureImportSettings tex; // type==Texture のみ意味を持つ (v2、M39b)
+    importmeta::ModelLodSettings lod;      // type==Model のみ意味を持つ (M90e。無い .meta = 段なし)
 };
 
 // アセットDB (M23): assets\ を走査し、各アセットに .meta サイドカーを生成/読込して

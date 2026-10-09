@@ -263,6 +263,7 @@ void ShadowAtlas::Render(GraphicsDevice& device, ShaderManager& shaders, const R
             if (!mesh) {
                 continue;
             }
+            const MeshLodLevel lodRange = mesh->LodRange(item.lod); // カメラ基準の段
             if (nextRun < runs_.size() && runs_[nextRun].first == idx) {
                 const MeshInstanceRun& run = runs_[nextRun];
                 if (!WorldAabbInFrustum(tileFrustum, runMin_[nextRun], runMax_[nextRun])) {
@@ -289,9 +290,9 @@ void ShadowAtlas::Render(GraphicsDevice& device, ShaderManager& shaders, const R
                     dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
                     boundMesh = item.mesh.value;
                 }
-                dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
+                dc->DrawIndexedInstanced(lodRange.indexCount, run.count, lodRange.indexStart, 0, 0);
                 ++drawCalls_;
-                prof::AddShadowDraw(static_cast<int>(mesh->indexCount / 3 * run.count));
+                prof::AddShadowDraw(static_cast<int>(lodRange.indexCount / 3 * run.count));
                 idx += run.count - 1;
                 continue;
             }
@@ -334,9 +335,9 @@ void ShadowAtlas::Render(GraphicsDevice& device, ShaderManager& shaders, const R
                 dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
                 boundMesh = item.mesh.value;
             }
-            dc->DrawIndexed(mesh->indexCount, 0, 0);
+            dc->DrawIndexed(lodRange.indexCount, lodRange.indexStart, 0);
             ++drawCalls_;
-            prof::AddShadowDraw(static_cast<int>(mesh->indexCount / 3));
+            prof::AddShadowDraw(static_cast<int>(lodRange.indexCount / 3));
         }
     }
 

@@ -82,7 +82,7 @@
 #### 4.1.2 メッシュ LOD
 - モデルの `.meta` に LOD 設定: 段数 (0 = 無し、既定。最大 4 段 = LOD0 + 3)、段ごとの目標三角形比、段ごとの screen-size 閾値 (自動 = 比から決める既定表)。
 - クック (フレッシュパースも同じ処理) で `meshopt_simplify` を段ごとに掛け、元の頂点を指す IB の範囲を足す。単純化が目標比に届かない (それ以上減らない) 段は作らない (段数が減る)。生成は決定的 (同じ入力から同じバイト列)。
-- 選択: エンティティのワールド AABB の外接球を画面に投影した高さ比 (screen-size) を、段の閾値 × `lodBias` と比べる。上げる方向と下げる方向で閾値に幅 (ヒステリシス) を持ち、前フレームの段を viewKey ごとに覚える。履歴の無いビュー・初回は距離だけで決まる (決定的撮影で再現する)。
+- 選択: エンティティのワールド AABB の外接球を画面に投影した高さ比 (screen-size) を、段の閾値と比べる。`lodBias` は screen-size 側に掛ける (`screenSize × lodBias` を閾値と比べる = 1 より大きいと詳細な段を長く使う。Unity の `QualitySettings.lodBias` と同じ向き。sub-05 round 1 で確定)。上げる方向と下げる方向で閾値に幅 (ヒステリシス) を持ち、前フレームの段を viewKey ごとに覚える。履歴の無いビュー・初回は距離だけで決まる (決定的撮影で再現する)。
 - 強制段 (デバッグ): -1 = 自動 / 0..3 = その段 (無ければ最も粗い段)。
 - 影のキャスターはそのエンティティのカメラ基準の段を使う。画面外のキャスターも同じ式で段を決める。
 - LOD0 は今の IB そのもの。物理・NavMesh・RT・MeshLibrary の CPU コピーの入力は変わらない。
@@ -143,7 +143,7 @@ tick の順序は `src\Engine\Engine\Loop\TickRunner.cpp:211` の `RunOneTick` (
 
 ### 4.3 UI / ビジュアル
 - エディタの描画設定メニュー (`EditorApp.cpp:1198` 付近の影の切り替えと同じ場所): オクルージョン ON/OFF、URO ON/OFF、lodBias、強制 LOD 段。文字列は `LocalizationTable.inl` の `Tr()`、両言語。
-- アセットブラウザ / Inspector のモデルの import 設定に LOD 段数・比を出す (テクスチャの import 設定と同じ流儀)。
+- アセットブラウザ / Inspector のモデルの import 設定に LOD 段数・比を出す (テクスチャの import 設定と同じ流儀)。 (sub-05 で確定: v1 は Inspector のみ。アセットブラウザの右クリック「インポート設定」はテクスチャ専用のまま。後回し)
 - ProfilerWindow: §4.1.1 の新しい欄と GPU ms。
 - `--hzb-debug`: max-Z ピラミッドと落とした物の AABB。
 - 見た目の期待: LOD を設定していないシーン・オクルージョン ON/OFF・URO の閾値より近いキャラは、今と画素一致 (golden PASS)。
@@ -197,6 +197,8 @@ tick の順序は `src\Engine\Engine\Loop\TickRunner.cpp:211` の `RunOneTick` (
 - `[聞]` #12 sim の並列化はアルゴリズムを変えない系だけ: 逆 (Crowd 等を Jacobi 化して並列化) を選ぶと挙動が変わり (ゲームの見た目も変わる)、三校の確認が要る。サブが 1〜2 本増える。
 - リスク: `DrawIndexedInstancedIndirect` と UAV の詰め込みが WARP で遅すぎて CI の時間が延びる → sub-02 で WARP の所要時間を測って報告する。
 - リスク: 2 フェーズで GBuffer を 2 回に分けて描くと、velocity・TAA のジッタ・ステンシルを使う経路の前提が崩れるかもしれない (sub-02 の未知)。
+- (sub-05 で判明) 硬い面のメッシュ (平面と鋭い辺だけの箱・パネル。例: Lab_Door.fbx) は、既定 (LockBorder、非 Permissive) では目標まで減らず段が作れない (段なし + WARN)。三校の素材に段を付けるなら、比を緩めるか Permissive のオプトインを足す必要がある。v1 の範囲外 (後回し)。
+- (sub-05 で判明) Debug selftest の ServerNetSelfTest (`V1 LoadPersist / LoadGame in a session`) が一過性に FAIL する (3 回目)。M90 は sim・ネットに触れていないので別件として扱い、sub-08 の全体検証で M90 前の基点 (`3b30251`) と比べて切り分ける。
 - リスク: meshopt の単純化が UV の継ぎ目・法線の割れ目で崩れる → 属性付き単純化 (`meshopt_simplifyWithAttributes`) と `meshopt_SimplifyLockBorder` を既定にし、ベンチのスクショで目視 (ユーザー)。
 - リスク: スキンの保守的 AABB が IK で外へ出る (余白で足りない)。出たら報告 (余白で黙って塗らない)。
 - (sub-04 で判明) スキンの保守的 AABB は実アセットでバインド高の 2.4〜2.9 倍と緩い (余白 = 最長辺の半分、根拠は IK / ブレンドの安全側で実測ではない)。画面端の判定が甘いだけで正しさには影響しない。詰めるのは計測で効果が見えてから (後回し)。
@@ -222,3 +224,9 @@ tick の順序は `src\Engine\Engine\Loop\TickRunner.cpp:211` の `RunOneTick` (
   - §2 #8: スキンの保守的 AABB は「登録時に SkinnedModel へ持つ」から「初回描画時に (モデル, メッシュ) の組ごとに計算してキャッシュし、登録の通番 (revision) で無効化」へ変えた。理由: メッシュとスケルトンは別々に登録され、組はエンティティでしか決まらない (coder の指摘を採用)。クックしない・決定的、は変わらない。
   - §4.1.3: 画面外のスキンもバインドポーズの world AABB で CSM のフィット AABB に入れ続ける (従来どおりのフィットを保つため)。ライト側の奥行きを切らない規則 (5 面判定 + 深度クランプ) を足した。理由: 既存の zNear は画面内の物とカメラのスライスだけから決まるので、ライト側へ離れた画面外キャスター (街の高い建物) が判定で落ち、または近平面でクリップされて影が消える = §1 の 4 が満たせない。
   - 既存 golden 3 枚 (demo_forward / demo_deferred / demo_forward_fxaa) の更新を了承した。差は画面外の立方体の影が手前の床に増えたこと (正しい修正による差) と、並べ替えで run の組が変わったことによる 1〜2 画素の丸め差。4 点計測で断定済み。
+- 2026-10-09 sub-05 round 1 (coder SELF_EVAL / planner VERDICT):
+  - §4.1.2: lodBias の向きを「screen-size × lodBias を閾値と比べる (> 1 で詳細な段を長く使う)」に確定した。理由: 元の字面 (閾値 × lodBias) は、同じ spec の §2 #5 にある「Unity の QualitySettings.lodBias 相当」と向きが逆で、spec の中で食い違っていた。
+  - §4.3: v1 のモデル LOD 設定 UI は Inspector だけにした (アセットブラウザの右クリックは後回し)。
+  - 既定値 (ヒステリシス 10%、自動 screen-size = 0.5·√ratio を前の段の 0.8 倍で頭打ち、誤差上限 0.05、届き具合 1.25 倍、属性の重み 0.5) は coder の値を採用する。根拠は ADR-029 (sub-08) に書く。
+  - LOD 設定の記録場所を blob の先頭 (ファイル単位の ModelCookData) にした。段表はメッシュ単位の CookedMesh。
+  - LOD の履歴 (LodHistory) をシーン切り替えで捨てる処理は sub-06 へ移した (パレットキャッシュを捨てるのと同じ契機)。

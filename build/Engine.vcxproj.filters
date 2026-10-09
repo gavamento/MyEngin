@@ -139,6 +139,9 @@
     <Filter Include="external\libtess2\Source">
       <UniqueIdentifier>{1F0BD09F-3A6C-8F8E-7768-74CDBC9E594A}</UniqueIdentifier>
     </Filter>
+    <Filter Include="external\meshoptimizer">
+      <UniqueIdentifier>{F59630C1-1575-80D4-313C-3DF84CC86FF3}</UniqueIdentifier>
+    </Filter>
     <Filter Include="external\recastnavigation">
       <UniqueIdentifier>{7D0C315C-0EEB-9161-2426-456BF9B87805}</UniqueIdentifier>
     </Filter>
@@ -394,6 +397,12 @@
       <Filter>Engine\Asset</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Asset\FractureAsset.cpp">
+      <Filter>Engine\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Asset\MeshLodBuilder.cpp">
+      <Filter>Engine\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Asset\MeshLodSelfTest.cpp">
       <Filter>Engine\Asset</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Asset\ModelCook.cpp">
@@ -1278,6 +1287,12 @@
     <ClInclude Include="..\src\Engine\Engine\Asset\FractureAsset.h">
       <Filter>Engine\Asset</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Asset\MeshLodBuilder.h">
+      <Filter>Engine\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Asset\MeshLodSelfTest.h">
+      <Filter>Engine\Asset</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Asset\ModelCook.h">
       <Filter>Engine\Asset</Filter>
     </ClInclude>
@@ -1884,6 +1899,9 @@
     <ClInclude Include="..\src\Engine\Renderer\Mesh\MeshInstancing.h">
       <Filter>Renderer\Mesh</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Mesh\MeshLod.h">
+      <Filter>Renderer\Mesh</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Mesh\Skeleton.h">
       <Filter>Renderer\Mesh</Filter>
     </ClInclude>
@@ -2115,6 +2133,15 @@
     <ClCompile Include="..\external\libtess2\Source\tess.c">
       <Filter>external\libtess2\Source</Filter>
     </ClCompile>
+    <ClCompile Include="..\external\meshoptimizer\allocator.cpp">
+      <Filter>external\meshoptimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\external\meshoptimizer\indexgenerator.cpp">
+      <Filter>external\meshoptimizer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\external\meshoptimizer\simplifier.cpp">
+      <Filter>external\meshoptimizer</Filter>
+    </ClCompile>
     <ClCompile Include="..\external\recastnavigation\DebugUtils\Source\DebugDraw.cpp">
       <Filter>external\recastnavigation\DebugUtils\Source</Filter>
     </ClCompile>
@@ -2252,6 +2279,9 @@
     </ClInclude>
     <ClInclude Include="..\external\libtess2\Source\tess.h">
       <Filter>external\libtess2\Source</Filter>
+    </ClInclude>
+    <ClInclude Include="..\external\meshoptimizer\meshoptimizer.h">
+      <Filter>external\meshoptimizer</Filter>
     </ClInclude>
     <ClInclude Include="..\external\recastnavigation\DebugUtils\Include\DebugDraw.h">
       <Filter>external\recastnavigation\DebugUtils\Include</Filter>

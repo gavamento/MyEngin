@@ -78,11 +78,14 @@ const std::vector<ScopeRecord>& FrameScopes()
     return g_records;
 }
 
-void AddDraw(int triangles)
+void AddDraw(int triangles, int lod, int instances)
 {
+    const int slot = (lod < 0) ? 0 : ((lod >= kRenderStatsLodSlots) ? kRenderStatsLodSlots - 1 : lod);
     Accumulate([&](RenderStats& r) {
         ++r.drawCalls;
         r.triangles += triangles;
+        r.lodDraws[slot] += instances;
+        r.lodTriangles[slot] += triangles;
     });
 }
 
@@ -119,6 +122,7 @@ void AddRenderStats(const RenderStats& d)
         }
         for (int i = 0; i < kRenderStatsLodSlots; ++i) {
             r.lodDraws[i] += d.lodDraws[i];
+            r.lodTriangles[i] += d.lodTriangles[i];
         }
         r.paletteEvaluated += d.paletteEvaluated;
         r.paletteReused += d.paletteReused;

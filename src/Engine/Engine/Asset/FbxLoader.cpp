@@ -50,6 +50,8 @@ struct LoadContext {
     std::vector<SkinCacheEntry> skinCache;
     // 非 null なら各 Register サイトが登録内容を追記する (M51b クックの sink)
     ModelCook::ModelCookData* cook = nullptr;
+    // .meta の LOD 設定 (段なしが既定)。メッシュ登録のたびに段を作る
+    importmeta::ModelLodSettings lodSettings;
 };
 
 // ufbx_vec3 → XMFLOAT3。左手系への変換は ufbx 側で完了済み (MakeOpts を参照)
@@ -247,10 +249,7 @@ AssetID LoadMeshPart(LoadContext& lc, const ufbx_mesh* mesh, const ufbx_mesh_par
         MYE_LOG_WARN("FBX skin: cluster index >= 256 のウェイトを破棄しました (%s)", key);
     }
     // 巻き順は ufbx が左手系変換時に反転済み (MakeOpts を参照)
-    if (lc.cook) {
-        lc.cook->AddMesh(key, vertices, indices);
-    }
-    return lc.resources->meshes.Register(key, vertices, indices);
+    return ModelCook::RegisterMeshWithLods(*lc.resources, lc.cook, key, vertices, indices, lc.lodSettings);
 }
 
 // FBX のテクスチャ参照を AssetID に解決する (P2)。解決順は
@@ -825,6 +824,7 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
     lc.keyPrefix = assetkey::SubAssetKeyPrefix(path);
     lc.baseDir = std::filesystem::path(path).parent_path().wstring();
     lc.shaderId = shaders.Load("forward_lit");
+    importmeta::ResolveModelLod(path, lc.lodSettings);
 
     const std::string rootName = std::filesystem::path(path).stem().string();
     GameObject root = scene.CreateGameObject(rootName);
@@ -873,7 +873,9 @@ bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const st
     lc.keyPrefix = assetkey::SubAssetKeyPrefix(path);
     lc.baseDir = std::filesystem::path(path).parent_path().wstring();
     lc.shaderId = shaders.Load("forward_lit");
+    importmeta::ResolveModelLod(path, lc.lodSettings);
     ModelCook::ModelCookData cookData;
+    cookData.lodSettings = lc.lodSettings;
     if (CookedCache::Enabled()) {
         lc.cook = &cookData;
     }

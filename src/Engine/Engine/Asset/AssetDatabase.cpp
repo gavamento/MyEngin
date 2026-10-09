@@ -228,6 +228,18 @@ bool AssetDatabase::ReadMeta(const std::wstring& metaPath, AssetMeta& out)
         out.tex.generateMips = t.value("generateMips", 1);
         out.tex.compress = t.value("compress", 0);
     }
+    // M90e: モデルの LOD 設定。キー無し = 段なし (従来の挙動)
+    out.lod = importmeta::ModelLodSettings{};
+    if (j.contains("lod") && j["lod"].is_object()) {
+        const json& l = j["lod"];
+        out.lod.levels = l.value("levels", 0);
+        for (int i = 0; i < importmeta::ModelLodSettings::kMaxExtraLevels; ++i) {
+            const std::string suffix = std::to_string(i + 1);
+            out.lod.ratio[i] = l.value("ratio" + suffix, out.lod.ratio[i]);
+            out.lod.screenSize[i] = l.value("screenSize" + suffix, 0.0f);
+        }
+        out.lod.Normalize();
+    }
     return out.guid != 0;
 }
 
@@ -244,6 +256,21 @@ bool AssetDatabase::WriteMeta(const std::wstring& metaPath, const AssetMeta& m)
                      { "compress", m.tex.compress } };
     } else {
         j["version"] = m.version;
+    }
+    // 段ありのモデルだけ "lod" を書く (段なしの .meta は従来とバイト一致)
+    if (m.type == AssetType::Model && m.lod.levels > 0) {
+        importmeta::ModelLodSettings lod = m.lod;
+        lod.Normalize();
+        json l;
+        l["levels"] = lod.levels;
+        for (int i = 0; i < lod.levels; ++i) {
+            const std::string suffix = std::to_string(i + 1);
+            l["ratio" + suffix] = lod.ratio[i];
+            if (lod.screenSize[i] > 0.0f) {
+                l["screenSize" + suffix] = lod.screenSize[i];
+            }
+        }
+        j["lod"] = l;
     }
     std::ofstream f(metaPath);
     if (!f) {
@@ -368,6 +395,18 @@ bool ImportMetaThunk(void* user, const std::wstring& path, importmeta::TextureIm
     return true;
 }
 
+// importmeta::ResolveModelLod → .meta ディスク読み (M90e)。テクスチャと同じくテーブルを持たない
+bool ModelLodThunk(void* user, const std::wstring& path, importmeta::ModelLodSettings& out)
+{
+    (void)user;
+    AssetMeta m;
+    if (!AssetDatabase::ReadMeta(path + L".meta", m) || m.lod.levels <= 0) {
+        return false;
+    }
+    out = m.lod;
+    return true;
+}
+
 } // namespace
 
 void AssetDatabase::InstallAsKeyResolver()
@@ -375,6 +414,7 @@ void AssetDatabase::InstallAsKeyResolver()
     assetkey::Install(&KeyResolverThunk, this);
     assetguid::Install(&GuidResolverThunk, this); // M39a: GUID→パスも同じ DB で解決
     importmeta::Install(&ImportMetaThunk, this);  // M39b: テクスチャインポート設定
+    importmeta::InstallModelLod(&ModelLodThunk, this); // M90e: モデルの LOD 設定
 }
 
 void AssetDatabase::UninstallKeyResolver()
@@ -382,6 +422,7 @@ void AssetDatabase::UninstallKeyResolver()
     assetkey::Install(nullptr, nullptr);
     assetguid::Install(nullptr, nullptr);
     importmeta::Install(nullptr, nullptr);
+    importmeta::InstallModelLod(nullptr, nullptr);
 }
 
 void AssetDatabase::MoveAsset(const std::wstring& oldPath, const std::wstring& newPath)

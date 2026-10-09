@@ -1222,6 +1222,22 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             ImGui::MenuItem(Tr(StrId::Menu_Ssao), nullptr, &ctx.renderSystem->enableSsao);
             ImGui::MenuItem(Tr(StrId::Menu_GpuInstancing), nullptr, &ctx.renderSystem->enableInstancing);
             ImGui::MenuItem(Tr(StrId::Menu_Occlusion), nullptr, &ctx.renderSystem->enableOcclusionCulling);
+            // M90e: メッシュ LOD。描画専用 (sim/hash 非影響)。.meta で段を作ったモデルだけに効く
+            if (ImGui::BeginMenu(Tr(StrId::Menu_Lod))) {
+                ImGui::SetNextItemWidth(160.0f);
+                ImGui::SliderFloat(Tr(StrId::Menu_LodBias), &ctx.renderSystem->lodBias, 0.25f, 4.0f, "%.2f");
+                ImGui::SeparatorText(Tr(StrId::Menu_LodForce));
+                if (ImGui::MenuItem(Tr(StrId::Menu_LodAuto), nullptr, ctx.renderSystem->lodForcedStage < 0)) {
+                    ctx.renderSystem->lodForcedStage = -1;
+                }
+                for (int stage = 0; stage <= importmeta::ModelLodSettings::kMaxExtraLevels; ++stage) {
+                    const std::string label = std::string(Tr(StrId::Menu_LodStage)) + " " + std::to_string(stage);
+                    if (ImGui::MenuItem(label.c_str(), nullptr, ctx.renderSystem->lodForcedStage == stage)) {
+                        ctx.renderSystem->lodForcedStage = stage;
+                    }
+                }
+                ImGui::EndMenu();
+            }
             ImGui::MenuItem(Tr(StrId::Menu_PostFx), nullptr, &ctx.renderSystem->enablePostFx);
             // M46f: レイトレ拡散 GI を最終画像へ合成。off なら BVH の構築すら走らない。
             // 品質パラメータ (解像度/バウンス/蓄積/SVGF) は RT Debug メニュー側と共通

@@ -180,6 +180,11 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
     ImGui::Separator();
     const prof::RenderStats rs = prof::GetRenderStats();
     ImGui::Text(Tr(StrId::Prof_Draw), rs.drawCalls, rs.triangles, rs.culled);
+    // M90e: LOD の段を持つメッシュを描いたときだけ分布を出す
+    if (rs.lodDraws[1] != 0 || rs.lodDraws[2] != 0 || rs.lodDraws[3] != 0) {
+        ImGui::Text(Tr(StrId::Prof_LodDraws), rs.lodDraws[0], rs.lodTriangles[0], rs.lodDraws[1],
+                    rs.lodTriangles[1], rs.lodDraws[2], rs.lodTriangles[2], rs.lodDraws[3], rs.lodTriangles[3]);
+    }
     // M90a: 影は本描画の欄に混ぜず別に出す。ビュー別は描いたビューだけ (viewKey 1=runtime 2=SceneView 3=GameView)
     ImGui::Text(Tr(StrId::Prof_ShadowDraw), rs.shadowDrawCalls, rs.shadowTriangles,
                 rs.shadowCascadeDraws[0], rs.shadowCascadeDraws[1], rs.shadowCascadeDraws[2]);

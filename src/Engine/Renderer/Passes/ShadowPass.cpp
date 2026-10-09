@@ -313,6 +313,7 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
             if (!mesh) {
                 continue;
             }
+            const MeshLodLevel lodRange = mesh->LodRange(item.lod); // カメラ基準の段 (影のためだけに別の段を選ばない)
             // M79 sub-03: サーフェスの不透明アイテムは影エントリ (ライト VP を gViewProj に入れて
             // VSMain、PS なし) で描く。スキン+サーフェスは対象外 (従来のスキン深度経路のまま)。
             // 失敗時 (surf->ready==false) は従来の shadow_depth (変位なし) へフォールスルーする
@@ -365,8 +366,8 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
                         if (resources.materials.GetSurfaceDoubleSided(item.material)) {
                             dc->RSSetState(rasterizerCullNone_.Get());
                         }
-                        dc->DrawIndexed(mesh->indexCount, 0, 0);
-                        prof::AddShadowDraw(static_cast<int>(mesh->indexCount / 3), c);
+                        dc->DrawIndexed(lodRange.indexCount, lodRange.indexStart, 0);
+                        prof::AddShadowDraw(static_cast<int>(lodRange.indexCount / 3), c);
                         restoreFixedShadowSlots(); // review-1 #1: 次の非サーフェスへ b0/t0 を戻す
                         continue;
                     }
@@ -394,8 +395,8 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
                     dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
                     boundMesh = item.mesh.value;
                 }
-                dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
-                prof::AddShadowDraw(static_cast<int>(mesh->indexCount / 3 * run.count), c);
+                dc->DrawIndexedInstanced(lodRange.indexCount, run.count, lodRange.indexStart, 0, 0);
+                prof::AddShadowDraw(static_cast<int>(lodRange.indexCount / 3 * run.count), c);
                 idx += run.count - 1; // for の ++idx と合わせて run 全体を飛ばす
                 continue;
             }
@@ -435,8 +436,8 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
                 dc->IASetIndexBuffer(mesh->ib.Get(), DXGI_FORMAT_R32_UINT, 0);
                 boundMesh = item.mesh.value;
             }
-            dc->DrawIndexed(mesh->indexCount, 0, 0);
-            prof::AddShadowDraw(static_cast<int>(mesh->indexCount / 3), c);
+            dc->DrawIndexed(lodRange.indexCount, lodRange.indexStart, 0);
+            prof::AddShadowDraw(static_cast<int>(lodRange.indexCount / 3), c);
         }
     }
 

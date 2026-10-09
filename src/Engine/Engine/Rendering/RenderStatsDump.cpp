@@ -54,6 +54,9 @@ void AppendStatsBody(std::string& out, const prof::RenderStats& s, const char* i
     AppendF(out, "%s\"lodDraws\": ", indent);
     AppendIntArray(out, s.lodDraws, prof::kRenderStatsLodSlots);
     out += ",\n";
+    AppendF(out, "%s\"lodTriangles\": ", indent);
+    AppendIntArray(out, s.lodTriangles, prof::kRenderStatsLodSlots);
+    out += ",\n";
     AppendF(out, "%s\"paletteEvaluated\": %d,\n", indent, s.paletteEvaluated);
     AppendF(out, "%s\"paletteReused\": %d,\n", indent, s.paletteReused);
     AppendF(out, "%s\"occlusionPhase1Draws\": %d,\n", indent, s.occlusionPhase1Draws);

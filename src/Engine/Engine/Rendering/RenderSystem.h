@@ -26,6 +26,7 @@
 #include "Engine/Renderer/Passes/SkyResolve.h" // FailedTextureLoad
 #include "Engine/Renderer/Passes/TerrainPass.h"
 #include "Engine/Renderer/Passes/WaterPass.h"
+#include "Engine/Renderer/Mesh/MeshLod.h"
 #include "Engine/Renderer/Mesh/SkinBounds.h"
 
 namespace mye {
@@ -137,6 +138,10 @@ public:
     // GPU オクルージョンカリング (Deferred / Forward の不透明のみ。viewKey 0 は常に off)。
     // 描かれる画素は off と同じで、見えない物を GPU が描かないだけ。CLI は --no-occlusion
     bool enableOcclusionCulling = true;
+    // メッシュ LOD (.meta で段を作ったモデルだけに効く)。lodBias > 1 で詳細な段を長く使う。
+    // lodForcedStage: -1 = 自動 / 0.. = その段 (無ければ最も粗い段)。デバッグ・A/B 用。CLI は --lod-bias / --lod-force
+    float lodBias = 1.0f;
+    int lodForcedStage = -1;
 
     // 描画補間 (M36b)。EngineLoop が毎フレーム設定する。1.0 = 補間なし (従来描画)。
     // 対象はカメラ + メッシュ収集のワールド行列 (パーティクル/スプライト/UI は対象外)
@@ -446,6 +451,8 @@ private:
     // M55c: viewKey 毎の「前フレームに実際に描いた world 行列」(velocity の出所)。
     // viewKey==0 (AssetPreview) は履歴を持たない = velocity は常に 0
     PrevRenderWorldStore prevRender_[4];
+    // メッシュ LOD の viewKey 毎の前フレームの段 (ヒステリシスの出所)。viewKey==0 は履歴を持たない
+    LodHistory lodHistory_[4];
     // M46b: レイトレ (遅延 Init)。rtDebugMode が 0 で RT のレーンも全部無効のあいだは一切触らない
     RtScene rtScene_;
     RtPasses rtPasses_;

@@ -45,6 +45,9 @@ void RenderQueue::Sort()
         if (a.mesh.value != b.mesh.value) {
             return a.mesh.value < b.mesh.value;
         }
+        if (a.lod != b.lod) {
+            return a.lod < b.lod; // 同じメッシュの同じ段を連続させる (インスタンシングの run)
+        }
         if (a.viewZ != b.viewZ && (ViewZLess(a.viewZ, b.viewZ) || ViewZLess(b.viewZ, a.viewZ))) {
             return ViewZLess(a.viewZ, b.viewZ); // 近い順 (early-Z)、NaN は末尾
         }

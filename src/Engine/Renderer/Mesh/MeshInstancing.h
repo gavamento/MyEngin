@@ -28,7 +28,7 @@ struct MeshInstanceRun {
 
 // 連続 run 検出 (純関数、決定論: items の並び順のみに依存)。
 // canInstance[i] = false の項目は run に入らず境界にもなる (スキン/シェーダ差替/欠損リソース)。
-// run の条件: 同一 material かつ同一 mesh が 2 件以上連続。
+// run の条件: 同一 material かつ同一 mesh かつ同一 LOD 段が 2 件以上連続。
 // outWorlds には run に入った項目のワールド行列を run 順・項目順で積む (row-major のまま —
 // シェーダ側は row_major float4x4 の StructuredBuffer で受けるので転置不要)。
 inline void BuildInstanceRuns(const std::vector<RenderItem>& items,
@@ -48,6 +48,8 @@ inline void BuildInstanceRuns(const std::vector<RenderItem>& items,
         while (j < items.size() && canInstance[j]
                && items[j].material.value == items[i].material.value
                && items[j].mesh.value == items[i].mesh.value
+               // 段が違えば index の範囲が違うので 1 回の DrawIndexedInstanced に束ねられない
+               && items[j].lod == items[i].lod
                // RT を受けるかは run 単位で 1 値 (PerObjectCB で渡す) なので、違えば run を切る。
                // 既定は全部 1 = 従来と同じ run になる
                && items[j].rtReceiver == items[i].rtReceiver) {

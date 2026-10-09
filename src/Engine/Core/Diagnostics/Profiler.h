@@ -42,15 +42,19 @@ struct RenderStats {
     // CSM のキャスター: カスケード別のカリングに掛けた候補数と、カスケードごとに残った数
     int shadowCasterCandidates = 0;
     int shadowCascadeCasters[kRenderStatsCascadeSlots] = {};
-    // 以降は後続サブが埋める欄 (欄と dump の形を先に固定してある)
+    // メッシュ LOD 段ごとの描画したオブジェクト数と三角形数 (本描画のみ。インスタンシングは個数で数える)
     int lodDraws[kRenderStatsLodSlots] = {};
+    int lodTriangles[kRenderStatsLodSlots] = {};
+    // 以降は後続サブが埋める欄 (欄と dump の形を先に固定してある)
     int paletteEvaluated = 0;
     int paletteReused = 0;
     int occlusionPhase1Draws = 0;
     int occlusionPhase2Draws = 0;
     int occluded = 0;
 };
-void AddDraw(int triangles);                   // 描画パスの DrawIndexed 地点で呼ぶ
+// 描画パスの DrawIndexed 地点で呼ぶ。triangles は呼び出し全体 (インスタンシングは三角形 x 個数)、
+// lod は描いた LOD 段、instances はその呼び出しで描いたオブジェクト数
+void AddDraw(int triangles, int lod = 0, int instances = 1);
 void AddCulled(int n);                         // 収集時にカリングした件数を加算 (M16)
 void AddShadowDraw(int triangles, int cascade = -1); // 影の DrawIndexed 地点。cascade < 0 = CSM 以外
 void AddRenderStats(const RenderStats& delta); // 任意の欄をまとめて加算 (後続サブの欄用)

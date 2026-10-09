@@ -454,7 +454,10 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
             oc.itemCount = u.count;
             oc.instanceBase = u.run ? u.run->base : 0u;
             oc.isInstanced = (u.run != nullptr);
-            oc.indexCount = u.mesh->indexCount;
+            // run 内の項目は同じ段 (BuildInstanceRuns が保証)
+            const MeshLodLevel lodRange = u.mesh->LodRange(queue.opaque[u.first].lod);
+            oc.indexCount = lodRange.indexCount;
+            oc.startIndex = lodRange.indexStart;
             occCmds_.push_back(oc);
             for (uint32_t k = 0; k < u.count; ++k) {
                 const RenderItem& it = queue.opaque[u.first + k];
@@ -712,6 +715,7 @@ void ForwardPath::DrawUnits(GraphicsDevice& device, const std::vector<DrawUnit>&
             continue;
         }
 
+        const MeshLodLevel lodRange = mesh->LodRange(item.lod);
         if (unit.kind == DrawUnit::Kind::Run) {
             const MeshInstanceRun& run = *unit.run;
             ShaderProgram* prog = shaders.Get(litInstancedShader_);
@@ -736,10 +740,11 @@ void ForwardPath::DrawUnits(GraphicsDevice& device, const std::vector<DrawUnit>&
                 dc->DrawIndexedInstancedIndirect(occlusion_.ArgsBuffer(),
                                                  occlusion_.ArgsByteOffset(phase, static_cast<uint32_t>(unit.cmdIndex)));
             } else {
-                dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
+                dc->DrawIndexedInstanced(lodRange.indexCount, run.count, lodRange.indexStart, 0, 0);
             }
             if (phase <= 0) {
-                prof::AddDraw(static_cast<int>(mesh->indexCount / 3 * run.count));
+                prof::AddDraw(static_cast<int>(lodRange.indexCount / 3 * run.count), item.lod,
+                              static_cast<int>(run.count));
             }
             continue;
         }
@@ -775,10 +780,10 @@ void ForwardPath::DrawUnits(GraphicsDevice& device, const std::vector<DrawUnit>&
             dc->DrawIndexedInstancedIndirect(occlusion_.ArgsBuffer(),
                                              occlusion_.ArgsByteOffset(phase, static_cast<uint32_t>(unit.cmdIndex)));
         } else {
-            dc->DrawIndexed(mesh->indexCount, 0, 0);
+            dc->DrawIndexed(lodRange.indexCount, lodRange.indexStart, 0);
         }
         if (phase <= 0) {
-            prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
+            prof::AddDraw(static_cast<int>(lodRange.indexCount / 3), item.lod);
         }
     }
 }
@@ -847,8 +852,9 @@ void ForwardPath::DrawSurfaceItem(GraphicsDevice& device, const RenderItem& item
     dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
     dc->IASetIndexBuffer(mesh.ib.Get(), DXGI_FORMAT_R32_UINT, 0);
 
-    dc->DrawIndexed(mesh.indexCount, 0, 0);
-    prof::AddDraw(static_cast<int>(mesh.indexCount / 3));
+    const MeshLodLevel lodRange = mesh.LodRange(item.lod);
+    dc->DrawIndexed(lodRange.indexCount, lodRange.indexStart, 0);
+    prof::AddDraw(static_cast<int>(lodRange.indexCount / 3), item.lod);
 }
 
 } // namespace mye

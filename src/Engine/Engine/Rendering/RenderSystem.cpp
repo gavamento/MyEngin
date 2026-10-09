@@ -55,6 +55,8 @@ struct CullCand {
     XMFLOAT3 boundsMax = { 0.0f, 0.0f, 0.0f };
     // 箱で判定できない (ラグドール作動中・スキンの箱を求められない) = 常に可視
     uint8_t alwaysVisible = 0;
+    // メッシュ LOD の段 (段のあるメッシュだけ。ステージ 2 で決める)
+    uint8_t lod = 0;
 };
 
 constexpr size_t kCullGrain = 256; // これ未満は直列 (スレッド起動コスト回避)
@@ -1236,10 +1238,28 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         }
     });
 
-    // ---- ステージ 2 (並列): 視錐台テスト + viewZ (要素独立・純関数、M25) ----
+    // ---- ステージ 2 (並列): 視錐台テスト + viewZ + LOD の段 (要素独立・純関数、M25) ----
+    // 履歴は読むだけ (書き込みはステージ 3)。履歴の無いビュー (viewKey 0) は距離だけで決まる
+    const LodSelectParams lodParams{ lodBias, static_cast<int32_t>(lodForcedStage) };
+    const LodHistory* lodHistoryRead = (prevRenderKey != 0) ? &lodHistory_[prevRenderKey] : nullptr;
+    const bool orthographic = view.proj._44 != 0.0f; // 透視は _44 == 0
     jobs::System().ParallelRanges(cullCands.size(), kCullGrain, [&](size_t a, size_t b) {
         for (size_t i = a; i < b; ++i) {
             CullCand& c = cullCands[i];
+            if (cullEnabled && c.meshPtr && c.meshPtr->lods.size() > 1) {
+                // 画面に占める外接球の大きさ。画面外のキャスターも同じ式で段を決める (影はカメラ基準の段)
+                XMFLOAT3 lo, hi;
+                WorldAabb(c.world, c.meshPtr->aabbMin, c.meshPtr->aabbMax, lo, hi, 0.0f);
+                const float cx = (lo.x + hi.x) * 0.5f - view.cameraPos.x;
+                const float cy = (lo.y + hi.y) * 0.5f - view.cameraPos.y;
+                const float cz = (lo.z + hi.z) * 0.5f - view.cameraPos.z;
+                const float radius = 0.5f * std::sqrt((hi.x - lo.x) * (hi.x - lo.x) + (hi.y - lo.y) * (hi.y - lo.y)
+                                                      + (hi.z - lo.z) * (hi.z - lo.z));
+                const float screenSize = LodScreenSize(radius, std::sqrt(cx * cx + cy * cy + cz * cz),
+                                                       view.proj._22, orthographic);
+                const int32_t prevLod = (lodHistoryRead != nullptr) ? lodHistoryRead->Get(c.e) : -1;
+                c.lod = static_cast<uint8_t>(SelectLod(c.meshPtr->lods, screenSize, prevLod, lodParams));
+            }
             // viewZ は画面外の影キャスターのソートキーにも使うので、落とす物にも先に求める
             const XMVECTOR posWS = XMVectorSet(c.world._41, c.world._42, c.world._43, 1);
             c.viewZ = XMVectorGetZ(XMVector3TransformCoord(posWS, v));
@@ -1255,6 +1275,9 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     // ---- ステージ 3 (直列): 可視候補をキュー化 (スキン/AABB/キューは順序依存で直列) ----
     rtInstances_.clear();
     for (const CullCand& c : cullCands) {
+        if (prevRenderKey != 0 && c.meshPtr != nullptr && c.meshPtr->lods.size() > 1) {
+            lodHistory_[prevRenderKey].Set(c.e, c.lod); // 次フレームのヒステリシスの出所
+        }
         // RT の適用範囲 (個別設定 → タグ規則 → 既定 OFF)。RT が off のフレームは引かない
         const RtScope rtScope = rtAnyLane ? ResolveRtScope(world, c.e, rtTagRules) : RtScope{};
         // M46b: レイトレ用の収集はフラスタムカリングしない (画面外の物体も
@@ -1279,6 +1302,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                 it.entity = c.e;
                 it.world = c.world;
                 it.viewZ = c.viewZ;
+                it.lod = c.lod;
                 ShadowCaster sc;
                 sc.offscreenIndex = static_cast<int32_t>(offscreenCasters_.size());
                 WorldAabb(c.world, c.boundsMin, c.boundsMax, sc.aabbMin, sc.aabbMax, c.boundsPadding);
@@ -1304,6 +1328,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         item.entity = c.e;
         item.world = c.world;
         item.viewZ = c.viewZ;
+        item.lod = c.lod;
         // RT が off のフレームは 1 固定 = G-Buffer が適用範囲の導入前とビット一致
         item.rtReceiver = (!rtAnyLane || rtScope.receiver.on) ? 1.0f : 0.0f;
         // M55c: velocity 用に「前フレームに実際に描いた行列」を載せる。履歴が無い

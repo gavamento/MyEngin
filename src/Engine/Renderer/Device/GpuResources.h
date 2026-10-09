@@ -44,10 +44,33 @@ struct MeshSkinVertex {
     DirectX::XMFLOAT4 boneWeights = { 0, 0, 0, 0 };
 };
 
+// メッシュ LOD の 1 段 (M90e)。頂点バッファは全段で共有し、IB の範囲だけが違う。
+// screenSize = この段へ落とす画面高さ比 (LOD0 は 1)
+struct MeshLodLevel {
+    uint32_t indexStart = 0;
+    uint32_t indexCount = 0;
+    float screenSize = 1.0f;
+    bool operator==(const MeshLodLevel&) const = default;
+};
+
 struct Mesh {
     Microsoft::WRL::ComPtr<ID3D11Buffer> vb;
     Microsoft::WRL::ComPtr<ID3D11Buffer> ib;
+    // LOD0 の index 数。物理・NavMesh・RT・picking など LOD を使わない側はこれと indices を読む
     uint32_t indexCount = 0;
+    // LOD の段表 (lods[0] = LOD0 = ib の先頭 indexCount 本)。空 = 段なし。ib は LOD0 の後ろに粗い段を連結して持つ
+    std::vector<MeshLodLevel> lods;
+    // lods[1..] の index 列 (LOD0 の後ろに連結する素材。ib の作り直しに使う)
+    std::vector<uint32_t> lodIndices;
+    uint32_t LodCount() const { return lods.empty() ? 1u : static_cast<uint32_t>(lods.size()); }
+    // 描画する index 範囲。lod が段数を超えるときは最も粗い段 (欠落した段は粗い方へ寄せる)
+    MeshLodLevel LodRange(uint32_t lod) const
+    {
+        if (lods.empty()) {
+            return MeshLodLevel{ 0, indexCount, 1.0f };
+        }
+        return lods[lod < lods.size() ? lod : lods.size() - 1];
+    }
     // ローカル空間 AABB (Register 時に頂点から計算)。Focus/ピッキング/サムネイルで使う (M8)
     DirectX::XMFLOAT3 aabbMin = { 0, 0, 0 };
     DirectX::XMFLOAT3 aabbMax = { 0, 0, 0 };
@@ -95,8 +118,11 @@ public:
     // GPU デバイス無し (ヘッドレス Server) の初期化。CPU 側の positions / indices / AABB だけを
     // 持つ組込みプリミティブを Init と同じ集合・同じ順序で登録する
     void InitHeadless() { RegisterBuiltinPrimitives(); }
+    // lodIndices / lodLevels = LOD1 以降 (M90e)。lodLevels の indexStart は連結後の ib 内の位置で、
+    // lodIndices の先頭は indices.size()。矛盾する指定は段なしとして登録する
     AssetID Register(std::string_view name, std::span<const MeshVertex> vertices,
-                     std::span<const uint32_t> indices);
+                     std::span<const uint32_t> indices, std::span<const uint32_t> lodIndices = {},
+                     std::span<const MeshLodLevel> lodLevels = {});
     Mesh* Get(AssetID id);
     // 描画用: vb / ib が無い (復旧で作り直せなかった) メッシュは nullptr = 呼び出し側の「メッシュ無し」と同じ扱い
     Mesh* GetDrawable(AssetID id);
@@ -118,6 +144,7 @@ public:
 
 private:
     // vb / ib を作って mesh へ入れる。Register と復旧 (RecreateGpu) の共通の隘路
+    // indices は LOD0 + 粗い段を連結した ib 全体
     bool UploadBuffers(Mesh& mesh, std::span<const MeshVertex> vertices,
                        std::span<const uint32_t> indices);
     void RegisterBuiltinPrimitives()

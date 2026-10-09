@@ -90,6 +90,10 @@ struct RenderItem {
     DirectX::XMFLOAT3 worldAabbMin = { 0.0f, 0.0f, 0.0f };
     DirectX::XMFLOAT3 worldAabbMax = { 0.0f, 0.0f, 0.0f };
     uint8_t hasWorldAabb = 0;
+    // ---- メッシュ LOD の段 (末尾 append) ----
+    // 描画する index 範囲は Mesh::LodRange(lod)。段なしのメッシュは 0 のまま。
+    // インスタンシングの run は (mesh, lod) で分かれ、ソートは mesh の次に lod を見る
+    uint8_t lod = 0;
 };
 
 // ---- 局所ライトのシャドウアトラス (M54c) ----

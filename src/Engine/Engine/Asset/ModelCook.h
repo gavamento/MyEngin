@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "Engine/Core/Asset/ImportMetaResolver.h"
+#include "Engine/Engine/Asset/MeshLodBuilder.h"
 #include "Engine/Renderer/Device/GpuResources.h"
 #include "Engine/Renderer/Mesh/Skeleton.h"
 
@@ -30,6 +32,9 @@ struct CookedMesh {
     std::string key;
     std::vector<MeshVertex> vertices;
     std::vector<uint32_t> indices;
+    // LOD1 以降 (M90e)。段なしは両方空。indices は LOD0 のまま = 段なしのバイト列は v5 と同じ
+    std::vector<uint32_t> lodIndices;
+    std::vector<MeshLodLevel> lods;
 };
 
 struct CookedMaterial {
@@ -43,6 +48,9 @@ struct CookedSkin {
 };
 
 struct ModelCookData {
+    // このクックが段を作るのに使った .meta の LOD 設定。キャッシュの読み込み時に現在の設定と比べ、
+    // 違えば再クックする (CookedCache の無効化は .meta を見ないため)
+    importmeta::ModelLodSettings lodSettings;
     std::vector<CookedTexture> textures;
     std::vector<CookedMesh> meshes;
     std::vector<CookedMaterial> materials;
@@ -55,13 +63,19 @@ struct ModelCookData {
     void AddTexture(uint8_t kind, bool srgb, std::string key, const std::wstring& path,
                     const void* bytes, size_t size);
     void AddMesh(std::string key, const std::vector<MeshVertex>& vertices,
-                 const std::vector<uint32_t>& indices);
+                 const std::vector<uint32_t>& indices, const MeshLodData& lod = {});
     void AddMaterial(std::string key, const Material& mat);
     void AddSkin(std::string key, const SkinnedModel& model);
 
     // CookedCache::Write の deps (外部テクスチャの存在検証用)
     std::vector<std::wstring> ExternalDeps() const;
 };
+
+// ローダの登録地点の共通処理 (フレッシュパースの両ローダが呼ぶ)。settings の LOD を生成し、
+// cook (null 可) へ追記して MeshLibrary へ登録する。LOD の生成も登録も Replay と同じ結果になる
+AssetID RegisterMeshWithLods(RenderResources& resources, ModelCookData* cook, const std::string& key,
+                             const std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices,
+                             const importmeta::ModelLodSettings& settings);
 
 // blob ⇄ 構造体。Deserialize は境界検査つき (破損ファイルで false、絶対に落ちない)
 void Serialize(const ModelCookData& d, std::vector<uint8_t>& out);

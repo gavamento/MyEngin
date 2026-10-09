@@ -117,6 +117,10 @@ struct EngineConfig {
     // GPU オクルージョンカリング (--no-occlusion で off)。Deferred / Forward の不透明 (影・半透明は対象外)。
     // 描かれる画素は off と同じで、A/B 比較 (img-diff) と原因の切り分け用
     bool occlusionCulling = true;
+    // メッシュ LOD (.meta で段を作ったモデルだけに効く)。--lod-bias F で詳細な段を長く使う (> 1) / 早く落とす (< 1)、
+    // --lod-force N で段を固定 (-1 = 自動、N が無ければ最も粗い段)。A/B 比較と切り分け用
+    float lodBias = 1.0f;
+    int lodForce = -1;
     // --render-bench-cut-frame N: このフレーム以降、描画側のカメラ上書きでカメラを別の位置へ切り替える
     // (render_bench の検証用。sim には触れない)。負 = 切り替えない。
     // カット直後のフレームでオクルージョンの履歴が全部外れても欠けないことの確認に使う

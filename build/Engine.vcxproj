@@ -80,6 +80,8 @@
     <ClCompile Include="..\src\Engine\Engine\Asset\CookedCacheSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Asset\FbxLoader.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Asset\FractureAsset.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Asset\MeshLodBuilder.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Asset\MeshLodSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Asset\ModelCook.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Asset\ModelLoader.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Asset\SubAssetKeySelfTest.cpp" />
@@ -374,6 +376,8 @@
     <ClInclude Include="..\src\Engine\Engine\Asset\CookedCacheSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Asset\FbxLoader.h" />
     <ClInclude Include="..\src\Engine\Engine\Asset\FractureAsset.h" />
+    <ClInclude Include="..\src\Engine\Engine\Asset\MeshLodBuilder.h" />
+    <ClInclude Include="..\src\Engine\Engine\Asset\MeshLodSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Asset\ModelCook.h" />
     <ClInclude Include="..\src\Engine\Engine\Asset\ModelLoader.h" />
     <ClInclude Include="..\src\Engine\Engine\Asset\SubAssetKeySelfTest.h" />
@@ -576,6 +580,7 @@
     <ClInclude Include="..\src\Engine\Renderer\ImGui\ImGuiTheme.h" />
     <ClInclude Include="..\src\Engine\Renderer\Mesh\MeshBind.h" />
     <ClInclude Include="..\src\Engine\Renderer\Mesh\MeshInstancing.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Mesh\MeshLod.h" />
     <ClInclude Include="..\src\Engine\Renderer\Mesh\Skeleton.h" />
     <ClInclude Include="..\src\Engine\Renderer\Mesh\SkinBounds.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\AcousticVolumePass.h" />
@@ -699,6 +704,18 @@
       <TreatWarningAsError>false</TreatWarningAsError>
     </ClCompile>
     <ClCompile Include="..\external\libtess2\Source\tess.c">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\meshoptimizer\allocator.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\meshoptimizer\indexgenerator.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\meshoptimizer\simplifier.cpp">
       <WarningLevel>Level3</WarningLevel>
       <TreatWarningAsError>false</TreatWarningAsError>
     </ClCompile>

@@ -31,6 +31,7 @@
 #include "Engine/Engine/Scene/TransformSystem.h"
 #include "Engine/Engine/Physics/Fracture/FractureBuilder.h" // M80f: 破片エンティティの事前生成
 #include "Engine/Engine/Scene/GameObject.h"
+#include "Engine/Core/Asset/AssetKeyResolver.h" // render_bench: LOD 付きモデルのメッシュキー
 #include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Engine/Physics/Fracture/FractureBake.h"    // M80f: --fracture-demo の焼き
 #include "Engine/Engine/Physics/Fracture/FractureLibrary.h" // M80f: メモリ上焼きの登録口
@@ -4967,6 +4968,17 @@ void BuildRenderBenchScene(EngineContext& ctx)
 
     const AssetID cube = res.meshes.Cube();
     const AssetID sphere = res.meshes.Sphere();
+    // メッシュ LOD の検証用に、高ポリの球を .meta で 3 段にしたモデルを使う (assets\models\lod_sphere.glb.meta)。
+    // 読めなければ組込みの球で代用する (LOD の統計だけが出なくなる)
+    AssetID lodSphere = sphere;
+    {
+        const std::wstring lodPath = ctx.assetsRoot + L"\\models\\lod_sphere.glb";
+        if (ModelLoader::RegisterAssets(res, *ctx.shaders, lodPath, /*logErrors=*/true)) {
+            lodSphere = AssetID{ HashStr(assetkey::SubAssetKeyPrefix(lodPath) + "#mesh0#prim0") };
+        } else {
+            MYE_LOG_ERROR("[render-bench] lod_sphere.glb could not be loaded (run tools\\gen_lod_test_gltf.ps1)");
+        }
+    }
     auto place = [&](const char* name, AssetID mesh, AssetID mat, float px, float py, float pz, float sx, float sy,
                      float sz) {
         GameObject go = s.CreateGameObject(name);
@@ -5031,7 +5043,8 @@ void BuildRenderBenchScene(EngineContext& ctx)
     for (int i = 0; i < 8; ++i) {
         char name[16];
         std::snprintf(name, sizeof(name), "Far_%d", i);
-        place(name, sphere, matFar, static_cast<float>(i - 4) * 40.0f + 20.0f, 15.0f, 300.0f, 30.0f, 30.0f, 30.0f);
+        place(name, lodSphere, matFar, static_cast<float>(i - 4) * 40.0f + 20.0f, 15.0f, 300.0f, 30.0f, 30.0f,
+              30.0f);
     }
 
     // ---- スキンのキャラ ----
@@ -5056,6 +5069,23 @@ void BuildRenderBenchScene(EngineContext& ctx)
         actor.SetLocalPosition(a.x, 0.0f, a.z);
         actor.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ kAnimTestControllerGuid };
         ++actorIndex;
+    }
+    // ---- LOD の見本 ----
+    // 半径 3 の球を、カメラから 14 / 34 / 43 / 65 m に左右 1 組ずつ置く (壁 x = ±18 の外側)。
+    // 画面に占める大きさで、近景は LOD0、遠ざかるにつれ LOD1 → LOD2 → LOD3 になる
+    // (切り替えの境目から余白を取ってある。ヒステリシスの帯に入ると前フレームの段に留まるため)
+    const ActorSpec lodSpheres[] = {
+        { -6.0f, -2.0f },  { 6.0f, -2.0f },  // LOD0
+        { -24.0f, 10.0f }, { 24.0f, 10.0f }, // LOD1
+        { -24.0f, 22.0f }, { 24.0f, 22.0f }, // LOD2
+        { -24.0f, 46.0f }, { 24.0f, 46.0f }, // LOD3
+    };
+    int lodIndex = 0;
+    for (const ActorSpec& a : lodSpheres) {
+        char name[16];
+        std::snprintf(name, sizeof(name), "Lod_%02d", lodIndex);
+        place(name, lodSphere, gridMats[lodIndex % 3], a.x, 3.0f, a.z, 6.0f, 6.0f, 6.0f);
+        ++lodIndex;
     }
     MYE_LOG_INFO("[render-bench] %d grid objects, %d skinned actors", kGridX * kGridZ, actorIndex);
 }

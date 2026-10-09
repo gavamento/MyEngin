@@ -35,7 +35,10 @@ namespace mye::CookedCache {
 // 5 = M89p: glTF の STEP / CUBICSPLINE のアニメを線形のキー列へ直して読むようになった。旧 blob の
 // スキンは CUBICSPLINE の接線を値として読んだクリップを持つので、版で弾いて読み直させる
 // (STEP / CUBICSPLINE を含むスキン付き glTF のみ影響。LINEAR だけのクリップは同じキーになる)
-inline constexpr uint32_t kCookVersion = 5;
+// 6 = M90e: メッシュ LOD。blob の先頭に .meta の LOD 設定 (ModelLodSettings) が入り、メッシュごとに
+// LOD1 以降の index 列と段表が付く。旧 blob はこの並びで読めないので版で弾く。LOD の設定が変わったかは
+// 版ではなく blob 内の設定と現在の .meta の比較で判定する (ModelCook::TryReplayFromCache)
+inline constexpr uint32_t kCookVersion = 6;
 
 // M51j: 封印マーカー。cooked ディレクトリにこの名前のファイルがあると「配布ビルドの
 // 封印キャッシュ」として扱い、ReadValidated が srcPathKey / stat / 内容ハッシュ / deps の

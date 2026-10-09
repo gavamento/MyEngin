@@ -5,6 +5,7 @@
 #include <cfloat> // M79 sub-06: DragFloat の上限に FLT_MAX を渡す
 #include <cmath>
 #include <cstring>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -24,6 +25,8 @@
 #include "Engine/Engine/Navigation/NavMeshAsset.h"
 #include "Engine/Core/Asset/AssetGuidResolver.h"
 #include "Engine/Core/Asset/AssetKeyResolver.h" // M80j: guid:// 登録名 → クック元パス (スキンの骨ウェイト取得)
+#include "Engine/Engine/Asset/FbxLoader.h"   // M90e: LOD 設定の適用でモデルのメッシュを登録し直す
+#include "Engine/Engine/Asset/ModelLoader.h" // 同上
 #include "Engine/Engine/Asset/ModelCook.h" // M80j: .mmdl クックキャッシュからボーンウェイト付き頂点を読む
 #include "Engine/Engine/Physics/Fracture/FractureSkinBake.h" // M80j: 骨割り当てへ渡す入力の型
 #include "Editor/Widgets/EditorComponentCatalog.h"
@@ -2959,6 +2962,7 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
         AssetMeta meta;
         AssetDatabase::ReadMeta(path + L".meta", meta);
         assetImportEdit_ = meta.tex;
+        assetLodEdit_ = meta.lod;
         if (type == AssetType::Material) {
             LoadMaterialEdit(ctx, path); // M40d
         }
@@ -3095,6 +3099,52 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
             AssetMeta meta;
             AssetDatabase::ReadMeta(path + L".meta", meta);
             assetImportEdit_ = meta.tex;
+        }
+    }
+
+    if (type == AssetType::Model) {
+        // ---- メッシュ LOD (M90e): .meta の "lod"。段数 0 = 段なし (既定) ----
+        ImGui::SeparatorText(Tr(StrId::Insp_Lod));
+        ImGui::SetNextItemWidth(200.0f);
+        ImGui::SliderInt(Tr(StrId::Insp_LodLevels), &assetLodEdit_.levels, 0, importmeta::ModelLodSettings::kMaxExtraLevels);
+        for (int i = 0; i < assetLodEdit_.levels; ++i) {
+            const std::string index = std::to_string(i + 1);
+            const std::string ratioLabel = std::string(Tr(StrId::Insp_LodRatio)) + " " + index + "##lodRatio" + index;
+            ImGui::SetNextItemWidth(200.0f);
+            ImGui::SliderFloat(ratioLabel.c_str(), &assetLodEdit_.ratio[i], 0.01f, 0.95f, "%.2f");
+            const std::string sizeLabel = std::string(Tr(StrId::Insp_LodScreenSize)) + " " + index + "##lodSize" + index;
+            ImGui::SetNextItemWidth(200.0f);
+            ImGui::SliderFloat(sizeLabel.c_str(), &assetLodEdit_.screenSize[i], 0.0f, 1.0f, "%.2f");
+        }
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_LodNote));
+        if (ImGui::Button(Tr(StrId::Common_Apply), ImVec2(90, 0))) {
+            const std::wstring metaPath = path + L".meta";
+            AssetDatabase::EnsureMeta(path); // 不在なら生成 (GUID 確定)
+            AssetMeta meta;
+            if (AssetDatabase::ReadMeta(metaPath, meta)) {
+                meta.type = AssetType::Model;
+                assetLodEdit_.Normalize();
+                meta.lod = assetLodEdit_;
+                AssetDatabase::WriteMeta(metaPath, meta);
+                // 登録済みのメッシュを段つきで登録し直す (AssetID 不変 = 参照側の再解決不要)。
+                // .meta はモデル本体の更新時刻に出ないのでファイル監視は反応しない
+                std::wstring ext = fs::path(path).extension().wstring();
+                std::transform(ext.begin(), ext.end(), ext.begin(),
+                               [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+                if (ctx.resources != nullptr && ctx.shaders != nullptr) {
+                    if (ext == L".fbx") {
+                        FbxLoader::ReloadMeshes(*ctx.resources, *ctx.shaders, path);
+                    } else {
+                        ModelLoader::ReloadMeshes(*ctx.resources, *ctx.shaders, path);
+                    }
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(Tr(StrId::Insp_Revert), ImVec2(90, 0))) {
+            AssetMeta meta;
+            AssetDatabase::ReadMeta(path + L".meta", meta);
+            assetLodEdit_ = meta.lod;
         }
     }
 }

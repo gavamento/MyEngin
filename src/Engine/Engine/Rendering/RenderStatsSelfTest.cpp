@@ -38,6 +38,9 @@ long long Fingerprint(const prof::RenderStats& s)
     for (int v : s.lodDraws) {
         add(v);
     }
+    for (int v : s.lodTriangles) {
+        add(v);
+    }
     add(s.paletteEvaluated);
     add(s.paletteReused);
     add(s.occlusionPhase1Draws);
@@ -80,13 +83,14 @@ bool RunRenderStatsSelfTest()
     prof::AddShadowDraw(20, 2);
     prof::AddShadowDraw(10); // CSM 以外 (局所影アトラス)
     prof::SetRenderStatsView(2);
-    prof::AddDraw(100);
+    prof::AddDraw(100, 2, 5); // LOD2 の 5 個をインスタンシングで 1 回に描いた
     prof::AddShadowDraw(7, 1);
     prof::SetRenderStatsView(3);
     prof::RenderStats delta;
     delta.drawCalls = 3;
     delta.triangles = 9;
     delta.lodDraws[1] = 2;
+    delta.lodTriangles[1] = 40;
     delta.shadowCasterCandidates = 4;
     delta.shadowCascadeCasters[2] = 3;
     delta.paletteEvaluated = 5;
@@ -117,6 +121,10 @@ bool RunRenderStatsSelfTest()
           "draws are filed under the current viewKey (out of range -> 0)");
     check(prof::GetRenderStatsForView(3).lodDraws[1] == 2 && prof::GetRenderStatsForView(3).occluded == 9,
           "AddRenderStats fills the fields later sub-milestones use");
+    check(prof::GetRenderStatsForView(2).lodDraws[2] == 5 && prof::GetRenderStatsForView(2).lodTriangles[2] == 100
+              && prof::GetRenderStatsForView(2).lodDraws[0] == 0 && total.lodDraws[0] == 3 && total.lodDraws[2] == 5
+              && prof::GetRenderStatsForView(3).lodTriangles[1] == 40,
+          "AddDraw files each draw under its LOD stage (objects and triangles)");
     check(prof::GetRenderStatsForView(3).shadowCasterCandidates == 4
               && prof::GetRenderStatsForView(3).shadowCascadeCasters[2] == 3,
           "AddRenderStats carries the CSM caster counts");
@@ -145,7 +153,8 @@ bool RunRenderStatsSelfTest()
     check(a.find("\"occlusionPhase2Draws\": 8") != std::string::npos
               && a.find("\"shadowCascadeDraws\": [1, 1, 1]") != std::string::npos
               && a.find("\"shadowCascadeCasters\": [0, 0, 3]") != std::string::npos
-              && a.find("\"lodDraws\": [0, 2, 0, 0]") != std::string::npos,
+              && a.find("\"lodDraws\": [0, 2, 0, 0]") != std::string::npos
+              && a.find("\"lodTriangles\": [0, 40, 0, 0]") != std::string::npos,
           "the reserved fields and arrays are written in a fixed shape");
 
     prof::BeginFrame(); // 後続の表示へ持ち越さない

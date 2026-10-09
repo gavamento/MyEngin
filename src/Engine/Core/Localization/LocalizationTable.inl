@@ -87,6 +87,12 @@ MYE_STR(Menu_Ssao,            "SSAO (Deferred)",   "SSAO (Deferred)")
 MYE_STR(Menu_GpuInstancing,   "GPU Instancing",    "GPU インスタンシング")
 MYE_STR(Menu_Occlusion,       "GPU Occlusion Culling (Deferred)", "GPU オクルージョンカリング (Deferred)")
 MYE_STR(Menu_PostFx,          "Post FX",           "ポストエフェクト")
+// M90e: メッシュ LOD の描画設定 (.meta で段を作ったモデルだけに効く)
+MYE_STR(Menu_Lod,             "Mesh LOD",          "メッシュ LOD")
+MYE_STR(Menu_LodBias,         "LOD Bias",          "LOD バイアス")
+MYE_STR(Menu_LodForce,        "Force Stage",       "段を固定")
+MYE_STR(Menu_LodAuto,         "Auto",              "自動")
+MYE_STR(Menu_LodStage,        "Stage",             "段")
 MYE_STR(Menu_RtGi,            "RT GI (Deferred)",  "RT GI (Deferred)")
 MYE_STR(Menu_RtShadow,        "RT Shadow (Deferred)",     "RT 影 (Deferred)")
 MYE_STR(Menu_RtReflection,    "RT Reflection (Deferred)", "RT 反射 (Deferred)")
@@ -314,6 +320,8 @@ MYE_STR(Prof_Particles,       "particles:",                   "パーティク�
 MYE_STR(Prof_ScopesHeader,    "CPU scopes (this frame):",     "CPU スコープ (今フレーム):")
 MYE_STR(Prof_Draw,            "render: %d draw calls, %d tris, %d culled",
                               "描画: %d ドローコール / %d 三角形 / %d カリング")
+MYE_STR(Prof_LodDraws,        "mesh lod (objects / tris): L0 %d / %d, L1 %d / %d, L2 %d / %d, L3 %d / %d",
+                              "メッシュ LOD (個数 / 三角形): L0 %d / %d, L1 %d / %d, L2 %d / %d, L3 %d / %d")
 MYE_STR(Prof_GpuStages,       "gpu: render (last view) %6.3f ms / gbuffer %6.3f ms / forward opaque %6.3f ms (GpuTimer)",
                               "GPU: Render (最後のビュー) %6.3f ms / GBuffer %6.3f ms / Forward 不透明 %6.3f ms (GpuTimer)")
 MYE_STR(Prof_Occlusion,       "  occlusion: %6.3f ms (GpuTimer, cull + max-Z pyramid) phase1 %d / phase2 %d / occluded %d",
@@ -696,6 +704,13 @@ MYE_STR(Insp_TipReflClass,    "How conservatively this surface is reused when it
                               "主役ほど保守的 = にじませない、小物ほど積極的に再利用します")
 MYE_STR(Insp_GenerateMips,    "Generate Mips",              "ミップマップを生成")
 MYE_STR(Insp_CookCompress,    "Cook Compress",              "圧縮 (cook)")
+// M90e: モデルのメッシュ LOD (.meta の "lod")
+MYE_STR(Insp_Lod,             "Mesh LOD",                   "メッシュ LOD")
+MYE_STR(Insp_LodLevels,       "Extra stages (0 = off)",     "追加する段数 (0 = なし)")
+MYE_STR(Insp_LodRatio,        "Triangle ratio, stage",      "三角形の比 段")
+MYE_STR(Insp_LodScreenSize,   "Switch screen size (0 = auto), stage", "切り替える画面高さ比 (0 = 自動) 段")
+MYE_STR(Insp_LodNote,         "Applying re-registers the meshes; the cook cache is rebuilt automatically.",
+                              "適用するとメッシュを登録し直します。クックキャッシュは自動で作り直されます。")
 MYE_STR(Insp_Srgb,            "sRGB",                       "sRGB")
 MYE_STR(Insp_Transparent,     "transparent",                "半透明")
 MYE_STR(Insp_PriorityNote,    "0 = unlimited. Higher priority wins when voices are stolen.",

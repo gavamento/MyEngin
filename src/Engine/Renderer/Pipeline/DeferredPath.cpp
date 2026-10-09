@@ -998,7 +998,10 @@ void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view
             oc.itemCount = cmd.count;
             oc.instanceBase = cmd.run ? cmd.run->base : 0u;
             oc.isInstanced = (cmd.run != nullptr);
-            oc.indexCount = cmd.mesh->indexCount;
+            // run 内の項目は同じ段 (BuildInstanceRuns が保証)
+            const MeshLodLevel lodRange = cmd.mesh->LodRange(queue.opaque[cmd.first].lod);
+            oc.indexCount = lodRange.indexCount;
+            oc.startIndex = lodRange.indexStart;
             occCmds_.push_back(oc);
             for (uint32_t k = 0; k < cmd.count; ++k) {
                 const RenderItem& it = queue.opaque[cmd.first + k];
@@ -1042,6 +1045,7 @@ void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view
             const RenderItem& item = queue.opaque[cmd.first];
             Material* mat = cmd.mat;
             Mesh* mesh = cmd.mesh;
+            const MeshLodLevel lodRange = mesh->LodRange(item.lod);
             if (cmd.run != nullptr) {
                 const MeshInstanceRun& run = *cmd.run;
                 if (gbufferInstancedShader_.value != boundGbShader) {
@@ -1066,10 +1070,11 @@ void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view
                     dc->DrawIndexedInstancedIndirect(occlusion_.ArgsBuffer(),
                                                      occlusion_.ArgsByteOffset(phase, cmdIdx));
                 } else {
-                    dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
+                    dc->DrawIndexedInstanced(lodRange.indexCount, run.count, lodRange.indexStart, 0, 0);
                 }
                 if (phase <= 0) {
-                    prof::AddDraw(static_cast<int>(mesh->indexCount / 3 * run.count));
+                    prof::AddDraw(static_cast<int>(lodRange.indexCount / 3 * run.count), item.lod,
+                                  static_cast<int>(run.count));
                 }
                 continue;
             }
@@ -1110,10 +1115,10 @@ void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view
                 dc->DrawIndexedInstancedIndirect(occlusion_.ArgsBuffer(),
                                                  occlusion_.ArgsByteOffset(phase, cmdIdx));
             } else {
-                dc->DrawIndexed(mesh->indexCount, 0, 0);
+                dc->DrawIndexed(lodRange.indexCount, lodRange.indexStart, 0);
             }
             if (phase <= 0) {
-                prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
+                prof::AddDraw(static_cast<int>(lodRange.indexCount / 3), item.lod);
             }
         }
     };
@@ -1685,9 +1690,10 @@ void DeferredPath::RenderSurfaceForward(GraphicsDevice& device, const RenderView
         if (resources.materials.GetSurfaceDoubleSided(item.material)) {
             dc->RSSetState(rasterizerCullNone_.Get());
         }
-        dc->DrawIndexed(mesh->indexCount, 0, 0);
+        const MeshLodLevel lodRange = mesh->LodRange(item.lod);
+        dc->DrawIndexed(lodRange.indexCount, lodRange.indexStart, 0);
         dc->RSSetState(f.wire ? rasterizerWire_.Get() : rasterizer_.Get());
-        prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
+        prof::AddDraw(static_cast<int>(lodRange.indexCount / 3), item.lod);
     }
 
     // 続く水面 (2.7) / 透明後段 (3) は単一 RT (view.rtv) + view.dsv を前提にしている
@@ -1784,8 +1790,9 @@ void DeferredPath::RenderTransparent(GraphicsDevice& device, const RenderView& v
             po.baseColor = SrgbToLinear(mat->baseColor); // M38a: authored 色をリニアへ
             UploadCB(dc, perObjectCB_.Get(), po);
             UploadCB(dc, materialCB_.Get(), MakeMaterialCB(*mat));
-            dc->DrawIndexed(mesh->indexCount, 0, 0);
-            prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
+            const MeshLodLevel lodRange = mesh->LodRange(item.lod);
+            dc->DrawIndexed(lodRange.indexCount, lodRange.indexStart, 0);
+            prof::AddDraw(static_cast<int>(lodRange.indexCount / 3), item.lod);
         }
     } else {
         // パーティクル後段のために RTV+DSV を戻しておく
@@ -1864,8 +1871,9 @@ void DeferredPath::DrawSurfaceTransparentItem(GraphicsDevice& device, const Rend
     dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
     dc->IASetIndexBuffer(mesh.ib.Get(), DXGI_FORMAT_R32_UINT, 0);
 
-    dc->DrawIndexed(mesh.indexCount, 0, 0);
-    prof::AddDraw(static_cast<int>(mesh.indexCount / 3));
+    const MeshLodLevel lodRange = mesh.LodRange(item.lod);
+    dc->DrawIndexed(lodRange.indexCount, lodRange.indexStart, 0);
+    prof::AddDraw(static_cast<int>(lodRange.indexCount / 3), item.lod);
 }
 
 // 4) - 6) デバッグ表示 (RT / velocity / HZB)。既定ではどれも 1 命令も走らない

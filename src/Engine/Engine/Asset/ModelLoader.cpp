@@ -94,6 +94,8 @@ struct LoadContext {
     AssetID shaderId;
     // 非 null なら各 Register サイトが登録内容を追記する (M51b クックの sink)
     ModelCook::ModelCookData* cook = nullptr;
+    // .meta の LOD 設定 (段なしが既定)。メッシュ登録のたびに段を作る
+    importmeta::ModelLodSettings lodSettings;
 };
 
 // 右手系 → 左手系: 位置/法線は z 反転、クォータニオンは (-x, -y, z, w)
@@ -185,10 +187,7 @@ AssetID LoadPrimitiveMesh(LoadContext& lc, const cgltf_primitive* prim, const ch
         std::swap(indices[i + 1], indices[i + 2]);
     }
 
-    if (lc.cook) {
-        lc.cook->AddMesh(key, vertices, indices);
-    }
-    return lc.resources->meshes.Register(key, vertices, indices);
+    return ModelCook::RegisterMeshWithLods(*lc.resources, lc.cook, key, vertices, indices, lc.lodSettings);
 }
 
 AssetID LoadMaterial(LoadContext& lc, const cgltf_material* mat, const char* key)
@@ -489,6 +488,7 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
     lc.keyPrefix = assetkey::SubAssetKeyPrefix(path);
     lc.baseDir = std::filesystem::path(path).parent_path().wstring();
     lc.shaderId = shaders.Load("forward_lit");
+    importmeta::ResolveModelLod(path, lc.lodSettings);
 
     const std::string rootName = std::filesystem::path(path).stem().string();
     GameObject root = scene.CreateGameObject(rootName);
@@ -536,7 +536,9 @@ bool RegisterAssets(RenderResources& resources, ShaderManager& shaders, const st
     lc.keyPrefix = assetkey::SubAssetKeyPrefix(path);
     lc.baseDir = std::filesystem::path(path).parent_path().wstring();
     lc.shaderId = shaders.Load("forward_lit");
+    importmeta::ResolveModelLod(path, lc.lodSettings);
     ModelCook::ModelCookData cookData;
+    cookData.lodSettings = lc.lodSettings;
     if (CookedCache::Enabled()) {
         lc.cook = &cookData;
     }

@@ -18,8 +18,8 @@
 | sub-01 計測の土台 | OK | 1 | 72ff316 | Debug selftest で ServerNetSelfTest が 1 回だけ一過性 FAIL (原因未断定) |
 | sub-02 GPU オクルージョン縦切り (Deferred) | OK | 1 | 1bd74ec | ServerNetSelfTest 一過性 FAIL 2 回目 |
 | sub-03 オクルージョンを Forward へ + hzb-debug | OK | 2 | 24781ec | 前セッションの途中差分を引き継いで再開。受け入れ 2 の目視はユーザー待ち |
-| sub-04 影のカスケード別カリング + スキン AABB | OK | 2 | (このコミット) | golden 3 枚更新 (画面外キャスターの影、planner 了承) |
-| sub-05 メッシュ LOD | 未着手 | 0 | | 依存 01 |
+| sub-04 影のカスケード別カリング + スキン AABB | OK | 2 | df7b1d3 | golden 3 枚更新 (画面外キャスターの影、planner 了承) |
+| sub-05 メッシュ LOD | OK | 1 | (このコミット) | meshoptimizer v1.3、kCookVersion 6。LOD 見た目の目視はユーザー待ち |
 | sub-06 描画側並列化 + URO | 未着手 | 0 | | 依存 04,05 |
 | sub-07 sim 並列化 (ADR-028) | 未着手 | 0 | | 依存 01 |
 | sub-08 文書 + 全体検証 (ADR-029) | 未着手 | 0 | | 依存 03,06,07 |
@@ -38,3 +38,5 @@
 - (coder sub-03) `Runtime.exe --screenshot` 単体ではスクショ後に終了しない (M90 以前から、コード読みのみで確認)。`--frames N` か `--render-stats-dump` と併用する。`tools\gen_project_files.ps1` は pwsh で実行する。shot_verify がタイムアウトすると Runtime / Editor が残って exe をロックする。
 - (planner 2026-10-09、sub-04 VERDICT nit) `WorldAabbInFrustumNoNear` は `WorldAabbInFrustum` の複製。除外面を引数にして 1 本化する (sub-06 で FrustumCull.h を触るとき)。`RenderSystem::Render` を通した画面外スキンの影の画素テストは無い (一時シーンの目視のみ)。
 - (coder sub-04 → sub-06) カスケード判定は RenderCascadeShadows の直列ループ (CascadeCasterMask)。画面外スキンのパレットは入ったカスケードがあるときだけ毎回評価 (間引き未)。EvaluateSkinPalette が評価の唯一の入口。SkinBoundsCache::Get はステージ 1 (直列) でだけ呼ぶ。AllocateShadowAtlas (局所影) は画面内の queue_.opaque のみ。スキンは GPU オクルージョンの判定箱に載せない (M90 の間は据え置き)。
+- (planner 2026-10-09、sub-05 VERDICT) lodHistory_ を捨てる契機・LOD 選択式の関数化は sub-06 やること 8 へ。indirect 引数の startIndex と ShadowPass の段ありの run は画素一致の間接確認のみ。硬い面のメッシュに段が作れない件と ServerNet 一過性 FAIL (計 3 回) は spec §7。
+- (coder sub-05 → sub-08) ADR-029 に .meta "lod" 形式、blob の並び、選択式 (screen-size × lodBias、ヒステリシス 10%)、溶接 + simplifyWithAttributes + LockBorder、硬い面の限界、--lod-bias / --lod-force、tools\gen_lod_test_gltf.ps1 を書く。engine_spec の kCookVersion を 6 へ。render_bench の cache\render_bench.scene.json が古いと LOD 球が出ない。

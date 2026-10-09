@@ -256,6 +256,10 @@ bool RunEngineCliSelfTest()
     r = RunParse({});
     check(r.config.occlusionCulling && r.config.renderBenchCutFrame < 0,
           "occlusion culling is on and the camera cut is off by default");
+    r = RunParse({ L"--lod-bias", L"1.5", L"--lod-force", L"2" });
+    check(r.consumed == 2 && r.config.lodBias == 1.5f && r.config.lodForce == 2, "--lod-bias F / --lod-force N");
+    r = RunParse({});
+    check(r.config.lodBias == 1.0f && r.config.lodForce == -1, "LOD bias is 1 and the stage is automatic by default");
     r = RunParse({ L"--probe-bake", L"1,2,3" });
     check(r.consumed == 1 && r.config.probeBake && r.config.probeBakePos[0] == 1.0f
               && r.config.probeBakePos[1] == 2.0f && r.config.probeBakePos[2] == 3.0f,
