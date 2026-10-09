@@ -557,6 +557,13 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
                           const FrameTarget& target, const CameraOverride* cameraOverride,
                           ParticleSystem* particles, VfxRenderer* vfx)
 {
+    prof::SetRenderStatsView(target.viewKey);
+    if (!frameTimerInit_) {
+        frameTimerInit_ = true;
+        frameTimer_.Init(device); // 失敗しても計測が 0 になるだけ
+    }
+    frameTimer_.Begin(device);
+
     // ★後の段は前の段が view / lights に書いた値を読む
     FrameContext f;
     BeginView(device, shaders, target, f);
@@ -581,9 +588,12 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     // ProfilerWindow が hzbDebugMip で行を出し分けることで付けている)
     hzbGpuMs_ = path.HzbGpuMs();
     ssrGpuMs_ = path.SsrGpuMs(); // M56d (同上)
+    gbufferGpuMs_ = path.GbufferGpuMs();             // M90a (同上)
+    forwardOpaqueGpuMs_ = path.ForwardOpaqueGpuMs(); // M90a (同上)
 
     DrawParticlesAndDebug(world, device, shaders, resources, target, cameraOverride, particles, vfx, f);
     ResolvePost(world, device, shaders, resources, path, target, cameraOverride, f);
+    frameTimer_.End(device);
     return f.cameraFound;
 }
 
@@ -2063,6 +2073,8 @@ void RenderSystem::ReleaseGpu()
     postFx_ = PostProcess();
     shadowPass_ = ShadowPass();
     shadowAtlas_ = ShadowAtlas();
+    frameTimer_ = GpuTimer();
+    frameTimerInit_ = false;
     froxelPass_ = FroxelPass();
     acousticPass_ = AcousticVolumePass();
     linePass_ = EditorLinePass();

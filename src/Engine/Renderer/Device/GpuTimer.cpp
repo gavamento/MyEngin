@@ -6,6 +6,7 @@ namespace mye {
 
 bool GpuTimer::Init(GraphicsDevice& device)
 {
+    ready_ = false;
     for (Frame& f : frames_) {
         D3D11_QUERY_DESC qd = {};
         qd.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
@@ -18,6 +19,7 @@ bool GpuTimer::Init(GraphicsDevice& device)
             return false;
         }
     }
+    ready_ = true;
     return true;
 }
 
@@ -28,11 +30,16 @@ void GpuTimer::Release()
     }
     current_ = 0;
     skip_ = false;
+    ready_ = false;
     lastMs_ = 0.0f;
 }
 
 void GpuTimer::Begin(GraphicsDevice& device)
 {
+    if (!ready_) {
+        skip_ = true; // End も何もしない
+        return;
+    }
     Frame& f = frames_[current_];
     ID3D11DeviceContext* dc = device.Context();
 

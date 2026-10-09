@@ -4938,4 +4938,126 @@ void BuildAnimShowcaseScene(EngineContext& ctx)
     }
 }
 
+void BuildRenderBenchScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+    s.SetName("render_bench");
+
+    // .meta の GUID (assets\anims\anim_test.controller.json.meta)。--anim-demo と同じコントローラ
+    constexpr uint64_t kAnimTestControllerGuid = 0xb44c659f992d4a83ull;
+
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    auto makeMaterial = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = shader;
+        m.texture = res.textures.White();
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    const AssetID gridMats[3] = {
+        makeMaterial("rbench_grid_a", 0.80f, 0.45f, 0.35f),
+        makeMaterial("rbench_grid_b", 0.40f, 0.70f, 0.45f),
+        makeMaterial("rbench_grid_c", 0.40f, 0.50f, 0.85f),
+    };
+    const AssetID matGround = makeMaterial("rbench_ground", 0.32f, 0.33f, 0.36f);
+    const AssetID matWall = makeMaterial("rbench_wall", 0.75f, 0.75f, 0.72f);
+    const AssetID matTower = makeMaterial("rbench_tower", 0.55f, 0.35f, 0.30f);
+    const AssetID matFar = makeMaterial("rbench_far", 0.60f, 0.65f, 0.80f);
+
+    const AssetID cube = res.meshes.Cube();
+    const AssetID sphere = res.meshes.Sphere();
+    auto place = [&](const char* name, AssetID mesh, AssetID mat, float px, float py, float pz, float sx, float sy,
+                     float sz) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(px, py, pz);
+        go.SetLocalScale(sx, sy, sz);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = mesh;
+        mr->material = mat;
+        return go;
+    };
+
+    // ---- カメラ (固定。+Z 向き) ----
+    // 後ろ (-Z) に視錐台の外のキャスター (Tower) を置くので、遠い側を広く取るために farZ を伸ばす
+    GameObject camera = s.CreateGameObject("Main Camera");
+    {
+        auto* cam = camera.AddComponent<CameraComponent>();
+        cam->fovYDeg = 60.0f;
+        cam->farZ = 400.0f;
+    }
+    camera.SetLocalPosition(0.0f, 7.0f, -14.0f);
+    camera.SetLocalRotationEuler(10.0f, 0.0f, 0.0f);
+
+    // ---- 太陽 ----
+    // 光は +Z 向きに 50 度で落ちる。Tower (カメラの背後) の影が画面の手前の床に伸びる
+    GameObject sun = s.CreateGameObject("Sun");
+    {
+        auto* l = sun.AddComponent<LightComponent>();
+        l->intensity = 0.9f;
+        l->ambient = { 0.15f, 0.16f, 0.19f };
+    }
+    sun.SetLocalRotationEuler(50.0f, 0.0f, 0.0f);
+
+    place("Ground", cube, matGround, 0.0f, -0.5f, 100.0f, 500.0f, 1.0f, 500.0f);
+
+    // ---- 遮蔽する壁 ----
+    // カメラ (y=7) から見て、壁の背後の中央の円錐にあるグリッドの物が隠れる
+    place("Wall", cube, matWall, 0.0f, 8.0f, 14.0f, 36.0f, 16.0f, 1.5f);
+
+    // ---- 視錐台の外の影キャスター ----
+    // カメラの背後にあり、本体は画面に入らない。影だけが手前の床へ落ちる (影のカリング用)
+    place("Tower", cube, matTower, 0.0f, 40.0f, -48.0f, 10.0f, 80.0f, 10.0f);
+
+    // ---- 不透明グリッド 61 x 60 = 3660 個 ----
+    // ★座標・高さ・材質はすべて添字の整数式 (乱数も三角関数も使わない = 毎回同じ並び)
+    constexpr int kGridX = 61;
+    constexpr int kGridZ = 60;
+    constexpr float kGridStep = 3.0f;
+    for (int iz = 0; iz < kGridZ; ++iz) {
+        for (int ix = 0; ix < kGridX; ++ix) {
+            const float height = 1.0f + static_cast<float>((ix * 7 + iz * 13) % 5) * 0.5f;
+            const float x = (static_cast<float>(ix) - 30.0f) * kGridStep;
+            const float z = 22.0f + static_cast<float>(iz) * kGridStep;
+            char name[32];
+            std::snprintf(name, sizeof(name), "Bench_%02d_%02d", ix, iz);
+            const bool isCube = ((ix + iz) % 2) == 0;
+            place(name, isCube ? cube : sphere, gridMats[(ix * 3 + iz) % 3], x, height * 0.5f, z, 1.6f, height,
+                  1.6f);
+        }
+    }
+
+    // ---- 遠景 (大きな球) ----
+    for (int i = 0; i < 8; ++i) {
+        char name[16];
+        std::snprintf(name, sizeof(name), "Far_%d", i);
+        place(name, sphere, matFar, static_cast<float>(i - 4) * 40.0f + 20.0f, 15.0f, 300.0f, 30.0f, 30.0f, 30.0f);
+    }
+
+    // ---- スキンのキャラ ----
+    // 近景 2 / 遠景 2 (壁の円錐の外) / 壁の裏 2 / 画面外 (カメラの背後) 1
+    struct ActorSpec {
+        float x;
+        float z;
+    };
+    const ActorSpec actors[] = {
+        { -2.0f, 0.0f },  { 2.5f, 4.0f },    // 近景
+        { 55.0f, 60.0f }, { -70.0f, 120.0f }, // 遠景
+        { -6.0f, 30.0f }, { 8.0f, 40.0f },    // 壁の裏
+        { 3.0f, -30.0f },                     // カメラの背後 (画面外)
+    };
+    int actorIndex = 0;
+    for (const ActorSpec& a : actors) {
+        GameObject actor = ModelLoader::Load(s, res, *ctx.shaders, ctx.assetsRoot + L"\\models\\anim_test.glb");
+        if (!actor) {
+            MYE_LOG_ERROR("[render-bench] anim_test.glb could not be loaded (run tools\\gen_anim_test_gltf.ps1)");
+            break;
+        }
+        actor.SetLocalPosition(a.x, 0.0f, a.z);
+        actor.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ kAnimTestControllerGuid };
+        ++actorIndex;
+    }
+    MYE_LOG_INFO("[render-bench] %d grid objects, %d skinned actors", kGridX * kGridZ, actorIndex);
+}
+
 } // namespace mye

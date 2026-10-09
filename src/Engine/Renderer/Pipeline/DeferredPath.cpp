@@ -242,6 +242,7 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     // M56c: HZB。CS も可視化シェーダも既定 off の経路では 1 度も使われないので、
     // 失敗しても続行する (HzbPass::Build が false を返して消費者が自然に無効化される)
     hzb_.Init(device, shaders);
+    gbufferTimer_.Init(device); // M90a: 失敗しても計測が 0 になるだけ
     hzbDebugShader_ = shaders.Load("debug_hzb");
     // M56d: SSR。同じく既定 off なので失敗しても続行 (SsrPass::Render が false を返すだけ)
     ssr_.Init(device, shaders);
@@ -497,6 +498,7 @@ void DeferredPath::Shutdown()
     normalCopyH_ = 0;
     // M56c: HZB
     hzb_.Shutdown();
+    gbufferTimer_.Release();
     hzbDebugCB_.Reset();
     ssr_.Shutdown(); // M56d
     skybox_.Shutdown();
@@ -744,7 +746,9 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     f.vp.MaxDepth = 1.0f;
 
     // ★呼ぶ順 = D3D へ命令を積む順。後の段は前の段が張った RTV / サンプラ / SRV を前提にしている所があるので入れ替えない
+    gbufferTimer_.Begin(device);
     RenderGeometry(device, view, queue, resources, shaders, f); // 1) + 1.1)
+    gbufferTimer_.End(device);
 
     // ---- 1.2) デカール (M56a/M56b): ジオメトリパス (地形込み) の直後・SSAO の前。
     //      「もう GBuffer に書かれた面」の albedo / 法線 / roughness を投影ボックスで

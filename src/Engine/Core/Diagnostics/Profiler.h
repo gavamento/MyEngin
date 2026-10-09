@@ -26,14 +26,35 @@ struct ScopeTimer {
 };
 
 // ---- レンダ統計 (ドローコール / 三角形 / カリング) ----
+// 影の draw は本描画の欄に混ぜない。ビュー別の集計 (SetRenderStatsView) の和が累積値と一致する
+inline constexpr int kRenderStatsViewSlots = 4; // viewKey 0..3 (RenderSystem の viewKey 規約)
+inline constexpr int kRenderStatsLodSlots = 4;     // LOD0 + 3 段
+inline constexpr int kRenderStatsCascadeSlots = 3; // ShadowPass::kCascades と同数
+
 struct RenderStats {
     int drawCalls = 0;
     int triangles = 0;
     int culled = 0; // フラスタムカリングで除外したメッシュ数 (M16)
+    // 影 (CSM + 局所影アトラス)。cascadeDraws は CSM のカスケード別
+    int shadowDrawCalls = 0;
+    int shadowTriangles = 0;
+    int shadowCascadeDraws[kRenderStatsCascadeSlots] = {};
+    // 以降は後続サブが埋める欄 (欄と dump の形を先に固定してある)
+    int lodDraws[kRenderStatsLodSlots] = {};
+    int paletteEvaluated = 0;
+    int paletteReused = 0;
+    int occlusionPhase1Draws = 0;
+    int occlusionPhase2Draws = 0;
+    int occluded = 0;
 };
-void AddDraw(int triangles); // 描画パスの DrawIndexed 地点で呼ぶ
-void AddCulled(int n);       // 収集時にカリングした件数を加算 (M16)
-RenderStats GetRenderStats();
+void AddDraw(int triangles);                   // 描画パスの DrawIndexed 地点で呼ぶ
+void AddCulled(int n);                         // 収集時にカリングした件数を加算 (M16)
+void AddShadowDraw(int triangles, int cascade = -1); // 影の DrawIndexed 地点。cascade < 0 = CSM 以外
+void AddRenderStats(const RenderStats& delta); // 任意の欄をまとめて加算 (後続サブの欄用)
+// 以降の加算を viewKey 別の集計にも入れる (RenderSystem::Render の先頭で呼ぶ)。範囲外は 0 番
+void SetRenderStatsView(uint32_t viewKey);
+RenderStats GetRenderStats(); // 従来の累積値 (全ビューの和)
+RenderStats GetRenderStatsForView(uint32_t viewKey);
 
 // ---- メモリ (MemoryTrack.cpp の global operator new/delete フック) ----
 struct MemStats {

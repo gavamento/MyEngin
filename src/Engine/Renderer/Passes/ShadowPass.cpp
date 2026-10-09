@@ -1,6 +1,7 @@
 #include "Engine/Renderer/Passes/ShadowPass.h"
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Renderer/Device/GpuResources.h"
 #include "Engine/Renderer/Device/GraphicsDevice.h"
 #include "Engine/Renderer/Pipeline/RenderTypes.h"
@@ -345,6 +346,7 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
                             dc->RSSetState(rasterizerCullNone_.Get());
                         }
                         dc->DrawIndexed(mesh->indexCount, 0, 0);
+                        prof::AddShadowDraw(static_cast<int>(mesh->indexCount / 3), c);
                         restoreFixedShadowSlots(); // review-1 #1: 次の非サーフェスへ b0/t0 を戻す
                         continue;
                     }
@@ -373,6 +375,7 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
                     boundMesh = item.mesh.value;
                 }
                 dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
+                prof::AddShadowDraw(static_cast<int>(mesh->indexCount / 3 * run.count), c);
                 idx += run.count - 1; // for の ++idx と合わせて run 全体を飛ばす
                 continue;
             }
@@ -413,6 +416,7 @@ void ShadowPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
                 boundMesh = item.mesh.value;
             }
             dc->DrawIndexed(mesh->indexCount, 0, 0);
+            prof::AddShadowDraw(static_cast<int>(mesh->indexCount / 3), c);
         }
     }
 

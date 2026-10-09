@@ -50,6 +50,9 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
     // M44d: ポストプロセス解決の GPU 時間 (複数ビューでは最後に完了した Resolve)
     if (ctx.renderSystem) {
         ImGui::Text("  postfx: %6.3f ms (GpuTimer)", ctx.renderSystem->PostFxGpuMs());
+        // M90a: 不透明の本描画とフレーム全体 (走らせないパスの欄は 0.000)
+        ImGui::Text(Tr(StrId::Prof_GpuStages), ctx.renderSystem->FrameGpuMs(),
+                    ctx.renderSystem->GbufferGpuMs(), ctx.renderSystem->ForwardOpaqueGpuMs());
         // M54d: 影 (csm = 平行光 3 カスケード / atlas = 局所ライトのタイル)。
         // 点光源 1 本 = 6 タイルなので、tiles と draws がアトラスの重さの実体。
         // culled はタイル毎の視錐台カリングで省いた draw と、シーン AABB に触れない面の数
@@ -169,6 +172,16 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
     ImGui::Separator();
     const prof::RenderStats rs = prof::GetRenderStats();
     ImGui::Text(Tr(StrId::Prof_Draw), rs.drawCalls, rs.triangles, rs.culled);
+    // M90a: 影は本描画の欄に混ぜず別に出す。ビュー別は描いたビューだけ (viewKey 1=runtime 2=SceneView 3=GameView)
+    ImGui::Text(Tr(StrId::Prof_ShadowDraw), rs.shadowDrawCalls, rs.shadowTriangles,
+                rs.shadowCascadeDraws[0], rs.shadowCascadeDraws[1], rs.shadowCascadeDraws[2]);
+    for (uint32_t viewKey = 0; viewKey < static_cast<uint32_t>(prof::kRenderStatsViewSlots); ++viewKey) {
+        const prof::RenderStats vs = prof::GetRenderStatsForView(viewKey);
+        if (vs.drawCalls != 0 || vs.shadowDrawCalls != 0 || vs.culled != 0) {
+            ImGui::Text(Tr(StrId::Prof_ViewStats), viewKey, vs.drawCalls, vs.triangles, vs.culled,
+                        vs.shadowDrawCalls, vs.shadowTriangles);
+        }
+    }
 
     const prof::MemStats mem = prof::GetMemoryStats();
     ImGui::Text(Tr(StrId::Prof_Memory),

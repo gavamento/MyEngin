@@ -269,4 +269,10 @@ void BuildBtShowcaseScene(EngineContext& ctx);
 // ★Walk / Run は Root が前進するクリップなので、ルートモーション (M89j) までは 1 周ごとに元の位置へ戻って見える
 void BuildAnimShowcaseScene(EngineContext& ctx);
 
+// M90a: 描画の計測用ベンチシーン (--render-bench-demo)。3660 個の不透明メッシュのグリッド、それを遮る壁、
+// 遠景の大球、スキンのキャラ 7 体 (近景 / 遠景 / 壁の裏 / カメラの背後)、**視錐台の外にあって影だけが
+// 手前の床に落ちる Tower** を固定カメラで見る。`--render-stats-dump` と組み合わせて draw / tri / カリング数を比べる。
+// ★座標は添字の整数式だけ (乱数なし)。既存デモの生成関数・生成順には触れない
+void BuildRenderBenchScene(EngineContext& ctx);
+
 } // namespace mye

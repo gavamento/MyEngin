@@ -190,6 +190,8 @@
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\LightSelection.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\ProbeBaker.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Rendering\RenderStatsDump.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Rendering\RenderStatsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\RenderSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\TerrainSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\WaterWaveSelfTest.cpp" />
@@ -486,6 +488,8 @@
     <ClInclude Include="..\src\Engine\Engine\Rendering\DebugDraw.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\LightSelection.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\ProbeBaker.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\RenderStatsDump.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\RenderStatsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\RenderSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\TerrainSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\WaterWaveSelfTest.h" />

@@ -10,6 +10,7 @@ class GraphicsDevice;
 // 読み出しレイテンシ吸収のため kFrames 本のリングで運用する (パイプラインストールなし)
 class GpuTimer {
 public:
+    // 失敗すると Begin / End は何もしない (計測が 0 のままになるだけ)
     bool Init(GraphicsDevice& device);
     // クエリを手放して Init 前へ戻す (デバイス消失からの復旧、M88)。直近の計測値も捨てる
     void Release();
@@ -30,6 +31,7 @@ private:
     Frame frames_[kFrames];
     int current_ = 0;
     bool skip_ = false;
+    bool ready_ = false;
     float lastMs_ = 0.0f;
 };
 

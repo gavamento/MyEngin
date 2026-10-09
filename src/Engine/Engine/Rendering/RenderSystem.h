@@ -262,6 +262,11 @@ public:
     float HzbGpuMs() const { return hzbGpuMs_; }
     // M56d: SSR (シーン色のコピー + 階層 Z トレース + 加算合成) の GPU 時間。同上
     float SsrGpuMs() const { return ssrGpuMs_; }
+    // M90a: 不透明の本描画 (Deferred の GBuffer / Forward の不透明メッシュ、どちらも地形込み) と、
+    // Render 1 回 (影・本描画・ポスト・パーティクルまで) の GPU 時間。同上の規約
+    float GbufferGpuMs() const { return gbufferGpuMs_; }
+    float ForwardOpaqueGpuMs() const { return forwardOpaqueGpuMs_; }
+    float FrameGpuMs() const { return frameTimer_.Milliseconds(); }
     // M46b: レイトレの統計 (ProfilerWindow 表示用)
     float RtDebugGpuMs() const { return rtPasses_.DebugGpuMs(); }
     float RtGiGpuMs() const { return rtPasses_.GiGpuMs(); }
@@ -366,6 +371,11 @@ private:
     float hzbGpuMs_ = 0.0f;
     // M56d: SSR の GPU 時間。hzbGpuMs_ と同じ理由・同じ規約でここに置く
     float ssrGpuMs_ = 0.0f;
+    // M90a: 同上 (パス側の計測を写す) と、Render 全体の計測
+    float gbufferGpuMs_ = 0.0f;
+    float forwardOpaqueGpuMs_ = 0.0f;
+    GpuTimer frameTimer_;
+    bool frameTimerInit_ = false; // 遅延 Init 済みか (ReleaseGpu で戻す)
 
     RenderQueue queue_;     // フレーム毎に再利用 (アロケーション回避)
     PostProcess postFx_;    // HDR 中間 + トーンマップ (遅延 Init)

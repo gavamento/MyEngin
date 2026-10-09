@@ -47,6 +47,7 @@
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Rendering/ProbeBaker.h"
 #include "Engine/Engine/App/Project.h"
+#include "Engine/Engine/Rendering/RenderStatsDump.h"
 #include "Engine/Engine/Rendering/RenderSystem.h"
 #include "Engine/Engine/Net/ClientSession.h"
 #include "Engine/Engine/Net/ClientSimRunner.h"
@@ -279,7 +280,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // v19: 窓を動かしてよい実行か。人の座っていない実行 (record/verify・バッチ・プローブ) で画面全体を奪わない
     // (カーソルロックの batchRun と同じ理由)。ネットは 1 台で 2 プロセスを並べて試すので動かさない
     const bool windowModeLive = config.applyWindowMode && config.replayRecordPath.empty()
-        && config.replayVerifyPath.empty() && config.maxFrames <= 0 && config.screenshotPath.empty()
+        && config.replayVerifyPath.empty() && config.maxFrames <= 0 && !config.IsCaptureRun()
         && config.netRole == 0 && config.timeTravelProbeTicks <= 0 && config.whatIfProbeTicks <= 0;
 
     // ---- 起動 ----
@@ -305,7 +306,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     }
     // 高 DPI で UI を実寸へ (テーマ第 3 世代)。--screenshot 中は 1.0 固定 — 撮影サイズは
     // 論理ピクセル指定なので、撮った機械の DPI で golden が変わってはならない
-    imguiOpts.dpiScale = config.screenshotPath.empty() ? window.DpiScale() : 1.0f;
+    imguiOpts.dpiScale = !config.IsCaptureRun() ? window.DpiScale() : 1.0f;
     if (config.enableImGui && !imgui.Init(window, device, imguiOpts)) {
         return 1;
     }
@@ -432,7 +433,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // M44b: リプレイ記録/検証・スクショの実行では露出適応を 1 フレーム収束にして
     // 決定的スクショを成立させる (aeInstant は Merge が base 維持する Settings 専用フィールド)
     renderSystem.postFxSettings.aeInstant = !config.replayVerifyPath.empty()
-        || !config.replayRecordPath.empty() || !config.screenshotPath.empty();
+        || !config.replayRecordPath.empty() || config.IsCaptureRun();
     // M46c: 同じ理由でレイトレのサンプル列もフレームで進めない (毎フレーム同じノイズ =
     // スクリーンショットが決定的になる)。GPU 上で完結し読み戻さないので sim には無関係。
     // M46d: ただし freeze 中はテンポラル蓄積が「同じ 1 サンプルを積む」だけになり
@@ -880,7 +881,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // (--shot-every) は実時間で回したいライブ検証用なので対象外、--shot-realtime で明示解除。
     // ★frame 番号 == tick 番号になるので --shot-frame N は「N tick 目の絵」を指す
     const bool deterministicShot =
-        !config.screenshotPath.empty() && config.screenshotEvery == 0 && !config.shotRealtime;
+        config.IsCaptureRun() && config.screenshotEvery == 0 && !config.shotRealtime;
     if (deterministicShot) {
         MYE_LOG_INFO("[shot] deterministic capture: fixed dt + async texture drain "
                      "(frame index == tick index)");
@@ -2884,7 +2885,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // ★バッチ実行 (--frames / --screenshot) でも掴まない。**人が座っていない
             //   実行でデスクトップのカーソルを奪うのは事故** — CI とスクショ検証は
             //   record/verify を通らない経路なので、この 1 条件が無いと素通りする
-            const bool batchRun = config.maxFrames > 0 || !config.screenshotPath.empty();
+            const bool batchRun = config.maxFrames > 0 || config.IsCaptureRun();
             // エディタは Game ビューの中央へ固定する。Game ビューが見えていないときと、
             // スクリプトが回っていないとき (エディタの Stop 後 / Pause 中) は掴まない —
             // Stop するとスクリプトはもう 0 を出せないので、ここで外さないと隠れたまま残る。
@@ -3007,6 +3008,24 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 } else if (ctx.frameIndex == static_cast<uint64_t>(config.screenshotFrame)) {
                     swapChain.SaveBackbufferPng(config.screenshotPath);
                 }
+            }
+            // ---- 描画統計のダンプ (M90a、--render-stats-dump) ----
+            // ★Present の後 = このフレームの Render が積んだ統計と GPU 時間が出そろっている。
+            //   次フレームの prof::BeginFrame が消す前に読む。書いたら終了する
+            if (!config.renderStatsDumpPath.empty()
+                && ctx.frameIndex == static_cast<uint64_t>(config.screenshotFrame)) {
+                const RenderStatsDump dump = CollectRenderStatsDump(
+                    renderSystem, ctx.frameIndex, static_cast<uint32_t>(target.width),
+                    static_cast<uint32_t>(target.height));
+                if (WriteRenderStatsDump(config.renderStatsDumpPath, dump)) {
+                    MYE_LOG_INFO("[render-stats] frame %llu -> %s", static_cast<unsigned long long>(ctx.frameIndex),
+                                 WideToUtf8(config.renderStatsDumpPath).c_str());
+                } else {
+                    MYE_LOG_ERROR("[render-stats] could not write %s",
+                                  WideToUtf8(config.renderStatsDumpPath).c_str());
+                    exitCode = 6;
+                }
+                running = false;
             }
             // ---- 反射プローブのベイク (M56e、--probe-bake) ----
             // ★スクショ保存の**後**に置く。ベイクは RTV / ビューポート / ラスタライザを
@@ -3138,7 +3157,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             lostInfo.simulated = simulatedLost && !deviceRemoved;
             lostInfo.presentHr = presentHr;
             lostInfo.removedReason = removedReason;
-            lostInfo.interactive = config.maxFrames <= 0 && config.screenshotPath.empty()
+            lostInfo.interactive = config.maxFrames <= 0 && !config.IsCaptureRun()
                 && config.replayRecordPath.empty() && config.replayVerifyPath.empty()
                 && config.timeTravelProbeTicks <= 0 && config.whatIfProbeTicks <= 0;
             MYE_LOG_ERROR("[device] lost at frame %llu: present hr=0x%08lX, removed reason=0x%08lX%s",

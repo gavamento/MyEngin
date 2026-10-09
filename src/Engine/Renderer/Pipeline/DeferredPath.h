@@ -3,6 +3,7 @@
 #include <vector>
 #include <wrl/client.h>
 
+#include "Engine/Renderer/Device/GpuTimer.h"
 #include "Engine/Renderer/Passes/HzbPass.h"
 #include "Engine/Renderer/Mesh/MeshInstancing.h"
 #include "Engine/Renderer/Pipeline/RenderPath.h"
@@ -38,6 +39,8 @@ public:
     ID3D11ShaderResourceView* VelocitySRV() const override { return gbVelocity_.SRV(); }
     // M56c: HZB を組んだ GPU 時間 (ProfilerWindow 表示用)。組まないフレームは前の値が残る
     float HzbGpuMs() const override { return hzb_.GpuMs(); }
+    // M90a: GBuffer への不透明 + 地形の書き込みの GPU 時間
+    float GbufferGpuMs() const override { return gbufferTimer_.Milliseconds(); }
     // M56d: SSR (コピー + 階層 Z トレース + 加算合成) の GPU 時間。同上
     float SsrGpuMs() const override { return ssr_.GpuMs(); }
     // M57d: 光パス (t15) で不透明ピクセルへ合成する。背景ピクセルと透明後段
@@ -88,6 +91,7 @@ private:
     void RenderDebugViews(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
                           DeferredFrame& f); // 4) - 6)
 
+    GpuTimer gbufferTimer_; // M90a: RenderGeometry の GPU 時間
     RenderTexture gbAlbedo_;   // a=1 でジオメトリ有りマーク
     RenderTexture gbNormal_;   // ワールド法線 *0.5+0.5
     RenderTexture gbPosition_; // ワールド座標 (Point/Spot ライティング用)

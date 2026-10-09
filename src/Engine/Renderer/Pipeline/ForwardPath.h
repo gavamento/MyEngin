@@ -3,6 +3,7 @@
 #include <vector>
 #include <wrl/client.h>
 
+#include "Engine/Renderer/Device/GpuTimer.h"
 #include "Engine/Renderer/Mesh/MeshInstancing.h"
 #include "Engine/Renderer/Pipeline/RenderPath.h"
 #include "Engine/Renderer/Passes/SkyboxPass.h"
@@ -29,6 +30,8 @@ public:
     // ★合成を外すなら false に戻すこと — true のまま合成が無いと「ゴッドレイだけ消えて
     //   霧が増えない」= 霧が減るだけになる
     bool AppliesFroxel() const override { return true; }
+    // M90a: 不透明メッシュ + 地形の GPU 時間
+    float ForwardOpaqueGpuMs() const override { return opaqueTimer_.Milliseconds(); }
 
 private:
     // forward_lit が前提にする固定バインド一式 (VS/PS b0-b2・PS t1-t9・s0-s2・VS t0・トポロジ・
@@ -79,6 +82,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Buffer> surfaceWaterCB_;      // MyEngineWater (sub-05 まで 0 埋め)
     AssetID surfaceErrorId_ = {}; // "surface_error" (失敗時のマゼンタ代替)
     std::unordered_set<uint64_t> skinnedSurfaceWarned_; // スキン+サーフェスの WARN はマテリアル毎に 1 回
+    GpuTimer opaqueTimer_; // M90a: 不透明メッシュ + 地形
     SkyboxPass skybox_; // 不透明後・透明前に空を塗る (M29d)
     // 地形 (M58c)。不透明メッシュの直後・スカイボックスの前に描く (深度を書くため)
     TerrainPass terrain_;

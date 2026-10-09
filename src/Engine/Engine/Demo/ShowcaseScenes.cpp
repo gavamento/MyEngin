@@ -60,6 +60,8 @@ const ShowcaseDef kShowcases[] = {
       false }, // M85
     { L"--anim-demo", false, L"cache\\anim_showcase.scene.json", nullptr, &BuildPlain<&BuildAnimShowcaseScene>,
       false }, // M89b
+    { L"--render-bench-demo", false, L"cache\\render_bench.scene.json", nullptr, &BuildPlain<&BuildRenderBenchScene>,
+      false }, // M90a
 };
 
 } // namespace

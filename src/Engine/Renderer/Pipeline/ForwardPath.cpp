@@ -198,6 +198,7 @@ bool ForwardPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     skybox_.Init(device, shaders);
     // 地形 (M58c)。失敗しても続行 (地形が描かれないだけ = 従来の絵)
     terrain_.Init(device, shaders);
+    opaqueTimer_.Init(device); // M90a: 失敗しても計測が 0 になるだけ
     // 水面。失敗しても続行 (水面が描かれないだけ = 従来の絵)
     water_.Init(device, shaders);
     return true;
@@ -226,6 +227,7 @@ void ForwardPath::Shutdown()
     surfaceWaterCB_.Reset();
     skybox_.Shutdown();
     terrain_.Shutdown(); // M58c
+    opaqueTimer_.Release();
     water_.Shutdown();
 }
 
@@ -424,6 +426,7 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     }
 
     // 不透明
+    opaqueTimer_.Begin(device);
     dc->OMSetDepthStencilState(depthOpaque_.Get(), 0);
     dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
     DrawItems(device, queue.opaque, view, resources, shaders, runs_.empty() ? nullptr : &runs_);
@@ -437,6 +440,7 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     // 透明段の DrawItems はシェーダを張り直すだけでよい。
     // 地形が無いフレームは TerrainPass が即 return する = 従来とビット一致
     terrain_.RenderForward(device, shaders, view, resources);
+    opaqueTimer_.End(device);
 
     // スカイボックス (M29d): 不透明後・透明前。深度 1.0 のピクセルだけ塗る。
     // PS の b3 のみ使うので b0-b2 / トポロジは不変 (透明段は DrawItems がシェーダ再バインド)。

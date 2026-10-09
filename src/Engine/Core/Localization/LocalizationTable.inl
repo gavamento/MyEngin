@@ -313,6 +313,12 @@ MYE_STR(Prof_Particles,       "particles:",                   "パーティク�
 MYE_STR(Prof_ScopesHeader,    "CPU scopes (this frame):",     "CPU スコープ (今フレーム):")
 MYE_STR(Prof_Draw,            "render: %d draw calls, %d tris, %d culled",
                               "描画: %d ドローコール / %d 三角形 / %d カリング")
+MYE_STR(Prof_GpuStages,       "gpu: frame %6.3f ms / gbuffer %6.3f ms / forward opaque %6.3f ms (GpuTimer)",
+                              "GPU: フレーム %6.3f ms / GBuffer %6.3f ms / Forward 不透明 %6.3f ms (GpuTimer)")
+MYE_STR(Prof_ShadowDraw,      "shadow: %d draw calls, %d tris (csm cascades %d / %d / %d)",
+                              "影: %d ドローコール / %d 三角形 (CSM カスケード別 %d / %d / %d)")
+MYE_STR(Prof_ViewStats,       "  view %u: %d draw calls, %d tris, %d culled, %d shadow draws, %d shadow tris",
+                              "  ビュー %u: %d ドローコール / %d 三角形 / %d カリング / 影 %d ドローコール / 影 %d 三角形")
 MYE_STR(Prof_Memory,          "memory: %llu live allocs, %.1f MB total (%llu allocs / %llu frees)",
                               "メモリ: %llu 件が生存 / 合計 %.1f MB (確保 %llu / 解放 %llu)")
 MYE_STR(Prof_RenderPath,      "render path: %s",              "レンダーパス: %s")

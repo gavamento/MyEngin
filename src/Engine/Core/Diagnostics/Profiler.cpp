@@ -16,7 +16,17 @@ OpenScope g_stack[64];
 int g_stackTop = 0;
 int64_t g_freq = 0;
 
-RenderStats g_render;
+RenderStats g_render;                              // 全ビューの累積値
+RenderStats g_renderByView[kRenderStatsViewSlots]; // viewKey 別 (和が g_render と一致する)
+int g_currentView = 0;
+
+// 累積値と現在ビューの集計の両方へ同じ加算をかける (和の一致をここ 1 箇所で保つ)
+template <typename Fn>
+void Accumulate(Fn&& fn)
+{
+    fn(g_render);
+    fn(g_renderByView[g_currentView]);
+}
 
 int64_t Now()
 {
@@ -37,6 +47,10 @@ void BeginFrame()
     g_records.clear();
     g_stackTop = 0;
     g_render = {};
+    for (RenderStats& v : g_renderByView) {
+        v = {};
+    }
+    g_currentView = 0;
 }
 
 void PushScope(const char* name)
@@ -66,18 +80,63 @@ const std::vector<ScopeRecord>& FrameScopes()
 
 void AddDraw(int triangles)
 {
-    ++g_render.drawCalls;
-    g_render.triangles += triangles;
+    Accumulate([&](RenderStats& r) {
+        ++r.drawCalls;
+        r.triangles += triangles;
+    });
 }
 
 void AddCulled(int n)
 {
-    g_render.culled += n;
+    Accumulate([&](RenderStats& r) { r.culled += n; });
+}
+
+void AddShadowDraw(int triangles, int cascade)
+{
+    Accumulate([&](RenderStats& r) {
+        ++r.shadowDrawCalls;
+        r.shadowTriangles += triangles;
+        if (cascade >= 0 && cascade < kRenderStatsCascadeSlots) {
+            ++r.shadowCascadeDraws[cascade];
+        }
+    });
+}
+
+void AddRenderStats(const RenderStats& d)
+{
+    Accumulate([&](RenderStats& r) {
+        r.drawCalls += d.drawCalls;
+        r.triangles += d.triangles;
+        r.culled += d.culled;
+        r.shadowDrawCalls += d.shadowDrawCalls;
+        r.shadowTriangles += d.shadowTriangles;
+        for (int i = 0; i < kRenderStatsCascadeSlots; ++i) {
+            r.shadowCascadeDraws[i] += d.shadowCascadeDraws[i];
+        }
+        for (int i = 0; i < kRenderStatsLodSlots; ++i) {
+            r.lodDraws[i] += d.lodDraws[i];
+        }
+        r.paletteEvaluated += d.paletteEvaluated;
+        r.paletteReused += d.paletteReused;
+        r.occlusionPhase1Draws += d.occlusionPhase1Draws;
+        r.occlusionPhase2Draws += d.occlusionPhase2Draws;
+        r.occluded += d.occluded;
+    });
+}
+
+void SetRenderStatsView(uint32_t viewKey)
+{
+    g_currentView = (viewKey < static_cast<uint32_t>(kRenderStatsViewSlots)) ? static_cast<int>(viewKey) : 0;
 }
 
 RenderStats GetRenderStats()
 {
     return g_render;
+}
+
+RenderStats GetRenderStatsForView(uint32_t viewKey)
+{
+    return (viewKey < static_cast<uint32_t>(kRenderStatsViewSlots)) ? g_renderByView[viewKey] : RenderStats{};
 }
 
 } // namespace mye::prof

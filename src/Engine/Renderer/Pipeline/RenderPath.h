@@ -37,6 +37,12 @@ public:
     // ProfilerWindow が RenderSystem 経由で読むだけの純計測口 (絵にも sim にも影響しない)
     virtual float HzbGpuMs() const { return 0.0f; }
 
+    // ---- M90a: 不透明の本描画 (地形込み) の GPU 時間 [ms] ----
+    // Deferred は GBuffer への書き込み、Forward は不透明メッシュ。走らせないパスは 0。
+    // 計測だけの口 (絵にも sim にも影響しない)
+    virtual float GbufferGpuMs() const { return 0.0f; }
+    virtual float ForwardOpaqueGpuMs() const { return 0.0f; }
+
     // ---- M56d: SSR ----
     // 直近の Render で SSR に掛かった GPU 時間 [ms]。走らせないパス / フレームは 0。
     // HzbGpuMs と同じく ProfilerWindow 用の純計測口

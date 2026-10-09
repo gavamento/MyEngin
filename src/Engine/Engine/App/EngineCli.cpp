@@ -46,6 +46,8 @@ const CliFlag kEngineCliFlags[] = {
     { L"--screenshot", CliValue::One, [](CliArgs& a) { a.c.screenshotPath = a.v1; return true; } },
     { L"--shot-frame", CliValue::One, [](CliArgs& a) { a.c.screenshotFrame = _wtoi64(a.v1); return true; } },
     { L"--shot-every", CliValue::One, [](CliArgs& a) { a.c.screenshotEvery = _wtoi64(a.v1); return true; } },
+    // M90a: --shot-frame のフレームで描画統計と GPU 時間を JSON へ書いて終了 (決定的撮影と同じ条件)
+    { L"--render-stats-dump", CliValue::One, [](CliArgs& a) { a.c.renderStatsDumpPath = a.v1; return true; } },
     // M52c: 撮影のフォントを機種非依存に固定する / 決定的撮影を解除して実時間で回す
     { L"--font-embedded", CliValue::None, [](CliArgs& a) { a.c.fontEmbedded = true; return true; } },
     { L"--shot-realtime", CliValue::None, [](CliArgs& a) { a.c.shotRealtime = true; return true; } },

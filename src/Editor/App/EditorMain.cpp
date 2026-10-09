@@ -16,6 +16,7 @@
 #include "Editor/SelfTest/PartSelfTest.h"
 #include "Editor/SelfTest/RagdollBuildSelfTest.h"
 #include "Engine/Engine/Scene/TagSelfTest.h"
+#include "Engine/Engine/Rendering/RenderStatsSelfTest.h"
 #include "Engine/Engine/Asset/CookedCacheSelfTest.h"
 #include "Engine/Engine/Asset/SubAssetKeySelfTest.h"
 #include "Engine/Engine/Asset/SubAssetMigration.h"
@@ -351,7 +352,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     // 自動化 (CI/検証) 起動かどうか。既存の CI/検証コマンド列 (--frames / --screenshot /
     // --scene / --replay-* 等) はレガシー動作 (リポジトリ assets) のまま
-    const bool automation = config.maxFrames > 0 || !config.screenshotPath.empty()
+    const bool automation = config.maxFrames > 0 || config.IsCaptureRun()
                             || !config.replayRecordPath.empty() || !config.replayVerifyPath.empty()
                             || !sceneOverride.empty() || autoPlay || saveSceneOnStart
                             || pickTestFrame >= 0 || !selectName.empty() || perfRate > 0.0f
@@ -621,6 +622,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunAnimatorControllerEditSelfTest();    // M89g: コントローラ窓の骨の駆動の編集
         ok &= mye::RunDeviceLostRescueSelfTest();          // M88a: デバイス消失時の退避保存
         ok &= mye::RunDeviceRecoverySelfTest();            // M88b: 復旧の連続消失制限と旧デバイス参照数ゲート
+        ok &= mye::RunRenderStatsSelfTest();               // M90a: 描画統計のビュー別集計と JSON ダンプ
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }

@@ -4,6 +4,7 @@
 #include <cfloat>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Renderer/Pipeline/FrustumCull.h"
 #include "Engine/Renderer/Device/GpuResources.h"
 #include "Engine/Renderer/Device/GraphicsDevice.h"
@@ -290,6 +291,7 @@ void ShadowAtlas::Render(GraphicsDevice& device, ShaderManager& shaders, const R
                 }
                 dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
                 ++drawCalls_;
+                prof::AddShadowDraw(static_cast<int>(mesh->indexCount / 3 * run.count));
                 idx += run.count - 1;
                 continue;
             }
@@ -334,6 +336,7 @@ void ShadowAtlas::Render(GraphicsDevice& device, ShaderManager& shaders, const R
             }
             dc->DrawIndexed(mesh->indexCount, 0, 0);
             ++drawCalls_;
+            prof::AddShadowDraw(static_cast<int>(mesh->indexCount / 3));
         }
     }
 

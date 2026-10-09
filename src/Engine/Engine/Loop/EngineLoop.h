@@ -48,6 +48,11 @@ struct EngineConfig {
     std::wstring screenshotPath; // 空でなければ screenshotFrame で PNG 保存 (検証用)
     int64_t screenshotFrame = 60;
     int64_t screenshotEvery = 0; // >0 で N フレーム毎に連番保存 (ライブ検証用)
+    // --render-stats-dump: 空でなければ screenshotFrame のフレームを描いた直後に、ビュー別の描画統計と
+    // GPU 時間を JSON で書いて終了する (M90a)。決定的撮影・バッチ実行の扱いは --screenshot と同じ
+    std::wstring renderStatsDumpPath;
+    // 撮影 / 計測を目的としたバッチ実行か (--screenshot または --render-stats-dump)
+    bool IsCaptureRun() const { return !screenshotPath.empty() || !renderStatsDumpPath.empty(); }
     // ---- 決定的スクショ (M52c) ----
     // --screenshot 指定 (連番の --shot-every を除く) で**自動 on**。フレームの dt を実時間
     // ではなく固定 tick 幅に固定し (= frame 番号がそのまま tick 番号)、非同期テクスチャの

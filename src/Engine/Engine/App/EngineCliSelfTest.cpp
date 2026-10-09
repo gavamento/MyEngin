@@ -206,6 +206,10 @@ bool RunEngineCliSelfTest()
     r = RunParse({ L"--shot-frame", L"77", L"--shot-every", L"5" });
     check(r.consumed == 2 && r.config.screenshotFrame == 77 && r.config.screenshotEvery == 5,
           "--shot-frame N / --shot-every N");
+    r = RunParse({ L"--render-stats-dump", L"stats.json", L"--shot-frame", L"30" });
+    check(r.consumed == 2 && r.config.renderStatsDumpPath == L"stats.json" && r.config.screenshotFrame == 30
+              && r.config.screenshotPath.empty() && r.config.IsCaptureRun(),
+          "--render-stats-dump PATH is a capture run without --screenshot");
     r = RunParse({ L"--replay-record", L"a.rep" });
     check(r.consumed == 1 && r.config.replayRecordPath == L"a.rep" && !r.config.vsync,
           "--replay-record PATH also turns vsync off");
