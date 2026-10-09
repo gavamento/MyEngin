@@ -1221,7 +1221,16 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             // 描画専用トグル (M40d)。sim/hash 非影響
             ImGui::MenuItem(Tr(StrId::Menu_Ssao), nullptr, &ctx.renderSystem->enableSsao);
             ImGui::MenuItem(Tr(StrId::Menu_GpuInstancing), nullptr, &ctx.renderSystem->enableInstancing);
-            ImGui::MenuItem(Tr(StrId::Menu_Occlusion), nullptr, &ctx.renderSystem->enableOcclusionCulling);
+            // オクルージョンだけはプロジェクト設定へ保存する (rayTracingTags と同じ理由: シーンの作りで
+            // 得か損かが決まる、プロジェクトの決めごと)
+            if (ImGui::MenuItem(Tr(StrId::Menu_Occlusion), nullptr, &ctx.renderSystem->enableOcclusionCulling)) {
+                if (SaveOcclusionCullingSetting(ctx.assetsRoot, ctx.renderSystem->enableOcclusionCulling)) {
+                    scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json");
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", Tr(StrId::Menu_OcclusionHint));
+            }
             ImGui::MenuItem(Tr(StrId::Menu_AnimUro), nullptr, &ctx.renderSystem->enableAnimUro);
             // M90e: メッシュ LOD。描画専用 (sim/hash 非影響)。.meta で段を作ったモデルだけに効く
             if (ImGui::BeginMenu(Tr(StrId::Menu_Lod))) {

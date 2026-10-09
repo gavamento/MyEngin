@@ -299,6 +299,36 @@ bool RunTagSelfTest()
         check(missing.sceneOn == 0 && missing.sceneOff == 0 && missing.receiverOn == 0
                   && missing.receiverOff == 0,
               "RtTagRules: missing file = no rules");
+        // ---- オクルージョン設定 (rendering.occlusionCulling) ----
+        {
+            const std::wstring root = dir.wstring();
+            check(LoadOcclusionCullingSetting(root), "OcclusionSetting: key missing = true");
+            {
+                std::ofstream f(dir / L"project_settings.json");
+                f << R"({"tags":["A"],"rayTracingTags":{"sceneOn":[1]},"rendering":{"other":7}})";
+            }
+            check(SaveOcclusionCullingSetting(root, false), "OcclusionSetting: save false");
+            check(!LoadOcclusionCullingSetting(root), "OcclusionSetting: false round trip");
+            {
+                std::ifstream f(dir / L"project_settings.json");
+                nlohmann::json j;
+                f >> j;
+                check(j.contains("tags") && j.contains("rayTracingTags") && j["rendering"]["other"] == 7,
+                      "OcclusionSetting: other keys are preserved");
+            }
+            check(SaveOcclusionCullingSetting(root, true) && LoadOcclusionCullingSetting(root),
+                  "OcclusionSetting: true round trip");
+            const std::string broken = "{ not json";
+            {
+                std::ofstream f(dir / L"project_settings.json", std::ios::binary);
+                f << broken;
+            }
+            check(LoadOcclusionCullingSetting(root), "OcclusionSetting: corrupt file reads as true");
+            check(!SaveOcclusionCullingSetting(root, false), "OcclusionSetting: corrupt file is not overwritten");
+            std::ifstream f(dir / L"project_settings.json", std::ios::binary);
+            const std::string after((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            check(after == broken, "OcclusionSetting: corrupt file content untouched");
+        }
         fs::remove_all(dir, ec);
 
         uint64_t m = 123;

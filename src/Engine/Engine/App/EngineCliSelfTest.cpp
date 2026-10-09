@@ -1,5 +1,6 @@
 #include "Engine/Engine/App/EngineCliSelfTest.h"
 
+#include <filesystem>
 #include <initializer_list>
 #include <string>
 #include <vector>
@@ -8,6 +9,7 @@
 #include "Engine/Engine/App/EngineCli.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
+#include "Engine/Engine/Scene/TagNames.h"
 
 namespace mye {
 namespace {
@@ -256,6 +258,25 @@ bool RunEngineCliSelfTest()
     r = RunParse({});
     check(r.config.occlusionCulling && r.config.renderBenchCutFrame < 0,
           "occlusion culling is on and the camera cut is off by default");
+    {
+        // 実効値 = ファイルの値 && CLI。--no-occlusion はファイルを書き換えない (EngineLoop と同じ式)
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / L"mye_cli_occlusion_selftest";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        const std::wstring root = dir.wstring();
+        auto effective = [&](bool noOcclusionFlag) {
+            const ParseRun p = noOcclusionFlag ? RunParse({ L"--no-occlusion" }) : RunParse({});
+            return LoadOcclusionCullingSetting(root) && p.config.occlusionCulling;
+        };
+        SaveOcclusionCullingSetting(root, false);
+        check(!effective(false), "occlusion: file false, no flag -> off");
+        SaveOcclusionCullingSetting(root, true);
+        check(effective(false) && !effective(true), "occlusion: file true -> on, with --no-occlusion -> off");
+        check(LoadOcclusionCullingSetting(root), "occlusion: --no-occlusion does not rewrite the file");
+        fs::remove_all(dir, ec);
+    }
     r = RunParse({ L"--lod-bias", L"1.5", L"--lod-force", L"2" });
     check(r.consumed == 2 && r.config.lodBias == 1.5f && r.config.lodForce == 2, "--lod-bias F / --lod-force N");
     r = RunParse({});

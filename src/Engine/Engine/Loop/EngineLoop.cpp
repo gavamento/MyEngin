@@ -383,7 +383,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.velocityDebugMode = config.velocityDebug; // M55c (--velocity-debug)
     renderSystem.hzbDebugMip = config.hzbDebug;            // M56c (--hzb-debug N)
     renderSystem.hzbDebugMax = config.hzbDebugMax;         // --hzb-debug-max
-    renderSystem.enableOcclusionCulling = config.occlusionCulling; // --no-occlusion
+    // プロジェクト設定 && CLI (--no-occlusion は config 側が false になるだけで、ファイルへは書き戻さない)
+    renderSystem.enableOcclusionCulling = LoadOcclusionCullingSetting(assetsRoot) && config.occlusionCulling;
     renderSystem.lodBias = config.lodBias;                 // --lod-bias
     renderSystem.lodForcedStage = config.lodForce;         // --lod-force
     renderSystem.enableAnimUro = config.animUro;           // --no-uro

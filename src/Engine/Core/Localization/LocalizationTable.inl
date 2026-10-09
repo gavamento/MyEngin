@@ -88,7 +88,9 @@ MYE_STR(Menu_GpuInstancing,   "GPU Instancing",    "GPU インスタンシング
 MYE_STR(Menu_Occlusion,       "GPU Occlusion Culling (Deferred)", "GPU オクルージョンカリング (Deferred)")
 MYE_STR(Menu_PostFx,          "Post FX",           "ポストエフェクト")
 // M90f: 遠いスキンのアニメ更新を間引く (描画専用)
-MYE_STR(Menu_AnimUro,         "Distant Animation Throttling (URO)", "遠いキャラのアニメ更新を間引く (URO)")
+MYE_STR(Menu_OcclusionHint,   "Saved to the project (project_settings.json). The --no-occlusion option overrides it at launch without saving",
+                              "プロジェクト (project_settings.json) に保存されます。起動時の --no-occlusion は保存せずに上書きします")
+MYE_STR(Menu_AnimUro,        "Distant Animation Throttling (URO)", "遠いキャラのアニメ更新を間引く (URO)")
 // M90e: メッシュ LOD の描画設定 (.meta で段を作ったモデルだけに効く)
 MYE_STR(Menu_Lod,             "Mesh LOD",          "メッシュ LOD")
 MYE_STR(Menu_LodBias,         "LOD Bias",          "LOD バイアス")

@@ -60,6 +60,11 @@ struct RtTagRules {
 RtTagRules LoadRtTagRules(const std::wstring& assetsRoot);
 bool SaveRtTagRules(const std::wstring& assetsRoot, const RtTagRules& rules);
 
+// GPU オクルージョンカリングの ON/OFF (project_settings.json の `"rendering": {"occlusionCulling"}`)。
+// キーが無い / 読めない = true。実効値はこの値 && CLI の --no-occlusion が無いこと (CLI は書き戻さない)
+bool LoadOcclusionCullingSetting(const std::wstring& assetsRoot);
+bool SaveOcclusionCullingSetting(const std::wstring& assetsRoot, bool enabled);
+
 // "0,3,5" のようなタグ番号のカンマ区切りをビット集合へ (CLI の --rt-receiver-tags 用)。
 // 範囲外・数字以外を含むなら false (out は触らない)。空文字列は 0 = 制限なし
 bool ParseTagIndexList(std::wstring_view text, uint64_t& out);

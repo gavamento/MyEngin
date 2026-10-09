@@ -1,8 +1,8 @@
 # sub-09: GPU オクルージョンの ON/OFF をプロジェクト設定に保存する
 
 - 依存: sub-06 (`EditorApp.cpp` の Rendering メニューと `EngineLoop.cpp` の設定の流し込みを同じ順で触るため)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (コミット待ち)
+- 往復: 1
 
 ## 背景
 sub-06 の計測で、run がすべて別のシーン (`--render-bench-unique-demo`) ではオクルージョン ON の CPU 提出が OFF の約 1.7 倍になった。ユーザー判断 (2026-10-09、台帳): 「既定 ON で、設定で ON/OFF を切り替えられるように」。
@@ -35,5 +35,10 @@ sub-06 の計測で、run がすべて別のシーン (`--render-bench-unique-de
 - 一時的に書き換えた `assets\project_settings.json` は検証後に元へ戻し、差分が無いことを確かめる
 
 ## 実装メモ (coder が追記)
+round 1: TagNames.cpp に Load/SaveOcclusionCullingSetting (rendering.occlusionCulling、キー無し/壊れ = true、保存は UpdateProjectSettingsFile)。EngineLoop は `Load && config.occlusionCulling`。EditorApp は切替で保存 + scmhint::Changed + ツールチップ (Menu_OcclusionHint)。selftest は TagSelfTest と EngineCliSelfTest。Debug/Release selftest exit 0、check_rules 0 error、shot_verify exit 0 (30 枚)、render_bench dump は既定 occluded 2867 / false 0。project_settings.json は元に戻し git diff 無し。
 
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-10-09)。受け入れ 1〜4 の根拠と検証が揃っている。selftest 11 項目が両構成で PASS、Runtime の dump 2 本 (キー無しで occluded 2867 / false で occluded 0)、`git diff -- assets` は空、shot_verify 30 枚 PASS、check_rules は 0 error。
+  - 不安・質問への回答: (a) `--no-occlusion` で起動したエディタでメニューを操作すると、メニューで選んだ値が保存される。この挙動は妥当とする。メニュー操作はユーザーの明示的な選択で、CLI は起動中の上書きにすぎず、保存しない。この優先順位を ADR-029 / engine_spec に書く (sub-08)。(b) 注記をツールチップにしたのは可。spec §4.3 の「注記を付ける」を満たしている。
+  - should (申し送り): CLI と組み合わせる selftest は、EngineLoop の式 (`Load && cli`) をテストの中に書き写しているので、本体の配線が変わっても検出できない。`ResolveOcclusionCulling(assetsRoot, cliFlag)` のような関数に出して本体と selftest で共有するのが望ましい。今回は dump 2 本で配線を確かめたので差し戻さない。
+  - nit (申し送り): `TagNames.h` の冒頭コメントが、描画設定 (rendering.occlusionCulling) も置いていることを反映していない。エディタのメニューからの保存経路 (`scmhint::Changed` を含む) とツールチップは実走・目視していない (ユーザーの目視待ち)。

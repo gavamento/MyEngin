@@ -197,6 +197,29 @@ bool SaveRtTagRules(const std::wstring& assetsRoot, const RtTagRules& rules)
     return WriteSettingsKey(assetsRoot, "rayTracingTags", std::move(rt));
 }
 
+bool LoadOcclusionCullingSetting(const std::wstring& assetsRoot)
+{
+    const json j = ReadSettings(assetsRoot);
+    if (j.contains("rendering") && j["rendering"].is_object()) {
+        const json& r = j["rendering"];
+        if (r.contains("occlusionCulling") && r["occlusionCulling"].is_boolean()) {
+            return r["occlusionCulling"].get<bool>();
+        }
+    }
+    return true;
+}
+
+bool SaveOcclusionCullingSetting(const std::wstring& assetsRoot, bool enabled)
+{
+    // "rendering" 内の将来のキーを壊さないよう、既存オブジェクトを残して 1 キーだけ差し替える
+    return UpdateProjectSettingsFile(ProjectSettingsPath(assetsRoot), [&](json& j) {
+        if (!j.contains("rendering") || !j["rendering"].is_object()) {
+            j["rendering"] = json::object();
+        }
+        j["rendering"]["occlusionCulling"] = enabled;
+    });
+}
+
 bool ParseTagIndexList(std::wstring_view text, uint64_t& out)
 {
     uint64_t mask = 0;

@@ -1,7 +1,7 @@
 # sub-07: sim の並列化 (CPU 粒子 / Perception / PartFollow / IK、jobs A/B ジョブ、ADR-028)
 
 - 依存: sub-01
-- 状態: OK (コミット待ち)
+- 状態: OK (commit 3935904)
 - 往復: 2
 
 ## やること
