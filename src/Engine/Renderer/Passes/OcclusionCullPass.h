@@ -95,6 +95,10 @@ public:
     // フェーズ phase の remap 領域の先頭 (VS の PerObject に渡す値の元)
     uint32_t RemapRegion(int phase) const { return static_cast<uint32_t>(phase) * worldCount_; }
 
+    // 統計のステージングを読む。経路が CPU 提出の計測区間の外で、フレームに 1 回呼ぶ。
+    // wait=false は GPU を待たず、終わっていなければ前の値を残す (対話の描画)。
+    // wait=true は決定的な撮影用 (counts を構成間で一致させるため待つ)
+    void PollStats(GraphicsDevice& device, uint32_t viewKey, bool wait);
     // 直近に読めた統計 (2 フレーム遅れ)
     OcclusionStats Stats(uint32_t viewKey) const;
     // viewKey の統計 (読めていれば) を prof::AddRenderStats へ足す。経路の Render が 1 回呼ぶ
@@ -138,7 +142,7 @@ private:
                        uint32_t worldCount);
     void Dispatch(GraphicsDevice& device, ID3D11ComputeShader* cs, int mode, int phase,
                   ID3D11ShaderResourceView* hzb, ViewState& vs);
-    void ReadStats(GraphicsDevice& device, ViewState& vs);
+    void ReadStats(GraphicsDevice& device, ViewState& vs, bool wait);
 
     AssetID cullCS_ = {};
     bool disabled_ = false;

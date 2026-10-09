@@ -436,17 +436,25 @@ void OcclusionCuller::TestPhase2(GraphicsDevice& device, ShaderManager& shaders,
     ID3D11Buffer* dst = vs.staging[vs.writeCount % kStagingRing].Get();
     dc->CopyResource(dst, stats_.Get());
     ++vs.writeCount;
-    ReadStats(device, vs);
 }
 
-void OcclusionCuller::ReadStats(GraphicsDevice& device, ViewState& vs)
+void OcclusionCuller::PollStats(GraphicsDevice& device, uint32_t viewKey, bool wait)
+{
+    if (viewKey < static_cast<uint32_t>(kViewSlots)) {
+        ReadStats(device, views_[viewKey], wait);
+    }
+}
+
+void OcclusionCuller::ReadStats(GraphicsDevice& device, ViewState& vs, bool wait)
 {
     if (vs.writeCount <= kStatsLagFrames) {
         return;
     }
     ID3D11Buffer* src = vs.staging[(vs.writeCount - 1u - kStatsLagFrames) % kStagingRing].Get();
     D3D11_MAPPED_SUBRESOURCE mapped = {};
-    if (FAILED(device.Context()->Map(src, 0, D3D11_MAP_READ, 0, &mapped))) {
+    // wait=false でコピーが終わっていなければ DXGI_ERROR_WAS_STILL_DRAWING。前の値を残す
+    if (FAILED(device.Context()->Map(src, 0, D3D11_MAP_READ, wait ? 0u : D3D11_MAP_FLAG_DO_NOT_WAIT,
+                                     &mapped))) {
         return;
     }
     uint32_t v[4] = {};

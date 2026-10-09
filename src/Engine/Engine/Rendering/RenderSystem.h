@@ -139,6 +139,9 @@ public:
     // GPU オクルージョンカリング (Deferred / Forward の不透明のみ。viewKey 0 は常に off)。
     // 描かれる画素は off と同じで、見えない物を GPU が描かないだけ。CLI は --no-occlusion
     bool enableOcclusionCulling = true;
+    // オクルージョンの統計の読み戻しで GPU を待つか。既定 true (selftest・決定的な撮影の counts を揃える)。
+    // 対話の描画は EngineLoop が false にする
+    bool occlusionStatsWait = true;
     // メッシュ LOD (.meta で段を作ったモデルだけに効く)。lodBias > 1 で詳細な段を長く使う。
     // lodForcedStage: -1 = 自動 / 0.. = その段 (無ければ最も粗い段)。デバッグ・A/B 用。CLI は --lod-bias / --lod-force
     float lodBias = 1.0f;

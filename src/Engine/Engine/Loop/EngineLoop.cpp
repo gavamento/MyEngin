@@ -384,7 +384,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.hzbDebugMip = config.hzbDebug;            // M56c (--hzb-debug N)
     renderSystem.hzbDebugMax = config.hzbDebugMax;         // --hzb-debug-max
     // プロジェクト設定 && CLI (--no-occlusion は config 側が false になるだけで、ファイルへは書き戻さない)
-    renderSystem.enableOcclusionCulling = LoadOcclusionCullingSetting(assetsRoot) && config.occlusionCulling;
+    renderSystem.enableOcclusionCulling = ResolveOcclusionCulling(assetsRoot, config.occlusionCulling);
+    // 撮影・計測の run だけ統計の読み戻しで GPU を待つ (counts を構成間で一致させる)。対話は待たない
+    renderSystem.occlusionStatsWait = config.IsCaptureRun();
     renderSystem.lodBias = config.lodBias;                 // --lod-bias
     renderSystem.lodForcedStage = config.lodForce;         // --lod-force
     renderSystem.enableAnimUro = config.animUro;           // --no-uro

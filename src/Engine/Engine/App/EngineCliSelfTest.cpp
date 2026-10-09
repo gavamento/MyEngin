@@ -259,7 +259,7 @@ bool RunEngineCliSelfTest()
     check(r.config.occlusionCulling && r.config.renderBenchCutFrame < 0,
           "occlusion culling is on and the camera cut is off by default");
     {
-        // 実効値 = ファイルの値 && CLI。--no-occlusion はファイルを書き換えない (EngineLoop と同じ式)
+        // 実効値 = ファイルの値 && CLI。--no-occlusion はファイルを書き換えない
         namespace fs = std::filesystem;
         const fs::path dir = fs::temp_directory_path() / L"mye_cli_occlusion_selftest";
         std::error_code ec;
@@ -268,7 +268,7 @@ bool RunEngineCliSelfTest()
         const std::wstring root = dir.wstring();
         auto effective = [&](bool noOcclusionFlag) {
             const ParseRun p = noOcclusionFlag ? RunParse({ L"--no-occlusion" }) : RunParse({});
-            return LoadOcclusionCullingSetting(root) && p.config.occlusionCulling;
+            return ResolveOcclusionCulling(root, p.config.occlusionCulling);
         };
         SaveOcclusionCullingSetting(root, false);
         check(!effective(false), "occlusion: file false, no flag -> off");

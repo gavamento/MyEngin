@@ -621,7 +621,7 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 
 ### オクルージョン (M90b / M90c / M90h)
 
-- [ ] `--render-bench-demo --deferred` / `--forward` の壁の裏の物が描かれない状態で、壁の手前に回り込む (カメラを動かす) と、見えるはずの物が 1 フレームも欠けずに現れる。カメラカット (`--render-bench-cut-frame 40`) の直後も欠けない
+- [ ] `--render-bench-demo` を `--deferred` あり / なしの両方で、壁の裏の物が描かれない状態で、壁の手前に回り込む (カメラを動かす) と、見えるはずの物が 1 フレームも欠けずに現れる。カメラカット (`--render-bench-cut-frame 40`) の直後も欠けない
 - [ ] Rendering メニューの「GPU オクルージョンカリング」を切り替えても絵が変わらない (ProfilerWindow の落とした数だけが変わる)。Scene View と Game View を同時に出して、両ビューの統計が別々に出る
 - [ ] `--hzb-debug 1 --hzb-debug-max` で max-Z のピラミッドが出て、落とした物の AABB が赤線で重なる
 - [ ] メニューで OFF にして保存し、エディタを再起動すると OFF のまま。`assets\project_settings.json` の `rendering.occlusionCulling` が `false` になり、`rayTracingTags` などの他のキーは残っている

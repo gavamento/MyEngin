@@ -464,6 +464,9 @@ struct RenderView {
     // 1 = hzbDebug の表示を min-Z ではなくオクルージョン用の max-Z ピラミッドにし、GPU 判定で
     // 隠れた物の AABB も重ねる (Deferred / Forward。occlusionEnabled の経路でだけ意味を持つ)
     int32_t hzbDebugMax = 0;
+    // 1 = オクルージョンの統計の読み戻しで GPU の完了を待つ (決定的な撮影、selftest)。
+    // 0 = 待たず、終わっていなければ前の値を残す (対話の描画)
+    int32_t occlusionStatsWait = 1;
 };
 
 // --hzb-debug-max 用: GPU オクルージョンが隠れていると判定した項目のワールド AABB

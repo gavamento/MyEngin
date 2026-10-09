@@ -376,12 +376,14 @@ struct BoxSpec {
     AssetID material;
     float cx, cy, cz;
     float sx, sy, sz;
+    uint8_t lod = 0; // LOD の段 (段表を持つメッシュだけ意味がある)
 };
 
 RenderItem MakeItem(RenderResources& resources, const BoxSpec& b, uint32_t entityIndex)
 {
     RenderItem item;
     item.mesh = b.mesh;
+    item.lod = b.lod;
     item.material = b.material;
     item.entity = EntityID{ entityIndex, 1 };
     XMStoreFloat4x4(&item.world, XMMatrixScaling(b.sx, b.sy, b.sz) * XMMatrixTranslation(b.cx, b.cy, b.cz));
@@ -447,12 +449,52 @@ void TestPathAB(const char* label, GraphicsDevice& device, ShaderManager& shader
     }
     boxes.push_back({ sphere, matB, 0.0f, 0.0f, 30.0f, 1.2f, 1.2f, 1.2f });  // 壁の裏の単発
     boxes.push_back({ sphere, matB, -9.0f, 0.0f, 16.0f, 1.2f, 1.2f, 1.2f }); // 壁の外の単発
+
+    // LOD 付きメッシュ (LOD1 = 三角形を 1 つおきに間引いた粗い段)。段ごとの index 範囲が
+    // フェーズ 1 / 2 の間接引数に正しく載ることを、カット直後も含めて ON/OFF 比較で確かめる
+    AssetID lodSphere = {};
+    {
+        const Mesh* base = resources.meshes.Get(sphere);
+        std::vector<MeshVertex> verts;
+        std::vector<uint32_t> coarse;
+        if (base != nullptr) {
+            verts.resize(base->positions.size());
+            for (size_t i = 0; i < verts.size(); ++i) {
+                verts[i].position = base->positions[i];
+                verts[i].normal = base->normals[i];
+                verts[i].uv = base->uvs[i];
+            }
+            for (size_t t = 0; t + 2 < base->indices.size(); t += 6) {
+                coarse.insert(coarse.end(), base->indices.begin() + t, base->indices.begin() + t + 3);
+            }
+            const MeshLodLevel lod1{ static_cast<uint32_t>(base->indices.size()),
+                                     static_cast<uint32_t>(coarse.size()), 0.5f };
+            lodSphere = resources.meshes.Register("occtest_lod_sphere", verts, base->indices, coarse,
+                                                  std::span<const MeshLodLevel>(&lod1, 1));
+        }
+        const Mesh* lm = resources.meshes.Get(lodSphere);
+        Check(lm != nullptr && lm->LodCount() == 2 && lm->LodRange(1).indexCount < lm->LodRange(0).indexCount,
+              "LOD 付きの検査用メッシュを登録できる");
+    }
+    if (!lodSphere.IsNull()) {
+        for (int i = 0; i < 4; ++i) {
+            boxes.push_back({ lodSphere, matB, -4.8f + 2.4f * static_cast<float>(i), 0.0f, 36.0f, 2.0f, 2.0f, 2.0f,
+                              1 }); // 壁の裏の LOD1 の run
+        }
+        boxes.push_back({ lodSphere, matB, 5.5f, 1.0f, 36.0f, 2.0f, 2.0f, 2.0f, 2 }); // 段数を超える指定 (最も粗い段)
+        for (int i = 0; i < 3; ++i) {
+            boxes.push_back({ lodSphere, matB, 17.0f + 1.5f * static_cast<float>(i), 0.0f, 26.0f, 1.2f, 1.2f,
+                              1.2f, 1 }); // 壁の外の LOD1 の run
+        }
+        boxes.push_back({ lodSphere, matA, -14.0f, 2.0f, 18.0f, 1.2f, 1.2f, 1.2f, 0 }); // 壁の外の LOD0
+    }
     if (!matSurface.IsNull()) {
         boxes.push_back({ cube, matSurface, 3.0f, -1.5f, 5.0f, 0.6f, 0.6f, 0.6f }); // 壁の手前 (判定対象外)
     }
 
     // 壁の裏の物はカメラ A では隠れ、カメラ B (横から) では見える
-    auto render = [&](bool occlusionOn, uint32_t serial, bool cameraB) {
+    // forceLod >= 0 は全項目の段をその値にする (LOD の差が絵に出ることの確認用)
+    auto render = [&](bool occlusionOn, uint32_t serial, bool cameraB, int forceLod = -1) {
         RenderView view;
         const XMVECTOR eye = cameraB ? XMVectorSet(26.0f, 3.0f, 8.0f, 1.0f) : XMVectorSet(0, 0, 0, 1);
         const XMVECTOR at = cameraB ? XMVectorSet(0.0f, 0.0f, 24.0f, 1.0f) : XMVectorSet(0, 0, 1, 1);
@@ -475,7 +517,11 @@ void TestPathAB(const char* label, GraphicsDevice& device, ShaderManager& shader
         lights.count = 0;
         RenderQueue queue;
         for (size_t i = 0; i < boxes.size(); ++i) {
-            queue.opaque.push_back(MakeItem(resources, boxes[i], static_cast<uint32_t>(i)));
+            RenderItem item = MakeItem(resources, boxes[i], static_cast<uint32_t>(i));
+            if (forceLod >= 0) {
+                item.lod = static_cast<uint8_t>(forceLod);
+            }
+            queue.opaque.push_back(item);
         }
         queue.Sort();
         dp.Render(device, view, queue, lights, resources, shaders);
@@ -486,6 +532,7 @@ void TestPathAB(const char* label, GraphicsDevice& device, ShaderManager& shader
     const std::vector<uint8_t> baselineA = render(false, 0, false);
     const std::vector<uint8_t> baselineB = render(false, 0, true);
     Check(baselineA != baselineB, "カメラ A と B で絵が違う (検査が意味を持つ)");
+    Check(render(false, 0, true, 0) != baselineB, "LOD0 と LOD1 で絵が違う (LOD の検査が意味を持つ)");
     size_t nonBackground = 0;
     for (size_t i = 0; i < baselineA.size(); i += 4) {
         nonBackground += (baselineA[i] != baselineA[0] || baselineA[i + 1] != baselineA[1]) ? 1 : 0;
@@ -532,9 +579,10 @@ void TestPathAB(const char* label, GraphicsDevice& device, ShaderManager& shader
 
 // 履歴・統計のあるビュー 1 本の遅延統計: 壁の裏の物が数えられる
 template <class Path>
-void TestStats(const char* label, GraphicsDevice& device, ShaderManager& shaders)
+void TestStats(const char* label, GraphicsDevice& device, ShaderManager& shaders, bool waitForStats = true)
 {
-    MYE_LOG_INFO("-- %s 統計: 2 フレーム遅れの GPU カウント --", label);
+    MYE_LOG_INFO("-- %s 統計 (読み戻しで%s): 2 フレーム遅れの GPU カウント --", label,
+                 waitForStats ? "待つ" : "待たない");
     RenderResources resources;
     resources.Init(device);
     Path dp;
@@ -571,6 +619,7 @@ void TestStats(const char* label, GraphicsDevice& device, ShaderManager& shaders
         view.viewKey = 2;
         view.viewFrameIndex = frame;
         view.occlusionEnabled = 1;
+        view.occlusionStatsWait = waitForStats ? 1 : 0;
         SceneLightData lights;
         lights.ambient = { 1.0f, 1.0f, 1.0f };
         RenderQueue queue;
@@ -585,8 +634,15 @@ void TestStats(const char* label, GraphicsDevice& device, ShaderManager& shaders
             phase1 = s.phase1Draws;
         }
     }
-    Check(occluded == 3, "壁の裏の 3 個が「隠れた物」として数えられる");
-    Check(phase1 == 1, "定常フレームのフェーズ 1 は壁 1 個だけ (隠れた物は描かない)");
+    if (waitForStats) {
+        Check(occluded == 3, "壁の裏の 3 個が「隠れた物」として数えられる");
+        Check(phase1 == 1, "定常フレームのフェーズ 1 は壁 1 個だけ (隠れた物は描かない)");
+    } else {
+        // 待たない読み方は、どのフレームの値が最後に読めるかが GPU の進み次第なので範囲だけ見る
+        // (読めなかったフレームは前の値のまま = 一度も読めなければ -1)
+        Check(occluded >= -1 && occluded <= 3, "待たない読み戻しの隠れた数が範囲内 (壁の裏は 3 個まで)");
+        Check(phase1 >= -1 && phase1 <= 4, "待たない読み戻しのフェーズ 1 の数が範囲内 (全 4 個まで)");
+    }
     dp.Shutdown();
 }
 
@@ -642,6 +698,7 @@ float4 PSMain(VSOut i) : SV_Target
     TestGpuPyramid(device, shaders);
     TestPathAB<DeferredPath>("Deferred", device, shaders, nullptr);
     TestStats<DeferredPath>("Deferred", device, shaders);
+    TestStats<DeferredPath>("Deferred", device, shaders, false);
     TestPathAB<ForwardPath>("Forward", device, shaders, &surfaceProbe);
     TestStats<ForwardPath>("Forward", device, shaders);
 

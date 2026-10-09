@@ -76,7 +76,7 @@
 #### 4.1.1 計測
 - `GpuTimer` で GBuffer (Deferred の不透明)、Forward の不透明、CSM、局所影アトラス、オクルージョン (HZB 構築 + 判定)、フレーム全体を計る。ProfilerWindow に既存の段と並べて出す。
 - `prof::RenderStats` に影の draw / tri を別欄で足す (本描画の欄に混ぜない)。ビュー (viewKey) 別に集計し、従来の累積値も残す (既存の表示が壊れないこと)。
-- 新しい欄: LOD 段ごとの描画数、オクルージョンで落とした数 (フェーズ 1 / 2 の描画数)、URO で再利用したパレット数。GPU で決まる数 (オクルージョン) は読み戻しを待たない: 数フレーム遅れのステージングで読み、**統計にだけ**使う (描画判断には使わない)。
+- 新しい欄: LOD 段ごとの描画数、オクルージョンで落とした数 (フェーズ 1 / 2 の描画数)、URO で再利用したパレット数。GPU で決まる数 (オクルージョン) は読み戻しを待たない: 数フレーム遅れのステージングで読み、**統計にだけ**使う (描画判断には使わない)。 (review-1 で確定) 対話の描画では `D3D11_MAP_FLAG_DO_NOT_WAIT` で読み、まだ終わっていなければ前の値を残す。決定的な撮影 (`--render-stats-dump` / `--screenshot`) では、counts を構成間で一致させるため待ってよい。待つのは CPU 提出の計測区間の外。
 - `--render-stats-dump <file>`: 決定的撮影モード (`--screenshot` と同じ固定条件) で指定フレーム数を描き、最後のフレームのビュー別統計と各段の GPU ms を JSON に書いて終了する。決定的な数は Debug / Release / WARP で同じ値になること。
 
 #### 4.1.2 メッシュ LOD
@@ -187,6 +187,7 @@ tick の順序は `src\Engine\Engine\Loop\TickRunner.cpp:211` の `RunOneTick` (
 | sub-07 | sim の並列化 (A/B ジョブを先に → CPU 粒子 / Perception / PartFollow / IK、ADR-028) | sub-01 | 12, 13 (ADR-028) | `M90g: CPU 粒子・知覚・部位追従・IK を並列化し、replay_verify に jobs の A/B を足す (ADR-028)` |
 | sub-09 | オクルージョンの ON/OFF をプロジェクト設定に保存する (project_settings.json、Editor のメニューで保存、Runtime も読む) | sub-06 | 8, 9, 14 | `M90h: オクルージョンの ON/OFF をプロジェクト設定 (project_settings.json) に保存する` |
 | sub-08 | 文書 (ADR-029、engine_spec の移動、test_checklists) と全体の検証 | sub-03, sub-06, sub-07, sub-09 | 13, 14, 9, 全体 | `M90i: LOD とオクルージョンの ADR-029 を書き、engine_spec と検証表を更新する` |
+| sub-10 | review-1 の修正 (統計の読み戻しの待ち、カット直後の LOD の画素差、ラベル・式の共有・コメント・検証表) | sub-08 | 1, 2, 8, 9, 14 | `M90j: レビュー 1 の指摘を直す (統計の読み戻しを待たない、カット直後の LOD の画素差、オクルージョンの表示名)` |
 
 - 並列にできる: sub-02 / sub-04 / sub-05 / sub-07 は sub-01 の後で互いに依存しない (ただし `RenderSystem.cpp` の同じ関数を触るので、司会が逐次に回すなら sub-02 → sub-04 → sub-05 → sub-07 の順を推奨)。
 - 最初のリスクの高い未知 = **2 フェーズのオクルージョンが既存の Deferred の描画経路 (インスタンシングの run、velocity、TAA、サーフェスマテリアル) と WARP で破綻なく組めるか**。sub-01 は計測が無いと sub-02 の効果を示せないので先に置くが、小さく閉じる。
@@ -246,3 +247,8 @@ tick の順序は `src\Engine\Engine\Loop\TickRunner.cpp:211` の `RunOneTick` (
   - URO の描画履歴への依存: 「許す」。§7 の `[聞]` を確定に直した。
 - 2026-10-09 sub-07 round 1 (coder SELF_EVAL / planner VERDICT): FootIk を外したこと、IK / PartFollow の並列の被覆を selftest で持つことを §7 に記録した。Perception の視線コライダー表は、§4.1.7 どおり並列段の前に直列で確定させる (coder の `call_once` 案は採らない。並列段で World を走査するため)。
 - 2026-10-10 sub-08 round 1 (coder SELF_EVAL / planner VERDICT): 実測で、run がすべて別のシーン (unique bench、1352 draw) ではオクルージョン ON の方が遅いと分かった (WARP の Forward 50.4 → 70.0 ms、Deferred の CPU 提出 0.71 → 2.52 ms)。既定 ON は変えず、ADR-029 の判断表で「そういうシーンは project_settings で OFF」と案内する。draw 数に応じた自動 OFF は閾値の根拠が無いので後回しにする (三校の実シーンで測ってから判断する)。ServerNetSelfTest の一過性 FAIL は M90 と別件とし、`CrashRoot` の固定パスを取り合っている可能性を仮説として残す。
+- 2026-10-10 review-1 (reviewer → planner REVIEW_RESPONSE):
+  - #3 (planner 宛て) は「仕様の穴」として認めた。既定 ON のユーザー判断は sub-06 の CPU の数字を前提にしており、#1 の待ち (統計の Map が GPU を待つ) はその数字に入っていなかった。sub-10 で #1 を直したあとに測り直し、既定 render_bench・Deferred・1080p・実 GPU・10 回の中央値で、CPU 提出の増分が 0.5 ms 以下なら、前提が保たれているので既定 ON を続ける。超えるならユーザーに確認する (基準は sub-10)。
+  - §4.1.1: 統計の読み戻しは、対話の描画では待たない (DO_NOT_WAIT)、決定的な撮影では待ってよい、と明記した。撮影モードで待たないと、受け入れ 2 の counts の構成間一致が崩れるため。
+  - coder 宛ての #1 #2 #4〜#7 は sub-10 (新規、1 コミット) にまとめた。#2 は、reviewer の観測 (ON の画素が LOD0 の絵と一致する) から LOD の段の取り違えを第一に疑う。原因を断定してから直す。
+- 2026-10-10 sub-10 (planner VERDICT): review-1 #3 は基準を満たした (1080p で CPU 提出の増分 +0.064 ms ≤ 0.5 ms)。既定 ON を続ける。カット直後の 11 画素は z-fight (カットのフレームでは可視ビットが古いカメラのもので、フェーズ 1 の描画順が変わる) と断定し、受け入れ 8 の許容に当たる。ADR-029 §3-6 に記録した。

@@ -1,7 +1,7 @@
 # sub-08: 文書 (ADR-029、engine_spec の移動、test_checklists) と全体の検証
 
 - 依存: sub-03, sub-06, sub-07, sub-09
-- 状態: OK (コミット待ち)
+- 状態: OK (commit be31dbd)
 - 往復: 1
 
 ## やること

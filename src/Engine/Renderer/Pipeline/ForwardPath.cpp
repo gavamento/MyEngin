@@ -522,11 +522,12 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
         DrawUnits(device, opaqueUnits_, queue.opaque, view, resources, shaders, 1);
         dc->VSSetShaderResources(0, 2, nullVsSrvs);
     }
+    opaqueTimer_.End(device);
     if (view.occlusionEnabled != 0) {
         // GPU が数えた値 (2 フレーム遅れ)。統計専用で、描画の判断には使わない
+        occlusion_.PollStats(device, view.viewKey, view.occlusionStatsWait != 0);
         occlusion_.PublishStats(view.viewKey);
     }
-    opaqueTimer_.End(device);
 
     // スカイボックス (M29d): 不透明後・透明前。深度 1.0 のピクセルだけ塗る。
     // PS の b3 のみ使うので b0-b2 / トポロジは不変 (透明段は DrawUnits がシェーダ再バインド)。

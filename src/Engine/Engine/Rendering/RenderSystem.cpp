@@ -1757,6 +1757,7 @@ void RenderSystem::PrepareEnvironment(World& world, GraphicsDevice& device, Shad
     view.velocityDebug = velocityDebugMode;            // M55c (Deferred のみ消費)
     view.hzbDebug = hzbDebugMip;                       // M56c (Deferred のみ消費。hzbDebugMax は Forward も)
     view.hzbDebugMax = hzbDebugMax ? 1 : 0;
+    view.occlusionStatsWait = occlusionStatsWait ? 1 : 0;
     view.ssrEnabled = enableSsr ? 1 : 0;               // M56d (Deferred のみ消費)
     // M56f: 焼いたプローブ束をそのまま指す (Deferred のみ消費)。ベイクした所有者が
     // このポインタを立てるまで null = 1 命令も増えない。**トグルを設けていない**のは、

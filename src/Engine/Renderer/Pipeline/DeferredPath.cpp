@@ -744,6 +744,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     gbufferTimer_.End(device);
     if (view.occlusionEnabled != 0) {
         // GPU が数えた値 (2 フレーム遅れ)。統計専用で、描画の判断には使わない
+        occlusion_.PollStats(device, view.viewKey, view.occlusionStatsWait != 0);
         occlusion_.PublishStats(view.viewKey);
     }
 

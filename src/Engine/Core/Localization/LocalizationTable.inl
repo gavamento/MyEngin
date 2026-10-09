@@ -85,7 +85,7 @@ MYE_STR(Menu_Rendering,       "Rendering",         "レンダリング")
 MYE_STR(Menu_Shadows,         "Shadows",           "影")
 MYE_STR(Menu_Ssao,            "SSAO (Deferred)",   "SSAO (Deferred)")
 MYE_STR(Menu_GpuInstancing,   "GPU Instancing",    "GPU インスタンシング")
-MYE_STR(Menu_Occlusion,       "GPU Occlusion Culling (Deferred)", "GPU オクルージョンカリング (Deferred)")
+MYE_STR(Menu_Occlusion,       "GPU Occlusion Culling", "GPU オクルージョンカリング")
 MYE_STR(Menu_PostFx,          "Post FX",           "ポストエフェクト")
 // M90f: 遠いスキンのアニメ更新を間引く (描画専用)
 MYE_STR(Menu_OcclusionHint,   "Saved to the project (project_settings.json). The --no-occlusion option overrides it at launch without saving",
