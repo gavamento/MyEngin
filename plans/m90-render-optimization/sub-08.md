@@ -1,8 +1,8 @@
 # sub-08: 文書 (ADR-029、engine_spec の移動、test_checklists) と全体の検証
 
 - 依存: sub-03, sub-06, sub-07, sub-09
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (コミット待ち)
+- 往復: 1
 
 ## やること
 spec 受け入れ条件 13、全体。
@@ -29,4 +29,13 @@ spec 受け入れ条件 13、全体。
 
 ## 実装メモ (coder が追記)
 
+### round 1
+- 文書: `docs\adr\ADR-029-render-optimization.md` (新規)、`engine_spec.md` (§5.4 sim 並列化、§6.14 描画の軽量化、§6.2 表 4 行、§10.2 キャッシュ表の LOD 行と kCookVersion 6、§11.3 jobs A/B、§12.2 に M90 行・題名 M0-M90、§12.3 の LOD 行を移動、ADR 一覧に 028 / 029)、`docs\test_checklists.md` (M90 の節)。
+- 切り分け (やること 6): 基点 3b30251 を別 worktree (C:\HAL\wt_base、作業後に削除) でビルドし、Debug `--selftest` を 3 回 (487 / 475 / 473 秒) → 3 回とも exit 0、ServerNetSelfTest の FAIL なし。HEAD の Debug も 1 回 exit 0 (501 秒)。= 基点で再現せず、HEAD でも今回は出ず。M90 の差分に `Engine\Net` と Save の変更は無い。結論は SELF_EVAL。
+- 計測 (やること 5): 結果は ADR-029 の「計測」節。生データは scratchpad の `measure_*.csv`。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-10-10)。やること 1〜6 と受け入れ 1〜2 を満たした。全体の検証もすべて PASS (Debug / Release の selftest、check_rules、replay_verify 19 ジョブ、shot_verify 30 枚)。
+  - 差分の判定: engine_spec の §5.4 / §6.14 を新設したこと、§12.3 の古い「Animation depth」を整理したこと、ADR-029 に実測の判断表を入れたことは、いずれも採用する。
+  - 不安・質問への回答: (1) (a) で確定。既定 ON のまま (ユーザー判断 2026-10-09) とし、ADR-029 に「draw が千単位で、メッシュ・材質がばらばらなシーンは OFF」と書いたとおりにする。draw 数に応じた自動 OFF は閾値の根拠が無いので M90 では作らず、spec §7 の後回しに記録する (三校の実シーンで測ってから判断する)。(2) ServerNetSelfTest の一過性 FAIL は M90 と別件とする。M90 の差分に Net / Save は無く、基点の 3 回と HEAD の 1 回はいずれも PASS だった。`CrashRoot` の固定パスを取り合っている可能性は仮説として申し送る。
+  - nit (申し送り): `Menu_Occlusion` のラベル (`LocalizationTable.inl:88`) に「(Deferred)」が残っている (M90c 以降は Forward にも効く)。sub-09 の should (`ResolveOcclusionCulling` の共有) と nit (`TagNames.h` の冒頭コメント) も未対応のまま。目視待ちは docs	est_checklists.md の M90 節。

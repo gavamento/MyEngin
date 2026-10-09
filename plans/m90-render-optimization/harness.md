@@ -3,7 +3,7 @@
 - 依頼原文: メッシュ LOD と GPU オクルージョンカリング (Hi-Z を流用)などの軽量化手法をエンジンに実装したい。
 マルチスレッドなどのほかの軽量化なども
 - 開始: 2026-10-09 / 基点コミット: 3b30251c082095ae900a55eecf88ac9c4834c8d2
-- フェーズ: 実装
+- フェーズ: レビュー
 
 ## ユーザー判断 (策定前の AskUserQuestion、2026-10-09)
 - 範囲: 計測の土台 / メッシュ LOD / GPU オクルージョン / 影とスキンのカリング (全部)
@@ -13,6 +13,7 @@
 - (2026-10-09、planner 裁定後に司会が確認) spec §2 の [聞] 4 件はすべて planner 裁定どおり: #2 オクルージョンは 2 フェーズ / #5 LOD は .meta でオプトイン (既定は段なし) / #9 URO は描画側だけ / #12 sim 並列化はアルゴリズムを変えない系だけ (CPU 粒子・Perception・PartFollow・IK)
 - (2026-10-09、sub-06 VERDICT の [聞] 2 件) オクルージョン: **既定 ON、設定で ON/OFF を切り替えられるようにする** (読み戻しで run を飛ばす案は不採用)。URO の描画履歴への依存: **許す** (planner 裁定どおり)。
 - (2026-10-09、planner PLAN_RESULT の [聞]) オクルージョンの保存先: **プロジェクト設定 (assets/project_settings.json の rendering.occlusionCulling)** (planner 裁定どおり)。新サブ sub-09 で実装。
+- (2026-10-10、ユーザー指示) **全部終わったら (レビュー PASS まで) コミット → Notion 記録 → git push → PC をシャットダウン**。
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
@@ -24,8 +25,8 @@
 | sub-05 メッシュ LOD | OK | 1 | 29a775e | meshoptimizer v1.3、kCookVersion 6。LOD 見た目の目視はユーザー待ち |
 | sub-06 描画側並列化 + URO | OK | 2 | d4e0211 | URO 位相を fmix32 ハッシュへ (round 1 REWORK) |
 | sub-07 sim 並列化 (ADR-028) | OK | 2 | 3935904 | FootIk は並列化せず (ForEachArchetype 並行不可) |
-| sub-09 オクルージョン ON/OFF をプロジェクト設定に保存 | OK | 1 | (このコミット) | 依存 06 (2026-10-09 ユーザー要求で新規)。メニューの保存経路とツールチップは目視待ち |
-| sub-08 文書 + 全体検証 (ADR-029) | 未着手 | 0 | | 依存 03,06,07,09 |
+| sub-09 オクルージョン ON/OFF をプロジェクト設定に保存 | OK | 1 | 141885c | 依存 06 (2026-10-09 ユーザー要求で新規)。メニューの保存経路とツールチップは目視待ち |
+| sub-08 文書 + 全体検証 (ADR-029) | OK | 1 | (このコミット) | 依存 03,06,07,09 |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -48,3 +49,4 @@
 - (planner 2026-10-09、sub-07 VERDICT nit) Debug だけ知覚の並列が直列より遅い (9.46 / 5.37 ms、Release は約 2 倍速い、原因未調査)。round 2 後の順序依存注入の再確認はしていない (検証路は不変)。ServerNet 一過性 FAIL は計 4 回。
 - (coder sub-07 → sub-08) 並列段で World を走査しない (ForEachArchetype / QueryArchetypes は並行不可、ADR-028)。engine_spec の sim 並列化の節と replay_verify の jobs A/B (`--job jobsab`、`[jobs]` PASS 行、JobSystem::GetStats) を書く。IK / PartFollow の実シーン A/B は M90 ではやらない (selftest のみ)。
 - (planner 2026-10-09、sub-09 VERDICT) should: EngineCliSelfTest は EngineLoop の `Load && cli` を書き写しているので、`ResolveOcclusionCulling(assetsRoot, cliFlag)` に出して共有するのが望ましい (本体の配線は Runtime dump で確認済み)。nit: TagNames.h の冒頭コメントが rendering.occlusionCulling を反映していない。エディタのメニュー保存経路 (scmhint::Changed 含む) とツールチップは未実走・目視待ち。--no-occlusion 起動中にメニューで選んだ値は保存される (CLI は起動中だけの上書き) — ADR-029 / engine_spec に書く。
+- (planner 2026-10-10、sub-08 VERDICT nit) `Menu_Occlusion` のラベル (LocalizationTable.inl:88) に「(Deferred)」が残る。sub-09 の should (`ResolveOcclusionCulling` 共有) と nit (TagNames.h 冒頭コメント) が未対応。目視待ち一覧は docs/test_checklists.md の M90 節。ON が不利なシーン (draw 千単位・メッシュ/材質ばらばら) は project_settings で OFF を案内、自動 OFF は後回し (spec §8)。ServerNet 一過性 FAIL は M90 と別件 (基点 3 回・HEAD 1 回とも PASS、CrashRoot 固定パスの取り合い仮説)。

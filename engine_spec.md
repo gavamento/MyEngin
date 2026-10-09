@@ -269,6 +269,28 @@ Three consequences worth stating, because each one has caused a bug:
 - **Adopted**: a fixed 60 Hz timestep drives the tick list above, and structural changes are applied at the end of each tick rather than the end of the frame (ADR-005). Replay reproducibility in Section 11.3 depends on it
 - Script execution order within the same phase is deterministic and follows registration order. Undefined ordering is not permitted under the consistency policy
 
+### 5.4 Simulation parallelism (M90g, ADR-028)
+
+The job system (`jobs::System().ParallelRanges`, M25) also runs a few simulation systems in parallel, under three conditions that
+all have to hold, and only over the **output** dimension (entities / pools / skinned meshes):
+
+1. the system reads nothing another entity wrote this tick (previous-tick values, immutable data and its own row only) and writes only its own row;
+2. it uses no shared RNG (`world.Rng()`) — only a stream the unit of work owns, such as a per-emitter seed;
+3. shared containers, events, logs, structural changes and "already warned" tables are applied **after** the parallel stage, serially in index order, and the workers never walk the `World`
+   (`ForEachArchetype` mutates an iteration depth and a query cache, so it is not safe to call concurrently).
+
+Reductions (stat sums) are stored per unit of work and added serially in index order, so the result does not depend on the number of workers.
+
+| Parallel | Serial on purpose |
+|---|---|
+| CPU particles (per emitter pool), Perception (per perceiver), PartFollow (per part), TwoBoneIk (per `SkinnedMesh`) | aerodynamics, XPBD and fracture voxelisation (permanently: the summation order is part of the result), BehaviorTree and AgentSystem (shared `world.Rng()`), Crowd (Detour scratch), AnimatorController, rigid-body solver, FootIk (`RaycastWorld` walks the `World`) |
+
+`--no-jobs` runs everything serially. The proof is `tools\replay_verify.bat`'s **jobs A/B**: a `.rep` recorded with `--no-jobs` is verified with
+the workers on, in Debug and Release, and the per-tick world hash must match (the header's jobs bit differs, and verify ignores it). The `jobsab` job
+covers `--particle-demo --particle-backend cpu` and `--perception-demo`; PartFollow runs inside the `parts` job; `SimParallelSelfTest` covers TwoBoneIk and
+PartFollow with 200 bodies. The PASS line of `--replay-verify` is followed by `[jobs] parallel batches N, chunks run by workers M` (both 0 under `--no-jobs`).
+Systems outside the table are not parallelised by changing their algorithm: that would change behaviour, not just speed.
+
 ---
 
 ## 6. Renderer Specification
@@ -403,6 +425,10 @@ attenuate.
 | Ray-traced secondary rays | Implemented | See §6.4 (default off) |
 | Decals (projector boxes) | Implemented | See §6.6. **Deferred path only** in v1 |
 | Hierarchical Z-buffer (min-Z pyramid) | Implemented | See §6.7. **Deferred path only**, built on demand |
+| Mesh LOD | Implemented | Opt-in per model through the `.meta` `"lod"` block, generated at cook time with meshoptimizer, screen-size selection with hysteresis. See §6.14 (M90e) |
+| GPU occlusion culling | Implemented | Two-phase, max-Z pyramid per view, Deferred and Forward opaque, default on. See §6.14 (M90b / M90c) |
+| Shadow caster and skin culling | Implemented | Per-cascade culling that no longer drops off-screen casters, and a conservative skinned AABB. See §6.14 (M90d) |
+| Distant animation throttling (URO) | Implemented | Render-side only; far skinned meshes rebuild their bone palette every 2 / 4 / 8 ticks. See §6.14 (M90f) |
 | Reflection probe capture | Implemented | See §6.9. Explicit bake only; nothing consumes it until M56f |
 | Volumetric fog (froxel) | Implemented | 160x90x64 view grid + local lights + shadow atlas, temporally reprojected. Composited on opaque / transparent / terrain / sky / CPU particles in both paths, default off (§6.1) |
 
@@ -978,6 +1004,73 @@ created in 10 attempts 500 ms apart, or on the third loss within 60 seconds. `--
 `--simulate-device-lost-fatal` and the editor menu item exercise the same path as a real loss. The ABI is unchanged. See
 `docs/adr/ADR-026-device-lost-recovery.md`.
 
+### 6.14 Render optimization (M90)
+
+Everything here is a render-side optimisation. None of it enters the simulation state: ABI v28, TypeId 80, SimSnapshot v48, the
+`.rep` format and the scene JSON are unchanged, and a frame's draw decisions depend only on the tick and the per-view render history, never on wall-clock
+time or the render frame count. The reasoning, rejected alternatives and measurements are in
+[docs/adr/ADR-029-render-optimization.md](docs/adr/ADR-029-render-optimization.md); the simulation-side parallelism is §5.4 / ADR-028.
+
+**Measurement (M90a).** `GpuTimer`s cover GBuffer, Forward opaque, CSM, the local-shadow atlas, occlusion and one `RenderSystem::Render` call (one view),
+all shown in the ProfilerWindow. `prof::RenderStats` is kept per view (viewKey) as well as cumulative; shadow draws / triangles have their own columns, and there are
+columns for the LOD stage distribution, occlusion (phase 1 / phase 2 / culled) and URO (palettes evaluated / reused). `drawCalls` / `triangles`
+are the *logical* counts the CPU submitted — what the GPU culled is read back two frames late into the occlusion columns and is used for statistics only, never for a draw decision.
+`--render-stats-dump <file>` (with `--shot-frame N`; exit code 6 = could not write) renders `N` frames under the same fixed
+conditions as `--screenshot` and writes the last frame's per-view statistics as JSON, split into `counts` (deterministic: identical in Debug, Release and
+`--warp`), `gpuMs` and `cpuMs` (reference values). The performance gates are the `counts`. The code-generated `--render-bench-demo` scene (3660 grid
+objects, an occluding wall, far spheres, LOD spheres, skinned characters, an off-screen shadow caster) is the bench; `--render-bench-unique-demo` is the
+variant with 1500 objects that all differ in mesh and material plus 6 distant skinned characters (no instancing, so CPU submission dominates), and
+`--render-bench-cut-frame N` cuts the camera on the render side only.
+
+**Mesh LOD (M90e).** Opt-in per model: a `"lod"` block in the `.meta` (`levels` 0..3 extra stages, `ratio1..3` target triangle ratios 0.01..0.95 with defaults
+0.5 / 0.25 / 0.125, optional `screenSize1..3`; without the block the model is unchanged to the bit). Cooking welds the vertices and runs meshoptimizer
+(`simplifyWithAttributes` with normals, UVs and, for skins, bone weights, `LockBorder`, error limit 0.05); a stage that cannot get within 1.25× of its target ratio, or does not shrink
+beyond the previous stage, is not created. The vertex buffer is shared and the index buffer is LOD0 followed by the other stages, so `MeshVertex` and GPU skinning are untouched,
+and colliders, NavMesh, the RT BVH and the CPU mesh copy keep using LOD0. The stage is chosen per entity and view from the world-AABB bounding sphere's screen height
+fraction times `lodBias` (> 1 keeps detailed stages longer, as Unity's `QualitySettings.lodBias`) with 10% hysteresis against the previous frame's stage; with no history the
+thresholds alone decide. Shadow casters use the same stage as the camera view. CLI `--lod-bias F`, `--lod-force N` (-1 auto; a missing stage falls back to the coarsest); the
+Rendering menu has the same two controls and the Inspector edits the `.meta`. Hard-surface meshes (flat faces and sharp edges only) often cannot reach the target under `LockBorder`
+and get no stages plus one WARN.
+
+**GPU occlusion culling (M90b, M90c).** Applies to the opaque part of the main pass of views 1-3, in Deferred (GBuffer) and Forward. Two phases: phase 1 draws what was visible
+last frame; a max-Z pyramid is built from that depth (plus terrain), and phase 2 tests every instance AABB against it in a compute shader and draws the visible ones that phase 1
+did not. The compute stage compacts the visible instance indices with an order-preserving prefix sum and writes `DrawIndexedInstancedIndirect` arguments, so nothing is read back to decide
+a draw. The pyramid reuses the min-Z pyramid's reduction footprint (§6.7: odd extents are widened, never rounded away) with `max`, and is a separate instance per view; the SSR pyramid is untouched.
+Because phase 2 always judges against the current frame's depth, a camera cut or a disocclusion cannot drop a visible object; it only costs more phase-2 draws. The test is
+conservative: boxes crossing the near plane or sticking out of the screen are drawn, and the depth comparison is relaxed by 32 depth steps. Skinned meshes, surface-material objects,
+water, shadows and transparents are not tested. Visibility bits are kept per view and entity (`entity.index`); history is dropped when the size changes, the per-view
+render serial skips, or the device is lost. If a pyramid or buffer cannot be created, occlusion alone turns off (one log line) and drawing continues.
+`--hzb-debug N --hzb-debug-max` shows the max-Z pyramid and draws culled boxes as red lines.
+
+**Shadow casters and skins (M90d).** Casters are no longer limited to what the camera frustum kept: each CSM cascade culls all opaque casters against the light's frustum
+(5 planes, without the light-side near plane) and the CSM raster state clamps depth instead of clipping, so an off-screen caster still shadows the screen. The CSM fit is
+unchanged. A skinned mesh gets a conservative model-space AABB — per-bone vertex envelopes over every key time of every clip (plus 1/30 s steps and the bind pose), plus a margin of
+half the longest side — cached per (model, mesh) and invalidated by registration revision; a ragdoll-driven mesh is always visible. Off-screen skins evaluate their palette only when
+a cascade needs them. The local-light shadow atlas still sees on-screen casters only.
+
+**URO and palette cache (M90f).** A skinned mesh whose bounding sphere covers less than 5% / 2% / 0.8% of the screen height rebuilds its bone palette every 2 / 4 / 8 ticks instead of every
+tick (nearer ones every tick; ragdoll or a blended pose never throttles), and reuses the previous palette in between with no interpolation. The update tick is
+`(simTick + fmix32(entity.index)) % interval == 0` — a hash, because model loaders create entities in strides of 20 and a plain index would put every character on the same phase. Palettes are cached across views
+(Scene View and Game View evaluate a character once per frame) under the key entity + model + pose inputs + interpolation alpha, and the pose evaluation, LOD choice and
+skin culling run in parallel into pre-allocated slots that are joined in index order (the output equals `--no-jobs` pixel for pixel). The simulation's pose evaluation (part follow, IK, ragdoll) is
+never throttled. Both LOD hysteresis and the URO window depend on which ticks this run rendered; after a seek, rewind, scene change or device recovery `RenderSystem::ResetRenderHistory()` drops them, and
+far characters may then differ from continuous playback by up to `interval - 1` ticks of pose (visual only). `--no-uro`, `enableAnimUro` and the Rendering menu turn it off.
+
+**Switches and the project setting.** Occlusion is on by default and is stored in `assets\project_settings.json` as `"rendering": {"occlusionCulling": bool}`; a missing key or an unreadable file means `true`
+(an unreadable file is not overwritten, and other keys such as `rayTracingTags` are preserved). Editor and Runtime read it at start-up. **Precedence:** `--no-occlusion` overrides the file for that run and never writes it; there is no CLI flag to
+force occlusion on over a file that says `false`. Switching it in the editor's Rendering menu saves the chosen value to the file, even if the editor was started with `--no-occlusion`. URO, `lodBias`
+and the forced stage are per-launch and not saved. There is no in-game option screen or GameLogic API for these (the ABI does not change).
+
+| Option | Meaning |
+|---|---|
+| `--render-stats-dump <file>` | write per-view statistics at `--shot-frame` and exit (fixed capture conditions) |
+| `--render-bench-demo`, `--render-bench-unique-demo`, `--render-bench-cut-frame N` | the bench scenes and the render-side camera cut |
+| `--no-occlusion` | occlusion off for this run (not saved) |
+| `--hzb-debug N`, `--hzb-debug-max` | pyramid level view; `-max` shows the occlusion max-Z pyramid and culled boxes |
+| `--lod-bias F`, `--lod-force N` | global LOD bias and forced stage |
+| `--no-uro` | disable the distant-animation throttle |
+| `--no-jobs` | everything serial (render-side and §5.4) — a pixel / hash A/B partner |
+
 ## 7. Particle System Specification
 
 ### 7.1 Requirements
@@ -1298,8 +1391,9 @@ persists the parse results so warm starts skip the parsers entirely.
 | Files | `<project>/cache/cooked/<guid 16hex>.mmdl` (models) / `.mpcm` (ogg PCM). Legacy launch and distributed builds use `<exeDir>/cache/cooked/` — the branch is on `projectRoot`, never on `assetsRoot` |
 | Blob contents | The raw bytes handed to the resource libraries (vertices / indices / materials / skins / clips, and texture sources). Float bit patterns are preserved; replaying registers content bit-identical to a fresh parse (`CookedCacheSelfTest` enforces this, `replay_verify` records cold and verifies warm) |
 | Insertion point | `RegisterAssets` (the startup scan via `RegisterAssetLibraries`, shared by Editor/Runtime) and the ogg branch of `LoadAudioFile`. `ModelLoader::Load` (drag & drop placement) always parses fresh. wav files are not cooked — their decode is near-memcpy |
-| Invalidation | Header `{magic, kCookVersion, guid, srcSize, srcMtime, srcContentHash, srcPathKey, deps}`. size+mtime match → valid; mtime mismatch → re-hash the source, and if the content is unchanged the header mtime self-heals; content change → recook. A moved source recooks, because the blob records external texture paths as resolved absolute paths (before M74a the sub-asset AssetIDs themselves derived from the normalized path, which was the main reason). Recorded external texture paths (`deps`) are existence-checked; texture *content* stays live because replay re-reads the files. **`kCookVersion` is 3 since M74a**, where sub-asset registration names changed from `"<normalized absolute path>#…"` to `"guid://<16hex>#…"` (§10.2.1) — the blob stores key strings verbatim and header validation never looks at them, so only the version can reject an old-format cache. Version 2 came from M67b, where `Material` grew 56 → 64 bytes (`reflectionClass` plus an explicit tail pad, because the `AssetID` alignment would otherwise round 60 → 64 with *implicit* padding and make the blob's bytes differ run to run). **Any change to a `Material` layout must bump it** — the blob `memcpy`s the struct, so an unbumped cache is read four bytes short and every field after it silently shifts. `ModelCook.cpp`'s `static_assert(sizeof(Material) == 64)` is the gate that makes the mistake a compile error rather than corrupt geometry |
+| Invalidation | Header `{magic, kCookVersion, guid, srcSize, srcMtime, srcContentHash, srcPathKey, deps}`. size+mtime match → valid; mtime mismatch → re-hash the source, and if the content is unchanged the header mtime self-heals; content change → recook. A moved source recooks, because the blob records external texture paths as resolved absolute paths (before M74a the sub-asset AssetIDs themselves derived from the normalized path, which was the main reason). Recorded external texture paths (`deps`) are existence-checked; texture *content* stays live because replay re-reads the files. **`kCookVersion` reached 3 in M74a** (it is **6** since M90e; the later bumps are 4 = FBX inheritance-mode correction, 5 = M89p glTF STEP / CUBICSPLINE, 6 = mesh LOD, see the LOD row below), where sub-asset registration names changed from `"<normalized absolute path>#…"` to `"guid://<16hex>#…"` (§10.2.1) — the blob stores key strings verbatim and header validation never looks at them, so only the version can reject an old-format cache. Version 2 came from M67b, where `Material` grew 56 → 64 bytes (`reflectionClass` plus an explicit tail pad, because the `AssetID` alignment would otherwise round 60 → 64 with *implicit* padding and make the blob's bytes differ run to run). **Any change to a `Material` layout must bump it** — the blob `memcpy`s the struct, so an unbumped cache is read four bytes short and every field after it silently shifts. `ModelCook.cpp`'s `static_assert(sizeof(Material) == 64)` is the gate that makes the mistake a compile error rather than corrupt geometry |
 | Textures | Embedded images are stored encoded and re-decoded on replay (so `.meta` import settings keep working); external files are re-loaded from the recorded resolved path |
+| Mesh LOD (M90e, `kCookVersion` 6) | The blob starts with the model's LOD settings (`ModelLodSettings`, 28 bytes: level count, three target ratios, three screen-sizes) and each mesh carries its LOD1+ index list plus a level table. The settings live in the `.meta`, which the header check never looks at, so `ModelCook::TryReplayFromCache` compares the settings recorded in the blob with the current `.meta` and recooks on any difference — no manual cache deletion. A sealed cache does not compare. A model without `"lod"` in its `.meta` has no levels and its vertex / index bytes are identical to version 5. Details: §6.14 and ADR-029 |
 | Escape hatch | `--no-cook-cache` (mirrors `--no-jobs` / `--no-sim-cache`): parse everything fresh, never read or write the cache |
 | Sealed bundle (M51j) | A `.sealed` marker inside `cache/cooked/` (written only by Build Settings into the package) makes `ReadValidated` skip the pathKey / stat / content-hash / deps checks (magic / version / guid still apply). A relocated package always misses pathKey and mtime, and after the batch DDS cook its source images no longer exist, so replaying the sealed registrations avoids a full re-parse that could not even find its textures. When M51j introduced it, this was also the only thing keeping scene references intact — sub-asset AssetIDs derived from the packaging machine's absolute paths. Since M74a they derive from `.meta` GUIDs (§10.2.1), so the IDs no longer depend on sealing. External texture paths recorded in the blob are remapped onto the package's `assets/` root when missing (`ModelCook::Replay`). A sealed cache still checks the version, so **packages are rebuilt with the new exe** whenever `kCookVersion` moves — the exe and the cache are always shipped together, so this is a rebuild, not a migration |
 
@@ -2667,6 +2761,10 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
   the same for every equation M59 and M60 added. The joint pair also covers the `.mcvx`
   convex-hull cook: Debug and Release bake it independently into separate cooked directories and
   still agree bit for bit
+- **jobs A/B (M90g, ADR-028).** The suite has grown to 13 scene chains (the list above plus `--nav-demo`,
+  `--perception-demo`, `--bt-demo`, `--anim-demo`), plus a `jobsab` job: a `.rep` recorded serially (`--no-jobs`) is
+  verified with the workers on, in Debug and Release, so the per-tick world hash proves the parallel simulation systems
+  (§5.4) equal the serial ones. A kCookVersion bump (M90e, 6) keeps the cold-record / warm-verify bit match (M51b)
 
 **Field-level divergence diagnosis (M52a).** Knowing *which tick* broke is not the same as
 knowing *what* broke. `HashWorld`, `HashWorldDetailed` and `HashWorldDump` are three exits of a
@@ -3342,9 +3440,9 @@ Kept verbatim, because the completion criteria it set are still the ones the pro
 
 The order was intentional: implementing the reload foundation in M3 first accelerated subsequent particle development through dogfooding.
 
-### 12.2 What was actually built (M0-M85)
+### 12.2 What was actually built (M0-M90)
 
-**2026-07-19 → 2026-10-06, over 530 commits.** The primary source is `git log`; the prefix on each
+**2026-07-19 → 2026-10-09, over 530 commits.** The primary source is `git log`; the prefix on each
 commit subject names the milestone. Grouped by system rather than by number, because the numbers
 interleave — several tracks ran in parallel and a few milestones were revisited weeks later.
 
@@ -3371,6 +3469,7 @@ interleave — several tracks ran in parallel and a few milestones were revisite
 | Modal impact sound | M76 | Deep-Modal: a modal synthesiser, a 32³ voxeliser, dataset generation and training tools, a `.dmnet` CPU inference backend, and the `ModalSound` component that turns collisions into synthesised impacts (ADR-020) |
 | Sky, water, project shaders | M77-M79 | Panorama skybox and IBL bake from 2D textures; Gerstner-wave water whose formula buoyancy shares; project post and compute effects with a Properties DSL and `.fxstack.json`; project surface shaders on both Forward and Deferred |
 | AI | M82-M85 | Recast-based NavMesh with bake, pathfinding, TileCache and Crowd held bit-identical (ADR-023); `AIPerception` sight and hearing (ADR-024); Agent Types, Surface grouping, filters and auto-generated links; **behaviour trees** with `.bt` / `.bb` assets, decorators, aborts, C# tasks and a node editor (ADR-025). ABI v24 → v27 = 158 slots |
+| Render optimization | M90 | Measurement first (per-view `RenderStats`, GPU timers, the `render_bench` scenes and `--render-stats-dump`); opt-in **mesh LOD** generated by meshoptimizer into the cooked blob (`kCookVersion` 6); two-phase **GPU occlusion culling** with a per-view max-Z pyramid for Deferred and Forward, default on and saved in `project_settings.json`; per-cascade shadow culling that keeps off-screen casters' shadows, and a conservative skinned AABB; render-side parallelism, a view-shared palette cache and distant-animation throttling (URO); parallel CPU particles / Perception / PartFollow / TwoBoneIk proven by replay_verify's jobs A/B (§5.4, §6.14, ADR-028 / ADR-029) |
 
 **A note on the numbering.** M17-M25 and M30-M31 have no commits of their own: they were finished
 before the repository was brought up to date and landed in two bundle commits (`M16-M25` and
@@ -3388,8 +3487,8 @@ to the physics roadmap.
 | M75h-j (in-game UI) | **Unstarted.** InputField with its ABI bump and C# mirror, the Rect Tool with Game View → surface conversion, and the final `--ui-demo`, spec sections and ADR. Plan: `plans\m75-ugui.md` |
 | M86 (Smart Objects) | **Unstarted, designed.** `SmartObjectComponent` with slots, a reservation table in the snapshot and hash, four behaviour-tree nodes, one ABI bump. Plan: `plans\ai-roadmap-m83-m86.md` |
 | Engine MCP server (M87) | **Unstarted, design settled.** Engine index dump, a stdio JSON-RPC server with search / describe, structured verify jobs, notes. Plan: `plans\エンジンMCPサーバ.md` |
-| Animation depth, sequencer, LOD | **Unstarted.** Blend trees, two-bone IK, root motion and animation events; a tick-based sequencer; mesh LOD and GPU occlusion culling. Listed as next tasks when M70 closed; none has a plan file yet |
-| Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (now ABI v28, TypeId 80, ADR-027). Plan files that name a specific future number are stale on that point |
+| Sequencer | **Unstarted.** A tick-based sequencer. (Blend trees, two-bone IK, root motion and animation events shipped as M89; mesh LOD and GPU occlusion culling as M90.) No plan file yet |
+| Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (now ABI v28, TypeId 80, ADR-029). Plan files that name a specific future number are stale on that point |
 | Dogfooding backlog | 5 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open (11 debug-draw log, 13 `builtin://wheel`, 17 CC ⇄ Rigidbody, 19 missing-`PhysicsEnvironment` warning, 20 script-to-script messaging). Each needs a new implementation surface; 20 needs the next ABI bump (`onMessage` on `MyeScriptDesc`) |
 
 ---
@@ -3425,7 +3524,9 @@ ADR-020 Deep-Modal impact synthesis (§10.7) /
 **ADR-024 AI perception: state in components** (§10.10) /
 **ADR-025 behavior tree: execution state in a system table** (§10.11) /
 **ADR-026 in-process GPU device-loss recovery** (§6.13) /
-ADR-027 skeletal pose program (M89, in progress).
+ADR-027 skeletal pose program (M89) /
+**ADR-028 simulation parallelism: output-dimension splits proven by jobs A/B** (§5.4) /
+**ADR-029 render optimization: opt-in mesh LOD, two-phase occlusion culling, render-side URO** (§6.14).
 
 ---
 

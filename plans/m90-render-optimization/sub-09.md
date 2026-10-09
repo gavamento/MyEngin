@@ -1,7 +1,7 @@
 # sub-09: GPU オクルージョンの ON/OFF をプロジェクト設定に保存する
 
 - 依存: sub-06 (`EditorApp.cpp` の Rendering メニューと `EngineLoop.cpp` の設定の流し込みを同じ順で触るため)
-- 状態: OK (コミット待ち)
+- 状態: OK (commit 141885c)
 - 往復: 1
 
 ## 背景
