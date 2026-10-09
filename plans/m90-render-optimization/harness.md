@@ -15,8 +15,8 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 計測の土台 | OK | 1 | (このコミット) | Debug selftest で ServerNetSelfTest が 1 回だけ一過性 FAIL (原因未断定) |
-| sub-02 GPU オクルージョン縦切り (Deferred) | 未着手 | 0 | | 依存 01 |
+| sub-01 計測の土台 | OK | 1 | 72ff316 | Debug selftest で ServerNetSelfTest が 1 回だけ一過性 FAIL (原因未断定) |
+| sub-02 GPU オクルージョン縦切り (Deferred) | OK | 1 | (このコミット) | ServerNetSelfTest 一過性 FAIL 2 回目 |
 | sub-03 オクルージョンを Forward へ + hzb-debug | 未着手 | 0 | | 依存 02 |
 | sub-04 影のカスケード別カリング + スキン AABB | 未着手 | 0 | | 依存 01 |
 | sub-05 メッシュ LOD | 未着手 | 0 | | 依存 01 |
@@ -32,4 +32,5 @@
 
 ## 申し送り (セッション跨ぎ)
 - design-draft.md と本台帳は未コミット。最初のサブのコミットに含める。
+- (planner 2026-10-09、sub-02 VERDICT) Debug selftest の ServerNetSelfTest (`V1 LoadPersist / LoadGame in a session`) が初回だけ FAIL する件は 2 回目の再発。M90 の差分にネット・セーブの経路は無いが、まだ断定はできない。**sub-08 の前に、基点コミット 3b30251 の Debug selftest を 2〜3 回回して、M90 より前から出ていたかを確かめる** (前から出ていれば別件として切り出す。出なければ M90 の差分を二分探索する)。
 - (planner 2026-10-09) spec.md 確定 (planner 裁定)。AskUserQuestion が使えなかったので、spec §2 の `[聞]` 4 件 (#2 2 フェーズ / #5 LOD オプトイン / #9 URO は描画側 / #12 sim 並列化はアルゴリズムを変えない系だけ) と全体の確定確認を司会がユーザーへ。差し戻されたら planner が該当行と §6 を直す。

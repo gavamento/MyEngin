@@ -85,6 +85,11 @@ struct RenderItem {
     // 既定 1 = タグのフィルタを設定していなければ全部の面が受ける = 従来の絵とビット一致。
     // float で持つのは PerObjectCB へ変換なしで載せるため
     float rtReceiver = 1.0f;
+    // ---- GPU オクルージョン用のワールド AABB (末尾 append) ----
+    // hasWorldAabb = 0 (姿勢が AABB に収まる保証の無いスキン等) の項目は判定せず常に描く
+    DirectX::XMFLOAT3 worldAabbMin = { 0.0f, 0.0f, 0.0f };
+    DirectX::XMFLOAT3 worldAabbMax = { 0.0f, 0.0f, 0.0f };
+    uint8_t hasWorldAabb = 0;
 };
 
 // ---- 局所ライトのシャドウアトラス (M54c) ----
@@ -449,6 +454,9 @@ struct RenderView {
     RtReflRestirParams rtReflRestirParams;
     // ---- 水面描画データ (末尾 append。null = 水面なし = 従来とビット完全一致) ----
     const struct WaterDrawData* water = nullptr;
+    // ---- GPU オクルージョン (末尾 append。0 = 従来と 1 ビットも変わらない) ----
+    // Deferred の不透明だけが読む。viewKey 0 (履歴の無いビュー) は RenderSystem が常に 0 にする
+    int32_t occlusionEnabled = 0;
 };
 
 // ---- デカール (M56a) ----

@@ -294,6 +294,10 @@ const CliFlag kEngineCliFlags[] = {
     { L"--rt-debug", CliValue::One, [](CliArgs& a) { a.c.rtDebugMode = _wtoi(a.v1); return true; } },
     { L"--velocity-debug", CliValue::None, [](CliArgs& a) { a.c.velocityDebug = 1; return true; } },
     { L"--hzb-debug", CliValue::One, [](CliArgs& a) { a.c.hzbDebug = _wtoi(a.v1); return true; } },
+    // GPU オクルージョンの切り替えと、render_bench のカメラカット (描画側の上書きだけ。sim には触れない)
+    { L"--no-occlusion", CliValue::None, [](CliArgs& a) { a.c.occlusionCulling = false; return true; } },
+    { L"--render-bench-cut-frame", CliValue::One,
+      [](CliArgs& a) { a.c.renderBenchCutFrame = _wtoi64(a.v1); return true; } },
     // M56d: SSR (Deferred のみ。HZB も一緒に組まれる)
     { L"--ssr", CliValue::None, [](CliArgs& a) { a.c.ssr = true; return true; } },
     // M56e: 反射プローブを 1 回だけ焼く (値は "X,Y,Z")。**明示指示専用** — 自動ベイクの口はどこにも無い

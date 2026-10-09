@@ -242,6 +242,10 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     // M56c: HZB。CS も可視化シェーダも既定 off の経路では 1 度も使われないので、
     // 失敗しても続行する (HzbPass::Build が false を返して消費者が自然に無効化される)
     hzb_.Init(device, shaders);
+    // GPU オクルージョン。失敗しても続行する (従来の描画に落ちるだけ)
+    if (!occlusion_.Init(device, shaders)) {
+        MYE_LOG_WARN("[occlusion] init failed - GPU occlusion culling is off");
+    }
     gbufferTimer_.Init(device); // M90a: 失敗しても計測が 0 になるだけ
     hzbDebugShader_ = shaders.Load("debug_hzb");
     // M56d: SSR。同じく既定 off なので失敗しても続行 (SsrPass::Render が false を返すだけ)
@@ -498,6 +502,7 @@ void DeferredPath::Shutdown()
     normalCopyH_ = 0;
     // M56c: HZB
     hzb_.Shutdown();
+    occlusion_.Shutdown();
     gbufferTimer_.Release();
     hzbDebugCB_.Reset();
     ssr_.Shutdown(); // M56d
@@ -749,6 +754,17 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     gbufferTimer_.Begin(device);
     RenderGeometry(device, view, queue, resources, shaders, f); // 1) + 1.1)
     gbufferTimer_.End(device);
+    if (view.occlusionEnabled != 0) {
+        // GPU が数えた値 (2 フレーム遅れ)。統計専用で、描画の判断には使わない
+        const OcclusionStats os = occlusion_.Stats(view.viewKey);
+        if (os.valid) {
+            prof::RenderStats d;
+            d.occlusionPhase1Draws = os.phase1Draws;
+            d.occlusionPhase2Draws = os.phase2Draws;
+            d.occluded = os.occluded;
+            prof::AddRenderStats(d);
+        }
+    }
 
     // ---- 1.2) デカール (M56a/M56b): ジオメトリパス (地形込み) の直後・SSAO の前。
     //      「もう GBuffer に書かれた面」の albedo / 法線 / roughness を投影ボックスで
@@ -946,105 +962,215 @@ void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view
         }
     }
 
-    MeshBindState bound;
-    uint64_t boundGbShader = gbufferShader_.value; // 上で gbProg を bind 済み
-    size_t nextRun = 0;
-    for (size_t idx = 0; idx < queue.opaque.size(); ++idx) {
-        const RenderItem& item = queue.opaque[idx];
-        Material* mat = resources.materials.Get(item.material);
-        Mesh* mesh = resources.meshes.GetDrawable(item.mesh);
-        if (!mat || !mesh) {
-            continue;
-        }
-        // M79 sub-03: shader が "*.surface" のマテリアルは GBuffer に描かず、
-        // 光パス後の専用段 (RenderSurfaceForward) が速度エントリで深度・色・velocity を描く。
-        // スキン+サーフェスは初版未対応 (spec §2) — WARN 1 回だけ出し、下の通常スキン経路へ落ちる
-        {
-            SurfaceMaterialState* surf = resources.materials.GetOrBuildSurfaceState(
-                item.material, shaders, resources.textures, device);
-            const bool isSurfaceSkinned =
-                surf && surf->isSurfaceShader && item.bones != nullptr && item.boneCount > 0;
-            if (surf && surf->isSurfaceShader && !isSurfaceSkinned) {
-                f.surfaceOpaqueIdx.push_back(idx);
+    // ---- 描画コマンドの計画 ----
+    // queue.opaque を上から見て、実際に描く単位 (インスタンス run か単発) に畳む。
+    // 従来の描画と GPU オクルージョンの 2 フェーズが同じ列を使うので、スキップ規則はここ 1 箇所
+    gbCmds_.clear();
+    {
+        size_t nextRun = 0;
+        for (size_t idx = 0; idx < queue.opaque.size(); ++idx) {
+            const RenderItem& item = queue.opaque[idx];
+            Material* mat = resources.materials.Get(item.material);
+            Mesh* mesh = resources.meshes.GetDrawable(item.mesh);
+            if (!mat || !mesh) {
                 continue;
             }
-            if (isSurfaceSkinned && skinnedSurfaceWarned_.insert(item.material.value).second) {
-                MYE_LOG_WARN("surface material on skinned mesh is not supported yet - using "
-                             "skinned GBuffer shader (material=0x%llx)",
-                             static_cast<unsigned long long>(item.material.value));
+            // M79 sub-03: shader が "*.surface" のマテリアルは GBuffer に描かず、
+            // 光パス後の専用段 (RenderSurfaceForward) が速度エントリで深度・色・velocity を描く。
+            // スキン+サーフェスは初版未対応 (spec §2) — WARN 1 回だけ出し、下の通常スキン経路へ落ちる
+            {
+                SurfaceMaterialState* surf = resources.materials.GetOrBuildSurfaceState(
+                    item.material, shaders, resources.textures, device);
+                const bool isSurfaceSkinned =
+                    surf && surf->isSurfaceShader && item.bones != nullptr && item.boneCount > 0;
+                if (surf && surf->isSurfaceShader && !isSurfaceSkinned) {
+                    f.surfaceOpaqueIdx.push_back(idx);
+                    continue;
+                }
+                if (isSurfaceSkinned && skinnedSurfaceWarned_.insert(item.material.value).second) {
+                    MYE_LOG_WARN("surface material on skinned mesh is not supported yet - using "
+                                 "skinned GBuffer shader (material=0x%llx)",
+                                 static_cast<unsigned long long>(item.material.value));
+                }
+            }
+            GbufferCmd cmd;
+            cmd.first = idx;
+            cmd.mat = mat;
+            cmd.mesh = mesh;
+            // インスタンス run の先頭なら一括描画 (M38f)
+            if (nextRun < runs_.size() && runs_[nextRun].first == idx) {
+                cmd.run = &runs_[nextRun];
+                cmd.count = runs_[nextRun].count;
+                ++nextRun;
+                idx += cmd.count - 1; // for の ++idx と合わせて run 全体を飛ばす
+            }
+            gbCmds_.push_back(cmd);
+        }
+    }
+
+    // ---- GPU オクルージョンの準備 (viewKey 0 = 履歴の無いビュー、ワイヤーフレーム、失敗後は従来の描画) ----
+    bool occlusion = false;
+    if (view.occlusionEnabled != 0 && !wire && view.depthSRV != nullptr && !gbCmds_.empty()) {
+        occItems_.clear();
+        occCmds_.clear();
+        for (const GbufferCmd& cmd : gbCmds_) {
+            OcclusionCmdIn oc;
+            oc.firstItem = static_cast<uint32_t>(occItems_.size());
+            oc.itemCount = cmd.count;
+            oc.instanceBase = cmd.run ? cmd.run->base : 0u;
+            oc.isInstanced = (cmd.run != nullptr);
+            oc.indexCount = cmd.mesh->indexCount;
+            occCmds_.push_back(oc);
+            for (uint32_t k = 0; k < cmd.count; ++k) {
+                const RenderItem& it = queue.opaque[cmd.first + k];
+                OcclusionItemIn oi;
+                oi.entity = it.entity;
+                oi.alwaysDraw = (it.hasWorldAabb == 0);
+                if (!oi.alwaysDraw) {
+                    oi.bmin[0] = it.worldAabbMin.x;
+                    oi.bmin[1] = it.worldAabbMin.y;
+                    oi.bmin[2] = it.worldAabbMin.z;
+                    oi.bmax[0] = it.worldAabbMax.x;
+                    oi.bmax[1] = it.worldAabbMax.y;
+                    oi.bmax[2] = it.worldAabbMax.z;
+                }
+                occItems_.push_back(oi);
             }
         }
-        // インスタンス run の先頭なら一括描画 (M38f)
-        if (nextRun < runs_.size() && runs_[nextRun].first == idx) {
-            const MeshInstanceRun& run = runs_[nextRun];
-            ++nextRun;
-            if (gbufferInstancedShader_.value != boundGbShader) {
-                dc->IASetInputLayout(gbInstProg->inputLayout.Get());
-                dc->VSSetShader(gbInstProg->vs.Get(), nullptr, 0);
-                dc->PSSetShader(gbInstProg->ps.Get(), nullptr, 0);
-                boundGbShader = gbufferInstancedShader_.value;
+        OcclusionCuller::FrameDesc od;
+        od.viewKey = view.viewKey;
+        od.serial = view.viewFrameIndex;
+        od.width = view.width;
+        od.height = view.height;
+        od.viewProjT = pf.viewProj; // 転置済み (上で積んだ GBuffer と同じジッタ込み)
+        od.worldCount = static_cast<uint32_t>(worlds_.size());
+        occlusion = occlusion_.Begin(device, shaders, od, occItems_, occCmds_);
+    }
+
+    ID3D11Buffer* velCbsDraw[1] = { velocityCB_.Get() };
+    // phase: -1 = 従来 (CPU が数を決めて直接描く) / 0 = フェーズ 1 / 1 = フェーズ 2 (どちらも間接描画)
+    const auto drawGbufferCmds = [&](int phase) {
+        MeshBindState bound;
+        // フェーズ 1 の頭は gbProg を bind 済み。フェーズ 2 は地形が IA/VS/PS を替えた後なので全部張り直す
+        uint64_t boundGbShader = (phase <= 0) ? gbufferShader_.value : 0;
+        if (phase >= 1) {
+            // 地形 (b4 に自前の CB を張る) の後。velocity 用 CB を張り直す
+            dc->VSSetConstantBuffers(4, 1, velCbsDraw);
+            dc->PSSetConstantBuffers(4, 1, velCbsDraw);
+        }
+        for (uint32_t cmdIdx = 0; cmdIdx < static_cast<uint32_t>(gbCmds_.size()); ++cmdIdx) {
+            const GbufferCmd& cmd = gbCmds_[cmdIdx];
+            const RenderItem& item = queue.opaque[cmd.first];
+            Material* mat = cmd.mat;
+            Mesh* mesh = cmd.mesh;
+            if (cmd.run != nullptr) {
+                const MeshInstanceRun& run = *cmd.run;
+                if (gbufferInstancedShader_.value != boundGbShader) {
+                    dc->IASetInputLayout(gbInstProg->inputLayout.Get());
+                    dc->VSSetShader(gbInstProg->vs.Get(), nullptr, 0);
+                    dc->PSSetShader(gbInstProg->ps.Get(), nullptr, 0);
+                    boundGbShader = gbufferInstancedShader_.value;
+                }
+                BindMaterialTextures(dc, resources.textures, *mat, kGBufferNormalSlot, bound);
+                BindMeshBuffers(dc, *mesh, item.mesh, bound);
+                PerObjectCB po = {};
+                po.world = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }; // 未使用
+                po.baseColor = SrgbToLinear(mat->baseColor);
+                po.instanceBase = static_cast<int32_t>(run.base);
+                po.rtReceiver = item.rtReceiver; // run 内は同値 (BuildInstanceRuns が保証)
+                po.remapPlus1 = (phase >= 0)
+                    ? static_cast<int32_t>(occlusion_.RemapRegion(phase) + run.base + 1u)
+                    : 0;
+                UploadCB(dc, perObjectCB_.Get(), po);
+                UploadCB(dc, materialCB_.Get(), MakeMaterialCB(*mat));
+                if (phase >= 0) {
+                    dc->DrawIndexedInstancedIndirect(occlusion_.ArgsBuffer(),
+                                                     occlusion_.ArgsByteOffset(phase, cmdIdx));
+                } else {
+                    dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
+                }
+                if (phase <= 0) {
+                    prof::AddDraw(static_cast<int>(mesh->indexCount / 3 * run.count));
+                }
+                continue;
+            }
+            // スキンメッシュは GBuffer シェーダをスキニング版に差し替え + ボーン CB を b3 に (M18)
+            const bool skinned =
+                (item.bones != nullptr && item.boneCount > 0 && gbSkinnedProg && gbSkinnedProg->valid);
+            const AssetID gbShaderId = skinned ? gbufferSkinnedShader_ : gbufferShader_;
+            if (gbShaderId.value != boundGbShader) {
+                ShaderProgram* gp = skinned ? gbSkinnedProg : gbProg;
+                dc->IASetInputLayout(gp->inputLayout.Get());
+                dc->VSSetShader(gp->vs.Get(), nullptr, 0);
+                dc->PSSetShader(gp->ps.Get(), nullptr, 0);
+                boundGbShader = gbShaderId.value;
+            }
+            if (skinned) {
+                D3D11_MAPPED_SUBRESOURCE bm = {};
+                if (SUCCEEDED(dc->Map(boneCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &bm))) {
+                    memcpy(bm.pData, item.bones,
+                           sizeof(XMFLOAT4X4) * static_cast<size_t>(item.boneCount));
+                    dc->Unmap(boneCB_.Get(), 0);
+                }
+                ID3D11Buffer* bcb = boneCB_.Get();
+                dc->VSSetConstantBuffers(3, 1, &bcb);
             }
             BindMaterialTextures(dc, resources.textures, *mat, kGBufferNormalSlot, bound);
             BindMeshBuffers(dc, *mesh, item.mesh, bound);
             PerObjectCB po = {};
-            po.world = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }; // 未使用
-            po.baseColor = SrgbToLinear(mat->baseColor);
-            po.instanceBase = static_cast<int32_t>(run.base);
-            po.rtReceiver = item.rtReceiver; // run 内は同値 (BuildInstanceRuns が保証)
+            XMStoreFloat4x4(&po.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
+            po.baseColor = SrgbToLinear(mat->baseColor); // M38a: authored 色をリニアへ
+            po.rtReceiver = item.rtReceiver;
             UploadCB(dc, perObjectCB_.Get(), po);
+            // M55c: この描画の「前フレームに実際に描いた world」。b4 の他のフィールドは
+            // フレーム頭で埋めた値をそのまま持ち回る
+            XMStoreFloat4x4(&vel.prevWorld, XMMatrixTranspose(XMLoadFloat4x4(&item.prevWorld)));
+            UploadCB(dc, velocityCB_.Get(), vel);
             UploadCB(dc, materialCB_.Get(), MakeMaterialCB(*mat));
-            dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
-            prof::AddDraw(static_cast<int>(mesh->indexCount / 3 * run.count));
-            idx += run.count - 1; // for の ++idx と合わせて run 全体を飛ばす
-            continue;
-        }
-        // スキンメッシュは GBuffer シェーダをスキニング版に差し替え + ボーン CB を b3 に (M18)
-        const bool skinned =
-            (item.bones != nullptr && item.boneCount > 0 && gbSkinnedProg && gbSkinnedProg->valid);
-        const AssetID gbShaderId = skinned ? gbufferSkinnedShader_ : gbufferShader_;
-        if (gbShaderId.value != boundGbShader) {
-            ShaderProgram* gp = skinned ? gbSkinnedProg : gbProg;
-            dc->IASetInputLayout(gp->inputLayout.Get());
-            dc->VSSetShader(gp->vs.Get(), nullptr, 0);
-            dc->PSSetShader(gp->ps.Get(), nullptr, 0);
-            boundGbShader = gbShaderId.value;
-        }
-        if (skinned) {
-            D3D11_MAPPED_SUBRESOURCE bm = {};
-            if (SUCCEEDED(dc->Map(boneCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &bm))) {
-                memcpy(bm.pData, item.bones,
-                       sizeof(XMFLOAT4X4) * static_cast<size_t>(item.boneCount));
-                dc->Unmap(boneCB_.Get(), 0);
+            if (phase >= 0) {
+                dc->DrawIndexedInstancedIndirect(occlusion_.ArgsBuffer(),
+                                                 occlusion_.ArgsByteOffset(phase, cmdIdx));
+            } else {
+                dc->DrawIndexed(mesh->indexCount, 0, 0);
             }
-            ID3D11Buffer* bcb = boneCB_.Get();
-            dc->VSSetConstantBuffers(3, 1, &bcb);
+            if (phase <= 0) {
+                prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
+            }
         }
-        BindMaterialTextures(dc, resources.textures, *mat, kGBufferNormalSlot, bound);
-        BindMeshBuffers(dc, *mesh, item.mesh, bound);
-        PerObjectCB po = {};
-        XMStoreFloat4x4(&po.world, XMMatrixTranspose(XMLoadFloat4x4(&item.world)));
-        po.baseColor = SrgbToLinear(mat->baseColor); // M38a: authored 色をリニアへ
-        po.rtReceiver = item.rtReceiver;
-        UploadCB(dc, perObjectCB_.Get(), po);
-        // M55c: この描画の「前フレームに実際に描いた world」。b4 の他のフィールドは
-        // フレーム頭で埋めた値をそのまま持ち回る
-        XMStoreFloat4x4(&vel.prevWorld, XMMatrixTranspose(XMLoadFloat4x4(&item.prevWorld)));
-        UploadCB(dc, velocityCB_.Get(), vel);
-        UploadCB(dc, materialCB_.Get(), MakeMaterialCB(*mat));
-        dc->DrawIndexed(mesh->indexCount, 0, 0);
-        prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
-    }
+    };
 
-    // インスタンス SRV を外す (次フレームの Map と競合させない、M38f。M55c で 2 本に)
-    ID3D11ShaderResourceView* nullVsSrvs[2] = {};
-    dc->VSSetShaderResources(0, 2, nullVsSrvs);
-
-    // ---- 1.1) 地形 (M58c): 同じ GBuffer + 同じ深度へ専用シェーダで書く。
+    // 1.1) 地形 (M58c): 同じ GBuffer + 同じ深度へ専用シェーダで書く。
     //      RT / ビューポート / ラスタライザ (Wireframe 込み) / 深度 / ブレンドは
     //      上の設定をそのまま使う。CB は b4 なので b0-b3 は張り替わらない =
     //      この後の透明後段 (forward_lit) は何も張り直さなくてよい。
-    //      地形が無いフレームは TerrainPass が即 return する = 従来とビット一致 ----
-    terrain_.RenderGBuffer(device, shaders, view, resources);
+    //      地形が無いフレームは TerrainPass が即 return する = 従来とビット一致
+    if (!occlusion) {
+        drawGbufferCmds(-1);
+        // インスタンス SRV を外す (次フレームの Map と競合させない、M38f。M55c で 2 本に)
+        ID3D11ShaderResourceView* nullVsSrvs[2] = {};
+        dc->VSSetShaderResources(0, 2, nullVsSrvs);
+        terrain_.RenderGBuffer(device, shaders, view, resources);
+    } else {
+        // ---- 2 フェーズ ----
+        // 1) 前フレームに可視だった項目を描く → 2) 地形も描いてから、その深度で max-Z ピラミッドを作る →
+        // 3) 全項目を判定して、フェーズ 1 で描いていない可視の項目を描く
+        occlusion_.SelectPhase1(device, shaders);
+        ID3D11ShaderResourceView* vsSrvs[3] = { instanceBuf_.SRV(), prevInstanceBuf_.SRV(),
+                                                occlusion_.RemapSRV() };
+        dc->VSSetShaderResources(0, 3, vsSrvs);
+        drawGbufferCmds(0);
+        terrain_.RenderGBuffer(device, shaders, view, resources);
+
+        // CS が深度を SRV で読み、remap を UAV で書くので、RTV/DSV と VS の SRV を先に外す
+        ID3D11ShaderResourceView* nullVsSrvs[3] = {};
+        dc->VSSetShaderResources(0, 3, nullVsSrvs);
+        dc->OMSetRenderTargets(0, nullptr, nullptr);
+        occlusion_.TestPhase2(device, shaders, view.depthSRV);
+        dc->OMSetRenderTargets(5, gbufs, view.dsv);
+        dc->VSSetShaderResources(0, 3, vsSrvs);
+        drawGbufferCmds(1);
+        dc->VSSetShaderResources(0, 3, nullVsSrvs);
+    }
 
     // Wireframe (M40b) は GBuffer パスのみ — フルスクリーン解決系は solid に戻す
     if (wire) {

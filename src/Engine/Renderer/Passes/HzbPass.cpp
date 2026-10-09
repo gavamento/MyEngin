@@ -64,9 +64,10 @@ void HzbReduceSpan(int dstIndex, int srcExtent, int dstExtent, int& begin, int& 
     }
 }
 
-bool HzbPass::Init(GraphicsDevice& device, ShaderManager& shaders)
+bool HzbPass::Init(GraphicsDevice& device, ShaderManager& shaders, HzbReduceOp op)
 {
-    reduceCS_ = shaders.LoadCompute("hzb_reduce.cs");
+    // max 版は hzb_reduce.cs.hlsl を #include して MYE_HZB_MAX を立てただけのシェーダ
+    reduceCS_ = shaders.LoadCompute((op == HzbReduceOp::Max) ? "hzb_reduce_max.cs" : "hzb_reduce.cs");
     if (!CreateConstant(device.Device(), sizeof(HzbCB), cb_)) {
         return false;
     }

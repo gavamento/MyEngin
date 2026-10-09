@@ -5,6 +5,7 @@
 
 #include "Engine/Renderer/Device/GpuTimer.h"
 #include "Engine/Renderer/Passes/HzbPass.h"
+#include "Engine/Renderer/Passes/OcclusionCullPass.h"
 #include "Engine/Renderer/Mesh/MeshInstancing.h"
 #include "Engine/Renderer/Pipeline/RenderPath.h"
 #include "Engine/Renderer/Device/RenderTexture.h"
@@ -41,6 +42,12 @@ public:
     float HzbGpuMs() const override { return hzb_.GpuMs(); }
     // M90a: GBuffer への不透明 + 地形の書き込みの GPU 時間
     float GbufferGpuMs() const override { return gbufferTimer_.Milliseconds(); }
+    // GPU オクルージョンの判定 + max-Z ピラミッド構築の GPU 時間 (フェーズ 1/2 の描画は含まない)
+    float OcclusionGpuMs() const override { return occlusion_.GpuMs(); }
+    // selftest 用: オクルージョンのリソース作成失敗を模擬する (描画は従来の経路で続く)
+    void InjectOcclusionFailureForTest(bool on) { occlusion_.InjectCreateFailureForTest(on); }
+    bool OcclusionDisabled() const { return occlusion_.IsDisabled(); }
+    OcclusionStats OcclusionStatsForTest(uint32_t viewKey) const { return occlusion_.Stats(viewKey); }
     // M56d: SSR (コピー + 階層 Z トレース + 加算合成) の GPU 時間。同上
     float SsrGpuMs() const override { return ssr_.GpuMs(); }
     // M57d: 光パス (t15) で不透明ピクセルへ合成する。背景ピクセルと透明後段
@@ -90,6 +97,21 @@ private:
                                     RenderResources& resources, const RenderView& view);
     void RenderDebugViews(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
                           DeferredFrame& f); // 4) - 6)
+
+    // GBuffer へ描く単位 1 個 = インスタンス run 1 本、または単発 1 個。RenderGeometry が
+    // queue.opaque から組み、従来の描画と 2 フェーズの描画が同じ列を使う
+    struct GbufferCmd {
+        size_t first = 0;               // queue.opaque の先頭項目
+        uint32_t count = 1;             // 項目数 (run なら run.count)
+        const MeshInstanceRun* run = nullptr; // null = 単発
+        Material* mat = nullptr;
+        Mesh* mesh = nullptr;
+    };
+    std::vector<GbufferCmd> gbCmds_; // フレーム毎スクラッチ
+    // GPU オクルージョン (2 フェーズ)。viewKey ごとの履歴を内部に持つ
+    OcclusionCuller occlusion_;
+    std::vector<OcclusionItemIn> occItems_; // フレーム毎スクラッチ
+    std::vector<OcclusionCmdIn> occCmds_;
 
     GpuTimer gbufferTimer_; // M90a: RenderGeometry の GPU 時間
     RenderTexture gbAlbedo_;   // a=1 でジオメトリ有りマーク

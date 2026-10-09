@@ -1221,6 +1221,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             // 描画専用トグル (M40d)。sim/hash 非影響
             ImGui::MenuItem(Tr(StrId::Menu_Ssao), nullptr, &ctx.renderSystem->enableSsao);
             ImGui::MenuItem(Tr(StrId::Menu_GpuInstancing), nullptr, &ctx.renderSystem->enableInstancing);
+            ImGui::MenuItem(Tr(StrId::Menu_Occlusion), nullptr, &ctx.renderSystem->enableOcclusionCulling);
             ImGui::MenuItem(Tr(StrId::Menu_PostFx), nullptr, &ctx.renderSystem->enablePostFx);
             // M46f: レイトレ拡散 GI を最終画像へ合成。off なら BVH の構築すら走らない。
             // 品質パラメータ (解像度/バウンス/蓄積/SVGF) は RT Debug メニュー側と共通

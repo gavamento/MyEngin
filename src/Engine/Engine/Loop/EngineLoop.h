@@ -112,6 +112,13 @@ struct EngineConfig {
     // Deferred パスのみ効く。**0 のときはピラミッドを組みもしない** (--ssr が on なら組む)。
     // 「本当に段が積めているか」を直接見る目視口
     int hzbDebug = 0;
+    // GPU オクルージョンカリング (--no-occlusion で off)。Deferred の不透明のみ。
+    // 描かれる画素は off と同じで、A/B 比較 (img-diff) と原因の切り分け用
+    bool occlusionCulling = true;
+    // --render-bench-cut-frame N: このフレーム以降、描画側のカメラ上書きでカメラを別の位置へ切り替える
+    // (render_bench の検証用。sim には触れない)。負 = 切り替えない。
+    // カット直後のフレームでオクルージョンの履歴が全部外れても欠けないことの確認に使う
+    int64_t renderBenchCutFrame = -1;
     // M56d: SSR (--ssr)。**Deferred のみ** (GBuffer と HZB が前提)。
     // シーンカメラに CameraPostFx があればそちらの ssrOn が勝つ (TAA と同じ規則)。
     // on にすると HZB (min-Z ピラミッド) も一緒に組まれる

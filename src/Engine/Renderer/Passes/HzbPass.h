@@ -33,9 +33,14 @@ class ShaderManager;
 // `common.hlsli` の共有 `LinearizeDepth` を near/far と一緒に呼べばよい。
 // **min を取る向きが正しいのは深度が「小さいほど手前」だから** (このリポジトリは reversed-Z を
 // 使っていない。全 `ClearDepthStencilView` が 1.0 でクリアしているのが根拠)。
+// 縮小の演算。Min = SSR 用 (最も手前)、Max = GPU オクルージョン用 (最も奥)。
+// 段の作り方 (HzbReduceSpan の分割規則、3 テクセル読みの重なり) は同じで、重なっても結果が
+// 変わらないのは min も max も同じ
+enum class HzbReduceOp { Min, Max };
+
 class HzbPass {
 public:
-    bool Init(GraphicsDevice& device, ShaderManager& shaders);
+    bool Init(GraphicsDevice& device, ShaderManager& shaders, HzbReduceOp op = HzbReduceOp::Min);
     void Shutdown();
 
     // depthSRV から min-Z ピラミッドを 1 段ずつ作る。
@@ -47,6 +52,8 @@ public:
 
     // ピラミッド全段の SRV (null = まだ 1 度も作れていない)
     ID3D11ShaderResourceView* SRV() const { return srv_.Get(); }
+    // ピラミッド本体 (selftest の読み戻し用)
+    ID3D11Texture2D* Texture() const { return tex_.Get(); }
     int Width() const { return width_; }
     int Height() const { return height_; }
     int MipCount() const { return mipCount_; }

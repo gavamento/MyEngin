@@ -49,6 +49,15 @@ void CSMain(uint3 dt : SV_DispatchThreadID)
     HzbSpan(dt.x, gHzbSrcSize.x, gHzbDstSize.x, x0, x1);
     HzbSpan(dt.y, gHzbSrcSize.y, gHzbDstSize.y, y0, y1);
 
+#ifdef MYE_HZB_MAX
+    // max 版 (GPU オクルージョン用)。初期値 0.0 = 最手前。深度は [0,1] なので、どの入力を読んでも必ず上回るか等しい
+    float m = 0.0f;
+    for (uint y = y0; y <= y1; ++y) {
+        for (uint x = x0; x <= x1; ++x) {
+            m = max(m, gHzbSrc.Load(int3(int(x), int(y), 0)));
+        }
+    }
+#else
     // 初期値 1.0 = 最遠。深度は [0,1] なので、どの入力を読んでも必ず下回るか等しい
     float m = 1.0f;
     for (uint y = y0; y <= y1; ++y) {
@@ -56,5 +65,6 @@ void CSMain(uint3 dt : SV_DispatchThreadID)
             m = min(m, gHzbSrc.Load(int3(int(x), int(y), 0)));
         }
     }
+#endif
     gHzbDst[dt.xy] = m;
 }

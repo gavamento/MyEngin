@@ -22,7 +22,9 @@ struct PerObjectCB {
     // ★PerObjectCB は `po = {}` で作られるので既定は 0 — GBuffer へ描く 3 か所は必ず
     //   RenderItem::rtReceiver を明示的に入れること (入れ忘れると RT が全部の面で消える)
     float rtReceiver;
-    float instPad[2];
+    // GPU オクルージョン (deferred_gbuffer_instanced.hlsl のみ読む)。0 = 無効、N = remap の N-1 番から
+    int32_t remapPlus1;
+    float instPad;
 };
 
 // forward_lit.hlsl / deferred_gbuffer.hlsl の MaterialParams (b2) と一致 (16 バイト)

@@ -82,6 +82,7 @@ RenderStatsDump CollectRenderStatsDump(const RenderSystem& renderSystem, uint64_
     d.frameMs = renderSystem.FrameGpuMs();
     d.gbufferMs = renderSystem.GbufferGpuMs();
     d.forwardOpaqueMs = renderSystem.ForwardOpaqueGpuMs();
+    d.occlusionMs = renderSystem.OcclusionGpuMs();
     d.csmMs = renderSystem.ShadowCsmGpuMs();
     d.atlasMs = renderSystem.ShadowAtlasGpuMs();
     d.hzbMs = renderSystem.HzbGpuMs();
@@ -128,6 +129,7 @@ std::string FormatRenderStatsJson(const RenderStatsDump& dump)
     AppendF(out, "    \"frame\": %.4f,\n", static_cast<double>(dump.frameMs));
     AppendF(out, "    \"gbuffer\": %.4f,\n", static_cast<double>(dump.gbufferMs));
     AppendF(out, "    \"forwardOpaque\": %.4f,\n", static_cast<double>(dump.forwardOpaqueMs));
+    AppendF(out, "    \"occlusion\": %.4f,\n", static_cast<double>(dump.occlusionMs));
     AppendF(out, "    \"csm\": %.4f,\n", static_cast<double>(dump.csmMs));
     AppendF(out, "    \"shadowAtlas\": %.4f,\n", static_cast<double>(dump.atlasMs));
     AppendF(out, "    \"hzb\": %.4f,\n", static_cast<double>(dump.hzbMs));

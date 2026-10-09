@@ -590,6 +590,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     ssrGpuMs_ = path.SsrGpuMs(); // M56d (同上)
     gbufferGpuMs_ = path.GbufferGpuMs();             // M90a (同上)
     forwardOpaqueGpuMs_ = path.ForwardOpaqueGpuMs(); // M90a (同上)
+    occlusionGpuMs_ = path.OcclusionGpuMs();         // (同上)
 
     DrawParticlesAndDebug(world, device, shaders, resources, target, cameraOverride, particles, vfx, f);
     ResolvePost(world, device, shaders, resources, path, target, cameraOverride, f);
@@ -1295,19 +1296,25 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         if (mat && mat->transparent != 0) {
             queue_.transparent.push_back(item);
         } else {
-            queue_.opaque.push_back(item);
             if (c.meshPtr) {
                 XMFLOAT3 wmin, wmax;
                 // M79 sub-06: 影のキャスターはこのカリング済みキューから取るので、
                 // CSM のフィット AABB もカリングと同じ余白で広げる。0 のときは従来と同じ AABB
                 WorldAabb(c.world, c.meshPtr->aabbMin, c.meshPtr->aabbMax, wmin, wmax,
                          c.boundsPadding);
+                // GPU オクルージョンの判定箱。スキンは姿勢が AABB に収まる保証が無いので載せない (常に描く)
+                if (c.skinned == 0) {
+                    item.worldAabbMin = wmin;
+                    item.worldAabbMax = wmax;
+                    item.hasWorldAabb = 1;
+                }
                 sceneMin = { std::min(sceneMin.x, wmin.x), std::min(sceneMin.y, wmin.y),
                              std::min(sceneMin.z, wmin.z) };
                 sceneMax = { std::max(sceneMax.x, wmax.x), std::max(sceneMax.y, wmax.y),
                              std::max(sceneMax.z, wmax.z) };
                 hasScene = true;
             }
+            queue_.opaque.push_back(item);
         }
     }
     prof::AddCulled(culledCount);
@@ -1461,6 +1468,8 @@ void RenderSystem::PrepareEnvironment(World& world, GraphicsDevice& device, Shad
     SceneLightData& lights = f.lights;
     view.ssaoEnabled = enableSsao ? 1 : 0; // M38e (Deferred のみ消費)
     view.instancingEnabled = enableInstancing ? 1 : 0; // M38f
+    // GPU オクルージョン (Deferred の不透明のみ)。viewKey 0 (AssetPreview) は履歴を持たないので常に off
+    view.occlusionEnabled = (enableOcclusionCulling && target.viewKey > 0 && target.viewKey < 4) ? 1 : 0;
     view.velocityDebug = velocityDebugMode;            // M55c (Deferred のみ消費)
     view.hzbDebug = hzbDebugMip;                       // M56c (Deferred のみ消費)
     view.ssrEnabled = enableSsr ? 1 : 0;               // M56d (Deferred のみ消費)

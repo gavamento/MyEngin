@@ -379,6 +379,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.rtDebugMode = config.rtDebugMode; // M46b (--rt-debug N、Deferred のみ)
     renderSystem.velocityDebugMode = config.velocityDebug; // M55c (--velocity-debug)
     renderSystem.hzbDebugMip = config.hzbDebug;            // M56c (--hzb-debug N)
+    renderSystem.enableOcclusionCulling = config.occlusionCulling; // --no-occlusion
     renderSystem.enableSsr = config.ssr;                   // M56d (--ssr、Deferred のみ)
     renderSystem.rtTemporal = config.rtTemporal;   // M46d (--rt-no-temporal / --rt-freeze-seed)
     renderSystem.rtFreezeSeed = config.rtFreezeSeed;
@@ -2961,8 +2962,27 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             target.dsvReadOnly = swapChain.DepthDSVReadOnly();
             target.viewKey = 1; // runtime バックバッファ
             if (config.renderSceneToBackbuffer) {
+                // --render-bench-cut-frame: 指定フレーム以降、描画側だけカメラを横へ飛ばす (検証用)。
+                // 壁の裏にあった物が急に見える = オクルージョンの履歴が全部外れるカメラカット。
+                // CameraOverride は描画だけの上書きで、シーンのカメラ (sim) には触れない
+                CameraOverride benchCut;
+                const CameraOverride* cutOverride = nullptr;
+                if (config.renderBenchCutFrame >= 0
+                    && ctx.frameIndex >= static_cast<uint64_t>(config.renderBenchCutFrame)) {
+                    // render_bench の壁 (z=15) の裏のグリッドを、右手前の斜めから見る位置
+                    const DirectX::XMVECTOR eye = DirectX::XMVectorSet(45.0f, 8.0f, 35.0f, 1.0f);
+                    const DirectX::XMVECTOR at = DirectX::XMVectorSet(0.0f, 2.0f, 70.0f, 1.0f);
+                    DirectX::XMStoreFloat4x4(
+                        &benchCut.view,
+                        DirectX::XMMatrixLookAtLH(eye, at, DirectX::XMVectorSet(0, 1, 0, 0)));
+                    DirectX::XMStoreFloat3(&benchCut.position, eye);
+                    benchCut.fovYDeg = 60.0f;
+                    benchCut.nearZ = 0.1f;
+                    benchCut.farZ = 400.0f;
+                    cutOverride = &benchCut;
+                }
                 renderSystem.Render(scene.GetWorld(), device, *activePath, shaderManager, resources,
-                                    target, nullptr, &particleSystem, &vfxRenderer);
+                                    target, cutOverride, &particleSystem, &vfxRenderer);
                 // M21: ゲーム内 UI を backbuffer に重ねる (Runtime 経路)。マウスは hover 表示用。
                 // ワールド追従 UI は直近 Render のカメラ (補間済み・ジッタ無し) + prevWorld で
                 // 3D パスと同じ絵の位置に射影する

@@ -85,6 +85,7 @@ MYE_STR(Menu_Rendering,       "Rendering",         "レンダリング")
 MYE_STR(Menu_Shadows,         "Shadows",           "影")
 MYE_STR(Menu_Ssao,            "SSAO (Deferred)",   "SSAO (Deferred)")
 MYE_STR(Menu_GpuInstancing,   "GPU Instancing",    "GPU インスタンシング")
+MYE_STR(Menu_Occlusion,       "GPU Occlusion Culling (Deferred)", "GPU オクルージョンカリング (Deferred)")
 MYE_STR(Menu_PostFx,          "Post FX",           "ポストエフェクト")
 MYE_STR(Menu_RtGi,            "RT GI (Deferred)",  "RT GI (Deferred)")
 MYE_STR(Menu_RtShadow,        "RT Shadow (Deferred)",     "RT 影 (Deferred)")
@@ -313,8 +314,10 @@ MYE_STR(Prof_Particles,       "particles:",                   "パーティク�
 MYE_STR(Prof_ScopesHeader,    "CPU scopes (this frame):",     "CPU スコープ (今フレーム):")
 MYE_STR(Prof_Draw,            "render: %d draw calls, %d tris, %d culled",
                               "描画: %d ドローコール / %d 三角形 / %d カリング")
-MYE_STR(Prof_GpuStages,       "gpu: frame %6.3f ms / gbuffer %6.3f ms / forward opaque %6.3f ms (GpuTimer)",
-                              "GPU: フレーム %6.3f ms / GBuffer %6.3f ms / Forward 不透明 %6.3f ms (GpuTimer)")
+MYE_STR(Prof_GpuStages,       "gpu: render (last view) %6.3f ms / gbuffer %6.3f ms / forward opaque %6.3f ms (GpuTimer)",
+                              "GPU: Render (最後のビュー) %6.3f ms / GBuffer %6.3f ms / Forward 不透明 %6.3f ms (GpuTimer)")
+MYE_STR(Prof_Occlusion,       "  occlusion: %6.3f ms (GpuTimer, cull + max-Z pyramid) phase1 %d / phase2 %d / occluded %d",
+                              "  オクルージョン: %6.3f ms (GpuTimer、判定 + max-Z ピラミッド) フェーズ1 %d / フェーズ2 %d / 隠れた物 %d")
 MYE_STR(Prof_ShadowDraw,      "shadow: %d draw calls, %d tris (csm cascades %d / %d / %d)",
                               "影: %d ドローコール / %d 三角形 (CSM カスケード別 %d / %d / %d)")
 MYE_STR(Prof_ViewStats,       "  view %u: %d draw calls, %d tris, %d culled, %d shadow draws, %d shadow tris",

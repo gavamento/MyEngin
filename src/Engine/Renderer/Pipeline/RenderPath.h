@@ -42,6 +42,8 @@ public:
     // 計測だけの口 (絵にも sim にも影響しない)
     virtual float GbufferGpuMs() const { return 0.0f; }
     virtual float ForwardOpaqueGpuMs() const { return 0.0f; }
+    // GPU オクルージョンの判定 + max-Z ピラミッド構築の GPU 時間 [ms]。走らせないパス / フレームは 0
+    virtual float OcclusionGpuMs() const { return 0.0f; }
 
     // ---- M56d: SSR ----
     // 直近の Render で SSR に掛かった GPU 時間 [ms]。走らせないパス / フレームは 0。

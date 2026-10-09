@@ -17,7 +17,8 @@ cbuffer PerObject : register(b1)
     // ---- インスタンシング (M38f、末尾 append) ----
     int      gInstanceBase; // gInstances 内の run 開始位置
     float    gRtReceiver;   // 汎用タグ: RT を受けるか (run 内は同値。BuildInstanceRuns が保証)
-    float2   _instPad;
+    int      gRemapPlus1;   // GPU オクルージョン: 0 = 無効 / N = gRemap の N-1 番から run の可視インスタンスの添字
+    float    _instPad;
 };
 
 cbuffer MaterialParams : register(b2)
@@ -37,6 +38,9 @@ StructuredBuffer<MeshInstance> gInstances : register(t0); // VS 側 (PS の t0 �
 // M55c: 前フレームに実際に描いた world 行列。gInstances と**同じ添字**で引く
 // (DeferredPath が runs_ の順序どおりに同じ長さで積むので base/instId がそのまま通る)
 StructuredBuffer<MeshInstance> gPrevInstances : register(t1); // VS 側
+// GPU オクルージョン (occlusion_cull.cs.hlsl) が詰めた「描くインスタンスの添字」。
+// gRemapPlus1 == 0 のフレームは読まない (添字は gInstanceBase + SV_InstanceID のまま = 従来と同一)
+StructuredBuffer<uint> gRemap : register(t2); // VS 側
 
 // M55c: 画面速度 (GBuffer RT4) 用。詳細は deferred_gbuffer.hlsl と同じ。
 // インスタンス版は gPrevWorld を使わない (行列は gPrevInstances から引く)
@@ -74,14 +78,16 @@ struct VSOut
 VSOut VSMain(VSIn v)
 {
     VSOut o;
-    const float4x4 world = gInstances[gInstanceBase + v.instId].world;
+    const uint instIndex = (gRemapPlus1 > 0) ? gRemap[(uint)(gRemapPlus1 - 1) + v.instId]
+                                             : (uint)gInstanceBase + v.instId;
+    const float4x4 world = gInstances[instIndex].world;
     const float4 posW = mul(float4(v.pos, 1.0f), world);
     o.pos = mul(posW, gViewProj);
     o.normalW = normalize(mul(v.normal, (float3x3)world));
     o.uv = v.uv;
     o.posW = posW.xyz;
     o.curClip = o.pos;
-    const float4x4 prevWorld = gPrevInstances[gInstanceBase + v.instId].world;
+    const float4x4 prevWorld = gPrevInstances[instIndex].world;
     o.prevClip = mul(mul(float4(v.pos, 1.0f), prevWorld), gPrevViewProj);
     return o;
 }

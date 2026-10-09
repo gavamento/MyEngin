@@ -37,6 +37,7 @@
 #include "Editor/SelfTest/TerrainSelfTest.h"
 #include "Editor/SelfTest/DecalSelfTest.h"
 #include "Editor/SelfTest/HzbSelfTest.h"
+#include "Engine/Renderer/Passes/OcclusionSelfTest.h"
 #include "Editor/SelfTest/SsrSelfTest.h"
 #include "Editor/SourceControl/SourceControlSelfTest.h"
 #include "Editor/SelfTest/ProbeBakerSelfTest.h"
@@ -623,6 +624,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunDeviceLostRescueSelfTest();          // M88a: デバイス消失時の退避保存
         ok &= mye::RunDeviceRecoverySelfTest();            // M88b: 復旧の連続消失制限と旧デバイス参照数ゲート
         ok &= mye::RunRenderStatsSelfTest();               // M90a: 描画統計のビュー別集計と JSON ダンプ
+        ok &= mye::RunOcclusionSelfTest();                 // M90b: GPU オクルージョン (max-Z HZB・保守的判定・ON/OFF 画素一致)
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }

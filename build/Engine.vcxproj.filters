@@ -966,6 +966,12 @@
     <ClCompile Include="..\src\Engine\Renderer\Passes\NavFillPass.cpp">
       <Filter>Renderer\Passes</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\OcclusionCullPass.cpp">
+      <Filter>Renderer\Passes</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\OcclusionSelfTest.cpp">
+      <Filter>Renderer\Passes</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Passes\PickingPass.cpp">
       <Filter>Renderer\Passes</Filter>
     </ClCompile>
@@ -1882,6 +1888,15 @@
       <Filter>Renderer\Passes</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Passes\NavFillPass.h">
+      <Filter>Renderer\Passes</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\OcclusionCullPass.h">
+      <Filter>Renderer\Passes</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\OcclusionMath.h">
+      <Filter>Renderer\Passes</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\OcclusionSelfTest.h">
       <Filter>Renderer\Passes</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Passes\PickingPass.h">

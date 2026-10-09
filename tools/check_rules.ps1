@@ -300,6 +300,30 @@ $constGroups = @(
         }
     }
     @{
+        # GPU オクルージョンの判定 CS の定数。スレッドグループ辺長 (prefix sum の配列長でもある)・
+        # 深度の甘さ・矩形の余白が C++ の CPU 鏡と食い違うと、selftest は通るのに GPU だけが
+        # 別の判定をする (隠れていない物を落とす = 描画の欠け)
+        label = 'occlusion::kThreadGroupSize / MYE_OCC_TG'
+        sites = @{
+            'src\Engine\Renderer\Passes\OcclusionMath.h' = 'constexpr\s+int\s+kThreadGroupSize\s*=\s*(\d+)'
+            'assets\shaders\occlusion_cull.cs.hlsl'      = '#\s*define\s+MYE_OCC_TG\s+(\d+)'
+        }
+    },
+    @{
+        label = 'occlusion::kDepthBiasSteps / MYE_OCC_BIAS_STEPS'
+        sites = @{
+            'src\Engine\Renderer\Passes\OcclusionMath.h' = 'constexpr\s+int\s+kDepthBiasSteps\s*=\s*(\d+)'
+            'assets\shaders\occlusion_cull.cs.hlsl'      = '#\s*define\s+MYE_OCC_BIAS_STEPS\s+(\d+)'
+        }
+    },
+    @{
+        label = 'occlusion::kRectMarginPx / MYE_OCC_MARGIN_PX'
+        sites = @{
+            'src\Engine\Renderer\Passes\OcclusionMath.h' = 'constexpr\s+int\s+kRectMarginPx\s*=\s*(\d+)'
+            'assets\shaders\occlusion_cull.cs.hlsl'      = '#\s*define\s+MYE_OCC_MARGIN_PX\s+(\d+)'
+        }
+    },
+    @{
         # M56d: SSR の光線 1 本あたりの最大反復回数。C++ 側は SsrSelfTest が上限の妥当性を
         # 見るためだけに持っているが、食い違うと **HLSL 側だけが本当の予算**になり、
         # 「反射が途中で切れる」形でしか現れない (絵は普通に出る) ので機械照合しておく

@@ -131,6 +131,9 @@ public:
     bool enableLocalShadows = true;
     bool enableSsao = true;    // SSAO (M38e、Deferred パスのみ効く)
     bool enableInstancing = true; // メッシュ GPU インスタンシング (M38f、A/B 比較用トグル)
+    // GPU オクルージョンカリング (Deferred の不透明のみ。viewKey 0 は常に off)。
+    // 描かれる画素は off と同じで、見えない物を GPU が描かないだけ。CLI は --no-occlusion
+    bool enableOcclusionCulling = true;
 
     // 描画補間 (M36b)。EngineLoop が毎フレーム設定する。1.0 = 補間なし (従来描画)。
     // 対象はカメラ + メッシュ収集のワールド行列 (パーティクル/スプライト/UI は対象外)
@@ -266,6 +269,8 @@ public:
     // Render 1 回 (影・本描画・ポスト・パーティクルまで) の GPU 時間。同上の規約
     float GbufferGpuMs() const { return gbufferGpuMs_; }
     float ForwardOpaqueGpuMs() const { return forwardOpaqueGpuMs_; }
+    // GPU オクルージョンの判定 + max-Z ピラミッド構築 (フェーズ 1/2 の描画は GBuffer 側に入る)
+    float OcclusionGpuMs() const { return occlusionGpuMs_; }
     float FrameGpuMs() const { return frameTimer_.Milliseconds(); }
     // M46b: レイトレの統計 (ProfilerWindow 表示用)
     float RtDebugGpuMs() const { return rtPasses_.DebugGpuMs(); }
@@ -374,6 +379,7 @@ private:
     // M90a: 同上 (パス側の計測を写す) と、Render 全体の計測
     float gbufferGpuMs_ = 0.0f;
     float forwardOpaqueGpuMs_ = 0.0f;
+    float occlusionGpuMs_ = 0.0f;
     GpuTimer frameTimer_;
     bool frameTimerInit_ = false; // 遅延 Init 済みか (ReleaseGpu で戻す)
 

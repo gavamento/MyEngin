@@ -53,6 +53,12 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
         // M90a: 不透明の本描画とフレーム全体 (走らせないパスの欄は 0.000)
         ImGui::Text(Tr(StrId::Prof_GpuStages), ctx.renderSystem->FrameGpuMs(),
                     ctx.renderSystem->GbufferGpuMs(), ctx.renderSystem->ForwardOpaqueGpuMs());
+        // GPU オクルージョン (Deferred。判定 + max-Z ピラミッド。件数は GPU が数えた 2 フレーム遅れの値の和)
+        if (ctx.renderSystem->enableOcclusionCulling) {
+            const prof::RenderStats all = prof::GetRenderStats();
+            ImGui::Text(Tr(StrId::Prof_Occlusion), ctx.renderSystem->OcclusionGpuMs(),
+                        all.occlusionPhase1Draws, all.occlusionPhase2Draws, all.occluded);
+        }
         // M54d: 影 (csm = 平行光 3 カスケード / atlas = 局所ライトのタイル)。
         // 点光源 1 本 = 6 タイルなので、tiles と draws がアトラスの重さの実体。
         // culled はタイル毎の視錐台カリングで省いた draw と、シーン AABB に触れない面の数

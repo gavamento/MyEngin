@@ -30,6 +30,7 @@ struct RenderStatsDump {
     float frameMs = 0.0f;
     float gbufferMs = 0.0f;
     float forwardOpaqueMs = 0.0f;
+    float occlusionMs = 0.0f;
     float csmMs = 0.0f;
     float atlasMs = 0.0f;
     float hzbMs = 0.0f;

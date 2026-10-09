@@ -250,6 +250,12 @@ bool RunEngineCliSelfTest()
     check(r.consumed == 1 && r.config.postFxMotionBlur == 0.25f, "--motion-blur F");
     r = RunParse({ L"--rt-debug", L"12", L"--hzb-debug", L"3" });
     check(r.consumed == 2 && r.config.rtDebugMode == 12 && r.config.hzbDebug == 3, "--rt-debug N / --hzb-debug N");
+    r = RunParse({ L"--no-occlusion", L"--render-bench-cut-frame", L"40" });
+    check(r.consumed == 2 && !r.config.occlusionCulling && r.config.renderBenchCutFrame == 40,
+          "--no-occlusion / --render-bench-cut-frame N");
+    r = RunParse({});
+    check(r.config.occlusionCulling && r.config.renderBenchCutFrame < 0,
+          "occlusion culling is on and the camera cut is off by default");
     r = RunParse({ L"--probe-bake", L"1,2,3" });
     check(r.consumed == 1 && r.config.probeBake && r.config.probeBakePos[0] == 1.0f
               && r.config.probeBakePos[1] == 2.0f && r.config.probeBakePos[2] == 3.0f,
