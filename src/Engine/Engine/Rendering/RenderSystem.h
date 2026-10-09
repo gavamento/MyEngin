@@ -131,7 +131,7 @@ public:
     bool enableLocalShadows = true;
     bool enableSsao = true;    // SSAO (M38e、Deferred パスのみ効く)
     bool enableInstancing = true; // メッシュ GPU インスタンシング (M38f、A/B 比較用トグル)
-    // GPU オクルージョンカリング (Deferred の不透明のみ。viewKey 0 は常に off)。
+    // GPU オクルージョンカリング (Deferred / Forward の不透明のみ。viewKey 0 は常に off)。
     // 描かれる画素は off と同じで、見えない物を GPU が描かないだけ。CLI は --no-occlusion
     bool enableOcclusionCulling = true;
 
@@ -216,6 +216,9 @@ public:
     // 0 = off / N = ミップ N-1 を表示。Deferred のみ。**0 のときはピラミッドを組みもしない** —
     // ただし下の enableSsr でも組まれる (SSR が HZB を読む)
     int hzbDebugMip = 0;
+    // --hzb-debug-max: hzbDebugMip の表示を min-Z ではなくオクルージョン用 max-Z にし、
+    // GPU 判定で隠れた物の AABB も重ねる (Deferred / Forward)。hzbDebugMip != 0 のときだけ効く
+    bool hzbDebugMax = false;
     // M56d: SSR (スクリーンスペース反射、--ssr / Rendering メニュー)。**Deferred のみ**。
     // シーンカメラに CameraPostFx があればそちらの ssrOn が勝つ (TAA と同じ規則)。
     // true にすると HZB も一緒に組まれる — SSR にとって唯一の加速構造なので

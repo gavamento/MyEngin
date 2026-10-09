@@ -960,6 +960,9 @@
     <ClCompile Include="..\src\Engine\Renderer\Passes\GhostMeshPass.cpp">
       <Filter>Renderer\Passes</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\HzbDebugPass.cpp">
+      <Filter>Renderer\Passes</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Passes\HzbPass.cpp">
       <Filter>Renderer\Passes</Filter>
     </ClCompile>
@@ -1882,6 +1885,9 @@
       <Filter>Renderer\Passes</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Passes\GhostMeshPass.h">
+      <Filter>Renderer\Passes</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\HzbDebugPass.h">
       <Filter>Renderer\Passes</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Passes\HzbPass.h">

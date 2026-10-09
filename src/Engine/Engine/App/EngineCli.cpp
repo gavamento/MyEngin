@@ -295,6 +295,7 @@ const CliFlag kEngineCliFlags[] = {
     { L"--velocity-debug", CliValue::None, [](CliArgs& a) { a.c.velocityDebug = 1; return true; } },
     { L"--hzb-debug", CliValue::One, [](CliArgs& a) { a.c.hzbDebug = _wtoi(a.v1); return true; } },
     // GPU オクルージョンの切り替えと、render_bench のカメラカット (描画側の上書きだけ。sim には触れない)
+    { L"--hzb-debug-max", CliValue::None, [](CliArgs& a) { a.c.hzbDebugMax = true; return true; } },
     { L"--no-occlusion", CliValue::None, [](CliArgs& a) { a.c.occlusionCulling = false; return true; } },
     { L"--render-bench-cut-frame", CliValue::One,
       [](CliArgs& a) { a.c.renderBenchCutFrame = _wtoi64(a.v1); return true; } },

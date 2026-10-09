@@ -109,10 +109,12 @@ struct EngineConfig {
     // Deferred パスのみ効く。velocity の中身を直接見る目視口
     int velocityDebug = 0;
     // M56c: HZB (min-Z ピラミッド) の可視化 (--hzb-debug N)。0=off / N=ミップ N-1 を表示。
-    // Deferred パスのみ効く。**0 のときはピラミッドを組みもしない** (--ssr が on なら組む)。
+    // min-Z 表示は Deferred のみ (--hzb-debug-max の max-Z 表示は Forward でも出る)。**0 のときはピラミッドを組みもしない** (--ssr が on なら組む)。
     // 「本当に段が積めているか」を直接見る目視口
     int hzbDebug = 0;
-    // GPU オクルージョンカリング (--no-occlusion で off)。Deferred の不透明のみ。
+    // --hzb-debug-max: hzbDebug の表示をオクルージョン用 max-Z + 隠れた物の AABB にする
+    bool hzbDebugMax = false;
+    // GPU オクルージョンカリング (--no-occlusion で off)。Deferred / Forward の不透明 (影・半透明は対象外)。
     // 描かれる画素は off と同じで、A/B 比較 (img-diff) と原因の切り分け用
     bool occlusionCulling = true;
     // --render-bench-cut-frame N: このフレーム以降、描画側のカメラ上書きでカメラを別の位置へ切り替える

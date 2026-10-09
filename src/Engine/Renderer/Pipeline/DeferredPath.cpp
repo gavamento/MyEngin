@@ -198,21 +198,6 @@ struct VelocityDebugCB {
 // 静止した床/柱/背景は灰のまま、という絵になる。デバッグ表示専用 (絵には影響しない)
 constexpr float kVelocityDebugPxRange = 1.0f;
 
-// M56c: debug_hzb.hlsl の HzbDebugCB と同一レイアウト
-struct HzbDebugCB {
-    float dstSize[2];
-    float mipSize[2];
-    float nearZ;
-    float farZ;
-    float range;
-    float mip;
-};
-
-// M56c: HZB 可視化が黒に振り切る距離 [world]。--render-demo のカメラは原点から約 18.6 の
-// 位置にいて床の奥行きがその倍ほど伸びる — 40 にすると「手前の柱が白く、床の奥が黒へ落ちる」
-// 階調になり、段が上がるほど四角が粗くなる様子が一番読み取りやすい。デバッグ表示専用
-constexpr float kHzbDebugRange = 40.0f;
-
 // 定数バッファ生成 / CB 更新は GpuBufferUtil.h (M46a)
 using namespace gpubuf;
 
@@ -247,7 +232,7 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
         MYE_LOG_WARN("[occlusion] init failed - GPU occlusion culling is off");
     }
     gbufferTimer_.Init(device); // M90a: 失敗しても計測が 0 になるだけ
-    hzbDebugShader_ = shaders.Load("debug_hzb");
+    hzbDebug_.Init(device, shaders); // 既定 off の可視化。失敗しても描画は続く
     // M56d: SSR。同じく既定 off なので失敗しても続行 (SsrPass::Render が false を返すだけ)
     ssr_.Init(device, shaders);
     // M79 sub-03: サーフェス失敗時のマゼンタ代替。ForwardPath と同じ LoadSurface 経路
@@ -260,7 +245,6 @@ bool DeferredPath::Init(GraphicsDevice& device, ShaderManager& shaders)
         || !CreateConstant(dev, sizeof(VelocityCB), velocityCB_)           // M55c (b4)
         || !CreateConstant(dev, sizeof(VelocityDebugCB), velocityDebugCB_) // M55c
         || !CreateConstant(dev, sizeof(DecalCB), decalCB_)                 // M56a
-        || !CreateConstant(dev, sizeof(HzbDebugCB), hzbDebugCB_)           // M56c
         || !CreateConstant(dev, sizeof(XMFLOAT4X4) * kMaxBones, boneCB_)
         // M79 sub-03: サーフェスシェーダーの予約 CB (GBuffer の perFrameCB_ とは別バッファ)
         || !CreateConstant(dev, sizeof(MyEnginePerFrameCB), surfacePerFrameCB_)
@@ -504,7 +488,7 @@ void DeferredPath::Shutdown()
     hzb_.Shutdown();
     occlusion_.Shutdown();
     gbufferTimer_.Release();
-    hzbDebugCB_.Reset();
+    hzbDebug_.Shutdown();
     ssr_.Shutdown(); // M56d
     skybox_.Shutdown();
     terrain_.Shutdown(); // M58c
@@ -708,6 +692,7 @@ struct DeferredPath::DeferredFrame {
     bool ssaoOn = false;
     bool ssrWanted = false;
     bool hzbBuilt = false;
+    bool occlusionRan = false; // このフレームの max-Z ピラミッドが新しい (--hzb-debug-max の前提)
     bool rtAvailable = false;
     RtFrameInputs rtIn;
     RtGiResult rtGi;
@@ -756,14 +741,7 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
     gbufferTimer_.End(device);
     if (view.occlusionEnabled != 0) {
         // GPU が数えた値 (2 フレーム遅れ)。統計専用で、描画の判断には使わない
-        const OcclusionStats os = occlusion_.Stats(view.viewKey);
-        if (os.valid) {
-            prof::RenderStats d;
-            d.occlusionPhase1Draws = os.phase1Draws;
-            d.occlusionPhase2Draws = os.phase2Draws;
-            d.occluded = os.occluded;
-            prof::AddRenderStats(d);
-        }
+        occlusion_.PublishStats(view.viewKey);
     }
 
     // ---- 1.2) デカール (M56a/M56b): ジオメトリパス (地形込み) の直後・SSAO の前。
@@ -1010,6 +988,7 @@ void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view
 
     // ---- GPU オクルージョンの準備 (viewKey 0 = 履歴の無いビュー、ワイヤーフレーム、失敗後は従来の描画) ----
     bool occlusion = false;
+    occDebugBoxes_.clear();
     if (view.occlusionEnabled != 0 && !wire && view.depthSRV != nullptr && !gbCmds_.empty()) {
         occItems_.clear();
         occCmds_.clear();
@@ -1166,6 +1145,10 @@ void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view
         dc->VSSetShaderResources(0, 3, nullVsSrvs);
         dc->OMSetRenderTargets(0, nullptr, nullptr);
         occlusion_.TestPhase2(device, shaders, view.depthSRV);
+        f.occlusionRan = true;
+        if (view.hzbDebugMax != 0) {
+            occlusion_.CollectOccludedBoxes(device, occItems_, occDebugBoxes_);
+        }
         dc->OMSetRenderTargets(5, gbufs, view.dsv);
         dc->VSSetShaderResources(0, 3, vsSrvs);
         drawGbufferCmds(1);
@@ -1261,7 +1244,9 @@ void DeferredPath::BuildHzb(GraphicsDevice& device, const RenderView& view, Shad
     const bool wire = f.wire;
     // 深度が書き終わった後、SSR より前に置く
     const bool ssrWanted = view.ssrEnabled != 0 && !unlit && !wire;
-    const bool hzbOn = (view.hzbDebug != 0 || ssrWanted) && view.depthSRV != nullptr;
+    // max-Z 表示 (hzbDebugMax) は GPU オクルージョンのピラミッドを見るので min-Z は要らない
+    const bool minDebug = view.hzbDebug != 0 && view.hzbDebugMax == 0;
+    const bool hzbOn = (minDebug || ssrWanted) && view.depthSRV != nullptr;
     bool hzbBuilt = false;
     if (hzbOn) {
         // ★CS が深度を SRV で読む前に RTV / DSV を明示的に外す。SSAO が off の経路では
@@ -1744,7 +1729,7 @@ void DeferredPath::RenderTransparent(GraphicsDevice& device, const RenderView& v
         static_assert(acoustic::kGlowForwardSrvSlot == 8, "音響の Forward SRV は t8 (M65e で 7->8)");
         static_assert(acoustic::kFrontForwardSrvSlot == 9, "解析的な波面の Forward SRV は t9 (8->9)");
         // M79 sub-05 round 2: サーフェス色エントリの描画後、次の forward_lit 透明アイテムのために
-        // このバインド一式 (b0-b2 / t1-t9 / s0) を戻す。ForwardPath::DrawItems の
+        // このバインド一式 (b0-b2 / t1-t9 / s0) を戻す。ForwardPath::DrawUnits の
         // restoreForwardLitBindings と同じ役目
         auto bindForwardLitFixed = [&]() {
             dc->PSSetShaderResources(1, 9, fwdSrvs);
@@ -1943,41 +1928,16 @@ void DeferredPath::RenderDebugViews(GraphicsDevice& device, const RenderView& vi
     //      ★条件は **hzbDebug** であって hzbOn ではない。hzbOn は SSR の要求も or で
     //        含むので、hzbOn で判定すると **--ssr を付けただけで画面が
     //        HZB の可視化に置き換わる** (実際に踏んだ) ----
-    if (view.hzbDebug != 0 && hzbBuilt && hzb_.SRV() != nullptr) {
-        ShaderProgram* hzbDbg = shaders.Get(hzbDebugShader_);
-        if (hzbDbg && hzbDbg->valid) {
-            // 指定が段数を超えたら最上段 (1x1 付近) で頭打ち — 範囲外の Load は
-            // 0 を返すので「真っ白」になり、指定ミスと本物の min-Z が区別できなくなる。
-            // 下側も 0 で止める (--hzb-debug に負値を渡されても同じ理由で画面が白くなる)
-            const int mip = std::clamp(view.hzbDebug - 1, 0, hzb_.MipCount() - 1);
-            HzbDebugCB hd = {};
-            hd.dstSize[0] = static_cast<float>(view.width);
-            hd.dstSize[1] = static_cast<float>(view.height);
-            hd.mipSize[0] = static_cast<float>(HzbMipExtent(hzb_.Width(), mip));
-            hd.mipSize[1] = static_cast<float>(HzbMipExtent(hzb_.Height(), mip));
-            hd.nearZ = view.nearZ;
-            hd.farZ = view.farZ;
-            hd.range = kHzbDebugRange;
-            hd.mip = static_cast<float>(mip);
-            UploadCB(dc, hzbDebugCB_.Get(), hd);
-            dc->OMSetRenderTargets(1, &view.rtv, nullptr); // 深度は SRV で読んでいるので外す
-            dc->RSSetViewports(1, &vp);
-            ID3D11Buffer* hdCbs[1] = { hzbDebugCB_.Get() };
-            dc->PSSetConstantBuffers(0, 1, hdCbs);
-            ID3D11ShaderResourceView* hzbSrv[1] = { hzb_.SRV() }; // 全段を覆う SRV
-            dc->PSSetShaderResources(0, 1, hzbSrv);
-            dc->IASetInputLayout(nullptr);
-            dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            dc->OMSetDepthStencilState(depthDisabled_.Get(), 0);
-            dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
-            dc->VSSetShader(hzbDbg->vs.Get(), nullptr, 0);
-            dc->PSSetShader(hzbDbg->ps.Get(), nullptr, 0);
-            dc->Draw(3, 0);
-            ID3D11ShaderResourceView* hzbNull[1] = {};
-            dc->PSSetShaderResources(0, 1, hzbNull); // 次フレームの UAV 書込前に解除
-            dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
-            dc->OMSetDepthStencilState(nullptr, 0);
-            dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
+    //      hzbDebugMax != 0 のときは min-Z ではなくオクルージョンの max-Z ピラミッドを出す
+    //      (落とした物の AABB は RenderSystem が線パスで重ねる) ----
+    if (view.hzbDebug != 0) {
+        if (view.hzbDebugMax != 0) {
+            const HzbPass* maxPyramid = f.occlusionRan ? occlusion_.DebugPyramid(view.viewKey) : nullptr;
+            if (maxPyramid != nullptr) {
+                hzbDebug_.Render(device, shaders, view, *maxPyramid, view.hzbDebug);
+            }
+        } else if (hzbBuilt && hzb_.SRV() != nullptr) {
+            hzbDebug_.Render(device, shaders, view, hzb_, view.hzbDebug);
         }
     }
 }

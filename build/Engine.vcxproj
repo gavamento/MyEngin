@@ -268,6 +268,7 @@
     <ClCompile Include="..\src\Engine\Renderer\Passes\EnvMapBaker.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\FroxelPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\GhostMeshPass.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Passes\HzbDebugPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\HzbPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\NavFillPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\OcclusionCullPass.cpp" />
@@ -576,6 +577,7 @@
     <ClInclude Include="..\src\Engine\Renderer\Passes\EnvMapBaker.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\FroxelPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\GhostMeshPass.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Passes\HzbDebugPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\HzbPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\NavFillPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\OcclusionCullPass.h" />

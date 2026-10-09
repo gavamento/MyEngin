@@ -6,6 +6,8 @@
 #include "Engine/Renderer/Device/GpuTimer.h"
 #include "Engine/Renderer/Mesh/MeshInstancing.h"
 #include "Engine/Renderer/Pipeline/RenderPath.h"
+#include "Engine/Renderer/Passes/HzbDebugPass.h"
+#include "Engine/Renderer/Passes/OcclusionCullPass.h"
 #include "Engine/Renderer/Passes/SkyboxPass.h"
 #include "Engine/Renderer/Passes/TerrainPass.h"
 #include "Engine/Renderer/Passes/WaterPass.h"
@@ -32,21 +34,50 @@ public:
     bool AppliesFroxel() const override { return true; }
     // M90a: 不透明メッシュ + 地形の GPU 時間
     float ForwardOpaqueGpuMs() const override { return opaqueTimer_.Milliseconds(); }
+    // GPU オクルージョンの判定 + max-Z ピラミッド構築の GPU 時間 (フェーズ 1/2 の描画は含まない)
+    float OcclusionGpuMs() const override { return occlusion_.GpuMs(); }
+    const std::vector<OcclusionDebugBox>& OcclusionDebugBoxes() const override { return occDebugBoxes_; }
+    // selftest 用: オクルージョンのリソース作成失敗を模擬する (描画は従来の経路で続く)
+    void InjectOcclusionFailureForTest(bool on) { occlusion_.InjectCreateFailureForTest(on); }
+    bool OcclusionDisabled() const { return occlusion_.IsDisabled(); }
+    OcclusionStats OcclusionStatsForTest(uint32_t viewKey) const { return occlusion_.Stats(viewKey); }
 
 private:
-    // forward_lit が前提にする固定バインド一式 (VS/PS b0-b2・PS t1-t9・s0-s2・VS t0・トポロジ・
+    // forward_lit が前提にする固定バインド一式 (VS/PS b0-b2・PS t1-t9・s0-s2・VS t0/t1・トポロジ・
     // ラスタライザ) を張り直す。他のパスや名前解決のサーフェスがスロットを張り替えた直後に呼ぶ
-    // (水面の後・サーフェスアイテムの後)。instSrv = VS t0 に張るインスタンスバッファ (無ければ null)
+    // (水面の後・サーフェスアイテムの後)。instSrv = VS t0 に張るインスタンスバッファ (無ければ null)、
+    // remapSrv = VS t1 に張るオクルージョンの remap (無ければ null)
     void BindForwardLitFixed(ID3D11DeviceContext* dc, const RenderView& view,
-                             ID3D11ShaderResourceView* instSrv);
-    // runs 非 null = opaque のインスタンス run 一括描画を併用 (M38f)。transparent は nullptr
-    void DrawItems(GraphicsDevice& device, const std::vector<RenderItem>& items,
-                   const RenderView& view, RenderResources& resources, ShaderManager& shaders,
-                   const std::vector<MeshInstanceRun>* runs);
+                             ID3D11ShaderResourceView* instSrv,
+                             ID3D11ShaderResourceView* remapSrv = nullptr);
+
+    // 1 回の描画単位。PlanItems が items から組み、従来の描画と GPU オクルージョンの 2 フェーズが
+    // 同じ列を使う (スキップ規則・サーフェス判定はここ 1 箇所)
+    struct DrawUnit {
+        enum class Kind { Run, Single, Surface };
+        Kind kind = Kind::Single;
+        size_t first = 0;                     // items の先頭項目
+        uint32_t count = 1;                   // 項目数 (Run なら run.count)
+        const MeshInstanceRun* run = nullptr; // Run のみ
+        Material* mat = nullptr;
+        Mesh* mesh = nullptr;
+        SurfaceMaterialState* surf = nullptr; // Surface のみ
+        AssetID shaderId = {};                // Single のみ (スキンならスキニング版)
+        bool skinned = false;
+        int32_t cmdIndex = -1;                // オクルージョンのコマンド番号。-1 = 判定対象外 (Surface)
+    };
+    void PlanItems(GraphicsDevice& device, const std::vector<RenderItem>& items,
+                   RenderResources& resources, ShaderManager& shaders,
+                   const std::vector<MeshInstanceRun>* runs, std::vector<DrawUnit>& out);
+    // units を描く。phase: -1 = 従来 (CPU が数を決めて直接描く) / 0 = フェーズ 1 / 1 = フェーズ 2
+    // (どちらも間接描画。フェーズ 1 でサーフェスなど判定対象外の単位も描き、フェーズ 2 は間接描画のみ)
+    void DrawUnits(GraphicsDevice& device, const std::vector<DrawUnit>& units,
+                   const std::vector<RenderItem>& items, const RenderView& view,
+                   RenderResources& resources, ShaderManager& shaders, int phase);
     // M79 sub-02: shader が "*.surface" のアイテムを 1 個描く (色エントリのみ。
     // 深度書き込み/ブレンドは呼び出し元が既に設定済みの opaque/transparent ステートに従う)。
     // 描画後に IA/VS/PS/CB/SRV/サンプラの一部が forward_lit の前提と食い違うので、
-    // 呼び出し側 (DrawItems) が続けて RestoreFixedBindings 相当を行うこと
+    // 呼び出し側 (DrawUnits) が続けて RestoreFixedBindings 相当を行うこと
     void DrawSurfaceItem(GraphicsDevice& device, const RenderItem& item, const Material& mat,
                          const Mesh& mesh, SurfaceMaterialState& surf, ShaderManager& shaders,
                          RenderResources& resources, const RenderView& view);
@@ -83,6 +114,14 @@ private:
     AssetID surfaceErrorId_ = {}; // "surface_error" (失敗時のマゼンタ代替)
     std::unordered_set<uint64_t> skinnedSurfaceWarned_; // スキン+サーフェスの WARN はマテリアル毎に 1 回
     GpuTimer opaqueTimer_; // M90a: 不透明メッシュ + 地形
+    // GPU オクルージョン (2 フェーズ)。viewKey ごとの履歴を内部に持つ
+    OcclusionCuller occlusion_;
+    HzbDebugPass hzbDebug_; // --hzb-debug-max の max-Z 全画面表示
+    std::vector<DrawUnit> opaqueUnits_; // フレーム毎スクラッチ
+    std::vector<DrawUnit> transparentUnits_;
+    std::vector<OcclusionItemIn> occItems_;
+    std::vector<OcclusionCmdIn> occCmds_;
+    std::vector<OcclusionDebugBox> occDebugBoxes_;
     SkyboxPass skybox_; // 不透明後・透明前に空を塗る (M29d)
     // 地形 (M58c)。不透明メッシュの直後・スカイボックスの前に描く (深度を書くため)
     TerrainPass terrain_;

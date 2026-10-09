@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Renderer/Device/GpuBufferUtil.h"
 #include "Engine/Renderer/Device/GraphicsDevice.h"
 #include "Engine/Renderer/Passes/OcclusionMath.h"
@@ -460,6 +461,65 @@ void OcclusionCuller::ReadStats(GraphicsDevice& device, ViewState& vs)
 OcclusionStats OcclusionCuller::Stats(uint32_t viewKey) const
 {
     return (viewKey < static_cast<uint32_t>(kViewSlots)) ? views_[viewKey].stats : OcclusionStats{};
+}
+
+void OcclusionCuller::PublishStats(uint32_t viewKey) const
+{
+    const OcclusionStats os = Stats(viewKey);
+    if (!os.valid) {
+        return;
+    }
+    prof::RenderStats d;
+    d.occlusionPhase1Draws = os.phase1Draws;
+    d.occlusionPhase2Draws = os.phase2Draws;
+    d.occluded = os.occluded;
+    prof::AddRenderStats(d);
+}
+
+const HzbPass* OcclusionCuller::DebugPyramid(uint32_t viewKey) const
+{
+    if (viewKey >= static_cast<uint32_t>(kViewSlots)) {
+        return nullptr;
+    }
+    const ViewState& vs = views_[viewKey];
+    return (vs.pyramidInit && vs.pyramid.SRV() != nullptr) ? &vs.pyramid : nullptr;
+}
+
+void OcclusionCuller::CollectOccludedBoxes(GraphicsDevice& device,
+                                           const std::vector<OcclusionItemIn>& items,
+                                           std::vector<OcclusionDebugBox>& out)
+{
+    out.clear();
+    ViewState& vs = views_[activeView_];
+    if (!vs.visBuf || vs.visCapacity == 0) {
+        return;
+    }
+    ID3D11DeviceContext* dc = device.Context();
+    D3D11_BUFFER_DESC bd = {};
+    bd.ByteWidth = vs.visCapacity * 4u;
+    bd.Usage = D3D11_USAGE_STAGING;
+    bd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> staging;
+    if (FAILED(device.Device()->CreateBuffer(&bd, nullptr, staging.GetAddressOf()))) {
+        return;
+    }
+    dc->CopyResource(staging.Get(), vs.visBuf.Get());
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    if (FAILED(dc->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+        return;
+    }
+    const uint32_t* vis = static_cast<const uint32_t*>(mapped.pData);
+    for (const OcclusionItemIn& it : items) {
+        if (it.alwaysDraw || !HasSlot(it.entity) || it.entity.index >= vs.visCapacity
+            || vis[it.entity.index] != 0) {
+            continue;
+        }
+        OcclusionDebugBox box;
+        std::memcpy(box.bmin, it.bmin, sizeof(box.bmin));
+        std::memcpy(box.bmax, it.bmax, sizeof(box.bmax));
+        out.push_back(box);
+    }
+    dc->Unmap(staging.Get(), 0);
 }
 
 float OcclusionCuller::GpuMs() const

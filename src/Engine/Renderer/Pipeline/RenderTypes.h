@@ -455,8 +455,17 @@ struct RenderView {
     // ---- 水面描画データ (末尾 append。null = 水面なし = 従来とビット完全一致) ----
     const struct WaterDrawData* water = nullptr;
     // ---- GPU オクルージョン (末尾 append。0 = 従来と 1 ビットも変わらない) ----
-    // Deferred の不透明だけが読む。viewKey 0 (履歴の無いビュー) は RenderSystem が常に 0 にする
+    // Deferred / Forward の不透明が読む。viewKey 0 (履歴の無いビュー) は RenderSystem が常に 0 にする
     int32_t occlusionEnabled = 0;
+    // 1 = hzbDebug の表示を min-Z ではなくオクルージョン用の max-Z ピラミッドにし、GPU 判定で
+    // 隠れた物の AABB も重ねる (Deferred / Forward。occlusionEnabled の経路でだけ意味を持つ)
+    int32_t hzbDebugMax = 0;
+};
+
+// --hzb-debug-max 用: GPU オクルージョンが隠れていると判定した項目のワールド AABB
+struct OcclusionDebugBox {
+    float bmin[3] = { 0.0f, 0.0f, 0.0f };
+    float bmax[3] = { 0.0f, 0.0f, 0.0f };
 };
 
 // ---- デカール (M56a) ----

@@ -318,6 +318,10 @@ MYE_STR(Prof_GpuStages,       "gpu: render (last view) %6.3f ms / gbuffer %6.3f 
                               "GPU: Render (最後のビュー) %6.3f ms / GBuffer %6.3f ms / Forward 不透明 %6.3f ms (GpuTimer)")
 MYE_STR(Prof_Occlusion,       "  occlusion: %6.3f ms (GpuTimer, cull + max-Z pyramid) phase1 %d / phase2 %d / occluded %d",
                               "  オクルージョン: %6.3f ms (GpuTimer、判定 + max-Z ピラミッド) フェーズ1 %d / フェーズ2 %d / 隠れた物 %d")
+MYE_STR(Prof_OcclusionDrawn,  "  occlusion: instances actually drawn = phase1 %d + phase2 %d = %d (GPU count, 2 frames late; draw calls above are the CPU-submitted logical count)",
+                              "  オクルージョン: 実際に描いたインスタンス数 = フェーズ1 %d + フェーズ2 %d = %d (GPU の数、2 フレーム遅れ。上のドローコールは CPU が提出した論理数)")
+MYE_STR(Prof_ViewOcclusion,   "  view %u occlusion: phase1 %d / phase2 %d / occluded %d (2 frames late)",
+                              "  ビュー %u オクルージョン: フェーズ1 %d / フェーズ2 %d / 隠れた物 %d (2 フレーム遅れ)")
 MYE_STR(Prof_ShadowDraw,      "shadow: %d draw calls, %d tris (csm cascades %d / %d / %d)",
                               "影: %d ドローコール / %d 三角形 (CSM カスケード別 %d / %d / %d)")
 MYE_STR(Prof_ViewStats,       "  view %u: %d draw calls, %d tris, %d culled, %d shadow draws, %d shadow tris",

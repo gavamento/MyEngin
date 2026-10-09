@@ -10,6 +10,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
 #include <vector>
 
 #include <DirectXMath.h>
@@ -25,6 +28,7 @@
 #include "Engine/Renderer/Passes/OcclusionCullPass.h"
 #include "Engine/Renderer/Passes/OcclusionMath.h"
 #include "Engine/Renderer/Pipeline/DeferredPath.h"
+#include "Engine/Renderer/Pipeline/ForwardPath.h"
 #include "Engine/Renderer/Shader/ShaderManager.h"
 
 using namespace DirectX;
@@ -390,13 +394,23 @@ RenderItem MakeItem(RenderResources& resources, const BoxSpec& b, uint32_t entit
     return item;
 }
 
-void TestDeferredAB(GraphicsDevice& device, ShaderManager& shaders)
+// 判定対象外 (フェーズ 1 で常に描かれる) サーフェス項目の材質。Forward だけが持つ経路を通す
+struct SurfaceProbe {
+    std::wstring dir;     // *.surface.hlsl と *.mat.json の置き場
+    std::wstring matPath; // サーフェス材質の .mat.json
+};
+
+// Deferred / Forward 共通の ON/OFF 一致テスト。Path は Init / Render / InjectOcclusionFailureForTest /
+// OcclusionDisabled / OcclusionStatsForTest / Shutdown を持つ描画経路。
+// surface が非 null なら、サーフェス材質の項目を 1 個混ぜる (Forward のみ。判定対象外の分岐を通す)
+template <class Path>
+void TestPathAB(const char* label, GraphicsDevice& device, ShaderManager& shaders, const SurfaceProbe* surface)
 {
-    MYE_LOG_INFO("-- Deferred: オクルージョン ON/OFF の画素一致 (履歴なし / 定常 / カメラカット) と失敗の局所化 --");
+    MYE_LOG_INFO("-- %s: オクルージョン ON/OFF の画素一致 (履歴なし / 定常 / カメラカット) と失敗の局所化 --", label);
     RenderResources resources;
     resources.Init(device);
-    DeferredPath dp;
-    Check(dp.Init(device, shaders), "DeferredPath::Init");
+    Path dp;
+    Check(dp.Init(device, shaders), "Path::Init");
     DeferredRig rig;
     const bool rigOk = rig.Create(device);
     Check(rigOk, "RTV/DSV(typeless)/staging を作れる");
@@ -416,6 +430,11 @@ void TestDeferredAB(GraphicsDevice& device, ShaderManager& shaders)
     const AssetID matB = makeMat("occtest_b", 0.2f, 0.7f, 0.3f);
     const AssetID cube = resources.meshes.Cube();
     const AssetID sphere = resources.meshes.Sphere();
+    AssetID matSurface = {};
+    if (surface != nullptr) {
+        matSurface = resources.materials.LoadFromFile(surface->matPath, resources.textures, surface->dir);
+        Check(!matSurface.IsNull(), "サーフェス材質を読み込める");
+    }
 
     // 壁 (z=10) の裏に同じ (材質, メッシュ) のインスタンス run、壁の外に別の run、単発の球
     std::vector<BoxSpec> boxes;
@@ -428,6 +447,9 @@ void TestDeferredAB(GraphicsDevice& device, ShaderManager& shaders)
     }
     boxes.push_back({ sphere, matB, 0.0f, 0.0f, 30.0f, 1.2f, 1.2f, 1.2f });  // 壁の裏の単発
     boxes.push_back({ sphere, matB, -9.0f, 0.0f, 16.0f, 1.2f, 1.2f, 1.2f }); // 壁の外の単発
+    if (!matSurface.IsNull()) {
+        boxes.push_back({ cube, matSurface, 3.0f, -1.5f, 5.0f, 0.6f, 0.6f, 0.6f }); // 壁の手前 (判定対象外)
+    }
 
     // 壁の裏の物はカメラ A では隠れ、カメラ B (横から) では見える
     auto render = [&](bool occlusionOn, uint32_t serial, bool cameraB) {
@@ -509,13 +531,14 @@ void TestDeferredAB(GraphicsDevice& device, ShaderManager& shaders)
 }
 
 // 履歴・統計のあるビュー 1 本の遅延統計: 壁の裏の物が数えられる
-void TestStats(GraphicsDevice& device, ShaderManager& shaders)
+template <class Path>
+void TestStats(const char* label, GraphicsDevice& device, ShaderManager& shaders)
 {
-    MYE_LOG_INFO("-- 統計: 2 フレーム遅れの GPU カウント --");
+    MYE_LOG_INFO("-- %s 統計: 2 フレーム遅れの GPU カウント --", label);
     RenderResources resources;
     resources.Init(device);
-    DeferredPath dp;
-    Check(dp.Init(device, shaders), "DeferredPath::Init (stats)");
+    Path dp;
+    Check(dp.Init(device, shaders), "Path::Init (stats)");
     DeferredRig rig;
     if (!rig.Create(device)) {
         Check(false, "rig");
@@ -586,11 +609,41 @@ bool RunOcclusionSelfTest()
     if (engineShaderDir.empty()) {
         return false;
     }
+    // サーフェス項目用の最小シェーダと材質 (一時ディレクトリ)
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path probeDir = fs::temp_directory_path(ec) / L"mye_occlusion_selftest";
+    fs::remove_all(probeDir, ec);
+    fs::create_directories(probeDir, ec);
+    {
+        std::ofstream hlsl(probeDir / L"OccProbe.surface.hlsl", std::ios::binary);
+        hlsl << R"HLSL(#include "MyEngineSurface.hlsli"
+struct VSIn { float3 pos : POSITION; };
+struct VSOut { float4 pos : SV_Position; };
+VSOut VSMain(VSIn v)
+{
+    VSOut o;
+    o.pos = mul(mul(float4(v.pos, 1.0f), gWorld), gViewProj);
+    return o;
+}
+float4 PSMain(VSOut i) : SV_Target
+{
+    return float4(0.2f, 0.8f, 0.3f, 1.0f);
+}
+)HLSL";
+        std::ofstream mat(probeDir / L"OccProbe.mat.json", std::ios::binary);
+        mat << "{\"shader\":\"OccProbe.surface\"}";
+    }
+    SurfaceProbe surfaceProbe;
+    surfaceProbe.dir = probeDir.wstring();
+    surfaceProbe.matPath = (probeDir / L"OccProbe.mat.json").wstring();
     ShaderManager shaders;
-    Check(shaders.Init(device, { engineShaderDir }), "shader manager init");
+    Check(shaders.Init(device, { surfaceProbe.dir, engineShaderDir }), "shader manager init");
     TestGpuPyramid(device, shaders);
-    TestDeferredAB(device, shaders);
-    TestStats(device, shaders);
+    TestPathAB<DeferredPath>("Deferred", device, shaders, nullptr);
+    TestStats<DeferredPath>("Deferred", device, shaders);
+    TestPathAB<ForwardPath>("Forward", device, shaders, &surfaceProbe);
+    TestStats<ForwardPath>("Forward", device, shaders);
 
     MYE_LOG_INFO("==== GPU occlusion culling self test: %s ====", g_fails == 0 ? "PASS" : "FAIL");
     return g_fails == 0;

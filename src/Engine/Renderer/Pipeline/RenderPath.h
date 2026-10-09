@@ -45,6 +45,14 @@ public:
     // GPU オクルージョンの判定 + max-Z ピラミッド構築の GPU 時間 [ms]。走らせないパス / フレームは 0
     virtual float OcclusionGpuMs() const { return 0.0f; }
 
+    // 直近の Render で GPU オクルージョンが隠れていると判定した物の AABB。
+    // view.hzbDebugMax != 0 のときだけ集める (GPU 待ちの読み戻し)。それ以外・走らせないパスは空
+    virtual const std::vector<OcclusionDebugBox>& OcclusionDebugBoxes() const
+    {
+        static const std::vector<OcclusionDebugBox> kEmpty;
+        return kEmpty;
+    }
+
     // ---- M56d: SSR ----
     // 直近の Render で SSR に掛かった GPU 時間 [ms]。走らせないパス / フレームは 0。
     // HzbGpuMs と同じく ProfilerWindow 用の純計測口

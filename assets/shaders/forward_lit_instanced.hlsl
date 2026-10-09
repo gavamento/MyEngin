@@ -74,7 +74,9 @@ cbuffer PerObject : register(b1)
     float4   gBaseColor;
     // ---- インスタンシング (M38f、末尾 append) ----
     int      gInstanceBase; // gInstances 内の run 開始位置
-    float3   _instPad;
+    float    _rtPad;        // deferred_gbuffer_instanced.hlsl の gRtReceiver の位置 (Forward は使わない)
+    int      gRemapPlus1;   // GPU オクルージョン: 0 = 無効 / N = gRemap の N-1 番から run の可視インスタンスの添字
+    float    _instPad;
 };
 
 cbuffer MaterialParams : register(b2)
@@ -91,6 +93,9 @@ struct MeshInstance
     row_major float4x4 world;
 };
 StructuredBuffer<MeshInstance> gInstances : register(t0); // VS 側 (PS の t0 とは独立)
+// GPU オクルージョン (occlusion_cull.cs.hlsl) が詰めた「描くインスタンスの添字」。
+// gRemapPlus1 == 0 のフレームは読まない (添字は gInstanceBase + SV_InstanceID のまま = 従来と同一)
+StructuredBuffer<uint> gRemap : register(t1); // VS 側 (PS の t1 = シャドウマップとは独立)
 
 Texture2D                gAlbedo        : register(t0);
 Texture2DArray           gShadowMap     : register(t1); // M38d: CSM カスケード配列
@@ -128,7 +133,9 @@ struct VSOut
 VSOut VSMain(VSIn v)
 {
     VSOut o;
-    const float4x4 world = gInstances[gInstanceBase + v.instId].world;
+    const uint instIndex = (gRemapPlus1 > 0) ? gRemap[(uint)(gRemapPlus1 - 1) + v.instId]
+                                             : (uint)gInstanceBase + v.instId;
+    const float4x4 world = gInstances[instIndex].world;
     const float4 posW = mul(float4(v.pos, 1.0f), world);
     o.pos = mul(posW, gViewProj);
     o.normalW = normalize(mul(v.normal, (float3x3)world));

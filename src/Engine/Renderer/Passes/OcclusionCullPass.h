@@ -14,6 +14,7 @@
 #include "Engine/Core/Ecs/EntityID.h"
 #include "Engine/Renderer/Device/GpuTimer.h"
 #include "Engine/Renderer/Passes/HzbPass.h"
+#include "Engine/Renderer/Pipeline/RenderTypes.h" // OcclusionDebugBox
 
 namespace mye {
 
@@ -47,8 +48,9 @@ struct OcclusionStats {
 };
 
 // viewKey ごとの履歴 (max-Z ピラミッド、可視ビット) と、フレーム単位の作業バッファを持つ。
+// Deferred と Forward が各自 1 個ずつ持つ (履歴は経路ごと。切り替え直後は履歴なし = 欠けない側に倒れる)。
 //
-// 流れ (DeferredPath が呼ぶ順):
+// 流れ (経路が呼ぶ順):
 //   Begin → SelectPhase1 → [フェーズ 1 を ArgsBuffer の phase 0 で描く] →
 //   TestPhase2 → [フェーズ 2 を phase 1 で描く]
 // 失敗 (リソース作成、ピラミッド作成) は 1 度ログを出して全ビューで OFF にする (Shutdown で復帰)。
@@ -95,6 +97,16 @@ public:
 
     // 直近に読めた統計 (2 フレーム遅れ)
     OcclusionStats Stats(uint32_t viewKey) const;
+    // viewKey の統計 (読めていれば) を prof::AddRenderStats へ足す。経路の Render が 1 回呼ぶ
+    void PublishStats(uint32_t viewKey) const;
+
+    // --hzb-debug 用。TestPhase2 が作った直近の max-Z ピラミッド (無ければ null)
+    const HzbPass* DebugPyramid(uint32_t viewKey) const;
+    // --hzb-debug 用。直近の TestPhase2 の判定で隠れていた項目の AABB を集める。
+    // GPU の完了を待つ読み戻しなので、デバッグ表示が ON のときだけ呼ぶこと。
+    // items は Begin に渡したものと同じ並び
+    void CollectOccludedBoxes(GraphicsDevice& device, const std::vector<OcclusionItemIn>& items,
+                              std::vector<OcclusionDebugBox>& out);
     // 直近フレームの判定 + ピラミッド構築の GPU 時間 [ms]
     float GpuMs() const;
 

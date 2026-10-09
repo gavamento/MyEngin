@@ -550,6 +550,7 @@ struct RenderSystem::FrameContext {
     XMFLOAT3 sceneMax = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
     bool hasScene = false;
     bool distortionActive = false;                     // M42d: このフレーム歪みバッファを使ったか
+    const std::vector<OcclusionDebugBox>* occlusionBoxes = nullptr; // --hzb-debug-max: パスが集めた (パスの寿命内だけ有効)
 };
 
 bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& path,
@@ -591,6 +592,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     gbufferGpuMs_ = path.GbufferGpuMs();             // M90a (同上)
     forwardOpaqueGpuMs_ = path.ForwardOpaqueGpuMs(); // M90a (同上)
     occlusionGpuMs_ = path.OcclusionGpuMs();         // (同上)
+    f.occlusionBoxes = (hzbDebugMip != 0 && hzbDebugMax) ? &path.OcclusionDebugBoxes() : nullptr;
 
     DrawParticlesAndDebug(world, device, shaders, resources, target, cameraOverride, particles, vfx, f);
     ResolvePost(world, device, shaders, resources, path, target, cameraOverride, f);
@@ -1468,10 +1470,11 @@ void RenderSystem::PrepareEnvironment(World& world, GraphicsDevice& device, Shad
     SceneLightData& lights = f.lights;
     view.ssaoEnabled = enableSsao ? 1 : 0; // M38e (Deferred のみ消費)
     view.instancingEnabled = enableInstancing ? 1 : 0; // M38f
-    // GPU オクルージョン (Deferred の不透明のみ)。viewKey 0 (AssetPreview) は履歴を持たないので常に off
+    // GPU オクルージョン (Deferred / Forward の不透明のみ)。viewKey 0 (AssetPreview) は履歴を持たないので常に off
     view.occlusionEnabled = (enableOcclusionCulling && target.viewKey > 0 && target.viewKey < 4) ? 1 : 0;
     view.velocityDebug = velocityDebugMode;            // M55c (Deferred のみ消費)
-    view.hzbDebug = hzbDebugMip;                       // M56c (Deferred のみ消費)
+    view.hzbDebug = hzbDebugMip;                       // M56c (Deferred のみ消費。hzbDebugMax は Forward も)
+    view.hzbDebugMax = hzbDebugMax ? 1 : 0;
     view.ssrEnabled = enableSsr ? 1 : 0;               // M56d (Deferred のみ消費)
     // M56f: 焼いたプローブ束をそのまま指す (Deferred のみ消費)。ベイクした所有者が
     // このポインタを立てるまで null = 1 命令も増えない。**トグルを設けていない**のは、
@@ -1837,7 +1840,8 @@ void RenderSystem::DrawParticlesAndDebug(World& world, GraphicsDevice& device, S
     // スクリプトの DebugDrawLine (v7、M37): シーン空間の線を深度テスト付きで重ねる。
     // ポスプロ解決前 = HDR 中間 (直描き時は最終 RT) に描く。ナビメッシュの輪郭線も同じ線パスで描く
     const bool hasNavLines = navView != nullptr && !navView->Lines().empty();
-    if ((debugLines != nullptr && !debugLines->empty()) || hasNavLines) {
+    const bool hasOccBoxes = f.occlusionBoxes != nullptr && !f.occlusionBoxes->empty();
+    if ((debugLines != nullptr && !debugLines->empty()) || hasNavLines || hasOccBoxes) {
         if (!linePass_.IsReady()) {
             linePass_.Init(device, shaders); // 遅延 Init (postFx_ 前例)
         }
@@ -1851,6 +1855,14 @@ void RenderSystem::DrawParticlesAndDebug(World& world, GraphicsDevice& device, S
             if (debugLines != nullptr) {
                 for (const DebugLineCmd& l : *debugLines) {
                     linePass_.AddLine({ l.ax, l.ay, l.az }, { l.bx, l.by, l.bz }, l.rgba, false);
+                }
+            }
+            if (hasOccBoxes) {
+                // 隠れていると判定された物なので手前に出す (R=1 G=0.2 B=0.2 A=1)
+                constexpr uint32_t kOccludedBoxRgba = 0xFF3333FFu;
+                for (const OcclusionDebugBox& b : *f.occlusionBoxes) {
+                    linePass_.AddAABB({ b.bmin[0], b.bmin[1], b.bmin[2] }, { b.bmax[0], b.bmax[1], b.bmax[2] },
+                                      kOccludedBoxRgba, true);
                 }
             }
             linePass_.Render(device, shaders, view.rtv, view.dsv, target.width, target.height,

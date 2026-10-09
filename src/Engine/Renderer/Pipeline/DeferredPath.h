@@ -4,6 +4,7 @@
 #include <wrl/client.h>
 
 #include "Engine/Renderer/Device/GpuTimer.h"
+#include "Engine/Renderer/Passes/HzbDebugPass.h"
 #include "Engine/Renderer/Passes/HzbPass.h"
 #include "Engine/Renderer/Passes/OcclusionCullPass.h"
 #include "Engine/Renderer/Mesh/MeshInstancing.h"
@@ -44,6 +45,7 @@ public:
     float GbufferGpuMs() const override { return gbufferTimer_.Milliseconds(); }
     // GPU オクルージョンの判定 + max-Z ピラミッド構築の GPU 時間 (フェーズ 1/2 の描画は含まない)
     float OcclusionGpuMs() const override { return occlusion_.GpuMs(); }
+    const std::vector<OcclusionDebugBox>& OcclusionDebugBoxes() const override { return occDebugBoxes_; }
     // selftest 用: オクルージョンのリソース作成失敗を模擬する (描画は従来の経路で続く)
     void InjectOcclusionFailureForTest(bool on) { occlusion_.InjectCreateFailureForTest(on); }
     bool OcclusionDisabled() const { return occlusion_.IsDisabled(); }
@@ -91,7 +93,7 @@ private:
     // 速度は書かない = spec §4.1 Deferred 透明列。予約 CB は RenderSurfaceForward が同じフレームで
     // 既に埋めた surfacePerFrameCB_/surfaceFrameCB_/surfaceWaterCB_ をそのまま使う)。
     // 描画後に IA/VS/PS/CB/SRV/サンプラが forward_lit の前提と食い違うので、
-    // 呼び出し側 (RenderTransparent) が続けてバインドを戻すこと (ForwardPath::DrawItems と同じ流儀)
+    // 呼び出し側 (RenderTransparent) が続けてバインドを戻すこと (ForwardPath::DrawUnits と同じ流儀)
     void DrawSurfaceTransparentItem(GraphicsDevice& device, const RenderItem& item, const Material& mat,
                                     const Mesh& mesh, SurfaceMaterialState& surf, ShaderManager& shaders,
                                     RenderResources& resources, const RenderView& view);
@@ -112,6 +114,7 @@ private:
     OcclusionCuller occlusion_;
     std::vector<OcclusionItemIn> occItems_; // フレーム毎スクラッチ
     std::vector<OcclusionCmdIn> occCmds_;
+    std::vector<OcclusionDebugBox> occDebugBoxes_; // --hzb-debug-max の間だけ埋まる
 
     GpuTimer gbufferTimer_; // M90a: RenderGeometry の GPU 時間
     RenderTexture gbAlbedo_;   // a=1 でジオメトリ有りマーク
@@ -179,8 +182,7 @@ private:
     // 組む条件は **view.hzbDebug != 0 と SSR の要求の or** (BuildHzb)。どちらも off の既定では
     // 1 命令も増えない。可視化シェーダは velocityDebugShader_ と同じ立ち位置
     HzbPass hzb_;
-    AssetID hzbDebugShader_ = {};
-    Microsoft::WRL::ComPtr<ID3D11Buffer> hzbDebugCB_;
+    HzbDebugPass hzbDebug_; // min-Z / オクルージョンの max-Z の全画面表示 (Forward と共有の部品)
     // ---- M56d: SSR (スクリーンスペース反射) ----
     // HZB の唯一の本番消費者。**view.ssrEnabled が HZB を組む条件に or で入る** —
     // 忘れると SSR が null のピラミッドを見て何も映らない

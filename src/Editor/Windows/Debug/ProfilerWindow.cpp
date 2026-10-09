@@ -58,6 +58,8 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
             const prof::RenderStats all = prof::GetRenderStats();
             ImGui::Text(Tr(StrId::Prof_Occlusion), ctx.renderSystem->OcclusionGpuMs(),
                         all.occlusionPhase1Draws, all.occlusionPhase2Draws, all.occluded);
+            ImGui::Text(Tr(StrId::Prof_OcclusionDrawn), all.occlusionPhase1Draws, all.occlusionPhase2Draws,
+                        all.occlusionPhase1Draws + all.occlusionPhase2Draws);
         }
         // M54d: 影 (csm = 平行光 3 カスケード / atlas = 局所ライトのタイル)。
         // 点光源 1 本 = 6 タイルなので、tiles と draws がアトラスの重さの実体。
@@ -186,6 +188,11 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
         if (vs.drawCalls != 0 || vs.shadowDrawCalls != 0 || vs.culled != 0) {
             ImGui::Text(Tr(StrId::Prof_ViewStats), viewKey, vs.drawCalls, vs.triangles, vs.culled,
                         vs.shadowDrawCalls, vs.shadowTriangles);
+            const bool hasOcclusion = vs.occlusionPhase1Draws != 0 || vs.occlusionPhase2Draws != 0 || vs.occluded != 0;
+            if (ctx.renderSystem && ctx.renderSystem->enableOcclusionCulling && hasOcclusion) {
+                ImGui::Text(Tr(StrId::Prof_ViewOcclusion), viewKey, vs.occlusionPhase1Draws,
+                            vs.occlusionPhase2Draws, vs.occluded);
+            }
         }
     }
 

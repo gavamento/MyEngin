@@ -199,6 +199,11 @@ bool ForwardPath::Init(GraphicsDevice& device, ShaderManager& shaders)
     // 地形 (M58c)。失敗しても続行 (地形が描かれないだけ = 従来の絵)
     terrain_.Init(device, shaders);
     opaqueTimer_.Init(device); // M90a: 失敗しても計測が 0 になるだけ
+    // GPU オクルージョンと max-Z 表示。失敗しても続行する (従来の描画に落ちるだけ)
+    if (!occlusion_.Init(device, shaders)) {
+        MYE_LOG_WARN("[occlusion] init failed - GPU occlusion culling is off (Forward)");
+    }
+    hzbDebug_.Init(device, shaders);
     // 水面。失敗しても続行 (水面が描かれないだけ = 従来の絵)
     water_.Init(device, shaders);
     return true;
@@ -228,6 +233,8 @@ void ForwardPath::Shutdown()
     skybox_.Shutdown();
     terrain_.Shutdown(); // M58c
     opaqueTimer_.Release();
+    occlusion_.Shutdown();
+    hzbDebug_.Shutdown();
     water_.Shutdown();
 }
 
@@ -429,21 +436,97 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     opaqueTimer_.Begin(device);
     dc->OMSetDepthStencilState(depthOpaque_.Get(), 0);
     dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
-    DrawItems(device, queue.opaque, view, resources, shaders, runs_.empty() ? nullptr : &runs_);
+    PlanItems(device, queue.opaque, resources, shaders, runs_.empty() ? nullptr : &runs_, opaqueUnits_);
 
-    // インスタンス SRV を外す (次フレームの Map と競合させない)
-    ID3D11ShaderResourceView* nullVsSrv = nullptr;
-    dc->VSSetShaderResources(0, 1, &nullVsSrv);
+    // ---- GPU オクルージョンの準備 (viewKey 0 = 履歴の無いビュー、ワイヤーフレーム、失敗後は従来の描画) ----
+    occDebugBoxes_.clear();
+    bool occlusionRan = false;
+    bool occlusion = false;
+    if (view.occlusionEnabled != 0 && !wire && view.depthSRV != nullptr) {
+        occItems_.clear();
+        occCmds_.clear();
+        for (const DrawUnit& u : opaqueUnits_) {
+            if (u.cmdIndex < 0) {
+                continue; // サーフェスは判定対象外 (フェーズ 1 で常に描く)
+            }
+            OcclusionCmdIn oc;
+            oc.firstItem = static_cast<uint32_t>(occItems_.size());
+            oc.itemCount = u.count;
+            oc.instanceBase = u.run ? u.run->base : 0u;
+            oc.isInstanced = (u.run != nullptr);
+            oc.indexCount = u.mesh->indexCount;
+            occCmds_.push_back(oc);
+            for (uint32_t k = 0; k < u.count; ++k) {
+                const RenderItem& it = queue.opaque[u.first + k];
+                OcclusionItemIn oi;
+                oi.entity = it.entity;
+                oi.alwaysDraw = (it.hasWorldAabb == 0);
+                if (!oi.alwaysDraw) {
+                    oi.bmin[0] = it.worldAabbMin.x;
+                    oi.bmin[1] = it.worldAabbMin.y;
+                    oi.bmin[2] = it.worldAabbMin.z;
+                    oi.bmax[0] = it.worldAabbMax.x;
+                    oi.bmax[1] = it.worldAabbMax.y;
+                    oi.bmax[2] = it.worldAabbMax.z;
+                }
+                occItems_.push_back(oi);
+            }
+        }
+        OcclusionCuller::FrameDesc od;
+        od.viewKey = view.viewKey;
+        od.serial = view.viewFrameIndex;
+        od.width = view.width;
+        od.height = view.height;
+        od.viewProjT = pf.viewProj; // 転置済み (上で積んだ描画と同じ行列)
+        od.worldCount = static_cast<uint32_t>(worlds_.size());
+        occlusion = occlusion_.Begin(device, shaders, od, occItems_, occCmds_);
+    }
 
-    // 地形 (M58c): 不透明メッシュの直後・スカイボックスの前。深度を書くので
-    // 「地形の向こうの空が塗られない」が成立する。CB は b4 なので b0-b2 は張り替わらず、
-    // 透明段の DrawItems はシェーダを張り直すだけでよい。
-    // 地形が無いフレームは TerrainPass が即 return する = 従来とビット一致
-    terrain_.RenderForward(device, shaders, view, resources);
+    ID3D11ShaderResourceView* const instSrv = runs_.empty() ? nullptr : instanceBuf_.SRV();
+    ID3D11ShaderResourceView* nullVsSrvs[2] = {};
+    if (!occlusion) {
+        DrawUnits(device, opaqueUnits_, queue.opaque, view, resources, shaders, -1);
+        // インスタンス SRV を外す (次フレームの Map と競合させない)
+        dc->VSSetShaderResources(0, 1, nullVsSrvs);
+        // 地形 (M58c): 不透明メッシュの直後・スカイボックスの前。深度を書くので
+        // 「地形の向こうの空が塗られない」が成立する。CB は b4 なので b0-b2 は張り替わらず、
+        // 透明段の DrawUnits はシェーダを張り直すだけでよい。
+        // 地形が無いフレームは TerrainPass が即 return する = 従来とビット一致
+        terrain_.RenderForward(device, shaders, view, resources);
+    } else {
+        // ---- 2 フェーズ ----
+        // 1) 前フレームに可視だった項目を描く → 2) 地形も描いてから、その深度で max-Z ピラミッドを作る →
+        // 3) 全項目を判定して、フェーズ 1 で描いていない可視の項目を描く
+        occlusion_.SelectPhase1(device, shaders);
+        ID3D11ShaderResourceView* vsSrvs[2] = { instSrv, occlusion_.RemapSRV() };
+        dc->VSSetShaderResources(0, 2, vsSrvs);
+        DrawUnits(device, opaqueUnits_, queue.opaque, view, resources, shaders, 0);
+        terrain_.RenderForward(device, shaders, view, resources);
+
+        // CS が深度を SRV で読み、remap を UAV で書くので、RTV/DSV と VS の SRV を先に外す
+        dc->VSSetShaderResources(0, 2, nullVsSrvs);
+        dc->OMSetRenderTargets(0, nullptr, nullptr);
+        occlusion_.TestPhase2(device, shaders, view.depthSRV);
+        occlusionRan = true;
+        if (view.hzbDebugMax != 0) {
+            occlusion_.CollectOccludedBoxes(device, occItems_, occDebugBoxes_);
+        }
+        // 地形が IA/VS/PS/CB を替えたので、固定バインドと不透明のステートを張り直す
+        dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
+        BindForwardLitFixed(dc, view, instSrv, occlusion_.RemapSRV());
+        dc->OMSetDepthStencilState(depthOpaque_.Get(), 0);
+        dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
+        DrawUnits(device, opaqueUnits_, queue.opaque, view, resources, shaders, 1);
+        dc->VSSetShaderResources(0, 2, nullVsSrvs);
+    }
+    if (view.occlusionEnabled != 0) {
+        // GPU が数えた値 (2 フレーム遅れ)。統計専用で、描画の判断には使わない
+        occlusion_.PublishStats(view.viewKey);
+    }
     opaqueTimer_.End(device);
 
     // スカイボックス (M29d): 不透明後・透明前。深度 1.0 のピクセルだけ塗る。
-    // PS の b3 のみ使うので b0-b2 / トポロジは不変 (透明段は DrawItems がシェーダ再バインド)。
+    // PS の b3 のみ使うので b0-b2 / トポロジは不変 (透明段は DrawUnits がシェーダ再バインド)。
     // Wireframe (M40b) はフルスクリーン三角形が線になってしまうためスキップ
     if (!wire) {
         skybox_.Render(device, shaders, view);
@@ -460,12 +543,20 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
         BindForwardLitFixed(dc, view, nullptr);
         dc->OMSetDepthStencilState(depthTransparent_.Get(), 0);
         dc->OMSetBlendState(blendAlpha_.Get(), nullptr, 0xFFFFFFFFu);
-        DrawItems(device, queue.transparent, view, resources, shaders, nullptr);
+        PlanItems(device, queue.transparent, resources, shaders, nullptr, transparentUnits_);
+        DrawUnits(device, transparentUnits_, queue.transparent, view, resources, shaders, -1);
     }
 
     // Wireframe (M40b) はメッシュ描画のみ — 後段 (パーティクル/ポスプロ) は solid に戻す
     if (wire) {
         dc->RSSetState(rasterizer_.Get());
+    }
+
+    // --hzb-debug-max: オクルージョンの max-Z ピラミッドを画面へ貼る (落とした物の AABB は RenderSystem が重ねる)
+    if (view.hzbDebug != 0 && view.hzbDebugMax != 0 && occlusionRan) {
+        if (const HzbPass* maxPyramid = occlusion_.DebugPyramid(view.viewKey)) {
+            hzbDebug_.Render(device, shaders, view, *maxPyramid, view.hzbDebug);
+        }
     }
 
     // ---- M57e: t1-t8 を剥がす。**t7 (フロクセル積分結果) を残してはいけない** ----
@@ -478,7 +569,8 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
 }
 
 void ForwardPath::BindForwardLitFixed(ID3D11DeviceContext* dc, const RenderView& view,
-                                      ID3D11ShaderResourceView* instSrv)
+                                      ID3D11ShaderResourceView* instSrv,
+                                      ID3D11ShaderResourceView* remapSrv)
 {
     ID3D11Buffer* cbs[2] = { perFrameCB_.Get(), perObjectCB_.Get() };
     dc->VSSetConstantBuffers(0, 2, cbs);
@@ -498,8 +590,10 @@ void ForwardPath::BindForwardLitFixed(ID3D11DeviceContext* dc, const RenderView&
     dc->PSSetShaderResources(1, 9, frameSrvs);
     // forward_lit_instanced.hlsl は VS 側 t0 に StructuredBuffer<MeshInstance> を持つ
     // (PS の t0 = アルベドとは独立のスロット空間)。サーフェスの VS が名前解決で VS t0 に
-    // Texture2D 等を張ると、次の instanced run が型不一致で丸ごと消える (review-1 #2)
-    dc->VSSetShaderResources(0, 1, &instSrv);
+    // Texture2D 等を張ると、次の instanced run が型不一致で丸ごと消える (review-1 #2)。
+    // t1 はオクルージョンの remap (StructuredBuffer<uint>)。同じ理由で毎回張り直す
+    ID3D11ShaderResourceView* vsSrvs[2] = { instSrv, remapSrv };
+    dc->VSSetShaderResources(0, 2, vsSrvs);
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     // doubleSided (Cull None) のサーフェスや水面 (Cull None) の後でも、通常描画の前提
     // (rasterizer_/rasterizerWire_) へ必ず戻す
@@ -507,36 +601,119 @@ void ForwardPath::BindForwardLitFixed(ID3D11DeviceContext* dc, const RenderView&
     dc->RSSetState(wire ? rasterizerWire_.Get() : rasterizer_.Get());
 }
 
-void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem>& items,
-                            const RenderView& view, RenderResources& resources,
-                            ShaderManager& shaders, const std::vector<MeshInstanceRun>* runs)
+void ForwardPath::PlanItems(GraphicsDevice& device, const std::vector<RenderItem>& items,
+                            RenderResources& resources, ShaderManager& shaders,
+                            const std::vector<MeshInstanceRun>* runs, std::vector<DrawUnit>& out)
 {
-    ID3D11DeviceContext* dc = device.Context();
-
-    uint64_t boundShader = 0;
-    MeshBindState bound;
+    out.clear();
     size_t nextRun = 0;
-
-    // M79 sub-02: DrawSurfaceItem は forward_lit の固定スロット (b0-b2 / VS t0 / PS t0-t9 / s0-s2) を
-    // 名前解決で自由に張り替えるので、直後にこの一式へ戻す。「次のアイテムが forward_lit の
-    // ときにバインド前提を壊さない」(sub-02.md 受け入れ条件 5) を、サーフェス→通常のどの
-    // 境目でも成立させるための唯一の復元経路
-    auto restoreForwardLitBindings = [&]() {
-        BindForwardLitFixed(dc, view, runs ? instanceBuf_.SRV() : nullptr);
-        boundShader = 0; // 次の通常アイテムに VS/PS/InputLayout を再バインドさせる
-        bound = MeshBindState{}; // t0/normal/メッシュ VB・IB も再バインドさせる
-    };
-
+    int32_t nextCmd = 0;
     for (size_t idx = 0; idx < items.size(); ++idx) {
         const RenderItem& item = items[idx];
+        DrawUnit unit;
+        unit.first = idx;
 
         // インスタンス run の先頭なら一括描画 (M38f)。run 判定時に mat/mesh/シェーダの
         // 有効性は確認済み (Render の canInstance_ 構築を参照)
         if (runs && nextRun < runs->size() && (*runs)[nextRun].first == idx) {
             const MeshInstanceRun& run = (*runs)[nextRun];
             ++nextRun;
-            Material* mat = resources.materials.Get(item.material);
-            Mesh* mesh = resources.meshes.GetDrawable(item.mesh);
+            unit.kind = DrawUnit::Kind::Run;
+            unit.run = &run;
+            unit.count = run.count;
+            unit.mat = resources.materials.Get(item.material);
+            unit.mesh = resources.meshes.GetDrawable(item.mesh);
+            unit.cmdIndex = nextCmd++;
+            out.push_back(unit);
+            idx += run.count - 1; // for の ++idx と合わせて run 全体を飛ばす
+            continue;
+        }
+
+        unit.mat = resources.materials.Get(item.material);
+        if (!unit.mat) {
+            continue;
+        }
+        unit.mesh = resources.meshes.GetDrawable(item.mesh);
+        if (!unit.mesh) {
+            continue;
+        }
+        // スキンメッシュはマテリアルのシェーダではなくスキニング版に差し替える (M18)
+        unit.skinned = (item.bones != nullptr && item.boneCount > 0);
+
+        // M79 sub-02: shader が "*.surface" のマテリアルはサーフェスプログラムの色エントリで描く。
+        // スキン+サーフェスは初版未対応 (spec §2) — WARN 1 回だけ出して従来経路へ落ちる
+        // (skinnedShader_ が使われ、mat->shader は無視される。既存の分岐と同じ)
+        SurfaceMaterialState* surf =
+            resources.materials.GetOrBuildSurfaceState(item.material, shaders, resources.textures, device);
+        if (surf && surf->isSurfaceShader) {
+            if (unit.skinned) {
+                if (skinnedSurfaceWarned_.insert(item.material.value).second) {
+                    MYE_LOG_WARN(
+                        "surface material on skinned mesh is not supported yet - using skinned shader (material=0x%llx)",
+                        static_cast<unsigned long long>(item.material.value));
+                }
+                // 従来のスキン経路へフォールスルー (下の shaderId 解決へ)
+            } else {
+                unit.kind = DrawUnit::Kind::Surface;
+                unit.surf = surf;
+                out.push_back(unit);
+                continue;
+            }
+        }
+
+        unit.shaderId = unit.skinned ? skinnedShader_ : unit.mat->shader;
+        ShaderProgram* prog = shaders.Get(unit.shaderId);
+        if (!prog || !prog->valid) {
+            continue;
+        }
+        unit.kind = DrawUnit::Kind::Single;
+        unit.cmdIndex = nextCmd++;
+        out.push_back(unit);
+    }
+}
+
+void ForwardPath::DrawUnits(GraphicsDevice& device, const std::vector<DrawUnit>& units,
+                            const std::vector<RenderItem>& items, const RenderView& view,
+                            RenderResources& resources, ShaderManager& shaders, int phase)
+{
+    ID3D11DeviceContext* dc = device.Context();
+
+    uint64_t boundShader = 0;
+    MeshBindState bound;
+
+    // Run を 1 本でも含むのは不透明だけ。含むときだけ VS t0 にインスタンスバッファを張り直す
+    bool anyRun = false;
+    for (const DrawUnit& u : units) {
+        anyRun = anyRun || (u.kind == DrawUnit::Kind::Run);
+    }
+    ID3D11ShaderResourceView* const remapSrv = (phase >= 0) ? occlusion_.RemapSRV() : nullptr;
+
+    // M79 sub-02: DrawSurfaceItem は forward_lit の固定スロット (b0-b2 / VS t0 / PS t0-t9 / s0-s2) を
+    // 名前解決で自由に張り替えるので、直後にこの一式へ戻す。「次のアイテムが forward_lit の
+    // ときにバインド前提を壊さない」(sub-02.md 受け入れ条件 5) を、サーフェス→通常のどの
+    // 境目でも成立させるための唯一の復元経路
+    auto restoreForwardLitBindings = [&]() {
+        BindForwardLitFixed(dc, view, anyRun ? instanceBuf_.SRV() : nullptr, remapSrv);
+        boundShader = 0; // 次の通常アイテムに VS/PS/InputLayout を再バインドさせる
+        bound = MeshBindState{}; // t0/normal/メッシュ VB・IB も再バインドさせる
+    };
+
+    for (const DrawUnit& unit : units) {
+        const RenderItem& item = items[unit.first];
+        Material* mat = unit.mat;
+        Mesh* mesh = unit.mesh;
+
+        if (unit.kind == DrawUnit::Kind::Surface) {
+            if (phase == 1) {
+                continue; // サーフェスはフェーズ 1 で描き済み (判定対象外)
+            }
+            DrawSurfaceItem(device, item, *mat, *mesh, *unit.surf, shaders, resources, view);
+            restoreForwardLitBindings();
+            continue;
+        }
+
+        if (unit.kind == DrawUnit::Kind::Run) {
+            const MeshInstanceRun& run = *unit.run;
             ShaderProgram* prog = shaders.Get(litInstancedShader_);
             if (litInstancedShader_.value != boundShader) {
                 dc->IASetInputLayout(prog->inputLayout.Get());
@@ -550,58 +727,31 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
             po.world = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }; // 未使用
             po.baseColor = SrgbToLinear(mat->baseColor);
             po.instanceBase = static_cast<int32_t>(run.base);
+            po.remapPlus1 = (phase >= 0)
+                ? static_cast<int32_t>(occlusion_.RemapRegion(phase) + run.base + 1u)
+                : 0;
             UploadCB(dc, perObjectCB_.Get(), po);
             UploadCB(dc, materialCB_.Get(), MakeMaterialCB(*mat));
-            dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
-            prof::AddDraw(static_cast<int>(mesh->indexCount / 3 * run.count));
-            idx += run.count - 1; // for の ++idx と合わせて run 全体を飛ばす
-            continue;
-        }
-
-        Material* mat = resources.materials.Get(item.material);
-        if (!mat) {
-            continue;
-        }
-        Mesh* mesh = resources.meshes.GetDrawable(item.mesh);
-        if (!mesh) {
-            continue;
-        }
-        // スキンメッシュはマテリアルのシェーダではなくスキニング版に差し替える (M18)
-        const bool skinned = (item.bones != nullptr && item.boneCount > 0);
-
-        // M79 sub-02: shader が "*.surface" のマテリアルはサーフェスプログラムの色エントリで描く。
-        // スキン+サーフェスは初版未対応 (spec §2) — WARN 1 回だけ出して下の従来経路へ落ちる
-        // (skinnedShader_ が使われ、mat->shader は無視される。既存の分岐と同じ)
-        SurfaceMaterialState* surf =
-            resources.materials.GetOrBuildSurfaceState(item.material, shaders, resources.textures, device);
-        if (surf && surf->isSurfaceShader) {
-            if (skinned) {
-                if (skinnedSurfaceWarned_.insert(item.material.value).second) {
-                    MYE_LOG_WARN(
-                        "surface material on skinned mesh is not supported yet - using skinned shader (material=0x%llx)",
-                        static_cast<unsigned long long>(item.material.value));
-                }
-                // 従来のスキン経路へフォールスルー (下の shaderId 解決へ)
+            if (phase >= 0) {
+                dc->DrawIndexedInstancedIndirect(occlusion_.ArgsBuffer(),
+                                                 occlusion_.ArgsByteOffset(phase, static_cast<uint32_t>(unit.cmdIndex)));
             } else {
-                DrawSurfaceItem(device, item, *mat, *mesh, *surf, shaders, resources, view);
-                restoreForwardLitBindings();
-                continue;
+                dc->DrawIndexedInstanced(mesh->indexCount, run.count, 0, 0, 0);
             }
-        }
-
-        const AssetID shaderId = skinned ? skinnedShader_ : mat->shader;
-        ShaderProgram* prog = shaders.Get(shaderId);
-        if (!prog || !prog->valid) {
+            if (phase <= 0) {
+                prof::AddDraw(static_cast<int>(mesh->indexCount / 3 * run.count));
+            }
             continue;
         }
 
-        if (shaderId.value != boundShader) {
+        ShaderProgram* prog = shaders.Get(unit.shaderId);
+        if (unit.shaderId.value != boundShader) {
             dc->IASetInputLayout(prog->inputLayout.Get());
             dc->VSSetShader(prog->vs.Get(), nullptr, 0);
             dc->PSSetShader(prog->ps.Get(), nullptr, 0);
-            boundShader = shaderId.value;
+            boundShader = unit.shaderId.value;
         }
-        if (skinned) {
+        if (unit.skinned) {
             // ボーンパレットを b3 (VS) にアップロード
             D3D11_MAPPED_SUBRESOURCE bm = {};
             if (SUCCEEDED(dc->Map(boneCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &bm))) {
@@ -621,8 +771,15 @@ void ForwardPath::DrawItems(GraphicsDevice& device, const std::vector<RenderItem
         UploadCB(dc, perObjectCB_.Get(), po);
         UploadCB(dc, materialCB_.Get(), MakeMaterialCB(*mat));
 
-        dc->DrawIndexed(mesh->indexCount, 0, 0);
-        prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
+        if (phase >= 0) {
+            dc->DrawIndexedInstancedIndirect(occlusion_.ArgsBuffer(),
+                                             occlusion_.ArgsByteOffset(phase, static_cast<uint32_t>(unit.cmdIndex)));
+        } else {
+            dc->DrawIndexed(mesh->indexCount, 0, 0);
+        }
+        if (phase <= 0) {
+            prof::AddDraw(static_cast<int>(mesh->indexCount / 3));
+        }
     }
 }
 
@@ -646,7 +803,7 @@ void ForwardPath::DrawSurfaceItem(GraphicsDevice& device, const RenderItem& item
     dc->VSSetShader(prog->colorVS.Get(), nullptr, 0);
     dc->PSSetShader(prog->colorPS.Get(), nullptr, 0);
     // M79 sub-06: doubleSided (.mat.json) は色・速度・影の全エントリを Cull None で描く。
-    // 呼び出し側 (DrawItems::restoreForwardLitBindings) が描画直後に既定のラスタライザへ戻す
+    // 呼び出し側 (DrawUnits::restoreForwardLitBindings) が描画直後に既定のラスタライザへ戻す
     if (resources.materials.GetSurfaceDoubleSided(item.material)) {
         dc->RSSetState(rasterizerCullNone_.Get());
     }

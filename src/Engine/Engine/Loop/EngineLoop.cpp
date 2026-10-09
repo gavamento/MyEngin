@@ -379,6 +379,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.rtDebugMode = config.rtDebugMode; // M46b (--rt-debug N、Deferred のみ)
     renderSystem.velocityDebugMode = config.velocityDebug; // M55c (--velocity-debug)
     renderSystem.hzbDebugMip = config.hzbDebug;            // M56c (--hzb-debug N)
+    renderSystem.hzbDebugMax = config.hzbDebugMax;         // --hzb-debug-max
     renderSystem.enableOcclusionCulling = config.occlusionCulling; // --no-occlusion
     renderSystem.enableSsr = config.ssr;                   // M56d (--ssr、Deferred のみ)
     renderSystem.rtTemporal = config.rtTemporal;   // M46d (--rt-no-temporal / --rt-freeze-seed)
