@@ -197,6 +197,8 @@
     <ClCompile Include="..\src\Engine\Engine\Rendering\RenderSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\ShadowCullSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\SkinBoundsSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Rendering\SkinPaletteCache.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Rendering\SkinPaletteCacheSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\TerrainSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\WaterWaveSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\CrashRing.cpp" />
@@ -503,6 +505,8 @@
     <ClInclude Include="..\src\Engine\Engine\Rendering\RenderSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\ShadowCullSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\SkinBoundsSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\SkinPaletteCache.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\SkinPaletteCacheSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\TerrainSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\WaterWaveSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\CrashRing.h" />

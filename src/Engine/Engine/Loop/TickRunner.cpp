@@ -885,6 +885,9 @@ void RunOneTick(TickServices& ts)
                 managedHost.OnSceneReloaded();
             })) {
             scene.GetWorld().Rng().Seed(0x4D794531ull); // 決定論的再シード (World 既定値)
+            if (ts.sceneLoadSerial) {
+                ++*ts.sceneLoadSerial;
+            }
             collisionSystem.Reset();
             particleSystem.ResetParticles();
             if (ts.xpbd) {

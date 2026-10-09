@@ -131,6 +131,8 @@ struct TickServices {
 
     // 遅延要求 (tick 末のセーフポイントで消費)
     std::wstring* pendingScene = nullptr;
+    // シーンを読み込むたびに +1 する数 (null = 数えない)。描画が履歴を捨てる契機で、sim の状態ではない
+    uint32_t* sceneLoadSerial = nullptr;
     int* pendingSaveSlot = nullptr;
     int* pendingLoadSlot = nullptr;
     // M70c: LoadPersist の要求 (シーンを動かさない persist だけのロード)

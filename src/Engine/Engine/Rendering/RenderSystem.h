@@ -8,6 +8,7 @@
 #include "Engine/Core/Ecs/EntityID.h"
 #include "Engine/Engine/Rendering/DebugDraw.h"
 #include "Engine/Engine/Rendering/LightSelection.h"
+#include "Engine/Engine/Rendering/SkinPaletteCache.h"
 #include "Engine/Engine/RayTracing/RtScene.h"
 #include "Engine/Engine/Scene/TagNames.h" // RtTagRules (タグによる RT の一括 ON/OFF)
 #include "Engine/Engine/Rendering/TerrainSystem.h"
@@ -142,6 +143,14 @@ public:
     // lodForcedStage: -1 = 自動 / 0.. = その段 (無ければ最も粗い段)。デバッグ・A/B 用。CLI は --lod-bias / --lod-force
     float lodBias = 1.0f;
     int lodForcedStage = -1;
+    // アニメの距離間引き (URO、描画専用)。画面で小さいスキンはパレットを数 tick に 1 回だけ作り直す。
+    // 近いキャラ・ラグドール・クロスフェード中は毎 tick。CLI は --no-uro
+    bool enableAnimUro = true;
+    // 描画が見る sim の tick 番号 (EngineLoop が毎フレーム設定する)。URO の更新 tick の出所で、
+    // 実時間・描画フレーム数は使わない = 決定的撮影で同じ絵になる。前に戻ったら描画の履歴を捨てる
+    uint64_t simTick = 0;
+    // 描画の履歴 (LOD の段・パレットのキャッシュ) を捨てる。シーン切り替え・巻き戻し・デバイス消失の後に呼ぶ
+    void ResetRenderHistory();
 
     // 描画補間 (M36b)。EngineLoop が毎フレーム設定する。1.0 = 補間なし (従来描画)。
     // 対象はカメラ + メッシュ収集のワールド行列 (パーティクル/スプライト/UI は対象外)
@@ -280,6 +289,8 @@ public:
     // Render 1 回 (影・本描画・ポスト・パーティクルまで) の GPU 時間。同上の規約
     float GbufferGpuMs() const { return gbufferGpuMs_; }
     float ForwardOpaqueGpuMs() const { return forwardOpaqueGpuMs_; }
+    // 不透明の本描画 (Deferred の GBuffer) の命令を積む CPU 時間 [ms]、直近 32 回の平均
+    float GbufferCpuMs() const { return gbufferCpuMs_; }
     // GPU オクルージョンの判定 + max-Z ピラミッド構築 (フェーズ 1/2 の描画は GBuffer 側に入る)
     float OcclusionGpuMs() const { return occlusionGpuMs_; }
     float FrameGpuMs() const { return frameTimer_.Milliseconds(); }
@@ -353,10 +364,15 @@ private:
     void CollectDrawables(World& world, RenderResources& resources, const FrameTarget& target, FrameContext& f);
     void RenderCascadeShadows(World& world, GraphicsDevice& device, ShaderManager& shaders,
                               RenderResources& resources, FrameContext& f);
-    // スキンメッシュ 1 体のボーンパレットを評価する (本描画と影で共有。入力は ECS の状態だけの純関数)。
-    // interp = ワールド行列を前 tick と補間しているフレームか
-    void EvaluateSkinPalette(World& world, EntityID e, const SkinnedMeshComponent& sm,
-                             const SkinnedModel& model, bool interp, std::vector<DirectX::XMFLOAT4X4>& palette);
+    // ---- スキンのパレット: 直列で必要数を数えてエントリを確保 → 並列で評価 → 直列でキューへ ----
+    struct PaletteJob;
+    // 直列。スキン 1 体のパレットのエントリを返す。キャッシュに使えるものがあればそれ (reused を数える)、
+    // 無ければエントリを確保して評価を jobs に積む。uroScreenSize = 画面での大きさ (URO の間隔の出所)
+    SkinPaletteCache::Entry* AcquireSkinPalette(World& world, EntityID e, const SkinnedMeshComponent& sm,
+                                                const SkinnedModel& model, float uroScreenSize,
+                                                std::vector<PaletteJob>& jobs, int& reused);
+    // jobs を並列に評価する (出力は互いに素なエントリ)。ボーン数超過の WARN はここ (直列) で出す
+    void RunPaletteJobs(World& world, std::vector<PaletteJob>& jobs);
     void AllocateShadowAtlas(GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
                              FrameContext& f);
     void PrepareEnvironment(World& world, GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
@@ -394,6 +410,7 @@ private:
     // M90a: 同上 (パス側の計測を写す) と、Render 全体の計測
     float gbufferGpuMs_ = 0.0f;
     float forwardOpaqueGpuMs_ = 0.0f;
+    float gbufferCpuMs_ = 0.0f;
     float occlusionGpuMs_ = 0.0f;
     GpuTimer frameTimer_;
     bool frameTimerInit_ = false; // 遅延 Init 済みか (ReleaseGpu で戻す)
@@ -416,9 +433,12 @@ private:
     EditorLinePass linePass_; // DebugDrawLine 用 (v7、遅延 Init)
     NavFillPass navFillPass_; // ナビメッシュの塗り (M82e、遅延 Init)
     EnvMapBaker envBaker_;    // IBL 環境マップ (M38c、lazy ベイク + キャッシュ)
-    // スキンメッシュのボーンパレット (M18)。フレーム毎に再構築。deque = push_back で
-    // 既存要素の .data() ポインタが無効化されない (RenderItem.bones が参照する)
-    std::deque<std::vector<DirectX::XMFLOAT4X4>> skinPalettes_;
+    // スキンメッシュのボーンパレット (M18)。ビュー間で共有するキャッシュ (RenderItem.bones はエントリを指す。
+    // エントリのアドレスは Render の間だけ有効)
+    SkinPaletteCache skinPaletteCache_;
+    uint64_t lastSimTick_ = 0;
+    // offscreenCasters_ と同じ並びの、画面での大きさ (スキンの URO 用。スキン以外は使わない)
+    std::vector<float> offscreenScreenSize_;
     // kMaxBones 超過の切り捨てを警告済みのスキンモデル AssetID (毎フレーム WARN を出さないため)
     std::vector<uint64_t> boneOverflowWarned_;
     // スキンの保守的 AABB (視錐台カリング用)。(モデル, メッシュ) ごとに最初に描くとき 1 回だけ計算する

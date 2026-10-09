@@ -1,7 +1,7 @@
 # sub-05: メッシュ LOD (meshoptimizer、.meta でオプトイン、kCookVersion 6、選択、UI)
 
 - 依存: sub-01
-- 状態: OK (コミット待ち)
+- 状態: OK (commit 29a775e)
 - 往復: 1
 
 ## やること

@@ -1,6 +1,7 @@
 #include "Engine/Renderer/Pipeline/DeferredPath.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 #include "Engine/Core/Diagnostics/Log.h"
@@ -737,7 +738,9 @@ void DeferredPath::Render(GraphicsDevice& device, const RenderView& view, const 
 
     // ★呼ぶ順 = D3D へ命令を積む順。後の段は前の段が張った RTV / サンプラ / SRV を前提にしている所があるので入れ替えない
     gbufferTimer_.Begin(device);
+    const auto geometryCpuStart = std::chrono::steady_clock::now();
     RenderGeometry(device, view, queue, resources, shaders, f); // 1) + 1.1)
+    gbufferCpu_.Add(std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - geometryCpuStart).count());
     gbufferTimer_.End(device);
     if (view.occlusionEnabled != 0) {
         // GPU が数えた値 (2 フレーム遅れ)。統計専用で、描画の判断には使わない

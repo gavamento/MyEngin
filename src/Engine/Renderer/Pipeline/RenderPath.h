@@ -42,6 +42,9 @@ public:
     // 計測だけの口 (絵にも sim にも影響しない)
     virtual float GbufferGpuMs() const { return 0.0f; }
     virtual float ForwardOpaqueGpuMs() const { return 0.0f; }
+    // 不透明の本描画の命令を積むのにかかった CPU 時間 [ms] (直近 kCpuTimeWindow フレームの平均。Deferred のみ)。
+    // GPU オクルージョンのフェーズ 2 の提出コストの確認用。計測だけの口
+    virtual float GbufferCpuMs() const { return 0.0f; }
     // GPU オクルージョンの判定 + max-Z ピラミッド構築の GPU 時間 [ms]。走らせないパス / フレームは 0
     virtual float OcclusionGpuMs() const { return 0.0f; }
 

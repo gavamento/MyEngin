@@ -5,8 +5,11 @@
 //====================================================================================
 #pragma once
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <vector>
+
+#include <DirectXMath.h>
 
 #include "Engine/Core/Ecs/EntityID.h"
 #include "Engine/Renderer/Device/GpuResources.h"
@@ -28,6 +31,20 @@ inline float LodScreenSize(float radius, float distance, float projScaleY, bool 
         return radius * projScaleY;
     }
     return radius * projScaleY / std::max(distance, 1e-4f);
+}
+
+// ワールド AABB の外接球が画面の高さに占める割合。LOD の段選択と URO (アニメ間引き) が共有する
+inline float BoxScreenSize(const DirectX::XMFLOAT3& lo, const DirectX::XMFLOAT3& hi,
+                           const DirectX::XMFLOAT3& cameraPos, float projScaleY, bool orthographic)
+{
+    const float cx = (lo.x + hi.x) * 0.5f - cameraPos.x;
+    const float cy = (lo.y + hi.y) * 0.5f - cameraPos.y;
+    const float cz = (lo.z + hi.z) * 0.5f - cameraPos.z;
+    const float dx = hi.x - lo.x;
+    const float dy = hi.y - lo.y;
+    const float dz = hi.z - lo.z;
+    const float radius = 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz);
+    return LodScreenSize(radius, std::sqrt(cx * cx + cy * cy + cz * cz), projScaleY, orthographic);
 }
 
 // 描く段を決める純関数。lods = Mesh::lods (LOD0 を含む)。prevLod < 0 = 履歴なし (しきい値だけで決める)。

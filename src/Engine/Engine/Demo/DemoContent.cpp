@@ -5090,4 +5090,105 @@ void BuildRenderBenchScene(EngineContext& ctx)
     MYE_LOG_INFO("[render-bench] %d grid objects, %d skinned actors", kGridX * kGridZ, actorIndex);
 }
 
+void BuildRenderBenchUniqueScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+    s.SetName("render_bench_unique");
+
+    constexpr uint64_t kAnimTestControllerGuid = 0xb44c659f992d4a83ull; // BuildRenderBenchScene と同じ
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    const AssetID cube = res.meshes.Cube();
+    const Mesh* cubeMesh = res.meshes.Get(cube);
+    if (cubeMesh == nullptr) {
+        return;
+    }
+
+    // ---- カメラ・太陽・床・壁は render_bench と同じ配置。遠景のキャラを映すため farZ を伸ばす ----
+    GameObject camera = s.CreateGameObject("Main Camera");
+    {
+        auto* cam = camera.AddComponent<CameraComponent>();
+        cam->fovYDeg = 60.0f;
+        cam->farZ = 1500.0f;
+    }
+    camera.SetLocalPosition(0.0f, 7.0f, -14.0f);
+    camera.SetLocalRotationEuler(10.0f, 0.0f, 0.0f);
+    GameObject sun = s.CreateGameObject("Sun");
+    {
+        auto* l = sun.AddComponent<LightComponent>();
+        l->intensity = 0.9f;
+        l->ambient = { 0.15f, 0.16f, 0.19f };
+    }
+    sun.SetLocalRotationEuler(50.0f, 0.0f, 0.0f);
+
+    auto makeMaterial = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = shader;
+        m.texture = res.textures.White();
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    auto place = [&](const char* name, AssetID mesh, AssetID mat, float px, float py, float pz, float sx, float sy,
+                     float sz) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(px, py, pz);
+        go.SetLocalScale(sx, sy, sz);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = mesh;
+        mr->material = mat;
+        return go;
+    };
+    place("Ground", cube, makeMaterial("rbu_ground", 0.32f, 0.33f, 0.36f), 0.0f, -0.5f, 100.0f, 500.0f, 1.0f, 500.0f);
+    place("Wall", cube, makeMaterial("rbu_wall", 0.75f, 0.75f, 0.72f), 0.0f, 8.0f, 14.0f, 36.0f, 16.0f, 1.5f);
+
+    // ---- メッシュも材質もすべて別のグリッド 50 x 30 = 1500 個 ----
+    // 同じメッシュ・材質が 1 つも無いのでインスタンシングの run が全部 1 個になり、GPU オクルージョンのフェーズ 2 が
+    // run ごとに状態設定と CB 更新を出し直す最悪の形になる (CPU の提出コストの計測用)。
+    // メッシュは立方体の頂点を添字ごとの倍率で変えた複製。座標・色は添字の整数式のみ (毎回同じ)
+    constexpr int kGridX = 50;
+    constexpr int kGridZ = 30;
+    constexpr float kGridStep = 3.0f;
+    std::vector<MeshVertex> vertices(cubeMesh->positions.size());
+    for (int iz = 0; iz < kGridZ; ++iz) {
+        for (int ix = 0; ix < kGridX; ++ix) {
+            const int index = iz * kGridX + ix;
+            const float scale = 1.0f + static_cast<float>(index % 7) * 0.02f;
+            for (size_t v = 0; v < vertices.size(); ++v) {
+                vertices[v].position = { cubeMesh->positions[v].x * scale, cubeMesh->positions[v].y * scale,
+                                         cubeMesh->positions[v].z * scale };
+                vertices[v].normal = cubeMesh->normals[v];
+                vertices[v].uv = cubeMesh->uvs[v];
+            }
+            char name[32];
+            std::snprintf(name, sizeof(name), "rbu_mesh_%04d", index);
+            const AssetID mesh = res.meshes.Register(name, vertices, cubeMesh->indices);
+            std::snprintf(name, sizeof(name), "rbu_mat_%04d", index);
+            const AssetID mat = makeMaterial(name, 0.3f + static_cast<float>(index % 5) * 0.15f,
+                                             0.3f + static_cast<float>(index % 7) * 0.1f,
+                                             0.3f + static_cast<float>(index % 3) * 0.25f);
+            const float height = 1.0f + static_cast<float>((ix * 7 + iz * 13) % 5) * 0.5f;
+            std::snprintf(name, sizeof(name), "BenchU_%02d_%02d", ix, iz);
+            place(name, mesh, mat, (static_cast<float>(ix) - 24.5f) * kGridStep, height * 0.5f,
+                  22.0f + static_cast<float>(iz) * kGridStep, 1.6f, height, 1.6f);
+        }
+    }
+
+    // ---- スキンのキャラ (URO の確認用): 近景 1 体と、画面で次第に小さくなる遠景 ----
+    // 画面での大きさの目安 (外接球の高さ比): z=2 で約 1、z=100 で約 0.07、200 で 0.035、400 で 0.017、800 で 0.009、1000 で 0.007
+    const float actorZ[] = { 2.0f, 100.0f, 200.0f, 400.0f, 800.0f, 1000.0f };
+    int actorIndex = 0;
+    for (const float z : actorZ) {
+        GameObject actor = ModelLoader::Load(s, res, *ctx.shaders, ctx.assetsRoot + L"\\models\\anim_test.glb");
+        if (!actor) {
+            MYE_LOG_ERROR("[render-bench] anim_test.glb could not be loaded (run tools\\gen_anim_test_gltf.ps1)");
+            break;
+        }
+        actor.SetLocalPosition(actorIndex == 0 ? 2.5f : -30.0f + 12.0f * static_cast<float>(actorIndex), 0.0f, z);
+        actor.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ kAnimTestControllerGuid };
+        ++actorIndex;
+    }
+    MYE_LOG_INFO("[render-bench-unique] %d unique mesh/material objects, %d skinned actors", kGridX * kGridZ,
+                 actorIndex);
+}
+
 } // namespace mye

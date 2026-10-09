@@ -1,8 +1,8 @@
 # sub-06: 描画側の並列化と URO (パレット・LOD 選択・カスケードの並列、ビュー間キャッシュ)
 
 - 依存: sub-04, sub-05
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (コミット待ち)
+- 往復: 2
 
 ## やること
 spec §4.1.5、§2 #9 #10 #11。
@@ -38,4 +38,20 @@ spec §4.1.5、§2 #9 #10 #11。
 
 ## 実装メモ (coder が追記)
 
+### round 1
+- パレット: `SkinPaletteCache` (新規、ビュー間キャッシュ + URO の判定関数)。CollectDrawables は 直列でエントリ確保 → `RunPaletteJobs` (ParallelRanges、grain 4) → 直列でキューの項目へ繋ぐ。`RenderCascadeShadows` の画面外スキンも同じ入口 (`AcquireSkinPalette`)。`skinPalettes_` (deque) は廃止し、エントリのアドレス安定は `std::deque<Entry>` で担保。WARN は `RunPaletteJobs` の直列部。
+- URO: `UroUpdateInterval` (screen-size 5% / 2% / 0.8% で 1 / 2 / 4 / 8 tick)、更新 tick = `(simTick + entity.index) % interval == 0`。`RenderSystem::simTick` を EngineLoop が `ctx.tickIndex` で設定。ラグドール作動中・`IsPoseBlending` (フェード中 / 2 層以上) は毎 tick。`enableAnimUro` + `--no-uro` + Rendering メニュー (`Menu_AnimUro`)。
+- キャッシュ鍵: entity + model + `SameRenderPoseInputs` (= `SamePoseInputs` + 使用層の prevTimeQ / stepQ) + alpha。URO は窓 (窓の先頭 tick) で再利用。ラグドールは再利用しない。
+- カスケード判定を `ParallelRanges` (キャスター単位、出力は自分の要素) に。
+- やること 8: `ResetRenderHistory()` (lodHistory_ + パレットキャッシュ)。呼ぶ場所は ReleaseGpu / タイムトラベル等の復元後 (`ResetNonSimLanesAfterRestore`) / シーン読み込み (`TickServices::sceneLoadSerial`) / `simTick` が前に戻ったとき。LOD の screen-size は `BoxScreenSize` (MeshLod.h) へ。
+- やること 7: `--render-bench-unique-demo` (メッシュ・材質が全部別の 1500 個 + 遠いスキン 6 体)、`DeferredPath::GbufferCpuMs` (RenderGeometry の CPU 時間の直近 32 回平均) を dump の `cpuMs.gbufferSubmit` に。
+
+SELF_EVAL は司会への返信本文を参照。
+
 ## フィードバック履歴
+- round 1: VERDICT REWORK (planner、2026-10-09)
+  1. [must] URO の位相を `(simTick + Hash(entity.index)) % interval` にする (spec §2 #9 / §8 を変更済み)。ハッシュは決定的な 32bit の整数ミックス (例: murmur3 の fmix32)。乱数・ポインタ・実時間は使わない。`UroIsUpdateTick` と `UroWindowStart` の両方を同じ位相に揃える。selftest には次を足す: 20 刻みの entity.index 群 (例: 0, 20, …, 380) で、interval 2 / 4 の更新 tick が 1 つの位相に偏らないこと (各位相に 1 割以上)。窓の先頭・更新 tick の既存の境界テストも新しい位相で通すこと。unique demo の dump で、tick 31〜34 の paletteEvaluated が特定の tick に集中しないことを報告する。jobs / --no-jobs / --no-uro の WARP A/B (diffPixels=0) と shot_verify は取り直す。
+  2. [should] SELF_EVAL の「未実行」にある Debug の A/B スクショは不要 (WARP の Release で受け入れ 1 の根拠は足りる)。2 ビュー同時の実機確認も、受け入れ 3 が「selftest または dump」としており、Editor の dump で view 2 のキャッシュ再利用を確認済みなので不要とする。
+  - 差分の判定: LodRange の取得が点在している件の整理は、sub-05 の nit であって、やること 8 の範囲ではない (8 は選択式を関数へ出すことで、BoxScreenSize で満たした)。いずれ別件で整理する。カスケード判定をキャスター単位で分割したのは結果が同じなので採用。その他の追加はすべて採用した (spec §8)。
+  - 不安・質問への回答: (a) オクルージョンの CPU 提出コストは既定 ON のまま。読み戻しは採らない (spec §7。`[聞]` の印付き)。GPU ms の ON/OFF は sub-08 で計る。(b) 位相は #1 のとおり。(c) 実 GPU の 51 画素の揺れは spec §7 に別件として記録した。
+- round 2: VERDICT OK (planner、2026-10-09)。#1 解消: `UroPhase` (fmix32) を更新 tick と窓の先頭の両方で使い、20 刻みの index で位相が偏らないことを selftest で確かめた。unique demo の dump で更新が 1 つの tick に集中しなくなった (2/4、3/3、3/3、4/2、2/4)。WARP の A/B (jobs / --no-jobs / --no-uro / 2 回撮り) はすべて diffPixels=0、shot_verify は 30 枚 PASS、selftest は両構成で exit 0。coder が実行しなかった check_rules は planner が現在のツリーで回し、0 error / 50 warning (既存の rule 7 のみ)。replay_verify は位相の変更が描画側だけなので、round 1 の 18 ジョブ PASS を引き継ぐ。

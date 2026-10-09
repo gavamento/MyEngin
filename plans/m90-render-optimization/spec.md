@@ -38,7 +38,7 @@
 | 6 | LOD の段をどう持つか | `MeshVertex` は 52B で static_assert、`CookedMesh` / `Mesh` は VB/IB 1 組 | (未) | **頂点バッファは共有し、段ごとに IB の範囲 (indexOffset / indexCount) を足す** (`meshopt_simplify` は元の頂点を指すインデックス列を返すので頂点を複製しない。Unity 6 の Mesh LOD と同じ持ち方)。`MeshVertex` は変えない。kCookVersion 5→6。コライダー・NavMesh・RT の BVH・MeshLibrary の CPU コピーは LOD0 (今の IB そのもの) を使い続ける |
 | 7 | 影のキャスターをカメラの視錐台で落としてよいか | `RenderSystem.cpp:1199-1301`: 影はカメラでカリング済みの `queue_.opaque` から取る → 画面外のキャスターの影が消える (現状の不具合) | (未) | **キャスター候補をカメラの視錐台から切り離し、カスケードごとにライトの直交視錐台でカリング**する。前例は `ShadowAtlas` のタイル単位カリング。CSM のフィット AABB の取り方は変えない (変えると影の解像度配分が変わり golden が動く — 変えたら §8 に積む) |
 | 8 | スキンの AABB をどう作るか | `RenderSystem.cpp:1185-1187`: バインドポーズの AABB しか無いので常に可視扱い。ポーズは IK・ラグドール・ブレンドで動く | (未) | **登録時に「全クリップの全キーフレーム × ボーンごとの頂点包絡」の和集合 + 余白** をモデル空間 AABB として SkinnedModel に持つ (クックしない = kCookVersion に関係しない)。**ラグドール作動中は従来どおり常に可視**。UE の固定 bounds / Unity の `localBounds` と同じく保守的な固定箱で、パレットを評価する前に判定できる (評価後に判定すると画面外のキャラのパレット評価を省けない) |
-| 9 | アニメの距離間引き (URO) を sim に入れるか | ポーズは `SkinnedMeshComponent` の入力からの純関数 (`Components.h:317-343`)。sim で姿勢を使うのは部位追従・IK・ラグドール (`PartFollowSystem` / `FootIkSystem` / `Ragdoll`) で、描画のパレットは `RenderSystem.cpp:1241-1281` で別に評価している。sim に入れてカメラ距離で間引くとリプレイ・ネット対戦で割れる (カメラは sim の入力ではない) | (未) `[聞]` | **描画側だけ**。sim のポーズ評価には一切触れない。遠い (screen-size が小さい) スキンは N tick に 1 回だけパレットを作り直し、間はキャッシュを使う (補間もしない)。どの tick で作り直すかは `tickIndex + エンティティ番号` から決める (実時間・描画フレーム数に依存しない = 決定的撮影で再現する)。UE の URO と同じく見た目だけの最適化 |
+| 9 | アニメの距離間引き (URO) を sim に入れるか | ポーズは `SkinnedMeshComponent` の入力からの純関数 (`Components.h:317-343`)。sim で姿勢を使うのは部位追従・IK・ラグドール (`PartFollowSystem` / `FootIkSystem` / `Ragdoll`) で、描画のパレットは `RenderSystem.cpp:1241-1281` で別に評価している。sim に入れてカメラ距離で間引くとリプレイ・ネット対戦で割れる (カメラは sim の入力ではない) | (未) `[聞]` | **描画側だけ**。sim のポーズ評価には一切触れない。遠い (screen-size が小さい) スキンは N tick に 1 回だけパレットを作り直し、間はキャッシュを使う (補間もしない)。どの tick で作り直すかは `tickIndex + エンティティ番号のハッシュ` から決める (sub-06 で「+ エンティティ番号」から変更) (実時間・描画フレーム数に依存しない = 決定的撮影で再現する)。UE の URO と同じく見た目だけの最適化 |
 | 10 | 同じフレームに複数ビュー (Scene View + Game View) が同じキャラのパレットを 2 回作っている | `RenderSystem.cpp:1248` のコメント「ビュー毎に Render() が呼ばれても同じ絵」= 毎ビュー評価 | (未) | URO のキャッシュを **(エンティティ, ポーズ入力, 補間 alpha)** をキーにビュー間で共有する。キャッシュは描画専用で sim から見えない |
 | 11 | 描画側の並列化で絵が変わらないか | 既存の流儀: `RenderSystem.cpp:1182` ステージ 2 は要素独立の純関数を `ParallelRanges`、ステージ 3 は直列 | (未) | パレット評価・LOD 選択・カスケードごとのカリングを並列段へ出す。**出力は事前に確保した互いに素のスロット、結合は index 順**。キュー・`skinPalettes_` への push は直列のまま。`--no-jobs` とスクショの画素差 0 が条件 |
 | 12 | sim の並列化は何を対象にするか | 空力と XPBD は「並列化を永久に禁止」(加算順が結果の一部)。ADR-020 は「出力次元だけを割る」流儀。他系の独立性は §4.1.7 の調査結果 | (未) `[聞]` | §4.1.7 の表で「他エンティティの今 tick の書き込みを読まない・共有 RNG を使わない・共有コンテナへ書かない」を満たす系だけ。満たさない系は**アルゴリズムを変えてまで並列化しない** (変えると挙動が変わり、それは軽量化ではなく仕様変更)。規約は ADR-028 |
@@ -101,7 +101,7 @@
 - インスタンスの同一性: 可視ビットは viewKey ごと・エンティティごと (prevRender と同じ流儀の安定スロット) に持つ。新しく出たエンティティは「前フレーム不可視」扱い (フェーズ 2 で判定される = 欠けない)。
 - 描画: インスタンシングの run ごとに、compute が可視インスタンスの index を詰め、`DrawIndexedInstancedIndirect` の引数 (instanceCount) を書く。CPU への読み戻しで描画を決めない。インスタンシングできない項目 (ボーン付き等) は instanceCount 0/1 の個別 indirect。
 - 遮蔽物: その時点で深度に書かれている物すべて。サーフェスマテリアル・水面など別経路で描く物は判定対象に入れない (常に描く)。
-- 切り替え: `RenderSystem::enableOcclusionCulling` (既定 true) と CLI `--no-occlusion`。`--hzb-debug` に max-Z ピラミッドと「落とした物の AABB」の表示を足す。
+- 切り替え: `RenderSystem::enableOcclusionCulling` (既定 true) と CLI `--no-occlusion`。プロジェクト設定 `assets\project_settings.json` の `"rendering": {"occlusionCulling": bool}` (キーが無い = true) に保存し、Editor と Runtime が起動時に読む。CLI `--no-occlusion` はファイルより優先し、書き戻さない。エディタのメニューで切り替えるとファイルへ保存する (ユーザー判断 2026-10-09、sub-09)。`--hzb-debug` に max-Z ピラミッドと「落とした物の AABB」の表示を足す。
 - リサイズ・デバイス消失 (M88) の後は履歴を捨てる (全部を前フレーム不可視として扱う = 欠けない)。
 
 #### 4.1.5 描画側の並列化と URO
@@ -142,7 +142,7 @@ tick の順序は `src\Engine\Engine\Loop\TickRunner.cpp:211` の `RunOneTick` (
 - 封印キャッシュ (`.sealed`) でも段表が blob に入っているので配布物で LOD が効く。
 
 ### 4.3 UI / ビジュアル
-- エディタの描画設定メニュー (`EditorApp.cpp:1198` 付近の影の切り替えと同じ場所): オクルージョン ON/OFF、URO ON/OFF、lodBias、強制 LOD 段。文字列は `LocalizationTable.inl` の `Tr()`、両言語。
+- エディタの描画設定メニュー (`EditorApp.cpp:1198` 付近の影の切り替えと同じ場所): オクルージョン ON/OFF、URO ON/OFF、lodBias、強制 LOD 段。 オクルージョンの ON/OFF だけはプロジェクトへ保存する (メニューに注記)。URO・lodBias・強制段は保存しない (起動ごと)。文字列は `LocalizationTable.inl` の `Tr()`、両言語。
 - アセットブラウザ / Inspector のモデルの import 設定に LOD 段数・比を出す (テクスチャの import 設定と同じ流儀)。 (sub-05 で確定: v1 は Inspector のみ。アセットブラウザの右クリック「インポート設定」はテクスチャ専用のまま。後回し)
 - ProfilerWindow: §4.1.1 の新しい欄と GPU ms。
 - `--hzb-debug`: max-Z ピラミッドと落とした物の AABB。
@@ -151,6 +151,7 @@ tick の順序は `src\Engine\Engine\Loop\TickRunner.cpp:211` の `RunOneTick` (
 ### 4.4 非機能
 - sim のビット一致 (Debug / Release / WARP、jobs あり / なし) を崩さない。描画の変更は sim のハッシュに入らない。
 - 決定的撮影: LOD・オクルージョン・URO は実時間・描画フレーム数に依存しない (tick とビュー別の描画通番だけ)。
+  - (sub-06 で確定) LOD のヒステリシスと URO の窓は「その run でどの tick を描いたか」の履歴に依存する。URO の窓の途中で初めて見えたキャラは、その tick のポーズでパレットを作る (窓の先頭 tick のポーズは持っていない)。同じ run・同じ撮影手順なら再現するが、シークや巻き戻しの直後は、連続再生と比べて遠景のキャラの姿勢が最大 interval-1 tick ずれうる (見た目だけで sim には入らない)。巻き戻し・シーン切り替え・デバイス消失・simTick の逆行では `ResetRenderHistory` で履歴を捨てる。
 - `/fp:precise`。meshoptimizer も同じフラグでビルドする (vcxproj のフラグを揃える)。
 - 失敗の局所化: HZB / indirect のリソース作成に失敗したらオクルージョンだけ OFF にしてログ 1 回 (描画は続く)。meshopt が段を作れなければ段なしで登録 (WARN 1 回)。
 - 性能のゲートは決定的な数だけ (#14)。ms は参考値。
@@ -184,7 +185,8 @@ tick の順序は `src\Engine\Engine\Loop\TickRunner.cpp:211` の `RunOneTick` (
 | sub-05 | メッシュ LOD (meshoptimizer、.meta オプトイン、kCookVersion 6、選択、UI) | sub-01 | 3, 4, 5, 9, 14, 15 (後半) | `M90e: メッシュ LOD を足す (meshoptimizer の自動生成、.meta でオプトイン、kCookVersion 6)` |
 | sub-06 | 描画側の並列化と URO (パレット・LOD 選択・カスケードの並列、ビュー間キャッシュ) | sub-04, sub-05 | 10, 11, 9 | `M90f: 描画側の CPU 処理を並列化し、遠いスキンのパレット更新を間引く (URO)` |
 | sub-07 | sim の並列化 (A/B ジョブを先に → CPU 粒子 / Perception / PartFollow / IK、ADR-028) | sub-01 | 12, 13 (ADR-028) | `M90g: CPU 粒子・知覚・部位追従・IK を並列化し、replay_verify に jobs の A/B を足す (ADR-028)` |
-| sub-08 | 文書 (ADR-029、engine_spec の移動、test_checklists) と全体の検証 | sub-03, sub-06, sub-07 | 13, 14, 9, 全体 | `M90h: LOD とオクルージョンの ADR-029 を書き、engine_spec と検証表を更新する` |
+| sub-09 | オクルージョンの ON/OFF をプロジェクト設定に保存する (project_settings.json、Editor のメニューで保存、Runtime も読む) | sub-06 | 8, 9, 14 | `M90h: オクルージョンの ON/OFF をプロジェクト設定 (project_settings.json) に保存する` |
+| sub-08 | 文書 (ADR-029、engine_spec の移動、test_checklists) と全体の検証 | sub-03, sub-06, sub-07, sub-09 | 13, 14, 9, 全体 | `M90i: LOD とオクルージョンの ADR-029 を書き、engine_spec と検証表を更新する` |
 
 - 並列にできる: sub-02 / sub-04 / sub-05 / sub-07 は sub-01 の後で互いに依存しない (ただし `RenderSystem.cpp` の同じ関数を触るので、司会が逐次に回すなら sub-02 → sub-04 → sub-05 → sub-07 の順を推奨)。
 - 最初のリスクの高い未知 = **2 フェーズのオクルージョンが既存の Deferred の描画経路 (インスタンシングの run、velocity、TAA、サーフェスマテリアル) と WARP で破綻なく組めるか**。sub-01 は計測が無いと sub-02 の効果を示せないので先に置くが、小さく閉じる。
@@ -199,6 +201,9 @@ tick の順序は `src\Engine\Engine\Loop\TickRunner.cpp:211` の `RunOneTick` (
 - リスク: 2 フェーズで GBuffer を 2 回に分けて描くと、velocity・TAA のジッタ・ステンシルを使う経路の前提が崩れるかもしれない (sub-02 の未知)。
 - (sub-05 で判明) 硬い面のメッシュ (平面と鋭い辺だけの箱・パネル。例: Lab_Door.fbx) は、既定 (LockBorder、非 Permissive) では目標まで減らず段が作れない (段なし + WARN)。三校の素材に段を付けるなら、比を緩めるか Permissive のオプトインを足す必要がある。v1 の範囲外 (後回し)。
 - (sub-05 で判明) Debug selftest の ServerNetSelfTest (`V1 LoadPersist / LoadGame in a session`) が一過性に FAIL する (3 回目)。M90 は sim・ネットに触れていないので別件として扱い、sub-08 の全体検証で M90 前の基点 (`3b30251`) と比べて切り分ける。
+- (sub-06 で判明) オクルージョン ON は、フェーズ 2 の状態設定と CB 更新の分だけ CPU の提出が重くなる。run がすべて別のシーン (`--render-bench-unique-demo`、1500 個) では GBuffer の提出が OFF 0.84 ms → ON 1.45 ms (約 1.7 倍)。既定の render_bench では +0.15 ms 程度。planner の裁定: 既定 ON のまま。可視ビットを数フレーム遅れで読み戻してフェーズ 2 の run を飛ばす案は採らない (新しく見えた物の run を飛ばすと欠ける = §1 の 3 に反する)。同じシーンで GPU ms の ON/OFF を sub-08 で計り、ADR-029 に「どういうシーンで OFF が得か」を書く。**確定 (ユーザー 2026-10-09)**: 既定 ON、設定で ON/OFF を切り替えられるようにする → プロジェクト設定へ保存 (sub-09)。
+- (sub-06 で判明) 実 GPU (WARP でない) の Release で、同じ入力の撮影が run 間で 51 画素 maxDiff=1 だけ揺れる。M90 前の `29a775e` でも 8 回中 2 回出る (`--no-jobs --no-uro --no-occlusion` でも出る) ので別件。画素 A/B は WARP で行う。golden は既存の許容値で吸収されている。
+- **確定 (ユーザー 2026-10-09、「許す」)** (sub-06) URO の窓の途中で初めて見えたキャラは、その tick のポーズで作る (§4.4 の追記)。逆 (どの描画履歴でも同じ絵) を選ぶと、全スキンのポーズ入力を更新 tick ごとに記録して窓の先頭のポーズで評価する必要があり、サブが 1 本増える (画面外のキャラにも毎 tick の記録が要る)。
 - リスク: meshopt の単純化が UV の継ぎ目・法線の割れ目で崩れる → 属性付き単純化 (`meshopt_simplifyWithAttributes`) と `meshopt_SimplifyLockBorder` を既定にし、ベンチのスクショで目視 (ユーザー)。
 - リスク: スキンの保守的 AABB が IK で外へ出る (余白で足りない)。出たら報告 (余白で黙って塗らない)。
 - (sub-04 で判明) スキンの保守的 AABB は実アセットでバインド高の 2.4〜2.9 倍と緩い (余白 = 最長辺の半分、根拠は IK / ブレンドの安全側で実測ではない)。画面端の判定が甘いだけで正しさには影響しない。詰めるのは計測で効果が見えてから (後回し)。
@@ -230,3 +235,11 @@ tick の順序は `src\Engine\Engine\Loop\TickRunner.cpp:211` の `RunOneTick` (
   - 既定値 (ヒステリシス 10%、自動 screen-size = 0.5·√ratio を前の段の 0.8 倍で頭打ち、誤差上限 0.05、届き具合 1.25 倍、属性の重み 0.5) は coder の値を採用する。根拠は ADR-029 (sub-08) に書く。
   - LOD 設定の記録場所を blob の先頭 (ファイル単位の ModelCookData) にした。段表はメッシュ単位の CookedMesh。
   - LOD の履歴 (LodHistory) をシーン切り替えで捨てる処理は sub-06 へ移した (パレットキャッシュを捨てるのと同じ契機)。
+- 2026-10-09 sub-06 round 1 (coder SELF_EVAL / planner VERDICT):
+  - §2 #9: URO の位相を `(tick + entity.index) % interval` から `(tick + Hash(entity.index)) % interval` に変えた。理由: ModelLoader はキャラ 1 体ごとに 20 エンティティを作るので entity.index が 20 刻みになり、interval 2 / 4 のキャラの位相が全員揃う (unique demo の frame 33 で実測)。これでは URO の目的 (フレームごとの CPU 負荷を下げる) のうち、負荷の山が平らにならない。ハッシュは決定的な整数ミックス (乱数ではない)。
+  - §4.4: LOD / URO の描画履歴への依存と、履歴を捨てる契機を明記した。
+  - §7: オクルージョンの CPU 提出コスト (既定 ON を維持、読み戻しは採らない)、実 GPU の画素の揺れ (別件)、URO の履歴依存 `[聞]` を追加した。
+  - 採用した追加: URO の閾値表 (5% / 2% / 0.8% → 1 / 2 / 4 / 8 tick)、窓の再利用規則、ラグドール作動中はキャッシュしない、画面外スキンにも URO、`TickServices::sceneLoadSerial`、simTick の逆行で履歴を捨てる、`--no-uro`、`--render-bench-unique-demo`、dump の cpuMs 節、カスケード判定はキャスター単位で分割。
+- 2026-10-09 ユーザー (sub-06 VERDICT の [聞] 2 件、司会経由):
+  - オクルージョン: 「既定 ON で、設定で ON/OFF を切り替えられるように」。既存の口 (Rendering メニュー `Menu_Occlusion`、CLI `--no-occlusion`) はどちらも保存されず、ビルド後の Runtime には CLI しか無いので、要求を満たさないと判断した。RT のタグ規則 (`rayTracingTags`) の前例に合わせ、`project_settings.json` へ保存するサブ sub-09 を新設した (§4.1.4 / §4.3 / §6)。sub-08 の依存に sub-09 を足し、コミットの記号を M90h → M90i にずらした。プレイヤー向けのオプション画面と GameLogic の API は範囲外 (ABI を上げない、§2 #16)。
+  - URO の描画履歴への依存: 「許す」。§7 の `[聞]` を確定に直した。

@@ -121,6 +121,8 @@ struct EngineConfig {
     // --lod-force N で段を固定 (-1 = 自動、N が無ければ最も粗い段)。A/B 比較と切り分け用
     float lodBias = 1.0f;
     int lodForce = -1;
+    // アニメの距離間引き (URO、--no-uro で off)。画面で小さいスキンのパレットを数 tick に 1 回だけ作り直す。描画専用
+    bool animUro = true;
     // --render-bench-cut-frame N: このフレーム以降、描画側のカメラ上書きでカメラを別の位置へ切り替える
     // (render_bench の検証用。sim には触れない)。負 = 切り替えない。
     // カット直後のフレームでオクルージョンの履歴が全部外れても欠けないことの確認に使う

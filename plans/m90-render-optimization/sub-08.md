@@ -1,6 +1,6 @@
 # sub-08: 文書 (ADR-029、engine_spec の移動、test_checklists) と全体の検証
 
-- 依存: sub-03, sub-06, sub-07
+- 依存: sub-03, sub-06, sub-07, sub-09
 - 状態: 未着手
 - 往復: 0
 
@@ -10,6 +10,8 @@ spec 受け入れ条件 13、全体。
 2. `engine_spec.md` §12.3 の「mesh LOD and GPU occlusion culling」を §12.2 の表へ移し、§12.2 時点の番号 (kCookVersion 6、ADR-028/029) を更新。描画の章に LOD・オクルージョン・URO・新しい CLI (`--no-occlusion`、`--render-stats-dump`) を足す。
 3. `docs\test_checklists.md` に手動確認 (LOD の遠景、オクルージョンの欠けなし、画面外キャスターの影、URO の遠いキャラ) を足す。
 4. 全体の検証を回し、結果を SELF_EVAL に書く。
+5. (sub-06 VERDICT から) `--render-bench-unique-demo` と既定の render_bench で、オクルージョン ON/OFF の GPU ms (GBuffer + オクルージョン) と CPU の提出 ms を実 GPU で計り、ADR-029 に「どういうシーンで OFF が得か」を書く。ADR-029 には URO の表・窓の規則・位相のハッシュ・キャッシュの鍵・`ResetRenderHistory` の契機・LOD / URO の描画履歴への依存 (spec §4.4) も書く。 engine_spec にはオクルージョンのプロジェクト設定 (`project_settings.json` の `rendering.occlusionCulling`、sub-09) と CLI との優先順位を書く。
+6. (sub-05 / sub-06 から) Debug selftest の ServerNetSelfTest の一過性 FAIL を、M90 前の基点 `3b30251` と比べて切り分け、結果を記録する (M90 由来でなければ別件として申し送り)。
 
 ## やらないこと (このサブでは)
 - コードの変更 (検証で見つかった不具合は「不安・質問」に出し、planner が差し戻し先を決める)。

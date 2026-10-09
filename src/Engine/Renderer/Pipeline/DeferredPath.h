@@ -43,6 +43,7 @@ public:
     float HzbGpuMs() const override { return hzb_.GpuMs(); }
     // M90a: GBuffer への不透明 + 地形の書き込みの GPU 時間
     float GbufferGpuMs() const override { return gbufferTimer_.Milliseconds(); }
+    float GbufferCpuMs() const override { return gbufferCpu_.Average(); }
     // GPU オクルージョンの判定 + max-Z ピラミッド構築の GPU 時間 (フェーズ 1/2 の描画は含まない)
     float OcclusionGpuMs() const override { return occlusion_.GpuMs(); }
     const std::vector<OcclusionDebugBox>& OcclusionDebugBoxes() const override { return occDebugBoxes_; }
@@ -117,6 +118,28 @@ private:
     std::vector<OcclusionDebugBox> occDebugBoxes_; // --hzb-debug-max の間だけ埋まる
 
     GpuTimer gbufferTimer_; // M90a: RenderGeometry の GPU 時間
+    // M90f: RenderGeometry が命令を積むのにかかった CPU 時間 [ms]。直近 32 回の平均を返す
+    struct CpuTimeWindow {
+        static constexpr int kSize = 32;
+        float samples[kSize] = {};
+        int count = 0;
+        int next = 0;
+        void Add(float ms)
+        {
+            samples[next] = ms;
+            next = (next + 1) % kSize;
+            count = count < kSize ? count + 1 : kSize;
+        }
+        float Average() const
+        {
+            float sum = 0.0f;
+            for (int i = 0; i < count; ++i) {
+                sum += samples[i];
+            }
+            return count > 0 ? sum / static_cast<float>(count) : 0.0f;
+        }
+    };
+    CpuTimeWindow gbufferCpu_;
     RenderTexture gbAlbedo_;   // a=1 でジオメトリ有りマーク
     RenderTexture gbNormal_;   // ワールド法線 *0.5+0.5
     RenderTexture gbPosition_; // ワールド座標 (Point/Spot ライティング用)

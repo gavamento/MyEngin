@@ -240,6 +240,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // RNG state はワールドハッシュ対象なので、オーディオが引くと sim が壊れる
     Pcg32 audioScriptRng;
     std::wstring pendingScene;                // LoadScene の遅延ロード先 (tick 末に消費)
+    // シーンを読み込んだ回数 (TickRunner が数える)。描画が前のシーンの履歴を捨てる契機
+    uint32_t sceneLoadSerial = 0;
+    uint32_t renderSceneLoadSerial = 0;
     // M51g: SaveGame/LoadGame のスロット要求 (-1 = なし)。積み手はスクリプト API (v12)。
     // Save は tick 末ハッシュ後の出力レーンで書出、Load は pendingScene と同じ
     // セーフポイントで消費し record/verify 中は no-op + WARN (決定台帳 5)
@@ -383,6 +386,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.enableOcclusionCulling = config.occlusionCulling; // --no-occlusion
     renderSystem.lodBias = config.lodBias;                 // --lod-bias
     renderSystem.lodForcedStage = config.lodForce;         // --lod-force
+    renderSystem.enableAnimUro = config.animUro;           // --no-uro
     renderSystem.enableSsr = config.ssr;                   // M56d (--ssr、Deferred のみ)
     renderSystem.rtTemporal = config.rtTemporal;   // M46d (--rt-no-temporal / --rt-freeze-seed)
     renderSystem.rtFreezeSeed = config.rtFreezeSeed;
@@ -967,6 +971,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.audioScriptRng = &audioScriptRng;
     tickServices.audioHandleSeq = &audioHandleSeq;
     tickServices.pendingScene = &pendingScene;
+    tickServices.sceneLoadSerial = &sceneLoadSerial;
     tickServices.pendingSaveSlot = &pendingSaveSlot;
     tickServices.pendingLoadSlot = &pendingLoadSlot;
     tickServices.pendingLoadPersistSlot = &pendingLoadPersistSlot;
@@ -1069,6 +1074,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         vfxRenderer.Reset();
         particleSystem.Gpu().Reset();
         acoustic.ResetVisual();
+        renderSystem.ResetRenderHistory(); // LOD の段とパレットも別の時間のもの
     };
 
     // ---- タイムトラベルのシーク本体 (M52e) ----
@@ -2945,6 +2951,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 ? std::clamp(static_cast<float>(accumulator / kFixedDt), 0.0f, 1.0f)
                 : 1.0f;
             renderSystem.prevWorld = &prevWorld;
+            renderSystem.simTick = ctx.tickIndex; // URO の更新 tick (描画専用。実時間・フレーム数は使わない)
+            if (sceneLoadSerial != renderSceneLoadSerial) {
+                renderSceneLoadSerial = sceneLoadSerial;
+                renderSystem.ResetRenderHistory(); // 別のシーン: 前のシーンの LOD の段とパレットを捨てる
+            }
             renderSystem.debugLines = &debugLines; // v7 DebugDrawLine (M37)
             // M82e: 表示用のナビメッシュはフレームごとに最新にする (Surface が無ければ走査だけ)。
             // OnRenderViews の前に置く = 編集中の SceneView も Bake 直後の絵になる

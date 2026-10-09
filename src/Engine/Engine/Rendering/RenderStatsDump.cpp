@@ -89,6 +89,7 @@ RenderStatsDump CollectRenderStatsDump(const RenderSystem& renderSystem, uint64_
     d.frameMs = renderSystem.FrameGpuMs();
     d.gbufferMs = renderSystem.GbufferGpuMs();
     d.forwardOpaqueMs = renderSystem.ForwardOpaqueGpuMs();
+    d.gbufferCpuMs = renderSystem.GbufferCpuMs();
     d.occlusionMs = renderSystem.OcclusionGpuMs();
     d.csmMs = renderSystem.ShadowCsmGpuMs();
     d.atlasMs = renderSystem.ShadowAtlasGpuMs();
@@ -142,6 +143,11 @@ std::string FormatRenderStatsJson(const RenderStatsDump& dump)
     AppendF(out, "    \"hzb\": %.4f,\n", static_cast<double>(dump.hzbMs));
     AppendF(out, "    \"ssr\": %.4f,\n", static_cast<double>(dump.ssrMs));
     AppendF(out, "    \"postFx\": %.4f\n", static_cast<double>(dump.postFxMs));
+    out += "  },\n";
+
+    // CPU 時間 [ms]。実測の参考値で、gpuMs と同じくゲートにしない
+    out += "  \"cpuMs\": {\n";
+    AppendF(out, "    \"gbufferSubmit\": %.4f\n", static_cast<double>(dump.gbufferCpuMs));
     out += "  }\n";
     out += "}\n";
     return out;

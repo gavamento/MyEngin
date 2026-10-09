@@ -26,7 +26,7 @@ struct RenderResources;
 //
 // ★ベイクは**明示指示のときだけ**走らせる (自動ベイクにしない)。「見えたらベイク」に
 //   すると撮影ごとに焼き上がりが変わり、決定的撮影 (M52c) が根元から壊れる。
-// ★`RenderSystem::Render` は再入不可 (queue_ / skinPalettes_ / viewSerial_ / prevVP_ を
+// ★`RenderSystem::Render` は再入不可 (queue_ / skinPaletteCache_ / viewSerial_ / prevVP_ を
 //   インスタンスで持つ) なので、**専用の RenderSystem を 1 個持つ**。メインの
 //   RenderSystem から 6 面を呼ぶと RT テンポラルと TAA の描画通番が 6 進んで履歴が全滅する
 //   (AssetPreviewCache が同じ理由で専用インスタンスを持っているのが前例)。

@@ -305,6 +305,8 @@ const CliFlag kEngineCliFlags[] = {
           return true;
       } },
     { L"--lod-force", CliValue::One, [](CliArgs& a) { a.c.lodForce = _wtoi(a.v1); return true; } },
+    // アニメの距離間引き (URO、描画専用) を切る。A/B 比較と切り分け用
+    { L"--no-uro", CliValue::None, [](CliArgs& a) { a.c.animUro = false; return true; } },
     { L"--render-bench-cut-frame", CliValue::One,
       [](CliArgs& a) { a.c.renderBenchCutFrame = _wtoi64(a.v1); return true; } },
     // M56d: SSR (Deferred のみ。HZB も一緒に組まれる)

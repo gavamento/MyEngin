@@ -275,4 +275,9 @@ void BuildAnimShowcaseScene(EngineContext& ctx);
 // ★座標は添字の整数式だけ (乱数なし)。既存デモの生成関数・生成順には触れない
 void BuildRenderBenchScene(EngineContext& ctx);
 
+// M90f: render_bench の変種 (--render-bench-unique-demo)。メッシュも材質もすべて別の 1500 個 (インスタンシングの
+// run が全部 1 個 = GPU オクルージョンのフェーズ 2 が run ごとに状態設定を出し直す最悪の形) と、
+// 画面で次第に小さくなるスキンのキャラ (URO の確認用)。既定の render_bench は変えない
+void BuildRenderBenchUniqueScene(EngineContext& ctx);
+
 } // namespace mye

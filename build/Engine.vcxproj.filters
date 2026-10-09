@@ -750,6 +750,12 @@
     <ClCompile Include="..\src\Engine\Engine\Rendering\SkinBoundsSelfTest.cpp">
       <Filter>Engine\Rendering</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\SkinPaletteCache.cpp">
+      <Filter>Engine\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\SkinPaletteCacheSelfTest.cpp">
+      <Filter>Engine\Rendering</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Rendering\TerrainSystem.cpp">
       <Filter>Engine\Rendering</Filter>
     </ClCompile>
@@ -1666,6 +1672,12 @@
       <Filter>Engine\Rendering</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Rendering\SkinBoundsSelfTest.h">
+      <Filter>Engine\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\SkinPaletteCache.h">
+      <Filter>Engine\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\SkinPaletteCacheSelfTest.h">
       <Filter>Engine\Rendering</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Rendering\TerrainSystem.h">

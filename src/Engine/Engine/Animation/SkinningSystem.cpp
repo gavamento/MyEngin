@@ -217,6 +217,26 @@ bool SamePoseInputs(const SkinnedMeshComponent& a, const SkinnedMeshComponent& b
                && a.fadeElapsed == b.fadeElapsed && a.fadeTotal == b.fadeTotal);
 }
 
+bool SameRenderPoseInputs(const SkinnedMeshComponent& a, const SkinnedMeshComponent& b)
+{
+    if (!SamePoseInputs(a, b)) {
+        return false;
+    }
+    // SamePoseInputs が見ない描画補間の入力 (層の prevTimeQ / stepQ)。使っていない層は見ない
+    const int32_t layers = ActivePoseLayers(a);
+    for (int32_t i = 0; i < layers; ++i) {
+        if (a.poseLayers[i].prevTimeQ != b.poseLayers[i].prevTimeQ || a.poseLayers[i].stepQ != b.poseLayers[i].stepQ) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool IsPoseBlending(const SkinnedMeshComponent& sm)
+{
+    return IsSkinFading(sm) || ActivePoseLayers(sm) > 1;
+}
+
 void SampleSkinnedLocals(const SkinnedModel& model, const SkinnedMeshComponent& sm,
                          std::vector<DirectX::XMMATRIX>& outLocals)
 {

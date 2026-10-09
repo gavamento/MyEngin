@@ -104,8 +104,9 @@ inline bool RenderableInFrustum(const Frustum& f, const DirectX::XMFLOAT4X4& m,
 // AabbInFrustum は「ローカル AABB + world 行列」を受けるが、シーン AABB や
 // 「タイル毎に使い回すため一度だけ world へ落としたキャッシュ」はもう行列を持たない。
 // 単位行列を作って渡す遠回りを避けるためのオーバーロード (判定式は p-vertex で同一)。
-inline bool WorldAabbInFrustum(const Frustum& f, const DirectX::XMFLOAT3& wmin,
-                               const DirectX::XMFLOAT3& wmax)
+// skipPlane の面 (0..5、負 = 除外なし) を除く 5〜6 面での判定本体。WorldAabbInFrustum / NoNear の共通実装
+inline bool WorldAabbInFrustumExcept(const Frustum& f, const DirectX::XMFLOAT3& wmin,
+                                     const DirectX::XMFLOAT3& wmax, int skipPlane)
 {
     using DirectX::XMFLOAT3;
     using DirectX::XMFLOAT4;
@@ -114,30 +115,7 @@ inline bool WorldAabbInFrustum(const Frustum& f, const DirectX::XMFLOAT3& wmin,
     const XMFLOAT3 we = { (wmax.x - wmin.x) * 0.5f, (wmax.y - wmin.y) * 0.5f,
                           (wmax.z - wmin.z) * 0.5f };
     for (int i = 0; i < 6; ++i) {
-        const XMFLOAT4& p = f.planes[i];
-        const float px = wc.x + (p.x >= 0.0f ? we.x : -we.x);
-        const float py = wc.y + (p.y >= 0.0f ? we.y : -we.y);
-        const float pz = wc.z + (p.z >= 0.0f ? we.z : -we.z);
-        if (p.x * px + p.y * py + p.z * pz + p.w < 0.0f) {
-            return false;
-        }
-    }
-    return true;
-}
-
-// WorldAabbInFrustum から近平面 (planes[4]) を除いた判定。CSM のキャスター用: ライトの手前側に
-// 離れた物は近平面で落とさず (影は深度クランプで描く)、xy・遠平面の外だけを落とす
-inline bool WorldAabbInFrustumNoNear(const Frustum& f, const DirectX::XMFLOAT3& wmin,
-                                     const DirectX::XMFLOAT3& wmax)
-{
-    using DirectX::XMFLOAT3;
-    using DirectX::XMFLOAT4;
-    const XMFLOAT3 wc = { (wmin.x + wmax.x) * 0.5f, (wmin.y + wmax.y) * 0.5f,
-                          (wmin.z + wmax.z) * 0.5f };
-    const XMFLOAT3 we = { (wmax.x - wmin.x) * 0.5f, (wmax.y - wmin.y) * 0.5f,
-                          (wmax.z - wmin.z) * 0.5f };
-    for (int i = 0; i < 6; ++i) {
-        if (i == 4) {
+        if (i == skipPlane) {
             continue;
         }
         const XMFLOAT4& p = f.planes[i];
@@ -149,6 +127,20 @@ inline bool WorldAabbInFrustumNoNear(const Frustum& f, const DirectX::XMFLOAT3& 
         }
     }
     return true;
+}
+
+inline bool WorldAabbInFrustum(const Frustum& f, const DirectX::XMFLOAT3& wmin,
+                               const DirectX::XMFLOAT3& wmax)
+{
+    return WorldAabbInFrustumExcept(f, wmin, wmax, -1);
+}
+
+// WorldAabbInFrustum から近平面 (planes[4]) を除いた判定。CSM のキャスター用: ライトの手前側に
+// 離れた物は近平面で落とさず (影は深度クランプで描く)、xy・遠平面の外だけを落とす
+inline bool WorldAabbInFrustumNoNear(const Frustum& f, const DirectX::XMFLOAT3& wmin,
+                                     const DirectX::XMFLOAT3& wmax)
+{
+    return WorldAabbInFrustumExcept(f, wmin, wmax, 4);
 }
 
 // CSM のキャスター 1 件が入るカスケードの集合 (bit c = カスケード c)。箱を持たない (bounded = false) 物は全部。

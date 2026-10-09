@@ -43,6 +43,14 @@ bool UsesLocalsPath(const SkinnedMeshComponent& sm);
 // 終わったフェードの残骸 (fromClip 等) や、使っていない層の中身の違いでは割れない
 bool SamePoseInputs(const SkinnedMeshComponent& a, const SkinnedMeshComponent& b);
 
+// SamePoseInputs に描画補間の入力 (層の prevTimeQ / stepQ) を足した等価。描画パレットのキャッシュのキー。
+// ★描画補間の入力を足したら、ここと SampleSkinnedLocalsInterpolated を一緒に直す
+bool SameRenderPoseInputs(const SkinnedMeshComponent& a, const SkinnedMeshComponent& b);
+
+// 2 つ以上のクリップ・層を混ぜている最中か (旧経路のクロスフェード、またはコントローラの複数層)。
+// 描画側のアニメ間引き (URO) はこの間は間引かない
+bool IsPoseBlending(const SkinnedMeshComponent& sm);
+
 // sm の今のポーズの局所行列 (joints.size() 個)。
 // ★描画 / ラグドール / 部位追従の 3 者が必ずこれを通す — どれか 1 つだけフェードを知らないと、
 //   骨に付けた部位やラグドールの未駆動の骨だけが、切り替えの瞬間に飛ぶ。

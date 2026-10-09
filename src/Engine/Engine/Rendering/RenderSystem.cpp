@@ -57,6 +57,9 @@ struct CullCand {
     uint8_t alwaysVisible = 0;
     // メッシュ LOD の段 (段のあるメッシュだけ。ステージ 2 で決める)
     uint8_t lod = 0;
+    // スキンの画面での大きさ (外接球の高さ比、全姿勢を包む箱から。ステージ 2 で決める)。URO の間隔の出所。
+    // 求められない (カメラ無し) ときは FLT_MAX = 間引かない
+    float uroSize = FLT_MAX;
 };
 
 constexpr size_t kCullGrain = 256; // これ未満は直列 (スレッド起動コスト回避)
@@ -609,6 +612,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     ssrGpuMs_ = path.SsrGpuMs(); // M56d (同上)
     gbufferGpuMs_ = path.GbufferGpuMs();             // M90a (同上)
     forwardOpaqueGpuMs_ = path.ForwardOpaqueGpuMs(); // M90a (同上)
+    gbufferCpuMs_ = path.GbufferCpuMs();             // M90f (同上)
     occlusionGpuMs_ = path.OcclusionGpuMs();         // (同上)
     f.occlusionBoxes = (hzbDebugMip != 0 && hzbDebugMax) ? &path.OcclusionDebugBoxes() : nullptr;
 
@@ -882,6 +886,16 @@ void RenderSystem::CollectLights(World& world, FrameContext& f)
     }
 }
 
+// パレット評価 1 件。評価はジョブ間で互いに素なエントリ (palette) にだけ書く
+struct RenderSystem::PaletteJob {
+    EntityID entity;
+    const SkinnedMeshComponent* sm = nullptr;
+    const SkinnedModel* model = nullptr;
+    SkinPaletteCache::Entry* entry = nullptr;
+    float alpha = 1.0f;
+    size_t rawBoneCount = 0; // kMaxBones で切る前の骨の数 (超過の WARN 用)
+};
+
 // 収集: 前フレーム world のストアを進め (M55c)、地形 (M58c) / デカール (M56a) / メッシュを集めてキューへ。
 // メッシュはカリング (並列) → スキンのパレット → 不透明 / 半透明の振り分けと、影のフィット用 AABB の集約
 void RenderSystem::CollectDrawables(World& world, RenderResources& resources, const FrameTarget& target,
@@ -904,12 +918,26 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
 
     // ---- 収集 ----
     queue_.Clear();
-    skinPalettes_.clear(); // スキンメッシュのボーンパレット (M18、フレーム毎に再構築)
+    // sim の tick が戻った = 巻き戻し・Play の開始や停止。前の履歴 (LOD の段・パレット) は別の時間のもの
+    if (simTick < lastSimTick_) {
+        ResetRenderHistory();
+    }
+    lastSimTick_ = simTick;
+    skinPaletteCache_.BeginFrame();
     // CSM のキャスター候補 (カメラの視錐台で落とす前の全不透明)。影を描かないフレームは集めない
     shadowCasters_.clear();
     offscreenCasters_.clear();
+    offscreenScreenSize_.clear();
     const bool collectShadowCasters = enableShadows && FindDirectionalLight(f.lights) >= 0;
-    int paletteEvaluated = 0; // このフレームに評価したボーンパレットの数 (統計)
+    // スキンのパレット: 直列段で必要なエントリを確保して評価を積み、並列段で評価し、キューの項目へ繋ぐ
+    std::vector<PaletteJob> paletteJobs;
+    struct PaletteBind {
+        bool transparent;
+        size_t index;
+        SkinPaletteCache::Entry* entry;
+    };
+    std::vector<PaletteBind> paletteBinds;
+    int paletteReused = 0; // キャッシュを使えたパレットの数 (統計)
     const XMMATRIX v = XMLoadFloat4x4(&view.view);
     // RT のどれかのレーン (か RT デバッグ表示) が on か。off のフレームは適用範囲を 1 回も
     // 判定しない (祖先を辿らない) — 既定の経路のコストと絵を RT 導入前のまま保つ
@@ -1250,15 +1278,16 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                 // 画面に占める外接球の大きさ。画面外のキャスターも同じ式で段を決める (影はカメラ基準の段)
                 XMFLOAT3 lo, hi;
                 WorldAabb(c.world, c.meshPtr->aabbMin, c.meshPtr->aabbMax, lo, hi, 0.0f);
-                const float cx = (lo.x + hi.x) * 0.5f - view.cameraPos.x;
-                const float cy = (lo.y + hi.y) * 0.5f - view.cameraPos.y;
-                const float cz = (lo.z + hi.z) * 0.5f - view.cameraPos.z;
-                const float radius = 0.5f * std::sqrt((hi.x - lo.x) * (hi.x - lo.x) + (hi.y - lo.y) * (hi.y - lo.y)
-                                                      + (hi.z - lo.z) * (hi.z - lo.z));
-                const float screenSize = LodScreenSize(radius, std::sqrt(cx * cx + cy * cy + cz * cz),
-                                                       view.proj._22, orthographic);
+                const float screenSize = BoxScreenSize(lo, hi, view.cameraPos, view.proj._22, orthographic);
                 const int32_t prevLod = (lodHistoryRead != nullptr) ? lodHistoryRead->Get(c.e) : -1;
                 c.lod = static_cast<uint8_t>(SelectLod(c.meshPtr->lods, screenSize, prevLod, lodParams));
+            }
+            if (cullEnabled && c.skinned != 0 && c.meshPtr && c.alwaysVisible == 0) {
+                // URO の大きさは全姿勢を包む箱から (姿勢が箱の外へ出ないので、遠いと判定した物は本当に小さい)。
+                // 箱を求められない物は FLT_MAX のまま = 間引かない
+                XMFLOAT3 lo, hi;
+                WorldAabb(c.world, c.boundsMin, c.boundsMax, lo, hi, 0.0f);
+                c.uroSize = BoxScreenSize(lo, hi, view.cameraPos, view.proj._22, orthographic);
             }
             // viewZ は画面外の影キャスターのソートキーにも使うので、落とす物にも先に求める
             const XMVECTOR posWS = XMVectorSet(c.world._41, c.world._42, c.world._43, 1);
@@ -1308,6 +1337,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                 WorldAabb(c.world, c.boundsMin, c.boundsMax, sc.aabbMin, sc.aabbMax, c.boundsPadding);
                 sc.bounded = 1;
                 offscreenCasters_.push_back(it);
+                offscreenScreenSize_.push_back(c.uroSize);
                 shadowCasters_.push_back(sc);
                 if (c.skinned != 0) {
                     // スキンは以前は常に可視 = フィット AABB に入っていた。フィットを変えないために入れ続ける
@@ -1343,21 +1373,20 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             prevRender->Record(c.e, c.world);
         }
 
-        // スキンメッシュ (M18): ポーズを評価してボーンパレットを構築し item に載せる。
+        // スキンメッシュ (M18): ポーズ評価の要否をここで決め、ボーンパレットはループの後で item に繋ぐ。
         // ポーズは描画専用 (SkinnedMeshComponent は kComponentNoHash)
+        SkinPaletteCache::Entry* paletteEntry = nullptr;
         if (auto* sm = world.GetComponent<SkinnedMeshComponent>(c.e)) {
             if (const SkinnedModel* model = resources.skinnedModels.Get(sm->model)) {
-                skinPalettes_.emplace_back();
-                std::vector<XMFLOAT4X4>& palette = skinPalettes_.back();
-                EvaluateSkinPalette(world, c.e, *sm, *model, interp, palette);
-                ++paletteEvaluated;
-                item.bones = palette.data();
-                item.boneCount = static_cast<int32_t>(palette.size());
+                paletteEntry = AcquireSkinPalette(world, c.e, *sm, *model, c.uroSize, paletteJobs, paletteReused);
             }
         }
 
         const Material* mat = resources.materials.Get(c.material);
         if (mat && mat->transparent != 0) {
+            if (paletteEntry != nullptr) {
+                paletteBinds.push_back({ true, queue_.transparent.size(), paletteEntry });
+            }
             queue_.transparent.push_back(item);
         } else {
             if (collectShadowCasters && c.meshPtr) {
@@ -1388,22 +1417,36 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                              std::max(sceneMax.z, wmax.z) };
                 hasScene = true;
             }
+            if (paletteEntry != nullptr) {
+                paletteBinds.push_back({ false, queue_.opaque.size(), paletteEntry });
+            }
             queue_.opaque.push_back(item);
         }
     }
     prof::AddCulled(culledCount);
-    if (paletteEvaluated != 0) {
+
+    // ---- パレットの評価 (並列) と、キューの項目への接続 (直列、キューの添字は固定) ----
+    RunPaletteJobs(world, paletteJobs);
+    for (const PaletteBind& bind : paletteBinds) {
+        RenderItem& item = bind.transparent ? queue_.transparent[bind.index] : queue_.opaque[bind.index];
+        item.bones = bind.entry->palette.data();
+        item.boneCount = static_cast<int32_t>(bind.entry->palette.size());
+    }
+    if (!paletteJobs.empty() || paletteReused != 0) {
         prof::RenderStats delta;
-        delta.paletteEvaluated = paletteEvaluated;
+        delta.paletteEvaluated = static_cast<int>(paletteJobs.size());
+        delta.paletteReused = paletteReused;
         prof::AddRenderStats(delta);
     }
 }
 
+namespace {
+
 // スキンメッシュ 1 体のボーンパレット。ポーズは描画専用 (SkinnedMeshComponent は kComponentNoHash)。
-// 入力は ECS の状態だけの純関数なので、ビュー毎に Render() が呼ばれても、本描画でも影でも同じ絵になる
-void RenderSystem::EvaluateSkinPalette(World& world, EntityID e, const SkinnedMeshComponent& sm,
-                                       const SkinnedModel& model, bool interp,
-                                       std::vector<XMFLOAT4X4>& palette)
+// 入力は ECS の状態と alpha だけの純関数で、world は読むだけ (ジョブから呼べる)。
+// 戻り値は kMaxBones で切る前の骨の数。alpha = 描画補間 (1 = 補間しない)
+size_t EvaluateSkinPalette(World& world, EntityID e, const SkinnedMeshComponent& sm, const SkinnedModel& model,
+                           float alpha, std::vector<XMFLOAT4X4>& palette)
 {
     const float timeSec = static_cast<float>(sm.timeTicks) / 60.0f;
     // M60g1: ラグドールが作動中なら、骨の姿勢はアニメではなく**部位の
@@ -1419,23 +1462,83 @@ void RenderSystem::EvaluateSkinPalette(World& world, EntityID e, const SkinnedMe
         // M89f: ポーズプログラムの時刻は、ワールド行列と同じ条件 (interp) で前 tick と補間する。
         // ラグドールの枝は補間しない = 剛体が置いた部位 (tick 境界の値) と骨がずれないように
         std::vector<XMMATRIX> locals;
-        SampleSkinnedLocalsInterpolated(model, sm, interp ? interpAlpha : 1.0f, locals);
+        SampleSkinnedLocalsInterpolated(model, sm, alpha, locals);
         ComputeBonePaletteWithOverrides(model, locals, {}, {}, palette);
     } else {
         ComputeBonePalette(model, sm.clip, timeSec, palette);
     }
-    if (palette.size() > static_cast<size_t>(kMaxBones)) {
-        // 上限超過は切り捨て (シェーダの定数バッファが kMaxBones 固定のため)。
-        // 黙って切ると姿勢が壊れた原因が追えないので model 毎に 1 回だけ WARN
-        if (std::find(boneOverflowWarned_.begin(), boneOverflowWarned_.end(), sm.model.value)
-            == boneOverflowWarned_.end()) {
-            boneOverflowWarned_.push_back(sm.model.value);
-            MYE_LOG_WARN("skinned model has %zu bones, clamped to %d "
-                         "(MYE_MAX_BONES): pose will be wrong for the extra bones",
-                         palette.size(), kMaxBones);
-        }
+    const size_t rawBoneCount = palette.size();
+    if (rawBoneCount > static_cast<size_t>(kMaxBones)) {
+        // 上限超過は切り捨て (シェーダの定数バッファが kMaxBones 固定のため)。WARN は呼び出し側 (直列) が出す
         palette.resize(static_cast<size_t>(kMaxBones));
     }
+    return rawBoneCount;
+}
+
+} // namespace
+
+SkinPaletteCache::Entry* RenderSystem::AcquireSkinPalette(World& world, EntityID e, const SkinnedMeshComponent& sm,
+                                                          const SkinnedModel& model, float uroScreenSize,
+                                                          std::vector<PaletteJob>& jobs, int& reused)
+{
+    const auto* rag = world.GetComponent<RagdollComponent>(e);
+    const bool ragdollActive = rag != nullptr && rag->active;
+    SkinPaletteCache::Request req;
+    req.entity = e;
+    req.model = sm.model;
+    req.sm = &sm;
+    req.alpha = (prevWorld != nullptr && interpAlpha < 1.0f) ? interpAlpha : 1.0f;
+    req.simTick = simTick;
+    // 剛体が置いた部位から組むパレットは ECS のポーズ入力だけでは決まらないので、キャッシュに使わない
+    req.cacheable = !ragdollActive;
+    req.interval = (enableAnimUro && UroEligible(sm, ragdollActive)) ? UroUpdateInterval(uroScreenSize) : 1u;
+    if (SkinPaletteCache::Entry* hit = skinPaletteCache_.Find(req)) {
+        ++reused;
+        return hit;
+    }
+    SkinPaletteCache::Entry* entry = skinPaletteCache_.Claim(req);
+    PaletteJob job;
+    job.entity = e;
+    job.sm = &sm;
+    job.model = &model;
+    job.entry = entry;
+    job.alpha = req.alpha;
+    jobs.push_back(job);
+    return entry;
+}
+
+void RenderSystem::RunPaletteJobs(World& world, std::vector<PaletteJob>& jobs)
+{
+    // 数個では起動コストの方が高い。パレット 1 体の評価は骨数 x クリップのサンプルで、それなりに重い
+    constexpr size_t kPaletteGrain = 4;
+    jobs::System().ParallelRanges(jobs.size(), kPaletteGrain, [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            PaletteJob& job = jobs[i];
+            job.rawBoneCount = EvaluateSkinPalette(world, job.entity, *job.sm, *job.model, job.alpha,
+                                                   job.entry->palette);
+        }
+    });
+    // 黙って切ると姿勢が壊れた原因が追えないので model 毎に 1 回だけ WARN (並列段では書かない)
+    for (const PaletteJob& job : jobs) {
+        if (job.rawBoneCount <= static_cast<size_t>(kMaxBones)) {
+            continue;
+        }
+        if (std::find(boneOverflowWarned_.begin(), boneOverflowWarned_.end(), job.sm->model.value)
+            == boneOverflowWarned_.end()) {
+            boneOverflowWarned_.push_back(job.sm->model.value);
+            MYE_LOG_WARN("skinned model has %zu bones, clamped to %d "
+                         "(MYE_MAX_BONES): pose will be wrong for the extra bones",
+                         job.rawBoneCount, kMaxBones);
+        }
+    }
+}
+
+void RenderSystem::ResetRenderHistory()
+{
+    for (LodHistory& history : lodHistory_) {
+        history.Clear();
+    }
+    skinPaletteCache_.Clear();
 }
 
 // 平行光の CSM (M17 / M38d): 最初の平行光でシーンにフィットした 3 カスケードを描く
@@ -1468,37 +1571,49 @@ void RenderSystem::RenderCascadeShadows(World& world, GraphicsDevice& device, Sh
             for (int c = 0; c < ShadowPass::kCascades; ++c) {
                 cascadeFrustum[c] = BuildFrustum(lightVPs[c]);
             }
+            // 判定はキャスターごとに独立 (入力は不変、出力は自分の要素だけ) = 並列
             shadowCasterMask_.assign(shadowCasters_.size(), 0);
-            for (size_t i = 0; i < shadowCasters_.size(); ++i) {
-                const ShadowCaster& sc = shadowCasters_[i];
-                shadowCasterMask_[i] = CascadeCasterMask(cascadeFrustum, ShadowPass::kCascades, sc.bounded != 0,
-                                                         sc.aabbMin, sc.aabbMax);
-            }
-            // 画面外のスキンは、どれかのカスケードに入ったときだけパレットを評価する
-            const bool interp = prevWorld != nullptr && interpAlpha < 1.0f;
-            int paletteEvaluated = 0;
+            constexpr size_t kCasterGrain = 256;
+            jobs::System().ParallelRanges(shadowCasters_.size(), kCasterGrain, [&](size_t begin, size_t end) {
+                for (size_t i = begin; i < end; ++i) {
+                    const ShadowCaster& sc = shadowCasters_[i];
+                    shadowCasterMask_[i] = CascadeCasterMask(cascadeFrustum, ShadowPass::kCascades, sc.bounded != 0,
+                                                             sc.aabbMin, sc.aabbMax);
+                }
+            });
+            // 画面外のスキンは、どれかのカスケードに入ったときだけパレットを評価する。
+            // 直列でエントリを確保 → 並列で評価 → 直列で項目へ繋ぐ (本描画のパレットと同じキャッシュを使う)
+            std::vector<PaletteJob> paletteJobs;
+            std::vector<std::pair<size_t, SkinPaletteCache::Entry*>> offscreenBinds;
+            int paletteReused = 0;
             for (size_t i = 0; i < shadowCasters_.size(); ++i) {
                 const ShadowCaster& sc = shadowCasters_[i];
                 if (sc.offscreenIndex < 0 || !OffscreenCasterNeedsPalette(shadowCasterMask_[i])) {
                     continue;
                 }
-                RenderItem& item = offscreenCasters_[static_cast<size_t>(sc.offscreenIndex)];
+                const size_t offscreenIndex = static_cast<size_t>(sc.offscreenIndex);
+                const RenderItem& item = offscreenCasters_[offscreenIndex];
                 const auto* sm = world.GetComponent<SkinnedMeshComponent>(item.entity);
                 const SkinnedModel* model = sm != nullptr ? resources.skinnedModels.Get(sm->model) : nullptr;
                 if (model != nullptr) {
-                    skinPalettes_.emplace_back();
-                    std::vector<XMFLOAT4X4>& palette = skinPalettes_.back();
-                    EvaluateSkinPalette(world, item.entity, *sm, *model, interp, palette);
-                    ++paletteEvaluated;
-                    item.bones = palette.data();
-                    item.boneCount = static_cast<int32_t>(palette.size());
+                    offscreenBinds.emplace_back(
+                        offscreenIndex, AcquireSkinPalette(world, item.entity, *sm, *model,
+                                                           offscreenScreenSize_[offscreenIndex], paletteJobs,
+                                                           paletteReused));
                 }
+            }
+            RunPaletteJobs(world, paletteJobs);
+            for (const auto& bind : offscreenBinds) {
+                RenderItem& item = offscreenCasters_[bind.first];
+                item.bones = bind.second->palette.data();
+                item.boneCount = static_cast<int32_t>(bind.second->palette.size());
             }
             // 並びは本描画のキューと同じキー (material → mesh → 深度 → entity)。連続する同一メッシュを
             // BuildInstanceRuns がインスタンシングする。深度だけなので並びは結果に効かない
             prof::RenderStats delta;
             delta.shadowCasterCandidates = static_cast<int>(shadowCasters_.size());
-            delta.paletteEvaluated = paletteEvaluated;
+            delta.paletteEvaluated = static_cast<int>(paletteJobs.size());
+            delta.paletteReused = paletteReused;
             for (int c = 0; c < ShadowPass::kCascades; ++c) {
                 std::vector<RenderItem>& list = cascadeQueues_[c].opaque;
                 cascadeQueues_[c].Clear();
@@ -2257,7 +2372,7 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
 void RenderSystem::ReleaseGpu()
 {
     // 遅延 Init のパス群は既定構築した実体へ差し替える = Init 前の状態へ戻り、ComPtr が解放される。
-    // 設定値 (public のフィールド) と CPU 側の履歴 (prevVP_ 等) は触らない
+    // 設定値 (public のフィールド) と CPU 側の履歴 (prevVP_ 等) は触らない。ただし LOD の段とパレットの履歴は捨てる
     postFx_ = PostProcess();
     shadowPass_ = ShadowPass();
     shadowAtlas_ = ShadowAtlas();
@@ -2286,6 +2401,7 @@ void RenderSystem::ReleaseGpu()
     }
     skyLoadFailed_ = FailedTextureLoad();
     lutLoadFailed_ = FailedTextureLoad();
+    ResetRenderHistory();
 }
 
 } // namespace mye

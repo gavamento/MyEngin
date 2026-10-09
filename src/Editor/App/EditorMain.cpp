@@ -19,6 +19,7 @@
 #include "Engine/Engine/Rendering/RenderStatsSelfTest.h"
 #include "Engine/Engine/Rendering/ShadowCullSelfTest.h"
 #include "Engine/Engine/Rendering/SkinBoundsSelfTest.h"
+#include "Engine/Engine/Rendering/SkinPaletteCacheSelfTest.h"
 #include "Engine/Engine/Asset/CookedCacheSelfTest.h"
 #include "Engine/Engine/Asset/MeshLodSelfTest.h"
 #include "Engine/Engine/Asset/SubAssetKeySelfTest.h"
@@ -631,6 +632,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunShadowCullSelfTest();                // M90d: CSM のカスケード別判定 (近平面を除く 5 面・run 数)
         ok &= mye::RunSkinBoundsSelfTest();              // M90d: スキンの保守的 AABB (全クリップの全フレームを包む)
         ok &= mye::RunMeshLodSelfTest();                 // M90e: メッシュ LOD (生成・クック・.meta・選択)
+        ok &= mye::RunSkinPaletteCacheSelfTest();        // M90f: パレットのキャッシュ・URO の更新 tick・LOD 履歴の破棄
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }
