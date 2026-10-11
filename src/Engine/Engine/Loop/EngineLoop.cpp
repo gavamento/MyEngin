@@ -74,6 +74,7 @@
 #include "Engine/Engine/Loop/DeviceRecovery.h"
 #include "Engine/Engine/Loop/SimInit.h"
 #include "Engine/Engine/Loop/TickInputs.h"
+#include "Engine/Engine/Compute/ComputeService.h"
 #include "Engine/Engine/Loop/TickRunner.h"
 #include "Engine/Engine/Scene/TransformSystem.h"
 #include "Engine/Engine/UI/UILayout.h" // ワールド追従 UI の射影コンテキスト
@@ -178,6 +179,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     DllReloader dllReloader;
     ManagedHost managedHost;
     ComputeAbiRunner computeAbi; // v21: スクリプト所有の構造化バッファ
+    compute::ComputeService computeService; // M91c: Compute.ForEach のエンジン核 (ABI 露出は M91e)
     ParticleSystem particleSystem;
     CollisionSystem collisionSystem;
     PhysicsSystem physicsSystem; // 剛体積分 + 衝突解決 (M20、ステートレス)
@@ -517,6 +519,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         shared.controllers = &controllerLibrary;
         WireScriptServices(scriptHost, managedHost, shared, config.developmentRun);
     }
+    computeService.Bind(&device, &shaderManager);
     scriptHost.SetComputeAbi(&computeAbi, &device, &shaderManager, &resources.textures);
     managedHost.SetComputeAbi(&computeAbi, &device, &shaderManager, &resources.textures);
 
@@ -942,6 +945,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.scriptHost = &scriptHost;
     tickServices.managedHost = &managedHost;
     tickServices.computeAbi = &computeAbi;
+    tickServices.computeService = &computeService;
     tickServices.animationSystem = &animationSystem;
     tickServices.animLibrary = &animLibrary;
     tickServices.controllerSystem = &controllerSystem;
@@ -1838,6 +1842,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             probeBaker->ReleaseGpu();
         }
         computeAbi.ReleaseGpu();
+        computeService.ReleaseGpu();
         vfxRenderer.Shutdown();
         uiRenderer.Shutdown();
         particleSystem.ReleaseGpu();
@@ -1895,6 +1900,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (computeFailed > 0) {
                 MYE_LOG_ERROR("[device] %d compute buffer(s) could not be recreated", computeFailed);
             }
+            computeService.RecreateGpu(); // Fx は次の GPU 実行で CPU ミラーから作り直す
             if (reBakeProbes && probeBaker
                 && probeBaker->BakeAll(scene.GetWorld(), device, forwardPath, shaderManager,
                                        resources, probeArray)) {
@@ -3248,6 +3254,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     scriptHost.Shutdown();
     managedHost.Shutdown();
     computeAbi.Shutdown(); // D3D リソースは device.Shutdown より前に手放す
+    computeService.ReleaseGpu();
     reloadHub.Shutdown();
     deferredPath.Shutdown();
     forwardPath.Shutdown();

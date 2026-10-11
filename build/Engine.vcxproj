@@ -107,6 +107,10 @@
     <ClCompile Include="..\src\Engine\Engine\Audio\Synth\ModalSynth.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\Synth\ModalSynthSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\Synth\SynthCore.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Compute\ComputeBufferStore.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Compute\ComputeDecision.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Compute\ComputeService.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Compute\ComputeServiceSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Compute\KernelCSharp.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Compute\KernelHash.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Compute\KernelLint.cpp" />
@@ -263,6 +267,7 @@
     <ClCompile Include="..\src\Engine\Platform\Win32Window.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Compute\ComputeAbiRunner.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Compute\ComputeAbiSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Compute\FxGpuBackend.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Compute\ProjectComputeRunner.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Compute\ProjectComputeRunnerSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Device\GpuResources.cpp" />
@@ -414,12 +419,18 @@
     <ClInclude Include="..\src\Engine\Engine\Audio\Synth\ModalSynth.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\Synth\ModalSynthSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\Synth\SynthCore.h" />
+    <ClInclude Include="..\src\Engine\Engine\Compute\ComputeBufferStore.h" />
+    <ClInclude Include="..\src\Engine\Engine\Compute\ComputeDecision.h" />
+    <ClInclude Include="..\src\Engine\Engine\Compute\ComputeService.h" />
+    <ClInclude Include="..\src\Engine\Engine\Compute\ComputeServiceSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Compute\ComputeTypes.h" />
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelAst.h" />
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelCSharp.h" />
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelHash.h" />
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelLint.h" />
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelLintInternal.h" />
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelLintSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelRange.h" />
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelRunner.h" />
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Demo\DemoContent.h" />
@@ -586,6 +597,7 @@
     <ClInclude Include="..\src\Engine\Platform\Win32Window.h" />
     <ClInclude Include="..\src\Engine\Renderer\Compute\ComputeAbiRunner.h" />
     <ClInclude Include="..\src\Engine\Renderer\Compute\ComputeAbiSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Compute\FxGpuBackend.h" />
     <ClInclude Include="..\src\Engine\Renderer\Compute\ProjectComputeRunner.h" />
     <ClInclude Include="..\src\Engine\Renderer\Compute\ProjectComputeRunnerSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\Device\GpuBufferUtil.h" />

@@ -483,6 +483,18 @@
     <ClCompile Include="..\src\Engine\Engine\Audio\Synth\SynthCore.cpp">
       <Filter>Engine\Audio\Synth</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Compute\ComputeBufferStore.cpp">
+      <Filter>Engine\Compute</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Compute\ComputeDecision.cpp">
+      <Filter>Engine\Compute</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Compute\ComputeService.cpp">
+      <Filter>Engine\Compute</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Compute\ComputeServiceSelfTest.cpp">
+      <Filter>Engine\Compute</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Compute\KernelCSharp.cpp">
       <Filter>Engine\Compute</Filter>
     </ClCompile>
@@ -951,6 +963,9 @@
     <ClCompile Include="..\src\Engine\Renderer\Compute\ComputeAbiSelfTest.cpp">
       <Filter>Renderer\Compute</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Compute\FxGpuBackend.cpp">
+      <Filter>Renderer\Compute</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Compute\ProjectComputeRunner.cpp">
       <Filter>Renderer\Compute</Filter>
     </ClCompile>
@@ -1404,6 +1419,21 @@
     <ClInclude Include="..\src\Engine\Engine\Audio\Synth\SynthCore.h">
       <Filter>Engine\Audio\Synth</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\ComputeBufferStore.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\ComputeDecision.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\ComputeService.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\ComputeServiceSelfTest.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\ComputeTypes.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelAst.h">
       <Filter>Engine\Compute</Filter>
     </ClInclude>
@@ -1420,6 +1450,9 @@
       <Filter>Engine\Compute</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelLintSelfTest.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelRange.h">
       <Filter>Engine\Compute</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelRunner.h">
@@ -1918,6 +1951,9 @@
       <Filter>Renderer\Compute</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Compute\ComputeAbiSelfTest.h">
+      <Filter>Renderer\Compute</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Compute\FxGpuBackend.h">
       <Filter>Renderer\Compute</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Compute\ProjectComputeRunner.h">

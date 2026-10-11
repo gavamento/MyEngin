@@ -12,6 +12,9 @@ class InputActions;
 class ScriptHost;
 class ManagedHost;
 class ComputeAbiRunner;
+namespace compute {
+class ComputeService;
+}
 class AnimationSystem;
 class AnimationLibrary;
 class AnimatorControllerSystem;
@@ -75,6 +78,8 @@ struct TickServices {
     ManagedHost* managedHost = nullptr;
     // v21: シーン遷移でスクリプトが握った GPU バッファを回収する。null なら何もしない
     ComputeAbiRunner* computeAbi = nullptr;
+    // M91c: Compute.ForEach の負荷枠を tick の頭で戻す。null なら何もしない
+    compute::ComputeService* computeService = nullptr;
 
     // システム層
     AnimationSystem* animationSystem = nullptr;

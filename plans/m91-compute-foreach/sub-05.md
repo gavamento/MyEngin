@@ -9,6 +9,7 @@
 ## やること
 spec 4.1.3 / 4.1.6 / 4.2 (ABI)、D17 / D18 / D22。**ABI の bump は M91 の中でこの 1 回だけ** (C# 用のスロットもここで確保し、sub-06 は ABI を変えない)。
 
+0a. (sub-03 からの申し送り) カーネル表の引数ごとに **HLSL の変数名** (RW / RO の宣言名) を出力する (`KernelArgDesc::name`、空だと登録を拒否する)。GPU のバインドはリフレクションの名前で行う。FXC は未使用の資源を落として詰めるので、位置で引いてはいけない。
 0. (sub-01 からの申し送り) 生成する .cpp は `#include "Shared/KernelCompat.h"` → `namespace mye::kernel::cpu::<Name> { #include "...<Name>.kernel.hlsl" }` の形にする。実行器は `RunKernelCpu(js, &Name_Cpu, params, RunOptions, RWView, ROView...)`。PowerShell 版のハッシュの手順と参照値 ("a" = af63dc4c8601ec8c) は sub-01.md の実装メモにある。
 1. codegen: `tools\gen_project_files.ps1` が `kernels/*.kernel.hlsl` (プロジェクト側とエンジン側) を走査し、`src/GameLogic/Generated/Kernels.gen.{h,cpp}` を生成する
    (カーネル表 = 名前・C++ のレンジ関数・正規化したハッシュ・バッファ引数ごとの stride と RW/RO・params の大きさ)。
@@ -17,7 +18,8 @@ spec 4.1.3 / 4.1.6 / 4.2 (ABI)、D17 / D18 / D22。**ABI の bump は M91 の中
 3. ABI: 着手時点の次の版 (今なら v29)。末尾に追加するだけ。ForEach 用のスロット群に、呼び出し元のスクリプト型 (ctx から取れるなら引数は不要) と、C# のレンジ関数ポインタを登録するスロット (sub-06 が使う) を含める。
    `MyeScriptModule` の末尾にカーネル表を足す。`Interop.cs` の位置ミラーも同時に直す。確定した本数とシグネチャを実装メモに書く。
 4. エンジン側: DLL の読込 / ホットリロードのときにカーネル表と宣言を取り込む。**宣言表は `MyeScriptModule` を取り込むのと同じ箇所・同じ時点で丸ごと差し替え、モジュールのコードと同じ世代にする** (spec D28-a)。これは Start より前に揃っていること。そのうえでハッシュを照合し、sub-02 の検査結果と合わせて判断 (sub-03) へ渡す。
-5. C++ 糖衣 (`ScriptAPI.h`): `Compute::CreateBuffer<T>` / `Buffer<T>` / `Compute::ForEach` / 配列を直接渡す糖衣 / `Job`。Fx の Read 結果をハッシュ対象に書くな、という注記 (D11)。
+5. C++ 糖衣 (`ScriptAPI.h`): `Compute::CreateBuffer<T>` / `Buffer<T>` / `Compute::ForEach` / 配列を直接渡す糖衣 / `Job`。Fx の Read 結果をハッシュ対象に書くな、という注記 (D11)。Fx のジョブハンドルを FIELD に保存するな、という注記 (spec 4.1.4)。
+   (sub-03 からの申し送り) カーネルの登録は `ComputeService::RegisterKernel(ComputeKernelDesc)`、宣言は `ReplaceDeclarations`、ソース情報は `UpdateKernelSource`、C++ 版は `kernel::MakeRangeFn<&ns::Name_Cpu>()` で作る。
 6. 同梱の GameLogic に最小のスクリプト (宣言つき) を置き、selftest または headless で実際に走らせる。宣言していないカーネルを呼ぶと失敗すること、Start の中からの呼び出しとホットリロード直後の最初の tick の呼び出しも同じ判定になることを確かめる (spec 5-16 の C++ 部分)。
 7. ctx から呼び出し元のスクリプト型が取れない呼び出し (BT タスクなど) は失敗にする (spec D28-e。U11 の裁定は仮置き)。
 

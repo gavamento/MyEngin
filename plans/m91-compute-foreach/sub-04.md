@@ -13,6 +13,7 @@ spec D7 / D8、4.2 (SimSnapshot・WorldHash)。
 2. `HashSources` に ComputeState を足す (使用中のスロットを昇順に)。`HashWorldDetailed` と `--hash-diff` にも出す。
 3. 所有: 作成したエンティティの破棄 (tick 末) で解放する。Play 停止とシーン読込では全部解放する (`ReleasePlaySessionEngineState`、`PlayModeController.cpp:99`)。C# 用のストアも Play 停止で解放する。
 4. Fx と C# 用のストアは、スナップショットにもハッシュにも入れない。
+4b. (sub-03 から移管) **HeadlessSim の経路に ComputeService を配線する** (所有・Bind、tick 頭の BeginTick(resim)、SimRefs。device-less なので GPU は無し)。Server.exe (`ServerLoop.cpp` は HeadlessSim を使う) と headless の replay 検証で、State の ForEach が EngineLoop と同じ結果になること。
 5. 復元した後、FIELD のハンドルが同じバッファを指すことを selftest で確かめる。
 
 ## やらないこと (このサブでは)
@@ -25,6 +26,7 @@ spec D7 / D8、4.2 (SimSnapshot・WorldHash)。
 ## 受け入れ条件 (このサブ)
 1. spec 5-5 (selftest)
 2. `tools\replay_verify.bat` の snapshot round-trip と既存のシーンが PASS する
+3. HeadlessSim に ComputeService があり、デバイスが無くても State の ForEach が動くこと (selftest または headless で確認)
 
 ## 検証コマンド
 - Debug / Release ビルド、`Editor.exe --selftest`、`tools\replay_verify.bat`、`tools\check_rules.ps1`

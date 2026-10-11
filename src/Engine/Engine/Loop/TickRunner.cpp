@@ -38,6 +38,7 @@
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Engine/Physics/Xpbd/XpbdBackend.h" // M60'b: シーン遷移時の Reset 用
 #include "Engine/Engine/Scene/Prefab.h"
+#include "Engine/Engine/Compute/ComputeService.h" // M91c: tick 頭の負荷枠リセット
 #include "Engine/Renderer/Compute/ComputeAbiRunner.h" // v21: シーン遷移で ABI バッファを回収
 #include "Engine/Engine/Rendering/RenderSystem.h"
 #include "Engine/Engine/Replay/Replay.h"
@@ -249,6 +250,11 @@ void RunOneTick(TickServices& ts)
     PrefabLibrary& prefabLibrary = *ts.prefabLibrary;
     const std::wstring& assetsRoot = *ts.assetsRoot;
     const std::wstring& saveDir = *ts.saveDir;
+
+    // M91c: ForEach の tick ごとの枠と resim の印。決定的な値だけ (時間は見ない)
+    if (ts.computeService != nullptr) {
+        ts.computeService->BeginTick(ts.resim);
+    }
 
     // ★毎回引き直す (キャッシュしない)。記録は最終 tick の途中で Finish() して
     //   IsActive() が落ちるので、tick 頭の値で判定すると挙動が変わってしまう
