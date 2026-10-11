@@ -501,6 +501,9 @@
     <ClCompile Include="..\src\Engine\Engine\Compute\ComputeStateSelfTest.cpp">
       <Filter>Engine\Compute</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Compute\KernelCppCodegen.cpp">
+      <Filter>Engine\Compute</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Compute\KernelCSharp.cpp">
       <Filter>Engine\Compute</Filter>
     </ClCompile>
@@ -1447,6 +1450,9 @@
       <Filter>Engine\Compute</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelAst.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelCppCodegen.h">
       <Filter>Engine\Compute</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelCSharp.h">

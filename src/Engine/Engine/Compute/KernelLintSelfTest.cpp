@@ -17,6 +17,7 @@
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Compute/KernelCSharp.h"
+#include "Engine/Engine/Compute/KernelCppCodegen.h"
 #include "Engine/Engine/Compute/KernelHash.h"
 #include "Engine/Engine/Compute/KernelLint.h"
 #include "Engine/Platform/PathUtil.h"
@@ -742,6 +743,81 @@ void TestGeneration(const std::wstring& kernelDir)
     fs::remove_all(emptyRoot, ec);
 }
 
+// 先頭の「//」だけの行 (banner) を除く。banner は生成器ごとに文面が違う
+std::string StripBanner(const std::string& s)
+{
+    size_t pos = 0;
+    while (s.compare(pos, 2, "//") == 0) {
+        const size_t nl = s.find('\n', pos);
+        if (nl == std::string::npos) {
+            return {};
+        }
+        pos = nl + 1;
+    }
+    return s.substr(pos);
+}
+
+void TestCppTable(const std::wstring& kernelDir)
+{
+    MYE_LOG_INFO("-- C++ カーネル表の生成 (PowerShell 版との一致) --");
+    const fs::path genDir = fs::path(kernelDir).parent_path().parent_path().parent_path() / "src" / "GameLogic" / "Generated";
+    std::error_code ec;
+    const fs::path tmp = fs::temp_directory_path() / "mye_kernel_cpp_table";
+    fs::remove_all(tmp, ec);
+
+    // エンジンのカーネルを C++ の生成器へ通す。比べないのは banner だけ (include パスは同じ相対パスで揃う)
+    if (fs::exists(genDir / "Kernels.gen.h", ec) && fs::exists(genDir / "Kernels.gen.cpp", ec)) {
+        const int bad = kernel::WriteCppKernels(kernelDir, (tmp / "engine").wstring(), "GameLogic/Generated/Kernels.gen.h", false);
+        // include は genDir からの相対で書かれる。tmp からの相対だと違うので、genDir 基準の文字列で作り直して比べる
+        std::vector<kernel::KernelCppSourceFile> files;
+        for (const fs::directory_entry& e : fs::directory_iterator(fs::path(kernelDir), ec)) {
+            const std::string name = e.path().filename().string();
+            if (name.size() > 12 && name.compare(name.size() - 12, 12, ".kernel.hlsl") == 0) {
+                kernel::KernelCppSourceFile f;
+                f.fileName = name;
+                f.text = ReadAll(e.path());
+                f.includePath = fs::relative(e.path(), genDir, ec).generic_string();
+                files.push_back(std::move(f));
+            }
+        }
+        const kernel::KernelCppBatch batch = kernel::BuildKernelsCpp(std::move(files), "GameLogic/Generated/Kernels.gen.h");
+        Check(bad == 0 && batch.diagnostics.empty(), "エンジンのカーネルは全部検査を通る");
+        Check(batch.emitted.size() >= 3, "カーネルが表に入る (" + std::to_string(batch.emitted.size()) + " 本)");
+        Check(StripBanner(batch.header) == StripBanner(ReadAll(genDir / "Kernels.gen.h")),
+              "Kernels.gen.h が PowerShell 版 (コミット済み) と一致する");
+        Check(StripBanner(batch.source) == StripBanner(ReadAll(genDir / "Kernels.gen.cpp")),
+              "Kernels.gen.cpp (名前・ハッシュ・引数名) が PowerShell 版と一致する");
+    } else {
+        MYE_LOG_WARN("  SKIP: src\\GameLogic\\Generated がない (配布物): PowerShell 版との比較");
+    }
+
+    // カーネルが 0 本でも空の表が出る
+    fs::create_directories(tmp / "none", ec);
+    kernel::WriteCppKernels((tmp / "none" / "kernels").wstring(), (tmp / "noneGen").wstring(), "Generated/Kernels.gen.h", true);
+    const std::string emptyH = ReadAll(tmp / "noneGen" / "Kernels.gen.h");
+    const std::string emptyC = ReadAll(tmp / "noneGen" / "Kernels.gen.cpp");
+    Check(!emptyH.empty() && emptyH.find("#pragma once") != std::string::npos && emptyC.find("KernelRegistrar") == std::string::npos
+              && emptyC.find("#include \"Generated/Kernels.gen.h\"") != std::string::npos,
+          "カーネルが 0 本でも空の表を出す");
+
+    // 違反したカーネルは表に入らず、絶対パスの include が書かれる
+    const std::string good = ReadAll(fs::path(kernelDir) / "SelfTestSaxpy.kernel.hlsl");
+    const std::string badSrc = "#include \"kernel_common.hlsli\"\nKERNEL_PARAMS(BadParams) { float a; };\nKERNEL(Bad, BadParams, RW(float, y))\n{\n    y[id] = 1.0;\n}\n";
+    const fs::path pk = tmp / "proj" / "kernels";
+    fs::create_directories(pk, ec);
+    std::ofstream(pk / "SelfTestSaxpy.kernel.hlsl", std::ios::binary) << good;
+    std::ofstream(pk / "Bad.kernel.hlsl", std::ios::binary) << badSrc;
+    const int badCount = kernel::WriteCppKernels(pk.wstring(), (tmp / "projGen").wstring(), "Generated/Kernels.gen.h", true);
+    const std::string h = ReadAll(tmp / "projGen" / "Kernels.gen.h");
+    const std::string c = ReadAll(tmp / "projGen" / "Kernels.gen.cpp");
+    Check(badCount == 1 && h.find("Bad") == std::string::npos && c.find("Bad") == std::string::npos
+              && c.find("\"SelfTestSaxpy\"") != std::string::npos,
+          "検査に落ちたカーネルは表に入らない");
+    const std::string absInc = "#include \"" + WideToUtf8(fs::absolute(pk / "SelfTestSaxpy.kernel.hlsl", ec).lexically_normal().generic_wstring()) + "\"";
+    Check(h.find(absInc) != std::string::npos, "include は絶対パスで書かれる");
+    fs::remove_all(tmp, ec);
+}
+
 void TestFormat()
 {
     MYE_LOG_INFO("-- 診断の書式 --");
@@ -770,6 +846,7 @@ bool RunKernelLintSelfTest()
     if (!kernelDir.empty()) {
         TestGolden(kernelDir);
         TestGeneration(kernelDir);
+        TestCppTable(kernelDir);
     }
 
     MYE_LOG_INFO("==== Kernel lint self test: %s ====", g_fails == 0 ? "PASS" : "FAIL");

@@ -1,7 +1,7 @@
 # sub-05: GameLogic のカーネル表・COMPUTE_KERNELS・ABI・C++ 糖衣・版ずれ制限
 
 - 依存: sub-02, sub-04
-- 状態: OK (M91e)
+- 状態: OK (commit 92bde8a)
 - 往復: 0
 - 更新: 2026-10-12 (U10「宣言なしは失敗」と、宣言を取り込む時点)
 - 再編: 2026-10-12 (旧 sub-04。U6 を反映して `COMPUTE_KERNELS` 宣言を追加し、U1 を反映して C# のレンジ関数を登録するスロットを ABI に含める)

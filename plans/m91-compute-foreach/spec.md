@@ -268,6 +268,7 @@ class Swarm : MyeScript {
 | sub-04 | State バッファのスナップショット・ハッシュ・寿命 | sub-03 | 5 | `M91d: State バッファを SimSnapshot とワールドハッシュに入れる (snapshot v49)` |
 | sub-05 | GameLogic のカーネル表・COMPUTE_KERNELS・ABI・C++ 糖衣・版ずれ制限 | sub-02, sub-04 | 7, 9 | `M91e: GameLogic のカーネル表と ForEach の ABI を足す (ABI v29)` |
 | sub-10 | 外部プロジェクトの C++ カーネル表 (エディタのスクリプトビルドへの組み込み) | sub-05 | 17 | `M91f: 外部プロジェクトの kernels から C++ のカーネル表を生成して GameLogic に組み込む` |
+| sub-11 | Debug selftest の net 試験の不安定さの切り分け (M91e の退行の疑い) | なし (sub-10 の後に行う) | — (品質の確認) | 修正したときだけ `M91 追補: 複数の sim が同時に生きているときのスクリプト登録の dangling を直す` |
 | sub-06 | C# の同形 API・C# の CPU 版の実行・[ComputeKernels]・RyuJIT の決定論 | sub-05 | 3 (C# 側), 8, 15 | `M91g: C# から Compute.ForEach を呼べるようにし、C# の CPU 版を走らせる` |
 | sub-07 | カーネルのアセット扱い・スクリプトのインスペクターの Compute 欄・project_settings | sub-06 | 11, 16 | `M91h: スクリプトのインスペクターに Compute 欄を足し、実行ポリシーと負荷枠を設定にする` |
 | sub-08 | デモと compute A/B (`--compute-force-cpu`) | sub-06 | 10, 12 | `M91i: Compute デモと replay_verify の compute A/B を足す` |
@@ -308,3 +309,4 @@ sub-02 と sub-03 は互いに依存しない (並列にできる)。sub-07 と 
 - 2026-10-12 (sub-04 round 1 の SELF_EVAL、coder の質問を planner が裁定): State と Fx はスロット空間を共有したままにした (ストアを種別ごとに分ける案は却下。Fx の作成はデバイスに依存しないので採番は決定的。分けるとハンドルの種別印とスナップショットの形が増える)。そのかわり 4.1.4 に「Fx の Status / Target / Read / ハンドルを sim の分岐に使わない」規約を追記した。ReleaseAll で世代も初期化すること、復元では stateTotalBytes を見ないこと、Fx はスナップショットに居た印と世代だけを入れること、を採用した。
 - 2026-10-12 (sub-05 round 1 の SELF_EVAL): ABI v29 = 174 スロット (ForEach 系 8 本 + C# の CPU 版と宣言を登録する 2 本)。ComputeForEach に callerScript 引数 (C# 用。C++ レーンではエンジンが実行中のスクリプトから決め、引数は信用しない)。宣言表を言語別にした。C++ の生成物を版管理にした (4.2)。外部プロジェクトの kernels の生成を後回しにした (3、U12)。判定: 仕様の不足と、現実の制約。
 - 2026-10-12 (ユーザー回答 3 回目、U12 = M91 でやる。planner 案「後回し」の逆): 外部プロジェクトの C++ カーネル表の生成をスコープに入れ、受け入れ条件 17 と sub-10 を新設した。sub-10 は sub-05 の次に行う (M91f)。これに合わせて、以降のコミット件名の文字を 1 つずつ繰り下げた (sub-06 = M91g、sub-07 = M91h、sub-08 = M91i、sub-09 = M91j)。sub-09 の依存に sub-10 を追加した。
+- 2026-10-12 (sub-10 round 1 の SELF_EVAL): Debug の selftest の net 試験 (V1 LoadPersist / LoadGame) が 1 回目だけ FAIL した。R10 (M91e の登録表の construct の差し替え) の退行が疑われるので、切り分けのために sub-11 を新設した。外部プロジェクトの生成は、include を絶対パスにすること、カーネル名とファイル名の不一致は検査器 (KL020) で表から外すこと、を採用した。

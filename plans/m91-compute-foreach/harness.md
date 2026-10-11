@@ -16,8 +16,9 @@
 | sub-02 | OK | 2 | f71dc9f | 検査器と C# への変換器 (依存 01) |
 | sub-03 | OK | 2 | c206131 | ForEach のエンジン核 (依存 01) |
 | sub-04 | OK | 1 | 42c6b89 | State のスナップショット・ハッシュ (依存 03、snapshot v49 目安) |
-| sub-05 | OK | 2 | (M91e) | カーネル表・COMPUTE_KERNELS・ABI (依存 02,04、ABI v29 目安) |
-| sub-10 | 未着手 | 0 | | 外部プロジェクトの C++ カーネル表 (依存 05、U12。sub-06 より先に着手) |
+| sub-05 | OK | 2 | 92bde8a | カーネル表・COMPUTE_KERNELS・ABI (依存 02,04、ABI v29 目安) |
+| sub-10 | OK | 1 | (M91f) | 外部プロジェクトの C++ カーネル表 (依存 05、U12。sub-06 より先に着手) |
+| sub-11 | 未着手 | 0 | | Debug selftest の net 試験の不安定さの切り分け (sub-06 の前。M91e 退行の疑い) |
 | sub-06 | 未着手 | 0 | | C# 同形 API・C# CPU 版 (依存 05) |
 | sub-07 | 未着手 | 0 | | スクリプトのインスペクター・project_settings (依存 06) |
 | sub-08 | 未着手 | 0 | | デモと compute A/B (依存 06) |
@@ -47,3 +48,4 @@
 - (planner VERDICT sub-03) 申し送り: (1) ComputeService::ForEach の分割 (引数検証と実行を関数へ) は sub-05 で入口を触るときに範囲内で。(2) SelfTestUnused.kernel.hlsl.meta の guid は手付け → sub-07 の .meta 整備で揃える。HeadlessSim への配線は sub-04 へ移管 (sub-04.md 4b・受け入れ 3)。GPU バインドはリフレクションの名前引き (FXC は未使用資源を落として詰めることを実測) → sub-05 のカーネル表は引数の HLSL 変数名を出す。
 - (planner VERDICT sub-04) snapshot v49 (CMP 節は BT の後・World の前)。申し送り: (1) State ハッシュのコスト (1MiB/16MiB の ms/tick) は sub-08 の 5 で計測、16MiB で tick の 10% 超なら planner 判断。(2) State 入り .rep の照合は sub-08 の 6 (Debug/Release と computeab)。(3) sub-05 の ABI CreateBuffer は実行中スクリプトのエンティティを owner に渡す。State/Fx は 1 スロット空間のまま (Fx の Status/Target/Read/ハンドルを sim 分岐に使わない規約を spec 4.1.4 に追記)。
 - (planner VERDICT sub-05) ABI v29 = 174 (+10 本)。Kernels.gen.{h,cpp} は版管理 (spec 4.2 改訂)。U12 を受けて sub-10 を新設、コミット件名の文字を繰り下げ (sub-10 = M91f、sub-06 = M91g、07 = M91h、08 = M91i、09 = M91j)。申し送り: ScriptHost.cpp が長い (分割は後続)。R10 (複数 ScriptHost 同時生存時の construct dangling) は範囲外。Release selftest は司会がコミット前に再実行して PASS。memory の M75h は v30 へ更新済み。
+- (planner VERDICT sub-10) 申し送り: (1) Debug selftest の net 試験 (V1 LoadPersist / LoadGame) が 1 回目に FAIL → sub-11 で HEAD と 42c6b89 の再現率を比べて切り分け。基点でも落ちる場合はユーザー判断。(2) [Rebuild Scripts] ボタンからの手動確認を sub-09 で test_checklists に足す。(3) 自動 Rebuild 後のホットリロードで unknown component が復活するかは範囲外 (記録のみ)。sub-07 に 1b (プロジェクトとエンジンの同名カーネルの優先順) を追加。

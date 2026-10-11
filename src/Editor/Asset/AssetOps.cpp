@@ -45,6 +45,7 @@
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Rendering/RenderSystem.h" // M58f: 地形ブラシ Undo 後のチャンク再構築
 #include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/Compute/KernelCppCodegen.h"
 #include "Engine/Engine/Schema/SchemaCodegen.h"
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Platform/PathUtil.h"
@@ -1738,8 +1739,10 @@ bool WriteGeneratedVcxproj(const std::wstring& path, const std::wstring& engineR
     // を "Generated/..." で引くため (Common.props はエンジン側 src しか通していない)
     x += "  <ItemDefinitionGroup>\r\n";
     x += "    <ClCompile>\r\n";
-    x += "      <AdditionalIncludeDirectories>" + XmlEscape(cacheDir)
-         + ";%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>\r\n";
+    // エンジンの assets\shaders\kernels は、カーネルの #include "kernel_common.hlsli" の解決用
+    // (プロジェクトの kernels\ に同名があればそちらが先: 引用符 include は呼び出し元の階層を先に探す)
+    x += "      <AdditionalIncludeDirectories>" + XmlEscape(cacheDir) + ";" + XmlEscape(engineRepo)
+         + "\\assets\\shaders\\kernels;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>\r\n";
     x += "    </ClCompile>\r\n";
     x += "    <Link>\r\n";
     x += "      <AdditionalOptions>/PDBALTPATH:$(TargetName).pdb %(AdditionalOptions)"
@@ -1748,6 +1751,7 @@ bool WriteGeneratedVcxproj(const std::wstring& path, const std::wstring& engineR
     x += "  </ItemDefinitionGroup>\r\n";
     x += "  <ItemGroup>\r\n";
     x += "    <ClCompile Include=\"" + XmlEscape(cacheDir) + "\\GameLogicMain.cpp\" />\r\n";
+    x += "    <ClCompile Include=\"" + XmlEscape(cacheDir) + "\\Generated\\Kernels.gen.cpp\" />\r\n";
     for (const std::wstring& s : sources) {
         x += "    <ClCompile Include=\"" + XmlEscape(s) + "\" />\r\n";
     }
@@ -1795,6 +1799,11 @@ std::wstring PrepareProjectScriptsBat(EngineContext& ctx)
         schema::WriteIfChanged(genDir + L"\\SchemaComponents.gen.h",
                                schema::EmitCppHeader(schema::BuildCodegenModel()));
     }
+    // Compute.ForEach のカーネル表 (M91f)。<project>\assets\shaders\kernels\*.kernel.hlsl を CPU 版として取り込む。
+    // 0 本でも空の表を出す (vcxproj が常に Kernels.gen.cpp を持つため)。
+    // include は絶対パス: cache\Generated からの相対だと、プロジェクトの置き場所ごとに表の中身が変わる
+    mye::kernel::WriteCppKernels(ctx.projectRoot + L"\\assets\\shaders\\kernels", cacheDir + L"\\Generated",
+                                 "Generated/Kernels.gen.h", /*absoluteIncludes=*/true);
     if (!WriteGeneratedMain(cacheDir + L"\\GameLogicMain.cpp")
         || !WriteGeneratedVcxproj(projPath, engineRepo, cacheDir, sources)) {
         return {};
