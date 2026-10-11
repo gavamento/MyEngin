@@ -49,6 +49,7 @@
 #include "Engine/Engine/Animation/AnimatorControllerSelfTest.h"
 #include "Engine/Engine/Asset/AssetDatabaseSelfTest.h"
 #include "Engine/Engine/Compute/ComputeServiceSelfTest.h"
+#include "Engine/Engine/Compute/ComputeStateSelfTest.h"
 #include "Engine/Engine/Compute/KernelLintSelfTest.h"
 #include "Engine/Engine/Compute/KernelSelfTest.h"
 #include "Engine/Engine/Audio/Playback/AudioSelfTest.h"
@@ -641,6 +642,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunKernelSelfTest();                  // M91a: *.kernel.hlsl の GPU/CPU 単一ソース・CPU 実行器・ハッシュ
         ok &= mye::RunKernelLintSelfTest();            // M91b: カーネル検査器と C# 変換器
         ok &= mye::RunComputeServiceSelfTest();        // M91c: ForEach のエンジン核 (ストア・判断・Fx GPU)
+        ok &= mye::RunComputeStateSelfTest();          // M91d: State バッファのスナップショット・ハッシュ・寿命
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }

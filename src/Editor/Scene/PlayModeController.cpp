@@ -2,6 +2,7 @@
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Audio/Playback/AudioSystem.h"
+#include "Engine/Engine/Compute/ComputeService.h"
 #include "Engine/Engine/Replay/TimeTravel.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Scene/SceneSerializer.h"
@@ -96,7 +97,8 @@ void PlayModeController::Step()
     }
 }
 
-void ReleasePlaySessionEngineState(AudioSystem* audio, ComputeAbiRunner* computeAbi)
+void ReleasePlaySessionEngineState(AudioSystem* audio, ComputeAbiRunner* computeAbi,
+                                   compute::ComputeService* computeService)
 {
     // M45: 鳴っている voice はエンジン側の状態なので戻らない。ループ音や BGM が Stop 後も
     // 鳴り続けるのを防ぐ。BGM は別レーンなので StopMusic も要る (M45f)
@@ -108,6 +110,10 @@ void ReleasePlaySessionEngineState(AudioSystem* audio, ComputeAbiRunner* compute
     // 残すと Play を繰り返すうちに上限 (kMaxAbiBuffers) に達し、CreateComputeBuffer が 0 を返す
     if (computeAbi != nullptr) {
         computeAbi->Shutdown();
+    }
+    // M91d: Compute.ForEach のバッファ (State も C# 用も)。採番も戻すので、次の Play は新規起動と同じ handle から始まる
+    if (computeService != nullptr) {
+        computeService->ReleaseAllBuffers();
     }
 }
 

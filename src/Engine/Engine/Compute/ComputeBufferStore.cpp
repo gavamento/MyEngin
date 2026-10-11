@@ -7,6 +7,8 @@
 
 #include <cstring>
 
+#include "Engine/Core/Util/ByteIo.h"
+
 namespace mye::compute {
 namespace {
 
@@ -27,7 +29,7 @@ uint32_t ComputeBufferStore::LaneMark() const
     return (lane_ == StoreLane::Game ? 2u : 3u) << kGenerationBits;
 }
 
-uint64_t ComputeBufferStore::Create(uint32_t count, uint32_t stride, BufferKind kind)
+uint64_t ComputeBufferStore::Create(uint32_t count, uint32_t stride, BufferKind kind, EntityID owner)
 {
     if (count == 0 || stride == 0 || (stride & 3u) != 0 || stride > limits_.maxStride
         || count > limits_.maxElements) {
@@ -60,6 +62,7 @@ uint64_t ComputeBufferStore::Create(uint32_t count, uint32_t stride, BufferKind 
     s.kind = kind;
     s.count = count;
     s.stride = stride;
+    s.owner = owner;
     s.data.assign(static_cast<size_t>(bytes), 0);
     s.fxCpuDirty = kind == BufferKind::Fx; // 作ったばかりの Fx は GPU バッファが無い
     if (kind == BufferKind::State) {
@@ -111,6 +114,7 @@ bool ComputeBufferStore::Release(uint64_t handle)
     s->live = false;
     s->count = 0;
     s->stride = 0;
+    s->owner = EntityID{};
     s->fxCpuDirty = false;
     std::vector<uint8_t>().swap(s->data);
     return true;
@@ -118,15 +122,7 @@ bool ComputeBufferStore::Release(uint64_t handle)
 
 void ComputeBufferStore::ReleaseAll()
 {
-    for (Slot& s : slots_) {
-        if (s.live) {
-            s.live = false;
-            s.count = 0;
-            s.stride = 0;
-            s.fxCpuDirty = false;
-            std::vector<uint8_t>().swap(s.data);
-        }
-    }
+    slots_.clear();
     stateBytes_ = 0;
 }
 
@@ -160,6 +156,124 @@ uint32_t ComputeBufferStore::LiveCount() const
         n += s.live ? 1u : 0u;
     }
     return n;
+}
+
+bool ComputeBufferStore::HasLiveState() const
+{
+    for (const Slot& s : slots_) {
+        if (s.live && s.kind == BufferKind::State) {
+            return true;
+        }
+    }
+    return false;
+}
+
+namespace {
+constexpr uint8_t kSnapDead = 0;
+constexpr uint8_t kSnapState = 1;
+constexpr uint8_t kSnapFx = 2;
+} // namespace
+
+void ComputeBufferStore::WriteSnapshot(ByteWriter& w) const
+{
+    w.Count(slots_.size());
+    for (const Slot& s : slots_) {
+        w.U32(s.generation);
+        if (!s.live) {
+            w.U8(kSnapDead);
+        } else if (s.kind == BufferKind::Fx) {
+            w.U8(kSnapFx);
+        } else {
+            w.U8(kSnapState);
+            w.U32(s.count);
+            w.U32(s.stride);
+            w.U32(s.owner.index);
+            w.U32(s.owner.generation);
+            w.Raw(s.data.data(), s.data.size());
+        }
+    }
+}
+
+bool ComputeBufferStore::ReadSnapshot(ByteReader& r, std::vector<Slot>& out) const
+{
+    out.clear();
+    // 1 スロットは最低 5 バイト (世代 + 印)
+    const size_t n = r.Count(sizeof(uint32_t) + sizeof(uint8_t));
+    if (!r.Ok() || n > limits_.maxSlots) {
+        return false;
+    }
+    out.resize(n);
+    for (Slot& s : out) {
+        s.generation = r.U32();
+        const uint8_t mark = r.U8();
+        if (!r.Ok() || s.generation > kGenerationMask) {
+            return false;
+        }
+        if (mark == kSnapDead) {
+            continue;
+        }
+        s.live = true;
+        if (mark == kSnapFx) {
+            s.kind = BufferKind::Fx;
+            continue;
+        }
+        if (mark != kSnapState) {
+            return false;
+        }
+        s.kind = BufferKind::State;
+        s.count = r.U32();
+        s.stride = r.U32();
+        s.owner.index = r.U32();
+        s.owner.generation = r.U32();
+        // Create と同じ上限で検証する (壊れた blob の巨大な確保を防ぐ)。State の総バイト枠は、設定が
+        // 録画時から変わっていても復元を拒まないよう見ない
+        if (!r.Ok() || s.generation == 0 || s.count == 0 || s.stride == 0 || (s.stride & 3u) != 0
+            || s.stride > limits_.maxStride || s.count > limits_.maxElements) {
+            return false;
+        }
+        const uint64_t bytes = static_cast<uint64_t>(s.count) * s.stride;
+        if (bytes > limits_.maxBufferBytes || bytes > r.Remaining()) {
+            return false;
+        }
+        s.data.resize(static_cast<size_t>(bytes));
+        r.Raw(s.data.data(), s.data.size());
+    }
+    return r.Ok();
+}
+
+void ComputeBufferStore::ApplySnapshot(std::vector<Slot>&& snapshot, std::vector<uint64_t>& droppedFx)
+{
+    // 撮影後に作られた Fx (表の外・世代違い) は捨てる。Fx は表示用で sim の状態ではない
+    for (uint32_t i = 0; i < slots_.size(); ++i) {
+        const Slot& cur = slots_[i];
+        if (!cur.live || cur.kind != BufferKind::Fx) {
+            continue;
+        }
+        const bool kept = i < snapshot.size() && snapshot[i].live && snapshot[i].kind == BufferKind::Fx
+            && snapshot[i].generation == cur.generation;
+        if (!kept) {
+            droppedFx.push_back(HandleOf(i));
+        }
+    }
+    std::vector<Slot> next(snapshot.size());
+    stateBytes_ = 0;
+    for (size_t i = 0; i < snapshot.size(); ++i) {
+        Slot& s = snapshot[i];
+        if (s.live && s.kind == BufferKind::Fx) {
+            if (i < slots_.size() && slots_[i].live && slots_[i].kind == BufferKind::Fx
+                && slots_[i].generation == s.generation) {
+                next[i] = std::move(slots_[i]);
+            } else {
+                next[i].generation = s.generation;
+            }
+        } else {
+            if (s.live) {
+                stateBytes_ += s.data.size();
+            }
+            next[i] = std::move(s);
+        }
+    }
+    slots_ = std::move(next);
 }
 
 } // namespace mye::compute

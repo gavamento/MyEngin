@@ -544,6 +544,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ctx.managedHost = &managedHost;
     ctx.particles = &particleSystem;
     ctx.computeAbi = &computeAbi;
+    ctx.computeService = &computeService;
     ctx.prefabs = &prefabLibrary;
     ctx.anims = &animLibrary;
     ctx.controllers = &controllerLibrary;
@@ -637,6 +638,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     simRefs.acoustic = &acoustic; // M65a: 同上 (復元側が Invalidate も呼ぶ)
     simRefs.nav = &navSystem; // M82c: 同上 (dtCrowd・スロット表)
     simRefs.behaviorTree = &behaviorTreeSystem; // M85: 同上 (ブラックボード・ノードごとの状態)
+    simRefs.compute = &computeService; // M91d: 同上 (State バッファ。Fx と C# 用は入れない)
     simRefs.collision = &collisionSystem;
     simRefs.scripts = &scriptHost;
     simRefs.prevTickInput = prevTickInput;

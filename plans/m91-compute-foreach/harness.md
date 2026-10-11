@@ -14,8 +14,8 @@
 |---|---|---|---|---|
 | sub-01 | OK | 1 | 5e0b501 | 単一ソースのカーネル (互換ヘッダ・KERNEL 展開・C++ CPU 実行器・ハッシュ) |
 | sub-02 | OK | 2 | f71dc9f | 検査器と C# への変換器 (依存 01) |
-| sub-03 | OK | 2 | (M91c) | ForEach のエンジン核 (依存 01) |
-| sub-04 | 未着手 | 0 | | State のスナップショット・ハッシュ (依存 03、snapshot v49 目安) |
+| sub-03 | OK | 2 | c206131 | ForEach のエンジン核 (依存 01) |
+| sub-04 | OK | 1 | (M91d) | State のスナップショット・ハッシュ (依存 03、snapshot v49 目安) |
 | sub-05 | 未着手 | 0 | | カーネル表・COMPUTE_KERNELS・ABI (依存 02,04、ABI v29 目安) |
 | sub-06 | 未着手 | 0 | | C# 同形 API・C# CPU 版 (依存 05) |
 | sub-07 | 未着手 | 0 | | スクリプトのインスペクター・project_settings (依存 06) |
@@ -43,3 +43,4 @@
 - (sub-01 coder) 4 バイト params を SRV+UAV で作ると WARP debug layer がアクセス違反 (原因未特定)。読み取り専用バッファは SRV のみ (sub-03 必須事項)。
 - (planner VERDICT sub-02) 申し送り: (1) GPU 側の FloatToInt/FloatToUint は FXC コンパイルのみ確認 → sub-08 の実機 GPU 計測時に 1 回確かめる。(2) ADR-030 (sub-09) の規則一覧は KernelLint.h (KL001〜KL028) から写す。環境変数 MYE_KERNEL_GOLDEN_DUMP / MYE_KERNEL_LINT_FILES、FloatToInt の仕様、互換層 3 か所 (kernel_common.hlsli / KernelCompat.h / KernelCompat.cs) を同式に保つことも ADR-030 へ。
 - (planner VERDICT sub-03) 申し送り: (1) ComputeService::ForEach の分割 (引数検証と実行を関数へ) は sub-05 で入口を触るときに範囲内で。(2) SelfTestUnused.kernel.hlsl.meta の guid は手付け → sub-07 の .meta 整備で揃える。HeadlessSim への配線は sub-04 へ移管 (sub-04.md 4b・受け入れ 3)。GPU バインドはリフレクションの名前引き (FXC は未使用資源を落として詰めることを実測) → sub-05 のカーネル表は引数の HLSL 変数名を出す。
+- (planner VERDICT sub-04) snapshot v49 (CMP 節は BT の後・World の前)。申し送り: (1) State ハッシュのコスト (1MiB/16MiB の ms/tick) は sub-08 の 5 で計測、16MiB で tick の 10% 超なら planner 判断。(2) State 入り .rep の照合は sub-08 の 6 (Debug/Release と computeab)。(3) sub-05 の ABI CreateBuffer は実行中スクリプトのエンティティを owner に渡す。State/Fx は 1 スロット空間のまま (Fx の Status/Target/Read/ハンドルを sim 分岐に使わない規約を spec 4.1.4 に追記)。

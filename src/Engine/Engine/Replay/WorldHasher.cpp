@@ -19,6 +19,7 @@
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Navigation/NavSystem.h"
 #include "Engine/Engine/AI/BehaviorTreeSystem.h"
+#include "Engine/Engine/Compute/ComputeBufferStore.h"
 #include "Engine/Engine/Physics/Xpbd/XpbdBackend.h"
 #include "Engine/Platform/PathUtil.h"
 
@@ -393,6 +394,38 @@ uint64_t HashBehaviorTreeState(const BehaviorTreeSystem& bt, DumpCtx* d)
     return h;
 }
 
+// Compute.ForEach の State バッファ (M91d)。使用中のスロットを昇順に、種別・世代・持ち主・形・中身を畳む。
+// 中身はバイト列のまま (要素の型はカーネルごとに違う)。ダンプは要素数 + サブハッシュの 1 行
+uint64_t HashComputeState(const compute::ComputeBufferStore& store, DumpCtx* d)
+{
+    uint64_t h = kFnvOffset;
+    const std::vector<compute::ComputeBufferStore::Slot>& slots = store.Slots();
+    for (uint32_t i = 0; i < slots.size(); ++i) {
+        const compute::ComputeBufferStore::Slot& s = slots[i];
+        if (!s.live || s.kind != compute::BufferKind::State) {
+            continue;
+        }
+        if (d && d->lines) {
+            d->entityCol.clear();
+            AppendDecU64(d->entityCol, s.owner.index);
+            d->entityCol.push_back(':');
+            AppendDecU64(d->entityCol, s.owner.generation);
+        }
+        FoldU64(h, d, "Compute", "slot", i);
+        FoldU64(h, d, "Compute", "generation", s.generation);
+        FoldU64(h, d, "Compute", "owner.index", s.owner.index);
+        FoldU64(h, d, "Compute", "owner.generation", s.owner.generation);
+        FoldU64(h, d, "Compute", "count", s.count);
+        FoldU64(h, d, "Compute", "stride", s.stride);
+        h = HashBytes(s.data.data(), s.data.size(), h);
+        EmitArray(d, "Compute", "data", s.data.data(), s.data.size(), s.count, h);
+    }
+    if (d && d->lines) {
+        d->entityCol = "-";
+    }
+    return h;
+}
+
 // M51g: ゲームフロー状態 (決定台帳 5)。RNG の直後・パーティクルの前に畳み込む。
 // PersistStore は std::map = キー昇順走査 (挿入順に依存しない — selftest が固定)
 uint64_t HashGameFlow(uint64_t h, const TimeControl* time, const PersistStore* persist, DumpCtx* d)
@@ -567,6 +600,12 @@ uint64_t HashWorldImpl(World& world, const SimSources& src,
         const uint64_t bh = HashBehaviorTreeState(*src.behaviorTree, d);
         total = HashCombine(total, bh);
         EmitU64(d, "BehaviorTree", "#total", bh, total);
+    }
+    // Compute.ForEach の State バッファ (M91d)。内容ゲート (理由は WorldHasher.h の SimSources::computeState)
+    if (src.computeState && src.computeState->HasLiveState()) {
+        const uint64_t ch = HashComputeState(*src.computeState, d);
+        total = HashCombine(total, ch);
+        EmitU64(d, "Compute", "#total", ch, total);
     }
     return total;
 }

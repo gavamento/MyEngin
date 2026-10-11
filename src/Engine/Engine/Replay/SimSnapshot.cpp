@@ -16,6 +16,7 @@
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Navigation/NavSystem.h"
 #include "Engine/Engine/AI/BehaviorTreeSystem.h"
+#include "Engine/Engine/Compute/ComputeService.h"
 #include "Engine/Engine/Physics/Xpbd/XpbdBackend.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Script/ScriptHost.h"
@@ -23,12 +24,19 @@
 namespace mye {
 
 SimSources SimSourcesOf(Scene& scene, const CpuParticleBackend* particles, const XpbdBackend* xpbd,
-                        const AcousticField* acoustic, const NavSystem* nav, const BehaviorTreeSystem* behaviorTree)
+                        const AcousticField* acoustic, const NavSystem* nav, const BehaviorTreeSystem* behaviorTree,
+                        const compute::ComputeBufferStore* computeState)
 {
     // 並びは SimSources の member 順 (畳み込む順序は HashWorldImpl が決めるので、ここは関係ない)
     // SessionLanes はシステム入力を持つ記録のときだけ畳む (D10)。持たない記録のハッシュ列を動かさない
     const SessionLanes* lanes = scene.Lanes().systemInput != 0 ? &scene.Lanes() : nullptr;
-    return { particles, &scene.Time(), &scene.Persist(), xpbd, acoustic, &scene.UI(), lanes, nav, behaviorTree };
+    return { particles, &scene.Time(), &scene.Persist(), xpbd, acoustic, &scene.UI(), lanes, nav, behaviorTree,
+             computeState };
+}
+
+const compute::ComputeBufferStore* ComputeGameStoreOf(const compute::ComputeService* service)
+{
+    return service != nullptr ? &service->Store(compute::CallerKind::Cpp) : nullptr;
 }
 
 namespace {
@@ -45,6 +53,7 @@ constexpr uint32_t kAcousticMagic = 0x31554341u; // 'ACU1' (M65a)
 constexpr uint32_t kSessionMagic = 0x31534553u;  // 'SES1' (M81b)
 constexpr uint32_t kNavMagic = 0x3156414Eu;      // 'NAV1' (M82c)
 constexpr uint32_t kBtMagic = 0x31305442u;       // 'BT01' (M85a)
+constexpr uint32_t kComputeMagic = 0x31504D43u;  // 'CMP1' (M91d)
 
 constexpr size_t kHeaderBytes = 4 * sizeof(uint32_t) + sizeof(uint64_t);
 
@@ -550,6 +559,35 @@ bool ReadBt(ByteReader& r, BtSnapshot& out)
     return true;
 }
 
+// ---- CMP 節 (M91d) ----
+// ComputeService が無い構成では「0 スロット」の短い節を書く (節は常にある)
+void WriteCompute(ByteWriter& w, const compute::ComputeService* service)
+{
+    w.U32(kComputeMagic);
+    if (service != nullptr) {
+        service->WriteGameSnapshot(w);
+    } else {
+        w.Count(0);
+    }
+}
+
+// service が無い構成でも、壊れた blob は検出できるよう既定の上限で検証だけする
+bool ReadCompute(ByteReader& r, const compute::ComputeService* service,
+                 std::vector<compute::ComputeBufferStore::Slot>& out)
+{
+    if (r.U32() != kComputeMagic) {
+        MYE_LOG_ERROR("[snapshot] compute section magic mismatch");
+        return false;
+    }
+    const bool ok = service != nullptr ? service->ReadGameSnapshot(r, out)
+                                       : compute::ComputeBufferStore(compute::StoreLane::Game).ReadSnapshot(r, out);
+    if (!ok) {
+        MYE_LOG_ERROR("[snapshot] compute section is corrupt");
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
@@ -578,6 +616,7 @@ bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
         return false;
     }
     WriteBt(w, refs.behaviorTree); // M85a (v34)
+    WriteCompute(w, refs.compute); // M91d (v49)
     // ★World は**最後**に置く。復元は「小さい節を全部一時領域へ読み切ってから
     //   World::SnapshotRead (それ自体が全読み後に一括差し替え) を呼ぶ」順で走るので、
     //   World の差し替え前の失敗では現世界に手が付かない (差し替え後の Nav 節の失敗だけ例外。RestoreSimSnapshot 参照)
@@ -660,6 +699,10 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     if (!ReadBt(r, btSnapshot)) { // M85a (v34)。refs.behaviorTree が無い構成では読み捨てる
         return false;
     }
+    std::vector<compute::ComputeBufferStore::Slot> computeSlots;
+    if (!ReadCompute(r, refs.compute, computeSlots)) { // M91d (v49)。refs.compute が無い構成では読み捨てる
+        return false;
+    }
     if (!r.Ok()) {
         MYE_LOG_ERROR("[snapshot] truncated blob");
         return false;
@@ -685,6 +728,10 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
         refs.nav == nullptr || refs.nav->ApplySnapshot(refs.scene->GetWorld(), navBlock.data(), navBlock.size());
     if (refs.behaviorTree != nullptr) {
         refs.behaviorTree->ApplySnapshot(refs.scene->GetWorld(), std::move(btSnapshot)); // 失敗しない (戻せない木は初期状態から)
+    }
+
+    if (refs.compute != nullptr) {
+        refs.compute->ApplyGameSnapshot(std::move(computeSlots));
     }
 
     if (refs.particles != nullptr) {

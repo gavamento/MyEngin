@@ -282,7 +282,7 @@ void TestStore()
     a.ReleaseAll();
     Check(a.LiveCount() == 0 && a.StateBytes() == 0, "ReleaseAll で全部戻る");
     const uint64_t again = a.Create(10, 4, BufferKind::State);
-    Check(a.SlotIndex(again) == 0 && again != a1, "全解放後も世代は戻らない (古いハンドルは無効のまま)");
+    Check(a.SlotIndex(again) == 0 && again == a1, "全解放後は採番も初期状態に戻る (新規起動と同じハンドルから始まる)");
 }
 
 // ---------------------------------------------------------------------------

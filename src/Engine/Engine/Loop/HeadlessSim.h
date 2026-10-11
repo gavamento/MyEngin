@@ -17,6 +17,9 @@
 namespace mye {
 
 struct NetRuntimeInfo;
+namespace compute {
+class ComputeService;
+}
 
 struct HeadlessSimSetup {
     // 共有 CLI (ParseEngineCliFlag) で埋めた設定。sim に効くのは projectRoot / useJobs /
@@ -92,6 +95,8 @@ public:
     const std::wstring& SaveDir() const;
     // ABI v13 の Net* スロットが読む値 (systemInput = true のセッション構成では D14 の固定値)
     const NetRuntimeInfo& NetInfo() const;
+    // Compute.ForEach のサービス。device 無しなので Fx は CPU 版で動く (M91d、selftest が State の ForEach を確かめる)
+    compute::ComputeService& Compute();
 
 private:
     struct Impl;

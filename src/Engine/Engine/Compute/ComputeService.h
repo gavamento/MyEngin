@@ -19,6 +19,9 @@
 #include "Engine/Engine/Compute/KernelRange.h"
 
 namespace mye {
+class ByteWriter;
+class ByteReader;
+class World;
 class GraphicsDevice;
 class ShaderManager;
 namespace jobs {
@@ -133,7 +136,9 @@ public:
     void SetKernelOverrideCpu(const std::string& kernel, bool cpuOnly);
 
     // ---- バッファ (caller の言語でストアが決まる: C++ = Game、C# = Script) ----
-    uint64_t CreateBuffer(CallerKind lane, uint32_t count, uint32_t stride, BufferKind kind);
+    // owner: 作成したスクリプトのエンティティ。null でなければ、そのエンティティが破棄された tick 末に自動解放する
+    uint64_t CreateBuffer(CallerKind lane, uint32_t count, uint32_t stride, BufferKind kind,
+                          EntityID owner = EntityID{});
     bool ReleaseBuffer(CallerKind lane, uint64_t handle);
     bool WriteBuffer(CallerKind lane, uint64_t handle, const void* src, uint32_t count);
     // Fx は最新の完了済み結果を返す (待たない)。wait=true で明示ストール
@@ -143,6 +148,17 @@ public:
     {
         return lane == CallerKind::Cpp ? gameStore_ : scriptStore_;
     }
+
+    // ---- 寿命 (D8) ----
+    // 持ち主のエンティティがもう居ないバッファを、両方のストアから昇順で解放する。tick 末の構造変更の適用後に呼ぶ
+    uint32_t ReleaseDeadOwners(const World& world);
+    // 両方のストアを初期状態へ戻す (Play 停止・シーン読込)。採番も戻るので、次のセッションは新規起動と同じ handle から始まる
+    void ReleaseAllBuffers();
+
+    // ---- スナップショット (C++ 用ストアの State だけ。Fx と C# 用ストアは入れない) ----
+    void WriteGameSnapshot(ByteWriter& w) const;
+    bool ReadGameSnapshot(ByteReader& r, std::vector<ComputeBufferStore::Slot>& out) const;
+    void ApplyGameSnapshot(std::vector<ComputeBufferStore::Slot>&& slots);
 
     // ---- 実行とジョブ ----
     // 失敗は kJobFailed (0)。State は同期で完了する。Fx の GPU は非同期 (Pending のジョブを返す)

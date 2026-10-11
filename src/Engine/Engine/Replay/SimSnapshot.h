@@ -16,6 +16,10 @@ class NavSystem;
 class BehaviorTreeSystem;
 class CollisionSystem;
 class ScriptHost;
+namespace compute {
+class ComputeService;
+class ComputeBufferStore;
+}
 
 // ワールドハッシュに畳む「ECS 外の sim 状態」の束 (WorldHasher の SimSources) を組む**唯一の場所**。
 // record / verify / --hash-dump / タイムトラベルの自己検証 / ネットの開始ハッシュが全部ここを通る —
@@ -23,7 +27,11 @@ class ScriptHost;
 // (M70c: acoustic を 4 か所で渡し忘れ、波の出るシーンでだけ crash .rep が全 tick 割れた)
 SimSources SimSourcesOf(Scene& scene, const CpuParticleBackend* particles, const XpbdBackend* xpbd,
                         const AcousticField* acoustic, const NavSystem* nav = nullptr,
-                        const BehaviorTreeSystem* behaviorTree = nullptr);
+                        const BehaviorTreeSystem* behaviorTree = nullptr,
+                        const compute::ComputeBufferStore* computeState = nullptr);
+
+// ComputeService の C++ 用ストア (State が sim 状態)。null なら nullptr。SimRefs::HashSources と TickRunner が使う
+const compute::ComputeBufferStore* ComputeGameStoreOf(const compute::ComputeService* service);
 
 // sim レーンのスナップショット (M52d、決定台帳 1)。
 // 「ある tick の sim 状態を丸ごと保存し、後でビット同一に復元し、そこから同じ入力で
@@ -77,9 +85,15 @@ struct SimRefs {
     // M85: ビヘイビアツリーの実行状態 (ブラックボード・ノードごとの状態)。復元は World を差し替えた後
     // (BehaviorTreeComponent が残っているエンティティだけ表へ戻す)。ハッシュと対で撮る (3 点セット契約)
     BehaviorTreeSystem* behaviorTree = nullptr;
+    // M91d: Compute.ForEach の State バッファ (C++ 用ストアのスロット表と中身)。復元は World を差し替えた後。
+    // ハッシュと対で撮る (3 点セット契約)。Fx と C# 用ストアは入れない
+    compute::ComputeService* compute = nullptr;
 
     // この束で撮るワールドハッシュの源 (SimSourcesOf)。scene は非 null が前提
-    SimSources HashSources() const { return SimSourcesOf(*scene, particles, xpbd, acoustic, nav, behaviorTree); }
+    SimSources HashSources() const
+    {
+        return SimSourcesOf(*scene, particles, xpbd, acoustic, nav, behaviorTree, ComputeGameStoreOf(compute));
+    }
 };
 
 // blob の形式版。**.rep の版とは独立** (M52a 申し送り 7 と同じ規約) —
@@ -137,7 +151,8 @@ struct SimRefs {
 // v47 (M89l): TwoBoneIKComponent (TypeId 80) と、SkinnedMesh の末尾に IK の鎖 (poseIkCount / poseIk[4])。World 節のカラム生バイト
 // v48 (M89m): TwoBoneIKComponent の末尾に足の接地の設定 (pelvisJoint / pelvisMaxDrop / groundProbe / groundLayerMask)、
 //            SkinnedMesh の末尾に骨盤のずらし (poseIkPelvisJoint / poseIkPelvisOffset)。どちらも World 節のカラム生バイト
-inline constexpr uint32_t kSimSnapshotVersion = 48;
+// v49 (M91d): CMP 節 (Compute.ForEach の State バッファ。スロット表・世代・持ち主・中身) を BT 節の後・World 節の前に追加
+inline constexpr uint32_t kSimSnapshotVersion = 49;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

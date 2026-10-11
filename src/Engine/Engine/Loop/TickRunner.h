@@ -78,7 +78,8 @@ struct TickServices {
     ManagedHost* managedHost = nullptr;
     // v21: シーン遷移でスクリプトが握った GPU バッファを回収する。null なら何もしない
     ComputeAbiRunner* computeAbi = nullptr;
-    // M91c: Compute.ForEach の負荷枠を tick の頭で戻す。null なら何もしない
+    // M91c: Compute.ForEach の負荷枠を tick の頭で戻す。M91d: tick 末に持ち主の居ないバッファを解放し、ハッシュの源にもなる。
+    // SimRefs.compute と同じ実体を渡すこと。null なら何もしない
     compute::ComputeService* computeService = nullptr;
 
     // システム層

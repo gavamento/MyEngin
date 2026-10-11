@@ -7,7 +7,13 @@
 #include <cstdint>
 #include <vector>
 
+#include "Engine/Core/Ecs/EntityID.h"
 #include "Engine/Engine/Compute/ComputeTypes.h"
+
+namespace mye {
+class ByteWriter;
+class ByteReader;
+} // namespace mye
 
 namespace mye::compute {
 
@@ -33,6 +39,7 @@ public:
         BufferKind kind = BufferKind::State;
         uint32_t count = 0;
         uint32_t stride = 0;
+        EntityID owner;            // 作成したスクリプトのエンティティ。null なら自動解放しない
         std::vector<uint8_t> data; // CPU 側の中身 (Fx では GPU の CPU ミラー)
         bool fxCpuDirty = false;   // Fx: ミラーが GPU より新しい (次の GPU 実行の前に upload する)
     };
@@ -40,9 +47,10 @@ public:
     explicit ComputeBufferStore(StoreLane lane, ComputeStoreLimits limits = {});
 
     // 0 = 失敗。count / stride が 0、上限超過、スロット満杯、State の総バイト枠超過
-    uint64_t Create(uint32_t count, uint32_t stride, BufferKind kind);
+    uint64_t Create(uint32_t count, uint32_t stride, BufferKind kind, EntityID owner = EntityID{});
     // 無効ハンドル・二重解放は false で何もしない
     bool Release(uint64_t handle);
+    // 全部解放し、スロット表と世代も初期状態へ戻す (次のセッションの採番を、新規起動と同じにするため)
     void ReleaseAll();
 
     bool IsValid(uint64_t handle) const { return Find(handle) != nullptr; }
@@ -65,6 +73,17 @@ public:
     // スロット番号 index が今の世代で持つハンドル (生きていなければ 0)
     uint64_t HandleOf(uint32_t index) const;
     StoreLane Lane() const { return lane_; }
+
+    // ---- スナップショット (State だけが中身つき。Fx は「居た」という印と世代だけ) ----
+    // 表 = [スロット数] x [世代, 種別の印 (0 空き / 1 State / 2 Fx), State のときは count / stride / owner / 中身]
+    void WriteSnapshot(ByteWriter& w) const;
+    // 読んで検証するだけ (ストアには触らない)。壊れていれば false
+    bool ReadSnapshot(ByteReader& r, std::vector<Slot>& out) const;
+    // ReadSnapshot の結果で State を丸ごと差し替える。Fx は撮影時と同じ世代のものだけ残し、
+    // 外れたものは handle を droppedFx に積む (呼び出し側が GPU 側の対応物を捨てる)
+    void ApplySnapshot(std::vector<Slot>&& snapshot, std::vector<uint64_t>& droppedFx);
+    // 生きている State が 1 本でもあるか (ハッシュの内容ゲート)
+    bool HasLiveState() const;
 
 private:
     uint32_t LaneMark() const;

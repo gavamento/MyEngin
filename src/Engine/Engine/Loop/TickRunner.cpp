@@ -622,6 +622,10 @@ void RunOneTick(TickServices& ts)
         effectQueue.clear();
     }
     scene.GetWorld().ApplyStructuralChanges(); // フェーズ 7 (tick 末適用 = ADR-005)
+    // M91d: 破棄されたエンティティが作った Compute バッファを解放する (D8)。ハッシュを撮る前に済ませる
+    if (ts.computeService != nullptr) {
+        ts.computeService->ReleaseDeadOwners(scene.GetWorld());
+    }
     // M80g/spec §4.1 破断4: 分離で付け替えた破片の新しい LocalTransform を、SetParent の反映
     // (直上の ApplyStructuralChanges) の直後・ハッシュを取る前に書く。書き込みの時期を
     // そろえることで、tick の途中は「古い親 + 古い LocalTransform」のまま一貫する。
@@ -630,7 +634,8 @@ void RunOneTick(TickServices& ts)
 
     // ここから先の変異・ダンプ・記録・照合が撮るハッシュの源 (全部同じ束で撮る)
     const SimSources hashSources =
-        SimSourcesOf(scene, &particleSystem.Cpu(), ts.xpbd, ts.acoustic, ts.navSystem, ts.behaviorTree);
+        SimSourcesOf(scene, &particleSystem.Cpu(), ts.xpbd, ts.acoustic, ts.navSystem, ts.behaviorTree,
+                     ComputeGameStoreOf(ts.computeService));
 
     // ---- 意図的な状態の変異 (M52i、--net-poke-tick N) ----
     // desync 検出と診断チェーン (--rep-diff → --hash-diff) が本当に働くかは、
@@ -924,6 +929,9 @@ void RunOneTick(TickServices& ts)
             scriptHost.ClearStarted();
             if (ts.computeAbi) {
                 ts.computeAbi->Shutdown(); // 旧シーンのスクリプトが握った GPU バッファを回収
+            }
+            if (ts.computeService) {
+                ts.computeService->ReleaseAllBuffers(); // M91d: 旧シーンのスクリプトが作った ForEach 用バッファ
             }
             // M45: 旧シーンの SE を断ち、ハンドル採番も 0 から振り直す。
             // 採番列は「スクリプトの呼出順」だけで決まる必要があるので、

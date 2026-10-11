@@ -29,6 +29,7 @@
 #include "Engine/Engine/Animation/TwoBoneIkSystem.h"
 #include "Engine/Engine/Animation/SkinningSystem.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
+#include "Engine/Engine/Compute/ComputeService.h"
 #include "Engine/Engine/Audio/Playback/AudioMixer.h"
 #include "Engine/Engine/Audio/Playback/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/Playback/AudioSystem.h"
@@ -102,6 +103,7 @@ struct HeadlessSim::Impl : IEngineApp {
     DllReloader dllReloader;
     ManagedHost managedHost; // Init しない = C# レーンは走らない
     ComputeAbiRunner computeAbi;
+    compute::ComputeService computeService; // M91d: device 無しなので Fx は CPU 版で代替する
     ParticleSystem particleSystem;
     CollisionSystem collisionSystem;
     PhysicsSystem physicsSystem;
@@ -187,6 +189,7 @@ void HeadlessSim::Impl::BuildTickServices(int netRole)
     ts.scriptHost = &scriptHost;
     ts.managedHost = &managedHost;
     ts.computeAbi = &computeAbi;
+    ts.computeService = &computeService;
     ts.animationSystem = &animationSystem;
     ts.animLibrary = &animLibrary;
     ts.controllerSystem = &controllerSystem;
@@ -327,7 +330,8 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
         shared.controllers = &m.controllerLibrary;
         WireScriptServices(m.scriptHost, m.managedHost, shared, m.config.developmentRun);
     }
-    // GPU デバイスは無い: コンピュート ABI のスロットは 0 / no-op を返す
+    // GPU デバイスは無い: コンピュート ABI のスロットは 0 / no-op を返す。ForEach の Fx は CPU 版で代わりに走る (D6)
+    m.computeService.Bind(nullptr, nullptr);
     m.scriptHost.SetComputeAbi(&m.computeAbi, nullptr, &m.shaderManager, &m.resources.textures);
     m.managedHost.SetComputeAbi(&m.computeAbi, nullptr, &m.shaderManager, &m.resources.textures);
 
@@ -341,6 +345,7 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     ctx.managedHost = &m.managedHost;
     ctx.particles = &m.particleSystem;
     ctx.computeAbi = &m.computeAbi;
+    ctx.computeService = &m.computeService;
     ctx.prefabs = &m.prefabLibrary;
     ctx.anims = &m.animLibrary;
     ctx.controllers = &m.controllerLibrary;
@@ -373,6 +378,7 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     m.simRefs.acoustic = &m.acoustic;
     m.simRefs.nav = &m.navSystem; // M82c
     m.simRefs.behaviorTree = &m.behaviorTreeSystem; // M85
+    m.simRefs.compute = &m.computeService; // M91d
     m.simRefs.collision = &m.collisionSystem;
     m.simRefs.scripts = &m.scriptHost;
     m.simRefs.prevTickInput = m.prevTickInput;
@@ -507,5 +513,6 @@ const SimProvenance& HeadlessSim::Provenance() const { return impl_->provenance;
 TickGates HeadlessSim::Gates() const { return GatesOf(impl_->tickServices); }
 const std::wstring& HeadlessSim::SaveDir() const { return impl_->saveDir; }
 const NetRuntimeInfo& HeadlessSim::NetInfo() const { return impl_->netInfo; }
+compute::ComputeService& HeadlessSim::Compute() { return impl_->computeService; }
 
 } // namespace mye

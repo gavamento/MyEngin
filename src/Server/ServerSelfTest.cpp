@@ -21,6 +21,7 @@
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
+#include "Engine/Engine/Compute/ComputeStateSelfTest.h"
 #include "Engine/Engine/Loop/HeadlessSim.h"
 #include "Engine/Engine/Loop/SimInit.h"
 #include "Engine/Engine/Navigation/NavDeterminismSelfTest.h"
@@ -497,6 +498,9 @@ void TestLoopTerminate(const CheckFn& check, const std::filesystem::path& tempDi
     if (!check(sim.Init(setup), "G3: the headless sim starts for the loop test (run from the repository root)")) {
         return;
     }
+    // M91d: device 無しの sim でも Compute.ForEach の State が CPU で EngineLoop と同じ結果になる
+    check(sim.Refs().compute == &sim.Compute() && CheckComputeStateRunsWithoutDevice(sim.Compute()),
+          "M91d: the headless sim wires ComputeService, and a State ForEach runs on the CPU without a device");
 
     auto fx = MakeFixture(2);
     FakeGameLiftSdk& sdk = *fx->sdk;

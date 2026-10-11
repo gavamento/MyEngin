@@ -18,6 +18,9 @@ spec 4.3 (デモ)、D11 / D15、受け入れ 10 / 12。
 3. `tools\replay_verify.bat` に、compute シーンの Debug / Release 照合と `computeab` を足す (Auto で録り、`--compute-force-cpu` で検証する。`jobsab` と同じ形)。ジョブの一覧、PASS の文言、`:diagnose` も更新する。
 4. 漏れの検出が働くことを 1 回だけ確かめる (Fx の Read 結果を LocalTransform に書く一時的な改変で computeab が FAIL すること。確かめたら元に戻す)。
 
+5. (sub-04 から移管) State のハッシュのコストを計測する。State の総量を 1MiB / 16MiB (既定の上限) にしたときの tick あたりのハッシュの ms を記録する。16MiB で 1 tick (16.6ms) の 10% を超えたら、SELF_EVAL の「不安・質問」に出す。結果は ADR-030 に載せる (sub-09)。
+6. State 入りの .rep が、Debug / Release と computeab の両方で一致すること (sub-04 では State を作れるスクリプトが無く、検証できなかった分)。
+
 ## 触る場所 (planner の見立て)
 - `src/Engine/Engine/Session/SessionTypes.h:34-43`、`src/Engine/Engine/App/EngineCli.cpp`、`src/GameLogic/Scripts/`、C# のデモスクリプト、`assets/shaders/kernels/`
 - `tools\replay_verify.bat` (:83 / :148 付近)

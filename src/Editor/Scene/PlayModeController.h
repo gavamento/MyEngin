@@ -7,6 +7,9 @@ namespace mye {
 
 class AudioSystem;
 class ComputeAbiRunner;
+namespace compute {
+class ComputeService;
+}
 class Scene;
 class TimeTravel;
 
@@ -66,7 +69,8 @@ private:
 // Play セッション中にエンジン側 (シーン文書の外) へ積まれた状態を片付ける。
 // PlayModeController::Stop はシーンをスナップショットから戻すだけなので、鳴っている音と
 // スクリプトが作ったコンピュートバッファは残る。Stop と Play 中のシーン切替の両方から呼ぶ
-// (TickRunner のスクリプト LoadScene と同じ後始末)。どちらの引数も null なら何もしない
-void ReleasePlaySessionEngineState(AudioSystem* audio, ComputeAbiRunner* computeAbi);
+// (TickRunner のスクリプト LoadScene と同じ後始末)。引数が null のものは何もしない
+void ReleasePlaySessionEngineState(AudioSystem* audio, ComputeAbiRunner* computeAbi,
+                                   compute::ComputeService* computeService = nullptr);
 
 } // namespace mye

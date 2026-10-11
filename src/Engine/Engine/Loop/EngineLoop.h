@@ -29,6 +29,9 @@ class AssetDatabase;
 class AudioSystem;
 class AudioSourceSystem;
 class ComputeAbiRunner;
+namespace compute {
+class ComputeService;
+}
 class SoundLibrary;
 class MixerLibrary;
 class InputActions;
@@ -455,6 +458,8 @@ struct EngineContext {
     // スクリプト所有のコンピュートバッファ (ABI v21)。EngineLoop が所有する。エディタは Play の終了と
     // Play 中のシーン切替で Shutdown して回収するためだけに使う (スクリプトの LoadScene と同じ後始末)
     ComputeAbiRunner* computeAbi = nullptr;
+    // M91d: Compute.ForEach のバッファ。エディタは Play の終了とシーン切替で ReleaseAllBuffers して回収するためだけに使う
+    compute::ComputeService* computeService = nullptr;
     std::wstring assetsRoot;            // assets\ の絶対パス
     std::wstring projectRoot;           // プロジェクトルート (M26)。レガシー起動時は空
     std::wstring imguiIniPath;          // imgui.ini の解決済みパス (レガシー時は L"imgui.ini")

@@ -120,7 +120,7 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
                 ctx.netLeaveRequested = netLocked; // クライアント接続中の Stop は Bye でセッションを抜ける
                 undo.EndPlaySession(); // Play 中に積まれた Undo エントリを破棄
                 // シーンはスナップショットから戻るが、音とコンピュートバッファはエンジン側に残る
-                ReleasePlaySessionEngineState(ctx.audio, ctx.computeAbi);
+                ReleasePlaySessionEngineState(ctx.audio, ctx.computeAbi, ctx.computeService);
             }
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) {

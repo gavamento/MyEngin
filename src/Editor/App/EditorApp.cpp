@@ -2083,7 +2083,7 @@ bool EditorApp::LoadSceneFromPath(EngineContext& ctx, const std::wstring& path)
     undo_.ClearAll();
     if (playMode_.InPlayMode()) {
         // Play 中の切替: 旧シーンのスクリプトが握っていた音とコンピュートバッファを回収する
-        ReleasePlaySessionEngineState(ctx.audio, ctx.computeAbi);
+        ReleasePlaySessionEngineState(ctx.audio, ctx.computeAbi, ctx.computeService);
     }
     Prefab::RefreshNonOverridden(*ctx.scene, *ctx.prefabs); // ロード直後 1 回 (M48e)
     PreloadFractureAssets(ctx.scene->GetWorld()); // 最初の物理 tick より前に破片資産を先読み
@@ -2119,7 +2119,7 @@ void EditorApp::ExecuteAction(EngineContext& ctx, PendingAction action)
         undo_.ClearAll();
         ctx.scene->Clear();
         if (playMode_.InPlayMode()) {
-            ReleasePlaySessionEngineState(ctx.audio, ctx.computeAbi); // LoadSceneFromPath と同じ
+            ReleasePlaySessionEngineState(ctx.audio, ctx.computeAbi, ctx.computeService); // LoadSceneFromPath と同じ
         }
         savedStateSerial_ = undo_.StateSerial(); // 空シーン = clean
         break;

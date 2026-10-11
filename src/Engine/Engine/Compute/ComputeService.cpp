@@ -8,6 +8,7 @@
 #include <chrono>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/World.h"
 #include "Engine/Core/Jobs/JobSystem.h"
 #include "Engine/Engine/Compute/KernelRunner.h"
 #include "Engine/Renderer/Compute/FxGpuBackend.h"
@@ -131,9 +132,61 @@ void ComputeService::SetKernelOverrideCpu(const std::string& kernel, bool cpuOnl
 // バッファ
 // ---------------------------------------------------------------------------
 
-uint64_t ComputeService::CreateBuffer(CallerKind lane, uint32_t count, uint32_t stride, BufferKind kind)
+uint64_t ComputeService::CreateBuffer(CallerKind lane, uint32_t count, uint32_t stride, BufferKind kind,
+                                      EntityID owner)
 {
-    return Store(lane).Create(count, stride, kind);
+    return Store(lane).Create(count, stride, kind, owner);
+}
+
+uint32_t ComputeService::ReleaseDeadOwners(const World& world)
+{
+    uint32_t released = 0;
+    for (const CallerKind lane : { CallerKind::Cpp, CallerKind::CSharp }) {
+        ComputeBufferStore& store = Store(lane);
+        const uint32_t slotCount = static_cast<uint32_t>(store.Slots().size());
+        for (uint32_t i = 0; i < slotCount; ++i) { // スロット昇順 = 決定的
+            const ComputeBufferStore::Slot& s = store.Slots()[i];
+            if (s.live && !s.owner.IsNull() && !world.IsAlive(s.owner)) {
+                const uint64_t handle = store.HandleOf(i);
+                ReleaseBuffer(lane, handle);
+                ++released;
+            }
+        }
+    }
+    return released;
+}
+
+void ComputeService::ReleaseAllBuffers()
+{
+    for (const CallerKind lane : { CallerKind::Cpp, CallerKind::CSharp }) {
+        ComputeBufferStore& store = Store(lane);
+        const uint32_t slotCount = static_cast<uint32_t>(store.Slots().size());
+        for (uint32_t i = 0; i < slotCount; ++i) {
+            if (store.Slots()[i].live && store.Slots()[i].kind == BufferKind::Fx) {
+                gpu_->Forget(store.HandleOf(i));
+            }
+        }
+        store.ReleaseAll();
+    }
+}
+
+void ComputeService::WriteGameSnapshot(ByteWriter& w) const
+{
+    gameStore_.WriteSnapshot(w);
+}
+
+bool ComputeService::ReadGameSnapshot(ByteReader& r, std::vector<ComputeBufferStore::Slot>& out) const
+{
+    return gameStore_.ReadSnapshot(r, out);
+}
+
+void ComputeService::ApplyGameSnapshot(std::vector<ComputeBufferStore::Slot>&& slots)
+{
+    std::vector<uint64_t> droppedFx;
+    gameStore_.ApplySnapshot(std::move(slots), droppedFx);
+    for (const uint64_t handle : droppedFx) {
+        gpu_->Forget(handle);
+    }
 }
 
 bool ComputeService::ReleaseBuffer(CallerKind lane, uint64_t handle)
