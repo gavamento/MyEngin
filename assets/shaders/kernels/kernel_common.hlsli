@@ -6,6 +6,7 @@
 //
 // ★RW / RO の間にコンマを書かない (FXC のマクロは可変長引数を持てないので、宣言を並べて 1 引数に束ねる)。
 // ★第 1 引数の RW の要素数が id の範囲になる。
+// ★オーバーフローしうる整数の計算は uint で書く (符号付きオーバーフローは C++ で未定義)。float -> int は FloatToInt / FloatToUint。
 #ifndef MYE_KERNEL_COMMON_HLSLI
 #define MYE_KERNEL_COMMON_HLSLI
 
@@ -40,6 +41,36 @@ uint HashU32(uint v)
 float HashToUnitFloat(uint h)
 {
     return (float)(h >> 8u) * (1.0f / 16777216.0f);
+}
+
+// float -> int / uint。KernelCompat.h の FloatToInt / FloatToUint と同じ式 (NaN は 0、範囲外は飽和)
+int FloatToInt(float x)
+{
+    if (x != x)
+    {
+        return 0;
+    }
+    if (x < -2147483648.0f)
+    {
+        x = -2147483648.0f;
+    }
+    if (x > 2147483520.0f)
+    {
+        x = 2147483520.0f;
+    }
+    return (int)x;
+}
+uint FloatToUint(float x)
+{
+    if (!(x > 0.0f))
+    {
+        return 0u;
+    }
+    if (x > 4294967040.0f)
+    {
+        x = 4294967040.0f;
+    }
+    return (uint)x;
 }
 
 #define params (__kernel_params[0])

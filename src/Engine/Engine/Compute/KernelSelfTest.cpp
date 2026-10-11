@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -305,6 +306,42 @@ int64_t UlpDistance(float a, float b)
 
 // テンプレート引数を介さないと requires が硬いエラーになる (テンプレート外の式は SFINAE されない)
 template <class V, class I> concept CanIndex = requires(V v, I i) { v[i]; };
+
+// float -> int / uint の変換関数 (NaN は 0、範囲外は飽和、0 方向へ切り捨て)
+void TestFloatConversions()
+{
+    MYE_LOG_INFO("-- FloatToInt / FloatToUint --");
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    struct IntCase {
+        float in;
+        int out;
+    };
+    const IntCase intCases[] = {
+        { nan, 0 }, { inf, 2147483520 }, { -inf, INT32_MIN }, { 1e10f, 2147483520 }, { -1e10f, INT32_MIN },
+        { -0.5f, 0 }, { 0.5f, 0 }, { 1.9f, 1 }, { -1.9f, -1 }, { -0.0f, 0 }, { 2147483520.0f, 2147483520 },
+        { 2147483648.0f, 2147483520 }, { -2147483648.0f, INT32_MIN }, { -2147483904.0f, INT32_MIN },
+    };
+    bool intOk = true;
+    for (const IntCase& c : intCases) {
+        intOk = intOk && kernel::FloatToInt(c.in) == c.out;
+    }
+    Check(intOk, "FloatToInt: NaN・±Inf・範囲外・-0.5f・境界値");
+    struct UintCase {
+        float in;
+        uint32_t out;
+    };
+    const UintCase uintCases[] = {
+        { nan, 0u }, { inf, 4294967040u }, { -inf, 0u }, { -1.0f, 0u }, { -0.5f, 0u }, { 0.5f, 0u }, { 1.9f, 1u },
+        { -0.0f, 0u }, { 3e9f, 3000000000u }, { 4294967040.0f, 4294967040u }, { 4294967296.0f, 4294967040u },
+        { 1e20f, 4294967040u },
+    };
+    bool uintOk = true;
+    for (const UintCase& c : uintCases) {
+        uintOk = uintOk && kernel::FloatToUint(c.in) == c.out;
+    }
+    Check(uintOk, "FloatToUint: NaN・±Inf・負数・範囲外・境界値");
+}
 
 void TestCompatTypes()
 {
@@ -638,6 +675,7 @@ bool RunKernelSelfTest()
     js.Init();
 
     TestCompatTypes();
+    TestFloatConversions();
     TestHashVectors();
     TestCpuDeterminism(js);
     TestRunnerGuards(js);

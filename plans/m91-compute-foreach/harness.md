@@ -12,9 +12,9 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 | OK | 1 | (M91a) | 単一ソースのカーネル (互換ヘッダ・KERNEL 展開・C++ CPU 実行器・ハッシュ) |
-| sub-02 | 実装中 | 0 | | 検査器と C# への変換器 (依存 01) |
-| sub-03 | 実装中 | 0 | | ForEach のエンジン核 (依存 01) |
+| sub-01 | OK | 1 | 5e0b501 | 単一ソースのカーネル (互換ヘッダ・KERNEL 展開・C++ CPU 実行器・ハッシュ) |
+| sub-02 | OK | 2 | (M91b) | 検査器と C# への変換器 (依存 01) |
+| sub-03 | 未着手 | 0 | | ForEach のエンジン核 (依存 01) |
 | sub-04 | 未着手 | 0 | | State のスナップショット・ハッシュ (依存 03、snapshot v49 目安) |
 | sub-05 | 未着手 | 0 | | カーネル表・COMPUTE_KERNELS・ABI (依存 02,04、ABI v29 目安) |
 | sub-06 | 未着手 | 0 | | C# 同形 API・C# CPU 版 (依存 05) |
@@ -41,3 +41,4 @@
 - ★(ユーザー指示 2026-10-12) 全サブ完了 (レビュー PASS まで) → Notion 活動記録へ記録 → PC をシャットダウン (`shutdown /s /t 60`)。上限超過などでユーザー判断が要る状態ではシャットダウンしない。
 - (planner VERDICT sub-01) 申し送り: (1) kernels の新規 .meta 3 件が LF (既存は CRLF) → sub-07 の .meta 整備で揃える。(2) Kernel の selftest は自前の JobSystem で jobs 構成を回す (`--no-jobs` は効かない) → ADR-030 (sub-09) に 1 行。(3) GPU/CPU 差の実測は WARP のみ → sub-08 のデモ撮影時に実機 GPU で 1 度測り ADR-030 に追記。
 - (sub-01 coder) 4 バイト params を SRV+UAV で作ると WARP debug layer がアクセス違反 (原因未特定)。読み取り専用バッファは SRV のみ (sub-03 必須事項)。
+- (planner VERDICT sub-02) 申し送り: (1) GPU 側の FloatToInt/FloatToUint は FXC コンパイルのみ確認 → sub-08 の実機 GPU 計測時に 1 回確かめる。(2) ADR-030 (sub-09) の規則一覧は KernelLint.h (KL001〜KL028) から写す。環境変数 MYE_KERNEL_GOLDEN_DUMP / MYE_KERNEL_LINT_FILES、FloatToInt の仕様、互換層 3 か所 (kernel_common.hlsli / KernelCompat.h / KernelCompat.cs) を同式に保つことも ADR-030 へ。

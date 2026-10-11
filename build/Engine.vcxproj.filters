@@ -483,7 +483,19 @@
     <ClCompile Include="..\src\Engine\Engine\Audio\Synth\SynthCore.cpp">
       <Filter>Engine\Audio\Synth</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Compute\KernelCSharp.cpp">
+      <Filter>Engine\Compute</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Compute\KernelHash.cpp">
+      <Filter>Engine\Compute</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Compute\KernelLint.cpp">
+      <Filter>Engine\Compute</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Compute\KernelLintSelfTest.cpp">
+      <Filter>Engine\Compute</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Compute\KernelParser.cpp">
       <Filter>Engine\Compute</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Compute\KernelSelfTest.cpp">
@@ -1392,7 +1404,22 @@
     <ClInclude Include="..\src\Engine\Engine\Audio\Synth\SynthCore.h">
       <Filter>Engine\Audio\Synth</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelAst.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelCSharp.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelHash.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelLint.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelLintInternal.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelLintSelfTest.h">
       <Filter>Engine\Compute</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelRunner.h">

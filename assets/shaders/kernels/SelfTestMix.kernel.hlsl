@@ -60,9 +60,8 @@ KERNEL(SelfTestMix, SelfTestMixParams, RW(SelfTestMixElem, outv) RO(SelfTestMixP
 
     const float3 n = normalize(d);
     const float3 c = cross(n, params.axis);
-    SelfTestMixElem e;
-    e.pos = lerp(n, c, smoothstep(0.0f, 1.0f, saturate(jitter))) * clamp(length(d), 1.0f, 4.0f);
-    e.val = (acc > 1.0f ? acc : -acc) + abs(walk) + (float)sign(c.x) + min(distance(n, c), 2.0f);
-    e.tag = HashU32(id) >> 8u;
-    outv[id] = e;
+    // 出力は初期化子の無い局所 struct を経由せず、要素へ直接書く
+    outv[id].pos = lerp(n, c, smoothstep(0.0f, 1.0f, saturate(jitter))) * clamp(length(d), 1.0f, 4.0f);
+    outv[id].val = (acc > 1.0f ? acc : -acc) + abs(walk) + (float)sign(c.x) + min(distance(n, c), 2.0f);
+    outv[id].tag = HashU32(id) >> 8u;
 }

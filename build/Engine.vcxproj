@@ -107,7 +107,11 @@
     <ClCompile Include="..\src\Engine\Engine\Audio\Synth\ModalSynth.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\Synth\ModalSynthSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Audio\Synth\SynthCore.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Compute\KernelCSharp.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Compute\KernelHash.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Compute\KernelLint.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Compute\KernelLintSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Compute\KernelParser.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Compute\KernelSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\DemoContent.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\ShowcaseScenes.cpp" />
@@ -410,7 +414,12 @@
     <ClInclude Include="..\src\Engine\Engine\Audio\Synth\ModalSynth.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\Synth\ModalSynthSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Audio\Synth\SynthCore.h" />
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelAst.h" />
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelCSharp.h" />
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelHash.h" />
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelLint.h" />
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelLintInternal.h" />
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelLintSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelRunner.h" />
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Demo\DemoContent.h" />

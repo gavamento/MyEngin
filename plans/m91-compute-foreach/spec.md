@@ -126,7 +126,9 @@ KERNEL(ParticleUpdate, ParticleUpdateParams, RW(Particle, particles) RO(Obstacle
 - ファイル名 = カーネル名 = `KERNEL` の第 1 引数。1 ファイルに 1 カーネル。
 - バッファ引数は位置の順に並べる。**`RW(...)` / `RO(...)` の間にはコンマを書かず、空白で並べる** (FXC のマクロは可変長引数を持てないため。sub-01 で `error X1500` を実測した)。第 1 引数は RW 必須で、その要素数が `id` の範囲になる。2 本目以降の RW は、第 1 引数以上の要素数が必要 (足りなければ失敗)。
 - C++ の取り込み方: `#include "Shared/KernelCompat.h"` を先に置き、カーネルのファイルを `namespace mye::kernel::cpu::<Name> { #include "<Name>.kernel.hlsl" }` で包む (CRT の `::sin` などとの曖昧さを避けるため)。
-- 予約語: `params` `id` `KernelId` `HashU32` `HashToUnitFloat` (カーネルの中で識別子に使えない)。
+- 予約語: `params` `id` `KernelId` `HashU32` `HashToUnitFloat` `FloatToInt` `FloatToUint` (カーネルの中で識別子に使えない)。
+- 検査規則の一覧の正本は `src/Engine/Engine/Compute/KernelLint.h` の KL001〜 (4.1.2 の表は要約)。sub-02 で表より厳しくした規則 (1 引数のコンストラクタの禁止、整数リテラルの範囲、条件式は bool のみ、uint の単項マイナスの禁止、シフト量は 0..31 のリテラル、遮蔽の禁止、void の自由関数の禁止、min/max の混在は (ベクトル, スカラー) の順だけ、など) も正本に含む。
+- 生成する C# は `namespace MyeKernels.<Name>` に入る (別のカーネルの同名 struct と衝突させないため)。
 - GPU に展開すると `[numthreads(64,1,1)] CSMain` になり、範囲外の `id` は早期 return する。params は要素数 1 の StructuredBuffer で渡す。
 - C++ の CPU 版は互換ヘッダを前に置いて C++ としてコンパイルする。C# の CPU 版は変換器が生成する。どちらも `id` は `KernelId` 型 (D4)。
 - カーネルが守る約束 (ADR-028 と同じ): 自分の要素だけを書く、他の要素の今回の書き込みを読まない、実行順に依存しない、エンジンの API・RNG・ログを触らない。乱数が要るときは、互換層にある `uint` ハッシュに params の seed と `id` を渡して作る。
@@ -138,9 +140,10 @@ KERNEL(ParticleUpdate, ParticleUpdateParams, RW(Particle, particles) RO(Obstacle
 | 型 | `float` `float2/3/4` `int` `int2/3/4` `uint` `uint2/3/4`、およびこれらだけを持つ struct | `bool` 型の変数・メンバ、`double` `half` `min16*`、行列、配列 (ローカルもメンバも)、入れ子の struct、テクスチャ |
 | 成分 | `.x` `.y` `.z` `.w` | スウィズル全般 |
 | リテラル | float は `f` 付き (`1.0f`、`0.5f`)。整数の後ろに `u` を付けてよい | `f` の無い小数 (`1.0`)、指数表記を省いた曖昧な書き方は検査器が弾く |
-| 変換 | 明示的なキャスト (`(float)i`、`(int)x`、`(uint)i`)、int→float の暗黙変換 | 暗黙の縮小変換 (float→int、int↔uint) |
+| 変換 | int / uint → float の明示キャストと暗黙変換、int ↔ uint の明示キャスト (2 の補数のビットをそのまま)、**float → int / uint は `FloatToInt(x)` / `FloatToUint(x)` だけ** (NaN → 0、範囲外は飽和、0 方向への切り捨て。3 つのバックエンドで同じ式を互換層に持つ) | 暗黙の縮小変換 (float→int、int↔uint)、float → int / uint の C 形式のキャスト (`(int)x`。C++ では範囲外と NaN が UB で、C# / HLSL と結果が割れる) |
 | 演算 | 四則、比較 (スカラー同士だけ)、論理 (`&&` `||` `!`)、三項演算子 (条件と結果がスカラー)、成分ごとの演算、スカラーとの混合、コンストラクタ `float3(a,b,c)`。ビット演算は整数だけ | ベクトル同士の比較、ベクトルの三項演算子、整数の `/` `%` (右辺が 0 でない整数リテラルの場合だけ可) |
 | 関数 | `min max clamp abs saturate lerp step smoothstep floor ceil frac sqrt rsqrt rcp dot cross length normalize distance sign sin cos`。スカラーとベクトルを混ぜてよいのは `min max clamp lerp step smoothstep` だけ。`sin`/`cos` は、範囲外のときだけ `x - 2pi*floor(x/2pi + 0.5f)` で折り返してから `MyeSinRad`/`MyeCosRad` を呼ぶ (式の正本は sub-01 の実装メモ。C# も同じ式) | 上記以外。D24 でバイト一致が取れなかった関数は外す |
+| 宣言 | 初期化子つきのローカル変数 (`float3 v = ...;`) | 初期化子のない宣言 (`T e;`。C++ / GPU では未定義の値。AGENTS.md §4.3「変数は宣言時に初期化」) |
 | 制御 | `if` `for` `while` `break` `continue` `return`、自由関数 (引数は値渡しだけで、結果は戻り値で返す) | `out`/`inout` 引数、`groupshared`、barrier、`Interlocked*`、再帰、属性すべて (`[unroll]` を含む。C++ では通らない)。式の中での代入と `++` `--` (= `&&` `||` `?:` の項に副作用を置けない。GPU では両辺を評価しうるため) |
 | 前処理 | `#include "kernel_common.hlsli"` だけ | それ以外の include、`#define` |
 
@@ -280,6 +283,7 @@ sub-02 と sub-03 は互いに依存しない (並列にできる)。sub-07 と 
 - R6 (sub-06、新規): RyuJIT でバイト一致が取れない関数がある可能性。その関数はホワイトリストから外し、検査器と spec 4.1.2 を直す (変更履歴に残す)。
 - R7 (sub-06、新規): JobSystem のワーカーから managed のレンジ関数を呼ぶとき、スレッドのアタッチと GC の停止待ちに時間がかかる。速度を計測して記録する。正しさが崩れる場合 (例外・デッドロック) は C# の CPU 版を呼び出しスレッドだけで直列に走らせる案へ退避する (結果は同じビット)。
 - R8 (sub-02): 変換器の構文解析の範囲がサブセットより広がると肥大化する。サブセットの外は解析せずに検査器でエラーにする。
+- R9 (sub-02 で判明): 符号付き整数の + - * のオーバーフローは、C++ では UB、C# では巻き戻り。検査器では静的に弾けないので書き手の責任とし、オーバーフローしうる計算 (ハッシュなど) は `uint` で書く規約を ADR-030 と kernel_common.hlsli の冒頭に書く。MSVC は実際には巻き戻るので、C++ と C# のバイト一致の selftest (sub-06) で見張る。
 - R5: 解消 (DeepModal の未コミット変更は、司会が M91 の前に別コミットにする — 2026-10-12)。
 
 ## 8. 変更履歴
@@ -290,3 +294,4 @@ sub-02 と sub-03 は互いに依存しない (並列にできる)。sub-07 と 
   - R5 を解消扱いにした。
 - 2026-10-12 (ユーザー回答 2 回目・司会経由): U8 (カーネル単位) と U9 (常に C# 版) は裁定どおり。U10 は planner 案「実行して WARN」の逆で、「宣言なしは失敗」にした。D18 を書き直し、D28 (宣言の出所と時点、スクリプトではない呼び出し元) を追加。4.1.4 の最後の行を「失敗、他の判定より先」に変更。4.1.7 の状態と受け入れ条件 16 を変更。U11 を新設 (裁定済み・仮置き)。サブ: sub-03 (判断の行と順序)、sub-05 (宣言表の取り込み時点)、sub-06 (C# の属性を登録する時点)、sub-07 (表示)、sub-08 (デモのスクリプトに宣言を書くこと) を更新。
 - 2026-10-12 (sub-01 round 1 の SELF_EVAL、coder の指摘を planner が採用): 4.1.1 の KERNEL の書式を「RW/RO をコンマなしで並べる」に変更した (FXC に可変長マクロが無いことを実測)。C++ の取り込み方 (名前空間で包む) を明記し、予約語と、2 本目以降の RW の要素数の条件を追加した。4.1.2 を変更: `[unroll]` と `out`/`inout` を禁止 (C++ で同じ綴りにできない)、式の中の代入と増減を禁止、スカラー混在を 6 関数に限定、sin/cos の範囲外の折り返しを明記。判定: 仕様の側の誤り (spec の例が FXC で成立しなかった)。
+- 2026-10-12 (sub-02 round 1 の SELF_EVAL、coder の質問を planner が裁定): 4.1.2 を変更。float → int / uint は `FloatToInt` / `FloatToUint` の互換関数だけ (C 形式のキャストは禁止。C++ の UB と C# の 0x80000000 で結果が割れるため)。初期化子のない宣言を禁止 (AGENTS §4.3)。検査規則の正本を KernelLint.h に置き、表より厳しい規則も採用。生成 C# の名前空間を明記。符号付き整数のオーバーフローは書き手の責任のまま (7.2 R9)。

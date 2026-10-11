@@ -322,6 +322,33 @@ constexpr uint HashU32(uint v)
 // 上位 24 bit を [0, 1) へ。float で厳密に表せるので CPU/GPU でビット一致する
 constexpr float HashToUnitFloat(uint h) { return static_cast<float>(h >> 8u) * (1.0f / 16777216.0f); }
 
+// float -> int / uint の変換 (C 形式のキャストは検査器が禁止する。C++ では範囲外と NaN が未定義のため)。
+// NaN は 0、範囲外は飽和、0 方向へ切り捨て。上限は float で表せる最大値へ丸めてからキャストする。
+// ★kernel_common.hlsli (HLSL) と Scripting/KernelCompat.cs (C#) に同じ式がある
+inline int FloatToInt(float x)
+{
+    if (x != x) {
+        return 0;
+    }
+    if (x < -2147483648.0f) {
+        x = -2147483648.0f;
+    }
+    if (x > 2147483520.0f) {
+        x = 2147483520.0f;
+    }
+    return static_cast<int>(x);
+}
+inline uint FloatToUint(float x)
+{
+    if (!(x > 0.0f)) {
+        return 0u; // NaN・負数・-0.5f も 0
+    }
+    if (x > 4294967040.0f) {
+        x = 4294967040.0f;
+    }
+    return static_cast<uint>(x);
+}
+
 // ---- バッファのビュー ----------------------------------------------------------------
 
 struct KernelLauncher; // 実行器 (Engine/Compute/KernelRunner.h) だけが KernelId を作れる
