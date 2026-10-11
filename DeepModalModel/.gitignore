@@ -1,0 +1,4 @@
+# 生成結果 (数 GB 級)。再現は run_config.json の seed と FAMILY_SET_VERSION から
+data/
+__pycache__/
+.pytest_cache/

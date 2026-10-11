@@ -1,0 +1,6 @@
+# DeepModalModel (形状生成器) の依存。tools/deepmodal/requirements.txt と同じ 3 つだけ
+# (trimesh 等のメッシュライブラリは使わない — ピースは閉じた殻を自前で組み、
+# ボクセル化は Editor.exe --modal-voxelize に任せる)。
+numpy
+scipy
+pytest

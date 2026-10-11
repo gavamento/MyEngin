@@ -648,3 +648,14 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 
 - [ ] `--no-jobs` と通常で、`render_bench` のスクショが WARP で画素一致する
 - [ ] `tools\shot_verify.bat` で golden 30 枚が PASS する (M90d で更新した 3 枚を含む)
+
+## DeepModalModel: DeepModal 用のプロシージャル形状生成器 (2026-10-11)
+
+対象: `DeepModalModel\` (形状生成 → `Editor.exe --modal-voxelize` → 受理検査 → `dataset.py` 用 list)。手順は `DeepModalModel\README.md`。
+
+- [ ] `cd DeepModalModel && python -m pytest` が全件 PASS する (Editor.exe があれば `test_editor_smoke.py` も走り、受理率 ≥ 85%・非連結 ≤ 2%・同じ OBJ の 2 回ボクセル化がバイト一致する)
+- [ ] `run_pilot.bat` (1,000 件) の `stats.json` で、受理率 ≥ 80%、`disconnected` が 1% 未満、占有の中央値が 1,000〜1,800、`unique_coarse_keys / accepted` ≥ 0.9
+- [ ] `data\pilot\qa\sheet_random.png` と `sheet_<family>.png` を目視し、カップ・トレイ・管に開口がある (interior が占有の半分未満)、歯車に穴と歯がある、人型・四足に手足がある
+- [ ] `run_full.bat` を途中で Ctrl+C して同じコマンドで再開しても、`manifest.jsonl` の同じ index の `occ_hash` が一致する (決定性)
+- [ ] `generate.py stats --out data\v1` の `fem_hours_est_jobs11` を確認してから `run_dataset.bat` を回す (50,000 件で 35〜40 時間の見込み)
+- [ ] FEM 完了後、`tools\deepmodal\data\synth_v1\stats.json` の `count_error` が 0、`mode_count` の中央値と `coverage.mean_ratio` が ModelNet40 (67 / 0.63) と同程度で、ファミリ接頭辞別に「無音 (mode_count==0)」が偏っていない

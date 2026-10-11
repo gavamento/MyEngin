@@ -79,7 +79,10 @@ class ModalNpzDataset(Dataset):
 
         target = torch.zeros((layout.CHANNELS, layout.MAP_N, layout.MAP_N, layout.MAP_N), dtype=torch.float32)
         valid_t = torch.zeros((1, layout.MAP_N, layout.MAP_N, layout.MAP_N), dtype=torch.float32)
-        vox_t = torch.from_numpy(vox.astype(np.float32)).unsqueeze(0)
+        # ★npz の vox は occ[x,y,z]。モデル入力は (D=z,H=y,W=x) なので必ず
+        # model.voxel_to_tensor で転置する (教師側は下で acz,acy,acx の順に詰めている)。
+        # f17ad63 でこの変換が落ち、入力だけ x↔z が入れ替わった状態で学習していた
+        vox_t = model.voxel_to_tensor(vox)[0]
 
         target[:, acz, acy, acx] = torch.from_numpy(feat.T)
         valid_t[0, acz, acy, acx] = 1.0
@@ -294,7 +297,9 @@ def load_samples(entries: List[dict]) -> tuple:
                 valid_tensor[0, 0, cz, cy, cx] = 1.0
                 idx += 1
 
-        vox_tensor = torch.from_numpy(occ.astype(np.uint8)).unsqueeze(0).unsqueeze(0)
+        # occ[x,y,z] → (1,1,z,y,x)。ModalNpzDataset と同じく voxel_to_tensor を通す
+        # (uint8 のまま保持してメモリを節約するのは従来どおり)
+        vox_tensor = model.voxel_to_tensor(occ).to(torch.uint8)
 
         samples.append(Sample(
             name=e["name"],
