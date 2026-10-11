@@ -52,6 +52,9 @@
     <Filter Include="Engine\Audio\Synth">
       <UniqueIdentifier>{3240EA11-FC6E-D842-470C-E7AF81E3B1D1}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Compute">
+      <UniqueIdentifier>{DFD22B59-6102-250A-0BF1-E55898ED09A1}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Demo">
       <UniqueIdentifier>{7645A0A4-277D-9725-8E8E-E117DE4A378F}</UniqueIdentifier>
     </Filter>
@@ -479,6 +482,12 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Audio\Synth\SynthCore.cpp">
       <Filter>Engine\Audio\Synth</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Compute\KernelHash.cpp">
+      <Filter>Engine\Compute</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Compute\KernelSelfTest.cpp">
+      <Filter>Engine\Compute</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Demo\DemoContent.cpp">
       <Filter>Engine\Demo</Filter>
@@ -1383,6 +1392,15 @@
     <ClInclude Include="..\src\Engine\Engine\Audio\Synth\SynthCore.h">
       <Filter>Engine\Audio\Synth</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelHash.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelRunner.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\KernelSelfTest.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Demo\DemoContent.h">
       <Filter>Engine\Demo</Filter>
     </ClInclude>
@@ -2098,6 +2116,9 @@
       <Filter>Renderer\Texture</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Shared\EngineAPI.h">
+      <Filter>Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Shared\KernelCompat.h">
       <Filter>Shared</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Shared\MathPod.h">

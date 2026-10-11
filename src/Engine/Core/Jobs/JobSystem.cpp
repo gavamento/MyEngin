@@ -4,6 +4,23 @@
 
 namespace mye::jobs {
 
+namespace {
+
+// このスレッドがレンジ関数の実行中なら 1 以上
+thread_local int t_rangeDepth = 0;
+
+struct RangeScope {
+    RangeScope() { ++t_rangeDepth; }
+    ~RangeScope() { --t_rangeDepth; }
+};
+
+} // namespace
+
+bool JobSystem::InJob()
+{
+    return t_rangeDepth > 0;
+}
+
 void JobSystem::Init()
 {
     if (!workers_.empty()) {
@@ -66,7 +83,10 @@ void JobSystem::DrainChunks(const Batch& b, bool onWorker)
         const size_t c = static_cast<size_t>(cur - b.base);
         const size_t begin = c * b.chunkSize;
         const size_t end = std::min(begin + b.chunkSize, b.total);
-        (*b.fn)(begin, end);
+        {
+            RangeScope scope;
+            (*b.fn)(begin, end);
+        }
         if (onWorker) {
             workerChunks_.fetch_add(1, std::memory_order_relaxed);
         }
@@ -109,6 +129,7 @@ void JobSystem::ParallelRanges(size_t total, size_t grain,
     const size_t maxChunks = (total + grain - 1) / grain;
     size_t chunks = std::min<size_t>(workers_.size() + 1, maxChunks);
     if (!enabled_.load(std::memory_order_relaxed) || workers_.empty() || chunks <= 1) {
+        RangeScope scope;
         fn(0, total); // 直列 (挙動は並列と同一)
         return;
     }

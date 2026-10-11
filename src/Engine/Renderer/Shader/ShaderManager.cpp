@@ -262,7 +262,10 @@ bool IsProjectIndexedShaderFile(const std::wstring& filename)
             && filename.compare(filename.size() - 8, 8, L".cs.hlsl") == 0)
         // M79: *.surface.hlsl も assets 全域索引に加える (短名 "Foo.surface")
         || (filename.size() >= 14
-            && filename.compare(filename.size() - 13, 13, L".surface.hlsl") == 0);
+            && filename.compare(filename.size() - 13, 13, L".surface.hlsl") == 0)
+        // M91: *.kernel.hlsl (Compute.ForEach のカーネル。短名 "Foo.kernel")
+        || (filename.size() >= 13
+            && filename.compare(filename.size() - 12, 12, L".kernel.hlsl") == 0);
 }
 
 // MyTint.post.hlsl → "MyTint.post" (Load 名)
@@ -756,6 +759,14 @@ std::wstring ShaderManager::ResolveInclude(const char* name, std::vector<char>* 
     std::vector<char>& data = outData ? *outData : scratch;
     for (const std::wstring& base : dirs_) {
         const std::wstring path = NormalizePathKey(base + L"\\" + Utf8ToWide(name));
+        if (ReadFileBytes(path, data)) {
+            return path;
+        }
+    }
+    // M91: kernels\ 配下のカーネルが同じ階層の kernel_common.hlsli を相対名で include できるようにする
+    // (D3DCompile の include は呼び出し元ファイルの階層を渡さない)。通常の探索で見つからなかったときだけ使う
+    for (const std::wstring& base : dirs_) {
+        const std::wstring path = NormalizePathKey(base + L"\\kernels\\" + Utf8ToWide(name));
         if (ReadFileBytes(path, data)) {
             return path;
         }

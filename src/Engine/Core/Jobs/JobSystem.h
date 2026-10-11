@@ -47,6 +47,10 @@ public:
         return { parallelBatches_.load(std::memory_order_relaxed), workerChunks_.load(std::memory_order_relaxed) };
     }
 
+    // 呼び出しスレッドが ParallelRanges のレンジ関数の中にいるか。直列実行 (jobs 無効・total 小) でも true。
+    // ネスト呼び出しは非対応なので、ジョブの中から別のジョブを起動する入口 (Compute.ForEach) が弾くのに使う。
+    static bool InJob();
+
     // fn(i) を [0,total) で並列処理する (ParallelRanges の要素版ラッパ)。
     void ParallelFor(size_t total, size_t grain, const std::function<void(size_t)>& fn);
 

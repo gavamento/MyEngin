@@ -106,6 +106,9 @@
     <ClInclude Include="..\src\Shared\EngineAPI.h">
       <Filter>Shared</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Shared\KernelCompat.h">
+      <Filter>Shared</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Shared\MathPod.h">
       <Filter>Shared</Filter>
     </ClInclude>

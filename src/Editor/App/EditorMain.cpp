@@ -48,6 +48,7 @@
 #include "Editor/Scene/CameraPilotSelfTest.h"
 #include "Engine/Engine/Animation/AnimatorControllerSelfTest.h"
 #include "Engine/Engine/Asset/AssetDatabaseSelfTest.h"
+#include "Engine/Engine/Compute/KernelSelfTest.h"
 #include "Engine/Engine/Audio/Playback/AudioSelfTest.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 #include "Engine/Engine/Loop/SimParallelSelfTest.h"
@@ -635,6 +636,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunSkinBoundsSelfTest();              // M90d: スキンの保守的 AABB (全クリップの全フレームを包む)
         ok &= mye::RunMeshLodSelfTest();                 // M90e: メッシュ LOD (生成・クック・.meta・選択)
         ok &= mye::RunSkinPaletteCacheSelfTest();        // M90f: パレットのキャッシュ・URO の更新 tick・LOD 履歴の破棄
+        ok &= mye::RunKernelSelfTest();                  // M91a: *.kernel.hlsl の GPU/CPU 単一ソース・CPU 実行器・ハッシュ
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }
