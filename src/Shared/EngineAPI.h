@@ -47,7 +47,11 @@
 //             AnimatorPlay / BtRestart (NavFindRandomPointFiltered の次の 7 本) + MyeScriptModule 末尾の btTaskCount / btTasks
 // v28 (M89c): Animator の型付きパラメータとステート — AnimatorSetFloat / AnimatorSetInt / AnimatorSetBool /
 //             AnimatorSetTrigger / AnimatorGetParam / AnimatorGetState (BtRestart の次の 6 本)
-#define MYE_API_VERSION 28u
+// v29 (M91e): Compute.ForEach — ComputeCreateBuffer / ComputeReleaseBuffer / ComputeWriteBuffer / ComputeReadBuffer /
+//             ComputeForEach / ComputeJobStatus / ComputeJobTarget / ComputeJobWait / ComputeRegisterManagedKernels /
+//             ComputeSetManagedDeclarations (AnimatorGetState の次の 10 本) + MyeScriptDesc 末尾の kernelNames、
+//             MyeScriptModule 末尾の kernels
+#define MYE_API_VERSION 29u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -220,6 +224,40 @@ struct MyeAnimatorParam {
     int32_t type; // MyeAnimatorParamType
     int32_t i;
     float f;
+};
+
+// ---- v29 (M91e): Compute.ForEach のカーネル表 (tools\gen_project_files.ps1 が Kernels.gen.cpp に出す) ----
+// カーネルに渡す 1 本のバッファ。data は要素 count 個ぶん (stride バイト刻み)
+struct MyeKernelBuffer {
+    void* data;
+    uint32_t count;
+    uint32_t stride;
+};
+
+// [begin, end) の要素を処理する CPU 版。params は P の先頭、bufs は宣言順 (RW / RO 混在)
+typedef void (*MyeKernelRangeFn)(const void* params, const MyeKernelBuffer* bufs, uint32_t bufCount,
+                                 uint32_t begin, uint32_t end);
+
+struct MyeKernelArg {
+    const char* name;    // HLSL の変数名 (GPU のバインドはリフレクションの名前で行う)
+    uint32_t stride;     // 要素 1 個のバイト数
+    uint32_t writable;   // 1 = RW、0 = RO
+};
+
+struct MyeKernelDesc {
+    const char* name;        // カーネル名 (ファイル名と同じ)
+    uint64_t sourceHash;     // 生成時の .kernel.hlsl の正規化ハッシュ。ディスク上のファイルと食い違えば版ずれ
+    uint32_t paramsSize;
+    uint32_t argCount;
+    const MyeKernelArg* args;
+    MyeKernelRangeFn range;
+};
+
+// C# が [ComputeKernels] を読んで登録する、スクリプト型 1 つ分の宣言
+struct MyeComputeDecl {
+    const char* scriptType;
+    uint32_t kernelNameCount;
+    const char* const* kernelNames;
 };
 
 // v28 AnimatorGetState の出力。時刻は tick (speed を掛けた後の再生位置)
@@ -936,6 +974,44 @@ struct MyeEngineApi {
     int (*AnimatorGetParam)(void* engine, MyeEntityId entity, uint64_t paramNameHash, MyeAnimatorParam* out);
     // AnimatorGetState: 今のステートと遷移を out へ書いて 1。Animator / controller が無ければ 0 (out は触らない)
     int (*AnimatorGetState)(void* engine, MyeEntityId entity, MyeAnimatorState* out);
+
+    // ---- v29 (M91e): Compute.ForEach ----
+    // ★v21 の Compute (CreateComputeBuffer 等) とは別系統: ハンドルの空間もバッファのストアも別で、互いのハンドルは失敗になる。
+    // ★バッファの種別 kind: 0 = State (ゲーム状態。常に CPU で計算し、スナップショットとワールドハッシュに入る)、
+    //   1 = Fx (演出。GPU で計算しうる。結果を sim の分岐に使ってはいけない)。
+    //   Fx のジョブハンドル / Status / Target / Read の結果 / バッファのハンドルは実行先 (CPU か GPU か) で値が変わりうるので、
+    //   FIELD に保存したり sim の分岐 (バッファの作成・解放を含む) に使ってはいけない。State は決定的。
+    // ★ForEach できるのは、呼び出し元のスクリプトが COMPUTE_KERNELS で宣言したカーネルだけ。
+    //   宣言のないカーネルや、スクリプトのコールバックの外 (BT タスクなど) からの呼び出しは、何も実行せずに 0 を返す。
+
+    // ComputeCreateBuffer: 64bit ハンドルを返す。0 = 失敗 (count が 0 / 上限超過 / stride が 4 の倍数でない / ストアが満杯 / State の総量超過)。
+    //   owner のエンティティが破棄されると tick 末に自動で解放する (無効なハンドルなら自動解放しない)
+    uint64_t (*ComputeCreateBuffer)(void* engine, MyeEntityId owner, uint32_t count, uint32_t stride, uint32_t kind);
+    // ComputeReleaseBuffer: 解放して 1。無効なハンドルは 0
+    int (*ComputeReleaseBuffer)(void* engine, uint64_t buffer);
+    // ComputeWriteBuffer: src から先頭の count 要素を書いて 1。count がバッファの要素数を超える / 無効なハンドルは 0 (何も書かない)
+    int (*ComputeWriteBuffer)(void* engine, uint64_t buffer, const void* src, uint32_t count);
+    // ComputeReadBuffer: 先頭の count 要素を dst へ書いて 1 (count 超過 / 無効なハンドルは 0)。
+    //   Fx は最新の完了済みの結果 (wait != 0 で GPU の完了を待つ)
+    int (*ComputeReadBuffer)(void* engine, uint64_t buffer, void* dst, uint32_t count, int32_t wait);
+    // ComputeForEach: kernel を buffers[0] の要素数ぶん実行する。execution: 0 Auto / 1 Cpu / 2 Gpu。
+    //   戻り値はジョブ (0 = 失敗、1 = CPU で完了、2 = 再シム中でスキップ、0x100 以上 = GPU の非同期ジョブ)。
+    //   callerScript: C++ レーンでは無視され、エンジンが実行中のスクリプトの型名を使う (null で良い)。
+    //   C# レーンでは呼び出し元のスクリプト型名 (null = スクリプトではない呼び出し元 = 失敗)
+    uint64_t (*ComputeForEach)(void* engine, const char* kernel, uint32_t execution, const void* params,
+                               uint32_t paramsSize, const uint64_t* buffers, uint32_t bufferCount,
+                               const char* callerScript);
+    // ComputeJobStatus: 0 Done / 1 Pending / 2 Failed / 3 Skipped
+    int32_t (*ComputeJobStatus)(void* engine, uint64_t job);
+    // ComputeJobTarget: 0 None / 1 Cpu / 2 Gpu
+    int32_t (*ComputeJobTarget)(void* engine, uint64_t job);
+    // ComputeJobWait: GPU のジョブの完了まで待って 1 (明示的なストール)。完了済み / CPU のジョブは待たずに 1、失敗のジョブは 0
+    int (*ComputeJobWait)(void* engine, uint64_t job);
+    // ComputeRegisterManagedKernels: C# の CPU 版を登録する (C# レーンの表を丸ごと差し替える。数 0 で空にする)。
+    //   C++ レーンからは何もせず 0
+    int (*ComputeRegisterManagedKernels)(void* engine, const MyeKernelDesc* kernels, uint32_t count);
+    // ComputeSetManagedDeclarations: C# の [ComputeKernels] の宣言表を丸ごと差し替える。C++ レーンからは何もせず 0
+    int (*ComputeSetManagedDeclarations)(void* engine, const MyeComputeDecl* decls, uint32_t count);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

@@ -410,7 +410,7 @@ namespace MyeScripting.KernelCompat
         // float -> int / uint。Shared/KernelCompat.h の FloatToInt / FloatToUint と同じ式 (NaN は 0、範囲外は飽和)
         public static int FloatToInt(float x)
         {
-            if (x != x)
+            if (float.IsNaN(x))
             {
                 return 0;
             }

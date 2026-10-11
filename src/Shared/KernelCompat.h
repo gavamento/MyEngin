@@ -351,8 +351,6 @@ inline uint FloatToUint(float x)
 
 // ---- バッファのビュー ----------------------------------------------------------------
 
-struct KernelLauncher; // 実行器 (Engine/Compute/KernelRunner.h) だけが KernelId を作れる
-
 // 要素番号。RW の添字にできるのはこの型だけで、id + 1 のような計算結果 (uint) は添字にできない。
 // 読み取りの用途 (乱数の種、float への変換) には uint として使える
 class KernelId {
@@ -363,6 +361,11 @@ private:
     friend struct KernelLauncher;
     constexpr explicit KernelId(uint v) : value_(v) {}
     uint value_;
+};
+
+// KernelId を作れる唯一の場所。実行器 (Engine/Compute/KernelRunner.h と Shared/KernelRangeFn.h) だけが使う
+struct KernelLauncher {
+    static KernelId Make(uint v) { return KernelId(v); }
 };
 
 // RWStructuredBuffer<T>。自分の要素 (KernelId) だけを書く約束 (ADR-028)

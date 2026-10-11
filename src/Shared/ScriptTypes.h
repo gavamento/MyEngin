@@ -69,6 +69,10 @@ struct MyeScriptDesc {
     // (impulse) を渡す。分かれた塊ごとに 1 回、ルート index → 新リーダー index 昇順で届く
     void (*onBreak)(void* state, MyeUpdateContext* ctx, MyeEntityId piece, MyeVec3 point,
                     float impulse);
+    // v29 (M91e): このスクリプトが ForEach で呼んでよいカーネルの名前表 (COMPUTE_KERNELS)。
+    // 宣言していないカーネルを呼ぶ ForEach は実行されずに失敗する。名前は大文字小文字を区別して完全一致
+    uint32_t kernelNameCount;
+    const char* const* kernelNames;
 };
 
 // BT タスクの戻り値 (BtResult と同値)
@@ -115,6 +119,9 @@ struct MyeScriptModule {
     // v27 (M85k) 末尾追加
     uint32_t btTaskCount;
     const MyeBtTaskDesc* btTasks;
+    // v29 (M91e) 末尾追加
+    uint32_t kernelCount;
+    const MyeKernelDesc* kernels;
 };
 
 // GameLogic.dll がエクスポートするエントリポイントの型

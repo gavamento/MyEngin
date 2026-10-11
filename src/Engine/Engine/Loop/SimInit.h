@@ -38,6 +38,9 @@ class NavFilterLibrary;
 class BehaviorTreeLibrary;
 class BlackboardLibrary;
 class TerrainColliderLibrary;
+namespace compute {
+class ComputeService;
+}
 
 // EngineLoop::Run と HeadlessSim は GPU / 窓 / オーディオ以外の初期化を**この関数群で共有する**。
 // 手で写すと 1 手順の漏れが tick 0 からの MISMATCH になる (スキーマ型の登録順は TypeId を動かす) ので、
@@ -95,6 +98,8 @@ struct SimSharedServices {
     WindowModeState* windowMode = nullptr;
     BehaviorTreeSystem* behaviorTree = nullptr; // v27: BtGetBlackboard 等の引き先と、C++ タスクの登録先
     const ControllerLibrary* controllers = nullptr; // v27: AnimatorPlay のステート名の引き先
+    compute::ComputeService* compute = nullptr; // v29: Compute.ForEach の引き先。null = 該当スロットが 0 を返す
+    std::wstring kernelDir;                      // v29: *.kernel.hlsl の置き場 (<assetsRoot>\shaders\kernels)。空 = ソースの走査をしない
     NavSystem* nav = nullptr; // v24: NavFindPath 等のクエリの引き先 (v26 の NavWarp / NavSetPath は書き換える)。null = 該当スロットが 0 を返す
 };
 void WireScriptServices(ScriptHost& scriptHost, ManagedHost& managedHost,

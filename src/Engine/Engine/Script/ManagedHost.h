@@ -17,6 +17,9 @@
 namespace mye {
 
 class Scene;
+namespace compute {
+class ComputeService;
+}
 
 // native ↔ managed の関数ポインタ表。Bootstrap.Initialize がここに書き込む。
 // MyeScripting の ManagedVTable (Interop.cs) とフィールド順・シグネチャを一致させること。
@@ -117,6 +120,14 @@ public:
     {
         apiCtx_.behaviorTree = bt;
         apiCtx_.controllers = controllers;
+    }
+
+    // v29 (M91e): Compute.ForEach の引き先。C# レーンはバッファのストアと宣言表が C++ とは別 (NoHash)。
+    // C# の CPU 版と宣言は ComputeRegisterManagedKernels / ComputeSetManagedDeclarations で managed 側が登録する (sub-06)
+    void SetComputeService(compute::ComputeService* service)
+    {
+        apiCtx_.compute = service;
+        apiCtx_.computeLane = compute::CallerKind::CSharp;
     }
 
     // v14 (M59k): 今 tick の接触列を繋ぐ / 外す (ScriptHost と同じ規約)

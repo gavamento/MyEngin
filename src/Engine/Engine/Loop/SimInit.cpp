@@ -164,6 +164,9 @@ void WireScriptServices(ScriptHost& scriptHost, ManagedHost& managedHost,
     managedHost.SetNavSystem(s.nav);
     scriptHost.SetBehaviorTree(s.behaviorTree, s.controllers);
     managedHost.SetBehaviorTree(s.behaviorTree, s.controllers);
+    // v29: カーネル表と宣言表の取り込みは DLL の読込時 (LoadModule) にも走る。DLL を先に読んだ場合はここで追いつく
+    scriptHost.SetComputeService(s.compute, s.kernelDir);
+    managedHost.SetComputeService(s.compute);
 }
 
 void InitSimAssets(AssetDatabase& assetDatabase, InputActions& inputActions,

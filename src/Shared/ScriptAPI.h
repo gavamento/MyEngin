@@ -17,6 +17,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <type_traits>
 #include <vector>
 
@@ -210,9 +211,62 @@ MyeScriptDesc MakeDesc(const char* name, const MyeScriptField* fields, uint32_t 
     return d;
 }
 
-struct Registrar {
-    explicit Registrar(const MyeScriptDesc& d) { Registry().push_back(d); }
+// ---- Compute.ForEach (v29、M91e) ----
+// カーネル表 (tools\gen_project_files.ps1 が Kernels.gen.cpp で埋める) と、スクリプトごとの宣言 (COMPUTE_KERNELS)
+inline std::vector<MyeKernelDesc>& KernelRegistry()
+{
+    static std::vector<MyeKernelDesc> registry;
+    return registry;
+}
+
+struct KernelRegistrar {
+    explicit KernelRegistrar(const MyeKernelDesc& d) { KernelRegistry().push_back(d); }
 };
+
+// COMPUTE_KERNELS の保留表。REGISTER_SCRIPT の前後どちらに書いても効くよう、
+// どちらの登録でも「相手が先に居れば結び付ける」
+struct KernelDeclaration {
+    const char* scriptName;
+    uint32_t count;
+    const char* const* names;
+};
+
+inline std::vector<KernelDeclaration>& KernelDeclarations()
+{
+    static std::vector<KernelDeclaration> declarations;
+    return declarations;
+}
+
+inline void BindKernelDeclaration(MyeScriptDesc& desc)
+{
+    for (const KernelDeclaration& decl : KernelDeclarations()) {
+        if (strcmp(decl.scriptName, desc.name) == 0) {
+            desc.kernelNameCount = decl.count;
+            desc.kernelNames = decl.names;
+        }
+    }
+}
+
+struct Registrar {
+    explicit Registrar(const MyeScriptDesc& d)
+    {
+        Registry().push_back(d);
+        BindKernelDeclaration(Registry().back());
+    }
+};
+
+struct KernelDeclRegistrar {
+    KernelDeclRegistrar(const char* scriptName, const char* const* names, uint32_t count)
+    {
+        KernelDeclarations().push_back({ scriptName, count, names });
+        for (MyeScriptDesc& desc : Registry()) {
+            if (strcmp(desc.name, scriptName) == 0) {
+                BindKernelDeclaration(desc);
+            }
+        }
+    }
+};
+
 
 // ---- BT タスク (v27、M85k) ----
 // 使い方: int32_t OnStart(MyeBtTaskContext& ctx); int32_t OnTick(MyeBtTaskContext& ctx); void OnAbort(MyeBtTaskContext& ctx);
@@ -371,6 +425,15 @@ struct BtTaskRegistrar {
 #define REGISTER_SCRIPT_NO_FIELDS(T)                                                             \
     static const ::mye_script_detail::Registrar T##_mye_registrar(                               \
         ::mye_script_detail::MakeDesc<T>(#T, nullptr, 0))
+
+// このスクリプトが Compute::ForEach で呼んでよいカーネルの宣言 (v29)。REGISTER_SCRIPT の前後どちらでもよい。
+//   COMPUTE_KERNELS(Swarm, "ParticleUpdate", "Collide");
+// 宣言していないカーネルを呼ぶ ForEach は、何も実行せずに失敗する (名前は大文字小文字を区別して完全一致)。
+// 宣言の表は DLL を読み込んだ時点でエンジンへ渡るので、Start より前から効く
+#define COMPUTE_KERNELS(T, ...)                                                                  \
+    static const char* const T##_mye_kernel_names[] = { __VA_ARGS__ };                           \
+    static const ::mye_script_detail::KernelDeclRegistrar T##_mye_kernel_decl(                   \
+        #T, T##_mye_kernel_names, (uint32_t)(sizeof(T##_mye_kernel_names) / sizeof(const char*)))
 
 // BT のタスク (v27)。フィールドは REGISTER_SCRIPT と同じ書き方で、BT エディタのノードのパラメータになる。
 // T の状態は木のノードのインスタンスごとにエンジンが持つ (BT 節に入る = 巻き戻しとリプレイの被覆内)
@@ -1337,3 +1400,6 @@ inline int MyeDispatchCompute(const MyeUpdateContext& ctx,
 {
     return ctx.api->DispatchCompute(ctx.api->engine, shader, gx, gy, gz);
 }
+
+// ---- v29 (M91e): Compute.ForEach の糖衣 (Compute::CreateBuffer / Compute::ForEach / Compute::Job) ----
+#include "Shared/ScriptCompute.h"

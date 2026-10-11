@@ -517,6 +517,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         shared.nav = &navSystem;
         shared.behaviorTree = &behaviorTreeSystem;
         shared.controllers = &controllerLibrary;
+        shared.compute = &computeService;
+        shared.kernelDir = assetsRoot + L"\\shaders\\kernels";
         WireScriptServices(scriptHost, managedHost, shared, config.developmentRun);
     }
     computeService.Bind(&device, &shaderManager);

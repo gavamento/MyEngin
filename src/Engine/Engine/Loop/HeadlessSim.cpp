@@ -328,6 +328,8 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
         shared.nav = &m.navSystem;
         shared.behaviorTree = &m.behaviorTreeSystem;
         shared.controllers = &m.controllerLibrary;
+        shared.compute = &m.computeService;
+        shared.kernelDir = m.assetsRoot + L"\\shaders\\kernels";
         WireScriptServices(m.scriptHost, m.managedHost, shared, m.config.developmentRun);
     }
     // GPU デバイスは無い: コンピュート ABI のスロットは 0 / no-op を返す。ForEach の Fx は CPU 版で代わりに走る (D6)
@@ -514,5 +516,11 @@ TickGates HeadlessSim::Gates() const { return GatesOf(impl_->tickServices); }
 const std::wstring& HeadlessSim::SaveDir() const { return impl_->saveDir; }
 const NetRuntimeInfo& HeadlessSim::NetInfo() const { return impl_->netInfo; }
 compute::ComputeService& HeadlessSim::Compute() { return impl_->computeService; }
+
+bool HeadlessSim::ReloadGameLogic()
+{
+    Activate();
+    return impl_->dllReloader.ReloadNow();
+}
 
 } // namespace mye

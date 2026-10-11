@@ -12,6 +12,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/AI/BehaviorTreeSystem.h"
+#include "Engine/Engine/Compute/ComputeService.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Script/EngineApiTable.h"
@@ -44,6 +45,25 @@ std::optional<FieldType> ToFieldTypeImpl(int32_t t)
     }
     return std::nullopt;
 }
+
+// スクリプトのコールバックを呼んでいる間だけ、実行中のスクリプト型名を ctx へ立てる (ForEach の宣言判定の入力)。
+// 入れ子になっても元の値へ戻す
+class RunningScriptScope {
+public:
+    RunningScriptScope(ScriptApiContext& ctx, const char* scriptName)
+        : ctx_(ctx)
+        , previous_(ctx.runningScript)
+    {
+        ctx_.runningScript = scriptName;
+    }
+    ~RunningScriptScope() { ctx_.runningScript = previous_; }
+    RunningScriptScope(const RunningScriptScope&) = delete;
+    RunningScriptScope& operator=(const RunningScriptScope&) = delete;
+
+private:
+    ScriptApiContext& ctx_;
+    const char* previous_;
+};
 
 } // namespace
 
@@ -96,6 +116,7 @@ void ScriptHost::DispatchTrigger(EntityID self, EntityID other, bool enter)
         ctx.tickIndex = tickIndex_;
         ctx.self = ToShared(self);
         ctx.api = &api_;
+        const RunningScriptScope running(apiCtx_, type.name.c_str());
         fn(state, &ctx, ToShared(other));
     }
 }
@@ -119,6 +140,7 @@ void ScriptHost::DispatchCollision(EntityID self, EntityID other, int kind, MyeV
         ctx.tickIndex = tickIndex_;
         ctx.self = ToShared(self);
         ctx.api = &api_;
+        const RunningScriptScope running(apiCtx_, type.name.c_str());
         if (kind == 0) {
             type.onCollisionEnter(state, &ctx, ToShared(other), normal);
         } else if (kind == 1) {
@@ -145,6 +167,7 @@ void ScriptHost::DispatchBreak(EntityID root, EntityID piece, MyeVec3 point, flo
         ctx.tickIndex = tickIndex_;
         ctx.self = ToShared(root);
         ctx.api = &api_;
+        const RunningScriptScope running(apiCtx_, type.name.c_str());
         type.onBreak(state, &ctx, ToShared(piece), point, impulse);
     }
 }
@@ -163,6 +186,42 @@ void ScriptHost::SetBehaviorTree(BehaviorTreeSystem* bt, const ControllerLibrary
     PublishBtTasks();
 }
 
+void ScriptHost::SetComputeService(compute::ComputeService* service, const std::wstring& kernelDir)
+{
+    compute_ = service;
+    kernelDir_ = kernelDir;
+    apiCtx_.compute = service;
+    apiCtx_.computeLane = compute::CallerKind::Cpp;
+    PublishCompute();
+}
+
+void ScriptHost::PublishCompute()
+{
+    if (compute_ == nullptr) {
+        return;
+    }
+    std::vector<compute::ComputeKernelDesc> descs;
+    descs.reserve(moduleKernels_.size());
+    for (const MyeKernelDesc& k : moduleKernels_) {
+        descs.push_back(compute::KernelDescFromAbi(k, compute::CallerKind::Cpp));
+    }
+    compute_->ReplaceKernels(compute::CallerKind::Cpp, descs);
+    compute_->ReplaceDeclarations(compute::CallerKind::Cpp, moduleDeclarations_);
+    if (kernelDir_.empty()) {
+        return;
+    }
+    compute_->ScanKernelSources(kernelDir_);
+    // 宣言したのにカーネルのファイルが無い (呼べば失敗する)。読込のたびに 1 回ずつ知らせる
+    for (const auto& decl : moduleDeclarations_) {
+        for (const std::string& kernel : decl.second) {
+            if (!compute_->HasKernelSource(kernel)) {
+                MYE_LOG_WARN("[compute] script '%s' declares kernel '%s' but %s.kernel.hlsl was not found in %s",
+                             decl.first.c_str(), kernel.c_str(), kernel.c_str(), WideToUtf8(kernelDir_).c_str());
+            }
+        }
+    }
+}
+
 void ScriptHost::PublishBtTasks()
 {
     if (behaviorTree_ != nullptr) {
@@ -178,6 +237,10 @@ void ScriptHost::Shutdown()
         behaviorTree_ = nullptr;
     }
     btTasks_.clear();
+    // カーネル表の関数ポインタも DLL 内を指すので、解放の前に外す
+    moduleKernels_.clear();
+    moduleDeclarations_.clear();
+    PublishCompute();
     if (module_) {
         FreeLibrary(static_cast<HMODULE>(module_));
         module_ = nullptr;
@@ -273,7 +336,16 @@ bool ScriptHost::LoadModule(const std::wstring& dllPath)
         }
 
         if (isNew) {
-            type->componentId = ComponentRegistry::Get().Register(std::move(cd));
+            // 登録表はプロセス共有で、同じ名前の型は Register が既存の id を返すだけ。別の ScriptHost (selftest が
+            // 1 プロセスに順に立てる HeadlessSim) が先に登録した型の construct は、そちらが解放した DLL を指したまま
+            // になるので、今の DLL のものへ差し替える
+            const ComponentTypeId known = ComponentRegistry::Get().FindByNameHash(cd.nameHash);
+            if (known != kInvalidComponentType) {
+                type->componentId = known;
+                ComponentRegistry::Get().UpdateDesc(known, std::move(cd));
+            } else {
+                type->componentId = ComponentRegistry::Get().Register(std::move(cd));
+            }
             MYE_LOG_INFO("[dll] script registered: %s (%u bytes, %u fields)", type->name.c_str(),
                          sd.stateSize, sd.fieldCount);
         } else if (type->layoutHash != sd.layoutHash
@@ -331,6 +403,26 @@ bool ScriptHost::LoadModule(const std::wstring& dllPath)
     btTasks_.assign(mod->btTasks, mod->btTasks + mod->btTaskCount);
     PublishBtTasks();
 
+    // Compute.ForEach のカーネル表と宣言表: モジュールのコードと同じ世代で丸ごと差し替える (D28-a)。
+    // スクリプトの Start より前に揃い、旧 DLL を解放する前に旧 DLL の関数ポインタが外れる
+    moduleKernels_.clear();
+    if (mod->kernels != nullptr) {
+        moduleKernels_.assign(mod->kernels, mod->kernels + mod->kernelCount);
+    }
+    moduleDeclarations_.clear();
+    for (const MyeScriptDesc* sdp : sorted) {
+        if (sdp->kernelNames == nullptr || sdp->kernelNameCount == 0) {
+            continue;
+        }
+        std::set<std::string>& names = moduleDeclarations_[sdp->name];
+        for (uint32_t k = 0; k < sdp->kernelNameCount; ++k) {
+            if (sdp->kernelNames[k] != nullptr) {
+                names.insert(sdp->kernelNames[k]);
+            }
+        }
+    }
+    PublishCompute();
+
     // 旧 DLL を解放 (関数テーブルは全て差し替え済み。フェーズ 2 = スクリプト非実行中)
     if (module_) {
         FreeLibrary(static_cast<HMODULE>(module_));
@@ -384,6 +476,7 @@ void ScriptHost::RunPhase(Phase phase)
                 ctx.self = ToShared(arch.EntityAt(row));
                 ctx.api = &api_;
                 void* state = arch.GetPtr(ci, row);
+                const RunningScriptScope running(apiCtx_, type.name.c_str());
                 if (wantStart) {
                     const ScriptStartedKey key = MakeScriptStartedKey(arch.EntityAt(row), type.componentId);
                     if (!started_.contains(key)) {

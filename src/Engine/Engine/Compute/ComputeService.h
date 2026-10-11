@@ -17,6 +17,7 @@
 #include "Engine/Engine/Compute/ComputeTypes.h"
 #include "Engine/Engine/Compute/KernelLint.h"
 #include "Engine/Engine/Compute/KernelRange.h"
+#include "Shared/EngineAPI.h" // MyeKernelDesc
 
 namespace mye {
 class ByteWriter;
@@ -63,6 +64,10 @@ struct ComputeKernelDesc {
     CpuImpl cpp;
     CpuImpl csharp;
 };
+
+// ABI の表の 1 行 (GameLogic.dll の Kernels.gen.cpp / C# の登録) を ComputeKernelDesc にする。
+// lane の CPU 版として入り、文字列は全部コピーする (DLL を解放しても残る)
+ComputeKernelDesc KernelDescFromAbi(const MyeKernelDesc& desc, CallerKind lane);
 
 // ディスク上のソースの検査結果とハッシュ (UpdateKernelSource が作る)
 struct KernelSourceInfo {
@@ -128,11 +133,26 @@ public:
     // ---- カーネル表・宣言・ソース情報 ----
     bool RegisterKernel(const ComputeKernelDesc& desc);
     void ClearKernels();
-    // スクリプト型名 → 宣言したカーネル名の集合。丸ごと差し替える (モジュールの取り込み)
-    void ReplaceDeclarations(std::map<std::string, std::set<std::string>> declarations);
+    // lane の CPU 版の表を丸ごと差し替える (GameLogic.dll の読込・ホットリロード / C# の再コンパイル)。
+    // もう一方の言語の CPU 版は残す。差し替えで CPU 版が無くなったカーネルは表から消える。
+    // 引数表が既存と食い違うカーネルは、もう一方の言語の CPU 版を捨てる (古い版を新しい引数表で走らせない)
+    void ReplaceKernels(CallerKind lane, const std::vector<ComputeKernelDesc>& descs);
+    // スクリプト型名 → 宣言したカーネル名の集合。言語 (lane) ごとに丸ごと差し替える (モジュールの取り込み)
+    void ReplaceDeclarations(CallerKind lane, std::map<std::string, std::set<std::string>> declarations);
+    void ReplaceDeclarations(std::map<std::string, std::set<std::string>> declarations)
+    {
+        ReplaceDeclarations(CallerKind::Cpp, std::move(declarations));
+    }
+    // dir 直下の *.kernel.hlsl を全部読み直して検査・ハッシュを覚える (前の内容は捨てる)。読めたファイル数を返す
+    uint32_t ScanKernelSources(const std::wstring& dir);
     // fileName は "Foo.kernel.hlsl"。検査してハッシュと一緒に覚える
     void UpdateKernelSource(const std::string& fileName, std::string_view text);
     void SetKernelSourceInfo(const std::string& kernel, const KernelSourceInfo& info);
+    // ディスク上の .kernel.hlsl を覚えているか / カーネル表に載っているか (宣言したのに無い、の検出用)
+    bool HasKernelSource(std::string_view kernel) const;
+    bool HasKernel(std::string_view kernel) const;
+    const ComputeKernelDesc* FindKernel(std::string_view kernel) const;
+    const KernelSourceInfo* FindKernelSource(std::string_view kernel) const;
     void SetKernelOverrideCpu(const std::string& kernel, bool cpuOnly);
 
     // ---- バッファ (caller の言語でストアが決まる: C++ = Game、C# = Script) ----
@@ -177,7 +197,8 @@ public:
     const KernelObservation* FindObservation(std::string_view scriptType, std::string_view kernel) const;
     const std::map<ObservationKey, KernelObservation>& Observations() const { return observations_; }
     void ClearObservations();
-    // 宣言表を引く (インスペクター用)
+    // 宣言表を引く。lane を渡すとその言語の宣言だけ、渡さなければどちらかにあれば真 (インスペクター用)
+    bool IsDeclared(CallerKind lane, std::string_view scriptType, std::string_view kernel) const;
     bool IsDeclared(std::string_view scriptType, std::string_view kernel) const;
     // 今 tick の使用量 (selftest 用)
     uint32_t TickDispatches() const { return tickDispatches_; }
@@ -191,6 +212,8 @@ private:
     uint64_t RunGpu(const ForEachArgs& args, const ComputeKernelDesc& desc, Resolved& r,
                     KernelObservation& obs, FailReason& why);
     bool SyncFxMirror(Resolved& r, KernelObservation& obs);
+    static bool ValidateKernelDesc(const ComputeKernelDesc& desc);
+    DecisionInput MakeDecisionInput(const ForEachArgs& args, const ComputeKernelDesc* desc, const Resolved* resolved) const;
     void LogOnce(const ForEachArgs& args, const char* level, FailReason reason, const char* detail);
 
     ComputeConfig config_;
@@ -203,7 +226,8 @@ private:
     uint64_t tickUploadBytes_ = 0;
 
     std::map<std::string, ComputeKernelDesc> kernels_;
-    std::map<std::string, std::set<std::string>, std::less<>> declarations_;
+    using DeclarationMap = std::map<std::string, std::set<std::string>, std::less<>>;
+    DeclarationMap declarations_[2]; // [CallerKind]
     std::map<std::string, KernelSourceInfo> sources_;
     std::set<std::string> overrideCpu_;
     kernel::KernelLintCache lintCache_;

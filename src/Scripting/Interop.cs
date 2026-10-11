@@ -212,6 +212,44 @@ namespace MyeScripting
         public bool IsIn(string stateName) => StateNameHash == Engine.NameHash(stateName);
     }
 
+    // v29 (M91e): Compute.ForEach のカーネル表 (EngineAPI.h の MyeKernelBuffer / MyeKernelArg / MyeKernelDesc / MyeComputeDecl と同一レイアウト)。
+    // C# の CPU 版は [UnmanagedCallersOnly] のレンジ関数 (Range) を ComputeRegisterManagedKernels で登録する (sub-06)
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct MyeKernelBuffer
+    {
+        public void* Data;
+        public uint Count;
+        public uint Stride;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct MyeKernelArg
+    {
+        public byte* Name;     // HLSL の変数名 (UTF-8、終端 0)
+        public uint Stride;
+        public uint Writable;  // 1 = RW、0 = RO
+    }
+
+    // 40 バイト
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct MyeKernelDesc
+    {
+        public byte* Name;
+        public ulong SourceHash;
+        public uint ParamsSize;
+        public uint ArgCount;
+        public MyeKernelArg* Args;
+        public delegate* unmanaged<void*, MyeKernelBuffer*, uint, uint, uint, void> Range;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct MyeComputeDecl
+    {
+        public byte* ScriptType;
+        public uint KernelNameCount;
+        public byte** KernelNames;
+    }
+
     // v16 (M70c): GetUIRect の出力。**キャンバス座標** (基準 1920x1080、M70b)
     [StructLayout(LayoutKind.Sequential)]
     internal struct MyeUIRect
@@ -431,6 +469,17 @@ namespace MyeScripting
         public delegate* unmanaged<void*, MyeEntityId, ulong, int> AnimatorSetTrigger;
         public delegate* unmanaged<void*, MyeEntityId, ulong, MyeAnimatorParam*, int> AnimatorGetParam;
         public delegate* unmanaged<void*, MyeEntityId, MyeAnimatorState*, int> AnimatorGetState;
+        // ---- v29 (M91e): Compute.ForEach ----
+        public delegate* unmanaged<void*, MyeEntityId, uint, uint, uint, ulong> ComputeCreateBuffer;
+        public delegate* unmanaged<void*, ulong, int> ComputeReleaseBuffer;
+        public delegate* unmanaged<void*, ulong, void*, uint, int> ComputeWriteBuffer;
+        public delegate* unmanaged<void*, ulong, void*, uint, int, int> ComputeReadBuffer;
+        public delegate* unmanaged<void*, byte*, uint, void*, uint, ulong*, uint, byte*, ulong> ComputeForEach;
+        public delegate* unmanaged<void*, ulong, int> ComputeJobStatus;
+        public delegate* unmanaged<void*, ulong, int> ComputeJobTarget;
+        public delegate* unmanaged<void*, ulong, int> ComputeJobWait;
+        public delegate* unmanaged<void*, MyeKernelDesc*, uint, int> ComputeRegisterManagedKernels;
+        public delegate* unmanaged<void*, MyeComputeDecl*, uint, int> ComputeSetManagedDeclarations;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。

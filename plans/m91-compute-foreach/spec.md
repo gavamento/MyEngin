@@ -97,6 +97,7 @@
   - ハッシュの照合と、不一致のときの実行制限
   - `.kernel.hlsl` のアセット扱い (meta、索引、ホットリロード)、スクリプトのインスペクターの Compute 欄、`project_settings.json`
   - デモ、compute A/B、`--compute-force-cpu`、ADR-030 と文書
+  - **外部プロジェクト (HAL Collector / 三校など) の `<project>/assets/shaders/kernels` から C++ のカーネル表を生成し、エディタが作る `<project>/cache/GameLogic.vcxproj` に組み込む** (U12、ユーザー 10-12 の回答で M91 に含めた)
 - やらない:
   - v21 の変更・統合 (D2)、WARP での代替 (D6)、ECS の列を直接渡すこと (論点 3)
   - `groupshared` / barrier / atomic / テクスチャ / スウィズル (D20)
@@ -224,7 +225,7 @@ class Swarm : MyeScript {
 - **WorldHash**: `HashSources` に ComputeState を足し、`HashWorldDetailed` にも出す。
 - **configBits**: `kCfgComputeForceCpu = 1u << 5`。
 - **project_settings.json**: `"compute": { "gpuMinElements": 4096, "cpuMaxChunks": 0, "fxUploadBytesPerTick": 8388608, "fxDispatchPerTick": 64, "stateTotalBytes": 16777216, "kernelOverrides": { "<Name>": "cpu" } }`。キーが無ければ既定値、不正な値なら既定値 + WARN。
-- **生成物**: C++ は `src/GameLogic/Generated/Kernels.gen.{h,cpp}` (`gen_project_files.ps1` から)。C# は `assets/scripts/Generated/Kernels.gen.cs` (エンジンが `SchemaCodegen` と同じ流儀で生成)。生成物をコミットするかは、既存の Schema.gen と同じ扱いにする。
+- **生成物**: C++ は `src/GameLogic/Generated/Kernels.gen.{h,cpp}` (`gen_project_files.ps1` から)。C# は `assets/scripts/Generated/Kernels.gen.cs` (エンジンが `SchemaCodegen` と同じ流儀で生成)。**C++ の生成物 (Kernels.gen.{h,cpp}) は版管理する** (sub-05 で変更。gen_project_files.ps1 を実行していない新規クローンでも GameLogic.vcxproj が参照する .cpp が存在するようにするため。ハッシュを含むので、カーネルを編集した後に再生成しなければ版ずれとして検出される)。C# の生成物の扱いは Schema.gen.cs と同じ。
 - 既存の .rep は snapshot の版が上がるので録り直しが要る。v21 の利用者には影響しない。
 
 ### 4.3 UI / ビジュアル
@@ -255,6 +256,7 @@ class Swarm : MyeScript {
 14. **(新規、U1)** サブセット検査器が 4.1.2 の違反をファイル名・行・規則つきで弾き、違反したカーネルはどの実行先でも失敗する。変換器は selftest のカーネルを C# に変換し、その出力が期待するテキスト (golden) と一致する。— selftest
 15. **(新規、U1 / D24)** 同じ入力に対して、C# の CPU 版と C++ の CPU 版の出力がバイト一致する。tiered JIT の有無でも一致する。ホワイトリストのすべての関数を通るカーネルで確かめる。— プローブまたは selftest。結果を ADR-030 に記録する
 16. **(新規 U6、U10 で変更)** スクリプトのインスペクターの Compute 欄に、宣言したカーネルと実行時に観測したカーネルが、状態・実行先・要素数・版・上書きつきで並ぶ (C++ と C# の両方)。宣言していないカーネルを呼ぶと**実行されずに失敗**し (戻り値 0、ログ、「宣言なしで失敗」の表示)、バッファの中身は変わらない。Start の中からの呼び出しと、ホットリロード直後の最初の tick の呼び出しも、同じ判定になる。— selftest (C++ / C# の両方。C# はプローブでも可) + スクリーンショット
+17. **(新規、U12)** 外部プロジェクトの構成 (`<project>/assets/shaders/kernels` と `<project>/src/GameLogic/Scripts`) で、エディタの [Rebuild Scripts] の経路 (`PrepareProjectScriptsBat`) がカーネル表を生成して GameLogic.dll に組み込み、C++ スクリプトから State の ForEach が動く。同じ入力に対して、C++ の生成器と PowerShell の生成器 (sub-05) のカーネル表 (名前・ハッシュ・引数名・RW/RO・stride) が一致する。— selftest (生成) + 一時プロジェクトでの実ビルドと実走 (手順と結果を記録)
 
 ## 6. サブ分割
 
@@ -265,10 +267,11 @@ class Swarm : MyeScript {
 | sub-03 | ForEach のエンジン核 (ストア 2 つ・実行先の判断・Fx の GPU 経路・ジョブ・対応表) | sub-01 | 4, 6 | `M91c: Compute.ForEach のエンジン側 (State/Fx バッファ・実行先の判断・Fx の遅延読み戻し)` |
 | sub-04 | State バッファのスナップショット・ハッシュ・寿命 | sub-03 | 5 | `M91d: State バッファを SimSnapshot とワールドハッシュに入れる (snapshot v49)` |
 | sub-05 | GameLogic のカーネル表・COMPUTE_KERNELS・ABI・C++ 糖衣・版ずれ制限 | sub-02, sub-04 | 7, 9 | `M91e: GameLogic のカーネル表と ForEach の ABI を足す (ABI v29)` |
-| sub-06 | C# の同形 API・C# の CPU 版の実行・[ComputeKernels]・RyuJIT の決定論 | sub-05 | 3 (C# 側), 8, 15 | `M91f: C# から Compute.ForEach を呼べるようにし、C# の CPU 版を走らせる` |
-| sub-07 | カーネルのアセット扱い・スクリプトのインスペクターの Compute 欄・project_settings | sub-06 | 11, 16 | `M91g: スクリプトのインスペクターに Compute 欄を足し、実行ポリシーと負荷枠を設定にする` |
-| sub-08 | デモと compute A/B (`--compute-force-cpu`) | sub-06 | 10, 12 | `M91h: Compute デモと replay_verify の compute A/B を足す` |
-| sub-09 | ADR-030 と文書 | sub-07, sub-08 | 13 | `M91i: Compute.ForEach の ADR-030 を書き、engine_spec と検証表を更新する` |
+| sub-10 | 外部プロジェクトの C++ カーネル表 (エディタのスクリプトビルドへの組み込み) | sub-05 | 17 | `M91f: 外部プロジェクトの kernels から C++ のカーネル表を生成して GameLogic に組み込む` |
+| sub-06 | C# の同形 API・C# の CPU 版の実行・[ComputeKernels]・RyuJIT の決定論 | sub-05 | 3 (C# 側), 8, 15 | `M91g: C# から Compute.ForEach を呼べるようにし、C# の CPU 版を走らせる` |
+| sub-07 | カーネルのアセット扱い・スクリプトのインスペクターの Compute 欄・project_settings | sub-06 | 11, 16 | `M91h: スクリプトのインスペクターに Compute 欄を足し、実行ポリシーと負荷枠を設定にする` |
+| sub-08 | デモと compute A/B (`--compute-force-cpu`) | sub-06 | 10, 12 | `M91i: Compute デモと replay_verify の compute A/B を足す` |
+| sub-09 | ADR-030 と文書 | sub-07, sub-08, sub-10 | 13 | `M91j: Compute.ForEach の ADR-030 を書き、engine_spec と検証表を更新する` |
 
 sub-02 と sub-03 は互いに依存しない (並列にできる)。sub-07 と sub-08 も互いに依存しないが、`LocalizationTable.inl` や `EngineCli.cpp` を重ねて触るなら直列にする。
 
@@ -279,6 +282,8 @@ sub-02 と sub-03 は互いに依存しない (並列にできる)。sub-07 と 
 - 回答済み (2026-10-12、2 回目): U8 = カーネル単位、U9 = 常に C# 版、U10 = 失敗にする (planner 案の逆。D18 / D28 / 4.1.4 / 受け入れ 16 に反映)。
 - `[ユーザーに聞ける]` U11 (D28-e): スクリプトのコールバックの外 (BT タスクの `MyeBtTaskDesc` など、宣言を持てない呼び出し元) からの ForEach の扱い / 裁定: 失敗にする (U10 の「宣言の無い呼び出しは失敗」と一貫させる) / 逆 (BT タスクにも宣言の欄を足して許す) にすると: `MyeBtTaskDesc` の末尾に追加する分の ABI が sub-05 に増え、インスペクターの表示先 (BT タスクには窓が無い) も決め直すことになる
 
+- 回答済み (2026-10-12、3 回目): U12 = M91 でやる (planner 案「後回し」の逆)。sub-10 を新設した。
+
 ### 7.2 リスク
 - R1 (sub-01): 同じテキストが HLSL と C++ の両方で通るか。sub-02 の検査器の規則で、通らない書き方を禁止に回す。
 - R2 (sub-08): DebugDrawLine が Runtime の `--screenshot` に写るか。
@@ -287,6 +292,7 @@ sub-02 と sub-03 は互いに依存しない (並列にできる)。sub-07 と 
 - R7 (sub-06、新規): JobSystem のワーカーから managed のレンジ関数を呼ぶとき、スレッドのアタッチと GC の停止待ちに時間がかかる。速度を計測して記録する。正しさが崩れる場合 (例外・デッドロック) は C# の CPU 版を呼び出しスレッドだけで直列に走らせる案へ退避する (結果は同じビット)。
 - R8 (sub-02): 変換器の構文解析の範囲がサブセットより広がると肥大化する。サブセットの外は解析せずに検査器でエラーにする。
 - R9 (sub-02 で判明): 符号付き整数の + - * のオーバーフローは、C++ では UB、C# では巻き戻り。検査器では静的に弾けないので書き手の責任とし、オーバーフローしうる計算 (ハッシュなど) は `uint` で書く規約を ADR-030 と kernel_common.hlsli の冒頭に書く。MSVC は実際には巻き戻るので、C++ と C# のバイト一致の selftest (sub-06) で見張る。
+- R10 (sub-05 で判明): 登録表 (プロセス共有) の construct を「最後に読んだ DLL」へ差し替える修正は、複数の ScriptHost が同時に生きている場合 (ServerNetSelfTest の 4 sim) に、先に解放された DLL を指す可能性が残る (既存の弱点)。エディタと Runtime と Server は ScriptHost が 1 つなので実害は selftest に限られる。M91 の範囲外として記録する。
 - R5: 解消 (DeepModal の未コミット変更は、司会が M91 の前に別コミットにする — 2026-10-12)。
 
 ## 8. 変更履歴
@@ -300,3 +306,5 @@ sub-02 と sub-03 は互いに依存しない (並列にできる)。sub-07 と 
 - 2026-10-12 (sub-02 round 1 の SELF_EVAL、coder の質問を planner が裁定): 4.1.2 を変更。float → int / uint は `FloatToInt` / `FloatToUint` の互換関数だけ (C 形式のキャストは禁止。C++ の UB と C# の 0x80000000 で結果が割れるため)。初期化子のない宣言を禁止 (AGENTS §4.3)。検査規則の正本を KernelLint.h に置き、表より厳しい規則も採用。生成 C# の名前空間を明記。符号付き整数のオーバーフローは書き手の責任のまま (7.2 R9)。
 - 2026-10-12 (sub-03 round 1 の SELF_EVAL。coder の追加を planner が採用): 4.1.4 に MixedKinds の失敗、「Auto で CPU 版が無いときは枠を見ない」、枠は Auto だけ、引数誤りの失敗、dispatch 失敗時の CPU 代替、Fx の CPU 実行で GPU を待つことを追記した。4.1.5 に作成の上限の具体値とストアの印を追記した。ジョブハンドルの値の規約と、Fx のジョブハンドルを FIELD に保存しないことを追記した。判定: 仕様の不足。
 - 2026-10-12 (sub-04 round 1 の SELF_EVAL、coder の質問を planner が裁定): State と Fx はスロット空間を共有したままにした (ストアを種別ごとに分ける案は却下。Fx の作成はデバイスに依存しないので採番は決定的。分けるとハンドルの種別印とスナップショットの形が増える)。そのかわり 4.1.4 に「Fx の Status / Target / Read / ハンドルを sim の分岐に使わない」規約を追記した。ReleaseAll で世代も初期化すること、復元では stateTotalBytes を見ないこと、Fx はスナップショットに居た印と世代だけを入れること、を採用した。
+- 2026-10-12 (sub-05 round 1 の SELF_EVAL): ABI v29 = 174 スロット (ForEach 系 8 本 + C# の CPU 版と宣言を登録する 2 本)。ComputeForEach に callerScript 引数 (C# 用。C++ レーンではエンジンが実行中のスクリプトから決め、引数は信用しない)。宣言表を言語別にした。C++ の生成物を版管理にした (4.2)。外部プロジェクトの kernels の生成を後回しにした (3、U12)。判定: 仕様の不足と、現実の制約。
+- 2026-10-12 (ユーザー回答 3 回目、U12 = M91 でやる。planner 案「後回し」の逆): 外部プロジェクトの C++ カーネル表の生成をスコープに入れ、受け入れ条件 17 と sub-10 を新設した。sub-10 は sub-05 の次に行う (M91f)。これに合わせて、以降のコミット件名の文字を 1 つずつ繰り下げた (sub-06 = M91g、sub-07 = M91h、sub-08 = M91i、sub-09 = M91j)。sub-09 の依存に sub-10 を追加した。

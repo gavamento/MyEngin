@@ -178,8 +178,11 @@ struct Fixture {
         svc.UpdateKernelSource("SelfTestUnused.kernel.hlsl", unusedText);
         svc.UpdateKernelSource("SelfTestSaxpy.kernel.hlsl", saxpyText);
         svc.UpdateKernelSource("SelfTestMix.kernel.hlsl", mixText);
-        svc.ReplaceDeclarations({ { kScript, { kSaxpy, kMix, kUnused } }, { kCsScript, { kSaxpy, kMix } },
-                                  { "OnlyMix", { kMix } } });
+        // 宣言表は言語ごとに持つ。この Fixture は両方の言語の呼び出しを試すので、同じ表を両方に入れる
+        const std::map<std::string, std::set<std::string>> declarations{
+            { kScript, { kSaxpy, kMix, kUnused } }, { kCsScript, { kSaxpy, kMix } }, { "OnlyMix", { kMix } } };
+        svc.ReplaceDeclarations(CallerKind::Cpp, declarations);
+        svc.ReplaceDeclarations(CallerKind::CSharp, declarations);
         ComputeConfig cfg;
         cfg.gpuMinElements = 64;
         svc.SetConfig(cfg);

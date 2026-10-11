@@ -1,8 +1,10 @@
 #pragma once
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "Engine/Core/Ecs/EntityID.h"
 #include "Engine/Core/Ecs/Reflection.h" // FieldDesc (FieldDescFromScriptField の戻り値)
@@ -16,6 +18,9 @@ namespace mye {
 class Scene;
 class BehaviorTreeSystem;
 class ControllerLibrary;
+namespace compute {
+class ComputeService;
+}
 
 // MyeScriptField (DLL 側の 1 フィールド) → FieldDesc (エンジン側のリフレクション)。
 // 名前・型・オフセットに加えて **v16 の表示メタデータ (displayName / rangeMin / rangeMax)**
@@ -88,6 +93,11 @@ public:
     // v27: BT の ABI の引き先と、C++ タスクの登録先 (bt->Tasks())。読み込み済みの DLL のタスクもここで渡す。起動時に 1 回
     void SetBehaviorTree(BehaviorTreeSystem* bt, const ControllerLibrary* controllers);
 
+    // v29 (M91e): Compute.ForEach の引き先。読み込み済みの DLL のカーネル表と宣言表、kernelDir 直下の *.kernel.hlsl の
+    // 検査結果をここで渡す。以後は DLL を読み込むたび (ホットリロード含む) に、モジュールと同じ世代の表へ丸ごと差し替える。
+    // DLL・ComputeService のどちらが先に用意されてもよい。起動時に 1 回 (kernelDir が空ならソースの走査はしない)
+    void SetComputeService(compute::ComputeService* service, const std::wstring& kernelDir);
+
     // v14 (M59k): 今 tick の接触列を繋ぐ / 外す。**毎 tick 呼ぶ** —
     // TickRunner が tick 頭で nullptr、物理 Update の直後に実体を渡す。
     // これで GetContactInfo が読めるのは「今 tick の物理が書いた列」だけになる
@@ -139,6 +149,8 @@ private:
     ScriptType* FindType(const char* name);
     // 読み込み済みの DLL の BT タスクを BT の登録表へ写す (DLL・BT のどちらが先に用意されてもよい)
     void PublishBtTasks();
+    // 現行モジュールのカーネル表と宣言表を ComputeService へ丸ごと渡す (DLL・ComputeService のどちらが先でもよい)
+    void PublishCompute();
 
     Scene* scene_ = nullptr;
     void* module_ = nullptr; // HMODULE (現行 DLL)
@@ -151,6 +163,11 @@ private:
     // 現行 DLL の BT タスクの記述子 (DLL 内を指す。登録表へ写した後は登録表が名前・フィールドをコピーして持つ)
     std::vector<MyeBtTaskDesc> btTasks_;
     BehaviorTreeSystem* behaviorTree_ = nullptr;
+    // Compute.ForEach (v29)。moduleKernels_ は現行 DLL 内を指す (DLL と同じ世代で差し替わる)。宣言表は文字列をコピーして持つ
+    compute::ComputeService* compute_ = nullptr;
+    std::wstring kernelDir_;
+    std::vector<MyeKernelDesc> moduleKernels_;
+    std::map<std::string, std::set<std::string>> moduleDeclarations_;
 
     // tick コンテキスト
     InputSnapshot input_ = {};

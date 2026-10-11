@@ -32,6 +32,7 @@
 #include "Engine/Engine/UI/UIWidgets.h" // M75f: ウィジェットの根もボタン状態 / フォーカスの相手になる
 #include "Engine/Platform/InputActions.h" // v12 GetActionState/GetAxisValue (M51h)
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Engine/Compute/ComputeService.h" // v29 (M91e)
 #include "Engine/Renderer/Compute/ComputeAbiRunner.h" // v21 (M78e)
 #include "Engine/Renderer/Device/GraphicsDevice.h"    // v21 (M78e): Device() の完全型
 
@@ -98,6 +99,101 @@ SessionLanes LanesOf(void* engine)
 
 // ---- Nav* のクエリ 4 種の実体 (v24 の版は navFilter = 0 で、v26 の ...Filtered はそのまま呼ぶ) ----
 static_assert(sizeof(MyeVec3) == sizeof(float) * 3, "MyeVec3 は float 3 つ (Navigation の float[3] へ書く)");
+
+// ---- v29 (M91e): Compute.ForEach のスロット。v21 の Compute ABI とは別のバッファストアを引く ----
+void FillComputeSlots(MyeEngineApi& out)
+{
+    using compute::BufferKind;
+    using compute::Execution;
+    out.ComputeCreateBuffer = [](void* engine, MyeEntityId owner, uint32_t count, uint32_t stride,
+                                 uint32_t kind) -> uint64_t {
+        ScriptApiContext* c = Ctx(engine);
+        if (c->compute == nullptr || kind > static_cast<uint32_t>(BufferKind::Fx)) {
+            return 0;
+        }
+        return c->compute->CreateBuffer(c->computeLane, count, stride, static_cast<BufferKind>(kind), ToEngine(owner));
+    };
+    out.ComputeReleaseBuffer = [](void* engine, uint64_t buffer) -> int {
+        ScriptApiContext* c = Ctx(engine);
+        return c->compute != nullptr && c->compute->ReleaseBuffer(c->computeLane, buffer) ? 1 : 0;
+    };
+    out.ComputeWriteBuffer = [](void* engine, uint64_t buffer, const void* src, uint32_t count) -> int {
+        ScriptApiContext* c = Ctx(engine);
+        return c->compute != nullptr && c->compute->WriteBuffer(c->computeLane, buffer, src, count) ? 1 : 0;
+    };
+    out.ComputeReadBuffer = [](void* engine, uint64_t buffer, void* dst, uint32_t count, int32_t wait) -> int {
+        ScriptApiContext* c = Ctx(engine);
+        return c->compute != nullptr && c->compute->ReadBuffer(c->computeLane, buffer, dst, count, wait != 0) ? 1 : 0;
+    };
+    out.ComputeForEach = [](void* engine, const char* kernel, uint32_t execution, const void* params,
+                            uint32_t paramsSize, const uint64_t* buffers, uint32_t bufferCount,
+                            const char* callerScript) -> uint64_t {
+        ScriptApiContext* c = Ctx(engine);
+        if (c->compute == nullptr || kernel == nullptr || execution > static_cast<uint32_t>(Execution::Gpu)) {
+            return compute::kJobFailed;
+        }
+        // 呼び出し元の型名: C++ はエンジンが実行中のスクリプトを知っている (引数の callerScript は信用しない)。
+        // C# は managed 側が自分で渡す
+        const char* script = c->computeLane == compute::CallerKind::Cpp ? c->runningScript : callerScript;
+        compute::ForEachArgs args;
+        args.caller.kind = c->computeLane;
+        args.caller.scriptType = script != nullptr ? script : "";
+        args.kernel = kernel;
+        args.execution = static_cast<Execution>(execution);
+        args.params = params;
+        args.paramsSize = paramsSize;
+        args.buffers = buffers;
+        args.bufferCount = bufferCount;
+        return c->compute->ForEach(args);
+    };
+    out.ComputeJobStatus = [](void* engine, uint64_t job) -> int32_t {
+        ScriptApiContext* c = Ctx(engine);
+        return c->compute != nullptr ? static_cast<int32_t>(c->compute->Status(job))
+                                     : static_cast<int32_t>(compute::JobStatus::Failed);
+    };
+    out.ComputeJobTarget = [](void* engine, uint64_t job) -> int32_t {
+        ScriptApiContext* c = Ctx(engine);
+        return c->compute != nullptr ? static_cast<int32_t>(c->compute->Target(job))
+                                     : static_cast<int32_t>(compute::JobTarget::None);
+    };
+    out.ComputeJobWait = [](void* engine, uint64_t job) -> int {
+        ScriptApiContext* c = Ctx(engine);
+        return c->compute != nullptr && c->compute->Wait(job) ? 1 : 0;
+    };
+    out.ComputeRegisterManagedKernels = [](void* engine, const MyeKernelDesc* kernels, uint32_t count) -> int {
+        ScriptApiContext* c = Ctx(engine);
+        if (c->compute == nullptr || c->computeLane != compute::CallerKind::CSharp || (kernels == nullptr && count > 0)) {
+            return 0;
+        }
+        std::vector<compute::ComputeKernelDesc> descs;
+        descs.reserve(count);
+        for (uint32_t i = 0; i < count; ++i) {
+            descs.push_back(compute::KernelDescFromAbi(kernels[i], compute::CallerKind::CSharp));
+        }
+        c->compute->ReplaceKernels(compute::CallerKind::CSharp, descs);
+        return 1;
+    };
+    out.ComputeSetManagedDeclarations = [](void* engine, const MyeComputeDecl* decls, uint32_t count) -> int {
+        ScriptApiContext* c = Ctx(engine);
+        if (c->compute == nullptr || c->computeLane != compute::CallerKind::CSharp || (decls == nullptr && count > 0)) {
+            return 0;
+        }
+        std::map<std::string, std::set<std::string>> table;
+        for (uint32_t i = 0; i < count; ++i) {
+            if (decls[i].scriptType == nullptr) {
+                continue;
+            }
+            std::set<std::string>& names = table[decls[i].scriptType];
+            for (uint32_t k = 0; k < decls[i].kernelNameCount; ++k) {
+                if (decls[i].kernelNames[k] != nullptr) {
+                    names.insert(decls[i].kernelNames[k]);
+                }
+            }
+        }
+        c->compute->ReplaceDeclarations(compute::CallerKind::CSharp, std::move(table));
+        return 1;
+    };
+}
 static_assert(sizeof(MyeNavPath) == sizeof(NavAgentPath) && offsetof(MyeNavPath, end) == offsetof(NavAgentPath, end)
                   && offsetof(MyeNavPath, polys) == offsetof(NavAgentPath, polys)
                   && offsetof(MyeNavPath, corners) == offsetof(NavAgentPath, corners)
@@ -1649,6 +1745,8 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         out->transitionToTime = animator->transitionToTime;
         return 1;
     };
+
+    FillComputeSlots(out); // v29
 }
 
 } // namespace mye

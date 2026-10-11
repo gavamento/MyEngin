@@ -1656,6 +1656,8 @@ bool WriteGeneratedMain(const std::wstring& path)
          "    mod.scriptCount = static_cast<uint32_t>(mye_script_detail::Registry().size());\n"
          "    mod.btTasks = mye_script_detail::BtTaskRegistry().data();\n"
          "    mod.btTaskCount = static_cast<uint32_t>(mye_script_detail::BtTaskRegistry().size());\n"
+         "    mod.kernels = mye_script_detail::KernelRegistry().data();\n"
+         "    mod.kernelCount = static_cast<uint32_t>(mye_script_detail::KernelRegistry().size());\n"
          "    return &mod;\n"
          "}\n"
          "\n"

@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "Engine/Engine/Compute/ComputeTypes.h" // v29: CallerKind
 #include "Engine/Engine/Rendering/DebugDraw.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h" // v14 (M59k): SolidContact
 #include "Engine/Platform/Input.h"
@@ -19,6 +20,9 @@ class TextureLibrary;   // v21
 class NavSystem;        // v24
 class BehaviorTreeSystem; // v27
 class ControllerLibrary;  // v27
+namespace compute {
+class ComputeService; // v29
+}
 
 // パッド振動の目標値 (v12、M51h)。スロットはここへ書くだけで、実際の XInputSetState は
 // EngineLoop がフレーム末 (出力レーン) に適用する — record/verify 中とフォーカス喪失中は
@@ -154,6 +158,13 @@ struct ScriptApiContext {
     // v27: AnimatorPlay のステート名の引き先 (読むだけ)。null 時は AnimatorPlay が 0 を返す。
     // v28: Animator* のパラメータ名・ステート名も同じ引き先 (null 時は 0)
     const ControllerLibrary* controllers = nullptr;
+    // v29 (M91e): Compute.ForEach の引き先。null 時は各スロットが 0 を返す
+    compute::ComputeService* compute = nullptr;
+    // この ctx を使うホストの言語。C++ の ScriptHost は Cpp、C# の ManagedHost は CSharp (バッファのストアと宣言表が分かれる)
+    compute::CallerKind computeLane = compute::CallerKind::Cpp;
+    // C++ レーンで実行中のスクリプトの型名。ScriptHost が各コールバックの前後で入れ外しする。
+    // null = スクリプトのコールバックの外 (BT タスクなど。宣言を持てないので ForEach は失敗する)
+    const char* runningScript = nullptr;
 };
 
 // out に MyeEngineApi (engine = ctx) を構築する。ctx の生存は呼び出し側が管理する。

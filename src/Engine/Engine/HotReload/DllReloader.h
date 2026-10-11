@@ -28,6 +28,10 @@ public:
 
     uint32_t Version() const { return counter_; }
 
+    // 書き込み時刻を見ずに、今のビルド出力でリロードする。セルフテストがホットリロード直後の状態を作るために使う
+    // (フェーズ 2 = スクリプト非実行中に呼ぶこと)
+    bool ReloadNow() { return TryCopyAndLoad(); }
+
     // 現在ロード中の GameLogic.dll のバイト列ハッシュ (SimProvenance.gameVersion)。
     // 実際にロードしたシャドウコピーを読んだ値で、リロードに成功するたびに更新される。0 = 未ロード
     uint64_t LoadedGameVersion() const { return loadedHash_; }

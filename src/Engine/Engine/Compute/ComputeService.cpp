@@ -5,12 +5,17 @@
 //====================================================================================
 #include "Engine/Engine/Compute/ComputeService.h"
 
+#include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Core/Jobs/JobSystem.h"
 #include "Engine/Engine/Compute/KernelRunner.h"
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/Compute/FxGpuBackend.h"
 
 namespace mye::compute {
@@ -33,6 +38,24 @@ double MsSince(std::chrono::steady_clock::time_point t0)
 }
 
 } // namespace
+
+ComputeKernelDesc KernelDescFromAbi(const MyeKernelDesc& desc, CallerKind lane)
+{
+    ComputeKernelDesc out;
+    out.name = desc.name != nullptr ? desc.name : "";
+    out.paramsSize = desc.paramsSize;
+    for (uint32_t i = 0; i < desc.argCount && desc.args != nullptr; ++i) {
+        KernelArgDesc arg;
+        arg.name = desc.args[i].name != nullptr ? desc.args[i].name : "";
+        arg.writable = desc.args[i].writable != 0;
+        arg.stride = desc.args[i].stride;
+        out.args.push_back(std::move(arg));
+    }
+    CpuImpl& impl = lane == CallerKind::Cpp ? out.cpp : out.csharp;
+    impl.range = desc.range;
+    impl.sourceHash = desc.sourceHash;
+    return out;
+}
 
 ComputeService::ComputeService()
     : gameStore_(StoreLane::Game)
@@ -64,7 +87,7 @@ void ComputeService::BeginTick(bool resim)
     tickUploadBytes_ = 0;
 }
 
-bool ComputeService::RegisterKernel(const ComputeKernelDesc& desc)
+bool ComputeService::ValidateKernelDesc(const ComputeKernelDesc& desc)
 {
     uint32_t rw = 0;
     uint32_t ro = 0;
@@ -77,6 +100,13 @@ bool ComputeService::RegisterKernel(const ComputeKernelDesc& desc)
     ok = ok && rw <= FxGpuBackend::kMaxReadWrite && ro <= FxGpuBackend::kMaxReadOnly;
     if (!ok) {
         MYE_LOG_ERROR("[compute] kernel '%s' has an invalid descriptor and was not registered", desc.name.c_str());
+    }
+    return ok;
+}
+
+bool ComputeService::RegisterKernel(const ComputeKernelDesc& desc)
+{
+    if (!ValidateKernelDesc(desc)) {
         return false;
     }
     kernels_[desc.name] = desc;
@@ -88,18 +118,107 @@ void ComputeService::ClearKernels()
     kernels_.clear();
 }
 
-void ComputeService::ReplaceDeclarations(std::map<std::string, std::set<std::string>> declarations)
+void ComputeService::ReplaceKernels(CallerKind lane, const std::vector<ComputeKernelDesc>& descs)
 {
-    declarations_.clear();
-    for (auto& kv : declarations) {
-        declarations_.emplace(kv.first, std::move(kv.second));
+    const auto implOf = [lane](ComputeKernelDesc& d) -> CpuImpl& { return lane == CallerKind::Cpp ? d.cpp : d.csharp; };
+    const auto otherOf = [lane](ComputeKernelDesc& d) -> CpuImpl& { return lane == CallerKind::Cpp ? d.csharp : d.cpp; };
+    const auto sameSignature = [](const ComputeKernelDesc& a, const ComputeKernelDesc& b) {
+        if (a.paramsSize != b.paramsSize || a.args.size() != b.args.size()) {
+            return false;
+        }
+        for (size_t i = 0; i < a.args.size(); ++i) {
+            if (a.args[i].name != b.args[i].name || a.args[i].writable != b.args[i].writable
+                || a.args[i].stride != b.args[i].stride) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    // この言語の CPU 版を全部外す。外した結果どちらの CPU 版も無くなるカーネルだけ、後で表から消す
+    std::set<std::string> hadImpl;
+    for (auto& kv : kernels_) {
+        CpuImpl& impl = implOf(kv.second);
+        if (impl.range != nullptr) {
+            hadImpl.insert(kv.first);
+        }
+        impl = CpuImpl{};
     }
+    for (const ComputeKernelDesc& desc : descs) {
+        if (!ValidateKernelDesc(desc)) {
+            continue;
+        }
+        ComputeKernelDesc incoming = desc;
+        const CpuImpl mine = implOf(incoming);
+        const auto it = kernels_.find(desc.name);
+        if (it == kernels_.end()) {
+            kernels_[desc.name] = std::move(incoming);
+            continue;
+        }
+        ComputeKernelDesc& existing = it->second;
+        if (!sameSignature(existing, desc)) {
+            otherOf(existing) = CpuImpl{}; // 引数表が変わった。もう一方の古い CPU 版は新しい表では走らせられない
+            existing.paramsSize = desc.paramsSize;
+            existing.args = desc.args;
+        }
+        implOf(existing) = mine;
+    }
+    for (auto it = kernels_.begin(); it != kernels_.end();) {
+        const bool orphan = it->second.cpp.range == nullptr && it->second.csharp.range == nullptr
+            && hadImpl.find(it->first) != hadImpl.end();
+        it = orphan ? kernels_.erase(it) : std::next(it);
+    }
+}
+
+void ComputeService::ReplaceDeclarations(CallerKind lane, std::map<std::string, std::set<std::string>> declarations)
+{
+    DeclarationMap& dst = declarations_[static_cast<size_t>(lane)];
+    dst.clear();
+    for (auto& kv : declarations) {
+        dst.emplace(kv.first, std::move(kv.second));
+    }
+}
+
+bool ComputeService::IsDeclared(CallerKind lane, std::string_view scriptType, std::string_view kernel) const
+{
+    const DeclarationMap& map = declarations_[static_cast<size_t>(lane)];
+    const auto it = map.find(scriptType);
+    return it != map.end() && it->second.find(std::string(kernel)) != it->second.end();
 }
 
 bool ComputeService::IsDeclared(std::string_view scriptType, std::string_view kernel) const
 {
-    const auto it = declarations_.find(scriptType);
-    return it != declarations_.end() && it->second.find(std::string(kernel)) != it->second.end();
+    return IsDeclared(CallerKind::Cpp, scriptType, kernel) || IsDeclared(CallerKind::CSharp, scriptType, kernel);
+}
+
+uint32_t ComputeService::ScanKernelSources(const std::wstring& dir)
+{
+    namespace fs = std::filesystem;
+    sources_.clear();
+    std::error_code ec;
+    if (!fs::is_directory(fs::path(dir), ec)) {
+        return 0;
+    }
+    std::vector<fs::path> files;
+    for (const fs::directory_entry& entry : fs::directory_iterator(fs::path(dir), ec)) {
+        const std::wstring name = entry.path().filename().wstring();
+        if (entry.is_regular_file(ec) && name.size() > 12 && name.compare(name.size() - 12, 12, L".kernel.hlsl") == 0) {
+            files.push_back(entry.path());
+        }
+    }
+    std::sort(files.begin(), files.end()); // 検査ログの順序を決定的にする
+    uint32_t read = 0;
+    for (const fs::path& path : files) {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) {
+            MYE_LOG_WARN("[compute] cannot read kernel source: %s", WideToUtf8(path.wstring()).c_str());
+            continue;
+        }
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        UpdateKernelSource(WideToUtf8(path.filename().wstring()), text);
+        ++read;
+    }
+    return read;
 }
 
 void ComputeService::UpdateKernelSource(const std::string& fileName, std::string_view text)
@@ -117,6 +236,28 @@ void ComputeService::UpdateKernelSource(const std::string& fileName, std::string
 void ComputeService::SetKernelSourceInfo(const std::string& kernel, const KernelSourceInfo& info)
 {
     sources_[kernel] = info;
+}
+
+bool ComputeService::HasKernelSource(std::string_view kernel) const
+{
+    return sources_.find(std::string(kernel)) != sources_.end();
+}
+
+bool ComputeService::HasKernel(std::string_view kernel) const
+{
+    return kernels_.find(std::string(kernel)) != kernels_.end();
+}
+
+const ComputeKernelDesc* ComputeService::FindKernel(std::string_view kernel) const
+{
+    const auto it = kernels_.find(std::string(kernel));
+    return it != kernels_.end() ? &it->second : nullptr;
+}
+
+const KernelSourceInfo* ComputeService::FindKernelSource(std::string_view kernel) const
+{
+    const auto it = sources_.find(std::string(kernel));
+    return it != sources_.end() ? &it->second : nullptr;
 }
 
 void ComputeService::SetKernelOverrideCpu(const std::string& kernel, bool cpuOnly)
@@ -395,6 +536,36 @@ uint64_t ComputeService::RunGpu(const ForEachArgs& args, const ComputeKernelDesc
     return kJobGpuBase + serial;
 }
 
+// 決定表 (ComputeDecision) への入力。宣言・検査・ハッシュ・設定・デバイス・負荷枠・引数の解決結果を集める。
+// resolved が null = 引数の検証に失敗した (バッファに関する入力は空)
+DecisionInput ComputeService::MakeDecisionInput(const ForEachArgs& args, const ComputeKernelDesc* desc,
+                                                const Resolved* resolved) const
+{
+    const auto sit = sources_.find(std::string(args.kernel));
+    DecisionInput in;
+    in.callerIsScript = !args.caller.scriptType.empty();
+    in.declared = in.callerIsScript && IsDeclared(args.caller.kind, args.caller.scriptType, args.kernel);
+    in.lint = (desc != nullptr && sit != sources_.end()) ? sit->second.lint : LintState::Unknown;
+    if (desc != nullptr) {
+        const CpuImpl& impl = args.caller.kind == CallerKind::Cpp ? desc->cpp : desc->csharp;
+        in.cpuVersion = impl.range != nullptr;
+        in.hashMatch = sit != sources_.end() && impl.sourceHash == sit->second.hash;
+    }
+    in.execution = args.execution;
+    in.forceCpu = config_.forceCpu;
+    in.overrideCpu = overrideCpu_.find(std::string(args.kernel)) != overrideCpu_.end();
+    in.resim = resim_;
+    in.deviceAvailable = gpu_->Available();
+    in.gpuMinElements = config_.gpuMinElements;
+    in.hasState = resolved != nullptr && resolved->hasState;
+    in.writesStateReadsFx = resolved != nullptr && resolved->writesStateReadsFx;
+    in.elementCount = resolved != nullptr ? resolved->elementCount : 0;
+    const uint64_t pendingUpload = resolved != nullptr ? resolved->pendingUploadBytes : 0;
+    in.gpuBudgetOk = tickDispatches_ < config_.fxDispatchPerTick
+        && tickUploadBytes_ + pendingUpload <= config_.fxUploadBytesPerTick;
+    return in;
+}
+
 uint64_t ComputeService::ForEach(const ForEachArgs& args)
 {
     ObservationKey key{ std::string(args.caller.scriptType), std::string(args.kernel) };
@@ -422,32 +593,11 @@ uint64_t ComputeService::ForEach(const ForEachArgs& args)
 
     const auto kit = kernels_.find(std::string(args.kernel));
     const ComputeKernelDesc* desc = kit != kernels_.end() ? &kit->second : nullptr;
-    const auto sit = sources_.find(std::string(args.kernel));
-
-    DecisionInput in;
-    in.callerIsScript = !args.caller.scriptType.empty();
-    in.declared = in.callerIsScript && IsDeclared(args.caller.scriptType, args.kernel);
-    in.lint = (desc != nullptr && sit != sources_.end()) ? sit->second.lint : LintState::Unknown;
-    if (desc != nullptr) {
-        const CpuImpl& impl = args.caller.kind == CallerKind::Cpp ? desc->cpp : desc->csharp;
-        in.cpuVersion = impl.range != nullptr;
-        in.hashMatch = sit != sources_.end() && impl.sourceHash == sit->second.hash;
-    }
-    in.execution = args.execution;
-    in.forceCpu = config_.forceCpu;
-    in.overrideCpu = overrideCpu_.find(std::string(args.kernel)) != overrideCpu_.end();
-    in.resim = resim_;
-    in.deviceAvailable = gpu_->Available();
-    in.gpuMinElements = config_.gpuMinElements;
 
     Resolved r;
     FailReason resolveWhy = FailReason::None;
     const bool resolved = Resolve(args, desc, r, resolveWhy);
-    in.hasState = resolved && r.hasState;
-    in.writesStateReadsFx = resolved && r.writesStateReadsFx;
-    in.elementCount = resolved ? r.elementCount : 0;
-    in.gpuBudgetOk = tickDispatches_ < config_.fxDispatchPerTick
-        && tickUploadBytes_ + r.pendingUploadBytes <= config_.fxUploadBytesPerTick;
+    const DecisionInput in = MakeDecisionInput(args, desc, resolved ? &r : nullptr);
 
     const Decision d = DecideExecution(in);
     obs.lastKind = d.kind;

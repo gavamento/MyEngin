@@ -29,11 +29,6 @@ struct RunOptions {
     size_t minBlocksPerChunk = 16; // 1 chunk の最小サイズ (8 要素 x 16 = 128 要素)
 };
 
-// KernelId を作れる唯一の場所
-struct KernelLauncher {
-    static KernelId Make(uint v) { return KernelId(v); }
-};
-
 namespace detail {
 
 template <class T> bool WriteViewFits(const RWView<T>& v, size_t count) { return v.Count() >= count; }

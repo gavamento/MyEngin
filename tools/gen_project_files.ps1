@@ -114,6 +114,112 @@ $serverSrc = Get-SourceItems @(@{ Path = 'src\Server'; Prefix = '' })
 Update-Vcxproj 'Server' $serverSrc
 Update-Filters 'Server' $serverSrc
 
+# ---- Compute.ForEach のカーネル表 (M91e): assets\shaders\kernels\*.kernel.hlsl → src\GameLogic\Generated\Kernels.gen.{h,cpp} ----
+# ハッシュの手順の正本は src\Engine\Engine\Compute\KernelHash.h (BOM を 1 個除く → CR+LF の CR を除く → FNV-1a 64bit)。
+# 参照値: "a" = af63dc4c8601ec8c (KernelSelfTest と同じテストベクタ)。算術は C# の unchecked で行う (PowerShell の [uint64] は乗算で溢れて例外になる)
+if (-not ('MyeKernelHash' -as [type])) {
+    Add-Type -TypeDefinition @'
+public static class MyeKernelHash
+{
+    public static ulong Compute(byte[] data)
+    {
+        int start = 0;
+        if (data.Length >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF) { start = 3; }
+        ulong h = 14695981039346656037UL;
+        for (int i = start; i < data.Length; ++i)
+        {
+            if (data[i] == 0x0D && i + 1 < data.Length && data[i + 1] == 0x0A) { continue; }
+            h ^= data[i];
+            h *= 1099511628211UL;
+        }
+        return h;
+    }
+}
+'@
+}
+
+function Get-KernelSourceHash([byte[]]$bytes) {
+    return [MyeKernelHash]::Compute($bytes)
+}
+
+# KERNEL(Name, ParamsType, RW(T, a) RO(U, b)) の宣言から、HLSL の変数名を宣言順に取り出す (コメントは先に除く)
+function Get-KernelArgNames([string]$text, [string]$fileName) {
+    $noComments = [regex]::Replace($text, '(?s)/\*.*?\*/|//[^\r\n]*', ' ')
+    $m = [regex]::Match($noComments, '(?s)\bKERNEL\s*\(\s*(\w+)\s*,\s*(\w+)\s*,(.*?)\)\s*\{')
+    if (-not $m.Success) { throw "$fileName : KERNEL(Name, Params, RW(...) RO(...)) の宣言が見つからない" }
+    $list = @()
+    foreach ($a in [regex]::Matches($m.Groups[3].Value, '\b(RW|RO)\s*\(\s*[^,()]+?\s*,\s*(\w+)\s*\)')) {
+        $list += [pscustomobject]@{ Kind = $a.Groups[1].Value; Name = $a.Groups[2].Value }
+    }
+    if ($list.Count -eq 0) { throw "$fileName : KERNEL にバッファ引数 (RW / RO) がない" }
+    return [pscustomobject]@{ Name = $m.Groups[1].Value; Params = $m.Groups[2].Value; Args = $list }
+}
+
+function Write-IfChanged([string]$path, [string]$text) {
+    $existing = if (Test-Path $path) { [System.IO.File]::ReadAllText($path) } else { $null }
+    if ($existing -ne $text) {
+        New-Item -ItemType Directory -Force (Split-Path -Parent $path) | Out-Null
+        [System.IO.File]::WriteAllText($path, $text, [System.Text.UTF8Encoding]::new($false))
+        Write-Host "updated $([System.IO.Path]::GetRelativePath($repo, $path))"
+    }
+}
+
+function Update-KernelGenerated {
+    if ((Get-KernelSourceHash ([System.Text.Encoding]::UTF8.GetBytes('a'))).ToString('x16') -ne 'af63dc4c8601ec8c') {
+        throw 'カーネルのソースハッシュの参照値 ("a" = af63dc4c8601ec8c) と合わない'
+    }
+    $kernelDirs = @((Join-Path $repo 'assets\shaders\kernels'))
+    $genDir = Join-Path $repo 'src\GameLogic\Generated'
+    $kernels = @()
+    foreach ($dir in $kernelDirs) {
+        if (-not (Test-Path $dir)) { continue }
+        foreach ($f in Get-ChildItem -File $dir -Filter '*.kernel.hlsl') {
+            $base = $f.Name.Substring(0, $f.Name.Length - '.kernel.hlsl'.Length)
+            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+            $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+            $decl = Get-KernelArgNames $text $f.Name
+            if ($decl.Name -ne $base) { throw "$($f.Name) : KERNEL の名前 '$($decl.Name)' がファイル名 '$base' と違う" }
+            $rel = [System.IO.Path]::GetRelativePath($genDir, $f.FullName).Replace('\', '/')
+            $kernels += [pscustomobject]@{ Name = $base; Rel = $rel; Hash = (Get-KernelSourceHash $bytes); Args = $decl.Args }
+        }
+    }
+    # 名前の序数順 (文化圏に依らず同じ並びにする)
+    $sorted = [System.Collections.Generic.List[object]]::new()
+    foreach ($k in $kernels) { $sorted.Add($k) }
+    $sorted.Sort([System.Comparison[object]]{ param($a, $b) [string]::CompareOrdinal($a.Name, $b.Name) })
+    $kernels = $sorted.ToArray()
+
+    $nl = "`n"
+    $banner = "// 自動生成 (tools\gen_project_files.ps1)。手編集しても次の実行で上書きされる。" + $nl +
+        "// assets\shaders\kernels\*.kernel.hlsl を GameLogic.dll の CPU 版として取り込み、カーネル表を作る。" + $nl +
+        "// .kernel.hlsl を編集したら gen_project_files.ps1 を実行して GameLogic を再ビルドすること" + $nl +
+        "// (表のハッシュとディスク上のファイルが食い違うと、エンジンは CPU 版を古いものとして扱う)。" + $nl
+    $h = $banner + "#pragma once" + $nl + '#include "Shared/KernelCompat.h"' + $nl
+    foreach ($k in $kernels) {
+        # 無名名前空間に入れる: カーネルの自由関数は inline ではないので、複数の TU がこのヘッダを include してもリンクが衝突しない。
+        # 型は TU ごとに別になるが、境界はバイト列 (void*) で越えるので問題ない
+        $h += $nl + "#pragma warning(push)" + $nl + "#pragma warning(disable : 4100 4505)" + $nl
+        $h += "namespace mye::kernel::cpu::$($k.Name) {" + $nl + "namespace {" + $nl + "#include `"$($k.Rel)`"" + $nl + "} // namespace" + $nl + "}" + $nl
+        $h += "#pragma warning(pop)" + $nl
+        $h += "namespace MyeKernels::$($k.Name) { using namespace ::mye::kernel::cpu::$($k.Name); }" + $nl
+    }
+    $c = $banner + '#include "GameLogic/Generated/Kernels.gen.h"' + $nl + '#include "Shared/KernelRangeFn.h"' + $nl + $nl + "namespace {" + $nl
+    foreach ($k in $kernels) {
+        $fn = "&::mye::kernel::cpu::$($k.Name)::$($k.Name)_Cpu"
+        $names = ($k.Args | ForEach-Object { "`"$($_.Name)`"" }) -join ', '
+        $c += $nl + "// $($k.Name)" + $nl
+        $c += "constexpr const char* const k$($k.Name)_argNames[] = { $names };" + $nl
+        $c += "constexpr auto k$($k.Name)_args = ::mye::kernel::MakeKernelArgs<$fn>(k$($k.Name)_argNames);" + $nl
+        $c += "const ::mye_script_detail::KernelRegistrar k$($k.Name)_registrar(" + $nl
+        $c += "    ::mye::kernel::MakeKernelDesc<$fn>(`"$($k.Name)`", 0x$($k.Hash.ToString('x16'))ull, k$($k.Name)_args.data()));" + $nl
+    }
+    $c += $nl + "} // namespace" + $nl
+    Write-IfChanged (Join-Path $genDir 'Kernels.gen.h') $h
+    Write-IfChanged (Join-Path $genDir 'Kernels.gen.cpp') $c
+    Write-Host "kernels: $($kernels.Count) ($(($kernels | ForEach-Object { $_.Name }) -join ', '))"
+}
+Update-KernelGenerated
+
 # ---- GameLogic: src\GameLogic + src\Shared ----
 $logicSrc = Get-SourceItems @(
     @{ Path = 'src\GameLogic'; Prefix = '' },

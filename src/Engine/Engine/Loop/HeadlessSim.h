@@ -97,6 +97,8 @@ public:
     const NetRuntimeInfo& NetInfo() const;
     // Compute.ForEach のサービス。device 無しなので Fx は CPU 版で動く (M91d、selftest が State の ForEach を確かめる)
     compute::ComputeService& Compute();
+    // GameLogic.dll を今のビルド出力から読み直す (ホットリロード直後の状態を selftest が作る)。tick の合間に呼ぶこと
+    bool ReloadGameLogic();
 
 private:
     struct Impl;
