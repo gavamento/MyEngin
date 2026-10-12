@@ -77,6 +77,7 @@
 | D26 | C# の CPU 版を並列に走らせる手段 | JobSystem は 1 つにまとめたい (負荷枠 `cpuMaxChunks` を共通にするため) | planner 裁定 | エンジンの JobSystem から `[UnmanagedCallersOnly]` のレンジ関数 (begin, end) を呼ぶ。生成コードは例外を投げない形にする (範囲外は 0、整数除算は D23 で制限)。`Parallel.For` は使わない |
 | D27 | カーネルの上書き (Auto→CPU 固定) の粒度 | U6 でスクリプトのインスペクターに表示が決まった | ユーザー 10-12 (U8): カーネル単位 | **カーネル単位** (`project_settings.json` の `kernelOverrides`)。どのスクリプトのインスペクターで変えても、そのカーネルを使う全スクリプトに効く。UI にもそう書く |
 | D28 | 宣言なしを失敗にするなら (U10)、宣言を Start 前やホットリロード直後に参照しても、一貫して判定できるか | C++ の宣言は `MyeScriptDesc` の静的データで、DLL を読み込んだ時点で揃う (Start の前)。C# の属性はアセンブリを読み込んだ時点でリフレクションで読める。BT タスク (`MyeBtTaskDesc`) にはスクリプト型が無い | ユーザー 10-12 (U10) の帰結。planner 裁定 | **判定に使う宣言は「いま読み込まれているモジュールの宣言表」**。(a) C++: DLL の読込 / ホットリロードで `MyeScriptModule` を取り込むのと同じ箇所・同じ時点で、エンジンが宣言表をコピーして差し替える。モジュールのコードと宣言表は必ず同じ世代になる。(b) C#: Roslyn のコンパイル後、スクリプトをインスタンス化する前に、属性を読み、レンジ関数と一緒に登録する (C# の再読込で外して付け直す)。(c) 呼び出し元の識別: C++ は ctx が指す実行中スクリプトの型名、C# は managed のスクリプト型。(d) 宣言表はスクリプトの Start より前に必ずあるので、Start の中から呼んでも同じ判定になる。名前は大文字小文字を区別して完全一致で比べる。(e) スクリプトのコールバックの外 (BT タスクなど、宣言を持てない呼び出し元) からの ForEach は失敗にする (U11)。(f) 宣言したがカーネルのファイルが無い場合は、読込時に WARN を 1 回出し、インスペクターに「宣言あり・カーネル無し」と表示する (呼べば失敗)。判定に使うのは静的な宣言とモジュールの世代だけなので、決定的になる (record と verify は同じ DLL で走る) |
+| D29 | (review-1 #1) State と Fx が 1 つのスロット空間を共有し、スナップショットには Fx の「居た印と世代」だけを入れる方式では、(a) 同じ Fx を持たないストアへの復元 (クライアントの参加 `ClientSimRunner.cpp:68`、ロールバック中の Fx の作り直し) と、(b) 復元後のスクリプトによる Fx の作り直し (デモの ComputeDemoSparks) で、State の採番が連続実行とずれる | reviewer の probe: continuous=8000000100000002、restored=8000000200000001。`ComputeBufferStore.cpp:244-276` (ApplySnapshot) と `:46-52` (最小の空きスロット) | planner 裁定 (sub-04 の round 1 で「空間を共有する」とした planner 自身の判断を覆す。ユーザーの判断ではないので聞かない) | **State と Fx のスロット表と採番を分ける**。スナップショットとハッシュは State の表だけにし、Fx は復元の前後で触らない。ハンドルに種別の印 1bit を足す。SimSnapshot は v50 にする。ABI は変えない。却下した案: (1) 空いた Fx のスロットを予約として残す、(2) Fx の count / stride もスナップショットに入れて作り直す。どちらも (a) は直すが (b) は直らない |
 
 ### 2.1 参照した既存エンジンの前例
 
@@ -199,7 +200,7 @@ class Swarm : MyeScript {
 | 任意 | 任意 | 呼び出し元のスクリプトがそのカーネルを宣言していない、または呼び出し元がスクリプトではない (D28) | **失敗** (0 + ログを 1 回 + インスペクターに表示)。この判定は他のすべての行より先に行う (U10) |
 
 負荷枠と `gpuMinElements` が効くのは Auto だけ (明示の Gpu / Cpu は利用者の意図を優先する)。引数の誤り (同じバッファを RW を含めて重複して渡す、params の大きさ違い、stride 違い、2 本目以降の RW が短い) は失敗し、バッファに触らない。Fx の GPU 実行で dispatch が失敗したときは、CPU 版があれば CPU で代わりに走らせる (WARN 1 回)。Fx を CPU で走らせるとき、GPU 側に未反映の結果があれば待つ (明示ストールとして Wait の回数に積む。Auto が CPU と GPU を行き来すると毎回起きうるが、観測できるので許容する)。
-判断に使う値は全部決定的で、時間の計測は判断に使わない。失敗したときのジョブハンドルは 0。同期で完了したジョブは定数 1、Skipped は定数 2、GPU の非同期ジョブだけが連番 (0x100 + 通し番号)。**Fx のジョブハンドルは実行先で値が変わるので、ハッシュ対象の FIELD に保存してはいけない** (ScriptAPI.h / MyeScript.cs に注記する。compute A/B が検出する)。同じ理由で、**Fx のジョブの `Status()` / `Target()`、Fx の `Read` 結果、Fx のバッファハンドルを、sim の分岐 (バッファの作成・解放を含む) に使ってはいけない**。State と Fx は 1 つのスロット空間を共有するので、Fx の作成・解放が実行先に依存すると State のハンドル値まで割れる。Fx の作成そのものはデバイスに依存しない (CPU ミラーだけを確保し、GPU バッファは最初の GPU 実行で遅れて作る) ので、この規約を守る限り採番は決定的。`Status()` は Done / Pending / Failed / Skipped、`Target()` は Cpu / Gpu / None を返す。
+判断に使う値は全部決定的で、時間の計測は判断に使わない。失敗したときのジョブハンドルは 0。同期で完了したジョブは定数 1、Skipped は定数 2、GPU の非同期ジョブだけが連番 (0x100 + 通し番号)。**Fx のジョブハンドルは実行先で値が変わるので、ハッシュ対象の FIELD に保存してはいけない** (ScriptAPI.h / MyeScript.cs に注記する。compute A/B が検出する)。同じ理由で、**Fx のジョブの `Status()` / `Target()`、Fx の `Read` 結果、Fx のバッファハンドルを、sim の分岐 (バッファの作成・解放を含む) に使ってはいけない**。**State と Fx は別々のスロット表と採番を持つ** (D29。review-1 #1 で、空間を共有すると採番がずれることが分かった)。State の採番は State の作成と解放だけで決まり、Fx の有無・作り直し・復元の影響を受けない。`Status()` は Done / Pending / Failed / Skipped、`Target()` は Cpu / Gpu / None を返す。
 
 #### 4.1.5 バッファと転送
 - `CreateBuffer(count, stride, kind)` は 64bit のハンドルを返す (世代 + スロット、最小の空きスロットから採番。世代の上位 2bit はストアの印で、他のストアや v21 のハンドルを弾く)。stride は 4 の倍数で 2048 以下 (D3D11 の構造化バッファの上限)、1 本 128MiB 以下、スロットは 1 ストアあたり 1024。count が 0、上限超過 (D21)、ストアが満杯、State の総バイト枠を超える場合は 0。stride がカーネルの struct の大きさと違えば ForEach が失敗する。
@@ -221,7 +222,7 @@ class Swarm : MyeScript {
 
 ### 4.2 データ・保存形式・互換性
 - **ABI** (sub-05 に着手した時点の次の版。2026-10-12 時点なら v29): 末尾に追加するだけ。ForEach 用のスロット群 (7〜9 本程度。C# のレンジ関数ポインタを登録するスロットを含む。確定は sub-05)。`MyeScriptModule` の末尾にカーネル表、`MyeScriptDesc` の末尾にカーネル宣言の名前表を足す (`ScriptTypes.h:35` の注記に従って同じ bump の中で)。`Interop.cs` の位置ミラーと check_rules の規則 11 も合わせる。
-- **SimSnapshot** (sub-04 に着手した時点の次の版。今なら v49): 新節「ComputeState」を追加。
+- **SimSnapshot** (sub-04 に着手した時点の次の版。今なら v49): 新節「ComputeState」を追加。**sub-16 で v50 に上げる** (State の表だけを入れる形に変えたため。D29)。
 - **WorldHash**: `HashSources` に ComputeState を足し、`HashWorldDetailed` にも出す。
 - **configBits**: `kCfgComputeForceCpu = 1u << 5`。
 - **project_settings.json**: `"compute": { "gpuMinElements": 4096, "cpuMaxChunks": 0, "fxUploadBytesPerTick": 8388608, "fxDispatchPerTick": 64, "stateTotalBytes": 8388608, "kernelOverrides": { "<Name>": "cpu" } }`。キーが無ければ既定値、不正な値なら既定値 + WARN。
@@ -273,6 +274,7 @@ class Swarm : MyeScript {
 | sub-13 | エンジン・エディタ・ツールが書くテキストの改行を規則に揃え、作業ツリーの見張りを有効にする | sub-12 | — (品質。U14) | `M91 追補: エンジンとツールが書くテキストの改行を .gitattributes の規則に揃える` |
 | sub-14 | 外部プロジェクト (三校 `C:\HAL\三校`) のリポジトリに同じ改行規則を入れる (1 コミット、push しない。エンジンで開ける・スクリプトがビルドできる・保存で改行の差分が出ない、を確認) | sub-13 | — (U15) | 三校のリポジトリの慣例に合わせた日本語の件名 (例: `改行コードを .gitattributes で統一する (テキストは LF、.bat は CRLF)`) |
 | sub-15 | 規則 14-c のエラーに直し方を出す (U17) と、三校 verify.bat の FAIL 2 件が M91 の退行かどうかの切り分け (7d28c31 と HEAD で比較) | sub-14 | — | `M91 追補: check_rules 規則 14-c のエラーに直し方を出す` (切り分けではコードを変えない) |
+| sub-16 | レビュー 1 の指摘を直す (#1: State と Fx の採番を分ける、snapshot v50。#2: resim 中の引数の誤りを失敗にする。#3: インスペクターの補足文を折り返す。#4: KL016 の文言) | sub-09 | 4, 5 (と review-1 の指摘) | `M91k: レビュー 1 の指摘を直す (State と Fx の採番を分ける、resim 中の引数の誤りを失敗にする。snapshot v50)` |
 | sub-06 | C# の同形 API・C# の CPU 版の実行・[ComputeKernels]・RyuJIT の決定論 | sub-05 | 3 (C# 側), 8, 15 | `M91g: C# から Compute.ForEach を呼べるようにし、C# の CPU 版を走らせる` |
 | sub-07 | カーネルのアセット扱い・スクリプトのインスペクターの Compute 欄・project_settings | sub-06 | 11, 16 | `M91h: スクリプトのインスペクターに Compute 欄を足し、実行ポリシーと負荷枠を設定にする` |
 | sub-08 | デモと compute A/B (`--compute-force-cpu`) | sub-06 | 10, 12 | `M91i: Compute デモと replay_verify の compute A/B を足す` |
@@ -298,6 +300,8 @@ sub-02 と sub-03 は互いに依存しない (並列にできる)。sub-07 と 
 
 - 回答済み (2026-10-12、8 回目): U19 = 裁定どおり (ハッシュを 8 バイト単位にして速くし、Release で 1 tick の 10% 以内に収まる 2 のべき乗の MiB を既定値にする)。sub-08 の round 2 の実測で、既定値は 8 MiB (8388608) に決まった。Release で 0.94 ms (5.7%)。16 MiB は 8.8〜11.1% で揺れるので採らない。
 
+- `[ユーザーに聞ける]` U20: net の selftest の V1 が、リトライ後もまれに FAIL する (「verified 0 of 270」) 件の扱い / 裁定: M91 の範囲外の別件として、M91 の完了後に切り分ける。M91 の前の基点では 5 回中 0 回、M91 では十数回中 3 回で、M91 が書き込みのタイミングを変えた可能性は否定できない。ただし、どの M91 の変更とも直接の関係は見つかっていない / 逆 (M91 の中で今直す) にすると: 切り分け (.rep の書き込みの完了を待つ仕組みの調査) のサブが 1 本増え、reviewer の round 2 が後ろにずれる
+
 ### 7.2 リスク
 - R1 (sub-01): 同じテキストが HLSL と C++ の両方で通るか。sub-02 の検査器の規則で、通らない書き方を禁止に回す。
 - R2 (sub-08): DebugDrawLine が Runtime の `--screenshot` に写るか。
@@ -308,6 +312,7 @@ sub-02 と sub-03 は互いに依存しない (並列にできる)。sub-07 と 
 - R9 (sub-02 で判明): 符号付き整数の + - * のオーバーフローは、C++ では UB、C# では巻き戻り。検査器では静的に弾けないので書き手の責任とし、オーバーフローしうる計算 (ハッシュなど) は `uint` で書く規約を ADR-030 と kernel_common.hlsli の冒頭に書く。MSVC は実際には巻き戻るので、C++ と C# のバイト一致の selftest (sub-06) で見張る。
 - R10 (sub-05 で判明): 登録表 (プロセス共有) の construct を「最後に読んだ DLL」へ差し替える修正は、複数の ScriptHost が同時に生きている場合 (ServerNetSelfTest の 4 sim) に、先に解放された DLL を指す可能性が残る (既存の弱点)。エディタと Runtime と Server は ScriptHost が 1 つなので実害は selftest に限られる。M91 の範囲外として記録する。
 - R11 (sub-11 で判明): Debug の selftest の net 試験 (V1 LoadPersist / LoadGame) が、まれに `cannot open` で FAIL する (HEAD 8 回中 2 回、基点 42c6b89 では 5 回中 0 回。有意差なし。原因は書いた直後のファイルを開けないことで、ScriptHost とは無関係と見る)。M91 の退行ではないと判断した。**ユーザーの回答 (U13 = いま足す) により、sub-11 で selftest の側に、ファイルが開けるまで待つリトライを足す** (製品コードの Replay.cpp などは変えない)。
+- R11 の追記 (sub-16 で観測): U13 のリトライを入れた後も、Debug の selftest の V1 (LoadPersist / LoadGame) が 1 回だけ「verified 0 of 270」で FAIL した。ファイルは開けたのに、検証できた tick が 0 件だった。書き込みが終わる前に読んだ可能性がある (未確認)。リトライ (開けるかどうか) では防げない種類なので、M91 の後に別件で切り分ける (U20)。
 - R12 (sub-11 で判明): core.autocrlf=true の新規チェックアウト (worktree、CI の Windows ランナー) ではカーネルのファイルが CRLF になる。selftest の「CRLF 化してもハッシュは同じ」が、すでに CRLF の入力にさらに CR を足して CRCRLF を作り、基点の worktree で 5 回とも FAIL した。ハッシュの正規化 (D17) は正しく、試験の側の誤り。生成物の比較 (sub-10 の C++ 版と PowerShell 版の比較など) も改行に依存していないか、新規チェックアウトで確かめる (sub-11 round 2)。
 - R5: 解消 (DeepModal の未コミット変更は、司会が M91 の前に別コミットにする — 2026-10-12)。
 
@@ -338,3 +343,5 @@ sub-02 と sub-03 は互いに依存しない (並列にできる)。sub-07 と 
 - 2026-10-12 (sub-08 round 1): State のハッシュのコストの実測を受けて、ハッシュを 8 バイト単位に変え、stateTotalBytes の既定値を決め直すことにした (U19。4.2 の既定値 16777216 は sub-08 の round 2 の結果で書き換える)。実機 GPU (RTX 3060) の Saxpy は、FMA の融合で最大 64 ULP 違った (WARP は 0 ULP)。「State は常に CPU」の根拠として ADR-030 に書く。
 - 2026-10-12 (sub-08 round 2): State のハッシュを、8 バイト単位・4 レーンで畳む方式に変えた。4.2 の stateTotalBytes の既定値を 16777216 から 8388608 (8 MiB) に変えた。根拠は Release の実測で、1 MiB が 0.066 ms、8 MiB が 0.944 ms (5.7%)、16 MiB が 1.768 ms (10.6%)。--warp の computeab が漏れを検出できることも確かめた。
 - 2026-10-12 (sub-09 round 1): 1M 要素の jobs あり/なしの計測は M91 では取らない (ADR-030 に「未計測」と明記)。ForEach に渡すバッファの数は、C# の糖衣が 4 本まで、C++ は可変長 (ABI は配列と個数で受ける) とし、事実どおり文書に書いた。
+- 2026-10-12 (reviewer round 1 #1、planner が仕様の穴として認めた): State と Fx のスロット空間を分ける (D29)。sub-04 の round 1 での planner の判断 (空間を共有する) は誤りだった。4.1.4 の注記を書き直し、SimSnapshot を v50 にすることにした。#2〜#4 は coder 宛てで、仕様には問題が無いことを確かめた (4.1.4 の「引数の誤りは失敗」と D14 のとおり)。sub-16 を新設した。
+- 2026-10-12 (sub-16 round 1): R11 に、リトライ後も net の selftest が割れた観測を追記した。U20 を足した。

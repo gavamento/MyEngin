@@ -11,7 +11,7 @@
   - 生成物: `src\GameLogic\Generated\Kernels.gen.{h,cpp}` (版管理)、`assets\scripts\Generated\Kernels.gen.cs` (.gitignore)、外部プロジェクトは `<project>\cache\Generated\Kernels.gen.{h,cpp}`。
   - UI・設定: `Editor\Windows\Scene\ComputeInspectorSection.{h,cpp}`、`Engine\Compute\ComputeSettings.{h,cpp}` (`project_settings.json` の `"compute"`)、`ComputeInspectorRows.{h,cpp}`。
   - デモ・検証: `--compute-demo`、`tools\replay_verify.bat` の `compute` / `computeab`、`ComputeDemoSwarm.cpp` / `ComputeDemoSparks.cpp` / `assets\scripts\ComputeCsSwarm.cs`。
-- 番号: ABI **v28 → v29** (164 → **174** スロット)、SimSnapshot **v48 → v49** (CMP 節)、configBits に `kCfgComputeForceCpu = 1u << 5`。TypeId・`kCookVersion` は使わない。
+- 番号: ABI **v28 → v29** (164 → **174** スロット)、SimSnapshot **v48 → v49** (CMP 節) → レビュー 1 の指摘で **v50** (CMP 節を State の表だけにした。D11 / D29)、configBits に `kCfgComputeForceCpu = 1u << 5`。TypeId・`kCookVersion` は使わない。
   v21 の Compute ABI (7 本、GPU 専用) は変更しない。
 
 ## 背景
@@ -71,7 +71,7 @@ ADR-028 の「自分の要素だけを書く」を規約でなく型で守る。
 
 ### D7 (U3): State はエンジン所有のストア
 
-`ComputeStateStore` を SimSnapshot の新節 (CMP、v49。BT の後・World の前) と `HashSources` の源にする。スクリプトは 64bit ハンドルを FIELD に持つだけ (ADR-003)。
+`ComputeStateStore` を SimSnapshot の新節 (CMP、v49 → v50。BT の後・World の前。中身は State の表だけ) と `HashSources` の源にする。スクリプトは 64bit ハンドルを FIELD に持つだけ (ADR-003)。
 ハンドルは決定的に採番 (最小の空きスロット)。ハッシュはスロット昇順で、世代・持ち主・形・中身を畳む。State が空なら節ごと畳まないので、既存シーンのハッシュ列は動かない。
 
 ### D8: 寿命は作成したスクリプトのエンティティが持つ
@@ -89,11 +89,13 @@ tick をまたぐジョブがスナップショットに入るのを避ける。
 ### D11: Fx の GPU 結果を sim に漏らさない
 
 規約: Fx のバッファ・ジョブハンドル・`Status()` / `Target()`・`Read` の結果を、sim の分岐 (バッファの作成・解放を含む) と FIELD に使わない。
-State と Fx は 1 つのスロット空間を共有するので、Fx の作成が実行先に依存すると State のハンドルまで割れる。Fx の作成そのものはデバイスに依存しない (CPU ミラーだけ確保し、GPU バッファは最初の GPU 実行で遅れて作る)。
+State と Fx は**別々のスロット表と採番**を持つ。State のハンドルは State の作成と解放だけで決まり、Fx の有無・作り直し・復元に影響されない。ハンドルの世代欄は [lane 印 2 bit | 種別の印 1 bit | 作成回数 29 bit]。Fx の作成そのものもデバイスに依存しない (CPU ミラーだけ確保し、GPU バッファは最初の GPU 実行で遅れて作る)。
 入口の防御: **書き込み先 (RW) に State があり、かつ引数に Fx が混ざる呼び出しは MixedKinds で失敗**する。検出: compute A/B (決定 12)。
 
-- 却下: State と Fx でスロット空間を分ける案。種別印とスナップショットの形が増える。規約を守る限り採番は決定的。
-- Fx はスナップショットに「居た印と世代」だけを入れる。復元では世代が同じものだけを残す (State の採番を連続実行と揃えるため)。
+- スナップショットとハッシュは State の表だけ。Fx は入れず、復元の前後で Fx の表に触らない。Fx は表示用なので、手元の Fx のハンドルは復元後も有効 (撮影後に作った Fx も捨てない)。
+- 経緯 (レビュー 1 の指摘 1): 最初は State と Fx が 1 つのスロット空間を共有し、スナップショットに Fx の「居た印と世代」だけを入れていた。すると (a) 同じ Fx を持たないストアへの復元 (ネットのクライアント参加 `ClientSimRunner::ApplySnapshot`、ロールバック中の Fx の作り直し) と、(b) 復元後にスクリプトが Fx を作り直す経路 (ComputeDemoSparks) で、State の採番が連続実行とずれた (probe: continuous=8000000100000002、restored=8000000200000001)。
+- 却下: (1) 空いた Fx のスロットを予約として残す案、(2) Fx の count / stride もスナップショットに入れて作り直す案。どちらも (a) は直るが (b) は直らない。
+- 常設の試験: ComputeStateSelfTest / ComputeServiceSelfTest の (i)〜(v)。
 
 ### D12 (U5): Fx の出口は読み戻し経由だけ
 
@@ -144,7 +146,7 @@ C++ (`KernelHash`)、PowerShell の codegen (`gen_project_files.ps1`)、C# 変�
 
 ### D22: 番号は着手時の末尾から取る
 
-ABI は sub-05 (v29)、snapshot は sub-04 (v49)、ADR は sub-09 (030)。memory の M75h は v30 へ繰り下がる。
+ABI は sub-05 (v29)、snapshot は sub-04 (v49)、sub-16 で v50、ADR は sub-09 (030)。memory の M75h は v30 へ繰り下がる。
 
 ### D23: サブセット検査器 — 全バックエンドの前段
 

@@ -1,0 +1,30 @@
+# review-1 — m91-compute-foreach
+
+- 対象: `3766e33..a805b6e` (master、19 コミット) / 日付: 2026-10-12 / reviewer round 1
+
+```
+REVIEW: FAIL
+round: 1
+軸 (1-5):
+  製品の深度: 3 — 正常系はデモ・selftest・replay_verify で動いている。ただし条件の外側を突くと決定論の穴が 2 つ見つかった。(1) Fx が居たスナップショットを、同じ Fx を持たないストアへ復元すると、その後の State の採番が連続実行と変わる。probe で実測した (指摘 1)。(2) resim 中に引数が誤った State の ForEach を呼ぶと、元の実行と違う値が返る (指摘 2)。どちらも、ネットのクライアント参加とロールバックという実際の経路に乗る。検査器は、敵対的なカーネル 15 本を自分で書いて通し、意図どおりに弾くことを確かめた
+  機能性: 4 — 受け入れ条件 1〜10、12、14〜16 を実行で確かめた: replay_verify (compute / computeab を含む 21 ジョブ) が PASS、Release の --selftest が exit 0 (Compute 系 8 本 PASS)、デモのスクショ、check_rules (rules ジョブ) が PASS。Debug の --selftest も exit 0。11 と 17 の GUI 部分は、台帳のとおりユーザーの手動確認に残っている
+  ビジュアルデザイン: 4 — compute.png で、火花・黄色い群れ・青い群れの 3 つとも意図どおりに写っている。インスペクターの補足文は折り返されず、右端で切れている (指摘 3)
+  コード品質: 4 — 層 (Renderer の FxGpuBackend / Engine の ComputeService / Shared の C ABI) が分かれている。決定表は純粋関数で、selftest が全行を網羅している。コメントには「なぜ」が書いてある。仕様との差分に書かれていない変更は見つからなかった
+指摘:
+  1. [major] 宛先: planner — Fx のスナップショットは「居た印と世代」だけを持つ。そのため、同じ Fx (同じスロット・同じ世代) を持たないストアへ復元すると、その Fx のスロットは「空き」になる。すると復元後の次の State の CreateBuffer が、連続実行とは別のハンドルを返す。State のハンドルは FIELD に入ってハッシュされるので、これは desync になる。ADR-030 の D11 (docs/adr/ADR-030-compute-foreach.md:95-96) の「復元では世代が同じものだけを残す (State の採番を連続実行と揃えるため)」と、spec 4.1.4 の「この規約を守る限り採番は決定的」が、この場合に成り立たない。実際の経路として、ネットのクライアント参加 (`ClientSimRunner::ApplySnapshot` → `RestoreSimSnapshot`、ClientSimRunner.cpp:68) は、クライアント自身のストアへサーバのスナップショットを入れる。ロールバックの間に Fx を作り直した場合も同じことが起きる。 — 根拠: ComputeBufferStore.cpp:262-268 (撮影時に居た Fx でも、今のストアに同じ世代が無ければ `next[i]` は live=false で世代だけを持つ)。ComputeBufferStore.cpp:46-52 (Create は最小の空きスロットを取る)。probe `scratchpad\probe\probe.cpp` (State@0・Fx@1 で撮影 → 連続実行で Create した値と、空のストアへ復元してから Create した値を比べる) の実行結果は `continuous=8000000100000002 restored=8000000200000001 DIFFERENT`。既存の ComputeStateSelfTest.cpp:189-197 は「空のストアへ復元しても State と採番は戻る」と書いているが、復元後に Create して確かめていない — 期待: 復元先が何であっても、復元後の採番が連続実行と一致することを仕様にする。案は、撮影時に居た Fx のスロットを「予約済み (Find では引けないが、Create でも使わない)」として戻す、または Fx の count/stride もスナップショットに入れて空のミラーで作り直す。そのうえで、空のストアへ復元してから Create する selftest を足す
+  2. [major] 宛先: coder — 引数が解決できない (State のハンドルが古い・解放済み、など) ForEach を resim 中に呼ぶと、kJobFailed (0) ではなく kJobSkipped (2) を返す。spec 4.1.4 は「引数の誤りは失敗」と定め、State は resim でも元の実行と同じに走る (D14) ことになっているので、元の実行では `Ok()==false`、resim では `Ok()==true` に割れる。デモの `if (!ForEach(...).Ok()) return; flip ^= 1u; ++steps;` のような、成否で State を分岐させる書き方では、ロールバックの再シムで状態が割れる。 — 根拠: ComputeService.cpp:683-698 (`Resolve` に失敗すると `MakeDecisionInput` に nullptr が渡り、`hasState=false` になる。その後 `DecideExecution` が resim を理由に Skipped を返し、`!resolved` の失敗判定 (:696) より先に :692 で `kJobSkipped` を返す)。ComputeDecision.cpp:49,57。Resolve の中で `hasState` を立てるのは、有効なスロットを見つけた分だけ (ComputeService.cpp:468-473)。そのため第 1 引数の State ハンドルが無効なら、必ずこの経路に入る。selftest (ComputeServiceSelfTest.cpp:628-643) は resim × 正しい引数しか見ていない — 期待: 引数の解決に失敗したら、resim かどうかに関係なく失敗を返す (Skipped の判定より前で `!resolved` を返す)。resim 中に無効なハンドルで呼ぶ selftest を足す
+  3. [minor] 宛先: coder — インスペクターの Compute 欄の補足文 (「COMPUTE_KERNELS(...) に足す」などの直し方) が折り返されず、右端で切れて読めない (spec 8. の sub-07 round 1 の記録「狭い幅で列が切れるため縦並びにした」の意図と合っていない)。 — 根拠: ComputeInspectorSection.cpp:129 (`ImGui::TextDisabled` で折り返していない)。画像 `C:\Users\akita\AppData\Local\Temp\claude\C--HAL-MyEngin\1045aa2f-0617-404e-a3b6-257b3a941d8f\scratchpad\inspector_cpp.png` では「Add the kernel to COMPUTE_KERNELS(...) next to REGISTER_SCRI」で切れている。inspector_cs.png の「...attribute of the class.」も端に掛かっている — 期待: 補足文を折り返して出す (同じ関数の末尾の注記と同じく `TextWrapped` 系にする)
+  4. [minor] 宛先: coder — RW バッファの他の要素を「読む」と、検査器のメッセージが「他の要素への書き込みは禁止」になる。判定 (KL016 で弾く) は正しいが、説明が事実と違う。 — 根拠: lint probe `scratchpad\lintprobe\lp.cpp` の `rw_read_other` (`float x = o[0u].v;`) → `error KL016 [rw-index]: RW バッファ 'o' の添字は id だけ (他の要素への書き込みは禁止。ADR-028)` — 期待: 「他の要素の読み書きは禁止」のように、読みも含む文言にする
+検証した手段:
+  - `tools\replay_verify.bat` (Debug / Release を再ビルドしてから) → exit 0。21 ジョブすべて PASS (compute 229 s、computeab 237.9 s、jobsab、tt ×2、whatif ×2、rules を含む)。computeab の記録側では DemoSparkStep の GPU シェーダが読まれていた (Fx は GPU で走った)。ログは `C:\Users\akita\AppData\Local\Temp\claude\C--HAL-MyEngin\1045aa2f-0617-404e-a3b6-257b3a941d8f\scratchpad\rv.log`、`C:\HAL\MyEngin\cache\replay_logs\*.log`
+  - `bin\x64\Release\Editor.exe --selftest` (CWD はリポジトリ直下) → exit 0、FAIL 0 件。Kernel / Kernel lint / Compute service / state / script ABI / C# / settings / inspector strings の 8 本が PASS
+  - `bin\x64\Debug\Editor.exe --selftest` → exit 0、FAIL 0 件 (Compute 系 8 本 PASS)。ログは scratchpad の st_dbg.log
+  - `bin\x64\Release\Runtime.exe --compute-demo --font-embedded --width 960 --height 540 --frames 130 --shot-frame 120 --screenshot ...` (CWD は scratchpad) → 画像 `C:\Users\akita\AppData\Local\Temp\claude\C--HAL-MyEngin\1045aa2f-0617-404e-a3b6-257b3a941d8f\scratchpad\rvshot\compute.png` を目で確かめた。左に火花、中央に黄色い群れ、右に青い C# の群れが写っている。ログに WARN / ERROR は無い
+  - インスペクターの画像 (sub-07 の coder が撮ったもの。撮影後に ComputeInspectorSection.cpp は変わっていない = git log で確認): inspector_cpp.png / inspector_cs.png
+  - 条件の外側を突いた probe (どちらもリポジトリの外。製品のソースを cl /utf-8 で単体コンパイル):
+    - `scratchpad\probe\probe.cpp` (ComputeBufferStore のスナップショット復元後の採番) → 指摘 1
+    - `scratchpad\lintprobe\lp.cpp` (検査器に敵対的なカーネルを 15 本) → RW の添字ずらし・他要素の読み・RO への書き込み・KernelId の別名・`1.0`・`(int)x`・変数での整数除算・スウィズル・三項演算子の中の代入は、全部正しい規則で弾かれた。日本語のコメント・struct の丸ごとの読み書き・自由関数に要素を値で渡す書き方・`uint k = id` は通った。`while (true)` も通るが、無限ループの禁止は spec 4.1.2 に無いので指摘にしない
+  - 読んだ範囲: spec.md 全体、harness.md、ComputeService.cpp / ComputeDecision.cpp / ComputeBufferStore.cpp の全体、ScriptCompute.h、Compute.cs、EngineApiTable.cpp / ScriptHost.cpp / ManagedHost.cpp / ReloadHub.cpp / TickRunner.cpp / EngineLoop.cpp / HeadlessSim.cpp / SimInit.cpp の差分、デモのスクリプト 3 本と DemoSwarmStep.kernel.hlsl、ComputeInspectorSection.cpp、replay_verify.bat の差分、ADR-030 と engine_spec の番号の記述 (ABI v29 = 174、snapshot v49、bit 5、8 MiB は実装と一致)、ClientSimRunner::ApplySnapshot。スクリプトのコールバック 4 系統 (RunPhase / Trigger / Collision / Break) がすべて RunningScriptScope で包まれていることを確かめた (BT タスクは包まれていない = U11 のとおり失敗になる)
+  - 作業ツリー: 製品のソースは変えていない (`git status --short` は、このファイル review-1.md の未追跡 1 件だけ)。probe はリポジトリの外 (scratchpad) に置いた
+前回指摘の消込: (round 1 のため無し)
+```

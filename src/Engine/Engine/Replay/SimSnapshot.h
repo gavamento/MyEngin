@@ -152,7 +152,8 @@ struct SimRefs {
 // v48 (M89m): TwoBoneIKComponent の末尾に足の接地の設定 (pelvisJoint / pelvisMaxDrop / groundProbe / groundLayerMask)、
 //            SkinnedMesh の末尾に骨盤のずらし (poseIkPelvisJoint / poseIkPelvisOffset)。どちらも World 節のカラム生バイト
 // v49 (M91d): CMP 節 (Compute.ForEach の State バッファ。スロット表・世代・持ち主・中身) を BT 節の後・World 節の前に追加
-inline constexpr uint32_t kSimSnapshotVersion = 49;
+// v50 (M91k): CMP 節を State の表だけにした (Fx は入れない。State と Fx の採番を分けた。ADR-030 D29)
+inline constexpr uint32_t kSimSnapshotVersion = 50;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

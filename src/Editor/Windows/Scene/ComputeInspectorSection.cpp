@@ -126,7 +126,10 @@ void DrawComputeInspectorSection(EngineContext& ctx, const char* scriptType, com
             ImGui::TextColored(StateColor(row.state), "%s", ComputeRowStateText(row.state));
             const std::string detail = ComputeRowDetail(row, lane);
             if (!detail.empty()) {
-                ImGui::TextDisabled("%s", detail.c_str());
+                // 直し方の文は長いので、TextDisabled のまま折り返す
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                ImGui::TextWrapped("%s", detail.c_str());
+                ImGui::PopStyleColor();
             }
             if (ImGui::BeginTable("##fields", 2, ImGuiTableFlags_SizingStretchProp)) {
                 ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthStretch, 1.0f);

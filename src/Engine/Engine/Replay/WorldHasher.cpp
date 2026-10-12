@@ -434,10 +434,10 @@ uint64_t HashStateBytes(const void* data, size_t size, uint64_t seed)
 uint64_t HashComputeState(const compute::ComputeBufferStore& store, DumpCtx* d)
 {
     uint64_t h = kFnvOffset;
-    const std::vector<compute::ComputeBufferStore::Slot>& slots = store.Slots();
+    const std::vector<compute::ComputeBufferStore::Slot>& slots = store.Slots(compute::BufferKind::State);
     for (uint32_t i = 0; i < slots.size(); ++i) {
         const compute::ComputeBufferStore::Slot& s = slots[i];
-        if (!s.live || s.kind != compute::BufferKind::State) {
+        if (!s.live) {
             continue;
         }
         if (d && d->lines) {

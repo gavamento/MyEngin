@@ -2721,9 +2721,9 @@ The declaration table is swapped together with the module on DLL load / hot relo
 | any | any | `--compute-force-cpu`: Fx runs on the CPU too. A `kernelOverrides` entry `"cpu"` turns Auto into Cpu for that kernel |
 
 The budgets (`gpuMinElements`, the per-tick dispatch count and upload bytes) apply to Auto only. No wall-clock time is used in a decision. WARP is never used. A failed GPU dispatch falls back to the CPU version (one warning).
-Job handles: 0 = failed, 1 = finished synchronously, 2 = Skipped, `0x100 + n` = an asynchronous GPU job. **An Fx job handle, `Status()` / `Target()`, `Read` result or buffer handle must not be stored in a field or used to branch simulation** (State and Fx share one slot space; compute A/B detects violations).
+Job handles: 0 = failed, 1 = finished synchronously, 2 = Skipped, `0x100 + n` = an asynchronous GPU job. **An Fx job handle, `Status()` / `Target()`, `Read` result or buffer handle must not be stored in a field or used to branch simulation** (State and Fx have separate slot tables and numbering, so Fx never moves a State handle; compute A/B detects violations).
 
-**Buffers.** `CreateBuffer(count, kind)` returns a 64-bit handle (generation + slot, lowest free slot). It returns 0 when `count` is 0 or above 4,194,240 elements, `stride` is not a multiple of 4 or exceeds 2048, one buffer exceeds 128 MiB, 1024 slots are taken, or the State total exceeds `stateTotalBytes`.
+**Buffers.** `CreateBuffer(count, kind)` returns a 64-bit handle (generation + slot, lowest free slot of its own State / Fx table; one bit of the generation marks the kind). It returns 0 when `count` is 0 or above 4,194,240 elements, `stride` is not a multiple of 4 or exceeds 2048, one buffer exceeds 128 MiB, 1024 slots of that kind are taken, or the State total exceeds `stateTotalBytes`.
 A buffer belongs to the entity of the script that created it and is freed when that entity is destroyed; everything is freed on Play stop and scene load. State lives only in a CPU array; Fx has a CPU mirror plus a GPU buffer uploaded when dirty. `Read` of an Fx buffer returns the latest
 completed result (a few frames old, three staging buffers); `Wait` stalls on purpose. Recovery from device loss (§6.13) rebuilds the Fx GPU buffers from the CPU mirrors.
 The engine keeps two stores: the game store (State is in the snapshot and hash) and a C# store (no hash, not snapshotted, like every C# component).
@@ -2732,7 +2732,7 @@ The engine keeps two stores: the game store (State is in the snapshot and hash) 
 and the inspector says "CPU version is stale — rebuild GameLogic" (C++) or "waiting for C# recompile". Saving a `.kernel.hlsl` recompiles the GPU shader and the C# scripts automatically; C++ needs a GameLogic rebuild.
 External projects get their C++ kernel table generated from `<project>/assets/shaders/kernels` by [Rebuild Scripts]; the engine's own kernels are not visible to them.
 
-**Simulation integration.** State enters `SimSnapshot` as the CMP section (v49, after BT and before World) and `WorldHash` as a source (slot order; generation, owner, shape and contents, hashed as 8-byte words in 4 lanes). An empty store adds nothing, so scenes without State keep their old hashes.
+**Simulation integration.** State enters `SimSnapshot` as the CMP section (v50, after BT and before World; State table only, Fx is never captured or restored) and `WorldHash` as a source (slot order; generation, owner, shape and contents, hashed as 8-byte words in 4 lanes). An empty store adds nothing, so scenes without State keep their old hashes.
 `tools\replay_verify.bat` has a `compute` job (Debug stress, Release, Server) and **compute A/B** (`computeab`: recorded with Auto, verified with `--compute-force-cpu`; `kCfgComputeForceCpu = 1u << 5`). An Fx leak into State fails at tick 0.
 
 **Settings** (`project_settings.json`; a missing key is the default, an invalid value is the default plus a warning):
@@ -2743,7 +2743,7 @@ External projects get their C++ kernel table generated from `<project>/assets/sh
 and applies to every script using it; Project Settings has "save as project default". Observation is display-only data, outside the snapshot and the hash.
 
 **Numbers.** ABI **v29** (164 → 174 slots, appended after `AnimatorGetState`: `ComputeCreateBuffer`, `ComputeReleaseBuffer`, `ComputeWriteBuffer`, `ComputeReadBuffer`, `ComputeForEach`, `ComputeJobStatus`, `ComputeJobTarget`, `ComputeJobWait`, `ComputeRegisterManagedKernels`, `ComputeSetManagedDeclarations`;
-`MyeScriptDesc` gains `kernelNameCount` / `kernelNames`, `MyeScriptModule` gains `kernelCount` / `kernels`; the v21 compute ABI is unchanged), **SimSnapshot v49**, configBits bit 5. A `GameLogic.dll` built for `apiVersion` 28 is refused; external projects must rebuild.
+`MyeScriptDesc` gains `kernelNameCount` / `kernelNames`, `MyeScriptModule` gains `kernelCount` / `kernels`; the v21 compute ABI is unchanged), **SimSnapshot v49** (v50 after review round 1: State table only), configBits bit 5. A `GameLogic.dll` built for `apiVersion` 28 is refused; external projects must rebuild.
 Demo: `--compute-demo` (a C++ State flock, a C++ Fx spark field drawn with `DebugDrawLine`, and a C# State flock).
 
 **Known limits.** `ReloadHub` calls `CompileScripts` synchronously, so Roslyn stalls the frame for a few seconds after a kernel save. On a real GPU the Fx results differ from the CPU (up to 64 ULP in the measured case) — by design, since only Fx may use the GPU. The C# lane is outside replay coverage.
@@ -3534,7 +3534,7 @@ interleave — several tracks ran in parallel and a few milestones were revisite
 | Sky, water, project shaders | M77-M79 | Panorama skybox and IBL bake from 2D textures; Gerstner-wave water whose formula buoyancy shares; project post and compute effects with a Properties DSL and `.fxstack.json`; project surface shaders on both Forward and Deferred |
 | AI | M82-M85 | Recast-based NavMesh with bake, pathfinding, TileCache and Crowd held bit-identical (ADR-023); `AIPerception` sight and hearing (ADR-024); Agent Types, Surface grouping, filters and auto-generated links; **behaviour trees** with `.bt` / `.bb` assets, decorators, aborts, C# tasks and a node editor (ADR-025). ABI v24 → v27 = 158 slots |
 | Render optimization | M90 | Measurement first (per-view `RenderStats`, GPU timers, the `render_bench` scenes and `--render-stats-dump`); opt-in **mesh LOD** generated by meshoptimizer into the cooked blob (`kCookVersion` 6); two-phase **GPU occlusion culling** with a per-view max-Z pyramid for Deferred and Forward, default on and saved in `project_settings.json`; per-cascade shadow culling that keeps off-screen casters' shadows, and a conservative skinned AABB; render-side parallelism, a view-shared palette cache and distant-animation throttling (URO); parallel CPU particles / Perception / PartFollow / TwoBoneIk proven by replay_verify's jobs A/B (§5.4, §6.14, ADR-028 / ADR-029) |
-| Compute.ForEach | M91 | One `*.kernel.hlsl` source run on the GPU, as a C++ CPU function and as a C# CPU function behind a checked HLSL subset (KL001–KL028); State buffers always on the CPU and in snapshot / hash (SimSnapshot v49), Fx buffers GPU-first with delayed readback; source-hash version check, `COMPUTE_KERNELS` / `[ComputeKernels]` declarations, a Compute section in the script inspector, compute A/B in `replay_verify` (§10.12, ABI v29, ADR-030) |
+| Compute.ForEach | M91 | One `*.kernel.hlsl` source run on the GPU, as a C++ CPU function and as a C# CPU function behind a checked HLSL subset (KL001–KL028); State buffers always on the CPU and in snapshot / hash (SimSnapshot v50), Fx buffers GPU-first with delayed readback; source-hash version check, `COMPUTE_KERNELS` / `[ComputeKernels]` declarations, a Compute section in the script inspector, compute A/B in `replay_verify` (§10.12, ABI v29, ADR-030) |
 
 **A note on the numbering.** M17-M25 and M30-M31 have no commits of their own: they were finished
 before the repository was brought up to date and landed in two bundle commits (`M16-M25` and
@@ -3553,7 +3553,7 @@ to the physics roadmap.
 | M86 (Smart Objects) | **Unstarted, designed.** `SmartObjectComponent` with slots, a reservation table in the snapshot and hash, four behaviour-tree nodes, one ABI bump. Plan: `plans\ai-roadmap-m83-m86.md` |
 | Engine MCP server (M87) | **Unstarted, design settled.** Engine index dump, a stdio JSON-RPC server with search / describe, structured verify jobs, notes. Plan: `plans\エンジンMCPサーバ.md` |
 | Sequencer | **Unstarted.** A tick-based sequencer. (Blend trees, two-bone IK, root motion and animation events shipped as M89; mesh LOD and GPU occlusion culling as M90.) No plan file yet |
-| Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (now ABI v29, TypeId 80, SimSnapshot v49, ADR-030). Plan files that name a specific future number are stale on that point |
+| Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (now ABI v29, TypeId 80, SimSnapshot v50, ADR-030). Plan files that name a specific future number are stale on that point |
 | Dogfooding backlog | 5 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open (11 debug-draw log, 13 `builtin://wheel`, 17 CC ⇄ Rigidbody, 19 missing-`PhysicsEnvironment` warning, 20 script-to-script messaging). Each needs a new implementation surface; 20 needs the next ABI bump (`onMessage` on `MyeScriptDesc`) |
 
 ---

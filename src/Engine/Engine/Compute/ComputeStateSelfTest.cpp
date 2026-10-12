@@ -158,8 +158,7 @@ void TestStoreSnapshot()
     ByteReader r(blob.data(), blob.size());
     std::vector<ComputeBufferStore::Slot> slots;
     Check(a.ReadSnapshot(r, slots) && r.Ok() && r.Remaining() == 0, "撮った blob を読める (読み残しなし)");
-    std::vector<uint64_t> dropped;
-    a.ApplySnapshot(std::move(slots), dropped);
+    a.ApplySnapshot(std::move(slots));
     std::vector<float> back(4);
     Check(a.IsValid(s0) && a.Read(s0, back.data(), 4) && back == f0, "State の中身が戻る");
     std::vector<float> back2(6);
@@ -170,10 +169,9 @@ void TestStoreSnapshot()
     const ComputeBufferStore::Slot* sl0 = a.Find(s0);
     Check(sl0 != nullptr && sl0->owner.index == e1.index && sl0->owner.generation == e1.generation,
           "持ち主 (EntityID) が戻る");
-    Check(a.IsValid(fx), "撮影時にあった Fx は世代が同じなので残る");
-    Check(!a.IsValid(lateFx) && dropped.size() == 1 && dropped[0] == lateFx, "撮影後に作った Fx は捨て、ハンドルを知らせる");
+    Check(a.IsValid(fx) && a.IsValid(lateFx), "(iii) 復元の前後で手元の Fx のハンドルはそのまま有効 (Fx の表には触らない)");
     Check(!a.IsValid(s3), "撮影時に解放済みだったものは空きのまま");
-    Check(a.LiveCount() == 3 && a.StateBytes() == (4u * 4u + 3u * 8u), "生存数と State のバイト数が合う");
+    Check(a.LiveCount() == 4 && a.StateBytes() == (4u * 4u + 3u * 8u), "生存数と State のバイト数が合う");
 
     // 同じ操作から同じハンドル: 撮影時点の続きと一致する
     ComputeBufferStore ref(StoreLane::Game);
@@ -186,15 +184,50 @@ void TestStoreSnapshot()
     const uint64_t gotNext = a.Create(2, 4, BufferKind::State);
     Check(gotNext == refNext && refNext != s3, "復元後に作ると、撮影時点の続きと同じハンドルが出る (世代も戻る)");
 
-    // 別の (空の) ストアへ復元: Fx は居なかったことになるが、State と採番は戻る
+    // 別の (空の) ストアへ復元: State と採番は戻る。(i) 復元後の Create が連続実行と一致する
     ComputeBufferStore fresh(StoreLane::Game);
     ByteReader r2(blob.data(), blob.size());
     std::vector<ComputeBufferStore::Slot> slots2;
-    std::vector<uint64_t> dropped2;
     Check(fresh.ReadSnapshot(r2, slots2), "空のストアでも読める");
-    fresh.ApplySnapshot(std::move(slots2), dropped2);
-    Check(fresh.IsValid(s0) && fresh.IsValid(s2) && !fresh.IsValid(fx) && dropped2.empty(),
-          "空のストアへは State だけが戻る (Fx は別物として扱わない)");
+    fresh.ApplySnapshot(std::move(slots2));
+    Check(fresh.IsValid(s0) && fresh.IsValid(s2) && !fresh.IsValid(fx), "空のストアへは State だけが戻る (Fx は別物)");
+    Check(fresh.Create(2, 4, BufferKind::State) == refNext, "(i)(v) 空のストアへ復元してから作ったハンドルが、連続実行と一致する");
+
+    // (ii) 復元の後に Fx を作ってから State を作っても、連続実行と一致する (Fx の作り直しが State の採番を動かさない)
+    ComputeBufferStore fresh2(StoreLane::Game);
+    ByteReader r3(blob.data(), blob.size());
+    std::vector<ComputeBufferStore::Slot> slots3;
+    Check(fresh2.ReadSnapshot(r3, slots3), "(ii) 読める");
+    fresh2.ApplySnapshot(std::move(slots3));
+    fresh2.Create(8, 4, BufferKind::Fx);
+    fresh2.Create(8, 4, BufferKind::Fx);
+    Check(fresh2.Create(2, 4, BufferKind::State) == refNext, "(ii) 復元後に Fx を作っても、続く State のハンドルは連続実行と一致する");
+
+    // (iv) State と Fx を交互に作成・解放しても、State のハンドル列は Fx の有無に依存しない
+    ComputeBufferStore withFx(StoreLane::Game);
+    ComputeBufferStore noFx(StoreLane::Game);
+    bool sameSeq = true;
+    uint64_t prevWith = 0;
+    uint64_t prevNo = 0;
+    for (int i = 0; i < 12; ++i) {
+        const uint64_t f1 = withFx.Create(4, 4, BufferKind::Fx);
+        const uint64_t hw = withFx.Create(2, 4, BufferKind::State);
+        const uint64_t hn = noFx.Create(2, 4, BufferKind::State);
+        sameSeq = sameSeq && hw == hn;
+        if (i % 3 == 2) {
+            withFx.Release(prevWith);
+            noFx.Release(prevNo);
+        }
+        if (i % 2 == 1) {
+            withFx.Release(f1);
+        }
+        prevWith = hw;
+        prevNo = hn;
+    }
+    Check(sameSeq, "(iv) State と Fx を交互に作成・解放しても、State のハンドル列は Fx の有無に依存しない");
+    Check(a.Find(fx) != nullptr && a.Find(fx)->kind == BufferKind::Fx && a.Find(s0)->kind == BufferKind::State
+              && ((fx >> 32) & (1u << 29)) != 0 && ((s0 >> 32) & (1u << 29)) == 0,
+          "ハンドルに種別の印 (世代欄の bit 29) が入る");
 
     // 壊れた blob
     bool allRejected = true;
@@ -380,12 +413,19 @@ void TestSimSnapshotAndLifetime()
         Check(HashWorld(w, refs.HashSources()) == hashA, "復元後のハッシュが撮影時と一致する");
         Check(ReadAll(svc, CallerKind::Cpp, buf[0], n) == y1 && svc.Store(CallerKind::Cpp).IsValid(other),
               "FIELD に持っていたハンドルが、復元後も同じバッファ (同じ中身) を指す");
-        Check(svc.Store(CallerKind::Cpp).IsValid(fx) && !svc.Store(CallerKind::Cpp).IsValid(lateFx),
-              "撮影時にあった Fx は残り、後から作った Fx は消える");
+        Check(svc.Store(CallerKind::Cpp).IsValid(fx) && svc.Store(CallerKind::Cpp).IsValid(lateFx),
+              "(iii) 復元の前後で、撮影前後どちらの Fx も手元のハンドルのまま有効 (Fx の表には触らない)");
         Check(svc.Store(CallerKind::CSharp).IsValid(scriptLane), "C# 用のストアは復元に触られない");
         const uint64_t again = svc.CreateBuffer(CallerKind::Cpp, 3, sizeof(float), BufferKind::State, e2.Id());
         Check(again == mutCreate, "復元後に同じ操作をすると同じハンドルが出る (連続して走った場合と同じ)");
         svc.ReleaseBuffer(CallerKind::Cpp, again);
+        RestoreSimSnapshot(refs, blob.data(), blob.size());
+        // (ii) 復元後にスクリプトが Fx を作り直しても、続く State の採番は連続実行と変わらない
+        const uint64_t rebuiltFx = svc.CreateBuffer(CallerKind::Cpp, 5, sizeof(float), BufferKind::Fx);
+        const uint64_t afterFx = svc.CreateBuffer(CallerKind::Cpp, 3, sizeof(float), BufferKind::State, e2.Id());
+        Check(afterFx == mutCreate, "(ii) 復元後に Fx を作ってから State を作っても、連続実行と同じハンドルが出る");
+        svc.ReleaseBuffer(CallerKind::Cpp, afterFx);
+        svc.ReleaseBuffer(CallerKind::Cpp, rebuiltFx);
 
         // 復元後の ForEach が、連続して走った場合と同じ結果
         svc.BeginTick(false);
@@ -417,7 +457,9 @@ void TestSimSnapshotAndLifetime()
         Check(svc.ReleaseDeadOwners(w) == 0, "もう一度呼んでも何も起きない");
         w.DestroyEntity(e2.Id());
         w.ApplyStructuralChanges();
-        Check(svc.ReleaseDeadOwners(w) == 2 && svc.Store(CallerKind::Cpp).LiveCount() == 0, "残りの持ち主を破棄すると全部解放される (Fx も)");
+        Check(svc.ReleaseDeadOwners(w) == 2 && svc.Store(CallerKind::Cpp).LiveCount() == 1
+                  && svc.Store(CallerKind::Cpp).IsValid(lateFx),
+              "残りの持ち主を破棄すると持ち主付きは全部解放される (Fx も。持ち主なしの Fx は残る)");
 
         // 持ち主なしは自動解放しない / 全解放で採番が新規起動と同じに戻る
         const uint64_t unowned = svc.CreateBuffer(CallerKind::Cpp, 2, sizeof(float), BufferKind::State);

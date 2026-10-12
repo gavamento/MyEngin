@@ -12,8 +12,10 @@
 namespace mye::compute {
 namespace {
 
-constexpr uint32_t kGenerationBits = 30;
+constexpr uint32_t kGenerationBits = 29;
 constexpr uint32_t kGenerationMask = (1u << kGenerationBits) - 1u;
+constexpr uint32_t kKindFxMark = 1u << kGenerationBits;
+constexpr uint32_t kLaneMaskBits = 3u << 30;
 
 } // namespace
 
@@ -26,7 +28,12 @@ ComputeBufferStore::ComputeBufferStore(StoreLane lane, ComputeStoreLimits limits
 uint32_t ComputeBufferStore::LaneMark() const
 {
     // Game = 0b10、Script = 0b11 (上位 2 bit)
-    return (lane_ == StoreLane::Game ? 2u : 3u) << kGenerationBits;
+    return (lane_ == StoreLane::Game ? 2u : 3u) << 30;
+}
+
+uint32_t ComputeBufferStore::HighMark(BufferKind kind) const
+{
+    return LaneMark() | (kind == BufferKind::Fx ? kKindFxMark : 0u);
 }
 
 uint64_t ComputeBufferStore::Create(uint32_t count, uint32_t stride, BufferKind kind, EntityID owner)
@@ -42,21 +49,22 @@ uint64_t ComputeBufferStore::Create(uint32_t count, uint32_t stride, BufferKind 
     if (kind == BufferKind::State && stateBytes_ + bytes > limits_.stateTotalBytes) {
         return 0;
     }
-    // 最小の空きスロット。無ければ末尾へ足す
-    size_t index = slots_.size();
-    for (size_t i = 0; i < slots_.size(); ++i) {
-        if (!slots_[i].live) {
+    // その種別の表の最小の空きスロット。無ければ末尾へ足す
+    std::vector<Slot>& table = slots_[static_cast<size_t>(kind)];
+    size_t index = table.size();
+    for (size_t i = 0; i < table.size(); ++i) {
+        if (!table[i].live) {
             index = i;
             break;
         }
     }
-    if (index == slots_.size()) {
-        if (slots_.size() >= limits_.maxSlots) {
+    if (index == table.size()) {
+        if (table.size() >= limits_.maxSlots) {
             return 0;
         }
-        slots_.emplace_back();
+        table.emplace_back();
     }
-    Slot& s = slots_[index];
+    Slot& s = table[index];
     s.generation = (s.generation % kGenerationMask) + 1u; // 1..kGenerationMask を巡回。0 にはしない
     s.live = true;
     s.kind = kind;
@@ -68,15 +76,16 @@ uint64_t ComputeBufferStore::Create(uint32_t count, uint32_t stride, BufferKind 
     if (kind == BufferKind::State) {
         stateBytes_ += bytes;
     }
-    return HandleOf(static_cast<uint32_t>(index));
+    return HandleOf(kind, static_cast<uint32_t>(index));
 }
 
-uint64_t ComputeBufferStore::HandleOf(uint32_t index) const
+uint64_t ComputeBufferStore::HandleOf(BufferKind kind, uint32_t index) const
 {
-    if (index >= slots_.size() || !slots_[index].live) {
+    const std::vector<Slot>& table = slots_[static_cast<size_t>(kind)];
+    if (index >= table.size() || !table[index].live) {
         return 0;
     }
-    const uint32_t gen = LaneMark() | slots_[index].generation;
+    const uint32_t gen = HighMark(kind) | table[index].generation;
     return (static_cast<uint64_t>(gen) << 32) | index;
 }
 
@@ -92,10 +101,15 @@ const ComputeBufferStore::Slot* ComputeBufferStore::Find(uint64_t handle) const
     }
     const uint32_t gen = static_cast<uint32_t>(handle >> 32);
     const uint32_t index = static_cast<uint32_t>(handle & 0xFFFFFFFFu);
-    if (index >= slots_.size() || (gen & ~kGenerationMask) != LaneMark()) {
+    if ((gen & kLaneMaskBits) != LaneMark()) {
         return nullptr;
     }
-    const Slot& s = slots_[index];
+    const BufferKind kind = (gen & kKindFxMark) != 0u ? BufferKind::Fx : BufferKind::State;
+    const std::vector<Slot>& table = slots_[static_cast<size_t>(kind)];
+    if (index >= table.size()) {
+        return nullptr;
+    }
+    const Slot& s = table[index];
     if (!s.live || s.generation != (gen & kGenerationMask)) {
         return nullptr;
     }
@@ -122,7 +136,8 @@ bool ComputeBufferStore::Release(uint64_t handle)
 
 void ComputeBufferStore::ReleaseAll()
 {
-    slots_.clear();
+    slots_[0].clear();
+    slots_[1].clear();
     stateBytes_ = 0;
 }
 
@@ -152,16 +167,18 @@ bool ComputeBufferStore::Read(uint64_t handle, void* dst, uint32_t count) const
 uint32_t ComputeBufferStore::LiveCount() const
 {
     uint32_t n = 0;
-    for (const Slot& s : slots_) {
-        n += s.live ? 1u : 0u;
+    for (const std::vector<Slot>& table : slots_) {
+        for (const Slot& s : table) {
+            n += s.live ? 1u : 0u;
+        }
     }
     return n;
 }
 
 bool ComputeBufferStore::HasLiveState() const
 {
-    for (const Slot& s : slots_) {
-        if (s.live && s.kind == BufferKind::State) {
+    for (const Slot& s : slots_[0]) {
+        if (s.live) {
             return true;
         }
     }
@@ -171,18 +188,16 @@ bool ComputeBufferStore::HasLiveState() const
 namespace {
 constexpr uint8_t kSnapDead = 0;
 constexpr uint8_t kSnapState = 1;
-constexpr uint8_t kSnapFx = 2;
 } // namespace
 
 void ComputeBufferStore::WriteSnapshot(ByteWriter& w) const
 {
-    w.Count(slots_.size());
-    for (const Slot& s : slots_) {
+    const std::vector<Slot>& table = slots_[static_cast<size_t>(BufferKind::State)];
+    w.Count(table.size());
+    for (const Slot& s : table) {
         w.U32(s.generation);
         if (!s.live) {
             w.U8(kSnapDead);
-        } else if (s.kind == BufferKind::Fx) {
-            w.U8(kSnapFx);
         } else {
             w.U8(kSnapState);
             w.U32(s.count);
@@ -212,14 +227,10 @@ bool ComputeBufferStore::ReadSnapshot(ByteReader& r, std::vector<Slot>& out) con
         if (mark == kSnapDead) {
             continue;
         }
-        s.live = true;
-        if (mark == kSnapFx) {
-            s.kind = BufferKind::Fx;
-            continue;
-        }
         if (mark != kSnapState) {
             return false;
         }
+        s.live = true;
         s.kind = BufferKind::State;
         s.count = r.U32();
         s.stride = r.U32();
@@ -241,39 +252,15 @@ bool ComputeBufferStore::ReadSnapshot(ByteReader& r, std::vector<Slot>& out) con
     return r.Ok();
 }
 
-void ComputeBufferStore::ApplySnapshot(std::vector<Slot>&& snapshot, std::vector<uint64_t>& droppedFx)
+void ComputeBufferStore::ApplySnapshot(std::vector<Slot>&& snapshot)
 {
-    // 撮影後に作られた Fx (表の外・世代違い) は捨てる。Fx は表示用で sim の状態ではない
-    for (uint32_t i = 0; i < slots_.size(); ++i) {
-        const Slot& cur = slots_[i];
-        if (!cur.live || cur.kind != BufferKind::Fx) {
-            continue;
-        }
-        const bool kept = i < snapshot.size() && snapshot[i].live && snapshot[i].kind == BufferKind::Fx
-            && snapshot[i].generation == cur.generation;
-        if (!kept) {
-            droppedFx.push_back(HandleOf(i));
-        }
-    }
-    std::vector<Slot> next(snapshot.size());
     stateBytes_ = 0;
-    for (size_t i = 0; i < snapshot.size(); ++i) {
-        Slot& s = snapshot[i];
-        if (s.live && s.kind == BufferKind::Fx) {
-            if (i < slots_.size() && slots_[i].live && slots_[i].kind == BufferKind::Fx
-                && slots_[i].generation == s.generation) {
-                next[i] = std::move(slots_[i]);
-            } else {
-                next[i].generation = s.generation;
-            }
-        } else {
-            if (s.live) {
-                stateBytes_ += s.data.size();
-            }
-            next[i] = std::move(s);
+    for (const Slot& s : snapshot) {
+        if (s.live) {
+            stateBytes_ += s.data.size();
         }
     }
-    slots_ = std::move(next);
+    slots_[static_cast<size_t>(BufferKind::State)] = std::move(snapshot);
 }
 
 } // namespace mye::compute

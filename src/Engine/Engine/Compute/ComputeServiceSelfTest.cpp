@@ -233,7 +233,8 @@ void TestStore()
     const uint64_t a2 = a.Create(10, 4, BufferKind::Fx);
     const uint64_t a3 = a.Create(10, 8, BufferKind::State);
     Check(a1 != 0 && a2 != 0 && a3 != 0 && a1 != a2 && a2 != a3, "3 本作れて、ハンドルは全部違う");
-    Check(a.SlotIndex(a1) == 0 && a.SlotIndex(a2) == 1 && a.SlotIndex(a3) == 2, "最小の空きスロットから順に採番");
+    Check(a.SlotIndex(a1) == 0 && a.SlotIndex(a2) == 0 && a.SlotIndex(a3) == 1,
+          "種別ごとに最小の空きスロットから順に採番 (State と Fx は別の表)");
 
     // 同じ操作列から同じハンドル (決定的な採番)
     ComputeBufferStore a2nd(StoreLane::Game);
@@ -245,8 +246,8 @@ void TestStore()
     Check(a.Release(a2), "解放できる");
     Check(!a.Release(a2), "二重解放は false で何も起きない");
     Check(!a.IsValid(a2), "解放後のハンドルは無効 (世代が古い)");
-    const uint64_t a4 = a.Create(5, 4, BufferKind::State);
-    Check(a.SlotIndex(a4) == 1 && a4 != a2, "空いたスロットを最小から再利用し、世代は進む");
+    const uint64_t a4 = a.Create(5, 4, BufferKind::Fx);
+    Check(a.SlotIndex(a4) == 0 && a4 != a2, "空いたスロットを最小から再利用し、世代は進む");
     Check(!a.IsValid(a2) && a.IsValid(a4), "古いハンドルは再利用スロットを指さない");
 
     Check(!b.IsValid(a1) && !b.IsValid(a4), "別レーンのストアは他方のハンドルを受け付けない");
@@ -269,9 +270,15 @@ void TestStore()
     Check(c1 != 0 && c.Create(10, 4, BufferKind::State) == 0, "State の総バイト枠を超えると 0");
     Check(c.Create(100, 4, BufferKind::Fx) != 0, "Fx は State の総バイト枠に数えない");
     c.Release(c1);
-    Check(c.Create(25, 4, BufferKind::State) != 0, "解放した分の枠は戻る");
+    const uint64_t c2 = c.Create(25, 4, BufferKind::State);
+    Check(c2 != 0, "解放した分の枠は戻る");
+    c.Release(c2);
     c.Create(1, 4, BufferKind::Fx);
-    Check(c.Create(1, 4, BufferKind::Fx) == 0, "スロット数の上限で 0");
+    c.Create(1, 4, BufferKind::Fx);
+    Check(c.Create(1, 4, BufferKind::Fx) == 0, "Fx の表がスロット数の上限で 0");
+    Check(c.Create(1, 4, BufferKind::State) != 0 && c.Create(1, 4, BufferKind::State) != 0
+              && c.Create(1, 4, BufferKind::State) != 0 && c.Create(1, 4, BufferKind::State) == 0,
+          "スロット数の上限は種別ごと (Fx が満杯でも State は作れる)");
 
     // Write / Read
     std::vector<uint8_t> src(40), dst(40, 0xEE);
@@ -637,6 +644,30 @@ void TestServiceCpu()
         Check(sk == kJobSkipped && svc.Status(sk) == JobStatus::Skipped && svc.Target(sk) == JobTarget::None,
               "Fx は resim 中は Skipped (Skipped / None)");
         Check(fx.ReadFloats(CallerKind::Cpp, fxb[0], kCount) == d.y0, "Skipped のとき Fx バッファは変わらない");
+        // 引数の誤りは resim でも失敗 (Skipped にしない)。元の実行と Ok() が割れてはいけない
+        {
+            uint64_t bad[2] = { 0, bufs[1] };
+            Check(svc.ForEach(fx.Args(kScript, CallerKind::Cpp, kSaxpy, Execution::Auto, bad, 2)) == kJobFailed,
+                  "resim 中でも無効ハンドル (0) は失敗");
+            uint64_t bogus[2] = { bufs[0] ^ (1ull << 40), bufs[1] };
+            Check(svc.ForEach(fx.Args(kScript, CallerKind::Cpp, kSaxpy, Execution::Auto, bogus, 2)) == kJobFailed,
+                  "resim 中でも世代違いのハンドルは失敗");
+            uint64_t released[2];
+            fx.MakeSaxpyBuffers(CallerKind::Cpp, BufferKind::State, BufferKind::State, d, released);
+            svc.ReleaseBuffer(CallerKind::Cpp, released[0]);
+            Check(svc.ForEach(fx.Args(kScript, CallerKind::Cpp, kSaxpy, Execution::Auto, released, 2)) == kJobFailed,
+                  "resim 中でも解放済みのハンドルは失敗");
+            svc.ReleaseBuffer(CallerKind::Cpp, released[1]);
+            uint64_t fxBad[2] = { fxb[0], 0 };
+            Check(svc.ForEach(fx.Args(kScript, CallerKind::Cpp, kSaxpy, Execution::Auto, fxBad, 2)) == kJobFailed,
+                  "resim 中でも Fx の引数に無効ハンドルが混じれば失敗 (Skipped にしない)");
+            Check(svc.ForEach(fx.Args(kScript, CallerKind::Cpp, kSaxpy, Execution::Auto, bufs, 1)) == kJobFailed,
+                  "resim 中でも引数の本数違いは失敗");
+            uint64_t wide[2] = { svc.CreateBuffer(CallerKind::Cpp, kCount, 8, BufferKind::State), bufs[1] };
+            Check(svc.ForEach(fx.Args(kScript, CallerKind::Cpp, kSaxpy, Execution::Auto, wide, 2)) == kJobFailed,
+                  "resim 中でも stride 違いは失敗");
+            svc.ReleaseBuffer(CallerKind::Cpp, wide[0]);
+        }
         svc.BeginTick(false);
         const uint64_t run = svc.ForEach(fx.Args(kScript, CallerKind::Cpp, kSaxpy, Execution::Auto, fxb, 2));
         Check(run == kJobDoneCpu && fx.ReadFloats(CallerKind::Cpp, fxb[0], kCount) == ref,

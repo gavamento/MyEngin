@@ -367,7 +367,7 @@ rem ---- Compute.ForEach (M91、ADR-030)。群れ 512 体 (C++ の State、CPU�
 rem Fx、GPU 優先。DebugDrawLine にだけ描く) が回る。State の ForEach の結果・State バッファのスナップショット・
 rem ハッシュ (snapshot stress の往復を含む) が Debug / Release / Server.exe でビット一致すること自体が、C++ の CPU 版の
 rem 構成間一致の証明になる。C# の群れは C# レーンが記録・検証中は止まるのでここには入らない (見えるだけ)。
-rem ★State のバッファのハンドルが FIELD に入るので、バッファの採番 (Fx との共有スロット空間を含む) もこのペアが検査する
+rem ★State のバッファのハンドルが FIELD に入るので、バッファの採番もこのペアが検査する
 :job_compute
 if exist cache\compute_showcase.scene.json del /q cache\compute_showcase.scene.json
 call :chain cache\golden_compute.rep "--compute-demo" "--compute-demo"

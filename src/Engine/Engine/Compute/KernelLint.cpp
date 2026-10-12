@@ -685,7 +685,7 @@ private:
             const bool isId = index.kind == ExprKind::Ident && index.ref == Ref::KernelId;
             if (!isId && !it.IsError()) {
                 Report(KernelRule::RwIndex, e.line,
-                       "RW バッファ '" + base.text + "' の添字は id だけ (他の要素への書き込みは禁止。ADR-028)");
+                       "RW バッファ '" + base.text + "' の添字は id だけ (他の要素の読み書きは禁止。ADR-028)");
             }
         } else if (!it.IsError() && !(it.IsScalar() && it.scalar == ScalarKind::Uint)) {
             Report(KernelRule::TypeMismatch, e.line, "RO バッファの添字は uint (今は " + Str(it) + ")" + NarrowingHint(KType::Scalar(ScalarKind::Uint), it));

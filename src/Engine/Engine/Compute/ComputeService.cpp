@@ -368,13 +368,15 @@ uint32_t ComputeService::ReleaseDeadOwners(const World& world)
     uint32_t released = 0;
     for (const CallerKind lane : { CallerKind::Cpp, CallerKind::CSharp }) {
         ComputeBufferStore& store = Store(lane);
-        const uint32_t slotCount = static_cast<uint32_t>(store.Slots().size());
-        for (uint32_t i = 0; i < slotCount; ++i) { // スロット昇順 = 決定的
-            const ComputeBufferStore::Slot& s = store.Slots()[i];
-            if (s.live && !s.owner.IsNull() && !world.IsAlive(s.owner)) {
-                const uint64_t handle = store.HandleOf(i);
-                ReleaseBuffer(lane, handle);
-                ++released;
+        for (const BufferKind kind : { BufferKind::State, BufferKind::Fx }) {
+            const uint32_t slotCount = static_cast<uint32_t>(store.Slots(kind).size());
+            for (uint32_t i = 0; i < slotCount; ++i) { // 表ごとにスロット昇順 = 決定的
+                const ComputeBufferStore::Slot& s = store.Slots(kind)[i];
+                if (s.live && !s.owner.IsNull() && !world.IsAlive(s.owner)) {
+                    const uint64_t handle = store.HandleOf(kind, i);
+                    ReleaseBuffer(lane, handle);
+                    ++released;
+                }
             }
         }
     }
@@ -385,10 +387,10 @@ void ComputeService::ReleaseAllBuffers()
 {
     for (const CallerKind lane : { CallerKind::Cpp, CallerKind::CSharp }) {
         ComputeBufferStore& store = Store(lane);
-        const uint32_t slotCount = static_cast<uint32_t>(store.Slots().size());
+        const uint32_t slotCount = static_cast<uint32_t>(store.Slots(BufferKind::Fx).size());
         for (uint32_t i = 0; i < slotCount; ++i) {
-            if (store.Slots()[i].live && store.Slots()[i].kind == BufferKind::Fx) {
-                gpu_->Forget(store.HandleOf(i));
+            if (store.Slots(BufferKind::Fx)[i].live) {
+                gpu_->Forget(store.HandleOf(BufferKind::Fx, i));
             }
         }
         store.ReleaseAll();
@@ -407,11 +409,8 @@ bool ComputeService::ReadGameSnapshot(ByteReader& r, std::vector<ComputeBufferSt
 
 void ComputeService::ApplyGameSnapshot(std::vector<ComputeBufferStore::Slot>&& slots)
 {
-    std::vector<uint64_t> droppedFx;
-    gameStore_.ApplySnapshot(std::move(slots), droppedFx);
-    for (const uint64_t handle : droppedFx) {
-        gpu_->Forget(handle);
-    }
+    // State の表だけを差し替える。Fx は表示用で、手元のハンドルも GPU 側の対応物もそのまま有効 (D29)
+    gameStore_.ApplySnapshot(std::move(slots));
 }
 
 bool ComputeService::ReleaseBuffer(CallerKind lane, uint64_t handle)
@@ -683,6 +682,17 @@ uint64_t ComputeService::ForEach(const ForEachArgs& args)
     const bool resolved = Resolve(args, desc, r, resolveWhy);
     const DecisionInput in = MakeDecisionInput(args, desc, resolved ? &r : nullptr);
 
+    // 引数の誤りは resim かどうかに関係なく失敗。Skipped の判定より前に出す (元の実行と resim で Ok() が割れない)
+    if (!resolved) {
+        const Decision pre = DecideExecution(in);
+        obs.lastKind = pre.kind;
+        obs.lastNote = pre.note;
+        if (pre.kind == DecisionKind::Failed) {
+            return fail(pre.reason);
+        }
+        return fail(resolveWhy);
+    }
+
     const Decision d = DecideExecution(in);
     obs.lastKind = d.kind;
     obs.lastNote = d.note;
@@ -692,9 +702,6 @@ uint64_t ComputeService::ForEach(const ForEachArgs& args)
     if (d.kind == DecisionKind::Skipped) {
         obs.lastFail = FailReason::None;
         return kJobSkipped;
-    }
-    if (!resolved) {
-        return fail(resolveWhy);
     }
 
     obs.lastElements = r.elementCount;
@@ -777,11 +784,11 @@ void ComputeService::ReleaseGpu()
 {
     // 消失前に終わっていた結果は拾えるだけ拾う (消失後は Map が失敗するだけ)
     for (ComputeBufferStore* store : { &gameStore_, &scriptStore_ }) {
-        std::vector<ComputeBufferStore::Slot>& slots = store->MutableSlots();
+        std::vector<ComputeBufferStore::Slot>& slots = store->MutableSlots(BufferKind::Fx);
         for (uint32_t i = 0; i < slots.size(); ++i) {
             ComputeBufferStore::Slot& s = slots[i];
-            if (s.live && s.kind == BufferKind::Fx) {
-                const uint64_t handle = store->HandleOf(i);
+            if (s.live) {
+                const uint64_t handle = store->HandleOf(BufferKind::Fx, i);
                 if (gpu_->HasUnapplied(handle)) {
                     gpu_->Poll(handle, s.data.data(), s.count, s.stride, false);
                 }
