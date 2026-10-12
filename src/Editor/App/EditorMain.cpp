@@ -557,8 +557,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         // MYE_SELFTEST_ONLY=servernet / servernet-v1: net の試験 (V1 など) だけを回す。不安定な FAIL の再現率を測るための入口で、
         // 製品の挙動には触れない
         wchar_t onlyName[32] = {};
-        if (GetEnvironmentVariableW(L"MYE_SELFTEST_ONLY", onlyName, 32) > 0 && std::wstring(onlyName).rfind(L"servernet", 0) == 0) {
-            ok &= mye::RunServerNetSelfTest();
+        const bool hasOnly = GetEnvironmentVariableW(L"MYE_SELFTEST_ONLY", onlyName, 32) > 0;
+        // MYE_SELFTEST_ONLY=computescript: HeadlessSim の起動と GameLogic.dll のホットリロードを通る試験だけを回す
+        if (hasOnly && (std::wstring(onlyName).rfind(L"servernet", 0) == 0 || std::wstring(onlyName) == L"computescript")) {
+            ok &= std::wstring(onlyName) == L"computescript" ? mye::RunComputeScriptSelfTest() : mye::RunServerNetSelfTest();
             if (!tempEc) {
                 std::filesystem::remove_all(selftestTemp, tempEc);
             }

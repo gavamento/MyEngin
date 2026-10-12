@@ -276,6 +276,7 @@ class Swarm : MyeScript {
 | sub-15 | 規則 14-c のエラーに直し方を出す (U17) と、三校 verify.bat の FAIL 2 件が M91 の退行かどうかの切り分け (7d28c31 と HEAD で比較) | sub-14 | — | `M91 追補: check_rules 規則 14-c のエラーに直し方を出す` (切り分けではコードを変えない) |
 | sub-16 | レビュー 1 の指摘を直す (#1: State と Fx の採番を分ける、snapshot v50。#2: resim 中の引数の誤りを失敗にする。#3: インスペクターの補足文を折り返す。#4: KL016 の文言) | sub-09 | 4, 5 (と review-1 の指摘) | `M91k: レビュー 1 の指摘を直す (State と Fx の採番を分ける、resim 中の引数の誤りを失敗にする。snapshot v50)` |
 | sub-17 | net の selftest V1 が不安定に落ちる原因を切り分けて直す (再現率の表、基点 7d28c31 / 42c6b89 との比較、原因の断定、修正後に連続 30 回で FAIL 0、sub-11 のリトライの扱い) | sub-16 | — (U20、R11) | `M91l: net の selftest (V1) が不安定に落ちる原因を直す` |
+| sub-18 | selftest の HeadlessSim のセーブと shadow コピーの置き場をプロセスごとに分ける (製品の置き場は変えない。同じ exe から同時 4 本 × 30 ラウンドで FAIL 0) | sub-17 | — (U21) | `M91m: selftest の HeadlessSim のセーブと shadow コピーの置き場をプロセスごとに分ける (製品の置き場は変えない)` |
 | sub-06 | C# の同形 API・C# の CPU 版の実行・[ComputeKernels]・RyuJIT の決定論 | sub-05 | 3 (C# 側), 8, 15 | `M91g: C# から Compute.ForEach を呼べるようにし、C# の CPU 版を走らせる` |
 | sub-07 | カーネルのアセット扱い・スクリプトのインスペクターの Compute 欄・project_settings | sub-06 | 11, 16 | `M91h: スクリプトのインスペクターに Compute 欄を足し、実行ポリシーと負荷枠を設定にする` |
 | sub-08 | デモと compute A/B (`--compute-force-cpu`) | sub-06 | 10, 12 | `M91i: Compute デモと replay_verify の compute A/B を足す` |
@@ -303,7 +304,7 @@ sub-02 と sub-03 は互いに依存しない (並列にできる)。sub-07 と 
 
 - 回答済み (2026-10-12、9 回目): U20 = M91 の中で今直す (planner 案「M91 の後に別件」の逆)。sub-17 を新設した。原因が M91 の変更でなくても、M91 の中で直す。
 
-- `[ユーザーに聞ける]` U21 (sub-17): 同じ exe のフォルダで同時に回すと共有されてしまう作業場所が、ほかにもまだある: `save_server` (V1 のスロット 7) と `cache\hot_server\i<n>` (HeadlessSim の側)。今は FAIL を起こしていない。V1 はネット中は LoadGame が no-op なので、結果に関与しないため / 裁定: M91 の範囲外の別件として記録だけにする / 逆 (M91 で直す) にすると: HeadlessSim の DLL の shadow コピーの置き場と、セーブのスロットの置き場を、プロセスごとに分けるサブが 1 本増える。製品コード (HeadlessSim) を触るので、Server と replay_verify の再確認も要る
+- 回答済み (2026-10-12、10 回目): U21 = M91 の中で直す (planner 案「別件として記録だけ」の逆)。sub-18 を新設した。製品の通常の置き場 (Server.exe の `save_server` は再起動をまたぐセーブ) と、決定論・ファイル形式は変えない。selftest だけが、HeadlessSimSetup の上書きの欄で、プロセスごとの置き場を使う。
 
 ### 7.2 リスク
 - R1 (sub-01): 同じテキストが HLSL と C++ の両方で通るか。sub-02 の検査器の規則で、通らない書き方を禁止に回す。
@@ -351,3 +352,5 @@ sub-02 と sub-03 は互いに依存しない (並列にできる)。sub-07 と 
 - 2026-10-12 (ユーザー回答 9 回目、U20 = 今直す。planner 案の逆): sub-17 を新設した。レビューの round 2 は sub-17 の後に回す。
 - 2026-10-12 (sub-17 round 1): 約 190 回 (単独 / 負荷 / 初回起動 / 再リンク直後 / 全体) 回しても再現しなかった。反証した仮説: 閉じる前に読む、FILE* の枯渇、置き場の共有 (ソースの上で)、製品による削除、FileWatcher。まだ試していない有力な仮説が 1 つ残る: **同じ exe のフォルダから、selftest を同時に複数回すこと**。作業ディレクトリが `GetExecutableDir()\cache\server_net_selftest` で、プロセスで共有されている (`ServerNetSelfTest.cpp:795`)。Debug と Release を同時に回すのは別のフォルダなので、この仮説を試したことにはならない。round 2 で確かめる。
 - 2026-10-12 (sub-17 round 2): R11 は解決した。原因は、同じ exe のフォルダから net の selftest を同時に回すと、作業フォルダ `cache\server_net_selftest` の .rep / .dump を互いに上書き・削除しあうことだった。修正前は同時 4 本で 30/40 が FAIL、作業フォルダを `p<pid>` に分けた後は 30 ラウンド (120 プロセス) で FAIL 0。M91 の外の原因。sub-11 のリトライは取り除いた。ほかにも共有のまま残っている作業場所を U21 として記録した。
+- 2026-10-12 (ユーザー回答 10 回目、U21 = M91 の中で直す。planner 案の逆): sub-18 を新設した。HeadlessSim.cpp:296-298 を確かめた結果、`save_server` は同じ exe のすべてのプロセスとインスタンスで共有されている。hot_server はデストラクタが `p<pid>` を消すので、すでにプロセスごとに分かれている可能性がある (sub-18 で確かめる)。
+- 2026-10-12 (sub-18 round 1): HeadlessSimSetup に saveDirOverride を足し、selftest だけがプロセスごとのセーブの置き場を使うようにした。製品の置き場 (`save_server`) は変えず、Server.exe の selftest でそれを確かめた。hot_server は、DllReloader が `p<pid>` を足すので、すでにプロセスごとに分かれていた。

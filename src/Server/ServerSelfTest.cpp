@@ -498,6 +498,13 @@ void TestLoopTerminate(const CheckFn& check, const std::filesystem::path& tempDi
     if (!check(sim.Init(setup), "G3: the headless sim starts for the loop test (run from the repository root)")) {
         return;
     }
+    // 上書きを渡さない sim (Server.exe の通常起動と同じ) は、専用サーバの再起動をまたぐ <base>\save_server を使い続ける
+    {
+        const std::wstring suffix = L"\\save_server";
+        const std::wstring& dir = sim.SaveDir();
+        check(dir.size() > suffix.size() && dir.compare(dir.size() - suffix.size(), suffix.size(), suffix) == 0,
+              "M91m: a headless sim without saveDirOverride keeps the default <base>\\save_server");
+    }
     // M91d: device 無しの sim でも Compute.ForEach の State が CPU で EngineLoop と同じ結果になる
     check(sim.Refs().compute == &sim.Compute() && CheckComputeStateRunsWithoutDevice(sim.Compute()),
           "M91d: the headless sim wires ComputeService, and a State ForEach runs on the CPU without a device");

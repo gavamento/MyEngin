@@ -293,9 +293,11 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     // 状態ファイルの置き場は Editor / Runtime と分ける (並列実行でも、片方の実行が相手の
     // シャドウコピー・セーブを触らない)。分岐は GameLogic.dll と同じく projectRoot の有無
     const std::wstring base = m.config.projectRoot.empty() ? GetExecutableDir() : m.config.projectRoot;
-    m.saveDir = base + L"\\save_server";
+    m.saveDir = setup.saveDirOverride.empty() ? base + L"\\save_server" : setup.saveDirOverride;
     m.shadowCopyDir =
         base + L"\\cache\\hot_server\\i" + std::to_wstring(g_instanceSerial.fetch_add(1));
+    MYE_LOG_INFO("[headless] saveDir=%s shadowCopyDir=%s pid=%lu", WideToUtf8(m.saveDir).c_str(),
+                 WideToUtf8(m.shadowCopyDir).c_str(), GetCurrentProcessId());
 
     // ---- GPU 系を除いた sim 側の起動手順 (EngineLoop::Run と同じ順、SimInit.h) ----
     m.resources.InitHeadless();

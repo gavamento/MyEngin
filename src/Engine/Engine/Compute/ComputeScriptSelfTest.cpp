@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <process.h>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -353,6 +354,7 @@ void TestGameLogicProbe()
 {
     HeadlessSimSetup setup;
     setup.config.title = L"MyEngine ComputeScriptSelfTest";
+    setup.saveDirOverride = (std::filesystem::temp_directory_path() / (L"mye_selftest_save_p" + std::to_wstring(_getpid()))).wstring(); // 同時実行の相手と save_server を共有しない
     setup.config.localPlayers = static_cast<int>(kMaxPlayers);
     setup.systemInput = true; // ServerNetSelfTest と同じ構成 (システム入力なしの構成は ForEach の経路に関係しない)
     setup.scene.showcase = FindShowcase(L"--local-demo", /*editor=*/true);

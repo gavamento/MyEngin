@@ -30,6 +30,8 @@ struct HeadlessSimSetup {
     // true: サーバ / クライアントのセッションとして動かす。RunTick へ渡すシステム入力
     // (参加・離脱) を tick ごとに適用し、SessionLanes を sim 状態に持つ (ctx.hasSystemInput)
     bool systemInput = false;
+    // 非空なら、セーブの置き場をここへ差し替える (空 = <base>\save_server)。同じ exe から検証を同時に回すときの分離用
+    std::wstring saveDirOverride;
 };
 
 struct HeadlessVerifyResult {

@@ -554,9 +554,12 @@ struct Sims {
     std::vector<std::byte> initialBlob;
 };
 
+std::wstring CrashRoot();
+
 bool InitSim(HeadlessSim& sim)
 {
     HeadlessSimSetup s;
+    s.saveDirOverride = CrashRoot() + L"\\save"; // 同時実行の相手と save_server を共有しない
     s.config.title = L"MyEngine ServerNetSelfTest";
     s.config.localPlayers = static_cast<int>(kMaxPlayers);
     s.scene.showcase = FindShowcase(L"--local-demo", /*editor=*/true);
@@ -1761,6 +1764,7 @@ OfflineVerify VerifyRepOffline(const std::wstring& path, const std::wstring& dum
     OfflineVerify o;
     HeadlessSimSetup s;
     s.config.title = L"MyEngine ServerNetSelfTest verify";
+    s.saveDirOverride = CrashRoot() + L"\\save";
     s.config.localPlayers = static_cast<int>(kMaxPlayers);
     s.config.replayVerifyPath = path;
     s.config.hashDumpPath = dumpPath;
@@ -1817,6 +1821,8 @@ void TestSaveLoadBoundary(Sims& sims)
     Check(NetLockstepBoundary(static_cast<int>(NetRole::Server)) && NetLockstepBoundary(static_cast<int>(NetRole::Client))
               && NetLockstepBoundary(static_cast<int>(NetRole::Host)) && !NetLockstepBoundary(0),
           "NetLockstepBoundary: every net role sets the boundary, no role does not");
+
+    Check(server.SaveDir() == CrashRoot() + L"\\save", "M91m: saveDirOverride puts the save under this process's work dir, not save_server");
 
     // 実在のセーブ (scenePath 無し = LoadGame もシーンを動かさない)
     const std::wstring savePath = SaveGameFile::PathForSlot(server.SaveDir(), kSlot);

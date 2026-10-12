@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <process.h>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -592,6 +593,7 @@ void TestManaged()
 
     HeadlessSimSetup setup;
     setup.config.title = L"MyEngine ComputeManagedSelfTest";
+    setup.saveDirOverride = (std::filesystem::temp_directory_path() / (L"mye_selftest_save_p" + std::to_wstring(_getpid()))).wstring(); // 同時実行の相手と save_server を共有しない
     setup.scene.showcase = FindShowcase(L"--local-demo", /*editor=*/true);
     HeadlessSim sim;
     if (setup.scene.showcase == nullptr || !sim.Init(setup)) {
