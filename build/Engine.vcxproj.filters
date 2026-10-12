@@ -489,6 +489,9 @@
     <ClCompile Include="..\src\Engine\Engine\Compute\ComputeDecision.cpp">
       <Filter>Engine\Compute</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Compute\ComputeInspectorRows.cpp">
+      <Filter>Engine\Compute</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Compute\ComputeManagedSelfTest.cpp">
       <Filter>Engine\Compute</Filter>
     </ClCompile>
@@ -499,6 +502,12 @@
       <Filter>Engine\Compute</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Compute\ComputeServiceSelfTest.cpp">
+      <Filter>Engine\Compute</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Compute\ComputeSettings.cpp">
+      <Filter>Engine\Compute</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Compute\ComputeSettingsSelfTest.cpp">
       <Filter>Engine\Compute</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Compute\ComputeStateSelfTest.cpp">
@@ -1437,6 +1446,9 @@
     <ClInclude Include="..\src\Engine\Engine\Compute\ComputeDecision.h">
       <Filter>Engine\Compute</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\ComputeInspectorRows.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Compute\ComputeManagedSelfTest.h">
       <Filter>Engine\Compute</Filter>
     </ClInclude>
@@ -1447,6 +1459,12 @@
       <Filter>Engine\Compute</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Compute\ComputeServiceSelfTest.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\ComputeSettings.h">
+      <Filter>Engine\Compute</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Compute\ComputeSettingsSelfTest.h">
       <Filter>Engine\Compute</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Compute\ComputeStateSelfTest.h">

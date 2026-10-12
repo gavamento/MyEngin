@@ -94,7 +94,7 @@
 ### round 1 の続き (書き直し後、司会が転記)
 - 書き直しはユーザー承認 (コミットしてから書き直す) のうえ司会が実施: 3972b9f をコミット → clean 確認 → `git rm --cached -r -q .` → `git reset -q --hard`。
 - 書き直し後の `git ls-files --eol`: 29 i/lf w/crlf、2129 i/lf w/lf、184 i/-text w/-text、w/mixed 0。
-- 書き直し後の作業ツリーで PASS: `toolseplay_verify.bat` (Debug/Release、19 ジョブ、217.8 s)、Editor.exe --selftest (Debug / Release)、Server.exe --selftest (Debug)、build_managed (TreatWarningsAsErrors)、`tools\shot_verify.bat` (30 shots、maxDiff=0、--update 不使用)、check_rules (0 error / 50 warning は既存の規則 7、規則 14 は 0 error)。検証後も `git status --porcelain` は空。
+- 書き直し後の作業ツリーで PASS: `tools\replay_verify.bat` (Debug/Release、19 ジョブ、217.8 s)、Editor.exe --selftest (Debug / Release)、Server.exe --selftest (Debug)、build_managed (TreatWarningsAsErrors)、`tools\shot_verify.bat` (30 shots、maxDiff=0、--update 不使用)、check_rules (0 error / 50 warning は既存の規則 7、規則 14 は 0 error)。検証後も `git status --porcelain` は空。
 
 ## フィードバック履歴
 - round 1: VERDICT OK (planner、2026-10-12)。作業ツリーの書き直しは自動の許可判定に 2 回拒否された。ユーザーの承認 (コミットしてから書き直す) を得て、司会が 3972b9f をコミットしたうえで実施した。書き直した後は w/mixed 0、テキストは w/lf (CRLF の規則の 29 件だけ w/crlf)。replay_verify の 19 ジョブ、selftest (Debug / Release / Server)、build_managed (警告をエラー扱い)、shot_verify の 30 shots (maxDiff=0) がすべて PASS した。nit: ASCII の .fbx 2 件も binary 指定になる (index は LF のままで、実害なし)。

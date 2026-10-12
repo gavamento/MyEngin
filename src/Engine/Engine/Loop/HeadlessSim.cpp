@@ -30,6 +30,7 @@
 #include "Engine/Engine/Animation/SkinningSystem.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
 #include "Engine/Engine/Compute/ComputeService.h"
+#include "Engine/Engine/Compute/ComputeSettings.h"
 #include "Engine/Engine/Audio/Playback/AudioMixer.h"
 #include "Engine/Engine/Audio/Playback/AudioSourceSystem.h"
 #include "Engine/Engine/Audio/Playback/AudioSystem.h"
@@ -334,6 +335,7 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     }
     // GPU デバイスは無い: コンピュート ABI のスロットは 0 / no-op を返す。ForEach の Fx は CPU 版で代わりに走る (D6)
     m.computeService.Bind(nullptr, nullptr);
+    compute::ApplyComputeSettings(m.computeService, compute::LoadComputeSettings(m.assetsRoot)); // M91: Runtime / Editor と同じ設定
     m.scriptHost.SetComputeAbi(&m.computeAbi, nullptr, &m.shaderManager, &m.resources.textures);
     m.managedHost.SetComputeAbi(&m.computeAbi, nullptr, &m.shaderManager, &m.resources.textures);
 

@@ -11,6 +11,8 @@
 #include "Engine/Engine/Audio/Synth/ImpactSoundAsset.h"
 #include "Engine/Engine/Audio/Playback/SoundAsset.h"
 #include "Engine/Engine/Asset/FbxLoader.h"
+#include "Engine/Engine/Compute/ComputeService.h"
+#include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Engine/Modal/ModalSoundLibrary.h"
 #include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
@@ -162,6 +164,12 @@ void ReloadHub::Shutdown()
 {
     watcher_.Stop();
     engineShaderWatcher_.Stop();
+}
+
+void ReloadHub::SetKernelHooks(compute::ComputeService* compute, ManagedHost* managed)
+{
+    compute_ = compute;
+    managed_ = managed;
 }
 
 void ReloadHub::SetActiveScenePath(const std::wstring& path)
@@ -328,7 +336,23 @@ ReloadHub::ReloadResult ReloadHub::ReloadShader(const std::wstring& path)
 {
     shaders_->RebuildProjectShaderIndex();
     shaders_->RequestRecompileForFile(path);
+    if (compute_ != nullptr && HasSuffix(path, L".kernel.hlsl")) {
+        ReloadKernel(path);
+    }
     return ReloadResult::Reloaded;
+}
+
+// CPU 側の変更の反映 (GPU は上の再コンパイル要求が受け持つ)。C++ の CPU 版は GameLogic の再ビルドで一致に戻り、
+// C# の CPU 版は CompileScripts の中で Kernels.gen.cs が作り直されて一致に戻る
+void ReloadHub::ReloadKernel(const std::wstring& path)
+{
+    const bool changed = compute_->ReloadKernelSource(path);
+    compute_->VerifyKernelSourceAgreement(); // 索引を作り直した直後に、GPU と CPU が同じファイルを読むか確かめ直す
+    if (!changed || managed_ == nullptr || !managed_->IsReady()) {
+        return;
+    }
+    MYE_LOG_INFO("[compute] kernel source changed - recompiling C# scripts: %s", WideToUtf8(path).c_str());
+    managed_->CompileScripts(assetsRoot_ + L"\\scripts");
 }
 
 ReloadHub::ReloadResult ReloadHub::ReloadTexture(const std::wstring& path)

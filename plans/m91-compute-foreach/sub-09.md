@@ -40,3 +40,12 @@ spec 受け入れ 13。
 - 変異テストの手順: `KernelCompat.cs` の `dot(float3)` の加算の順を変えると、selftest の一致の確認が FAIL する。
 - 速度: 1M 要素の Release で、Saxpy は C++ 0.21〜0.34 ms / C# 0.26〜0.60 ms、Mix は C++ 12.8〜22.4 ms / C# 15.1〜28.6 ms。
 - `RWView<T>` を int で添字すると、C# では CS1503 になる。
+
+## 申し送り (2026-10-12、sub-07 から)
+- ADR-030 の既知の制限: ReloadHub が CompileScripts を同期で呼ぶので、Roslyn の数秒ぶんフレームが止まる。
+- 起動順の事実: C# の起動時の登録は SetComputeService より後でなければ拒否される。HeadlessSim は順序が逆なので、selftest では見つけにくい。
+- test_checklists に足すこと:
+  - 日本語表示の Compute 欄
+  - GameLogic を Rebuild した後に、C++ の行が「一致」に戻ること
+  - Play 中にカーネルを保存したときの挙動
+  - 実機 GPU での Compute 欄の数値 (sub-08 で確かめられなければ)

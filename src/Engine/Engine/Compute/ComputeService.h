@@ -73,6 +73,9 @@ ComputeKernelDesc KernelDescFromAbi(const MyeKernelDesc& desc, CallerKind lane);
 struct KernelSourceInfo {
     LintState lint = LintState::Unknown;
     uint64_t hash = 0;
+    std::wstring path;      // 読んだファイル (NormalizePathKey 済み)。空 = 手で登録した情報
+    std::string violation;  // 最初の検査違反 ("file(12): error KL005 [swizzle]: ...")。違反が無ければ空
+    std::string conflict;   // GPU が読む .kernel.hlsl と別のファイルだったときの説明 (lint も Violation にする)
 };
 
 struct ComputeCaller {
@@ -145,8 +148,16 @@ public:
     }
     // dir 直下の *.kernel.hlsl を全部読み直して検査・ハッシュを覚える (前の内容は捨てる)。読めたファイル数を返す
     uint32_t ScanKernelSources(const std::wstring& dir);
-    // fileName は "Foo.kernel.hlsl"。検査してハッシュと一緒に覚える
-    void UpdateKernelSource(const std::string& fileName, std::string_view text);
+    // fileName は "Foo.kernel.hlsl"。検査してハッシュと一緒に覚える。path は読んだファイル (表示と GPU 側との照合用)
+    void UpdateKernelSource(const std::string& fileName, std::string_view text, const std::wstring& path = {});
+    // FileWatcher が拾った kernelDir 直下の .kernel.hlsl 1 本を読み直す (大文字小文字はディスクの綴りを採る)。
+    // ファイルが消えていれば表から外す。内容 (ハッシュ) が変わった・現れた・消えたら true
+    bool ReloadKernelSource(const std::wstring& normPath);
+    // 覚えている kernelDir (ScanKernelSources が渡された dir)
+    const std::wstring& KernelDir() const { return kernelDir_; }
+    // 各カーネルについて、CPU 側が覚えたファイルと GPU 側 (ShaderManager) が読むファイルが同じか確かめる。
+    // 食い違うカーネルは conflict を立てて検査違反扱い (ForEach は失敗) にし、ログに 1 回出す。食い違った数を返す
+    uint32_t VerifyKernelSourceAgreement();
     void SetKernelSourceInfo(const std::string& kernel, const KernelSourceInfo& info);
     // ディスク上の .kernel.hlsl を覚えているか / カーネル表に載っているか (宣言したのに無い、の検出用)
     bool HasKernelSource(std::string_view kernel) const;
@@ -154,6 +165,8 @@ public:
     const ComputeKernelDesc* FindKernel(std::string_view kernel) const;
     const KernelSourceInfo* FindKernelSource(std::string_view kernel) const;
     void SetKernelOverrideCpu(const std::string& kernel, bool cpuOnly);
+    bool IsKernelOverrideCpu(std::string_view kernel) const;
+    const std::set<std::string>& KernelOverridesCpu() const { return overrideCpu_; }
 
     // ---- バッファ (caller の言語でストアが決まる: C++ = Game、C# = Script) ----
     // owner: 作成したスクリプトのエンティティ。null でなければ、そのエンティティが破棄された tick 末に自動解放する
@@ -200,6 +213,8 @@ public:
     // 宣言表を引く。lane を渡すとその言語の宣言だけ、渡さなければどちらかにあれば真 (インスペクター用)
     bool IsDeclared(CallerKind lane, std::string_view scriptType, std::string_view kernel) const;
     bool IsDeclared(std::string_view scriptType, std::string_view kernel) const;
+    // scriptType が lane で宣言したカーネル名 (名前順)
+    std::vector<std::string> DeclaredKernels(CallerKind lane, std::string_view scriptType) const;
     // 今 tick の使用量 (selftest 用)
     uint32_t TickDispatches() const { return tickDispatches_; }
     uint64_t TickUploadBytes() const { return tickUploadBytes_; }
@@ -229,6 +244,8 @@ private:
     using DeclarationMap = std::map<std::string, std::set<std::string>, std::less<>>;
     DeclarationMap declarations_[2]; // [CallerKind]
     std::map<std::string, KernelSourceInfo> sources_;
+    std::wstring kernelDir_;
+    ShaderManager* shaders_ = nullptr;
     std::set<std::string> overrideCpu_;
     kernel::KernelLintCache lintCache_;
     std::map<ObservationKey, KernelObservation> observations_;

@@ -75,6 +75,7 @@
 #include "Engine/Engine/Loop/SimInit.h"
 #include "Engine/Engine/Loop/TickInputs.h"
 #include "Engine/Engine/Compute/ComputeService.h"
+#include "Engine/Engine/Compute/ComputeSettings.h"
 #include "Engine/Engine/Loop/TickRunner.h"
 #include "Engine/Engine/Scene/TransformSystem.h"
 #include "Engine/Engine/UI/UILayout.h" // ワールド追従 UI の射影コンテキスト
@@ -482,6 +483,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
     // C# スクリプトホスト (CoreCLR)。未導入でも失敗ログのみでエンジンは継続する
     if (managedHost.Init(GetExecutableDir(), &scene)) {
+        // C# の CPU 版と [ComputeKernels] の宣言は CompileScripts の中で登録される。ForEach の引き先が
+        // 後の WireScriptServices まで未設定だと、この起動時のコンパイルの登録がエンジンに拒否される
+        managedHost.SetComputeService(&computeService);
         // スキーマ定数/アクセサを生成してからコンパイル (M50d)。Compile は
         // assets\scripts を再帰収集するので Generated\ は追加設定ゼロで混ざる
         schema::WriteCSharpBindings(assetsRoot);
@@ -522,6 +526,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         WireScriptServices(scriptHost, managedHost, shared, config.developmentRun);
     }
     computeService.Bind(&device, &shaderManager);
+    compute::ApplyComputeSettings(computeService, compute::LoadComputeSettings(assetsRoot)); // M91: project_settings.json の compute 節
+    reloadHub.SetKernelHooks(&computeService, &managedHost);
     scriptHost.SetComputeAbi(&computeAbi, &device, &shaderManager, &resources.textures);
     managedHost.SetComputeAbi(&computeAbi, &device, &shaderManager, &resources.textures);
 

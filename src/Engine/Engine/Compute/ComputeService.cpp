@@ -17,6 +17,7 @@
 #include "Engine/Engine/Compute/KernelRunner.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/Compute/FxGpuBackend.h"
+#include "Engine/Renderer/Shader/ShaderManager.h"
 
 namespace mye::compute {
 
@@ -70,6 +71,8 @@ ComputeService::~ComputeService() = default;
 void ComputeService::Bind(GraphicsDevice* device, ShaderManager* shaders, jobs::JobSystem* js)
 {
     gpu_->Bind(device, shaders);
+    shaders_ = shaders;
+    VerifyKernelSourceAgreement(); // ソースの走査は Bind より前に済んでいることがある (SimInit)
     jobs_ = js != nullptr ? js : &jobs::System();
 }
 
@@ -191,10 +194,18 @@ bool ComputeService::IsDeclared(std::string_view scriptType, std::string_view ke
     return IsDeclared(CallerKind::Cpp, scriptType, kernel) || IsDeclared(CallerKind::CSharp, scriptType, kernel);
 }
 
+std::vector<std::string> ComputeService::DeclaredKernels(CallerKind lane, std::string_view scriptType) const
+{
+    const DeclarationMap& map = declarations_[static_cast<size_t>(lane)];
+    const auto it = map.find(scriptType);
+    return it != map.end() ? std::vector<std::string>(it->second.begin(), it->second.end()) : std::vector<std::string>{};
+}
+
 uint32_t ComputeService::ScanKernelSources(const std::wstring& dir)
 {
     namespace fs = std::filesystem;
     sources_.clear();
+    kernelDir_ = dir;
     std::error_code ec;
     if (!fs::is_directory(fs::path(dir), ec)) {
         return 0;
@@ -215,22 +226,90 @@ uint32_t ComputeService::ScanKernelSources(const std::wstring& dir)
             continue;
         }
         const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        UpdateKernelSource(WideToUtf8(path.filename().wstring()), text);
+        UpdateKernelSource(WideToUtf8(path.filename().wstring()), text, NormalizePathKey(path.wstring()));
         ++read;
     }
     return read;
 }
 
-void ComputeService::UpdateKernelSource(const std::string& fileName, std::string_view text)
+void ComputeService::UpdateKernelSource(const std::string& fileName, std::string_view text, const std::wstring& path)
 {
     const std::shared_ptr<const kernel::KernelLintResult> result = lintCache_.Get(fileName, text);
     KernelSourceInfo info;
     info.lint = result->Ok() ? LintState::Ok : LintState::Violation;
     info.hash = result->sourceHash;
+    info.path = path;
     for (const kernel::KernelDiagnostic& d : result->diagnostics) {
         MYE_LOG_ERROR("%s", kernel::FormatKernelDiagnostic(d).c_str());
     }
+    if (!result->diagnostics.empty()) {
+        info.violation = kernel::FormatKernelDiagnostic(result->diagnostics.front());
+    }
     sources_[result->kernelName] = info;
+}
+
+bool ComputeService::ReloadKernelSource(const std::wstring& normPath)
+{
+    namespace fs = std::filesystem;
+    if (kernelDir_.empty()) {
+        return false;
+    }
+    // FileWatcher のパスは小文字化済みなので、カーネル名の綴りはディスクのファイル名から取る
+    std::error_code ec;
+    fs::path real;
+    for (const fs::directory_entry& entry : fs::directory_iterator(fs::path(kernelDir_), ec)) {
+        if (entry.is_regular_file(ec) && NormalizePathKey(entry.path().wstring()) == normPath) {
+            real = entry.path();
+            break;
+        }
+    }
+    if (real.empty()) {
+        // 消えた (または kernelDir 直下ではない)。覚えていたカーネルだけ外す
+        for (auto it = sources_.begin(); it != sources_.end(); ++it) {
+            if (it->second.path == normPath) {
+                sources_.erase(it);
+                return true;
+            }
+        }
+        return false;
+    }
+    std::ifstream in(real, std::ios::binary);
+    if (!in) {
+        return false;
+    }
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::string fileName = WideToUtf8(real.filename().wstring());
+    const std::string name = fileName.substr(0, fileName.size() - 12); // ".kernel.hlsl"
+    const auto before = sources_.find(name);
+    const bool existed = before != sources_.end();
+    const uint64_t oldHash = existed ? before->second.hash : 0;
+    UpdateKernelSource(fileName, text, normPath);
+    return !existed || sources_[name].hash != oldHash;
+}
+
+uint32_t ComputeService::VerifyKernelSourceAgreement()
+{
+    if (shaders_ == nullptr) {
+        return 0;
+    }
+    uint32_t conflicts = 0;
+    for (auto& kv : sources_) {
+        KernelSourceInfo& info = kv.second;
+        if (info.path.empty()) {
+            continue;
+        }
+        info.conflict.clear();
+        const std::wstring gpuPath = NormalizePathKey(shaders_->ResolveShaderPath(kv.first + ".kernel"));
+        if (gpuPath == info.path) {
+            continue;
+        }
+        info.conflict = "GPU reads " + WideToUtf8(gpuPath) + " but CPU reads " + WideToUtf8(info.path);
+        info.lint = LintState::Violation;
+        ++conflicts;
+        MYE_LOG_ERROR("[compute] kernel '%s' resolves to different files for CPU and GPU (the kernel is disabled): %s",
+                      kv.first.c_str(), info.conflict.c_str());
+    }
+    return conflicts;
 }
 
 void ComputeService::SetKernelSourceInfo(const std::string& kernel, const KernelSourceInfo& info)
@@ -267,6 +346,11 @@ void ComputeService::SetKernelOverrideCpu(const std::string& kernel, bool cpuOnl
     } else {
         overrideCpu_.erase(kernel);
     }
+}
+
+bool ComputeService::IsKernelOverrideCpu(std::string_view kernel) const
+{
+    return overrideCpu_.find(std::string(kernel)) != overrideCpu_.end();
 }
 
 // ---------------------------------------------------------------------------

@@ -15,6 +15,8 @@
 #include "Editor/App/ShortcutHub.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Localization/Localization.h"
+#include "Engine/Engine/Compute/ComputeService.h"
+#include "Engine/Engine/Compute/ComputeSettings.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/UI/UIFontMetricsCook.h" // M75d
 #include "Engine/Platform/InputActions.h"
@@ -171,6 +173,29 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
         } else if (fontCookState_ == 3) {
             ImGui::TextColored(themeColor::Error, Tr(StrId::PrjSet_FontMetricsFailed),
                                fontCookText_.c_str());
+        }
+    }
+
+    // ---- Compute (M91h、project_settings.json の compute.kernelOverrides) ----
+    // ★kernelOverrides を書き戻すのは**ここだけ** (SaveComputeKernelOverrides)。インスペクターの Auto / CPU 固定は
+    //   セッション上書きで、触っただけでは共有ファイルは動かない (パーティクルのバックエンドと同じ流儀)
+    if (ctx.computeService != nullptr && ImGui::CollapsingHeader(Tr(StrId::PrjSet_Compute))) {
+        ImGui::TextWrapped("%s", Tr(StrId::PrjSet_ComputeHint));
+        const std::set<std::string>& overrides = ctx.computeService->KernelOverridesCpu();
+        if (overrides.empty()) {
+            ImGui::TextDisabled("%s", Tr(StrId::PrjSet_ComputeNoOverrides));
+        }
+        for (const std::string& name : overrides) {
+            ImGui::BulletText("%s", name.c_str());
+        }
+        if (ImGui::Button(Tr(StrId::PrjSet_SaveCompute))) {
+            if (compute::SaveComputeKernelOverrides(ctx.assetsRoot, overrides)) {
+                computeSaved_ = true;
+                scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json");
+            }
+        }
+        if (computeSaved_) {
+            ImGui::TextColored(themeColor::Success, "%s", Tr(StrId::PrjSet_ComputeSaved));
         }
     }
 

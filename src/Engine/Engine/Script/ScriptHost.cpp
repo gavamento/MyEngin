@@ -211,6 +211,7 @@ void ScriptHost::PublishCompute()
         return;
     }
     compute_->ScanKernelSources(kernelDir_);
+    compute_->VerifyKernelSourceAgreement();
     // 宣言したのにカーネルのファイルが無い (呼べば失敗する)。読込のたびに 1 回ずつ知らせる
     for (const auto& decl : moduleDeclarations_) {
         for (const std::string& kernel : decl.second) {
@@ -245,6 +246,16 @@ void ScriptHost::Shutdown()
         FreeLibrary(static_cast<HMODULE>(module_));
         module_ = nullptr;
     }
+}
+
+bool ScriptHost::IsScriptComponent(ComponentTypeId type) const
+{
+    for (const ScriptType& t : types_) {
+        if (t.componentId == type) {
+            return true;
+        }
+    }
+    return false;
 }
 
 ScriptHost::ScriptType* ScriptHost::FindType(const char* name)

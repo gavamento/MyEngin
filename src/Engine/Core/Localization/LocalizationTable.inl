@@ -446,6 +446,15 @@ MYE_STR(PrjSet_UIActive,      "In effect now: %d x %d", "現在の実効値: %d 
 MYE_STR(PrjSet_SaveUI,        "Save UI settings###PrjSetSaveUI", "UI 設定を保存###PrjSetSaveUI")
 MYE_STR(PrjSet_UISaved,       "Saved. The new reference resolution applies after a restart.",
                               "保存しました。新しい基準解像度は再起動後に反映されます。")
+// ---- Compute (M91h)。kernelOverrides だけここから project_settings.json へ書き戻す ----
+MYE_STR(PrjSet_Compute,       "Compute###PrjSetCompute",    "Compute (計算)###PrjSetCompute")
+MYE_STR(PrjSet_ComputeHint,   "Execution limits come from the \"compute\" section of assets/project_settings.json (read at launch, shared). Only the per-kernel CPU-only overrides below can be saved here.",
+                              "実行の負荷枠は assets/project_settings.json の \"compute\" 節 (共有、起動時に読み込み) にあります。下のカーネル単位の CPU 固定だけ、ここから保存できます。")
+MYE_STR(PrjSet_ComputeNoOverrides, "(no kernel is fixed to CPU)", "(CPU 固定にしているカーネルはありません)")
+MYE_STR(PrjSet_SaveCompute,   "Save overrides as the project default###PrjSetSaveCompute",
+                              "上書きをプロジェクト既定として保存###PrjSetSaveCompute")
+MYE_STR(PrjSet_ComputeSaved,  "Kernel overrides saved to assets/project_settings.json.",
+                              "カーネルの上書きを assets/project_settings.json に保存しました。")
 // M75d: フォント計測表。cook の結果は次回起動から (sim が読む値なので実行中は差し替えない)
 MYE_STR(PrjSet_FontMetrics,   "Font metrics",        "フォント計測表")
 MYE_STR(PrjSet_FontMetricsHint, "Layout groups and content size fitters measure text inside the simulation with this table (per-glyph advances of the project font). Cook it again and commit it whenever you replace the font. Applied on the next launch.",
@@ -681,6 +690,42 @@ MYE_STR(ReflClass_Default,    "Default",                    "既定")
 MYE_STR(Insp_NoPublicFields,  "(no public fields)",         "(public なフィールドがありません)")
 MYE_STR(Insp_NoManagedInst,   "(no managed instance — click 'Compile C# Scripts')",
                               "(マネージドインスタンスがありません — 「C# スクリプトをコンパイル」を押してください)")
+// ---- スクリプトのインスペクターの Compute 欄 (M91h、Compute.ForEach) ----
+MYE_STR(Insp_Compute,         "Compute###InspCompute",      "Compute (計算)###InspCompute")
+MYE_STR(Insp_ComputeNone,     "(no kernels declared or used)", "(宣言・使用しているカーネルはありません)")
+MYE_STR(Insp_ComputeOverrideNote, "Auto / CPU only is per kernel: it applies to every script that uses the kernel. It is kept for this session; save it in Project Settings > Compute.",
+                              "Auto / CPU 固定はカーネル単位で、そのカーネルを使うすべてのスクリプトに効きます。このセッションの間だけ有効で、保存は Project Settings の Compute で行います。")
+MYE_STR(Insp_ComputeColTarget, "Last target", "最終の実行先")
+MYE_STR(Insp_ComputeColElements, "Elements", "要素数")
+MYE_STR(Insp_ComputeColTransfer, "Up / Read (B)", "upload / readback (B)")
+MYE_STR(Insp_ComputeColTime,  "CPU ms / GPU calls", "CPU ms / GPU 回数")
+MYE_STR(Insp_ComputeColVersion, "CPU version", "CPU 版")
+MYE_STR(Insp_ComputeColOverride, "Override",                "上書き")
+MYE_STR(Insp_ComputeStateNotRun, "declared, not run yet",   "宣言あり・未実行")
+MYE_STR(Insp_ComputeStateRan, "ran",                        "実行済み")
+MYE_STR(Insp_ComputeStateNotDeclared, "FAILED: not declared", "失敗: 宣言なし")
+MYE_STR(Insp_ComputeStateNoKernel, "declared, kernel file missing", "宣言あり・カーネルのファイル無し")
+MYE_STR(Insp_ComputeStateLint, "kernel rejected",           "検査違反")
+MYE_STR(Insp_ComputeTargetNone, "-",                        "-")
+MYE_STR(Insp_ComputeTargetCpu, "CPU",                       "CPU")
+MYE_STR(Insp_ComputeTargetGpu, "GPU",                       "GPU")
+MYE_STR(Insp_ComputeTargetSubst, "CPU (substituted)",       "CPU (代替)")
+MYE_STR(Insp_ComputeTargetFailed, "failed",                 "失敗")
+MYE_STR(Insp_ComputeTargetSkipped, "skipped",               "スキップ")
+MYE_STR(Insp_ComputeVersionUnknown, "-",                    "-")
+MYE_STR(Insp_ComputeVersionMatch, "up to date",             "一致")
+MYE_STR(Insp_ComputeVersionStaleCpp, "stale - rebuild GameLogic", "古い — GameLogic を再ビルド")
+MYE_STR(Insp_ComputeVersionStaleCs, "waiting for C# recompile", "C# の再コンパイル待ち")
+MYE_STR(Insp_ComputeVersionNone, "no CPU version",          "CPU 版なし")
+MYE_STR(Insp_ComputeOverrideAuto, "Auto",                   "Auto")
+MYE_STR(Insp_ComputeOverrideCpu, "CPU only",                "CPU 固定")
+MYE_STR(Insp_ComputeDeclareCpp, "Add the kernel to COMPUTE_KERNELS(...) next to REGISTER_SCRIPT.",
+                              "REGISTER_SCRIPT の隣の COMPUTE_KERNELS(...) にカーネル名を足してください。")
+MYE_STR(Insp_ComputeDeclareCs, "Add the kernel to the [ComputeKernels(...)] attribute of the class.",
+                              "クラスの [ComputeKernels(...)] 属性にカーネル名を足してください。")
+MYE_STR(Insp_ComputeFileMissing, "No <name>.kernel.hlsl in assets/shaders/kernels.",
+                              "assets/shaders/kernels に <name>.kernel.hlsl がありません。")
+MYE_STR(Insp_ComputeLastFail, "Last failure reason",        "直近の失敗理由")
 MYE_STR(Insp_AssetGone,       "(asset no longer exists)",   "(アセットが見つかりません)")
 MYE_STR(Insp_MaterialFailed,  "(material parse failed)",    "(マテリアルの読み込みに失敗)")
 MYE_STR(Insp_SoundFailed,     "(sound parse failed)",       "(サウンドの読み込みに失敗)")

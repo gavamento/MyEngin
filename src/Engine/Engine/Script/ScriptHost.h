@@ -112,6 +112,9 @@ public:
     //   unordered_set に戻すなら書き出し側で昇順に整列すること
     std::set<ScriptStartedKey>& StartedForSnapshot() { return started_; }
 
+    // この ECS コンポーネント型が C++ スクリプト (GameLogic.dll の REGISTER_SCRIPT) か。インスペクターの Compute 欄の出し分け用
+    bool IsScriptComponent(ComponentTypeId type) const;
+
     // 毎 tick、フェーズ 3/5 で呼ぶ (Play 中のみ)
     void SetTickContext(const InputSnapshot& input, uint64_t tickIndex, float dt, uint32_t playerCount);
     void RunStartAndUpdate(); // フェーズ 3: 新規インスタンスの Start → 全 Update

@@ -18,6 +18,8 @@
 #include "Editor/Scene/ComponentClipboard.h"
 #include "Editor/Scene/ComponentDependencies.h"
 #include "Editor/Widgets/EditorWidgets.h"
+#include "Editor/Windows/Scene/ComputeInspectorSection.h" // M91h: スクリプトの Compute 欄
+#include "Engine/Engine/Script/ScriptHost.h"
 #include "Editor/Tools/FractureBakeCommit.h" // M80i: 焼き成功結果の確定 (.mfrac 保存・登録・Undo)
 #include "Editor/Tools/NavBakeCommit.h"      // M82b: ベイク結果の確定 (.mnav 保存・参照の設定・Undo)
 #include "Editor/Tools/PatrolRouteEdit.h"    // M85g: 巡回ルートの点の追加・削除・入れ替え
@@ -920,6 +922,7 @@ void InspectorWindow::DrawComponent(EngineContext& ctx, Selection& selection, Un
         // (マルチ選択でも primary のみ編集 — managed 状態はエンティティ毎に独立)
         if (comp && row.managed) {
             DrawManagedComponentFields(ctx, t, comp, tg.e);
+            DrawComputeInspectorSection(ctx, desc.name, compute::CallerKind::CSharp); // M91h
             ImGui::PopID();
             return;
         }
@@ -940,6 +943,9 @@ void InspectorWindow::DrawComponent(EngineContext& ctx, Selection& selection, Un
                 }
             }
             DrawComponentFields(ctx, selection, undo, tg, row, comp);
+            if (ctx.scriptHost != nullptr && ctx.scriptHost->IsScriptComponent(t)) {
+                DrawComputeInspectorSection(ctx, desc.name, compute::CallerKind::Cpp); // M91h
+            }
         }
         DrawComponentNotes(ctx, selection, undo, tg, row);
     }

@@ -24,12 +24,14 @@
 #include "Engine/Engine/Compute/KernelHash.h"
 #include "Engine/Engine/Compute/KernelRange.h"
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
+#include "Engine/Engine/HotReload/ReloadHub.h"
 #include "Engine/Engine/Loop/HeadlessSim.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/Shader/ShaderManager.h"
 #include "Shared/KernelCompat.h"
 #include "Shared/KernelRangeFn.h"
 
@@ -768,6 +770,37 @@ void TestManaged()
         Tick(host, run.tick);
         Check(ReadU64(run.probe, "jobSaxpy") == kJobDoneCpu && ReadU64(run.probe, "hashSaxpy") == run.refHashSaxpy,
               "再コンパイル後は一致に戻り、ForEach が成功する (コメントだけの編集なので結果は同じ)");
+    }
+
+    // FileWatcher → ReloadHub の経路 (M91h): ファイルを書き換えるだけで、ソース表の更新と C# の再生成・再コンパイルが自動で走る
+    {
+        const fs::path kernelsDir = root / L"assets" / L"shaders" / L"kernels";
+        const fs::path saxpyPath = kernelsDir / L"SelfTestSaxpy.kernel.hlsl";
+        svc.ScanKernelSources(kernelsDir.wstring()); // このテストの一時プロジェクトを kernelDir にする
+        ShaderManager shaders; // Init しない (デバイス無し)。索引だけ使う
+        shaders.SetAssetsRoot((root / L"assets").wstring());
+        shaders.RebuildProjectShaderIndex();
+        ReloadHub hub;
+        const bool watching = hub.Init(&shaders, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, (root / L"assets").wstring());
+        hub.SetKernelHooks(&svc, &host);
+        Check(watching, "ReloadHub が一時プロジェクトの assets を監視できる");
+        const std::string edited2 = ReadFile(saxpyPath) + "\n// edited by the watcher\n";
+        const uint64_t gen0 = host.ReloadGeneration();
+        WriteFile(saxpyPath, edited2);
+        std::this_thread::sleep_for(std::chrono::milliseconds(600)); // FileWatcher のデバウンス (150 ms) を越える
+        hub.Update();
+        const ComputeKernelDesc* k = svc.FindKernel("SelfTestSaxpy");
+        const KernelSourceInfo* src = svc.FindKernelSource("SelfTestSaxpy");
+        Check(src != nullptr && src->hash == kernel::HashKernelSource(edited2),
+              "FileWatcher が .kernel.hlsl の変更を拾い、ソース表のハッシュが新しくなる");
+        Check(host.ReloadGeneration() == gen0 + 1 && k != nullptr && k->csharp.sourceHash == kernel::HashKernelSource(edited2),
+              "C# が自動で再生成・再コンパイルされ、C# の CPU 版が新しいハッシュで一致に戻る");
+        Tick(host, run.tick);
+        Check(ReadU64(run.probe, "jobSaxpy") == kJobDoneCpu && ReadU64(run.probe, "hashSaxpy") == run.refHashSaxpy,
+              "自動で再コンパイルされた後は ForEach が成功する");
+        hub.Update(); // 変更が無ければ再コンパイルしない
+        Check(host.ReloadGeneration() == gen0 + 1, "もう一度 Update しても (変更が無ければ) 再コンパイルしない");
+        hub.Shutdown();
     }
 
     // RW を KernelId 以外で添字する C# はコンパイルエラーになる。失敗しても前の登録は残る

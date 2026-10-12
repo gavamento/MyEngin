@@ -23,8 +23,8 @@
 | sub-13 | OK | 1 | c0cbcd3 | エンジン・ツールが書くテキストの改行を規則に揃え、作業ツリーの見張りを有効化 (依存 12) |
 | sub-14 | OK | 1 | 三校 f918c7b (未 push) | 外部プロジェクト (三校) にも同じ改行規則 (依存 13、U15。HAL Collector は git 無し = U16) |
 | sub-15 | OK | 1 | 232609d | 14-c の文言に直し方 (U17) と三校 verify.bat FAIL の切り分け (依存 14、U18) |
-| sub-06 | 実装中 | 0 | | C# 同形 API・C# CPU 版 (依存 05) |
-| sub-07 | 未着手 | 0 | | スクリプトのインスペクター・project_settings (依存 06) |
+| sub-06 | OK | 1 | 8afe3d3 | C# 同形 API・C# CPU 版 (依存 05) |
+| sub-07 | 差し戻し | 1 | | スクリプトのインスペクター・project_settings (依存 06) |
 | sub-08 | 未着手 | 0 | | デモと compute A/B (依存 06) |
 | sub-09 | 未着手 | 0 | | ADR-030 と文書 (依存 07,08,10) |
 
@@ -66,3 +66,5 @@
 - (planner VERDICT sub-13) 申し送り: (1) 受け入れ 3 の GUI 確認は sub-14 の 3-e (三校で保存・.meta 作り直し・Rebuild Scripts) と sub-09 の test_checklists 手動項目で補う。(2) AssetOps / NetRollback の書き込みは sub-14 の 3-b / 3-e で実経路確認。(3) selftest の LF 確認ラムダ 3 か所の重複は共通化しない。U17 (14-c の厳しさ) はユーザー確認。
 - (planner VERDICT sub-14) 申し送り: 三校の origin に master が無い (origin/develop・origin/stage-transition のみ)。ローカル master の f918c7b の push 先はユーザー判断。3-e の GUI 操作 (シーン保存・actions/fxstack 書き出し・GUI の Rebuild Scripts) は sub-09 の test_checklists 手動項目へ。
 - (planner VERDICT sub-15) 三校 verify.bat の FAIL 2 件は 7d28c31 と HEAD で同値 = M91 の退行ではない (三校側の別件、対応はユーザー判断)。.editorconfig は足さない。docs の VS メニュー名と三校の f918c7b の push 先はユーザー判断 (sub-09 の手動項目にも)。
+- (planner VERDICT sub-06) OK round 1 = 8afe3d3。.kernel.hlsl 編集時の C# 再コンパイル要求は sub-07 (1c) へ移管。JIT 設定 6 通りの再実行は CI に常設せず、手順を ADR-030 (sub-09) に書く。ForEach のバッファ上限 4 本が C++ と揃っていることを sub-09 の文書で明記。実機 GPU の C# Fx と GUI の [Compile C# Scripts] は sub-08 / sub-09 の test_checklists で補う。
+- (2026-10-12 ユーザー指示) 全サブ完了・Notion 記録後のシャットダウンは取り消し。シャットダウンしない。

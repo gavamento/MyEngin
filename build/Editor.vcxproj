@@ -60,6 +60,7 @@
     <ClCompile Include="..\src\Editor\Scene\PlayModeController.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\AnimatorControllerEditSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\SelfTest\ComputeInspectorSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\DecalSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\DeviceLostRescueSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\GameFlowSelfTest.cpp" />
@@ -114,6 +115,7 @@
     <ClCompile Include="..\src\Editor\Windows\Project\NetWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\SourceControlWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\GameViewWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\HierarchyWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\InspectorWindow.cpp" />
@@ -146,6 +148,7 @@
     <ClInclude Include="..\src\Editor\Scene\Selection.h" />
     <ClInclude Include="..\src\Editor\SelfTest\AnimatorControllerEditSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.h" />
+    <ClInclude Include="..\src\Editor\SelfTest\ComputeInspectorSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\DecalSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\DeviceLostRescueSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\GameFlowSelfTest.h" />
@@ -201,6 +204,7 @@
     <ClInclude Include="..\src\Editor\Windows\Project\NetWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\SourceControlWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\GameViewWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\HierarchyWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\InspectorWindow.h" />

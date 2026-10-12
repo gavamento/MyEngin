@@ -49,7 +49,9 @@
 #include "Engine/Engine/Animation/AnimatorControllerSelfTest.h"
 #include "Engine/Engine/Asset/AssetDatabaseSelfTest.h"
 #include "Engine/Engine/Compute/ComputeManagedSelfTest.h"
+#include "Editor/SelfTest/ComputeInspectorSelfTest.h"
 #include "Engine/Engine/Compute/ComputeServiceSelfTest.h"
+#include "Engine/Engine/Compute/ComputeSettingsSelfTest.h"
 #include "Engine/Engine/Compute/ComputeScriptSelfTest.h"
 #include "Engine/Engine/Compute/ComputeStateSelfTest.h"
 #include "Engine/Engine/Compute/KernelLintSelfTest.h"
@@ -647,6 +649,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunComputeStateSelfTest();          // M91d: State バッファのスナップショット・ハッシュ・寿命
         ok &= mye::RunComputeScriptSelfTest();         // M91e: GameLogic のカーネル表・COMPUTE_KERNELS・ForEach の ABI
         ok &= mye::RunComputeManagedSelfTest();        // M91g: C# の ForEach・C# の CPU 版 (C++ 版とのバイト一致)
+        ok &= mye::RunComputeSettingsSelfTest();       // M91h: compute 節・Compute 欄の行・カーネルのホットリロード
+        ok &= mye::RunComputeInspectorSelfTest();      // M91h: Compute 欄の文字列 (日英)
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }

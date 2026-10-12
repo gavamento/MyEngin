@@ -129,6 +129,9 @@
     <ClCompile Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.cpp">
       <Filter>SelfTest</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\ComputeInspectorSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\DecalSelfTest.cpp">
       <Filter>SelfTest</Filter>
     </ClCompile>
@@ -291,6 +294,9 @@
     <ClCompile Include="..\src\Editor\Windows\Project\SourceControlWindow.cpp">
       <Filter>Windows\Project</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.cpp">
+      <Filter>Windows\Scene</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Scene\GameViewWindow.cpp">
       <Filter>Windows\Scene</Filter>
     </ClCompile>
@@ -385,6 +391,9 @@
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\ComputeInspectorSelfTest.h">
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\DecalSelfTest.h">
@@ -551,6 +560,9 @@
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Project\SourceControlWindow.h">
       <Filter>Windows\Project</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.h">
+      <Filter>Windows\Scene</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Scene\GameViewWindow.h">
       <Filter>Windows\Scene</Filter>

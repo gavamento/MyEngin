@@ -6,8 +6,12 @@
 #include "Engine/Core/Util/FileWatcher.h"
 
 namespace mye {
+namespace compute {
+class ComputeService;
+}
 
 class ShaderManager;
+class ManagedHost;
 class Scene;
 class PrefabLibrary;
 class AnimationLibrary;
@@ -88,6 +92,11 @@ public:
               MixerLibrary* mixers, AudioSystem* audio, const std::wstring& assetsRoot);
     void Shutdown();
 
+    // .kernel.hlsl の変更の行き先。compute は CPU 側のソース表 (検査・ハッシュ) を読み直し、
+    // managed が準備できていれば C# の CPU 版 (Kernels.gen.cs) を作り直すために CompileScripts を呼ぶ。
+    // どちらも null 可 (null なら GPU 側のシェーダ再コンパイルだけ)
+    void SetKernelHooks(compute::ComputeService* compute, ManagedHost* managed);
+
     // 現在編集中のシーンファイル (このファイルの外部編集だけ差分適用する)
     void SetActiveScenePath(const std::wstring& path);
 
@@ -119,6 +128,7 @@ private:
         Retry,    // 読めなかった (共有違反 = まだ書き込み中など)。次のフレームにもう一度
     };
     ReloadResult ReloadShader(const std::wstring& path);
+    void ReloadKernel(const std::wstring& path);
     ReloadResult ReloadTexture(const std::wstring& path);
     ReloadResult ReloadAudioClip(const std::wstring& path);
     ReloadResult ReloadGltf(const std::wstring& path);
@@ -146,6 +156,8 @@ private:
     // レガシー起動 (assets = エンジンの assets) では重複するので起動しない
     FileWatcher engineShaderWatcher_;
     ShaderManager* shaders_ = nullptr;
+    compute::ComputeService* compute_ = nullptr; // M91: .kernel.hlsl のソース表
+    ManagedHost* managed_ = nullptr;             // M91: C# の CPU 版の再生成
     RenderResources* resources_ = nullptr;
     Scene* scene_ = nullptr;
     PrefabLibrary* prefabs_ = nullptr;

@@ -59,6 +59,7 @@ private:
     int tagRowsShown_ = 8;
     bool uiLoaded_ = false;
     bool uiSaved_ = false;
+    bool computeSaved_ = false; // M91h: kernelOverrides を保存した直後の 1 行表示
     uilayout::ProjectUiSettings uiEdit_;
     uilayout::ProjectUiSettings uiDisk_;
     // フォント計測表 (M75d)。fontSource_ は cook 対象のフォント名 (空 = assets\fonts にフォントなし)。
