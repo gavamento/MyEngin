@@ -18,9 +18,10 @@
 | sub-04 | OK | 1 | 42c6b89 | State のスナップショット・ハッシュ (依存 03、snapshot v49 目安) |
 | sub-05 | OK | 2 | 92bde8a | カーネル表・COMPUTE_KERNELS・ABI (依存 02,04、ABI v29 目安) |
 | sub-10 | OK | 1 | ff60f77 | 外部プロジェクトの C++ カーネル表 (依存 05、U12。sub-06 より先に着手) |
-| sub-11 | OK | 2 | | Debug selftest の net 試験の不安定さの切り分け (sub-06 の前。M91e 退行の疑い) |
+| sub-11 | OK | 2 | ce452a4 | Debug selftest の net 試験の不安定さの切り分け (sub-06 の前。M91e 退行の疑い) |
 | sub-12 | 未着手 | 0 | | リポジトリ全体の改行を .gitattributes で統一 (依存 11、U14) |
 | sub-13 | 未着手 | 0 | | エンジン・ツールが書くテキストの改行を規則に揃え、作業ツリーの見張りを有効化 (依存 12) |
+| sub-14 | 未着手 | 0 | | 外部プロジェクト (三校) にも同じ改行規則 (依存 13、U15。HAL Collector は git 無し = U16) |
 | sub-06 | 未着手 | 0 | | C# 同形 API・C# CPU 版 (依存 05) |
 | sub-07 | 未着手 | 0 | | スクリプトのインスペクター・project_settings (依存 06) |
 | sub-08 | 未着手 | 0 | | デモと compute A/B (依存 06) |
@@ -55,3 +56,4 @@
 - (planner VERDICT sub-05) ABI v29 = 174 (+10 本)。Kernels.gen.{h,cpp} は版管理 (spec 4.2 改訂)。U12 を受けて sub-10 を新設、コミット件名の文字を繰り下げ (sub-10 = M91f、sub-06 = M91g、07 = M91h、08 = M91i、09 = M91j)。申し送り: ScriptHost.cpp が長い (分割は後続)。R10 (複数 ScriptHost 同時生存時の construct dangling) は範囲外。Release selftest は司会がコミット前に再実行して PASS。memory の M75h は v30 へ更新済み。
 - (planner VERDICT sub-10) 申し送り: (1) Debug selftest の net 試験 (V1 LoadPersist / LoadGame) が 1 回目に FAIL → sub-11 で HEAD と 42c6b89 の再現率を比べて切り分け。基点でも落ちる場合はユーザー判断。(2) [Rebuild Scripts] ボタンからの手動確認を sub-09 で test_checklists に足す。(3) 自動 Rebuild 後のホットリロードで unknown component が復活するかは範囲外 (記録のみ)。sub-07 に 1b (プロジェクトとエンジンの同名カーネルの優先順) を追加。
 - (planner VERDICT sub-11) 申し送り: (1) `TestWaitUntilReadable` の上限 1500 ms は遅い CI で揺れうる → sub-12 の 7 で緩める。(2) Release selftest と replay_verify は sub-12 の受け入れ 4 で回す。比較側の CR 除去 (StripBanner) は sub-12 後も二重の守りとして残す。
+- (planner、U15 反映) sub-14 新設。三校 `C:\HAL\三校` は push しない (共同制作のリポジトリ、時期はユーザー判断)。HAL Collector `C:\HAL\GameEngin_Demo` は git が無い (U16)。実行順: sub-12 → 13 → 14 → 06 → 07/08 → 09。

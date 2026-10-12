@@ -1,7 +1,7 @@
 # sub-11: Debug selftest の net 試験 (V1 LoadPersist / LoadGame) の不安定さの切り分け
 
 - 依存: なし (sub-10 の後、sub-06 の前に行う)
-- 状態: 未着手
+- 状態: OK (commit ce452a4)
 - 往復: 0
 - 新設: 2026-10-12 (sub-10 round 1 の SELF_EVAL で、Debug の `Editor.exe --selftest` の 1 回目に「V1 LoadPersist / LoadGame in a session」(`src/Engine/Engine/Net/ServerNetSelfTest.cpp:1797`) の 2 件が FAIL し、2 回目は PASS した)
 
