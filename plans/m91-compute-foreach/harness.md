@@ -6,7 +6,7 @@
   - 「大前提決定論を維持するためにCPUとGPUで結果が変わる物はCPU側で計算するように / 判断はどちらでやっても整合性/決定論が壊れないかを確認するように / 重要なゲーム状態はCPUで計算するように / 1.制限を受け入れる 2.assets/shaders/kernels/に置く 3.ハッシュと不一致時の実行制限」
   - 「C++/C#は同じように呼び出せるようにしてほしい / HLSLはまだ話したい」
 - 開始: 2026-10-11 / 基点コミット: 3766e33 (当初 7d28c31。M91 開始前に未コミットの DeepModal 変更を 3766e33 として切り出したため繰り下げ)
-- フェーズ: レビュー (round 1 FAIL → sub-16〜18 → round 2 依頼中)
+- フェーズ: 完了 (2026-10-12、レビュー round 2 PASS)
 - 事前調査: plans/m91-compute-foreach/design-draft.md
 
 ## サブ進捗
@@ -35,6 +35,7 @@
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
 | 1 | FAIL | 3/4/4/4 | major 2 (Fx 復元後の State 採番 = planner、resim 中の引数誤りが Skipped = coder)、minor 2 (補足文の折り返し、KL016 の文言) |
+| 2 | PASS | 4/5/4/4 | なし (#1〜#4 消込済み。#1・#2 は旧実装に戻すと試験が落ちることも確認) |
 
 ## ユーザー判断
 - (2026-10-11、対話で確定) design-draft §1 のとおり。
@@ -79,3 +80,4 @@
 - (planner VERDICT sub-08) OK round 2 = 5c4096c。stateTotalBytes 既定 8 MiB (U19)。Debug の 8 MiB ハッシュは 1 tick の 29% (受け入れ、ADR-030 の表に載せる)。ハッシュのさらなる高速化は M91 ではやらない。Editor の Compute 欄の実機 GPU 目視は sub-09 の test_checklists へ。
 - (planner VERDICT sub-09) OK round 1 = f1f0007。minor: ADR-030 の「決定 N」に D 番号を添える / 1M の jobs あり・なし比較は未計測 / C++ ForEach の 5 本以上のバッファは未検証 (static_assert は足さない) / test_checklists の一部手順は未実走 (ユーザー確認)。
 - (sub-18、2026-10-12) 申し送り: %TEMP% の mye_selftest_<pid> が 19 個残っている (Compute の selftest が一時フォルダを消していない可能性。次に Compute の selftest を触るときに片付けを足す)。Release の save_server/slot0.json を書いた処理は未特定 (replay_verify の Release ジョブの可能性が高い、範囲外)。ComputeScript / Managed の selftest で上書き行が重複 (nit)。
+- (review round 2、2026-10-12) PASS。新しい指摘なし。reviewer が実行しなかったこと: sub-17 の 30 ラウンドの追試 (4 本同時 1 ラウンドのみ)、インスペクターの撮り直し (coder の画像を使用)、GUI の手動確認項目 (ユーザー確認のまま)。
