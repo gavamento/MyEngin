@@ -1,7 +1,7 @@
 # sub-12: リポジトリ全体の改行コードを .gitattributes で統一する
 
 - 依存: sub-11 (sub-11 のコミットの後に着手する。**着手時に作業ツリーが clean であること** — 司会が plans/ の更新を含めてコミットしておく。clean でなければ着手しない)
-- 状態: 未着手
+- 状態: OK (commit 3972b9f + 続きのコミット)
 - 往復: 0
 - 新設: 2026-10-12 (ユーザーの追加依頼「subを追加テストの改行コードを統一」)
 - 拡張: 2026-10-12 (U14 のユーザー回答「リポジトリ全体」。planner 案「M91 の範囲だけ」の逆)
@@ -91,4 +91,10 @@
   - LF (std::ios::binary): EditorApp/EditorGlobalSettings/EditorSettings/LayoutManager/ProjectRegistry/ProjectTemplates/Project.cpp(manifest)/Prefab/SchemaCodegen/Replay/WorldHasher/Provenance/TerrainEdit/RenderStatsDump/PerfBenchmark/InspectorWindow 他、AssetOps の binary 箇所 (bat 生成 1818 は binary = 文字列次第)
   - ツール: gen_project_files.ps1 の vcxproj/filters は Set-Content -NoNewline (読み込んだ改行のまま)、Kernels.gen は WriteAllText (文字列の改行次第)。collab_fixture / gen_skinned_beam_fbx は LF 明示。perf_verify の Set-Content は CRLF。tools/deepmodal 等の python `open(.., 'w')` は newline 指定なしが大半 = Windows で CRLF (不明/CRLF)
 
+### round 1 の続き (書き直し後、司会が転記)
+- 書き直しはユーザー承認 (コミットしてから書き直す) のうえ司会が実施: 3972b9f をコミット → clean 確認 → `git rm --cached -r -q .` → `git reset -q --hard`。
+- 書き直し後の `git ls-files --eol`: 29 i/lf w/crlf、2129 i/lf w/lf、184 i/-text w/-text、w/mixed 0。
+- 書き直し後の作業ツリーで PASS: `toolseplay_verify.bat` (Debug/Release、19 ジョブ、217.8 s)、Editor.exe --selftest (Debug / Release)、Server.exe --selftest (Debug)、build_managed (TreatWarningsAsErrors)、`tools\shot_verify.bat` (30 shots、maxDiff=0、--update 不使用)、check_rules (0 error / 50 warning は既存の規則 7、規則 14 は 0 error)。検証後も `git status --porcelain` は空。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-10-12)。作業ツリーの書き直しは自動の許可判定に 2 回拒否された。ユーザーの承認 (コミットしてから書き直す) を得て、司会が 3972b9f をコミットしたうえで実施した。書き直した後は w/mixed 0、テキストは w/lf (CRLF の規則の 29 件だけ w/crlf)。replay_verify の 19 ジョブ、selftest (Debug / Release / Server)、build_managed (警告をエラー扱い)、shot_verify の 30 shots (maxDiff=0) がすべて PASS した。nit: ASCII の .fbx 2 件も binary 指定になる (index は LF のままで、実害なし)。
