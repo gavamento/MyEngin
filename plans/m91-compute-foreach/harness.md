@@ -6,7 +6,7 @@
   - 「大前提決定論を維持するためにCPUとGPUで結果が変わる物はCPU側で計算するように / 判断はどちらでやっても整合性/決定論が壊れないかを確認するように / 重要なゲーム状態はCPUで計算するように / 1.制限を受け入れる 2.assets/shaders/kernels/に置く 3.ハッシュと不一致時の実行制限」
   - 「C++/C#は同じように呼び出せるようにしてほしい / HLSLはまだ話したい」
 - 開始: 2026-10-11 / 基点コミット: 3766e33 (当初 7d28c31。M91 開始前に未コミットの DeepModal 変更を 3766e33 として切り出したため繰り下げ)
-- フェーズ: レビュー
+- フェーズ: レビュー (round 1 FAIL → sub-16)
 - 事前調査: plans/m91-compute-foreach/design-draft.md
 
 ## サブ進捗
@@ -27,10 +27,13 @@
 | sub-07 | OK | 2 | b85a9c6 | スクリプトのインスペクター・project_settings (依存 06) |
 | sub-08 | OK | 2 | 5c4096c | デモと compute A/B (依存 06) |
 | sub-09 | OK | 1 | f1f0007 | ADR-030 と文書 (依存 07,08,10) |
+| sub-16 | OK | 1 | 913067d | レビュー 1 の指摘 #1〜#4 (State と Fx の採番を分ける、snapshot v50) |
+| sub-17 | 実装中 | 0 | | net selftest V1 の不安定さの原因を切り分けて直す (U20) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
+| 1 | FAIL | 3/4/4/4 | major 2 (Fx 復元後の State 採番 = planner、resim 中の引数誤りが Skipped = coder)、minor 2 (補足文の折り返し、KL016 の文言) |
 
 ## ユーザー判断
 - (2026-10-11、対話で確定) design-draft §1 のとおり。
@@ -46,6 +49,7 @@
 - (2026-10-12、司会が AskUserQuestion) U17 = check_rules 規則 14-c はエラーのまま (裁定どおり)。文言に直し方のコマンドを入れる追補を sub-14 の後に入れる。
 - (2026-10-12、司会が AskUserQuestion) U18 = 三校 verify.bat の FAIL 2 件は M91 の退行かだけ sub-15 で切り分ける (裁定どおり)。三校の golden 撮り直し・コード変更はしない。
 - (2026-10-12、司会が AskUserQuestion) U19 = State の総量の既定の上限は、ハッシュを 8 バイト単位にして速くしたうえで、Release で 1 tick の 10% 以内に収まる 2 のべき乗の MiB を既定値にする (裁定どおり)。
+- (2026-10-12、司会が AskUserQuestion) U20 = net selftest V1 (LoadPersist / LoadGame) の「verified 0 of 270」は **M91 の中で今直す** (planner の裁定 = M91 後の別件、とは逆)。
 
 ## 申し送り (セッション跨ぎ)
 - (解消: 3766e33 に切り出し済み) 開始時点で作業ツリーに無関係の未コミット変更あり (`docs/test_checklists.md`、`tools/deepmodal/train.py`、`DeepModalModel/`、`docs/deepmodal/synthetic_shapes.md`、`tools/deepmodal/tests/test_train_axes.py`)。実装フェーズに入る前にユーザーへ扱いを確認する (`docs/test_checklists.md` は coder も触りうる)。
