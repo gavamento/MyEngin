@@ -25,8 +25,8 @@
 | sub-15 | OK | 1 | 232609d | 14-c の文言に直し方 (U17) と三校 verify.bat FAIL の切り分け (依存 14、U18) |
 | sub-06 | OK | 1 | 8afe3d3 | C# 同形 API・C# CPU 版 (依存 05) |
 | sub-07 | OK | 2 | b85a9c6 | スクリプトのインスペクター・project_settings (依存 06) |
-| sub-08 | 差し戻し | 1 | | デモと compute A/B (依存 06) |
-| sub-09 | 未着手 | 0 | | ADR-030 と文書 (依存 07,08,10) |
+| sub-08 | OK | 2 | 5c4096c | デモと compute A/B (依存 06) |
+| sub-09 | 実装中 | 0 | | ADR-030 と文書 (依存 07,08,10) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -70,3 +70,4 @@
 - (planner VERDICT sub-06) OK round 1 = 8afe3d3。.kernel.hlsl 編集時の C# 再コンパイル要求は sub-07 (1c) へ移管。JIT 設定 6 通りの再実行は CI に常設せず、手順を ADR-030 (sub-09) に書く。ForEach のバッファ上限 4 本が C++ と揃っていることを sub-09 の文書で明記。実機 GPU の C# Fx と GUI の [Compile C# Scripts] は sub-08 / sub-09 の test_checklists で補う。
 - (2026-10-12 ユーザー指示) 全サブ完了・Notion 記録後のシャットダウンは取り消し。シャットダウンしない。
 - (planner VERDICT sub-07) OK round 2 = b85a9c6。ReloadHub が ManagedHost / ComputeService を直接持つ依存は受け入れ (minor)。実機 GPU の Compute 欄の数値は sub-08 のデモ撮影で確認し、無理なら sub-09 の test_checklists へ。ADR-030 に同期 CompileScripts と起動順の事実を書く (sub-09.md に申し送り済み)。
+- (planner VERDICT sub-08) OK round 2 = 5c4096c。stateTotalBytes 既定 8 MiB (U19)。Debug の 8 MiB ハッシュは 1 tick の 29% (受け入れ、ADR-030 の表に載せる)。ハッシュのさらなる高速化は M91 ではやらない。Editor の Compute 欄の実機 GPU 目視は sub-09 の test_checklists へ。

@@ -28,3 +28,5 @@ VS の新規ファイルは既定で CRLF になり、`check_rules.ps1` の規�
 - VS の「編集 > 詳細 > 改行コードの設定」(Edit > Advanced > Set Line Endings) で LF を選んで保存する。
 
 `.editorconfig` の `end_of_line = lf` は、VS が守ることを実機で確かめていないため足していない。確かめられたら足す。
+
+`*.fbx` は `.gitattributes` で `binary` にしてあるので、ASCII 形式の FBX も改行を変換しない。

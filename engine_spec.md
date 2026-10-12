@@ -3,7 +3,7 @@
 - **Engine Name**: MyEngine
 - **Version**: 1.0 (as of M68)
 - **Author**: Gavament
-- **Last Updated**: 2026-09-07
+- **Last Updated**: 2026-10-12
 
 ---
 
@@ -2686,6 +2686,68 @@ SearchArea points and the running task name. The demo is `--bt-demo` (patrol, sp
 point, the Unreal rules the design follows were written from memory and not checked against the documentation, and the
 full list is in ADR-025.
 
+### 10.12 Compute.ForEach (M91, ADR-030)
+
+One kernel source, `assets/shaders/kernels/<Name>.kernel.hlsl`, runs on the GPU (cs_5_0), as a C++ CPU function and as a C# CPU function. Buffers carry a **kind**:
+**State** is simulation state and always runs on the CPU, synchronously; **Fx** is presentation state and may run on the GPU. The call looks the same from C++ (`Compute::ForEach(ctx, ...)`) and C# (`Compute.ForEach(...)`).
+The bit-for-bit Debug / Release / CI (WARP) contract (§11) is the reason: on a real GPU (RTX 3060) `a*x+y` differs from the CPU by up to 64 ULP (fused multiply-add), while WARP gives 0 ULP.
+
+**Kernel file.** `#include "kernel_common.hlsli"`, optional `KERNEL_PARAMS(P) { ... }`, then `KERNEL(Name, P, RW(T,a) RO(U,b)) { ... }` — one kernel per file, file name = kernel name, **no comma between `RW(...)` / `RO(...)`** (FXC has no variadic macros).
+The first argument is `RW` and its length is the range of `id`. `params` is a one-element `StructuredBuffer<P>` (4-byte packing, so the C++ / C# struct layouts agree). `id` is a `KernelId`; `RW` is indexed by `id` only, `RO` returns a zeroed `T` out of range.
+The count must equal the kernel's argument count; the C# helpers are hand-written overloads for 1–4 buffers, the C++ `Compute::ForEach` is variadic with no fixed cap (5 or more is untested). The kernel must write only its own element, read no other element's current write, and not touch engine APIs, RNG or logging; randomness comes from `HashU32(seed, id)`.
+
+**HLSL subset** (`KernelLint`, rules KL001–KL028, errors read `file(line): error KL005 [swizzle]: ...`; a violating kernel fails on every target). Types `float` / `int` / `uint`, their 2–4 vectors and structs of them; components `.x .y .z .w` only; float literals need `f`;
+no arrays, matrices, `bool` variables, swizzles, `double` / `half`, `groupshared`, barriers, atomics, textures, attributes, `out` / `inout`, assignments inside expressions, `#define`; integer `/` `%` only by a non-zero literal; float → int only through `FloatToInt` / `FloatToUint`
+(NaN → 0, saturating, truncating). Functions: `min max clamp abs saturate lerp step smoothstep floor ceil frac sqrt rsqrt rcp dot cross length normalize distance sign sin cos`, plus `HashU32` / `HashToUnitFloat`.
+`rsqrt` / `rcp` are approximate on the GPU and exact on the CPU. Signed-integer overflow is the author's responsibility (use `uint`).
+
+**C# CPU version.** The engine converts the subset to C# (`assets/scripts/Generated/Kernels.gen.cs`, namespace `MyeKernels.<Name>`) and Roslyn compiles it with the scripts, so a C#-only project needs no MSVC. A C# call always uses the C# version and a C++ call the C++ version.
+The C# output is **byte-identical** to the C++ CPU version for every whitelisted function across six JIT configurations (ADR-030 D24 has the list and how to rerun it).
+
+**Declaration.** A script must declare the kernels it calls: `COMPUTE_KERNELS(Swarm, "ParticleUpdate");` (C++) or `[ComputeKernels("ParticleUpdate")]` (C#). A call to an undeclared kernel — or from outside a script callback, such as a behaviour-tree task — **fails without running**.
+The declaration table is swapped together with the module on DLL load / hot reload, so it is the same generation as the code.
+
+**Where it runs** (`DecideExecution`; an undeclared caller is rejected before every row):
+
+| Buffers | Execution | Result |
+|---|---|---|
+| any State | Auto / Cpu | CPU, synchronous, if the kernel passes the subset check, a CPU version exists and the source hash matches; otherwise fails (returns 0 and logs) |
+| any State | Gpu | refused |
+| State in an `RW` slot with any Fx argument | any | **fails** (MixedKinds): Fx data must not leak into simulation state. A State read (`RO`) feeding an Fx write is allowed |
+| all Fx | Auto | GPU (asynchronous) when the device exists, count ≥ `gpuMinElements` and the per-tick budget allows; else the CPU version; with no CPU version the GPU regardless of the thresholds; on a hash mismatch the GPU plus a warning |
+| all Fx | Cpu | CPU, or fails |
+| all Fx | Gpu | GPU; with no device the CPU version stands in (one warning), or fails |
+| all Fx | any | during a resim: nothing, returns Skipped |
+| any | any | `--compute-force-cpu`: Fx runs on the CPU too. A `kernelOverrides` entry `"cpu"` turns Auto into Cpu for that kernel |
+
+The budgets (`gpuMinElements`, the per-tick dispatch count and upload bytes) apply to Auto only. No wall-clock time is used in a decision. WARP is never used. A failed GPU dispatch falls back to the CPU version (one warning).
+Job handles: 0 = failed, 1 = finished synchronously, 2 = Skipped, `0x100 + n` = an asynchronous GPU job. **An Fx job handle, `Status()` / `Target()`, `Read` result or buffer handle must not be stored in a field or used to branch simulation** (State and Fx share one slot space; compute A/B detects violations).
+
+**Buffers.** `CreateBuffer(count, kind)` returns a 64-bit handle (generation + slot, lowest free slot). It returns 0 when `count` is 0 or above 4,194,240 elements, `stride` is not a multiple of 4 or exceeds 2048, one buffer exceeds 128 MiB, 1024 slots are taken, or the State total exceeds `stateTotalBytes`.
+A buffer belongs to the entity of the script that created it and is freed when that entity is destroyed; everything is freed on Play stop and scene load. State lives only in a CPU array; Fx has a CPU mirror plus a GPU buffer uploaded when dirty. `Read` of an Fx buffer returns the latest
+completed result (a few frames old, three staging buffers); `Wait` stalls on purpose. Recovery from device loss (§6.13) rebuilds the Fx GPU buffers from the CPU mirrors.
+The engine keeps two stores: the game store (State is in the snapshot and hash) and a C# store (no hash, not snapshotted, like every C# component).
+
+**Source hash.** FNV-1a 64-bit of the kernel text with one BOM and the CR of each CRLF removed. The GameLogic build embeds it in `Kernels.gen.cpp`, the engine compares it with the file on disk, and C# embeds the hash it converted from. A mismatch makes State refuse to run (data untouched)
+and the inspector says "CPU version is stale — rebuild GameLogic" (C++) or "waiting for C# recompile". Saving a `.kernel.hlsl` recompiles the GPU shader and the C# scripts automatically; C++ needs a GameLogic rebuild.
+External projects get their C++ kernel table generated from `<project>/assets/shaders/kernels` by [Rebuild Scripts]; the engine's own kernels are not visible to them.
+
+**Simulation integration.** State enters `SimSnapshot` as the CMP section (v49, after BT and before World) and `WorldHash` as a source (slot order; generation, owner, shape and contents, hashed as 8-byte words in 4 lanes). An empty store adds nothing, so scenes without State keep their old hashes.
+`tools\replay_verify.bat` has a `compute` job (Debug stress, Release, Server) and **compute A/B** (`computeab`: recorded with Auto, verified with `--compute-force-cpu`; `kCfgComputeForceCpu = 1u << 5`). An Fx leak into State fails at tick 0.
+
+**Settings** (`project_settings.json`; a missing key is the default, an invalid value is the default plus a warning):
+`"compute": { "gpuMinElements": 4096, "cpuMaxChunks": 0, "fxUploadBytesPerTick": 8388608, "fxDispatchPerTick": 64, "stateTotalBytes": 8388608, "kernelOverrides": { "<Name>": "cpu" } }`.
+`stateTotalBytes` (8 MiB) is read once at startup because it decides whether an allocation succeeds. At 8 MiB the State hash costs 5.7 % of a tick in Release (16 MiB: 8.8–11.1 %). `cpuMaxChunks` 0 = unlimited.
+
+**Inspector.** A script's inspector has a **Compute** fold-out (C++ and C#): for each declared or observed kernel it shows the state (not run / ran / failed: undeclared / declared but no kernel / subset violation), the last target, element count, upload / readback bytes, CPU ms (GPU: count), version agreement and an Auto / CPU override. The override is per kernel
+and applies to every script using it; Project Settings has "save as project default". Observation is display-only data, outside the snapshot and the hash.
+
+**Numbers.** ABI **v29** (164 → 174 slots, appended after `AnimatorGetState`: `ComputeCreateBuffer`, `ComputeReleaseBuffer`, `ComputeWriteBuffer`, `ComputeReadBuffer`, `ComputeForEach`, `ComputeJobStatus`, `ComputeJobTarget`, `ComputeJobWait`, `ComputeRegisterManagedKernels`, `ComputeSetManagedDeclarations`;
+`MyeScriptDesc` gains `kernelNameCount` / `kernelNames`, `MyeScriptModule` gains `kernelCount` / `kernels`; the v21 compute ABI is unchanged), **SimSnapshot v49**, configBits bit 5. A `GameLogic.dll` built for `apiVersion` 28 is refused; external projects must rebuild.
+Demo: `--compute-demo` (a C++ State flock, a C++ Fx spark field drawn with `DebugDrawLine`, and a C# State flock).
+
+**Known limits.** `ReloadHub` calls `CompileScripts` synchronously, so Roslyn stalls the frame for a few seconds after a kernel save. On a real GPU the Fx results differ from the CPU (up to 64 ULP in the measured case) — by design, since only Fx may use the GPU. The C# lane is outside replay coverage.
+
 ---
 
 ## 11. Debug/Release Consistency Policy
@@ -2765,6 +2827,7 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
   `--perception-demo`, `--bt-demo`, `--anim-demo`), plus a `jobsab` job: a `.rep` recorded serially (`--no-jobs`) is
   verified with the workers on, in Debug and Release, so the per-tick world hash proves the parallel simulation systems
   (§5.4) equal the serial ones. A kCookVersion bump (M90e, 6) keeps the cold-record / warm-verify bit match (M51b)
+- **compute A/B (M91, ADR-030).** A `compute` job (the `--compute-demo` scene: Debug stress, Release, `Server.exe` without a GPU) and a `computeab` job: a `.rep` recorded with Auto is verified with `--compute-force-cpu` in Debug and Release. State is in the hash (CMP section) and Fx is not, so an Fx result that leaked into State breaks the hash at tick 0 (measured on a real GPU and on `--warp`).
 
 **Field-level divergence diagnosis (M52a).** Knowing *which tick* broke is not the same as
 knowing *what* broke. `HashWorld`, `HashWorldDetailed` and `HashWorldDump` are three exits of a
@@ -3397,7 +3460,8 @@ built for `apiVersion` 26 is refused by a v27 engine; external projects (Sanko, 
 by the FNV-1a 64-bit hash of their name; a setter whose type differs from the `.controller.json` declaration returns 0 and
 writes nothing, and `AnimatorSetFloat` rejects non-finite values. The v7 `SetAnimatorParam` / `GetAnimatorParam` (index, raw
 bits) stay and now reach index 15. A `GameLogic.dll` built for `apiVersion` 27 is refused by a v28 engine; external projects
-must rebuild. The next ABI bump (M75h, InputField) is v29.
+must rebuild.
+**Scripting (ABI v29, M91e).** `MYE_API_VERSION` 29, 164 → 174 slots, appended after `AnimatorGetState`: ten `Compute*` slots (§10.12). `MyeScriptDesc` gains `kernelNameCount` / `kernelNames` and `MyeScriptModule` gains `kernelCount` / `kernels` at their ends. A `GameLogic.dll` built for `apiVersion` 28 is refused by a v29 engine; external projects must rebuild (the editor's [Rebuild Scripts] also generates their kernel table). The next ABI bump (M75h, InputField) is v30.
 
 **Verification.** `Editor.exe --selftest` runs the Session suite and the in-process server/client suite
 (one server and three clients over a seeded fake transport: missed deadline, late join, drop → reconnect,
@@ -3440,9 +3504,9 @@ Kept verbatim, because the completion criteria it set are still the ones the pro
 
 The order was intentional: implementing the reload foundation in M3 first accelerated subsequent particle development through dogfooding.
 
-### 12.2 What was actually built (M0-M90)
+### 12.2 What was actually built (M0-M91)
 
-**2026-07-19 → 2026-10-09, over 530 commits.** The primary source is `git log`; the prefix on each
+**2026-07-19 → 2026-10-12, over 600 commits.** The primary source is `git log`; the prefix on each
 commit subject names the milestone. Grouped by system rather than by number, because the numbers
 interleave — several tracks ran in parallel and a few milestones were revisited weeks later.
 
@@ -3470,6 +3534,7 @@ interleave — several tracks ran in parallel and a few milestones were revisite
 | Sky, water, project shaders | M77-M79 | Panorama skybox and IBL bake from 2D textures; Gerstner-wave water whose formula buoyancy shares; project post and compute effects with a Properties DSL and `.fxstack.json`; project surface shaders on both Forward and Deferred |
 | AI | M82-M85 | Recast-based NavMesh with bake, pathfinding, TileCache and Crowd held bit-identical (ADR-023); `AIPerception` sight and hearing (ADR-024); Agent Types, Surface grouping, filters and auto-generated links; **behaviour trees** with `.bt` / `.bb` assets, decorators, aborts, C# tasks and a node editor (ADR-025). ABI v24 → v27 = 158 slots |
 | Render optimization | M90 | Measurement first (per-view `RenderStats`, GPU timers, the `render_bench` scenes and `--render-stats-dump`); opt-in **mesh LOD** generated by meshoptimizer into the cooked blob (`kCookVersion` 6); two-phase **GPU occlusion culling** with a per-view max-Z pyramid for Deferred and Forward, default on and saved in `project_settings.json`; per-cascade shadow culling that keeps off-screen casters' shadows, and a conservative skinned AABB; render-side parallelism, a view-shared palette cache and distant-animation throttling (URO); parallel CPU particles / Perception / PartFollow / TwoBoneIk proven by replay_verify's jobs A/B (§5.4, §6.14, ADR-028 / ADR-029) |
+| Compute.ForEach | M91 | One `*.kernel.hlsl` source run on the GPU, as a C++ CPU function and as a C# CPU function behind a checked HLSL subset (KL001–KL028); State buffers always on the CPU and in snapshot / hash (SimSnapshot v49), Fx buffers GPU-first with delayed readback; source-hash version check, `COMPUTE_KERNELS` / `[ComputeKernels]` declarations, a Compute section in the script inspector, compute A/B in `replay_verify` (§10.12, ABI v29, ADR-030) |
 
 **A note on the numbering.** M17-M25 and M30-M31 have no commits of their own: they were finished
 before the repository was brought up to date and landed in two bundle commits (`M16-M25` and
@@ -3488,7 +3553,7 @@ to the physics roadmap.
 | M86 (Smart Objects) | **Unstarted, designed.** `SmartObjectComponent` with slots, a reservation table in the snapshot and hash, four behaviour-tree nodes, one ABI bump. Plan: `plans\ai-roadmap-m83-m86.md` |
 | Engine MCP server (M87) | **Unstarted, design settled.** Engine index dump, a stdio JSON-RPC server with search / describe, structured verify jobs, notes. Plan: `plans\エンジンMCPサーバ.md` |
 | Sequencer | **Unstarted.** A tick-based sequencer. (Blend trees, two-bone IK, root motion and animation events shipped as M89; mesh LOD and GPU occlusion culling as M90.) No plan file yet |
-| Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (now ABI v28, TypeId 80, ADR-029). Plan files that name a specific future number are stale on that point |
+| Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (now ABI v29, TypeId 80, SimSnapshot v49, ADR-030). Plan files that name a specific future number are stale on that point |
 | Dogfooding backlog | 5 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open (11 debug-draw log, 13 `builtin://wheel`, 17 CC ⇄ Rigidbody, 19 missing-`PhysicsEnvironment` warning, 20 script-to-script messaging). Each needs a new implementation surface; 20 needs the next ABI bump (`onMessage` on `MyeScriptDesc`) |
 
 ---
@@ -3526,7 +3591,8 @@ ADR-020 Deep-Modal impact synthesis (§10.7) /
 **ADR-026 in-process GPU device-loss recovery** (§6.13) /
 ADR-027 skeletal pose program (M89) /
 **ADR-028 simulation parallelism: output-dimension splits proven by jobs A/B** (§5.4) /
-**ADR-029 render optimization: opt-in mesh LOD, two-phase occlusion culling, render-side URO** (§6.14).
+**ADR-029 render optimization: opt-in mesh LOD, two-phase occlusion culling, render-side URO** (§6.14) /
+**ADR-030 Compute.ForEach: one kernel source, State on the CPU, Fx GPU-first** (§10.12).
 
 ---
 

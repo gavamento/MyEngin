@@ -1,7 +1,7 @@
 # sub-08: デモと compute A/B (`--compute-force-cpu`)
 
 - 依存: sub-06
-- 状態: 未着手
+- 状態: OK (commit 5c4096c)
 - 往復: 0
 - 再編: 2026-10-12 (旧 sub-07。C# 版のデモを追加)
 

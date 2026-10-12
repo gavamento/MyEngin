@@ -649,6 +649,60 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] `--no-jobs` と通常で、`render_bench` のスクショが WARP で画素一致する
 - [ ] `tools\shot_verify.bat` で golden 30 枚が PASS する (M90d で更新した 3 枚を含む)
 
+## M91: Compute.ForEach (C++ / C# 共通の計算 API)
+
+実装の根拠と測定は `docs\adr\ADR-030-compute-foreach.md`、仕様は `engine_spec.md` の 10.12。決定的な部分 (決定表・採番・ハッシュ・C++ と C# のバイト一致・外部プロジェクトの生成) は `Editor.exe --selftest` と `tools\replay_verify.bat` (compute / computeab) が見る。ここは GUI と実機 GPU でしか確かめられない項目。
+数値の確認は Release の `bin\x64\Release\Editor.exe` で行う (Debug は State のハッシュが約 5 倍遅い)。
+
+### デモの見た目 (受け入れ 12)
+
+- [ ] `bin\x64\Release\Runtime.exe --compute-demo --font-embedded --width 960 --height 540 --frames 130 --shot-frame 120 --screenshot <png>` で、左に火花 (線)、中央に黄色い C++ の群れ (512 体)、右に青い C# の群れ (48 体) が写る
+- [ ] 同じ引数に `--compute-force-cpu` を足しても、群れ 2 つは同じ絵になる (火花だけが少し違うのは Fx の GPU 遅れと誤差で、正常)
+- [ ] `--warp` を足しても 3 つとも写る
+
+### スクリプトのインスペクターの Compute 欄 (M91h)
+
+- [ ] Editor で `--compute-demo` を開いて Play し、`ComputeDemoSwarm` (C++ State)、`ComputeDemoSparks` (C++ Fx)、`ComputeCsSwarm` (C#) のエンティティを順に選ぶと、スクリプトの欄に「Compute」(日本語表示では「Compute (計算)」) の折り畳みが出る
+- [ ] 各行に、カーネル名 (`DemoSwarmStep` / `DemoSparkStep`)、状態 (実行済み)、最終の実行先、要素数、upload / readback (B)、CPU ms / GPU 回数、CPU 版 (一致)、上書き (Auto) が出る。日本語表示 (言語を日本語に切り替える) で文字化けや欠けがない
+- [ ] **実機 GPU** で `ComputeDemoSparks` の行が「GPU」を示し、GPU 回数・upload / readback のバイト数が増えていく (sub-08 では GUI の目視を取れていない)。デバイスが無い構成 (`Server.exe`) ではこの行は CPU
+- [ ] 上書きを「CPU 固定」にすると、`ComputeDemoSparks` の最終の実行先が CPU になり、「そのカーネルを使うすべてのスクリプトに効く」旨の注記が読める。「Auto」に戻すと GPU に戻る
+- [ ] Project Settings の「Compute (計算)」で「上書きをプロジェクト既定として保存」を押すと `assets\project_settings.json` の `"compute"."kernelOverrides"` が書かれ、押さない限り書かれない
+- [ ] 狭いインスペクターの幅でも Compute 欄の項目が切れない (縦並び)
+- [ ] 宣言していないカーネルを呼ぶように `COMPUTE_KERNELS` から名前を一時的に外して GameLogic を再ビルドすると、行が「失敗: 宣言なし」になり、直し方 (COMPUTE_KERNELS に足す) が出る。C# は `[ComputeKernels(...)]` から外して [Compile C# Scripts]
+
+### `.kernel.hlsl` の編集と版ずれ (受け入れ 11)
+
+- [ ] Play 中に `assets\shaders\kernels\DemoSwarmStep.kernel.hlsl` を保存すると、コンソールに `[compute] kernel source changed - recompiling C# scripts` が出る。数秒フレームが止まるのは既知の制限 (ADR-030)
+- [ ] 保存の直後、C++ の `ComputeDemoSwarm` の行は「CPU 版: 古い — GameLogic を再ビルド」になり、群れが止まる (State の ForEach が失敗し、バッファの中身は変わらない)
+- [ ] C# の `ComputeCsSwarm` の行は再コンパイルのあと「一致」に戻り、群れが動き続ける
+- [ ] GameLogic を Rebuild (または [Rebuild Scripts]) すると、C++ の行が「一致」に戻り、群れが再び動く
+- [ ] `ComputeDemoSparks` (Fx) は保存の直後も描かれ続ける (GPU 版がシェーダのホットリロードで作り直される)
+- [ ] 編集で `1.0` (f の無いリテラル) を書いて保存すると、検査違反 (`KL006`) がコンソールにファイル名と行つきで出て、行が「検査違反」になる。直して保存すると戻る
+- [ ] メニューの [Rebuild Scripts] と [Compile C# Scripts] をそれぞれ押して、エラーなく終わり、Compute 欄が「一致」になる
+
+### 外部プロジェクト (受け入れ 17)
+
+- [ ] 外部プロジェクト (例: 三校) を開いて [Rebuild Scripts] を押すと、`<project>\cache\Generated\Kernels.gen.{h,cpp}` ができ、`<project>\assets\shaders\kernels` にカーネルを置いて宣言したスクリプトが State の ForEach に成功する。エンジンの `SelfTest*` カーネルはそこには出ない
+- [ ] カーネルを編集して再ビルドしないで Play すると、コンソールに `hash-mismatch` が出て結果が変わらない
+
+### 改行 (sub-13 の GUI 確認と docs\line-endings.md)
+
+- [ ] 外部プロジェクトまたはこのリポジトリでシーンを GUI から保存し、`git status` に改行だけの差分が出ない (LF のまま)
+- [ ] アセットの `.meta` を作り直す操作 (アセットの再インポートや新規ファイルの追加) のあとも、`git status` に改行だけの差分が出ない
+- [ ] [Rebuild Scripts] のあとも、`git status` に改行だけの差分が出ない。出たら `tools\check_rules.ps1` の規則 14-c の指示に従う
+- [ ] `docs\line-endings.md` に書いた Visual Studio のメニュー名 (編集 > 詳細 > 改行コードの設定 / Edit > Advanced > Set Line Endings) が実機の VS 2022 にある。無ければ文書を直す (実機で未確認)
+
+### 実機 GPU
+
+- [ ] 実機 GPU (RTX 3060 以外でもよい) で `--compute-demo` を Release で出すと、`ComputeDemoSparks` の最終の実行先が GPU になる。Saxpy 相当の GPU と CPU の差 (最大 64 ULP の見込み) は Fx だけに現れ、State (C++ / C# の群れ) の絵は WARP や `--compute-force-cpu` と同じ
+- [ ] 実機で `Editor.exe --selftest` を回して落ちる項目は、WARP 前提の許容差 8 項目 (「GPU と CPU の差が 1〜2 ULP 以内」) だけであること。それ以外が落ちたら不具合 (ADR-030 の決定 14)
+
+### 回帰
+
+- [ ] `tools\check_rules.ps1` が 0 error
+- [ ] `tools\replay_verify.bat` が PASS し、PASS 行に `compute` と `compute A/B` が含まれる
+- [ ] C# と C++ のバイト一致を JIT 設定を変えて確かめ直す場合は ADR-030 の D24 の手順に従う (`KernelCompat.cs` / `KernelCSharp.cpp` を変えたとき)
+
 ## DeepModalModel: DeepModal 用のプロシージャル形状生成器 (2026-10-11)
 
 対象: `DeepModalModel\` (形状生成 → `Editor.exe --modal-voxelize` → 受理検査 → `dataset.py` 用 list)。手順は `DeepModalModel\README.md`。
