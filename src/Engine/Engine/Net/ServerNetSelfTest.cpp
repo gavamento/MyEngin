@@ -12,9 +12,11 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "Engine/Core/Diagnostics/Log.h"
@@ -1720,10 +1722,42 @@ struct OfflineVerify {
     uint64_t probePlayerCount = 0;
 };
 
+// 書いた直後のファイルを OS 側 (ウイルス対策など) が一時的に掴んで開けないことがある。
+// 読み取りで開けるまで最大 kOpenTries 回試す。待ちは firstWaitMs から倍々 (既定 50→100→200→400 ms)。
+// 5 回とも失敗したら false を返すだけで、失敗は呼び出し側の既存の経路 (ERROR + FAIL) にそのまま出す
+constexpr int kOpenTries = 5;
+bool WaitUntilReadable(const std::wstring& path, int firstWaitMs = 50)
+{
+    const auto start = std::chrono::steady_clock::now();
+    int waitMs = firstWaitMs;
+    for (int attempt = 1; attempt <= kOpenTries; ++attempt) {
+        std::error_code ec;
+        std::filesystem::file_size(std::filesystem::path(path), ec);
+        if (!ec) {
+            std::ifstream f(std::filesystem::path(path), std::ios::binary);
+            if (f) {
+                if (attempt > 1) {
+                    const long long elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                  std::chrono::steady_clock::now() - start).count();
+                    MYE_LOG_WARN("[selftest] opened after %d tries (%lld ms): %s", attempt, elapsed,
+                                 WideToUtf8(path).c_str());
+                }
+                return true;
+            }
+        }
+        if (attempt < kOpenTries) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(waitMs));
+            waitMs *= 2;
+        }
+    }
+    return false;
+}
+
 // Server.exe --replay-verify と同じ経路 (systemInput = false の HeadlessSim で VerifyReplay)
 // dumpPath 非空: dumpTick の tick 末のフィールド単位ダンプを書く (--hash-dump-tick / --hash-dump)
 OfflineVerify VerifyRepOffline(const std::wstring& path, const std::wstring& dumpPath = L"", int64_t dumpTick = 0)
 {
+    WaitUntilReadable(path);
     OfflineVerify o;
     HeadlessSimSetup s;
     s.config.title = L"MyEngine ServerNetSelfTest verify";
@@ -1912,6 +1946,8 @@ void TestSaveLoadBoundary(Sims& sims)
     const OfflineVerify serverFull = VerifyRepOffline(fullRep, serverDump, dumpTick);
     HashDump dc;
     HashDump ds;
+    WaitUntilReadable(clientDump);
+    WaitUntilReadable(serverDump);
     const bool dumpsRead = ReadHashDump(clientDump, dc) && ReadHashDump(serverDump, ds);
     Check(serverFull.result.passed && dumpsRead && dc.tick == static_cast<uint64_t>(dumpTick) && !dc.lines.empty()
               && DiffHashDumps(dc, ds, 0).Same(),
@@ -1939,6 +1975,27 @@ void TestSaveLoadBoundary(Sims& sims)
     std::filesystem::remove(serverDump, ec);
 }
 
+// WaitUntilReadable: 存在しないパスは 5 回試して false、待ちは合計 750 ms 前後。存在するファイルは待たずに true
+void TestWaitUntilReadable()
+{
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "mye_server_net_wait_readable";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const std::wstring missing = (dir / L"missing.rep").wstring();
+    const auto t0 = std::chrono::steady_clock::now();
+    const bool missingOpened = WaitUntilReadable(missing);
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    Check(!missingOpened && ms >= 700 && ms < 1500, "WaitUntilReadable: a missing path gives false after about 750 ms (%lld ms)", ms);
+
+    const std::wstring present = (dir / L"present.bin").wstring();
+    { std::ofstream(std::filesystem::path(present), std::ios::binary) << "x"; }
+    const auto t1 = std::chrono::steady_clock::now();
+    const bool presentOpened = WaitUntilReadable(present);
+    const long long ms1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t1).count();
+    Check(presentOpened && ms1 < 50, "WaitUntilReadable: an existing file opens on the first try without waiting (%lld ms)", ms1);
+    std::filesystem::remove_all(dir, ec);
+}
+
 } // namespace
 
 bool RunServerNetSelfTest()
@@ -1954,6 +2011,7 @@ bool RunServerNetSelfTest()
         TestGracefulLeave();
         TestReconnectLeavesOnce();
         TestSnapshotTransfer();
+        TestWaitUntilReadable();
     }
 
     // ---- sim あり: サーバ 1 + クライアント 3 を 1 プロセスに立てる ----

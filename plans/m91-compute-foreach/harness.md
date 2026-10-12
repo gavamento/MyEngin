@@ -17,8 +17,10 @@
 | sub-03 | OK | 2 | c206131 | ForEach のエンジン核 (依存 01) |
 | sub-04 | OK | 1 | 42c6b89 | State のスナップショット・ハッシュ (依存 03、snapshot v49 目安) |
 | sub-05 | OK | 2 | 92bde8a | カーネル表・COMPUTE_KERNELS・ABI (依存 02,04、ABI v29 目安) |
-| sub-10 | OK | 1 | (M91f) | 外部プロジェクトの C++ カーネル表 (依存 05、U12。sub-06 より先に着手) |
-| sub-11 | 未着手 | 0 | | Debug selftest の net 試験の不安定さの切り分け (sub-06 の前。M91e 退行の疑い) |
+| sub-10 | OK | 1 | ff60f77 | 外部プロジェクトの C++ カーネル表 (依存 05、U12。sub-06 より先に着手) |
+| sub-11 | OK | 2 | | Debug selftest の net 試験の不安定さの切り分け (sub-06 の前。M91e 退行の疑い) |
+| sub-12 | 未着手 | 0 | | リポジトリ全体の改行を .gitattributes で統一 (依存 11、U14) |
+| sub-13 | 未着手 | 0 | | エンジン・ツールが書くテキストの改行を規則に揃え、作業ツリーの見張りを有効化 (依存 12) |
 | sub-06 | 未着手 | 0 | | C# 同形 API・C# CPU 版 (依存 05) |
 | sub-07 | 未着手 | 0 | | スクリプトのインスペクター・project_settings (依存 06) |
 | sub-08 | 未着手 | 0 | | デモと compute A/B (依存 06) |
@@ -34,6 +36,9 @@
 - (2026-10-12、司会が AskUserQuestion) U8 = 上書きはカーネル単位 / U9 = C# からは常に C# 版 / U10 = 宣言していないカーネルの呼び出しは失敗 (planner 裁定の逆)。
 - (2026-10-12、司会が AskUserQuestion) U12 = 外部プロジェクト (HAL Collector / 三校) の kernels から C++ のカーネル表を生成する対応を M91 でやる (planner 裁定「後回し」の逆)。
 - (2026-10-12、司会が AskUserQuestion) U11 = スクリプトのコールバック外 (BT タスク等) からの ForEach は失敗 (裁定どおり)。仕様確定。
+- (2026-10-12、司会が AskUserQuestion) U13 = net の selftest の `cannot open` に、開けるまで数回リトライする処理を**いま足す** (planner 裁定「足さない」の逆)。sub-11 の追補コミットに入れる。
+- (2026-10-12、司会が AskUserQuestion) U14 = 改行の統一は**リポジトリ全体** (planner 裁定「M91 の分だけ」の逆)。既存の golden・replay・アセット・シーン・.sln/.vcxproj/.bat の例外まで決める。
+- (2026-10-12、司会が AskUserQuestion) U15 = 外部プロジェクト (HAL Collector / 三校) のリポジトリの改行も**揃える** (planner 裁定「範囲外」の逆)。
 
 ## 申し送り (セッション跨ぎ)
 - (解消: 3766e33 に切り出し済み) 開始時点で作業ツリーに無関係の未コミット変更あり (`docs/test_checklists.md`、`tools/deepmodal/train.py`、`DeepModalModel/`、`docs/deepmodal/synthetic_shapes.md`、`tools/deepmodal/tests/test_train_axes.py`)。実装フェーズに入る前にユーザーへ扱いを確認する (`docs/test_checklists.md` は coder も触りうる)。
@@ -49,3 +54,4 @@
 - (planner VERDICT sub-04) snapshot v49 (CMP 節は BT の後・World の前)。申し送り: (1) State ハッシュのコスト (1MiB/16MiB の ms/tick) は sub-08 の 5 で計測、16MiB で tick の 10% 超なら planner 判断。(2) State 入り .rep の照合は sub-08 の 6 (Debug/Release と computeab)。(3) sub-05 の ABI CreateBuffer は実行中スクリプトのエンティティを owner に渡す。State/Fx は 1 スロット空間のまま (Fx の Status/Target/Read/ハンドルを sim 分岐に使わない規約を spec 4.1.4 に追記)。
 - (planner VERDICT sub-05) ABI v29 = 174 (+10 本)。Kernels.gen.{h,cpp} は版管理 (spec 4.2 改訂)。U12 を受けて sub-10 を新設、コミット件名の文字を繰り下げ (sub-10 = M91f、sub-06 = M91g、07 = M91h、08 = M91i、09 = M91j)。申し送り: ScriptHost.cpp が長い (分割は後続)。R10 (複数 ScriptHost 同時生存時の construct dangling) は範囲外。Release selftest は司会がコミット前に再実行して PASS。memory の M75h は v30 へ更新済み。
 - (planner VERDICT sub-10) 申し送り: (1) Debug selftest の net 試験 (V1 LoadPersist / LoadGame) が 1 回目に FAIL → sub-11 で HEAD と 42c6b89 の再現率を比べて切り分け。基点でも落ちる場合はユーザー判断。(2) [Rebuild Scripts] ボタンからの手動確認を sub-09 で test_checklists に足す。(3) 自動 Rebuild 後のホットリロードで unknown component が復活するかは範囲外 (記録のみ)。sub-07 に 1b (プロジェクトとエンジンの同名カーネルの優先順) を追加。
+- (planner VERDICT sub-11) 申し送り: (1) `TestWaitUntilReadable` の上限 1500 ms は遅い CI で揺れうる → sub-12 の 7 で緩める。(2) Release selftest と replay_verify は sub-12 の受け入れ 4 で回す。比較側の CR 除去 (StripBanner) は sub-12 後も二重の守りとして残す。

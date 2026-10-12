@@ -708,7 +708,11 @@ void TestGeneration(const std::wstring& kernelDir)
     Check(changed != first && changed->sourceHash != first->sourceHash, "ソースが変わればキャッシュを作り直す");
     const auto crlf = [&] {
         std::string s;
+        // good が CRLF でチェックアウトされていても CRCRLF にならないよう、先に CR を落としてから CRLF 化する
         for (char ch : good) {
+            if (ch == '\r') {
+                continue;
+            }
             if (ch == '\n') {
                 s += '\r';
             }
@@ -743,7 +747,8 @@ void TestGeneration(const std::wstring& kernelDir)
     fs::remove_all(emptyRoot, ec);
 }
 
-// 先頭の「//」だけの行 (banner) を除く。banner は生成器ごとに文面が違う
+// 先頭の「//」だけの行 (banner) を除き、CR を落として LF に揃える。
+// banner は生成器ごとに文面が違う。コミット済みの生成物は autocrlf の環境で CRLF になるが、生成器は LF で出す
 std::string StripBanner(const std::string& s)
 {
     size_t pos = 0;
@@ -754,7 +759,9 @@ std::string StripBanner(const std::string& s)
         }
         pos = nl + 1;
     }
-    return s.substr(pos);
+    std::string body = s.substr(pos);
+    body.erase(std::remove(body.begin(), body.end(), '\r'), body.end());
+    return body;
 }
 
 void TestCppTable(const std::wstring& kernelDir)
