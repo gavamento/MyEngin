@@ -1,8 +1,8 @@
 # sub-18: 同時実行で共有される残りの作業場所 (save_server と hot_server) を、selftest ではプロセスごとに分ける
 
 - 依存: sub-17 (77269f9)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (commit bb625f3)
+- 往復: 1
 - 新設: 2026-10-12 (U21 のユーザー回答「M91 の中で直す」。planner 案「M91 の外の別件として記録だけ」の逆)
 
 ## 現状 (planner が `src/Engine/Engine/Loop/HeadlessSim.cpp:240-300` で確認)

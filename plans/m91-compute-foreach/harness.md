@@ -6,7 +6,7 @@
   - 「大前提決定論を維持するためにCPUとGPUで結果が変わる物はCPU側で計算するように / 判断はどちらでやっても整合性/決定論が壊れないかを確認するように / 重要なゲーム状態はCPUで計算するように / 1.制限を受け入れる 2.assets/shaders/kernels/に置く 3.ハッシュと不一致時の実行制限」
   - 「C++/C#は同じように呼び出せるようにしてほしい / HLSLはまだ話したい」
 - 開始: 2026-10-11 / 基点コミット: 3766e33 (当初 7d28c31。M91 開始前に未コミットの DeepModal 変更を 3766e33 として切り出したため繰り下げ)
-- フェーズ: レビュー (round 1 FAIL → sub-16、sub-17、sub-18)
+- フェーズ: レビュー (round 1 FAIL → sub-16〜18 → round 2 依頼中)
 - 事前調査: plans/m91-compute-foreach/design-draft.md
 
 ## サブ進捗
@@ -29,7 +29,7 @@
 | sub-09 | OK | 1 | f1f0007 | ADR-030 と文書 (依存 07,08,10) |
 | sub-16 | OK | 1 | 913067d | レビュー 1 の指摘 #1〜#4 (State と Fx の採番を分ける、snapshot v50) |
 | sub-17 | OK | 2 | 77269f9 | net selftest の作業フォルダをプロセスごとに分ける。原因 = 同じ exe から同時実行で .rep / .dump を上書きしあっていた (修正前 同時 4 本で 30/40 FAIL → 修正後 30 ラウンド FAIL 0)。リトライは除去 (U20) |
-| sub-18 | 策定中 | 0 | | 同時実行で共有のまま残る save_server と cache\hot_server\i<n> をプロセスごとに分ける (U21) |
+| sub-18 | OK | 1 | bb625f3 | 同時実行で共有のまま残る save_server と cache\hot_server\i<n> をプロセスごとに分ける (U21)。hot_server は元からプロセスごと、直したのは save だけ |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -78,3 +78,4 @@
 - (planner VERDICT sub-07) OK round 2 = b85a9c6。ReloadHub が ManagedHost / ComputeService を直接持つ依存は受け入れ (minor)。実機 GPU の Compute 欄の数値は sub-08 のデモ撮影で確認し、無理なら sub-09 の test_checklists へ。ADR-030 に同期 CompileScripts と起動順の事実を書く (sub-09.md に申し送り済み)。
 - (planner VERDICT sub-08) OK round 2 = 5c4096c。stateTotalBytes 既定 8 MiB (U19)。Debug の 8 MiB ハッシュは 1 tick の 29% (受け入れ、ADR-030 の表に載せる)。ハッシュのさらなる高速化は M91 ではやらない。Editor の Compute 欄の実機 GPU 目視は sub-09 の test_checklists へ。
 - (planner VERDICT sub-09) OK round 1 = f1f0007。minor: ADR-030 の「決定 N」に D 番号を添える / 1M の jobs あり・なし比較は未計測 / C++ ForEach の 5 本以上のバッファは未検証 (static_assert は足さない) / test_checklists の一部手順は未実走 (ユーザー確認)。
+- (sub-18、2026-10-12) 申し送り: %TEMP% の mye_selftest_<pid> が 19 個残っている (Compute の selftest が一時フォルダを消していない可能性。次に Compute の selftest を触るときに片付けを足す)。Release の save_server/slot0.json を書いた処理は未特定 (replay_verify の Release ジョブの可能性が高い、範囲外)。ComputeScript / Managed の selftest で上書き行が重複 (nit)。
