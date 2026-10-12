@@ -1,3 +1,19 @@
+# 改行の統一 (M91 追補 sub-12)。作業ツリーの改行を core.autocrlf などマシンの設定に依存させない。
+# 順序は「既定 -> 例外 (CRLF) -> バイナリ」で、後の行が勝つ。
+# テキスト判定は git の自動判定に任せ、テキストは作業ツリーでも LF にする。
+* text=auto eol=lf
+
+# cmd.exe と Visual Studio / MSBuild が書き戻す形式は CRLF が正。
+# LF にすると VS で保存するたびに全行が差分に見える。blob は LF のまま、checkout 時だけ変換する。
+*.cmd text eol=crlf
+*.sln text eol=crlf
+*.vcxproj text eol=crlf
+*.filters text eol=crlf
+*.props text eol=crlf
+*.targets text eol=crlf
+*.csproj text eol=crlf
+*.rc text eol=crlf
+
 # golden スクリーンショット (M52c) を含む PNG は絶対に改行変換させない。
 # 現状 git の自動判定でも binary 扱いになるが、判定に任せると 1 バイトの取り違えが
 # 「ピクセル回帰テストが理由不明で赤い」という最悪の形で出るので明示する。
@@ -28,3 +44,17 @@ external/gamelift-server-sdk/lib/**/*.lib binary
 external/gamelift-server-sdk/patches/*.patch -text
 external/openssl/redist/*.dll binary
 external/openssl/lib/*.lib binary
+
+# golden・replay・アセットのバイナリ。自動判定に任せず 1 バイトも変換させない。
+# まだリポジトリに無い種類 (.rep など) も、生成されてコミットされうるので先に書く。
+*.fbx binary
+*.glb binary
+*.wav binary
+*.dds binary
+*.blend binary
+*.lib binary
+*.dll binary
+*.exe binary
+*.pdf binary
+*.pyc binary
+*.rep binary

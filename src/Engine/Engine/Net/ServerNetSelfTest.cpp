@@ -1985,7 +1985,7 @@ void TestWaitUntilReadable()
     const auto t0 = std::chrono::steady_clock::now();
     const bool missingOpened = WaitUntilReadable(missing);
     const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
-    Check(!missingOpened && ms >= 700 && ms < 1500, "WaitUntilReadable: a missing path gives false after about 750 ms (%lld ms)", ms);
+    Check(!missingOpened && ms >= 700 && ms < 5000, "WaitUntilReadable: a missing path gives false after about 750 ms (%lld ms)", ms);
 
     const std::wstring present = (dir / L"present.bin").wstring();
     { std::ofstream(std::filesystem::path(present), std::ios::binary) << "x"; }

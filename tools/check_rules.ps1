@@ -947,6 +947,28 @@ foreach ($f in (Get-ChildItem -Recurse -File "$repo\build" | Where-Object { $_.E
     }
 }
 
+# 規則 14: 改行の統一 (M91 追補 sub-12、正本: .gitattributes)
+# (a) index のテキストに CRLF / 混在が無いこと (blob は常に LF)
+# (b) .gitattributes が eol=crlf とした種類 (.bat や VS のプロジェクト) が、作業ツリーで CRLF であること
+# LF 側の作業ツリー検査は、エンジンが CRLF で書くファイルを揃える sub-13 の後に足す
+$eolLines = @(& git -C $repo ls-files --eol)
+if ($LASTEXITCODE -ne 0 -or $eolLines.Count -eq 0) {
+    Write-Host "ERROR [rule 14] git ls-files --eol failed"
+    $errors++
+}
+foreach ($l in $eolLines) {
+    if ($l -notmatch '^i/(\S+)\s+w/(\S+)\s+attr/(.*?)\s*	(.+)$') { continue }
+    $idx = $Matches[1]; $wt = $Matches[2]; $attr = $Matches[3]; $path = $Matches[4]
+    if ($idx -eq 'crlf' -or $idx -eq 'mixed') {
+        Write-Host "ERROR [rule 14-a] ${path}: index has $idx line endings (must be LF)"
+        $errors++
+    }
+    if ($attr -match 'eol=crlf' -and $wt -ne 'crlf') {
+        Write-Host "ERROR [rule 14-b] ${path}: .gitattributes says eol=crlf but the working tree is $wt (re-checkout: docs/line-endings.md)"
+        $errors++
+    }
+}
+
 Write-Host "=== result: $errors error(s), $warnings warning(s) ==="
 if ($errors -gt 0) { exit 1 }
 exit 0

@@ -40,6 +40,8 @@
 - (2026-10-12、司会が AskUserQuestion) U13 = net の selftest の `cannot open` に、開けるまで数回リトライする処理を**いま足す** (planner 裁定「足さない」の逆)。sub-11 の追補コミットに入れる。
 - (2026-10-12、司会が AskUserQuestion) U14 = 改行の統一は**リポジトリ全体** (planner 裁定「M91 の分だけ」の逆)。既存の golden・replay・アセット・シーン・.sln/.vcxproj/.bat の例外まで決める。
 - (2026-10-12、司会が AskUserQuestion) U15 = 外部プロジェクト (HAL Collector / 三校) のリポジトリの改行も**揃える** (planner 裁定「範囲外」の逆)。
+- (2026-10-12、司会が AskUserQuestion) U16 = HAL Collector (git 無し) は触らない (裁定どおり)。
+- (2026-10-12、司会が AskUserQuestion) sub-12 の作業ツリーの書き直しは「コミットしてから書き直す」を承認 (自動判定が coder の書き直しを 2 回拒否したため)。
 
 ## 申し送り (セッション跨ぎ)
 - (解消: 3766e33 に切り出し済み) 開始時点で作業ツリーに無関係の未コミット変更あり (`docs/test_checklists.md`、`tools/deepmodal/train.py`、`DeepModalModel/`、`docs/deepmodal/synthetic_shapes.md`、`tools/deepmodal/tests/test_train_axes.py`)。実装フェーズに入る前にユーザーへ扱いを確認する (`docs/test_checklists.md` は coder も触りうる)。

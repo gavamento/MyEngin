@@ -81,4 +81,14 @@
 
 ## 実装メモ (coder が追記)
 
+### round 1 (中断: 作業ツリーの書き直しが自動承認の分類器に拒否された)
+- 済み: .gitattributes 書き直し (既定 `* text=auto eol=lf` -> CRLF 例外 -> バイナリ追記)。`git add --renormalize .` の差分は .gitattributes のみ (0 件 + 自身)。
+- 済み: check_rules 規則 14 (a: index の crlf/mixed、b: eol=crlf の作業ツリー)。新規 worktree (autocrlf=true/false) で集計が同一 (29 w/crlf = .bat 16 .vcxproj 5 .filters 5 .csproj/.props/.sln 各 1、2128 w/lf、184 -text、mixed 0)。規則 14 は新 worktree で 0 error、CRLF の index blob と LF の .bat をそれぞれ検出。
+- 済み: ServerNetSelfTest の上限 1500 -> 5000 ms。docs/line-endings.md。
+- 未実施: 本ツリーの書き直し (`git read-tree HEAD` + `git checkout-index -a -f` 相当。`git checkout-index -f` 単独は stat 一致で書き直さない)、受け入れ 4 の再確認一式。
+- 書き込み側の洗い出し (sub-13 入力、src の非 SelfTest): 
+  - CRLF (text モード ofstream, Windows): AssetOps.cpp:912/957/1641 (スクリプトひな形)、AssetDatabase.cpp:275 (.meta)、NetRollback.cpp:206 (desync.txt)、InputActions.cpp:142 (actions.json)、FxStackAsset.cpp:207
+  - LF (std::ios::binary): EditorApp/EditorGlobalSettings/EditorSettings/LayoutManager/ProjectRegistry/ProjectTemplates/Project.cpp(manifest)/Prefab/SchemaCodegen/Replay/WorldHasher/Provenance/TerrainEdit/RenderStatsDump/PerfBenchmark/InspectorWindow 他、AssetOps の binary 箇所 (bat 生成 1818 は binary = 文字列次第)
+  - ツール: gen_project_files.ps1 の vcxproj/filters は Set-Content -NoNewline (読み込んだ改行のまま)、Kernels.gen は WriteAllText (文字列の改行次第)。collab_fixture / gen_skinned_beam_fbx は LF 明示。perf_verify の Set-Content は CRLF。tools/deepmodal 等の python `open(.., 'w')` は newline 指定なしが大半 = Windows で CRLF (不明/CRLF)
+
 ## フィードバック履歴
