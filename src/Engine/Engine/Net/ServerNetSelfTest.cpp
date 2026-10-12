@@ -10,13 +10,14 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <process.h>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "Engine/Core/Diagnostics/Log.h"
@@ -777,9 +778,40 @@ void Harvest(ClientNode& n, ClientOutcome& out)
     out.sessionPlayerCount = n.session->PlayerCount();
 }
 
+// MYE_SELFTEST_ONLY=servernet-v1 のとき true。V1 (セーブ境界) の再現率を測るための入口 (製品の挙動は変えない)
+bool OnlyV1()
+{
+    char* value = nullptr;
+    size_t length = 0;
+    const bool only = _dupenv_s(&value, &length, "MYE_SELFTEST_ONLY") == 0 && value != nullptr
+        && std::string(value) == "servernet-v1";
+    std::free(value);
+    return only;
+}
+
+// 作業フォルダはプロセスごとに分ける。同じ exe から selftest を同時に回しても、.rep / .dump を上書きしあわない
 std::wstring CrashRoot()
 {
-    return GetExecutableDir() + L"\\cache\\server_net_selftest";
+    return GetExecutableDir() + L"\\cache\\server_net_selftest\\p" + std::to_wstring(_getpid());
+}
+
+// 落ちた実行が残した古い作業フォルダを消す。1 時間以内に更新されたものは、同時に走っている実行のものかもしれないので残す
+void SweepStaleWorkDirs()
+{
+    namespace fs = std::filesystem;
+    constexpr auto kStaleAge = std::chrono::hours(1);
+    std::error_code ec;
+    const fs::path parent = fs::path(CrashRoot()).parent_path();
+    for (fs::directory_iterator it(parent, ec), end; !ec && it != end; it.increment(ec)) {
+        const std::wstring name = it->path().filename().wstring();
+        if (name.size() < 2 || name[0] != L'p' || !it->is_directory(ec)) {
+            continue;
+        }
+        const auto age = fs::file_time_type::clock::now() - fs::last_write_time(it->path(), ec);
+        if (!ec && age > kStaleAge) {
+            fs::remove_all(it->path(), ec);
+        }
+    }
 }
 
 ScenarioResult RunScenario(Sims& sims, const ScenarioDef& def)
@@ -1722,42 +1754,10 @@ struct OfflineVerify {
     uint64_t probePlayerCount = 0;
 };
 
-// 書いた直後のファイルを OS 側 (ウイルス対策など) が一時的に掴んで開けないことがある。
-// 読み取りで開けるまで最大 kOpenTries 回試す。待ちは firstWaitMs から倍々 (既定 50→100→200→400 ms)。
-// 5 回とも失敗したら false を返すだけで、失敗は呼び出し側の既存の経路 (ERROR + FAIL) にそのまま出す
-constexpr int kOpenTries = 5;
-bool WaitUntilReadable(const std::wstring& path, int firstWaitMs = 50)
-{
-    const auto start = std::chrono::steady_clock::now();
-    int waitMs = firstWaitMs;
-    for (int attempt = 1; attempt <= kOpenTries; ++attempt) {
-        std::error_code ec;
-        std::filesystem::file_size(std::filesystem::path(path), ec);
-        if (!ec) {
-            std::ifstream f(std::filesystem::path(path), std::ios::binary);
-            if (f) {
-                if (attempt > 1) {
-                    const long long elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                  std::chrono::steady_clock::now() - start).count();
-                    MYE_LOG_WARN("[selftest] opened after %d tries (%lld ms): %s", attempt, elapsed,
-                                 WideToUtf8(path).c_str());
-                }
-                return true;
-            }
-        }
-        if (attempt < kOpenTries) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(waitMs));
-            waitMs *= 2;
-        }
-    }
-    return false;
-}
-
 // Server.exe --replay-verify と同じ経路 (systemInput = false の HeadlessSim で VerifyReplay)
 // dumpPath 非空: dumpTick の tick 末のフィールド単位ダンプを書く (--hash-dump-tick / --hash-dump)
 OfflineVerify VerifyRepOffline(const std::wstring& path, const std::wstring& dumpPath = L"", int64_t dumpTick = 0)
 {
-    WaitUntilReadable(path);
     OfflineVerify o;
     HeadlessSimSetup s;
     s.config.title = L"MyEngine ServerNetSelfTest verify";
@@ -1870,8 +1870,9 @@ void TestSaveLoadBoundary(Sims& sims)
     Check(WriteRepFromLog(sims, r, fullRep, 0), "%s: wrote the server's confirmed log as a .rep", d.name);
     const OfflineVerify full = VerifyRepOffline(fullRep);
     Check(full.ready && full.result.ran && full.result.passed && full.result.verifiedTicks == r.log.size(),
-          "%s: the offline replay of the server .rep matches every tick (verified %llu of %zu, reason '%s')", d.name,
-          static_cast<unsigned long long>(full.result.verifiedTicks), r.log.size(), full.result.failReason.c_str());
+          "%s: the offline replay of the server .rep matches every tick (verified %llu of %zu, ready %d, ran %d, reason '%s')",
+          d.name, static_cast<unsigned long long>(full.result.verifiedTicks), r.log.size(), full.ready ? 1 : 0,
+          full.result.ran ? 1 : 0, full.result.failReason.c_str());
     // V12: ゲームが v13 の Net* を毎 tick 読んで sim へ書いても (誤用だが)、サーバ .rep のオフライン再生は
     // ライブと同じ値を読む (再生専用の sim でも NetIsConnected = 1 / NetPlayerCount = 人数)。
     // 上の全 tick 一致 (ライブのサーバのハッシュ列と同じ) がその証拠で、ここでは probe が実際に値を読んだことも見る
@@ -1940,14 +1941,12 @@ void TestSaveLoadBoundary(Sims& sims)
     const std::wstring serverDump = (dir / L"save_boundary_server.dump").wstring();
     const OfflineVerify client = VerifyRepOffline(clientRep, clientDump, dumpTick);
     Check(client.ready && client.result.ran && client.result.passed && client.result.verifiedTicks == r.log.size() - clientFrom,
-          "%s: a .rep that starts at tick %zu replays alone and matches every tick (verified %llu of %zu, reason '%s')", d.name,
-          clientFrom, static_cast<unsigned long long>(client.result.verifiedTicks), r.log.size() - clientFrom,
-          client.result.failReason.c_str());
+          "%s: a .rep that starts at tick %zu replays alone and matches every tick (verified %llu of %zu, ready %d, ran %d, "
+          "reason '%s')", d.name, clientFrom, static_cast<unsigned long long>(client.result.verifiedTicks),
+          r.log.size() - clientFrom, client.ready ? 1 : 0, client.result.ran ? 1 : 0, client.result.failReason.c_str());
     const OfflineVerify serverFull = VerifyRepOffline(fullRep, serverDump, dumpTick);
     HashDump dc;
     HashDump ds;
-    WaitUntilReadable(clientDump);
-    WaitUntilReadable(serverDump);
     const bool dumpsRead = ReadHashDump(clientDump, dc) && ReadHashDump(serverDump, ds);
     Check(serverFull.result.passed && dumpsRead && dc.tick == static_cast<uint64_t>(dumpTick) && !dc.lines.empty()
               && DiffHashDumps(dc, ds, 0).Same(),
@@ -1975,33 +1974,13 @@ void TestSaveLoadBoundary(Sims& sims)
     std::filesystem::remove(serverDump, ec);
 }
 
-// WaitUntilReadable: 存在しないパスは 5 回試して false、待ちは合計 750 ms 前後。存在するファイルは待たずに true
-void TestWaitUntilReadable()
-{
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "mye_server_net_wait_readable";
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    const std::wstring missing = (dir / L"missing.rep").wstring();
-    const auto t0 = std::chrono::steady_clock::now();
-    const bool missingOpened = WaitUntilReadable(missing);
-    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
-    Check(!missingOpened && ms >= 700 && ms < 5000, "WaitUntilReadable: a missing path gives false after about 750 ms (%lld ms)", ms);
-
-    const std::wstring present = (dir / L"present.bin").wstring();
-    { std::ofstream(std::filesystem::path(present), std::ios::binary) << "x"; }
-    const auto t1 = std::chrono::steady_clock::now();
-    const bool presentOpened = WaitUntilReadable(present);
-    const long long ms1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t1).count();
-    Check(presentOpened && ms1 < 50, "WaitUntilReadable: an existing file opens on the first try without waiting (%lld ms)", ms1);
-    std::filesystem::remove_all(dir, ec);
-}
-
 } // namespace
 
 bool RunServerNetSelfTest()
 {
     g_fail = 0;
     MYE_LOG_INFO("==== Server/client net self test: start ====");
+    SweepStaleWorkDirs();
 
     // ---- sim 無しのプロトコル単体 ----
     {
@@ -2011,7 +1990,6 @@ bool RunServerNetSelfTest()
         TestGracefulLeave();
         TestReconnectLeavesOnce();
         TestSnapshotTransfer();
-        TestWaitUntilReadable();
     }
 
     // ---- sim あり: サーバ 1 + クライアント 3 を 1 プロセスに立てる ----
@@ -2032,17 +2010,24 @@ bool RunServerNetSelfTest()
                 StepTimer t(name);
                 fn(*sims);
             };
-            timed("rollback across system events", &TestRollbackAcrossSystemEvents);
-            timed("N1 lifecycle", &TestLifecycle);
-            timed("N1 deadline overrun", &TestDeadlineOverrun);
-            timed("N2 order independence", &TestOrderIndependence);
-            timed("N3 eventSeq gap", &TestEventGap);
-            timed("N3 desync", &TestDesync);
-            timed("N4 speculation limit", &TestSpeculationLimit);
-            timed("V7 time sync", &TestTimeSync);
+            // MYE_SELFTEST_ONLY=servernet-v1: V1 (セーブ境界) だけを回す。不安定な FAIL の再現率を測る入口
+            if (!OnlyV1()) {
+                timed("rollback across system events", &TestRollbackAcrossSystemEvents);
+                timed("N1 lifecycle", &TestLifecycle);
+                timed("N1 deadline overrun", &TestDeadlineOverrun);
+                timed("N2 order independence", &TestOrderIndependence);
+                timed("N3 eventSeq gap", &TestEventGap);
+                timed("N3 desync", &TestDesync);
+                timed("N4 speculation limit", &TestSpeculationLimit);
+                timed("V7 time sync", &TestTimeSync);
+            }
             timed("V1-V4 save/load boundary, net info, empty replay", &TestSaveLoadBoundary);
         }
     }
+
+    sims.reset();
+    std::error_code removeEc;
+    std::filesystem::remove_all(CrashRoot(), removeEc);
 
     if (g_fail == 0) {
         MYE_LOG_INFO("==== Server/client net self test: ALL PASS ====");
