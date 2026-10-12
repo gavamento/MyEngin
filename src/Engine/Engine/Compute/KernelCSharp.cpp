@@ -134,7 +134,7 @@ private:
     {
         const KernelDef& k = prog_.kernel;
         Line(2, "[UnmanagedCallersOnly]");
-        Line(2, "public static void Range(uint begin, uint end, void* paramsPtr, void** buffers, uint* counts)");
+        Line(2, "public static void Range(void* paramsPtr, KernelBuffer* buffers, uint bufferCount, uint begin, uint end)");
         Line(2, "{");
         Line(3, "ref readonly " + k.paramsName + " prm = ref *(" + k.paramsName + "*)paramsPtr;");
         std::string call = "Body(new KernelId(i), in prm";
@@ -143,7 +143,7 @@ private:
             const std::string view = std::string(b.rw ? "RWView<" : "ROView<") + b.typeName + ">";
             const std::string var = "buf" + std::to_string(i);
             Line(3, view + " " + var + " = new " + view + "((" + b.typeName + "*)buffers[" + std::to_string(i)
-                        + "], counts[" + std::to_string(i) + "]);");
+                        + "].Data, buffers[" + std::to_string(i) + "].Count);");
             call += ", " + var;
         }
         Line(3, "for (uint i = begin; i < end; ++i)");

@@ -193,6 +193,17 @@ namespace MyeScripting
             }
             _types.Sort((a, b) => string.CompareOrdinal(a.FullName, b.FullName));
 
+            // C# の CPU 版と [ComputeKernels] の宣言を、スクリプトをインスタンス化する前に登録し直す (エンジンの表は丸ごと差し替え)
+            try
+            {
+                int kernelCount = ComputeRegistration.Register(allTypes, _types);
+                if (kernelCount > 0) Engine.Log("[csharp] registered " + kernelCount + " compute kernel(s)");
+            }
+            catch (Exception ex)
+            {
+                Engine.Log("[csharp] compute registration failed: " + ex.Message, 3);
+            }
+
             var old = _alc;
             _alc = newAlc;
             old?.Unload();
@@ -267,6 +278,7 @@ namespace MyeScripting
                 // M70d: ネイティブから来た tick 番号をインスタンスへ渡す。
                 // C# レーンにはこれ以外に決定論的な時間カウンタが無い
                 inst.Tick = tick;
+                using var computeScope = new ComputeCaller.Scope(inst);
                 switch (phase)
                 {
                     case 0: inst.Start(); break;
@@ -286,6 +298,7 @@ namespace MyeScripting
             try
             {
                 var e = new MyeEntity(other);
+                using var computeScope = new ComputeCaller.Scope(inst);
                 if (enter != 0) inst.OnTriggerEnter(e); else inst.OnTriggerExit(e);
             }
             catch (Exception ex)
@@ -300,6 +313,7 @@ namespace MyeScripting
             try
             {
                 var e = new MyeEntity(other);
+                using var computeScope = new ComputeCaller.Scope(inst);
                 switch (kind)
                 {
                     case 0: inst.OnCollisionEnter(e, normal); break;
@@ -318,6 +332,7 @@ namespace MyeScripting
             if (!_instances.TryGetValue(handle, out var inst)) return;
             try
             {
+                using var computeScope = new ComputeCaller.Scope(inst);
                 inst.OnBreak(new MyeEntity(piece), point, impulse);
             }
             catch (Exception ex)

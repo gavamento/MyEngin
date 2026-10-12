@@ -410,11 +410,11 @@ constexpr const char* kGoldenSaxpy = R"KGOLD(namespace MyeKernels.SelfTestSaxpy
         }
 
         [UnmanagedCallersOnly]
-        public static void Range(uint begin, uint end, void* paramsPtr, void** buffers, uint* counts)
+        public static void Range(void* paramsPtr, KernelBuffer* buffers, uint bufferCount, uint begin, uint end)
         {
             ref readonly SelfTestSaxpyParams prm = ref *(SelfTestSaxpyParams*)paramsPtr;
-            RWView<float> buf0 = new RWView<float>((float*)buffers[0], counts[0]);
-            ROView<float> buf1 = new ROView<float>((float*)buffers[1], counts[1]);
+            RWView<float> buf0 = new RWView<float>((float*)buffers[0].Data, buffers[0].Count);
+            ROView<float> buf1 = new ROView<float>((float*)buffers[1].Data, buffers[1].Count);
             for (uint i = begin; i < end; ++i)
             {
                 Body(new KernelId(i), in prm, buf0, buf1);
@@ -498,11 +498,11 @@ constexpr const char* kGoldenMix = R"KGOLD(namespace MyeKernels.SelfTestMix
         }
 
         [UnmanagedCallersOnly]
-        public static void Range(uint begin, uint end, void* paramsPtr, void** buffers, uint* counts)
+        public static void Range(void* paramsPtr, KernelBuffer* buffers, uint bufferCount, uint begin, uint end)
         {
             ref readonly SelfTestMixParams prm = ref *(SelfTestMixParams*)paramsPtr;
-            RWView<SelfTestMixElem> buf0 = new RWView<SelfTestMixElem>((SelfTestMixElem*)buffers[0], counts[0]);
-            ROView<SelfTestMixProbe> buf1 = new ROView<SelfTestMixProbe>((SelfTestMixProbe*)buffers[1], counts[1]);
+            RWView<SelfTestMixElem> buf0 = new RWView<SelfTestMixElem>((SelfTestMixElem*)buffers[0].Data, buffers[0].Count);
+            ROView<SelfTestMixProbe> buf1 = new ROView<SelfTestMixProbe>((SelfTestMixProbe*)buffers[1].Data, buffers[1].Count);
             for (uint i = begin; i < end; ++i)
             {
                 Body(new KernelId(i), in prm, buf0, buf1);

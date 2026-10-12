@@ -1324,6 +1324,36 @@ namespace MyeScripting
             }
         }
 
+        // ---- v29 (M91e/g): Compute.ForEach ----
+        // 公開 API は Compute.cs (MyeScripting.Compute)。ここはスロットの薄い窓口だけ
+        public static ulong ComputeCreateBuffer(MyeEntityId owner, uint count, uint stride, uint kind)
+            => _api != null ? _api->ComputeCreateBuffer(_api->Engine, owner, count, stride, kind) : 0;
+        public static bool ComputeReleaseBuffer(ulong buffer)
+            => _api != null && _api->ComputeReleaseBuffer(_api->Engine, buffer) != 0;
+        public static bool ComputeWriteBuffer(ulong buffer, void* src, uint count)
+            => _api != null && _api->ComputeWriteBuffer(_api->Engine, buffer, src, count) != 0;
+        public static bool ComputeReadBuffer(ulong buffer, void* dst, uint count, bool wait)
+            => _api != null && _api->ComputeReadBuffer(_api->Engine, buffer, dst, count, wait ? 1 : 0) != 0;
+        public static ulong ComputeForEach(string kernel, uint execution, void* prm, uint paramsSize,
+                                            ulong* buffers, uint bufferCount, string callerScript)
+        {
+            if (_api == null || kernel == null) return 0;
+            var kb = Utf8(kernel);
+            // callerScript が null = スクリプトのコールバックの外。エンジンは宣言なしとして失敗にする (U11)
+            var sb = callerScript != null ? Utf8(callerScript) : null;
+            fixed (byte* kp = kb) fixed (byte* sp = sb)
+            {
+                return _api->ComputeForEach(_api->Engine, kp, execution, prm, paramsSize, buffers, bufferCount, sp);
+            }
+        }
+        public static int ComputeJobStatus(ulong job) => _api != null ? _api->ComputeJobStatus(_api->Engine, job) : 2;
+        public static int ComputeJobTarget(ulong job) => _api != null ? _api->ComputeJobTarget(_api->Engine, job) : 0;
+        public static bool ComputeJobWait(ulong job) => _api != null && _api->ComputeJobWait(_api->Engine, job) != 0;
+        public static bool ComputeRegisterManagedKernels(MyeKernelDesc* kernels, uint count)
+            => _api != null && _api->ComputeRegisterManagedKernels(_api->Engine, kernels, count) != 0;
+        public static bool ComputeSetManagedDeclarations(MyeComputeDecl* decls, uint count)
+            => _api != null && _api->ComputeSetManagedDeclarations(_api->Engine, decls, count) != 0;
+
         // ---- v22 (M80l): 破壊への損傷 ----
         // entity は Destructible のルートか、その破片のどちらでもよい。radius<=0 は
         // 最寄りの 1 破片へ amount をそのまま加算する。呼んだ瞬間に damage へ書く

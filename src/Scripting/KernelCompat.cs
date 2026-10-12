@@ -304,6 +304,15 @@ namespace MyeScripting.KernelCompat
         public static uint4 operator ^(uint s, uint4 b) => new uint4((uint)(s ^ b.x), (uint)(s ^ b.y), (uint)(s ^ b.z), (uint)(s ^ b.w));
     }
 
+    // エンジンが生成コードの Range へ渡すバッファ 1 本 (EngineAPI.h の MyeKernelBuffer と同一レイアウト)
+    [StructLayout(LayoutKind.Sequential)]
+    public unsafe struct KernelBuffer
+    {
+        public void* Data;
+        public uint Count;
+        public uint Stride;
+    }
+
     // 要素番号。RW の添字にできるのはこの型だけ (C++ 版の KernelId と同じ契約)
     public readonly struct KernelId
     {

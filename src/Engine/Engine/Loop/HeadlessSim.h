@@ -17,6 +17,7 @@
 namespace mye {
 
 struct NetRuntimeInfo;
+class ManagedHost;
 namespace compute {
 class ComputeService;
 }
@@ -97,6 +98,8 @@ public:
     const NetRuntimeInfo& NetInfo() const;
     // Compute.ForEach のサービス。device 無しなので Fx は CPU 版で動く (M91d、selftest が State の ForEach を確かめる)
     compute::ComputeService& Compute();
+    // C# スクリプトホスト。Init 済みにするのは selftest だけ (既定は未 Init = C# レーンは走らない)。Init した後は自分で SetTickContext / RunStartAndUpdate を回すこと
+    ManagedHost& Managed();
     // GameLogic.dll を今のビルド出力から読み直す (ホットリロード直後の状態を selftest が作る)。tick の合間に呼ぶこと
     bool ReloadGameLogic();
 

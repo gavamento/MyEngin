@@ -516,6 +516,7 @@ TickGates HeadlessSim::Gates() const { return GatesOf(impl_->tickServices); }
 const std::wstring& HeadlessSim::SaveDir() const { return impl_->saveDir; }
 const NetRuntimeInfo& HeadlessSim::NetInfo() const { return impl_->netInfo; }
 compute::ComputeService& HeadlessSim::Compute() { return impl_->computeService; }
+ManagedHost& HeadlessSim::Managed() { return impl_->managedHost; }
 
 bool HeadlessSim::ReloadGameLogic()
 {

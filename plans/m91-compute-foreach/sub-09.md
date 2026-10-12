@@ -32,3 +32,11 @@ spec 受け入れ 13。
 
 ## 申し送り (2026-10-12、sub-15 から)
 - `docs/line-endings.md` に書いた VS のメニュー名 (Edit > Advanced > Set Line Endings) は、実機で確かめていない。test_checklists に手動の項目として載せ、ユーザーの確認に回す。
+
+## 申し送り (2026-10-12、sub-06 から。ADR-030 に書く事実)
+- 生成する C# の `Range` の署名は、ABI の `MyeKernelRangeFn` (params, bufs, bufCount, begin, end) と同じ。
+- collectible ALC の中の `[UnmanagedCallersOnly]` の関数ポインタは、`GetFunctionPointer()` で取れて、JobSystem のワーカーから呼べる。新しい表は、古い ALC を捨てる前に登録する。
+- D24: ホワイトリストのすべての関数で、6 通りの JIT 設定 (既定 / TieredCompilation=0 / TieredPGO=0 / QuickJitForLoops=0 + OSR / AVX と AVX2 を無効 / ReadyToRun=0) のどれでも、C++ の CPU 版とバイト一致した。CI には常設しない。手動で再実行する手順を書く。
+- 変異テストの手順: `KernelCompat.cs` の `dot(float3)` の加算の順を変えると、selftest の一致の確認が FAIL する。
+- 速度: 1M 要素の Release で、Saxpy は C++ 0.21〜0.34 ms / C# 0.26〜0.60 ms、Mix は C++ 12.8〜22.4 ms / C# 15.1〜28.6 ms。
+- `RWView<T>` を int で添字すると、C# では CS1503 になる。

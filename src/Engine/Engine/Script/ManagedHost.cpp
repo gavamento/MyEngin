@@ -16,6 +16,8 @@
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Compute/ComputeService.h"
+#include "Engine/Engine/Compute/KernelCSharp.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Platform/PathUtil.h"
 
@@ -161,6 +163,11 @@ bool ManagedHost::Init(const std::wstring& exeDir, Scene* scene)
 
 void ManagedHost::Shutdown()
 {
+    // C# の CPU 版はこのランタイムの中のコードを指しているので、ランタイムを閉じる前に表から外す
+    if (apiCtx_.compute != nullptr) {
+        apiCtx_.compute->ReplaceKernels(compute::CallerKind::CSharp, {});
+        apiCtx_.compute->ReplaceDeclarations(compute::CallerKind::CSharp, {});
+    }
     if (ctx_ && g_close) {
         g_close(static_cast<hostfxr_handle>(ctx_));
         ctx_ = nullptr;
@@ -314,6 +321,9 @@ bool ManagedHost::CompileScripts(const std::wstring& scriptsDir)
     if (!ready_) {
         return false;
     }
+    // カーネルの C# の CPU 版 (assets\scripts\Generated\Kernels.gen.cs) を、スクリプトと一緒にコンパイルする前に作り直す。
+    // 検査に落ちたカーネルは出力に入らない (ログに違反が出る)。.kernel.hlsl が変わった後はここを通って初めて一致に戻る
+    kernel::WriteCSharpKernels(std::filesystem::path(scriptsDir).parent_path().wstring());
     const std::string dir = WideToUtf8(scriptsDir);
     const int32_t n = vt_.Compile(dir.c_str());
     if (n < 0) {

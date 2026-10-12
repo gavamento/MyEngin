@@ -11,6 +11,9 @@ spec 4.1.7 / 4.2 (project_settings) / 4.3、D19 / D27、受け入れ 11 / 16。
 
 1. `.kernel.hlsl` のアセット扱い: `.meta` (sub-01 / sub-03 で手で作った .meta の線種 (LF) と guid (SelfTestUnused は手で付けた値) を、既存の生成規則に揃える)、Project ブラウザでの表示、FileWatcher → GPU のホットリロード → ハッシュと検査の評価し直し → C# の再生成要求 (sub-06)。
 1b. (sub-10 からの申し送り) プロジェクトとエンジンの両方の `kernels` に同じ名前のカーネルがあるときに、ShaderManager のプロジェクト索引と ComputeService のソース表がどちらを採るかを確かめる。シェーダルートの優先順位 (プロジェクトが先) と揃っていなければ揃える。揃えられない場合は失敗にしてログに出す。結果を実装メモに書く。
+1c. (sub-06 から移管) FileWatcher が `.kernel.hlsl` の変更を拾ったら、`ComputeService::UpdateKernelSource` を呼ぶ。C# が読み込まれていれば、`ManagedHost::CompileScripts` を呼ぶか要求を立てる。Kernels.gen.cs の再生成は CompileScripts の中で行われる。
+   - 確認: カーネルを編集すると C# の State がいったん不一致で失敗し、自動で再コンパイルされて一致に戻ること。selftest か手順で確かめる。
+   - C# の状態の表示には `IsDeclared(CallerKind::CSharp, ...)` と `FindKernel(...)->csharp` を使う。C# の宣言表のスクリプト型名は `Type.FullName`。
 2. スクリプトのインスペクターの Compute 欄 (C++ の FIELDS スクリプトと C# スクリプトの両方): 行 = 宣言 ∪ 観測 (名前順)。列は spec 4.1.7 のとおり。
    上書き (Auto / CPU 固定) はカーネル単位で、「このカーネルを使うすべてのスクリプトに効く」と表示する (U8 の裁定)。State を GPU へ向ける UI は作らない。
    状態には「宣言なしで失敗」(U10) と「宣言あり・カーネル無し」(D28-f) を含める。検査で違反しているカーネルは、規則と行を表示する。文字列は `Tr()` で日英両方。`###` の後の識別子と書式指定子の順を揃える。

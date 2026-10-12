@@ -7,6 +7,12 @@
 
 namespace {
 
+// SelfTestAllFuncs
+constexpr const char* const kSelfTestAllFuncs_argNames[] = { "outv", "src" };
+constexpr auto kSelfTestAllFuncs_args = ::mye::kernel::MakeKernelArgs<&::mye::kernel::cpu::SelfTestAllFuncs::SelfTestAllFuncs_Cpu>(kSelfTestAllFuncs_argNames);
+const ::mye_script_detail::KernelRegistrar kSelfTestAllFuncs_registrar(
+    ::mye::kernel::MakeKernelDesc<&::mye::kernel::cpu::SelfTestAllFuncs::SelfTestAllFuncs_Cpu>("SelfTestAllFuncs", 0x47d3e576911ef0faull, kSelfTestAllFuncs_args.data()));
+
 // SelfTestMix
 constexpr const char* const kSelfTestMix_argNames[] = { "outv", "probes" };
 constexpr auto kSelfTestMix_args = ::mye::kernel::MakeKernelArgs<&::mye::kernel::cpu::SelfTestMix::SelfTestMix_Cpu>(kSelfTestMix_argNames);

@@ -7,6 +7,16 @@
 
 #pragma warning(push)
 #pragma warning(disable : 4100 4505)
+namespace mye::kernel::cpu::SelfTestAllFuncs {
+namespace {
+#include "../../../assets/shaders/kernels/SelfTestAllFuncs.kernel.hlsl"
+} // namespace
+}
+#pragma warning(pop)
+namespace MyeKernels::SelfTestAllFuncs { using namespace ::mye::kernel::cpu::SelfTestAllFuncs; }
+
+#pragma warning(push)
+#pragma warning(disable : 4100 4505)
 namespace mye::kernel::cpu::SelfTestMix {
 namespace {
 #include "../../../assets/shaders/kernels/SelfTestMix.kernel.hlsl"

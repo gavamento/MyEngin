@@ -48,6 +48,7 @@
 #include "Editor/Scene/CameraPilotSelfTest.h"
 #include "Engine/Engine/Animation/AnimatorControllerSelfTest.h"
 #include "Engine/Engine/Asset/AssetDatabaseSelfTest.h"
+#include "Engine/Engine/Compute/ComputeManagedSelfTest.h"
 #include "Engine/Engine/Compute/ComputeServiceSelfTest.h"
 #include "Engine/Engine/Compute/ComputeScriptSelfTest.h"
 #include "Engine/Engine/Compute/ComputeStateSelfTest.h"
@@ -645,6 +646,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunComputeServiceSelfTest();        // M91c: ForEach のエンジン核 (ストア・判断・Fx GPU)
         ok &= mye::RunComputeStateSelfTest();          // M91d: State バッファのスナップショット・ハッシュ・寿命
         ok &= mye::RunComputeScriptSelfTest();         // M91e: GameLogic のカーネル表・COMPUTE_KERNELS・ForEach の ABI
+        ok &= mye::RunComputeManagedSelfTest();        // M91g: C# の ForEach・C# の CPU 版 (C++ 版とのバイト一致)
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }
