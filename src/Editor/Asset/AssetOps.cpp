@@ -909,7 +909,7 @@ std::wstring CreateCppScript(EngineContext& ctx, const std::string& rawName)
         "};\n"
         "REGISTER_SCRIPT({NAME}, FIELDS(speed));\n";
     ReplaceAll(t, "{NAME}", name);
-    std::ofstream f{ fs::path(path) };
+    std::ofstream f{ fs::path(path), std::ios::binary };
     if (!f) {
         MYE_LOG_ERROR(Tr(StrId::Log_WriteScriptFail), WideToUtf8(path).c_str());
         return {};
@@ -954,7 +954,7 @@ std::wstring CreateCSharpScript(EngineContext& ctx, const std::string& rawName)
         "    }\n"
         "}\n";
     ReplaceAll(t, "{NAME}", name);
-    std::ofstream f{ fs::path(path) };
+    std::ofstream f{ fs::path(path), std::ios::binary };
     if (!f) {
         MYE_LOG_ERROR(Tr(StrId::Log_WriteCsFail), WideToUtf8(path).c_str());
         return {};
@@ -1638,7 +1638,7 @@ namespace {
 // プロジェクト側が参照するエンジン資産は Shared\ のヘッダ 4 本だけになる
 bool WriteGeneratedMain(const std::wstring& path)
 {
-    std::ofstream f{ fs::path(path) };
+    std::ofstream f{ fs::path(path), std::ios::binary };
     if (!f) {
         MYE_LOG_ERROR(Tr(StrId::Log_WriteFail), WideToUtf8(path).c_str());
         return false;

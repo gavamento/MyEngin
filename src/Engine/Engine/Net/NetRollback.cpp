@@ -203,7 +203,7 @@ bool WriteNetDesyncBundle(const std::wstring& crashRoot, const NetDesyncReport& 
     ring.WriteRepFile((dir / L"local.rep").wstring().c_str());
     WriteHashDump((dir / L"local.dump").wstring(), dump);
 
-    std::ofstream f(dir / L"desync.txt");
+    std::ofstream f(dir / L"desync.txt", std::ios::binary);
     if (!f) {
         return false;
     }

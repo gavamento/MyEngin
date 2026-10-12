@@ -731,7 +731,7 @@ void RunOneTick(TickServices& ts)
                               hashSources, ctx.tickIndex, dump);
                 WriteHashDump(dumpPath, dump);
                 std::ofstream mf(
-                    std::filesystem::path(config.replayVerifyPath + L".mismatch.txt"));
+                    std::filesystem::path(config.replayVerifyPath + L".mismatch.txt"), std::ios::binary);
                 if (mf) {
                     mf << ctx.tickIndex << "\n";
                 }

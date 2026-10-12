@@ -272,7 +272,7 @@ bool AssetDatabase::WriteMeta(const std::wstring& metaPath, const AssetMeta& m)
         }
         j["lod"] = l;
     }
-    std::ofstream f(metaPath);
+    std::ofstream f(metaPath, std::ios::binary); // LF のまま書く (.gitattributes の規則)
     if (!f) {
         return false;
     }

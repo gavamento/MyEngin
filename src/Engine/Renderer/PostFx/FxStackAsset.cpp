@@ -204,7 +204,7 @@ bool SaveFxStack(const std::wstring& path, const FxStackAsset& asset, std::strin
         j["passes"].push_back(std::move(ep));
     }
 
-    std::ofstream f(path);
+    std::ofstream f(path, std::ios::binary);
     if (!f.is_open()) {
         if (errorMsg) {
             *errorMsg = "ファイルに書き込めません";

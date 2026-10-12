@@ -1,7 +1,7 @@
 # sub-13: エンジン・エディタ・ツールが書くテキストの改行を、.gitattributes の規則に揃える
 
 - 依存: sub-12
-- 状態: 未着手
+- 状態: OK (commit 下記)
 - 往復: 0
 - 新設: 2026-10-12 (U14 のユーザー回答「リポジトリ全体」に伴う。sub-12 の洗い出しの表が入力)
 
@@ -44,5 +44,13 @@ text モードの ofstream で CRLF を書く箇所が 6 つある:
 - 表に該当が 1 件も無ければ、3 の見張りの有効化だけをコミットする
 
 ## 実装メモ (coder が追記)
+SELF_EVAL: sub-13 (round 1) 要約
+- 6 箇所 (AssetDatabase.cpp:275 / AssetOps.cpp:912,957,1641 / NetRollback.cpp:206 / InputActions.cpp:142 / FxStackAsset.cpp:207) を std::ios::binary に。追加で TickRunner.cpp の .mismatch.txt (未追跡の出力) も同様。
+- selftest に LF のみの確認を 3 つ (.meta / FxStack / actions.json)。check_rules に 14-c を追加。検出を確認 (CRLF だった sub-13.md で error、LF 化して 0 error)。
+- Debug/Release ビルド・--selftest PASS、replay_verify PASS。受け入れ 3 (エディタ GUI の保存/Rebuild Scripts) は未実施。
 
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-10-12)。
+  - 受け入れ 3 (GUI での確認) は selftest で代えたうえで、残りを sub-14 の 3-e (三校をエンジンで開いて保存し、改行の差分が出ないこと) と、sub-09 で test_checklists に足す手動の項目で補う。
+  - TickRunner の .mismatch.txt の binary 化は、同じ種類の書き込みなので採用する。
+  - should: 14-c は、ローカルで VS が新しく作ったファイル (CRLF) を、git add した後もエラーにする。運用の負担は U17 で決める。

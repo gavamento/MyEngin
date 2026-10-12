@@ -1404,6 +1404,13 @@ bool RunSourceControlSelfTest()
         check(InputActionsDifferFromDisk(assets.wstring(), ia),
               "project settings: an action added but not saved is dirty (file still absent)");
         check(ia.Save(assets.wstring()), "project settings: actions.json was written");
+        // .gitattributes の規則 (テキストは LF) どおり、CR を混ぜない
+        check([](const std::filesystem::path& p) {
+            std::ifstream in(p, std::ios::binary);
+            const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            return !bytes.empty() && bytes.find('') == std::string::npos;
+        }(assets / L"input" / L"actions.json"),
+              "project settings: actions.json is written with LF only");
         check(!InputActionsDifferFromDisk(assets.wstring(), ia),
               "project settings: saving clears the dirty state");
         // 空の root は「まだ窓を開いていない」= 判定しない

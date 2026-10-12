@@ -82,6 +82,12 @@ void TestPostRoundTrip()
         orig.passes.push_back(std::move(e));
     }
     FX_CHECK(SaveFxStack(tmp, orig));
+    // .gitattributes の規則 (テキストは LF) どおり、CR を混ぜない
+    FX_CHECK([](const std::filesystem::path& p) {
+        std::ifstream in(p, std::ios::binary);
+        const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        return !bytes.empty() && bytes.find('') == std::string::npos;
+    }(tmp));
 
     // 読み戻す
     FxStackAsset loaded;

@@ -139,7 +139,7 @@ bool InputActions::Save(const std::wstring& assetsRoot) const
     std::error_code ec;
     const std::filesystem::path dir(assetsRoot + L"\\input");
     std::filesystem::create_directories(dir, ec); // 既存でも成功扱い
-    std::ofstream out(dir / L"actions.json");
+    std::ofstream out(dir / L"actions.json", std::ios::binary);
     if (!out) {
         MYE_LOG_WARN("[input] failed to write actions.json");
         return false;

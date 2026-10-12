@@ -20,7 +20,7 @@
 | sub-10 | OK | 1 | ff60f77 | 外部プロジェクトの C++ カーネル表 (依存 05、U12。sub-06 より先に着手) |
 | sub-11 | OK | 2 | ce452a4 | Debug selftest の net 試験の不安定さの切り分け (sub-06 の前。M91e 退行の疑い) |
 | sub-12 | OK | 1 | 3972b9f+ | リポジトリ全体の改行を .gitattributes で統一 (依存 11、U14) |
-| sub-13 | 未着手 | 0 | | エンジン・ツールが書くテキストの改行を規則に揃え、作業ツリーの見張りを有効化 (依存 12) |
+| sub-13 | OK | 1 | (下記) | エンジン・ツールが書くテキストの改行を規則に揃え、作業ツリーの見張りを有効化 (依存 12) |
 | sub-14 | 未着手 | 0 | | 外部プロジェクト (三校) にも同じ改行規則 (依存 13、U15。HAL Collector は git 無し = U16) |
 | sub-06 | 未着手 | 0 | | C# 同形 API・C# CPU 版 (依存 05) |
 | sub-07 | 未着手 | 0 | | スクリプトのインスペクター・project_settings (依存 06) |
@@ -60,3 +60,4 @@
 - (planner VERDICT sub-11) 申し送り: (1) `TestWaitUntilReadable` の上限 1500 ms は遅い CI で揺れうる → sub-12 の 7 で緩める。(2) Release selftest と replay_verify は sub-12 の受け入れ 4 で回す。比較側の CR 除去 (StripBanner) は sub-12 後も二重の守りとして残す。
 - (planner、U15 反映) sub-14 新設。三校 `C:\HAL\三校` は push しない (共同制作のリポジトリ、時期はユーザー判断)。HAL Collector `C:\HAL\GameEngin_Demo` は git が無い (U16)。実行順: sub-12 → 13 → 14 → 06 → 07/08 → 09。
 - (planner VERDICT sub-12) 申し送り: (1) `*.fbx` を binary にしたので ASCII FBX 2 件も改行変換されない旨を ADR-030 か docs/line-endings.md に 1 行 (sub-09)。(2) 3972b9f の件名の「作業中」は履歴を書き換えず残す。sub-13 の入力 (CRLF を書く ofstream 7 箇所と規則 14-c) は sub-13.md に追記済み。
+- (planner VERDICT sub-13) 申し送り: (1) 受け入れ 3 の GUI 確認は sub-14 の 3-e (三校で保存・.meta 作り直し・Rebuild Scripts) と sub-09 の test_checklists 手動項目で補う。(2) AssetOps / NetRollback の書き込みは sub-14 の 3-b / 3-e で実経路確認。(3) selftest の LF 確認ラムダ 3 か所の重複は共通化しない。U17 (14-c の厳しさ) はユーザー確認。
