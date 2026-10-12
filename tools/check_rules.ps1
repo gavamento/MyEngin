@@ -968,7 +968,9 @@ foreach ($l in $eolLines) {
         $errors++
     }
     if ($attr -notmatch 'eol=crlf' -and $attr -ne '-text' -and ($wt -eq 'crlf' -or $wt -eq 'mixed')) {
-        Write-Host "ERROR [rule 14-c] ${path}: the working tree is $wt but the file is an LF text (rewrite it with LF; docs/line-endings.md)"
+        Write-Host "ERROR [rule 14-c] ${path}: the working tree is $wt but the file is an LF text (docs/line-endings.md)"
+        Write-Host "    fix: git rm --cached -q -- `"$path`" ; git checkout -- `"$path`""
+        Write-Host "    WARNING: that fix discards uncommitted edits of the file. git add or commit it first (the index stores LF, so the content is kept)."
         $errors++
     }
 }

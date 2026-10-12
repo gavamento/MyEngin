@@ -29,3 +29,6 @@ spec 受け入れ 13。
 ## 実装メモ (coder が追記)
 
 ## フィードバック履歴
+
+## 申し送り (2026-10-12、sub-15 から)
+- `docs/line-endings.md` に書いた VS のメニュー名 (Edit > Advanced > Set Line Endings) は、実機で確かめていない。test_checklists に手動の項目として載せ、ユーザーの確認に回す。

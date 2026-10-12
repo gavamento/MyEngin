@@ -1,7 +1,7 @@
 # sub-15: 規則 14-c の文言 (U17) と、三校 verify.bat の FAIL の切り分け
 
 - 依存: sub-14
-- 状態: 未着手
+- 状態: OK
 - 往復: 0
 - 新設: 2026-10-12 (sub-14 round 1 の判定から)
 
@@ -40,5 +40,22 @@ sub-14 で、shot の golden の不一致 (diffPixels=28402、maxDiff=122) と�
 - B はコードを変えない (退行が見つかって直す場合は、planner の判定の後で別にコミットする)
 
 ## 実装メモ (coder が追記)
+### round 1
+- A: check_rules 14-c のエラーに `git rm --cached -q -- "<file>" ; git checkout -- "<file>"` と、未コミットの変更が消えるので先に add/コミットする旨の WARNING を追加。docs/line-endings.md に VS の CRLF 対策の節を追加。`.editorconfig` は VS の挙動を実機で確かめられないため足していない。ADR-001 を一時的に CRLF にして 14-c の検出と文言を確認し、戻した (check_rules は 0 error)。
+- B: 結果 (Release、三校 f918c7b、どちらも warp):
+
+| エンジン | shot | replay |
+|---|---|---|
+| HEAD (05243cf) | FAIL diffPixels=28402 maxDiff=122 | FAIL "agent never left patrol" (VERIFY PASS は出る) |
+| 7d28c31 (dll を ABI 28 で再ビルド後) | FAIL diffPixels=28402 maxDiff=122 | 同じ FAIL |
+
+- 判定: M91 とは無関係 (両項目とも基点でも同一の数値・同一の失敗)。退行なし。なお最初の基点実行は cache\GameLogic.dll が ABI 29 のままで "API version mismatch (dll=29, engine=28)" となり別の失敗 (diffPixels=34541) になった。基点エンジンの Editor を一度 --project で起動して dll を再ビルドさせてから測り直した。
+- 片付け: worktree 削除済み、cache\GameLogic.dll は HEAD の Editor 起動で HEAD 向けに再ビルド済み。三校は clean (f918c7b)。
+
 
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-10-12)。
+  - A: 14-c の文言を確かめた。
+  - B: 7d28c31 と HEAD で数値が同じだったので、M91 の退行ではない。三校側の別件として記録する (U18)。
+  - .editorconfig は足していない (確かめられなかったため。仕様の許す分岐)。
+  - nit: docs に書いた VS のメニュー名は未確認。sub-09 で test_checklists に手動の項目を足すときに確かめる。

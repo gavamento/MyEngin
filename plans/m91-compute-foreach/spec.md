@@ -330,3 +330,4 @@ sub-02 と sub-03 は互いに依存しない (並列にできる)。sub-07 と 
 - 2026-10-12 (ユーザー回答 6 回目、U15 = 揃える。planner 案の逆): 外部プロジェクトの改行を揃える sub-14 を新設し、sub-13 の後に置いた。対象は git のある三校 (`C:\HAL\三校`、clean、index に CRLF が 6 件)。HAL Collector (`C:\HAL\GameEngin_Demo`) は git が無いので外し、U16 として裁定を仮置きした。
 - 2026-10-12 (sub-13 round 1): sub-13 の受け入れ 3 (GUI での確認) は、selftest と、sub-14 の 3-e と、sub-09 の手動の項目で補うことにした。規則 14-c の厳しさを U17 として仮置きした。
 - 2026-10-12 (sub-14 round 1): 三校の改行の統一は f918c7b (未 push) で完了した。verify.bat の FAIL 2 件は改行が原因ではないことが対照実験で示されたが、M91 の退行かどうかは未確定なので sub-15 で切り分ける (U18)。U17 の文言の修正も sub-15 に入れた。3-e のうち実施できなかった分 (シーンの保存、GUI からの Rebuild Scripts) は、sub-09 の手動の項目とユーザーの目視で補う。
+- 2026-10-12 (sub-15 round 1): 三校の verify.bat の FAIL 2 件 (shot の diffPixels=28402 と、replay の「agent never left patrol」) は、M91 の前の 7d28c31 でも同じ数値だった。M91 の退行ではないと確定した。三校側の別件として扱い、誰がいつ対応するかはユーザーが決める (M91 の範囲外)。
