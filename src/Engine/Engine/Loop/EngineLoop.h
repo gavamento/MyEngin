@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "Engine/Engine/Loop/StartupProgress.h"
 #include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Platform/Input.h"
 
@@ -46,6 +47,9 @@ struct EngineConfig {
     int height = 900;
     int64_t maxFrames = -1;  // >0 でそのフレーム数後に自動終了 (スモークテスト / CI 用)
     bool enableImGui = true; // false = エディタ UI 無し (Runtime.exe が使う)
+    // true = 作成直後は非表示 (Editor スプラッシュ)。初回 Present の後に Show する
+    bool startHidden = false;
+    IStartupObserver* startupObserver = nullptr; // 起動段階の通知 (Editor スプラッシュ等)
     bool vsync = true;
     float clearColor[4] = { 0.08f, 0.09f, 0.11f, 1.0f };
     std::wstring screenshotPath; // 空でなければ screenshotFrame で PNG 保存 (検証用)

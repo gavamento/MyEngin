@@ -1313,6 +1313,16 @@ As a shared foundation for all hot-reload targets, the Core layer provides **fil
 
 ## 9. Editor GUI Specification (ImGui)
 
+### 9.0 Startup splash (interactive `--project` launch)
+
+When `Editor.exe` is started with `--project <dir>` and no automation flags (`--selftest`,
+`--frames`, `--screenshot`, replay/net/probe flags, etc.), a **separate borderless splash window**
+(Direct2D on a dedicated thread) is shown while the main window is created hidden. `EngineLoop`
+reports `StartupStage` values through `EngineConfig::startupObserver` and logs
+`[startup] <stage> <ms>` for each phase. The main window is shown after the first successful
+`Present`, then the splash closes. Optional branding: `<project>/assets/editor/splash.png`
+(replaces the default Möbius-strip wireframe in the center). Hub / CI / headless paths are unchanged.
+
 | Window | Functionality |
 |---|---|
 | Hierarchy | Display the scene’s GameObject tree; select objects; modify parent-child relationships; create and delete objects |

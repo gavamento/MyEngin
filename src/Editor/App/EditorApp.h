@@ -37,6 +37,7 @@
 #include "Editor/Windows/AI/BehaviorTreeWindow.h"
 #include "Editor/Windows/Audio/SoundGenWindow.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Loop/StartupProgress.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Rendering/ProbeBaker.h"
 #include "Engine/Engine/Scene/Scene.h"
@@ -77,6 +78,7 @@ public:
     std::string selectName;        // --select NAME (起動時に名前でエンティティを選択 — ギズモ検証用)
     int pickTestFrame = -1;        // --pick-test (このフレームで中心をピッキングし PASS/FAIL ログ)
     std::wstring sceneOverride;    // --scene PATH (既定の main.scene.json の代わりに読むシーン)
+    IStartupObserver* startupObserver = nullptr; // 起動スプラッシュ (EditorMain が設定)
     // --*-demo (ShowcaseScenes.cpp の表の 1 行)。複数渡したら表の上の行が勝つ。nullptr = 通常の起動
     const ShowcaseDef* showcase = nullptr;
     ShowcaseOptions showcaseOptions; // --terrain-lod / --terrain-skirt (M58e。地形ショーケースだけが使う)

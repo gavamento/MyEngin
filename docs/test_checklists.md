@@ -3,6 +3,14 @@
 自動化済みの検証 (`--selftest`, `tools\replay_verify.bat`, `tools\check_rules.ps1`) に加えて、
 対話的な機能はこの手順で確認する。ウォッチャー/ローダ周りを変更したら必ず再実施すること。
 
+## Editor 起動スプラッシュ (`--project` 対話起動)
+
+- [ ] `Editor.exe --project <dir>`: スプラッシュが中央に出る。メビウスの輪が回り続け、段階名と進捗が更新される
+- [ ] 準備完了後、スプラッシュが閉じてメイン窓だけが表示される (白画面のちらつきなし)
+- [ ] プロジェクト Hub から開く経路でも同様 (Hub 経由の `--project` 再起動)
+- [ ] `<project>\assets\editor\splash.png` を置くと中央が画像になり、輪は出ない
+- [ ] `--selftest` / `--frames` / `--screenshot` 等の自動化フラグではスプラッシュが出ない
+
 ## M3: シェーダ / アセット / シーンのホットリロード
 
 - [ ] 実行中に `assets/shaders/forward_lit.hlsl` を編集 → 1 秒以内に見た目へ反映

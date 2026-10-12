@@ -458,6 +458,7 @@
     <ClInclude Include="..\src\Engine\Engine\Loop\DeviceRecovery.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\DeviceRecoverySelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\EngineLoop.h" />
+    <ClInclude Include="..\src\Engine\Engine\Loop\StartupProgress.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\GameFlow.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\HeadlessSim.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\PlayerInputSystem.h" />

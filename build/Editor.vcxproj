@@ -41,6 +41,9 @@
     <ClCompile Include="..\src\Editor\App\EditorApp.cpp" />
     <ClCompile Include="..\src\Editor\App\EditorGlobalSettings.cpp" />
     <ClCompile Include="..\src\Editor\App\EditorMain.cpp" />
+    <ClCompile Include="..\src\Editor\App\StartupMoebius.cpp" />
+    <ClCompile Include="..\src\Editor\App\StartupSplash.cpp" />
+    <ClCompile Include="..\src\Editor\SelfTest\StartupSplashSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\App\EditorSettings.cpp" />
     <ClCompile Include="..\src\Editor\App\LayoutManager.cpp" />
     <ClCompile Include="..\src\Editor\Asset\AssetOps.cpp" />
@@ -126,6 +129,8 @@
     <ClInclude Include="..\src\Editor\App\DeviceLostRescue.h" />
     <ClInclude Include="..\src\Editor\App\DiskCompare.h" />
     <ClInclude Include="..\src\Editor\App\EditorApp.h" />
+    <ClInclude Include="..\src\Editor\App\StartupMoebius.h" />
+    <ClInclude Include="..\src\Editor\App\StartupSplash.h" />
     <ClInclude Include="..\src\Editor\App\EditorGlobalSettings.h" />
     <ClInclude Include="..\src\Editor\App\EditorSettings.h" />
     <ClInclude Include="..\src\Editor\App\LayoutManager.h" />
@@ -152,6 +157,7 @@
     <ClInclude Include="..\src\Editor\SelfTest\DecalSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\DeviceLostRescueSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\GameFlowSelfTest.h" />
+    <ClInclude Include="..\src\Editor\SelfTest\StartupSplashSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\HzbSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\LightSelectionSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\PartSelfTest.h" />

@@ -27,6 +27,12 @@ extern const ImVec4 Success;    // 成功・PASS
 extern const ImVec4 Warning;    // 警告・注意 (ログ Warn / バージョン不一致 等)
 extern const ImVec4 Error;      // エラー・失敗 (ログ Error / NG / desync 等)
 extern const ImVec4 Prefab;     // プレハブ由来の印 (Unity 風の淡青。Accent とは別物)
+// テーマ第 3 世代の無彩色 (ApplyEditorTheme とスプラッシュ等が共有)
+extern const ImVec4 BgApp;      // 最奥 (タイトル/メニュー/ドック地)
+extern const ImVec4 BgPanel;    // パネル面
+extern const ImVec4 Text;       // 主文字
+extern const ImVec4 TextDim;    // 副文字
+extern const ImVec4 Border;     // 罫線 (白 7%)
 } // namespace themeColor
 
 // テーマ第 3 世代: 3 段の暗色面 (最奥 < パネル < ポップアップ) + 沈み込む入力欄 +

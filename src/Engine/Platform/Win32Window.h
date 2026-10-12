@@ -17,6 +17,7 @@ struct WindowDesc {
     int width = 1600; // ウィンドウ時のクライアント寸法 (ボーダーレスから戻るときの大きさにもなる)
     int height = 900;
     WindowMode mode = WindowMode::Windowed; // 最初に見せる前に当てる (起動時のちらつきを出さない)
+    bool startHidden = false; // true = 作成時は SW_HIDE (Editor スプラッシュ中のメイン窓)
 };
 
 // Win32 ウィンドウ。生の HWND / windows.h をヘッダから隠蔽する (void* 経由)。
@@ -27,6 +28,8 @@ public:
         std::function<bool(void* hwnd, uint32_t msg, uint64_t wparam, int64_t lparam, int64_t& result)>;
 
     bool Create(const WindowDesc& desc);
+    // startHidden で作った窓を初回 Present の後などに表示する
+    void Show();
     void Destroy();
 
     // 登録順に呼ばれる。ImGui → Input の順で登録する想定

@@ -2315,3 +2315,16 @@ MYE_STR(DevLost_FailRebuild,   "Recovery failed: graphics objects could not be r
 MYE_STR(DevLost_FailTooOften,  "Recovery was not attempted: the device was lost too many times in a short period.", "短時間にデバイス消失が続いたため、復旧を試みませんでした。")
 MYE_STR(Menu_SimulateDeviceLost, "Simulate Device Lost###Menu_SimulateDeviceLost", "デバイス消失を偽装###Menu_SimulateDeviceLost")
 MYE_STR(DevLost_FailSimFatal,  "Recovery was skipped by --simulate-device-lost-fatal.", "--simulate-device-lost-fatal により復旧を行いませんでした。")
+
+// ---- 起動スプラッシュ (Editor) ----
+MYE_STR(Startup_EditorTag,     "EDITOR", "EDITOR")
+MYE_STR(Startup_StageWindow,   "Preparing window...", "ウィンドウを準備中...")
+MYE_STR(Startup_StageDevice,   "Initializing graphics...", "グラフィックスを初期化中...")
+MYE_STR(Startup_StageShaders,  "Loading shaders...", "シェーダーを準備中...")
+MYE_STR(Startup_StageRenderPaths, "Building render paths...", "描画パスを構築中...")
+MYE_STR(Startup_StageUi,       "Initializing UI...", "UI を初期化中...")
+MYE_STR(Startup_StageScripts,  "Loading scripts...", "スクリプトを読み込み中...")
+MYE_STR(Startup_StageCSharp,   "Compiling C#...", "C# をコンパイル中...")
+MYE_STR(Startup_StageAudio,    "Starting audio...", "オーディオを起動中...")
+MYE_STR(Startup_StageAssets,   "Registering assets...", "アセットを登録中...")
+MYE_STR(Startup_StageScene,    "Loading scene...", "シーンを読み込み中...")

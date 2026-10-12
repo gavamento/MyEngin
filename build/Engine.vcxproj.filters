@@ -1536,6 +1536,9 @@
     <ClInclude Include="..\src\Engine\Engine\Loop\EngineLoop.h">
       <Filter>Engine\Loop</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Loop\StartupProgress.h">
+      <Filter>Engine\Loop</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Loop\GameFlow.h">
       <Filter>Engine\Loop</Filter>
     </ClInclude>

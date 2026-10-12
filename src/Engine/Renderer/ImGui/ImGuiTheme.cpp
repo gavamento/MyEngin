@@ -25,6 +25,11 @@ const ImVec4 Success = ImVec4(0.45f, 0.72f, 0.52f, 1.00f);
 const ImVec4 Warning = ImVec4(0.83f, 0.69f, 0.38f, 1.00f);
 const ImVec4 Error = ImVec4(0.82f, 0.44f, 0.40f, 1.00f);
 const ImVec4 Prefab = ImVec4(0.52f, 0.68f, 0.90f, 1.00f);
+const ImVec4 BgApp = ImVec4(0.055f, 0.058f, 0.068f, 1.00f);
+const ImVec4 BgPanel = ImVec4(0.105f, 0.110f, 0.125f, 1.00f);
+const ImVec4 Text = ImVec4(0.90f, 0.91f, 0.93f, 1.00f);
+const ImVec4 TextDim = ImVec4(0.50f, 0.52f, 0.56f, 1.00f);
+const ImVec4 Border = ImVec4(1.00f, 1.00f, 1.00f, 0.07f);
 } // namespace themeColor
 
 void ApplyEditorTheme(ImGuiStyle& style)
@@ -37,10 +42,10 @@ void ApplyEditorTheme(ImGuiStyle& style)
     // 入力欄は逆に**沈める** (bgPanel より暗い bgInput)。ホバー/押下は白の半透明
     // オーバーレイで統一して、どの面の上でも同じ「光り方」になるようにする。
     const ImVec4 accent = themeColor::Accent;
-    const ImVec4 text = ImVec4(0.90f, 0.91f, 0.93f, 1.00f);
-    const ImVec4 textDim = ImVec4(0.50f, 0.52f, 0.56f, 1.00f);
-    const ImVec4 bgApp = ImVec4(0.055f, 0.058f, 0.068f, 1.00f);  // タイトル/メニュー/ドック地
-    const ImVec4 bgPanel = ImVec4(0.105f, 0.110f, 0.125f, 1.00f); // ウィンドウ面
+    const ImVec4 text = themeColor::Text;
+    const ImVec4 textDim = themeColor::TextDim;
+    const ImVec4 bgApp = themeColor::BgApp;
+    const ImVec4 bgPanel = themeColor::BgPanel;
     const ImVec4 bgPopup = ImVec4(0.130f, 0.135f, 0.152f, 0.98f);
     const ImVec4 bgInput = ImVec4(0.050f, 0.052f, 0.062f, 1.00f); // 沈み込み (パネルより暗く)
     const ImVec4 hoverWhite = ImVec4(1.00f, 1.00f, 1.00f, 0.06f);
@@ -52,7 +57,7 @@ void ApplyEditorTheme(ImGuiStyle& style)
     c[ImGuiCol_WindowBg] = bgPanel;
     c[ImGuiCol_ChildBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
     c[ImGuiCol_PopupBg] = bgPopup;
-    c[ImGuiCol_Border] = ImVec4(1.00f, 1.00f, 1.00f, 0.07f);
+    c[ImGuiCol_Border] = themeColor::Border;
     c[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
     // 入力欄 (テキスト/ドラッグ/コンボ)。ホバーは色の差し替えではなく「少し浮く」だけ
     c[ImGuiCol_FrameBg] = bgInput;

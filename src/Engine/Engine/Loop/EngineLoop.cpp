@@ -1,6 +1,7 @@
 #include "Engine/Engine/Loop/EngineLoop.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <memory>
 #include <optional>
@@ -264,6 +265,19 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     std::vector<DebugLineCmd> debugLines; // DebugDrawLine (v7)。tick 頭クリア → 描画で消費
     IRenderPath* activePath = &forwardPath;
 
+    using StartupClock = std::chrono::steady_clock;
+    StartupClock::time_point startupStageT = StartupClock::now();
+    auto reportStartupStage = [&](StartupStage stage) {
+        const StartupClock::time_point now = StartupClock::now();
+        const double ms = std::chrono::duration<double, std::milli>(now - startupStageT).count();
+        MYE_LOG_INFO("[startup] %s %.1f ms", StartupStageLogName(stage), ms);
+        startupStageT = now;
+        if (config.startupObserver) {
+            config.startupObserver->OnStage(stage);
+        }
+    };
+    bool mainWindowShown = !config.startHidden;
+
     // ---- プロジェクト/アセットルート解決 (M26) ----
     // --project 指定時は <root>\assets を使い、状態ファイル (.mye\) をプロジェクト側へ置く。
     // 未指定はレガシー動作 (exe から上へ assets を探索、imgui.ini は CWD 相対)
@@ -295,9 +309,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     wd.width = config.width;
     wd.height = config.height;
     wd.mode = windowModeLive ? display::LoadStartupWindowMode(assetsRoot, saveDir) : WindowMode::Windowed;
+    wd.startHidden = config.startHidden;
     if (!window.Create(wd)) {
         return 1;
     }
+    reportStartupStage(StartupStage::Window);
     windowMode.mode = static_cast<int32_t>(window.Mode()); // GetWindowMode の起動直後の値 = 実際のモード
     bool windowModeIgnoredLogged = false;
     if (!device.Init(config.forceWarp)) {
@@ -316,6 +332,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (config.enableImGui && !imgui.Init(window, device, imguiOpts)) {
         return 1;
     }
+    reportStartupStage(StartupStage::Device);
     // ImGui のハンドラ登録より後に登録する (ImGui が先にメッセージを見る)
     window.AddMsgHandler([&input](void* hwnd, uint32_t msg, uint64_t wp, int64_t lp, int64_t& result) {
         return input.HandleMessage(hwnd, msg, wp, lp, result);
@@ -347,6 +364,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                      config.useShaderCache ? "enabled" : "disabled (compile every launch)",
                      WideToUtf8(shaderCacheDir).c_str());
     }
+    reportStartupStage(StartupStage::Shaders);
     resources.Init(device);
     // sim が AssetID から形状・設定を引くライブラリ群 (HeadlessSim と共有、SimInit.h)。
     // 破片資産 (.mfrac) の Clear() 後の再登録は呼び出し側が ReregisterAll() を呼ぶ責務
@@ -368,6 +386,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (!deferredPath.Init(device, shaderManager)) {
         return 1;
     }
+    reportStartupStage(StartupStage::RenderPaths);
     // tick が回る前に 1 回だけ決める sim の静的な入力 (UI 基準解像度 / フォント計測表 / タグ名。
     // HeadlessSim と共有、SimInit.h)。タグ名は下の RT タグ規則の読込より前に済ませる
     InitSimProjectState(assetsRoot);
@@ -378,6 +397,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                    &mixerLibrary, &audioSystem, assetsRoot);
     particleSystem.Init(device, shaderManager, assetsRoot, config.particleBackendOverride,
                         config.particleCompareOverride); // M57追補: CLI 上書き (永続化しない)
+    reportStartupStage(StartupStage::Ui);
 
     // ポストプロセス設定を config から反映 (M16)。全ビューポート共通の renderSystem に載る
     renderSystem.assetsRoot = assetsRoot; // M58c: TerrainComponent.source の解決基点
@@ -480,6 +500,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             : config.projectRoot + L"\\cache\\GameLogic.dll";
         LoadGameLogic(scene, scriptHost, dllReloader, assetsRoot, dllPath, cacheHot);
     }
+    reportStartupStage(StartupStage::Scripts);
 
     // C# スクリプトホスト (CoreCLR)。未導入でも失敗ログのみでエンジンは継続する
     if (managedHost.Init(GetExecutableDir(), &scene)) {
@@ -491,6 +512,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         schema::WriteCSharpBindings(assetsRoot);
         managedHost.CompileScripts(assetsRoot + L"\\scripts"); // 起動時に既存 C# を一括コンパイル
     }
+    reportStartupStage(StartupStage::CSharp);
     // シーン保存/復元時に C# コンポーネントのフィールドを永続化する hook を登録
     SceneSerializer::SetManagedHost(&managedHost);
 
@@ -500,6 +522,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 担う — 単一ファイルのハードコードはここには置かない
     audioSystem.Init(config.audio);
     audioScriptRng.Seed(kAudioScriptRngSeed); // world.Rng() とは別ストリーム
+    reportStartupStage(StartupStage::Audio);
     // v13 (M52i): ネットセッションの状態 POD。**宣言はここ** (スクリプトへ配線する
     // 時点で生きていること = Run のスコープ)。中身を書くのはフレーム末の 1 か所だけ
     NetRuntimeInfo netInfo;
@@ -3185,6 +3208,14 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 }
             }
             presentHr = swapChain.Present(config.vsync);
+            if (config.startHidden && !mainWindowShown) {
+                window.Show();
+                mainWindowShown = true;
+                reportStartupStage(StartupStage::Ready);
+                if (config.startupObserver) {
+                    config.startupObserver->OnReady();
+                }
+            }
         } else {
             Sleep(10); // 最小化中はスピンしない
         }

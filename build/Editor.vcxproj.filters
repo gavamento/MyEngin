@@ -72,6 +72,12 @@
     <ClCompile Include="..\src\Editor\App\EditorMain.cpp">
       <Filter>App</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\App\StartupMoebius.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\App\StartupSplash.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\App\EditorSettings.cpp">
       <Filter>App</Filter>
     </ClCompile>
@@ -139,6 +145,9 @@
       <Filter>SelfTest</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\GameFlowSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\StartupSplashSelfTest.cpp">
       <Filter>SelfTest</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\HzbSelfTest.cpp">
@@ -327,6 +336,12 @@
     <ClInclude Include="..\src\Editor\App\EditorApp.h">
       <Filter>App</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\App\StartupMoebius.h">
+      <Filter>App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\App\StartupSplash.h">
+      <Filter>App</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\App\EditorGlobalSettings.h">
       <Filter>App</Filter>
     </ClInclude>
@@ -403,6 +418,9 @@
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\GameFlowSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\StartupSplashSelfTest.h">
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\HzbSelfTest.h">

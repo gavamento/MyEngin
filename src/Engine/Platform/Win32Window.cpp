@@ -83,10 +83,18 @@ bool Win32Window::Create(const WindowDesc& desc)
     // 見せる前に当てる = 起動直後にウィンドウの姿を一瞬出してから全面へ化けない
     SetMode(desc.mode);
 
-    ShowWindow(hwnd, SW_SHOW);
+    ShowWindow(hwnd, desc.startHidden ? SW_HIDE : SW_SHOW);
     UpdateWindow(hwnd);
-    MYE_LOG_INFO("Window created: %dx%d", width_, height_);
+    MYE_LOG_INFO("Window created: %dx%d%s", width_, height_, desc.startHidden ? " (hidden)" : "");
     return true;
+}
+
+void Win32Window::Show()
+{
+    if (hwnd_) {
+        ShowWindow(static_cast<HWND>(hwnd_), SW_SHOW);
+        UpdateWindow(static_cast<HWND>(hwnd_));
+    }
 }
 
 void Win32Window::Destroy()

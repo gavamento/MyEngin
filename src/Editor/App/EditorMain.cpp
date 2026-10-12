@@ -8,6 +8,8 @@
 #include <shellapi.h>
 
 #include "Editor/App/EditorApp.h"
+#include "Editor/App/StartupSplash.h"
+#include "Editor/SelfTest/StartupSplashSelfTest.h"
 #include "Editor/App/EditorGlobalSettings.h"
 #include "Editor/Tools/FractureEditorSelfTest.h" // M80i: 破壊物 Inspector の焼き回り
 #include "Editor/SelfTest/DeviceLostRescueSelfTest.h"
@@ -125,6 +127,7 @@
 #include "Engine/Renderer/Device/VolumeTexture.h"
 #include "Engine/Engine/Physics/Fracture/FractureBenchmark.h" // M80k: --fracture-bench
 #include "Engine/Engine/App/PerfBenchmark.h"
+#include "Shared/EngineAPI.h"
 
 namespace {
 
@@ -663,6 +666,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunComputeManagedSelfTest();        // M91g: C# の ForEach・C# の CPU 版 (C++ 版とのバイト一致)
         ok &= mye::RunComputeSettingsSelfTest();       // M91h: compute 節・Compute 欄の行・カーネルのホットリロード
         ok &= mye::RunComputeInspectorSelfTest();      // M91h: Compute 欄の文字列 (日英)
+        ok &= mye::RunStartupSplashSelfTest();       // 起動スプラッシュの進捗とメビウス幾何
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }
@@ -697,7 +701,44 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         registry.Touch(dir, manifest.name);
     }
 
+    mye::StartupSplash startupSplash;
+    struct StartupSplashScope {
+        mye::StartupSplash* splash = nullptr;
+        ~StartupSplashScope()
+        {
+            if (splash != nullptr) {
+                splash->Close();
+            }
+        }
+    } startupSplashScope;
+    const bool showStartupSplash = !selftest && !automation && !projectDir.empty();
+    if (showStartupSplash) {
+        mye::SplashDesc splashDesc;
+        splashDesc.projectPath = std::filesystem::absolute(projectDir).wstring();
+        mye::ProjectManifest splashManifest;
+        if (mye::LoadProjectManifest(splashDesc.projectPath, splashManifest) && !splashManifest.name.empty()) {
+            splashDesc.projectDisplayName = mye::Utf8ToWide(splashManifest.name);
+        } else {
+            splashDesc.projectDisplayName = splashDesc.projectPath;
+        }
+        splashDesc.imagePath = splashDesc.projectPath + L"\\assets\\editor\\splash.png";
+        wchar_t buildCaption[256] = {};
+        swprintf_s(buildCaption, L"%s | x64 | ABI v%u | %hs",
+#ifdef _DEBUG
+                   L"Debug",
+#else
+                   L"Release",
+#endif
+                   MYE_API_VERSION, __DATE__);
+        splashDesc.buildCaption = buildCaption;
+        startupSplash.Start(splashDesc);
+        startupSplashScope.splash = &startupSplash;
+        config.startHidden = true;
+        config.startupObserver = &startupSplash;
+    }
+
     mye::EditorApp app;
+    app.startupObserver = config.startupObserver;
     app.saveSceneOnStart = saveSceneOnStart;
     app.autoPlay = autoPlay;
     app.openTimeline = openTimeline;

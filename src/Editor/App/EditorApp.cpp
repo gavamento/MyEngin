@@ -141,6 +141,9 @@ void EditorApp::OnStart(EngineContext& ctx)
     // (パスベースの完全なアセット解決は AssetManager の将来拡張)
     RegisterDemoContent(ctx);
     RegisterAssetLibraries(ctx); // シーンロード前に .prefab/.anim を登録 (参照解決のため)
+    if (startupObserver != nullptr) {
+        startupObserver->OnStage(StartupStage::Assets);
+    }
     // ショーケース材質は無条件で登録する (M50a)。名前キーの少数登録で冪等・非ハッシュなので
     // 常時登録が安全 — フラグゲートだと保存済みショーケースを --scene で直接開いたときに
     // 材質が解決されず、キューブ群が描画されない
@@ -175,6 +178,9 @@ void EditorApp::OnStart(EngineContext& ctx)
         showcase->build(ctx, showcaseOptions);
     } else {
         BuildDemoScene(ctx, perfRate, perfMax);
+    }
+    if (startupObserver != nullptr) {
+        startupObserver->OnStage(StartupStage::Scene);
     }
     if (saveSceneOnStart) {
         std::filesystem::create_directories(std::filesystem::path(scenePath_).parent_path());
