@@ -526,6 +526,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         WireScriptServices(scriptHost, managedHost, shared, config.developmentRun);
     }
     computeService.Bind(&device, &shaderManager);
+    {
+        // --compute-force-cpu は設定ファイルに無い起動オプションなので、Apply が保つ値として先に入れておく
+        compute::ComputeConfig launch = computeService.Config();
+        launch.forceCpu = config.computeForceCpu;
+        computeService.SetConfig(launch);
+    }
     compute::ApplyComputeSettings(computeService, compute::LoadComputeSettings(assetsRoot)); // M91: project_settings.json の compute 節
     reloadHub.SetKernelHooks(&computeService, &managedHost);
     scriptHost.SetComputeAbi(&computeAbi, &device, &shaderManager, &resources.textures);

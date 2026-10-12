@@ -7,6 +7,26 @@
 
 #pragma warning(push)
 #pragma warning(disable : 4100 4505)
+namespace mye::kernel::cpu::DemoSparkStep {
+namespace {
+#include "../../../assets/shaders/kernels/DemoSparkStep.kernel.hlsl"
+} // namespace
+}
+#pragma warning(pop)
+namespace MyeKernels::DemoSparkStep { using namespace ::mye::kernel::cpu::DemoSparkStep; }
+
+#pragma warning(push)
+#pragma warning(disable : 4100 4505)
+namespace mye::kernel::cpu::DemoSwarmStep {
+namespace {
+#include "../../../assets/shaders/kernels/DemoSwarmStep.kernel.hlsl"
+} // namespace
+}
+#pragma warning(pop)
+namespace MyeKernels::DemoSwarmStep { using namespace ::mye::kernel::cpu::DemoSwarmStep; }
+
+#pragma warning(push)
+#pragma warning(disable : 4100 4505)
 namespace mye::kernel::cpu::SelfTestAllFuncs {
 namespace {
 #include "../../../assets/shaders/kernels/SelfTestAllFuncs.kernel.hlsl"

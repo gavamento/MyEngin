@@ -97,6 +97,10 @@ struct EngineConfig {
     // 登録される内容はクック有無でビット同一 (CookedCacheSelfTest + replay_verify が保証)
     bool useCookCache = true;
 
+    // ---- Compute.ForEach (M91) ----
+    // true で Fx のカーネルも CPU 版で走らせる (--compute-force-cpu)。State は常に CPU なので、sim の結果は変わらないはず (A/B 検証用)
+    bool computeForceCpu = false;
+
     // ---- シェーダのバイトコードキャッシュ ----
     // false で cache\shaders\ を読み書きせず毎回 D3DCompile (障害切り分け / A-B 計測用)。
     // バイトコードはコンパイル結果そのものなので、描画結果はキャッシュ有無でビット同一

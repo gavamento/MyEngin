@@ -224,7 +224,7 @@ class Swarm : MyeScript {
 - **SimSnapshot** (sub-04 に着手した時点の次の版。今なら v49): 新節「ComputeState」を追加。
 - **WorldHash**: `HashSources` に ComputeState を足し、`HashWorldDetailed` にも出す。
 - **configBits**: `kCfgComputeForceCpu = 1u << 5`。
-- **project_settings.json**: `"compute": { "gpuMinElements": 4096, "cpuMaxChunks": 0, "fxUploadBytesPerTick": 8388608, "fxDispatchPerTick": 64, "stateTotalBytes": 16777216, "kernelOverrides": { "<Name>": "cpu" } }`。キーが無ければ既定値、不正な値なら既定値 + WARN。
+- **project_settings.json**: `"compute": { "gpuMinElements": 4096, "cpuMaxChunks": 0, "fxUploadBytesPerTick": 8388608, "fxDispatchPerTick": 64, "stateTotalBytes": 8388608, "kernelOverrides": { "<Name>": "cpu" } }`。キーが無ければ既定値、不正な値なら既定値 + WARN。
 - **生成物**: C++ は `src/GameLogic/Generated/Kernels.gen.{h,cpp}` (`gen_project_files.ps1` から)。C# は `assets/scripts/Generated/Kernels.gen.cs` (エンジンが `SchemaCodegen` と同じ流儀で生成)。**C++ の生成物 (Kernels.gen.{h,cpp}) は版管理する** (sub-05 で変更。gen_project_files.ps1 を実行していない新規クローンでも GameLogic.vcxproj が参照する .cpp が存在するようにするため。ハッシュを含むので、カーネルを編集した後に再生成しなければ版ずれとして検出される)。C# の生成物の扱いは Schema.gen.cs と同じ。
 - 既存の .rep は snapshot の版が上がるので録り直しが要る。v21 の利用者には影響しない。
 
@@ -296,6 +296,8 @@ sub-02 と sub-03 は互いに依存しない (並列にできる)。sub-07 と 
 - 回答済み (2026-10-12、7 回目): U17 = エラーのまま (裁定どおり)。文言に直し方を入れる修正は sub-15 で行う。
 - `[ユーザーに聞ける]` U18 (sub-14): 三校の verify.bat の FAIL 2 件 (golden の不一致と「agent never left patrol」) をどうするか / 裁定: M91 では三校の golden を撮り直さず、三校のコードも変えない。sub-15 で M91 の退行かどうかだけを切り分ける。退行なら M91 で直し、退行でなければ三校側の別件として記録する / 逆 (M91 の中で golden を撮り直す) にすると: 三校の制作上の制限 (ASSET_HANDOVER.md、三校企画.md) に触れる変更が、共同制作のリポジトリに 1 コミット増える。replay の FAIL は撮り直しでは直らないので、原因の調査がさらに要る
 
+- 回答済み (2026-10-12、8 回目): U19 = 裁定どおり (ハッシュを 8 バイト単位にして速くし、Release で 1 tick の 10% 以内に収まる 2 のべき乗の MiB を既定値にする)。sub-08 の round 2 の実測で、既定値は 8 MiB (8388608) に決まった。Release で 0.94 ms (5.7%)。16 MiB は 8.8〜11.1% で揺れるので採らない。
+
 ### 7.2 リスク
 - R1 (sub-01): 同じテキストが HLSL と C++ の両方で通るか。sub-02 の検査器の規則で、通らない書き方を禁止に回す。
 - R2 (sub-08): DebugDrawLine が Runtime の `--screenshot` に写るか。
@@ -333,3 +335,5 @@ sub-02 と sub-03 は互いに依存しない (並列にできる)。sub-07 と 
 - 2026-10-12 (sub-15 round 1): 三校の verify.bat の FAIL 2 件 (shot の diffPixels=28402 と、replay の「agent never left patrol」) は、M91 の前の 7d28c31 でも同じ数値だった。M91 の退行ではないと確定した。三校側の別件として扱い、誰がいつ対応するかはユーザーが決める (M91 の範囲外)。
 - 2026-10-12 (sub-07 round 1): インスペクターの Compute 欄は、表ではなくカーネルごとの縦並びにした (狭い幅で列が切れるため。項目は 4.1.7 と同じ)。インスペクターの上書きはセッション上書きで、`project_settings.json` に保存できるのは Project Settings 窓の「プロジェクト既定として保存」だけ (書き戻しの箇所は 1 つ)。負荷枠の GUI は作らない。"compute" 節の許容範囲は sub-07 の実装メモが正本。1b の結論: エンジン側の kernels は外部プロジェクトからは見えない。同じ名前のカーネルや kernels\ の外にあるカーネルは、照合で失敗にする。
 - 2026-10-12 (sub-06 round 1): 生成する C# の Range の署名を ABI に合わせた。SelfTestAllFuncs カーネルを追加し、GameLogic のカーネル表が 4 本になった。JIT の設定を切り替えて回す試験は CI に常設しない (CI の時間が約 6 倍になるため。手順を ADR-030 に書く)。
+- 2026-10-12 (sub-08 round 1): State のハッシュのコストの実測を受けて、ハッシュを 8 バイト単位に変え、stateTotalBytes の既定値を決め直すことにした (U19。4.2 の既定値 16777216 は sub-08 の round 2 の結果で書き換える)。実機 GPU (RTX 3060) の Saxpy は、FMA の融合で最大 64 ULP 違った (WARP は 0 ULP)。「State は常に CPU」の根拠として ADR-030 に書く。
+- 2026-10-12 (sub-08 round 2): State のハッシュを、8 バイト単位・4 レーンで畳む方式に変えた。4.2 の stateTotalBytes の既定値を 16777216 から 8388608 (8 MiB) に変えた。根拠は Release の実測で、1 MiB が 0.066 ms、8 MiB が 0.944 ms (5.7%)、16 MiB が 1.768 ms (10.6%)。--warp の computeab が漏れを検出できることも確かめた。

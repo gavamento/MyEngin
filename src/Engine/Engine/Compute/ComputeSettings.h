@@ -11,7 +11,7 @@
 
 // assets\project_settings.json の "compute" 節:
 //   "compute": { "gpuMinElements": 4096, "cpuMaxChunks": 0, "fxUploadBytesPerTick": 8388608,
-//                "fxDispatchPerTick": 64, "stateTotalBytes": 16777216, "kernelOverrides": { "Name": "cpu" } }
+//                "fxDispatchPerTick": 64, "stateTotalBytes": 8388608, "kernelOverrides": { "Name": "cpu" } }
 // キーが無ければ既定値、型や範囲が不正な値はそのキーだけ既定値に倒して WARN を出す。
 // stateTotalBytes は State の確保可否 = sim の結果を変えるので、起動時に 1 回だけ読む。
 // project_settings.json は assets 配下なので contentHash に入り、ネットの出自照合で食い違いを弾ける。

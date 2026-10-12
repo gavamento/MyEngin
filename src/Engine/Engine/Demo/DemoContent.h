@@ -280,4 +280,8 @@ void BuildRenderBenchScene(EngineContext& ctx);
 // 画面で次第に小さくなるスキンのキャラ (URO の確認用)。既定の render_bench は変えない
 void BuildRenderBenchUniqueScene(EngineContext& ctx);
 
+// M91i: Compute.ForEach のデモ (--compute-demo)。C++ の State の群れ (CPU)、C++ の Fx の火花 (GPU 優先)、C# の State の群れ
+// (C# の CPU 版) を並べる。State の群れの位置はリプレイの照合に入る。--compute-force-cpu で Fx も CPU に回せる (replay_verify の computeab)
+void BuildComputeShowcaseScene(EngineContext& ctx);
+
 } // namespace mye

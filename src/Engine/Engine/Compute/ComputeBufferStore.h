@@ -22,7 +22,7 @@ struct ComputeStoreLimits {
     uint32_t maxElements = 4194240;           // kMaxKernelElements と同じ (D21)
     uint32_t maxStride = 2048;                // D3D11 の StructureByteStride の上限
     uint64_t maxBufferBytes = 128ull << 20;   // 1 本あたり
-    uint64_t stateTotalBytes = 16ull << 20;   // State の生存分の合計
+    uint64_t stateTotalBytes = 8ull << 20;    // State の生存分の合計。毎 tick のハッシュが tick の 10% 以内に収まる上限
 };
 
 // ストアの種類。ハンドルの世代欄の上位 2 bit に入り、他のストアと v21 (ComputeAbiRunner) のハンドルを弾く

@@ -289,6 +289,8 @@ const CliFlag kEngineCliFlags[] = {
     { L"--no-jobs", CliValue::None, [](CliArgs& a) { a.c.useJobs = false; return true; } },
     { L"--no-sim-cache", CliValue::None, [](CliArgs& a) { a.c.useSimCache = false; return true; } },
     { L"--no-cook-cache", CliValue::None, [](CliArgs& a) { a.c.useCookCache = false; return true; } },
+    // M91: Fx の Compute.ForEach も CPU で走らせる (Auto との A/B 検証用)
+    { L"--compute-force-cpu", CliValue::None, [](CliArgs& a) { a.c.computeForceCpu = true; return true; } },
     { L"--no-shader-cache", CliValue::None, [](CliArgs& a) { a.c.useShaderCache = false; return true; } },
     // M46b / M55c / M56c: デバッグ表示 (Deferred のみ)
     { L"--rt-debug", CliValue::One, [](CliArgs& a) { a.c.rtDebugMode = _wtoi(a.v1); return true; } },

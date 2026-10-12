@@ -335,6 +335,11 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     }
     // GPU デバイスは無い: コンピュート ABI のスロットは 0 / no-op を返す。ForEach の Fx は CPU 版で代わりに走る (D6)
     m.computeService.Bind(nullptr, nullptr);
+    {
+        compute::ComputeConfig launch = m.computeService.Config();
+        launch.forceCpu = m.config.computeForceCpu; // EngineLoop と同じ。起動オプションは Apply が保つ
+        m.computeService.SetConfig(launch);
+    }
     compute::ApplyComputeSettings(m.computeService, compute::LoadComputeSettings(m.assetsRoot)); // M91: Runtime / Editor と同じ設定
     m.scriptHost.SetComputeAbi(&m.computeAbi, nullptr, &m.shaderManager, &m.resources.textures);
     m.managedHost.SetComputeAbi(&m.computeAbi, nullptr, &m.shaderManager, &m.resources.textures);

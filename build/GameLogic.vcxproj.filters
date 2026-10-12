@@ -25,6 +25,12 @@
     <ClCompile Include="..\src\GameLogic\Scripts\BtProbeTask.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\ComputeDemoSparks.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\ComputeDemoSwarm.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\GameLogic\Scripts\ComputeProbe.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>

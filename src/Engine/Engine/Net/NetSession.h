@@ -118,6 +118,7 @@ enum NetConfigBits : uint32_t {
     kNetCfgSimCache = kCfgSimCache,
     kNetCfgCookCache = kCfgCookCache,
     kNetCfgAllowGameMismatch = kCfgAllowGameMismatch, // 照合の方針なので configBits の一致検査からは外す
+    kNetCfgComputeForceCpu = kCfgComputeForceCpu,
 };
 
 // 拒否理由 (ログに出す。参加側が「何が違うのか」を 1 行で分かるように)

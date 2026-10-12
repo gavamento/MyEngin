@@ -199,7 +199,7 @@ uint32_t BuildSessionConfigBits(const EngineConfig& config)
 {
     return (config.synthInput ? kCfgSynthInput : 0u) | (config.useJobs ? kCfgJobs : 0u)
         | (config.useSimCache ? kCfgSimCache : 0u) | (config.useCookCache ? kCfgCookCache : 0u)
-        | (config.allowGameMismatch ? kCfgAllowGameMismatch : 0u);
+        | (config.allowGameMismatch ? kCfgAllowGameMismatch : 0u) | (config.computeForceCpu ? kCfgComputeForceCpu : 0u);
 }
 
 void FillSessionConfigFromProject(SessionConfig& cfg, const EngineConfig& config)

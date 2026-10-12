@@ -40,7 +40,7 @@ struct ComputeConfig {
     uint32_t cpuMaxChunks = 0;                 // 0 = 制限なし
     uint64_t fxUploadBytesPerTick = 8388608;
     uint32_t fxDispatchPerTick = 64;
-    uint64_t stateTotalBytes = 16777216;
+    uint64_t stateTotalBytes = 8388608;
     bool forceCpu = false;                     // --compute-force-cpu
     bool alwaysWaitGpu = false;                // 決定的撮影・selftest: GPU 実行の直後に結果を待って反映する
 };

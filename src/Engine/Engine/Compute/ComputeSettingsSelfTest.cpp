@@ -101,9 +101,9 @@ void TestParse()
     ComputeProjectSettings s;
     Check(!ParseComputeSettings("{}", s) && s.config.gpuMinElements == 4096 && s.config.cpuMaxChunks == 0
               && s.config.fxUploadBytesPerTick == 8388608 && s.config.fxDispatchPerTick == 64
-              && s.config.stateTotalBytes == 16777216 && s.kernelOverridesCpu.empty(),
+              && s.config.stateTotalBytes == 8388608 && s.kernelOverridesCpu.empty(),
           "compute 節が無ければ既定値");
-    Check(!ParseComputeSettings("not json", s) && s.config.stateTotalBytes == 16777216, "壊れた JSON は既定値");
+    Check(!ParseComputeSettings("not json", s) && s.config.stateTotalBytes == 8388608, "壊れた JSON は既定値");
     Check(ParseComputeSettings(
               R"({"compute":{"gpuMinElements":1,"cpuMaxChunks":8,"fxUploadBytesPerTick":1024,"fxDispatchPerTick":2,
                   "stateTotalBytes":2048,"kernelOverrides":{"A":"cpu","B":"auto","C":"gpu","D":3}}})",
@@ -121,7 +121,7 @@ void TestParse()
               && s.config.gpuMinElements == 4096 && s.config.cpuMaxChunks == 0 && s.config.fxUploadBytesPerTick == 8388608
               && s.config.fxDispatchPerTick == 64 && s.config.stateTotalBytes == 4096,
           "負数・文字列・小数・範囲外は既定値に倒れ、正しいキーは読める");
-    Check(!ParseComputeSettings(R"({"compute":[1,2]})", s) && s.config.stateTotalBytes == 16777216,
+    Check(!ParseComputeSettings(R"({"compute":[1,2]})", s) && s.config.stateTotalBytes == 8388608,
           "compute がオブジェクトでなければ既定値");
     Check(ParseComputeSettings(R"({"compute":{"kernelOverrides":["A"]}})", s) && s.kernelOverridesCpu.empty(),
           "kernelOverrides がオブジェクトでなければ無視");

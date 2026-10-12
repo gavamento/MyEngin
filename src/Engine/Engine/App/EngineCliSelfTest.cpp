@@ -8,6 +8,8 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/App/EngineCli.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Loop/SimInit.h"
+#include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
 #include "Engine/Engine/Scene/TagNames.h"
 
@@ -110,6 +112,10 @@ bool RunEngineCliSelfTest()
     check(r.consumed == 1 && !r.config.useCookCache, "--no-cook-cache");
     r = RunParse({ L"--no-shader-cache" });
     check(r.consumed == 1 && !r.config.useShaderCache, "--no-shader-cache");
+    r = RunParse({ L"--compute-force-cpu" });
+    check(r.consumed == 1 && r.config.computeForceCpu, "--compute-force-cpu");
+    check(BuildSessionConfigBits(r.config) == (BuildSessionConfigBits(EngineConfig{}) | kCfgComputeForceCpu),
+          "--compute-force-cpu is one configBits bit (kCfgComputeForceCpu)");
     r = RunParse({ L"--velocity-debug" });
     check(r.consumed == 1 && r.config.velocityDebug == 1, "--velocity-debug");
     r = RunParse({ L"--ssr" });
@@ -427,6 +433,11 @@ bool RunEngineCliSelfTest()
     check(btDemo != nullptr && FindShowcase(L"--bt-demo", false) == btDemo
               && ShowcaseScenePath(*btDemo, L"c:\\p\\assets") == L"cache\\bt_showcase.scene.json",
           "--bt-demo is offered to the Runtime and saves under cache");
+    // M91i: --compute-demo も Runtime にも提供され、cache\ 側へ保存する
+    const ShowcaseDef* computeDemo = FindShowcase(L"--compute-demo", true);
+    check(computeDemo != nullptr && FindShowcase(L"--compute-demo", false) == computeDemo
+              && ShowcaseScenePath(*computeDemo, L"c:\\p\\assets") == L"cache\\compute_showcase.scene.json",
+          "--compute-demo is offered to the Runtime and saves under cache");
     // M89b: --anim-demo も Runtime にも提供され、cache\ 側へ保存する
     const ShowcaseDef* animDemo = FindShowcase(L"--anim-demo", true);
     check(animDemo != nullptr && FindShowcase(L"--anim-demo", false) == animDemo

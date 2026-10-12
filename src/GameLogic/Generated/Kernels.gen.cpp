@@ -7,6 +7,18 @@
 
 namespace {
 
+// DemoSparkStep
+constexpr const char* const kDemoSparkStep_argNames[] = { "sparks" };
+constexpr auto kDemoSparkStep_args = ::mye::kernel::MakeKernelArgs<&::mye::kernel::cpu::DemoSparkStep::DemoSparkStep_Cpu>(kDemoSparkStep_argNames);
+const ::mye_script_detail::KernelRegistrar kDemoSparkStep_registrar(
+    ::mye::kernel::MakeKernelDesc<&::mye::kernel::cpu::DemoSparkStep::DemoSparkStep_Cpu>("DemoSparkStep", 0xe5cb39cc86ce9bbdull, kDemoSparkStep_args.data()));
+
+// DemoSwarmStep
+constexpr const char* const kDemoSwarmStep_argNames[] = { "next", "prev" };
+constexpr auto kDemoSwarmStep_args = ::mye::kernel::MakeKernelArgs<&::mye::kernel::cpu::DemoSwarmStep::DemoSwarmStep_Cpu>(kDemoSwarmStep_argNames);
+const ::mye_script_detail::KernelRegistrar kDemoSwarmStep_registrar(
+    ::mye::kernel::MakeKernelDesc<&::mye::kernel::cpu::DemoSwarmStep::DemoSwarmStep_Cpu>("DemoSwarmStep", 0x1fc9ddd690f5eb3bull, kDemoSwarmStep_args.data()));
+
 // SelfTestAllFuncs
 constexpr const char* const kSelfTestAllFuncs_argNames[] = { "outv", "src" };
 constexpr auto kSelfTestAllFuncs_args = ::mye::kernel::MakeKernelArgs<&::mye::kernel::cpu::SelfTestAllFuncs::SelfTestAllFuncs_Cpu>(kSelfTestAllFuncs_argNames);

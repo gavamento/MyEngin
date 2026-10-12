@@ -24,8 +24,8 @@
 | sub-14 | OK | 1 | 三校 f918c7b (未 push) | 外部プロジェクト (三校) にも同じ改行規則 (依存 13、U15。HAL Collector は git 無し = U16) |
 | sub-15 | OK | 1 | 232609d | 14-c の文言に直し方 (U17) と三校 verify.bat FAIL の切り分け (依存 14、U18) |
 | sub-06 | OK | 1 | 8afe3d3 | C# 同形 API・C# CPU 版 (依存 05) |
-| sub-07 | 差し戻し | 1 | | スクリプトのインスペクター・project_settings (依存 06) |
-| sub-08 | 未着手 | 0 | | デモと compute A/B (依存 06) |
+| sub-07 | OK | 2 | b85a9c6 | スクリプトのインスペクター・project_settings (依存 06) |
+| sub-08 | 差し戻し | 1 | | デモと compute A/B (依存 06) |
 | sub-09 | 未着手 | 0 | | ADR-030 と文書 (依存 07,08,10) |
 
 ## レビュー
@@ -45,6 +45,7 @@
 - (2026-10-12、司会が AskUserQuestion) sub-12 の作業ツリーの書き直しは「コミットしてから書き直す」を承認 (自動判定が coder の書き直しを 2 回拒否したため)。
 - (2026-10-12、司会が AskUserQuestion) U17 = check_rules 規則 14-c はエラーのまま (裁定どおり)。文言に直し方のコマンドを入れる追補を sub-14 の後に入れる。
 - (2026-10-12、司会が AskUserQuestion) U18 = 三校 verify.bat の FAIL 2 件は M91 の退行かだけ sub-15 で切り分ける (裁定どおり)。三校の golden 撮り直し・コード変更はしない。
+- (2026-10-12、司会が AskUserQuestion) U19 = State の総量の既定の上限は、ハッシュを 8 バイト単位にして速くしたうえで、Release で 1 tick の 10% 以内に収まる 2 のべき乗の MiB を既定値にする (裁定どおり)。
 
 ## 申し送り (セッション跨ぎ)
 - (解消: 3766e33 に切り出し済み) 開始時点で作業ツリーに無関係の未コミット変更あり (`docs/test_checklists.md`、`tools/deepmodal/train.py`、`DeepModalModel/`、`docs/deepmodal/synthetic_shapes.md`、`tools/deepmodal/tests/test_train_axes.py`)。実装フェーズに入る前にユーザーへ扱いを確認する (`docs/test_checklists.md` は coder も触りうる)。
@@ -68,3 +69,4 @@
 - (planner VERDICT sub-15) 三校 verify.bat の FAIL 2 件は 7d28c31 と HEAD で同値 = M91 の退行ではない (三校側の別件、対応はユーザー判断)。.editorconfig は足さない。docs の VS メニュー名と三校の f918c7b の push 先はユーザー判断 (sub-09 の手動項目にも)。
 - (planner VERDICT sub-06) OK round 1 = 8afe3d3。.kernel.hlsl 編集時の C# 再コンパイル要求は sub-07 (1c) へ移管。JIT 設定 6 通りの再実行は CI に常設せず、手順を ADR-030 (sub-09) に書く。ForEach のバッファ上限 4 本が C++ と揃っていることを sub-09 の文書で明記。実機 GPU の C# Fx と GUI の [Compile C# Scripts] は sub-08 / sub-09 の test_checklists で補う。
 - (2026-10-12 ユーザー指示) 全サブ完了・Notion 記録後のシャットダウンは取り消し。シャットダウンしない。
+- (planner VERDICT sub-07) OK round 2 = b85a9c6。ReloadHub が ManagedHost / ComputeService を直接持つ依存は受け入れ (minor)。実機 GPU の Compute 欄の数値は sub-08 のデモ撮影で確認し、無理なら sub-09 の test_checklists へ。ADR-030 に同期 CompileScripts と起動順の事実を書く (sub-09.md に申し送り済み)。

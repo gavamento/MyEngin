@@ -40,6 +40,8 @@ enum SessionConfigBits : uint32_t {
     // --allow-game-mismatch: GameLogic.dll の食い違いを WARN に落として接続を許した記録。
     // 照合の方針であって tick 列の意味には効かないので、--rep-diff と接続の configBits 照合は無視する
     kCfgAllowGameMismatch = 1u << 4,
+    // --compute-force-cpu: Fx の Compute.ForEach も CPU で走らせる起動オプション。A/B 検証で食い違いを入口で弾くために入れる
+    kCfgComputeForceCpu = 1u << 5,
 };
 
 // セッション開始時に確定し、走行中は変えない設定。0 は「不明/未設定」の予約値

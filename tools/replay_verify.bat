@@ -6,6 +6,7 @@ rem        - シーンごとのチェーン: record (Debug, --replay-fast) →
 rem          snapshot stress 付き verify (Debug) → verify (Release) →
 rem          ヘッドレス Server.exe (Release) の verify (M81a)
 rem        - jobs A/B (M90g): 直列 (--no-jobs) で録った .rep を jobs あり (ワーカー起動) で照合する
+rem        - compute A/B (M91i): Fx を GPU 優先 (Auto) で録った .rep を --compute-force-cpu (Fx も CPU) で照合する
 rem        - タイムトラベルの巻き戻しと分岐 What-if (それぞれ Debug / Release)
 rem        - 静的規則チェック (check_rules.ps1)
 rem   3. 失敗時は mismatch マーカーの残ったシーンだけ :diagnose を直列で回す
@@ -77,13 +78,13 @@ rem 前回の失敗マーカーが残っていると :diagnose が古い tick �
 del /q cache\*.mismatch.txt 2>nul
 if exist cache\replay_logs rd /s /q cache\replay_logs
 
-echo === parallel verification: 13 scene chains + jobs A/B + time travel x2 + what-if x2 + rule check ===
+echo === parallel verification: 14 scene chains + jobs A/B + compute A/B + time travel x2 + what-if x2 + rule check ===
 rem ★Entry は空白なし相対パスで渡す (人間/CI が bat を叩くのと同じ呼び形に固定。
 rem   バッチ読取りの罠と chcp 437 の理由は runner 冒頭のコメント参照)
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,perception,bt,anim,jobsab,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,perception,bt,anim,compute,jobsab,computeab,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 13 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav + perception + bt + anim) + snapshot round-trip + jobs A/B + time travel + rule check
+echo [PASS] replay consistency (Debug/Release, 14 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav + perception + bt + anim + compute) + snapshot round-trip + jobs A/B + compute A/B + time travel + rule check
 exit /b 0
 
 rem ---------------------------------------------------------------- :failed
@@ -144,6 +145,10 @@ if exist cache\golden_anim.rep.mismatch.txt (
     set DIAGFOUND=1
     call :diagnose "cache\golden_anim.rep" "--anim-demo"
 )
+if exist cache\golden_compute.rep.mismatch.txt (
+    set DIAGFOUND=1
+    call :diagnose "cache\golden_compute.rep" "--compute-demo"
+)
 rem jobs A/B: 期待側は直列で録り直す (記録と同じ --no-jobs)
 if exist cache\jobsab_particle.rep.mismatch.txt (
     set DIAGFOUND=1
@@ -156,6 +161,11 @@ if exist cache\jobsab_perception.rep.mismatch.txt (
 if exist cache\jobsab_parts.rep.mismatch.txt (
     set DIAGFOUND=1
     call :diagnose "cache\jobsab_parts.rep" "--parts-demo --no-jobs"
+)
+rem compute A/B: 期待側は記録と同じ Auto で録り直す (検証側にだけ --compute-force-cpu が付く)
+if exist cache\computeab.rep.mismatch.txt (
+    set DIAGFOUND=1
+    call :diagnose "cache\computeab.rep" "--compute-demo"
 )
 if "%DIAGFOUND%"=="0" echo [diag] no mismatch markers - failures happened before any hash comparison, see the job logs above
 echo [FAIL] replay verification
@@ -353,6 +363,16 @@ if exist cache\anim_showcase.scene.json del /q cache\anim_showcase.scene.json
 call :chain cache\golden_anim.rep "--anim-demo" "--anim-demo"
 exit /b %ERRORLEVEL%
 
+rem ---- Compute.ForEach (M91、ADR-030)。群れ 512 体 (C++ の State、CPU。結果が LocalTransform に入る) と火花 4096 粒 (C++ の
+rem Fx、GPU 優先。DebugDrawLine にだけ描く) が回る。State の ForEach の結果・State バッファのスナップショット・
+rem ハッシュ (snapshot stress の往復を含む) が Debug / Release / Server.exe でビット一致すること自体が、C++ の CPU 版の
+rem 構成間一致の証明になる。C# の群れは C# レーンが記録・検証中は止まるのでここには入らない (見えるだけ)。
+rem ★State のバッファのハンドルが FIELD に入るので、バッファの採番 (Fx との共有スロット空間を含む) もこのペアが検査する
+:job_compute
+if exist cache\compute_showcase.scene.json del /q cache\compute_showcase.scene.json
+call :chain cache\golden_compute.rep "--compute-demo" "--compute-demo"
+exit /b %ERRORLEVEL%
+
 rem ---- jobs A/B (M90g、ADR-028) ----
 rem sim の並列化 (CPU 粒子 / Perception / PartFollow / IK) が「直列と 1 ビットも違わない」ことの
 rem 実シーンでの証明。直列 (--no-jobs) で録った .rep を、ワーカーを起こした Debug / Release で
@@ -363,6 +383,15 @@ rem 部位追従のペアは :job_parts の中で回す (保存済みシーン�
 call :jobsab_one cache\jobsab_particle.rep "--particle-demo --particle-backend cpu"
 if errorlevel 1 exit /b 1
 call :jobsab_one cache\jobsab_perception.rep "--perception-demo"
+exit /b %ERRORLEVEL%
+
+rem ---- compute A/B (M91i、ADR-030) ----
+rem Fx の結果は GPU か CPU かで変わりうるので、sim の状態 (ECS / ハッシュ対象) へ漏れてはいけない。それを機械で検出する:
+rem Auto (Fx は GPU 優先) で録った .rep を、--compute-force-cpu (Fx も CPU 版) の Debug / Release で毎 tick のワールドハッシュと照合する。
+rem 割れたら「Fx の結果 (Read の中身・ジョブハンドル・バッファのハンドル) を sim の状態や分岐に使っている」。
+rem .rep のヘッダの configBits (kCfgComputeForceCpu) は違うが、verify は見ない (jobs A/B と同じ)
+:job_computeab
+call :computeab_one cache\computeab.rep "--compute-demo"
 exit /b %ERRORLEVEL%
 
 rem ---- タイムトラベルの巻き戻し (M52e) ----
@@ -412,6 +441,29 @@ bin\x64\Debug\Editor.exe %AARG% --replay-verify %AREP% %MYE_EXTRA_ARGS% || (
 echo === jobs A/B verify %AREP% : Release, workers on ===
 bin\x64\Release\Editor.exe %AARG% --replay-verify %AREP% %MYE_EXTRA_ARGS% || (
     echo [FAIL] jobs A/B Release verify: %AREP%
+    endlocal & exit /b 1
+)
+endlocal & exit /b 0
+
+rem ---------------------------------------------------------------- :computeab_one
+rem compute A/B の 1 シーン。%1 = .rep パス / %2 = シーン引数 (record と verify で同じ)
+:computeab_one
+setlocal
+set "XREP=%~1"
+set "XARG=%~2"
+echo === compute A/B record %XREP% : Debug, Auto ^(Fx prefers GPU^), %TICKS% ticks ===
+bin\x64\Debug\Editor.exe %XARG% --replay-record %XREP% --replay-ticks %TICKS% --replay-fast %MYE_EXTRA_ARGS% || (
+    echo [FAIL] compute A/B record: %XREP%
+    endlocal & exit /b 1
+)
+echo === compute A/B verify %XREP% : Debug, --compute-force-cpu ===
+bin\x64\Debug\Editor.exe %XARG% --compute-force-cpu --replay-verify %XREP% %MYE_EXTRA_ARGS% || (
+    echo [FAIL] compute A/B Debug verify: %XREP%
+    endlocal & exit /b 1
+)
+echo === compute A/B verify %XREP% : Release, --compute-force-cpu ===
+bin\x64\Release\Editor.exe %XARG% --compute-force-cpu --replay-verify %XREP% %MYE_EXTRA_ARGS% || (
+    echo [FAIL] compute A/B Release verify: %XREP%
     endlocal & exit /b 1
 )
 endlocal & exit /b 0
@@ -469,7 +521,7 @@ rem 失敗した照合の「どのフィールドが割れたか」を出す (M5
 rem   %1 = .rep パス / %2 = シーン切替の追加引数 ("" / "--parts-demo" / "--flow-demo" /
 rem                        "--local-demo" / "--physics-demo" / "--joint-demo" /
 rem                        "--acoustic-demo" / "--ui-demo --ui-demo-input" / "--fracture-demo" / "--nav-demo" /
-rem                        "--perception-demo" / "--bt-demo" / "--anim-demo")
+rem                        "--perception-demo" / "--bt-demo" / "--anim-demo" / "--compute-demo")
 rem 失敗側のダンプは EngineLoop が MISMATCH 時に自動で残しているので、
 rem ここでは期待側 (= その .rep を録ったのと同じコマンド) を撮り直して突き合わせる
 :diagnose

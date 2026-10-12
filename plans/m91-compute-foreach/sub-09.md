@@ -49,3 +49,13 @@ spec 受け入れ 13。
   - GameLogic を Rebuild した後に、C++ の行が「一致」に戻ること
   - Play 中にカーネルを保存したときの挙動
   - 実機 GPU での Compute 欄の数値 (sub-08 で確かめられなければ)
+
+## 申し送り (2026-10-12、sub-08 から)
+- ADR-030 に書くこと:
+  - 実機 GPU (RTX 3060) の差: Saxpy は FMA の融合で最大 64 ULP、Mix は 6.2e-6、FloatToInt / FloatToUint は 18 値すべて一致した。WARP を前提にした許容差の 8 項目は、実機では FAIL する。
+  - State のハッシュの方式: 8 バイト単位、4 レーン。
+  - 既定 8 MiB の根拠の表: Release / Debug × 1 / 8 / 16 MiB。
+  - compute A/B の仕組みと、漏れを入れると tick 0 で FAIL すること (実機 GPU と --warp の両方で確かめた)。
+  - kCfgComputeForceCpu = 1u << 5。
+- engine_spec の stateTotalBytes の既定値は 8388608。
+- test_checklists に足すこと: 実機 GPU での Compute 欄の数値。Editor で ComputeCsSwarm / ComputeDemoSwarm / ComputeDemoSparks を選んで Compute 欄を見る手順。

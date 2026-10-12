@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string_view>
@@ -394,6 +395,40 @@ uint64_t HashBehaviorTreeState(const BehaviorTreeSystem& bt, DumpCtx* d)
     return h;
 }
 
+// State の中身を 8 バイト語で畳む (バイト単位の FNV は 16MiB で tick の 100% を超えたため)。
+// 4 本のレーンに 32 バイトずつ交互に流し込んで依存の鎖を断ち、最後に 1 本へ畳む。語は memcpy で読む
+// (エンディアン以外のアラインメント依存なし。対象は x64 のリトルエンディアンのみ)。端数のバイトは従来の HashBytes
+uint64_t HashStateBytes(const void* data, size_t size, uint64_t seed)
+{
+    constexpr uint64_t kMul = 0x9E3779B97F4A7C15ull;
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    uint64_t lane[4] = { seed ^ 0x1111111111111111ull, seed ^ 0x2222222222222222ull,
+                         seed ^ 0x3333333333333333ull, seed ^ 0x4444444444444444ull };
+    auto mix = [](uint64_t h, uint64_t w) {
+        h = (h ^ w) * kMul;
+        return h ^ (h >> 32);
+    };
+    size_t i = 0;
+    for (; i + 32 <= size; i += 32) {
+        uint64_t w[4];
+        std::memcpy(w, p + i, sizeof(w));
+        lane[0] = mix(lane[0], w[0]);
+        lane[1] = mix(lane[1], w[1]);
+        lane[2] = mix(lane[2], w[2]);
+        lane[3] = mix(lane[3], w[3]);
+    }
+    for (uint32_t k = 0; i + 8 <= size; i += 8, ++k) {
+        uint64_t w;
+        std::memcpy(&w, p + i, sizeof(w));
+        lane[k] = mix(lane[k], w);
+    }
+    uint64_t h = seed;
+    for (uint64_t l : lane) {
+        h = HashCombine(h, l);
+    }
+    return HashBytes(p + i, size - i, HashCombine(h, size));
+}
+
 // Compute.ForEach の State バッファ (M91d)。使用中のスロットを昇順に、種別・世代・持ち主・形・中身を畳む。
 // 中身はバイト列のまま (要素の型はカーネルごとに違う)。ダンプは要素数 + サブハッシュの 1 行
 uint64_t HashComputeState(const compute::ComputeBufferStore& store, DumpCtx* d)
@@ -417,7 +452,7 @@ uint64_t HashComputeState(const compute::ComputeBufferStore& store, DumpCtx* d)
         FoldU64(h, d, "Compute", "owner.generation", s.owner.generation);
         FoldU64(h, d, "Compute", "count", s.count);
         FoldU64(h, d, "Compute", "stride", s.stride);
-        h = HashBytes(s.data.data(), s.data.size(), h);
+        h = HashStateBytes(s.data.data(), s.data.size(), h);
         EmitArray(d, "Compute", "data", s.data.data(), s.data.size(), s.count, h);
     }
     if (d && d->lines) {

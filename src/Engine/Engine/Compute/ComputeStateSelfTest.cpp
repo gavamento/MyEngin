@@ -5,6 +5,7 @@
 //====================================================================================
 #include "Engine/Engine/Compute/ComputeStateSelfTest.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -277,6 +278,49 @@ void TestHash()
     Check(detailedTotal == h1, "HashWorldDetailed も同じ total");
 }
 
+// State の総量ごとの、1 回のワールドハッシュにかかる時間 (ms)。1 tick (16.6ms) に毎 tick 1 回かかるコストの目安で、
+// 既定の上限 (8MiB) が tick の 10% 以内かを人が読む用に記録する (比較のため 16MiB まで測る)。時間は合否に使わない (決定論の邪魔をしない)
+void TestHashCost()
+{
+    MYE_LOG_INFO("-- State のハッシュのコスト --");
+    constexpr uint32_t kBufferBytes = 1u << 20;
+    constexpr uint32_t kStride = 16;
+    constexpr uint32_t kRepeats = 8;
+    for (const uint32_t megabytes : { 1u, 2u, 4u, 8u, 16u }) {
+        Scene scene;
+        World& w = scene.GetWorld();
+        GameObject g = scene.CreateGameObjectTracked("Owner");
+        w.ApplyStructuralChanges();
+        ComputeStoreLimits limits;
+        limits.stateTotalBytes = 16ull << 20; // 既定より大きい総量も測る
+        ComputeBufferStore store(StoreLane::Game, limits);
+        SimSources src;
+        src.time = &scene.Time();
+        src.computeState = &store;
+        std::vector<uint8_t> fill(kBufferBytes);
+        for (uint32_t i = 0; i < kBufferBytes; ++i) {
+            fill[i] = static_cast<uint8_t>(kernel::HashU32(i + 7u) >> 24);
+        }
+        bool created = true;
+        for (uint32_t b = 0; b < megabytes; ++b) {
+            const uint64_t h = store.Create(kBufferBytes / kStride, kStride, BufferKind::State, g.Id());
+            created = created && h != 0 && store.Write(h, fill.data(), kBufferBytes / kStride);
+        }
+        Check(created && store.StateBytes() == static_cast<uint64_t>(megabytes) * kBufferBytes, "State を総量ぶん作れる");
+        const uint64_t first = HashWorld(w, src);
+        bool stable = true;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (uint32_t r = 0; r < kRepeats; ++r) {
+            stable = stable && HashWorld(w, src) == first;
+        }
+        const double ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / kRepeats;
+        MYE_LOG_INFO("    State %u MiB: ワールドハッシュ 1 回 %.3f ms (1 tick = 16.667 ms の %.1f%%)", megabytes, ms,
+                     ms * 100.0 / (1000.0 / 60.0));
+        Check(stable, "同じ状態のハッシュは繰り返しても同じ");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // SimSnapshot の往復・寿命
 // ---------------------------------------------------------------------------
@@ -396,6 +440,7 @@ bool RunComputeStateSelfTest()
     g_fails = 0;
     TestStoreSnapshot();
     TestHash();
+    TestHashCost();
     TestSimSnapshotAndLifetime();
     MYE_LOG_INFO("==== Compute state self test: %s ====", g_fails == 0 ? "PASS" : "FAIL");
     return g_fails == 0;
