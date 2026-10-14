@@ -3535,7 +3535,7 @@ host server's confirmed inputs do (§11.5). `check_rules` rule 13-a forbids sim-
 and loss, a local lobby with data both ways in one process). Two Runtime processes on the `local`
 backend record `.rep` files that match tick for tick over their overlap and replay headlessly.
 
-**Known limits.** The EOS implementation has not been compiled or tested against the SDK yet. No host
+**Known limits.** The EOS implementation compiles against SDK v1.19.2.1 but has not been tested against the service yet. No host
 migration: when the host leaves, the session ends. Returning to single player after a session needs a
 restart. The editor has no lobby. Keys typed into the lobby window also reach the game.
 
