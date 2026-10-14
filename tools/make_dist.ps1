@@ -65,6 +65,10 @@ if (-not $SkipBuild) {
 # 欠けたまま配ると、受け取った側で「C# だけ動かない」のような原因の分かりにくい縮退になる
 $required = 'Editor.exe', 'Runtime.exe', 'Server.exe', 'GameLogic.dll', 'nethost.dll', 'MyeScripting.dll',
     'MyeScripting.runtimeconfig.json', 'MyeCollab.dll', 'MyeCollabCli.exe', 'libcrypto-3-x64.dll', 'libssl-3-x64.dll'
+# M93: EOS SDK を入れてビルドしたなら、その DLL が無いと Runtime / Editor が起動しない (import している)
+if (Test-Path -LiteralPath (Join-Path $repo 'external\eos-sdk\Include\eos_sdk.h')) {
+    $required += 'EOSSDK-Win64-Shipping.dll'
+}
 $missing = @($required | Where-Object { -not (Test-Path -LiteralPath (Join-Path $bin $_)) })
 if ($missing.Count -gt 0) { throw "missing in ${bin}: $($missing -join ', ')" }
 

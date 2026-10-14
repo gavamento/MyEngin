@@ -92,6 +92,9 @@
   </ItemDefinitionGroup>
   <Target Name="MyeCopyEosDll" AfterTargets="Build" Condition="'$(MyeHasEos)'=='true' And '$(ConfigurationType)'=='Application'">
     <Copy SourceFiles="$(MyeEosRoot)Bin\EOSSDK-Win64-Shipping.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <!-- ボイス (RTC) の再生に EOS が読む XAudio2.9 の再配布 DLL。無ければボイスだけが無効になる (EosOnlineService) -->
+    <Copy SourceFiles="$(MyeEosRoot)Bin\xaudio2_9redist.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true"
+          Condition="Exists('$(MyeEosRoot)Bin\xaudio2_9redist.dll')" />
   </Target>
   <!--
     ビルド情報の埋め込み (M52f)。クラッシュ報告に「どのコミットの・どの構成のビルドか」が

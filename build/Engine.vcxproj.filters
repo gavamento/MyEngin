@@ -76,6 +76,9 @@
     <Filter Include="Engine\Online">
       <UniqueIdentifier>{617CA204-43A0-0C0F-0AF3-35630C95C4EC}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Online\Eos">
+      <UniqueIdentifier>{B2052530-AD0B-498B-DC5C-A707989872F1}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Particles">
       <UniqueIdentifier>{DCDC7B06-EF20-69BD-0BF7-3CA3702AC5ED}</UniqueIdentifier>
     </Filter>
@@ -663,7 +666,22 @@
     <ClCompile Include="..\src\Engine\Engine\Net\ServerSession.cpp">
       <Filter>Engine\Net</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Online\Eos\EosOnlineService.cpp">
+      <Filter>Engine\Online\Eos</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Online\HostServerProcess.cpp">
+      <Filter>Engine\Online</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Online\LocalOnlineService.cpp">
+      <Filter>Engine\Online</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Online\OnlineFactory.cpp">
+      <Filter>Engine\Online</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Online\OnlineSelfTest.cpp">
+      <Filter>Engine\Online</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Online\OnlineSession.cpp">
       <Filter>Engine\Online</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Online\OnlineSettings.cpp">
@@ -1656,7 +1674,22 @@
     <ClInclude Include="..\src\Engine\Engine\Net\ServerSession.h">
       <Filter>Engine\Net</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Online\Eos\EosOnlineService.h">
+      <Filter>Engine\Online\Eos</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Online\HostServerProcess.h">
+      <Filter>Engine\Online</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Online\IOnlineService.h">
+      <Filter>Engine\Online</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Online\LocalOnlineService.h">
+      <Filter>Engine\Online</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Online\OnlineSelfTest.h">
+      <Filter>Engine\Online</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Online\OnlineSession.h">
       <Filter>Engine\Online</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Online\OnlineSettings.h">

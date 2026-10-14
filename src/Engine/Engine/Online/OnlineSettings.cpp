@@ -43,6 +43,20 @@ const char* OnlineBackendName(OnlineBackend backend)
     return "none";
 }
 
+bool ParseOnlineBackend(const std::string& name, OnlineBackend& out)
+{
+    if (name == "eos") {
+        out = OnlineBackend::Eos;
+    } else if (name == "local") {
+        out = OnlineBackend::Local;
+    } else if (name == "none" || name.empty()) {
+        out = OnlineBackend::None;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 bool LoadOnlineSettings(const std::wstring& assetsRoot, OnlineSettings& out)
 {
     out = OnlineSettings{};
@@ -55,12 +69,9 @@ bool LoadOnlineSettings(const std::wstring& assetsRoot, OnlineSettings& out)
     }
     const nlohmann::json& online = root["online"];
     const std::string backend = StringOr(online, "backend");
-    if (backend == "eos") {
-        out.backend = OnlineBackend::Eos;
-    } else if (backend == "local") {
-        out.backend = OnlineBackend::Local;
-    } else if (!backend.empty() && backend != "none") {
+    if (!ParseOnlineBackend(backend, out.backend)) {
         // 綴り違いを黙って「オフライン」にしない (気づかないまま配布される)
+        out.backend = OnlineBackend::None;
         MYE_LOG_WARN("[online] project_settings.json: unknown online.backend \"%s\" - online features are off",
                      backend.c_str());
     }
@@ -77,6 +88,13 @@ bool LoadOnlineSettings(const std::wstring& assetsRoot, OnlineSettings& out)
         const nlohmann::json& voice = online["voice"];
         out.voiceEnabled = BoolOr(voice, "enabled", out.voiceEnabled);
         out.pushToTalk = BoolOr(voice, "pushToTalk", out.pushToTalk);
+        const std::string key = StringOr(voice, "pushToTalkKey");
+        if (key.size() == 1 && ((key[0] >= 'A' && key[0] <= 'Z') || (key[0] >= 'a' && key[0] <= 'z'))) {
+            out.pushToTalkKey = static_cast<char>(key[0] & ~0x20); // 大文字へ (仮想キーコードと同じ値)
+        } else if (!key.empty()) {
+            MYE_LOG_WARN("[online] project_settings.json: voice.pushToTalkKey must be one letter (got \"%s\") - using T",
+                         key.c_str());
+        }
     }
     return true;
 }

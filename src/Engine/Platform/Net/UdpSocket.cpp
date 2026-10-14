@@ -113,7 +113,7 @@ UdpSocket::~UdpSocket()
     Close();
 }
 
-bool UdpSocket::Open(uint16_t localPort)
+bool UdpSocket::Open(uint16_t localPort, bool loopbackOnly)
 {
     Close();
     if (!WsaAcquire()) {
@@ -144,7 +144,7 @@ bool UdpSocket::Open(uint16_t localPort)
     }
     sockaddr_in addr = {};
     addr.sin_family = AF_INET;
-    addr.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
+    addr.sin_addr.S_un.S_addr = htonl(loopbackOnly ? INADDR_LOOPBACK : INADDR_ANY);
     addr.sin_port = htons(localPort);
     if (bind(s, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
         MYE_LOG_ERROR("[net] bind(port %u) failed (%d)", static_cast<unsigned>(localPort),

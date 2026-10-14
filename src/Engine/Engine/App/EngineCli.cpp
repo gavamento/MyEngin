@@ -175,6 +175,17 @@ const CliFlag kEngineCliFlags[] = {
     // 検証用 (どちらも参加スナップショットの tick から N tick 後): Bye を送らずに終了する / sim 状態を壊す
     { L"--net-drop-after", CliValue::One, [](CliArgs& a) { a.c.netDropAfterTicks = _wtoi64(a.v1); return true; } },
     { L"--net-poke-after", CliValue::One, [](CliArgs& a) { a.c.netPokeAfterTicks = _wtoi64(a.v1); return true; } },
+    // M93: オンラインのロビー (project_settings.json の online.backend が eos / local のとき)。
+    // ログインでき次第ロビーを作る / 参加コードで入る。--online-code はホストの参加コードを固定する (検証用)
+    { L"--online-backend", CliValue::One, [](CliArgs& a) { a.c.onlineBackendOverride = a.v1; return true; } },
+    { L"--online-host", CliValue::None, [](CliArgs& a) { a.c.onlineAutoHost = true; return true; } },
+    { L"--online-no-ui", CliValue::None, [](CliArgs& a) { a.c.onlineLobbyUi = false; return true; } },
+    { L"--online-join", CliValue::One, [](CliArgs& a) { a.c.onlineAutoJoin = a.v1; return true; } },
+    { L"--online-code", CliValue::One,
+      [](CliArgs& a) {
+          a.c.onlineJoinCodeOverride = WideToUtf8(a.v1);
+          return true;
+      } },
     // M81c: GameLogic.dll の食い違いを WARN に落として接続を許す (Debug / Release 混在の検証用)
     { L"--allow-game-mismatch", CliValue::None, [](CliArgs& a) { a.c.allowGameMismatch = true; return true; } },
     // M52i: 予測ロールバックを切って M52h の素の遅延ロックステップへ落とす

@@ -12,6 +12,8 @@
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
 #include "Engine/Engine/Loop/DeviceFatal.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Online/IOnlineService.h"
+#include "Runtime/OnlineLobbyWindow.h"
 #include "Engine/Platform/Win32Window.h"
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/App/Project.h"
@@ -69,6 +71,19 @@ public:
     // ランタイムは常時シミュレート (Editor の Play 相当)
     void OnTick(mye::EngineContext& ctx) override { ctx.simulateScripts = true; }
 
+    // ImGui はオンラインのロビー窓を出すときだけ立つ (EngineLoop が決める)
+    void OnImGui(mye::EngineContext& ctx) override
+    {
+        if (ctx.online != nullptr) {
+            mye::DrawOnlineLobbyWindow(*ctx.online, lobbyWindow_);
+        }
+    }
+
+private:
+    mye::OnlineLobbyWindowState lobbyWindow_;
+
+public:
+
     // Runtime は編集データを持たないので、理由の表示だけ行って終了する
     void OnDeviceFatal(mye::EngineContext& ctx, const mye::DeviceFatalInfo& info) override
     {
@@ -121,6 +136,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             }
         }
         LocalFree(argv);
+    }
+    // M93: オンライン (ロビー・P2P・ボイス)。生成関数を渡すのは Runtime の main だけ (EngineLoop.h の注記)。
+    // ホストが起動する Server.exe には、この Runtime と同じ起動シーンを渡す
+    config.createOnlineService = &mye::CreateOnlineService;
+    if (!app.scenePath.empty()) {
+        config.onlineServerSceneArgs = L"--scene \"" + app.scenePath + L"\"";
+    } else if (app.showcase != nullptr) {
+        config.onlineServerSceneArgs = app.showcase->flag;
     }
     // ABI v18 IsDevelopmentRun: --project 付き = 開発中 (verify.bat のヘッドレス検証もここ)、無し = 配布物。
     // 引数を全部読んでから決める (--project の位置に依らない)

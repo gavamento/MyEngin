@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,9 @@ class TimeTravel;
 class BehaviorTreeSystem;
 struct RenderResources;
 struct NetRuntimeInfo;
+class IOnlineService;
+class OnlineSession;
+enum class OnlineBackend : uint8_t;
 
 struct EngineConfig {
     std::wstring title = L"MyEngine";
@@ -376,6 +380,20 @@ struct EngineConfig {
     int64_t netDropAfterTicks = -1;  // --net-drop-after N: Bye を送らずに終了する (クラッシュ・回線断の再現)。-1 = 無効
     int64_t netPokeAfterTicks = -1;  // --net-poke-after N: その tick の末に sim 状態を 1 フィールド壊す (--net-poke-tick と同じ変異)
 
+    // ---- オンライン (M93: ロビー・P2P 中継・ボイス。ホスト兼サーバ、ADR-031) ----
+    // 実装の生成関数。Runtime の main が CreateOnlineService を入れる。Server.exe は入れない = EOS SDK の
+    // import を Server へ持ち込まない (Engine.lib の中から生成関数を直接呼ぶと、リンクで引き込まれる)。
+    // null、または project_settings.json の online.backend が none ならオンライン機能なし
+    std::unique_ptr<IOnlineService> (*createOnlineService)(OnlineBackend) = nullptr;
+    // --online-backend eos|local|none: project_settings.json の online.backend を上書きする (設定ファイルを触らずに試す)
+    std::wstring onlineBackendOverride;
+    bool onlineLobbyUi = true;            // false (--online-no-ui): ロビー窓を出さない (Runtime で ImGui を立てない)
+    bool onlineAutoHost = false;          // --online-host: ログインできたらロビーを作ってホストになる
+    std::wstring onlineAutoJoin;          // --online-join CODE: ログインできたらその参加コードのロビーへ入る
+    std::string onlineJoinCodeOverride;   // --online-code CODE: --online-host の参加コードを固定する (検証用)
+    // ホストの Server.exe に渡す起動シーンの引数 (Runtime の --scene <path> / --*-demo をそのまま)。空 = 既定の解決
+    std::wstring onlineServerSceneArgs;
+
     // ---- 予測ロールバック + desync 検出 (M52i) ----
     // 既定 on。未着レーンを予測 (直近の確定値の繰り返し) で埋めて先へ進み、外れたら
     // 巻き戻して確定入力で再シムする。--net-no-rollback で M52h の素の遅延ロックステップ
@@ -434,6 +452,8 @@ struct FrameTimings {
 
 // アプリ側 (Editor / Runtime) がサブシステムへアクセスするための窓口
 struct EngineContext {
+    // オンラインのロビー (M93)。オンラインを使わない実行では null。Runtime のロビー窓だけが読む (sim の外)
+    OnlineSession* online = nullptr;
     Win32Window* window = nullptr;
     GraphicsDevice* device = nullptr;
     SwapChain* swapChain = nullptr;

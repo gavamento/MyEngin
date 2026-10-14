@@ -37,8 +37,10 @@ public:
     UdpSocket(const UdpSocket&) = delete;
     UdpSocket& operator=(const UdpSocket&) = delete;
 
-    // localPort = 0 で任意ポート (参加側)。常に非ブロッキングで開く
-    bool Open(uint16_t localPort);
+    // localPort = 0 で任意ポート (参加側)。常に非ブロッキングで開く。
+    // loopbackOnly = true なら 127.0.0.1 にだけ bind する (M93: ホストの PC 内で閉じる中継とローカルサーバ。
+    // 外から届かないので Windows ファイアウォールの許可ダイアログも出ない)
+    bool Open(uint16_t localPort, bool loopbackOnly = false);
     void Close();
     bool IsOpen() const { return sock_ != kInvalid; }
     uint16_t LocalPort() const { return localPort_; }

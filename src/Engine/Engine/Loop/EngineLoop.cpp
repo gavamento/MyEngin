@@ -55,6 +55,10 @@
 #include "Engine/Engine/Net/NetRollback.h"
 #include "Engine/Engine/Net/NetRuntime.h"
 #include "Engine/Engine/Net/NetSession.h"
+#include "Engine/Engine/Online/HostServerProcess.h"
+#include "Engine/Engine/Online/IOnlineService.h"
+#include "Engine/Engine/Online/OnlineSession.h"
+#include "Engine/Engine/Online/OnlineSettings.h"
 #include "Engine/Engine/Replay/CrashRing.h"
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
@@ -286,6 +290,21 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     if (!ResolveAssetsRoot(config, assetsRoot)) {
         return 1;
     }
+    // ---- オンライン (M93) の設定 ----
+    // ImGui の要否と出自より前に読む: ロビーから接続するとサーバが contentHash を照合するので、オンラインを使う実行でも計算しておく。
+    // --replay-verify と、起動時から CLI でネットへ繋ぐ実行ではオンラインを立てない (経路を混ぜない)
+    OnlineSettings onlineSettings;
+    LoadOnlineSettings(assetsRoot, onlineSettings);
+    if (!config.onlineBackendOverride.empty()
+        && !ParseOnlineBackend(WideToUtf8(config.onlineBackendOverride), onlineSettings.backend)) {
+        MYE_LOG_WARN("[online] unknown --online-backend \"%s\" (eos / local / none)",
+                     WideToUtf8(config.onlineBackendOverride).c_str());
+    }
+    const bool onlineWanted = onlineSettings.backend != OnlineBackend::None && config.createOnlineService != nullptr
+        && config.replayVerifyPath.empty() && config.netRole == 0;
+
+    // Runtime は普段 ImGui を持たないが、オンラインのロビー窓 (Runtime の OnImGui) を出すときだけ立てる
+    const bool imguiEnabled = config.enableImGui || (onlineWanted && config.onlineLobbyUi);
     if (!config.projectRoot.empty()) {
         std::error_code fsec;
         const std::wstring localDir = config.projectRoot + L"\\" + kProjectLocalDir;
@@ -329,7 +348,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 高 DPI で UI を実寸へ (テーマ第 3 世代)。--screenshot 中は 1.0 固定 — 撮影サイズは
     // 論理ピクセル指定なので、撮った機械の DPI で golden が変わってはならない
     imguiOpts.dpiScale = !config.IsCaptureRun() ? window.DpiScale() : 1.0f;
-    if (config.enableImGui && !imgui.Init(window, device, imguiOpts)) {
+    if (imguiEnabled && !imgui.Init(window, device, imguiOpts)) {
         return 1;
     }
     reportStartupStage(StartupStage::Device);
@@ -622,7 +641,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // contentHash は接続するか .rep を録るときだけ計算する (assets 全体のハッシュは毎回の起動に重い)
     const SimProvenance runProvenance = BuildRunProvenance(
         dllReloader, assetsRoot, kNetProtoVersion,
-        config.netRole != 0 || !config.replayRecordPath.empty());
+        config.netRole != 0 || !config.replayRecordPath.empty() || onlineWanted);
 
     // ---- クラッシュバンドル (M52f) ----
     // ★設置は app.OnStart の**前**。シーンロードやスクリプト初期化で落ちるのは
@@ -729,7 +748,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     const bool netWanted = config.netRole != 0 && config.replayVerifyPath.empty();
     // 専用サーバへ接続するクライアント (M81e) は P2P (host / join) と別の経路 (ClientSimRunner)。
     // netEnabled は P2P だけを指す。どちらも「ネット中」として共有する箇所は netEnabled || clientEnabled と書く
-    const bool clientEnabled = netWanted && config.netRole == static_cast<int>(NetRole::Client);
+    // ★M93: オンラインのロビーから実行中に接続を始めると false → true になる (StartClient)。
+    //   P2P (netEnabled) は起動時に決まったまま
+    bool clientEnabled = netWanted && config.netRole == static_cast<int>(NetRole::Client);
     const bool netEnabled = netWanted && !clientEnabled;
     if (config.netRole != 0 && !config.replayVerifyPath.empty()) {
         MYE_LOG_WARN("[net] --replay-verify wins over the net session (the .rep already carries "
@@ -879,7 +900,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             scene.GetWorld().Rng().Restore(player.RngState(), player.RngInc());
         }
         verifyStartTick = ctx.tickIndex;
-    } else if (!config.replayRecordPath.empty() && !netFailed && !clientEnabled) {
+    } else if (!config.replayRecordPath.empty() && !netFailed && !clientEnabled
+               && !(onlineWanted && (config.onlineAutoHost || !config.onlineAutoJoin.empty()))) {
         // (専用サーバのクライアントは、参加スナップショットの復元後に onSnapshotApplied が記録を始める)
         // 接続できなかったときは記録も始めない (0 tick の .rep を残すと、後で
         // 「録れているのに中身が無い」という別の謎になる)。
@@ -1581,6 +1603,16 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     bool clientHasJoined = false;       // 最初の参加スナップショットを復元した
     uint64_t clientFirstTick = 0;       // その tick (--net-drop-after / --net-poke-after の起点)
     const auto ClientNowMs = [&clock]() -> uint64_t { return static_cast<uint64_t>(clock.Now() * 1000.0); };
+    // 実行中に始めた接続 (M93) が、参加スナップショットを受け取る前に失敗したとき: sim はまだオフラインの
+    // 世界のままなので、そのまま 1 人で遊べる状態へ戻す。参加後の失敗は世界がセッションのものなので戻さない
+    const auto StopClientBeforeJoin = [&]() {
+        clientSocket.Close();
+        clientEnabled = false;
+        ctx.hasSystemInput = false;
+        ctx.net = nullptr;
+        netInfo = NetRuntimeInfo{};
+        MYE_LOG_WARN("[client] the connection was not established - back to the offline game");
+    };
     const auto ClientRepPath = [&config](uint32_t segment) -> std::wstring {
         if (segment == 0) {
             return config.replayRecordPath;
@@ -1589,12 +1621,30 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         return (path.parent_path() / (path.stem().wstring() + L".rs" + std::to_wstring(segment)
                                       + path.extension().wstring())).wstring();
     };
-    if (clientEnabled) {
+    // 接続の開始。起動時の --net-connect と、実行中の要求 (オンラインのロビー、M93) の両方がここを通る。
+    // fromCli = false のときはフレーム境界 (tick ループの直前) で呼ぶこと。失敗しても終了せずオフラインのまま戻る
+    const auto StartClient = [&](const std::wstring& target, const std::string& playerSessionId, uint64_t playerId,
+                                 uint32_t connectTimeoutMs, bool fromCli) -> bool {
+        if (!fromCli) {
+            // オフラインで走っていた sim を、参加スナップショットで丸ごと差し替える準備。
+            // .rep は確定 tick だけを onCommitted / onSnapshotApplied が録る (起動時の経路と同じ)
+            if (recorder.IsActive()) {
+                MYE_LOG_WARN("[client] the offline recording stops here (the session is recorded from the join snapshot)");
+                recorder.Finish();
+            }
+            tickServices.recorder = nullptr;
+            clientDone = clientDropped = clientLeft = clientHasJoined = false;
+            clientCommittedTotal = 0;
+            clientFirstTick = 0;
+            clientEnabled = true;
+        }
         ctx.hasSystemInput = true; // 受け取る確定入力は SystemInputTick を持つ
         ctx.net = &netInfo;
         netInfo.active = true;
         netInfo.rollbackEnabled = true;
-        netInfo.role = config.netRole;
+        netInfo.role = fromCli ? config.netRole : EngineConfig::kNetRoleClient;
+        // C# レーンはセッション中ずっと止める (サーバと同じ。起動時の経路は tickServices の初期化で立てている)
+        tickServices.netLockstep = NetLockstepBoundary(EngineConfig::kNetRoleClient);
 
         ClientSessionConfig ccfg;
         ccfg.provenance = runProvenance;
@@ -1604,13 +1654,17 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         ccfg.referenceW = fill.referenceW;
         ccfg.referenceH = fill.referenceH;
         ccfg.fontMetricsHash = fill.fontMetricsHash;
-        ccfg.playerSessionId = WideToUtf8(config.netPlayerSessionId);
-        ccfg.playerId = config.netPlayerId;
+        ccfg.playerSessionId = playerSessionId;
+        ccfg.playerId = playerId;
         ccfg.allowGameMismatch = config.allowGameMismatch;
+        if (connectTimeoutMs > 0) {
+            ccfg.connectTimeoutMs = connectTimeoutMs;
+        }
 
-        const bool clientOk = ResolveEndpoint(config.netJoinTarget, clientServerAddr) && clientSocket.Open(0);
+        clientSocket.Close(); // 前回の試行のソケット (開いていなければ何もしない)
+        const bool clientOk = ResolveEndpoint(target, clientServerAddr) && clientSocket.Open(0);
         if (!clientOk) {
-            MYE_LOG_ERROR("[client] could not open a socket to %s", WideToUtf8(config.netJoinTarget).c_str());
+            MYE_LOG_ERROR("[client] could not open a socket to %s", WideToUtf8(target).c_str());
         }
         // ロス注入の乱数は sim の RNG と完全に別のストリーム (ハッシュにも .rep にも影響しない)
         clientLossRng.Seed(static_cast<uint64_t>(clientSocket.LocalPort()) * 0x9E3779B9ull + 1, 4);
@@ -1732,13 +1786,72 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 ClientNowMs());
             clientRunner.Attach(&clientSession, simRefs, hooks, rcfg);
             MYE_LOG_INFO("[client] connecting to %s (player session id \"%s\"%s)",
-                         WideToUtf8(config.netJoinTarget).c_str(), ccfg.playerSessionId.c_str(),
+                         WideToUtf8(target).c_str(), ccfg.playerSessionId.c_str(),
                          ccfg.playerId != 0 ? ", reconnecting" : "");
-        } else {
+            if (!fromCli) {
+                const TickGates gates = GatesOf(tickServices);
+                if (!IsNetSessionGates(gates)) {
+                    MYE_LOG_ERROR("[net] the client's tick gates differ from the server session's (see IsNetSessionGates)");
+                }
+            }
+            return true;
+        }
+        if (fromCli) {
             exitCode = 1;
             running = false;
+        } else {
+            StopClientBeforeJoin();
         }
+        return false;
+    };
+    if (clientEnabled) {
+        StartClient(config.netJoinTarget, WideToUtf8(config.netPlayerSessionId), config.netPlayerId, 0, true);
     }
+
+    // ---- オンライン (M93): ロビー → ホストの Server.exe / P2P 中継 → StartClient ----
+    // サービスは出力レーンで回す (SDK の時間と受信順は、ClientSession のパケットとしてしか sim 側へ渡らない)
+    std::unique_ptr<IOnlineService> online;
+    OnlineSession onlineSession;
+    bool clientFromOnline = false; // いまのクライアントはロビーから始めた (失敗しても終了せず、ロビーへ戻す)
+    bool onlineAutoDone = false;   // --online-host / --online-join を 1 回だけ実行した
+    bool onlinePttDown = false;    // このフレームの「押している間だけ送る」キー (フレーム頭の生入力)
+    if (onlineWanted) {
+        online = config.createOnlineService(onlineSettings.backend);
+        if (online && !online->Init(onlineSettings)) {
+            MYE_LOG_WARN("[online] %s could not start: %s (playing offline)", OnlineBackendName(onlineSettings.backend),
+                         online->LastError());
+        }
+        HostServerLaunch launch;
+        launch.serverExe = DefaultServerExePath();
+        launch.projectRoot = config.projectRoot;
+        launch.sceneArgs = config.onlineServerSceneArgs;
+        launch.logPath = (config.projectRoot.empty() ? GetExecutableDir() : config.projectRoot)
+            + L"\\cache\\logs\\online_host_server.log";
+        launch.maxPlayers = kOnlineMaxMembers;
+        launch.inputDelay = config.netInputDelay;
+        launch.synthInput = config.synthInput;
+        launch.useJobs = config.useJobs;
+        launch.useSimCache = config.useSimCache;
+        launch.useCookCache = config.useCookCache;
+        launch.computeForceCpu = config.computeForceCpu;
+        onlineSession.Attach(online.get(), launch, onlineSettings);
+        ctx.online = &onlineSession; // Runtime のロビー窓 (OnImGui) が読む
+    }
+    // ロビーから始めたセッションの終わり。参加前ならオフラインの世界へ戻し、参加後は世界を止める
+    // (世界はもうセッションのものなので、1 人用として続けると他の人の分が宙に浮く)
+    const auto EndOnlineClient = [&](const std::string& reason) {
+        if (recorder.IsActive()) {
+            recorder.Finish();
+        }
+        if (clientHasJoined) {
+            clientLeft = true;
+            MYE_LOG_WARN("[client] the online session ended (%s): the world stops here", reason.c_str());
+        } else {
+            StopClientBeforeJoin();
+        }
+        clientFromOnline = false;
+        onlineSession.NotifySessionEnded(reason.c_str(), clientLeft);
+    };
     // ソケットに溜まったパケットをセッションへ渡す。ClientFrame と、復旧中のネット専用スレッド (RecoveryNetPump) で共有する
     const auto ClientReceive = [&]() {
         NetAddress from;
@@ -1785,9 +1898,17 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             if (clientSession.RejectReason() != NetReject::None) {
                 MYE_LOG_ERROR("[client] the server refused the connection: %s", clientSession.FailReason().c_str());
             }
+            if (clientFromOnline) {
+                EndOnlineClient(clientSession.FailReason());
+                return;
+            }
             exitCode = 1;
             ctx.requestExit = true;
         } else if (clientRunner.Failed()) {
+            if (clientFromOnline) {
+                EndOnlineClient("the client could not continue (see the log)");
+                return;
+            }
             exitCode = 1;
             ctx.requestExit = true;
         } else if (clientRunner.Halted()) {
@@ -1917,7 +2038,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         const double deviceMs = (tShader - tRelease) * 1000.0;
         const bool rebuilt =
             swapChain.Init(device, window.Hwnd(), window.Width(), window.Height())
-            && (!config.enableImGui || imgui.RecreateDevice(device));
+            && (!imguiEnabled || imgui.RecreateDevice(device));
         const int shadersFailed = rebuilt ? shaderManager.RecreateAll(device) : 0;
         const double shaderMs = (clock.Now() - tShader) * 1000.0;
         MYE_LOG_INFO("[device] shaders recreated in %.1f ms (%d failed)", shaderMs, shadersFailed);
@@ -2040,6 +2161,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             const uint32_t captureLanes = (netEnabled || clientEnabled) ? 1u : ctx.playerCount;
             for (uint32_t p = 0; p < captureLanes; ++p) {
                 ctx.inputs[p] = input.CaptureSnapshot(p, surface);
+            }
+            if (online) {
+                // ボイスの「押している間だけ送る」(M93)。ここで読むのは表示レーンの値で、tick へは渡さない
+                onlinePttDown = ctx.inputs[0].KeyDown(static_cast<uint8_t>(onlineSession.PushToTalkKey()));
             }
             // 前のフレームで tick が回らず読まれなかったマウス量を足す (PointerDeltaCarry)。
             // ★画面外のホイールを捨てる下の Mask より前 = 持ち越した分にも同じ規則が効く
@@ -2236,6 +2361,35 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         //   ここはホットリロードのセーフポイントも通過済みで、確実に tick 境界
         NetReconcile();
         NetCheckDesync();
+        if (online && onlineSession.TakeLeaveRequest()) {
+            // 窓の「退出」: 自分のクライアントに Bye を送らせ、中継へ流してからロビーを抜ける
+            if (clientEnabled && clientFromOnline) {
+                clientSession.Close(ClientNowMs());
+                if (recorder.IsActive()) {
+                    recorder.Finish();
+                }
+                if (clientHasJoined) {
+                    clientLeft = true; // 世界はセッションのもの。止めて、1 人で遊ぶには再起動
+                } else {
+                    StopClientBeforeJoin();
+                }
+                clientFromOnline = false;
+                onlineSession.Update();
+                online->Tick();
+            }
+            onlineSession.Leave();
+        }
+        if (online) {
+            onlineSession.Update(); // 中継の受信側 (P2P → 自分のクライアントのソケット) を tick の前に流す
+            OnlineConnectRequest onlineReq;
+            if (!clientEnabled && onlineSession.TakeConnectRequest(onlineReq)) {
+                clientFromOnline = true;
+                if (!StartClient(onlineReq.target, onlineReq.playerSessionId, 0, onlineReq.connectTimeoutMs, false)) {
+                    clientFromOnline = false;
+                    onlineSession.NotifySessionEnded("could not open the client socket", false);
+                }
+            }
+        }
         if (clientEnabled) {
             ClientFrame();
             accumulator = 0.0; // tick を回すのは ClientSimRunner (自前の accumulator)。ここに溜めない
@@ -2922,6 +3076,20 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // dt は**実時間**を渡す (M45f の BGM クロスフェードは絶対経過時間で進むため。
         // 固定 dt を渡すと 6500fps ではフェードが 100 倍速で終わる)
         audioSystem.Update(static_cast<float>(dt));
+        // ---- オンライン (M93、出力レーン): SDK を回し、ロビーの出来事を処理し、中継の送信側を流す ----
+        if (online) {
+            onlineSession.UpdatePushToTalk(onlinePttDown);
+            online->Tick();
+            if (!onlineAutoDone && online->State() == OnlineState::Ready) {
+                onlineAutoDone = true;
+                if (config.onlineAutoHost) {
+                    onlineSession.Host(config.onlineJoinCodeOverride);
+                } else if (!config.onlineAutoJoin.empty()) {
+                    onlineSession.Join(WideToUtf8(config.onlineAutoJoin).c_str());
+                }
+            }
+            onlineSession.Update();
+        }
         // ---- パッド振動の適用 (M51h、出力レーン)。record/verify 中は 0 に落とす
         // (オーディオ suspend と同型)。フォーカス喪失中も 0 (裏で振動し続けない)。
         // 実際の XInputSetState は Input 側が値の変化時だけ発行する ----
@@ -3077,7 +3245,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             const double tPresent = clock.Now();
 
             // ---- フェーズ 8: ImGui 描画 / Present ----
-            if (config.enableImGui) {
+            if (imguiEnabled) {
                 imgui.BeginFrame();
                 app.OnImGui(ctx);
                 imgui.EndFrame();
@@ -3352,6 +3520,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                      static_cast<unsigned long long>(clientSession.Stats().packetsIn),
                      static_cast<unsigned long long>(clientSession.Stats().packetsOut));
         clientSocket.Close();
+    }
+    if (online) {
+        onlineSession.Update(); // 直前の Bye を中継へ流す (届かなくてもサーバのタイムアウトで同じ結果になる)
+        online->Tick();
+        onlineSession.Leave();  // ホストなら Server.exe も止める
+        online->Shutdown();
     }
     if (recorder.IsActive()) {
         recorder.Finish(); // maxFrames 等で先に抜けた場合も書き出す

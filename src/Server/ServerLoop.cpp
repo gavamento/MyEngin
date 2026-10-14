@@ -146,7 +146,7 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
     }
 
     UdpSocket socket;
-    if (!socket.Open(cfg.port)) {
+    if (!socket.Open(cfg.port, cfg.loopbackOnly)) {
         MYE_LOG_ERROR("[server] could not open UDP port %u", cfg.port);
         return kServerExitFailed;
     }

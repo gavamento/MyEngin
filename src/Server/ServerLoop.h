@@ -19,6 +19,7 @@ class HeadlessSim;
 
 struct ServerLoopConfig {
     uint16_t port = 7777;
+    bool loopbackOnly = false;       // --loopback: 127.0.0.1 にだけ bind (M93: ホストの Runtime が子プロセスとして起動する)
     // role = Server。人数 / 入力遅延 / 締め切り / 予約期間 / configBits / UI 基準解像度 / フォント計測表は埋めてあること
     SessionConfig session = {};
     uint32_t lossPercent = 0;        // 送信パケットを故意に捨てる割合 (検証用。sim には入らない)

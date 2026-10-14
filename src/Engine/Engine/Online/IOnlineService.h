@@ -51,6 +51,8 @@ public:
     virtual bool ReceivePacket(char (&outPeerId)[kOnlineIdChars], void* buf, size_t capacity, size_t& outSize) = 0;
 
     // ---- ボイス (ロビー全員に聞こえる無線。距離減衰なし) ----
+    // この実装 / この実行でボイスが使えるか (local 実装は常に false、EOS は RTC を初期化できたとき)
+    virtual bool VoiceAvailable() const = 0;
     virtual void SetVoiceSending(bool enabled) = 0;
     virtual bool VoiceSending() const = 0;
     virtual void SetMemberMuted(const char* memberId, bool muted) = 0;

@@ -71,6 +71,7 @@ struct ServerOptions {
     int deadlineTicks = static_cast<int>(mye::kServerDefaultDeadlineTicks);
     int rejoinTimeoutTicks = static_cast<int>(mye::kServerDefaultRejoinTimeoutTicks);
     bool exitWhenEmpty = false;
+    bool loopback = false; // --loopback: 同じ PC の Runtime (オンラインのホスト、M93) だけが繋ぐ
     int timeoutSec = 0;
     // --hosting gamelift (Anywhere)。認証トークンはコマンド履歴に残さないよう環境変数から読む
     std::wstring gameLiftWsUrl;
@@ -87,7 +88,7 @@ void PrintUsage()
     std::fprintf(stderr,
                  "usage: Server.exe [--port N] [--hosting local|gamelift] [--max-players 1..4] [--*-demo | --scene <path>]\n"
                  "                  [--net-delay N] [--net-deadline N] [--net-rejoin-timeout N] [--net-loss N]\n"
-                 "                  [--replay-record <file.rep>] [--replay-ticks N] [--exit-when-empty]\n"
+                 "                  [--replay-record <file.rep>] [--replay-ticks N] [--exit-when-empty] [--loopback]\n"
                  "                  [--server-timeout SEC] [--allow-game-mismatch] [--project <dir>] [--synth-input]\n"
                  "                  [--crash-test KIND --crash-at-tick N] [--no-crash-handler]\n"
                  "                  [--gamelift-ws-url URL --gamelift-fleet-id ID --gamelift-host-id ID\n"
@@ -197,6 +198,7 @@ int RunLiveServer(mye::HeadlessSimSetup& setup, const ServerOptions& opt, bool t
 
     mye::ServerLoopConfig lc;
     lc.port = static_cast<uint16_t>(opt.port);
+    lc.loopbackOnly = opt.loopback;
     lc.session = mye::DefaultServerSessionConfig(static_cast<uint32_t>(opt.maxPlayers),
                                                  static_cast<uint32_t>(setup.config.netInputDelay));
     lc.session.deadlineTicks = static_cast<uint32_t>(opt.deadlineTicks);
@@ -281,6 +283,8 @@ int wmain(int argc, wchar_t** argv)
             opt.rejoinTimeoutTicks = _wtoi(argv[++i]);
         } else if (arg == L"--exit-when-empty") {
             opt.exitWhenEmpty = true;
+        } else if (arg == L"--loopback") {
+            opt.loopback = true;
         } else if (arg == L"--server-timeout" && i + 1 < argc) {
             opt.timeoutSec = _wtoi(argv[++i]);
         } else if (arg == L"--gamelift-ws-url" && i + 1 < argc) {

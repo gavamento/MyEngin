@@ -3493,6 +3493,51 @@ A GPU particle back end has to be configured identically on every participant (t
 in about 15 minutes. The SDK's TLS does not verify certificates and nothing is encrypted by M81 (player
 session ID only). Windows only, 4 players at most.
 
+### 11.6 Online lobby, P2P relay and radio voice (host-as-server, M93)
+
+Decision record: ADR-031. Setup and field test: `docs\eos-setup.md`.
+
+**Topology.** The player who creates a room (the host) runs `Server.exe --hosting local --loopback
+--exit-when-empty` as a child process in a kill-on-close job and joins it at `127.0.0.1` as an ordinary
+client. Every other member's packets arrive over the online service's P2P and are relayed by the host's
+Runtime to the server from one loopback UDP socket per member, so the server sees four ordinary clients.
+A member's own client connects to a loopback relay port that forwards to the host over P2P. The server,
+the client, the protocol and the `.rep` are unchanged from §11.5; P2P packets above 1,170 bytes are split
+into at most four fragments by the relay (`OnlineSession::Fragment`).
+
+**Service.** `IOnlineService` (`src\Engine\Engine\Online\`) is login, lobby (create with a 6-character
+join code, find by code, leave, members), P2P datagrams and voice (send on/off, per-member mute,
+speaking). Implementations: `EosOnlineService` (Device ID login through Connect, lobby attribute
+`JOINCODE`, P2P socket `mye`, the lobby's RTC room; built only when `external\eos-sdk` is present,
+`MYE_HAS_EOS`) and `LocalOnlineService` (loopback UDP between processes on one PC, for development,
+selftests and CI). `project_settings.json` `online.backend` selects `eos` / `local` / `none`;
+`--online-backend` overrides it. The Runtime's `main` passes `CreateOnlineService` through
+`EngineConfig::createOnlineService`; `Server.exe` never does, so it carries no EOS import.
+
+**Session lifecycle.** A connect request from the lobby starts the client at a frame boundary
+(`StartClient`, the same function `--net-connect` uses). If the client fails before the join snapshot,
+the offline world resumes; after the join the world stops (it belongs to the session) and the lobby
+window says so. `--online-host` / `--online-join CODE` / `--online-code CODE` drive the lobby from the
+command line for tests. The Runtime enables ImGui only to draw the lobby window (`--online-no-ui` turns
+it off).
+
+**Voice.** Radio: everybody in the room hears everybody, no positional audio. Always-on by default;
+`voice.pushToTalk` sends only while `voice.pushToTalkKey` is held, read from the presentation-lane input
+and never written to `InputSnapshot`. The SDK owns the microphone and speakers; the engine mixer is not
+involved.
+
+**Boundary.** Lobby state, names, speaking flags and P2P timing never reach the simulation; only the
+host server's confirmed inputs do (§11.5). `check_rules` rule 13-a forbids sim-side includes of
+`Online\`; rule 13-d confines EOS names to `Online\Eos\` and `build\Common.props`.
+
+**Verification.** `Editor.exe --selftest` runs the Online suite (join-code alphabet, fragment round trips
+and loss, a local lobby with data both ways in one process). Two Runtime processes on the `local`
+backend record `.rep` files that match tick for tick over their overlap and replay headlessly.
+
+**Known limits.** The EOS implementation has not been compiled or tested against the SDK yet. No host
+migration: when the host leaves, the session ends. Returning to single player after a session needs a
+restart. The editor has no lobby. Keys typed into the lobby window also reach the game.
+
 ---
 
 ## 12. Milestones

@@ -35,7 +35,9 @@
   </ItemDefinitionGroup>
   <!-- BEGIN FILES (tools\gen_project_files.ps1 が再生成する。手編集しない) -->
   <ItemGroup>
+    <ClCompile Include="..\src\Runtime\OnlineLobbyWindow.cpp" />
     <ClCompile Include="..\src\Runtime\RuntimeMain.cpp" />
+    <ClInclude Include="..\src\Runtime\OnlineLobbyWindow.h" />
   </ItemGroup>
   <!-- END FILES -->
   <ItemGroup>

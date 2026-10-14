@@ -97,6 +97,7 @@
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
 #include "Engine/Engine/Replay/CrashRingSelfTest.h"
 #include "Engine/Engine/Session/SessionSelfTest.h"
+#include "Engine/Engine/Online/OnlineSelfTest.h"
 #include "Engine/Engine/Net/ServerNetSelfTest.h"
 #include "Engine/Engine/Navigation/NavDeterminismSelfTest.h"
 #include "Engine/Engine/Navigation/NavAgentSelfTest.h"
@@ -641,6 +642,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunFractureSkinSelfTest();              // M80j: スキンメッシュの破壊
         ok &= mye::RunSessionSelfTest();                   // M81b: システム入力 / SessionLanes / .rep v9
         ok &= mye::RunServerNetSelfTest();                 // M81d: 入力確定型サーバ/クライアント (1 プロセス内の偽トランスポート)
+        ok &= mye::RunOnlineSelfTest();                    // M93: 参加コード / P2P 中継の分割 / local 実装のロビー
         ok &= mye::RunNavDeterminismSelfTest();            // M82a: Recast のビット一致と状態の保存・復元
         ok &= mye::RunNavSurfaceSelfTest();                // M82b: Surface のベイク入力・.mnav・NavSystem
         ok &= mye::RunNavEditorSelfTest();                 // M82b: Create / Bake / Clear の皮

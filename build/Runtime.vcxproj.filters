@@ -3,6 +3,8 @@
   <ItemGroup>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\src\Runtime\OnlineLobbyWindow.cpp" />
     <ClCompile Include="..\src\Runtime\RuntimeMain.cpp" />
+    <ClInclude Include="..\src\Runtime\OnlineLobbyWindow.h" />
   </ItemGroup>
 </Project>

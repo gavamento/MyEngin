@@ -21,7 +21,7 @@ enum class OnlineBackend : uint8_t {
 //     "backend": "eos" | "local" | "none",
 //     "displayName": "",
 //     "eos": { "productId": "", "sandboxId": "", "deploymentId": "", "clientId": "", "clientSecret": "" },
-//     "voice": { "enabled": true, "pushToTalk": false }
+//     "voice": { "enabled": true, "pushToTalk": false, "pushToTalkKey": "T" }
 //   }
 // ★EOS の 5 つの値は Peer2Peer クライアントポリシーでは**実行ファイルに同梱される前提**の値で、
 //   秘密鍵ではない。ただし公開リポジトリには空で置き、配布ビルドの直前に埋める運用にする
@@ -36,6 +36,7 @@ struct OnlineSettings {
     std::string clientSecret;
     bool voiceEnabled = true;
     bool pushToTalk = false; // false = 常時送信 (ミュートは手動)
+    char pushToTalkKey = 'T'; // 押している間だけ送るキー (英字 1 文字。"voice.pushToTalkKey")
 };
 
 // assetsRoot の project_settings.json から読む。節が無い / 壊れている → 既定値 (None) で false。
@@ -43,5 +44,7 @@ struct OnlineSettings {
 bool LoadOnlineSettings(const std::wstring& assetsRoot, OnlineSettings& out);
 
 const char* OnlineBackendName(OnlineBackend backend);
+// "eos" / "local" / "none" → 値。知らない綴りは false
+bool ParseOnlineBackend(const std::string& name, OnlineBackend& out);
 
 } // namespace mye
