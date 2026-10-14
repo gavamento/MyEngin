@@ -73,6 +73,9 @@
     <Filter Include="Engine\Net">
       <UniqueIdentifier>{ED389294-AB46-D963-50F2-AF0CEB244C3C}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Online">
+      <UniqueIdentifier>{617CA204-43A0-0C0F-0AF3-35630C95C4EC}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Particles">
       <UniqueIdentifier>{DCDC7B06-EF20-69BD-0BF7-3CA3702AC5ED}</UniqueIdentifier>
     </Filter>
@@ -659,6 +662,12 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Net\ServerSession.cpp">
       <Filter>Engine\Net</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Online\OnlineFactory.cpp">
+      <Filter>Engine\Online</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Online\OnlineSettings.cpp">
+      <Filter>Engine\Online</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Particles\CpuParticleBackend.cpp">
       <Filter>Engine\Particles</Filter>
@@ -1536,9 +1545,6 @@
     <ClInclude Include="..\src\Engine\Engine\Loop\EngineLoop.h">
       <Filter>Engine\Loop</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Engine\Engine\Loop\StartupProgress.h">
-      <Filter>Engine\Loop</Filter>
-    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Loop\GameFlow.h">
       <Filter>Engine\Loop</Filter>
     </ClInclude>
@@ -1552,6 +1558,9 @@
       <Filter>Engine\Loop</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Loop\SimParallelSelfTest.h">
+      <Filter>Engine\Loop</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Loop\StartupProgress.h">
       <Filter>Engine\Loop</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Loop\TickInputs.h">
@@ -1646,6 +1655,15 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Net\ServerSession.h">
       <Filter>Engine\Net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Online\IOnlineService.h">
+      <Filter>Engine\Online</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Online\OnlineSettings.h">
+      <Filter>Engine\Online</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Online\OnlineTypes.h">
+      <Filter>Engine\Online</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Particles\CpuParticleBackend.h">
       <Filter>Engine\Particles</Filter>

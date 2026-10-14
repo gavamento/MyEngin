@@ -67,6 +67,33 @@
     </Link>
   </ItemDefinitionGroup>
   <!--
+    Epic Online Services SDK (M93)。SDK は再配布の可否が Epic の開発者契約に依るため**コミットしない**
+    (external\eos-sdk\ は gitignore、置き方は external\eos-sdk\BUILD.md)。
+    ヘッダがあるときだけ MYE_HAS_EOS=1 で EOS 実装 (src\Engine\Engine\Online\Eos\) をビルドし、
+    exe へ import lib を渡して DLL を出力先へ置く。無いときは EOS 実装が空の翻訳単位になり、
+    CI と SDK を持たない開発機はそのままビルドできる (オンラインは local / none だけ)。
+    ★Server.exe も Engine.lib をリンクするが、EOS の実装を参照するのは Editor / Runtime の main が呼ぶ
+      CreateOnlineService だけなので、Server の exe に EOS の import は入らない (lib は渡しても使われない)。
+  -->
+  <PropertyGroup>
+    <MyeEosRoot>$(RepoRoot)external\eos-sdk\</MyeEosRoot>
+    <MyeHasEos Condition="Exists('$(MyeEosRoot)Include\eos_sdk.h')">true</MyeHasEos>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(MyeHasEos)'=='true'">
+    <ClCompile>
+      <PreprocessorDefinitions>MYE_HAS_EOS=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(MyeEosRoot)Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(MyeHasEos)'=='true' And '$(ConfigurationType)'=='Application'">
+    <Link>
+      <AdditionalDependencies>$(MyeEosRoot)Lib\EOSSDK-Win64-Shipping.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <Target Name="MyeCopyEosDll" AfterTargets="Build" Condition="'$(MyeHasEos)'=='true' And '$(ConfigurationType)'=='Application'">
+    <Copy SourceFiles="$(MyeEosRoot)Bin\EOSSDK-Win64-Shipping.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+  <!--
     ビルド情報の埋め込み (M52f)。クラッシュ報告に「どのコミットの・どの構成のビルドか」が
     無いと、届いた minidump の RVA を突き合わせる相手 (pdb) を特定できない = 報告が死ぬ。
     ★ClCompile の PreprocessorDefinitions へ直接書かない。git ハッシュはコミットの度に

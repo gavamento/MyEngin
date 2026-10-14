@@ -166,6 +166,8 @@
     <ClCompile Include="..\src\Engine\Engine\Net\NetSession.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Net\ServerNetSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Net\ServerSession.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Online\OnlineFactory.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Online\OnlineSettings.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Particles\CpuParticleBackend.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Particles\GpuParticleBackend.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Particles\ParticleSelfTest.cpp" />
@@ -458,12 +460,12 @@
     <ClInclude Include="..\src\Engine\Engine\Loop\DeviceRecovery.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\DeviceRecoverySelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\EngineLoop.h" />
-    <ClInclude Include="..\src\Engine\Engine\Loop\StartupProgress.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\GameFlow.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\HeadlessSim.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\PlayerInputSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\SimInit.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\SimParallelSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Loop\StartupProgress.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\TickInputs.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\TickRunner.h" />
     <ClInclude Include="..\src\Engine\Engine\Modal\CpuModalBackend.h" />
@@ -495,6 +497,9 @@
     <ClInclude Include="..\src\Engine\Engine\Net\NetSession.h" />
     <ClInclude Include="..\src\Engine\Engine\Net\ServerNetSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Net\ServerSession.h" />
+    <ClInclude Include="..\src\Engine\Engine\Online\IOnlineService.h" />
+    <ClInclude Include="..\src\Engine\Engine\Online\OnlineSettings.h" />
+    <ClInclude Include="..\src\Engine\Engine\Online\OnlineTypes.h" />
     <ClInclude Include="..\src\Engine\Engine\Particles\CpuParticleBackend.h" />
     <ClInclude Include="..\src\Engine\Engine\Particles\GpuAliveEstimator.h" />
     <ClInclude Include="..\src\Engine\Engine\Particles\GpuParticleBackend.h" />

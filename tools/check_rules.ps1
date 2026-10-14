@@ -870,11 +870,15 @@ foreach ($d in $scmDirs) {
 #         (許可リストは下。各行に「sim から到達するか」の判定理由を書く)
 #   13-b: Session/ (sim 側の型の置き場) は Net/ Platform/Net/ を include しない (Net → Session は可、逆は不可)
 #   13-c: GameLift SDK のヘッダ / lib 名は build\Server.vcxproj と src\Server\ 以外に現れない
-$netIncludeRx = '^\s*#\s*include\s*[<"](?:[^>"]*(?:Engine[\\/]Net[\\/]|Platform[\\/]Net[\\/])|Server[\\/]|aws[\\/]gamelift|[^>"]*GameLiftServerAPI)'
+#   13-d (M93): EOS SDK の名前は src\Engine\Engine\Online\Eos\ と build\Common.props 以外に現れない。
+#         Online\ (ロビー・P2P・ボイス) も 13-a の監視対象に含める (実時間と SDK コールバックの層)
+$netIncludeRx = '^\s*#\s*include\s*[<"](?:[^>"]*(?:Engine[\\/]Net[\\/]|Engine[\\/]Online[\\/]|Platform[\\/]Net[\\/])|Server[\\/]|aws[\\/]gamelift|[^>"]*GameLiftServerAPI|eos_[a-z_]*\.h)'
 $netGuardDirs = @('src\Engine\Core', 'src\Engine\Engine', 'src\GameLogic', 'src\Shared')
 $netAllow = @(
     # Net/ 自身 (確定入力へ変換して sim に渡す側)
     @{ Path = 'src\Engine\Engine\Net\'; Reason = 'the net layer itself' },
+    # Online/ (M93): ロビー・P2P・ボイス。ゲームの通信は Server.exe と ClientSession の既存プロトコルを運ぶだけで sim に触れない
+    @{ Path = 'src\Engine\Engine\Online\'; Reason = 'online services layer (lobby / p2p relay / voice), outside the sim' },
     # tick ループ: ネットの組み立てを担う唯一の場所。sim へは確定入力 (ctx.inputs / systemInput) としてだけ入る
     @{ Path = 'src\Engine\Engine\Loop\EngineLoop.cpp'; Reason = 'loop owner: net values reach the sim only as confirmed inputs' },
     # CLI の解釈。NetRole 等は EngineConfig の POD として渡り、sim 状態には触れない
@@ -943,6 +947,21 @@ foreach ($f in (Get-ChildItem -Recurse -File "$repo\build" | Where-Object { $_.E
     if ($f.Name -in 'Server.vcxproj', 'Server.vcxproj.filters') { continue }
     foreach ($h in (Select-String -Path $f.FullName -Pattern $gameLiftRx)) {
         Write-Host "ERROR [rule 13-c] $($h.Path):$($h.LineNumber): GameLift SDK names are allowed only in build\Server.vcxproj"
+        $errors++
+    }
+}
+
+# 13-d (M93): EOS SDK の名前は Online\Eos\ と build\Common.props だけ
+$eosRx = 'eos_[a-z_]+\.h|EOSSDK-Win64|\bEOS_[A-Z][A-Za-z]+_[A-Za-z]'
+$eosDir = (Join-Path $repo 'src\Engine\Engine\Online\Eos') + '\'
+foreach ($f in (Get-ChildItem -Recurse -File "$repo\src" | Where-Object { $_.Extension -in '.cpp', '.h', '.hpp', '.inl' })) {
+    if ($f.FullName.StartsWith($eosDir, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+    Test-CodeLines $f $eosRx 'rule 13-d' 'EOS SDK names are allowed only in src\Engine\Engine\Online\Eos'
+}
+foreach ($f in (Get-ChildItem -Recurse -File "$repo\build" | Where-Object { $_.Extension -in '.vcxproj', '.props', '.targets', '.filters' })) {
+    if ($f.Name -in 'Common.props', 'Engine.vcxproj', 'Engine.vcxproj.filters') { continue }
+    foreach ($h in (Select-String -Path $f.FullName -Pattern 'EOSSDK|eos-sdk')) {
+        Write-Host "ERROR [rule 13-d] $($h.Path):$($h.LineNumber): EOS SDK names are allowed only in build\Common.props"
         $errors++
     }
 }

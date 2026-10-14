@@ -43,3 +43,8 @@ tools/deepmodal/runs/
 /CLAUDE.md
 /エンジン配布用
 /tmp/pdfs
+
+# Epic Online Services SDK (M93)。再配布の可否が Epic の開発者契約に依るのでコミットしない。
+# 置き方は external/eos-sdk/BUILD.md (これだけは版管理する)
+/external/eos-sdk/*
+!/external/eos-sdk/BUILD.md
