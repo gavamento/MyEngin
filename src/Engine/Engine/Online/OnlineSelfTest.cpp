@@ -16,6 +16,9 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Online/LocalOnlineService.h"
 #include "Engine/Engine/Online/OnlineSession.h"
+#include "Engine/Engine/Net/NetRuntime.h"
+#include "Engine/Engine/Script/EngineApiTable.h"
+#include "Shared/EngineAPI.h"
 
 namespace mye {
 
@@ -191,6 +194,42 @@ bool RunOnlineSelfTest()
         host.Shutdown();
         guest.Shutdown();
         late.Shutdown();
+    }
+
+    // ---- ABI v30 の Online* (NetRuntimeInfo の写しを読む) ----
+    {
+        NetRuntimeInfo info;
+        info.onlineMemberCount = 2;
+        std::memcpy(info.onlineJoinCode, "ABC234", 7);
+        std::memcpy(info.onlineMemberNames[0], "host-name", 10);
+        std::memcpy(info.onlineMemberNames[1], "guest", 6);
+        info.onlineMemberFlags[0] = MYE_ONLINE_MEMBER_OWNER;
+        info.onlineMemberFlags[1] = MYE_ONLINE_MEMBER_LOCAL | MYE_ONLINE_MEMBER_SPEAKING;
+        ScriptApiContext apiCtx;
+        apiCtx.net = &info;
+        MyeEngineApi api = {};
+        BuildEngineApi(api, &apiCtx);
+        char buf[16] = {};
+        const uint32_t n0 = api.OnlineMemberName(&apiCtx, 0, buf, sizeof(buf));
+        const bool nameOk = n0 == 9 && std::strcmp(buf, "host-name") == 0;
+        char small[5] = {};
+        const uint32_t nCut = api.OnlineMemberName(&apiCtx, 0, small, sizeof(small));
+        const bool cutOk = nCut == 4 && std::strcmp(small, "host") == 0;
+        char outOfRange[8] = { 'x' };
+        const bool rangeOk = api.OnlineMemberName(&apiCtx, 2, outOfRange, sizeof(outOfRange)) == 0
+            && outOfRange[0] == '\0' && api.OnlineMemberFlags(&apiCtx, 2) == 0;
+        char code[8] = {};
+        const bool codeOk = api.OnlineJoinCode(&apiCtx, code, sizeof(code)) == 6 && std::strcmp(code, "ABC234") == 0;
+        check(api.OnlineMemberCount(&apiCtx) == 2 && nameOk && cutOk && rangeOk && codeOk
+                  && api.OnlineMemberFlags(&apiCtx, 1) == (MYE_ONLINE_MEMBER_LOCAL | MYE_ONLINE_MEMBER_SPEAKING),
+              "abi v30: Online* return count / names (truncated, NUL-terminated) / flags / join code, 0 out of range");
+        ScriptApiContext noNet;
+        MyeEngineApi apiNoNet = {};
+        BuildEngineApi(apiNoNet, &noNet);
+        char none[8] = { 'x' };
+        check(apiNoNet.OnlineMemberCount(&noNet) == 0 && apiNoNet.OnlineJoinCode(&noNet, none, sizeof(none)) == 0
+                  && none[0] == '\0',
+              "abi v30: without the net info (server / headless) Online* report an empty lobby");
     }
 
     MYE_LOG_INFO("==== Online self test: %s (%d failure(s)) ====", failCount == 0 ? "PASS" : "FAIL", failCount);

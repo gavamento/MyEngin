@@ -22,6 +22,15 @@ namespace MyeScripting
         public const ushort Y = 0x8000;
     }
 
+    // オンラインのロビーのメンバーの状態ビット (Shared/EngineAPI.h の MYE_ONLINE_MEMBER_* と同値、v30)
+    public static class OnlineMember
+    {
+        public const uint Owner = 1u;
+        public const uint Local = 2u;
+        public const uint Speaking = 4u;
+        public const uint Muted = 8u;
+    }
+
     // エンティティへの薄いハンドル。Transform 操作の入口。
     public readonly struct MyeEntity
     {
@@ -441,6 +450,14 @@ namespace MyeScripting
         protected static uint NetPlayerCount() => Engine.NetPlayerCount();
         protected static float NetPingMs() => Engine.NetPingMs();
         protected static ulong NetRollbackCount() => Engine.NetRollbackCount();
+
+        // ---- オンラインのロビー (v30、M93) ----
+        // ★表示専用 (人数・名前・発話中は機種依存)。HUD に出すだけにして、sim 状態へ書き戻さないこと。
+        //   flags は OnlineMember.Owner / Local / Speaking / Muted のビット
+        protected static uint OnlineMemberCount() => Engine.OnlineMemberCount();
+        protected static string OnlineMemberName(uint index) => Engine.OnlineMemberName(index);
+        protected static uint OnlineMemberFlags(uint index) => Engine.OnlineMemberFlags(index);
+        protected static string OnlineJoinCode() => Engine.OnlineJoinCode();
 
         // ---- gamepad (v3 の回収、M51h)。パッド 0。mask は PadButtons.* ----
         protected static bool PadConnected() => Engine.PadConnected();

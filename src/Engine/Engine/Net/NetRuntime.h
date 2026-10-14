@@ -59,6 +59,18 @@ struct NetRuntimeInfo {
     float arrivalMarginMs = 0.0f;   // 自分の入力が締め切りに対して何 ms 前に届いたか
     uint64_t resyncs = 0;           // 再同期を要求した回数
     uint64_t desyncs = 0;           // desync を検出した回数
+
+    // ---- オンラインのロビー (M93、ABI v30 の Online* スロットが読む) ----
+    // EngineLoop がフレームごとに IOnlineService のロビーから写す (オンラインを使わない実行では 0 / 空)。
+    // セッションに繋ぐ前 (ロビーだけ) でも埋まる。表示専用で、sim へ書き戻さない
+    // ★大きさは Online\OnlineTypes.h の kOnline* と一致させる (EngineLoop.cpp の static_assert)。
+    //   このヘッダは sim 側 (EngineApiTable.cpp) から読まれるので Online\ を include しない (規則 13-a)
+    static constexpr uint32_t kOnlineMembers = 4;
+    static constexpr uint32_t kOnlineNameBytes = 64;
+    uint32_t onlineMemberCount = 0;
+    char onlineJoinCode[8] = {};                                  // NUL 終端。ロビーに居なければ空
+    char onlineMemberNames[kOnlineMembers][kOnlineNameBytes] = {}; // UTF-8、NUL 終端
+    uint32_t onlineMemberFlags[kOnlineMembers] = {};              // MYE_ONLINE_MEMBER_* のビット
 };
 
 } // namespace mye

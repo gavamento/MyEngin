@@ -51,7 +51,15 @@
 //             ComputeForEach / ComputeJobStatus / ComputeJobTarget / ComputeJobWait / ComputeRegisterManagedKernels /
 //             ComputeSetManagedDeclarations (AnimatorGetState の次の 10 本) + MyeScriptDesc 末尾の kernelNames、
 //             MyeScriptModule 末尾の kernels
-#define MYE_API_VERSION 29u
+// v30 (M93): オンラインのロビー (表示専用) — OnlineMemberCount / OnlineMemberName / OnlineMemberFlags /
+//             OnlineJoinCode (ComputeSetManagedDeclarations の次の 4 本)
+#define MYE_API_VERSION 30u
+
+// v30 (M93) OnlineMemberFlags のビット
+#define MYE_ONLINE_MEMBER_OWNER 1u    // 部屋を作った人 (ホスト = サーバを動かしている人)
+#define MYE_ONLINE_MEMBER_LOCAL 2u    // この PC の人
+#define MYE_ONLINE_MEMBER_SPEAKING 4u // ボイスで発話中
+#define MYE_ONLINE_MEMBER_MUTED 8u    // この PC で受信を止めている
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -1012,6 +1020,20 @@ struct MyeEngineApi {
     int (*ComputeRegisterManagedKernels)(void* engine, const MyeKernelDesc* kernels, uint32_t count);
     // ComputeSetManagedDeclarations: C# の [ComputeKernels] の宣言表を丸ごと差し替える。C++ レーンからは何もせず 0
     int (*ComputeSetManagedDeclarations)(void* engine, const MyeComputeDecl* decls, uint32_t count);
+
+    // ---- v30 (M93): オンラインのロビー ----
+    // ★すべて**機種依存・実時間依存の表示専用値** (Net* と同じ扱い)。人数・名前・発話中を sim 状態へ書き戻すと
+    //   .rep が再生できず、ネットでは desync になる。HUD の表示と、ボイスの発話表示にだけ使う。
+    //   ゲームの参加・離脱は NetLane* / NetGetSystemEvent (確定入力から導く sim 値) で扱う
+    // OnlineMemberCount: ロビーの人数 (ロビーに居ない / オンラインなし = 0)
+    uint32_t (*OnlineMemberCount)(void* engine);
+    // OnlineMemberName: index 番目の表示名 (UTF-8) を out へ NUL 終端で書き、書いたバイト数 (NUL を除く) を返す。
+    //   範囲外 / capacity == 0 は 0 (out[0] = 0)。収まらない分は切り詰める
+    uint32_t (*OnlineMemberName)(void* engine, uint32_t index, char* out, uint32_t capacity);
+    // OnlineMemberFlags: MYE_ONLINE_MEMBER_* のビット。範囲外は 0
+    uint32_t (*OnlineMemberFlags)(void* engine, uint32_t index);
+    // OnlineJoinCode: 部屋のコード (6 文字) を out へ NUL 終端で書き、書いたバイト数を返す。ロビーに居なければ 0
+    uint32_t (*OnlineJoinCode)(void* engine, char* out, uint32_t capacity);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

@@ -173,6 +173,49 @@ void FillComputeSlots(MyeEngineApi& out)
         c->compute->ReplaceKernels(compute::CallerKind::CSharp, descs);
         return 1;
     };
+    // ---- v30 (M93): オンラインのロビー。NetRuntimeInfo の写し (EngineLoop がフレームごとに書く表示専用値) を読む ----
+    out.OnlineMemberCount = [](void* engine) -> uint32_t {
+        const NetRuntimeInfo* n = Ctx(engine)->net;
+        return n != nullptr ? (std::min)(n->onlineMemberCount, NetRuntimeInfo::kOnlineMembers) : 0u;
+    };
+    out.OnlineMemberName = [](void* engine, uint32_t index, char* outText, uint32_t capacity) -> uint32_t {
+        if (outText == nullptr || capacity == 0) {
+            return 0u;
+        }
+        outText[0] = '\0';
+        const NetRuntimeInfo* n = Ctx(engine)->net;
+        if (n == nullptr || index >= (std::min)(n->onlineMemberCount, NetRuntimeInfo::kOnlineMembers)) {
+            return 0u;
+        }
+        const char* name = n->onlineMemberNames[index];
+        const uint32_t len = static_cast<uint32_t>(strnlen(name, NetRuntimeInfo::kOnlineNameBytes - 1));
+        const uint32_t copied = (std::min)(len, capacity - 1);
+        std::memcpy(outText, name, copied);
+        outText[copied] = '\0';
+        return copied;
+    };
+    out.OnlineMemberFlags = [](void* engine, uint32_t index) -> uint32_t {
+        const NetRuntimeInfo* n = Ctx(engine)->net;
+        if (n == nullptr || index >= (std::min)(n->onlineMemberCount, NetRuntimeInfo::kOnlineMembers)) {
+            return 0u;
+        }
+        return n->onlineMemberFlags[index];
+    };
+    out.OnlineJoinCode = [](void* engine, char* outText, uint32_t capacity) -> uint32_t {
+        if (outText == nullptr || capacity == 0) {
+            return 0u;
+        }
+        outText[0] = '\0';
+        const NetRuntimeInfo* n = Ctx(engine)->net;
+        if (n == nullptr) {
+            return 0u;
+        }
+        const uint32_t len = static_cast<uint32_t>(strnlen(n->onlineJoinCode, sizeof(n->onlineJoinCode) - 1));
+        const uint32_t copied = (std::min)(len, capacity - 1);
+        std::memcpy(outText, n->onlineJoinCode, copied);
+        outText[copied] = '\0';
+        return copied;
+    };
     out.ComputeSetManagedDeclarations = [](void* engine, const MyeComputeDecl* decls, uint32_t count) -> int {
         ScriptApiContext* c = Ctx(engine);
         if (c->compute == nullptr || c->computeLane != compute::CallerKind::CSharp || (decls == nullptr && count > 0)) {

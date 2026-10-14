@@ -480,6 +480,11 @@ namespace MyeScripting
         public delegate* unmanaged<void*, ulong, int> ComputeJobWait;
         public delegate* unmanaged<void*, MyeKernelDesc*, uint, int> ComputeRegisterManagedKernels;
         public delegate* unmanaged<void*, MyeComputeDecl*, uint, int> ComputeSetManagedDeclarations;
+        // ---- v30 (M93): オンラインのロビー (表示専用) ----
+        public delegate* unmanaged<void*, uint> OnlineMemberCount;
+        public delegate* unmanaged<void*, uint, byte*, uint, uint> OnlineMemberName;
+        public delegate* unmanaged<void*, uint, uint> OnlineMemberFlags;
+        public delegate* unmanaged<void*, byte*, uint, uint> OnlineJoinCode;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -1353,6 +1358,24 @@ namespace MyeScripting
             => _api != null && _api->ComputeRegisterManagedKernels(_api->Engine, kernels, count) != 0;
         public static bool ComputeSetManagedDeclarations(MyeComputeDecl* decls, uint count)
             => _api != null && _api->ComputeSetManagedDeclarations(_api->Engine, decls, count) != 0;
+
+        // ---- v30 (M93): オンラインのロビー (表示専用。sim 状態へ書き戻さない) ----
+        public static uint OnlineMemberCount() => _api != null ? _api->OnlineMemberCount(_api->Engine) : 0u;
+        public static uint OnlineMemberFlags(uint index) => _api != null ? _api->OnlineMemberFlags(_api->Engine, index) : 0u;
+        public static string OnlineMemberName(uint index)
+        {
+            if (_api == null) return string.Empty;
+            byte* buf = stackalloc byte[64];
+            uint n = _api->OnlineMemberName(_api->Engine, index, buf, 64);
+            return System.Text.Encoding.UTF8.GetString(buf, (int)n);
+        }
+        public static string OnlineJoinCode()
+        {
+            if (_api == null) return string.Empty;
+            byte* buf = stackalloc byte[16];
+            uint n = _api->OnlineJoinCode(_api->Engine, buf, 16);
+            return System.Text.Encoding.UTF8.GetString(buf, (int)n);
+        }
 
         // ---- v22 (M80l): 破壊への損傷 ----
         // entity は Destructible のルートか、その破片のどちらでもよい。radius<=0 は

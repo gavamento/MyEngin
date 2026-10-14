@@ -175,8 +175,12 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 29u,
-              "abi: the table reports v29");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 30u,
+              "abi: the table reports v30");
+        // v30 (M93): オンラインのロビー。呼んだ結果は OnlineSelfTest が見る (ここは充填のみ)
+        check(api.OnlineMemberCount != nullptr && api.OnlineMemberName != nullptr && api.OnlineMemberFlags != nullptr
+                  && api.OnlineJoinCode != nullptr,
+              "abi: the v30 online slots are filled in");
         // v28 (M89c): Animator の型付きパラメータとステート。呼んだ結果は AnimatorControllerSelfTest が見る (ここは充填のみ)
         check(api.AnimatorSetFloat != nullptr && api.AnimatorSetInt != nullptr && api.AnimatorSetBool != nullptr
                   && api.AnimatorSetTrigger != nullptr && api.AnimatorGetParam != nullptr && api.AnimatorGetState != nullptr,

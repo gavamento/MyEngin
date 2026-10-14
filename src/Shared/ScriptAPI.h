@@ -1145,6 +1145,26 @@ inline bool MyeNetGetSystemEvent(const MyeUpdateContext& ctx, uint32_t index, My
     return ctx.api->NetGetSystemEvent(ctx.api->engine, index, out) != 0;
 }
 
+// ---- オンラインのロビー (v30、M93)。表示専用 = sim 状態へ書き戻さない (EngineAPI.h の注記) ----
+inline uint32_t MyeOnlineMemberCount(const MyeUpdateContext& ctx)
+{
+    return ctx.api->OnlineMemberCount(ctx.api->engine);
+}
+// 表示名を out へ (NUL 終端)。書いたバイト数を返す
+inline uint32_t MyeOnlineMemberName(const MyeUpdateContext& ctx, uint32_t index, char* out, uint32_t capacity)
+{
+    return ctx.api->OnlineMemberName(ctx.api->engine, index, out, capacity);
+}
+// MYE_ONLINE_MEMBER_OWNER / LOCAL / SPEAKING / MUTED のビット
+inline uint32_t MyeOnlineMemberFlags(const MyeUpdateContext& ctx, uint32_t index)
+{
+    return ctx.api->OnlineMemberFlags(ctx.api->engine, index);
+}
+inline uint32_t MyeOnlineJoinCode(const MyeUpdateContext& ctx, char* out, uint32_t capacity)
+{
+    return ctx.api->OnlineJoinCode(ctx.api->engine, out, capacity);
+}
+
 // ---- v24 (M82i): NavMesh ----
 // 座標はワールド。クエリは agentTypeId が合う最初の Surface で行い、未読み込みなら false / 0。
 // 目的地を書いて歩かせる / 止める (NavMeshAgent 非所持は false)

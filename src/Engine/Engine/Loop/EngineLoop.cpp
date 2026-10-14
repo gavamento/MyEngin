@@ -2675,6 +2675,29 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             netInfo.resyncs = clientSession.Stats().resyncs;
             netInfo.desyncs = clientRunner.Stats().desyncs;
         }
+        // オンラインのロビーの写し (M93、ABI v30 の Online*)。セッションに繋ぐ前のロビーでも埋める
+        {
+            static_assert(NetRuntimeInfo::kOnlineMembers == kOnlineMaxMembers
+                              && NetRuntimeInfo::kOnlineNameBytes == kOnlineNameChars
+                              && sizeof(NetRuntimeInfo{}.onlineJoinCode) > kOnlineJoinCodeChars,
+                          "NetRuntimeInfo's lobby copy must match OnlineTypes.h");
+            const OnlineLobbyView* lobby =
+                (online && online->Lobby().state == LobbyState::InLobby) ? &online->Lobby() : nullptr;
+            netInfo.onlineMemberCount = lobby != nullptr ? lobby->memberCount : 0u;
+            std::memcpy(netInfo.onlineJoinCode, lobby != nullptr ? lobby->joinCode : "",
+                        lobby != nullptr ? sizeof(lobby->joinCode) : 1);
+            for (uint32_t i = 0; i < kOnlineMaxMembers; ++i) {
+                const bool present = lobby != nullptr && i < lobby->memberCount;
+                const OnlineMember empty = {};
+                const OnlineMember& m = present ? lobby->members[i] : empty;
+                const char* name = m.name[0] != '\0' ? m.name : m.id;
+                std::memcpy(netInfo.onlineMemberNames[i], name, kOnlineNameChars);
+                netInfo.onlineMemberNames[i][kOnlineNameChars - 1] = '\0';
+                netInfo.onlineMemberFlags[i] = (m.isOwner ? MYE_ONLINE_MEMBER_OWNER : 0u)
+                    | (m.isLocal ? MYE_ONLINE_MEMBER_LOCAL : 0u) | (m.speaking ? MYE_ONLINE_MEMBER_SPEAKING : 0u)
+                    | (m.mutedByMe ? MYE_ONLINE_MEMBER_MUTED : 0u);
+            }
+        }
         // ---- タイムトラベルの自動プローブ (M52e、--timetravel-selftest N) ----
         // 「T まで進める → T-K へ戻す → 記録入力で T まで再シム → 元の T とハッシュ一致」を
         // 複数の K で実走する。エディタ GUI を開かずに巻き戻しの正しさを機械判定する唯一の口
