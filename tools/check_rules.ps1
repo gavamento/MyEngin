@@ -3,8 +3,9 @@
 # -SourceRoot: ソース走査型の規則 (1 / 2 / 7 / 8 / 10-a) が見るルートを差し替える。違反を仕込んだ
 #   フィクスチャで「正規表現が実際に当たるか」を確かめるためのもの (規則 1 と 7 は、当たらない
 #   正規表現のまま何か月も 0 件を返し続けていた)。リポジトリ固定パスを読む規則は影響を受けない
-# -McpSourceDir: 規則 15-c / 15-d が見る tools\mcp\src を差し替える (同じ目的。違反を仕込んだ一時コピー用)
-param([string]$SourceRoot = '', [string]$McpSourceDir = '')
+# -McpSourceDir: 規則 15-c / 15-d / 15-e が見る tools\mcp\src を差し替える (同じ目的。違反を仕込んだ一時コピー用)
+# -ReplayVerifyBat: 規則 15-e が見る replay_verify.bat を差し替える (同上)
+param([string]$SourceRoot = '', [string]$McpSourceDir = '', [string]$ReplayVerifyBat = '')
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $srcDirs = @("$repo\src")
@@ -1004,7 +1005,6 @@ foreach ($l in $eolLines) {
 # 15-d  (M87b) tools\mcp\src でファイルを書く API を使ってよいファイルは許可リストだけ
 # 15-e  (M87c) replay_verify.bat の :job_* 集合 == -Jobs 列 == tools\mcp\src\verify.rs のジョブ表
 # 15-f  gen_engine_index.ps1 -CheckOnly が成功する (索引の静的パースが静かに 0 件へ壊れるのを CI で止める)
-# 15-e は verify_job を作るサブ (M87c) で実装する (ここでは予告だけ)
 $mcpRoots = @('Engine', 'Runtime', 'GameLogic', 'Shared', 'Server')
 $srcRootFull = (Resolve-Path -LiteralPath $srcDirs[0]).Path.TrimEnd([char]92)
 foreach ($f in (Get-ChildItem -Recurse -File $srcDirs | Where-Object { $_.Extension -in '.cpp', '.h', '.hpp', '.inl' })) {
@@ -1033,10 +1033,11 @@ foreach ($name in 'EngineIndexDump.cpp', 'EngineIndexDump.h') {
 }
 # 15-c / 15-d: MCP サーバが外へ手を伸ばす経路 (子プロセス起動・ファイル書き込み) を許可リストのファイルに閉じ込める。
 # 許可リストは、その経路を足すサブがここを編集して広げる (M87c: verify.rs, M87d: notes.rs)。
+# verify.rs が書くのは cache\mcp_logs の create_dir_all だけ (ログ本体は子の cmd が > で書く)。
 # 許可ファイルの外で使うと、読み取り専用のはずの search / describe が副作用を持てるようになる。
 $mcpSrcDir = if ($McpSourceDir -ne '') { $McpSourceDir } else { Join-Path $repo 'tools\mcp\src' }
-$mcpSpawnAllowed = @()
-$mcpWriteAllowed = @()
+$mcpSpawnAllowed = @('verify.rs')
+$mcpWriteAllowed = @('verify.rs')
 $mcpFsWriteNames = 'write|create_dir|create_dir_all|rename|remove_file|remove_dir|remove_dir_all|copy|set_permissions|hard_link|symlink_file|symlink_dir'
 $mcpSpawnPattern = '\bCommand\s*::\s*new\b|\bprocess\s*::\s*Command\b|\.spawn\s*\(|\braw_arg\s*\(|\bCommandExt\b'
 $mcpWritePattern = "\bfs\s*::\s*($mcpFsWriteNames)\b|\buse\s+std::fs::($mcpFsWriteNames)\b|\buse\s+std::fs::\{[^}]*\b($mcpFsWriteNames)\b|\bFile\s*::\s*(create|create_new)\b|\bOpenOptions\b"
@@ -1047,6 +1048,44 @@ if (Test-Path -LiteralPath $mcpSrcDir) {
         }
         if ($mcpWriteAllowed -notcontains $f.Name) {
             Test-CodeLines $f $mcpWritePattern 'rule 15-d' 'writing / creating / deleting files is only allowed in the files listed in $mcpWriteAllowed (tools\check_rules.ps1)'
+        }
+    }
+}
+# 15-e: verify_job のジョブ表 (verify.rs の JOBS) を replay_verify.bat の :job_* ラベル集合 / -Jobs 列と照合する。
+# ジョブを足して表だけ更新し忘れると、足したジョブが verify_job から静かに起動できないままになる。
+$rvBat = if ($ReplayVerifyBat -ne '') { $ReplayVerifyBat } else { Join-Path $repo 'tools\replay_verify.bat' }
+$verifyRs = Join-Path $mcpSrcDir 'verify.rs'
+if ((Test-Path -LiteralPath $rvBat) -and (Test-Path -LiteralPath $verifyRs)) {
+    $rvText = [System.IO.File]::ReadAllText($rvBat)
+    $labelJobs = @([regex]::Matches($rvText, '(?m)^:job_([A-Za-z0-9_]+)\s*$') | ForEach-Object { $_.Groups[1].Value })
+    $listJobs = @()
+    if ($rvText -match '-Jobs\s+"([^"]+)"') { $listJobs = @($Matches[1] -split ',') }
+    $rsText = [System.IO.File]::ReadAllText($verifyRs)
+    $tableJobs = @()
+    if ($rsText -match '(?s)pub const JOBS:[^=]*=\s*\[(.*?)\];') {
+        $tableJobs = @([regex]::Matches($Matches[1], '"([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+    }
+    if ($labelJobs.Count -eq 0 -or $listJobs.Count -eq 0 -or $tableJobs.Count -eq 0) {
+        Write-Host "ERROR [rule 15-e] could not read the job names (labels=$($labelJobs.Count) -Jobs=$($listJobs.Count) verify.rs=$($tableJobs.Count))"
+        $errors++
+    } else {
+        # 集合の差 (:job_ ラベル / -Jobs 列 / JOBS) と、-Jobs 列と JOBS の並び
+        $sources = [ordered]@{ ':job_* labels' = $labelJobs; '-Jobs list' = $listJobs; 'verify.rs JOBS' = $tableJobs }
+        foreach ($a in $sources.Keys) {
+            foreach ($b in $sources.Keys) {
+                if ($a -eq $b) { continue }
+                foreach ($n in $sources[$a]) {
+                    if ($sources[$b] -notcontains $n) {
+                        Write-Host "ERROR [rule 15-e] job '$n' is in $a but not in ${b}: keep replay_verify.bat and tools\mcp\src\verify.rs in sync"
+                        $errors++
+                    }
+                }
+            }
+        }
+        if (($listJobs -join ',') -ne ($tableJobs -join ',') -and
+            @($listJobs | Where-Object { $tableJobs -contains $_ }).Count -eq $listJobs.Count -and $listJobs.Count -eq $tableJobs.Count) {
+            Write-Host "ERROR [rule 15-e] the order of -Jobs in replay_verify.bat differs from verify.rs JOBS"
+            $errors++
         }
     }
 }

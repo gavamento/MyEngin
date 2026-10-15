@@ -1,7 +1,7 @@
 # sub-02: MCP crate 骨格 (stdio JSON-RPC、dual-era) と search / describe、mcp_verify
 
 - 依存: sub-01
-- 状態: 未着手
+- 状態: OK (commit 75d3004)
 - 往復: 0
 
 ## やること

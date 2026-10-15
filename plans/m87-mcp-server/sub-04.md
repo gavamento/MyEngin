@@ -11,7 +11,7 @@ spec 4.1.6 / 4.4 (規則 15-d の notes.rs 許可) と文書を仕上げる。
 1. `tools\mcp\src\notes.rs`: 書き先の決定 (`--project` → `<project>\.mye\notes`、無ければ `<root>\.mye\notes`)、topic のガード、追記のみのオープン、`.gitignore` (`*`) の設置、note_read の一覧 / 最新 N 件 / 64 KB 打ち切り、UTC 時刻 (std の `SystemTime` から暦計算。依存を足さない)。
 2. `search` に notes (topic 名とエントリ見出し、`src: "notes"`、kind `note`) を足す。
 3. `tests\mcp\` に notes のシナリオとパストラバーサル拒否の固定テスト (spec 条件 24 の列挙を全部)。書き先は一時プロジェクト (`cache\mcp_verify\...`)。時刻は正規化して比較。ジャンクションのケースは mcp_verify の ps1 側で `New-Item -ItemType Junction` で作り、終わったら片付ける。
-4. 規則 15-d の許可に notes.rs を足す。
+4. 規則 15-d の許可に notes.rs を足す。あわせて、verify.rs の許可を spec 4.4 のとおり `create_dir_all` だけに絞る (sub-03 ではファイル単位で全 API を許していた)。verify.rs に `fs::write` を仕込んだ一時コピーで ERROR が出ることを 1 回示す。
 5. `.gitignore` に `.mye/`。
 7. 固定 10 問 (spec 条件 12) の計測を `tools\mcp_verify.ps1` の実索引モード (例: `-RealIndex`) として入れる。`cache\engine_index.json` が無ければ SKIP と表示して exit 0 にする。CI には入れない。sub-02 の scratch のスクリプト (未コミット) の代わり。reviewer が再現できるようにするため。
 6. 文書: `docs\mcp-server.md` (ビルド、`.mcp.json` による登録と Claude Code の初回承認、「未ビルドのとき」の節 (sub-02 の実装メモにある条件 31 の実測をそのまま写し、ビルドの 1 行 `cargo build --release --manifest-path tools\mcp\Cargo.toml` を添える)、相対パスの起点の制約 (条件 30 の実測)、`--project` を付けたいときの個人設定の例 (`claude mcp add --scope local ...`)、道具の一覧と引数、notes の住み分け表 (計画書 §6)、全体実行の replay_verify と verify_job を同時に叩かない注意、走行中ジョブは MCP 終了後も止まらない注意)、`docs\adr\ADR-032-engine-mcp-server.md` (短く。正本は計画書へリンク)、計画書 `plans\エンジンMCPサーバ.md` 冒頭の「現在地」と §10 の未決の消込、`docs\test_checklists.md` に手動確認 (実クライアントからの接続・verify_job 1 本・note の往復)。

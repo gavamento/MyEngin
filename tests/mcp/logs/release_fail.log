@@ -1,0 +1,8 @@
+=== record cache\golden.rep : Debug, 600 ticks, --replay-fast ===
+[INFO ] [replay] recorded 600 ticks
+=== verify cache\golden.rep : Debug + snapshot stress every 37 ticks ===
+[INFO ] [replay] verify OK: 600 ticks
+=== verify cache\golden.rep : Release ===
+[ERROR] [replay] HASH MISMATCH at tick 389
+[ERROR] [replay]   expected 00000000000000AA / actual 00000000000000AB
+[FAIL] Release verify: cache\golden.rep

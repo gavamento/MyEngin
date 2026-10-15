@@ -27,6 +27,8 @@ tools/collab/target/
 # エンジン MCP サーバ (M87) の cargo ビルド成果物。.mcp.json がここの exe を指すので、
 # 使うには各自 cargo build --release が要る (docs/mcp-server.md)
 tools/mcp/target/
+# verify_job のログ構造化テストの固定ログ (*.log の例外)
+!tests/mcp/logs/*.log
 
 # --package DIR の出力 (M51j の封印)。exe / dotnet / assets を丸ごと抱えるので
 # 数十 MB になる。作り直せる生成物なので版管理しない

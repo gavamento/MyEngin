@@ -10,6 +10,7 @@ mod rpc;
 mod search;
 mod stdio;
 mod tools;
+mod verify;
 
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -60,7 +61,7 @@ fn main() {
         Some(r) => eprintln!("[mye_mcp] root={}", r.display()),
         None => eprintln!("[mye_mcp] root not found (MyEngine.sln); tools will report an error"),
     }
-    let mut ctx = handler::Context { root, index: index_arg };
+    let mut ctx = handler::Context { root, index: index_arg, jobs: verify::JobTable::default() };
 
     let mut input = BufReader::new(std::io::stdin().lock());
     let mut out = std::io::stdout().lock();

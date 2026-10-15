@@ -189,7 +189,7 @@ AI クライアント (Claude Code ほか) がこのエンジンで作業する�
 17. 子のコマンド文字列が `/c chcp 437 >nul & call tools\replay_verify.bat --job <name> > "<log>" 2>&1` と文字列一致 (unit test)。`CREATE_NO_WINDOW`・stdio null・カレント = root。— cargo test + コードの該当行
 18. 引数の拒否: enum 外の job (`demo & calc` / `../x` / 空) と ticks 範囲外 → isError、子を起動しない。同名走行中 / 3 本目 → isError。— mcp_verify (起動しない系) + 実行
 19. ログ構造化: PASS / stress 失敗 (plain 失敗・plain 成功) / Release 失敗 / ログなし の固定ログ (`tests\mcp\logs\`) から期待どおりの summary。— cargo test
-20. 実ジョブ: MCP 経由で `rules` と `demo` (ticks 60) を start → poll し、`state: done` / `exitCode: 0` / `result: PASS`。その間 MCP の stdout に JSON-RPC 以外の行が無い。— 実行スクリプトの出力
+20. 実ジョブ: MCP 経由で `rules` と `demo` (ticks 60) を start → poll し `state: done` になる。demo は `exitCode: 0` / `result: PASS`。rules の exitCode と result は、check_rules.ps1 を単体で回したときの終了コードと一致する (既知 3 件がある間は exit 1 / FAIL が正しい結果)。その間 MCP の stdout に JSON-RPC 以外の行が無い。— 実行スクリプトの出力
 21. §8-2: MCP をコンソールから起動してジョブを 1 本完走させた前後で、親コンソールのコードページが変わらない (`chcp` の出力を前後で比較)。ツール環境にコンソールが無く測れなければ、その旨と代替の観測を書き「未検証」とする。— 実行ログ
 22. check_rules OK、mcp_verify exit 0。
 
@@ -229,3 +229,5 @@ AI クライアント (Claude Code ほか) がこのエンジンで作業する�
 - 2026-10-15 (sub-01 round 1 の coder の質問): describe の言及を 1 種別 20 件 + `mentionsTotal` に絞ることを 4.1.4 に追記した。一般語の component 名で返却が膨らむため。索引側 (mentions) は全件のまま
 - 2026-10-15 (sub-02 round 1 の coder の SELF_EVAL): 4.1.3 の modern の tools/list に `ttlMs` / `cacheScope` を足した (実クライアントの要求)。4.1.4 の手書き訳語表を 40 点とし、機械展開の規則と search の `total` を明記した。同義語表は M87b の計測で決まった (ユーザー回答「87b で決める」の決着): 機械生成のみでは 5/10、手書き 5 行 (剛体 / 経路 / 霧 / 破壊 / タイムトラベル) で 10/10。実クライアントは Claude Code 2.1.300 で、modern で接続した。探りで落ちると legacy で再接続する作りなので、dual-era の裁定は妥当だった。相対パスの起点はクライアントの cwd (条件 30 の実測)
 - 2026-10-15 (planner): 固定 10 問の計測スクリプトがコミットされていなかったので、sub-04 のやることに「mcp_verify に実索引モードとして入れる (索引が無ければ SKIP、CI には入れない)」を足した
+- 2026-10-15 (sub-03 round 1 の coder の質問): 条件 20 の rules を「PASS」から「check_rules 単体の終了コードと一致」に直した。既知 3 件がある間は原理的に PASS にならないため
+- 2026-10-15 (planner、sub-03 round 1 の判定): 規則 15-d の verify.rs の許可は、spec 4.4 では `create_dir_all` だけだったが、実装はファイル単位で全 API を許している。sub-04 で API 単位に絞る (sub-04 のやること 4)

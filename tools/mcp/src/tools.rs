@@ -8,6 +8,7 @@ use crate::handler::Context;
 use crate::index;
 use crate::rpc::{RpcError, INVALID_PARAMS};
 use crate::search::{self, Described, KINDS};
+use crate::verify;
 use serde_json::{json, Value};
 
 const QUERY_MAX_CHARS: usize = 200;
@@ -26,7 +27,7 @@ impl ToolError {
     }
 }
 
-// tools/list の中身。固定順。sub-03 / sub-04 で verify_job / note_* を後ろへ足す。
+// tools/list の中身。固定順。sub-04 で note_* を後ろへ足す。
 pub fn list() -> Value {
     json!([
         {
@@ -59,12 +60,27 @@ pub fn list() -> Value {
                 "required": ["id"],
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "verify_job",
+            "description": "Run one tools\replay_verify.bat job (prebuilt Debug and Release Editor.exe required; nothing is built) in the background and read its structured result. op=start returns a jobId; op=poll returns running or, when done, exitCode plus a summary (failed stage, first mismatching tick, diagnostic lines; not the whole log). At most 2 jobs run at once and a job name cannot be started twice at the same time.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "op": {"type": "string", "enum": ["start", "poll"]},
+                    "job": {"type": "string", "enum": verify::JOBS, "description": "op=start: the job name (the :job_* labels of replay_verify.bat)."},
+                    "ticks": {"type": "integer", "minimum": verify::TICKS_MIN, "maximum": verify::TICKS_MAX, "default": verify::TICKS_DEFAULT, "description": "op=start: ticks per scene (MYE_RV_TICKS)."},
+                    "jobId": {"type": "string", "description": "op=poll: the jobId returned by start."}
+                },
+                "required": ["op"],
+                "additionalProperties": false
+            }
         }
     ])
 }
 
 // tools/call。params の形が悪ければ -32602、道具の中の失敗は isError の結果にする。
-pub fn call(ctx: &Context, params: &Value) -> Result<Value, RpcError> {
+pub fn call(ctx: &mut Context, params: &Value) -> Result<Value, RpcError> {
     let obj = params
         .as_object()
         .ok_or_else(|| RpcError::new(INVALID_PARAMS, "params must be an object"))?;
@@ -81,6 +97,7 @@ pub fn call(ctx: &Context, params: &Value) -> Result<Value, RpcError> {
     let outcome = match name {
         "search" => search_tool(ctx, args),
         "describe" => describe_tool(ctx, args),
+        "verify_job" => verify_job_tool(ctx, args),
         _ => return Err(RpcError::new(INVALID_PARAMS, format!("Unknown tool: {name}"))),
     };
     Ok(match outcome {
@@ -181,5 +198,36 @@ fn describe_tool(ctx: &Context, args: &Value) -> Result<Value, ToolError> {
             message: format!("not found: {id}"),
             data: Some(json!({"stale": stale, "candidates": candidates})),
         }),
+    }
+}
+
+fn verify_job_tool(ctx: &mut Context, args: &Value) -> Result<Value, ToolError> {
+    let op = args
+        .get("op")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ToolError::new("op is required and must be \"start\" or \"poll\""))?;
+    match op {
+        "start" => {
+            reject_unknown(args, &["op", "job", "ticks"])?;
+            let job = args
+                .get("job")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ToolError::new("job is required for op=start and must be a string"))?;
+            let ticks = match args.get("ticks") {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(v.as_i64().ok_or_else(|| ToolError::new("ticks must be an integer"))?),
+            };
+            let root = ctx.root.clone();
+            ctx.jobs.start(root.as_deref(), job, ticks).map_err(ToolError::new)
+        }
+        "poll" => {
+            reject_unknown(args, &["op", "jobId"])?;
+            let id = args
+                .get("jobId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ToolError::new("jobId is required for op=poll and must be a string"))?;
+            ctx.jobs.poll(id).map_err(ToolError::new)
+        }
+        _ => Err(ToolError::new("op must be \"start\" or \"poll\"")),
     }
 }

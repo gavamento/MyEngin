@@ -1,0 +1,9 @@
+=== record cache\golden.rep : Debug, 600 ticks, --replay-fast ===
+[INFO ] Window created: 1600x900
+[INFO ] [replay] recorded 600 ticks
+=== verify cache\golden.rep : Debug + snapshot stress every 37 ticks ===
+[INFO ] [replay] verify OK: 600 ticks
+=== verify cache\golden.rep : Release ===
+[INFO ] [replay] verify OK: 600 ticks
+=== verify cache\golden.rep : Release, headless Server.exe ===
+[INFO ] [replay] verify OK: 600 ticks

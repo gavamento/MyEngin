@@ -52,4 +52,10 @@ spec 5. の 16〜22。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-03 (round 1)
+- 実装: verify.rs (21 名 JOBS、start/poll、child_command_line/build_command、check_admission、summarize)、tools.rs (verify_job 追加)、handler.rs/main.rs (Context.jobs)、check_rules.ps1 (15-c/15-d に verify.rs、15-e、-ReplayVerifyBat)、tests/mcp/logs/*.log 4 本、tests/mcp/verify_job.ndjson、.gitignore に `!tests/mcp/logs/*.log`
+- 差分: [追加] .gitignore 例外 (`*.log` で固定ログが無視されるため) / [追加] errors に `ERROR ` 始まり (rules ジョブ) も含める / [追加] start の返却に job/ticks/logPath、op ごとに許可引数を絞る / [判断] rules は Editor.exe 前提を課さない (check_rules を pwsh で回すだけ) / 条件 20 の rules は exit 1 (既知 3 件の ERROR のため。FAIL を正しく返した) / Release\Server.exe は前提に含めない (仕様どおり Editor 2 本のみ)
+- 検証: cargo test 35 pass、mcp_verify 全 PASS、check_rules は既知 3 件のみ、15-e は :job_zzz 入り bat で ERROR、実ジョブ (demo/physics PASS exit 0、同名拒否・busy 拒否、stdout に非 JSON-RPC 0 行)、chcp は 65001 のまま前後不変 (コンソールあり)
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner)。cargo test 35 passed、固定ログ 4 本が追跡に載ること、raw_arg / CREATE_NO_WINDOW / create_dir_all の箇所を planner が確認した。条件 20 は spec を直して達成扱い。15-d の許可の粒度 (should) は sub-04 で絞る

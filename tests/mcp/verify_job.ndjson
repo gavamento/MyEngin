@@ -1,0 +1,16 @@
+# verify_job の拒否系。どれも子を起動しない (実ジョブは mcp_verify に入れない)。
+# root を exe の無いフィクスチャにするので、検証を通る呼び出しも「前提の exe が無い」で止まる
+# args --root tests/mcp/fixture
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"verify_job","arguments":{"op":"start","job":"demo & calc"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"verify_job","arguments":{"op":"start","job":"../x"}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"verify_job","arguments":{"op":"start","job":""}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"verify_job","arguments":{"op":"start","job":"demo","ticks":0}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"verify_job","arguments":{"op":"start","job":"demo","ticks":100001}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"verify_job","arguments":{"op":"start","job":"demo","ticks":1.5}}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"verify_job","arguments":{"op":"start","job":"demo"}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"verify_job","arguments":{"op":"start"}}}
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"verify_job","arguments":{"op":"start","job":"demo","jobId":"jb_01"}}}
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"verify_job","arguments":{"op":"poll","jobId":"jb_01"}}}
+{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"verify_job","arguments":{"op":"poll"}}}
+{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"verify_job","arguments":{"op":"kill"}}}
+{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"verify_job","arguments":{}}}

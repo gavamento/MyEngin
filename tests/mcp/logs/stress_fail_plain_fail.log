@@ -1,0 +1,11 @@
+=== record cache\golden_physics.rep : Debug, 600 ticks, --replay-fast ===
+[INFO ] [replay] recorded 600 ticks
+=== verify cache\golden_physics.rep : Debug + snapshot stress every 37 ticks ===
+[ERROR] [replay] HASH MISMATCH at tick 241
+[ERROR] [replay]   expected 1A2B3C4D5E6F7081 / actual 1A2B3C4D5E6F7082
+[ERROR] [replay]   entities=12 rng=00000000DEADBEEF
+[FAIL] Debug verify with snapshot stress: cache\golden_physics.rep
+[diag] re-running plain verify to disambiguate...
+[ERROR] [replay] HASH MISMATCH at tick 241
+[ERROR] [replay]   expected 1A2B3C4D5E6F7081 / actual 1A2B3C4D5E6F7082
+[diag] plain verify FAILS too = base determinism is broken, not the snapshot path

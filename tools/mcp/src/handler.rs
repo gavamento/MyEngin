@@ -8,6 +8,7 @@ use crate::rpc::{
     Request, Response, RpcError, INVALID_PARAMS, METHOD_NOT_FOUND, UNSUPPORTED_VERSION,
 };
 use crate::tools;
+use crate::verify::JobTable;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
@@ -32,6 +33,8 @@ pub struct Context {
     pub root: Option<PathBuf>,
     // --index で明示された索引。None なら <root>\cache\engine_index.json
     pub index: Option<PathBuf>,
+    // verify_job の起動済みジョブ (プロセス内のみ)
+    pub jobs: JobTable,
 }
 
 impl Context {
@@ -94,7 +97,7 @@ fn requested_version(params: &Value) -> Option<Value> {
     params.get("_meta")?.get(META_VERSION_KEY).cloned()
 }
 
-fn dispatch(ctx: &Context, era: Era, method: &str, params: &Value) -> Result<Value, RpcError> {
+fn dispatch(ctx: &mut Context, era: Era, method: &str, params: &Value) -> Result<Value, RpcError> {
     match method {
         "initialize" => initialize(params),
         "ping" => Ok(json!({})),
@@ -152,7 +155,7 @@ mod tests {
     use crate::rpc::parse_request;
 
     fn run(line: &str) -> Option<Value> {
-        let mut ctx = Context { root: None, index: None };
+        let mut ctx = Context { root: None, index: None, jobs: JobTable::default() };
         let req = parse_request(line).ok().unwrap();
         handle(&mut ctx, req).map(|r| serde_json::from_str(&r.to_line()).unwrap())
     }

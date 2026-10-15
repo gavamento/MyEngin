@@ -1,0 +1,9 @@
+=== record cache\golden_joints.rep : Debug, 600 ticks, --replay-fast ===
+[INFO ] [replay] recorded 600 ticks
+=== verify cache\golden_joints.rep : Debug + snapshot stress every 37 ticks ===
+[ERROR] [replay] HASH MISMATCH at tick 74
+[ERROR] [replay]   expected 0000000000000001 / actual 0000000000000002
+[FAIL] Debug verify with snapshot stress: cache\golden_joints.rep
+[diag] re-running plain verify to disambiguate...
+[INFO ] [replay] verify OK: 600 ticks
+[diag] plain verify passes = snapshot restore asymmetry - only --snapshot-stress broke it
