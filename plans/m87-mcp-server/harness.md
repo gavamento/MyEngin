@@ -30,7 +30,7 @@
 - (planner 2026-10-15) verify_job の対象は実ファイルで数え直して **21 個** (依頼の 23 は数え違い)。spec.md 2. に記録
 - (planner 2026-10-15) MCP の最新仕様は 2026-07-28 (initialize 廃止の modern 方式)。dual-era で実装する裁定。sub-02 の条件 15 で実クライアント接続を確かめる
 - (planner 2026-10-15) AskUserQuestion なしで裁定した論点は PLAN_RESULT の未決事項 `[ユーザーに聞ける]` を参照
-- (review round 1 PASS、minor 7 件 = review-1.md) 未対応のまま残す:
+- (review round 1 PASS、minor 7 件 = review-1.md) 2026-10-15 にユーザー指示「直して」で司会が直接修正 (harness 不使用、M87 追補コミット)。7 件とも対応済み:
   1. [coder] docs	est_checklists.md:722-723 の `.mye
 otes` が `
 ` で改行に化けている
@@ -41,3 +41,4 @@ otes` が `
   6. [planner] verify_job の重複拒否はプロセス内だけ。MCP 再起動直後・複数セッションの同名ジョブが通る (docs に追記するかロック)
   7. [planner] spec.md:234 に生の CR が混入
 - 未検証 (test_checklists の M87 節で手動確認): 実クライアントからの note_* / verify_job、legacy での実クライアント接続、`claude mcp add --scope local` と project スコープの優先順位、実端末ウィンドウでの chcp 不変
+- minor の修正で決めたこと: #4 は上限を JSON 文字列に直した長さで数える (同じ再現で応答 1 行 393,403 B → 196,842 B)。#6 はロックを入れず docs の注意に追記 (v1 は許容)。#3 の catch_unwind は経路を実際に panic させての確認はしていない (ビルドと既存テストのみ)

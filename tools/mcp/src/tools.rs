@@ -79,7 +79,7 @@ pub fn list() -> Value {
         },
         {
             "name": "note_read",
-            "description": "Read the project's append-only notes (.mye/notes/<topic>.md, gitignored; the engine index is separate). Omit topic to list topics ([{topic, bytes, lastHeading}] in name order). With topic, returns the latest `latest` entries (default 5, max 50) oldest first; output is capped at 64 KB (oldest entries are dropped, truncated: true).",
+            "description": "Read the project's append-only notes (.mye/notes/<topic>.md, gitignored; the engine index is separate). Omit topic to list topics ([{topic, bytes, lastHeading}] in name order). With topic, returns the latest `latest` entries (default 5, max 50) oldest first; the entries are capped at 64 KB measured as JSON-escaped heading + text (oldest entries are dropped, truncated: true).",
             "inputSchema": {
                 "type": "object",
                 "properties": {

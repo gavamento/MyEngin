@@ -719,8 +719,7 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] 実クライアントから `search` を呼んで (例: 「音の遮蔽」)、`AcousticVolume` など該当 component が返る
 - [ ] 実クライアントから `verify_job` を 1 本 (例: `demo`、ticks 60。Debug と Release の `Editor.exe` をビルド済みで) start し、poll で `state: done` / `result: PASS` になる。この間に全体実行の `replay_verify.bat` を走らせていない
 - [ ] 実端末ウィンドウ (ツールのコンソールではなく) から `claude` を起動して `verify_job` を完走させた前後で、その端末の `chcp` の出力が変わらない (ツールのコンソールでは 65001 のまま不変を確認済み)
-- [ ] 実クライアントから `note_append` (topic 例: `m87-check`) → `note_read` で、追記した本文と UTC の見出しが返る。`git status` に `.mye` が出ない。確認後に `.mye
-otes\m87-check.md` は手で消してよい
+- [ ] 実クライアントから `note_append` (topic 例: `m87-check`) → `note_read` で、追記した本文と UTC の見出しが返る。`git status` に `.mye` が出ない。確認後に `.mye\notes\m87-check.md` は手で消してよい
 - [ ] 実クライアントから `search` で `kind: ["note"]` を指定すると、追記した topic が `src: "notes"` で返る
 - [ ] `target` を一時的に別名にして Claude Code を起動すると、`mye-engine` だけが失敗扱いになり他の機能は使える (`docs\mcp-server.md` の「未ビルドのとき」)
 

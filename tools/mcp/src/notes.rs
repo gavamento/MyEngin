@@ -15,7 +15,8 @@ pub const TITLE_MAX_CHARS: usize = 120;
 pub const TEXT_MAX_BYTES: usize = 65536;
 pub const LATEST_DEFAULT: i64 = 5;
 pub const LATEST_MAX: i64 = 50;
-// note_read の返却の上限。超えたら古い側を落として truncated: true
+// note_read の返却の上限。超えたら古い側を落として truncated: true。
+// 生のバイトではなく JSON 文字列に直した後の長さで数える (`\` や `"` の多い本文は 2 倍近くに膨らむため)
 pub const READ_MAX_BYTES: usize = 64 * 1024;
 
 const DIR_PARENT: &str = ".mye";
@@ -280,12 +281,31 @@ fn parse_entries(content: &str) -> Vec<Entry> {
     entries
 }
 
-fn truncate_at(s: &str, max_bytes: usize) -> &str {
-    let mut end = max_bytes.min(s.len());
-    while !s.is_char_boundary(end) {
-        end -= 1;
+// JSON 文字列に直したときの 1 文字の長さ (serde_json の既定のエスケープと同じ規則)
+fn json_char_len(c: char) -> usize {
+    match c {
+        '"' | '\\' | '\u{08}' | '\u{0C}' | '\n' | '\r' | '\t' => 2,
+        c if (c as u32) < 0x20 => 6,
+        c => c.len_utf8(),
     }
-    &s[..end]
+}
+
+// JSON 文字列リテラルとしての長さ (前後の引用符を含む)
+fn json_len(s: &str) -> usize {
+    2 + s.chars().map(json_char_len).sum::<usize>()
+}
+
+// JSON 文字列に直した長さが max_json 以下に収まる先頭部分
+fn truncate_json(s: &str, max_json: usize) -> &str {
+    let mut used = 2;
+    for (i, c) in s.char_indices() {
+        let len = json_char_len(c);
+        if used + len > max_json {
+            return &s[..i];
+        }
+        used += len;
+    }
+    s
 }
 
 // notes ディレクトリ直下の通常の .md から (topic, パス) を topic 名順で返す。無ければ空
@@ -345,7 +365,7 @@ pub fn read(base: &Path, topic: Option<&str>, latest: Option<i64>) -> Result<Val
     let mut picked: Vec<Value> = Vec::new();
     let mut truncated = false;
     for e in entries[start..].iter().rev() {
-        let cost = e.heading.len() + e.text.len();
+        let cost = json_len(&e.heading) + json_len(&e.text);
         if cost <= budget {
             budget -= cost;
             picked.push(json!({"heading": e.heading, "text": e.text}));
@@ -353,8 +373,8 @@ pub fn read(base: &Path, topic: Option<&str>, latest: Option<i64>) -> Result<Val
         }
         truncated = true;
         if picked.is_empty() {
-            let keep = budget.saturating_sub(e.heading.len());
-            picked.push(json!({"heading": e.heading, "text": truncate_at(&e.text, keep)}));
+            let keep = budget.saturating_sub(json_len(&e.heading));
+            picked.push(json!({"heading": e.heading, "text": truncate_json(&e.text, keep)}));
         }
         break;
     }
@@ -496,8 +516,36 @@ mod tests {
         let n = r["entries"].as_array().unwrap().len();
         assert!(n >= 1 && n < 4, "{n}");
         assert_eq!(r["entries"][n - 1]["heading"], "1970-01-01T00:00:03Z");
-        let total: usize = r["entries"].as_array().unwrap().iter().map(|e| e["text"].as_str().unwrap().len() + 20).sum();
-        assert!(total <= READ_MAX_BYTES);
+        assert!(entries_json_len(&r) <= READ_MAX_BYTES);
+    }
+
+    fn entries_json_len(r: &Value) -> usize {
+        r["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| json_len(e["heading"].as_str().unwrap()) + json_len(e["text"].as_str().unwrap()))
+            .sum()
+    }
+
+    #[test]
+    fn 上限はエスケープ後の長さで数える() {
+        let base = project();
+        // `"` は JSON で 2 バイトになる。生のバイトで数えると 64 KB に収まって見えてしまう
+        let quotes = "\"".repeat(TEXT_MAX_BYTES);
+        append(&base, "q", None, &quotes, at(0)).unwrap();
+        let r = read(&base, Some("q"), None).unwrap();
+        assert_eq!(r["truncated"], true);
+        assert!(entries_json_len(&r) <= READ_MAX_BYTES);
+        let out = serde_json::to_string(&r["entries"][0]["text"]).unwrap();
+        assert_eq!(out.len(), json_len(r["entries"][0]["text"].as_str().unwrap()));
+    }
+
+    #[test]
+    fn json_len_は_serde_json_と一致する() {
+        for s in ["", "abc", "あ\"\\", "\n\r\t\u{08}\u{0C}", "\u{01}\u{1F}\u{7F}", "😀/<>&'"] {
+            assert_eq!(json_len(s), serde_json::to_string(s).unwrap().len(), "{s:?}");
+        }
     }
 
     #[test]
@@ -508,7 +556,8 @@ mod tests {
         let r = read(&base, Some("huge"), Some(1)).unwrap();
         assert_eq!(r["truncated"], true);
         let e = &r["entries"][0];
-        assert!(e["text"].as_str().unwrap().len() + e["heading"].as_str().unwrap().len() <= READ_MAX_BYTES);
+        assert!(entries_json_len(&r) <= READ_MAX_BYTES);
+        assert!(!e["text"].as_str().unwrap().is_empty());
         append(&base, "huge", Some("t"), &big, at(1)).unwrap();
         let r = read(&base, Some("huge"), Some(2)).unwrap();
         assert_eq!(r["truncated"], true);

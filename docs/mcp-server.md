@@ -14,7 +14,7 @@ cargo build --release --manifest-path tools\mcp\Cargo.toml
 
 出力は `tools\mcp\target\release\mye_mcp.exe` (gitignore)。`cargo` (Rust stable) が要る。
 検索には索引 `cache\engine_index.json` も要る。無ければ `pwsh -NoProfile -File tools\gen_engine_index.ps1`
-(Debug の `Editor.exe` が先にビルドされている必要がある)。索引は自動では作り直さない。
+(Release か Debug の `Editor.exe` が先にビルドされている必要がある。両方あれば Release を使う)。索引は自動では作り直さない。
 ソースより古いと検索結果に `stale: true` が付くので、そのときに作り直す。
 
 ## Claude Code への登録
@@ -65,7 +65,7 @@ claude mcp add --scope local mye-engine -- C:\HAL\MyEngin\tools\mcp\target\relea
 | `search` | `q` (1〜200 文字)、`kind` (配列。省略 = 全部)、`limit` (1〜100、既定 20) | `{stale, total, hits:[{kind, id, score, src, ...}]}`。日本語でも英語でも引ける |
 | `describe` | `id` (search が返した id と完全一致) | `{stale, matches:[...]}`。component のフィールド、言及する spec 見出しと ADR (各 20 件まで + `mentionsTotal`)、関連 golden。未知 id は `isError` で候補 5 件 |
 | `verify_job` | `op` = `start` / `poll`。start は `job` と `ticks` (1〜100000、既定 600)、poll は `jobId` | start: `{jobId, job, ticks, logPath}`。poll: `{state:"running"}` か `{state:"done", exitCode, summary}` |
-| `note_read` | `topic` (省略 = 一覧)、`latest` (1〜50、既定 5。topic が要る) | 一覧: `{topics:[{topic, bytes, lastHeading}]}` (topic 名順)。topic 指定: `{topic, total, truncated, entries:[{heading, text}]}` (古い順。64 KB を超えたら古い側を落として `truncated: true`) |
+| `note_read` | `topic` (省略 = 一覧)、`latest` (1〜50、既定 5。topic が要る) | 一覧: `{topics:[{topic, bytes, lastHeading}]}` (topic 名順)。topic 指定: `{topic, total, truncated, entries:[{heading, text}]}` (古い順。見出しと本文を JSON 文字列に直した長さの合計が 64 KB を超えたら古い側を落として `truncated: true`。応答は同じ内容を `content` の text (JSON をさらに文字列にしたもの) と `structuredContent` の 2 か所に載せるので、応答 1 行は 64 KB の 2〜3 倍になる。`"` だけの 65536 バイトの本文で 196,842 B を実測) |
 | `note_append` | `topic`、`text` (1〜65536 バイト)、`title` (任意、1 行 120 文字以内) | `{path, bytes}` (path はプロジェクトからの相対、bytes は追記後のファイルサイズ) |
 
 `search` の `kind` は `component` / `field` / `cli` / `abi` / `adr` / `spec` / `golden` / `note`。`src` は `engine` か `notes` で、
@@ -87,6 +87,9 @@ claude mcp add --scope local mye-engine -- C:\HAL\MyEngin\tools\mcp\target\relea
 - **走行中のジョブは MCP が終わっても止まらない。** 子の `cmd` は切り離して動いている。Claude Code を閉じても `replay_verify` は最後まで走る。
 - **ジョブ表は MCP のプロセスの中だけにある。** MCP を再起動すると、前の `jobId` は `poll` できない
   (ログは `cache\mcp_logs\` に残るので、直接読む)。
+- **同名ジョブの二重起動を止めるのは、同じ MCP プロセスの中だけ。** MCP を再起動した直後 (前の子がまだ走っている) や、
+  Claude Code のセッションを 2 つ開いて両方から同じ名前のジョブを起動すると、2 本目も通る。2 本は
+  `cache\mcp_logs\<name>.log` と `cache\*.rep` を奪い合って結果が壊れるので、前のジョブが終わったことを確かめてから起動する。
 - **全体実行の `tools\replay_verify.bat` と同時に叩かない。** どちらも `cache\*.rep` を書くので奪い合って割れる。
   `verify_job` を使う間は全体実行を走らせない (逆も同じ)。
 - `rules` は `tools\check_rules.ps1` を回すジョブ。作業ツリーに既知の ERROR が残っている間は FAIL が正しい結果。

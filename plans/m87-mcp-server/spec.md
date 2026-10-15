@@ -129,7 +129,7 @@ AI クライアント (Claude Code ほか) がこのエンジンで作業する�
 
 - 書き先: `--project` 指定時 `<project>\.mye\notes\<topic>.md`、無ければ `<root>\.mye\notes\<topic>.md`。ディレクトリを作るとき同じディレクトリに `.gitignore` (中身 `*`) を置く。
 - `note_append {topic, title?, text}`: 末尾に `\n## <UTC ISO 8601 秒まで、Z 付き> <title>\n\n<text>\n` を追記する (title 省略時は見出しが時刻だけ)。ファイルは追記モードでのみ開く (切り詰め・上書き・削除・改名の手段を持たない)。`text` は 1〜65536 バイト、`title` は 1 行 120 文字以内。返却 `{path, bytes}` (bytes = 追記後のファイルサイズ)。
-- `note_read {topic?, latest?}`: topic 省略 = 一覧 (`[{topic, bytes, lastHeading}]`、topic 名順)。topic 指定 = 最新 `latest` 件 (既定 5、上限 50) の見出しと本文。返却は 64 KB で打ち切り (`truncated: true`)。
+- `note_read {topic?, latest?}`: topic 省略 = 一覧 (`[{topic, bytes, lastHeading}]`、topic 名順)。topic 指定 = 最新 `latest` 件 (既定 5、上限 50) の見出しと本文。返却は見出しと本文を JSON 文字列に直した長さの合計 64 KB で打ち切り (`truncated: true`)。
 - ガード (どれかに当たれば `isError`、ファイルは作らない): topic が `^[A-Za-z0-9_-]{1,64}$` でない / Windows の予約デバイス名 (大小無視) / notes ディレクトリかファイルがシンボリックリンク・ジャンクション / 正規化後の親ディレクトリが notes ディレクトリでない。
 - `search` は notes の topic 名とエントリ見出しも引く (`src: "notes"`、kind `note`)。
 
@@ -231,4 +231,5 @@ AI クライアント (Claude Code ほか) がこのエンジンで作業する�
 - 2026-10-15 (planner): 固定 10 問の計測スクリプトがコミットされていなかったので、sub-04 のやることに「mcp_verify に実索引モードとして入れる (索引が無ければ SKIP、CI には入れない)」を足した
 - 2026-10-15 (sub-03 round 1 の coder の質問): 条件 20 の rules を「PASS」から「check_rules 単体の終了コードと一致」に直した。既知 3 件がある間は原理的に PASS にならないため
 - 2026-10-15 (planner、sub-03 round 1 の判定): 規則 15-d の verify.rs の許可は、spec 4.4 では `create_dir_all` だけだったが、実装はファイル単位で全 API を許している。sub-04 で API 単位に絞る (sub-04 のやること 4)
-- 2026-10-15 (sub-04 round 1): 規則 15-d を「ファイル x 許可 API」の表にした (verify.rs = create_dir_all、notes.rs = create_dir_all + OpenOptions)。sub-03 の verify_job の description にあった `` 混入 (Rust 文字列のエスケープ) を修正した。残るリスク: notes のハードリンクと、検査後にリンクを差し替える TOCTOU は未対応 (7. に追記相当。v1 は許容)
+- 2026-10-15 (sub-04 round 1): 規則 15-d を「ファイル x 許可 API」の表にした (verify.rs = create_dir_all、notes.rs = create_dir_all + OpenOptions)。sub-03 の verify_job の description にあった `\r` 混入 (Rust 文字列のエスケープ) を修正した。残るリスク: notes のハードリンクと、検査後にリンクを差し替える TOCTOU は未対応 (7. に追記相当。v1 は許容)
+- 2026-10-15 (review round 1 の minor 7 件を司会が直接修正): note_read の 64 KB は JSON 文字列に直した長さで数える (生のバイトだと `"` や `\` の多い本文で応答が 6 倍に膨らんだ)。verify_job の同名二重起動の拒否はプロセス内だけのまま v1 は許容し、docs\mcp-server.md の注意に MCP 再起動直後と複数セッションの場合を足した (ロックファイルは入れない)。ほかは文書の誤り・15-d の `File::options()` の抜け・catch_unwind の欠落の修正で、仕様は変えていない

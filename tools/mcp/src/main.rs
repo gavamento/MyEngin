@@ -33,6 +33,20 @@ fn find_root_default() -> Option<PathBuf> {
     std::env::current_dir().ok().and_then(|cwd| find_root_from(&cwd))
 }
 
+// 1 件の要求で panic してもサーバを落とさず、その要求だけ -32603 で返して次へ進む。
+// panic = "unwind" (Cargo.toml) はこの catch_unwind のための設定。panic の内容は既定のフックが stderr に出す
+fn handle_guarded(ctx: &mut handler::Context, request: rpc::Request) -> Option<rpc::Response> {
+    let id = request.id.clone();
+    let method = request.method.clone();
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler::handle(ctx, request))) {
+        Ok(response) => response,
+        Err(_) => {
+            eprintln!("[mye_mcp] panic while handling {method}; the server keeps running");
+            id.map(|id| rpc::Response::error(id, rpc::INTERNAL_ERROR, "Internal error"))
+        }
+    }
+}
+
 fn main() {
     let mut root_arg: Option<PathBuf> = None;
     let mut index_arg: Option<PathBuf> = None;
@@ -86,7 +100,7 @@ fn main() {
             )),
             Ok(text) => match rpc::parse_request(&text) {
                 Err(error_response) => Some(error_response),
-                Ok(request) => handler::handle(&mut ctx, request),
+                Ok(request) => handle_guarded(&mut ctx, request),
             },
         };
         if let Some(r) = response {

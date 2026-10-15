@@ -1047,7 +1047,8 @@ $mcpSpawnPattern = '\bCommand\s*::\s*new\b|\bprocess\s*::\s*Command\b|\.spawn\s*
 function Get-McpWritePattern([string[]]$allowedApis) {
     $names = ($mcpFsWriteNames | Where-Object { $allowedApis -notcontains $_ }) -join '|'
     $pattern = "\bfs\s*::\s*($names)\b|\buse\s+std::fs::($names)\b|\buse\s+std::fs::\{[^}]*\b($names)\b|\bFile\s*::\s*(create|create_new)\b"
-    if ($allowedApis -notcontains 'OpenOptions') { $pattern += '|\bOpenOptions\b' }
+    # File::options() は OpenOptions を返すだけの別名なので、同じ許可で扱う
+    if ($allowedApis -notcontains 'OpenOptions') { $pattern += '|\bOpenOptions\b|\bFile\s*::\s*options\b' }
     return $pattern
 }
 if (Test-Path -LiteralPath $mcpSrcDir) {

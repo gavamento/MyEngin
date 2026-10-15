@@ -63,4 +63,4 @@ SELF_EVAL: sub-01 (round 1) — 本文は司会への返信と同じ。要点:
 
 ## フィードバック履歴
 - round 1: VERDICT REWORK (planner)。must 1 件: 新規 5 ファイル (EngineIndexDump.h/.cpp、EngineIndexDumpSelfTest.h/.cpp、gen_engine_index.ps1) の作業ツリーが CRLF。.gitattributes は `* text=auto eol=lf` なので、コミット後に check_rules 規則 14-c が 5 件の ERROR を出す (今は未追跡なので見えていない)。LF に直し、`git add -N` 等で追跡に載せた状態で check_rules を確かめること。他の条件 1〜7 は planner が再実行して確認済み (check_rules 既知 3 件のみ、-CheckOnly exit 0、Release の dump の SHA256 が SELF_EVAL と一致)。15-b の厳密な許可リストは承認
-- round 2: VERDICT OK (planner)。訂正: round 1 の must (CRLF) は planner の測り違いだった。Git Bash の `grep -c $''` が全行を数えていた。バイト単位で数え直すと 5 本とも CR は 0 で、round 1 の時点から LF だった。round 2 の `git add -N` + check_rules で、既知 3 件以外に ERROR が無いことを確認した。コミット件名: "M87a: エンジン索引のダンプ (--dump-index) と gen_engine_index.ps1、規則 15 を追加する"
+- round 2: VERDICT OK (planner)。訂正: round 1 の must (CRLF) は planner の測り違いだった。Git Bash の `grep -c $'\r'` が全行を数えていた。バイト単位で数え直すと 5 本とも CR は 0 で、round 1 の時点から LF だった。round 2 の `git add -N` + check_rules で、既知 3 件以外に ERROR が無いことを確認した。コミット件名: "M87a: エンジン索引のダンプ (--dump-index) と gen_engine_index.ps1、規則 15 を追加する"
