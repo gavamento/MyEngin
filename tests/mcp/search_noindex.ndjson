@@ -1,0 +1,4 @@
+# 索引が無い -> isError で再生成の手順を返す (describe も同じ)
+# args --index tests/mcp/fixture/missing.json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"q":"Terrain"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"describe","arguments":{"id":"Terrain"}}}

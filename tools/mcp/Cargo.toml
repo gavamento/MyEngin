@@ -1,0 +1,30 @@
+# mye_mcp — エンジン索引の検索 / 検証ジョブ / メモを AI クライアントへ出す MCP サーバ (M87)。
+#
+# 出力は bin mye_mcp.exe だけ。stdio で JSON-RPC 2.0 (1 行 1 JSON) を話す。
+# 設計の正本: plans\エンジンMCPサーバ.md
+#
+# ★edition は 2021 に固定している (tools\collab と同じ判断)。2024 だと rustc 1.85 未満の
+#   ツールチェーンでビルドが通らない。古い stable でも通る側に倒す。
+# ★panic = "unwind" を明示する。abort にすると 1 件の道具呼び出しの panic でサーバ全体が
+#   落ち、クライアント側には「接続が切れた」としか見えない。
+# ★依存は serde / serde_json だけ。依存が増えるほど「cargo build が通らない同僚」が増える
+#   (rmcp などの MCP SDK を使わない理由もこれ。プロトコルの面は小さいので自前で持つ)。
+[package]
+name = "mye_mcp"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "mye_mcp"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+panic = "unwind"
+
+[profile.dev]
+panic = "unwind"

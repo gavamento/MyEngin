@@ -1,0 +1,18 @@
+# describe: component / field / cli / golden / abi / adr / spec / 同名複数 kind / 未知 -> 候補
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"describe","arguments":{"id":"Rigidbody"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"describe","arguments":{"id":"Terrain"}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"describe","arguments":{"id":"Name"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"describe","arguments":{"id":"Rigidbody.mass"}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"describe","arguments":{"id":"--timetravel-selftest"}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"describe","arguments":{"id":"--deferred"}}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"describe","arguments":{"id":"--terrain-demo"}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"describe","arguments":{"id":"demo_render_deferred"}}}
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"describe","arguments":{"id":"demo_forward"}}}
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"describe","arguments":{"id":"CreateGameObject"}}}
+{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"describe","arguments":{"id":"ADR-017"}}}
+{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"describe","arguments":{"id":"1.4 Scope Boundaries"}}}
+{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"describe","arguments":{"id":"Rigidbod"}}}
+{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"describe","arguments":{"id":"zzzzqqq"}}}
+{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"describe","arguments":{}}}
+{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"describe","arguments":{"id":""}}}
+{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"describe","arguments":{"id":"x","extra":1}}}

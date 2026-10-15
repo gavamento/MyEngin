@@ -3,7 +3,8 @@
 # -SourceRoot: ソース走査型の規則 (1 / 2 / 7 / 8 / 10-a) が見るルートを差し替える。違反を仕込んだ
 #   フィクスチャで「正規表現が実際に当たるか」を確かめるためのもの (規則 1 と 7 は、当たらない
 #   正規表現のまま何か月も 0 件を返し続けていた)。リポジトリ固定パスを読む規則は影響を受けない
-param([string]$SourceRoot = '')
+# -McpSourceDir: 規則 15-c / 15-d が見る tools\mcp\src を差し替える (同じ目的。違反を仕込んだ一時コピー用)
+param([string]$SourceRoot = '', [string]$McpSourceDir = '')
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $srcDirs = @("$repo\src")
@@ -1003,7 +1004,7 @@ foreach ($l in $eolLines) {
 # 15-d  (M87b) tools\mcp\src でファイルを書く API を使ってよいファイルは許可リストだけ
 # 15-e  (M87c) replay_verify.bat の :job_* 集合 == -Jobs 列 == tools\mcp\src\verify.rs のジョブ表
 # 15-f  gen_engine_index.ps1 -CheckOnly が成功する (索引の静的パースが静かに 0 件へ壊れるのを CI で止める)
-# 15-c / 15-d / 15-e は MCP の crate を作るサブで実装する (ここでは予告だけ)
+# 15-e は verify_job を作るサブ (M87c) で実装する (ここでは予告だけ)
 $mcpRoots = @('Engine', 'Runtime', 'GameLogic', 'Shared', 'Server')
 $srcRootFull = (Resolve-Path -LiteralPath $srcDirs[0]).Path.TrimEnd([char]92)
 foreach ($f in (Get-ChildItem -Recurse -File $srcDirs | Where-Object { $_.Extension -in '.cpp', '.h', '.hpp', '.inl' })) {
@@ -1027,6 +1028,25 @@ foreach ($name in 'EngineIndexDump.cpp', 'EngineIndexDump.h') {
         if ($line -match '^\s*#\s*include\s*"([^"]+)"' -and $indexDumpAllowed -notcontains $Matches[1]) {
             Write-Host "ERROR [rule 15-b] ${path}:${lineNo}: $($Matches[1]) is not in the allow list (the index dump must not pull in headers that run the sim)"
             $errors++
+        }
+    }
+}
+# 15-c / 15-d: MCP サーバが外へ手を伸ばす経路 (子プロセス起動・ファイル書き込み) を許可リストのファイルに閉じ込める。
+# 許可リストは、その経路を足すサブがここを編集して広げる (M87c: verify.rs, M87d: notes.rs)。
+# 許可ファイルの外で使うと、読み取り専用のはずの search / describe が副作用を持てるようになる。
+$mcpSrcDir = if ($McpSourceDir -ne '') { $McpSourceDir } else { Join-Path $repo 'tools\mcp\src' }
+$mcpSpawnAllowed = @()
+$mcpWriteAllowed = @()
+$mcpFsWriteNames = 'write|create_dir|create_dir_all|rename|remove_file|remove_dir|remove_dir_all|copy|set_permissions|hard_link|symlink_file|symlink_dir'
+$mcpSpawnPattern = '\bCommand\s*::\s*new\b|\bprocess\s*::\s*Command\b|\.spawn\s*\(|\braw_arg\s*\(|\bCommandExt\b'
+$mcpWritePattern = "\bfs\s*::\s*($mcpFsWriteNames)\b|\buse\s+std::fs::($mcpFsWriteNames)\b|\buse\s+std::fs::\{[^}]*\b($mcpFsWriteNames)\b|\bFile\s*::\s*(create|create_new)\b|\bOpenOptions\b"
+if (Test-Path -LiteralPath $mcpSrcDir) {
+    foreach ($f in (Get-ChildItem -Recurse -File -LiteralPath $mcpSrcDir -Filter '*.rs')) {
+        if ($mcpSpawnAllowed -notcontains $f.Name) {
+            Test-CodeLines $f $mcpSpawnPattern 'rule 15-c' 'starting a child process is only allowed in the files listed in $mcpSpawnAllowed (tools\check_rules.ps1)'
+        }
+        if ($mcpWriteAllowed -notcontains $f.Name) {
+            Test-CodeLines $f $mcpWritePattern 'rule 15-d' 'writing / creating / deleting files is only allowed in the files listed in $mcpWriteAllowed (tools\check_rules.ps1)'
         }
     }
 }

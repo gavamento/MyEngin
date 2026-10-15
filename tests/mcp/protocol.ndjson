@@ -1,0 +1,33 @@
+# JSON-RPC の誤り系と、MCP の legacy / modern の時代判定。道具は呼ばない (索引不要)。
+# --- JSON-RPC 誤り系 ---
+{
+[]
+1
+{"jsonrpc":"2.0","id":1}
+{"jsonrpc":"1.0","id":2,"method":"ping"}
+{"jsonrpc":"2.0","id":null,"method":"ping"}
+{"jsonrpc":"2.0","id":{"a":1},"method":"ping"}
+{"jsonrpc":"2.0","id":3,"method":"no/such/method"}
+{"jsonrpc":"2.0","id":4,"method":"resources/list"}
+# --- 通知 (応答なし) ---
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","method":"no/such/notification"}
+# --- legacy: initialize は 3 版を echo、未知版は 2025-11-25 ---
+{"jsonrpc":"2.0","id":10,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}
+{"jsonrpc":"2.0","id":11,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}
+{"jsonrpc":"2.0","id":12,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}
+{"jsonrpc":"2.0","id":13,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}
+{"jsonrpc":"2.0","id":14,"method":"initialize","params":{}}
+{"jsonrpc":"2.0","id":"s-15","method":"ping"}
+# --- modern: server/discover、_meta 付き、未知版 -32022 ---
+{"jsonrpc":"2.0","id":20,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}
+{"jsonrpc":"2.0","id":21,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}
+{"jsonrpc":"2.0","id":22,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2030-01-01"}}}
+{"jsonrpc":"2.0","id":23,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2025-11-25"}}}
+{"jsonrpc":"2.0","id":24,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":20260728}}}
+{"jsonrpc":"2.0","method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2030-01-01"}}}
+# --- tools/call の形の誤り (-32602) ---
+{"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"no_such_tool","arguments":{}}}
+{"jsonrpc":"2.0","id":31,"method":"tools/call","params":{}}
+{"jsonrpc":"2.0","id":32,"method":"tools/call","params":{"name":"search","arguments":[]}}
+{"jsonrpc":"2.0","id":33,"method":"tools/call"}

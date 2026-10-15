@@ -102,15 +102,15 @@ AI クライアント (Claude Code ほか) がこのエンジンで作業する�
 - JSON-RPC: 解析不能 → `-32700` (id null)、配列 (バッチ) → `-32600`、未知メソッド → `-32601`、引数不正 → `-32602`。通知 (id なし) には応答しない。
 - MCP 時代の判定 (リクエスト単位):
   - legacy: `initialize` の `protocolVersion` が `2025-11-25` / `2025-06-18` / `2025-03-26` ならそれを返し、それ以外なら `2025-11-25` を返す。capabilities は `tools: {}`、`serverInfo` (name `mye-engine`、crate の version)。`notifications/initialized` は無応答。`ping` は `{}`。
-  - modern: `params._meta["io.modelcontextprotocol/protocolVersion"]` があるリクエスト。`2026-07-28` なら処理し、結果に `"resultType": "complete"` を付ける。それ以外の版は `-32022` (`data.supported` / `data.requested`)。`server/discover` は `supportedVersions` (`["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"]`)、`capabilities`、`_meta["io.modelcontextprotocol/serverInfo"]` を返す。
+  - modern: `params._meta["io.modelcontextprotocol/protocolVersion"]` があるリクエスト。`2026-07-28` なら処理し、結果に `"resultType": "complete"` を付ける。list 系 (`tools/list`) の結果には `ttlMs: 3600000` と `cacheScope: "public"` も付ける (Claude Code 2.1.300 はこれが無い tools/list を拒否した。sub-02 で実測。道具表はプロセスの寿命の間は固定なので 1 時間)。legacy の結果には付けない。それ以外の版は `-32022` (`data.supported` / `data.requested`)。`server/discover` は `supportedVersions` (`["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"]`)、`capabilities`、`_meta["io.modelcontextprotocol/serverInfo"]` を返す。
 - `tools/list`: 固定順 (search, describe, verify_job, note_read, note_append。そのサブで未実装の道具は載せない)。各道具に `inputSchema` (`additionalProperties: false`)。
 - `tools/call`: 結果は `content: [{type: "text", text: <JSON 文字列>}]` + `structuredContent` (同じ JSON)。道具の実行エラー (引数の値が不正、索引なし等) は `isError: true` で返す。未知の道具名は `-32602`。
 
 #### 4.1.4 `search` / `describe` (sub-02)
 
 - `search {q, kind?, limit?}`: `q` は 1〜200 文字。`kind` は `component` / `field` / `cli` / `abi` / `adr` / `spec` / `golden` / `note` の部分集合 (省略 = 全部)。`limit` 既定 20、上限 100。
-- スコア: 完全一致 100 > 前方一致 80 > 部分一致 60 > `jp` / `tooltip` / l10n の訳語での一致 40 > 同義語展開での一致 30 (英字は大小無視)。同点は kind の固定順 → id の辞書順 (決定的)。
-- 返却: `{stale, hits: [{kind, id, score, jp?, src, ...種別ごとの短い付帯 (typeId 等)}]}`。`src` は必ず付ける (`engine` / `notes`)。
+- スコア: 完全一致 100 > 前方一致 80 > 部分一致 60 > `jp` / `tooltip` / l10n の訳語での一致 40 > 同義語展開での一致 30 (英字は大小無視)。手書きの訳語表 `tools\mcp\synonyms_extra.tsv` での一致は、l10n の訳語と同じ扱いで 40 にする (30 だと field の jp 一致に埋もれて top-5 に入らなかった。sub-02 で実測)。機械展開は l10n の短いラベル (40 文字以下) の英単語を、名前の語の先頭で引く。同点は kind の固定順 → id の辞書順 (決定的)。
+- 返却: `{stale, total, hits: [{kind, id, score, jp?, src, ...種別ごとの短い付帯 (typeId 等)}]}`。`src` は必ず付ける (`engine` / `notes`)。
 - `stale`: 索引の `sources` のどれかの最終更新時刻が記録値と違えば true (MCP は再生成しない。計画書 §3)。
 - 索引が無い / 読めない → `isError` で「`pwsh -File tools\gen_engine_index.ps1` を実行」と返す。
 - `describe {id}`: 完全一致で 1 件を引く (同名が複数 kind にあれば全部)。component なら fields 全部 + 言及している spec 見出し / ADR。CLI フラグなら層 (engine / showcase / editor)・値の個数・言及している spec 見出し・そのフラグを引数に含む golden。golden なら引数と、引数に出る CLI フラグ。ABI スロットなら番号・引数個数。見つからなければ `isError` + 上位 5 件の候補。 言及 (spec 見出し / ADR) は、`Name` や `Light` のような一般語の component だと多数の節に当たる。そのため 1 種別につき最大 20 件 (spec は行番号順) に絞り、総数を `mentionsTotal` で返す。
@@ -227,3 +227,5 @@ AI クライアント (Claude Code ほか) がこのエンジンで作業する�
 
 - 2026-10-15 (ユーザー): `.mcp.json` をコミットする (planner の裁定「コミットしない」を覆した)。2. の該当行、3. のスコープ、5. の条件 15 / 28 を直し、条件 30 / 31 (相対パスの起点、未ビルド時の見え方) を足した。担当は sub-02 (サーバを作るサブなので、実測できるのはここ)。docs との整合は sub-04 の条件 28 で見る。その他の `[ユーザーに聞ける]` 5 件はすべて裁定どおりと回答があった (ジョブ数 21 も確認済み)
 - 2026-10-15 (sub-01 round 1 の coder の質問): describe の言及を 1 種別 20 件 + `mentionsTotal` に絞ることを 4.1.4 に追記した。一般語の component 名で返却が膨らむため。索引側 (mentions) は全件のまま
+- 2026-10-15 (sub-02 round 1 の coder の SELF_EVAL): 4.1.3 の modern の tools/list に `ttlMs` / `cacheScope` を足した (実クライアントの要求)。4.1.4 の手書き訳語表を 40 点とし、機械展開の規則と search の `total` を明記した。同義語表は M87b の計測で決まった (ユーザー回答「87b で決める」の決着): 機械生成のみでは 5/10、手書き 5 行 (剛体 / 経路 / 霧 / 破壊 / タイムトラベル) で 10/10。実クライアントは Claude Code 2.1.300 で、modern で接続した。探りで落ちると legacy で再接続する作りなので、dual-era の裁定は妥当だった。相対パスの起点はクライアントの cwd (条件 30 の実測)
+- 2026-10-15 (planner): 固定 10 問の計測スクリプトがコミットされていなかったので、sub-04 のやることに「mcp_verify に実索引モードとして入れる (索引が無ければ SKIP、CI には入れない)」を足した

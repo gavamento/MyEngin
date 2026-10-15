@@ -1,0 +1,3 @@
+# schema が違う索引は読めない旨を isError で返す
+# args --index tests/mcp/fixture/engine_index_schema2.json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"q":"Terrain"}}}

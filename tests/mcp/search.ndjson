@@ -1,0 +1,38 @@
+# search: フィクスチャ索引 (stale: .gitattributes の時刻が違う)。
+# --- 完全一致 / 前方 / 部分 / 大小無視 / 記号無視 ---
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"q":"Terrain"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"q":"Rigid","kind":["component"]}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search","arguments":{"q":"body","kind":["component"]}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"search","arguments":{"q":"TERRAIN","kind":["component"]}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"search","arguments":{"q":"time travel","kind":["cli"]}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"search","arguments":{"q":"frames"}}}
+# --- jp (フィールドの訳語) / l10n の訳語 / 同義語 / 手書き訳語表 / 助詞つき ---
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"search","arguments":{"q":"質量"}}}
+{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"search","arguments":{"q":"ビヘイビアツリー","kind":["component"]}}}
+{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"search","arguments":{"q":"ラグドール"}}}
+{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"search","arguments":{"q":"タイムトラベル"}}}
+{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"search","arguments":{"q":"地形のアセット"}}}
+{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"search","arguments":{"q":"scrollbar","kind":["cli","component"]}}}
+# --- kind 絞り込み (文字列でも配列でも) / limit / total ---
+{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"search","arguments":{"q":"demo","kind":["golden"]}}}
+{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"search","arguments":{"q":"demo","kind":"cli","limit":2}}}
+{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"search","arguments":{"q":"demo","kind":["abi","adr","spec"]}}}
+{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"search","arguments":{"q":"log","kind":["abi"],"limit":1}}}
+# --- 同点の並び (kind の固定順 → id の辞書順) ---
+{"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"search","arguments":{"q":"d","kind":["component","cli","golden"],"limit":50}}}
+# --- 該当なし ---
+{"jsonrpc":"2.0","id":40,"method":"tools/call","params":{"name":"search","arguments":{"q":"zzzzqqq"}}}
+# --- 引数の誤り (isError) ---
+{"jsonrpc":"2.0","id":50,"method":"tools/call","params":{"name":"search","arguments":{}}}
+{"jsonrpc":"2.0","id":51,"method":"tools/call","params":{"name":"search","arguments":{"q":""}}}
+{"jsonrpc":"2.0","id":52,"method":"tools/call","params":{"name":"search","arguments":{"q":"   "}}}
+{"jsonrpc":"2.0","id":53,"method":"tools/call","params":{"name":"search","arguments":{"q":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+{"jsonrpc":"2.0","id":54,"method":"tools/call","params":{"name":"search","arguments":{"q":"x","kind":["nope"]}}}
+{"jsonrpc":"2.0","id":55,"method":"tools/call","params":{"name":"search","arguments":{"q":"x","limit":0}}}
+{"jsonrpc":"2.0","id":56,"method":"tools/call","params":{"name":"search","arguments":{"q":"x","limit":101}}}
+{"jsonrpc":"2.0","id":57,"method":"tools/call","params":{"name":"search","arguments":{"q":"x","limit":"5"}}}
+{"jsonrpc":"2.0","id":58,"method":"tools/call","params":{"name":"search","arguments":{"q":"x","extra":1}}}
+{"jsonrpc":"2.0","id":59,"method":"tools/call","params":{"name":"search","arguments":{"q":5}}}
+{"jsonrpc":"2.0","id":60,"method":"tools/call","params":{"name":"search","arguments":{"q":"x","kind":[1]}}}
+# --- modern でも同じ結果 (resultType 付き) ---
+{"jsonrpc":"2.0","id":70,"method":"tools/call","params":{"name":"search","arguments":{"q":"mass"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}

@@ -1,0 +1,3 @@
+# sources が空の索引は stale: false (時刻に依存しない fresh 側の確認)
+# args --index tests/mcp/fixture/engine_index_fresh.json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"q":"Terrain"}}}

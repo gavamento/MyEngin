@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mye-engine": {
+      "command": "tools/mcp/target/release/mye_mcp.exe",
+      "args": []
+    }
+  }
+}

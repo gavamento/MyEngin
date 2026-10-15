@@ -1,0 +1,24 @@
+{"error":{"code":-32700,"message":"Parse error"},"id":null,"jsonrpc":"2.0"}
+{"error":{"code":-32600,"message":"Batch requests are not supported"},"id":null,"jsonrpc":"2.0"}
+{"error":{"code":-32600,"message":"Request must be an object"},"id":null,"jsonrpc":"2.0"}
+{"error":{"code":-32600,"message":"method must be a string"},"id":1,"jsonrpc":"2.0"}
+{"error":{"code":-32600,"message":"jsonrpc must be \"2.0\""},"id":2,"jsonrpc":"2.0"}
+{"error":{"code":-32600,"message":"id must be a string or a number"},"id":null,"jsonrpc":"2.0"}
+{"error":{"code":-32600,"message":"id must be a string or a number"},"id":null,"jsonrpc":"2.0"}
+{"error":{"code":-32601,"message":"Method not found: no/such/method"},"id":3,"jsonrpc":"2.0"}
+{"error":{"code":-32601,"message":"Method not found: resources/list"},"id":4,"jsonrpc":"2.0"}
+{"id":10,"jsonrpc":"2.0","result":{"capabilities":{"tools":{}},"protocolVersion":"2025-11-25","serverInfo":{"name":"mye-engine","version":"0.1.0"}}}
+{"id":11,"jsonrpc":"2.0","result":{"capabilities":{"tools":{}},"protocolVersion":"2025-06-18","serverInfo":{"name":"mye-engine","version":"0.1.0"}}}
+{"id":12,"jsonrpc":"2.0","result":{"capabilities":{"tools":{}},"protocolVersion":"2025-03-26","serverInfo":{"name":"mye-engine","version":"0.1.0"}}}
+{"id":13,"jsonrpc":"2.0","result":{"capabilities":{"tools":{}},"protocolVersion":"2025-11-25","serverInfo":{"name":"mye-engine","version":"0.1.0"}}}
+{"error":{"code":-32602,"message":"params.protocolVersion must be a string"},"id":14,"jsonrpc":"2.0"}
+{"id":"s-15","jsonrpc":"2.0","result":{}}
+{"id":20,"jsonrpc":"2.0","result":{"_meta":{"io.modelcontextprotocol/serverInfo":{"name":"mye-engine","version":"0.1.0"}},"capabilities":{"tools":{}},"resultType":"complete","supportedVersions":["2026-07-28","2025-11-25","2025-06-18","2025-03-26"]}}
+{"id":21,"jsonrpc":"2.0","result":{"resultType":"complete"}}
+{"error":{"code":-32022,"data":{"requested":"2030-01-01","supported":["2026-07-28","2025-11-25","2025-06-18","2025-03-26"]},"message":"Unsupported protocol version"},"id":22,"jsonrpc":"2.0"}
+{"error":{"code":-32022,"data":{"requested":"2025-11-25","supported":["2026-07-28","2025-11-25","2025-06-18","2025-03-26"]},"message":"Unsupported protocol version"},"id":23,"jsonrpc":"2.0"}
+{"error":{"code":-32022,"data":{"requested":20260728,"supported":["2026-07-28","2025-11-25","2025-06-18","2025-03-26"]},"message":"Unsupported protocol version"},"id":24,"jsonrpc":"2.0"}
+{"error":{"code":-32602,"message":"Unknown tool: no_such_tool"},"id":30,"jsonrpc":"2.0"}
+{"error":{"code":-32602,"message":"params.name must be a string"},"id":31,"jsonrpc":"2.0"}
+{"error":{"code":-32602,"message":"params.arguments must be an object"},"id":32,"jsonrpc":"2.0"}
+{"error":{"code":-32602,"message":"params must be an object"},"id":33,"jsonrpc":"2.0"}

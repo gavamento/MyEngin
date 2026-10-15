@@ -1,0 +1,769 @@
+{
+ "schema": 1,
+ "generatedAt": "2000-01-01T00:00:00.0000000Z",
+ "sources": [
+  {
+   "path": ".gitattributes",
+   "mtime": "2000-01-01T00:00:00.0000000Z"
+  },
+  {
+   "path": "no/such/file.txt",
+   "mtime": "2000-01-01T00:00:00.0000000Z"
+  }
+ ],
+ "abi": {
+  "version": 30,
+  "slots": [
+   {
+    "index": 0,
+    "name": "Log",
+    "args": 3
+   },
+   {
+    "index": 1,
+    "name": "KeyDown",
+    "args": 2
+   },
+   {
+    "index": 2,
+    "name": "MouseButton",
+    "args": 2
+   },
+   {
+    "index": 3,
+    "name": "MousePos",
+    "args": 3
+   },
+   {
+    "index": 4,
+    "name": "CreateGameObject",
+    "args": 2
+   },
+   {
+    "index": 5,
+    "name": "DestroyGameObject",
+    "args": 2
+   },
+   {
+    "index": 6,
+    "name": "IsAlive",
+    "args": 2
+   },
+   {
+    "index": 7,
+    "name": "FindByName",
+    "args": 2
+   }
+  ]
+ },
+ "components": [
+  {
+   "name": "Name",
+   "typeId": 0,
+   "size": 64,
+   "align": 1,
+   "flags": [],
+   "fields": [
+    {
+     "name": "value",
+     "type": "String64",
+     "offset": 0,
+     "flags": [],
+     "jp": "値"
+    }
+   ]
+  },
+  {
+   "name": "Rigidbody",
+   "typeId": 15,
+   "size": 72,
+   "align": 4,
+   "flags": [],
+   "fields": [
+    {
+     "name": "velocity",
+     "type": "Float3",
+     "offset": 0,
+     "flags": [],
+     "jp": "速度"
+    },
+    {
+     "name": "mass",
+     "type": "Float",
+     "offset": 12,
+     "flags": [],
+     "jp": "質量"
+    },
+    {
+     "name": "linearDamping",
+     "type": "Float",
+     "offset": 16,
+     "flags": [],
+     "jp": "移動の減衰"
+    },
+    {
+     "name": "restitution",
+     "type": "Float",
+     "offset": 20,
+     "flags": [],
+     "jp": "反発"
+    }
+   ]
+  },
+  {
+   "name": "Terrain",
+   "typeId": 33,
+   "size": 76,
+   "align": 4,
+   "flags": [
+    "noHash"
+   ],
+   "fields": [
+    {
+     "name": "source",
+     "type": "String64",
+     "offset": 0,
+     "flags": [],
+     "jp": "地形アセット",
+     "tooltip": "assets-relative .terrain.json path"
+    },
+    {
+     "name": "chunkTiles",
+     "type": "Int32",
+     "offset": 64,
+     "flags": [],
+     "jp": "チャンクのタイル数",
+     "min": 2,
+     "max": 256
+    },
+    {
+     "name": "lodDistance",
+     "type": "Float",
+     "offset": 68,
+     "flags": [],
+     "jp": "LOD 切替距離",
+     "tooltip": "camera-space depth for LOD 1 (0 = LOD off)"
+    },
+    {
+     "name": "skirtDepth",
+     "type": "Float",
+     "offset": 72,
+     "flags": [],
+     "jp": "スカート深さ",
+     "tooltip": "0 = auto (measured LOD edge gap), <0 = no skirt"
+    }
+   ]
+  },
+  {
+   "name": "Ragdoll",
+   "typeId": 41,
+   "size": 1,
+   "align": 1,
+   "flags": [],
+   "fields": [
+    {
+     "name": "active",
+     "type": "Bool",
+     "offset": 0,
+     "flags": [],
+     "jp": "物理駆動",
+     "tooltip": "on hands the bones to the rigid bodies; off lets the animation drive them and holds the bodies kinematic"
+    }
+   ]
+  },
+  {
+   "name": "BehaviorTree",
+   "typeId": 78,
+   "size": 312,
+   "align": 8,
+   "flags": [],
+   "fields": [
+    {
+     "name": "tree",
+     "type": "AssetRef",
+     "offset": 0,
+     "flags": [],
+     "jp": "ビヘイビアツリー",
+     "tooltip": ".bt.json to run"
+    },
+    {
+     "name": "enabled",
+     "type": "Bool",
+     "offset": 8,
+     "flags": [],
+     "jp": "有効",
+     "tooltip": "off = stop (a running tree is aborted; the blackboard is kept)"
+    },
+    {
+     "name": "drawDebug",
+     "type": "Bool",
+     "offset": 9,
+     "flags": [
+      "noHash"
+     ],
+     "jp": "デバッグ表示"
+    },
+    {
+     "name": "status",
+     "type": "Int32",
+     "offset": 12,
+     "flags": [
+      "readOnly"
+     ],
+     "jp": "状態"
+    },
+    {
+     "name": "activeNodeId",
+     "type": "Int32",
+     "offset": 16,
+     "flags": [
+      "readOnly"
+     ],
+     "jp": "実行中のノード"
+    },
+    {
+     "name": "lastAbortTick",
+     "type": "Int32",
+     "offset": 20,
+     "flags": [
+      "readOnly"
+     ],
+     "jp": "最後の Abort の tick"
+    },
+    {
+     "name": "bbEntityKey0",
+     "type": "String64",
+     "offset": 24,
+     "flags": [],
+     "jp": "Entity キー 0",
+     "tooltip": "blackboard Entity key to fill when the tree starts"
+    },
+    {
+     "name": "bbEntityValue0",
+     "type": "EntityRef",
+     "offset": 280,
+     "flags": [],
+     "jp": "Entity キーの値 0",
+     "tooltip": "the entity written to that key (empty = leave it as it is)"
+    },
+    {
+     "name": "bbEntityKey1",
+     "type": "String64",
+     "offset": 88,
+     "flags": [],
+     "jp": "Entity キー 1",
+     "tooltip": "blackboard Entity key to fill when the tree starts"
+    },
+    {
+     "name": "bbEntityValue1",
+     "type": "EntityRef",
+     "offset": 288,
+     "flags": [],
+     "jp": "Entity キーの値 1",
+     "tooltip": "the entity written to that key (empty = leave it as it is)"
+    },
+    {
+     "name": "bbEntityKey2",
+     "type": "String64",
+     "offset": 152,
+     "flags": [],
+     "jp": "Entity キー 2",
+     "tooltip": "blackboard Entity key to fill when the tree starts"
+    },
+    {
+     "name": "bbEntityValue2",
+     "type": "EntityRef",
+     "offset": 296,
+     "flags": [],
+     "jp": "Entity キーの値 2",
+     "tooltip": "the entity written to that key (empty = leave it as it is)"
+    },
+    {
+     "name": "bbEntityKey3",
+     "type": "String64",
+     "offset": 216,
+     "flags": [],
+     "jp": "Entity キー 3",
+     "tooltip": "blackboard Entity key to fill when the tree starts"
+    },
+    {
+     "name": "bbEntityValue3",
+     "type": "EntityRef",
+     "offset": 304,
+     "flags": [],
+     "jp": "Entity キーの値 3",
+     "tooltip": "the entity written to that key (empty = leave it as it is)"
+    }
+   ]
+  }
+ ],
+ "cliEngine": [
+  {
+   "name": "--frames",
+   "value": "one"
+  },
+  {
+   "name": "--timetravel-selftest",
+   "value": "optional"
+  }
+ ],
+ "cliShowcase": [
+  {
+   "flag": "--rt-demo",
+   "editorOnly": false
+  },
+  {
+   "flag": "--render-demo",
+   "editorOnly": false
+  },
+  {
+   "flag": "--terrain-demo",
+   "editorOnly": false
+  },
+  {
+   "flag": "--acoustic-demo",
+   "editorOnly": false
+  }
+ ],
+ "cliEditor": [
+  {
+   "flag": "--anim-preview"
+  }
+ ],
+ "adr": [
+  {
+   "id": "ADR-016",
+   "file": "docs/adr/ADR-016-restir-reflection.md",
+   "title": "ADR-016: RT 反射の ReSTIR は reconnection 方式、クラスはヒット側 `RtInstance` に置く",
+   "headings": [
+    "決定",
+    "理由",
+    "なぜ reconnection 方式なのか (方向の再利用ではなく)",
+    "なぜクラスは受け側 G-Buffer (RT3.a) ではなくヒット側 `RtInstance` なのか",
+    "なぜ 2 パスなのか (temporal の Dispatch を分けないのか)",
+    "なぜ保存量が wSum ではなく W なのか",
+    "なぜ temporal も厳密な Jacobian なのか (U4、planner の近似案は却下)",
+    "なぜ spatial は reservoir を書き戻さないのか (M67f round 1 の反証)",
+    "なぜ半径を受け側の α に比例させるのか",
+    "なぜタップ回転をフレームで回さないのか",
+    "なぜ spatial の既定が off なのか",
+    "なぜ p̂ = 0 の候補は M を数えないのか",
+    "VNDF pdf は上半球で 1 に積分されない (受け入れ条件の誤りを訂正した話)",
+    "HLSL で `isfinite()` / `isinf()` を使わない",
+    "帰結",
+    "決定論と後方互換",
+    "コストと容量 (実測)",
+    "既知の制限 (v1)",
+    "S5 (パラメータ調整) の結論 — 4 行は規則どおり据え置き、`Hero` の M 上限だけ 8 → 16 (M67h)",
+    "測り方 (デモには 1 行も触っていない)",
+    "軸 A (フリッカー) — mCap を上げるほど単調に良くなる",
+    "軸 B (追従率) — 規則が使った指標と、その健全性",
+    "規則 (R1〜R6) の適用 — どの行も条件を満たさなかった",
+    "★`Hero` を 16 にした帰結 — 出荷構成では Hero / Character / Default が同挙動になる",
+    "1 行の変更が本当に絵へ届いたかの観測 (M67h round 2)",
+    "R5 (`svgfHistory` 8→4) — 規則は発火したが、規則の 2 つのガードが両方とも盲だった",
+    "A9: 「受け側が動く (J ≠ 1) temporal 経路」を GPU で観測した",
+    "未検証のまま残るもの (嘘の「確定」を書かないための一覧)"
+   ]
+  },
+  {
+   "id": "ADR-017",
+   "file": "docs/adr/ADR-017-acoustic-audio.md",
+   "title": "ADR-017: 音響の波面を耳へ出す — リスナー場は「3 本目の Dial」、整形は純関数 1 本、sim 状態はゼロ",
+   "headings": [
+    "決定",
+    "決定 0 (M65 の土台。ここで初めて ADR に残す)",
+    "決定 1〜9 (M68)",
+    "理由",
+    "なぜ場を共通化せず「3 本目の写し」なのか",
+    "なぜ振幅は √エネルギーなのか (逆二乗をそのまま volume に掛けない)",
+    "なぜ `AudioListener` を Watcher の子エンティティに置くのか",
+    "なぜ到来方向は「最後の 1 歩」なのか (平均は却下、U5)",
+    "なぜ一発再生は追従整形しないのか (U6)",
+    "なぜ reverb の override を `ApplyReverbParams()` の 1 箇所で選ぶのか",
+    "なぜ波 → 一発再生の push は tick 側で、drain はフレーム側なのか",
+    "なぜ開放度がこの指標で、アンカーが 0.30 / 0.8 なのか",
+    "なぜ `probeMaxRing` の既定が 96 (= 48 m) なのか",
+    "なぜ `minWaveVolume` の既定が 0.10 なのか",
+    "なぜ決定的撮影モードで生マウスデルタを 0 にするのか (M68c、却下 2 案)",
+    "帰結",
+    "決定論と後方互換",
+    "コスト (実測)",
+    "既知の制限 (v1)"
+   ]
+  },
+  {
+   "id": "ADR-018",
+   "file": "docs/adr/ADR-018-whatif-branches.md",
+   "title": "ADR-018: タイムトラベルの分岐 (What-if リプレイ) — 未来は捨てずに分岐へ、ゴーストは 1 回の再シムで焼く",
+   "headings": [
+    "決定",
+    "決定 1: 未来は捨てない。分岐は「suffix だけを所有する」ツリー",
+    "決定 2: 分岐点のスナップショットはレーン固有。編集後の状態を pinned で撮り直す (欠陥の修正)",
+    "決定 3: 同一分岐は畳む。予算は全レーン合計。切替の途中では上限を適用しない",
+    "決定 4: ゴーストは第 2 の World ではなく、分岐した瞬間の 1 回の再シムで採取する",
+    "決定 5: 入力の上書きは置換チェーンの後ろで OR し、entry に記録させる",
+    "決定 6: 乖離のドリルダウンは既存の `HashWorldDump` + `DiffHashDumps` をインプロセスで撃つ",
+    "版バンプ",
+    "実測 (既定デモ 528 体、527 体が動く)",
+    "検証の口",
+    "踏んだ罠 (プローブが捕まえたもの)",
+    "申し送り"
+   ]
+  },
+  {
+   "id": "ADR-025",
+   "file": "docs/adr/ADR-025-behavior-tree.md",
+   "title": "ADR-025: ビヘイビアツリー (BT + Blackboard) — 実行状態をシステムの表で持つ",
+   "headings": [
+    "背景",
+    "決定 1: 実行状態は BehaviorTreeSystem の表に置き、SimSnapshot に BT 節を足す",
+    "決定 2: 表の形",
+    "決定 3: 実行モデルは UE 方式 (実行中のノードを持ち続ける) + ポーリングの監視",
+    "決定 4: アセットとノード種類の表",
+    "決定 5: ライフサイクル",
+    "決定 6: 性能",
+    "決定 7: 汎用イベントキュー",
+    "決定 8: C++ タスクの状態の扱い、C# タスクは決定論の保証外",
+    "決定 9: SubTree は平らな展開",
+    "決定 10: 巡回ルートと Patrol",
+    "UE との違い",
+    "既知の限界・未検証"
+   ]
+  },
+  {
+   "id": "ADR-029",
+   "file": "docs/adr/ADR-029-render-optimization.md",
+   "title": "ADR-029: 描画の軽量化 — LOD はアセット単位のオプトイン、オクルージョンは 2 フェーズの max-Z、URO と影のカリングは描画側だけ",
+   "headings": [
+    "背景",
+    "決定 1: 計測を先に作り、決定的な数と ms を分ける",
+    "決定 2: メッシュ LOD は「モデルの `.meta` でオプトイン」、頂点は共有して IB の範囲だけ増やす",
+    "2-1. オプトイン",
+    "2-2. 生成 (`MeshLodBuilder`、meshoptimizer v1.3)",
+    "2-3. 持ち方: 共有 VB + IB の範囲",
+    "2-4. クックキャッシュ (`kCookVersion` 6)",
+    "2-5. 選択式 (`MeshLod.h` の純関数)",
+    "2-6. 知っておく限界",
+    "決定 3: GPU オクルージョンは 2 フェーズ、max-Z の HZB を viewKey ごとに持つ",
+    "3-1. 方式",
+    "3-2. 却下した案: 1 フェーズ (前フレームの HZB を再投影)",
+    "3-3. リソース確保の失敗は局所化する",
+    "3-4. 切り替え口と優先順位",
+    "3-5. デバッグ表示",
+    "3-6. カメラカットのフレームの画素差 (z-fight)",
+    "決定 4: 影はカスケードごとにカリングし、スキンは保守的な AABB で落とす",
+    "4-1. 影のキャスター",
+    "4-2. スキンの保守的 AABB",
+    "決定 5: URO (アニメの距離間引き) は描画側だけ",
+    "5-1. 描画側に置いた理由",
+    "5-2. 間引きの表 (`kUroTiers`)",
+    "5-3. 窓の規則と位相",
+    "5-4. ビュー間キャッシュ",
+    "5-5. 描画履歴への依存と `ResetRenderHistory`",
+    "決定 6: 描画側の並列化は「出力スロットを先に確保し、結合は index 順」",
+    "計測: どういうシーンでオクルージョンを OFF にした方が得か",
+    "検証",
+    "残る制約"
+   ]
+  }
+ ],
+ "spec": [
+  {
+   "level": 1,
+   "title": "Custom Game Engine Specification",
+   "line": 1
+  },
+  {
+   "level": 2,
+   "title": "1. Overview",
+   "line": 10
+  },
+  {
+   "level": 3,
+   "title": "1.1 Purpose",
+   "line": 12
+  },
+  {
+   "level": 3,
+   "title": "1.2 Concept",
+   "line": 23
+  },
+  {
+   "level": 3,
+   "title": "1.3 Intended Audience",
+   "line": 31
+  },
+  {
+   "level": 3,
+   "title": "1.4 Scope Boundaries",
+   "line": 36
+  },
+  {
+   "level": 2,
+   "title": "2. Runtime and Build Environment",
+   "line": 53
+  },
+  {
+   "level": 3,
+   "title": "2.1 Build Configurations",
+   "line": 65
+  },
+  {
+   "level": 2,
+   "title": "3. Architecture",
+   "line": 76
+  },
+  {
+   "level": 3,
+   "title": "3.1 Layer Structure",
+   "line": 78
+  },
+  {
+   "level": 3,
+   "title": "3.2 Module and Build Artifact Structure",
+   "line": 101
+  },
+  {
+   "level": 2,
+   "title": "4. Object Model (Hybrid ECS)",
+   "line": 114
+  },
+  {
+   "level": 3,
+   "title": "4.1 Policy",
+   "line": 116
+  },
+  {
+   "level": 3,
+   "title": "4.2 EntityID (Generational Handle)",
+   "line": 127
+  },
+  {
+   "level": 3,
+   "title": "4.3 GameObject API (Excerpt)",
+   "line": 140
+  },
+  {
+   "level": 3,
+   "title": "4.4 Transform Hierarchy",
+   "line": 153
+  },
+  {
+   "level": 3,
+   "title": "4.5 Deferred Structural Changes",
+   "line": 159
+  },
+  {
+   "level": 2,
+   "title": "5. Update Model (Two-Layer Structure)",
+   "line": 168
+  },
+  {
+   "level": 3,
+   "title": "5.1 Policy",
+   "line": 170
+  },
+  {
+   "level": 3,
+   "title": "5.2 Script Component Structure (Designed for Hot Reloading)",
+   "line": 179
+  },
+  {
+   "level": 3,
+   "title": "5.3 Frame and Tick Phases",
+   "line": 226
+  },
+  {
+   "level": 3,
+   "title": "5.4 Simulation parallelism (M90g, ADR-028)",
+   "line": 272
+  },
+  {
+   "level": 2,
+   "title": "6. Renderer Specification",
+   "line": 296
+  },
+  {
+   "level": 3,
+   "title": "6.1 Scope",
+   "line": 298
+  },
+  {
+   "level": 3,
+   "title": "6.2 Feature Scope",
+   "line": 412
+  },
+  {
+   "level": 3,
+   "title": "6.3 DirectX 11 Abstraction",
+   "line": 435
+  },
+  {
+   "level": 3,
+   "title": "6.4 Hybrid Ray Tracing (default off)",
+   "line": 440
+  },
+  {
+   "level": 3,
+   "title": "6.5 Deliberate Non-Goals of the Rendering Roadmap (M54-M58)",
+   "line": 576
+  },
+  {
+   "level": 3,
+   "title": "6.6 Decals (M56a, M56b)",
+   "line": 588
+  },
+  {
+   "level": 3,
+   "title": "6.7 Hierarchical Z-Buffer (M56c)",
+   "line": 637
+  },
+  {
+   "level": 3,
+   "title": "6.5 Deliberate Non-Goals of the Rendering Roadmap (M54-M58)",
+   "line": 576
+  },
+  {
+   "level": 3,
+   "title": "11.3 Automated Verification: Replay Consistency Test",
+   "line": 2786
+  },
+  {
+   "level": 2,
+   "title": "Terrain",
+   "line": 9999
+  }
+ ],
+ "golden": [
+  {
+   "n": 1,
+   "name": "demo_forward",
+   "args": [],
+   "png": true
+  },
+  {
+   "n": 2,
+   "name": "demo_deferred",
+   "args": [
+    "--deferred"
+   ],
+   "png": true
+  },
+  {
+   "n": 7,
+   "name": "demo_render_deferred",
+   "args": [
+    "--render-demo",
+    "--deferred"
+   ],
+   "png": true
+  },
+  {
+   "n": 8,
+   "name": "demo_terrain_deferred",
+   "args": [
+    "--terrain-demo",
+    "--deferred"
+   ],
+   "png": true
+  }
+ ],
+ "l10n": [
+  {
+   "id": "Win_Hierarchy",
+   "en": "Hierarchy###Hierarchy",
+   "ja": "ヒエラルキー###Hierarchy"
+  },
+  {
+   "id": "Create_Ragdoll",
+   "en": "Ragdoll (from Skeleton)",
+   "ja": "ラグドール (スケルトンから)"
+  },
+  {
+   "id": "Create_UIScrollbar",
+   "en": "Scrollbar",
+   "ja": "スクロールバー"
+  },
+  {
+   "id": "Tool_TipTimeTravel",
+   "en": "rewind 30 ticks (time travel)",
+   "ja": "30 tick 巻き戻す (タイムトラベル)"
+  },
+  {
+   "id": "Terrain_AssetType",
+   "en": "Terrain",
+   "ja": "地形"
+  },
+  {
+   "id": "Asset_BehaviorTree",
+   "en": "Behavior Tree",
+   "ja": "ビヘイビアツリー"
+  }
+ ],
+ "mentions": {
+  "components": {
+   "Terrain": {
+    "spec": [
+     576
+    ],
+    "adr": [
+     "ADR-029"
+    ]
+   },
+   "Rigidbody": {
+    "spec": [
+     1,
+     10,
+     12,
+     23,
+     31,
+     36,
+     53,
+     65,
+     76,
+     78,
+     101,
+     114,
+     116,
+     127,
+     140,
+     153,
+     159,
+     168,
+     170,
+     179,
+     226,
+     272,
+     296,
+     298,
+     412
+    ],
+    "adr": [
+     "ADR-018",
+     "ADR-017"
+    ]
+   }
+  },
+  "cli": {
+   "--timetravel-selftest": {
+    "spec": [
+     2786
+    ],
+    "adr": [
+     "ADR-018"
+    ]
+   },
+   "--acoustic-demo": {
+    "spec": [
+     2786
+    ],
+    "adr": [
+     "ADR-016",
+     "ADR-017",
+     "ADR-023"
+    ]
+   }
+  }
+ }
+}

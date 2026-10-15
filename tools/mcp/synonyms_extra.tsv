@@ -1,0 +1,8 @@
+# l10n (LocalizationTable.inl) の en/ja 対から機械生成できなかった語だけを足す訳語表。
+# 書式: 日本語<TAB>英語[,英語...]。英語は名前 (component / フィールド / CLI) への部分一致で引く (小文字)。
+# 追加する前に、固定 10 問と同じ要領で「機械生成だけでは外れる」ことを確かめること。
+剛体	rigidbody
+経路	navmesh
+霧	fog
+破壊	destructible,fracture
+タイムトラベル	timetravel

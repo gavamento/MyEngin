@@ -1,0 +1,98 @@
+{
+ "schema": 1,
+ "generatedAt": "2000-01-01T00:00:00.0000000Z",
+ "sources": [],
+ "abi": {
+  "version": 30,
+  "slots": [
+   {
+    "index": 0,
+    "name": "Log",
+    "args": 3
+   },
+   {
+    "index": 1,
+    "name": "KeyDown",
+    "args": 2
+   }
+  ]
+ },
+ "components": [
+  {
+   "name": "Name",
+   "typeId": 0,
+   "size": 64,
+   "align": 1,
+   "flags": [],
+   "fields": [
+    {
+     "name": "value",
+     "type": "String64",
+     "offset": 0,
+     "flags": [],
+     "jp": "値"
+    }
+   ]
+  },
+  {
+   "name": "Terrain",
+   "typeId": 33,
+   "size": 76,
+   "align": 4,
+   "flags": [
+    "noHash"
+   ],
+   "fields": [
+    {
+     "name": "source",
+     "type": "String64",
+     "offset": 0,
+     "flags": [],
+     "jp": "地形アセット",
+     "tooltip": "assets-relative .terrain.json path"
+    },
+    {
+     "name": "chunkTiles",
+     "type": "Int32",
+     "offset": 64,
+     "flags": [],
+     "jp": "チャンクのタイル数",
+     "min": 2,
+     "max": 256
+    },
+    {
+     "name": "lodDistance",
+     "type": "Float",
+     "offset": 68,
+     "flags": [],
+     "jp": "LOD 切替距離",
+     "tooltip": "camera-space depth for LOD 1 (0 = LOD off)"
+    },
+    {
+     "name": "skirtDepth",
+     "type": "Float",
+     "offset": 72,
+     "flags": [],
+     "jp": "スカート深さ",
+     "tooltip": "0 = auto (measured LOD edge gap), <0 = no skirt"
+    }
+   ]
+  }
+ ],
+ "cliEngine": [
+  {
+   "name": "--frames",
+   "value": "one"
+  }
+ ],
+ "cliShowcase": [],
+ "cliEditor": [],
+ "adr": [],
+ "spec": [],
+ "golden": [],
+ "l10n": [],
+ "mentions": {
+  "components": {},
+  "cli": {}
+ }
+}

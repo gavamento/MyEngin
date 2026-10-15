@@ -13,6 +13,7 @@ spec 4.1.6 / 4.4 (規則 15-d の notes.rs 許可) と文書を仕上げる。
 3. `tests\mcp\` に notes のシナリオとパストラバーサル拒否の固定テスト (spec 条件 24 の列挙を全部)。書き先は一時プロジェクト (`cache\mcp_verify\...`)。時刻は正規化して比較。ジャンクションのケースは mcp_verify の ps1 側で `New-Item -ItemType Junction` で作り、終わったら片付ける。
 4. 規則 15-d の許可に notes.rs を足す。
 5. `.gitignore` に `.mye/`。
+7. 固定 10 問 (spec 条件 12) の計測を `tools\mcp_verify.ps1` の実索引モード (例: `-RealIndex`) として入れる。`cache\engine_index.json` が無ければ SKIP と表示して exit 0 にする。CI には入れない。sub-02 の scratch のスクリプト (未コミット) の代わり。reviewer が再現できるようにするため。
 6. 文書: `docs\mcp-server.md` (ビルド、`.mcp.json` による登録と Claude Code の初回承認、「未ビルドのとき」の節 (sub-02 の実装メモにある条件 31 の実測をそのまま写し、ビルドの 1 行 `cargo build --release --manifest-path tools\mcp\Cargo.toml` を添える)、相対パスの起点の制約 (条件 30 の実測)、`--project` を付けたいときの個人設定の例 (`claude mcp add --scope local ...`)、道具の一覧と引数、notes の住み分け表 (計画書 §6)、全体実行の replay_verify と verify_job を同時に叩かない注意、走行中ジョブは MCP 終了後も止まらない注意)、`docs\adr\ADR-032-engine-mcp-server.md` (短く。正本は計画書へリンク)、計画書 `plans\エンジンMCPサーバ.md` 冒頭の「現在地」と §10 の未決の消込、`docs\test_checklists.md` に手動確認 (実クライアントからの接続・verify_job 1 本・note の往復)。
 
 ## やらないこと (このサブでは)
