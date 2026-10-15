@@ -1,7 +1,7 @@
 # sub-04: notes (note_read / note_append) とパストラバーサル拒否、文書
 
 - 依存: sub-02 (check_rules 規則 15 と handler の道具表を sub-03 と両方が触るので、司会は sub-03 の後に回す)
-- 状態: 未着手
+- 状態: OK (commit de38970)
 - 往復: 0
 
 ## やること

@@ -3,7 +3,7 @@
 - 依頼原文: M87の実装をしたい
   (方針確認への回答) 1.全部ハーネスで 2.すべて 3.87bで決める
 - 開始: 2026-10-15 / 基点コミット: 32d1e1e206dde87d6e21a0d9f10516397bb0b903
-- フェーズ: 実装
+- フェーズ: 完了
 
 ## ユーザー判断
 - 2026-10-15: M87a〜d をすべてハーネスで進める
@@ -14,10 +14,11 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
+| 1 | PASS | 4/4/4/4 | minor 7 件 (review-1.md) |
 | sub-01 | OK | 1 | 54f22f1 | --dump-index / gen_engine_index.ps1 / 規則 15-a/b/f |
 | sub-02 | OK | 0 | 75d3004 | crate 骨格 dual-era / search / describe / mcp_verify / .mcp.json |
 | sub-03 | OK | 0 | bc8f5d4 | verify_job |
-| sub-04 | OK | 0 | | notes / パストラバーサル拒否 / ADR-032 / docs |
+| sub-04 | OK | 0 | de38970 | notes / パストラバーサル拒否 / ADR-032 / docs |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -29,3 +30,14 @@
 - (planner 2026-10-15) verify_job の対象は実ファイルで数え直して **21 個** (依頼の 23 は数え違い)。spec.md 2. に記録
 - (planner 2026-10-15) MCP の最新仕様は 2026-07-28 (initialize 廃止の modern 方式)。dual-era で実装する裁定。sub-02 の条件 15 で実クライアント接続を確かめる
 - (planner 2026-10-15) AskUserQuestion なしで裁定した論点は PLAN_RESULT の未決事項 `[ユーザーに聞ける]` を参照
+- (review round 1 PASS、minor 7 件 = review-1.md) 未対応のまま残す:
+  1. [coder] docs	est_checklists.md:722-723 の `.mye
+otes` が `
+` で改行に化けている
+  2. [coder] 規則 15-d が `File::options()` を見逃す (Get-McpWritePattern に `File\s*::\s*options` を足す)
+  3. [coder] Cargo.toml のコメントは panic で落ちないと読めるが catch_unwind が無い (main.rs で包むかコメントを直す)
+  4. [coder/planner] note_read の 64 KB 上限が生バイトで、応答は JSON エスケープ + 2 重載せで大きく超える
+  5. [coder] docs\mcp-server.md の「Debug の Editor.exe が要る」は誤り (Release 優先、無ければ Debug)
+  6. [planner] verify_job の重複拒否はプロセス内だけ。MCP 再起動直後・複数セッションの同名ジョブが通る (docs に追記するかロック)
+  7. [planner] spec.md:234 に生の CR が混入
+- 未検証 (test_checklists の M87 節で手動確認): 実クライアントからの note_* / verify_job、legacy での実クライアント接続、`claude mcp add --scope local` と project スコープの優先順位、実端末ウィンドウでの chcp 不変
