@@ -96,4 +96,13 @@ std::wstring ShowcaseScenePath(const ShowcaseDef& showcase, const std::wstring& 
     return showcase.inAssets ? assetsRoot + L"\\" + showcase.scenePath : std::wstring(showcase.scenePath);
 }
 
+std::vector<const ShowcaseDef*> ListShowcases()
+{
+    std::vector<const ShowcaseDef*> out;
+    for (const ShowcaseDef& s : kShowcases) {
+        out.push_back(&s);
+    }
+    return out;
+}
+
 } // namespace mye

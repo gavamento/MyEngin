@@ -545,4 +545,20 @@ CliParse ParseEngineCliFlag(int argc, wchar_t** argv, int& i, EngineConfig& conf
     return CliParse::NotMine;
 }
 
+std::vector<EngineCliFlagInfo> ListEngineCliFlags()
+{
+    std::vector<EngineCliFlagInfo> out;
+    for (const CliFlag& flag : kEngineCliFlags) {
+        const char* value = "none";
+        switch (flag.value) {
+        case CliValue::None: value = "none"; break;
+        case CliValue::One: value = "one"; break;
+        case CliValue::Two: value = "two"; break;
+        case CliValue::Optional: value = "optional"; break;
+        }
+        out.push_back({ flag.name, value });
+    }
+    return out;
+}
+
 } // namespace mye

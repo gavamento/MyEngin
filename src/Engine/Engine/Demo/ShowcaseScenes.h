@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 
 namespace mye {
 
@@ -28,5 +29,8 @@ const ShowcaseDef* FindShowcase(const std::wstring& flag, bool editor);
 const ShowcaseDef* PickShowcase(const ShowcaseDef* current, const ShowcaseDef* candidate);
 // 保存先の実パス
 std::wstring ShowcaseScenePath(const ShowcaseDef& showcase, const std::wstring& assetsRoot);
+
+// kShowcases[] を表の順に返す (--dump-index が索引へ書く読み取り専用の列挙)
+std::vector<const ShowcaseDef*> ListShowcases();
 
 } // namespace mye

@@ -994,6 +994,48 @@ foreach ($l in $eolLines) {
     }
 }
 
+# 規則 15: エンジン MCP サーバ (M87)。設計の正本: plans\エンジンMCPサーバ.md
+# 15-a  索引ダンプ (Editor\Tools\EngineIndexDump) を Engine / Runtime / GameLogic / Shared / Server から include しない
+#       (--dump-index は Editor 層の機能。下位層から Editor を引く逆依存を作らない)
+# 15-b  索引ダンプの実装が include してよいヘッダは許可リストだけ。World / EngineLoop / TickRunner など
+#       sim を動かすヘッダを足すと、ダンプが sim の状態に触れうる (許可リスト方式なので足すたびにここで止まる)
+# 15-c  (M87b) tools\mcp\src で子プロセスを起動してよいファイルは許可リストだけ
+# 15-d  (M87b) tools\mcp\src でファイルを書く API を使ってよいファイルは許可リストだけ
+# 15-e  (M87c) replay_verify.bat の :job_* 集合 == -Jobs 列 == tools\mcp\src\verify.rs のジョブ表
+# 15-f  gen_engine_index.ps1 -CheckOnly が成功する (索引の静的パースが静かに 0 件へ壊れるのを CI で止める)
+# 15-c / 15-d / 15-e は MCP の crate を作るサブで実装する (ここでは予告だけ)
+$mcpRoots = @('Engine', 'Runtime', 'GameLogic', 'Shared', 'Server')
+$srcRootFull = (Resolve-Path -LiteralPath $srcDirs[0]).Path.TrimEnd([char]92)
+foreach ($f in (Get-ChildItem -Recurse -File $srcDirs | Where-Object { $_.Extension -in '.cpp', '.h', '.hpp', '.inl' })) {
+    $rel = $f.FullName.Substring($srcRootFull.Length).TrimStart([char]92)
+    $top = ($rel -split '[\\/]')[0]
+    if ($mcpRoots -contains $top) {
+        Test-CodeLines $f '#\s*include\s*"[^"]*EngineIndexDump' 'rule 15-a' 'EngineIndexDump is an Editor-layer feature - do not include it from Engine / Runtime / GameLogic / Shared / Server'
+    }
+}
+$indexDumpAllowed = @(
+    'Editor/Tools/EngineIndexDump.h', 'Engine/Core/Ecs/ComponentRegistry.h', 'Engine/Core/Ecs/Components.h',
+    'Engine/Core/Ecs/Reflection.h', 'Engine/Platform/PathUtil.h', 'Engine/Engine/App/EngineCli.h',
+    'Engine/Engine/Demo/ShowcaseScenes.h'
+)
+foreach ($name in 'EngineIndexDump.cpp', 'EngineIndexDump.h') {
+    $path = Join-Path $srcDirs[0] "Editor\Tools\$name"
+    if (-not (Test-Path -LiteralPath $path)) { continue }
+    $lineNo = 0
+    foreach ($line in [System.IO.File]::ReadLines($path)) {
+        $lineNo++
+        if ($line -match '^\s*#\s*include\s*"([^"]+)"' -and $indexDumpAllowed -notcontains $Matches[1]) {
+            Write-Host "ERROR [rule 15-b] ${path}:${lineNo}: $($Matches[1]) is not in the allow list (the index dump must not pull in headers that run the sim)"
+            $errors++
+        }
+    }
+}
+& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'gen_engine_index.ps1') -CheckOnly | ForEach-Object { if ($_ -like 'ERROR*') { Write-Host $_ } }
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR [rule 15-f] tools\gen_engine_index.ps1 -CheckOnly failed (the static parsers of the engine index are broken)"
+    $errors++
+}
+
 Write-Host "=== result: $errors error(s), $warnings warning(s) ==="
 if ($errors -gt 0) { exit 1 }
 exit 0

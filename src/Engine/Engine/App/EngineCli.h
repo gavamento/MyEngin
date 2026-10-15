@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 
 namespace mye {
 
@@ -29,5 +30,13 @@ int RunWriteContentManifestCli(const std::wstring& projectDir, const std::wstrin
 
 // argv[i] が共通フラグなら、値まで読んで config / extras へ書く (表は EngineCli.cpp の kEngineCliFlags)
 CliParse ParseEngineCliFlag(int argc, wchar_t** argv, int& i, EngineConfig& config, EngineCliExtras& extras);
+
+// 共通フラグ表 1 行の読み取り専用ビュー (--dump-index が索引へ書く。表の中身は変えない)
+struct EngineCliFlagInfo {
+    const wchar_t* name;
+    const char* value; // "none" | "one" | "two" | "optional"
+};
+// kEngineCliFlags[] を表の順に返す
+std::vector<EngineCliFlagInfo> ListEngineCliFlags();
 
 } // namespace mye

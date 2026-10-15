@@ -106,6 +106,8 @@
 #include "Engine/Engine/Navigation/NavSurfaceSelfTest.h"
 #include "Editor/Tools/NavEditorSelfTest.h"
 #include "Editor/Tools/PatrolRouteEditSelfTest.h"
+#include "Editor/Tools/EngineIndexDump.h"         // M87a: --dump-index
+#include "Editor/Tools/EngineIndexDumpSelfTest.h"
 #include "Editor/SelfTest/BehaviorTreeEditorSelfTest.h"
 #include "Editor/SelfTest/AnimatorControllerEditSelfTest.h"
 #include "Engine/Platform/CrashHandler.h"
@@ -203,6 +205,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool modalBake = false;               // --modal-bake (M76e: .dmnet → .msfm のヘッドレス CLI)
     bool fractureBench = false;           // --fracture-bench (M80k: 破壊物理のヘッドレス性能計測)
     std::wstring perfBenchOutput;         // --perf-bench FILE
+    std::wstring dumpIndexPath;           // --dump-index FILE (M87a: エンジン索引を JSON へ書いて終了)
     std::string perfBenchCommit;           // --perf-commit SHA
 
     int argc = 0;
@@ -262,6 +265,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             // と同じ「連鎖の手前」の置き方)。実行は下の早期 return 群と同じ場所で行う
             if (arg == L"--fracture-bench") {
                 fractureBench = true;
+                continue;
+            }
+            if (arg == L"--dump-index" && i + 1 < argc) {
+                dumpIndexPath = argv[++i];
                 continue;
             }
             if (arg == L"--perf-bench" && i + 1 < argc) {
@@ -408,6 +415,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     // 破片数 (16/32/64/128/256) と破壊物の個数 (1/8) の組み合わせを順に測って終了する
     if (fractureBench) {
         return mye::RunFractureBenchmark();
+    }
+    // --dump-index FILE (M87a): ウィンドウも D3D も作らず、組み込み型と CLI 表を JSON へ書いて終了する
+    if (!dumpIndexPath.empty()) {
+        return mye::RunDumpIndexCli(dumpIndexPath);
     }
     if (!perfBenchOutput.empty()) {
         if (perfBenchCommit.size() != 40 || perfBenchCommit.find_first_not_of("0123456789abcdefABCDEF")
@@ -650,6 +661,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunPerceptionSelfTest();                // M83: AI の知覚 (視覚・聴覚・ダメージ・接触・予測)
         ok &= mye::RunBehaviorTreeSelfTest();              // M85: ビヘイビアツリー (アセット・Composite・BT 節)
         ok &= mye::RunPatrolRouteEditSelfTest();           // M85g: 巡回ルートの点の編集と Undo
+        ok &= mye::RunEngineIndexDumpSelfTest();           // M87a: 索引ダンプの件数・決定性
         ok &= mye::RunBehaviorTreeEditorSelfTest();        // M85h: BT 窓のモデル層 (追加・接続・削除・保存)
         ok &= mye::RunAnimatorControllerEditSelfTest();    // M89g: コントローラ窓の骨の駆動の編集
         ok &= mye::RunDeviceLostRescueSelfTest();          // M88a: デバイス消失時の退避保存
