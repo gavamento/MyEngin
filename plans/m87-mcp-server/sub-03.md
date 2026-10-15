@@ -1,7 +1,7 @@
 # sub-03: verify_job (start / poll、ログの構造化)
 
 - 依存: sub-02
-- 状態: 未着手
+- 状態: OK (commit bc8f5d4)
 - 往復: 0
 
 ## やること

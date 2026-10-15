@@ -231,3 +231,4 @@ AI クライアント (Claude Code ほか) がこのエンジンで作業する�
 - 2026-10-15 (planner): 固定 10 問の計測スクリプトがコミットされていなかったので、sub-04 のやることに「mcp_verify に実索引モードとして入れる (索引が無ければ SKIP、CI には入れない)」を足した
 - 2026-10-15 (sub-03 round 1 の coder の質問): 条件 20 の rules を「PASS」から「check_rules 単体の終了コードと一致」に直した。既知 3 件がある間は原理的に PASS にならないため
 - 2026-10-15 (planner、sub-03 round 1 の判定): 規則 15-d の verify.rs の許可は、spec 4.4 では `create_dir_all` だけだったが、実装はファイル単位で全 API を許している。sub-04 で API 単位に絞る (sub-04 のやること 4)
+- 2026-10-15 (sub-04 round 1): 規則 15-d を「ファイル x 許可 API」の表にした (verify.rs = create_dir_all、notes.rs = create_dir_all + OpenOptions)。sub-03 の verify_job の description にあった `` 混入 (Rust 文字列のエスケープ) を修正した。残るリスク: notes のハードリンクと、検査後にリンクを差し替える TOCTOU は未対応 (7. に追記相当。v1 は許容)

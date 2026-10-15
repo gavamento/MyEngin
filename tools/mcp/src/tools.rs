@@ -6,6 +6,7 @@
 
 use crate::handler::Context;
 use crate::index;
+use crate::notes;
 use crate::rpc::{RpcError, INVALID_PARAMS};
 use crate::search::{self, Described, KINDS};
 use crate::verify;
@@ -27,7 +28,7 @@ impl ToolError {
     }
 }
 
-// tools/list の中身。固定順。sub-04 で note_* を後ろへ足す。
+// tools/list の中身。固定順。
 pub fn list() -> Value {
     json!([
         {
@@ -63,7 +64,7 @@ pub fn list() -> Value {
         },
         {
             "name": "verify_job",
-            "description": "Run one tools\replay_verify.bat job (prebuilt Debug and Release Editor.exe required; nothing is built) in the background and read its structured result. op=start returns a jobId; op=poll returns running or, when done, exitCode plus a summary (failed stage, first mismatching tick, diagnostic lines; not the whole log). At most 2 jobs run at once and a job name cannot be started twice at the same time.",
+            "description": "Run one tools\\replay_verify.bat job (prebuilt Debug and Release Editor.exe required; nothing is built) in the background and read its structured result. op=start returns a jobId; op=poll returns running or, when done, exitCode plus a summary (failed stage, first mismatching tick, diagnostic lines; not the whole log). At most 2 jobs run at once and a job name cannot be started twice at the same time.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -73,6 +74,32 @@ pub fn list() -> Value {
                     "jobId": {"type": "string", "description": "op=poll: the jobId returned by start."}
                 },
                 "required": ["op"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "note_read",
+            "description": "Read the project's append-only notes (.mye/notes/<topic>.md, gitignored; the engine index is separate). Omit topic to list topics ([{topic, bytes, lastHeading}] in name order). With topic, returns the latest `latest` entries (default 5, max 50) oldest first; output is capped at 64 KB (oldest entries are dropped, truncated: true).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$", "description": "Topic name. Omit to list topics."},
+                    "latest": {"type": "integer", "minimum": 1, "maximum": notes::LATEST_MAX, "default": notes::LATEST_DEFAULT, "description": "Number of newest entries."}
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "note_append",
+            "description": "Append one entry to a topic (created on first use) as `## <UTC time> <title>` followed by the text. Append-only: entries cannot be edited, overwritten or deleted. Returns the relative path and the file size after the append. Use for the current state of work that should survive the session; not for facts that belong in docs or ADRs.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$", "description": "Topic name (letters, digits, _ and -; Windows device names such as con / nul / com1 are refused)."},
+                    "title": {"type": "string", "minLength": 1, "maxLength": notes::TITLE_MAX_CHARS, "description": "Optional one-line heading, 1-120 characters."},
+                    "text": {"type": "string", "minLength": 1, "description": "Entry body, 1-65536 bytes (UTF-8)."}
+                },
+                "required": ["topic", "text"],
                 "additionalProperties": false
             }
         }
@@ -98,6 +125,8 @@ pub fn call(ctx: &mut Context, params: &Value) -> Result<Value, RpcError> {
         "search" => search_tool(ctx, args),
         "describe" => describe_tool(ctx, args),
         "verify_job" => verify_job_tool(ctx, args),
+        "note_read" => note_read_tool(ctx, args),
+        "note_append" => note_append_tool(ctx, args),
         _ => return Err(RpcError::new(INVALID_PARAMS, format!("Unknown tool: {name}"))),
     };
     Ok(match outcome {
@@ -178,7 +207,13 @@ fn search_tool(ctx: &Context, args: &Value) -> Result<Value, ToolError> {
         return Err(ToolError::new(format!("limit must be 1-{LIMIT_MAX} (got {limit})")));
     }
     let (doc, stale) = load_index(ctx)?;
-    let outcome = search::search(&doc, q, &kinds, limit as usize);
+    // notes を引かない絞り込みなら notes には触らない。notes が読めなければ engine だけで答える
+    let wants_notes = kinds.is_empty() || kinds.iter().any(|k| k == "note");
+    let note_headings = match ctx.notes_base() {
+        Ok(base) if wants_notes => notes::headings(base),
+        _ => Vec::new(),
+    };
+    let outcome = search::search(&doc, q, &kinds, limit as usize, &note_headings);
     Ok(json!({"stale": stale, "total": outcome.total, "hits": outcome.hits}))
 }
 
@@ -230,4 +265,34 @@ fn verify_job_tool(ctx: &mut Context, args: &Value) -> Result<Value, ToolError> 
         }
         _ => Err(ToolError::new("op must be \"start\" or \"poll\"")),
     }
+}
+
+fn optional_string<'a>(args: &'a Value, key: &str) -> Result<Option<&'a str>, ToolError> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_str().map(Some).ok_or_else(|| ToolError::new(format!("{key} must be a string"))),
+    }
+}
+
+fn note_read_tool(ctx: &Context, args: &Value) -> Result<Value, ToolError> {
+    reject_unknown(args, &["topic", "latest"])?;
+    let topic = optional_string(args, "topic")?;
+    let latest = match args.get("latest") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_i64().ok_or_else(|| ToolError::new("latest must be an integer"))?),
+    };
+    if topic.is_none() && latest.is_some() {
+        return Err(ToolError::new("latest needs a topic"));
+    }
+    let base = ctx.notes_base().map_err(ToolError::new)?;
+    notes::read(base, topic, latest).map_err(ToolError::new)
+}
+
+fn note_append_tool(ctx: &Context, args: &Value) -> Result<Value, ToolError> {
+    reject_unknown(args, &["topic", "title", "text"])?;
+    let topic = optional_string(args, "topic")?.ok_or_else(|| ToolError::new("topic is required and must be a string"))?;
+    let title = optional_string(args, "title")?;
+    let text = optional_string(args, "text")?.ok_or_else(|| ToolError::new("text is required and must be a string"))?;
+    let base = ctx.notes_base().map_err(ToolError::new)?;
+    notes::append(base, topic, title, text, std::time::SystemTime::now()).map_err(ToolError::new)
 }

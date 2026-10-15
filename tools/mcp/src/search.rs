@@ -4,6 +4,7 @@
 //                                          エンジン索引の検索 (スコア・同義語展開) と describe
 //====================================================================================
 
+use crate::notes::NoteHeading;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 
@@ -51,7 +52,7 @@ fn arr<'a>(doc: &'a Value, key: &str) -> &'a [Value] {
     doc.get(key).and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
 }
 
-fn build_entities(doc: &Value, wanted: &[bool; 8]) -> Vec<Entity> {
+fn build_entities(doc: &Value, notes: &[NoteHeading], wanted: &[bool; 8]) -> Vec<Entity> {
     let mut out = Vec::new();
     let mut push = |kind: usize, id: String, names: Vec<String>, secondary: Vec<String>, extra: Map<String, Value>| {
         if wanted[kind] {
@@ -145,6 +146,20 @@ fn build_entities(doc: &Value, wanted: &[bool; 8]) -> Vec<Entity> {
         extra.insert("args".into(), g["args"].clone());
         extra.insert("png".into(), g["png"].clone());
         push(6, name.clone(), vec![name], vec![], extra);
+    }
+    // notes: topic 名と各エントリの見出し (時刻は名前の一致に使わず、題だけを名前にする)
+    for n in notes {
+        let mut extra = Map::new();
+        extra.insert("topic".into(), json!(n.topic));
+        match &n.heading {
+            None => push(7, n.topic.clone(), vec![n.topic.clone()], vec![], extra),
+            Some(h) => {
+                extra.insert("heading".into(), json!(h));
+                let title = h.split_once(' ').map_or("", |(_, t)| t).to_string();
+                let names = if title.is_empty() { vec![h.clone()] } else { vec![title, h.clone()] };
+                push(7, format!("{}: {h}", n.topic), names, vec![], extra);
+            }
+        }
     }
     out
 }
@@ -414,7 +429,7 @@ pub struct SearchOutcome {
 }
 
 // kinds: 絞り込み (空 = 全部)。名前が KINDS に無ければ呼び出し側が先に弾く。
-pub fn search(doc: &Value, q: &str, kinds: &[String], limit: usize) -> SearchOutcome {
+pub fn search(doc: &Value, q: &str, kinds: &[String], limit: usize, notes: &[NoteHeading]) -> SearchOutcome {
     let mut wanted = [kinds.is_empty(); 8];
     for k in kinds {
         if let Some(i) = KINDS.iter().position(|n| n == k) {
@@ -423,7 +438,7 @@ pub fn search(doc: &Value, q: &str, kinds: &[String], limit: usize) -> SearchOut
     }
     let query = prepare(doc, q);
     let mut scored: Vec<(u32, &Entity)> = Vec::new();
-    let entities = build_entities(doc, &wanted);
+    let entities = build_entities(doc, notes, &wanted);
     for e in &entities {
         let sc = score(e, &query);
         if sc > 0 {
@@ -440,7 +455,7 @@ pub fn search(doc: &Value, q: &str, kinds: &[String], limit: usize) -> SearchOut
             m.insert("kind".into(), json!(KINDS[e.kind]));
             m.insert("id".into(), json!(e.id));
             m.insert("score".into(), json!(sc));
-            m.insert("src".into(), json!("engine"));
+            m.insert("src".into(), json!(if KINDS[e.kind] == "note" { "notes" } else { "engine" }));
             Value::Object(m)
         })
         .collect();
@@ -593,7 +608,7 @@ pub fn describe(doc: &Value, id: &str) -> Described {
     if !found.is_empty() {
         return Described::Found(found);
     }
-    let candidates = search(doc, id, &[], 5)
+    let candidates = search(doc, id, &[], 5, &[])
         .hits
         .into_iter()
         .map(|h| json!({"kind": h["kind"], "id": h["id"]}))
@@ -635,11 +650,11 @@ mod tests {
     #[test]
     fn 完全一致_前方一致_部分一致の順() {
         let d = doc();
-        let r = search(&d, "rigidbody", &["component".to_string()], 10);
+        let r = search(&d, "rigidbody", &["component".to_string()], 10, &[]);
         assert_eq!(ids(&r), ["Rigidbody", "RigidbodyHelper"]);
         assert_eq!(r.hits[0]["score"], SCORE_EXACT);
         assert_eq!(r.hits[1]["score"], SCORE_PREFIX);
-        let r = search(&d, "body", &["component".to_string()], 10);
+        let r = search(&d, "body", &["component".to_string()], 10, &[]);
         assert_eq!(r.hits[0]["score"], SCORE_CONTAINS);
     }
 
@@ -647,7 +662,7 @@ mod tests {
     fn 同点は_kind_の固定順_次に_id() {
         let d = doc();
         // Terrain は component (100) と spec (100) の両方に完全一致する
-        let r = search(&d, "Terrain", &[], 10);
+        let r = search(&d, "Terrain", &[], 10, &[]);
         assert_eq!(r.hits[0]["kind"], "component");
         assert_eq!(r.hits[1]["kind"], "spec");
     }
@@ -656,24 +671,41 @@ mod tests {
     fn jp_と_l10n_と同義語() {
         let d = doc();
         // フィールドの jp (40)
-        let r = search(&d, "質量", &[], 10);
+        let r = search(&d, "質量", &[], 10, &[]);
         assert_eq!(r.hits[0]["id"], "Rigidbody");
         assert_eq!(r.hits[0]["score"], SCORE_TRANSLATION);
         // l10n の訳語 (ja 地形 -> en Terrain が名前と完全一致 = 40)
-        let r = search(&d, "地形", &["component".to_string()], 10);
+        let r = search(&d, "地形", &["component".to_string()], 10, &[]);
         assert_eq!(ids(&r), ["Terrain"]);
         assert_eq!(r.hits[0]["score"], SCORE_TRANSLATION);
         // 同義語展開 (30): ラグドール -> l10n の "Ragdoll (from Skeleton)" の単語 ragdoll
         let mut d2 = doc();
         d2["l10n"].as_array_mut().unwrap().push(json!({"id": "Create_Ragdoll", "en": "Ragdoll (from Skeleton)", "ja": "ラグドール (スケルトンから)"}));
         d2["components"].as_array_mut().unwrap().push(json!({"name": "RagdollBody", "typeId": 50, "size": 4, "align": 4, "flags": [], "fields": []}));
-        let r = search(&d2, "ラグドール", &["component".to_string()], 10);
+        let r = search(&d2, "ラグドール", &["component".to_string()], 10, &[]);
         assert_eq!(ids(&r), ["RagdollBody"]);
         assert_eq!(r.hits[0]["score"], SCORE_SYNONYM);
         // 手書きの訳語表 (40): タイムトラベル -> timetravel が --timetravel-selftest に含まれる
-        let r = search(&d, "タイムトラベル", &[], 10);
+        let r = search(&d, "タイムトラベル", &[], 10, &[]);
         assert_eq!(ids(&r), ["--timetravel-selftest"]);
         assert_eq!(r.hits[0]["score"], SCORE_TRANSLATION);
+    }
+
+    #[test]
+    fn notes_は_src_notes_で返る() {
+        let notes = vec![
+            NoteHeading { topic: "m87-state".into(), heading: None },
+            NoteHeading { topic: "m87-state".into(), heading: Some("2026-10-15T09:30:00Z NavMesh の続き".into()) },
+        ];
+        let r = search(&doc(), "m87", &[], 10, &notes);
+        assert_eq!(ids(&r), ["m87-state"]);
+        assert_eq!(r.hits[0]["src"], "notes");
+        assert_eq!(r.hits[0]["kind"], "note");
+        let r = search(&doc(), "navmesh", &["note".to_string()], 10, &notes);
+        assert_eq!(ids(&r), ["m87-state: 2026-10-15T09:30:00Z NavMesh の続き"]);
+        assert_eq!(r.hits[0]["heading"], "2026-10-15T09:30:00Z NavMesh の続き");
+        let r = search(&doc(), "terrain", &[], 10, &notes);
+        assert!(r.hits.iter().all(|h| h["src"] == "engine"));
     }
 
     #[test]
@@ -695,7 +727,7 @@ mod tests {
     #[test]
     fn 助詞つきの問いは長い連なりだけで引く() {
         let d = doc();
-        let r = search(&d, "音の遮蔽", &[], 10);
+        let r = search(&d, "音の遮蔽", &[], 10, &[]);
         assert_eq!(ids(&r), ["AcousticVolume", "AcousticVolume.blockLayerMask"]);
     }
 

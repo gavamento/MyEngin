@@ -1,0 +1,37 @@
+# notes: note_append / note_read の往復と、search が notes を引くこと。書き先は一時プロジェクト。
+# --- 空の一覧 / 無い topic ---
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"note_read","arguments":{}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"m87-state"}}}
+# --- 追記 (題あり / 題なし / 別 topic)。bytes は追記後のファイルサイズ ---
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"m87-state","title":"first","text":"body 1"}}}
+{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"m87-state","text":"body 2\nsecond line"}}}
+{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"alpha","title":"日本語の題","text":"日本語の本文"}}}
+{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"m87-state","title":"third","text":"body 3"}}}
+# --- 一覧 (topic 名順) / 最新 N 件 ---
+{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"note_read","arguments":{}}}
+{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"m87-state"}}}
+{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"m87-state","latest":1}}}
+{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"m87-state","latest":2}}}
+{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"alpha"}}}
+# --- search が notes を src: notes で返す ---
+{"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"search","arguments":{"q":"m87-state","kind":["note"]}}}
+{"jsonrpc":"2.0","id":31,"method":"tools/call","params":{"name":"search","arguments":{"q":"third"}}}
+{"jsonrpc":"2.0","id":32,"method":"tools/call","params":{"name":"search","arguments":{"q":"日本語の題","kind":["note"]}}}
+{"jsonrpc":"2.0","id":33,"method":"tools/call","params":{"name":"search","arguments":{"q":"third","kind":["component"]}}}
+# --- 引数の誤り (isError) ---
+{"jsonrpc":"2.0","id":40,"method":"tools/call","params":{"name":"note_read","arguments":{"latest":3}}}
+{"jsonrpc":"2.0","id":41,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"m87-state","latest":0}}}
+{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"m87-state","latest":51}}}
+{"jsonrpc":"2.0","id":43,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"m87-state","latest":"2"}}}
+{"jsonrpc":"2.0","id":44,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"m87-state","extra":1}}}
+{"jsonrpc":"2.0","id":45,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"m87-state"}}}
+{"jsonrpc":"2.0","id":46,"method":"tools/call","params":{"name":"note_append","arguments":{"text":"no topic"}}}
+{"jsonrpc":"2.0","id":47,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"m87-state","text":""}}}
+{"jsonrpc":"2.0","id":48,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"m87-state","title":"two\nlines","text":"x"}}}
+{"jsonrpc":"2.0","id":49,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"m87-state","title":"@@REP:t:121@@","text":"x"}}}
+{"jsonrpc":"2.0","id":50,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"m87-state","title":"","text":"x"}}}
+{"jsonrpc":"2.0","id":51,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"m87-state","text":"@@REP:a:65537@@"}}}
+{"jsonrpc":"2.0","id":52,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"m87-state","text":7}}}
+{"jsonrpc":"2.0","id":53,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"m87-state","text":"x","extra":true}}}
+# --- 上限ちょうど (65536 バイト) は通る / 120 文字の題も通る ---
+{"jsonrpc":"2.0","id":60,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"limit","title":"@@REP:t:120@@","text":"@@REP:a:65536@@"}}}

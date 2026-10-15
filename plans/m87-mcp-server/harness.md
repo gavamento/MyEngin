@@ -16,8 +16,8 @@
 |---|---|---|---|---|
 | sub-01 | OK | 1 | 54f22f1 | --dump-index / gen_engine_index.ps1 / 規則 15-a/b/f |
 | sub-02 | OK | 0 | 75d3004 | crate 骨格 dual-era / search / describe / mcp_verify / .mcp.json |
-| sub-03 | OK | 0 | | verify_job |
-| sub-04 | 未着手 | 0 | | notes / パストラバーサル拒否 / ADR-032 / docs |
+| sub-03 | OK | 0 | bc8f5d4 | verify_job |
+| sub-04 | OK | 0 | | notes / パストラバーサル拒否 / ADR-032 / docs |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |

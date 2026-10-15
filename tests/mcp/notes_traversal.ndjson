@@ -1,0 +1,26 @@
+# notes: パストラバーサル / 予約デバイス名 / 不正な topic はすべて isError で、何も作らない。
+# expect-untouched
+# --- note_append ---
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"../x","text":"t"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"..\\x","text":"t"}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"C:\\x","text":"t"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"/x","text":"t"}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"a/b","text":"t"}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"a.md","text":"t"}}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"con","text":"t"}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"NUL","text":"t"}}}
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"Com1","text":"t"}}}
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"","text":"t"}}}
+{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"@@REP:a:65@@","text":"t"}}}
+{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"日本語","text":"t"}}}
+{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"con.md","text":"t"}}}
+{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"LPT9","text":"t"}}}
+{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"prn","text":"t"}}}
+{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"aux","text":"t"}}}
+{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"a\nb","text":"t"}}}
+{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"a:b","text":"t"}}}
+# --- note_read も同じガード ---
+{"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"../x"}}}
+{"jsonrpc":"2.0","id":31,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"C:\\x"}}}
+{"jsonrpc":"2.0","id":32,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"con"}}}
+{"jsonrpc":"2.0","id":33,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"日本語"}}}

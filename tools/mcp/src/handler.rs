@@ -10,7 +10,7 @@ use crate::rpc::{
 use crate::tools;
 use crate::verify::JobTable;
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const SERVER_NAME: &str = "mye-engine";
 pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -33,11 +33,22 @@ pub struct Context {
     pub root: Option<PathBuf>,
     // --index で明示された索引。None なら <root>\cache\engine_index.json
     pub index: Option<PathBuf>,
+    // --project で明示された notes の書き先。None なら root
+    pub project: Option<PathBuf>,
     // verify_job の起動済みジョブ (プロセス内のみ)
     pub jobs: JobTable,
 }
 
 impl Context {
+    // notes の置き場の親 (<project> または <root>)。そこに .mye\notes ができる
+    pub fn notes_base(&self) -> Result<&Path, String> {
+        match (&self.project, &self.root) {
+            (Some(p), _) => Ok(p),
+            (None, Some(r)) => Ok(r),
+            (None, None) => Err("repo root not found (MyEngine.sln); start the server with --root <repo> or --project <dir>".to_string()),
+        }
+    }
+
     // 索引の場所と、エラー文に出す表示名 (絶対パスを避けるため、指定された文字列かルート相対)
     pub fn index_location(&self) -> Result<(PathBuf, String), String> {
         if let Some(p) = &self.index {
@@ -155,7 +166,7 @@ mod tests {
     use crate::rpc::parse_request;
 
     fn run(line: &str) -> Option<Value> {
-        let mut ctx = Context { root: None, index: None, jobs: JobTable::default() };
+        let mut ctx = Context { root: None, index: None, project: None, jobs: JobTable::default() };
         let req = parse_request(line).ok().unwrap();
         handle(&mut ctx, req).map(|r| serde_json::from_str(&r.to_line()).unwrap())
     }

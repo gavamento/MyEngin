@@ -1,0 +1,7 @@
+# notes: .mye ディレクトリ がジャンクションなら書き込みも読み出しも拒否し、行き先に何も作らない。
+# expect-untouched
+# junction .mye
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"t","text":"x"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"note_read","arguments":{}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"t"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"search","arguments":{"q":"Terrain","kind":["component","note"],"limit":1}}}

@@ -1,0 +1,6 @@
+# notes: --project が存在しないディレクトリなら isError で、ディレクトリを作らない。
+# expect-untouched
+# args --index tests\mcp\fixture\engine_index.json --project cache\mcp_verify\no_such_dir
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"ok","text":"t"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"note_read","arguments":{}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search","arguments":{"q":"Terrain","kind":["component"],"limit":1}}}

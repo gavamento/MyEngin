@@ -711,6 +711,19 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] `tools\replay_verify.bat` が PASS し、PASS 行に `compute` と `compute A/B` が含まれる
 - [ ] C# と C++ のバイト一致を JIT 設定を変えて確かめ直す場合は ADR-030 の D24 の手順に従う (`KernelCompat.cs` / `KernelCSharp.cpp` を変えたとき)
 
+## M87: エンジン MCP サーバ (mye_mcp)
+
+使い方は `docs\mcp-server.md`、判断は `docs\adr\ADR-032-engine-mcp-server.md`。JSON-RPC の応答・パストラバーサルの拒否・notes の往復・固定 10 問は `tools\mcp_verify.bat` と `tools\mcp_verify.ps1 -RealIndex` が見る。ここは実クライアントと実端末でしか確かめられない項目。
+
+- [ ] `cargo build --release --manifest-path tools\mcp\Cargo.toml` の後、リポジトリのルートで `claude` を起動して `.mcp.json` の承認をすると、`claude mcp list` で `mye-engine` が接続済みになる
+- [ ] 実クライアントから `search` を呼んで (例: 「音の遮蔽」)、`AcousticVolume` など該当 component が返る
+- [ ] 実クライアントから `verify_job` を 1 本 (例: `demo`、ticks 60。Debug と Release の `Editor.exe` をビルド済みで) start し、poll で `state: done` / `result: PASS` になる。この間に全体実行の `replay_verify.bat` を走らせていない
+- [ ] 実端末ウィンドウ (ツールのコンソールではなく) から `claude` を起動して `verify_job` を完走させた前後で、その端末の `chcp` の出力が変わらない (ツールのコンソールでは 65001 のまま不変を確認済み)
+- [ ] 実クライアントから `note_append` (topic 例: `m87-check`) → `note_read` で、追記した本文と UTC の見出しが返る。`git status` に `.mye` が出ない。確認後に `.mye
+otes\m87-check.md` は手で消してよい
+- [ ] 実クライアントから `search` で `kind: ["note"]` を指定すると、追記した topic が `src: "notes"` で返る
+- [ ] `target` を一時的に別名にして Claude Code を起動すると、`mye-engine` だけが失敗扱いになり他の機能は使える (`docs\mcp-server.md` の「未ビルドのとき」)
+
 ## DeepModalModel: DeepModal 用のプロシージャル形状生成器 (2026-10-11)
 
 対象: `DeepModalModel\` (形状生成 → `Editor.exe --modal-voxelize` → 受理検査 → `dataset.py` 用 list)。手順は `DeepModalModel\README.md`。

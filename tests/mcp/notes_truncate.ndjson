@@ -1,0 +1,11 @@
+# notes の 64 KB 打ち切り: 30000 バイトの 3 件 (a / b / c)。新しい側から詰め、入りきらない古い a を落とす。
+# 出力の同じ文字の長い連なりは <文字>*<回数> に正規化される (切れた位置は回数に出る)。
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"big","title":"a","text":"@@REP:a:30000@@"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"big","title":"b","text":"@@REP:b:30000@@"}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"big","title":"c","text":"@@REP:c:30000@@"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"big","latest":50}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"big","latest":2}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"big","latest":1}}}
+# 1 件が 64 KB を超えるとき (65536 バイト + 見出し): 最新 1 件の本文を切って載せる
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"note_append","arguments":{"topic":"huge","title":"h","text":"@@REP:h:65536@@"}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"note_read","arguments":{"topic":"huge","latest":1}}}

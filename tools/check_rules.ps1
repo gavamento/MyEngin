@@ -1033,22 +1033,30 @@ foreach ($name in 'EngineIndexDump.cpp', 'EngineIndexDump.h') {
 }
 # 15-c / 15-d: MCP サーバが外へ手を伸ばす経路 (子プロセス起動・ファイル書き込み) を許可リストのファイルに閉じ込める。
 # 許可リストは、その経路を足すサブがここを編集して広げる (M87c: verify.rs, M87d: notes.rs)。
-# verify.rs が書くのは cache\mcp_logs の create_dir_all だけ (ログ本体は子の cmd が > で書く)。
+# verify.rs が書くのは cache\mcp_logs の create_dir_all だけ (ログ本体は子の cmd が > で書く)。notes.rs は追記モードの OpenOptions と create_dir_all だけ。
 # 許可ファイルの外で使うと、読み取り専用のはずの search / describe が副作用を持てるようになる。
 $mcpSrcDir = if ($McpSourceDir -ne '') { $McpSourceDir } else { Join-Path $repo 'tools\mcp\src' }
 $mcpSpawnAllowed = @('verify.rs')
-$mcpWriteAllowed = @('verify.rs')
-$mcpFsWriteNames = 'write|create_dir|create_dir_all|rename|remove_file|remove_dir|remove_dir_all|copy|set_permissions|hard_link|symlink_file|symlink_dir'
+$mcpWriteAllowed = @{
+    'verify.rs' = @('create_dir_all')
+    'notes.rs'  = @('create_dir_all', 'OpenOptions')
+}
+$mcpFsWriteNames = @('write', 'create_dir', 'create_dir_all', 'rename', 'remove_file', 'remove_dir', 'remove_dir_all', 'copy', 'set_permissions', 'hard_link', 'symlink_file', 'symlink_dir')
 $mcpSpawnPattern = '\bCommand\s*::\s*new\b|\bprocess\s*::\s*Command\b|\.spawn\s*\(|\braw_arg\s*\(|\bCommandExt\b'
-$mcpWritePattern = "\bfs\s*::\s*($mcpFsWriteNames)\b|\buse\s+std::fs::($mcpFsWriteNames)\b|\buse\s+std::fs::\{[^}]*\b($mcpFsWriteNames)\b|\bFile\s*::\s*(create|create_new)\b|\bOpenOptions\b"
+# ファイルごとに許可された API だけを禁止パターンから外す (許可の単位は「ファイル x API」)
+function Get-McpWritePattern([string[]]$allowedApis) {
+    $names = ($mcpFsWriteNames | Where-Object { $allowedApis -notcontains $_ }) -join '|'
+    $pattern = "\bfs\s*::\s*($names)\b|\buse\s+std::fs::($names)\b|\buse\s+std::fs::\{[^}]*\b($names)\b|\bFile\s*::\s*(create|create_new)\b"
+    if ($allowedApis -notcontains 'OpenOptions') { $pattern += '|\bOpenOptions\b' }
+    return $pattern
+}
 if (Test-Path -LiteralPath $mcpSrcDir) {
     foreach ($f in (Get-ChildItem -Recurse -File -LiteralPath $mcpSrcDir -Filter '*.rs')) {
         if ($mcpSpawnAllowed -notcontains $f.Name) {
             Test-CodeLines $f $mcpSpawnPattern 'rule 15-c' 'starting a child process is only allowed in the files listed in $mcpSpawnAllowed (tools\check_rules.ps1)'
         }
-        if ($mcpWriteAllowed -notcontains $f.Name) {
-            Test-CodeLines $f $mcpWritePattern 'rule 15-d' 'writing / creating / deleting files is only allowed in the files listed in $mcpWriteAllowed (tools\check_rules.ps1)'
-        }
+        $allowedApis = if ($mcpWriteAllowed.ContainsKey($f.Name)) { [string[]]$mcpWriteAllowed[$f.Name] } else { [string[]]@() }
+        Test-CodeLines $f (Get-McpWritePattern $allowedApis) 'rule 15-d' 'this file may not use that file-writing / creating / deleting API; the allowed (file, API) pairs are in $mcpWriteAllowed (tools\check_rules.ps1)'
     }
 }
 # 15-e: verify_job のジョブ表 (verify.rs の JOBS) を replay_verify.bat の :job_* ラベル集合 / -Jobs 列と照合する。

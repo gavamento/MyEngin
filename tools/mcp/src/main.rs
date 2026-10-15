@@ -6,6 +6,7 @@
 
 mod handler;
 mod index;
+mod notes;
 mod rpc;
 mod search;
 mod stdio;
@@ -35,11 +36,12 @@ fn find_root_default() -> Option<PathBuf> {
 fn main() {
     let mut root_arg: Option<PathBuf> = None;
     let mut index_arg: Option<PathBuf> = None;
+    let mut project_arg: Option<PathBuf> = None;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     while i < args.len() {
         let flag = args[i].as_str();
-        if !matches!(flag, "--root" | "--index") {
+        if !matches!(flag, "--root" | "--index" | "--project") {
             eprintln!("mye_mcp: unknown argument: {flag}");
             std::process::exit(2);
         }
@@ -49,8 +51,10 @@ fn main() {
         };
         if flag == "--root" {
             root_arg = Some(PathBuf::from(value));
-        } else {
+        } else if flag == "--index" {
             index_arg = Some(PathBuf::from(value));
+        } else {
+            project_arg = Some(PathBuf::from(value));
         }
         i += 2;
     }
@@ -61,7 +65,7 @@ fn main() {
         Some(r) => eprintln!("[mye_mcp] root={}", r.display()),
         None => eprintln!("[mye_mcp] root not found (MyEngine.sln); tools will report an error"),
     }
-    let mut ctx = handler::Context { root, index: index_arg, jobs: verify::JobTable::default() };
+    let mut ctx = handler::Context { root, index: index_arg, project: project_arg, jobs: verify::JobTable::default() };
 
     let mut input = BufReader::new(std::io::stdin().lock());
     let mut out = std::io::stdout().lock();

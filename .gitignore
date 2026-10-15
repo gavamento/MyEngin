@@ -54,3 +54,6 @@ tools/deepmodal/runs/
 # 置き方は external/eos-sdk/BUILD.md (これだけは版管理する)
 /external/eos-sdk/*
 !/external/eos-sdk/BUILD.md
+
+# MCP サーバ (M87) の notes。追記専用の個人メモで、版管理しない (docs/mcp-server.md)
+.mye/
