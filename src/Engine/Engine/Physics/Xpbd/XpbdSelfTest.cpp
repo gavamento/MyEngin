@@ -5,6 +5,7 @@
 //====================================================================================
 #include "Engine/Engine/Physics/Xpbd/XpbdSelfTest.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <utility>
 #include <vector>
@@ -12,6 +13,10 @@
 #include <cmath>
 
 #include "Engine/Core/Ecs/Components.h"
+#include "Engine/Engine/Physics/Collider/ConvexColliderLibrary.h" // M60'e: 形状ごとの非貫通
+#include "Engine/Engine/Physics/Collider/ConvexHull.h"
+#include "Engine/Engine/Physics/Collider/MeshColliderLibrary.h"
+#include "Engine/Engine/Physics/Collider/TerrainColliderLibrary.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Scene/GameObject.h"
@@ -536,6 +541,361 @@ int AttachChecks()
     return failCount;
 }
 
+// ---- M60'e: 粒子 vs 世界の衝突 (片方向) ----
+// ロープを横倒しで落とす共通セットアップ。rotation はロープのローカル -Y をどちらへ
+// 倒すか (Z 軸 +90° → +X 方向、X 軸 +90° → -Z 方向)。始端ピンは外す (自由落下させる)
+GameObject MakeLyingRope(Scene& scene, float x, float y, float z, float qx, float qy, float qz,
+                         float qw, float length)
+{
+    GameObject go = scene.CreateGameObjectTracked("LyingRope");
+    go.AddComponent<RopeComponent>();
+    World& w = scene.GetWorld();
+    w.ApplyStructuralChanges();
+    auto* rope = w.GetComponent<RopeComponent>(go.Id());
+    rope->segmentCount = 16;
+    rope->length = length;
+    rope->mass = 1.0f;
+    rope->radius = 0.05f;
+    rope->attachStart = false;
+    if (auto* t = w.GetComponent<LocalTransform>(go.Id())) {
+        t->position = { x, y, z };
+        t->rotation = { qx, qy, qz, qw };
+    }
+    return go;
+}
+
+// 静的コライダー (Rigidbody 無し) を 1 個置く。形状ごとの詳細は呼び側が書き足す
+ColliderComponent* MakeStaticCollider(Scene& scene, const char* name, float x, float y, float z,
+                                      int32_t shape, EntityID& outId)
+{
+    GameObject go = scene.CreateGameObjectTracked(name);
+    go.AddComponent<ColliderComponent>();
+    World& w = scene.GetWorld();
+    w.ApplyStructuralChanges();
+    outId = go.Id();
+    if (auto* t = w.GetComponent<LocalTransform>(go.Id())) {
+        t->position = { x, y, z };
+    }
+    auto* col = w.GetComponent<ColliderComponent>(go.Id());
+    col->shape = shape;
+    col->isTrigger = false;
+    return col;
+}
+
+// 粒子の最下点 (y − r の最小値) と最大速さ
+void PoolLowestAndSpeed(const XpbdBackend::Pool& p, float radius, float& lowest, float& maxSpeed)
+{
+    lowest = 1e30f;
+    maxSpeed = 0.0f;
+    for (size_t i = 0; i < p.px.size(); ++i) {
+        lowest = std::min(lowest, p.py[i] - radius);
+        const float s = std::sqrt(p.vx[i] * p.vx[i] + p.vy[i] * p.vy[i] + p.vz[i] * p.vz[i]);
+        maxSpeed = std::max(maxSpeed, s);
+    }
+}
+
+float PoolMeanX(const XpbdBackend::Pool& p)
+{
+    float sum = 0.0f;
+    for (const float x : p.px) {
+        sum += x;
+    }
+    return sum / static_cast<float>(p.px.size());
+}
+
+int ContactChecks()
+{
+    int failCount = 0;
+    auto check = [&](bool cond, const char* what) {
+        if (cond) {
+            MYE_LOG_INFO("  PASS: %s", what);
+        } else {
+            MYE_LOG_ERROR("  FAIL: %s", what);
+            ++failCount;
+        }
+    };
+    constexpr float kDt = 1.0f / 60.0f;
+    constexpr float kRadius = 0.05f;
+    // 接触は平面へ厳密に射影するので、残る貫通は反復の後の摩擦補正ぶんだけ (≒ 0)
+    constexpr float kSlop = 0.002f;
+    // Z 軸まわり +90° (ロープを +X へ寝かせる)
+    constexpr float kS45 = 0.70710678f;
+
+    // 1) 箱の床に落としたロープが貫通せずに静止する
+    {
+        Scene scene;
+        World& w = scene.GetWorld();
+        EntityID floorId;
+        auto* col = MakeStaticCollider(scene, "Floor", 0.0f, -0.5f, 0.0f, 1, floorId);
+        col->halfExtents = { 5.0f, 0.5f, 5.0f };
+        MakeLyingRope(scene, -1.0f, 0.5f, 0.0f, 0.0f, 0.0f, kS45, kS45, 2.0f);
+        XpbdBackend backend;
+        PhysicsSystem phys;
+        for (int i = 0; i < 300; ++i) {
+            phys.Update(w, kDt, nullptr, &backend);
+        }
+        float lowest, maxSpeed;
+        PoolLowestAndSpeed(backend.Pools()[0], kRadius, lowest, maxSpeed);
+        float highest = -1e30f;
+        for (const float y : backend.Pools()[0].py) {
+            highest = std::max(highest, y - kRadius);
+        }
+        MYE_LOG_INFO("  [xpbd] rope on box floor: lowest %.6f highest %.6f maxSpeed %.6f",
+                     static_cast<double>(lowest), static_cast<double>(highest),
+                     static_cast<double>(maxSpeed));
+        check(lowest > -kSlop, "a rope dropped on a box floor does not sink into it");
+        check(highest < 0.01f && maxSpeed < 0.01f, "and comes to rest lying on the surface");
+    }
+
+    // 2) 斜面 30°: μ < tan30° は滑り落ち、μ > tan30° は留まる (クーロン摩擦の閾値)
+    //    箱を Z 軸まわり +30° 傾けると上面の法線は (−0.5, 0.866, 0) = +X 側が高く、下り方向は −X。
+    //    ロープは Z 方向 (X 軸 +90°) に寝かせ、x=0 の斜面の真上から置く
+    auto slide = [&](float mu) {
+        Scene scene;
+        World& w = scene.GetWorld();
+        GameObject env = scene.CreateGameObjectTracked("Env");
+        env.AddComponent<PhysicsEnvironmentComponent>();
+        EntityID slopeId;
+        auto* col = MakeStaticCollider(scene, "Slope", 0.0f, 0.0f, 0.0f, 1, slopeId);
+        col->halfExtents = { 5.0f, 0.5f, 5.0f };
+        col->friction = mu;
+        if (auto* t = w.GetComponent<LocalTransform>(slopeId)) {
+            t->rotation = { 0.0f, 0.0f, 0.25881905f, 0.96592583f }; // Z 軸 +30°
+        }
+        // 上面は (−0.25, 0.433, 0) を通る → x=0 での高さ 0.5774。半径 + 1cm 上から置く
+        MakeLyingRope(scene, 0.0f, 0.5774f + kRadius + 0.01f, 1.0f, kS45, 0.0f, 0.0f, kS45, 2.0f);
+        XpbdBackend backend;
+        PhysicsSystem phys;
+        phys.Update(w, kDt, nullptr, &backend);
+        const float x0 = PoolMeanX(backend.Pools()[0]);
+        for (int i = 0; i < 60; ++i) {
+            phys.Update(w, kDt, nullptr, &backend);
+        }
+        return PoolMeanX(backend.Pools()[0]) - x0;
+    };
+    {
+        const float slipLow = slide(0.2f);
+        const float slipHigh = slide(1.0f);
+        // μ=0.2: a = g(sin30° − μ cos30°) ≈ 3.2 m/s² → 1 s で −X へ ~1.6 m (着地と静定のぶん少し短い)
+        MYE_LOG_INFO("  [xpbd] slope 30deg: slip mu=0.2 %.4f / mu=1.0 %.6f",
+                     static_cast<double>(slipLow), static_cast<double>(slipHigh));
+        check(slipLow < -1.0f && slipLow > -2.0f,
+              "a low-friction rope slides down a 30 degree slope at about g(sin - mu cos)");
+        check(std::fabs(slipHigh) < 0.01f, "a high-friction rope stays put on the same slope");
+    }
+
+    // 3) 形状ごとの非貫通: 球 / カプセル / メッシュ / 地形 / 凸包
+    //    「表面からの距離 ≥ r − slop」を形状ごとの式で測る
+    auto dropOn = [&](Scene& scene, float x, float y, float z, float length) {
+        MakeLyingRope(scene, x, y, z, 0.0f, 0.0f, kS45, kS45, length);
+        XpbdBackend backend;
+        PhysicsSystem phys;
+        for (int i = 0; i < 240; ++i) {
+            phys.Update(scene.GetWorld(), kDt, nullptr, &backend);
+        }
+        return backend.Pools()[0];
+    };
+    {
+        // 球 (r=2, 原点): ロープを頂上へ掛ける
+        Scene scene;
+        EntityID id;
+        auto* col = MakeStaticCollider(scene, "Ball", 0.0f, 0.0f, 0.0f, 0, id);
+        col->radius = 2.0f;
+        const XpbdBackend::Pool p = dropOn(scene, -1.5f, 2.0f + kRadius + 0.2f, 0.0f, 3.0f);
+        float minGap = 1e30f;
+        for (size_t i = 0; i < p.px.size(); ++i) {
+            const float d = std::sqrt(p.px[i] * p.px[i] + p.py[i] * p.py[i] + p.pz[i] * p.pz[i]);
+            minGap = std::min(minGap, d - 2.0f - kRadius);
+        }
+        MYE_LOG_INFO("  [xpbd] rope over sphere: min gap %.6f", static_cast<double>(minGap));
+        check(minGap > -kSlop, "a rope draped over a sphere does not sink into it");
+    }
+    {
+        // カプセル (横倒し: Z 軸 +90° で軸が X、r=0.5、全高 4): 線分からの距離で測る
+        Scene scene;
+        EntityID id;
+        auto* col = MakeStaticCollider(scene, "Bar", 0.0f, 0.0f, 0.0f, 2, id);
+        col->radius = 0.5f;
+        col->height = 4.0f;
+        if (auto* t = scene.GetWorld().GetComponent<LocalTransform>(id)) {
+            t->rotation = { 0.0f, 0.0f, kS45, kS45 };
+        }
+        // バーと直交 (Z 方向) に掛ける
+        MakeLyingRope(scene, 0.0f, 0.5f + kRadius + 0.2f, 1.5f, kS45, 0.0f, 0.0f, kS45, 3.0f);
+        XpbdBackend backend;
+        PhysicsSystem phys;
+        for (int i = 0; i < 240; ++i) {
+            phys.Update(scene.GetWorld(), kDt, nullptr, &backend);
+        }
+        const XpbdBackend::Pool& p = backend.Pools()[0];
+        float minGap = 1e30f;
+        for (size_t i = 0; i < p.px.size(); ++i) {
+            const float cx = std::clamp(p.px[i], -1.5f, 1.5f); // 線分半長 = 2 − 0.5
+            const float dx = p.px[i] - cx;
+            const float d = std::sqrt(dx * dx + p.py[i] * p.py[i] + p.pz[i] * p.pz[i]);
+            minGap = std::min(minGap, d - 0.5f - kRadius);
+        }
+        MYE_LOG_INFO("  [xpbd] rope over capsule: min gap %.6f", static_cast<double>(minGap));
+        check(minGap > -kSlop, "a rope draped over a capsule does not sink into it");
+    }
+    {
+        // メッシュ (y=0 の 10x10 四角形)
+        MeshColliderData quad;
+        BuildMeshColliderData({ { -5, 0, -5 }, { 5, 0, -5 }, { 5, 0, 5 }, { -5, 0, 5 } },
+                              { 0, 1, 2, 0, 2, 3 }, quad);
+        MeshColliderLibrary lib;
+        const AssetID meshId{ 0x58504244ull };
+        lib.Register(meshId, std::move(quad));
+        meshcol::Install(&lib);
+        Scene scene;
+        EntityID id;
+        auto* col = MakeStaticCollider(scene, "MeshFloor", 0.0f, 0.0f, 0.0f, 3, id);
+        col->meshAsset = meshId;
+        float lowest, maxSpeed;
+        PoolLowestAndSpeed(dropOn(scene, -1.0f, 0.5f, 0.0f, 2.0f), kRadius, lowest, maxSpeed);
+        MYE_LOG_INFO("  [xpbd] rope on mesh: lowest %.6f maxSpeed %.6f",
+                     static_cast<double>(lowest), static_cast<double>(maxSpeed));
+        check(lowest > -kSlop && maxSpeed < 0.01f, "a rope rests on a mesh collider (shape=3)");
+        meshcol::Install(nullptr);
+    }
+    {
+        // 地形 (平坦な高さ 2.5m)
+        TerrainColliderLibrary* prevLib = terraincol::Library();
+        TerrainColliderLibrary lib;
+        terraincol::Install(&lib);
+        TerrainAsset::TerrainData d;
+        d.heightW = d.heightH = 9;
+        d.splatW = d.splatH = 1;
+        d.worldSizeX = d.worldSizeZ = 40.0f;
+        d.heightBase = 0.0f;
+        d.heightScale = 10.0f;
+        d.heights.assign(9 * 9, static_cast<uint16_t>(0.25f * 65535.0f + 0.5f));
+        d.splat.assign(4, 0);
+        d.splat[0] = 255;
+        const AssetID tid{ 0x58504245ull };
+        lib.Register(tid, std::move(d));
+        Scene scene;
+        EntityID id;
+        auto* col = MakeStaticCollider(scene, "Terrain", 0.0f, 0.0f, 0.0f, 4, id);
+        col->meshAsset = tid;
+        float lowest, maxSpeed;
+        // 原点近傍 (中心原点でも隅原点でも地形の内側に入る x,z>0 側) に置く
+        PoolLowestAndSpeed(dropOn(scene, 0.5f, 3.0f, 0.5f, 2.0f), kRadius, lowest, maxSpeed);
+        MYE_LOG_INFO("  [xpbd] rope on terrain: lowest %.6f maxSpeed %.6f",
+                     static_cast<double>(lowest), static_cast<double>(maxSpeed));
+        check(lowest > 2.5f - kSlop && maxSpeed < 0.01f,
+              "a rope rests on a heightfield (shape=4)");
+        terraincol::Install(prevLib);
+    }
+    {
+        // 凸包 (10x2x10、上面 y=0)
+        ConvexColliderLibrary lib;
+        ConvexHullData hull;
+        BuildConvexHull({ { -5.0f, -1.0f, -5.0f }, { 5.0f, -1.0f, -5.0f }, { 5.0f, 1.0f, -5.0f },
+                          { -5.0f, 1.0f, -5.0f }, { -5.0f, -1.0f, 5.0f }, { 5.0f, -1.0f, 5.0f },
+                          { 5.0f, 1.0f, 5.0f }, { -5.0f, 1.0f, 5.0f } },
+                        hull);
+        const AssetID hid{ 0x58504246ull };
+        lib.Register(hid, std::move(hull));
+        convexcol::Install(&lib);
+        Scene scene;
+        EntityID id;
+        auto* col = MakeStaticCollider(scene, "HullFloor", 0.0f, -1.0f, 0.0f, 5, id);
+        col->meshAsset = hid;
+        float lowest, maxSpeed;
+        PoolLowestAndSpeed(dropOn(scene, -1.0f, 0.5f, 0.0f, 2.0f), kRadius, lowest, maxSpeed);
+        MYE_LOG_INFO("  [xpbd] rope on convex: lowest %.6f maxSpeed %.6f",
+                     static_cast<double>(lowest), static_cast<double>(maxSpeed));
+        check(lowest > -kSlop && maxSpeed < 0.01f, "a rope rests on a convex hull (shape=5)");
+        convexcol::Install(nullptr);
+    }
+
+    // 4) 除外とレイヤー: 持ち主自身のコライダーは押し出さない / マスクで外した床は素通り
+    {
+        // 持ち主に箱コライダー (半辺 0.5) を付けて始端ピンで吊る。除外が無いと上の
+        // 粒子が箱の外へ押し出されて鎖が曲がる
+        Scene scene;
+        World& w = scene.GetWorld();
+        GameObject go = scene.CreateGameObjectTracked("RopeHolder");
+        go.AddComponent<RopeComponent>();
+        go.AddComponent<ColliderComponent>();
+        w.ApplyStructuralChanges();
+        w.GetComponent<ColliderComponent>(go.Id())->shape = 1;
+        auto* rope = w.GetComponent<RopeComponent>(go.Id());
+        rope->segmentCount = 8;
+        rope->length = 2.0f;
+        if (auto* t = w.GetComponent<LocalTransform>(go.Id())) {
+            t->position = { 0.0f, 10.0f, 0.0f };
+        }
+        XpbdBackend backend;
+        PhysicsSystem phys;
+        for (int i = 0; i < 120; ++i) {
+            phys.Update(w, kDt, nullptr, &backend);
+        }
+        const XpbdBackend::Pool& p = backend.Pools()[0];
+        float maxSide = 0.0f;
+        for (size_t i = 0; i < p.px.size(); ++i) {
+            maxSide = std::max(maxSide, std::max(std::fabs(p.px[i]), std::fabs(p.pz[i])));
+        }
+        check(maxSide < 1e-4f, "the owner's own collider does not push its rope out");
+    }
+    {
+        Scene scene;
+        World& w = scene.GetWorld();
+        EntityID floorId;
+        auto* col = MakeStaticCollider(scene, "GhostFloor", 0.0f, -0.5f, 0.0f, 1, floorId);
+        col->halfExtents = { 5.0f, 0.5f, 5.0f };
+        col->mask = ~1u; // レイヤー 0 (粒子) を相手にしない
+        MakeLyingRope(scene, -1.0f, 0.5f, 0.0f, 0.0f, 0.0f, kS45, kS45, 2.0f);
+        XpbdBackend backend;
+        PhysicsSystem phys;
+        for (int i = 0; i < 60; ++i) {
+            phys.Update(w, kDt, nullptr, &backend);
+        }
+        float lowest, maxSpeed;
+        PoolLowestAndSpeed(backend.Pools()[0], kRadius, lowest, maxSpeed);
+        check(lowest < -2.0f, "a floor whose mask excludes layer 0 lets the rope fall through");
+    }
+
+    // 5) 決定論: 斜面を滑っている最中の snapshot 復元 → 再シムが同じハッシュに着地する
+    {
+        Scene scene;
+        World& w = scene.GetWorld();
+        EntityID slopeId;
+        auto* col = MakeStaticCollider(scene, "Slope", 0.0f, 0.0f, 0.0f, 1, slopeId);
+        col->halfExtents = { 5.0f, 0.5f, 5.0f };
+        col->friction = 0.3f;
+        if (auto* t = w.GetComponent<LocalTransform>(slopeId)) {
+            t->rotation = { 0.0f, 0.0f, 0.25881905f, 0.96592583f };
+        }
+        MakeLyingRope(scene, 0.0f, 0.5774f + kRadius + 0.01f, 1.0f, kS45, 0.0f, 0.0f, kS45, 2.0f);
+        XpbdBackend backend;
+        PhysicsSystem phys;
+        SimSources src;
+        src.xpbd = &backend;
+        SimRefs refs;
+        refs.scene = &scene;
+        refs.xpbd = &backend;
+        for (int i = 0; i < 20; ++i) {
+            phys.Update(w, kDt, nullptr, &backend);
+        }
+        std::vector<std::byte> blob;
+        check(CaptureSimSnapshot(refs, blob), "capture while sliding succeeds");
+        for (int i = 0; i < 30; ++i) {
+            phys.Update(w, kDt, nullptr, &backend);
+        }
+        const uint64_t hashA = HashWorld(w, src);
+        check(RestoreSimSnapshot(refs, blob.data(), blob.size()), "restore while sliding succeeds");
+        for (int i = 0; i < 30; ++i) {
+            phys.Update(w, kDt, nullptr, &backend);
+        }
+        check(HashWorld(w, src) == hashA,
+              "restore + resim lands on the same hash (contacts and friction are stateless)");
+    }
+
+    return failCount;
+}
+
 } // namespace
 
 bool RunXpbdSelfTest()
@@ -663,6 +1023,9 @@ bool RunXpbdSelfTest()
 
     // ---- M60'd: 終端アタッチの検査 ----
     failCount += AttachChecks();
+
+    // ---- M60'e: 粒子 vs 世界の衝突の検査 ----
+    failCount += ContactChecks();
 
     if (failCount == 0) {
         MYE_LOG_INFO("==== Xpbd backend self test: ALL PASS ====");

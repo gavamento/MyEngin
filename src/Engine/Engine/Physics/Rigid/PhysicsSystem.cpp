@@ -2513,6 +2513,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     std::vector<SolidContact> subContacts; // サブステップ 1 回ぶんの接触 (合算前)
     std::vector<ShapeImpulse> subShapeImpulses; // sub-05: 同上の形状単位版 (outShapeImpulses 用)
     std::vector<float> xpbdLambda; // M60'c: XPBD の λ スクラッチ (sim 状態ではない)
+    // M60'e: 粒子 vs 世界の形状と接触平面。どちらもサブステップごとに作り直すスクラッチ
+    std::vector<xpbd::WorldShape> xpbdShapes;
+    std::vector<xpbd::ParticleContact> xpbdContacts;
     // ---- XPBD 終端アタッチの解決と焼き込み (M60'd) ----
     // connectedEntity → bodies の添字を tick 頭に 1 回引く (bodies は index 昇順ソート済 =
     // 関節/車輪の findBodyIndex と同じ二分探索)。**初回解決の tick** に末尾粒子の現在位置を
@@ -4462,13 +4465,40 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         // ★補正は速度へだけ返す (v += Δ/h、ω += Δθ/h)。姿勢へ直接書くと後段の位置積分が
         //   補正済み速度でもう一度動かして二重適用になる (XpbdSolver.h の契約)
         if (xpbd && !xpbd->Pools().empty()) {
+            // ---- 世界の形状を並べる (M60'e、片方向の衝突)。剛体は不動として見る ----
+            // 位置補正の後・位置積分の前の pose = 剛体どうしの接触が解けた姿勢。
+            // 並びは bodies (entity.index 昇順) × forEachShape の順 = 明示キーの固定順。
+            // 粒子はレイヤー 0・全マスク扱い (Collider の既定と同じ) で CanCollide を通す
+            xpbdShapes.clear();
+            for (const Body& b : bodies) {
+                if (!b.solid || !shapes::CanCollide(0, 0xFFFFFFFFu, b.layer, b.mask)) {
+                    continue;
+                }
+                const float muK = SolverCoefficient(b.friction, 100.0f);
+                const float muS = SolverCoefficient(b.frictionS, 100.0f);
+                forEachShape(b, [&](const ShapePose& sp) {
+                    xpbd::WorldShape ws;
+                    ws.pose = sp;
+                    shapes::ComputeAabb(sp, ws.minX, ws.minY, ws.minZ, ws.maxX, ws.maxY, ws.maxZ);
+                    ws.muS = muS;
+                    ws.muK = muK;
+                    ws.entity = b.entity;
+                    xpbdShapes.push_back(ws);
+                });
+            }
             std::vector<XpbdBackend::Pool>& pools = xpbd->PoolsForSnapshot();
             for (size_t k = 0; k < pools.size(); ++k) {
                 const RopeComponent* rope = xpbdParams[k];
                 const float compliance = rope != nullptr ? rope->compliance : 0.0f;
                 const int32_t bi = xpbdAttachBody.empty() ? -1 : xpbdAttachBody[k];
-                if (bi < 0 || pools[k].attachValid == 0) {
-                    xpbd::Solve(pools[k], compliance, h, xpbdLambda);
+                const bool attached = bi >= 0 && pools[k].attachValid != 0;
+                xpbd::CollectContacts(pools[k], rope != nullptr ? rope->radius : 0.0f, xpbdShapes,
+                                      pools[k].owner,
+                                      attached ? bodies[static_cast<size_t>(bi)].entity
+                                               : kNullEntity,
+                                      xpbdContacts);
+                if (!attached) {
+                    xpbd::Solve(pools[k], compliance, h, xpbdLambda, nullptr, &xpbdContacts);
                     continue;
                 }
                 XpbdBackend::Pool& pool = pools[k];
@@ -4509,7 +4539,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                         }
                     }
                 }
-                xpbd::Solve(pool, compliance, h, xpbdLambda, &ctx);
+                xpbd::Solve(pool, compliance, h, xpbdLambda, &ctx, &xpbdContacts);
                 // ---- 起床 (M60'd): 眠った剛体はロープに引かれたら起こす ----
                 // 信号はアタッチ行が実際に適用した補正の総和 (kXpbdAttachWakeSlop 参照)。
                 // 効くのは次のサブステップから = M59h の「1 パスで届かない分は次へ」と

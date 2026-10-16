@@ -5,6 +5,15 @@
 1 サブ = 1 コミット (`M60'a: ...` 形式の日本語件名) = 1 セッション + /clear。
 進捗の一次情報は git log、本ファイルの進捗表には**計画外の事実・罠・申し送りのみ**書く。
 
+**★現在地合わせ (2026-10-16、M60'e 再開時)**: d の後に 6 週間の中断があり、以下の番号は
+本文の記述より進んでいる。本文の古い番号は歴史として残し、**着手時はこちらと実ファイルを正とする**。
+- TypeId: Rope=44 は登録済み。**51/52 は他機能が使用済み** (末尾は 80 = TwoBoneIK、M89l)。
+  Cloth / SoftBody は h / k 着手時に `Components.cpp` の**その時点の末尾**へ append する。
+- `kSimSnapshotVersion` = **50** (本文の v4〜v6 は当時の値)。Xpbd 節を変えるサブはここから bump。
+- ABI = `MYE_API_VERSION` **30** (本文の「v14 のまま」は「追加ゼロ = 据え置き」と読み替える)。
+- golden は **30 枚** (`tests\golden\`)、replay_verify は **13 本**の .rep を照合する
+  (本文の「14 枚 → 15 枚目」「6 → 7 ペア」は m 着手時に現在値へ読み替える)。
+
 **スコープ (ユーザー決定 2026-08-27)**: ロードマップ (`greedy-cooking-wave.md` 全体
 ロードマップ節) のフルセット — ステートフルバックエンド様式の確立 → 粒子+拘束基盤 →
 ロープ/鎖 → 布 (空力カーネル共有) → ソフトボディ → 塑性/粘弾性/クリープ/応力緩和。
@@ -183,7 +192,10 @@ EngineLoop (所有)
   ⑤replay 往復ビット一致。
 
 ### M60'e: 粒子 vs 世界の衝突 (片方向)
-- Shapes リファクタ: `SphereTriContact` / `ClosestPtPointTri` / `SoupGatherTris` /
+- ★**実装時の変更 (2026-10-16)**: 下の Shapes リファクタは**不要だった**。`shapes::Collide` が
+  球 vs 全 6 形状を既に解く (メッシュ/地形は最深の三角形 1 枚、凸包は SAT) ので、粒子を
+  球の `ShapePose` にして Collide を呼ぶだけで足りた。Shapes.h の公開面は不変。
+- Shapes リファクタ (不採用): `SphereTriContact` / `ClosestPtPointTri` / `SoupGatherTris` /
   `SoupWorldTri` / `TriFaceNormal` を `shapes::` 公開へ (挙動 1 ビット不変。
   M60g2 の `DecomposeRowMajorTRS` 公開と同じ流儀の準備リファクタ)。
 - 粒子を半径 r の球として静的コライダー + 剛体 (sphere/box/capsule/convex/mesh/terrain)
@@ -291,7 +303,7 @@ EngineLoop (所有)
 | SimSnapshot 版 | b | v3 → **v4** (Xpbd 節追加。World 節の前)。旧 blob は版不一致で拒否 = 仕様どおり |
 | ReplayFile 版 | **bump なし見込み** | ハッシュは a で値不変・b で内容ゲート。変形体入りシーンは新規コンテンツなので過去 .rep と衝突しない |
 | `.physmat.json` スキーマ | l | compliance 系 6 キーを末尾 append (未指定 = 既定値 = 従来) |
-| Shapes.h の公開面 | e | `SphereTriContact` 等 5 関数の公開 (**挙動 1 ビット不変**の準備リファクタ) |
+| Shapes.h の公開面 | ~~e~~ | **変更なし** (e の実装で不要と判明。`shapes::Collide` を球で呼ぶだけで足りた) |
 | `PhysicsSystem::Update` 署名 | b | `XpbdBackend*` 引数追加 (TickRunner/TickServices 経由) |
 | GpuResources | j | DYNAMIC VB 経路追加 (IMMUTABLE 経路は不変) |
 | 新規セルフテスト | b | `XpbdSelfTest.cpp` を連鎖へ append (PhysicsSelfTest は 6109 行で満杯) |
@@ -341,7 +353,7 @@ EngineLoop (所有)
 | M60'b XpbdBackend 骨格 | 完了 | `85a9cdd` | 下記「M60'b の申し送り」参照 |
 | M60'c ソルバ核 + Rope | 完了 | (本コミット) | M60b 申し送り 8 も消化。下記「M60'c の申し送り」参照 |
 | M60'd アタッチ双方向 | 完了 | (本コミット) | 冒頭判定 = **ConstraintBlock の K は流用不可** (速度レベル + 方向/K⁻¹ を生成時固定 + 解かれる場所が剛体速度ソルバ内で粒子が居ない) → Macklin 式 w(n) = invM + (r×n)·I⁻¹(r×n) で新設 (式自体は FinalizeConstraintBlock の対角項と同じ。腕 r 反復中固定も「K は生成時 1 回」の踏襲)。下記「M60'd の申し送り」参照 |
-| M60'e 粒子 vs 世界 (片方向) | 未着手 | — | |
+| M60'e 粒子 vs 世界 (片方向) | 完了 | (本コミット) | Shapes リファクタは不要だった。下記「M60'e の申し送り」参照 |
 | M60'f 接触双方向 | 未着手 | — | 最深部。冒頭で方式 A/B を確定 |
 | M60'g ロープ描画 | 未着手 | — | |
 | M60'h 布 + 曲げ | 未着手 | — | |
@@ -428,3 +440,28 @@ EngineLoop (所有)
    中心を 0.4m 外して吊った箱が |q.xyz|=0.615 まで回転し、アンカーが x=0.001 の真下静止。
 6. replay 被覆はまだセルフテストのみ (デモシーンに Rope が無い)。m (ショーケース) で
    6 ペア側へ載せるまでは、replay_verify の「無風 PASS」が既存シーン不変の証明。
+
+### M60'e の申し送り (計画外の事実・罠)
+
+1. **Shapes リファクタは不要だった** — `shapes::Collide(粒子の球, 形状)` が全 6 形状を解く
+   (メッシュ/地形は CollideMeshOther の最深三角形 1 枚、凸包は ConvexOtherCollide)。
+   Shapes.h / Shapes.cpp は 1 バイトも変えていない。
+2. 接触は**サブステップ冒頭に 1 回だけ集めて平面化** (`n·x ≥ planeD`)、反復中は形状判定を
+   引き直さない。予測位置で離れていても反復中に距離拘束が押し込むぶんは
+   `xpbd::kContactMargin` (2cm) の先読みで拾う。接触も摩擦も位置からの純関数 =
+   **sim 状態は増えない** (snapshot 版も Pool も不変)。
+3. 摩擦は Macklin 2014 の位置ベース式 (接線変位が μs·押し量 未満なら全消し、超えたら
+   μk·押し量ぶん)。相手は不動なので相対変位 = 粒子の変位。30° 斜面で μ=0.2 は 1 s で
+   1.44m 滑り (解析 g(sinθ−μcosθ) ≈ 1.6m と整合)、μ=1.0 は 0.08mm しか動かない。
+4. 射影順は 距離拘束 → アタッチ → **接触 (最後)**。貫通しないことを最優先にした。
+   f (双方向) で接触を剛体ソルバ側へ混ぜるときはこの順序の再検討から入る。
+5. **除外は池の持ち主とアタッチ先の剛体** (関節の disableCollision と同じ理屈)。
+   粒子はレイヤー 0・全マスク扱いで `CanCollide` を通す (Rope にレイヤー欄は無い。
+   要るなら Component へ末尾 append で足す)。トリガーは `b.solid` で落ちる。
+6. ★**テストの罠**: 箱を Z 軸 +30° 回すと上面法線は (−0.5, 0.866, 0) = **+X 側が高い**
+   (下りは −X)。初版は符号を逆に書いて FAIL した (物理は正しかった)。
+7. 既存シーン不変の証明: selftest の `hash @` 14 本が変更前 exe と Release/Debug とも
+   完全一致 + 既存 `[xpbd]` 6 行の値も不変 (経路は池の存在ゲートの内側だけ)。
+8. 剛体の姿勢は「位置補正の後・位置積分の前」の現在姿勢で見ている (アタッチのような
+   予測姿勢ではない)。片方向なので動く剛体には 1 サブステップ遅れて押し出される —
+   f で剛体側へ力を返すときに予測姿勢へ揃えるか判断する。
