@@ -1,7 +1,7 @@
 # sub-03: スプライト資産 (`.meta` の sprites / filter / PPU、SpriteLibrary) とソート層
 
 - 依存: なし
-- 状態: OK (commit は台帳参照)
+- 状態: OK (commit 03521a8)
 - 往復: 0
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む**。spec: 2. #10, #11, #12、4.1.2、4.2.1
 
