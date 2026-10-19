@@ -32,8 +32,8 @@
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
 | sub-01 | OK | 1 | 86dec43 | 平面拘束 `Rigidbody.plane2D` と一方通行 `Collider.oneWay`、2D 不変量の selftest。依存: なし。**最大の未知 (平面拘束がビット単位で成立するか) を最初に潰す** |
-| sub-02 | 実装中 | 0 | | 正射影カメラと Scene View の 2D モード。依存: なし |
-| sub-03 | 未着手 | 0 | | スプライト資産 (.meta の sprites / filter / PPU、SpriteLibrary) とソート層。依存: なし |
+| sub-02 | OK | 1 | 9142d88 | 正射影カメラと Scene View の 2D モード。依存: なし |
+| sub-03 | 実装中 | 0 | | スプライト資産 (.meta の sprites / filter / PPU、SpriteLibrary) とソート層。依存: なし |
 | sub-04 | 未着手 | 0 | | Sprite2D と Sprite2DPass (Simple / flip / 整数ソート / Point・Linear)。依存: 02, 03 |
 | sub-05 | 未着手 | 0 | | スプライトエディタ窓。依存: 03 |
 | sub-06 | 未着手 | 0 | | Sliced / Tiled、SortingGroup2D、SpriteMask2D。依存: 04 |
@@ -82,3 +82,8 @@
 - (sub-01 coder) `MYE_SELFTEST_ONLY=m94` の分岐は `EditorMain.cpp` にある。以降のサブは自分の suite をそこへ足す。
 - (sub-01 coder → sub-08) `FractureSystem.cpp:188` は破片へ `freezeRotation` をコピーするが `plane2D` をコピーしない。sub-08 やること 6。
 - (sub-01 coder) 親付き (frame が identity でない) plane2D は未検証 (ルート剛体のみ検証)。複合コライダーの子形状の oneWay は v1 未対応 (spec R9)。
+- (sub-02 VERDICT) 正射影 + froxel の描画は未確認 → sub-23 やること 7 (`--2d-demo --froxel --deferred` を 1 枚、spec R11)。
+  SceneView 2D の入力 (ホイール / パン / F) の実操作はユーザーの目視 (test_checklists の M94 節、sub-24)。
+- (sub-02 coder) Camera.orthographic / orthoSize が使える。SceneView の 2D 状態は `SceneViewWindow::mode2d`、`orthoSize2d_`、
+  `lastView_` / `lastProj_` (ピッキング・ギズモ共通)。sub-12 の塗りは `MouseRay` と z=0 平面の交点でセルを取れる。
+- (sub-02 coder) エディタのスクショ撮影は、リポジトリ直下の `imgui.ini` (Git 管理外) が窓位置を覚えているため、一時的に退避して撮り、元に戻す。

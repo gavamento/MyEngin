@@ -1,7 +1,7 @@
 # sub-02: 正射影カメラと Scene View の 2D モード
 
 - 依存: なし
-- 状態: OK (commit は台帳参照)
+- 状態: OK (commit 9142d88)
 - 往復: 0
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む**。spec: 2. #23, #26、4.1.1、4.3
 
