@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <optional>
 #include <vector>
 
@@ -43,6 +44,12 @@ constexpr int kMaxSubsteps = 16;
 //   なり、保存性が出てこない (実測: 1 反復だと無トルクの箱の |L| が 4 秒で 7.3% 落ちる)
 constexpr int kGyroIterations = 3;
 constexpr float kPenetrationSlop = 0.0005f; // 微小めり込みは許容 (ジッタ抑制)
+// 一方通行コライダー (M94a): 天面からこの深さまでめり込んで始まった tick は「上に居る」とみなす。
+constexpr float kOneWaySlop = 0.05f;
+// これより速く降下している物は、天面より深くめり込んで始まった tick でも「上から着地中」とみなす。
+// 着地した tick の貫通は 1 tick の降下量 (速度 x dt) まで深くなり、次 tick の開始時点で kOneWaySlop を
+// 超えるため、深さだけで判定すると速く落ちた物が床を素通りする
+constexpr float kOneWayLandingSpeed = 0.5f;
 // |vn| がこの閾値未満の接触は反発 0 扱い (micro-bounce 除去 = 静止安定の柱。~2g·dt)
 constexpr float kRestitutionVelThreshold = 0.3f;
 float SolverCoefficient(float value, float upper)
@@ -243,6 +250,14 @@ struct Body {
     // 物理が動かすと綱引きになる。★`rb->isKinematic` を書き換える案は採らない —
     // Inspector の値を潰すし、ソルバがコンポーネントを書くのは家風でない (決定台帳 14)
     bool kinematic = false;
+    // M94a: 平面拘束 (Rigidbody.plane2D)。kinematic では立てない。z0 = tick 開始時のワールド z。
+    // 拘束の 3 点 (慣性 / 速度ソルバ直後 / 位置積分直後) は plane2D の検索で辿れる
+    bool plane2D = false;
+    float z0 = 0.0f;
+    // M94a: 一方通行 (Collider.oneWay)。startMinY / startVy = tick 開始時の形状 AABB の y 最小と y 速度 (動的ボディのみ)
+    bool oneWay = false;
+    float startMinY = 0.0f;
+    float startVy = 0.0f;
     int32_t layer = 0;             // 衝突レイヤー (M36a、Collider から複製)
     uint32_t mask = 0xFFFFFFFFu;   // 衝突マスク (既定 = 全レイヤー → 従来挙動)
     // 親のワールドフレーム (M28d)。収集時に合成し運動学的フレームとして固定。
@@ -271,6 +286,48 @@ ShapePose BodyCollisionPose(const Body& b)
         pose.pz += b.colliderOffset.z;
     }
     return pose;
+}
+
+// plane2D の逆慣性: Z 軸まわりの成分 (ワールド zz) だけ残す。接触・関節がどんな腕で
+// インパルスを入れても X/Y 軸回りの角速度が生まれない (M94a の拘束 A)
+void RestrictInertiaToZ(Body& b)
+{
+    const float zz = b.invI[2][2];
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            b.invI[r][c] = 0.0f;
+        }
+    }
+    b.invI[2][2] = zz;
+}
+
+// 一方通行 (M94a): A, B の形状ペア (pa, pb、法線は b→a で ny はその y 成分) の接触を捨てるか。
+// 捨てるのは、床 (静的 / kinematic の oneWay) から見て法線が上向きでない接触、または相手の
+// tick 開始時の最下点が床の天面より kOneWaySlop 以上深く、かつ着地の速さで降下していない接触。
+// 両方 oneWay なら通常の接触
+bool RejectOneWayContact(const Body& A, const Body& B, const ShapePose& pa, const ShapePose& pb,
+                         float ny)
+{
+    if (A.oneWay == B.oneWay) {
+        return false;
+    }
+    const bool floorIsB = B.oneWay;
+    const Body& floorBody = floorIsB ? B : A;
+    const Body& mover = floorIsB ? A : B;
+    if ((floorBody.rb != nullptr && !floorBody.kinematic) || mover.rb == nullptr
+        || mover.kinematic) {
+        return false;
+    }
+    const float upward = floorIsB ? ny : -ny;
+    if (upward <= 0.0f) {
+        return true;
+    }
+    float minX, minY, minZ, maxX, maxY, maxZ;
+    shapes::ComputeAabb(floorIsB ? pb : pa, minX, minY, minZ, maxX, maxY, maxZ);
+    if (mover.startMinY >= maxY - kOneWaySlop) {
+        return false;
+    }
+    return mover.startVy - floorBody.vy >= -kOneWayLandingSpeed;
 }
 
 // bodies は収集後に entity.index 昇順へソート済み。generationも一致する対象だけ返す。
@@ -1571,6 +1628,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     // ---- 収集 (動的: Rigidbody + LocalTransform) ----
     std::vector<Body> bodies;
     bool anyCompound = false; // M60e: 複合コライダーを要求した剛体が 1 つでも居るか
+    // M94a: plane2D の剛体 / oneWay のコライダーが 1 つでも居るか。居なければ該当の帯ごと通らない
+    bool anyPlane2D = false;
+    bool anyOneWay = false;
     // M60g1: **存在ゲート**。RagdollComponent が 1 つも無ければ部位の探索ごと通らない
     // (既存シーンは以降の分岐を 1 つも踏まない = ビット同一)
     const bool anyRagdoll = ragdoll::AnyRagdoll(world);
@@ -1629,6 +1689,28 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 rb->velocity = { 0.0f, 0.0f, 0.0f };
                 rb->angularVelocity = { 0.0f, 0.0f, 0.0f };
             }
+            // M94a: 平面拘束。z0 は tick 開始時のワールド z で、サブステップをまたいで同じ値を使う。
+            // 姿勢は Z 回転だけに正規化し直し、速度 / 角速度の面外成分も入口で落とす
+            if (rb->plane2D && !kinematic) {
+                b.plane2D = true;
+                anyPlane2D = true;
+                b.z0 = b.pose.pz;
+                b.vz = 0.0f;
+                b.wx = 0.0f;
+                b.wy = 0.0f;
+                if (b.qx != 0.0f || b.qy != 0.0f) {
+                    const float zLen = std::sqrt(b.qz * b.qz + b.qw * b.qw);
+                    b.qx = 0.0f;
+                    b.qy = 0.0f;
+                    if (zLen > 1e-6f) {
+                        b.qz /= zLen;
+                        b.qw /= zLen;
+                    } else {
+                        b.qz = 0.0f;
+                        b.qw = 1.0f;
+                    }
+                }
+            }
             // コライダーがあり isTrigger==0 ならソリッド (衝突解決に参加)。
             // M41: メッシュ (shape=3) は静的/kinematic 専用 — 動的剛体では無視する
             // (慣性テンソルを定義しないため。kinematic は invMass=0 なので許可)
@@ -1677,6 +1759,10 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 b.adhesion = SelectAdhesion(mat);                 // M60d
                 b.layer = col->layer; // M36a
                 b.mask = col->mask;
+                if (col->oneWay) {
+                    b.oneWay = true; // M94a
+                    anyOneWay = true;
+                }
             }
             bodies.push_back(b);
         }
@@ -1771,6 +1857,10 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             b.adhesion = SelectAdhesion(mat);              // M60d
             b.layer = col->layer; // M36a
             b.mask = col->mask;
+            if (col->oneWay) {
+                b.oneWay = true; // M94a
+                anyOneWay = true;
+            }
             // M28d: 親付き静的コライダーもワールド姿勢で判定 (lt 直読みでは親の姿勢が抜ける)
             const WorldFrame f = ComposeParentFrame(world, e);
             XMFLOAT3 wpos;
@@ -2652,6 +2742,22 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     b.Ilz = iz;
                 }
             } // freezeRot / kinematic は零行列のまま = 角応答なし
+            if (b.plane2D) {
+                RestrictInertiaToZ(b); // M94a 拘束 A
+            }
+            // M94a: 一方通行の判定に使う「tick 開始時の最下点」。この pose は前 tick 末の姿勢
+            if (anyOneWay && sub == 0 && b.solid) {
+                b.startVy = b.vy;
+                bool firstShape = true;
+                forEachShape(b, [&](const ShapePose& sp) {
+                    float nx0, ny0, nz0, nx1, ny1, nz1;
+                    shapes::ComputeAabb(sp, nx0, ny0, nz0, nx1, ny1, nz1);
+                    if (firstShape || ny0 < b.startMinY) {
+                        b.startMinY = ny0;
+                        firstShape = false;
+                    }
+                });
+            }
             if (b.hasCom) {
                 // 形状原点 → 質量中心のワールドオフセット。姿勢が変わるたび取り直す
                 QuatRotate(b.qx, b.qy, b.qz, b.qw, b.comLx, b.comLy, b.comLz, b.comx, b.comy,
@@ -3664,6 +3770,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     b.Ily = iy;
                     b.Ilz = iz;
                 }
+                if (b.plane2D) {
+                    RestrictInertiaToZ(b); // M94a 拘束 A (起床で組み直した慣性にも掛ける)
+                }
             }
         };
         for (const uint64_t pairKey : candidates) {
@@ -3911,7 +4020,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                             return;
                         }
                         shapes::Manifold t;
-                        if (shapes::CollideManifold(pa, pb, t) && t.count > 0) {
+                        if (shapes::CollideManifold(pa, pb, t) && t.count > 0
+                            && !(anyOneWay && RejectOneWayContact(A, B, pa, pb, t.ny))) {
                             sm = t;
                             hit = true;
                         }
@@ -3949,6 +4059,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             shapes::Manifold m;
             if (!shapes::CollideManifold(pa, pb, m)) {
                 return;
+            }
+            if (anyOneWay && RejectOneWayContact(A, B, pa, pb, m.ny)) {
+                return; // M94a: 一方通行の床が通す側の接触は作らない
             }
             ContactConstraint c;
             c.ai = ai;
@@ -4265,6 +4378,19 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             }
         }
 
+        // ---- 平面拘束 B (M94a): 速度ソルバの直後・位置補正の前に面外の速度を落とす ----
+        // 位置補正は速度を見ないが、CCD と下の位置積分が b.v* を読むので、ここで厳密に 0 にする。
+        // 代入であって演算ではない (-0.0f 化けを起こさない)。OFF のボディは何も通らない
+        if (anyPlane2D) {
+            for (Body& b : bodies) {
+                if (b.plane2D && b.invMass != 0.0f) {
+                    b.vz = 0.0f;
+                    b.wx = 0.0f;
+                    b.wy = 0.0f;
+                }
+            }
+        }
+
         // ---- 破断の集計 (M60d): このサブステップで関節が受け止めた力積を足す ----
         // ★反復ループの**外**で 1 回だけ読む。中で読むと反復の途中経過 (まだ収束前の λ)
         //   まで足してしまう。λ はブロックごとの蓄積量なので、反復が終わった時点の値が
@@ -4440,6 +4566,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 shapes::Manifold m;
                 if (!shapes::CollideManifold(pa, pb, m)) {
                     return;
+                }
+                if (anyOneWay && RejectOneWayContact(A, B, pa, pb, m.ny)) {
+                    return; // M94a: 位置補正も一方通行の床が通す側は押し出さない
                 }
                 float maxDepth = 0.0f;
                 for (int k = 0; k < m.count; ++k) {
@@ -4635,6 +4764,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     if (!CcdSweepTarget(BodyCollisionPose(B), sweepPose.px, sweepPose.py, sweepPose.pz, dx, dy, dz, R,
                                         bestT, t, nx, ny, nz, cpx, cpy, cpz)) {
                         continue;
+                    }
+                    if (anyOneWay && RejectOneWayContact(A, B, sweepPose, BodyCollisionPose(B), ny)) {
+                        continue; // M94a: 一方通行の床が通す側では掃引でも止めない
                     }
                     if (t >= bestT) {
                         continue; // 厳密 < = 同距離は低 index が勝つ (決定論)
@@ -4864,6 +4996,16 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 b.pose.px = comWx - ox;
                 b.pose.py = comWy - oy;
                 b.pose.pz = comWz - oz;
+            }
+            // 平面拘束 D (M94a): 積分・CCD の差し替え・質量中心の逆算が済んだ最後に面外を戻す。
+            // 姿勢は x/y 成分を捨てるだけ (Z 回転だけの姿勢に積分されているので正規化は崩れない)
+            if (b.plane2D) {
+                b.pose.pz = b.z0;
+                b.qx = 0.0f;
+                b.qy = 0.0f;
+                b.vz = 0.0f;
+                b.wx = 0.0f;
+                b.wy = 0.0f;
             }
         }
 
@@ -5332,6 +5474,12 @@ int ApplyTorqueWorld(World& world, EntityID e, MyeVec3 torque, float dt)
     float invI[3][3];
     InvInertiaWorld(pose, ix, iy, iz, invI);
     float ox, oy, oz;
+    if (rb->plane2D) {
+        // M94a: 2D 剛体は Z 軸まわりのトルクだけ受ける
+        MulInvI(invI, 0.0f, 0.0f, torque.z * dt, ox, oy, oz);
+        rb->angularVelocity.z += oz;
+        return 1;
+    }
     MulInvI(invI, torque.x * dt, torque.y * dt, torque.z * dt, ox, oy, oz);
     rb->angularVelocity.x += ox;
     rb->angularVelocity.y += oy;
@@ -5353,7 +5501,9 @@ int ApplyForceAtWorldPoint(World& world, EntityID e, MyeVec3 force, MyeVec3 worl
     const float s = dt / mass;
     rb->velocity.x += force.x * s;
     rb->velocity.y += force.y * s;
-    rb->velocity.z += force.z * s;
+    if (!rb->plane2D) { // M94a: 2D 剛体は面外 (z) の力を受けない
+        rb->velocity.z += force.z * s;
+    }
     if (rb->freezeRotation) {
         return 1; // 回転を凍らせたボディは端を押しても回らない (並進だけ入って成功)
     }
@@ -5380,6 +5530,13 @@ int ApplyForceAtWorldPoint(World& world, EntityID e, MyeVec3 force, MyeVec3 worl
     float invI[3][3];
     InvInertiaWorld(pose, ix, iy, iz, invI);
     float ox, oy, oz;
+    if (rb->plane2D) {
+        // M94a: z の力を捨てた腕のトルクのうち Z 軸まわりだけ受ける
+        Cross(rx, ry, rz, force.x, force.y, 0.0f, tx, ty, tz);
+        MulInvI(invI, 0.0f, 0.0f, tz * dt, ox, oy, oz);
+        rb->angularVelocity.z += oz;
+        return 1;
+    }
     MulInvI(invI, tx * dt, ty * dt, tz * dt, ox, oy, oz);
     rb->angularVelocity.x += ox;
     rb->angularVelocity.y += oy;

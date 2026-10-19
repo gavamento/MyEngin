@@ -489,7 +489,9 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         const float s = kFixedDt / mass;
         rb->velocity.x += f.x * s;
         rb->velocity.y += f.y * s;
-        rb->velocity.z += f.z * s;
+        if (!rb->plane2D) { // M94a: 2D 剛体は面外 (z) の力を受けない
+            rb->velocity.z += f.z * s;
+        }
         return 1;
     };
     out.AddImpulse = [](void* engine, MyeEntityId id, MyeVec3 imp) -> int {
@@ -500,7 +502,9 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         const float mass = EffectiveMassWorld(Sc(engine)->GetWorld(), ToEngine(id), *rb); // M59a2
         rb->velocity.x += imp.x / mass;
         rb->velocity.y += imp.y / mass;
-        rb->velocity.z += imp.z / mass;
+        if (!rb->plane2D) { // M94a
+            rb->velocity.z += imp.z / mass;
+        }
         return 1;
     };
     out.AddTorque = [](void* engine, MyeEntityId id, MyeVec3 torque) -> int {

@@ -1,6 +1,8 @@
 #include "Engine/Engine/Physics/Rigid/PhysicsSelfTest.h"
 
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -7516,6 +7518,276 @@ bool RunPhysicsSelfTest()
             check(det, "nocollide: two identical excluded scenes hash-identical for 240 ticks");
             MYE_LOG_INFO("  [phys] joint nocollide scene hash @240 = %016llX",
                          static_cast<unsigned long long>(finalHash));
+        }
+    }
+
+    // ---- M94a: 平面拘束 (Rigidbody.plane2D) と一方通行 (Collider.oneWay) ----
+    // 3D ソルバへの拘束 (慣性 / 速度ソルバ直後 / 位置積分直後) が、接触・関節・CCD・スリープ・
+    // 質量中心と組み合わさっても z / vz / wx / wy / qx / qy を**ビット単位で**保つかを見る
+    {
+        // 生ビットで比べる (-0.0f も不一致にするため)
+        auto bitsOf = [](float v) {
+            uint32_t b = 0;
+            std::memcpy(&b, &v, sizeof(b));
+            return b;
+        };
+        auto quatFromZ = [](float angle) {
+            return DirectX::XMFLOAT4{ 0.0f, 0.0f, std::sin(angle * 0.5f), std::cos(angle * 0.5f) };
+        };
+        // 箔 10 + 球 5 + Hinge(axis=(0,0,1)) の振り子 1 組 (2 体)。床と壁は静的
+        auto buildPlane2D = [&](Scene& s) {
+            GameObject envGo = s.CreateGameObjectTracked("Env"); // 既定: substeps 4 + スリープ有効
+            envGo.AddComponent<PhysicsEnvironmentComponent>();
+            MakeGround(s, "Floor", 0.0f, -0.5f, 0.0f, 12.0f, 0.5f, 2.0f);
+            MakeGround(s, "WallL", -11.5f, 5.0f, 0.0f, 0.5f, 6.0f, 2.0f);
+            MakeGround(s, "WallR", 11.5f, 5.0f, 0.0f, 0.5f, 6.0f, 2.0f);
+            for (int i = 0; i < 10; ++i) {
+                GameObject foil = MakeBox(s, "Foil", -8.0f + 1.6f * static_cast<float>(i),
+                                          1.5f + 0.5f * static_cast<float>(i),
+                                          0.05f * static_cast<float>(i % 3), 0.5f, 0.04f, 0.3f,
+                                          (i % 2 == 0) ? 0.3f : 0.0f);
+                foil.GetComponent<LocalTransform>()->rotation = quatFromZ(0.15f * static_cast<float>(i));
+                auto* rb = foil.GetComponent<RigidbodyComponent>();
+                rb->plane2D = true;
+                if (i == 3) { // 面外の傾き: 入口で Z 回転だけに直される
+                    foil.GetComponent<LocalTransform>()->rotation = { 0.2f, 0.1f, 0.3f, 0.92f };
+                }
+                if (i == 4) { rb->angularVelocity = { 2.0f, -3.0f, 1.0f }; }
+                if (i == 5) { rb->velocity = { 1.0f, 0.0f, 0.7f }; }
+                if (i == 6) { rb->ccd = true; rb->velocity = { 0.0f, -60.0f, 0.0f }; }
+                if (i == 7) { rb->centerOfMass = { 0.15f, 0.05f, 0.02f }; }
+                if (i == 8) { rb->gyroscopic = true; rb->angularVelocity = { 0.0f, 0.0f, 4.0f }; }
+                if (i == 9) { rb->mass = 5.0f; rb->linearDamping = 0.01f; }
+            }
+            for (int i = 0; i < 5; ++i) {
+                GameObject ball = MakeSphereBody(s, "Ball", -6.0f + 2.9f * static_cast<float>(i),
+                                                 6.0f + 0.7f * static_cast<float>(i),
+                                                 0.04f * static_cast<float>(i % 2),
+                                                 0.3f + 0.05f * static_cast<float>(i));
+                auto* rb = ball.GetComponent<RigidbodyComponent>();
+                rb->plane2D = true;
+                rb->restitution = (i % 2 == 0) ? 0.6f : 0.0f;
+                rb->velocity = { 1.5f - 0.7f * static_cast<float>(i), 0.0f, (i == 2) ? 0.4f : 0.0f };
+            }
+            // 振り子: A は左端をワールドへ、B は A の右端へ Hinge。どちらも plane2D
+            GameObject pa = MakeBox(s, "PendA", 0.0f, 8.0f, 0.0f, 0.6f, 0.05f, 0.2f);
+            GameObject pb = MakeBox(s, "PendB", 1.2f, 8.0f, 0.0f, 0.6f, 0.05f, 0.2f);
+            pa.GetComponent<RigidbodyComponent>()->plane2D = true;
+            pb.GetComponent<RigidbodyComponent>()->plane2D = true;
+            auto* ja = pa.AddComponent<JointComponent>();
+            ja->type = jointtype::kHinge;
+            ja->anchor = { -0.6f, 0.0f, 0.0f };
+            ja->connectedAnchor = { -0.6f, 8.0f, 0.0f }; // 相手が null のときはワールド座標
+            ja->axis = { 0.0f, 0.0f, 1.0f };
+            auto* jb = pb.AddComponent<JointComponent>();
+            jb->type = jointtype::kHinge;
+            jb->connectedEntity = pa.Id();
+            jb->anchor = { -0.6f, 0.0f, 0.0f };
+            jb->connectedAnchor = { 0.6f, 0.0f, 0.0f };
+            jb->axis = { 0.0f, 0.0f, 1.0f };
+            s.GetWorld().ApplyStructuralChanges();
+        };
+
+        constexpr int kPlane2DTicks = 3000;
+        Scene sa, sb;
+        buildPlane2D(sa);
+        buildPlane2D(sb);
+        // tick 開始時の z (z0) を控える。entity.index → z のビット列
+        std::vector<std::pair<uint32_t, uint32_t>> startZ;
+        {
+            const ComponentTypeId req[] = { RigidbodyComponent::sTypeId, LocalTransform::sTypeId };
+            sa.GetWorld().ForEachArchetype(req, [&](Archetype& arch) {
+                const int li = arch.FindTypeIndex(LocalTransform::sTypeId);
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    const auto* lt = static_cast<const LocalTransform*>(arch.GetPtr(li, row));
+                    startZ.emplace_back(arch.EntityAt(row).index, bitsOf(lt->position.z));
+                }
+            });
+        }
+        check(startZ.size() == 17, "plane2D: scene has 10 foils + 5 balls + 2 pendulum links");
+        int invariantFailTick = -1;
+        char invariantFailWhat[96] = {};
+        bool determinism = true;
+        uint64_t finalHash = 0;
+        for (int tick = 0; tick < kPlane2DTicks; ++tick) {
+            phys.Update(sa.GetWorld(), kDt);
+            phys.Update(sb.GetWorld(), kDt);
+            if (invariantFailTick < 0) {
+                const ComponentTypeId req[] = { RigidbodyComponent::sTypeId,
+                                                LocalTransform::sTypeId };
+                sa.GetWorld().ForEachArchetype(req, [&](Archetype& arch) {
+                    const int li = arch.FindTypeIndex(LocalTransform::sTypeId);
+                    const int ri = arch.FindTypeIndex(RigidbodyComponent::sTypeId);
+                    for (uint32_t row = 0; row < arch.Count() && invariantFailTick < 0; ++row) {
+                        const auto* lt = static_cast<const LocalTransform*>(arch.GetPtr(li, row));
+                        const auto* rb = static_cast<const RigidbodyComponent*>(arch.GetPtr(ri, row));
+                        uint32_t z0 = 0;
+                        for (const auto& zp : startZ) {
+                            if (zp.first == arch.EntityAt(row).index) { z0 = zp.second; }
+                        }
+                        const char* bad = nullptr;
+                        if (bitsOf(lt->position.z) != z0) { bad = "position.z"; }
+                        else if (bitsOf(rb->velocity.z) != 0) { bad = "velocity.z"; }
+                        else if (bitsOf(rb->angularVelocity.x) != 0) { bad = "angularVelocity.x"; }
+                        else if (bitsOf(rb->angularVelocity.y) != 0) { bad = "angularVelocity.y"; }
+                        else if (bitsOf(lt->rotation.x) != 0) { bad = "rotation.x"; }
+                        else if (bitsOf(lt->rotation.y) != 0) { bad = "rotation.y"; }
+                        if (bad) {
+                            invariantFailTick = tick;
+                            std::snprintf(invariantFailWhat, sizeof(invariantFailWhat),
+                                          "entity %u %s", arch.EntityAt(row).index, bad);
+                        }
+                    }
+                });
+            }
+            const uint64_t ha = HashWorld(sa.GetWorld());
+            const uint64_t hb = HashWorld(sb.GetWorld());
+            if (ha != hb && determinism) {
+                determinism = false;
+                MYE_LOG_ERROR("  plane2D determinism diverged at tick %d: %016llX vs %016llX", tick,
+                              static_cast<unsigned long long>(ha),
+                              static_cast<unsigned long long>(hb));
+            }
+            finalHash = ha;
+        }
+        if (invariantFailTick >= 0) {
+            MYE_LOG_ERROR("  plane2D invariant broke at tick %d: %s", invariantFailTick,
+                          invariantFailWhat);
+        }
+        check(invariantFailTick < 0,
+              "plane2D: z / vz / wx / wy / qx / qy hold bit-exactly on every tick for all 17 bodies");
+        check(determinism, "plane2D: two identical scenes hash-identical for 3000 ticks");
+        // 空振りでないこと: 箔と球が落ちて床付近まで来ており、Z 回転が生きている
+        {
+            float lowest = 1e9f;
+            float maxAbsQz = 0.0f;
+            bool finite = true;
+            const ComponentTypeId req[] = { RigidbodyComponent::sTypeId, LocalTransform::sTypeId };
+            sa.GetWorld().ForEachArchetype(req, [&](Archetype& arch) {
+                const int li = arch.FindTypeIndex(LocalTransform::sTypeId);
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    const auto* lt = static_cast<const LocalTransform*>(arch.GetPtr(li, row));
+                    finite = finite && std::isfinite(lt->position.x) && std::isfinite(lt->position.y);
+                    lowest = (std::min)(lowest, lt->position.y);
+                    maxAbsQz = (std::max)(maxAbsQz, std::fabs(lt->rotation.z));
+                }
+            });
+            MYE_LOG_INFO("  [phys] plane2D scene: lowest y %.3f, max |qz| %.3f",
+                         static_cast<double>(lowest), static_cast<double>(maxAbsQz));
+            check(finite && lowest > -0.5f && lowest < 1.0f && maxAbsQz > 0.01f,
+                  "plane2D: bodies fell, landed on the floor and kept rotating about Z");
+        }
+        MYE_LOG_INFO("  [phys] plane2D scene hash @3000 = %016llX",
+                     static_cast<unsigned long long>(finalHash));
+        // Debug / Release 共通の期待値。0 は「未採取」 (採取値をログから読んで焼く)
+        constexpr uint64_t kPlane2DExpectedHash = 0x639107476EA401A3ull;
+        check(kPlane2DExpectedHash == 0 || finalHash == kPlane2DExpectedHash,
+              "plane2D: the final world hash matches the baked value (Debug == Release)");
+
+        // ---- 一方通行 (oneWay)。通常の 3D 剛体と plane2D 剛体の両方で見る ----
+        for (int mode = 0; mode < 2; ++mode) {
+            const bool plane = (mode == 1);
+            Scene s;
+            // 一方通行の床: 天面 y = 0.1
+            GameObject floorOw = MakeGround(s, "OneWayFloor", 0.0f, 0.0f, 0.0f, 3.0f, 0.1f, 1.0f);
+            floorOw.GetComponent<ColliderComponent>()->oneWay = true;
+            // 対照: 同じ位置関係の普通の床 (下から来た球を止める)
+            MakeGround(s, "SolidFloor", 40.0f, 0.0f, 0.0f, 3.0f, 0.1f, 1.0f);
+            auto mkBall = [&](const char* name, float x, float y, float vx, float vy, float gs) {
+                GameObject b = MakeSphereBody(s, name, x, y, 0.0f, 0.25f);
+                auto* rb = b.GetComponent<RigidbodyComponent>();
+                rb->velocity = { vx, vy, 0.0f };
+                rb->gravityScale = gs;
+                rb->plane2D = plane;
+                return b;
+            };
+            GameObject fromBelow = mkBall("FromBelow", 0.0f, -2.0f, 0.0f, 9.0f, 1.0f);
+            GameObject fromAbove = mkBall("FromAbove", 1.5f, 2.0f, 0.0f, 0.0f, 1.0f);
+            GameObject control = mkBall("BelowSolid", 40.0f, -2.0f, 0.0f, 9.0f, 1.0f);
+            s.GetWorld().ApplyStructuralChanges();
+            float belowMaxY = -1e9f, controlMaxY = -1e9f;
+            for (int tick = 0; tick < 400; ++tick) {
+                phys.Update(s.GetWorld(), kDt);
+                belowMaxY = (std::max)(belowMaxY, fromBelow.GetComponent<LocalTransform>()->position.y);
+                controlMaxY = (std::max)(controlMaxY, control.GetComponent<LocalTransform>()->position.y);
+            }
+            const auto* below = fromBelow.GetComponent<LocalTransform>();
+            const auto* above = fromAbove.GetComponent<LocalTransform>();
+            // 横から: 上に乗る球に邪魔されないよう別シーンで、床の厚みの中央を重力なしで通す
+            Scene sideScene;
+            GameObject sideFloor = MakeGround(sideScene, "OneWayFloor", 0.0f, 0.0f, 0.0f, 3.0f, 0.1f, 1.0f);
+            sideFloor.GetComponent<ColliderComponent>()->oneWay = true;
+            GameObject fromSide = MakeSphereBody(sideScene, "FromSide", -5.0f, 0.1f, 0.0f, 0.25f);
+            fromSide.GetComponent<RigidbodyComponent>()->velocity = { 4.0f, 0.0f, 0.0f };
+            fromSide.GetComponent<RigidbodyComponent>()->gravityScale = 0.0f;
+            fromSide.GetComponent<RigidbodyComponent>()->plane2D = plane;
+            sideScene.GetWorld().ApplyStructuralChanges();
+            for (int tick = 0; tick < 400; ++tick) {
+                phys.Update(sideScene.GetWorld(), kDt);
+            }
+            const auto* side = fromSide.GetComponent<LocalTransform>();
+            const auto* sideRb = fromSide.GetComponent<RigidbodyComponent>();
+            MYE_LOG_INFO("  [phys] oneWay (plane2D=%d): below maxY %.3f final %.3f / above final %.3f / "
+                         "side x %.3f vx %.3f / control maxY %.3f",
+                         plane ? 1 : 0, static_cast<double>(belowMaxY),
+                         static_cast<double>(below->position.y),
+                         static_cast<double>(above->position.y),
+                         static_cast<double>(side->position.x),
+                         static_cast<double>(sideRb->velocity.x),
+                         static_cast<double>(controlMaxY));
+            check(controlMaxY < -0.2f,
+                  plane ? "oneWay[2D]: a normal floor stops the ball coming from below (control)"
+                        : "oneWay: a normal floor stops the ball coming from below (control)");
+            check(belowMaxY > 1.0f,
+                  plane ? "oneWay[2D]: the ball passes up through the platform from below"
+                        : "oneWay: the ball passes up through the platform from below");
+            check(std::fabs(below->position.y - 0.35f) < 0.03f && std::fabs(below->position.x) < 0.05f,
+                  plane ? "oneWay[2D]: ...then lands on top and rests there"
+                        : "oneWay: ...then lands on top and rests there");
+            check(std::fabs(above->position.y - 0.35f) < 0.03f,
+                  plane ? "oneWay[2D]: a ball dropped from above rests on top"
+                        : "oneWay: a ball dropped from above rests on top");
+            check(side->position.x > 5.0f && sideRb->velocity.x > 3.9f
+                      && std::fabs(side->position.y - 0.1f) < 0.01f,
+                  plane ? "oneWay[2D]: a ball hitting the platform from the side is not stopped"
+                        : "oneWay: a ball hitting the platform from the side is not stopped");
+        }
+
+        // ---- OFF のボディだけのシーンは拘束の追加で 1 ビットも変わらない ----
+        // 着手前のコミットで採った [phys] body の位置 / 速度ビット (stacking シーン、240 tick) の FNV-1a
+        {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 5.0f, 0.5f, 5.0f);
+            MakeBox(s, "B0", -1.0f, 2.0f, 0, 0.5f, 0.5f, 0.5f, 0.2f);
+            MakeBox(s, "B1", 1.0f, 4.0f, 0, 0.5f, 0.5f, 0.5f, 0.4f);
+            MakeBox(s, "B2", 0.2f, 6.0f, 0.1f, 0.5f, 0.5f, 0.5f, 0.0f);
+            s.GetWorld().ApplyStructuralChanges();
+            for (int i = 0; i < 240; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            uint64_t fnv = 0xcbf29ce484222325ull;
+            const ComponentTypeId req[] = { RigidbodyComponent::sTypeId, LocalTransform::sTypeId };
+            s.GetWorld().ForEachArchetype(req, [&](Archetype& arch) {
+                const int li = arch.FindTypeIndex(LocalTransform::sTypeId);
+                const int ri = arch.FindTypeIndex(RigidbodyComponent::sTypeId);
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    const auto* lt = static_cast<const LocalTransform*>(arch.GetPtr(li, row));
+                    const auto* rb = static_cast<const RigidbodyComponent*>(arch.GetPtr(ri, row));
+                    uint32_t words[6];
+                    std::memcpy(words, &lt->position, sizeof(float) * 3);
+                    std::memcpy(words + 3, &rb->velocity, sizeof(float) * 3);
+                    for (const uint32_t w : words) {
+                        for (int k = 0; k < 4; ++k) {
+                            fnv ^= (w >> (8 * k)) & 0xFFu;
+                            fnv *= 0x100000001b3ull;
+                        }
+                    }
+                }
+            });
+            MYE_LOG_INFO("  [phys] plane2D-off stacking bits FNV = %016llX",
+                         static_cast<unsigned long long>(fnv));
+            check(fnv == 0x14c1df5f2242a072ull,
+                  "plane2D off: the stacking scene is bit-identical to the pre-M94a build");
         }
     }
 

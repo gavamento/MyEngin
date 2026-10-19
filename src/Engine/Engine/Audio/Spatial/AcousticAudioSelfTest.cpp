@@ -126,7 +126,7 @@ bool RunAcousticAudioSelfTest()
         // NoHash = WorldHasher が丸ごと飛ばす = **AcousticAudio を足しても snapshot の版は動かない**。
         // ★この検査が守っているのは「AcousticAudio のせいで版が動いていないこと」で、
         //   他の理由で版を上げたときは値を追随させる (>= にすると主張が消えるので値で書く)
-        check(kSimSnapshotVersion == 50, // v50 = Compute の State の表だけ (M91k。AcousticAudio とは無関係)
+        check(kSimSnapshotVersion == 51, // v51 = Rigidbody.plane2D / Collider.oneWay (M94a。AcousticAudio とは無関係)
               "T1: snapshot version matches engine (AcousticAudio is NoHash)");
     }
 

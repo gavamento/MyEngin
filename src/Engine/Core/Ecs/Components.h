@@ -237,6 +237,11 @@ struct ColliderComponent {
     uint32_t materialOverrideBits = 0; // kPhysMatOverride* の集合 (立てたビットは材料より既存フィールドが勝つ)
     DirectX::XMFLOAT3 center = { 0, 0, 0 }; // オブジェクト原点からのローカル位置
     DirectX::XMFLOAT4 rotation = { 0, 0, 0, 1 }; // 基本形状のローカル姿勢
+    // ---- M94a 追加: 一方通行 (末尾 append) ----
+    // true の静的 / kinematic コライダーは、下から・横から来る物を通し、上から乗る物だけを受け止める
+    // (接触法線の y が上向き、かつ相手の tick 開始時の最下点が天面付近以上のときだけ接触を作る)。
+    // 両者とも oneWay なら通常の接触。isTrigger との併用では無視される
+    bool oneWay = false;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -442,6 +447,12 @@ struct RigidbodyComponent {
     //   `mass` で与える)。材料・レイヤーも body 単位で、親の Collider が無ければ
     //   最初の子から採る。ジャイロ項は複合では効かない (フルテンソルを要求するため)
     bool compoundColliders = false;
+    // ---- M94a 追加: 平面拘束 (末尾 append) ----
+    // true で XY 平面の 2D 剛体として拘束する。z 位置は tick 開始時の値で固定、z 速度と X/Y 軸回りの
+    // 角速度・姿勢は厳密に 0.0f。**異なる z の物同士は当たらない** (3D ソルバのままなので、
+    // z が接触距離より離れた plane2D 剛体は触れない)。既定 off = 既存シーンとビット同一。
+    // 拘束の置き場と手順は PhysicsSystem.cpp の plane2D 節が正本
+    bool plane2D = false;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

@@ -193,6 +193,11 @@ void RegisterBuiltinComponents()
         MYE_JP("材料の上書き", MYE_FIELD(ColliderComponent, materialOverrideBits, UInt32)),
         MYE_JP("中心", MYE_FIELD(ColliderComponent, center, Float3)),
         MYE_JP("回転", MYE_FIELD(ColliderComponent, rotation, Quat)),
+        // M94a: 一方通行 (opt-in、末尾 append)
+        MYE_JP("一方通行",
+               MYE_FIELD_TIP(ColliderComponent, oneWay, Bool,
+                             "Static / kinematic only: lets bodies pass from below and from the "
+                             "side, and catches bodies that land on top")),
     });
 
     // M10: 無ければ有効扱い
@@ -283,6 +288,11 @@ void RegisterBuiltinComponents()
                MYE_FIELD_TIP(RigidbodyComponent, compoundColliders, Bool,
                              "Absorb the colliders of descendants that have no rigidbody of "
                              "their own, and derive the centre of mass and inertia from them")),
+        // M94a: 平面拘束 (opt-in、末尾 append)
+        MYE_JP("2D 平面拘束",
+               MYE_FIELD_TIP(RigidbodyComponent, plane2D, Bool,
+                             "Constrain to the XY plane: z is held at its start value and only "
+                             "rotation about Z remains. Bodies at different z never touch")),
     });
 
     // M21: ゲーム内 UI。描画専用なので **kComponentNoHash**。

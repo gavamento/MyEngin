@@ -14,6 +14,7 @@
 3. クエリ: `OverlapBoxWorld` にマスク付きの口 (`PhysicsQueries.cpp:80` に `mask` 引数の overload)、`BoxCastWorld(center, halfExtents, dir, maxDist, mask, skip, outHit)` (`SphereCastWorld` :92 の 32 回保守的前進と同じ構造。AABB vs 形状の最近接距離は `shapes::` の既存 Overlap を距離化できないなら、箱の 8 頂点 + 中心からの `Raycast` で近似してよい — 採った方式を差分に書く)。
 4. Scene View ギズモ: `kPolygon2D` / `kEdge2D` の点列 (緑)、選択中は点をドラッグ (`HandlePatrolRoute` の流儀)、辺クリックで追加、Delete で削除。編集はアセット (`.shape2d.json`) に書く (独自 Undo は sub-05 の `SpriteEditModel` と同型の小さいもの、またはドラッグ 1 回 = 保存 1 回で Undo 無し。採った方を差分に書く)。
 5. PhysicsSelfTest に `Shapes2D` 節 (spec 4.1.8 の 5 項目) + Debug / Release のハッシュ焼き込み。
+6. (sub-01 round 1 の申し送り、spec 7. R9 (c)) `FractureSystem.cpp:188` 付近で破片の Rigidbody へ `plane2D` もコピーする (`freezeRotation` の隣に 1 行)。plane2D の破壊物の破片が XY 平面に留まることを `Shapes2D` 節か FractureSelfTest に 1 項目で確認。
 
 ## やらないこと (このサブでは)
 - ABI 露出 (sub-14)、タイルの箱 (sub-11)、SpriteShape (sub-19)

@@ -49,7 +49,7 @@ constexpr uint64_t kLinkGenGuid = 0x4E41564147454E36ull; // Link の自動生成
 constexpr uint64_t kExpectedLinkGenAssetHash = 0xACDD08E5A7CD26D0ull;
 // Debug で採取し、Release で同じ値になることを確認して焼く (docs\adr\ADR-023-navmesh.md)。
 // 0f659f3 (Collider へ center / rotation を追加 = 庭の床・段差のハッシュ対象が増えた) で値が変わったので焼き直した
-constexpr uint64_t kExpectedYardHash = 0x0964E3D5948168AAull; // M84e: NavMeshSurface に Link の自動生成を足した
+constexpr uint64_t kExpectedYardHash = 0xCCF96006900E9C0Aull; // M94a: Rigidbody.plane2D / Collider.oneWay がハッシュの欄に入って再採取 (挙動は不変)
 
 struct Checker {
     int failCount = 0;

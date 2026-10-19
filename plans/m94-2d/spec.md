@@ -125,7 +125,7 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
 
 - `RigidbodyComponent` に末尾 append: `bool plane2D = false`。hash 対象 (sim 入力)。
 - ON のボディは 2. #3 の (A)(B)(D) で拘束される。不変量: **tick 末尾で `position.z == z0`、`velocity.z == 0.0f`、`angularVelocity.x == angularVelocity.y == 0.0f`、`rotation.x == rotation.y == 0.0f` がビット単位で成立** (z0 = そのボディの tick 開始時の `LocalTransform.position.z`)。スリープ・CCD・複合コライダー・ジョイント・ラグドール (held) と組み合わせても成立する。
-- `ColliderComponent` に末尾 append: `bool oneWay = false` (2. #9)。接触を落とす判定はソルバの接触生成 (:3842-4096) の時点で、相手ボディの「tick 開始時の最下点 (形状 AABB の y 最小)」と床の天面 (`oneWay` 形状のワールド AABB の y 最大) を比べる。`isTrigger` との併用は無視 (トリガーは接触を作らない)。
+- `ColliderComponent` に末尾 append: `bool oneWay = false` (2. #9)。床 = 静的または kinematic の `oneWay` 形状 (動的な oneWay 剛体は通常の接触)。接触を**採る**のは「法線 (床→物体) が上向き (ny > 0)」かつ「物体の tick 開始時の最下点 (形状 AABB の y 最小) ≥ 床の天面 (oneWay 形状のワールド AABB の y 最大) − `kOneWaySlop` (0.05)」**または**「相対 vy < −`kOneWayLandingSpeed` (0.5 m/s) で降下中」のとき (sub-01 round 1 で確定: 着地 tick の貫通は 1 tick の降下量 (5.7 m/s で 0.067) まで深くなり slop を超えるため、速度条件が無いと速い落下が床を素通りする)。判定関数は 1 つ (`RejectOneWayContact`) で、接触生成・位置補正パス・睡眠ペアの報告・CCD 掃引の 4 箇所から呼ぶ (位置補正と CCD にも入れないと下から抜ける物を押し戻す)。`isTrigger` との併用は無視 (トリガーは接触を作らない)。複合コライダー (M60e) の子形状の `oneWay` は v1 未対応 (ボディ自身のコライダーだけ見る。7. R9)。
 - ABI の `AddForce` / `AddImpulse` / `AddTorque` は plane2D のとき z 成分 / X・Y トルクを捨てる (`ApplyTorqueWorld` が freezeRotation で 0 を返す前例 :5318)。
 - PhysicsSelfTest に `Plane2D` 節: 箔 10 個 + 球 5 個 + Hinge 1 組を plane2D で 3000 tick 落として積む。(a) 不変量 (b) 2 ワールド並走の `HashWorld` 一致 (c) 最終 `HashWorld` を定数に焼き、Debug / Release で同値 (d) `oneWay` 床を下から上に抜け、上から乗る (e) `--hash-diff` で既存デモの差分が append したフィールドだけ。
 
@@ -379,6 +379,8 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
 - (R5) M75h が先に ABI v31 を使った場合は sub-14 は v32。司会は着手時に `EngineAPI.h` を見る。
 - (R6) `.meta` の `sprites[]` を手で編集して重複 id を作った場合: 後勝ちで警告 (壊さない)。
 - (R7) GridAgent2D の 1 tick 4096 展開上限で広い面は数 tick かかる。status Moving のまま待つ (Stuck にはしない)。
+- (R9) sub-01 の既知の限界: (a) 複合コライダーの子形状の `oneWay` は見ない (b) 親付き (親フレームが identity でない) plane2D 剛体の `LocalTransform.z` 保証は未検証 — z0 はワールド z で、書き戻しは親の逆変換を通る。Rigidbody は「ルート = ワールド位置前提」(`Components.h` の Rigidbody コメント) なので v1 はルート限定とし、engine_spec に書く (sub-24) (c) `FractureSystem.cpp:188` は破片へ `freezeRotation` をコピーするが `plane2D` はまだコピーしない → sub-08 で 1 行足す。
+- (R10) 一方通行の速度条件 (kOneWayLandingSpeed) は「上面が天面より上で、半分以上沈んで降下中の物」も押し上げる。プラットフォーマーの着地としては望ましい挙動だが、天面より下から高速で上昇中の物は法線条件で通す (期待どおり)。問題が出たら深さの上限を足す。
 - (R8) 2D ライトのバッファ再構築回数が層数に比例する。層 32 × 別々のライト集合という極端な配置では 32 回 clear + 加算。v1 はそのまま、engine_spec に書く。
 
 ## 8. 変更履歴
@@ -386,3 +388,4 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
 (確定後の変更のみ。出所と理由を書く)
 
 - 2026-10-20 ユーザー判断 9 (「selftest や検証 bat はサブ 5 回につき 1 回でいい、回すのが長すぎる」): 4.4 の検証運用を「毎サブ = 0 警告ビルド + check_rules + 自分の selftest 節 (`MYE_SELFTEST_ONLY=m94`) + 軽い固有検証」「チェックポイント (sub-05 / 10 / 15 / 20 / 23 / 24) = 全体 selftest + replay_verify + shot_verify (golden 30 枚 maxDiff=0)」に変更。5. の共通条件を 1-3 (毎回) と 4-5 (チェックポイント) に分け、6. の表と sub-01〜24 の「検証コマンド」を追随させた。sub-01 の Plane2D 節 (a)〜(d) と hash-diff は核心なので必須のまま。
+- 2026-10-20 coder SELF_EVAL sub-01 round 1 (planner 採用): 4.1.5 の `oneWay` 判定に速度条件 (`kOneWayLandingSpeed` 0.5 m/s) と `kOneWaySlop` 0.05 を追記し、判定箇所を 4 箇所 (接触生成・位置補正・睡眠ペア・CCD) に広げた。理由: 条件式だけでは y=2 から静止落下した球が床を素通りした (再現済み)。7. に R9 (複合子の oneWay 未対応、親付き plane2D 未検証、Fracture の plane2D 未コピー) と R10 を追加。平面拘束は A+B+D の 3 点で不変量が成立 (R1 の追加拘束は不要だった)。snapshot は v51。
