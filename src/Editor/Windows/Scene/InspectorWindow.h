@@ -70,6 +70,13 @@ class InspectorWindow {
 
 public:
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
+    // [Open Sprite Editor] が押されたテクスチャのパス (空 = なし)。EditorApp がスプライトエディタ窓で開く
+    std::wstring TakePendingOpenSpriteEditor()
+    {
+        std::wstring p;
+        p.swap(pendingOpenSpriteEditor_);
+        return p;
+    }
     // preview はマテリアルのライブプレビュー用 (M53)。AssetBrowser のサムネイルと同一インスタンス
     // inPlayMode: PlayModeController::InPlayMode() (Editing 以外)。DrawDestructibleNotes が
     // 生成ボタンの無効化に使う (Play 中の生成は Stop でシーンごと巻き戻る)
@@ -157,6 +164,7 @@ private:
     // アセットインスペクタの編集キャッシュ (M40c)。選択パスが変わったら .meta から再読込
     std::wstring assetEditPath_;
     importmeta::TextureImportSettings assetImportEdit_;
+    std::wstring pendingOpenSpriteEditor_;
     importmeta::ModelLodSettings assetLodEdit_; // モデルの LOD 設定 (M90e)
 
     // マテリアルインスペクタの編集キャッシュ (M40d)。.mat.json のスキーマ固定編集

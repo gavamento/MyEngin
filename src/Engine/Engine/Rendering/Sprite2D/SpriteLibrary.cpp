@@ -12,6 +12,7 @@
 #include "Engine/Core/Asset/AssetGuidResolver.h"
 #include "Engine/Core/Asset/AssetKeyResolver.h"
 #include "Engine/Core/Asset/ImportMetaResolver.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
 #include "Engine/Platform/PathUtil.h"
@@ -83,9 +84,15 @@ int SpriteLibrary::Register(const std::wstring& texPath)
         std::snprintf(e.def.name, sizeof(e.def.name), "%s", sp.name);
         e.displayName = stem + "#" + sp.name;
         const AssetID id = SliceId(texPath, sp.id);
+        // 同じ id が .meta に複数あれば後勝ち (手編集・マージ事故の救済)
+        if (entries_.contains(id.value) && id.value != textureId.value) {
+            MYE_LOG_WARN("sprite id %u is duplicated in the .meta (the later one wins): %s", sp.id,
+                         WideToUtf8(texPath).c_str());
+        } else {
+            ids.push_back(id.value);
+            ++count;
+        }
         entries_[id.value] = std::move(e);
-        ids.push_back(id.value);
-        ++count;
     }
     return count;
 }

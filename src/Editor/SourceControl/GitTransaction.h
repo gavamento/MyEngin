@@ -35,6 +35,7 @@ enum class GateBlocker : uint8_t {
     MixerDirty,           // Audio Mixer 窓の編集が未保存
     BehaviorTreeDirty,    // Behavior Tree 窓の編集が未保存
     ProjectSettingsDirty, // Project Settings の編集が未保存
+    SpriteEditorDirty,    // スプライトエディタの編集が未保存 (.meta に書く前)
     Playing,              // 再生中 / ポーズ中
     NetActive,            // ネットセッション中
     BuildRunning,         // Build Settings のパイプラインが進行中
@@ -55,6 +56,7 @@ struct GateInputs {
     bool mixerDirty = false;
     bool behaviorTreeDirty = false;
     bool projectSettingsDirty = false;
+    bool spriteEditorDirty = false;
     bool playing = false;
     bool netActive = false;
     bool buildRunning = false;
@@ -97,6 +99,7 @@ struct DocumentDirty {
     bool mixer = false;
     bool behaviorTree = false;
     bool projectSettings = false;
+    bool spriteEditor = false;
 };
 
 class GitTransaction {

@@ -71,6 +71,7 @@
     <ClCompile Include="..\src\Editor\SelfTest\PartSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\ProbeBakerSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\RagdollBuildSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\SelfTest\SpriteEditorSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\SsrSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\StartupSplashSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\TerrainSelfTest.cpp" />
@@ -127,6 +128,8 @@
     <ClCompile Include="..\src\Editor\Windows\Scene\ParticleSettingsWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\SceneViewGhost.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\SceneViewWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Sprite\SpriteEditModel.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Sprite\SpriteEditorWindow.cpp" />
     <ClInclude Include="..\src\Editor\App\ChildProcess.h" />
     <ClInclude Include="..\src\Editor\App\DeviceLostRescue.h" />
     <ClInclude Include="..\src\Editor\App\DiskCompare.h" />
@@ -164,6 +167,7 @@
     <ClInclude Include="..\src\Editor\SelfTest\PartSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\ProbeBakerSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\RagdollBuildSelfTest.h" />
+    <ClInclude Include="..\src\Editor\SelfTest\SpriteEditorSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\SsrSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\StartupSplashSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\TerrainSelfTest.h" />
@@ -220,6 +224,8 @@
     <ClInclude Include="..\src\Editor\Windows\Scene\InspectorWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\ParticleSettingsWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\SceneViewWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Sprite\SpriteEditModel.h" />
+    <ClInclude Include="..\src\Editor\Windows\Sprite\SpriteEditorWindow.h" />
   </ItemGroup>
   <!-- END FILES -->
   <ItemGroup>

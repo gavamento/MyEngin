@@ -578,6 +578,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         const bool isMixer = type == AssetType::Mixer;
         const bool isClip = type == AssetType::Audio; // 素の音声ファイル (.wav / .ogg)
         const bool isBehaviorTree = type == AssetType::BehaviorTree;
+        const bool isTexture = type == AssetType::Texture;
 
         if (i % cols != 0) {
             ImGui::SameLine();
@@ -772,6 +773,9 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                         MYE_LOG_WARN("could not load mixer: %s", WideToUtf8(path).c_str());
                     }
                 }
+            } else if (isTexture) {
+                // テクスチャはスプライトエディタ窓で開く (M94e)
+                pendingOpenSpriteEditor_ = path;
             } else if (isBehaviorTree) {
                 // .bt.json は BT 窓で開く (登録と未保存の確認は窓側。EditorApp が窓へ渡す)
                 pendingOpenBehaviorTree_ = path;
@@ -965,7 +969,9 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             AssetMeta m;
             if (AssetDatabase::ReadMeta(metaPath, m)) {
                 m.type = AssetType::Texture; // 旧 .meta の型欠落でも tex を書けるように
+                std::vector<importmeta::SpriteSlice> sprites = std::move(m.tex.sprites); // スライスは上書きしない
                 m.tex = importEdit_;
+                m.tex.sprites = std::move(sprites);
                 m.version = 2;
                 AssetDatabase::WriteMeta(metaPath, m);
                 // ロード済みならその場で再ロード (AssetID 不変 = 参照側の再解決不要)

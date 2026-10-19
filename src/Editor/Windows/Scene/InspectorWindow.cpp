@@ -3121,15 +3121,32 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
         const char* compLabels[] = { "Auto (BC1/BC3)", "None (RGBA8)" };
         ImGui::SetNextItemWidth(200.0f);
         ImGui::Combo(Tr(StrId::Insp_CookCompress), &assetImportEdit_.compress, compLabels, 2);
+        // Sprite2D 用 (M94): filter と PPU。スライスはスプライトエディタ窓が持つ
+        const char* filterLabels[] = { "Auto (linear)", "Linear", "Point" };
+        ImGui::SetNextItemWidth(200.0f);
+        ImGui::Combo(Tr(StrId::Insp_SpriteFilter), &assetImportEdit_.filter, filterLabels, 3);
+        ImGui::SetNextItemWidth(200.0f);
+        ImGui::InputInt(Tr(StrId::Insp_PixelsPerUnit), &assetImportEdit_.pixelsPerUnit);
+        assetImportEdit_.pixelsPerUnit = (std::max)(assetImportEdit_.pixelsPerUnit, 1);
+        if (ImGui::Button(Tr(StrId::Insp_OpenSpriteEditor))) {
+            pendingOpenSpriteEditor_ = path;
+        }
         if (ImGui::Button(Tr(StrId::Common_Apply), ImVec2(90, 0))) {
             const std::wstring metaPath = path + L".meta";
             AssetDatabase::EnsureMeta(path); // 不在なら生成 (GUID 確定)
             AssetMeta meta;
             if (AssetDatabase::ReadMeta(metaPath, meta)) {
+                // スライスはスプライトエディタが書く: 選択時のコピーで上書きしない
+                std::vector<importmeta::SpriteSlice> sprites = std::move(meta.tex.sprites);
                 meta.type = AssetType::Texture;
                 meta.tex = assetImportEdit_;
+                meta.tex.sprites = std::move(sprites);
                 meta.version = 2;
                 AssetDatabase::WriteMeta(metaPath, meta);
+                // .meta 単体の変更は ReloadHub が拾わないので SpriteLibrary を直接登録し直す
+                if (SpriteLibrary* sprites2d = spritelib::Library()) {
+                    sprites2d->Register(path);
+                }
                 // ロード済みならその場で再ロード (AssetID 不変 = 参照側の再解決不要)
                 ctx.resources->textures.ReplaceFromFile(TextureLibrary::IdForFile(path), path);
             }

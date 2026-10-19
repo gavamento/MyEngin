@@ -52,6 +52,9 @@
     <Filter Include="Windows\Scene">
       <UniqueIdentifier>{EE604B7F-6B52-BFC9-FDD9-D122510A3432}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Windows\Sprite">
+      <UniqueIdentifier>{F1E4613B-858B-A87B-8170-95B82594829E}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\Editor\App\ChildProcess.cpp">
@@ -160,6 +163,9 @@
       <Filter>SelfTest</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\RagdollBuildSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\SpriteEditorSelfTest.cpp">
       <Filter>SelfTest</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\SsrSelfTest.cpp">
@@ -330,6 +336,12 @@
     <ClCompile Include="..\src\Editor\Windows\Scene\SceneViewWindow.cpp">
       <Filter>Windows\Scene</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Sprite\SpriteEditModel.cpp">
+      <Filter>Windows\Sprite</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Sprite\SpriteEditorWindow.cpp">
+      <Filter>Windows\Sprite</Filter>
+    </ClCompile>
     <ClInclude Include="..\src\Editor\App\ChildProcess.h">
       <Filter>App</Filter>
     </ClInclude>
@@ -439,6 +451,9 @@
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\RagdollBuildSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\SpriteEditorSelfTest.h">
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\SsrSelfTest.h">
@@ -608,6 +623,12 @@
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Scene\SceneViewWindow.h">
       <Filter>Windows\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Sprite\SpriteEditModel.h">
+      <Filter>Windows\Sprite</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Sprite\SpriteEditorWindow.h">
+      <Filter>Windows\Sprite</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

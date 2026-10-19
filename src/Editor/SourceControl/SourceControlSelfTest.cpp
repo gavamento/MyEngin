@@ -868,6 +868,7 @@ bool RunSourceControlSelfTest()
             { "BehaviorTreeDirty", &GateInputs::behaviorTreeDirty, GateBlocker::BehaviorTreeDirty },
             { "ProjectSettingsDirty", &GateInputs::projectSettingsDirty,
               GateBlocker::ProjectSettingsDirty },
+            { "SpriteEditorDirty", &GateInputs::spriteEditorDirty, GateBlocker::SpriteEditorDirty },
             { "Playing", &GateInputs::playing, GateBlocker::Playing },
             { "NetActive", &GateInputs::netActive, GateBlocker::NetActive },
             { "BuildRunning", &GateInputs::buildRunning, GateBlocker::BuildRunning },

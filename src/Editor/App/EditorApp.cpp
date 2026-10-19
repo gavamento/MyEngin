@@ -118,6 +118,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Sound Generator", &soundGen_.open },
                     { "Audio Mixer", &audioMixer_.open },
                     { "Behavior Tree", &behaviorTree_.open },
+                    { "SpriteEditor", &spriteEditor_.open },
                     { "Project Settings", &projectSettings_.open },
                     { "Build Settings", &buildSettings_.open },
                     { "Stats", &showStats_ } });
@@ -359,6 +360,7 @@ void EditorApp::OnStart(EngineContext& ctx)
             in.mixerDirty = audioMixer_.HasUnsavedChanges();
             in.behaviorTreeDirty = behaviorTree_.HasUnsavedChanges();
             in.projectSettingsDirty = projectSettings_.HasUnsavedChanges();
+            in.spriteEditorDirty = spriteEditor_.HasUnsavedChanges();
             return ComputeBlockers(in);
         };
         hooks.openPath = [](const std::wstring& path) {
@@ -1068,6 +1070,14 @@ void EditorApp::OnImGui(EngineContext& ctx)
         behaviorTree_.OpenAsset(p);
     }
     behaviorTree_.OnImGui(ctx, selection_);
+    // Asset Browser のダブルクリックと Inspector の [Open Sprite Editor] で、テクスチャをスプライトエディタ窓で開く (M94e)
+    if (std::wstring p = assetBrowser_.TakePendingOpenSpriteEditor(); !p.empty()) {
+        spriteEditor_.OpenTexture(p);
+    }
+    if (std::wstring p = inspector_.TakePendingOpenSpriteEditor(); !p.empty()) {
+        spriteEditor_.OpenTexture(p);
+    }
+    spriteEditor_.OnImGui(ctx);
 
     // ピッキング自動テスト (--pick-test): 指定フレームでビュー中心を選択できるか検証
     if (pickTestFrame >= 0 && static_cast<int64_t>(ctx.frameIndex) == pickTestFrame) {
@@ -1623,6 +1633,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem(Tr(StrId::Win_SoundGenerator), nullptr, &soundGen_.open);
         ImGui::MenuItem(Tr(StrId::Win_AudioMixer), nullptr, &audioMixer_.open);
         ImGui::MenuItem(Tr(StrId::Win_BehaviorTree), nullptr, &behaviorTree_.open);
+        ImGui::MenuItem(Tr(StrId::Win_SpriteEditor), nullptr, &spriteEditor_.open);
         ImGui::Separator();
         ImGui::MenuItem(Tr(StrId::Win_ProjectSettings), nullptr, &projectSettings_.open);
         ImGui::MenuItem(Tr(StrId::Win_BuildSettings), nullptr, &buildSettings_.open);
@@ -1962,6 +1973,7 @@ GateInputs EditorApp::BuildGateInputs(EngineContext& ctx)
         d.mixer = audioMixer_.HasUnsavedChanges();
         d.behaviorTree = behaviorTree_.HasUnsavedChanges();
         d.projectSettings = projectSettings_.HasUnsavedChanges();
+        d.spriteEditor = spriteEditor_.HasUnsavedChanges();
         return d;
     });
     in.animationDirty = dirty.animation;
@@ -1969,6 +1981,7 @@ GateInputs EditorApp::BuildGateInputs(EngineContext& ctx)
     in.mixerDirty = dirty.mixer;
     in.behaviorTreeDirty = dirty.behaviorTree;
     in.projectSettingsDirty = dirty.projectSettings;
+    in.spriteEditorDirty = dirty.spriteEditor;
     return in;
 }
 

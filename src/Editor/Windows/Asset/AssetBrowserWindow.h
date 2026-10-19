@@ -70,6 +70,14 @@ public:
         return p;
     }
 
+    // ダブルクリックされたテクスチャのパス (空 = なし)。EditorApp がスプライトエディタ窓で開く (M94e)
+    std::wstring TakePendingOpenSpriteEditor()
+    {
+        std::wstring p;
+        p.swap(pendingOpenSpriteEditor_);
+        return p;
+    }
+
     // [Rebuild Scripts] が押されたか (M66e)。**窓は起動しない** —
     // EditorApp が StartGameLogicBuild でハンドルを持ち、走っている間は
     // 書き込み系 git 操作のゲートを閉じる (GateBlocker::ScriptBuildRunning)
@@ -101,6 +109,7 @@ private:
     std::wstring pendingOpenScene_; // ダブルクリックされたシーン (TakePendingOpenScene で消費)
     std::wstring pendingOpenActor_; // ダブルクリックされた構成アセット (M48k)
     std::wstring pendingOpenBehaviorTree_; // ダブルクリックされた .bt.json (M85h)
+    std::wstring pendingOpenSpriteEditor_; // ダブルクリックされたテクスチャ (M94e)
     bool openMixerRequest_ = false; // .mixer.json をダブルクリックした (M45d)
     bool rebuildScriptsRequest_ = false; // [Rebuild Scripts] (M66e。起動は EditorApp)
     // D&D 移動 (M30b)。描画中の fs 変更 (iterator 破壊) を避けるためフレーム末に実行する

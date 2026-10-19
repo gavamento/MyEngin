@@ -41,6 +41,7 @@
 #include "Engine/Core/Localization/LocalizationSelfTest.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Editor/Asset/AssetOpsSelfTest.h"
+#include "Editor/SelfTest/SpriteEditorSelfTest.h"
 #include "Editor/SelfTest/TerrainSelfTest.h"
 #include "Editor/SelfTest/DecalSelfTest.h"
 #include "Editor/SelfTest/HzbSelfTest.h"
@@ -587,6 +588,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             ok &= mye::RunPhysicsSelfTest();
             ok &= mye::RunUISelfTest();
             ok &= mye::RunSprite2DAssetSelfTest();
+            ok &= mye::RunSpriteEditorSelfTest();
             if (!tempEc) {
                 std::filesystem::remove_all(selftestTemp, tempEc);
             }
@@ -693,6 +695,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunComputeInspectorSelfTest();      // M91h: Compute 欄の文字列 (日英)
         ok &= mye::RunStartupSplashSelfTest();       // 起動スプラッシュの進捗とメビウス幾何
         ok &= mye::RunSprite2DAssetSelfTest();       // M94c: スプライト資産 (.meta の sprites) とソート層
+        ok &= mye::RunSpriteEditorSelfTest();        // M94e: スプライトエディタ (スライス純関数 / Undo / 保存)
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }
