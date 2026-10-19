@@ -272,16 +272,21 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
 - **ローカライズ**: 全エディタ文字列。`check_rules.ps1` 規則 10。
 - **コメント**: 日本語で理由を書く。新規 .h/.cpp はヘッダー付き (AGENTS.md 5)。
 - **レイヤー**: Sprite2D の D3D 型は `src\Engine\Renderer\` の中に閉じる。Engine 層は収集した頂点列・ライト列を渡すだけ。SpriteLibrary / TilemapSystem は Engine 層。エディタ窓は Editor 層。
-- **検証コマンド** (全サブ共通、AGENTS.md 7): Debug / Release を `/p:MyeWarnAsError=true` で 0 警告 → `bin\x64\Debug\Editor.exe --selftest` と Release → `pwsh tools\check_rules.ps1` → `tools\shot_verify.bat` (Release、既存 golden maxDiff=0) → `tools\replay_verify.bat` (物理・sim を触ったサブ)。ソース追加時は `pwsh tools\gen_project_files.ps1`。exe は PowerShell ツールから起動する (Bash の `cmd /c` は実行されない)。
+- **検証の運用 (ユーザー判断 9、2026-10-20: 重い検証はサブ 5 本に 1 回)**:
+  - **毎サブ必須**: Debug / Release を `/p:MyeWarnAsError=true` で 0 警告、`pwsh tools\check_rules.ps1` が 0、そのサブが新設・変更した selftest 節だけの実行 (`MYE_SELFTEST_ONLY=m94` — sub-01 で入口を足し、以降のサブは自分の suite をその分岐に追加する。節単位で切れない suite (PhysicsSelfTest 等) は suite 単位でよい)、サブ固有の軽い検証 (hash-diff、スクショ 1 枚など)。ソース追加時は `pwsh tools\gen_project_files.ps1`。exe は PowerShell ツールから起動する (Bash の `cmd /c` は実行されない)。
+  - **チェックポイント (sub-05 / sub-10 / sub-15 / sub-20 / sub-23 / sub-24 の完了時) だけ**: `Editor.exe --selftest` 全体 (Debug / Release)、`tools\replay_verify.bat` 全ジョブ、`tools\shot_verify.bat` (Release) + 既存 golden 30 枚の `--tol 0` 照合。割れたら、その 5 本の範囲で原因サブを特定して差し戻す。
+  - VERDICT は「全体 selftest / replay_verify / shot_verify 未実行」を REWORK の理由にしない (チェックポイント以外)。
 
 ## 5. 受け入れ条件
 
-共通 (全サブ):
-1. 既存 golden 30 枚 (`tests\golden\*.png`) が **maxDiff = 0** (`tools\shot_verify.bat` の結果と、`Editor.exe --img-diff ... --tol 0` を既存 30 枚に手で当てたログ)。動いてよいのは `2d_*` だけ。
-2. `tools\replay_verify.bat` の既存 14 ジョブ + `rules` が PASS (sim を触ったサブ。描画・エディタだけのサブは `check_rules` と selftest で代替し、その旨を SELF_EVAL に書く)。
-3. Debug / Release が `/p:MyeWarnAsError=true` で 0 警告、`Editor.exe --selftest` に新しい FAIL が無い、`check_rules.ps1` が 0。
-4. 版 bump が 4.4 の宣言どおり (触った版と理由を SELF_EVAL に書く。宣言外の bump は REWORK)。
-5. 新規・変更のエディタ文字列が `LocalizationTable.inl` 経由で両言語。
+共通 (全サブ、毎回):
+1. Debug / Release が `/p:MyeWarnAsError=true` で 0 警告、`check_rules.ps1` が 0、そのサブの selftest 節 (`MYE_SELFTEST_ONLY=m94`) が PASS。
+2. 版 bump が 4.4 の宣言どおり (触った版と理由を SELF_EVAL に書く。宣言外の bump は REWORK)。
+3. 新規・変更のエディタ文字列が `LocalizationTable.inl` 経由で両言語。
+
+チェックポイント (sub-05 / sub-10 / sub-15 / sub-20 / sub-23 / sub-24 の完了時にだけ求める。ユーザー判断 9):
+4. 既存 golden 30 枚 (`tests\golden\*.png`) が **maxDiff = 0** (`tools\shot_verify.bat` の結果と、`Editor.exe --img-diff ... --tol 0` を既存 30 枚に手で当てたログ)。動いてよいのは `2d_*` だけ。
+5. `tools\replay_verify.bat` の既存 14 ジョブ + `rules` (sub-23 以降は `2d` も) が PASS。`Editor.exe --selftest` 全体 (Debug / Release) に新しい FAIL が無い。
 
 段階 1 基盤:
 6. (01) PhysicsSelfTest `Plane2D` 節: 3000 tick 後の plane2D 剛体 16 体 + Hinge 1 組の z / vz / wx / wy / qx / qy がビット単位で初期値 / 0.0f。2 ワールド並走の HashWorld 一致。焼いた最終 HashWorld が Debug / Release で同値。
@@ -338,30 +343,30 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
 
 | サブ | 題名 | 依存 | 受け入れ条件 | コミット件名候補 |
 |---|---|---|---|---|
-| 01 | 平面拘束 `Rigidbody.plane2D` と一方通行 `Collider.oneWay`、2D 不変量の selftest | なし | 1-8 | `M94a: 剛体の平面拘束 (plane2D) と一方通行コライダー、2D 不変量の selftest (snapshot vNN)` |
-| 02 | 正射影カメラと Scene View の 2D モード | なし | 1-5, 9, 10 | `M94b: 正射影カメラ (orthographic / orthoSize) と Scene View の 2D モード` |
-| 03 | スプライト資産 (`.meta` の sprites / filter / PPU、SpriteLibrary) とソート層 | なし | 1-5, 11, 12 | `M94c: スプライトのスライスを .meta のサブアセットにし、ソート層を project_settings に足す` |
-| 04 | `Sprite2D` と `Sprite2DPass` (Simple / flip / 整数ソート / Point・Linear) | 02, 03 | 1-5, 13 | `M94d: Sprite2D コンポーネントと整数ソートの Sprite2D パス (TypeId NN)` |
-| 05 | スプライトエディタ窓 | 03 | 1-5, 14 | `M94e: スプライトエディタ窓 (グリッド / 自動分割、pivot、border、Undo)` |
-| 06 | Sliced / Tiled、SortingGroup2D、SpriteMask2D (ステンシル) | 04 | 1-5, 15 | `M94f: Sprite2D の Sliced / Tiled、SortingGroup2D、SpriteMask2D` |
-| 07 | スプライト列クリップ (`.spriteanim.json`、コントローラの `"sprite"`、イベント、窓) | 04 | 1-5, 16, 17 | `M94g: スプライト列アニメを Animator Controller の sprite ステートとして追加する` |
-| 08 | 2D 形状 (`kPolygon2D` / `kEdge2D`、`.shape2d.json`) と C++ クエリ | 01 | 1-5, 18 | `M94h: 2D の多角形 / 辺コライダーと OverlapBoxMasked / BoxCast` |
-| 09 | CharacterController の `plane2D` (一方通行・移動床・剛体押し・報告) | 01 | 1-5, 19 | `M94i: CharacterController の 2D モード (一方通行、移動床、剛体を押す、壁と接地の報告)` |
-| 10 | タイルパレット / タイルマップ資産、`Tilemap`、チャンク描画 | 04 | 1-5, 20 | `M94j: タイルマップ資産 (.tilepalette / .tilemap) と Tilemap のチャンク描画` |
-| 11 | タイル衝突 + セル書き換えの sim 状態 + 破壊 | 08, 10 | 1-5, 21, 22, 23 | `M94k: タイルの衝突 (行結合箱) とセル書き換えの sim 状態 (TM2D 節)、破壊可能タイル` |
-| 12 | タイルパレット窓 | 10, 02 | 1-5, 24 | `M94l: タイルパレット窓 (ブラシ / 消去 / 塗り潰し / 矩形 / ピック、Undo)` |
-| 13 | ルールタイル、アニメーションタイル、レイヤー UI | 11, 12 | 1-5, 25 | `M94m: ルールタイルとアニメーションタイル、タイルレイヤーの編集` |
-| 14 | ABI (10 本) + C# ミラー + MyeScript | 08, 11 | 1-5, 26 | `M94n: ABI vNN — タイルのセル操作・座標変換、OverlapBoxMasked / BoxCast、SpriteByName (NN スロット)` |
-| 15 | Light2D とライトバッファ | 06 | 1-5, 27, 28 | `M94o: 2D ライト (Global / Spot / Freeform / Sprite) とソート層ごとのライトバッファ` |
-| 16 | ShadowCaster2D と法線マップ | 15 | 1-5, 29 | `M94p: 2D の影 (ポリゴン押し出し) と法線マップ付きスプライト` |
-| 17 | スプライトのサーフェスシェーダ枝、Parallax2D、2D ポスト例 | 06 | 1-5, 30, 31 | `M94q: スプライトのプロジェクトシェーダ、視差 (Parallax2D)、CRT ポストの例` |
-| 18 | Line2D | 06 | 1-5, 32 | `M94r: Line2D (点列・幅・塗り)` |
-| 19 | SpriteShape2D (描画・衝突・ハンドル) | 08, 18 | 1-5, 33 | `M94s: SpriteShape2D (スプラインに沿う縁と塗り、辺衝突、ハンドル編集)` |
-| 20 | 2D ジョイント検証と Effector2D | 09 | 1-5, 34 | `M94t: 2D ジョイントの検証と Effector2D (風 / コンベア / 浮力 / 引力)` |
-| 21 | GridAgent2D、BT MoveTo の fallback、Perception forwardAxis | 11, 09 | 1-5, 35 | `M94u: グリッド A* の GridAgent2D と BT MoveTo の 2D 対応、知覚の前方軸` |
-| 22 | Camera2DFollow と PixelPerfectCamera2D | 02, 11 | 1-5, 36, 37 | `M94v: 2D カメラ追従とピクセルパーフェクトカメラ (低解像度 RT の整数倍拡大)` |
-| 23 | `--2d-demo`、golden `2d` / `2d_lights`、replay_verify `2d` | 全部 (01-22) | 1-5, 38, 39 | `M94w: 2D デモ (--2d-demo) と golden 2d / 2d_lights、replay_verify の 2d ジョブ` |
-| 24 | 文書 (engine_spec / ADR-033 / test_checklists / README) | 23 | 40 | `M94x: 2D レーンの ADR-033 と engine_spec / 検証表 / README を更新する` |
+| 01 | 平面拘束 `Rigidbody.plane2D` と一方通行 `Collider.oneWay`、2D 不変量の selftest | なし | 1-3, 6-8 | `M94a: 剛体の平面拘束 (plane2D) と一方通行コライダー、2D 不変量の selftest (snapshot vNN)` |
+| 02 | 正射影カメラと Scene View の 2D モード | なし | 1-3, 9, 10 | `M94b: 正射影カメラ (orthographic / orthoSize) と Scene View の 2D モード` |
+| 03 | スプライト資産 (`.meta` の sprites / filter / PPU、SpriteLibrary) とソート層 | なし | 1-3, 11, 12 | `M94c: スプライトのスライスを .meta のサブアセットにし、ソート層を project_settings に足す` |
+| 04 | `Sprite2D` と `Sprite2DPass` (Simple / flip / 整数ソート / Point・Linear) | 02, 03 | 1-3, 13 | `M94d: Sprite2D コンポーネントと整数ソートの Sprite2D パス (TypeId NN)` |
+| 05 | スプライトエディタ窓 (**チェックポイント**: sub-01〜05 の分の 4, 5) | 03 | 1-5, 14 | `M94e: スプライトエディタ窓 (グリッド / 自動分割、pivot、border、Undo)` |
+| 06 | Sliced / Tiled、SortingGroup2D、SpriteMask2D (ステンシル) | 04 | 1-3, 15 | `M94f: Sprite2D の Sliced / Tiled、SortingGroup2D、SpriteMask2D` |
+| 07 | スプライト列クリップ (`.spriteanim.json`、コントローラの `"sprite"`、イベント、窓) | 04 | 1-3, 16, 17 | `M94g: スプライト列アニメを Animator Controller の sprite ステートとして追加する` |
+| 08 | 2D 形状 (`kPolygon2D` / `kEdge2D`、`.shape2d.json`) と C++ クエリ | 01 | 1-3, 18 | `M94h: 2D の多角形 / 辺コライダーと OverlapBoxMasked / BoxCast` |
+| 09 | CharacterController の `plane2D` (一方通行・移動床・剛体押し・報告) | 01 | 1-3, 19 | `M94i: CharacterController の 2D モード (一方通行、移動床、剛体を押す、壁と接地の報告)` |
+| 10 | タイルパレット / タイルマップ資産、`Tilemap`、チャンク描画 (**チェックポイント**: sub-06〜10) | 04 | 1-5, 20 | `M94j: タイルマップ資産 (.tilepalette / .tilemap) と Tilemap のチャンク描画` |
+| 11 | タイル衝突 + セル書き換えの sim 状態 + 破壊 | 08, 10 | 1-3, 21, 22, 23 | `M94k: タイルの衝突 (行結合箱) とセル書き換えの sim 状態 (TM2D 節)、破壊可能タイル` |
+| 12 | タイルパレット窓 | 10, 02 | 1-3, 24 | `M94l: タイルパレット窓 (ブラシ / 消去 / 塗り潰し / 矩形 / ピック、Undo)` |
+| 13 | ルールタイル、アニメーションタイル、レイヤー UI | 11, 12 | 1-3, 25 | `M94m: ルールタイルとアニメーションタイル、タイルレイヤーの編集` |
+| 14 | ABI (10 本) + C# ミラー + MyeScript | 08, 11 | 1-3, 26 | `M94n: ABI vNN — タイルのセル操作・座標変換、OverlapBoxMasked / BoxCast、SpriteByName (NN スロット)` |
+| 15 | Light2D とライトバッファ (**チェックポイント**: sub-11〜15) | 06 | 1-5, 27, 28 | `M94o: 2D ライト (Global / Spot / Freeform / Sprite) とソート層ごとのライトバッファ` |
+| 16 | ShadowCaster2D と法線マップ | 15 | 1-3, 29 | `M94p: 2D の影 (ポリゴン押し出し) と法線マップ付きスプライト` |
+| 17 | スプライトのサーフェスシェーダ枝、Parallax2D、2D ポスト例 | 06 | 1-3, 30, 31 | `M94q: スプライトのプロジェクトシェーダ、視差 (Parallax2D)、CRT ポストの例` |
+| 18 | Line2D | 06 | 1-3, 32 | `M94r: Line2D (点列・幅・塗り)` |
+| 19 | SpriteShape2D (描画・衝突・ハンドル) | 08, 18 | 1-3, 33 | `M94s: SpriteShape2D (スプラインに沿う縁と塗り、辺衝突、ハンドル編集)` |
+| 20 | 2D ジョイント検証と Effector2D (**チェックポイント**: sub-16〜20) | 09 | 1-5, 34 | `M94t: 2D ジョイントの検証と Effector2D (風 / コンベア / 浮力 / 引力)` |
+| 21 | GridAgent2D、BT MoveTo の fallback、Perception forwardAxis | 11, 09 | 1-3, 35 | `M94u: グリッド A* の GridAgent2D と BT MoveTo の 2D 対応、知覚の前方軸` |
+| 22 | Camera2DFollow と PixelPerfectCamera2D | 02, 11 | 1-3, 36, 37 | `M94v: 2D カメラ追従とピクセルパーフェクトカメラ (低解像度 RT の整数倍拡大)` |
+| 23 | `--2d-demo`、golden `2d` / `2d_lights`、replay_verify `2d` (**チェックポイント**: sub-21〜23、golden 新設) | 全部 (01-22) | 1-5, 38, 39 | `M94w: 2D デモ (--2d-demo) と golden 2d / 2d_lights、replay_verify の 2d ジョブ` |
+| 24 | 文書 (engine_spec / ADR-033 / test_checklists / README) (**チェックポイント**: 最終) | 23 | 1-5, 40 | `M94x: 2D レーンの ADR-033 と engine_spec / 検証表 / README を更新する` |
 
 最初のサブ (01) が最も荷重のかかる未知 (U3 の平面拘束が 3D ソルバで厳密に成立するか) を潰す。02 / 03 は 01 と独立。
 
@@ -379,3 +384,5 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
 ## 8. 変更履歴
 
 (確定後の変更のみ。出所と理由を書く)
+
+- 2026-10-20 ユーザー判断 9 (「selftest や検証 bat はサブ 5 回につき 1 回でいい、回すのが長すぎる」): 4.4 の検証運用を「毎サブ = 0 警告ビルド + check_rules + 自分の selftest 節 (`MYE_SELFTEST_ONLY=m94`) + 軽い固有検証」「チェックポイント (sub-05 / 10 / 15 / 20 / 23 / 24) = 全体 selftest + replay_verify + shot_verify (golden 30 枚 maxDiff=0)」に変更。5. の共通条件を 1-3 (毎回) と 4-5 (チェックポイント) に分け、6. の表と sub-01〜24 の「検証コマンド」を追随させた。sub-01 の Plane2D 節 (a)〜(d) と hash-diff は核心なので必須のまま。

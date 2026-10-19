@@ -28,14 +28,15 @@
 ## 受け入れ条件 (このサブ)
 1. (spec 36) `Camera2DFollowSelfTest` PASS (数値をログ)。
 2. (spec 37) スクショ 2 枚 (`plans\m94-2d\screenshots\pixelperfect_960.png`、`_1280.png`) の画素数、UI のエッジ、TAA / FXAA 無効化のログ。`Compute` の表 selftest PASS。
-3. PixelPerfect の無いシーンは経路が変わらない (golden 30 枚 maxDiff=0 で証明)。Camera2DFollow の無いシーンの hash-diff 無差分。replay_verify 全 PASS。
-4. (spec 1-5) 0 警告、check_rules 0、snapshot +1 のみ。
+3. PixelPerfect の無いシーンは経路が変わらない (コードで示し、`demo_forward` 1 枚を `--img-diff --tol 0`。30 枚は sub-23)。Camera2DFollow の無いシーンの hash-diff 無差分 (`--demo` 1 本)。
+4. (spec 1-3) 0 警告、check_rules 0、`MYE_SELFTEST_ONLY=m94` に 2 本の selftest を足して両構成 PASS、snapshot +1 のみ。
 
 ## 検証コマンド
-- Debug / Release ビルド、`Editor.exe --selftest` (両構成)、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`
-- `tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
-- `tools\replay_verify.bat`
+毎サブ必須: Debug / Release ビルド、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest (両構成)
+- `Runtime.exe --demo --replay-record` → `--hash-diff`、`demo_forward` 1 枚の `--screenshot` → `--img-diff --tol 0`
 - temp シーンの `Runtime.exe --warp --width 960 --height 540 ... --screenshot` と `--width 1280 --height 720`
+
+チェックポイントではない (重い 3 本は sub-23)。
 
 ## 実装メモ (coder が追記)
 

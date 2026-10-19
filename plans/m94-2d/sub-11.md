@@ -29,12 +29,12 @@
 1. (spec 21) 箱数と物理 1 tick 時間のログ (SELF_EVAL に数値)。(a)(b)(c) PASS。
 2. (spec 22) (d)(e)(g) PASS。
 3. (spec 23) (f) PASS。
-4. (spec 1-5) golden 不変、replay_verify 全 PASS (既存 14 ジョブの hash は Tilemap 無しなので不変 = (e) で確認)、0 警告、check_rules 0、snapshot +1 のみ。
+4. (spec 1-3) 0 警告、check_rules 0、`MYE_SELFTEST_ONLY=m94` の Tilemap / Physics suite が両構成で PASS、snapshot +1 のみ。既存ジョブの hash は Tilemap 無しなので不変 = (e) で確認。重い 3 本は sub-15。
 
 ## 検証コマンド
-- Debug / Release ビルド、`Editor.exe --selftest` (両構成)、`pwsh tools\check_rules.ps1`
-- `tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
-- `tools\replay_verify.bat`
+毎サブ必須: Debug / Release ビルド、`pwsh tools\check_rules.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest (両構成)
+- `Runtime.exe --demo --replay-record` → `--hash-diff` (presence gate の 1 本確認)
+チェックポイントではない (重い 3 本は sub-15)。
 
 ## 実装メモ (coder が追記)
 

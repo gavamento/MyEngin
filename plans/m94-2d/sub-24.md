@@ -30,10 +30,12 @@
 1. (spec 40) 上の全箇所が書かれ、engine_spec の節番号・ADR 番号・ABI 版・TypeId・snapshot 版が**実際のコード**と一致 (grep で確認したログ)。
 2. `pwsh tools\check_rules.ps1` 0 (規則 14 の改行など)。
 3. 文書内のリンク先が存在する。
+4. **最終チェックポイント (spec 4-5)**: sub-23 の完了後にソースが 1 行も変わっていなければ (`git diff <sub-23 のコミット> -- src assets tools` が空)、sub-23 のチェックポイント結果をそのまま流用してよい (SELF_EVAL にその旨と diff の空を書く)。変わっていれば `Editor.exe --selftest` 全体 / `tools\replay_verify.bat` / `tools\shot_verify.bat` を回す。
 
 ## 検証コマンド
 - `pwsh tools\check_rules.ps1`
-- `git diff --stat` で文書だけが変わっていること
+- `git diff --stat` で文書だけが変わっていること (= 最終チェックポイントは sub-23 の結果を流用)
+- ソースが変わっていた場合だけ: `Editor.exe --selftest` 全体 (Debug / Release)、`tools\replay_verify.bat`、`tools\shot_verify.bat`
 
 ## 実装メモ (coder が追記)
 

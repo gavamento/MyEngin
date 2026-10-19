@@ -27,12 +27,13 @@
 ## 受け入れ条件 (このサブ)
 1. (spec 20) スクショ `plans\m94-2d\screenshots\tilemap_basic.png` で層順と flip / 回転が期待どおり (画素座標のログ)。selftest (a)(b)(c) PASS。
 2. 100×50×3 層のタイルを temp で作り、`--frames 300` の平均フレーム時間を Release / WARP でログ (spec 4.4 の 16 ms 予算の内訳。超えても今は REWORK にしないが記録する)。
-3. (spec 1-5) golden 不変、0 警告、check_rules 0、snapshot +1 のみ。replay_verify は `demo` / `rules` (Tilemap 無しの hash 不変は型追加なので自明。sub-11 で presence gate を本格確認)。
+3. (spec 1-3) 0 警告、check_rules 0、`MYE_SELFTEST_ONLY=m94` に `TilemapSelfTest` を足して PASS、snapshot +1 のみ。
+4. **チェックポイント (sub-06〜10 の分、spec 4-5)**: `Editor.exe --selftest` 全体 (Debug / Release) に新 FAIL 無し、`tools\replay_verify.bat` 全ジョブ PASS、`tools\shot_verify.bat` + 既存 golden 30 枚 `--tol 0` で maxDiff=0。割れたら sub-06〜10 のどれが原因かを特定して SELF_EVAL に書く。
 
 ## 検証コマンド
-- Debug / Release ビルド、`Editor.exe --selftest`、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`
-- `tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
+毎サブ必須: Debug / Release ビルド、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest
 - temp シーンの `Runtime.exe ... --screenshot` と `--frames 300`
+**チェックポイント (このサブで回す)**: `Editor.exe --selftest` 全体 (Debug / Release)、`tools\replay_verify.bat`、`tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
 
 ## 実装メモ (coder が追記)
 

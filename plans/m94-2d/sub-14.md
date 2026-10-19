@@ -26,13 +26,13 @@
 
 ## 受け入れ条件 (このサブ)
 1. (spec 26) `check_rules.ps1` 規則 11-a〜d が 0、`PartSelfTest` / `TwoDAbiSelfTest` PASS、`tools\build_managed.bat` 成功、C# temp プローブのログ。
-2. GameLogic.dll の既存スクリプト (`src\GameLogic\Scripts\*.cpp`) がリビルドだけで動く (`--replay-verify` の既存ジョブで被覆)。
-3. (spec 1-5) golden 不変、replay_verify 全 PASS、0 警告、ABI +1 のみ (snapshot は触らない)。
+2. GameLogic.dll の既存スクリプト (`src\GameLogic\Scripts\*.cpp`) がリビルドだけで動く (`--demo` を `--replay-record` → `--hash-diff` で 1 本。replay_verify 全体は sub-15)。
+3. (spec 1-3) 0 警告、check_rules 0 (規則 11)、`MYE_SELFTEST_ONLY=m94` に `TwoDAbiSelfTest` / `PartSelfTest` を足して PASS、ABI +1 のみ (snapshot は触らない)。
 
 ## 検証コマンド
-- Debug / Release ビルド、`tools\build_managed.bat`、`Editor.exe --selftest`、`pwsh tools\check_rules.ps1`
-- `tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
-- `tools\replay_verify.bat`
+毎サブ必須: Debug / Release ビルド、`tools\build_managed.bat`、`pwsh tools\check_rules.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest
+- `Runtime.exe --demo --replay-record` → `--hash-diff`
+チェックポイントではない (重い 3 本は sub-15)。
 
 ## 実装メモ (coder が追記)
 

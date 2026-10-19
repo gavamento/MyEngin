@@ -26,11 +26,15 @@
 ## 受け入れ条件 (このサブ)
 1. (spec 14) 純関数 selftest PASS (期待矩形の一覧をテストに書く)。Undo 3 段。
 2. (spec 14) 実機: 16×16 ×4 の市松 PNG を Automatic で 4 矩形に切り Save → `.meta` に `sprites` 4 個、`Sprite2D.sprite` にピッカーから 1 枚を選んで表示が変わる。エディタスクショ `plans\m94-2d\screenshots\sprite_editor.png`。
-3. (spec 1-5) golden 不変、0 警告、check_rules 0 (規則 10)、版 bump なし。
+3. (spec 1-3) 0 警告、check_rules 0 (規則 10)、`MYE_SELFTEST_ONLY=m94` に `SpriteEditorSelfTest` を足して PASS、版 bump なし。
+4. **チェックポイント (sub-01〜05 の分、spec 4-5)**: `Editor.exe --selftest` 全体 (Debug / Release) に新 FAIL 無し、`tools\replay_verify.bat` 全ジョブ PASS、`tools\shot_verify.bat` + 既存 golden 30 枚 `--tol 0` で maxDiff=0。割れたら sub-01〜05 のどれが原因かを `--hash-diff` / `--img-diff` で特定して SELF_EVAL に書く (planner が差し戻し先を決める)。
 
 ## 検証コマンド
-- Debug / Release ビルド、`Editor.exe --selftest`、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`
-- `tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
+毎サブ必須: Debug / Release ビルド、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest
+**チェックポイント (このサブで回す)**:
+- `bin\x64\Debug\Editor.exe --selftest` と `bin\x64\Release\Editor.exe --selftest` (全体)
+- `tools\replay_verify.bat`
+- `tools\shot_verify.bat` (Release) + 既存 30 枚に `Editor.exe --img-diff tests\golden\X.png tests\actual\X.png --tol 0`
 
 ## 実装メモ (coder が追記)
 

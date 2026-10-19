@@ -25,11 +25,11 @@
 ## 受け入れ条件 (このサブ)
 1. (spec 24) 純関数 selftest PASS。
 2. (spec 24) 実機: 8×8 を塗って Save → `.tilemap.json` が変わり、Runtime で読める (sub-10 の経路)。Play 中は無効の表示。エディタスクショ `plans\m94-2d\screenshots\tile_palette.png` (窓 + Scene View のハイライト)。
-3. (spec 1-5) golden 不変、0 警告、check_rules 0 (規則 10)、版 bump なし。
+3. (spec 1-3) 0 警告、check_rules 0 (規則 10)、`MYE_SELFTEST_ONLY=m94` に `TilePaletteSelfTest` を足して PASS、版 bump なし。重い 3 本は sub-15。
 
 ## 検証コマンド
-- Debug / Release ビルド、`Editor.exe --selftest`、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`
-- `tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
+毎サブ必須: Debug / Release ビルド、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest
+チェックポイントではない (重い 3 本は sub-15)。
 
 ## 実装メモ (coder が追記)
 

@@ -23,12 +23,12 @@
 ## 受け入れ条件 (このサブ)
 1. (spec 29) スクショ 3 枚 (`plans\m94-2d\screenshots\shadow2d.png`、`normal2d_left.png`、`normal2d_right.png`) の画素値のログ。
 2. ShadowCaster2D も normalMap も無いシーンのスクショが sub-16 前後で `--tol 0` 同一 (gate)。
-3. (spec 1-5) golden 不変、0 警告、check_rules 0、snapshot +1 のみ。
+3. (spec 1-3) 0 警告、check_rules 0、`MYE_SELFTEST_ONLY=m94` の selftest PASS、snapshot +1 のみ。重い 3 本は sub-20。
 
 ## 検証コマンド
-- Debug / Release ビルド、`Editor.exe --selftest`、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`
-- `tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
+毎サブ必須: Debug / Release ビルド、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest
 - temp シーンの `Runtime.exe ... --screenshot`
+チェックポイントではない (重い 3 本は sub-20)。
 
 ## 実装メモ (coder が追記)
 

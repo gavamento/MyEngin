@@ -27,13 +27,13 @@
 ## 受け入れ条件 (このサブ)
 1. (spec 16) selftest (a)〜(d)(f) PASS。Animator 窓のエディタスクショ `plans\m94-2d\screenshots\animator_sprite.png` (ピッカーとコマ番号)。
 2. (spec 17) selftest (e) PASS。
-3. 既存 `--anim-demo` / `--bt-demo` の replay_verify PASS、`.controller.json` v1 / v2 の既存アセットが読める (selftest の既存項目)。
-4. (spec 1-5) golden 不変、0 警告、check_rules 0、版 bump なし。
+3. `.controller.json` v1 / v2 の既存アセットが読める (`AnimatorControllerSelfTest` の既存項目。この suite を `MYE_SELFTEST_ONLY=m94` に足す)。`--anim-demo` の `--hash-diff` が無差分 (replay_verify 全体は sub-10)。
+4. (spec 1-3) 0 警告、check_rules 0、版 bump なし。
 
 ## 検証コマンド
-- Debug / Release ビルド、`Editor.exe --selftest`、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`
-- `tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
-- `tools\replay_verify.bat` (`anim` / `bt` / `rules` を含む全ジョブ)
+毎サブ必須: Debug / Release ビルド、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest
+- `Runtime.exe --anim-demo --replay-record` → `--hash-diff`
+チェックポイントではない (重い 3 本は sub-10)。
 
 ## 実装メモ (coder が追記)
 

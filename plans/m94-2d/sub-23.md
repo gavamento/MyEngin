@@ -24,15 +24,15 @@
 - 参考: `demo-entity-order-is-rng-stream` (生成順は RNG ストリーム — デモへ足すなら末尾)、`screenshot-probe-recipes`、`replay-verify-triage`
 
 ## 受け入れ条件 (このサブ)
-1. (spec 38) `tools\shot_verify.bat` が 32 枚 PASS (既存 30 枚は maxDiff=0)、`tools\replay_verify.bat` の `2d` を含む全ジョブ PASS、`check_rules` 15-e が 0。
+1. (spec 38、**チェックポイント = sub-21〜23 の分、spec 4-5**) `tools\shot_verify.bat` が 32 枚 PASS (既存 30 枚は maxDiff=0)、`tools\replay_verify.bat` の `2d` を含む全ジョブ PASS、`Editor.exe --selftest` 全体 (Debug / Release) に新 FAIL 無し、`check_rules` 15-e が 0。割れたら sub-21〜23 のどれが原因かを特定して SELF_EVAL に書く。
 2. (spec 39) `TwoDDemoSelfTest` PASS (Debug / Release)、300 フレーム平均のログ (SELF_EVAL に数値)。
 3. golden 2 枚を目視できる形で `plans\m94-2d\screenshots\` にもコピー (reviewer 用)。
-4. (spec 1-5) 0 警告、check_rules 0、版 bump なし。
+4. (spec 1-3) 0 警告、check_rules 0、`MYE_SELFTEST_ONLY=m94` に `TwoDDemoSelfTest` を足して PASS、版 bump なし。
 
 ## 検証コマンド
 - `python -I tools\gen_2d_assets.py`
-- Debug / Release ビルド、`Editor.exe --selftest` (両構成)、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`
-- `tools\shot_verify.bat`、`tools\replay_verify.bat`
+毎サブ必須: Debug / Release ビルド、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest (両構成)
+**チェックポイント (このサブで回す。golden を新設するので必須)**: `Editor.exe --selftest` 全体 (Debug / Release)、`tools\shot_verify.bat` (32 枚)、`tools\replay_verify.bat` (`2d` 込み)
 - `bin\x64\Release\Runtime.exe --2d-demo --warp --no-audio --frames 300` (PowerShell ツールから)
 
 ## 実装メモ (coder が追記)

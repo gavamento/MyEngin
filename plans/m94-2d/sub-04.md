@@ -27,13 +27,13 @@
 
 ## 受け入れ条件 (このサブ)
 1. (spec 13) 4 枚のスクショで描画順・flip・color・Point が期待どおり (画素値のログを SELF_EVAL に)。スクショは `plans\m94-2d\screenshots\sprite2d_basic.png` に保存。
-2. Sprite2D を持たないシーンで Sprite2DPass が Draw を 1 回も出さない (バッチ 0 で早期 return) → golden 30 枚 maxDiff=0。
-3. (spec 1-5) 0 警告、selftest FAIL 無し、check_rules 0、snapshot +1 のみ。replay_verify は `demo` と `rules` だけ回す (NoHash 型の追加は hash 不変)。
+2. Sprite2D を持たないシーンで Sprite2DPass が Draw を 1 回も出さない (バッチ 0 で早期 return) — コードで示し、`demo_forward` 1 枚だけ `Runtime.exe --screenshot` → `--img-diff --tol 0` で確認 (30 枚全部は sub-05)。
+3. (spec 1-3) 0 警告、check_rules 0、snapshot +1 のみ。重い 3 本は sub-05 (NoHash 型の追加は hash 不変)。
 4. D3D 型が `src\Engine\Renderer\` の外に出ていない (`Sprite2DRenderer.h` に `ID3D11*` が無い)。
 
 ## 検証コマンド
-- Debug / Release ビルド、`Editor.exe --selftest`、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`
-- `tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
+毎サブ必須: Debug / Release ビルド、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest
+- `Runtime.exe --warp --no-audio --font-embedded --width 960 --height 540 --frames 6 --shot-frame 3 --no-fxaa --screenshot tests\actual\demo_forward.png` → `Editor.exe --img-diff tests\golden\demo_forward.png tests\actual\demo_forward.png --tol 0`
 - `Runtime.exe --scene <temp> --warp --no-audio --font-embedded --width 960 --height 540 --frames 6 --shot-frame 3 --screenshot plans\m94-2d\screenshots\sprite2d_basic.png`
 
 ## 実装メモ (coder が追記)

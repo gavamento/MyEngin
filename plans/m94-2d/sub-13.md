@@ -24,11 +24,10 @@
 ## 受け入れ条件 (このサブ)
 1. (spec 25) selftest (a)〜(d) PASS。スクショ 2 枚 (`plans\m94-2d\screenshots\tile_rule_anim_t3.png` / `_t11.png`) の差分がアニメタイルの画素だけ (`--img-diff` のログ)。レイヤー UI のエディタスクショ 1 枚。
 2. アニメタイルを含むシーンで、描画を 2 回 (SceneView + GameView) 走らせても sim の `HashWorld` が変わらない (selftest か、`--replay-verify` の既存経路で代替)。
-3. (spec 1-5) golden 不変、0 警告、check_rules 0、版 bump なし (アセットの形だけ。sub-10 で `rule` / `anim` を既に読み書きしている)。
+3. (spec 1-3) 0 警告、check_rules 0、`MYE_SELFTEST_ONLY=m94` の Tilemap suite PASS、版 bump なし (アセットの形だけ。sub-10 で `rule` / `anim` を既に読み書きしている)。重い 3 本は sub-15。
 
 ## 検証コマンド
-- Debug / Release ビルド、`Editor.exe --selftest`、`pwsh tools\check_rules.ps1`
-- `tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
+毎サブ必須: Debug / Release ビルド、`pwsh tools\check_rules.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest
 - temp シーンの `Runtime.exe ... --shot-frame 3` / `--shot-frame 11`
 
 ## 実装メモ (coder が追記)

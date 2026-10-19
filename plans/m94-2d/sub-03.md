@@ -25,11 +25,11 @@
 ## 受け入れ条件 (このサブ)
 1. (spec 11) selftest (a)(b) PASS。既存 .meta の 1 つ (`assets/models/player_fp_v01/previews/first_person.png.meta`) を ReadMeta → WriteMeta してバイト同一 (ログ)。
 2. (spec 12) selftest (c)(d) PASS。Project Settings のエディタスクショ `plans\m94-2d\screenshots\sorting_layers.png`。
-3. (spec 1-5) golden 不変、0 警告、check_rules 0 (規則 10 を含む)、版 bump なし (sim に触らない)。replay_verify は `rules` ジョブと selftest で代替 (SELF_EVAL に明記)。
+3. (spec 1-3) 0 警告、check_rules 0 (規則 10 を含む)、`MYE_SELFTEST_ONLY=m94` に `Sprite2DAssetSelfTest` を足して PASS、版 bump なし (sim に触らない)。重い 3 本は sub-05。
 
 ## 検証コマンド
-- Debug / Release ビルド、`Editor.exe --selftest`、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`
-- `tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
+毎サブ必須: Debug / Release ビルド、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest
+チェックポイントではない (重い 3 本は sub-05)。
 
 ## 実装メモ (coder が追記)
 

@@ -29,13 +29,13 @@
 
 ## 受け入れ条件 (このサブ)
 1. (spec 35) selftest 全項目 PASS (Debug / Release ハッシュ同値)。
-2. `--bt-demo` / `--nav-demo` / `--perception-demo` の replay_verify PASS、hash-diff が Perception の append のみ。
-3. (spec 1-5) golden 不変、0 警告、check_rules 0、snapshot +1 のみ。
+2. `--bt-demo` / `--nav-demo` / `--perception-demo` の hash-diff が Perception の append のみ (replay_verify 全体は sub-23)。
+3. (spec 1-3) 0 警告、check_rules 0、`MYE_SELFTEST_ONLY=m94` に `GridNav2DSelfTest` を足して両構成 PASS (BT / Perception の suite もこの分岐に)、snapshot +1 のみ。
 
 ## 検証コマンド
-- Debug / Release ビルド、`Editor.exe --selftest` (両構成)、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`
-- `tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
-- `tools\replay_verify.bat`
+毎サブ必須: Debug / Release ビルド、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest (両構成)
+- `Runtime.exe --bt-demo / --nav-demo / --perception-demo --replay-record` → `--hash-diff`
+チェックポイントではない (重い 3 本は sub-23)。
 
 ## 実装メモ (coder が追記)
 

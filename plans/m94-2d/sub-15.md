@@ -24,12 +24,13 @@
 ## 受け入れ条件 (このサブ)
 1. (spec 27) スクショ `plans\m94-2d\screenshots\light2d.png`: スポット内 > 外 (画素値)、外した層の明度が Global のみ。Light2D 無しの temp シーンのスクショが sub-15 前後で `--tol 0` 同一。
 2. (spec 28) Forward / Deferred の maxDiff ≤ 3。
-3. (spec 1-5) golden 不変、0 警告、check_rules 0、snapshot +1 のみ。
+3. (spec 1-3) 0 警告、check_rules 0、`MYE_SELFTEST_ONLY=m94` の selftest PASS、snapshot +1 のみ。
+4. **チェックポイント (sub-11〜15 の分、spec 4-5)**: `Editor.exe --selftest` 全体 (Debug / Release) に新 FAIL 無し、`tools\replay_verify.bat` 全ジョブ PASS、`tools\shot_verify.bat` + 既存 golden 30 枚 `--tol 0` で maxDiff=0。割れたら sub-11〜15 のどれが原因かを特定して SELF_EVAL に書く。
 
 ## 検証コマンド
-- Debug / Release ビルド、`Editor.exe --selftest`、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`
-- `tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
+毎サブ必須: Debug / Release ビルド、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest
 - temp シーンの `Runtime.exe ... --screenshot` と `--deferred`
+**チェックポイント (このサブで回す)**: `Editor.exe --selftest` 全体 (Debug / Release)、`tools\replay_verify.bat`、`tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
 
 ## 実装メモ (coder が追記)
 

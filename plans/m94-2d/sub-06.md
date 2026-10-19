@@ -26,12 +26,12 @@
 ## 受け入れ条件 (このサブ)
 1. (spec 15) 4 枚のスクショ (`plans\m94-2d\screenshots\sprite2d_sliced_tiled.png`、`sprite2d_group_mask.png`) で、角の画素幅が原寸 (4 px × 画面倍率)、Tiled の繰り返し数、グループの塊、マスクの内外が期待どおり (画素座標のログ)。
 2. SceneView と GameView と Runtime の 3 経路でマスクが同じに出る (SceneView のエディタスクショ 1 枚)。
-3. (spec 1-5) golden 不変 (ステンシルクリアは Sprite2D が 0 枚なら実行しない)、0 警告、check_rules 0、snapshot +1 のみ。
+3. (spec 1-3) 0 警告、check_rules 0、snapshot +1 のみ。ステンシルクリアは Sprite2D が 0 枚なら実行しない (コードで示す)。重い 3 本は sub-10。
 
 ## 検証コマンド
-- Debug / Release ビルド、`Editor.exe --selftest`、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`
-- `tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
+毎サブ必須: Debug / Release ビルド、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest
 - temp シーンの `Runtime.exe ... --screenshot`
+チェックポイントではない (重い 3 本は sub-10)。
 
 ## 実装メモ (coder が追記)
 

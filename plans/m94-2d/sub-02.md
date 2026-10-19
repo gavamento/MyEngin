@@ -27,13 +27,13 @@
 ## 受け入れ条件 (このサブ)
 1. (spec 9) 正射影スクショの箔の画素幅が計算値 ± 1 px。透視のシーンは golden 30 枚 maxDiff=0。
 2. (spec 10) 2D トグル ON のエディタスクショ `plans\m94-2d\screenshots\sceneview_2d.png` (XY グリッドとギズモが見える。撮り方は `--screenshot` ではなくエディタの SceneView を表示した状態の Editor.exe のスクショ。既存の `screenshot-probe-recipes` にあるエディタ撮影の手順で)。
-3. (spec 1-5) 既存 golden 不変、replay_verify PASS (CameraComponent の append で hash 値は変わるが挙動は不変 — `--hash-diff` が append のみであることを 1 本 (`demo`) で確認)、0 警告、check_rules 0、snapshot +1 のみ。
+3. (spec 1-3) 0 警告、check_rules 0、snapshot +1 のみ。CameraComponent の append で hash 値は変わるが挙動は不変 — `--hash-diff` が append のみであることを 1 本 (`demo`) で確認。golden 30 枚 / replay_verify / 全体 selftest は sub-05 のチェックポイント。
 
 ## 検証コマンド
-- Debug / Release ビルド (`/p:MyeWarnAsError=true`)、`Editor.exe --selftest`、`pwsh tools\check_rules.ps1`
-- `tools\shot_verify.bat` + 既存 30 枚の `--tol 0`
-- `tools\replay_verify.bat`
+毎サブ必須: Debug / Release ビルド (`/p:MyeWarnAsError=true`)、`pwsh tools\check_rules.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest (このサブで足した節があれば)
+- `Runtime.exe --replay-record` → `--hash-diff` (`demo` 1 本)
 - temp シーンの `Runtime.exe --scene <temp> --warp --width 960 --height 540 --screenshot <out>`
+チェックポイントではない (重い 3 本は sub-05)。
 
 ## 実装メモ (coder が追記)
 
