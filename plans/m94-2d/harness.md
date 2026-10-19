@@ -34,8 +34,8 @@
 | sub-01 | OK | 1 | 86dec43 | 平面拘束 `Rigidbody.plane2D` と一方通行 `Collider.oneWay`、2D 不変量の selftest。依存: なし。**最大の未知 (平面拘束がビット単位で成立するか) を最初に潰す** |
 | sub-02 | OK | 1 | 9142d88 | 正射影カメラと Scene View の 2D モード。依存: なし |
 | sub-03 | OK | 1 | 03521a8 | スプライト資産 (.meta の sprites / filter / PPU、SpriteLibrary) とソート層。依存: なし |
-| sub-04 | 実装中 | 0 | | Sprite2D と Sprite2DPass (Simple / flip / 整数ソート / Point・Linear)。依存: 02, 03 |
-| sub-05 | 未着手 | 0 | | スプライトエディタ窓。依存: 03 |
+| sub-04 | OK | 1 | ffcf47a | Sprite2D と Sprite2DPass (Simple / flip / 整数ソート / Point・Linear)。依存: 02, 03 |
+| sub-05 | 実装中 | 0 | | スプライトエディタ窓。依存: 03。**チェックポイント 1 (sub-01〜05)** |
 | sub-06 | 未着手 | 0 | | Sliced / Tiled、SortingGroup2D、SpriteMask2D。依存: 04 |
 | sub-07 | 未着手 | 0 | | スプライト列クリップ (.spriteanim.json、コントローラの "sprite")。依存: 04 |
 | sub-08 | 未着手 | 0 | | 2D 形状 (kPolygon2D / kEdge2D) と C++ クエリ。依存: 01 |
@@ -92,3 +92,9 @@
   既定値なら .meta に書かない / `OrderOf` の無い id は Default の配列位置 / `.meta` 単体変更は Apply (スプライトエディタ + Inspector Import
   Settings) が `SpriteLibrary::Register` を直接呼ぶ (sub-05) / `SortingLayers` の起動 Load は EngineLoop 初期化で sub-04 が接続。
 - (sub-03 VERDICT) `.meta` の重複 id の「後勝ちで WARN」(spec R6) は未確認 → sub-05 やること 4。GUI の Up / Down / Remove の実クリックはユーザー目視 (sub-24)。
+- (sub-04 VERDICT) **2D の色の契約 (spec 4.1.3)**: テクスチャは `.meta` srgb = auto (UNORM ロード)、2D カメラは `CameraPostFx.tonemapMode = 0`
+  (Passthrough) で元画素が ±1 で出る。ACES 既定では白が 231 になる。Light2D の乗算はガンマ符号化値に掛かる (Unity の Gamma 色空間と同じ割り切り)。
+  srgb = on のテクスチャは Inspector で警告 (sub-06)。`--2d-demo` のカメラは tonemapMode 0 (sub-23)。
+- (sub-04 coder) Sprite2DRenderer の `Item.groupKey` は 0 のまま (sub-06 で SortingGroup2D)。`sprite2d.hlsl` の t1 / s1 は空き (sub-15)。
+  Inspector / ギズモ / Create メニューの GUI 部は実操作未確認 → sub-05 の受け入れ条件 2 で通す。
+- (sub-04 VERDICT) Renderer 層との受け渡しは `Renderer/Passes/Sprite2DDrawList.h` の POD。`TextureLibrary::IsPending` で非同期ロード中は描かない。

@@ -1,7 +1,7 @@
 # sub-04: `Sprite2D` と `Sprite2DPass` (Simple / flip / 整数ソート / Point・Linear)
 
 - 依存: sub-02, sub-03
-- 状態: OK (commit は台帳参照)
+- 状態: OK (commit ffcf47a)
 - 往復: 0
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む**。spec: 2. #1, #12, #24、4.1.3、4.3、4.4 (レイヤー)
 
