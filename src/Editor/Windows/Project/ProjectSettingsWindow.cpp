@@ -9,6 +9,7 @@
 #include "Editor/App/EditorSettings.h"
 #include "Editor/Project/PartTagNames.h"
 #include "Engine/Engine/Scene/TagNames.h" // 汎用タグの名前表
+#include "Engine/Engine/Scene/SortingLayers.h" // M94: 2D のソート層
 #include "Editor/Project/PhysicsLayerNames.h"
 #include "Editor/Project/NavAreaNames.h"
 #include "Editor/Project/NavAgentTypes.h"
@@ -409,6 +410,66 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
         }
     }
 
+    // ---- ソート層 (M94、assets\project_settings.json の sortingLayers) ----
+    // 上の行ほど奥に描かれる。スプライトが持つのは id で、改名・並べ替えでは切れない
+    if (ImGui::CollapsingHeader(Tr(StrId::PrjSet_SortingLayers))) {
+        SortingLayers& layers = SortingLayers::Get();
+        layers.Load(ctx.assetsRoot);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", Tr(StrId::PrjSet_SortingHint));
+        ImGui::PopTextWrapPos();
+        int removeId = -1;
+        int moveFrom = -1;
+        int moveTo = -1;
+        for (int i = 0; i < layers.Count(); ++i) {
+            SortingLayer& l = layers.EditAt(i);
+            ImGui::PushID(l.id);
+            ImGui::Text("%2d", l.id);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(200.0f);
+            ImGui::InputText("##name", l.name, sizeof(l.name));
+            ImGui::SameLine();
+            ImGui::BeginDisabled(i == 0);
+            if (ImGui::SmallButton(Tr(StrId::PrjSet_SortingLayerUp))) {
+                moveFrom = i;
+                moveTo = i - 1;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(i == layers.Count() - 1);
+            if (ImGui::SmallButton(Tr(StrId::PrjSet_SortingLayerDown))) {
+                moveFrom = i;
+                moveTo = i + 1;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(l.id == SortingLayers::kDefaultId);
+            if (ImGui::SmallButton(Tr(StrId::PrjSet_RemoveSortingLayer))) {
+                removeId = l.id; // 回し終えてから消す
+            }
+            ImGui::EndDisabled();
+            ImGui::PopID();
+        }
+        if (removeId >= 0) {
+            layers.Remove(removeId);
+        }
+        if (moveFrom >= 0) {
+            layers.Move(moveFrom, moveTo);
+        }
+        ImGui::BeginDisabled(layers.Count() >= SortingLayers::kMaxLayers);
+        if (ImGui::Button(Tr(StrId::PrjSet_AddSortingLayer))) {
+            layers.Add("Layer");
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button(Tr(StrId::PrjSet_SaveSortingLayers))) {
+            if (layers.Save(ctx.assetsRoot)) {
+                layers.Load(ctx.assetsRoot, true);
+                scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json");
+            }
+        }
+    }
+
     // ---- 入力アクション (M51d、assets\input\actions.json) ----
     if (ImGui::CollapsingHeader(Tr(StrId::PrjSet_Input))) {
         DrawInputSection(ctx);
@@ -702,7 +763,8 @@ bool ProjectSettingsWindow::HasUnsavedChanges() const
     if (PhysicsLayerNames::Get().DiffersFromDisk() || NavAreaNames::Get().DiffersFromDisk()
         || NavAgentTypes::Get().DiffersFromDisk()
         || PartTagNames::Get().DiffersFromDisk()
-        || TagNames::Get().DiffersFromDisk()) {
+        || TagNames::Get().DiffersFromDisk()
+        || SortingLayers::Get().DiffersFromDisk()) {
         return true;
     }
     if (uiLoaded_ && uiEdit_ != uiDisk_) {

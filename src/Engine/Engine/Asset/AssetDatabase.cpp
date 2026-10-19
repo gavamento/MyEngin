@@ -198,6 +198,23 @@ bool AssetDatabase::IsMetaPath(const std::wstring& path)
     return EndsWith(LowerUtf8(path), ".meta");
 }
 
+namespace {
+
+// 整数配列 key の先頭 n 要素を out へ読む。配列でない / 短いときは out を触らない
+void ReadIntArray(const json& obj, const char* key, int32_t* out, size_t n)
+{
+    if (!obj.contains(key) || !obj[key].is_array() || obj[key].size() < n) {
+        return;
+    }
+    for (size_t i = 0; i < n; ++i) {
+        if (obj[key][i].is_number()) {
+            out[i] = obj[key][i].get<int32_t>();
+        }
+    }
+}
+
+} // namespace
+
 bool AssetDatabase::ReadMeta(const std::wstring& metaPath, AssetMeta& out)
 {
     std::ifstream f(metaPath);
@@ -227,6 +244,39 @@ bool AssetDatabase::ReadMeta(const std::wstring& metaPath, AssetMeta& out)
         out.tex.srgb = t.value("srgb", 0);
         out.tex.generateMips = t.value("generateMips", 1);
         out.tex.compress = t.value("compress", 0);
+        out.tex.filter = t.value("filter", 0);
+        out.tex.pixelsPerUnit = t.value("pixelsPerUnit", importmeta::TextureImportSettings::kDefaultPixelsPerUnit);
+        if (t.contains("sprites") && t["sprites"].is_array()) {
+            for (const json& sj : t["sprites"]) {
+                importmeta::SpriteSlice sp;
+                if (!sj.is_object() || !sj.contains("id") || !sj["id"].is_number_integer()) {
+                    continue; // id が無い要素は参照できないので捨てる
+                }
+                const int64_t id = sj["id"].get<int64_t>();
+                if (id < 1 || id > UINT32_MAX) {
+                    continue;
+                }
+                sp.id = static_cast<uint32_t>(id);
+                std::snprintf(sp.name, sizeof(sp.name), "%s", sj.value("name", std::string()).c_str());
+                int32_t rect[4] = {};
+                int32_t border[4] = {};
+                ReadIntArray(sj, "rect", rect, 4);
+                ReadIntArray(sj, "border", border, 4);
+                sp.x = rect[0];
+                sp.y = rect[1];
+                sp.w = rect[2];
+                sp.h = rect[3];
+                sp.borderL = border[0];
+                sp.borderB = border[1];
+                sp.borderR = border[2];
+                sp.borderT = border[3];
+                if (sj.contains("pivot") && sj["pivot"].is_array() && sj["pivot"].size() >= 2) {
+                    sp.pivotX = sj["pivot"][0].get<float>();
+                    sp.pivotY = sj["pivot"][1].get<float>();
+                }
+                out.tex.sprites.push_back(sp);
+            }
+        }
     }
     // M90e: モデルの LOD 設定。キー無し = 段なし (従来の挙動)
     out.lod = importmeta::ModelLodSettings{};
@@ -254,6 +304,28 @@ bool AssetDatabase::WriteMeta(const std::wstring& metaPath, const AssetMeta& m)
         j["tex"] = { { "srgb", m.tex.srgb },
                      { "generateMips", m.tex.generateMips },
                      { "compress", m.tex.compress } };
+        // 既定値と sprites は書かない (スプライト設定の無い .meta は従来とバイト一致)
+        if (m.tex.filter != 0) {
+            j["tex"]["filter"] = m.tex.filter;
+        }
+        if (m.tex.pixelsPerUnit != importmeta::TextureImportSettings::kDefaultPixelsPerUnit) {
+            j["tex"]["pixelsPerUnit"] = m.tex.pixelsPerUnit;
+        }
+        if (!m.tex.sprites.empty()) {
+            json arr = json::array();
+            for (const importmeta::SpriteSlice& sp : m.tex.sprites) {
+                json sj;
+                sj["id"] = sp.id;
+                sj["name"] = std::string(sp.name);
+                sj["rect"] = json::array({ sp.x, sp.y, sp.w, sp.h });
+                sj["pivot"] = json::array({ sp.pivotX, sp.pivotY });
+                if (sp.borderL != 0 || sp.borderB != 0 || sp.borderR != 0 || sp.borderT != 0) {
+                    sj["border"] = json::array({ sp.borderL, sp.borderB, sp.borderR, sp.borderT });
+                }
+                arr.push_back(std::move(sj));
+            }
+            j["tex"]["sprites"] = std::move(arr);
+        }
     } else {
         j["version"] = m.version;
     }

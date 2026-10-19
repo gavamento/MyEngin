@@ -37,6 +37,8 @@
 #include "Engine/Engine/Physics/Fracture/FractureLibrary.h" // M80f: メモリ上焼きの登録口
 #include "Engine/Engine/Physics/Fracture/FractureSkinBake.h" // M80j: スキン破壊の骨割り当て
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
+#include "Engine/Engine/Asset/AssetDatabase.h"
+#include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
@@ -3253,6 +3255,11 @@ void RegisterAssetLibraries(EngineContext& ctx)
             // 全部読み終えてからでないと判定できない (M45f)
             if (ext == L".wav" || ext == L".ogg") {
                 audioFiles.push_back(p);
+            } else if (AssetDatabase::ClassifyPath(p) == AssetType::Texture) {
+                // M94: スプライト (.meta の sprites)。GPU テクスチャのロードは参照側が行う
+                if (SpriteLibrary* sprites = spritelib::Library()) {
+                    sprites->Register(p);
+                }
             } else if (ctx.resources != nullptr && ctx.shaders != nullptr
                        && (ext == L".glb" || ext == L".gltf" || ext == L".fbx")) {
                 // M50a: メッシュ / マテリアル / スキンを丸ごとヘッドレス登録する。

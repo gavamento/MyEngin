@@ -16,6 +16,7 @@
 #include "Engine/Engine/Modal/ModalSoundLibrary.h"
 #include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
+#include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
@@ -363,6 +364,9 @@ ReloadHub::ReloadResult ReloadHub::ReloadTexture(const std::wstring& path)
     }
     if (!resources_->textures.ReplaceFromFile(id, path)) {
         return ReloadResult::Retry;
+    }
+    if (SpriteLibrary* sprites = spritelib::Library()) {
+        sprites->Register(path); // .meta の sprites / filter / PPU も読み直す
     }
     MYE_LOG_INFO("[reload] texture replaced: %s", WideToUtf8(path).c_str());
     return ReloadResult::Reloaded;

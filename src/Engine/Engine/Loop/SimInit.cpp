@@ -18,6 +18,7 @@
 #include "Engine/Engine/Physics/Collider/TerrainColliderLibrary.h"
 #include "Engine/Engine/Physics/Fracture/FractureLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
+#include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
@@ -76,6 +77,8 @@ void InstallSimLibraries(const SimLibraries& libs)
     // M85: ビヘイビアツリーとブラックボード (.bt.json / .bb.json)。同じく起動走査より前に注入する
     behaviortree::Install(libs.behaviorTrees);
     blackboard::Install(libs.blackboards);
+    // M94: スプライト。起動走査 (RegisterAssetLibraries) より前に注入する
+    spritelib::Install(libs.sprites);
 }
 
 void UninstallSimLibraries()
@@ -88,6 +91,7 @@ void UninstallSimLibraries()
     navfilter::Install(nullptr);
     behaviortree::Install(nullptr);
     blackboard::Install(nullptr);
+    spritelib::Install(nullptr);
 }
 
 void InitSimProjectState(const std::wstring& assetsRoot)

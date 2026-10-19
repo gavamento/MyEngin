@@ -109,6 +109,9 @@
     <Filter Include="Engine\Rendering">
       <UniqueIdentifier>{34B4F580-4D9C-A8EB-5B5F-0F513C958215}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Rendering\Sprite2D">
+      <UniqueIdentifier>{0DFEDE05-7DA4-C41C-E716-83D52601CE03}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Replay">
       <UniqueIdentifier>{DBAE9292-5C25-5143-7BD0-30A497BF8AF2}</UniqueIdentifier>
     </Filter>
@@ -840,6 +843,12 @@
     <ClCompile Include="..\src\Engine\Engine\Rendering\SkinPaletteCacheSelfTest.cpp">
       <Filter>Engine\Rendering</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DAssetSelfTest.cpp">
+      <Filter>Engine\Rendering\Sprite2D</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteLibrary.cpp">
+      <Filter>Engine\Rendering\Sprite2D</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Rendering\TerrainSystem.cpp">
       <Filter>Engine\Rendering</Filter>
     </ClCompile>
@@ -895,6 +904,9 @@
       <Filter>Engine\Scene</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Scene\SceneSerializer.cpp">
+      <Filter>Engine\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Scene\SortingLayers.cpp">
       <Filter>Engine\Scene</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Scene\TagNames.cpp">
@@ -1860,6 +1872,12 @@
     <ClInclude Include="..\src\Engine\Engine\Rendering\SkinPaletteCacheSelfTest.h">
       <Filter>Engine\Rendering</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DAssetSelfTest.h">
+      <Filter>Engine\Rendering\Sprite2D</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteLibrary.h">
+      <Filter>Engine\Rendering\Sprite2D</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Rendering\TerrainSystem.h">
       <Filter>Engine\Rendering</Filter>
     </ClInclude>
@@ -1918,6 +1936,9 @@
       <Filter>Engine\Scene</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Scene\SceneSerializer.h">
+      <Filter>Engine\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Scene\SortingLayers.h">
       <Filter>Engine\Scene</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Scene\TagNames.h">

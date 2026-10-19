@@ -10,7 +10,7 @@
 2. 編集モデル `SpriteEditModel` (純関数 + 状態、`BehaviorTreeEditModel` の流儀): `.meta` の `sprites[]` を読み、`std::deque` の 128 段 Undo (`BeginGesture / EndGesture`)、保存時 JSON との比較で Dirty。
    - 純関数 (selftest 対象): `SliceGridByCellSize(texW, texH, cellW, cellH, offX, offY, padX, padY, keepEmpty) → rects`、`SliceGridByCellCount(cols, rows, ...)`、`SliceAutomatic(pixels RGBA8, w, h, minSize) → rects` (アルファ > 0 の 4 連結成分の AABB)、`ApplySlices(existing, newRects, method)` (method 0 = Delete Existing、1 = Safe: 既存と重なる新規を捨てる)、`PivotPreset(k) → (px, py)` (9 種)。
 3. UI: 左に拡大・パン可能なテクスチャ表示 (ImGui の `Image` + 自前の矩形描画。ズームは整数倍と 1/2、Point 表示)、矩形の選択 / ドラッグ / リサイズ (8 ハンドル) / Delete、右に選択矩形の name / rect / pivot (プリセットコンボ + 数値) / border 4 辺、上に Slice パネル (Type: Grid by Cell Size / Grid by Cell Count / Automatic、Method、Pivot)、Apply (= Slice を実行して矩形を置き換え)、Save (Ctrl+S)。Save は `AssetDatabase::EnsureMeta → ReadMeta → 書き換え → WriteMeta` → `SpriteLibrary::Register(texPath)` → `TextureLibrary::ReplaceFromFile` (filter / ppu が変わったときだけ再読込は不要だが、流儀どおり呼ぶ)。
-4. Inspector のテクスチャ Import Settings (`InspectorWindow.cpp:3078-3108`) に `filter` と `pixelsPerUnit` を足す (sprites は窓で)。
+4. Inspector のテクスチャ Import Settings (`InspectorWindow.cpp:3078-3108`) に `filter` と `pixelsPerUnit` を足す (sprites は窓で)。この Apply も `SpriteLibrary::Register(texPath)` を呼ぶ (`.meta` 単体の変更は ReloadHub が拾わない。sub-03 の申し送り)。`.meta` に重複 id があれば後勝ちで WARN (spec R6) — `SpriteLibrary::Register` がそうなっているか確認し、違えば直す。
 5. 文字列は全部 `Tr()`。selftest `SpriteEditorSelfTest` (純関数): 4×4 グリッド、連結成分 3 個の合成画像、Safe の重なり除外、Undo 3 段。
 
 ## やらないこと (このサブでは)

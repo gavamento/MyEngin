@@ -18,6 +18,7 @@
 #include "Editor/SelfTest/PartSelfTest.h"
 #include "Editor/SelfTest/RagdollBuildSelfTest.h"
 #include "Engine/Engine/Scene/TagSelfTest.h"
+#include "Engine/Engine/Rendering/Sprite2D/Sprite2DAssetSelfTest.h"
 #include "Engine/Engine/Rendering/RenderStatsSelfTest.h"
 #include "Engine/Engine/Rendering/ShadowCullSelfTest.h"
 #include "Engine/Engine/Rendering/SkinBoundsSelfTest.h"
@@ -585,6 +586,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         if (hasOnly && std::wstring(onlyName) == L"m94") {
             ok &= mye::RunPhysicsSelfTest();
             ok &= mye::RunUISelfTest();
+            ok &= mye::RunSprite2DAssetSelfTest();
             if (!tempEc) {
                 std::filesystem::remove_all(selftestTemp, tempEc);
             }
@@ -690,6 +692,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunComputeSettingsSelfTest();       // M91h: compute 節・Compute 欄の行・カーネルのホットリロード
         ok &= mye::RunComputeInspectorSelfTest();      // M91h: Compute 欄の文字列 (日英)
         ok &= mye::RunStartupSplashSelfTest();       // 起動スプラッシュの進捗とメビウス幾何
+        ok &= mye::RunSprite2DAssetSelfTest();       // M94c: スプライト資産 (.meta の sprites) とソート層
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }

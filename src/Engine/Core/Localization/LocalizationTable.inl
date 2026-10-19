@@ -490,6 +490,14 @@ MYE_STR(PrjSet_ColAgentJump,  "Jump Distance###agentJump", "飛び越えの距�
 MYE_STR(PrjSet_AddNavAgent,   "Add Agent Type",      "種別を追加")
 MYE_STR(PrjSet_RemoveNavAgent, "Remove###removeAgent", "削除###removeAgent")
 MYE_STR(PrjSet_SaveNavAgents, "Save Agent Types",    "エージェント種別を保存")
+MYE_STR(PrjSet_SortingLayers, "Sorting Layers",      "ソート層") // M94
+MYE_STR(PrjSet_SortingHint,   "Sprites draw from the top row to the bottom row. The id (0..31) is what sprites store, so renaming or reordering keeps them. Default cannot be removed.",
+                              "スプライトは上の行から順に描かれます。スプライトが持つのは id (0..31) なので、改名や並べ替えをしても保たれます。Default は消せません")
+MYE_STR(PrjSet_AddSortingLayer, "Add Layer",         "層を追加")
+MYE_STR(PrjSet_RemoveSortingLayer, "Remove###removeSortLayer", "削除###removeSortLayer")
+MYE_STR(PrjSet_SortingLayerUp, "Up###sortLayerUp",   "上へ###sortLayerUp")
+MYE_STR(PrjSet_SortingLayerDown, "Down###sortLayerDown", "下へ###sortLayerDown")
+MYE_STR(PrjSet_SaveSortingLayers, "Save Sorting Layers", "ソート層を保存")
 MYE_STR(PrjSet_Shortcuts,     "Shortcuts",           "ショートカット")
 MYE_STR(PrjSet_ColAction,     "Action###action",     "操作###action")
 MYE_STR(PrjSet_ColKey,        "Key###key",           "キー###key")
