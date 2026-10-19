@@ -34,6 +34,17 @@ constexpr int kSplashW = 640;
 constexpr int kSplashH = 360;
 constexpr float kMargin = 32.0f;
 constexpr float kProgressH = 2.0f;
+// 下部フッター (上から名前 → パス → 段階 → ログ → 進捗バー)。帯の高さを固定して重なりを防ぐ
+constexpr float kFooterProgressY = kSplashH - kMargin - kProgressH;
+constexpr float kFooterLogBottom = kFooterProgressY - 8.0f;
+constexpr float kFooterLogTop = kFooterLogBottom - 16.0f;
+constexpr float kFooterStageBottom = kFooterLogTop - 8.0f;
+constexpr float kFooterStageTop = kFooterStageBottom - 20.0f;
+constexpr float kFooterPathBottom = kFooterStageTop - 6.0f;
+constexpr float kFooterPathTop = kFooterPathBottom - 16.0f;
+constexpr float kFooterNameBottom = kFooterPathTop - 4.0f;
+constexpr float kFooterNameTop = kFooterNameBottom - 18.0f;
+constexpr float kCenterBottom = kFooterNameTop - 8.0f;
 
 template<typename T>
 void SafeRelease(T*& ptr)
@@ -392,7 +403,7 @@ void StartupSplash::RunThread()
             fmtBody->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         }
 
-        const D2D1_RECT_F centerRect = { kMargin, 96.0f, kSplashW - kMargin, 248.0f };
+        const D2D1_RECT_F centerRect = { kMargin, 96.0f, kSplashW - kMargin, kCenterBottom };
         if (splashImage) {
             DrawCoverImage(rt, splashImage, centerRect);
         } else if (brush) {
@@ -412,38 +423,10 @@ void StartupSplash::RunThread()
             }
         }
 
-        // 下部情報
-        if (fmtBody && brush) {
-            brush->SetColor(ToD2D(themeColor::Text));
-            D2D1_RECT_F nameRect = { kMargin, 252.0f, kSplashW - kMargin, 272.0f };
-            const std::wstring& nameLine =
-                projectNameCopy.empty() ? std::wstring(L"MyEngine Editor") : projectNameCopy;
-            rt->DrawText(nameLine.c_str(), static_cast<UINT32>(nameLine.size()), fmtBody, nameRect, brush);
-            if (!projectPathCopy.empty()) {
-                brush->SetColor(ToD2D(themeColor::TextDim));
-                D2D1_RECT_F pathRect = { kMargin, 272.0f, kSplashW - kMargin, 288.0f };
-                rt->DrawText(projectPathCopy.c_str(), static_cast<UINT32>(projectPathCopy.size()), fmtBody, pathRect,
-                             brush);
-            }
-            wchar_t stageBuf[256];
-            swprintf_s(stageBuf, L"%s  %d / %d", stageLabelCopy.c_str(), stepCopy, kStartupProgressSteps);
-            brush->SetColor(ToD2D(themeColor::Text));
-            D2D1_RECT_F stageRect = { kMargin, 296.0f, kSplashW - 96.0f, 316.0f };
-            rt->DrawText(stageBuf, static_cast<UINT32>(wcslen(stageBuf)), fmtBody, stageRect, brush);
-
-            wchar_t timeBuf[32];
-            swprintf_s(timeBuf, L"%.1f s", static_cast<double>(elapsed));
-            brush->SetColor(ToD2D(themeColor::TextDim));
-            D2D1_RECT_F timeRect = { kSplashW - 120.0f, 296.0f, kSplashW - kMargin, 316.0f };
-            fmtBody->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-            rt->DrawText(timeBuf, static_cast<UINT32>(wcslen(timeBuf)), fmtBody, timeRect, brush);
-            fmtBody->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        }
-
-        // 進捗バー
+        // 進捗バー (テキストより先に描いて、文字が上に来る)
         if (brush) {
-            const float barY = kSplashH - kMargin - kProgressH;
-            const D2D1_RECT_F track = { kMargin, barY, kSplashW - kMargin, barY + kProgressH };
+            const D2D1_RECT_F track = { kMargin, kFooterProgressY, kSplashW - kMargin,
+                                        kFooterProgressY + kProgressH };
             brush->SetColor(ToD2D(themeColor::Border, 0.5f));
             rt->FillRectangle(track, brush);
             D2D1_RECT_F fill = track;
@@ -452,13 +435,41 @@ void StartupSplash::RunThread()
             rt->FillRectangle(fill, brush);
         }
 
+        // 下部情報 (固定帯。段階名と進捗バーの間にログ行を挟む)
+        if (fmtBody && brush) {
+            brush->SetColor(ToD2D(themeColor::Text));
+            D2D1_RECT_F nameRect = { kMargin, kFooterNameTop, kSplashW - kMargin, kFooterNameBottom };
+            const std::wstring& nameLine =
+                projectNameCopy.empty() ? std::wstring(L"MyEngine Editor") : projectNameCopy;
+            rt->DrawText(nameLine.c_str(), static_cast<UINT32>(nameLine.size()), fmtBody, nameRect, brush);
+            if (!projectPathCopy.empty()) {
+                brush->SetColor(ToD2D(themeColor::TextDim));
+                D2D1_RECT_F pathRect = { kMargin, kFooterPathTop, kSplashW - kMargin, kFooterPathBottom };
+                rt->DrawText(projectPathCopy.c_str(), static_cast<UINT32>(projectPathCopy.size()), fmtBody, pathRect,
+                             brush);
+            }
+            wchar_t stageBuf[256];
+            swprintf_s(stageBuf, L"%s  %d / %d", stageLabelCopy.c_str(), stepCopy, kStartupProgressSteps);
+            brush->SetColor(ToD2D(themeColor::Text));
+            D2D1_RECT_F stageRect = { kMargin, kFooterStageTop, kSplashW - 88.0f, kFooterStageBottom };
+            rt->DrawText(stageBuf, static_cast<UINT32>(wcslen(stageBuf)), fmtBody, stageRect, brush);
+
+            wchar_t timeBuf[32];
+            swprintf_s(timeBuf, L"%.1f s", static_cast<double>(elapsed));
+            brush->SetColor(ToD2D(themeColor::TextDim));
+            D2D1_RECT_F timeRect = { kSplashW - 80.0f, kFooterStageTop, kSplashW - kMargin, kFooterStageBottom };
+            fmtBody->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+            rt->DrawText(timeBuf, static_cast<UINT32>(wcslen(timeBuf)), fmtBody, timeRect, brush);
+            fmtBody->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        }
+
         if (fmtMono && brush && lastLog.message[0] != '\0') {
             const ImVec4 logColor = lastLog.level == LogLevel::Error   ? themeColor::Error
                                     : lastLog.level == LogLevel::Warn ? themeColor::Warning
                                                                       : themeColor::TextDim;
             brush->SetColor(ToD2D(logColor));
             const std::wstring logLine = Utf8ToWide(lastLog.message);
-            D2D1_RECT_F logRect = { kMargin, 318.0f, kSplashW - kMargin, kSplashH - kMargin - 6.0f };
+            D2D1_RECT_F logRect = { kMargin, kFooterLogTop, kSplashW - kMargin, kFooterLogBottom };
             rt->DrawText(logLine.c_str(), static_cast<UINT32>(logLine.size()), fmtMono, logRect, brush);
         }
 
