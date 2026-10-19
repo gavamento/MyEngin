@@ -1,7 +1,7 @@
 # sub-06: Sliced / Tiled、SortingGroup2D、SpriteMask2D (ステンシル)
 
 - 依存: sub-04
-- 状態: 未着手
+- 状態: 実装中
 - 往復: 0
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む**。spec: 4.1.3、7. R3
 

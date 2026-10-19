@@ -33,7 +33,7 @@
 ## 検証コマンド
 毎サブ必須: Debug / Release ビルド、`pwsh tools\check_rules.ps1`、`pwsh tools\gen_project_files.ps1`、`MYE_SELFTEST_ONLY=m94` の selftest
 - temp シーンの `Runtime.exe ... --screenshot` と `--frames 300`
-**チェックポイント (このサブで回す)**: `Editor.exe --selftest` 全体 (Debug / Release)、`tools\replay_verify.bat`、`tools\shot_verify.bat` + 既存 30 枚 `--tol 0`
+**チェックポイント (このサブで回す)**: `Editor.exe --selftest` 全体 (Debug / Release)、`tools\replay_verify.bat`、`tools\shot_verify.bat` + 既存 30 枚 `--tol 0`。replay_verify は全文ログを `cache\m94\replay_verify_cp2.log` に残し、ジョブごとの PASS 行を SELF_EVAL に写す (sub-05 VERDICT should 3)。`demo_terrain_deferred` は golden でなく基点 `25fb355` の絵と `--tol 0` で比べる (spec 5. 条件 4 の例外)
 
 ## 実装メモ (coder が追記)
 
