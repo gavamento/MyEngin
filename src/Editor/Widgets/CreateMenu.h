@@ -31,6 +31,7 @@ GameObject CreateSpotLight(EngineContext& ctx, const char* name);
 GameObject CreateCamera(EngineContext& ctx, const char* name);
 GameObject CreateAudioSource(EngineContext& ctx, const char* name);   // M45e
 GameObject CreateAudioListener(EngineContext& ctx, const char* name); // M45e
+GameObject CreateSprite2D(EngineContext& ctx, const char* name);      // M94
 GameObject CreateUIPanel(EngineContext& ctx, const char* name);       // M51f
 GameObject CreateUIImage(EngineContext& ctx, const char* name);       // M51f
 GameObject CreateUIButton(EngineContext& ctx, const char* name);      // M51f

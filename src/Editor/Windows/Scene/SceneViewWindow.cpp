@@ -33,6 +33,7 @@
 #include "Engine/Engine/Physics/Rigid/PhysicsDebugDraw.h"
 #include "Engine/Engine/Physics/Rigid/Shapes.h"
 #include "Engine/Engine/Rendering/RenderSystem.h"
+#include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h" // M94: Sprite2D のギズモ寸法
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Renderer/Pipeline/FrustumCull.h"
 #include "Engine/Renderer/Device/GpuResources.h"
@@ -424,6 +425,9 @@ constexpr uint32_t kJointErr = 0xFF3030FFu;   // 2 点を結ぶ「ずれ」の�
 constexpr uint32_t kForce = 0xF0A040FFu;
 constexpr uint32_t kCharCtrl = 0x30E0B0FFu;
 constexpr uint32_t kVfx = 0xC080F0FFu;        // スプライト / 3D テキスト
+constexpr uint32_t kSprite2DRect = 0xFFFFFFFFu;  // 選択中 Sprite2D の矩形 (白)
+constexpr uint32_t kSprite2DPivot = 0xFFE020FFu; // 同 pivot の十字 (黄)
+constexpr float kSprite2DPivotCrossPx = 8.0f;   // pivot の十字の半長 (画面の画素。ワールド寸法に直して引く)
 constexpr uint32_t kAudio = 0x40E0C0FFu;      // 音源マーカー / リスナー
 constexpr uint32_t kAudioMin = 0x40FFA0FFu;   // minDistance (ここまでは減衰しない)
 constexpr uint32_t kAudioMax = 0x2080A0FFu;   // maxDistance (ここから先は無音)
@@ -516,6 +520,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         DrawConstantForceGizmos(world);
         DrawCharacterControllerGizmos(world);
         DrawSpriteGizmos(world);
+        DrawSprite2DGizmos(ctx, world, selection);
         DrawAudioGizmos(ctx, world, selection);
         DrawTextMeshGizmos(world);
         DrawPartSocketGizmos(world);
@@ -748,6 +753,54 @@ void SceneViewWindow::DrawSpriteGizmos(World& world)
             lines_.AddLine({ p.x + hx, p.y + hy, p.z }, { p.x - hx, p.y + hy, p.z }, gizmo::kVfx);
             lines_.AddLine({ p.x - hx, p.y + hy, p.z }, { p.x - hx, p.y - hy, p.z }, gizmo::kVfx);
         });
+}
+
+// 選択中の Sprite2D の矩形 (白) と pivot (黄の十字、M94)。2D モードでなくても描く。
+// 矩形は描画と同じ寸法 (Sprite2DRenderer::LocalRect) に flip を掛けて、ワールド行列で運ぶ
+void SceneViewWindow::DrawSprite2DGizmos(EngineContext& ctx, World& world, const Selection& selection)
+{
+    const GameObject selected = ctx.scene->FindByFileId(selection.primary);
+    if (!selected) {
+        return;
+    }
+    const auto* sp = world.GetComponent<Sprite2DComponent>(selected.Id());
+    const auto* wmc = world.GetComponent<WorldMatrixComponent>(selected.Id());
+    if (sp == nullptr || wmc == nullptr) {
+        return;
+    }
+    // 寸法が決まらない間 (未解決 / テクスチャ未ロード) は描画側のマゼンタと同じ 1 単位角
+    float rect[4] = { -0.5f, -0.5f, 0.5f, 0.5f };
+    if (SpriteLibrary* lib = spritelib::Library()) {
+        if (const SpriteDef* def = lib->Get(sp->sprite)) {
+            if (const Texture* tex = ctx.resources->textures.Get(def->texture)) {
+                Sprite2DRenderer::LocalRect(*def, tex->width, tex->height, rect);
+            }
+        }
+    }
+    const float sx = sp->flipX ? -1.0f : 1.0f;
+    const float sy = sp->flipY ? -1.0f : 1.0f;
+    const XMFLOAT4X4& m = wmc->value;
+    auto toWorld = [&m](float x, float y) {
+        return XMFLOAT3{ x * m._11 + y * m._21 + m._41, x * m._12 + y * m._22 + m._42,
+                         x * m._13 + y * m._23 + m._43 };
+    };
+    const XMFLOAT3 c0 = toWorld(rect[0] * sx, rect[1] * sy);
+    const XMFLOAT3 c1 = toWorld(rect[2] * sx, rect[1] * sy);
+    const XMFLOAT3 c2 = toWorld(rect[2] * sx, rect[3] * sy);
+    const XMFLOAT3 c3 = toWorld(rect[0] * sx, rect[3] * sy);
+    lines_.AddLine(c0, c1, gizmo::kSprite2DRect);
+    lines_.AddLine(c1, c2, gizmo::kSprite2DRect);
+    lines_.AddLine(c2, c3, gizmo::kSprite2DRect);
+    lines_.AddLine(c3, c0, gizmo::kSprite2DRect);
+
+    // pivot = エンティティの原点。十字は画面上で一定の大きさにする (2D は半高から、3D は固定)
+    const float half = mode2d ? orthoSize2d_ * (gizmo::kSprite2DPivotCrossPx / std::max(1, desiredH_) * 2.0f) : 0.1f;
+    const XMFLOAT3 xa = toWorld(half, 0.0f);
+    const XMFLOAT3 xb = toWorld(-half, 0.0f);
+    const XMFLOAT3 ya = toWorld(0.0f, half);
+    const XMFLOAT3 yb = toWorld(0.0f, -half);
+    lines_.AddLine(xb, xa, gizmo::kSprite2DPivot);
+    lines_.AddLine(yb, ya, gizmo::kSprite2DPivot);
 }
 
 // オーディオ (M45e)。音源はマーカー球、リスナーは向きが要るので前方向線も引く。

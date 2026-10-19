@@ -39,6 +39,8 @@
 #include "Engine/Engine/Navigation/NavSystem.h" // NavCheckLinkPlacement (Link の置き方の検査)
 #include "Editor/SourceControl/ScmHint.h" // M66i: タグ名の保存直後に status を取り直させる
 #include "Engine/Engine/Scene/TagNames.h" // 汎用タグの名前表 (タグ欄のドロップダウン)
+#include "Engine/Engine/Scene/SortingLayers.h" // M94: Sprite2D のソート層コンボ
+#include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h" // M94: Sprite2D.sprite のピッカー
 #include "Engine/Engine/Scene/Tags.h" // 汎用タグの読み書き (Tags::OwnMask / SetOwnMask)
 #include "Engine/Engine/RayTracing/RtScope.h" // RT の実効値と根拠 (描画と同じ判定)
 #include "Engine/Engine/Rendering/RenderSystem.h" // RT のタグ規則 / レーンの on/off
@@ -2520,6 +2522,30 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
                 v = types.At(index).id;
                 changed = true;
             }
+        } else if (componentName && std::strcmp(componentName, "Sprite2D") == 0
+                   && std::strcmp(field.name, "sortingLayerId") == 0) {
+            // M94: ソート層は Project Settings の表から名前で選ぶ。表に無い id は黙って Default へ潰さず、
+            // 「未定義の id」の項目を足して選択中にする (描画は Default として扱われる)
+            SortingLayers& layers = SortingLayers::Get();
+            layers.Load(ctx.assetsRoot);
+            int& v = *static_cast<int*>(p);
+            const char* labels[SortingLayers::kMaxLayers + 1];
+            for (int i = 0; i < layers.Count(); ++i) {
+                labels[i] = layers.At(i).name;
+            }
+            int count = layers.Count();
+            int index = layers.IndexOfId(v);
+            char undefinedLabel[48];
+            if (index < 0) {
+                std::snprintf(undefinedLabel, sizeof(undefinedLabel), "%s %d", Tr(StrId::Insp_SortingLayerUndefined), v);
+                labels[count] = undefinedLabel;
+                index = count;
+                ++count;
+            }
+            if (ImGui::Combo(label, &index, labels, count) && index < layers.Count() && layers.At(index).id != v) {
+                v = layers.At(index).id;
+                changed = true;
+            }
         } else if (const EnumFieldLabels* ef = FindEnumLabels(componentName, field.name)) {
             int v = *static_cast<int*>(p);
             if (v < 0 || v >= ef->count) {
@@ -4262,6 +4288,16 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
     } else if (fname == "fxstack") {
         // M78c: プロジェクトポスト/コンピュートスタック (*.fxstack.json はディスクにしか無い)
         diskType = AssetType::FxStack;
+    } else if (fname == "sprite") {
+        // M94: Sprite2D.sprite。テクスチャ全面と、.meta でスライスしたサブスプライト。
+        // "tex" 分岐 (テクスチャ総当たり) より先に見る
+        if (SpriteLibrary* sprites = spritelib::Library()) {
+            std::vector<SpriteListing> listing;
+            sprites->Enumerate(listing);
+            for (const SpriteListing& l : listing) {
+                entries.push_back({ l.id, l.displayName });
+            }
+        }
     } else if (fname.find("model") != std::string::npos) {
         // M18: SkinnedMesh.model。★"model" は "mesh" を含まないので、この分岐が無いと
         //   最後の else (メッシュ + マテリアル + テクスチャの混合) に落ちる。正解の
@@ -4330,7 +4366,7 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
     }
 
     auto assign = [&](AssetID v) {
-        if (!v.IsNull() && fname.find("tex") != std::string::npos) {
+        if (!v.IsNull() && fname != "sprite" && fname.find("tex") != std::string::npos) {
             if (!ctx.resources->textures.Get(v)) {
                 const std::wstring loadPath = assetguid::ResolvePath(v.value);
                 if (!loadPath.empty()) {
@@ -4361,6 +4397,12 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
             if (fname.find("tex") != std::string::npos && AssetDatabase::ClassifyPath(dropPath) == AssetType::Texture) {
                 const AssetID aid = ctx.resources->textures.RequestLoadFileAsync(dropPath);
                 assign(aid);
+            } else if (fname == "sprite" && AssetDatabase::ClassifyPath(dropPath) == AssetType::Texture) {
+                // M94: テクスチャのドロップは「全面スプライト」(AssetID はテクスチャ自身)。ロードは描画側が頼む
+                if (SpriteLibrary* sprites = spritelib::Library()) {
+                    sprites->Register(dropPath);
+                }
+                assign(TextureLibrary::IdForFile(dropPath));
             }
         }
         ImGui::EndDragDropTarget();
@@ -4396,6 +4438,13 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
             }
         }
         ImGui::EndPopup();
+    }
+    if (fname == "sprite") {
+        // M94: 描画側は未解決のスプライトを内蔵のマゼンタで描く。理由を Inspector で見えるようにする
+        SpriteLibrary* sprites = spritelib::Library();
+        if (sprites == nullptr || sprites->Get(*id) == nullptr) {
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "%s", Tr(StrId::Insp_Sprite2DUnresolved));
+        }
     }
     ImGui::PopID();
 }

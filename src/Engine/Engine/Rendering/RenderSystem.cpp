@@ -2056,6 +2056,17 @@ void RenderSystem::DrawParticlesAndDebug(World& world, GraphicsDevice& device, S
     SceneLightData& lights = f.lights;
     PostProcess::Target* hdr = f.hdr;
     bool& distortionActive = f.distortionActive;
+    // M94: Sprite2D。VFX の直前 (整数ソートキーで並べた 2D スプライト)。Sprite2D が無ければ
+    // 描画リストが空のままパスを Init もせず、D3D の状態も触らない
+    {
+        const Sprite2DDrawList& sprites = sprite2dRenderer_.Collect(world, resources);
+        if (!sprites.Empty()) {
+            if (!sprite2dPass_.IsReady()) {
+                sprite2dPass_.Init(device, shaders);
+            }
+            sprite2dPass_.Render(device, shaders, resources.textures, sprites, view.view, view.proj);
+        }
+    }
     // VFX (M29c): Sprite/Trail/TextMesh をメッシュ (不透明+透明) の後・パーティクルの前に
     // 重ねる。HDR 中間へ描かれ postfx を通る。RT はパスがバインドしたまま
     if (vfx) {
@@ -2386,6 +2397,7 @@ void RenderSystem::ReleaseGpu()
     acousticPass_ = AcousticVolumePass();
     linePass_ = EditorLinePass();
     navFillPass_ = NavFillPass();
+    sprite2dPass_ = Sprite2DPass();
     envBaker_ = EnvMapBaker();
     rtScene_ = RtScene();
     rtPasses_ = RtPasses();

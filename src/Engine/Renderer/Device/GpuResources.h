@@ -234,6 +234,8 @@ public:
     // これが無いと「撮影フレームまでにデコードが間に合ったか」= 実時間で絵が変わる。
     // タイムアウト付き (デコード結果が返らない事故でも CI を吊らさない)
     void WaitForAsyncLoads(int timeoutMs = 30000);
+    // 非同期ロード中 (Get() が白のプレースホルダを返している間) か。メインスレッド専用
+    bool IsPending(AssetID id) const { return pending_.count(id.value) != 0; }
 
     // ファイルパスに対応する AssetID (正規化パスのハッシュ)。ロード有無に関わらず同じ値
     static AssetID IdForFile(const std::wstring& path);

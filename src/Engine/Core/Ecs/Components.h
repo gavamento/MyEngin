@@ -2316,6 +2316,27 @@ struct TwoBoneIKComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 2D スプライト (M94、TypeId=81) ----
+// 横スクロール 2D (XY 平面、+Z が奥) 用のスプライト。**無ければ何も描かない** (opt-in)。描画専用なので
+// **kComponentNoHash**。SpriteRenderer (VFX 用ビルボード) とは別物で、Sprite2DRenderer / Sprite2DPass が
+// ソート層 → orderInLayer → entity.index の整数キーで描く (viewZ は見ない)。
+// drawMode 以降の欄は後続サブ (Sliced / Tiled / マスク / ライト / マテリアル) が使う。生バイトを伸ばさないため先に置いてある
+struct Sprite2DComponent {
+    AssetID sprite = {};                           // SpriteLibrary の AssetID (スライス or テクスチャ全面)。空 = マゼンタ
+    DirectX::XMFLOAT4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
+    DirectX::XMFLOAT2 size = { 1.0f, 1.0f };       // Sliced / Tiled のワールド寸法
+    int32_t drawMode = 0;                          // 0 Simple / 1 Sliced / 2 Tiled
+    int32_t sortingLayerId = 0;                    // SortingLayers の id
+    int32_t orderInLayer = 0;
+    int32_t maskInteraction = 0;                   // 0 None / 1 VisibleInside / 2 VisibleOutside
+    AssetID material = {};                         // 空 = 内蔵
+    AssetID normalMap = {};
+    bool flipX = false;                            // pivot まわりに左右反転
+    bool flipY = false;
+    bool lit = true;                               // 2D ライトの対象にする
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

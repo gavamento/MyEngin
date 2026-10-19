@@ -846,6 +846,9 @@
     <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DAssetSelfTest.cpp">
       <Filter>Engine\Rendering\Sprite2D</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DRenderer.cpp">
+      <Filter>Engine\Rendering\Sprite2D</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteLibrary.cpp">
       <Filter>Engine\Rendering\Sprite2D</Filter>
     </ClCompile>
@@ -1108,6 +1111,9 @@
       <Filter>Renderer\Passes</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Passes\SkyboxPass.cpp">
+      <Filter>Renderer\Passes</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\Sprite2DPass.cpp">
       <Filter>Renderer\Passes</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Passes\SsrPass.cpp">
@@ -1875,6 +1881,9 @@
     <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DAssetSelfTest.h">
       <Filter>Engine\Rendering\Sprite2D</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DRenderer.h">
+      <Filter>Engine\Rendering\Sprite2D</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteLibrary.h">
       <Filter>Engine\Rendering\Sprite2D</Filter>
     </ClInclude>
@@ -2170,6 +2179,12 @@
       <Filter>Renderer\Passes</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Passes\SkyResolve.h">
+      <Filter>Renderer\Passes</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\Sprite2DDrawList.h">
+      <Filter>Renderer\Passes</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\Sprite2DPass.h">
       <Filter>Renderer\Passes</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Passes\SsrPass.h">

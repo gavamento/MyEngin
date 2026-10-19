@@ -108,6 +108,8 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "AIStimulusSource", { ICON_FA_BULLSEYE, "AI", "AI 刺激源" } },
         { "BehaviorTree", { ICON_FA_SITEMAP, "AI", "ビヘイビアツリー" } }, // M85
         { "PatrolRoute", { ICON_FA_SHOE_PRINTS, "AI", "巡回ルート" } }, // M85g
+        // M94: 2D レーン
+        { "Sprite2D", { ICON_FA_IMAGES, "2D", "2D スプライト" } },
     };
     return t;
 }
@@ -133,7 +135,7 @@ const std::vector<const char*>& ComponentUiCategories()
     static const std::vector<const char*> cats = { "General",   "Rendering", "Physics",
                                                    "Animation", "VFX",       "Audio",
                                                    "Environment", "Navigation", "UI",
-                                                   "Scripts" };
+                                                   "2D", "Scripts" };
     return cats;
 }
 
@@ -148,7 +150,7 @@ const char* ComponentCategoryLabel(const char* categoryKey)
         { "General", "一般" },      { "Rendering", "レンダリング" }, { "Physics", "物理" },
         { "Animation", "アニメーション" }, { "VFX", "エフェクト" },  { "Audio", "オーディオ" },
         { "Environment", "環境" },  { "Navigation", "ナビゲーション" }, { "UI", "UI" },
-        { "Scripts", "スクリプト" },
+        { "2D", "2D" },             { "Scripts", "スクリプト" },
     };
     for (const Row& r : kRows) {
         if (std::strcmp(r.key, categoryKey) == 0) {
@@ -171,6 +173,7 @@ const ImVec4& ComponentCategoryColor(const char* categoryKey)
         { "Audio", ImVec4(0.44f, 0.71f, 0.71f, 1.0f) },       // 青緑
         { "Environment", ImVec4(0.68f, 0.71f, 0.44f, 1.0f) }, // 黄緑
         { "UI", ImVec4(0.52f, 0.64f, 0.82f, 1.0f) },          // 青
+        { "2D", ImVec4(0.82f, 0.62f, 0.72f, 1.0f) },          // 薄紅 (Scripts の桃と見分ける)
         { "Scripts", ImVec4(0.79f, 0.54f, 0.62f, 1.0f) },     // 桃
     };
     if (categoryKey != nullptr) {

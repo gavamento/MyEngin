@@ -63,6 +63,7 @@ private:
     void DrawConstantForceGizmos(World& world);
     void DrawCharacterControllerGizmos(World& world);
     void DrawSpriteGizmos(World& world);
+    void DrawSprite2DGizmos(EngineContext& ctx, World& world, const Selection& selection);
     void DrawAudioGizmos(EngineContext& ctx, World& world, const Selection& selection);
     void DrawTextMeshGizmos(World& world);
     void DrawPartSocketGizmos(World& world);

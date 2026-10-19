@@ -155,7 +155,8 @@ struct SimRefs {
 // v50 (M91k): CMP 節を State の表だけにした (Fx は入れない。State と Fx の採番を分けた。ADR-030 D29)
 // v51 (M94a): RigidbodyComponent.plane2D と ColliderComponent.oneWay (World 節のカラム生バイト)
 // v52 (M94b): CameraComponent に orthographic / orthoSize (World 節のカラム生バイト)
-inline constexpr uint32_t kSimSnapshotVersion = 52;
+// v53 (M94d): Sprite2DComponent (TypeId 81、NoHash)。World 節のカラム生バイト
+inline constexpr uint32_t kSimSnapshotVersion = 53;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

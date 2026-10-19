@@ -9,6 +9,7 @@
 #include "Engine/Engine/Rendering/DebugDraw.h"
 #include "Engine/Engine/Rendering/LightSelection.h"
 #include "Engine/Engine/Rendering/SkinPaletteCache.h"
+#include "Engine/Engine/Rendering/Sprite2D/Sprite2DRenderer.h"
 #include "Engine/Engine/RayTracing/RtScene.h"
 #include "Engine/Engine/Scene/TagNames.h" // RtTagRules (タグによる RT の一括 ON/OFF)
 #include "Engine/Engine/Rendering/TerrainSystem.h"
@@ -24,6 +25,7 @@
 #include "Engine/Renderer/Pipeline/RenderTypes.h"
 #include "Engine/Renderer/Passes/ShadowAtlas.h"
 #include "Engine/Renderer/Passes/ShadowPass.h"
+#include "Engine/Renderer/Passes/Sprite2DPass.h"
 #include "Engine/Renderer/Passes/SkyResolve.h" // FailedTextureLoad
 #include "Engine/Renderer/Passes/TerrainPass.h"
 #include "Engine/Renderer/Passes/WaterPass.h"
@@ -435,6 +437,8 @@ private:
     bool acousticSupplied_ = false; // 直近フレームで SRV を供給できたか (統計表示用)
     EditorLinePass linePass_; // DebugDrawLine 用 (v7、遅延 Init)
     NavFillPass navFillPass_; // ナビメッシュの塗り (M82e、遅延 Init)
+    Sprite2DRenderer sprite2dRenderer_; // Sprite2D の収集とソート (M94)
+    Sprite2DPass sprite2dPass_;         // Sprite2D の描画 (遅延 Init。Sprite2D が現れるまで 1 バイトも確保しない)
     EnvMapBaker envBaker_;    // IBL 環境マップ (M38c、lazy ベイク + キャッシュ)
     // スキンメッシュのボーンパレット (M18)。ビュー間で共有するキャッシュ (RenderItem.bones はエントリを指す。
     // エントリのアドレスは Render の間だけ有効)

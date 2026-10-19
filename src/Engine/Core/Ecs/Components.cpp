@@ -1699,6 +1699,24 @@ void RegisterBuiltinComponents()
     });
 #undef MYE_IK_CHAIN
 #undef MYE_IK_FIELD
+
+    // M94: 2D スプライト (TypeId=81、末尾 append)。**kComponentNoHash** — 描画専用で sim に触れない。
+    // 新規 opt-in 型なので既存シーンのハッシュは不変。drawMode 以降は後続サブが使う欄
+    RegisterComponent<Sprite2DComponent>("Sprite2D", {
+        MYE_JP("スプライト", MYE_FIELD(Sprite2DComponent, sprite, AssetRef)),
+        MYE_JP("色", MYE_FIELD(Sprite2DComponent, color, Color)),
+        MYE_JP("左右反転", MYE_FIELD(Sprite2DComponent, flipX, Bool)),
+        MYE_JP("上下反転", MYE_FIELD(Sprite2DComponent, flipY, Bool)),
+        MYE_JP("描画モード", MYE_FIELD_TIP(Sprite2DComponent, drawMode, Int32, "0 = Simple, 1 = Sliced, 2 = Tiled")),
+        MYE_JP("サイズ", MYE_FIELD_TIP(Sprite2DComponent, size, Float2, "world size for Sliced / Tiled")),
+        MYE_JP("ソート層", MYE_FIELD(Sprite2DComponent, sortingLayerId, Int32)),
+        MYE_JP("層内の順序", MYE_FIELD(Sprite2DComponent, orderInLayer, Int32)),
+        MYE_JP("マスクとの関係", MYE_FIELD_TIP(Sprite2DComponent, maskInteraction, Int32,
+                                              "0 = None, 1 = VisibleInside, 2 = VisibleOutside")),
+        MYE_JP("マテリアル", MYE_FIELD(Sprite2DComponent, material, AssetRef)),
+        MYE_JP("法線マップ", MYE_FIELD(Sprite2DComponent, normalMap, AssetRef)),
+        MYE_JP("ライトの対象", MYE_FIELD(Sprite2DComponent, lit, Bool)),
+    }, kComponentNoHash);
 }
 
 } // namespace mye

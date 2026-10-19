@@ -11,6 +11,7 @@
 3. `SortingGroup2DComponent` (NoHash、TypeId 末尾): `sortingLayerId / orderInLayer`。Sprite2DRenderer の収集で、各 Sprite2D の最も近い祖先の SortingGroup2D を探し (HierarchyComponent の親リンクを上る)、キーを (グループの層順, グループの order, グループの entity.index, 自分の層順, 自分の order, 自分の index) にする。グループ無しは (自分の層順, 自分の order, 0, 0, 0, index) ではなく、Unity と同じく「グループはグループのキー位置に 1 つの塊として入る」: キー = (層順, order, index) をグループなら**グループの値**、塊の内側は自分の値で 2 次ソート。
 4. `SpriteMask2DComponent` (NoHash、TypeId 末尾): `sprite / alphaCutoff (0.5) / sortingLayerId / orderInLayer / rangeBack / rangeFront (int32、既定 INT_MIN / INT_MAX 相当の大きい値)`。Sprite2DPass の冒頭でステンシルを 0 でクリア (`ClearDepthStencilView(D3D11_CLEAR_STENCIL)` — 深度は触らない。読み取り専用 DSV に差し替わる前 (`RenderSystem.cpp:2097` の前) に Sprite2D パスが走ることを確認し、ステンシル書き込み可能な DSV を使う)。マスクは描画順にスプライトと一緒に並び、自分の位置で「alpha ≥ cutoff の画素にステンシル ref 1 を書く (色は書かない)」。`maskInteraction` 1 = Equal 1、2 = Equal 0 でテスト。マスクの `rangeBack / rangeFront` は「この order 範囲のスプライトだけマスクされる」= 範囲外のスプライトはステンシルテスト無しで描く。複数マスクの重なりは OR (ref 1 を書き重ねる) で可。
 5. Scene View のギズモ: SortingGroup2D は無し、SpriteMask2D は矩形 (紫)。EditorComponentCatalog に 2 行。`kSimSnapshotVersion` +1 (型 2 つ追加で 1 回)。
+7. 色の契約 (spec 4.1.3): temp シーンのカメラに `CameraPostFx.tonemapMode = 0` を付け、(128,128,128) と (200,50,10) の 1×1 テクスチャ (srgb auto) の Sprite2D を `--screenshot` → 画素が ±1 で一致することをログに残す。Inspector の sprite 欄に「テクスチャの .meta が srgb=on」の警告行を足す (sub-04 の未解決警告の隣、`Tr()`)。
 6. 確認スクショ: Sliced (border 4 px の 16×16 を 3×1 単位)、Tiled (同じ絵を 3×2)、SortingGroup (グループ A の子 2 枚の間にグループ外の 1 枚が割り込まない)、Mask (丸マスクの VisibleInside / Outside)。
 
 ## やらないこと (このサブでは)
@@ -26,6 +27,7 @@
 ## 受け入れ条件 (このサブ)
 1. (spec 15) 4 枚のスクショ (`plans\m94-2d\screenshots\sprite2d_sliced_tiled.png`、`sprite2d_group_mask.png`) で、角の画素幅が原寸 (4 px × 画面倍率)、Tiled の繰り返し数、グループの塊、マスクの内外が期待どおり (画素座標のログ)。
 2. SceneView と GameView と Runtime の 3 経路でマスクが同じに出る (SceneView のエディタスクショ 1 枚)。
+2b. (spec 4.1.3 色の契約) tonemapMode 0 で (128,128,128) / (200,50,10) が ±1 (画素値のログ)。
 3. (spec 1-3) 0 警告、check_rules 0、snapshot +1 のみ。ステンシルクリアは Sprite2D が 0 枚なら実行しない (コードで示す)。重い 3 本は sub-10。
 
 ## 検証コマンド

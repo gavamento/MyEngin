@@ -7,6 +7,7 @@
 #include <optional>
 
 #include "Engine/Core/Asset/AssetGuidResolver.h" // v8 PlayMusic の生クリップ経路 (GUID → 実パス)
+#include "Engine/Engine/Scene/SortingLayers.h" // M94: 2D のソート層の表
 #include "Engine/Engine/Scene/TagNames.h" // 汎用タグ: 名前の表と RT の適用範囲
 #include "Engine/Core/Diagnostics/Check.h"
 #include "Engine/Core/Jobs/JobSystem.h"
@@ -411,6 +412,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // tick が回る前に 1 回だけ決める sim の静的な入力 (UI 基準解像度 / フォント計測表 / タグ名。
     // HeadlessSim と共有、SimInit.h)。タグ名は下の RT タグ規則の読込より前に済ませる
     InitSimProjectState(assetsRoot);
+    SortingLayers::Get().Load(assetsRoot); // M94: 描画順の表 (描画専用。HeadlessSim / Server は描かないので共有部へ置かない)
     // M21: 失敗してもエンジンは継続 (UI が出ないだけ)。M52c: --font-embedded でフォント固定
     uiRenderer.Init(device, shaderManager, assetsRoot, config.fontEmbedded);
     vfxRenderer.Init(device, shaderManager, &uiRenderer); // M29c: 同上 (VFX が出ないだけ)

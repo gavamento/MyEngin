@@ -18,8 +18,10 @@
 #include "Engine/Core/Asset/AssetKeyResolver.h"
 #include "Engine/Core/Asset/ImportMetaResolver.h"
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
+#include "Engine/Engine/Rendering/Sprite2D/Sprite2DRenderer.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Scene/SortingLayers.h"
 #include "Engine/Platform/PathUtil.h"
@@ -289,6 +291,34 @@ bool RunSprite2DAssetSelfTest()
         broken.Load(root.wstring(), true);
         check(broken.Count() == 3 && broken.At(0).id == 0 && broken.At(1).id == 5 && broken.At(2).id == 7,
               "Load repairs: Default prepended, duplicate / out-of-range ids dropped");
+    }
+
+    // ---- (e) Sprite2D の登録とローカル矩形 ----
+    {
+        RegisterBuiltinComponents(); // 多重呼び出しは無害
+        // TypeId は登録順そのもの。80 (TwoBoneIK) の次
+        check(Sprite2DComponent::sTypeId == 81, "Sprite2D is TypeId 81");
+        const ComponentDesc& d = ComponentRegistry::Get().Desc(Sprite2DComponent::sTypeId);
+        check((d.flags & kComponentNoHash) != 0, "Sprite2D is kComponentNoHash (render-only)");
+
+        // 全面スプライト: 画素寸法 / ppu、pivot 中央
+        SpriteDef full;
+        full.ppu = 32;
+        float r[4] = {};
+        Sprite2DRenderer::LocalRect(full, 64, 32, r);
+        check(r[0] == -1.0f && r[1] == -0.5f && r[2] == 1.0f && r[3] == 0.5f, "LocalRect: full texture 64x32 @ ppu 32, centered");
+
+        // スライス: rect の寸法を使い、pivot (左下原点) を原点に取る
+        SpriteDef slice;
+        slice.rect[0] = 16;
+        slice.rect[1] = 8;
+        slice.rect[2] = 32;
+        slice.rect[3] = 16;
+        slice.ppu = 16;
+        slice.pivot[0] = 0.0f;
+        slice.pivot[1] = 1.0f;
+        Sprite2DRenderer::LocalRect(slice, 1024, 1024, r);
+        check(r[0] == 0.0f && r[1] == -1.0f && r[2] == 2.0f && r[3] == 0.0f, "LocalRect: slice 32x16 @ ppu 16, pivot top-left");
     }
 
     fs::remove_all(root, ec);

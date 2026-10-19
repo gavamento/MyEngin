@@ -225,6 +225,7 @@
     <ClCompile Include="..\src\Engine\Engine\Rendering\SkinPaletteCache.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\SkinPaletteCacheSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DAssetSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\TerrainSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\WaterWaveSelfTest.cpp" />
@@ -313,6 +314,7 @@
     <ClCompile Include="..\src\Engine\Renderer\Passes\ShadowAtlas.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\ShadowPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\SkyboxPass.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Passes\Sprite2DPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\SsrPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\TaaPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\TerrainPass.cpp" />
@@ -568,6 +570,7 @@
     <ClInclude Include="..\src\Engine\Engine\Rendering\SkinPaletteCache.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\SkinPaletteCacheSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DAssetSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DRenderer.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\TerrainSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\WaterWaveSelfTest.h" />
@@ -667,6 +670,8 @@
     <ClInclude Include="..\src\Engine\Renderer\Passes\ShadowPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\SkyboxPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\SkyResolve.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Passes\Sprite2DDrawList.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Passes\Sprite2DPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\SsrPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\TaaPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\TerrainPass.h" />

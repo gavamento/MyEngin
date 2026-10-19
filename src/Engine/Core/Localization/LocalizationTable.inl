@@ -967,6 +967,8 @@ MYE_STR(Create_Audio,         "Audio",             "オーディオ")
 MYE_STR(Create_AudioSource,   "Audio Source",      "オーディオソース")
 MYE_STR(Create_AudioListener, "Audio Listener",    "オーディオリスナー")
 MYE_STR(Create_Camera,        "Camera",            "カメラ")
+MYE_STR(Create_2D,            "2D",                "2D") // M94
+MYE_STR(Create_Sprite2D,      "Sprite",            "スプライト") // M94
 MYE_STR(Create_Part,          "Part (with Bounds)", "部位 (範囲付き)")
 // M60g2: ラグドール生成器 (右クリック対象の SkinnedMesh のスケルトンから組む)
 MYE_STR(Create_Ragdoll,       "Ragdoll (from Skeleton)", "ラグドール (スケルトンから)")
@@ -2229,6 +2231,9 @@ MYE_STR(Insp_NavAgentRigidbody, "A Rigidbody disables the CharacterController: t
 MYE_STR(Insp_NavAgentBrain,    "AgentBrain also writes CharacterController.moveInput; the NavMeshAgent runs later and wins.",
                                "AgentBrain も CharacterController.moveInput を書きます。後に走る NavMeshAgent が勝ちます")
 MYE_STR(Insp_NavAgentTypeUndefined, "(undefined id %d)", "(未定義の id %d)") // M84a
+MYE_STR(Insp_SortingLayerUndefined, "(undefined id)", "(未定義の id)") // M94
+MYE_STR(Insp_Sprite2DUnresolved, "Sprite not found: drawn as a magenta square.",
+                               "スプライトが見つかりません。マゼンタの四角で描画されます") // M94
 MYE_STR(Insp_NavAgentTypeMissing, "Agent type id %d is not defined in Project Settings.",
                                "エージェント種別 id %d は Project Settings にありません")
 MYE_STR(Insp_NavAgentTypeDiffers, "The agent size differs from the type '%s' in Project Settings. Bake copies the type's size.",

@@ -138,6 +138,14 @@ GameObject CreateAudioListener(EngineContext& ctx, const char* name)
     return obj;
 }
 
+// M94: 2D スプライト (Sprite2D + LocalTransform)。sprite は空 = 内蔵マゼンタ。Inspector か D&D で割り当てる
+GameObject CreateSprite2D(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    obj.AddComponent<Sprite2DComponent>();
+    return obj;
+}
+
 // ---- UI (M51f) ----
 // text はシーンに保存されるデータなのでエディタ言語に依存しない英語固定 (メニュー表示とは別物)
 
@@ -418,6 +426,10 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
         ImGui::EndMenu();
     }
     CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Camera), "Camera", &CreateCamera);
+    if (ImGui::BeginMenu(Tr(StrId::Create_2D))) { // M94
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Sprite2D), "Sprite", &CreateSprite2D);
+        ImGui::EndMenu();
+    }
 
     // 部位 (範囲付き、M49)。汎用 CreateItem を使わないのは、右クリック対象 (parent) の
     // メッシュ AABB へ範囲をフィットさせる親依存の初期化があるため
