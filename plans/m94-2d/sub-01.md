@@ -1,7 +1,7 @@
 # sub-01: 平面拘束 `Rigidbody.plane2D` と一方通行 `Collider.oneWay`、2D 不変量の selftest
 
 - 依存: なし
-- 状態: OK (commit は台帳参照)
+- 状態: OK (commit 86dec43)
 - 往復: 0
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む** (第 4 章 必須制約、第 5 章 規約、第 6・7 章 進め方と検証)。spec は `C:\HAL\MyEngin\plans\m94-2d\spec.md` (2. #3, #4, #9、4.1.5、4.4)
 

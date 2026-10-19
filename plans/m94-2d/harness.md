@@ -31,8 +31,8 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 | 未着手 | 0 | | 平面拘束 `Rigidbody.plane2D` と一方通行 `Collider.oneWay`、2D 不変量の selftest。依存: なし。**最大の未知 (平面拘束がビット単位で成立するか) を最初に潰す** |
-| sub-02 | 未着手 | 0 | | 正射影カメラと Scene View の 2D モード。依存: なし |
+| sub-01 | OK | 1 | 86dec43 | 平面拘束 `Rigidbody.plane2D` と一方通行 `Collider.oneWay`、2D 不変量の selftest。依存: なし。**最大の未知 (平面拘束がビット単位で成立するか) を最初に潰す** |
+| sub-02 | 実装中 | 0 | | 正射影カメラと Scene View の 2D モード。依存: なし |
 | sub-03 | 未着手 | 0 | | スプライト資産 (.meta の sprites / filter / PPU、SpriteLibrary) とソート層。依存: なし |
 | sub-04 | 未着手 | 0 | | Sprite2D と Sprite2DPass (Simple / flip / 整数ソート / Point・Linear)。依存: 02, 03 |
 | sub-05 | 未着手 | 0 | | スプライトエディタ窓。依存: 03 |
@@ -72,3 +72,13 @@
 
 ## 申し送り (セッション跨ぎ)
 - 基点の直前に無関係の 2 コミット (`2ac3b4f` DeepModal 再学習、`25fb355` スプラッシュ) を司会が切り出した。
+- (sub-01 VERDICT) **平面拘束は A (慣性 zz 限定) + B (速度ソルバ直後) + D (積分直後) の 3 点で成立**。R1 の追加拘束は不要だった。
+  焼いたハッシュ 639107476EA401A3 (Debug == Release)。ADR-033 (sub-24) の材料。
+- (sub-01 VERDICT) `check_rules.ps1` の既存 error 3 件は **M94 の範囲外の別件**: `EditorMain.cpp:741` の `#ifdef _DEBUG` (規則 1、
+  `25fb355` スプラッシュの残り) と `tools/engine_dist/Editor.bat` / `Setup.bat` が LF (規則 14-b、`bfc48ff` M92 配布物の残り)。
+  以降の VERDICT では「check_rules 0」を「M94 の変更で新しい error / warning を増やさない」と読む。
+- (sub-01 coder) ビルド癖: 変更後の初回ビルドが `SelfTestUnused.kernel.hlsl` の C4100 で落ち、同じコマンドの再実行で通る。
+  着手前の HEAD でも再現。M94 の範囲外。
+- (sub-01 coder) `MYE_SELFTEST_ONLY=m94` の分岐は `EditorMain.cpp` にある。以降のサブは自分の suite をそこへ足す。
+- (sub-01 coder → sub-08) `FractureSystem.cpp:188` は破片へ `freezeRotation` をコピーするが `plane2D` をコピーしない。sub-08 やること 6。
+- (sub-01 coder) 親付き (frame が identity でない) plane2D は未検証 (ルート剛体のみ検証)。複合コライダーの子形状の oneWay は v1 未対応 (spec R9)。
