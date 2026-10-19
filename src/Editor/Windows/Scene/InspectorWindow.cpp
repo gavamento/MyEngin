@@ -1044,6 +1044,14 @@ void InspectorWindow::DrawComponentFields(EngineContext& ctx, Selection& selecti
                 continue;
             }
         }
+        if (std::strcmp(desc.name, "Camera") == 0) {
+            // 正射影のときは視野角が、透視のときは半高が効かない。効かない行は出さない
+            const bool ortho = static_cast<const CameraComponent*>(comp)->orthographic;
+            if ((ortho && std::strcmp(f.name, "fovYDeg") == 0)
+                || (!ortho && std::strcmp(f.name, "orthoSize") == 0)) {
+                continue;
+            }
+        }
         if (isJoint && !JointFieldApplies(jointType, f.name)) {
             continue;
         }

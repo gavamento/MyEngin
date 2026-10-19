@@ -332,6 +332,30 @@ bool RunUISelfTest()
         check(FindNext(wt, 3, wt[0], kNavUp) == 1, "nav: orthogonal drift is penalized");
     }
 
+    // ---- 正射影カメラ上のワールド追従 UI (M94b) ----
+    // orthoSize 5・1920x1080: x = 960 + 960·(2/(5·16/9)) = 1176、y = 540 − 540·(3/5) = 216。z (距離) に依らない
+    {
+        World w;
+        TransformSystem xform;
+        const EntityID cam = w.CreateEntity("cam");
+        auto* camComp = w.AddComponent<CameraComponent>(cam);
+        camComp->orthographic = true;
+        camComp->orthoSize = 5.0f;
+        const EntityID obj = w.CreateEntity("sprite");
+        w.AddComponent<MeshRendererComponent>(obj);
+        AddLegacyUi(w, obj, 0, 0.0f, 0.0f, 100.0f, 40.0f);
+        w.ApplyStructuralChanges();
+        uilayout::UIWorldContext wc;
+        check(uilayout::BuildSimWorldContext(w, 1920, 1080, wc), "ortho world UI: sim camera context builds");
+        for (const float z : { 10.0f, 40.0f }) {
+            w.GetComponent<LocalTransform>(obj)->position = { 2.0f, 3.0f, z };
+            xform.Update(w);
+            const auto res = uilayout::Resolve(w, obj, 1920, 1080, &wc);
+            check(res.visible && std::fabs(res.rect.x - 1176.0f) < 1e-1f && std::fabs(res.rect.y - 216.0f) < 1e-1f,
+                  "ortho world UI: projects by orthoSize, independent of depth");
+        }
+    }
+
     // ---- ワールド追従 UI (エンティティ構成による完全自動判定) ----
     // 規則: UI 専用オブジェクト (基本 4 種 + UIElement + 帳簿 + スクリプト状態のみ) は画面 UI、
     // それ以外のコンポーネントを持つオブジェクト上の UIElement はそのオブジェクトに追従。

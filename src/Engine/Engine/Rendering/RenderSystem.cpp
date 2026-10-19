@@ -711,8 +711,11 @@ void RenderSystem::ResolveCamera(World& world, const CameraOverride* cameraOverr
             }
             const XMMATRIX w = XMLoadFloat4x4(&camWorld);
             const XMMATRIX v = XMMatrixInverse(nullptr, w);
-            const XMMATRIX p = XMMatrixPerspectiveFovLH(
-                XMConvertToRadians(cam.fovYDeg), aspectRatio, cam.nearZ, cam.farZ);
+            const XMMATRIX p = cam.orthographic
+                ? XMMatrixOrthographicLH(2.0f * cam.orthoSize * aspectRatio, 2.0f * cam.orthoSize,
+                                         cam.nearZ, cam.farZ)
+                : XMMatrixPerspectiveFovLH(XMConvertToRadians(cam.fovYDeg), aspectRatio,
+                                           cam.nearZ, cam.farZ);
             XMStoreFloat4x4(&view.view, v);
             XMStoreFloat4x4(&view.proj, p);
             view.cameraPos = { camWorld._41, camWorld._42, camWorld._43 };

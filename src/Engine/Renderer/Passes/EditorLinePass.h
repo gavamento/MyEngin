@@ -43,6 +43,10 @@ public:
                         float radius, float halfSeg, uint32_t rgba, bool onTop = false);
     void AddGrid(int halfCount, float spacing, uint32_t lineRgba, uint32_t axisXRgba,
                  uint32_t axisZRgba);
+    // XY 平面 (z = 0) のグリッド。[minX,maxX]×[minY,maxY] を spacing ごとに引く (2D モード用)。
+    // 軸線 (x = 0 / y = 0) だけ色を変える。線の数が多すぎるときは何も積まない
+    void AddGridXY(float minX, float maxX, float minY, float maxY, float spacing, uint32_t lineRgba,
+                   uint32_t axisXRgba, uint32_t axisYRgba);
 
     // 貯めた線を rtv/dsv に描画する (クリアしない = シーンの上に重ねる)
     void Render(GraphicsDevice& device, ShaderManager& shaders, ID3D11RenderTargetView* rtv,

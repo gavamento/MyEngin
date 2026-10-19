@@ -574,19 +574,29 @@ bool BuildSimWorldContext(World& world, int screenW, int screenH, UIWorldContext
     const float vtx = -(tx * v11 + ty * v21 + tz * v31);
     const float vty = -(tx * v12 + ty * v22 + tz * v32);
     const float vtz = -(tx * v13 + ty * v23 + tz * v33);
-    // PerspectiveFovLH (XMMatrixPerspectiveFovLH と同式) を scalar で
-    const float fovY = cam.fovYDeg * (3.14159265358979323846f / 180.0f);
-    const float ys = 1.0f / std::tan(fovY * 0.5f);
     const float aspect = (screenH > 0)
         ? static_cast<float>(screenW) / static_cast<float>(screenH) : 1.0f;
-    const float xs = ys / aspect;
-    const float fRange = cam.farZ / (cam.farZ - cam.nearZ);
-    // viewProj = view * proj。proj の疎性 (列 1=xs / 2=ys / 3=fRange,+w / 4=z) を手展開
+    // viewProj = view * proj。proj の疎性を手展開する。
+    // 透視 (XMMatrixPerspectiveFovLH と同式): 列 1=xs / 2=ys / 3=zs,+w / 4=z
+    // 正射影 (XMMatrixOrthographicLH と同式、w 列は 0・o_44 = 1): xs = 1/(orthoSize*aspect), ys = 1/orthoSize
+    const bool ortho = cam.orthographic;
+    float xs = 0.0f, ys = 0.0f, zs = 0.0f;
+    if (ortho) {
+        xs = 1.0f / (cam.orthoSize * aspect);
+        ys = 1.0f / cam.orthoSize;
+        zs = 1.0f / (cam.farZ - cam.nearZ);
+    } else {
+        const float fovY = cam.fovYDeg * (3.14159265358979323846f / 180.0f);
+        ys = 1.0f / std::tan(fovY * 0.5f);
+        xs = ys / aspect;
+        zs = cam.farZ / (cam.farZ - cam.nearZ);
+    }
+    const float wv = ortho ? 0.0f : 1.0f; // 透視は w = view.z、正射影は w = 1 (最下行だけ)
     DirectX::XMFLOAT4X4& o = out.viewProj;
-    o._11 = v11 * xs; o._12 = v12 * ys; o._13 = v13 * fRange;                  o._14 = v13;
-    o._21 = v21 * xs; o._22 = v22 * ys; o._23 = v23 * fRange;                  o._24 = v23;
-    o._31 = v31 * xs; o._32 = v32 * ys; o._33 = v33 * fRange;                  o._34 = v33;
-    o._41 = vtx * xs; o._42 = vty * ys; o._43 = vtz * fRange - cam.nearZ * fRange; o._44 = vtz;
+    o._11 = v11 * xs; o._12 = v12 * ys; o._13 = v13 * zs;                  o._14 = v13 * wv;
+    o._21 = v21 * xs; o._22 = v22 * ys; o._23 = v23 * zs;                  o._24 = v23 * wv;
+    o._31 = v31 * xs; o._32 = v32 * ys; o._33 = v33 * zs;                  o._34 = v33 * wv;
+    o._41 = vtx * xs; o._42 = vty * ys; o._43 = vtz * zs - cam.nearZ * zs; o._44 = ortho ? 1.0f : vtz;
     out.prevWorld = nullptr; // sim レーンは補間しない (決定論)
     out.alpha = 1.0f;
     return true;

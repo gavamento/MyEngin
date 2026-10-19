@@ -101,6 +101,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Inspector", &inspector_.open },
                     { "Console", &console_.open },
                     { "Scene", &sceneView_.open },
+                    { "Scene 2D", &sceneView_.mode2d },
                     { "Game", &gameView_.open },
                     { "Assets", &assetBrowser_.open },
                     { "Animation", &animation_.open },

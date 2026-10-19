@@ -249,6 +249,32 @@ void EditorLinePass::AddGrid(int halfCount, float spacing, uint32_t lineRgba, ui
     }
 }
 
+void EditorLinePass::AddGridXY(float minX, float maxX, float minY, float maxY, float spacing,
+                               uint32_t lineRgba, uint32_t axisXRgba, uint32_t axisYRgba)
+{
+    constexpr int kMaxLinesPerAxis = 400;
+    if (!(spacing > 0.0f)) {
+        return;
+    }
+    const int x0 = static_cast<int>(std::floor(minX / spacing));
+    const int x1 = static_cast<int>(std::ceil(maxX / spacing));
+    const int y0 = static_cast<int>(std::floor(minY / spacing));
+    const int y1 = static_cast<int>(std::ceil(maxY / spacing));
+    if (x1 - x0 > kMaxLinesPerAxis || y1 - y0 > kMaxLinesPerAxis) {
+        return;
+    }
+    const float lowX = x0 * spacing, highX = x1 * spacing;
+    const float lowY = y0 * spacing, highY = y1 * spacing;
+    for (int i = x0; i <= x1; ++i) {
+        const float x = i * spacing;
+        AddLine({ x, lowY, 0.0f }, { x, highY, 0.0f }, (i == 0) ? axisYRgba : lineRgba); // Y 方向線
+    }
+    for (int j = y0; j <= y1; ++j) {
+        const float y = j * spacing;
+        AddLine({ lowX, y, 0.0f }, { highX, y, 0.0f }, (j == 0) ? axisXRgba : lineRgba); // X 方向線
+    }
+}
+
 void EditorLinePass::PushVerts(std::vector<LineVertex>& dst, ID3D11DeviceContext* dc,
                                GraphicsDevice& device)
 {

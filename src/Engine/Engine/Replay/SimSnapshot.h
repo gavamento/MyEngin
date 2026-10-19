@@ -154,7 +154,8 @@ struct SimRefs {
 // v49 (M91d): CMP 節 (Compute.ForEach の State バッファ。スロット表・世代・持ち主・中身) を BT 節の後・World 節の前に追加
 // v50 (M91k): CMP 節を State の表だけにした (Fx は入れない。State と Fx の採番を分けた。ADR-030 D29)
 // v51 (M94a): RigidbodyComponent.plane2D と ColliderComponent.oneWay (World 節のカラム生バイト)
-inline constexpr uint32_t kSimSnapshotVersion = 51;
+// v52 (M94b): CameraComponent に orthographic / orthoSize (World 節のカラム生バイト)
+inline constexpr uint32_t kSimSnapshotVersion = 52;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

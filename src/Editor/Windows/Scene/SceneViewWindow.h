@@ -29,6 +29,9 @@ struct CameraComponent;
 class SceneViewWindow {
 public:
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
+    // 2D モード (正射影 + XY 正面)。レイアウト保存の対象で、シーンには保存しない。
+    // 切り替えの副作用 (カメラ姿勢の退避と復元) は次の OnRenderViews が SyncMode2d で行う
+    bool mode2d = false;
     void OnRenderViews(EngineContext& ctx, Selection& selection); // フェーズ 6: RT へ描画 + 補助線
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo, EditorSettings& settings);
     // デバイス復旧 (M88): RT と遅延 Init のパスを手放す。次の OnRenderViews / ピック要求で作り直される
@@ -46,6 +49,10 @@ public:
 
 private:
     void BuildOverlays(EngineContext& ctx, Selection& selection);
+    // mode2d の変化を検出してカメラ姿勢を切り替える (ON: 3D 姿勢を退避して XY 正面へ / OFF: 退避を復元)
+    void SyncMode2d();
+    // 描画・ギズモ・ピッキングが使う投影が正射影か (従来の Ortho トグルか 2D モード)
+    bool ViewIsOrtho() const { return orthographic_ || mode2d; }
     // BuildOverlays が同じ順に呼ぶギズモ (showGizmos_ のときだけ)。どれも lines_ へ線を積むだけ
     void DrawColliderGizmos(World& world, EntityID only = kNullEntity);
     void DrawLightGizmos(World& world);
@@ -131,6 +138,13 @@ private:
     ImGuizmo::OPERATION gizmoOp_ = ImGuizmo::TRANSLATE;
     ImGuizmo::MODE gizmoMode_ = ImGuizmo::LOCAL;
     bool orthographic_ = false;
+    // 2D モードの状態。orthoSize2d_ は画面の半高 (ワールド単位)。saved3d* は ON にする直前の 3D 姿勢
+    float orthoSize2d_ = 5.0f;
+    bool applied2d_ = false; // SyncMode2d が最後に反映した mode2d
+    DirectX::XMFLOAT3 saved3dPos_ = { 0.0f, 7.0f, -16.0f };
+    float saved3dYaw_ = 0.0f;
+    float saved3dPitch_ = 18.0f;
+    bool saved3dOrtho_ = false;
     bool gizmoActive_ = false; // Undo transient 記録中 (ドラッグ全体で 1 エントリ)
     uint64_t gizmoFileId_ = 0;
     bool gizmoCollider_ = false;

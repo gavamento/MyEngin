@@ -85,6 +85,8 @@ void RegisterBuiltinComponents()
         MYE_JP("ニアクリップ", MYE_FIELD(CameraComponent, nearZ, Float)),
         MYE_JP("ファークリップ", MYE_FIELD(CameraComponent, farZ, Float)),
         MYE_JP("メインカメラ", MYE_FIELD(CameraComponent, isPrimary, Bool)),
+        MYE_JP("正射影", MYE_FIELD(CameraComponent, orthographic, Bool)),
+        MYE_JP("正射影の半高", MYE_FIELD(CameraComponent, orthoSize, Float)),
     });
 
     RegisterComponent<LightComponent>("Light", {

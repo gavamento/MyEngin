@@ -53,6 +53,8 @@ struct CameraComponent {
     float nearZ = 0.1f;
     float farZ = 1000.0f;
     bool isPrimary = true;
+    bool orthographic = false; // true: 正射影 (視野角は無視)。2D 横スクロール用
+    float orthoSize = 5.0f;    // 正射影の半高 (ワールド単位)。半幅は orthoSize × アスペクト比
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

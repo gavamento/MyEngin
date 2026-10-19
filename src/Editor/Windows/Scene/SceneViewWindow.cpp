@@ -50,6 +50,10 @@ constexpr float kDeg2Rad = 3.14159265358979323846f / 180.0f;
 constexpr float kEditorFovDeg = 60.0f;
 constexpr float kNearZ = 0.1f;
 constexpr float kFarZ = 1000.0f;
+constexpr float kMinOrthoSize2d = 0.1f;   // 2D ズームの下限 (半高、ワールド単位)
+constexpr float kMaxOrthoSize2d = 1000.0f;
+constexpr float kZoomStep2d = 1.1f;       // ホイール 1 ノッチの倍率
+constexpr float kCamZ2d = -50.0f;         // 2D モードのカメラ z (+Z を見るので負側)
 
 // カメラプレビュー窓の RT。★視錐台ワイヤもこのアスペクトで描く — 「線の内側に写る」が
 // 成り立たないとワイヤが嘘になるので、両者は必ず同じ 1 つの値から引く。
@@ -209,6 +213,7 @@ void SceneViewWindow::OnRenderViews(EngineContext& ctx, Selection& selection)
         return;
     }
 
+    SyncMode2d();
     const XMMATRIX camWorld =
         XMMatrixRotationRollPitchYaw(camPitch_ * kDeg2Rad, camYaw_ * kDeg2Rad, 0.0f)
         * XMMatrixTranslation(camPos_.x, camPos_.y, camPos_.z);
@@ -225,7 +230,9 @@ void SceneViewWindow::OnRenderViews(EngineContext& ctx, Selection& selection)
     lastView_ = cam.view;
     const float aspect =
         (rt_.Height() > 0) ? static_cast<float>(rt_.Width()) / static_cast<float>(rt_.Height()) : 1.0f;
-    const XMMATRIX proj = orthographic_
+    const XMMATRIX proj = mode2d
+        ? XMMatrixOrthographicLH(2.0f * orthoSize2d_ * aspect, 2.0f * orthoSize2d_, kNearZ, kFarZ)
+        : orthographic_
         ? XMMatrixOrthographicLH(static_cast<float>(rt_.Width()) * 0.02f,
                                  static_cast<float>(rt_.Height()) * 0.02f, kNearZ, kFarZ)
         : XMMatrixPerspectiveFovLH(XMConvertToRadians(kEditorFovDeg), aspect, kNearZ, kFarZ);
@@ -487,7 +494,14 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
 {
     World& world = ctx.scene->GetWorld();
 
-    if (showGrid_) {
+    if (showGrid_ && mode2d) {
+        // 画面に入る範囲だけ XY 平面に引く。間隔は半高の 1/5 以下の 10 の冪 (どのズームでも線が 10〜50 本)
+        const float spacing = std::pow(10.0f, std::floor(std::log10(orthoSize2d_ * 0.2f)));
+        const float aspect = (desiredH_ > 0) ? static_cast<float>(desiredW_) / static_cast<float>(desiredH_) : 1.0f;
+        const float halfW = orthoSize2d_ * aspect;
+        lines_.AddGridXY(camPos_.x - halfW, camPos_.x + halfW, camPos_.y - orthoSize2d_,
+                         camPos_.y + orthoSize2d_, spacing, 0x5A5A64FFu, 0xC04848FFu, 0x48C048FFu);
+    } else if (showGrid_) {
         lines_.AddGrid(20, 1.0f, 0x5A5A64FFu, 0xC04848FFu, 0x4868C0FFu);
     }
 
@@ -1159,7 +1173,14 @@ void SceneViewWindow::DrawToolbar(EditorSettings& settings)
         gizmoMode_ = (gizmoMode_ == ImGuizmo::LOCAL) ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
     }
     ImGui::SameLine();
+    ImGui::BeginDisabled(mode2d); // 2D モードは常に正射影
     ImGui::Checkbox(Tr(StrId::SceneView_Ortho), &orthographic_);
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::Checkbox(Tr(StrId::SceneView_Mode2D), &mode2d);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", Tr(StrId::SceneView_Mode2DTip));
+    }
     toolbarFlow_.Separator();
     ImGui::Checkbox(Tr(StrId::SceneView_Grid), &showGrid_);
     ImGui::SameLine();
@@ -1424,7 +1445,7 @@ bool SceneViewWindow::HandlePatrolRoute(EngineContext& ctx, Selection& selection
     if (gizmoActive_ && !gizmoPatrol_) {
         closeRecord();
     }
-    ImGuizmo::SetOrthographic(orthographic_);
+    ImGuizmo::SetOrthographic(ViewIsOrtho());
     ImGuizmo::SetDrawlist();
     ImGuizmo::SetRect(rectX, rectY, rectW, rectH);
     const XMFLOAT3 pointWorld = PatrolPointLocalToWorld(wm->value, route->points[patrolPoint_]);
@@ -1502,7 +1523,7 @@ void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoSt
         return;
     }
 
-    ImGuizmo::SetOrthographic(orthographic_);
+    ImGuizmo::SetOrthographic(ViewIsOrtho());
     ImGuizmo::SetDrawlist();
     ImGuizmo::SetRect(rectX, rectY, rectW, rectH);
 
@@ -1558,7 +1579,14 @@ void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoSt
         snapVals[0] = snapVals[1] = snapVals[2] = settings.snapScale;
     }
 
-    const bool used = ImGuizmo::Manipulate(&lastView_.m[0][0], &lastProj_.m[0][0], gizmoOp_,
+    // 2D モードは XY 平面で動かす: 並進 XY / 回転 Z / 拡縮 XY だけ出す
+    ImGuizmo::OPERATION manipulateOp = gizmoOp_;
+    if (mode2d) {
+        manipulateOp = gizmoOp_ == ImGuizmo::TRANSLATE ? (ImGuizmo::TRANSLATE_X | ImGuizmo::TRANSLATE_Y)
+            : gizmoOp_ == ImGuizmo::ROTATE ? ImGuizmo::ROTATE_Z
+            : gizmoOp_ == ImGuizmo::SCALE ? (ImGuizmo::SCALE_X | ImGuizmo::SCALE_Y) : gizmoOp_;
+    }
+    const bool used = ImGuizmo::Manipulate(&lastView_.m[0][0], &lastProj_.m[0][0], manipulateOp,
                                            colliderEditing && gizmoOp_ == ImGuizmo::SCALE ? ImGuizmo::LOCAL : gizmoMode_, &worldM.m[0][0], nullptr,
                                            snap ? snapVals : nullptr);
     const bool using_ = ImGuizmo::IsUsing();
@@ -1658,12 +1686,52 @@ void SceneViewWindow::FocusOnSelection(EngineContext& ctx, Selection& selection)
             radius = std::max(0.5f, XMVectorGetX(XMVector3Length(scaled)) * 0.5f);
         }
     }
+    if (mode2d) {
+        // 正面固定なので位置の x/y だけ合わせ、半高で大きさを収める
+        camPos_.x = target.x;
+        camPos_.y = target.y;
+        orthoSize2d_ = std::clamp(radius * 1.2f, kMinOrthoSize2d, kMaxOrthoSize2d);
+        return;
+    }
     const float dist = radius / std::sin(XMConvertToRadians(kEditorFovDeg) * 0.5f) + radius;
 
     XMVECTOR fwd, right, up;
     CamBasis(camPitch_, camYaw_, fwd, right, up);
     const XMVECTOR pos = XMVectorSubtract(XMLoadFloat3(&target), XMVectorScale(fwd, dist));
     XMStoreFloat3(&camPos_, pos);
+}
+
+void SceneViewWindow::SyncMode2d()
+{
+    if (mode2d == applied2d_) {
+        return;
+    }
+    applied2d_ = mode2d;
+    if (mode2d) {
+        saved3dPos_ = camPos_;
+        saved3dYaw_ = camYaw_;
+        saved3dPitch_ = camPitch_;
+        saved3dOrtho_ = orthographic_;
+        // 3D 視点の光軸が z = 0 と交わる点を画面中心にする (交わらなければ x/y をそのまま使う)
+        XMVECTOR fwd, right, up;
+        CamBasis(camPitch_, camYaw_, fwd, right, up);
+        const float fz = XMVectorGetZ(fwd);
+        if (fz > 1e-3f) {
+            const float t = -camPos_.z / fz;
+            if (t > 0.0f) {
+                camPos_.x += XMVectorGetX(fwd) * t;
+                camPos_.y += XMVectorGetY(fwd) * t;
+            }
+        }
+        camYaw_ = 0.0f;
+        camPitch_ = 0.0f;
+        camPos_.z = kCamZ2d;
+    } else {
+        camPos_ = saved3dPos_;
+        camYaw_ = saved3dYaw_;
+        camPitch_ = saved3dPitch_;
+        orthographic_ = saved3dOrtho_;
+    }
 }
 
 void SceneViewWindow::HandleCamera(EngineContext& ctx, Selection& selection, UndoStack& undo,
@@ -1692,6 +1760,18 @@ void SceneViewWindow::HandleCamera(EngineContext& ctx, Selection& selection, Und
         HandlePilotCamera(ctx, selection, undo, settings, pilotCam);
         consumed = ImGui::IsMouseDown(ImGuiMouseButton_Right)
             || ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+    } else if (mode2d) {
+        // 2D: ホイールで半高をズーム、中 / 右ドラッグでパン (1 px = 2·orthoSize / ビュー高 ワールド単位)
+        if (io.MouseWheel != 0.0f) {
+            orthoSize2d_ = std::clamp(orthoSize2d_ * std::pow(kZoomStep2d, -io.MouseWheel),
+                                      kMinOrthoSize2d, kMaxOrthoSize2d);
+        }
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
+            const float worldPerPixel = (desiredH_ > 0) ? 2.0f * orthoSize2d_ / static_cast<float>(desiredH_) : 0.0f;
+            camPos_.x -= io.MouseDelta.x * worldPerPixel;
+            camPos_.y += io.MouseDelta.y * worldPerPixel;
+            consumed = true;
+        }
     } else {
         // ホイール: RMB ホールド中は移動速度調整 (M27d、Unity/UE 風)、それ以外は前後ズーム
         if (io.MouseWheel != 0.0f) {
@@ -1746,7 +1826,7 @@ void SceneViewWindow::HandleCamera(EngineContext& ctx, Selection& selection, Und
     // ★操縦中も**エディタ視点**に効かせる (F のフレーミングも同じ) — 操縦中に視点を
     //   動かす手段が無いと、カメラを遠くへ飛ばした瞬間に何も見えなくなって詰む。
     //   オービットとフレーミングは「見る位置」しか変えないので対象を取り違えようが無い
-    if (!consumed && io.KeyAlt && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    if (!consumed && !mode2d && io.KeyAlt && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         const float orbitDist = 12.0f;
         const XMVECTOR pivot = XMVectorAdd(XMLoadFloat3(&camPos_), XMVectorScale(fwd, orbitDist));
         camYaw_ += io.MouseDelta.x * 0.3f;

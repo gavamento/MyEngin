@@ -12,6 +12,7 @@
 4. replay_verify: ジョブ `2d` (`:job_2d`: `del cache\2d_showcase.scene.json` → `call :chain cache\golden_2d.rep "--2d-demo --synth-input" "--2d-demo"`)。`-Jobs` 列、`:failed` の mismatch 分岐、シーン数のコメント、`tools\mcp\src\verify.rs` のジョブ表 (規則 15-e)。
 5. 不変量と性能: `--selftest` に `TwoDDemoSelfTest` (デモシーンを HeadlessSim で 3000 tick 回し、全 plane2D 剛体の z / vz / wx / wy / qx / qy を検査。Debug / Release のハッシュ焼き込み)。`Runtime.exe --2d-demo --warp --frames 300` の平均フレーム時間 (`PerfDrawBenchmark` の流儀でログ) を Release で記録 → 16 ms 以内。
 6. `docs\test_checklists.md` の M94 節に手動確認項目 (sub-24 が仕上げるので下書きでよい)。
+7. (spec R11) `Runtime.exe --2d-demo --froxel --deferred --screenshot` を 1 枚撮り、正射影 + froxel で壊れない (真っ黒・NaN にならない) ことを目視。golden には登録しない。
 
 ## やらないこと (このサブでは)
 - engine_spec / ADR / README (sub-24)、新機能の追加 (見つかった不具合は該当サブの範囲として「仕様との差分」に出す)

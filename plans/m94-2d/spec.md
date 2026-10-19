@@ -91,7 +91,7 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
 
 - `CameraComponent` に末尾 append: `bool orthographic = false`、`float orthoSize = 5.0f` (半高、ワールド単位)。既定は透視 = 既存シーンのビット同一。
 - `RenderSystem::ResolveCamera` (`RenderSystem.cpp:661-726`) は `orthographic` なら `XMMatrixOrthographicLH(2·orthoSize·aspect, 2·orthoSize, nearZ, farZ)`。`UILayout.cpp:529-544` (ワールド追従 UI の射影) も同じ分岐を持つ。射影行列は Renderer 内で閉じる (D3D 型を外へ出さない)。
-- Scene View の「2D」トグル (2. #23)。トグルの状態はエディタ設定 (レイアウト保存) に残し、シーンには保存しない。
+- Scene View の「2D」トグル (2. #23)。トグルの状態はエディタ設定 (レイアウト保存、キー "Scene 2D"、無ければ OFF) に残し、シーンには保存しない。sub-02 で確定: ON で 3D 姿勢を退避し「3D 視点の光軸が z=0 と交わる点」を画面中心に、yaw/pitch 0、camPos.z = −50。ホイール ×1.1 (0.1..1000)、中/右ドラッグでパン、F で選択へ。XY グリッドは 10 の冪の間隔で画面範囲だけ。ImGuizmo は並進 XY / 回転 Z / 拡縮 XY。OFF で 3D 姿勢を復元。
 
 #### 4.1.2 スプライト資産とソート層 (sub-03 / sub-05)
 
@@ -381,6 +381,7 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
 - (R7) GridAgent2D の 1 tick 4096 展開上限で広い面は数 tick かかる。status Moving のまま待つ (Stuck にはしない)。
 - (R9) sub-01 の既知の限界: (a) 複合コライダーの子形状の `oneWay` は見ない (b) 親付き (親フレームが identity でない) plane2D 剛体の `LocalTransform.z` 保証は未検証 — z0 はワールド z で、書き戻しは親の逆変換を通る。Rigidbody は「ルート = ワールド位置前提」(`Components.h` の Rigidbody コメント) なので v1 はルート限定とし、engine_spec に書く (sub-24) (c) `FractureSystem.cpp:188` は破片へ `freezeRotation` をコピーするが `plane2D` はまだコピーしない → sub-08 で 1 行足す。
 - (R10) 一方通行の速度条件 (kOneWayLandingSpeed) は「上面が天面より上で、半分以上沈んで降下中の物」も押し上げる。プラットフォーマーの着地としては望ましい挙動だが、天面より下から高速で上昇中の物は法線条件で通す (期待どおり)。問題が出たら深さの上限を足す。
+- (R11) 正射影カメラ + froxel (`--froxel`) の描画は未確認 (`engine_spec.md:406` は正射影でグリッドをスキップすると書く)。sub-15 (ライト) か sub-23 (デモ) で `--2d-demo --froxel` を 1 回撮って壊れないことを見る。
 - (R8) 2D ライトのバッファ再構築回数が層数に比例する。層 32 × 別々のライト集合という極端な配置では 32 回 clear + 加算。v1 はそのまま、engine_spec に書く。
 
 ## 8. 変更履歴
