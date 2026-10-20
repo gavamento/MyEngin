@@ -37,7 +37,7 @@
 | sub-04 | OK | 1 | ffcf47a | Sprite2D と Sprite2DPass (Simple / flip / 整数ソート / Point・Linear)。依存: 02, 03 |
 | sub-05 | OK | 1 | bd506db | スプライトエディタ窓。依存: 03。**チェックポイント 1 (sub-01〜05) 通過**。Point 表示 / .dds ダブルクリックは sub-06 追補 8 (a)(b) |
 | sub-06 | OK | 1 | 484e482 | Sliced / Tiled、SortingGroup2D、SpriteMask2D + sub-05 追補 8 (a)(b)。依存: 04。TypeId 82/83、snapshot v54。Deferred のマスク確認は sub-15 へ |
-| sub-07 | 実装中 | 0 | | スプライト列クリップ (.spriteanim.json、コントローラの "sprite")。依存: 04 |
+| sub-07 | OK | 1 | 52c973b | スプライト列クリップ (.spriteanim.json、コントローラの "sprite")。依存: 04。版 bump なし |
 | sub-08 | 未着手 | 0 | | 2D 形状 (kPolygon2D / kEdge2D) と C++ クエリ。依存: 01 |
 | sub-09 | 未着手 | 0 | | CharacterController の plane2D (一方通行・移動床・剛体押し・報告)。依存: 01 |
 | sub-10 | 未着手 | 0 | | タイルパレット / タイルマップ資産、Tilemap、チャンク描画。依存: 04 |
@@ -108,3 +108,6 @@
 - (sub-06 coder) `Sprite2DRenderer` の Item キーは外側 / 内側の 6 整数 + isMask。タイルマップのチャンク (sub-10) を同じ整列に混ぜるなら Item に種別を足す。そのとき Collect / EmitSprite を種別ごとの小関数に割る余地あり (planner nit)。
 - (sub-06 coder) スプライトエディタの Point 表示は `ImGuiDrawListSetPointSampling(dl, true/false)` で AddImage を挟む (Renderer/ImGui 層の関数。他の ImGui 画像にも使える)。一時シーンの 64 px/unit は orthoSize = 540 / 2 / 64 = 4.21875、画素は px = 480 + 64x, 270 - 64y (sub-23 のデモの座標確認に流用可)。
 - (sub-06 VERDICT) Deferred 経路のマスク (書き込み DSV と深度 SRV の同時束縛) は未確認 → sub-15 やること 5 の temp シーンに SpriteMask2D を 1 個入れて Forward / Deferred で同じ形を見る。Inspector の srgb 警告行と Add Component / Create の実クリックはユーザー目視 (sub-24)。
+- (sub-07 coder) SpriteAnim のコマ選びは `SpriteAnimFrameAt` 1 本 (sub-13 のアニメタイルで流用可)。Sprite2D への書き込みは `AnimatorController.cpp` の `WriteSpriteFrame` 1 箇所。`MYE_SELFTEST_ONLY=m94` は Physics / UI / Sprite2DAsset / SpriteEditor / AnimatorController / AnimatorControllerEdit / AssetDatabase / ReloadHub / AssetOps。hash-diff の `UIInteraction.prevSurfX/Y` は実マウス座標のミラー (入力) なので run 間で違って当然、replay は割れない (planner 確認)。
+- (sub-07 → sub-24) engine_spec に書く: スクリプトが Sprite2D.sprite を書いても次 tick で Animator が書き戻す。書き込み先は自身 → 前順で最初の子孫 (別の Animator の部分木は除く)。遷移中のコマは transitionTick*2 >= duration で先に切り替わる。イベントのキーは .spriteanim.json の name。GUI の実クリックはユーザー目視、Play 中の切替は sub-23 の --2d-demo で通る。
+- **2026-10-20 ユーザー指示で一時停止 (sub-07 OK の直後)。再開は sub-08 (2D 形状とクエリ + Fracture plane2D コピー) の coder 起動から。sub-10 がチェックポイント 2 (sub-06〜10): replay_verify の全文ログを `cache\m94eplay_verify_cp2.log` に残す件を prompt に添える。**

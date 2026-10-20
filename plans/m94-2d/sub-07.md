@@ -1,8 +1,8 @@
 # sub-07: スプライト列クリップ (`.spriteanim.json`、コントローラの `"sprite"`、イベント、窓)
 
 - 依存: sub-04
-- 状態: 実装中
-- 往復: 0
+- 状態: OK (commit 52c973b)
+- 往復: 1
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む**。spec: 2. #2、4.1.4、4.2.1、4.2.3
 
 ## やること
