@@ -141,8 +141,9 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
   - `int32_t ticksSinceGrounded = 0` (read-only) — 接地で 0、離地で +1、32767 で飽和 (ハッシュが動き続けないため)
   - `EntityID groundEntity = {}` (read-only、FieldType::EntityRef) — 接地している床のエンティティ (無ければ無効 ID)
   - `DirectX::XMFLOAT3 groundVelocity = {0,0,0}` (read-only) — 床が Rigidbody (kinematic / dynamic) ならその `velocity`、それ以外は 0
-- 移動床: `plane2D` かつ接地中、CC の変位に `groundVelocity × dt` を足す (Transform を直接動かした床には乗れない。**床は kinematic Rigidbody の velocity で動かす**、と Inspector 注記と engine_spec に書く)。
-- 一方通行: `SolveCharacters` の押し出しで `oneWay` 形状は「CC の tick 開始時の最下点が天面 − slop 以上、かつ `velocity.y <= 0`、かつ `!ignoreOneWay`」のときだけ押す。ジャンプで下から抜ける。
+- 移動床: `plane2D` かつ接地中、CC の変位に `groundVelocity × dt` を足す (Transform を直接動かした床には乗れない。**床は kinematic Rigidbody の velocity で動かす**、と Inspector 注記と engine_spec に書く)。**kinematic かつ `plane2D` の剛体は、物理が `velocity` (と `angularVelocity.z`) で位置・姿勢を積分する** (sub-09 round 1 で確定。従来 kinematic は「スクリプトが Transform を動かし velocity は接触の相対速度にだけ使う」だったが、velocity と Transform の二重管理は事故のもと。plane2D OFF の kinematic は従来どおり積分しない = 既存シーン不変。Unity の kinematic Rigidbody2D + velocity と同じ)。乗っている間の `cc->velocity.x` は床に対する速度 (床の変位を引く)。`groundVelocity` は `SolveCharacters` 時点の床の `velocity` (kinematic は tick 開始時のまま、dynamic は解決後 = 次 tick 開始時の値)。`groundVelocity.y` も変位に足す。
+- 一方通行: `SolveCharacters` の押し出しで `oneWay` 形状は「CC の tick 開始時の最下点が天面 − slop 以上、かつ `velocity.y <= 0`、かつ `!ignoreOneWay`」のときだけ押す。ジャンプで下から抜ける。法線が上向きでない (ny ≤ 0) 接触も捨てる (剛体の `RejectOneWayContact` と同じ規約)。
+- 報告の細則 (sub-09): `wallContact` は「今 tick に押し出し法線 |nx| > 0.9 の接触があった」(押し付けていなくても接している間は立つ。壁ジャンプ・壁滑り向き)。剛体押しは |nx| > 0.5 かつ進行方向の接触に `pushPower × moveInput.x` のインパルス (意図値)、1 tick に 1 剛体 1 回・最大 8 体、押した剛体は起こす。
 - 剛体 → CC は従来どおり (CC は剛体から押される)。CC → 剛体は `pushPower` (上)。
 - PhysicsSelfTest に `CC2D` 節: 坂 (30°) を登る / 45° 超は滑る / 0.3 の段差を登る / 一方通行を下から抜けて上から乗り `ignoreOneWay` で降りる / kinematic 床 (velocity.x = 1) に乗って 60 tick で 1.0 進む / 箔を押して動く / 壁で `wallContact` が立つ / z 不変量 / Debug・Release ハッシュ一致。
 
@@ -382,7 +383,7 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
 - (R5) M75h が先に ABI v31 を使った場合は sub-14 は v32。司会は着手時に `EngineAPI.h` を見る。
 - (R6) `.meta` の `sprites[]` を手で編集して重複 id を作った場合: 後勝ちで警告 (壊さない)。
 - (R7) GridAgent2D の 1 tick 4096 展開上限で広い面は数 tick かかる。status Moving のまま待つ (Stuck にはしない)。
-- (R9) sub-01 の既知の限界: (a) 複合コライダーの子形状の `oneWay` は見ない (b) 親付き (親フレームが identity でない) plane2D 剛体の `LocalTransform.z` 保証は未検証 — z0 はワールド z で、書き戻しは親の逆変換を通る。Rigidbody は「ルート = ワールド位置前提」(`Components.h` の Rigidbody コメント) なので v1 はルート限定とし、engine_spec に書く (sub-24) (c) `FractureSystem.cpp:188` は破片へ `freezeRotation` をコピーするが `plane2D` はまだコピーしない → sub-08 で 1 行足した (済) (d) 複合コライダー (`compoundColliders`) の子に付いた kPolygon2D は動的剛体の一部として凸包で解けず、v1 はスープのまま (sub-08)。親付きの多角形・辺は `MakePose` を通るが未検証。どちらも engine_spec の「v1 の限界」に書く (sub-24)。
+- (R9) sub-01 の既知の限界: (a) 複合コライダーの子形状の `oneWay` は見ない (b) 親付き (親フレームが identity でない) plane2D 剛体の `LocalTransform.z` 保証は未検証 — z0 はワールド z で、書き戻しは親の逆変換を通る。Rigidbody は「ルート = ワールド位置前提」(`Components.h` の Rigidbody コメント) なので v1 はルート限定とし、engine_spec に書く (sub-24) (c) `FractureSystem.cpp:188` は破片へ `freezeRotation` をコピーするが `plane2D` はまだコピーしない → sub-08 で 1 行足した (済) (d) 複合コライダー (`compoundColliders`) の子に付いた kPolygon2D は動的剛体の一部として凸包で解けず、v1 はスープのまま (sub-08)。(e) 回転する kinematic 床 (angularVelocity.z) に乗る CC は `groundVelocity` が並進だけなので運ばれない。親付き kinematic plane2D は未検証 (sub-09)。親付きの多角形・辺は `MakePose` を通るが未検証。どちらも engine_spec の「v1 の限界」に書く (sub-24)。
 - (R10) 一方通行の速度条件 (kOneWayLandingSpeed) は「上面が天面より上で、半分以上沈んで降下中の物」も押し上げる。プラットフォーマーの着地としては望ましい挙動だが、天面より下から高速で上昇中の物は法線条件で通す (期待どおり)。問題が出たら深さの上限を足す。
 - (R11) 正射影カメラ + froxel (`--froxel`) の描画は未確認 (`engine_spec.md:406` は正射影でグリッドをスキップすると書く)。sub-15 (ライト) か sub-23 (デモ) で `--2d-demo --froxel` を 1 回撮って壊れないことを見る。
 - (R8) 2D ライトのバッファ再構築回数が層数に比例する。層 32 × 別々のライト集合という極端な配置では 32 回 clear + 加算。v1 はそのまま、engine_spec に書く。

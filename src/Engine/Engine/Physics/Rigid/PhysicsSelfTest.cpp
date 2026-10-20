@@ -8110,6 +8110,291 @@ bool RunPhysicsSelfTest()
         shape2d::Install(prevShapeLib);
     }
 
+    // ---- M94i: CharacterController の 2D モード (plane2D / 一方通行 / 移動床 / 剛体押し / 報告) ----
+    {
+        auto bitsOf = [](float v) {
+            uint32_t b = 0;
+            std::memcpy(&b, &v, sizeof(b));
+            return b;
+        };
+        // 既定寸法 (r=0.3 h=1.8 → 接地中心 y=0.9) の 2D キャラ
+        auto mkCc = [&](Scene& s, const char* name, float x, float y, float z) {
+            GameObject ch = s.CreateGameObjectTracked(name);
+            ch.SetLocalPosition(x, y, z);
+            ch.AddComponent<CharacterControllerComponent>()->plane2D = true;
+            return ch;
+        };
+        auto run = [&](Scene& s, int ticks) {
+            for (int i = 0; i < ticks; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+        };
+
+        // (1) 30° の坂を登る
+        {
+            Scene s;
+            MakeStaticBoxRot(s, "Slope30", 0, 0, 0, 6.0f, 0.5f, 4.0f, { 0, 0, 0.2588190f, 0.9659258f });
+            GameObject ch = mkCc(s, "Climber", -2.0f, 3.0f, 0);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* cc = ch.GetComponent<CharacterControllerComponent>();
+            auto* lt = ch.GetComponent<LocalTransform>();
+            run(s, 90);
+            const float x0 = lt->position.x, y0 = lt->position.y;
+            cc->moveInput.x = 1.5f;
+            run(s, 120);
+            check(lt->position.x - x0 > 1.0f && lt->position.y - y0 > 0.4f && cc->isGrounded,
+                  "CC2D: climbs a 30 deg slope");
+        }
+        // (2) 60° の坂は登れない (滑る)
+        {
+            Scene s;
+            MakeStaticBoxRot(s, "Slope60", 0, 0, 0, 6.0f, 0.5f, 4.0f, { 0, 0, 0.5f, 0.8660254f });
+            GameObject ch = mkCc(s, "Pusher", -1.0f, 4.0f, 0);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* cc = ch.GetComponent<CharacterControllerComponent>();
+            auto* lt = ch.GetComponent<LocalTransform>();
+            run(s, 60);
+            const float ySettle = lt->position.y;
+            cc->moveInput.x = 1.5f;
+            bool noClimb = true;
+            for (int i = 0; i < 180; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                noClimb = noClimb && lt->position.y <= ySettle + 0.05f;
+            }
+            check(noClimb, "CC2D: cannot climb a 60 deg slope (y never increases)");
+        }
+        // (3) 0.3 の段差を登る
+        {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 20.0f, 0.5f, 5.0f);
+            MakeGround(s, "Step", 6.0f, 0.15f, 0, 3.0f, 0.15f, 5.0f); // 前面 x=3、高さ 0.3
+            GameObject ch = mkCc(s, "Stepper", 0, 0.9f, 0);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* cc = ch.GetComponent<CharacterControllerComponent>();
+            auto* lt = ch.GetComponent<LocalTransform>();
+            run(s, 90);
+            cc->moveInput.x = 2.0f;
+            for (int i = 0; i < 600 && lt->position.x < 4.0f; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            check(lt->position.x >= 4.0f && std::fabs(lt->position.y - 1.2f) < 0.03f && cc->isGrounded,
+                  "CC2D: climbs a 0.3 m step");
+        }
+        // (4) 一方通行: 下から跳んで抜け、上から乗り、ignoreOneWay で降りる
+        {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 20.0f, 0.5f, 5.0f);
+            GameObject plat = MakeGround(s, "Plat", 0, 2.4f, 0, 3.0f, 0.1f, 5.0f); // 天面 y=2.5
+            plat.GetComponent<ColliderComponent>()->oneWay = true;
+            GameObject ch = mkCc(s, "Jumper", 0, 0.9f, 0);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* cc = ch.GetComponent<CharacterControllerComponent>();
+            auto* lt = ch.GetComponent<LocalTransform>();
+            run(s, 60);
+            check(cc->isGrounded && std::fabs(lt->position.y - 0.9f) < 0.02f && cc->groundEntity != plat.Id(),
+                  "CC2D oneWay: starts on the ground below the platform");
+            cc->jumpSpeed = 9.0f; // 頂点 = 4.1 m。足元が天面 2.5 を越える
+            float maxY = lt->position.y;
+            bool passedThrough = false;
+            for (int i = 0; i < 240; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                maxY = (std::max)(maxY, lt->position.y);
+                passedThrough = passedThrough || lt->position.y > 2.5f + 0.9f;
+            }
+            check(passedThrough && maxY > 3.5f,
+                  "CC2D oneWay: a jump from below passes through the platform");
+            check(cc->isGrounded && std::fabs(lt->position.y - 3.4f) < 0.02f && cc->groundEntity == plat.Id()
+                      && cc->ticksSinceGrounded == 0,
+                  "CC2D oneWay: lands on top of the platform and reports it as the ground");
+            cc->ignoreOneWay = true;
+            run(s, 120);
+            check(std::fabs(lt->position.y - 0.9f) < 0.02f && cc->groundEntity != plat.Id(),
+                  "CC2D oneWay: ignoreOneWay drops through to the ground");
+            cc->ignoreOneWay = false;
+            cc->jumpSpeed = 9.0f;
+            run(s, 240);
+            check(std::fabs(lt->position.y - 3.4f) < 0.02f,
+                  "CC2D oneWay: the platform is solid again once ignoreOneWay is cleared");
+        }
+        // (5) kinematic 床 (velocity.x = 1) に乗ると 60 tick で 1.0 運ばれる
+        {
+            Scene s;
+            GameObject floor = MakeBox(s, "Lift", 0, -0.25f, 0, 3.0f, 0.25f, 5.0f);
+            floor.GetComponent<RigidbodyComponent>()->isKinematic = true;
+            floor.GetComponent<RigidbodyComponent>()->plane2D = true;
+            floor.GetComponent<RigidbodyComponent>()->velocity = { 1.0f, 0.0f, 0.0f };
+            // 対照: plane2D が OFF の kinematic は velocity があっても動かない (従来どおり)
+            GameObject still = MakeBox(s, "Still", 20.0f, -0.25f, 0, 3.0f, 0.25f, 5.0f);
+            still.GetComponent<RigidbodyComponent>()->isKinematic = true;
+            still.GetComponent<RigidbodyComponent>()->velocity = { 1.0f, 0.0f, 0.0f };
+            GameObject ch = mkCc(s, "Rider", 0, 0.9f, 0);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* cc = ch.GetComponent<CharacterControllerComponent>();
+            auto* lt = ch.GetComponent<LocalTransform>();
+            auto* flt = floor.GetComponent<LocalTransform>();
+            // 床は kinematic + plane2D の velocity だけで動く (Transform は触らない)
+            run(s, 30);
+            const float x0 = lt->position.x, fx0 = flt->position.x;
+            const float rel0 = x0 - fx0;
+            run(s, 60);
+            check(cc->groundEntity == floor.Id() && std::fabs(cc->groundVelocity.x - 1.0f) < 1e-6f,
+                  "CC2D moving floor: groundEntity / groundVelocity report the kinematic floor");
+            check(std::fabs((flt->position.x - fx0) - 1.0f) < 1e-3f && flt->position.z == 0.0f,
+                  "CC2D moving floor: a kinematic plane2D floor moves 1.0 m in 60 ticks by velocity alone");
+            check(std::fabs((lt->position.x - fx0) - (x0 - fx0) - 1.0f) < 0.02f
+                      && std::fabs((lt->position.x - flt->position.x) - rel0) < 0.01f
+                      && std::fabs(cc->velocity.x) < 1e-3f,
+                  "CC2D moving floor: the character stays on the floor (relative x within 0.01; velocity is relative)");
+            check(still.GetComponent<LocalTransform>()->position.x == 20.0f,
+                  "CC2D moving floor: a kinematic body without plane2D is still not integrated");
+        }
+        // (6) 箔 (plane2D 剛体) を押す。pushPower 0 なら動かさない
+        {
+            auto pushDistance = [&](float pushPower) {
+                Scene s;
+                MakeGround(s, "G", 0, -0.5f, 0, 20.0f, 0.5f, 5.0f);
+                GameObject box = MakeBox(s, "Crate", 1.5f, 0.25f, 0, 0.25f, 0.25f, 0.5f);
+                box.GetComponent<RigidbodyComponent>()->plane2D = true;
+                GameObject ch = mkCc(s, "Pusher", 0, 0.9f, 0);
+                s.GetWorld().ApplyStructuralChanges();
+                auto* cc = ch.GetComponent<CharacterControllerComponent>();
+                cc->pushPower = pushPower;
+                run(s, 30);
+                cc->moveInput.x = 1.0f;
+                run(s, 180);
+                return box.GetComponent<LocalTransform>()->position.x - 1.5f;
+            };
+            const float pushed = pushDistance(1.0f);
+            const float notPushed = pushDistance(0.0f);
+            MYE_LOG_INFO("  [phys] CC2D push: crate moved %.3f (pushPower 1) / %.3f (pushPower 0)",
+                         static_cast<double>(pushed), static_cast<double>(notPushed));
+            check(pushed > 0.5f, "CC2D push: pushPower > 0 moves a plane2D rigidbody");
+            check(std::fabs(notPushed) < 1e-4f, "CC2D push: pushPower 0 leaves the rigidbody alone");
+        }
+        // (7) 壁: wallContact が立つ側を確かめる
+        {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 20.0f, 0.5f, 5.0f);
+            MakeGround(s, "WallR", 3.0f, 2.0f, 0, 0.5f, 2.0f, 5.0f); // 内側面 x=2.5
+            MakeGround(s, "WallL", -3.0f, 2.0f, 0, 0.5f, 2.0f, 5.0f); // 内側面 x=-2.5
+            GameObject ch = mkCc(s, "Walker", 0, 0.9f, 0);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* cc = ch.GetComponent<CharacterControllerComponent>();
+            run(s, 30);
+            check(cc->wallContact == 0, "CC2D wall: no contact in open space");
+            cc->moveInput.x = 2.0f;
+            run(s, 150);
+            check(cc->wallContact == 1, "CC2D wall: wallContact = 1 against a wall on the right");
+            cc->moveInput.x = -2.0f;
+            run(s, 300);
+            check(cc->wallContact == -1, "CC2D wall: wallContact = -1 against a wall on the left");
+            cc->moveInput.x = 0.0f;
+            run(s, 5);
+            check(cc->wallContact == -1, "CC2D wall: wallContact stays while the character rests against the wall");
+            cc->moveInput.x = 2.0f;
+            run(s, 30);
+            check(cc->wallContact == 0, "CC2D wall: wallContact clears once the character walks away");
+        }
+        // (8) z 不変量と ticksSinceGrounded: z をずらして置き、moveInput.z / 壁際を使ってもビット不変
+        {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 20.0f, 0.5f, 5.0f);
+            MakeGround(s, "Wall", 3.0f, 2.0f, 0.37f, 0.5f, 2.0f, 5.0f);
+            GameObject ch = mkCc(s, "ZLocked", 0, 2.0f, 0.37f);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* cc = ch.GetComponent<CharacterControllerComponent>();
+            auto* lt = ch.GetComponent<LocalTransform>();
+            const uint32_t z0 = bitsOf(lt->position.z);
+            cc->moveInput = { 2.0f, 0.0f, 3.0f };
+            bool zHeld = true;
+            bool airborneCounted = false;
+            for (int i = 0; i < 300; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                zHeld = zHeld && bitsOf(lt->position.z) == z0 && bitsOf(cc->velocity.z) == 0u;
+                airborneCounted = airborneCounted || (!cc->isGrounded && cc->ticksSinceGrounded >= 5);
+            }
+            check(zHeld && cc->moveInput.z == 3.0f, "CC2D: z and velocity.z hold bit-exactly; moveInput.z is ignored, not overwritten");
+            check(airborneCounted && cc->isGrounded && cc->ticksSinceGrounded == 0,
+                  "CC2D: ticksSinceGrounded counts up while falling and is 0 on the ground");
+            // 比較対照: 2D でないキャラは moveInput.z で奥へ動く (既存の挙動が変わっていない)
+            Scene s3;
+            MakeGround(s3, "G", 0, -0.5f, 0, 20.0f, 0.5f, 20.0f);
+            GameObject ch3 = s3.CreateGameObjectTracked("Free");
+            ch3.SetLocalPosition(0, 0.9f, 0.37f);
+            ch3.AddComponent<CharacterControllerComponent>()->moveInput = { 0.0f, 0.0f, 1.0f };
+            s3.GetWorld().ApplyStructuralChanges();
+            run(s3, 60);
+            check(std::fabs(ch3.GetComponent<LocalTransform>()->position.z - 1.37f) < 0.02f,
+                  "CC2D: with plane2D off the character still walks along z");
+        }
+        // (9) 決定論 + Debug / Release のハッシュ焼き込み。跳ぶ / 運ばれる / 押す / 壁を一つの世界で回す
+        {
+            auto build = [&](Scene& s) {
+                GameObject env = s.CreateGameObjectTracked("Env");
+                env.AddComponent<PhysicsEnvironmentComponent>();
+                MakeGround(s, "G", 0, -0.5f, 0, 30.0f, 0.5f, 5.0f);
+                MakeGround(s, "WallR", 12.0f, 2.0f, 0, 0.5f, 2.0f, 5.0f);
+                GameObject plat = MakeGround(s, "Plat", 0, 2.4f, 0, 3.0f, 0.1f, 5.0f);
+                plat.GetComponent<ColliderComponent>()->oneWay = true;
+                GameObject lift = MakeBox(s, "Lift", 6.0f, -0.25f, 0, 3.0f, 0.25f, 5.0f);
+                lift.GetComponent<RigidbodyComponent>()->isKinematic = true;
+                lift.GetComponent<RigidbodyComponent>()->plane2D = true;
+                lift.GetComponent<RigidbodyComponent>()->velocity = { 0.5f, 0.0f, 0.0f };
+                GameObject crate = MakeBox(s, "Crate", 9.0f, 0.25f, 0, 0.25f, 0.25f, 0.5f);
+                crate.GetComponent<RigidbodyComponent>()->plane2D = true;
+                GameObject jumper = mkCc(s, "Jumper", 0, 0.9f, 0);
+                GameObject rider = mkCc(s, "Rider", 5.0f, 0.9f, 0);
+                rider.GetComponent<CharacterControllerComponent>()->pushPower = 0.8f;
+                s.GetWorld().ApplyStructuralChanges();
+            };
+            Scene sa, sb;
+            build(sa);
+            build(sb);
+            auto drive = [&](Scene& s, int tick) {
+                auto find = [&](const char* name) { return s.Find(name); };
+                GameObject jumper = find("Jumper");
+                GameObject rider = find("Rider");
+                auto* jcc = jumper.GetComponent<CharacterControllerComponent>();
+                auto* rcc = rider.GetComponent<CharacterControllerComponent>();
+                if (tick == 40 || tick == 400) { jcc->jumpSpeed = 9.0f; }
+                jcc->moveInput.x = (tick >= 40 && tick < 200) ? 1.0f : 0.0f;
+                jcc->ignoreOneWay = (tick >= 500 && tick < 560);
+                rcc->moveInput.x = (tick >= 60) ? 1.5f : 0.0f;
+            };
+            bool deterministic = true;
+            uint64_t finalHash = 0;
+            for (int tick = 0; tick < 900; ++tick) {
+                drive(sa, tick);
+                drive(sb, tick);
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                const uint64_t ha = HashWorld(sa.GetWorld());
+                if (ha != HashWorld(sb.GetWorld()) && deterministic) {
+                    deterministic = false;
+                    MYE_LOG_ERROR("  CC2D determinism diverged at tick %d", tick);
+                }
+                finalHash = ha;
+            }
+            check(deterministic, "CC2D: two identical scenes hash-identical for 900 ticks");
+            {
+                const auto* jcc = sa.Find("Jumper").GetComponent<CharacterControllerComponent>();
+                const auto* rcc = sa.Find("Rider").GetComponent<CharacterControllerComponent>();
+                const auto* crateLt = sa.Find("Crate").GetComponent<LocalTransform>();
+                MYE_LOG_INFO("  [phys] CC2D scene: jumper y %.3f, rider x %.3f wall %d, crate x %.3f",
+                             static_cast<double>(sa.Find("Jumper").GetComponent<LocalTransform>()->position.y),
+                             static_cast<double>(sa.Find("Rider").GetComponent<LocalTransform>()->position.x),
+                             rcc->wallContact, static_cast<double>(crateLt->position.x));
+                check(jcc->plane2D && crateLt->position.x > 9.2f && rcc->wallContact == 1,
+                      "CC2D scene: the rider pushed the crate and ended up against the wall");
+            }
+            MYE_LOG_INFO("  [phys] CC2D scene hash @900 = %016llX", static_cast<unsigned long long>(finalHash));
+            // Debug / Release 共通の期待値。0 は「未採取」 (採取値をログから読んで焼く)
+            constexpr uint64_t kCc2dExpectedHash = 0xC04B7FFA3E31E5D0ull;
+            check(kCc2dExpectedHash == 0 || finalHash == kCc2dExpectedHash,
+                  "CC2D: the final world hash matches the baked value (Debug == Release)");
+        }
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
         return true;

@@ -867,6 +867,18 @@ struct CharacterControllerComponent {
     float jumpSpeed = 0.0f; // >0 なら次 tick 接地時に vy=jumpSpeed (接地可否に関わらず消費)
     bool isGrounded = false; // 前 tick の接地判定 (読み取り専用)
     float stepOffset = 0.3f; // 接地中に登る段差の高さ (m)。実効値は x |scale.y| (height と同じ)。0 = 登らない。既定は Unity と同じ
+
+    // ---- 2D モード (M94i)。plane2D が false のあいだは以下を一切読み書きしない (既存シーンとビット同一) ----
+    // 床は kinematic Rigidbody の velocity で動かす (Transform を直接動かした床には乗れない)。
+    // z は tick 開始時の値に固定され、異なる z の物とは当たらない。
+    bool plane2D = false;      // ON: moveInput.z を無視して z を固定し、以下の機能を有効にする
+    bool ignoreOneWay = false; // true の間は oneWay の床を無視する (下入力で降りる)
+    float pushPower = 0.0f;    // > 0: 非 kinematic の plane2D 剛体を押すと velocity.x += pushPower x moveInput.x (質量で割らない単純則)
+    int32_t wallContact = 0;   // 読み取り専用。壁に接している側 (押し出し法線が横向き): -1 左 / 0 無し / 1 右 / 2 両側
+    int32_t ticksSinceGrounded = 0; // 読み取り専用。接地で 0、離地で +1、kMaxTicksSinceGrounded で飽和
+    EntityID groundEntity = {};     // 読み取り専用。接地している床のエンティティ (無ければ無効 ID)
+    DirectX::XMFLOAT3 groundVelocity = { 0.0f, 0.0f, 0.0f }; // 読み取り専用。床の Rigidbody.velocity (Rigidbody が無ければ 0)
+    static constexpr int32_t kMaxTicksSinceGrounded = 32767;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

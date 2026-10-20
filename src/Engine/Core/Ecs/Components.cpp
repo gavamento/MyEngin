@@ -399,6 +399,27 @@ void RegisterBuiltinComponents()
         MYE_JP("ジャンプ速度", MYE_FIELD_FLAGS(CharacterControllerComponent, jumpSpeed, Float, kFieldHidden)),
         MYE_JP("接地している", MYE_FIELD_FLAGS(CharacterControllerComponent, isGrounded, Bool, kFieldReadOnly)),
         MYE_JP("登れる段差", MYE_FIELD_RANGE(CharacterControllerComponent, stepOffset, Float, 0.0f, 5.0f)),
+        // M94i: 2D モード (末尾 append)。read-only は CharacterControllerSystem が書く sim 状態なので hash 対象のまま
+        MYE_JP("2D モード",
+               MYE_FIELD_TIP(CharacterControllerComponent, plane2D, Bool,
+                             "Side-scroller mode: moveInput.z is ignored and z is held at its start value "
+                             "(bodies at a different z never touch). Platforms must be moved through a "
+                             "kinematic Rigidbody velocity, not by editing the Transform")),
+        MYE_JP("一方通行を無視",
+               MYE_FIELD_TIP(CharacterControllerComponent, ignoreOneWay, Bool,
+                             "While true, one-way platforms are ignored (drop down through them)")),
+        MYE_JP("押す力",
+               MYE_FIELD_TIP(CharacterControllerComponent, pushPower, Float,
+                             "> 0: pushing a non-kinematic plane2D rigidbody adds pushPower * moveInput.x to its "
+                             "velocity.x each tick (not divided by mass)")),
+        MYE_JP("壁の接触",
+               MYE_FIELD_FLAGS(CharacterControllerComponent, wallContact, Int32, kFieldReadOnly)),
+        MYE_JP("離地からの tick",
+               MYE_FIELD_FLAGS(CharacterControllerComponent, ticksSinceGrounded, Int32, kFieldReadOnly)),
+        MYE_JP("接地している床",
+               MYE_FIELD_FLAGS(CharacterControllerComponent, groundEntity, EntityRef, kFieldReadOnly)),
+        MYE_JP("床の速度",
+               MYE_FIELD_FLAGS(CharacterControllerComponent, groundVelocity, Float3, kFieldReadOnly)),
     });
 
     // M29c: スプライト/トレイル/3D テキスト。描画専用なので **kComponentNoHash**。

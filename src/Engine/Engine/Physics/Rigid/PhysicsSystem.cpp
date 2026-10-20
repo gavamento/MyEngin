@@ -256,6 +256,9 @@ struct Body {
     // M94a: 平面拘束 (Rigidbody.plane2D)。kinematic では立てない。z0 = tick 開始時のワールド z。
     // 拘束の 3 点 (慣性 / 速度ソルバ直後 / 位置積分直後) は plane2D の検索で辿れる
     bool plane2D = false;
+    // M94i: plane2D の kinematic 剛体 (休止ラグドールを除く)。velocity / angularVelocity.z で位置・姿勢を積分する。
+    // plane2D が OFF の kinematic は従来どおり積分しない
+    bool kinDrive = false;
     float z0 = 0.0f;
     // M94a: 一方通行 (Collider.oneWay)。startMinY / startVy = tick 開始時の形状 AABB の y 最小と y 速度 (動的ボディのみ)
     bool oneWay = false;
@@ -1334,13 +1337,46 @@ constexpr float kStepMinRise = 0.02f;    // これ以下の凹凸は通常の押
 constexpr int kStepAdvanceTries = 5;     // 遮られた歩幅を超えて前へ出す試行回数 (半径の 1/4 刻み)
 constexpr int kStepBisectIters = 12;     // 着地高さの二分探索の回数 (固定 = 決定論)
 
+// 2D モード (M94i) の定数
+constexpr float kCharWallNormalX = 0.9f;    // 押し出し法線の |nx| がこれを超えたら壁の接触
+constexpr float kCharPushNormalX = 0.5f;    // 剛体を押す接触とみなす |nx| の下限 (床に立っているだけでは押さない)
+constexpr int kCharMaxPushTargets = 8;      // 1 tick に押せる剛体の数 (固定長 = 確保なし)
+
+// CC の一方通行判定 (M94i)。plane2D の CC だけが on にする
+struct CharOneWayContext {
+    bool on = false;
+    float startFeetY = 0.0f; // tick 開始時のカプセル最下点
+    bool passAll = false;    // ignoreOneWay、または上昇中 (velocity.y > 0) = 全部すり抜ける
+};
+
+// obs が CC から見て「今 tick はすり抜ける」一方通行の床か。床になれるのは静的 / kinematic の oneWay 形状だけ
+// (動的な oneWay 剛体は通常の接触。RejectOneWayContact と同じ規約)
+bool CharPassesThroughOneWay(const CharOneWayContext& ow, const Body& obs)
+{
+    if (!ow.on || !obs.oneWay || (obs.rb != nullptr && !obs.kinematic)) {
+        return false;
+    }
+    if (ow.passAll) {
+        return true;
+    }
+    float minX, minY, minZ, maxX, maxY, maxZ;
+    shapes::ComputeAabb(obs.pose, minX, minY, minZ, maxX, maxY, maxZ);
+    return ow.startFeetY < maxY - kOneWaySlop;
+}
+
+// 通り抜けない一方通行の床でも、上向きでない法線 (横や下からの接触) は捨てる
+bool CharRejectsOneWayNormal(const CharOneWayContext& ow, const Body& obs, float ny)
+{
+    return ow.on && obs.oneWay && (obs.rb == nullptr || obs.kinematic) && ny <= 0.0f;
+}
+
 // 段差登り。接地中に水平移動 (dirX,dirZ は単位ベクトル、len は今 tick の歩幅) が遮られたときだけ呼ぶ。
 // 「stepHeight だけ持ち上げる → 前へ出す → 真下へ着地点を探す」を、前へ出す量を歩幅から半径まで
 // 増やしながら試す。足を載せるのに必要なぶんだけ前へ出る = 低速でも 1 tick で登れる。
 // 着地面の法線が登れる傾斜 (cosSlope 以上) で、接触点の高さが足元から stepHeight 以内のときだけ成功。
 // 戻り値 true なら (outX,outY,outZ) が登った後のカプセル中心
 bool TryCharStepUp(const std::vector<Body>& bodies, const CharBody& c, float cosSlope, float dirX,
-                   float dirZ, float len, float& outX, float& outY, float& outZ)
+                   float dirZ, float len, const CharOneWayContext& ow, float& outX, float& outY, float& outZ)
 {
     auto overlapsAny = [&](const ShapePose& p) {
         for (const Body& obs : bodies) {
@@ -1349,6 +1385,9 @@ bool TryCharStepUp(const std::vector<Body>& bodies, const CharBody& c, float cos
             }
             if (!shapes::CanCollide(c.layer, c.mask, obs.layer, obs.mask)) {
                 continue;
+            }
+            if (CharPassesThroughOneWay(ow, obs)) {
+                continue; // M94i
             }
             if (shapes::Overlap(p, obs.pose)) {
                 return true;
@@ -1407,6 +1446,9 @@ bool TryCharStepUp(const std::vector<Body>& bodies, const CharBody& c, float cos
             if (!shapes::CanCollide(c.layer, c.mask, obs.layer, obs.mask)) {
                 continue;
             }
+            if (CharPassesThroughOneWay(ow, obs)) {
+                continue; // M94i
+            }
             float nx, ny, nz, depth;
             if (shapes::Collide(q, obs.pose, nx, ny, nz, depth) && ny > supportNy) {
                 supportNy = ny;
@@ -1455,6 +1497,26 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
         pose.px = c.px + c.cc->moveInput.x * dt;
         pose.py = c.py + vy * dt;
         pose.pz = c.pz + c.cc->moveInput.z * dt;
+        // 2D モード (M94i)。plane2D が false なら以下の変数は一度も読まれない (既存 CC の演算は増えない)
+        const bool p2 = c.cc->plane2D;
+        CharOneWayContext oneWay;
+        float groundDx = 0.0f; // 前 tick の床が動かす今 tick の変位 (移動床)
+        bool wallLeft = false;
+        bool wallRight = false;
+        const Body* pushed[kCharMaxPushTargets] = {};
+        int pushedCount = 0;
+        if (p2) {
+            // moveInput.z は無視し z は tick 開始時の値に固定する (押し出しの z 成分も下で捨てる)
+            pose.pz = c.pz;
+            oneWay.on = true;
+            oneWay.startFeetY = c.py - c.halfSeg - c.radius;
+            oneWay.passAll = c.cc->ignoreOneWay || c.cc->velocity.y > 0.0f;
+            if (c.cc->isGrounded) {
+                groundDx = c.cc->groundVelocity.x * dt;
+                pose.px += groundDx;
+                pose.py += c.cc->groundVelocity.y * dt;
+            }
+        }
         bool grounded = false;
         // 押し出し: 固定パス × 障害物 index 昇順 (bodies はソート済)。自分の collider は skip
         for (int pass = 0; pass < kCharPushPasses; ++pass) {
@@ -1465,13 +1527,39 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
                 if (!shapes::CanCollide(c.layer, c.mask, obs.layer, obs.mask)) {
                     continue; // M36a
                 }
+                if (p2 && CharPassesThroughOneWay(oneWay, obs)) {
+                    continue; // M94i
+                }
                 float nx, ny, nz, depth;
                 if (!shapes::Collide(pose, obs.pose, nx, ny, nz, depth)) {
                     continue;
                 }
+                if (p2) {
+                    if (CharRejectsOneWayNormal(oneWay, obs, ny)) {
+                        continue;
+                    }
+                    if (nx > kCharWallNormalX) {
+                        wallLeft = true; // 法線は障害物 → CC。+x を向く = 壁は左にある
+                    } else if (nx < -kCharWallNormalX) {
+                        wallRight = true;
+                    }
+                    if (c.cc->pushPower > 0.0f && obs.rb != nullptr && !obs.kinematic && obs.plane2D
+                        && std::fabs(nx) > kCharPushNormalX && nx * c.cc->moveInput.x < 0.0f
+                        && pushedCount < kCharMaxPushTargets) {
+                        bool seen = false;
+                        for (int k = 0; k < pushedCount; ++k) {
+                            seen = seen || (pushed[k] == &obs);
+                        }
+                        if (!seen) {
+                            pushed[pushedCount++] = &obs;
+                        }
+                    }
+                }
                 pose.px += nx * depth;
                 pose.py += ny * depth;
-                pose.pz += nz * depth;
+                if (!p2) {
+                    pose.pz += nz * depth; // 2D は面外へ押し出さない
+                }
                 if (ny >= cosSlope) {
                     grounded = true; // 登れる斜面 = 接地
                     if (vy < 0.0f) {
@@ -1495,6 +1583,9 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
                 if (!shapes::CanCollide(c.layer, c.mask, obs.layer, obs.mask)) {
                     continue; // M36a
                 }
+                if (p2 && CharPassesThroughOneWay(oneWay, obs)) {
+                    continue; // M94i
+                }
                 float nx, ny, nz, depth;
                 if (shapes::Collide(probe, obs.pose, nx, ny, nz, depth) && ny >= cosSlope) {
                     grounded = true;
@@ -1507,16 +1598,18 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
         float stepSpeedCap = -1.0f; // 段差を登った tick の水平 velocity の上限 (m/s)。負 = 登っていない
         if (c.stepHeight > 0.0f && c.cc->isGrounded && c.cc->jumpSpeed <= 0.0f) {
             const float mx = c.cc->moveInput.x;
-            const float mz = c.cc->moveInput.z;
+            const float mz = p2 ? 0.0f : c.cc->moveInput.z;
             const float speed = std::sqrt(mx * mx + mz * mz);
             if (speed > 0.0f) {
                 const float dirX = mx / speed;
                 const float dirZ = mz / speed;
                 const float len = speed * dt;
-                const float progress = (pose.px - c.px) * dirX + (pose.pz - c.pz) * dirZ;
+                // 移動床が運んだ分は歩いた量に数えない (groundDx は 2D 以外では使わない)
+                const float movedX = p2 ? (pose.px - c.px - groundDx) : (pose.px - c.px);
+                const float progress = movedX * dirX + (pose.pz - c.pz) * dirZ;
                 float sx, sy, sz;
                 if (progress < 0.5f * len
-                    && TryCharStepUp(bodies, c, cosSlope, dirX, dirZ, len, sx, sy, sz)) {
+                    && TryCharStepUp(bodies, c, cosSlope, dirX, dirZ, len, oneWay, sx, sy, sz)) {
                     pose.px = sx;
                     pose.py = sy;
                     pose.pz = sz;
@@ -1535,9 +1628,10 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
         }
         // 書き戻し (剛体と同じ親フレーム逆変換。回転は触らない)
         const float invDt = 1.0f / dt;
-        c.cc->velocity.x = (pose.px - c.px) * invDt;
+        // 2D は移動床が運んだ分を引いた「床に対する速度」を書く (歩行アニメ / 足音が床の速度で歩き出さない)
+        c.cc->velocity.x = p2 ? (pose.px - c.px - groundDx) * invDt : (pose.px - c.px) * invDt;
         c.cc->velocity.y = vy;
-        c.cc->velocity.z = (pose.pz - c.pz) * invDt;
+        c.cc->velocity.z = p2 ? 0.0f : (pose.pz - c.pz) * invDt;
         if (stepSpeedCap >= 0.0f) {
             // 登りのために前へ出した分は移動速度に数えない (足音の歩幅やアニメーションが velocity を読む)
             const float horizontal = std::sqrt(c.cc->velocity.x * c.cc->velocity.x + c.cc->velocity.z * c.cc->velocity.z);
@@ -1548,6 +1642,49 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
             }
         }
         c.cc->isGrounded = grounded;
+        if (p2) {
+            // 報告 (M94i)。接地した床 = 接地プローブと同じ姿勢で最も上向きの面を持つ形状 (同値は bodies の先頭)
+            EntityID groundEntity = {};
+            XMFLOAT3 groundVelocity = { 0.0f, 0.0f, 0.0f };
+            if (grounded) {
+                ShapePose probe = pose;
+                probe.py -= (c.cc->skinWidth + 0.01f);
+                const Body* ground = nullptr;
+                float groundNy = -2.0f;
+                for (const Body& obs : bodies) {
+                    if (!obs.solid || obs.entity.index == c.entity.index
+                        || !shapes::CanCollide(c.layer, c.mask, obs.layer, obs.mask)
+                        || CharPassesThroughOneWay(oneWay, obs)) {
+                        continue;
+                    }
+                    float nx, ny, nz, depth;
+                    if (shapes::Collide(probe, obs.pose, nx, ny, nz, depth) && ny >= cosSlope
+                        && ny > groundNy) {
+                        groundNy = ny;
+                        ground = &obs;
+                    }
+                }
+                if (ground != nullptr) {
+                    groundEntity = ground->entity;
+                    if (ground->rb != nullptr) {
+                        groundVelocity = ground->rb->velocity;
+                    }
+                }
+            }
+            c.cc->groundEntity = groundEntity;
+            c.cc->groundVelocity = groundVelocity;
+            c.cc->ticksSinceGrounded = grounded
+                ? 0
+                : std::min(c.cc->ticksSinceGrounded + 1, CharacterControllerComponent::kMaxTicksSinceGrounded);
+            c.cc->wallContact = (wallLeft && wallRight) ? 2 : (wallLeft ? -1 : (wallRight ? 1 : 0));
+            // 剛体を押す: 次 tick の物理で動く。眠っていれば起こす
+            for (int k = 0; k < pushedCount; ++k) {
+                RigidbodyComponent* target = pushed[k]->rb;
+                target->velocity.x += c.cc->pushPower * c.cc->moveInput.x;
+                target->isSleeping = false;
+                target->sleepTicks = 0;
+            }
+        }
         if (c.frame.identity) {
             c.lt->position = { pose.px, pose.py, pose.pz };
         } else {
@@ -1711,9 +1848,10 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             }
             // M94a: 平面拘束。z0 は tick 開始時のワールド z で、サブステップをまたいで同じ値を使う。
             // 姿勢は Z 回転だけに正規化し直し、速度 / 角速度の面外成分も入口で落とす
-            if (rb->plane2D && !kinematic) {
-                b.plane2D = true;
-                anyPlane2D = true;
+            if (rb->plane2D && (!kinematic || !held)) {
+                b.plane2D = !kinematic;
+                b.kinDrive = kinematic;
+                anyPlane2D = anyPlane2D || !kinematic;
                 b.z0 = b.pose.pz;
                 b.vz = 0.0f;
                 b.wx = 0.0f;
@@ -5021,6 +5159,15 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
 
         // ---- 位置・姿勢積分 (解決後の速度で前進) ----
         for (Body& b : bodies) {
+            if (b.kinDrive) {
+                // M94i: kinematic + plane2D は velocity で動く。z と X/Y 回転は動かさない (質量中心は持たない)
+                b.pose.px += b.vx * h;
+                b.pose.py += b.vy * h;
+                if (b.wz != 0.0f) {
+                    IntegrateQuatNormalized(0.0f, 0.0f, b.wz * 0.5f * h, b.qx, b.qy, b.qz, b.qw);
+                }
+                continue;
+            }
             if (b.invMass == 0.0f || !b.rb) {
                 continue;
             }
@@ -5227,7 +5374,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     // ---- 書き戻し (動的・非 kinematic のみ。kinematic は物理が何も変えないので
     //      スキップ = 親付きの world→local 往復変換ドリフトも出ない) ----
     for (Body& b : bodies) {
-        if (!b.rb || b.invMass == 0.0f) {
+        if (!b.rb || (b.invMass == 0.0f && !b.kinDrive)) {
             continue;
         }
         if (b.frame.identity) {
@@ -5255,6 +5402,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 lqx *= inv; lqy *= inv; lqz *= inv; lqw *= inv;
             }
             b.lt->rotation = { lqx, lqy, lqz, lqw };
+        }
+        if (b.kinDrive) {
+            continue; // kinematic の速度は利用者の入力。物理は書き換えない
         }
         b.rb->velocity.x = b.vx;
         b.rb->velocity.y = b.vy;
