@@ -49,6 +49,7 @@
 #include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
 #include "Engine/Engine/Tilemap/TilemapAssets.h"
+#include "Engine/Engine/Tilemap/TilemapSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
@@ -127,6 +128,7 @@ struct HeadlessSim::Impl : IEngineApp {
     ShapeLibrary2D shapeLibrary2D;           // M94h
     TilePaletteLibrary tilePaletteLibrary;   // M94j
     TilemapLibrary tilemapLibrary;           // M94j
+    TilemapSystem tilemapSystem;             // M94k: セルの書き換えと衝突
     XpbdBackend xpbd;
     AcousticField acoustic;
     AgentSystem agentSystem;
@@ -209,6 +211,7 @@ void HeadlessSim::Impl::BuildTickServices(int netRole)
     ts.twoBoneIkSystem = &twoBoneIkSystem;
     ts.effectSystem = &effectSystem;
     ts.physicsSystem = &physicsSystem;
+    physicsSystem.AddStaticShapeSource(&tilemapSystem); // M94k: タイルの箱
     ts.fractureSystem = &fractureSystem;
     ts.shapeImpulses = &fractureShapeImpulses;
     ts.xpbd = &xpbd;
@@ -217,6 +220,7 @@ void HeadlessSim::Impl::BuildTickServices(int netRole)
     ts.navSystem = &navSystem; // M82b
     ts.perception = &perceptionSystem; // M83
     ts.behaviorTree = &behaviorTreeSystem; // M85
+    ts.tilemap = &tilemapSystem; // M94k
     ts.transformSystem = &transformSystem;
     ts.collisionSystem = &collisionSystem;
     ts.particleSystem = &particleSystem;
@@ -281,7 +285,7 @@ void HeadlessSim::Activate()
     InstallSimLibraries({ &m.resources, &m.meshColliders, &m.convexColliders, &m.fractureAssets,
                           &m.physMatLibrary, &m.terrainColliders, &m.navFilterLibrary, &m.behaviorTreeLibrary,
                           &m.blackboardLibrary, &m.spriteLibrary, &m.spriteAnimLibrary, &m.shapeLibrary2D, &m.tilePaletteLibrary,
-                          &m.tilemapLibrary });
+                          &m.tilemapLibrary, &m.tilemapSystem });
     m.assetDatabase.InstallAsKeyResolver();
     SceneSerializer::SetManagedHost(&m.managedHost);
 }
@@ -314,7 +318,7 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     InstallSimLibraries({ &m.resources, &m.meshColliders, &m.convexColliders, &m.fractureAssets,
                           &m.physMatLibrary, &m.terrainColliders, &m.navFilterLibrary, &m.behaviorTreeLibrary,
                           &m.blackboardLibrary, &m.spriteLibrary, &m.spriteAnimLibrary, &m.shapeLibrary2D, &m.tilePaletteLibrary,
-                          &m.tilemapLibrary });
+                          &m.tilemapLibrary, &m.tilemapSystem });
     // ParticleSystem::Init の代わり: CPU / GPU バックエンドの選択だけ project_settings.json から決める
     m.particleSystem.LoadSettings(m.assetsRoot + L"\\project_settings.json");
     InitSimProjectState(m.assetsRoot);
@@ -401,6 +405,7 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     m.simRefs.nav = &m.navSystem; // M82c
     m.simRefs.behaviorTree = &m.behaviorTreeSystem; // M85
     m.simRefs.compute = &m.computeService; // M91d
+    m.simRefs.tilemap = &m.tilemapSystem; // M94k
     m.simRefs.collision = &m.collisionSystem;
     m.simRefs.scripts = &m.scriptHost;
     m.simRefs.prevTickInput = m.prevTickInput;

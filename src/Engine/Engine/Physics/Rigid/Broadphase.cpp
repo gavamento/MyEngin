@@ -33,6 +33,9 @@ void ComputeCandidatePairs(const std::vector<BroadphaseEntry>& entries,
             if (b.minY > a.maxY || a.minY > b.maxY || b.minZ > a.maxZ || a.minZ > b.maxZ) {
                 continue;
             }
+            if (a.staticOnly && b.staticOnly) {
+                continue;
+            }
             const uint32_t lo = (a.id < b.id) ? a.id : b.id;
             const uint32_t hi = (a.id < b.id) ? b.id : a.id;
             outPairs.push_back((static_cast<uint64_t>(lo) << 32) | hi);

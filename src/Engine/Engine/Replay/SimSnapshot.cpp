@@ -20,18 +20,19 @@
 #include "Engine/Engine/Physics/Xpbd/XpbdBackend.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Script/ScriptHost.h"
+#include "Engine/Engine/Tilemap/TilemapSystem.h"
 
 namespace mye {
 
 SimSources SimSourcesOf(Scene& scene, const CpuParticleBackend* particles, const XpbdBackend* xpbd,
                         const AcousticField* acoustic, const NavSystem* nav, const BehaviorTreeSystem* behaviorTree,
-                        const compute::ComputeBufferStore* computeState)
+                        const compute::ComputeBufferStore* computeState, const TilemapSystem* tilemap)
 {
     // 並びは SimSources の member 順 (畳み込む順序は HashWorldImpl が決めるので、ここは関係ない)
     // SessionLanes はシステム入力を持つ記録のときだけ畳む (D10)。持たない記録のハッシュ列を動かさない
     const SessionLanes* lanes = scene.Lanes().systemInput != 0 ? &scene.Lanes() : nullptr;
     return { particles, &scene.Time(), &scene.Persist(), xpbd, acoustic, &scene.UI(), lanes, nav, behaviorTree,
-             computeState };
+             computeState, tilemap };
 }
 
 const compute::ComputeBufferStore* ComputeGameStoreOf(const compute::ComputeService* service)
@@ -54,6 +55,7 @@ constexpr uint32_t kSessionMagic = 0x31534553u;  // 'SES1' (M81b)
 constexpr uint32_t kNavMagic = 0x3156414Eu;      // 'NAV1' (M82c)
 constexpr uint32_t kBtMagic = 0x31305442u;       // 'BT01' (M85a)
 constexpr uint32_t kComputeMagic = 0x31504D43u;  // 'CMP1' (M91d)
+constexpr uint32_t kTilemapMagic = 0x44324D54u;  // 'TM2D' (M94k)
 
 constexpr size_t kHeaderBytes = 4 * sizeof(uint32_t) + sizeof(uint64_t);
 
@@ -588,6 +590,31 @@ bool ReadCompute(ByteReader& r, const compute::ComputeService* service,
     return true;
 }
 
+// ---- TM2D 節 (M94k) ----
+// TilemapSystem が無い構成 / 書き換えたセルが 1 つも無いシーンでは「0 件」の短い節を書く (節は常にある)
+void WriteTilemap(ByteWriter& w, const TilemapSystem* tilemap)
+{
+    w.U32(kTilemapMagic);
+    if (tilemap != nullptr) {
+        tilemap->SaveSnapshot(w);
+    } else {
+        w.Count(0);
+    }
+}
+
+bool ReadTilemap(ByteReader& r, TilemapSnapshot& out)
+{
+    if (r.U32() != kTilemapMagic) {
+        MYE_LOG_ERROR("[snapshot] tilemap section magic mismatch");
+        return false;
+    }
+    if (!TilemapSystem::ReadSnapshot(r, out)) {
+        MYE_LOG_ERROR("[snapshot] tilemap section is corrupt");
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
@@ -617,6 +644,7 @@ bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
     }
     WriteBt(w, refs.behaviorTree); // M85a (v34)
     WriteCompute(w, refs.compute); // M91d (v49)
+    WriteTilemap(w, refs.tilemap); // M94k (v57)
     // ★World は**最後**に置く。復元は「小さい節を全部一時領域へ読み切ってから
     //   World::SnapshotRead (それ自体が全読み後に一括差し替え) を呼ぶ」順で走るので、
     //   World の差し替え前の失敗では現世界に手が付かない (差し替え後の Nav 節の失敗だけ例外。RestoreSimSnapshot 参照)
@@ -703,6 +731,10 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     if (!ReadCompute(r, refs.compute, computeSlots)) { // M91d (v49)。refs.compute が無い構成では読み捨てる
         return false;
     }
+    TilemapSnapshot tilemapSnapshot;
+    if (!ReadTilemap(r, tilemapSnapshot)) { // M94k (v57)。refs.tilemap が無い構成では読み捨てる
+        return false;
+    }
     if (!r.Ok()) {
         MYE_LOG_ERROR("[snapshot] truncated blob");
         return false;
@@ -732,6 +764,9 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
 
     if (refs.compute != nullptr) {
         refs.compute->ApplyGameSnapshot(std::move(computeSlots));
+    }
+    if (refs.tilemap != nullptr) {
+        refs.tilemap->ApplySnapshot(refs.scene->GetWorld(), std::move(tilemapSnapshot)); // 衝突と描画のキャッシュも作り直させる
     }
 
     if (refs.particles != nullptr) {

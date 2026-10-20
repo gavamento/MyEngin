@@ -44,6 +44,7 @@
 #include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
 #include "Engine/Engine/Tilemap/TilemapAssets.h"
+#include "Engine/Engine/Tilemap/TilemapSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
@@ -209,6 +210,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     ShapeLibrary2D shapeLibrary2D;           // .shape2d.json (M94h)
     TilePaletteLibrary tilePaletteLibrary;   // .tilepalette.json (M94j)
     TilemapLibrary tilemapLibrary;           // .tilemap.json (M94j)
+    // タイルの書き換え (override 表) と衝突。ECS 外の sim 状態なのでハッシュ節 (SimSources) と snapshot 節 (SimRefs) の
+    // 両方へ配線し (3 点セット契約)、PhysicsSystem の静的形状の供給口にもなる (M94k)
+    TilemapSystem tilemapSystem;
     TerrainColliderLibrary terrainColliders; // 地形コライダー (M59i)。**描画側とは別キャッシュ**
     // XPBD 変形体の粒子池 (M60'b)。ECS 外 sim 状態の 2 例目 — ハッシュ節 (SimSources) と
     // snapshot 節 (SimRefs) の両方へ必ず配線する (3 点セット契約)
@@ -401,7 +405,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     InstallSimLibraries({ &resources, &meshColliders, &convexColliders, &fractureAssets,
                           &physMatLibrary, &terrainColliders, &navFilterLibrary, &behaviorTreeLibrary,
                           &blackboardLibrary, &spriteLibrary, &spriteAnimLibrary, &shapeLibrary2D, &tilePaletteLibrary,
-                          &tilemapLibrary });
+                          &tilemapLibrary, &tilemapSystem });
     // M76e: Deep-Modal 推論。CLI (--modal-backend) は綴りだけ検査済みで、未実装名
     // ("d3d11cs") への縮退はここ (SetBackendByName) が WARN 付きでやる。
     // .dmnet が無い (M76h 未実装/未生成) 環境では LoadModel が false を返すだけで、
@@ -707,6 +711,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     simRefs.nav = &navSystem; // M82c: 同上 (dtCrowd・スロット表)
     simRefs.behaviorTree = &behaviorTreeSystem; // M85: 同上 (ブラックボード・ノードごとの状態)
     simRefs.compute = &computeService; // M91d: 同上 (State バッファ。Fx と C# 用は入れない)
+    simRefs.tilemap = &tilemapSystem; // M94k: 同上 (セルの書き換え)
     simRefs.collision = &collisionSystem;
     simRefs.scripts = &scriptHost;
     simRefs.prevTickInput = prevTickInput;
@@ -1028,6 +1033,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.twoBoneIkSystem = &twoBoneIkSystem;
     tickServices.effectSystem = &effectSystem;
     tickServices.physicsSystem = &physicsSystem;
+    physicsSystem.AddStaticShapeSource(&tilemapSystem); // M94k: タイルの箱
     tickServices.fractureSystem = &fractureSystem; // M80g
     tickServices.shapeImpulses = &fractureShapeImpulses; // M80g
     tickServices.xpbd = &xpbd; // M60'b
@@ -1036,6 +1042,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.navSystem = &navSystem; // M82b
     tickServices.perception = &perceptionSystem; // M83
     tickServices.behaviorTree = &behaviorTreeSystem; // M85
+    tickServices.tilemap = &tilemapSystem; // M94k
     tickServices.transformSystem = &transformSystem;
     tickServices.collisionSystem = &collisionSystem;
     tickServices.particleSystem = &particleSystem;

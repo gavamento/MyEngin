@@ -20,6 +20,7 @@
 #include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
 #include "Engine/Engine/Tilemap/TilemapAssets.h"
+#include "Engine/Engine/Tilemap/TilemapSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
@@ -89,6 +90,8 @@ void InstallSimLibraries(const SimLibraries& libs)
     // M94j: タイルパレットとタイルマップ。起動走査より前に注入する
     tilepalette::Install(libs.tilePalettes);
     tilemap::Install(libs.tilemaps);
+    // M94k: 描画が書き換え込みのセルを引く
+    tilemap::InstallSystem(libs.tilemapSystem);
 }
 
 void UninstallSimLibraries()
@@ -106,6 +109,7 @@ void UninstallSimLibraries()
     shape2d::Install(nullptr);
     tilepalette::Install(nullptr);
     tilemap::Install(nullptr);
+    tilemap::InstallSystem(nullptr);
 }
 
 void InitSimProjectState(const std::wstring& assetsRoot)

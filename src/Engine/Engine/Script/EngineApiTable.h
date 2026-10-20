@@ -90,6 +90,8 @@ struct EffectSpawnRequest {
     // v7 Instantiate (M37): 呼出時に予約したルート fileId (0 = PlayEffect = 予約なし)。
     // 予約は Scene::NextFileId() の消費 = 決定論点で行われ record/verify で同一列になる
     uint64_t reservedRootFid = 0;
+    // 0 以外ならパスの解決を飛ばしてこの PrefabLibrary のキーで生成する (タイルの destroyEffect。prefabKey は使わない)
+    uint64_t prefabHash = 0;
 };
 
 // MyeEngineApi の engine 不透明ポインタが指すコンテキスト。

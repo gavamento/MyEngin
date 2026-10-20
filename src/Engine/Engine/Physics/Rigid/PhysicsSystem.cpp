@@ -96,6 +96,10 @@ constexpr float kJointRowUnbounded = 1e30f;
 // g·h² ≈ 2.7mm だけ自由落下予測でずれ、その分の補正が毎回入る。これより小さくすると
 // 「吊るしただけで毎 tick 起きる」= 眠りと起床の往復が止まらなくなる
 constexpr float kXpbdAttachWakeSlop = 0.005f;
+// 静的形状の供給元へ渡す「動かす物体が届く範囲」の余裕: 速度の 2 tick ぶんに足す固定の長さ (m)。
+// ソルバが tick 内で速度を足しても、サスペンションや段差の探りが届く範囲
+constexpr float kStaticRegionMargin = 2.0f;
+constexpr float kStaticRegionHuge = 1.0e30f; // 非有限の位置 (NaN) の物体は全部を含む範囲にする
 // ---- タイヤ (M60h2) ----
 // スリップ角を出すときに前進速度へ噛ませる下限 [m/s]。**0 割りを避けるためだけの値では
 // ない** — 停止寸前でスリップ角が 90 度に張り付くと、横力が μN に飽和したまま向きだけ
@@ -2057,9 +2061,88 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     });
     // M94h: 呼び出し側が持つ静的形状の供給口 (タイルの箱など)。登録順に呼ぶ
     if (!staticSources_.empty()) {
+        // この tick に動かす物体が届く範囲。供給元が形状を絞りたいときだけ、最初の Get() で組む
+        MotionRegions regions([&](std::vector<StaticRegion>& out) {
+            const auto addRegion = [&](float minX, float minY, float minZ, float maxX, float maxY, float maxZ,
+                                       float speedL1) {
+                const float pad = speedL1 * dt * 2.0f + kStaticRegionMargin;
+                StaticRegion r{ minX - pad, minY - pad, minZ - pad, maxX + pad, maxY + pad, maxZ + pad };
+                if (!std::isfinite(r.minX + r.minY + r.minZ + r.maxX + r.maxY + r.maxZ)) {
+                    r = { -kStaticRegionHuge, -kStaticRegionHuge, -kStaticRegionHuge, kStaticRegionHuge, kStaticRegionHuge, kStaticRegionHuge };
+                }
+                out.push_back(r);
+            };
+            const auto addPose = [&](const ShapePose& p, float speedL1) {
+                float minX, minY, minZ, maxX, maxY, maxZ;
+                shapes::ComputeAabb(p, minX, minY, minZ, maxX, maxY, maxZ);
+                addRegion(minX, minY, minZ, maxX, maxY, maxZ, speedL1);
+            };
+            // 眠っている剛体も入れる (接触で起きた次の瞬間に、足場が無いことにならないように)。kinematic は静的と当たらない
+            for (const Body& b : bodies) {
+                if (b.rb == nullptr || b.kinematic || b.col == nullptr) {
+                    continue;
+                }
+                const ShapePose p = shapes::MakePose(*b.col, { b.pose.px, b.pose.py, b.pose.pz },
+                                                     { b.qx, b.qy, b.qz, b.qw }, b.scale);
+                addPose(p, std::fabs(b.vx) + std::fabs(b.vy) + std::fabs(b.vz));
+            }
+            for (const CompoundShape& cs : compoundShapes) {
+                const ShapePose p = shapes::MakePose(*cs.col, { cs.wpx, cs.wpy, cs.wpz }, { cs.wqx, cs.wqy, cs.wqz, cs.wqw },
+                                                     { cs.sx, cs.sy, cs.sz });
+                const auto* ownerRb = world.GetComponent<RigidbodyComponent>(cs.owner);
+                const float speed = (ownerRb != nullptr)
+                    ? std::fabs(ownerRb->velocity.x) + std::fabs(ownerRb->velocity.y) + std::fabs(ownerRb->velocity.z)
+                    : 0.0f;
+                addPose(p, speed);
+            }
+            if (xpbd != nullptr) {
+                for (const XpbdBackend::Pool& pool : xpbd->Pools()) {
+                    if (pool.px.empty()) {
+                        continue;
+                    }
+                    float minX = pool.px[0], maxX = pool.px[0], minY = pool.py[0], maxY = pool.py[0];
+                    float minZ = pool.pz[0], maxZ = pool.pz[0], speed = 0.0f;
+                    for (size_t i = 0; i < pool.px.size(); ++i) {
+                        minX = std::min(minX, pool.px[i]);
+                        maxX = std::max(maxX, pool.px[i]);
+                        minY = std::min(minY, pool.py[i]);
+                        maxY = std::max(maxY, pool.py[i]);
+                        minZ = std::min(minZ, pool.pz[i]);
+                        maxZ = std::max(maxZ, pool.pz[i]);
+                        speed = std::max(speed, std::fabs(pool.vx[i]) + std::fabs(pool.vy[i]) + std::fabs(pool.vz[i]));
+                    }
+                    addRegion(minX, minY, minZ, maxX, maxY, maxZ, speed);
+                }
+            }
+            // キャラクター (Rigidbody 非所持): カプセルの外接箱 + 段差 + 今 tick の移動
+            const ComponentTypeId ccRegionReq[] = { CharacterControllerComponent::sTypeId, LocalTransform::sTypeId };
+            world.ForEachArchetype(ccRegionReq, [&](Archetype& arch) {
+                const int ci = arch.FindTypeIndex(CharacterControllerComponent::sTypeId);
+                const int li = arch.FindTypeIndex(LocalTransform::sTypeId);
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    const EntityID e = arch.EntityAt(row);
+                    if (!IsEntityActive(world, e) || world.HasComponent(e, RigidbodyComponent::sTypeId)) {
+                        continue;
+                    }
+                    const auto* cc = static_cast<const CharacterControllerComponent*>(arch.GetPtr(ci, row));
+                    const auto* lt = static_cast<const LocalTransform*>(arch.GetPtr(li, row));
+                    XMFLOAT3 wpos;
+                    XMFLOAT4 wrot;
+                    XMFLOAT3 wscale;
+                    ApplyFrame(ComposeParentFrame(world, e), *lt, wpos, wrot, wscale);
+                    const float reach = std::max(cc->radius * std::max(std::fabs(wscale.x), std::fabs(wscale.z)),
+                                                 cc->height * 0.5f * std::fabs(wscale.y))
+                                        + std::max(cc->stepOffset, 0.0f) * std::fabs(wscale.y);
+                    const float speed = std::fabs(cc->moveInput.x) + std::fabs(cc->moveInput.y) + std::fabs(cc->moveInput.z)
+                                        + std::fabs(cc->velocity.x) + std::fabs(cc->velocity.y) + std::fabs(cc->velocity.z)
+                                        + std::fabs(cc->jumpSpeed);
+                    addRegion(wpos.x - reach, wpos.y - reach, wpos.z - reach, wpos.x + reach, wpos.y + reach, wpos.z + reach, speed);
+                }
+            });
+        });
         std::vector<StaticShape> supplied;
         for (StaticShapeSource* source : staticSources_) {
-            source->Collect(world, supplied);
+            source->CollectWithin(world, regions, supplied);
         }
         for (const StaticShape& s : supplied) {
             if (s.col == nullptr || s.col->isTrigger) {
@@ -3869,6 +3952,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                 }
                 BroadphaseEntry e;
                 e.id = static_cast<uint32_t>(i);
+                e.staticOnly = bodies[i].rb == nullptr; // タイルの箱のように数が多い静的同士を、候補の段階で落とす
                 // M60e: 複合は**全子形状の和の AABB** を 1 エントリで出す。ペアキーが body ベースの
                 // ままなので、SolidContact の意味も統合処理も子形状を意識せずに済む。候補列は真の接触集合のスーパーセットで
                 // あればよい (Broadphase.h の契約) ので、和の AABB でも正しい。

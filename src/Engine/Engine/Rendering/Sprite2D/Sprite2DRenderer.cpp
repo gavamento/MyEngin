@@ -475,8 +475,12 @@ void Sprite2DRenderer::BakeTileChunk(const Item& item, World& world, RenderResou
     const TilemapAsset* map = TilemapSystem::AssetOf(world, item.tileEntity);
     const TilePalette* palette = (map != nullptr) ? tilepalette::Resolve(map->palette) : nullptr;
     std::array<uint32_t, kTilemapChunkCells> cells;
-    if (map == nullptr || palette == nullptr
-        || !TilemapSystem::GetChunkCells(world, item.tileEntity, item.tileLayer, item.tileChunk, cells)) {
+    // sim の書き換え (override) を重ねた実効セルで焼く。sim の持ち主が未接続ならアセットの値だけ
+    const TilemapSystem* sim = tilemap::System();
+    const bool haveCells = (sim != nullptr)
+        ? sim->GetChunkCells(world, item.tileEntity, item.tileLayer, item.tileChunk, cells)
+        : TilemapSystem::AssetChunkCells(world, item.tileEntity, item.tileLayer, item.tileChunk, cells);
+    if (map == nullptr || palette == nullptr || !haveCells) {
         return;
     }
     const float cellW = map->cellSize[0];
@@ -639,6 +643,8 @@ void Sprite2DRenderer::CollectTilemaps(World& world, const XMFLOAT4X4* view, con
     XMFLOAT3 boundsMin = { 0.0f, 0.0f, 0.0f };
     XMFLOAT3 boundsMax = { 0.0f, 0.0f, 0.0f };
     const bool culling = OrthoWorldBounds(view, proj, boundsMin, boundsMax);
+    const TilemapSystem* sim = tilemap::System();
+    std::vector<ChunkKey> chunkKeys;
 
     world.ForEachArchetype(req, [&](Archetype& arch) {
         const int ti = arch.FindTypeIndex(TilemapComponent::sTypeId);
@@ -659,7 +665,13 @@ void Sprite2DRenderer::CollectTilemaps(World& world, const XMFLOAT4X4* view, con
             const float chunkH = static_cast<float>(kTilemapChunkSize) * map->cellSize[1];
             for (size_t li = 0; li < map->layers.size(); ++li) {
                 const TilemapLayer& layer = map->layers[li];
-                for (const auto& [key, chunk] : layer.chunks) {
+                // override だけで埋まったチャンクも描くため、実効セルの列挙を使う
+                if (sim != nullptr) {
+                    sim->EnumerateChunks(world, e, static_cast<int32_t>(li), chunkKeys);
+                } else {
+                    TilemapSystem::AssetEnumerateChunks(world, e, static_cast<int32_t>(li), chunkKeys);
+                }
+                for (const ChunkKey& key : chunkKeys) {
                     TileCacheKey ck;
                     ck.entityIndex = e.index;
                     ck.entityGeneration = e.generation;

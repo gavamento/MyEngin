@@ -14,6 +14,7 @@ class XpbdBackend;
 class AcousticField;
 class NavSystem;
 class BehaviorTreeSystem;
+class TilemapSystem;
 class CollisionSystem;
 class ScriptHost;
 namespace compute {
@@ -28,7 +29,8 @@ class ComputeBufferStore;
 SimSources SimSourcesOf(Scene& scene, const CpuParticleBackend* particles, const XpbdBackend* xpbd,
                         const AcousticField* acoustic, const NavSystem* nav = nullptr,
                         const BehaviorTreeSystem* behaviorTree = nullptr,
-                        const compute::ComputeBufferStore* computeState = nullptr);
+                        const compute::ComputeBufferStore* computeState = nullptr,
+                        const TilemapSystem* tilemap = nullptr);
 
 // ComputeService の C++ 用ストア (State が sim 状態)。null なら nullptr。SimRefs::HashSources と TickRunner が使う
 const compute::ComputeBufferStore* ComputeGameStoreOf(const compute::ComputeService* service);
@@ -42,7 +44,7 @@ const compute::ComputeBufferStore* ComputeGameStoreOf(const compute::ComputeServ
 //   World (全アーキタイプのカラム生バイト + レコード表 + freeIndices + ルート + RNG)
 //   Scene (TimeControl / UI 対話状態 / PersistStore / nextFileId / sourcePath / override 表)
 //   SessionLanes (M81b。Scene が持つので refs.scene から引く = SimRefs に別参照を足さない)
-//   CpuParticleBackend の池 / XpbdBackend の池 (M60'b) /
+//   CpuParticleBackend の池 / XpbdBackend の池 (M60'b) / TilemapSystem のセル書き換え表 (M94k) /
 //   CollisionSystem の前 tick ペア / ScriptHost の Start 済み記録
 //   EngineLoop の prevTickInput (アクション評価の pressed/released 判定に効く) と
 //   audioHandleSeq (再生ハンドルの採番列)
@@ -88,11 +90,13 @@ struct SimRefs {
     // M91d: Compute.ForEach の State バッファ (C++ 用ストアのスロット表と中身)。復元は World を差し替えた後。
     // ハッシュと対で撮る (3 点セット契約)。Fx と C# 用ストアは入れない
     compute::ComputeService* compute = nullptr;
+    // M94k: タイルの書き換え (override 表)。復元は World を差し替えた後。ハッシュと対で撮る (3 点セット契約)
+    TilemapSystem* tilemap = nullptr;
 
     // この束で撮るワールドハッシュの源 (SimSourcesOf)。scene は非 null が前提
     SimSources HashSources() const
     {
-        return SimSourcesOf(*scene, particles, xpbd, acoustic, nav, behaviorTree, ComputeGameStoreOf(compute));
+        return SimSourcesOf(*scene, particles, xpbd, acoustic, nav, behaviorTree, ComputeGameStoreOf(compute), tilemap);
     }
 };
 
@@ -159,7 +163,8 @@ struct SimRefs {
 // v54 (M94f): SortingGroup2D / SpriteMask2D (TypeId 82 / 83、NoHash)。World 節のカラム生バイト
 // v55 (M94i): CharacterControllerComponent へ 2D モード 7 欄 (World 節のカラム生バイト)
 // v56 (M94j): TilemapComponent (TypeId 84、hash 対象)。World 節のカラム生バイト
-inline constexpr uint32_t kSimSnapshotVersion = 56;
+// v57 (M94k): TM2D 節 (TilemapSystem の override 表) を CMP 節の後・World 節の前に追加
+inline constexpr uint32_t kSimSnapshotVersion = 57;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

@@ -910,6 +910,21 @@ void SceneViewWindow::DrawTilemapGizmos(EngineContext& ctx, World& world, const 
                 lines_.AddLine({ x1, y1, origin.z }, { x0, y1, origin.z }, gizmo::kTilemapBounds);
                 lines_.AddLine({ x0, y1, origin.z }, { x0, y0, origin.z }, gizmo::kTilemapBounds);
             }
+            // 衝突の箱 (緑)。絞り込まない全箱で、Play 中は書き換え済みのセルが反映される
+            if (tm.showCollision) {
+                if (TilemapSystem* sim = tilemap::System()) {
+                    std::vector<StaticShape> boxes;
+                    sim->AppendCollisionShapes(world, e, boxes);
+                    for (const StaticShape& b : boxes) {
+                        const XMFLOAT3 lo = { b.pose.px - b.pose.hx, b.pose.py - b.pose.hy, b.pose.pz };
+                        const XMFLOAT3 hi = { b.pose.px + b.pose.hx, b.pose.py + b.pose.hy, b.pose.pz };
+                        lines_.AddLine({ lo.x, lo.y, lo.z }, { hi.x, lo.y, lo.z }, gizmo::kCollider);
+                        lines_.AddLine({ hi.x, lo.y, lo.z }, { hi.x, hi.y, lo.z }, gizmo::kCollider);
+                        lines_.AddLine({ hi.x, hi.y, lo.z }, { lo.x, hi.y, lo.z }, gizmo::kCollider);
+                        lines_.AddLine({ lo.x, hi.y, lo.z }, { lo.x, lo.y, lo.z }, gizmo::kCollider);
+                    }
+                }
+            }
             if (!mode2d || e != selected) {
                 return;
             }

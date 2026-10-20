@@ -13,6 +13,8 @@ struct BroadphaseEntry {
     uint32_t id = 0; // 呼び出し側のインデックス (ペアキーに使われる)
     float minX = 0, minY = 0, minZ = 0;
     float maxX = 0, maxY = 0, maxZ = 0;
+    // true なら Rigidbody を持たない静的コライダー。静的同士のペアは何も起こさない (接触も起床も島も作らない) ので候補にしない
+    bool staticOnly = false;
 };
 
 // X スイープ + Y/Z 重なり枝刈りで候補ペアを列挙する。

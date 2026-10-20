@@ -43,6 +43,7 @@ class SpriteAnimLibrary;
 class ShapeLibrary2D;
 class TilePaletteLibrary;
 class TilemapLibrary;
+class TilemapSystem;
 namespace compute {
 class ComputeService;
 }
@@ -76,6 +77,7 @@ struct SimLibraries {
     ShapeLibrary2D* shapes2d = nullptr;           // M94h: .shape2d.json (Collider.shape = kPolygon2D / kEdge2D が引く)
     TilePaletteLibrary* tilePalettes = nullptr;   // M94j: .tilepalette.json
     TilemapLibrary* tilemaps = nullptr;           // M94j: .tilemap.json (Tilemap コンポーネントが引く)
+    TilemapSystem* tilemapSystem = nullptr;       // M94k: 描画が実効セル (セルの書き換え込み) を引く口。所有は sim の持ち主
 };
 void InstallSimLibraries(const SimLibraries& libs);
 // 所有者が死ぬ前に必ず呼ぶ (注入したポインタをプロセス全体から外す)

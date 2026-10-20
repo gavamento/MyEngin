@@ -38,6 +38,7 @@
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Engine/Physics/Xpbd/XpbdBackend.h" // M60'b: シーン遷移時の Reset 用
 #include "Engine/Engine/Scene/Prefab.h"
+#include "Engine/Engine/Tilemap/TilemapSystem.h" // M94k: タイルの破壊エフェクトと持ち主の掃除
 #include "Engine/Engine/Compute/ComputeService.h" // M91c: tick 頭の負荷枠リセット
 #include "Engine/Renderer/Compute/ComputeAbiRunner.h" // v21: シーン遷移で ABI バッファを回収
 #include "Engine/Engine/Rendering/RenderSystem.h"
@@ -585,43 +586,28 @@ void RunOneTick(TickServices& ts)
     // ---- エフェクト spawn を drain (M32f): Prefab::Instantiate は内部で構造変更を確定する
     // ため tick 末のここで。verify でもゲートしない = sim 状態として同 tick のハッシュに含まれる。
     // C++ スクリプトは verify 中も走り同一キューを積む → 同一 fileId/EntityID 列で再現される。
+    // M94k: 壊れたタイルの destroyEffect も同じ口で生成する (積んだ順 = スクリプトのエフェクトの後)
+    if (ts.tilemap != nullptr) {
+        std::vector<TileEffectRequest> tileEffects;
+        ts.tilemap->DrainEffects(tileEffects);
+        for (const TileEffectRequest& te : tileEffects) {
+            EffectSpawnRequest r;
+            r.prefabHash = te.prefabHash;
+            r.pos = { te.pos.x, te.pos.y, te.pos.z };
+            effectQueue.push_back(std::move(r));
+        }
+    }
     if (!effectQueue.empty()) {
         for (const EffectSpawnRequest& req : effectQueue) {
-            std::wstring full = Utf8ToWide(req.prefabKey);
-            if (!PrefabLibrary::IsComposePath(full)) {
-                full += PrefabLibrary::kPrefabSuffix; // 既定は従来どおり (既存キー互換)
-            }
-            if (full.find(L':') == std::wstring::npos) {
-                full = assetsRoot + L"\\" + full; // assets ルート相対を絶対化
-            }
-            const uint64_t hash = PrefabLibrary::HashForPath(full);
-            if (!prefabLibrary.Contains(hash)) {
-                prefabLibrary.LoadFromFile(full);
-            }
-            // ★M70d (dogfooding #4): 判定は null id そのもので行う。「index も generation も
-            //   0 でなければ親あり」で判定すると、MyeEntityId{} (= null id、index 0xFFFFFFFF) が
-            //   「親あり」に分類され、逆に最初に作られた実在エンティティ {0,0} を親に渡すと
-            //   黙ってルート生成になる。
-            const bool hasParent = !MyeEntityIdIsNull(req.parent);
-            const uint64_t parentFid =
-                hasParent ? scene.EnsureFileId(
-                                EntityID{ req.parent.index, req.parent.generation })
-                          : 0;
-            const uint64_t rootFid = Prefab::Instantiate(
-                scene, prefabLibrary, hash, parentFid, req.reservedRootFid);
-            if (rootFid != 0) {
-                const EntityID root = scene.FindByFileId(rootFid).Id();
-                if (auto* t = scene.GetWorld().GetComponent<LocalTransform>(root)) {
-                    t->position = { req.pos.x, req.pos.y, req.pos.z };
-                }
-            } else {
-                MYE_LOG_WARN("PlayEffect: prefab not found: %s",
-                             WideToUtf8(full).c_str());
-            }
+            SpawnEffectRequest(scene, prefabLibrary, assetsRoot, req);
         }
         effectQueue.clear();
     }
     scene.GetWorld().ApplyStructuralChanges(); // フェーズ 7 (tick 末適用 = ADR-005)
+    // M94k: 死んだ持ち主 / Tilemap を失ったエンティティの書き換えを捨てる。ハッシュを撮る前に済ませる
+    if (ts.tilemap != nullptr) {
+        ts.tilemap->Sweep(scene.GetWorld());
+    }
     // M91d: 破棄されたエンティティが作った Compute バッファを解放する (D8)。ハッシュを撮る前に済ませる
     if (ts.computeService != nullptr) {
         ts.computeService->ReleaseDeadOwners(scene.GetWorld());
@@ -635,7 +621,7 @@ void RunOneTick(TickServices& ts)
     // ここから先の変異・ダンプ・記録・照合が撮るハッシュの源 (全部同じ束で撮る)
     const SimSources hashSources =
         SimSourcesOf(scene, &particleSystem.Cpu(), ts.xpbd, ts.acoustic, ts.navSystem, ts.behaviorTree,
-                     ComputeGameStoreOf(ts.computeService));
+                     ComputeGameStoreOf(ts.computeService), ts.tilemap);
 
     // ---- 意図的な状態の変異 (M52i、--net-poke-tick N) ----
     // desync 検出と診断チェーン (--rep-diff → --hash-diff) が本当に働くかは、
@@ -919,6 +905,9 @@ void RunOneTick(TickServices& ts)
             if (ts.behaviorTree) {
                 ts.behaviorTree->Reset(); // M85: 旧シーンの木の実行状態 (EntityID が別シーンの別物になる)
             }
+            if (ts.tilemap) {
+                ts.tilemap->Reset(); // M94k: 旧シーンのセルの書き換え (EntityID が別シーンの別物になる)
+            }
             vfxRenderer.Reset(); // M29c: トレイル点列も新シーンでリセット
             partFollowSystem.Reset(); // M48g: 旧シーンの warn 抑制を捨てる
             twoBoneIkSystem.Reset();  // M89l: 同上
@@ -951,6 +940,47 @@ void RunOneTick(TickServices& ts)
     }
 
     ++ctx.tickIndex;
+}
+
+uint64_t SpawnEffectRequest(Scene& scene, PrefabLibrary& prefabLibrary, const std::wstring& assetsRoot,
+                            const EffectSpawnRequest& req)
+{
+    uint64_t hash = req.prefabHash;
+    std::wstring full;
+    if (hash == 0) {
+        full = Utf8ToWide(req.prefabKey);
+        if (!PrefabLibrary::IsComposePath(full)) {
+            full += PrefabLibrary::kPrefabSuffix; // 既定は従来どおり (既存キー互換)
+        }
+        if (full.find(L':') == std::wstring::npos) {
+            full = assetsRoot + L"\\" + full; // assets ルート相対を絶対化
+        }
+        hash = PrefabLibrary::HashForPath(full);
+        if (!prefabLibrary.Contains(hash)) {
+            prefabLibrary.LoadFromFile(full);
+        }
+    }
+    // ★M70d (dogfooding #4): 判定は null id そのもので行う。「index も generation も
+    //   0 でなければ親あり」で判定すると、MyeEntityId{} (= null id、index 0xFFFFFFFF) が
+    //   「親あり」に分類され、逆に最初に作られた実在エンティティ {0,0} を親に渡すと
+    //   黙ってルート生成になる。
+    const bool hasParent = !MyeEntityIdIsNull(req.parent);
+    const uint64_t parentFid =
+        hasParent ? scene.EnsureFileId(EntityID{ req.parent.index, req.parent.generation }) : 0;
+    const uint64_t rootFid = Prefab::Instantiate(scene, prefabLibrary, hash, parentFid, req.reservedRootFid);
+    if (rootFid == 0) {
+        if (req.prefabHash != 0) {
+            MYE_LOG_WARN("PlayEffect: prefab not found: hash %016llx", static_cast<unsigned long long>(req.prefabHash));
+        } else {
+            MYE_LOG_WARN("PlayEffect: prefab not found: %s", WideToUtf8(full).c_str());
+        }
+        return 0;
+    }
+    const EntityID root = scene.FindByFileId(rootFid).Id();
+    if (auto* t = scene.GetWorld().GetComponent<LocalTransform>(root)) {
+        t->position = { req.pos.x, req.pos.y, req.pos.z };
+    }
+    return rootFid;
 }
 
 } // namespace mye

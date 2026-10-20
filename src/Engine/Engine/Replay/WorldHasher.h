@@ -14,6 +14,7 @@ class XpbdBackend;
 class AcousticField;
 class NavSystem;
 class BehaviorTreeSystem;
+class TilemapSystem;
 namespace compute {
 class ComputeBufferStore;
 }
@@ -66,6 +67,9 @@ struct SimSources {
     // M91d: Compute.ForEach の State バッファ (C++ 用ストア)。★nav と同じ**内容ゲート** (生きている State が
     // 1 本も無ければ節ごと畳まない) — Compute を使わないシーンのハッシュ列を 1 tick も動かさない。Fx と C# 用は入れない
     const compute::ComputeBufferStore* computeState = nullptr;
+    // M94k: タイルの書き換え (override 表)。★computeState と同じ**内容ゲート** (表が空なら節ごと畳まない) —
+    // Tilemap を使わないシーンのハッシュ列を 1 tick も動かさない。アセットは初期値で hash 対象外 (コンポーネントの参照だけが畳まれる)
+    const TilemapSystem* tilemap = nullptr;
 };
 
 uint64_t HashWorld(World& world, const SimSources& src = {});

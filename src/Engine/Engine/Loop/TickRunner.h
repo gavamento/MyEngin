@@ -32,6 +32,7 @@ class AgentSystem;
 class NavSystem;
 class PerceptionSystem;
 class BehaviorTreeSystem;
+class TilemapSystem;
 class TransformSystem;
 class CollisionSystem;
 class ParticleSystem;
@@ -115,6 +116,9 @@ struct TickServices {
     // 実行状態は SimSnapshot の BT 節とワールドハッシュ (SimRefs / SimSources) に入る = SimRefs.behaviorTree と同じ実体を渡すこと。
     // null = 回さない (World 単体の selftest 経路)
     BehaviorTreeSystem* behaviorTree = nullptr;
+    // M94k: タイルの書き換えと破壊エフェクト。破壊エフェクトを tick 末のエフェクト生成へ渡し、構造変更の後に死んだ持ち主の項を捨てる。
+    // 実体は SimRefs.tilemap / PhysicsSystem の静的形状の供給口と同じものを渡すこと。null = 回さない (World 単体の selftest 経路)
+    TilemapSystem* tilemap = nullptr;
     TransformSystem* transformSystem = nullptr;
     CollisionSystem* collisionSystem = nullptr;
     ParticleSystem* particleSystem = nullptr;
@@ -218,5 +222,10 @@ inline bool IsNetSessionGates(const TickGates& g)
 //   合成入力 / .rep の記録入力 / タイムトラベルのリング入力を RunOneTick 側で
 //   区別しないための取り決め (決定台帳 5)。
 void RunOneTick(TickServices& ts);
+
+// effectQueue の 1 件 (PlayEffect / Instantiate / アニメイベント / タイルの破壊エフェクト) をプレハブとして生成する。
+// tick 末の drain が 1 件ずつ呼ぶ。成功でルートの fileId、見つからなければ警告して 0
+uint64_t SpawnEffectRequest(Scene& scene, PrefabLibrary& prefabLibrary, const std::wstring& assetsRoot,
+                            const EffectSpawnRequest& req);
 
 } // namespace mye

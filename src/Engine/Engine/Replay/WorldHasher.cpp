@@ -22,6 +22,7 @@
 #include "Engine/Engine/AI/BehaviorTreeSystem.h"
 #include "Engine/Engine/Compute/ComputeBufferStore.h"
 #include "Engine/Engine/Physics/Xpbd/XpbdBackend.h"
+#include "Engine/Engine/Tilemap/TilemapSystem.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {
@@ -461,6 +462,30 @@ uint64_t HashComputeState(const compute::ComputeBufferStore& store, DumpCtx* d)
     return h;
 }
 
+// タイルの書き換え (M94k)。override 表は (持ち主, 世代, レイヤー, cellKey) 昇順の配列なので、その順に畳む。
+// ダンプは書き換えたセルごとに持ち主の列を付けた 3 行
+uint64_t HashTilemapOverrides(const TilemapSystem& tilemap, DumpCtx* d)
+{
+    uint64_t h = kFnvOffset;
+    const std::vector<TileOverride>& table = tilemap.Overrides();
+    FoldU64(h, d, "Tilemap", "count", static_cast<uint64_t>(table.size()));
+    for (const TileOverride& o : table) {
+        if (d && d->lines) {
+            d->entityCol.clear();
+            AppendDecU64(d->entityCol, o.entityIndex);
+            d->entityCol.push_back(':');
+            AppendDecU64(d->entityCol, o.entityGeneration);
+        }
+        FoldU64(h, d, "Tilemap", "layer", o.layer);
+        FoldU64(h, d, "Tilemap", "cellKey", o.cellKey);
+        FoldU64(h, d, "Tilemap", "value", o.value);
+    }
+    if (d && d->lines) {
+        d->entityCol = "-";
+    }
+    return h;
+}
+
 // M51g: ゲームフロー状態 (決定台帳 5)。RNG の直後・パーティクルの前に畳み込む。
 // PersistStore は std::map = キー昇順走査 (挿入順に依存しない — selftest が固定)
 uint64_t HashGameFlow(uint64_t h, const TimeControl* time, const PersistStore* persist, DumpCtx* d)
@@ -641,6 +666,12 @@ uint64_t HashWorldImpl(World& world, const SimSources& src,
         const uint64_t ch = HashComputeState(*src.computeState, d);
         total = HashCombine(total, ch);
         EmitU64(d, "Compute", "#total", ch, total);
+    }
+    // タイルの書き換え (M94k)。内容ゲート (理由は WorldHasher.h の SimSources::tilemap)
+    if (src.tilemap && src.tilemap->HasLiveState()) {
+        const uint64_t th = HashTilemapOverrides(*src.tilemap, d);
+        total = HashCombine(total, th);
+        EmitU64(d, "Tilemap", "#total", th, total);
     }
     return total;
 }

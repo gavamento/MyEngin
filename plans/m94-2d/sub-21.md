@@ -13,7 +13,7 @@
    - 追従: 次セルの中心へ `cc->moveInput.x = ±speed`、ジャンプ辺の始点で `cc->jumpSpeed = jumpSpeed`。セル中心 ± 0.1 で次へ。目的地セルに入って `Arrived`。`replanInterval` tick ごと、または目的地が変わったら再計画。30 tick 進展が無ければ `Stuck`。CC が無い / `plane2D` でない / Tilemap が無効なら `Inactive`。
    - Agent は entity.index 順に処理。
 3. BT の MoveTo (`BehaviorTreeSystem.cpp:507-566`、`ReleaseMoveTo` :221): `NavMeshAgentComponent` が無く `GridAgent2DComponent` があればそちらへ書き、`status` を同じ switch で読む。`HorizontalDistance` は GridAgent のとき XY。`--bt-demo` は不変 (NavMeshAgent がある)。
-4. `AIPerceptionComponent` に `int32_t forwardAxis = 0` を末尾 append。`SightGeometry` (`PerceptionSystem.cpp:254-274`) の前方を `forwardAxis == 1` なら +X 行 (`_11,_12,_13`) に。ギズモ (`SceneViewWindow.cpp:1049-1063`) も XY に。`kSimSnapshotVersion` は上と同じ 1 回で済ませる。
+4. `AIPerceptionComponent` に `int32_t forwardAxis = 0` を末尾 append (hash 対象の append なので、焼いた WorldHash 定数 (`grep -rn "kExpected" src --include=*SelfTest.cpp`) を同じサブで再採取する — spec 4.4)。LOS の `CollectLosColliders` にも `StaticShapeSource::Collect` (sub-14 でクエリに足した口) を使い、タイルの壁が視線を遮る (selftest 1 項目)。`SightGeometry` (`PerceptionSystem.cpp:254-274`) の前方を `forwardAxis == 1` なら +X 行 (`_11,_12,_13`) に。ギズモ (`SceneViewWindow.cpp:1049-1063`) も XY に。`kSimSnapshotVersion` は上と同じ 1 回で済ませる。
 5. selftest `GridNav2DSelfTest`: 10×10 の面 (段差 2、穴 1) で Arrived、到達不能で NoPath、2 ワールド並走一致、Debug / Release ハッシュ焼き込み、BT MoveTo の fallback (`BehaviorTreeSelfTest` に 1 項目)、Perception `forwardAxis = 1` で +X 側だけ見える (`PerceptionSelfTest` に 1 項目)。
 
 ## やらないこと (このサブでは)
