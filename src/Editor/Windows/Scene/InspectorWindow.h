@@ -16,6 +16,7 @@
 #include "Engine/Engine/Audio/Synth/ModalAudio.h" // ModalShotResult / kModalPreviewDefaultImpulse (sub-10 H)
 #include "Engine/Engine/Audio/Playback/SoundAsset.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
+#include "Editor/Windows/Animation/SpriteAnimEditor.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
@@ -236,6 +237,9 @@ private:
     bool physMatEditValid_ = false;
     void LoadPhysMatEdit(const std::wstring& path);
     void DrawPhysMatInspector(const std::wstring& path);
+
+    // スプライト列クリップインスペクタの編集キャッシュ (M94、.spriteanim.json)。アセット編集は UndoStack 対象外
+    SpriteAnimEditState spriteAnimEdit_;
 
     // ナビのエリアのフィルタの編集キャッシュ (M84c)。物理マテリアルと同じくアセット編集は UndoStack 対象外
     NavAreaFilter navFilterEdit_;

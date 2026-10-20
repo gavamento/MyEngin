@@ -60,6 +60,9 @@ private:
         int32_t weightQ = 0;
     };
 
+    // スプライト列のステートを持つコントローラだけのキャラ (SkinnedMesh が無い) の表示 (M94)。
+    // ステートを選び、コマをステップ / スクラブ / 再生で見る。一時シーンは使わない
+    void DrawSpritePreview(EngineContext& ctx, ControllerAsset& ctrl);
     void Rebuild(EngineContext& ctx, EntityID sourceRoot, const std::vector<EntityID>& driven);
     void WritePose(const SkinnedModelLibrary& models, int32_t tick);
     void FitCamera(const SkinnedModelLibrary& models);
@@ -88,6 +91,7 @@ private:
     Mode mode_ = Mode::Clip;
     std::string clipName_;      // クリップモードの骨クリップ名
     int32_t stateIndex_ = -1;   // ステートモードのステート (ControllerAsset::states の index)
+    int32_t spriteStateIndex_ = -1; // スプライト列のプレビューのステート
     float paramX_ = 0.0f;       // ブレンドツリーのパラメータ (窓の中だけの値)
     float paramY_ = 0.0f;
     std::vector<Source> sources_;

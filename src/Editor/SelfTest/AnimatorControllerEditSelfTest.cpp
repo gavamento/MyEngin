@@ -129,6 +129,24 @@ bool RunAnimatorControllerEditSelfTest()
         check(NamedSkeletalClips(nullptr).empty(), "NamedSkeletalClips(null) is empty");
     }
 
+    // (6b) スプライト列 (M94): 骨の駆動と排他。Sprite へは候補が要り、他の種類へ移ると spriteHash を落とす
+    {
+        ControllerState s;
+        SetStateSkelClip(s, "Walk");
+        SetStateSkelKind(s, StateSkelKind::Sprite, "Idle", 777);
+        check(GetStateSkelKind(s) == StateSkelKind::Sprite && s.spriteHash == 777 && s.skelClip.empty()
+                  && !StateDrivesSkeleton(s),
+              "-> Sprite takes the fallback sprite animation and clears the bone clip");
+        SetStateSkelKind(s, StateSkelKind::Sprite, "Idle", 999);
+        check(s.spriteHash == 777, "-> Sprite again keeps the chosen sprite animation");
+        SetStateSkelKind(s, StateSkelKind::Clip, "Idle", 777);
+        check(GetStateSkelKind(s) == StateSkelKind::Clip && s.spriteHash == 0 && s.skelClip == "Idle",
+              "Sprite -> Clip drops the sprite animation (it would win over the bone clip on load)");
+        ControllerState empty;
+        SetStateSkelKind(empty, StateSkelKind::Sprite, "", 0);
+        check(GetStateSkelKind(empty) == StateSkelKind::None, "-> Sprite without any candidate stays None");
+    }
+
     // (7) アニメイベントの編集 (M89o、プレビュー窓のタイムライン)
     {
         ControllerAsset asset;

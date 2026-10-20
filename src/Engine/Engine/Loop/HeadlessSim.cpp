@@ -46,6 +46,7 @@
 #include "Engine/Engine/Physics/Fracture/FractureLibrary.h"
 #include "Engine/Engine/Physics/Fracture/FractureSystem.h"
 #include "Engine/Engine/Physics/Rigid/CollisionSystem.h"
+#include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
@@ -120,6 +121,7 @@ struct HeadlessSim::Impl : IEngineApp {
     BehaviorTreeLibrary behaviorTreeLibrary; // M85
     BlackboardLibrary blackboardLibrary;     // M85
     SpriteLibrary spriteLibrary;             // M94
+    SpriteAnimLibrary spriteAnimLibrary;     // M94
     XpbdBackend xpbd;
     AcousticField acoustic;
     AgentSystem agentSystem;
@@ -273,7 +275,7 @@ void HeadlessSim::Activate()
     Impl& m = *impl_;
     InstallSimLibraries({ &m.resources, &m.meshColliders, &m.convexColliders, &m.fractureAssets,
                           &m.physMatLibrary, &m.terrainColliders, &m.navFilterLibrary, &m.behaviorTreeLibrary,
-                          &m.blackboardLibrary, &m.spriteLibrary });
+                          &m.blackboardLibrary, &m.spriteLibrary, &m.spriteAnimLibrary });
     m.assetDatabase.InstallAsKeyResolver();
     SceneSerializer::SetManagedHost(&m.managedHost);
 }
@@ -305,7 +307,7 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     m.resources.InitHeadless();
     InstallSimLibraries({ &m.resources, &m.meshColliders, &m.convexColliders, &m.fractureAssets,
                           &m.physMatLibrary, &m.terrainColliders, &m.navFilterLibrary, &m.behaviorTreeLibrary,
-                          &m.blackboardLibrary, &m.spriteLibrary });
+                          &m.blackboardLibrary, &m.spriteLibrary, &m.spriteAnimLibrary });
     // ParticleSystem::Init の代わり: CPU / GPU バックエンドの選択だけ project_settings.json から決める
     m.particleSystem.LoadSettings(m.assetsRoot + L"\\project_settings.json");
     InitSimProjectState(m.assetsRoot);

@@ -96,6 +96,7 @@ bool RunAssetOpsSelfTest()
             { L"existing.physmat.json", &CreatePhysMatAsset },
             { L"existing.bt.json", &CreateBehaviorTreeAsset },
             { L"existing.bb.json", &CreateBlackboardAsset },
+            { L"existing.spriteanim.json", &CreateSpriteAnimAsset },
         };
         bool preserved = true;
         for (const auto& item : cases) {
@@ -819,6 +820,7 @@ bool RunAssetOpsSelfTest()
             { L"assets/crate.prefab.json", "prefab" },
             { L"assets/walk.anim.json", "anim" },
             { L"assets/ice.physmat.json", "physmat" },
+            { L"assets/walk.spriteanim.json", "spriteanim" },
             { L"assets/guard.bt.json", "bt" },
             { L"assets/guard.bb.json", "bb" },
             { L"assets/red.mat.json", "mat" },

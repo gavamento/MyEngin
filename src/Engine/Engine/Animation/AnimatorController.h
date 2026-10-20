@@ -68,10 +68,19 @@ struct ControllerState {
     int32_t blendParam = 0;  // 混ぜ具合を決めるパラメータの index (Blend2D では x)。Float 以外の型は値を float にして使う
     int32_t blendParamY = 0; // Blend2D の y のパラメータの index
     std::vector<ControllerBlendChild> blendChildren; // 並び順は自由 (閾値の昇順でなくてよい)
+    // スプライト列クリップ (M94、"sprite": <.spriteanim.json の GUID>)。0 = 使わない。骨の駆動 (skel / ブレンドツリー) とは
+    // 排他で、読み込みは sprite を採って骨の指定を捨てる (FromJson)。プロパティクリップ (clipHash) とは併用できる
+    uint64_t spriteHash = 0;
 };
 
 // ステートが骨を駆動するか (骨クリップ 1 本、または子を持つブレンドツリー)
 bool StateDrivesSkeleton(const ControllerState& state);
+
+// ステートがスプライト列を駆動するか (spriteHash が 0 でない)。SpriteAnimLibrary に無くても true (未解決はコマを書かないだけ)
+inline bool StateDrivesSprite(const ControllerState& state)
+{
+    return state.spriteHash != 0;
+}
 
 // 比べ方は参照するパラメータの型で決まる (宣言の無い index は Int):
 // Int = params と value を op で / Float = params のビット列を float に戻して floatValue と op で /

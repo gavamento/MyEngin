@@ -12,6 +12,9 @@ namespace mye {
 
 StateSkelKind GetStateSkelKind(const ControllerState& state)
 {
+    if (state.spriteHash != 0) {
+        return StateSkelKind::Sprite;
+    }
     switch (state.blendType) {
     case ControllerBlendType::Blend1D:
         return StateSkelKind::Blend1D;
@@ -48,9 +51,21 @@ void AddBlendChild(ControllerState& state, const std::string& clip)
     state.blendChildren.push_back(child);
 }
 
-void SetStateSkelKind(ControllerState& state, StateSkelKind kind, const std::string& fallbackClip)
+void SetStateSkelKind(ControllerState& state, StateSkelKind kind, const std::string& fallbackClip,
+                      uint64_t fallbackSprite)
 {
+    if (kind == StateSkelKind::Sprite) {
+        state.blendType = ControllerBlendType::None;
+        SetStateSkelClip(state, std::string());
+        if (state.spriteHash == 0) {
+            state.spriteHash = fallbackSprite;
+        }
+        return;
+    }
+    state.spriteHash = 0;
     switch (kind) {
+    case StateSkelKind::Sprite:
+        return; // 上で処理済み
     case StateSkelKind::None:
         state.blendType = ControllerBlendType::None;
         SetStateSkelClip(state, std::string());

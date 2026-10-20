@@ -15,6 +15,7 @@
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Engine/Modal/ModalSoundLibrary.h"
 #include "Engine/Engine/Asset/ModelLoader.h"
+#include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
@@ -72,6 +73,7 @@ constexpr AssetKindRow kAssetKinds[] = {
     { L".navfilter.json", ReloadKind::NavFilter, 6 },
     { L".bt.json", ReloadKind::BehaviorTree, 6 },
     { L".bb.json", ReloadKind::Blackboard, 6 },
+    { L".spriteanim.json", ReloadKind::SpriteAnim, 6 }, // M94。Animator (.controller.json は未登録の .json 扱い) より前
     { L".dmnet", ReloadKind::ModalNet, 6 }, // M76e。.sound.json 等と同格 (誰も参照していない)
     { PrefabLibrary::kActorSuffix, ReloadKind::Compose, 7 },
     { PrefabLibrary::kPrefabSuffix, ReloadKind::Compose, 7 },
@@ -294,6 +296,9 @@ void ReloadHub::HandleChange(const std::wstring& normPath, int attempt)
     case ReloadKind::PhysMat:
         result = ReloadPhysMat(normPath);
         break;
+    case ReloadKind::SpriteAnim:
+        result = ReloadSpriteAnim(normPath);
+        break;
     case ReloadKind::NavFilter:
         result = ReloadNavFilter(normPath);
         break;
@@ -492,6 +497,20 @@ ReloadHub::ReloadResult ReloadHub::ReloadPhysMat(const std::wstring& path)
         return ReloadResult::Retry;
     }
     MYE_LOG_INFO("[reload] physmat reloaded: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// 登録済みなら読み直す (M94)。Animator が長さとコマを引くので physmat と同じく sim を変える資産クラス
+ReloadHub::ReloadResult ReloadHub::ReloadSpriteAnim(const std::wstring& path)
+{
+    SpriteAnimLibrary* lib = spriteanim::Library();
+    if (lib == nullptr || !lib->Contains(SpriteAnimLibrary::HashForPath(path))) {
+        return ReloadResult::Skipped;
+    }
+    if (lib->LoadFromFile(path) == 0) {
+        return ReloadResult::Retry;
+    }
+    MYE_LOG_INFO("[reload] spriteanim reloaded: %s", WideToUtf8(path).c_str());
     return ReloadResult::Reloaded;
 }
 

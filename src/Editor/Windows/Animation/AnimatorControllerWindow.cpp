@@ -15,6 +15,7 @@
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Animation/Animation.h"
 #include "Engine/Engine/Animation/AnimatorController.h"
+#include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Renderer/Device/GpuResources.h"
@@ -114,7 +115,7 @@ void DrawArrow(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 col, float thick)
 
 // StateSkelKind の並び
 const StrId kSkelKindNames[] = { StrId::Anim_SkelNone, StrId::Anim_SkelClip, StrId::Anim_SkelBlend1D,
-                                 StrId::Anim_SkelBlend2D };
+                                 StrId::Anim_SkelBlend2D, StrId::Anim_SpriteAnim };
 
 const ImU32 kMissingClipColor = IM_COL32(240, 150, 90, 255);
 
@@ -476,6 +477,9 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
         char sub[64];
         if (kind == StateSkelKind::Clip) {
             snprintf(sub, sizeof(sub), "%s", ns.skelClip.c_str());
+        } else if (kind == StateSkelKind::Sprite) {
+            const SpriteAnim* anim = spriteanim::Resolve(AssetID{ ns.spriteHash });
+            snprintf(sub, sizeof(sub), "sprite: %s", anim != nullptr ? anim->name.c_str() : Tr(StrId::Anim_SpriteMissing));
         } else if (kind == StateSkelKind::None) {
             snprintf(sub, sizeof(sub), "-");
         } else {
@@ -578,14 +582,42 @@ void AnimatorControllerWindow::DrawSkeletonDrive(const ControllerAsset& ctrl, Co
     for (int i = 0; i < IM_ARRAYSIZE(kSkelKindNames); ++i) {
         kindNames[i] = Tr(kSkelKindNames[i]);
     }
+    // スプライト列の候補 (名前昇順)。種類を Sprite へ切り替えたとき最初の 1 本を入れる
+    SpriteAnimLibrary* spriteLib = spriteanim::Library();
+    const std::vector<SpriteAnimEntry> spriteAnims =
+        spriteLib != nullptr ? spriteLib->Enumerate() : std::vector<SpriteAnimEntry>();
     int kind = static_cast<int>(GetStateSkelKind(state));
     if (ImGui::Combo(Tr(StrId::Anim_SkelKind), &kind, kindNames, IM_ARRAYSIZE(kindNames))) {
-        SetStateSkelKind(state, static_cast<StateSkelKind>(kind), modelClips.empty() ? std::string() : modelClips.front());
+        SetStateSkelKind(state, static_cast<StateSkelKind>(kind), modelClips.empty() ? std::string() : modelClips.front(),
+                         spriteAnims.empty() ? 0 : spriteAnims.front().hash);
+    }
+    if (GetStateSkelKind(state) == StateSkelKind::Sprite) {
+        // スプライト列は骨の駆動と排他。ピッカーと長さを出す
+        const SpriteAnim* current = spriteanim::Resolve(AssetID{ state.spriteHash });
+        if (ImGui::BeginCombo(Tr(StrId::Anim_SpriteAnimName), current != nullptr ? current->name.c_str() : Tr(StrId::Anim_SpriteMissing))) {
+            for (const SpriteAnimEntry& e : spriteAnims) {
+                ImGui::PushID(static_cast<int>(e.hash & 0x7fffffff));
+                if (ImGui::Selectable(e.name.c_str(), e.hash == state.spriteHash)) {
+                    state.spriteHash = e.hash;
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        if (current != nullptr) {
+            ImGui::TextDisabled("%d ticks / %zu", current->lengthTicks, current->frames.size());
+        }
+        return;
+    }
+    if (spriteAnims.empty() && GetStateSkelKind(state) == StateSkelKind::None) {
+        ImGui::TextDisabled("%s", Tr(StrId::Anim_SpriteNone));
     }
     if (modelClips.empty()) {
         ImGui::TextDisabled("%s", Tr(StrId::Anim_NoSkinnedModel));
     }
     switch (GetStateSkelKind(state)) {
+    case StateSkelKind::Sprite:
+        return; // 上で処理済み
     case StateSkelKind::None:
         return;
     case StateSkelKind::Clip: {
@@ -682,10 +714,34 @@ void AnimatorControllerWindow::DrawPoseLayers(World& world, EntityID entity, con
     if (comp.transitionTo >= 0) {
         showPhase(comp.transitionTo, comp.transitionToPhase);
     }
+    // スプライト列のステートは現在コマ番号 (M94。エンジンが書くコマと同じ SpriteAnimFrameAt)
+    bool anySprite = false;
+    const auto showSpriteFrame = [&](int32_t stateIndex, int32_t time) {
+        if (stateIndex < 0 || stateIndex >= nStates || !StateDrivesSprite(ctrl.states[static_cast<size_t>(stateIndex)])) {
+            return;
+        }
+        anySprite = true;
+        const ControllerState& st = ctrl.states[static_cast<size_t>(stateIndex)];
+        const SpriteAnim* anim = spriteanim::Resolve(AssetID{ st.spriteHash });
+        const int32_t frame = anim != nullptr ? SpriteAnimFrameAt(*anim, time) : -1;
+        ImGui::Text("%s", st.name.c_str());
+        ImGui::SameLine();
+        if (frame < 0) {
+            ImGui::TextDisabled("%s", Tr(StrId::Anim_SpriteMissing));
+        } else {
+            ImGui::Text(Tr(StrId::Anim_SpriteFrameNow), frame + 1, static_cast<int>(anim->frames.size()));
+        }
+    };
+    showSpriteFrame(comp.currentState, comp.stateTimeTicks);
+    if (comp.transitionTo >= 0) {
+        showSpriteFrame(comp.transitionTo, comp.transitionToTime);
+    }
 
     CollectDrivenSkinnedMeshes(world, entity, driven_);
     if (driven_.empty()) {
-        ImGui::TextDisabled("%s", Tr(StrId::Anim_NoSkinnedModel));
+        if (!anySprite) {
+            ImGui::TextDisabled("%s", Tr(StrId::Anim_NoSkinnedModel));
+        }
         return;
     }
     for (const EntityID e : driven_) {

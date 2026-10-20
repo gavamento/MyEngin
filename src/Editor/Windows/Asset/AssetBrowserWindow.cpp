@@ -60,6 +60,7 @@ enum CreateKind {
     kCreateNavFilter, // M84c
     kCreateBehaviorTree, // M85
     kCreateBlackboard,   // M85
+    kCreateSpriteAnim,   // M94
     kCreatePostShader,
     kCreateComputeShader,
     kCreateSurfaceShader, // M79 sub-04
@@ -93,6 +94,7 @@ constexpr TypeFilterEntry kTypeFilters[] = {
     { AssetType::NavFilter, StrId::Asset_NavFilter }, // M84c
     { AssetType::BehaviorTree, StrId::Asset_BehaviorTree }, // M85
     { AssetType::Blackboard, StrId::Asset_Blackboard },     // M85
+    { AssetType::SpriteAnim, StrId::Asset_SpriteAnim },     // M94
     { AssetType::FxStack, StrId::Type_FxStack },
 };
 
@@ -168,6 +170,8 @@ const char* TileLabel(AssetType type, const std::wstring& ext, const std::wstrin
         return "bt"; // .bt.json (M85)
     case AssetType::Blackboard:
         return "bb"; // .bb.json (M85)
+    case AssetType::SpriteAnim:
+        return "spriteanim"; // .spriteanim.json (M94)
     case AssetType::Material:
         return "mat";
     case AssetType::Sound:
@@ -833,6 +837,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             if (ImGui::MenuItem(Tr(StrId::Asset_NavFilter))) { beginCreate(kCreateNavFilter, "New NavFilter"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_BehaviorTree))) { beginCreate(kCreateBehaviorTree, "New BehaviorTree"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_Blackboard))) { beginCreate(kCreateBlackboard, "New Blackboard"); }
+            if (ImGui::MenuItem(Tr(StrId::Asset_SpriteAnim))) { beginCreate(kCreateSpriteAnim, "New SpriteAnim"); }
             if (ImGui::BeginMenu(Tr(StrId::Asset_ShaderMenu))) {
                 if (ImGui::MenuItem(Tr(StrId::Asset_PostShader))) {
                     beginCreate(kCreatePostShader, "New Post");
@@ -1066,6 +1071,10 @@ void AssetBrowserWindow::DoCreate(EngineContext& ctx, UndoStack& undo,
         break;
     case kCreateBlackboard: // M85
         created = CreateBlackboardAsset(ctx, current_, name);
+        RecordAssetCreated(undo, created);
+        break;
+    case kCreateSpriteAnim: // M94
+        created = CreateSpriteAnimAsset(ctx, current_, name);
         RecordAssetCreated(undo, created);
         break;
     case kCreatePostShader:

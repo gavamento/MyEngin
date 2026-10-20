@@ -45,6 +45,8 @@ std::wstring CreateBehaviorTreeAsset(EngineContext& ctx, const std::wstring& dir
                                      const std::string& name);                     // .bt.json (M85)
 std::wstring CreateBlackboardAsset(EngineContext& ctx, const std::wstring& dir,
                                    const std::string& name);                       // .bb.json (M85)
+std::wstring CreateSpriteAnimAsset(EngineContext& ctx, const std::wstring& dir,
+                                   const std::string& name);                       // .spriteanim.json (M94)
 // M78: プロジェクトポスト／コンピュート／fxstack (HLSL は assetsRoot\shaders 固定)
 std::wstring CreatePostShaderAsset(EngineContext& ctx, const std::wstring& dir,
                                  const std::string& name);   // *.post.hlsl (dir = Browser カレント)

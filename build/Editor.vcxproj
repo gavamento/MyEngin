@@ -109,6 +109,7 @@
     <ClCompile Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Animation\ClipEventEdit.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Animation\ControllerStateEdit.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Animation\SpriteAnimEditor.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Asset\SearchWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Audio\AudioMixerWindow.cpp" />
@@ -206,6 +207,7 @@
     <ClInclude Include="..\src\Editor\Windows\Animation\AnimatorControllerWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Animation\ClipEventEdit.h" />
     <ClInclude Include="..\src\Editor\Windows\Animation\ControllerStateEdit.h" />
+    <ClInclude Include="..\src\Editor\Windows\Animation\SpriteAnimEditor.h" />
     <ClInclude Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Asset\SearchWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Audio\AudioMixerWindow.h" />

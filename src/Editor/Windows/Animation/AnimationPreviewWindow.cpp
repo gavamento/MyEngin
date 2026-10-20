@@ -15,12 +15,14 @@
 #include "Editor/SourceControl/ScmHint.h"
 #include "Editor/Windows/Animation/ClipEventEdit.h"
 #include "Editor/Windows/Animation/ControllerStateEdit.h"
+#include "Editor/Windows/Animation/SpriteAnimEditor.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Engine/Animation/AnimatorController.h"
 #include "Engine/Engine/Animation/SkinningSystem.h"
+#include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Renderer/Device/GpuResources.h"
 #include "Engine/Renderer/Mesh/Skeleton.h"
@@ -281,6 +283,18 @@ void AnimationPreviewWindow::OnImGui(EngineContext& ctx, Selection& selection)
     if (driven.empty()) {
         built_ = false;
         builtFor_ = 0;
+        // 骨を駆動しないキャラでも、スプライト列のステートがあればそれを見せる (M94)
+        const AnimatorControllerComponent* spriteComp = go ? go.GetComponent<AnimatorControllerComponent>() : nullptr;
+        ControllerAsset* spriteCtrl = (spriteComp != nullptr && ctx.controllers != nullptr)
+            ? ctx.controllers->GetMutable(spriteComp->controller.value)
+            : nullptr;
+        if (spriteCtrl != nullptr
+            && std::any_of(spriteCtrl->states.begin(), spriteCtrl->states.end(),
+                           [](const ControllerState& s) { return StateDrivesSprite(s); })) {
+            DrawSpritePreview(ctx, *spriteCtrl);
+            ImGui::End();
+            return;
+        }
         ImGui::TextWrapped("%s", Tr(StrId::AnimPrev_NoTarget));
         ImGui::End();
         return;
@@ -478,6 +492,79 @@ void AnimationPreviewWindow::OnImGui(EngineContext& ctx, Selection& selection)
         height_ = 0;
     }
     ImGui::End();
+}
+
+void AnimationPreviewWindow::DrawSpritePreview(EngineContext& ctx, ControllerAsset& ctrl)
+{
+    const auto isSprite = [&](int32_t i) {
+        return i >= 0 && i < static_cast<int32_t>(ctrl.states.size()) && StateDrivesSprite(ctrl.states[static_cast<size_t>(i)]);
+    };
+    if (!isSprite(spriteStateIndex_)) {
+        spriteStateIndex_ = -1;
+        for (size_t i = 0; i < ctrl.states.size(); ++i) {
+            if (StateDrivesSprite(ctrl.states[i])) {
+                spriteStateIndex_ = static_cast<int32_t>(i);
+                break;
+            }
+        }
+    }
+    if (spriteStateIndex_ < 0) {
+        ImGui::TextUnformatted(Tr(StrId::AnimPrev_NoSpriteStates));
+        return;
+    }
+    if (ImGui::BeginCombo(Tr(StrId::AnimPrev_State), ctrl.states[static_cast<size_t>(spriteStateIndex_)].name.c_str())) {
+        for (size_t i = 0; i < ctrl.states.size(); ++i) {
+            if (StateDrivesSprite(ctrl.states[i])
+                && ImGui::Selectable(ctrl.states[i].name.c_str(), static_cast<int32_t>(i) == spriteStateIndex_)) {
+                spriteStateIndex_ = static_cast<int32_t>(i);
+                tick_ = 0;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    const ControllerState& state = ctrl.states[static_cast<size_t>(spriteStateIndex_)];
+    const SpriteAnim* anim = spriteanim::Resolve(AssetID{ state.spriteHash });
+    lengthTicks_ = anim != nullptr ? anim->lengthTicks : 0;
+    loop_ = state.loop;
+    const int32_t lastTick = std::max(lengthTicks_ - 1, 0);
+
+    // 時刻 (再生・スクラブ・±1 tick)。コマは SpriteAnimFrameAt で引く = エンジンが Sprite2D に書くコマと同じ
+    if (playing_ && lengthTicks_ > 0) {
+        playAccum_ += ImGui::GetIO().DeltaTime * kTicksPerSecond;
+        const int32_t steps = static_cast<int32_t>(playAccum_);
+        playAccum_ -= static_cast<float>(steps);
+        tick_ += steps;
+        tick_ = loop_ != 0 ? tick_ % lengthTicks_ : std::min(tick_, lastTick);
+    }
+    tick_ = std::clamp(tick_, 0, lastTick);
+    if (ImGui::Button(playing_ ? Tr(StrId::AnimPrev_Pause) : Tr(StrId::AnimPrev_Play))) {
+        playing_ = !playing_;
+        playAccum_ = 0.0f;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("|<")) {
+        tick_ = 0;
+        playing_ = false;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("-1")) {
+        tick_ = loop_ != 0 && tick_ == 0 ? lastTick : std::max(tick_ - 1, 0);
+        playing_ = false;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("+1")) {
+        tick_ = loop_ != 0 && tick_ >= lastTick ? 0 : std::min(tick_ + 1, lastTick);
+        playing_ = false;
+    }
+    const int32_t frame = anim != nullptr ? SpriteAnimFrameAt(*anim, tick_) : -1;
+    ImGui::SameLine();
+    ImGui::Text(Tr(StrId::SprAnim_PreviewAt), tick_, lengthTicks_, frame + 1);
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::SliderInt("##anim_preview_sprite_tick", &tick_, 0, lastTick)) {
+        playing_ = false;
+    }
+    const float box = std::max(std::min(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y), kMinImageSize);
+    DrawSpriteThumb(ctx, frame >= 0 ? AssetID{ anim->frames[static_cast<size_t>(frame)].sprite } : AssetID{}, box);
 }
 
 int32_t AnimationPreviewWindow::LastTick() const

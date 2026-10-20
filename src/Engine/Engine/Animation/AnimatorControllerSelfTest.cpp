@@ -15,6 +15,7 @@
 #include "Engine/Engine/Animation/Animation.h"
 #include "Engine/Engine/Animation/AnimatorController.h"
 #include "Engine/Engine/Animation/SkinningSystem.h"
+#include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene/Scene.h"
@@ -1609,6 +1610,250 @@ bool RunAnimatorControllerSelfTest()
             check(near4(worldQ, expected, 1e-5f),
                   "M89k: under a rotated parent the entity turns about world Y (the axis is taken back into parent space)");
         }
+    }
+
+    // ---- (M94) スプライト列クリップ: コマ選択 / hasExitTime / イベント / 遷移中の切り替え / 書き込み先 / ハッシュ ----
+    {
+        SpriteAnimLibrary spriteAnims;
+        SpriteAnimLibrary* prevSpriteAnims = spriteanim::Library();
+        spriteanim::Install(&spriteAnims);
+
+        const auto makeAnim = [&](const char* name, const std::wstring& path,
+                                  std::initializer_list<std::pair<uint64_t, int32_t>> frames) {
+            SpriteAnim a;
+            a.name = name;
+            for (const auto& [sprite, ticks] : frames) {
+                a.frames.push_back({ sprite, ticks });
+            }
+            return spriteAnims.Register(path, std::move(a));
+        };
+        const uint64_t walkAnim = makeAnim("Walk", L"walk.spriteanim.json", { { 101, 6 }, { 102, 6 }, { 103, 12 } });
+        const uint64_t jumpAnim = makeAnim("Jump", L"jump.spriteanim.json", { { 201, 4 }, { 202, 4 } });
+
+        // .spriteanim.json の読み書き: 往復で同じ、ticks < 1 は 1 へ丸める、種別キーの無い JSON は読まない
+        {
+            const SpriteAnim* walk = spriteAnims.Get(walkAnim);
+            SpriteAnim again;
+            check(walk != nullptr && walk->lengthTicks == 24 && walk->nameHash == HashStr("Walk"),
+                  "M94: a sprite animation's length is the sum of its frame ticks (6+6+12 = 24)");
+            const bool ok = walk != nullptr && SpriteAnimLibrary::FromJson(SpriteAnimLibrary::ToJson(*walk), again);
+            check(ok && again.name == "Walk" && again.frames.size() == 3 && again.frames[2].sprite == 103
+                      && again.frames[2].ticks == 12 && again.lengthTicks == 24,
+                  "M94: .spriteanim.json round-trips through ToJson / FromJson");
+            SpriteAnim bad;
+            const json badJson = { { "spriteanim", 1 },
+                                   { "frames", json::array({ { { "sprite", 5 }, { "ticks", 0 } },
+                                                             { { "sprite", 6 }, { "ticks", -3 } } }) } };
+            check(SpriteAnimLibrary::FromJson(badJson, bad) && bad.frames.size() == 2 && bad.frames[0].ticks == 1
+                      && bad.frames[1].ticks == 1 && bad.lengthTicks == 2,
+                  "M94: frame ticks below 1 are raised to 1");
+            check(!SpriteAnimLibrary::FromJson(json{ { "physmat", 1 } }, bad),
+                  "M94: a JSON without the spriteanim key is not read");
+            // 時刻 → コマ (境界は次のコマの先頭、範囲外は端のコマ)
+            const int32_t expected[] = { 0, 0, 0, 1, 1, 2, 2, 2 };
+            const int32_t times[] = { -5, 0, 5, 6, 11, 12, 23, 100 };
+            bool frameOk = walk != nullptr;
+            for (int i = 0; frameOk && i < 8; ++i) {
+                frameOk = SpriteAnimFrameAt(*walk, times[i]) == expected[i];
+            }
+            check(frameOk, "M94: SpriteAnimFrameAt picks the frame by cumulative ticks and clamps out of range times");
+        }
+
+        // コントローラ: 0 = Walk (スプライト、ループ)、1 = Jump (スプライト、ループ)
+        const auto makeCtrl = [&](const wchar_t* path, int hasExitTime, int duration, bool withEvent) {
+            ControllerAsset c;
+            c.parameters = { { "go" } };
+            ControllerState walk;
+            walk.name = "Walk";
+            walk.spriteHash = walkAnim;
+            ControllerState jump;
+            jump.name = "Jump";
+            jump.spriteHash = jumpAnim;
+            c.states = { walk, jump };
+            ControllerTransition t;
+            t.from = 0;
+            t.to = 1;
+            t.duration = duration;
+            t.hasExitTime = hasExitTime;
+            if (!hasExitTime) {
+                t.conditions = { { 0, CondOp::Gt, 0 } };
+            }
+            c.transitions.push_back(t);
+            if (withEvent) {
+                ControllerClipEvents ce;
+                ce.clip = "Walk"; // キーは .spriteanim.json の name
+                ce.clipHash = HashStr("Walk");
+                ControllerClipEvent ev;
+                ev.name = "Step";
+                ev.nameHash = HashStr("Step");
+                ev.tick = 12;
+                ce.events.push_back(ev);
+                c.clipEvents.push_back(std::move(ce));
+            }
+            return ctrlLib.Register(path, std::move(c));
+        };
+        const auto spawn = [&](Scene& s, uint64_t controller) {
+            GameObject go = s.CreateGameObjectTracked("Hero");
+            go.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ controller };
+            go.AddComponent<Sprite2DComponent>();
+            s.GetWorld().ApplyStructuralChanges();
+            return go;
+        };
+        const auto spriteOf = [](GameObject& go) { return go.GetComponent<Sprite2DComponent>()->sprite.value; };
+
+        // (a) 3 コマ (6/6/12) のループ: Update n の終わりの時刻は n % 24 で、そのコマが書かれる
+        {
+            const uint64_t h = makeCtrl(L"m94_a.controller.json", 0, 1, false);
+            Scene s;
+            GameObject go = spawn(s, h);
+            go.GetComponent<AnimatorControllerComponent>()->params[0] = 0;
+            bool frames = true;
+            for (int n = 1; n <= 60; ++n) {
+                sys.Update(s.GetWorld(), ctrlLib, animLib);
+                const int t = n % 24;
+                const uint64_t want = t < 6 ? 101 : (t < 12 ? 102 : 103);
+                frames = frames && spriteOf(go) == want;
+            }
+            check(frames, "M94 (a): a 6/6/12 sprite loop writes the frame of the post-advance time every tick (60 ticks)");
+            check(ControllerStateLengthTicks(*ctrlLib.Get(h), ctrlLib.Get(h)->states[0], nullptr, &animLib, nullptr) == 24,
+                  "M94: ControllerStateLengthTicks returns the sum of the sprite frame ticks");
+        }
+
+        // (b) hasExitTime: 長さ 24 の最後の tick (Update 24 の頭で time == 23) で遷移を採る
+        {
+            const uint64_t h = makeCtrl(L"m94_b.controller.json", 1, 1, false);
+            Scene s;
+            GameObject go = spawn(s, h);
+            auto* c = go.GetComponent<AnimatorControllerComponent>();
+            int firedAt = 0;
+            for (int n = 1; n <= 40 && firedAt == 0; ++n) {
+                sys.Update(s.GetWorld(), ctrlLib, animLib);
+                if (c->currentState == 1) {
+                    firedAt = n;
+                }
+            }
+            check(firedAt == 24, "M94 (b): a hasExitTime transition leaves a 24-tick sprite state on tick 24");
+        }
+
+        // (c) clipEvents (キー = スプライト列の name): tick 12 のイベントは 1 周に 1 回、ちょうど通った tick に出る
+        {
+            const uint64_t h = makeCtrl(L"m94_c.controller.json", 0, 1, true);
+            Scene s;
+            GameObject go = spawn(s, h);
+            int total = 0;
+            int firstTick = 0;
+            int secondTick = 0;
+            for (int n = 1; n <= 48; ++n) {
+                sys.Update(s.GetWorld(), ctrlLib, animLib); // models == nullptr でもスプライトのイベントは出る
+                for (const AnimEventFired& f : sys.FiredEvents()) {
+                    if (f.nameHash == HashStr("Step")) {
+                        ++total;
+                        (firstTick == 0 ? firstTick : secondTick) = n;
+                    }
+                }
+            }
+            check(total == 2 && firstTick == 12 && secondTick == 36,
+                  "M94 (c): the tick-12 event of a 24-tick sprite loop fires once per cycle, on the tick that passes it");
+        }
+
+        // (d) 遷移 duration 4: 遷移を始めた Update は元のコマ、2 tick 目 (2 · 2 >= 4) から先のコマ
+        {
+            const uint64_t h = makeCtrl(L"m94_d.controller.json", 0, 4, false);
+            Scene s;
+            GameObject go = spawn(s, h);
+            go.GetComponent<AnimatorControllerComponent>()->params[0] = 1;
+            uint64_t seen[5] = {};
+            for (int n = 1; n <= 4; ++n) {
+                sys.Update(s.GetWorld(), ctrlLib, animLib);
+                seen[n] = spriteOf(go);
+            }
+            // 元 (Walk) は time 1 → 101。先 (Jump) は time 2 / 3 → 201、遷移を終える tick は time 4 → 202
+            check(seen[1] == 101 && seen[2] == 201 && seen[3] == 201 && seen[4] == 202,
+                  "M94 (d): during a 4-tick transition the frame switches from source to target at the integer midpoint");
+        }
+
+        // (e) Sprite2D.sprite を手で書いても HashWorld は変わらない (NoHash)。次の Update では Animator が書き戻す
+        {
+            const uint64_t h = makeCtrl(L"m94_e.controller.json", 0, 1, false);
+            Scene s;
+            GameObject go = spawn(s, h);
+            sys.Update(s.GetWorld(), ctrlLib, animLib);
+            const uint64_t before = HashWorld(s.GetWorld());
+            go.GetComponent<Sprite2DComponent>()->sprite = AssetID{ 987654321 };
+            check(HashWorld(s.GetWorld()) == before, "M94 (e): writing Sprite2D.sprite by hand does not change HashWorld");
+            sys.Update(s.GetWorld(), ctrlLib, animLib);
+            check(spriteOf(go) == 101, "M94: the Animator wins over a script write on the next tick");
+        }
+
+        // (f) 2 ワールド並走: 遷移・ループ・パラメータ変更を含む 120 tick の HashWorld が毎 tick 一致する
+        {
+            const uint64_t h = makeCtrl(L"m94_f.controller.json", 0, 4, true);
+            Scene sa, sb;
+            GameObject ga = spawn(sa, h);
+            GameObject gb = spawn(sb, h);
+            bool same = true;
+            for (int i = 0; i < 120 && same; ++i) {
+                const int32_t p = i >= 50 ? 1 : 0;
+                ga.GetComponent<AnimatorControllerComponent>()->params[0] = p;
+                gb.GetComponent<AnimatorControllerComponent>()->params[0] = p;
+                sys.Update(sa.GetWorld(), ctrlLib, animLib);
+                sys.Update(sb.GetWorld(), ctrlLib, animLib);
+                same = HashWorld(sa.GetWorld()) == HashWorld(sb.GetWorld()) && spriteOf(ga) == spriteOf(gb);
+            }
+            check(same, "M94 (f): two worlds running the same sprite controller hash-identical for 120 ticks");
+        }
+
+        // 書き込み先: 自身の Sprite2D が先、無ければ前順で最初の子孫
+        {
+            const uint64_t h = makeCtrl(L"m94_t.controller.json", 0, 1, false);
+            Scene s;
+            World& world = s.GetWorld();
+            GameObject root = s.CreateGameObjectTracked("Root");
+            root.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ h };
+            GameObject first = s.CreateGameObjectTracked("First");
+            GameObject second = s.CreateGameObjectTracked("Second");
+            first.SetParent(root);
+            second.SetParent(root);
+            first.AddComponent<Sprite2DComponent>();
+            second.AddComponent<Sprite2DComponent>();
+            world.ApplyStructuralChanges();
+            sys.Update(world, ctrlLib, animLib);
+            check(spriteOf(first) == 101 && spriteOf(second) == 0,
+                  "M94: with no Sprite2D on the controller entity, the first descendant in pre-order is written");
+            root.AddComponent<Sprite2DComponent>();
+            world.ApplyStructuralChanges();
+            sys.Update(world, ctrlLib, animLib);
+            check(spriteOf(root) == 101 && spriteOf(second) == 0,
+                  "M94: the controller entity's own Sprite2D takes precedence once it exists (searched every tick)");
+        }
+
+        // .controller.json: "sprite" の往復。"skel" と両方あれば sprite を採る。骨のステートは従来どおり読める
+        {
+            ControllerAsset c;
+            ControllerState st;
+            st.name = "S";
+            st.spriteHash = walkAnim;
+            c.states.push_back(st);
+            ControllerAsset back;
+            const json round = ControllerLibrary::ToJson(c);
+            check(ControllerLibrary::FromJson(round, back) && back.states[0].spriteHash == walkAnim
+                      && !round["states"][0].contains("skel"),
+                  "M94: a sprite state round-trips through .controller.json as \"sprite\" (no skel written)");
+            const json both = { { "states", json::array({ { { "name", "B" }, { "sprite", walkAnim },
+                                                            { "skel", { { "clip", "Run" } } } } }) } };
+            ControllerAsset bothOut;
+            check(ControllerLibrary::FromJson(both, bothOut) && bothOut.states[0].spriteHash == walkAnim
+                      && bothOut.states[0].skelClipHash == 0 && !StateDrivesSkeleton(bothOut.states[0]),
+                  "M94: a state with both sprite and skel keeps the sprite and drops the skel");
+            const json v2 = { { "controller", 2 },
+                              { "states", json::array({ { { "name", "K" }, { "skel", { { "clip", "Run" } } } } }) } };
+            ControllerAsset v2Out;
+            check(ControllerLibrary::FromJson(v2, v2Out) && v2Out.states[0].spriteHash == 0
+                      && v2Out.states[0].skelClip == "Run",
+                  "M94: a v2 skeletal state without \"sprite\" still reads as before");
+        }
+
+        spriteanim::Install(prevSpriteAnims);
     }
 
     if (failCount == 0) {

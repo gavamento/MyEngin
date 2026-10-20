@@ -34,6 +34,7 @@ enum class AssetType : int32_t {
     NavFilter,  // .navfilter.json (M84c — ナビのエリアのフィルタ。Agent / クエリのエリアのコストと通行可否)
     BehaviorTree, // .bt.json (M85 — ビヘイビアツリー)
     Blackboard,   // .bb.json (M85 — ビヘイビアツリーのブラックボードのキー定義)
+    SpriteAnim,   // .spriteanim.json (M94g — スプライト列クリップ。コマ列)
 };
 
 // アセット 1 件のサイドカー情報 (<asset>.meta に JSON で保存)。

@@ -279,6 +279,9 @@
     <ClCompile Include="..\src\Editor\Windows\Animation\ControllerStateEdit.cpp">
       <Filter>Windows\Animation</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Animation\SpriteAnimEditor.cpp">
+      <Filter>Windows\Animation</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.cpp">
       <Filter>Windows\Asset</Filter>
     </ClCompile>
@@ -568,6 +571,9 @@
       <Filter>Windows\Animation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Animation\ControllerStateEdit.h">
+      <Filter>Windows\Animation</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Animation\SpriteAnimEditor.h">
       <Filter>Windows\Animation</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Asset\AssetBrowserWindow.h">

@@ -589,6 +589,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             ok &= mye::RunUISelfTest();
             ok &= mye::RunSprite2DAssetSelfTest();
             ok &= mye::RunSpriteEditorSelfTest();
+            ok &= mye::RunAnimatorControllerSelfTest(); // M94g: スプライト列クリップ (既存の v1 / v2 の読みも含む)
+            ok &= mye::RunAnimatorControllerEditSelfTest(); // M94g: コントローラ窓のステート編集 (Sprite の排他)
+            ok &= mye::RunAssetDatabaseSelfTest();      // M94g: .spriteanim.json の分類
+            ok &= mye::RunReloadHubSelfTest();          // M94g: .spriteanim.json の振り分け
+            ok &= mye::RunAssetOpsSelfTest();           // M94g: Create 重複拒否 / タイルラベル / 複合サフィックス
             if (!tempEc) {
                 std::filesystem::remove_all(selftestTemp, tempEc);
             }

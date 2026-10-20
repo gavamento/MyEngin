@@ -227,6 +227,7 @@ const char* FileTypeIcon(const wchar_t* path)
     case AssetType::NavFilter: return ICON_FA_FILTER;
     case AssetType::BehaviorTree: return ICON_FA_SITEMAP;
     case AssetType::Blackboard: return ICON_FA_TABLE_LIST;
+    case AssetType::SpriteAnim: return ICON_FA_FILM;
     default: break;
     }
     // エンジンのアセット種別に無いもの (ソースコード・文書・動画など) は末尾の拡張子で引く

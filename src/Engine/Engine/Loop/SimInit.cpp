@@ -17,6 +17,7 @@
 #include "Engine/Engine/Physics/Collider/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/Collider/TerrainColliderLibrary.h"
 #include "Engine/Engine/Physics/Fracture/FractureLibrary.h"
+#include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
@@ -79,6 +80,8 @@ void InstallSimLibraries(const SimLibraries& libs)
     blackboard::Install(libs.blackboards);
     // M94: スプライト。起動走査 (RegisterAssetLibraries) より前に注入する
     spritelib::Install(libs.sprites);
+    // M94: スプライト列クリップ (.spriteanim.json)。同じく起動走査より前に注入する
+    spriteanim::Install(libs.spriteAnims);
 }
 
 void UninstallSimLibraries()
@@ -92,6 +95,7 @@ void UninstallSimLibraries()
     behaviortree::Install(nullptr);
     blackboard::Install(nullptr);
     spritelib::Install(nullptr);
+    spriteanim::Install(nullptr);
 }
 
 void InitSimProjectState(const std::wstring& assetsRoot)

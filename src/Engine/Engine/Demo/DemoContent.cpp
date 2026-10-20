@@ -36,6 +36,7 @@
 #include "Engine/Engine/Physics/Fracture/FractureBake.h"    // M80f: --fracture-demo の焼き
 #include "Engine/Engine/Physics/Fracture/FractureLibrary.h" // M80f: メモリ上焼きの登録口
 #include "Engine/Engine/Physics/Fracture/FractureSkinBake.h" // M80j: スキン破壊の骨割り当て
+#include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
@@ -3240,6 +3241,11 @@ void RegisterAssetLibraries(EngineContext& ctx)
             // M85: ブラックボード。同じく blackboard:: で注入済み
             if (BlackboardLibrary* bb = blackboard::Library()) {
                 bb->LoadFromFile(p);
+            }
+        } else if (p.size() >= 16 && p.compare(p.size() - 16, 16, L".spriteanim.json") == 0) {
+            // M94: スプライト列クリップ。所有は EngineLoop / HeadlessSim、spriteanim:: で注入済み
+            if (SpriteAnimLibrary* sa = spriteanim::Library()) {
+                sa->LoadFromFile(p);
             }
         } else if (p.size() >= 13 && p.compare(p.size() - 13, 13, L".physmat.json") == 0) {
             // M59a1: 物理マテリアル。所有は EngineLoop、ここへは physmat:: で注入済み

@@ -72,6 +72,7 @@ enum class ReloadKind : uint8_t {
     NavFilter,   // .navfilter.json (M84c)
     BehaviorTree, // .bt.json (M85)
     Blackboard,   // .bb.json (M85)
+    SpriteAnim,   // .spriteanim.json (M94)
     Compose,     // .actor.json / .prefab.json
     Scene,       // .scene.json と、それ以外の .json (開いているシーンなら拡張子を問わない)
     ModalNet,    // .dmnet (M76e: Deep-Modal の学習済みネット)
@@ -142,6 +143,7 @@ private:
     ReloadResult ReloadNavFilter(const std::wstring& path);
     ReloadResult ReloadBehaviorTree(const std::wstring& path);
     ReloadResult ReloadBlackboard(const std::wstring& path);
+    ReloadResult ReloadSpriteAnim(const std::wstring& path);
     ReloadResult ReloadModalNet(const std::wstring& path);
     ReloadResult ReloadCompose(const std::wstring& path);
     ReloadResult ReloadActiveScene(const std::wstring& path);

@@ -3015,6 +3015,9 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
         if (type == AssetType::NavFilter) {
             LoadNavFilterEdit(path); // M84c
         }
+        if (type == AssetType::SpriteAnim) {
+            LoadSpriteAnimEdit(path, spriteAnimEdit_); // M94
+        }
         if (type == AssetType::FxStack) {
             LoadFxStackEdit(path); // M78c
         }
@@ -3066,6 +3069,11 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
 
     if (type == AssetType::NavFilter) {
         DrawNavFilterInspector(ctx, path); // M84c
+        return;
+    }
+
+    if (type == AssetType::SpriteAnim) {
+        DrawSpriteAnimInspector(ctx, path, spriteAnimEdit_); // M94
         return;
     }
 

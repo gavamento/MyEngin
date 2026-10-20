@@ -2429,3 +2429,28 @@ MYE_STR(Insp_SpriteFilter,     "Sprite Filter",                        "スプ�
 MYE_STR(Insp_PixelsPerUnit,    "Pixels Per Unit",                      "1 ユニットあたりの画素数")
 MYE_STR(GateB_SpriteEditorDirty, "the Sprite Editor has unsaved changes",
                                  "スプライトエディターに未保存の変更があります")
+
+// ---- スプライト列クリップ (M94g) ----
+MYE_STR(Asset_SpriteAnim,      "Sprite Animation",                     "スプライトアニメーション")
+MYE_STR(Log_WriteSpriteAnimFail, "could not write sprite animation: %s",
+                               "スプライトアニメーションを書き出せません: %s")
+MYE_STR(Log_CreatedSpriteAnim, "created sprite animation: %s",
+                               "スプライトアニメーションを作成しました: %s")
+MYE_STR(SprAnim_Failed,        "(sprite animation parse failed)",      "(スプライトアニメーションを読めません)")
+MYE_STR(SprAnim_Name,          "Name (event key)",                     "名前 (イベントのキー)")
+MYE_STR(SprAnim_Length,        "Length: %d ticks, %d frames",          "長さ: %d tick、%d コマ")
+MYE_STR(SprAnim_Frames,        "Frames",                               "コマ")
+MYE_STR(SprAnim_AddFrame,      "Add Frame",                            "コマを追加")
+MYE_STR(SprAnim_AddSlices,     "Add Slices Of...",                     "スライスをまとめて追加...")
+MYE_STR(SprAnim_NoSlices,      "(no sliced textures)",                 "(スライス済みのテクスチャがありません)")
+MYE_STR(SprAnim_Ticks,         "ticks",                                "tick")
+MYE_STR(SprAnim_PreviewAt,     "tick %d / %d   frame %d",              "tick %d / %d   コマ %d")
+MYE_STR(SprAnim_NoFrames,      "(no frames)",                          "(コマがありません)")
+MYE_STR(SprAnim_Unresolved,    "(missing sprite)",                     "(スプライトが見つかりません)")
+MYE_STR(Anim_SpriteAnim,       "sprite animation",                     "スプライトアニメーション")
+MYE_STR(Anim_SpriteAnimName,   "Sprite Animation",                     "スプライトアニメーション")
+MYE_STR(Anim_SpriteNone,       "(no sprite animations in the project)", "(プロジェクトにスプライトアニメーションがありません)")
+MYE_STR(Anim_SpriteMissing,    "(not found)",                          "(見つかりません)")
+MYE_STR(Anim_SpriteFrameNow,   "frame %d / %d",                        "コマ %d / %d")
+MYE_STR(AnimPrev_NoSpriteStates, "This controller has no sprite animation states.",
+                               "このコントローラにスプライトアニメーションのステートがありません")

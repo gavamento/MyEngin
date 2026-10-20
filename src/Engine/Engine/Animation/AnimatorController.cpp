@@ -13,6 +13,7 @@
 #include "Engine/Core/Ecs/HierarchyWalk.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Animation/Animation.h"
+#include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Animation/SkinningSystem.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/Mesh/Skeleton.h"
@@ -981,7 +982,9 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
                     { "clip", std::move(clip) },
                     { "speed", s.speed },
                     { "loop", s.loop } };
-        if (s.blendType == ControllerBlendType::Blend2D) {
+        if (s.spriteHash != 0) {
+            st["sprite"] = s.spriteHash; // M94。骨の指定とは排他なので skel は書かない
+        } else if (s.blendType == ControllerBlendType::Blend2D) {
             json children = json::array();
             for (const ControllerBlendChild& ch : s.blendChildren) {
                 children.push_back({ { "clip", ch.clip }, { "x", ch.posX }, { "y", ch.posY } });
@@ -1138,6 +1141,21 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
             } else {
                 cs.skelClip = skel.value("clip", std::string());
                 cs.skelClipHash = cs.skelClip.empty() ? 0 : HashStr(cs.skelClip);
+            }
+        }
+        // M94: スプライト列。骨の指定 (単一クリップ / ブレンドツリー) と排他で、あれば sprite を採って骨を捨てる
+        if (s.contains("sprite") && s["sprite"].is_number_integer()) {
+            cs.spriteHash = s["sprite"].get<uint64_t>();
+            if (cs.spriteHash != 0) {
+                if (StateDrivesSkeleton(cs)) {
+                    MYE_LOG_WARN("[controller] state '%s' has both sprite and skel; sprite is used", cs.name.c_str());
+                }
+                cs.skelClip.clear();
+                cs.skelClipHash = 0;
+                cs.blendType = ControllerBlendType::None;
+                cs.blendChildren.clear();
+                cs.blendParam = 0;
+                cs.blendParamY = 0;
             }
         }
         out.states.push_back(std::move(cs));
@@ -1492,12 +1510,25 @@ void FireClipEvents(EntityID entity, const ControllerClipEvents& ce, int32_t len
 }
 
 // 1 ステートのイベント層。骨クリップ 1 本はその時計で、ブレンドツリーは最大重みの子 (同値なら index の小さい子)
-// 1 本だけを位相で判定する。長さは主 SkinnedMesh のモデルで引く
+// 1 本だけを位相で判定する。長さは主 SkinnedMesh のモデルで引く。
+// スプライト列 (M94) は .spriteanim.json の name を clipEvents のキーにし、長さは Σticks (モデル不要)
 void FireStateEvents(const ControllerAsset& ctrl, const ControllerState& st, const int32_t* params,
-                     const StateClock& clock, bool entered, int32_t stateWeightQ, const SkinnedModel& mainModel,
+                     const StateClock& clock, bool entered, int32_t stateWeightQ, const SkinnedModel* mainModelPtr,
                      EntityID entity, std::vector<std::pair<int64_t, int32_t>>& passed,
                      std::vector<AnimEventFired>& fired)
 {
+    if (StateDrivesSprite(st)) {
+        const SpriteAnim* anim = spriteanim::Resolve(AssetID{ st.spriteHash });
+        const ControllerClipEvents* ce = anim != nullptr ? FindClipEvents(ctrl, anim->nameHash) : nullptr;
+        if (ce != nullptr) {
+            FireClipEvents(entity, *ce, anim->lengthTicks, false, clock, st.loop, entered, stateWeightQ, passed, fired);
+        }
+        return;
+    }
+    if (mainModelPtr == nullptr) {
+        return; // 骨クリップの長さはモデルで決まる。モデルが無ければ発火しない
+    }
+    const SkinnedModel& mainModel = *mainModelPtr;
     if (st.blendType == ControllerBlendType::None) {
         const ControllerClipEvents* ce = st.skelClipHash != 0 ? FindClipEvents(ctrl, st.skelClipHash) : nullptr;
         const int32_t clip = ce != nullptr ? mainModel.FindClipByHash(st.skelClipHash) : -1;
@@ -1543,7 +1574,13 @@ int32_t ControllerStateLengthTicks(const ControllerAsset& controller, const Cont
                                    const int32_t* params, const AnimationLibrary* clips,
                                    const SkinnedModel* mainModel)
 {
-    if (state.blendType != ControllerBlendType::None) {
+    if (state.spriteHash != 0) {
+        // M94: スプライト列の長さ (Σticks)。未登録は 0 = 時刻が進まない (骨クリップが引けないときと同じ)
+        const SpriteAnim* anim = spriteanim::Resolve(AssetID{ state.spriteHash });
+        if (anim != nullptr && anim->lengthTicks > 0) {
+            return anim->lengthTicks;
+        }
+    } else if (state.blendType != ControllerBlendType::None) {
         BlendChildWeight w[kMaxBlendLayers];
         const int32_t n = StateBlendWeights(controller, state, params, w);
         const int64_t weightedTicks = BlendWeightedTicks(state, w, n, mainModel);
@@ -1590,6 +1627,61 @@ bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t dur
     c->transitionToPhase = 0;
     return true;
 }
+
+namespace {
+
+// 今表示するスプライト列のコマ (M94)。遷移中は transitionTick · 2 >= transitionDuration なら遷移先、それ以外は元 (整数比較)。
+// 選んだステートがスプライトを駆動しない・列が未登録 / 空なら 0 (書き込まない)
+uint64_t CurrentSpriteFrame(const ControllerAsset& ctrl, const AnimatorControllerComponent& c)
+{
+    int32_t stateIndex = c.currentState;
+    int32_t time = c.stateTimeTicks;
+    if (c.transitionTo >= 0 && int64_t(c.transitionTick) * 2 >= int64_t(c.transitionDuration)) {
+        stateIndex = c.transitionTo;
+        time = c.transitionToTime;
+    }
+    if (stateIndex < 0 || stateIndex >= static_cast<int32_t>(ctrl.states.size())) {
+        return 0;
+    }
+    const ControllerState& st = ctrl.states[static_cast<size_t>(stateIndex)];
+    if (!StateDrivesSprite(st)) {
+        return 0;
+    }
+    const SpriteAnim* anim = spriteanim::Resolve(AssetID{ st.spriteHash });
+    const int32_t frame = anim != nullptr ? SpriteAnimFrameAt(*anim, time) : -1;
+    return frame >= 0 ? anim->frames[static_cast<size_t>(frame)].sprite : 0;
+}
+
+// 書き込み先 = 自身の Sprite2D、無ければ部分木で最初 (前順) の Sprite2D。別の Animator の部分木は、そちらが駆動するので辿らない。
+// 結果はキャッシュしない (毎 tick 探す = 構造変更に追随する。コストは部分木の大きさ)
+Sprite2DComponent* FindSpriteTarget(World& world, EntityID root)
+{
+    Sprite2DComponent* found = nullptr;
+    ForEachInSubtree(world, root, [&](EntityID e, uint32_t) {
+        if (e != root && world.GetComponent<AnimatorControllerComponent>(e) != nullptr) {
+            return WalkStep::SkipChildren;
+        }
+        if (Sprite2DComponent* sprite = world.GetComponent<Sprite2DComponent>(e)) {
+            found = sprite;
+            return WalkStep::Stop;
+        }
+        return WalkStep::Continue;
+    });
+    return found;
+}
+
+void WriteSpriteFrame(World& world, EntityID entity, const ControllerAsset& ctrl, const AnimatorControllerComponent& c)
+{
+    const uint64_t sprite = CurrentSpriteFrame(ctrl, c);
+    if (sprite == 0) {
+        return;
+    }
+    if (Sprite2DComponent* target = FindSpriteTarget(world, entity)) {
+        target->sprite = AssetID{ sprite }; // Animator が勝つ (スクリプトが書いても次 tick で戻る)
+    }
+}
+
+} // namespace
 
 // ==== AnimatorControllerSystem ====
 
@@ -1730,14 +1822,16 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
 
             // 4. アニメイベント (M89h)。遷移を終える tick も、終える前の元と先で判定する (元は重み 0 で発火しない)
             const size_t firstFired = fired_.size();
-            if (mainModel != nullptr && !ctrl->clipEvents.empty()) {
+            if (!ctrl->clipEvents.empty()) {
                 const ControllerState& from = ctrl->states[static_cast<size_t>(c->currentState)];
                 int32_t fromWeightQ = static_cast<int32_t>(kWeightOne);
                 int32_t toWeightQ = 0;
                 if (c->transitionTo >= 0) {
                     // ステートの重みは BuildSkeletalSources と同じ (片側だけが骨を駆動するならそちらが満杯)
-                    const bool fromSkel = StateDrivesSkeleton(from);
-                    const bool toSkel = StateDrivesSkeleton(ctrl->states[static_cast<size_t>(c->transitionTo)]);
+                    // スプライト列 (M94) も骨と同じ層の重みで数える
+                    const ControllerState& to = ctrl->states[static_cast<size_t>(c->transitionTo)];
+                    const bool fromSkel = StateDrivesSkeleton(from) || StateDrivesSprite(from);
+                    const bool toSkel = StateDrivesSkeleton(to) || StateDrivesSprite(to);
                     if (toSkel && !fromSkel) {
                         fromWeightQ = 0;
                         toWeightQ = static_cast<int32_t>(kWeightOne);
@@ -1748,11 +1842,11 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                         fromWeightQ = static_cast<int32_t>(kWeightOne) - toWeightQ;
                     }
                 }
-                FireStateEvents(*ctrl, from, c->params, fromClock, fromEntered, fromWeightQ, *mainModel, e, passed_,
+                FireStateEvents(*ctrl, from, c->params, fromClock, fromEntered, fromWeightQ, mainModel, e, passed_,
                                 fired_);
                 if (c->transitionTo >= 0) {
                     FireStateEvents(*ctrl, ctrl->states[static_cast<size_t>(c->transitionTo)], c->params, toClock,
-                                    toEntered, toWeightQ, *mainModel, e, passed_, fired_);
+                                    toEntered, toWeightQ, mainModel, e, passed_, fired_);
                 }
             }
 
@@ -1797,6 +1891,9 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                     }
                 }
             }
+
+            // 6b. スプライト列の現在コマ (M94)。進めた後の時刻で書く = 骨と同じ「その tick の終わりの姿」
+            WriteSpriteFrame(world, e, *ctrl, *c);
 
             // 7. 発火したイベントの位置 (M89i)。ジョイントの位置は 6. で書いたプログラム (この tick の終わりの姿勢) で引く
             if (fired_.size() > firstFired) {

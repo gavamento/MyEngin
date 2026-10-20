@@ -116,7 +116,8 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
 
 - `.spriteanim.json`: `{ "engine":"MyEngine", "spriteanim":1, "name":"Walk", "frames":[{"sprite": <uint64 AssetID>, "ticks": 6}, ...] }`。`ticks` ≥ 1。長さ = Σticks。`SpriteAnimLibrary` (GUID キー、`PhysMatLibrary` の流儀、ReloadHub 対応、Project 窓の Create → Sprite Animation、ダブルクリックで Inspector 編集 (コマの追加・削除・順序・ticks・プレビュー))。
 - コントローラのステートに `"sprite": <uint64 AssetID>` を足す (`"skel"` と排他、`"clip"` とは併用可)。`ControllerStateLengthTicks` が長さを返す = `hasExitTime` / `loop` / `speed` が効く。現在コマ = `stateTimeTicks` を frames の累積 ticks で二分探索 (整数)。ブレンドツリー (`blend1d` / `blend2d`) はスプライトでは作らない (JSON にあれば警告してスプライトを優先)。
-- **書き込み先**: コントローラのエンティティ自身の `Sprite2D.sprite` と、部分木の Sprite2D のうち `Sprite2D` を持つ**最初の子孫** (DFS 順) のどちらか: 自身にあれば自身、無ければ最初の子孫。毎 tick 上書き (Unity と同じく Animator が勝つ)。スクリプトが `sprite` を書いても次 tick で戻る、と engine_spec に書く。
+- **書き込み先**: コントローラのエンティティ自身の `Sprite2D.sprite` と、部分木の Sprite2D のうち `Sprite2D` を持つ**最初の子孫** (DFS 順) のどちらか: 自身にあれば自身、無ければ最初の子孫。**別の AnimatorController を持つ子孫の部分木は辿らない** (入れ子の Animator はそちらが駆動する。骨の `CollectDrivenSkinnedMeshes` と同じ原則、sub-07 で確定)。毎 tick 上書き (Unity と同じく Animator が勝つ)。遷移中に選んだ側のステートがスプライトを駆動しない / 列が未登録・空なら何も書かない (直前のコマのまま)。スクリプトが `sprite` を書いても次 tick で戻る、と engine_spec に書く。
+- `.spriteanim.json` の編集は Project 窓で選択 → Inspector (physmat と同じ流儀。ダブルクリック専用の動作は作らない。コマの追加・削除・順序・ticks・ピッカー・「スライスをまとめて追加」(自然順)・ステップ再生・保存 / 戻す)。`"sprite"` と `"skel"` の併記は WARN して `sprite` を採り骨側を全部捨てる。ReloadHub の rank は 6。
 - 遷移中 (duration > 0) は `transitionTick · 2 >= transitionDuration` なら遷移先のコマ、それ以外は元のコマ (整数比較、ブレンド無し)。推奨 duration は 0。
 - イベント: `"clipEvents"` のキーに `.spriteanim.json` の `name` を使う。発火規則 (`(old, new]`、ループ折り返し、`stateEntered`) は骨と同じ関数を通す。kind 4 種そのまま。イベントの位置は `"joint"` を無視してコントローラのエンティティ位置。
 - 描画補間: コマは離散。`WriteSkeletalProgram` 相当は書かないので対象外 (`stepQ` の分岐も触らない)。

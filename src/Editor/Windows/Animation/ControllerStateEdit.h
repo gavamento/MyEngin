@@ -20,6 +20,7 @@ enum class StateSkelKind : int32_t {
     Clip = 1,    // 骨クリップ 1 本 (skelClip)
     Blend1D = 2,
     Blend2D = 3,
+    Sprite = 4,  // スプライト列クリップ (M94、spriteHash)。骨の駆動とは排他
 };
 
 StateSkelKind GetStateSkelKind(const ControllerState& state);
@@ -29,7 +30,10 @@ StateSkelKind GetStateSkelKind(const ControllerState& state);
 // — skelClip が残っていると骨を駆動してしまうため。
 // - Clip へ: skelClip が空なら、最初の名前付きの子 → fallbackClip の順で埋める
 // - Blend1D / Blend2D へ: 子が無ければ skelClip (空なら fallbackClip) の子を 1 本作る
-void SetStateSkelKind(ControllerState& state, StateSkelKind kind, const std::string& fallbackClip);
+// - Sprite へ: skelClip を空にし、spriteHash が 0 なら fallbackSprite で埋める (候補が無ければ None のまま)
+// - Sprite 以外へ: spriteHash を 0 にする (読み込みは sprite を優先するので、残すと骨の指定が捨てられる)
+void SetStateSkelKind(ControllerState& state, StateSkelKind kind, const std::string& fallbackClip,
+                      uint64_t fallbackSprite = 0);
 
 // 骨クリップの名前を書き、ハッシュを揃える (ハッシュだけ古いと別のクリップを駆動する)
 void SetStateSkelClip(ControllerState& state, const std::string& clip);

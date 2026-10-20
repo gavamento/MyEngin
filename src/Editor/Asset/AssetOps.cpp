@@ -38,6 +38,7 @@
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Asset/FbxLoader.h"
 #include "Engine/Engine/Asset/ModelLoader.h"
+#include "Engine/Engine/Animation/SpriteAnim.h" // M94: .spriteanim.json の生成/登録
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h" // M59a1: .physmat.json の生成/登録
 #include "Engine/Engine/Navigation/NavFilterLibrary.h" // M84c: .navfilter.json の生成/登録
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"      // M85: .bt.json / .bb.json の生成/登録
@@ -262,13 +263,36 @@ std::wstring CreateBlackboardAsset(EngineContext& ctx, const std::wstring& dir, 
     return path;
 }
 
+std::wstring CreateSpriteAnimAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
+{
+    (void)ctx; // 署名は他の Create* と揃える。登録は spriteanim:: 経由
+    const std::string safe = SanitizeFileName(name, "New SpriteAnim");
+    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".spriteanim.json";
+    if (fs::exists(path)) {
+        return {};
+    }
+    SpriteAnim anim;
+    anim.name = safe;
+    if (!WriteNewAssetFile(path, SpriteAnimLibrary::ToJson(anim).dump(2))) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteSpriteAnimFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    // 生成直後に登録 → コントローラ窓のピッカーで即使える
+    if (SpriteAnimLibrary* lib = spriteanim::Library()) {
+        lib->LoadFromFile(path);
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedSpriteAnim), WideToUtf8(path).c_str());
+    return path;
+}
+
 void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstring& suffix)
 {
     static const std::wstring kCompound[] = {L".scene.json",  L".prefab.json", L".actor.json",
                                              L".anim.json",   L".mat.json",    L".controller.json",
                                              L".sound.json",  L".mixer.json",  L".physmat.json",
                                              L".fxstack.json", L".post.hlsl",  L".cs.hlsl",
-                                             L".navfilter.json", L".bt.json",  L".bb.json"};
+                                             L".navfilter.json", L".bt.json",  L".bb.json",
+                                             L".spriteanim.json"};
     for (const std::wstring& c : kCompound) {
         if (filename.size() > c.size() &&
             filename.compare(filename.size() - c.size(), c.size(), c) == 0) {

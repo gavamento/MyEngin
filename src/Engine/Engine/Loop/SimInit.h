@@ -39,6 +39,7 @@ class BehaviorTreeLibrary;
 class BlackboardLibrary;
 class TerrainColliderLibrary;
 class SpriteLibrary;
+class SpriteAnimLibrary;
 namespace compute {
 class ComputeService;
 }
@@ -68,6 +69,7 @@ struct SimLibraries {
     BehaviorTreeLibrary* behaviorTrees = nullptr; // M85: .bt.json
     BlackboardLibrary* blackboards = nullptr;     // M85: .bb.json
     SpriteLibrary* sprites = nullptr;             // M94: スプライト (描画専用。sim は引かない)
+    SpriteAnimLibrary* spriteAnims = nullptr;     // M94: .spriteanim.json (Animator が現在コマの長さと名前を引く)
 };
 void InstallSimLibraries(const SimLibraries& libs);
 // 所有者が死ぬ前に必ず呼ぶ (注入したポインタをプロセス全体から外す)
