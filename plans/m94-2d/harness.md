@@ -36,8 +36,8 @@
 | sub-03 | OK | 1 | 03521a8 | スプライト資産 (.meta の sprites / filter / PPU、SpriteLibrary) とソート層。依存: なし |
 | sub-04 | OK | 1 | ffcf47a | Sprite2D と Sprite2DPass (Simple / flip / 整数ソート / Point・Linear)。依存: 02, 03 |
 | sub-05 | OK | 1 | bd506db | スプライトエディタ窓。依存: 03。**チェックポイント 1 (sub-01〜05) 通過**。Point 表示 / .dds ダブルクリックは sub-06 追補 8 (a)(b) |
-| sub-06 | 実装中 | 0 | | Sliced / Tiled、SortingGroup2D、SpriteMask2D + sub-05 追補 8 (a)(b)。依存: 04 |
-| sub-07 | 未着手 | 0 | | スプライト列クリップ (.spriteanim.json、コントローラの "sprite")。依存: 04 |
+| sub-06 | OK | 1 | 484e482 | Sliced / Tiled、SortingGroup2D、SpriteMask2D + sub-05 追補 8 (a)(b)。依存: 04。TypeId 82/83、snapshot v54。Deferred のマスク確認は sub-15 へ |
+| sub-07 | 実装中 | 0 | | スプライト列クリップ (.spriteanim.json、コントローラの "sprite")。依存: 04 |
 | sub-08 | 未着手 | 0 | | 2D 形状 (kPolygon2D / kEdge2D) と C++ クエリ。依存: 01 |
 | sub-09 | 未着手 | 0 | | CharacterController の plane2D (一方通行・移動床・剛体押し・報告)。依存: 01 |
 | sub-10 | 未着手 | 0 | | タイルパレット / タイルマップ資産、Tilemap、チャンク描画。依存: 04 |
@@ -71,6 +71,7 @@
 - Q-8 タイルパレット窓 / スプライトエディタ窓の Undo を独自 deque (BT 窓の流儀) にし、Play 中は塗れない、でよいか / 裁定: よい / 逆を選ぶと: Play 中の塗りを sim の override として記録する経路 (sub-12) が 1 本増える
 - Q-9 (sub-05 VERDICT) check_rules の既存 3 error (`EditorMain.cpp` スプラッシュ表示文字列の `#ifdef _DEBUG` = 規則 1、`tools/engine_dist/Editor.bat` / `Setup.bat` の LF = 規則 14-b) を M94 の中で別コミットとして直してよいか / 裁定: 直したい (replay_verify の `rules` ジョブが毎チェックポイントで赤くなり、本物の失敗と区別しにくい。`#ifdef` は定数で表示だけ分ける、.bat は CRLF へ。どちらも挙動不変) / 逆を選ぶと: M94 の間ずっと `rules` が FAIL のまま、reviewer も毎回除外して読む。**未着手 (司会がユーザーの答えを待ってから別コミットで)**
 - Q-10 (sub-05 VERDICT) Project 窓でテクスチャをダブルクリックしたときの既定を「スプライトエディタを開く」に変えてよいか (従来は OS 既定アプリ) / 裁定: 変える。非対応形式 (.dds 等) だけ OS 既定へ (sub-06 追補 8 (b)) / 逆を選ぶと: 窓は Inspector の [Open Sprite Editor] と Window メニューだけから開く (sub-06 (b) が「全部 OS 既定へ戻す」に変わる)
+- Q-11 (sub-06 VERDICT) SpriteMask2D の効き方を「描画順で先に出たマスクの range に入るスプライトだけ」(現行 v1) のままにするか、Unity 互換 (描画順に関係なく range 内の全スプライトに効き、マスクが無い VisibleInside は見えない) にするか / 裁定: v1 のまま (マスクの order を小さくすれば同じ使い方ができ、ステンシル 1 bit の制約はどちらでも同じ)。Unity 互換は spec 3. 後回しに記録 / 逆を選ぶと: Sprite2DRenderer の Collect で「マスクを先に全部描く」並べ替えと、マスク 0 個の VisibleInside を落とす分岐が増える (1 サブの追補規模、sub-17 の前に挟める)
 
 ## 申し送り (セッション跨ぎ)
 - 基点の直前に無関係の 2 コミット (`2ac3b4f` DeepModal 再学習、`25fb355` スプラッシュ) を司会が切り出した。
@@ -103,3 +104,7 @@
 - (sub-05 coder) `SpriteEditModel` の BeginGesture / EndGesture と deque Undo の形は sub-07 (アニメプレビュー) / sub-12 (タイルパレット窓) で流用できる。`SpriteEditModel::Save` は `TextureLibrary` を触らない (窓が `ReplaceFromFile` を呼ぶ)。窓以外から保存するなら同じ組を呼ぶ。
 - (sub-05 VERDICT) チェックポイント 1 通過。`demo_terrain_deferred` だけ golden と maxDiff=5 / 2 画素ずれるが基点 `25fb355` でも同じ (WARP の版差、M94 の外の別件。録り直すなら golden-diff-triage の 4 点計測の後)。以後この 1 枚は「基点の絵と maxDiff=0」で見る (spec 5. 条件 4)。次のチェックポイント (sub-10) からは replay_verify の全文ログを `cache\m94\replay_verify_cpN.log` に残す (sub-10 検証コマンドに追記済み)。
 - (sub-05 VERDICT nit) `DrawCanvas` が入力と描画を 1 関数に持っていて長い → sub-12 の窓では分ける。窓の実操作一式 (ズーム / パン / ドラッグ / Delete / Ctrl+S / 未保存モーダル / Inspector のボタン / Window メニュー / ゲート表示) と Inspector のスプライトピッカーはユーザー目視 (sub-24 checklists)。
+- (sub-06 coder) `sprite2d.hlsl` の PS は b1 (マスクのクリップ) を使用済み。t1 / s1 は空きのまま (sub-15)。`Sprite2DBatch` に stencil / alphaCutoff が増えたので、Light2D のバッチ分割は `Sprite2DRenderer::Push` の比較に足す。Pass の DSV 差し替えは UsesStencil (マスクがあるとき) だけ。
+- (sub-06 coder) `Sprite2DRenderer` の Item キーは外側 / 内側の 6 整数 + isMask。タイルマップのチャンク (sub-10) を同じ整列に混ぜるなら Item に種別を足す。そのとき Collect / EmitSprite を種別ごとの小関数に割る余地あり (planner nit)。
+- (sub-06 coder) スプライトエディタの Point 表示は `ImGuiDrawListSetPointSampling(dl, true/false)` で AddImage を挟む (Renderer/ImGui 層の関数。他の ImGui 画像にも使える)。一時シーンの 64 px/unit は orthoSize = 540 / 2 / 64 = 4.21875、画素は px = 480 + 64x, 270 - 64y (sub-23 のデモの座標確認に流用可)。
+- (sub-06 VERDICT) Deferred 経路のマスク (書き込み DSV と深度 SRV の同時束縛) は未確認 → sub-15 やること 5 の temp シーンに SpriteMask2D を 1 個入れて Forward / Deferred で同じ形を見る。Inspector の srgb 警告行と Add Component / Create の実クリックはユーザー目視 (sub-24)。
