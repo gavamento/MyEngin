@@ -40,8 +40,8 @@
 | sub-07 | OK | 1 | 52c973b | スプライト列クリップ (.spriteanim.json、コントローラの "sprite")。依存: 04。版 bump なし |
 | sub-08 | OK | 1 | 4c4c154 | 2D 形状 (kPolygon2D / kEdge2D) と C++ クエリ + Fracture plane2D コピー。依存: 01。版 bump なし。静的形状の供給口 AddStaticShapeSource (sub-11 / sub-19 が使う) |
 | sub-09 | OK | 2 | 02e4022 | CharacterController の plane2D (一方通行・移動床・剛体押し・報告)。依存: 01。snapshot v55。round 1 REWORK (must: kinematic + plane2D は velocity で積分) |
-| sub-10 | 実装中 | 0 | | タイルパレット / タイルマップ資産、Tilemap、チャンク描画。依存: 04。**チェックポイント 2 (sub-06〜10)** |
-| sub-11 | 未着手 | 0 | | タイル衝突 + セル書き換えの sim 状態 + 破壊。依存: 08, 10 |
+| sub-10 | OK | 1 | cc01485 | タイルパレット / タイルマップ資産、Tilemap、チャンク描画。依存: 04。**チェックポイント 2 (sub-06〜10) 通過**。TypeId 84、snapshot v56。NavAgent 庭ハッシュの再採取 (sub-09 起因) は追補 9a49655 |
+| sub-11 | 実装中 | 0 | | タイル衝突 + セル書き換えの sim 状態 + 破壊。依存: 08, 10 |
 | sub-12 | 未着手 | 0 | | タイルパレット窓。依存: 10, 02 |
 | sub-13 | 未着手 | 0 | | ルールタイル、アニメーションタイル、レイヤー UI。依存: 11, 12 |
 | sub-14 | 未着手 | 0 | | ABI (10 本) + C# ミラー + MyeScript。依存: 08, 11。**版は着手時の末尾 (M75h より先なら v31)** |
@@ -72,6 +72,7 @@
 - Q-9 (sub-05 VERDICT) check_rules の既存 3 error (`EditorMain.cpp` スプラッシュ表示文字列の `#ifdef _DEBUG` = 規則 1、`tools/engine_dist/Editor.bat` / `Setup.bat` の LF = 規則 14-b) を M94 の中で別コミットとして直してよいか / 裁定: 直したい (replay_verify の `rules` ジョブが毎チェックポイントで赤くなり、本物の失敗と区別しにくい。`#ifdef` は定数で表示だけ分ける、.bat は CRLF へ。どちらも挙動不変) / 逆を選ぶと: M94 の間ずっと `rules` が FAIL のまま、reviewer も毎回除外して読む。**未着手 (司会がユーザーの答えを待ってから別コミットで)**
 - Q-10 (sub-05 VERDICT) Project 窓でテクスチャをダブルクリックしたときの既定を「スプライトエディタを開く」に変えてよいか (従来は OS 既定アプリ) / 裁定: 変える。非対応形式 (.dds 等) だけ OS 既定へ (sub-06 追補 8 (b)) / 逆を選ぶと: 窓は Inspector の [Open Sprite Editor] と Window メニューだけから開く (sub-06 (b) が「全部 OS 既定へ戻す」に変わる)
 - Q-11 (sub-06 VERDICT) SpriteMask2D の効き方を「描画順で先に出たマスクの range に入るスプライトだけ」(現行 v1) のままにするか、Unity 互換 (描画順に関係なく range 内の全スプライトに効き、マスクが無い VisibleInside は見えない) にするか / 裁定: v1 のまま (マスクの order を小さくすれば同じ使い方ができ、ステンシル 1 bit の制約はどちらでも同じ)。Unity 互換は spec 3. 後回しに記録 / 逆を選ぶと: Sprite2DRenderer の Collect で「マスクを先に全部描く」並べ替えと、マスク 0 個の VisibleInside を落とす分岐が増える (1 サブの追補規模、sub-17 の前に挟める)
+- Q-12 (sub-10 VERDICT) タイルの絵を「パレットのスプライトの矩形をセル全面 (cellSize) へ伸ばす」にするか、Unity の原寸 + pivot 配置にするか / 裁定: 伸ばす (標準の 16 px = 1 セルでは同じ結果、サイズ違いの絵がセルからはみ出さない、可逆) / 逆を選ぶと: `BakeTileChunk` のクアッド寸法を `LocalRect` (原寸 + pivot) 基準に変える (sub-13 の rule / anim の前に決めるのが安い)
 
 ## 申し送り (セッション跨ぎ)
 - 基点の直前に無関係の 2 コミット (`2ac3b4f` DeepModal 再学習、`25fb355` スプラッシュ) を司会が切り出した。
@@ -121,3 +122,11 @@
 - (sub-09 coder → sub-11) タイル箱は `StaticShape` 経由で bodies に入るので CC の一方通行 / 接地プローブ / `groundEntity` (owner = Tilemap エンティティ) にそのまま効くはずだが、タイルでは未確認 → sub-11 の selftest で CC を載せて確認する。
 - (sub-09 VERDICT nit → sub-24) spec 7. R9 (e): 回転する kinematic 床に乗る CC は運ばれない (groundVelocity は並進のみ)、親付き kinematic plane2D / 親付き plane2D CC の z 不変は未検証、`wallContact = 2` と複数剛体の押しは selftest に無い (sub-23 のデモで通る見込み)。`SolveCharacters` の報告部を小関数に割る余地。`cache\m94\s09\` の hash-diff ダンプは git 管理外のまま。
 - (sub-09 coder) 焼いたハッシュ: CC2D C04B7FFA3E31E5D0 (Debug == Release)。既存の plane2D 639107476EA401A3 / Shapes2D 2ECF7CFD5CC45314 は不変。
+- (sub-10 VERDICT) **チェックポイント 2 (sub-06〜10) 通過**: 全体 selftest 両構成 exit 0、replay_verify 20 ジョブ全 PASS (全文 `cache\m94\replay_verify_cp2.log`、rules だけ既存 3 error で赤)、shot_verify 30 枚 PASS、golden `--tol 0` 29 枚 0 + `demo_terrain_deferred` は基点の絵 (`cache\m94\baseline_terrain.png`) と 0。割れたのは NavAgentSelfTest の焼いた庭ハッシュ 1 件 (sub-09 の CC 7 欄 append が原因、挙動は不変) → 追補 `9a49655` で再採取。
+- (sub-10 VERDICT should 2 → sub-21 ほか append するサブ) **spec 4.4 の規則: hash 対象フィールドを既存型に append するサブは、焼いた WorldHash 定数 (`grep -rn "kExpected" src --include=*SelfTest.cpp`) を同じサブで再採取する。** sub-21 (Perception `forwardAxis`) の依頼文に添える。
+- (sub-10 coder) `cache\m94\base25fb355` (基点 `25fb355` の git archive + Release Runtime、約 0.5 GB、git 管理外) と `cache\m94\baseline_terrain.png` を残してある。次のチェックポイント (sub-15) の `demo_terrain_deferred` 比較に流用できる。
+- (sub-10 coder → sub-11) Tilemap の衝突は `TilemapSystem::GetChunkCells / EnumerateChunks` にアセットの値が出る。override を足すときは GetCell / GetChunkCells で重ね、EnumerateChunks に override だけのチャンクも含め、書き換え / 復元で `MarkAllDirty` を呼ぶ (描画側は `DirtyEpoch` の変化で全チャンクを焼き直す)。showCollision の描画は `DrawTilemapGizmos` に足す (緑)。静的形状は `PhysicsSystem::AddStaticShapeSource` (sub-08 の供給口)。`TilemapLibrary` は Register のたびに Epoch が増える。
+- (sub-10 coder → sub-12) 窓から塗るときは `TilemapLayer::SetCell` (空になったチャンクは消える) と `TilemapLibrary::ToJson / Register`。Register で Epoch が増え、描画のキャッシュは自動で焼き直る。SceneView の 2D モードのセル格子は選択中の Tilemap だけ、1 方向 256 本を超える密度では引かない。sub-12 やること 7 (planner 追記): `SpriteLibrary::Epoch()` を足し、チャンクキャッシュのキーに (Tilemap / TilePalette / SpriteLibrary の epoch) を含める (スプライトエディタ Apply 後に古い UV が残らないように)。
+- (sub-10 coder → sub-13) パレットの rule / anim は読み書きのみ。評価は `BakeTileChunk` の「def->sprite を引く」1 箇所に差し込む (隣接は実効セル、アニメは tick から。アニメを含むチャンクの焼き直しは dirtyEpoch か専用キーで)。コマ選びは sub-07 の `SpriteAnimFrameAt`。
+- (sub-10 coder → sub-14) C++ 側のセル座標 API は `TilemapSystem` の静的関数。`CellToWorld` はセル中心 (左下角が要るなら足す)。
+- (sub-10 VERDICT) 描画の確定 (spec 4.1.7): 絵はセル全面へ伸ばす (Q-12)、flip → 回転 (反時計回り 90°) の UV 隅入れ替え、行 0 が下、チャンク (cy, cx) 昇順、正射影だけチャンク切り、タイブレーク entity.index → レイヤー → チャンク。性能: 15000 セル全面で GPU 約 9 ms (WARP、空 2.5 ms)、CPU 増分 約 1.1 ms (毎フレームの原点加算コピー、nit)。Sprite2D 2000 枚との合算は sub-23。Scene View のギズモ / Create / ピッカー / D&D の実画面は sub-12 のエディタスクショで通す。
