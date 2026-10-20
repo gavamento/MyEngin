@@ -4461,6 +4461,8 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         SpriteLibrary* sprites = spritelib::Library();
         if (sprites == nullptr || sprites->Get(*id) == nullptr) {
             ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "%s", Tr(StrId::Insp_Sprite2DUnresolved));
+        } else if (sprites->Get(*id)->texSrgbOn) {
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "%s", Tr(StrId::Insp_Sprite2DSrgbOn));
         }
     }
     ImGui::PopID();

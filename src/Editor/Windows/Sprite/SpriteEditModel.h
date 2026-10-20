@@ -61,6 +61,9 @@ bool RectsOverlap(const IRect& a, const IRect& b);
 // 矩形をテクスチャ内に収める (最小 1x1)。texW / texH が 0 以下なら収めない
 IRect ClampRectToTexture(IRect r, int texW, int texH);
 
+// スプライトエディタが画素を読める拡張子か (.png .jpg .jpeg .bmp .tga)。.dds などは false = OS 既定アプリへ回す
+bool CanOpenInSpriteEditor(const std::wstring& path);
+
 } // namespace spriteedit
 
 // スプライトエディタが編集中のスライス一覧。.meta の tex.sprites だけを編集し、

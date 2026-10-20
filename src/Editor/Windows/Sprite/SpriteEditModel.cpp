@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cwctype>
 #include <filesystem>
 
 #include "Engine/Engine/Asset/AssetDatabase.h"
@@ -233,6 +234,15 @@ std::vector<importmeta::SpriteSlice> ApplySlices(const std::vector<importmeta::S
         result.push_back(s);
     }
     return result;
+}
+
+bool CanOpenInSpriteEditor(const std::wstring& path)
+{
+    std::wstring ext = std::filesystem::path(path).extension().wstring();
+    for (wchar_t& c : ext) {
+        c = static_cast<wchar_t>(std::towlower(c));
+    }
+    return ext == L".png" || ext == L".jpg" || ext == L".jpeg" || ext == L".bmp" || ext == L".tga";
 }
 
 } // namespace spriteedit

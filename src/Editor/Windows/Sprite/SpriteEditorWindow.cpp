@@ -21,6 +21,7 @@
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/ImGui/ImGuiRenderer.h" // ImGuiDrawListSetPointSampling
 #include "Engine/Renderer/ImGui/ImGuiTheme.h" // themeColor
 
 namespace mye {
@@ -637,7 +638,10 @@ void SpriteEditorWindow::DrawCanvas(EngineContext& ctx)
     const Texture* tex = ctx.resources->textures.Get(texId);
     // 読み込み中は 1x1 のプレースホルダなので、実寸が 1x1 のときだけ描く
     if (tex != nullptr && tex->srv && (tex->width > 1 || (model_.TexW() == 1 && model_.TexH() == 1))) {
+        // 拡大してもドットがにじまないよう Point で描く (縮小は Linear のままでよいが、キャンバスの主用途は拡大)
+        ImGuiDrawListSetPointSampling(dl, true);
         dl->AddImage(reinterpret_cast<ImTextureID>(tex->srv.Get()), imgMin, imgMax);
+        ImGuiDrawListSetPointSampling(dl, false);
     }
     dl->AddRect(imgMin, imgMax, Col(200, 200, 200, 120));
 

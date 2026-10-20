@@ -14,6 +14,7 @@
 #include "Editor/SourceControl/ScmHint.h"            // 作成直後のヒント (M66i)
 #include "Editor/SourceControl/SourceControlState.h" // バッジの引き先 (M66i)
 #include "Editor/Undo/UndoStack.h"
+#include "Editor/Windows/Sprite/SpriteEditModel.h" // CanOpenInSpriteEditor
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Animation/Animation.h"
@@ -773,8 +774,8 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                         MYE_LOG_WARN("could not load mixer: %s", WideToUtf8(path).c_str());
                     }
                 }
-            } else if (isTexture) {
-                // テクスチャはスプライトエディタ窓で開く (M94e)
+            } else if (isTexture && spriteedit::CanOpenInSpriteEditor(path)) {
+                // 画素を読める形式はスプライトエディタ窓で開く (M94e)。.dds などは下の else で従来の OS 既定アプリへ
                 pendingOpenSpriteEditor_ = path;
             } else if (isBehaviorTree) {
                 // .bt.json は BT 窓で開く (登録と未保存の確認は窓側。EditorApp が窓へ渡す)

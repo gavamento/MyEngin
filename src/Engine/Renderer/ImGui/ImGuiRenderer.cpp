@@ -144,4 +144,10 @@ void ImGuiRenderer::EndFrame()
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }
 
+void ImGuiDrawListSetPointSampling(ImDrawList* drawList, bool point)
+{
+    const ImGuiPlatformIO& io = ImGui::GetPlatformIO();
+    drawList->AddCallback(point ? io.DrawCallback_SetSamplerNearest : io.DrawCallback_SetSamplerLinear, nullptr);
+}
+
 } // namespace mye

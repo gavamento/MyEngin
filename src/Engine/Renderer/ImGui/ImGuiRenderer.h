@@ -1,6 +1,8 @@
 #pragma once
 #include <string>
 
+struct ImDrawList; // imgui.h (グローバル名前空間)
+
 namespace mye {
 
 class GraphicsDevice;
@@ -41,5 +43,10 @@ private:
     // io.IniFilename は文字列をコピーせずポインタを保持するだけなので、寿命をここで保証する
     std::string iniPathUtf8_;
 };
+
+// 描画リストに「以降の AddImage を Point (最近傍) / Linear で描く」命令を積む。ドットの拡大表示用。
+// バックエンドのサンプラ切替を imgui.h の API だけで頼むので、呼び手 (Editor 層) は D3D を触らない。
+// Point にしたら描き終えたところで Linear に戻すこと (戻さないと同じ ImDrawList の後続の画像が Point のまま)
+void ImGuiDrawListSetPointSampling(ImDrawList* drawList, bool point);
 
 } // namespace mye

@@ -2064,7 +2064,7 @@ void RenderSystem::DrawParticlesAndDebug(World& world, GraphicsDevice& device, S
             if (!sprite2dPass_.IsReady()) {
                 sprite2dPass_.Init(device, shaders);
             }
-            sprite2dPass_.Render(device, shaders, resources.textures, sprites, view.view, view.proj);
+            sprite2dPass_.Render(device, shaders, resources.textures, sprites, view.view, view.proj, view.dsv);
         }
     }
     // VFX (M29c): Sprite/Trail/TextMesh をメッシュ (不透明+透明) の後・パーティクルの前に

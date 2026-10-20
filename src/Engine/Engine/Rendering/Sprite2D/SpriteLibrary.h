@@ -24,6 +24,7 @@ struct SpriteDef {
     int32_t border[4] = {};
     int32_t ppu = 100;
     int32_t filter = 0; // 0 auto (linear) / 1 linear / 2 point
+    bool texSrgbOn = false; // テクスチャの .meta が srgb = on (2D の Passthrough では暗く出る。Inspector が警告する)
     char name[64] = {};
 
     bool IsFullTexture() const { return rect[2] == 0 && rect[3] == 0; }

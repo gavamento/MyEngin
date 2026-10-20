@@ -2234,6 +2234,8 @@ MYE_STR(Insp_NavAgentTypeUndefined, "(undefined id %d)", "(未定義の id %d)")
 MYE_STR(Insp_SortingLayerUndefined, "(undefined id)", "(未定義の id)") // M94
 MYE_STR(Insp_Sprite2DUnresolved, "Sprite not found: drawn as a magenta square.",
                                "スプライトが見つかりません。マゼンタの四角で描画されます") // M94
+MYE_STR(Insp_Sprite2DSrgbOn, "The texture's .meta has sRGB = on: 2D sprites look darker. Set sRGB to auto/off.",
+                               "テクスチャの .meta が sRGB = on です。2D スプライトが暗く出ます。sRGB を auto か off にしてください") // M94
 MYE_STR(Insp_NavAgentTypeMissing, "Agent type id %d is not defined in Project Settings.",
                                "エージェント種別 id %d は Project Settings にありません")
 MYE_STR(Insp_NavAgentTypeDiffers, "The agent size differs from the type '%s' in Project Settings. Bake copies the type's size.",

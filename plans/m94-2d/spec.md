@@ -77,7 +77,7 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
   - World Space Canvas (M75 の判断を維持)、Rect Tool (M75i)
   - ネット対戦 (M81 / M93) との統合テスト。2D は sim なので理屈上は通るが、M94 では replay_verify までを範囲とする
 - 後回し:
-  - Light2D の Volumetric・Blend Style 複数 (v1 は乗算 1 種)、Sprite2D のソフトマスク (v1 はステンシル = 二値)
+  - Light2D の Volumetric・Blend Style 複数 (v1 は乗算 1 種)、Sprite2D のソフトマスク (v1 はステンシル = 二値)、SpriteMask2D の Unity 互換 (描画順に関係なく range 内の全スプライトに効く / マスク無しの VisibleInside は不可視) とステンシル bit の分割 (range の違う複数マスクの重なり)
   - タイルの Collider Type = Sprite、Isometric / Hex グリッド
   - GridAgent2D の群衆回避
 
@@ -109,7 +109,7 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
 - **色の契約 (sub-04 round 1 で確定)**: 2D テクスチャは `.meta` の `srgb` = auto (既存の非同期経路どおり UNORM でロード = 画素値をそのまま scene RT へ書く) を前提にし、2D のカメラは `CameraPostFxComponent.tonemapMode = 0` (Passthrough。`postfx_tonemap.hlsl:82` は HDR 値を加工せず返す) を使う。この組み合わせで**元画素 (r,g,b) が画面で ±1 で出る** (パレット忠実)。ACES (既定 1) では白が 231 になる (sub-04 のスクショ)。Light2D (sub-15) の乗算はこのガンマ符号化された値に掛かる (Unity の Gamma 色空間 + 2D ライトと同じ割り切り。engine_spec に書く)。`srgb` = on のテクスチャを Sprite2D に使うと Passthrough で暗く出る (Inspector の警告対象、sub-06)。`--2d-demo` のカメラは tonemapMode 0。
 - Sliced: border で 9 分割、角は原寸、辺と中央は伸縮。border が全部 0 なら Simple と同じ (Unity の記載なしの箇所は「伸縮」とする)。Tiled: 中央と辺を原寸で繰り返し、端は切る (Unity の Tile Mode = Continuous 相当。Adaptive は作らない)。
 - `SortingGroup2DComponent` (NoHash、見込み 82): `sortingLayerId` / `orderInLayer`。子孫の Sprite2D は自分のキーの代わりに「グループのキー + 子孫内の自キー」で並ぶ (Unity の Sorting Group、入れ子は最も近い祖先が勝つ)。
-- `SpriteMask2DComponent` (NoHash、見込み 83): `sprite` / `alphaCutoff` (0.5) / `sortingLayerId` / `orderInLayer`、`rangeBack` / `rangeFront` (orderInLayer 範囲、既定は全域)。実装は**ステンシル** (D24S8 の 8 bit、マスク = ref 1 を書く、VisibleInside = Equal 1、VisibleOutside = Equal 0)。ステンシル初使用 = パス開始時にステンシルを 0 でクリアする (深度は触らない)。
+- `SpriteMask2DComponent` (NoHash、見込み 83): `sprite` / `alphaCutoff` (0.5) / `sortingLayerId` / `orderInLayer`、`rangeBack` / `rangeFront` (orderInLayer 範囲、既定は全域)。実装は**ステンシル** (D24S8 の 8 bit、マスク = ref 1 を書く、VisibleInside = Equal 1、VisibleOutside = Equal 0)。ステンシル初使用 = パス開始時にステンシルを 0 でクリアする (深度は触らない。sub-06 で確定: クリアと DSV 差し替えは「描画リストにマスクがあるとき」だけ、Pass は元の RT / DSV を控えて戻す)。**効き方 (sub-06 で確定、v1)**: マスクは描画順 (層 → order) で並び、**自分より後に描かれるスプライトのうち、`maskInteraction` を持ち、かつそのスプライトの orderInLayer が「ここまでに出たどれかのマスクの range」に入るもの**にだけ効く。該当マスクが無い `maskInteraction` 付きスプライトはテスト無しで描く (Unity は「マスク無しの VisibleInside は見えない」— 違いは engine_spec に書く。マスクしたいスプライトよりマスクの order を小さくするのが使い方)。マスクはグループに入れず自分の層 / order で並ぶ。range の違う複数マスクが同じ画素に重なると区別できない (ref 1 の 1 bit。後回し: bit 分割)。Tiled の原点は左・下 (端のタイルは右・上が切れる)。
 - Inspector: `sprite` の AssetRef ピッカー (`DrawAssetRef` のフィールド名 "sprite" 分岐 → SpriteLibrary の Enumerate)、テクスチャの D&D は「全面スプライト」として受理。EditorComponentCatalog に 2D カテゴリを足す。Scene View のギズモ: 選択中の Sprite2D の矩形 (白) と pivot (黄の十字)。
 
 #### 4.1.4 スプライト列アニメ (sub-07)

@@ -29,10 +29,21 @@ VSOut VSMain(VSIn i)
     return o;
 }
 
+// マスク描画 (M94f): x = 1 のとき alpha < y の画素を捨てる。0 は通常のスプライト (クリップしない)
+cbuffer Sprite2DPsCB : register(b1)
+{
+    float2 gMaskClip;
+    float2 gPad;
+};
+
 Texture2D    gTex  : register(t0);
 SamplerState gSamp : register(s0); // バッチごとに LINEAR / POINT が入れ替わる
 
 float4 PSMain(VSOut i) : SV_TARGET
 {
-    return i.color * gTex.Sample(gSamp, i.uv);
+    const float4 c = i.color * gTex.Sample(gSamp, i.uv);
+    if (gMaskClip.x > 0.5) {
+        clip(c.a - gMaskClip.y);
+    }
+    return c;
 }

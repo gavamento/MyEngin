@@ -427,6 +427,7 @@ constexpr uint32_t kCharCtrl = 0x30E0B0FFu;
 constexpr uint32_t kVfx = 0xC080F0FFu;        // スプライト / 3D テキスト
 constexpr uint32_t kSprite2DRect = 0xFFFFFFFFu;  // 選択中 Sprite2D の矩形 (白)
 constexpr uint32_t kSprite2DPivot = 0xFFE020FFu; // 同 pivot の十字 (黄)
+constexpr uint32_t kSpriteMask2D = 0xB050F0FFu;  // SpriteMask2D の矩形 (紫。マスクは描かれないので全部に引く)
 constexpr float kSprite2DPivotCrossPx = 8.0f;   // pivot の十字の半長 (画面の画素。ワールド寸法に直して引く)
 constexpr uint32_t kAudio = 0x40E0C0FFu;      // 音源マーカー / リスナー
 constexpr uint32_t kAudioMin = 0x40FFA0FFu;   // minDistance (ここまでは減衰しない)
@@ -755,10 +756,50 @@ void SceneViewWindow::DrawSpriteGizmos(World& world)
         });
 }
 
-// 選択中の Sprite2D の矩形 (白) と pivot (黄の十字、M94)。2D モードでなくても描く。
-// 矩形は描画と同じ寸法 (Sprite2DRenderer::LocalRect) に flip を掛けて、ワールド行列で運ぶ
+// 選択中の Sprite2D の矩形 (白) と pivot (黄の十字)、全 SpriteMask2D の矩形 (紫、M94)。2D モードでなくても描く。
+// 矩形は描画と同じ寸法 (Sprite2DRenderer::LocalRect。Sliced / Tiled は size) に flip を掛けて、ワールド行列で運ぶ
 void SceneViewWindow::DrawSprite2DGizmos(EngineContext& ctx, World& world, const Selection& selection)
 {
+    // 寸法が決まらない間 (未解決 / テクスチャ未ロード) は描画側のマゼンタと同じ 1 単位角
+    auto localRect = [&ctx](AssetID sprite, const Sprite2DComponent* sizedBy, float rect[4]) {
+        rect[0] = -0.5f;
+        rect[1] = -0.5f;
+        rect[2] = 0.5f;
+        rect[3] = 0.5f;
+        SpriteLibrary* lib = spritelib::Library();
+        const SpriteDef* def = (lib != nullptr) ? lib->Get(sprite) : nullptr;
+        const Texture* tex = (def != nullptr) ? ctx.resources->textures.Get(def->texture) : nullptr;
+        if (tex == nullptr) {
+            return;
+        }
+        if (sizedBy != nullptr && (sizedBy->drawMode == 1 || sizedBy->drawMode == 2)) {
+            rect[0] = -def->pivot[0] * sizedBy->size.x;
+            rect[1] = -def->pivot[1] * sizedBy->size.y;
+            rect[2] = rect[0] + sizedBy->size.x;
+            rect[3] = rect[1] + sizedBy->size.y;
+        } else {
+            Sprite2DRenderer::LocalRect(*def, tex->width, tex->height, rect);
+        }
+    };
+
+    ForEachWithWorldMatrix<SpriteMask2DComponent>(
+        world, [&](const SpriteMask2DComponent& mk, const XMFLOAT4X4& m, EntityID) {
+            float rect[4];
+            localRect(mk.sprite, nullptr, rect);
+            auto toWorld = [&m](float x, float y) {
+                return XMFLOAT3{ x * m._11 + y * m._21 + m._41, x * m._12 + y * m._22 + m._42,
+                                 x * m._13 + y * m._23 + m._43 };
+            };
+            const XMFLOAT3 c0 = toWorld(rect[0], rect[1]);
+            const XMFLOAT3 c1 = toWorld(rect[2], rect[1]);
+            const XMFLOAT3 c2 = toWorld(rect[2], rect[3]);
+            const XMFLOAT3 c3 = toWorld(rect[0], rect[3]);
+            lines_.AddLine(c0, c1, gizmo::kSpriteMask2D);
+            lines_.AddLine(c1, c2, gizmo::kSpriteMask2D);
+            lines_.AddLine(c2, c3, gizmo::kSpriteMask2D);
+            lines_.AddLine(c3, c0, gizmo::kSpriteMask2D);
+        });
+
     const GameObject selected = ctx.scene->FindByFileId(selection.primary);
     if (!selected) {
         return;
@@ -768,15 +809,8 @@ void SceneViewWindow::DrawSprite2DGizmos(EngineContext& ctx, World& world, const
     if (sp == nullptr || wmc == nullptr) {
         return;
     }
-    // 寸法が決まらない間 (未解決 / テクスチャ未ロード) は描画側のマゼンタと同じ 1 単位角
-    float rect[4] = { -0.5f, -0.5f, 0.5f, 0.5f };
-    if (SpriteLibrary* lib = spritelib::Library()) {
-        if (const SpriteDef* def = lib->Get(sp->sprite)) {
-            if (const Texture* tex = ctx.resources->textures.Get(def->texture)) {
-                Sprite2DRenderer::LocalRect(*def, tex->width, tex->height, rect);
-            }
-        }
-    }
+    float rect[4];
+    localRect(sp->sprite, sp, rect);
     const float sx = sp->flipX ? -1.0f : 1.0f;
     const float sy = sp->flipY ? -1.0f : 1.0f;
     const XMFLOAT4X4& m = wmc->value;

@@ -61,6 +61,7 @@ int SpriteLibrary::Register(const std::wstring& texPath)
     full.def.texture = textureId;
     full.def.ppu = ppu;
     full.def.filter = tex.filter;
+    full.def.texSrgbOn = (tex.srgb == 1);
     full.displayName = stem;
     entries_[textureId.value] = full;
     ids.push_back(textureId.value);
@@ -81,6 +82,7 @@ int SpriteLibrary::Register(const std::wstring& texPath)
         e.def.border[3] = sp.borderT;
         e.def.ppu = ppu;
         e.def.filter = tex.filter;
+        e.def.texSrgbOn = (tex.srgb == 1);
         std::snprintf(e.def.name, sizeof(e.def.name), "%s", sp.name);
         e.displayName = stem + "#" + sp.name;
         const AssetID id = SliceId(texPath, sp.id);

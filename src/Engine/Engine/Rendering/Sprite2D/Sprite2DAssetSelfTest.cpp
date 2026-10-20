@@ -5,6 +5,7 @@
 //====================================================================================
 #include "Engine/Engine/Rendering/Sprite2D/Sprite2DAssetSelfTest.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -183,6 +184,21 @@ bool RunSprite2DAssetSelfTest()
         check(run != nullptr && std::strcmp(run->name, "run") == 0 && run->rect[0] == 32 && run->ppu == 32
                   && run->filter == 2 && run->texture.value == m.guid,
               "Get(slice): def carries rect / ppu / filter / texture");
+        check(!run->texSrgbOn, "Get(slice): srgb auto does not raise the Inspector's sRGB warning flag");
+
+        // srgb = on の .meta は texSrgbOn が立つ (全面スプライトにも)。2D は UNORM 前提なので Inspector が警告する
+        {
+            AssetMeta srgb;
+            AssetDatabase::ReadMeta(tex.wstring() + L".meta", srgb);
+            srgb.tex.srgb = 1;
+            AssetDatabase::WriteMeta(tex.wstring() + L".meta", srgb);
+            SpriteLibrary srgbLib;
+            srgbLib.Register(tex.wstring());
+            const SpriteDef* srgbRun = srgbLib.Get(runId);
+            const SpriteDef* srgbFull = srgbLib.Get(AssetID{ m.guid });
+            check(srgbRun != nullptr && srgbRun->texSrgbOn && srgbFull != nullptr && srgbFull->texSrgbOn,
+                  "srgb = on in the .meta sets texSrgbOn on slices and the full-texture sprite");
+        }
 
         // 改名 + 新規追加。id 2 の AssetID は変わらず、新規は最大 + 1 = 3
         AssetMeta edit;
@@ -319,6 +335,114 @@ bool RunSprite2DAssetSelfTest()
         slice.pivot[1] = 1.0f;
         Sprite2DRenderer::LocalRect(slice, 1024, 1024, r);
         check(r[0] == 0.0f && r[1] == -1.0f && r[2] == 2.0f && r[3] == 0.0f, "LocalRect: slice 32x16 @ ppu 16, pivot top-left");
+    }
+
+    // ---- (f) SortingGroup2D / SpriteMask2D の登録、Sliced / Tiled の分割 (M94f) ----
+    {
+        check(SortingGroup2DComponent::sTypeId == 82 && SpriteMask2DComponent::sTypeId == 83,
+              "SortingGroup2D / SpriteMask2D are TypeId 82 / 83");
+        const ComponentDesc& g = ComponentRegistry::Get().Desc(SortingGroup2DComponent::sTypeId);
+        const ComponentDesc& mk = ComponentRegistry::Get().Desc(SpriteMask2DComponent::sTypeId);
+        check((g.flags & kComponentNoHash) != 0 && (mk.flags & kComponentNoHash) != 0,
+              "group / mask are kComponentNoHash (render-only)");
+        const SpriteMask2DComponent defMask;
+        check(defMask.alphaCutoff == 0.5f && defMask.rangeBack < -1000000 && defMask.rangeFront > 1000000,
+              "mask defaults: cutoff 0.5, range covers everything");
+
+        using Q = Sprite2DRenderer::SliceQuad;
+        Sprite2DRenderer::SliceInput in;
+        in.rect[2] = 16.0f; // 16x16 の絵 (テクスチャも 16x16)
+        in.rect[3] = 16.0f;
+        in.texW = 16.0f;
+        in.texH = 16.0f;
+        in.ppu = 16.0f;
+        in.sizeX = 3.0f;
+        in.sizeY = 1.0f;
+        std::vector<Q> quads;
+
+        // border 4 px の Sliced 3x1: 角は 4/16 = 0.25 単位の原寸、辺と中央が伸びる
+        for (int i = 0; i < 4; ++i) {
+            in.border[i] = 4.0f;
+        }
+        in.tiled = false;
+        check(!Sprite2DRenderer::BuildSliceQuads(in, quads) && quads.size() == 9, "Sliced: 9 quads");
+        float cornerW = 0.0f;
+        float centerW = 0.0f;
+        float centerH = 0.0f;
+        for (const Q& q : quads) {
+            if (q.x0 == -1.5f && q.y0 == -0.5f) {
+                cornerW = q.x1 - q.x0; // 左下の角
+            }
+            if (q.x0 == -1.25f && q.y0 == -0.25f) {
+                centerW = q.x1 - q.x0; // 中央
+                centerH = q.y1 - q.y0;
+            }
+        }
+        check(cornerW == 0.25f && centerW == 2.5f && centerH == 0.5f,
+              "Sliced: corners keep 4px / ppu = 0.25, the center stretches to 2.5 x 0.5");
+
+        // border 全 0 の Sliced は 1 枚 (size いっぱい、UV は全面)
+        for (int i = 0; i < 4; ++i) {
+            in.border[i] = 0.0f;
+        }
+        check(!Sprite2DRenderer::BuildSliceQuads(in, quads) && quads.size() == 1 && quads[0].x0 == -1.5f
+                  && quads[0].x1 == 1.5f && quads[0].u0 == 0.0f && quads[0].u1 == 1.0f,
+              "Sliced with border 0 = one quad over the full size");
+
+        // size が角の合計より小さいときは角を縮める
+        for (int i = 0; i < 4; ++i) {
+            in.border[i] = 8.0f; // 角 0.5 + 0.5 = 1.0
+        }
+        in.sizeX = 0.5f;
+        in.sizeY = 0.5f;
+        Sprite2DRenderer::BuildSliceQuads(in, quads);
+        float minX = 1.0e9f;
+        float maxX = -1.0e9f;
+        for (const Q& q : quads) {
+            minX = (std::min)(minX, q.x0);
+            maxX = (std::max)(maxX, q.x1);
+        }
+        check(minX == -0.25f && maxX == 0.25f, "Sliced: corners shrink to fit a size smaller than the borders");
+
+        // Tiled 3x2 (border 0): 原寸 1x1 の絵が 3x2 枚、UV は全面
+        for (int i = 0; i < 4; ++i) {
+            in.border[i] = 0.0f;
+        }
+        in.sizeX = 3.0f;
+        in.sizeY = 2.0f;
+        in.tiled = true;
+        check(!Sprite2DRenderer::BuildSliceQuads(in, quads) && quads.size() == 6, "Tiled 3x2: 6 quads");
+        bool uvFull = true;
+        for (const Q& q : quads) {
+            uvFull = uvFull && q.u0 == 0.0f && q.u1 == 1.0f && q.v0 == 0.0f && q.v1 == 1.0f
+                     && q.x1 - q.x0 == 1.0f && q.y1 - q.y0 == 1.0f;
+        }
+        check(uvFull, "Tiled 3x2: every tile is the full image at original size");
+
+        // 端のタイルは UV を切る (右端 0.5 幅 -> u1 = 0.5)。タイルは左から並ぶ
+        in.sizeX = 2.5f;
+        in.sizeY = 1.0f;
+        Sprite2DRenderer::BuildSliceQuads(in, quads);
+        const Q* last = nullptr;
+        for (const Q& q : quads) {
+            if (last == nullptr || q.x0 > last->x0) {
+                last = &q;
+            }
+        }
+        check(quads.size() == 3 && last != nullptr && last->x1 - last->x0 == 0.5f && last->u0 == 0.0f
+                  && last->u1 == 0.5f,
+              "Tiled: the last tile is clipped in UV (0.5 wide -> u 0..0.5)");
+
+        // 上限 (4096 頂点 = 682 枚) で切る
+        in.sizeX = 1000.0f;
+        in.sizeY = 1000.0f;
+        const bool capped = Sprite2DRenderer::BuildSliceQuads(in, quads);
+        check(capped && quads.size() * 6 <= Sprite2DRenderer::kMaxSpriteVertices && quads.size() > 600,
+              "Tiled: capped at 4096 vertices");
+
+        // 不正な size は何も出さない
+        in.sizeX = 0.0f;
+        check(!Sprite2DRenderer::BuildSliceQuads(in, quads) && quads.empty(), "size <= 0 emits nothing");
     }
 
     fs::remove_all(root, ec);

@@ -335,6 +335,15 @@ bool RunSpriteEditorSelfTest()
         AssetDatabase::UninstallKeyResolver();
     }
 
+    // ---- (h) Project 窓のダブルクリック: 画素を読める形式だけスプライトエディタへ、.dds などは OS 既定アプリへ ----
+    check(spriteedit::CanOpenInSpriteEditor(L"a/b.png") && spriteedit::CanOpenInSpriteEditor(L"C:\\x\\Y.JPG")
+              && spriteedit::CanOpenInSpriteEditor(L"c.tga") && spriteedit::CanOpenInSpriteEditor(L"d.bmp")
+              && spriteedit::CanOpenInSpriteEditor(L"e.jpeg"),
+          "double click: png / jpg / jpeg / bmp / tga go to the sprite editor (case-insensitive)");
+    check(!spriteedit::CanOpenInSpriteEditor(L"a.dds") && !spriteedit::CanOpenInSpriteEditor(L"a.hdr")
+              && !spriteedit::CanOpenInSpriteEditor(L"noext"),
+          "double click: .dds and others fall back to the OS default app");
+
     fs::remove_all(root, ec);
     MYE_LOG_INFO("==== SpriteEditor self test %s (%d failure(s)) ====", failCount == 0 ? "PASS" : "FAIL", failCount);
     return failCount == 0;

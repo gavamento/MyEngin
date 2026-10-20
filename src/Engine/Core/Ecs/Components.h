@@ -1,5 +1,6 @@
 #pragma once
 #include <DirectXMath.h>
+#include <limits>
 
 #include "Engine/Core/Ecs/ComponentRegistry.h"
 #include "Engine/Core/Ecs/EntityID.h"
@@ -2334,6 +2335,29 @@ struct Sprite2DComponent {
     bool flipX = false;                            // pivot まわりに左右反転
     bool flipY = false;
     bool lit = true;                               // 2D ライトの対象にする
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- 2D ソートグループ (M94、TypeId=82) ----
+// 子孫の Sprite2D を 1 つの塊として、この層 / 順序の位置へ並べる (最も近い祖先が勝つ)。塊の内側は各スプライト自身のキー。
+// 描画専用なので **kComponentNoHash**
+struct SortingGroup2DComponent {
+    int32_t sortingLayerId = 0;
+    int32_t orderInLayer = 0;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- 2D スプライトマスク (M94、TypeId=83) ----
+// alpha >= alphaCutoff の画素にステンシル 1 を書く (色は書かない)。マスクは Sprite2D と一緒に整列し、自分の位置より後に描かれる
+// maskInteraction != 0 のスプライトだけが効く。range は orderInLayer の範囲で、範囲外のスプライトはマスクされない。
+// 描画専用なので **kComponentNoHash**
+struct SpriteMask2DComponent {
+    AssetID sprite = {};
+    float alphaCutoff = 0.5f;
+    int32_t sortingLayerId = 0;
+    int32_t orderInLayer = 0;
+    int32_t rangeBack = (std::numeric_limits<int32_t>::min)();  // この orderInLayer 以上のスプライトが対象
+    int32_t rangeFront = (std::numeric_limits<int32_t>::max)(); // この orderInLayer 以下のスプライトが対象
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

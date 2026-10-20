@@ -1717,6 +1717,22 @@ void RegisterBuiltinComponents()
         MYE_JP("法線マップ", MYE_FIELD(Sprite2DComponent, normalMap, AssetRef)),
         MYE_JP("ライトの対象", MYE_FIELD(Sprite2DComponent, lit, Bool)),
     }, kComponentNoHash);
+
+    // M94: 2D ソートグループ / スプライトマスク (TypeId=82 / 83、末尾 append)。どちらも描画専用の **kComponentNoHash**
+    RegisterComponent<SortingGroup2DComponent>("SortingGroup2D", {
+        MYE_JP("ソート層", MYE_FIELD(SortingGroup2DComponent, sortingLayerId, Int32)),
+        MYE_JP("層内の順序", MYE_FIELD(SortingGroup2DComponent, orderInLayer, Int32)),
+    }, kComponentNoHash);
+    RegisterComponent<SpriteMask2DComponent>("SpriteMask2D", {
+        MYE_JP("スプライト", MYE_FIELD(SpriteMask2DComponent, sprite, AssetRef)),
+        MYE_JP("アルファ閾値", MYE_FIELD_RANGE(SpriteMask2DComponent, alphaCutoff, Float, 0.0f, 1.0f)),
+        MYE_JP("ソート層", MYE_FIELD(SpriteMask2DComponent, sortingLayerId, Int32)),
+        MYE_JP("層内の順序", MYE_FIELD(SpriteMask2DComponent, orderInLayer, Int32)),
+        MYE_JP("範囲の下限", MYE_FIELD_TIP(SpriteMask2DComponent, rangeBack, Int32,
+                                          "sprites with orderInLayer >= this are masked")),
+        MYE_JP("範囲の上限", MYE_FIELD_TIP(SpriteMask2DComponent, rangeFront, Int32,
+                                          "sprites with orderInLayer <= this are masked")),
+    }, kComponentNoHash);
 }
 
 } // namespace mye

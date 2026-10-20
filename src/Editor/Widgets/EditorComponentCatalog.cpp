@@ -110,6 +110,8 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "PatrolRoute", { ICON_FA_SHOE_PRINTS, "AI", "巡回ルート" } }, // M85g
         // M94: 2D レーン
         { "Sprite2D", { ICON_FA_IMAGES, "2D", "2D スプライト" } },
+        { "SortingGroup2D", { ICON_FA_LAYER_GROUP, "2D", "2D ソートグループ" } },
+        { "SpriteMask2D", { ICON_FA_MASKS_THEATER, "2D", "2D スプライトマスク" } },
     };
     return t;
 }
