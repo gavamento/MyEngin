@@ -39,8 +39,8 @@
 | sub-06 | OK | 1 | 484e482 | Sliced / Tiled、SortingGroup2D、SpriteMask2D + sub-05 追補 8 (a)(b)。依存: 04。TypeId 82/83、snapshot v54。Deferred のマスク確認は sub-15 へ |
 | sub-07 | OK | 1 | 52c973b | スプライト列クリップ (.spriteanim.json、コントローラの "sprite")。依存: 04。版 bump なし |
 | sub-08 | OK | 1 | 4c4c154 | 2D 形状 (kPolygon2D / kEdge2D) と C++ クエリ + Fracture plane2D コピー。依存: 01。版 bump なし。静的形状の供給口 AddStaticShapeSource (sub-11 / sub-19 が使う) |
-| sub-09 | 実装中 | 0 | | CharacterController の plane2D (一方通行・移動床・剛体押し・報告)。依存: 01 |
-| sub-10 | 未着手 | 0 | | タイルパレット / タイルマップ資産、Tilemap、チャンク描画。依存: 04 |
+| sub-09 | OK | 2 | 02e4022 | CharacterController の plane2D (一方通行・移動床・剛体押し・報告)。依存: 01。snapshot v55。round 1 REWORK (must: kinematic + plane2D は velocity で積分) |
+| sub-10 | 実装中 | 0 | | タイルパレット / タイルマップ資産、Tilemap、チャンク描画。依存: 04。**チェックポイント 2 (sub-06〜10)** |
 | sub-11 | 未着手 | 0 | | タイル衝突 + セル書き換えの sim 状態 + 破壊。依存: 08, 10 |
 | sub-12 | 未着手 | 0 | | タイルパレット窓。依存: 10, 02 |
 | sub-13 | 未着手 | 0 | | ルールタイル、アニメーションタイル、レイヤー UI。依存: 11, 12 |
@@ -116,3 +116,8 @@
 - (sub-08 coder → sub-19) `shapes::ExpandEdge2D` は `Shape2D` 資産の点列から線分ごとの箱 (半厚 edgeRadius、両端を edgeRadius 延長、z 半厚 depth/2) を作る。SpriteShape の辺は同じ式で箱を作るか `StaticShapeSource` で返す。`ShapeLibrary2D` の項目は Register で同じ map 要素へ書き換わる (ポインタは有効なまま中身が変わる)。tick の途中で Register しないこと。
 - (sub-08 VERDICT) spec 7. R9 (d): 複合コライダーの子の kPolygon2D は v1 スープのまま (動的剛体の一部としては未対応)、親付き (frame が identity でない) の多角形 / 辺は未検証 → sub-24 で engine_spec の限界欄へ。kinematic の多角形はスープ、動的 / kinematic の辺は WARN して無効。`MYE_SELFTEST_ONLY=m94` に Fracture suite を追加 (plane2D 破片コピーの 1 項目)。
 - (sub-08 VERDICT nit) `HandleShape2DEdit` が点の描画・判定・ドラッグ・追加・削除を 1 関数に持つ → sub-19 の SpriteShape ハンドルで共通化の余地。点のドラッグ / 辺クリック追加 / Delete の実クリックはユーザー目視 (sub-24 checklists)。点編集は Undo 無し (ドラッグ 1 回 = 保存 1 回)。
+- (sub-09 VERDICT) **plane2D かつ kinematic の剛体は物理のサブステップで velocity / angularVelocity.z を積分する** (`Body.kinDrive`、spec 4.1.6)。plane2D OFF の kinematic は従来どおり積分しない。移動床は kinematic Rigidbody に velocity を書くだけで動き、CC が乗る (Transform を別に動かさない)。sub-23 のデモの移動床はこの流儀で。
+- (sub-09 coder) CC の 2D 報告欄: `wallContact` は接触中に立つ (押し付け不要)、`groundVelocity` は SolveCharacters 時点の床の velocity (kinematic は tick 開始時、dynamic は解決後) で y も変位に足す、乗っている間の `cc->velocity.x` は床に対する速度。剛体押しは |nx| > 0.5 かつ進行方向、`pushPower × moveInput.x`、1 tick 1 剛体 1 回・最大 8 体、押した剛体を起こす。sub-20 (Effector2D) / sub-21 (GridAgent2D) は `groundEntity` と `ticksSinceGrounded` を読める。
+- (sub-09 coder → sub-11) タイル箱は `StaticShape` 経由で bodies に入るので CC の一方通行 / 接地プローブ / `groundEntity` (owner = Tilemap エンティティ) にそのまま効くはずだが、タイルでは未確認 → sub-11 の selftest で CC を載せて確認する。
+- (sub-09 VERDICT nit → sub-24) spec 7. R9 (e): 回転する kinematic 床に乗る CC は運ばれない (groundVelocity は並進のみ)、親付き kinematic plane2D / 親付き plane2D CC の z 不変は未検証、`wallContact = 2` と複数剛体の押しは selftest に無い (sub-23 のデモで通る見込み)。`SolveCharacters` の報告部を小関数に割る余地。`cache\m94\s09\` の hash-diff ダンプは git 管理外のまま。
+- (sub-09 coder) 焼いたハッシュ: CC2D C04B7FFA3E31E5D0 (Debug == Release)。既存の plane2D 639107476EA401A3 / Shapes2D 2ECF7CFD5CC45314 は不変。
