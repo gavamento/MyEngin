@@ -17,6 +17,7 @@
 #include "Editor/Scene/Selection.h"
 #include "Editor/SourceControl/ScmHint.h"
 #include "Editor/Windows/Animation/SpriteAnimEditor.h" // DrawSpriteThumb
+#include "Editor/Windows/Tilemap/TileAssetEditUi.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
@@ -143,7 +144,7 @@ void TilePaletteWindow::RequestTarget(EngineContext& ctx, uint64_t fileId)
         targetFid_ = fileId;
         return;
     }
-    if (model_.IsLoaded() && model_.Dirty()) {
+    if (model_.IsLoaded() && HasUnsavedChanges()) {
         pendingFid_ = fileId;
         modalRequest_ = true;
         return;
@@ -160,6 +161,10 @@ bool TilePaletteWindow::LoadTarget(EngineContext& ctx, uint64_t fileId)
         return false;
     }
     model_.Load(*asset);
+    paletteModel_.Clear();
+    if (const TilePalette* palette = tilepalette::Resolve(asset->palette)) {
+        paletteModel_.Load(*palette);
+    }
     targetFid_ = fileId;
     layer_ = std::clamp(layer_, 0, (std::max)(static_cast<int>(model_.Asset().layers.size()) - 1, 0));
     stroking_ = false;
@@ -167,19 +172,31 @@ bool TilePaletteWindow::LoadTarget(EngineContext& ctx, uint64_t fileId)
     TilemapLibrary* lib = tilemap::Library();
     syncedRevision_ = model_.Revision();
     syncedEpoch_ = lib != nullptr ? lib->Epoch() : 0;
+    TilePaletteLibrary* paletteLib = tilepalette::Library();
+    syncedPaletteRevision_ = paletteModel_.Revision();
+    syncedPaletteEpoch_ = paletteLib != nullptr ? paletteLib->Epoch() : 0;
+    seenMapRevision_ = model_.Revision();
+    seenPaletteRevision_ = paletteModel_.Revision();
     return true;
 }
 
-// 未保存の編集を捨てる。TilemapLibrary に反映済みの内容はファイルから読み直して戻す
+// 未保存の編集を捨てる。TilemapLibrary / TilePaletteLibrary に反映済みの内容はファイルから読み直して戻す
 void TilePaletteWindow::DiscardEdits()
 {
     const std::wstring path = model_.IsLoaded() ? model_.Asset().path : std::wstring();
+    const std::wstring palettePath = paletteModel_.IsLoaded() ? paletteModel_.Palette().path : std::wstring();
     model_.Clear();
+    paletteModel_.Clear();
     targetFid_ = 0;
     stroking_ = false;
     if (!path.empty()) {
         if (TilemapLibrary* lib = tilemap::Library()) {
             lib->LoadFromFile(path);
+        }
+    }
+    if (!palettePath.empty()) {
+        if (TilePaletteLibrary* lib = tilepalette::Library()) {
+            lib->LoadFromFile(palettePath);
         }
     }
 }
@@ -199,7 +216,7 @@ void TilePaletteWindow::SyncLive()
     }
     if (!modelChanged) {
         const TilemapAsset* current = lib->Get(model_.Asset().hash);
-        if (current == nullptr || model_.SameCells(*current)) {
+        if (current == nullptr || model_.SameLayers(*current)) {
             syncedEpoch_ = lib->Epoch(); // 別のアセットの登録、または自分の保存の読み直し
             return;
         }
@@ -215,12 +232,39 @@ void TilePaletteWindow::SyncLive()
     syncedEpoch_ = lib->Epoch();
 }
 
-void TilePaletteWindow::DoSave(EngineContext& ctx)
+// 編集中のパレットを TilePaletteLibrary へ反映する (ファイルは書かない)。SyncLive と同じ規則
+void TilePaletteWindow::SyncPaletteLive()
 {
-    (void)ctx;
-    if (!model_.IsLoaded()) {
+    TilePaletteLibrary* lib = tilepalette::Library();
+    if (!paletteModel_.IsLoaded() || lib == nullptr) {
         return;
     }
+    const bool modelChanged = paletteModel_.Revision() != syncedPaletteRevision_;
+    const bool libChanged = lib->Epoch() != syncedPaletteEpoch_;
+    if (!modelChanged && !libChanged) {
+        return;
+    }
+    if (!modelChanged) {
+        const TilePalette* current = lib->Get(paletteModel_.Palette().hash);
+        if (current == nullptr || paletteModel_.SameTiles(*current)) {
+            syncedPaletteEpoch_ = lib->Epoch();
+            return;
+        }
+        if (!paletteModel_.Dirty()) {
+            paletteModel_.Load(*current);
+            syncedPaletteRevision_ = paletteModel_.Revision();
+            seenPaletteRevision_ = paletteModel_.Revision();
+            syncedPaletteEpoch_ = lib->Epoch();
+            return;
+        }
+    }
+    lib->Register(paletteModel_.Palette().path, paletteModel_.Palette());
+    syncedPaletteRevision_ = paletteModel_.Revision();
+    syncedPaletteEpoch_ = lib->Epoch();
+}
+
+bool TilePaletteWindow::SaveTilemap()
+{
     SyncLive();
     const TilemapAsset& asset = model_.Asset();
     std::ofstream out(std::filesystem::path(asset.path), std::ios::binary);
@@ -231,11 +275,86 @@ void TilePaletteWindow::DoSave(EngineContext& ctx)
     if (!out) {
         MYE_LOG_ERROR(Tr(StrId::Log_WriteTilemapFail), WideToUtf8(asset.path).c_str());
         status_ = StatusKind::SaveFailed;
-        return;
+        return false;
     }
     scmhint::Changed(asset.path);
     model_.MarkSaved();
     status_ = StatusKind::Saved;
+    return true;
+}
+
+bool TilePaletteWindow::SavePalette()
+{
+    SyncPaletteLive();
+    const TilePalette& palette = paletteModel_.Palette();
+    std::ofstream out(std::filesystem::path(palette.path), std::ios::binary);
+    if (out) {
+        out << TilePaletteLibrary::ToJson(palette).dump(2);
+        out.close();
+    }
+    if (!out) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteTilePaletteFail), WideToUtf8(palette.path).c_str());
+        status_ = StatusKind::PaletteSaveFailed;
+        return false;
+    }
+    scmhint::Changed(palette.path);
+    paletteModel_.MarkSaved();
+    status_ = StatusKind::PaletteSaved;
+    return true;
+}
+
+// タイルマップは常に書き、パレットは変更があるときだけ書く
+void TilePaletteWindow::DoSave(EngineContext& ctx)
+{
+    (void)ctx;
+    if (!model_.IsLoaded()) {
+        return;
+    }
+    const bool mapOk = SaveTilemap();
+    if (mapOk && paletteModel_.Dirty()) {
+        SavePalette();
+    }
+}
+
+// 直前に変わった側 (Undo / Redo も変更に数える) を覚え、Ctrl+Z がそちらから戻すようにする
+void TilePaletteWindow::TrackLastEdited()
+{
+    if (paletteModel_.Revision() != seenPaletteRevision_) {
+        seenPaletteRevision_ = paletteModel_.Revision();
+        lastEditPalette_ = true;
+    }
+    if (model_.Revision() != seenMapRevision_) {
+        seenMapRevision_ = model_.Revision();
+        lastEditPalette_ = false;
+    }
+}
+
+bool TilePaletteWindow::CanUndoAny() const
+{
+    return model_.CanUndo() || paletteModel_.CanUndo();
+}
+
+bool TilePaletteWindow::CanRedoAny() const
+{
+    return model_.CanRedo() || paletteModel_.CanRedo();
+}
+
+void TilePaletteWindow::UndoLast()
+{
+    if (lastEditPalette_ ? paletteModel_.CanUndo() : !model_.CanUndo()) {
+        paletteModel_.Undo();
+    } else {
+        model_.Undo();
+    }
+}
+
+void TilePaletteWindow::RedoLast()
+{
+    if (lastEditPalette_ ? paletteModel_.CanRedo() : !model_.CanRedo()) {
+        paletteModel_.Redo();
+    } else {
+        model_.Redo();
+    }
 }
 
 uint32_t TilePaletteWindow::BrushValue() const
@@ -431,7 +550,16 @@ void TilePaletteWindow::OnImGui(EngineContext& ctx, const Selection& selection)
         stroking_ = false;
     }
     SyncLive();
+    SyncPaletteLive();
+    TrackLastEdited();
     if (!open) {
+        // 窓を閉じた時点で開いたままのドラッグ (Inspector の値など) を閉じる
+        if (paletteModel_.InGesture()) {
+            paletteModel_.EndGesture();
+        }
+        if (model_.InGesture() && !stroking_) {
+            model_.EndGesture();
+        }
         return;
     }
     ImGui::SetNextWindowSize(ImVec2(420.0f, 520.0f), ImGuiCond_FirstUseEver);
@@ -456,7 +584,7 @@ void TilePaletteWindow::OnImGui(EngineContext& ctx, const Selection& selection)
     ImGui::EndDisabled();
     DrawStatus();
     ImGui::Separator();
-    DrawPaletteList(ctx);
+    DrawBody(ctx);
     ImGui::End();
 }
 
@@ -473,7 +601,7 @@ void TilePaletteWindow::DrawUnsavedModal(EngineContext& ctx)
     ImGui::TextDisabled("%s", model_.IsLoaded() ? WideToUtf8(model_.Asset().path).c_str() : "");
     if (ImGui::Button(Tr(StrId::TilePal_ModalSave))) {
         DoSave(ctx);
-        if (!model_.Dirty()) {
+        if (!HasUnsavedChanges()) {
             DiscardEdits();
             LoadTarget(ctx, pendingFid_);
             ImGui::CloseCurrentPopup();
@@ -548,13 +676,13 @@ void TilePaletteWindow::HandleKeys(EngineContext& ctx)
     }
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, ImGuiInputFlags_Repeat, owner)) {
         if (io.KeyShift) {
-            model_.Redo();
+            RedoLast();
         } else {
-            model_.Undo();
+            UndoLast();
         }
     }
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, ImGuiInputFlags_Repeat, owner)) {
-        model_.Redo();
+        RedoLast();
     }
     if (tool_ == tileedit::Tool::Select && ImGui::IsKeyPressed(ImGuiKey_Delete, ImGuiInputFlags_None, owner)) {
         Report(model_.EraseSelection(layer_));
@@ -618,15 +746,15 @@ void TilePaletteWindow::DrawTargetRow(EngineContext& ctx)
     }
 
     // Undo / Redo / Save
-    ImGui::BeginDisabled(inPlay_ || !model_.CanUndo());
+    ImGui::BeginDisabled(inPlay_ || !CanUndoAny());
     if (ImGui::Button(Tr(StrId::Spr_Undo))) {
-        model_.Undo();
+        UndoLast();
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::BeginDisabled(inPlay_ || !model_.CanRedo());
+    ImGui::BeginDisabled(inPlay_ || !CanRedoAny());
     if (ImGui::Button(Tr(StrId::Spr_Redo))) {
-        model_.Redo();
+        RedoLast();
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
@@ -636,7 +764,7 @@ void TilePaletteWindow::DrawTargetRow(EngineContext& ctx)
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", model_.Dirty() ? "*" : "");
+    ImGui::TextDisabled("%s", HasUnsavedChanges() ? "*" : "");
 }
 
 void TilePaletteWindow::DrawToolRow()
@@ -694,6 +822,12 @@ void TilePaletteWindow::DrawStatus()
     case StatusKind::SaveFailed:
         ImGui::TextColored(themeColor::Error, "%s", Tr(StrId::TilePal_StatusSaveFailed));
         break;
+    case StatusKind::PaletteSaved:
+        ImGui::TextColored(themeColor::Success, "%s", Tr(StrId::TilePal_StatusPaletteSaved));
+        break;
+    case StatusKind::PaletteSaveFailed:
+        ImGui::TextColored(themeColor::Error, "%s", Tr(StrId::TilePal_StatusPaletteSaveFailed));
+        break;
     case StatusKind::TooLarge:
         WrappedText(themeColor::Warning, Tr(StrId::TilePal_StatusTooLarge));
         break;
@@ -703,21 +837,44 @@ void TilePaletteWindow::DrawStatus()
     }
 }
 
-void TilePaletteWindow::DrawPaletteList(EngineContext& ctx)
+// 下半分 (スクロールする): レイヤー / パレットのタイル一覧と追加・削除 / 選択中のタイルの設定
+void TilePaletteWindow::DrawBody(EngineContext& ctx)
 {
     if (!model_.IsLoaded()) {
         return;
     }
-    const TilePalette* palette = tilepalette::Resolve(model_.Asset().palette);
-    if (palette == nullptr) {
+    ImGui::BeginChild("##tp_body", ImVec2(0.0f, 0.0f), false);
+    ImGui::BeginDisabled(inPlay_);
+    if (ImGui::CollapsingHeader(Tr(StrId::TilePal_Layers), ImGuiTreeNodeFlags_DefaultOpen)) {
+        tileui::DrawLayerPanel(ctx, model_, layer_);
+    }
+    if (ImGui::CollapsingHeader(Tr(StrId::TilePal_Tiles), ImGuiTreeNodeFlags_DefaultOpen)) {
+        DrawPaletteList(ctx);
+        if (const uint32_t picked = tileui::DrawPaletteToolbar(paletteModel_, brushTile_)) {
+            brushTile_ = picked;
+        }
+        if (paletteModel_.IsLoaded() && paletteModel_.Palette().Find(brushTile_) == nullptr) {
+            brushTile_ = 0; // 消したタイルをブラシに残さない
+        }
+    }
+    if (paletteModel_.IsLoaded() && ImGui::CollapsingHeader(Tr(StrId::TilePal_TileInspector), ImGuiTreeNodeFlags_DefaultOpen)) {
+        tileui::DrawTileInspector(ctx, paletteModel_, brushTile_);
+    }
+    ImGui::EndDisabled();
+    ImGui::EndChild();
+}
+
+void TilePaletteWindow::DrawPaletteList(EngineContext& ctx)
+{
+    if (!paletteModel_.IsLoaded()) {
         ImGui::TextDisabled("%s", Tr(StrId::TilePal_NoPalette));
         return;
     }
+    const TilePalette* palette = &paletteModel_.Palette();
     if (palette->tiles.empty()) {
         ImGui::TextDisabled("%s", Tr(StrId::TilePal_PaletteEmpty));
         return;
     }
-    ImGui::BeginChild("##tp_tiles", ImVec2(0.0f, 0.0f), false);
     const float width = ImGui::GetContentRegionAvail().x;
     const float cell = kTileThumbSize + kTileThumbSpacing;
     const int perRow = (std::max)(1, static_cast<int>(width / cell));
@@ -747,7 +904,9 @@ void TilePaletteWindow::DrawPaletteList(EngineContext& ctx)
             column = 0;
         }
     }
-    ImGui::EndChild();
+    if (column != 0) {
+        ImGui::NewLine(); // 行の途中で終わったときも次の部品は新しい行から
+    }
 }
 
 } // namespace mye

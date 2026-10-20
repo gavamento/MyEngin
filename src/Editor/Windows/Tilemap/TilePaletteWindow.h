@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "Editor/Windows/Tilemap/TilePaletteEditModel.h"
 #include "Editor/Windows/Tilemap/TilemapEditModel.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 
@@ -41,7 +42,10 @@ struct TileSceneOverlay {
 // タイルパレット窓 (M94l)。シーン内の Tilemap エンティティを 1 つ対象にして、その .tilemap.json を編集する:
 //   - ツール (選択 / ブラシ / 消去 / 塗り潰し / 矩形 / ピック)、flip / 回転、パレットのタイル一覧、レイヤー選択
 //   - 塗りは Scene View (2D モード) のドラッグ。編集中は TilemapLibrary へ即時に反映し (ファイルは書かない)、Ctrl+S で書く
-//   - 独自の Undo (128 段)。Play 中は塗れない (Play 中の書き換えはスクリプトの TilemapSetCell だけ)
+//   - レイヤーの追加 / 削除 / 並べ替え / 設定、パレットのタイルの追加 / 削除 / 設定 (衝突・破壊・ルール・アニメ) も同じ窓で編集する。
+//     パレットも TilePaletteLibrary へ即時に反映し、Ctrl+S で .tilepalette.json を書く
+//   - 独自の Undo (タイルマップとパレットでそれぞれ 128 段。Ctrl+Z は直前に編集した側から戻す)。
+//     Play 中は編集できない (Play 中の書き換えはスクリプトの TilemapSetCell だけ)
 class TilePaletteWindow {
 public:
     bool open = false;
@@ -50,7 +54,7 @@ public:
     // Inspector の [Open Tile Palette]: 窓を開いて、そのエンティティを対象にする
     void OpenForEntity(EngineContext& ctx, uint64_t fileId);
 
-    bool HasUnsavedChanges() const { return model_.Dirty(); }
+    bool HasUnsavedChanges() const { return model_.Dirty() || paletteModel_.Dirty(); }
 
     // ---- Scene View との連携 ----
     // EditorApp が毎フレーム Scene View より先に渡す
@@ -67,7 +71,7 @@ public:
     TileSceneOverlay SceneOverlay() const;
 
 private:
-    enum class StatusKind { None, Saved, SaveFailed, TooLarge, NoTile };
+    enum class StatusKind { None, Saved, SaveFailed, PaletteSaved, PaletteSaveFailed, TooLarge, NoTile };
     struct TargetEntry {
         uint64_t fileId = 0;
         uint64_t assetHash = 0;
@@ -79,7 +83,16 @@ private:
     bool LoadTarget(EngineContext& ctx, uint64_t fileId);
     void DiscardEdits();
     void SyncLive();
+    void SyncPaletteLive();
     void DoSave(EngineContext& ctx);
+    bool SaveTilemap();
+    bool SavePalette();
+    // Ctrl+Z / Ctrl+Y とボタン: 直前に編集した側 (タイルマップかパレット) から戻す
+    void TrackLastEdited();
+    bool CanUndoAny() const;
+    bool CanRedoAny() const;
+    void UndoLast();
+    void RedoLast();
     uint32_t BrushValue() const;
     void SetTool(tileedit::Tool tool);
 
@@ -89,6 +102,7 @@ private:
     void DrawTargetRow(EngineContext& ctx);
     void DrawToolRow();
     void DrawBrushRow();
+    void DrawBody(EngineContext& ctx);
     void DrawPaletteList(EngineContext& ctx);
     void DrawStatus();
 
@@ -100,10 +114,16 @@ private:
     void Report(tileedit::EditResult result);
 
     TilemapEditModel model_;
+    TilePaletteEditModel paletteModel_; // 対象の Tilemap が指すパレット (無ければ未ロード)
     std::vector<TargetEntry> targets_;
     uint64_t targetFid_ = 0;
     uint64_t syncedRevision_ = 0;
     uint64_t syncedEpoch_ = 0; // 窓が最後に見た TilemapLibrary の版
+    uint64_t syncedPaletteRevision_ = 0;
+    uint64_t syncedPaletteEpoch_ = 0; // 窓が最後に見た TilePaletteLibrary の版
+    uint64_t seenMapRevision_ = 0;
+    uint64_t seenPaletteRevision_ = 0;
+    bool lastEditPalette_ = false; // 直前に変わったのがパレット側か
     bool inPlay_ = false;
     bool sceneMode2d_ = false;
 

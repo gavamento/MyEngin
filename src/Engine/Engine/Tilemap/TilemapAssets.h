@@ -50,9 +50,10 @@ inline uint32_t Make(uint32_t tileId, bool flipX, bool flipY, uint32_t rotation,
 struct TileVariant {
     std::string neighbors = "........";
     AssetID sprite = {};
+    bool operator==(const TileVariant&) const = default;
 };
 
-// タイル 1 種。rule / anim は sub-13 が評価する (読み書きだけ今から持つ)
+// タイル 1 種。見た目の選び方: anim (コマ) > rule (隣接) > sprite
 struct TileDef {
     uint32_t id = 0; // 1..kTileIdMax
     std::string name;
@@ -67,6 +68,7 @@ struct TileDef {
     bool hasAnim = false;
     int32_t ticksPerFrame = 8;
     std::vector<AssetID> animFrames;
+    bool operator==(const TileDef&) const = default;
 };
 
 struct TilePalette {
@@ -81,6 +83,19 @@ struct TilePalette {
     // 末尾に 1 種足す。id が尽きていたら nullptr。返したポインタは次の変更まで有効
     TileDef* Add(const std::string& name, AssetID sprite);
 };
+
+// ルールタイルが見る隣接 8 マスの tileId (添字は NW N NE W E SW S SE。N = +y)。同じレイヤーの実効セルから作る
+using TileNeighbors = std::array<uint32_t, kTileNeighborCount>;
+
+// tileId のタイルの変種を順に見て、最初に合う neighbors (x = 同じ tileId / o = 空 / . = 任意) の sprite を返す。
+// 合わない / ルール無し / 未登録の id は tileId の既定 sprite (id が無ければ null)
+AssetID ResolveRuleVariant(const TilePalette& palette, uint32_t tileId, const TileNeighbors& neighbors);
+
+// アニメのコマ番号 = (tick / ticksPerFrame) % frameCount。frameCount が 0 なら -1。tick は sim の tick (描画フレーム数ではない)
+int32_t TileAnimFrameIndex(int32_t ticksPerFrame, size_t frameCount, uint64_t tick);
+
+// def の現在の絵。anim (frames が空でない) があればそのコマ、無ければ rule、無ければ sprite
+AssetID ResolveTileSprite(const TilePalette& palette, const TileDef& def, const TileNeighbors& neighbors, uint64_t tick);
 
 struct TilePaletteEntry {
     uint64_t hash = 0;

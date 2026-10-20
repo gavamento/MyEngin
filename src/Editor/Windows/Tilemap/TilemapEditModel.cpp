@@ -42,7 +42,9 @@ bool LayersEqual(const std::vector<TilemapLayer>& a, const std::vector<TilemapLa
         return false;
     }
     for (size_t i = 0; i < a.size(); ++i) {
-        if (!ChunksEqual(a[i].chunks, b[i].chunks)) {
+        if (a[i].name != b[i].name || a[i].sortingLayerId != b[i].sortingLayerId
+            || a[i].orderInLayer != b[i].orderInLayer || a[i].collision != b[i].collision
+            || !ChunksEqual(a[i].chunks, b[i].chunks)) {
             return false;
         }
     }
@@ -100,7 +102,7 @@ bool TilemapEditModel::Dirty() const
     return dirtyCache_;
 }
 
-bool TilemapEditModel::SameCells(const TilemapAsset& other) const
+bool TilemapEditModel::SameLayers(const TilemapAsset& other) const
 {
     return loaded_ && LayersEqual(asset_.layers, other.layers);
 }
@@ -127,37 +129,119 @@ uint32_t TilemapEditModel::GetCell(int32_t layer, int32_t x, int32_t y) const
 
 void TilemapEditModel::ApplyStep(const Step& step, bool forward)
 {
+    if (step.layerOp) {
+        asset_.layers = forward ? step.afterLayers : step.beforeLayers;
+        ++revision_;
+        return;
+    }
     // 逆方向は後ろから戻す (同じセルを 2 回書いた段でも元の値に戻る)
     if (forward) {
-        for (const CellEdit& e : step) {
+        for (const CellEdit& e : step.cells) {
             asset_.layers[static_cast<size_t>(e.layer)].SetCell(e.x, e.y, e.after);
         }
     } else {
-        for (auto it = step.rbegin(); it != step.rend(); ++it) {
+        for (auto it = step.cells.rbegin(); it != step.cells.rend(); ++it) {
             asset_.layers[static_cast<size_t>(it->layer)].SetCell(it->x, it->y, it->before);
         }
     }
     ++revision_;
 }
 
-tileedit::EditResult TilemapEditModel::Commit(Step&& edits)
+void TilemapEditModel::PushUndo(Step&& step)
+{
+    undo_.push_back(std::move(step));
+    gesturePushed_ = gesture_;
+    while (undo_.size() > kMaxUndo) {
+        undo_.pop_front();
+    }
+}
+
+tileedit::EditResult TilemapEditModel::Commit(std::vector<CellEdit>&& edits)
 {
     if (edits.empty()) {
         return tileedit::EditResult::NoChange;
     }
-    ApplyStep(edits, true);
+    Step step;
+    step.cells = std::move(edits);
+    ApplyStep(step, true);
     redo_.clear();
-    if (gesture_ && gesturePushed_ && !undo_.empty()) {
-        Step& open = undo_.back();
-        open.insert(open.end(), edits.begin(), edits.end());
+    if (gesture_ && gesturePushed_ && !undo_.empty() && !undo_.back().layerOp) {
+        std::vector<CellEdit>& open = undo_.back().cells;
+        open.insert(open.end(), step.cells.begin(), step.cells.end());
     } else {
-        undo_.push_back(std::move(edits));
-        gesturePushed_ = gesture_;
-        while (undo_.size() > kMaxUndo) {
-            undo_.pop_front();
-        }
+        PushUndo(std::move(step));
     }
     return tileedit::EditResult::Changed;
+}
+
+tileedit::EditResult TilemapEditModel::CommitLayers(std::vector<TilemapLayer>&& beforeLayers)
+{
+    ++revision_;
+    redo_.clear();
+    if (gesture_ && gesturePushed_ && !undo_.empty() && undo_.back().layerOp) {
+        undo_.back().afterLayers = asset_.layers; // 連続した変更は最初の before を残して 1 段にまとめる
+        return tileedit::EditResult::Changed;
+    }
+    Step step;
+    step.layerOp = true;
+    step.beforeLayers = std::move(beforeLayers);
+    step.afterLayers = asset_.layers;
+    PushUndo(std::move(step));
+    return tileedit::EditResult::Changed;
+}
+
+tileedit::EditResult TilemapEditModel::AddLayer(const std::string& name)
+{
+    if (!loaded_ || asset_.layers.size() >= kMaxTilemapLayers) {
+        return tileedit::EditResult::Invalid;
+    }
+    std::vector<TilemapLayer> before = asset_.layers;
+    TilemapLayer layer;
+    layer.name = name;
+    asset_.layers.push_back(std::move(layer));
+    return CommitLayers(std::move(before));
+}
+
+tileedit::EditResult TilemapEditModel::RemoveLayer(int32_t layer)
+{
+    if (!loaded_ || layer < 0 || static_cast<size_t>(layer) >= asset_.layers.size() || asset_.layers.size() <= 1) {
+        return tileedit::EditResult::Invalid;
+    }
+    std::vector<TilemapLayer> before = asset_.layers;
+    asset_.layers.erase(asset_.layers.begin() + layer);
+    return CommitLayers(std::move(before));
+}
+
+tileedit::EditResult TilemapEditModel::MoveLayer(int32_t layer, int32_t delta)
+{
+    if (!loaded_ || layer < 0 || static_cast<size_t>(layer) >= asset_.layers.size()) {
+        return tileedit::EditResult::Invalid;
+    }
+    const int64_t target = static_cast<int64_t>(layer) + delta;
+    if (delta == 0 || target < 0 || target >= static_cast<int64_t>(asset_.layers.size())) {
+        return tileedit::EditResult::NoChange;
+    }
+    std::vector<TilemapLayer> before = asset_.layers;
+    std::swap(asset_.layers[static_cast<size_t>(layer)], asset_.layers[static_cast<size_t>(target)]);
+    return CommitLayers(std::move(before));
+}
+
+tileedit::EditResult TilemapEditModel::SetLayerProps(int32_t layer, const TilemapLayer& props)
+{
+    if (!loaded_ || layer < 0 || static_cast<size_t>(layer) >= asset_.layers.size()) {
+        return tileedit::EditResult::Invalid;
+    }
+    TilemapLayer& target = asset_.layers[static_cast<size_t>(layer)];
+    if (target.name == props.name && target.sortingLayerId == props.sortingLayerId
+        && target.orderInLayer == props.orderInLayer && target.collision == props.collision) {
+        return tileedit::EditResult::NoChange;
+    }
+    std::vector<TilemapLayer> before = asset_.layers;
+    target.name = props.name;
+    target.sortingLayerId = props.sortingLayerId;
+    target.orderInLayer = props.orderInLayer;
+    target.collision = props.collision;
+    return CommitLayers(std::move(before));
 }
 
 tileedit::EditResult TilemapEditModel::PaintCell(int32_t layer, int32_t x, int32_t y, uint32_t value)
@@ -169,7 +253,7 @@ tileedit::EditResult TilemapEditModel::PaintCell(int32_t layer, int32_t x, int32
     if (before == value) {
         return tileedit::EditResult::NoChange;
     }
-    Step edits;
+    std::vector<CellEdit> edits;
     edits.push_back(CellEdit{ layer, x, y, before, value });
     return Commit(std::move(edits));
 }
@@ -219,7 +303,7 @@ tileedit::EditResult TilemapEditModel::FloodFill(int32_t layer, int32_t x, int32
             }
         }
     }
-    Step edits;
+    std::vector<CellEdit> edits;
     edits.reserve(queue.size());
     for (const uint32_t key : queue) {
         int32_t cx = 0;
@@ -247,7 +331,7 @@ tileedit::EditResult TilemapEditModel::FillRect(int32_t layer, int32_t ax, int32
     if (cells > kMaxRectCells) {
         return tileedit::EditResult::TooLarge;
     }
-    Step edits;
+    std::vector<CellEdit> edits;
     for (int32_t cy = r.y0; cy <= r.y1; ++cy) {
         for (int32_t cx = r.x0; cx <= r.x1; ++cx) {
             const uint32_t before = GetCell(layer, cx, cy);

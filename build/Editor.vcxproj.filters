@@ -357,7 +357,13 @@
     <ClCompile Include="..\src\Editor\Windows\Sprite\SpriteEditorWindow.cpp">
       <Filter>Windows\Sprite</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Tilemap\TileAssetEditUi.cpp">
+      <Filter>Windows\Tilemap</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Tilemap\TilemapEditModel.cpp">
+      <Filter>Windows\Tilemap</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Tilemap\TilePaletteEditModel.cpp">
       <Filter>Windows\Tilemap</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Tilemap\TilePaletteWindow.cpp">
@@ -663,7 +669,13 @@
     <ClInclude Include="..\src\Editor\Windows\Sprite\SpriteEditorWindow.h">
       <Filter>Windows\Sprite</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Tilemap\TileAssetEditUi.h">
+      <Filter>Windows\Tilemap</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Tilemap\TilemapEditModel.h">
+      <Filter>Windows\Tilemap</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Tilemap\TilePaletteEditModel.h">
       <Filter>Windows\Tilemap</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Tilemap\TilePaletteWindow.h">

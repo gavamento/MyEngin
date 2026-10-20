@@ -465,23 +465,59 @@ void Sprite2DRenderer::TileCornerUv(float u0, float v0, float u1, float v1, bool
     std::copy(&c[0][0], &c[0][0] + 8, &out[0][0]);
 }
 
+TileNeighbors Sprite2DRenderer::TileNeighborsAt(const TileChunkAround& around, int32_t lx, int32_t ly)
+{
+    static constexpr int32_t kDx[kTileNeighborCount] = { -1, 0, 1, -1, 1, -1, 0, 1 };
+    static constexpr int32_t kDy[kTileNeighborCount] = { 1, 1, 1, 0, 0, -1, -1, -1 };
+    TileNeighbors out{};
+    for (size_t i = 0; i < kTileNeighborCount; ++i) {
+        const int32_t x = lx + kDx[i];
+        const int32_t y = ly + kDy[i];
+        const int32_t chunkX = (x < 0) ? 0 : (x >= kTilemapChunkSize ? 2 : 1);
+        const int32_t chunkY = (y < 0) ? 0 : (y >= kTilemapChunkSize ? 2 : 1);
+        const TileChunkCells& cells = around[static_cast<size_t>(chunkY * 3 + chunkX)];
+        out[i] = tilecell::TileId(cells[static_cast<size_t>(TilemapFloorMod(y, kTilemapChunkSize) * kTilemapChunkSize
+                                                            + TilemapFloorMod(x, kTilemapChunkSize))]);
+    }
+    return out;
+}
+
 // チャンクを焼く: 実効セルを読み、tileId → パレット → スプライトを引いて、セルごとに 1 クアッドを原点基準で並べる。
+// 絵は anim > rule (同じレイヤーの隣接 8 マス。チャンク境界は隣のチャンクを読む) > sprite の順で選ぶ。
 // 非同期ロード中のスプライトがあれば complete = false にして次フレームも焼き直す
 void Sprite2DRenderer::BakeTileChunk(const Item& item, World& world, RenderResources& resources, BakedChunk& out)
 {
     out.vertices.clear();
     out.runs.clear();
+    out.anims.clear();
     out.complete = true;
     const TilemapAsset* map = TilemapSystem::AssetOf(world, item.tileEntity);
     const TilePalette* palette = (map != nullptr) ? tilepalette::Resolve(map->palette) : nullptr;
-    std::array<uint32_t, kTilemapChunkCells> cells;
     // sim の書き換え (override) を重ねた実効セルで焼く。sim の持ち主が未接続ならアセットの値だけ
     const TilemapSystem* sim = tilemap::System();
-    const bool haveCells = (sim != nullptr)
-        ? sim->GetChunkCells(world, item.tileEntity, item.tileLayer, item.tileChunk, cells)
-        : TilemapSystem::AssetChunkCells(world, item.tileEntity, item.tileLayer, item.tileChunk, cells);
-    if (map == nullptr || palette == nullptr || !haveCells) {
+    const auto readChunk = [&](ChunkKey key, std::array<uint32_t, kTilemapChunkCells>& cells) {
+        return (sim != nullptr) ? sim->GetChunkCells(world, item.tileEntity, item.tileLayer, key, cells)
+                                : TilemapSystem::AssetChunkCells(world, item.tileEntity, item.tileLayer, key, cells);
+    };
+    std::array<uint32_t, kTilemapChunkCells> cells;
+    if (map == nullptr || palette == nullptr || !readChunk(item.tileChunk, cells)) {
         return;
+    }
+    // 隣接を見るのはルールタイルがあるパレットだけ。3x3 チャンクの実効セル (添字 = (dy + 1) * 3 + (dx + 1)、中央は cells)
+    const bool needNeighbors = std::any_of(palette->tiles.begin(), palette->tiles.end(),
+                                           [](const TileDef& t) { return t.hasRule; });
+    TileChunkAround around{};
+    if (needNeighbors) {
+        for (int32_t dy = -1; dy <= 1; ++dy) {
+            for (int32_t dx = -1; dx <= 1; ++dx) {
+                auto& dst = around[static_cast<size_t>((dy + 1) * 3 + (dx + 1))];
+                if (dx == 0 && dy == 0) {
+                    dst = cells;
+                } else if (!readChunk(ChunkKey{ item.tileChunk.cy + dy, item.tileChunk.cx + dx }, dst)) {
+                    dst.fill(0);
+                }
+            }
+        }
     }
     const float cellW = map->cellSize[0];
     const float cellH = map->cellSize[1];
@@ -492,17 +528,32 @@ void Sprite2DRenderer::BakeTileChunk(const Item& item, World& world, RenderResou
         for (int32_t lx = 0; lx < kTilemapChunkSize; ++lx) {
             const uint32_t value = cells[static_cast<size_t>(ly) * kTilemapChunkSize + static_cast<size_t>(lx)];
             const TileDef* def = palette->Find(tilecell::TileId(value));
-            if (def == nullptr || def->sprite.IsNull()) {
-                continue; // 空 / パレットに無い id / スプライト無しは描かない
+            if (def == nullptr) {
+                continue; // 空 / パレットに無い id は描かない
             }
-            auto found = memo.find(def->sprite.value);
+            const TileNeighbors neighbors = def->hasRule ? TileNeighborsAt(around, lx, ly) : TileNeighbors{};
+            if (def->hasAnim && !def->animFrames.empty()) {
+                const auto stamp = std::lower_bound(out.anims.begin(), out.anims.end(), def->id,
+                                                    [](const AnimStamp& a, uint32_t id) { return a.tileId < id; });
+                if (stamp == out.anims.end() || stamp->tileId != def->id) {
+                    out.anims.insert(stamp, AnimStamp{ def->id, def->ticksPerFrame,
+                                                       static_cast<uint32_t>(def->animFrames.size()),
+                                                       TileAnimFrameIndex(def->ticksPerFrame, def->animFrames.size(),
+                                                                          simTick_) });
+                }
+            }
+            const AssetID sprite = ResolveTileSprite(*palette, *def, neighbors, simTick_);
+            if (sprite.IsNull()) {
+                continue; // スプライト無しは描かない
+            }
+            auto found = memo.find(sprite.value);
             if (found == memo.end()) {
                 Resolved r;
-                if (!Resolve(def->sprite, resources, true, r)) {
+                if (!Resolve(sprite, resources, true, r)) {
                     out.complete = false;
                     continue;
                 }
-                found = memo.emplace(def->sprite.value, r).first;
+                found = memo.emplace(sprite.value, r).first;
             }
             const Resolved& r = found->second;
             float uv[4][2];
@@ -557,8 +608,12 @@ void Sprite2DRenderer::EmitTileChunk(const Item& item, World& world, RenderResou
     const uint64_t dirtyEpoch = TilemapSystem::DirtyEpoch();
     SpriteLibrary* sprites = spritelib::Library();
     const uint64_t spriteEpoch = (sprites != nullptr) ? sprites->Epoch() : 0;
+    // アニメーションタイルは、含むコマのどれかが今の tick で変わったときだけ焼き直す
+    const bool animChanged = std::any_of(chunk.anims.begin(), chunk.anims.end(), [this](const AnimStamp& a) {
+        return TileAnimFrameIndex(a.ticksPerFrame, a.frameCount, simTick_) != a.frame;
+    });
     if (!chunk.complete || chunk.mapEpoch != mapEpoch || chunk.paletteEpoch != paletteEpoch
-        || chunk.dirtyEpoch != dirtyEpoch || chunk.spriteEpoch != spriteEpoch) {
+        || chunk.dirtyEpoch != dirtyEpoch || chunk.spriteEpoch != spriteEpoch || animChanged) {
         BakeTileChunk(item, world, resources, chunk);
         chunk.mapEpoch = mapEpoch;
         chunk.paletteEpoch = paletteEpoch;
@@ -709,8 +764,9 @@ void Sprite2DRenderer::CollectTilemaps(World& world, const XMFLOAT4X4* view, con
 }
 
 const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources& resources, const XMFLOAT4X4* view,
-                                                  const XMFLOAT4X4* proj)
+                                                  const XMFLOAT4X4* proj, uint64_t simTick)
 {
+    simTick_ = simTick;
     list_.Clear();
     items_.clear();
     seenMasks_.clear();

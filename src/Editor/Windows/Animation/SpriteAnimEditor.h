@@ -5,10 +5,13 @@
 //====================================================================================
 #pragma once
 #include <cstdint>
+#include <map>
 #include <string>
+#include <vector>
 
 #include "Engine/Core/Ecs/EntityID.h"
 #include "Engine/Engine/Animation/SpriteAnim.h"
+#include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 
 namespace mye {
 
@@ -21,6 +24,12 @@ bool DrawSpriteThumb(EngineContext& ctx, AssetID sprite, float box);
 // スプライトのピッカー (現在の名前のボタン + 絞り込み付きポップアップ)。選び直したら true。
 // 候補は SpriteLibrary の全面 / スライス (表示名の昇順)。id は ImGui の ID 衝突を避けるための文字列
 bool DrawSpritePicker(const char* id, AssetID& sprite, float width);
+
+// スプライトの表示名 ("tex" または "tex#name")。空 / 解決できなければ空文字
+std::string SpriteDisplayName(AssetID id);
+
+// スライス済みのテクスチャ名 → そのスライス (自然順: walk_2 < walk_10)。全面だけのテクスチャは含めない
+std::map<std::string, std::vector<SpriteListing>> ListSlicedTextures();
 
 // Inspector の .spriteanim.json 編集の作業領域 (選択が変わるたびに LoadSpriteAnimEdit で読み直す)
 struct SpriteAnimEditState {

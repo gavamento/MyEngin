@@ -127,6 +127,61 @@ TileDef* TilePalette::Add(const std::string& tileName, AssetID sprite)
     return &tiles.back();
 }
 
+namespace {
+
+// 変種 1 つの neighbors が隣接に合うか
+bool NeighborsMatch(const std::string& pattern, uint32_t tileId, const TileNeighbors& neighbors)
+{
+    if (pattern.size() != kTileNeighborCount) {
+        return false;
+    }
+    for (size_t i = 0; i < kTileNeighborCount; ++i) {
+        const uint32_t n = tilecell::TileId(neighbors[i]);
+        if ((pattern[i] == 'x' && n != tileId) || (pattern[i] == 'o' && n != 0)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+AssetID ResolveRuleVariant(const TilePalette& palette, uint32_t tileId, const TileNeighbors& neighbors)
+{
+    const TileDef* def = palette.Find(tileId);
+    if (def == nullptr) {
+        return AssetID{};
+    }
+    if (def->hasRule) {
+        for (const TileVariant& v : def->variants) {
+            if (NeighborsMatch(v.neighbors, tileId, neighbors)) {
+                return v.sprite;
+            }
+        }
+    }
+    return def->sprite;
+}
+
+int32_t TileAnimFrameIndex(int32_t ticksPerFrame, size_t frameCount, uint64_t tick)
+{
+    if (frameCount == 0) {
+        return -1;
+    }
+    const uint64_t perFrame = static_cast<uint64_t>((std::max)(ticksPerFrame, 1));
+    return static_cast<int32_t>((tick / perFrame) % frameCount);
+}
+
+AssetID ResolveTileSprite(const TilePalette& palette, const TileDef& def, const TileNeighbors& neighbors, uint64_t tick)
+{
+    if (def.hasAnim) {
+        const int32_t frame = TileAnimFrameIndex(def.ticksPerFrame, def.animFrames.size(), tick);
+        if (frame >= 0) {
+            return def.animFrames[static_cast<size_t>(frame)];
+        }
+    }
+    return ResolveRuleVariant(palette, def.id, neighbors);
+}
+
 // ==== TilePaletteLibrary ====
 
 uint64_t TilePaletteLibrary::HashForPath(const std::wstring& path)

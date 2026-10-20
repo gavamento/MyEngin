@@ -6,6 +6,7 @@
 #pragma once
 #include <cstdint>
 #include <deque>
+#include <string>
 #include <vector>
 
 #include "Engine/Engine/Tilemap/TilemapAssets.h"
@@ -59,8 +60,8 @@ public:
     bool Dirty() const;
     // 今の内容を保存済みとして記録する
     void MarkSaved();
-    // 全レイヤーのセルが other と同じか (外部の再読み込みと編集中の内容の比較用)
-    bool SameCells(const TilemapAsset& other) const;
+    // 全レイヤー (セルと名前・ソート・衝突の設定) が other と同じか (外部の再読み込みと編集中の内容の比較用)
+    bool SameLayers(const TilemapAsset& other) const;
 
     uint32_t GetCell(int32_t layer, int32_t x, int32_t y) const;
 
@@ -74,6 +75,17 @@ public:
                                   size_t* outCount = nullptr);
     // ピック: セルの値。空は 0
     uint32_t PickCell(int32_t layer, int32_t x, int32_t y) const { return GetCell(layer, x, y); }
+
+    // ---- レイヤー (Undo の 1 段 = layer 配列ごとのスナップショット。CellEdit の添字は段ごとの配列に対するもの) ----
+    // 末尾に空のレイヤーを足す。上限 (kMaxTilemapLayers) なら Invalid
+    tileedit::EditResult AddLayer(const std::string& name);
+    // 削除する。範囲外 / 最後の 1 枚は Invalid
+    tileedit::EditResult RemoveLayer(int32_t layer);
+    // delta (+1 = 配列の後ろへ) だけ動かす。端を越えるなら NoChange、範囲外は Invalid
+    tileedit::EditResult MoveLayer(int32_t layer, int32_t delta);
+    // 名前・sortingLayerId・orderInLayer・collision を props の値にする (セルは触らない)。
+    // Inspector のドラッグなど連続した変更は BeginGesture / EndGesture で 1 段にまとまる
+    tileedit::EditResult SetLayerProps(int32_t layer, const TilemapLayer& props);
 
     // ---- 選択 (Select ツール) ----
     void SelectRect(int32_t ax, int32_t ay, int32_t bx, int32_t by);
@@ -102,11 +114,20 @@ private:
         uint32_t before = 0;
         uint32_t after = 0;
     };
-    using Step = std::vector<CellEdit>;
+    // Undo の 1 段。セルの差分か、layer 配列ごとの前後のスナップショット (レイヤーの追加 / 削除 / 並べ替え / 設定)
+    struct Step {
+        std::vector<CellEdit> cells;
+        bool layerOp = false;
+        std::vector<TilemapLayer> beforeLayers;
+        std::vector<TilemapLayer> afterLayers;
+    };
 
     bool ValidCell(int32_t layer, int32_t x, int32_t y) const;
     // edits を反映して Undo に積む。空なら NoChange
-    tileedit::EditResult Commit(Step&& edits);
+    tileedit::EditResult Commit(std::vector<CellEdit>&& edits);
+    // asset_.layers を書き換えた後に呼ぶ。beforeLayers は書き換え前の配列
+    tileedit::EditResult CommitLayers(std::vector<TilemapLayer>&& beforeLayers);
+    void PushUndo(Step&& step);
     void ApplyStep(const Step& step, bool forward);
 
     bool loaded_ = false;

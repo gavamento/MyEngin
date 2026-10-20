@@ -1061,6 +1061,128 @@ bool RunTilemapSelfTest()
         tilemap::Install(previousMaps);
     }
 
+    // ---- ルールタイルとアニメーションタイル (M94m) ----
+    {
+        constexpr uint32_t kGround = 1;
+        constexpr uint32_t kWaterId = 2;
+        const AssetID defaultSprite{ 100 };
+        const AssetID leftSprite{ 101 };
+        const AssetID midSprite{ 102 };
+        const AssetID rightSprite{ 103 };
+        const AssetID singleSprite{ 104 };
+        TilePalette palette;
+        {
+            TileDef& ground = *palette.Add("ground", defaultSprite);
+            ground.hasRule = true;
+            // 左右 (W E) だけを見る地面の縁。上の行ほど優先
+            ground.variants = { { "...ox...", leftSprite }, { "...xx...", midSprite }, { "...xo...", rightSprite },
+                                { "...oo...", singleSprite } };
+            TileDef& water = *palette.Add("water", AssetID{ 200 });
+            water.hasAnim = true;
+            water.ticksPerFrame = 8;
+            water.animFrames = { AssetID{ 201 }, AssetID{ 202 }, AssetID{ 203 } };
+            water.hasRule = true; // anim が優先される
+            water.variants = { { "........", AssetID{ 299 } } };
+        }
+
+        // 同じレイヤーの 1 行 (y = 5) に地面を並べ、(x, y) の隣接を 3x3 チャンクの実効セルから読んで変種を引く
+        TilemapLayer layer;
+        for (int32_t x : { 0, 2, 3, 4, 15, 16, 17 }) {
+            layer.SetCell(x, 5, tilecell::Make(kGround, false, false, 0));
+        }
+        layer.SetCell(3, 6, tilecell::Make(kWaterId, false, false, 0)); // 真上に別種
+        auto aroundOf = [](const TilemapLayer& l, int32_t chunkX, int32_t chunkY) {
+            Sprite2DRenderer::TileChunkAround a{};
+            for (int32_t dy = -1; dy <= 1; ++dy) {
+                for (int32_t dx = -1; dx <= 1; ++dx) {
+                    const auto it = l.chunks.find(ChunkKey{ chunkY + dy, chunkX + dx });
+                    if (it != l.chunks.end()) {
+                        a[static_cast<size_t>((dy + 1) * 3 + (dx + 1))] = it->second.cells;
+                    }
+                }
+            }
+            return a;
+        };
+        auto spriteOf = [&](int32_t x, int32_t y) {
+            const int32_t cx = TilemapFloorDiv(x, kTilemapChunkSize);
+            const int32_t cy = TilemapFloorDiv(y, kTilemapChunkSize);
+            const TileNeighbors n = Sprite2DRenderer::TileNeighborsAt(
+                aroundOf(layer, cx, cy), TilemapFloorMod(x, kTilemapChunkSize), TilemapFloorMod(y, kTilemapChunkSize));
+            return ResolveRuleVariant(palette, tilecell::TileId(layer.GetCell(x, y)), n).value;
+        };
+
+        // (a) 縁 4 種
+        check(spriteOf(0, 5) == singleSprite.value, "rule tile: an isolated tile takes the single variant");
+        check(spriteOf(2, 5) == leftSprite.value, "rule tile: the left end of a row takes the left-edge variant");
+        check(spriteOf(3, 5) == midSprite.value, "rule tile: the middle of a row takes the middle variant");
+        check(spriteOf(4, 5) == rightSprite.value, "rule tile: the right end of a row takes the right-edge variant");
+
+        // 先頭から順に合うものを採る / 合わなければ既定の sprite / 未登録 id は null
+        {
+            TilePalette p2 = palette;
+            TileDef* g = const_cast<TileDef*>(p2.Find(kGround));
+            const TileNeighbors none{};
+            g->variants = { { "........", AssetID{ 111 } }, { "...xx...", AssetID{ 112 } } };
+            check(ResolveRuleVariant(p2, kGround, none).value == 111, "rule tile: the first matching variant wins (any-pattern first)");
+            g->variants = { { "xxxxxxxx", AssetID{ 113 } } };
+            check(ResolveRuleVariant(p2, kGround, none) == defaultSprite, "rule tile: no matching variant falls back to the tile sprite");
+            TileNeighbors all;
+            all.fill(kGround);
+            check(ResolveRuleVariant(p2, kGround, all).value == 113, "rule tile: x needs the same tile id in all 8 neighbors");
+            all[7] = tilecell::Make(kGround, true, false, 1, 3); // flip / 回転 / damage ビットは同種判定に影響しない
+            check(ResolveRuleVariant(p2, kGround, all).value == 113, "rule tile: flip / rotation / damage bits do not affect same-tile matching");
+            all[7] = kWaterId;
+            check(ResolveRuleVariant(p2, kGround, all) == defaultSprite, "rule tile: a different tile id does not satisfy x");
+            check(ResolveRuleVariant(p2, 99, none).IsNull(), "rule tile: an unknown tile id has no sprite");
+        }
+
+        // (b) チャンク境界: セル 15 の東はチャンク (0, 1) のセル 16 (西の 14 は空なので、隣を読めていれば左端、読めていなければ単独)、
+        // セル 16 の西はチャンク (0, 0) のセル 15
+        check(spriteOf(15, 5) == leftSprite.value,
+              "rule tile: the east neighbor across the chunk border (cell 16) is read from the next chunk");
+        check(spriteOf(16, 5) == midSprite.value,
+              "rule tile: the west neighbor across the chunk border (cell 15) is read from the previous chunk");
+        check(spriteOf(17, 5) == rightSprite.value, "rule tile: the end of a row in the next chunk takes the right-edge variant");
+        {
+            // 対角: チャンク (0, 0) の角 (15, 15) の NE はチャンク (1, 1) の (0, 0) = セル (16, 16)
+            TilemapLayer corner;
+            corner.SetCell(16, 16, tilecell::Make(kGround, false, false, 0));
+            corner.SetCell(15, 15, tilecell::Make(kGround, false, false, 0));
+            const TileNeighbors n = Sprite2DRenderer::TileNeighborsAt(aroundOf(corner, 0, 0), 15, 15);
+            check(n[2] == kGround && n[0] == 0 && n[1] == 0 && n[3] == 0 && n[4] == 0 && n[5] == 0 && n[6] == 0 && n[7] == 0,
+                  "rule tile: the NE neighbor at a chunk corner comes from the diagonal chunk (order NW N NE W E SW S SE)");
+            const TileNeighbors sw = Sprite2DRenderer::TileNeighborsAt(aroundOf(corner, 1, 1), 0, 0);
+            check(sw[5] == kGround && sw[0] == 0 && sw[7] == 0 && sw[2] == 0,
+                  "rule tile: the SW neighbor at the opposite corner comes from chunk (0, 0)");
+        }
+
+        // (c) アニメ: (tick / ticksPerFrame) % frames。tick 8 でコマが進み、24 で戻る
+        const TileDef* water = palette.Find(kWaterId);
+        const TileNeighbors none{};
+        auto animSprite = [&](uint64_t tick) { return ResolveTileSprite(palette, *water, none, tick).value; };
+        check(animSprite(0) == 201 && animSprite(7) == 201, "anim tile: frame 0 for ticks 0..7");
+        check(animSprite(8) == 202 && animSprite(15) == 202, "anim tile: the frame advances at tick 8");
+        check(animSprite(16) == 203 && animSprite(23) == 203, "anim tile: frame 2 for ticks 16..23");
+        check(animSprite(24) == 201 && animSprite(24 * 1000 + 8) == 202, "anim tile: it loops with the frame count");
+        check(TileAnimFrameIndex(8, 0, 100) == -1, "anim tile: no frames has no frame index");
+        check(TileAnimFrameIndex(0, 3, 5) == 2, "anim tile: ticksPerFrame below 1 is treated as 1");
+        {
+            TilePalette p3 = palette;
+            TileDef* w = const_cast<TileDef*>(p3.Find(kWaterId));
+            w->animFrames.clear();
+            check(ResolveTileSprite(p3, *w, none, 8).value == 299, "anim tile: an empty frame list falls through to the rule / sprite");
+        }
+
+        // 往復 (rule / anim は sub-10 で読み書き済み): 変種の順序とコマ列が保たれる
+        {
+            TilePalette back;
+            check(TilePaletteLibrary::FromJson(TilePaletteLibrary::ToJson(palette), back)
+                      && back.Find(kGround)->variants.size() == 4 && back.Find(kGround)->variants[3].neighbors == "...oo..."
+                      && back.Find(kWaterId)->animFrames.size() == 3 && back.Find(kWaterId)->animFrames[2].value == 203,
+                  "palette round trip keeps the variant order and the frame list");
+        }
+    }
+
     fs::remove_all(root, ec);
 
     if (failCount == 0) {

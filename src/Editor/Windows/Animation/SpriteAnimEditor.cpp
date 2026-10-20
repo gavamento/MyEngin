@@ -88,6 +88,8 @@ void SplitDisplayName(const std::string& display, std::string& tex, std::string&
     slice = hash == std::string::npos ? std::string() : display.substr(hash + 1);
 }
 
+} // namespace
+
 std::string SpriteDisplayName(AssetID id)
 {
     SpriteLibrary* lib = spritelib::Library();
@@ -104,7 +106,28 @@ std::string SpriteDisplayName(AssetID id)
     return std::string();
 }
 
-} // namespace
+std::map<std::string, std::vector<SpriteListing>> ListSlicedTextures()
+{
+    std::map<std::string, std::vector<SpriteListing>> byTexture;
+    if (SpriteLibrary* lib = spritelib::Library()) {
+        std::vector<SpriteListing> listing;
+        lib->Enumerate(listing);
+        for (const SpriteListing& l : listing) {
+            std::string tex;
+            std::string slice;
+            SplitDisplayName(l.displayName, tex, slice);
+            if (!slice.empty()) {
+                byTexture[tex].push_back(l);
+            }
+        }
+    }
+    for (auto& [tex, slices] : byTexture) {
+        std::sort(slices.begin(), slices.end(), [](const SpriteListing& a, const SpriteListing& b) {
+            return NaturalLess(a.displayName, b.displayName);
+        });
+    }
+    return byTexture;
+}
 
 bool DrawSpriteThumb(EngineContext& ctx, AssetID sprite, float box)
 {
@@ -233,20 +256,8 @@ void DrawAddSlices(SpriteAnimEditState& state)
     if (!ImGui::BeginPopup("##addslices")) {
         return;
     }
-    // テクスチャ名 → そのスライス (表示名の昇順で来るが、足すときは自然順に並べ直す)
-    std::map<std::string, std::vector<SpriteListing>> byTexture;
-    if (SpriteLibrary* lib = spritelib::Library()) {
-        std::vector<SpriteListing> listing;
-        lib->Enumerate(listing);
-        for (const SpriteListing& l : listing) {
-            std::string tex;
-            std::string slice;
-            SplitDisplayName(l.displayName, tex, slice);
-            if (!slice.empty()) {
-                byTexture[tex].push_back(l);
-            }
-        }
-    }
+    // テクスチャ名 → そのスライス (自然順)
+    std::map<std::string, std::vector<SpriteListing>> byTexture = ListSlicedTextures();
     if (byTexture.empty()) {
         ImGui::TextDisabled("%s", Tr(StrId::SprAnim_NoSlices));
     }
@@ -254,9 +265,6 @@ void DrawAddSlices(SpriteAnimEditState& state)
         if (!ImGui::Selectable(tex.c_str())) {
             continue;
         }
-        std::sort(slices.begin(), slices.end(), [](const SpriteListing& a, const SpriteListing& b) {
-            return NaturalLess(a.displayName, b.displayName);
-        });
         const int32_t lastTicks = state.anim.frames.empty() ? 6 : state.anim.frames.back().ticks;
         for (const SpriteListing& s : slices) {
             if (state.anim.frames.size() >= kMaxSpriteAnimFrames) {

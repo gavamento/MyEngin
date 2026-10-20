@@ -134,7 +134,9 @@
     <ClCompile Include="..\src\Editor\Windows\Scene\TileAssetInspector.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Sprite\SpriteEditModel.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Sprite\SpriteEditorWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Tilemap\TileAssetEditUi.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Tilemap\TilemapEditModel.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Tilemap\TilePaletteEditModel.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Tilemap\TilePaletteWindow.cpp" />
     <ClInclude Include="..\src\Editor\App\ChildProcess.h" />
     <ClInclude Include="..\src\Editor\App\DeviceLostRescue.h" />
@@ -236,7 +238,9 @@
     <ClInclude Include="..\src\Editor\Windows\Scene\TileAssetInspector.h" />
     <ClInclude Include="..\src\Editor\Windows\Sprite\SpriteEditModel.h" />
     <ClInclude Include="..\src\Editor\Windows\Sprite\SpriteEditorWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Tilemap\TileAssetEditUi.h" />
     <ClInclude Include="..\src\Editor\Windows\Tilemap\TilemapEditModel.h" />
+    <ClInclude Include="..\src\Editor\Windows\Tilemap\TilePaletteEditModel.h" />
     <ClInclude Include="..\src\Editor\Windows\Tilemap\TilePaletteWindow.h" />
   </ItemGroup>
   <!-- END FILES -->

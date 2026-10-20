@@ -4,6 +4,7 @@
 //                                          Sprite2D の収集とソート (描画リストを作る)
 //====================================================================================
 #pragma once
+#include <array>
 #include <cstdint>
 #include <map>
 #include <utility>
@@ -32,10 +33,11 @@ struct SpriteDef;
 class Sprite2DRenderer {
 public:
     // Sprite2D / Tilemap が無ければ空の描画リストを返す。返した参照は次の Collect まで有効。
-    // view / proj を渡し、proj が正射影ならタイルのチャンクを画面外で切る (透視 / 省略は切らない)
+    // view / proj を渡し、proj が正射影ならタイルのチャンクを画面外で切る (透視 / 省略は切らない)。
+    // simTick は sim の tick 番号 (アニメーションタイルのコマ選び用。実時間・描画フレーム数は使わない)
     const Sprite2DDrawList& Collect(World& world, RenderResources& resources,
                                     const DirectX::XMFLOAT4X4* view = nullptr,
-                                    const DirectX::XMFLOAT4X4* proj = nullptr);
+                                    const DirectX::XMFLOAT4X4* proj = nullptr, uint64_t simTick = 0);
 
     // 正射影のとき、カメラの視錐台 (直方体) を囲むワールドの AABB (view / proj は行ベクトル規約の行列)。
     // 透視 / 行列が無い / 特異は false (タイルを切らない)
@@ -46,6 +48,13 @@ public:
     // flip を先に掛け、その後 rotation (0..3 = 反時計回りに 90 度ずつ) で絵を回す。ジオメトリは変えない
     static void TileCornerUv(float u0, float v0, float u1, float v1, bool flipX, bool flipY, uint32_t rotation,
                              float out[4][2]);
+
+    // ルールタイルの隣接 (NW N NE W E SW S SE) を、3x3 チャンクの実効セルから読む純関数。
+    // around の添字は (dy + 1) * 3 + (dx + 1) (中央が対象のチャンク、dy = +1 が北)。(lx, ly) は対象チャンク内の座標で、
+    // 範囲外 (-1 または 16) になる隣は隣のチャンクの値を返す。値は tileId だけ
+    using TileChunkCells = std::array<uint32_t, kTilemapChunkCells>;
+    using TileChunkAround = std::array<TileChunkCells, 9>;
+    static TileNeighbors TileNeighborsAt(const TileChunkAround& around, int32_t lx, int32_t ly);
 
     // pivot を原点にしたローカル矩形 {left, bottom, right, top} (ワールド単位、flip 適用前)。
     // 描画と Scene View のギズモが同じ寸法を使うための 1 本。texWidth / texHeight は全面スプライトのときだけ使う
@@ -109,6 +118,13 @@ private:
         ChunkKey chunk;
         auto operator<=>(const TileCacheKey&) const = default;
     };
+    // 焼いたチャンクに含まれるアニメーションタイル 1 種と、そのとき選んだコマ
+    struct AnimStamp {
+        uint32_t tileId = 0;
+        int32_t ticksPerFrame = 1;
+        uint32_t frameCount = 0;
+        int32_t frame = 0;
+    };
     struct BakedChunk {
         uint64_t mapEpoch = 0;     // 焼いたときのライブラリ / 全体 dirty の版。違えば焼き直す
         uint64_t paletteEpoch = 0;
@@ -118,6 +134,7 @@ private:
         uint64_t lastUsed = 0;
         std::vector<Sprite2DVertex> vertices;
         std::vector<TileRun> runs;
+        std::vector<AnimStamp> anims; // tileId 昇順。コマが変わった tick だけ焼き直す
     };
 
     // 解決済みの 1 スプライト (SpriteDef + テクスチャ寸法)。矩形・border は画素、左上原点
@@ -158,6 +175,7 @@ private:
     std::vector<Sprite2DVertex> scratch_; // 1 スプライト分の頂点 (上限 kMaxSpriteVertices)
     std::vector<std::pair<int32_t, int32_t>> seenMasks_; // 描画順でここまでに出たマスクの range
     std::map<TileCacheKey, BakedChunk> tileCache_;       // 走査は挿入 / 削除だけ (描画順には使わない)
+    uint64_t simTick_ = 0;                               // Collect が受けた sim の tick (アニメーションタイル用)
     uint64_t tileFrame_ = 0;                             // Collect の通し番号 (使われなくなったチャンクの掃除用)
     std::vector<Sprite2DVertex> tileScratch_;            // 原点を足した 1 run 分の頂点
     Sprite2DDrawList list_;
