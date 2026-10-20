@@ -43,7 +43,7 @@
 | sub-10 | OK | 1 | cc01485 | タイルパレット / タイルマップ資産、Tilemap、チャンク描画。依存: 04。**チェックポイント 2 (sub-06〜10) 通過**。TypeId 84、snapshot v56。NavAgent 庭ハッシュの再採取 (sub-09 起因) は追補 9a49655 |
 | sub-11 | OK | 1 | 1eaee36 | タイル衝突 + セル書き換えの sim 状態 + 破壊。依存: 08, 10。snapshot v57。前カリング (CollectWithin / staticOnly) と WakeBodiesNear を spec 4.1.7 に採用 |
 | sub-12 | OK | 1 | 3a11cdb | タイルパレット窓。依存: 10, 02。版 bump なし。編集中の反映は TilemapLibrary::Register (TilemapSystem に編集専用の口を作らない) |
-| sub-13 | 実装中 | 0 | | ルールタイル、アニメーションタイル、レイヤー UI。依存: 11, 12。やること 3b (タイル追加 UI) / 3c (大きな面のドラッグ計測) を sub-12 VERDICT で追加 |
+| sub-13 | 判定待ち | 0 | | ルールタイル、アニメーションタイル、レイヤー UI。依存: 11, 12。**SELF_EVAL round 1 到着済み・planner 未判定・変更は作業ツリーに未コミット**。やること 3b (タイル追加 UI) / 3c (大きな面のドラッグ計測) を sub-12 VERDICT で追加 |
 | sub-14 | 未着手 | 0 | | ABI (10 本) + C# ミラー + MyeScript。依存: 08, 11。**版は着手時の末尾 (M75h より先なら v31)** |
 | sub-15 | 未着手 | 0 | | Light2D とライトバッファ。依存: 06 |
 | sub-16 | 未着手 | 0 | | ShadowCaster2D と法線マップ。依存: 15 |
@@ -143,3 +143,4 @@
 - (sub-12 VERDICT should → sub-13) やること 3b: パレットのタイル追加 UI (スプライトから追加・スライス済みテクスチャから一括・削除、`TilePaletteEditModel` の独自 Undo)。やること 3c: 100×50×3 層で Brush を 60 フレームドラッグしたフレーム時間を計測し、33 ms を超えたら描画キャッシュの dirty をチャンク単位へ。
 - (sub-12 VERDICT nit → sub-24 checklists) 実マウスのクリック判定、S/B/D/G/U/I・Ctrl+S/Z/Y、Delete 先取り、別アセット切替モーダル、Open Tile Palette ボタン、Window メニュー、TextWrapped 化後の Play 中表示はユーザー目視。Revert ボタンは無し (Undo で戻せる)。
 - (sub-12 coder → sub-13) レイヤー編集で `TilemapEditModel` を拡張するなら `LayersEqual` の size 比較と `CellEdit.layer` 添字に注意。rule / anim が入っても窓の「編集中は Register で反映」はそのまま使える。キー: S B D G U I は窓フォーカスか Scene View 上カーソル時、Ctrl+S/Z/Y は窓フォーカス時のみ (Scene View フォーカスの Ctrl+Z はシーンの UndoStack)。Scene View 2D の色が淡いのはエディタカメラの ACES (色の契約はゲームカメラの話、spec 4.1.7 に明記)。
+- **2026-10-21 ユーザー指示「40分後にいったん止めて」で sub-13 の判定前に一時停止。** 再開手順: (1) `git status` で sub-13 の変更 (SELF_EVAL の「触ったファイル」と一致、`plans\m94-2d\sub-13.md` の実装メモに SELF_EVAL round 1 の写し) が残っていることを確認 (2) planner を新規起動し (セッションを跨ぐと SendMessage 不可)、`MODE: VERDICT` で sub-13.md 実装メモの SELF_EVAL 全文を渡す。coder の不安・質問 5 件 (3c の 33 ms 判定は WARP 基準でも超えるので見送り / ドラッグ初回だけ約 110 ms / Ctrl+Z はマップとパレット別履歴 / Edit 中アニメタイルは止まる / レイヤー UI は Inspector でなく窓) を裁定させる (3) OK ならコミット (件名は VERDICT から) → 台帳 → sub-14 (ABI、M75h が v31 予約なので末尾確認、やること 6 = PhysicsQueries にタイルの箱)。REWORK なら新しい coder に FIX_REQUEST + sub-13.md を渡す。
