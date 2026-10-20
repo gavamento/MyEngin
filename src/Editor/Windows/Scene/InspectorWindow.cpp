@@ -1282,6 +1282,9 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
             }
             ImGui::TextDisabled("%s", Tr(StrId::Insp_TilemapNote));
             ImGui::PopTextWrapPos();
+            if (ImGui::Button(Tr(StrId::Insp_OpenTilePalette))) {
+                pendingOpenTilePalette_ = ctx.scene->EnsureFileId(tg.e);
+            }
         }
     }
     // M50a: PartBounds 単独 (Part 無し) は RaycastParts の収集

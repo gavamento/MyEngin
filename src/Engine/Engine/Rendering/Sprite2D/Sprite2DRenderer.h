@@ -113,6 +113,7 @@ private:
         uint64_t mapEpoch = 0;     // 焼いたときのライブラリ / 全体 dirty の版。違えば焼き直す
         uint64_t paletteEpoch = 0;
         uint64_t dirtyEpoch = 0;
+        uint64_t spriteEpoch = 0;  // SpriteLibrary の版 (スプライトエディタの Apply で UV が変わる)
         bool complete = false;     // false = 非同期ロード中のスプライトがあった (次フレームも焼き直す)
         uint64_t lastUsed = 0;
         std::vector<Sprite2DVertex> vertices;

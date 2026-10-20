@@ -11,6 +11,7 @@
 #include "Editor/Scene/Selection.h"
 #include "Editor/Tools/PatrolRouteEdit.h"
 #include "Editor/Windows/Scene/Shape2DEditor.h"
+#include "Editor/Windows/Tilemap/TilePaletteWindow.h"
 #include "Editor/Windows/AI/BtDisplayNames.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Ecs/Components.h"
@@ -2493,6 +2494,85 @@ bool SceneViewWindow::HandleTerrainBrush(EngineContext& ctx, Selection& selectio
     return consumed;
 }
 
+bool SceneViewWindow::HandleTilePaint(EngineContext& ctx, const ImVec2& imgPos, const ImVec2& size)
+{
+    if (!mode2d || tilePalette_ == nullptr || !tilePalette_->SceneEditActive() || !rt_.IsValid()) {
+        return false;
+    }
+    World& world = ctx.scene->GetWorld();
+    const GameObject target = ctx.scene->FindByFileId(tilePalette_->TargetFileId());
+    const TilemapAsset* asset = tilePalette_->TargetAsset();
+    if (!target || asset == nullptr || world.GetComponent<TilemapComponent>(target.Id()) == nullptr) {
+        return false;
+    }
+    const EntityID e = target.Id();
+    const ImGuiIO& io = ImGui::GetIO();
+    const XMFLOAT3 origin = TilemapSystem::OriginOf(world, e);
+
+    // カーソルのレイと Tilemap の z 平面の交点 → セル
+    constexpr float kMinRayZ = 1e-6f;
+    TileSceneInput in;
+    XMFLOAT3 ro;
+    XMFLOAT3 rd;
+    if (MouseRay(imgPos, size, ro, rd) && std::fabs(rd.z) > kMinRayZ) {
+        const float t = (origin.z - ro.z) / rd.z;
+        const XMFLOAT3 hit = { ro.x + rd.x * t, ro.y + rd.y * t, origin.z };
+        // セル座標の範囲外は int32 への変換が未定義になるので、先に double で範囲を見る
+        const double fx = std::floor((static_cast<double>(hit.x) - origin.x) / asset->cellSize[0]);
+        const double fy = std::floor((static_cast<double>(hit.y) - origin.y) / asset->cellSize[1]);
+        if (fx >= TilemapSystem::kCellCoordMin && fx <= TilemapSystem::kCellCoordMax && fy >= TilemapSystem::kCellCoordMin
+            && fy <= TilemapSystem::kCellCoordMax) {
+            TilemapSystem::WorldToCell(world, e, hit, in.cellX, in.cellY);
+            in.hasCell = true;
+        }
+    }
+    in.hovered = ImGui::IsWindowHovered() && !io.KeyAlt;
+    in.pressed = in.hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+    in.down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    in.released = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+    tilePalette_->OnSceneInput(in);
+
+    // 枠の描画: セル矩形 (両端を含む) の 4 隅をワールドから画面へ
+    const TileSceneOverlay overlay = tilePalette_->SceneOverlay();
+    const XMMATRIX vp = XMMatrixMultiply(XMLoadFloat4x4(&lastView_), XMLoadFloat4x4(&lastProj_));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    auto drawCells = [&](const tileedit::CellRect& r, ImU32 line, ImU32 fill) {
+        const float xs[2] = { origin.x + static_cast<float>(r.x0) * asset->cellSize[0],
+                              origin.x + static_cast<float>(r.x1 + 1) * asset->cellSize[0] };
+        const float ys[2] = { origin.y + static_cast<float>(r.y0) * asset->cellSize[1],
+                              origin.y + static_cast<float>(r.y1 + 1) * asset->cellSize[1] };
+        const int order[4][2] = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } };
+        ImVec2 pts[4];
+        for (int i = 0; i < 4; ++i) {
+            const XMVECTOR clip = XMVector4Transform(
+                XMVectorSet(xs[order[i][0]], ys[order[i][1]], origin.z, 1.0f), vp);
+            const float w = XMVectorGetW(clip);
+            if (w <= 0.0f) {
+                return;
+            }
+            pts[i] = ImVec2(imgPos.x + (XMVectorGetX(clip) / w * 0.5f + 0.5f) * size.x,
+                            imgPos.y + (0.5f - XMVectorGetY(clip) / w * 0.5f) * size.y);
+        }
+        dl->AddConvexPolyFilled(pts, 4, fill);
+        dl->AddPolyline(pts, 4, line, 2.0f, ImDrawFlags_Closed);
+    };
+    constexpr ImU32 kCursorLine = IM_COL32(255, 220, 64, 255);
+    constexpr ImU32 kCursorFill = IM_COL32(255, 220, 64, 48);
+    constexpr ImU32 kSelectionLine = IM_COL32(64, 200, 255, 255);
+    constexpr ImU32 kSelectionFill = IM_COL32(64, 200, 255, 40);
+    if (overlay.hasSelection) {
+        drawCells(overlay.selection, kSelectionLine, kSelectionFill);
+    }
+    if (overlay.hasDragRect) {
+        drawCells(overlay.dragRect, kCursorLine, kCursorFill);
+    }
+    if (overlay.hasCursor) {
+        drawCells(tileedit::CellRect{ overlay.cursorX, overlay.cursorY, overlay.cursorX, overlay.cursorY },
+                  kCursorLine, kCursorFill);
+    }
+    return true;
+}
+
 void SceneViewWindow::DrawTerrainBrushPanel(EngineContext& ctx)
 {
     if (!terrainBrush_) {
@@ -2633,11 +2713,12 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     // 地形ブラシ (M58f)。★ギズモ**より前**に置く — 塗っている最中にギズモが左ボタンを
     // 掴むと、地形を撫でたつもりで選択オブジェクトが飛んでいく
     const bool brushConsumed = HandleTerrainBrush(ctx, selection, undo, imgPos, avail);
+    const bool tilePaintConsumed = HandleTilePaint(ctx, imgPos, avail);
 
     // ギズモ (ImGui 描画レイヤ — シーン RT/backbuffer には焼き込まれない)
     bool patrolClicked = false;
     bool shape2dClicked = false;
-    if (selection.primary != 0 && !terrainBrush_) {
+    if (selection.primary != 0 && !terrainBrush_ && !tilePaintConsumed) {
         if (HandleShape2DEdit(ctx, selection, settings, imgPos.x, imgPos.y, avail.x, avail.y, shape2dClicked)) {
             // M94h: 2D 形状の点を編集している間は変形ギズモを出さない
         } else if (!HandlePatrolRoute(ctx, selection, undo, settings, imgPos.x, imgPos.y, avail.x, avail.y, patrolClicked)) {
@@ -2654,7 +2735,7 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     // ---- ビルボードアイコン (M40b): カメラ/ライト/エミッタ位置に FA アイコンを重ねる。
     //      GPU パス不要 (ImGui drawlist に world→screen 投影) + クリックで選択 ----
     const ImGuiIO& io = ImGui::GetIO();
-    bool iconClicked = brushConsumed || patrolClicked || shape2dClicked; // ブラシが左ボタンを掴んでいる間・巡回点をクリックした間は選択させない
+    bool iconClicked = brushConsumed || tilePaintConsumed || patrolClicked || shape2dClicked; // ブラシが左ボタンを掴んでいる間・巡回点をクリックした間は選択させない
     if (showGizmos_ && rt_.IsValid()) {
         World& world = ctx.scene->GetWorld();
         const XMMATRIX vp =

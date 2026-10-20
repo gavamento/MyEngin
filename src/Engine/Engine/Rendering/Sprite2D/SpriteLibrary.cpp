@@ -49,6 +49,7 @@ int SpriteLibrary::Register(const std::wstring& texPath)
     const AssetID textureId{ assetkey::Resolve(NormalizePathKey(texPath)) };
     Unregister(textureId.value);
     unresolved_.clear();
+    ++epoch_;
 
     importmeta::TextureImportSettings tex; // .meta 無しは既定値
     importmeta::Resolve(texPath, tex);
@@ -161,6 +162,7 @@ void SpriteLibrary::Clear()
     entries_.clear();
     idsByTexture_.clear();
     unresolved_.clear();
+    ++epoch_;
 }
 
 namespace spritelib {

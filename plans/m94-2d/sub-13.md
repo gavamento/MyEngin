@@ -9,6 +9,8 @@
 1. ルールタイル: 純関数 `ResolveRuleVariant(palette, tileId, neighbors8) → spriteAssetId` (`variants` を順に見て最初に合う `neighbors` 8 文字パターン (NW N NE W E SW S SE、x = 同 tileId が必要 / o = 空 (0) が必要 / . = 任意) を採る。合わなければタイル既定の `sprite`)。隣接は**同じレイヤー**の実効セル (override 込み)。チャンク境界は隣チャンクを読む (隣チャンクの変更で自チャンクも dirty にする = 変更セルの 8 近傍が別チャンクならそのチャンクも dirty)。
 2. アニメーションタイル: `frameIndex = (simTick / ticksPerFrame) % frames.size()`。`Sprite2DRenderer` の収集は sim tick (`TickRunner` が持つ現在 tick を描画側へ渡す既存の経路、無ければ `EngineContext` の tick) を受け、アニメタイルを含むチャンクは `frameIndex` が変わった tick だけ焼き直す (チャンクごとに「最後に焼いた frameIndex 列」を持つ)。sim 状態は持たない。
 3. レイヤー UI: Tilemap の Inspector (アセット側) にレイヤーの追加 / 削除 / 名前 / sortingLayerId / orderInLayer / collision / ↑↓。パレット窓のタイル Inspector に `collider / oneWay / hp / destroyedTile / destroyEffect / rule (variants の追加・削除・8 近傍のトグル UI・sprite ピッカー) / anim (ticksPerFrame・frames の追加・削除・順序)`。両方とも独自 Undo (sub-12 の `TilemapEditModel` を拡張 / `TilePaletteEditModel` を新設)。
+3b. (sub-12 の申し送り) パレットのタイル追加 UI: パレット窓 (またはパレットアセットの Inspector) に「スプライトからタイルを追加」(ピッカー、id は最大 + 1) と「スライス済みテクスチャから全スライスを追加」、タイルの削除。`TilePaletteEditModel` の独自 Undo に載せる。レイヤーの追加・削除・並べ替えを `TilemapEditModel` に載せるときは `LayersEqual` の size 比較と `CellEdit.layer` 添字のずれに注意 (レイヤー操作は Undo の 1 段として layer 配列ごとスナップショットでよい)。
+3c. (sub-12 の不安 1) 100×50×3 層の Tilemap で Brush を 60 フレームドラッグしたときのエディタのフレーム時間をログ (Release / WARP)。1 フレーム 33 ms を超えたら、描画キャッシュの dirty をチャンク単位にする (TilemapLibrary に「変更チャンクの集合」を持たせ、Sprite2DRenderer が epoch 全体でなくそれを見る)。
 4. selftest (`TilemapSelfTest` に節追加): (a) 地面の縁 4 種 (左端 / 中 / 右端 / 単独) のルールが隣接で正しく選ばれる (b) チャンク境界の隣接 (c) アニメの frameIndex が tick 8 で進む (d) レイヤー 3 枚の順序入れ替えの往復 JSON。
 5. 確認スクショ 2 枚 (tick 3 と tick 11 で `--shot-frame` を変えてアニメタイルのコマが違う。ルール変種の縁)。
 

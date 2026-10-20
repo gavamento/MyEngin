@@ -43,6 +43,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Editor/Asset/AssetOpsSelfTest.h"
 #include "Editor/SelfTest/SpriteEditorSelfTest.h"
+#include "Editor/SelfTest/TilePaletteSelfTest.h"
 #include "Editor/SelfTest/TerrainSelfTest.h"
 #include "Editor/SelfTest/DecalSelfTest.h"
 #include "Editor/SelfTest/HzbSelfTest.h"
@@ -592,6 +593,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             ok &= mye::RunUISelfTest();
             ok &= mye::RunSprite2DAssetSelfTest();
             ok &= mye::RunSpriteEditorSelfTest();
+            ok &= mye::RunTilePaletteSelfTest();        // M94l: タイルパレット窓の塗り (塗り潰し / 矩形 / Undo / ピック)
             ok &= mye::RunAnimatorControllerSelfTest(); // M94g: スプライト列クリップ (既存の v1 / v2 の読みも含む)
             ok &= mye::RunAnimatorControllerEditSelfTest(); // M94g: コントローラ窓のステート編集 (Sprite の排他)
             ok &= mye::RunAssetDatabaseSelfTest();      // M94g: .spriteanim.json の分類
@@ -705,6 +707,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunSprite2DAssetSelfTest();       // M94c: スプライト資産 (.meta の sprites) とソート層
         ok &= mye::RunTilemapSelfTest();             // M94j: タイルパレット / タイルマップ資産と座標変換
         ok &= mye::RunSpriteEditorSelfTest();        // M94e: スプライトエディタ (スライス純関数 / Undo / 保存)
+        ok &= mye::RunTilePaletteSelfTest();         // M94l: タイルパレット窓の塗り (塗り潰し / 矩形 / Undo / ピック)
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }

@@ -555,12 +555,15 @@ void Sprite2DRenderer::EmitTileChunk(const Item& item, World& world, RenderResou
     const uint64_t mapEpoch = (maps != nullptr) ? maps->Epoch() : 0;
     const uint64_t paletteEpoch = (palettes != nullptr) ? palettes->Epoch() : 0;
     const uint64_t dirtyEpoch = TilemapSystem::DirtyEpoch();
+    SpriteLibrary* sprites = spritelib::Library();
+    const uint64_t spriteEpoch = (sprites != nullptr) ? sprites->Epoch() : 0;
     if (!chunk.complete || chunk.mapEpoch != mapEpoch || chunk.paletteEpoch != paletteEpoch
-        || chunk.dirtyEpoch != dirtyEpoch) {
+        || chunk.dirtyEpoch != dirtyEpoch || chunk.spriteEpoch != spriteEpoch) {
         BakeTileChunk(item, world, resources, chunk);
         chunk.mapEpoch = mapEpoch;
         chunk.paletteEpoch = paletteEpoch;
         chunk.dirtyEpoch = dirtyEpoch;
+        chunk.spriteEpoch = spriteEpoch;
     }
     chunk.lastUsed = tileFrame_;
 

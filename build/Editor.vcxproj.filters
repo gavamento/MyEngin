@@ -55,6 +55,9 @@
     <Filter Include="Windows\Sprite">
       <UniqueIdentifier>{F1E4613B-858B-A87B-8170-95B82594829E}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Windows\Tilemap">
+      <UniqueIdentifier>{00BE9E4C-8C3E-51A1-5421-2B5AB1FF7339}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\Editor\App\ChildProcess.cpp">
@@ -175,6 +178,9 @@
       <Filter>SelfTest</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\TerrainSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\TilePaletteSelfTest.cpp">
       <Filter>SelfTest</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\SourceControl\CollabClient.cpp">
@@ -351,6 +357,12 @@
     <ClCompile Include="..\src\Editor\Windows\Sprite\SpriteEditorWindow.cpp">
       <Filter>Windows\Sprite</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Tilemap\TilemapEditModel.cpp">
+      <Filter>Windows\Tilemap</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Tilemap\TilePaletteWindow.cpp">
+      <Filter>Windows\Tilemap</Filter>
+    </ClCompile>
     <ClInclude Include="..\src\Editor\App\ChildProcess.h">
       <Filter>App</Filter>
     </ClInclude>
@@ -472,6 +484,9 @@
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\TerrainSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\TilePaletteSelfTest.h">
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SourceControl\CollabClient.h">
@@ -647,6 +662,12 @@
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Sprite\SpriteEditorWindow.h">
       <Filter>Windows\Sprite</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Tilemap\TilemapEditModel.h">
+      <Filter>Windows\Tilemap</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Tilemap\TilePaletteWindow.h">
+      <Filter>Windows\Tilemap</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

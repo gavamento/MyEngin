@@ -23,6 +23,7 @@ class UndoStack;
 struct EditorSettings;
 struct CameraComponent;
 struct ColliderComponent;
+class TilePaletteWindow;
 
 // エディタカメラでシーンを描画するビュー (engine_spec.md 9 章)。
 // カメラはエンティティではなくエディタ所有 (Play 状態と無関係に操作できる)。
@@ -38,6 +39,9 @@ public:
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo, EditorSettings& settings);
     // デバイス復旧 (M88): RT と遅延 Init のパスを手放す。次の OnRenderViews / ピック要求で作り直される
     void ReleaseGpu();
+
+    // M94l: タイルパレット窓。2D モードで窓が開いている間、左ボタンはセルを塗る入力になる (EditorApp が毎フレーム渡す)
+    void SetTilePalette(TilePaletteWindow* window) { tilePalette_ = window; }
 
     // ビュー中心をピッキングして選択する (自動テスト用 — --pick-test)。ヒットで true
     bool PickAtCenter(EngineContext& ctx, Selection& selection);
@@ -122,6 +126,9 @@ private:
     bool HandleTerrainBrush(EngineContext& ctx, Selection& selection, UndoStack& undo,
                             const ImVec2& imgPos, const ImVec2& size);
     void DrawTerrainBrushPanel(EngineContext& ctx);
+    // M94l: タイルパレット窓へ Scene View のマウスをセル座標にして渡し、カーソルのセル・ドラッグ範囲・選択範囲の枠を重ねる。
+    // 戻り値 = 左ボタンを窓に渡した (= ピッキング / ギズモへ流さない)
+    bool HandleTilePaint(EngineContext& ctx, const ImVec2& imgPos, const ImVec2& size);
     void FocusOnSelection(EngineContext& ctx, Selection& selection);
     // カーソル位置のワールドレイ (origin + 正規化 dir)。ビュー行列が特異なら false
     bool MouseRay(const ImVec2& imgPos, const ImVec2& size, DirectX::XMFLOAT3& origin,
@@ -211,6 +218,7 @@ private:
     bool pilotRecording_ = false;
     uint64_t pilotRecordFid_ = 0;
 
+    TilePaletteWindow* tilePalette_ = nullptr; // M94l: 所有は EditorApp
     PickingPass picking_;    // クリック選択 (遅延 Init)
     EditorLinePass lines_;   // グリッド/ワイヤ/アウトライン (遅延 Init)
     GhostMeshPass ghostMesh_; // M72i: 分岐のゴーストの半透明メッシュ (遅延 Init)。線より先に描く

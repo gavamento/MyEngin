@@ -36,6 +36,7 @@ enum class GateBlocker : uint8_t {
     BehaviorTreeDirty,    // Behavior Tree 窓の編集が未保存
     ProjectSettingsDirty, // Project Settings の編集が未保存
     SpriteEditorDirty,    // スプライトエディタの編集が未保存 (.meta に書く前)
+    TilePaletteDirty,     // タイルパレット窓の編集が未保存 (.tilemap.json に書く前)
     Playing,              // 再生中 / ポーズ中
     NetActive,            // ネットセッション中
     BuildRunning,         // Build Settings のパイプラインが進行中
@@ -57,6 +58,7 @@ struct GateInputs {
     bool behaviorTreeDirty = false;
     bool projectSettingsDirty = false;
     bool spriteEditorDirty = false;
+    bool tilePaletteDirty = false;
     bool playing = false;
     bool netActive = false;
     bool buildRunning = false;
@@ -100,6 +102,7 @@ struct DocumentDirty {
     bool behaviorTree = false;
     bool projectSettings = false;
     bool spriteEditor = false;
+    bool tilePalette = false;
 };
 
 class GitTransaction {

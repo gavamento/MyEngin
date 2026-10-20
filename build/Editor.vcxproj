@@ -75,6 +75,7 @@
     <ClCompile Include="..\src\Editor\SelfTest\SsrSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\StartupSplashSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\TerrainSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\SelfTest\TilePaletteSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\CollabClient.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\GitTransaction.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\PairRule.cpp" />
@@ -133,6 +134,8 @@
     <ClCompile Include="..\src\Editor\Windows\Scene\TileAssetInspector.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Sprite\SpriteEditModel.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Sprite\SpriteEditorWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Tilemap\TilemapEditModel.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Tilemap\TilePaletteWindow.cpp" />
     <ClInclude Include="..\src\Editor\App\ChildProcess.h" />
     <ClInclude Include="..\src\Editor\App\DeviceLostRescue.h" />
     <ClInclude Include="..\src\Editor\App\DiskCompare.h" />
@@ -174,6 +177,7 @@
     <ClInclude Include="..\src\Editor\SelfTest\SsrSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\StartupSplashSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\TerrainSelfTest.h" />
+    <ClInclude Include="..\src\Editor\SelfTest\TilePaletteSelfTest.h" />
     <ClInclude Include="..\src\Editor\SourceControl\CollabClient.h" />
     <ClInclude Include="..\src\Editor\SourceControl\CollabProtocol.h" />
     <ClInclude Include="..\src\Editor\SourceControl\GitTransaction.h" />
@@ -232,6 +236,8 @@
     <ClInclude Include="..\src\Editor\Windows\Scene\TileAssetInspector.h" />
     <ClInclude Include="..\src\Editor\Windows\Sprite\SpriteEditModel.h" />
     <ClInclude Include="..\src\Editor\Windows\Sprite\SpriteEditorWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Tilemap\TilemapEditModel.h" />
+    <ClInclude Include="..\src\Editor\Windows\Tilemap\TilePaletteWindow.h" />
   </ItemGroup>
   <!-- END FILES -->
   <ItemGroup>

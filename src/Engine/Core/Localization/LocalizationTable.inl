@@ -2494,3 +2494,37 @@ MYE_STR(Insp_TilemapUnresolved, "Tilemap asset not found: nothing is drawn.",
                                "タイルマップのアセットが見つかりません (何も描かれません)")
 MYE_STR(Insp_TilemapNote,      "The origin is the entity's world position (cell (0, 0) is its lower left). World rotation and scale are ignored.",
                                "原点はエンティティのワールド位置です (セル (0, 0) の左下)。ワールドの回転とスケールは無視されます")
+// ---- タイルパレット窓 (M94l) ----
+MYE_STR(Win_TilePalette,       "Tile Palette###TilePalette",           "タイルパレット###TilePalette")
+MYE_STR(TilePal_NoTarget,      "(select a Tilemap)",                   "(Tilemap を選択)")
+MYE_STR(TilePal_Layer,         "Layer###tp_layer",                     "レイヤー###tp_layer")
+MYE_STR(TilePal_ToolSelect,    "Select (S)###tp_select",               "選択 (S)###tp_select")
+MYE_STR(TilePal_ToolBrush,     "Brush (B)###tp_brush",                 "ブラシ (B)###tp_brush")
+MYE_STR(TilePal_ToolErase,     "Erase (D)###tp_erase",                 "消去 (D)###tp_erase")
+MYE_STR(TilePal_ToolFill,      "Fill (G)###tp_fill",                   "塗り潰し (G)###tp_fill")
+MYE_STR(TilePal_ToolRect,      "Rect (U)###tp_rect",                   "矩形 (U)###tp_rect")
+MYE_STR(TilePal_ToolPick,      "Pick (I)###tp_pick",                   "ピック (I)###tp_pick")
+MYE_STR(TilePal_FlipX,         "Flip X###tp_fx",                       "左右反転###tp_fx")
+MYE_STR(TilePal_FlipY,         "Flip Y###tp_fy",                       "上下反転###tp_fy")
+MYE_STR(TilePal_Rotate,        "Rotate 90###tp_rot",                   "90 度回転###tp_rot")
+MYE_STR(TilePal_SceneEdit,     "Paint in Scene View###tp_scene",       "Scene View で塗る###tp_scene")
+MYE_STR(TilePal_NoPalette,     "(this tilemap has no palette)",        "(このタイルマップにはパレットがありません)")
+MYE_STR(TilePal_PaletteEmpty,  "(the palette has no tiles)",           "(パレットにタイルがありません)")
+MYE_STR(TilePal_Play,          "Editing is disabled while playing. Stop first; during play, tiles change only through scripts.",
+                               "Play 中は編集できません。停止してから編集してください (Play 中のタイル変更はスクリプトだけです)")
+MYE_STR(TilePal_Need2D,        "Turn on the 2D mode of the Scene View to paint.",
+                               "塗るには Scene View の 2D モードを ON にしてください")
+MYE_STR(TilePal_Help,          "Click / drag in the Scene View. Ctrl+S: save   Ctrl+Z: undo   Delete: erase selection (Esc: deselect)",
+                               "Scene View をクリック / ドラッグ。Ctrl+S: 保存   Ctrl+Z: 元に戻す   Delete: 選択範囲を消去 (Esc: 選択を外す)")
+MYE_STR(TilePal_StatusSaved,   "Saved the tilemap.",                   "タイルマップを保存しました。")
+MYE_STR(TilePal_StatusSaveFailed, "Could not write the tilemap.",      "タイルマップを書き込めませんでした。")
+MYE_STR(TilePal_StatusTooLarge, "The area is too large to fill (limit: 65536 cells for Fill, 262144 for Rect). Nothing was changed.",
+                               "範囲が広すぎて塗れません (塗り潰しは 65536 セル、矩形は 262144 セルまで)。何も変えていません。")
+MYE_STR(TilePal_StatusNoTile,  "Pick a tile from the list first.",     "先に一覧からタイルを選んでください。")
+MYE_STR(TilePal_ModalTitle,    "Unsaved tilemap changes###TileUnsaved", "タイルマップの未保存の変更###TileUnsaved")
+MYE_STR(TilePal_ModalBody,     "This tilemap has unsaved changes:",    "このタイルマップに未保存の変更があります:")
+MYE_STR(TilePal_ModalSave,     "Save and switch###tp_msave",           "保存して切り替える###tp_msave")
+MYE_STR(TilePal_ModalDiscard,  "Discard and switch###tp_mdiscard",     "破棄して切り替える###tp_mdiscard")
+MYE_STR(Insp_OpenTilePalette,  "Open Tile Palette",                    "タイルパレットを開く")
+MYE_STR(GateB_TilePaletteDirty, "the Tile Palette has unsaved changes",
+                                "タイルパレットに未保存の変更があります")

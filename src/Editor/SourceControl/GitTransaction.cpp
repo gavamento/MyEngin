@@ -94,6 +94,7 @@ std::vector<GateBlocker> ComputeBlockers(const GateInputs& in)
     add(in.behaviorTreeDirty, GateBlocker::BehaviorTreeDirty);
     add(in.projectSettingsDirty, GateBlocker::ProjectSettingsDirty);
     add(in.spriteEditorDirty, GateBlocker::SpriteEditorDirty);
+    add(in.tilePaletteDirty, GateBlocker::TilePaletteDirty);
     add(in.playing, GateBlocker::Playing);
     add(in.netActive, GateBlocker::NetActive);
     add(in.buildRunning, GateBlocker::BuildRunning);
@@ -143,6 +144,8 @@ StrId GateBlockerText(GateBlocker b)
         return StrId::GateB_ProjectSettingsDirty;
     case GateBlocker::SpriteEditorDirty:
         return StrId::GateB_SpriteEditorDirty;
+    case GateBlocker::TilePaletteDirty:
+        return StrId::GateB_TilePaletteDirty;
     case GateBlocker::Playing:
         return StrId::GateB_Playing;
     case GateBlocker::NetActive:

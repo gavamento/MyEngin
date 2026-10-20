@@ -21,6 +21,7 @@
 #include "Editor/Windows/Asset/AssetBrowserWindow.h"
 #include "Editor/Windows/Project/BuildSettingsWindow.h"
 #include "Editor/Windows/Sprite/SpriteEditorWindow.h"
+#include "Editor/Windows/Tilemap/TilePaletteWindow.h"
 #include "Editor/Windows/Debug/ConsoleWindow.h"
 #include "Editor/Windows/Scene/GameViewWindow.h"
 #include "Editor/Windows/Scene/HierarchyWindow.h"
@@ -205,6 +206,7 @@ private:
     AnimatorControllerWindow animatorController_;
     AnimationPreviewWindow animPreview_; // M89n
     SpriteEditorWindow spriteEditor_;    // M94e
+    TilePaletteWindow tilePalette_;      // M94l
     SearchWindow search_;
     ProjectSettingsWindow projectSettings_;
     BuildSettingsWindow buildSettings_;

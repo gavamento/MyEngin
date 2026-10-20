@@ -119,6 +119,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Audio Mixer", &audioMixer_.open },
                     { "Behavior Tree", &behaviorTree_.open },
                     { "SpriteEditor", &spriteEditor_.open },
+                    { "TilePalette", &tilePalette_.open },
                     { "Project Settings", &projectSettings_.open },
                     { "Build Settings", &buildSettings_.open },
                     { "Stats", &showStats_ } });
@@ -856,6 +857,10 @@ void EditorApp::OnImGui(EngineContext& ctx)
     hierarchy_.OnImGui(ctx, selection_, undo_);
     inspector_.OnImGui(ctx, selection_, undo_, preview_, playMode_.InPlayMode());
     console_.OnImGui(settings_.externalEditorCmd);
+    // M94l: タイルパレット窓が Scene View の 2D モードで塗る。Play 中・2D モードの状態は Scene View より先に渡す
+    tilePalette_.SetInPlayMode(playMode_.InPlayMode());
+    tilePalette_.SetSceneMode2d(sceneView_.mode2d);
+    sceneView_.SetTilePalette(&tilePalette_);
     sceneView_.OnImGui(ctx, selection_, undo_, settings_);
     gameView_.OnImGui(ctx, selection_);
     particleSettings_.OnImGui(ctx, settings_);
@@ -1078,6 +1083,11 @@ void EditorApp::OnImGui(EngineContext& ctx)
         spriteEditor_.OpenTexture(p);
     }
     spriteEditor_.OnImGui(ctx);
+    // Inspector の [Open Tile Palette] で、その Tilemap エンティティを対象に窓を開く (M94l)
+    if (const uint64_t fid = inspector_.TakePendingOpenTilePalette(); fid != 0) {
+        tilePalette_.OpenForEntity(ctx, fid);
+    }
+    tilePalette_.OnImGui(ctx, selection_);
 
     // ピッキング自動テスト (--pick-test): 指定フレームでビュー中心を選択できるか検証
     if (pickTestFrame >= 0 && static_cast<int64_t>(ctx.frameIndex) == pickTestFrame) {
@@ -1634,6 +1644,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem(Tr(StrId::Win_AudioMixer), nullptr, &audioMixer_.open);
         ImGui::MenuItem(Tr(StrId::Win_BehaviorTree), nullptr, &behaviorTree_.open);
         ImGui::MenuItem(Tr(StrId::Win_SpriteEditor), nullptr, &spriteEditor_.open);
+        ImGui::MenuItem(Tr(StrId::Win_TilePalette), nullptr, &tilePalette_.open);
         ImGui::Separator();
         ImGui::MenuItem(Tr(StrId::Win_ProjectSettings), nullptr, &projectSettings_.open);
         ImGui::MenuItem(Tr(StrId::Win_BuildSettings), nullptr, &buildSettings_.open);
@@ -1681,7 +1692,8 @@ void EditorApp::HandleShortcuts(EngineContext& ctx)
         if (shortcuts_.Pressed(Shortcut::Paste)) {
             PasteClipboard(ctx);
         }
-        if (shortcuts_.Pressed(Shortcut::Delete)) {
+        // タイルパレット窓が Delete で選択範囲を消すあいだは、選択中のエンティティ (Tilemap 自身) を消さない
+        if (shortcuts_.Pressed(Shortcut::Delete) && !tilePalette_.ClaimsDeleteKey()) {
             DeleteSelection(ctx);
         }
     }
@@ -1974,6 +1986,7 @@ GateInputs EditorApp::BuildGateInputs(EngineContext& ctx)
         d.behaviorTree = behaviorTree_.HasUnsavedChanges();
         d.projectSettings = projectSettings_.HasUnsavedChanges();
         d.spriteEditor = spriteEditor_.HasUnsavedChanges();
+        d.tilePalette = tilePalette_.HasUnsavedChanges();
         return d;
     });
     in.animationDirty = dirty.animation;
@@ -1982,6 +1995,7 @@ GateInputs EditorApp::BuildGateInputs(EngineContext& ctx)
     in.behaviorTreeDirty = dirty.behaviorTree;
     in.projectSettingsDirty = dirty.projectSettings;
     in.spriteEditorDirty = dirty.spriteEditor;
+    in.tilePaletteDirty = dirty.tilePalette;
     return in;
 }
 

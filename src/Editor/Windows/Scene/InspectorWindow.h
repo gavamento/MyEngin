@@ -79,6 +79,13 @@ public:
         p.swap(pendingOpenSpriteEditor_);
         return p;
     }
+    // [Open Tile Palette] が押された Tilemap エンティティの fileId (0 = なし)。EditorApp がタイルパレット窓で開く
+    uint64_t TakePendingOpenTilePalette()
+    {
+        const uint64_t fid = pendingOpenTilePalette_;
+        pendingOpenTilePalette_ = 0;
+        return fid;
+    }
     // preview はマテリアルのライブプレビュー用 (M53)。AssetBrowser のサムネイルと同一インスタンス
     // inPlayMode: PlayModeController::InPlayMode() (Editing 以外)。DrawDestructibleNotes が
     // 生成ボタンの無効化に使う (Play 中の生成は Stop でシーンごと巻き戻る)
@@ -167,6 +174,7 @@ private:
     std::wstring assetEditPath_;
     importmeta::TextureImportSettings assetImportEdit_;
     std::wstring pendingOpenSpriteEditor_;
+    uint64_t pendingOpenTilePalette_ = 0;
     importmeta::ModelLodSettings assetLodEdit_; // モデルの LOD 設定 (M90e)
 
     // マテリアルインスペクタの編集キャッシュ (M40d)。.mat.json のスキーマ固定編集

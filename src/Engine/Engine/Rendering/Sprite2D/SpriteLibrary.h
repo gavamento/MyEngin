@@ -56,6 +56,9 @@ public:
 
     void Clear();
 
+    // Register / Clear のたびに増える。タイルのチャンクキャッシュが古い UV を捨てる判断に使う
+    uint64_t Epoch() const { return epoch_; }
+
     // スライス 1 枚の AssetID
     static AssetID SliceId(const std::wstring& texPath, uint32_t sliceId);
 
@@ -69,6 +72,7 @@ private:
 
     std::map<uint64_t, Entry> entries_; // 順序つき: Enumerate が読み順に依存しない
     std::unordered_map<uint64_t, std::vector<uint64_t>> idsByTexture_; // Unregister 用
+    uint64_t epoch_ = 0;
     std::unordered_set<uint64_t> unresolved_; // 遅延登録に失敗した ID (毎フレームの GUID 引きを避ける)
 };
 
