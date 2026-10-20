@@ -42,8 +42,8 @@
 | sub-09 | OK | 2 | 02e4022 | CharacterController の plane2D (一方通行・移動床・剛体押し・報告)。依存: 01。snapshot v55。round 1 REWORK (must: kinematic + plane2D は velocity で積分) |
 | sub-10 | OK | 1 | cc01485 | タイルパレット / タイルマップ資産、Tilemap、チャンク描画。依存: 04。**チェックポイント 2 (sub-06〜10) 通過**。TypeId 84、snapshot v56。NavAgent 庭ハッシュの再採取 (sub-09 起因) は追補 9a49655 |
 | sub-11 | OK | 1 | 1eaee36 | タイル衝突 + セル書き換えの sim 状態 + 破壊。依存: 08, 10。snapshot v57。前カリング (CollectWithin / staticOnly) と WakeBodiesNear を spec 4.1.7 に採用 |
-| sub-12 | 実装中 | 0 | | タイルパレット窓。依存: 10, 02 |
-| sub-13 | 未着手 | 0 | | ルールタイル、アニメーションタイル、レイヤー UI。依存: 11, 12 |
+| sub-12 | OK | 1 | 3a11cdb | タイルパレット窓。依存: 10, 02。版 bump なし。編集中の反映は TilemapLibrary::Register (TilemapSystem に編集専用の口を作らない) |
+| sub-13 | 実装中 | 0 | | ルールタイル、アニメーションタイル、レイヤー UI。依存: 11, 12。やること 3b (タイル追加 UI) / 3c (大きな面のドラッグ計測) を sub-12 VERDICT で追加 |
 | sub-14 | 未着手 | 0 | | ABI (10 本) + C# ミラー + MyeScript。依存: 08, 11。**版は着手時の末尾 (M75h より先なら v31)** |
 | sub-15 | 未着手 | 0 | | Light2D とライトバッファ。依存: 06 |
 | sub-16 | 未着手 | 0 | | ShadowCaster2D と法線マップ。依存: 15 |
@@ -73,6 +73,7 @@
 - Q-10 (sub-05 VERDICT) Project 窓でテクスチャをダブルクリックしたときの既定を「スプライトエディタを開く」に変えてよいか (従来は OS 既定アプリ) / 裁定: 変える。非対応形式 (.dds 等) だけ OS 既定へ (sub-06 追補 8 (b)) / 逆を選ぶと: 窓は Inspector の [Open Sprite Editor] と Window メニューだけから開く (sub-06 (b) が「全部 OS 既定へ戻す」に変わる)
 - Q-11 (sub-06 VERDICT) SpriteMask2D の効き方を「描画順で先に出たマスクの range に入るスプライトだけ」(現行 v1) のままにするか、Unity 互換 (描画順に関係なく range 内の全スプライトに効き、マスクが無い VisibleInside は見えない) にするか / 裁定: v1 のまま (マスクの order を小さくすれば同じ使い方ができ、ステンシル 1 bit の制約はどちらでも同じ)。Unity 互換は spec 3. 後回しに記録 / 逆を選ぶと: Sprite2DRenderer の Collect で「マスクを先に全部描く」並べ替えと、マスク 0 個の VisibleInside を落とす分岐が増える (1 サブの追補規模、sub-17 の前に挟める)
 - Q-12 (sub-10 VERDICT) タイルの絵を「パレットのスプライトの矩形をセル全面 (cellSize) へ伸ばす」にするか、Unity の原寸 + pivot 配置にするか / 裁定: 伸ばす (標準の 16 px = 1 セルでは同じ結果、サイズ違いの絵がセルからはみ出さない、可逆) / 逆を選ぶと: `BakeTileChunk` のクアッド寸法を `LocalRect` (原寸 + pivot) 基準に変える (sub-13 の rule / anim の前に決めるのが安い)
+- Q-13 (sub-12 VERDICT) タイルパレット窓を開いている間、Scene View 2D の左クリックを「塗り」にする既定を ON のままでよいか / 裁定: ON (Unity の Tile Palette と同じ。窓の「Paint in Scene View」チェックで外せる) / 逆を選ぶと: 既定 OFF にして、塗るたびにチェックを入れる操作が 1 つ増える (コードは既定値 1 行)
 
 ## 申し送り (セッション跨ぎ)
 - 基点の直前に無関係の 2 コミット (`2ac3b4f` DeepModal 再学習、`25fb355` スプラッシュ) を司会が切り出した。
@@ -139,3 +140,6 @@
 - (sub-11 coder → sub-14) TilemapSetCell / GetCell / DamageCell は TilemapSystem のインスタンス (EngineApiTable の文脈に `TilemapSystem*` を足す) に 1 対 1。座標変換は `CellToWorld / WorldToCell` (WorldMatrix 基準、1 tick 古い)。
 - (sub-11 coder → sub-21) GridAgent2D の歩行可否は `TilemapSystem::GetCell` と palette の collider / oneWay で引く。→ sub-22 / 23: タイルの箱は動く物体の範囲に届くものだけ物理に渡る (動かさない面だけの Tilemap でも近づいた tick に箱が現れる)。
 - (sub-11 coder) 焼いた値: タイル並走シナリオ 326BA3CD14F4BBB8 (`TilemapSelfTest.cpp` の `kTileScenarioExpectedHash`)。既存の plane2D / Shapes2D / CC2D / NavAgent 庭は不動。`MYE_SELFTEST_ONLY=m94` に Tilemap suite が入っている。通常の静的 Collider を消しても眠っている剛体が起きない既存挙動は別件のまま。`cache\m94\s11\` に着手前後のダンプ・.rep (git 管理外)。
+- (sub-12 VERDICT should → sub-13) やること 3b: パレットのタイル追加 UI (スプライトから追加・スライス済みテクスチャから一括・削除、`TilePaletteEditModel` の独自 Undo)。やること 3c: 100×50×3 層で Brush を 60 フレームドラッグしたフレーム時間を計測し、33 ms を超えたら描画キャッシュの dirty をチャンク単位へ。
+- (sub-12 VERDICT nit → sub-24 checklists) 実マウスのクリック判定、S/B/D/G/U/I・Ctrl+S/Z/Y、Delete 先取り、別アセット切替モーダル、Open Tile Palette ボタン、Window メニュー、TextWrapped 化後の Play 中表示はユーザー目視。Revert ボタンは無し (Undo で戻せる)。
+- (sub-12 coder → sub-13) レイヤー編集で `TilemapEditModel` を拡張するなら `LayersEqual` の size 比較と `CellEdit.layer` 添字に注意。rule / anim が入っても窓の「編集中は Register で反映」はそのまま使える。キー: S B D G U I は窓フォーカスか Scene View 上カーソル時、Ctrl+S/Z/Y は窓フォーカス時のみ (Scene View フォーカスの Ctrl+Z はシーンの UndoStack)。Scene View 2D の色が淡いのはエディタカメラの ACES (色の契約はゲームカメラの話、spec 4.1.7 に明記)。

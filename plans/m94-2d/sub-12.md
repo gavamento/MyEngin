@@ -1,8 +1,8 @@
 # sub-12: タイルパレット窓
 
 - 依存: sub-10, sub-02
-- 状態: 実装中
-- 往復: 0
+- 状態: OK (commit 3a11cdb)
+- 往復: 1
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む**。spec: 2. #22、4.1.7、4.3
 
 ## やること
