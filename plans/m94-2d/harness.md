@@ -38,8 +38,8 @@
 | sub-05 | OK | 1 | bd506db | スプライトエディタ窓。依存: 03。**チェックポイント 1 (sub-01〜05) 通過**。Point 表示 / .dds ダブルクリックは sub-06 追補 8 (a)(b) |
 | sub-06 | OK | 1 | 484e482 | Sliced / Tiled、SortingGroup2D、SpriteMask2D + sub-05 追補 8 (a)(b)。依存: 04。TypeId 82/83、snapshot v54。Deferred のマスク確認は sub-15 へ |
 | sub-07 | OK | 1 | 52c973b | スプライト列クリップ (.spriteanim.json、コントローラの "sprite")。依存: 04。版 bump なし |
-| sub-08 | 未着手 | 0 | | 2D 形状 (kPolygon2D / kEdge2D) と C++ クエリ。依存: 01 |
-| sub-09 | 未着手 | 0 | | CharacterController の plane2D (一方通行・移動床・剛体押し・報告)。依存: 01 |
+| sub-08 | OK | 1 | 4c4c154 | 2D 形状 (kPolygon2D / kEdge2D) と C++ クエリ + Fracture plane2D コピー。依存: 01。版 bump なし。静的形状の供給口 AddStaticShapeSource (sub-11 / sub-19 が使う) |
+| sub-09 | 実装中 | 0 | | CharacterController の plane2D (一方通行・移動床・剛体押し・報告)。依存: 01 |
 | sub-10 | 未着手 | 0 | | タイルパレット / タイルマップ資産、Tilemap、チャンク描画。依存: 04 |
 | sub-11 | 未着手 | 0 | | タイル衝突 + セル書き換えの sim 状態 + 破壊。依存: 08, 10 |
 | sub-12 | 未着手 | 0 | | タイルパレット窓。依存: 10, 02 |
@@ -110,4 +110,9 @@
 - (sub-06 VERDICT) Deferred 経路のマスク (書き込み DSV と深度 SRV の同時束縛) は未確認 → sub-15 やること 5 の temp シーンに SpriteMask2D を 1 個入れて Forward / Deferred で同じ形を見る。Inspector の srgb 警告行と Add Component / Create の実クリックはユーザー目視 (sub-24)。
 - (sub-07 coder) SpriteAnim のコマ選びは `SpriteAnimFrameAt` 1 本 (sub-13 のアニメタイルで流用可)。Sprite2D への書き込みは `AnimatorController.cpp` の `WriteSpriteFrame` 1 箇所。`MYE_SELFTEST_ONLY=m94` は Physics / UI / Sprite2DAsset / SpriteEditor / AnimatorController / AnimatorControllerEdit / AssetDatabase / ReloadHub / AssetOps。hash-diff の `UIInteraction.prevSurfX/Y` は実マウス座標のミラー (入力) なので run 間で違って当然、replay は割れない (planner 確認)。
 - (sub-07 → sub-24) engine_spec に書く: スクリプトが Sprite2D.sprite を書いても次 tick で Animator が書き戻す。書き込み先は自身 → 前順で最初の子孫 (別の Animator の部分木は除く)。遷移中のコマは transitionTick*2 >= duration で先に切り替わる。イベントのキーは .spriteanim.json の name。GUI の実クリックはユーザー目視、Play 中の切替は sub-23 の --2d-demo で通る。
-- **2026-10-20 ユーザー指示で一時停止 (sub-07 OK の直後)。再開は sub-08 (2D 形状とクエリ + Fracture plane2D コピー) の coder 起動から。sub-10 がチェックポイント 2 (sub-06〜10): replay_verify の全文ログを `cache\m94eplay_verify_cp2.log` に残す件を prompt に添える。**
+- 2026-10-20 ユーザー指示で一時停止 (sub-07 OK の直後) → 同日「続き」で再開し sub-08 から続行。sub-10 がチェックポイント 2 (sub-06〜10): replay_verify の全文ログを `cache\m94\replay_verify_cp2.log` に残す件を prompt に添える。
+- (sub-08 coder → sub-11) 静的形状の供給口は `PhysicsSystem::AddStaticShapeSource` / `RemoveStaticShapeSource` + `StaticShapeSource::Collect(World&, std::vector<StaticShape>&)` (`StaticShape{owner, pose, col}`、`Physics\Rigid\StaticShapeSource.h`)。同じ持ち主の形状は並べて返す (bodies は stable_sort で収集順を保つ)。姿勢は呼び出し側がワールドで確定して渡す。`col` は tick の間変わらない ColliderComponent を指す (oneWay / 材料 / レイヤーの出所)。所有は呼び出し側。
+- (sub-08 coder → sub-14) `OverlapBoxWorld` は既にマスク付き (新 overload 無し)。`BoxCastWorld` の C++ 引数順は `(world, center, half, dir, maxDist, outHit, mask, skip, skipUser)` (RaycastWorld 流。spec 当初の順は却下)。方式は箱の 27 点 Raycast の近似で「突端が撃つ点の隙間に入ると取りこぼす」→ ABI の docstring と engine_spec の限界欄 (sub-24) に書く。
+- (sub-08 coder → sub-19) `shapes::ExpandEdge2D` は `Shape2D` 資産の点列から線分ごとの箱 (半厚 edgeRadius、両端を edgeRadius 延長、z 半厚 depth/2) を作る。SpriteShape の辺は同じ式で箱を作るか `StaticShapeSource` で返す。`ShapeLibrary2D` の項目は Register で同じ map 要素へ書き換わる (ポインタは有効なまま中身が変わる)。tick の途中で Register しないこと。
+- (sub-08 VERDICT) spec 7. R9 (d): 複合コライダーの子の kPolygon2D は v1 スープのまま (動的剛体の一部としては未対応)、親付き (frame が identity でない) の多角形 / 辺は未検証 → sub-24 で engine_spec の限界欄へ。kinematic の多角形はスープ、動的 / kinematic の辺は WARN して無効。`MYE_SELFTEST_ONLY=m94` に Fracture suite を追加 (plane2D 破片コピーの 1 項目)。
+- (sub-08 VERDICT nit) `HandleShape2DEdit` が点の描画・判定・ドラッグ・追加・削除を 1 関数に持つ → sub-19 の SpriteShape ハンドルで共通化の余地。点のドラッグ / 辺クリック追加 / Delete の実クリックはユーザー目視 (sub-24 checklists)。点編集は Undo 無し (ドラッグ 1 回 = 保存 1 回)。

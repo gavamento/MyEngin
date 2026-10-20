@@ -1,8 +1,8 @@
 # sub-08: 2D 形状 (`kPolygon2D` / `kEdge2D`、`.shape2d.json`) と C++ クエリ
 
 - 依存: sub-01
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (commit 4c4c154)
+- 往復: 1
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む**。spec: 2. #19、4.1.8
 
 ## やること
