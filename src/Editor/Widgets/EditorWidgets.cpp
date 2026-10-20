@@ -228,6 +228,7 @@ const char* FileTypeIcon(const wchar_t* path)
     case AssetType::BehaviorTree: return ICON_FA_SITEMAP;
     case AssetType::Blackboard: return ICON_FA_TABLE_LIST;
     case AssetType::SpriteAnim: return ICON_FA_FILM;
+    case AssetType::Shape2D: return ICON_FA_DRAW_POLYGON;
     default: break;
     }
     // エンジンのアセット種別に無いもの (ソースコード・文書・動画など) は末尾の拡張子で引く

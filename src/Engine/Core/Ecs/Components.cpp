@@ -188,7 +188,7 @@ void RegisterBuiltinComponents()
         MYE_JP("摩擦", MYE_FIELD(ColliderComponent, friction, Float)),
         MYE_JP("レイヤー", MYE_FIELD_TIP(ColliderComponent, layer, Int32, "collision layer 0..31")),
         MYE_JP("衝突マスク", MYE_FIELD_TIP(ColliderComponent, mask, UInt32, "layers this collider hits (bitmask)")),
-        MYE_JP("メッシュアセット", MYE_FIELD(ColliderComponent, meshAsset, AssetRef)), // shape=3 静的メッシュ / shape=4 .terrain.json
+        MYE_JP("メッシュアセット", MYE_FIELD(ColliderComponent, meshAsset, AssetRef)), // shape=3 静的メッシュ / shape=4 .terrain.json / shape=6, 7 .shape2d.json
         // M59a2: 物理マテリアル (末尾 append)。未割当の挙動のビット同一は
         // PhysicsSelfTest の [phys] body ビットパターン照合が見る (ワールドハッシュ値は変わるため)
         MYE_JP("物理マテリアル", MYE_FIELD(ColliderComponent, physMaterial, AssetRef)),

@@ -586,6 +586,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         // MYE_SELFTEST_ONLY=m94: M94 (2D レーン) の suite だけを回す。以降のサブは自分の suite をここへ足す
         if (hasOnly && std::wstring(onlyName) == L"m94") {
             ok &= mye::RunPhysicsSelfTest();
+            ok &= mye::RunFractureSelfTest();           // M94h: 破片へ plane2D を写す
             ok &= mye::RunUISelfTest();
             ok &= mye::RunSprite2DAssetSelfTest();
             ok &= mye::RunSpriteEditorSelfTest();

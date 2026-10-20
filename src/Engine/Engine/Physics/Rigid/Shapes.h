@@ -7,6 +7,7 @@
 // そのまま通す fast-path を持つ — 無回転コライダーのみの既存シーンはビット同一挙動。
 
 #include <cstdint>
+#include <vector>
 
 #include <DirectXMath.h>
 
@@ -65,6 +66,15 @@ ShapePose MakePose(const ColliderComponent& col, const DirectX::XMFLOAT3& positi
 
 // WorldMatrix から (トリガー / レイ / ギズモ用)。行ベクトル長 = スケール、正規化行 = 基底
 ShapePose MakePoseFromMatrix(const ColliderComponent& col, const DirectX::XMFLOAT4X4& wm);
+
+// M94h: kPolygon2D の pose (MakePose は静的用に三角形スープを載せる) を動的剛体用の凸包へ差し替える。
+// 他の shape の col には何もしない
+void UseHullForDynamicPolygon2D(ShapePose& p, const ColliderComponent& col);
+
+// M94h: kEdge2D の線分ごとの薄い箱 (半厚 edgeRadius、z 半厚 depth/2) を out へ追加する。
+// base は MakePose / MakePoseFromMatrix が作ったその Collider の pose (位置・基底・スケールだけを読む)。
+// 形状が未登録なら何も足さない。順序は線分の並びどおり
+void ExpandEdge2D(const ColliderComponent& col, const ShapePose& base, std::vector<ShapePose>& out);
 
 // a と b の貫通を判定。ヒットで true、normal (nx,ny,nz) は b→a 方向 (a を +normal へ
 // 押し出す)、depth は貫通量。全 6 形状ペア (s-s / s-b / s-c / b-b / b-c / c-c) 対応。

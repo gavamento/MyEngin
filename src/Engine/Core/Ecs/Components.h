@@ -210,7 +210,11 @@ inline constexpr int32_t kCapsule = 2; // ローカル Y 軸
 inline constexpr int32_t kMesh = 3;    // 三角形メッシュ (静的専用、M41)
 inline constexpr int32_t kTerrain = 4; // 地形ハイトフィールド (静的専用、M59i)
 inline constexpr int32_t kConvex = 5;  // 凸包 (M60f、動的剛体でも使える)
-inline constexpr int32_t kCount = 6;
+// M94h: 2D 形状。meshAsset が `.shape2d.json` を指す。静的 = 押し出した多角形の三角形スープ (凹も可)、
+// 動的 = その凸包 (凹は埋まる)。kEdge2D は静的専用で、線分ごとの薄い箱として解く
+inline constexpr int32_t kPolygon2D = 6;
+inline constexpr int32_t kEdge2D = 7;
+inline constexpr int32_t kCount = 8;
 } // namespace collidershape
 
 struct ColliderComponent {
@@ -230,7 +234,7 @@ struct ColliderComponent {
     // ---- M36a 追加: 衝突レイヤー (hash 対象) ----
     int32_t layer = 0;          // 所属レイヤー 0..31 (名前は project_settings.json、sim は index のみ)
     uint32_t mask = 0xFFFFFFFFu; // 衝突相手レイヤーのビット集合。判定は双方向 (CanCollide)
-    // shape=3 なら静的メッシュ資産、shape=4 なら `.terrain.json` (M59i)。空 = 従来形状
+    // shape=3 なら静的メッシュ資産、shape=4 なら `.terrain.json` (M59i)、shape=6 / 7 なら `.shape2d.json` (M94h)。空 = 従来形状
     AssetID meshAsset = {};
     // ---- M59a2 追加: 物理マテリアル (末尾 append = シーン/リプレイ互換維持) ----
     // 摩擦/反発の解決順は「overrideBits のビット → 既存フィールド / 材料割当あり → .physmat 値 /

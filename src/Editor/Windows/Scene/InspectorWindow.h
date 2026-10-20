@@ -17,6 +17,7 @@
 #include "Engine/Engine/Audio/Playback/SoundAsset.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 #include "Editor/Windows/Animation/SpriteAnimEditor.h"
+#include "Editor/Windows/Scene/Shape2DEditor.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
@@ -240,6 +241,9 @@ private:
 
     // スプライト列クリップインスペクタの編集キャッシュ (M94、.spriteanim.json)。アセット編集は UndoStack 対象外
     SpriteAnimEditState spriteAnimEdit_;
+
+    // 2D 形状インスペクタの編集キャッシュ (M94h、.shape2d.json)。アセット編集は UndoStack 対象外
+    Shape2DEditState shape2dEdit_;
 
     // ナビのエリアのフィルタの編集キャッシュ (M84c)。物理マテリアルと同じくアセット編集は UndoStack 対象外
     NavAreaFilter navFilterEdit_;

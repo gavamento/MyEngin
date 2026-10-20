@@ -3,7 +3,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 #include "Engine/Core/Ecs/Components.h"
@@ -14,6 +16,7 @@
 #include "Engine/Engine/Physics/Collider/ConvexColliderLibrary.h" // M60f: 凸包コライダー
 #include "Engine/Engine/Physics/Collider/ConvexHull.h"
 #include "Engine/Engine/Physics/Collider/MeshColliderLibrary.h"
+#include "Engine/Engine/Physics/Collider/Shape2DLibrary.h" // M94h: 2D 形状
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h" // M59a2: 材料解決の検証
 #include "Engine/Engine/Physics/Collider/TerrainColliderLibrary.h" // M59i: 地形コライダー
 #include "Engine/Engine/Rendering/DebugDraw.h"
@@ -21,6 +24,7 @@
 #include "Engine/Engine/Physics/Rigid/PhysicsDebugDraw.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Engine/Physics/Rigid/Shapes.h"
+#include "Engine/Engine/Physics/Rigid/StaticShapeSource.h" // M94h: 静的形状の供給口
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Script/EngineApiTable.h" // M59k: ABI v14 のスロットを実物で叩く
@@ -101,6 +105,21 @@ GameObject MakeStaticBoxRot(Scene& s, const char* name, float x, float y, float 
     go.GetComponent<LocalTransform>()->rotation = rot;
     return go;
 }
+
+// 供給口のテスト用: 箱 1 枚を毎 tick 返す (M94h)
+class FixedBoxSource final : public StaticShapeSource {
+public:
+    ColliderComponent col;
+    EntityID owner = kNullEntity;
+    ShapePose pose;
+    int collectCount = 0;
+
+    void Collect(World&, std::vector<StaticShape>& out) override
+    {
+        ++collectCount;
+        out.push_back({ owner, pose, &col });
+    }
+};
 
 } // namespace
 
@@ -7789,6 +7808,306 @@ bool RunPhysicsSelfTest()
             check(fnv == 0x14c1df5f2242a072ull,
                   "plane2D off: the stacking scene is bit-identical to the pre-M94a build");
         }
+    }
+
+    // ---- M94h: 2D 形状 (kPolygon2D / kEdge2D)・静的形状の供給口・BoxCast ----
+    {
+        using DirectX::XMFLOAT2;
+        // 三角形の面積の合計と、全部が反時計回りか
+        auto triangleArea = [](const std::vector<XMFLOAT2>& pts, const std::vector<uint32_t>& tris,
+                               bool& allCcw) {
+            double area = 0.0;
+            allCcw = true;
+            for (size_t t = 0; t + 2 < tris.size(); t += 3) {
+                const XMFLOAT2& a = pts[tris[t]];
+                const XMFLOAT2& b = pts[tris[t + 1]];
+                const XMFLOAT2& c = pts[tris[t + 2]];
+                const double cross = static_cast<double>(b.x - a.x) * static_cast<double>(c.y - a.y)
+                                   - static_cast<double>(b.y - a.y) * static_cast<double>(c.x - a.x);
+                area += 0.5 * cross;
+                allCcw = allCcw && cross > 0.0;
+            }
+            return area;
+        };
+        // L 字 (面積 6): 横棒 4 x 1 + 縦棒 1 x 2。(1,1) が凹頂点
+        const std::vector<XMFLOAT2> lShape = { { 0, 0 }, { 4, 0 }, { 4, 1 }, { 1, 1 }, { 1, 3 }, { 0, 3 } };
+
+        // ---- 耳刈り ----
+        {
+            std::vector<uint32_t> tris;
+            bool ccw = false;
+            const bool ok = TriangulatePolygon2D(lShape, tris);
+            const double area = triangleArea(lShape, tris, ccw);
+            check(ok && tris.size() == 12 && ccw && std::fabs(area - 6.0) < 1e-4,
+                  "Shapes2D triangulate: concave L (6 vertices) -> 4 CCW triangles covering area 6");
+            std::vector<XMFLOAT2> reversed(lShape.rbegin(), lShape.rend());
+            const bool okRev = TriangulatePolygon2D(reversed, tris);
+            const double areaRev = triangleArea(reversed, tris, ccw);
+            check(okRev && tris.size() == 12 && ccw && std::fabs(areaRev - 6.0) < 1e-4,
+                  "Shapes2D triangulate: clockwise input gives the same CCW triangles");
+            const std::vector<XMFLOAT2> withCollinear = { { 0, 0 }, { 1, 0 }, { 2, 0 }, { 2, 2 }, { 0, 2 } };
+            const bool okCol = TriangulatePolygon2D(withCollinear, tris);
+            const double areaCol = triangleArea(withCollinear, tris, ccw);
+            check(okCol && ccw && std::fabs(areaCol - 4.0) < 1e-4,
+                  "Shapes2D triangulate: a collinear vertex emits no zero-area triangle");
+            const std::vector<XMFLOAT2> bowtie = { { 0, 0 }, { 2, 2 }, { 2, 0 }, { 0, 2 } }; // 自己交差
+            check(TriangulatePolygon2D(bowtie, tris),
+                  "Shapes2D triangulate: a self-intersecting input still terminates");
+            check(!TriangulatePolygon2D({ { 0, 0 }, { 1, 0 } }, tris),
+                  "Shapes2D triangulate: fewer than 3 points is rejected");
+        }
+
+        ShapeLibrary2D shapeLib;
+        ShapeLibrary2D* const prevShapeLib = shape2d::Library();
+        shape2d::Install(&shapeLib);
+        auto registerShape = [&](const wchar_t* path, std::vector<XMFLOAT2> pts, bool closed, float depth,
+                                 float radius) {
+            Shape2D s;
+            s.points = std::move(pts);
+            s.closed = closed;
+            s.depth = depth;
+            s.edgeRadius = radius;
+            return AssetID{ shapeLib.Register(path, std::move(s)) };
+        };
+
+        // ---- 資産: 導出データ / JSON の往復 / 非有限の点 ----
+        {
+            const AssetID lId = registerShape(L"C:\\sel\\shapes2d\\L.shape2d.json", lShape, true, 2.0f, 0.02f);
+            const Shape2D* l = shapeLib.Get(lId.value);
+            check(l != nullptr && l->soup.TriCount() == 20 && l->hull.Valid(),
+                  "Shapes2D asset: L prism = 20 soup triangles (4 front + 4 back + 12 side) and a valid hull");
+            check(l != nullptr && shape2d::ResolveSoup(lId) == &l->soup && shape2d::ResolveHull(lId) == &l->hull
+                      && shape2d::ResolveSoup(AssetID{}) == nullptr,
+                  "Shapes2D asset: Resolve* return the registered data and null for an empty id");
+            Shape2D round;
+            const bool parsed = l != nullptr && ShapeLibrary2D::FromJson(ShapeLibrary2D::ToJson(*l), round);
+            check(parsed && round.points.size() == lShape.size() && round.closed && round.depth == 2.0f
+                      && round.edgeRadius == 0.02f && round.points[3].x == 1.0f && round.points[3].y == 1.0f,
+                  "Shapes2D asset: JSON round trip keeps points / closed / depth / edgeRadius");
+            Shape2D bad;
+            bad.points = { { 0, 0 }, { std::numeric_limits<float>::quiet_NaN(), 1 }, { 1, 0 }, { 0, 1 } };
+            bad.depth = -5.0f;
+            bad.edgeRadius = 0.0f;
+            ShapeLibrary2D::Sanitize(bad);
+            check(bad.points.size() == 3 && bad.depth > 0.0f && bad.edgeRadius > 0.0f,
+                  "Shapes2D asset: Sanitize drops non-finite points and clamps depth / edgeRadius");
+            nlohmann::json notShape = nlohmann::json::object();
+            Shape2D none;
+            check(!ShapeLibrary2D::FromJson(notShape, none),
+                  "Shapes2D asset: a JSON without the shape2d key is not a 2D shape");
+        }
+
+        // ---- シミュレーション: 凹 L 字 / 辺 / 動的多角形 / 供給口 ----
+        const AssetID lAsset = registerShape(L"C:\\sel\\shapes2d\\L2.shape2d.json", lShape, true, 2.0f, 0.02f);
+        const AssetID edgeAsset = registerShape(L"C:\\sel\\shapes2d\\Line.shape2d.json",
+                                                { { -3, 0 }, { 3, 0 } }, false, 2.0f, 0.02f);
+        const AssetID squareAsset = registerShape(L"C:\\sel\\shapes2d\\Sq.shape2d.json",
+                                                  { { -0.4f, -0.4f }, { 0.4f, -0.4f }, { 0.4f, 0.4f }, { -0.4f, 0.4f } },
+                                                  true, 0.5f, 0.02f);
+        const AssetID smallL = registerShape(L"C:\\sel\\shapes2d\\SmallL.shape2d.json",
+                                             { { -0.4f, -0.4f }, { 0.4f, -0.4f }, { 0.4f, 0.0f }, { 0.0f, 0.0f },
+                                               { 0.0f, 0.4f }, { -0.4f, 0.4f } },
+                                             true, 0.5f, 0.02f);
+        auto makeShapeEntity = [](Scene& s, const char* name, int32_t shape, AssetID asset, float x, float y,
+                                  float z) {
+            GameObject go = s.CreateGameObjectTracked(name);
+            go.SetLocalPosition(x, y, z);
+            auto* col = go.AddComponent<ColliderComponent>();
+            col->shape = shape;
+            col->isTrigger = false;
+            col->meshAsset = asset;
+            return go;
+        };
+        // 既に Rigidbody を持つ物 (MakeSphereBody) はそのまま、無ければ足して、平面拘束を立てる
+        auto makeDynamic = [](GameObject go) {
+            if (go.GetComponent<RigidbodyComponent>() == nullptr) {
+                go.AddComponent<RigidbodyComponent>();
+            }
+            auto* rb = go.GetComponent<RigidbodyComponent>();
+            rb->mass = 1.0f;
+            rb->gravityScale = 1.0f;
+            rb->plane2D = true;
+            return go;
+        };
+
+        // 供給口: 箱 1 枚 (x = 30 の床)
+        FixedBoxSource source;
+        PhysicsSystem phys2d;
+        phys2d.AddStaticShapeSource(&source);
+        phys2d.AddStaticShapeSource(&source); // 二重登録は無視される
+
+        struct Entities {
+            GameObject notchBall, wallBall, edgeTop, edgeBelow, square, smallLBody, srcBall, dynEdge;
+        };
+        auto buildSim = [&](Scene& s) {
+            Entities e;
+            GameObject env = s.CreateGameObjectTracked("Env");
+            env.AddComponent<PhysicsEnvironmentComponent>();
+            // 凹 L 字 (静的): x = 0..4、z は -1..1。窪みは x 1..4 / y > 1
+            makeShapeEntity(s, "L", collidershape::kPolygon2D, lAsset, 0.0f, 0.0f, 0.0f);
+            e.notchBall = makeDynamic(MakeSphereBody(s, "NotchBall", 2.5f, 5.0f, 0.0f, 0.25f));
+            e.wallBall = makeDynamic(MakeSphereBody(s, "WallBall", 1.9f, 1.6f, 0.0f, 0.25f));
+            e.wallBall.GetComponent<RigidbodyComponent>()->velocity = { -4.0f, 0.0f, 0.0f };
+            // 辺 (静的): y = 0 の水平線 x = 7..13
+            makeShapeEntity(s, "Edge", collidershape::kEdge2D, edgeAsset, 10.0f, 0.0f, 0.0f);
+            e.edgeTop = makeDynamic(MakeSphereBody(s, "EdgeTop", 10.0f, 2.0f, 0.0f, 0.25f));
+            e.edgeBelow = makeDynamic(MakeSphereBody(s, "EdgeBelow", 12.0f, -2.0f, 0.0f, 0.25f));
+            e.edgeBelow.GetComponent<RigidbodyComponent>()->velocity = { 0.0f, 9.0f, 0.0f };
+            // 動的な多角形 (凸包): 床の上に落とす
+            MakeGround(s, "Floor", 20.0f, -0.5f, 0.0f, 4.0f, 0.5f, 2.0f);
+            e.square = makeDynamic(makeShapeEntity(s, "Square", collidershape::kPolygon2D, squareAsset, 20.0f, 2.0f, 0.0f));
+            e.smallLBody = makeDynamic(makeShapeEntity(s, "SmallL", collidershape::kPolygon2D, smallL, 22.0f, 3.0f, 0.0f));
+            // 供給口の箱 (x = 30): 持ち主は Collider を持たないエンティティ
+            GameObject srcOwner = s.CreateGameObjectTracked("SourceOwner");
+            source.owner = srcOwner.Id();
+            e.srcBall = makeDynamic(MakeSphereBody(s, "SourceBall", 30.0f, 2.0f, 0.0f, 0.25f));
+            // 動的な辺は無視される (落ち続ける)
+            e.dynEdge = makeDynamic(makeShapeEntity(s, "DynEdge", collidershape::kEdge2D, edgeAsset, 40.0f, 2.0f, 0.0f));
+            s.GetWorld().ApplyStructuralChanges();
+            return e;
+        };
+        {
+            ColliderComponent boxCol;
+            boxCol.shape = collidershape::kBox;
+            boxCol.isTrigger = false;
+            boxCol.halfExtents = { 2.0f, 0.5f, 2.0f };
+            source.col = boxCol;
+            source.pose = shapes::MakePose(boxCol, { 30.0f, -0.5f, 0.0f }, { 0, 0, 0, 1 }, { 1, 1, 1 });
+        }
+
+        constexpr int kShapes2DTicks = 600;
+        Scene sa, sb;
+        Entities ea = buildSim(sa);
+        source.owner = kNullEntity; // 2 つ目のシーンの生成で書き直される (同じ生成順なので同じ ID)
+        Entities eb = buildSim(sb);
+        (void)eb;
+        bool deterministic = true;
+        float edgeBelowMaxY = -1e9f;
+        float notchBallMinY = 1e9f;
+        float wallBallMinX = 1e9f;
+        uint64_t shapes2dHash = 0;
+        for (int tick = 0; tick < kShapes2DTicks; ++tick) {
+            phys2d.Update(sa.GetWorld(), kDt);
+            phys2d.Update(sb.GetWorld(), kDt);
+            const uint64_t ha = HashWorld(sa.GetWorld());
+            const uint64_t hb = HashWorld(sb.GetWorld());
+            if (ha != hb && deterministic) {
+                deterministic = false;
+                MYE_LOG_ERROR("  Shapes2D determinism diverged at tick %d: %016llX vs %016llX", tick,
+                              static_cast<unsigned long long>(ha), static_cast<unsigned long long>(hb));
+            }
+            shapes2dHash = ha;
+            edgeBelowMaxY = (std::max)(edgeBelowMaxY, ea.edgeBelow.GetComponent<LocalTransform>()->position.y);
+            notchBallMinY = (std::min)(notchBallMinY, ea.notchBall.GetComponent<LocalTransform>()->position.y);
+            wallBallMinX = (std::min)(wallBallMinX, ea.wallBall.GetComponent<LocalTransform>()->position.x);
+        }
+        check(source.collectCount > 0, "Shapes2D source: Collect is called every tick");
+        check(deterministic, "Shapes2D: two identical scenes hash-identical for 600 ticks");
+
+        const auto* notch = ea.notchBall.GetComponent<LocalTransform>();
+        const auto* wallBall = ea.wallBall.GetComponent<LocalTransform>();
+        const auto* edgeTop = ea.edgeTop.GetComponent<LocalTransform>();
+        const auto* square = ea.square.GetComponent<LocalTransform>();
+        const auto* smallLTf = ea.smallLBody.GetComponent<LocalTransform>();
+        const auto* srcBall = ea.srcBall.GetComponent<LocalTransform>();
+        const auto* dynEdge = ea.dynEdge.GetComponent<LocalTransform>();
+        MYE_LOG_INFO("  [phys] Shapes2D: notch (%.3f, %.3f) min y %.3f / wall (%.3f, %.3f) / edge top y %.3f / "
+                     "edge below maxY %.3f / square y %.3f / smallL y %.3f / source y %.3f / dynEdge y %.1f",
+                     static_cast<double>(notch->position.x), static_cast<double>(notch->position.y),
+                     static_cast<double>(notchBallMinY), static_cast<double>(wallBall->position.x),
+                     static_cast<double>(wallBall->position.y), static_cast<double>(edgeTop->position.y),
+                     static_cast<double>(edgeBelowMaxY), static_cast<double>(square->position.y),
+                     static_cast<double>(smallLTf->position.y), static_cast<double>(srcBall->position.y),
+                     static_cast<double>(dynEdge->position.y));
+        // 凹の窪み: 凸包で埋まっていれば球は斜面の上 (y > 2) で止まる。窪みの底 (横棒の天面 y = 1) なら 1.25
+        check(std::fabs(notch->position.y - 1.25f) < 0.03f && notch->position.x > 1.25f && notch->position.x < 4.0f,
+              "Shapes2D polygon: a ball dropped into the concave notch rests on the bar top (y = 1.25)");
+        check(notchBallMinY > 1.2f, "Shapes2D polygon: the ball never sank into the L prism");
+        // 壁の面は x = 1。半径 0.25 の球の中心は 1.25 より内側へ入れない (入っていれば壁をすり抜けている)
+        check(wallBallMinX > 1.2f && wallBall->position.x < 4.0f && std::fabs(wallBall->position.y - 1.25f) < 0.03f,
+              "Shapes2D polygon: a ball rolling into the notch wall is stopped by it (x never below 1.25)");
+        check(std::fabs(edgeTop->position.y - 0.27f) < 0.03f,
+              "Shapes2D edge: a ball dropped on the chain rests on top (edgeRadius 0.02 + r 0.25)");
+        check(edgeBelowMaxY < -0.2f,
+              "Shapes2D edge: a ball thrown up from below is stopped by the underside (both faces solid)");
+        check(std::fabs(square->position.y - 0.4f) < 0.03f,
+              "Shapes2D dynamic polygon: a convex-hull square rests on the floor (y = 0.4)");
+        check(smallLTf->position.y > 0.05f && smallLTf->position.y < 1.0f && std::isfinite(smallLTf->position.y),
+              "Shapes2D dynamic polygon: a concave L is filled in (hull) and rests above the floor");
+        check(std::fabs(srcBall->position.y - 0.25f) < 0.03f,
+              "Shapes2D source: a ball dropped on the supplied static box rests on it");
+        check(dynEdge->position.y < -5.0f,
+              "Shapes2D edge: an Edge2D collider on a Rigidbody is ignored (the body keeps falling)");
+        {
+            const auto* rb = ea.square.GetComponent<RigidbodyComponent>();
+            const auto* lt = ea.square.GetComponent<LocalTransform>();
+            check(rb != nullptr && lt != nullptr && lt->position.z == 0.0f && rb->velocity.z == 0.0f
+                      && rb->angularVelocity.x == 0.0f && rb->angularVelocity.y == 0.0f,
+                  "Shapes2D dynamic polygon: plane2D invariants hold (z, vz, wx, wy)");
+        }
+        MYE_LOG_INFO("  [phys] Shapes2D scene hash @600 = %016llX", static_cast<unsigned long long>(shapes2dHash));
+        // Debug / Release 共通の期待値。0 は「未採取」 (採取値をログから読んで焼く)
+        constexpr uint64_t kShapes2DExpectedHash = 0x2ECF7CFD5CC45314ull;
+        check(kShapes2DExpectedHash == 0 || shapes2dHash == kShapes2DExpectedHash,
+              "Shapes2D: the final world hash matches the baked value (Debug == Release)");
+        phys2d.RemoveStaticShapeSource(&source);
+        phys2d.RemoveStaticShapeSource(&source); // 未登録の Remove は何もしない
+
+        // ---- クエリ: BoxCast / マスク付き OverlapBox / 辺の Raycast と二重カウント ----
+        {
+            Scene q;
+            TransformSystem ts;
+            GameObject upper = MakeGround(q, "Upper", 0.0f, -0.5f, 0.0f, 5.0f, 0.5f, 5.0f); // 天面 y = 0
+            GameObject lower = MakeGround(q, "Lower", 0.0f, -3.5f, 0.0f, 5.0f, 0.5f, 5.0f); // 天面 y = -3
+            lower.GetComponent<ColliderComponent>()->layer = 2;
+            GameObject layerA = MakeGround(q, "LayerA", 20.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f);
+            GameObject layerB = MakeGround(q, "LayerB", 20.5f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f);
+            layerB.GetComponent<ColliderComponent>()->layer = 3;
+            const AssetID chain = registerShape(L"C:\\sel\\shapes2d\\Chain.shape2d.json",
+                                                { { -2, 0 }, { 0, 0 }, { 2, 0 } }, false, 2.0f, 0.02f);
+            GameObject chainGo = makeShapeEntity(q, "Chain", collidershape::kEdge2D, chain, 40.0f, 0.0f, 0.0f);
+            q.GetWorld().ApplyStructuralChanges();
+            ts.Update(q.GetWorld());
+
+            MyeRaycastHit hit = {};
+            int ok = BoxCastWorld(q.GetWorld(), { 0, 5, 0 }, { 0.5f, 0.25f, 0.5f }, { 0, -1, 0 }, 100.0f, &hit);
+            check(ok == 1 && hit.entity.index == upper.Id().index && std::fabs(hit.distance - 4.75f) < 1e-3f
+                      && std::fabs(hit.normal.y - 1.0f) < 1e-3f,
+                  "Shapes2D BoxCast: returns the first floor (4.75 down, normal +y)");
+            ok = BoxCastWorld(q.GetWorld(), { 0, 5, 0 }, { 0.5f, 0.25f, 0.5f }, { 0, -1, 0 }, 100.0f, &hit,
+                              1u << 2);
+            check(ok == 1 && hit.entity.index == lower.Id().index && std::fabs(hit.distance - 7.75f) < 1e-3f,
+                  "Shapes2D BoxCast: the layer mask skips the upper floor and finds the lower one");
+            ok = BoxCastWorld(q.GetWorld(), { 0, 5, 0 }, { 0.5f, 0.25f, 0.5f }, { 0, -1, 0 }, 3.0f, &hit);
+            check(ok == 0, "Shapes2D BoxCast: maxDist short of the floor is a miss");
+            ok = BoxCastWorld(q.GetWorld(), { 0, 0.1f, 0 }, { 0.5f, 0.25f, 0.5f }, { 0, -1, 0 }, 100.0f, &hit);
+            check(ok == 1 && hit.distance == 0.0f && std::fabs(hit.normal.y - 1.0f) < 1e-3f,
+                  "Shapes2D BoxCast: a box that starts overlapping reports distance 0 and normal -dir");
+            ok = BoxCastWorld(q.GetWorld(), { 0, 5, 0 }, { 0.5f, 0.25f, 0.5f }, { 0, 1, 0 }, 100.0f, &hit);
+            check(ok == 0, "Shapes2D BoxCast: casting away from the floors misses");
+
+            MyeEntityId hits[8] = {};
+            int n = OverlapBoxWorld(q.GetWorld(), { 20.25f, 0, 0 }, { 2, 2, 2 }, { 0, 0, 0, 1 }, hits, 8);
+            check(n == 2, "Shapes2D OverlapBox: both layers hit with the default mask");
+            n = OverlapBoxWorld(q.GetWorld(), { 20.25f, 0, 0 }, { 2, 2, 2 }, { 0, 0, 0, 1 }, hits, 8, 1u << 0);
+            check(n == 1 && hits[0].index == layerA.Id().index,
+                  "Shapes2D OverlapBox: mask layer 0 excludes the layer-3 collider");
+            n = OverlapBoxWorld(q.GetWorld(), { 20.25f, 0, 0 }, { 2, 2, 2 }, { 0, 0, 0, 1 }, hits, 8, 1u << 3);
+            check(n == 1 && hits[0].index == layerB.Id().index,
+                  "Shapes2D OverlapBox: mask layer 3 keeps only the layer-3 collider");
+
+            n = OverlapBoxWorld(q.GetWorld(), { 40.0f, 0, 0 }, { 3, 1, 1 }, { 0, 0, 0, 1 }, hits, 8);
+            check(n == 1 && hits[0].index == chainGo.Id().index,
+                  "Shapes2D OverlapBox: a two-segment chain overlapped in both boxes counts once");
+            ok = RaycastWorld(q.GetWorld(), { 41.0f, 3.0f, 0 }, { 0, -1, 0 }, 100.0f, &hit);
+            check(ok == 1 && hit.entity.index == chainGo.Id().index && std::fabs(hit.distance - 2.98f) < 1e-3f,
+                  "Shapes2D Raycast: a ray hits the edge chain's top (3 - edgeRadius)");
+            ok = RaycastWorld(q.GetWorld(), { 41.0f, -3.0f, 0 }, { 0, 1, 0 }, 100.0f, &hit);
+            check(ok == 1 && hit.entity.index == chainGo.Id().index && std::fabs(hit.distance - 2.98f) < 1e-3f,
+                  "Shapes2D Raycast: a ray from below hits the chain's underside too");
+        }
+
+        shape2d::Install(prevShapeLib);
     }
 
     if (failCount == 0) {

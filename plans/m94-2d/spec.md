@@ -162,7 +162,8 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
 
 - `collidershape::kPolygon2D = 6`、`kEdge2D = 7` (append)。点列は `.shape2d.json` (`{ "shape2d":1, "points":[[x,y],...], "closed":true, "edgeRadius":0.02, "depth":1.0 }`) を `meshAsset` で参照。解決は 2. #19。`ShapeLibrary2D` (GUID キー、ReloadHub、Create メニュー)。
 - Scene View のギズモで点をドラッグ編集 (`HandlePatrolRoute` の流儀)、点の追加 (辺をクリック) と削除 (Delete)。
-- C++ クエリ: `OverlapBoxWorld` にマスク付きの口、`BoxCastWorld` (AABB の掃引、`SphereCastWorld` と同じ 32 回の保守的前進)。既存 `RaycastWorld` / `OverlapSphereWorld` は z = 任意の 3D 関数としてそのまま 2D に使う。
+- C++ クエリ (sub-08 で確定): `OverlapBoxWorld` は既にマスク引数を持っていた (新 overload は無し)。`BoxCastWorld(world, center, halfExtents, dir, maxDist, outHit, mask = 全, skip = null, skipUser = null)` (引数順は `RaycastWorld` / `SphereCastWorld` に揃える。spec 当初の「mask, skip, outHit」順は却下)。方式は箱の 27 点 (頂点 8 + 辺中点 12 + 面中心 6 + 中心) から進行方向へ `Raycast` した最短距離、始点で Overlap なら距離 0・法線 −dir。**近似**: 相手の突端が 27 点の隙間に入ると取りこぼす (engine_spec に書く。保守的前進は AABB-形状の距離化が要るので採らなかった)。既存 `RaycastWorld` / `OverlapSphereWorld` は z = 任意の 3D 関数としてそのまま 2D に使う。
+- 形状の細則 (sub-08): kinematic の kPolygon2D は静的と同じスープ (凸包にしない)、動的 / kinematic の kEdge2D は WARN して無効。kEdge2D の箱は両端を `edgeRadius` 伸ばす (折れ点の外側に隙間を作らない)、`closed` は 3 点以上でだけ閉じる。耳刈りは共線頂点を落とし必ず終わる、点は 512 上限。静的形状の供給口は `PhysicsSystem::AddStaticShapeSource / RemoveStaticShapeSource` + `StaticShapeSource::Collect(World&, std::vector<StaticShape>&)` (`StaticShape{owner, pose, col}`。同じ持ち主の形状は並べて返す。bodies の整列は `stable_sort` で収集順を保つ)。点編集の Undo は「ドラッグ 1 回 = 保存 1 回、Undo 無し」。
 - PhysicsSelfTest に `Shapes2D` 節: 凹 L 字の静的多角形の窪みで球が止まる / 辺チェーンの両面で止まる / 動的多角形 (凸包) が床に乗る / `BoxCast` が最初の床を返す / `OverlapBoxMasked` がマスクで除外する。
 
 #### 4.1.9 2D ライト・影・法線 (sub-15 / sub-16)
@@ -381,7 +382,7 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
 - (R5) M75h が先に ABI v31 を使った場合は sub-14 は v32。司会は着手時に `EngineAPI.h` を見る。
 - (R6) `.meta` の `sprites[]` を手で編集して重複 id を作った場合: 後勝ちで警告 (壊さない)。
 - (R7) GridAgent2D の 1 tick 4096 展開上限で広い面は数 tick かかる。status Moving のまま待つ (Stuck にはしない)。
-- (R9) sub-01 の既知の限界: (a) 複合コライダーの子形状の `oneWay` は見ない (b) 親付き (親フレームが identity でない) plane2D 剛体の `LocalTransform.z` 保証は未検証 — z0 はワールド z で、書き戻しは親の逆変換を通る。Rigidbody は「ルート = ワールド位置前提」(`Components.h` の Rigidbody コメント) なので v1 はルート限定とし、engine_spec に書く (sub-24) (c) `FractureSystem.cpp:188` は破片へ `freezeRotation` をコピーするが `plane2D` はまだコピーしない → sub-08 で 1 行足す。
+- (R9) sub-01 の既知の限界: (a) 複合コライダーの子形状の `oneWay` は見ない (b) 親付き (親フレームが identity でない) plane2D 剛体の `LocalTransform.z` 保証は未検証 — z0 はワールド z で、書き戻しは親の逆変換を通る。Rigidbody は「ルート = ワールド位置前提」(`Components.h` の Rigidbody コメント) なので v1 はルート限定とし、engine_spec に書く (sub-24) (c) `FractureSystem.cpp:188` は破片へ `freezeRotation` をコピーするが `plane2D` はまだコピーしない → sub-08 で 1 行足した (済) (d) 複合コライダー (`compoundColliders`) の子に付いた kPolygon2D は動的剛体の一部として凸包で解けず、v1 はスープのまま (sub-08)。親付きの多角形・辺は `MakePose` を通るが未検証。どちらも engine_spec の「v1 の限界」に書く (sub-24)。
 - (R10) 一方通行の速度条件 (kOneWayLandingSpeed) は「上面が天面より上で、半分以上沈んで降下中の物」も押し上げる。プラットフォーマーの着地としては望ましい挙動だが、天面より下から高速で上昇中の物は法線条件で通す (期待どおり)。問題が出たら深さの上限を足す。
 - (R11) 正射影カメラ + froxel (`--froxel`) の描画は未確認 (`engine_spec.md:406` は正射影でグリッドをスキップすると書く)。sub-15 (ライト) か sub-23 (デモ) で `--2d-demo --froxel` を 1 回撮って壊れないことを見る。
 - (R8) 2D ライトのバッファ再構築回数が層数に比例する。層 32 × 別々のライト集合という極端な配置では 32 回 clear + 加算。v1 はそのまま、engine_spec に書く。

@@ -42,6 +42,7 @@
 #include "Engine/Engine/Physics/Fracture/FractureLibrary.h"
 #include "Engine/Engine/Physics/Collider/MeshColliderLibrary.h"
 #include "Engine/Engine/Animation/SpriteAnim.h"
+#include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
@@ -204,6 +205,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     BlackboardLibrary blackboardLibrary;     // .bb.json (M85)
     SpriteLibrary spriteLibrary;             // スプライト (M94)
     SpriteAnimLibrary spriteAnimLibrary;     // .spriteanim.json (M94)
+    ShapeLibrary2D shapeLibrary2D;           // .shape2d.json (M94h)
     TerrainColliderLibrary terrainColliders; // 地形コライダー (M59i)。**描画側とは別キャッシュ**
     // XPBD 変形体の粒子池 (M60'b)。ECS 外 sim 状態の 2 例目 — ハッシュ節 (SimSources) と
     // snapshot 節 (SimRefs) の両方へ必ず配線する (3 点セット契約)
@@ -395,7 +397,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // (現状の呼び出し元はまだ無い)
     InstallSimLibraries({ &resources, &meshColliders, &convexColliders, &fractureAssets,
                           &physMatLibrary, &terrainColliders, &navFilterLibrary, &behaviorTreeLibrary,
-                          &blackboardLibrary, &spriteLibrary, &spriteAnimLibrary });
+                          &blackboardLibrary, &spriteLibrary, &spriteAnimLibrary, &shapeLibrary2D });
     // M76e: Deep-Modal 推論。CLI (--modal-backend) は綴りだけ検査済みで、未実装名
     // ("d3d11cs") への縮退はここ (SetBackendByName) が WARN 付きでやる。
     // .dmnet が無い (M76h 未実装/未生成) 環境では LoadModel が false を返すだけで、

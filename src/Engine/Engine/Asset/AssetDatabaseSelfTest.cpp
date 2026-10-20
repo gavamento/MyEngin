@@ -95,10 +95,12 @@ bool RunAssetDatabaseSelfTest()
           ".bb.json is classified as the blackboard type");
     check(AssetDatabase::ClassifyPath(L"x\\Walk.spriteanim.json") == AssetType::SpriteAnim,
           ".spriteanim.json is classified as the sprite animation type");
+    check(AssetDatabase::ClassifyPath(L"x\\Wall.shape2d.json") == AssetType::Shape2D,
+          ".shape2d.json is classified as the 2D shape type");
     for (AssetType t : { AssetType::Actor, AssetType::Prefab, AssetType::Sound, AssetType::Mixer,
                          AssetType::Schema, AssetType::PhysMat, AssetType::Fracture, AssetType::NavMesh,
                          AssetType::NavFilter, AssetType::BehaviorTree, AssetType::Blackboard,
-                         AssetType::SpriteAnim }) {
+                         AssetType::SpriteAnim, AssetType::Shape2D }) {
         check(AssetDatabase::ParseTypeName(AssetDatabase::TypeName(t)) == t,
               "asset type name round-trips through .meta");
     }

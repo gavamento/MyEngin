@@ -2295,7 +2295,7 @@ MYE_STR(Insp_NavCellAtMinimum, "The cell size hit its minimum (0.05 m), so the e
 MYE_STR(Insp_NavSlopeUnreachable, "Max Slope (%.0f deg) is above the effective limit (%.1f deg): steeper slopes are not walkable. Enable Auto Cell Size, raise Max Climb, or shrink the cell size.",
                                "登れる傾斜 (%.0f 度) が実効の上限 (%.1f 度) を超えています。それより急な坂は歩けません。セルの大きさの自動決定を有効にするか、登れる段差を上げるか、セルを小さくしてください")
 MYE_STR(Insp_EditCollider, "Edit collider", "コライダーを編集")
-MYE_STR(Insp_EditColliderUnsupported, "Select one sphere, box or capsule to edit.", "球・箱・カプセルを持つオブジェクトを1つ選択してください。")
+MYE_STR(Insp_EditColliderUnsupported, "Select one sphere, box, capsule or 2D shape (with a shape asset) to edit.", "球・箱・カプセル・2D 形状 (形状アセット指定済み) を持つオブジェクトを1つ選択してください。")
 MYE_STR(SceneView_EditingCollider, "Editing collider", "コライダー編集中")
 MYE_STR(SceneView_SphereRotation, "Sphere rotation has no effect.", "球の回転操作は無効です。")
 MYE_STR(SceneView_EditingPatrolPoint, "Editing patrol point (Esc: back to the entity gizmo)", "巡回点を編集中 (Esc でエンティティのギズモへ戻る)")
@@ -2454,3 +2454,24 @@ MYE_STR(Anim_SpriteMissing,    "(not found)",                          "(見つ�
 MYE_STR(Anim_SpriteFrameNow,   "frame %d / %d",                        "コマ %d / %d")
 MYE_STR(AnimPrev_NoSpriteStates, "This controller has no sprite animation states.",
                                "このコントローラにスプライトアニメーションのステートがありません")
+
+// ---- 2D 形状 (M94h) ----
+MYE_STR(Asset_Shape2D,         "2D Shape",                             "2D 形状")
+MYE_STR(Log_WriteShape2DFail,  "could not write 2D shape: %s",         "2D 形状を書き出せません: %s")
+MYE_STR(Log_CreatedShape2D,    "created 2D shape: %s",                 "2D 形状を作成しました: %s")
+MYE_STR(Shape2D_Failed,        "(2D shape parse failed)",              "(2D 形状を読めません)")
+MYE_STR(Shape2D_Usage,         "Set Collider.shape to Polygon2D or Edge2D and pick this asset as the mesh asset.",
+                               "Collider の形状を 多角形2D か 辺2D にして、このアセットをメッシュアセットに指定します")
+MYE_STR(Shape2D_Closed,        "Closed (Edge2D)",                      "閉じる (辺2D)")
+MYE_STR(Shape2D_EdgeRadius,    "Edge Radius (Edge2D)",                 "辺の半厚 (辺2D)")
+MYE_STR(Shape2D_Depth,         "Depth (z thickness)",                  "厚み (z 方向)")
+MYE_STR(Shape2D_Points,        "Points (%d)",                          "点 (%d)")
+MYE_STR(Shape2D_AddPoint,      "Add Point",                            "点を追加")
+MYE_STR(Insp_Shape2DDynamicNote, "A Rigidbody uses the convex hull of the points: concave parts are filled in.",
+                               "Rigidbody が付いた多角形は点の凸包で当たります (凹んだ部分は埋まります)")
+MYE_STR(Insp_Shape2DEdgeNote,  "Edge2D is static only: it is ignored on a Rigidbody entity.",
+                               "辺2D は静的専用です (Rigidbody が付いたエンティティでは無視されます)")
+MYE_STR(Insp_Shape2DUnresolved, "2D shape asset not found: the collider has no effect.",
+                               "2D 形状アセットが見つかりません (コライダーは無効です)")
+MYE_STR(SceneView_EditingShape2D, "Editing 2D shape: drag a point / click an edge to add / Delete to remove / Esc to leave",
+                               "2D 形状を編集中: 点をドラッグ / 辺をクリックで追加 / Delete で削除 / Esc で終了")

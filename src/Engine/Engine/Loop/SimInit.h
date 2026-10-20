@@ -40,6 +40,7 @@ class BlackboardLibrary;
 class TerrainColliderLibrary;
 class SpriteLibrary;
 class SpriteAnimLibrary;
+class ShapeLibrary2D;
 namespace compute {
 class ComputeService;
 }
@@ -70,6 +71,7 @@ struct SimLibraries {
     BlackboardLibrary* blackboards = nullptr;     // M85: .bb.json
     SpriteLibrary* sprites = nullptr;             // M94: スプライト (描画専用。sim は引かない)
     SpriteAnimLibrary* spriteAnims = nullptr;     // M94: .spriteanim.json (Animator が現在コマの長さと名前を引く)
+    ShapeLibrary2D* shapes2d = nullptr;           // M94h: .shape2d.json (Collider.shape = kPolygon2D / kEdge2D が引く)
 };
 void InstallSimLibraries(const SimLibraries& libs);
 // 所有者が死ぬ前に必ず呼ぶ (注入したポインタをプロセス全体から外す)

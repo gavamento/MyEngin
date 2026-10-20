@@ -41,6 +41,7 @@
 #include "Engine/Engine/Scene/TagNames.h" // 汎用タグの名前表 (タグ欄のドロップダウン)
 #include "Engine/Engine/Scene/SortingLayers.h" // M94: Sprite2D のソート層コンボ
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h" // M94: Sprite2D.sprite のピッカー
+#include "Engine/Engine/Physics/Collider/Shape2DLibrary.h" // M94h: Collider.meshAsset の 2D 形状ピッカー
 #include "Engine/Engine/Scene/Tags.h" // 汎用タグの読み書き (Tags::OwnMask / SetOwnMask)
 #include "Engine/Engine/RayTracing/RtScope.h" // RT の実効値と根拠 (描画と同じ判定)
 #include "Engine/Engine/Rendering/RenderSystem.h" // RT のタグ規則 / レーンの on/off
@@ -302,7 +303,7 @@ struct EnumFieldLabels {
     }
 };
 constexpr const char* kColliderShapeLabels[] = { "Sphere", "Box",  "Capsule",
-                                                 "Mesh",   "Terrain", "Convex" };
+                                                 "Mesh",   "Terrain", "Convex", "Polygon2D", "Edge2D" };
 constexpr const char* kLightTypeLabels[] = { "Directional", "Point", "Spot" };
 constexpr const char* kEmitterShapeLabels[] = { "Point", "Sphere", "Cone", "Box" };
 constexpr const char* kBlendModeLabels[] = { "Additive", "Alpha", "Distortion" }; // M42d
@@ -337,7 +338,7 @@ constexpr const char* kUIPresetColLabels[] = { "Left", "Center", "Right", "Stret
 constexpr const char* kUIPresetRowLabels[] = { "Top", "Middle", "Bottom", "Stretch" };
 // M47c: 日本語表示。ACES / Reinhard / Exp2 のような固有名詞・数式名は英語のまま
 constexpr const char* kColliderShapeJa[] = { "スフィア", "ボックス", "カプセル", "メッシュ",
-                                             "地形",     "凸包" };
+                                             "地形",     "凸包",     "多角形2D", "辺2D" };
 constexpr const char* kLightTypeJa[] = { "平行光", "ポイント", "スポット" };
 constexpr const char* kEmitterShapeJa[] = { "点", "スフィア", "コーン", "ボックス" };
 constexpr const char* kBlendModeJa[] = { "加算", "アルファ", "歪み" };
@@ -932,8 +933,10 @@ void InspectorWindow::DrawComponent(EngineContext& ctx, Selection& selection, Un
             if (std::strcmp(desc.name, "Collider") == 0) {
                 const auto& collider = *static_cast<const ColliderComponent*>(comp);
                 const bool supported = selection.ids.size() == 1
-                    && collider.shape >= collidershape::kSphere
-                    && collider.shape <= collidershape::kCapsule;
+                    && ((collider.shape >= collidershape::kSphere && collider.shape <= collidershape::kCapsule)
+                        // M94h: 2D 形状は点の編集 (形状アセットが解決できるときだけ)
+                        || (collider.shape >= collidershape::kPolygon2D
+                            && shape2d::Resolve(collider.meshAsset) != nullptr));
                 bool editing = selection.colliderEditFileId == selection.primary;
                 ImGui::BeginDisabled(!supported);
                 if (ImGui::Checkbox(Tr(StrId::Insp_EditCollider), &editing)) {
@@ -1250,6 +1253,22 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
         }
         ImGui::SameLine();
         ImGui::TextDisabled("%s", Tr(StrId::Insp_WaterPreviewHint));
+    }
+    // M94h: 2D 形状の Collider の注意 (アセット未解決 / 動的剛体での扱い)
+    if (std::strcmp(desc.name, "Collider") == 0 && !tg.multi) {
+        const auto* collider = world.GetComponent<ColliderComponent>(tg.e);
+        if (collider != nullptr
+            && (collider->shape == collidershape::kPolygon2D || collider->shape == collidershape::kEdge2D)) {
+            ImGui::PushTextWrapPos(0.0f);
+            if (shape2d::Resolve(collider->meshAsset) == nullptr) {
+                ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_Shape2DUnresolved));
+            }
+            if (world.GetComponent<RigidbodyComponent>(tg.e) != nullptr) {
+                ImGui::TextDisabled("%s", Tr(collider->shape == collidershape::kPolygon2D ? StrId::Insp_Shape2DDynamicNote
+                                                                                          : StrId::Insp_Shape2DEdgeNote));
+            }
+            ImGui::PopTextWrapPos();
+        }
     }
     // M50a: PartBounds 単独 (Part 無し) は RaycastParts の収集
     // ({Part, PartBounds, WorldMatrix} の同居アーキタイプ) から黙って外れるため警告
@@ -3018,6 +3037,9 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
         if (type == AssetType::SpriteAnim) {
             LoadSpriteAnimEdit(path, spriteAnimEdit_); // M94
         }
+        if (type == AssetType::Shape2D) {
+            LoadShape2DEdit(path, shape2dEdit_); // M94h
+        }
         if (type == AssetType::FxStack) {
             LoadFxStackEdit(path); // M78c
         }
@@ -3074,6 +3096,11 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
 
     if (type == AssetType::SpriteAnim) {
         DrawSpriteAnimInspector(ctx, path, spriteAnimEdit_); // M94
+        return;
+    }
+
+    if (type == AssetType::Shape2D) {
+        DrawShape2DInspector(ctx, path, shape2dEdit_); // M94h
         return;
     }
 
@@ -4283,6 +4310,8 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
     std::transform(fname.begin(), fname.end(), fname.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     std::vector<AssetEntry> entries;
+    const bool isShape2DRef = fname == "meshasset" && !comps.empty()
+        && static_cast<const ColliderComponent*>(comps.front())->shape >= collidershape::kPolygon2D;
     // ディスク上のファイルも候補に出す種別 (Unknown = ライブラリの一覧だけ)。
     // ディスクの走査はポップアップを開いている間だけ行う (毎フレーム assets 全体を再帰走査し、
     // .meta の無いファイルへ .meta を書き出していた)
@@ -4330,6 +4359,13 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         //   "None" になり、そこから選ぶと FBX ローダが入れた参照が壊れる
         for (const SkinnedModelEntry& s : ctx.resources->skinnedModels.Enumerate()) {
             entries.push_back({ AssetID{ s.hash }, s.name });
+        }
+    } else if (isShape2DRef) {
+        // M94h: Collider.meshAsset が 2D 形状 (kPolygon2D / kEdge2D) のとき .shape2d.json を選ぶ
+        if (ShapeLibrary2D* shapes2d = shape2d::Library()) {
+            for (const Shape2DEntry& e : shapes2d->Enumerate()) {
+                entries.push_back({ AssetID{ e.hash }, e.name });
+            }
         }
     } else if (fname.find("mesh") != std::string::npos) {
         entries = ctx.resources->meshes.Enumerate();
@@ -4422,6 +4458,14 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
             if (fname.find("tex") != std::string::npos && AssetDatabase::ClassifyPath(dropPath) == AssetType::Texture) {
                 const AssetID aid = ctx.resources->textures.RequestLoadFileAsync(dropPath);
                 assign(aid);
+            } else if (isShape2DRef && AssetDatabase::ClassifyPath(dropPath) == AssetType::Shape2D) {
+                // M94h: .shape2d.json のドロップは GUID を確定して割り当てる
+                if (ShapeLibrary2D* shapes2d = shape2d::Library()) {
+                    shapes2d->LoadFromFile(dropPath);
+                }
+                const uint64_t guid = ctx.assetDb ? ctx.assetDb->GuidForPath(dropPath, true)
+                                                  : AssetDatabase::EnsureMeta(dropPath);
+                assign(AssetID{ guid });
             } else if (fname == "sprite" && AssetDatabase::ClassifyPath(dropPath) == AssetType::Texture) {
                 // M94: テクスチャのドロップは「全面スプライト」(AssetID はテクスチャ自身)。ロードは描画側が頼む
                 if (SpriteLibrary* sprites = spritelib::Library()) {

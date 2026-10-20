@@ -81,6 +81,9 @@ AssetType AssetDatabase::ClassifyPath(const std::wstring& path)
     if (EndsWith(s, ".physmat.json")) {
         return AssetType::PhysMat;
     }
+    if (EndsWith(s, ".shape2d.json")) {
+        return AssetType::Shape2D;
+    }
     if (EndsWith(s, ".spriteanim.json")) {
         return AssetType::SpriteAnim;
     }
@@ -165,6 +168,7 @@ const char* AssetDatabase::TypeName(AssetType t)
     case AssetType::BehaviorTree: return "behaviortree";
     case AssetType::Blackboard: return "blackboard";
     case AssetType::SpriteAnim: return "spriteanim";
+    case AssetType::Shape2D: return "shape2d";
     case AssetType::Unknown:
     default: return "unknown";
     }
@@ -195,6 +199,7 @@ AssetType AssetDatabase::ParseTypeName(const std::string& s)
     if (s == "behaviortree") return AssetType::BehaviorTree;
     if (s == "blackboard") return AssetType::Blackboard;
     if (s == "spriteanim") return AssetType::SpriteAnim;
+    if (s == "shape2d") return AssetType::Shape2D;
     return AssetType::Unknown;
 }
 

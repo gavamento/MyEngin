@@ -35,6 +35,7 @@ enum class AssetType : int32_t {
     BehaviorTree, // .bt.json (M85 — ビヘイビアツリー)
     Blackboard,   // .bb.json (M85 — ビヘイビアツリーのブラックボードのキー定義)
     SpriteAnim,   // .spriteanim.json (M94g — スプライト列クリップ。コマ列)
+    Shape2D,      // .shape2d.json (M94h — 2D 衝突形状の点列。Collider.shape = kPolygon2D / kEdge2D)
 };
 
 // アセット 1 件のサイドカー情報 (<asset>.meta に JSON で保存)。

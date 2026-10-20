@@ -185,6 +185,7 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\ConvexHull.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\ConvexSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\MeshColliderLibrary.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\Collider\Shape2DLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\TerrainColliderLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Fracture\FractureBake.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Fracture\FractureBenchmark.cpp" />
@@ -531,6 +532,7 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\ConvexHull.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\ConvexSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\MeshColliderLibrary.h" />
+    <ClInclude Include="..\src\Engine\Engine\Physics\Collider\Shape2DLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\TerrainColliderLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Fracture\FractureBake.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Fracture\FractureBenchmark.h" />
@@ -554,6 +556,7 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysMatLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysMatSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\Shapes.h" />
+    <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\StaticShapeSource.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Xpbd\XpbdBackend.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Xpbd\XpbdSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Xpbd\XpbdSolver.h" />

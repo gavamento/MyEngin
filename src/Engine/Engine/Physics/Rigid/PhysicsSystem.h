@@ -14,6 +14,7 @@ struct PhysMat;
 struct PhysicsEnvironmentComponent;
 struct WaterWaveComponent;
 struct ShapePose;
+class StaticShapeSource;
 
 // ソリッド接触ペア (M28c)。PhysicsSystem が tick 毎に全サブステップの接触制約から集めたペア (和集合) を
 // key 昇順で出力し、CollisionSystem が前 tick 差分から OnCollisionEnter/Stay/Exit を配信する。
@@ -70,7 +71,8 @@ void ComposeEntityWorldPose(World& world, EntityID e, float& px, float& py, floa
 // 子に伝播しない)。velocity / angularVelocity は常にワールド系。
 // 関節 (JointComponent、M60a) と複合コライダー (Rigidbody.compoundColliders で子のコライダーを親剛体へ畳む、M60e) も解く。
 // ブロードフェーズ (M28d): 毎 tick 再構築の 1 軸 sort & sweep (Broadphase.cpp)。
-// 状態は全てコンポーネントに常駐 (velocity=Rigidbody, position=LocalTransform) → システムはステートレス。
+// 状態は全てコンポーネントに常駐 (velocity=Rigidbody, position=LocalTransform) → システムはステートレス
+// (M94h の静的形状の供給口は配線であって sim 状態ではない)。
 // CCD (M59j): Rigidbody.ccd を立てたボディだけ、1 サブステップの移動量が自分の外接球半径を
 // 超えるときに掃引され、最初に触れる位置で止まって法線インパルスを 1 発受ける。
 // 相手は不動として扱う近似で、止まった直後は起動しきい値を外れて通常の離散ソルバへ戻る
@@ -86,9 +88,17 @@ public:
     void Update(World& world, float dt, std::vector<SolidContact>* outContacts = nullptr,
                 XpbdBackend* xpbd = nullptr, std::vector<ShapeImpulse>* outShapeImpulses = nullptr);
 
+    // M94h: 静的形状の供給口 (StaticShapeSource.h)。Update の静的収集が登録順に Collect を呼ぶ。
+    // 所有は呼び出し側 (外すまで生かす)。同じ source の二重登録は無視、未登録の Remove は何もしない
+    void AddStaticShapeSource(StaticShapeSource* source);
+    void RemoveStaticShapeSource(StaticShapeSource* source);
+
     // 等価性テスト用 (PhysicsSelfTest): true でブロードフェーズを総当たり候補に切替。
     // 挙動はビット同一のはず — selftest がハッシュ比較で常時検証する
     static inline bool sDisableBroadphaseForTest = false;
+
+private:
+    std::vector<StaticShapeSource*> staticSources_;
 };
 
 // ---- 物理マテリアル解決 (M59a2)。全て純関数 — ソルバ収集と ABI が共有する ----
@@ -216,5 +226,12 @@ int OverlapBoxWorld(World& world, MyeVec3 center, MyeVec3 halfExtents, MyeQuat r
 // sphere/capsule 相手は解析解 (半径膨張レイ)、box 相手は固定 32 回の保守的前進 (決定論)。
 int SphereCastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float radius, float maxDist,
                     MyeRaycastHit* outHit, uint32_t mask = 0xFFFFFFFFu);
+// M94h: 軸平行の箱 (center ± halfExtents、無回転) を dir 方向へ掃引し最近ヒットを返す。
+// 始点で重なっていれば距離 0・法線 -dir。それ以外は箱の 27 点 (頂点・辺の中点・面の中心・中心) から
+// 進行方向へ撃つレイの最短距離 (近似。形状の突端が撃つ点の隙間に入る場合は取りこぼす)。
+// 2D の足元判定などで使う。skip の意味は RaycastWorld と同じ
+int BoxCastWorld(World& world, MyeVec3 center, MyeVec3 halfExtents, MyeVec3 dir, float maxDist,
+                 MyeRaycastHit* outHit, uint32_t mask = 0xFFFFFFFFu, RaycastSkipFn skip = nullptr,
+                 const void* skipUser = nullptr);
 
 } // namespace mye

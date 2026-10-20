@@ -1712,6 +1712,7 @@ bool RunFractureSelfTest()
             rootRb->mass = 8.0f;
             rootRb->velocity = { 2.0f, 0.0f, 0.0f };
             rootRb->angularVelocity = { 0.0f, 0.0f, 3.0f };
+            rootRb->plane2D = true; // M94h: 破片の Rigidbody へ写されること
             auto* d = root.GetComponent<DestructibleComponent>();
             d->strength = 100.0f; // 低めにして単純な形状単位インパルスで確実に切れさせる
             d->fractureAsset = AssetID{ HashStr("fracture-selftest://row8") };
@@ -1756,6 +1757,8 @@ bool RunFractureSelfTest()
                 check(!leaderRb->isKinematic, "fracture system: a separated chunk is dynamic");
                 check(!leaderRb->compoundColliders,
                       "fracture system: a lone separated piece is not a compound (1 member)");
+                check(leaderRb->plane2D,
+                      "fracture system: a separated chunk keeps the plane2D constraint of the original body");
                 check(w.GetParent(piece0) == w.GetParent(root.Id()),
                       "fracture system: the new leader is reparented to the root's parent");
             }

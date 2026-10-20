@@ -8,6 +8,7 @@
 #include "Engine/Engine/Physics/Collider/ConvexCollision.h"        // M60f: shape=5 の SAT
 #include "Engine/Engine/Physics/Collider/ConvexColliderLibrary.h"  // M60f: shape=5 の実体解決
 #include "Engine/Engine/Physics/Collider/TerrainColliderLibrary.h" // M59i: shape=4 の実体解決
+#include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"         // M94h: shape=6 / 7 の実体解決
 
 namespace mye {
 namespace shapes {
@@ -938,6 +939,16 @@ void ApplyScaledExtents(ShapePose& p, const ColliderComponent& col, float sx, fl
         // meshAsset が `.terrain.json` を指す — 自然な使い方は「TerrainComponent と
         // 同じエンティティに shape=4 の Collider を置き、同じ地形を指す」
         p.meshData = terraincol::Resolve(col.meshAsset);
+    } else if (col.shape == collidershape::kPolygon2D) {
+        // M94h: 静的 / kinematic の既定 = プリズムの三角形スープ (shape=3 と同じ経路)。
+        // 動的剛体は UseHullForDynamicPolygon2D が凸包へ差し替える
+        p.shape = collidershape::kMesh;
+        p.meshData = shape2d::ResolveSoup(col.meshAsset);
+    } else if (col.shape == collidershape::kEdge2D) {
+        // M94h: 線分の列は 1 つの pose に収まらない。呼び出し側が ExpandEdge2D で箱へ展開する。
+        // 展開しない経路では「衝突なし」に落ちる (null のメッシュ)
+        p.shape = collidershape::kMesh;
+        p.meshData = nullptr;
     }
 }
 
@@ -1950,6 +1961,59 @@ ShapePose MakePoseFromMatrix(const ColliderComponent& col, const DirectX::XMFLOA
         }
     }
     return p;
+}
+
+void UseHullForDynamicPolygon2D(ShapePose& p, const ColliderComponent& col)
+{
+    if (col.shape != collidershape::kPolygon2D) {
+        return;
+    }
+    p.shape = collidershape::kConvex;
+    p.meshData = shape2d::ResolveHull(col.meshAsset);
+}
+
+void ExpandEdge2D(const ColliderComponent& col, const ShapePose& base, std::vector<ShapePose>& out)
+{
+    const Shape2D* shape = shape2d::Resolve(col.meshAsset);
+    if (shape == nullptr) {
+        return;
+    }
+    constexpr float kMinSegmentLength = 1e-6f;
+    // 半厚は XY のうち大きいほうのスケールで太らせる (球の半径と同じ「最大成分」規約)
+    const float radius = shape->edgeRadius * std::max(base.sx, base.sy);
+    const int32_t count = shape->SegmentCount();
+    for (int32_t i = 0; i < count; ++i) {
+        DirectX::XMFLOAT2 a, b;
+        shape->Segment(i, a, b);
+        const float ax = a.x * base.sx, ay = a.y * base.sy;
+        const float bx = b.x * base.sx, by = b.y * base.sy;
+        const float dx = bx - ax, dy = by - ay;
+        const float len = std::sqrt(dx * dx + dy * dy);
+        if (len < kMinSegmentLength) {
+            continue;
+        }
+        // 線分の向き (cos, sin)。三角関数を通さず方向ベクトルから直接作る
+        const float c = dx / len;
+        const float s = dy / len;
+        const float mx = (ax + bx) * 0.5f;
+        const float my = (ay + by) * 0.5f;
+        ShapePose q;
+        q.shape = collidershape::kBox;
+        q.px = base.px + base.bx[0] * mx + base.by[0] * my;
+        q.py = base.py + base.bx[1] * mx + base.by[1] * my;
+        q.pz = base.pz + base.bx[2] * mx + base.by[2] * my;
+        for (int k = 0; k < 3; ++k) {
+            q.bx[k] = c * base.bx[k] + s * base.by[k];
+            q.by[k] = -s * base.bx[k] + c * base.by[k];
+            q.bz[k] = base.bz[k];
+        }
+        q.identityRot = (base.identityRot != 0 && c == 1.0f && s == 0.0f) ? 1 : 0;
+        // 端を半厚ぶん伸ばして、折れ点の外側に隙間を作らない
+        q.hx = len * 0.5f + radius;
+        q.hy = radius;
+        q.hz = shape->depth * 0.5f * base.sz;
+        out.push_back(q);
+    }
 }
 
 bool Collide(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float& nz, float& depth)

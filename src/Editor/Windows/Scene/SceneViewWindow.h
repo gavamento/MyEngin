@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 
 #include <DirectXMath.h>
 
@@ -21,6 +22,7 @@ class World;
 class UndoStack;
 struct EditorSettings;
 struct CameraComponent;
+struct ColliderComponent;
 
 // エディタカメラでシーンを描画するビュー (engine_spec.md 9 章)。
 // カメラはエンティティではなくエディタ所有 (Play 状態と無関係に操作できる)。
@@ -64,6 +66,8 @@ private:
     void DrawCharacterControllerGizmos(World& world);
     void DrawSpriteGizmos(World& world);
     void DrawSprite2DGizmos(EngineContext& ctx, World& world, const Selection& selection);
+    // M94h: kPolygon2D / kEdge2D の点列 (緑) を前後面の輪郭と支柱で描く
+    void AddShape2DWire(const ColliderComponent& col, const DirectX::XMFLOAT4X4& wm);
     void DrawAudioGizmos(EngineContext& ctx, World& world, const Selection& selection);
     void DrawTextMeshGizmos(World& world);
     void DrawPartSocketGizmos(World& world);
@@ -87,6 +91,11 @@ private:
     // 点を選んでいる間は true を返す (呼び出し側はエンティティの変形ギズモを出さない)。点をクリックしたら clickConsumed が true
     bool HandlePatrolRoute(EngineContext& ctx, Selection& selection, UndoStack& undo, const EditorSettings& settings,
                            float rectX, float rectY, float rectW, float rectH, bool& clickConsumed);
+    // M94h: 「Edit Collider」が入った kPolygon2D / kEdge2D の点の表示・ドラッグ移動・辺クリックで追加・Delete で削除。
+    // 編集はアセット (.shape2d.json) に書く (ドラッグ 1 回 = 保存 1 回、Undo 無し)。
+    // 編集中は true を返す (呼び出し側は変形ギズモを出さない)。点・辺をクリックしたら clickConsumed が true
+    bool HandleShape2DEdit(EngineContext& ctx, Selection& selection, const EditorSettings& settings, float rectX,
+                           float rectY, float rectW, float rectH, bool& clickConsumed);
     void DrawGizmo(EngineContext& ctx, Selection& selection, UndoStack& undo,
                    const EditorSettings& settings, float rectX, float rectY, float rectW,
                    float rectH);
@@ -152,6 +161,10 @@ private:
     bool gizmoPatrol_ = false; // 記録中のドラッグが巡回点のもの
     int patrolPoint_ = -1;     // ドラッグで動かすために選んでいる巡回点 (-1 = 無し)
     uint64_t patrolFileId_ = 0; // patrolPoint_ を選んだときのエンティティ (選択が変わったら捨てる)
+    int shape2dPoint_ = -1;      // M94h: 編集で選んでいる 2D 形状の点 (-1 = 無し)
+    uint64_t shape2dFileId_ = 0; // 同 選んだときのエンティティ
+    bool shape2dDragging_ = false;
+    std::vector<DirectX::XMFLOAT2> shape2dDragPoints_; // ドラッグ中の作業用点列 (離したら保存)
     bool gizmoBlockedUntilRelease_ = false;
     bool camSpeedDirty_ = false; // RMB+ホイールで速度変更中 (RMB リリース時に settings.Save)
     bool showGrid_ = true;

@@ -726,6 +726,9 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\MeshColliderLibrary.cpp">
       <Filter>Engine\Physics\Collider</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Collider\Shape2DLibrary.cpp">
+      <Filter>Engine\Physics\Collider</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\TerrainColliderLibrary.cpp">
       <Filter>Engine\Physics\Collider</Filter>
     </ClCompile>
@@ -1764,6 +1767,9 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\MeshColliderLibrary.h">
       <Filter>Engine\Physics\Collider</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Collider\Shape2DLibrary.h">
+      <Filter>Engine\Physics\Collider</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\TerrainColliderLibrary.h">
       <Filter>Engine\Physics\Collider</Filter>
     </ClInclude>
@@ -1831,6 +1837,9 @@
       <Filter>Engine\Physics\Rigid</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\Shapes.h">
+      <Filter>Engine\Physics\Rigid</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\StaticShapeSource.h">
       <Filter>Engine\Physics\Rigid</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\Xpbd\XpbdBackend.h">

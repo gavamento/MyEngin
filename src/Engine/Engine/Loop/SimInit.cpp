@@ -18,6 +18,7 @@
 #include "Engine/Engine/Physics/Collider/TerrainColliderLibrary.h"
 #include "Engine/Engine/Physics/Fracture/FractureLibrary.h"
 #include "Engine/Engine/Animation/SpriteAnim.h"
+#include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
@@ -82,6 +83,8 @@ void InstallSimLibraries(const SimLibraries& libs)
     spritelib::Install(libs.sprites);
     // M94: スプライト列クリップ (.spriteanim.json)。同じく起動走査より前に注入する
     spriteanim::Install(libs.spriteAnims);
+    // M94h: 2D 形状 (.shape2d.json)。Collider の pose 構築が引くので起動走査より前に注入する
+    shape2d::Install(libs.shapes2d);
 }
 
 void UninstallSimLibraries()
@@ -96,6 +99,7 @@ void UninstallSimLibraries()
     blackboard::Install(nullptr);
     spritelib::Install(nullptr);
     spriteanim::Install(nullptr);
+    shape2d::Install(nullptr);
 }
 
 void InitSimProjectState(const std::wstring& assetsRoot)

@@ -186,6 +186,7 @@ void CopyOtherRigidbodyFields(const RigidbodyComponent& src, RigidbodyComponent&
     dst.gravityScale = src.gravityScale;
     dst.angularDamping = src.angularDamping;
     dst.freezeRotation = src.freezeRotation;
+    dst.plane2D = src.plane2D;
     dst.useDensity = src.useDensity;
     dst.gyroscopic = src.gyroscopic;
     dst.centerOfMass = src.centerOfMass;

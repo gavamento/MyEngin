@@ -15,8 +15,11 @@
 #include "Engine/Engine/Physics/Rigid/Broadphase.h"
 #include "Engine/Engine/Physics/Collider/ConvexColliderLibrary.h" // M60f: convexcol::Resolve
 #include "Engine/Engine/Physics/Collider/ConvexHull.h"            // M60f: 凸包の質量特性
+#include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"        // M94h: 動的な多角形の凸包 / 体積
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h" // M59a2: physmat::Resolve (材料解決)
 #include "Engine/Engine/Physics/Rigid/Shapes.h"
+#include "Engine/Engine/Physics/Rigid/StaticShapeSource.h" // M94h
 #include "Engine/Engine/Physics/Xpbd/XpbdBackend.h" // M60'b: 変形体の粒子池
 #include "Engine/Engine/Physics/Xpbd/XpbdSolver.h"  // M60'c: XPBD 距離拘束の射影
 #include "Engine/Engine/Physics/Ragdoll/Ragdoll.h" // M60g1: 休止中のラグドールは kinematic 扱い
@@ -269,6 +272,9 @@ void SetBodyShape(Body& b, const ColliderComponent& col, const XMFLOAT3& pos,
                   const XMFLOAT4& rot, const XMFLOAT3& scale)
 {
     b.pose = shapes::MakePose(col, pos, rot, scale);
+    if (b.rb != nullptr && !b.kinematic) {
+        shapes::UseHullForDynamicPolygon2D(b.pose, col); // M94h: 動的な多角形は凸包で解く
+    }
     b.colliderOffset = {};
     if (col.shape <= collidershape::kCapsule
         && (col.center.x != 0 || col.center.y != 0 || col.center.z != 0)) {
@@ -1579,6 +1585,20 @@ void ComposeEntityWorldPose(World& world, EntityID e, float& px, float& py, floa
     qx = wrot.x; qy = wrot.y; qz = wrot.z; qw = wrot.w;
 }
 
+void PhysicsSystem::AddStaticShapeSource(StaticShapeSource* source)
+{
+    if (source != nullptr
+        && std::find(staticSources_.begin(), staticSources_.end(), source) == staticSources_.end()) {
+        staticSources_.push_back(source);
+    }
+}
+
+void PhysicsSystem::RemoveStaticShapeSource(StaticShapeSource* source)
+{
+    staticSources_.erase(std::remove(staticSources_.begin(), staticSources_.end(), source),
+                         staticSources_.end());
+}
+
 void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* outContacts,
                            XpbdBackend* xpbd, std::vector<ShapeImpulse>* outShapeImpulses)
 {
@@ -1719,6 +1739,15 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             if (col && col->shape == collidershape::kMesh && !kinematic) {
                 col = nullptr;
             }
+            if (col && col->shape == collidershape::kEdge2D) {
+                // M94h: 辺の列は静的専用 (線分ごとの箱を静的収集で作る)。動的 / kinematic に付いていたら無視する
+                static bool warned = false;
+                if (!warned) {
+                    warned = true;
+                    MYE_LOG_WARN("[phys] Edge2D collider on a Rigidbody entity is ignored (static only)");
+                }
+                col = nullptr;
+            }
             const PhysMat* mat = col ? physmat::Resolve(col->physMaterial) : nullptr; // M59a2
             b.shapeCol = col; // M59b: 空力の基準面積も同じ「形状」の読みを共有する
             const float mass = ResolveBodyMass(*rb, col, mat, wscale.x, wscale.y, wscale.z);
@@ -1785,6 +1814,29 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     std::vector<CompoundShape> compoundShapes;
 
     // ---- 収集 (静的: Collider(isTrigger==0) + LocalTransform、Rigidbody 非所持) ----
+    // 静的ボディの形状以外の欄 (材料 / レイヤー / oneWay)。Collider の通常経路と供給口が共有する
+    const auto makeStaticBody = [&](EntityID e, const ColliderComponent* col) {
+        Body b;
+        b.entity = e;
+        b.solid = true;
+        b.ownShape = true; // M60e
+        b.invMass = 0.0f;  // 静的 = 不動
+        const PhysMat* mat = physmat::Resolve(col->physMaterial); // M59a2
+        b.friction = SelectFriction(*col, mat);
+        // M59a2: 材料付き静的コライダーは e を主張できる (従来は構造的に 0 = 新規能力。
+        // 未割当は mat=nullptr → SelectRestitution が従来どおり 0 を返す)
+        b.restitution = SelectRestitution(col, nullptr, mat);
+        b.frictionS = SelectStaticFriction(*col, mat); // M59f2
+        b.roll = SelectRollingResistance(*col, mat);   // M59f2
+        b.adhesion = SelectAdhesion(mat);              // M60d
+        b.layer = col->layer; // M36a
+        b.mask = col->mask;
+        if (col->oneWay) {
+            b.oneWay = true; // M94a
+            anyOneWay = true;
+        }
+        return b;
+    };
     const ComponentTypeId colReq[] = { ColliderComponent::sTypeId, LocalTransform::sTypeId };
     world.ForEachArchetype(colReq, [&](Archetype& arch) {
         const int ci = arch.FindTypeIndex(ColliderComponent::sTypeId);
@@ -1842,35 +1894,44 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     continue;
                 }
             }
-            Body b;
-            b.entity = e;
-            b.solid = true;
-            b.ownShape = true; // M60e
-            b.invMass = 0.0f;  // 静的 = 不動
-            const PhysMat* mat = physmat::Resolve(col->physMaterial); // M59a2
-            b.friction = SelectFriction(*col, mat);
-            // M59a2: 材料付き静的コライダーは e を主張できる (従来は構造的に 0 = 新規能力。
-            // 未割当は mat=nullptr → SelectRestitution が従来どおり 0 を返す)
-            b.restitution = SelectRestitution(col, nullptr, mat);
-            b.frictionS = SelectStaticFriction(*col, mat); // M59f2
-            b.roll = SelectRollingResistance(*col, mat);   // M59f2
-            b.adhesion = SelectAdhesion(mat);              // M60d
-            b.layer = col->layer; // M36a
-            b.mask = col->mask;
-            if (col->oneWay) {
-                b.oneWay = true; // M94a
-                anyOneWay = true;
-            }
+            Body b = makeStaticBody(e, col);
             // M28d: 親付き静的コライダーもワールド姿勢で判定 (lt 直読みでは親の姿勢が抜ける)
             const WorldFrame f = ComposeParentFrame(world, e);
             XMFLOAT3 wpos;
             XMFLOAT4 wrot;
             XMFLOAT3 wscale;
             ApplyFrame(f, *lt, wpos, wrot, wscale);
+            if (col->shape == collidershape::kEdge2D) {
+                // M94h: 線分ごとの薄い箱へ展開する。同じ持ち主の箱は線分の並びで隣り合う
+                SetBodyShape(b, *col, wpos, wrot, wscale);
+                std::vector<ShapePose> boxes;
+                shapes::ExpandEdge2D(*col, b.pose, boxes);
+                for (const ShapePose& box : boxes) {
+                    Body eb = b;
+                    eb.pose = box;
+                    bodies.push_back(eb);
+                }
+                continue;
+            }
             SetBodyShape(b, *col, wpos, wrot, wscale);
             bodies.push_back(b);
         }
     });
+    // M94h: 呼び出し側が持つ静的形状の供給口 (タイルの箱など)。登録順に呼ぶ
+    if (!staticSources_.empty()) {
+        std::vector<StaticShape> supplied;
+        for (StaticShapeSource* source : staticSources_) {
+            source->Collect(world, supplied);
+        }
+        for (const StaticShape& s : supplied) {
+            if (s.col == nullptr || s.col->isTrigger) {
+                continue;
+            }
+            Body b = makeStaticBody(s.owner, s.col);
+            b.pose = s.pose;
+            bodies.push_back(b);
+        }
+    }
 
     // ---- 収集 (キャラクターコントローラ: CC + LocalTransform、Rigidbody 非所持) (M29b) ----
     std::vector<CharBody> chars;
@@ -1927,8 +1988,10 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     if (bodies.empty() && chars.empty() && (xpbd == nullptr || xpbd->Pools().empty())) {
         return;
     }
-    std::sort(bodies.begin(), bodies.end(),
-              [](const Body& a, const Body& b) { return a.entity.index < b.entity.index; });
+    // M94h: 同じ持ち主の静的形状 (辺の箱 / 供給口の形状) が複数並ぶので安定ソートにする。
+    // 持ち主が一意の既存シーンでは std::sort と同じ並びになる
+    std::stable_sort(bodies.begin(), bodies.end(),
+                     [](const Body& a, const Body& b) { return a.entity.index < b.entity.index; });
 
     // ---- 複合コライダーの合成 (M60e) ----
     // ★**bodies の並べ替えのあと**にやる — subFirst/subCount は並べ替え後の添字で持つ。
@@ -2095,7 +2158,8 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     // ★複合の子として集約された凸包はここへ来ない (subCount > 0 は上のブロックが済ませて
     //   いる) — 二重に慣性を組むと後勝ちで静かに壊れる
     for (Body& b : bodies) {
-        if (!b.rb || b.subCount > 0 || !b.ownShape || !b.col || b.col->shape != collidershape::kConvex) {
+        if (!b.rb || b.subCount > 0 || !b.ownShape || !b.col
+            || (b.col->shape != collidershape::kConvex && b.col->shape != collidershape::kPolygon2D)) {
             continue;
         }
         if (b.invMass <= 0.0f || b.freezeRot) {
@@ -5324,7 +5388,7 @@ float MeanProjectedAreaWorld(const ColliderComponent* col, float sx, float sy, f
     sz = std::fabs(sz);
     // コライダー無し / 動的 mesh は慣性導出 (LocalInertiaDiag) と同じ「半径 0.5 の球」既定。
     // ここを 0 にすると「空力が黙って効かない」になるので、既定の代表形状へ落とす
-    if (!col || col->shape == collidershape::kMesh) {
+    if (!col || col->shape == collidershape::kMesh || col->shape == collidershape::kEdge2D) {
         return XM_PI * 0.25f;
     }
     switch (col->shape) {
@@ -5338,10 +5402,14 @@ float MeanProjectedAreaWorld(const ColliderComponent* col, float sx, float sy, f
         const float hz = col->halfExtents.z * sz;
         return 2.0f * (hx * hy + hy * hz + hz * hx);
     }
+    case collidershape::kPolygon2D:
     case collidershape::kConvex: { // M60f: 凸包は**外接 AABB の箱で代用**する。
         // 厳密な表面積は非一様スケールで積分し直しになるうえ、向きを見る正しい
         // 面積分は M59c/M59d の面サンプリングが担当なので、ここは代表値で足りる
-        const ConvexHullData* h = convexcol::Resolve(col->meshAsset);
+        // (M94h: 多角形はプリズムの凸包)
+        const ConvexHullData* h = (col->shape == collidershape::kPolygon2D)
+            ? shape2d::ResolveHull(col->meshAsset)
+            : convexcol::Resolve(col->meshAsset);
         if (!h || !h->Valid()) {
             return XM_PI * 0.25f;
         }
@@ -5422,6 +5490,10 @@ float ShapeVolumeWorld(const ColliderComponent& col, float sx, float sy, float s
     }
     case collidershape::kConvex: { // M60f: 凸包。生成時に積分した体積 (密度 1) に線形写像の行列式を掛ける
         const ConvexHullData* h = convexcol::Resolve(col.meshAsset);
+        return h ? h->volume * sx * sy * sz : 0.0f;
+    }
+    case collidershape::kPolygon2D: { // M94h: 動的な多角形はプリズムの凸包で解く (凹は埋まる)
+        const ConvexHullData* h = shape2d::ResolveHull(col.meshAsset);
         return h ? h->volume * sx * sy * sz : 0.0f;
     }
     default: // mesh (shape=3) は体積を定義しない → 呼び出し側が mass へフォールバック
@@ -5647,11 +5719,21 @@ int RaycastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float maxDist, MyeRa
                 continue; // M89m: 呼び出し側が除く物 (自分の体など)
             }
             const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
-            targets.push_back({ e, shapes::MakePoseFromMatrix(*col, wm->value) });
+            const ShapePose pose = shapes::MakePoseFromMatrix(*col, wm->value);
+            if (col->shape == collidershape::kEdge2D) {
+                // M94h: 辺の列は線分ごとの箱へ展開する
+                std::vector<ShapePose> boxes;
+                shapes::ExpandEdge2D(*col, pose, boxes);
+                for (const ShapePose& box : boxes) {
+                    targets.push_back({ e, box });
+                }
+                continue;
+            }
+            targets.push_back({ e, pose });
         }
     });
-    std::sort(targets.begin(), targets.end(),
-              [](const RayTarget& a, const RayTarget& b) { return a.entity.index < b.entity.index; });
+    std::stable_sort(targets.begin(), targets.end(),
+                     [](const RayTarget& a, const RayTarget& b) { return a.entity.index < b.entity.index; });
 
     float bestT = maxDist;
     bool hit = false;

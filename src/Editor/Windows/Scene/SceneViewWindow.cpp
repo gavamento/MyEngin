@@ -10,6 +10,7 @@
 #include "Editor/Widgets/EditorWidgets.h"
 #include "Editor/Scene/Selection.h"
 #include "Editor/Tools/PatrolRouteEdit.h"
+#include "Editor/Windows/Scene/Shape2DEditor.h"
 #include "Editor/Windows/AI/BtDisplayNames.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Ecs/Components.h"
@@ -29,6 +30,7 @@
 #include "Engine/Engine/Navigation/NavBakeInput.h" // M82e: Surface の範囲箱 (NavMakeBakeConfig)
 #include "Engine/Engine/Navigation/NavSystem.h"    // M82f: Obstacle の形 (NavMakeObstacleSpec)
 #include "Engine/Engine/Physics/Collider/ConvexHull.h" // M60f: shape=5 のワイヤ表示
+#include "Engine/Engine/Physics/Collider/Shape2DLibrary.h" // M94h: 2D 形状の点列
 #include "Engine/Engine/Acoustic/AcousticDebugDraw.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsDebugDraw.h"
 #include "Engine/Engine/Physics/Rigid/Shapes.h"
@@ -428,6 +430,10 @@ constexpr uint32_t kVfx = 0xC080F0FFu;        // スプライト / 3D テキス�
 constexpr uint32_t kSprite2DRect = 0xFFFFFFFFu;  // 選択中 Sprite2D の矩形 (白)
 constexpr uint32_t kSprite2DPivot = 0xFFE020FFu; // 同 pivot の十字 (黄)
 constexpr uint32_t kSpriteMask2D = 0xB050F0FFu;  // SpriteMask2D の矩形 (紫。マスクは描かれないので全部に引く)
+constexpr uint32_t kShape2D = 0x40E060FFu;         // kPolygon2D / kEdge2D の点列 (緑)
+constexpr uint32_t kShape2DPointSelected = 0xFFFF60FFu; // 編集で選んでいる点 (黄)
+constexpr float kShape2DPickRadiusPx = 10.0f;      // 点・辺のクリック判定半径
+constexpr float kShape2DHandleHalfPx = 4.0f;       // 点のハンドルの半径
 constexpr float kSprite2DPivotCrossPx = 8.0f;   // pivot の十字の半長 (画面の画素。ワールド寸法に直して引く)
 constexpr uint32_t kAudio = 0x40E0C0FFu;      // 音源マーカー / リスナー
 constexpr uint32_t kAudioMin = 0x40FFA0FFu;   // minDistance (ここまでは減衰しない)
@@ -581,6 +587,8 @@ void SceneViewWindow::DrawColliderGizmos(World& world, EntityID only)
                                    gizmo::kCollider);
                 }
             }
+        } else if (col.shape == collidershape::kPolygon2D || col.shape == collidershape::kEdge2D) {
+            AddShape2DWire(col, wm);
         } else {
             // OBB: 基底 × スケール適用済み half extents を行列に組んで描画
             XMFLOAT4X4 boxWorld = {
@@ -592,6 +600,34 @@ void SceneViewWindow::DrawColliderGizmos(World& world, EntityID only)
             lines_.AddWireBox(boxWorld, { pose.hx, pose.hy, pose.hz }, gizmo::kCollider);
         }
     });
+}
+
+// 2D 形状の点列 (緑)。前後面 (z = ±depth/2) の輪郭と、点ごとの支柱を引く。
+// 多角形は閉じ、辺の列は closed に従う
+void SceneViewWindow::AddShape2DWire(const ColliderComponent& col, const XMFLOAT4X4& wm)
+{
+    const Shape2D* shape = shape2d::Resolve(col.meshAsset);
+    if (shape == nullptr || shape->points.size() < 2) {
+        return;
+    }
+    const float halfDepth = shape->depth * 0.5f;
+    auto toWorld = [&wm](const XMFLOAT2& p, float z) {
+        return XMFLOAT3{ p.x * wm._11 + p.y * wm._21 + z * wm._31 + wm._41,
+                         p.x * wm._12 + p.y * wm._22 + z * wm._32 + wm._42,
+                         p.x * wm._13 + p.y * wm._23 + z * wm._33 + wm._43 };
+    };
+    for (const XMFLOAT2& p : shape->points) {
+        lines_.AddLine(toWorld(p, halfDepth), toWorld(p, -halfDepth), gizmo::kShape2D);
+    }
+    const int32_t segments = (col.shape == collidershape::kPolygon2D)
+        ? static_cast<int32_t>(shape->points.size() >= 3 ? shape->points.size() : shape->points.size() - 1)
+        : shape->SegmentCount();
+    for (int32_t i = 0; i < segments; ++i) {
+        const XMFLOAT2& a = shape->points[static_cast<size_t>(i)];
+        const XMFLOAT2& b = shape->points[(static_cast<size_t>(i) + 1) % shape->points.size()];
+        lines_.AddLine(toWorld(a, halfDepth), toWorld(b, halfDepth), gizmo::kShape2D);
+        lines_.AddLine(toWorld(a, -halfDepth), toWorld(b, -halfDepth), gizmo::kShape2D);
+    }
 }
 
 // ライト (位置マーカー + 前方向)
@@ -1571,6 +1607,199 @@ bool SceneViewWindow::HandlePatrolRoute(EngineContext& ctx, Selection& selection
     return true;
 }
 
+bool SceneViewWindow::HandleShape2DEdit(EngineContext& ctx, Selection& selection, const EditorSettings& settings,
+                                        float rectX, float rectY, float rectW, float rectH, bool& clickConsumed)
+{
+    clickConsumed = false;
+    World& world = ctx.scene->GetWorld();
+    ShapeLibrary2D* lib = shape2d::Library();
+    const bool requested = selection.colliderEditFileId != 0 && selection.colliderEditFileId == selection.primary
+        && selection.ids.size() == 1 && showGizmos_;
+    const GameObject sel = requested ? ctx.scene->FindByFileId(selection.primary) : GameObject{};
+    const ColliderComponent* col = sel ? world.GetComponent<ColliderComponent>(sel.Id()) : nullptr;
+    const WorldMatrixComponent* wmc = sel ? world.GetComponent<WorldMatrixComponent>(sel.Id()) : nullptr;
+    const bool is2DShape = col != nullptr
+        && (col->shape == collidershape::kPolygon2D || col->shape == collidershape::kEdge2D);
+    const Shape2D* shape = (lib != nullptr && is2DShape) ? lib->Get(col->meshAsset.value) : nullptr;
+    if (shape == nullptr || wmc == nullptr) {
+        shape2dPoint_ = -1;
+        shape2dDragging_ = false;
+        return false;
+    }
+    if (shape2dFileId_ != selection.primary) {
+        shape2dFileId_ = selection.primary;
+        shape2dPoint_ = -1;
+        shape2dDragging_ = false;
+    }
+    const size_t minPoints = (col->shape == collidershape::kPolygon2D) ? 3 : 2;
+    const XMFLOAT4X4& wm = wmc->value;
+    const ImGuiIO& io = ImGui::GetIO();
+    const XMMATRIX vp = XMMatrixMultiply(XMLoadFloat4x4(&lastView_), XMLoadFloat4x4(&lastProj_));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // 作業中の点列 (ドラッグ中は作業用、それ以外はアセットそのもの)
+    const std::vector<XMFLOAT2>& pts = shape2dDragging_ ? shape2dDragPoints_ : shape->points;
+    const int count = static_cast<int>(pts.size());
+    if (shape2dPoint_ >= count) {
+        shape2dPoint_ = -1;
+    }
+
+    // 点のローカル (x, y, 0) → 画面。カメラ後方は false
+    auto toScreen = [&](const XMFLOAT2& p, ImVec2& out) {
+        const XMVECTOR world4 = XMVector3Transform(XMVectorSet(p.x, p.y, 0.0f, 1.0f), XMLoadFloat4x4(&wm));
+        const XMVECTOR clip = XMVector4Transform(XMVectorSetW(world4, 1.0f), vp);
+        const float w = XMVectorGetW(clip);
+        if (w <= 0.01f) {
+            return false;
+        }
+        out = ImVec2(rectX + (XMVectorGetX(clip) / w * 0.5f + 0.5f) * rectW,
+                     rectY + (0.5f - XMVectorGetY(clip) / w * 0.5f) * rectH);
+        return true;
+    };
+    // マウスのレイをエンティティの XY 平面 (原点を通り、ローカル Z 軸が法線) と交差させ、ローカル座標へ戻す
+    auto mouseLocal = [&](XMFLOAT2& out) {
+        XMFLOAT3 ro;
+        XMFLOAT3 rd;
+        if (!MouseRay(ImVec2(rectX, rectY), ImVec2(rectW, rectH), ro, rd)) {
+            return false;
+        }
+        const XMVECTOR planeOrigin = XMVectorSet(wm._41, wm._42, wm._43, 0.0f);
+        const XMVECTOR planeNormal = XMVector3Normalize(XMVectorSet(wm._31, wm._32, wm._33, 0.0f));
+        const XMVECTOR dirV = XMLoadFloat3(&rd);
+        const float denom = XMVectorGetX(XMVector3Dot(planeNormal, dirV));
+        constexpr float kParallelEpsilon = 1e-6f;
+        if (std::fabs(denom) < kParallelEpsilon) {
+            return false;
+        }
+        const XMVECTOR originV = XMLoadFloat3(&ro);
+        const float t = XMVectorGetX(XMVector3Dot(planeNormal, XMVectorSubtract(planeOrigin, originV))) / denom;
+        const XMVECTOR hit = XMVectorAdd(originV, XMVectorScale(dirV, t));
+        XMVECTOR det;
+        const XMMATRIX inv = XMMatrixInverse(&det, XMLoadFloat4x4(&wm));
+        if (XMVectorGetX(det) == 0.0f) {
+            return false;
+        }
+        XMFLOAT3 local;
+        XMStoreFloat3(&local, XMVector3TransformCoord(hit, inv));
+        out = { local.x, local.y };
+        return true;
+    };
+    // 編集結果をアセットへ。save=false はライブラリの項目だけ差し替え (ドラッグ中の見た目)、true はファイルまで書く
+    auto commit = [&](const std::vector<XMFLOAT2>& newPoints, bool save) {
+        Shape2D work = *shape;
+        work.points = newPoints;
+        if (save) {
+            SaveShape2D(work.path, work);
+        } else {
+            ShapeLibrary2D::Sanitize(work);
+            lib->Register(work.path, work);
+        }
+    };
+
+    // 点のハンドルと番号、クリック対象の判定
+    int nearestPoint = -1;
+    float nearestDist2 = gizmo::kShape2DPickRadiusPx * gizmo::kShape2DPickRadiusPx;
+    std::vector<ImVec2> screen(static_cast<size_t>(count));
+    std::vector<char> visible(static_cast<size_t>(count), 0);
+    for (int i = 0; i < count; ++i) {
+        const size_t ui = static_cast<size_t>(i);
+        visible[ui] = toScreen(pts[ui], screen[ui]) ? 1 : 0;
+        if (!visible[ui]) {
+            continue;
+        }
+        const ImVec2 sp = screen[ui];
+        const bool chosen = (i == shape2dPoint_);
+        const ImU32 color = chosen ? IM_COL32(0xFF, 0xFF, 0x60, 0xFF) : IM_COL32(0x40, 0xE0, 0x60, 0xFF);
+        dl->AddRectFilled(ImVec2(sp.x - gizmo::kShape2DHandleHalfPx, sp.y - gizmo::kShape2DHandleHalfPx),
+                          ImVec2(sp.x + gizmo::kShape2DHandleHalfPx, sp.y + gizmo::kShape2DHandleHalfPx), color);
+        char label[16];
+        std::snprintf(label, sizeof(label), "%d", i);
+        dl->AddText(ImVec2(sp.x + 7.0f, sp.y - 18.0f), color, label);
+        const float dx = io.MousePos.x - sp.x;
+        const float dy = io.MousePos.y - sp.y;
+        if (dx * dx + dy * dy < nearestDist2) {
+            nearestDist2 = dx * dx + dy * dy;
+            nearestPoint = i;
+        }
+    }
+
+    const bool hovered = ImGui::IsWindowHovered();
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !shape2dDragging_) {
+        if (nearestPoint >= 0) {
+            shape2dPoint_ = nearestPoint;
+            shape2dDragging_ = true;
+            shape2dDragPoints_ = shape->points;
+            clickConsumed = true;
+        } else {
+            // 辺をクリックしたら、その辺に点を足す (点の判定が先なので、重なる点は点が勝つ)
+            const int segments = (col->shape == collidershape::kPolygon2D)
+                ? (count >= 3 ? count : count - 1)
+                : shape->SegmentCount();
+            int bestSegment = -1;
+            float bestDist2 = gizmo::kShape2DPickRadiusPx * gizmo::kShape2DPickRadiusPx;
+            for (int i = 0; i < segments; ++i) {
+                const size_t a = static_cast<size_t>(i);
+                const size_t b = (a + 1) % static_cast<size_t>(count);
+                if (!visible[a] || !visible[b]) {
+                    continue;
+                }
+                const float ex = screen[b].x - screen[a].x;
+                const float ey = screen[b].y - screen[a].y;
+                const float len2 = ex * ex + ey * ey;
+                float u = len2 > 0.0f ? ((io.MousePos.x - screen[a].x) * ex + (io.MousePos.y - screen[a].y) * ey) / len2 : 0.0f;
+                u = std::clamp(u, 0.0f, 1.0f);
+                const float px = screen[a].x + ex * u - io.MousePos.x;
+                const float py = screen[a].y + ey * u - io.MousePos.y;
+                if (px * px + py * py < bestDist2) {
+                    bestDist2 = px * px + py * py;
+                    bestSegment = i;
+                }
+            }
+            XMFLOAT2 at = {};
+            if (bestSegment >= 0 && static_cast<size_t>(count) < kMaxShape2DPoints && mouseLocal(at)) {
+                std::vector<XMFLOAT2> next = shape->points;
+                next.insert(next.begin() + bestSegment + 1, at);
+                commit(next, true);
+                shape2dPoint_ = bestSegment + 1;
+                clickConsumed = true;
+            }
+        }
+    }
+    if (shape2dDragging_) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            XMFLOAT2 at = {};
+            if (shape2dPoint_ >= 0 && mouseLocal(at)) {
+                if (io.KeyCtrl && settings.snapTranslate > 0.0f) {
+                    at.x = std::round(at.x / settings.snapTranslate) * settings.snapTranslate;
+                    at.y = std::round(at.y / settings.snapTranslate) * settings.snapTranslate;
+                }
+                shape2dDragPoints_[static_cast<size_t>(shape2dPoint_)] = at;
+                commit(shape2dDragPoints_, false);
+            }
+            clickConsumed = true;
+        } else {
+            commit(shape2dDragPoints_, true); // 離したら 1 回だけ保存
+            shape2dDragging_ = false;
+        }
+    }
+    if (hovered && shape2dPoint_ >= 0 && !shape2dDragging_ && ImGui::IsKeyPressed(ImGuiKey_Delete, false)
+        && static_cast<size_t>(count) > minPoints) {
+        std::vector<XMFLOAT2> next = shape->points;
+        next.erase(next.begin() + shape2dPoint_);
+        shape2dPoint_ = -1;
+        commit(next, true);
+    }
+    if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        selection.colliderEditFileId = 0;
+        shape2dPoint_ = -1;
+        shape2dDragging_ = false;
+        return false;
+    }
+    dl->AddText(ImVec2(rectX + 12, rectY + rectH - 28), IM_COL32(0x60, 0xE0, 0x80, 0xFF),
+                Tr(StrId::SceneView_EditingShape2D));
+    return true;
+}
+
 void SceneViewWindow::DrawGizmo(EngineContext& ctx, Selection& selection, UndoStack& undo,
                                 const EditorSettings& settings, float rectX, float rectY,
                                 float rectW, float rectH)
@@ -2327,8 +2556,11 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
 
     // ギズモ (ImGui 描画レイヤ — シーン RT/backbuffer には焼き込まれない)
     bool patrolClicked = false;
+    bool shape2dClicked = false;
     if (selection.primary != 0 && !terrainBrush_) {
-        if (!HandlePatrolRoute(ctx, selection, undo, settings, imgPos.x, imgPos.y, avail.x, avail.y, patrolClicked)) {
+        if (HandleShape2DEdit(ctx, selection, settings, imgPos.x, imgPos.y, avail.x, avail.y, shape2dClicked)) {
+            // M94h: 2D 形状の点を編集している間は変形ギズモを出さない
+        } else if (!HandlePatrolRoute(ctx, selection, undo, settings, imgPos.x, imgPos.y, avail.x, avail.y, patrolClicked)) {
             DrawGizmo(ctx, selection, undo, settings, imgPos.x, imgPos.y, avail.x, avail.y);
         }
     } else if (gizmoActive_) {
@@ -2342,7 +2574,7 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     // ---- ビルボードアイコン (M40b): カメラ/ライト/エミッタ位置に FA アイコンを重ねる。
     //      GPU パス不要 (ImGui drawlist に world→screen 投影) + クリックで選択 ----
     const ImGuiIO& io = ImGui::GetIO();
-    bool iconClicked = brushConsumed || patrolClicked; // ブラシが左ボタンを掴んでいる間・巡回点をクリックした間は選択させない
+    bool iconClicked = brushConsumed || patrolClicked || shape2dClicked; // ブラシが左ボタンを掴んでいる間・巡回点をクリックした間は選択させない
     if (showGizmos_ && rt_.IsValid()) {
         World& world = ctx.scene->GetWorld();
         const XMMATRIX vp =
