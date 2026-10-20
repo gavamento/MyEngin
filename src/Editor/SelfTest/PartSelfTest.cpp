@@ -175,8 +175,14 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 30u,
-              "abi: the table reports v30");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 31u,
+              "abi: the table reports v31");
+        // v31 (M94n): 2D。呼んだ結果は TwoDAbiSelfTest が見る (ここは充填のみ)
+        check(api.OverlapBoxMasked != nullptr && api.BoxCast != nullptr && api.SpriteByName != nullptr
+                  && api.TilemapGetCell != nullptr && api.TilemapSetCell != nullptr && api.TilemapFillRect != nullptr
+                  && api.TilemapDamageCell != nullptr && api.TilemapWorldToCell != nullptr
+                  && api.TilemapCellToWorld != nullptr && api.TilemapGetBounds != nullptr,
+              "abi: the v31 2D slots are filled in");
         // v30 (M93): オンラインのロビー。呼んだ結果は OnlineSelfTest が見る (ここは充填のみ)
         check(api.OnlineMemberCount != nullptr && api.OnlineMemberName != nullptr && api.OnlineMemberFlags != nullptr
                   && api.OnlineJoinCode != nullptr,

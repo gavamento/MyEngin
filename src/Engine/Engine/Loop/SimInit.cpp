@@ -22,6 +22,7 @@
 #include "Engine/Engine/Tilemap/TilemapAssets.h"
 #include "Engine/Engine/Tilemap/TilemapSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
+#include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
@@ -92,6 +93,8 @@ void InstallSimLibraries(const SimLibraries& libs)
     tilemap::Install(libs.tilemaps);
     // M94k: 描画が書き換え込みのセルを引く
     tilemap::InstallSystem(libs.tilemapSystem);
+    // M94n: 空間クエリ (Raycast 等) が供給口の形状を見る
+    physicsquery::Install(libs.physics);
 }
 
 void UninstallSimLibraries()
@@ -110,6 +113,7 @@ void UninstallSimLibraries()
     tilepalette::Install(nullptr);
     tilemap::Install(nullptr);
     tilemap::InstallSystem(nullptr);
+    physicsquery::Install(nullptr);
 }
 
 void InitSimProjectState(const std::wstring& assetsRoot)
@@ -186,6 +190,8 @@ void WireScriptServices(ScriptHost& scriptHost, ManagedHost& managedHost,
     managedHost.SetNavSystem(s.nav);
     scriptHost.SetBehaviorTree(s.behaviorTree, s.controllers);
     managedHost.SetBehaviorTree(s.behaviorTree, s.controllers);
+    scriptHost.SetTilemapService(s.tilemap, s.assetsRoot);
+    managedHost.SetTilemapService(s.tilemap, s.assetsRoot);
     // v29: カーネル表と宣言表の取り込みは DLL の読込時 (LoadModule) にも走る。DLL を先に読んだ場合はここで追いつく
     scriptHost.SetComputeService(s.compute, s.kernelDir);
     managedHost.SetComputeService(s.compute);

@@ -267,6 +267,40 @@ void TilemapSystem::EnumerateChunks(World& world, EntityID e, int32_t layer, std
     out.erase(std::unique(out.begin(), out.end()), out.end());
 }
 
+bool TilemapSystem::GetLayerBounds(World& world, EntityID e, int32_t layer, int32_t& minX, int32_t& minY,
+                                   int32_t& maxX, int32_t& maxY) const
+{
+    std::vector<ChunkKey> chunks;
+    EnumerateChunks(world, e, layer, chunks);
+    bool found = false;
+    std::array<uint32_t, kTilemapChunkCells> cells{};
+    for (const ChunkKey& chunk : chunks) {
+        if (!GetChunkCells(world, e, layer, chunk, cells)) {
+            continue;
+        }
+        for (int32_t ly = 0; ly < kTilemapChunkSize; ++ly) {
+            for (int32_t lx = 0; lx < kTilemapChunkSize; ++lx) {
+                if (tilecell::TileId(cells[static_cast<size_t>(ly) * kTilemapChunkSize + static_cast<size_t>(lx)]) == 0u) {
+                    continue;
+                }
+                const int32_t x = chunk.cx * kTilemapChunkSize + lx;
+                const int32_t y = chunk.cy * kTilemapChunkSize + ly;
+                if (!found) {
+                    minX = maxX = x;
+                    minY = maxY = y;
+                    found = true;
+                } else {
+                    minX = std::min(minX, x);
+                    maxX = std::max(maxX, x);
+                    minY = std::min(minY, y);
+                    maxY = std::max(maxY, y);
+                }
+            }
+        }
+    }
+    return found;
+}
+
 // ---- 書き換え ----
 
 void TilemapSystem::InvalidateChunk(EntityKey owner, int32_t layerIndex, ChunkKey chunk)

@@ -12,6 +12,7 @@
 4. replay_verify: ジョブ `2d` (`:job_2d`: `del cache\2d_showcase.scene.json` → `call :chain cache\golden_2d.rep "--2d-demo --synth-input" "--2d-demo"`)。`-Jobs` 列、`:failed` の mismatch 分岐、シーン数のコメント、`tools\mcp\src\verify.rs` のジョブ表 (規則 15-e)。
 5. 不変量と性能: `--selftest` に `TwoDDemoSelfTest` (デモシーンを HeadlessSim で 3000 tick 回し、全 plane2D 剛体の z / vz / wx / wy / qx / qy を検査。Debug / Release のハッシュ焼き込み)。`Runtime.exe --2d-demo --warp --frames 300` の平均フレーム時間 (`PerfDrawBenchmark` の流儀でログ) を Release で記録 → 16 ms 以内。
 6. `docs\test_checklists.md` の M94 節に手動確認項目 (sub-24 が仕上げるので下書きでよい)。
+8. (sub-14 の申し送り) 供給口 `Collect` を毎クエリ呼ぶコスト: デモで 1 tick に撃つ Raycast / BoxCast の本数と、物理 + スクリプト + Perception の 1 tick 時間をログ。1 tick の sim が 2 ms を超えたら、`StaticShapeSource` の全体 Collect を tick 単位でキャッシュする (tick 境界で無効化)。
 7. (spec R11) `Runtime.exe --2d-demo --froxel --deferred --screenshot` を 1 枚撮り、正射影 + froxel で壊れない (真っ黒・NaN にならない) ことを目視。golden には登録しない。
 
 ## やらないこと (このサブでは)

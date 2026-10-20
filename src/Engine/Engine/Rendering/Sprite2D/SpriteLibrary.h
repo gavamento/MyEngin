@@ -53,6 +53,8 @@ public:
     void Enumerate(std::vector<SpriteListing>& out) const;
 
     const SpriteDef* FindByName(const std::wstring& texPath, const char* name);
+    // FindByName と同じ検索で、スプライトの AssetID を返す (Sprite2D.sprite に書ける値)。無ければ null の AssetID
+    AssetID FindIdByName(const std::wstring& texPath, const char* name);
 
     void Clear();
 

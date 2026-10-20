@@ -90,6 +90,13 @@ public:
     // v24: ナビメッシュのクエリの引き先 (NavSystem は EngineLoop / HeadlessSim の所有)。起動時に 1 回
     void SetNavSystem(NavSystem* nav) { apiCtx_.nav = nav; }
 
+    // v31 (M94n): タイルの操作の引き先と、SpriteByName が相対パスを解く assets の根。起動時に 1 回
+    void SetTilemapService(TilemapSystem* tilemap, const std::wstring& assetsRoot)
+    {
+        apiCtx_.tilemap = tilemap;
+        apiCtx_.assetsRoot = assetsRoot;
+    }
+
     // v27: BT の ABI の引き先と、C++ タスクの登録先 (bt->Tasks())。読み込み済みの DLL のタスクもここで渡す。起動時に 1 回
     void SetBehaviorTree(BehaviorTreeSystem* bt, const ControllerLibrary* controllers);
 

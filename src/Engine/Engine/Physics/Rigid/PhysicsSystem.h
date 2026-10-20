@@ -2,6 +2,7 @@
 #include <vector>
 
 #include "Engine/Core/Ecs/EntityID.h"
+#include "Engine/Engine/Physics/Rigid/StaticShapeSource.h" // 空間クエリが供給口の形状を受け取る
 #include "Shared/EngineAPI.h" // MyeRaycastHit / MyeVec3
 
 namespace mye {
@@ -14,7 +15,6 @@ struct PhysMat;
 struct PhysicsEnvironmentComponent;
 struct WaterWaveComponent;
 struct ShapePose;
-class StaticShapeSource;
 
 // ソリッド接触ペア (M28c)。PhysicsSystem が tick 毎に全サブステップの接触制約から集めたペア (和集合) を
 // key 昇順で出力し、CollisionSystem が前 tick 差分から OnCollisionEnter/Stay/Exit を配信する。
@@ -92,6 +92,8 @@ public:
     // 所有は呼び出し側 (外すまで生かす)。同じ source の二重登録は無視、未登録の Remove は何もしない
     void AddStaticShapeSource(StaticShapeSource* source);
     void RemoveStaticShapeSource(StaticShapeSource* source);
+    // 登録済みの供給口 (登録順)。空間クエリ (physicsquery) が読む
+    const std::vector<StaticShapeSource*>& StaticShapeSources() const { return staticSources_; }
 
     // 等価性テスト用 (PhysicsSelfTest): true でブロードフェーズを総当たり候補に切替。
     // 挙動はビット同一のはず — selftest がハッシュ比較で常時検証する
@@ -100,6 +102,15 @@ public:
 private:
     std::vector<StaticShapeSource*> staticSources_;
 };
+
+// 空間クエリ (RaycastWorld / OverlapSphereWorld / OverlapBoxWorld / SphereCastWorld / BoxCastWorld) が、通常の Collider に加えて
+// 見る静的形状の供給口 (タイルの箱など)。World だけを取るクエリが PhysicsSystem の登録を引けるようにする注入口で、
+// sim の持ち主 (EngineLoop / HeadlessSim) が Install し、終了時に nullptr で外す。未接続の間は供給口を見ない
+namespace physicsquery {
+void Install(const PhysicsSystem* physics);
+// 供給口の Collect 全体 (絞り込まない) のうち mask に合うレイヤーの形状を、登録順・供給元の返す順で out の末尾へ足す
+void CollectStaticShapes(World& world, uint32_t mask, std::vector<StaticShape>& out);
+} // namespace physicsquery
 
 // ---- 物理マテリアル解決 (M59a2)。全て純関数 — ソルバ収集と ABI が共有する ----
 // 摩擦/反発は fp 演算を挟まない「値の選択」のみ: overrideBits のビット → 既存フィールド /

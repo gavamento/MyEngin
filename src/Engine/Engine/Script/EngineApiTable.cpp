@@ -33,6 +33,8 @@
 #include "Engine/Platform/InputActions.h" // v12 GetActionState/GetAxisValue (M51h)
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Engine/Compute/ComputeService.h" // v29 (M91e)
+#include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h" // v31 (M94n): SpriteByName
+#include "Engine/Engine/Tilemap/TilemapSystem.h" // v31: Tilemap* の引き先
 #include "Engine/Renderer/Compute/ComputeAbiRunner.h" // v21 (M78e)
 #include "Engine/Renderer/Device/GraphicsDevice.h"    // v21 (M78e): Device() の完全型
 
@@ -318,6 +320,134 @@ int NavQueryRandomPoint(void* engine, int32_t agentTypeId, MyeVec3 center, float
     }
     *out = { r[0], r[1], r[2] };
     return 1;
+}
+
+// ---- v31 (M94n): 2D。タイルの操作は TilemapSystem、箱のクエリは PhysicsQueries の関数に 1 対 1 ----
+
+// e の Tilemap アセット。システム未接続 / コンポーネント無し / アセット未登録は nullptr
+const TilemapAsset* TilemapAssetOf(void* engine, MyeEntityId e)
+{
+    ScriptApiContext* c = Ctx(engine);
+    if (c->tilemap == nullptr || c->scene == nullptr) {
+        return nullptr;
+    }
+    return TilemapSystem::AssetOf(c->scene->GetWorld(), ToEngine(e));
+}
+
+bool TilemapLayerValid(const TilemapAsset* map, int32_t layer)
+{
+    return map != nullptr && layer >= 0 && static_cast<size_t>(layer) < map->layers.size();
+}
+
+void FillTwoDSlots(MyeEngineApi& out)
+{
+    out.OverlapBoxMasked = [](void* engine, MyeVec3 center, MyeVec3 halfExtents, uint32_t mask,
+                              MyeEntityId* outEntities, int maxCount) -> int {
+        return OverlapBoxWorld(Sc(engine)->GetWorld(), center, halfExtents, MyeQuat{ 0.0f, 0.0f, 0.0f, 1.0f }, outEntities,
+                               maxCount, mask);
+    };
+    out.BoxCast = [](void* engine, MyeVec3 origin, MyeVec3 halfExtents, MyeVec3 dir, float maxDist, uint32_t mask,
+                     MyeRaycastHit* outHit) -> int {
+        return BoxCastWorld(Sc(engine)->GetWorld(), origin, halfExtents, dir, maxDist, outHit, mask);
+    };
+    out.SpriteByName = [](void* engine, const char* texturePath, const char* spriteName) -> uint64_t {
+        SpriteLibrary* sprites = spritelib::Library();
+        if (sprites == nullptr || texturePath == nullptr || texturePath[0] == '\0' || spriteName == nullptr) {
+            return 0;
+        }
+        std::wstring path = Utf8ToWide(texturePath);
+        // assets ルート相対を絶対化する (PlayEffect のプレハブキーと同じ規則)
+        const std::wstring& root = Ctx(engine)->assetsRoot;
+        if (!root.empty() && path.find(L':') == std::wstring::npos) {
+            path = root + L"\\" + path;
+        }
+        return sprites->FindIdByName(path, spriteName).value;
+    };
+    out.TilemapGetCell = [](void* engine, MyeEntityId e, int32_t layer, int32_t cx, int32_t cy) -> uint32_t {
+        if (TilemapAssetOf(engine, e) == nullptr) {
+            return 0u;
+        }
+        ScriptApiContext* c = Ctx(engine);
+        return c->tilemap->GetCell(c->scene->GetWorld(), ToEngine(e), layer, cx, cy);
+    };
+    out.TilemapSetCell = [](void* engine, MyeEntityId e, int32_t layer, int32_t cx, int32_t cy, uint32_t value) -> int {
+        if (TilemapAssetOf(engine, e) == nullptr) {
+            return 0;
+        }
+        ScriptApiContext* c = Ctx(engine);
+        return c->tilemap->SetCell(c->scene->GetWorld(), ToEngine(e), layer, cx, cy, value) ? 1 : 0;
+    };
+    out.TilemapFillRect = [](void* engine, MyeEntityId e, int32_t layer, int32_t x0, int32_t y0, int32_t x1, int32_t y1,
+                             uint32_t value) -> int {
+        if (TilemapAssetOf(engine, e) == nullptr) {
+            return 0;
+        }
+        ScriptApiContext* c = Ctx(engine);
+        if (!c->tilemap->FillRect(c->scene->GetWorld(), ToEngine(e), layer, x0, y0, x1, y1, value)) {
+            return 0;
+        }
+        // FillRect が通った = 両端とも範囲内で kMaxFillCells 以下なので int に収まる
+        const int64_t w = (x0 > x1 ? static_cast<int64_t>(x0) - x1 : static_cast<int64_t>(x1) - x0) + 1;
+        const int64_t h = (y0 > y1 ? static_cast<int64_t>(y0) - y1 : static_cast<int64_t>(y1) - y0) + 1;
+        return static_cast<int>(w * h);
+    };
+    out.TilemapDamageCell = [](void* engine, MyeEntityId e, int32_t layer, int32_t cx, int32_t cy, int32_t amount) -> int {
+        const TilemapAsset* map = TilemapAssetOf(engine, e);
+        if (!TilemapLayerValid(map, layer) || cx < TilemapSystem::kCellCoordMin || cx > TilemapSystem::kCellCoordMax
+            || cy < TilemapSystem::kCellCoordMin || cy > TilemapSystem::kCellCoordMax) {
+            return -1;
+        }
+        ScriptApiContext* c = Ctx(engine);
+        switch (c->tilemap->DamageCell(c->scene->GetWorld(), ToEngine(e), layer, cx, cy, amount)) {
+        case TileDamageResult::kDamaged:
+            return 1;
+        case TileDamageResult::kDestroyed:
+            return 2;
+        case TileDamageResult::kNone:
+            break;
+        }
+        return 0;
+    };
+    out.TilemapWorldToCell = [](void* engine, MyeEntityId e, MyeVec3 worldPos, int32_t* outCx, int32_t* outCy) -> int {
+        if (outCx == nullptr || outCy == nullptr || TilemapAssetOf(engine, e) == nullptr || !std::isfinite(worldPos.x)
+            || !std::isfinite(worldPos.y) || !std::isfinite(worldPos.z)) {
+            return 0;
+        }
+        int32_t x = 0;
+        int32_t y = 0;
+        TilemapSystem::WorldToCell(Sc(engine)->GetWorld(), ToEngine(e), { worldPos.x, worldPos.y, worldPos.z }, x, y);
+        *outCx = x;
+        *outCy = y;
+        return 1;
+    };
+    out.TilemapCellToWorld = [](void* engine, MyeEntityId e, int32_t cx, int32_t cy, MyeVec3* outPos) -> int {
+        if (outPos == nullptr || TilemapAssetOf(engine, e) == nullptr) {
+            return 0;
+        }
+        const DirectX::XMFLOAT3 p = TilemapSystem::CellToWorld(Sc(engine)->GetWorld(), ToEngine(e), cx, cy);
+        *outPos = { p.x, p.y, p.z };
+        return 1;
+    };
+    out.TilemapGetBounds = [](void* engine, MyeEntityId e, int32_t layer, int32_t* outMinX, int32_t* outMinY,
+                              int32_t* outMaxX, int32_t* outMaxY) -> int {
+        if (outMinX == nullptr || outMinY == nullptr || outMaxX == nullptr || outMaxY == nullptr
+            || !TilemapLayerValid(TilemapAssetOf(engine, e), layer)) {
+            return 0;
+        }
+        ScriptApiContext* c = Ctx(engine);
+        int32_t minX = 0;
+        int32_t minY = 0;
+        int32_t maxX = 0;
+        int32_t maxY = 0;
+        if (!c->tilemap->GetLayerBounds(c->scene->GetWorld(), ToEngine(e), layer, minX, minY, maxX, maxY)) {
+            return 0;
+        }
+        *outMinX = minX;
+        *outMinY = minY;
+        *outMaxX = maxX;
+        *outMaxY = maxY;
+        return 1;
+    };
 }
 
 } // namespace
@@ -1794,6 +1924,7 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     };
 
     FillComputeSlots(out); // v29
+    FillTwoDSlots(out);    // v31
 }
 
 } // namespace mye

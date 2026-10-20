@@ -485,6 +485,17 @@ namespace MyeScripting
         public delegate* unmanaged<void*, uint, byte*, uint, uint> OnlineMemberName;
         public delegate* unmanaged<void*, uint, uint> OnlineMemberFlags;
         public delegate* unmanaged<void*, byte*, uint, uint> OnlineJoinCode;
+        // ---- v31 (M94n): 2D ----
+        public delegate* unmanaged<void*, MyeVec3, MyeVec3, uint, MyeEntityId*, int, int> OverlapBoxMasked;
+        public delegate* unmanaged<void*, MyeVec3, MyeVec3, MyeVec3, float, uint, MyeRaycastHit*, int> BoxCast;
+        public delegate* unmanaged<void*, byte*, byte*, ulong> SpriteByName;
+        public delegate* unmanaged<void*, MyeEntityId, int, int, int, uint> TilemapGetCell;
+        public delegate* unmanaged<void*, MyeEntityId, int, int, int, uint, int> TilemapSetCell;
+        public delegate* unmanaged<void*, MyeEntityId, int, int, int, int, int, uint, int> TilemapFillRect;
+        public delegate* unmanaged<void*, MyeEntityId, int, int, int, int, int> TilemapDamageCell;
+        public delegate* unmanaged<void*, MyeEntityId, MyeVec3, int*, int*, int> TilemapWorldToCell;
+        public delegate* unmanaged<void*, MyeEntityId, int, int, MyeVec3*, int> TilemapCellToWorld;
+        public delegate* unmanaged<void*, MyeEntityId, int, int*, int*, int*, int*, int> TilemapGetBounds;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -1375,6 +1386,74 @@ namespace MyeScripting
             byte* buf = stackalloc byte[16];
             uint n = _api->OnlineJoinCode(_api->Engine, buf, 16);
             return System.Text.Encoding.UTF8.GetString(buf, (int)n);
+        }
+
+        // ---- v31 (M94n): 2D (無回転の箱のクエリとタイルマップ。書き込みは sim 状態なので tick の中で呼ぶ) ----
+        public static int OverlapBoxMasked(MyeVec3 center, MyeVec3 halfExtents, uint mask, MyeEntityId[] outEntities)
+        {
+            if (_api == null) return 0;
+            fixed (MyeEntityId* p = outEntities)
+            {
+                return _api->OverlapBoxMasked(_api->Engine, center, halfExtents, mask, p, outEntities?.Length ?? 0);
+            }
+        }
+        public static bool BoxCast(MyeVec3 origin, MyeVec3 halfExtents, MyeVec3 dir, float maxDist, uint mask,
+                                   out MyeRaycastHit hit)
+        {
+            hit = default;
+            if (_api == null) return false;
+            fixed (MyeRaycastHit* p = &hit)
+            {
+                return _api->BoxCast(_api->Engine, origin, halfExtents, dir, maxDist, mask, p) != 0;
+            }
+        }
+        public static ulong SpriteByName(string texturePath, string spriteName)
+        {
+            if (_api == null) return 0;
+            var t = Utf8(texturePath ?? "");
+            var n = Utf8(spriteName ?? "");
+            fixed (byte* pt = t)
+            fixed (byte* pn = n)
+            {
+                return _api->SpriteByName(_api->Engine, pt, pn);
+            }
+        }
+        public static uint TilemapGetCell(MyeEntityId map, int layer, int cx, int cy)
+            => _api != null ? _api->TilemapGetCell(_api->Engine, map, layer, cx, cy) : 0u;
+        public static bool TilemapSetCell(MyeEntityId map, int layer, int cx, int cy, uint value)
+            => _api != null && _api->TilemapSetCell(_api->Engine, map, layer, cx, cy, value) != 0;
+        public static int TilemapFillRect(MyeEntityId map, int layer, int x0, int y0, int x1, int y1, uint value)
+            => _api != null ? _api->TilemapFillRect(_api->Engine, map, layer, x0, y0, x1, y1, value) : 0;
+        public static int TilemapDamageCell(MyeEntityId map, int layer, int cx, int cy, int amount)
+            => _api != null ? _api->TilemapDamageCell(_api->Engine, map, layer, cx, cy, amount) : -1;
+        public static bool TilemapWorldToCell(MyeEntityId map, MyeVec3 worldPos, out int cx, out int cy)
+        {
+            cx = 0;
+            cy = 0;
+            if (_api == null) return false;
+            int x = 0, y = 0;
+            if (_api->TilemapWorldToCell(_api->Engine, map, worldPos, &x, &y) == 0) return false;
+            cx = x;
+            cy = y;
+            return true;
+        }
+        public static bool TilemapCellToWorld(MyeEntityId map, int cx, int cy, out MyeVec3 pos)
+        {
+            pos = default;
+            if (_api == null) return false;
+            fixed (MyeVec3* p = &pos)
+            {
+                return _api->TilemapCellToWorld(_api->Engine, map, cx, cy, p) != 0;
+            }
+        }
+        public static bool TilemapGetBounds(MyeEntityId map, int layer, out int minX, out int minY, out int maxX, out int maxY)
+        {
+            minX = 0; minY = 0; maxX = 0; maxY = 0;
+            if (_api == null) return false;
+            int a = 0, b = 0, c = 0, d = 0;
+            if (_api->TilemapGetBounds(_api->Engine, map, layer, &a, &b, &c, &d) == 0) return false;
+            minX = a; minY = b; maxX = c; maxY = d;
+            return true;
         }
 
         // ---- v22 (M80l): 破壊への損傷 ----

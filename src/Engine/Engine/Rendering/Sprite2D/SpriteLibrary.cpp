@@ -138,7 +138,7 @@ void SpriteLibrary::Enumerate(std::vector<SpriteListing>& out) const
     });
 }
 
-const SpriteDef* SpriteLibrary::FindByName(const std::wstring& texPath, const char* name)
+AssetID SpriteLibrary::FindIdByName(const std::wstring& texPath, const char* name)
 {
     const AssetID textureId{ assetkey::Resolve(NormalizePathKey(texPath)) };
     if (!idsByTexture_.contains(textureId.value)) {
@@ -146,15 +146,25 @@ const SpriteDef* SpriteLibrary::FindByName(const std::wstring& texPath, const ch
     }
     auto it = idsByTexture_.find(textureId.value);
     if (it == idsByTexture_.end() || name == nullptr) {
-        return nullptr;
+        return AssetID{};
     }
     for (uint64_t id : it->second) {
         const Entry& e = entries_.at(id);
         if (id != textureId.value && std::string(e.def.name) == name) {
-            return &e.def;
+            return AssetID{ id };
         }
     }
-    return nullptr;
+    return AssetID{};
+}
+
+const SpriteDef* SpriteLibrary::FindByName(const std::wstring& texPath, const char* name)
+{
+    const AssetID id = FindIdByName(texPath, name);
+    if (id.IsNull()) {
+        return nullptr;
+    }
+    auto it = entries_.find(id.value);
+    return it != entries_.end() ? &it->second.def : nullptr;
 }
 
 void SpriteLibrary::Clear()

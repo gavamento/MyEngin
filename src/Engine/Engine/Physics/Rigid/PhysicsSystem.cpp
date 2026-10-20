@@ -5966,6 +5966,14 @@ int RaycastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float maxDist, MyeRa
             targets.push_back({ e, pose });
         }
     });
+    // 供給口の形状 (タイルの箱など)。マスクはここで見る。skip は通常のコライダーと同じ扱い
+    std::vector<StaticShape> supplied;
+    physicsquery::CollectStaticShapes(world, mask, supplied);
+    for (const StaticShape& shape : supplied) {
+        if (skip == nullptr || !skip(world, shape.owner, skipUser)) {
+            targets.push_back({ shape.owner, shape.pose });
+        }
+    }
     std::stable_sort(targets.begin(), targets.end(),
                      [](const RayTarget& a, const RayTarget& b) { return a.entity.index < b.entity.index; });
 

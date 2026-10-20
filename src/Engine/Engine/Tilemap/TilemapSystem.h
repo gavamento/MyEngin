@@ -106,6 +106,10 @@ public:
     // アセットまたは override に載るチャンクを (cy, cx) 昇順で列挙する。アセット / レイヤーが無ければ空
     void EnumerateChunks(World& world, EntityID e, int32_t layer, std::vector<ChunkKey>& out) const;
 
+    // layer の空でない実効セル (タイル id != 0) を囲む矩形 (両端を含む)。空でないセルが無い / アセット・レイヤーが無ければ false
+    bool GetLayerBounds(World& world, EntityID e, int32_t layer, int32_t& minX, int32_t& minY, int32_t& maxX,
+                        int32_t& maxY) const;
+
     // ---- 書き換え (sim 状態。スクリプトからは tick の中で呼ぶ) ----
 
     // 1 セルを書く。value がアセットの初期値と同じなら override を消す。

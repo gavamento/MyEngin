@@ -10,8 +10,38 @@
 // 空間クエリ (M28c、ABI OverlapSphere/OverlapBox/SphereCast の実装本体)。
 // 決定論契約: 全て scalar float 演算、収集は entity.index 昇順、反復は固定回数。
 // RaycastWorld と同じく WorldMatrix ベースでトリガー含む全コライダーが対象 (汎用クエリ)。
+// PhysicsSystem に登録された静的形状の供給口 (タイルの箱) も、絞り込まずに全体を対象にする。
 
 namespace mye {
+namespace physicsquery {
+namespace {
+const PhysicsSystem* sPhysics = nullptr;
+} // namespace
+
+void Install(const PhysicsSystem* physics)
+{
+    sPhysics = physics;
+}
+
+void CollectStaticShapes(World& world, uint32_t mask, std::vector<StaticShape>& out)
+{
+    if (sPhysics == nullptr) {
+        return;
+    }
+    // 供給元ごとに空のバッファへ集める (Collect は渡された out の中身を前提にしてよいとは限らない)
+    std::vector<StaticShape> one;
+    for (StaticShapeSource* source : sPhysics->StaticShapeSources()) {
+        one.clear();
+        source->Collect(world, one);
+        for (const StaticShape& shape : one) {
+            if (shape.col != nullptr && shapes::LayerHit(mask, shape.col->layer)) {
+                out.push_back(shape);
+            }
+        }
+    }
+}
+} // namespace physicsquery
+
 namespace {
 
 struct QueryTarget {
@@ -50,6 +80,12 @@ void CollectTargets(World& world, uint32_t mask, std::vector<QueryTarget>& out)
             out.push_back({ e, pose });
         }
     });
+    // 供給口の形状 (タイルの箱など)。持ち主ごとに index 昇順へ整列されるので、ここで足す位置は並びに効かない
+    std::vector<StaticShape> supplied;
+    physicsquery::CollectStaticShapes(world, mask, supplied);
+    for (const StaticShape& shape : supplied) {
+        out.push_back({ shape.owner, shape.pose });
+    }
     // 安定ソート: 同じ持ち主の箱 (M94h) が収集順のまま残る。持ち主が一意なら std::sort と同じ並び
     std::stable_sort(out.begin(), out.end(), [](const QueryTarget& a, const QueryTarget& b) {
         return a.entity.index < b.entity.index;

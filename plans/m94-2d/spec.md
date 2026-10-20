@@ -189,8 +189,10 @@ U = ユーザー判断 (design-draft §0)。`[ユーザーに聞ける]` = plann
 6. `TilemapFillRect(e, layer, x0, y0, x1, y1, value) → count`
 7. `TilemapDamageCell(e, layer, cx, cy, amount) → 0 無傷 / 1 損傷 / 2 破壊 / -1 対象外`
 8. `TilemapWorldToCell(e, worldPos, outCx, outCy) → 1/0`
-9. `TilemapCellToWorld(e, cx, cy) → Vec3 (セル中心)`
-10. `TilemapGetBounds(e, layer, outMinX, outMinY, outMaxX, outMaxY) → 1/0`
+9. `TilemapCellToWorld(e, cx, cy, MyeVec3* out) → 1/0` (セル中心。sub-14 で確定: 既存テーブルに構造体の値返しが無く、C# の値返しは未検証の経路なので out ポインタ。`→ Vec3` は却下)
+10. `TilemapGetBounds(e, layer, outMinX, outMinY, outMaxX, outMaxY) → 1/0` (タイル id ≠ 0 の実効セル (override 込み) の外接矩形、両端含む)
+
+sub-14 の確定事項: 版は v31 = 188 スロット (M75h は v32 以降)。`SpriteByName` の `texturePath` は ':' を含まなければ assets 根を前置 (PlayEffect と同じ規則)。`FillRect` は書いたセル数、`DamageCell` の −1 は Tilemap 無し / layer 範囲外 / 座標範囲外。空間クエリ (Raycast / Overlap* / SphereCast / BoxCast) は `physicsquery::Install` で注入された PhysicsSystem の供給口 `Collect` (絞り込み無し) を mask で絞って通常コライダーと同じ targets に足す (owner = Tilemap)。**Raycast を使う既存の消費者 (AcousticField、FootIk の接地レイ、Perception) もタイルの箱に当たる** — Tilemap のあるシーンだけの変化で、2D の床に足や音が当たるのは意図どおり。
 
 その他 (Sprite2D.sprite、CC の plane2D 系、GridAgent2D.destination、Camera2DFollow.target、Light2D) は `Get/SetComponentField`。スプライト列の再生は既存 `AnimatorPlay`。C# `Interop.cs` は位置ミラー (`abi-bump-verification` の手順: 順序を check_rules 11-a で機械照合)、`MyeScript.cs` に `Tilemap.GetCell(...)` 等の糖衣、`ScriptAPI.h` に C++ 糖衣。`PartSelfTest.cpp:178` の版固定と `check_rules.ps1:743` の表を更新。
 

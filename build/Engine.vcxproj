@@ -259,6 +259,7 @@
     <ClCompile Include="..\src\Engine\Engine\Script\EngineApiTable.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Script\ManagedHost.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Script\ScriptHost.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Script\TwoDAbiSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Session\Provenance.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Session\SessionSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Session\SessionTypes.cpp" />
@@ -612,6 +613,7 @@
     <ClInclude Include="..\src\Engine\Engine\Script\ManagedHost.h" />
     <ClInclude Include="..\src\Engine\Engine\Script\ScriptHost.h" />
     <ClInclude Include="..\src\Engine\Engine\Script\ScriptKeys.h" />
+    <ClInclude Include="..\src\Engine\Engine\Script\TwoDAbiSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Session\Provenance.h" />
     <ClInclude Include="..\src\Engine\Engine\Session\SessionSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Session\SessionTypes.h" />

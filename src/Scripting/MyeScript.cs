@@ -549,6 +549,35 @@ namespace MyeScripting
                                                float maxDist, uint mask, out MyeRaycastHit hit)
             => Engine.SphereCastMasked(origin, dir, radius, maxDist, mask, out hit);
 
+        // ---- 2D (v31、M94n) ----
+        // 箱は無回転 (center ± halfExtents)。タイルの箱は持ち主が Tilemap のエンティティで当たる。
+        // BoxCast は箱の 27 点から撃つ Raycast の近似で、突端が撃つ点の隙間に入ると取りこぼす
+        protected static int OverlapBoxMasked(MyeVec3 center, MyeVec3 halfExtents, uint mask, MyeEntity[] hits)
+            => FillEntities(hits, buf => Engine.OverlapBoxMasked(center, halfExtents, mask, buf));
+        protected static bool BoxCast(MyeVec3 origin, MyeVec3 halfExtents, MyeVec3 dir, float maxDist, uint mask,
+                                      out MyeRaycastHit hit)
+            => Engine.BoxCast(origin, halfExtents, dir, maxDist, mask, out hit);
+        // .meta のスプライト名 → Sprite2D.sprite に書ける AssetID (0 = 無い)。Start で引いて持つこと
+        protected static ulong SpriteByName(string texturePath, string spriteName)
+            => Engine.SpriteByName(texturePath, spriteName);
+        // タイルマップ (Tilemap コンポーネントを持つエンティティ)。セルの値はビット 0-15 がタイル id (0 = 空)、
+        // 16 flipX、17 flipY、18-19 回転、24-31 損傷。書き込みは sim 状態なので Update の中で呼ぶ
+        protected static uint TilemapGetCell(MyeEntity map, int layer, int cx, int cy)
+            => Engine.TilemapGetCell(map.Id, layer, cx, cy);
+        protected static bool TilemapSetCell(MyeEntity map, int layer, int cx, int cy, uint value)
+            => Engine.TilemapSetCell(map.Id, layer, cx, cy, value);
+        protected static int TilemapFillRect(MyeEntity map, int layer, int x0, int y0, int x1, int y1, uint value)
+            => Engine.TilemapFillRect(map.Id, layer, x0, y0, x1, y1, value);
+        // 0 無傷 / 1 損傷 / 2 破壊 / -1 対象外
+        protected static int TilemapDamageCell(MyeEntity map, int layer, int cx, int cy, int amount)
+            => Engine.TilemapDamageCell(map.Id, layer, cx, cy, amount);
+        protected static bool TilemapWorldToCell(MyeEntity map, MyeVec3 worldPos, out int cx, out int cy)
+            => Engine.TilemapWorldToCell(map.Id, worldPos, out cx, out cy);
+        protected static bool TilemapCellToWorld(MyeEntity map, int cx, int cy, out MyeVec3 pos)
+            => Engine.TilemapCellToWorld(map.Id, cx, cy, out pos);
+        protected static bool TilemapGetBounds(MyeEntity map, int layer, out int minX, out int minY, out int maxX, out int maxY)
+            => Engine.TilemapGetBounds(map.Id, layer, out minX, out minY, out maxX, out maxY);
+
         // クエリの共通後処理 (ネイティブは MyeEntityId 配列を書くので MyeEntity へ包み直す)
         private static int FillEntities(MyeEntity[] hits,
                                         System.Func<MyeEntityId[], int> query)

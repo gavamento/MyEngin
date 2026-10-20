@@ -1165,6 +1165,63 @@ inline uint32_t MyeOnlineJoinCode(const MyeUpdateContext& ctx, char* out, uint32
     return ctx.api->OnlineJoinCode(ctx.api->engine, out, capacity);
 }
 
+// ---- v31 (M94n): 2D ----
+// 無回転の箱と重なる Collider (タイルの箱を含む。持ち主は Tilemap のエンティティ)。mask に含まれるレイヤーだけ。
+// 戻り値は切り捨て前の総数
+inline int MyeOverlapBoxMasked(const MyeUpdateContext& ctx, MyeVec3 center, MyeVec3 halfExtents, uint32_t mask,
+                               MyeEntityId* outEntities, int maxCount)
+{
+    return ctx.api->OverlapBoxMasked(ctx.api->engine, center, halfExtents, mask, outEntities, maxCount);
+}
+// 無回転の箱の掃引。方式は 27 点の Raycast の近似で、突端が撃つ点の隙間に入ると取りこぼす
+inline bool MyeBoxCast(const MyeUpdateContext& ctx, MyeVec3 origin, MyeVec3 halfExtents, MyeVec3 dir, float maxDist,
+                       uint32_t mask, MyeRaycastHit& outHit)
+{
+    return ctx.api->BoxCast(ctx.api->engine, origin, halfExtents, dir, maxDist, mask, &outHit) != 0;
+}
+// .meta のスプライト名 → Sprite2D.sprite に書ける AssetID (0 = 無い)。毎 tick 呼ばず Start で引いて持つ
+inline uint64_t MyeSpriteByName(const MyeUpdateContext& ctx, const char* texturePath, const char* spriteName)
+{
+    return ctx.api->SpriteByName(ctx.api->engine, texturePath, spriteName);
+}
+// タイルの実効セルの値 (Tilemap 無し / 空 / 範囲外は 0)
+inline uint32_t MyeTilemapGetCell(const MyeUpdateContext& ctx, MyeEntityId tilemap, int32_t layer, int32_t cx, int32_t cy)
+{
+    return ctx.api->TilemapGetCell(ctx.api->engine, tilemap, layer, cx, cy);
+}
+// sim 状態の書き換え (tick の中で呼ぶ)
+inline bool MyeTilemapSetCell(const MyeUpdateContext& ctx, MyeEntityId tilemap, int32_t layer, int32_t cx, int32_t cy,
+                              uint32_t value)
+{
+    return ctx.api->TilemapSetCell(ctx.api->engine, tilemap, layer, cx, cy, value) != 0;
+}
+// 書いたセル数 (失敗は 0)
+inline int MyeTilemapFillRect(const MyeUpdateContext& ctx, MyeEntityId tilemap, int32_t layer, int32_t x0, int32_t y0,
+                              int32_t x1, int32_t y1, uint32_t value)
+{
+    return ctx.api->TilemapFillRect(ctx.api->engine, tilemap, layer, x0, y0, x1, y1, value);
+}
+// 0 無傷 / 1 損傷 / 2 破壊 / -1 対象外
+inline int MyeTilemapDamageCell(const MyeUpdateContext& ctx, MyeEntityId tilemap, int32_t layer, int32_t cx, int32_t cy,
+                                int32_t amount)
+{
+    return ctx.api->TilemapDamageCell(ctx.api->engine, tilemap, layer, cx, cy, amount);
+}
+inline bool MyeTilemapWorldToCell(const MyeUpdateContext& ctx, MyeEntityId tilemap, MyeVec3 worldPos, int32_t& outCx,
+                                  int32_t& outCy)
+{
+    return ctx.api->TilemapWorldToCell(ctx.api->engine, tilemap, worldPos, &outCx, &outCy) != 0;
+}
+inline bool MyeTilemapCellToWorld(const MyeUpdateContext& ctx, MyeEntityId tilemap, int32_t cx, int32_t cy, MyeVec3& out)
+{
+    return ctx.api->TilemapCellToWorld(ctx.api->engine, tilemap, cx, cy, &out) != 0;
+}
+inline bool MyeTilemapGetBounds(const MyeUpdateContext& ctx, MyeEntityId tilemap, int32_t layer, int32_t& outMinX,
+                                int32_t& outMinY, int32_t& outMaxX, int32_t& outMaxY)
+{
+    return ctx.api->TilemapGetBounds(ctx.api->engine, tilemap, layer, &outMinX, &outMinY, &outMaxX, &outMaxY) != 0;
+}
+
 // ---- v24 (M82i): NavMesh ----
 // 座標はワールド。クエリは agentTypeId が合う最初の Surface で行い、未読み込みなら false / 0。
 // 目的地を書いて歩かせる / 止める (NavMeshAgent 非所持は false)

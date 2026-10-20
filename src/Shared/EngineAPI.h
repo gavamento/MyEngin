@@ -53,7 +53,9 @@
 //             MyeScriptModule 末尾の kernels
 // v30 (M93): オンラインのロビー (表示専用) — OnlineMemberCount / OnlineMemberName / OnlineMemberFlags /
 //             OnlineJoinCode (ComputeSetManagedDeclarations の次の 4 本)
-#define MYE_API_VERSION 30u
+// v31 (M94n): 2D — OverlapBoxMasked / BoxCast / SpriteByName / TilemapGetCell / TilemapSetCell / TilemapFillRect /
+//             TilemapDamageCell / TilemapWorldToCell / TilemapCellToWorld / TilemapGetBounds (OnlineJoinCode の次の 10 本)
+#define MYE_API_VERSION 31u
 
 // v30 (M93) OnlineMemberFlags のビット
 #define MYE_ONLINE_MEMBER_OWNER 1u    // 部屋を作った人 (ホスト = サーバを動かしている人)
@@ -1034,6 +1036,44 @@ struct MyeEngineApi {
     uint32_t (*OnlineMemberFlags)(void* engine, uint32_t index);
     // OnlineJoinCode: 部屋のコード (6 文字) を out へ NUL 終端で書き、書いたバイト数を返す。ロビーに居なければ 0
     uint32_t (*OnlineJoinCode)(void* engine, char* out, uint32_t capacity);
+
+    // ---- v31 (M94n): 2D ----
+    // タイルのスロットは Tilemap コンポーネントを持つエンティティ e と、レイヤー番号 layer (0 始まり)、セル座標 (cx, cy)
+    // (-32768..32767。セル (0, 0) は Tilemap の原点の上、y が上) を取る。Tilemap が無い / layer が範囲外ならそれぞれの失敗値。
+    // 書き込みは sim 状態 (アセットとの差分が WorldHash と SimSnapshot に載る) なので、tick の中で決定論順に呼ぶこと。
+    // セルの値: bit 0-15 タイル id (0 = 空)、16 flipX、17 flipY、18-19 回転 (90 度の個数)、24-31 損傷
+    // OverlapBoxMasked: 無回転の箱 (center ± halfExtents) と重なる Collider を maxCount 個まで out へ書き (entity.index 昇順)、
+    //   mask に含まれるレイヤーだけ数える。戻り値は切り捨て前の総数。タイルの箱は持ち主が Tilemap のエンティティ
+    int (*OverlapBoxMasked)(void* engine, MyeVec3 center, MyeVec3 halfExtents, uint32_t mask, MyeEntityId* outEntities,
+                            int maxCount);
+    // BoxCast: 無回転の箱を origin から dir へ maxDist (<= 0 は無限) 掃引した最初の接触。始点で重なっていれば distance 0・
+    //   法線 -dir。方式は箱の 27 点 (頂点・辺の中点・面の中心・中心) から進行方向へ撃つ Raycast の近似なので、
+    //   形状の突端が撃つ点の隙間に入ると取りこぼす。halfExtents に 0 以下の軸があれば Raycast と同じ
+    int (*BoxCast)(void* engine, MyeVec3 origin, MyeVec3 halfExtents, MyeVec3 dir, float maxDist, uint32_t mask,
+                   MyeRaycastHit* outHit);
+    // SpriteByName: テクスチャ (assets 相対、または絶対パス) の .meta に定義されたスプライトを名前で引き、Sprite2D.sprite に
+    //   書ける AssetID を返す。無ければ 0。初回は .meta を読むので毎 tick 呼ばず、起動時に引いて持っておく
+    uint64_t (*SpriteByName)(void* engine, const char* texturePath, const char* spriteName);
+    // TilemapGetCell: 実効セルの値 (アセットの初期値に Play 中の書き換えを重ねたもの)。空 / 範囲外 / Tilemap 無しは 0
+    uint32_t (*TilemapGetCell)(void* engine, MyeEntityId tilemap, int32_t layer, int32_t cx, int32_t cy);
+    // TilemapSetCell: 1 セルを value にする。成功 1、Tilemap 無し / layer 範囲外 / 座標範囲外は 0 (何も書かない)
+    int (*TilemapSetCell)(void* engine, MyeEntityId tilemap, int32_t layer, int32_t cx, int32_t cy, uint32_t value);
+    // TilemapFillRect: 両端を含む矩形 (x0 > x1 でも可) を value で埋め、書いたセル数を返す。
+    //   失敗 (SetCell と同じ理由、または 262144 セルを超える) は 0
+    int (*TilemapFillRect)(void* engine, MyeEntityId tilemap, int32_t layer, int32_t x0, int32_t y0, int32_t x1, int32_t y1,
+                           uint32_t value);
+    // TilemapDamageCell: セルに amount の損傷を足す。0 = 何も起きない (空 / 壊れないタイル / amount <= 0)、
+    //   1 = 損傷が増えた、2 = 壊れて destroyedTile に置き換わった (palette の destroyEffect が tick 末に生成される)、
+    //   -1 = 対象外 (Tilemap 無し / layer 範囲外 / 座標範囲外)
+    int (*TilemapDamageCell)(void* engine, MyeEntityId tilemap, int32_t layer, int32_t cx, int32_t cy, int32_t amount);
+    // TilemapWorldToCell: ワールド座標が入るセルを outCx / outCy へ。回転とスケールは無視 (原点のワールド位置と cellSize だけ)。
+    //   WorldMatrix 基準なので Transform を動かした tick は 1 tick 古い。Tilemap 無しは 0 (out は触らない)
+    int (*TilemapWorldToCell)(void* engine, MyeEntityId tilemap, MyeVec3 worldPos, int32_t* outCx, int32_t* outCy);
+    // TilemapCellToWorld: セル中心のワールド座標を out へ (z は原点の z)。Tilemap 無しは 0 (out は触らない)
+    int (*TilemapCellToWorld)(void* engine, MyeEntityId tilemap, int32_t cx, int32_t cy, MyeVec3* out);
+    // TilemapGetBounds: layer の空でないセル (タイル id != 0) を囲む矩形 (両端を含む) を書く。1 つも無い / 失敗は 0
+    int (*TilemapGetBounds)(void* engine, MyeEntityId tilemap, int32_t layer, int32_t* outMinX, int32_t* outMinY,
+                            int32_t* outMaxX, int32_t* outMaxY);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

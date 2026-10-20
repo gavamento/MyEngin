@@ -405,7 +405,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     InstallSimLibraries({ &resources, &meshColliders, &convexColliders, &fractureAssets,
                           &physMatLibrary, &terrainColliders, &navFilterLibrary, &behaviorTreeLibrary,
                           &blackboardLibrary, &spriteLibrary, &spriteAnimLibrary, &shapeLibrary2D, &tilePaletteLibrary,
-                          &tilemapLibrary, &tilemapSystem });
+                          &tilemapLibrary, &tilemapSystem, &physicsSystem });
     // M76e: Deep-Modal 推論。CLI (--modal-backend) は綴りだけ検査済みで、未実装名
     // ("d3d11cs") への縮退はここ (SetBackendByName) が WARN 付きでやる。
     // .dmnet が無い (M76h 未実装/未生成) 環境では LoadModel が false を返すだけで、
@@ -577,6 +577,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         shared.pendingLoadPersistSlot = &pendingLoadPersistSlot;
         shared.windowMode = &windowMode;
         shared.nav = &navSystem;
+        shared.tilemap = &tilemapSystem;
+        shared.assetsRoot = assetsRoot;
         shared.behaviorTree = &behaviorTreeSystem;
         shared.controllers = &controllerLibrary;
         shared.compute = &computeService;

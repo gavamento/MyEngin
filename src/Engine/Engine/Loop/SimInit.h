@@ -44,6 +44,7 @@ class ShapeLibrary2D;
 class TilePaletteLibrary;
 class TilemapLibrary;
 class TilemapSystem;
+class PhysicsSystem;
 namespace compute {
 class ComputeService;
 }
@@ -78,6 +79,7 @@ struct SimLibraries {
     TilePaletteLibrary* tilePalettes = nullptr;   // M94j: .tilepalette.json
     TilemapLibrary* tilemaps = nullptr;           // M94j: .tilemap.json (Tilemap コンポーネントが引く)
     TilemapSystem* tilemapSystem = nullptr;       // M94k: 描画が実効セル (セルの書き換え込み) を引く口。所有は sim の持ち主
+    const PhysicsSystem* physics = nullptr;       // M94n: 空間クエリが静的形状の供給口 (タイルの箱) を引く口。所有は sim の持ち主
 };
 void InstallSimLibraries(const SimLibraries& libs);
 // 所有者が死ぬ前に必ず呼ぶ (注入したポインタをプロセス全体から外す)
@@ -112,6 +114,8 @@ struct SimSharedServices {
     const ControllerLibrary* controllers = nullptr; // v27: AnimatorPlay のステート名の引き先
     compute::ComputeService* compute = nullptr; // v29: Compute.ForEach の引き先。null = 該当スロットが 0 を返す
     std::wstring kernelDir;                      // v29: *.kernel.hlsl の置き場 (<assetsRoot>\shaders\kernels)。空 = ソースの走査をしない
+    TilemapSystem* tilemap = nullptr; // v31: Tilemap* の引き先。null = 該当スロットが失敗値を返す
+    std::wstring assetsRoot;           // v31: SpriteByName が相対パスを解く根
     NavSystem* nav = nullptr; // v24: NavFindPath 等のクエリの引き先 (v26 の NavWarp / NavSetPath は書き換える)。null = 該当スロットが 0 を返す
 };
 void WireScriptServices(ScriptHost& scriptHost, ManagedHost& managedHost,

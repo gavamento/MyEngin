@@ -19,6 +19,7 @@
 #include "Editor/SelfTest/RagdollBuildSelfTest.h"
 #include "Engine/Engine/Scene/TagSelfTest.h"
 #include "Engine/Engine/Rendering/Sprite2D/Sprite2DAssetSelfTest.h"
+#include "Engine/Engine/Script/TwoDAbiSelfTest.h"
 #include "Engine/Engine/Tilemap/TilemapSelfTest.h"
 #include "Engine/Engine/Rendering/RenderStatsSelfTest.h"
 #include "Engine/Engine/Rendering/ShadowCullSelfTest.h"
@@ -599,6 +600,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             ok &= mye::RunAssetDatabaseSelfTest();      // M94g: .spriteanim.json の分類
             ok &= mye::RunReloadHubSelfTest();          // M94g: .spriteanim.json の振り分け
             ok &= mye::RunAssetOpsSelfTest();           // M94g: Create 重複拒否 / タイルラベル / 複合サフィックス
+            ok &= mye::RunTwoDAbiSelfTest();            // M94n: ABI v31 (箱のクエリ / SpriteByName / Tilemap)
+            ok &= mye::RunPartSelfTest();               // M94n: ABI の版の固定と v31 スロットの充填
             if (!tempEc) {
                 std::filesystem::remove_all(selftestTemp, tempEc);
             }
@@ -708,6 +711,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunTilemapSelfTest();             // M94j: タイルパレット / タイルマップ資産と座標変換
         ok &= mye::RunSpriteEditorSelfTest();        // M94e: スプライトエディタ (スライス純関数 / Undo / 保存)
         ok &= mye::RunTilePaletteSelfTest();         // M94l: タイルパレット窓の塗り (塗り潰し / 矩形 / Undo / ピック)
+        ok &= mye::RunTwoDAbiSelfTest();             // M94n: ABI v31 (箱のクエリ / SpriteByName / Tilemap)
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }

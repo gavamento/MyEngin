@@ -285,7 +285,7 @@ void HeadlessSim::Activate()
     InstallSimLibraries({ &m.resources, &m.meshColliders, &m.convexColliders, &m.fractureAssets,
                           &m.physMatLibrary, &m.terrainColliders, &m.navFilterLibrary, &m.behaviorTreeLibrary,
                           &m.blackboardLibrary, &m.spriteLibrary, &m.spriteAnimLibrary, &m.shapeLibrary2D, &m.tilePaletteLibrary,
-                          &m.tilemapLibrary, &m.tilemapSystem });
+                          &m.tilemapLibrary, &m.tilemapSystem, &m.physicsSystem });
     m.assetDatabase.InstallAsKeyResolver();
     SceneSerializer::SetManagedHost(&m.managedHost);
 }
@@ -318,7 +318,7 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     InstallSimLibraries({ &m.resources, &m.meshColliders, &m.convexColliders, &m.fractureAssets,
                           &m.physMatLibrary, &m.terrainColliders, &m.navFilterLibrary, &m.behaviorTreeLibrary,
                           &m.blackboardLibrary, &m.spriteLibrary, &m.spriteAnimLibrary, &m.shapeLibrary2D, &m.tilePaletteLibrary,
-                          &m.tilemapLibrary, &m.tilemapSystem });
+                          &m.tilemapLibrary, &m.tilemapSystem, &m.physicsSystem });
     // ParticleSystem::Init の代わり: CPU / GPU バックエンドの選択だけ project_settings.json から決める
     m.particleSystem.LoadSettings(m.assetsRoot + L"\\project_settings.json");
     InitSimProjectState(m.assetsRoot);
@@ -344,6 +344,8 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
         shared.pendingLoadPersistSlot = &m.pendingLoadPersistSlot;
         shared.windowMode = &m.windowMode;
         shared.nav = &m.navSystem;
+        shared.tilemap = &m.tilemapSystem;
+        shared.assetsRoot = m.assetsRoot;
         shared.behaviorTree = &m.behaviorTreeSystem;
         shared.controllers = &m.controllerLibrary;
         shared.compute = &m.computeService;

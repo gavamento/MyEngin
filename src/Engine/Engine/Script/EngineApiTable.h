@@ -20,6 +20,7 @@ class TextureLibrary;   // v21
 class NavSystem;        // v24
 class BehaviorTreeSystem; // v27
 class ControllerLibrary;  // v27
+class TilemapSystem;      // v31
 namespace compute {
 class ComputeService; // v29
 }
@@ -167,6 +168,10 @@ struct ScriptApiContext {
     // C++ レーンで実行中のスクリプトの型名。ScriptHost が各コールバックの前後で入れ外しする。
     // null = スクリプトのコールバックの外 (BT タスクなど。宣言を持てないので ForEach は失敗する)
     const char* runningScript = nullptr;
+    // v31 (M94n): Tilemap* の引き先 (書き換えは sim 状態)。null 時は Tilemap* スロットが失敗値を返す
+    TilemapSystem* tilemap = nullptr;
+    // v31: SpriteByName が assets 相対のパスを絶対化する根。空 = 相対パスを解決しない (絶対パスだけ引ける)
+    std::wstring assetsRoot;
 };
 
 // out に MyeEngineApi (engine = ctx) を構築する。ctx の生存は呼び出し側が管理する。
