@@ -44,7 +44,7 @@
 | sub-11 | OK | 1 | 1eaee36 | タイル衝突 + セル書き換えの sim 状態 + 破壊。依存: 08, 10。snapshot v57。前カリング (CollectWithin / staticOnly) と WakeBodiesNear を spec 4.1.7 に採用 |
 | sub-12 | OK | 1 | 3a11cdb | タイルパレット窓。依存: 10, 02。版 bump なし。編集中の反映は TilemapLibrary::Register (TilemapSystem に編集専用の口を作らない) |
 | sub-13 | OK | 1 | ec7a3a0 | ルールタイル、アニメーションタイル、レイヤー UI。依存: 11, 12。3b (タイル追加 UI) 実装、3c は計測の結果 dirty のチャンク化を見送り (焼き直し CPU 1.2〜2.8 ms、33 ms 超は WARP のエディタ全体が主因)。版 bump なし |
-| sub-14 | 実装中 | 0 | | ABI (10 本) + C# ミラー + MyeScript。依存: 08, 11。**版は着手時の末尾 (M75h より先なら v31)** |
+| sub-14 | OK | 1 | 4fe503f | ABI (10 本) + C# ミラー + MyeScript。依存: 08, 11。**ABI v31 = 188 スロット** (M75h は v32 以降)。空間クエリがタイルの箱を見る (physicsquery::Install) |
 | sub-15 | 未着手 | 0 | | Light2D とライトバッファ。依存: 06 |
 | sub-16 | 未着手 | 0 | | ShadowCaster2D と法線マップ。依存: 15 |
 | sub-17 | 未着手 | 0 | | スプライトのサーフェスシェーダ枝、Parallax2D、2D ポスト例。依存: 06 |
@@ -150,3 +150,8 @@
 - (sub-13 VERDICT nit → sub-24 checklists) パレット窓の初回ドラッグが一瞬 (約 110 ms) 止まらないか、GUI の実クリック (追加ポップアップ、8 近傍トグル、InputText、Ctrl+Z の宛先、パレットの Ctrl+S 往復)。Inspector のタイル資産要約から窓を開く導線は無し (Tilemap コンポーネント側の [Open Tile Palette] で足りる)。
 - (sub-13 coder) ルール / アニメの評価は描画側だけ (TilemapSystem / ABI に足していない)。スクリプトの SetCell で変わったセルのルール変種は自動で追従。sub-15: Sprite2DRenderer の Collect に simTick 引数が増えた (呼び元は RenderSystem.cpp の 1 箇所)。sub-24 に書くこと: 評価順 anim > rule > sprite、neighbors の順 (NW N NE W E SW S SE、N = +y)、Edit モードではアニメが進まない (Q-14)、Play 中は編集不可、Ctrl+Z はマップ / パレット別で直前に変わった側から。
 - (sub-14 着手時の確認) `MYE_API_VERSION` は 30。M75h は未着手なので M94 の sub-14 が v31 を使い、M75h は v32 以降になる (メモリの M75h 予約を更新すること)。
+- (sub-14 VERDICT should 1 → sub-15) チェックポイント 3 で `toolsuild_managed.bat Release` を 1 回回す (sub-14 は Debug だけ)。
+- (sub-14 VERDICT → sub-15 の依頼文に添える) sub-11 (Broadphase / 動く物の範囲) と sub-14 (PhysicsQueries の供給口) を重点に、replay_verify 全ジョブの個別 PASS 行を確認し全文ログを `cache\m94eplay_verify_cp3.log` に残す。sub-15 やること 5 の Deferred でのマスク確認。
+- (sub-14 VERDICT nit → sub-23 やること 8) 供給口の Collect を毎クエリ絞り込み無しで呼ぶコストを計測し、1 tick の sim が 2 ms を超えたら tick 単位でキャッシュ。C# の SpriteByName は実在スライスをデモスクリプトで引く。→ sub-22 やること 0: Camera2DFollow の boundsFromTilemap 用に `GetCollisionBounds` (ABI には出さない)。
+- (sub-14 coder) Raycast の既存消費者 (AcousticField / FootIk / Perception) もタイルの箱に当たる (意図どおり、spec 4.1.10)。sub-21 の Perception LOS は `physicsquery::CollectStaticShapes(world, mask, out)` で同じ口を使える。sub-24 の限界欄: BoxCast 27 点近似、クエリは絞り込み無しの全箱、GetBounds の定義、CellToWorld は out ポインタ。ビルド癖: C4100 の既存癖は非 WX ビルドを 1 回挟んでから WX を 2 回重ねると通る。`plans\m75-ugui.md` の M75h 版注記は sub-24 で更新。
+- **2026-10-21 ユーザー指示「sub14が終わったらいったん止めて」で sub-14 コミット後に一時停止。** 作業ツリーは clean。再開は `/harness resume m94-2d` (同じセッションなら planner は SendMessage で再開可、跨ぐなら新規起動して spec / 台帳を渡す) → sub-15 (チェックポイント 3) の coder を起動。依頼文に上の 3 行 (build_managed Release / replay の個別 PASS 行と全文ログ / Deferred のマスク) と、`demo_terrain_deferred` は基点の絵 `cache\m94aseline_terrain.png` と比較することを添える。

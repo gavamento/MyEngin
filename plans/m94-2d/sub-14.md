@@ -1,8 +1,8 @@
 # sub-14: ABI (10 本) + C# ミラー + MyeScript
 
 - 依存: sub-08, sub-11
-- 状態: 実装中
-- 往復: 0
+- 状態: OK (commit 4fe503f)
+- 往復: 1
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む** (特に 4.1 の ABI 規約)。spec: 2. #18、4.1.10、7. R5
 
 ## やること
