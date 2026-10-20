@@ -11,6 +11,7 @@
 3. UI: 対象 Tilemap (シーン内の Tilemap エンティティのコンボ) とレイヤーのコンボ、ツール (選択 / ブラシ / 消去 / 塗り潰し / 矩形 / ピック。ショートカットは Unity と同じ S / B / D / G / U / I)、flip X / Y と回転 90° のボタン (ブラシの値に反映)、パレットのタイル一覧 (`.tilepalette.json` の各タイルのスプライトのサムネイル、クリックで選択)、Save (Ctrl+S)。
 4. Scene View との連携: 窓がアクティブで Scene View が 2D モードのとき、Scene View 上のマウスをセル座標に変換 (`TilemapSystem::WorldToCell` にレイの XY 交点 (z = Tilemap の z)) し、ツールを適用。カーソルのセルをハイライト (黄の矩形)。矩形ツールはドラッグで範囲表示。Play 中 (`EngineContext` の play 状態) は塗れず、窓に「Play 中は編集できません」を表示。
 5. Save → `TilemapLibrary` のアセットを書き → ReloadHub が拾って全チャンク dirty (sub-10 の口)。描画は編集中もモデルの内容を即反映したい → 窓がモデルを持っている間は `TilemapSystem` に「編集中の上書き (エディタ専用、sim には無関係 = Play 中は使わない)」を渡すか、1 ストロークごとにアセットを書き換えて ReloadHub を待つか。**前者を推奨** (Save 前に見える)。採った方式を差分に書く。
+7. (sub-10 の申し送り Q3) `SpriteLibrary` に `Epoch()` (Register のたびに +1) を足し、タイルのチャンクキャッシュのキーに (Tilemap epoch, TilePalette epoch, SpriteLibrary epoch) を含める。スプライトエディタの Apply 後に焼いたチャンクが古い UV のままにならないことを、窓で Apply → Scene View の絵が変わることで確認。
 6. selftest `TilePaletteSelfTest` (純関数): 塗り潰しの 4 連結と上限、矩形、Undo 3 段、ピック。
 
 ## やらないこと (このサブでは)

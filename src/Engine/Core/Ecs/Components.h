@@ -2377,6 +2377,20 @@ struct SpriteMask2DComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 2D タイルマップ (M94、TypeId=84) ----
+// .tilemap.json (セル配列はアセットが初期値) をエンティティに置く。原点 = エンティティのワールド位置 (セル (0,0) の左下)、
+// ワールドの回転・スケールは無視する。hash 対象 (sim 入力。衝突 = sub-11 とセル書き換えが sim に効く)。
+// 描画は Sprite2DRenderer がチャンクごとに頂点列を焼いて Sprite2D と同じ整列に混ぜる
+struct TilemapComponent {
+    AssetID tilemap = {};              // TilemapLibrary の AssetID
+    int32_t layer = 0;                 // タイル衝突の所属レイヤー 0..31 (Collider.layer と同じ)
+    uint32_t mask = 0xFFFFFFFFu;       // 衝突相手レイヤーのビット集合
+    float friction = 0.5f;             // タイル衝突の摩擦係数
+    AssetID physMaterial = {};         // .physmat.json (空 = 未割当)
+    bool showCollision = false;        // Scene View に衝突の箱を引く (kFieldNoHash、描画専用)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

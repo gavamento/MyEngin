@@ -42,6 +42,8 @@
 #include "Engine/Engine/Scene/SortingLayers.h" // M94: Sprite2D のソート層コンボ
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h" // M94: Sprite2D.sprite のピッカー
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h" // M94h: Collider.meshAsset の 2D 形状ピッカー
+#include "Engine/Engine/Tilemap/TilemapAssets.h" // M94j: Tilemap.tilemap のピッカー
+#include "Editor/Windows/Scene/TileAssetInspector.h" // M94j: .tilepalette.json / .tilemap.json の簡易表示
 #include "Engine/Engine/Scene/Tags.h" // 汎用タグの読み書き (Tags::OwnMask / SetOwnMask)
 #include "Engine/Engine/RayTracing/RtScope.h" // RT の実効値と根拠 (描画と同じ判定)
 #include "Engine/Engine/Rendering/RenderSystem.h" // RT のタグ規則 / レーンの on/off
@@ -1267,6 +1269,18 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
                 ImGui::TextDisabled("%s", Tr(collider->shape == collidershape::kPolygon2D ? StrId::Insp_Shape2DDynamicNote
                                                                                           : StrId::Insp_Shape2DEdgeNote));
             }
+            ImGui::PopTextWrapPos();
+        }
+    }
+    // M94j: Tilemap の注意 (アセット未解決 / 原点の規則)
+    if (std::strcmp(desc.name, "Tilemap") == 0 && !tg.multi) {
+        const auto* tm = world.GetComponent<TilemapComponent>(tg.e);
+        if (tm != nullptr) {
+            ImGui::PushTextWrapPos(0.0f);
+            if (tilemap::Resolve(tm->tilemap) == nullptr) {
+                ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_TilemapUnresolved));
+            }
+            ImGui::TextDisabled("%s", Tr(StrId::Insp_TilemapNote));
             ImGui::PopTextWrapPos();
         }
     }
@@ -3104,6 +3118,11 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
         return;
     }
 
+    if (type == AssetType::TilePalette || type == AssetType::Tilemap) {
+        DrawTileAssetInspector(type, path); // M94j: 読み取り専用の要約
+        return;
+    }
+
     if (type == AssetType::FxStack) {
             DrawFxStackInspector(ctx, path); // M78c
         return;
@@ -4342,6 +4361,13 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
     } else if (fname == "fxstack") {
         // M78c: プロジェクトポスト/コンピュートスタック (*.fxstack.json はディスクにしか無い)
         diskType = AssetType::FxStack;
+    } else if (fname == "tilemap") {
+        // M94j: Tilemap.tilemap (.tilemap.json)。"map" を含む他の語には当たらないが、念のため "tex" 等より先に見る
+        if (TilemapLibrary* maps = tilemap::Library()) {
+            for (const TilemapEntry& e : maps->Enumerate()) {
+                entries.push_back({ AssetID{ e.hash }, e.name });
+            }
+        }
     } else if (fname == "sprite") {
         // M94: Sprite2D.sprite。テクスチャ全面と、.meta でスライスしたサブスプライト。
         // "tex" 分岐 (テクスチャ総当たり) より先に見る
@@ -4458,6 +4484,14 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
             if (fname.find("tex") != std::string::npos && AssetDatabase::ClassifyPath(dropPath) == AssetType::Texture) {
                 const AssetID aid = ctx.resources->textures.RequestLoadFileAsync(dropPath);
                 assign(aid);
+            } else if (fname == "tilemap" && AssetDatabase::ClassifyPath(dropPath) == AssetType::Tilemap) {
+                // M94j: .tilemap.json のドロップは GUID を確定して割り当てる
+                if (TilemapLibrary* maps = tilemap::Library()) {
+                    maps->LoadFromFile(dropPath);
+                }
+                const uint64_t guid = ctx.assetDb ? ctx.assetDb->GuidForPath(dropPath, true)
+                                                  : AssetDatabase::EnsureMeta(dropPath);
+                assign(AssetID{ guid });
             } else if (isShape2DRef && AssetDatabase::ClassifyPath(dropPath) == AssetType::Shape2D) {
                 // M94h: .shape2d.json のドロップは GUID を確定して割り当てる
                 if (ShapeLibrary2D* shapes2d = shape2d::Library()) {

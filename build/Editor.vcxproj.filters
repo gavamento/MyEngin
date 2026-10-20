@@ -342,6 +342,9 @@
     <ClCompile Include="..\src\Editor\Windows\Scene\Shape2DEditor.cpp">
       <Filter>Windows\Scene</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Scene\TileAssetInspector.cpp">
+      <Filter>Windows\Scene</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Sprite\SpriteEditModel.cpp">
       <Filter>Windows\Sprite</Filter>
     </ClCompile>
@@ -634,6 +637,9 @@
       <Filter>Windows\Scene</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Scene\Shape2DEditor.h">
+      <Filter>Windows\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Scene\TileAssetInspector.h">
       <Filter>Windows\Scene</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Sprite\SpriteEditModel.h">

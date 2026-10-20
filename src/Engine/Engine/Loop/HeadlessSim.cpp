@@ -48,6 +48,7 @@
 #include "Engine/Engine/Physics/Rigid/CollisionSystem.h"
 #include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
+#include "Engine/Engine/Tilemap/TilemapAssets.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
@@ -124,6 +125,8 @@ struct HeadlessSim::Impl : IEngineApp {
     SpriteLibrary spriteLibrary;             // M94
     SpriteAnimLibrary spriteAnimLibrary;     // M94
     ShapeLibrary2D shapeLibrary2D;           // M94h
+    TilePaletteLibrary tilePaletteLibrary;   // M94j
+    TilemapLibrary tilemapLibrary;           // M94j
     XpbdBackend xpbd;
     AcousticField acoustic;
     AgentSystem agentSystem;
@@ -277,7 +280,8 @@ void HeadlessSim::Activate()
     Impl& m = *impl_;
     InstallSimLibraries({ &m.resources, &m.meshColliders, &m.convexColliders, &m.fractureAssets,
                           &m.physMatLibrary, &m.terrainColliders, &m.navFilterLibrary, &m.behaviorTreeLibrary,
-                          &m.blackboardLibrary, &m.spriteLibrary, &m.spriteAnimLibrary, &m.shapeLibrary2D });
+                          &m.blackboardLibrary, &m.spriteLibrary, &m.spriteAnimLibrary, &m.shapeLibrary2D, &m.tilePaletteLibrary,
+                          &m.tilemapLibrary });
     m.assetDatabase.InstallAsKeyResolver();
     SceneSerializer::SetManagedHost(&m.managedHost);
 }
@@ -309,7 +313,8 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     m.resources.InitHeadless();
     InstallSimLibraries({ &m.resources, &m.meshColliders, &m.convexColliders, &m.fractureAssets,
                           &m.physMatLibrary, &m.terrainColliders, &m.navFilterLibrary, &m.behaviorTreeLibrary,
-                          &m.blackboardLibrary, &m.spriteLibrary, &m.spriteAnimLibrary, &m.shapeLibrary2D });
+                          &m.blackboardLibrary, &m.spriteLibrary, &m.spriteAnimLibrary, &m.shapeLibrary2D, &m.tilePaletteLibrary,
+                          &m.tilemapLibrary });
     // ParticleSystem::Init の代わり: CPU / GPU バックエンドの選択だけ project_settings.json から決める
     m.particleSystem.LoadSettings(m.assetsRoot + L"\\project_settings.json");
     InitSimProjectState(m.assetsRoot);

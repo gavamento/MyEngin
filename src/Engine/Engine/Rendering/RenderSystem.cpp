@@ -2059,7 +2059,7 @@ void RenderSystem::DrawParticlesAndDebug(World& world, GraphicsDevice& device, S
     // M94: Sprite2D。VFX の直前 (整数ソートキーで並べた 2D スプライト)。Sprite2D が無ければ
     // 描画リストが空のままパスを Init もせず、D3D の状態も触らない
     {
-        const Sprite2DDrawList& sprites = sprite2dRenderer_.Collect(world, resources);
+        const Sprite2DDrawList& sprites = sprite2dRenderer_.Collect(world, resources, &view.view, &view.proj);
         if (!sprites.Empty()) {
             if (!sprite2dPass_.IsReady()) {
                 sprite2dPass_.Init(device, shaders);

@@ -40,6 +40,7 @@
 #include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Engine/Animation/SpriteAnim.h" // M94: .spriteanim.json の生成/登録
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h" // M94h: .shape2d.json の生成/登録
+#include "Engine/Engine/Tilemap/TilemapAssets.h" // M94j: .tilepalette.json / .tilemap.json の生成/登録
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h" // M59a1: .physmat.json の生成/登録
 #include "Engine/Engine/Navigation/NavFilterLibrary.h" // M84c: .navfilter.json の生成/登録
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"      // M85: .bt.json / .bb.json の生成/登録
@@ -310,6 +311,49 @@ std::wstring CreateShape2DAsset(EngineContext& ctx, const std::wstring& dir, con
     return path;
 }
 
+std::wstring CreateTilePaletteAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
+{
+    (void)ctx; // 署名は他の Create* と揃える。登録は tilepalette:: 経由
+    const std::string safe = SanitizeFileName(name, "New TilePalette");
+    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".tilepalette.json";
+    if (fs::exists(path)) {
+        return {};
+    }
+    if (!WriteNewAssetFile(path, TilePaletteLibrary::ToJson(TilePalette{}).dump(2))) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteTilePaletteFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    if (TilePaletteLibrary* lib = tilepalette::Library()) {
+        lib->LoadFromFile(path);
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedTilePalette), WideToUtf8(path).c_str());
+    return path;
+}
+
+std::wstring CreateTilemapAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
+{
+    (void)ctx;
+    const std::string safe = SanitizeFileName(name, "New Tilemap");
+    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".tilemap.json";
+    if (fs::exists(path)) {
+        return {};
+    }
+    // 既定は空の 1 レイヤー (パレットはパレット窓か Inspector で結ぶ)
+    TilemapAsset map;
+    TilemapLayer ground;
+    ground.name = "Ground";
+    map.layers.push_back(std::move(ground));
+    if (!WriteNewAssetFile(path, TilemapLibrary::ToJson(map).dump(2))) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteTilemapFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    if (TilemapLibrary* lib = tilemap::Library()) {
+        lib->LoadFromFile(path);
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedTilemap), WideToUtf8(path).c_str());
+    return path;
+}
+
 void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstring& suffix)
 {
     static const std::wstring kCompound[] = {L".scene.json",  L".prefab.json", L".actor.json",
@@ -317,7 +361,8 @@ void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstri
                                              L".sound.json",  L".mixer.json",  L".physmat.json",
                                              L".fxstack.json", L".post.hlsl",  L".cs.hlsl",
                                              L".navfilter.json", L".bt.json",  L".bb.json",
-                                             L".spriteanim.json", L".shape2d.json"};
+                                             L".spriteanim.json", L".shape2d.json",
+                                             L".tilepalette.json", L".tilemap.json"};
     for (const std::wstring& c : kCompound) {
         if (filename.size() > c.size() &&
             filename.compare(filename.size() - c.size(), c.size(), c) == 0) {

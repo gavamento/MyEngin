@@ -112,6 +112,7 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "Sprite2D", { ICON_FA_IMAGES, "2D", "2D スプライト" } },
         { "SortingGroup2D", { ICON_FA_LAYER_GROUP, "2D", "2D ソートグループ" } },
         { "SpriteMask2D", { ICON_FA_MASKS_THEATER, "2D", "2D スプライトマスク" } },
+        { "Tilemap", { ICON_FA_BORDER_ALL, "2D", "2D タイルマップ" } },
     };
     return t;
 }

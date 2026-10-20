@@ -17,6 +17,8 @@
 #include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
+#include "Engine/Engine/Tilemap/TilemapAssets.h"
+#include "Engine/Engine/Tilemap/TilemapSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
@@ -76,6 +78,8 @@ constexpr AssetKindRow kAssetKinds[] = {
     { L".bb.json", ReloadKind::Blackboard, 6 },
     { L".spriteanim.json", ReloadKind::SpriteAnim, 6 }, // M94。Animator (.controller.json は未登録の .json 扱い) より前
     { L".shape2d.json", ReloadKind::Shape2D, 6 },        // M94h。未登録の .json (Scene) より前
+    { L".tilepalette.json", ReloadKind::TilePalette, 6 }, // M94j。Tilemap が引く表なので Tilemap と同格
+    { L".tilemap.json", ReloadKind::Tilemap, 6 },         // M94j
     { L".dmnet", ReloadKind::ModalNet, 6 }, // M76e。.sound.json 等と同格 (誰も参照していない)
     { PrefabLibrary::kActorSuffix, ReloadKind::Compose, 7 },
     { PrefabLibrary::kPrefabSuffix, ReloadKind::Compose, 7 },
@@ -300,6 +304,12 @@ void ReloadHub::HandleChange(const std::wstring& normPath, int attempt)
         break;
     case ReloadKind::Shape2D:
         result = ReloadShape2D(normPath);
+        break;
+    case ReloadKind::TilePalette:
+        result = ReloadTilePalette(normPath);
+        break;
+    case ReloadKind::Tilemap:
+        result = ReloadTilemap(normPath);
         break;
     case ReloadKind::SpriteAnim:
         result = ReloadSpriteAnim(normPath);
@@ -530,6 +540,37 @@ ReloadHub::ReloadResult ReloadHub::ReloadShape2D(const std::wstring& path)
         return ReloadResult::Retry;
     }
     MYE_LOG_INFO("[reload] shape2d reloaded: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// 登録済みなら読み直す (M94j)。パレットは描画 (スプライト) と衝突 (collider / hp) の両方に効く。
+// 描画側のチャンクキャッシュはライブラリの Epoch で無効になるが、sub-11 の衝突キャッシュのため MarkAllDirty も呼ぶ
+ReloadHub::ReloadResult ReloadHub::ReloadTilePalette(const std::wstring& path)
+{
+    TilePaletteLibrary* lib = tilepalette::Library();
+    if (lib == nullptr || !lib->Contains(TilePaletteLibrary::HashForPath(path))) {
+        return ReloadResult::Skipped;
+    }
+    if (lib->LoadFromFile(path) == 0) {
+        return ReloadResult::Retry;
+    }
+    TilemapSystem::MarkAllDirty();
+    MYE_LOG_INFO("[reload] tilepalette reloaded: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// 登録済みなら読み直す (M94j)。全チャンクを dirty にする (sim 側の書き換え = override は保持される)
+ReloadHub::ReloadResult ReloadHub::ReloadTilemap(const std::wstring& path)
+{
+    TilemapLibrary* lib = tilemap::Library();
+    if (lib == nullptr || !lib->Contains(TilemapLibrary::HashForPath(path))) {
+        return ReloadResult::Skipped;
+    }
+    if (lib->LoadFromFile(path) == 0) {
+        return ReloadResult::Retry;
+    }
+    TilemapSystem::MarkAllDirty();
+    MYE_LOG_INFO("[reload] tilemap reloaded: %s", WideToUtf8(path).c_str());
     return ReloadResult::Reloaded;
 }
 

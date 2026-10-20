@@ -1754,6 +1754,17 @@ void RegisterBuiltinComponents()
         MYE_JP("範囲の上限", MYE_FIELD_TIP(SpriteMask2DComponent, rangeFront, Int32,
                                           "sprites with orderInLayer <= this are masked")),
     }, kComponentNoHash);
+
+    // M94: 2D タイルマップ (TypeId=84、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変。
+    // hash 対象 (sim 入力)。showCollision だけ描画専用
+    RegisterComponent<TilemapComponent>("Tilemap", {
+        MYE_JP("タイルマップ", MYE_FIELD(TilemapComponent, tilemap, AssetRef)),
+        MYE_JP("衝突レイヤー", MYE_FIELD_TIP(TilemapComponent, layer, Int32, "collision layer 0..31")),
+        MYE_JP("衝突マスク", MYE_FIELD_TIP(TilemapComponent, mask, UInt32, "layers this tilemap hits (bitmask)")),
+        MYE_JP("摩擦", MYE_FIELD(TilemapComponent, friction, Float)),
+        MYE_JP("物理マテリアル", MYE_FIELD(TilemapComponent, physMaterial, AssetRef)),
+        MYE_JP("衝突を描く", MYE_FIELD_FLAGS(TilemapComponent, showCollision, Bool, kFieldNoHash)),
+    });
 }
 
 } // namespace mye

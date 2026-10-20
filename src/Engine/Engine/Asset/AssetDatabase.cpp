@@ -84,6 +84,12 @@ AssetType AssetDatabase::ClassifyPath(const std::wstring& path)
     if (EndsWith(s, ".shape2d.json")) {
         return AssetType::Shape2D;
     }
+    if (EndsWith(s, ".tilepalette.json")) {
+        return AssetType::TilePalette;
+    }
+    if (EndsWith(s, ".tilemap.json")) {
+        return AssetType::Tilemap;
+    }
     if (EndsWith(s, ".spriteanim.json")) {
         return AssetType::SpriteAnim;
     }
@@ -169,6 +175,8 @@ const char* AssetDatabase::TypeName(AssetType t)
     case AssetType::Blackboard: return "blackboard";
     case AssetType::SpriteAnim: return "spriteanim";
     case AssetType::Shape2D: return "shape2d";
+    case AssetType::TilePalette: return "tilepalette";
+    case AssetType::Tilemap: return "tilemap";
     case AssetType::Unknown:
     default: return "unknown";
     }
@@ -200,6 +208,8 @@ AssetType AssetDatabase::ParseTypeName(const std::string& s)
     if (s == "blackboard") return AssetType::Blackboard;
     if (s == "spriteanim") return AssetType::SpriteAnim;
     if (s == "shape2d") return AssetType::Shape2D;
+    if (s == "tilepalette") return AssetType::TilePalette;
+    if (s == "tilemap") return AssetType::Tilemap;
     return AssetType::Unknown;
 }
 

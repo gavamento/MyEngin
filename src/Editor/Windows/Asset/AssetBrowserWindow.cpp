@@ -62,6 +62,8 @@ enum CreateKind {
     kCreateBlackboard,   // M85
     kCreateSpriteAnim,   // M94
     kCreateShape2D,      // M94h
+    kCreateTilePalette,  // M94j
+    kCreateTilemap,      // M94j
     kCreatePostShader,
     kCreateComputeShader,
     kCreateSurfaceShader, // M79 sub-04
@@ -97,6 +99,8 @@ constexpr TypeFilterEntry kTypeFilters[] = {
     { AssetType::Blackboard, StrId::Asset_Blackboard },     // M85
     { AssetType::SpriteAnim, StrId::Asset_SpriteAnim },     // M94
     { AssetType::Shape2D, StrId::Asset_Shape2D },           // M94h
+    { AssetType::TilePalette, StrId::Asset_TilePalette },   // M94j
+    { AssetType::Tilemap, StrId::Asset_Tilemap },           // M94j
     { AssetType::FxStack, StrId::Type_FxStack },
 };
 
@@ -176,6 +180,10 @@ const char* TileLabel(AssetType type, const std::wstring& ext, const std::wstrin
         return "spriteanim"; // .spriteanim.json (M94)
     case AssetType::Shape2D:
         return "shape2d"; // .shape2d.json (M94h)
+    case AssetType::TilePalette:
+        return "tilepalette"; // .tilepalette.json (M94j)
+    case AssetType::Tilemap:
+        return "tilemap"; // .tilemap.json (M94j)
     case AssetType::Material:
         return "mat";
     case AssetType::Sound:
@@ -843,6 +851,8 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             if (ImGui::MenuItem(Tr(StrId::Asset_Blackboard))) { beginCreate(kCreateBlackboard, "New Blackboard"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_SpriteAnim))) { beginCreate(kCreateSpriteAnim, "New SpriteAnim"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_Shape2D))) { beginCreate(kCreateShape2D, "New Shape2D"); }
+            if (ImGui::MenuItem(Tr(StrId::Asset_TilePalette))) { beginCreate(kCreateTilePalette, "New TilePalette"); }
+            if (ImGui::MenuItem(Tr(StrId::Asset_Tilemap))) { beginCreate(kCreateTilemap, "New Tilemap"); }
             if (ImGui::BeginMenu(Tr(StrId::Asset_ShaderMenu))) {
                 if (ImGui::MenuItem(Tr(StrId::Asset_PostShader))) {
                     beginCreate(kCreatePostShader, "New Post");
@@ -1084,6 +1094,14 @@ void AssetBrowserWindow::DoCreate(EngineContext& ctx, UndoStack& undo,
         break;
     case kCreateShape2D: // M94h
         created = CreateShape2DAsset(ctx, current_, name);
+        RecordAssetCreated(undo, created);
+        break;
+    case kCreateTilePalette: // M94j
+        created = CreateTilePaletteAsset(ctx, current_, name);
+        RecordAssetCreated(undo, created);
+        break;
+    case kCreateTilemap: // M94j
+        created = CreateTilemapAsset(ctx, current_, name);
         RecordAssetCreated(undo, created);
         break;
     case kCreatePostShader:

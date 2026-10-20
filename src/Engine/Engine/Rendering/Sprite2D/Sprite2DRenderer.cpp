@@ -6,6 +6,7 @@
 #include "Engine/Engine/Rendering/Sprite2D/Sprite2DRenderer.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <tuple>
 
@@ -15,6 +16,7 @@
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Scene/SortingLayers.h"
+#include "Engine/Engine/Tilemap/TilemapSystem.h"
 #include "Engine/Renderer/Device/GpuResources.h"
 
 using namespace DirectX;
@@ -32,6 +34,8 @@ constexpr int kMaxGroupWalk = 64;
 constexpr int kMaxPiecesPerAxis = 700;
 // 端のタイルがほぼ丁度のときに薄いタイルを出さないための余裕 (タイル数に対する比)
 constexpr float kTileCountEpsilon = 1.0e-4f;
+// 視錐台の逆行列が特異とみなす行列式の下限 (これ未満はチャンクを切らない)
+constexpr float kMinFrustumDeterminant = 1.0e-20f;
 
 // 1 方向 (x か y) の 1 区間。dest はワールドの小さい側から、src は画素の小さい側から
 struct Piece {
@@ -96,6 +100,36 @@ const SortingGroup2DComponent* FindGroup(World& world, EntityID e, EntityID& gro
 }
 
 } // namespace
+
+// 正射影のとき、カメラの視錐台 (直方体) を囲むワールドの AABB。透視 / 行列が無い / 特異は false (切らない)
+bool Sprite2DRenderer::OrthoWorldBounds(const XMFLOAT4X4* view, const XMFLOAT4X4* proj, XMFLOAT3& outMin, XMFLOAT3& outMax)
+{
+    // XMMatrixOrthographicLH は _34 = 0、_44 = 1。透視は _34 = 1、_44 = 0
+    if (view == nullptr || proj == nullptr || proj->_34 != 0.0f || proj->_44 != 1.0f) {
+        return false;
+    }
+    const XMMATRIX viewProj = XMMatrixMultiply(XMLoadFloat4x4(view), XMLoadFloat4x4(proj));
+    XMVECTOR det;
+    const XMMATRIX inv = XMMatrixInverse(&det, viewProj);
+    if (std::fabs(XMVectorGetX(det)) < kMinFrustumDeterminant) {
+        return false;
+    }
+    bool first = true;
+    for (int i = 0; i < 8; ++i) {
+        const XMVECTOR ndc = XMVectorSet((i & 1) ? 1.0f : -1.0f, (i & 2) ? 1.0f : -1.0f, (i & 4) ? 1.0f : 0.0f, 1.0f);
+        XMFLOAT3 p;
+        XMStoreFloat3(&p, XMVector3TransformCoord(ndc, inv));
+        if (first) {
+            outMin = p;
+            outMax = p;
+            first = false;
+        } else {
+            outMin = { (std::min)(outMin.x, p.x), (std::min)(outMin.y, p.y), (std::min)(outMin.z, p.z) };
+            outMax = { (std::max)(outMax.x, p.x), (std::max)(outMax.y, p.y), (std::max)(outMax.z, p.z) };
+        }
+    }
+    return true;
+}
 
 void Sprite2DRenderer::LocalRect(const SpriteDef& def, int texWidth, int texHeight, float out[4])
 {
@@ -379,13 +413,293 @@ void Sprite2DRenderer::EmitMask(const Item& item, RenderResources& resources)
          static_cast<uint32_t>(scratch_.size()));
 }
 
-const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources& resources)
+void Sprite2DRenderer::AssignKeys(Item& it, World& world, bool hasGroups, EntityID e, int32_t layerId,
+                                  int32_t order) const
+{
+    const SortingLayers& layers = SortingLayers::Get();
+    it.outerLayer = layers.OrderOf(layerId);
+    it.outerOrder = order;
+    it.outerIndex = e.index;
+    it.innerLayer = 0;
+    it.innerOrder = 0;
+    it.innerIndex = 0;
+    EntityID groupEntity = kNullEntity;
+    const SortingGroup2DComponent* g = (hasGroups && !it.isMask) ? FindGroup(world, e, groupEntity) : nullptr;
+    if (g != nullptr) {
+        it.innerLayer = it.outerLayer;
+        it.innerOrder = it.outerOrder;
+        it.innerIndex = it.outerIndex;
+        it.outerLayer = layers.OrderOf(g->sortingLayerId);
+        it.outerOrder = g->orderInLayer;
+        it.outerIndex = groupEntity.index;
+    }
+}
+
+void Sprite2DRenderer::TileCornerUv(float u0, float v0, float u1, float v1, bool flipX, bool flipY, uint32_t rotation,
+                                    float out[4][2])
+{
+    // 左上, 右上, 右下, 左下
+    float c[4][2] = { { u0, v0 }, { u1, v0 }, { u1, v1 }, { u0, v1 } };
+    const auto swap2 = [&c](int a, int b) {
+        std::swap(c[a][0], c[b][0]);
+        std::swap(c[a][1], c[b][1]);
+    };
+    if (flipX) {
+        swap2(0, 1);
+        swap2(3, 2);
+    }
+    if (flipY) {
+        swap2(0, 3);
+        swap2(1, 2);
+    }
+    // 絵を反時計回りに 90 度回すと、左上にあった内容は左下へ、左下は右下へ、右下は右上へ、右上は左上へ移る
+    for (uint32_t k = 0; k < (rotation & 3u); ++k) {
+        float r[4][2];
+        for (int i = 0; i < 4; ++i) {
+            const int dst = (i + 3) % 4;
+            r[dst][0] = c[i][0];
+            r[dst][1] = c[i][1];
+        }
+        std::copy(&r[0][0], &r[0][0] + 8, &c[0][0]);
+    }
+    std::copy(&c[0][0], &c[0][0] + 8, &out[0][0]);
+}
+
+// チャンクを焼く: 実効セルを読み、tileId → パレット → スプライトを引いて、セルごとに 1 クアッドを原点基準で並べる。
+// 非同期ロード中のスプライトがあれば complete = false にして次フレームも焼き直す
+void Sprite2DRenderer::BakeTileChunk(const Item& item, World& world, RenderResources& resources, BakedChunk& out)
+{
+    out.vertices.clear();
+    out.runs.clear();
+    out.complete = true;
+    const TilemapAsset* map = TilemapSystem::AssetOf(world, item.tileEntity);
+    const TilePalette* palette = (map != nullptr) ? tilepalette::Resolve(map->palette) : nullptr;
+    std::array<uint32_t, kTilemapChunkCells> cells;
+    if (map == nullptr || palette == nullptr
+        || !TilemapSystem::GetChunkCells(world, item.tileEntity, item.tileLayer, item.tileChunk, cells)) {
+        return;
+    }
+    const float cellW = map->cellSize[0];
+    const float cellH = map->cellSize[1];
+    const float white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    std::map<uint64_t, Resolved> memo; // 参照するだけ。走査しない
+    out.vertices.reserve(kTilemapChunkCells * 6);
+    for (int32_t ly = 0; ly < kTilemapChunkSize; ++ly) {
+        for (int32_t lx = 0; lx < kTilemapChunkSize; ++lx) {
+            const uint32_t value = cells[static_cast<size_t>(ly) * kTilemapChunkSize + static_cast<size_t>(lx)];
+            const TileDef* def = palette->Find(tilecell::TileId(value));
+            if (def == nullptr || def->sprite.IsNull()) {
+                continue; // 空 / パレットに無い id / スプライト無しは描かない
+            }
+            auto found = memo.find(def->sprite.value);
+            if (found == memo.end()) {
+                Resolved r;
+                if (!Resolve(def->sprite, resources, true, r)) {
+                    out.complete = false;
+                    continue;
+                }
+                found = memo.emplace(def->sprite.value, r).first;
+            }
+            const Resolved& r = found->second;
+            float uv[4][2];
+            TileCornerUv(r.rect[0] / r.texW, r.rect[1] / r.texH, (r.rect[0] + r.rect[2]) / r.texW,
+                         (r.rect[1] + r.rect[3]) / r.texH, (value & tilecell::kFlipX) != 0,
+                         (value & tilecell::kFlipY) != 0, tilecell::Rotation(value), uv);
+            const float x0 = static_cast<float>(item.tileChunk.cx * kTilemapChunkSize + lx) * cellW;
+            const float y0 = static_cast<float>(item.tileChunk.cy * kTilemapChunkSize + ly) * cellH;
+            const float x1 = x0 + cellW;
+            const float y1 = y0 + cellH;
+            // 左上, 右上, 右下, 左下
+            const float px[4] = { x0, x1, x1, x0 };
+            const float py[4] = { y1, y1, y0, y0 };
+            Sprite2DVertex corner[4];
+            for (int i = 0; i < 4; ++i) {
+                corner[i].pos[0] = px[i];
+                corner[i].pos[1] = py[i];
+                corner[i].pos[2] = 0.0f;
+                corner[i].uv[0] = uv[i][0];
+                corner[i].uv[1] = uv[i][1];
+                for (int c = 0; c < 4; ++c) {
+                    corner[i].color[c] = white[c];
+                }
+            }
+            const Sprite2DVertex quad[6] = { corner[0], corner[1], corner[2], corner[0], corner[2], corner[3] };
+            if (out.runs.empty() || out.runs.back().texture != r.texture || out.runs.back().pointFilter != r.pointFilter) {
+                TileRun run;
+                run.texture = r.texture;
+                run.pointFilter = r.pointFilter;
+                run.start = static_cast<uint32_t>(out.vertices.size());
+                out.runs.push_back(run);
+            }
+            out.vertices.insert(out.vertices.end(), quad, quad + 6);
+            out.runs.back().count += 6;
+        }
+    }
+}
+
+void Sprite2DRenderer::EmitTileChunk(const Item& item, World& world, RenderResources& resources)
+{
+    TileCacheKey key;
+    key.entityIndex = item.tileEntity.index;
+    key.entityGeneration = item.tileEntity.generation;
+    key.layer = item.tileLayer;
+    key.chunk = item.tileChunk;
+    BakedChunk& chunk = tileCache_[key];
+
+    TilemapLibrary* maps = tilemap::Library();
+    TilePaletteLibrary* palettes = tilepalette::Library();
+    const uint64_t mapEpoch = (maps != nullptr) ? maps->Epoch() : 0;
+    const uint64_t paletteEpoch = (palettes != nullptr) ? palettes->Epoch() : 0;
+    const uint64_t dirtyEpoch = TilemapSystem::DirtyEpoch();
+    if (!chunk.complete || chunk.mapEpoch != mapEpoch || chunk.paletteEpoch != paletteEpoch
+        || chunk.dirtyEpoch != dirtyEpoch) {
+        BakeTileChunk(item, world, resources, chunk);
+        chunk.mapEpoch = mapEpoch;
+        chunk.paletteEpoch = paletteEpoch;
+        chunk.dirtyEpoch = dirtyEpoch;
+    }
+    chunk.lastUsed = tileFrame_;
+
+    for (const TileRun& run : chunk.runs) {
+        tileScratch_.assign(chunk.vertices.begin() + run.start, chunk.vertices.begin() + run.start + run.count);
+        for (Sprite2DVertex& v : tileScratch_) {
+            v.pos[0] += item.tileOrigin.x;
+            v.pos[1] += item.tileOrigin.y;
+            v.pos[2] += item.tileOrigin.z;
+        }
+        Push(run.texture, run.pointFilter, sprite2dstencil::kNone, 0.0f, tileScratch_.data(),
+             static_cast<uint32_t>(tileScratch_.size()));
+    }
+}
+
+void Sprite2DRenderer::CollectSprites(World& world, bool hasGroups)
+{
+    const ComponentTypeId req[] = { Sprite2DComponent::sTypeId, WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int si = arch.FindTypeIndex(Sprite2DComponent::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (!IsEntityActive(world, e)) {
+                continue;
+            }
+            Item it;
+            it.sprite = static_cast<const Sprite2DComponent*>(arch.GetPtr(si, row));
+            it.world = &static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+            AssignKeys(it, world, hasGroups, e, it.sprite->sortingLayerId, it.sprite->orderInLayer);
+            items_.push_back(it);
+        }
+    });
+}
+
+void Sprite2DRenderer::CollectMasks(World& world, bool hasGroups)
+{
+    const ComponentTypeId req[] = { SpriteMask2DComponent::sTypeId, WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int mi = arch.FindTypeIndex(SpriteMask2DComponent::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (!IsEntityActive(world, e)) {
+                continue;
+            }
+            Item it;
+            it.isMask = true;
+            it.mask = static_cast<const SpriteMask2DComponent*>(arch.GetPtr(mi, row));
+            it.world = &static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+            AssignKeys(it, world, hasGroups, e, it.mask->sortingLayerId, it.mask->orderInLayer);
+            items_.push_back(it);
+        }
+    });
+}
+
+// Tilemap のレイヤー x チャンクを 1 項目ずつ。正射影なら画面外のチャンクは項目にしない
+// (キャッシュは掃除されないよう lastUsed だけ更新する)
+void Sprite2DRenderer::CollectTilemaps(World& world, const XMFLOAT4X4* view, const XMFLOAT4X4* proj)
+{
+    const ComponentTypeId req[] = { TilemapComponent::sTypeId, WorldMatrixComponent::sTypeId };
+    bool any = false;
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        if (arch.Count() > 0) {
+            any = true;
+        }
+    });
+    if (!any) {
+        return;
+    }
+    bool hasGroups = false;
+    {
+        const ComponentTypeId reqGroup[] = { SortingGroup2DComponent::sTypeId };
+        world.ForEachArchetype(reqGroup, [&](Archetype& arch) {
+            if (arch.Count() > 0) {
+                hasGroups = true;
+            }
+        });
+    }
+    XMFLOAT3 boundsMin = { 0.0f, 0.0f, 0.0f };
+    XMFLOAT3 boundsMax = { 0.0f, 0.0f, 0.0f };
+    const bool culling = OrthoWorldBounds(view, proj, boundsMin, boundsMax);
+
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int ti = arch.FindTypeIndex(TilemapComponent::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (!IsEntityActive(world, e)) {
+                continue;
+            }
+            const auto* tm = static_cast<const TilemapComponent*>(arch.GetPtr(ti, row));
+            const TilemapAsset* map = tilemap::Resolve(tm->tilemap);
+            if (map == nullptr) {
+                continue;
+            }
+            const XMFLOAT4X4& wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+            const XMFLOAT3 origin = { wm._41, wm._42, wm._43 };
+            const float chunkW = static_cast<float>(kTilemapChunkSize) * map->cellSize[0];
+            const float chunkH = static_cast<float>(kTilemapChunkSize) * map->cellSize[1];
+            for (size_t li = 0; li < map->layers.size(); ++li) {
+                const TilemapLayer& layer = map->layers[li];
+                for (const auto& [key, chunk] : layer.chunks) {
+                    TileCacheKey ck;
+                    ck.entityIndex = e.index;
+                    ck.entityGeneration = e.generation;
+                    ck.layer = static_cast<int32_t>(li);
+                    ck.chunk = key;
+                    if (culling) {
+                        const float minX = origin.x + static_cast<float>(key.cx) * chunkW;
+                        const float minY = origin.y + static_cast<float>(key.cy) * chunkH;
+                        const bool outside = minX > boundsMax.x || minX + chunkW < boundsMin.x || minY > boundsMax.y
+                                             || minY + chunkH < boundsMin.y || origin.z > boundsMax.z
+                                             || origin.z < boundsMin.z;
+                        if (outside) {
+                            const auto cached = tileCache_.find(ck);
+                            if (cached != tileCache_.end()) {
+                                cached->second.lastUsed = tileFrame_;
+                            }
+                            continue;
+                        }
+                    }
+                    Item it;
+                    it.isTile = true;
+                    it.tileEntity = e;
+                    it.tileLayer = static_cast<int32_t>(li);
+                    it.tileChunk = key;
+                    it.tileOrigin = origin;
+                    AssignKeys(it, world, hasGroups, e, layer.sortingLayerId, layer.orderInLayer);
+                    items_.push_back(it);
+                }
+            }
+        }
+    });
+}
+
+const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources& resources, const XMFLOAT4X4* view,
+                                                  const XMFLOAT4X4* proj)
 {
     list_.Clear();
     items_.clear();
     seenMasks_.clear();
-
-    const SortingLayers& layers = SortingLayers::Get();
+    ++tileFrame_;
 
     // グループがシーンに無ければ祖先を辿らない (多くのシーンはグループを持たない)
     bool hasGroups = false;
@@ -397,82 +711,36 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
             }
         });
     }
-
-    // 外側 = 自分のキー。グループの子孫なら外側 = グループのキー、内側 = 自分のキー
-    auto assignKeys = [&](Item& it, EntityID e, int32_t layerId, int32_t order) {
-        it.outerLayer = layers.OrderOf(layerId);
-        it.outerOrder = order;
-        it.outerIndex = e.index;
-        it.innerLayer = 0;
-        it.innerOrder = 0;
-        it.innerIndex = 0;
-        EntityID groupEntity = kNullEntity;
-        const SortingGroup2DComponent* g = (hasGroups && !it.isMask) ? FindGroup(world, e, groupEntity) : nullptr;
-        if (g != nullptr) {
-            it.innerLayer = it.outerLayer;
-            it.innerOrder = it.outerOrder;
-            it.innerIndex = it.outerIndex;
-            it.outerLayer = layers.OrderOf(g->sortingLayerId);
-            it.outerOrder = g->orderInLayer;
-            it.outerIndex = groupEntity.index;
-        }
-    };
-
-    {
-        const ComponentTypeId req[] = { Sprite2DComponent::sTypeId, WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(req, [&](Archetype& arch) {
-            const int si = arch.FindTypeIndex(Sprite2DComponent::sTypeId);
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const EntityID e = arch.EntityAt(row);
-                if (!IsEntityActive(world, e)) {
-                    continue;
-                }
-                Item it;
-                it.sprite = static_cast<const Sprite2DComponent*>(arch.GetPtr(si, row));
-                it.world = &static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                assignKeys(it, e, it.sprite->sortingLayerId, it.sprite->orderInLayer);
-                items_.push_back(it);
-            }
-        });
-    }
-    {
-        const ComponentTypeId req[] = { SpriteMask2DComponent::sTypeId, WorldMatrixComponent::sTypeId };
-        world.ForEachArchetype(req, [&](Archetype& arch) {
-            const int mi = arch.FindTypeIndex(SpriteMask2DComponent::sTypeId);
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const EntityID e = arch.EntityAt(row);
-                if (!IsEntityActive(world, e)) {
-                    continue;
-                }
-                Item it;
-                it.isMask = true;
-                it.mask = static_cast<const SpriteMask2DComponent*>(arch.GetPtr(mi, row));
-                it.world = &static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                assignKeys(it, e, it.mask->sortingLayerId, it.mask->orderInLayer);
-                items_.push_back(it);
-            }
-        });
-    }
+    CollectSprites(world, hasGroups);
+    CollectMasks(world, hasGroups);
+    CollectTilemaps(world, view, proj);
     if (items_.empty()) {
+        tileCache_.clear();
         return list_;
     }
 
     // 浮動小数点を使わない整数キー。entity.index まで入れるので同値は無く、並びはアーキタイプの走査順に依らない
-    // (同じエンティティにスプライトとマスクがあるときだけ isMask で決める)
+    // (同じエンティティにスプライトとマスクがあるときだけ isMask で、同じタイルマップのレイヤー / チャンクは添字で決める)
     std::stable_sort(items_.begin(), items_.end(), [](const Item& a, const Item& b) {
-        return std::tie(a.outerLayer, a.outerOrder, a.outerIndex, a.innerLayer, a.innerOrder, a.innerIndex, a.isMask)
+        return std::tie(a.outerLayer, a.outerOrder, a.outerIndex, a.innerLayer, a.innerOrder, a.innerIndex, a.isMask,
+                        a.tileLayer, a.tileChunk.cy, a.tileChunk.cx)
                < std::tie(b.outerLayer, b.outerOrder, b.outerIndex, b.innerLayer, b.innerOrder, b.innerIndex,
-                          b.isMask);
+                          b.isMask, b.tileLayer, b.tileChunk.cy, b.tileChunk.cx);
     });
     list_.vertices.reserve(items_.size() * 6);
     for (const Item& it : items_) {
-        if (it.isMask) {
+        if (it.isTile) {
+            EmitTileChunk(it, world, resources);
+        } else if (it.isMask) {
             EmitMask(it, resources);
         } else {
             EmitSprite(it, resources);
         }
+    }
+
+    // 今回どのタイルマップにも使われなかったチャンク (エンティティ / レイヤー / チャンクの削除) を捨てる
+    for (auto it = tileCache_.begin(); it != tileCache_.end();) {
+        it = (it->second.lastUsed == tileFrame_) ? std::next(it) : tileCache_.erase(it);
     }
     return list_;
 }

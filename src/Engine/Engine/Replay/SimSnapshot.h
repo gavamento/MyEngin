@@ -158,7 +158,8 @@ struct SimRefs {
 // v53 (M94d): Sprite2DComponent (TypeId 81、NoHash)。World 節のカラム生バイト
 // v54 (M94f): SortingGroup2D / SpriteMask2D (TypeId 82 / 83、NoHash)。World 節のカラム生バイト
 // v55 (M94i): CharacterControllerComponent へ 2D モード 7 欄 (World 節のカラム生バイト)
-inline constexpr uint32_t kSimSnapshotVersion = 55;
+// v56 (M94j): TilemapComponent (TypeId 84、hash 対象)。World 節のカラム生バイト
+inline constexpr uint32_t kSimSnapshotVersion = 56;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

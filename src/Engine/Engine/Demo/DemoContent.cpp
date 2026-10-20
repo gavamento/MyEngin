@@ -38,6 +38,7 @@
 #include "Engine/Engine/Physics/Fracture/FractureSkinBake.h" // M80j: スキン破壊の骨割り当て
 #include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
+#include "Engine/Engine/Tilemap/TilemapAssets.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
@@ -3247,6 +3248,16 @@ void RegisterAssetLibraries(EngineContext& ctx)
             // M94h: 2D 衝突形状。所有は EngineLoop / HeadlessSim、shape2d:: で注入済み
             if (ShapeLibrary2D* s2 = shape2d::Library()) {
                 s2->LoadFromFile(p);
+            }
+        } else if (p.size() >= 17 && p.compare(p.size() - 17, 17, L".tilepalette.json") == 0) {
+            // M94j: タイルパレット。所有は EngineLoop / HeadlessSim、tilepalette:: で注入済み
+            if (TilePaletteLibrary* tp = tilepalette::Library()) {
+                tp->LoadFromFile(p);
+            }
+        } else if (p.size() >= 13 && p.compare(p.size() - 13, 13, L".tilemap.json") == 0) {
+            // M94j: タイルマップ。tilemap:: で注入済み
+            if (TilemapLibrary* tm = tilemap::Library()) {
+                tm->LoadFromFile(p);
             }
         } else if (p.size() >= 16 && p.compare(p.size() - 16, 16, L".spriteanim.json") == 0) {
             // M94: スプライト列クリップ。所有は EngineLoop / HeadlessSim、spriteanim:: で注入済み

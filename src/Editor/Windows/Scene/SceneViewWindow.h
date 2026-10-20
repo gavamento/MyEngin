@@ -66,6 +66,7 @@ private:
     void DrawCharacterControllerGizmos(World& world);
     void DrawSpriteGizmos(World& world);
     void DrawSprite2DGizmos(EngineContext& ctx, World& world, const Selection& selection);
+    void DrawTilemapGizmos(EngineContext& ctx, World& world, const Selection& selection); // M94j
     // M94h: kPolygon2D / kEdge2D の点列 (緑) を前後面の輪郭と支柱で描く
     void AddShape2DWire(const ColliderComponent& col, const DirectX::XMFLOAT4X4& wm);
     void DrawAudioGizmos(EngineContext& ctx, World& world, const Selection& selection);

@@ -36,6 +36,7 @@
 #include "Engine/Engine/Physics/Rigid/Shapes.h"
 #include "Engine/Engine/Rendering/RenderSystem.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h" // M94: Sprite2D のギズモ寸法
+#include "Engine/Engine/Tilemap/TilemapSystem.h" // M94j: Tilemap のギズモ
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Renderer/Pipeline/FrustumCull.h"
 #include "Engine/Renderer/Device/GpuResources.h"
@@ -430,6 +431,9 @@ constexpr uint32_t kVfx = 0xC080F0FFu;        // スプライト / 3D テキス�
 constexpr uint32_t kSprite2DRect = 0xFFFFFFFFu;  // 選択中 Sprite2D の矩形 (白)
 constexpr uint32_t kSprite2DPivot = 0xFFE020FFu; // 同 pivot の十字 (黄)
 constexpr uint32_t kSpriteMask2D = 0xB050F0FFu;  // SpriteMask2D の矩形 (紫。マスクは描かれないので全部に引く)
+constexpr uint32_t kTilemapBounds = 0x909098FFu;   // Tilemap の使用チャンクの範囲 (灰)
+constexpr uint32_t kTilemapCell = 0x585860FFu;     // 2D モードのセルの格子 (薄い灰)
+constexpr int kTilemapCellLineLimit = 256;         // 1 方向の格子線の上限 (これを超える密度では引かない)
 constexpr uint32_t kShape2D = 0x40E060FFu;         // kPolygon2D / kEdge2D の点列 (緑)
 constexpr uint32_t kShape2DPointSelected = 0xFFFF60FFu; // 編集で選んでいる点 (黄)
 constexpr float kShape2DPickRadiusPx = 10.0f;      // 点・辺のクリック判定半径
@@ -528,6 +532,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         DrawCharacterControllerGizmos(world);
         DrawSpriteGizmos(world);
         DrawSprite2DGizmos(ctx, world, selection);
+        DrawTilemapGizmos(ctx, world, selection);
         DrawAudioGizmos(ctx, world, selection);
         DrawTextMeshGizmos(world);
         DrawPartSocketGizmos(world);
@@ -871,6 +876,66 @@ void SceneViewWindow::DrawSprite2DGizmos(EngineContext& ctx, World& world, const
     const XMFLOAT3 yb = toWorld(0.0f, -half);
     lines_.AddLine(xb, xa, gizmo::kSprite2DPivot);
     lines_.AddLine(yb, ya, gizmo::kSprite2DPivot);
+}
+
+// Tilemap の使用チャンクの範囲 (灰、全 Tilemap) と、2D モードで選択中の Tilemap のセル格子 (薄い灰、画面内だけ)
+void SceneViewWindow::DrawTilemapGizmos(EngineContext& ctx, World& world, const Selection& selection)
+{
+    const EntityID selected = [&] {
+        const GameObject go = ctx.scene->FindByFileId(selection.primary);
+        return go ? go.Id() : kNullEntity;
+    }();
+    ForEachWithWorldMatrix<TilemapComponent>(
+        world, [&](const TilemapComponent& tm, const XMFLOAT4X4& m, EntityID e) {
+            const TilemapAsset* map = tilemap::Resolve(tm.tilemap);
+            if (map == nullptr) {
+                return;
+            }
+            const float sx = map->cellSize[0];
+            const float sy = map->cellSize[1];
+            const XMFLOAT3 origin = { m._41, m._42, m._43 };
+            int32_t minCx = 0;
+            int32_t minCy = 0;
+            int32_t maxCx = 0;
+            int32_t maxCy = 0;
+            if (map->ChunkBounds(minCx, minCy, maxCx, maxCy)) {
+                const float chunkW = static_cast<float>(kTilemapChunkSize) * sx;
+                const float chunkH = static_cast<float>(kTilemapChunkSize) * sy;
+                const float x0 = origin.x + static_cast<float>(minCx) * chunkW;
+                const float y0 = origin.y + static_cast<float>(minCy) * chunkH;
+                const float x1 = origin.x + static_cast<float>(maxCx + 1) * chunkW;
+                const float y1 = origin.y + static_cast<float>(maxCy + 1) * chunkH;
+                lines_.AddLine({ x0, y0, origin.z }, { x1, y0, origin.z }, gizmo::kTilemapBounds);
+                lines_.AddLine({ x1, y0, origin.z }, { x1, y1, origin.z }, gizmo::kTilemapBounds);
+                lines_.AddLine({ x1, y1, origin.z }, { x0, y1, origin.z }, gizmo::kTilemapBounds);
+                lines_.AddLine({ x0, y1, origin.z }, { x0, y0, origin.z }, gizmo::kTilemapBounds);
+            }
+            if (!mode2d || e != selected) {
+                return;
+            }
+            // 画面に入るセルの範囲 (camPos_ を中心に半高 orthoSize2d_)
+            const float aspect = (desiredH_ > 0) ? static_cast<float>(desiredW_) / static_cast<float>(desiredH_) : 1.0f;
+            const float halfW = orthoSize2d_ * aspect;
+            const int ix0 = static_cast<int>(std::floor((camPos_.x - halfW - origin.x) / sx));
+            const int ix1 = static_cast<int>(std::ceil((camPos_.x + halfW - origin.x) / sx));
+            const int iy0 = static_cast<int>(std::floor((camPos_.y - orthoSize2d_ - origin.y) / sy));
+            const int iy1 = static_cast<int>(std::ceil((camPos_.y + orthoSize2d_ - origin.y) / sy));
+            if (ix1 - ix0 > gizmo::kTilemapCellLineLimit || iy1 - iy0 > gizmo::kTilemapCellLineLimit) {
+                return;
+            }
+            const float left = origin.x + static_cast<float>(ix0) * sx;
+            const float right = origin.x + static_cast<float>(ix1) * sx;
+            const float bottom = origin.y + static_cast<float>(iy0) * sy;
+            const float top = origin.y + static_cast<float>(iy1) * sy;
+            for (int ix = ix0; ix <= ix1; ++ix) {
+                const float x = origin.x + static_cast<float>(ix) * sx;
+                lines_.AddLine({ x, bottom, origin.z }, { x, top, origin.z }, gizmo::kTilemapCell);
+            }
+            for (int iy = iy0; iy <= iy1; ++iy) {
+                const float y = origin.y + static_cast<float>(iy) * sy;
+                lines_.AddLine({ left, y, origin.z }, { right, y, origin.z }, gizmo::kTilemapCell);
+            }
+        });
 }
 
 // オーディオ (M45e)。音源はマーカー球、リスナーは向きが要るので前方向線も引く。

@@ -969,6 +969,7 @@ MYE_STR(Create_AudioListener, "Audio Listener",    "オーディオリスナー"
 MYE_STR(Create_Camera,        "Camera",            "カメラ")
 MYE_STR(Create_2D,            "2D",                "2D") // M94
 MYE_STR(Create_Sprite2D,      "Sprite",            "スプライト") // M94
+MYE_STR(Create_Tilemap,       "Tilemap",           "タイルマップ") // M94j
 MYE_STR(Create_Part,          "Part (with Bounds)", "部位 (範囲付き)")
 // M60g2: ラグドール生成器 (右クリック対象の SkinnedMesh のスケルトンから組む)
 MYE_STR(Create_Ragdoll,       "Ragdoll (from Skeleton)", "ラグドール (スケルトンから)")
@@ -2475,3 +2476,21 @@ MYE_STR(Insp_Shape2DUnresolved, "2D shape asset not found: the collider has no e
                                "2D 形状アセットが見つかりません (コライダーは無効です)")
 MYE_STR(SceneView_EditingShape2D, "Editing 2D shape: drag a point / click an edge to add / Delete to remove / Esc to leave",
                                "2D 形状を編集中: 点をドラッグ / 辺をクリックで追加 / Delete で削除 / Esc で終了")
+
+// ---- タイルパレット / タイルマップ (M94j) ----
+MYE_STR(Asset_TilePalette,     "Tile Palette",                         "タイルパレット")
+MYE_STR(Asset_Tilemap,         "Tilemap",                              "タイルマップ")
+MYE_STR(Log_WriteTilePaletteFail, "could not write tile palette: %s",  "タイルパレットを書き出せません: %s")
+MYE_STR(Log_CreatedTilePalette, "created tile palette: %s",            "タイルパレットを作成しました: %s")
+MYE_STR(Log_WriteTilemapFail,  "could not write tilemap: %s",          "タイルマップを書き出せません: %s")
+MYE_STR(Log_CreatedTilemap,    "created tilemap: %s",                  "タイルマップを作成しました: %s")
+MYE_STR(Tilemap_Failed,        "(tile asset not loaded)",              "(タイルアセットを読めません)")
+MYE_STR(Tilemap_Summary,       "Layers: %d / Chunks: %d / Extent: %d x %d cells / Cell size: %.2f x %.2f",
+                               "レイヤー: %d / チャンク: %d / 範囲: %d x %d セル / セル寸法: %.2f x %.2f")
+MYE_STR(Tilemap_Palette,       "Palette: %s",                          "パレット: %s")
+MYE_STR(Tilemap_PaletteMissing, "(palette not found)",                 "(パレットが見つかりません)")
+MYE_STR(TilePalette_Summary,   "Tiles: %d",                            "タイル: %d 種")
+MYE_STR(Insp_TilemapUnresolved, "Tilemap asset not found: nothing is drawn.",
+                               "タイルマップのアセットが見つかりません (何も描かれません)")
+MYE_STR(Insp_TilemapNote,      "The origin is the entity's world position (cell (0, 0) is its lower left). World rotation and scale are ignored.",
+                               "原点はエンティティのワールド位置です (セル (0, 0) の左下)。ワールドの回転とスケールは無視されます")

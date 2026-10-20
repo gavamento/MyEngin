@@ -146,6 +146,14 @@ GameObject CreateSprite2D(EngineContext& ctx, const char* name)
     return obj;
 }
 
+// M94j: 2D タイルマップ (Tilemap + LocalTransform)。タイルマップアセットは Inspector か D&D で割り当てる
+GameObject CreateTilemap(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    obj.AddComponent<TilemapComponent>();
+    return obj;
+}
+
 // ---- UI (M51f) ----
 // text はシーンに保存されるデータなのでエディタ言語に依存しない英語固定 (メニュー表示とは別物)
 
@@ -428,6 +436,7 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
     CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Camera), "Camera", &CreateCamera);
     if (ImGui::BeginMenu(Tr(StrId::Create_2D))) { // M94
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Sprite2D), "Sprite", &CreateSprite2D);
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Tilemap), "Tilemap", &CreateTilemap);
         ImGui::EndMenu();
     }
 

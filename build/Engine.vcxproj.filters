@@ -127,6 +127,9 @@
     <Filter Include="Engine\Session">
       <UniqueIdentifier>{65616315-DB51-DBD3-83C2-A431855687C5}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Tilemap">
+      <UniqueIdentifier>{CE6204BF-4B75-DAC4-EC35-971EA600C9C6}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\UI">
       <UniqueIdentifier>{AD97C4EA-898A-15C7-7B0A-F4DF0AA75D30}</UniqueIdentifier>
     </Filter>
@@ -956,6 +959,15 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Session\SessionTypes.cpp">
       <Filter>Engine\Session</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Tilemap\TilemapAssets.cpp">
+      <Filter>Engine\Tilemap</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Tilemap\TilemapSelfTest.cpp">
+      <Filter>Engine\Tilemap</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Tilemap\TilemapSystem.cpp">
+      <Filter>Engine\Tilemap</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\UI\FontSelfTest.cpp">
       <Filter>Engine\UI</Filter>
@@ -2006,6 +2018,15 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Session\SessionTypes.h">
       <Filter>Engine\Session</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Tilemap\TilemapAssets.h">
+      <Filter>Engine\Tilemap</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Tilemap\TilemapSelfTest.h">
+      <Filter>Engine\Tilemap</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Tilemap\TilemapSystem.h">
+      <Filter>Engine\Tilemap</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\UI\FontSelfTest.h">
       <Filter>Engine\UI</Filter>
