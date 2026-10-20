@@ -43,8 +43,8 @@
 | sub-10 | OK | 1 | cc01485 | タイルパレット / タイルマップ資産、Tilemap、チャンク描画。依存: 04。**チェックポイント 2 (sub-06〜10) 通過**。TypeId 84、snapshot v56。NavAgent 庭ハッシュの再採取 (sub-09 起因) は追補 9a49655 |
 | sub-11 | OK | 1 | 1eaee36 | タイル衝突 + セル書き換えの sim 状態 + 破壊。依存: 08, 10。snapshot v57。前カリング (CollectWithin / staticOnly) と WakeBodiesNear を spec 4.1.7 に採用 |
 | sub-12 | OK | 1 | 3a11cdb | タイルパレット窓。依存: 10, 02。版 bump なし。編集中の反映は TilemapLibrary::Register (TilemapSystem に編集専用の口を作らない) |
-| sub-13 | 判定待ち | 0 | | ルールタイル、アニメーションタイル、レイヤー UI。依存: 11, 12。**SELF_EVAL round 1 到着済み・planner 未判定・変更は作業ツリーに未コミット**。やること 3b (タイル追加 UI) / 3c (大きな面のドラッグ計測) を sub-12 VERDICT で追加 |
-| sub-14 | 未着手 | 0 | | ABI (10 本) + C# ミラー + MyeScript。依存: 08, 11。**版は着手時の末尾 (M75h より先なら v31)** |
+| sub-13 | OK | 1 | ec7a3a0 | ルールタイル、アニメーションタイル、レイヤー UI。依存: 11, 12。3b (タイル追加 UI) 実装、3c は計測の結果 dirty のチャンク化を見送り (焼き直し CPU 1.2〜2.8 ms、33 ms 超は WARP のエディタ全体が主因)。版 bump なし |
+| sub-14 | 実装中 | 0 | | ABI (10 本) + C# ミラー + MyeScript。依存: 08, 11。**版は着手時の末尾 (M75h より先なら v31)** |
 | sub-15 | 未着手 | 0 | | Light2D とライトバッファ。依存: 06 |
 | sub-16 | 未着手 | 0 | | ShadowCaster2D と法線マップ。依存: 15 |
 | sub-17 | 未着手 | 0 | | スプライトのサーフェスシェーダ枝、Parallax2D、2D ポスト例。依存: 06 |
@@ -74,6 +74,7 @@
 - Q-11 (sub-06 VERDICT) SpriteMask2D の効き方を「描画順で先に出たマスクの range に入るスプライトだけ」(現行 v1) のままにするか、Unity 互換 (描画順に関係なく range 内の全スプライトに効き、マスクが無い VisibleInside は見えない) にするか / 裁定: v1 のまま (マスクの order を小さくすれば同じ使い方ができ、ステンシル 1 bit の制約はどちらでも同じ)。Unity 互換は spec 3. 後回しに記録 / 逆を選ぶと: Sprite2DRenderer の Collect で「マスクを先に全部描く」並べ替えと、マスク 0 個の VisibleInside を落とす分岐が増える (1 サブの追補規模、sub-17 の前に挟める)
 - Q-12 (sub-10 VERDICT) タイルの絵を「パレットのスプライトの矩形をセル全面 (cellSize) へ伸ばす」にするか、Unity の原寸 + pivot 配置にするか / 裁定: 伸ばす (標準の 16 px = 1 セルでは同じ結果、サイズ違いの絵がセルからはみ出さない、可逆) / 逆を選ぶと: `BakeTileChunk` のクアッド寸法を `LocalRect` (原寸 + pivot) 基準に変える (sub-13 の rule / anim の前に決めるのが安い)
 - Q-13 (sub-12 VERDICT) タイルパレット窓を開いている間、Scene View 2D の左クリックを「塗り」にする既定を ON のままでよいか / 裁定: ON (Unity の Tile Palette と同じ。窓の「Paint in Scene View」チェックで外せる) / 逆を選ぶと: 既定 OFF にして、塗るたびにチェックを入れる操作が 1 つ増える (コードは既定値 1 行)
+- Q-14 (sub-13 VERDICT) エディタの Edit モード (Play していない) でアニメーションタイルが止まって見える (コマ 0 のまま) のでよいか / 裁定: 止まったままでよい (アニメは sim tick から導出、描画専用の時計を足すと決定性の境界が 1 つ増える。Play 中と Runtime では動く) / 逆を選ぶと: Sprite2DRenderer に「Edit 中だけ実時間から仮の tick を作る」描画専用の時計を足す (小規模。sim には触れない。スクショ / golden は tick 基準のまま)
 
 ## 申し送り (セッション跨ぎ)
 - 基点の直前に無関係の 2 コミット (`2ac3b4f` DeepModal 再学習、`25fb355` スプラッシュ) を司会が切り出した。
@@ -144,3 +145,8 @@
 - (sub-12 VERDICT nit → sub-24 checklists) 実マウスのクリック判定、S/B/D/G/U/I・Ctrl+S/Z/Y、Delete 先取り、別アセット切替モーダル、Open Tile Palette ボタン、Window メニュー、TextWrapped 化後の Play 中表示はユーザー目視。Revert ボタンは無し (Undo で戻せる)。
 - (sub-12 coder → sub-13) レイヤー編集で `TilemapEditModel` を拡張するなら `LayersEqual` の size 比較と `CellEdit.layer` 添字に注意。rule / anim が入っても窓の「編集中は Register で反映」はそのまま使える。キー: S B D G U I は窓フォーカスか Scene View 上カーソル時、Ctrl+S/Z/Y は窓フォーカス時のみ (Scene View フォーカスの Ctrl+Z はシーンの UndoStack)。Scene View 2D の色が淡いのはエディタカメラの ACES (色の契約はゲームカメラの話、spec 4.1.7 に明記)。
 - **2026-10-21 ユーザー指示「40分後にいったん止めて」で sub-13 の判定前に一時停止。** 再開手順: (1) `git status` で sub-13 の変更 (SELF_EVAL の「触ったファイル」と一致、`plans\m94-2d\sub-13.md` の実装メモに SELF_EVAL round 1 の写し) が残っていることを確認 (2) planner を新規起動し (セッションを跨ぐと SendMessage 不可)、`MODE: VERDICT` で sub-13.md 実装メモの SELF_EVAL 全文を渡す。coder の不安・質問 5 件 (3c の 33 ms 判定は WARP 基準でも超えるので見送り / ドラッグ初回だけ約 110 ms / Ctrl+Z はマップとパレット別履歴 / Edit 中アニメタイルは止まる / レイヤー UI は Inspector でなく窓) を裁定させる (3) OK ならコミット (件名は VERDICT から) → 台帳 → sub-14 (ABI、M75h が v31 予約なので末尾確認、やること 6 = PhysicsQueries にタイルの箱)。REWORK なら新しい coder に FIX_REQUEST + sub-13.md を渡す。
+- 2026-10-21 ユーザーの「続き」で再開。planner (同じセッションの agent) は SendMessage で再開でき、sub-13 を判定した。
+- (sub-13 VERDICT nit → sub-23) デモ資産の `.meta` は spec 4.1.14 どおり `filter = 2 (point)` にする (`tools\gen_2d_assets.py`)。sub-13 の temp 資産は filter auto で滲んでいた。
+- (sub-13 VERDICT nit → sub-24 checklists) パレット窓の初回ドラッグが一瞬 (約 110 ms) 止まらないか、GUI の実クリック (追加ポップアップ、8 近傍トグル、InputText、Ctrl+Z の宛先、パレットの Ctrl+S 往復)。Inspector のタイル資産要約から窓を開く導線は無し (Tilemap コンポーネント側の [Open Tile Palette] で足りる)。
+- (sub-13 coder) ルール / アニメの評価は描画側だけ (TilemapSystem / ABI に足していない)。スクリプトの SetCell で変わったセルのルール変種は自動で追従。sub-15: Sprite2DRenderer の Collect に simTick 引数が増えた (呼び元は RenderSystem.cpp の 1 箇所)。sub-24 に書くこと: 評価順 anim > rule > sprite、neighbors の順 (NW N NE W E SW S SE、N = +y)、Edit モードではアニメが進まない (Q-14)、Play 中は編集不可、Ctrl+Z はマップ / パレット別で直前に変わった側から。
+- (sub-14 着手時の確認) `MYE_API_VERSION` は 30。M75h は未着手なので M94 の sub-14 が v31 を使い、M75h は v32 以降になる (メモリの M75h 予約を更新すること)。
