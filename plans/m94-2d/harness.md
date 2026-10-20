@@ -41,8 +41,8 @@
 | sub-08 | OK | 1 | 4c4c154 | 2D 形状 (kPolygon2D / kEdge2D) と C++ クエリ + Fracture plane2D コピー。依存: 01。版 bump なし。静的形状の供給口 AddStaticShapeSource (sub-11 / sub-19 が使う) |
 | sub-09 | OK | 2 | 02e4022 | CharacterController の plane2D (一方通行・移動床・剛体押し・報告)。依存: 01。snapshot v55。round 1 REWORK (must: kinematic + plane2D は velocity で積分) |
 | sub-10 | OK | 1 | cc01485 | タイルパレット / タイルマップ資産、Tilemap、チャンク描画。依存: 04。**チェックポイント 2 (sub-06〜10) 通過**。TypeId 84、snapshot v56。NavAgent 庭ハッシュの再採取 (sub-09 起因) は追補 9a49655 |
-| sub-11 | 実装中 | 0 | | タイル衝突 + セル書き換えの sim 状態 + 破壊。依存: 08, 10 |
-| sub-12 | 未着手 | 0 | | タイルパレット窓。依存: 10, 02 |
+| sub-11 | OK | 1 | 1eaee36 | タイル衝突 + セル書き換えの sim 状態 + 破壊。依存: 08, 10。snapshot v57。前カリング (CollectWithin / staticOnly) と WakeBodiesNear を spec 4.1.7 に採用 |
+| sub-12 | 実装中 | 0 | | タイルパレット窓。依存: 10, 02 |
 | sub-13 | 未着手 | 0 | | ルールタイル、アニメーションタイル、レイヤー UI。依存: 11, 12 |
 | sub-14 | 未着手 | 0 | | ABI (10 本) + C# ミラー + MyeScript。依存: 08, 11。**版は着手時の末尾 (M75h より先なら v31)** |
 | sub-15 | 未着手 | 0 | | Light2D とライトバッファ。依存: 06 |
@@ -130,3 +130,12 @@
 - (sub-10 coder → sub-13) パレットの rule / anim は読み書きのみ。評価は `BakeTileChunk` の「def->sprite を引く」1 箇所に差し込む (隣接は実効セル、アニメは tick から。アニメを含むチャンクの焼き直しは dirtyEpoch か専用キーで)。コマ選びは sub-07 の `SpriteAnimFrameAt`。
 - (sub-10 coder → sub-14) C++ 側のセル座標 API は `TilemapSystem` の静的関数。`CellToWorld` はセル中心 (左下角が要るなら足す)。
 - (sub-10 VERDICT) 描画の確定 (spec 4.1.7): 絵はセル全面へ伸ばす (Q-12)、flip → 回転 (反時計回り 90°) の UV 隅入れ替え、行 0 が下、チャンク (cy, cx) 昇順、正射影だけチャンク切り、タイブレーク entity.index → レイヤー → チャンク。性能: 15000 セル全面で GPU 約 9 ms (WARP、空 2.5 ms)、CPU 増分 約 1.1 ms (毎フレームの原点加算コピー、nit)。Sprite2D 2000 枚との合算は sub-23。Scene View のギズモ / Create / ピッカー / D&D の実画面は sub-12 のエディタスクショで通す。
+- (sub-11 VERDICT) **sub-11 は Broadphase (`staticOnly`) と PhysicsSystem (`MotionRegions` の組み立て) を触った。** チェックポイント 3 (sub-15) の replay_verify は全ジョブの個別 PASS 行をログで確認する (`cache\m94\replay_verify_cp3.log`)。Phase 3 の reviewer 依頼文に「PhysicsSelfTest の既存節と全 replay ジョブの照合を重めに」と明記する。
+- (sub-11 VERDICT should 1 → sub-14 やること 6) PhysicsQueries (Raycast / OverlapSphere / OverlapBox / SphereCast / BoxCast) はタイルの箱を見ない。sub-14 で供給口の `Collect` 全体 (絞り込み無し) をクエリのコライダー収集に足す + selftest (spec 7. R12 (b))。
+- (sub-11 VERDICT should 2 → sub-21 やること 4) Perception の LOS (`CollectLosColliders`) も同じ口でタイルを見せる。sub-21 の依頼文には append 再採取規則 (spec 4.4) も添える。
+- (sub-11 VERDICT nit → sub-12) Scene View のエディタスクショに showCollision の緑の箱 (タイル衝突) も写す。nit → sub-24: 絞り込みの余裕 (速度 2 tick + 2 m) を超える探りはタイルを見ない (spec R12 (a))、チャンク境界 (16 セル) で箱が分かれる (R12 (c))、を engine_spec の限界欄へ。
+- (sub-11 coder) Play 中の sim の書き換えは `TilemapSystem::SetCell / FillRect / DamageCell` (World と持ち主 EntityID を取る)、`tilemap::System()` が Editor からも引ける。アセット編集 (sub-12 のパレット窓) は `TilemapLayer::SetCell` + `TilemapLibrary::Register`。セル座標は -32768..32767、範囲外の書き込みは false。cellKey は各軸 +32768 の 16 bit 詰め (cy が上位)。
+- (sub-11 coder → sub-13) `BakeTileChunk` は `tilemap::System()` の実効セルを読む。damage ビット (bit24-31) は実効セルに入っているので、ひび割れの見た目は評価時に `Damage(value)` を見る。
+- (sub-11 coder → sub-14) TilemapSetCell / GetCell / DamageCell は TilemapSystem のインスタンス (EngineApiTable の文脈に `TilemapSystem*` を足す) に 1 対 1。座標変換は `CellToWorld / WorldToCell` (WorldMatrix 基準、1 tick 古い)。
+- (sub-11 coder → sub-21) GridAgent2D の歩行可否は `TilemapSystem::GetCell` と palette の collider / oneWay で引く。→ sub-22 / 23: タイルの箱は動く物体の範囲に届くものだけ物理に渡る (動かさない面だけの Tilemap でも近づいた tick に箱が現れる)。
+- (sub-11 coder) 焼いた値: タイル並走シナリオ 326BA3CD14F4BBB8 (`TilemapSelfTest.cpp` の `kTileScenarioExpectedHash`)。既存の plane2D / Shapes2D / CC2D / NavAgent 庭は不動。`MYE_SELFTEST_ONLY=m94` に Tilemap suite が入っている。通常の静的 Collider を消しても眠っている剛体が起きない既存挙動は別件のまま。`cache\m94\s11\` に着手前後のダンプ・.rep (git 管理外)。
