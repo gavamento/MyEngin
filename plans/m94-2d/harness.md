@@ -47,8 +47,8 @@
 | sub-14 | OK | 1 | 4fe503f | ABI (10 本) + C# ミラー + MyeScript。依存: 08, 11。**ABI v31 = 188 スロット** (M75h は v32 以降)。空間クエリがタイルの箱を見る (physicsquery::Install) |
 | sub-15 | OK | 1 | 971e6a4 | Light2D とライトバッファ。依存: 06。TypeId 85、snapshot v58。チェックポイント 3 通過 (replay 20 ジョブ個別 PASS、golden 30 枚 tol 0、build_managed 成功) |
 | sub-16 | OK | 1 | 03ff599 | ShadowCaster2D と法線マップ。依存: 15。TypeId 86、snapshot v59。押し出し距離は「頂点→画面中心 + 対角」に変更 (spec 4.1.9) |
-| sub-17 | 実装中 | 0 | | スプライトのサーフェスシェーダ枝、Parallax2D、2D ポスト例。依存: 06。やること 4b (normalMap の sRGB 警告) を sub-16 VERDICT で追加 |
-| sub-18 | 未着手 | 0 | | Line2D。依存: 06 |
+| sub-17 | OK | 1 | 3e54872 | スプライトのサーフェスシェーダ枝、Parallax2D、2D ポスト例。依存: 06。TypeId 87、snapshot v60。スプライトのエントリは新規 hlsli 2 本 (既存サーフェスはバイト同一) |
+| sub-18 | 実装中 | 0 | | Line2D。依存: 06 |
 | sub-19 | 未着手 | 0 | | SpriteShape2D (描画・衝突・ハンドル)。依存: 08, 18 |
 | sub-20 | 未着手 | 0 | | 2D ジョイント検証と Effector2D。依存: 09 |
 | sub-21 | 未着手 | 0 | | GridAgent2D、BT MoveTo の fallback、Perception forwardAxis。依存: 11, 09 |
@@ -167,3 +167,6 @@
 - (sub-16 VERDICT nit 3 → sub-24 checklists) ShadowCaster2D の紫のギズモ、Inspector の normalMap ピッカー (ドロップ / 一覧がテクスチャだけ)、Add Component の 2D 分類はユーザー目視。ShadowCaster2D の Create メニューは無し (Add Component で足りる)。
 - (sub-16 coder → sub-17 以降) Sprite2DBatch を増やすときは `Sprite2DRenderer::Push` の比較に足す。法線バッチは別系統 (PushNormal、Sprite2DNormalBatch)。Sprite2DPass は VB の前半がスプライト頂点、後半が法線頂点。→ sub-23: golden 2d_lights (影と法線入り) は sub-16 の temp シーンの座標・色を流用できる (`cache\m94\s16\` と screenshots の 4 枚)。
 - (sub-16 coder → sub-24 限界欄) 影は硬い影のみ、スプライトのシルエット影は無し、法線 RT はステンシルマスク対象外、法線は sRGB オフ・緑 = 上、影 RT はライトごとに作り直し、透視カメラでは影もずれる、caster の Collider 回転・中心は Box / Sphere だけ反映し Polygon2D はローカル XY のみ、法線 RT が有効なら法線マップ無しのスプライトにも N·L (Q-16)。
+- (sub-17 VERDICT nit → sub-23) 透視カメラでの Parallax、回転・スケール付きの親を持つスプライトの視差、大量バッチ混在は実描画で未確認 (2D は正射影前提で v1 は可)。sub-23 のデモ (視差背景 ×2) で正射影の実運用を通す。m94 suite に Surface 3 本 (Shader / Material / Deferred) が入り所要時間が増えた (メッシュ用サーフェス経路の不変を毎サブ見るため維持)。
+- (sub-17 coder → sub-20 以降) `Sprite2DPass::Render` に MaterialLibrary 引数 (呼び元は RenderSystem.cpp の 1 箇所)。Sprite2DBatch に material が増え Push の比較に入っている。`cache\m94\s15\base_head` は基点 edb87ac を Release ビルドした状態に更新済み (約 0.5 GB、git 管理外)。
+- (sub-17 coder → sub-24 engine_spec) スプライトのサーフェスは MyEngineSurfaceSprite.hlsli を include して `float4 PSMain(MyeSpriteInput i)` (VS・ライト乗算・ブレンドはエンジン)、メッシュ用と併記可、判定は include 名。使えない材質は内蔵 + Inspector に理由、走行中に壊すと旧プログラムが残る、輪郭線は矩形の内側だけ、材質は色パスだけで法線 RT / 影 RT に効かない、Properties 名は `_` 始まり。Parallax2D の repeat は正射影だけ (片軸 64 / 両軸 8x8)、factor は描画位置だけ。
