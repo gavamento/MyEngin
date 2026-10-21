@@ -1,8 +1,8 @@
 # sub-15: Light2D とライトバッファ
 
 - 依存: sub-06
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (commit 971e6a4)
+- 往復: 1
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む**。spec: 2. #14、4.1.9、7. R8
 
 ## やること

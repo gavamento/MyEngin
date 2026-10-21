@@ -45,8 +45,8 @@
 | sub-12 | OK | 1 | 3a11cdb | タイルパレット窓。依存: 10, 02。版 bump なし。編集中の反映は TilemapLibrary::Register (TilemapSystem に編集専用の口を作らない) |
 | sub-13 | OK | 1 | ec7a3a0 | ルールタイル、アニメーションタイル、レイヤー UI。依存: 11, 12。3b (タイル追加 UI) 実装、3c は計測の結果 dirty のチャンク化を見送り (焼き直し CPU 1.2〜2.8 ms、33 ms 超は WARP のエディタ全体が主因)。版 bump なし |
 | sub-14 | OK | 1 | 4fe503f | ABI (10 本) + C# ミラー + MyeScript。依存: 08, 11。**ABI v31 = 188 スロット** (M75h は v32 以降)。空間クエリがタイルの箱を見る (physicsquery::Install) |
-| sub-15 | 未着手 | 0 | | Light2D とライトバッファ。依存: 06 |
-| sub-16 | 未着手 | 0 | | ShadowCaster2D と法線マップ。依存: 15 |
+| sub-15 | OK | 1 | 971e6a4 | Light2D とライトバッファ。依存: 06。TypeId 85、snapshot v58。チェックポイント 3 通過 (replay 20 ジョブ個別 PASS、golden 30 枚 tol 0、build_managed 成功) |
+| sub-16 | 実装中 | 0 | | ShadowCaster2D と法線マップ。依存: 15。やること 5b (Freeform / Sprite ライトの画素確認) を sub-15 VERDICT で追加 |
 | sub-17 | 未着手 | 0 | | スプライトのサーフェスシェーダ枝、Parallax2D、2D ポスト例。依存: 06 |
 | sub-18 | 未着手 | 0 | | Line2D。依存: 06 |
 | sub-19 | 未着手 | 0 | | SpriteShape2D (描画・衝突・ハンドル)。依存: 08, 18 |
@@ -75,6 +75,7 @@
 - Q-12 (sub-10 VERDICT) タイルの絵を「パレットのスプライトの矩形をセル全面 (cellSize) へ伸ばす」にするか、Unity の原寸 + pivot 配置にするか / 裁定: 伸ばす (標準の 16 px = 1 セルでは同じ結果、サイズ違いの絵がセルからはみ出さない、可逆) / 逆を選ぶと: `BakeTileChunk` のクアッド寸法を `LocalRect` (原寸 + pivot) 基準に変える (sub-13 の rule / anim の前に決めるのが安い)
 - Q-13 (sub-12 VERDICT) タイルパレット窓を開いている間、Scene View 2D の左クリックを「塗り」にする既定を ON のままでよいか / 裁定: ON (Unity の Tile Palette と同じ。窓の「Paint in Scene View」チェックで外せる) / 逆を選ぶと: 既定 OFF にして、塗るたびにチェックを入れる操作が 1 つ増える (コードは既定値 1 行)
 - Q-14 (sub-13 VERDICT) エディタの Edit モード (Play していない) でアニメーションタイルが止まって見える (コマ 0 のまま) のでよいか / 裁定: 止まったままでよい (アニメは sim tick から導出、描画専用の時計を足すと決定性の境界が 1 つ増える。Play 中と Runtime では動く) / 逆を選ぶと: Sprite2DRenderer に「Edit 中だけ実時間から仮の tick を作る」描画専用の時計を足す (小規模。sim には触れない。スクショ / golden は tick 基準のまま)
+- Q-15 (sub-15 VERDICT) どのライトにも照らされない層の lit スプライトを黒にする (Unity と同じ) でよいか / 裁定: 黒 (Global ライトを置けば底上げできる。ライトを入れたら暗所は暗く見えるのが 2D ライトの意図) / 逆を選ぶと: 集合が空の層だけ従来色に戻す (`SwitchLightGroup` の 1 分岐。ただし「ライトの当たらない層だけ明るい」逆転が起きる)
 
 ## 申し送り (セッション跨ぎ)
 - 基点の直前に無関係の 2 コミット (`2ac3b4f` DeepModal 再学習、`25fb355` スプラッシュ) を司会が切り出した。
@@ -155,3 +156,9 @@
 - (sub-14 VERDICT nit → sub-23 やること 8) 供給口の Collect を毎クエリ絞り込み無しで呼ぶコストを計測し、1 tick の sim が 2 ms を超えたら tick 単位でキャッシュ。C# の SpriteByName は実在スライスをデモスクリプトで引く。→ sub-22 やること 0: Camera2DFollow の boundsFromTilemap 用に `GetCollisionBounds` (ABI には出さない)。
 - (sub-14 coder) Raycast の既存消費者 (AcousticField / FootIk / Perception) もタイルの箱に当たる (意図どおり、spec 4.1.10)。sub-21 の Perception LOS は `physicsquery::CollectStaticShapes(world, mask, out)` で同じ口を使える。sub-24 の限界欄: BoxCast 27 点近似、クエリは絞り込み無しの全箱、GetBounds の定義、CellToWorld は out ポインタ。ビルド癖: C4100 の既存癖は非 WX ビルドを 1 回挟んでから WX を 2 回重ねると通る。`plans\m75-ugui.md` の M75h 版注記は sub-24 で更新。
 - **2026-10-21 ユーザー指示「sub14が終わったらいったん止めて」で sub-14 コミット後に一時停止。** 作業ツリーは clean。再開は `/harness resume m94-2d` (同じセッションなら planner は SendMessage で再開可、跨ぐなら新規起動して spec / 台帳を渡す) → sub-15 (チェックポイント 3) の coder を起動。依頼文に上の 3 行 (build_managed Release / replay の個別 PASS 行と全文ログ / Deferred のマスク) と、`demo_terrain_deferred` は基点の絵 `cache\m94\baseline_terrain.png` と比較することを添える。
+- (sub-15 VERDICT) チェックポイント 3 通過。全文ログ `cache\m94\replay_verify_cp3.log`。`cache\m94\s15\base_head` (基点 044b508 の git archive、約 0.5 GB、git 管理外) は次のチェックポイントの基点比較に流用できる。
+- (sub-15 VERDICT should 1 → sub-16 やること 5b) 5 点の凸 Freeform と丸テクスチャの Sprite ライトを置き、形の内側が明るく外側が Global のみであることを画素ログで確認する。nit 3 → sub-16: 影 RT / 法線 RT を入れるとき `Sprite2DPass::Render` のライトバッファ構築部を関数に割る余地。
+- (sub-15 VERDICT nit 2 → sub-24 checklists) Light2D のギズモ、Create → 2D → Light 2D、Inspector の実操作、非 Play の Scene View でライトが効く見た目はユーザー目視。
+- (sub-15 coder → sub-16) ライトの形状 PS は `sprite2d_light.hlsl` の LightCB (b0)。shadows / shadowStrength / normalMapDistance は Light2DComponent に既にある (未使用)。影 RT は群ごとの BuildLightBuffer 内、ライト 1 個ずつの描画の前に差し込める。法線 RT は BuildLightBuffer の前に作り、sprite2d_light.hlsl に t を足す。
+- (sub-15 coder → sub-17 以降) Sprite2DBatch を増やすときは `Sprite2DRenderer::Push` の比較に足す (lit と forceNewBatch_ はここ)。→ sub-23: golden 2d_lights はこのライト経路、ライトのあるシーンでは Tilemap も常に lit。
+- (sub-15 coder → sub-24 限界欄) 集合が空の層は黒 (Q-15)、凹 Freeform の外縁の重なりは加算で明るくなる、透視カメラではライト平面がずれる、ライトバッファは層集合が変わるたびに作り直し (R8、層 32 × 別集合で 32 回)、Spot の falloff は半径方向の指数で Unity の Falloff とは別。
