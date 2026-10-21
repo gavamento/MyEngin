@@ -10,6 +10,7 @@
 2. 影: `shadows` が立つライトごとに、R8_UNORM の影 RT (シーン RT と同サイズ、1 枚を使い回す) を clear(0) → 全キャスターの多角形 (source 0: 同エンティティの Collider — Box は 4 点、Sphere は 16 角、Polygon2D は点列、それ以外は無し / source 1: points) の各辺を、ライト位置から辺の両端へのベクトルを「RT 対角 × 2」の距離まで延ばした四辺形として 1.0 で描く → `selfShadow == false` のキャスターは自分の多角形を 0.0 で描き戻す → ライト形状の PS (sub-15) が `1 − shadow[screenUV] × shadowStrength` を掛ける。`castsShadows == false` は除外。Global には影無し。
 3. 法線: `Sprite2D.normalMap` を持つスプライトを、ライト群の処理前に法線 RT (RGBA8、clear (0.5, 0.5, 1, 1)) へ同じ頂点列で描く (flipX / flipY で法線の x / y を反転。`sprite2d_normal.hlsl`)。形状ライトの PS は `N = normalRT × 2 − 1`、`L = normalize(lightPos.xy − pixelWorld.xy, normalMapDistance)`、`max(0, N·L)` を掛ける。法線を持つスプライトが 0 枚なら法線 RT を作らない (gate)。
 4. Scene View ギズモ: ShadowCaster2D の多角形 (紫)。Inspector: `normalMap` の AssetRef ピッカー (テクスチャ)。
+5b. (sub-15 の持ち越し) Freeform ライト (5 点の凸多角形 + falloffWidth) と Sprite ライト (丸いテクスチャ) を同じ temp シーンに 1 個ずつ置き、形の内側が明るく外側が Global のみになる画素値をログ (sub-15 は selftest の頂点数まで)。
 5. 確認スクショ: Spot 1 + 箔 (ShadowCaster source 0、selfShadow false) → 影が落ち、箔自身は明るい。法線付きスプライト 1 枚、ライトを左 / 右に置いた 2 枚で明暗が反転。
 
 ## やらないこと (このサブでは)

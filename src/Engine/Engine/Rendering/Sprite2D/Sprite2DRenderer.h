@@ -22,6 +22,7 @@ class World;
 struct RenderResources;
 struct Sprite2DComponent;
 struct SpriteMask2DComponent;
+struct Light2DComponent;
 struct SpriteDef;
 
 // World の active な Sprite2D / SpriteMask2D / Tilemap を集め、SpriteDef を解決して三角形リストに展開し、
@@ -92,6 +93,7 @@ private:
         int32_t innerLayer = 0;
         int32_t innerOrder = 0;
         uint32_t innerIndex = 0;
+        int32_t layerId = 0; // ライトの対象層に使うソート層の安定 id (グループの子孫はグループの層)
         bool isMask = false;
         // タイルのチャンク (isTile)。同じキーの中ではレイヤー添字 → チャンク (cy, cx) の順
         bool isTile = false;
@@ -164,8 +166,27 @@ private:
     void CollectTilemaps(World& world, const DirectX::XMFLOAT4X4* view, const DirectX::XMFLOAT4X4* proj);
     void AddQuad(const DirectX::XMFLOAT4X4& m, float flipX, float flipY, const float color[4], float x0, float y0,
                  float x1, float y1, float u0, float v0, float u1, float v1);
-    void Push(AssetID texture, bool pointFilter, uint8_t stencil, float alphaCutoff, const Sprite2DVertex* v,
-              uint32_t count);
+    void Push(AssetID texture, bool pointFilter, uint8_t stencil, float alphaCutoff, bool lit,
+              const Sprite2DVertex* v, uint32_t count);
+
+    // ---- 2D ライト ----
+    // 収集したライトの対象層と Global の判定 (list_.lights と同じ添字は Global を除いた並び、meta は全ライト)
+    struct LightMeta {
+        uint32_t targetMask = 0xFFFFFFFFu;
+        bool global = false;
+        uint32_t instance = 0; // 非 Global の list_.lights 添字
+        float color[3] = {};   // rgb × intensity
+    };
+    // シーンの有効な Light2D を集めて list_.lights / lightVertices と lightMeta_ を作る (無ければ lightMeta_ が空)
+    void CollectLights(World& world, RenderResources& resources);
+    void BuildSpotLight(const Light2DComponent& lc, const DirectX::XMFLOAT4X4& m, Light2DInstance& out);
+    bool BuildFreeformLight(const Light2DComponent& lc, const DirectX::XMFLOAT4X4& m, Light2DInstance& out);
+    bool BuildSpriteLight(const Light2DComponent& lc, const DirectX::XMFLOAT4X4& m, RenderResources& resources,
+                          Light2DInstance& out);
+    // 描画順に走る中で、次に出す項目 (層 layerId、lit か) のライト群へ切り替える。集合が変わるときバッチを割る
+    void SwitchLightGroup(int32_t layerId, bool lit);
+    // 層 layerId を照らすライト集合の id (同じ集合の層は同じ id)
+    uint32_t LightSetOf(int32_t layerId);
 
     AssetID missingTexture_ = {}; // 内蔵 16x16 マゼンタ (未解決のスプライト用。必要になったときに作る)
     bool warnedVertexCap_ = false;
@@ -175,6 +196,11 @@ private:
     std::vector<Sprite2DVertex> scratch_; // 1 スプライト分の頂点 (上限 kMaxSpriteVertices)
     std::vector<std::pair<int32_t, int32_t>> seenMasks_; // 描画順でここまでに出たマスクの range
     std::map<TileCacheKey, BakedChunk> tileCache_;       // 走査は挿入 / 削除だけ (描画順には使わない)
+    std::vector<LightMeta> lightMeta_;                   // 有効な Light2D (空 = presence gate で従来経路)
+    std::vector<std::vector<uint32_t>> lightSets_;       // 集合 id → 照らすライトの lightMeta_ 添字 (昇順)
+    int32_t layerLightSet_[32] = {};                     // 層 id → 集合 id (-1 = 未計算)
+    std::vector<uint32_t> groupSetIds_;                  // list_.lightGroups と並ぶ集合 id
+    bool forceNewBatch_ = false;                         // 次の Push でバッチを必ず割る (ライト群の切り替え)
     uint64_t simTick_ = 0;                               // Collect が受けた sim の tick (アニメーションタイル用)
     uint64_t tileFrame_ = 0;                             // Collect の通し番号 (使われなくなったチャンクの掃除用)
     std::vector<Sprite2DVertex> tileScratch_;            // 原点を足した 1 run 分の頂点

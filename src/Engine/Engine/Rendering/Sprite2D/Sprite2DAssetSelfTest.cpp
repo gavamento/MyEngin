@@ -6,6 +6,7 @@
 #include "Engine/Engine/Rendering/Sprite2D/Sprite2DAssetSelfTest.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -20,12 +21,14 @@
 #include "Engine/Core/Asset/ImportMetaResolver.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Ecs/World.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
 #include "Engine/Engine/Rendering/Sprite2D/Sprite2DRenderer.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Scene/SortingLayers.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/Device/GpuResources.h"
 
 #include "nlohmann/json.hpp"
 
@@ -443,6 +446,150 @@ bool RunSprite2DAssetSelfTest()
         // 不正な size は何も出さない
         in.sizeX = 0.0f;
         check(!Sprite2DRenderer::BuildSliceQuads(in, quads) && quads.empty(), "size <= 0 emits nothing");
+    }
+
+    // ---- (g) Light2D の登録と、収集 -> ライト群 (M94o)。GPU を使わない部分だけ ----
+    {
+        check(Light2DComponent::sTypeId == 85, "Light2D is TypeId 85");
+        const ComponentDesc& ld = ComponentRegistry::Get().Desc(Light2DComponent::sTypeId);
+        check((ld.flags & kComponentNoHash) != 0, "Light2D is kComponentNoHash (render-only)");
+
+        // 層 id 1 を一時的に足す (終わったら消す)。Default (0) と合わせて 2 層
+        SortingLayers& layers = SortingLayers::Get();
+        const int32_t fgId = layers.Add("LightTestFg");
+        check(fgId > 0, "Light2D test: an extra sorting layer is available");
+
+        RenderResources resources;
+        Sprite2DRenderer renderer;
+        const auto addSprite = [](World& w, int32_t layerId, bool lit) {
+            const EntityID e = w.CreateEntity("sprite");
+            auto* sp = w.AddComponent<Sprite2DComponent>(e);
+            sp->sortingLayerId = layerId;
+            sp->lit = lit;
+            return e;
+        };
+        const auto addLight = [](World& w, int32_t type, uint32_t mask) {
+            const EntityID e = w.CreateEntity("light");
+            auto* lc = w.AddComponent<Light2DComponent>(e);
+            lc->type = type;
+            lc->targetLayerMask = mask;
+            return e;
+        };
+
+        // Light2D が無いシーン = presence gate (ライト群もライト頂点も作らない)
+        {
+            World w;
+            addSprite(w, 0, true);
+            const Sprite2DDrawList& l = renderer.Collect(w, resources);
+            check(!l.HasLights() && l.lights.empty() && l.lightVertices.empty() && l.groupLights.empty(),
+                  "Light2D: no light in the scene -> no light groups (presence gate)");
+        }
+
+        // Global (0.3) + Spot (Default 層だけ) と、Default / 別層の lit スプライト
+        {
+            World w;
+            addSprite(w, 0, true);
+            addSprite(w, fgId, true);
+            addSprite(w, fgId, false);
+            const EntityID global = addLight(w, light2dtype::kGlobal, 0xFFFFFFFFu);
+            auto* g = w.GetComponent<Light2DComponent>(global);
+            g->color = { 0.3f, 0.3f, 0.3f, 1.0f };
+            const EntityID spot = addLight(w, light2dtype::kSpot, 1u << 0);
+            w.GetComponent<Light2DComponent>(spot)->outerRadius = 3.0f;
+            const Sprite2DDrawList& l = renderer.Collect(w, resources);
+            check(l.lights.size() == 1 && l.lights[0].shape == light2dshape::kSpot && l.lightVertices.size() == 6,
+                  "Light2D: Spot becomes one instance with a 6-vertex quad; Global is not an instance");
+            check(l.lightGroups.size() == 2 && l.lightGroups[0].anyLit && l.lightGroups[1].anyLit,
+                  "Light2D: two layers with different light sets -> two groups");
+            check(l.lightGroups.size() == 2 && l.lightGroups[0].lightCount == 1 && l.lightGroups[1].lightCount == 0,
+                  "Light2D: Default layer gets the Spot, the other layer (mask excludes it) gets only Global");
+            check(l.lightGroups.size() == 2 && l.lightGroups[0].globalColor[0] == 0.3f
+                      && l.lightGroups[1].globalColor[0] == 0.3f,
+                  "Light2D: Global color is the clear color of every group");
+        }
+
+        // 同じ集合を照らす 2 層は 1 群にまとまる。lit=false だけのシーンは群が anyLit にならない
+        {
+            World w;
+            addSprite(w, 0, true);
+            addSprite(w, fgId, true);
+            addLight(w, light2dtype::kGlobal, 0xFFFFFFFFu);
+            const Sprite2DDrawList& l = renderer.Collect(w, resources);
+            check(l.lightGroups.size() == 1 && l.lightGroups[0].anyLit, "Light2D: same light set across layers -> one group");
+        }
+        {
+            World w;
+            addSprite(w, 0, false);
+            addLight(w, light2dtype::kGlobal, 0xFFFFFFFFu);
+            const Sprite2DDrawList& l = renderer.Collect(w, resources);
+            check(l.lightGroups.size() == 1 && !l.lightGroups[0].anyLit,
+                  "Light2D: a group with only lit=false sprites builds no light buffer");
+        }
+
+        // Spot の角度: 90 度の扇形は useAngle、360 度は全周
+        {
+            World w;
+            addSprite(w, 0, true);
+            const EntityID spot = addLight(w, light2dtype::kSpot, 0xFFFFFFFFu);
+            auto* lc = w.GetComponent<Light2DComponent>(spot);
+            lc->innerAngleDeg = 0.0f;
+            lc->outerAngleDeg = 90.0f;
+            const Sprite2DDrawList& l = renderer.Collect(w, resources);
+            check(l.lights.size() == 1 && l.lights[0].useAngle == 1.0f
+                      && std::fabs(l.lights[0].cosOuter - 0.70710678f) < 1.0e-5f
+                      && std::fabs(l.lights[0].invCosRange - 1.0f / (1.0f - 0.70710678f)) < 1.0e-3f,
+                  "Light2D: Spot 0..90 deg cone -> cosOuter = cos 45, range 1 - cos 45");
+            lc->outerAngleDeg = 360.0f;
+            const Sprite2DDrawList& full = renderer.Collect(w, resources);
+            check(full.lights.size() == 1 && full.lights[0].useAngle == 0.0f, "Light2D: Spot outer 360 deg = point light");
+            lc->outerRadius = 0.0f;
+            check(renderer.Collect(w, resources).lights.empty(), "Light2D: Spot with radius 0 is dropped");
+        }
+
+        // Freeform: 正方形 (耳刈り 2 枚 = 6 頂点) + 外縁 4 辺 x 6 頂点。外縁幅 0 は内側だけ
+        {
+            World w;
+            addSprite(w, 0, true);
+            const EntityID ff = addLight(w, light2dtype::kFreeform, 0xFFFFFFFFu);
+            auto* lc = w.GetComponent<Light2DComponent>(ff);
+            lc->pointCount = 4;
+            lc->points[0] = { -1.0f, -1.0f };
+            lc->points[1] = { 1.0f, -1.0f };
+            lc->points[2] = { 1.0f, 1.0f };
+            lc->points[3] = { -1.0f, 1.0f };
+            lc->falloffWidth = 0.5f;
+            const Sprite2DDrawList& l = renderer.Collect(w, resources);
+            check(l.lights.size() == 1 && l.lights[0].vertexCount == 6 + 4 * 6 && l.lightVertices.size() == 30,
+                  "Light2D: Freeform square = 2 triangles + 4 edge strips");
+            bool outerOutside = true; // edge 0 の頂点は正方形の外 (|x| または |y| が 1 を超える)
+            for (const Light2DVertex& v : l.lightVertices) {
+                if (v.edge == 0.0f) {
+                    outerOutside = outerOutside && (std::fabs(v.pos[0]) > 1.0f || std::fabs(v.pos[1]) > 1.0f);
+                }
+            }
+            check(outerOutside, "Light2D: Freeform edge vertices (edge 0) are pushed outside the polygon");
+            lc->falloffWidth = 0.0f;
+            check(renderer.Collect(w, resources).lights[0].vertexCount == 6, "Light2D: Freeform width 0 = fill only");
+            lc->pointCount = 2;
+            check(renderer.Collect(w, resources).lights.empty(), "Light2D: Freeform with < 3 points is dropped");
+        }
+
+        // 未知の層 id (表に無い) は Default として照らされる。mask = 0 のライトはどの層も照らさない
+        {
+            World w;
+            addSprite(w, 31, true);
+            addLight(w, light2dtype::kGlobal, 1u << 0);
+            const Sprite2DDrawList& l = renderer.Collect(w, resources);
+            check(l.lightGroups.size() == 1 && l.lightGroups[0].globalColor[0] == 1.0f,
+                  "Light2D: a layer id missing from the table is lit as Default");
+            World w2;
+            addSprite(w2, 0, true);
+            addLight(w2, light2dtype::kGlobal, 0u);
+            const Sprite2DDrawList& none = renderer.Collect(w2, resources);
+            check(none.lightGroups.size() == 1 && none.lightGroups[0].globalColor[0] == 0.0f,
+                  "Light2D: targetLayerMask 0 lights nothing (the group's clear color is black)");
+        }
+        layers.Remove(fgId);
     }
 
     fs::remove_all(root, ec);

@@ -37,6 +37,16 @@ FieldDesc AnimatorParamField(uint32_t index, const char* name, const char* jp)
     return WithJp(d, jp);
 }
 
+// Light2D の points[index] を 1 要素ずつ Float2 で登録する (配列フィールドの型が無いため)
+FieldDesc Light2DPointField(uint32_t index, const char* name, const char* jp)
+{
+    FieldDesc d{ name, FieldType::Float2,
+                 static_cast<uint32_t>(offsetof(Light2DComponent, points) + index * sizeof(DirectX::XMFLOAT2)),
+                 kFieldNone };
+    d.tooltip = "Freeform polygon vertex (local space); only the first pointCount are used";
+    return WithJp(d, jp);
+}
+
 } // namespace
 
 void RegisterBuiltinComponents()
@@ -1765,6 +1775,44 @@ void RegisterBuiltinComponents()
         MYE_JP("物理マテリアル", MYE_FIELD(TilemapComponent, physMaterial, AssetRef)),
         MYE_JP("衝突を描く", MYE_FIELD_FLAGS(TilemapComponent, showCollision, Bool, kFieldNoHash)),
     });
+
+    // M94o: 2D ライト (TypeId=85、末尾 append)。描画専用の **kComponentNoHash**。
+    // points[16] は配列なので各要素を Float2 で登録する (Animator の params[16] と同じ)
+    RegisterComponent<Light2DComponent>("Light2D", {
+        MYE_JP("種類", MYE_FIELD_TIP(Light2DComponent, type, Int32, "0 = Global, 1 = Spot, 2 = Freeform, 3 = Sprite")),
+        MYE_JP("色", MYE_FIELD(Light2DComponent, color, Color)),
+        MYE_JP("強さ", MYE_FIELD_RANGE(Light2DComponent, intensity, Float, 0.0f, 16.0f)),
+        MYE_JP("対象の層", MYE_FIELD_TIP(Light2DComponent, targetLayerMask, UInt32,
+                                        "bit = sorting layer id; only sprites on these layers are lit")),
+        MYE_JP("内側の半径", MYE_FIELD_TIP(Light2DComponent, innerRadius, Float, "Spot: no falloff inside this radius")),
+        MYE_JP("外側の半径", MYE_FIELD_TIP(Light2DComponent, outerRadius, Float, "Spot: reaches 0 at this radius")),
+        MYE_JP("内側の角度", MYE_FIELD_TIP(Light2DComponent, innerAngleDeg, Float, "Spot: full cone angle (deg)")),
+        MYE_JP("外側の角度", MYE_FIELD_TIP(Light2DComponent, outerAngleDeg, Float,
+                                          "Spot: full cone angle (deg); 360 = point light")),
+        MYE_JP("減衰の指数", MYE_FIELD_TIP(Light2DComponent, falloff, Float, "Spot: radial falloff exponent (1 = linear)")),
+        MYE_JP("頂点数", MYE_FIELD_RANGE(Light2DComponent, pointCount, Int32, 0, 16)),
+        Light2DPointField(0, "point0", "頂点 0"),
+        Light2DPointField(1, "point1", "頂点 1"),
+        Light2DPointField(2, "point2", "頂点 2"),
+        Light2DPointField(3, "point3", "頂点 3"),
+        Light2DPointField(4, "point4", "頂点 4"),
+        Light2DPointField(5, "point5", "頂点 5"),
+        Light2DPointField(6, "point6", "頂点 6"),
+        Light2DPointField(7, "point7", "頂点 7"),
+        Light2DPointField(8, "point8", "頂点 8"),
+        Light2DPointField(9, "point9", "頂点 9"),
+        Light2DPointField(10, "point10", "頂点 10"),
+        Light2DPointField(11, "point11", "頂点 11"),
+        Light2DPointField(12, "point12", "頂点 12"),
+        Light2DPointField(13, "point13", "頂点 13"),
+        Light2DPointField(14, "point14", "頂点 14"),
+        Light2DPointField(15, "point15", "頂点 15"),
+        MYE_JP("外縁の幅", MYE_FIELD_TIP(Light2DComponent, falloffWidth, Float, "Freeform: edge gradient width (world units)")),
+        MYE_JP("スプライト", MYE_FIELD(Light2DComponent, sprite, AssetRef)),
+        MYE_JP("影", MYE_FIELD(Light2DComponent, shadows, Bool)),
+        MYE_JP("影の強さ", MYE_FIELD_RANGE(Light2DComponent, shadowStrength, Float, 0.0f, 1.0f)),
+        MYE_JP("法線マップの距離", MYE_FIELD(Light2DComponent, normalMapDistance, Float)),
+    }, kComponentNoHash);
 }
 
 } // namespace mye

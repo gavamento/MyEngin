@@ -11,12 +11,14 @@
 #include <wrl/client.h>
 
 #include "Engine/Core/Ecs/EntityID.h"
+#include "Engine/Renderer/Device/RenderTexture.h"
 #include "Engine/Renderer/Passes/Sprite2DDrawList.h"
 
 namespace mye {
 
 class GraphicsDevice;
 class ShaderManager;
+struct ShaderProgram;
 class TextureLibrary;
 
 // Sprite2DRenderer が並べた描画リストを、パスがバインド済みの HDR シーン RT へ重ねる (VfxRenderer と同じ位置)。
@@ -39,9 +41,23 @@ public:
 
 private:
     bool Upload(GraphicsDevice& device, const Sprite2DDrawList& list);
+    // ライト頂点を lightVb_ へ上げる (足りなければ作り直す)
+    bool UploadLights(GraphicsDevice& device, const Sprite2DDrawList& list);
+    // 群 1 つ分のライトバッファを作る: グローバル色でクリア → 非 Global のライトを加算。
+    // 呼ぶ前後で RT / ビューポート / 入力アセンブラの状態は呼び出し側が戻す
+    void BuildLightBuffer(GraphicsDevice& device, TextureLibrary& textures, const Sprite2DDrawList& list,
+                          const Sprite2DLightGroup& group, const DirectX::XMFLOAT4X4& viewProjTransposed,
+                          const D3D11_VIEWPORT& viewport, ShaderProgram& lightProg);
 
     bool ready_ = false;
     AssetID shader_ = {};
+    AssetID lightShader_ = {};  // sprite2d_light (ライト形状の描画)
+    Microsoft::WRL::ComPtr<ID3D11Buffer> lightCb_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> lightVb_;
+    uint32_t lightVbCapacity_ = 0; // 頂点数
+    Microsoft::WRL::ComPtr<ID3D11BlendState> blendAdd_;               // ライト: ONE / ONE
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthOff_;        // ライト: 深度もステンシルも使わない
+    RenderTexture lightBuffer_;    // シーン RT と同サイズの RGBA16F。Light2D があるときだけ確保する
     Microsoft::WRL::ComPtr<ID3D11Buffer> cb_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> psCb_; // マスクのクリップ指定 (b1)
     Microsoft::WRL::ComPtr<ID3D11Buffer> vb_;

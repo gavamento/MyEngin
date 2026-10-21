@@ -432,6 +432,8 @@ constexpr uint32_t kVfx = 0xC080F0FFu;        // スプライト / 3D テキス�
 constexpr uint32_t kSprite2DRect = 0xFFFFFFFFu;  // 選択中 Sprite2D の矩形 (白)
 constexpr uint32_t kSprite2DPivot = 0xFFE020FFu; // 同 pivot の十字 (黄)
 constexpr uint32_t kSpriteMask2D = 0xB050F0FFu;  // SpriteMask2D の矩形 (紫。マスクは描かれないので全部に引く)
+constexpr uint32_t kLight2D = 0xFFD840FFu;         // Light2D の輪郭 (黄)
+constexpr int kLight2DArcSegments = 48;            // Spot の円弧の分割数 (全周あたり)
 constexpr uint32_t kTilemapBounds = 0x909098FFu;   // Tilemap の使用チャンクの範囲 (灰)
 constexpr uint32_t kTilemapCell = 0x585860FFu;     // 2D モードのセルの格子 (薄い灰)
 constexpr int kTilemapCellLineLimit = 256;         // 1 方向の格子線の上限 (これを超える密度では引かない)
@@ -534,6 +536,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         DrawSpriteGizmos(world);
         DrawSprite2DGizmos(ctx, world, selection);
         DrawTilemapGizmos(ctx, world, selection);
+        DrawLight2DGizmos(ctx, world);
         DrawAudioGizmos(ctx, world, selection);
         DrawTextMeshGizmos(world);
         DrawPartSocketGizmos(world);
@@ -877,6 +880,94 @@ void SceneViewWindow::DrawSprite2DGizmos(EngineContext& ctx, World& world, const
     const XMFLOAT3 yb = toWorld(0.0f, -half);
     lines_.AddLine(xb, xa, gizmo::kSprite2DPivot);
     lines_.AddLine(yb, ya, gizmo::kSprite2DPivot);
+}
+
+// 全 Light2D の輪郭 (黄)。Spot = 内外半径の円弧 (扇形なら両端の半径線も)、Freeform = 多角形、
+// Sprite = 矩形、Global = 小さい太陽マーク (画面上で一定の大きさ)
+void SceneViewWindow::DrawLight2DGizmos(EngineContext& ctx, World& world)
+{
+    const float sunRadius = mode2d ? orthoSize2d_ * (24.0f / std::max(1, desiredH_)) : 0.3f;
+    ForEachWithWorldMatrix<Light2DComponent>(
+        world, [&](const Light2DComponent& lc, const XMFLOAT4X4& m, EntityID) {
+            const XMFLOAT3 c = { m._41, m._42, m._43 };
+            const auto toWorld = [&m](float x, float y) {
+                return XMFLOAT3{ x * m._11 + y * m._21 + m._41, x * m._12 + y * m._22 + m._42,
+                                 x * m._13 + y * m._23 + m._43 };
+            };
+            if (lc.type == light2dtype::kSpot) {
+                // 向きは +X をエンティティの回転で運んだ方向。扇の全角は outerAngleDeg
+                const float dirLen = std::sqrt(m._11 * m._11 + m._12 * m._12);
+                const float baseAngle = (dirLen > 1.0e-6f) ? std::atan2(m._12, m._11) : 0.0f;
+                const float outerDeg = std::clamp(lc.outerAngleDeg, 0.0f, 360.0f);
+                const bool cone = outerDeg < 360.0f;
+                const float span = outerDeg * XM_PI / 180.0f;
+                const float start = cone ? baseAngle - span * 0.5f : 0.0f;
+                const float sweep = cone ? span : 2.0f * XM_PI;
+                const float radii[2] = { std::max(lc.innerRadius, 0.0f), std::max(lc.outerRadius, 0.0f) };
+                for (float r : radii) {
+                    if (r <= 0.0f) {
+                        continue;
+                    }
+                    const int seg = std::max(2, static_cast<int>(gizmo::kLight2DArcSegments * sweep / (2.0f * XM_PI)));
+                    XMFLOAT3 prev = { c.x + r * std::cos(start), c.y + r * std::sin(start), c.z };
+                    for (int i = 1; i <= seg; ++i) {
+                        const float a = start + sweep * static_cast<float>(i) / static_cast<float>(seg);
+                        const XMFLOAT3 cur = { c.x + r * std::cos(a), c.y + r * std::sin(a), c.z };
+                        lines_.AddLine(prev, cur, gizmo::kLight2D);
+                        prev = cur;
+                    }
+                }
+                if (cone && radii[1] > 0.0f) {
+                    lines_.AddLine(c, { c.x + radii[1] * std::cos(start), c.y + radii[1] * std::sin(start), c.z },
+                                   gizmo::kLight2D);
+                    const float end = start + sweep;
+                    lines_.AddLine(c, { c.x + radii[1] * std::cos(end), c.y + radii[1] * std::sin(end), c.z },
+                                   gizmo::kLight2D);
+                }
+            } else if (lc.type == light2dtype::kFreeform) {
+                const int n = std::clamp(lc.pointCount, 0, kLight2DMaxPoints);
+                for (int i = 0; i < n && n >= 2; ++i) {
+                    const XMFLOAT2& a = lc.points[i];
+                    const XMFLOAT2& b = lc.points[(i + 1) % n];
+                    lines_.AddLine(toWorld(a.x, a.y), toWorld(b.x, b.y), gizmo::kLight2D);
+                }
+            } else if (lc.type == light2dtype::kSprite) {
+                // 寸法が決まらない間 (未解決 / テクスチャ未ロード) は描画側と同じ 1 単位角
+                float rect[4] = { -0.5f, -0.5f, 0.5f, 0.5f };
+                SpriteLibrary* lib = spritelib::Library();
+                const SpriteDef* def = (lib != nullptr) ? lib->Get(lc.sprite) : nullptr;
+                const Texture* tex = (def != nullptr) ? ctx.resources->textures.Get(def->texture) : nullptr;
+                if (tex != nullptr) {
+                    Sprite2DRenderer::LocalRect(*def, tex->width, tex->height, rect);
+                }
+                const XMFLOAT3 c0 = toWorld(rect[0], rect[1]);
+                const XMFLOAT3 c1 = toWorld(rect[2], rect[1]);
+                const XMFLOAT3 c2 = toWorld(rect[2], rect[3]);
+                const XMFLOAT3 c3 = toWorld(rect[0], rect[3]);
+                lines_.AddLine(c0, c1, gizmo::kLight2D);
+                lines_.AddLine(c1, c2, gizmo::kLight2D);
+                lines_.AddLine(c2, c3, gizmo::kLight2D);
+                lines_.AddLine(c3, c0, gizmo::kLight2D);
+            } else {
+                // Global: 円 + 8 本の光線
+                constexpr int kRays = 8;
+                constexpr int kCircleSegments = 16;
+                const float inner = sunRadius * 0.5f;
+                XMFLOAT3 prev = { c.x + inner, c.y, c.z };
+                for (int i = 1; i <= kCircleSegments; ++i) {
+                    const float a = 2.0f * XM_PI * static_cast<float>(i) / static_cast<float>(kCircleSegments);
+                    const XMFLOAT3 cur = { c.x + inner * std::cos(a), c.y + inner * std::sin(a), c.z };
+                    lines_.AddLine(prev, cur, gizmo::kLight2D);
+                    prev = cur;
+                }
+                for (int i = 0; i < kRays; ++i) {
+                    const float a = 2.0f * XM_PI * static_cast<float>(i) / static_cast<float>(kRays);
+                    lines_.AddLine({ c.x + inner * 1.3f * std::cos(a), c.y + inner * 1.3f * std::sin(a), c.z },
+                                   { c.x + sunRadius * std::cos(a), c.y + sunRadius * std::sin(a), c.z },
+                                   gizmo::kLight2D);
+                }
+            }
+        });
 }
 
 // Tilemap の使用チャンクの範囲 (灰、全 Tilemap) と、2D モードで選択中の Tilemap のセル格子 (薄い灰、画面内だけ)

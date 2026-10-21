@@ -970,6 +970,7 @@ MYE_STR(Create_Camera,        "Camera",            "カメラ")
 MYE_STR(Create_2D,            "2D",                "2D") // M94
 MYE_STR(Create_Sprite2D,      "Sprite",            "スプライト") // M94
 MYE_STR(Create_Tilemap,       "Tilemap",           "タイルマップ") // M94j
+MYE_STR(Create_Light2D,       "Light 2D",          "2D ライト") // M94o
 MYE_STR(Create_Part,          "Part (with Bounds)", "部位 (範囲付き)")
 // M60g2: ラグドール生成器 (右クリック対象の SkinnedMesh のスケルトンから組む)
 MYE_STR(Create_Ragdoll,       "Ragdoll (from Skeleton)", "ラグドール (スケルトンから)")

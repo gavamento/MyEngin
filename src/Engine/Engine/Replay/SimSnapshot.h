@@ -164,7 +164,8 @@ struct SimRefs {
 // v55 (M94i): CharacterControllerComponent へ 2D モード 7 欄 (World 節のカラム生バイト)
 // v56 (M94j): TilemapComponent (TypeId 84、hash 対象)。World 節のカラム生バイト
 // v57 (M94k): TM2D 節 (TilemapSystem の override 表) を CMP 節の後・World 節の前に追加
-inline constexpr uint32_t kSimSnapshotVersion = 57;
+// v58 (M94o): Light2DComponent (TypeId 85、NoHash)。World 節のカラム生バイト
+inline constexpr uint32_t kSimSnapshotVersion = 58;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

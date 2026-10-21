@@ -14,6 +14,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Scene/SortingLayers.h"
 #include "Engine/Engine/Tilemap/TilemapSystem.h"
@@ -160,20 +161,23 @@ AssetID Sprite2DRenderer::EnsureMissingTexture(RenderResources& resources)
     return missingTexture_;
 }
 
-void Sprite2DRenderer::Push(AssetID texture, bool pointFilter, uint8_t stencil, float alphaCutoff,
+void Sprite2DRenderer::Push(AssetID texture, bool pointFilter, uint8_t stencil, float alphaCutoff, bool lit,
                             const Sprite2DVertex* v, uint32_t count)
 {
     if (count == 0) {
         return;
     }
-    if (list_.batches.empty() || list_.batches.back().texture != texture
+    // ライト群の切り替え直後は、同じテクスチャでも群の境界でバッチを割る (群ごとにライトバッファが違う)
+    if (forceNewBatch_ || list_.batches.empty() || list_.batches.back().texture != texture
         || list_.batches.back().pointFilter != pointFilter || list_.batches.back().stencil != stencil
-        || list_.batches.back().alphaCutoff != alphaCutoff) {
+        || list_.batches.back().alphaCutoff != alphaCutoff || list_.batches.back().lit != lit) {
+        forceNewBatch_ = false;
         Sprite2DBatch b;
         b.texture = texture;
         b.pointFilter = pointFilter;
         b.stencil = stencil;
         b.alphaCutoff = alphaCutoff;
+        b.lit = lit;
         b.start = static_cast<uint32_t>(list_.vertices.size());
         list_.batches.push_back(b);
     }
@@ -393,7 +397,8 @@ void Sprite2DRenderer::EmitSprite(const Item& item, RenderResources& resources)
             }
         }
     }
-    Push(r.texture, r.pointFilter, stencil, 0.0f, scratch_.data(), static_cast<uint32_t>(scratch_.size()));
+    Push(r.texture, r.pointFilter, stencil, 0.0f, !lightMeta_.empty() && sp.lit, scratch_.data(),
+         static_cast<uint32_t>(scratch_.size()));
 }
 
 void Sprite2DRenderer::EmitMask(const Item& item, RenderResources& resources)
@@ -409,7 +414,7 @@ void Sprite2DRenderer::EmitMask(const Item& item, RenderResources& resources)
     AddQuad(*item.world, 1.0f, 1.0f, white, r.local[0], r.local[1], r.local[2], r.local[3], r.rect[0] / r.texW,
             r.rect[1] / r.texH, (r.rect[0] + r.rect[2]) / r.texW, (r.rect[1] + r.rect[3]) / r.texH);
     seenMasks_.emplace_back(mk.rangeBack, mk.rangeFront);
-    Push(r.texture, r.pointFilter, sprite2dstencil::kWriteMask, mk.alphaCutoff, scratch_.data(),
+    Push(r.texture, r.pointFilter, sprite2dstencil::kWriteMask, mk.alphaCutoff, false, scratch_.data(),
          static_cast<uint32_t>(scratch_.size()));
 }
 
@@ -417,6 +422,7 @@ void Sprite2DRenderer::AssignKeys(Item& it, World& world, bool hasGroups, Entity
                                   int32_t order) const
 {
     const SortingLayers& layers = SortingLayers::Get();
+    it.layerId = layerId;
     it.outerLayer = layers.OrderOf(layerId);
     it.outerOrder = order;
     it.outerIndex = e.index;
@@ -429,6 +435,7 @@ void Sprite2DRenderer::AssignKeys(Item& it, World& world, bool hasGroups, Entity
         it.innerLayer = it.outerLayer;
         it.innerOrder = it.outerOrder;
         it.innerIndex = it.outerIndex;
+        it.layerId = g->sortingLayerId;
         it.outerLayer = layers.OrderOf(g->sortingLayerId);
         it.outerOrder = g->orderInLayer;
         it.outerIndex = groupEntity.index;
@@ -629,7 +636,8 @@ void Sprite2DRenderer::EmitTileChunk(const Item& item, World& world, RenderResou
             v.pos[1] += item.tileOrigin.y;
             v.pos[2] += item.tileOrigin.z;
         }
-        Push(run.texture, run.pointFilter, sprite2dstencil::kNone, 0.0f, tileScratch_.data(),
+        // タイルマップには lit の欄が無い。ライトがあるシーンでは常に lit
+        Push(run.texture, run.pointFilter, sprite2dstencil::kNone, 0.0f, !lightMeta_.empty(), tileScratch_.data(),
              static_cast<uint32_t>(tileScratch_.size()));
     }
 }
@@ -763,6 +771,306 @@ void Sprite2DRenderer::CollectTilemaps(World& world, const XMFLOAT4X4* view, con
     });
 }
 
+// ---- 2D ライト ----
+
+namespace {
+// 度 → ラジアン
+constexpr float kDegToRad = 0.017453292519943295f;
+// 扇形の内外の cos 差の下限 (内外の角度が等しいときの 0 割りを避け、境界をほぼ段差にする)
+constexpr float kMinCosRange = 1.0e-4f;
+// 外角がこの値以上なら全周 (点光源)
+constexpr float kFullAngleDeg = 360.0f;
+// Freeform の外縁を広げるときの miter 係数の下限 (鋭角で無限に伸びないようにする)
+constexpr float kMinMiterDot = 0.25f;
+// 面積がこれ以下の多角形は Freeform として描かない
+constexpr float kMinPolygonArea = 1.0e-8f;
+
+// ライトのエンティティが向く方向 (ワールド行列のローカル X 軸の XY 成分)。ゼロなら +X
+void LightDirection(const XMFLOAT4X4& m, float out[2])
+{
+    const float len = std::sqrt(m._11 * m._11 + m._12 * m._12);
+    if (len < 1.0e-6f) {
+        out[0] = 1.0f;
+        out[1] = 0.0f;
+        return;
+    }
+    out[0] = m._11 / len;
+    out[1] = m._12 / len;
+}
+
+void AddLightQuad(std::vector<Light2DVertex>& out, const float x[4], const float y[4], const float u[4],
+                  const float v[4])
+{
+    // 左上, 右上, 右下, 左下
+    const int order[6] = { 0, 1, 2, 0, 2, 3 };
+    for (int k : order) {
+        out.push_back({ { x[k], y[k] }, { u[k], v[k] }, 1.0f });
+    }
+}
+} // namespace
+
+void Sprite2DRenderer::BuildSpotLight(const Light2DComponent& lc, const XMFLOAT4X4& m, Light2DInstance& out)
+{
+    out.shape = light2dshape::kSpot;
+    out.center[0] = m._41;
+    out.center[1] = m._42;
+    LightDirection(m, out.dir);
+    out.outerRadius = (std::max)(lc.outerRadius, 0.0f);
+    out.innerRadius = (std::min)((std::max)(lc.innerRadius, 0.0f), out.outerRadius);
+    out.falloff = (std::max)(lc.falloff, 0.0f);
+    const float outerAngle = (std::max)(lc.outerAngleDeg, 0.0f);
+    const float innerAngle = (std::min)((std::max)(lc.innerAngleDeg, 0.0f), outerAngle);
+    out.useAngle = (outerAngle < kFullAngleDeg) ? 1.0f : 0.0f;
+    const float cosInner = std::cos(innerAngle * 0.5f * kDegToRad);
+    out.cosOuter = std::cos(outerAngle * 0.5f * kDegToRad);
+    out.invCosRange = 1.0f / (std::max)(cosInner - out.cosOuter, kMinCosRange);
+    // 外半径の外接クアッド (PS が距離と角度で減衰させる)
+    const float r = out.outerRadius;
+    const float x[4] = { m._41 - r, m._41 + r, m._41 + r, m._41 - r };
+    const float y[4] = { m._42 + r, m._42 + r, m._42 - r, m._42 - r };
+    const float u[4] = { 0.0f, 1.0f, 1.0f, 0.0f };
+    const float v[4] = { 0.0f, 0.0f, 1.0f, 1.0f };
+    out.vertexStart = static_cast<uint32_t>(list_.lightVertices.size());
+    AddLightQuad(list_.lightVertices, x, y, u, v);
+    out.vertexCount = 6;
+}
+
+bool Sprite2DRenderer::BuildFreeformLight(const Light2DComponent& lc, const XMFLOAT4X4& m, Light2DInstance& out)
+{
+    const int count = (std::min)((std::max)(lc.pointCount, 0), kLight2DMaxPoints);
+    if (count < 3) {
+        return false;
+    }
+    std::vector<XMFLOAT2> pts(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        const float lx = lc.points[i].x;
+        const float ly = lc.points[i].y;
+        pts[static_cast<size_t>(i)] = { lx * m._11 + ly * m._21 + m._41, lx * m._12 + ly * m._22 + m._42 };
+    }
+    float area2 = 0.0f; // 符号付き面積の 2 倍 (正 = 反時計回り)
+    for (int i = 0; i < count; ++i) {
+        const XMFLOAT2& a = pts[static_cast<size_t>(i)];
+        const XMFLOAT2& b = pts[static_cast<size_t>((i + 1) % count)];
+        area2 += a.x * b.y - b.x * a.y;
+    }
+    if (std::fabs(area2) < kMinPolygonArea) {
+        return false;
+    }
+    std::vector<uint32_t> tris;
+    if (!TriangulatePolygon2D(pts, tris)) {
+        return false;
+    }
+    out.shape = light2dshape::kFreeform;
+    out.vertexStart = static_cast<uint32_t>(list_.lightVertices.size());
+    for (uint32_t idx : tris) {
+        const XMFLOAT2& p = pts[idx];
+        list_.lightVertices.push_back({ { p.x, p.y }, { 0.0f, 0.0f }, 1.0f });
+    }
+    // 外縁: 各辺を外向き法線へ falloffWidth だけ押し出し、edge 1 → 0 のグラデーションにする
+    const float width = (std::max)(lc.falloffWidth, 0.0f);
+    if (width > 0.0f) {
+        const float sign = (area2 > 0.0f) ? 1.0f : -1.0f; // 反時計回りなら辺の右側が外
+        std::vector<XMFLOAT2> offsets(static_cast<size_t>(count));
+        for (int i = 0; i < count; ++i) {
+            const XMFLOAT2& prev = pts[static_cast<size_t>((i + count - 1) % count)];
+            const XMFLOAT2& cur = pts[static_cast<size_t>(i)];
+            const XMFLOAT2& next = pts[static_cast<size_t>((i + 1) % count)];
+            const auto edgeNormal = [sign](const XMFLOAT2& a, const XMFLOAT2& b) {
+                const float dx = b.x - a.x;
+                const float dy = b.y - a.y;
+                const float len = (std::max)(std::sqrt(dx * dx + dy * dy), 1.0e-12f);
+                return XMFLOAT2{ sign * dy / len, -sign * dx / len };
+            };
+            const XMFLOAT2 n0 = edgeNormal(prev, cur);
+            const XMFLOAT2 n1 = edgeNormal(cur, next);
+            float ax = n0.x + n1.x;
+            float ay = n0.y + n1.y;
+            const float alen = (std::max)(std::sqrt(ax * ax + ay * ay), 1.0e-12f);
+            ax /= alen;
+            ay /= alen;
+            const float miter = (std::max)(ax * n0.x + ay * n0.y, kMinMiterDot);
+            offsets[static_cast<size_t>(i)] = { ax * width / miter, ay * width / miter };
+        }
+        for (int i = 0; i < count; ++i) {
+            const int j = (i + 1) % count;
+            const XMFLOAT2& a = pts[static_cast<size_t>(i)];
+            const XMFLOAT2& b = pts[static_cast<size_t>(j)];
+            const Light2DVertex ia = { { a.x, a.y }, { 0.0f, 0.0f }, 1.0f };
+            const Light2DVertex ib = { { b.x, b.y }, { 0.0f, 0.0f }, 1.0f };
+            const Light2DVertex oa = { { a.x + offsets[static_cast<size_t>(i)].x, a.y + offsets[static_cast<size_t>(i)].y },
+                                       { 0.0f, 0.0f }, 0.0f };
+            const Light2DVertex ob = { { b.x + offsets[static_cast<size_t>(j)].x, b.y + offsets[static_cast<size_t>(j)].y },
+                                       { 0.0f, 0.0f }, 0.0f };
+            const Light2DVertex quad[6] = { ia, ib, ob, ia, ob, oa };
+            list_.lightVertices.insert(list_.lightVertices.end(), quad, quad + 6);
+        }
+    }
+    out.vertexCount = static_cast<uint32_t>(list_.lightVertices.size()) - out.vertexStart;
+    return true;
+}
+
+bool Sprite2DRenderer::BuildSpriteLight(const Light2DComponent& lc, const XMFLOAT4X4& m, RenderResources& resources,
+                                        Light2DInstance& out)
+{
+    Resolved r;
+    if (!Resolve(lc.sprite, resources, false, r)) {
+        return false; // スプライトが無い / 未ロードのライトは何も足さない
+    }
+    out.shape = light2dshape::kSprite;
+    out.texture = r.texture;
+    const float lx[4] = { r.local[0], r.local[2], r.local[2], r.local[0] };
+    const float ly[4] = { r.local[3], r.local[3], r.local[1], r.local[1] };
+    float x[4];
+    float y[4];
+    for (int i = 0; i < 4; ++i) {
+        x[i] = lx[i] * m._11 + ly[i] * m._21 + m._41;
+        y[i] = lx[i] * m._12 + ly[i] * m._22 + m._42;
+    }
+    const float u0 = r.rect[0] / r.texW;
+    const float v0 = r.rect[1] / r.texH;
+    const float u1 = (r.rect[0] + r.rect[2]) / r.texW;
+    const float v1 = (r.rect[1] + r.rect[3]) / r.texH;
+    const float u[4] = { u0, u1, u1, u0 };
+    const float v[4] = { v0, v0, v1, v1 };
+    out.vertexStart = static_cast<uint32_t>(list_.lightVertices.size());
+    AddLightQuad(list_.lightVertices, x, y, u, v);
+    out.vertexCount = 6;
+    return true;
+}
+
+void Sprite2DRenderer::CollectLights(World& world, RenderResources& resources)
+{
+    struct Entry {
+        EntityID entity;
+        LightMeta meta;
+        Light2DInstance inst;
+    };
+    std::vector<Entry> found;
+    const ComponentTypeId req[] = { Light2DComponent::sTypeId, WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int li = arch.FindTypeIndex(Light2DComponent::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (!IsEntityActive(world, e)) {
+                continue;
+            }
+            const auto* lc = static_cast<const Light2DComponent*>(arch.GetPtr(li, row));
+            const XMFLOAT4X4& m = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+            Entry en;
+            en.entity = e;
+            const float k = (std::max)(lc->intensity, 0.0f);
+            en.meta.targetMask = lc->targetLayerMask;
+            en.meta.color[0] = lc->color.x * k;
+            en.meta.color[1] = lc->color.y * k;
+            en.meta.color[2] = lc->color.z * k;
+            en.meta.global = (lc->type == light2dtype::kGlobal);
+            en.inst.z = m._43;
+            std::copy(en.meta.color, en.meta.color + 3, en.inst.color);
+            // 形状を作れないライト (半径 0、頂点不足、スプライト未解決) は数えない = ライトが 0 個のシーンと同じ扱い
+            bool ok = true;
+            if (lc->type == light2dtype::kSpot) {
+                ok = lc->outerRadius > 0.0f;
+                if (ok) {
+                    BuildSpotLight(*lc, m, en.inst);
+                }
+            } else if (lc->type == light2dtype::kFreeform) {
+                ok = BuildFreeformLight(*lc, m, en.inst);
+            } else if (lc->type == light2dtype::kSprite) {
+                ok = BuildSpriteLight(*lc, m, resources, en.inst);
+            } else if (!en.meta.global) {
+                ok = false; // 未知の種類
+            }
+            if (ok) {
+                found.push_back(en);
+            }
+        }
+    });
+    // 加算なので順序は結果に効かないが、アーキタイプの走査順に依らないよう entity.index で並べる
+    std::stable_sort(found.begin(), found.end(), [](const Entry& a, const Entry& b) {
+        return std::tie(a.entity.index, a.entity.generation) < std::tie(b.entity.index, b.entity.generation);
+    });
+    // 並べ替えで頂点区間の順は変わるが、各ライトは自分の区間を指しているので問題ない
+    for (Entry& en : found) {
+        if (!en.meta.global) {
+            en.meta.instance = static_cast<uint32_t>(list_.lights.size());
+            list_.lights.push_back(en.inst);
+        }
+        lightMeta_.push_back(en.meta);
+    }
+}
+
+uint32_t Sprite2DRenderer::LightSetOf(int32_t layerId)
+{
+    // 表に無い id は描画順と同じく Default として扱う
+    const int32_t layer = (layerId < 0 || layerId > 31 || SortingLayers::Get().IndexOfId(layerId) < 0)
+                              ? SortingLayers::kDefaultId
+                              : layerId;
+    if (layerLightSet_[layer] >= 0) {
+        return static_cast<uint32_t>(layerLightSet_[layer]);
+    }
+    std::vector<uint32_t> set;
+    for (uint32_t i = 0; i < lightMeta_.size(); ++i) {
+        if (((lightMeta_[i].targetMask >> layer) & 1u) != 0u) {
+            set.push_back(i);
+        }
+    }
+    // 同じ集合は同じ id (層ごとに別の id になると、集合が同じでも群を割ってしまう)
+    for (size_t s = 0; s < lightSets_.size(); ++s) {
+        if (lightSets_[s] == set) {
+            layerLightSet_[layer] = static_cast<int32_t>(s);
+            return static_cast<uint32_t>(s);
+        }
+    }
+    lightSets_.push_back(std::move(set));
+    layerLightSet_[layer] = static_cast<int32_t>(lightSets_.size() - 1);
+    return static_cast<uint32_t>(lightSets_.size() - 1);
+}
+
+void Sprite2DRenderer::SwitchLightGroup(int32_t layerId, bool lit)
+{
+    if (list_.lightGroups.empty()) {
+        Sprite2DLightGroup g;
+        g.firstBatch = static_cast<uint32_t>(list_.batches.size());
+        list_.lightGroups.push_back(g);
+        groupSetIds_.push_back(0);
+        forceNewBatch_ = true;
+    }
+    if (!lit) {
+        return; // lit でない項目 (マスク / lit=false) は今の群にそのまま入る
+    }
+    const uint32_t setId = LightSetOf(layerId);
+    const auto fill = [&](Sprite2DLightGroup& g) {
+        g.anyLit = true;
+        g.lightStart = static_cast<uint32_t>(list_.groupLights.size());
+        for (uint32_t li : lightSets_[setId]) {
+            const LightMeta& meta = lightMeta_[li];
+            if (meta.global) {
+                for (int c = 0; c < 3; ++c) {
+                    g.globalColor[c] += meta.color[c];
+                }
+            } else {
+                list_.groupLights.push_back(meta.instance);
+            }
+        }
+        g.lightCount = static_cast<uint32_t>(list_.groupLights.size()) - g.lightStart;
+    };
+    if (!list_.lightGroups.back().anyLit) {
+        groupSetIds_.back() = setId;
+        fill(list_.lightGroups.back());
+        return;
+    }
+    if (groupSetIds_.back() == setId) {
+        return;
+    }
+    Sprite2DLightGroup g;
+    g.firstBatch = static_cast<uint32_t>(list_.batches.size());
+    list_.lightGroups.push_back(g);
+    groupSetIds_.push_back(setId);
+    fill(list_.lightGroups.back());
+    forceNewBatch_ = true;
+}
+
 const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources& resources, const XMFLOAT4X4* view,
                                                   const XMFLOAT4X4* proj, uint64_t simTick)
 {
@@ -770,6 +1078,11 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
     list_.Clear();
     items_.clear();
     seenMasks_.clear();
+    lightMeta_.clear();
+    lightSets_.clear();
+    groupSetIds_.clear();
+    std::fill(std::begin(layerLightSet_), std::end(layerLightSet_), -1);
+    forceNewBatch_ = false;
     ++tileFrame_;
 
     // グループがシーンに無ければ祖先を辿らない (多くのシーンはグループを持たない)
@@ -799,7 +1112,11 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
                           b.isMask, b.tileLayer, b.tileChunk.cy, b.tileChunk.cx);
     });
     list_.vertices.reserve(items_.size() * 6);
+    CollectLights(world, resources);
     for (const Item& it : items_) {
+        if (!lightMeta_.empty()) {
+            SwitchLightGroup(it.layerId, it.isTile || (!it.isMask && it.sprite->lit));
+        }
         if (it.isTile) {
             EmitTileChunk(it, world, resources);
         } else if (it.isMask) {

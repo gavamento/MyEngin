@@ -2391,6 +2391,38 @@ struct TilemapComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 2D ライト (M94、TypeId=85) ----
+// Sprite2DRenderer が収集し、Sprite2DPass が RGBA16F のライトバッファへ加算して lit なスプライトに乗算する。
+// 向きはエンティティの Z 回転。描画専用なので **kComponentNoHash**。
+// shadows 以降の欄は sub-16 (影・法線マップ) が使う。生バイトを伸ばさないため先に置いてある
+namespace light2dtype {
+inline constexpr int32_t kGlobal = 0;   // 画面全体を一様に照らす
+inline constexpr int32_t kSpot = 1;     // 円 / 扇形 (半径と角度の減衰)
+inline constexpr int32_t kFreeform = 2; // 多角形 (points) と外縁のグラデーション
+inline constexpr int32_t kSprite = 3;   // スプライトの形そのもの
+} // namespace light2dtype
+inline constexpr int32_t kLight2DMaxPoints = 16;
+
+struct Light2DComponent {
+    int32_t type = light2dtype::kGlobal;
+    DirectX::XMFLOAT4 color = { 1.0f, 1.0f, 1.0f, 1.0f }; // rgb だけ使う
+    float intensity = 1.0f;
+    uint32_t targetLayerMask = 0xFFFFFFFFu;        // bit = ソート層の安定 id。立っている層のスプライトだけ照らす
+    float innerRadius = 0.0f;                      // Spot: この半径までは減衰しない
+    float outerRadius = 3.0f;                      // Spot: この半径で 0
+    float innerAngleDeg = 360.0f;                  // Spot: 扇の全角。outer が 360 以上なら全周
+    float outerAngleDeg = 360.0f;
+    float falloff = 1.0f;                          // Spot: 半径方向の減衰の指数 (1 = 線形)
+    int32_t pointCount = 0;                        // Freeform
+    DirectX::XMFLOAT2 points[kLight2DMaxPoints] = {}; // Freeform: ローカル座標
+    float falloffWidth = 0.5f;                     // Freeform: 外縁のグラデーション幅 (ワールド単位)
+    AssetID sprite = {};                           // Sprite
+    bool shadows = false;
+    float shadowStrength = 1.0f;
+    float normalMapDistance = 1.0f;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

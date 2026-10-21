@@ -34,20 +34,75 @@ struct Sprite2DBatch {
     bool pointFilter = false; // false = linear
     uint8_t stencil = 0;      // Sprite2DStencil
     float alphaCutoff = 0.0f; // stencil == kWriteMask のときだけ使う (alpha がこれ未満の画素は書かない)
+    bool lit = false;         // true = ライトバッファを乗算する (属する LightGroup が anyLit のときだけ効く)
     uint32_t start = 0;
     uint32_t count = 0;
 };
 
-// 描画順に並んだ三角形リスト (1 枚 = 6 頂点)。バッチが 0 件なら描画パスは何もしない
+// ---- 2D ライト ----
+// ライトの形状は Engine 側でワールド座標へ展開済み。Renderer 層は頂点を描くだけで sim もシーンも見ない
+namespace light2dshape {
+inline constexpr uint8_t kSpot = 1;     // 外半径の外接クアッド。放射 / 角度の減衰は PS が計算する
+inline constexpr uint8_t kFreeform = 2; // 三角形列。edge (1 = 内側、0 = 外縁) がそのまま明るさ
+inline constexpr uint8_t kSprite = 3;   // テクスチャ付きクアッド
+} // namespace light2dshape
+
+struct Light2DVertex {
+    float pos[2]; // ワールド XY
+    float uv[2];
+    float edge;   // Freeform の外縁グラデーション (1 = 内側、0 = 外縁)。他の形状は 1
+};
+static_assert(sizeof(Light2DVertex) == 20, "sprite2d_light.hlsl の VSIn と合わせる");
+
+// ライト 1 個。color は rgb × intensity 済み。Global はここに入らず、群の globalColor へ足し込む
+struct Light2DInstance {
+    uint8_t shape = 0;
+    float color[3] = {};
+    float z = 0.0f;           // 描くワールド Z (ライトのエンティティ位置)
+    // Spot
+    float center[2] = {};
+    float dir[2] = { 1.0f, 0.0f };
+    float innerRadius = 0.0f;
+    float outerRadius = 1.0f;
+    float falloff = 1.0f;
+    float useAngle = 0.0f;    // 1 = 扇形、0 = 全周
+    float cosOuter = -1.0f;
+    float invCosRange = 0.0f; // 1 / (cosInner - cosOuter)
+    // Freeform / Sprite / Spot の頂点列 (lightVertices の区間)
+    uint32_t vertexStart = 0;
+    uint32_t vertexCount = 0;
+    AssetID texture;          // Sprite
+};
+
+// 同じライト集合で描くバッチの区間。群ごとにライトバッファを作り直す (先頭バッチ = firstBatch、次の群の先頭まで)
+struct Sprite2DLightGroup {
+    uint32_t firstBatch = 0;
+    uint32_t lightStart = 0;   // groupLights の区間
+    uint32_t lightCount = 0;
+    float globalColor[3] = {}; // 群の Global ライトの合計 (ライトバッファのクリア色)
+    bool anyLit = false;       // lit なバッチを含む (含まない群はバッファを作らない)
+};
+
+// 描画順に並んだ三角形リスト (1 枚 = 6 頂点)。バッチが 0 件なら描画パスは何もしない。
+// lightGroups が空 = シーンに Light2D が無い (presence gate)。従来どおりライトバッファを作らない
 struct Sprite2DDrawList {
     std::vector<Sprite2DVertex> vertices;
     std::vector<Sprite2DBatch> batches;
+    std::vector<Light2DInstance> lights;
+    std::vector<Light2DVertex> lightVertices;
+    std::vector<uint32_t> groupLights; // 群が使う lights の添字
+    std::vector<Sprite2DLightGroup> lightGroups;
 
     void Clear()
     {
         vertices.clear();
         batches.clear();
+        lights.clear();
+        lightVertices.clear();
+        groupLights.clear();
+        lightGroups.clear();
     }
+    bool HasLights() const { return !lightGroups.empty(); }
     bool Empty() const { return batches.empty(); }
     // ステンシルを使うバッチがあるか (無ければ描画パスはステンシルのクリアも DSV の差し替えもしない)
     bool UsesStencil() const

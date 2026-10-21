@@ -154,6 +154,14 @@ GameObject CreateTilemap(EngineContext& ctx, const char* name)
     return obj;
 }
 
+// M94o: 2D ライト。既定は Global (画面全体を一様に照らす)。種類は Inspector で切り替える
+GameObject CreateLight2D(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    obj.AddComponent<Light2DComponent>();
+    return obj;
+}
+
 // ---- UI (M51f) ----
 // text はシーンに保存されるデータなのでエディタ言語に依存しない英語固定 (メニュー表示とは別物)
 
@@ -437,6 +445,7 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
     if (ImGui::BeginMenu(Tr(StrId::Create_2D))) { // M94
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Sprite2D), "Sprite", &CreateSprite2D);
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Tilemap), "Tilemap", &CreateTilemap);
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Light2D), "Light 2D", &CreateLight2D);
         ImGui::EndMenu();
     }
 

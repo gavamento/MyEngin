@@ -34,4 +34,29 @@
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-15 (round 1)
+実装:
+  - Components.h/.cpp: Light2DComponent (TypeId 85、NoHash、spec 4.1.9 の全欄、points[16] は Float2 個別登録)。light2dtype 定数。
+  - SimSnapshot.h: kSimSnapshotVersion 57 -> 58。AcousticAudioSelfTest.cpp:129 を 58 に追随。
+  - Sprite2DDrawList.h: Sprite2DBatch.lit、Light2DInstance / Light2DVertex / Sprite2DLightGroup、groupLights、HasLights()。
+  - Sprite2DRenderer.{h,cpp}: CollectLights / BuildSpot・Freeform・SpriteLight / LightSetOf / SwitchLightGroup。描画順に走り「層 bit を含むライト集合」が変わる位置で群を切りバッチを割る (Push の比較に lit と forceNewBatch_)。Freeform は TriangulatePolygon2D + 外縁ストリップ。
+  - Sprite2DPass.{h,cpp}: RGBA16F ライトバッファ (RenderTexture::Resize、メンバ)。群ごとに Global 合計色で clear -> 非 Global を加算 (ONE/ONE) -> lit バッチを描く。presence gate (lightGroups 空なら従来経路、バッファも t1 も張らない)。終了時に RT/DSV/ビューポート/PS b0 を戻す。
+  - assets/shaders/sprite2d.hlsl (t1/s1、gLit、gInvScreen)、新規 sprite2d_light.hlsl。
+  - SceneViewWindow.{h,cpp}: DrawLight2DGizmos (黄、Spot 円弧 + 扇の半径線、Freeform 多角形、Sprite 矩形、Global 太陽)。EditorComponentCatalog / CreateMenu (Create -> 2D -> Light 2D) / LocalizationTable.inl (Create_Light2D)。
+  - Sprite2DAssetSelfTest.cpp: 節 (g) Light2D 19 項目。
+仕様との差分:
+  - [追加] Global は「クリア色に合計を入れる」実装 (clear(0) + 全面加算と同じ結果、全面描画 1 回を省く)。
+  - [追加] タイルマップは lit 欄が無いのでライトのあるシーンでは常に lit。ライトが効く層の判定は Tilemap レイヤーの sortingLayerId。
+  - [追加] どのライトにも照らされない層 (集合が空) の lit スプライトは黒になる (Unity と同じ)。表に無い層 id は Default 扱い。
+  - [追加] 形状を作れないライト (Spot 半径 0、Freeform 3 点未満、Sprite 未解決) は数えない。
+  - [追加] ライト頂点の Z はライトのエンティティ位置 (Z) を使う。透視カメラではスプライトと平面がずれうる (2D は正射影前提)。
+検証:
+  - Debug / Release /p:MyeWarnAsError=true -> 0 警告 (初回は既知の SelfTestUnused C4100 で落ち、再実行で通る)
+  - MYE_SELFTEST_ONLY=m94 (Debug) -> exit 0、Light2D 節 全 PASS
+  - check_rules -> 3 error / 50 warning (着手前と同じ既存分)
+  - temp シーン (Global 0.3 + Spot 白半径 3 + 2 層 + lit=false + SpriteMask2D 円盤): D 近傍 136 / D 遠方 38 / 外した層 F 38 (Global のみ) / lit=false 128 / マスク内 (118,24,24)・外は背景。Forward と --deferred は maxDiff=0 (Deferred のマスクも同じ形)。Light2D 無し版は HEAD(044b508) の Runtime と --tol 0 で maxDiff=0。スクショ plans\m94-2d\screenshots\light2d.png / light2d_deferred.png。
+  - チェックポイント 3: Editor.exe --selftest 全体 Debug / Release -> exit 0・FAIL 0・ERROR 0。replay_verify -> 20 ジョブ全 PASS + rules のみ既存 3 error で FAIL (全文 cache\m94\replay_verify_cp3.log)。shot_verify PASS (30 枚)、golden --tol 0 は 29 枚 maxDiff=0、demo_terrain_deferred は基点の絵と maxDiff=0。build_managed.bat Release -> 成功 0 警告。
+版: snapshot 57 -> 58 のみ。ABI / Scene kDocVersion / kCookVersion は不変。hash 対象フィールドの append なし (kExpected 再採取不要)。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-10-21、チェックポイント 3 = sub-11〜15)。スクショ `light2d.png` で Spot 内 > 外、外した層は Global のみ、lit=false は従来色、マスク円盤の内側だけ赤を確認。Forward = Deferred maxDiff 0 (sub-06 持ち越しの Deferred マスク確認も消化)、Light2D 無しは基点とビット一致。チェックポイント 3: 全体 selftest 両構成 FAIL 0、replay_verify 20 ジョブ個別 PASS (rules は既存 3 error)、shot_verify 30 枚 PASS + tol 0 は 29 枚 0 と terrain は基点と 0、build_managed Release 成功。Freeform / Sprite ライトの画素確認は sub-16 5b へ。不安 1 (空集合は黒) は `[ユーザーに聞ける]`、2・3 は spec 4.1.9 に記録。
