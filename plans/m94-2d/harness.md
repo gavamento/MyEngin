@@ -46,8 +46,8 @@
 | sub-13 | OK | 1 | ec7a3a0 | ルールタイル、アニメーションタイル、レイヤー UI。依存: 11, 12。3b (タイル追加 UI) 実装、3c は計測の結果 dirty のチャンク化を見送り (焼き直し CPU 1.2〜2.8 ms、33 ms 超は WARP のエディタ全体が主因)。版 bump なし |
 | sub-14 | OK | 1 | 4fe503f | ABI (10 本) + C# ミラー + MyeScript。依存: 08, 11。**ABI v31 = 188 スロット** (M75h は v32 以降)。空間クエリがタイルの箱を見る (physicsquery::Install) |
 | sub-15 | OK | 1 | 971e6a4 | Light2D とライトバッファ。依存: 06。TypeId 85、snapshot v58。チェックポイント 3 通過 (replay 20 ジョブ個別 PASS、golden 30 枚 tol 0、build_managed 成功) |
-| sub-16 | 実装中 | 0 | | ShadowCaster2D と法線マップ。依存: 15。やること 5b (Freeform / Sprite ライトの画素確認) を sub-15 VERDICT で追加 |
-| sub-17 | 未着手 | 0 | | スプライトのサーフェスシェーダ枝、Parallax2D、2D ポスト例。依存: 06 |
+| sub-16 | OK | 1 | 03ff599 | ShadowCaster2D と法線マップ。依存: 15。TypeId 86、snapshot v59。押し出し距離は「頂点→画面中心 + 対角」に変更 (spec 4.1.9) |
+| sub-17 | 実装中 | 0 | | スプライトのサーフェスシェーダ枝、Parallax2D、2D ポスト例。依存: 06。やること 4b (normalMap の sRGB 警告) を sub-16 VERDICT で追加 |
 | sub-18 | 未着手 | 0 | | Line2D。依存: 06 |
 | sub-19 | 未着手 | 0 | | SpriteShape2D (描画・衝突・ハンドル)。依存: 08, 18 |
 | sub-20 | 未着手 | 0 | | 2D ジョイント検証と Effector2D。依存: 09 |
@@ -76,6 +76,7 @@
 - Q-13 (sub-12 VERDICT) タイルパレット窓を開いている間、Scene View 2D の左クリックを「塗り」にする既定を ON のままでよいか / 裁定: ON (Unity の Tile Palette と同じ。窓の「Paint in Scene View」チェックで外せる) / 逆を選ぶと: 既定 OFF にして、塗るたびにチェックを入れる操作が 1 つ増える (コードは既定値 1 行)
 - Q-14 (sub-13 VERDICT) エディタの Edit モード (Play していない) でアニメーションタイルが止まって見える (コマ 0 のまま) のでよいか / 裁定: 止まったままでよい (アニメは sim tick から導出、描画専用の時計を足すと決定性の境界が 1 つ増える。Play 中と Runtime では動く) / 逆を選ぶと: Sprite2DRenderer に「Edit 中だけ実時間から仮の tick を作る」描画専用の時計を足す (小規模。sim には触れない。スクショ / golden は tick 基準のまま)
 - Q-15 (sub-15 VERDICT) どのライトにも照らされない層の lit スプライトを黒にする (Unity と同じ) でよいか / 裁定: 黒 (Global ライトを置けば底上げできる。ライトを入れたら暗所は暗く見えるのが 2D ライトの意図) / 逆を選ぶと: 集合が空の層だけ従来色に戻す (`SwitchLightGroup` の 1 分岐。ただし「ライトの当たらない層だけ明るい」逆転が起きる)
+- Q-16 (sub-16 VERDICT) 法線マップ付きスプライトが 1 枚でもあるシーンで、法線マップを持たないスプライトにも N·L (ライトの真下以外が少し暗くなる) を掛ける (Unity の Normal Maps 有効時と同じ) でよいか / 裁定: 掛ける (手前と奥で照らされ方が揃い、法線マップの有無で浮いて見えない) / 逆を選ぶと: 法線 RT のアルファで「法線あり」を区別し、無しのスプライトは N·L を 1 にする (clear 値とシェーダの小変更)
 
 ## 申し送り (セッション跨ぎ)
 - 基点の直前に無関係の 2 コミット (`2ac3b4f` DeepModal 再学習、`25fb355` スプラッシュ) を司会が切り出した。
@@ -162,3 +163,7 @@
 - (sub-15 coder → sub-16) ライトの形状 PS は `sprite2d_light.hlsl` の LightCB (b0)。shadows / shadowStrength / normalMapDistance は Light2DComponent に既にある (未使用)。影 RT は群ごとの BuildLightBuffer 内、ライト 1 個ずつの描画の前に差し込める。法線 RT は BuildLightBuffer の前に作り、sprite2d_light.hlsl に t を足す。
 - (sub-15 coder → sub-17 以降) Sprite2DBatch を増やすときは `Sprite2DRenderer::Push` の比較に足す (lit と forceNewBatch_ はここ)。→ sub-23: golden 2d_lights はこのライト経路、ライトのあるシーンでは Tilemap も常に lit。
 - (sub-15 coder → sub-24 限界欄) 集合が空の層は黒 (Q-15)、凹 Freeform の外縁の重なりは加算で明るくなる、透視カメラではライト平面がずれる、ライトバッファは層集合が変わるたびに作り直し (R8、層 32 × 別集合で 32 回)、Spot の falloff は半径方向の指数で Unity の Falloff とは別。
+- (sub-16 VERDICT nit 1 → sub-17 やること 4b) normalMap の sRGB 警告行を Inspector に (sub-06 の sprite 欄と同じ形)。nit 2 → sub-17: マテリアル別バッチを入れるとき `Sprite2DPass::Render` のバッチ描画ループを関数に割る余地。nit 4: ECS の AddComponent でカラムが動くと既存のコンポーネントポインタが無効になる (sub-16 の selftest で踏んだ)。後続サブの selftest でも注意。
+- (sub-16 VERDICT nit 3 → sub-24 checklists) ShadowCaster2D の紫のギズモ、Inspector の normalMap ピッカー (ドロップ / 一覧がテクスチャだけ)、Add Component の 2D 分類はユーザー目視。ShadowCaster2D の Create メニューは無し (Add Component で足りる)。
+- (sub-16 coder → sub-17 以降) Sprite2DBatch を増やすときは `Sprite2DRenderer::Push` の比較に足す。法線バッチは別系統 (PushNormal、Sprite2DNormalBatch)。Sprite2DPass は VB の前半がスプライト頂点、後半が法線頂点。→ sub-23: golden 2d_lights (影と法線入り) は sub-16 の temp シーンの座標・色を流用できる (`cache\m94\s16\` と screenshots の 4 枚)。
+- (sub-16 coder → sub-24 限界欄) 影は硬い影のみ、スプライトのシルエット影は無し、法線 RT はステンシルマスク対象外、法線は sRGB オフ・緑 = 上、影 RT はライトごとに作り直し、透視カメラでは影もずれる、caster の Collider 回転・中心は Box / Sphere だけ反映し Polygon2D はローカル XY のみ、法線 RT が有効なら法線マップ無しのスプライトにも N·L (Q-16)。

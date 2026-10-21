@@ -1,8 +1,8 @@
 # sub-16: ShadowCaster2D と法線マップ
 
 - 依存: sub-15
-- 状態: 実装中
-- 往復: 0
+- 状態: OK (commit 03ff599)
+- 往復: 1
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む**。spec: 2. #15, #16、4.1.9
 
 ## やること
