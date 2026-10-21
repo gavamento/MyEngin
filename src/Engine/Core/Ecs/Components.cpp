@@ -47,6 +47,16 @@ FieldDesc Light2DPointField(uint32_t index, const char* name, const char* jp)
     return WithJp(d, jp);
 }
 
+// ShadowCaster2D の points[index] を 1 要素ずつ Float2 で登録する
+FieldDesc ShadowCaster2DPointField(uint32_t index, const char* name, const char* jp)
+{
+    FieldDesc d{ name, FieldType::Float2,
+                 static_cast<uint32_t>(offsetof(ShadowCaster2DComponent, points) + index * sizeof(DirectX::XMFLOAT2)),
+                 kFieldNone };
+    d.tooltip = "Polygon vertex (local space); only the first pointCount are used (source = 1)";
+    return WithJp(d, jp);
+}
+
 } // namespace
 
 void RegisterBuiltinComponents()
@@ -1812,6 +1822,31 @@ void RegisterBuiltinComponents()
         MYE_JP("影", MYE_FIELD(Light2DComponent, shadows, Bool)),
         MYE_JP("影の強さ", MYE_FIELD_RANGE(Light2DComponent, shadowStrength, Float, 0.0f, 1.0f)),
         MYE_JP("法線マップの距離", MYE_FIELD(Light2DComponent, normalMapDistance, Float)),
+    }, kComponentNoHash);
+
+    // M94p: 2D シャドウキャスター (TypeId=86、末尾 append)。描画専用の **kComponentNoHash**
+    RegisterComponent<ShadowCaster2DComponent>("ShadowCaster2D", {
+        MYE_JP("形の出所", MYE_FIELD_TIP(ShadowCaster2DComponent, source, Int32, "0 = this entity's Collider, 1 = points")),
+        MYE_JP("自分も影にする", MYE_FIELD_TIP(ShadowCaster2DComponent, selfShadow, Bool,
+                                              "false = the inside of its own polygon stays lit")),
+        MYE_JP("影を落とす", MYE_FIELD(ShadowCaster2DComponent, castsShadows, Bool)),
+        MYE_JP("頂点数", MYE_FIELD_RANGE(ShadowCaster2DComponent, pointCount, Int32, 0, 16)),
+        ShadowCaster2DPointField(0, "point0", "頂点 0"),
+        ShadowCaster2DPointField(1, "point1", "頂点 1"),
+        ShadowCaster2DPointField(2, "point2", "頂点 2"),
+        ShadowCaster2DPointField(3, "point3", "頂点 3"),
+        ShadowCaster2DPointField(4, "point4", "頂点 4"),
+        ShadowCaster2DPointField(5, "point5", "頂点 5"),
+        ShadowCaster2DPointField(6, "point6", "頂点 6"),
+        ShadowCaster2DPointField(7, "point7", "頂点 7"),
+        ShadowCaster2DPointField(8, "point8", "頂点 8"),
+        ShadowCaster2DPointField(9, "point9", "頂点 9"),
+        ShadowCaster2DPointField(10, "point10", "頂点 10"),
+        ShadowCaster2DPointField(11, "point11", "頂点 11"),
+        ShadowCaster2DPointField(12, "point12", "頂点 12"),
+        ShadowCaster2DPointField(13, "point13", "頂点 13"),
+        ShadowCaster2DPointField(14, "point14", "頂点 14"),
+        ShadowCaster2DPointField(15, "point15", "頂点 15"),
     }, kComponentNoHash);
 }
 

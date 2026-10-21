@@ -10,6 +10,7 @@
 2. 例 `assets\shaders\SpriteFx.surface.hlsl`: Properties = `FlashColor (Color)`, `FlashAmount (0..1)`, `OutlineColor`, `OutlineWidth (px)`, `Dissolve (0..1)`。`assets\materials\SpriteFx.mat.json`。
 3. `Parallax2DComponent` (NoHash、TypeId 末尾): `factor / repeatX / repeatY / repeatSize`。`Sprite2DRenderer` の収集で、同エンティティの Sprite2D の描画位置を `pos + (cam.xy − pos.xy) × (1 − factor)` にし、repeat なら正射影の表示範囲 (透視なら repeat 無し) を覆う枚数 (上限 64) を複製。Catalog。`kSimSnapshotVersion` +1。
 4. 2D ポスト例 `assets\shaders\CrtScanline.post.hlsl` (走査線 + わずかな色収差。`MyTint.post.hlsl` の規約) と `assets\CrtScanline.fxstack.json` (AfterTonemap)。エンジン変更なし。
+4b. (sub-16 の申し送り) Inspector の `Sprite2D.normalMap` 欄に「テクスチャの .meta が srgb=on」の警告行 (sub-06 の sprite 欄の警告と同じ形、`Tr()`)。
 5. 確認スクショ: flash 1.0 で白、dissolve 0.5 で穴、Parallax factor 0.5 でカメラ x を 0 → 2 に動かした 2 枚で背景が 1 動く、CRT を載せた 1 枚。
 
 ## やらないこと (このサブでは)

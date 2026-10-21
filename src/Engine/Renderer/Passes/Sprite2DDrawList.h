@@ -72,6 +72,35 @@ struct Light2DInstance {
     uint32_t vertexStart = 0;
     uint32_t vertexCount = 0;
     AssetID texture;          // Sprite
+    // 影・法線マップ。center は形状に依らずライトの位置 (法線のライト方向)
+    bool shadows = false;
+    float shadowStrength = 1.0f;
+    float normalMapDistance = 1.0f; // ライトの平面からの高さ (法線の N·L の z)
+};
+
+// ---- 2D 影 / 法線マップ ----
+// キャスター 1 個: shadowPoints の区間が輪郭 (ワールド XY、向きは任意)。selfShadow == false のときだけ
+// shadowFill の区間 (輪郭を三角形に割ったもの) を持ち、影を描いた後に 0 で描き戻して自分を明るく保つ
+struct Shadow2DPoint {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+struct Shadow2DCaster {
+    uint32_t pointStart = 0;
+    uint32_t pointCount = 0;
+    uint32_t fillStart = 0;  // shadowFill の区間 (3 点 1 組)
+    uint32_t fillCount = 0;  // 点の数。selfShadow == true なら 0
+};
+
+// 法線 RT へ描くバッチ。頂点は Sprite2DDrawList::normalVertices の区間 (sprite2d の頂点と同じ形)。
+// 頂点色は法線の 2x2 変換 (rgba = m11 m12 m21 m22: 回転と flip を畳んだもの)。
+// normalMap が空 = 法線マップを持たない lit スプライト (平らな法線 (0,0,1) で描き、奥の法線を隠す)
+struct Sprite2DNormalBatch {
+    AssetID texture;   // 色のテクスチャ (アルファだけ使う)
+    AssetID normalMap;
+    bool pointFilter = false;
+    uint32_t start = 0;
+    uint32_t count = 0;
 };
 
 // 同じライト集合で描くバッチの区間。群ごとにライトバッファを作り直す (先頭バッチ = firstBatch、次の群の先頭まで)
@@ -92,6 +121,13 @@ struct Sprite2DDrawList {
     std::vector<Light2DVertex> lightVertices;
     std::vector<uint32_t> groupLights; // 群が使う lights の添字
     std::vector<Sprite2DLightGroup> lightGroups;
+    // 影を落とすライトがあるシーンだけ埋まる (presence gate)。法線マップ付きの lit スプライトがあるシーンだけ
+    // normalBatches が空でなくなる
+    std::vector<Shadow2DCaster> shadowCasters;
+    std::vector<Shadow2DPoint> shadowPoints;
+    std::vector<Shadow2DPoint> shadowFill;
+    std::vector<Sprite2DVertex> normalVertices;
+    std::vector<Sprite2DNormalBatch> normalBatches;
 
     void Clear()
     {
@@ -101,8 +137,14 @@ struct Sprite2DDrawList {
         lightVertices.clear();
         groupLights.clear();
         lightGroups.clear();
+        shadowCasters.clear();
+        shadowPoints.clear();
+        shadowFill.clear();
+        normalVertices.clear();
+        normalBatches.clear();
     }
     bool HasLights() const { return !lightGroups.empty(); }
+    bool HasNormals() const { return !normalBatches.empty(); }
     bool Empty() const { return batches.empty(); }
     // ステンシルを使うバッチがあるか (無ければ描画パスはステンシルのクリアも DSV の差し替えもしない)
     bool UsesStencil() const

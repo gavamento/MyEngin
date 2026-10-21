@@ -37,6 +37,8 @@ constexpr int kMaxPiecesPerAxis = 700;
 constexpr float kTileCountEpsilon = 1.0e-4f;
 // 視錐台の逆行列が特異とみなす行列式の下限 (これ未満はチャンクを切らない)
 constexpr float kMinFrustumDeterminant = 1.0e-20f;
+// 法線を回すワールド行列の軸の長さの下限 (これ未満の軸は回さない)
+constexpr float kMinAxisLength = 1.0e-6f;
 
 // 1 方向 (x か y) の 1 区間。dest はワールドの小さい側から、src は画素の小さい側から
 struct Piece {
@@ -130,6 +132,18 @@ bool Sprite2DRenderer::OrthoWorldBounds(const XMFLOAT4X4* view, const XMFLOAT4X4
         }
     }
     return true;
+}
+
+void Sprite2DRenderer::NormalTransform(const XMFLOAT4X4& m, bool flipX, bool flipY, float out[4])
+{
+    const float xLen = std::sqrt(m._11 * m._11 + m._12 * m._12);
+    const float yLen = std::sqrt(m._21 * m._21 + m._22 * m._22);
+    const float sx = flipX ? -1.0f : 1.0f;
+    const float sy = flipY ? -1.0f : 1.0f;
+    out[0] = (xLen > kMinAxisLength ? m._11 / xLen : 1.0f) * sx;
+    out[1] = (xLen > kMinAxisLength ? m._12 / xLen : 0.0f) * sx;
+    out[2] = (yLen > kMinAxisLength ? m._21 / yLen : 0.0f) * sy;
+    out[3] = (yLen > kMinAxisLength ? m._22 / yLen : 1.0f) * sy;
 }
 
 void Sprite2DRenderer::LocalRect(const SpriteDef& def, int texWidth, int texHeight, float out[4])
@@ -397,8 +411,16 @@ void Sprite2DRenderer::EmitSprite(const Item& item, RenderResources& resources)
             }
         }
     }
-    Push(r.texture, r.pointFilter, stencil, 0.0f, !lightMeta_.empty() && sp.lit, scratch_.data(),
-         static_cast<uint32_t>(scratch_.size()));
+    const bool lit = !lightMeta_.empty() && sp.lit;
+    Push(r.texture, r.pointFilter, stencil, 0.0f, lit, scratch_.data(), static_cast<uint32_t>(scratch_.size()));
+    if (lit && anyNormalMap_) {
+        // 法線 RT へ同じ頂点列を重ねる。法線マップが無いスプライトも平らな法線で描き、奥の法線を隠す
+        const AssetID normalTex = ResolveNormalMap(sp.normalMap, resources);
+        anyNormalReady_ = anyNormalReady_ || !normalTex.IsNull();
+        float xform[4];
+        NormalTransform(m, sp.flipX, sp.flipY, xform);
+        PushNormal(r.texture, normalTex, r.pointFilter, xform, scratch_.data(), static_cast<uint32_t>(scratch_.size()));
+    }
 }
 
 void Sprite2DRenderer::EmitMask(const Item& item, RenderResources& resources)
@@ -639,6 +661,11 @@ void Sprite2DRenderer::EmitTileChunk(const Item& item, World& world, RenderResou
         // タイルマップには lit の欄が無い。ライトがあるシーンでは常に lit
         Push(run.texture, run.pointFilter, sprite2dstencil::kNone, 0.0f, !lightMeta_.empty(), tileScratch_.data(),
              static_cast<uint32_t>(tileScratch_.size()));
+        if (!lightMeta_.empty() && anyNormalMap_) {
+            const float flat[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
+            PushNormal(run.texture, AssetID{}, run.pointFilter, flat, tileScratch_.data(),
+                       static_cast<uint32_t>(tileScratch_.size()));
+        }
     }
 }
 
@@ -656,6 +683,9 @@ void Sprite2DRenderer::CollectSprites(World& world, bool hasGroups)
             Item it;
             it.sprite = static_cast<const Sprite2DComponent*>(arch.GetPtr(si, row));
             it.world = &static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+            if (it.sprite->lit && !it.sprite->normalMap.IsNull()) {
+                anyNormalMap_ = true;
+            }
             AssignKeys(it, world, hasGroups, e, it.sprite->sortingLayerId, it.sprite->orderInLayer);
             items_.push_back(it);
         }
@@ -784,6 +814,10 @@ constexpr float kFullAngleDeg = 360.0f;
 constexpr float kMinMiterDot = 0.25f;
 // 面積がこれ以下の多角形は Freeform として描かない
 constexpr float kMinPolygonArea = 1.0e-8f;
+// 法線の N·L が 0 にならないよう、ライトの高さ (normalMapDistance) に持たせる下限
+constexpr float kMinNormalMapDistance = 1.0e-3f;
+// Collider が球のシャドウキャスターを近似する多角形の角数
+constexpr int kShadowCircleSegments = 16;
 
 // ライトのエンティティが向く方向 (ワールド行列のローカル X 軸の XY 成分)。ゼロなら +X
 void LightDirection(const XMFLOAT4X4& m, float out[2])
@@ -966,6 +1000,11 @@ void Sprite2DRenderer::CollectLights(World& world, RenderResources& resources)
             en.meta.color[2] = lc->color.z * k;
             en.meta.global = (lc->type == light2dtype::kGlobal);
             en.inst.z = m._43;
+            en.inst.center[0] = m._41;
+            en.inst.center[1] = m._42;
+            en.inst.shadows = lc->shadows && !en.meta.global; // Global には影が無い
+            en.inst.shadowStrength = (std::min)((std::max)(lc->shadowStrength, 0.0f), 1.0f);
+            en.inst.normalMapDistance = (std::max)(lc->normalMapDistance, kMinNormalMapDistance);
             std::copy(en.meta.color, en.meta.color + 3, en.inst.color);
             // 形状を作れないライト (半径 0、頂点不足、スプライト未解決) は数えない = ライトが 0 個のシーンと同じ扱い
             bool ok = true;
@@ -995,9 +1034,153 @@ void Sprite2DRenderer::CollectLights(World& world, RenderResources& resources)
         if (!en.meta.global) {
             en.meta.instance = static_cast<uint32_t>(list_.lights.size());
             list_.lights.push_back(en.inst);
+            anyShadowLight_ = anyShadowLight_ || en.inst.shadows;
         }
         lightMeta_.push_back(en.meta);
     }
+}
+
+bool Sprite2DRenderer::BuildShadowPolygon(World& world, EntityID entity, const ShadowCaster2DComponent& caster,
+                                          const XMFLOAT4X4& m, std::vector<XMFLOAT2>& out)
+{
+    out.clear();
+    // ローカル座標 (x, y, z) → ワールド XY (行ベクトル規約)
+    const auto toWorld = [&m](float x, float y, float z) {
+        return XMFLOAT2{ x * m._11 + y * m._21 + z * m._31 + m._41, x * m._12 + y * m._22 + z * m._32 + m._42 };
+    };
+    if (caster.source == shadowcaster2dsource::kPoints) {
+        const int count = (std::min)((std::max)(caster.pointCount, 0), kShadowCaster2DMaxPoints);
+        for (int i = 0; i < count; ++i) {
+            out.push_back(toWorld(caster.points[i].x, caster.points[i].y, 0.0f));
+        }
+    } else if (const auto* col = world.GetComponent<ColliderComponent>(entity)) {
+        if (col->shape == collidershape::kBox) {
+            // 箱の XY 断面 (collider の回転と中心を含む)
+            const XMVECTOR q = XMLoadFloat4(&col->rotation);
+            const float hx = col->halfExtents.x;
+            const float hy = col->halfExtents.y;
+            const float cornerX[4] = { -hx, hx, hx, -hx };
+            const float cornerY[4] = { -hy, -hy, hy, hy };
+            for (int i = 0; i < 4; ++i) {
+                XMFLOAT3 p;
+                XMStoreFloat3(&p, XMVector3Rotate(XMVectorSet(cornerX[i], cornerY[i], 0.0f, 0.0f), q));
+                out.push_back(toWorld(p.x + col->center.x, p.y + col->center.y, p.z + col->center.z));
+            }
+        } else if (col->shape == collidershape::kSphere) {
+            for (int i = 0; i < kShadowCircleSegments; ++i) {
+                const float a = 2.0f * XM_PI * static_cast<float>(i) / static_cast<float>(kShadowCircleSegments);
+                out.push_back(toWorld(col->center.x + col->radius * std::cos(a), col->center.y + col->radius * std::sin(a),
+                                      col->center.z));
+            }
+        } else if (col->shape == collidershape::kPolygon2D) {
+            if (const Shape2D* shape = shape2d::Resolve(col->meshAsset)) {
+                for (const XMFLOAT2& p : shape->points) {
+                    out.push_back(toWorld(p.x, p.y, 0.0f));
+                }
+            }
+        }
+    }
+    if (out.size() < 3) {
+        out.clear();
+        return false;
+    }
+    return true;
+}
+
+void Sprite2DRenderer::CollectShadowCasters(World& world)
+{
+    struct Found {
+        EntityID entity;
+        bool selfShadow = false;
+        std::vector<XMFLOAT2> points;
+    };
+    std::vector<Found> found;
+    const ComponentTypeId req[] = { ShadowCaster2DComponent::sTypeId, WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int ci = arch.FindTypeIndex(ShadowCaster2DComponent::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (!IsEntityActive(world, e)) {
+                continue;
+            }
+            const auto* sc = static_cast<const ShadowCaster2DComponent*>(arch.GetPtr(ci, row));
+            if (!sc->castsShadows) {
+                continue;
+            }
+            Found f;
+            f.entity = e;
+            f.selfShadow = sc->selfShadow;
+            if (BuildShadowPolygon(world, e, *sc, static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value,
+                                   f.points)) {
+                found.push_back(std::move(f));
+            }
+        }
+    });
+    // 影は和集合 (描画順に依らない) だが、アーキタイプの走査順に依らないよう entity 順に並べる
+    std::stable_sort(found.begin(), found.end(), [](const Found& a, const Found& b) {
+        return std::tie(a.entity.index, a.entity.generation) < std::tie(b.entity.index, b.entity.generation);
+    });
+    for (const Found& f : found) {
+        Shadow2DCaster c;
+        c.pointStart = static_cast<uint32_t>(list_.shadowPoints.size());
+        c.pointCount = static_cast<uint32_t>(f.points.size());
+        for (const XMFLOAT2& p : f.points) {
+            list_.shadowPoints.push_back({ p.x, p.y });
+        }
+        c.fillStart = static_cast<uint32_t>(list_.shadowFill.size());
+        if (!f.selfShadow) {
+            std::vector<uint32_t> tris;
+            if (TriangulatePolygon2D(f.points, tris)) {
+                for (uint32_t idx : tris) {
+                    list_.shadowFill.push_back({ f.points[idx].x, f.points[idx].y });
+                }
+            }
+        }
+        c.fillCount = static_cast<uint32_t>(list_.shadowFill.size()) - c.fillStart;
+        list_.shadowCasters.push_back(c);
+    }
+}
+
+AssetID Sprite2DRenderer::ResolveNormalMap(AssetID normalMap, RenderResources& resources)
+{
+    if (normalMap.IsNull()) {
+        return AssetID{};
+    }
+    TextureLibrary& textures = resources.textures;
+    if (textures.Get(normalMap) == nullptr) {
+        const std::wstring path = assetguid::ResolvePath(normalMap.value);
+        if (!path.empty()) {
+            textures.RequestLoadFileAsync(path);
+        }
+        return AssetID{};
+    }
+    // 白のプレースホルダ (1x1) の間は法線として使えない
+    return textures.IsPending(normalMap) ? AssetID{} : normalMap;
+}
+
+void Sprite2DRenderer::PushNormal(AssetID texture, AssetID normalMap, bool pointFilter, const float xform[4],
+                                  const Sprite2DVertex* v, uint32_t count)
+{
+    if (count == 0) {
+        return;
+    }
+    if (list_.normalBatches.empty() || list_.normalBatches.back().texture != texture
+        || list_.normalBatches.back().normalMap != normalMap || list_.normalBatches.back().pointFilter != pointFilter) {
+        Sprite2DNormalBatch b;
+        b.texture = texture;
+        b.normalMap = normalMap;
+        b.pointFilter = pointFilter;
+        b.start = static_cast<uint32_t>(list_.normalVertices.size());
+        list_.normalBatches.push_back(b);
+    }
+    // 頂点色は法線の変換に使う (法線 RT のアルファはテクスチャから取る)
+    const size_t first = list_.normalVertices.size();
+    list_.normalVertices.insert(list_.normalVertices.end(), v, v + count);
+    for (size_t i = first; i < list_.normalVertices.size(); ++i) {
+        std::copy(xform, xform + 4, list_.normalVertices[i].color);
+    }
+    list_.normalBatches.back().count += count;
 }
 
 uint32_t Sprite2DRenderer::LightSetOf(int32_t layerId)
@@ -1083,6 +1266,9 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
     groupSetIds_.clear();
     std::fill(std::begin(layerLightSet_), std::end(layerLightSet_), -1);
     forceNewBatch_ = false;
+    anyShadowLight_ = false;
+    anyNormalMap_ = false;
+    anyNormalReady_ = false;
     ++tileFrame_;
 
     // グループがシーンに無ければ祖先を辿らない (多くのシーンはグループを持たない)
@@ -1113,6 +1299,9 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
     });
     list_.vertices.reserve(items_.size() * 6);
     CollectLights(world, resources);
+    if (anyShadowLight_) {
+        CollectShadowCasters(world);
+    }
     for (const Item& it : items_) {
         if (!lightMeta_.empty()) {
             SwitchLightGroup(it.layerId, it.isTile || (!it.isMask && it.sprite->lit));
@@ -1124,6 +1313,12 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
         } else {
             EmitSprite(it, resources);
         }
+    }
+
+    // 使える法線マップが 1 枚も無ければ法線 RT を作らない (平らな法線だけのバッチは捨てる)
+    if (!anyNormalReady_) {
+        list_.normalVertices.clear();
+        list_.normalBatches.clear();
     }
 
     // 今回どのタイルマップにも使われなかったチャンク (エンティティ / レイヤー / チャンクの削除) を捨てる

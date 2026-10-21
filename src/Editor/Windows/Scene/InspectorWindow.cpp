@@ -4332,6 +4332,8 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
     std::transform(fname.begin(), fname.end(), fname.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     std::vector<AssetEntry> entries;
+    // テクスチャを指すフィールド。名前に "tex" を含まない Sprite2D.normalMap もテクスチャ (M94p)
+    const bool isTextureRef = fname.find("tex") != std::string::npos || fname == "normalmap";
     const bool isShape2DRef = fname == "meshasset" && !comps.empty()
         && static_cast<const ColliderComponent*>(comps.front())->shape >= collidershape::kPolygon2D;
     // ディスク上のファイルも候補に出す種別 (Unknown = ライブラリの一覧だけ)。
@@ -4400,7 +4402,7 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         entries = ctx.resources->meshes.Enumerate();
     } else if (fname.find("material") != std::string::npos) {
         entries = ctx.resources->materials.Enumerate();
-    } else if (fname.find("tex") != std::string::npos) {
+    } else if (isTextureRef) {
         entries = ctx.resources->textures.Enumerate();
         diskType = AssetType::Texture; // 未ロードのテクスチャもポップアップで出す (MaterialInspector と同じ)
     } else if (fname.find("sound") != std::string::npos) {
@@ -4456,7 +4458,7 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
     }
 
     auto assign = [&](AssetID v) {
-        if (!v.IsNull() && fname != "sprite" && fname.find("tex") != std::string::npos) {
+        if (!v.IsNull() && fname != "sprite" && isTextureRef) {
             if (!ctx.resources->textures.Get(v)) {
                 const std::wstring loadPath = assetguid::ResolvePath(v.value);
                 if (!loadPath.empty()) {
@@ -4484,7 +4486,7 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         if (const ImGuiPayload* pa = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
             const std::string utf8 = static_cast<const char*>(pa->Data);
             const std::wstring dropPath = Utf8ToWide(utf8);
-            if (fname.find("tex") != std::string::npos && AssetDatabase::ClassifyPath(dropPath) == AssetType::Texture) {
+            if (isTextureRef && AssetDatabase::ClassifyPath(dropPath) == AssetType::Texture) {
                 const AssetID aid = ctx.resources->textures.RequestLoadFileAsync(dropPath);
                 assign(aid);
             } else if (fname == "tilemap" && AssetDatabase::ClassifyPath(dropPath) == AssetType::Tilemap) {

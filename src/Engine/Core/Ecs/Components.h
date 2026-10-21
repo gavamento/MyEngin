@@ -2394,7 +2394,8 @@ struct TilemapComponent {
 // ---- 2D ライト (M94、TypeId=85) ----
 // Sprite2DRenderer が収集し、Sprite2DPass が RGBA16F のライトバッファへ加算して lit なスプライトに乗算する。
 // 向きはエンティティの Z 回転。描画専用なので **kComponentNoHash**。
-// shadows 以降の欄は sub-16 (影・法線マップ) が使う。生バイトを伸ばさないため先に置いてある
+// shadows = ShadowCaster2D の影を受ける (Global には効かない)、shadowStrength = 影の濃さ、
+// normalMapDistance = 法線マップ付きスプライトの N·L に使う、ライトの平面からの高さ
 namespace light2dtype {
 inline constexpr int32_t kGlobal = 0;   // 画面全体を一様に照らす
 inline constexpr int32_t kSpot = 1;     // 円 / 扇形 (半径と角度の減衰)
@@ -2420,6 +2421,24 @@ struct Light2DComponent {
     bool shadows = false;
     float shadowStrength = 1.0f;
     float normalMapDistance = 1.0f;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- 2D シャドウキャスター (M94、TypeId=86) ----
+// shadows が立った Light2D の影を落とす多角形。source 0 = 同じエンティティの Collider の形 (Box は 4 点、
+// Sphere は 16 角、Polygon2D は点列。それ以外は影なし)、1 = points。描画専用なので **kComponentNoHash**
+namespace shadowcaster2dsource {
+inline constexpr int32_t kCollider = 0;
+inline constexpr int32_t kPoints = 1;
+} // namespace shadowcaster2dsource
+inline constexpr int32_t kShadowCaster2DMaxPoints = 16;
+
+struct ShadowCaster2DComponent {
+    int32_t source = shadowcaster2dsource::kCollider;
+    bool selfShadow = false;   // false = 自分の多角形の内側は影にしない (箔自身は明るいまま)
+    bool castsShadows = true;
+    int32_t pointCount = 0;    // source 1
+    DirectX::XMFLOAT2 points[kShadowCaster2DMaxPoints] = {}; // source 1: ローカル座標
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

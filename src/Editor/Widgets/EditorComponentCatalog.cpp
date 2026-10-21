@@ -114,6 +114,7 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "SpriteMask2D", { ICON_FA_MASKS_THEATER, "2D", "2D スプライトマスク" } },
         { "Tilemap", { ICON_FA_BORDER_ALL, "2D", "2D タイルマップ" } },
         { "Light2D", { ICON_FA_LIGHTBULB, "2D", "2D ライト" } },
+        { "ShadowCaster2D", { ICON_FA_CIRCLE_HALF_STROKE, "2D", "2D シャドウキャスター" } }, // M94p
     };
     return t;
 }

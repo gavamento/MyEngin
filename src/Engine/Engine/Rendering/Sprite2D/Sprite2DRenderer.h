@@ -23,6 +23,7 @@ struct RenderResources;
 struct Sprite2DComponent;
 struct SpriteMask2DComponent;
 struct Light2DComponent;
+struct ShadowCaster2DComponent;
 struct SpriteDef;
 
 // World の active な Sprite2D / SpriteMask2D / Tilemap を集め、SpriteDef を解決して三角形リストに展開し、
@@ -84,6 +85,15 @@ public:
     };
     // 3x3 に割ったクアッド列を作る (GPU に依らない純関数)。頂点数が kMaxSpriteVertices を超える分は切り、切ったら true
     static bool BuildSliceQuads(const SliceInput& in, std::vector<SliceQuad>& out);
+
+    // 法線の 2x2 変換 (m11 m12 m21 m22): タンジェント空間の法線 (x, y) → ワールドの (x, y)。
+    // ワールド行列のローカル X / Y 軸の向き (スケールは除く) に flip の符号を掛けたもの
+    static void NormalTransform(const DirectX::XMFLOAT4X4& m, bool flipX, bool flipY, float out[4]);
+
+    // ShadowCaster2D の輪郭をワールド XY で作る (描画と Scene View のギズモが同じ形を使う 1 本)。
+    // 3 点未満 (形を作れない / Collider が対応外) は false。world は Collider の取得だけに使う
+    static bool BuildShadowPolygon(World& world, EntityID entity, const ShadowCaster2DComponent& caster,
+                                   const DirectX::XMFLOAT4X4& worldMatrix, std::vector<DirectX::XMFLOAT2>& out);
 
 private:
     struct Item {
@@ -188,6 +198,15 @@ private:
     // 層 layerId を照らすライト集合の id (同じ集合の層は同じ id)
     uint32_t LightSetOf(int32_t layerId);
 
+    // ---- 2D 影 / 法線マップ ----
+    // 影を落とすライトがあるシーンだけ呼ぶ。castsShadows のキャスターを entity 順に list_.shadow* へ積む
+    void CollectShadowCasters(World& world);
+    // 法線マップのテクスチャが使える状態なら ID を返す (未ロードなら読み込みを頼んで空を返す = 平らな法線で描く)
+    AssetID ResolveNormalMap(AssetID normalMap, RenderResources& resources);
+    // 頂点列を法線 RT 用のバッチへ積む。xform = 法線の 2x2 変換 (m11 m12 m21 m22)。normalMap が空 = 平らな法線
+    void PushNormal(AssetID texture, AssetID normalMap, bool pointFilter, const float xform[4],
+                    const Sprite2DVertex* v, uint32_t count);
+
     AssetID missingTexture_ = {}; // 内蔵 16x16 マゼンタ (未解決のスプライト用。必要になったときに作る)
     bool warnedVertexCap_ = false;
     bool capped_ = false; // いま組んでいるスプライトが上限に当たった
@@ -201,6 +220,9 @@ private:
     int32_t layerLightSet_[32] = {};                     // 層 id → 集合 id (-1 = 未計算)
     std::vector<uint32_t> groupSetIds_;                  // list_.lightGroups と並ぶ集合 id
     bool forceNewBatch_ = false;                         // 次の Push でバッチを必ず割る (ライト群の切り替え)
+    bool anyShadowLight_ = false;                        // shadows が立った非 Global ライトがある (キャスターを集める条件)
+    bool anyNormalMap_ = false;                          // 法線マップを持つ lit スプライトがある (無ければ法線を一切積まない)
+    bool anyNormalReady_ = false;                        // 実際に法線マップのバッチを積んだ (積めなければ法線 RT を作らない)
     uint64_t simTick_ = 0;                               // Collect が受けた sim の tick (アニメーションタイル用)
     uint64_t tileFrame_ = 0;                             // Collect の通し番号 (使われなくなったチャンクの掃除用)
     std::vector<Sprite2DVertex> tileScratch_;            // 原点を足した 1 run 分の頂点

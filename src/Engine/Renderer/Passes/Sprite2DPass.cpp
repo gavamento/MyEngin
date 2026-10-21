@@ -5,6 +5,8 @@
 //====================================================================================
 #include "Engine/Renderer/Passes/Sprite2DPass.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #include "Engine/Renderer/Device/GpuResources.h"
@@ -41,8 +43,72 @@ struct LightCb {
     float spotA[4];               // center.xy, dir.xy
     float spotB[4];               // inner, outer, falloff, mode
     float spotC[4];               // useAngle, cosOuter, invCosRange, z
+    float fx[4];                  // 法線を掛ける, normalMapDistance, 影を掛ける, shadowStrength
+    float screen[4];              // 1 / ライトバッファの寸法 (xy)
 };
+static_assert(sizeof(LightCb) % 16 == 0, "cbuffer は 16 バイト境界");
+
+// sprite2d_shadow.hlsl の ShadowCB と一致させる
+struct ShadowCb {
+    DirectX::XMFLOAT4X4 viewProj; // 転置済み
+    float param[4];               // x = ワールド Z, y = 書く値
+};
+static_assert(sizeof(ShadowCb) % 16 == 0, "cbuffer は 16 バイト境界");
+
+// sprite2d_normal.hlsl の NormalPsCB と一致させる
+struct NormalPsCb {
+    float flat; // 1 = 法線マップ無し (平らな法線)
+    float pad[3];
+};
+static_assert(sizeof(NormalPsCb) % 16 == 0, "cbuffer は 16 バイト境界");
+
+constexpr UINT kLightNormalSlot = 1; // sprite2d_light.hlsl の t1 (法線 RT)
+constexpr UINT kLightShadowSlot = 2; // sprite2d_light.hlsl の t2 (影 RT)
+// 法線 RT のクリア色: 平らな法線 (0, 0, 1) を 0.5 倍して 0.5 を足した値
+constexpr float kFlatNormalClear[4] = { 0.5f, 0.5f, 1.0f, 1.0f };
+constexpr uint32_t kShadowVertexCapacityMargin = 256;
+// view * proj の逆行列が特異とみなす行列式の下限
+constexpr float kMinViewDeterminant = 1.0e-20f;
+
+// 画面が映すワールド XY の中心と対角の長さ (影の押し出し距離の基準)。正射影前提で、特異な行列は false
+bool WorldViewExtent(const XMFLOAT4X4& view, const XMFLOAT4X4& proj, float center[2], float& diag)
+{
+    const XMMATRIX viewProj = XMMatrixMultiply(XMLoadFloat4x4(&view), XMLoadFloat4x4(&proj));
+    XMVECTOR det;
+    const XMMATRIX inv = XMMatrixInverse(&det, viewProj);
+    if (std::fabs(XMVectorGetX(det)) < kMinViewDeterminant) {
+        return false;
+    }
+    float minX = 0.0f;
+    float maxX = 0.0f;
+    float minY = 0.0f;
+    float maxY = 0.0f;
+    for (int i = 0; i < 4; ++i) {
+        XMFLOAT3 p;
+        XMStoreFloat3(&p, XMVector3TransformCoord(XMVectorSet((i & 1) ? 1.0f : -1.0f, (i & 2) ? 1.0f : -1.0f, 0.5f, 1.0f), inv));
+        minX = (i == 0) ? p.x : (std::min)(minX, p.x);
+        maxX = (i == 0) ? p.x : (std::max)(maxX, p.x);
+        minY = (i == 0) ? p.y : (std::min)(minY, p.y);
+        maxY = (i == 0) ? p.y : (std::max)(maxY, p.y);
+    }
+    center[0] = 0.5f * (minX + maxX);
+    center[1] = 0.5f * (minY + maxY);
+    diag = std::sqrt((maxX - minX) * (maxX - minX) + (maxY - minY) * (maxY - minY));
+    return true;
+}
 } // namespace
+
+// 1 回の Render で法線 RT・影・ライトバッファが共有する値
+struct Sprite2DPass::LightContext {
+    DirectX::XMFLOAT4X4 viewProjT = {};   // 転置済み
+    D3D11_VIEWPORT viewport = {};
+    float invScreen[2] = { 0.0f, 0.0f };
+    ShaderProgram* lightProg = nullptr;
+    bool normalReady = false;             // 法線 RT が作れた (ライトの PS が N·L を掛ける)
+    ShaderProgram* shadowProg = nullptr;  // null = 影なし (影 RT が作れない / キャスターが無い)
+    float viewCenter[2] = { 0.0f, 0.0f };  // 画面が映すワールド XY の中心と対角 (影の押し出し距離の基準)
+    float viewDiag = 0.0f;
+};
 
 bool Sprite2DPass::Init(GraphicsDevice& device, ShaderManager& shaders)
 {
@@ -158,6 +224,17 @@ bool Sprite2DPass::Init(GraphicsDevice& device, ShaderManager& shaders)
     }
     lightShader_ = shaders.Load("sprite2d_light");
 
+    cbd.ByteWidth = sizeof(ShadowCb);
+    if (FAILED(dev->CreateBuffer(&cbd, nullptr, shadowCb_.GetAddressOf()))) {
+        return false;
+    }
+    cbd.ByteWidth = sizeof(NormalPsCb);
+    if (FAILED(dev->CreateBuffer(&cbd, nullptr, normalCb_.GetAddressOf()))) {
+        return false;
+    }
+    shadowShader_ = shaders.Load("sprite2d_shadow");
+    normalShader_ = shaders.Load("sprite2d_normal");
+
     ready_ = true;
     return true;
 }
@@ -171,6 +248,12 @@ void Sprite2DPass::Shutdown()
     lightCb_.Reset();
     lightVb_.Reset();
     lightVbCapacity_ = 0;
+    shadowCb_.Reset();
+    shadowVb_.Reset();
+    shadowVbCapacity_ = 0;
+    normalCb_.Reset();
+    shadowRt_.Release();
+    normalRt_.Release();
     blendAdd_.Reset();
     depthOff_.Reset();
     lightBuffer_.Release();
@@ -187,7 +270,9 @@ void Sprite2DPass::Shutdown()
 
 bool Sprite2DPass::Upload(GraphicsDevice& device, const Sprite2DDrawList& list)
 {
-    const uint32_t needed = static_cast<uint32_t>(list.vertices.size());
+    // 法線 RT 用の頂点は、スプライトの頂点の後ろに続けて上げる (法線バッチの start は list.vertices の後ろ起点)
+    const uint32_t spriteCount = static_cast<uint32_t>(list.vertices.size());
+    const uint32_t needed = spriteCount + static_cast<uint32_t>(list.normalVertices.size());
     if (!vb_ || needed > vbCapacity_) {
         vbCapacity_ = needed + needed / 2 + kVertexCapacityMargin;
         D3D11_BUFFER_DESC vbd = {};
@@ -205,7 +290,11 @@ bool Sprite2DPass::Upload(GraphicsDevice& device, const Sprite2DDrawList& list)
     if (FAILED(device.Context()->Map(vb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
         return false;
     }
-    std::memcpy(mapped.pData, list.vertices.data(), static_cast<size_t>(needed) * sizeof(Sprite2DVertex));
+    std::memcpy(mapped.pData, list.vertices.data(), static_cast<size_t>(spriteCount) * sizeof(Sprite2DVertex));
+    if (!list.normalVertices.empty()) {
+        std::memcpy(static_cast<Sprite2DVertex*>(mapped.pData) + spriteCount, list.normalVertices.data(),
+                    list.normalVertices.size() * sizeof(Sprite2DVertex));
+    }
     device.Context()->Unmap(vb_.Get(), 0);
     return true;
 }
@@ -238,9 +327,169 @@ bool Sprite2DPass::UploadLights(GraphicsDevice& device, const Sprite2DDrawList& 
     return true;
 }
 
+bool Sprite2DPass::BuildNormalBuffer(GraphicsDevice& device, TextureLibrary& textures, const Sprite2DDrawList& list,
+                                     const LightContext& ctx, ShaderProgram& normalProg)
+{
+    normalRt_.Resize(device, lightBuffer_.Width(), lightBuffer_.Height(), DXGI_FORMAT_R8G8B8A8_UNORM, false);
+    if (!normalRt_.IsValid()) {
+        return false;
+    }
+    ID3D11DeviceContext* dc = device.Context();
+    ID3D11RenderTargetView* rtv = normalRt_.RTV();
+    dc->OMSetRenderTargets(1, &rtv, nullptr);
+    dc->RSSetViewports(1, &ctx.viewport);
+    dc->ClearRenderTargetView(rtv, kFlatNormalClear);
+
+    const UINT stride = sizeof(Sprite2DVertex);
+    const UINT offset = 0;
+    ID3D11Buffer* vb = vb_.Get();
+    dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+    dc->IASetInputLayout(normalProg.inputLayout.Get());
+    dc->VSSetShader(normalProg.vs.Get(), nullptr, 0);
+    dc->PSSetShader(normalProg.ps.Get(), nullptr, 0);
+    ID3D11Buffer* vsCbs[1] = { cb_.Get() };
+    dc->VSSetConstantBuffers(0, 1, vsCbs);
+    ID3D11Buffer* psCbs[1] = { normalCb_.Get() };
+    dc->PSSetConstantBuffers(1, 1, psCbs);
+    dc->OMSetBlendState(blend_.Get(), nullptr, 0xFFFFFFFFu);
+    dc->OMSetDepthStencilState(depthOff_.Get(), 0);
+
+    // 法線バッチの頂点はスプライトの頂点の後ろに上げてある (Upload)
+    const uint32_t base = static_cast<uint32_t>(list.vertices.size());
+    for (const Sprite2DNormalBatch& b : list.normalBatches) {
+        const Texture* colorTex = textures.Get(b.texture);
+        if (colorTex == nullptr || !colorTex->srv || b.count == 0) {
+            continue;
+        }
+        const Texture* normalTex = b.normalMap.IsNull() ? nullptr : textures.Get(b.normalMap);
+        const bool flat = normalTex == nullptr || !normalTex->srv;
+        NormalPsCb ps = {};
+        ps.flat = flat ? 1.0f : 0.0f;
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        if (SUCCEEDED(dc->Map(normalCb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+            std::memcpy(mapped.pData, &ps, sizeof(ps));
+            dc->Unmap(normalCb_.Get(), 0);
+        }
+        ID3D11SamplerState* samp = b.pointFilter ? samplerPoint_.Get() : samplerLinear_.Get();
+        dc->PSSetSamplers(0, 1, &samp);
+        ID3D11ShaderResourceView* srvs[2] = { flat ? colorTex->srv.Get() : normalTex->srv.Get(), colorTex->srv.Get() };
+        dc->PSSetShaderResources(0, 2, srvs);
+        dc->Draw(b.count, base + b.start);
+    }
+    ID3D11ShaderResourceView* nullSrvs[2] = { nullptr, nullptr };
+    dc->PSSetShaderResources(0, 2, nullSrvs);
+    return true;
+}
+
+void Sprite2DPass::RenderShadowMap(GraphicsDevice& device, const Sprite2DDrawList& list, const Light2DInstance& light,
+                                   const LightContext& ctx)
+{
+    // 辺 (a, b) を、ライトから遠ざかる向きへ延ばした四辺形にする。延ばす距離は「頂点から画面の中心まで + 画面の対角」で、
+    // 画面内のどの点もこの長さより手前にあるので、押し出しの先端が画面に見えることはない
+    shadowScratch_.clear();
+    const float lx = light.center[0];
+    const float ly = light.center[1];
+    constexpr float kMinLightDistance = 1.0e-6f;
+    for (const Shadow2DCaster& caster : list.shadowCasters) {
+        for (uint32_t i = 0; i < caster.pointCount; ++i) {
+            const Shadow2DPoint& a = list.shadowPoints[caster.pointStart + i];
+            const Shadow2DPoint& b = list.shadowPoints[caster.pointStart + (i + 1) % caster.pointCount];
+            const float adx = a.x - lx;
+            const float ady = a.y - ly;
+            const float bdx = b.x - lx;
+            const float bdy = b.y - ly;
+            const float aLen = std::sqrt(adx * adx + ady * ady);
+            const float bLen = std::sqrt(bdx * bdx + bdy * bdy);
+            if (aLen < kMinLightDistance || bLen < kMinLightDistance) {
+                continue; // 頂点にライトが重なる辺は向きが決まらない
+            }
+            const float aReach = std::sqrt((a.x - ctx.viewCenter[0]) * (a.x - ctx.viewCenter[0])
+                                           + (a.y - ctx.viewCenter[1]) * (a.y - ctx.viewCenter[1]));
+            const float bReach = std::sqrt((b.x - ctx.viewCenter[0]) * (b.x - ctx.viewCenter[0])
+                                           + (b.y - ctx.viewCenter[1]) * (b.y - ctx.viewCenter[1]));
+            const float reach = (std::max)(aReach, bReach) + ctx.viewDiag;
+            const Light2DVertex va = { { a.x, a.y }, { 0.0f, 0.0f }, 1.0f };
+            const Light2DVertex vb = { { b.x, b.y }, { 0.0f, 0.0f }, 1.0f };
+            const Light2DVertex fa = { { a.x + adx / aLen * reach, a.y + ady / aLen * reach }, { 0.0f, 0.0f }, 1.0f };
+            const Light2DVertex fb = { { b.x + bdx / bLen * reach, b.y + bdy / bLen * reach }, { 0.0f, 0.0f }, 1.0f };
+            const Light2DVertex quad[6] = { va, vb, fb, va, fb, fa };
+            shadowScratch_.insert(shadowScratch_.end(), quad, quad + 6);
+        }
+    }
+    const uint32_t volumeCount = static_cast<uint32_t>(shadowScratch_.size());
+    for (const Shadow2DPoint& p : list.shadowFill) {
+        shadowScratch_.push_back({ { p.x, p.y }, { 0.0f, 0.0f }, 1.0f });
+    }
+
+    ID3D11DeviceContext* dc = device.Context();
+    // 前のライトで読んでいた影 SRV を外してから書き込み先にする
+    ID3D11ShaderResourceView* nullSrv[1] = { nullptr };
+    dc->PSSetShaderResources(kLightShadowSlot, 1, nullSrv);
+    ID3D11RenderTargetView* rtv = shadowRt_.RTV();
+    dc->OMSetRenderTargets(1, &rtv, nullptr);
+    dc->RSSetViewports(1, &ctx.viewport);
+    const float clear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    dc->ClearRenderTargetView(rtv, clear);
+    if (shadowScratch_.empty()) {
+        return;
+    }
+
+    const uint32_t needed = static_cast<uint32_t>(shadowScratch_.size());
+    if (!shadowVb_ || needed > shadowVbCapacity_) {
+        shadowVbCapacity_ = needed + needed / 2 + kShadowVertexCapacityMargin;
+        D3D11_BUFFER_DESC vbd = {};
+        vbd.ByteWidth = shadowVbCapacity_ * sizeof(Light2DVertex);
+        vbd.Usage = D3D11_USAGE_DYNAMIC;
+        vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        vbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        shadowVb_.Reset();
+        if (FAILED(device.Device()->CreateBuffer(&vbd, nullptr, shadowVb_.GetAddressOf()))) {
+            shadowVbCapacity_ = 0;
+            return; // 影 RT は 0 のまま = このライトは影なし
+        }
+    }
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    if (FAILED(dc->Map(shadowVb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        return;
+    }
+    std::memcpy(mapped.pData, shadowScratch_.data(), static_cast<size_t>(needed) * sizeof(Light2DVertex));
+    dc->Unmap(shadowVb_.Get(), 0);
+
+    const UINT stride = sizeof(Light2DVertex);
+    const UINT offset = 0;
+    ID3D11Buffer* vb = shadowVb_.Get();
+    dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+    dc->IASetInputLayout(ctx.shadowProg->inputLayout.Get());
+    dc->VSSetShader(ctx.shadowProg->vs.Get(), nullptr, 0);
+    dc->PSSetShader(ctx.shadowProg->ps.Get(), nullptr, 0);
+    ID3D11Buffer* cbs[1] = { shadowCb_.Get() };
+    dc->VSSetConstantBuffers(0, 1, cbs);
+    dc->PSSetConstantBuffers(0, 1, cbs);
+    dc->OMSetBlendState(blend_.Get(), nullptr, 0xFFFFFFFFu); // アルファ 1 の上書き
+    dc->OMSetDepthStencilState(depthOff_.Get(), 0);
+
+    ShadowCb cb = {};
+    cb.viewProj = ctx.viewProjT;
+    cb.param[0] = light.z;
+    const auto draw = [&](float value, uint32_t first, uint32_t count) {
+        if (count == 0) {
+            return;
+        }
+        cb.param[1] = value;
+        D3D11_MAPPED_SUBRESOURCE cbMapped = {};
+        if (SUCCEEDED(dc->Map(shadowCb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &cbMapped))) {
+            std::memcpy(cbMapped.pData, &cb, sizeof(cb));
+            dc->Unmap(shadowCb_.Get(), 0);
+        }
+        dc->Draw(count, first);
+    };
+    draw(1.0f, 0, volumeCount);
+    // selfShadow == false: 自分の多角形の内側は影を消して戻す (全キャスターの影を描いた後に行う)
+    draw(0.0f, volumeCount, needed - volumeCount);
+}
+
 void Sprite2DPass::BuildLightBuffer(GraphicsDevice& device, TextureLibrary& textures, const Sprite2DDrawList& list,
-                                    const Sprite2DLightGroup& group, const XMFLOAT4X4& viewProjTransposed,
-                                    const D3D11_VIEWPORT& viewport, ShaderProgram& lightProg)
+                                    const Sprite2DLightGroup& group, const LightContext& ctx)
 {
     ID3D11DeviceContext* dc = device.Context();
     // シーン RT の t1 を剥がしてから書き込み先にする (読みと書きの同時束縛を避ける)
@@ -248,26 +497,34 @@ void Sprite2DPass::BuildLightBuffer(GraphicsDevice& device, TextureLibrary& text
     dc->PSSetShaderResources(kLightBufferSlot, 1, nullSrv);
     ID3D11RenderTargetView* lightRtv = lightBuffer_.RTV();
     dc->OMSetRenderTargets(1, &lightRtv, nullptr);
-    dc->RSSetViewports(1, &viewport);
+    dc->RSSetViewports(1, &ctx.viewport);
     const float clear[4] = { group.globalColor[0], group.globalColor[1], group.globalColor[2], 1.0f };
     dc->ClearRenderTargetView(lightRtv, clear);
     if (group.lightCount == 0) {
         return;
     }
 
-    const UINT stride = sizeof(Light2DVertex);
-    const UINT offset = 0;
-    ID3D11Buffer* vb = lightVb_.Get();
-    dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
-    dc->IASetInputLayout(lightProg.inputLayout.Get());
-    dc->VSSetShader(lightProg.vs.Get(), nullptr, 0);
-    dc->PSSetShader(lightProg.ps.Get(), nullptr, 0);
-    ID3D11Buffer* cbs[1] = { lightCb_.Get() };
-    dc->VSSetConstantBuffers(0, 1, cbs);
-    dc->PSSetConstantBuffers(0, 1, cbs);
-    dc->OMSetBlendState(blendAdd_.Get(), nullptr, 0xFFFFFFFFu);
-    dc->OMSetDepthStencilState(depthOff_.Get(), 0);
-    dc->PSSetSamplers(0, 1, samplerLinear_.GetAddressOf());
+    // 影 RT の描画がシェーダ / 入力アセンブラ / RT を変えるので、ライト 1 個ごとに張り直せる形にしておく
+    ID3D11ShaderResourceView* normalSrv = ctx.normalReady ? normalRt_.SRV() : nullptr;
+    const auto bindLightState = [&]() {
+        const UINT stride = sizeof(Light2DVertex);
+        const UINT offset = 0;
+        ID3D11Buffer* vb = lightVb_.Get();
+        dc->OMSetRenderTargets(1, &lightRtv, nullptr);
+        dc->RSSetViewports(1, &ctx.viewport);
+        dc->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+        dc->IASetInputLayout(ctx.lightProg->inputLayout.Get());
+        dc->VSSetShader(ctx.lightProg->vs.Get(), nullptr, 0);
+        dc->PSSetShader(ctx.lightProg->ps.Get(), nullptr, 0);
+        ID3D11Buffer* cbs[1] = { lightCb_.Get() };
+        dc->VSSetConstantBuffers(0, 1, cbs);
+        dc->PSSetConstantBuffers(0, 1, cbs);
+        dc->OMSetBlendState(blendAdd_.Get(), nullptr, 0xFFFFFFFFu);
+        dc->OMSetDepthStencilState(depthOff_.Get(), 0);
+        dc->PSSetSamplers(0, 1, samplerLinear_.GetAddressOf());
+        dc->PSSetShaderResources(kLightNormalSlot, 1, &normalSrv);
+    };
+    bindLightState();
 
     for (uint32_t k = 0; k < group.lightCount; ++k) {
         const Light2DInstance& li = list.lights[list.groupLights[group.lightStart + k]];
@@ -282,8 +539,13 @@ void Sprite2DPass::BuildLightBuffer(GraphicsDevice& device, TextureLibrary& text
             }
             srv = t->srv.Get();
         }
+        const bool shadowed = li.shadows && ctx.shadowProg != nullptr;
+        if (shadowed) {
+            RenderShadowMap(device, list, li, ctx);
+            bindLightState();
+        }
         LightCb cb = {};
-        cb.viewProj = viewProjTransposed;
+        cb.viewProj = ctx.viewProjT;
         cb.color[0] = li.color[0];
         cb.color[1] = li.color[1];
         cb.color[2] = li.color[2];
@@ -299,15 +561,26 @@ void Sprite2DPass::BuildLightBuffer(GraphicsDevice& device, TextureLibrary& text
         cb.spotC[1] = li.cosOuter;
         cb.spotC[2] = li.invCosRange;
         cb.spotC[3] = li.z;
+        cb.fx[0] = ctx.normalReady ? 1.0f : 0.0f;
+        cb.fx[1] = li.normalMapDistance;
+        cb.fx[2] = shadowed ? 1.0f : 0.0f;
+        cb.fx[3] = li.shadowStrength;
+        cb.screen[0] = ctx.invScreen[0];
+        cb.screen[1] = ctx.invScreen[1];
         D3D11_MAPPED_SUBRESOURCE mapped = {};
         if (SUCCEEDED(dc->Map(lightCb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
             std::memcpy(mapped.pData, &cb, sizeof(cb));
             dc->Unmap(lightCb_.Get(), 0);
         }
         dc->PSSetShaderResources(0, 1, &srv);
+        ID3D11ShaderResourceView* shadowSrv = shadowed ? shadowRt_.SRV() : nullptr;
+        dc->PSSetShaderResources(kLightShadowSlot, 1, &shadowSrv);
         dc->Draw(li.vertexCount, li.vertexStart);
     }
+    // t0 / 法線 / 影は後段 (スプライト描画、次の群の書き込み) の前に外す
     dc->PSSetShaderResources(0, 1, nullSrv);
+    dc->PSSetShaderResources(kLightNormalSlot, 1, nullSrv);
+    dc->PSSetShaderResources(kLightShadowSlot, 1, nullSrv);
 }
 
 uint32_t Sprite2DPass::Render(GraphicsDevice& device, ShaderManager& shaders, TextureLibrary& textures,
@@ -403,6 +676,31 @@ uint32_t Sprite2DPass::Render(GraphicsDevice& device, ShaderManager& shaders, Te
     };
     bindSpriteState();
 
+    // 法線 RT と影の下準備 (群ごとのライトバッファより前に、1 回だけ)
+    LightContext lightCtx;
+    if (lighting) {
+        lightCtx.viewProjT = viewProj;
+        lightCtx.viewport = prevViewport;
+        lightCtx.invScreen[0] = invScreen[0];
+        lightCtx.invScreen[1] = invScreen[1];
+        lightCtx.lightProg = lightProg;
+        ShaderProgram* normalProg = list.HasNormals() ? shaders.Get(normalShader_) : nullptr;
+        if (normalProg != nullptr && normalProg->valid) {
+            lightCtx.normalReady = BuildNormalBuffer(device, textures, list, lightCtx, *normalProg);
+            dc->OMSetRenderTargets(1, prevRtv.GetAddressOf(), sceneDsv);
+            dc->RSSetViewports(1, &prevViewport);
+            bindSpriteState();
+        }
+        ShaderProgram* shadowProg = list.shadowCasters.empty() ? nullptr : shaders.Get(shadowShader_);
+        if (shadowProg != nullptr && shadowProg->valid
+            && WorldViewExtent(view, proj, lightCtx.viewCenter, lightCtx.viewDiag)) {
+            shadowRt_.Resize(device, lightBuffer_.Width(), lightBuffer_.Height(), DXGI_FORMAT_R8_UNORM, false);
+            if (shadowRt_.IsValid()) {
+                lightCtx.shadowProg = shadowProg;
+            }
+        }
+    }
+
     // バッチ列を群で区切る。ライト無しは [0, batches.size()) の 1 区間
     const uint32_t batchTotal = static_cast<uint32_t>(list.batches.size());
     const size_t groupCount = lighting ? list.lightGroups.size() : 1;
@@ -419,7 +717,7 @@ uint32_t Sprite2DPass::Render(GraphicsDevice& device, ShaderManager& shaders, Te
                 continue;
             }
             if (group.anyLit) {
-                BuildLightBuffer(device, textures, list, group, viewProj, prevViewport, *lightProg);
+                BuildLightBuffer(device, textures, list, group, lightCtx);
                 dc->OMSetRenderTargets(1, prevRtv.GetAddressOf(), sceneDsv);
                 dc->RSSetViewports(1, &prevViewport);
                 bindSpriteState();

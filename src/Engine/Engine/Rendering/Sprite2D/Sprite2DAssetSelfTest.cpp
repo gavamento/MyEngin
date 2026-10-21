@@ -24,6 +24,7 @@
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
+#include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/Sprite2DRenderer.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Scene/SortingLayers.h"
@@ -590,6 +591,132 @@ bool RunSprite2DAssetSelfTest()
                   "Light2D: targetLayerMask 0 lights nothing (the group's clear color is black)");
         }
         layers.Remove(fgId);
+    }
+
+    // ---- (h) ShadowCaster2D の登録と収集、法線の変換 (M94p)。GPU を使わない部分だけ ----
+    {
+        check(ShadowCaster2DComponent::sTypeId == 86, "ShadowCaster2D is TypeId 86");
+        const ComponentDesc& sd = ComponentRegistry::Get().Desc(ShadowCaster2DComponent::sTypeId);
+        check((sd.flags & kComponentNoHash) != 0, "ShadowCaster2D is kComponentNoHash (render-only)");
+        const ShadowCaster2DComponent defaults;
+        check(defaults.source == shadowcaster2dsource::kCollider && !defaults.selfShadow && defaults.castsShadows
+                  && defaults.pointCount == 0,
+              "ShadowCaster2D defaults: source 0, selfShadow false, castsShadows true");
+
+        RenderResources resources;
+        Sprite2DRenderer renderer;
+        World w;
+        const EntityID sprite = w.CreateEntity("sprite");
+        w.AddComponent<Sprite2DComponent>(sprite);
+        const EntityID lightEntity = w.CreateEntity("light");
+        auto* light = w.AddComponent<Light2DComponent>(lightEntity);
+        light->type = light2dtype::kSpot;
+        light->outerRadius = 3.0f;
+        // キャスター 1: Box (中心 (2, 0)、半径 (0.5, 1))
+        const EntityID box = w.CreateEntity("box");
+        w.AddComponent<ColliderComponent>(box);
+        auto* boxCaster = w.AddComponent<ShadowCaster2DComponent>(box);
+        // AddComponent は他のコンポーネントのポインタを無効にする (アーキタイプ移動)。足し終えてから取る
+        auto* boxCol = w.GetComponent<ColliderComponent>(box);
+        boxCol->shape = collidershape::kBox;
+        boxCol->halfExtents = { 0.5f, 1.0f, 0.5f };
+        w.GetComponent<WorldMatrixComponent>(box)->value._41 = 2.0f;
+
+        // 影を落とすライトが無ければキャスターを集めない (presence gate)
+        check(renderer.Collect(w, resources).shadowCasters.empty(), "Shadow: no light with shadows -> no casters collected");
+        light->shadows = true;
+        light->shadowStrength = 2.0f;
+        {
+            const Sprite2DDrawList& l = renderer.Collect(w, resources);
+            check(l.lights.size() == 1 && l.lights[0].shadows && l.lights[0].shadowStrength == 1.0f,
+                  "Shadow: Light2D.shadows reaches the instance, strength clamps to 0..1");
+            check(l.shadowCasters.size() == 1 && l.shadowCasters[0].pointCount == 4 && l.shadowPoints.size() == 4,
+                  "Shadow: Box collider -> 4 points");
+            bool inBox = l.shadowPoints.size() == 4;
+            for (const Shadow2DPoint& p : l.shadowPoints) {
+                inBox = inBox && std::fabs(std::fabs(p.x - 2.0f) - 0.5f) < 1.0e-5f && std::fabs(std::fabs(p.y) - 1.0f) < 1.0e-5f;
+            }
+            check(inBox, "Shadow: Box corners are at the world position +/- halfExtents");
+            check(l.shadowCasters[0].fillCount == 6 && l.shadowFill.size() == 6,
+                  "Shadow: selfShadow false -> the polygon is triangulated for the fill pass (2 triangles)");
+        }
+        boxCaster->selfShadow = true;
+        {
+            const Sprite2DDrawList& l = renderer.Collect(w, resources);
+            check(l.shadowCasters.size() == 1 && l.shadowCasters[0].fillCount == 0 && l.shadowFill.empty(),
+                  "Shadow: selfShadow true -> no fill pass");
+        }
+        boxCaster->castsShadows = false;
+        check(renderer.Collect(w, resources).shadowCasters.empty(), "Shadow: castsShadows false -> excluded");
+        boxCaster->castsShadows = true;
+
+        // Global ライトの shadows は無視 (影の対象は非 Global だけ)
+        light->type = light2dtype::kGlobal;
+        check(renderer.Collect(w, resources).shadowCasters.empty(), "Shadow: Global light has no shadow");
+        light->type = light2dtype::kSpot;
+
+        // Sphere = 16 角、対応外の形 (カプセル) は無し
+        boxCol->shape = collidershape::kSphere;
+        boxCol->radius = 0.5f;
+        check(renderer.Collect(w, resources).shadowCasters.size() == 1
+                  && renderer.Collect(w, resources).shadowCasters[0].pointCount == 16,
+              "Shadow: Sphere collider -> 16-gon");
+        boxCol->shape = collidershape::kCapsule;
+        check(renderer.Collect(w, resources).shadowCasters.empty(), "Shadow: unsupported collider shape -> no caster");
+
+        // source 1: points。3 点未満は無し、上限 16 点
+        boxCaster->source = shadowcaster2dsource::kPoints;
+        boxCaster->pointCount = 2;
+        check(renderer.Collect(w, resources).shadowCasters.empty(), "Shadow: points source with < 3 points -> no caster");
+        boxCaster->pointCount = 3;
+        boxCaster->points[0] = { -1.0f, 0.0f };
+        boxCaster->points[1] = { 1.0f, 0.0f };
+        boxCaster->points[2] = { 0.0f, 1.0f };
+        {
+            const Sprite2DDrawList& l = renderer.Collect(w, resources);
+            check(l.shadowCasters.size() == 1 && l.shadowCasters[0].pointCount == 3 && l.shadowPoints[0].x == 1.0f,
+                  "Shadow: points source -> the points, carried by the world matrix (x + 2)");
+        }
+        boxCaster->pointCount = 99;
+        check(renderer.Collect(w, resources).shadowCasters[0].pointCount == kShadowCaster2DMaxPoints,
+              "Shadow: pointCount is capped at 16");
+
+        // Polygon2D コライダーは .shape2d の点列
+        ShapeLibrary2D shapeLib;
+        shape2d::Install(&shapeLib);
+        Shape2D poly;
+        poly.points = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f } };
+        const uint64_t polyHash = shapeLib.Register(L"m94p_shadow_poly.shape2d.json", poly);
+        boxCaster->source = shadowcaster2dsource::kCollider;
+        boxCol->shape = collidershape::kPolygon2D;
+        boxCol->meshAsset = AssetID{ polyHash };
+        check(renderer.Collect(w, resources).shadowCasters.size() == 1
+                  && renderer.Collect(w, resources).shadowCasters[0].pointCount == 4,
+              "Shadow: Polygon2D collider -> the .shape2d points");
+        shape2d::Install(nullptr);
+
+        // 法線の変換: 回転と flip を畳んだ 2x2 (スケールは除く)
+        const auto xform = [](const DirectX::XMFLOAT4X4& m, bool fx, bool fy, float out[4]) {
+            Sprite2DRenderer::NormalTransform(m, fx, fy, out);
+        };
+        float t[4];
+        DirectX::XMFLOAT4X4 id = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+        xform(id, false, false, t);
+        check(t[0] == 1.0f && t[1] == 0.0f && t[2] == 0.0f && t[3] == 1.0f, "Normal: identity world matrix -> identity");
+        xform(id, true, false, t);
+        check(t[0] == -1.0f && t[1] == 0.0f && t[2] == 0.0f && t[3] == 1.0f, "Normal: flipX negates the x axis");
+        xform(id, false, true, t);
+        check(t[0] == 1.0f && t[1] == 0.0f && t[2] == 0.0f && t[3] == -1.0f, "Normal: flipY negates the y axis");
+        DirectX::XMFLOAT4X4 rot90 = { 0, 3, 0, 0, -3, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }; // 反時計回り 90 度、スケール 3
+        xform(rot90, false, false, t);
+        check(t[0] == 0.0f && t[1] == 1.0f && t[2] == -1.0f && t[3] == 0.0f,
+              "Normal: 90 deg rotation (scale 3) -> unit axes (0,1) and (-1,0)");
+        DirectX::XMFLOAT4X4 degenerate = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+        xform(degenerate, false, false, t);
+        check(t[0] == 1.0f && t[1] == 0.0f && t[2] == 0.0f && t[3] == 1.0f, "Normal: a zero-length axis falls back to identity");
+
+        // 法線マップを持つスプライトが無ければ、ライトがあっても法線の一覧は空 (presence gate)
+        check(!renderer.Collect(w, resources).HasNormals(), "Normal: no normalMap in the scene -> no normal batches");
     }
 
     fs::remove_all(root, ec);

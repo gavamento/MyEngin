@@ -433,6 +433,7 @@ constexpr uint32_t kSprite2DRect = 0xFFFFFFFFu;  // 選択中 Sprite2D の矩形
 constexpr uint32_t kSprite2DPivot = 0xFFE020FFu; // 同 pivot の十字 (黄)
 constexpr uint32_t kSpriteMask2D = 0xB050F0FFu;  // SpriteMask2D の矩形 (紫。マスクは描かれないので全部に引く)
 constexpr uint32_t kLight2D = 0xFFD840FFu;         // Light2D の輪郭 (黄)
+constexpr uint32_t kShadowCaster2D = 0xA040E0FFu;  // ShadowCaster2D の多角形 (紫。SpriteMask2D より濃い)
 constexpr int kLight2DArcSegments = 48;            // Spot の円弧の分割数 (全周あたり)
 constexpr uint32_t kTilemapBounds = 0x909098FFu;   // Tilemap の使用チャンクの範囲 (灰)
 constexpr uint32_t kTilemapCell = 0x585860FFu;     // 2D モードのセルの格子 (薄い灰)
@@ -537,6 +538,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         DrawSprite2DGizmos(ctx, world, selection);
         DrawTilemapGizmos(ctx, world, selection);
         DrawLight2DGizmos(ctx, world);
+        DrawShadowCaster2DGizmos(world);
         DrawAudioGizmos(ctx, world, selection);
         DrawTextMeshGizmos(world);
         DrawPartSocketGizmos(world);
@@ -966,6 +968,23 @@ void SceneViewWindow::DrawLight2DGizmos(EngineContext& ctx, World& world)
                                    { c.x + sunRadius * std::cos(a), c.y + sunRadius * std::sin(a), c.z },
                                    gizmo::kLight2D);
                 }
+            }
+        });
+}
+
+// 全 ShadowCaster2D の多角形 (紫)。影になる形そのもの (Sprite2DRenderer::BuildShadowPolygon と同じ)
+void SceneViewWindow::DrawShadowCaster2DGizmos(World& world)
+{
+    std::vector<XMFLOAT2> polygon;
+    ForEachWithWorldMatrix<ShadowCaster2DComponent>(
+        world, [&](const ShadowCaster2DComponent& sc, const XMFLOAT4X4& m, EntityID entity) {
+            if (!Sprite2DRenderer::BuildShadowPolygon(world, entity, sc, m, polygon)) {
+                return;
+            }
+            for (size_t i = 0; i < polygon.size(); ++i) {
+                const XMFLOAT2& a = polygon[i];
+                const XMFLOAT2& b = polygon[(i + 1) % polygon.size()];
+                lines_.AddLine({ a.x, a.y, m._43 }, { b.x, b.y, m._43 }, gizmo::kShadowCaster2D);
             }
         });
 }
