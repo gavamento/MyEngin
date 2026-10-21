@@ -17,6 +17,7 @@
 #include "Engine/Engine/Acoustic/AcousticDebugDraw.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AgentSystem.h" // M65f: 敵の思考 (フェーズ 3.4 の後半)
+#include "Engine/Engine/Navigation/GridNav2D.h" // M94u: 2D グリッド A*
 #include "Engine/Engine/Navigation/NavSystem.h" // M82b: ナビメッシュ (フェーズ 3.4 と 3.5 の間)
 #include "Engine/Engine/Perception/PerceptionSystem.h" // M83: 知覚 (フェーズ 3.4a)
 #include "Engine/Engine/AI/BehaviorTreeSystem.h" // M85: ビヘイビアツリー (フェーズ 3.4a2)
@@ -429,6 +430,12 @@ void RunOneTick(TickServices& ts)
         MYE_PROFILE_SCOPE("nav");
         ts.navSystem->SetCrossingLogEnabled(!ts.resim); // 再シムでは渡り開始のログを重ねない
         ts.navSystem->Update(scene.GetWorld(), ctx.fixedDt);
+    }
+    // ---- 2D グリッド A* (フェーズ 3.4b、M94u): ナビメッシュの直後 ----
+    // GridAgent2D が無いシーンでは走査だけで何もしない。書いた moveInput / jumpSpeed は物理 (3.6) が同じ tick で読む
+    if (stepSim && ts.gridNav != nullptr) {
+        MYE_PROFILE_SCOPE("gridnav");
+        ts.gridNav->Update(scene.GetWorld(), ts.tilemap, ctx.fixedDt);
     }
     // ---- アニメーション (フェーズ 3.5): スクリプト後・Transform 前に LocalTransform を確定 ----
     // Play 中のみ進行 (編集時は Animation 窓が明示サンプリングする)。M51g からは

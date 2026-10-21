@@ -2168,6 +2168,14 @@ enum : int32_t {
 };
 } // namespace hearingmode
 
+// 視野の前方を決めるワールド行列の軸 (AIPerception.forwardAxis)
+namespace perceptionforward {
+enum : int32_t {
+    kZ = 0, // +Z (3D の既定)
+    kX = 1, // +X (横スクロール 2D。Z 回転で向きが変わる)
+};
+} // namespace perceptionforward
+
 inline constexpr int32_t kMaxPercepts = 8;
 inline constexpr int32_t kMaxFactions = 32;
 
@@ -2227,6 +2235,8 @@ struct AIPerceptionComponent {
     EntityID pendingDamageSource = kNullEntity;
     DirectX::XMFLOAT3 pendingDamagePos = { 0.0f, 0.0f, 0.0f };
     float pendingDamageAmount = 0.0f;  // 0 = 保留なし
+    // ---- 視野の前方 (M94u、末尾 append) ----
+    int32_t forwardAxis = perceptionforward::kZ; // perceptionforward。2D は kX
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -2512,6 +2522,33 @@ struct Effector2DComponent {
     float magnitude = 10.0f;                  // Point: 中心への力 [N]。負で反発
     bool useMask = false;                     // true なら mask のレイヤーの剛体だけを対象にする
     uint32_t mask = 0xFFFFFFFFu;              // 対象レイヤー (Collider.layer のビット)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- 2D グリッド A* エージェント (M94、TypeId=91) ----
+// tilemap の collision レイヤーの歩行可能セルを A* で歩き、同じエンティティの plane2D な CharacterController の
+// moveInput.x / jumpSpeed を書く (GridNavSystem、NavMeshAgent と同じ位相)。status は navagentstatus の値を流用する。
+// 経路はコンポーネントに持たない (導出値。毎 tick 同じ入力から同じ経路が引ける)。sim の入力・出力なので **hash 対象**
+struct GridAgent2DComponent {
+    EntityID tilemap = kNullEntity;       // 経路を引く Tilemap を持つエンティティ
+    DirectX::XMFLOAT3 destination = { 0.0f, 0.0f, 0.0f };
+    bool hasDestination = false;
+    float speed = 3.0f;                   // 歩く速さ (m/s)
+    int32_t maxJumpHeight = 2;            // 登れる段差 (セル)
+    int32_t maxJumpLength = 3;            // 越えられる水平距離 (セル)
+    float jumpSpeed = 8.0f;               // ジャンプ辺の始点で CC.jumpSpeed に書く値 (m/s)
+    int32_t replanInterval = 30;          // 経路を引き直す間隔 (tick)。0 = 目的地が変わったときだけ
+    // ---- 実行状態 (kFieldReadOnly) ----
+    int32_t status = navagentstatus::kIdle;
+    int32_t nextCellX = 0;                // 向かっている次のセル
+    int32_t nextCellY = 0;
+    // ---- 経路の追従に要る状態 (kFieldHidden | kFieldReadOnly)。経路そのものは持たず、1 つ先のセルだけ覚える ----
+    bool hasPlan = false;                 // goalCell に対して計画済み (status が Arrived / NoPath でも立つ)
+    int32_t planAge = 0;                  // 計画してからの tick
+    int32_t goalCellX = 0;                // 計画したときの目的地セル (置き換え前)。変わったら引き直す
+    int32_t goalCellY = 0;
+    int32_t stuckTicks = 0;               // 次のセルへ近づけていない tick
+    float bestDistance = 0.0f;            // 次のセルへの距離の最良値 (進展の基準)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

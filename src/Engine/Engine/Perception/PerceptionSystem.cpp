@@ -158,9 +158,14 @@ Perceiver MakePerceiver(EntityID e, AIPerceptionComponent* perception, const Dir
     p.perception = perception;
     p.pos = Position(wm);
     p.eye = { p.pos.x, p.pos.y + perception->eyeHeight, p.pos.z };
-    const float fl = Length(wm._31, wm._32, wm._33);
+    // 前方 = ワールド行列の +Z 行 (既定) か +X 行 (forwardAxis = 1、2D 用)
+    const bool useX = (perception->forwardAxis == perceptionforward::kX);
+    const float fx = useX ? wm._11 : wm._31;
+    const float fy = useX ? wm._12 : wm._32;
+    const float fz = useX ? wm._13 : wm._33;
+    const float fl = Length(fx, fy, fz);
     if (fl > 1e-8f) {
-        p.forward = { wm._31 / fl, wm._32 / fl, wm._33 / fl };
+        p.forward = { fx / fl, fy / fl, fz / fl };
     }
     return p;
 }
@@ -232,8 +237,15 @@ void CollectLosColliders(World& world, std::vector<LosCollider>& out)
             out.push_back({ e, shapes::MakePoseFromMatrix(*col, wm), col->layer });
         }
     });
-    // 遮られたかどうかだけを見るので順序は結果に効かないが、走査の手順を固定しておく
-    std::sort(out.begin(), out.end(), [](const LosCollider& a, const LosCollider& b) { return KeyLess(a.entity, b.entity); });
+    // タイルマップ・SpriteShape の箱 (供給口)。トリガーではなく、持ち主のレイヤーで遮蔽の可否を決める
+    std::vector<StaticShape> supplied;
+    physicsquery::CollectStaticShapes(world, 0xFFFFFFFFu, supplied);
+    for (const StaticShape& shape : supplied) {
+        out.push_back({ shape.owner, shape.pose, shape.col->layer });
+    }
+    // 遮られたかどうかだけを見るので順序は結果に効かないが、走査の手順を固定しておく。
+    // 同じ持ち主の箱は供給元が返した順のまま残す
+    std::stable_sort(out.begin(), out.end(), [](const LosCollider& a, const LosCollider& b) { return KeyLess(a.entity, b.entity); });
 }
 
 // 前の tick に target を視覚で見ていたか (見失う距離の判定)

@@ -974,6 +974,7 @@ MYE_STR(Create_Light2D,       "Light 2D",          "2D ライト") // M94o
 MYE_STR(Create_Line2D,        "Line",              "2D 折れ線") // M94r
 MYE_STR(Create_SpriteShape,   "Sprite Shape",      "スプライトシェイプ") // M94s
 MYE_STR(Create_Effector2D,    "Effector 2D",       "2D エフェクター") // M94t
+MYE_STR(Create_GridAgent2D,   "Grid Agent 2D",     "2D グリッドエージェント") // M94u
 MYE_STR(Create_Part,          "Part (with Bounds)", "部位 (範囲付き)")
 // M60g2: ラグドール生成器 (右クリック対象の SkinnedMesh のスケルトンから組む)
 MYE_STR(Create_Ragdoll,       "Ragdoll (from Skeleton)", "ラグドール (スケルトンから)")

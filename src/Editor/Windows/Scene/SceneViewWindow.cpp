@@ -545,6 +545,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         DrawLine2DGizmos(world);
         DrawSpriteShape2DGizmos(world);
         DrawEffector2DGizmos(world);
+        DrawGridAgent2DGizmos(world);
         DrawAudioGizmos(ctx, world, selection);
         DrawTextMeshGizmos(world);
         DrawPartSocketGizmos(world);
@@ -1039,6 +1040,42 @@ void SceneViewWindow::DrawSpriteShape2DGizmos(World& world)
         });
 }
 
+// 全 GridAgent2D の経路 (橙): 足元から次のセルの中心への線と、次のセル・目的地セルの枠。
+// 経路全体は持たない (1 つ先のセルだけ覚える) ので、描くのは今向かっている区間だけ
+void SceneViewWindow::DrawGridAgent2DGizmos(World& world)
+{
+    ForEachWithWorldMatrix<GridAgent2DComponent>(
+        world, [&](const GridAgent2DComponent& ga, const XMFLOAT4X4& m, EntityID) {
+            if (!ga.hasDestination || !ga.hasPlan || ga.tilemap.IsNull() || !world.IsAlive(ga.tilemap)) {
+                return;
+            }
+            const TilemapAsset* map = TilemapSystem::AssetOf(world, ga.tilemap);
+            if (map == nullptr) {
+                return;
+            }
+            const XMFLOAT3 origin = TilemapSystem::OriginOf(world, ga.tilemap);
+            const float cw = map->cellSize[0];
+            const float ch = map->cellSize[1];
+            const auto box = [&](int32_t cx, int32_t cy) {
+                const float x0 = origin.x + static_cast<float>(cx) * cw;
+                const float y0 = origin.y + static_cast<float>(cy) * ch;
+                const float z = origin.z;
+                lines_.AddLine({ x0, y0, z }, { x0 + cw, y0, z }, gizmo::kEffector2D);
+                lines_.AddLine({ x0 + cw, y0, z }, { x0 + cw, y0 + ch, z }, gizmo::kEffector2D);
+                lines_.AddLine({ x0 + cw, y0 + ch, z }, { x0, y0 + ch, z }, gizmo::kEffector2D);
+                lines_.AddLine({ x0, y0 + ch, z }, { x0, y0, z }, gizmo::kEffector2D);
+            };
+            box(ga.goalCellX, ga.goalCellY);
+            if (ga.status == navagentstatus::kMoving || ga.status == navagentstatus::kStuck) {
+                box(ga.nextCellX, ga.nextCellY);
+                lines_.AddLine({ m._41, m._42, m._43 },
+                               { origin.x + (static_cast<float>(ga.nextCellX) + 0.5f) * cw,
+                                 origin.y + (static_cast<float>(ga.nextCellY) + 0.5f) * ch, m._43 },
+                               gizmo::kEffector2D);
+            }
+        });
+}
+
 // 全 Effector2D の作用の向き (橙の矢印、XY 平面)。Area は力の向き、Surface は面の動く向き、Buoyancy は上、
 // Point は領域中心へ (反発なら外へ) の 4 本。領域そのものはトリガー Collider のギズモが引く
 void SceneViewWindow::DrawEffector2DGizmos(World& world)
@@ -1463,8 +1500,8 @@ void SceneViewWindow::DrawPatrolRouteGizmos(EngineContext& ctx, World& world, co
 }
 
 // AIPerception の視野と聴覚 (M83)。**選択中の 1 体だけ** (全員に描くと扇形で埋まる)。
-// 目と前方は PerceptionSystem と同じ規則 (位置 + (0, eyeHeight, 0)、ワールド行列の +Z) で、
-// 視野は目の高さの水平面に描く (上下の視野角も同じ全角だが、平面の扇形で読めれば足りる)
+// 目と前方は PerceptionSystem と同じ規則 (位置 + (0, eyeHeight, 0)、ワールド行列の +Z。forwardAxis = 1 は +X) で、
+// 視野は目の高さの水平面 (forwardAxis = 1 は XY 平面) に描く (上下の視野角も同じ全角だが、平面の扇形で読めれば足りる)
 void SceneViewWindow::DrawPerceptionGizmos(EngineContext& ctx, World& world, const Selection& selection)
 {
     const GameObject sel = ctx.scene->FindByFileId(selection.primary);
@@ -1480,20 +1517,27 @@ void SceneViewWindow::DrawPerceptionGizmos(EngineContext& ctx, World& world, con
     const XMFLOAT3 eye = { wm._41, wm._42 + perc->eyeHeight, wm._43 };
     lines_.AddWireSphere(eye, gizmo::kEyeMarkerRadius, gizmo::kSightNear);
 
-    // 前方の水平成分の角度 (真上・真下を向いていたら +Z とみなす)
-    float fx = wm._31, fz = wm._33;
+    // 前方 (forwardAxis): +Z (3D) は XZ 平面、+X (2D) は XY 平面に描く。
+    // 前方の面内成分の角度 (面に直交して向いていたら既定の向きとみなす)
+    const bool planar2D = (perc->forwardAxis == perceptionforward::kX);
+    float fx = planar2D ? wm._11 : wm._31;
+    float fz = planar2D ? wm._12 : wm._33; // 2D は面内の第 2 軸が Y
     const float fl = std::sqrt(fx * fx + fz * fz);
     if (fl < 1.0e-6f) {
-        fx = 0.0f;
-        fz = 1.0f;
+        fx = planar2D ? 1.0f : 0.0f;
+        fz = planar2D ? 0.0f : 1.0f;
     } else {
         fx /= fl;
         fz /= fl;
     }
-    const float heading = std::atan2(fx, fz); // +Z = 0、+X = 90 度
+    // 3D は +Z = 0・+X = 90 度 (sin が X)。2D は +X = 0・+Y = 90 度 (cos が X)
+    const float heading = planar2D ? std::atan2(fz, fx) : std::atan2(fx, fz);
     const float fov = std::clamp(perc->fovDeg, 0.0f, 360.0f) * 0.017453292f;
     const bool fullCircle = perc->fovDeg >= 360.0f;
     const auto pointAt = [&](float radius, float angle) {
+        if (planar2D) {
+            return XMFLOAT3{ eye.x + std::cos(angle) * radius, eye.y + std::sin(angle) * radius, eye.z };
+        }
         return XMFLOAT3{ eye.x + std::sin(angle) * radius, eye.y, eye.z + std::cos(angle) * radius };
     };
     const auto arc = [&](float radius, float from, float span, uint32_t color) {

@@ -119,6 +119,7 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "Line2D", { ICON_FA_BEZIER_CURVE, "2D", "2D 折れ線" } }, // M94r
         { "SpriteShape2D", { ICON_FA_MOUNTAIN, "2D", "2D スプライトシェイプ" } }, // M94s
         { "Effector2D", { ICON_FA_WIND, "2D", "2D エフェクター" } }, // M94t
+        { "GridAgent2D", { ICON_FA_ROUTE, "2D", "2D グリッドエージェント" } }, // M94u
     };
     return t;
 }

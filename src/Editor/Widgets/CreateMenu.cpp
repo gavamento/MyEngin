@@ -200,6 +200,17 @@ GameObject CreateEffector2D(EngineContext& ctx, const char* name)
     return obj;
 }
 
+// M94u: 2D グリッドエージェント (plane2D の CharacterController + GridAgent2D)。
+// Tilemap は Inspector で割り当てる (空のままだと status は Inactive)
+GameObject CreateGridAgent2D(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    CharacterControllerComponent* cc = obj.AddComponent<CharacterControllerComponent>();
+    cc->plane2D = true;
+    obj.AddComponent<GridAgent2DComponent>();
+    return obj;
+}
+
 // ---- UI (M51f) ----
 // text はシーンに保存されるデータなのでエディタ言語に依存しない英語固定 (メニュー表示とは別物)
 
@@ -489,6 +500,8 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
                    &CreateSpriteShape2D);
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Effector2D), "Effector 2D",
                    &CreateEffector2D);
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_GridAgent2D), "Grid Agent 2D",
+                   &CreateGridAgent2D);
         ImGui::EndMenu();
     }
 

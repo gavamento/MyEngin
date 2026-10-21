@@ -27,6 +27,7 @@
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AgentSystem.h" // M65f: 敵の思考 (実体はここが持つ)
 #include "Engine/Engine/Navigation/NavDebugDraw.h" // M82e: ナビメッシュの塗り・輪郭
+#include "Engine/Engine/Navigation/GridNav2D.h" // M94u
 #include "Engine/Engine/Navigation/NavSystem.h" // M82b: ナビメッシュ (実体はここが持つ)
 #include "Engine/Engine/Perception/PerceptionSystem.h" // M83: 知覚
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h" // M85: ビヘイビアツリー (実体はここが持つ)
@@ -232,6 +233,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     AgentSystem agentSystem;
     // M82b: ナビメッシュ。ナビメッシュ本体は .mnav から作る導出値、dtCrowd とスロット表は sim 状態 (SimSnapshot の Nav 節)
     NavSystem navSystem;
+    // M94u: 2D グリッド A*。状態は GridAgent2D コンポーネントにあり、ここは作業バッファだけ (3 点セット契約の対象外)
+    GridNavSystem gridNavSystem;
     // M82e: ナビメッシュの表示用ジオメトリ (塗り・輪郭)。sim ではなく描画フレームごとに更新する出力レーン。
     // tick を回さない編集中の SceneView にも出すため NavSystem とは別に持つ
     NavDebugView navDebugView;
@@ -1047,6 +1050,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.acoustic = &acoustic; // M65a
     tickServices.agentSystem = &agentSystem; // M65f
     tickServices.navSystem = &navSystem; // M82b
+    tickServices.gridNav = &gridNavSystem; // M94u
     tickServices.perception = &perceptionSystem; // M83
     tickServices.behaviorTree = &behaviorTreeSystem; // M85
     tickServices.tilemap = &tilemapSystem; // M94k

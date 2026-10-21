@@ -18,6 +18,7 @@
 #include "Engine/Core/Util/Random.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AgentSystem.h"
+#include "Engine/Engine/Navigation/GridNav2D.h" // M94u
 #include "Engine/Engine/Navigation/NavSystem.h"
 #include "Engine/Engine/Perception/PerceptionSystem.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
@@ -137,6 +138,7 @@ struct HeadlessSim::Impl : IEngineApp {
     AcousticField acoustic;
     AgentSystem agentSystem;
     NavSystem navSystem; // M82b
+    GridNavSystem gridNavSystem; // M94u
     PerceptionSystem perceptionSystem; // M83
     BehaviorTreeSystem behaviorTreeSystem; // M85
     std::vector<SolidContact> solidContacts;
@@ -223,6 +225,7 @@ void HeadlessSim::Impl::BuildTickServices(int netRole)
     ts.acoustic = &acoustic;
     ts.agentSystem = &agentSystem;
     ts.navSystem = &navSystem; // M82b
+    ts.gridNav = &gridNavSystem; // M94u
     ts.perception = &perceptionSystem; // M83
     ts.behaviorTree = &behaviorTreeSystem; // M85
     ts.tilemap = &tilemapSystem; // M94k

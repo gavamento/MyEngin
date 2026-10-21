@@ -23,6 +23,8 @@
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Scene/TransformSystem.h"
 #include "Engine/Engine/Script/EngineApiTable.h"
+#include "Engine/Engine/Tilemap/TilemapAssets.h"
+#include "Engine/Engine/Tilemap/TilemapSystem.h"
 
 namespace mye {
 namespace {
@@ -554,6 +556,91 @@ bool RunPerceptionSelfTest()
         }
         ck.Check(same, "巻き戻して 120 tick 進めた毎 tick のハッシュが連続実行と一致 (状態は全部コンポーネント)");
         ck.Check(again.GetWorld().GetComponent<AIPerceptionComponent>(obs)->perceivedCount > 0, "テスト中に何かを知覚している");
+    }
+
+    // ---- 13. 2D: forwardAxis = 1 (前方 = +X) と、Tilemap の壁が視線を遮る (M94u) ----
+    {
+        Scene scene;
+        const EntityID obs = AddObserver(scene, 0.0f, 0.0f);
+        scene.GetWorld().GetComponent<AIPerceptionComponent>(obs)->forwardAxis = perceptionforward::kX;
+        const auto addAt = [&](float x, float y) {
+            const EntityID t = AddTarget(scene, x, 0.0f);
+            scene.GetWorld().GetComponent<LocalTransform>(t)->position = { x, y, 0.0f };
+            return t;
+        };
+        const EntityID right = addAt(5.0f, 0.0f);
+        const EntityID left = addAt(-5.0f, 0.0f);
+        const EntityID above = addAt(0.0f, 5.0f); // +Y は前方ではない
+        Sim sim(scene);
+        sim.Prepare();
+        sim.Step();
+        World& w = sim.GetWorld();
+        ck.Check(Sees(w, obs, right) && !Sees(w, obs, left) && !Sees(w, obs, above),
+                 "forwardAxis = 1: +X 側の相手だけ見える (-X 側と +Y 側は見えない)");
+
+        // Z 回転で向きが変わる (180 度回すと -X が前方)
+        scene.GetWorld().GetComponent<LocalTransform>(obs)->rotation = { 0.0f, 0.0f, 1.0f, 0.0f };
+        sim.Step();
+        sim.Step();
+        ck.Check(!Sees(w, obs, right) && Sees(w, obs, left), "forwardAxis = 1: Z 回転 180 度で前方が -X になる");
+
+        // 既定 (forwardAxis = 0) は +Z 行のまま: +X の相手は見えない
+        w.GetComponent<LocalTransform>(obs)->rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        w.GetComponent<AIPerceptionComponent>(obs)->forwardAxis = perceptionforward::kZ;
+        sim.Step();
+        sim.Step();
+        ck.Check(!Sees(w, obs, right) && !Sees(w, obs, left), "forwardAxis = 0 (既定) は +Z 前方のまま (+X / -X の相手は見えない)");
+    }
+    {
+        TilePaletteLibrary palettes;
+        TilemapLibrary maps;
+        TilePaletteLibrary* previousPalettes = tilepalette::Library();
+        TilemapLibrary* previousMaps = tilemap::Library();
+        tilepalette::Install(&palettes);
+        tilemap::Install(&maps);
+        TilePalette palette;
+        palette.Add("wall", AssetID{ 301 })->collider = 1;
+        const uint64_t paletteHash = palettes.Register(L"C:\\sel\\perception\\wall.tilepalette.json", palette);
+        TilemapAsset asset;
+        asset.palette = paletteHash;
+        TilemapLayer layer;
+        layer.name = "Ground";
+        for (int32_t y = 0; y <= 2; ++y) {
+            layer.SetCell(3, y, tilecell::Make(1, false, false, 0)); // x = 3..4 の壁 (高さ 0..3、目の高さ 1.6 を含む)
+        }
+        asset.layers.push_back(std::move(layer));
+        const AssetID mapId{ maps.Register(L"C:\\sel\\perception\\wall.tilemap.json", std::move(asset)) };
+
+        const auto seesAcrossWall = [&](int32_t tileLayer, uint32_t losMask, bool withWall) {
+            Scene scene;
+            PhysicsSystem phys;
+            TilemapSystem tiles;
+            phys.AddStaticShapeSource(&tiles);
+            physicsquery::Install(&phys);
+            const EntityID obs = AddObserver(scene, 0.0f, 0.0f);
+            auto* perc = scene.GetWorld().GetComponent<AIPerceptionComponent>(obs);
+            perc->forwardAxis = perceptionforward::kX;
+            perc->losLayerMask = losMask;
+            const EntityID tgt = AddTarget(scene, 0.0f, 0.0f);
+            scene.GetWorld().GetComponent<LocalTransform>(tgt)->position = { 6.0f, 0.0f, 0.0f };
+            if (withWall) {
+                GameObject map = scene.CreateGameObjectTracked("Map");
+                auto* tm = map.AddComponent<TilemapComponent>();
+                tm->tilemap = mapId;
+                tm->layer = tileLayer;
+            }
+            Sim sim(scene);
+            sim.Prepare();
+            sim.Step();
+            const bool seen = Sees(sim.GetWorld(), obs, tgt);
+            physicsquery::Install(nullptr);
+            return seen;
+        };
+        ck.Check(seesAcrossWall(0, 0xFFFFFFFFu, false), "2D: 壁が無ければ +X の 6 m 先が見える");
+        ck.Check(!seesAcrossWall(0, 0xFFFFFFFFu, true), "2D: Tilemap のタイルの壁が視線を遮る");
+        ck.Check(seesAcrossWall(5, ~(1u << 5), true), "2D: 視線を遮るレイヤーに入っていない Tilemap は遮らない (Tilemap.layer で判定)");
+        tilemap::Install(previousMaps);
+        tilepalette::Install(previousPalettes);
     }
 
     // ---- 12. 計測: 50 体が 50 体を見る ----

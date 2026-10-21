@@ -222,6 +222,10 @@ void ReleaseMoveTo(RunCtx& c, const BtNodeDef& node)
 {
     NavMeshAgentComponent* agent = c.world.GetComponent<NavMeshAgentComponent>(c.inst.entity);
     if (agent == nullptr) {
+        // 2D: NavMeshAgent が無ければ GridAgent2D の目的地を倒す (navFilter は NavMeshAgent だけのもの)
+        if (GridAgent2DComponent* grid = c.world.GetComponent<GridAgent2DComponent>(c.inst.entity)) {
+            grid->hasDestination = false;
+        }
         return;
     }
     agent->hasDestination = false;
@@ -502,7 +506,16 @@ BtResult EndBody(RunCtx& c, int32_t index, BtResult result)
     return result;
 }
 
-// MoveTo: 目標へ NavMeshAgent を歩かせる。目標 (BB のキー) が Vector / Entity、NavMeshAgent が無ければ Failure。
+// XY 平面の距離 (GridAgent2D の MoveTo 用。NavMeshAgent の HorizontalDistance は XZ)
+float PlanarDistanceXY(const float* a, const float* b)
+{
+    const float dx = a[0] - b[0];
+    const float dy = a[1] - b[1];
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+// MoveTo: 目標へ NavMeshAgent を歩かせる。目標 (BB のキー) が Vector / Entity、NavMeshAgent も GridAgent2D も無ければ Failure。
+// NavMeshAgent が無く GridAgent2D があるときは、2D の経路 (GridNavSystem) へ目的地を書き、到着判定の距離は XY で測る。
 // 目的地を書いた tick の Nav はまだ走っていないので、その tick は status を読まない (前の目的地の Arrived が残っている)
 BtResult VisitMoveTo(RunCtx& c, int32_t index)
 {
@@ -510,24 +523,35 @@ BtResult VisitMoveTo(RunCtx& c, int32_t index)
     BtNodeState& state = c.inst.nodes[static_cast<size_t>(index)];
     const bool starting = state.active == 0;
     NavMeshAgentComponent* agent = c.world.GetComponent<NavMeshAgentComponent>(c.inst.entity);
+    GridAgent2DComponent* grid = (agent == nullptr) ? c.world.GetComponent<GridAgent2DComponent>(c.inst.entity) : nullptr;
     float target[3] = {};
     float self[3] = {};
-    if (agent == nullptr || !ResolveTarget(c, node, target) || !WorldPositionOf(c.world, c.inst.entity, self)) {
+    if ((agent == nullptr && grid == nullptr) || !ResolveTarget(c, node, target)
+        || !WorldPositionOf(c.world, c.inst.entity, self)) {
         return starting ? BtResult::Failure : EndBody(c, index, BtResult::Failure);
     }
     const float acceptance = node.params[btmoveparam::kAcceptanceRadius].f;
+    const auto distanceToTarget = [&]() {
+        return grid != nullptr ? PlanarDistanceXY(self, target) : HorizontalDistance(self, target);
+    };
     const auto writeDestination = [&]() {
+        if (grid != nullptr) {
+            grid->destination = { target[0], target[1], target[2] };
+            grid->hasDestination = true;
+            return;
+        }
         agent->destination = { target[0], target[1], target[2] };
         agent->hasDestination = true;
     };
+    const int32_t agentStatus = (grid != nullptr) ? grid->status : agent->status;
 
     if (starting) {
-        if (HorizontalDistance(self, target) <= acceptance) {
+        if (distanceToTarget() <= acceptance) {
             return BtResult::Success; // もう着いている。Agent には何も書かない
         }
         BtMoveToState moveState;
         const uint64_t filter = node.params[btmoveparam::kNavFilter].u;
-        if (filter != 0) {
+        if (filter != 0 && agent != nullptr) {
             moveState.savedNavFilter = agent->navFilter.value;
             moveState.flags |= btmovetoflag::kNavFilterSwapped;
             agent->navFilter = AssetID{ filter };
@@ -549,13 +573,13 @@ BtResult VisitMoveTo(RunCtx& c, int32_t index)
         StoreExtra(c, node, moveState);
         writeDestination();
     }
-    if (HorizontalDistance(self, target) <= acceptance) {
+    if (distanceToTarget() <= acceptance) {
         return EndBody(c, index, BtResult::Success);
     }
     if (rewrote) {
         return BtResult::Running;
     }
-    switch (agent->status) {
+    switch (agentStatus) {
     case navagentstatus::kArrived: return EndBody(c, index, BtResult::Success);
     case navagentstatus::kNoPath:
     case navagentstatus::kInactive: return EndBody(c, index, BtResult::Failure);

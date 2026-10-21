@@ -2059,7 +2059,34 @@ bool RunBehaviorTreeSelfTest()
             Sim bare;
             const EntityID e = bare.AddTreeEntity(noAgent);
             bare.Step();
-            ck.Check(bare.Status(e) == kFailed, "MoveTo: NavMeshAgent が無ければ Failure");
+            ck.Check(bare.Status(e) == kFailed, "MoveTo: NavMeshAgent も GridAgent2D も無ければ Failure");
+        }
+
+        // ---- 2D: NavMeshAgent が無く GridAgent2D があれば、そちらへ目的地を書き status を読む (M94u) ----
+        {
+            const uint64_t guid = RegisterTree(lib, L"move_grid", Tree(0, { MoveTo(0, "Goal", 0.5, false) }, board));
+            Sim sim;
+            const EntityID arrives = sim.AddTreeEntity(guid, "GridArrives");
+            const EntityID noPath = sim.AddTreeEntity(guid, "GridNoPath");
+            const EntityID nearXY = sim.AddTreeEntity(guid, "GridNearXY");
+            for (const EntityID e : { arrives, noPath, nearXY }) {
+                sim.GetWorld().AddComponent<GridAgent2DComponent>(e);
+            }
+            sim.GetWorld().GetComponent<LocalTransform>(nearXY)->position = { 6.0f, 0.0f, 50.0f }; // XY では Goal (6, 0, 0) の上
+            sim.Step();
+            const GridAgent2DComponent* ga = sim.GetWorld().GetComponent<GridAgent2DComponent>(arrives);
+            ck.Check(sim.Status(arrives) == kRunning && ga->hasDestination && ga->destination.x == 6.0f && ga->destination.y == 0.0f
+                         && ga->destination.z == 0.0f,
+                     "MoveTo: GridAgent2D へ destination / hasDestination を書いて Running");
+            ck.Check(sim.Status(nearXY) == kSucceeded && !sim.GetWorld().GetComponent<GridAgent2DComponent>(nearXY)->hasDestination,
+                     "MoveTo: GridAgent2D の到着判定は XY 距離 (Z が 50 離れていても XY で着いていれば何も書かずに Success)");
+            sim.GetWorld().GetComponent<GridAgent2DComponent>(arrives)->status = navagentstatus::kArrived;
+            sim.GetWorld().GetComponent<GridAgent2DComponent>(noPath)->status = navagentstatus::kNoPath;
+            sim.Step();
+            ck.Check(sim.Status(arrives) == kSucceeded && !sim.GetWorld().GetComponent<GridAgent2DComponent>(arrives)->hasDestination,
+                     "MoveTo: GridAgent2D が Arrived になると Success、目的地を倒す (NavMeshAgent と同じ status の値)");
+            ck.Check(sim.Status(noPath) == kFailed && !sim.GetWorld().GetComponent<GridAgent2DComponent>(noPath)->hasDestination,
+                     "MoveTo: GridAgent2D が NoPath なら Failure、目的地を倒す");
         }
 
         // ---- 近くにいれば歩かず Success / acceptanceRadius で途中でも Success ----

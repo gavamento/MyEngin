@@ -1666,6 +1666,8 @@ void RegisterBuiltinComponents()
         MYE_FIELD_FLAGS(AIPerceptionComponent, pendingDamageSource, EntityRef, kFieldHidden | kFieldReadOnly),
         MYE_FIELD_FLAGS(AIPerceptionComponent, pendingDamagePos, Float3, kFieldHidden | kFieldReadOnly),
         MYE_FIELD_FLAGS(AIPerceptionComponent, pendingDamageAmount, Float, kFieldHidden | kFieldReadOnly),
+        MYE_JP("前方の軸", MYE_FIELD_TIP(AIPerceptionComponent, forwardAxis, Int32,
+                                         "axis of the world matrix that counts as forward for the field of view: 0 = +Z (3D), 1 = +X (side-scrolling 2D)")),
     });
 #undef MYE_PERCEPT_SLOT
 #undef MYE_PERCEPT_FIELD
@@ -1965,6 +1967,26 @@ void RegisterBuiltinComponents()
         MYE_JP("引力", MYE_FIELD_TIP(Effector2DComponent, magnitude, Float, "Point: force toward the collider center (N); negative repels")),
         MYE_JP("マスクを使う", MYE_FIELD(Effector2DComponent, useMask, Bool)),
         MYE_JP("対象レイヤー", MYE_FIELD_TIP(Effector2DComponent, mask, UInt32, "layers affected when useMask is on (bitmask of Collider.layer)")),
+    });
+    // M94u: 2D グリッド A* エージェント (TypeId=91、末尾 append)。status と追従の状態が sim の出力なので **hash 対象**
+    RegisterComponent<GridAgent2DComponent>("GridAgent2D", {
+        MYE_JP("Tilemap", MYE_FIELD_TIP(GridAgent2DComponent, tilemap, EntityRef, "entity with the Tilemap this agent walks on")),
+        MYE_JP("目的地", MYE_FIELD(GridAgent2DComponent, destination, Float3)),
+        MYE_JP("目的地あり", MYE_FIELD(GridAgent2DComponent, hasDestination, Bool)),
+        MYE_JP("速さ", MYE_FIELD_RANGE(GridAgent2DComponent, speed, Float, 0.0f, 50.0f)),
+        MYE_JP("ジャンプの高さ (セル)", MYE_FIELD_TIP(GridAgent2DComponent, maxJumpHeight, Int32, "highest ledge the agent plans to jump up / down (cells); the CharacterController must be able to clear it with jumpSpeed")),
+        MYE_JP("ジャンプの距離 (セル)", MYE_FIELD_TIP(GridAgent2DComponent, maxJumpLength, Int32, "widest gap the agent plans to jump across (cells)")),
+        MYE_JP("ジャンプ速度", MYE_FIELD_TIP(GridAgent2DComponent, jumpSpeed, Float, "value written to CharacterController.jumpSpeed at the start of a jump edge (m/s)")),
+        MYE_JP("再計画の間隔 (tick)", MYE_FIELD_TIP(GridAgent2DComponent, replanInterval, Int32, "re-plan every N ticks while following a path; 0 = only when the goal cell changes or a cell is reached")),
+        MYE_JP("状態", MYE_FIELD_FLAGS(GridAgent2DComponent, status, Int32, kFieldReadOnly)),
+        MYE_JP("次のセル X", MYE_FIELD_FLAGS(GridAgent2DComponent, nextCellX, Int32, kFieldReadOnly)),
+        MYE_JP("次のセル Y", MYE_FIELD_FLAGS(GridAgent2DComponent, nextCellY, Int32, kFieldReadOnly)),
+        MYE_FIELD_FLAGS(GridAgent2DComponent, hasPlan, Bool, kFieldHidden | kFieldReadOnly),
+        MYE_FIELD_FLAGS(GridAgent2DComponent, planAge, Int32, kFieldHidden | kFieldReadOnly),
+        MYE_FIELD_FLAGS(GridAgent2DComponent, goalCellX, Int32, kFieldHidden | kFieldReadOnly),
+        MYE_FIELD_FLAGS(GridAgent2DComponent, goalCellY, Int32, kFieldHidden | kFieldReadOnly),
+        MYE_FIELD_FLAGS(GridAgent2DComponent, stuckTicks, Int32, kFieldHidden | kFieldReadOnly),
+        MYE_FIELD_FLAGS(GridAgent2DComponent, bestDistance, Float, kFieldHidden | kFieldReadOnly),
     });
 }
 
