@@ -48,8 +48,8 @@
 | sub-15 | OK | 1 | 971e6a4 | Light2D とライトバッファ。依存: 06。TypeId 85、snapshot v58。チェックポイント 3 通過 (replay 20 ジョブ個別 PASS、golden 30 枚 tol 0、build_managed 成功) |
 | sub-16 | OK | 1 | 03ff599 | ShadowCaster2D と法線マップ。依存: 15。TypeId 86、snapshot v59。押し出し距離は「頂点→画面中心 + 対角」に変更 (spec 4.1.9) |
 | sub-17 | OK | 1 | 3e54872 | スプライトのサーフェスシェーダ枝、Parallax2D、2D ポスト例。依存: 06。TypeId 87、snapshot v60。スプライトのエントリは新規 hlsli 2 本 (既存サーフェスはバイト同一) |
-| sub-18 | 実装中 | 0 | | Line2D。依存: 06 |
-| sub-19 | 未着手 | 0 | | SpriteShape2D (描画・衝突・ハンドル)。依存: 08, 18 |
+| sub-18 | OK | 1 | a5004df | Line2D。依存: 06。TypeId 88、snapshot v61。ライトのあるシーンでは常に lit (Q-17) |
+| sub-19 | 実装中 | 0 | | SpriteShape2D (描画・衝突・ハンドル)。依存: 08, 18。やること 5b (点編集の共通化) を sub-18 VERDICT で追加 |
 | sub-20 | 未着手 | 0 | | 2D ジョイント検証と Effector2D。依存: 09 |
 | sub-21 | 未着手 | 0 | | GridAgent2D、BT MoveTo の fallback、Perception forwardAxis。依存: 11, 09 |
 | sub-22 | 未着手 | 0 | | Camera2DFollow と PixelPerfectCamera2D。依存: 02, 11 |
@@ -77,6 +77,7 @@
 - Q-14 (sub-13 VERDICT) エディタの Edit モード (Play していない) でアニメーションタイルが止まって見える (コマ 0 のまま) のでよいか / 裁定: 止まったままでよい (アニメは sim tick から導出、描画専用の時計を足すと決定性の境界が 1 つ増える。Play 中と Runtime では動く) / 逆を選ぶと: Sprite2DRenderer に「Edit 中だけ実時間から仮の tick を作る」描画専用の時計を足す (小規模。sim には触れない。スクショ / golden は tick 基準のまま)
 - Q-15 (sub-15 VERDICT) どのライトにも照らされない層の lit スプライトを黒にする (Unity と同じ) でよいか / 裁定: 黒 (Global ライトを置けば底上げできる。ライトを入れたら暗所は暗く見えるのが 2D ライトの意図) / 逆を選ぶと: 集合が空の層だけ従来色に戻す (`SwitchLightGroup` の 1 分岐。ただし「ライトの当たらない層だけ明るい」逆転が起きる)
 - Q-16 (sub-16 VERDICT) 法線マップ付きスプライトが 1 枚でもあるシーンで、法線マップを持たないスプライトにも N·L (ライトの真下以外が少し暗くなる) を掛ける (Unity の Normal Maps 有効時と同じ) でよいか / 裁定: 掛ける (手前と奥で照らされ方が揃い、法線マップの有無で浮いて見えない) / 逆を選ぶと: 法線 RT のアルファで「法線あり」を区別し、無しのスプライトは N·L を 1 にする (clear 値とシェーダの小変更)
+- Q-17 (sub-18 VERDICT) Line2D を「ライトのあるシーンでは常に照らされる」(lit の切り替え欄なし) でよいか / 裁定: 常に lit (Tilemap と同じ。夜のロープは暗く見えるのが自然) / 逆を選ぶと: Line2D に `lit` (bool、既定 true) を末尾に足す (NoHash なので sim には影響しない。Sprite2D の lit と同じ扱い、小規模)
 
 ## 申し送り (セッション跨ぎ)
 - 基点の直前に無関係の 2 コミット (`2ac3b4f` DeepModal 再学習、`25fb355` スプラッシュ) を司会が切り出した。
@@ -170,3 +171,6 @@
 - (sub-17 VERDICT nit → sub-23) 透視カメラでの Parallax、回転・スケール付きの親を持つスプライトの視差、大量バッチ混在は実描画で未確認 (2D は正射影前提で v1 は可)。sub-23 のデモ (視差背景 ×2) で正射影の実運用を通す。m94 suite に Surface 3 本 (Shader / Material / Deferred) が入り所要時間が増えた (メッシュ用サーフェス経路の不変を毎サブ見るため維持)。
 - (sub-17 coder → sub-20 以降) `Sprite2DPass::Render` に MaterialLibrary 引数 (呼び元は RenderSystem.cpp の 1 箇所)。Sprite2DBatch に material が増え Push の比較に入っている。`cache\m94\s15\base_head` は基点 edb87ac を Release ビルドした状態に更新済み (約 0.5 GB、git 管理外)。
 - (sub-17 coder → sub-24 engine_spec) スプライトのサーフェスは MyEngineSurfaceSprite.hlsli を include して `float4 PSMain(MyeSpriteInput i)` (VS・ライト乗算・ブレンドはエンジン)、メッシュ用と併記可、判定は include 名。使えない材質は内蔵 + Inspector に理由、走行中に壊すと旧プログラムが残る、輪郭線は矩形の内側だけ、材質は色パスだけで法線 RT / 影 RT に効かない、Properties 名は `_` 始まり。Parallax2D の repeat は正射影だけ (片軸 64 / 両軸 8x8)、factor は描画位置だけ。
+- (sub-18 VERDICT should 1 → sub-19 やること 5b) `HandleLine2DEdit` と `HandleShape2DEdit` が同じ 2 本の lambda (toScreen / mouseLocal) と点ハンドル処理を重複して持つ。SpriteShape を足す前に共通関数へ寄せ、SpriteShape もそれを使う (挙動は変えない)。
+- (sub-18 VERDICT nit → sub-24) 点ハンドル (選択・ドラッグ・辺クリック追加・Delete・Esc) と Create → 2D → Line の実クリックはユーザー目視 (checklists)。限界欄: Scene View のクリック選択に Line2D は載らない (Hierarchy か点ハンドル)、最大 32 点、曲がり 120° 超はベベルで半透明の帯は内側で二重に乗る、端は平ら (丸キャップ / 破線 / テクスチャ繰り返し無し)、帯の UV は u = 全長 0..1 / v = 左右、塗りはローカル / 1 単位、サンプラ clamp、ライトのあるシーンでは常に lit。
+- (sub-18 coder → sub-19 / 23) 三角形分割は `line2d::Triangulate` (= TriangulatePolygon2D)。`HandleLine2DEdit` が「コンポーネントのフィールドへ直接書く + UndoStack」版の手本 (HandleShape2DEdit はアセットへ書く版)。sub-23 のロープは Line2D (loop なし、幅 0.1 前後)。`TextureLibrary::White()` を使うので device の無い selftest で Collect するなら Init が要る。img-diff は Editor.exe で (Runtime.exe だとハング)。`cache\m94\s15\base_head` は基点 f694013 の Release ビルドに更新済み。

@@ -1,8 +1,8 @@
 # sub-18: Line2D
 
 - 依存: sub-06
-- 状態: 実装中
-- 往復: 0
+- 状態: OK (commit a5004df)
+- 往復: 1
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む**。spec: 4.1.11
 
 ## やること

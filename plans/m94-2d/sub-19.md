@@ -1,7 +1,7 @@
 # sub-19: SpriteShape2D (描画・衝突・ハンドル)
 
 - 依存: sub-08, sub-18
-- 状態: 未着手
+- 状態: 実装中
 - 往復: 0
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む**。spec: 4.1.11、4.2.3
 
