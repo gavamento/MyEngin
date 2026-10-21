@@ -1,8 +1,8 @@
 # sub-22: Camera2DFollow と PixelPerfectCamera2D
 
 - 依存: sub-02, sub-11
-- 状態: 実装中
-- 往復: 0
+- 状態: OK (commit a038819)
+- 往復: 1
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む**。spec: 2. #13, #31、4.1.12、7. R4
 
 ## やること

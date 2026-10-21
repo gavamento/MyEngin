@@ -52,8 +52,8 @@
 | sub-19 | OK | 1 | 15276f6 | SpriteShape2D (描画・衝突・ハンドル)。依存: 08, 18。TypeId 89、snapshot v62。点編集は EditPointList に共通化、縁の厚みはワールド単位 (Q-18) |
 | sub-20 | OK | 2 | a2b5d90 | 2D ジョイント検証と Effector2D。依存: 09。TypeId 90、snapshot v63。チェックポイント 4 (sub-16〜20) 通過。round 1 REWORK = 眠った剛体を起こす規則 (spec 2. #21b) |
 | sub-21 | OK | 1 | 55ae902 | GridAgent2D、BT MoveTo の fallback、Perception forwardAxis。依存: 11, 09。TypeId 91、snapshot v64。展開上限超えは最良ノードへの部分経路 (spec 4.1.13) |
-| sub-22 | 実装中 | 0 | | Camera2DFollow と PixelPerfectCamera2D。依存: 02, 11 |
-| sub-23 | 未着手 | 0 | | --2d-demo、golden 2d / 2d_lights、replay_verify 2d。依存: 01〜22 |
+| sub-22 | OK | 1 | a038819 | Camera2DFollow と PixelPerfectCamera2D。依存: 02, 11。TypeId 92/93、snapshot v65。RT は画面を覆う最小の偶数 (spec 4.1.12) |
+| sub-23 | 実装中 | 0 | | --2d-demo、golden 2d / 2d_lights、replay_verify 2d。依存: 01〜22。チェックポイント 5 (sub-21〜23) |
 | sub-24 | 未着手 | 0 | | 文書 (engine_spec / ADR-033 / test_checklists / README)。依存: 23 |
 
 ## レビュー
@@ -184,3 +184,6 @@
 - (sub-20 coder → sub-21 以降) TypeId 90 まで使用 (次は 91)、snapshot v63、ABI 不変。焼き値 joint2D A82F779A97738D34 / effector2D 9504211B9041ECC2。sub-23 のデモにベルトを置くなら乗せる物は接地状態から (半厚 0.1 以上、速度 3.0 で安定)。sub-21 の依頼に添える: forwardAxis は hash 対象の append なので kExpected の焼き値を同じサブで再採取、Perception LOS の CollectLosColliders は physicsquery::CollectStaticShapes でタイル / SpriteShape の箱も見る。
 - (sub-21 VERDICT nit → sub-23 / 24) 部分経路が最終的に Arrived まで着くこと、一方通行床の上の歩行、親付き Agent は selftest 無し → sub-23 のデモで敵に一方通行床を含む面を追わせる。限界欄: 経路は 1 つ先のセルだけ記憶 (経路全体のギズモ無し)、頭上の空きは見ない、動く床と剛体の上は歩行不可、群衆回避なし、CC の jumpSpeed が maxJumpHeight / Length に足りるかは未検証。checklists: Create → 2D → Grid Agent 2D、橙ギズモ、XY の知覚扇形。`UpdateAgent` がやや長い (分割は任意)。
 - (sub-21 coder → sub-23) 敵の GridAgent2D.tilemap をタイルマップのエンティティに向ける (Create では空)、CC は plane2D 必須で足元はタイル。BT の MoveTo は NavMeshAgent が無ければ自動で GridAgent2D。TypeId 91 まで使用 (次は 92)、snapshot v64、ABI 不変。焼き値 GridNav2D シナリオ A 05C77D287CAAA51B。m94 suite に Perception / BT を追加。
+- (sub-22 VERDICT should 1 → sub-23 やること 9) Camera2DFollow の境界は CameraComponent.orthoSize を見るので、Create → 2D → Camera 2D が orthoSize を `refResolutionY / (2 × assetsPPU)` で初期化する (spec 4.1.12)。sub-23 で確認し未対応なら 1 行足す。
+- (sub-22 VERDICT nit → sub-23 / 24) blit は自動テスト無し → sub-23 の golden `2d` (PixelPerfect 有効) で固定。`RenderSystem::Render` が長くなった (任意)。checklists: GameView 上の PixelPerfect、青い deadZone / bounds ギズモ、Create → 2D → Camera 2D、Inspector の有効値表示 (直近のゲームカメラ描画基準)。限界欄: PixelPerfect 中も UI / ImGui はフル解像度でポストは低解像度、cameraOverride (エディタ視界) には効かない、lastViewProjNoJitter は画面に見える範囲、GetCollisionBounds のギズモはアセット基準の近似。
+- (sub-22 coder → sub-23) TypeId 93 まで使用 (次は 94 だが実行時スキーマの Health が 94 を使うログあり、着手時の末尾から取る)、snapshot v65、ABI 不変。焼き値 Camera2DFollow D5147EA06255DFC2。デモの Camera2DFollow.boundsFromTilemap はタイルマップを割り当てて useBounds、Camera.orthoSize は PixelPerfect の有効値 (PPU 16 / ref 180 なら 5.625)。全体 selftest で NavAgent 庭 8581BEE4A676337C を確認。
