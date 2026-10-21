@@ -49,8 +49,8 @@
 | sub-16 | OK | 1 | 03ff599 | ShadowCaster2D と法線マップ。依存: 15。TypeId 86、snapshot v59。押し出し距離は「頂点→画面中心 + 対角」に変更 (spec 4.1.9) |
 | sub-17 | OK | 1 | 3e54872 | スプライトのサーフェスシェーダ枝、Parallax2D、2D ポスト例。依存: 06。TypeId 87、snapshot v60。スプライトのエントリは新規 hlsli 2 本 (既存サーフェスはバイト同一) |
 | sub-18 | OK | 1 | a5004df | Line2D。依存: 06。TypeId 88、snapshot v61。ライトのあるシーンでは常に lit (Q-17) |
-| sub-19 | 実装中 | 0 | | SpriteShape2D (描画・衝突・ハンドル)。依存: 08, 18。やること 5b (点編集の共通化) を sub-18 VERDICT で追加 |
-| sub-20 | 未着手 | 0 | | 2D ジョイント検証と Effector2D。依存: 09 |
+| sub-19 | OK | 1 | 15276f6 | SpriteShape2D (描画・衝突・ハンドル)。依存: 08, 18。TypeId 89、snapshot v62。点編集は EditPointList に共通化、縁の厚みはワールド単位 (Q-18) |
+| sub-20 | 実装中 | 0 | | 2D ジョイント検証と Effector2D。依存: 09。チェックポイント 4 (sub-16〜20) |
 | sub-21 | 未着手 | 0 | | GridAgent2D、BT MoveTo の fallback、Perception forwardAxis。依存: 11, 09 |
 | sub-22 | 未着手 | 0 | | Camera2DFollow と PixelPerfectCamera2D。依存: 02, 11 |
 | sub-23 | 未着手 | 0 | | --2d-demo、golden 2d / 2d_lights、replay_verify 2d。依存: 01〜22 |
@@ -78,6 +78,7 @@
 - Q-15 (sub-15 VERDICT) どのライトにも照らされない層の lit スプライトを黒にする (Unity と同じ) でよいか / 裁定: 黒 (Global ライトを置けば底上げできる。ライトを入れたら暗所は暗く見えるのが 2D ライトの意図) / 逆を選ぶと: 集合が空の層だけ従来色に戻す (`SwitchLightGroup` の 1 分岐。ただし「ライトの当たらない層だけ明るい」逆転が起きる)
 - Q-16 (sub-16 VERDICT) 法線マップ付きスプライトが 1 枚でもあるシーンで、法線マップを持たないスプライトにも N·L (ライトの真下以外が少し暗くなる) を掛ける (Unity の Normal Maps 有効時と同じ) でよいか / 裁定: 掛ける (手前と奥で照らされ方が揃い、法線マップの有無で浮いて見えない) / 逆を選ぶと: 法線 RT のアルファで「法線あり」を区別し、無しのスプライトは N·L を 1 にする (clear 値とシェーダの小変更)
 - Q-17 (sub-18 VERDICT) Line2D を「ライトのあるシーンでは常に照らされる」(lit の切り替え欄なし) でよいか / 裁定: 常に lit (Tilemap と同じ。夜のロープは暗く見えるのが自然) / 逆を選ぶと: Line2D に `lit` (bool、既定 true) を末尾に足す (NoHash なので sim には影響しない。Sprite2D の lit と同じ扱い、小規模)
+- Q-18 (sub-19 VERDICT) SpriteShape2D の縁の帯の厚み (`height`) をエンティティのスケールに追従させるか / 裁定: 追従させない (ワールド単位。スケールで丘を大きくしても縁の太さが変わらず、ピクセルアートの縁が太らない) / 逆を選ぶと: `EmitShape` で height にワールドスケール (y 方向) を掛ける 1 箇所の変更 (Unity の Sprite Shape は Transform に追従する)
 
 ## 申し送り (セッション跨ぎ)
 - 基点の直前に無関係の 2 コミット (`2ac3b4f` DeepModal 再学習、`25fb355` スプラッシュ) を司会が切り出した。
@@ -174,3 +175,7 @@
 - (sub-18 VERDICT should 1 → sub-19 やること 5b) `HandleLine2DEdit` と `HandleShape2DEdit` が同じ 2 本の lambda (toScreen / mouseLocal) と点ハンドル処理を重複して持つ。SpriteShape を足す前に共通関数へ寄せ、SpriteShape もそれを使う (挙動は変えない)。
 - (sub-18 VERDICT nit → sub-24) 点ハンドル (選択・ドラッグ・辺クリック追加・Delete・Esc) と Create → 2D → Line の実クリックはユーザー目視 (checklists)。限界欄: Scene View のクリック選択に Line2D は載らない (Hierarchy か点ハンドル)、最大 32 点、曲がり 120° 超はベベルで半透明の帯は内側で二重に乗る、端は平ら (丸キャップ / 破線 / テクスチャ繰り返し無し)、帯の UV は u = 全長 0..1 / v = 左右、塗りはローカル / 1 単位、サンプラ clamp、ライトのあるシーンでは常に lit。
 - (sub-18 coder → sub-19 / 23) 三角形分割は `line2d::Triangulate` (= TriangulatePolygon2D)。`HandleLine2DEdit` が「コンポーネントのフィールドへ直接書く + UndoStack」版の手本 (HandleShape2DEdit はアセットへ書く版)。sub-23 のロープは Line2D (loop なし、幅 0.1 前後)。`TextureLibrary::White()` を使うので device の無い selftest で Collect するなら Init が要る。img-diff は Editor.exe で (Runtime.exe だとハング)。`cache\m94\s15\base_head` は基点 f694013 の Release ビルドに更新済み。
+- (sub-19 VERDICT 裁定、spec 4.1.11) 点が変わっても眠っている剛体は起こさない (Tilemap の SetCell は明示 API なので起こす)。開いた線は「左から右が表」で Flip は作らず点の並びを逆にする運用。
+- (sub-19 VERDICT nit → sub-23 / 24) 描画は目視 + Collect の頂点数までで画素の解析照合なし → sub-23 の golden `2d` に丘を入れて固定。点のドラッグ / 辺クリック追加 / Delete / Esc / Create → 2D → Sprite Shape の実クリック、透視カメラ・回転 / スケール付きの親の見た目はユーザー目視 (checklists)。`EmitShape` が長め、`SpriteShape.h` が json.hpp を `Sprite2DRenderer.h` 経由で配る (Shape2DLibrary と同じ形)。
+- (sub-19 coder → sub-20 チェックポイント 4) sub-19 は PhysicsSystem (`ComposeEntityWorldScale`) と Shapes (`MakeSegmentBox2D` の抜き出し) を触った。replay_verify は全ジョブの個別 PASS 行を確認し全文ログを `cache\m94\replay_verify_cp4.log` に残す。`tools\build_managed.bat Release` も回す。`cache\m94\s15\base_head` は基点 26aa0fa の Release ビルドに更新済み。
+- (sub-19 coder → sub-21 / 23 / 24) sub-21: physicsquery::CollectStaticShapes で SpriteShape の箱も返る (LOS も同じ口)。sub-23: 丘は SpriteShape2D (閉じた smooth、profile = 縁 3 + fill)、生成スクリプトは `cache\m94\s19\make_hill_scene.py` (git 管理外)、縁 32x16 / ppu 32 / height 0.5。sub-24 限界欄: 縁の角度は外向き法線 / 開いた線は左から右が表 / height はワールド単位 / 頂点 z はエンティティ原点 / 角スプライト・開いた形状の塗り無し / 衝突の箱は半厚 0.1 / 眠りは起こさない / クアッド上限 682・塗り 4096 / 塗りの格子は原点基準。
