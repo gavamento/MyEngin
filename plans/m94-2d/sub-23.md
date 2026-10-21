@@ -1,8 +1,8 @@
 # sub-23: `--2d-demo`、golden `2d` / `2d_lights`、replay_verify `2d`
 
 - 依存: sub-01 〜 sub-22 (全部)
-- 状態: 実装中
-- 往復: 0
+- 状態: OK (commit c1948da)
+- 往復: 1
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む**。spec: 4.1.14、4.4 (性能)、5. 38-39
 
 ## やること

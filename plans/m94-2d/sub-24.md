@@ -1,7 +1,7 @@
 # sub-24: 文書 (engine_spec / ADR-033 / test_checklists / README)
 
 - 依存: sub-23
-- 状態: 未着手
+- 状態: 実装中
 - 往復: 0
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む** (第 1 章の文書規約、第 8 章)。spec: 5. 40
 

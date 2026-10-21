@@ -53,8 +53,8 @@
 | sub-20 | OK | 2 | a2b5d90 | 2D ジョイント検証と Effector2D。依存: 09。TypeId 90、snapshot v63。チェックポイント 4 (sub-16〜20) 通過。round 1 REWORK = 眠った剛体を起こす規則 (spec 2. #21b) |
 | sub-21 | OK | 1 | 55ae902 | GridAgent2D、BT MoveTo の fallback、Perception forwardAxis。依存: 11, 09。TypeId 91、snapshot v64。展開上限超えは最良ノードへの部分経路 (spec 4.1.13) |
 | sub-22 | OK | 1 | a038819 | Camera2DFollow と PixelPerfectCamera2D。依存: 02, 11。TypeId 92/93、snapshot v65。RT は画面を覆う最小の偶数 (spec 4.1.12) |
-| sub-23 | 実装中 | 0 | | --2d-demo、golden 2d / 2d_lights、replay_verify 2d。依存: 01〜22。チェックポイント 5 (sub-21〜23) |
-| sub-24 | 未着手 | 0 | | 文書 (engine_spec / ADR-033 / test_checklists / README)。依存: 23 |
+| sub-23 | OK | 1 | c1948da | --2d-demo、golden 2d / 2d_lights、replay_verify 2d。依存: 01〜22。チェックポイント 5 (sub-21〜23) 通過。版 bump なし、焼き値 2D デモ 55DEACAD78012785 |
+| sub-24 | 実装中 | 0 | | 文書 (engine_spec / ADR-033 / test_checklists / README)。依存: 23 |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -187,3 +187,6 @@
 - (sub-22 VERDICT should 1 → sub-23 やること 9) Camera2DFollow の境界は CameraComponent.orthoSize を見るので、Create → 2D → Camera 2D が orthoSize を `refResolutionY / (2 × assetsPPU)` で初期化する (spec 4.1.12)。sub-23 で確認し未対応なら 1 行足す。
 - (sub-22 VERDICT nit → sub-23 / 24) blit は自動テスト無し → sub-23 の golden `2d` (PixelPerfect 有効) で固定。`RenderSystem::Render` が長くなった (任意)。checklists: GameView 上の PixelPerfect、青い deadZone / bounds ギズモ、Create → 2D → Camera 2D、Inspector の有効値表示 (直近のゲームカメラ描画基準)。限界欄: PixelPerfect 中も UI / ImGui はフル解像度でポストは低解像度、cameraOverride (エディタ視界) には効かない、lastViewProjNoJitter は画面に見える範囲、GetCollisionBounds のギズモはアセット基準の近似。
 - (sub-22 coder → sub-23) TypeId 93 まで使用 (次は 94 だが実行時スキーマの Health が 94 を使うログあり、着手時の末尾から取る)、snapshot v65、ABI 不変。焼き値 Camera2DFollow D5147EA06255DFC2。デモの Camera2DFollow.boundsFromTilemap はタイルマップを割り当てて useBounds、Camera.orthoSize は PixelPerfect の有効値 (PPU 16 / ref 180 なら 5.625)。全体 selftest で NavAgent 庭 8581BEE4A676337C を確認。
+- (sub-23 チェックポイント 5、round 1) 全体 selftest Debug / Release FAIL 0 (PASS 8737、NavAgent 庭 8581BEE4A676337C)、replay_verify 22 ジョブ中 21 個別 PASS (rules は既存 3 error、全文 `cache\m94\replay_verify_cp5.log`)、shot_verify 32 枚 PASS (既存 maxDiff 0、terrain は基点と 0、`--update` 不使用、`cache\m94\shot_verify_cp5.log`)、build_managed Release 0 警告、cargo test 49 PASS。sub-21〜23 に割れ無し。
+- (sub-23 VERDICT should 1 → sub-24 やること 5b) ADR-032 の「固定 21 ジョブ」を 22 に。5b: 各サブの確定事項と R9〜R12 の限界を engine_spec の 1 か所に集約 (敵は動く物・非タイル足場を見ない、froxel / deferred は 2D 経路に効かず forward と画素一致 = R11 は満たした)、`--2d-demo` / `--2d-night` / `--2d-stress` と性能値 (デモ 0.88〜1.39 ms、stress 4.43〜4.60 ms、sim 0.21 ms/tick、Raycast 12.7 us / BoxCast 67.5 us) を engine_spec へ、checklists に各 VERDICT で目視に回した GUI 操作を全部 (Create → 2D → Camera 2D の orthoSize 初期化を含む)。最終チェックポイントは sub-23 以降にソースが変わっていなければ sub-23 の結果を流用 (sub-24 受け入れ条件 4)。
+- (sub-23 coder → sub-24 / reviewer) スクリプト名は ZTwoDHero / ZTwoDMover (既存スクリプトの TypeId を動かさない)。タイル配置を変えると TwoDDemoSelfTest の kExpectedHash と golden 2 枚が変わる (`MYE_SELFTEST_ONLY=twod` で採取)、gen_2d_assets.py の GUID は DemoContent.cpp の kTwoD*Guid と揃える。reviewer には物理 (sub-01 / 08 / 09 / 11 / 14 / 19 / 20) と描画 (sub-04 / 06 / 15 / 16 / 17 / 22) の変更範囲と `cache\m94\` の各チェックポイント全文ログを添える。
