@@ -2581,7 +2581,7 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
                 v = types.At(index).id;
                 changed = true;
             }
-        } else if (componentName && std::strcmp(componentName, "Sprite2D") == 0
+        } else if (componentName && (std::strcmp(componentName, "Sprite2D") == 0 || std::strcmp(componentName, "Line2D") == 0)
                    && std::strcmp(field.name, "sortingLayerId") == 0) {
             // M94: ソート層は Project Settings の表から名前で選ぶ。表に無い id は黙って Default へ潰さず、
             // 「未定義の id」の項目を足して選択中にする (描画は Default として扱われる)

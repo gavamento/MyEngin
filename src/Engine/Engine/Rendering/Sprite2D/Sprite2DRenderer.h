@@ -13,6 +13,7 @@
 #include <DirectXMath.h>
 
 #include "Engine/Core/Ecs/EntityID.h"
+#include "Engine/Engine/Rendering/Sprite2D/Line2DGeometry.h"
 #include "Engine/Engine/Tilemap/TilemapAssets.h"
 #include "Engine/Renderer/Passes/Sprite2DDrawList.h"
 
@@ -25,13 +26,15 @@ struct SpriteMask2DComponent;
 struct Light2DComponent;
 struct ShadowCaster2DComponent;
 struct Parallax2DComponent;
+struct Line2DComponent;
 struct SpriteDef;
 
-// World の active な Sprite2D / SpriteMask2D / Tilemap を集め、SpriteDef を解決して三角形リストに展開し、
+// World の active な Sprite2D / SpriteMask2D / Line2D / Tilemap を集め、SpriteDef を解決して三角形リストに展開し、
 // 整数のソートキーで並べた描画リストを作る。描画は Renderer 層の Sprite2DPass。
 // ソートキー = (外側の層順, order, index, 内側の層順, order, index) の辞書式で、安定ソート。viewZ は見ない。
 // SortingGroup2D の子孫は外側 = 最も近い祖先グループ、内側 = 自分。グループ無しは外側 = 自分、内側 = 0。
 // Tilemap はレイヤーごと・チャンクごとに 1 項目で、同じキーの Sprite2D と並ぶ (同値は entity.index → レイヤー → チャンク)。
+// Line2D は 1 エンティティ 1 項目 (塗り → 帯の順に同じバッチへ積む)。ライトのあるシーンでは Tilemap と同じく常に lit。
 // 描画専用で sim の入力ではない (ハッシュ対象外)。メインスレッド専用
 class Sprite2DRenderer {
 public:
@@ -106,6 +109,7 @@ private:
         uint32_t innerIndex = 0;
         int32_t layerId = 0; // ライトの対象層に使うソート層の安定 id (グループの子孫はグループの層)
         bool isMask = false;
+        bool isLine = false;
         // タイルのチャンク (isTile)。同じキーの中ではレイヤー添字 → チャンク (cy, cx) の順
         bool isTile = false;
         int32_t tileLayer = 0;
@@ -114,6 +118,7 @@ private:
         DirectX::XMFLOAT3 tileOrigin = { 0.0f, 0.0f, 0.0f };
         const Sprite2DComponent* sprite = nullptr;
         const SpriteMask2DComponent* mask = nullptr;
+        const Line2DComponent* line = nullptr;
         const Parallax2DComponent* parallax = nullptr;
         const DirectX::XMFLOAT4X4* world = nullptr;
     };
@@ -169,12 +174,14 @@ private:
     bool Resolve(AssetID sprite, RenderResources& resources, bool allowMissing, Resolved& out);
     void EmitSprite(const Item& item, RenderResources& resources);
     void EmitMask(const Item& item, RenderResources& resources);
+    void EmitLine(const Item& item, RenderResources& resources);
     void EmitTileChunk(const Item& item, World& world, RenderResources& resources);
     void BakeTileChunk(const Item& item, World& world, RenderResources& resources, BakedChunk& out);
     // 外側 = 自分のキー。グループの子孫なら外側 = グループのキー、内側 = 自分のキー
     void AssignKeys(Item& it, World& world, bool hasGroups, EntityID e, int32_t layerId, int32_t order) const;
     void CollectSprites(World& world, bool hasGroups);
     void CollectMasks(World& world, bool hasGroups);
+    void CollectLines(World& world, bool hasGroups);
     void CollectTilemaps(World& world, const DirectX::XMFLOAT4X4* view, const DirectX::XMFLOAT4X4* proj);
     void AddQuad(const DirectX::XMFLOAT4X4& m, float flipX, float flipY, const float color[4], float x0, float y0,
                  float x1, float y1, float u0, float v0, float u1, float v1);
@@ -231,6 +238,8 @@ private:
     uint64_t simTick_ = 0;                               // Collect が受けた sim の tick (アニメーションタイル用)
     uint64_t tileFrame_ = 0;                             // Collect の通し番号 (使われなくなったチャンクの掃除用)
     std::vector<Sprite2DVertex> tileScratch_;            // 原点を足した 1 run 分の頂点
+    std::vector<uint32_t> lineFill_;                     // Line2D の塗りの三角形の添字
+    std::vector<line2d::StrokeVertex> lineStroke_;       // Line2D の帯の頂点
     std::vector<Sprite2DVertex> repeatScratch_;          // 視差の複製 1 枚分の頂点
     bool hasParallaxItem_ = false;                       // Parallax2D を持つ Sprite2D がある (カメラ位置を求める条件)
     bool hasCamera_ = false;

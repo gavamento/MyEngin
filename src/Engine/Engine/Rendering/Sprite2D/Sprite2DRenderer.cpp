@@ -15,6 +15,7 @@
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
+#include "Engine/Engine/Rendering/Sprite2D/Line2DGeometry.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Scene/SortingLayers.h"
 #include "Engine/Engine/Tilemap/TilemapSystem.h"
@@ -531,6 +532,74 @@ void Sprite2DRenderer::EmitMask(const Item& item, RenderResources& resources)
          static_cast<uint32_t>(scratch_.size()));
 }
 
+void Sprite2DRenderer::EmitLine(const Item& item, RenderResources& resources)
+{
+    const Line2DComponent& ln = *item.line;
+    const int n = std::clamp(ln.pointCount, 0, kLine2DMaxPoints);
+    const bool stroke = ln.width > 0.0f && n >= 2;
+    const bool fill = ln.fill && n >= 3;
+    if (!stroke && !fill) {
+        return; // 描くものが無いときはテクスチャの読み込みも頼まない
+    }
+    // texture が空 = 白。指定があって未ロードなら読み込みを頼んで、このフレームは描かない (パスが引けないものはマゼンタ)
+    TextureLibrary& textures = resources.textures;
+    AssetID texture = textures.White();
+    if (!ln.texture.IsNull()) {
+        if (textures.Get(ln.texture) != nullptr) {
+            texture = ln.texture;
+        } else {
+            const std::wstring path = assetguid::ResolvePath(ln.texture.value);
+            if (path.empty()) {
+                texture = EnsureMissingTexture(resources);
+            } else {
+                textures.RequestLoadFileAsync(path);
+                return;
+            }
+        }
+    }
+
+    const XMFLOAT4X4& m = *item.world;
+    scratch_.clear();
+    const auto addVertex = [&](float x, float y, float u, float v) {
+        Sprite2DVertex vert;
+        vert.pos[0] = x * m._11 + y * m._21 + m._41;
+        vert.pos[1] = x * m._12 + y * m._22 + m._42;
+        vert.pos[2] = x * m._13 + y * m._23 + m._43;
+        vert.uv[0] = u;
+        vert.uv[1] = v;
+        vert.color[0] = ln.color.x;
+        vert.color[1] = ln.color.y;
+        vert.color[2] = ln.color.z;
+        vert.color[3] = ln.color.w;
+        scratch_.push_back(vert);
+    };
+    // 塗りを先に積む (帯が上に重なる)。UV = ローカル座標 / 1 単位 (テクスチャの上 = +y なので v は符号を反転)
+    if (fill) {
+        line2d::Triangulate(ln.points, n, lineFill_);
+        for (const uint32_t idx : lineFill_) {
+            const XMFLOAT2& p = ln.points[idx];
+            addVertex(p.x, p.y, p.x, -p.y);
+        }
+    }
+    if (stroke) {
+        line2d::BuildStroke(ln.points, n, ln.width, ln.loop, lineStroke_);
+        for (const line2d::StrokeVertex& sv : lineStroke_) {
+            addVertex(sv.x, sv.y, sv.u, sv.v);
+        }
+    }
+    if (scratch_.empty()) {
+        return;
+    }
+
+    // Line2D には lit の欄が無い。ライトがあるシーンでは Tilemap と同じく常に lit (法線 RT には平らな法線で載る)
+    const bool lit = !lightMeta_.empty();
+    const uint32_t count = static_cast<uint32_t>(scratch_.size());
+    Push(texture, false, sprite2dstencil::kNone, 0.0f, lit, scratch_.data(), count);
+    if (lit && anyNormalMap_) {
+        const float flat[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
+        PushNormal(texture, AssetID{}, false, flat, scratch_.data(), count);
+    }
+}
 void Sprite2DRenderer::AssignKeys(Item& it, World& world, bool hasGroups, EntityID e, int32_t layerId,
                                   int32_t order) const
 {
@@ -814,6 +883,26 @@ void Sprite2DRenderer::CollectMasks(World& world, bool hasGroups)
     });
 }
 
+void Sprite2DRenderer::CollectLines(World& world, bool hasGroups)
+{
+    const ComponentTypeId req[] = { Line2DComponent::sTypeId, WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int li = arch.FindTypeIndex(Line2DComponent::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (!IsEntityActive(world, e)) {
+                continue;
+            }
+            Item it;
+            it.isLine = true;
+            it.line = static_cast<const Line2DComponent*>(arch.GetPtr(li, row));
+            it.world = &static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+            AssignKeys(it, world, hasGroups, e, it.line->sortingLayerId, it.line->orderInLayer);
+            items_.push_back(it);
+        }
+    });
+}
 // Tilemap のレイヤー x チャンクを 1 項目ずつ。正射影なら画面外のチャンクは項目にしない
 // (キャッシュは掃除されないよう lastUsed だけ更新する)
 void Sprite2DRenderer::CollectTilemaps(World& world, const XMFLOAT4X4* view, const XMFLOAT4X4* proj)
@@ -1399,6 +1488,7 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
         hasOrtho_ = OrthoWorldBounds(view, proj, orthoMin_, orthoMax_);
     }
     CollectMasks(world, hasGroups);
+    CollectLines(world, hasGroups);
     CollectTilemaps(world, view, proj);
     if (items_.empty()) {
         tileCache_.clear();
@@ -1409,9 +1499,9 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
     // (同じエンティティにスプライトとマスクがあるときだけ isMask で、同じタイルマップのレイヤー / チャンクは添字で決める)
     std::stable_sort(items_.begin(), items_.end(), [](const Item& a, const Item& b) {
         return std::tie(a.outerLayer, a.outerOrder, a.outerIndex, a.innerLayer, a.innerOrder, a.innerIndex, a.isMask,
-                        a.tileLayer, a.tileChunk.cy, a.tileChunk.cx)
+                        a.isLine, a.tileLayer, a.tileChunk.cy, a.tileChunk.cx)
                < std::tie(b.outerLayer, b.outerOrder, b.outerIndex, b.innerLayer, b.innerOrder, b.innerIndex,
-                          b.isMask, b.tileLayer, b.tileChunk.cy, b.tileChunk.cx);
+                          b.isMask, b.isLine, b.tileLayer, b.tileChunk.cy, b.tileChunk.cx);
     });
     list_.vertices.reserve(items_.size() * 6);
     CollectLights(world, resources);
@@ -1420,12 +1510,14 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
     }
     for (const Item& it : items_) {
         if (!lightMeta_.empty()) {
-            SwitchLightGroup(it.layerId, it.isTile || (!it.isMask && it.sprite->lit));
+            SwitchLightGroup(it.layerId, it.isTile || it.isLine || (!it.isMask && it.sprite->lit));
         }
         if (it.isTile) {
             EmitTileChunk(it, world, resources);
         } else if (it.isMask) {
             EmitMask(it, resources);
+        } else if (it.isLine) {
+            EmitLine(it, resources);
         } else {
             EmitSprite(it, resources);
         }

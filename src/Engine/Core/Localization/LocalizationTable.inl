@@ -971,6 +971,7 @@ MYE_STR(Create_2D,            "2D",                "2D") // M94
 MYE_STR(Create_Sprite2D,      "Sprite",            "スプライト") // M94
 MYE_STR(Create_Tilemap,       "Tilemap",           "タイルマップ") // M94j
 MYE_STR(Create_Light2D,       "Light 2D",          "2D ライト") // M94o
+MYE_STR(Create_Line2D,        "Line",              "2D 折れ線") // M94r
 MYE_STR(Create_Part,          "Part (with Bounds)", "部位 (範囲付き)")
 // M60g2: ラグドール生成器 (右クリック対象の SkinnedMesh のスケルトンから組む)
 MYE_STR(Create_Ragdoll,       "Ragdoll (from Skeleton)", "ラグドール (スケルトンから)")
@@ -2485,6 +2486,8 @@ MYE_STR(Insp_Shape2DUnresolved, "2D shape asset not found: the collider has no e
                                "2D 形状アセットが見つかりません (コライダーは無効です)")
 MYE_STR(SceneView_EditingShape2D, "Editing 2D shape: drag a point / click an edge to add / Delete to remove / Esc to leave",
                                "2D 形状を編集中: 点をドラッグ / 辺をクリックで追加 / Delete で削除 / Esc で終了")
+MYE_STR(SceneView_EditingLine2D, "Editing Line 2D: drag the point / click an edge to add / Delete to remove / Esc to leave",
+                               "2D 折れ線を編集中: 点をドラッグ / 辺をクリックで追加 / Delete で削除 / Esc で終了") // M94r
 
 // ---- タイルパレット / タイルマップ (M94j) ----
 MYE_STR(Asset_TilePalette,     "Tile Palette",                         "タイルパレット")

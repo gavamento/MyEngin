@@ -162,6 +162,14 @@ GameObject CreateLight2D(EngineContext& ctx, const char* name)
     return obj;
 }
 
+// M94r: 2D 折れ線 (Line2D + LocalTransform)。既定は (-1, 0) から (1, 0) の 2 点の線
+GameObject CreateLine2D(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    obj.AddComponent<Line2DComponent>();
+    return obj;
+}
+
 // ---- UI (M51f) ----
 // text はシーンに保存されるデータなのでエディタ言語に依存しない英語固定 (メニュー表示とは別物)
 
@@ -446,6 +454,7 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Sprite2D), "Sprite", &CreateSprite2D);
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Tilemap), "Tilemap", &CreateTilemap);
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Light2D), "Light 2D", &CreateLight2D);
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Line2D), "Line", &CreateLine2D);
         ImGui::EndMenu();
     }
 

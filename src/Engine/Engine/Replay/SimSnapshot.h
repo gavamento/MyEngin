@@ -167,7 +167,8 @@ struct SimRefs {
 // v58 (M94o): Light2DComponent (TypeId 85、NoHash)。World 節のカラム生バイト
 // v59 (M94p): ShadowCaster2DComponent (TypeId 86、NoHash)。World 節のカラム生バイト
 // v60 (M94q): Parallax2DComponent (TypeId 87、NoHash)。World 節のカラム生バイト
-inline constexpr uint32_t kSimSnapshotVersion = 60;
+// v61 (M94r): Line2DComponent (TypeId 88、NoHash)。World 節のカラム生バイト
+inline constexpr uint32_t kSimSnapshotVersion = 61;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

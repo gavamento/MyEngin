@@ -116,6 +116,7 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "Light2D", { ICON_FA_LIGHTBULB, "2D", "2D ライト" } },
         { "ShadowCaster2D", { ICON_FA_CIRCLE_HALF_STROKE, "2D", "2D シャドウキャスター" } }, // M94p
         { "Parallax2D", { ICON_FA_LAYER_GROUP, "2D", "2D 視差" } }, // M94q
+        { "Line2D", { ICON_FA_BEZIER_CURVE, "2D", "2D 折れ線" } }, // M94r
     };
     return t;
 }

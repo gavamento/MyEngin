@@ -2454,6 +2454,24 @@ struct Parallax2DComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 2D 折れ線 / 多角形 (M94、TypeId=88) ----
+// points (ローカル XY) を幅 width の帯にして描く (継ぎ目はマイター、鋭すぎればベベル。端は平ら)。
+// fill は点列を閉じた多角形として color で塗る (帯の下)。texture が空なら白。
+// Sprite2D と同じソートキーで並ぶ。描画専用なので **kComponentNoHash**
+inline constexpr int32_t kLine2DMaxPoints = 32;
+struct Line2DComponent {
+    int32_t pointCount = 2;
+    DirectX::XMFLOAT2 points[kLine2DMaxPoints] = { { -1.0f, 0.0f }, { 1.0f, 0.0f } };
+    float width = 0.1f;
+    DirectX::XMFLOAT4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
+    AssetID texture = {};
+    bool loop = false;
+    bool fill = false;
+    int32_t sortingLayerId = 0;
+    int32_t orderInLayer = 0;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

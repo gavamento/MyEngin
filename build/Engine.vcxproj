@@ -226,6 +226,8 @@
     <ClCompile Include="..\src\Engine\Engine\Rendering\SkinBoundsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\SkinPaletteCache.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\SkinPaletteCacheSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\Line2DGeometry.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\Line2DSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DAssetSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteLibrary.cpp" />
@@ -578,6 +580,8 @@
     <ClInclude Include="..\src\Engine\Engine\Rendering\SkinBoundsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\SkinPaletteCache.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\SkinPaletteCacheSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\Line2DGeometry.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\Line2DSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DAssetSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DRenderer.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteLibrary.h" />

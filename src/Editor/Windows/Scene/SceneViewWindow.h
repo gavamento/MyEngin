@@ -73,6 +73,7 @@ private:
     void DrawTilemapGizmos(EngineContext& ctx, World& world, const Selection& selection); // M94j
     void DrawLight2DGizmos(EngineContext& ctx, World& world);                              // M94o
     void DrawShadowCaster2DGizmos(World& world);                                           // M94p
+    void DrawLine2DGizmos(World& world);                                                   // M94r
     // M94h: kPolygon2D / kEdge2D の点列 (緑) を前後面の輪郭と支柱で描く
     void AddShape2DWire(const ColliderComponent& col, const DirectX::XMFLOAT4X4& wm);
     void DrawAudioGizmos(EngineContext& ctx, World& world, const Selection& selection);
@@ -103,6 +104,11 @@ private:
     // 編集中は true を返す (呼び出し側は変形ギズモを出さない)。点・辺をクリックしたら clickConsumed が true
     bool HandleShape2DEdit(EngineContext& ctx, Selection& selection, const EditorSettings& settings, float rectX,
                            float rectY, float rectW, float rectH, bool& clickConsumed);
+    // M94r: 選択中の Line2D の点の表示・ドラッグ移動・辺クリックで追加・Delete で削除。点をクリックして選ぶまでは false
+    // (変形ギズモを出す)。点を選んでいる間は true を返し、変形ギズモを出さない。ドラッグ 1 回 = 追加 1 回 = 削除 1 回 = 1 Undo。
+    // 点・辺をクリックしたら clickConsumed が true
+    bool HandleLine2DEdit(EngineContext& ctx, Selection& selection, UndoStack& undo, const EditorSettings& settings,
+                          float rectX, float rectY, float rectW, float rectH, bool& clickConsumed);
     void DrawGizmo(EngineContext& ctx, Selection& selection, UndoStack& undo,
                    const EditorSettings& settings, float rectX, float rectY, float rectW,
                    float rectH);
@@ -174,6 +180,9 @@ private:
     int shape2dPoint_ = -1;      // M94h: 編集で選んでいる 2D 形状の点 (-1 = 無し)
     uint64_t shape2dFileId_ = 0; // 同 選んだときのエンティティ
     bool shape2dDragging_ = false;
+    int line2dPoint_ = -1;       // M94r: 編集で選んでいる Line2D の点 (-1 = 無し)
+    uint64_t line2dFileId_ = 0;  // 同 選んだときのエンティティ (ドラッグ中の Undo 記録の対象でもある)
+    bool line2dDragging_ = false; // 点のドラッグ中 (UndoStack の記録を開いている)
     std::vector<DirectX::XMFLOAT2> shape2dDragPoints_; // ドラッグ中の作業用点列 (離したら保存)
     bool gizmoBlockedUntilRelease_ = false;
     bool camSpeedDirty_ = false; // RMB+ホイールで速度変更中 (RMB リリース時に settings.Save)

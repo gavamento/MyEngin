@@ -852,6 +852,12 @@
     <ClCompile Include="..\src\Engine\Engine\Rendering\SkinPaletteCacheSelfTest.cpp">
       <Filter>Engine\Rendering</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\Line2DGeometry.cpp">
+      <Filter>Engine\Rendering\Sprite2D</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\Line2DSelfTest.cpp">
+      <Filter>Engine\Rendering\Sprite2D</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DAssetSelfTest.cpp">
       <Filter>Engine\Rendering\Sprite2D</Filter>
     </ClCompile>
@@ -1907,6 +1913,12 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Rendering\SkinPaletteCacheSelfTest.h">
       <Filter>Engine\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\Line2DGeometry.h">
+      <Filter>Engine\Rendering\Sprite2D</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\Line2DSelfTest.h">
+      <Filter>Engine\Rendering\Sprite2D</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DAssetSelfTest.h">
       <Filter>Engine\Rendering\Sprite2D</Filter>

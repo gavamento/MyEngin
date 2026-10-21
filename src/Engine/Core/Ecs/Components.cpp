@@ -57,6 +57,16 @@ FieldDesc ShadowCaster2DPointField(uint32_t index, const char* name, const char*
     return WithJp(d, jp);
 }
 
+// Line2D の points[index] を 1 要素ずつ Float2 で登録する
+FieldDesc Line2DPointField(uint32_t index, const char* name, const char* jp)
+{
+    FieldDesc d{ name, FieldType::Float2,
+                 static_cast<uint32_t>(offsetof(Line2DComponent, points) + index * sizeof(DirectX::XMFLOAT2)),
+                 kFieldNone };
+    d.tooltip = "Line vertex (local space); only the first pointCount are used";
+    return WithJp(d, jp);
+}
+
 } // namespace
 
 void RegisterBuiltinComponents()
@@ -1855,6 +1865,49 @@ void RegisterBuiltinComponents()
         MYE_JP("X を繰り返す", MYE_FIELD(Parallax2DComponent, repeatX, Bool)),
         MYE_JP("Y を繰り返す", MYE_FIELD(Parallax2DComponent, repeatY, Bool)),
         MYE_JP("繰り返しの間隔", MYE_FIELD_TIP(Parallax2DComponent, repeatSize, Float2, "0 = sprite size (world units)")),
+    }, kComponentNoHash);
+    // M94r: 2D 折れ線 / 多角形 (TypeId=88、末尾 append)。描画専用の **kComponentNoHash**
+    RegisterComponent<Line2DComponent>("Line2D", {
+        MYE_JP("頂点数", MYE_FIELD_RANGE(Line2DComponent, pointCount, Int32, 0, 32)),
+        Line2DPointField(0, "point0", "頂点 0"),
+        Line2DPointField(1, "point1", "頂点 1"),
+        Line2DPointField(2, "point2", "頂点 2"),
+        Line2DPointField(3, "point3", "頂点 3"),
+        Line2DPointField(4, "point4", "頂点 4"),
+        Line2DPointField(5, "point5", "頂点 5"),
+        Line2DPointField(6, "point6", "頂点 6"),
+        Line2DPointField(7, "point7", "頂点 7"),
+        Line2DPointField(8, "point8", "頂点 8"),
+        Line2DPointField(9, "point9", "頂点 9"),
+        Line2DPointField(10, "point10", "頂点 10"),
+        Line2DPointField(11, "point11", "頂点 11"),
+        Line2DPointField(12, "point12", "頂点 12"),
+        Line2DPointField(13, "point13", "頂点 13"),
+        Line2DPointField(14, "point14", "頂点 14"),
+        Line2DPointField(15, "point15", "頂点 15"),
+        Line2DPointField(16, "point16", "頂点 16"),
+        Line2DPointField(17, "point17", "頂点 17"),
+        Line2DPointField(18, "point18", "頂点 18"),
+        Line2DPointField(19, "point19", "頂点 19"),
+        Line2DPointField(20, "point20", "頂点 20"),
+        Line2DPointField(21, "point21", "頂点 21"),
+        Line2DPointField(22, "point22", "頂点 22"),
+        Line2DPointField(23, "point23", "頂点 23"),
+        Line2DPointField(24, "point24", "頂点 24"),
+        Line2DPointField(25, "point25", "頂点 25"),
+        Line2DPointField(26, "point26", "頂点 26"),
+        Line2DPointField(27, "point27", "頂点 27"),
+        Line2DPointField(28, "point28", "頂点 28"),
+        Line2DPointField(29, "point29", "頂点 29"),
+        Line2DPointField(30, "point30", "頂点 30"),
+        Line2DPointField(31, "point31", "頂点 31"),
+        MYE_JP("幅", MYE_FIELD_TIP(Line2DComponent, width, Float, "stroke width (world units); 0 = no stroke")),
+        MYE_JP("色", MYE_FIELD(Line2DComponent, color, Color)),
+        MYE_JP("テクスチャ", MYE_FIELD_TIP(Line2DComponent, texture, AssetRef, "empty = white; stroke u = 0..1 along the line, fill uv = local position")),
+        MYE_JP("閉じる", MYE_FIELD(Line2DComponent, loop, Bool)),
+        MYE_JP("塗る", MYE_FIELD_TIP(Line2DComponent, fill, Bool, "fill the closed polygon (under the stroke)")),
+        MYE_JP("ソート層", MYE_FIELD(Line2DComponent, sortingLayerId, Int32)),
+        MYE_JP("層内の順序", MYE_FIELD(Line2DComponent, orderInLayer, Int32)),
     }, kComponentNoHash);
 }
 
