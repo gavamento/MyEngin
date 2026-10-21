@@ -1955,6 +1955,17 @@ void RegisterBuiltinComponents()
         MYE_JP("ソート層", MYE_FIELD(SpriteShape2DComponent, sortingLayerId, Int32)),
         MYE_JP("層内の順序", MYE_FIELD(SpriteShape2DComponent, orderInLayer, Int32)),
     });
+    // M94t: 2D エフェクター (TypeId=90、末尾 append)。力が物理の入力になるので **hash 対象**
+    RegisterComponent<Effector2DComponent>("Effector2D", {
+        MYE_JP("種類", MYE_FIELD_TIP(Effector2DComponent, type, Int32, "0 = Area, 1 = Surface, 2 = Buoyancy, 3 = Point")),
+        MYE_JP("力", MYE_FIELD_TIP(Effector2DComponent, force, Float2, "Area: constant force (N, world XY)")),
+        MYE_JP("面の速度", MYE_FIELD_TIP(Effector2DComponent, surfaceSpeed, Float, "Surface: speed of the contact surface (m/s) along local +X; needs a solid static / kinematic collider")),
+        MYE_JP("流体密度", MYE_FIELD_TIP(Effector2DComponent, density, Float, "Buoyancy: fluid density (kg/m^3); the surface is the top of the collider bounds")),
+        MYE_JP("水中抗力", MYE_FIELD_TIP(Effector2DComponent, drag, Float, "Buoyancy: linear drag scaled by the submerged fraction")),
+        MYE_JP("引力", MYE_FIELD_TIP(Effector2DComponent, magnitude, Float, "Point: force toward the collider center (N); negative repels")),
+        MYE_JP("マスクを使う", MYE_FIELD(Effector2DComponent, useMask, Bool)),
+        MYE_JP("対象レイヤー", MYE_FIELD_TIP(Effector2DComponent, mask, UInt32, "layers affected when useMask is on (bitmask of Collider.layer)")),
+    });
 }
 
 } // namespace mye

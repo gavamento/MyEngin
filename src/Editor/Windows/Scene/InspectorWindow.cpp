@@ -1289,6 +1289,19 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
             ImGui::PopTextWrapPos();
         }
     }
+    // M94t: Effector2D の注意 (領域になる Collider が無い / Surface にトリガーは使えない)
+    if (std::strcmp(desc.name, "Effector2D") == 0 && !tg.multi) {
+        const auto* effector = world.GetComponent<Effector2DComponent>(tg.e);
+        const auto* region = world.GetComponent<ColliderComponent>(tg.e);
+        ImGui::PushTextWrapPos(0.0f);
+        if (region == nullptr) {
+            ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_Effector2DNoCollider));
+        } else if (effector != nullptr && effector->type == effector2dtype::kSurface && region->isTrigger) {
+            ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_Effector2DSurfaceTrigger));
+        }
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_Effector2DNote));
+        ImGui::PopTextWrapPos();
+    }
     // M94h: 2D 形状の Collider の注意 (アセット未解決 / 動的剛体での扱い)
     if (std::strcmp(desc.name, "Collider") == 0 && !tg.multi) {
         const auto* collider = world.GetComponent<ColliderComponent>(tg.e);
@@ -1318,6 +1331,23 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
             if (ImGui::Button(Tr(StrId::Insp_OpenTilePalette))) {
                 pendingOpenTilePalette_ = ctx.scene->EnsureFileId(tg.e);
             }
+        }
+    }
+    // M94t: 2D 物理の関節。Hinge は回転軸を Z に、Slider は滑る方向を X に向ける (plane2D の剛体を繋ぐときの定石)。
+    // Ball / Fixed / Cone は軸を使わない or 2D 用の既定が無いので出さない
+    if (std::strcmp(desc.name, "Joint") == 0 && !tg.multi && !undo.IsRecording()) {
+        const auto* joint = world.GetComponent<JointComponent>(tg.e);
+        if (joint != nullptr && (joint->type == jointtype::kHinge || joint->type == jointtype::kSlider)) {
+            if (ImGui::Button(Tr(StrId::Insp_Joint2DAxis))) {
+                const bool hinge = (joint->type == jointtype::kHinge);
+                undo.Record("Set Joint 2D Axis", *ctx.scene, selection, tg.fid, UndoStack::StructuralChanges::None, [&] {
+                    if (auto* editable = world.GetComponent<JointComponent>(tg.e)) {
+                        editable->axis = hinge ? DirectX::XMFLOAT3{ 0.0f, 0.0f, 1.0f } : DirectX::XMFLOAT3{ 1.0f, 0.0f, 0.0f };
+                    }
+                });
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", Tr(StrId::Insp_Joint2DAxisHint));
         }
     }
     // M50a: PartBounds 単独 (Part 無し) は RaycastParts の収集

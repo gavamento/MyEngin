@@ -2491,6 +2491,30 @@ struct SpriteShape2DComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 2D エフェクター (M94、TypeId=90) ----
+// 同じエンティティの ColliderComponent を領域にして、領域に重なる plane2D の非 kinematic 剛体へ力を足す。
+// Area / Point / Buoyancy は毎サブステップの外力、Surface は接触解決の段で接線の目標速度になる
+// (Surface の領域は ソリッドな Collider の静的 / kinematic の面。トリガーは接触を作らない)。
+// sim の入力なので **hash 対象**
+namespace effector2dtype {
+inline constexpr int32_t kArea = 0;     // 一定の力 force [N]
+inline constexpr int32_t kSurface = 1;  // 接触面が surfaceSpeed [m/s] で動く (ベルトコンベア)
+inline constexpr int32_t kBuoyancy = 2; // 領域の天面を水面にした浮力 + 水中抗力
+inline constexpr int32_t kPoint = 3;    // 領域中心への力 (magnitude が負なら反発)
+inline constexpr int32_t kCount = 4;
+} // namespace effector2dtype
+struct Effector2DComponent {
+    int32_t type = effector2dtype::kArea;
+    DirectX::XMFLOAT2 force = { 0.0f, 0.0f }; // Area: 一定の力 [N] (ワールド XY)
+    float surfaceSpeed = 2.0f;                // Surface: 接触面の速度 [m/s]。+X をエンティティの Z 回転で回した向き
+    float density = 1000.0f;                  // Buoyancy: 流体密度 [kg/m^3]
+    float drag = 1.0f;                        // Buoyancy: 水中抗力 (没水割合で按分する線形抗力係数 [1/s])
+    float magnitude = 10.0f;                  // Point: 中心への力 [N]。負で反発
+    bool useMask = false;                     // true なら mask のレイヤーの剛体だけを対象にする
+    uint32_t mask = 0xFFFFFFFFu;              // 対象レイヤー (Collider.layer のビット)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

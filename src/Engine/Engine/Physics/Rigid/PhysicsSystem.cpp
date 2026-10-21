@@ -68,6 +68,8 @@ constexpr float kBroadphaseMargin = 0.1f;
 // 係数を極端にしたオーサリングミスでシーンが吹き飛ぶのを止めるための防波堤。
 // 抗力系は閉形式 implicit なのでクランプを要らない (除算しかしないため発散し得ない)
 constexpr float kExplicitMaxDeltaV = 100.0f;
+// M94t: Surface の起床判定で面の AABB を広げる量 [m] (接触候補の余裕。kOneWaySlop と同じ値)
+constexpr float kEffectorWakeMargin = 0.05f;
 // 面サンプリング (M59c) のトルク側の同じ防波堤 [rad/s]
 constexpr float kExplicitMaxDeltaOmega = 100.0f;
 // ---- CCD (M59j) ----
@@ -268,7 +270,13 @@ struct Body {
     bool oneWay = false;
     float startMinY = 0.0f;
     float startVy = 0.0f;
-    int32_t layer = 0;             // 衝突レイヤー (M36a、Collider から複製)
+    // M94t: Effector2D(Surface) の面。surface が立つ静的 / kinematic の solid 形状は、plane2D の動的剛体との接触で
+    // 接線の目標速度 surfaceVel (ワールド、tick 開始時の +X 向き × surfaceSpeed) を持つ
+    bool surface = false;
+    float surfaceVel[3] = { 0.0f, 0.0f, 0.0f };
+    // M94t: 有効な Effector2D の領域に重なる plane2D の剛体。眠らせない (入眠の静けさ計数を 0 に保つ)
+    bool effectorHold = false;
+    int32_t layer = 0;            // 衝突レイヤー (M36a、Collider から複製)
     uint32_t mask = 0xFFFFFFFFu;   // 衝突マスク (既定 = 全レイヤー → 従来挙動)
     // 親のワールドフレーム (M28d)。収集時に合成し運動学的フレームとして固定。
     // identity (ルート) なら書き戻しは従来の直接代入 (ビット同一 fast-path)
@@ -288,6 +296,22 @@ void SetBodyShape(Body& b, const ColliderComponent& col, const XMFLOAT3& pos,
         b.colliderOffset = { b.pose.px - pos.x, b.pose.py - pos.y, b.pose.pz - pos.z };
         b.pose.px = pos.x; b.pose.py = pos.y; b.pose.pz = pos.z;
     }
+}
+
+// Effector2D の重なり判定に使う剛体の形状。浮力と同じく shapeCol から組み直す
+// (トリガー併用のボディや質量中心オフセットでも同じ姿勢)。コライダー無しは半径 0.5 の球
+ShapePose EffectorBodyPose(const Body& b)
+{
+    ShapePose bp = b.pose;
+    if (b.shapeCol) {
+        bp = shapes::MakePose(*b.shapeCol, { b.pose.px, b.pose.py, b.pose.pz }, { b.qx, b.qy, b.qz, b.qw },
+                              b.scale);
+    } else {
+        bp.shape = collidershape::kSphere;
+        bp.radius = 0.5f;
+        bp.identityRot = 1;
+    }
+    return bp;
 }
 
 ShapePose BodyCollisionPose(const Body& b)
@@ -2229,6 +2253,123 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     std::stable_sort(bodies.begin(), bodies.end(),
                      [](const Body& a, const Body& b) { return a.entity.index < b.entity.index; });
 
+    // ---- Effector2D (M94t) の収集 ----
+    // ★**存在ゲート**: plane2D の動的剛体が居ない / Effector2D が 1 つも無いシーンは効く相手も領域も無いので、
+    //   以降のサブステップの帯と接触生成の分岐ごと通らない (fp 演算ゼロ = 既存シーンとビット同一)。
+    // 領域の姿勢は tick 開始時のもの (サブステップの途中で動く kinematic の領域には追従しない)。
+    // Surface は外力でなく接触の目標速度なので、領域の一覧ではなく持ち主の Body に印を付ける
+    struct EffectorRegion {
+        const Effector2DComponent* eff = nullptr;
+        ShapePose pose;
+        float minX = 0, minY = 0, minZ = 0, maxX = 0, maxY = 0, maxZ = 0; // pose のワールド AABB
+        EntityID entity;
+    };
+    std::vector<EffectorRegion> effectorRegions;
+    bool anySurface = false;
+    if (anyPlane2D) {
+        const ComponentTypeId effReq[] = { Effector2DComponent::sTypeId, ColliderComponent::sTypeId,
+                                           LocalTransform::sTypeId };
+        world.ForEachArchetype(effReq, [&](Archetype& arch) {
+            const int ei = arch.FindTypeIndex(Effector2DComponent::sTypeId);
+            const int ci = arch.FindTypeIndex(ColliderComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                const EntityID e = arch.EntityAt(row);
+                if (!IsEntityActive(world, e)) {
+                    continue;
+                }
+                const auto* eff = static_cast<const Effector2DComponent*>(arch.GetPtr(ei, row));
+                const auto* ecol = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
+                // 領域にできない形状 (三角形メッシュ / 地形 / 辺の列) は無視する
+                if (ecol->shape == collidershape::kMesh || ecol->shape == collidershape::kTerrain
+                    || ecol->shape == collidershape::kEdge2D) {
+                    continue;
+                }
+                float px, py, pz, qx, qy, qz, qw, sx, sy, sz;
+                ComposeEntityWorldPose(world, e, px, py, pz, qx, qy, qz, qw);
+                ComposeEntityWorldScale(world, e, sx, sy, sz);
+                if (eff->type == effector2dtype::kSurface) {
+                    // 面になれるのは solid な静的 / kinematic の形状だけ (トリガーは接触を作らない)
+                    const int32_t bi = FindBodyIndex(bodies, e);
+                    if (bi < 0 || !bodies[static_cast<size_t>(bi)].solid) {
+                        continue;
+                    }
+                    Body& belt = bodies[static_cast<size_t>(bi)];
+                    if (belt.rb != nullptr && !belt.kinematic) {
+                        continue;
+                    }
+                    float dx, dy, dz;
+                    QuatRotate(qx, qy, qz, qw, 1.0f, 0.0f, 0.0f, dx, dy, dz);
+                    belt.surface = true;
+                    belt.surfaceVel[0] = dx * eff->surfaceSpeed;
+                    belt.surfaceVel[1] = dy * eff->surfaceSpeed;
+                    belt.surfaceVel[2] = dz * eff->surfaceSpeed;
+                    anySurface = true; // 領域の一覧にも入れる (起床判定が面の範囲を見る)
+                }
+                EffectorRegion r;
+                r.eff = eff;
+                r.entity = e;
+                r.pose = shapes::MakePose(*ecol, { px, py, pz }, { qx, qy, qz, qw }, { sx, sy, sz });
+                shapes::ComputeAabb(r.pose, r.minX, r.minY, r.minZ, r.maxX, r.maxY, r.maxZ);
+                effectorRegions.push_back(r);
+            }
+        });
+        // 足す順序をアーキタイプの走査順に任せない (速度への加算は fp なので順序が結果のビットを決める)
+        std::sort(effectorRegions.begin(), effectorRegions.end(),
+                  [](const EffectorRegion& a, const EffectorRegion& b) { return a.entity.index < b.entity.index; });
+        // 起床: 有効な領域に重なる plane2D の剛体は眠らせない。眠っていれば収集時の「不動」を戻して起こす
+        // (慣性は後の pose 確定で組み直される)。判定は tick 開始時の sim 状態だけで行う = 決定的。
+        // 有効 = Area は force != 0、Point は magnitude != 0、Buoyancy は没水割合 > 0、
+        // Surface は surfaceSpeed != 0 で面の AABB を kEffectorWakeMargin 広げた範囲に入る
+        for (Body& b : bodies) {
+            if (!b.plane2D || !b.rb) {
+                continue;
+            }
+            const ShapePose bp = EffectorBodyPose(b);
+            float bMinX, bMinY, bMinZ, bMaxX, bMaxY, bMaxZ;
+            shapes::ComputeAabb(bp, bMinX, bMinY, bMinZ, bMaxX, bMaxY, bMaxZ);
+            bool hold = false;
+            for (const EffectorRegion& r : effectorRegions) {
+                const Effector2DComponent& eff = *r.eff;
+                if (eff.useMask && (b.layer < 0 || b.layer > 31 || ((eff.mask >> b.layer) & 1u) == 0u)) {
+                    continue;
+                }
+                if (eff.type == effector2dtype::kSurface) {
+                    hold = eff.surfaceSpeed != 0.0f && bMaxX >= r.minX - kEffectorWakeMargin
+                        && bMinX <= r.maxX + kEffectorWakeMargin && bMaxY >= r.minY - kEffectorWakeMargin
+                        && bMinY <= r.maxY + kEffectorWakeMargin && bMaxZ >= r.minZ - kEffectorWakeMargin
+                        && bMinZ <= r.maxZ + kEffectorWakeMargin;
+                } else {
+                    if (bMaxX < r.minX || bMinX > r.maxX || bMaxY < r.minY || bMinY > r.maxY || bMaxZ < r.minZ
+                        || bMinZ > r.maxZ || !shapes::Overlap(r.pose, bp)) {
+                        continue;
+                    }
+                    if (eff.type == effector2dtype::kArea) {
+                        hold = eff.force.x != 0.0f || eff.force.y != 0.0f;
+                    } else if (eff.type == effector2dtype::kPoint) {
+                        hold = eff.magnitude != 0.0f;
+                    } else if (eff.type == effector2dtype::kBuoyancy && eff.density > 0.0f) {
+                        float centroidY = bp.py;
+                        hold = SubmergedFractionWorld(bp, r.maxY, centroidY) > 0.0f;
+                    }
+                }
+                if (hold) {
+                    break;
+                }
+            }
+            if (!hold) {
+                continue;
+            }
+            b.effectorHold = true;
+            if (b.sleeping) {
+                b.sleeping = false;
+                b.rb->isSleeping = false;
+                b.invMass = b.awakeInvMass;
+                b.freezeRot = b.awakeFreezeRot;
+            }
+            b.rb->sleepTicks = 0;
+        }
+    }
+
     // ---- 複合コライダーの合成 (M60e) ----
     // ★**bodies の並べ替えのあと**にやる — subFirst/subCount は並べ替え後の添字で持つ。
     // ★子形状の順序は (親 index, 子 index) 昇順で明示的に固定する。慣性の足し算は fp なので
@@ -3518,6 +3659,85 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             }
         }
 
+        // ---- Effector2D (M94t): Area / Point / Buoyancy。浮力の直後 = 水中抗力が他の外力を受けた速度に効く。
+        //      領域が 1 つも無ければ帯ごと通らない (存在ゲート)。対象は plane2D の非 kinematic 剛体で、
+        //      領域の AABB → shapes::Overlap の順で絞る。Surface は接触解決の段 (ContactConstraint::surf) ----
+        if (!effectorRegions.empty()) {
+            for (Body& b : bodies) {
+                if (!b.plane2D || b.invMass == 0.0f) {
+                    continue; // plane2D は非 kinematic にしか立たない。眠っているボディも invMass == 0 で外れる
+                }
+                const ShapePose bp = EffectorBodyPose(b);
+                float bMinX, bMinY, bMinZ, bMaxX, bMaxY, bMaxZ;
+                shapes::ComputeAabb(bp, bMinX, bMinY, bMinZ, bMaxX, bMaxY, bMaxZ);
+                for (const EffectorRegion& r : effectorRegions) {
+                    const Effector2DComponent& eff = *r.eff;
+                    if (eff.type == effector2dtype::kSurface) {
+                        continue; // 接触解決の段で扱う
+                    }
+                    if (eff.useMask && (b.layer < 0 || b.layer > 31 || ((eff.mask >> b.layer) & 1u) == 0u)) {
+                        continue;
+                    }
+                    if (bMaxX < r.minX || bMinX > r.maxX || bMaxY < r.minY || bMinY > r.maxY
+                        || bMaxZ < r.minZ || bMinZ > r.maxZ || !shapes::Overlap(r.pose, bp)) {
+                        continue;
+                    }
+                    // Area / Point の力積 → 速度。1 サブステップの Δv は他の陽的な力と同じ上限で抑える
+                    const auto addForce = [&](float fx, float fy) {
+                        float dvx = fx * b.invMass * h;
+                        float dvy = fy * b.invMass * h;
+                        const float d2 = dvx * dvx + dvy * dvy;
+                        if (d2 > kExplicitMaxDeltaV * kExplicitMaxDeltaV) {
+                            const float clampV = kExplicitMaxDeltaV / std::sqrt(d2);
+                            dvx *= clampV;
+                            dvy *= clampV;
+                        }
+                        b.vx += dvx;
+                        b.vy += dvy;
+                    };
+                    if (eff.type == effector2dtype::kArea) {
+                        addForce(eff.force.x, eff.force.y);
+                    } else if (eff.type == effector2dtype::kPoint) {
+                        const float dx = r.pose.px - bp.px;
+                        const float dy = r.pose.py - bp.py;
+                        const float dist = std::sqrt(dx * dx + dy * dy);
+                        if (dist > 1e-6f) { // 中心と重なる物体は向きが定義できない (決定論的分岐)
+                            addForce(dx / dist * eff.magnitude, dy / dist * eff.magnitude);
+                        }
+                    } else if (eff.type == effector2dtype::kBuoyancy && eff.density > 0.0f) {
+                        // 水面 = 領域 AABB の天面。没水体積 × 密度 × |g| を +Y へ、没水部分の重心に作用させる
+                        float centroidY = bp.py;
+                        const float frac = SubmergedFractionWorld(bp, r.maxY, centroidY);
+                        if (frac <= 0.0f) {
+                            continue;
+                        }
+                        float total = b.shapeCol ? ShapeVolumeWorld(*b.shapeCol, b.scale.x, b.scale.y, b.scale.z)
+                                                 : 0.0f;
+                        if (total <= 0.0f) {
+                            total = (4.0f / 3.0f) * XM_PI * 0.125f; // 半径 0.5 の球 (コライダー無し)
+                        }
+                        float gMag = -kGravity;
+                        if (env) {
+                            gMag = std::sqrt(env->gravity.x * env->gravity.x + env->gravity.y * env->gravity.y
+                                             + env->gravity.z * env->gravity.z);
+                        }
+                        float jy = eff.density * total * frac * gMag * h;
+                        const float maxJ = kExplicitMaxDeltaV / b.invMass;
+                        if (jy > maxJ) {
+                            jy = maxJ;
+                        }
+                        ApplyImpulse(b, -b.comx, centroidY - bp.py - b.comy, -b.comz, 0.0f, jy, 0.0f, 1.0f);
+                        if (eff.drag > 0.0f) {
+                            const float scale = 1.0f / (1.0f + eff.drag * frac * h);
+                            b.vx *= scale;
+                            b.vy *= scale;
+                            b.wz *= scale; // plane2D の角速度は Z だけが生きている
+                        }
+                    }
+                }
+            }
+        }
+
         // ---- ジャイロ項 ω×Iω (M59f1): **陰的**に解く。opt-in (Rigidbody.gyroscopic) ----
         // 剛体の回転方程式は I ω̇ + ω×Iω = τ。gyroscopic を立てないボディはこの第 2 項を落とす
         // (= 対称でない物体が回っても軸が動かない)。陽的に足すとエネルギーが単調に増えて
@@ -4296,6 +4516,10 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             float lambdaNcMin = 0.0f;
             float lambdaNc = 0.0f;           // 蓄積: 中央法線
             float lambdaT1 = 0.0f, lambdaT2 = 0.0f; // 蓄積: 重心摩擦
+            // M94t: Effector2D(Surface) の面との接触。摩擦が目指す接線の相対速度 (A - B、ワールド)。
+            // surf が false の接触は従来の式 (目標 0) を通る
+            bool surf = false;
+            float surfV[3] = { 0.0f, 0.0f, 0.0f };
             ContactPoint pts[4];
         };
         std::vector<ContactConstraint> constraints;
@@ -4401,6 +4625,22 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                     c.t1[0] = ax / al; c.t1[1] = ay / al; c.t1[2] = az / al;
                 }
                 Cross(c.nx, c.ny, c.nz, c.t1[0], c.t1[1], c.t1[2], c.t2[0], c.t2[1], c.t2[2]);
+            }
+            // M94t: 面 (Surface) と plane2D の動的剛体の接触。面の速度を接触面へ射影して目標にする。
+            // ソルバが測る相対速度は ボディ速度の A - B (面そのものの速度は含まない) なので、
+            // 面が A なら相手が面と同じ速さになる相対速度は −sv、面が B なら +sv
+            if (anySurface && A.surface != B.surface) {
+                const Body& belt = A.surface ? A : B;
+                const Body& mover = A.surface ? B : A;
+                if (mover.plane2D) {
+                    const float dn = belt.surfaceVel[0] * c.nx + belt.surfaceVel[1] * c.ny
+                                   + belt.surfaceVel[2] * c.nz;
+                    const float sign = A.surface ? -1.0f : 1.0f;
+                    c.surf = true;
+                    c.surfV[0] = sign * (belt.surfaceVel[0] - dn * c.nx);
+                    c.surfV[1] = sign * (belt.surfaceVel[1] - dn * c.ny);
+                    c.surfV[2] = sign * (belt.surfaceVel[2] - dn * c.nz);
+                }
             }
             const float e = (std::min)(SolverCoefficient(A.restitution, 1.0f),
                                        SolverCoefficient(B.restitution, 1.0f));
@@ -4619,7 +4859,9 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
                         float rvx, rvy, rvz;
                         relVelAt(c.raC, c.rbC, rvx, rvy, rvz);
                         const float vt = rvx * d[0] + rvy * d[1] + rvz * d[2];
-                        float dl = -vt * mass;
+                        // 面の接触は接線の目標速度との差を消す (M94t)。それ以外は従来式のまま (目標 0)
+                        float dl = c.surf ? -(vt - (c.surfV[0] * d[0] + c.surfV[1] * d[1] + c.surfV[2] * d[2])) * mass
+                                          : -vt * mass;
                         const float old = acc;
                         float now = old + dl;
                         // 枠は既定で μs。超えたら滑走に転じたので μd の枠を採る
@@ -5391,6 +5633,10 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
         //    = 眠っているあいだワールドハッシュが完全に静止する)
         for (Body& b : bodies) {
             if (!b.rb || b.sleeping || b.invMass == 0.0f) {
+                continue;
+            }
+            if (b.effectorHold) {
+                b.rb->sleepTicks = 0; // M94t: 有効な Effector2D の中の剛体は眠らせない
                 continue;
             }
             const float v2 = b.vx * b.vx + b.vy * b.vy + b.vz * b.vz;

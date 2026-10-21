@@ -973,6 +973,7 @@ MYE_STR(Create_Tilemap,       "Tilemap",           "タイルマップ") // M94j
 MYE_STR(Create_Light2D,       "Light 2D",          "2D ライト") // M94o
 MYE_STR(Create_Line2D,        "Line",              "2D 折れ線") // M94r
 MYE_STR(Create_SpriteShape,   "Sprite Shape",      "スプライトシェイプ") // M94s
+MYE_STR(Create_Effector2D,    "Effector 2D",       "2D エフェクター") // M94t
 MYE_STR(Create_Part,          "Part (with Bounds)", "部位 (範囲付き)")
 // M60g2: ラグドール生成器 (右クリック対象の SkinnedMesh のスケルトンから組む)
 MYE_STR(Create_Ragdoll,       "Ragdoll (from Skeleton)", "ラグドール (スケルトンから)")
@@ -2507,6 +2508,18 @@ MYE_STR(Insp_SpriteShapeNoProfile, "No profile: nothing is drawn (the collider s
                                "プロファイルが未設定です (描画されません。コライダーは有効です)")
 MYE_STR(SceneView_EditingSpriteShape, "Editing sprite shape: drag a point / click an edge to add / Delete to remove / Esc to leave",
                                "スプライトシェイプを編集中: 点をドラッグ / 辺をクリックで追加 / Delete で削除 / Esc で終了")
+
+// ---- 2D ジョイント / エフェクター (M94t) ----
+MYE_STR(Insp_Joint2DAxis,      "2D (Z axis)",
+                               "2D (Z 軸)")
+MYE_STR(Insp_Joint2DAxisHint,  "Hinge: axis = Z / Slider: axis = X (for plane2D bodies)",
+                               "Hinge は軸を Z、Slider は軸を X にします (plane2D の剛体用)")
+MYE_STR(Insp_Effector2DNoCollider, "No Collider on this entity: the effector has no region and does nothing.",
+                               "このエンティティに Collider がありません (領域が無いので何も起きません)")
+MYE_STR(Insp_Effector2DSurfaceTrigger, "Surface needs a solid (non-trigger) Collider that is static or kinematic.",
+                               "Surface はトリガーでない静的 / kinematic の Collider が必要です")
+MYE_STR(Insp_Effector2DNote,   "Affects plane2D dynamic rigidbodies overlapping the Collider (Surface: touching it).",
+                               "Collider に重なった plane2D の動的剛体に効きます (Surface は接触している剛体)")
 
 // ---- タイルパレット / タイルマップ (M94j) ----
 MYE_STR(Asset_TilePalette,     "Tile Palette",                         "タイルパレット")

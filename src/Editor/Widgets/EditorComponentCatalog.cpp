@@ -118,6 +118,7 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "Parallax2D", { ICON_FA_LAYER_GROUP, "2D", "2D 視差" } }, // M94q
         { "Line2D", { ICON_FA_BEZIER_CURVE, "2D", "2D 折れ線" } }, // M94r
         { "SpriteShape2D", { ICON_FA_MOUNTAIN, "2D", "2D スプライトシェイプ" } }, // M94s
+        { "Effector2D", { ICON_FA_WIND, "2D", "2D エフェクター" } }, // M94t
     };
     return t;
 }

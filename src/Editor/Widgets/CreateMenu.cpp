@@ -188,6 +188,18 @@ GameObject CreateSpriteShape2D(EngineContext& ctx, const char* name)
     return obj;
 }
 
+// M94t: 2D エフェクター (Effector2D + トリガー Box)。領域は幅 4 x 高さ 2 (z は plane2D の物体が入る厚み)
+GameObject CreateEffector2D(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    ColliderComponent* col = obj.AddComponent<ColliderComponent>();
+    col->shape = collidershape::kBox;
+    col->isTrigger = true;
+    col->halfExtents = { 2.0f, 1.0f, 0.5f };
+    obj.AddComponent<Effector2DComponent>();
+    return obj;
+}
+
 // ---- UI (M51f) ----
 // text はシーンに保存されるデータなのでエディタ言語に依存しない英語固定 (メニュー表示とは別物)
 
@@ -475,6 +487,8 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Line2D), "Line", &CreateLine2D);
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_SpriteShape), "Sprite Shape",
                    &CreateSpriteShape2D);
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Effector2D), "Effector 2D",
+                   &CreateEffector2D);
         ImGui::EndMenu();
     }
 

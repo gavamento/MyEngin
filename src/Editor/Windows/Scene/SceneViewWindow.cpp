@@ -436,6 +436,7 @@ constexpr uint32_t kSpriteMask2D = 0xB050F0FFu;  // SpriteMask2D の矩形 (紫�
 constexpr uint32_t kLight2D = 0xFFD840FFu;         // Light2D の輪郭 (黄)
 constexpr uint32_t kShadowCaster2D = 0xA040E0FFu;  // ShadowCaster2D の多角形 (紫。SpriteMask2D より濃い)
 constexpr uint32_t kLine2D = 0xFFFFFFFFu;          // Line2D の点列 (白)
+constexpr uint32_t kEffector2D = 0xFF9020FFu;      // Effector2D の矢印 (橙)
 constexpr int kLight2DArcSegments = 48;            // Spot の円弧の分割数 (全周あたり)
 constexpr uint32_t kTilemapBounds = 0x909098FFu;   // Tilemap の使用チャンクの範囲 (灰)
 constexpr uint32_t kTilemapCell = 0x585860FFu;     // 2D モードのセルの格子 (薄い灰)
@@ -543,6 +544,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         DrawShadowCaster2DGizmos(world);
         DrawLine2DGizmos(world);
         DrawSpriteShape2DGizmos(world);
+        DrawEffector2DGizmos(world);
         DrawAudioGizmos(ctx, world, selection);
         DrawTextMeshGizmos(world);
         DrawPartSocketGizmos(world);
@@ -1033,6 +1035,63 @@ void SceneViewWindow::DrawSpriteShape2DGizmos(World& world)
             const size_t segments = spriteshape::IsClosedOutline(count, sh.closed) ? n : n - 1;
             for (size_t i = 0; i < segments; ++i) {
                 lines_.AddLine(toWorld(polyline[i]), toWorld(polyline[(i + 1) % n]), color);
+            }
+        });
+}
+
+// 全 Effector2D の作用の向き (橙の矢印、XY 平面)。Area は力の向き、Surface は面の動く向き、Buoyancy は上、
+// Point は領域中心へ (反発なら外へ) の 4 本。領域そのものはトリガー Collider のギズモが引く
+void SceneViewWindow::DrawEffector2DGizmos(World& world)
+{
+    ForEachWithWorldMatrix<Effector2DComponent>(
+        world, [&](const Effector2DComponent& eff, const XMFLOAT4X4& m, EntityID) {
+            const auto arrow = [&](float px, float py, float pz, float dx, float dy) {
+                const float len = std::sqrt(dx * dx + dy * dy);
+                if (len < 1e-6f) {
+                    return;
+                }
+                dx /= len;
+                dy /= len;
+                const float tipX = px + dx * gizmo::kForceArrowLength;
+                const float tipY = py + dy * gizmo::kForceArrowLength;
+                lines_.AddLine({ px, py, pz }, { tipX, tipY, pz }, gizmo::kEffector2D);
+                // 矢先: 根本方向へ戻り、XY 平面の法線方向へ開く
+                const float backX = tipX - dx * gizmo::kForceHeadBack;
+                const float backY = tipY - dy * gizmo::kForceHeadBack;
+                lines_.AddLine({ tipX, tipY, pz }, { backX - dy * gizmo::kForceHeadSide, backY + dx * gizmo::kForceHeadSide, pz },
+                               gizmo::kEffector2D);
+                lines_.AddLine({ tipX, tipY, pz }, { backX + dy * gizmo::kForceHeadSide, backY - dx * gizmo::kForceHeadSide, pz },
+                               gizmo::kEffector2D);
+            };
+            const float ox = m._41, oy = m._42, oz = m._43;
+            switch (eff.type) {
+            case effector2dtype::kArea:
+                arrow(ox, oy, oz, eff.force.x, eff.force.y);
+                break;
+            case effector2dtype::kSurface:
+                arrow(ox, oy, oz, m._11 * (eff.surfaceSpeed < 0.0f ? -1.0f : 1.0f),
+                      m._12 * (eff.surfaceSpeed < 0.0f ? -1.0f : 1.0f));
+                break;
+            case effector2dtype::kBuoyancy:
+                arrow(ox, oy, oz, 0.0f, 1.0f);
+                break;
+            case effector2dtype::kPoint: {
+                // 中心から 2 本分離れた 4 方向の点から中心へ (反発なら中心から外へ向けて)
+                const float sign = eff.magnitude < 0.0f ? -1.0f : 1.0f;
+                const float r = gizmo::kForceArrowLength * 2.0f;
+                const float dirs[4][2] = { { 1.0f, 0.0f }, { -1.0f, 0.0f }, { 0.0f, 1.0f }, { 0.0f, -1.0f } };
+                for (const auto& d : dirs) {
+                    if (sign > 0.0f) {
+                        arrow(ox + d[0] * r, oy + d[1] * r, oz, -d[0], -d[1]);
+                    } else {
+                        arrow(ox + d[0] * (r - gizmo::kForceArrowLength), oy + d[1] * (r - gizmo::kForceArrowLength), oz,
+                              d[0], d[1]);
+                    }
+                }
+                break;
+            }
+            default:
+                break;
             }
         });
 }

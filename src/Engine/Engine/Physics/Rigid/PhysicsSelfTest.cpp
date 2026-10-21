@@ -5,7 +5,9 @@
 #include <cstdio>
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <limits>
+#include <string>
 #include <vector>
 
 #include "Engine/Core/Ecs/Components.h"
@@ -7807,6 +7809,357 @@ bool RunPhysicsSelfTest()
                          static_cast<unsigned long long>(fnv));
             check(fnv == 0x14c1df5f2242a072ull,
                   "plane2D off: the stacking scene is bit-identical to the pre-M94a build");
+        }
+    }
+
+    // ---- M94t: 2D ジョイント (Hinge / Slider / SpringJoint) の検証と Effector2D (Area / Surface / Buoyancy / Point) ----
+    // ジョイントは新設せず、plane2D の拘束 (M94a) が既存の 3D 拘束と組み合わさって成り立つことを固定する。
+    // どちらも 2 ワールド並走の HashWorld 一致と、Debug / Release 共通の最終ハッシュを取る
+    {
+        auto bitsOf = [](float v) {
+            uint32_t b = 0;
+            std::memcpy(&b, &v, sizeof(b));
+            return b;
+        };
+        struct NamedBody {
+            std::string name;
+            EntityID id;
+        };
+        struct PairRun {
+            bool invariantsOk = true; // 全 plane2D 剛体の z / vz / wx / wy / qx / qy が毎 tick ビット単位で保たれる
+            bool deterministic = true;
+            uint64_t finalHash = 0;
+        };
+        // 同じシーンを 2 つ作って並走させる。observe は A のシーンを毎 tick 見る (最後の tick の値が最終状態)
+        const auto runPair = [&](const std::function<void(Scene&, std::vector<NamedBody>&)>& build, int ticks,
+                                 const std::function<void(Scene&, const std::vector<NamedBody>&, int)>& observe) {
+            PairRun run;
+            Scene sa, sb;
+            std::vector<NamedBody> namesA, namesB;
+            build(sa, namesA);
+            build(sb, namesB);
+            // plane2D 剛体の entity.index → 開始時の z のビット
+            std::vector<std::pair<uint32_t, uint32_t>> startZ;
+            const ComponentTypeId req[] = { RigidbodyComponent::sTypeId, LocalTransform::sTypeId };
+            sa.GetWorld().ForEachArchetype(req, [&](Archetype& arch) {
+                const int li = arch.FindTypeIndex(LocalTransform::sTypeId);
+                const int ri = arch.FindTypeIndex(RigidbodyComponent::sTypeId);
+                for (uint32_t row = 0; row < arch.Count(); ++row) {
+                    if (static_cast<const RigidbodyComponent*>(arch.GetPtr(ri, row))->plane2D) {
+                        startZ.emplace_back(arch.EntityAt(row).index,
+                                            bitsOf(static_cast<const LocalTransform*>(arch.GetPtr(li, row))->position.z));
+                    }
+                }
+            });
+            for (int tick = 0; tick < ticks; ++tick) {
+                phys.Update(sa.GetWorld(), kDt);
+                phys.Update(sb.GetWorld(), kDt);
+                if (run.invariantsOk) {
+                    sa.GetWorld().ForEachArchetype(req, [&](Archetype& arch) {
+                        const int li = arch.FindTypeIndex(LocalTransform::sTypeId);
+                        const int ri = arch.FindTypeIndex(RigidbodyComponent::sTypeId);
+                        for (uint32_t row = 0; row < arch.Count(); ++row) {
+                            const auto* lt = static_cast<const LocalTransform*>(arch.GetPtr(li, row));
+                            const auto* rb = static_cast<const RigidbodyComponent*>(arch.GetPtr(ri, row));
+                            if (!rb->plane2D) {
+                                continue;
+                            }
+                            uint32_t z0 = 0;
+                            for (const auto& zp : startZ) {
+                                if (zp.first == arch.EntityAt(row).index) { z0 = zp.second; }
+                            }
+                            if (bitsOf(lt->position.z) != z0 || bitsOf(rb->velocity.z) != 0
+                                || bitsOf(rb->angularVelocity.x) != 0 || bitsOf(rb->angularVelocity.y) != 0
+                                || bitsOf(lt->rotation.x) != 0 || bitsOf(lt->rotation.y) != 0) {
+                                run.invariantsOk = false;
+                                MYE_LOG_ERROR("  M94t invariant broke at tick %d: entity %u", tick,
+                                              arch.EntityAt(row).index);
+                            }
+                        }
+                    });
+                }
+                const uint64_t ha = HashWorld(sa.GetWorld());
+                const uint64_t hb = HashWorld(sb.GetWorld());
+                if (ha != hb && run.deterministic) {
+                    run.deterministic = false;
+                    MYE_LOG_ERROR("  M94t determinism diverged at tick %d: %016llX vs %016llX", tick,
+                                  static_cast<unsigned long long>(ha), static_cast<unsigned long long>(hb));
+                }
+                run.finalHash = ha;
+                observe(sa, namesA, tick);
+            }
+            return run;
+        };
+        const auto idOf = [](const std::vector<NamedBody>& list, const char* name) {
+            for (const NamedBody& n : list) {
+                if (n.name == name) {
+                    return n.id;
+                }
+            }
+            return kNullEntity;
+        };
+        const auto addEnv = [](Scene& s) {
+            GameObject envGo = s.CreateGameObjectTracked("Env"); // 既定: 重力 -9.81、substeps 4、スリープ有効
+            envGo.AddComponent<PhysicsEnvironmentComponent>();
+        };
+        // plane2D の箱 / 球
+        const auto mkBox2D = [&](Scene& s, std::vector<NamedBody>& names, const char* name, float x, float y,
+                                 float hx, float hy, float mass, float gravityScale) {
+            GameObject g = MakeBox(s, name, x, y, 0.0f, hx, hy, 0.2f);
+            auto* rb = g.GetComponent<RigidbodyComponent>();
+            rb->plane2D = true;
+            rb->mass = mass;
+            rb->gravityScale = gravityScale;
+            names.push_back({ name, g.Id() });
+            return g;
+        };
+        const auto mkBall2D = [&](Scene& s, std::vector<NamedBody>& names, const char* name, float x, float y,
+                                  float r, float mass, float gravityScale) {
+            GameObject g = MakeSphereBody(s, name, x, y, 0.0f, r);
+            auto* rb = g.GetComponent<RigidbodyComponent>();
+            rb->plane2D = true;
+            rb->mass = mass;
+            rb->gravityScale = gravityScale;
+            names.push_back({ name, g.Id() });
+            return g;
+        };
+        // 最後の tick の位置 / 速度
+        struct Pv {
+            float x = 0, y = 0, vx = 0, vy = 0;
+        };
+        const auto readPv = [](Scene& s, const std::vector<NamedBody>& names, const char* name) {
+            Pv pv;
+            for (const NamedBody& n : names) {
+                if (n.name == name) {
+                    const auto* lt = s.GetWorld().GetComponent<LocalTransform>(n.id);
+                    const auto* rb = s.GetWorld().GetComponent<RigidbodyComponent>(n.id);
+                    pv = { lt->position.x, lt->position.y, rb->velocity.x, rb->velocity.y };
+                }
+            }
+            return pv;
+        };
+
+        // ---- (1) ジョイント 3 組: Hinge(Z) の振り子 / Slider(X) の水平レール / SpringJoint の距離ばね ----
+        constexpr int kJointTicks = 1000;
+        float hingeMaxAnchorErr = 0.0f, hingeMinY = 1e9f, hingeMaxAbsQz = 0.0f;
+        float sliderMaxYErr = 0.0f, sliderMaxAbsQz = 0.0f, sliderMaxX = -1e9f;
+        float springMinDist = 1e9f, springMaxDist = 0.0f, springEndDist = 0.0f, springComVy = 0.0f;
+        const auto buildJoints = [&](Scene& s, std::vector<NamedBody>& names) {
+            addEnv(s);
+            // Hinge: 長さ 1.0 の棒の左端 (ローカル (-0.5, 0, 0)) をワールド (0, 6, 0) に留める。水平から落として振る
+            GameObject bob = mkBox2D(s, names, "HingeBob", 0.5f, 6.0f, 0.5f, 0.05f, 1.0f, 1.0f);
+            auto* hinge = bob.AddComponent<JointComponent>();
+            hinge->type = jointtype::kHinge;
+            hinge->anchor = { -0.5f, 0.0f, 0.0f };
+            hinge->connectedAnchor = { 0.0f, 6.0f, 0.0f }; // 相手が null のときはワールド座標
+            hinge->axis = { 0.0f, 0.0f, 1.0f };
+            // Slider: x 方向のレール。重力を受けながら x だけに動き、+2 m のリミットで止まる
+            GameObject cart = mkBox2D(s, names, "SliderCart", 20.0f, 3.0f, 0.4f, 0.2f, 1.0f, 1.0f);
+            cart.GetComponent<RigidbodyComponent>()->velocity = { 4.0f, 0.0f, 0.0f };
+            auto* slider = cart.AddComponent<JointComponent>();
+            slider->type = jointtype::kSlider;
+            slider->anchor = { 0.0f, 0.0f, 0.0f };
+            slider->connectedAnchor = { 20.0f, 3.0f, 0.0f };
+            slider->axis = { 1.0f, 0.0f, 0.0f };
+            slider->useLimit = true;
+            slider->limitMin = -2.0f;
+            slider->limitMax = 2.0f;
+            // SpringJoint: 重力なしの 2 球。自然長 2 m、片方に y 速度を与える (重心は等速で上がり、距離は自然長へ収束)
+            GameObject ballA = mkBall2D(s, names, "SpringA", 40.0f - 1.5f, 5.0f, 0.3f, 1.0f, 0.0f);
+            GameObject ballB = mkBall2D(s, names, "SpringB", 40.0f + 1.5f, 5.0f, 0.3f, 1.0f, 0.0f);
+            ballA.GetComponent<RigidbodyComponent>()->velocity = { 0.0f, 1.0f, 0.0f };
+            auto* spring = ballA.AddComponent<SpringJointComponent>();
+            spring->connectedEntity = ballB.Id();
+            spring->restLength = 2.0f;
+            spring->stiffness = 50.0f;
+            spring->damping = 0.5f;
+            s.GetWorld().ApplyStructuralChanges();
+        };
+        const auto observeJoints = [&](Scene& s, const std::vector<NamedBody>& names, int) {
+            World& w = s.GetWorld();
+            const auto* bobLt = w.GetComponent<LocalTransform>(idOf(names, "HingeBob"));
+            const float theta = 2.0f * std::atan2(bobLt->rotation.z, bobLt->rotation.w);
+            const float ex = bobLt->position.x - 0.5f * std::cos(theta);
+            const float ey = bobLt->position.y - 0.5f * std::sin(theta) - 6.0f;
+            hingeMaxAnchorErr = (std::max)(hingeMaxAnchorErr, std::sqrt(ex * ex + ey * ey));
+            hingeMinY = (std::min)(hingeMinY, bobLt->position.y);
+            hingeMaxAbsQz = (std::max)(hingeMaxAbsQz, std::fabs(bobLt->rotation.z));
+            const auto* cartLt = w.GetComponent<LocalTransform>(idOf(names, "SliderCart"));
+            sliderMaxYErr = (std::max)(sliderMaxYErr, std::fabs(cartLt->position.y - 3.0f));
+            sliderMaxAbsQz = (std::max)(sliderMaxAbsQz, std::fabs(cartLt->rotation.z));
+            sliderMaxX = (std::max)(sliderMaxX, cartLt->position.x - 20.0f);
+            const Pv a = readPv(s, names, "SpringA");
+            const Pv b = readPv(s, names, "SpringB");
+            const float dist = std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
+            springMinDist = (std::min)(springMinDist, dist);
+            springMaxDist = (std::max)(springMaxDist, dist);
+            springEndDist = dist;
+            springComVy = 0.5f * (a.vy + b.vy);
+        };
+        const PairRun jointRun = runPair(buildJoints, kJointTicks, observeJoints);
+        check(jointRun.invariantsOk,
+              "joint2D: z / vz / wx / wy / qx / qy hold bit-exactly for Hinge(Z) + Slider(X) + SpringJoint bodies (1000 ticks)");
+        check(jointRun.deterministic, "joint2D: two identical scenes hash-identical for 1000 ticks");
+        MYE_LOG_INFO("  [phys] joint2D: hinge anchor err max %.4f, min y %.3f, max |qz| %.3f / slider max y err %.4f, "
+                     "max |qz| %.4f, max x %.3f / spring dist %.3f..%.3f end %.4f com vy %.4f",
+                     static_cast<double>(hingeMaxAnchorErr), static_cast<double>(hingeMinY),
+                     static_cast<double>(hingeMaxAbsQz), static_cast<double>(sliderMaxYErr),
+                     static_cast<double>(sliderMaxAbsQz), static_cast<double>(sliderMaxX),
+                     static_cast<double>(springMinDist), static_cast<double>(springMaxDist),
+                     static_cast<double>(springEndDist), static_cast<double>(springComVy));
+        check(hingeMaxAnchorErr < 0.02f && hingeMinY < 5.5f && hingeMaxAbsQz > 0.3f,
+              "joint2D Hinge(Z): the pendulum swings about the pin and the pin stays within 2 cm");
+        check(sliderMaxYErr < 0.01f && sliderMaxAbsQz < 0.01f && sliderMaxX > 1.9f && sliderMaxX < 2.1f,
+              "joint2D Slider(X): the cart stays on the horizontal rail (y within 1 cm, no rotation) and stops at the +2 m limit");
+        check(springMinDist < 1.9f && springMaxDist > 2.9f && std::fabs(springEndDist - 2.0f) < 0.05f
+                  && std::fabs(springComVy - 0.5f) < 0.01f,
+              "joint2D SpringJoint: the distance oscillates, settles at the rest length 2 m, and the centre of mass keeps its momentum");
+        MYE_LOG_INFO("  [phys] joint2D scene hash @1000 = %016llX", static_cast<unsigned long long>(jointRun.finalHash));
+        constexpr uint64_t kJoints2DExpectedHash = 0xA82F779A97738D34ull;
+        check(kJoints2DExpectedHash == 0 || jointRun.finalHash == kJoints2DExpectedHash,
+              "joint2D: the final world hash matches the baked value (Debug == Release)");
+
+        // ---- (2) Effector2D 4 種。クラスタを x でずらして 1 シーンに置く ----
+        constexpr int kEffectorTicks = 300;
+        const auto addEffector = [&](Scene& s, const char* name, float x, float y, float hx, float hy,
+                                     int32_t type) {
+            GameObject region = MakeGround(s, name, x, y, 0.0f, hx, hy, 0.5f, /*isTrigger=*/true);
+            auto* eff = region.AddComponent<Effector2DComponent>();
+            eff->type = type;
+            return eff;
+        };
+        const auto buildEffectors = [&](Scene& s, std::vector<NamedBody>& names) {
+            addEnv(s);
+            // Area: 左向き 20 N の領域 (x=-200)。箔は重力なしで領域に入って流れる。領域の外の同じ箔は動かない
+            addEffector(s, "AreaRegion", -200.0f, 5.0f, 3.0f, 3.0f, effector2dtype::kArea)->force = { -20.0f, 0.0f };
+            mkBox2D(s, names, "AreaFoil", -198.0f, 5.0f, 0.4f, 0.05f, 1.0f, 0.0f);
+            mkBox2D(s, names, "AreaFoilOutside", -200.0f, -30.0f, 0.4f, 0.05f, 1.0f, 0.0f);
+            // Area + マスク: 領域は layer 5 だけを対象にする (x=-400)
+            auto* masked = addEffector(s, "MaskRegion", -400.0f, 5.0f, 3.0f, 3.0f, effector2dtype::kArea);
+            masked->force = { -20.0f, 0.0f };
+            masked->useMask = true;
+            masked->mask = 1u << 5;
+            GameObject onLayer = mkBox2D(s, names, "MaskFoilL5", -398.0f, 4.0f, 0.4f, 0.05f, 1.0f, 0.0f);
+            onLayer.GetComponent<ColliderComponent>()->layer = 5;
+            mkBox2D(s, names, "MaskFoilL0", -398.0f, 6.0f, 0.4f, 0.05f, 1.0f, 0.0f);
+            // Point: 領域の中心 (x=100) へ 30 N。反発 (負) の領域は x=300
+            addEffector(s, "PointRegion", 100.0f, 5.0f, 6.0f, 6.0f, effector2dtype::kPoint)->magnitude = 30.0f;
+            mkBall2D(s, names, "PointBall", 103.0f, 5.0f, 0.3f, 1.0f, 0.0f);
+            addEffector(s, "RepelRegion", 300.0f, 5.0f, 6.0f, 6.0f, effector2dtype::kPoint)->magnitude = -30.0f;
+            mkBall2D(s, names, "RepelBall", 301.0f, 5.0f, 0.3f, 1.0f, 0.0f);
+            // Surface: +X へ 3 m/s のベルト (x=0)。乗った箔が運ばれる (接地した状態から始める: 落下の衝撃で摩擦が大きなトルクを入れて転がるため)。効果のない床 (x=700) と逆向きのベルト (x=900) が対照
+            GameObject belt = MakeGround(s, "Belt", 0.0f, -0.25f, 0.0f, 20.0f, 0.25f, 1.0f);
+            belt.AddComponent<Effector2DComponent>()->type = effector2dtype::kSurface;
+            belt.GetComponent<Effector2DComponent>()->surfaceSpeed = 3.0f;
+            mkBox2D(s, names, "BeltFoil", 0.0f, 0.1f, 0.4f, 0.1f, 1.0f, 1.0f);
+            MakeGround(s, "PlainFloor", 700.0f, -0.25f, 0.0f, 20.0f, 0.25f, 1.0f);
+            mkBox2D(s, names, "PlainFoil", 700.0f, 0.1f, 0.4f, 0.1f, 1.0f, 1.0f);
+            GameObject beltBack = MakeGround(s, "BeltBack", 900.0f, -0.25f, 0.0f, 20.0f, 0.25f, 1.0f);
+            beltBack.AddComponent<Effector2DComponent>()->type = effector2dtype::kSurface;
+            beltBack.GetComponent<Effector2DComponent>()->surfaceSpeed = -3.0f;
+            mkBox2D(s, names, "BackFoil", 900.0f, 0.1f, 0.4f, 0.1f, 1.0f, 1.0f);
+            // Buoyancy: 密度 10 の水 (x=500、水面 y=4)。軽い球は浮き、重い球は沈んで床に着く
+            auto* water = addEffector(s, "WaterRegion", 500.0f, 2.0f, 4.0f, 2.0f, effector2dtype::kBuoyancy);
+            water->density = 10.0f;
+            water->drag = 5.0f;
+            MakeGround(s, "WaterFloor", 500.0f, -0.25f, 0.0f, 6.0f, 0.25f, 1.0f);
+            mkBall2D(s, names, "Floater", 498.5f, 1.0f, 0.3f, 0.5f, 1.0f);
+            mkBall2D(s, names, "Sinker", 501.5f, 3.0f, 0.3f, 3.0f, 1.0f);
+            s.GetWorld().ApplyStructuralChanges();
+        };
+        float pointMinX = 1e9f, pointMaxX = -1e9f, pointFirstVx = 0.0f;
+        float repelMaxVx = 0.0f, floaterMaxY = -1e9f;
+        bool floaterAsleep = true;
+        int32_t floaterSleepTicks = -1;
+        Pv areaFoil, areaOutside, maskL5, maskL0, repel, beltFoil, plainFoil, backFoil, floater, sinker;
+        const auto observeEffectors = [&](Scene& s, const std::vector<NamedBody>& names, int tick) {
+            const Pv point = readPv(s, names, "PointBall");
+            pointMinX = (std::min)(pointMinX, point.x);
+            pointMaxX = (std::max)(pointMaxX, point.x);
+            if (tick == 0) {
+                pointFirstVx = point.vx;
+            }
+            areaFoil = readPv(s, names, "AreaFoil");
+            areaOutside = readPv(s, names, "AreaFoilOutside");
+            maskL5 = readPv(s, names, "MaskFoilL5");
+            maskL0 = readPv(s, names, "MaskFoilL0");
+            repel = readPv(s, names, "RepelBall");
+            repelMaxVx = (std::max)(repelMaxVx, repel.vx);
+            beltFoil = readPv(s, names, "BeltFoil");
+            plainFoil = readPv(s, names, "PlainFoil");
+            backFoil = readPv(s, names, "BackFoil");
+            floater = readPv(s, names, "Floater");
+            floaterMaxY = (std::max)(floaterMaxY, floater.y);
+            {
+                const auto* frb = s.GetWorld().GetComponent<RigidbodyComponent>(idOf(names, "Floater"));
+                floaterAsleep = frb->isSleeping;
+                floaterSleepTicks = frb->sleepTicks;
+            }
+            sinker = readPv(s, names, "Sinker");
+        };
+        const PairRun effRun = runPair(buildEffectors, kEffectorTicks, observeEffectors);
+        check(effRun.invariantsOk, "effector2D: plane2D invariants hold bit-exactly under all four effector types");
+        check(effRun.deterministic, "effector2D: two identical scenes hash-identical for 300 ticks");
+        MYE_LOG_INFO("  [phys] effector2D: area foil x %.2f vx %.2f / outside vx %.4f / mask L5 vx %.2f L0 vx %.4f / "
+                     "point x %.2f..%.2f first vx %.3f / repel vx %.2f x %.2f / belt vx %.3f plain vx %.4f back vx %.3f / "
+                     "floater y %.3f (max %.3f) vy %.3f sinker y %.3f",
+                     static_cast<double>(areaFoil.x), static_cast<double>(areaFoil.vx), static_cast<double>(areaOutside.vx),
+                     static_cast<double>(maskL5.vx), static_cast<double>(maskL0.vx), static_cast<double>(pointMinX),
+                     static_cast<double>(pointMaxX), static_cast<double>(pointFirstVx), static_cast<double>(repel.vx),
+                     static_cast<double>(repel.x), static_cast<double>(beltFoil.vx), static_cast<double>(plainFoil.vx),
+                     static_cast<double>(backFoil.vx), static_cast<double>(floater.y), static_cast<double>(floaterMaxY),
+                     static_cast<double>(floater.vy), static_cast<double>(sinker.y));
+        check(areaFoil.vx < -10.0f && areaFoil.x < -206.0f && areaOutside.vx == 0.0f && areaOutside.vy == 0.0f,
+              "effector2D Area: a foil in the region is pushed sideways by F/m; the same foil outside is untouched");
+        check(maskL5.vx < -10.0f && maskL0.vx == 0.0f,
+              "effector2D Area + mask: only the body on the masked layer is pushed");
+        check(pointFirstVx < 0.0f && pointMinX < 99.0f && pointMaxX < 103.1f,
+              "effector2D Point: a ball is pulled toward the region centre, passes through and is pulled back");
+        check(repelMaxVx > 10.0f && repel.x > 310.0f,
+              "effector2D Point (negative magnitude): a ball is pushed away from the centre and leaves the region");
+        check(std::fabs(beltFoil.vx - 3.0f) < 0.2f && std::fabs(plainFoil.vx) < 0.05f && std::fabs(backFoil.vx + 3.0f) < 0.2f,
+              "effector2D Surface: a foil on the belt is carried at the surface speed; a plain floor and the reversed belt differ");
+        check(floaterMaxY > 3.5f && floater.y > 3.6f && floater.y < 4.4f && std::fabs(floater.vy) < 0.5f && sinker.y < 0.5f,
+              "effector2D Buoyancy: the light ball rises and floats at the surface (top of the region); the heavy one sinks");
+        MYE_LOG_INFO("  [phys] effector2D scene hash @300 = %016llX", static_cast<unsigned long long>(effRun.finalHash));
+        constexpr uint64_t kEffector2DExpectedHash = 0x9504211B9041ECC2ull;
+        check(kEffector2DExpectedHash == 0 || effRun.finalHash == kEffector2DExpectedHash,
+              "effector2D: the final world hash matches the baked value (Debug == Release)");
+        check(Effector2DComponent::sTypeId == 90, "Effector2D is TypeId 90");
+        check(!floaterAsleep && floaterSleepTicks == 0,
+              "effector2D wake: a ball floating in the Buoyancy region never goes to sleep (sleepTicks stays 0)");
+
+        // ---- 起床: 眠った箔は、有効になった Area に起こされて動く。力 0 の領域の箔は従来どおり眠る ----
+        {
+            Scene s;
+            addEnv(s);
+            std::vector<NamedBody> names;
+            const auto addArea = [&](const char* name, float x) {
+                GameObject region = MakeGround(s, name, x, 5.0f, 0.0f, 3.0f, 3.0f, 0.5f, /*isTrigger=*/true);
+                region.AddComponent<Effector2DComponent>(); // 既定は Area、force (0, 0)
+                names.push_back({ name, region.Id() });
+            };
+            addArea("WakeRegion", 0.0f);
+            addArea("QuietRegion", 50.0f);
+            mkBox2D(s, names, "WakeFoil", 0.0f, 5.0f, 0.4f, 0.1f, 1.0f, 0.0f);
+            mkBox2D(s, names, "QuietFoil", 50.0f, 5.0f, 0.4f, 0.1f, 1.0f, 0.0f);
+            s.GetWorld().ApplyStructuralChanges();
+            for (int tick = 0; tick < 150; ++tick) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const auto* wakeRb = s.GetWorld().GetComponent<RigidbodyComponent>(idOf(names, "WakeFoil"));
+            const auto* quietRb = s.GetWorld().GetComponent<RigidbodyComponent>(idOf(names, "QuietFoil"));
+            check(wakeRb->isSleeping && quietRb->isSleeping,
+                  "effector2D wake: foils in an Area with force 0 fall asleep as usual (control)");
+            s.GetWorld().GetComponent<Effector2DComponent>(idOf(names, "WakeRegion"))->force = { -20.0f, 0.0f };
+            for (int tick = 0; tick < 5; ++tick) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+            const auto* wakeLt = s.GetWorld().GetComponent<LocalTransform>(idOf(names, "WakeFoil"));
+            check(!wakeRb->isSleeping && wakeRb->velocity.x < -1.0f && wakeLt->position.x < -0.01f,
+                  "effector2D wake: a sleeping foil is woken and pushed once the Area force becomes non-zero");
+            check(quietRb->isSleeping,
+                  "effector2D wake: the foil in the still-zero Area stays asleep");
         }
     }
 
