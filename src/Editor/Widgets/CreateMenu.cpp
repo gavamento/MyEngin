@@ -1,6 +1,7 @@
 #include "Editor/Widgets/CreateMenu.h"
 
 #include <cstdio>
+#include <iterator>
 #include <string>
 
 #include "Editor/Scene/Selection.h"
@@ -167,6 +168,23 @@ GameObject CreateLine2D(EngineContext& ctx, const char* name)
 {
     GameObject obj = ctx.scene->CreateGameObjectTracked(name);
     obj.AddComponent<Line2DComponent>();
+    return obj;
+}
+
+// M94s: 2D スプライトシェイプ (SpriteShape2D + LocalTransform)。既定は閉じた滑らかな小山 (6 点)。
+// profile は Inspector か D&D で割り当てる (空のままだと何も描かれない)
+GameObject CreateSpriteShape2D(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    SpriteShape2DComponent* shape = obj.AddComponent<SpriteShape2DComponent>();
+    const DirectX::XMFLOAT2 mound[] = { { -3.0f, 0.0f }, { -2.0f, 1.2f }, { 0.0f, 1.8f },
+                                        { 2.0f, 1.2f },  { 3.0f, 0.0f }, { 0.0f, -1.0f } };
+    shape->pointCount = static_cast<int32_t>(std::size(mound));
+    for (size_t i = 0; i < std::size(mound); ++i) {
+        shape->points[i] = mound[i];
+    }
+    shape->closed = true;
+    shape->smooth = true;
     return obj;
 }
 
@@ -455,6 +473,8 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Tilemap), "Tilemap", &CreateTilemap);
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Light2D), "Light 2D", &CreateLight2D);
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Line2D), "Line", &CreateLine2D);
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_SpriteShape), "Sprite Shape",
+                   &CreateSpriteShape2D);
         ImGui::EndMenu();
     }
 

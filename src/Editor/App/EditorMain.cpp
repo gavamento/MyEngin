@@ -19,6 +19,7 @@
 #include "Editor/SelfTest/RagdollBuildSelfTest.h"
 #include "Engine/Engine/Scene/TagSelfTest.h"
 #include "Engine/Engine/Rendering/Sprite2D/Line2DSelfTest.h"
+#include "Engine/Engine/Rendering/Sprite2D/SpriteShapeSelfTest.h"
 #include "Engine/Engine/Rendering/Sprite2D/Sprite2DAssetSelfTest.h"
 #include "Engine/Engine/Script/TwoDAbiSelfTest.h"
 #include "Engine/Engine/Tilemap/TilemapSelfTest.h"
@@ -607,6 +608,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             ok &= mye::RunSurfaceMaterialSelfTest();    // M94q: スプライト用サーフェス (Sprite2D.material) の実描画
             ok &= mye::RunSurfaceDeferredSelfTest();    // M94q: Deferred のサーフェス段 (メッシュ用の経路が変わらないこと)
             ok &= mye::RunLine2DSelfTest();             // M94r: Line2D の帯・塗りの頂点生成と描画リスト
+            ok &= mye::RunSpriteShapeSelfTest();        // M94s: SpriteShape2D の輪郭・縁・塗り・辺の箱・丘を転がる球
             if (!tempEc) {
                 std::filesystem::remove_all(selftestTemp, tempEc);
             }
@@ -718,6 +720,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunTilePaletteSelfTest();         // M94l: タイルパレット窓の塗り (塗り潰し / 矩形 / Undo / ピック)
         ok &= mye::RunTwoDAbiSelfTest();             // M94n: ABI v31 (箱のクエリ / SpriteByName / Tilemap)
         ok &= mye::RunLine2DSelfTest();              // M94r: Line2D の帯・塗りの頂点生成と描画リスト
+        ok &= mye::RunSpriteShapeSelfTest();         // M94s: SpriteShape2D の輪郭・縁・塗り・辺の箱・丘を転がる球
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }

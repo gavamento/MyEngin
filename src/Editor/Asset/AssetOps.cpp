@@ -40,6 +40,7 @@
 #include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Engine/Animation/SpriteAnim.h" // M94: .spriteanim.json の生成/登録
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h" // M94h: .shape2d.json の生成/登録
+#include "Engine/Engine/Rendering/Sprite2D/SpriteShape.h" // M94s: .spriteshape.json の生成/登録
 #include "Engine/Engine/Tilemap/TilemapAssets.h" // M94j: .tilepalette.json / .tilemap.json の生成/登録
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h" // M59a1: .physmat.json の生成/登録
 #include "Engine/Engine/Navigation/NavFilterLibrary.h" // M84c: .navfilter.json の生成/登録
@@ -354,6 +355,29 @@ std::wstring CreateTilemapAsset(EngineContext& ctx, const std::wstring& dir, con
     return path;
 }
 
+std::wstring CreateSpriteShapeAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
+{
+    (void)ctx; // 署名は他の Create* と揃える。登録は spriteshape:: 経由
+    const std::string safe = SanitizeFileName(name, "New SpriteShape");
+    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".spriteshape.json";
+    if (fs::exists(path)) {
+        return {};
+    }
+    // 既定は上面 (-45..45) と左右の側面の 3 縁。スプライトは Inspector で選ぶ (未設定の縁は描かれない)
+    SpriteShapeProfile profile;
+    profile.edges = { { -45.0f, 45.0f, 0 }, { 45.0f, 135.0f, 0 }, { -135.0f, -45.0f, 0 } };
+    if (!WriteNewAssetFile(path, SpriteShapeLibrary::ToJson(profile).dump(2))) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteSpriteShapeFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    // 生成直後に登録 → SpriteShape2D のピッカーで即使える
+    if (SpriteShapeLibrary* lib = spriteshape::Library()) {
+        lib->LoadFromFile(path);
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedSpriteShape), WideToUtf8(path).c_str());
+    return path;
+}
+
 void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstring& suffix)
 {
     static const std::wstring kCompound[] = {L".scene.json",  L".prefab.json", L".actor.json",
@@ -361,7 +385,7 @@ void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstri
                                              L".sound.json",  L".mixer.json",  L".physmat.json",
                                              L".fxstack.json", L".post.hlsl",  L".cs.hlsl",
                                              L".navfilter.json", L".bt.json",  L".bb.json",
-                                             L".spriteanim.json", L".shape2d.json",
+                                             L".spriteanim.json", L".shape2d.json", L".spriteshape.json",
                                              L".tilepalette.json", L".tilemap.json"};
     for (const std::wstring& c : kCompound) {
         if (filename.size() > c.size() &&

@@ -74,6 +74,7 @@ private:
     void DrawLight2DGizmos(EngineContext& ctx, World& world);                              // M94o
     void DrawShadowCaster2DGizmos(World& world);                                           // M94p
     void DrawLine2DGizmos(World& world);                                                   // M94r
+    void DrawSpriteShape2DGizmos(World& world);                                              // M94s
     // M94h: kPolygon2D / kEdge2D の点列 (緑) を前後面の輪郭と支柱で描く
     void AddShape2DWire(const ColliderComponent& col, const DirectX::XMFLOAT4X4& wm);
     void DrawAudioGizmos(EngineContext& ctx, World& world, const Selection& selection);
@@ -109,6 +110,54 @@ private:
     // 点・辺をクリックしたら clickConsumed が true
     bool HandleLine2DEdit(EngineContext& ctx, Selection& selection, UndoStack& undo, const EditorSettings& settings,
                           float rectX, float rectY, float rectW, float rectH, bool& clickConsumed);
+    // M94s: 選択中の SpriteShape2D の点編集 (Line2D と同じ流儀。点を選ぶまでは false)
+    bool HandleSpriteShape2DEdit(EngineContext& ctx, Selection& selection, UndoStack& undo,
+                                 const EditorSettings& settings, float rectX, float rectY, float rectW, float rectH,
+                                 bool& clickConsumed);
+
+    // ---- 点列ハンドル編集の共通部 (HandleShape2DEdit / HandleLine2DEdit / HandleSpriteShape2DEdit) ----
+    // 点列の持ち主 (ワールド行列) と Scene View の描画矩形。点は持ち主のローカル XY
+    struct PointHandleFrame {
+        const DirectX::XMFLOAT4X4* world = nullptr;
+        float rectX = 0.0f;
+        float rectY = 0.0f;
+        float rectW = 0.0f;
+        float rectH = 0.0f;
+    };
+    // 点ハンドル 1 フレームぶん: 点の画面位置、カメラ前方か、マウスに最も近い点 (ピック半径内、無ければ -1)
+    struct PointHandleScan {
+        std::vector<ImVec2> screen;
+        std::vector<char> visible;
+        int nearest = -1;
+    };
+    // コンポーネントのフィールドへ直接書く点リスト (Line2D / SpriteShape2D)。minCount 以下には削除しない
+    struct PointListTarget {
+        DirectX::XMFLOAT2* points = nullptr;
+        int32_t* pointCount = nullptr;
+        int maxCount = 0;
+        int minCount = 0;
+        bool closedLoop = false; // 最後の点から最初の点への辺も、辺クリックの追加先に数える (3 点以上)
+    };
+    struct PointListEditState {
+        int point = -1;        // 選んでいる点 (-1 = 無し)
+        uint64_t fileId = 0;   // 選んだときのエンティティ (ドラッグ中の Undo 記録の対象でもある)
+        bool dragging = false; // 点のドラッグ中 (UndoStack の記録を開いている)
+    };
+    struct PointListEditLabels {
+        const char* edit;
+        const char* add;
+        const char* remove;
+        const char* banner; // 編集中に画面下へ出す案内
+    };
+    bool PointToScreen(const PointHandleFrame& f, const DirectX::XMFLOAT2& p, ImVec2& out) const;
+    bool MouseToLocal(const PointHandleFrame& f, DirectX::XMFLOAT2& out) const;
+    void ScanPointHandles(const PointHandleFrame& f, const DirectX::XMFLOAT2* pts, int count, int chosen,
+                          ImU32 normalColor, PointHandleScan& scan) const;
+    int PickSegmentUnderMouse(const PointHandleScan& scan, int count, int segments) const;
+    void ClosePointListDrag(EngineContext& ctx, Selection& selection, UndoStack& undo, PointListEditState& st);
+    bool EditPointList(EngineContext& ctx, Selection& selection, UndoStack& undo, const EditorSettings& settings,
+                       const PointHandleFrame& frame, const PointListTarget& target, PointListEditState& st,
+                       const PointListEditLabels& labels, bool& clickConsumed);
     void DrawGizmo(EngineContext& ctx, Selection& selection, UndoStack& undo,
                    const EditorSettings& settings, float rectX, float rectY, float rectW,
                    float rectH);
@@ -180,9 +229,8 @@ private:
     int shape2dPoint_ = -1;      // M94h: 編集で選んでいる 2D 形状の点 (-1 = 無し)
     uint64_t shape2dFileId_ = 0; // 同 選んだときのエンティティ
     bool shape2dDragging_ = false;
-    int line2dPoint_ = -1;       // M94r: 編集で選んでいる Line2D の点 (-1 = 無し)
-    uint64_t line2dFileId_ = 0;  // 同 選んだときのエンティティ (ドラッグ中の Undo 記録の対象でもある)
-    bool line2dDragging_ = false; // 点のドラッグ中 (UndoStack の記録を開いている)
+    PointListEditState line2dEdit_;       // M94r: 編集で選んでいる Line2D の点
+    PointListEditState spriteShapeEdit_;  // M94s: 同 SpriteShape2D の点
     std::vector<DirectX::XMFLOAT2> shape2dDragPoints_; // ドラッグ中の作業用点列 (離したら保存)
     bool gizmoBlockedUntilRelease_ = false;
     bool camSpeedDirty_ = false; // RMB+ホイールで速度変更中 (RMB リリース時に settings.Save)

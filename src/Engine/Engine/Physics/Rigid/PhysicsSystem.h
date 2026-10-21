@@ -54,6 +54,9 @@ struct ShapeImpulse {
 // 位置にだけ効き、回転は正規化前提 (剛体と同じ近似)
 void ComposeEntityWorldPose(World& world, EntityID e, float& px, float& py, float& pz, float& qx,
                             float& qy, float& qz, float& qw);
+// M94s: 同じ親フレーム合成のワールドスケール (符号つき)。LocalTransform の無いエンティティは (1, 1, 1)。
+// SpriteShape2D の辺の箱が点列をスケールするのに使う
+void ComposeEntityWorldScale(World& world, EntityID e, float& sx, float& sy, float& sz);
 
 // 剛体物理 (M20、形状拡張 M28a、回転剛体 M28b)。決定論契約に従う簡易逐次インパルスソルバ:
 //   収集 (entity.index 昇順) → サブステップごとに [速度積分 (重力 / 減衰) →

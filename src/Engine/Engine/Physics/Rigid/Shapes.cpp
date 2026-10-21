@@ -1972,47 +1972,58 @@ void UseHullForDynamicPolygon2D(ShapePose& p, const ColliderComponent& col)
     p.meshData = shape2d::ResolveHull(col.meshAsset);
 }
 
+bool MakeSegmentBox2D(const DirectX::XMFLOAT2& a, const DirectX::XMFLOAT2& b, float radius, float halfDepth,
+                      const ShapePose& base, ShapePose& out)
+{
+    constexpr float kMinSegmentLength = 1e-6f;
+    const float dx = b.x - a.x, dy = b.y - a.y;
+    const float len = std::sqrt(dx * dx + dy * dy);
+    if (len < kMinSegmentLength) {
+        return false;
+    }
+    // 線分の向き (cos, sin)。三角関数を通さず方向ベクトルから直接作る
+    const float c = dx / len;
+    const float s = dy / len;
+    const float mx = (a.x + b.x) * 0.5f;
+    const float my = (a.y + b.y) * 0.5f;
+    ShapePose q;
+    q.shape = collidershape::kBox;
+    q.px = base.px + base.bx[0] * mx + base.by[0] * my;
+    q.py = base.py + base.bx[1] * mx + base.by[1] * my;
+    q.pz = base.pz + base.bx[2] * mx + base.by[2] * my;
+    for (int k = 0; k < 3; ++k) {
+        q.bx[k] = c * base.bx[k] + s * base.by[k];
+        q.by[k] = -s * base.bx[k] + c * base.by[k];
+        q.bz[k] = base.bz[k];
+    }
+    q.identityRot = (base.identityRot != 0 && c == 1.0f && s == 0.0f) ? 1 : 0;
+    // 端を半厚ぶん伸ばして、折れ点の外側に隙間を作らない
+    q.hx = len * 0.5f + radius;
+    q.hy = radius;
+    q.hz = halfDepth;
+    out = q;
+    return true;
+}
+
 void ExpandEdge2D(const ColliderComponent& col, const ShapePose& base, std::vector<ShapePose>& out)
 {
     const Shape2D* shape = shape2d::Resolve(col.meshAsset);
     if (shape == nullptr) {
         return;
     }
-    constexpr float kMinSegmentLength = 1e-6f;
     // 半厚は XY のうち大きいほうのスケールで太らせる (球の半径と同じ「最大成分」規約)
     const float radius = shape->edgeRadius * std::max(base.sx, base.sy);
+    const float halfDepth = shape->depth * 0.5f * base.sz;
     const int32_t count = shape->SegmentCount();
     for (int32_t i = 0; i < count; ++i) {
         DirectX::XMFLOAT2 a, b;
         shape->Segment(i, a, b);
-        const float ax = a.x * base.sx, ay = a.y * base.sy;
-        const float bx = b.x * base.sx, by = b.y * base.sy;
-        const float dx = bx - ax, dy = by - ay;
-        const float len = std::sqrt(dx * dx + dy * dy);
-        if (len < kMinSegmentLength) {
-            continue;
-        }
-        // 線分の向き (cos, sin)。三角関数を通さず方向ベクトルから直接作る
-        const float c = dx / len;
-        const float s = dy / len;
-        const float mx = (ax + bx) * 0.5f;
-        const float my = (ay + by) * 0.5f;
+        const DirectX::XMFLOAT2 sa = { a.x * base.sx, a.y * base.sy };
+        const DirectX::XMFLOAT2 sb = { b.x * base.sx, b.y * base.sy };
         ShapePose q;
-        q.shape = collidershape::kBox;
-        q.px = base.px + base.bx[0] * mx + base.by[0] * my;
-        q.py = base.py + base.bx[1] * mx + base.by[1] * my;
-        q.pz = base.pz + base.bx[2] * mx + base.by[2] * my;
-        for (int k = 0; k < 3; ++k) {
-            q.bx[k] = c * base.bx[k] + s * base.by[k];
-            q.by[k] = -s * base.bx[k] + c * base.by[k];
-            q.bz[k] = base.bz[k];
+        if (MakeSegmentBox2D(sa, sb, radius, halfDepth, base, q)) {
+            out.push_back(q);
         }
-        q.identityRot = (base.identityRot != 0 && c == 1.0f && s == 0.0f) ? 1 : 0;
-        // 端を半厚ぶん伸ばして、折れ点の外側に隙間を作らない
-        q.hx = len * 0.5f + radius;
-        q.hy = radius;
-        q.hz = shape->depth * 0.5f * base.sz;
-        out.push_back(q);
     }
 }
 

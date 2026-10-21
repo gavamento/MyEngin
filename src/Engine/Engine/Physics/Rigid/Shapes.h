@@ -76,6 +76,12 @@ void UseHullForDynamicPolygon2D(ShapePose& p, const ColliderComponent& col);
 // 形状が未登録なら何も足さない。順序は線分の並びどおり
 void ExpandEdge2D(const ColliderComponent& col, const ShapePose& base, std::vector<ShapePose>& out);
 
+// 線分 1 本ぶんの薄い箱 (ExpandEdge2D と SpriteShape2D の辺が共有する本体)。
+// a / b は base のローカル XY で、スケールは適用済み。半厚 radius、z 半厚 halfDepth もワールドの長さで渡す。
+// base からは位置と基底だけを読む。端は radius ぶん伸ばす。線分が短すぎて向きを作れなければ false
+bool MakeSegmentBox2D(const DirectX::XMFLOAT2& a, const DirectX::XMFLOAT2& b, float radius, float halfDepth,
+                      const ShapePose& base, ShapePose& out);
+
 // a と b の貫通を判定。ヒットで true、normal (nx,ny,nz) は b→a 方向 (a を +normal へ
 // 押し出す)、depth は貫通量。全 6 形状ペア (s-s / s-b / s-c / b-b / b-c / c-c) 対応。
 bool Collide(const ShapePose& a, const ShapePose& b, float& nx, float& ny, float& nz,

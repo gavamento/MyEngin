@@ -24,6 +24,7 @@
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
+#include "Engine/Engine/Rendering/Sprite2D/SpriteShape.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
@@ -95,6 +96,8 @@ void InstallSimLibraries(const SimLibraries& libs)
     tilemap::InstallSystem(libs.tilemapSystem);
     // M94n: 空間クエリ (Raycast 等) が供給口の形状を見る
     physicsquery::Install(libs.physics);
+    // M94s: スプライトシェイプのプロファイル。起動走査より前に注入する
+    spriteshape::Install(libs.spriteShapes);
 }
 
 void UninstallSimLibraries()
@@ -114,6 +117,7 @@ void UninstallSimLibraries()
     tilemap::Install(nullptr);
     tilemap::InstallSystem(nullptr);
     physicsquery::Install(nullptr);
+    spriteshape::Install(nullptr);
 }
 
 void InitSimProjectState(const std::wstring& assetsRoot)

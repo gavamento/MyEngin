@@ -38,6 +38,7 @@ enum class AssetType : int32_t {
     Shape2D,      // .shape2d.json (M94h — 2D 衝突形状の点列。Collider.shape = kPolygon2D / kEdge2D)
     TilePalette,  // .tilepalette.json (M94j — タイル定義の表)
     Tilemap,      // .tilemap.json (M94j — タイルのセル配列。Tilemap コンポーネントが参照)
+    SpriteShape,  // .spriteshape.json (M94s — スプライトシェイプのプロファイル。縁スプライトと塗り)
 };
 
 // アセット 1 件のサイドカー情報 (<asset>.meta に JSON で保存)。

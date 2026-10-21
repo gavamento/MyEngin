@@ -42,6 +42,7 @@
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
+#include "Engine/Engine/Rendering/Sprite2D/SpriteShape.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
@@ -3253,6 +3254,11 @@ void RegisterAssetLibraries(EngineContext& ctx)
             // M94j: タイルパレット。所有は EngineLoop / HeadlessSim、tilepalette:: で注入済み
             if (TilePaletteLibrary* tp = tilepalette::Library()) {
                 tp->LoadFromFile(p);
+            }
+        } else if (p.size() >= 17 && p.compare(p.size() - 17, 17, L".spriteshape.json") == 0) {
+            // M94s: スプライトシェイプのプロファイル。spriteshape:: で注入済み
+            if (SpriteShapeLibrary* ss = spriteshape::Library()) {
+                ss->LoadFromFile(p);
             }
         } else if (p.size() >= 13 && p.compare(p.size() - 13, 13, L".tilemap.json") == 0) {
             // M94j: タイルマップ。tilemap:: で注入済み

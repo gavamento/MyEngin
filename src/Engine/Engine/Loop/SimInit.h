@@ -41,6 +41,7 @@ class TerrainColliderLibrary;
 class SpriteLibrary;
 class SpriteAnimLibrary;
 class ShapeLibrary2D;
+class SpriteShapeLibrary;
 class TilePaletteLibrary;
 class TilemapLibrary;
 class TilemapSystem;
@@ -80,6 +81,7 @@ struct SimLibraries {
     TilemapLibrary* tilemaps = nullptr;           // M94j: .tilemap.json (Tilemap コンポーネントが引く)
     TilemapSystem* tilemapSystem = nullptr;       // M94k: 描画が実効セル (セルの書き換え込み) を引く口。所有は sim の持ち主
     const PhysicsSystem* physics = nullptr;       // M94n: 空間クエリが静的形状の供給口 (タイルの箱) を引く口。所有は sim の持ち主
+    SpriteShapeLibrary* spriteShapes = nullptr;   // M94s: .spriteshape.json (描画専用。sim は引かない)
 };
 void InstallSimLibraries(const SimLibraries& libs);
 // 所有者が死ぬ前に必ず呼ぶ (注入したポインタをプロセス全体から外す)

@@ -76,6 +76,7 @@ enum class ReloadKind : uint8_t {
     Shape2D,      // .shape2d.json (M94h)
     TilePalette,  // .tilepalette.json (M94j)
     Tilemap,      // .tilemap.json (M94j)
+    SpriteShape,  // .spriteshape.json (M94s)
     Compose,     // .actor.json / .prefab.json
     Scene,       // .scene.json と、それ以外の .json (開いているシーンなら拡張子を問わない)
     ModalNet,    // .dmnet (M76e: Deep-Modal の学習済みネット)
@@ -150,6 +151,7 @@ private:
     ReloadResult ReloadShape2D(const std::wstring& path);
     ReloadResult ReloadTilePalette(const std::wstring& path);
     ReloadResult ReloadTilemap(const std::wstring& path);
+    ReloadResult ReloadSpriteShape(const std::wstring& path);
     ReloadResult ReloadModalNet(const std::wstring& path);
     ReloadResult ReloadCompose(const std::wstring& path);
     ReloadResult ReloadActiveScene(const std::wstring& path);

@@ -972,6 +972,7 @@ MYE_STR(Create_Sprite2D,      "Sprite",            "スプライト") // M94
 MYE_STR(Create_Tilemap,       "Tilemap",           "タイルマップ") // M94j
 MYE_STR(Create_Light2D,       "Light 2D",          "2D ライト") // M94o
 MYE_STR(Create_Line2D,        "Line",              "2D 折れ線") // M94r
+MYE_STR(Create_SpriteShape,   "Sprite Shape",      "スプライトシェイプ") // M94s
 MYE_STR(Create_Part,          "Part (with Bounds)", "部位 (範囲付き)")
 // M60g2: ラグドール生成器 (右クリック対象の SkinnedMesh のスケルトンから組む)
 MYE_STR(Create_Ragdoll,       "Ragdoll (from Skeleton)", "ラグドール (スケルトンから)")
@@ -2488,6 +2489,24 @@ MYE_STR(SceneView_EditingShape2D, "Editing 2D shape: drag a point / click an edg
                                "2D 形状を編集中: 点をドラッグ / 辺をクリックで追加 / Delete で削除 / Esc で終了")
 MYE_STR(SceneView_EditingLine2D, "Editing Line 2D: drag the point / click an edge to add / Delete to remove / Esc to leave",
                                "2D 折れ線を編集中: 点をドラッグ / 辺をクリックで追加 / Delete で削除 / Esc で終了") // M94r
+
+// ---- スプライトシェイプ (M94s) ----
+MYE_STR(Asset_SpriteShape,     "Sprite Shape",                         "スプライトシェイプ")
+MYE_STR(Log_WriteSpriteShapeFail, "could not write sprite shape: %s",  "スプライトシェイプを書き出せません: %s")
+MYE_STR(Log_CreatedSpriteShape, "created sprite shape: %s",            "スプライトシェイプを作成しました: %s")
+MYE_STR(SpriteShape_Failed,    "(sprite shape parse failed)",          "(スプライトシェイプを読めません)")
+MYE_STR(SpriteShape_Usage,     "Edge sprites are laid along the outline by the angle of each span's outward normal (0 = up, positive = counter-clockwise); the first matching edge wins. Pick this asset as SpriteShape2D.profile.",
+                               "縁のスプライトは、輪郭の各区間の外向き法線の角度 (上 = 0、反時計回りが正) で選んで敷きます。先に一致した縁が優先です。SpriteShape2D の「プロファイル」にこのアセットを指定します。")
+MYE_STR(SpriteShape_Fill,      "Fill sprite",                          "塗りのスプライト")
+MYE_STR(SpriteShape_Height,    "Edge height",                          "縁の厚み")
+MYE_STR(SpriteShape_Edges,     "Edges (%d)",                           "縁 (%d)")
+MYE_STR(SpriteShape_AddEdge,   "Add Edge",                             "縁を追加")
+MYE_STR(SpriteShape_AngleFrom, "From (deg)",                           "開始角 (度)")
+MYE_STR(SpriteShape_AngleTo,   "To (deg)",                             "終了角 (度)")
+MYE_STR(Insp_SpriteShapeNoProfile, "No profile: nothing is drawn (the collider still works).",
+                               "プロファイルが未設定です (描画されません。コライダーは有効です)")
+MYE_STR(SceneView_EditingSpriteShape, "Editing sprite shape: drag a point / click an edge to add / Delete to remove / Esc to leave",
+                               "スプライトシェイプを編集中: 点をドラッグ / 辺をクリックで追加 / Delete で削除 / Esc で終了")
 
 // ---- タイルパレット / タイルマップ (M94j) ----
 MYE_STR(Asset_TilePalette,     "Tile Palette",                         "タイルパレット")

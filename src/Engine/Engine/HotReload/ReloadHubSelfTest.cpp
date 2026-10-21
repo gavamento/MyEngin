@@ -54,6 +54,7 @@ bool RunReloadHubSelfTest()
         { L"c:\\p\\assets\\2d\\wall.shape2d.json", ReloadKind::Shape2D, 6 },
         { L"c:\\p\\assets\\2d\\ground.tilepalette.json", ReloadKind::TilePalette, 6 },
         { L"c:\\p\\assets\\2d\\level.tilemap.json", ReloadKind::Tilemap, 6 },
+        { L"c:\\p\\assets\\2d\\hill.spriteshape.json", ReloadKind::SpriteShape, 6 },
         { L"c:\\p\\assets\\ai\\guard.bt.json", ReloadKind::BehaviorTree, 6 },
         { L"c:\\p\\assets\\ai\\guard.bb.json", ReloadKind::Blackboard, 6 },
         { L"c:\\p\\assets\\deepmodal\\deepmodal.dmnet", ReloadKind::ModalNet, 6 },

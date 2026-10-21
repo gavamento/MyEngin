@@ -43,6 +43,8 @@
 #include "Engine/Engine/Physics/Collider/MeshColliderLibrary.h"
 #include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
+#include "Engine/Engine/Physics/Collider/SpriteShapeCollider.h"
+#include "Engine/Engine/Rendering/Sprite2D/SpriteShape.h"
 #include "Engine/Engine/Tilemap/TilemapAssets.h"
 #include "Engine/Engine/Tilemap/TilemapSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
@@ -208,6 +210,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     SpriteLibrary spriteLibrary;             // スプライト (M94)
     SpriteAnimLibrary spriteAnimLibrary;     // .spriteanim.json (M94)
     ShapeLibrary2D shapeLibrary2D;           // .shape2d.json (M94h)
+    SpriteShapeLibrary spriteShapeLibrary;   // .spriteshape.json (M94s)
+    SpriteShapeColliders spriteShapeColliders; // SpriteShape2D の辺の箱。物理の静的形状の供給口 (M94s)
     TilePaletteLibrary tilePaletteLibrary;   // .tilepalette.json (M94j)
     TilemapLibrary tilemapLibrary;           // .tilemap.json (M94j)
     // タイルの書き換え (override 表) と衝突。ECS 外の sim 状態なのでハッシュ節 (SimSources) と snapshot 節 (SimRefs) の
@@ -405,7 +409,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     InstallSimLibraries({ &resources, &meshColliders, &convexColliders, &fractureAssets,
                           &physMatLibrary, &terrainColliders, &navFilterLibrary, &behaviorTreeLibrary,
                           &blackboardLibrary, &spriteLibrary, &spriteAnimLibrary, &shapeLibrary2D, &tilePaletteLibrary,
-                          &tilemapLibrary, &tilemapSystem, &physicsSystem });
+                          &tilemapLibrary, &tilemapSystem, &physicsSystem, &spriteShapeLibrary });
     // M76e: Deep-Modal 推論。CLI (--modal-backend) は綴りだけ検査済みで、未実装名
     // ("d3d11cs") への縮退はここ (SetBackendByName) が WARN 付きでやる。
     // .dmnet が無い (M76h 未実装/未生成) 環境では LoadModel が false を返すだけで、
@@ -1036,6 +1040,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.effectSystem = &effectSystem;
     tickServices.physicsSystem = &physicsSystem;
     physicsSystem.AddStaticShapeSource(&tilemapSystem); // M94k: タイルの箱
+    physicsSystem.AddStaticShapeSource(&spriteShapeColliders); // M94s: スプライトシェイプの辺の箱
     tickServices.fractureSystem = &fractureSystem; // M80g
     tickServices.shapeImpulses = &fractureShapeImpulses; // M80g
     tickServices.xpbd = &xpbd; // M60'b

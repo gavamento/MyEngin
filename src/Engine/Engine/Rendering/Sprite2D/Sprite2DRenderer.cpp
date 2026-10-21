@@ -600,6 +600,109 @@ void Sprite2DRenderer::EmitLine(const Item& item, RenderResources& resources)
         PushNormal(texture, AssetID{}, false, flat, scratch_.data(), count);
     }
 }
+
+// SpriteShape2D: 折れ線をワールド XY へ移してから塗りと縁を作る (向きの正規化・格子の切りをワールドで行うため)。
+// 頂点の z はエンティティ原点の z で一定 (xy 平面の形状が前提)。profile / スプライトが無ければ何も描かない
+void Sprite2DRenderer::EmitShape(const Item& item, RenderResources& resources)
+{
+    const SpriteShape2DComponent& sh = *item.shape;
+    const int n = std::clamp(sh.pointCount, 0, kSpriteShape2DMaxPoints);
+    const SpriteShapeProfile* profile = spriteshape::Resolve(sh.profile);
+    if (profile == nullptr || n < 2) {
+        return;
+    }
+    spriteshape::EvaluateSpline(sh.points, n, sh.closed, sh.smooth, shapeLocal_);
+    const XMFLOAT4X4& m = *item.world;
+    shapeWorld_.resize(shapeLocal_.size());
+    for (size_t i = 0; i < shapeLocal_.size(); ++i) {
+        const XMFLOAT2& p = shapeLocal_[i];
+        shapeWorld_[i] = { p.x * m._11 + p.y * m._21 + m._41, p.x * m._12 + p.y * m._22 + m._42 };
+    }
+    const float z = m._43;
+    const bool closed = spriteshape::IsClosedOutline(n, sh.closed);
+    const bool lit = !lightMeta_.empty();
+    const auto addVertex = [&](float x, float y, float u, float v) {
+        Sprite2DVertex vert;
+        vert.pos[0] = x;
+        vert.pos[1] = y;
+        vert.pos[2] = z;
+        vert.uv[0] = u;
+        vert.uv[1] = v;
+        vert.color[0] = 1.0f;
+        vert.color[1] = 1.0f;
+        vert.color[2] = 1.0f;
+        vert.color[3] = 1.0f;
+        scratch_.push_back(vert);
+    };
+    // scratch_ を 1 バッチとして積む (ライトのあるシーンでは法線 RT へ平らな法線でも)
+    const auto flush = [&](const Resolved& r) {
+        if (scratch_.empty()) {
+            return;
+        }
+        const uint32_t count = static_cast<uint32_t>(scratch_.size());
+        Push(r.texture, r.pointFilter, sprite2dstencil::kNone, 0.0f, lit, scratch_.data(), count);
+        if (lit && anyNormalMap_) {
+            const float flat[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
+            PushNormal(r.texture, AssetID{}, r.pointFilter, flat, scratch_.data(), count);
+        }
+    };
+    bool capped = false;
+
+    // 塗り (縁の下)。スプライト 1 枚ぶんの寸法の格子で繰り返す
+    if (closed && profile->fill != 0) {
+        Resolved r;
+        if (Resolve(AssetID{ profile->fill }, resources, true, r)) {
+            capped = spriteshape::BuildFill(shapeWorld_, r.rect[2] / r.ppu, r.rect[3] / r.ppu, r.rect[0] / r.texW,
+                                            r.rect[1] / r.texH, (r.rect[0] + r.rect[2]) / r.texW,
+                                            (r.rect[1] + r.rect[3]) / r.texH, kMaxSpriteVertices, shapeFill_)
+                     || capped;
+            scratch_.clear();
+            for (const spriteshape::FillVertex& fv : shapeFill_) {
+                addVertex(fv.x, fv.y, fv.u, fv.v);
+            }
+            flush(r);
+        }
+    }
+
+    // 縁。profile.edges の添字順に、同じ縁のクアッドを 1 バッチへまとめる
+    if (!profile->edges.empty()) {
+        std::vector<Resolved> resolved(profile->edges.size());
+        std::vector<spriteshape::EdgeSpriteInfo> infos(profile->edges.size());
+        for (size_t i = 0; i < profile->edges.size(); ++i) {
+            const AssetID id{ profile->edges[i].sprite };
+            if (id.IsNull() || !Resolve(id, resources, true, resolved[i])) {
+                continue;
+            }
+            const Resolved& r = resolved[i];
+            infos[i].width = r.rect[2] / r.ppu;
+            infos[i].u0 = r.rect[0] / r.texW;
+            infos[i].v0 = r.rect[1] / r.texH;
+            infos[i].u1 = (r.rect[0] + r.rect[2]) / r.texW;
+            infos[i].v1 = (r.rect[1] + r.rect[3]) / r.texH;
+        }
+        capped = spriteshape::BuildEdgeQuads(shapeWorld_, sh.closed && closed, profile->edges, infos, profile->height,
+                                             kMaxSpriteVertices / 6, shapeQuads_)
+                 || capped;
+        static constexpr int kTriOrder[6] = { 0, 1, 2, 0, 2, 3 };
+        for (size_t e = 0; e < profile->edges.size(); ++e) {
+            scratch_.clear();
+            for (const spriteshape::EdgeQuad& q : shapeQuads_) {
+                if (q.edge != static_cast<int>(e)) {
+                    continue;
+                }
+                for (const int k : kTriOrder) {
+                    addVertex(q.x[k], q.y[k], q.u[k], q.v[k]);
+                }
+            }
+            flush(resolved[e]);
+        }
+    }
+    if (capped && !warnedShapeCap_) {
+        warnedShapeCap_ = true;
+        MYE_LOG_WARN("[spriteshape] too many fill / edge pieces: the rest of the outline is not drawn");
+    }
+}
+
 void Sprite2DRenderer::AssignKeys(Item& it, World& world, bool hasGroups, EntityID e, int32_t layerId,
                                   int32_t order) const
 {
@@ -903,6 +1006,28 @@ void Sprite2DRenderer::CollectLines(World& world, bool hasGroups)
         }
     });
 }
+
+void Sprite2DRenderer::CollectShapes(World& world, bool hasGroups)
+{
+    const ComponentTypeId req[] = { SpriteShape2DComponent::sTypeId, WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int si = arch.FindTypeIndex(SpriteShape2DComponent::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (!IsEntityActive(world, e)) {
+                continue;
+            }
+            Item it;
+            it.isShape = true;
+            it.shape = static_cast<const SpriteShape2DComponent*>(arch.GetPtr(si, row));
+            it.world = &static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
+            AssignKeys(it, world, hasGroups, e, it.shape->sortingLayerId, it.shape->orderInLayer);
+            items_.push_back(it);
+        }
+    });
+}
+
 // Tilemap のレイヤー x チャンクを 1 項目ずつ。正射影なら画面外のチャンクは項目にしない
 // (キャッシュは掃除されないよう lastUsed だけ更新する)
 void Sprite2DRenderer::CollectTilemaps(World& world, const XMFLOAT4X4* view, const XMFLOAT4X4* proj)
@@ -1489,6 +1614,7 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
     }
     CollectMasks(world, hasGroups);
     CollectLines(world, hasGroups);
+    CollectShapes(world, hasGroups);
     CollectTilemaps(world, view, proj);
     if (items_.empty()) {
         tileCache_.clear();
@@ -1499,9 +1625,9 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
     // (同じエンティティにスプライトとマスクがあるときだけ isMask で、同じタイルマップのレイヤー / チャンクは添字で決める)
     std::stable_sort(items_.begin(), items_.end(), [](const Item& a, const Item& b) {
         return std::tie(a.outerLayer, a.outerOrder, a.outerIndex, a.innerLayer, a.innerOrder, a.innerIndex, a.isMask,
-                        a.isLine, a.tileLayer, a.tileChunk.cy, a.tileChunk.cx)
+                        a.isLine, a.isShape, a.tileLayer, a.tileChunk.cy, a.tileChunk.cx)
                < std::tie(b.outerLayer, b.outerOrder, b.outerIndex, b.innerLayer, b.innerOrder, b.innerIndex,
-                          b.isMask, b.isLine, b.tileLayer, b.tileChunk.cy, b.tileChunk.cx);
+                          b.isMask, b.isLine, b.isShape, b.tileLayer, b.tileChunk.cy, b.tileChunk.cx);
     });
     list_.vertices.reserve(items_.size() * 6);
     CollectLights(world, resources);
@@ -1510,7 +1636,7 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
     }
     for (const Item& it : items_) {
         if (!lightMeta_.empty()) {
-            SwitchLightGroup(it.layerId, it.isTile || it.isLine || (!it.isMask && it.sprite->lit));
+            SwitchLightGroup(it.layerId, it.isTile || it.isLine || it.isShape || (!it.isMask && it.sprite->lit));
         }
         if (it.isTile) {
             EmitTileChunk(it, world, resources);
@@ -1518,6 +1644,8 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
             EmitMask(it, resources);
         } else if (it.isLine) {
             EmitLine(it, resources);
+        } else if (it.isShape) {
+            EmitShape(it, resources);
         } else {
             EmitSprite(it, resources);
         }

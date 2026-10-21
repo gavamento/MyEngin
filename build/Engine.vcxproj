@@ -186,6 +186,7 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\ConvexSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\MeshColliderLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\Shape2DLibrary.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\Collider\SpriteShapeCollider.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\TerrainColliderLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Fracture\FractureBake.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Fracture\FractureBenchmark.cpp" />
@@ -231,6 +232,8 @@
     <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DAssetSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteLibrary.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteShape.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteShapeSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\TerrainSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\WaterWaveSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Replay\CrashRing.cpp" />
@@ -539,6 +542,7 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\ConvexSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\MeshColliderLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\Shape2DLibrary.h" />
+    <ClInclude Include="..\src\Engine\Engine\Physics\Collider\SpriteShapeCollider.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\TerrainColliderLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Fracture\FractureBake.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Fracture\FractureBenchmark.h" />
@@ -585,6 +589,8 @@
     <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DAssetSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\Sprite2DRenderer.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteLibrary.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteShape.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteShapeSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\TerrainSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\WaterWaveSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Replay\CrashRing.h" />

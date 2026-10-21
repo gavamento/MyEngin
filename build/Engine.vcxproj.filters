@@ -732,6 +732,9 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\Shape2DLibrary.cpp">
       <Filter>Engine\Physics\Collider</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Collider\SpriteShapeCollider.cpp">
+      <Filter>Engine\Physics\Collider</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\TerrainColliderLibrary.cpp">
       <Filter>Engine\Physics\Collider</Filter>
     </ClCompile>
@@ -865,6 +868,12 @@
       <Filter>Engine\Rendering\Sprite2D</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteLibrary.cpp">
+      <Filter>Engine\Rendering\Sprite2D</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteShape.cpp">
+      <Filter>Engine\Rendering\Sprite2D</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteShapeSelfTest.cpp">
       <Filter>Engine\Rendering\Sprite2D</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Rendering\TerrainSystem.cpp">
@@ -1791,6 +1800,9 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\Shape2DLibrary.h">
       <Filter>Engine\Physics\Collider</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Collider\SpriteShapeCollider.h">
+      <Filter>Engine\Physics\Collider</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\TerrainColliderLibrary.h">
       <Filter>Engine\Physics\Collider</Filter>
     </ClInclude>
@@ -1927,6 +1939,12 @@
       <Filter>Engine\Rendering\Sprite2D</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteLibrary.h">
+      <Filter>Engine\Rendering\Sprite2D</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteShape.h">
+      <Filter>Engine\Rendering\Sprite2D</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Sprite2D\SpriteShapeSelfTest.h">
       <Filter>Engine\Rendering\Sprite2D</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Rendering\TerrainSystem.h">

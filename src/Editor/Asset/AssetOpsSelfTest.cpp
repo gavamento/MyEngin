@@ -98,6 +98,7 @@ bool RunAssetOpsSelfTest()
             { L"existing.bb.json", &CreateBlackboardAsset },
             { L"existing.spriteanim.json", &CreateSpriteAnimAsset },
             { L"existing.shape2d.json", &CreateShape2DAsset },
+            { L"existing.spriteshape.json", &CreateSpriteShapeAsset },
             { L"existing.tilepalette.json", &CreateTilePaletteAsset },
             { L"existing.tilemap.json", &CreateTilemapAsset },
         };
@@ -825,6 +826,7 @@ bool RunAssetOpsSelfTest()
             { L"assets/ice.physmat.json", "physmat" },
             { L"assets/walk.spriteanim.json", "spriteanim" },
             { L"assets/wall.shape2d.json", "shape2d" },
+            { L"assets/hill.spriteshape.json", "spriteshape" },
             { L"assets/ground.tilepalette.json", "tilepalette" },
             { L"assets/level.tilemap.json", "tilemap" },
             { L"assets/guard.bt.json", "bt" },

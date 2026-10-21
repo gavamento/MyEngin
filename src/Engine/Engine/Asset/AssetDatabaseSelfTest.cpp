@@ -101,11 +101,13 @@ bool RunAssetDatabaseSelfTest()
           ".tilepalette.json is classified as the tile palette type");
     check(AssetDatabase::ClassifyPath(L"x\\Level.tilemap.json") == AssetType::Tilemap,
           ".tilemap.json is classified as the tilemap type");
+    check(AssetDatabase::ClassifyPath(L"x\\Hill.spriteshape.json") == AssetType::SpriteShape,
+          ".spriteshape.json is classified as the sprite shape type");
     for (AssetType t : { AssetType::Actor, AssetType::Prefab, AssetType::Sound, AssetType::Mixer,
                          AssetType::Schema, AssetType::PhysMat, AssetType::Fracture, AssetType::NavMesh,
                          AssetType::NavFilter, AssetType::BehaviorTree, AssetType::Blackboard,
                          AssetType::SpriteAnim, AssetType::Shape2D, AssetType::TilePalette,
-                         AssetType::Tilemap }) {
+                         AssetType::Tilemap, AssetType::SpriteShape }) {
         check(AssetDatabase::ParseTypeName(AssetDatabase::TypeName(t)) == t,
               "asset type name round-trips through .meta");
     }

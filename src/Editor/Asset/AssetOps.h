@@ -49,6 +49,8 @@ std::wstring CreateSpriteAnimAsset(EngineContext& ctx, const std::wstring& dir,
                                    const std::string& name);                       // .spriteanim.json (M94)
 std::wstring CreateShape2DAsset(EngineContext& ctx, const std::wstring& dir,
                                 const std::string& name);                          // .shape2d.json (M94h)
+std::wstring CreateSpriteShapeAsset(EngineContext& ctx, const std::wstring& dir,
+                                    const std::string& name);                      // .spriteshape.json (M94s)
 std::wstring CreateTilePaletteAsset(EngineContext& ctx, const std::wstring& dir,
                                     const std::string& name);                      // .tilepalette.json (M94j)
 std::wstring CreateTilemapAsset(EngineContext& ctx, const std::wstring& dir,

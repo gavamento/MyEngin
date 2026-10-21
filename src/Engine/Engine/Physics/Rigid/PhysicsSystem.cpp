@@ -1726,6 +1726,21 @@ void ComposeEntityWorldPose(World& world, EntityID e, float& px, float& py, floa
     qx = wrot.x; qy = wrot.y; qz = wrot.z; qw = wrot.w;
 }
 
+void ComposeEntityWorldScale(World& world, EntityID e, float& sx, float& sy, float& sz)
+{
+    sx = 1.0f; sy = 1.0f; sz = 1.0f;
+    const auto* lt = world.GetComponent<LocalTransform>(e);
+    if (!lt) {
+        return;
+    }
+    const WorldFrame f = ComposeParentFrame(world, e);
+    XMFLOAT3 wpos;
+    XMFLOAT4 wrot;
+    XMFLOAT3 wscale;
+    ApplyFrame(f, *lt, wpos, wrot, wscale);
+    sx = wscale.x; sy = wscale.y; sz = wscale.z;
+}
+
 void PhysicsSystem::AddStaticShapeSource(StaticShapeSource* source)
 {
     if (source != nullptr

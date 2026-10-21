@@ -21,6 +21,7 @@
 #include "Engine/Engine/Tilemap/TilemapSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
+#include "Engine/Engine/Rendering/Sprite2D/SpriteShape.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
@@ -80,6 +81,7 @@ constexpr AssetKindRow kAssetKinds[] = {
     { L".shape2d.json", ReloadKind::Shape2D, 6 },        // M94h。未登録の .json (Scene) より前
     { L".tilepalette.json", ReloadKind::TilePalette, 6 }, // M94j。Tilemap が引く表なので Tilemap と同格
     { L".tilemap.json", ReloadKind::Tilemap, 6 },         // M94j
+    { L".spriteshape.json", ReloadKind::SpriteShape, 6 }, // M94s。Sprite2D と同じ描画専用の表
     { L".dmnet", ReloadKind::ModalNet, 6 }, // M76e。.sound.json 等と同格 (誰も参照していない)
     { PrefabLibrary::kActorSuffix, ReloadKind::Compose, 7 },
     { PrefabLibrary::kPrefabSuffix, ReloadKind::Compose, 7 },
@@ -310,6 +312,9 @@ void ReloadHub::HandleChange(const std::wstring& normPath, int attempt)
         break;
     case ReloadKind::Tilemap:
         result = ReloadTilemap(normPath);
+        break;
+    case ReloadKind::SpriteShape:
+        result = ReloadSpriteShape(normPath);
         break;
     case ReloadKind::SpriteAnim:
         result = ReloadSpriteAnim(normPath);
@@ -571,6 +576,20 @@ ReloadHub::ReloadResult ReloadHub::ReloadTilemap(const std::wstring& path)
     }
     TilemapSystem::MarkAllDirty();
     MYE_LOG_INFO("[reload] tilemap reloaded: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// 登録済みなら読み直す (M94s)。描画専用の表で、描画側は毎フレーム引き直すのでキャッシュの掃除は要らない
+ReloadHub::ReloadResult ReloadHub::ReloadSpriteShape(const std::wstring& path)
+{
+    SpriteShapeLibrary* lib = spriteshape::Library();
+    if (lib == nullptr || !lib->Contains(SpriteShapeLibrary::HashForPath(path))) {
+        return ReloadResult::Skipped;
+    }
+    if (lib->LoadFromFile(path) == 0) {
+        return ReloadResult::Retry;
+    }
+    MYE_LOG_INFO("[reload] spriteshape reloaded: %s", WideToUtf8(path).c_str());
     return ReloadResult::Reloaded;
 }
 

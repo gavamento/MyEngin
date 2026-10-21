@@ -67,6 +67,16 @@ FieldDesc Line2DPointField(uint32_t index, const char* name, const char* jp)
     return WithJp(d, jp);
 }
 
+// SpriteShape2D の points[index] を 1 要素ずつ Float2 で登録する
+FieldDesc SpriteShape2DPointField(uint32_t index, const char* name, const char* jp)
+{
+    FieldDesc d{ name, FieldType::Float2,
+                 static_cast<uint32_t>(offsetof(SpriteShape2DComponent, points) + index * sizeof(DirectX::XMFLOAT2)),
+                 kFieldNone };
+    d.tooltip = "Outline vertex (local space); only the first pointCount are used";
+    return WithJp(d, jp);
+}
+
 } // namespace
 
 void RegisterBuiltinComponents()
@@ -1909,6 +1919,42 @@ void RegisterBuiltinComponents()
         MYE_JP("ソート層", MYE_FIELD(Line2DComponent, sortingLayerId, Int32)),
         MYE_JP("層内の順序", MYE_FIELD(Line2DComponent, orderInLayer, Int32)),
     }, kComponentNoHash);
+    // M94s: 2D スプライトシェイプ (TypeId=89、末尾 append)。点列が物理の入力になるので **hash 対象**
+    // (kComponentNoHash を付けない)。profile は描画だけが引くが、シーンが指す資産としてフィールドの一部
+    RegisterComponent<SpriteShape2DComponent>("SpriteShape2D", {
+        MYE_JP("プロファイル", MYE_FIELD_TIP(SpriteShape2DComponent, profile, AssetRef, ".spriteshape.json: edge sprites by angle + fill")),
+        MYE_JP("頂点数", MYE_FIELD_RANGE(SpriteShape2DComponent, pointCount, Int32, 0, 24)),
+        SpriteShape2DPointField(0, "point0", "頂点 0"),
+        SpriteShape2DPointField(1, "point1", "頂点 1"),
+        SpriteShape2DPointField(2, "point2", "頂点 2"),
+        SpriteShape2DPointField(3, "point3", "頂点 3"),
+        SpriteShape2DPointField(4, "point4", "頂点 4"),
+        SpriteShape2DPointField(5, "point5", "頂点 5"),
+        SpriteShape2DPointField(6, "point6", "頂点 6"),
+        SpriteShape2DPointField(7, "point7", "頂点 7"),
+        SpriteShape2DPointField(8, "point8", "頂点 8"),
+        SpriteShape2DPointField(9, "point9", "頂点 9"),
+        SpriteShape2DPointField(10, "point10", "頂点 10"),
+        SpriteShape2DPointField(11, "point11", "頂点 11"),
+        SpriteShape2DPointField(12, "point12", "頂点 12"),
+        SpriteShape2DPointField(13, "point13", "頂点 13"),
+        SpriteShape2DPointField(14, "point14", "頂点 14"),
+        SpriteShape2DPointField(15, "point15", "頂点 15"),
+        SpriteShape2DPointField(16, "point16", "頂点 16"),
+        SpriteShape2DPointField(17, "point17", "頂点 17"),
+        SpriteShape2DPointField(18, "point18", "頂点 18"),
+        SpriteShape2DPointField(19, "point19", "頂点 19"),
+        SpriteShape2DPointField(20, "point20", "頂点 20"),
+        SpriteShape2DPointField(21, "point21", "頂点 21"),
+        SpriteShape2DPointField(22, "point22", "頂点 22"),
+        SpriteShape2DPointField(23, "point23", "頂点 23"),
+        MYE_JP("閉じる", MYE_FIELD_TIP(SpriteShape2DComponent, closed, Bool, "closed outline: the fill is drawn and the last point joins the first. Open outlines have their lit side on the left of travel")),
+        MYE_JP("滑らか", MYE_FIELD_TIP(SpriteShape2DComponent, smooth, Bool, "Catmull-Rom spline through the points, 8 steps per span")),
+        MYE_JP("コライダー", MYE_FIELD_TIP(SpriteShape2DComponent, collider, Bool, "supply the outline to physics as thin static boxes")),
+        MYE_JP("一方通行", MYE_FIELD_TIP(SpriteShape2DComponent, oneWay, Bool, "with collider: only bodies landing from above are caught")),
+        MYE_JP("ソート層", MYE_FIELD(SpriteShape2DComponent, sortingLayerId, Int32)),
+        MYE_JP("層内の順序", MYE_FIELD(SpriteShape2DComponent, orderInLayer, Int32)),
+    });
 }
 
 } // namespace mye

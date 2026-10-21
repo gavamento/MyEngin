@@ -42,6 +42,7 @@
 #include "Engine/Engine/Scene/SortingLayers.h" // M94: Sprite2D のソート層コンボ
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h" // M94: Sprite2D.sprite のピッカー
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h" // M94h: Collider.meshAsset の 2D 形状ピッカー
+#include "Engine/Engine/Rendering/Sprite2D/SpriteShape.h"   // M94s: SpriteShape2D.profile のピッカー
 #include "Engine/Engine/Tilemap/TilemapAssets.h" // M94j: Tilemap.tilemap のピッカー
 #include "Editor/Windows/Scene/TileAssetInspector.h" // M94j: .tilepalette.json / .tilemap.json の簡易表示
 #include "Engine/Engine/Scene/Tags.h" // 汎用タグの読み書き (Tags::OwnMask / SetOwnMask)
@@ -1276,6 +1277,15 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
                     ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_Sprite2DMaterialNoSprite));
                 }
             }
+            ImGui::PopTextWrapPos();
+        }
+    }
+    // M94s: SpriteShape2D の注意 (プロファイル未設定 / 未解決では何も描かれない。コライダーは点列だけで有効)
+    if (std::strcmp(desc.name, "SpriteShape2D") == 0 && !tg.multi) {
+        const auto* shape = world.GetComponent<SpriteShape2DComponent>(tg.e);
+        if (shape != nullptr && spriteshape::Resolve(shape->profile) == nullptr) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_SpriteShapeNoProfile));
             ImGui::PopTextWrapPos();
         }
     }
@@ -2581,7 +2591,8 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
                 v = types.At(index).id;
                 changed = true;
             }
-        } else if (componentName && (std::strcmp(componentName, "Sprite2D") == 0 || std::strcmp(componentName, "Line2D") == 0)
+        } else if (componentName && (std::strcmp(componentName, "Sprite2D") == 0 || std::strcmp(componentName, "Line2D") == 0
+                                  || std::strcmp(componentName, "SpriteShape2D") == 0)
                    && std::strcmp(field.name, "sortingLayerId") == 0) {
             // M94: ソート層は Project Settings の表から名前で選ぶ。表に無い id は黙って Default へ潰さず、
             // 「未定義の id」の項目を足して選択中にする (描画は Default として扱われる)
@@ -3080,6 +3091,9 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
         if (type == AssetType::Shape2D) {
             LoadShape2DEdit(path, shape2dEdit_); // M94h
         }
+        if (type == AssetType::SpriteShape) {
+            LoadSpriteShapeEdit(path, spriteShapeEdit_); // M94s
+        }
         if (type == AssetType::FxStack) {
             LoadFxStackEdit(path); // M78c
         }
@@ -3141,6 +3155,11 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
 
     if (type == AssetType::Shape2D) {
         DrawShape2DInspector(ctx, path, shape2dEdit_); // M94h
+        return;
+    }
+
+    if (type == AssetType::SpriteShape) {
+        DrawSpriteShapeInspector(ctx, path, spriteShapeEdit_); // M94s
         return;
     }
 
@@ -4396,6 +4415,13 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
                 entries.push_back({ AssetID{ e.hash }, e.name });
             }
         }
+    } else if (fname == "profile") {
+        // M94s: SpriteShape2D.profile (.spriteshape.json)
+        if (SpriteShapeLibrary* profiles = spriteshape::Library()) {
+            for (const SpriteShapeEntry& e : profiles->Enumerate()) {
+                entries.push_back({ AssetID{ e.hash }, e.name });
+            }
+        }
     } else if (fname == "sprite") {
         // M94: Sprite2D.sprite。テクスチャ全面と、.meta でスライスしたサブスプライト。
         // "tex" 分岐 (テクスチャ総当たり) より先に見る
@@ -4516,6 +4542,14 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
                 // M94j: .tilemap.json のドロップは GUID を確定して割り当てる
                 if (TilemapLibrary* maps = tilemap::Library()) {
                     maps->LoadFromFile(dropPath);
+                }
+                const uint64_t guid = ctx.assetDb ? ctx.assetDb->GuidForPath(dropPath, true)
+                                                  : AssetDatabase::EnsureMeta(dropPath);
+                assign(AssetID{ guid });
+            } else if (fname == "profile" && AssetDatabase::ClassifyPath(dropPath) == AssetType::SpriteShape) {
+                // M94s: .spriteshape.json のドロップは GUID を確定して割り当てる
+                if (SpriteShapeLibrary* profiles = spriteshape::Library()) {
+                    profiles->LoadFromFile(dropPath);
                 }
                 const uint64_t guid = ctx.assetDb ? ctx.assetDb->GuidForPath(dropPath, true)
                                                   : AssetDatabase::EnsureMeta(dropPath);

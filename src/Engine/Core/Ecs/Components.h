@@ -2472,6 +2472,25 @@ struct Line2DComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 2D スプライトシェイプ (M94、TypeId=89) ----
+// points (ローカル XY、最大 24 点) を輪郭にして、profile (.spriteshape.json) の縁スプライトを輪郭に沿って敷き、
+// closed なら fill も塗る。smooth は Catmull-Rom で 1 区間 8 分割する。
+// collider は輪郭を静的な辺の箱として物理へ供給する (oneWay は上から乗る床だけ受け止める)。
+// 点列が物理の入力になるので **hash 対象** (kComponentNoHash を付けない)
+inline constexpr int32_t kSpriteShape2DMaxPoints = 24;
+struct SpriteShape2DComponent {
+    AssetID profile = {};
+    int32_t pointCount = 2;
+    DirectX::XMFLOAT2 points[kSpriteShape2DMaxPoints] = { { -2.0f, 0.0f }, { 2.0f, 0.0f } };
+    bool closed = false;
+    bool smooth = false;
+    bool collider = false;
+    bool oneWay = false;
+    int32_t sortingLayerId = 0;
+    int32_t orderInLayer = 0;
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。
