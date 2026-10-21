@@ -1,8 +1,8 @@
 # sub-20: 2D ジョイント検証と Effector2D
 
 - 依存: sub-09
-- 状態: 実装中
-- 往復: 0
+- 状態: OK (commit a2b5d90)
+- 往復: 2
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む**。spec: 2. #20, #21、4.1.5
 
 ## やること

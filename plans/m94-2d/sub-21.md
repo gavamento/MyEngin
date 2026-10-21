@@ -1,7 +1,7 @@
 # sub-21: GridAgent2D、BT MoveTo の fallback、Perception forwardAxis
 
 - 依存: sub-11, sub-09
-- 状態: 未着手
+- 状態: 実装中
 - 往復: 0
 - **coder は着手前に `C:\HAL\MyEngin\AGENTS.md` を全文読む**。spec: 2. #17, #30、4.1.13、7. R7
 

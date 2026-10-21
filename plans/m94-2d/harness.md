@@ -50,8 +50,8 @@
 | sub-17 | OK | 1 | 3e54872 | スプライトのサーフェスシェーダ枝、Parallax2D、2D ポスト例。依存: 06。TypeId 87、snapshot v60。スプライトのエントリは新規 hlsli 2 本 (既存サーフェスはバイト同一) |
 | sub-18 | OK | 1 | a5004df | Line2D。依存: 06。TypeId 88、snapshot v61。ライトのあるシーンでは常に lit (Q-17) |
 | sub-19 | OK | 1 | 15276f6 | SpriteShape2D (描画・衝突・ハンドル)。依存: 08, 18。TypeId 89、snapshot v62。点編集は EditPointList に共通化、縁の厚みはワールド単位 (Q-18) |
-| sub-20 | 実装中 | 0 | | 2D ジョイント検証と Effector2D。依存: 09。チェックポイント 4 (sub-16〜20) |
-| sub-21 | 未着手 | 0 | | GridAgent2D、BT MoveTo の fallback、Perception forwardAxis。依存: 11, 09 |
+| sub-20 | OK | 2 | a2b5d90 | 2D ジョイント検証と Effector2D。依存: 09。TypeId 90、snapshot v63。チェックポイント 4 (sub-16〜20) 通過。round 1 REWORK = 眠った剛体を起こす規則 (spec 2. #21b) |
+| sub-21 | 実装中 | 0 | | GridAgent2D、BT MoveTo の fallback、Perception forwardAxis。依存: 11, 09 |
 | sub-22 | 未着手 | 0 | | Camera2DFollow と PixelPerfectCamera2D。依存: 02, 11 |
 | sub-23 | 未着手 | 0 | | --2d-demo、golden 2d / 2d_lights、replay_verify 2d。依存: 01〜22 |
 | sub-24 | 未着手 | 0 | | 文書 (engine_spec / ADR-033 / test_checklists / README)。依存: 23 |
@@ -179,3 +179,6 @@
 - (sub-19 VERDICT nit → sub-23 / 24) 描画は目視 + Collect の頂点数までで画素の解析照合なし → sub-23 の golden `2d` に丘を入れて固定。点のドラッグ / 辺クリック追加 / Delete / Esc / Create → 2D → Sprite Shape の実クリック、透視カメラ・回転 / スケール付きの親の見た目はユーザー目視 (checklists)。`EmitShape` が長め、`SpriteShape.h` が json.hpp を `Sprite2DRenderer.h` 経由で配る (Shape2DLibrary と同じ形)。
 - (sub-19 coder → sub-20 チェックポイント 4) sub-19 は PhysicsSystem (`ComposeEntityWorldScale`) と Shapes (`MakeSegmentBox2D` の抜き出し) を触った。replay_verify は全ジョブの個別 PASS 行を確認し全文ログを `cache\m94\replay_verify_cp4.log` に残す。`tools\build_managed.bat Release` も回す。`cache\m94\s15\base_head` は基点 26aa0fa の Release ビルドに更新済み。
 - (sub-19 coder → sub-21 / 23 / 24) sub-21: physicsquery::CollectStaticShapes で SpriteShape の箱も返る (LOS も同じ口)。sub-23: 丘は SpriteShape2D (閉じた smooth、profile = 縁 3 + fill)、生成スクリプトは `cache\m94\s19\make_hill_scene.py` (git 管理外)、縁 32x16 / ppu 32 / height 0.5。sub-24 限界欄: 縁の角度は外向き法線 / 開いた線は左から右が表 / height はワールド単位 / 頂点 z はエンティティ原点 / 角スプライト・開いた形状の塗り無し / 衝突の箱は半厚 0.1 / 眠りは起こさない / クアッド上限 682・塗り 4096 / 塗りの格子は原点基準。
+- (sub-20 チェックポイント 4、round 1) 全体 selftest Debug / Release FAIL 0 (PASS 8648)、replay_verify 20 ジョブ個別 PASS (rules は既存 3 error、全文 `cache\m94\replay_verify_cp4.log`)、shot_verify 30 枚 PASS (tol 0 で 29 枚 0、terrain は基点の絵と 0)、build_managed Release 0 警告。sub-16〜19 に割れ無し。round 2 の差分は Effector 存在ゲート内なので次のチェックポイント (sub-23) で被覆。
+- (sub-20 VERDICT nit → sub-24) 限界欄: Effector の領域は tick 開始時の姿勢、Surface はソリッド Collider 必須で対象は plane2D の動的剛体のみ、有効な領域内の剛体は起こされ眠らない (島ごと)、Surface の起床は面 AABB + 0.05 の AABB 判定、親付きの領域と回転ベルトは未検証、Buoyancy の体積は 3D 体積 (density 既定 1000 は軽ければ必ず浮く)、領域にできない形状は kMesh / kTerrain / kEdge2D。checklists: 橙の矢印ギズモ、Joint の「2D (Z 軸)」ボタン、Effector の警告行、Create → 2D → Effector 2D。
+- (sub-20 coder → sub-21 以降) TypeId 90 まで使用 (次は 91)、snapshot v63、ABI 不変。焼き値 joint2D A82F779A97738D34 / effector2D 9504211B9041ECC2。sub-23 のデモにベルトを置くなら乗せる物は接地状態から (半厚 0.1 以上、速度 3.0 で安定)。sub-21 の依頼に添える: forwardAxis は hash 対象の append なので kExpected の焼き値を同じサブで再採取、Perception LOS の CollectLosColliders は physicsquery::CollectStaticShapes でタイル / SpriteShape の箱も見る。
