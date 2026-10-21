@@ -1,0 +1,89 @@
+{
+  "engine": "MyEngine",
+  "tilepalette": 1,
+  "tiles": [
+    {
+      "id": 1,
+      "name": "ground",
+      "sprite": 9706068725469991743,
+      "collider": 1,
+      "oneWay": false,
+      "hp": 0,
+      "destroyedTile": 0,
+      "destroyEffect": 0,
+      "rule": {
+        "variants": [
+          {
+            "neighbors": ".o.o....",
+            "sprite": 9706067625958363532
+          },
+          {
+            "neighbors": ".o..o...",
+            "sprite": 9706066526446735321
+          },
+          {
+            "neighbors": ".o......",
+            "sprite": 9706069824981619954
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "name": "plank",
+      "sprite": 9706065426935107110,
+      "collider": 1,
+      "oneWay": true,
+      "hp": 0,
+      "destroyedTile": 0,
+      "destroyEffect": 0
+    },
+    {
+      "id": 3,
+      "name": "block",
+      "sprite": 9706064327423478899,
+      "collider": 1,
+      "oneWay": false,
+      "hp": 3,
+      "destroyedTile": 0,
+      "destroyEffect": 0
+    },
+    {
+      "id": 4,
+      "name": "wall",
+      "sprite": 9706063227911850688,
+      "collider": 0,
+      "oneWay": false,
+      "hp": 0,
+      "destroyedTile": 0,
+      "destroyEffect": 0
+    },
+    {
+      "id": 5,
+      "name": "window",
+      "sprite": 9706063227911850688,
+      "collider": 0,
+      "oneWay": false,
+      "hp": 0,
+      "destroyedTile": 0,
+      "destroyEffect": 0,
+      "anim": {
+        "ticksPerFrame": 30,
+        "frames": [
+          9706063227911850688,
+          9706079720586273853
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "name": "tuft",
+      "sprite": 9706078621074645642,
+      "collider": 0,
+      "oneWay": false,
+      "hp": 0,
+      "destroyedTile": 0,
+      "destroyEffect": 0
+    }
+  ]
+}

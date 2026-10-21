@@ -5297,4 +5297,397 @@ void BuildComputeShowcaseScene(EngineContext& ctx)
     w.ApplyStructuralChanges();
 }
 
+// ---- M94w: --2d-demo (横スクロール 2D のショーケース) ----
+// 2D レーンの全部品を 1 枚に載せる: タイルマップ (背景 / 地面 / 前景の 3 層、ルール・アニメ・一方通行・壊れるブロック) /
+// 主人公 (CC plane2D、スプライト列、ZTwoDHero) / 箱 3 個 + ベルト (Effector2D) / kinematic の移動床 / 敵 (GridAgent2D + BT) /
+// 丘 (SpriteShape2D) / ロープ (Line2D) / 視差背景 2 枚 / Camera2DFollow + PixelPerfectCamera2D (320x180、PPU 16)。
+// night = true で Light2D (Global 暗 + スポット 2 灯 + 影) を足す (--2d-night。昼夜の差は末尾の数エンティティだけ)。
+// stress = true で負荷計測用に Sprite2D 2000 枚と 100 x 50 x 3 層のタイルを画面へ詰める (--2d-stress)。
+// 資産は assets\2d\ (tools\gen_2d_assets.py が生成)。GUID は同スクリプトの G_* と同じ値。
+namespace {
+
+constexpr uint64_t kTwoDTilesGuid = 0x2D00000000000001ull;
+constexpr uint64_t kTwoDHeroGuid = 0x2D00000000000002ull;
+constexpr uint64_t kTwoDCrateGuid = 0x2D00000000000003ull;
+constexpr uint64_t kTwoDBgFarGuid = 0x2D00000000000004ull;
+constexpr uint64_t kTwoDBgNearGuid = 0x2D00000000000005ull;
+constexpr uint64_t kTwoDHeroNormalGuid = 0x2D00000000000006ull;
+constexpr uint64_t kTwoDControllerGuid = 0x2D00000000000012ull;
+constexpr uint64_t kTwoDPaletteGuid = 0x2D00000000000013ull;
+constexpr uint64_t kTwoDTilemapGuid = 0x2D00000000000014ull;
+constexpr uint64_t kTwoDHillProfileGuid = 0x2D00000000000015ull;
+constexpr uint64_t kTwoDChaseTreeGuid = 0x2D00000000000016ull;
+
+// tiles.png のスライス番号 (tools\gen_2d_assets.py の tile_names の並び)
+constexpr uint32_t kTilePlankSlice = 5;
+
+// SpriteLibrary::SliceId と同じ式。ここは AssetDatabase のキー解決が無くても組めるよう GUID から直接引く
+AssetID TwoDSliceId(uint64_t textureGuid, uint32_t sliceNo)
+{
+    char key[64];
+    std::snprintf(key, sizeof(key), "%s%016llx#sprite%u", assetkey::kSubAssetKeyScheme.data(),
+                  static_cast<unsigned long long>(textureGuid), sliceNo);
+    return AssetID{ HashStr(key) };
+}
+
+// 負荷計測 (--2d-stress) の追加分。Sprite2D 2000 枚 + 100 x 50 x 3 層のタイル (計 15000 セル) を、画面 (20 x 11.25 ワールド単位)
+// の中へ全部詰める (視錐台で切られない最悪の形)。タイルマップはファイルを作らずメモリ上へ登録する (衝突なし = 物理には載らない)
+void AddTwoDStress(Scene& scene)
+{
+    constexpr int32_t kMapWidth = 100;
+    constexpr int32_t kMapHeight = 50;
+    constexpr float kStressCellSize = 0.2f; // 100 x 50 セルがちょうど 20 x 10 ワールド単位
+    constexpr uint32_t kStressTiles[] = { 4, 6, 4 }; // 壁 / 草 / 壁。層ごとに別のタイルで 3 層を埋める
+    constexpr int32_t kSpriteColumns = 50;
+    constexpr int32_t kSpriteRows = 40;
+    constexpr float kSpriteScale = 0.35f;
+    constexpr int32_t kOrderStressBase = -60;
+
+    if (TilemapLibrary* maps = tilemap::Library()) {
+        TilemapAsset map;
+        map.palette = kTwoDPaletteGuid;
+        map.cellSize[0] = kStressCellSize;
+        map.cellSize[1] = kStressCellSize;
+        for (size_t layerIndex = 0; layerIndex < std::size(kStressTiles); ++layerIndex) {
+            TilemapLayer layer;
+            layer.name = "Stress";
+            layer.orderInLayer = kOrderStressBase + static_cast<int32_t>(layerIndex);
+            layer.collision = false;
+            for (int32_t y = 0; y < kMapHeight; ++y) {
+                for (int32_t x = 0; x < kMapWidth; ++x) {
+                    layer.SetCell(x, y, tilecell::Make(kStressTiles[layerIndex], false, false, 0));
+                }
+            }
+            map.layers.push_back(std::move(layer));
+        }
+        GameObject tiles = scene.CreateGameObject("Stress Tiles");
+        tiles.SetLocalPosition(0.5f, 0.5f, 0.0f);
+        tiles.AddComponent<TilemapComponent>()->tilemap = AssetID{ maps->Register(L"stress://2d_stress.tilemap.json", std::move(map)) };
+    }
+    for (int32_t i = 0; i < kSpriteColumns * kSpriteRows; ++i) {
+        GameObject sprite = scene.CreateGameObject("Stress Sprite");
+        sprite.SetLocalPosition(0.7f + static_cast<float>(i % kSpriteColumns) * 0.4f,
+                                0.3f + static_cast<float>(i / kSpriteColumns) * 0.25f, 0.0f);
+        sprite.SetLocalScale(kSpriteScale, kSpriteScale, 1.0f);
+        auto* sp = sprite.AddComponent<Sprite2DComponent>();
+        sp->sprite = AssetID{ kTwoDCrateGuid };
+        sp->orderInLayer = kOrderStressBase + 10;
+    }
+}
+
+} // namespace
+
+void BuildTwoDShowcaseScene(EngineContext& ctx, bool night, bool stress){
+    Scene& s = *ctx.scene;
+    World& w = s.GetWorld();
+    s.SetName("twod_showcase");
+
+    // 手で決めた配置。単位はワールド (= タイル 1 セル = 16 px)。床の天面が y = 2
+    constexpr float kGroundTop = 2.0f;
+    constexpr float kCcHalfHeight = 0.9f; // CC の既定の高さ 1.8 の半分
+    constexpr float kRefHeightPx = 180.0f;
+    constexpr float kPixelsPerUnit = 16.0f;
+    constexpr float kOrthoSize = kRefHeightPx / (2.0f * kPixelsPerUnit); // 5.625
+    constexpr int32_t kOrderHero = 20;
+    constexpr int32_t kOrderEnemy = 18;
+    constexpr int32_t kOrderProp = 10;
+    constexpr int32_t kOrderRope = 12;
+
+    const AssetID heroSprite = TwoDSliceId(kTwoDHeroGuid, 1);
+    const AssetID plankSprite = TwoDSliceId(kTwoDTilesGuid, kTilePlankSlice);
+
+    // ---- カメラ (主カメラ。ピクセルパーフェクト + 追従。色の契約: tonemapMode 0 = 元の画素がそのまま出る) ----
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.SetLocalPosition(10.5f, 5.625f, -10.0f);
+    {
+        auto* cam = camera.AddComponent<CameraComponent>();
+        cam->orthographic = true;
+        cam->orthoSize = kOrthoSize;
+    }
+    {
+        auto* fx = camera.AddComponent<CameraPostFxComponent>();
+        fx->tonemapMode = 0;
+        fx->bloomOn = false;
+        fx->fxaaOn = false;
+    }
+    {
+        auto* pp = camera.AddComponent<PixelPerfectCamera2DComponent>();
+        pp->assetsPPU = static_cast<int32_t>(kPixelsPerUnit);
+        pp->refResolutionX = 320;
+        pp->refResolutionY = static_cast<int32_t>(kRefHeightPx);
+        pp->upscaleRT = true;
+    }
+    camera.AddComponent<Camera2DFollowComponent>();
+
+    {
+        GameObject envGo = s.CreateGameObject("Environment");
+        envGo.AddComponent<PhysicsEnvironmentComponent>();
+    }
+
+    // ---- タイルマップ (背景 / 地面 / 前景)。衝突は Ground レイヤー ----
+    GameObject level = s.CreateGameObject("Level");
+    level.AddComponent<TilemapComponent>()->tilemap = AssetID{ kTwoDTilemapGuid };
+
+    // ---- 主人公 ----
+    GameObject hero = s.CreateGameObject("Hero");
+    hero.SetLocalPosition(10.5f, 5.0f + kCcHalfHeight + 0.02f, 0.0f); // 一方通行板 (天面 y = 5) の上
+    {
+        auto* cc = hero.AddComponent<CharacterControllerComponent>();
+        cc->plane2D = true;
+        cc->pushPower = 3.0f;
+    }
+    hero.AddComponent<PlayerInputComponent>();
+    hero.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ kTwoDControllerGuid };
+    AttachScriptIfRegistered(w, hero.Id(), "ZTwoDHero");
+    {
+        // 足元 (CC の下端) が絵の下端になるよう、pivot が足元のスプライトを CC の半分だけ下げて置く
+        GameObject body = s.CreateGameObject("HeroSprite");
+        body.SetParent(hero);
+        body.SetLocalPosition(0.0f, -kCcHalfHeight, 0.0f);
+        auto* sp = body.AddComponent<Sprite2DComponent>();
+        sp->sprite = heroSprite;
+        sp->normalMap = AssetID{ kTwoDHeroNormalGuid };
+        sp->orderInLayer = kOrderHero;
+    }
+    {
+        // 夜の影。主人公の胴の箱 (幅 0.6 x 高さ 1.6)。CC は Box でも Sphere でもないので points で与える
+        GameObject caster = s.CreateGameObject("HeroShadow");
+        caster.SetParent(hero);
+        auto* sc = caster.AddComponent<ShadowCaster2DComponent>();
+        sc->source = shadowcaster2dsource::kPoints;
+        sc->pointCount = 4;
+        sc->points[0] = { -0.3f, -0.8f };
+        sc->points[1] = { 0.3f, -0.8f };
+        sc->points[2] = { 0.3f, 0.8f };
+        sc->points[3] = { -0.3f, 0.8f };
+    }
+
+    // ---- 敵 (GridAgent2D + BT の MoveTo で主人公を追う。段差と一方通行板を越えて板へ上がる) ----
+    GameObject enemy = s.CreateGameObject("Enemy");
+    enemy.SetLocalPosition(17.5f, kGroundTop + kCcHalfHeight + 0.02f, 0.0f);
+    {
+        auto* cc = enemy.AddComponent<CharacterControllerComponent>();
+        cc->plane2D = true;
+        cc->pushPower = 3.0f; // 箱の山を押しのけて進む (経路探索は動く物を見ない)
+    }
+    {
+        auto* agent = enemy.AddComponent<GridAgent2DComponent>();
+        agent->tilemap = level.Id();
+        agent->speed = 3.0f;
+        agent->maxJumpHeight = 2;
+        agent->maxJumpLength = 3;
+        agent->jumpSpeed = 9.0f;
+    }
+    {
+        auto* bt = enemy.AddComponent<BehaviorTreeComponent>();
+        bt->tree = AssetID{ kTwoDChaseTreeGuid };
+        std::snprintf(bt->bbEntityKey[0], kBtEntityKeyBytes, "%s", "target");
+        bt->bbEntityValue[0] = hero.Id();
+    }
+    enemy.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ kTwoDControllerGuid };
+    {
+        GameObject body = s.CreateGameObject("EnemySprite");
+        body.SetParent(enemy);
+        body.SetLocalPosition(0.0f, -kCcHalfHeight, 0.0f);
+        auto* sp = body.AddComponent<Sprite2DComponent>();
+        sp->sprite = heroSprite;
+        sp->color = { 1.0f, 0.55f, 0.5f, 1.0f };
+        sp->orderInLayer = kOrderEnemy;
+    }
+
+    // ---- 箱 3 個 (plane2D の動的剛体)。1 個はベルトの上、2 個は積んで置く ----
+    auto addCrate = [&](const char* name, float x, float y) {
+        GameObject crate = s.CreateGameObject(name);
+        crate.SetLocalPosition(x, y, 0.0f);
+        {
+            auto* rb = crate.AddComponent<RigidbodyComponent>();
+            rb->plane2D = true;
+        }
+        {
+            auto* col = crate.AddComponent<ColliderComponent>();
+            col->shape = collidershape::kBox;
+            col->halfExtents = { 0.5f, 0.5f, 0.5f };
+        }
+        {
+            auto* sp = crate.AddComponent<Sprite2DComponent>();
+            sp->sprite = AssetID{ kTwoDCrateGuid };
+            sp->orderInLayer = kOrderProp;
+        }
+        crate.AddComponent<ShadowCaster2DComponent>(); // source 0 = 同じエンティティの Collider (Box)
+        return crate;
+    };
+    addCrate("Crate Stack A", 19.5f, kGroundTop + 0.5f);
+    addCrate("Crate Stack B", 19.5f, kGroundTop + 1.5f);
+    // ベルト (Surface は接触面を動かす。乗せる物は接地状態から始める)。板は厚み 0.25 (CC の段差 0.3 以内)
+    constexpr float kBeltHalfThickness = 0.125f;
+    constexpr float kBeltHalfLength = 2.0f;
+    {
+        GameObject belt = s.CreateGameObject("Belt");
+        belt.SetLocalPosition(24.0f, kGroundTop + kBeltHalfThickness, 0.0f);
+        {
+            auto* col = belt.AddComponent<ColliderComponent>();
+            col->shape = collidershape::kBox;
+            col->halfExtents = { kBeltHalfLength, kBeltHalfThickness, 0.5f };
+        }
+        {
+            auto* eff = belt.AddComponent<Effector2DComponent>();
+            eff->type = effector2dtype::kSurface;
+            eff->surfaceSpeed = 2.0f;
+        }
+        for (int i = 0; i < 4; ++i) {
+            GameObject plank = s.CreateGameObject("BeltPlank");
+            plank.SetParent(belt);
+            // 板のタイルは上 6 px だけ描いてある。絵の上端を天面へ揃える (タイル中心 = 天面 - 0.5)
+            plank.SetLocalPosition(-kBeltHalfLength + 0.5f + static_cast<float>(i), kBeltHalfThickness - 0.5f, 0.0f);
+            auto* sp = plank.AddComponent<Sprite2DComponent>();
+            sp->sprite = plankSprite;
+            sp->color = { 1.0f, 0.72f, 0.5f, 1.0f };
+            sp->orderInLayer = kOrderProp - 1;
+        }
+    }
+    addCrate("Crate Belt", 23.0f, kGroundTop + 2.0f * kBeltHalfThickness + 0.5f);
+
+    // ---- 動く床 (kinematic の plane2D。velocity を ZTwoDMover が書く) ----
+    {
+        constexpr float kPlatformHalfThickness = 0.1875f; // 板のタイルの絵 (6 px) と同じ厚み
+        GameObject platform = s.CreateGameObject("Moving Platform");
+        platform.SetLocalPosition(32.0f, 5.5f, 0.0f);
+        {
+            auto* rb = platform.AddComponent<RigidbodyComponent>();
+            rb->isKinematic = true;
+            rb->plane2D = true;
+            rb->gravityScale = 0.0f;
+        }
+        {
+            auto* col = platform.AddComponent<ColliderComponent>();
+            col->shape = collidershape::kBox;
+            col->halfExtents = { 1.5f, kPlatformHalfThickness, 0.5f };
+        }
+        platform.AddComponent<ShadowCaster2DComponent>();
+        AttachScriptIfRegistered(w, platform.Id(), "ZTwoDMover");
+        for (int i = 0; i < 3; ++i) {
+            GameObject plank = s.CreateGameObject("PlatformPlank");
+            plank.SetParent(platform);
+            plank.SetLocalPosition(-1.0f + static_cast<float>(i), kPlatformHalfThickness - 0.5f, 0.0f);
+            auto* sp = plank.AddComponent<Sprite2DComponent>();
+            sp->sprite = plankSprite;
+            sp->color = { 0.7f, 0.85f, 1.0f, 1.0f };
+            sp->orderInLayer = kOrderProp - 1;
+        }
+    }
+
+    // ---- 丘 (SpriteShape2D。閉じた smooth の輪郭 + 縁 3 + 塗り。衝突あり) ----
+    {
+        GameObject hill = s.CreateGameObject("Hill");
+        hill.SetLocalPosition(3.5f, kGroundTop, 0.0f);
+        auto* shape = hill.AddComponent<SpriteShape2DComponent>();
+        shape->profile = AssetID{ kTwoDHillProfileGuid };
+        shape->closed = true;
+        shape->smooth = true;
+        shape->collider = true;
+        shape->orderInLayer = -5;
+        const DirectX::XMFLOAT2 points[] = { { -2.5f, 0.0f }, { -1.5f, 0.7f }, { 0.0f, 1.3f },
+                                             { 1.5f, 0.7f },  { 2.5f, 0.0f },  { 0.0f, -0.6f } };
+        shape->pointCount = static_cast<int32_t>(std::size(points));
+        std::copy(std::begin(points), std::end(points), shape->points);
+    }
+
+    // ---- ロープ (Line2D。端を固定した放物線のたるみ) ----
+    {
+        GameObject rope = s.CreateGameObject("Rope");
+        rope.SetLocalPosition(10.5f, 8.6f, 0.0f);
+        auto* line = rope.AddComponent<Line2DComponent>();
+        constexpr int32_t kRopePoints = 13;
+        constexpr float kRopeHalfSpan = 4.0f;
+        constexpr float kRopeSag = 1.0f;
+        line->pointCount = kRopePoints;
+        for (int32_t i = 0; i < kRopePoints; ++i) {
+            const float t = static_cast<float>(i) / static_cast<float>(kRopePoints - 1) * 2.0f - 1.0f; // -1..1
+            line->points[i] = { t * kRopeHalfSpan, -kRopeSag * (1.0f - t * t) };
+        }
+        line->width = 0.12f;
+        line->color = { 0.58f, 0.36f, 0.2f, 1.0f };
+        line->orderInLayer = kOrderRope;
+    }
+
+    // ---- 視差背景 2 枚 (遠景 / 近景。正射影の表示範囲を覆うまで横に繰り返す) ----
+    {
+        GameObject farBg = s.CreateGameObject("Parallax Far");
+        farBg.SetLocalPosition(10.0f, 6.0f, 0.0f);
+        {
+            auto* sp = farBg.AddComponent<Sprite2DComponent>();
+            sp->sprite = AssetID{ kTwoDBgFarGuid };
+            sp->orderInLayer = -100;
+        }
+        {
+            auto* pr = farBg.AddComponent<Parallax2DComponent>();
+            pr->factor = { 0.15f, 0.15f };
+            pr->repeatX = true;
+        }
+        GameObject nearBg = s.CreateGameObject("Parallax Near");
+        nearBg.SetLocalPosition(10.0f, 3.5f, 0.0f);
+        {
+            auto* sp = nearBg.AddComponent<Sprite2DComponent>();
+            sp->sprite = AssetID{ kTwoDBgNearGuid };
+            sp->orderInLayer = -90;
+        }
+        {
+            auto* pr = nearBg.AddComponent<Parallax2DComponent>();
+            pr->factor = { 0.5f, 0.5f };
+            pr->repeatX = true;
+        }
+    }
+
+    // ---- 夜 (--2d-night): Global 暗 + スポット 2 灯 (吊りランプ / 主人公のランタン)。影は箱・移動床・主人公 ----
+    if (night) {
+        GameObject global = s.CreateGameObject("Night Global");
+        {
+            auto* l = global.AddComponent<Light2DComponent>();
+            l->type = light2dtype::kGlobal;
+            l->color = { 0.16f, 0.2f, 0.42f, 1.0f };
+            l->intensity = 1.0f;
+        }
+        GameObject lamp = s.CreateGameObject("Night Lamp");
+        lamp.SetLocalPosition(10.5f, 7.0f, 0.0f);
+        {
+            auto* l = lamp.AddComponent<Light2DComponent>();
+            l->type = light2dtype::kSpot;
+            l->color = { 1.0f, 0.82f, 0.5f, 1.0f };
+            l->intensity = 1.3f;
+            l->innerRadius = 1.0f;
+            l->outerRadius = 8.0f;
+            l->shadows = true;
+        }
+        GameObject lantern = s.CreateGameObject("Hero Lantern");
+        lantern.SetParent(hero);
+        lantern.SetLocalPosition(0.4f, 0.4f, 0.0f);
+        {
+            auto* l = lantern.AddComponent<Light2DComponent>();
+            l->type = light2dtype::kSpot;
+            l->color = { 0.6f, 0.85f, 1.0f, 1.0f };
+            l->intensity = 1.1f;
+            l->innerRadius = 0.5f;
+            l->outerRadius = 6.0f;
+            l->shadows = true;
+        }
+    }
+
+    if (stress) {
+        AddTwoDStress(s);
+    }
+
+    // ---- 配線 ----
+    {
+        auto* follow = camera.GetComponent<Camera2DFollowComponent>();
+        follow->target = hero.Id();
+        follow->offset = { 0.0f, 1.0f };
+        follow->deadZone = { 1.0f, 0.75f };
+        follow->damping = { 0.12f, 0.12f };
+        follow->lookAheadX = 1.0f;
+        follow->useBounds = true;
+        follow->boundsFromTilemap = level.Id();
+    }
+    w.ApplyStructuralChanges();
+}
+
 } // namespace mye

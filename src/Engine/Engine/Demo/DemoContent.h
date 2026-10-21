@@ -284,4 +284,10 @@ void BuildRenderBenchUniqueScene(EngineContext& ctx);
 // (C# の CPU 版) を並べる。State の群れの位置はリプレイの照合に入る。--compute-force-cpu で Fx も CPU に回せる (replay_verify の computeab)
 void BuildComputeShowcaseScene(EngineContext& ctx);
 
+// M94w: 横スクロール 2D のデモ (--2d-demo)。タイルマップ・スプライト列アニメの主人公・敵 (GridAgent2D + BT)・箱・ベルト・移動床・
+// 丘・ロープ・視差背景・ピクセルパーフェクト + 追従カメラ。night (--2d-night) で Light2D の Global + スポット 2 灯と影を足す。
+// stress (--2d-stress) は負荷計測用に Sprite2D 2000 枚と 100 x 50 x 3 層のタイルを画面へ詰める (見た目は golden に入れない)。
+// 資産は assets\2d\ (tools\gen_2d_assets.py)。主人公の動きは GameLogic の ZTwoDHero (無い構成では動かない)
+void BuildTwoDShowcaseScene(EngineContext& ctx, bool night, bool stress);
+
 } // namespace mye

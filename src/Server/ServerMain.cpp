@@ -269,6 +269,10 @@ int wmain(int argc, wchar_t** argv)
             setup.scene.showcaseOptions.terrainLodDistance = static_cast<float>(_wtof(argv[++i]));
         } else if (arg == L"--terrain-skirt" && i + 1 < argc) {
             setup.scene.showcaseOptions.terrainSkirtDepth = static_cast<float>(_wtof(argv[++i]));
+        } else if (arg == L"--2d-night") {
+            setup.scene.showcaseOptions.twoDNight = true;
+        } else if (arg == L"--2d-stress") {
+            setup.scene.showcaseOptions.twoDStress = true;
         } else if (arg == L"--project" && i + 1 < argc) {
             setup.config.projectRoot = std::filesystem::absolute(argv[++i]).wstring();
         } else if (arg == L"--port" && i + 1 < argc) {

@@ -711,6 +711,42 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] `tools\replay_verify.bat` が PASS し、PASS 行に `compute` と `compute A/B` が含まれる
 - [ ] C# と C++ のバイト一致を JIT 設定を変えて確かめ直す場合は ADR-030 の D24 の手順に従う (`KernelCompat.cs` / `KernelCSharp.cpp` を変えたとき)
 
+## M94: 2D レーン (横スクロール) — 下書き (sub-24 が仕上げる)
+
+仕様は `plans\m94-2d\spec.md`、決定的な部分 (平面拘束・タイル衝突・GridAgent2D・Camera2DFollow・ハッシュの焼き込み・版の固定) は `Editor.exe --selftest` (`TwoDDemoSelfTest` ほか) と `tools\replay_verify.bat` の `2d` ジョブが見る。ここは GUI の実操作と目視でしか確かめられない項目。アセットは `python -I tools\gen_2d_assets.py` で `assets\2d\` に作り直せる。
+
+### デモの見た目 (`--2d-demo`)
+
+- [ ] `bin\x64\Release\Runtime.exe --warp --font-embedded --width 960 --height 540 --frames 6 --shot-frame 3 --no-fxaa --2d-demo --screenshot <png>` で、320x180 を 3 倍にした画素の絵になり、左端の壁・壊れるブロック (2 列 3 段)・一方通行板の上の主人公・左の丘・ロープのたるみ・視差の山と木・段差・敵・右端の箱の山が写る
+- [ ] `--2d-night` を足して `--frames 125 --shot-frame 120` で撮ると、Global の暗い青と、吊りランプ・主人公のランタンの 2 灯、箱・主人公・移動床の影が写る。主人公の法線で明暗が付く
+- [ ] `--froxel --deferred` を足しても真っ黒 / NaN にならない (golden には入れない)
+- [ ] Editor で `--2d-demo` を開いて Play すると、主人公が (入力なしでは) 立ったまま、敵が段差と一方通行板を越えて主人公へ向かう。矢印や A / D / Space / J で主人公を操作でき、壁へ押し付けると前のブロックが削れて壊れる
+
+### Create メニューと Inspector
+
+- [ ] Create → 2D → Sprite / Tilemap / Light 2D / Sprite Shape / Line / Effector 2D / Grid Agent 2D / Camera 2D の各項目で、エンティティが作られる。Camera 2D の Camera は正射影で、半高が 0.9 (基準解像度 320x180 / PPU 100) になっている
+- [ ] Inspector の Camera 2D の有効値 (PixelPerfectCamera2D) が、直近のゲームビューの寸法に対する RT と orthoSize を示す
+- [ ] Sprite2D の srgb 警告行 / normalMap の srgb 警告行、Effector2D の警告行、GridAgent2D の tilemap 未設定の警告が読める
+
+### Scene View の 2D モード
+
+- [ ] ツールバーの「2D」トグルで XY の正射影になり、ホイールでズーム、中 / 右ドラッグでパン、F で選択へ寄る
+- [ ] ギズモ: Sprite2D の矩形 (白) と pivot (黄)、2D コライダー (緑)、Tilemap の衝突箱 (`showCollision`)、Light2D (黄)、ShadowCaster2D (紫)、Camera2DFollow の deadZone と bounds (青)、GridAgent2D の経路 (橙)、Effector2D の矢印 (橙) が出る
+- [ ] Line2D / SpriteShape2D の点ハンドル: ドラッグ・辺クリックで追加・Delete・Esc が働く
+
+### スプライトエディタ / タイルパレット / コントローラ窓
+
+- [ ] テクスチャをダブルクリックするとスプライトエディタが開く (`.dds` は OS 既定アプリ)。スライス・pivot・border・PPU・filter を編集して Apply でき、Point 表示で滲まない
+- [ ] タイルパレット窓で塗り・矩形・塗り潰し・スポイト・Undo / Redo (Ctrl+Z / Y)・保存 (Ctrl+S) ができ、Scene View の 2D で左クリックでも塗れる。初回のドラッグが一瞬 (約 110 ms) 止まっても許容
+- [ ] パレットのタイル追加 (スプライトから / スライス済みテクスチャから一括 / 削除)、ルール (8 近傍トグル) とアニメの編集が働く
+- [ ] コントローラ窓のステートに Sprite (スプライト列) を指定でき、骨クリップとは排他になる
+
+### 回帰
+
+- [ ] `tools\check_rules.ps1` が既存の 3 error のまま (15-e が 0)
+- [ ] `tools\replay_verify.bat` が PASS し、PASS 行に `2d` が含まれる
+- [ ] `tools\shot_verify.bat` が 32 枚 PASS する (`2d` / `2d_lights` を含む)
+
 ## M87: エンジン MCP サーバ (mye_mcp)
 
 使い方は `docs\mcp-server.md`、判断は `docs\adr\ADR-032-engine-mcp-server.md`。JSON-RPC の応答・パストラバーサルの拒否・notes の往復・固定 10 問は `tools\mcp_verify.bat` と `tools\mcp_verify.ps1 -RealIndex` が見る。ここは実クライアントと実端末でしか確かめられない項目。

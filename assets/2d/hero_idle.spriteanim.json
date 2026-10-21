@@ -1,0 +1,15 @@
+{
+  "engine": "MyEngine",
+  "spriteanim": 1,
+  "name": "Idle",
+  "frames": [
+    {
+      "sprite": 14895032378902039003,
+      "ticks": 30
+    },
+    {
+      "sprite": 14895033478413667214,
+      "ticks": 30
+    }
+  ]
+}

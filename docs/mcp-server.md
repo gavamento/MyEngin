@@ -77,7 +77,7 @@ claude mcp add --scope local mye-engine -- C:\HAL\MyEngin\tools\mcp\target\relea
 落ちた段・最初に割れた tick・診断行だけを `summary` に返す (ログ全体は返さない。1 本 150 KB 前後ある)。
 **ビルドはしない**。Debug と Release の `Editor.exe` が先にビルドされている必要がある (無ければ `isError`)。
 
-- 名前は固定の 21 個: `demo` `parts` `flow` `mp` `physics` `joints` `acoustic` `ui` `fracture` `nav` `perception` `bt` `anim` `compute` `jobsab` `computeab` `ttdebug` `ttrelease` `whatifdebug` `whatifrelease` `rules`。
+- 名前は固定の 22 個: `demo` `parts` `flow` `mp` `physics` `joints` `acoustic` `ui` `fracture` `nav` `perception` `bt` `anim` `compute` `2d` `jobsab` `computeab` `ttdebug` `ttrelease` `whatifdebug` `whatifrelease` `rules`。
   `replay_verify.bat` の `:job_*` と `verify.rs` の表が食い違うと `tools\check_rules.ps1` の規則 15-e が止める。
 - 同時に走るのは 2 本まで。同じ名前は同時に 2 本走らせられない。
 - `summary` は `result` (`PASS` / `FAIL`)、`stage`、`firstMismatchTick`、`diagnostic`、ログが無いとき `noLog: true`。

@@ -1,0 +1,140 @@
+{
+  "guid": "2d00000000000001",
+  "type": "texture",
+  "version": 2,
+  "tex": {
+    "srgb": 0,
+    "generateMips": 0,
+    "compress": 0,
+    "filter": 2,
+    "pixelsPerUnit": 16,
+    "sprites": [
+      {
+        "id": 1,
+        "name": "grass_top",
+        "rect": [
+          0,
+          0,
+          16,
+          16
+        ],
+        "pivot": [
+          0.5,
+          0.5
+        ]
+      },
+      {
+        "id": 2,
+        "name": "dirt",
+        "rect": [
+          16,
+          0,
+          16,
+          16
+        ],
+        "pivot": [
+          0.5,
+          0.5
+        ]
+      },
+      {
+        "id": 3,
+        "name": "grass_left",
+        "rect": [
+          32,
+          0,
+          16,
+          16
+        ],
+        "pivot": [
+          0.5,
+          0.5
+        ]
+      },
+      {
+        "id": 4,
+        "name": "grass_right",
+        "rect": [
+          48,
+          0,
+          16,
+          16
+        ],
+        "pivot": [
+          0.5,
+          0.5
+        ]
+      },
+      {
+        "id": 5,
+        "name": "plank",
+        "rect": [
+          64,
+          0,
+          16,
+          16
+        ],
+        "pivot": [
+          0.5,
+          0.5
+        ]
+      },
+      {
+        "id": 6,
+        "name": "block",
+        "rect": [
+          80,
+          0,
+          16,
+          16
+        ],
+        "pivot": [
+          0.5,
+          0.5
+        ]
+      },
+      {
+        "id": 7,
+        "name": "bg_a",
+        "rect": [
+          96,
+          0,
+          16,
+          16
+        ],
+        "pivot": [
+          0.5,
+          0.5
+        ]
+      },
+      {
+        "id": 8,
+        "name": "bg_b",
+        "rect": [
+          112,
+          0,
+          16,
+          16
+        ],
+        "pivot": [
+          0.5,
+          0.5
+        ]
+      },
+      {
+        "id": 9,
+        "name": "tuft",
+        "rect": [
+          128,
+          0,
+          16,
+          16
+        ],
+        "pivot": [
+          0.5,
+          0.5
+        ]
+      }
+    ]
+  }
+}

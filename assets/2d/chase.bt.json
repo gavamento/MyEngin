@@ -1,0 +1,26 @@
+{
+  "engine": "MyEngine",
+  "behaviortree": 1,
+  "name": "chase",
+  "blackboard": "2d00000000000017",
+  "root": 0,
+  "nodes": [
+    {
+      "id": 0,
+      "type": "MoveTo",
+      "params": {
+        "acceptanceRadius": 0.8,
+        "failOnStuck": false
+      },
+      "keys": {
+        "target": "target"
+      },
+      "decorators": [],
+      "children": [],
+      "pos": [
+        0.0,
+        0.0
+      ]
+    }
+  ]
+}

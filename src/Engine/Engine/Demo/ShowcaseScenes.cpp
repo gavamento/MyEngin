@@ -17,6 +17,11 @@ void BuildTerrain(EngineContext& ctx, const ShowcaseOptions& options)
     BuildTerrainShowcaseScene(ctx, options.terrainLodDistance, options.terrainSkirtDepth);
 }
 
+void BuildTwoD(EngineContext& ctx, const ShowcaseOptions& options)
+{
+    BuildTwoDShowcaseScene(ctx, options.twoDNight, options.twoDStress);
+}
+
 // ★並び順に意味がある (契約は ShowcaseScenes.h の PickShowcase)。
 // ★cache\ の行はコードから毎回組む。保存先を専用にしてあるのは、万一 Ctrl+S されても既定デモシーン
 //   (main.scene.json = golden.rep の入力) を潰さないため。保存済みが残っているとロードする側へ落ちるので、
@@ -66,6 +71,7 @@ const ShowcaseDef kShowcases[] = {
       &BuildPlain<&BuildRenderBenchUniqueScene>, false }, // M90f
     { L"--compute-demo", false, L"cache\\compute_showcase.scene.json", nullptr, &BuildPlain<&BuildComputeShowcaseScene>,
       false }, // M91i
+    { L"--2d-demo", false, L"cache\\2d_showcase.scene.json", nullptr, &BuildTwoD, false }, // M94w
 };
 
 } // namespace

@@ -22,6 +22,7 @@
 #include "Engine/Engine/Rendering/Sprite2D/SpriteShapeSelfTest.h"
 #include "Engine/Engine/Rendering/Sprite2D/Sprite2DAssetSelfTest.h"
 #include "Engine/Engine/Script/TwoDAbiSelfTest.h"
+#include "Engine/Engine/Demo/TwoDDemoSelfTest.h"
 #include "Engine/Engine/Tilemap/TilemapSelfTest.h"
 #include "Engine/Engine/Rendering/RenderStatsSelfTest.h"
 #include "Engine/Engine/Rendering/ShadowCullSelfTest.h"
@@ -344,6 +345,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 showcaseOptions.terrainLodDistance = static_cast<float>(_wtof(argv[++i]));
             } else if (arg == L"--terrain-skirt" && i + 1 < argc) {
                 showcaseOptions.terrainSkirtDepth = static_cast<float>(_wtof(argv[++i])); // M58e (負値 = 無し)
+            } else if (arg == L"--2d-night") {
+                showcaseOptions.twoDNight = true; // M94: --2d-demo に Light2D を足す
+            } else if (arg == L"--2d-stress") {
+                showcaseOptions.twoDStress = true; // M94: --2d-demo に負荷計測用の物を足す
             } else if (arg == L"--edit-actor" && i + 1 < argc) {
                 editActorPath = argv[++i]; // M48k: 起動直後にミニシーン編集モードで開く
             } else if (arg == L"--package" && i + 1 < argc) {
@@ -584,8 +589,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         wchar_t onlyName[32] = {};
         const bool hasOnly = GetEnvironmentVariableW(L"MYE_SELFTEST_ONLY", onlyName, 32) > 0;
         // MYE_SELFTEST_ONLY=computescript: HeadlessSim の起動と GameLogic.dll のホットリロードを通る試験だけを回す
-        if (hasOnly && (std::wstring(onlyName).rfind(L"servernet", 0) == 0 || std::wstring(onlyName) == L"computescript")) {
-            ok &= std::wstring(onlyName) == L"computescript" ? mye::RunComputeScriptSelfTest() : mye::RunServerNetSelfTest();
+        // MYE_SELFTEST_ONLY=twod: --2d-demo の 3000 tick 試験 (M94w) だけを回す。焼き込みハッシュの採取用
+        if (hasOnly && (std::wstring(onlyName).rfind(L"servernet", 0) == 0 || std::wstring(onlyName) == L"computescript"
+                        || std::wstring(onlyName) == L"twod")) {
+            if (std::wstring(onlyName) == L"twod") {
+                ok &= mye::RunTwoDDemoSelfTest();
+            } else {
+                ok &= std::wstring(onlyName) == L"computescript" ? mye::RunComputeScriptSelfTest() : mye::RunServerNetSelfTest();
+            }
             if (!tempEc) {
                 std::filesystem::remove_all(selftestTemp, tempEc);
             }
@@ -617,6 +628,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             ok &= mye::RunPixelPerfect2DSelfTest();     // M94v: pixelperfect2d::Compute の表
             ok &= mye::RunPerceptionSelfTest();         // M94u: forwardAxis と Tilemap の遮蔽
             ok &= mye::RunBehaviorTreeSelfTest();       // M94u: MoveTo の GridAgent2D fallback
+            ok &= mye::RunTwoDDemoSelfTest();           // M94w: --2d-demo の 3000 tick 不変量と焼き込みハッシュ
             if (!tempEc) {
                 std::filesystem::remove_all(selftestTemp, tempEc);
             }
@@ -732,6 +744,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunGridNav2DSelfTest();           // M94u: GridAgent2D のグリッド A* (段差 / 穴 / NoPath / 並走一致)
         ok &= mye::RunCamera2DFollowSelfTest();      // M94v: Camera2DFollow (デッドゾーン / damping / 境界 / 並走一致)
         ok &= mye::RunPixelPerfect2DSelfTest();      // M94v: pixelperfect2d::Compute の表
+        ok &= mye::RunTwoDDemoSelfTest();            // M94w: --2d-demo の 3000 tick 不変量と焼き込みハッシュ
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }

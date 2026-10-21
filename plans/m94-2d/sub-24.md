@@ -18,6 +18,7 @@
 3. `docs\test_checklists.md` の M94 節 (sub-23 の下書きを仕上げる): 手動確認 (Scene View 2D モードの操作感、スプライトエディタ、タイルパレット、ピクセルパーフェクトの見え方、ライトの見え方)。
 4. `README.md` の機能表に 2D レーンの 1 行。`plans\m75-ugui.md` の M75h の注記に「M94n が v31 を使った場合は v32」(実際の版で)。
 5. `plans\m94-2d\harness.md` の申し送り欄に残り minor と未確認事項 (司会が仕上げるが、coder が下書き)。
+5b. (各サブの申し送りの集約) engine_spec の「2D の v1 の限界」欄に、spec 7. R9〜R12 と spec 4.1.x の各「確定事項」に書いた限界 (親付き plane2D / 複合子の oneWay・多角形 / 回転床 / BoxCast の近似 / タイル絞り込みの余裕 / マスクの効き方 / 影・法線・Freeform / SpriteShape の height / GridAgent の非タイル足場 / Effector の領域内は眠らない / froxel は 2D 経路に効かない 等) を 1 か所にまとめる。`docs\adr\ADR-032-engine-mcp-server.md` の「固定 21 ジョブ」を 22 (2d 追加) に直す。engine_spec に `--2d-demo` / `--2d-night` / `--2d-stress` と性能値 (デモ 0.9〜1.4 ms/フレーム、stress 4.4〜4.6 ms、sim 0.21 ms/tick、Raycast 12.7 us / BoxCast 67.5 us) を書く。`docs\test_checklists.md` の M94 節は、各 VERDICT で「ユーザー目視」に回した GUI 操作 (sub-02〜22 の nit) を全部拾う。
 6. 文書のみの変更: ビルドは原則不要 (AGENTS.md 7)。参照先の存在と行番号 / 名前の整合を確認する。
 
 ## やらないこと (このサブでは)

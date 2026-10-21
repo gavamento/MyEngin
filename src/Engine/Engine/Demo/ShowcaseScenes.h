@@ -6,10 +6,12 @@ namespace mye {
 
 struct EngineContext;
 
-// ショーケースの組み立てに渡す CLI の値 (--terrain-lod / --terrain-skirt。地形ショーケースだけが使う、M58e)
+// ショーケースの組み立てに渡す CLI の値 (--terrain-lod / --terrain-skirt = 地形、M58e / --2d-night = 2D デモの夜、M94)
 struct ShowcaseOptions {
     float terrainLodDistance = 0.0f; // 0 = LOD 無効 (既定 = golden の絵)
     float terrainSkirtDepth = 0.0f;  // 0 = 自動 / < 0 = スカート無し (クラックの A/B 撮影用)
+    bool twoDNight = false;          // --2d-demo に Light2D (Global 暗 + スポット 2 灯) を足す
+    bool twoDStress = false;         // --2d-demo に負荷計測用の Sprite2D 2000 枚とタイル 15000 セルを足す
 };
 
 // デモ / ショーケースのシーン 1 本 = --*-demo フラグ 1 本 (表は ShowcaseScenes.cpp の kShowcases)。

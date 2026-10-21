@@ -208,6 +208,10 @@ GameObject CreateCamera2D(EngineContext& ctx, const char* name)
     auto* cam = obj.AddComponent<CameraComponent>();
     cam->isPrimary = false;
     cam->orthographic = true;
+    // 半高は PixelPerfect の既定 (基準解像度の高さ / PPU) から。ピクセルパーフェクトを外しても同じ視野になる
+    const PixelPerfectCamera2DComponent pixelPerfectDefaults;
+    cam->orthoSize = static_cast<float>(pixelPerfectDefaults.refResolutionY)
+                     / (2.0f * static_cast<float>(pixelPerfectDefaults.assetsPPU));
     obj.AddComponent<Camera2DFollowComponent>();
     obj.AddComponent<PixelPerfectCamera2DComponent>();
     obj.SetLocalPosition(0.0f, 0.0f, -10.0f);

@@ -78,6 +78,7 @@
     <ClCompile Include="..\src\GameLogic\Scripts\WatcherThrowTool.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\WavePinger.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\WaveWalker.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\ZTwoDHero.cpp" />
     <ClInclude Include="..\src\GameLogic\Generated\Kernels.gen.h" />
     <ClInclude Include="..\src\Shared\EngineAPI.h" />
     <ClInclude Include="..\src\Shared\KernelCompat.h" />

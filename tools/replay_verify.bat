@@ -78,13 +78,13 @@ rem 前回の失敗マーカーが残っていると :diagnose が古い tick �
 del /q cache\*.mismatch.txt 2>nul
 if exist cache\replay_logs rd /s /q cache\replay_logs
 
-echo === parallel verification: 14 scene chains + jobs A/B + compute A/B + time travel x2 + what-if x2 + rule check ===
+echo === parallel verification: 15 scene chains + jobs A/B + compute A/B + time travel x2 + what-if x2 + rule check ===
 rem ★Entry は空白なし相対パスで渡す (人間/CI が bat を叩くのと同じ呼び形に固定。
 rem   バッチ読取りの罠と chcp 437 の理由は runner 冒頭のコメント参照)
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,perception,bt,anim,compute,jobsab,computeab,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,perception,bt,anim,compute,2d,jobsab,computeab,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 14 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav + perception + bt + anim + compute) + snapshot round-trip + jobs A/B + compute A/B + time travel + rule check
+echo [PASS] replay consistency (Debug/Release, 15 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav + perception + bt + anim + compute + 2d) + snapshot round-trip + jobs A/B + compute A/B + time travel + rule check
 exit /b 0
 
 rem ---------------------------------------------------------------- :failed
@@ -148,6 +148,11 @@ if exist cache\golden_anim.rep.mismatch.txt (
 if exist cache\golden_compute.rep.mismatch.txt (
     set DIAGFOUND=1
     call :diagnose "cache\golden_compute.rep" "--compute-demo"
+)
+if exist cache\golden_2d.rep.mismatch.txt (
+    set DIAGFOUND=1
+    rem 期待側の撮り直しは記録と同じ引数 (--synth-input 込み) でないと入力がずれる
+    call :diagnose "cache\golden_2d.rep" "--2d-demo --synth-input"
 )
 rem jobs A/B: 期待側は直列で録り直す (記録と同じ --no-jobs)
 if exist cache\jobsab_particle.rep.mismatch.txt (
@@ -373,6 +378,18 @@ if exist cache\compute_showcase.scene.json del /q cache\compute_showcase.scene.j
 call :chain cache\golden_compute.rep "--compute-demo" "--compute-demo"
 exit /b %ERRORLEVEL%
 
+rem ---- 2D 横スクロール (M94、ADR-033)。タイルマップ (衝突・書き換え・破壊) + plane2D の剛体 3 個 + kinematic の移動床 +
+rem Effector2D のベルト + 主人公 (CC plane2D、スプライト列、PlayerInput + GameLogic の ZTwoDHero) + 敵 (GridAgent2D + BT の MoveTo) +
+rem 丘 (SpriteShape2D の衝突) + Camera2DFollow が 1 本の tick タイムラインで回り、Debug / Release / Server.exe でビット一致すること。
+rem ★記録側にだけ --synth-input を渡す (acoustic / flow と同じ理由)。無入力だと主人公が一歩も動かず、敵も追う相手が動かない。
+rem   合成入力は左右・ジャンプ・下を流し、壁へ押し付けると前方のタイルを攻撃する (TilemapDamageCell)。検証側には渡さない
+rem   (入力は .rep に記録済み)。ZTwoDHero / ZTwoDMover は GameLogic.dll なので、DLL が焼けていないと主人公が動かないまま緑になる
+rem シーンはコードから毎回組み直す (保存済みが残っていると Editor はそちらをロードする)
+:job_2d
+if exist cache\2d_showcase.scene.json del /q cache\2d_showcase.scene.json
+call :chain cache\golden_2d.rep "--2d-demo --synth-input" "--2d-demo"
+exit /b %ERRORLEVEL%
+
 rem ---- jobs A/B (M90g、ADR-028) ----
 rem sim の並列化 (CPU 粒子 / Perception / PartFollow / IK) が「直列と 1 ビットも違わない」ことの
 rem 実シーンでの証明。直列 (--no-jobs) で録った .rep を、ワーカーを起こした Debug / Release で
@@ -521,7 +538,8 @@ rem 失敗した照合の「どのフィールドが割れたか」を出す (M5
 rem   %1 = .rep パス / %2 = シーン切替の追加引数 ("" / "--parts-demo" / "--flow-demo" /
 rem                        "--local-demo" / "--physics-demo" / "--joint-demo" /
 rem                        "--acoustic-demo" / "--ui-demo --ui-demo-input" / "--fracture-demo" / "--nav-demo" /
-rem                        "--perception-demo" / "--bt-demo" / "--anim-demo" / "--compute-demo")
+rem                        "--perception-demo" / "--bt-demo" / "--anim-demo" / "--compute-demo" /
+rem                        "--2d-demo --synth-input")
 rem 失敗側のダンプは EngineLoop が MISMATCH 時に自動で残しているので、
 rem ここでは期待側 (= その .rep を録ったのと同じコマンド) を撮り直して突き合わせる
 :diagnose

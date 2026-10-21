@@ -463,6 +463,23 @@ call :shot bt --bt-demo
 set SHOT=%SHOTBASE% --no-fxaa
 :skip_bt
 
+rem ---- 31/32 枚目 (M94w): 2D 横スクロールのデモ。**ピクセルパーフェクト (320x180 を 3 倍の整数倍拡大) / タイルマップのルール・前景 /
+rem      スプライト列 / SpriteShape の丘 / Line2D / 視差 / Light2D・影・法線の唯一のピクセル被覆**。
+rem      2d = 昼 (frame 3、既定の撮り方。主人公は一方通行板の上、敵は段差の右)。
+rem      2d_lights = 夜 (--2d-night、frame 120。吊りランプと主人公のランタンの 2 灯と影)。120 tick 経つと敵が段差へ跳びかかる最中で、
+rem      GameLogic.dll (ZTwoDHero) と GridAgent2D の経路が絵に出る。sim は固定 tick の決定論 (Debug / Release / Server でビット一致、replay_verify の 2d ジョブ)。
+rem ★GameLogic.dll が要る (主人公の入力を ZTwoDHero が読む。--synth-input は付けないので静止入力 = 主人公は動かず、敵だけが動く)
+rem ★保存済みが残っているとロード経路に落ちるので撮影前に消す (physics 等と同じ)
+rem ★ライトバッファ (RGBA16F) と影・法線の RT を含むので、ランナーで赤くなったら MYE_SHOT_SKIP_2D を立てる
+if defined MYE_SHOT_SKIP_2D goto :skip_2d
+set TWOD_SCENE=cache\2d_showcase.scene.json
+if exist %TWOD_SCENE% del /q %TWOD_SCENE%
+call :shot 2d --2d-demo
+set SHOT=--warp --no-audio --font-embedded --width 960 --height 540 --frames 125 --shot-frame 120 --no-fxaa
+call :shot 2d_lights --2d-demo --2d-night
+set SHOT=%SHOTBASE% --no-fxaa
+:skip_2d
+
 echo.
 if %UPDATE%==1 (
     echo [shot_verify] golden updated in %GOLDEN% - review the images before committing
@@ -475,9 +492,9 @@ if not %FAILED%==0 (
     exit /b 1
 )
 if defined MYE_SHOT_SKIP_FXAA (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints/fog/particle/acoustic/nav/fracture_after at frame 120, bt at frame 260^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, no-fxaa, tol=%TOL% + terrain at 12, physics/joints/fog/particle/acoustic/nav/fracture_after/2d_lights at frame 120, bt at frame 260^)
 ) else (
-    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints/fog/particle/acoustic/nav/fracture_after at frame 120, bt at frame 260 + rtrefl_restir at frame 40 + fxaa/taa/ssr/froxel/fog/particle/rt at tol=0^)
+    echo [PASS] screenshot regression ^(%SHOTS% shots, warp, tol=%TOL% + terrain at 12 + physics/joints/fog/particle/acoustic/nav/fracture_after/2d_lights at frame 120, bt at frame 260 + rtrefl_restir at frame 40 + fxaa/taa/ssr/froxel/fog/particle/rt at tol=0^)
 )
 exit /b 0
 

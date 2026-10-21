@@ -1,0 +1,24 @@
+{
+  "engine": "MyEngine",
+  "spriteshape": 1,
+  "name": "Hill",
+  "fill": 3242591731706757130,
+  "height": 0.5,
+  "edges": [
+    {
+      "angleFrom": -45,
+      "angleTo": 45,
+      "sprite": 3242591731706757127
+    },
+    {
+      "angleFrom": 45,
+      "angleTo": 135,
+      "sprite": 3242591731706757128
+    },
+    {
+      "angleFrom": -135,
+      "angleTo": -45,
+      "sprite": 3242591731706757129
+    }
+  ]
+}

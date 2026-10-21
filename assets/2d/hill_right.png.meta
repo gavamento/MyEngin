@@ -1,0 +1,12 @@
+{
+  "guid": "2d00000000000009",
+  "type": "texture",
+  "version": 2,
+  "tex": {
+    "srgb": 0,
+    "generateMips": 0,
+    "compress": 0,
+    "filter": 2,
+    "pixelsPerUnit": 32
+  }
+}

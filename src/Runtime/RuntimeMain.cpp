@@ -130,6 +130,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 app.showcaseOptions.terrainLodDistance = static_cast<float>(_wtof(argv[++i]));
             } else if (arg == L"--terrain-skirt" && i + 1 < argc) {
                 app.showcaseOptions.terrainSkirtDepth = static_cast<float>(_wtof(argv[++i])); // 負値 = 無し
+            } else if (arg == L"--2d-night") {
+                app.showcaseOptions.twoDNight = true; // M94: --2d-demo に Light2D を足す (golden 2d_lights)
+            } else if (arg == L"--2d-stress") {
+                app.showcaseOptions.twoDStress = true; // M94: --2d-demo に負荷計測用の物を足す
             } else if (arg == L"--project" && i + 1 < argc) {
                 // M26: プロジェクト指定。指定が無ければ dist 配布物は exe 隣の assets を自動発見する
                 config.projectRoot = std::filesystem::absolute(argv[++i]).wstring();

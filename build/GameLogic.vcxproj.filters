@@ -118,6 +118,9 @@
     <ClCompile Include="..\src\GameLogic\Scripts\WaveWalker.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\ZTwoDHero.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClInclude Include="..\src\GameLogic\Generated\Kernels.gen.h">
       <Filter>Generated</Filter>
     </ClInclude>

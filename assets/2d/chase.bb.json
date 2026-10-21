@@ -1,0 +1,11 @@
+{
+  "engine": "MyEngine",
+  "blackboard": 1,
+  "name": "chase",
+  "keys": [
+    {
+      "name": "target",
+      "type": "Entity"
+    }
+  ]
+}

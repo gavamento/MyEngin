@@ -1,0 +1,23 @@
+{
+  "engine": "MyEngine",
+  "spriteanim": 1,
+  "name": "Walk",
+  "frames": [
+    {
+      "sprite": 14895034577925295425,
+      "ticks": 8
+    },
+    {
+      "sprite": 14895035677436923636,
+      "ticks": 8
+    },
+    {
+      "sprite": 14895036776948551847,
+      "ticks": 8
+    },
+    {
+      "sprite": 14895037876460180058,
+      "ticks": 8
+    }
+  ]
+}
