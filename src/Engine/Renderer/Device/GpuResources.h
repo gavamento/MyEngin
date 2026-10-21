@@ -373,12 +373,19 @@ public:
     // Tex2D 解決)。対象外 (forward_lit 等) のマテリアルは nullptr を返す — 呼び出し側は
     // 従来どおり mat->shader を ShaderManager::Get() へ渡す経路を使うこと。
     // 変化 (JSON 再読込・シェーダの世代) が無ければ再パックせず前回の結果を返す
+    // forSprite = true は Sprite2D.material からの呼び出し (スプライト用エントリを持つシェーダだけ ready になる)。
+    // 既定 (false) はメッシュ用で、スプライト専用シェーダは ready にならない
     SurfaceMaterialState* GetOrBuildSurfaceState(AssetID materialId, ShaderManager& shaders,
-                                                 TextureLibrary& textures, GraphicsDevice& device);
+                                                 TextureLibrary& textures, GraphicsDevice& device,
+                                                 bool forSprite = false);
 
     // デバイス消失からの復旧 (M88)。サーフェスマテリアルの GPU 側 CB を手放し、次の
     // GetOrBuildSurfaceState で CPU 側の perMaterialCB から作り直させる。Material 本体は GPU を持たない
     void ReleaseGpu();
+
+    // .mat.json の shader が "*.surface" 短名ならその名前 (横テーブルの値)。サーフェスでない / 未登録は nullptr。
+    // Inspector が「このマテリアルのシェーダは何で、使えるか」を調べるための読み取り専用の窓口
+    const std::string* SurfaceShaderName(AssetID materialId) const;
 
     // M79 sub-06: 視錐台カリング / CSM キャスター AABB 集約の余白 [m]。サーフェスでない
     // マテリアル (横テーブルに未登録) は 0 を返す — padding は非サーフェスに効かない (spec §4.1)。

@@ -187,9 +187,13 @@ bool DecodeShaderCacheEntry(const std::vector<uint8_t>& bytes, ShaderCacheEntry&
         }
     }
     uint32_t blobCount = 0;
-    // CS = 1 本 / VS+PS = 2 本 / サーフェス = 5 本 以外は形式違反
-    const uint32_t expectedBlobs = out.isSurface ? 5u : (out.isCompute ? 1u : 2u);
-    if (!r.Pod(blobCount) || blobCount != expectedBlobs) {
+    // CS = 1 本 / VS+PS = 2 本 / サーフェス = 5 本 (メッシュ) か 2 本 (スプライト) か 7 本 (両方) 以外は形式違反
+    if (!r.Pod(blobCount)) {
+        return false;
+    }
+    const bool blobCountOk = out.isSurface ? (blobCount == 5u || blobCount == 2u || blobCount == 7u)
+                                           : (blobCount == (out.isCompute ? 1u : 2u));
+    if (!blobCountOk) {
         return false;
     }
     out.blobs.resize(blobCount);

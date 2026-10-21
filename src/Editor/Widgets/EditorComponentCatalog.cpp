@@ -115,6 +115,7 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "Tilemap", { ICON_FA_BORDER_ALL, "2D", "2D タイルマップ" } },
         { "Light2D", { ICON_FA_LIGHTBULB, "2D", "2D ライト" } },
         { "ShadowCaster2D", { ICON_FA_CIRCLE_HALF_STROKE, "2D", "2D シャドウキャスター" } }, // M94p
+        { "Parallax2D", { ICON_FA_LAYER_GROUP, "2D", "2D 視差" } }, // M94q
     };
     return t;
 }

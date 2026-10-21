@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "passes": [
+    {
+      "kind": "post",
+      "shader": "CrtScanline.post",
+      "enabled": true,
+      "insertion": "AfterTonemap",
+      "priority": 100,
+      "properties": {
+        "_Scanline": 0.35,
+        "_Aberration": 1.5,
+        "_ScanlinePitch": 3.0
+      }
+    }
+  ]
+}

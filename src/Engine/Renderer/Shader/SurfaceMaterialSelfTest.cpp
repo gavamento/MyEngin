@@ -5,6 +5,7 @@
 //====================================================================================
 #include "Engine/Renderer/Shader/SurfaceMaterialSelfTest.h"
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -22,6 +23,8 @@
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Renderer/Passes/Sprite2DDrawList.h"
+#include "Engine/Renderer/Passes/Sprite2DPass.h"
 #include "Engine/Renderer/Pipeline/ForwardPath.h"
 #include "Engine/Renderer/Device/GpuResources.h"
 #include "Engine/Renderer/Device/GraphicsDevice.h"
@@ -993,6 +996,266 @@ float4 PSMain(VSOut i) : SV_Target
 
 } // namespace
 
+// ---- 6. スプライト用サーフェス (Sprite2D.material): コンパイル / キャッシュ / 使い道の振り分け / 実描画 ----
+void TestSprite2DSurface(GraphicsDevice& device, const std::wstring& engineShaderDir)
+{
+    MYE_LOG_INFO("-- Sprite2D.material: スプライト用サーフェス --");
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir = fs::temp_directory_path(ec) / L"mye_surface_material_selftest_sprite";
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+
+    const char* kSpriteTint = R"HLSL(
+/*@MyEngineProperties
+_Tint ("Tint", Color) = (1,1,1,1)
+@*/
+#include "MyEngineSurfaceSprite.hlsli"
+cbuffer MyEnginePerMaterial
+{
+    float4 _Tint;
+};
+float4 PSMain(MyeSpriteInput i) : SV_Target
+{
+    return MyeSampleSprite(i.uv) * i.color * _Tint;
+}
+)HLSL";
+    // メッシュ用とスプライト用を 1 ファイルに併記する (PSMain はオーバーロード)
+    const char* kBoth = R"HLSL(
+#include "MyEngineSurface.hlsli"
+#include "MyEngineSurfaceSprite.hlsli"
+struct VSIn { float3 pos : POSITION; };
+struct VSOut { float4 pos : SV_Position; };
+VSOut VSMain(VSIn v)
+{
+    VSOut o;
+    o.pos = mul(mul(float4(v.pos, 1.0f), gWorld), gViewProj);
+    return o;
+}
+float4 PSMain(VSOut i) : SV_Target { return float4(1.0f, 0.0f, 0.0f, 1.0f); }
+float4 PSMain(MyeSpriteInput i) : SV_Target { return i.color; }
+)HLSL";
+    const char* kMeshOnly = R"HLSL(
+#include "MyEngineSurface.hlsli"
+struct VSIn { float3 pos : POSITION; };
+struct VSOut { float4 pos : SV_Position; };
+VSOut VSMain(VSIn v)
+{
+    VSOut o;
+    o.pos = mul(mul(float4(v.pos, 1.0f), gWorld), gViewProj);
+    return o;
+}
+float4 PSMain(VSOut i) : SV_Target { return float4(1.0f, 0.0f, 0.0f, 1.0f); }
+)HLSL";
+    // スプライト用の include はあるが、PSMain の引数が規約と違う
+    const char* kBad = R"HLSL(
+#include "MyEngineSurfaceSprite.hlsli"
+float4 PSMain(float x) : SV_Target { return float4(x, x, x, 1.0f); }
+)HLSL";
+    WriteFile(dir / L"SpriteTint.surface.hlsl", kSpriteTint);
+    WriteFile(dir / L"SpriteBoth.surface.hlsl", kBoth);
+    WriteFile(dir / L"MeshOnly.surface.hlsl", kMeshOnly);
+    WriteFile(dir / L"SpriteBad.surface.hlsl", kBad);
+    const auto writeMat = [&](const wchar_t* file, const char* shader, const nlohmann::json& props) {
+        nlohmann::json m;
+        m["engine"] = "MyEngine";
+        m["material"] = 1;
+        m["shader"] = shader;
+        m["properties"] = props;
+        WriteFile(dir / file, m.dump(2));
+    };
+    writeMat(L"SpriteTint.mat.json", "SpriteTint.surface", { { "_Tint", { 0.0, 1.0, 0.0, 1.0 } } });
+    writeMat(L"SpriteBoth.mat.json", "SpriteBoth.surface", nlohmann::json::object());
+    writeMat(L"MeshOnly.mat.json", "MeshOnly.surface", nlohmann::json::object());
+    writeMat(L"SpriteBad.mat.json", "SpriteBad.surface", nlohmann::json::object());
+
+    std::vector<std::wstring> dirs = { dir.wstring(), engineShaderDir };
+    const fs::path cacheDir = dir / L"cache";
+    fs::create_directories(cacheDir, ec);
+    ShaderManager shaders;
+    shaders.SetCacheDir(cacheDir.wstring(), true);
+    Check(shaders.Init(device, dirs), "shader manager init (sprite surface test)");
+
+    // ---- コンパイルと入口の持ち方 ----
+    SurfaceProgram* tint = shaders.GetSurface(shaders.LoadSurface("SpriteTint.surface"));
+    Check(tint != nullptr && tint->valid, "スプライト専用シェーダ (MyEngineSurfaceSprite.hlsli のみ) がコンパイルできる");
+    if (tint != nullptr && !tint->valid) {
+        MYE_LOG_ERROR("    error: %s", tint->errorMessage.c_str());
+    }
+    if (tint != nullptr && tint->valid) {
+        Check(tint->hasSprite && !tint->hasMesh && tint->spriteVS && tint->spritePS && tint->spriteInputLayout
+                  && !tint->colorVS && !tint->colorPS && !tint->shadowVS && !tint->velocityVS,
+              "スプライト専用は sprite の入口だけを持つ (メッシュ用の色 / 影 / 速度は無い)");
+        // C++ 側 (Sprite2DPass の SurfaceCb) と HLSL の予約 CB のレイアウトが一致する
+        const auto vsIt = tint->spriteVSReflect.vars.find("gMyeSpriteViewProj");
+        Check(vsIt != tint->spriteVSReflect.vars.end() && vsIt->second.offset == 0 && vsIt->second.size == 64
+                  && vsIt->second.cbufSize == 80,
+              "MyEngineSprite2D.gMyeSpriteViewProj は offset 0 / 64 バイト、cbuffer は 80 バイト");
+        const auto psIt = tint->spritePSReflect.vars.find("gMyeSpriteLit");
+        Check(psIt != tint->spritePSReflect.vars.end() && psIt->second.offset == 64 && psIt->second.size == 16,
+              "MyEngineSprite2D.gMyeSpriteLit は offset 64 / 16 バイト");
+        Check(tint->spritePSReflect.resources.contains("gMyeSpriteTex")
+                  && tint->spritePSReflect.resources.contains("gMyeLightBuffer")
+                  && tint->spritePSReflect.resources.contains("MyEnginePerMaterial"),
+              "PS のリフレクションに gMyeSpriteTex / gMyeLightBuffer / MyEnginePerMaterial が載る");
+    }
+    SurfaceProgram* both = shaders.GetSurface(shaders.LoadSurface("SpriteBoth.surface"));
+    Check(both != nullptr && both->valid && both->hasMesh && both->hasSprite && both->colorVS && both->spriteVS,
+          "メッシュ用とスプライト用を併記したシェーダは両方の入口を持つ");
+    if (both != nullptr && !both->valid) {
+        MYE_LOG_ERROR("    error: %s", both->errorMessage.c_str());
+    }
+    SurfaceProgram* meshOnly = shaders.GetSurface(shaders.LoadSurface("MeshOnly.surface"));
+    Check(meshOnly != nullptr && meshOnly->valid && meshOnly->hasMesh && !meshOnly->hasSprite && !meshOnly->spriteVS,
+          "従来のメッシュ用シェーダはスプライトの入口を持たない");
+    SurfaceProgram* bad = shaders.GetSurface(shaders.LoadSurface("SpriteBad.surface"));
+    Check(bad != nullptr && !bad->valid && bad->errorMessage.find("スプライト") != std::string::npos,
+          "PSMain の規約違反は「スプライト」付きの規約エラーで失敗する");
+
+    // ---- バイトコードキャッシュ: blob の数 (2 / 7 / 5) が違っても同じ入口が復元される ----
+    {
+        ShaderManager again;
+        again.SetCacheDir(cacheDir.wstring(), true);
+        Check(again.Init(device, dirs), "shader manager init (cache B)");
+        SurfaceProgram* t2 = again.GetSurface(again.LoadSurface("SpriteTint.surface"));
+        SurfaceProgram* b2 = again.GetSurface(again.LoadSurface("SpriteBoth.surface"));
+        SurfaceProgram* m2 = again.GetSurface(again.LoadSurface("MeshOnly.surface"));
+        Check(again.CacheHits() == 3 && again.CacheMisses() == 0, "3 本とも 2 本目の ShaderManager でキャッシュヒットする");
+        Check(t2 && t2->valid && t2->hasSprite && !t2->hasMesh && b2 && b2->valid && b2->hasSprite && b2->hasMesh
+                  && m2 && m2->valid && !m2->hasSprite && m2->hasMesh,
+              "キャッシュ経由でも hasMesh / hasSprite が復元される (blob 数 2 / 7 / 5)");
+    }
+
+    RenderResources resources;
+    resources.Init(device);
+    const auto loadMat = [&](const wchar_t* file) {
+        return resources.materials.LoadFromFile((dir / file).wstring(), resources.textures, dir.wstring());
+    };
+    const AssetID tintMat = loadMat(L"SpriteTint.mat.json");
+    const AssetID bothMat = loadMat(L"SpriteBoth.mat.json");
+    const AssetID meshMat = loadMat(L"MeshOnly.mat.json");
+    const AssetID badMat = loadMat(L"SpriteBad.mat.json");
+
+    // ---- 使い道の振り分け (メッシュ用の呼び出しにスプライト専用を渡さない / その逆も) ----
+    {
+        SurfaceMaterialState* forSprite =
+            resources.materials.GetOrBuildSurfaceState(tintMat, shaders, resources.textures, device, true);
+        Check(forSprite != nullptr && forSprite->ready && forSprite->perMaterialCB.size() == 16
+                  && ReadFloatAt(forSprite->perMaterialCB, 4) == 1.0f && ReadFloatAt(forSprite->perMaterialCB, 0) == 0.0f,
+              "スプライト専用 + forSprite: ready で、MyEnginePerMaterial に _Tint (0,1,0,1) が詰まる");
+        SurfaceMaterialState* asMesh =
+            resources.materials.GetOrBuildSurfaceState(tintMat, shaders, resources.textures, device, false);
+        Check(asMesh != nullptr && !asMesh->ready && asMesh->useErrorFallback
+                  && asMesh->errorMessage.find("スプライト専用") != std::string::npos,
+              "スプライト専用 + メッシュ用の呼び出し: ready にならず、理由が出る");
+        SurfaceMaterialState* meshAsSprite =
+            resources.materials.GetOrBuildSurfaceState(meshMat, shaders, resources.textures, device, true);
+        Check(meshAsSprite != nullptr && !meshAsSprite->ready, "メッシュ専用 + forSprite: ready にならない");
+        SurfaceMaterialState* bothSprite =
+            resources.materials.GetOrBuildSurfaceState(bothMat, shaders, resources.textures, device, true);
+        Check(bothSprite != nullptr && bothSprite->ready, "併記シェーダ + forSprite: ready");
+        SurfaceMaterialState* bothMesh =
+            resources.materials.GetOrBuildSurfaceState(bothMat, shaders, resources.textures, device, false);
+        Check(bothMesh != nullptr && bothMesh->ready, "併記シェーダ + メッシュ用の呼び出し: ready");
+        const std::string* name = resources.materials.SurfaceShaderName(tintMat);
+        Check(name != nullptr && *name == "SpriteTint.surface"
+                  && resources.materials.SurfaceShaderName(AssetID{ 1 }) == nullptr,
+              "SurfaceShaderName は *.surface の名前を返し、未登録は nullptr");
+    }
+
+    // ---- 実描画: Sprite2DPass が 4 枚のクアッドを描き分ける ----
+    constexpr UINT kWidth = 128;
+    constexpr UINT kHeight = 32;
+    ID3D11Device* dev = device.Device();
+    ID3D11DeviceContext* dc = device.Context();
+    D3D11_TEXTURE2D_DESC td = {};
+    td.Width = kWidth;
+    td.Height = kHeight;
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    td.SampleDesc = { 1, 0 };
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_RENDER_TARGET;
+    ComPtr<ID3D11Texture2D> colorTex;
+    ComPtr<ID3D11RenderTargetView> colorRtv;
+    bool ok = SUCCEEDED(dev->CreateTexture2D(&td, nullptr, colorTex.GetAddressOf()));
+    ok = ok && SUCCEEDED(dev->CreateRenderTargetView(colorTex.Get(), nullptr, colorRtv.GetAddressOf()));
+    D3D11_TEXTURE2D_DESC sd = td;
+    sd.Usage = D3D11_USAGE_STAGING;
+    sd.BindFlags = 0;
+    sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ComPtr<ID3D11Texture2D> staging;
+    ok = ok && SUCCEEDED(dev->CreateTexture2D(&sd, nullptr, staging.GetAddressOf()));
+    Check(ok, "スプライト描画確認用の RTV / staging を作成できる");
+    Sprite2DPass pass;
+    Check(ok && pass.Init(device, shaders), "Sprite2DPass::Init");
+    if (ok && pass.IsReady()) {
+        // world = NDC (view / proj とも単位行列)。x は 4 等分: [A: tint 材質][B: 材質なし][C: 壊れた材質][D: メッシュ専用の材質]
+        const AssetID white = resources.textures.White();
+        Sprite2DDrawList list;
+        const float colors[4][4] = { { 1, 1, 1, 1 }, { 1, 0, 0, 1 }, { 0, 0, 1, 1 }, { 1, 1, 0, 1 } };
+        const AssetID mats[4] = { tintMat, AssetID{}, badMat, meshMat };
+        for (int i = 0; i < 4; ++i) {
+            const float x0 = -1.0f + 0.5f * static_cast<float>(i);
+            const float x1 = x0 + 0.5f;
+            const float z = 0.5f;
+            const float pos[4][3] = { { x0, 1, z }, { x1, 1, z }, { x1, -1, z }, { x0, -1, z } };
+            const float uv[4][2] = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } };
+            Sprite2DVertex corner[4];
+            for (int c = 0; c < 4; ++c) {
+                std::memcpy(corner[c].pos, pos[c], sizeof(corner[c].pos));
+                std::memcpy(corner[c].uv, uv[c], sizeof(corner[c].uv));
+                std::memcpy(corner[c].color, colors[i], sizeof(corner[c].color));
+            }
+            Sprite2DBatch batch;
+            batch.texture = white;
+            batch.material = mats[i];
+            batch.start = static_cast<uint32_t>(list.vertices.size());
+            batch.count = 6;
+            list.batches.push_back(batch);
+            const int order[6] = { 0, 1, 2, 0, 2, 3 };
+            for (int v : order) {
+                list.vertices.push_back(corner[v]);
+            }
+        }
+        XMFLOAT4X4 identity;
+        XMStoreFloat4x4(&identity, XMMatrixIdentity());
+        const float clear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+        ID3D11RenderTargetView* rtv = colorRtv.Get();
+        dc->OMSetRenderTargets(1, &rtv, nullptr);
+        D3D11_VIEWPORT vp = { 0.0f, 0.0f, static_cast<float>(kWidth), static_cast<float>(kHeight), 0.0f, 1.0f };
+        dc->RSSetViewports(1, &vp);
+        dc->ClearRenderTargetView(rtv, clear);
+        const uint32_t drawn =
+            pass.Render(device, shaders, resources.textures, resources.materials, list, identity, identity, nullptr);
+        Check(drawn == 4, "4 バッチとも描かれる (材質が使えなくても内蔵で描く)");
+
+        dc->CopyResource(staging.Get(), colorTex.Get());
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        std::array<std::array<uint8_t, 4>, 4> px = {};
+        if (SUCCEEDED(dc->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+            for (int i = 0; i < 4; ++i) {
+                const uint8_t* p = static_cast<const uint8_t*>(mapped.pData) + 16 * mapped.RowPitch + (16 + 32 * i) * 4;
+                std::memcpy(px[i].data(), p, 4);
+            }
+            dc->Unmap(staging.Get(), 0);
+        }
+        const auto approxEq = [](const std::array<uint8_t, 4>& c, int r, int g, int b) {
+            return std::abs(c[0] - r) <= 2 && std::abs(c[1] - g) <= 2 && std::abs(c[2] - b) <= 2;
+        };
+        Check(approxEq(px[0], 0, 255, 0), "A: 材質あり = サーフェスの PSMain (白 * 頂点色 * _Tint 緑) で描かれる");
+        Check(approxEq(px[1], 255, 0, 0), "B: 材質なし = 内蔵シェーダ (頂点色の赤)。サーフェスの後でも状態が戻っている");
+        Check(approxEq(px[2], 0, 0, 255), "C: 壊れた材質 = 内蔵シェーダへフォールバックする (頂点色の青)");
+        Check(approxEq(px[3], 255, 255, 0), "D: メッシュ専用の材質 = 内蔵シェーダへフォールバックする (頂点色の黄)");
+        if (!approxEq(px[0], 0, 255, 0) || !approxEq(px[1], 255, 0, 0) || !approxEq(px[2], 0, 0, 255) || !approxEq(px[3], 255, 255, 0)) {
+            MYE_LOG_ERROR("    A=(%d,%d,%d) B=(%d,%d,%d) C=(%d,%d,%d) D=(%d,%d,%d)", px[0][0], px[0][1], px[0][2], px[1][0],
+                          px[1][1], px[1][2], px[2][0], px[2][1], px[2][2], px[3][0], px[3][1], px[3][2]);
+        }
+    }
+    fs::remove_all(dir, ec);
+}
+
 bool RunSurfaceMaterialSelfTest()
 {
     MYE_LOG_INFO("==== M79 surface material self test (sub-02) ====");
@@ -1014,6 +1277,7 @@ bool RunSurfaceMaterialSelfTest()
         TestForwardPathDrawsSurfaceItems(device, engineShaderDir);
         TestForwardPathDoubleSidedCullingAndRestore(device, engineShaderDir); // M79 sub-06
         TestSampleToonFlatCompiles(device, engineShaderDir);
+        TestSprite2DSurface(device, engineShaderDir); // M94q
     }
 
     device.Shutdown();

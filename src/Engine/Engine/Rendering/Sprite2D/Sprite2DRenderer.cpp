@@ -40,6 +40,11 @@ constexpr float kMinFrustumDeterminant = 1.0e-20f;
 // 法線を回すワールド行列の軸の長さの下限 (これ未満の軸は回さない)
 constexpr float kMinAxisLength = 1.0e-6f;
 
+// Parallax2D の繰り返し: 1 スプライトの複製の上限、間隔の下限、添字の絶対値の上限 (int への変換を安全にする)
+constexpr int32_t kParallaxMaxCopies = 64;
+constexpr float kMinRepeatPeriod = 1.0e-4f;
+constexpr double kMaxRepeatIndex = 1.0e6;
+
 // 1 方向 (x か y) の 1 区間。dest はワールドの小さい側から、src は画素の小さい側から
 struct Piece {
     float d0, d1; // ワールド座標 (d0 < d1)
@@ -176,18 +181,21 @@ AssetID Sprite2DRenderer::EnsureMissingTexture(RenderResources& resources)
 }
 
 void Sprite2DRenderer::Push(AssetID texture, bool pointFilter, uint8_t stencil, float alphaCutoff, bool lit,
-                            const Sprite2DVertex* v, uint32_t count)
+                            const Sprite2DVertex* v, uint32_t count, AssetID material)
 {
     if (count == 0) {
         return;
     }
-    // ライト群の切り替え直後は、同じテクスチャでも群の境界でバッチを割る (群ごとにライトバッファが違う)
+    // ライト群の切り替え直後は、同じテクスチャでも群の境界でバッチを割る (群ごとにライトバッファが違う)。
+    // マテリアルが違えばシェーダが違うのでバッチを割る
     if (forceNewBatch_ || list_.batches.empty() || list_.batches.back().texture != texture
         || list_.batches.back().pointFilter != pointFilter || list_.batches.back().stencil != stencil
-        || list_.batches.back().alphaCutoff != alphaCutoff || list_.batches.back().lit != lit) {
+        || list_.batches.back().alphaCutoff != alphaCutoff || list_.batches.back().lit != lit
+        || list_.batches.back().material != material) {
         forceNewBatch_ = false;
         Sprite2DBatch b;
         b.texture = texture;
+        b.material = material;
         b.pointFilter = pointFilter;
         b.stencil = stencil;
         b.alphaCutoff = alphaCutoff;
@@ -358,6 +366,57 @@ bool Sprite2DRenderer::BuildSliceQuads(const SliceInput& in, std::vector<SliceQu
     return capped;
 }
 
+// scratch_ に組んだ 1 枚目の外接矩形と正射影の表示範囲から、複製するオフセットの添字範囲 [first, last] を求める。
+// 繰り返しの無い軸は 0..0。表示範囲が取れない (透視 / 行列なし) ときも 0..0 で、1 枚だけ描く
+void Sprite2DRenderer::ParallaxRepeatRange(const Parallax2DComponent& px, int32_t& firstX, int32_t& lastX,
+                                           int32_t& firstY, int32_t& lastY, float& periodX, float& periodY)
+{
+    firstX = lastX = firstY = lastY = 0;
+    periodX = periodY = 0.0f;
+    if ((!px.repeatX && !px.repeatY) || !hasOrtho_ || scratch_.empty()) {
+        return;
+    }
+    float lo[2] = { scratch_[0].pos[0], scratch_[0].pos[1] };
+    float hi[2] = { lo[0], lo[1] };
+    for (const Sprite2DVertex& v : scratch_) {
+        for (int a = 0; a < 2; ++a) {
+            lo[a] = (std::min)(lo[a], v.pos[a]);
+            hi[a] = (std::max)(hi[a], v.pos[a]);
+        }
+    }
+    // 両軸を繰り返すときは 1 辺 8 枚 (8 x 8 = 上限 64)
+    const int32_t axisCap = (px.repeatX && px.repeatY) ? kParallaxMaxCopies / 8 : kParallaxMaxCopies;
+    const auto range = [&](int axis, bool enable, float repeatSize, float viewLo, float viewHi, int32_t& first,
+                           int32_t& last, float& period) {
+        if (!enable) {
+            return;
+        }
+        const float p = repeatSize > 0.0f ? repeatSize : (hi[axis] - lo[axis]);
+        if (!(p > kMinRepeatPeriod)) {
+            return;
+        }
+        const double a = std::ceil(static_cast<double>(viewLo - hi[axis]) / p);
+        const double b = std::floor(static_cast<double>(viewHi - lo[axis]) / p);
+        first = static_cast<int32_t>((std::max)(-kMaxRepeatIndex, (std::min)(kMaxRepeatIndex, a)));
+        last = static_cast<int32_t>((std::max)(-kMaxRepeatIndex, (std::min)(kMaxRepeatIndex, b)));
+        period = p;
+        if (last - first + 1 > axisCap) {
+            // 上限を超えるときは範囲の中央付近だけ描く (端は欠ける)
+            const int32_t center = (first + last) / 2;
+            first = center - axisCap / 2;
+            last = first + axisCap - 1;
+            if (!warnedParallaxCap_) {
+                warnedParallaxCap_ = true;
+                MYE_LOG_WARN("[sprite2d] Parallax2D の繰り返しが上限 (%d 枚) を超えたので端を省きました。"
+                             "repeatSize を大きくするか、スプライトを大きくしてください",
+                             kParallaxMaxCopies);
+            }
+        }
+    };
+    range(0, px.repeatX, px.repeatSize.x, orthoMin_.x, orthoMax_.x, firstX, lastX, periodX);
+    range(1, px.repeatY, px.repeatSize.y, orthoMin_.y, orthoMax_.y, firstY, lastY, periodY);
+}
+
 void Sprite2DRenderer::EmitSprite(const Item& item, RenderResources& resources)
 {
     const Sprite2DComponent& sp = *item.sprite;
@@ -365,7 +424,13 @@ void Sprite2DRenderer::EmitSprite(const Item& item, RenderResources& resources)
     if (!Resolve(sp.sprite, resources, true, r)) {
         return;
     }
-    const XMFLOAT4X4& m = *item.world;
+    // 視差: 描画位置だけをずらす (回転・スケール・当たりは変えない)
+    XMFLOAT4X4 shifted = *item.world;
+    if (item.parallax != nullptr && hasCamera_) {
+        shifted._41 += (cameraXY_.x - shifted._41) * (1.0f - item.parallax->factor.x);
+        shifted._42 += (cameraXY_.y - shifted._42) * (1.0f - item.parallax->factor.y);
+    }
+    const XMFLOAT4X4& m = shifted;
 
     scratch_.clear();
     capped_ = false;
@@ -412,14 +477,40 @@ void Sprite2DRenderer::EmitSprite(const Item& item, RenderResources& resources)
         }
     }
     const bool lit = !lightMeta_.empty() && sp.lit;
-    Push(r.texture, r.pointFilter, stencil, 0.0f, lit, scratch_.data(), static_cast<uint32_t>(scratch_.size()));
+    const AssetID normalTex = (lit && anyNormalMap_) ? ResolveNormalMap(sp.normalMap, resources) : AssetID{};
+    float xform[4] = {};
     if (lit && anyNormalMap_) {
-        // 法線 RT へ同じ頂点列を重ねる。法線マップが無いスプライトも平らな法線で描き、奥の法線を隠す
-        const AssetID normalTex = ResolveNormalMap(sp.normalMap, resources);
         anyNormalReady_ = anyNormalReady_ || !normalTex.IsNull();
-        float xform[4];
         NormalTransform(m, sp.flipX, sp.flipY, xform);
-        PushNormal(r.texture, normalTex, r.pointFilter, xform, scratch_.data(), static_cast<uint32_t>(scratch_.size()));
+    }
+    // 視差の繰り返し: 1 枚目 (scratch_ のまま) の後ろに、間隔ぶんずらした複製を足す
+    int32_t firstX = 0;
+    int32_t lastX = 0;
+    int32_t firstY = 0;
+    int32_t lastY = 0;
+    float periodX = 0.0f;
+    float periodY = 0.0f;
+    if (item.parallax != nullptr) {
+        ParallaxRepeatRange(*item.parallax, firstX, lastX, firstY, lastY, periodX, periodY);
+    }
+    for (int32_t ky = firstY; ky <= lastY; ++ky) {
+        for (int32_t kx = firstX; kx <= lastX; ++kx) {
+            const Sprite2DVertex* verts = scratch_.data();
+            const uint32_t count = static_cast<uint32_t>(scratch_.size());
+            if (kx != 0 || ky != 0) {
+                repeatScratch_.assign(scratch_.begin(), scratch_.end());
+                for (Sprite2DVertex& v : repeatScratch_) {
+                    v.pos[0] += periodX * static_cast<float>(kx);
+                    v.pos[1] += periodY * static_cast<float>(ky);
+                }
+                verts = repeatScratch_.data();
+            }
+            Push(r.texture, r.pointFilter, stencil, 0.0f, lit, verts, count, sp.material);
+            if (lit && anyNormalMap_) {
+                // 法線 RT へ同じ頂点列を重ねる。法線マップが無いスプライトも平らな法線で描き、奥の法線を隠す
+                PushNormal(r.texture, normalTex, r.pointFilter, xform, verts, count);
+            }
+        }
     }
 }
 
@@ -671,6 +762,12 @@ void Sprite2DRenderer::EmitTileChunk(const Item& item, World& world, RenderResou
 
 void Sprite2DRenderer::CollectSprites(World& world, bool hasGroups)
 {
+    // Parallax2D がシーンに無ければ、スプライトごとの引き当てをしない
+    bool anyParallax = false;
+    {
+        const ComponentTypeId reqParallax[] = { Parallax2DComponent::sTypeId };
+        world.ForEachArchetype(reqParallax, [&](Archetype& arch) { anyParallax = anyParallax || arch.Count() > 0; });
+    }
     const ComponentTypeId req[] = { Sprite2DComponent::sTypeId, WorldMatrixComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
         const int si = arch.FindTypeIndex(Sprite2DComponent::sTypeId);
@@ -685,6 +782,10 @@ void Sprite2DRenderer::CollectSprites(World& world, bool hasGroups)
             it.world = &static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
             if (it.sprite->lit && !it.sprite->normalMap.IsNull()) {
                 anyNormalMap_ = true;
+            }
+            if (anyParallax) {
+                it.parallax = world.GetComponent<Parallax2DComponent>(e);
+                hasParallaxItem_ = hasParallaxItem_ || it.parallax != nullptr;
             }
             AssignKeys(it, world, hasGroups, e, it.sprite->sortingLayerId, it.sprite->orderInLayer);
             items_.push_back(it);
@@ -1281,7 +1382,22 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
             }
         });
     }
+    hasParallaxItem_ = false;
+    hasCamera_ = false;
+    hasOrtho_ = false;
     CollectSprites(world, hasGroups);
+    if (hasParallaxItem_ && view != nullptr) {
+        // 視差の基準 = カメラのワールド位置 (view の逆行列の平行移動)
+        XMVECTOR det;
+        const XMMATRIX inv = XMMatrixInverse(&det, XMLoadFloat4x4(view));
+        if (std::fabs(XMVectorGetX(det)) >= kMinFrustumDeterminant) {
+            XMFLOAT4X4 invView;
+            XMStoreFloat4x4(&invView, inv);
+            cameraXY_ = { invView._41, invView._42 };
+            hasCamera_ = true;
+        }
+        hasOrtho_ = OrthoWorldBounds(view, proj, orthoMin_, orthoMax_);
+    }
     CollectMasks(world, hasGroups);
     CollectTilemaps(world, view, proj);
     if (items_.empty()) {

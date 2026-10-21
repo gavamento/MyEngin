@@ -1542,7 +1542,7 @@ AssetID ResolveSurfaceTexProperty(const nlohmann::json& v, TextureLibrary& textu
 SurfaceMaterialState* MaterialLibrary::GetOrBuildSurfaceState(AssetID materialId,
                                                               ShaderManager& shaders,
                                                               TextureLibrary& textures,
-                                                              GraphicsDevice& device)
+                                                              GraphicsDevice& device, bool forSprite)
 {
     const auto srcIt = surfaceSources_.find(materialId.value);
     if (srcIt == surfaceSources_.end()) {
@@ -1553,7 +1553,17 @@ SurfaceMaterialState* MaterialLibrary::GetOrBuildSurfaceState(AssetID materialId
 
     const AssetID progId = shaders.LoadSurface(src.shaderName);
     SurfaceProgram* prog = shaders.GetSurface(progId);
-    const bool progOk = (prog != nullptr) && prog->valid;
+    // 使い道 (メッシュ / スプライト) に合うエントリを持たないシェーダは、失敗と同じ扱いにする
+    // (メッシュ用の描画経路に、色 VS を持たないスプライト専用シェーダを渡さない)
+    std::string wrongUseMessage;
+    if (prog != nullptr && prog->valid) {
+        if (forSprite && !prog->hasSprite) {
+            wrongUseMessage = "サーフェス規約: このシェーダはスプライト用 (MyEngineSurfaceSprite.hlsli) ではありません";
+        } else if (!forSprite && !prog->hasMesh) {
+            wrongUseMessage = "サーフェス規約: このシェーダはスプライト専用で、メッシュのマテリアルには使えません";
+        }
+    }
+    const bool progOk = (prog != nullptr) && prog->valid && wrongUseMessage.empty();
     const uint64_t gen = progOk ? prog->generation : 0;
 
     SurfaceMaterialState& st = surfaceStates_[materialId.value];
@@ -1568,8 +1578,9 @@ SurfaceMaterialState* MaterialLibrary::GetOrBuildSurfaceState(AssetID materialId
     }
 
     if (!progOk) {
-        const std::string msg =
-            prog ? prog->errorMessage : ("surface shader not found: " + src.shaderName);
+        const std::string msg = !wrongUseMessage.empty()
+            ? wrongUseMessage
+            : (prog ? prog->errorMessage : ("surface shader not found: " + src.shaderName));
         if (!st.useErrorFallback || st.errorMessage != msg) {
             MYE_LOG_ERROR("surface material '%s': %s", src.shaderName.c_str(), msg.c_str());
         }
@@ -1644,6 +1655,8 @@ SurfaceMaterialState* MaterialLibrary::GetOrBuildSurfaceState(AssetID materialId
     };
     collect(prog->colorVSReflect);
     collect(prog->colorPSReflect);
+    collect(prog->spriteVSReflect);
+    collect(prog->spritePSReflect);
 
     std::vector<std::string> missing;
     PackPropertiesReflected(prog->propertiesSchema, values, reflectionVars, cbSize,
@@ -1700,6 +1713,12 @@ void MaterialLibrary::ReleaseGpu()
         // GetOrBuildSurfaceState が必ず再パックして CB を作り直す
         st.builtFromRevision = 0;
     }
+}
+
+const std::string* MaterialLibrary::SurfaceShaderName(AssetID materialId) const
+{
+    const auto it = surfaceSources_.find(materialId.value);
+    return it == surfaceSources_.end() ? nullptr : &it->second.shaderName;
 }
 
 float MaterialLibrary::GetSurfaceBoundsPadding(AssetID materialId) const

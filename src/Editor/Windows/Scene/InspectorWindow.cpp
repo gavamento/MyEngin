@@ -1256,6 +1256,29 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
         ImGui::SameLine();
         ImGui::TextDisabled("%s", Tr(StrId::Insp_WaterPreviewHint));
     }
+    // M94q: Sprite2D.material の注意。使えないマテリアルは内蔵のスプライトシェーダで描かれる (理由を見えるようにする)
+    if (std::strcmp(desc.name, "Sprite2D") == 0 && !tg.multi && ctx.resources != nullptr && ctx.shaders != nullptr) {
+        const auto* sprite2d = world.GetComponent<Sprite2DComponent>(tg.e);
+        if (sprite2d != nullptr && !sprite2d->material.IsNull()) {
+            const std::string* shaderName = ctx.resources->materials.SurfaceShaderName(sprite2d->material);
+            ImGui::PushTextWrapPos(0.0f);
+            if (shaderName == nullptr) {
+                ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_Sprite2DMaterialNoSurface));
+            } else {
+                const SurfaceProgram* prog = ctx.shaders->GetSurface(ctx.shaders->LoadSurface(*shaderName));
+                if (prog == nullptr || !prog->valid) {
+                    const std::string firstLine = (prog != nullptr && !prog->errorMessage.empty())
+                        ? prog->errorMessage.substr(0, prog->errorMessage.find('\n'))
+                        : std::string("shader not found");
+                    ImGui::TextColored(themeColor::Error, Tr(StrId::Insp_Sprite2DMaterialFailed), shaderName->c_str(),
+                                       firstLine.c_str());
+                } else if (!prog->hasSprite) {
+                    ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_Sprite2DMaterialNoSprite));
+                }
+            }
+            ImGui::PopTextWrapPos();
+        }
+    }
     // M94h: 2D 形状の Collider の注意 (アセット未解決 / 動的剛体での扱い)
     if (std::strcmp(desc.name, "Collider") == 0 && !tg.multi) {
         const auto* collider = world.GetComponent<ColliderComponent>(tg.e);
@@ -4546,6 +4569,26 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
             }
         }
         ImGui::EndPopup();
+    }
+    if (fname == "normalmap" && !id->IsNull()) {
+        // M94p: 法線は sRGB で読むと歪む。.meta の読み直しを毎フレーム繰り返さないよう、ID 単位に少し間を置く
+        static uint64_t cachedId = 0;
+        static int cachedFrame = -1000;
+        static bool cachedSrgbOn = false;
+        constexpr int kMetaRecheckFrames = 30;
+        const int frame = ImGui::GetFrameCount();
+        if (id->value != cachedId || frame < cachedFrame || frame - cachedFrame > kMetaRecheckFrames) {
+            cachedId = id->value;
+            cachedFrame = frame;
+            importmeta::TextureImportSettings tex;
+            const std::wstring texPath = assetguid::ResolvePath(id->value);
+            cachedSrgbOn = !texPath.empty() && importmeta::Resolve(texPath, tex) && tex.srgb == 1;
+        }
+        if (cachedSrgbOn) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "%s", Tr(StrId::Insp_Sprite2DNormalSrgbOn));
+            ImGui::PopTextWrapPos();
+        }
     }
     if (fname == "sprite") {
         // M94: 描画側は未解決のスプライトを内蔵のマゼンタで描く。理由を Inspector で見えるようにする

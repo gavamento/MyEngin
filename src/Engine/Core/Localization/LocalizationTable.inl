@@ -2238,6 +2238,14 @@ MYE_STR(Insp_Sprite2DUnresolved, "Sprite not found: drawn as a magenta square.",
                                "スプライトが見つかりません。マゼンタの四角で描画されます") // M94
 MYE_STR(Insp_Sprite2DSrgbOn, "The texture's .meta has sRGB = on: 2D sprites look darker. Set sRGB to auto/off.",
                                "テクスチャの .meta が sRGB = on です。2D スプライトが暗く出ます。sRGB を auto か off にしてください") // M94
+MYE_STR(Insp_Sprite2DNormalSrgbOn, "The normal map texture's .meta has sRGB = on: normals get distorted. Set sRGB to auto/off.",
+                               "法線マップのテクスチャの .meta が sRGB = on です。法線が歪みます。sRGB を auto か off にしてください") // M94
+MYE_STR(Insp_Sprite2DMaterialNoSurface, "The material has no *.surface shader: drawn with the built-in sprite shader.",
+                               "マテリアルが *.surface のシェーダを持たないため、内蔵のスプライトシェーダで描画されます") // M94
+MYE_STR(Insp_Sprite2DMaterialNoSprite, "The shader has no sprite entry (include MyEngineSurfaceSprite.hlsli): drawn with the built-in sprite shader.",
+                               "シェーダがスプライト用のエントリを持たない (MyEngineSurfaceSprite.hlsli を include していない) ため、内蔵のスプライトシェーダで描画されます") // M94
+MYE_STR(Insp_Sprite2DMaterialFailed, "Shader error (%s): %s -- drawn with the built-in sprite shader.",
+                               "シェーダーエラー (%s): %s -- 内蔵のスプライトシェーダで描画されます") // M94
 MYE_STR(Insp_NavAgentTypeMissing, "Agent type id %d is not defined in Project Settings.",
                                "エージェント種別 id %d は Project Settings にありません")
 MYE_STR(Insp_NavAgentTypeDiffers, "The agent size differs from the type '%s' in Project Settings. Bake copies the type's size.",

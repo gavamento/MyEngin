@@ -110,6 +110,8 @@ private:
     bool CompileProgram(const std::wstring& path, ShaderProgram& out); // out.isCompute を見て分岐
     // M79: 作者ソース + 生成エントリ (MyEngineSurfaceEntries.hlsli) を 5 エントリ
     // (色 VS/PS・影 VS・速度 VS/PS) 個別コンパイルし、リフレクション表と入力レイアウトまで作る。
+    // M94: MyEngineSurfaceSprite.hlsli を include した作者ソースは、スプライト用 2 エントリ
+    // (MyEngineSurfaceSpriteEntries.hlsli) も作る。MyEngineSurface.hlsli を include していなければスプライト専用。
     // previousGeneration: ホットリロード成功時に +1 して out.generation にする (0 = 初回)
     bool CompileSurfaceProgram(const std::wstring& path, SurfaceProgram& out,
                               uint64_t previousGeneration = 0);
@@ -123,7 +125,8 @@ private:
     // コンパイル直後で同じ関数を通す = 「キャッシュ経由だけ入力レイアウトが違う」を作らない
     bool Instantiate(const std::string& pathUtf8,
                      const std::vector<std::vector<uint8_t>>& blobs, ShaderProgram& out);
-    // M79 sub-02: サーフェス版 (5 blob: 色VS,色PS,影VS,速度VS,速度PS の順)
+    // M79 sub-02: サーフェス版 (5 blob: 色VS,色PS,影VS,速度VS,速度PS の順。M94: 末尾にスプライト VS,PS の 2 本。
+    // 2 本 = スプライト専用、7 本 = 両方)
     bool InstantiateSurface(const std::vector<std::vector<uint8_t>>& blobs, SurfaceProgram& out);
     // #include "name" を優先度順のルートで解決する (IncludeRecorder と同じ規則)。
     // 見つからなければ空文字列

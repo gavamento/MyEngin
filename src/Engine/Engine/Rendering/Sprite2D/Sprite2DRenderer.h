@@ -24,6 +24,7 @@ struct Sprite2DComponent;
 struct SpriteMask2DComponent;
 struct Light2DComponent;
 struct ShadowCaster2DComponent;
+struct Parallax2DComponent;
 struct SpriteDef;
 
 // World の active な Sprite2D / SpriteMask2D / Tilemap を集め、SpriteDef を解決して三角形リストに展開し、
@@ -113,6 +114,7 @@ private:
         DirectX::XMFLOAT3 tileOrigin = { 0.0f, 0.0f, 0.0f };
         const Sprite2DComponent* sprite = nullptr;
         const SpriteMask2DComponent* mask = nullptr;
+        const Parallax2DComponent* parallax = nullptr;
         const DirectX::XMFLOAT4X4* world = nullptr;
     };
 
@@ -177,7 +179,10 @@ private:
     void AddQuad(const DirectX::XMFLOAT4X4& m, float flipX, float flipY, const float color[4], float x0, float y0,
                  float x1, float y1, float u0, float v0, float u1, float v1);
     void Push(AssetID texture, bool pointFilter, uint8_t stencil, float alphaCutoff, bool lit,
-              const Sprite2DVertex* v, uint32_t count);
+              const Sprite2DVertex* v, uint32_t count, AssetID material = {});
+    // Parallax2D の繰り返し: scratch_ の 1 枚目と正射影の表示範囲から、複製の添字範囲と間隔を求める
+    void ParallaxRepeatRange(const Parallax2DComponent& px, int32_t& firstX, int32_t& lastX, int32_t& firstY,
+                             int32_t& lastY, float& periodX, float& periodY);
 
     // ---- 2D ライト ----
     // 収集したライトの対象層と Global の判定 (list_.lights と同じ添字は Global を除いた並び、meta は全ライト)
@@ -226,6 +231,14 @@ private:
     uint64_t simTick_ = 0;                               // Collect が受けた sim の tick (アニメーションタイル用)
     uint64_t tileFrame_ = 0;                             // Collect の通し番号 (使われなくなったチャンクの掃除用)
     std::vector<Sprite2DVertex> tileScratch_;            // 原点を足した 1 run 分の頂点
+    std::vector<Sprite2DVertex> repeatScratch_;          // 視差の複製 1 枚分の頂点
+    bool hasParallaxItem_ = false;                       // Parallax2D を持つ Sprite2D がある (カメラ位置を求める条件)
+    bool hasCamera_ = false;
+    DirectX::XMFLOAT2 cameraXY_ = { 0.0f, 0.0f };        // 視差の基準 (カメラのワールド XY)
+    bool hasOrtho_ = false;                              // 正射影の表示範囲が取れた (無ければ繰り返さない)
+    DirectX::XMFLOAT3 orthoMin_ = { 0.0f, 0.0f, 0.0f };
+    DirectX::XMFLOAT3 orthoMax_ = { 0.0f, 0.0f, 0.0f };
+    bool warnedParallaxCap_ = false;
     Sprite2DDrawList list_;
 };
 

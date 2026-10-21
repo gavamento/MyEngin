@@ -30,6 +30,7 @@
 #include "Engine/Engine/Scene/SortingLayers.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Device/GraphicsDevice.h"
 
 #include "nlohmann/json.hpp"
 
@@ -717,6 +718,146 @@ bool RunSprite2DAssetSelfTest()
 
         // 法線マップを持つスプライトが無ければ、ライトがあっても法線の一覧は空 (presence gate)
         check(!renderer.Collect(w, resources).HasNormals(), "Normal: no normalMap in the scene -> no normal batches");
+    }
+
+    // ---- (i) Parallax2D と Sprite2D.material の収集 (M94q)。GPU を使わない部分だけ ----
+    {
+        check(Parallax2DComponent::sTypeId == 87, "Parallax2D is TypeId 87");
+        const ComponentDesc& pd = ComponentRegistry::Get().Desc(Parallax2DComponent::sTypeId);
+        check((pd.flags & kComponentNoHash) != 0, "Parallax2D is kComponentNoHash (render-only)");
+        const Parallax2DComponent defaults;
+        check(defaults.factor.x == 1.0f && defaults.factor.y == 1.0f && !defaults.repeatX && !defaults.repeatY
+                  && defaults.repeatSize.x == 0.0f && defaults.repeatSize.y == 0.0f,
+              "Parallax2D defaults: factor (1,1), no repeat, repeatSize 0");
+
+        // 内蔵マゼンタのテクスチャを作るので、WARP のデバイスを使う (頂点まで確かめるのはこのブロックだけ)
+        GraphicsDevice device;
+        check(device.Init(true), "Parallax test: WARP device init");
+        RenderResources resources;
+        resources.textures.Init(device);
+        Sprite2DRenderer renderer;
+        // カメラ (2, 0) から +Z を見る正射影 (表示範囲は x -2..6、y -2.25..2.25)
+        DirectX::XMFLOAT4X4 view;
+        DirectX::XMFLOAT4X4 proj;
+        DirectX::XMStoreFloat4x4(&view, DirectX::XMMatrixTranslation(-2.0f, 0.0f, 10.0f));
+        DirectX::XMStoreFloat4x4(&proj, DirectX::XMMatrixOrthographicLH(8.0f, 4.5f, 0.1f, 100.0f));
+        // 全頂点の x / y の範囲。スプライトは sprite 未設定 = 内蔵マゼンタ (1 x 1 ワールド単位、pivot 中央)
+        const auto extent = [](const Sprite2DDrawList& l, int axis, bool wantMax) {
+            float v = wantMax ? -1.0e30f : 1.0e30f;
+            for (const Sprite2DVertex& vert : l.vertices) {
+                v = wantMax ? (std::max)(v, vert.pos[axis]) : (std::min)(v, vert.pos[axis]);
+            }
+            return v;
+        };
+        const auto approxEq = [](float a, float b) { return std::fabs(a - b) < 1.0e-4f; };
+
+        World w;
+        const EntityID e = w.CreateEntity("parallax");
+        w.AddComponent<Sprite2DComponent>(e);
+        w.AddComponent<Parallax2DComponent>(e);
+        // AddComponent は他のコンポーネントのポインタを無効にする (アーキタイプ移動)。足し終えてから取る
+        auto* px = w.GetComponent<Parallax2DComponent>(e);
+
+        px->factor = { 1.0f, 1.0f };
+        {
+            const Sprite2DDrawList& l = renderer.Collect(w, resources, &view, &proj);
+            check(l.vertices.size() == 6 && approxEq(extent(l, 0, false), -0.5f) && approxEq(extent(l, 0, true), 0.5f),
+                  "Parallax: factor 1 = the world position (no shift)");
+        }
+        px->factor = { 0.5f, 0.5f };
+        {
+            const Sprite2DDrawList& l = renderer.Collect(w, resources, &view, &proj);
+            check(approxEq(extent(l, 0, false), 0.5f) && approxEq(extent(l, 0, true), 1.5f),
+                  "Parallax: factor 0.5, camera x 2 -> drawn at x + (2 - 0) * 0.5 = 1");
+        }
+        px->factor = { 0.0f, 0.0f };
+        {
+            const Sprite2DDrawList& l = renderer.Collect(w, resources, &view, &proj);
+            check(approxEq(extent(l, 0, false), 1.5f) && approxEq(extent(l, 0, true), 2.5f),
+                  "Parallax: factor 0 = pinned to the camera (x 2)");
+        }
+        check(approxEq(extent(renderer.Collect(w, resources), 0, false), -0.5f),
+              "Parallax: no camera matrix -> no shift");
+        // y 軸は x と独立 (カメラ y 0、スプライト y 1、factor y 0.5 -> 1 + (0 - 1) * 0.5 = 0.5)
+        w.GetComponent<WorldMatrixComponent>(e)->value._42 = 1.0f;
+        px->factor = { 1.0f, 0.5f };
+        {
+            const Sprite2DDrawList& l = renderer.Collect(w, resources, &view, &proj);
+            check(approxEq(extent(l, 1, false), 0.0f) && approxEq(extent(l, 1, true), 1.0f) && approxEq(extent(l, 0, false), -0.5f),
+                  "Parallax: y follows factor.y independently of x");
+        }
+        w.GetComponent<WorldMatrixComponent>(e)->value._42 = 0.0f;
+
+        // 繰り返し: factor 0.5 の 1 枚目は x 0.5..1.5。表示範囲 -2..6 を間隔 1 で覆う = k -3..5 の 9 枚
+        px->factor = { 0.5f, 1.0f };
+        px->repeatX = true;
+        {
+            const Sprite2DDrawList& l = renderer.Collect(w, resources, &view, &proj);
+            check(l.vertices.size() == 9 * 6 && approxEq(extent(l, 0, false), -2.5f) && approxEq(extent(l, 0, true), 6.5f),
+                  "Parallax repeat: copies cover the orthographic view (9 sprites, x -2.5..6.5)");
+        }
+        px->repeatSize = { 2.0f, 0.0f };
+        {
+            const Sprite2DDrawList& l = renderer.Collect(w, resources, &view, &proj);
+            check(l.vertices.size() == 4 * 6 && approxEq(extent(l, 0, false), -1.5f) && approxEq(extent(l, 0, true), 5.5f),
+                  "Parallax repeat: repeatSize 2 -> spacing 2 (4 sprites, x -1.5..5.5)");
+        }
+        px->repeatSize = { 0.01f, 0.0f };
+        check(renderer.Collect(w, resources, &view, &proj).vertices.size() == 64 * 6,
+              "Parallax repeat: one axis is capped at 64 sprites");
+        px->repeatY = true;
+        px->repeatSize = { 0.01f, 0.01f };
+        check(renderer.Collect(w, resources, &view, &proj).vertices.size() == 64 * 6,
+              "Parallax repeat: both axes together are capped at 64 sprites (8 x 8)");
+        // 透視カメラでは繰り返さない (1 枚だけ)
+        px->repeatY = false;
+        px->repeatSize = { 0.0f, 0.0f };
+        DirectX::XMFLOAT4X4 persp;
+        DirectX::XMStoreFloat4x4(&persp, DirectX::XMMatrixPerspectiveFovLH(1.0f, 1.6f, 0.1f, 100.0f));
+        check(renderer.Collect(w, resources, &view, &persp).vertices.size() == 6,
+              "Parallax repeat: a perspective camera draws one sprite (no repeat)");
+
+        // Parallax2D の無いスプライトは動かない
+        const EntityID plain = w.CreateEntity("plain");
+        w.AddComponent<Sprite2DComponent>(plain);
+        w.GetComponent<Sprite2DComponent>(plain)->orderInLayer = 5;
+        px = w.GetComponent<Parallax2DComponent>(e); // AddComponent で動いた可能性
+        px->repeatX = false;
+        px->factor = { 0.0f, 0.0f };
+        {
+            const Sprite2DDrawList& l = renderer.Collect(w, resources, &view, &proj);
+            // 並びは (order, index): e (order 0) が先で x 2、plain (order 5) が後で x 0
+            check(l.vertices.size() == 12 && approxEq(l.vertices[0].pos[0] + l.vertices[1].pos[0], 4.0f)
+                      && approxEq(l.vertices[6].pos[0], -0.5f),
+                  "Parallax: only the entity with Parallax2D shifts");
+        }
+        device.Shutdown();
+    }
+    {
+        // Sprite2D.material はバッチに載り、材質が違えばバッチを割る
+        GraphicsDevice device;
+        check(device.Init(true), "Sprite2D.material test: WARP device init");
+        RenderResources resources;
+        resources.textures.Init(device);
+        Sprite2DRenderer renderer;
+        World w;
+        const AssetID mat{ 777 };
+        const int32_t orders[4] = { 0, 1, 2, 3 };
+        const bool useMat[4] = { false, true, true, false };
+        for (int i = 0; i < 4; ++i) {
+            const EntityID s = w.CreateEntity("m");
+            w.AddComponent<Sprite2DComponent>(s);
+            auto* sp = w.GetComponent<Sprite2DComponent>(s);
+            sp->orderInLayer = orders[i];
+            sp->material = useMat[i] ? mat : AssetID{};
+        }
+        const Sprite2DDrawList& l = renderer.Collect(w, resources);
+        check(l.batches.size() == 3 && l.batches[0].material.IsNull() && l.batches[1].material == mat
+                  && l.batches[1].count == 12 && l.batches[2].material.IsNull(),
+              "Sprite2D.material: a different material splits the batch; the same material merges");
+        check(l.UsesMaterial() && !Sprite2DDrawList().UsesMaterial(),
+              "Sprite2DDrawList::UsesMaterial is true only when a batch has a material");
+        device.Shutdown();
     }
 
     fs::remove_all(root, ec);

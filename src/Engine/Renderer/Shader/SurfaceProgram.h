@@ -64,6 +64,16 @@ struct SurfaceProgram {
     Microsoft::WRL::ComPtr<ID3D11InputLayout> shadowInputLayout;
     SurfaceEntryReflection shadowVSReflect;
 
+    // スプライト: Sprite2D.material 用 (MyEngineSurfaceSprite.hlsli を include した作者ソースだけ)。
+    // メッシュ用のエントリ (上の 3 系統) を持つかは hasMesh、スプライト用を持つかは hasSprite で見分ける
+    Microsoft::WRL::ComPtr<ID3D11VertexShader> spriteVS;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> spritePS;
+    Microsoft::WRL::ComPtr<ID3D11InputLayout> spriteInputLayout;
+    SurfaceEntryReflection spriteVSReflect;
+    SurfaceEntryReflection spritePSReflect;
+    bool hasMesh = true;
+    bool hasSprite = false;
+
     std::wstring path;                  // フルパス (正規化済み)
     std::vector<std::wstring> includes; // #include 依存 (ホットリロード用)
     std::string errorMessage;           // 失敗時のエラー文 ("サーフェス規約: ..." を含む)

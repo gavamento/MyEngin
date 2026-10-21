@@ -2442,6 +2442,18 @@ struct ShadowCaster2DComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 2D 視差 (M94、TypeId=87) ----
+// 同じエンティティの Sprite2D をカメラ位置に応じてずらす。描画位置 = pos + (cam.xy - pos.xy) * (1 - factor)
+// (0 = カメラに固定、1 = 通常)。repeat は正射影の表示範囲を覆う枚数だけ複製する (透視カメラでは複製しない)。
+// 描画専用なので **kComponentNoHash**
+struct Parallax2DComponent {
+    DirectX::XMFLOAT2 factor = { 1.0f, 1.0f };
+    bool repeatX = false;
+    bool repeatY = false;
+    DirectX::XMFLOAT2 repeatSize = { 0.0f, 0.0f }; // 繰り返しの間隔 (ワールド単位)。0 = スプライト寸法
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

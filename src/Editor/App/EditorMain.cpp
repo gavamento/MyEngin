@@ -602,6 +602,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             ok &= mye::RunAssetOpsSelfTest();           // M94g: Create 重複拒否 / タイルラベル / 複合サフィックス
             ok &= mye::RunTwoDAbiSelfTest();            // M94n: ABI v31 (箱のクエリ / SpriteByName / Tilemap)
             ok &= mye::RunPartSelfTest();               // M94n: ABI の版の固定と v31 スロットの充填
+            ok &= mye::RunSurfaceShaderSelfTest();      // M94q: サーフェス規約 (既存のメッシュ用の入口が変わらないこと)
+            ok &= mye::RunSurfaceMaterialSelfTest();    // M94q: スプライト用サーフェス (Sprite2D.material) の実描画
+            ok &= mye::RunSurfaceDeferredSelfTest();    // M94q: Deferred のサーフェス段 (メッシュ用の経路が変わらないこと)
             if (!tempEc) {
                 std::filesystem::remove_all(selftestTemp, tempEc);
             }

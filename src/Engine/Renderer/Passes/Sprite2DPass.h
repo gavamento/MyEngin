@@ -18,6 +18,7 @@
 namespace mye {
 
 class GraphicsDevice;
+class MaterialLibrary;
 class ShaderManager;
 struct ShaderProgram;
 class TextureLibrary;
@@ -29,6 +30,8 @@ class TextureLibrary;
 // (深度は触らない)、終わったら元の RT / DSV に戻す。
 // Light2D があるシーンだけ、群ごとのライトバッファを作る。法線マップ付きの lit スプライトがあれば先に法線 RT へ描き、
 // shadows のライトごとに影 RT へキャスターの影を描いて、ライトの形状 PS が N·L と影を掛ける。
+// Sprite2D.material が *.surface のバッチ (b.material) は、そのスプライト用エントリで描く。使えないとき (コンパイル失敗など) は
+// 内蔵シェーダで描く。サーフェスは MyEngineSprite2D (viewProj / lit)・作者の MyEnginePerMaterial・テクスチャ・ライトバッファを名前で引いて束ねる。
 // レイヤ規約: 生 D3D11 はこの Renderer 層に閉じる。決定論規約: sim には触れない
 class Sprite2DPass {
 public:
@@ -38,7 +41,7 @@ public:
 
     // RT / ビューポートはバインド済みのものを使う。描画したバッチ数を返す (SRV が引けないバッチは飛ばす)。
     // stencilDsv = ステンシルを書ける DSV (D24S8 の通常ビュー)。null ならマスクは無視され、マスク対象は素通りで描く
-    uint32_t Render(GraphicsDevice& device, ShaderManager& shaders, TextureLibrary& textures,
+    uint32_t Render(GraphicsDevice& device, ShaderManager& shaders, TextureLibrary& textures, MaterialLibrary& materials,
                     const Sprite2DDrawList& list, const DirectX::XMFLOAT4X4& view, const DirectX::XMFLOAT4X4& proj,
                     ID3D11DepthStencilView* stencilDsv);
 
@@ -62,7 +65,17 @@ private:
     void BuildLightBuffer(GraphicsDevice& device, TextureLibrary& textures, const Sprite2DDrawList& list,
                           const Sprite2DLightGroup& group, const LightContext& ctx);
 
+    // マテリアル付きのバッチ 1 つを、サーフェスのスプライト用エントリで描く。使えなければ false (何も描かず状態も変えない)。
+    // 成功した後は IA / シェーダ / CB / SRV がサーフェス用になっているので、呼び出し側が内蔵の状態を張り直す。
+    // viewProjT = 転置済みの view * proj、invScreen = 1 / ライトバッファの寸法
+    bool DrawSurfaceBatch(GraphicsDevice& device, ShaderManager& shaders, TextureLibrary& textures,
+                          MaterialLibrary& materials, const Sprite2DBatch& batch, ID3D11ShaderResourceView* spriteSrv,
+                          bool groupLit, const DirectX::XMFLOAT4X4& viewProjT, const float invScreen[2]);
+    // バッチの種別 (ステンシルの動作) に合わせたブレンド / 深度ステンシルを張る
+    void BindBatchOutputState(ID3D11DeviceContext* dc, uint8_t stencilMode);
+
     bool ready_ = false;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> surfaceCb_; // MyEngineSprite2D (サーフェス用の viewProj / lit)
     AssetID shader_ = {};
     AssetID lightShader_ = {};  // sprite2d_light (ライト形状の描画)
     AssetID shadowShader_ = {}; // sprite2d_shadow (影 RT への書き込み)

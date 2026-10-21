@@ -1,0 +1,6 @@
+sub-17 Parallax2D の位置差 (960x540、orthoSize 2 = 135 px/unit、背景 factor 0.5、前景の目印 factor 1)
+カメラ x = 0 -> 2 の 2 枚 (parallax_a.png / parallax_b.png) を同じ行で走査した結果
+parallax_a: bg left edge x=210, marker x=462..497
+parallax_b: bg left edge x=75,  marker x=192..227
+背景の動き = -135 px = 1.0 unit (カメラが 2 動く x (1 - 0.5))、前景の目印 = -270 px = 2.0 unit (カメラと同じ量)
+parallax_repeat.png: repeatX = true、背景 4 帯 (1 枚 4 unit) が画面幅 (7.1 unit) を継ぎ目なく覆う

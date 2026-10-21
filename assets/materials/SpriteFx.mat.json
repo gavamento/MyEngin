@@ -1,0 +1,19 @@
+{
+  "engine": "MyEngine",
+  "material": 1,
+  "name": "SpriteFx",
+  "shader": "SpriteFx.surface",
+  "baseColor": [1.0, 1.0, 1.0, 1.0],
+  "metallic": 0.0,
+  "roughness": 0.5,
+  "texture": "",
+  "normalMap": "",
+  "transparent": true,
+  "properties": {
+    "_FlashColor": [1.0, 1.0, 1.0, 1.0],
+    "_FlashAmount": 0.0,
+    "_OutlineColor": [0.0, 0.0, 0.0, 1.0],
+    "_OutlineWidth": 0.0,
+    "_Dissolve": 0.0
+  }
+}

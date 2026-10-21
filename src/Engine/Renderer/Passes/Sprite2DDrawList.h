@@ -35,6 +35,7 @@ struct Sprite2DBatch {
     uint8_t stencil = 0;      // Sprite2DStencil
     float alphaCutoff = 0.0f; // stencil == kWriteMask のときだけ使う (alpha がこれ未満の画素は書かない)
     bool lit = false;         // true = ライトバッファを乗算する (属する LightGroup が anyLit のときだけ効く)
+    AssetID material;         // 空 = 内蔵シェーダ。*.surface を使う .mat.json (使えなければ内蔵で描く)
     uint32_t start = 0;
     uint32_t count = 0;
 };
@@ -144,6 +145,16 @@ struct Sprite2DDrawList {
         normalBatches.clear();
     }
     bool HasLights() const { return !lightGroups.empty(); }
+    // マテリアル (サーフェスシェーダ) を持つバッチがあるか
+    bool UsesMaterial() const
+    {
+        for (const Sprite2DBatch& b : batches) {
+            if (!b.material.IsNull()) {
+                return true;
+            }
+        }
+        return false;
+    }
     bool HasNormals() const { return !normalBatches.empty(); }
     bool Empty() const { return batches.empty(); }
     // ステンシルを使うバッチがあるか (無ければ描画パスはステンシルのクリアも DSV の差し替えもしない)

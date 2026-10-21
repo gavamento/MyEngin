@@ -1848,6 +1848,14 @@ void RegisterBuiltinComponents()
         ShadowCaster2DPointField(14, "point14", "頂点 14"),
         ShadowCaster2DPointField(15, "point15", "頂点 15"),
     }, kComponentNoHash);
+
+    // M94q: 2D 視差 (TypeId=87、末尾 append)。描画専用の **kComponentNoHash**
+    RegisterComponent<Parallax2DComponent>("Parallax2D", {
+        MYE_JP("係数", MYE_FIELD_TIP(Parallax2DComponent, factor, Float2, "0 = fixed to the camera, 1 = moves with the world")),
+        MYE_JP("X を繰り返す", MYE_FIELD(Parallax2DComponent, repeatX, Bool)),
+        MYE_JP("Y を繰り返す", MYE_FIELD(Parallax2DComponent, repeatY, Bool)),
+        MYE_JP("繰り返しの間隔", MYE_FIELD_TIP(Parallax2DComponent, repeatSize, Float2, "0 = sprite size (world units)")),
+    }, kComponentNoHash);
 }
 
 } // namespace mye

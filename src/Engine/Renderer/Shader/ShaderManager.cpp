@@ -956,17 +956,53 @@ bool ShaderManager::CompileProgram(const std::wstring& path, ShaderProgram& out)
 bool ShaderManager::InstantiateSurface(const std::vector<std::vector<uint8_t>>& blobs,
                                        SurfaceProgram& out)
 {
-    if (blobs.size() != 5) {
+    // blob の並び: メッシュ 5 本 (色VS,色PS,影VS,速度VS,速度PS) → スプライト 2 本 (VS,PS)。
+    // 5 = メッシュのみ (従来)、2 = スプライトのみ、7 = 両方
+    if (blobs.size() != 5 && blobs.size() != 2 && blobs.size() != 7) {
         out.errorMessage = "サーフェス規約: キャッシュ形式が不正 (blob 数不一致)";
         return false;
     }
+    out.hasMesh = blobs.size() != 2;
+    out.hasSprite = blobs.size() != 5;
+    ID3D11Device* dev = device_->Device();
+    out.spriteVS.Reset();
+    out.spritePS.Reset();
+    out.spriteInputLayout.Reset();
+    out.spriteVSReflect = {};
+    out.spritePSReflect = {};
+    if (out.hasSprite) {
+        const std::vector<uint8_t>& spriteVsBytecode = blobs[blobs.size() - 2];
+        const std::vector<uint8_t>& spritePsBytecode = blobs[blobs.size() - 1];
+        if (FAILED(dev->CreateVertexShader(spriteVsBytecode.data(), spriteVsBytecode.size(), nullptr,
+                                           out.spriteVS.GetAddressOf()))
+            || FAILED(dev->CreatePixelShader(spritePsBytecode.data(), spritePsBytecode.size(), nullptr,
+                                             out.spritePS.GetAddressOf()))
+            || !BuildInputLayout(dev, spriteVsBytecode, out.spriteInputLayout)) {
+            out.errorMessage = "サーフェス規約: スプライト用シェーダオブジェクト作成に失敗";
+            MYE_LOG_ERROR("%s", out.errorMessage.c_str());
+            return false;
+        }
+        ReflectSurfaceBytecode(spriteVsBytecode, out.spriteVSReflect);
+        ReflectSurfaceBytecode(spritePsBytecode, out.spritePSReflect);
+    }
+    if (!out.hasMesh) {
+        out.colorVS.Reset();
+        out.colorPS.Reset();
+        out.colorInputLayout.Reset();
+        out.shadowVS.Reset();
+        out.shadowInputLayout.Reset();
+        out.velocityVS.Reset();
+        out.velocityPS.Reset();
+        out.velocityInputLayout.Reset();
+        return true;
+    }
+
     const std::vector<uint8_t>& colorVsBytecode = blobs[0];
     const std::vector<uint8_t>& colorPsBytecode = blobs[1];
     const std::vector<uint8_t>& shadowVsBytecode = blobs[2];
     const std::vector<uint8_t>& velVsBytecode = blobs[3];
     const std::vector<uint8_t>& velPsBytecode = blobs[4];
 
-    ID3D11Device* dev = device_->Device();
     out.colorVS.Reset();
     out.colorPS.Reset();
     out.colorInputLayout.Reset();
@@ -1068,10 +1104,22 @@ bool ShaderManager::CompileSurfaceProgram(const std::wstring& path, SurfaceProgr
 
     // 作者ソースの直後に生成エントリの include を足す。#include なので IncludeRecorder の
     // 依存グラフに自然に乗り、MyEngineSurfaceEntries.hlsli の編集もホットリロード対象になる
+    // M94: MyEngineSurfaceSprite.hlsli を include した作者ソースはスプライト用エントリ (Sprite2D.material) も持つ。
+    // メッシュ用の MyEngineSurface.hlsli を include していなければスプライト専用で、メッシュ用の生成エントリは足さない。
+    // どちらでもない従来のソースの combined は変わらない (キャッシュも同じキー)
+    const std::string_view authorText(authorSource.data(), authorSource.size());
+    const bool hasSprite = authorText.find("MyEngineSurfaceSprite.hlsli") != std::string_view::npos;
+    const bool hasMesh = !hasSprite || authorText.find("MyEngineSurface.hlsli") != std::string_view::npos;
     static constexpr char kEntriesInclude[] = "\n#include \"MyEngineSurfaceEntries.hlsli\"\n";
+    static constexpr char kSpriteEntriesInclude[] = "\n#include \"MyEngineSurfaceSpriteEntries.hlsli\"\n";
     std::vector<char> combined(authorSource);
-    combined.insert(combined.end(), kEntriesInclude,
-                    kEntriesInclude + (sizeof(kEntriesInclude) - 1));
+    if (hasMesh) {
+        combined.insert(combined.end(), kEntriesInclude, kEntriesInclude + (sizeof(kEntriesInclude) - 1));
+    }
+    if (hasSprite) {
+        combined.insert(combined.end(), kSpriteEntriesInclude,
+                        kSpriteEntriesInclude + (sizeof(kSpriteEntriesInclude) - 1));
+    }
 
     if (TryLoadCachedSurface(path, combined, out)) {
         out.valid = true;
@@ -1113,18 +1161,28 @@ bool ShaderManager::CompileSurfaceProgram(const std::wstring& path, SurfaceProgr
     std::vector<uint8_t> shadowVsBytecode;
     std::vector<uint8_t> velVsBytecode;
     std::vector<uint8_t> velPsBytecode;
+    std::vector<uint8_t> spriteVsBytecode;
+    std::vector<uint8_t> spritePsBytecode;
     std::string err;
 
-    const bool ok = compile("MyeVSColor", "vs_5_0", colorVsBytecode, err)
-        && compile("MyePSColor", "ps_5_0", colorPsBytecode, err)
-        && compile("MyeVSShadow", "vs_5_0", shadowVsBytecode, err)
-        && compile("MyeVSVelocity", "vs_5_0", velVsBytecode, err)
-        && compile("MyePSVelocity", "ps_5_0", velPsBytecode, err);
+    bool ok = !hasMesh
+        || (compile("MyeVSColor", "vs_5_0", colorVsBytecode, err)
+            && compile("MyePSColor", "ps_5_0", colorPsBytecode, err)
+            && compile("MyeVSShadow", "vs_5_0", shadowVsBytecode, err)
+            && compile("MyeVSVelocity", "vs_5_0", velVsBytecode, err)
+            && compile("MyePSVelocity", "ps_5_0", velPsBytecode, err));
+    bool spriteFailed = false;
+    if (ok && hasSprite) {
+        ok = compile("MyeVSSprite2D", "vs_5_0", spriteVsBytecode, err)
+            && compile("MyePSSprite2D", "ps_5_0", spritePsBytecode, err);
+        spriteFailed = !ok;
+    }
 
     if (!ok) {
-        out.errorMessage =
-            "サーフェス規約: VSOut VSMain(VSIn v) / float4 PSMain(VSOut i) : SV_Target / "
-            "VSOut.pos : SV_Position\n" + err;
+        out.errorMessage = spriteFailed
+            ? "サーフェス規約 (スプライト): float4 PSMain(MyeSpriteInput i) : SV_Target\n" + err
+            : "サーフェス規約: VSOut VSMain(VSIn v) / float4 PSMain(VSOut i) : SV_Target / "
+              "VSOut.pos : SV_Position\n" + err;
         MYE_LOG_ERROR("HLSL surface (%s):\n%s", pathUtf8.c_str(), out.errorMessage.c_str());
         return false;
     }
@@ -1154,9 +1212,16 @@ bool ShaderManager::CompileSurfaceProgram(const std::wstring& path, SurfaceProgr
         out.includes = std::move(uniqueIncludes);
     }
 
-    if (!InstantiateSurface({ colorVsBytecode, colorPsBytecode, shadowVsBytecode, velVsBytecode,
-                             velPsBytecode },
-                           out)) {
+    // blob の並び: メッシュ 5 本 → スプライト 2 本 (InstantiateSurface と同じ)
+    std::vector<std::vector<uint8_t>> blobs;
+    if (hasMesh) {
+        blobs = { colorVsBytecode, colorPsBytecode, shadowVsBytecode, velVsBytecode, velPsBytecode };
+    }
+    if (hasSprite) {
+        blobs.push_back(spriteVsBytecode);
+        blobs.push_back(spritePsBytecode);
+    }
+    if (!InstantiateSurface(blobs, out)) {
         return false;
     }
 
@@ -1170,8 +1235,7 @@ bool ShaderManager::CompileSurfaceProgram(const std::wstring& path, SurfaceProgr
         entry.isCompute = false;
         entry.isSurface = true;
         entry.sourceHash = HashBytes(combined.data(), combined.size());
-        entry.blobs = { colorVsBytecode, colorPsBytecode, shadowVsBytecode, velVsBytecode,
-                       velPsBytecode };
+        entry.blobs = blobs;
         const std::vector<uint8_t> bytes = EncodeShaderCacheEntry(entry);
         const std::wstring finalPath = cacheDir_ + L"\\" + SurfaceShaderCacheFileName(path);
         // ★テンポラリ → rename (CompileProgram と同じ理由。replay_verify の並列起動対策)

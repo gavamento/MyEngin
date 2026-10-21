@@ -12,6 +12,8 @@
 #include "Engine/Renderer/Device/GpuResources.h"
 #include "Engine/Renderer/Device/GraphicsDevice.h"
 #include "Engine/Renderer/Shader/ShaderManager.h"
+#include "Engine/Renderer/Shader/SurfaceDrawBind.h"
+#include "Engine/Renderer/Shader/SurfaceShaderTypes.h"
 
 using namespace DirectX;
 
@@ -35,6 +37,15 @@ struct PsCb {
     float pad2[2];
 };
 static_assert(sizeof(PsCb) % 16 == 0, "cbuffer は 16 バイト境界");
+
+// MyEngineSurfaceSpriteEntries.hlsli の MyEngineSprite2D と一致させる
+struct SurfaceCb {
+    DirectX::XMFLOAT4X4 viewProj; // 転置済み
+    float lit[4];                 // x = 1 でライトバッファを乗算, yz = 1 / ライトバッファの寸法
+};
+static_assert(sizeof(SurfaceCb) % 16 == 0, "cbuffer は 16 バイト境界");
+
+constexpr char kSurfaceSpriteCB[] = "MyEngineSprite2D"; // 予約 cbuffer 名
 
 // sprite2d_light.hlsl の LightCB と一致させる
 struct LightCb {
@@ -126,6 +137,10 @@ bool Sprite2DPass::Init(GraphicsDevice& device, ShaderManager& shaders)
 
     cbd.ByteWidth = sizeof(PsCb);
     if (FAILED(dev->CreateBuffer(&cbd, nullptr, psCb_.GetAddressOf()))) {
+        return false;
+    }
+    cbd.ByteWidth = sizeof(SurfaceCb);
+    if (FAILED(dev->CreateBuffer(&cbd, nullptr, surfaceCb_.GetAddressOf()))) {
         return false;
     }
 
@@ -243,6 +258,7 @@ void Sprite2DPass::Shutdown()
 {
     cb_.Reset();
     psCb_.Reset();
+    surfaceCb_.Reset();
     vb_.Reset();
     vbCapacity_ = 0; // 0 に戻さないと復旧後に vb_ 無しで Map する
     lightCb_.Reset();
@@ -583,9 +599,80 @@ void Sprite2DPass::BuildLightBuffer(GraphicsDevice& device, TextureLibrary& text
     dc->PSSetShaderResources(kLightShadowSlot, 1, nullSrv);
 }
 
+void Sprite2DPass::BindBatchOutputState(ID3D11DeviceContext* dc, uint8_t stencilMode)
+{
+    if (stencilMode == sprite2dstencil::kWriteMask) {
+        dc->OMSetBlendState(blendNoColor_.Get(), nullptr, 0xFFFFFFFFu);
+        dc->OMSetDepthStencilState(depthMaskWrite_.Get(), kStencilMaskRef);
+        return;
+    }
+    dc->OMSetBlendState(blend_.Get(), nullptr, 0xFFFFFFFFu);
+    if (stencilMode == sprite2dstencil::kTestInside) {
+        dc->OMSetDepthStencilState(depthTestStencil_.Get(), kStencilMaskRef);
+    } else if (stencilMode == sprite2dstencil::kTestOutside) {
+        dc->OMSetDepthStencilState(depthTestStencil_.Get(), kStencilOutsideRef);
+    } else {
+        dc->OMSetDepthStencilState(depth_.Get(), 0);
+    }
+}
+
+bool Sprite2DPass::DrawSurfaceBatch(GraphicsDevice& device, ShaderManager& shaders, TextureLibrary& textures,
+                                    MaterialLibrary& materials, const Sprite2DBatch& batch,
+                                    ID3D11ShaderResourceView* spriteSrv, bool groupLit,
+                                    const XMFLOAT4X4& viewProjT, const float invScreen[2])
+{
+    SurfaceMaterialState* state = materials.GetOrBuildSurfaceState(batch.material, shaders, textures, device, true);
+    if (state == nullptr || !state->ready) {
+        return false;
+    }
+    SurfaceProgram* prog = shaders.GetSurface(state->surfaceProgramId);
+    if (prog == nullptr || !prog->valid || !prog->hasSprite || !surfaceCb_) {
+        return false;
+    }
+    ID3D11DeviceContext* dc = device.Context();
+
+    SurfaceCb cb = {};
+    cb.viewProj = viewProjT;
+    cb.lit[0] = (groupLit && batch.lit) ? 1.0f : 0.0f;
+    cb.lit[1] = invScreen[0];
+    cb.lit[2] = invScreen[1];
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    if (SUCCEEDED(dc->Map(surfaceCb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        std::memcpy(mapped.pData, &cb, sizeof(cb));
+        dc->Unmap(surfaceCb_.Get(), 0);
+    }
+
+    dc->IASetInputLayout(prog->spriteInputLayout.Get());
+    dc->VSSetShader(prog->spriteVS.Get(), nullptr, 0);
+    dc->PSSetShader(prog->spritePS.Get(), nullptr, 0);
+    const SurfaceEntryReflection& vsRefl = prog->spriteVSReflect;
+    const SurfaceEntryReflection& psRefl = prog->spritePSReflect;
+    BindSurfaceNamedCB(dc, vsRefl, psRefl, kSurfaceSpriteCB, surfaceCb_.Get());
+    BindSurfaceNamedCB(dc, vsRefl, psRefl, surface::kPerMaterialCB, state->perMaterialGpuCB.Get());
+    BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gMyeSpriteTex", spriteSrv);
+    BindSurfaceNamedSRV(dc, vsRefl, psRefl, "gMyeLightBuffer", groupLit ? lightBuffer_.SRV() : nullptr);
+    BindSurfaceNamedSampler(dc, vsRefl, psRefl, "gMyeSpriteSamp",
+                            batch.pointFilter ? samplerPoint_.Get() : samplerLinear_.Get());
+    BindSurfaceNamedSampler(dc, vsRefl, psRefl, "gMyeLightSamp", samplerLinear_.Get());
+    for (const auto& [texName, texId] : state->textures) {
+        const Texture* tex = textures.Get(texId);
+        BindSurfaceNamedSRV(dc, vsRefl, psRefl, texName.c_str(), tex != nullptr ? tex->srv.Get() : nullptr);
+    }
+    dc->Draw(batch.count, batch.start);
+
+    // 張ったテクスチャは外す (内蔵の描画やライト用 RT が同じスロットを使う)
+    ID3D11ShaderResourceView* nullSrv = nullptr;
+    for (const auto& [name, res] : psRefl.resources) {
+        if (res.type == D3D_SIT_TEXTURE) {
+            dc->PSSetShaderResources(res.bindSlot, 1, &nullSrv);
+        }
+    }
+    return true;
+}
+
 uint32_t Sprite2DPass::Render(GraphicsDevice& device, ShaderManager& shaders, TextureLibrary& textures,
-                              const Sprite2DDrawList& list, const XMFLOAT4X4& view, const XMFLOAT4X4& proj,
-                              ID3D11DepthStencilView* stencilDsv)
+                              MaterialLibrary& materials, const Sprite2DDrawList& list, const XMFLOAT4X4& view,
+                              const XMFLOAT4X4& proj, ID3D11DepthStencilView* stencilDsv)
 {
     // Sprite2D の無いシーンはここで終わる (D3D の状態を一切触らない)
     if (!ready_ || list.Empty() || list.vertices.empty()) {
@@ -632,9 +719,10 @@ uint32_t Sprite2DPass::Render(GraphicsDevice& device, ShaderManager& shaders, Te
         lighting = tex && lightBuffer_.IsValid() && lightBuffer_.SRV() != nullptr;
         dc->RSGetViewports(&viewportCount, &prevViewport);
     }
-    // ライトのシェーダは PS の b0 を使うので、後段の前提 (ホストパスが張った CB) を終了時に戻す
+    // ライトのシェーダとサーフェスのシェーダは PS の b0 を使うので、後段の前提 (ホストパスが張った CB) を終了時に戻す
+    const bool usesMaterial = list.UsesMaterial();
     Microsoft::WRL::ComPtr<ID3D11Buffer> prevPsCb0;
-    if (lighting) {
+    if (lighting || usesMaterial) {
         dc->PSGetConstantBuffers(0, 1, prevPsCb0.GetAddressOf());
     }
     bool swappedDsv = false;
@@ -738,6 +826,22 @@ uint32_t Sprite2DPass::Render(GraphicsDevice& device, ShaderManager& shaders, Te
                 continue;
             }
             const uint8_t mode = useStencil ? b.stencil : sprite2dstencil::kNone;
+            BindBatchOutputState(dc, mode);
+            // マテリアル付きはサーフェスのスプライト用エントリで描く (マスクの書き込みは対象外)。
+            // 使えなければ (コンパイル失敗など) このまま内蔵シェーダで描く
+            if (!b.material.IsNull() && mode != sprite2dstencil::kWriteMask
+                && DrawSurfaceBatch(device, shaders, textures, materials, b, t->srv.Get(), groupLit, viewProj,
+                                    invScreen)) {
+                ++drawn;
+                // サーフェスが書き換えた IA / シェーダ / CB / ライトバッファの SRV を内蔵の状態へ戻す
+                bindSpriteState();
+                if (groupLit) {
+                    ID3D11ShaderResourceView* lightSrv = lightBuffer_.SRV();
+                    dc->PSSetShaderResources(kLightBufferSlot, 1, &lightSrv);
+                    dc->PSSetSamplers(kLightBufferSlot, 1, samplerLinear_.GetAddressOf());
+                }
+                continue;
+            }
             PsCb ps = {};
             ps.lit = (groupLit && b.lit) ? 1.0f : 0.0f;
             ps.invScreen[0] = invScreen[0];
@@ -745,17 +849,6 @@ uint32_t Sprite2DPass::Render(GraphicsDevice& device, ShaderManager& shaders, Te
             if (mode == sprite2dstencil::kWriteMask) {
                 ps.maskClip[0] = 1.0f;
                 ps.maskClip[1] = b.alphaCutoff;
-                dc->OMSetBlendState(blendNoColor_.Get(), nullptr, 0xFFFFFFFFu);
-                dc->OMSetDepthStencilState(depthMaskWrite_.Get(), kStencilMaskRef);
-            } else {
-                dc->OMSetBlendState(blend_.Get(), nullptr, 0xFFFFFFFFu);
-                if (mode == sprite2dstencil::kTestInside) {
-                    dc->OMSetDepthStencilState(depthTestStencil_.Get(), kStencilMaskRef);
-                } else if (mode == sprite2dstencil::kTestOutside) {
-                    dc->OMSetDepthStencilState(depthTestStencil_.Get(), kStencilOutsideRef);
-                } else {
-                    dc->OMSetDepthStencilState(depth_.Get(), 0);
-                }
             }
             if (SUCCEEDED(dc->Map(psCb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
                 std::memcpy(mapped.pData, &ps, sizeof(ps));
@@ -774,6 +867,8 @@ uint32_t Sprite2DPass::Render(GraphicsDevice& device, ShaderManager& shaders, Te
     dc->PSSetShaderResources(0, 1, nullSrv);
     if (lighting) {
         dc->PSSetShaderResources(kLightBufferSlot, 1, nullSrv);
+    }
+    if (lighting || usesMaterial) {
         ID3D11Buffer* restoreCb[1] = { prevPsCb0.Get() };
         dc->PSSetConstantBuffers(0, 1, restoreCb);
     }
