@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cfloat> // M79 sub-06: DragFloat の上限に FLT_MAX を渡す
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <cwctype>
 #include <filesystem>
@@ -1332,6 +1333,33 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
                 pendingOpenTilePalette_ = ctx.scene->EnsureFileId(tg.e);
             }
         }
+    }
+    // M94v: Camera2DFollow の注意 (親があると位置の前提が崩れる / 境界の見積もり)
+    if (std::strcmp(desc.name, "Camera2DFollow") == 0 && !tg.multi) {
+        ImGui::PushTextWrapPos(0.0f);
+        if (!world.GetParent(tg.e).IsNull()) {
+            ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_Camera2DFollowParented));
+        }
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_Camera2DFollowNote));
+        ImGui::PopTextWrapPos();
+    }
+    // M94v: PixelPerfectCamera2D の有効値 (直近のゲームビューの寸法基準。Camera.orthoSize の値は無視される)
+    if (std::strcmp(desc.name, "PixelPerfectCamera2D") == 0 && !tg.multi) {
+        ImGui::PushTextWrapPos(0.0f);
+        const auto* cam = world.GetComponent<CameraComponent>(tg.e);
+        if (cam == nullptr || !cam->orthographic) {
+            ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_PixelPerfectNoCamera));
+        } else if (!ctx.renderSystem->lastPixelPerfectValid) {
+            ImGui::TextDisabled("%s", Tr(StrId::Insp_PixelPerfectNoView));
+        } else {
+            const pixelperfect2d::Result& r = ctx.renderSystem->lastPixelPerfect;
+            char line[160];
+            std::snprintf(line, sizeof(line), Tr(StrId::Insp_PixelPerfectValues), static_cast<int>(r.zoom),
+                          static_cast<int>(r.rtW), static_cast<int>(r.rtH), static_cast<double>(r.orthoSize));
+            ImGui::TextUnformatted(line);
+        }
+        ImGui::TextDisabled("%s", Tr(StrId::Insp_PixelPerfectNote));
+        ImGui::PopTextWrapPos();
     }
     // M94t: 2D 物理の関節。Hinge は回転軸を Z に、Slider は滑る方向を X に向ける (plane2D の剛体を繋ぐときの定石)。
     // Ball / Fixed / Cone は軸を使わない or 2D 用の既定が無いので出さない

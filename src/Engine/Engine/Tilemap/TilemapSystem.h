@@ -110,6 +110,11 @@ public:
     bool GetLayerBounds(World& world, EntityID e, int32_t layer, int32_t& minX, int32_t& minY, int32_t& maxX,
                         int32_t& maxY) const;
 
+    // collision が立った全レイヤーの GetLayerBounds の和 (両端を含むセル範囲)。ABI には出さない
+    // (Camera2DFollow の boundsFromTilemap 用)。衝突レイヤーに空でないセルが無ければ false
+    bool GetCollisionBounds(World& world, EntityID e, int32_t& minX, int32_t& minY, int32_t& maxX,
+                            int32_t& maxY) const;
+
     // ---- 書き換え (sim 状態。スクリプトからは tick の中で呼ぶ) ----
 
     // 1 セルを書く。value がアセットの初期値と同じなら override を消す。

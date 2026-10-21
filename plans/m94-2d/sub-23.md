@@ -12,6 +12,7 @@
 4. replay_verify: ジョブ `2d` (`:job_2d`: `del cache\2d_showcase.scene.json` → `call :chain cache\golden_2d.rep "--2d-demo --synth-input" "--2d-demo"`)。`-Jobs` 列、`:failed` の mismatch 分岐、シーン数のコメント、`tools\mcp\src\verify.rs` のジョブ表 (規則 15-e)。
 5. 不変量と性能: `--selftest` に `TwoDDemoSelfTest` (デモシーンを HeadlessSim で 3000 tick 回し、全 plane2D 剛体の z / vz / wx / wy / qx / qy を検査。Debug / Release のハッシュ焼き込み)。`Runtime.exe --2d-demo --warp --frames 300` の平均フレーム時間 (`PerfDrawBenchmark` の流儀でログ) を Release で記録 → 16 ms 以内。
 6. `docs\test_checklists.md` の M94 節に手動確認項目 (sub-24 が仕上げるので下書きでよい)。
+9. (sub-22 の申し送り) Create → 2D → Camera 2D が CameraComponent.orthoSize を `refResolutionY / (2 × assetsPPU)` (既定 320×180 / PPU 100 なら 0.9) で初期化しているか確認し、していなければ 1 行足す (spec 4.1.12)。デモのカメラは orthoSize 5.625 (PPU 16 / ref 180)、Camera2DFollow.boundsFromTilemap = タイルマップ、useBounds = true。全体 selftest で NavAgent 庭の焼き値 8581BEE4A676337C を確認する。コンポーネントの TypeId は着手時の末尾から (スキーマ登録の型と衝突しないこと)。
 8. (sub-14 の申し送り) 供給口 `Collect` を毎クエリ呼ぶコスト: デモで 1 tick に撃つ Raycast / BoxCast の本数と、物理 + スクリプト + Perception の 1 tick 時間をログ。1 tick の sim が 2 ms を超えたら、`StaticShapeSource` の全体 Collect を tick 単位でキャッシュする (tick 境界で無効化)。
 7. (spec R11) `Runtime.exe --2d-demo --froxel --deferred --screenshot` を 1 枚撮り、正射影 + froxel で壊れない (真っ黒・NaN にならない) ことを目視。golden には登録しない。
 

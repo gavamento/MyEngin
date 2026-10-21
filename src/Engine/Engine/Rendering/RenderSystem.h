@@ -25,6 +25,8 @@
 #include "Engine/Renderer/Pipeline/RenderTypes.h"
 #include "Engine/Renderer/Passes/ShadowAtlas.h"
 #include "Engine/Renderer/Passes/ShadowPass.h"
+#include "Engine/Renderer/Passes/PixelPerfectBlitPass.h"
+#include "Engine/Renderer/Pipeline/PixelPerfect2D.h"
 #include "Engine/Renderer/Passes/Sprite2DPass.h"
 #include "Engine/Renderer/Passes/SkyResolve.h" // FailedTextureLoad
 #include "Engine/Renderer/Passes/TerrainPass.h"
@@ -118,8 +120,11 @@ public:
     // particles を渡すとシーン描画後に Forward 後段としてパーティクルを重ねる
     // (M6.5 の Deferred でも共通の後段 — spec 7 章 / 6.1)。
     // vfx (M29c) は Sprite/Trail/TextMesh をメッシュ後・パーティクル前に重ねる
+    //
+    // M94v: 主カメラに PixelPerfectCamera2D があり zoom > 1 && upscaleRT なら、screenTarget ではなく
+    // 低解像度 RT に全段を描き、最後に整数倍で screenTarget.rtv へ貼る (UI / ImGui は呼び出し側が後段でフル解像度に描く)
     bool Render(World& world, GraphicsDevice& device, IRenderPath& path, ShaderManager& shaders,
-                RenderResources& resources, const FrameTarget& target,
+                RenderResources& resources, const FrameTarget& screenTarget,
                 const CameraOverride* cameraOverride = nullptr,
                 ParticleSystem* particles = nullptr, VfxRenderer* vfx = nullptr);
 
@@ -165,6 +170,11 @@ public:
     // も止まるので、エディタの「水面プレビュー」がオンの間だけここに経過秒を足して水面を動かす。
     // 描画専用 (ワールドの状態にもシーン保存にも触れない)。Runtime と Play 中は常に 0
     float waterPreviewSeconds = 0.0f;
+
+    // M94v: 直近のゲームカメラの描画 (cameraOverride 無し) で使ったピクセルパーフェクトの有効値。
+    // valid = 主カメラが PixelPerfectCamera2D を持っていた。Inspector が GameView の寸法基準の値を表示するのに読む
+    bool lastPixelPerfectValid = false;
+    pixelperfect2d::Result lastPixelPerfect;
 
     // ワールド追従 UI (uilayout): 直近の Render() が解決したカメラの view×projNoJitter。
     // 補間済み・ジッタ無し = 3D パスと同じ絵の位置に UI が乗る。呼び出し側 (EngineLoop /
@@ -439,6 +449,11 @@ private:
     NavFillPass navFillPass_; // ナビメッシュの塗り (M82e、遅延 Init)
     Sprite2DRenderer sprite2dRenderer_; // Sprite2D の収集とソート (M94)
     Sprite2DPass sprite2dPass_;         // Sprite2D の描画 (遅延 Init。Sprite2D が現れるまで 1 バイトも確保しない)
+    // M94v: ピクセルパーフェクトカメラの低解像度 RT と整数倍拡大。専用に持つ (PostProcess::Acquire の LRU に
+    // 入れると他のサイズを追い出す)。PixelPerfectCamera2D が現れるまで 1 バイトも確保しない
+    RenderTexture pixelPerfectRt_;
+    PixelPerfectBlitPass pixelPerfectBlit_;
+    bool pixelPerfectLogged_ = false; // TAA / FXAA を止めたログを出したか
     EnvMapBaker envBaker_;    // IBL 環境マップ (M38c、lazy ベイク + キャッシュ)
     // スキンメッシュのボーンパレット (M18)。ビュー間で共有するキャッシュ (RenderItem.bones はエントリを指す。
     // エントリのアドレスは Render の間だけ有効)

@@ -437,6 +437,8 @@ constexpr uint32_t kLight2D = 0xFFD840FFu;         // Light2D の輪郭 (黄)
 constexpr uint32_t kShadowCaster2D = 0xA040E0FFu;  // ShadowCaster2D の多角形 (紫。SpriteMask2D より濃い)
 constexpr uint32_t kLine2D = 0xFFFFFFFFu;          // Line2D の点列 (白)
 constexpr uint32_t kEffector2D = 0xFF9020FFu;      // Effector2D の矢印 (橙)
+constexpr uint32_t kCamera2DFollow = 0x4080FFFFu;  // Camera2DFollow の deadZone と bounds (青)
+constexpr float kCamera2DBoundsThickness = 0.004f; // bounds の太線: 矩形の長辺に対する平行線のずらし幅の比
 constexpr int kLight2DArcSegments = 48;            // Spot の円弧の分割数 (全周あたり)
 constexpr uint32_t kTilemapBounds = 0x909098FFu;   // Tilemap の使用チャンクの範囲 (灰)
 constexpr uint32_t kTilemapCell = 0x585860FFu;     // 2D モードのセルの格子 (薄い灰)
@@ -546,6 +548,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         DrawSpriteShape2DGizmos(world);
         DrawEffector2DGizmos(world);
         DrawGridAgent2DGizmos(world);
+        DrawCamera2DFollowGizmos(world);
         DrawAudioGizmos(ctx, world, selection);
         DrawTextMeshGizmos(world);
         DrawPartSocketGizmos(world);
@@ -1073,6 +1076,68 @@ void SceneViewWindow::DrawGridAgent2DGizmos(World& world)
                                  origin.y + (static_cast<float>(ga.nextCellY) + 0.5f) * ch, m._43 },
                                gizmo::kEffector2D);
             }
+        });
+}
+
+// 全 Camera2DFollow の deadZone (青の矩形、カメラ位置中心) と bounds (青の太線)。
+// boundsFromTilemap はアセットの衝突レイヤーの外接矩形で描く (実行中のセル書き換えは反映しない近似)
+void SceneViewWindow::DrawCamera2DFollowGizmos(World& world)
+{
+    const auto rect = [&](float x0, float y0, float x1, float y1, float z, float thick, int passes) {
+        for (int i = -(passes - 1) / 2; i <= passes / 2; ++i) {
+            const float d = static_cast<float>(i) * thick;
+            const float ax = x0 - d, ay = y0 - d, bx = x1 + d, by = y1 + d;
+            lines_.AddLine({ ax, ay, z }, { bx, ay, z }, gizmo::kCamera2DFollow);
+            lines_.AddLine({ bx, ay, z }, { bx, by, z }, gizmo::kCamera2DFollow);
+            lines_.AddLine({ bx, by, z }, { ax, by, z }, gizmo::kCamera2DFollow);
+            lines_.AddLine({ ax, by, z }, { ax, ay, z }, gizmo::kCamera2DFollow);
+        }
+    };
+    ForEachWithWorldMatrix<Camera2DFollowComponent>(
+        world, [&](const Camera2DFollowComponent& f, const XMFLOAT4X4& m, EntityID) {
+            if (f.deadZone.x > 0.0f || f.deadZone.y > 0.0f) {
+                rect(m._41 - f.deadZone.x, m._42 - f.deadZone.y, m._41 + f.deadZone.x, m._42 + f.deadZone.y, m._43, 0.0f, 1);
+            }
+            if (!f.useBounds) {
+                return;
+            }
+            float x0 = f.boundsMin.x, y0 = f.boundsMin.y, x1 = f.boundsMax.x, y1 = f.boundsMax.y;
+            if (!f.boundsFromTilemap.IsNull() && world.IsAlive(f.boundsFromTilemap)) {
+                const TilemapAsset* map = TilemapSystem::AssetOf(world, f.boundsFromTilemap);
+                bool found = false;
+                int32_t minX = 0, minY = 0, maxX = 0, maxY = 0;
+                if (map != nullptr) {
+                    for (const TilemapLayer& layer : map->layers) {
+                        if (!layer.collision) {
+                            continue;
+                        }
+                        for (const auto& [key, chunk] : layer.chunks) {
+                            for (size_t i = 0; i < kTilemapChunkCells; ++i) {
+                                if (tilecell::TileId(chunk.cells[i]) == 0u) {
+                                    continue;
+                                }
+                                const int32_t local = static_cast<int32_t>(i);
+                                const int32_t cx = key.cx * kTilemapChunkSize + local % kTilemapChunkSize;
+                                const int32_t cy = key.cy * kTilemapChunkSize + local / kTilemapChunkSize;
+                                minX = found ? std::min(minX, cx) : cx;
+                                minY = found ? std::min(minY, cy) : cy;
+                                maxX = found ? std::max(maxX, cx) : cx;
+                                maxY = found ? std::max(maxY, cy) : cy;
+                                found = true;
+                            }
+                        }
+                    }
+                }
+                if (found) {
+                    const XMFLOAT3 origin = TilemapSystem::OriginOf(world, f.boundsFromTilemap);
+                    x0 = origin.x + static_cast<float>(minX) * map->cellSize[0];
+                    y0 = origin.y + static_cast<float>(minY) * map->cellSize[1];
+                    x1 = origin.x + static_cast<float>(maxX + 1) * map->cellSize[0];
+                    y1 = origin.y + static_cast<float>(maxY + 1) * map->cellSize[1];
+                }
+            }
+            const float thick = gizmo::kCamera2DBoundsThickness * std::max(std::fabs(x1 - x0), std::fabs(y1 - y0));
+            rect(x0, y0, x1, y1, m._43, thick, 3);
         });
 }
 

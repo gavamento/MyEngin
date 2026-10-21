@@ -293,6 +293,10 @@ void Sprite2DRenderer::AddQuad(const XMFLOAT4X4& m, float flipX, float flipY, co
         corner[i].pos[0] = lx[i] * m._11 + ly[i] * m._21 + m._41;
         corner[i].pos[1] = lx[i] * m._12 + ly[i] * m._22 + m._42;
         corner[i].pos[2] = lx[i] * m._13 + ly[i] * m._23 + m._43;
+        if (pixelSnapUnit_ > 0.0f) {
+            corner[i].pos[0] = std::round(corner[i].pos[0] / pixelSnapUnit_) * pixelSnapUnit_;
+            corner[i].pos[1] = std::round(corner[i].pos[1] / pixelSnapUnit_) * pixelSnapUnit_;
+        }
         corner[i].uv[0] = cu[i];
         corner[i].uv[1] = cv[i];
         for (int c = 0; c < 4; ++c) {

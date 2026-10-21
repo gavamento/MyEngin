@@ -2552,6 +2552,38 @@ struct GridAgent2DComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 2D カメラ追従 (M94、TypeId=92) ----
+// 同じエンティティの Camera の LocalTransform.position.xy を、物理の後・Transform の前の tick 位相で書く
+// (Camera2DFollowSystem)。カメラはルート前提 (親があっても親の逆変換はしない)。z は触らない。
+// 画面寸法を sim に持ち込まないため、境界のクランプは Camera.orthoSize と boundsAspect で半幅半高を決める。
+// カメラ位置 (LocalTransform) を決める sim の入力なので **hash 対象**
+struct Camera2DFollowComponent {
+    EntityID target = kNullEntity;
+    DirectX::XMFLOAT2 offset = { 0.0f, 0.0f };
+    DirectX::XMFLOAT2 deadZone = { 0.0f, 0.0f };  // 半幅・半高。0 = 無し
+    DirectX::XMFLOAT2 damping = { 0.15f, 0.15f }; // 0..1。1 tick で desired へ詰める割合
+    float lookAheadX = 0.0f;                      // 対象の速度 x の符号 × この距離を desired に足す
+    bool useBounds = false;
+    DirectX::XMFLOAT2 boundsMin = { -10.0f, -10.0f };
+    DirectX::XMFLOAT2 boundsMax = { 10.0f, 10.0f };
+    EntityID boundsFromTilemap = kNullEntity;     // 有効な Tilemap なら、その衝突レイヤーの外接矩形が boundsMin/Max の代わり
+    float boundsAspect = 16.0f / 9.0f;            // クランプに使う画面の縦横比 (半幅 = orthoSize × この値)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- ピクセルパーフェクトカメラ (M94、TypeId=93) ----
+// 主カメラ (正射影) のエンティティに付ける。画面に整数倍で収まる zoom を決め、orthoSize の有効値を上書きする
+// (pixelperfect2d::Compute)。upscaleRT なら低解像度 RT に描いて整数倍に拡大し、TAA と FXAA は止める。
+// 描画専用なので **kComponentNoHash**
+struct PixelPerfectCamera2DComponent {
+    int32_t assetsPPU = 100;      // スプライトの 1 ワールド単位あたりのピクセル数
+    int32_t refResolutionX = 320; // 基準解像度
+    int32_t refResolutionY = 180;
+    bool upscaleRT = true;        // true: 低解像度 RT に描いて整数倍拡大 / false: 解像度そのままで orthoSize だけ合わせる
+    bool pixelSnapping = false;   // Sprite2D の頂点とカメラ位置を 1/assetsPPU の格子へ丸める (描画のみ)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

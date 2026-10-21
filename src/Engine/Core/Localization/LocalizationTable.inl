@@ -975,6 +975,7 @@ MYE_STR(Create_Line2D,        "Line",              "2D 折れ線") // M94r
 MYE_STR(Create_SpriteShape,   "Sprite Shape",      "スプライトシェイプ") // M94s
 MYE_STR(Create_Effector2D,    "Effector 2D",       "2D エフェクター") // M94t
 MYE_STR(Create_GridAgent2D,   "Grid Agent 2D",     "2D グリッドエージェント") // M94u
+MYE_STR(Create_Camera2D,      "Camera 2D",         "2D カメラ") // M94v
 MYE_STR(Create_Part,          "Part (with Bounds)", "部位 (範囲付き)")
 // M60g2: ラグドール生成器 (右クリック対象の SkinnedMesh のスケルトンから組む)
 MYE_STR(Create_Ragdoll,       "Ragdoll (from Skeleton)", "ラグドール (スケルトンから)")
@@ -2521,6 +2522,20 @@ MYE_STR(Insp_Effector2DSurfaceTrigger, "Surface needs a solid (non-trigger) Coll
                                "Surface はトリガーでない静的 / kinematic の Collider が必要です")
 MYE_STR(Insp_Effector2DNote,   "Affects plane2D dynamic rigidbodies overlapping the Collider (Surface: touching it).",
                                "Collider に重なった plane2D の動的剛体に効きます (Surface は接触している剛体)")
+
+// ---- 2D カメラ (M94v) ----
+MYE_STR(Insp_Camera2DFollowParented, "This camera has a parent: its local position is written without undoing the parent's transform. Keep it a root entity.",
+                               "このカメラには親があります。親の変換を戻さずにローカル位置を書くので、ルートに置いてください")
+MYE_STR(Insp_Camera2DFollowNote, "Bounds keep the view inside using Camera.orthoSize x Bounds Aspect, never the real window size. Needs an orthographic Camera.",
+                               "境界は Camera.orthoSize と境界のアスペクト比で視野を収めます (実際のウィンドウ寸法は見ません)。正射影の Camera が要ります")
+MYE_STR(Insp_PixelPerfectNoCamera, "Needs an orthographic Camera on this entity (it is also the primary camera).",
+                               "このエンティティに正射影の Camera が必要です (主カメラであること)")
+MYE_STR(Insp_PixelPerfectNoView, "No Game View frame has been rendered with this camera yet.",
+                               "このカメラでまだゲームビューを描いていません")
+MYE_STR(Insp_PixelPerfectValues, "Game View now: zoom %d / render %d x %d px / orthoSize %.4f (Camera.orthoSize is ignored)",
+                               "現在のゲームビュー: 拡大率 %d / 描画 %d x %d px / orthoSize %.4f (Camera.orthoSize は無視)")
+MYE_STR(Insp_PixelPerfectNote, "With Upscale RT on, TAA and FXAA are turned off and UI draws at full resolution.",
+                               "低解像度 RT に描くときは TAA と FXAA が止まります。UI はフル解像度で描かれます")
 
 // ---- タイルパレット / タイルマップ (M94j) ----
 MYE_STR(Asset_TilePalette,     "Tile Palette",                         "タイルパレット")

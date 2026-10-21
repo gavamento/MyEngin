@@ -220,6 +220,8 @@
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtScope.cpp" />
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Camera2DFollow.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Camera2DFollowSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\LightSelection.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\ProbeBaker.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\RenderStatsDump.cpp" />
@@ -324,6 +326,7 @@
     <ClCompile Include="..\src\Engine\Renderer\Passes\OcclusionCullPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\OcclusionSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\PickingPass.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Passes\PixelPerfectBlitPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\ShadowAtlas.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\ShadowPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\SkyboxPass.cpp" />
@@ -336,6 +339,8 @@
     <ClCompile Include="..\src\Engine\Renderer\Pipeline\DeferredPath.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Pipeline\ForwardPath.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Pipeline\PerfDrawBenchmark.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Pipeline\PixelPerfect2D.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Pipeline\PixelPerfect2DSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Pipeline\RenderQueue.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Pipeline\RenderSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\PostFx\FxStackAsset.cpp" />
@@ -578,6 +583,8 @@
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSceneBuild.h" />
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtScope.h" />
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Camera2DFollow.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Camera2DFollowSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\DebugDraw.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\LightSelection.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\ProbeBaker.h" />
@@ -693,6 +700,7 @@
     <ClInclude Include="..\src\Engine\Renderer\Passes\OcclusionMath.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\OcclusionSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\PickingPass.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Passes\PixelPerfectBlitPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\ShadowAtlas.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\ShadowPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\SkyboxPass.h" />
@@ -708,6 +716,8 @@
     <ClInclude Include="..\src\Engine\Renderer\Pipeline\ForwardPath.h" />
     <ClInclude Include="..\src\Engine\Renderer\Pipeline\FrustumCull.h" />
     <ClInclude Include="..\src\Engine\Renderer\Pipeline\PerfDrawBenchmark.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Pipeline\PixelPerfect2D.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Pipeline\PixelPerfect2DSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\Pipeline\RenderPath.h" />
     <ClInclude Include="..\src\Engine\Renderer\Pipeline\RenderSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\Pipeline\RenderTypes.h" />

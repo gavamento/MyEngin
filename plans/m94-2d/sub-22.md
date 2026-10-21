@@ -41,4 +41,11 @@
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-22 (round 1) の写し。
+- Camera2DFollow (TypeId 92、hash 対象、snapshot v65) は sim 側 (UpdateCamera2DFollow、物理の後・PostPhysics の隣)。PixelPerfectCamera2D (TypeId 93、NoHash) は描画側のみ。
+- 仕様との差分 [追加]: (1) RT 寸法は「画面を覆う最小の偶数」(切り上げ→偶数)。spec の W / zoom / 2 * 2 (切り捨て) では 1003x543 などで黒帯が出るため。(2) Compute に viewOrthoSize (画面に見える半高) を足し UI のワールド追従射影に使う。(3) boundsFromTilemap は useBounds が立っているときだけ効く。引けなければ手書きの boundsMin/Max。(4) 正射影でない Camera は境界の半幅半高 0。(5) pixelSnapping は upscaleRT に関わらず効き、カメラ XY も 1/PPU 格子へ丸める (描画のみ)。(6) 親付きカメラは Inspector 警告のみ。(7) Create → 2D → Camera 2D は z = -10、isPrimary = false。
+- 検証: ビルド Debug / Release /p:MyeWarnAsError=true 0 警告、MYE_SELFTEST_ONLY=m94 両構成 FAIL 0 (焼き値 D5147EA06255DFC2 が Debug == Release)、check_rules 3 error / 50 warning (増減なし)、demo_forward 基点との --img-diff --tol 0 PASS (diffPixels 0)、--demo の --hash-diff は UIInteraction.prevSurfX/Y の 2 欄 (実マウスのミラー) だけ、スクショ 960 (zoom 3、タイル 48 px、UI 箱 11 px) / 1280 (zoom 4、タイル 64 px、UI 箱 14 px)。
+- 未検証: エディタ (GameView / Inspector / Scene View ギズモ / Create) の実操作、全体 selftest / replay_verify / shot_verify は sub-23。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-10-22)。スクショ `pixelperfect_960.png` でタイル周期 48 px (16 px × 3) の整数倍拡大と UI のフル解像度文字を確認、1280 は 64 px。Compute の表と総当たり (画面を覆う最小の偶数)、Camera2DFollow 30 項目超と焼き値 D5147EA06255DFC2 両構成同値、既存の焼き値不動、demo_forward tol 0、`--demo` hash-diff は入力ミラーだけ。[追加] 7 件は採用 (spec 4.1.12)。不安 1 (RT 切り上げ) 採用、2 (境界は Camera.orthoSize) は Create の初期化で緩和 (sub-23 やること 9)、3 (Inspector の有効値は直近描画) は可。

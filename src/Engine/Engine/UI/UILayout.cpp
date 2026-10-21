@@ -6,6 +6,7 @@
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Rendering/RenderSystem.h" // PrevWorldStore (描画補間 M36b)
+#include "Engine/Renderer/Pipeline/PixelPerfect2D.h" // M94v: ピクセルパーフェクトの orthoSize
 #include "Engine/Engine/UI/UILayoutGroup.h" // M75e: 自動レイアウト
 #include "Engine/Engine/UI/UIWidgets.h"     // M75f: Slider の fill / handle のアンカー
 #include "Engine/Platform/Input.h" // InputSnapshot (M75b: CanvasOfInput)
@@ -530,6 +531,7 @@ bool BuildSimWorldContext(World& world, int screenW, int screenH, UIWorldContext
     // (アーキタイプ内 return は RenderSystem の実装と同じ = 同じ結果を選ぶ)
     bool found = false;
     CameraComponent cam = {};
+    EntityID camEntity = kNullEntity;
     DirectX::XMFLOAT4X4 cw = {};
     const ComponentTypeId req[] = { CameraComponent::sTypeId, WorldMatrixComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
@@ -539,6 +541,7 @@ bool BuildSimWorldContext(World& world, int screenW, int screenH, UIWorldContext
             const auto* c = static_cast<const CameraComponent*>(arch.GetPtr(ci, row));
             if (!found || c->isPrimary) {
                 cam = *c;
+                camEntity = arch.EntityAt(row);
                 cw = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
                 found = true;
                 if (c->isPrimary) {
@@ -582,8 +585,18 @@ bool BuildSimWorldContext(World& world, int screenW, int screenH, UIWorldContext
     const bool ortho = cam.orthographic;
     float xs = 0.0f, ys = 0.0f, zs = 0.0f;
     if (ortho) {
-        xs = 1.0f / (cam.orthoSize * aspect);
-        ys = 1.0f / cam.orthoSize;
+        // M94v: PixelPerfectCamera2D があれば画面に見える範囲の半高 (RenderSystem と同じ Compute)
+        float orthoSize = cam.orthoSize;
+        if (const auto* pp = world.GetComponent<PixelPerfectCamera2DComponent>(camEntity)) {
+            pixelperfect2d::Settings s;
+            s.assetsPPU = pp->assetsPPU;
+            s.refResolutionX = pp->refResolutionX;
+            s.refResolutionY = pp->refResolutionY;
+            s.upscaleRT = pp->upscaleRT;
+            orthoSize = pixelperfect2d::Compute(screenW, screenH, s).viewOrthoSize;
+        }
+        xs = 1.0f / (orthoSize * aspect);
+        ys = 1.0f / orthoSize;
         zs = 1.0f / (cam.farZ - cam.nearZ);
     } else {
         const float fovY = cam.fovYDeg * (3.14159265358979323846f / 180.0f);

@@ -76,6 +76,7 @@ private:
     void DrawLine2DGizmos(World& world);                                                   // M94r
     void DrawEffector2DGizmos(World& world);                                                 // M94t
     void DrawGridAgent2DGizmos(World& world);                                                // M94u
+    void DrawCamera2DFollowGizmos(World& world);                                             // M94v
     void DrawSpriteShape2DGizmos(World& world);                                              // M94s
     // M94h: kPolygon2D / kEdge2D の点列 (緑) を前後面の輪郭と支柱で描く
     void AddShape2DWire(const ColliderComponent& col, const DirectX::XMFLOAT4X4& wm);

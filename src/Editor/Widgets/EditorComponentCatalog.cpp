@@ -120,6 +120,8 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "SpriteShape2D", { ICON_FA_MOUNTAIN, "2D", "2D スプライトシェイプ" } }, // M94s
         { "Effector2D", { ICON_FA_WIND, "2D", "2D エフェクター" } }, // M94t
         { "GridAgent2D", { ICON_FA_ROUTE, "2D", "2D グリッドエージェント" } }, // M94u
+        { "Camera2DFollow", { ICON_FA_VIDEO, "2D", "2D カメラ追従" } }, // M94v
+        { "PixelPerfectCamera2D", { ICON_FA_BORDER_ALL, "2D", "2D ピクセルパーフェクトカメラ" } }, // M94v
     };
     return t;
 }

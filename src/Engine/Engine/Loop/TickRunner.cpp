@@ -18,6 +18,7 @@
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AgentSystem.h" // M65f: 敵の思考 (フェーズ 3.4 の後半)
 #include "Engine/Engine/Navigation/GridNav2D.h" // M94u: 2D グリッド A*
+#include "Engine/Engine/Rendering/Camera2DFollow.h" // M94v: 2D カメラ追従 (物理の後)
 #include "Engine/Engine/Navigation/NavSystem.h" // M82b: ナビメッシュ (フェーズ 3.4 と 3.5 の間)
 #include "Engine/Engine/Perception/PerceptionSystem.h" // M83: 知覚 (フェーズ 3.4a)
 #include "Engine/Engine/AI/BehaviorTreeSystem.h" // M85: ビヘイビアツリー (フェーズ 3.4a2)
@@ -519,6 +520,9 @@ void RunOneTick(TickServices& ts)
         if (ts.navSystem != nullptr) {
             ts.navSystem->PostPhysics(scene.GetWorld(), ctx.fixedDt);
         }
+        // M94v: 2D カメラ追従。対象は物理が書いた LocalTransform の連鎖から読む (Transform の前 = ラグ無し)。
+        // Camera2DFollow が無いシーンでは走査だけで何もしない
+        UpdateCamera2DFollow(scene.GetWorld(), ts.tilemap);
         // v14 GetContactInfo (M59k): ここから先 (OnCollision* / LateUpdate) だけが読める。
         // stepSim が false の tick は繋がないまま = ポーズ中は常に「接触なし」が返る
         scriptHost.SetTickContacts(&solidContacts);

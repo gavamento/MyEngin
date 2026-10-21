@@ -301,6 +301,38 @@ bool TilemapSystem::GetLayerBounds(World& world, EntityID e, int32_t layer, int3
     return found;
 }
 
+bool TilemapSystem::GetCollisionBounds(World& world, EntityID e, int32_t& minX, int32_t& minY, int32_t& maxX,
+                                       int32_t& maxY) const
+{
+    const TilemapAsset* map = AssetOf(world, e);
+    if (map == nullptr) {
+        return false;
+    }
+    bool found = false;
+    for (size_t li = 0; li < map->layers.size(); ++li) {
+        if (!map->layers[li].collision) {
+            continue;
+        }
+        int32_t lx0 = 0, ly0 = 0, lx1 = 0, ly1 = 0;
+        if (!GetLayerBounds(world, e, static_cast<int32_t>(li), lx0, ly0, lx1, ly1)) {
+            continue;
+        }
+        if (!found) {
+            minX = lx0;
+            minY = ly0;
+            maxX = lx1;
+            maxY = ly1;
+            found = true;
+        } else {
+            minX = std::min(minX, lx0);
+            minY = std::min(minY, ly0);
+            maxX = std::max(maxX, lx1);
+            maxY = std::max(maxY, ly1);
+        }
+    }
+    return found;
+}
+
 // ---- 書き換え ----
 
 void TilemapSystem::InvalidateChunk(EntityKey owner, int32_t layerIndex, ChunkKey chunk)

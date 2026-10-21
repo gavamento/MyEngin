@@ -1988,6 +1988,27 @@ void RegisterBuiltinComponents()
         MYE_FIELD_FLAGS(GridAgent2DComponent, stuckTicks, Int32, kFieldHidden | kFieldReadOnly),
         MYE_FIELD_FLAGS(GridAgent2DComponent, bestDistance, Float, kFieldHidden | kFieldReadOnly),
     });
+    // M94v: 2D カメラ追従 (TypeId=92、末尾 append)。カメラの位置 (LocalTransform) を決める sim の入力なので **hash 対象**
+    RegisterComponent<Camera2DFollowComponent>("Camera2DFollow", {
+        MYE_JP("追従対象", MYE_FIELD_TIP(Camera2DFollowComponent, target, EntityRef, "entity the camera follows (its LocalTransform chain gives the world position)")),
+        MYE_JP("オフセット", MYE_FIELD(Camera2DFollowComponent, offset, Float2)),
+        MYE_JP("デッドゾーン", MYE_FIELD_TIP(Camera2DFollowComponent, deadZone, Float2, "half width / half height around the camera where the target can move without moving it; 0 = none")),
+        MYE_JP("ダンピング", MYE_FIELD_TIP(Camera2DFollowComponent, damping, Float2, "fraction of the remaining distance covered per tick (0..1); 1 = snap")),
+        MYE_JP("先読み X", MYE_FIELD_TIP(Camera2DFollowComponent, lookAheadX, Float, "distance added toward the target's horizontal velocity (Rigidbody, else CharacterController)")),
+        MYE_JP("境界を使う", MYE_FIELD(Camera2DFollowComponent, useBounds, Bool)),
+        MYE_JP("境界 最小", MYE_FIELD(Camera2DFollowComponent, boundsMin, Float2)),
+        MYE_JP("境界 最大", MYE_FIELD(Camera2DFollowComponent, boundsMax, Float2)),
+        MYE_JP("境界の Tilemap", MYE_FIELD_TIP(Camera2DFollowComponent, boundsFromTilemap, EntityRef, "when set (and Use Bounds is on) the bounds are the box around the non-empty cells of this Tilemap's collision layers")),
+        MYE_JP("境界のアスペクト比", MYE_FIELD_TIP(Camera2DFollowComponent, boundsAspect, Float, "screen aspect used to keep the view inside the bounds (half width = orthoSize x this); the simulation never sees the real window size")),
+    });
+    // M94v: ピクセルパーフェクトカメラ (TypeId=93、末尾 append)。描画専用の **kComponentNoHash**
+    RegisterComponent<PixelPerfectCamera2DComponent>("PixelPerfectCamera2D", {
+        MYE_JP("アセットの PPU", MYE_FIELD_TIP(PixelPerfectCamera2DComponent, assetsPPU, Int32, "pixels per world unit of the sprites")),
+        MYE_JP("基準解像度 X", MYE_FIELD(PixelPerfectCamera2DComponent, refResolutionX, Int32)),
+        MYE_JP("基準解像度 Y", MYE_FIELD(PixelPerfectCamera2DComponent, refResolutionY, Int32)),
+        MYE_JP("低解像度 RT に描く", MYE_FIELD_TIP(PixelPerfectCamera2DComponent, upscaleRT, Bool, "draw into a low-resolution render target and upscale by the integer zoom; TAA and FXAA are turned off")),
+        MYE_JP("ピクセルスナップ", MYE_FIELD_TIP(PixelPerfectCamera2DComponent, pixelSnapping, Bool, "snap Sprite2D vertices and the camera to the 1 / PPU grid (render only)")),
+    }, kComponentNoHash);
 }
 
 } // namespace mye

@@ -200,6 +200,20 @@ GameObject CreateEffector2D(EngineContext& ctx, const char* name)
     return obj;
 }
 
+// M94v: 2D カメラ (正射影 Camera + Camera2DFollow + PixelPerfectCamera2D)。既存のメインカメラを奪わない。
+// 追従対象は Inspector で割り当てる。z = -10 から +Z を向く (スプライトは z = 0 付近)
+GameObject CreateCamera2D(EngineContext& ctx, const char* name)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    auto* cam = obj.AddComponent<CameraComponent>();
+    cam->isPrimary = false;
+    cam->orthographic = true;
+    obj.AddComponent<Camera2DFollowComponent>();
+    obj.AddComponent<PixelPerfectCamera2DComponent>();
+    obj.SetLocalPosition(0.0f, 0.0f, -10.0f);
+    return obj;
+}
+
 // M94u: 2D グリッドエージェント (plane2D の CharacterController + GridAgent2D)。
 // Tilemap は Inspector で割り当てる (空のままだと status は Inactive)
 GameObject CreateGridAgent2D(EngineContext& ctx, const char* name)
@@ -502,6 +516,7 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
                    &CreateEffector2D);
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_GridAgent2D), "Grid Agent 2D",
                    &CreateGridAgent2D);
+        CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Camera2D), "Camera 2D", &CreateCamera2D);
         ImGui::EndMenu();
     }
 

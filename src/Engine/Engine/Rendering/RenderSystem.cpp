@@ -25,6 +25,7 @@
 #include "Engine/Engine/Vfx/VfxRenderer.h"
 #include "Engine/Platform/PathUtil.h" // WideToUtf8 (fxstack のパスをログへ)
 #include "Engine/Renderer/Pipeline/FrustumCull.h"
+#include "Engine/Renderer/Pipeline/PixelPerfect2D.h" // M94v
 #include "Engine/Renderer/Device/GpuResources.h"
 #include "Engine/Renderer/Device/GraphicsDevice.h"
 #include "Engine/Renderer/PostFx/PostFxMath.h" // M55b: camerajitter
@@ -572,22 +573,117 @@ struct RenderSystem::FrameContext {
     bool hasScene = false;
     bool distortionActive = false;                     // M42d: このフレーム歪みバッファを使ったか
     const std::vector<OcclusionDebugBox>* occlusionBoxes = nullptr; // --hzb-debug-max: パスが集めた (パスの寿命内だけ有効)
+    // M94v: ピクセルパーフェクトカメラ (描画専用)
+    float orthoSizeOverride = 0.0f;                    // > 0: 主カメラの orthoSize の代わりに使う
+    bool pixelPerfect = false;                         // TAA ジッタと FXAA を止める (低解像度 RT に描くとき)
+    float pixelSnapUnit = 0.0f;                        // > 0: カメラ位置をこの格子 (ワールド単位) へ丸める
 };
+
+namespace {
+
+// 主カメラのピクセルパーフェクト設定から求めた描画計画 (ResolveCamera と同じ規則でカメラを選ぶ)
+struct PixelPerfectPlan {
+    bool active = false;             // 主カメラが正射影で PixelPerfectCamera2D を持つ
+    bool snapping = false;
+    float snapUnit = 0.0f;           // 1 / assetsPPU (ワールド単位)
+    pixelperfect2d::Result result;
+};
+
+PixelPerfectPlan PlanPixelPerfect(World& world, int screenW, int screenH)
+{
+    PixelPerfectPlan plan;
+    bool found = false;
+    EntityID camEntity = kNullEntity;
+    bool orthographic = false;
+    const ComponentTypeId req[] = { CameraComponent::sTypeId, WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int ci = arch.FindTypeIndex(CameraComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const auto* c = static_cast<const CameraComponent*>(arch.GetPtr(ci, row));
+            if (!found || c->isPrimary) {
+                orthographic = c->orthographic;
+                camEntity = arch.EntityAt(row);
+                found = true;
+                if (c->isPrimary) {
+                    return;
+                }
+            }
+        }
+    });
+    if (!found || !orthographic) {
+        return plan;
+    }
+    const auto* pp = world.GetComponent<PixelPerfectCamera2DComponent>(camEntity);
+    if (pp == nullptr) {
+        return plan;
+    }
+    pixelperfect2d::Settings s;
+    s.assetsPPU = pp->assetsPPU;
+    s.refResolutionX = pp->refResolutionX;
+    s.refResolutionY = pp->refResolutionY;
+    s.upscaleRT = pp->upscaleRT;
+    plan.active = true;
+    plan.snapping = pp->pixelSnapping;
+    plan.snapUnit = 1.0f / static_cast<float>(std::max(pp->assetsPPU, 1));
+    plan.result = pixelperfect2d::Compute(screenW, screenH, s);
+    return plan;
+}
+
+} // namespace
 
 bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& path,
                           ShaderManager& shaders, RenderResources& resources,
-                          const FrameTarget& target, const CameraOverride* cameraOverride,
+                          const FrameTarget& screenTarget, const CameraOverride* cameraOverride,
                           ParticleSystem* particles, VfxRenderer* vfx)
 {
-    prof::SetRenderStatsView(target.viewKey);
+    prof::SetRenderStatsView(screenTarget.viewKey);
     if (!frameTimerInit_) {
         frameTimerInit_ = true;
         frameTimer_.Init(device); // 失敗しても計測が 0 になるだけ
     }
     frameTimer_.Begin(device);
 
+    // ---- M94v: ピクセルパーフェクト。エディタ視界 (cameraOverride) は対象外 ----
+    // PixelPerfectCamera2D の無いシーンは PlanPixelPerfect が active=false を返すだけで、以降の経路は従来と同じ
+    PixelPerfectPlan ppPlan;
+    if (!cameraOverride) {
+        ppPlan = PlanPixelPerfect(world, screenTarget.width, screenTarget.height);
+        lastPixelPerfectValid = ppPlan.active;
+        lastPixelPerfect = ppPlan.result;
+    }
+    FrameTarget lowTarget;
+    bool drawLowRes = false;
+    if (ppPlan.active && ppPlan.result.upscale) {
+        pixelPerfectRt_.Resize(device, ppPlan.result.rtW, ppPlan.result.rtH);
+        if (pixelPerfectRt_.IsValid()) {
+            lowTarget = screenTarget;
+            lowTarget.rtv = pixelPerfectRt_.RTV();
+            lowTarget.dsv = pixelPerfectRt_.DSV();
+            lowTarget.width = pixelPerfectRt_.Width();
+            lowTarget.height = pixelPerfectRt_.Height();
+            lowTarget.depthSRV = pixelPerfectRt_.DepthSRV();
+            lowTarget.dsvReadOnly = pixelPerfectRt_.DSVReadOnly();
+            drawLowRes = true;
+        } else {
+            // RT を作れなければ解像度そのままで描く (見える範囲は同じ。orthoSize だけ画面基準にする)
+            ppPlan.result.orthoSize = ppPlan.result.viewOrthoSize;
+        }
+    }
+    const FrameTarget& target = drawLowRes ? lowTarget : screenTarget;
+    if (drawLowRes && !pixelPerfectLogged_) {
+        pixelPerfectLogged_ = true;
+        MYE_LOG_INFO("RenderSystem: PixelPerfectCamera2D zoom %d, RT %dx%d -> %dx%d (TAA / FXAA are turned off)",
+                     ppPlan.result.zoom, ppPlan.result.rtW, ppPlan.result.rtH, screenTarget.width, screenTarget.height);
+    }
+
     // ★後の段は前の段が view / lights に書いた値を読む
     FrameContext f;
+    if (ppPlan.active) {
+        f.orthoSizeOverride = ppPlan.result.orthoSize;
+        f.pixelPerfect = drawLowRes;
+        f.pixelSnapUnit = ppPlan.snapping ? ppPlan.snapUnit : 0.0f;
+    }
+    sprite2dRenderer_.SetPixelSnapUnit(f.pixelSnapUnit);
     BeginView(device, shaders, target, f);
     ResolveCamera(world, cameraOverride, f);
     DecideTaaAndFroxel(world, path, target, cameraOverride, f);
@@ -618,6 +714,26 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
 
     DrawParticlesAndDebug(world, device, shaders, resources, target, cameraOverride, particles, vfx, f);
     ResolvePost(world, device, shaders, resources, path, target, cameraOverride, f);
+    if (drawLowRes) {
+        // 低解像度 RT を整数倍で画面へ。深度は呼び出し側の後段 (ギズモ等) のために 1 へ戻しておく
+        if (!pixelPerfectBlit_.IsReady()) {
+            pixelPerfectBlit_.Init(device, shaders);
+        }
+        if (screenTarget.dsv != nullptr) {
+            device.Context()->ClearDepthStencilView(screenTarget.dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+        }
+        pixelPerfectBlit_.Blit(device, shaders, pixelPerfectRt_.SRV(), lowTarget.width, lowTarget.height,
+                               screenTarget.rtv, screenTarget.width, screenTarget.height, ppPlan.result.zoom);
+        // ワールド追従 UI は画面に見えている範囲 (RT の端を切った後) の射影で置く
+        if (f.cameraFound) {
+            const float viewHalfH = ppPlan.result.viewOrthoSize;
+            const float screenAspect = (screenTarget.height > 0)
+                ? static_cast<float>(screenTarget.width) / static_cast<float>(screenTarget.height) : 1.0f;
+            const XMMATRIX screenProj = XMMatrixOrthographicLH(2.0f * viewHalfH * screenAspect, 2.0f * viewHalfH,
+                                                               f.view.nearZ, f.view.farZ);
+            XMStoreFloat4x4(&lastViewProjNoJitter, XMLoadFloat4x4(&f.view.view) * screenProj);
+        }
+    }
     frameTimer_.End(device);
     return f.cameraFound;
 }
@@ -709,10 +825,17 @@ void RenderSystem::ResolveCamera(World& world, const CameraOverride* cameraOverr
                     camWorld = LerpWorld(*pw, camWorld, interpAlpha);
                 }
             }
+            // M94v: ピクセルスナップ中はカメラの XY を 1/PPU の格子へ丸める (スプライトの頂点と同じ格子)
+            if (f.pixelSnapUnit > 0.0f) {
+                camWorld._41 = std::round(camWorld._41 / f.pixelSnapUnit) * f.pixelSnapUnit;
+                camWorld._42 = std::round(camWorld._42 / f.pixelSnapUnit) * f.pixelSnapUnit;
+            }
             const XMMATRIX w = XMLoadFloat4x4(&camWorld);
             const XMMATRIX v = XMMatrixInverse(nullptr, w);
+            // M94v: PixelPerfectCamera2D があれば orthoSize はそちらの有効値 (CameraComponent.orthoSize は無視)
+            const float orthoSize = (f.orthoSizeOverride > 0.0f) ? f.orthoSizeOverride : cam.orthoSize;
             const XMMATRIX p = cam.orthographic
-                ? XMMatrixOrthographicLH(2.0f * cam.orthoSize * aspectRatio, 2.0f * cam.orthoSize,
+                ? XMMatrixOrthographicLH(2.0f * orthoSize * aspectRatio, 2.0f * orthoSize,
                                          cam.nearZ, cam.farZ)
                 : XMMatrixPerspectiveFovLH(XMConvertToRadians(cam.fovYDeg), aspectRatio,
                                            cam.nearZ, cam.farZ);
@@ -768,8 +891,9 @@ void RenderSystem::DecideTaaAndFroxel(World& world, IRenderPath& path, const Fra
                 taaOn = pfx->taaOn;
             }
         }
+        // M94v: ピクセルパーフェクト中はジッタも TAA も止める (ドットが滲む)
         view.taaEnabled = (taaOn && cameraFound && hdr != nullptr && path.WritesVelocity()
-                           && target.viewKey > 0 && target.viewKey < 4)
+                           && target.viewKey > 0 && target.viewKey < 4 && !f.pixelPerfect)
             ? 1 : 0;
     }
     // ---- M57c: フロクセルの有効判定とパラメータ ----
@@ -2187,6 +2311,10 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
                 effective = MergeCameraPostFx(postFxSettings, *pfx);
             }
         }
+        // M94v: 低解像度 RT に描いたシーンは FXAA を掛けない (拡大するとドットの輪郭が滲む)
+        if (f.pixelPerfect) {
+            effective.fxaa = false;
+        }
         // M44d: 前フレーム viewProj は path.Render 前に充填済み (view.prevViewProj)。
         // SceneView (cameraOverride) はエディタ操作中のスミアが UX を阻害するため強制 off
         if (cameraOverride) {
@@ -2398,6 +2526,8 @@ void RenderSystem::ReleaseGpu()
     linePass_ = EditorLinePass();
     navFillPass_ = NavFillPass();
     sprite2dPass_ = Sprite2DPass();
+    pixelPerfectRt_ = RenderTexture();
+    pixelPerfectBlit_ = PixelPerfectBlitPass();
     envBaker_ = EnvMapBaker();
     rtScene_ = RtScene();
     rtPasses_ = RtPasses();

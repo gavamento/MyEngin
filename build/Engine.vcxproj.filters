@@ -834,6 +834,12 @@
     <ClCompile Include="..\src\Engine\Engine\RayTracing\RtSelfTest.cpp">
       <Filter>Engine\RayTracing</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Camera2DFollow.cpp">
+      <Filter>Engine\Rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\Camera2DFollowSelfTest.cpp">
+      <Filter>Engine\Rendering</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Rendering\LightSelection.cpp">
       <Filter>Engine\Rendering</Filter>
     </ClCompile>
@@ -1146,6 +1152,9 @@
     <ClCompile Include="..\src\Engine\Renderer\Passes\PickingPass.cpp">
       <Filter>Renderer\Passes</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\PixelPerfectBlitPass.cpp">
+      <Filter>Renderer\Passes</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Passes\ShadowAtlas.cpp">
       <Filter>Renderer\Passes</Filter>
     </ClCompile>
@@ -1180,6 +1189,12 @@
       <Filter>Renderer\Pipeline</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Pipeline\PerfDrawBenchmark.cpp">
+      <Filter>Renderer\Pipeline</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Pipeline\PixelPerfect2D.cpp">
+      <Filter>Renderer\Pipeline</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Pipeline\PixelPerfect2DSelfTest.cpp">
       <Filter>Renderer\Pipeline</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Pipeline\RenderQueue.cpp">
@@ -1908,6 +1923,12 @@
     <ClInclude Include="..\src\Engine\Engine\RayTracing\RtSelfTest.h">
       <Filter>Engine\RayTracing</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Camera2DFollow.h">
+      <Filter>Engine\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\Camera2DFollowSelfTest.h">
+      <Filter>Engine\Rendering</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Rendering\DebugDraw.h">
       <Filter>Engine\Rendering</Filter>
     </ClInclude>
@@ -2253,6 +2274,9 @@
     <ClInclude Include="..\src\Engine\Renderer\Passes\PickingPass.h">
       <Filter>Renderer\Passes</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\PixelPerfectBlitPass.h">
+      <Filter>Renderer\Passes</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Passes\ShadowAtlas.h">
       <Filter>Renderer\Passes</Filter>
     </ClInclude>
@@ -2296,6 +2320,12 @@
       <Filter>Renderer\Pipeline</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Pipeline\PerfDrawBenchmark.h">
+      <Filter>Renderer\Pipeline</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Pipeline\PixelPerfect2D.h">
+      <Filter>Renderer\Pipeline</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Pipeline\PixelPerfect2DSelfTest.h">
       <Filter>Renderer\Pipeline</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Pipeline\RenderPath.h">
