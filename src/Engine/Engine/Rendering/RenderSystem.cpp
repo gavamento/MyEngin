@@ -575,7 +575,7 @@ struct RenderSystem::FrameContext {
     const std::vector<OcclusionDebugBox>* occlusionBoxes = nullptr; // --hzb-debug-max: パスが集めた (パスの寿命内だけ有効)
     // M94v: ピクセルパーフェクトカメラ (描画専用)
     float orthoSizeOverride = 0.0f;                    // > 0: 主カメラの orthoSize の代わりに使う
-    bool pixelPerfect = false;                         // TAA ジッタと FXAA を止める (低解像度 RT に描くとき)
+    bool pixelPerfect = false;                         // TAA ジッタと FXAA を止める (PixelPerfectCamera2D が有効な間は常に)
     float pixelSnapUnit = 0.0f;                        // > 0: カメラ位置をこの格子 (ワールド単位) へ丸める
 };
 
@@ -670,17 +670,23 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         }
     }
     const FrameTarget& target = drawLowRes ? lowTarget : screenTarget;
-    if (drawLowRes && !pixelPerfectLogged_) {
+    if (ppPlan.active && !pixelPerfectLogged_) {
         pixelPerfectLogged_ = true;
-        MYE_LOG_INFO("RenderSystem: PixelPerfectCamera2D zoom %d, RT %dx%d -> %dx%d (TAA / FXAA are turned off)",
-                     ppPlan.result.zoom, ppPlan.result.rtW, ppPlan.result.rtH, screenTarget.width, screenTarget.height);
+        if (drawLowRes) {
+            MYE_LOG_INFO("RenderSystem: PixelPerfectCamera2D zoom %d, RT %dx%d -> %dx%d (TAA / FXAA are turned off)",
+                         ppPlan.result.zoom, ppPlan.result.rtW, ppPlan.result.rtH, screenTarget.width,
+                         screenTarget.height);
+        } else {
+            MYE_LOG_INFO("RenderSystem: PixelPerfectCamera2D zoom %d, drawn at %dx%d without a low-res RT (TAA / FXAA are turned off)",
+                         ppPlan.result.zoom, screenTarget.width, screenTarget.height);
+        }
     }
 
     // ★後の段は前の段が view / lights に書いた値を読む
     FrameContext f;
     if (ppPlan.active) {
         f.orthoSizeOverride = ppPlan.result.orthoSize;
-        f.pixelPerfect = drawLowRes;
+        f.pixelPerfect = true; // 低解像度 RT を使わない (zoom 1 / upscaleRT = false) ときもドットを保つ
         f.pixelSnapUnit = ppPlan.snapping ? ppPlan.snapUnit : 0.0f;
     }
     sprite2dRenderer_.SetPixelSnapUnit(f.pixelSnapUnit);
@@ -891,7 +897,7 @@ void RenderSystem::DecideTaaAndFroxel(World& world, IRenderPath& path, const Fra
                 taaOn = pfx->taaOn;
             }
         }
-        // M94v: ピクセルパーフェクト中はジッタも TAA も止める (ドットが滲む)
+        // M94v: PixelPerfectCamera2D がある間はジッタも TAA も止める (ドットが滲む)
         view.taaEnabled = (taaOn && cameraFound && hdr != nullptr && path.WritesVelocity()
                            && target.viewKey > 0 && target.viewKey < 4 && !f.pixelPerfect)
             ? 1 : 0;
@@ -2311,7 +2317,7 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
                 effective = MergeCameraPostFx(postFxSettings, *pfx);
             }
         }
-        // M94v: 低解像度 RT に描いたシーンは FXAA を掛けない (拡大するとドットの輪郭が滲む)
+        // M94v: PixelPerfectCamera2D がある間は FXAA を掛けない (ドットの輪郭が滲む)
         if (f.pixelPerfect) {
             effective.fxaa = false;
         }

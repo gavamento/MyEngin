@@ -544,6 +544,9 @@ void ShaderManager::ReleaseGpu()
         p.velocityInputLayout.Reset();
         p.shadowVS.Reset();
         p.shadowInputLayout.Reset();
+        p.spriteVS.Reset();
+        p.spritePS.Reset();
+        p.spriteInputLayout.Reset();
         p.valid = false;
     }
 }

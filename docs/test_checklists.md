@@ -735,6 +735,7 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] Inspector の警告行が読める: Sprite2D の srgb = on の警告 / normalMap の srgb 警告 / ソート層が無い id の警告 / Effector2D の警告 (Surface でトリガー Collider など) / GridAgent2D の tilemap 未設定 / Tilemap のワールドスケール無視の注記 / plane2D の「異なる z は当たらない」注記
 - [ ] スプライトのサーフェスシェーダ (`SpriteFx.surface.hlsl` を Material に割り当てた Sprite2D) で flash / 輪郭 / dissolve が効く。使えない材質を割り当てると内蔵で描かれ Inspector に理由が出る
 - [ ] Joint の Inspector の **「2D (Z 軸)」ボタン**を押すと axis が (0,0,1) になる (Hinge)
+- [ ] Light2D の Inspector の実操作: type の切り替えで項目が出入りし、色・強度・半径・角度のドラッグが Scene View のライトに追従し、Freeform / Sprite の形の指定と Undo が働く
 
 ### Project Settings のソート層
 
@@ -744,7 +745,9 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 
 - [ ] ツールバーの「2D」トグルで XY の正射影になり、ホイールでズーム、中 / 右ドラッグでパン、F で選択へ寄る。OFF で元の 3D 視点に戻る。ImGuizmo が XY 並進 / Z 回転 / XY 拡縮だけになり、XY グリッドが出る
 - [ ] ギズモの色: Sprite2D の矩形 (白) と pivot (黄の十字)、2D コライダー (緑)、Tilemap の衝突箱 (`showCollision`、緑)、Light2D (黄。type ごとの輪郭)、ShadowCaster2D (紫)、Camera2DFollow の deadZone と bounds (青)、GridAgent2D の次セル (橙)、Effector2D の矢印 (橙) が出る
+- [ ] Perception の `forwardAxis` が XY (2D) のとき、知覚扇形のギズモが XY 平面に出て、視野角と距離が Inspector の値に追従する
 - [ ] Line2D / SpriteShape2D の点ハンドル: 点を選ぶまでは変形ギズモのまま。点のドラッグ・点選択中の辺クリックで追加・Delete で削除・Esc が働き、1 ドラッグ 1 Undo
+- [ ] SpriteShape2D は透視カメラ・回転 / スケール付きの親の下でも、縁と塗りの見た目が正射影・親なしのときと破綻しない (縁がずれず、塗りが裏返らない)
 - [ ] `.shape2d.json` (Polygon2D / Edge2D Collider) の点ハンドル: ドラッグ、辺クリックで追加、Delete (Undo は無く、ドラッグ 1 回 = 保存 1 回)
 - [ ] Scene View のクリック選択が Sprite2D を選ぶ (Line2D は選べない = 仕様の限界。Hierarchy か点ハンドルから)
 - [ ] 非 Play の Scene View で Light2D が効いた見た目になる (ライトの配置が見える)。Scene View の色はエディタカメラの ACES で淡く出る (ゲームカメラの契約とは別)
@@ -767,6 +770,7 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 ### タイルパレット / タイルマップ
 
 - [ ] タイルパレット窓で塗り (B)・消去 (D)・塗り潰し (G)・矩形・ピック (I)・選択 (S) とその Delete・Undo / Redo (Ctrl+Z / Y)・保存 (Ctrl+S) ができ、窓を開いている間は Scene View の 2D で左クリックでも塗れる (「Paint in Scene View」で外せる)。キーは窓フォーカスか Scene View 上のカーソルのとき、Ctrl+S / Z / Y は窓フォーカスのとき。Scene View フォーカスの Ctrl+Z はシーンの Undo
+- [ ] タイルパレットのキー U (矩形) で矩形ツールに切り替わり、ドラッグで矩形に塗れる (キーは窓フォーカスか Scene View 上のカーソルのとき)
 - [ ] 別アセットへ切り替えるときのモーダル、Tilemap コンポーネントの [Open Tile Palette] ボタン、Window メニューから開く。Play 中は塗れず、理由が折り返して全部読める
 - [ ] パレットのタイル追加 (スプライトから / スライス済みテクスチャから一括) と削除、ルール (8 近傍トグル) とアニメ (ticksPerFrame・コマ) の編集、レイヤーの追加・削除・順序が働く。InputText で名前を編集できる
 - [ ] 初回のドラッグが一瞬 (約 110 ms) 止まっても許容。連続ドラッグで目立って重くならない

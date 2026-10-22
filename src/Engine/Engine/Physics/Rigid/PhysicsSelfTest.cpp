@@ -8746,6 +8746,44 @@ bool RunPhysicsSelfTest()
             check(kCc2dExpectedHash == 0 || finalHash == kCc2dExpectedHash,
                   "CC2D: the final world hash matches the baked value (Debug == Release)");
         }
+        // (10) 上昇する一方通行の kinematic 床に CC と箱を載せる。床の天面は tick 開始時の姿勢で見るので、
+        //      1 tick の上昇量が kOneWaySlop (0.05) を超える 4 m/s (0.067 m/tick) でもすり抜けない
+        for (const float riseSpeed : { 1.0f, 4.0f }) {
+            Scene s;
+            GameObject lift = MakeBox(s, "RisingLift", 0, -0.1f, 0, 6.0f, 0.1f, 5.0f); // 天面 y=0
+            lift.GetComponent<ColliderComponent>()->oneWay = true;
+            lift.GetComponent<RigidbodyComponent>()->isKinematic = true;
+            lift.GetComponent<RigidbodyComponent>()->plane2D = true;
+            lift.GetComponent<RigidbodyComponent>()->velocity = { 0.0f, riseSpeed, 0.0f };
+            GameObject ch = mkCc(s, "Rider", -3.0f, 0.9f, 0);
+            GameObject crate = MakeBox(s, "Crate", 3.0f, 0.25f, 0, 0.25f, 0.25f, 0.5f);
+            crate.GetComponent<RigidbodyComponent>()->plane2D = true;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* cc = ch.GetComponent<CharacterControllerComponent>();
+            auto* lt = ch.GetComponent<LocalTransform>();
+            auto* crateLt = crate.GetComponent<LocalTransform>();
+            auto* liftLt = lift.GetComponent<LocalTransform>();
+            bool ccStayed = true;
+            bool crateStayed = true;
+            for (int i = 0; i < 120; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+                const float top = liftLt->position.y + 0.1f;
+                ccStayed = ccStayed && std::fabs(lt->position.y - (top + 0.9f)) < 0.05f;
+                // 動的な箱は止まった状態から床に追いつくので、最初の 1 tick (床が 1 tick 分先に動く) だけ遅れる
+                crateStayed = crateStayed && (i < 2 || std::fabs(crateLt->position.y - (top + 0.25f)) < 0.05f);
+            }
+            const float top = liftLt->position.y + 0.1f;
+            MYE_LOG_INFO("  [phys] rising oneWay lift %.1f m/s: top %.3f, cc y %.3f, crate y %.3f",
+                         static_cast<double>(riseSpeed), static_cast<double>(top),
+                         static_cast<double>(lt->position.y), static_cast<double>(crateLt->position.y));
+            check(top > riseSpeed * 1.9f, riseSpeed > 2.0f ? "CC2D rising oneWay (4 m/s): the lift rose"
+                                                           : "CC2D rising oneWay (1 m/s): the lift rose");
+            check(ccStayed && cc->groundEntity == lift.Id(),
+                  riseSpeed > 2.0f ? "CC2D rising oneWay (4 m/s): the character stays on the lift for 120 ticks"
+                                   : "CC2D rising oneWay (1 m/s): the character stays on the lift for 120 ticks");
+            check(crateStayed, riseSpeed > 2.0f ? "rising oneWay (4 m/s): the crate stays on the lift for 120 ticks"
+                                                : "rising oneWay (1 m/s): the crate stays on the lift for 120 ticks");
+        }
     }
 
     if (failCount == 0) {

@@ -270,6 +270,7 @@ struct Body {
     bool oneWay = false;
     float startMinY = 0.0f;
     float startVy = 0.0f;
+    float startPy = 0.0f; // tick 開始時の pose.py (rb を持つ oneWay 床の天面を tick 開始時へ戻すのに使う)
     // M94t: Effector2D(Surface) の面。surface が立つ静的 / kinematic の solid 形状は、plane2D の動的剛体との接触で
     // 接線の目標速度 surfaceVel (ワールド、tick 開始時の +X 向き × surfaceSpeed) を持つ
     bool surface = false;
@@ -338,9 +339,16 @@ void RestrictInertiaToZ(Body& b)
     b.invI[2][2] = zz;
 }
 
+// 一方通行の床の天面を tick 開始時へ戻す量 (現在の pose.py - tick 開始時の pose.py)。動く床 (kinematic) だけ。
+// 静的床は 0 = 天面は元のまま。mover の startMinY が tick 開始時の値なので、時刻をそろえるために引く
+float OneWayFloorShift(const Body& floorBody)
+{
+    return floorBody.rb != nullptr ? floorBody.pose.py - floorBody.startPy : 0.0f;
+}
+
 // 一方通行 (M94a): A, B の形状ペア (pa, pb、法線は b→a で ny はその y 成分) の接触を捨てるか。
 // 捨てるのは、床 (静的 / kinematic の oneWay) から見て法線が上向きでない接触、または相手の
-// tick 開始時の最下点が床の天面より kOneWaySlop 以上深く、かつ着地の速さで降下していない接触。
+// tick 開始時の最下点が床の天面 (床の tick 開始時の姿勢) より kOneWaySlop 以上深く、かつ着地の速さで降下していない接触。
 // 両方 oneWay なら通常の接触
 bool RejectOneWayContact(const Body& A, const Body& B, const ShapePose& pa, const ShapePose& pb,
                          float ny)
@@ -361,7 +369,7 @@ bool RejectOneWayContact(const Body& A, const Body& B, const ShapePose& pa, cons
     }
     float minX, minY, minZ, maxX, maxY, maxZ;
     shapes::ComputeAabb(floorIsB ? pb : pa, minX, minY, minZ, maxX, maxY, maxZ);
-    if (mover.startMinY >= maxY - kOneWaySlop) {
+    if (mover.startMinY >= maxY - OneWayFloorShift(floorBody) - kOneWaySlop) {
         return false;
     }
     return mover.startVy - floorBody.vy >= -kOneWayLandingSpeed;
@@ -1389,7 +1397,7 @@ bool CharPassesThroughOneWay(const CharOneWayContext& ow, const Body& obs)
     }
     float minX, minY, minZ, maxX, maxY, maxZ;
     shapes::ComputeAabb(obs.pose, minX, minY, minZ, maxX, maxY, maxZ);
-    return ow.startFeetY < maxY - kOneWaySlop;
+    return ow.startFeetY < maxY - OneWayFloorShift(obs) - kOneWaySlop;
 }
 
 // 通り抜けない一方通行の床でも、上向きでない法線 (横や下からの接触) は捨てる
@@ -3189,6 +3197,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             // M94a: 一方通行の判定に使う「tick 開始時の最下点」。この pose は前 tick 末の姿勢
             if (anyOneWay && sub == 0 && b.solid) {
                 b.startVy = b.vy;
+                b.startPy = b.pose.py;
                 bool firstShape = true;
                 forEachShape(b, [&](const ShapePose& sp) {
                     float nx0, ny0, nz0, nx1, ny1, nz1;

@@ -2927,7 +2927,7 @@ Physics
 - A CC standing on a **rotating** kinematic platform is not carried (`groundVelocity` is translation only). A CC pushes at most 8 bodies a tick; `wallContact = 2` and multi-body pushes are covered only by the demo.
 - A one-way platform also lifts a body that is more than half sunk and descending fast (a landing rule); a body rising from below passes.
 - `BoxCast` is a 27-point approximation (a thin tip between the points is missed). The narrowing of tile boxes (2 ticks of speed + 2 m, by chunk) means a probe inside the physics step that reaches farther (a vehicle suspension ray; a 2D game does not use wheels) does not see the tiles; script queries go through the unnarrowed supplier. A tile run is split at every 16-cell chunk border, so a capsule can catch on a seam.
-- An Effector region is judged on the start-of-tick pose, Surface needs a solid collider and acts on plane2D dynamic bodies only, and a buoyant body in an active region never sleeps.
+- An Effector region is judged on the start-of-tick pose, Surface needs a solid collider and acts on plane2D dynamic bodies only, a plane2D body in an active region never sleeps. A one-way platform is a horizontal one only (a tilted or rotated one-way floor is not supported), and while a PixelPerfectCamera2D is active TAA and FXAA are always off.
 - plane2D bodies at different z do not collide; a changed SpriteShape2D outline does not wake sleepers; a tile id change near a sleeper does.
 
 Rendering
@@ -3023,7 +3023,7 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
   verified with the workers on, in Debug and Release, so the per-tick world hash proves the parallel simulation systems
   (§5.4) equal the serial ones. A kCookVersion bump (M90e, 6) keeps the cold-record / warm-verify bit match (M51b)
 - **compute A/B (M91, ADR-030).** A `compute` job (the `--compute-demo` scene: Debug stress, Release, `Server.exe` without a GPU) and a `computeab` job: a `.rep` recorded with Auto is verified with `--compute-force-cpu` in Debug and Release. State is in the hash (CMP section) and Fx is not, so an Fx result that leaked into State breaks the hash at tick 0 (measured on a real GPU and on `--warp`).
-- **2D lane (M94w, ADR-033).** A `2d` job: `--2d-demo --synth-input` is recorded in Debug, verified in Debug (snapshot stress 37), Release and `Server.exe` without a GPU. The scene holds plane2D bodies, a CC with a moving platform, tile overrides (the TM2D section), a `GridAgent2D`, Camera2DFollow and a GameLogic script, so it proves the plane invariants, the tile override table and the 2D snapshot round trip across builds. `tools\mcp\srcerify.rs` lists 22 fixed jobs (rule 15-e keeps the list and `replay_verify.bat` equal).
+- **2D lane (M94w, ADR-033).** A `2d` job: `--2d-demo --synth-input` is recorded in Debug, verified in Debug (snapshot stress 37), Release and `Server.exe` without a GPU. The scene holds plane2D bodies, a CC with a moving platform, tile overrides (the TM2D section), a `GridAgent2D`, Camera2DFollow and a GameLogic script, so it proves the plane invariants, the tile override table and the 2D snapshot round trip across builds. `tools\mcp\src\verify.rs` lists 22 fixed jobs (rule 15-e keeps the list and `replay_verify.bat` equal).
 
 **Field-level divergence diagnosis (M52a).** Knowing *which tick* broke is not the same as
 knowing *what* broke. `HashWorld`, `HashWorldDetailed` and `HashWorldDump` are three exits of a

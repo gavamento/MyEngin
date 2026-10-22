@@ -51,17 +51,17 @@ SELF_EVAL: sub-20 (round 1)
   - [追加] Effector2D の既定値: surfaceSpeed 2.0 / density 1000 / drag 1.0 / magnitude 10 / mask 全ビット (spec は既定値を指定していない)
   - [追加] Create → 2D → Effector 2D の既定の領域は幅 4 × 高さ 2 × 奥行き 1 (halfExtents 2, 1, 0.5)
 検証:
-  - Debug / Release `MyEngine.sln /p:MyeWarnAsError=true` → 0 警告 0 エラー (最終コードで両構成。SelfTestUnused の C4100 は今回は出なかった)。ログ cache\m94\s20uild_*_3.log
+  - Debug / Release `MyEngine.sln /p:MyeWarnAsError=true` → 0 警告 0 エラー (最終コードで両構成。SelfTestUnused の C4100 は今回は出なかった)。ログ cache\m94\s20\build_*_3.log
   - `MYE_SELFTEST_ONLY=m94` Debug / Release → どちらも exit 0、FAIL 0 (PASS 2549 = sub-19 の 2529 + 20)。新節の焼き値: joint2D A82F779A97738D34 / effector2D 85C0AB87B50CE78C、Debug == Release。既存の焼き値は不動 (plane2D 639107476EA401A3 / Shapes2D 2ECF7CFD5CC45314 / CC2D C04B7FFA3E31E5D0 / Tilemap / SpriteShape 丘は PASS 行で確認)
   - joint2D の実測 (Debug): Hinge の留め金のずれ 最大 0.0001 m・最低点 y 5.500 (振り子が真下まで来る)、Slider の y ずれ 0・回転 0・停止位置 x 2.000、SpringJoint の距離 1.177〜2.983 → 終端 2.011、重心 vy 0.5000
   - effector2D の実測: Area の箔 vx -14.67 (領域外の同じ箔は 0)、マスク L5 だけ動く、Point は 97.04〜103.00 を往復 / 反発は 17.9 m/s で領域を出る、ベルト +3.025 / 逆向き -2.995 / 対照 0、浮き球 y 4.024 (水面 4.0) / 沈む球 0.300
   - `check_rules.ps1` → 3 error / 50 warning (基準どおり、増減なし)
   - hash-diff: 基点 26aa0fa の Release Runtime と現行 Release Runtime で `--physics-demo --replay-record --replay-ticks 600 --replay-fast --hash-dump-tick 599` を比較 → 差は UIInteraction.prevSurfX/Y の 2 欄だけ (実マウス座標のミラー = 入力、sub-07 で planner 確認済み)。rep ファイルは別、sim の欄は全部一致。Effector2D の無いシーンは無差分
   - チェックポイント 4 (sub-16〜20):
-      1. `Editor.exe --selftest` 全体 Debug / Release → 両方 exit 0 (PASS 8648 同数、FAIL 行なし。"compile FAILED" は C# 失敗系の負のテストのログ)。ログ cache\m94\s20ull_*.log/.err
+      1. `Editor.exe --selftest` 全体 Debug / Release → 両方 exit 0 (PASS 8648 同数、FAIL 行なし。"compile FAILED" は C# 失敗系の負のテストのログ)。ログ cache\m94\s20\full_*.log/.err
       2. `toolseplay_verify.bat` (MYE_MSBUILD_ARGS=/p:MyeWarnAsError=true、全文 cache\m94eplay_verify_cp4.log) → 21 ジョブ中 20 PASS、rules だけ FAIL (check_rules の既存 3 error)。個別行: mp / physics / acoustic / demo / fracture / flow / ui / joints / perception / nav / ttrelease / anim / bt / whatifrelease / parts / ttdebug / whatifdebug / compute / computeab / jobsab 全部 PASS
-      3. `tools\shot_verify.bat` (MYE_SHOT_TOL=0) → 30 枚 PASS、29 枚 maxDiff=0、demo_terrain_deferred は golden と maxDiff=5 / 2 画素 (基点でも同じ既知分、tol=12 の個別枠) → `cache\m94aseline_terrain.png` と `--img-diff --tol 0` で maxDiff=0 diffPixels=0。割れなし
-      4. `toolsuild_managed.bat Release` → 0 警告 0 エラー
+      3. `tools\shot_verify.bat` (MYE_SHOT_TOL=0) → 30 枚 PASS、29 枚 maxDiff=0、demo_terrain_deferred は golden と maxDiff=5 / 2 画素 (基点でも同じ既知分、tol=12 の個別枠) → `cache\m94\baseline_terrain.png` と `--img-diff --tol 0` で maxDiff=0 diffPixels=0。割れなし
+      4. `tools\build_managed.bat Release` → 0 警告 0 エラー
       割れたものは無く、原因サブの特定は不要
   - 未実施: Scene View のギズモ (橙の矢印) と Inspector の「2D (Z 軸)」ボタン / Effector 警告行 / Create → 2D → Effector 2D の実画面・実クリック (ユーザー目視 = sub-24 checklists)
 自己採点 (1-5):

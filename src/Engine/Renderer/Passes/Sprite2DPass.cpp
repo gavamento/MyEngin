@@ -688,6 +688,17 @@ uint32_t Sprite2DPass::Render(GraphicsDevice& device, ShaderManager& shaders, Te
     ShaderProgram* lightProg = list.HasLights() ? shaders.Get(lightShader_) : nullptr;
     bool lighting = lightProg != nullptr && lightProg->valid && UploadLights(device, list);
 
+    // ラスタライザ / ブレンド / 深度ステンシルは後段 (パーティクル等) が張り直さないので、元の状態を控えて終了時に戻す
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> prevRaster;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> prevBlend;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilState> prevDepth;
+    float prevBlendFactor[4] = {};
+    UINT prevSampleMask = 0xFFFFFFFFu;
+    UINT prevStencilRef = 0;
+    dc->RSGetState(prevRaster.GetAddressOf());
+    dc->OMGetBlendState(prevBlend.GetAddressOf(), prevBlendFactor, &prevSampleMask);
+    dc->OMGetDepthStencilState(prevDepth.GetAddressOf(), &prevStencilRef);
+
     // マスクがあるとき (ステンシル) とライトがあるときだけ、元の RT / DSV / ビューポートを控える。終了時に戻す
     const bool useStencil = stencilDsv != nullptr && list.UsesStencil();
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> prevRtv;
@@ -761,6 +772,8 @@ uint32_t Sprite2DPass::Render(GraphicsDevice& device, ShaderManager& shaders, Te
         ID3D11Buffer* psCbs[1] = { psCb_.Get() };
         dc->PSSetConstantBuffers(1, 1, psCbs);
         dc->RSSetState(raster_.Get());
+        // ライト無しのバッチでも PS は s1 を宣言している。前段 (影) の比較サンプラを残さない
+        dc->PSSetSamplers(kLightBufferSlot, 1, samplerLinear_.GetAddressOf());
     };
     bindSpriteState();
 
@@ -873,14 +886,15 @@ uint32_t Sprite2DPass::Render(GraphicsDevice& device, ShaderManager& shaders, Te
         dc->PSSetConstantBuffers(0, 1, restoreCb);
     }
     if (useStencil || lighting) {
-        // 次段へ通常のブレンド / 深度状態と元の DSV を返す
-        dc->OMSetBlendState(blend_.Get(), nullptr, 0xFFFFFFFFu);
-        dc->OMSetDepthStencilState(depth_.Get(), 0);
+        // 元の RT / DSV を返す
         if (swappedDsv || lighting) {
             ID3D11RenderTargetView* rtv = prevRtv.Get();
             dc->OMSetRenderTargets(1, &rtv, prevDsv.Get());
         }
     }
+    dc->RSSetState(prevRaster.Get());
+    dc->OMSetBlendState(prevBlend.Get(), prevBlendFactor, prevSampleMask);
+    dc->OMSetDepthStencilState(prevDepth.Get(), prevStencilRef);
     return drawn;
 }
 
