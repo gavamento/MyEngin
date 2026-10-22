@@ -2,7 +2,7 @@
 
 - 依頼原文: 2D レーンと2D分野をさらに拡充させたい
 - 開始: 2026-10-20 / 基点コミット: 25fb355
-- フェーズ: レビュー (round 1 FAIL → sub-25 OK (cf5f298)、round 2 中。全 24 サブ OK 2026-10-22。策定完了 2026-10-20。spec.md 確定: 疑い 31 件、受け入れ条件 40 件、サブ 24 本)
+- フェーズ: 完了 (2026-10-22。review round 2 PASS。round 1 FAIL → sub-25 OK (cf5f298)。全 24 サブ OK 2026-10-22。策定完了 2026-10-20。spec.md 確定: 疑い 31 件、受け入れ条件 40 件、サブ 24 本)
 
 ## ユーザー判断 (策定前に確定、2026-10-20)
 
@@ -61,6 +61,7 @@
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
 | 1 | FAIL | 4/3/4/3 | major 2 (#1 s1 の比較サンプラで D3D ERROR 196 件、#2 ReleaseGpu の sprite 3 本で M88 復旧打ち切り)、minor 8。planner 宛 #6 #8 #10 は spec で処理、coder 宛は sub-25 に集約 |
+| 2 | PASS | 4/5/4/4 | blocker / major 0。round 1 の #1〜#10 は 9 件解消・#8 一部 (→ round 2 minor 1)。minor 2 件 (planner 宛、spec.md の文書) は planner が処理済み |
 
 ## 保留質問 (planner の裁定で通したもの。Notion 活動記録「M94 2D: ハーネスの保留質問」にも写した)
 - Q-1 plane2D の z を 0 に強制するか初期値を保つか / 裁定: 初期値 (z0) を保つ。異なる z の plane2D 物同士は当たらない (Unity と違う、注記する) / 逆を選ぶと: sub-01 の D 拘束が pz=0 固定になり、z をずらして配置した物理物が初回 tick で飛ぶ
@@ -199,3 +200,5 @@
 - (Phase 3 依頼に添える) 物理の変更範囲 (sub-01 / 08 / 09 / 11 / 14 / 19 / 20: 拘束 A/B/D・oneWay・kinDrive・StaticShapeSource と MotionRegions・Broadphase の staticOnly・physicsquery の注入・Effector と起床)、描画の変更範囲 (sub-04 / 06 / 15 / 16 / 17 / 22: Sprite2DPass・ステンシル・ライト / 影 / 法線 RT・サーフェス枝・PixelPerfect の低解像度 RT)、`cache\m94\` の cp1〜cp5 全文ログ、spec 4.1.x と engine_spec §6.15 / §10.13 の食い違いの重点確認、PhysicsSelfTest の既存節と全 replay ジョブの照合を重めに。
 - (review round 1 → sub-25) 指摘は sub-01〜24 に差し戻さず新サブ sub-25 に集約。sub-25 はチェックポイント 6 (重い 3 本 + build_managed)。上昇床の判定を変えると動く oneWay 床を含む焼き値 (2d デモ 55DEACAD78012785 など) が動きうる → 理由を示して再採取。修正後は同じ reviewer へ REVIEW round 2 (消込から)。reviewer は撮影のたびに cache\2d_showcase.scene.json (再生成される生成物) を消していた。
 - (sub-25 VERDICT OK、チェックポイント 6 通過) 全体 selftest FAIL 0 (PASS 8743)、replay_verify 21/22 個別 PASS (rules は既存 3 error)、shot_verify 32 枚、build_managed、焼き値不動。nit: 材質付きシーンのデバイス消失は手動ログ証跡のみ (cache\m94\s25\)、TAA / FXAA 停止は画素比較なし (golden 2d / 2d_lights は tol 0 で不変)、Release の SelfTestUnused.kernel.hlsl C4100 (/WX なし Editor 単独 Release ビルド直後の 1 回目) は既存の癖で M94 外。剛体側 RejectOneWayContact の shift は planner が採用 (時刻をそろえる)。planner が sub-20.md の制御文字 4 バイトを直した (同コミット)。
+- (review round 2 PASS) planner 宛 minor 2 件 (spec.md:219 の 4.1.12 に sub-22 で変更の注記、6. サブ分割表の sub-24 行の件名候補セル) は planner が直した (同コミット)。残る未検証: スプライト材質ありのデバイス消失の自動テスト化、TAA を掛けた画素比較、GUI の実操作と実 GPU の目視 (docs\test_checklists.md の M94 節)。
+- (完了後の別件) Q-9: check_rules の既存 3 error を M94 の外の別コミットで直す。cache\m94\ (git 管理外、約 1 GB) の削除はユーザー許可が要る (未実施)。
