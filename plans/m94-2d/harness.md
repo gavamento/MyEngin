@@ -2,7 +2,7 @@
 
 - 依頼原文: 2D レーンと2D分野をさらに拡充させたい
 - 開始: 2026-10-20 / 基点コミット: 25fb355
-- フェーズ: レビュー (全 24 サブ OK 2026-10-22。策定完了 2026-10-20。spec.md 確定: 疑い 31 件、受け入れ条件 40 件、サブ 24 本)
+- フェーズ: レビュー (round 1 FAIL → sub-25 で修正中。全 24 サブ OK 2026-10-22。策定完了 2026-10-20。spec.md 確定: 疑い 31 件、受け入れ条件 40 件、サブ 24 本)
 
 ## ユーザー判断 (策定前に確定、2026-10-20)
 
@@ -55,10 +55,12 @@
 | sub-22 | OK | 1 | a038819 | Camera2DFollow と PixelPerfectCamera2D。依存: 02, 11。TypeId 92/93、snapshot v65。RT は画面を覆う最小の偶数 (spec 4.1.12) |
 | sub-23 | OK | 1 | c1948da | --2d-demo、golden 2d / 2d_lights、replay_verify 2d。依存: 01〜22。チェックポイント 5 (sub-21〜23) 通過。版 bump なし、焼き値 2D デモ 55DEACAD78012785 |
 | sub-24 | OK | 1 | 962431b | 文書 (engine_spec / ADR-033 / test_checklists / README)。依存: 23。文書のみ、最終チェックポイントは sub-23 の結果を流用 (受け入れ条件 4) |
+| sub-25 | 実装中 | 0 | | レビュー round 1 の修正 (review-1 #1 #2 #3 #4 #5 #7 #9 #10)。依存: 24。チェックポイント 6 (replay_verify 全文は cache\m94\replay_verify_cp6.log) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
+| 1 | FAIL | 4/3/4/3 | major 2 (#1 s1 の比較サンプラで D3D ERROR 196 件、#2 ReleaseGpu の sprite 3 本で M88 復旧打ち切り)、minor 8。planner 宛 #6 #8 #10 は spec で処理、coder 宛は sub-25 に集約 |
 
 ## 保留質問 (planner の裁定で通したもの。Notion 活動記録「M94 2D: ハーネスの保留質問」にも写した)
 - Q-1 plane2D の z を 0 に強制するか初期値を保つか / 裁定: 初期値 (z0) を保つ。異なる z の plane2D 物同士は当たらない (Unity と違う、注記する) / 逆を選ぶと: sub-01 の D 拘束が pz=0 固定になり、z をずらして配置した物理物が初回 tick で飛ぶ
@@ -79,6 +81,7 @@
 - Q-16 (sub-16 VERDICT) 法線マップ付きスプライトが 1 枚でもあるシーンで、法線マップを持たないスプライトにも N·L (ライトの真下以外が少し暗くなる) を掛ける (Unity の Normal Maps 有効時と同じ) でよいか / 裁定: 掛ける (手前と奥で照らされ方が揃い、法線マップの有無で浮いて見えない) / 逆を選ぶと: 法線 RT のアルファで「法線あり」を区別し、無しのスプライトは N·L を 1 にする (clear 値とシェーダの小変更)
 - Q-17 (sub-18 VERDICT) Line2D を「ライトのあるシーンでは常に照らされる」(lit の切り替え欄なし) でよいか / 裁定: 常に lit (Tilemap と同じ。夜のロープは暗く見えるのが自然) / 逆を選ぶと: Line2D に `lit` (bool、既定 true) を末尾に足す (NoHash なので sim には影響しない。Sprite2D の lit と同じ扱い、小規模)
 - Q-18 (sub-19 VERDICT) SpriteShape2D の縁の帯の厚み (`height`) をエンティティのスケールに追従させるか / 裁定: 追従させない (ワールド単位。スケールで丘を大きくしても縁の太さが変わらず、ピクセルアートの縁が太らない) / 逆を選ぶと: `EmitShape` で height にワールドスケール (y 方向) を掛ける 1 箇所の変更 (Unity の Sprite Shape は Transform に追従する)
+- Q-19 (review round 1 #6) 一方通行床 (oneWay) を v1 では水平な床だけとし、傾いた一方通行床は対象外にしてよいか / 裁定: 水平だけ (「上」= ワールド +Y・天面 = AABB の y 最大で実装済み、テストも水平のみ。限界欄に明記) / 逆を選ぶと: 判定を床のローカル +Y と形状の上面に切り替える修正と傾いた床の selftest が sub-25 に 1 項目増える (中規模、決定性への影響なし) / ユーザーの方針 (推奨案で通し Notion に記録) により裁定どおり採用 (2026-10-22)
 
 ## 申し送り (セッション跨ぎ)
 - 基点の直前に無関係の 2 コミット (`2ac3b4f` DeepModal 再学習、`25fb355` スプラッシュ) を司会が切り出した。
@@ -194,3 +197,4 @@
 - (sub-24 VERDICT nit) engine_spec §10.13 末尾の限界欄の Effector の行「a buoyant body in an active region never sleeps」を「a plane2D body in an active region never sleeps」に一般化する (本文 1929〜1932 行は正しい)。§12.2 に M92 / M93 の行が無いのは既存の欠落 (M94 外)。
 - (sub-24 VERDICT 未決 [ユーザーに聞ける] = Q-9) check_rules の既存 3 error (EditorMain.cpp の `#ifdef _DEBUG`、tools\engine_dist の .bat 2 本の LF) を M94 の後に別コミットで直す。ユーザーの方針 (推奨案で通し Notion に記録) により planner の裁定どおり「直す」を採用。Phase 4 の後に別件として行う。
 - (Phase 3 依頼に添える) 物理の変更範囲 (sub-01 / 08 / 09 / 11 / 14 / 19 / 20: 拘束 A/B/D・oneWay・kinDrive・StaticShapeSource と MotionRegions・Broadphase の staticOnly・physicsquery の注入・Effector と起床)、描画の変更範囲 (sub-04 / 06 / 15 / 16 / 17 / 22: Sprite2DPass・ステンシル・ライト / 影 / 法線 RT・サーフェス枝・PixelPerfect の低解像度 RT)、`cache\m94\` の cp1〜cp5 全文ログ、spec 4.1.x と engine_spec §6.15 / §10.13 の食い違いの重点確認、PhysicsSelfTest の既存節と全 replay ジョブの照合を重めに。
+- (review round 1 → sub-25) 指摘は sub-01〜24 に差し戻さず新サブ sub-25 に集約。sub-25 はチェックポイント 6 (重い 3 本 + build_managed)。上昇床の判定を変えると動く oneWay 床を含む焼き値 (2d デモ 55DEACAD78012785 など) が動きうる → 理由を示して再採取。修正後は同じ reviewer へ REVIEW round 2 (消込から)。reviewer は撮影のたびに cache\2d_showcase.scene.json (再生成される生成物) を消していた。
