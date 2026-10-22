@@ -2,7 +2,7 @@
 
 - 依頼原文: 2D レーンと2D分野をさらに拡充させたい
 - 開始: 2026-10-20 / 基点コミット: 25fb355
-- フェーズ: レビュー (round 1 FAIL → sub-25 で修正中。全 24 サブ OK 2026-10-22。策定完了 2026-10-20。spec.md 確定: 疑い 31 件、受け入れ条件 40 件、サブ 24 本)
+- フェーズ: レビュー (round 1 FAIL → sub-25 OK (cf5f298)、round 2 中。全 24 サブ OK 2026-10-22。策定完了 2026-10-20。spec.md 確定: 疑い 31 件、受け入れ条件 40 件、サブ 24 本)
 
 ## ユーザー判断 (策定前に確定、2026-10-20)
 
@@ -55,7 +55,7 @@
 | sub-22 | OK | 1 | a038819 | Camera2DFollow と PixelPerfectCamera2D。依存: 02, 11。TypeId 92/93、snapshot v65。RT は画面を覆う最小の偶数 (spec 4.1.12) |
 | sub-23 | OK | 1 | c1948da | --2d-demo、golden 2d / 2d_lights、replay_verify 2d。依存: 01〜22。チェックポイント 5 (sub-21〜23) 通過。版 bump なし、焼き値 2D デモ 55DEACAD78012785 |
 | sub-24 | OK | 1 | 962431b | 文書 (engine_spec / ADR-033 / test_checklists / README)。依存: 23。文書のみ、最終チェックポイントは sub-23 の結果を流用 (受け入れ条件 4) |
-| sub-25 | 実装中 | 0 | | レビュー round 1 の修正 (review-1 #1 #2 #3 #4 #5 #7 #9 #10)。依存: 24。チェックポイント 6 (replay_verify 全文は cache\m94\replay_verify_cp6.log) |
+| sub-25 | OK | 1 | cf5f298 | レビュー round 1 の修正 (review-1 #1 #2 #3 #4 #5 #7 #9 #10)。依存: 24。チェックポイント 6 (replay_verify 全文は cache\m94\replay_verify_cp6.log) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -198,3 +198,4 @@
 - (sub-24 VERDICT 未決 [ユーザーに聞ける] = Q-9) check_rules の既存 3 error (EditorMain.cpp の `#ifdef _DEBUG`、tools\engine_dist の .bat 2 本の LF) を M94 の後に別コミットで直す。ユーザーの方針 (推奨案で通し Notion に記録) により planner の裁定どおり「直す」を採用。Phase 4 の後に別件として行う。
 - (Phase 3 依頼に添える) 物理の変更範囲 (sub-01 / 08 / 09 / 11 / 14 / 19 / 20: 拘束 A/B/D・oneWay・kinDrive・StaticShapeSource と MotionRegions・Broadphase の staticOnly・physicsquery の注入・Effector と起床)、描画の変更範囲 (sub-04 / 06 / 15 / 16 / 17 / 22: Sprite2DPass・ステンシル・ライト / 影 / 法線 RT・サーフェス枝・PixelPerfect の低解像度 RT)、`cache\m94\` の cp1〜cp5 全文ログ、spec 4.1.x と engine_spec §6.15 / §10.13 の食い違いの重点確認、PhysicsSelfTest の既存節と全 replay ジョブの照合を重めに。
 - (review round 1 → sub-25) 指摘は sub-01〜24 に差し戻さず新サブ sub-25 に集約。sub-25 はチェックポイント 6 (重い 3 本 + build_managed)。上昇床の判定を変えると動く oneWay 床を含む焼き値 (2d デモ 55DEACAD78012785 など) が動きうる → 理由を示して再採取。修正後は同じ reviewer へ REVIEW round 2 (消込から)。reviewer は撮影のたびに cache\2d_showcase.scene.json (再生成される生成物) を消していた。
+- (sub-25 VERDICT OK、チェックポイント 6 通過) 全体 selftest FAIL 0 (PASS 8743)、replay_verify 21/22 個別 PASS (rules は既存 3 error)、shot_verify 32 枚、build_managed、焼き値不動。nit: 材質付きシーンのデバイス消失は手動ログ証跡のみ (cache\m94\s25\)、TAA / FXAA 停止は画素比較なし (golden 2d / 2d_lights は tol 0 で不変)、Release の SelfTestUnused.kernel.hlsl C4100 (/WX なし Editor 単独 Release ビルド直後の 1 回目) は既存の癖で M94 外。剛体側 RejectOneWayContact の shift は planner が採用 (時刻をそろえる)。planner が sub-20.md の制御文字 4 バイトを直した (同コミット)。
