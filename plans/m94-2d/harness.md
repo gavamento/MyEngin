@@ -2,7 +2,7 @@
 
 - 依頼原文: 2D レーンと2D分野をさらに拡充させたい
 - 開始: 2026-10-20 / 基点コミット: 25fb355
-- フェーズ: 実装 (策定完了 2026-10-20。spec.md 確定: 疑い 31 件、受け入れ条件 40 件、サブ 24 本)
+- フェーズ: レビュー (全 24 サブ OK 2026-10-22。策定完了 2026-10-20。spec.md 確定: 疑い 31 件、受け入れ条件 40 件、サブ 24 本)
 
 ## ユーザー判断 (策定前に確定、2026-10-20)
 
@@ -54,7 +54,7 @@
 | sub-21 | OK | 1 | 55ae902 | GridAgent2D、BT MoveTo の fallback、Perception forwardAxis。依存: 11, 09。TypeId 91、snapshot v64。展開上限超えは最良ノードへの部分経路 (spec 4.1.13) |
 | sub-22 | OK | 1 | a038819 | Camera2DFollow と PixelPerfectCamera2D。依存: 02, 11。TypeId 92/93、snapshot v65。RT は画面を覆う最小の偶数 (spec 4.1.12) |
 | sub-23 | OK | 1 | c1948da | --2d-demo、golden 2d / 2d_lights、replay_verify 2d。依存: 01〜22。チェックポイント 5 (sub-21〜23) 通過。版 bump なし、焼き値 2D デモ 55DEACAD78012785 |
-| sub-24 | 実装中 | 0 | | 文書 (engine_spec / ADR-033 / test_checklists / README)。依存: 23 |
+| sub-24 | OK | 1 | 962431b | 文書 (engine_spec / ADR-033 / test_checklists / README)。依存: 23。文書のみ、最終チェックポイントは sub-23 の結果を流用 (受け入れ条件 4) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -190,3 +190,7 @@
 - (sub-23 チェックポイント 5、round 1) 全体 selftest Debug / Release FAIL 0 (PASS 8737、NavAgent 庭 8581BEE4A676337C)、replay_verify 22 ジョブ中 21 個別 PASS (rules は既存 3 error、全文 `cache\m94\replay_verify_cp5.log`)、shot_verify 32 枚 PASS (既存 maxDiff 0、terrain は基点と 0、`--update` 不使用、`cache\m94\shot_verify_cp5.log`)、build_managed Release 0 警告、cargo test 49 PASS。sub-21〜23 に割れ無し。
 - (sub-23 VERDICT should 1 → sub-24 やること 5b) ADR-032 の「固定 21 ジョブ」を 22 に。5b: 各サブの確定事項と R9〜R12 の限界を engine_spec の 1 か所に集約 (敵は動く物・非タイル足場を見ない、froxel / deferred は 2D 経路に効かず forward と画素一致 = R11 は満たした)、`--2d-demo` / `--2d-night` / `--2d-stress` と性能値 (デモ 0.88〜1.39 ms、stress 4.43〜4.60 ms、sim 0.21 ms/tick、Raycast 12.7 us / BoxCast 67.5 us) を engine_spec へ、checklists に各 VERDICT で目視に回した GUI 操作を全部 (Create → 2D → Camera 2D の orthoSize 初期化を含む)。最終チェックポイントは sub-23 以降にソースが変わっていなければ sub-23 の結果を流用 (sub-24 受け入れ条件 4)。
 - (sub-23 coder → sub-24 / reviewer) スクリプト名は ZTwoDHero / ZTwoDMover (既存スクリプトの TypeId を動かさない)。タイル配置を変えると TwoDDemoSelfTest の kExpectedHash と golden 2 枚が変わる (`MYE_SELFTEST_ONLY=twod` で採取)、gen_2d_assets.py の GUID は DemoContent.cpp の kTwoD*Guid と揃える。reviewer には物理 (sub-01 / 08 / 09 / 11 / 14 / 19 / 20) と描画 (sub-04 / 06 / 15 / 16 / 17 / 22) の変更範囲と `cache\m94\` の各チェックポイント全文ログを添える。
+- (sub-24 VERDICT should 1、司会) coder が SELF_EVAL を sub-24.md に写さず harness.md の申し送り欄へ下書きを書いた (役の境界外)。司会が harness.md の追記を戻し、SELF_EVAL を sub-24.md の実装メモへ転記した。下書きの要点はこの欄に司会の文で残す: GUI の実クリックと実 GPU の目視は `docs\test_checklists.md` の M94 節に集約、v1 の限界は `engine_spec.md` §10.13 末尾に集約、長い関数 (`DrawCanvas` / `HandleShape2DEdit` / `UpdateAgent` / `SolveCharacters` の報告部 / `RenderSystem::Render` / `Sprite2DPass::Render` / `EmitShape` / `BuildTwoDShowcaseScene`) の分割は任意、合成入力の偏りで `2d` の replay 被覆は画面中央が薄い。`cache\m94\` (git 管理外、約 1 GB) の削除はユーザー許可が要る (未実施)。
+- (sub-24 VERDICT nit) engine_spec §10.13 末尾の限界欄の Effector の行「a buoyant body in an active region never sleeps」を「a plane2D body in an active region never sleeps」に一般化する (本文 1929〜1932 行は正しい)。§12.2 に M92 / M93 の行が無いのは既存の欠落 (M94 外)。
+- (sub-24 VERDICT 未決 [ユーザーに聞ける] = Q-9) check_rules の既存 3 error (EditorMain.cpp の `#ifdef _DEBUG`、tools\engine_dist の .bat 2 本の LF) を M94 の後に別コミットで直す。ユーザーの方針 (推奨案で通し Notion に記録) により planner の裁定どおり「直す」を採用。Phase 4 の後に別件として行う。
+- (Phase 3 依頼に添える) 物理の変更範囲 (sub-01 / 08 / 09 / 11 / 14 / 19 / 20: 拘束 A/B/D・oneWay・kinDrive・StaticShapeSource と MotionRegions・Broadphase の staticOnly・physicsquery の注入・Effector と起床)、描画の変更範囲 (sub-04 / 06 / 15 / 16 / 17 / 22: Sprite2DPass・ステンシル・ライト / 影 / 法線 RT・サーフェス枝・PixelPerfect の低解像度 RT)、`cache\m94\` の cp1〜cp5 全文ログ、spec 4.1.x と engine_spec §6.15 / §10.13 の食い違いの重点確認、PhysicsSelfTest の既存節と全 replay ジョブの照合を重めに。
