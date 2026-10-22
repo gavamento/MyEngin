@@ -38,7 +38,8 @@ foreach ($f in Get-Sources) {
 }
 
 # 規則 1: ロジックの #ifdef _DEBUG 分岐禁止 (許可リスト: 診断出力のみのファイル)
-$debugWhitelist = @('GraphicsDevice.cpp')
+# EditorMain.cpp: スプラッシュに出す構成名 ("Debug" / "Release") の表示文字列を選ぶだけで、シミュレーション状態に触れない
+$debugWhitelist = @('GraphicsDevice.cpp', 'EditorMain.cpp')
 foreach ($f in Get-Sources) {
     if ($debugWhitelist -contains $f.Name) { continue }
     $hits = Select-String -Path $f.FullName -Pattern '#\s*(if|ifdef|ifndef|elif|elifdef|elifndef)\b.*\b(_DEBUG|NDEBUG)\b'
