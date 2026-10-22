@@ -1071,6 +1071,70 @@ and the forced stage are per-launch and not saved. There is no in-game option sc
 | `--no-uro` | disable the distant-animation throttle |
 | `--no-jobs` | everything serial (render-side and §5.4) — a pixel / hash A/B partner |
 
+### 6.15 2D rendering (M94)
+
+Side-scrolling 2D (the XY plane, +Y up, +Z away from the camera, 1 world unit = `pixelsPerUnit` pixels) drawn by a pass of its own. The rendering components are all
+`kComponentNoHash` (they never write simulation state); the ones that feed physics or camera placement are hash-relevant and are in §10.13. TypeIds 81-93, SimSnapshot v65
+(ABI is §10.13). Reasons, rejected alternatives and measurements: [docs/adr/ADR-033-2d-lane.md](docs/adr/ADR-033-2d-lane.md). The consolidated limits of this lane are at the end of §10.13.
+
+**Camera.** `Camera.orthographic` / `orthoSize` (half height in world units) switch `RenderSystem::ResolveCamera` to `XMMatrixOrthographicLH(2·orthoSize·aspect, 2·orthoSize, near, far)`; the
+projection of world-following UI (`UILayout`) follows the same branch. The default is perspective, so existing scenes are bit-identical. The Scene View has a **2D toggle** next to Ortho (saved
+in the editor layout under "Scene 2D", never in the scene): it looks down +Z at the XY plane, the mouse wheel scales `orthoSize`, middle / right drag pans, F frames the selection, the
+grid is XY at powers of ten, and the gizmo is limited to XY translation, Z rotation and XY scale.
+
+**Sprite2D.** `Sprite2D` (81) holds `sprite` (an AssetID), `color`, `flipX/Y`, `drawMode` (Simple / Sliced / Tiled), `size`, `sortingLayerId`, `orderInLayer`, `maskInteraction`, `material`, `normalMap`
+and `lit`. Sprites are sub-assets of a texture: the `.meta` carries `sprites[]` (§10.13) and a sprite's AssetID is `HashStr(SubAssetKeyPrefix(texPath) + "#sprite" + id)`, so renames and reordering
+do not move ids; the texture's own AssetID resolves to "the whole image, pivot centre". An unresolved id draws a 16x16 magenta and the Inspector warns. The pass (`Sprite2DPass`, shader
+`assets\shaders\sprite2d.hlsl`) runs just before the VFX renderer into the HDR scene RT with alpha blending (not premultiplied), ZTest LEqual, ZWrite off and no culling, and batches on (texture, filter, stencil, material, lit). It is the
+same function for the Scene View, Game View, Runtime and screenshots. Forward and Deferred give the same picture (a sprite never reads the G-buffer, so 2D ignores froxel fog and deferred lighting).
+
+**Sort key.** The order is an **integer** lexicographic key — (sorting-layer position, `orderInLayer`, SortingGroup key, entity index) — and a stable sort; view-space Z is never read, so goldens do not depend on
+float ordering. Z is depth only: sprites still depth-test (ZWrite off), so a 3D mesh can hide them. Sorting layers live in `project_settings.json` as `"sortingLayers": [{"id","name"}]`; array order is draw order,
+`id` is the lowest unused value in 0..31 (deleting frees it), id 0 "Default" cannot be deleted, and the limit of **32** exists so that a light's `targetLayerMask` stays a `uint32`. An unknown id draws as Default and the Inspector warns.
+`SortingGroup2D` (82) gives its descendants the group's key plus their own inner key (the nearest ancestor wins).
+
+**Sliced and Tiled.** Sliced cuts the sprite into nine by `border` (corners keep their pixel size, edges and centre stretch; a zero border is Simple). Tiled repeats at pixel size and clips at the right / top edge
+(there is no wrap sampler — vertices are emitted per tile). Point and linear sampling are two samplers in the pass chosen per sprite by the `.meta` `filter`.
+
+**SpriteMask2D** (83) uses the D24S8 stencil: the pass clears stencil to 0 (only when the draw list has a mask, swapping the DSV and restoring it afterwards), a mask writes reference 1, VisibleInside tests Equal 1 and
+VisibleOutside Equal 0. A mask affects only sprites drawn **after** it whose `orderInLayer` lies in the range of a mask already drawn; a `maskInteraction` sprite with no such mask is drawn untested
+(Unity would hide a VisibleInside sprite with no mask — put the mask at a lower order). Overlapping masks with different ranges cannot be told apart (one stencil bit).
+
+**Colour contract.** Textures keep their `.meta` `srgb = auto` (loaded UNORM, raw pixels into the scene RT) and the 2D camera uses `CameraPostFx.tonemapMode = 0` (Passthrough), so source pixels come out within ±1; ACES (the default) would turn white into 231.
+A texture with `srgb = on` used by a Sprite2D looks dark under Passthrough and the Inspector warns. Light2D multiplies the **gamma-encoded** value (the same compromise as Unity's Gamma colour space).
+
+**Light2D** (85). `type` Global / Spot / Freeform / Sprite, `color`, `intensity`, `targetLayerMask`, radii and angles, `falloff`, up to 16 Freeform points, `shadows`, `shadowStrength`, `normalMapDistance`. The light
+buffer is an RGBA16F target the size of the scene RT. Walking the layers in draw order, whenever the set of lights that target the layer changes, the buffer is cleared and the Global sum is written, then each shape light is added (SRC_ONE / DEST_ONE); a lit
+sprite outputs `colour × texture × lightBuffer[screenUV]`. **Presence gate:** with no light that can make a shape, nothing is built and sprites keep their plain colour (existing goldens do not move). With any light, Tilemap and
+Line2D / SpriteShape2D are always lit, and a lit sprite in a layer **no light reaches is black** (add a Global light to lift it). Lights also work in the non-Play Scene View. Spot `falloff` is an exponent along the radius (Unity's 0..1 softness is
+a different thing). The buffer is rebuilt every time the target set changes, so 32 layers with 32 different sets cost 32 clears and passes.
+
+**ShadowCaster2D** (86). For each light with `shadows`, an R8 shadow RT is cleared, every caster's edges are extruded away from the light into quads (distance = vertex to screen centre plus the screen diagonal) and drawn as 1,
+non-self-shadowing casters are redrawn as 0 over their own polygon, and the light's pixel shader multiplies by `1 − shadow × shadowStrength`. Hard shadows only; a sprite's silhouette casts nothing (give it a caster).
+The source is the entity's Collider (Box, Sphere as a 16-gon, Polygon2D) or up to 16 explicit points; a Collider's rotation and centre are honoured for Box / Sphere only, Polygon2D uses its local XY.
+
+**Normal maps.** A `Sprite2D.normalMap` (same rect, sRGB off, green = up) is drawn into an RGBA8 normal RT (clear (0.5, 0.5, 1, 1)) before the light buffer. Lit sprites without a map, and tiles, draw a flat normal, normals turn with flip and
+Z rotation, and the normal RT ignores the stencil mask. A shape light multiplies N·L (L = (lightPos − pixel, `normalMapDistance`) normalised); Global does not. **Once any normal RT exists, sprites without a map also get N·L.**
+
+**Parallax2D** (87). Drawn position = `pos + (camera.xy − pos.xy) × (1 − factor)` (`factor` 0 pins to the camera, 1 is normal; the offset moves only the drawn position, never the simulation). `repeatX/Y` tile enough copies to cover the view,
+orthographic only, at most 64 along one axis or 8×8 over both (beyond that only the middle is drawn, with one warning).
+
+**Line2D** (88) and **SpriteShape2D** (89). Line2D (up to 32 points, `width`, `loop`, `fill` by ear clipping) emits a mitred strip (bevel past 120°, flat ends, UV u = whole length 0..1, v = 0/1 left/right, clamp sampler) into the Sprite2D pass.
+SpriteShape2D lays the profile's edge sprites along the outline (up to 24 points, optional Catmull-Rom with 8 steps a segment) by outward-normal angle (+Y = 0°, counter-clockwise positive; a closed outline is made clockwise, an open
+one has "the top on the left-to-right side"), the edge band has world-unit thickness `height` (it does **not** follow entity scale), and the closed fill is triangulated on an origin-based grid of one sprite size (4096 cells at most; 682 edge quads at most).
+
+**Surface shaders for sprites.** `Sprite2D.material` names a `.mat.json` whose `*.surface.hlsl` includes `MyEngineSurfaceSprite.hlsli` and implements `float4 PSMain(MyeSpriteInput i)` (`color`, `uv`, `world`); the engine owns the vertex shader, the
+light multiply and the blend. The mesh surface headers are untouched (existing surface cache keys are byte-identical). A source may include both headers (one file, overloaded `PSMain`); the kind is detected by the include name.
+`assets\shaders\SpriteFx.surface.hlsl` (flash / outline / dissolve) is the example; `CrtScanline.post.hlsl` is a 2D post-process through `fxstack`. A material that cannot be used is not made ready (the built-in draws and the Inspector says why); a
+program broken while running keeps the old one (as M79). The outline stays inside the rectangle; materials affect the colour pass only, not the normal or shadow RT; property names start with `_`.
+
+**Pixel-perfect camera** (`PixelPerfectCamera2D` 93; Camera2DFollow is §10.13). `assetsPPU`, `refResolutionX/Y`, `upscaleRT`, `pixelSnapping`. With the window W×H, `zoom = max(1, min(H / refY, W / refX))` (integer division) and
+`viewOrthoSize = H / 2 / (zoom × PPU)`. When `upscaleRT` and zoom > 1, `RenderSystem::Render` draws the scene (3D, sprites **and post-processing**) into a low-resolution RT of **the smallest even size that covers the screen**
+(W / zoom rounded up to even) and `sprite2d_blit` (Point) scales it by `zoom` onto the target, centred with the overshoot cut at both edges — never a black border. `orthoSize` is overridden by the effective value (the Inspector shows it; the
+`CameraComponent.orthoSize` field is ignored for drawing). TAA jitter and FXAA are off while it is active, post-processing runs at the low resolution (the intended retro look), and **UI Canvas and ImGui are drawn afterwards at full resolution**.
+`pixelSnapping` rounds sprite vertices and the camera XY to the 1/PPU grid (drawing only). If the low-resolution RT cannot be created it falls back to full resolution with `orthoSize = viewOrthoSize`. It does not apply to `cameraOverride` (the editor view).
+The pure function `pixelperfect2d::Compute` lives in the Renderer layer.
+
 ## 7. Particle System Specification
 
 ### 7.1 Requirements
@@ -1835,6 +1899,40 @@ connects. **Where the filter sits is the specification**, not an implementation 
 | **A drivetrain model for vehicles** | No engine curve, gearbox or differential; force is proportional to throttle with a friction-circle saturation. That is enough for a vehicle that drives, steers and brakes deterministically, which is what the replay pair exists to prove |
 | **Suspension reaction on the surface it stands on** | The wheel raycast is one-directional. Returning the reaction would need the hit body resolved back to a solver index and would make suspension a two-body constraint — at which point it should be a constraint, not a force |
 | **Wheel visuals that survive non-uniform scale or reach child entities** | Roll, steer and suspension travel are pre-multiplied into the wheel's world matrix, which is what keeps them out of the hashed state. Pre-multiplication acts before scale, so a non-uniformly scaled wheel shears, and propagating to children would require the parent's inverse world matrix — a per-entity inverse in the collection stage, for a case the authoring rule ("wheels are unrotated, unscaled, childless") already avoids |
+
+#### 2D physics on the 3D solver (M94)
+
+There is no second solver. A side-scrolling game uses the same Rigidbody, Collider, joints and CharacterController, constrained to the XY plane; Rigidbody2D / Collider2D / Joint2D are not separate components (ADR-033).
+
+**Plane constraint.** `Rigidbody.plane2D` (hash-relevant, appended; off adds not one operation) holds a body to the plane at three points: (A) at collection the inverse inertia keeps only its Z-axis component, so a contact or a joint
+cannot inject X / Y rotation; (B) right after the velocity solver, before the position-correction pass, `vz = wx = wy = 0.0f`; (D) after position and orientation integration (CCD included) `position.z = z0`, `rotation.x = rotation.y = 0.0f` and the velocities are zeroed again.
+**Invariant, bit for bit at the end of every tick:** `position.z == z0` (the body's z at the start of the tick), `velocity.z == 0.0f`, `angularVelocity.x == angularVelocity.y == 0.0f`, `rotation.x == rotation.y == 0.0f`; it holds with sleep, CCD, compound
+colliders, joints and held ragdolls. z is **kept at its initial value, not forced to 0**, so a body placed behind the plane does not jump; the price is that **plane2D bodies at different z never collide** (unlike Unity). `AddForce` / `AddImpulse` / `AddTorque`
+drop the Z force and the X / Y torque. A kinematic plane2D body is integrated by the physics from its `velocity` / `angularVelocity.z` (a kinematic body without plane2D is untouched, as before) — that is how a moving platform is driven, and a script should set the
+velocity rather than move the Transform.
+
+**One-way platforms.** `Collider.oneWay` (appended). A contact is taken only when the normal (platform to body) points up (`ny > 0`) **and** the body's lowest point at the start of the tick is at least (platform top − `kOneWaySlop` 0.05), **or** the body is descending faster than
+`kOneWayLandingSpeed` 0.5 m/s (otherwise a fast fall lands deeper than the slop in one tick and tunnels). One function, `RejectOneWayContact`, is called from contact generation, the position-correction pass, the sleeping-pair report and the CCD sweep. A dynamic oneWay body makes ordinary contacts, and a `oneWay` on a
+compound collider's child is ignored (v1).
+
+**CharacterController 2D mode.** Appended, all hash-relevant: `plane2D` (ignores `moveInput.z`, pins z to z0, enables the rest), `ignoreOneWay` (true: pass through platforms, e.g. on a down input), `pushPower` (> 0: an impulse `pushPower × moveInput.x` into a non-kinematic plane2D body
+touched with |nx| > 0.5 in the travelling direction; one body one push per tick, at most 8 bodies, the pushed body is woken), and read-only reports `wallContact` (−1 left / 0 / 1 right / 2 both; set while touching at |nx| > 0.9, pressing is not required), `ticksSinceGrounded` (0 grounded, saturates at 32767),
+`groundEntity` and `groundVelocity` (the floor's Rigidbody velocity at `SolveCharacters` time; kinematic = start of tick, dynamic = after solving). While grounded, `groundVelocity × dt` (y included) is added to the displacement and `cc->velocity.x` is relative to the floor. A one-way platform pushes
+the capsule only if its lowest point at tick start is above the top − slop, `velocity.y <= 0` and `!ignoreOneWay`. The capsule shape is kept (the existing push-out, step and slope code is reused; there is no box CC).
+
+**2D shapes** (`collidershape::kPolygon2D = 6`, `kEdge2D = 7`, `.shape2d.json`, §10.13). A static polygon becomes a prism triangle soup (concave allowed), a dynamic one the prism's convex hull (a concave outline fills in; the Inspector says so), a kinematic one the soup;
+an edge chain becomes thin boxes with half thickness `edgeRadius`, extended by it at both ends (no gap at a corner), `closed` only with 3 or more points. A dynamic / kinematic Edge2D is warned about and disabled. Points are capped at 512. Static shapes reach the solver through
+`PhysicsSystem::AddStaticShapeSource` (`StaticShapeSource::Collect`), the same supplier used by tiles and SpriteShape2D.
+
+**2D joints.** None are new: with plane2D, `Hinge(axis = (0,0,1))` is a 2D revolute joint, `Slider(axis in XY)` a 2D slider, `Fixed` a 2D weld and `SpringJoint` a distance spring; the invariant holds unchanged. The Inspector's JointComponent has a "2D (Z axis)" button. A wheel is a Hinge plus the existing motor.
+
+**Effector2D** (90, hash-relevant). One component, four types, using the same entity's Collider as the region: **Area** (constant force), **Point** (force toward / away from the centre), **Surface** (conveyor: the contact surface velocity, needs a solid non-trigger static or kinematic Collider, acts on plane2D dynamic bodies only) and **Buoyancy**
+(the region top is the water surface; depth fraction × density, the volume is the 3D `ShapeVolumeWorld` including z thickness, so the default density 1000 floats anything lighter). It applies to plane2D bodies overlapping the region every substep. Defaults: surfaceSpeed 2.0, density 1000, drag 1.0, magnitude 10, mask all bits.
+The region pose and the Surface direction (+X turned by the entity's Z rotation) are those of the start of the tick. A plane2D body inside an **active** region is woken and kept awake that tick, island by island (active = force ≠ 0 / magnitude ≠ 0 / submerged fraction > 0 / surfaceSpeed ≠ 0 with a candidate in the face AABB + 0.05),
+so a buoyant body at equilibrium or a body held against a wall by wind never sleeps. Shapes that cannot be a region: kMesh, kTerrain, kEdge2D.
+
+**Queries.** `OverlapBoxWorld` already took a mask; `BoxCastWorld(world, center, half, dir, maxDist, out, mask, skip, skipUser)` is an **approximation**: it casts rays from 27 points of the box (8 vertices, 12 edge midpoints, 6 face centres, the centre) and returns the shortest, distance 0 and normal −dir
+if it starts overlapping — a thin tip that falls between the 27 points can be missed. Raycast / Overlap* / SphereCast / BoxCast and Perception's line of sight also see tile and SpriteShape boxes (`physicsquery::Install`, the supplier's `Collect` with no narrowing), which includes the existing consumers (acoustic field, foot IK ground ray).
 
 ---
 
@@ -2609,6 +2707,12 @@ reports `Arrived` 60 ticks late. The translucent fill is unverified on the CI WA
 cover a drop straight below an edge and a jump to the same height (no jump-then-drop), and cannot be excluded per
 object. `CalculatePath` paths longer than 256 polygons are cut.
 
+**GridAgent2D (M94u, TypeId 91).** The 2D counterpart of `NavMeshAgent`, on a Tilemap instead of a NavMesh (no Recast). It has the same `destination` / `hasDestination` / `status` names and values (`navagentstatus`: Idle / Moving / Arrived / NoPath / Stuck / Inactive),
+and the behaviour tree's `MoveTo` falls back to it when the entity has no `NavMeshAgent` (distance to arrival is measured in XY). `GridNavSystem` runs at the NavSystem phase, right after it. A walkable cell is empty in the collision layer with solid ground (one-way included) directly below. Edges: walk left / right (cost 10),
+fall (10 + height), jump (rise ≤ `maxJumpHeight`, run ≤ `maxJumpLength`, the cells on the way empty, cost 20 + run + |dy|; a hop that could simply be walked is not an edge). A* uses a binary heap with the total order (f, g, cellKey), so ties are deterministic. At most **4096 expansions a tick**; past that the agent follows a partial
+path to the reached node nearest the goal (smallest h, g, cellKey) and status stays Moving (NoPath only when the open list runs dry). Output is `CharacterController.moveInput.x = ±speed` and, on a jump edge, `jumpSpeed`; without a CC the agent is Inactive. It keeps only the next cell and a few follow-up fields (all hashed), replans when it reaches the next cell, the goal cell changes,
+`replanInterval` (30) ticks pass or an edge stops holding, and never in the air. A goal or start cell that is not walkable moves to the nearest within Chebyshev distance 2.
+
 ### 10.10 AI Perception (M83)
 
 **What it does.** A character with `AIPerception` sees, hears, feels damage and touch, remembers what it perceived and
@@ -2642,6 +2746,8 @@ scene with no `AIPerception` leaves the RNG and the world hash unchanged. `--per
 **Scripting (ABI v25).** `PerceptionReportNoise`, `PerceptionReportDamage`, `PerceptionGetCount`, `PerceptionGet`
 (`MyePercept`, same 64-byte layout as `AIPercept`), `PerceptionCanSee` (immediate check, writes nothing). Scripts read
 the results written by the previous tick's perception phase.
+
+**2D (M94u).** `AIPerception.forwardAxis` (appended, hash-relevant; 0 = +Z as above, 1 = +X, turned by the entity's Z rotation) makes sight work in a side view; `eyeHeight` stays on Y, and the gizmo draws the cone in XY. Line of sight also sees tile and SpriteShape2D boxes.
 
 **Known limits.** Sight is a cone with one ray to one point (no partial visibility). Prediction is a straight line. The
 SceneView gizmo draws the cone on the horizontal plane at eye height. `AgentBrain` still uses its own sensors.
@@ -2758,6 +2864,85 @@ Demo: `--compute-demo` (a C++ State flock, a C++ Fx spark field drawn with `Debu
 
 **Known limits.** `ReloadHub` calls `CompileScripts` synchronously, so Roslyn stalls the frame for a few seconds after a kernel save. On a real GPU the Fx results differ from the CPU (up to 64 ULP in the measured case) — by design, since only Fx may use the GPU. The C# lane is outside replay coverage.
 
+### 10.13 2D assets, simulation state and limits (M94, ADR-033)
+
+Rendering is §6.15 and the physics / AI are the end of §10.5, §10.9 and §10.10; this section holds what the lane stores, what of it is simulation state, how to run it, and everything it does not do in v1.
+
+**Assets.** All are appended to `AssetType`, classified by longest suffix, registered in `RegisterAssetLibraries`, watched by `ReloadHub` (the `.meta` is the exception) and created from the Project window's Create menu.
+
+| File | Content | Library | Reload |
+|---|---|---|---|
+| `.meta` `tex.sprites[]` (plus `filter`, `pixelsPerUnit`) | slices, pivot, border | `SpriteLibrary` | explicit: the Sprite Editor / Inspector Apply call `SpriteLibrary::Register` (a `.meta` alone is not watched) |
+| `.spriteanim.json` | frame list | `SpriteAnimLibrary` | ReloadHub |
+| `.tilepalette.json` | tile definitions | `TilePaletteLibrary` | ReloadHub |
+| `.tilemap.json` | grid, layers, cells | `TilemapLibrary` | ReloadHub (all chunks dirty, overrides kept) |
+| `.shape2d.json` | polygon / edge points | `ShapeLibrary2D` | ReloadHub (static collection cache dropped) |
+| `.spriteshape.json` | edge / fill profile | `SpriteShapeLibrary` | ReloadHub |
+
+**Sprites in the `.meta`.** `tex` gains `filter` (0 auto = linear / 1 linear / 2 point), `pixelsPerUnit` (default 100) and `sprites`: `{ "id", "name", "rect": [x,y,w,h] (px, top-left origin), "pivot": [0..1] (bottom-left origin), "border": [l,b,r,t] }`. Defaults are not written, so a texture with no sprite settings has a byte-identical `.meta`.
+`id` is 1 or more, unique in the texture, assigned as maximum + 1 and never reused, even by "Delete Existing" re-slicing (an old `Sprite2D.sprite` shows magenta rather than another picture). A rect with w = h = 0 means the whole image. A duplicate id in a hand-edited `.meta` is "last wins" with a warning.
+The **Sprite Editor** (double-click a texture; formats stb cannot read, such as `.dds`, still open the OS default) has grid slicing, automatic slicing (connected components of alpha > 0), rect add / delete / drag, nine pivot presets plus custom, borders, names, PPU and filter, a Point-sampled canvas, its own 128-step Undo and Ctrl+S / Apply.
+
+**Sprite animation.** `.spriteanim.json` is `{ "spriteanim":1, "name", "frames":[{"sprite": AssetID, "ticks": ≥1}] }`; length = Σticks. A controller state may carry `"sprite": <AssetID of the .spriteanim.json>` (exclusive with `"skel"`, which loses with a warning; `"clip"` may coexist), so transitions, typed parameters, `hasExitTime` / `loop` / `speed`, `AnimatorPlay`
+and the BT's PlayAnimation all work unchanged. **The current frame is derived** — a binary search of `stateTimeTicks` in the cumulative ticks — so no new simulation state exists. During a transition the destination's frame is shown once `transitionTick × 2 >= transitionDuration` (no blending; duration 0 is recommended). It is written to the controller entity's own
+`Sprite2D.sprite`, otherwise the first descendant that has one (depth first, not entering a subtree with another Animator), **every tick**, so a script that sets `sprite` is overwritten next tick. `clipEvents` are keyed by the `.spriteanim.json` `name` and fire by the same `(old, new]` rule as skeletal clips (kinds script / sound / effect / noise; the position is the controller entity). Blend trees are not available for sprites.
+
+**Tilemap data.** `.tilepalette.json` tiles: `id` (1..65535), `name`, `sprite`, `collider` (0 none / 1 grid), `oneWay`, `hp` (0 = unbreakable), `destroyedTile`, `destroyEffect` (a prefab), and optional `rule` (variants with an 8-character `neighbors` string of `x` same tile / `o` empty / `.` any, in the order NW N NE W E SW S SE, N = +y; first match wins) and `anim`
+(`ticksPerFrame`, `frames`). `.tilemap.json` has `palette`, `cellSize`, and up to 8 layers (`name`, `sortingLayerId`, `orderInLayer`, `collision`, `chunks`) of 16×16-cell chunks (empty chunks are not written). A cell is a `uint32`: bits 0-15 `tileId` (0 = empty), 16 flipX, 17 flipY, 18-19 rotation (0/90/180/270), 24-31 damage.
+Row 0 is the bottom; coordinates run −32768..32767 (outside returns false). `Tilemap` (84, hash-relevant) holds the asset, a collision `layer` and `mask`, `friction`, `physMaterial` and `showCollision`; the origin is the entity's world position (cell (0,0) left-bottom corner) and **world scale is ignored**.
+
+**Tile drawing.** The sprite's rect is stretched over the whole cell (not the Unity original-size-plus-pivot placement; identical for 16 px art in a 1-unit cell). Flip first, then 90° counter-clockwise rotation, by swapping UV corners. Chunks are baked into vertex lists per chunk and only re-baked when dirty (`DirtyEpoch` over the Tilemap, palette and `SpriteLibrary` epochs); under an orthographic camera chunks outside the view are not submitted.
+Evaluation order **anim > rule > sprite**; neighbours are the effective cells of the same layer (overrides included, reading into adjacent chunks) and "same" compares the tile id only. Animation is `(simTick / ticksPerFrame) % frames`, so **in Edit mode (the sim tick does not advance) an animated tile stays on frame 0**. Rules and animation are derived at draw time and never touch the simulation, collision does not depend on the variant.
+
+**Tile collision.** For each collision layer, cells with `collider != 0` are merged along rows into boxes (one-way tiles into a separate set), cached per chunk. The boxes are handed to `PhysicsSystem` through `AddStaticShapeSource` with a **narrowing** step (`CollectWithin`): only chunks within (2 ticks of velocity + 2 m) of anything moving (bodies including sleeping ones but not kinematic, compound children, XPBD particles, characters), and the broadphase drops static-static pairs. Order is owner index → layer → chunk (cy, cx) → normal → one-way. A 100×50 floor is 350 boxes; one physics tick was 0.82× the `--physics-demo` figure (4.6× before narrowing).
+
+**Tile simulation state.** The asset is the initial value; the only simulation state is the table of cells written since: `TilemapSystem::OverrideStore`, a sorted array of `(entity index, generation, layer, cellKey) → uint32` (cellKey packs each axis + 32768 into 16 bits, cy in the upper half). `SetCell` / `FillRect` / `DamageCell` (script ABI and C++) write it; a write equal to the asset value removes the entry. It is in `WorldHash` as a
+content-gated SimSources source and in `SimSnapshot` as the 'TM2D' section (after Compute, before World); **a scene with no Tilemap changes neither one by a single byte** (presence gate). After a restore every chunk is re-baked and the collision cache dropped; entries of a destroyed Tilemap entity are discarded at the end of the tick. Changing a tile id wakes the sleeping bodies near it (a floor that vanishes drops its ball). `DamageCell`
+adds to the damage byte; at `hp` the cell becomes `destroyedTile` (flip / rotation kept, damage 0) and `destroyEffect` is queued for the tick-end effect spawn at the cell centre; `hp == 0` does nothing. Edits made in the editor (Tile Palette window) go through `TilemapLayer::SetCell` + `TilemapLibrary::Register`, never the override table, and are disabled while playing.
+
+**Tile Palette window.** Tools Select (range + Delete only, no move / copy), Brush, Erase, Fill (4-connected; over the limit nothing is written and a warning shows; rectangle limit 262144), Rect and Pick; flip / rotate; layer list; adding tiles (from a sprite, in bulk from a sliced texture, delete) and rule / animation editing; two Undo histories (map and palette) with Ctrl+Z going to whichever changed last. While open, a
+left click in the 2D Scene View paints ("Paint in Scene View", default on); keys S B D G U I act when the window is focused or the cursor is over the Scene View, Ctrl+S / Z / Y only with the window focused. The Scene View is shown through the editor camera's ACES, so its colours look pale (the colour contract applies to the game camera).
+
+**Shapes and profiles.** `.shape2d.json` is `{ "shape2d":1, "points", "closed", "edgeRadius", "depth" }`. `.spriteshape.json` is `{ "spriteshape":1, "fill", "edges":[{"angleFrom","angleTo","sprite"}], "height" }`. `SpriteShape2D` (89, hash-relevant) adds `points[24]`, `closed`, `smooth`, `collider` (an edge chain of thin boxes, half thickness 0.1, z thickness 1, layer 0 / mask all, through the same supplier,
+rebuilt from the world pose each tick and cached by a content hash of the points), `oneWay`, and the sorting fields. A change of points does **not** wake sleeping bodies (the cache is derived and is not in the snapshot; a wake decided from its diff would differ after a restore). Point editing for Line2D / SpriteShape2D / Shape2D is shared (`EditPointList`): drag, click an edge to add, Delete to remove the selected point, Esc to deselect.
+
+**Camera2DFollow** (92, hash-relevant; runs in the PostPhysics phase, after physics and before Transform, composing the target position through the `LocalTransform` chain so there is no lag). `target`, `offset`, `deadZone`, `damping` (0..1, the fraction of the gap closed per tick, default 0.15), `lookAheadX` (sign of the target's Rigidbody / CC velocity.x), `useBounds`, `boundsMin/Max`, `boundsAspect` (default 16/9) and `boundsFromTilemap` (the collision-layer AABB).
+`camPos += (desired − camPos) × damping`, written to `position.xy` only. **The bounds use `CameraComponent.orthoSize` and `boundsAspect`, never the window size** (no screen dimension may enter the simulation), so Create → 2D → Camera 2D sets `orthoSize = refResolutionY / (2 × assetsPPU)` and the Inspector reminds you to keep it equal to PixelPerfect's effective value. A non-orthographic camera has half extents 0.
+
+**Scripting.** ABI **v31 = 188 slots** (178 → 188, appended after v30's slots; `PartSelfTest` fixes the version, `check_rules.ps1` the slot table, rule 11-a checks `Interop.cs` by position): `OverlapBoxMasked`, `BoxCast`, `SpriteByName` (a `texturePath` without ':' is prefixed with the assets root, as `PlayEffect`), `TilemapGetCell`, `TilemapSetCell`, `TilemapFillRect` (returns cells written), `TilemapDamageCell` (0 unharmed / 1 damaged / 2 destroyed / −1 not applicable),
+`TilemapWorldToCell`, `TilemapCellToWorld` (cell centre, an out pointer because a struct return is an unverified C# path) and `TilemapGetBounds` (rectangle of effective non-empty cells, ends inclusive). Everything else (Sprite2D.sprite, the CC's 2D fields, `GridAgent2D.destination`, `Camera2DFollow.target`, Light2D) goes through `Get/SetComponentField`; sprite animation through `AnimatorPlay`. C# has `MyeScript.cs` sugar (`Tilemap.GetCell(...)` …) and C++ `ScriptAPI.h`.
+A `GameLogic.dll` built for an older `apiVersion` is refused. TypeIds: Sprite2D 81, SortingGroup2D 82, SpriteMask2D 83, Tilemap 84, Light2D 85, ShadowCaster2D 86, Parallax2D 87, Line2D 88, SpriteShape2D 89, Effector2D 90, GridAgent2D 91, Camera2DFollow 92, PixelPerfectCamera2D 93. Hash-relevant: Tilemap, SpriteShape2D, Effector2D, GridAgent2D, Camera2DFollow and the appended fields on Rigidbody, Collider, Camera, CharacterController and AIPerception; the rest is `kComponentNoHash`.
+SimSnapshot is v65 (the version went up with every sub-milestone that changed a sim type or section); Scene `kDocVersion` stays 4 and `kCookVersion` 6. Existing goldens did not move.
+
+**Demo, verification and measurements.** `--2d-demo` builds a one-level side scroller: a 3-layer 60×20 tilemap (rule tiles, an animated tile, breakable blocks, one-way boards), a hero (CC plane2D with `.spriteanim.json` Idle / Walk through the controller, a `ZTwoDHero` script driven by `--synth-input`), three plane2D boxes, a kinematic moving platform (`ZTwoDMover`), a
+`GridAgent2D` enemy chasing with the BT's MoveTo, Camera2DFollow, a 320×180 PPU 16 PixelPerfect camera with `tonemapMode 0`, two parallax layers, Global + 2 Spot lights with shadow casters and a normal-mapped hero, a Line2D rope and a SpriteShape2D hill. Art is generated by `python -I tools\gen_2d_assets.py` into `assets\2d\` (fixed seed and GUIDs; no outside material). `--2d-night` turns the lights on and
+`--2d-stress` adds 2000 sprites and 100×50×3 tile layers inside the view for timing (neither affects the goldens or the replay). Goldens `2d` (frame 3) and `2d_lights` (`--2d-night`, frame 120); the `replay_verify` job `2d` (Debug record → Debug stress → Release → `Server.exe`); `TwoDDemoSelfTest` checks the plane invariants of every plane2D body and CC for 3000 ticks and pins `WorldHash` `55DEACAD78012785` (Debug == Release; the
+tile layout changes it, and the goldens). Measured in Release at 960×540 under WARP: the demo costs 0.88-1.39 ms a frame, the stress scene 4.43-4.60 ms (both within the 16 ms target), a simulation tick 0.21 ms (Debug 2.6 ms), and one supplier-backed query Raycast 12.7 µs / BoxCast 67.5 µs over 86 static boxes — so the supplier's `Collect` is called without a per-tick cache. With `--froxel --deferred` the scene is not black or NaN and equals the forward picture pixel for pixel: those lanes do not reach the 2D path.
+
+#### v1 limits of the 2D lane (consolidated)
+
+Physics
+- A plane2D body with a parent (non-identity parent frame) is unverified: Rigidbody assumes a root, z0 is world z and the write-back goes through the parent's inverse. A parented plane2D CC and a parented kinematic plane2D body are also unverified; so are parented polygons / edges and Effector regions, and a rotating Effector belt.
+- A compound collider child's `oneWay` is ignored and a child `kPolygon2D` stays a triangle soup (not a convex hull). A kinematic Edge2D and a dynamic Edge2D are disabled.
+- A CC standing on a **rotating** kinematic platform is not carried (`groundVelocity` is translation only). A CC pushes at most 8 bodies a tick; `wallContact = 2` and multi-body pushes are covered only by the demo.
+- A one-way platform also lifts a body that is more than half sunk and descending fast (a landing rule); a body rising from below passes.
+- `BoxCast` is a 27-point approximation (a thin tip between the points is missed). The narrowing of tile boxes (2 ticks of speed + 2 m, by chunk) means a probe inside the physics step that reaches farther (a vehicle suspension ray; a 2D game does not use wheels) does not see the tiles; script queries go through the unnarrowed supplier. A tile run is split at every 16-cell chunk border, so a capsule can catch on a seam.
+- An Effector region is judged on the start-of-tick pose, Surface needs a solid collider and acts on plane2D dynamic bodies only, and a buoyant body in an active region never sleeps.
+- plane2D bodies at different z do not collide; a changed SpriteShape2D outline does not wake sleepers; a tile id change near a sleeper does.
+
+Rendering
+- SpriteMask2D acts only on sprites drawn after it whose order falls in a mask's range (not Unity's rule), and masks with different ranges cannot be told apart. The normal RT ignores the stencil mask.
+- Shadows are hard, a sprite silhouette casts none, the shadow RT is rebuilt per light; Freeform lights overlap additively at a concave outline; a Spot's `falloff` is an exponent; a perspective camera misplaces light planes and shadows. Layers with no light are black. Normals make all lit sprites take N·L once a normal RT exists.
+- SpriteShape2D `height` is in world units, vertex z is the entity origin, corner sprites and an open shape's fill do not exist; the Scene View click-pick does not hit a Line2D (select it in the Hierarchy or by a point handle); a Line2D is limited to 32 points with flat ends (no round caps, dashes or repeated texture) and its translucent bands double up inside a sharp bend.
+- Surface shader sprites affect the colour pass only; Parallax2D `repeat` is orthographic only; perspective parallax, a parent with rotation / scale and heavy mixed batches were not checked.
+- PixelPerfect: UI / ImGui are full resolution while post-processing is low resolution; it ignores the editor's `cameraOverride`; the Inspector's effective value follows the last game-camera draw; the `GetCollisionBounds` gizmo is an asset-based approximation.
+- An animated tile does not advance in Edit mode (Play and Runtime do). `froxel` fog and deferred lighting have no effect on the 2D path.
+
+AI and tools
+- `GridAgent2D` sees only tiles: **a moving platform, a rigid body or a SpriteShape2D is not a floor** for it and is not an obstacle, nothing above the head is checked, there is no crowd avoidance, whether the CC's `jumpSpeed` really clears `maxJumpHeight` / `maxJumpLength` is not verified, and only the next cell is remembered (no whole-path gizmo). The demo enemy can therefore be held up by a box wall.
+- The synthetic input of the demo leans left, so the hero collects at the left wall and hill during a replay (coverage of the middle of the level is thinner than of the left).
+- Not done by design: 2D skeletal animation, top-down (Y-sort / XZ) play, a dedicated 2D solver, black borders, wrap samplers and atlas packing, World Space Canvas, Platform Effector's variable surface arc, Collider Type = Sprite, isometric / hex grids, and network play (M81 / M93) for 2D (it is simulation, so it should work, but only `replay_verify` is claimed).
+
 ---
 
 ## 11. Debug/Release Consistency Policy
@@ -2838,6 +3023,7 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
   verified with the workers on, in Debug and Release, so the per-tick world hash proves the parallel simulation systems
   (§5.4) equal the serial ones. A kCookVersion bump (M90e, 6) keeps the cold-record / warm-verify bit match (M51b)
 - **compute A/B (M91, ADR-030).** A `compute` job (the `--compute-demo` scene: Debug stress, Release, `Server.exe` without a GPU) and a `computeab` job: a `.rep` recorded with Auto is verified with `--compute-force-cpu` in Debug and Release. State is in the hash (CMP section) and Fx is not, so an Fx result that leaked into State breaks the hash at tick 0 (measured on a real GPU and on `--warp`).
+- **2D lane (M94w, ADR-033).** A `2d` job: `--2d-demo --synth-input` is recorded in Debug, verified in Debug (snapshot stress 37), Release and `Server.exe` without a GPU. The scene holds plane2D bodies, a CC with a moving platform, tile overrides (the TM2D section), a `GridAgent2D`, Camera2DFollow and a GameLogic script, so it proves the plane invariants, the tile override table and the 2D snapshot round trip across builds. `tools\mcp\srcerify.rs` lists 22 fixed jobs (rule 15-e keeps the list and `replay_verify.bat` equal).
 
 **Field-level divergence diagnosis (M52a).** Knowing *which tick* broke is not the same as
 knowing *what* broke. `HashWorld`, `HashWorldDetailed` and `HashWorldDump` are three exits of a
@@ -2908,6 +3094,8 @@ A further shot (`demo_terrain_deferred`, M58c) uses its own `--terrain-demo` sce
 extending `--render-demo`: terrain covers the whole frame, so folding it into the existing
 showcase would have re-recorded goldens shared with other in-flight branches, and
 `tests\golden\*.png` is binary and therefore unmergeable.
+
+Two further shots (M94w) are the side-scrolling 2D showcase: `2d` (`--2d-demo`, frame 3, day) and `2d_lights` (`--2d-demo --2d-night`, frame 120, two spot lights with shadows and a normal-mapped hero, with the enemy mid-jump) — 32 shots in all, `MYE_SHOT_SKIP_2D` skips both. The earlier shots did not move across the M94 lane: 29 are at maxDiff 0, and `demo_terrain_deferred` equals its pre-M94 picture exactly (its own maxDiff 5 against the golden is a WARP-version difference that predates M94), which is the mechanical evidence that every 2D addition is a presence-gated opt-in.
 
 Eight shots are **not** taken at frame 3: `physics` (M59l), `joints` (M60k), `fog` (M57追補),
 the two particle backends (M63a) and the two acoustic paths (M65e) all shoot frame 120, and
@@ -3561,7 +3749,7 @@ Kept verbatim, because the completion criteria it set are still the ones the pro
 
 The order was intentional: implementing the reload foundation in M3 first accelerated subsequent particle development through dogfooding.
 
-### 12.2 What was actually built (M0-M91)
+### 12.2 What was actually built (M0-M91, M94)
 
 **2026-07-19 → 2026-10-12, over 600 commits.** The primary source is `git log`; the prefix on each
 commit subject names the milestone. Grouped by system rather than by number, because the numbers
@@ -3592,6 +3780,7 @@ interleave — several tracks ran in parallel and a few milestones were revisite
 | AI | M82-M85 | Recast-based NavMesh with bake, pathfinding, TileCache and Crowd held bit-identical (ADR-023); `AIPerception` sight and hearing (ADR-024); Agent Types, Surface grouping, filters and auto-generated links; **behaviour trees** with `.bt` / `.bb` assets, decorators, aborts, C# tasks and a node editor (ADR-025). ABI v24 → v27 = 158 slots |
 | Render optimization | M90 | Measurement first (per-view `RenderStats`, GPU timers, the `render_bench` scenes and `--render-stats-dump`); opt-in **mesh LOD** generated by meshoptimizer into the cooked blob (`kCookVersion` 6); two-phase **GPU occlusion culling** with a per-view max-Z pyramid for Deferred and Forward, default on and saved in `project_settings.json`; per-cascade shadow culling that keeps off-screen casters' shadows, and a conservative skinned AABB; render-side parallelism, a view-shared palette cache and distant-animation throttling (URO); parallel CPU particles / Perception / PartFollow / TwoBoneIk proven by replay_verify's jobs A/B (§5.4, §6.14, ADR-028 / ADR-029) |
 | Compute.ForEach | M91 | One `*.kernel.hlsl` source run on the GPU, as a C++ CPU function and as a C# CPU function behind a checked HLSL subset (KL001–KL028); State buffers always on the CPU and in snapshot / hash (SimSnapshot v50), Fx buffers GPU-first with delayed readback; source-hash version check, `COMPUTE_KERNELS` / `[ComputeKernels]` declarations, a Compute section in the script inspector, compute A/B in `replay_verify` (§10.12, ABI v29, ADR-030) |
+| 2D lane (side-scrolling) | M94 | Plane-constrained 3D solver as the 2D physics (`plane2D` invariant bit-exact, one-way platforms, a 2D CharacterController mode, polygon / edge shapes, Effector2D, GridAgent2D A*); integer-sorted `Sprite2D` with sorting layers, groups, masks, Sliced / Tiled, sprite-sheet animation as a controller state; tilemaps with rule / animated / breakable tiles whose edits are a sparse sim-state table; Light2D with shadows and normal maps, Line2D, SpriteShape2D, sprite surface shaders, Parallax2D; PixelPerfectCamera2D and Camera2DFollow; Sprite / Tile Palette editors and a 2D Scene View; ABI v31 = 188, SimSnapshot v65, TypeId 81-93, `--2d-demo` with goldens `2d` / `2d_lights` and the `2d` replay job (§6.15, §10.5, §10.9, §10.13, ADR-033) |
 
 **A note on the numbering.** M17-M25 and M30-M31 have no commits of their own: they were finished
 before the repository was brought up to date and landed in two bundle commits (`M16-M25` and
@@ -3610,7 +3799,7 @@ to the physics roadmap.
 | M86 (Smart Objects) | **Unstarted, designed.** `SmartObjectComponent` with slots, a reservation table in the snapshot and hash, four behaviour-tree nodes, one ABI bump. Plan: `plans\ai-roadmap-m83-m86.md` |
 | Engine MCP server (M87) | **Unstarted, design settled.** Engine index dump, a stdio JSON-RPC server with search / describe, structured verify jobs, notes. Plan: `plans\エンジンMCPサーバ.md` |
 | Sequencer | **Unstarted.** A tick-based sequencer. (Blend trees, two-bone IK, root motion and animation events shipped as M89; mesh LOD and GPU occlusion culling as M90.) No plan file yet |
-| Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (now ABI v29, TypeId 80, SimSnapshot v50, ADR-030). Plan files that name a specific future number are stale on that point |
+| Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (at the time of M94: ABI v31 = 188, TypeId 93, SimSnapshot v65, ADR-033). Plan files that name a specific future number are stale on that point |
 | Dogfooding backlog | 5 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open (11 debug-draw log, 13 `builtin://wheel`, 17 CC ⇄ Rigidbody, 19 missing-`PhysicsEnvironment` warning, 20 script-to-script messaging). Each needs a new implementation surface; 20 needs the next ABI bump (`onMessage` on `MyeScriptDesc`) |
 
 ---
@@ -3649,7 +3838,8 @@ ADR-020 Deep-Modal impact synthesis (§10.7) /
 ADR-027 skeletal pose program (M89) /
 **ADR-028 simulation parallelism: output-dimension splits proven by jobs A/B** (§5.4) /
 **ADR-029 render optimization: opt-in mesh LOD, two-phase occlusion culling, render-side URO** (§6.14) /
-**ADR-030 Compute.ForEach: one kernel source, State on the CPU, Fx GPU-first** (§10.12).
+**ADR-030 Compute.ForEach: one kernel source, State on the CPU, Fx GPU-first** (§10.12) /
+**ADR-033 the 2D lane: plane-constrained 3D solver, integer sort keys, assets plus a sparse sim-state diff** (§6.15, §10.13).
 
 ---
 

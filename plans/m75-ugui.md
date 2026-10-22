@@ -11,7 +11,10 @@
 - 現行の版: Scene `kDocVersion=3` / `.rep` v7 / `kSimSnapshotVersion=17` / `kNetProtoVersion=4` / ABI v17 = 111 スロット / 末尾 TypeId 50
   (★これは M75 着手時の値。**2026-10-06 時点の実際は ABI v27 = 158 スロット、末尾 TypeId 79、ADR は 025 まで使用済み**)
 - **番号は着手時の末尾から取る。** この文書に出てくる M75h の ABI (v19 / v25)、InputField の TypeId (71 / 「76 以降」)、
-  M75j の ADR 番号 (ADR-020) はどれも計画時の値で、もう使われている。M75h は着手時に `EngineAPI.h` の版と
+  M75j の ADR 番号 (ADR-020) はどれも計画時の値で、もう使われている。
+  (2026-10-22 時点: ABI は M94 sub-14 が **v31 = 188 スロット**を使用済みなので **M75h は v32 以降**。TypeId は M94 が 93 まで使用済み
+  — 実行時スキーマの Health が 94 を使うログがあるので、次の空きは着手時の末尾から取る。SimSnapshot は v65、ADR は 033 まで使用済み)
+  M75h は着手時に `EngineAPI.h` の版と
   `Components.cpp` の末尾、`docs\adr\` の次の空き番号を確認して、そこから振る (M86 と先着で取り合う)
 
 ## Context

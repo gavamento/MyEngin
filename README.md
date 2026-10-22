@@ -129,7 +129,7 @@ C# は `MyeScripting.dll` とその依存ファイル、Git は `MyeCollab.dll` 
 
 **未登録コンポーネントの JSON は保持して再保存する実装になっています。** 型が未登録のまま実行できるわけではありませんが、旧 README にあった「未登録なら保存で消える」という説明は現状には当てはまりません。
 
-スクリプト API の正本は [src/Shared/EngineAPI.h](src/Shared/EngineAPI.h) と [src/Shared/ScriptAPI.h](src/Shared/ScriptAPI.h) です。現行の `MYE_API_VERSION` は **29** (174 スロット)。ABI を更新した場合は本体、ゲーム DLL、言語間ミラーの整合が必要です。
+スクリプト API の正本は [src/Shared/EngineAPI.h](src/Shared/EngineAPI.h) と [src/Shared/ScriptAPI.h](src/Shared/ScriptAPI.h) です。現行の `MYE_API_VERSION` は **31** (188 スロット)。ABI を更新した場合は本体、ゲーム DLL、言語間ミラーの整合が必要です。
 
 ### 描画・演出
 
@@ -157,6 +157,7 @@ C# は `MyeScripting.dll` とその依存ファイル、Git は `MyeCollab.dll` 
 | 音響伝播 | 整数距離場による波面を、可視化・敵の聴覚・経路探索・プレイヤーに届く音へ利用 |
 | 敵 AI | 音・光のセンサー、状態機械、グリッド上の経路探索 |
 | Deep-Modal | 形状・材質・接触位置・衝突の強さに応じたモーダル衝突音の合成 |
+| 2D（横スクロール） | XY 平面の平面拘束物理（一方通行床・移動床・タイル衝突）、スプライト / タイルマップ / 2D ライト・影 / ピクセルパーフェクトカメラ、グリッド A*。固定 Tick の決定論を 3D と同じ契約で保つ。仕様は engine_spec §6.15 / §10.13、判断は [ADR-033](docs/adr/ADR-033-2d-lane.md)。`--2d-demo` |
 
 Deep-Modal は、学習済み `.dmnet` からメッシュ単位の特徴を `.msfm` に焼き、`ModalSound` を持つ物体の衝突から音を合成します。録音 SE の一律再生とは異なり、形状や励起条件が音色・音量へ影響します。モデルの汎化やマスクによって無音になるメッシュがあり、資産ごとの確認が必要です。学習環境と操作は [tools/deepmodal/README.md](tools/deepmodal/README.md)、設計は [ADR-020](docs/adr/ADR-020-deep-modal.md) を参照してください。
 
@@ -242,6 +243,7 @@ UI は日本語・英語に対応し、メニューから切り替えられま�
 | `--acoustic-demo` | 波面と聴覚・AI。波の可視化は Scene ビューの音響表示で確認 |
 | `--modal-demo` | 材質の異なる物体の合成衝突音 |
 | `--ui-demo` | UI ウィジェット |
+| `--2d-demo` | 横スクロール 2D。`--2d-night` で 2D ライトの夜、`--2d-stress` で性能計測用の大量配置 |
 | `--local-demo` / `--net-demo` | ローカル複数プレイヤー / ネット対戦 |
 | `--parts-demo` / `--flow-demo` | 部位追従 / シーン遷移・セーブ。Editor 専用 |
 

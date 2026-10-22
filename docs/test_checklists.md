@@ -711,41 +711,73 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] `tools\replay_verify.bat` が PASS し、PASS 行に `compute` と `compute A/B` が含まれる
 - [ ] C# と C++ のバイト一致を JIT 設定を変えて確かめ直す場合は ADR-030 の D24 の手順に従う (`KernelCompat.cs` / `KernelCSharp.cpp` を変えたとき)
 
-## M94: 2D レーン (横スクロール) — 下書き (sub-24 が仕上げる)
+## M94: 2D レーン (横スクロール)
 
-仕様は `plans\m94-2d\spec.md`、決定的な部分 (平面拘束・タイル衝突・GridAgent2D・Camera2DFollow・ハッシュの焼き込み・版の固定) は `Editor.exe --selftest` (`TwoDDemoSelfTest` ほか) と `tools\replay_verify.bat` の `2d` ジョブが見る。ここは GUI の実操作と目視でしか確かめられない項目。アセットは `python -I tools\gen_2d_assets.py` で `assets\2d\` に作り直せる。
+仕様は `plans\m94-2d\spec.md`、まとめは [engine_spec.md](../engine_spec.md) §6.15 / §10.13、判断は [ADR-033](adr/ADR-033-2d-lane.md)。決定的な部分 (平面拘束・タイル衝突・GridAgent2D・Camera2DFollow・ハッシュの焼き込み・版の固定) は `Editor.exe --selftest` (`TwoDDemoSelfTest` ほか) と `tools\replay_verify.bat` の `2d` ジョブ、画素は golden `2d` / `2d_lights` が見る。ここは **GUI の実クリックと目視でしか確かめられない項目**で、各サブの判定が「ユーザー目視」に回したものを全部集めてある。アセットは `python -I tools\gen_2d_assets.py` で `assets\2d\` に作り直せる (GUID と seed は固定)。
 
 ### デモの見た目 (`--2d-demo`)
 
 - [ ] `bin\x64\Release\Runtime.exe --warp --font-embedded --width 960 --height 540 --frames 6 --shot-frame 3 --no-fxaa --2d-demo --screenshot <png>` で、320x180 を 3 倍にした画素の絵になり、左端の壁・壊れるブロック (2 列 3 段)・一方通行板の上の主人公・左の丘・ロープのたるみ・視差の山と木・段差・敵・右端の箱の山が写る
 - [ ] `--2d-night` を足して `--frames 125 --shot-frame 120` で撮ると、Global の暗い青と、吊りランプ・主人公のランタンの 2 灯、箱・主人公・移動床の影が写る。主人公の法線で明暗が付く
-- [ ] `--froxel --deferred` を足しても真っ黒 / NaN にならない (golden には入れない)
-- [ ] Editor で `--2d-demo` を開いて Play すると、主人公が (入力なしでは) 立ったまま、敵が段差と一方通行板を越えて主人公へ向かう。矢印や A / D / Space / J で主人公を操作でき、壁へ押し付けると前のブロックが削れて壊れる
+- [ ] `--froxel --deferred` を足しても真っ黒 / NaN にならず、昼の絵と同じ (golden には入れない。2D の経路には froxel / deferred が効かない)
+- [ ] Editor で `--2d-demo` を開いて Play すると、主人公が (入力なしでは) 立ったまま、敵が段差と一方通行板を越えて主人公へ向かう。矢印や A / D / Space / J で主人公を操作でき、壁へ押し付けると前のブロックが削れて壊れる。S (下) で一方通行板を降りられる
+- [ ] 移動床 (kinematic) に乗った主人公が床と一緒に運ばれる。箱 (plane2D 剛体) を押して動かせる
+- [ ] Edit モード (Play していない) ではアニメーションタイルがコマ 0 のまま止まって見える (仕様どおり。Play 中と Runtime では動く)
+- [ ] 実機 GPU でも `--2d-demo` の絵が WARP と大きく違わない (ライトバッファ RGBA16F、ステンシルマスク、ピクセルパーフェクトの blit)。違う場合は Deferred / Forward / `--froxel` の組み合わせも試す
 
 ### Create メニューと Inspector
 
-- [ ] Create → 2D → Sprite / Tilemap / Light 2D / Sprite Shape / Line / Effector 2D / Grid Agent 2D / Camera 2D の各項目で、エンティティが作られる。Camera 2D の Camera は正射影で、半高が 0.9 (基準解像度 320x180 / PPU 100) になっている
-- [ ] Inspector の Camera 2D の有効値 (PixelPerfectCamera2D) が、直近のゲームビューの寸法に対する RT と orthoSize を示す
-- [ ] Sprite2D の srgb 警告行 / normalMap の srgb 警告行、Effector2D の警告行、GridAgent2D の tilemap 未設定の警告が読める
+- [ ] Create → 2D の各項目 (Sprite / Tilemap / Light 2D / Sprite Shape / Line / Effector 2D / Grid Agent 2D / Camera 2D) で、エンティティが作られ Undo で戻る。Shadow Caster 2D には Create 項目が無い (Add Component の 2D 分類で足りる)
+- [ ] **Create → 2D → Camera 2D** の Camera が正射影で、`orthoSize` が 0.9 (= 基準解像度 Y 180 / (2 × PPU 100)) に初期化されている。Inspector に「PixelPerfect と合わせる」注記が出る (sub-23 で直したが実際の Create 操作は未実施)
+- [ ] Camera 2D の Inspector (PixelPerfectCamera2D) の有効値が、直近のゲームビューの寸法に対する RT と orthoSize を示す。Play 前に何も描かれていないときの表示も確認する
+- [ ] Add Component の「2D」分類に Sprite2D / SortingGroup2D / SpriteMask2D / Tilemap / Light2D / ShadowCaster2D / Parallax2D / Line2D / SpriteShape2D / Effector2D / GridAgent2D / Camera2DFollow / PixelPerfectCamera2D が並ぶ
+- [ ] Sprite2D の `sprite` に AssetRef ピッカーが出て (一覧にスライスが名前で並ぶ)、テクスチャの D&D は全面スプライトとして受理される。`normalMap` のピッカーはテクスチャだけを一覧し、ドロップも効く
+- [ ] Inspector の警告行が読める: Sprite2D の srgb = on の警告 / normalMap の srgb 警告 / ソート層が無い id の警告 / Effector2D の警告 (Surface でトリガー Collider など) / GridAgent2D の tilemap 未設定 / Tilemap のワールドスケール無視の注記 / plane2D の「異なる z は当たらない」注記
+- [ ] スプライトのサーフェスシェーダ (`SpriteFx.surface.hlsl` を Material に割り当てた Sprite2D) で flash / 輪郭 / dissolve が効く。使えない材質を割り当てると内蔵で描かれ Inspector に理由が出る
+- [ ] Joint の Inspector の **「2D (Z 軸)」ボタン**を押すと axis が (0,0,1) になる (Hinge)
+
+### Project Settings のソート層
+
+- [ ] Project Settings の Sorting Layers で追加・削除・改名・並べ替え (Up / Down) の実クリックが働く。id 0 "Default" は削除できず、32 を超えて追加できない。Remove のあとの空き id が再利用される
 
 ### Scene View の 2D モード
 
-- [ ] ツールバーの「2D」トグルで XY の正射影になり、ホイールでズーム、中 / 右ドラッグでパン、F で選択へ寄る
-- [ ] ギズモ: Sprite2D の矩形 (白) と pivot (黄)、2D コライダー (緑)、Tilemap の衝突箱 (`showCollision`)、Light2D (黄)、ShadowCaster2D (紫)、Camera2DFollow の deadZone と bounds (青)、GridAgent2D の経路 (橙)、Effector2D の矢印 (橙) が出る
-- [ ] Line2D / SpriteShape2D の点ハンドル: ドラッグ・辺クリックで追加・Delete・Esc が働く
+- [ ] ツールバーの「2D」トグルで XY の正射影になり、ホイールでズーム、中 / 右ドラッグでパン、F で選択へ寄る。OFF で元の 3D 視点に戻る。ImGuizmo が XY 並進 / Z 回転 / XY 拡縮だけになり、XY グリッドが出る
+- [ ] ギズモの色: Sprite2D の矩形 (白) と pivot (黄の十字)、2D コライダー (緑)、Tilemap の衝突箱 (`showCollision`、緑)、Light2D (黄。type ごとの輪郭)、ShadowCaster2D (紫)、Camera2DFollow の deadZone と bounds (青)、GridAgent2D の次セル (橙)、Effector2D の矢印 (橙) が出る
+- [ ] Line2D / SpriteShape2D の点ハンドル: 点を選ぶまでは変形ギズモのまま。点のドラッグ・点選択中の辺クリックで追加・Delete で削除・Esc が働き、1 ドラッグ 1 Undo
+- [ ] `.shape2d.json` (Polygon2D / Edge2D Collider) の点ハンドル: ドラッグ、辺クリックで追加、Delete (Undo は無く、ドラッグ 1 回 = 保存 1 回)
+- [ ] Scene View のクリック選択が Sprite2D を選ぶ (Line2D は選べない = 仕様の限界。Hierarchy か点ハンドルから)
+- [ ] 非 Play の Scene View で Light2D が効いた見た目になる (ライトの配置が見える)。Scene View の色はエディタカメラの ACES で淡く出る (ゲームカメラの契約とは別)
+- [ ] GameView 上の PixelPerfect: ウィンドウサイズを変えても整数倍の拡大で黒帯が出ず、ドットが滲まず、UI の文字はフル解像度で鮮明。TAA / FXAA を選んでいても滲まない
 
-### スプライトエディタ / タイルパレット / コントローラ窓
+### スプライトエディタ
 
-- [ ] テクスチャをダブルクリックするとスプライトエディタが開く (`.dds` は OS 既定アプリ)。スライス・pivot・border・PPU・filter を編集して Apply でき、Point 表示で滲まない
-- [ ] タイルパレット窓で塗り・矩形・塗り潰し・スポイト・Undo / Redo (Ctrl+Z / Y)・保存 (Ctrl+S) ができ、Scene View の 2D で左クリックでも塗れる。初回のドラッグが一瞬 (約 110 ms) 止まっても許容
-- [ ] パレットのタイル追加 (スプライトから / スライス済みテクスチャから一括 / 削除)、ルール (8 近傍トグル) とアニメの編集が働く
-- [ ] コントローラ窓のステートに Sprite (スプライト列) を指定でき、骨クリップとは排他になる
+- [ ] Project 窓でテクスチャをダブルクリックするとスプライトエディタが開く (`.dds` など stb が読めない形式は OS 既定アプリ)。Inspector の [Open Sprite Editor] と Window メニューからも開く
+- [ ] キャンバスの操作: ズーム / パン / 矩形のドラッグ移動・リサイズ / 矩形の追加 / Delete / Ctrl+S / Undo・Redo。グリッド分割・自動分割・pivot プリセット 9 種とカスタム・border・名前・PPU・filter を編集して Apply でき、Point 表示で滲まない
+- [ ] 未保存のまま閉じる / 別テクスチャへ切り替えるとモーダルが出る。ゲート表示 (Play 中や Source Control の状態) が出る
+- [ ] Apply 後に Sprite2D の表示がすぐ変わる。再スライスのあと古い id を指す Sprite2D がマゼンタに見える (id は使い回されない)
+- [ ] Inspector の Import Settings (filter / PPU) の Apply で表示が変わる。srgb 警告行が読める
+
+### スプライトアニメ / コントローラ窓
+
+- [ ] Project 窓の Create → Sprite Animation で `.spriteanim.json` が作れ、Inspector でコマの追加・削除・順序・ticks・ピッカー・「スライスをまとめて追加」・ステップ再生・保存 / 戻すが働く
+- [ ] コントローラ窓のステートに Sprite (スプライト列) を指定でき、骨クリップとは排他になる (併記は WARN)。ノードの 2 行目に "sprite: Walk"、ポーズ層の欄に現在コマ番号が出る。プレビュー窓 (M89n) でスプライトのコマが出てステップ再生できる
+- [ ] Play 中にスプライトを手で書き換えても次の tick で Animator が書き戻す
+
+### タイルパレット / タイルマップ
+
+- [ ] タイルパレット窓で塗り (B)・消去 (D)・塗り潰し (G)・矩形・ピック (I)・選択 (S) とその Delete・Undo / Redo (Ctrl+Z / Y)・保存 (Ctrl+S) ができ、窓を開いている間は Scene View の 2D で左クリックでも塗れる (「Paint in Scene View」で外せる)。キーは窓フォーカスか Scene View 上のカーソルのとき、Ctrl+S / Z / Y は窓フォーカスのとき。Scene View フォーカスの Ctrl+Z はシーンの Undo
+- [ ] 別アセットへ切り替えるときのモーダル、Tilemap コンポーネントの [Open Tile Palette] ボタン、Window メニューから開く。Play 中は塗れず、理由が折り返して全部読める
+- [ ] パレットのタイル追加 (スプライトから / スライス済みテクスチャから一括) と削除、ルール (8 近傍トグル) とアニメ (ticksPerFrame・コマ) の編集、レイヤーの追加・削除・順序が働く。InputText で名前を編集できる
+- [ ] 初回のドラッグが一瞬 (約 110 ms) 止まっても許容。連続ドラッグで目立って重くならない
+- [ ] 保存すると ReloadHub が読み直して Scene View の絵が変わる。マップとパレットの Undo は別で、Ctrl+Z は直前に変わった側から戻る
+- [ ] Tilemap の `showCollision` を ON にすると衝突箱 (緑) が出て、Play 中に SetCell で消したセルの箱も消える
 
 ### 回帰
 
 - [ ] `tools\check_rules.ps1` が既存の 3 error のまま (15-e が 0)
 - [ ] `tools\replay_verify.bat` が PASS し、PASS 行に `2d` が含まれる
-- [ ] `tools\shot_verify.bat` が 32 枚 PASS する (`2d` / `2d_lights` を含む)
+- [ ] `tools\shot_verify.bat` が 32 枚 PASS する (`2d` / `2d_lights` を含む)。`demo_terrain_deferred` は golden と maxDiff 5 (WARP の版差で M94 以前から) のままで、基点の絵とは 0
 
 ## M87: エンジン MCP サーバ (mye_mcp)
 

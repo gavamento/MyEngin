@@ -17,7 +17,7 @@ AI クライアントがエンジンで作業するとき、(1) `replay_verify.b
    MCP の legacy (2025-03-26〜2025-11-25) と modern (2026-07-28) の両方に答える。
 2. **エンジン (sim / Runtime / GameLogic / Shared / Server) から索引ダンプ (`Editor/Tools/EngineIndexDump`) を include しない。**
    索引ダンプは Editor 層の機能で、`Editor.exe --dump-index` が実行時の登録表から出す。規則 15-a / 15-b。
-3. **道具は 5 つ**: `search` / `describe` (索引。読み取り専用)、`verify_job` (固定 21 ジョブの起動と結果の構造化)、
+3. **道具は 5 つ**: `search` / `describe` (索引。読み取り専用)、`verify_job` (固定 22 ジョブの起動と結果の構造化)、
    `note_read` / `note_append` (追記専用のメモ)。
 4. **外へ手を伸ばす経路をファイル単位で閉じ込める** (`tools\check_rules.ps1` の規則 15-c / 15-d)。
    子プロセスを起動してよいのは `verify.rs` だけ。ファイルを書く API を使ってよいのは (ファイル x API) の組で許可された所だけ:
