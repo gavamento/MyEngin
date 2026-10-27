@@ -83,12 +83,22 @@ public:
     // xpbd (M60'b): 変形体の粒子池。先頭で Sync し、サブステップごとに xpbd::Predict / Solve を呼ぶ
     // outShapeImpulses (sub-05): 非 null なら clear して形状単位インパルスを entity index
     // 昇順で書き込む。null のあいだは一切計算しない (既存呼び出し元は変更不要)
+    // outCharacterContacts (M93e、dogfooding #17): 非 null なら clear して、CharacterController が押し出しで
+    // 触れた**剛体 (Rigidbody 持ち) との**接触を key 昇順で書く。運動量の交換はせず impulse は 0。
+    // SolidContact とは別の列にするのは、音響の衝撃音・知覚・モーダル音・GetContactInfo に
+    // 「重さの無い接触」を混ぜないため (消費するのは CollisionSystem の OnCollision* だけ)
     void Update(World& world, float dt, std::vector<SolidContact>* outContacts = nullptr,
-                XpbdBackend* xpbd = nullptr, std::vector<ShapeImpulse>* outShapeImpulses = nullptr);
+                XpbdBackend* xpbd = nullptr, std::vector<ShapeImpulse>* outShapeImpulses = nullptr,
+                std::vector<SolidContact>* outCharacterContacts = nullptr);
 
     // 等価性テスト用 (PhysicsSelfTest): true でブロードフェーズを総当たり候補に切替。
     // 挙動はビット同一のはず — selftest がハッシュ比較で常時検証する
     static inline bool sDisableBroadphaseForTest = false;
+
+private:
+    // M93e (dogfooding #19): 「Vehicle があるのに PhysicsEnvironment が無い」を 1 回だけ WARN した印。
+    // ログのためだけの状態で sim には触れない (ハッシュ・スナップショットの対象外)
+    bool warnedVehicleWithoutEnvironment_ = false;
 };
 
 // ---- 物理マテリアル解決 (M59a2)。全て純関数 — ソルバ収集と ABI が共有する ----

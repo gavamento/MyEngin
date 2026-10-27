@@ -172,6 +172,27 @@ void ScriptHost::DispatchBreak(EntityID root, EntityID piece, MyeVec3 point, flo
     }
 }
 
+void ScriptHost::DispatchScriptMessage(EntityID target, EntityID from, uint64_t nameHash, int32_t value)
+{
+    World& world = scene_->GetWorld();
+    for (ScriptType& type : types_) { // 登録順 (決定論)
+        if (!type.onMessage) {
+            continue;
+        }
+        void* state = world.GetComponentRaw(target, type.componentId);
+        if (!state) {
+            continue; // 破棄済み / そのスクリプトを持たない target は黙って捨てる (送り手には分からない)
+        }
+        MyeUpdateContext ctx;
+        ctx.dt = dt_;
+        ctx.tickIndex = tickIndex_;
+        ctx.self = ToShared(target);
+        ctx.api = &api_;
+        const RunningScriptScope running(apiCtx_, type.name.c_str());
+        type.onMessage(state, &ctx, ToShared(from), nameHash, value);
+    }
+}
+
 void ScriptHost::Init(Scene* scene)
 {
     scene_ = scene;
@@ -379,6 +400,7 @@ bool ScriptHost::LoadModule(const std::wstring& dllPath)
         type->onCollisionStay = sd.onCollisionStay;
         type->onCollisionExit = sd.onCollisionExit;
         type->onBreak = sd.onBreak;
+        type->onMessage = sd.onMessage; // v30 (M93e)
     }
 
     // 新 DLL に無くなった型: ロジックを外す (状態は残す — 復活したら再バインドされる)
@@ -397,6 +419,7 @@ bool ScriptHost::LoadModule(const std::wstring& dllPath)
             t.onCollisionStay = nullptr;
             t.onCollisionExit = nullptr;
             t.onBreak = nullptr;
+            t.onMessage = nullptr;
             // ★construct も外す。registry に旧 DLL の関数が残ったまま下で旧 DLL を解放すると、
             //   この型が残るエンティティに別のコンポーネントを足す (アーキタイプ移動の AddRow) だけで
             //   解放済みのコードを呼ぶ。null の型は ConstructComponent がゼロで埋める

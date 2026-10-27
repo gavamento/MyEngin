@@ -46,6 +46,7 @@ namespace MyeScripting
             vt->InvokeBreak = &ScriptRuntime.NativeInvokeBreak;
             vt->BtTask = &ScriptRuntime.NativeBtTask;
             vt->BtTaskCatalog = &ScriptRuntime.NativeBtTaskCatalog;
+            vt->InvokeMessage = &ScriptRuntime.NativeInvokeMessage; // v30 (M93e)
 
             Engine.Log("[csharp] managed runtime ready (.NET " + Environment.Version + ", ABI v"
                        + MyeEngineApi.kExpectedApiVersion + ")");

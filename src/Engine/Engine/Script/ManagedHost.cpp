@@ -474,6 +474,25 @@ void ManagedHost::DispatchBreak(EntityID root, EntityID piece, MyeVec3 point, fl
     }
 }
 
+void ManagedHost::DispatchScriptMessage(EntityID target, EntityID from, uint64_t nameHash, int32_t value)
+{
+    if (!ready_ || types_.empty() || !vt_.InvokeMessage) {
+        return; // 旧 MyeScripting.dll (スロット未設定) は無視
+    }
+    World& world = scene_->GetWorld();
+    for (CsType& type : types_) {
+        void* payload = world.GetComponentRaw(target, type.componentId);
+        if (!payload) {
+            continue;
+        }
+        const int32_t handle = *static_cast<int32_t*>(payload);
+        if (handle == 0) {
+            continue; // まだインスタンス化されていない
+        }
+        vt_.InvokeMessage(handle, ToShared(from), nameHash, value);
+    }
+}
+
 int32_t ManagedHost::RunTask(EntityID owner, int32_t nodeIndex, const std::string& className, int32_t phase, uint64_t tick,
                              const std::string& fieldsJson)
 {

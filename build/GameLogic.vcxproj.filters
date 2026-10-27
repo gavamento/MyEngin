@@ -46,6 +46,9 @@
     <ClCompile Include="..\src\GameLogic\Scripts\LocalPlayerDemo.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\MessageProbe.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\GameLogic\Scripts\NavDemoDriver.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>

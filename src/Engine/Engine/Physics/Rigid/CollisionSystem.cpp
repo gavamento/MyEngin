@@ -26,8 +26,8 @@ struct Body {
     uint32_t mask = 0xFFFFFFFFu;
 };
 
-// key 昇順の SolidContact 列から法線を引く (無ければ +Y)
-void FindContactNormal(const std::vector<SolidContact>& contacts, uint64_t key, float& nx,
+// key 昇順の SolidContact 列から法線を引く。見つかれば true。無ければ +Y を書いて false
+bool FindContactNormal(const std::vector<SolidContact>& contacts, uint64_t key, float& nx,
                        float& ny, float& nz)
 {
     auto it = std::lower_bound(contacts.begin(), contacts.end(), key,
@@ -36,17 +36,19 @@ void FindContactNormal(const std::vector<SolidContact>& contacts, uint64_t key, 
         nx = it->nx;
         ny = it->ny;
         nz = it->nz;
-    } else {
-        nx = 0;
-        ny = 1;
-        nz = 0; // Exit ペア (今 tick に接触なし) は前 tick 法線を持たないため既定値
+        return true;
     }
+    nx = 0;
+    ny = 1;
+    nz = 0; // Exit ペア (今 tick に接触なし) は前 tick 法線を持たないため既定値
+    return false;
 }
 
 } // namespace
 
 void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* managed,
-                             const std::vector<SolidContact>* solidContacts)
+                             const std::vector<SolidContact>* solidContacts,
+                             const std::vector<SolidContact>* characterContacts)
 {
     // ---- 収集 (index 昇順 = 決定論) ----
     std::vector<Body> bodies;
@@ -115,10 +117,21 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
     solidExit_.clear();
     static const std::vector<SolidContact> kNoContacts;
     const std::vector<SolidContact>& solid = solidContacts ? *solidContacts : kNoContacts;
+    const std::vector<SolidContact>& chars = characterContacts ? *characterContacts : kNoContacts;
     currentSolidPairs_.clear();
-    currentSolidPairs_.reserve(solid.size());
+    currentSolidPairs_.reserve(solid.size() + chars.size());
     for (const SolidContact& c : solid) {
         currentSolidPairs_.push_back(c.key); // PhysicsSystem 出力は key 昇順
+    }
+    if (!chars.empty()) {
+        // M93e: キャラと剛体の接触を同じ差分に載せる。両列とも昇順だが、キャラが Collider も
+        // 持つと同じ key が両方に居られるので、整列して重複を落とす (整数キーなので結果は一意)
+        for (const SolidContact& c : chars) {
+            currentSolidPairs_.push_back(c.key);
+        }
+        std::sort(currentSolidPairs_.begin(), currentSolidPairs_.end());
+        currentSolidPairs_.erase(std::unique(currentSolidPairs_.begin(), currentSolidPairs_.end()),
+                                 currentSolidPairs_.end());
     }
     std::set_difference(currentSolidPairs_.begin(), currentSolidPairs_.end(),
                         prevSolidPairs_.begin(),
@@ -159,7 +172,9 @@ void CollisionSystem::Update(World& world, ScriptHost* scripts, ManagedHost* man
             const EntityID a = world.EntityFromIndex(static_cast<uint32_t>(key >> 32));
             const EntityID b = world.EntityFromIndex(static_cast<uint32_t>(key & 0xFFFFFFFFu));
             float nx, ny, nz;
-            FindContactNormal(solid, key, nx, ny, nz);
+            if (!FindContactNormal(solid, key, nx, ny, nz)) {
+                FindContactNormal(chars, key, nx, ny, nz); // M93e: キャラと剛体の接触の法線 (無ければ +Y)
+            }
             if (!a.IsNull()) {
                 if (scripts) { scripts->DispatchCollision(a, b, kind, { nx, ny, nz }); }
                 if (managed) { managed->DispatchCollision(a, b, kind, { nx, ny, nz }); }

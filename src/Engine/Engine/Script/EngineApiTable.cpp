@@ -193,6 +193,22 @@ void FillComputeSlots(MyeEngineApi& out)
         c->compute->ReplaceDeclarations(compute::CallerKind::CSharp, std::move(table));
         return 1;
     };
+
+    // ---- v30 (M93e): スクリプト間メッセージ (dogfooding #20) ----
+    out.SendScriptMessage = [](void* engine, MyeEntityId from, MyeEntityId target, uint64_t nameHash,
+                               int32_t value) -> int {
+        ScriptApiContext* c = Ctx(engine);
+        // C# レーン (NoHash) からの送信は受けない — C++ スクリプトの hash 対象の状態を C# の判断で動かすと
+        // リプレイが再現できない (SetUIRect 等と同じ「NoHash レーンは hash 側へ書かない」規則)。受信は配達側で行う
+        if (c->messageQueue == nullptr || c->computeLane == compute::CallerKind::CSharp || MyeEntityIdIsNull(target)) {
+            return 0;
+        }
+        if (c->messageQueue->size() >= kScriptMessageQueueMax) {
+            return 0; // 1 tick の上限 (暴走の遮断)。戻り値で分かるので WARN は出さない
+        }
+        c->messageQueue->push_back(ScriptMessage{ from, target, nameHash, value });
+        return 1;
+    };
 }
 static_assert(sizeof(MyeNavPath) == sizeof(NavAgentPath) && offsetof(MyeNavPath, end) == offsetof(NavAgentPath, end)
                   && offsetof(MyeNavPath, polys) == offsetof(NavAgentPath, polys)

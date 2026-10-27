@@ -341,6 +341,21 @@ namespace MyeScripting
             }
         }
 
+        // v30 (M93e): スクリプト間メッセージの受信。送り主は C++ スクリプト (C# からは送れない)
+        private void InvokeMessage(int handle, MyeEntityId from, ulong nameHash, int value)
+        {
+            if (!_instances.TryGetValue(handle, out var inst)) return;
+            try
+            {
+                using var computeScope = new ComputeCaller.Scope(inst);
+                inst.OnMessage(new MyeEntity(from), nameHash, value);
+            }
+            catch (Exception ex)
+            {
+                Engine.Log("[csharp] " + inst.GetType().Name + ".OnMessage threw: " + ex.Message, 3);
+            }
+        }
+
         // BT の C# タスクを 1 手進める。phase: 0 = enter (新しいインスタンスで OnStart)、1 = tick (OnTick。インスタンスが無ければ
         // enter と同じ = リロード後の再開)、2 = abort (OnAbort して捨てる)。戻り値は MyeBtStatus、-1 = そのクラスが無い。
         // Success / Failure と例外 (Failure) でインスタンスを捨てる
@@ -758,6 +773,9 @@ namespace MyeScripting
 
         [UnmanagedCallersOnly]
         public static void NativeInvokeBreak(int handle, MyeEntityId piece, MyeVec3 point, float impulse) => Inst.InvokeBreak(handle, piece, point, impulse);
+
+        [UnmanagedCallersOnly]
+        public static void NativeInvokeMessage(int handle, MyeEntityId from, ulong nameHash, int value) => Inst.InvokeMessage(handle, from, nameHash, value);
 
         [UnmanagedCallersOnly]
         public static int NativeGetFieldValue(int handle, int fieldIndex, byte* buf, int bufLen)

@@ -743,7 +743,7 @@ if (-not (Test-Path $tablePath)) {
 #       version の bump とこの表の更新を**同時に**行うこと (どちらか片方だとここで止まる)
 # 11-d  EngineApiTable.cpp が全スロットに `out.<Name> =` で実装を充填している
 # 11-e  Interop.cs の kExpectedApiVersion (実行時照合の前提値、M93a) が MYE_API_VERSION と一致
-$apiVersionSlots = @{ 11 = 73; 12 = 87; 13 = 94; 14 = 102; 15 = 104; 16 = 110; 17 = 111; 18 = 112; 19 = 114; 20 = 118; 21 = 125; 22 = 126; 23 = 131; 24 = 139; 25 = 144; 26 = 151; 27 = 158; 28 = 164; 29 = 174 }
+$apiVersionSlots = @{ 11 = 73; 12 = 87; 13 = 94; 14 = 102; 15 = 104; 16 = 110; 17 = 111; 18 = 112; 19 = 114; 20 = 118; 21 = 125; 22 = 126; 23 = 131; 24 = 139; 25 = 144; 26 = 151; 27 = 158; 28 = 164; 29 = 174; 30 = 175 }
 $apiHeaderPath = Join-Path $repo 'src\Shared\EngineAPI.h'
 $interopPath = Join-Path $repo 'src\Scripting\Interop.cs'
 $apiTablePath = Join-Path $repo 'src\Engine\Engine\Script\EngineApiTable.cpp'

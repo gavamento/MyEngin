@@ -219,6 +219,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // ハッシュ節 (SimSources) と snapshot 節 (SimRefs) の両方へ必ず配線する (3 点セット契約)
     BehaviorTreeSystem behaviorTreeSystem;
     std::vector<SolidContact> solidContacts; // 物理→衝突イベントの tick 内受け渡し (M28c)
+    std::vector<SolidContact> characterContacts; // CC と剛体の接触 (M93e、CollisionSystem だけが読む)
     PrefabLibrary prefabLibrary;
     AnimationLibrary animLibrary;
     AnimationSystem animationSystem;
@@ -262,7 +263,21 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // v19: SetWindowMode の要求値。同じ出力レーンで、切り替えと display.json への保存はフレーム末
     WindowModeState windowMode;
     std::vector<EffectSpawnRequest> effectQueue; // PlayEffect の spawn 要求 (tick 末に消費、M32f)
+    std::vector<ScriptMessage> messageQueue; // SendScriptMessage の積み先 (同じ tick の配達点で drain、v30 M93e)
+    std::vector<ScriptMessage> messageBatch; // 配達の作業領域 (queue と swap)
     std::vector<DebugLineCmd> debugLines; // DebugDrawLine (v7)。tick 頭クリア → 描画で消費
+    // M93e (dogfooding #11): --debug-draw-log の書き先。開けなければ WARN して無効 (sim には無関係)
+    std::ofstream debugDrawLog;
+    if (!config.debugDrawLogPath.empty()) {
+        debugDrawLog.open(std::filesystem::path(config.debugDrawLogPath), std::ios::out | std::ios::trunc);
+        if (debugDrawLog.is_open()) {
+            MYE_LOG_INFO("[debug-draw] logging DebugDrawLine segments to %s",
+                         WideToUtf8(config.debugDrawLogPath).c_str());
+        } else {
+            MYE_LOG_WARN("[debug-draw] cannot open %s - --debug-draw-log disabled",
+                         WideToUtf8(config.debugDrawLogPath).c_str());
+        }
+    }
     IRenderPath* activePath = &forwardPath;
 
     using StartupClock = std::chrono::steady_clock;
@@ -531,6 +546,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         shared.audioQueue = &audioQueue;
         shared.pendingScene = &pendingScene;
         shared.effectQueue = &effectQueue;
+        shared.messageQueue = &messageQueue; // v30 (M93e)
         shared.debugLines = &debugLines;
         shared.audioHandleSeq = &audioHandleSeq;
         shared.inputActions = &inputActions;
@@ -1008,8 +1024,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     tickServices.vfxRenderer = &vfxRenderer;
     tickServices.resources = &resources;
     tickServices.solidContacts = &solidContacts;
+    tickServices.characterContacts = &characterContacts; // M93e
     tickServices.effectQueue = &effectQueue;
+    tickServices.messageQueue = &messageQueue; // v30 (M93e)
+    tickServices.messageBatch = &messageBatch;
     tickServices.debugLines = &debugLines;
+    tickServices.debugDrawLog = debugDrawLog.is_open() ? &debugDrawLog : nullptr; // M93e
     tickServices.audioQueue = &audioQueue;
     tickServices.audioSystem = &audioSystem;
     tickServices.audioSources = &audioSources;

@@ -52,7 +52,9 @@
 //             ComputeForEach / ComputeJobStatus / ComputeJobTarget / ComputeJobWait / ComputeRegisterManagedKernels /
 //             ComputeSetManagedDeclarations (AnimatorGetState の次の 10 本) + MyeScriptDesc 末尾の kernelNames、
 //             MyeScriptModule 末尾の kernels
-#define MYE_API_VERSION 29u
+// v30 (M93e): スクリプト間メッセージ — SendScriptMessage (ComputeSetManagedDeclarations の次の 1 本) +
+//             MyeScriptDesc 末尾の onMessage イベント (dogfooding #20)
+#define MYE_API_VERSION 30u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -1013,6 +1015,17 @@ struct MyeEngineApi {
     int (*ComputeRegisterManagedKernels)(void* engine, const MyeKernelDesc* kernels, uint32_t count);
     // ComputeSetManagedDeclarations: C# の [ComputeKernels] の宣言表を丸ごと差し替える。C++ レーンからは何もせず 0
     int (*ComputeSetManagedDeclarations)(void* engine, const MyeComputeDecl* decls, uint32_t count);
+
+    // ---- v30 (M93e): スクリプト間メッセージ (dogfooding #20) ----
+    // SendScriptMessage: target に付いた全スクリプト (C++ は OnMessage、C# は OnMessage) へ (from, nameHash, value) を届ける。
+    //   配達は**同じ tick の中**: フェーズ 3 (Update) の直後と、フェーズ 5 (LateUpdate) の直後の 2 点で、積まれた順。
+    //   配達中に送られた分も同じ点で続けて配る (8 巡まで。超えた分は捨てて WARN)。tick をまたいで残らないので
+    //   スナップショットには入らない (= 巻き戻し・ロールバックに新しい状態を増やさない)。
+    //   from は呼び出し側が渡す (通常は ctx.self)。名前は MyeNameHash("...") (ScriptAPI.h) か任意の 64bit 定数。
+    //   戻り値 1 = 積んだ、0 = target が null / 積み先が無い / 1 tick の上限 (4096 件) 超過 / C# レーンからの送信
+    //   (C# は NoHash レーンなので、hash 対象の状態を C# の判断で動かす送信は受けない。受信はできる)。
+    //   ★Win32 の SendMessage マクロと名前が衝突しないよう SendScriptMessage にしている
+    int (*SendScriptMessage)(void* engine, MyeEntityId from, MyeEntityId target, uint64_t nameHash, int32_t value);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

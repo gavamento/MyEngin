@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <iosfwd> // M93e: TickServices::debugDrawLog (std::ofstream の前方宣言)
 
 #include "Engine/Engine/Loop/EngineLoop.h" // EngineContext / EngineConfig / IEngineApp
 
@@ -123,9 +124,19 @@ struct TickServices {
 
     // tick 内で積んで tick 内で捌くバッファ
     std::vector<SolidContact>* solidContacts = nullptr;
+    // M93e (dogfooding #17): CharacterController と剛体の接触 (PhysicsSystem → CollisionSystem だけが使う)。
+    // null なら CC の接触イベントは配らない
+    std::vector<SolidContact>* characterContacts = nullptr;
     std::vector<EffectSpawnRequest>* effectQueue = nullptr;
     std::vector<DebugLineCmd>* debugLines = nullptr;
     std::vector<ScriptAudioEvent>* audioQueue = nullptr;
+    // M93e (dogfooding #11): --debug-draw-log の書き先。非 null かつ open なら、tick 末に debugLines を
+    // テキストで追記する (出力レーン: sim は読まない)
+    std::ofstream* debugDrawLog = nullptr;
+    // v30 (M93e、dogfooding #20): SendScriptMessage の積み先と、配達の作業領域 (queue と swap して使う。tick 間で
+    // capacity を使い回す)。両方非 null のときだけ配る
+    std::vector<ScriptMessage>* messageQueue = nullptr;
+    std::vector<ScriptMessage>* messageBatch = nullptr;
 
     // 出力レーン (ハッシュ後にしか触らない)
     AudioSystem* audioSystem = nullptr;

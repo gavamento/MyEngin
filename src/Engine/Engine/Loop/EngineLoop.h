@@ -58,6 +58,11 @@ struct EngineConfig {
     // --render-stats-dump: 空でなければ screenshotFrame のフレームを描いた直後に、ビュー別の描画統計と
     // GPU 時間を JSON で書いて終了する (M90a)。決定的撮影・バッチ実行の扱いは --screenshot と同じ
     std::wstring renderStatsDumpPath;
+    // --debug-draw-log <path> (M93e、dogfooding #11): DebugDrawLine が積んだ線分を tick ごとにテキストで追記する。
+    // ヘッドレス (--warp --no-audio) の記録 / 検証でも、スクリプトの射線や物理・AI の可視化を後から追えるようにする。
+    // 描画レーンの写しなので sim とハッシュには一切関係しない (書いても書かなくても .rep は同じ)。
+    // 1 行 = "tick ax ay az bx by bz rrggbbaa" (ワールド座標、色は 0xRRGGBBAA の 16 進)
+    std::wstring debugDrawLogPath;
     // 撮影 / 計測を目的としたバッチ実行か (--screenshot または --render-stats-dump)
     bool IsCaptureRun() const { return !screenshotPath.empty() || !renderStatsDumpPath.empty(); }
     // ---- 決定的スクショ (M52c) ----

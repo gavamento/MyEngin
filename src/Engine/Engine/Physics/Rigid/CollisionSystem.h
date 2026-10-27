@@ -21,9 +21,12 @@ class ManagedHost;
 class CollisionSystem {
 public:
     // managed 非 null のとき C# スクリプトにも配信する (別レーン、記録/検証中は null)。
-    // solidContacts は PhysicsSystem::Update の出力 (物理が走らない場合は null で可)
+    // solidContacts は PhysicsSystem::Update の出力 (物理が走らない場合は null で可)。
+    // characterContacts (M93e、dogfooding #17) は CharacterController と剛体の接触 (同じく key 昇順、
+    // impulse 0)。ソリッド接触と同じ差分で OnCollisionEnter / Stay / Exit を配る
     void Update(World& world, ScriptHost* scripts, ManagedHost* managed = nullptr,
-                const std::vector<SolidContact>* solidContacts = nullptr);
+                const std::vector<SolidContact>* solidContacts = nullptr,
+                const std::vector<SolidContact>* characterContacts = nullptr);
     void Reset()
     {
         prevPairs_.clear();

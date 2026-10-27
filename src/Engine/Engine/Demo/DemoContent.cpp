@@ -203,6 +203,13 @@ void BuildDemoScene(EngineContext& ctx, float perfRate, int perfMax)
         s.GetWorld().AddComponentRaw(spinner.Id(), health);
         s.GetWorld().AddComponentRaw(spinner.Id(), healthDemo);
     }
+    // ---- スクリプト間メッセージ (v30、M93e) をリプレイ被覆に入れる ----
+    // Spinner に MessageProbe を載せ、7 tick ごとに自分宛てへ送って同じ tick に受け取り、回数を
+    // sim 状態へ書く (詳細は MessageProbe.cpp)。DLL 未ロードではスキップ
+    const ComponentTypeId messageProbe = ComponentRegistry::Get().FindByName("MessageProbe");
+    if (messageProbe != kInvalidComponentType) {
+        s.GetWorld().AddComponentRaw(spinner.Id(), messageProbe);
+    }
 }
 
 void RegisterRtShowcaseContent(EngineContext& ctx)

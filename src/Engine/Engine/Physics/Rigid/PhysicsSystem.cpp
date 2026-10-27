@@ -8,6 +8,7 @@
 #include <DirectXMath.h>
 
 #include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Diagnostics/Log.h"      // M93e: PhysicsEnvironment 欠落の WARN (dogfooding #19)
 #include "Engine/Core/Diagnostics/Profiler.h" // M80k: phys.collect/broad/narrow/solve/writeback スコープ
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Physics/Rigid/AeroSampling.h" // M59c: 面サンプリング
@@ -1372,7 +1373,11 @@ bool TryCharStepUp(const std::vector<Body>& bodies, const CharBody& c, float cos
 // 60Hz × 常識的な移動速度では起きない (v=30m/s でも 0.5m/tick)。剛体ソルバの後に走るので
 // 障害物 (静的 + 解決後の動的剛体) の pose は当該 tick の最終位置。CC が剛体を押す応答は
 // 無し (必要ならソリッド capsule Collider を併用し OnCollision + AddForce で組む)。
-void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, float dt)
+// outContacts (M93e、dogfooding #17): 非 null なら、押し出しで触れた剛体 (obs.rb != nullptr) との接触を積む。
+// 静的コライダー (床・壁) との接触は積まない — 接地中は毎 tick 全キャラ分の Stay が出て、OnCollision* を
+// 持つスクリプトの負荷になるだけで、使い道 (轢く・押される) は剛体側にしか無い
+void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, float dt,
+                     std::vector<SolidContact>* outContacts)
 {
     if (chars.empty()) {
         return;
@@ -1405,6 +1410,26 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
                 float nx, ny, nz, depth;
                 if (!shapes::Collide(pose, obs.pose, nx, ny, nz, depth)) {
                     continue;
+                }
+                if (outContacts != nullptr && obs.rb != nullptr) {
+                    // M93e (dogfooding #17): 剛体に触れたことを接触列へ (運動量の交換はしない)。
+                    // key と法線は SolidContact の規約 (小 index << 32 | 大 index、法線は大 → 小) に揃える。
+                    // Collide の法線は障害物 → キャラ (キャラを押し出す向き)
+                    const bool charIsSmall = c.entity.index < obs.entity.index;
+                    SolidContact sc;
+                    sc.key = charIsSmall
+                        ? ((static_cast<uint64_t>(c.entity.index) << 32) | obs.entity.index)
+                        : ((static_cast<uint64_t>(obs.entity.index) << 32) | c.entity.index);
+                    const float sign = charIsSmall ? 1.0f : -1.0f;
+                    sc.nx = nx * sign;
+                    sc.ny = ny * sign;
+                    sc.nz = nz * sign;
+                    // 代表点はカプセル表面で最も深く食い込んだ点の近似 (中心から法線の逆へ半径ぶん)
+                    sc.px = pose.px - nx * c.radius;
+                    sc.py = pose.py - ny * c.radius;
+                    sc.pz = pose.pz - nz * c.radius;
+                    sc.impulse = 0.0f; // キャラは運動量を持たない (通知だけ)
+                    outContacts->push_back(sc);
                 }
                 pose.px += nx * depth;
                 pose.py += ny * depth;
@@ -1499,6 +1524,16 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
             c.lt->position = { lx * isx, ly * isy, lz * isz };
         }
     }
+    if (outContacts != nullptr && !outContacts->empty()) {
+        // 同じペアが複数パスで重複する。key 昇順にして先頭だけ残す (CollisionSystem の二分探索の前提)。
+        // 入力の順 (キャラ index 昇順 → パス → 障害物 index 昇順) は決定的なので、安定ソートで
+        // 「どの重複が残るか」まで決定的にする
+        std::stable_sort(outContacts->begin(), outContacts->end(),
+                         [](const SolidContact& a, const SolidContact& b) { return a.key < b.key; });
+        outContacts->erase(std::unique(outContacts->begin(), outContacts->end(),
+                                       [](const SolidContact& a, const SolidContact& b) { return a.key == b.key; }),
+                           outContacts->end());
+    }
 }
 
 } // namespace
@@ -1523,10 +1558,14 @@ void ComposeEntityWorldPose(World& world, EntityID e, float& px, float& py, floa
 }
 
 void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* outContacts,
-                           XpbdBackend* xpbd, std::vector<ShapeImpulse>* outShapeImpulses)
+                           XpbdBackend* xpbd, std::vector<ShapeImpulse>* outShapeImpulses,
+                           std::vector<SolidContact>* outCharacterContacts)
 {
     if (outContacts) {
         outContacts->clear();
+    }
+    if (outCharacterContacts) {
+        outCharacterContacts->clear(); // M93e: 早期 return の経路でも前 tick の接触を残さない
     }
     if (outShapeImpulses) {
         outShapeImpulses->clear();
@@ -2055,6 +2094,23 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
 
     // ---- 物理環境の解決 (M59b)。不在 (= 既存シーンの全部) なら以降は全て従来経路 ----
     const PhysicsEnvironmentComponent* env = ResolvePhysicsEnvironment(world);
+    // M93e (dogfooding #19): 車輪のばねは substeps 1 では硬すぎるのに、PhysicsEnvironment が無いと
+    // 黙って従来経路 (substeps 1 相当) を通って柔らかい車になる。原因に辿り着けるよう 1 回だけ WARN する。
+    // 走査はアーキタイプの件数を見るだけ (エンティティは触らない)。ログだけで sim は変えない
+    if (env == nullptr && !warnedVehicleWithoutEnvironment_) {
+        bool anyVehicle = false;
+        const ComponentTypeId vehicleReq[] = { VehicleComponent::sTypeId };
+        world.ForEachArchetype(vehicleReq, [&](Archetype& arch) {
+            if (arch.Count() > 0) {
+                anyVehicle = true;
+            }
+        });
+        if (anyVehicle) {
+            warnedVehicleWithoutEnvironment_ = true;
+            MYE_LOG_WARN("[phys] a Vehicle exists but the scene has no PhysicsEnvironment - wheel springs run with "
+                         "substeps 1 and the car feels soft. Add a PhysicsEnvironment (substeps 8-16) to the scene");
+        }
+    }
 
     // ---- CCD の有無 (M59j) ----
     // 1 個も居なければ掃引パスごと通らない = 既存シーンは fp 演算が 1 回も増えない。
@@ -5029,7 +5085,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     }
 
     // ---- キャラクターコントローラ解決 (M29b)。剛体解決後の最終 pose を障害物として使う ----
-    SolveCharacters(bodies, chars, dt);
+    SolveCharacters(bodies, chars, dt, outCharacterContacts);
 }
 
 // ==== 物理マテリアル解決 (M59a2) ====

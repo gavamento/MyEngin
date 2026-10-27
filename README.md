@@ -130,7 +130,7 @@ C# は `MyeScripting.dll` とその依存ファイル、Git は `MyeCollab.dll` 
 
 **未登録コンポーネントの JSON は保持して再保存する実装になっています。** 型が未登録のまま実行できるわけではありませんが、旧 README にあった「未登録なら保存で消える」という説明は現状には当てはまりません。
 
-スクリプト API の正本は [src/Shared/EngineAPI.h](src/Shared/EngineAPI.h) と [src/Shared/ScriptAPI.h](src/Shared/ScriptAPI.h) です。現行の `MYE_API_VERSION` は **29** (174 スロット)。ABI を更新した場合は本体、ゲーム DLL、言語間ミラーの整合が必要です。
+スクリプト API の正本は [src/Shared/EngineAPI.h](src/Shared/EngineAPI.h) と [src/Shared/ScriptAPI.h](src/Shared/ScriptAPI.h) です。現行の `MYE_API_VERSION` は **30** (175 スロット)。ABI を更新した場合は本体、ゲーム DLL、言語間ミラーの整合が必要です。
 
 ### 描画・演出
 
@@ -268,6 +268,9 @@ UI は日本語・英語に対応し、メニューから切り替えられま�
 # 音響経路 / モーダル合成のログ。聴感確認は別途必要
 .\bin\x64\Debug\Editor.exe --acoustic-demo --acoustic-audio-log 300 --synth-input
 .\bin\x64\Release\Runtime.exe --modal-demo --modal-sync-bake --modal-audio-log 300 --synth-input
+
+# DebugDrawLine の線分をヘッドレスでテキストへ (1 行 = tick 始点 終点 色。M93e)
+.\bin\x64\Debug\Editor.exe --physics-demo --replay-record "cache\phys.rep" --replay-ticks 600 --warp --no-audio --debug-draw-log "cache\phys_lines.txt"
 
 # モデルを .msfm へベイク
 .\bin\x64\Release\Editor.exe --modal-bake --project "C:\MyGames\FirstGame" --modal-backend cpu
