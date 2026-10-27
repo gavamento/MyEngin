@@ -249,4 +249,69 @@
    - `ReloadHub` の監視拡張子への `.cs` 追加
    - `EngineApiTable.cpp` の C ABI 受信境界での `std::isfinite` ガード
 
+---
 
+## 8. 対応状況の台帳（2026-10-27、M93c。以後の正本）
+
+§7 の修正要件を現コードと照合した結果。判定の意味: **対応済** = コードで確認、**対応済（M93c）** = 今回直した、**誤検知** = `falsification_report.md` の反証どおり、**未対応** = コードは当時のまま（理由を書く）、**未確認** = 今回の照合で確かめ切れなかった、**設計判断** = 直さないことを決めている。
+`review_verification.md` と `falsification_report.md` は 2026-09-28 時点の記録として残し、現状はこの表で更新する。行番号は 2026-10-27 の master のもの。
+
+| 分類 | 指摘 | 判定 | 根拠・備考 |
+|---|---|---|---|
+| ECS | `World::SnapshotRead` の types / sizes / 列長 / archIndex / row / freeIndices / aliveCount 検証 | 対応済 | `src/Engine/Core/Ecs/World.cpp:677-693, 736-742` とその後続の freeIndices・aliveCount 検算 |
+| ECS | `CollectSubtree` の循環・多重破棄ガード | 未確認 | `World.cpp:487` に訪問済みの印は無い。親子は fileId 整合で循環を作らない前提のまま |
+| ECS | `JsonUtil` の String64 / String256 の全域 `memset(0)` | 対応済 | `src/Engine/Core/Util/JsonUtil.cpp:115, 123` |
+| シリアライズ | `ApplyPartial` 完了時の `EntityRef` 全体再解決 | 未確認 | 適用中は fileId で解決する (`SceneSerializer.cpp:630, 704`)。完了後の再走査は見つからない |
+| シリアライズ | 旧 `UIElement` 移行条件を anchor 以外にも | 未対応（実害なし） | `SceneSerializer.cpp:225, 428` は anchor キーで判定。旧書式は anchor を必ず書く |
+| Platform | `WriteFileReplacing` の rename | 誤検知 | MSVC STL は `MoveFileExW(REPLACE_EXISTING)`（反証報告） |
+| Platform | 一時ファイル名に PID / TID / 通番 | 対応済 | `src/Engine/Platform/PathUtil.cpp:120-123` |
+| Platform | `CrashHandler` のハンドラ内 `CreateThread` | 対応済 | `CrashHandler.cpp:661-667` で起動時に事前生成し、イベントで起こす |
+| Platform | 多重クラッシュ時の後着スレッド | 対応済（有限待ち） | `CrashHandler.cpp:478-482` 後着は `g_bundleFinished` を 30 秒待つ。`Sleep(INFINITE)` ではなく有限 |
+| Platform | RawInput 絶対座標の換算 | 対応済 | `src/Engine/Platform/Input.cpp:56-71`（仮想画面の寸法で換算、初回は 0） |
+| Platform | カーソルロック時の振動相殺 | 未確認（実機） | 絶対座標の差分化で原因側は消えた。RDP / タブレットでの実機確認は未実施 |
+| Platform | `AdjustWindowRectExForDpi` / `WM_DPICHANGED` | **対応済（M93c）** | `Win32Window.cpp` Create で窓の DPI の外形へ取り直し、`WM_DPICHANGED` で OS の勧める矩形を当てる。ImGui の文字倍率は起動時の値のまま（既知の制限） |
+| Platform | `HandleMsg` の再入 | 対応済 | `Win32Window.cpp:199` 走査前にハンドラ列をコピー |
+| 物理 | `.mcvx` の頂点数上限 | 対応済 | `src/Engine/Engine/Physics/Collider/ConvexHull.cpp:879` |
+| 物理 | XPBD 粒子池が空のときの `size_t` アンダーフロー | 誤検知（到達不能） | 反証報告。加えて `PhysicsSystem.cpp:2530` に `px.empty()` ガード |
+| 物理 | `xpbd::Predict / Solve` の h ゼロ除算 | 未対応（実害なし） | h は固定 dt / substeps 由来で 0 にならない（`XpbdSolver.cpp:141`） |
+| 物理 | `BoxTriSat` の法線を面法線基準へ | 未対応（別作業） | `Shapes.cpp:1435` は重心判定のまま。接触法線が変わる = 物理挙動と replay が変わるので、計測と回帰を伴う単独の作業に切る |
+| 物理 | `SolveCharacters` の複合コライダー子形状 | 未確認 | `PhysicsSystem.cpp:1375` の障害物は bodies の pose 1 つ。子形状の走査は見当たらない |
+| 物理 | CCD を形状固有距離の保守的前進へ | 未対応（設計改善） | 提案のまま |
+| 物理 | Sutherland-Hodgman の境界値重複排除 | 未確認 | `Shapes.cpp:514, 1457` |
+| 物理 | マニフォールド削減を支持面維持へ | 未対応（設計改善） | 提案のまま |
+| 粒子 | `ParticleFlipTilePos` の tiles == 0 | 誤検知（P3） | 呼び出し側が `max(1, tiles)`（反証報告）。HLSL との C++ ミラーなので関数は変えない |
+| 粒子 | `TrailStore` の巻き戻し検出 | 対応済 | `src/Engine/Engine/Vfx/VfxRenderer.cpp:95` |
+| 粒子 | `SimSnapshot` の `ParticleEmitterComponent` 生ダンプ | 未対応（サイズ検査で緩和） | `SimSnapshot.cpp:193, 234` は sizeof を書いて読む側で照合する。明示フィールド化は snapshot 版を動かす別作業 |
+| 粒子 | SoA 保存を alive 個分に限定 | 未確認 | `SimSnapshot.cpp:201` |
+| 粒子 | `VfxRenderer` の nowTick | 対応済と読める | `VfxRenderer.cpp:328` のコメント |
+| 粒子 | `CpuParticleBackend::Reset` の `instanceBuffer_` | 問題なし | メンバとして保持・再利用し `ReleaseGpu` で手放す（`CpuParticleBackend.cpp:181`） |
+| UI | `ResolveWorldBase` の cw ゼロ除算 | 対応済 | `src/Engine/Engine/UI/UILayout.cpp:170` |
+| UI | `Clamp01` の NaN 透過 | **対応済（M93c）** | `UIWidgets.cpp:40` を否定形へ。有限値の結果は不変 |
+| UI | `ArrangeGrid` の `cellsPerMainAxis` | 対応済 | `UILayoutGroup.cpp:376-404`（constraintCount >= 1、n > 1 ? n : 1） |
+| UI | `BuildSimWorldContext` の fovY / farZ | 未確認 | 同名の関数が無い（名前が変わった可能性）。該当箇所の再特定が要る |
+| UI | `FindNextFocus` の決定性 | 対応済と読める | `UIInteraction.cpp:158` 候補に entity index を持つ |
+| UI | `FontAtlas::Grow` の成否検査 | 対応済 | `src/Engine/Renderer/Text/FontAtlas.cpp:364-366` |
+| UI | `SetUIRect` の親基準化防止 | 未確認 | `EngineApiTable.cpp:936` は anchoredPosition を書く設計。指摘の再現条件を特定できていない |
+| 描画 | `postfx_taa.hlsl` の isfinite | 対応済 | `assets/shaders/postfx_taa.hlsl:48-60` |
+| 描画 | `ComputeCascadeSplits` の nearZ | **対応済（M93c）** | `FrustumCull.h` に near / far の下限。有限の入力では値が変わらない |
+| 描画 | `gAeSpeed` の下限 | **対応済（M93c）** | `PostProcess.cpp:39` で負値 / NaN を 0 に |
+| 描画 | 自動露出バッファの viewKey 分離 | 未確認 | `PostProcess.cpp:483, 618` |
+| 描画 | `hzb_reduce.cs.hlsl` の underflow | 対応済 | `hzb_reduce.cs.hlsl:35-37` |
+| 描画 | `FroxelPass` の gridNearZ_ と projNoJitter | 未確認 | `FroxelPass.cpp:196, 259` |
+| 描画 | `postfx_hist.cs.hlsl` の NaN と `min(bin, 255)` | **対応済（M93c）** | シェーダと C++ ミラー `PostFxMath.h` の両方を否定形 + min に |
+| 描画 | `rt_common.hlsli` の tMin | 対応済と読める | `rt_common.hlsli:113` kEps |
+| 描画 | `cbufferName.varName` の一意化 | 一部対応 | `ShaderManager.cpp:245`（M79b-fix）。`ComputeAbiRunner` は未確認 |
+| 描画 | `ComputeAbiRunner` の定数バッファ永続プール | 未確認 | `ComputeAbiRunner.cpp:445` |
+| 描画 | `forward_lit.hlsl` の PerObject 96B | 未確認 | |
+| エディタ | PlayMode 中のシーン切替ガード | 未確認 | `EditorApp.cpp` の OpenScene 経路 |
+| エディタ | ギズモ中断時の `CancelRecord` | 未対応（別作業） | `SceneViewWindow.cpp:1575` BeginRecord 後、選択変更・破棄で中断する経路に CancelRecord が無い |
+| エディタ | `GitTransaction` の強制キャンセル | 設計判断 | 書き込みは取り消せない（spec §14.6）。`GitTransaction.cpp:980` の 15 秒注記で代替 |
+| 音 | `RegisterClip` の XAudio2 quantum 待ち | 一部対応 | `AudioSystem.cpp:907` 差し替え前に `StopVoicesUsingClip`。quantum の遅延解放は無い |
+| 音 | `ModalSynth` の isfinite | **対応済（M93c）** | `ModalSynth.cpp:92` 過減衰判定を否定形に（NaN も捨てる） |
+| 音 | `AcousticField::Rebuild` の glow_ | 対応済 | `AcousticField.cpp:494-496` shellSlot < 0 は焼かない |
+| スクリプト | `managedIndex = -1` のリセット | 対応済 | `ManagedHost.cpp:201, 240` |
+| スクリプト | `ReadValue` の境界 | 対応済 | `ScriptRuntime.cs:596` 付近の Length 検査 |
+| スクリプト | `ReloadHub` の `.cs` 監視 | 未確認 | 拡張子判定は見当たらない。C# の再コンパイルは手動 Rebuild と kernel 変更時（`ReloadHub.cpp:355`） |
+| スクリプト | `EngineApiTable` の isfinite | 一部対応 | isfinite は 1 箇所 |
+
+集計（55 件）: 対応済 23（うち M93c で 6）、対応済と読める 3、一部対応 3、誤検知 3、未対応 7、未確認 14、設計判断 1、問題なし 1。

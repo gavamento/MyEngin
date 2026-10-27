@@ -2,7 +2,8 @@
 
 - 検証日時: 2026-09-28
 - 対象ファイル: エンジン全域（Core, Platform, Physics, Particles, UI, Renderer, PostProcess）
-- 格納場所: `C:\HAL\MyEngin\docs\rev\falsification_report.md`
+- 格納場所: `docs/rev/falsification_report.md`
+- 2026-10-27: 各指摘の現在の対応状況は [oversights.md §8](oversights.md#8-対応状況の台帳2026-10-27m93c以後の正本) を正本とする。この文書は検証時点の記録
 
 ---
 

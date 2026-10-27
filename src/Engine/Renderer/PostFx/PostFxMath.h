@@ -70,11 +70,12 @@ inline void LutStripUv(float r, float g, float b, float& u0, float& u1, float& v
 // postfx_hist.cs.hlsl / postfx_hist_reduce.cs.hlsl とコメント同期 — 変更時は全て更新
 inline int BinForLuminance(float lum)
 {
-    if (lum <= 1e-6f) {
+    // 否定形 = NaN も bin 0 (postfx_hist.cs.hlsl と同じ規約、M93c)。有限値の結果は従来と同じ
+    if (!(lum > 1e-6f)) {
         return 0;
     }
     const float t = std::clamp((std::log2(lum) + 10.0f) / 16.0f, 0.0f, 1.0f);
-    return static_cast<int>(t * 254.0f + 1.5f); // 1..255
+    return std::min(static_cast<int>(t * 254.0f + 1.5f), 255); // 1..255
 }
 
 // bin → 代表輝度 (BinForLuminance の逆量子化)

@@ -89,8 +89,8 @@ void BuildModes(const ModalCellFeature& feature, const float k[3], const DmNetHe
         // 手順 7: 目標材質の減衰・周波数。過減衰 / ナイキスト超え / 無音は捨てる
         const float c = 0.5f * (post.alpha + post.beta * lambda);
         const float underRoot = lambda - c * c;
-        if (underRoot <= 0.0f) {
-            continue; // 過減衰 (虚数になる)
+        if (!(underRoot > 0.0f)) {
+            continue; // 過減衰 (虚数になる)。否定形 = NaN (縮退した入力) もここで捨てる (M93c)
         }
         const float f = std::sqrt(underRoot) / static_cast<float>(kTwoPi);
         if (f >= fsNyquistLimit) {

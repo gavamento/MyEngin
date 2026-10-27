@@ -62,7 +62,8 @@ bool Win32Window::Create(const WindowDesc& desc)
     static ATOM classAtom = RegisterClassExW(&wc);
     MYE_CHECKF(classAtom != 0, "RegisterClassExW failed (%lu)", GetLastError());
 
-    // クライアント領域が desc.width/height になるよう外形を補正
+    // クライアント領域が desc.width/height になるよう外形を補正。作成前は窓がどのモニタに
+    // 置かれるか分からないので、ここはシステム DPI 前提の暫定値 (下で窓の DPI で取り直す)
     RECT rect = { 0, 0, desc.width, desc.height };
     const DWORD style = WS_OVERLAPPEDWINDOW;
     AdjustWindowRect(&rect, style, FALSE);
@@ -80,6 +81,18 @@ bool Win32Window::Create(const WindowDesc& desc)
     hwnd_ = hwnd;
     width_ = desc.width;
     height_ = desc.height;
+    // M93c: 窓が置かれたモニタの DPI で外形を取り直す。PerMonitorV2 では非クライアント領域の
+    // 太さがモニタ DPI で変わるので、システム DPI 前提の AdjustWindowRect のままだと 150% の
+    // モニタで要求より小さいクライアント領域 (= 違う大きさのバックバッファ) が黙って作られる。
+    // 同期で届く WM_SIZE が width_/height_ を揃える (要求どおりなら resized_ は立たない)
+    {
+        const UINT dpi = GetDpiForWindow(hwnd);
+        RECT exact = { 0, 0, desc.width, desc.height };
+        if (dpi != 0 && AdjustWindowRectExForDpi(&exact, style, FALSE, 0, dpi)) {
+            SetWindowPos(hwnd, nullptr, 0, 0, exact.right - exact.left, exact.bottom - exact.top,
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        }
+    }
     // 見せる前に当てる = 起動直後にウィンドウの姿を一瞬出してから全面へ化けない
     SetMode(desc.mode);
 
@@ -110,8 +123,9 @@ float Win32Window::DpiScale() const
     if (!hwnd_) {
         return 1.0f;
     }
-    // PerMonitorV2 なので生成時のモニタの実 DPI が返る (96 = 100%)。
-    // モニタ間移動 (WM_DPICHANGED) への追従は未対応 — 起動時の値で固定
+    // PerMonitorV2 なので今いるモニタの実 DPI が返る (96 = 100%)。
+    // モニタ間移動 (WM_DPICHANGED、M93c) は窓の外形だけ追従する。UI 倍率の呼び出し側
+    // (ImGui のフォント) は起動時に 1 度読んだ値を使い続ける = 文字の大きさは追従しない (既知の制限)
     return static_cast<float>(GetDpiForWindow(static_cast<HWND>(hwnd_))) / 96.0f;
 }
 
@@ -217,6 +231,18 @@ intptr_t Win32Window::HandleMsg(void* hwndRaw, uint32_t msg, uint64_t wparam, in
                 height_ = h;
                 resized_ = true;
             }
+        }
+        return 0;
+    }
+    case WM_DPICHANGED: {
+        // M93c: モニタ間を移動して DPI が変わった。OS が勧める矩形 (lparam) をそのまま当てると、
+        // クライアント領域が新しい DPI で同じ物理寸法になる。続く WM_SIZE が width_/height_ と
+        // resized_ を更新するので、スワップチェーンは次フレームの ConsumeResize で追従する。
+        // ボーダーレス中はモニタ全面を覆っているので SetMode の矩形に任せる
+        const RECT* suggested = reinterpret_cast<const RECT*>(lparam);
+        if (suggested != nullptr && mode_ == WindowMode::Windowed) {
+            SetWindowPos(hwnd, nullptr, suggested->left, suggested->top, suggested->right - suggested->left,
+                         suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOACTIVATE);
         }
         return 0;
     }
