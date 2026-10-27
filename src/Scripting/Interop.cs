@@ -266,6 +266,13 @@ namespace MyeScripting
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe struct MyeEngineApi
     {
+        // このミラーが前提にする EngineAPI.h の MYE_API_VERSION (M93a)。Bootstrap.Initialize が
+        // 受け取った表の Version と照合し、違えば C# レーンを起動しない — 位置ベースのミラーは
+        // 版がずれると全スロットが黙って別関数を指すため、静的照合 (規則 11) だけでは
+        // 「C++ 側だけ更新して build_managed.bat を忘れた」古い MyeScripting.dll を捕まえられない。
+        // ★MYE_API_VERSION を上げたらここも同時に上げる (規則 11-e が機械照合する)
+        internal const uint kExpectedApiVersion = 29u;
+
         public uint Version;
         public void* Engine;
         public delegate* unmanaged<void*, int, byte*, void> Log;
@@ -519,6 +526,9 @@ namespace MyeScripting
     {
         public MyeEngineApi* Api;
         public ManagedVTable* OutVtable;
+        // M93a: managed 側が自分の kExpectedApiVersion を書き戻す (ネイティブが不一致のログに両方の版を出すため)。
+        // 旧 MyeScripting.dll はこの欄を知らない = 0 のまま。argLength で欄の有無を確かめてから書く
+        public uint ManagedApiVersion;
     }
 
     // MyeEngineApi をラップして C# から呼びやすくする静的窓口。

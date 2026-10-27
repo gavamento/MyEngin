@@ -12,7 +12,8 @@
 // 互換性チェック用。テーブルや ScriptDesc のレイアウトを変えたら必ず上げること
 // ★既存スロットの並びとシグネチャは変えない — Interop.cs が位置ベースでミラーしているため、
 //   既存スロットをいじると C# 側が全てズレる。ミラー照合は tools\check_rules.ps1 規則 11
-//   (順序・件数・名前・引数個数 + version⇄スロット数の同時性) が機械検査する。
+//   (順序・件数・名前・引数個数 + version⇄スロット数の同時性 + Interop.cs の kExpectedApiVersion)
+//   が機械検査し、実行時は Bootstrap.Initialize が version を照合して古い MyeScripting.dll を弾く (M93a)。
 // 版ごとの中身 (注意は各スロットの注記。足した経緯は docs\history\api-scripting-tools.md):
 // v3 (M19): gamepad / Raycast / PlaySound / StopSound / LoadScene
 // v4 (M28a): 剛体操作 (AddForce/AddImpulse/AddTorque/Get/SetVelocity) + Overlap*/SphereCast + OnCollision

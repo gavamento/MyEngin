@@ -732,14 +732,17 @@ if (-not (Test-Path $tablePath)) {
 }
 
 # 規則 11: ABI ミラーの機械照合 (M51h)
-# Interop.cs は EngineAPI.h の**位置ベース**ミラーで、実行時の版検証が無い —
-# 順序・件数・名前・引数個数がズレると全スロットが静かに別関数を指す。
+# Interop.cs は EngineAPI.h の**位置ベース**ミラー — 順序・件数・名前・引数個数がズレると
+# 全スロットが静かに別関数を指す。実行時には Bootstrap.Initialize が表の version と
+# Interop.cs の kExpectedApiVersion を照合する (M93a) が、それは「古い MyeScripting.dll を
+# 載せた」事故を捕まえるためのもので、ソースの食い違いはここで止める。
 # 11-a  EngineAPI.h (MyeEngineApi) と Interop.cs (MyeEngineApi) のスロット列が
 #       順序・件数・名前とも完全一致
 # 11-b  各スロットの引数個数一致 (C++ の仮引数数 == C# の delegate* 型リスト数 - 1 (戻り値))
 # 11-c  MYE_API_VERSION とスロット数の対応が下表と一致 — スロットを足すときは
 #       version の bump とこの表の更新を**同時に**行うこと (どちらか片方だとここで止まる)
 # 11-d  EngineApiTable.cpp が全スロットに `out.<Name> =` で実装を充填している
+# 11-e  Interop.cs の kExpectedApiVersion (実行時照合の前提値、M93a) が MYE_API_VERSION と一致
 $apiVersionSlots = @{ 11 = 73; 12 = 87; 13 = 94; 14 = 102; 15 = 104; 16 = 110; 17 = 111; 18 = 112; 19 = 114; 20 = 118; 21 = 125; 22 = 126; 23 = 131; 24 = 139; 25 = 144; 26 = 151; 27 = 158; 28 = 164; 29 = 174 }
 $apiHeaderPath = Join-Path $repo 'src\Shared\EngineAPI.h'
 $interopPath = Join-Path $repo 'src\Scripting\Interop.cs'
@@ -821,6 +824,15 @@ if (-not (Test-Path $apiHeaderPath) -or -not (Test-Path $interopPath) -or -not (
                 $errors++
             } elseif ($apiVersionSlots[$ver] -ne $cppSlots.Count) {
                 Write-Host "ERROR [rule 11] MYE_API_VERSION=$ver expects $($apiVersionSlots[$ver]) slots but EngineAPI.h has $($cppSlots.Count) - bump the version and this table together"
+                $errors++
+            }
+            # 11-e: C# 側の実行時照合の前提値。無ければ照合そのものが消えたことになるのでエラー
+            $csVerMatch = [regex]::Match($csText, 'kExpectedApiVersion\s*=\s*(\d+)u?\s*;')
+            if (-not $csVerMatch.Success) {
+                Write-Host "ERROR [rule 11-e] Interop.cs: kExpectedApiVersion not found (Bootstrap's runtime ABI check needs it)"
+                $errors++
+            } elseif ([int]$csVerMatch.Groups[1].Value -ne $ver) {
+                Write-Host "ERROR [rule 11-e] Interop.cs kExpectedApiVersion=$($csVerMatch.Groups[1].Value) but EngineAPI.h MYE_API_VERSION=$ver - bump both together"
                 $errors++
             }
         }
