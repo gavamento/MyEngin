@@ -84,3 +84,9 @@
 - (M70b) v4。本体長とハンドシェイク項目の両方が変わった。
 - (M75b) v5。基準解像度の実効値は M75c (project_settings)、計測表のハッシュは M75d で入った。欄と照合だけは M75b で先に確保し、版上げを 1 回にまとめた。
 - (M52i) 相手の確定点を単純に代入すると、冗長送信で古いパケットが後から届いたときに確定点が行ったり来たりし、desync の照合対象が安定しない。このため後退させない。
+
+## PhysicsSystem.cpp / CollisionSystem.cpp — CharacterController と剛体の接触イベント (M93e、dogfooding #17)
+- 物理は剛体を bodies、キャラを chars と別の配列で解き、接触イベントは剛体同士 (SolidContact) からしか生まれなかった。「車で敵を轢く」が OnCollisionEnter で書けない (dogfooding #17)。SolveCharacters が押し出しで触れた剛体 (Rigidbody 持ち) を別の列 characterContacts に積み、CollisionSystem がソリッド接触と同じ前 tick 差分で Enter / Stay / Exit を両者へ配るようにした。
+- SolidContact と同じ列に混ぜなかったのは、音響の衝撃音・知覚・モーダル音・GetContactInfo が「法線インパルス = 重さ」を前提に読むため。キャラは運動量を持たないので impulse 0 の接触を混ぜると「鳴らない・聞こえない音」と「0 の接触情報」が増えるだけ。静的コライダー (床・壁) との接触も積まない (接地中に毎 tick 全キャラ分の Stay が出る)。
+- CollisionSystem の prevSolidPairs_ (SimSnapshot の節) にはキャラのペアも載る。形式は同じ uint64 の列なので snapshot 版は動かしていない。
+- 同 M93e (dogfooding #19): Vehicle があるのに PhysicsEnvironment が無いシーンは substeps 1 相当で柔らかい車になる。原因に辿り着けるよう、環境を解決した直後に 1 回だけ WARN する (ログだけで sim は変えない)。

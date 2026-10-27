@@ -74,3 +74,9 @@
 ## Prefab.cpp — プレハブ読み込みの検証 (M48d)
 - (M48d) 宣言キー (actor:1 / prefab:1) を一切見ずに entities だけ拾っていたので、別種の .json (シーンやマテリアル) を渡しても「エンティティ 0 件のプレハブ」として静かに登録されていた。
 - (M48d) ベースに複数のルートがあると、最後のルートだけをタグ付けして残りが野良になっていた。ラッパーで包むようにした。
+
+## TickRunner.cpp — スクリプト間メッセージの配達点と --debug-draw-log (M93e)
+- SendScriptMessage (ABI v30) は tick をまたいで残さない設計にした。配達点を「フェーズ 3 Update の直後」と「フェーズ 5 LateUpdate の直後」の 2 つに固定し、積まれた順に配る。配達中に送られた分は同じ点で 8 巡まで続け、超えた分は捨てて WARN する。これで SimSnapshot に新しい節を足さずに済み、タイムトラベル・ロールバックの再シムでも同じ列になる (キューは tick の中で必ず空になる)。
+- C# レーンからの送信はスロットが 0 を返す。C# は NoHash レーンなので、C++ スクリプトの hash 対象の状態を C# の判断で動かすとリプレイが再現できない (SetUIRect 等を C# から閉じたのと同じ規則)。受信は runManaged のときだけ配る = 記録 / 検証中は C# 宛てを捨てる。
+- 名前を SendMessage / DispatchMessage にしなかったのは Win32 のマクロ (SendMessageW / DispatchMessageW への置換) のため。Windows.h を include する翻訳単位だけ構造体のメンバ名が変わり、位置ベースのミラーが静かにずれる。
+- --debug-draw-log (dogfooding #11) は DebugDrawLine の線分を tick 末 (スクリプトと物理・AI の可視化が積み終わった後、ApplyStructuralChanges の直前) にテキストへ追記する。TickServices::debugDrawLog に開いた ofstream を渡すだけで、EngineLoop と HeadlessSim の両方が同じ出力レーンを通る。
