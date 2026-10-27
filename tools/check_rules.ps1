@@ -987,6 +987,83 @@ foreach ($l in $eolLines) {
     }
 }
 
+# 規則 15: 生の D3D / DXGI 型の居場所 (M93b。engine_spec §6.3 / AGENTS 4.1 の「Renderer の外へ出さない」の実態)
+# 仕様の境界は実装では Engine 層の描画系 (Rendering / Particles の両バックエンド / UI・Vfx の描画器 /
+# RtScene / ProbeBaker / EngineLoop の描画先) と、Editor のサムネイル・プレビュー (ImGui のテクスチャ ID が
+# SRV そのもの) まで広がっている。文章で境界を狭めても実装は戻らないので、**今ある場所を許可リストで
+# 固定し、新しい場所へ広がるのを止める** (ラチェット)。許可リストへ足すのは設計判断 — 理由を書き、
+# engine_spec §6.3 の表も同時に直すこと。
+#   15-a: 下の guard ディレクトリのソースは、許可リスト以外で d3d11* / dxgi* / d3dcompiler の include と
+#         ID3D11* / IDXGI* / D3D11_* / DXGI_* の識別子をコード行 (// コメントは除外) に持たない
+#   15-b: 許可リストのファイルが無くなったら項目を消す (死んだ許可を残さない)
+$d3dIncludeRx = '^\s*#\s*include\s*[<"](?:d3d11|dxgi|d3dcompiler|d3d11shader)[^>"]*[>"]'
+$d3dIdentRx = '\bID3D11\w+|\bIDXGI\w+|\bD3D11_[A-Z0-9_]+\b|\bDXGI_[A-Z0-9_]+\b'
+$d3dGuardDirs = @('src\Engine\Core', 'src\Engine\Engine', 'src\Editor', 'src\Runtime', 'src\GameLogic', 'src\Shared', 'src\Server')
+$d3dAllow = @(
+    # ---- Engine 層の描画系 (Renderer のパスへ RTV / SRV / バッファを渡す側) ----
+    @{ Path = 'src\Engine\Engine\Rendering\RenderSystem.h'; Reason = 'FrameTarget (RTV / DSV) と各パスへの受け渡し' },
+    @{ Path = 'src\Engine\Engine\Rendering\RenderSystem.cpp'; Reason = 'FrameTarget (RTV / DSV) と各パスへの受け渡し' },
+    @{ Path = 'src\Engine\Engine\Rendering\ProbeBaker.h'; Reason = '反射プローブ焼きの一時レンダーターゲット (M56e)' },
+    @{ Path = 'src\Engine\Engine\Rendering\ProbeBaker.cpp'; Reason = '反射プローブ焼きの一時レンダーターゲット (M56e)' },
+    @{ Path = 'src\Engine\Engine\Particles\CpuParticleBackend.h'; Reason = 'CPU 粒子のインスタンスバッファ (M5)' },
+    @{ Path = 'src\Engine\Engine\Particles\CpuParticleBackend.cpp'; Reason = 'CPU 粒子のインスタンスバッファ (M5)' },
+    @{ Path = 'src\Engine\Engine\Particles\GpuParticleBackend.h'; Reason = 'GPU 粒子 (Compute + indirect draw、M5)' },
+    @{ Path = 'src\Engine\Engine\Particles\GpuParticleBackend.cpp'; Reason = 'GPU 粒子 (Compute + indirect draw、M5)' },
+    @{ Path = 'src\Engine\Engine\UI\UIRenderer.h'; Reason = 'ゲーム内 UI の描画器 (M21)' },
+    @{ Path = 'src\Engine\Engine\UI\UIRenderer.cpp'; Reason = 'ゲーム内 UI の描画器 (M21)' },
+    @{ Path = 'src\Engine\Engine\Vfx\VfxRenderer.h'; Reason = 'Sprite / Trail / TextMesh の描画器 (M29)' },
+    @{ Path = 'src\Engine\Engine\Vfx\VfxRenderer.cpp'; Reason = 'Sprite / Trail / TextMesh の描画器 (M29)' },
+    @{ Path = 'src\Engine\Engine\RayTracing\RtScene.h'; Reason = 'BVH の GPU バッファ (M46)' },
+    @{ Path = 'src\Engine\Engine\RayTracing\RtScene.cpp'; Reason = 'BVH の GPU バッファ (M46)' },
+    @{ Path = 'src\Engine\Engine\Loop\EngineLoop.cpp'; Reason = 'ImGui だけのフレームの描画先クリア' },
+    # ---- GPU を直接叩く selftest (製品コードの境界ではない) ----
+    @{ Path = 'src\Engine\Engine\Asset\MeshLodSelfTest.cpp'; Reason = 'selftest: LOD の index buffer を直接作る' },
+    @{ Path = 'src\Engine\Engine\Compute\ComputeServiceSelfTest.cpp'; Reason = 'selftest: Fx バッファの GPU 側を直接読む' },
+    @{ Path = 'src\Engine\Engine\Compute\KernelSelfTest.cpp'; Reason = 'selftest: カーネルを GPU で直接走らせる' },
+    @{ Path = 'src\Engine\Engine\Loop\DeviceRecoverySelfTest.cpp'; Reason = 'selftest: デバイス消失の疑似発生 (M88)' },
+    @{ Path = 'src\Engine\Engine\Vfx\VfxSelfTest.cpp'; Reason = 'selftest: 描画器の GPU 側を直接検査する' },
+    # ---- Editor 層: ImGui のテクスチャ ID は SRV そのもの (imgui_impl_dx11 の契約) ----
+    @{ Path = 'src\Editor\Asset\AssetPreviewCache.h'; Reason = 'サムネイル / マテリアルプレビューの RT と SRV' },
+    @{ Path = 'src\Editor\Asset\AssetPreviewCache.cpp'; Reason = 'サムネイル / マテリアルプレビューの RT と SRV' },
+    @{ Path = 'src\Editor\Project\ProjectManager.cpp'; Reason = 'プロジェクト管理画面のバックバッファクリア' },
+    @{ Path = 'src\Editor\Windows\Animation\AnimationPreviewWindow.cpp'; Reason = 'プレビュー RT の形式指定 (M89n)' },
+    @{ Path = 'src\Editor\Windows\Asset\AssetBrowserWindow.cpp'; Reason = 'サムネイル SRV を ImGui::Image へ渡す' },
+    @{ Path = 'src\Editor\Windows\Scene\InspectorWindow.cpp'; Reason = 'マテリアルプレビュー SRV を ImGui::Image へ渡す' }
+)
+foreach ($a in $d3dAllow) {
+    if (-not (Test-Path (Join-Path $repo $a.Path))) {
+        Write-Host "ERROR [rule 15-b] allow list entry no longer exists: $($a.Path) (remove it)"
+        $errors++
+    }
+}
+foreach ($d in $d3dGuardDirs) {
+    $full = Join-Path $repo $d
+    if (-not (Test-Path $full)) {
+        Write-Host "ERROR [rule 15] missing directory: $d"
+        $errors++
+        continue
+    }
+    $files = Get-ChildItem -Recurse -File $full | Where-Object { $_.Extension -in '.cpp', '.h', '.hpp', '.inl' }
+    foreach ($f in $files) {
+        $rel = [System.IO.Path]::GetRelativePath($repo, $f.FullName)
+        $allowed = $false
+        foreach ($a in $d3dAllow) {
+            if ($rel.Equals($a.Path, [System.StringComparison]::OrdinalIgnoreCase)) { $allowed = $true; break }
+        }
+        if ($allowed) { continue }
+        $lineNo = 0
+        foreach ($line in [System.IO.File]::ReadLines($f.FullName)) {
+            $lineNo++
+            $code = ($line -split '//', 2)[0]
+            if ($code -match $d3dIncludeRx -or $code -match $d3dIdentRx) {
+                Write-Host "ERROR [rule 15-a] $($f.FullName):${lineNo}: raw D3D / DXGI types stay inside the rendering boundary (src\Engine\Renderer + the rule 15 allow list). Wrap the handle or add the file to the list with a reason and update engine_spec §6.3"
+                $errors++
+                break # 1 ファイル 1 行で十分 (同じファイルで何十行も出さない)
+            }
+        }
+    }
+}
+
 Write-Host "=== result: $errors error(s), $warnings warning(s) ==="
 if ($errors -gt 0) { exit 1 }
 exit 0

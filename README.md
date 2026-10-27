@@ -384,7 +384,7 @@ docs/            機能説明、ADR、検証資料、履歴
 plans/           個別機能の計画・作業記録
 ```
 
-設計上の必須条件は、上位層から下位層への依存、Renderer 外へ生の D3D 型を露出させないこと、`src/Shared/` を C ABI + POD に限定することです。ソース管理機能は Editor に置き、Engine / Runtime / GameLogic / Shared から依存させません。
+設計上の必須条件は、上位層から下位層への依存、描画境界（`src/Engine/Renderer/` と `tools/check_rules.ps1` 規則 15 の許可リストにある描画系）の外へ生の D3D 型を露出させないこと、`src/Shared/` を C ABI + POD に限定することです。ソース管理機能は Editor に置き、Engine / Runtime / GameLogic / Shared から依存させません。
 
 シミュレーションは固定 **60 Hz Tick**、描画は Frame として分けます。PCG32 の seed、処理順序、構造変更の適用点、状態の所有権を管理し、Debug / Release で状態を変える条件分岐を避けます。通常 Tick・巻き戻し・ネットの再実行は [TickRunner.cpp](src/Engine/Engine/Loop/TickRunner.cpp) の共通経路を使います。
 

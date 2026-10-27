@@ -76,7 +76,7 @@ MyEngineはVisual Studio 2022、C++20、DirectX 11を使用するゲームエン
 
 ### 4.1 レイヤーとABI
 
-- 上位層から下位層への依存だけを許可し、逆依存を作らない。生のD3D型をRendererの外へ露出させない。
+- 上位層から下位層への依存だけを許可し、逆依存を作らない。生のD3D型は描画境界（`src/Engine/Renderer/` と、`tools/check_rules.ps1` 規則15の許可リストにあるEngine層の描画系・エディタのプレビュー経路）の外へ露出させない。許可リストへの追加は設計判断として理由を書き、`engine_spec.md` §6.3 も同時に更新する。
 - `src/Shared/` のDLL境界はC ABIとPODのみとする。STL、vtable、例外を境界越しに渡さない。
 - ABI変更時は共有定義、言語間のミラー、APIテーブルの設定を同時に確認する。スロット変更ではABIバージョンとスロット数を整合させる。
 - ソース管理機能はEditor層に置く。Engine、Runtime、GameLogic、Sharedから `Editor/SourceControl/` へ依存しない。
