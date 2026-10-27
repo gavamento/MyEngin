@@ -206,7 +206,7 @@ CC のジャンプ API 自体は接地条件を判断しないため、呼び出
 
 車両は PhysicsEnvironment の有無に影響されます。欠けていても期待する設定になると仮定しないでください。XPBD はロープまでで、布、ソフトボディ、塑性変形、粒子と世界の衝突、破砕、熱・流体・電気シミュレーションは実装済み機能に含めません。浮力があることは流体ソルバの存在を意味しません。
 
-根拠: [PhysicsSystem.h](../src/Engine/Engine/Physics/Rigid/PhysicsSystem.h)、[PhysicsSystem.cpp](../src/Engine/Engine/Physics/Rigid/PhysicsSystem.cpp)、[PhysicsQueries.cpp](../src/Engine/Engine/Physics/Rigid/PhysicsQueries.cpp)、[RagdollBuilder.cpp](../src/Engine/Engine/Physics/Ragdoll/RagdollBuilder.cpp)、[XpbdBackend.cpp](../src/Engine/Engine/Physics/Xpbd/XpbdBackend.cpp)。
+根拠: [PhysicsSystem.h](../src/Engine/Engine/Physics/Rigid/PhysicsSystem.h)、[PhysicsSystem.cpp](../src/Engine/Engine/Physics/Rigid/PhysicsSystem.cpp)、[PhysicsCharacters.cpp](../src/Engine/Engine/Physics/Rigid/PhysicsCharacters.cpp)、[PhysicsMaterials.cpp](../src/Engine/Engine/Physics/Rigid/PhysicsMaterials.cpp)、[PhysicsBodyOps.cpp](../src/Engine/Engine/Physics/Rigid/PhysicsBodyOps.cpp)、[PhysicsQueries.cpp](../src/Engine/Engine/Physics/Rigid/PhysicsQueries.cpp)、[RagdollBuilder.cpp](../src/Engine/Engine/Physics/Ragdoll/RagdollBuilder.cpp)、[XpbdBackend.cpp](../src/Engine/Engine/Physics/Xpbd/XpbdBackend.cpp)。
 
 ## 9. 音声・音響伝播・敵 AI
 

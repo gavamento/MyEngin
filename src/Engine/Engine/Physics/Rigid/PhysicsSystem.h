@@ -71,6 +71,8 @@ void ComposeEntityWorldPose(World& world, EntityID e, float& px, float& py, floa
 // 関節 (JointComponent、M60a) と複合コライダー (Rigidbody.compoundColliders で子のコライダーを親剛体へ畳む、M60e) も解く。
 // ブロードフェーズ (M28d): 毎 tick 再構築の 1 軸 sort & sweep (Broadphase.cpp)。
 // 状態は全てコンポーネントに常駐 (velocity=Rigidbody, position=LocalTransform) → システムはステートレス。
+// 実装の置き場所: ソルバ本体は PhysicsSystem.cpp、CharacterController の押し出しは PhysicsCharacters.cpp
+// (作業用の Body / CharBody と共有ヘルパーは PhysicsSystemInternal.h)。
 // CCD (M59j): Rigidbody.ccd を立てたボディだけ、1 サブステップの移動量が自分の外接球半径を
 // 超えるときに掃引され、最初に触れる位置で止まって法線インパルスを 1 発受ける。
 // 相手は不動として扱う近似で、止まった直後は起動しきい値を外れて通常の離散ソルバへ戻る
@@ -101,7 +103,7 @@ private:
     bool warnedVehicleWithoutEnvironment_ = false;
 };
 
-// ---- 物理マテリアル解決 (M59a2)。全て純関数 — ソルバ収集と ABI が共有する ----
+// ---- 物理マテリアル解決 (M59a2)。全て純関数 — ソルバ収集と ABI が共有する。実装は PhysicsMaterials.cpp ----
 // 摩擦/反発は fp 演算を挟まない「値の選択」のみ: overrideBits のビット → 既存フィールド /
 // 材料割当あり → .physmat 値 / 未割当 → 既存フィールド。未割当シーンは従来と同じメモリを
 // 同じ経路で読むので既存挙動はビット同一 (PhysicsSelfTest の body ビットパターンで機械照合)。
@@ -143,7 +145,7 @@ float ResolveBodyMass(const RigidbodyComponent& rb, const ColliderComponent* col
 // 親合成スケールと厳密には一致しない — 既存の慣性導出と同じ割り切り)
 float EffectiveMassWorld(World& world, EntityID e, const RigidbodyComponent& rb);
 
-// ---- 物理環境と等方空力 (M59b)。全て純関数 ----
+// ---- 物理環境と等方空力 (M59b)。全て純関数。実装は PhysicsMaterials.cpp ----
 
 // env 不在時の既定値。**「env を置く」= 新しい数式への opt-in** なので、これらは
 // 「env が無いが Aero だけ付いている」ボディのための値であって、
@@ -179,6 +181,8 @@ float MeanProjectedAreaWorld(const ColliderComponent* col, float sx, float sy, f
 // 水面より上なら 0 を返し、呼び出し側は項ごとスキップする = 陸上のボディは fp 演算ゼロ
 float SubmergedFractionWorld(const ShapePose& pose, float planeY, float& outCentroidY);
 
+// ---- ABI の 1 発適用 (M28b / M59k)。実装は PhysicsBodyOps.cpp ----
+
 // ワールドトルクを 1 tick 分適用 (M28b、ABI AddTorque の実装本体)。
 // ω += I⁻¹·τ·dt を即時適用 (蓄積フィールドなし = ステートレス)。
 // Rigidbody 非所持 / kinematic / freezeRotation は 0 を返す。
@@ -203,7 +207,7 @@ int ApplyForceAtWorldPoint(World& world, EntityID e, MyeVec3 force, MyeVec3 worl
 int SampleTerrainHeightWorld(World& world, float x, float z, float* outHeight,
                              MyeVec3* outNormal);
 
-// ワールドのコライダーに対するレイキャスト (M20、ABI Raycast の実装本体)。
+// ワールドのコライダーに対するレイキャスト (M20、ABI Raycast の実装本体。実装は下の空間クエリと同じ PhysicsQueries.cpp)。
 // origin/dir はワールド座標。dir は非正規化でよい (内部で正規化する)。
 // 最近ヒットを outHit に書いて 1 を返す。ヒット無しで 0。走査は entity.index 昇順 (決定論)。
 // トリガー / ソリッドを問わず全コライダーが対象 (汎用空間クエリ)。WorldMatrix ベース。

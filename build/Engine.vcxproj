@@ -203,7 +203,10 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\AeroSampling.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\Broadphase.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\CollisionSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsBodyOps.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsCharacters.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsDebugDraw.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsMaterials.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsQueries.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSystem.cpp" />
@@ -539,6 +542,7 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysicsDebugDraw.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSystemInternal.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysMatLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysMatSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\Shapes.h" />

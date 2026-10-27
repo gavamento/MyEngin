@@ -771,7 +771,16 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\CollisionSystem.cpp">
       <Filter>Engine\Physics\Rigid</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsBodyOps.cpp">
+      <Filter>Engine\Physics\Rigid</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsCharacters.cpp">
+      <Filter>Engine\Physics\Rigid</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsDebugDraw.cpp">
+      <Filter>Engine\Physics\Rigid</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsMaterials.cpp">
       <Filter>Engine\Physics\Rigid</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsQueries.cpp">
@@ -1777,6 +1786,9 @@
       <Filter>Engine\Physics\Rigid</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSystem.h">
+      <Filter>Engine\Physics\Rigid</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSystemInternal.h">
       <Filter>Engine\Physics\Rigid</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysMatLibrary.h">

@@ -7,9 +7,9 @@
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Engine/Physics/Rigid/Shapes.h"
 
-// 空間クエリ (M28c、ABI OverlapSphere/OverlapBox/SphereCast の実装本体)。
+// 空間クエリ (ABI Raycast / OverlapSphere / OverlapBox / SphereCast の実装本体、M20 / M28c)。
 // 決定論契約: 全て scalar float 演算、収集は entity.index 昇順、反復は固定回数。
-// RaycastWorld と同じく WorldMatrix ベースでトリガー含む全コライダーが対象 (汎用クエリ)。
+// どれも WorldMatrix ベースでトリガー含む全コライダーが対象 (汎用クエリ)。
 
 namespace mye {
 namespace {
@@ -178,6 +178,76 @@ int SphereCastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float radius, flo
     if (outHit) {
         outHit->entity = { bestE.index, bestE.generation };
         outHit->point = { bpx, bpy, bpz };
+        outHit->normal = { bnx, bny, bnz };
+        outHit->distance = bestT;
+    }
+    return 1;
+}
+
+// ワールドのコライダーに対するレイキャスト (ABI Raycast の実装本体)。契約は PhysicsSystem.h
+int RaycastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float maxDist, MyeRaycastHit* outHit,
+                 uint32_t mask, RaycastSkipFn skip, const void* skipUser)
+{
+    // dir を正規化 (ゼロ長は無効)
+    float dlen = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+    if (dlen < 1e-8f) {
+        return 0;
+    }
+    const float dx = dir.x / dlen, dy = dir.y / dlen, dz = dir.z / dlen;
+    if (maxDist <= 0.0f) {
+        maxDist = 1e9f;
+    }
+
+    // 収集 (index 昇順、WorldMatrix ベースのワールドポーズ)
+    struct RayTarget {
+        EntityID entity;
+        ShapePose pose;
+    };
+    std::vector<RayTarget> targets;
+    const ComponentTypeId req[] = { ColliderComponent::sTypeId, WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(req, [&](Archetype& arch) {
+        const int ci = arch.FindTypeIndex(ColliderComponent::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const EntityID e = arch.EntityAt(row);
+            if (!IsEntityActive(world, e)) {
+                continue;
+            }
+            const auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
+            if (!shapes::LayerHit(mask, col->layer)) {
+                continue; // M36a: マスク外レイヤーは収集段階で除外
+            }
+            if (skip != nullptr && skip(world, e, skipUser)) {
+                continue; // M89m: 呼び出し側が除く物 (自分の体など)
+            }
+            const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
+            targets.push_back({ e, shapes::MakePoseFromMatrix(*col, wm->value) });
+        }
+    });
+    std::sort(targets.begin(), targets.end(),
+              [](const RayTarget& a, const RayTarget& b) { return a.entity.index < b.entity.index; });
+
+    float bestT = maxDist;
+    bool hit = false;
+    EntityID bestE = kNullEntity;
+    float bnx = 0, bny = 0, bnz = 0;
+    for (const RayTarget& t : targets) {
+        float ht, nx, ny, nz;
+        const bool ok = shapes::Raycast(t.pose, origin.x, origin.y, origin.z, dx, dy, dz, bestT,
+                                        ht, nx, ny, nz);
+        if (ok && ht < bestT) { // 昇順走査 + 厳密 < なので同 t は低 index が残る (決定論)
+            bestT = ht;
+            bestE = t.entity;
+            bnx = nx; bny = ny; bnz = nz;
+            hit = true;
+        }
+    }
+    if (!hit) {
+        return 0;
+    }
+    if (outHit) {
+        outHit->entity = { bestE.index, bestE.generation };
+        outHit->point = { origin.x + dx * bestT, origin.y + dy * bestT, origin.z + dz * bestT };
         outHit->normal = { bnx, bny, bnz };
         outHit->distance = bestT;
     }
