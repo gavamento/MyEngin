@@ -723,13 +723,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         }
         splashDesc.imagePath = splashDesc.projectPath + L"\\assets\\editor\\splash.png";
         wchar_t buildCaption[256] = {};
-        swprintf_s(buildCaption, L"%s | x64 | ABI v%u | %hs",
-#ifdef _DEBUG
-                   L"Debug",
-#else
-                   L"Release",
-#endif
-                   MYE_API_VERSION, __DATE__);
+        // 構成名は _DEBUG で分岐して作らず (規則 1)、ビルドに埋め込まれた文字列を Engine から受け取る
+        swprintf_s(buildCaption, L"%hs | x64 | ABI v%u | %hs", mye::BuildConfigName(), MYE_API_VERSION, __DATE__);
         splashDesc.buildCaption = buildCaption;
         startupSplash.Start(splashDesc);
         startupSplashScope.splash = &startupSplash;
