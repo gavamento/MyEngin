@@ -85,3 +85,10 @@
 - 記録は窓ごとに ImGui の編集点へ BeginRecord を撒くのではなく、フレーム頭と ImGui::End 直前の JSON を比べる DocUndoRecorder にした。編集点が多い (ステート・遷移・条件・骨の駆動・ブレンドの子・イベント) ので撒くと必ず取りこぼす、という M48e の override 記録と同じ判断。連続操作 (スライダ・テキスト) は IsAnyItemActive が偽になるフレームまで畳む。
 - Audio Mixer のトポロジ編集 (追加・削除・改名・親変更・切替・既定へ戻す) は ApplyMixer が次の Update まで反映されないので、フレーム末の差分では拾えない。操作の場で before/after を積み、そのフレームの差分は取らない。戻るのはランタイムのバス構成だけで、アクティブな .mixer.json の選択は戻さない (選択は MixerLibrary の状態で、文書ではない)。
 - SoundGen 窓 (合成パラメータから .wav を書き出す) と Particle Settings 窓 (セッション限定のバックエンド切替と個人設定) は文書を編集していないので Undo の対象にしなかった。
+
+## Windows/Scene/InspectorWindow.cpp — 翻訳単位の分割 (M93g)
+- 4,452 行のうち、アセット選択時の描画 (DrawAssetInspector と Material / Sound / PhysMat / NavFilter / Properties / FxStack のスキーマ固定編集、1,280 行) を InspectorWindowAssets.cpp へ、ナビのベイク (NavMeshSurface / NavMeshAgent 節、CommitReadyNavBakes、.mnav 要約キャッシュ、360 行) を InspectorWindowNav.cpp へ移した。同じクラスのメンバ関数を翻訳単位で分けただけで、本文は 1 行も変えていない。
+- 無名名前空間のヘルパー (HandleEditUndo / MakeFieldLabel / 列挙の表示名表など) は全てエンティティ側に残る。DrawPatrolRouteNotes は HandleEditUndo を使うので動かさなかった (ヘルパーを共有ヘッダへ出すほどの量ではない)。
+- DrawNavMeshAgentNotes の説明コメントは、M85g で DrawPatrolRouteNotes が間に挿入されたときから PatrolRoute の頭に付いていた。本来の持ち主の上へ戻した。
+- 唯一の生 D3D 型 (`ID3D11ShaderResourceView*`、マテリアルプレビューを ImGui::Image へ渡す) は DrawMaterialInspector と一緒に InspectorWindowAssets.cpp へ移ったので、規則 15 の許可リストの項目も差し替えた (項目数 26 は変わらない)。
+- 各翻訳単位の include は本文が直接使う宣言だけに絞った。MSVC の無い環境での作業なので、ビルドで不足が出たら足す。

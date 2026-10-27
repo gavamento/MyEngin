@@ -1028,7 +1028,7 @@ $d3dAllow = @(
     @{ Path = 'src\Editor\Project\ProjectManager.cpp'; Reason = 'プロジェクト管理画面のバックバッファクリア' },
     @{ Path = 'src\Editor\Windows\Animation\AnimationPreviewWindow.cpp'; Reason = 'プレビュー RT の形式指定 (M89n)' },
     @{ Path = 'src\Editor\Windows\Asset\AssetBrowserWindow.cpp'; Reason = 'サムネイル SRV を ImGui::Image へ渡す' },
-    @{ Path = 'src\Editor\Windows\Scene\InspectorWindow.cpp'; Reason = 'マテリアルプレビュー SRV を ImGui::Image へ渡す' }
+    @{ Path = 'src\Editor\Windows\Scene\InspectorWindowAssets.cpp'; Reason = 'マテリアルプレビュー SRV を ImGui::Image へ渡す (M93g までは InspectorWindow.cpp)' }
 )
 foreach ($a in $d3dAllow) {
     if (-not (Test-Path (Join-Path $repo $a.Path))) {

@@ -62,7 +62,9 @@ struct InspectorComponentRow {
 // ComponentRegistry のフィールド表から widget を自動生成する —
 // コンポーネント個別の UI コードは存在しない (これが M1 リフレクション設計の回収点)
 // M40a マルチ選択: 全選択が共通に持つコンポーネントを表示 (値は primary のもの)、
-// 編集/削除/追加/paste/reset は全選択へバッチ適用 (1 Undo エントリ)。ギズモは primary のみ
+// 編集/削除/追加/paste/reset は全選択へバッチ適用 (1 Undo エントリ)。ギズモは primary のみ。
+// 実装の置き場所: エンティティ側 (コンポーネント欄・参照ピッカー) は InspectorWindow.cpp、アセット選択時の
+// スキーマ固定編集は InspectorWindowAssets.cpp、ナビのベイクと .mnav 要約は InspectorWindowNav.cpp
 class InspectorWindow {
     // M80p: GetCachedSkinWeights のキャッシュ挙動 (ImGui 非依存) をヘッドレスで
     // 検算する。ImGui の描画自体は screenshot 検証の範囲 (このファイルではテストしない)
