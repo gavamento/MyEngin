@@ -19,6 +19,7 @@
 #include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Engine/Physics/Fracture/FractureBake.h"    // M80f: --fracture-demo の焼き
 #include "Engine/Engine/Physics/Fracture/FractureLibrary.h" // M80f: メモリ上焼きの登録口
+#include "Engine/Engine/Physics/Fracture/FractureSkinBake.h" // M80j: スキン破壊の骨割り当て
 #include "Engine/Engine/Physics/Ragdoll/RagdollBuilder.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Renderer/Device/GpuResources.h"

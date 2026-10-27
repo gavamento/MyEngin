@@ -85,6 +85,7 @@
 - 記録は窓ごとに ImGui の編集点へ BeginRecord を撒くのではなく、フレーム頭と ImGui::End 直前の JSON を比べる DocUndoRecorder にした。編集点が多い (ステート・遷移・条件・骨の駆動・ブレンドの子・イベント) ので撒くと必ず取りこぼす、という M48e の override 記録と同じ判断。連続操作 (スライダ・テキスト) は IsAnyItemActive が偽になるフレームまで畳む。
 - Audio Mixer のトポロジ編集 (追加・削除・改名・親変更・切替・既定へ戻す) は ApplyMixer が次の Update まで反映されないので、フレーム末の差分では拾えない。操作の場で before/after を積み、そのフレームの差分は取らない。戻るのはランタイムのバス構成だけで、アクティブな .mixer.json の選択は戻さない (選択は MixerLibrary の状態で、文書ではない)。
 - SoundGen 窓 (合成パラメータから .wav を書き出す) と Particle Settings 窓 (セッション限定のバックエンド切替と個人設定) は文書を編集していないので Undo の対象にしなかった。
+- Mixer の Undo / Redo は、バス構成 (本数・名前・親) が今と同じなら ApplyMixer を呼ばず、Mixer 窓のフェーダと同じ setter (SetBusVolumeDb / SetBusMute / SetBusSolo / SetBusReverbSend / SetReverbPreset / SetReverbWetDryMix) で値だけを即時に戻す。ApplyMixer は次の Update でバスグラフを作り直して再生中の全ボイスを破棄するので、試聴しながらの Undo で音が止まる (PR #1 の Codex 指摘)。構成が変わる文書だけ ApplyMixer に委ねる。
 
 ## Windows/Scene/InspectorWindow.cpp — 翻訳単位の分割 (M93g)
 - 4,452 行のうち、アセット選択時の描画 (DrawAssetInspector と Material / Sound / PhysMat / NavFilter / Properties / FxStack のスキーマ固定編集、1,280 行) を InspectorWindowAssets.cpp へ、ナビのベイク (NavMeshSurface / NavMeshAgent 節、CommitReadyNavBakes、.mnav 要約キャッシュ、360 行) を InspectorWindowNav.cpp へ移した。同じクラスのメンバ関数を翻訳単位で分けただけで、本文は 1 行も変えていない。

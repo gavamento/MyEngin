@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Engine/Core/Ecs/Components.h"
+#include "Engine/Engine/Physics/Rigid/PhysicsSystem.h" // SolidContact
 #include "Engine/Engine/Physics/Rigid/Shapes.h"
 
 namespace mye {

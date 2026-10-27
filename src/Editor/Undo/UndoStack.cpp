@@ -155,6 +155,21 @@ void UndoStack::PushDocOp(const char* label, UndoDocOp op)
     redo_.clear();
 }
 
+// バス構成 (本数・名前・親) が同じか。値 (音量 / Mute / Solo / 送り / リバーブ) は見ない。
+// 並びは両方とも AudioSystem::CurrentMixer の順 (記録側も ApplyMixer に渡した資産もその順で持つ)
+bool SameBusLayout(const MixerAsset& a, const MixerAsset& b)
+{
+    if (a.buses.size() != b.buses.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.buses.size(); ++i) {
+        if (a.buses[i].name != b.buses[i].name || a.buses[i].parent != b.buses[i].parent) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool ExecuteDocOp(EngineContext* ctx, const UndoDocOp& op, bool redo)
 {
     if (ctx == nullptr) {
@@ -192,7 +207,23 @@ bool ExecuteDocOp(EngineContext* ctx, const UndoDocOp& op, bool redo)
             MYE_LOG_WARN("[undo] mixer: stored JSON could not be read - edit not restored");
             return false;
         }
-        ctx->audio->ApplyMixer(m); // 音量もトポロジも ApplyMixer 1 本で戻る (次の Update で反映)
+        // 値だけの編集 (フェーダ / Mute / Solo / 送り / リバーブ) は、Mixer 窓のライブ編集と同じ setter で即時に戻す。
+        // ApplyMixer は次の Update でバスグラフを作り直し、再生中の全ボイスを破棄する (DestroyAllSourceVoices) ので、
+        // 試聴しながらの Undo / Redo で音まで止めてしまう。バス構成が変わる文書だけ ApplyMixer に委ねる
+        AudioSystem& audio = *ctx->audio;
+        if (SameBusLayout(audio.CurrentMixer(), m)) {
+            for (size_t i = 0; i < m.buses.size(); ++i) {
+                const int bus = static_cast<int>(i);
+                audio.SetBusVolumeDb(bus, m.buses[i].volumeDb);
+                audio.SetBusMute(bus, m.buses[i].mute);
+                audio.SetBusSolo(bus, m.buses[i].solo);
+                audio.SetBusReverbSend(bus, m.buses[i].reverbSend); // ルートは setter 側が無視する (送れない)
+            }
+            audio.SetReverbPreset(ReverbPresetIndex(m.reverbPreset.c_str()));
+            audio.SetReverbWetDryMix(m.reverbWetDryMix);
+            return true;
+        }
+        audio.ApplyMixer(m); // バス構成ごと戻す (次の Update で反映)
         return true;
     }
     case UndoDocOp::Kind::None:

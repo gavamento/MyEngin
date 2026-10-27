@@ -27,6 +27,7 @@ class EffectSystem;
 class PhysicsSystem;
 class FractureSystem;
 struct ShapeImpulse;
+struct ScriptMessage; // v30 (M93e): TickServices::messageQueue / messageBatch
 class XpbdBackend;
 class AcousticField;
 class AgentSystem;

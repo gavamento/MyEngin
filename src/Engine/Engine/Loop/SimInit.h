@@ -21,6 +21,7 @@ struct ScriptAudioEvent;
 struct EffectSpawnRequest;
 struct DebugLineCmd;
 struct NetRuntimeInfo;
+struct ScriptMessage; // v30 (M93e): SimSharedServices::messageQueue
 class Scene;
 class ScriptHost;
 class ManagedHost;
