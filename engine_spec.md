@@ -2345,7 +2345,7 @@ calibration defect to chase mesh-by-mesh; it is expected to shrink with ModelNet
 the anchor should be re-measured (README, "音量較正") rather than patched per mesh now.
 
 **The demo's objects were fixed to have realistic mass, not to fit a chosen `p`.** `BuildModalShowcaseScene`
-(`DemoContent.cpp`) now sets each body's `RigidbodyComponent::mass` directly (wood 2 kg, metal 4 kg,
+(`DemoContentAudio.cpp`; part of `DemoContent.cpp` until the M93g split) now sets each body's `RigidbodyComponent::mass` directly (wood 2 kg, metal 4 kg,
 glass 1 kg, the M76i sphere 1.5 kg) instead of deriving 700–7,850 kg from `useDensity` on a solid
 1 m³ collider — order matters: `p` was fixed first from the realistic-range argument above, *then*
 the demo was made to actually produce realistic impulses, not the reverse. The resulting 20-impact

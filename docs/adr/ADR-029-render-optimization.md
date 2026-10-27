@@ -3,7 +3,7 @@
 - 状態: **確定** (2026-10-09、M90a〜M90i)
 - 出所: M90 描画の軽量化。計画は `plans\m90-render-optimization\spec.md`、判断の経緯は同じ場所の `harness.md` / `sub-NN.md`。
 - 実体:
-  - 計測: `Engine\Rendering\RenderStatsDump.{h,cpp}`、`Core\Diagnostics\Profiler.{h,cpp}`、`Renderer\Device\GpuTimer.h`、`Engine\Demo\DemoContent.cpp` の `BuildRenderBenchScene`。
+  - 計測: `Engine\Rendering\RenderStatsDump.{h,cpp}`、`Core\Diagnostics\Profiler.{h,cpp}`、`Renderer\Device\GpuTimer.h`、`Engine\Demo\DemoContentRender.cpp` の `BuildRenderBenchScene` (M93g までは `DemoContent.cpp`)。
   - LOD: `Engine\Asset\MeshLodBuilder.{h,cpp}`、`Engine\Asset\ModelCook.{h,cpp}`、`Engine\Asset\CookedCache.h`、`Renderer\Mesh\MeshLod.h`、`Renderer\Device\GpuResources.{h,cpp}`、`Core\Asset\ImportMetaResolver.{h,cpp}`、`external\meshoptimizer\`。
   - オクルージョン: `Renderer\Passes\OcclusionCullPass.{h,cpp}`、`OcclusionMath.h`、`HzbPass.{h,cpp}`、`HzbDebugPass.{h,cpp}`、`assets\shaders\occlusion_cull.cs.hlsl`、`hzb_reduce_max.cs.hlsl`、`Renderer\Pipeline\DeferredPath.cpp` / `ForwardPath.cpp`。
   - 影・スキン・URO: `Renderer\Pipeline\FrustumCull.h`、`Renderer\Passes\ShadowPass.cpp`、`Renderer\Mesh\SkinBounds.{h,cpp}`、`Engine\Rendering\SkinPaletteCache.{h,cpp}`、`Engine\Rendering\RenderSystem.{h,cpp}`。
