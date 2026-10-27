@@ -2,7 +2,7 @@
 
 - 対象: M80 (破壊システム) 実装差分および関連する Core / Physics / Editor / Script / Renderer 全体
 - 日時: 2026-09-28
-- 作成先: `C:\HAL\MyEngin\docs\rev\round2_perspectives.md`
+- 作成先: `docs/rev/round2_perspectives.md`
 
 ---
 

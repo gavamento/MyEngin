@@ -2785,6 +2785,7 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
 | 13 | Dependency direction between the simulation and net / hosting (§11.5): `src/Engine/Core`, `src/Engine/Engine`, `src/GameLogic` and `src/Shared` must not include `Engine/Net/`, `Platform/Net/`, `Server/` or the GameLift SDK except through the documented allow list; `Session/` never includes `Net/`; GameLift names appear only in `src/Server` and `build/Server.vcxproj` |
 | 14 | Line endings follow `.gitattributes`: the index holds LF for every text file, files declared `eol=crlf` (`.bat`, Visual Studio project files) are CRLF in the working tree, and no LF text file carries a CR (`docs/line-endings.md`) |
 | 15 | Raw D3D11 / DXGI types stay inside the rendering boundary of §6.3. Outside `src/Engine/Renderer/`, only the files on the rule's allow list may include `d3d11*` / `dxgi*` / `d3dcompiler` or name `ID3D11*` / `IDXGI*` / `D3D11_*` / `DXGI_*`; the list is a ratchet (an entry that no longer exists is an error too), so adding one is a design decision that also updates §6.3 (M93b) |
+| 16 | (warning only) Documents under `docs/`, `README.md`, `engine_spec.md` and `AGENTS.md` do not carry the developer machine's absolute paths (a drive letter followed by `HAL`, `HAKtokyo` or `Users`, and `file:` URLs with a drive letter); links are repository-relative. Two historical records are allow-listed with their reasons (M93d) |
 
 ### 11.3 Automated Verification: Replay Consistency Test
 

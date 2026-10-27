@@ -6,7 +6,7 @@ Windows 向けの **C++20 / DirectX 11 製自作 3D ゲームエンジン**で�
 
 中心にあるのは、**ゲームを動かし、その内部状態を理解し、同じ条件から結果を再現できること**です。固定 Tick のシミュレーションと状態の記録・復元を共通基盤にして、リプレイ、タイムトラベル、未来の分岐比較、ネット対戦のロールバック、クラッシュ直前の再現へつなげています。描画、物理、音響伝播、制作ツールを含め、就職活動用ポートフォリオとして開発しています。
 
-本 README は **2026-09-22 時点のソースツリー**に合わせた入口です。機能説明は実装の存在・接続を示すもので、全機能の実機試験や最新 CI の合格を保証するものではありません。仕様は [engine_spec.md](engine_spec.md)、作業規則は [AGENTS.md](AGENTS.md) を参照してください。
+本 README は **2026-10-27 時点のソースツリー (M93)** に合わせた入口です。機能説明は実装の存在・接続を示すもので、全機能の実機試験や最新 CI の合格を保証するものではありません。仕様は [engine_spec.md](engine_spec.md)、作業規則は [AGENTS.md](AGENTS.md) を参照してください。
 
 ## 目次
 
@@ -118,7 +118,8 @@ C# は `MyeScripting.dll` とその依存ファイル、Git は `MyeCollab.dll` 
 | 階層・有効状態 | LocalTransform から WorldMatrix を計算。親の Active を子へ伝播 |
 | リフレクション | 登録フィールドを Inspector、JSON、DLL 状態移行、ワールドハッシュで利用 |
 | C++ ホットリロード | GameLogic.dll と PDB をコピーして差し替え、名前と型が一致する登録フィールドを移行 |
-| C# スクリプト | .NET ホストと Roslyn による別の記述経路。決定論検証とは分離 |
+| C# スクリプト | .NET ホストと Roslyn による別の記述経路。決定論検証とは分離。起動時に ABI 版を照合し、版の違う `MyeScripting.dll` は C# だけを無効にする |
+| Compute.ForEach | `*.kernel.hlsl` 1 ソースを GPU / C++ CPU / C# CPU で実行。State バッファはスナップショットとワールドハッシュに入り、Fx バッファは GPU 優先で遅延読み戻し（M91、ADR-030） |
 | データスキーマ | `.component.schema.json` からコンポーネントを定義し、C++ / C# 向けアクセスコードを生成 |
 | シーン・構成アセット | `.scene.json`、`.actor.json` / `.prefab.json`、インスタンス化、Apply / Revert、フィールド・コンポーネントの上書き |
 | 部位・ソケット | Part の名前・タグ検索、骨への追従、部位の箱・球による判定 |
@@ -134,6 +135,7 @@ C# は `MyeScripting.dll` とその依存ファイル、Git は `MyeCollab.dll` 
 ### 描画・演出
 
 - **Forward / Deferred** を実行時に切替。PBR、IBL、平行光・点光源・スポット光、影、透明描画に対応。
+- **計測と最適化**（M90）。ビュー別の描画統計と GPU 時間、`render_bench` シーン、meshoptimizer による opt-in のメッシュ LOD、max-Z HZB を使う 2 フェーズの GPU オクルージョンカリング（既定 on、`project_settings.json` に保存）、カスケード別の影カリング（ADR-029）。描画側の CPU 処理と CPU 粒子・知覚・部位追従・IK は Job で並列化し、`replay_verify` の jobs A/B でビット一致を確かめます（ADR-028）。
 - **DirectX 11 Compute Shader による二次光線追跡**。自前 BVH で拡散 GI・平行光の影・反射を計算し、SVGF でデノイズ。DXR は使用しません。
 - **ReSTIR 反射**。時空間のサンプル再利用と、映る物体の `ReflectionClass` に応じた再利用制御。既定無効。
 - **SSR、反射プローブ、デカール、TAA、Bloom、トーンマップ、フォグ**。SSR・TAA などには Deferred の条件があります。
@@ -293,6 +295,8 @@ Release の本体をビルドし、外部プロジェクトのスクリプトを
 
 生成後は **出力先の `Runtime.exe`** を起動して、起動シーン・入力・音・フォント・シーン遷移を確認してください。パッケージ生成成功と、配布先でゲームを遊び通せることは別の確認です。処理の正本は [BuildSettingsWindow.cpp](src/Editor/Windows/Project/BuildSettingsWindow.cpp) です。
 
+ゲームの配布とは別に、**エンジン自体を他の人へ渡す配布物**は [tools/make_dist.ps1](tools/make_dist.ps1) が作ります（M92）。Release 本体と C# ホスト・Git サービスをビルドし、exe 一式・`assets/`・C++ スクリプト用の `src/Shared` と `build/Common.props`・ライセンスを `dist_engine/` に集めて zip 化します。受け取った側は展開して [Setup.bat](tools/engine_dist/Setup.bat) を実行すると、足りない VC++ 再頒布・.NET 8・Git を winget で導入し、C++ Build Tools は確認してから導入して Editor を起動します。
+
 ## 検証と CI
 
 ### 基本確認
@@ -320,7 +324,7 @@ SelfTest は ECS、シリアライズ、物理、アセット、スクリプト 
 .\bin\x64\Debug\Editor.exe --whatif-selftest 400
 ```
 
-現行の `replay_verify.bat` は、既定デモ・部位・ゲームフロー・ローカル 2P・物理・関節・音響・UI の **8 シーン**を検証します。Debug 記録、Debug / Release 照合、スナップショット往復、タイムトラベル、What-if、静的規則検査を含みます。ログは `cache/replay_logs/` に出力します。
+現行の `replay_verify.bat` は、既定デモ・部位・ゲームフロー・ローカル 2P・物理・関節・音響・UI・破壊・ナビメッシュ・知覚・ビヘイビアツリー・骨アニメ・Compute の **14 シーン**を検証します。各シーンは Debug 記録、スナップショット往復付きの Debug 照合、Release 照合、ヘッドレス `Server.exe` の照合を通り、加えて jobs A/B（直列で録った記録を並列で照合）、compute A/B（GPU 優先で録った記録を CPU 強制で照合）、タイムトラベル、What-if、静的規則検査が並列プールで回ります。ジョブ一覧の正本は同 bat の `-Jobs` 引数です。ログは `cache/replay_logs/` に出力します。
 
 このスクリプトはクック済みキャッシュや過去の検証ログを消して再生成します。保存したい生成物がある場合は実行前に退避してください。
 

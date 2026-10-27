@@ -5,7 +5,7 @@
 - 改訂: 2026-10-05 (M84a〜M84e、NavMesh の拡張)。決定 6 の「複数の Surface」を決定 14 で置き換え、決定 14 を足した。
   計画は `plans\ai-roadmap-m83-m86.md` の「M84 で決めたこと」。
 - 出所: 依頼「ナビメッシュの実装」。仕様は `plans\m82-navmesh\spec.md`、事前計画は
-  `C:\Users\akita\.claude\plans\imperative-scribbling-shore.md` の M-A。
+  作業者のローカルにあった計画メモ `imperative-scribbling-shore.md`（リポジトリ外） の M-A。
 - 試作の実体: `src\Engine\Engine\Navigation\NavTileCacheSupport.{h,cpp}` と
   `NavDeterminismSelfTest.{h,cpp}`。パッチは `external\recastnavigation\PATCHES.md`。
 
@@ -514,7 +514,8 @@ M82j の時点 (2026-10-04、HEAD `d8ff284` + 文書のみの変更) で全体�
 |---|---|
 | `Editor.exe --selftest` (Debug / Release) | 全件 PASS (終了コード 0)。NavSurface / NavAgent の期待ハッシュ 3 件 (`.mnav` 形式 2・庭のワールドハッシュ・生成した Link の `.mnav`) は Debug で採り Release で一致 |
 | `Server.exe --selftest` (Debug / Release) | 全件 PASS (終了コード 0) |
-| `toolseplay_verify.bat` | 全 16 ジョブ PASS (140 s)。`nav` ジョブは ABI v26 の `NavDemoDriver` を含む。静的規則 0 error / 0 warning |
+| `tools
+eplay_verify.bat` | 全 16 ジョブ PASS (140 s)。`nav` ジョブは ABI v26 の `NavDemoDriver` を含む。静的規則 0 error / 0 warning |
 | `tools\shot_verify.bat` | FAIL 6 枚。5 枚は M82j と同じ (parts 198/3625、joints 208/137、acoustic_forward 83/596、acoustic_deferred 82/594、fracture_after 150/192)。**`nav` が 214/21664 で新たに FAIL**。差は線 (輪郭・経路・Link) の上だけで、M83 より前のコミット `f6c7bef` (EditorLinePass の線を AntialiasedLine + 面の手前へずらす) と合う。M84b の切り詰めの寄与は切り分けていない。golden は更新していない |
 
 ### ビルド警告

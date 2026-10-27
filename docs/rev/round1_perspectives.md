@@ -2,7 +2,7 @@
 
 - 対象: M80 (破壊システム) 実装差分および関連する Core / Physics / Editor / Script / Renderer 全体
 - 日時: 2026-09-28
-- 作成先: `C:\HAL\MyEngin\docs\rev\round1_perspectives.md`
+- 作成先: `docs/rev/round1_perspectives.md`
 
 ---
 
@@ -34,5 +34,5 @@
 
 ## 追補: 観点適用漏れと見落としの記録
 - 観点1（メモリ安全性）および観点3（シリアライズ）において、基盤層 `World::SnapshotRead` の入力未検証・境界外アクセス脆弱性の見落としが発生した。
-- 詳細な技術分析、影響範囲、根本原因分析（RCA）は [oversights.md](file:///C:/HAL/MyEngin/docs/rev/oversights.md) に記録。
+- 詳細な技術分析、影響範囲、根本原因分析（RCA）は [oversights.md](../../docs/rev/oversights.md) に記録。
 

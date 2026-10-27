@@ -1,8 +1,8 @@
 # MyEngine 全機能ガイド
 
-調査日: 2026-09-11。対象: `C:/HAKtokyo/My_Engin/MyEngin` の作業ツリー。
+調査日: 2026-09-11（追補: 2026-10-27、M93）。対象: このリポジトリの作業ツリー。
 
-この文書は、MyEngine が何をできるエンジンなのかを、制作者・利用者・説明を聞く人に向けて整理したものです。実装の入口、コンポーネント、エディタ操作、検証手段を対応させています。詳細な列挙は [機能リファレンス](C:/HAKtokyo/My_Engin/MyEngin/docs/engine-feature-reference.md) を参照してください。
+この文書は、MyEngine が何をできるエンジンなのかを、制作者・利用者・説明を聞く人に向けて整理したものです。実装の入口、コンポーネント、エディタ操作、検証手段を対応させています。詳細な列挙は機能リファレンス（`docs/engine-feature-reference.md` として計画されたが、リポジトリには未収録）に委ねる前提で書かれているため、組込みコンポーネント・ABI・CLI の一覧は正本のソース（`src/Engine/Core/Ecs/Components.h`、`src/Shared/EngineAPI.h`、`src/Engine/Engine/App/EngineCli.cpp`）を参照してください。
 
 調査はソースコード、プロジェクト定義、シェーダ、既存仕様、テストコードの静的確認です。「実装あり」は実装と呼び出し経路を確認したという意味で、今回の実機動作試験の合格を意味しません。既存の未コミット変更も調査対象に含みます。ビルド、ゲーム起動、GPU・音声・通信試験は今回実行していません。既存文書にある性能値や過去のテスト合格数を、今回の測定結果としては扱いません。
 
@@ -40,7 +40,7 @@ Visual Studio 2022、C++ デスクトップ開発環境、Windows SDK、x64 構�
 
 Platform はウィンドウ・入力・時計・UDP・クラッシュ処理、Core は ECS・リフレクション・ジョブ・ログ、Renderer は GPU リソースと描画処理、Engine はそれらを使うゲーム機能を担当します。DLL 境界は C ABI の関数テーブルと POD 型で構成され、STL、例外、仮想関数テーブルを跨がせません。
 
-根拠: [MyEngine.sln](C:/HAKtokyo/My_Engin/MyEngin/MyEngine.sln)、[Engine.vcxproj](C:/HAKtokyo/My_Engin/MyEngin/build/Engine.vcxproj)、[外部依存一覧](C:/HAKtokyo/My_Engin/MyEngin/external/VERSIONS.md)、[EngineAPI.h](C:/HAKtokyo/My_Engin/MyEngin/src/Shared/EngineAPI.h)。
+根拠: [MyEngine.sln](../MyEngine.sln)、[Engine.vcxproj](../build/Engine.vcxproj)、[外部依存一覧](../external/VERSIONS.md)、[EngineAPI.h](../src/Shared/EngineAPI.h)。
 
 ## 3. オブジェクト・シーン・データ設計
 
@@ -66,7 +66,7 @@ LocalTransform が位置・回転・スケールを持ち、Hierarchy から Wor
 
 未登録のコンポーネントは現在の実装では JSON データを保留して再保存時に戻します。これは「意味を理解して実行する」機能ではなく、「未登録だからといって保存で消さない」機能です。型が利用可能かどうかは別途確認する必要があります。
 
-根拠: [World.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Core/Ecs/World.h)、[Components.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Core/Ecs/Components.h)、[Reflection.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Core/Ecs/Reflection.h)、[SchemaComponents.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Schema/SchemaComponents.cpp)、[SceneSerializer.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Scene/SceneSerializer.cpp)。
+根拠: [World.h](../src/Engine/Core/Ecs/World.h)、[Components.h](../src/Engine/Core/Ecs/Components.h)、[Reflection.h](../src/Engine/Core/Ecs/Reflection.h)、[SchemaComponents.cpp](../src/Engine/Engine/Schema/SchemaComponents.cpp)、[SceneSerializer.cpp](../src/Engine/Engine/Scene/SceneSerializer.cpp)。
 
 ## 4. ゲーム更新とスクリプト
 
@@ -93,7 +93,7 @@ LocalTransform が位置・回転・スケールを持ち、Hierarchy から Wor
 - 非ハッシュの描画コンポーネントは汎用 API で書けますが、同 API の読み取りは制限されています。描画側の値が sim の判断に流入するのを防ぐ設計です。
 - ホットリロードの対象はゲーム DLL です。エンジン本体の変更には再ビルドが必要です。
 
-根拠: [TickRunner.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Loop/TickRunner.cpp)、[ScriptAPI.h](C:/HAKtokyo/My_Engin/MyEngin/src/Shared/ScriptAPI.h)、[EngineApiTable.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Script/EngineApiTable.cpp)、[DllReloader.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/HotReload/DllReloader.cpp)、[ManagedHost.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Script/ManagedHost.cpp)。
+根拠: [TickRunner.cpp](../src/Engine/Engine/Loop/TickRunner.cpp)、[ScriptAPI.h](../src/Shared/ScriptAPI.h)、[EngineApiTable.cpp](../src/Engine/Engine/Script/EngineApiTable.cpp)、[DllReloader.cpp](../src/Engine/Engine/HotReload/DllReloader.cpp)、[ManagedHost.cpp](../src/Engine/Engine/Script/ManagedHost.cpp)。
 
 ## 5. アセットと再利用
 
@@ -123,7 +123,7 @@ Part は武器の持ち手や車体の接続点に相当するソケットです
 
 ファイル監視からシェーダ、テクスチャ、モデル、シーン、構成アセットなどを更新します。シェーダは include 依存を追い、コンパイル失敗時は旧シェーダを維持します。リロードできることと、すべての編集中状態が無条件に移行されることは別です。
 
-根拠: [AssetDatabase.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Asset/AssetDatabase.h)、[FbxLoader.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Asset/FbxLoader.cpp)、[CookedCache.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Asset/CookedCache.h)、[Prefab.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Scene/Prefab.h)、[Parts.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Animation/Parts.h)、[ReloadHub.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/HotReload/ReloadHub.cpp)。
+根拠: [AssetDatabase.h](../src/Engine/Engine/Asset/AssetDatabase.h)、[FbxLoader.cpp](../src/Engine/Engine/Asset/FbxLoader.cpp)、[CookedCache.h](../src/Engine/Engine/Asset/CookedCache.h)、[Prefab.h](../src/Engine/Engine/Scene/Prefab.h)、[Parts.h](../src/Engine/Engine/Animation/Parts.h)、[ReloadHub.cpp](../src/Engine/Engine/HotReload/ReloadHub.cpp)。
 
 ## 6. レンダリング
 
@@ -157,7 +157,7 @@ SSAO、TAA、SSR は Deferred に依存します。TAA は履歴を利用する�
 
 距離 Fog は Linear / Exp / Exp2、高さ方向の減衰、太陽方向の散乱表現を持ちます。別に Froxel のボリュメトリック処理があり、空間を小区画に分けて光と霧を積分し、時間蓄積して合成します。Froxel 使用時はゴッドレイの重複計上を抑える処理があります。
 
-根拠: [RenderSystem.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Rendering/RenderSystem.cpp)、[RenderTypes.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Renderer/Pipeline/RenderTypes.h)、[PostProcess.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Renderer/PostFx/PostProcess.cpp)、[RtPasses.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Renderer/RayTracing/RtPasses.cpp)、[FroxelPass.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Renderer/Passes/FroxelPass.cpp)、[ADR-016](C:/HAKtokyo/My_Engin/MyEngin/docs/adr/ADR-016-restir-reflection.md)。
+根拠: [RenderSystem.cpp](../src/Engine/Engine/Rendering/RenderSystem.cpp)、[RenderTypes.h](../src/Engine/Renderer/Pipeline/RenderTypes.h)、[PostProcess.cpp](../src/Engine/Renderer/PostFx/PostProcess.cpp)、[RtPasses.cpp](../src/Engine/Renderer/RayTracing/RtPasses.cpp)、[FroxelPass.cpp](../src/Engine/Renderer/Passes/FroxelPass.cpp)、[ADR-016](../docs/adr/ADR-016-restir-reflection.md)。
 
 ## 7. 地形・アニメーション・VFX
 
@@ -179,7 +179,7 @@ ParticleEmitter には発生数・寿命・形状・速度・色・サイズな�
 
 SpriteRenderer は板状画像、TrailRenderer は移動の軌跡、TextMesh は空間内文字を描きます。Effect はこれらを束ねた演出の再生・再始動・寿命管理に利用できます。
 
-根拠: [TerrainEdit.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Asset/TerrainEdit.h)、[TerrainSystem.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Rendering/TerrainSystem.cpp)、[Animation.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Animation/Animation.h)、[AnimatorController.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Animation/AnimatorController.h)、[ParticleSystem.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Particles/ParticleSystem.cpp)、[VfxRenderer.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Vfx/VfxRenderer.cpp)。
+根拠: [TerrainEdit.h](../src/Engine/Engine/Asset/TerrainEdit.h)、[TerrainSystem.cpp](../src/Engine/Engine/Rendering/TerrainSystem.cpp)、[Animation.h](../src/Engine/Engine/Animation/Animation.h)、[AnimatorController.h](../src/Engine/Engine/Animation/AnimatorController.h)、[ParticleSystem.cpp](../src/Engine/Engine/Particles/ParticleSystem.cpp)、[VfxRenderer.cpp](../src/Engine/Engine/Vfx/VfxRenderer.cpp)。
 
 ## 8. 物理
 
@@ -206,7 +206,7 @@ CC のジャンプ API 自体は接地条件を判断しないため、呼び出
 
 車両は PhysicsEnvironment の有無に影響されます。欠けていても期待する設定になると仮定しないでください。XPBD はロープまでで、布、ソフトボディ、塑性変形、粒子と世界の衝突、破砕、熱・流体・電気シミュレーションは実装済み機能に含めません。浮力があることは流体ソルバの存在を意味しません。
 
-根拠: [PhysicsSystem.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Physics/Rigid/PhysicsSystem.h)、[PhysicsSystem.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Physics/Rigid/PhysicsSystem.cpp)、[PhysicsQueries.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Physics/Rigid/PhysicsQueries.cpp)、[RagdollBuilder.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Physics/Ragdoll/RagdollBuilder.cpp)、[XpbdBackend.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Physics/Xpbd/XpbdBackend.cpp)。
+根拠: [PhysicsSystem.h](../src/Engine/Engine/Physics/Rigid/PhysicsSystem.h)、[PhysicsSystem.cpp](../src/Engine/Engine/Physics/Rigid/PhysicsSystem.cpp)、[PhysicsQueries.cpp](../src/Engine/Engine/Physics/Rigid/PhysicsQueries.cpp)、[RagdollBuilder.cpp](../src/Engine/Engine/Physics/Ragdoll/RagdollBuilder.cpp)、[XpbdBackend.cpp](../src/Engine/Engine/Physics/Xpbd/XpbdBackend.cpp)。
 
 ## 9. 音声・音響伝播・敵 AI
 
@@ -226,7 +226,7 @@ AcousticAudio はこの伝播を実際の音へ接続します。経路長から
 
 AgentBrain は Patrol / Alert / Search / Chase / Return の 5 状態です。AcousticListener による聴覚と LightSeeker による光センサーを組み合わせ、AcousticNav を使って移動します。同じエンティティの移動入力をスクリプトと AI の両方が書くと、後に走る AI が優先される設計です。AgentBrain は音響ナビ専用で、段差・坂・敵同士の回避・ジャンプ地点を扱う汎用の移動は 9.4 の NavMesh が受け持ちます。同じエンティティに AgentBrain と NavMeshAgent があれば、後に走る NavMesh 側が移動入力を決めます。一般目的の Behavior Tree エディタは別マイルストーンです。
 
-根拠: [AudioSystem.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Audio/Playback/AudioSystem.h)、[SynthCore.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Audio/Synth/SynthCore.h)、[AcousticField.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Acoustic/AcousticField.h)、[AcousticAudio.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Audio/Spatial/AcousticAudio.cpp)、[AgentSystem.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Acoustic/AgentSystem.h)、[ADR-017](C:/HAKtokyo/My_Engin/MyEngin/docs/adr/ADR-017-acoustic-audio.md)。
+根拠: [AudioSystem.h](../src/Engine/Engine/Audio/Playback/AudioSystem.h)、[SynthCore.h](../src/Engine/Engine/Audio/Synth/SynthCore.h)、[AcousticField.h](../src/Engine/Engine/Acoustic/AcousticField.h)、[AcousticAudio.cpp](../src/Engine/Engine/Audio/Spatial/AcousticAudio.cpp)、[AgentSystem.h](../src/Engine/Engine/Acoustic/AgentSystem.h)、[ADR-017](../docs/adr/ADR-017-acoustic-audio.md)。
 
 ### 9.4 NavMesh (経路探索と群衆移動、M82 / M84)
 
@@ -246,7 +246,7 @@ Create → 3D Object に 4 項目 (NavMesh Surface / Obstacle / Modifier / Link)
 
 制約: 静的ジオメトリの実行時の再ベイクは未実装です (壊れる壁は Obstacle で表す)。部分経路の到着は完全な経路より 60 tick (1 秒) 遅れます。同じ目的地へ向かう Agent が渋滞したときも、前進が 60 tick 止まった Agent は目的地の近く、または到着済みの Agent に接していれば Arrived になります。Stuck は表示と通知だけで、Agent は止まらず押し続け、前進が戻れば Moving に戻ります。ABI の `NavFindRandomPoint` が返す点は中心とつながっているとは限りません。自動生成の Link は縁の真下への飛び降りと同じ高さへの飛び越えだけで、物ごとに生成を外す指定はありません。
 
-根拠: [NavSystem.h](C:/HAL/MyEngin/src/Engine/Engine/Navigation/NavSystem.h)、[NavTileCacheSupport.h](C:/HAL/MyEngin/src/Engine/Engine/Navigation/NavTileCacheSupport.h)、[ADR-023](C:/HAL/MyEngin/docs/adr/ADR-023-navmesh.md)。
+根拠: [NavSystem.h](../src/Engine/Engine/Navigation/NavSystem.h)、[NavTileCacheSupport.h](../src/Engine/Engine/Navigation/NavTileCacheSupport.h)、[ADR-023](../docs/adr/ADR-023-navmesh.md)。
 
 ### 9.5 AI の知覚 (視覚・聴覚・ダメージ・接触、M83)
 
@@ -263,7 +263,7 @@ Create → 3D Object に 4 項目 (NavMesh Surface / Obstacle / Modifier / Link)
 
 制約: 視線は目から相手の 1 点への 1 本だけで、体の一部だけ見える状態は判定しません。1 体が 1 tick に確かめる視線は近い順に 16 本までです。予測は直線です。音響の敵 (AgentBrain) は従来のセンサーのままで、知覚を使う行動はビヘイビアツリー (別マイルストーン) で組みます。
 
-根拠: [PerceptionSystem.h](C:/HAL/MyEngin/src/Engine/Engine/Perception/PerceptionSystem.h)、[ADR-024](C:/HAL/MyEngin/docs/adr/ADR-024-ai-perception.md)。
+根拠: [PerceptionSystem.h](../src/Engine/Engine/Perception/PerceptionSystem.h)、[ADR-024](../docs/adr/ADR-024-ai-perception.md)。
 
 ### 9.6 ビヘイビアツリー (BT + Blackboard、M85)
 
@@ -298,7 +298,7 @@ Create → 3D Object に 4 項目 (NavMesh Surface / Obstacle / Modifier / Link)
 
 制約: SubTree は平らに展開し (1024 ノード、入れ子 8 段まで)、部分木の根の LowerPriority は Self 扱いです。Patrol は入るたびに一番近い点から始めます。`.bt.json` にノードの位置を持つので、位置を動かしただけでも provenance の contentHash が変わります。UE の規則 (Loop・Cooldown・Simple Parallel など) は記憶に基づき、公式文書とは照合していません。完全な一覧は ADR-025 にあります。
 
-根拠: [BehaviorTreeSystem.h](C:/HAL/MyEngin/src/Engine/Engine/AI/BehaviorTreeSystem.h)、[BehaviorTreeLibrary.h](C:/HAL/MyEngin/src/Engine/Engine/AI/BehaviorTreeLibrary.h)、[ADR-025](C:/HAL/MyEngin/docs/adr/ADR-025-behavior-tree.md)。
+根拠: [BehaviorTreeSystem.h](../src/Engine/Engine/AI/BehaviorTreeSystem.h)、[BehaviorTreeLibrary.h](../src/Engine/Engine/AI/BehaviorTreeLibrary.h)、[ADR-025](../docs/adr/ADR-025-behavior-tree.md)。
 
 ## 10. 入力・ゲーム内 UI・ゲーム進行
 
@@ -319,7 +319,7 @@ hovered / pressed / clicked / focused をスクリプトより前に評価しま
 
 通常のセーブは、全エンティティ・物理の途中状態をそのまま保存するスナップショットではありません。ロードは記録・検証・ネット中には制限されます。ゲーム内ポーズと、エディタで tick 自体を止める Pause / Hold は異なる制御です。
 
-根拠: [InputActions.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Platform/InputActions.h)、[UILayout.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/UI/UILayout.cpp)、[UIInteraction.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/UI/UIInteraction.cpp)、[GameFlow.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Loop/GameFlow.h)、[SaveGame.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Scene/SaveGame.h)。
+根拠: [InputActions.h](../src/Engine/Platform/InputActions.h)、[UILayout.cpp](../src/Engine/Engine/UI/UILayout.cpp)、[UIInteraction.cpp](../src/Engine/Engine/UI/UIInteraction.cpp)、[GameFlow.h](../src/Engine/Engine/Loop/GameFlow.h)、[SaveGame.h](../src/Engine/Engine/Scene/SaveGame.h)。
 
 ## 11. エディタの機能
 
@@ -354,7 +354,7 @@ Rust サービスは JSON と 6 つの C ABI 関数でエディタに接続し�
 
 サービスがない場合は Source Control が利用不可になります。認証の初期設定と Git 自体の制約は残ります。モデルのサブアセット ID に関する配置先の制約は M74a で無くなりました。これはゲーム内ネットワーク機能とは独立です。
 
-根拠: [EditorApp.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/App/EditorApp.cpp)、[EditorApp.h](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/App/EditorApp.h)、[SearchWindow.h](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/Windows/Asset/SearchWindow.h)、[PlayModeController.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/Scene/PlayModeController.cpp)、[GitTransaction.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/SourceControl/GitTransaction.cpp)、[ADR-015](C:/HAKtokyo/My_Engin/MyEngin/docs/adr/ADR-015-in-process-rust-collab.md)。
+根拠: [EditorApp.cpp](../src/Editor/App/EditorApp.cpp)、[EditorApp.h](../src/Editor/App/EditorApp.h)、[SearchWindow.h](../src/Editor/Windows/Asset/SearchWindow.h)、[PlayModeController.cpp](../src/Editor/Scene/PlayModeController.cpp)、[GitTransaction.cpp](../src/Editor/SourceControl/GitTransaction.cpp)、[ADR-015](../docs/adr/ADR-015-in-process-rust-collab.md)。
 
 ## 12. リプレイ・タイムトラベル・クラッシュ再現
 
@@ -378,7 +378,7 @@ CrashRing は直近スナップショットと、そこからの全 tick 入力�
 
 調査時の作業ツリーでは、CrashRing 自身が要求するハッシュ間隔は既定 60 tick、スナップショット間隔は 600 tick です。入力は間引きません。ハッシュ 0 は期待値なしを意味します。通常リプレイの照合と、間引き可能なクラッシュ用チェックポイントを区別する必要があります。この箇所は既存の未コミット変更を含みます。
 
-根拠: [Replay.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Replay/Replay.h)、[WorldHasher.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Replay/WorldHasher.cpp)、[SimSnapshot.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Replay/SimSnapshot.h)、[TimeTravel.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Replay/TimeTravel.h)、[CrashRing.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Replay/CrashRing.h)、[ADR-018](C:/HAKtokyo/My_Engin/MyEngin/docs/adr/ADR-018-whatif-branches.md)。
+根拠: [Replay.h](../src/Engine/Engine/Replay/Replay.h)、[WorldHasher.cpp](../src/Engine/Engine/Replay/WorldHasher.cpp)、[SimSnapshot.h](../src/Engine/Engine/Replay/SimSnapshot.h)、[TimeTravel.h](../src/Engine/Engine/Replay/TimeTravel.h)、[CrashRing.h](../src/Engine/Engine/Replay/CrashRing.h)、[ADR-018](../docs/adr/ADR-018-whatif-branches.md)。
 
 ## 13. ネット対戦
 
@@ -395,12 +395,12 @@ P2P とは別に、GPU も窓も無いマシンで動くヘッドレスの `Serv
 - **ABI v23 の影響**: 外部プロジェクト (三校 / HAL Collector) の `GameLogic.dll` は `apiVersion` 22 のままだと拒否されるので、v23 のエンジンで開く前に再ビルドが必須です。検証用スクリプト `NetEventProbe` はデモへ自動では付きません。
 - **接続時の照合**: エンジンのビルド、`GameLogic.dll`、sim が読むアセット (`contentHash`)、プロトコルとスナップショットの版を照合し、食い違えば最初の項目名つきで拒否します。Debug と Release の混在検証だけ `--allow-game-mismatch` を使います (本番では使いません)。
 - **締め切りと予約**: 遅い入力は 3 tick (50ms) を超えると前の入力 (文字・ホイール・マウス移動は 0) で確定します。切断したレーンは 30 秒予約します。GameLift ではゲームプロパティ `myeDeadlineTicks` / `myeRejoinTimeoutTicks` で上書きできます。
-- **ホスティング**: `LocalHosting` (開発・CI) と `GameLiftHosting` (Server SDK 5.x、Anywhere で疎通)。手順は [gamelift-anywhere.md](C:/HAL/MyEngin/docs/gamelift-anywhere.md)。SDK の TLS は証明書を検証せず、通信の暗号化は M81 の対象外 (認証は player session ID の照合のみ) です。
+- **ホスティング**: `LocalHosting` (開発・CI) と `GameLiftHosting` (Server SDK 5.x、Anywhere で疎通)。手順は [gamelift-anywhere.md](../docs/gamelift-anywhere.md)。SDK の TLS は証明書を検証せず、通信の暗号化は M81 の対象外 (認証は player session ID の照合のみ) です。
 - **記録と検証**: サーバは `.rep` (v9) を逐次書き出し、異常終了しても完了済みの tick まで読めます。クラッシュバンドルの `crash.txt` は、その `.rep` を `Server.exe --replay-verify` にかける手順を示します。`Server.exe --selftest` は GameLift の偽 SDK と `.rep` の書き出しを確認します。
 
-既知の制限: UI を操作できるのはレーン 0 だけ (多レーン UI 不可)、コンピュート ABI の結果を sim に入れてはいけない、GPU パーティクルの設定は全員一致が前提、Server は cook キャッシュを使わない、`contentHash` は描画・音声専用の拡張子を除く (除外した種類の `.meta` は入らない)、Anywhere の認証トークンは約 15 分で失効する、Windows のみ。マッチメイキング、NAT 越えサービス、アカウント基盤、EC2 フリート、Linux は含めません。詳細は [ADR-022](C:/HAL/MyEngin/docs/adr/ADR-022-dedicated-server.md) と [engine_spec.md](C:/HAL/MyEngin/engine_spec.md) §11.5。
+既知の制限: UI を操作できるのはレーン 0 だけ (多レーン UI 不可)、コンピュート ABI の結果を sim に入れてはいけない、GPU パーティクルの設定は全員一致が前提、Server は cook キャッシュを使わない、`contentHash` は描画・音声専用の拡張子を除く (除外した種類の `.meta` は入らない)、Anywhere の認証トークンは約 15 分で失効する、Windows のみ。マッチメイキング、NAT 越えサービス、アカウント基盤、EC2 フリート、Linux は含めません。詳細は [ADR-022](../docs/adr/ADR-022-dedicated-server.md) と [engine_spec.md](../engine_spec.md) §11.5。
 
-根拠: [NetSession.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Net/NetSession.h)、[NetRollback.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Net/NetRollback.cpp)、[net_verify.bat](C:/HAKtokyo/My_Engin/MyEngin/tools/net_verify.bat)、[ADR-013](C:/HAKtokyo/My_Engin/MyEngin/docs/adr/ADR-013-predictive-rollback-netcode.md)、[ServerSession.h](C:/HAL/MyEngin/src/Engine/Engine/Net/ServerSession.h)、[ServerLoop.cpp](C:/HAL/MyEngin/src/Server/ServerLoop.cpp)、[server_verify.bat](C:/HAL/MyEngin/tools/server_verify.bat)。
+根拠: [NetSession.h](../src/Engine/Engine/Net/NetSession.h)、[NetRollback.cpp](../src/Engine/Engine/Net/NetRollback.cpp)、[net_verify.bat](../tools/net_verify.bat)、[ADR-013](../docs/adr/ADR-013-predictive-rollback-netcode.md)、[ServerSession.h](../src/Engine/Engine/Net/ServerSession.h)、[ServerLoop.cpp](../src/Server/ServerLoop.cpp)、[server_verify.bat](../tools/server_verify.bat)。
 
 ## 14. プロジェクト・配布・検証
 
@@ -426,13 +426,13 @@ Build Settings は、スクリプト再ビルド、クックの準備、Runtime 
 
 スクリーンショットの固定条件、WARP、内蔵フォント、画像差分の許容値、sim / cook キャッシュの切替など、原因を分けるための CLI があります。テストの存在は対象範囲の検証手段がある証拠であり、全機能の正しさを一括保証するものではありません。
 
-根拠: [Project.h](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/App/Project.h)、[BuildSettingsWindow.h](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/Windows/Project/BuildSettingsWindow.h)、[EditorMain.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Editor/App/EditorMain.cpp)、[RuntimeMain.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Runtime/RuntimeMain.cpp)、[CI](C:/HAKtokyo/My_Engin/MyEngin/.github/workflows/ci.yml)。
+根拠: [Project.h](../src/Engine/Engine/App/Project.h)、[BuildSettingsWindow.h](../src/Editor/Windows/Project/BuildSettingsWindow.h)、[EditorMain.cpp](../src/Editor/App/EditorMain.cpp)、[RuntimeMain.cpp](../src/Runtime/RuntimeMain.cpp)、[CI](../.github/workflows/ci.yml)。
 
 ## 15. 実装と既存文書の差・残る制約
 
 | 項目 | 調査時の判定 |
 |---|---|
-| ABI v16 / 110 スロットという README 記述 | 現行コードは v24 / 139 スロット (M82i)。公開関数一覧はリファレンス参照 |
+| ABI の版とスロット数 | 正本は [src/Shared/EngineAPI.h](../src/Shared/EngineAPI.h) の `MYE_API_VERSION` と [tools/check_rules.ps1](../tools/check_rules.ps1) 規則 11 の表 (2026-10-27 時点で v29 / 174 スロット)。README や過去の記述の数字は転記しない |
 | 未登録コンポーネントの保存消失 | 現行は未登録 JSON を保持する実装あり。古い未解決扱いを転記しない |
 | ハイスコアだけの読込ができない | `LoadPersist` が実装済み |
 | Skybox cubemap が未実装 | 実装済み。旧記録側の誤り |
@@ -449,7 +449,7 @@ Build Settings は、スクリプト再ビルド、クックの準備、Runtime 
 
 また、`plans` の将来案は、対応する実装・登録・呼び出しがあることを確認できない限り実装済みへ分類しません。ゲーム企画や外部プロジェクトの個別ルールもエンジン共通機能と区別します。
 
-根拠: [dogfooding.md](C:/HAKtokyo/My_Engin/MyEngin/docs/dogfooding.md)、[engine_spec.md](C:/HAKtokyo/My_Engin/MyEngin/engine_spec.md)、[EngineAPI.h](C:/HAKtokyo/My_Engin/MyEngin/src/Shared/EngineAPI.h)、[SceneSerializer.cpp](C:/HAKtokyo/My_Engin/MyEngin/src/Engine/Engine/Scene/SceneSerializer.cpp)。
+根拠: [dogfooding.md](../docs/dogfooding.md)、[engine_spec.md](../engine_spec.md)、[EngineAPI.h](../src/Shared/EngineAPI.h)、[SceneSerializer.cpp](../src/Engine/Engine/Scene/SceneSerializer.cpp)。
 
 ## 16. 説明・デモの組み立て方
 
@@ -489,3 +489,11 @@ Build Settings は、スクリプト再ビルド、クックの準備、Runtime 
 機能リファレンスには、組込みコンポーネントの宣言フィールド、C ABI の公開関数、Editor / Runtime の CLI、実装ファイル・テスト・シェーダの索引を収録します。列挙は静的な宣言・ファイルに基づくため、Inspector 公開可否、組合せ制約、動作確認の判定には本ガイドと各実装を合わせて参照してください。
 
 新機能追加時は「目的、操作入口、実装箇所、既定値と制約、検証入口」を一緒に更新します。既存仕様より実装が進んだ箇所もあるため、マイルストーン名だけで完了と判定しないことが重要です。
+
+## 18. 追補（2026-10-27）: M90〜M92 で増えたもの
+
+| 機能 | 入口と実装 |
+|---|---|
+| 描画の計測と最適化 (M90) | ビュー別の描画統計と GPU 時間 (`--render-stats-dump`、`render_bench`)、opt-in のメッシュ LOD (`.meta`、meshoptimizer、`kCookVersion` 6)、2 フェーズの GPU オクルージョンカリング (既定 on、`project_settings.json`)、カスケード別の影カリング、描画側の並列化と遠距離アニメの間引き、CPU 粒子・知覚・部位追従・IK の Job 化。根拠: [ADR-028](adr/ADR-028-sim-parallelism.md)、[ADR-029](adr/ADR-029-render-optimization.md)、[RenderSystem.cpp](../src/Engine/Engine/Rendering/RenderSystem.cpp) |
+| Compute.ForEach (M91) | `*.kernel.hlsl` 1 ソースを GPU / C++ CPU / C# CPU で実行する。HLSL サブセットの検査器 (KL001〜KL028)、State バッファ (CPU・スナップショット・ハッシュ対象) と Fx バッファ (GPU 優先・遅延読み戻し)、`COMPUTE_KERNELS` / `[ComputeKernels]` の宣言、スクリプトのインスペクターの Compute 欄、`replay_verify` の compute A/B。根拠: [ADR-030](adr/ADR-030-compute-foreach.md)、[ComputeService.h](../src/Engine/Engine/Compute/ComputeService.h)、[KernelCompat.h](../src/Shared/KernelCompat.h) |
+| エンジン配布物 (M92) | [tools/make_dist.ps1](../tools/make_dist.ps1) が Release 本体・C# ホスト・Git サービスをビルドし、exe 一式・assets・C++ スクリプト用の `src/Shared` と `build/Common.props`・ライセンスを `dist_engine/` に集めて zip 化。受け取り側は [Setup.bat](../tools/engine_dist/Setup.bat) で不足する VC++ 再頒布・.NET 8・Git を winget で導入して Editor を起動する |

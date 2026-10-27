@@ -248,7 +248,7 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 
 ### 三校ステージでの通し (コンテストの見せ方)
 
-`Editor.exe --project C:\HAL\Shadow_Sound` → Play (stage1)。
+`Editor.exe --project <Shadow_Sound のパス>` → Play (stage1)。
 
 - [ ] 敵に見つかるまで歩く → 見つかった tick から 5 秒ほど戻る → Timeline の「Input overrides」で
       `Light` を 150 tick 押す (= ビーコンを置く) → 「Branch and resume」

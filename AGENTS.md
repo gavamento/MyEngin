@@ -26,6 +26,8 @@ MyEngineはVisual Studio 2022、C++20、DirectX 11を使用するゲームエン
 | `src/Runtime/` | エディタUIを持たない実行ファイル |
 | `src/GameLogic/` | ホットリロード対象のユーザーDLL |
 | `src/Shared/` | DLL間のC ABI境界 |
+| `src/Scripting/` | .NETホスト（CoreCLR + Roslyn）のC#側。`Interop.cs` は `EngineAPI.h` の位置ベースのミラー |
+| `src/Server/` | ヘッドレス専用サーバ `Server.exe` とホスティング（ローカル / GameLift） |
 | `src/Engine/` | Platform、Core、Renderer、Engine各層 |
 | `assets/` | アセットとシェーダー |
 | `docs/` | 設計資料、ADR、検証資料 |

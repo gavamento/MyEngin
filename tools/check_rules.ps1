@@ -1064,6 +1064,40 @@ foreach ($d in $d3dGuardDirs) {
     }
 }
 
+# 規則 16 (参考警告): 文書に残った開発機の絶対パス (M93d)
+# AGENTS 第 1 章の「ユーザーへの報告では絶対パスを示す」はチャット向けの規則で、リポジトリの文書へ
+# 書くと他の環境でリンクが切れる (2026-10-27 の照合で docs に 100 箇所以上残っていた)。
+# 検査するのは開発機の実在するルートだけ (C:\HAL\、C:\HAKtokyo\、C:\Users\、file:///C:/)。
+# README の `C:\MyGames\FirstGame` のような架空の例は対象にしない。
+# 過去の事故や作業の記録として残す文書は下の許可リストに理由付きで載せる。警告扱い (exit code は変えない)
+$docPathRx = '[A-Za-z]:[\\/](?:HAL|HAKtokyo|Users)[\\/]|file:///[A-Za-z]:/'
+$docPathAllow = @(
+    @{ Path = 'docs\dogfooding.md'; Reason = 'HAL Collector を作業したときのプロジェクト置き場 (記録)' },
+    @{ Path = 'docs\adr\ADR-019-guid-subasset-keys.md'; Reason = '2 台の clone 先が違ったことが ADR の出所そのもの (記録)' }
+)
+$docRoots = @('docs', 'README.md', 'engine_spec.md', 'AGENTS.md')
+foreach ($r in $docRoots) {
+    $full = Join-Path $repo $r
+    if (-not (Test-Path $full)) { continue }
+    $docs = if ((Get-Item $full).PSIsContainer) { Get-ChildItem -Recurse -File $full | Where-Object { $_.Extension -eq '.md' } } else { @(Get-Item $full) }
+    foreach ($f in $docs) {
+        $rel = [System.IO.Path]::GetRelativePath($repo, $f.FullName)
+        $skip = $false
+        foreach ($a in $docPathAllow) {
+            if ($rel.Equals($a.Path, [System.StringComparison]::OrdinalIgnoreCase)) { $skip = $true; break }
+        }
+        if ($skip) { continue }
+        $lineNo = 0
+        foreach ($line in [System.IO.File]::ReadLines($f.FullName)) {
+            $lineNo++
+            if ($line -match $docPathRx) {
+                Write-Host "WARN  [rule 16] $($f.FullName):${lineNo}: machine-specific absolute path in a document (use a repository-relative link)"
+                $warnings++
+            }
+        }
+    }
+}
+
 Write-Host "=== result: $errors error(s), $warnings warning(s) ==="
 if ($errors -gt 0) { exit 1 }
 exit 0
