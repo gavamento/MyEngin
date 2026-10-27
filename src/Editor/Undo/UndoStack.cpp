@@ -3,7 +3,12 @@
 #include <algorithm>
 
 #include "Editor/Scene/Selection.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Animation/AnimatorController.h" // M93f: 文書エントリ (Controller)
+#include "Engine/Engine/Audio/Playback/AudioMixer.h"     // M93f: 文書エントリ (Mixer)
+#include "Engine/Engine/Audio/Playback/AudioSystem.h"
+#include "Engine/Engine/Loop/EngineLoop.h"               // EngineContext
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Scene/Scene.h"
@@ -137,6 +142,90 @@ void UndoStack::PushFileOp(const char* label, UndoFileOp op)
     redo_.clear();
 }
 
+void UndoStack::PushDocOp(const char* label, UndoDocOp op)
+{
+    if (op.kind == UndoDocOp::Kind::None || op.before == op.after) {
+        return; // 実変化なし
+    }
+    Entry e;
+    e.label = label ? label : "Edit";
+    e.docOp = std::move(op);
+    e.serial = StateSerial(); // 文書はシーン状態ではない — 新規採番するとシーンが偽 dirty になる (PushFileOp と同じ)
+    undo_.push_back(std::move(e));
+    redo_.clear();
+}
+
+bool ExecuteDocOp(EngineContext* ctx, const UndoDocOp& op, bool redo)
+{
+    if (ctx == nullptr) {
+        MYE_LOG_WARN("[undo] document op skipped: no engine context");
+        return false;
+    }
+    const json& target = redo ? op.after : op.before;
+    switch (op.kind) {
+    case UndoDocOp::Kind::Controller: {
+        ControllerAsset* asset = ctx->controllers != nullptr ? ctx->controllers->GetMutable(op.hash) : nullptr;
+        if (asset == nullptr) {
+            MYE_LOG_WARN("[undo] controller %016llx is no longer registered - edit not restored",
+                         static_cast<unsigned long long>(op.hash));
+            return false;
+        }
+        // 同一性 (hash / name / path) は保ち、中身だけ JSON から戻す。FromJson は states を必須にする
+        ControllerAsset restored = *asset;
+        if (!ControllerLibrary::FromJson(target, restored)) {
+            MYE_LOG_WARN("[undo] controller %s: stored JSON could not be read - edit not restored", asset->name.c_str());
+            return false;
+        }
+        restored.hash = asset->hash;
+        restored.name = asset->name;
+        restored.path = asset->path;
+        *asset = std::move(restored);
+        return true;
+    }
+    case UndoDocOp::Kind::Mixer: {
+        if (ctx->audio == nullptr) {
+            MYE_LOG_WARN("[undo] mixer edit skipped: no audio system");
+            return false;
+        }
+        MixerAsset m;
+        if (!MixerLibrary::FromJson(target, m)) {
+            MYE_LOG_WARN("[undo] mixer: stored JSON could not be read - edit not restored");
+            return false;
+        }
+        ctx->audio->ApplyMixer(m); // 音量もトポロジも ApplyMixer 1 本で戻る (次の Update で反映)
+        return true;
+    }
+    case UndoDocOp::Kind::None:
+        break;
+    }
+    return false;
+}
+
+void DocUndoRecorder::Observe(UndoStack& undo, const char* label, UndoDocOp::Kind kind, uint64_t docHash,
+                              const json& pre, json post, bool anyItemActive)
+{
+    if (pending && hash != docHash) {
+        pending = false; // 文書が切り替わった: 前の文書の after が無いので捨てる
+        before = json();
+    }
+    if (!pending && post != pre) {
+        pending = true;
+        hash = docHash;
+        before = pre;
+    }
+    if (!pending || anyItemActive) {
+        return; // 変化なし / 連続操作の途中 (離したフレームで 1 つに畳む)
+    }
+    pending = false;
+    UndoDocOp op;
+    op.kind = kind;
+    op.hash = docHash;
+    op.before = std::move(before);
+    op.after = std::move(post);
+    before = json();
+    undo.PushDocOp(label, std::move(op)); // 往復して元に戻っていれば PushDocOp が捨てる
+}
+
 void UndoStack::ApplyStep(Scene& scene, Selection& sel, const json& payload,
                           const std::vector<uint64_t>& destroyFirst,
                           const std::vector<uint64_t>& selIds, uint64_t primary)
@@ -166,6 +255,8 @@ void UndoStack::Undo(Scene& scene, Selection& sel)
         // ファイル操作エントリ (M51i)。失敗 (逆操作先消滅 = WARN 済み no-op) でも
         // redo 側へ送る — 死んだエントリで Ctrl+Z が詰まらないようにする
         ExecuteAssetFileOp(fileOpCtx_, e.fileOp, /*redo=*/false);
+    } else if (e.docOp.kind != UndoDocOp::Kind::None) {
+        ExecuteDocOp(fileOpCtx_, e.docOp, /*redo=*/false); // 文書エントリ (M93f)。失敗しても同じく redo 側へ
     } else {
         // op が生成したものを破棄してから before を適用 (= op 前の状態へ)
         ApplyStep(scene, sel, e.before, e.createdIds, e.selBefore, e.primaryBefore);
@@ -182,6 +273,8 @@ void UndoStack::Redo(Scene& scene, Selection& sel)
     redo_.pop_back();
     if (e.fileOp.kind != UndoFileOp::Kind::None) {
         ExecuteAssetFileOp(fileOpCtx_, e.fileOp, /*redo=*/true); // 順操作の再適用 (M51i)
+    } else if (e.docOp.kind != UndoDocOp::Kind::None) {
+        ExecuteDocOp(fileOpCtx_, e.docOp, /*redo=*/true); // 文書エントリ (M93f)
     } else {
         // op が破棄したものを破棄してから after を適用 (= op 後の状態へ)
         ApplyStep(scene, sel, e.after, e.destroyedIds, e.selAfter, e.primaryAfter);

@@ -79,3 +79,9 @@
 
 ## TerrainSelfTest.cpp — LOD 境界のクラック検査
 - 旧 MakeTestTerrain は、地形の高さが縁に沿って 1 次式になっている fixture だった。「> 0」の判定だと丸め誤差だけの 1e-5 が通り、クラック検査が何も検査しないまま緑になっていたので、1 m 以上の食い違いを要求するようにした。
+
+## Undo/UndoStack.cpp / Windows/Animation / Windows/Audio — アセット文書の Undo (M93f)
+- Animator Controller 窓・Animation Preview 窓 (イベント編集)・Audio Mixer 窓は SaveToFile で直接保存し、Undo を持たなかった (27 窓のうち Undo に触れるのは 8 窓)。UndoStack はシーン (fileId 単位の before/after) とファイル操作 (M51i) に特化していたので、3 つ目の種類として「文書エントリ」(UndoDocOp: JSON の before/after を ControllerLibrary::FromJson / AudioSystem::ApplyMixer で戻す) を足した。serial は PushFileOp と同じく現状態を継承し、シーンの dirty を汚さない。
+- 記録は窓ごとに ImGui の編集点へ BeginRecord を撒くのではなく、フレーム頭と ImGui::End 直前の JSON を比べる DocUndoRecorder にした。編集点が多い (ステート・遷移・条件・骨の駆動・ブレンドの子・イベント) ので撒くと必ず取りこぼす、という M48e の override 記録と同じ判断。連続操作 (スライダ・テキスト) は IsAnyItemActive が偽になるフレームまで畳む。
+- Audio Mixer のトポロジ編集 (追加・削除・改名・親変更・切替・既定へ戻す) は ApplyMixer が次の Update まで反映されないので、フレーム末の差分では拾えない。操作の場で before/after を積み、そのフレームの差分は取らない。戻るのはランタイムのバス構成だけで、アクティブな .mixer.json の選択は戻さない (選択は MixerLibrary の状態で、文書ではない)。
+- SoundGen 窓 (合成パラメータから .wav を書き出す) と Particle Settings 窓 (セッション限定のバックエンド切替と個人設定) は文書を編集していないので Undo の対象にしなかった。

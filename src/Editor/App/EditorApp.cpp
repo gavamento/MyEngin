@@ -1042,8 +1042,8 @@ void EditorApp::OnImGui(EngineContext& ctx)
         ctx.scene = actorEdit_ ? &actorEdit_->scene : mainScene;
     }
     animation_.OnImGui(ctx, selection_, undo_);
-    animatorController_.OnImGui(ctx, selection_);
-    animPreview_.OnImGui(ctx, selection_);
+    animatorController_.OnImGui(ctx, selection_, undo_); // M93f: 文書 Undo
+    animPreview_.OnImGui(ctx, selection_, undo_);
     search_.OnImGui(ctx, selection_);
     projectSettings_.OnImGui(ctx, settings_, shortcuts_);
     buildSettings_.OnImGui(ctx);
@@ -1061,7 +1061,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     if (assetBrowser_.TakeOpenMixerRequest()) {
         audioMixer_.FocusOnActive();
     }
-    audioMixer_.OnImGui(ctx);
+    audioMixer_.OnImGui(ctx, undo_); // M93f: 文書 Undo
     // Asset Browser で .bt.json がダブルクリックされたら BT 窓で開く (M85h)
     if (std::wstring p = assetBrowser_.TakePendingOpenBehaviorTree(); !p.empty()) {
         behaviorTree_.OpenAsset(p);

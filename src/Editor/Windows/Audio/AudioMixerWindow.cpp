@@ -99,6 +99,7 @@ std::string UniqueBusName(const MixerAsset& m, const std::string& base)
 void AudioMixerWindow::AddBus(EngineContext& ctx, int parentBus)
 {
     MixerAsset m = ctx.audio->CurrentMixer();
+    const MixerAsset before = m; // M93f: Undo の before (ApplyMixer は次の Update まで反映されない)
     if (parentBus < 0 || parentBus >= static_cast<int>(m.buses.size())) {
         parentBus = ctx.audio->RootBus();
     }
@@ -107,12 +108,14 @@ void AudioMixerWindow::AddBus(EngineContext& ctx, int parentBus)
     b.parent = m.buses[static_cast<size_t>(parentBus)].name;
     m.buses.push_back(std::move(b));
     ctx.audio->ApplyMixer(m);
+    PushTopologyOp(ctx, "Add Bus", before, m);
     status_ = "added a bus (applies on the next frame)";
 }
 
 void AudioMixerWindow::RemoveBus(EngineContext& ctx, int bus)
 {
     MixerAsset m = ctx.audio->CurrentMixer();
+    const MixerAsset before = m; // M93f: Undo の before (ApplyMixer は次の Update まで反映されない)
     if (bus < 0 || bus >= static_cast<int>(m.buses.size())) {
         return;
     }
@@ -130,12 +133,14 @@ void AudioMixerWindow::RemoveBus(EngineContext& ctx, int bus)
         }
     }
     ctx.audio->ApplyMixer(m);
+    PushTopologyOp(ctx, "Remove Bus", before, m);
     status_ = "removed bus '" + gone + "' (its children moved to '" + newParent + "')";
 }
 
 void AudioMixerWindow::RenameBus(EngineContext& ctx, int bus, const std::string& newName)
 {
     MixerAsset m = ctx.audio->CurrentMixer();
+    const MixerAsset before = m; // M93f: Undo の before (ApplyMixer は次の Update まで反映されない)
     if (bus < 0 || bus >= static_cast<int>(m.buses.size()) || newName.empty()) {
         return;
     }
@@ -155,6 +160,7 @@ void AudioMixerWindow::RenameBus(EngineContext& ctx, int bus, const std::string&
         }
     }
     ctx.audio->ApplyMixer(m);
+    PushTopologyOp(ctx, "Rename Bus", before, m);
     // .sound.json はバス名で参照しているので、改名すると参照が切れて既定バスに落ちる
     status_ = "renamed '" + old + "' to '" + newName
         + "' — .sound.json assets referencing the old name fall back to the default bus";
@@ -163,13 +169,30 @@ void AudioMixerWindow::RenameBus(EngineContext& ctx, int bus, const std::string&
 void AudioMixerWindow::ReparentBus(EngineContext& ctx, int bus, int newParent)
 {
     MixerAsset m = ctx.audio->CurrentMixer();
+    const MixerAsset before = m; // M93f: Undo の before (ApplyMixer は次の Update まで反映されない)
     if (bus < 0 || bus >= static_cast<int>(m.buses.size()) || newParent < 0
         || newParent >= static_cast<int>(m.buses.size()) || bus == newParent) {
         return;
     }
     m.buses[static_cast<size_t>(bus)].parent = m.buses[static_cast<size_t>(newParent)].name;
     ctx.audio->ApplyMixer(m); // 閉路になる組み合わせは ApplyMixer 側の検証で弾かれる
+    PushTopologyOp(ctx, "Reparent Bus", before, m);
     status_.clear();
+}
+
+void AudioMixerWindow::PushTopologyOp(EngineContext& ctx, const char* label, const MixerAsset& before,
+                                      const MixerAsset& after)
+{
+    if (undo_ == nullptr) {
+        return;
+    }
+    UndoDocOp op;
+    op.kind = UndoDocOp::Kind::Mixer;
+    op.hash = ctx.mixers != nullptr ? ctx.mixers->ActiveHash() : 0;
+    op.before = MixerLibrary::ToJson(before);
+    op.after = MixerLibrary::ToJson(after);
+    undo_->PushDocOp(label, std::move(op)); // before == after なら積まない
+    docOpPushed_ = true;
 }
 
 void AudioMixerWindow::Save(EngineContext& ctx)
@@ -345,8 +368,10 @@ void AudioMixerWindow::DrawFooter(EngineContext& ctx)
             for (const MixerEntry& e : all) {
                 if (ImGui::Selectable(e.name.c_str(), active != nullptr && active->hash == e.hash)) {
                     if (const MixerAsset* m = ctx.mixers->Get(e.hash)) {
+                        const MixerAsset before = audio.CurrentMixer();
                         ctx.mixers->SetActive(e.hash);
                         audio.ApplyMixer(*m);
+                        PushTopologyOp(ctx, "Switch Mixer", before, *m); // M93f: 戻るのはバス構成だけ (選択は戻らない)
                         status_ = "switched to '" + e.name + "'";
                     }
                 }
@@ -368,7 +393,10 @@ void AudioMixerWindow::DrawFooter(EngineContext& ctx)
     }
     ImGui::SameLine();
     if (ImGui::Button(Tr(StrId::Mixer_ReloadDefault))) {
-        audio.ApplyMixer(DefaultMixer());
+        const MixerAsset before = audio.CurrentMixer();
+        const MixerAsset defaults = DefaultMixer();
+        audio.ApplyMixer(defaults);
+        PushTopologyOp(ctx, "Reset Mixer", before, defaults); // M93f
         status_ = "reset to the built-in Master/BGM/SE/UI layout (not saved yet)";
     }
 
@@ -410,11 +438,13 @@ void AudioMixerWindow::DrawFooter(EngineContext& ctx)
     }
 }
 
-void AudioMixerWindow::OnImGui(EngineContext& ctx)
+void AudioMixerWindow::OnImGui(EngineContext& ctx, UndoStack& undo)
 {
     if (!open) {
         return;
     }
+    undo_ = &undo;          // M93f: この枠の間だけ有効 (PushTopologyOp が使う)
+    docOpPushed_ = false;
     ImGui::SetNextWindowSize(ImVec2(660.0f, 540.0f), ImGuiCond_FirstUseEver);
     // 窓名はアイコン無しの素の文字列にする — LayoutManager / DockBuilder / Window メニューが
     // この文字列で参照するため (既存パネルと同じ規約、M45b の教訓)
@@ -430,6 +460,8 @@ void AudioMixerWindow::OnImGui(EngineContext& ctx)
     // 未保存判定に使う参照を控える (M66d)
     audio_ = ctx.audio;
     mixers_ = ctx.mixers;
+    // M93f: フレーム頭のランタイムのミキサー (フェーダ等の連続編集の Undo 用)
+    const nlohmann::json docBefore = MixerLibrary::ToJson(ctx.audio->CurrentMixer());
     if (!ctx.audio->IsReady()) {
         ImGui::TextDisabled("%s", Tr(StrId::Mixer_NoDevice));
     }
@@ -451,6 +483,17 @@ void AudioMixerWindow::OnImGui(EngineContext& ctx)
     ImGui::EndChild();
 
     DrawFooter(ctx);
+    // M93f: フェーダ / M・S / 送り / リバーブの変化を 1 エントリに畳む。トポロジ編集を積んだフレームは
+    // 取らない (ApplyMixer が次の Update まで反映されず、その操作は PushTopologyOp が積んでいる)
+    if (!docOpPushed_) {
+        docUndo_.Observe(undo, "Audio Mixer", UndoDocOp::Kind::Mixer,
+                         ctx.mixers != nullptr ? ctx.mixers->ActiveHash() : 0, docBefore,
+                         MixerLibrary::ToJson(ctx.audio->CurrentMixer()), ImGui::IsAnyItemActive());
+    } else {
+        docUndo_.pending = false;
+        docUndo_.before = nlohmann::json();
+    }
+    undo_ = nullptr;
     ImGui::End();
 }
 

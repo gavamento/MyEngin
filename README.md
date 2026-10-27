@@ -213,7 +213,7 @@ Tex2D の既定名には制限があります。現在 `white` は白テクス�
 | Project Settings / Build Settings | プロジェクト設定と配布ビルド |
 | Source Control | 変更一覧、stage / commit / push、fetch / pull、ブランチ、競合への対応 |
 
-基本ショートカットは `Ctrl+S`（保存）、`Ctrl+Z` / `Ctrl+Y`（Undo / Redo）、`Ctrl+D`（複製）、`F`（選択へフォーカス）、`F2`（名前変更）、`Ctrl+C/X/V`（コピー / 切り取り / 貼り付け）、`Delete`（削除）です。操作対象や編集中の状態によって有効範囲が変わります。
+基本ショートカットは `Ctrl+S`（保存）、`Ctrl+Z` / `Ctrl+Y`（Undo / Redo）、`Ctrl+D`（複製）、`F`（選択へフォーカス）、`F2`（名前変更）、`Ctrl+C/X/V`（コピー / 切り取り / 貼り付け）、`Delete`（削除）です。操作対象や編集中の状態によって有効範囲が変わります。 Undo / Redo はシーン編集とアセットのファイル操作に加え、Animator Controller（Animation Preview のイベント編集を含む）と Audio Mixer の編集にも効きます（M93f）。Audio Mixer で戻るのはランタイムのバス構成で、アクティブな `.mixer.json` の選択は戻りません。
 
 UI は日本語・英語に対応し、メニューから切り替えられます。CLI で固定する場合は `--lang ja` / `--lang en` を指定します。
 

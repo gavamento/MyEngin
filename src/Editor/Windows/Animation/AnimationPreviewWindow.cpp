@@ -256,7 +256,7 @@ void AnimationPreviewWindow::FitCamera(const SkinnedModelLibrary& models)
     distance_ = radius / std::sin(kFovYDeg * 0.5f * kPi / 180.0f) * 1.2f;
 }
 
-void AnimationPreviewWindow::OnImGui(EngineContext& ctx, Selection& selection)
+void AnimationPreviewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo)
 {
     if (!open) {
         return;
@@ -308,6 +308,8 @@ void AnimationPreviewWindow::OnImGui(EngineContext& ctx, Selection& selection)
     // イベントを書き換えるので可変で引く (AnimatorControllerWindow と同じく、保存までは共有のアセットを直接編集する)
     ControllerAsset* ctrl =
         (comp != nullptr && ctx.controllers != nullptr) ? ctx.controllers->GetMutable(comp->controller.value) : nullptr;
+    // M93f: フレーム頭の文書 (イベント編集の Undo 用。末尾で比べる)
+    const nlohmann::json docBefore = ctrl != nullptr ? ControllerLibrary::ToJson(*ctrl) : nlohmann::json();
     int32_t mode = static_cast<int32_t>(mode_);
     ImGui::RadioButton(Tr(StrId::AnimPrev_ModeClip), &mode, static_cast<int32_t>(Mode::Clip));
     if (ctrl != nullptr) {
@@ -476,6 +478,11 @@ void AnimationPreviewWindow::OnImGui(EngineContext& ctx, Selection& selection)
     } else {
         width_ = 0;
         height_ = 0;
+    }
+    if (ctrl != nullptr) {
+        // M93f: タイムラインでのイベントの追加 / 移動 / 削除 / 種類・名前の変更を文書エントリとして積む
+        docUndo_.Observe(undo, "Animation Events", UndoDocOp::Kind::Controller, ctrl->hash, docBefore,
+                         ControllerLibrary::ToJson(*ctrl), ImGui::IsAnyItemActive());
     }
     ImGui::End();
 }
