@@ -301,14 +301,14 @@ bool RunTagSelfTest()
               "RtTagRules: missing file = no rules");
         // ---- オクルージョン設定 (rendering.occlusionCulling) ----
         {
-            const std::wstring root = dir.wstring();
-            check(LoadOcclusionCullingSetting(root), "OcclusionSetting: key missing = true");
+            const std::wstring projectRoot = dir.wstring();
+            check(LoadOcclusionCullingSetting(projectRoot), "OcclusionSetting: key missing = true");
             {
                 std::ofstream f(dir / L"project_settings.json");
                 f << R"({"tags":["A"],"rayTracingTags":{"sceneOn":[1]},"rendering":{"other":7}})";
             }
-            check(SaveOcclusionCullingSetting(root, false), "OcclusionSetting: save false");
-            check(!LoadOcclusionCullingSetting(root), "OcclusionSetting: false round trip");
+            check(SaveOcclusionCullingSetting(projectRoot, false), "OcclusionSetting: save false");
+            check(!LoadOcclusionCullingSetting(projectRoot), "OcclusionSetting: false round trip");
             {
                 std::ifstream f(dir / L"project_settings.json");
                 nlohmann::json j;
@@ -316,15 +316,15 @@ bool RunTagSelfTest()
                 check(j.contains("tags") && j.contains("rayTracingTags") && j["rendering"]["other"] == 7,
                       "OcclusionSetting: other keys are preserved");
             }
-            check(SaveOcclusionCullingSetting(root, true) && LoadOcclusionCullingSetting(root),
+            check(SaveOcclusionCullingSetting(projectRoot, true) && LoadOcclusionCullingSetting(projectRoot),
                   "OcclusionSetting: true round trip");
             const std::string broken = "{ not json";
             {
                 std::ofstream f(dir / L"project_settings.json", std::ios::binary);
                 f << broken;
             }
-            check(LoadOcclusionCullingSetting(root), "OcclusionSetting: corrupt file reads as true");
-            check(!SaveOcclusionCullingSetting(root, false), "OcclusionSetting: corrupt file is not overwritten");
+            check(LoadOcclusionCullingSetting(projectRoot), "OcclusionSetting: corrupt file reads as true");
+            check(!SaveOcclusionCullingSetting(projectRoot, false), "OcclusionSetting: corrupt file is not overwritten");
             std::ifstream f(dir / L"project_settings.json", std::ios::binary);
             const std::string after((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
             check(after == broken, "OcclusionSetting: corrupt file content untouched");
