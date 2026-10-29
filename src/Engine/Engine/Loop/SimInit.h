@@ -21,6 +21,7 @@ struct ScriptAudioEvent;
 struct EffectSpawnRequest;
 struct DebugLineCmd;
 struct NetRuntimeInfo;
+struct ScriptMessage; // v30 (M93e): SimSharedServices::messageQueue
 class Scene;
 class ScriptHost;
 class ManagedHost;
@@ -101,6 +102,7 @@ struct SimSharedServices {
     compute::ComputeService* compute = nullptr; // v29: Compute.ForEach の引き先。null = 該当スロットが 0 を返す
     std::wstring kernelDir;                      // v29: *.kernel.hlsl の置き場 (<assetsRoot>\shaders\kernels)。空 = ソースの走査をしない
     NavSystem* nav = nullptr; // v24: NavFindPath 等のクエリの引き先 (v26 の NavWarp / NavSetPath は書き換える)。null = 該当スロットが 0 を返す
+    std::vector<ScriptMessage>* messageQueue = nullptr; // v30 (M93e): SendScriptMessage の積み先。null = スロットが 0 を返す
 };
 void WireScriptServices(ScriptHost& scriptHost, ManagedHost& managedHost,
                         const SimSharedServices& services, bool developmentRun);

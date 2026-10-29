@@ -39,7 +39,12 @@ bool RefAlive(World& world, EntityID e)
 
 float Clamp01(float t)
 {
-    return (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
+    // ★NaN は全ての比較が false なので `t < 0 ? 0 : (t > 1 ? 1 : t)` をすり抜けて NaN のまま出る
+    //   (docs/rev の見落としパターン G)。否定形で書くと NaN は 0 へ落ちる。有限値の結果は従来と同じ
+    if (!(t >= 0.0f)) {
+        return 0.0f;
+    }
+    return (t > 1.0f) ? 1.0f : t;
 }
 
 // 偶数丸め (Unity の Mathf.Round = System.Math.Round の既定)。floor と減算と fmod だけ = 丸めモードに依らない

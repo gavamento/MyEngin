@@ -2,7 +2,7 @@
 
 - 対象ファイル: エンジン全域（Core, ECS, Net, Replay, Asset, Renderer, Physics, Scripting, Editor, Audio, Shaders）
 - 最終更新: 2026-09-28
-- 格納場所: `C:\HAL\MyEngin\docs\rev\oversights.md`
+- 格納場所: `docs/rev/oversights.md`
 
 ---
 
@@ -11,10 +11,10 @@
 ### [P0] `World::SnapshotRead` における入力検証欠如による任意のヒープ境界外アクセス・クラッシュ
 
 #### 対象コードパスと行番号
-- [`C:/HAL/MyEngin/src/Engine/Core/Ecs/World.cpp:670-689`](file:///C:/HAL/MyEngin/src/Engine/Core/Ecs/World.cpp#L670-L689)
-- [`C:/HAL/MyEngin/src/Engine/Core/Ecs/World.cpp:716-722`](file:///C:/HAL/MyEngin/src/Engine/Core/Ecs/World.cpp#L716-L722)
-- [`C:/HAL/MyEngin/src/Engine/Core/Ecs/Archetype.cpp:22-24`](file:///C:/HAL/MyEngin/src/Engine/Core/Ecs/Archetype.cpp#L22-L24)
-- [`C:/HAL/MyEngin/src/Engine/Core/Ecs/ComponentRegistry.h:65`](file:///C:/HAL/MyEngin/src/Engine/Core/Ecs/ComponentRegistry.h#L65)
+- [`src/Engine/Core/Ecs/World.cpp:670-689`](../../src/Engine/Core/Ecs/World.cpp#L670-L689)
+- [`src/Engine/Core/Ecs/World.cpp:716-722`](../../src/Engine/Core/Ecs/World.cpp#L716-L722)
+- [`src/Engine/Core/Ecs/Archetype.cpp:22-24`](../../src/Engine/Core/Ecs/Archetype.cpp#L22-L24)
+- [`src/Engine/Core/Ecs/ComponentRegistry.h:65`](../../src/Engine/Core/Ecs/ComponentRegistry.h#L65)
 
 #### 脆弱性・不整合のメカニズム
 1. **未検査の `ComponentTypeId` による `ComponentRegistry` 境界外読み出し**:
@@ -74,30 +74,30 @@
 
 ### 見落としパターン E: エディタ操作（UI状態機械）とデータライフサイクルの非同期・割り込み
 - **発見された不具合**:
-  1. PlayMode 中にシーンを開く/新規作成するとスナップショットが残留し、Play 停止時に新シーンが旧シーンで上書き破壊される（[P0-1](file:///C:/HAL/MyEngin/src/Editor/App/EditorApp.cpp#L1893-L1896)）。
-  2. ギズモドラッグ中にエンティティ破棄や選択変更が起きると Undo トランザクションが孤立し、異種エンティティ間のスナップショット合成（キメラ化）が発生する（[P0-2](file:///C:/HAL/MyEngin/src/Editor/Windows/Scene/SceneViewWindow.cpp#L1033-L1081)）。
-  3. 部分更新（`ApplyPartial`）によるエンティティ再生成時、ペイロード外の第三者エンティティが持つ `EntityRef`（EntityID）が再解決されずダングリング化する（[P1-1](file:///C:/HAL/MyEngin/src/Engine/Engine/Scene/SceneSerializer.cpp#L720-L765)）。
+  1. PlayMode 中にシーンを開く/新規作成するとスナップショットが残留し、Play 停止時に新シーンが旧シーンで上書き破壊される（[P0-1](../../src/Editor/App/EditorApp.cpp#L1893-L1896)）。
+  2. ギズモドラッグ中にエンティティ破棄や選択変更が起きると Undo トランザクションが孤立し、異種エンティティ間のスナップショット合成（キメラ化）が発生する（[P0-2](../../src/Editor/Windows/Scene/SceneViewWindow.cpp#L1033-L1081)）。
+  3. 部分更新（`ApplyPartial`）によるエンティティ再生成時、ペイロード外の第三者エンティティが持つ `EntityRef`（EntityID）が再解決されずダングリング化する（[P1-1](../../src/Engine/Engine/Scene/SceneSerializer.cpp#L720-L765)）。
 - **見落としの根本原因**:
   - 過去のレビューは「ヘッドレス・直列実行」を前提とする C++ 単体テスト（SelfTest）やリプレイ検証（`replay_verify.bat`）に過度に依存していた。
   - 即時モード GUI（ImGui）における「フレームを跨ぐドラッグ」「フォーカス喪失」「ショートカットキー割り込み」「部分的な Undo/Redo 再生成」といった**ユーザーの非同期・不規則なUI操作とデータライフサイクルが交差するシナリオ**を検証スコープから完全に除外していた。
 
 ### 見落としパターン F: 外部非同期 API（XAudio2）の量子（Quantum）モデルとメモリ解放の競合
 - **発見された不具合**:
-  - クリップ再登録・ホットリロード時に `FlushSourceBuffers` 直後に PCM バッファを解放し、XAudio2 オーディオスレッドが解放済みメモリを読み取って UAF クラッシュを引き起こす（[P0-3](file:///C:/HAL/MyEngin/src/Engine/Engine/Audio/Playback/AudioSystem.cpp#L907-L910)）。
+  - クリップ再登録・ホットリロード時に `FlushSourceBuffers` 直後に PCM バッファを解放し、XAudio2 オーディオスレッドが解放済みメモリを読み取って UAF クラッシュを引き起こす（[P0-3](../../src/Engine/Engine/Audio/Playback/AudioSystem.cpp#L907-L910)）。
 - **見落としの根本原因**:
   - API 名の「`FlushSourceBuffers`（フラッシュ完了）」という単語から、「バッファが完全に手放された」と直感的に誤認した。XAudio2 が「約10msの処理量子単位」で非同期に動いており、現在処理中のバッファはクォンタム終了まで解放されないという**低レベル非同期オーディオランタイムの契約**を意識していなかった。
 
 ### 見落としパターン G: IEEE 754 NaN と C++ 比較演算子の「全比較 false」によるガードすり抜け
 - **発見された不具合**:
-  - ModalSynth において縮退オブジェクトによるゼロ除算で NaN が混入した際、`if (underRoot <= 0.0f)` などの全ガード節が false となり、NaN がそのまま PCM 生成へ流れて `std::bad_alloc` や UB キャストを引き起こす（[P0-4](file:///C:/HAL/MyEngin/src/Engine/Engine/Audio/Synth/ModalSynth.cpp#L52-L174)）。
-  - 自動露出ヒストグラム（HLSL）で NaN 輝度が入り、`groupshared uint sBins[256]` に対しアドレス `4294967295` への LDS 境界外書き込み・TDR を引き起こす（[P0-7](file:///C:/HAL/MyEngin/assets/shaders/postfx_hist.cs.hlsl#L18-L37)）。
+  - ModalSynth において縮退オブジェクトによるゼロ除算で NaN が混入した際、`if (underRoot <= 0.0f)` などの全ガード節が false となり、NaN がそのまま PCM 生成へ流れて `std::bad_alloc` や UB キャストを引き起こす（[P0-4](../../src/Engine/Engine/Audio/Synth/ModalSynth.cpp#L52-L174)）。
+  - 自動露出ヒストグラム（HLSL）で NaN 輝度が入り、`groupshared uint sBins[256]` に対しアドレス `4294967295` への LDS 境界外書き込み・TDR を引き起こす（[P0-7](../../assets/shaders/postfx_hist.cs.hlsl#L18-L37)）。
 - **見落としの根本原因**:
   - ガード節を書く際に「正常な実数」のみを無意識に仮定していた。IEEE 754 において「NaN に対する大小・等値比較はすべて false を返す」という言語仕様の罠を考慮せず、`!std::isfinite()` や `isfinite()` による明示的な有限性検証を行っていなかった。
 
 ### 見落としパターン H: 静的検証ツール通過による「意味論的検証」の油断
 - **発見された不具合**:
-  - `Interop.cs` と `MyeEngineApi` のスロット一致静的検査（`check_rules.ps1` 規則 11）が通過していることに満足し、スロット内部でのバッファ境界検証欠如（FailFast 即死）や NaN バリデーション欠如を見落とした（[P0-2](file:///C:/HAL/MyEngin/src/Scripting/ScriptRuntime.cs#L348-L392), [P1-3](file:///C:/HAL/MyEngin/src/Engine/Engine/Script/EngineApiTable.cpp#L127-L281)）。
-  - スクリプト削除時の `managedIndex` ゾンビ化（[P0-1](file:///C:/HAL/MyEngin/src/Engine/Engine/Script/ManagedHost.cpp#L191-L251)）。
+  - `Interop.cs` と `MyeEngineApi` のスロット一致静的検査（`check_rules.ps1` 規則 11）が通過していることに満足し、スロット内部でのバッファ境界検証欠如（FailFast 即死）や NaN バリデーション欠如を見落とした（[P0-2](../../src/Scripting/ScriptRuntime.cs#L348-L392), [P1-3](../../src/Engine/Engine/Script/EngineApiTable.cpp#L127-L281)）。
+  - スクリプト削除時の `managedIndex` ゾンビ化（[P0-1](../../src/Engine/Engine/Script/ManagedHost.cpp#L191-L251)）。
 - **見落としの根本原因**:
   - CI の機械的チェックが「エラー 0」を返していることで心理的安全性を得てしまい、「関数の境界で渡されるポインタ・データの中身が本当に安全か」という**セマンティック層の防御的プログラミング監査**を省略してしまっていた。
 
@@ -107,46 +107,46 @@
 
 ### 見落としパターン I: OS / プラットフォーム固有仕様（POSIX互換錯覚・高DPI・RawInput）の過小評価
 - **発見された不具合**:
-  1. Windows における `std::filesystem::rename` が既存ファイルを上書きできずエラーになる仕様（[P1-1](file:///C:/HAL/MyEngin/src/Engine/Platform/PathUtil.cpp#L133-L138)）。
-  2. Per-Monitor V2 DPI 環境下で `AdjustWindowRect` を誤用し、クライアント矩形とバックバッファが不整合を起こす（[P1-5](file:///C:/HAL/MyEngin/src/Engine/Platform/Win32Window.cpp#L52-L55)）。
-  3. RDP やタブレットの RawInput（`MOUSE_MOVE_ABSOLUTE`）の 0..65535 正規化座標をピクセル差分と誤認してカメラが 34 倍暴走・カーソルロック振動（[P1-3](file:///C:/HAL/MyEngin/src/Engine/Platform/Input.cpp#L56-L70)）。
+  1. Windows における `std::filesystem::rename` が既存ファイルを上書きできずエラーになる仕様（[P1-1](../../src/Engine/Platform/PathUtil.cpp#L133-L138)）。
+  2. Per-Monitor V2 DPI 環境下で `AdjustWindowRect` を誤用し、クライアント矩形とバックバッファが不整合を起こす（[P1-5](../../src/Engine/Platform/Win32Window.cpp#L52-L55)）。
+  3. RDP やタブレットの RawInput（`MOUSE_MOVE_ABSOLUTE`）の 0..65535 正規化座標をピクセル差分と誤認してカメラが 34 倍暴走・カーソルロック振動（[P1-3](../../src/Engine/Platform/Input.cpp#L56-L70)）。
 - **見落としの根本原因**:
   - レビューの焦点が ECS、レンダラー、物理などの高度なアルゴリズム層に偏り、OS ラッパー層を「自明な薄いコード」と過小評価していた。
   - C++ 標準ライブラリ（`std::filesystem`）の関数名から POSIX 的なアトミック置換を期待してしまい、Windows プラットフォーム特有の実装差分（`MoveFileExW` の挙動）を検証していなかった。
 
 ### 見落としパターン J: クラッシュハンドラ内での「ローダロック非同期安全」軽視
 - **発見された不具合**:
-  1. スタック枯渇回避のためにハンドラ内で `CreateThread` を呼び、ローダロック取得デッドロックで 20 秒間完全ハングする（[P0-1](file:///C:/HAL/MyEngin/src/Engine/Platform/CrashHandler.cpp#L319)）。
-  2. マルチスレッドクラッシュ時に後着スレッドが即座に `TerminateProcess` を呼び、先着スレッドのダンプ出力を切断・破壊する（[P0-2](file:///C:/HAL/MyEngin/src/Engine/Platform/CrashHandler.cpp#L460)）。
+  1. スタック枯渇回避のためにハンドラ内で `CreateThread` を呼び、ローダロック取得デッドロックで 20 秒間完全ハングする（[P0-1](../../src/Engine/Platform/CrashHandler.cpp#L319)）。
+  2. マルチスレッドクラッシュ時に後着スレッドが即座に `TerminateProcess` を呼び、先着スレッドのダンプ出力を切断・破壊する（[P0-2](../../src/Engine/Platform/CrashHandler.cpp#L460)）。
 - **見落としの根本原因**:
   - クラッシュハンドラは正常系テストでは動作せず、単一障害のテストケースしか通していなかった。
   - プロセスが致命的障害に陥っている状況で Windows の `CreateThread` が全 DLL の `DllMain(DLL_THREAD_ATTACH)` を同期実行し、ローダロック（`LdrpLoaderLock`）を奪合するという**OS 低レベルの非同期シグナル安全性（Async-Signal-Safety）**の制約を意識していなかった。
 
 ### 見落としパターン K: 物理幾何における「教科書的アルゴリズムの境界値」と「直感の罠」
 - **発見された不具合**:
-  1. Sutherland-Hodgman 多角形クリッピングの境界値（$d=0$）で同一頂点が二重登録され、接触マニフォールドが重複点で浪費される（[P1-4](file:///C:/HAL/MyEngin/src/Engine/Engine/Physics/Collider/ConvexCollision.cpp#L367-L379)）。
-  2. 接触マニフォールド削減を「深度ソート降順」のみで行った結果、わずかな傾きで支持面が 1 次元の線分に縮退し、箱が直交軸まわりに転倒・不安定化する（[P2-1](file:///C:/HAL/MyEngin/src/Engine/Engine/Physics/Collider/ConvexCollision.cpp#L412-L424)）。
-  3. 三角形重心とボックス中心の内積で接触法線の向きを決めていたため、ボックスが床をわずかに超えて貫通した瞬間に法線が 180 度反転し、床の内側へ吸い込まれる（[P1-1](file:///C:/HAL/MyEngin/src/Engine/Engine/Physics/Rigid/Shapes.cpp#L1435-L1444)）。
+  1. Sutherland-Hodgman 多角形クリッピングの境界値（$d=0$）で同一頂点が二重登録され、接触マニフォールドが重複点で浪費される（[P1-4](../../src/Engine/Engine/Physics/Collider/ConvexCollision.cpp#L367-L379)）。
+  2. 接触マニフォールド削減を「深度ソート降順」のみで行った結果、わずかな傾きで支持面が 1 次元の線分に縮退し、箱が直交軸まわりに転倒・不安定化する（[P2-1](../../src/Engine/Engine/Physics/Collider/ConvexCollision.cpp#L412-L424)）。
+  3. 三角形重心とボックス中心の内積で接触法線の向きを決めていたため、ボックスが床をわずかに超えて貫通した瞬間に法線が 180 度反転し、床の内側へ吸い込まれる（[P1-1](../../src/Engine/Engine/Physics/Rigid/Shapes.cpp#L1435-L1444)）。
 - **見落としの根本原因**:
   - 教科書通りのアルゴリズム（クリッピング、深度優先選択）を盲信し、「接触力学では最大面積の支持多角形（Support Polygon）の維持が最優先である」という物理エンジンの本質的要求と照合していなかった。
   - 正常系の浅い貫通テストケースばかりで検証し、深い貫通・境界平面上という動的極限条件での挙動トレースを怠っていた。
 
 ### 見落としパターン L: 「安全側の包含（外接球）」が引き起こす逆転の早期ガード・すり抜け
 - **発見された不具合**:
-  - CCD（連続衝突判定）において、安全側として外接球半径 $R$ を採用した結果、細長い剛体が障害物の手前 0.5m にある時点で「既に接触している」と誤判定され、CCD が除外ガードでスキップされて壁をすり抜ける（[P1-3](file:///C:/HAL/MyEngin/src/Engine/Engine/Physics/Rigid/PhysicsSystem.cpp#L1171-L1172)）。
+  - CCD（連続衝突判定）において、安全側として外接球半径 $R$ を採用した結果、細長い剛体が障害物の手前 0.5m にある時点で「既に接触している」と誤判定され、CCD が除外ガードでスキップされて壁をすり抜ける（[P1-3](../../src/Engine/Engine/Physics/Rigid/PhysicsSystem.cpp#L1171-L1172)）。
 - **見落としの根本原因**:
   - 「外接球で包含すれば衝突を取りこぼさないから安全側である」という直感に頼り、「包含が大きすぎると、移動前接触の除外チェックを誤発火させて処理そのものをバイパスさせる」という**ガード条件との相互作用の逆転現象**を見落としていた。
 
 ### 見落としパターン M: 手書き SoA / 特殊パイプラインにおける「汎用防護網の孤立」
 - **発見された不具合**:
-  - CPU パーティクルの SoA 実装で `SimSnapshot` に手書きシリアライズを行い、構造体の未初期化パディングゴミ（デシンク原因）や生存数 `alive` を超えた死骸配列をまるごと保存して肥大化させた（[P1-3](file:///C:/HAL/MyEngin/src/Engine/Engine/Replay/SimSnapshot.cpp#L195), [P1-4](file:///C:/HAL/MyEngin/src/Engine/Engine/Replay/SimSnapshot.cpp#L196-L208)）。
-  - `TrailStore` を「描画専用（`kComponentNoHash`）」と分類したことで Replay 監査から除外し、巻き戻し時の `uint64_t` アンダーフローによる全点消滅・巨大ポリゴンアーティファクトを見落とした（[P0-2](file:///C:/HAL/MyEngin/src/Engine/Engine/Vfx/VfxRenderer.cpp#L97-L100)）。
+  - CPU パーティクルの SoA 実装で `SimSnapshot` に手書きシリアライズを行い、構造体の未初期化パディングゴミ（デシンク原因）や生存数 `alive` を超えた死骸配列をまるごと保存して肥大化させた（[P1-3](../../src/Engine/Engine/Replay/SimSnapshot.cpp#L195), [P1-4](../../src/Engine/Engine/Replay/SimSnapshot.cpp#L196-L208)）。
+  - `TrailStore` を「描画専用（`kComponentNoHash`）」と分類したことで Replay 監査から除外し、巻き戻し時の `uint64_t` アンダーフローによる全点消滅・巨大ポリゴンアーティファクトを見落とした（[P0-2](../../src/Engine/Engine/Vfx/VfxRenderer.cpp#L97-L100)）。
 - **見落としの根本原因**:
   - ECS の自動リフレクションやハッシュ検証システムがカバーしている領域の外側に、性能理由で手書きされた特殊モジュールが存在する場合、それらのデータ整合性・決定性検証がシステム全体から孤立し、レビューの死角になっていた。
 
 ### 見落としパターン N: 権威あるコード（公式バグ修正等）移植時の前提条件未検証
 - **発見された不具合**:
-  - Unity 公式バグ修正（case 1345471）を移植した `UILayoutGroup::ArrangeGrid` において、`cellsPerMainAxis == 1`（1列グリッド）のときに `cellsPerMainAxis - 1.0f` でゼロ除算が発生し全子要素の座標が負の彼方へ吹き飛ぶ（[P1-3](file:///C:/HAL/MyEngin/src/Engine/Engine/UI/UILayoutGroup.cpp#L446-L455)）。
+  - Unity 公式バグ修正（case 1345471）を移植した `UILayoutGroup::ArrangeGrid` において、`cellsPerMainAxis == 1`（1列グリッド）のときに `cellsPerMainAxis - 1.0f` でゼロ除算が発生し全子要素の座標が負の彼方へ吹き飛ぶ（[P1-3](../../src/Engine/Engine/UI/UILayoutGroup.cpp#L446-L455)）。
 - **見落としの根本原因**:
   - 「Unity の公式コードだから正しい」という権威バイアス（先入観）が働き、1列や1行という最も基本的な境界値（$n=1$）に対する分母ゼロチェックの検証を省略してしまった。
 
@@ -158,19 +158,19 @@
 
 ### 見落としパターン O: テンポラルフィルタ（TAA）における「NaN 感染爆発（Temporal Explosions）」の盲点
 - **発見された不具合**:
-  - `postfx_taa.hlsl` において、3x3 近傍の色の箱（`nmin`, `nmax`）の計算に NaN ガードがなく、入力 HDR シーンに 1 画素でも NaN が混入した場合、`clamp` と `lerp` を経て次フレームの `gTaaHist` に書き込まれ、再投影サンプリングによって画面全体へ無限に拡散・黒画面/白画面化する（[P0-1](file:///C:/HAL/MyEngin/assets/shaders/postfx_taa.hlsl#L57-L78)）。
+  - `postfx_taa.hlsl` において、3x3 近傍の色の箱（`nmin`, `nmax`）の計算に NaN ガードがなく、入力 HDR シーンに 1 画素でも NaN が混入した場合、`clamp` と `lerp` を経て次フレームの `gTaaHist` に書き込まれ、再投影サンプリングによって画面全体へ無限に拡散・黒画面/白画面化する（[P0-1](../../assets/shaders/postfx_taa.hlsl#L57-L78)）。
 - **見落としの根本原因**:
   - TAA のカラークランピング（Neighborhood Clamping）が「ゴースト（前フレームの残像）を抑えるための安全機構」として機能していることに満足し、「IEEE 754 の min/max 比較において NaN が入ると比較結果が破壊され、クランプ自身が NaN 拡散の媒介になる」というテンポラルアルゴリズム特有の感染リスクを検証していなかった。
 
 ### 見落としパターン P: 幾何射影・シャドウスプリットにおける「対数空間（Log Space）ゼロ割れ」
 - **発見された不具合**:
-  - `FrustumCull.h` の `ComputeCascadeSplits` において、`nearZ <= 0` のときに `std::pow(farZ / nearZ, p)` がゼロ除算・負数累乗により NaN を返し、`cascadeSplits` が全滅してディレクショナルシャドウが全消滅する（[P0-2](file:///C:/HAL/MyEngin/src/Engine/Renderer/Pipeline/FrustumCull.h#L14-L22)）。
+  - `FrustumCull.h` の `ComputeCascadeSplits` において、`nearZ <= 0` のときに `std::pow(farZ / nearZ, p)` がゼロ除算・負数累乗により NaN を返し、`cascadeSplits` が全滅してディレクショナルシャドウが全消滅する（[P0-2](../../src/Engine/Renderer/Pipeline/FrustumCull.h#L14-L22)）。
 - **見落としの根本原因**:
   - 正常な透視投影（$nearZ = 0.1, farZ = 1000$）の範囲内でのみユニットテストが書かれており、カメラの nearClip が 0 や負値に設定された極限条件（未設定・エディタでの不正入力）での対数補間式（Practical Split）の特異点チェックが抜けていた。
 
 ### 見落としパターン Q: ポストプロセスリソース管理における「ビュー時間状態と解像度キーの結合」
 - **発見された不具合**:
-  - `PostProcess::Acquire` において、解像度キー（`w,h`）を元にレンダーターゲットを管理しているため、エディタウィンドウをドラッグして連続リサイズした際、毎フレーム大量の VRAM 破棄・再生成ストールが発生するだけでなく、自動露出バッファ（`exposureBuf`）の過去履歴が消失して激しい明滅（露出フリッカー）を引き起こす（[P1-2](file:///C:/HAL/MyEngin/src/Engine/Renderer/PostFx/PostProcess.cpp#L240-L274)）。
+  - `PostProcess::Acquire` において、解像度キー（`w,h`）を元にレンダーターゲットを管理しているため、エディタウィンドウをドラッグして連続リサイズした際、毎フレーム大量の VRAM 破棄・再生成ストールが発生するだけでなく、自動露出バッファ（`exposureBuf`）の過去履歴が消失して激しい明滅（露出フリッカー）を引き起こす（[P1-2](../../src/Engine/Renderer/PostFx/PostProcess.cpp#L240-L274)）。
 - **見落としの根本原因**:
   - 「ターゲットテクスチャのサイズ適合」という描画リソースの都合と、「自動露出の明暗適応」というビュー（カメラ）の時間的シミュレーション状態を同一のキャッシュ構造体（`Target`）に混在させ、所有権とライフサイクルの分離を怠っていた。
 
@@ -249,4 +249,69 @@
    - `ReloadHub` の監視拡張子への `.cs` 追加
    - `EngineApiTable.cpp` の C ABI 受信境界での `std::isfinite` ガード
 
+---
 
+## 8. 対応状況の台帳（2026-10-27、M93c。以後の正本）
+
+§7 の修正要件を現コードと照合した結果。判定の意味: **対応済** = コードで確認、**対応済（M93c）** = 今回直した、**誤検知** = `falsification_report.md` の反証どおり、**未対応** = コードは当時のまま（理由を書く）、**未確認** = 今回の照合で確かめ切れなかった、**設計判断** = 直さないことを決めている。
+`review_verification.md` と `falsification_report.md` は 2026-09-28 時点の記録として残し、現状はこの表で更新する。行番号は 2026-10-27 の master のもの。
+
+| 分類 | 指摘 | 判定 | 根拠・備考 |
+|---|---|---|---|
+| ECS | `World::SnapshotRead` の types / sizes / 列長 / archIndex / row / freeIndices / aliveCount 検証 | 対応済 | `src/Engine/Core/Ecs/World.cpp:677-693, 736-742` とその後続の freeIndices・aliveCount 検算 |
+| ECS | `CollectSubtree` の循環・多重破棄ガード | 未確認 | `World.cpp:487` に訪問済みの印は無い。親子は fileId 整合で循環を作らない前提のまま |
+| ECS | `JsonUtil` の String64 / String256 の全域 `memset(0)` | 対応済 | `src/Engine/Core/Util/JsonUtil.cpp:115, 123` |
+| シリアライズ | `ApplyPartial` 完了時の `EntityRef` 全体再解決 | 未確認 | 適用中は fileId で解決する (`SceneSerializer.cpp:630, 704`)。完了後の再走査は見つからない |
+| シリアライズ | 旧 `UIElement` 移行条件を anchor 以外にも | 未対応（実害なし） | `SceneSerializer.cpp:225, 428` は anchor キーで判定。旧書式は anchor を必ず書く |
+| Platform | `WriteFileReplacing` の rename | 誤検知 | MSVC STL は `MoveFileExW(REPLACE_EXISTING)`（反証報告） |
+| Platform | 一時ファイル名に PID / TID / 通番 | 対応済 | `src/Engine/Platform/PathUtil.cpp:120-123` |
+| Platform | `CrashHandler` のハンドラ内 `CreateThread` | 対応済 | `CrashHandler.cpp:661-667` で起動時に事前生成し、イベントで起こす |
+| Platform | 多重クラッシュ時の後着スレッド | 対応済（有限待ち） | `CrashHandler.cpp:478-482` 後着は `g_bundleFinished` を 30 秒待つ。`Sleep(INFINITE)` ではなく有限 |
+| Platform | RawInput 絶対座標の換算 | 対応済 | `src/Engine/Platform/Input.cpp:56-71`（仮想画面の寸法で換算、初回は 0） |
+| Platform | カーソルロック時の振動相殺 | 未確認（実機） | 絶対座標の差分化で原因側は消えた。RDP / タブレットでの実機確認は未実施 |
+| Platform | `AdjustWindowRectExForDpi` / `WM_DPICHANGED` | **対応済（M93c）** | `Win32Window.cpp` Create で窓の DPI の外形へ取り直し、`WM_DPICHANGED` で OS の勧める矩形を当てる。ImGui の文字倍率は起動時の値のまま（既知の制限） |
+| Platform | `HandleMsg` の再入 | 対応済 | `Win32Window.cpp:199` 走査前にハンドラ列をコピー |
+| 物理 | `.mcvx` の頂点数上限 | 対応済 | `src/Engine/Engine/Physics/Collider/ConvexHull.cpp:879` |
+| 物理 | XPBD 粒子池が空のときの `size_t` アンダーフロー | 誤検知（到達不能） | 反証報告。加えて `PhysicsSystem.cpp:2530` に `px.empty()` ガード |
+| 物理 | `xpbd::Predict / Solve` の h ゼロ除算 | 未対応（実害なし） | h は固定 dt / substeps 由来で 0 にならない（`XpbdSolver.cpp:141`） |
+| 物理 | `BoxTriSat` の法線を面法線基準へ | 未対応（別作業） | `Shapes.cpp:1435` は重心判定のまま。接触法線が変わる = 物理挙動と replay が変わるので、計測と回帰を伴う単独の作業に切る |
+| 物理 | `SolveCharacters` の複合コライダー子形状 | 未確認 | `PhysicsSystem.cpp:1375` の障害物は bodies の pose 1 つ。子形状の走査は見当たらない |
+| 物理 | CCD を形状固有距離の保守的前進へ | 未対応（設計改善） | 提案のまま |
+| 物理 | Sutherland-Hodgman の境界値重複排除 | 未確認 | `Shapes.cpp:514, 1457` |
+| 物理 | マニフォールド削減を支持面維持へ | 未対応（設計改善） | 提案のまま |
+| 粒子 | `ParticleFlipTilePos` の tiles == 0 | 誤検知（P3） | 呼び出し側が `max(1, tiles)`（反証報告）。HLSL との C++ ミラーなので関数は変えない |
+| 粒子 | `TrailStore` の巻き戻し検出 | 対応済 | `src/Engine/Engine/Vfx/VfxRenderer.cpp:95` |
+| 粒子 | `SimSnapshot` の `ParticleEmitterComponent` 生ダンプ | 未対応（サイズ検査で緩和） | `SimSnapshot.cpp:193, 234` は sizeof を書いて読む側で照合する。明示フィールド化は snapshot 版を動かす別作業 |
+| 粒子 | SoA 保存を alive 個分に限定 | 未確認 | `SimSnapshot.cpp:201` |
+| 粒子 | `VfxRenderer` の nowTick | 対応済と読める | `VfxRenderer.cpp:328` のコメント |
+| 粒子 | `CpuParticleBackend::Reset` の `instanceBuffer_` | 問題なし | メンバとして保持・再利用し `ReleaseGpu` で手放す（`CpuParticleBackend.cpp:181`） |
+| UI | `ResolveWorldBase` の cw ゼロ除算 | 対応済 | `src/Engine/Engine/UI/UILayout.cpp:170` |
+| UI | `Clamp01` の NaN 透過 | **対応済（M93c）** | `UIWidgets.cpp:40` を否定形へ。有限値の結果は不変 |
+| UI | `ArrangeGrid` の `cellsPerMainAxis` | 対応済 | `UILayoutGroup.cpp:376-404`（constraintCount >= 1、n > 1 ? n : 1） |
+| UI | `BuildSimWorldContext` の fovY / farZ | 未確認 | 同名の関数が無い（名前が変わった可能性）。該当箇所の再特定が要る |
+| UI | `FindNextFocus` の決定性 | 対応済と読める | `UIInteraction.cpp:158` 候補に entity index を持つ |
+| UI | `FontAtlas::Grow` の成否検査 | 対応済 | `src/Engine/Renderer/Text/FontAtlas.cpp:364-366` |
+| UI | `SetUIRect` の親基準化防止 | 未確認 | `EngineApiTable.cpp:936` は anchoredPosition を書く設計。指摘の再現条件を特定できていない |
+| 描画 | `postfx_taa.hlsl` の isfinite | 対応済 | `assets/shaders/postfx_taa.hlsl:48-60` |
+| 描画 | `ComputeCascadeSplits` の nearZ | **対応済（M93c）** | `FrustumCull.h` に near / far の下限。有限の入力では値が変わらない |
+| 描画 | `gAeSpeed` の下限 | **対応済（M93c）** | `PostProcess.cpp:39` で負値 / NaN を 0 に |
+| 描画 | 自動露出バッファの viewKey 分離 | 未確認 | `PostProcess.cpp:483, 618` |
+| 描画 | `hzb_reduce.cs.hlsl` の underflow | 対応済 | `hzb_reduce.cs.hlsl:35-37` |
+| 描画 | `FroxelPass` の gridNearZ_ と projNoJitter | 未確認 | `FroxelPass.cpp:196, 259` |
+| 描画 | `postfx_hist.cs.hlsl` の NaN と `min(bin, 255)` | **対応済（M93c）** | シェーダと C++ ミラー `PostFxMath.h` の両方を否定形 + min に |
+| 描画 | `rt_common.hlsli` の tMin | 対応済と読める | `rt_common.hlsli:113` kEps |
+| 描画 | `cbufferName.varName` の一意化 | 一部対応 | `ShaderManager.cpp:245`（M79b-fix）。`ComputeAbiRunner` は未確認 |
+| 描画 | `ComputeAbiRunner` の定数バッファ永続プール | 未確認 | `ComputeAbiRunner.cpp:445` |
+| 描画 | `forward_lit.hlsl` の PerObject 96B | 未確認 | |
+| エディタ | PlayMode 中のシーン切替ガード | 未確認 | `EditorApp.cpp` の OpenScene 経路 |
+| エディタ | ギズモ中断時の `CancelRecord` | 未対応（別作業） | `SceneViewWindow.cpp:1575` BeginRecord 後、選択変更・破棄で中断する経路に CancelRecord が無い |
+| エディタ | `GitTransaction` の強制キャンセル | 設計判断 | 書き込みは取り消せない（spec §14.6）。`GitTransaction.cpp:980` の 15 秒注記で代替 |
+| 音 | `RegisterClip` の XAudio2 quantum 待ち | 一部対応 | `AudioSystem.cpp:907` 差し替え前に `StopVoicesUsingClip`。quantum の遅延解放は無い |
+| 音 | `ModalSynth` の isfinite | **対応済（M93c）** | `ModalSynth.cpp:92` 過減衰判定を否定形に（NaN も捨てる） |
+| 音 | `AcousticField::Rebuild` の glow_ | 対応済 | `AcousticField.cpp:494-496` shellSlot < 0 は焼かない |
+| スクリプト | `managedIndex = -1` のリセット | 対応済 | `ManagedHost.cpp:201, 240` |
+| スクリプト | `ReadValue` の境界 | 対応済 | `ScriptRuntime.cs:596` 付近の Length 検査 |
+| スクリプト | `ReloadHub` の `.cs` 監視 | 未確認 | 拡張子判定は見当たらない。C# の再コンパイルは手動 Rebuild と kernel 変更時（`ReloadHub.cpp:355`） |
+| スクリプト | `EngineApiTable` の isfinite | 一部対応 | isfinite は 1 箇所 |
+
+集計（55 件）: 対応済 23（うち M93c で 6）、対応済と読める 3、一部対応 3、誤検知 3、未対応 7、未確認 14、設計判断 1、問題なし 1。

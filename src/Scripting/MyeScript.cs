@@ -815,5 +815,9 @@ namespace MyeScripting
         // 破壊イベント (v22、M80l)。piece = 分かれた塊のリーダー、point/impulse は
         // その塊で荷重最大の破片の原点とその荷重 [N]
         public virtual void OnBreak(MyeEntity piece, MyeVec3 point, float impulse) { }
+        // スクリプト間メッセージ (v30、M93e)。C++ スクリプトの SendScriptMessage が自分 (のエンティティ) 宛てに
+        // 送った (from, nameHash, value) を同じ tick に受け取る。★C# からは送れない — C# は NoHash レーンなので、
+        // hash 対象の C++ 側の状態を C# の判断で動かす送信はリプレイが再現できない
+        public virtual void OnMessage(MyeEntity from, ulong nameHash, int value) { }
     }
 }

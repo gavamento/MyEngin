@@ -266,6 +266,13 @@ namespace MyeScripting
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe struct MyeEngineApi
     {
+        // このミラーが前提にする EngineAPI.h の MYE_API_VERSION (M93a)。Bootstrap.Initialize が
+        // 受け取った表の Version と照合し、違えば C# レーンを起動しない — 位置ベースのミラーは
+        // 版がずれると全スロットが黙って別関数を指すため、静的照合 (規則 11) だけでは
+        // 「C++ 側だけ更新して build_managed.bat を忘れた」古い MyeScripting.dll を捕まえられない。
+        // ★MYE_API_VERSION を上げたらここも同時に上げる (規則 11-e が機械照合する)
+        internal const uint kExpectedApiVersion = 30u;
+
         public uint Version;
         public void* Engine;
         public delegate* unmanaged<void*, int, byte*, void> Log;
@@ -480,6 +487,9 @@ namespace MyeScripting
         public delegate* unmanaged<void*, ulong, int> ComputeJobWait;
         public delegate* unmanaged<void*, MyeKernelDesc*, uint, int> ComputeRegisterManagedKernels;
         public delegate* unmanaged<void*, MyeComputeDecl*, uint, int> ComputeSetManagedDeclarations;
+        // v30 (M93e): スクリプト間メッセージ。C# レーンからの呼び出しはエンジン側が 0 を返す (NoHash レーンは hash 側へ書かない)。
+        // 受信は ManagedVTable.InvokeMessage → MyeScript.OnMessage
+        public delegate* unmanaged<void*, MyeEntityId, MyeEntityId, ulong, int, int> SendScriptMessage;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -511,6 +521,8 @@ namespace MyeScripting
         public delegate* unmanaged<MyeEntityId, int, byte*, int, ulong, byte*, int> BtTask;
         // [BtTask] クラスの一覧 (JSON UTF-8)。buf に収まる分だけ書き (終端の NUL 込み)、全体のバイト数 (NUL を含まない) を返す (bufLen = 0 で長さだけ)
         public delegate* unmanaged<byte*, int, int> BtTaskCatalog;
+        // v30 (M93e) 末尾追加。スクリプト間メッセージの受信 (from, nameHash, value)
+        public delegate* unmanaged<int, MyeEntityId, ulong, int, void> InvokeMessage;
     }
 
     // native → managed の起動引数 (ManagedHost.cpp の MyeBootstrapArgs と一致)
@@ -519,6 +531,9 @@ namespace MyeScripting
     {
         public MyeEngineApi* Api;
         public ManagedVTable* OutVtable;
+        // M93a: managed 側が自分の kExpectedApiVersion を書き戻す (ネイティブが不一致のログに両方の版を出すため)。
+        // 旧 MyeScripting.dll はこの欄を知らない = 0 のまま。argLength で欄の有無を確かめてから書く
+        public uint ManagedApiVersion;
     }
 
     // MyeEngineApi をラップして C# から呼びやすくする静的窓口。

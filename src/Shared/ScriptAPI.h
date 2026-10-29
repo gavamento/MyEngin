@@ -164,6 +164,24 @@ void (*GetBreakFn())(void*, MyeUpdateContext*, MyeEntityId, MyeVec3, float)
     }
 }
 
+// ---- スクリプト間メッセージ (v30、M93e) ----
+// 使い方: void OnMessage(MyeUpdateContext& ctx, MyeEntityId from, uint64_t nameHash, int32_t value);
+// 送る側: ctx.api->SendScriptMessage(ctx.api->engine, ctx.self, target, MyeNameHash("hit"), 1);
+
+template <typename T>
+void (*GetMessageFn())(void*, MyeUpdateContext*, MyeEntityId, uint64_t, int32_t)
+{
+    if constexpr (requires(T t, MyeUpdateContext& c, MyeEntityId f, uint64_t h, int32_t v) {
+                      t.OnMessage(c, f, h, v);
+                  }) {
+        return [](void* s, MyeUpdateContext* c, MyeEntityId f, uint64_t h, int32_t v) {
+            static_cast<T*>(s)->OnMessage(*c, f, h, v);
+        };
+    } else {
+        return nullptr;
+    }
+}
+
 inline uint64_t LayoutHash(const MyeScriptField* fields, uint32_t count)
 {
     // FNV-1a (Engine/Core/Util/Hash.h と同じ定数 — Shared はエンジンヘッダを include できないため再掲)
@@ -208,6 +226,7 @@ MyeScriptDesc MakeDesc(const char* name, const MyeScriptField* fields, uint32_t 
     d.onCollisionStay = GetCollisionStayFn<T>();
     d.onCollisionExit = GetCollisionExitFn<T>();
     d.onBreak = GetBreakFn<T>();
+    d.onMessage = GetMessageFn<T>(); // v30 (M93e)
     return d;
 }
 

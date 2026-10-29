@@ -125,6 +125,15 @@
     <ClCompile Include="..\src\Engine\Engine\Compute\KernelParser.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Compute\KernelSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\DemoContent.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentAi.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentAnimation.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentAudio.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentCompute.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentFlow.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentPhysics.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentRender.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentUi.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentVfx.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\ShowcaseScenes.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\StartScene.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp" />
@@ -194,7 +203,10 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\AeroSampling.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\Broadphase.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\CollisionSystem.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsBodyOps.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsCharacters.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsDebugDraw.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsMaterials.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsQueries.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSystem.cpp" />
@@ -448,6 +460,7 @@
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelRunner.h" />
     <ClInclude Include="..\src\Engine\Engine\Compute\KernelSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Demo\DemoContent.h" />
+    <ClInclude Include="..\src\Engine\Engine\Demo\DemoContentInternal.h" />
     <ClInclude Include="..\src\Engine\Engine\Demo\ShowcaseScenes.h" />
     <ClInclude Include="..\src\Engine\Engine\Demo\StartScene.h" />
     <ClInclude Include="..\src\Engine\Engine\HotReload\DllReloader.h" />
@@ -529,6 +542,7 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysicsDebugDraw.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSystem.h" />
+    <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysicsSystemInternal.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysMatLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\PhysMatSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Rigid\Shapes.h" />

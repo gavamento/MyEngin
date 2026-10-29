@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Editor/Undo/UndoStack.h" // M93f: 文書 Undo の記録器
 #include "Engine/Engine/Animation/AnimatorController.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 
@@ -22,7 +23,9 @@ struct AnimatorControllerComponent;
 class AnimatorControllerWindow {
 public:
     bool open = true;
-    void OnImGui(EngineContext& ctx, Selection& selection);
+    // undo: この窓でのコントローラの編集を文書エントリとして積む (M93f)。1 フレームの前後の JSON を比べ、
+    // ドラッグ中はまとめる (DocUndoRecorder)
+    void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo);
 
     // 触ったコントローラのうち 1 本でもディスクと食い違うか (M66d、spec §4.1 の S6)。
     // 判定の理屈は AnimationWindow::HasUnsavedChanges と同じ (この窓も dirty を持たない)
@@ -41,6 +44,7 @@ private:
 
     ControllerLibrary* controllers_ = nullptr; // 寿命は EngineContext と同じ
     std::vector<uint64_t> touched_;
+    DocUndoRecorder docUndo_; // M93f
 
     struct NodePos {
         float x = 0.0f;

@@ -92,6 +92,18 @@ struct EffectSpawnRequest {
     uint64_t reservedRootFid = 0;
 };
 
+// スクリプト間メッセージ (v30、M93e、dogfooding #20)。SendScriptMessage が積み、TickRunner が同じ tick の
+// 配達点 (Update の直後 / LateUpdate の直後) で target のスクリプトへ配る。tick をまたいで残らないので
+// sim 状態ではない (スナップショット対象外)
+struct ScriptMessage {
+    MyeEntityId from = {};
+    MyeEntityId target = {};
+    uint64_t nameHash = 0;
+    int32_t value = 0;
+};
+// 1 tick に積める上限。超えた SendScriptMessage は 0 を返す (暴走したスクリプトで tick を食い潰さないため)
+inline constexpr size_t kScriptMessageQueueMax = 4096;
+
 // MyeEngineApi の engine 不透明ポインタが指すコンテキスト。
 // C++ の ScriptHost と C# の ManagedHost が同じ C ABI テーブルを共有するために使う
 // (Transform / Log / Input / Random は両ホストで同一実装)。
@@ -108,6 +120,8 @@ struct ScriptApiContext {
     void* physics = nullptr;                             // Raycast 用 (M20 で PhysicsWorld*)
     std::vector<EffectSpawnRequest>* effectQueue = nullptr; // PlayEffect の積み先 (M32f、tick 末消費)
     std::vector<DebugLineCmd>* debugLines = nullptr; // DebugDrawLine の積み先 (v7。tick 頭クリア)
+    // v30 (M93e): SendScriptMessage の積み先 (TickRunner が配達点で drain する)。null 時は SendScriptMessage が 0 を返す
+    std::vector<ScriptMessage>* messageQueue = nullptr;
     // v8 (M45): 再生ハンドルの予約カウンタ。**採番はここ (push 側) で行う** —
     // drain はゲートされるがこのカウンタは常に進むので、スクリプトが受け取る値が
     // 記録/検証で一致する (v7 Instantiate の fileId 予約と同型)。null 時は 0 を返す

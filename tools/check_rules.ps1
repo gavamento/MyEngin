@@ -732,15 +732,18 @@ if (-not (Test-Path $tablePath)) {
 }
 
 # 規則 11: ABI ミラーの機械照合 (M51h)
-# Interop.cs は EngineAPI.h の**位置ベース**ミラーで、実行時の版検証が無い —
-# 順序・件数・名前・引数個数がズレると全スロットが静かに別関数を指す。
+# Interop.cs は EngineAPI.h の**位置ベース**ミラー — 順序・件数・名前・引数個数がズレると
+# 全スロットが静かに別関数を指す。実行時には Bootstrap.Initialize が表の version と
+# Interop.cs の kExpectedApiVersion を照合する (M93a) が、それは「古い MyeScripting.dll を
+# 載せた」事故を捕まえるためのもので、ソースの食い違いはここで止める。
 # 11-a  EngineAPI.h (MyeEngineApi) と Interop.cs (MyeEngineApi) のスロット列が
 #       順序・件数・名前とも完全一致
 # 11-b  各スロットの引数個数一致 (C++ の仮引数数 == C# の delegate* 型リスト数 - 1 (戻り値))
 # 11-c  MYE_API_VERSION とスロット数の対応が下表と一致 — スロットを足すときは
 #       version の bump とこの表の更新を**同時に**行うこと (どちらか片方だとここで止まる)
 # 11-d  EngineApiTable.cpp が全スロットに `out.<Name> =` で実装を充填している
-$apiVersionSlots = @{ 11 = 73; 12 = 87; 13 = 94; 14 = 102; 15 = 104; 16 = 110; 17 = 111; 18 = 112; 19 = 114; 20 = 118; 21 = 125; 22 = 126; 23 = 131; 24 = 139; 25 = 144; 26 = 151; 27 = 158; 28 = 164; 29 = 174 }
+# 11-e  Interop.cs の kExpectedApiVersion (実行時照合の前提値、M93a) が MYE_API_VERSION と一致
+$apiVersionSlots = @{ 11 = 73; 12 = 87; 13 = 94; 14 = 102; 15 = 104; 16 = 110; 17 = 111; 18 = 112; 19 = 114; 20 = 118; 21 = 125; 22 = 126; 23 = 131; 24 = 139; 25 = 144; 26 = 151; 27 = 158; 28 = 164; 29 = 174; 30 = 175 }
 $apiHeaderPath = Join-Path $repo 'src\Shared\EngineAPI.h'
 $interopPath = Join-Path $repo 'src\Scripting\Interop.cs'
 $apiTablePath = Join-Path $repo 'src\Engine\Engine\Script\EngineApiTable.cpp'
@@ -821,6 +824,15 @@ if (-not (Test-Path $apiHeaderPath) -or -not (Test-Path $interopPath) -or -not (
                 $errors++
             } elseif ($apiVersionSlots[$ver] -ne $cppSlots.Count) {
                 Write-Host "ERROR [rule 11] MYE_API_VERSION=$ver expects $($apiVersionSlots[$ver]) slots but EngineAPI.h has $($cppSlots.Count) - bump the version and this table together"
+                $errors++
+            }
+            # 11-e: C# 側の実行時照合の前提値。無ければ照合そのものが消えたことになるのでエラー
+            $csVerMatch = [regex]::Match($csText, 'kExpectedApiVersion\s*=\s*(\d+)u?\s*;')
+            if (-not $csVerMatch.Success) {
+                Write-Host "ERROR [rule 11-e] Interop.cs: kExpectedApiVersion not found (Bootstrap's runtime ABI check needs it)"
+                $errors++
+            } elseif ([int]$csVerMatch.Groups[1].Value -ne $ver) {
+                Write-Host "ERROR [rule 11-e] Interop.cs kExpectedApiVersion=$($csVerMatch.Groups[1].Value) but EngineAPI.h MYE_API_VERSION=$ver - bump both together"
                 $errors++
             }
         }
@@ -972,6 +984,117 @@ foreach ($l in $eolLines) {
         Write-Host "    fix: git rm --cached -q -- `"$path`" ; git checkout -- `"$path`""
         Write-Host "    WARNING: that fix discards uncommitted edits of the file. git add or commit it first (the index stores LF, so the content is kept)."
         $errors++
+    }
+}
+
+# 規則 15: 生の D3D / DXGI 型の居場所 (M93b。engine_spec §6.3 / AGENTS 4.1 の「Renderer の外へ出さない」の実態)
+# 仕様の境界は実装では Engine 層の描画系 (Rendering / Particles の両バックエンド / UI・Vfx の描画器 /
+# RtScene / ProbeBaker / EngineLoop の描画先) と、Editor のサムネイル・プレビュー (ImGui のテクスチャ ID が
+# SRV そのもの) まで広がっている。文章で境界を狭めても実装は戻らないので、**今ある場所を許可リストで
+# 固定し、新しい場所へ広がるのを止める** (ラチェット)。許可リストへ足すのは設計判断 — 理由を書き、
+# engine_spec §6.3 の表も同時に直すこと。
+#   15-a: 下の guard ディレクトリのソースは、許可リスト以外で d3d11* / dxgi* / d3dcompiler の include と
+#         ID3D11* / IDXGI* / D3D11_* / DXGI_* の識別子をコード行 (// コメントは除外) に持たない
+#   15-b: 許可リストのファイルが無くなったら項目を消す (死んだ許可を残さない)
+$d3dIncludeRx = '^\s*#\s*include\s*[<"](?:d3d11|dxgi|d3dcompiler|d3d11shader)[^>"]*[>"]'
+$d3dIdentRx = '\bID3D11\w+|\bIDXGI\w+|\bD3D11_[A-Z0-9_]+\b|\bDXGI_[A-Z0-9_]+\b'
+$d3dGuardDirs = @('src\Engine\Core', 'src\Engine\Engine', 'src\Editor', 'src\Runtime', 'src\GameLogic', 'src\Shared', 'src\Server')
+$d3dAllow = @(
+    # ---- Engine 層の描画系 (Renderer のパスへ RTV / SRV / バッファを渡す側) ----
+    @{ Path = 'src\Engine\Engine\Rendering\RenderSystem.h'; Reason = 'FrameTarget (RTV / DSV) と各パスへの受け渡し' },
+    @{ Path = 'src\Engine\Engine\Rendering\RenderSystem.cpp'; Reason = 'FrameTarget (RTV / DSV) と各パスへの受け渡し' },
+    @{ Path = 'src\Engine\Engine\Rendering\ProbeBaker.h'; Reason = '反射プローブ焼きの一時レンダーターゲット (M56e)' },
+    @{ Path = 'src\Engine\Engine\Rendering\ProbeBaker.cpp'; Reason = '反射プローブ焼きの一時レンダーターゲット (M56e)' },
+    @{ Path = 'src\Engine\Engine\Particles\CpuParticleBackend.h'; Reason = 'CPU 粒子のインスタンスバッファ (M5)' },
+    @{ Path = 'src\Engine\Engine\Particles\CpuParticleBackend.cpp'; Reason = 'CPU 粒子のインスタンスバッファ (M5)' },
+    @{ Path = 'src\Engine\Engine\Particles\GpuParticleBackend.h'; Reason = 'GPU 粒子 (Compute + indirect draw、M5)' },
+    @{ Path = 'src\Engine\Engine\Particles\GpuParticleBackend.cpp'; Reason = 'GPU 粒子 (Compute + indirect draw、M5)' },
+    @{ Path = 'src\Engine\Engine\UI\UIRenderer.h'; Reason = 'ゲーム内 UI の描画器 (M21)' },
+    @{ Path = 'src\Engine\Engine\UI\UIRenderer.cpp'; Reason = 'ゲーム内 UI の描画器 (M21)' },
+    @{ Path = 'src\Engine\Engine\Vfx\VfxRenderer.h'; Reason = 'Sprite / Trail / TextMesh の描画器 (M29)' },
+    @{ Path = 'src\Engine\Engine\Vfx\VfxRenderer.cpp'; Reason = 'Sprite / Trail / TextMesh の描画器 (M29)' },
+    @{ Path = 'src\Engine\Engine\RayTracing\RtScene.h'; Reason = 'BVH の GPU バッファ (M46)' },
+    @{ Path = 'src\Engine\Engine\RayTracing\RtScene.cpp'; Reason = 'BVH の GPU バッファ (M46)' },
+    @{ Path = 'src\Engine\Engine\Loop\EngineLoop.cpp'; Reason = 'ImGui だけのフレームの描画先クリア' },
+    # ---- GPU を直接叩く selftest (製品コードの境界ではない) ----
+    @{ Path = 'src\Engine\Engine\Asset\MeshLodSelfTest.cpp'; Reason = 'selftest: LOD の index buffer を直接作る' },
+    @{ Path = 'src\Engine\Engine\Compute\ComputeServiceSelfTest.cpp'; Reason = 'selftest: Fx バッファの GPU 側を直接読む' },
+    @{ Path = 'src\Engine\Engine\Compute\KernelSelfTest.cpp'; Reason = 'selftest: カーネルを GPU で直接走らせる' },
+    @{ Path = 'src\Engine\Engine\Loop\DeviceRecoverySelfTest.cpp'; Reason = 'selftest: デバイス消失の疑似発生 (M88)' },
+    @{ Path = 'src\Engine\Engine\Vfx\VfxSelfTest.cpp'; Reason = 'selftest: 描画器の GPU 側を直接検査する' },
+    # ---- Editor 層: ImGui のテクスチャ ID は SRV そのもの (imgui_impl_dx11 の契約) ----
+    @{ Path = 'src\Editor\Asset\AssetPreviewCache.h'; Reason = 'サムネイル / マテリアルプレビューの RT と SRV' },
+    @{ Path = 'src\Editor\Asset\AssetPreviewCache.cpp'; Reason = 'サムネイル / マテリアルプレビューの RT と SRV' },
+    @{ Path = 'src\Editor\Project\ProjectManager.cpp'; Reason = 'プロジェクト管理画面のバックバッファクリア' },
+    @{ Path = 'src\Editor\Windows\Animation\AnimationPreviewWindow.cpp'; Reason = 'プレビュー RT の形式指定 (M89n)' },
+    @{ Path = 'src\Editor\Windows\Asset\AssetBrowserWindow.cpp'; Reason = 'サムネイル SRV を ImGui::Image へ渡す' },
+    @{ Path = 'src\Editor\Windows\Scene\InspectorWindowAssets.cpp'; Reason = 'マテリアルプレビュー SRV を ImGui::Image へ渡す (M93g までは InspectorWindow.cpp)' }
+)
+foreach ($a in $d3dAllow) {
+    if (-not (Test-Path (Join-Path $repo $a.Path))) {
+        Write-Host "ERROR [rule 15-b] allow list entry no longer exists: $($a.Path) (remove it)"
+        $errors++
+    }
+}
+foreach ($d in $d3dGuardDirs) {
+    $full = Join-Path $repo $d
+    if (-not (Test-Path $full)) {
+        Write-Host "ERROR [rule 15] missing directory: $d"
+        $errors++
+        continue
+    }
+    $files = Get-ChildItem -Recurse -File $full | Where-Object { $_.Extension -in '.cpp', '.h', '.hpp', '.inl' }
+    foreach ($f in $files) {
+        $rel = [System.IO.Path]::GetRelativePath($repo, $f.FullName)
+        $allowed = $false
+        foreach ($a in $d3dAllow) {
+            if ($rel.Equals($a.Path, [System.StringComparison]::OrdinalIgnoreCase)) { $allowed = $true; break }
+        }
+        if ($allowed) { continue }
+        $lineNo = 0
+        foreach ($line in [System.IO.File]::ReadLines($f.FullName)) {
+            $lineNo++
+            $code = ($line -split '//', 2)[0]
+            if ($code -match $d3dIncludeRx -or $code -match $d3dIdentRx) {
+                Write-Host "ERROR [rule 15-a] $($f.FullName):${lineNo}: raw D3D / DXGI types stay inside the rendering boundary (src\Engine\Renderer + the rule 15 allow list). Wrap the handle or add the file to the list with a reason and update engine_spec §6.3"
+                $errors++
+                break # 1 ファイル 1 行で十分 (同じファイルで何十行も出さない)
+            }
+        }
+    }
+}
+
+# 規則 16 (参考警告): 文書に残った開発機の絶対パス (M93d)
+# AGENTS 第 1 章の「ユーザーへの報告では絶対パスを示す」はチャット向けの規則で、リポジトリの文書へ
+# 書くと他の環境でリンクが切れる (2026-10-27 の照合で docs に 100 箇所以上残っていた)。
+# 検査するのは開発機の実在するルートだけ (C:\HAL\、C:\HAKtokyo\、C:\Users\、file:///C:/)。
+# README の `C:\MyGames\FirstGame` のような架空の例は対象にしない。
+# 過去の事故や作業の記録として残す文書は下の許可リストに理由付きで載せる。警告扱い (exit code は変えない)
+$docPathRx = '[A-Za-z]:[\\/](?:HAL|HAKtokyo|Users)[\\/]|file:///[A-Za-z]:/'
+$docPathAllow = @(
+    @{ Path = 'docs\dogfooding.md'; Reason = 'HAL Collector を作業したときのプロジェクト置き場 (記録)' },
+    @{ Path = 'docs\adr\ADR-019-guid-subasset-keys.md'; Reason = '2 台の clone 先が違ったことが ADR の出所そのもの (記録)' }
+)
+$docRoots = @('docs', 'README.md', 'engine_spec.md', 'AGENTS.md')
+foreach ($r in $docRoots) {
+    $full = Join-Path $repo $r
+    if (-not (Test-Path $full)) { continue }
+    $docs = if ((Get-Item $full).PSIsContainer) { Get-ChildItem -Recurse -File $full | Where-Object { $_.Extension -eq '.md' } } else { @(Get-Item $full) }
+    foreach ($f in $docs) {
+        $rel = [System.IO.Path]::GetRelativePath($repo, $f.FullName)
+        $skip = $false
+        foreach ($a in $docPathAllow) {
+            if ($rel.Equals($a.Path, [System.StringComparison]::OrdinalIgnoreCase)) { $skip = $true; break }
+        }
+        if ($skip) { continue }
+        $lineNo = 0
+        foreach ($line in [System.IO.File]::ReadLines($f.FullName)) {
+            $lineNo++
+            if ($line -match $docPathRx) {
+                Write-Host "WARN  [rule 16] $($f.FullName):${lineNo}: machine-specific absolute path in a document (use a repository-relative link)"
+                $warnings++
+            }
+        }
     }
 }
 

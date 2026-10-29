@@ -122,3 +122,7 @@
 - (M18) SkinnedModelLibrary::Enumerate が無く、SkinnedMesh.model のピッカーが混合リストへ落ちていたのは M18 の積み残し。
 - GpuTimer のリングは当初 3 フレームだった記述が残っていた (現在は kFrames = 6)。
 - RenderSelfTest は M16 の時点では視錐台カリングだけを検証していた。
+
+## tools/check_rules.ps1 規則 15 / engine_spec §6.3 — 生の D3D 型の居場所を実態に合わせた (M93b)
+- §6.3 は長く「生の D3D 型を Engine 層以上へ出さない」と書いていたが、Engine 層の描画系 (RenderSystem / ProbeBaker / 両粒子バックエンド / UIRenderer / VfxRenderer / RtScene / EngineLoop の描画先) と Editor のサムネイル・プレビュー経路 (ImGui のテクスチャ ID が SRV そのもの) は最初から device を直接触っていた。2026-10-27 の照合で製品コード 21 ファイル + selftest 5 ファイルに広がっていることを数え、文章を実態へ直したうえで、その 26 ファイルを規則 15 の許可リストとして固定した (ラチェット: 新しい場所へは広がらない、消えた許可は消す)。
+- 不透明ハンドルに包み直す案 (RTV / SRV を `TextureHandle` 化して UIRenderer / VfxRenderer を Renderer 層へ移す) は採らなかった。グラフィクス API の差し替えは §1.4 で範囲外のままで、26 ファイルを書き直す利益を測れないため。要るときは規則 15 の許可リストが「どこから手を付けるか」の一覧になる。

@@ -315,6 +315,12 @@
     <ClCompile Include="..\src\Editor\Windows\Scene\InspectorWindow.cpp">
       <Filter>Windows\Scene</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Scene\InspectorWindowAssets.cpp">
+      <Filter>Windows\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Scene\InspectorWindowNav.cpp">
+      <Filter>Windows\Scene</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Scene\ParticleSettingsWindow.cpp">
       <Filter>Windows\Scene</Filter>
     </ClCompile>

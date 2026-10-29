@@ -1,4 +1,5 @@
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
+#include "Engine/Engine/Physics/Rigid/PhysicsSystemInternal.h"
 
 #include <algorithm>
 #include <cmath>
@@ -8,6 +9,7 @@
 #include <DirectXMath.h>
 
 #include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Diagnostics/Log.h"      // M93e: PhysicsEnvironment 欠落の WARN (dogfooding #19)
 #include "Engine/Core/Diagnostics/Profiler.h" // M80k: phys.collect/broad/narrow/solve/writeback スコープ
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Physics/Rigid/AeroSampling.h" // M59c: 面サンプリング
@@ -27,7 +29,7 @@ namespace {
 
 // 決定論のため全て scalar float 演算 (XMVECTOR SIMD を使わない = Debug/Release で同一ビット)。
 // 形状判定は Physics/Shapes.cpp に統合 (M28a)。
-constexpr float kGravity = -9.81f;      // m/s^2 (重力加速度、-Y)
+
 // 速度ソルバの固定反復回数 (収束判定による早期終了はしない = 決定論)。
 // 速度反復は CollideManifold も有効質量の再計算もしない安い計算
 // (CollideManifold を呼ぶのは制約生成の 1 回 + 位置補正の毎パス)
@@ -93,38 +95,6 @@ constexpr float kXpbdAttachWakeSlop = 0.005f;
 // 素直な意味を持たせてあり、実車の低速域 (据え切り) の感触にも近い
 constexpr float kTireSlipRefSpeed = 2.0f;
 
-// ---- scalar クォータニオン演算 (親子合成用。XMVECTOR 禁止 = 決定論契約) ----
-
-// Hamilton 積 a ⊗ b
-void QuatMul(float ax, float ay, float az, float aw, float bx, float by, float bz, float bw,
-             float& ox, float& oy, float& oz, float& ow)
-{
-    ox = aw * bx + ax * bw + ay * bz - az * by;
-    oy = aw * by - ax * bz + ay * bw + az * bx;
-    oz = aw * bz + ax * by - ay * bx + az * bw;
-    ow = aw * bw - ax * bx - ay * by - az * bz;
-}
-
-// 単位クォータニオンでベクトルを回転: v' = v + 2·q.w·(q×v) + 2·q×(q×v)
-void QuatRotate(float qx, float qy, float qz, float qw, float vx, float vy, float vz, float& ox,
-                float& oy, float& oz)
-{
-    const float tx = 2.0f * (qy * vz - qz * vy);
-    const float ty = 2.0f * (qz * vx - qx * vz);
-    const float tz = 2.0f * (qx * vy - qy * vx);
-    ox = vx + qw * tx + (qy * tz - qz * ty);
-    oy = vy + qw * ty + (qz * tx - qx * tz);
-    oz = vz + qw * tz + (qx * ty - qy * tx);
-}
-
-// ワールドフレーム (親チェーンの合成結果)。シアーは無視の近似 (基底正規化と同じ流儀)
-struct WorldFrame {
-    float px = 0, py = 0, pz = 0;
-    float qx = 0, qy = 0, qz = 0, qw = 1;
-    float sx = 1, sy = 1, sz = 1;
-    bool identity = true; // 親なし (ルート) — 既存コードパスをビット同一で通す fast-path
-};
-
 // e の親チェーンを LocalTransform から scalar 合成する (M28d)。
 // WorldMatrix は使わない — 物理はフェーズ 3.6 = TransformSystem 前で、現 tick の
 // スクリプト/アニメ結果を反映した LocalTransform チェーンが正となる。
@@ -178,77 +148,6 @@ void ApplyFrame(const WorldFrame& f, const LocalTransform& lt, XMFLOAT3& outPos,
     outRot = { qx, qy, qz, qw };
     outScale = { f.sx * lt.scale.x, f.sy * lt.scale.y, f.sz * lt.scale.z };
 }
-
-struct Body {
-    EntityID entity;
-    LocalTransform* lt = nullptr;   // 位置/回転書き込み先
-    RigidbodyComponent* rb = nullptr; // null = 静的コライダー (動かない衝突面)
-    const ColliderComponent* col = nullptr; // ソリッド形状 (null = コライダー無し動的ボディ)
-    // M59b: 質量/面積の導出に使う形状。**トリガーも含む** (形状とソリッド性は独立 —
-    // M59a2 の質量導出と同じ規約) が、動的剛体の mesh (shape=3) は除外済み
-    const ColliderComponent* shapeCol = nullptr;
-    bool solid = false;            // 衝突解決に参加するか (isTrigger==0)
-    bool freezeRot = true;         // 回転積分・角応答をしない (静的 / kinematic / freezeRotation)
-    ShapePose pose;                // 形状 + 作業用ワールド位置 (pose.px/py/pz をソルバが更新)
-    XMFLOAT3 colliderOffset = {}; // 剛体原点と形状中心を分離する
-    XMFLOAT3 scale = { 1, 1, 1 };  // ワールドスケール (pose 再構築用)
-    float qx = 0, qy = 0, qz = 0, qw = 1; // 作業用姿勢 (ワールド)
-    float vx = 0, vy = 0, vz = 0;  // 作業用速度 (ワールド)
-    float wx = 0, wy = 0, wz = 0;  // 作業用角速度 (rad/s、ワールド)
-    float invMass = 0;             // 0 = 不動 (静的 / kinematic)
-    float invI[3][3] = {};         // ワールド逆慣性テンソル (freezeRot は零行列)
-    // M59f1: 主軸ローカルの対角慣性。ジャイロ項は逆テンソルでは書けない (ω×Iω に I 自身が
-    // 要る) ので invI とは別に持つ。freezeRot / kinematic は 0 のまま
-    float Ilx = 0, Ily = 0, Ilz = 0;
-    // M59f1: 質量中心。comL* = ローカル (スケール適用済み)、com* = 形状原点からのワールド
-    // オフセット。**hasCom が false のあいだ com* は必ず +0.0f** — 腕の計算が
-    // `p - pose.p - com` で従来とビット同一になるのはこの前提に依る (x - (+0.0f) == x)
-    bool hasCom = false;
-    bool gyro = false;
-    // M59h: スリープ。眠っているあいだ invMass / freezeRot を「不動」へ倒して
-    // ソルバの全帯から自然に外す (専用の分岐を各帯に撒かないための作り)。
-    // 起こすときに戻す値を awake* に控えておく
-    bool sleeping = false;
-    float awakeInvMass = 0.0f;
-    bool awakeFreezeRot = true;
-    // M59j: CCD が「このサブステップの移動量」を差し替えたか。★スケール係数ではなく
-    // **移動量そのもの**を持つ — CCD は止めると同時に速度へインパルスを入れるので、
-    // 位置積分の時点の b.v* は掃引に使った速度と別物になっている
-    bool ccdClamped = false;
-    float ccdDx = 0, ccdDy = 0, ccdDz = 0;
-    float comLx = 0, comLy = 0, comLz = 0;
-    float comx = 0, comy = 0, comz = 0;
-    float restitution = 0;
-    float friction = 0.5f;         // クーロン摩擦係数 (Collider から。ペアは sqrt(μa·μb))
-    // M59f2: 静止摩擦と転がり抵抗。材料未割当なら frictionS == friction / roll == 0 で、
-    // ソルバの新しい分岐が全て従来側へ畳まれる
-    float frictionS = 0.5f;
-    float roll = 0.0f;
-    // M60d: 粘着力 [N]。材料未割当なら 0 で、法線インパルスの下限が従来どおり 0 になる
-    float adhesion = 0.0f;
-    // M60e: 複合コライダー。**subCount == 0 が非複合** = 形状 1 個 (b.pose) の従来経路。
-    // 複合だけ慣性を 3x3 フルで持つ (平行軸で合成すると非対角が出るため)
-    // ★`col` は**動的ボディにしか入っていない** (静的は pose だけ作って col を持たない) —
-    //   「自分自身の形状を持つか」は専用フラグで表す。これを col の有無で代用すると
-    //   静的コライダーが形状ゼロになって世界から床が消える
-    bool ownShape = false;
-    int32_t subFirst = 0;
-    int32_t subCount = 0;
-    // M60f: 慣性を 3x3 フルで持つか。**複合 (M60e) と凸包 (M60f) の 2 通りある**ので
-    // subCount では判別できない — 「非対角が出る形状か」を専用フラグで表す
-    bool fullInertia = false;
-    float invILocal[3][3] = {}; // フルテンソル時: 剛体ローカルでの I⁻¹
-    // M60g1: kinematic として扱うか = `rb->isKinematic` **または**「休止中のラグドールに
-    // 属する部位」。後者は PartFollowSystem がアニメで LocalTransform を書いている最中なので、
-    // 物理が動かすと綱引きになる。★`rb->isKinematic` を書き換える案は採らない —
-    // Inspector の値を潰すし、ソルバがコンポーネントを書くのは家風でない (決定台帳 14)
-    bool kinematic = false;
-    int32_t layer = 0;             // 衝突レイヤー (M36a、Collider から複製)
-    uint32_t mask = 0xFFFFFFFFu;   // 衝突マスク (既定 = 全レイヤー → 従来挙動)
-    // 親のワールドフレーム (M28d)。収集時に合成し運動学的フレームとして固定。
-    // identity (ルート) なら書き戻しは従来の直接代入 (ビット同一 fast-path)
-    WorldFrame frame;
-};
 
 void SetBodyShape(Body& b, const ColliderComponent& col, const XMFLOAT3& pos,
                   const XMFLOAT4& rot, const XMFLOAT3& scale)
@@ -317,75 +216,6 @@ inline void IntegrateQuatNormalized(float hx, float hy, float hz, float& qx, flo
         qy = 0.0f;
         qz = 0.0f;
         qw = 1.0f;
-    }
-}
-
-// 形状のローカル主軸慣性 (対角、質量 m)。col null は半径 0.5 の球扱い。
-// pose の寸法はワールドスケール適用済みなのでそのまま使う
-void LocalInertiaDiag(const ColliderComponent* col, const ShapePose& pose, float m, float& ix,
-                      float& iy, float& iz)
-{
-    if (!col || pose.shape == collidershape::kSphere) {
-        const float r = col ? pose.radius : 0.5f;
-        const float i = 0.4f * m * r * r; // 2/5 m r²
-        ix = iy = iz = i;
-        return;
-    }
-    if (pose.shape == collidershape::kConvex) {
-        // M60f: 凸包。ソルバ本体は下のフル 3x3 経路 (Body::invILocal) を通るので、
-        // ここへ来るのは ABI の AddTorque / AddForceAtPoint と、凸包が未生成で
-        // フル経路に載れなかったボディだけ。**非対角を捨てた対角近似**で答える —
-        // 厳密ではないが、既定のカプセル式に落ちるよりは遥かにまし
-        const ConvexHullData* h = static_cast<const ConvexHullData*>(pose.meshData);
-        if (h && h->Valid()) {
-            float vol = 0.0f;
-            DirectX::XMFLOAT3 com{};
-            float I[3][3];
-            ConvexMassProperties(*h, pose.sx, pose.sy, pose.sz, vol, com, I);
-            if (vol > 1e-12f) {
-                const float s = m / vol; // 密度 1 の積分値を実質量へ
-                ix = I[0][0] * s;
-                iy = I[1][1] * s;
-                iz = I[2][2] * s;
-                return;
-            }
-        }
-    }
-    if (pose.shape == collidershape::kBox) {
-        // box (全辺 = 2h): I = m/12 (d1² + d2²) = m/3 (h1² + h2²)
-        ix = m * (pose.hy * pose.hy + pose.hz * pose.hz) / 3.0f;
-        iy = m * (pose.hx * pose.hx + pose.hz * pose.hz) / 3.0f;
-        iz = m * (pose.hx * pose.hx + pose.hy * pose.hy) / 3.0f;
-        return;
-    }
-    // capsule: 円柱 + 半球×2 の合成 (体積比で質量配分)。軸はローカル Y
-    const float r = pose.radius;
-    const float H = 2.0f * pose.halfSeg;
-    const float r2 = r * r;
-    const float vc = 3.14159265f * r2 * H;  // 円柱体積
-    const float vs = 4.18879020f * r2 * r;  // 球体積 (4/3 π r³)
-    const float vt = vc + vs;
-    const float mc = (vt > 1e-12f) ? m * (vc / vt) : 0.0f;
-    const float ms = m - mc;
-    const float axial = mc * r2 * 0.5f + ms * r2 * 0.4f;
-    const float trans = mc * (H * H / 12.0f + r2 * 0.25f)
-                      + ms * (r2 * 0.4f + H * H * 0.25f + 0.375f * H * r);
-    ix = trans;
-    iy = axial;
-    iz = trans;
-}
-
-// I⁻¹_world = Σ_k (1/I_k)·b_k·b_kᵀ (b_k = pose のワールド基底 = 主軸方向)
-void InvInertiaWorld(const ShapePose& pose, float ix, float iy, float iz, float out[3][3])
-{
-    const float inv[3] = { (ix > 1e-12f) ? 1.0f / ix : 0.0f, (iy > 1e-12f) ? 1.0f / iy : 0.0f,
-                           (iz > 1e-12f) ? 1.0f / iz : 0.0f };
-    const float* B[3] = { pose.bx, pose.by, pose.bz };
-    for (int r = 0; r < 3; ++r) {
-        for (int c = 0; c < 3; ++c) {
-            out[r][c] = inv[0] * B[0][r] * B[0][c] + inv[1] * B[1][r] * B[1][c]
-                      + inv[2] * B[2][r] * B[2][c];
-        }
     }
 }
 
@@ -523,21 +353,6 @@ bool Invert3x3(const float a[3][3], float out[3][3])
     out[1][2] = (a[0][2] * a[1][0] - a[0][0] * a[1][2]) * inv;
     out[2][2] = (a[0][0] * a[1][1] - a[0][1] * a[1][0]) * inv;
     return true;
-}
-
-void MulInvI(const float m[3][3], float x, float y, float z, float& ox, float& oy, float& oz)
-{
-    ox = m[0][0] * x + m[0][1] * y + m[0][2] * z;
-    oy = m[1][0] * x + m[1][1] * y + m[1][2] * z;
-    oz = m[2][0] * x + m[2][1] * y + m[2][2] * z;
-}
-
-void Cross(float ax, float ay, float az, float bx, float by, float bz, float& ox, float& oy,
-           float& oz)
-{
-    ox = ay * bz - az * by;
-    oy = az * bx - ax * bz;
-    oz = ax * by - ay * bx;
 }
 
 // 接触点方向 d の有効質量逆数: invMass + d·((I⁻¹(r×d))×r)
@@ -1247,260 +1062,6 @@ bool CcdSweepTarget(const ShapePose& target, float ox, float oy, float oz, float
     return true;
 }
 
-// ---- キャラクターコントローラ (M29b) ----
-
-struct CharBody {
-    EntityID entity;
-    CharacterControllerComponent* cc = nullptr;
-    LocalTransform* lt = nullptr;
-    WorldFrame frame;              // 親フレーム (収集時固定)
-    float px = 0, py = 0, pz = 0;  // tick 頭のワールド位置
-    float radius = 0, halfSeg = 0; // ワールドスケール適用済みのカプセル寸法
-    float stepHeight = 0;          // 登れる段差 (stepOffset x |scale.y|、ワールド m)。0 以下 = 段差登りなし
-    int32_t layer = 0;             // 衝突レイヤー (M36a、併用 Collider から。無ければ既定)
-    uint32_t mask = 0xFFFFFFFFu;
-};
-
-constexpr int kCharPushPasses = 4; // 固定パス数 (収束早期終了はしない = 決定論)
-
-// 段差登り (M82d) の定数
-constexpr float kStepSkin = 0.002f;     // 探索用カプセルの半径の縮み。接地直後の 0 深度接触を重なりと誤判定しない
-constexpr float kStepLandProbe = 0.005f; // 着地面の法線を測るために探索姿勢から押し込む量
-constexpr float kStepHeightTol = 0.005f; // 段差の上面が stepOffset ちょうどのとき浮動小数点誤差で落とさない余裕
-constexpr float kStepMinRise = 0.02f;    // これ以下の凹凸は通常の押し出しに任せる
-constexpr int kStepAdvanceTries = 5;     // 遮られた歩幅を超えて前へ出す試行回数 (半径の 1/4 刻み)
-constexpr int kStepBisectIters = 12;     // 着地高さの二分探索の回数 (固定 = 決定論)
-
-// 段差登り。接地中に水平移動 (dirX,dirZ は単位ベクトル、len は今 tick の歩幅) が遮られたときだけ呼ぶ。
-// 「stepHeight だけ持ち上げる → 前へ出す → 真下へ着地点を探す」を、前へ出す量を歩幅から半径まで
-// 増やしながら試す。足を載せるのに必要なぶんだけ前へ出る = 低速でも 1 tick で登れる。
-// 着地面の法線が登れる傾斜 (cosSlope 以上) で、接触点の高さが足元から stepHeight 以内のときだけ成功。
-// 戻り値 true なら (outX,outY,outZ) が登った後のカプセル中心
-bool TryCharStepUp(const std::vector<Body>& bodies, const CharBody& c, float cosSlope, float dirX,
-                   float dirZ, float len, float& outX, float& outY, float& outZ)
-{
-    auto overlapsAny = [&](const ShapePose& p) {
-        for (const Body& obs : bodies) {
-            if (!obs.solid || obs.entity.index == c.entity.index) {
-                continue;
-            }
-            if (!shapes::CanCollide(c.layer, c.mask, obs.layer, obs.mask)) {
-                continue;
-            }
-            if (shapes::Overlap(p, obs.pose)) {
-                return true;
-            }
-        }
-        return false;
-    };
-    ShapePose p;
-    p.shape = collidershape::kCapsule;
-    p.identityRot = 1;
-    p.radius = c.radius - kStepSkin;
-    p.halfSeg = c.halfSeg;
-    const float feetY = c.py - c.halfSeg - c.radius;
-    const float raisedY = c.py + c.stepHeight;
-    // 持ち上げた位置が天井に塞がれていれば登れない
-    p.px = c.px;
-    p.py = raisedY;
-    p.pz = c.pz;
-    if (overlapsAny(p)) {
-        return false;
-    }
-    for (int k = 0; k < kStepAdvanceTries; ++k) {
-        const float adv = len + static_cast<float>(k) * (c.radius * 0.25f);
-        p.px = c.px + dirX * adv;
-        p.pz = c.pz + dirZ * adv;
-        p.py = raisedY;
-        if (overlapsAny(p)) {
-            break; // 持ち上げた高さでも壁がある。これ以上前へ出すと薄い壁を抜けるので打ち切る
-        }
-        // 真下へ着地点を探す。下端は足元より少し下 (床があれば必ず重なる) に置く
-        float lo = c.py - 0.01f;
-        float hi = raisedY;
-        p.py = lo;
-        if (!overlapsAny(p)) {
-            continue; // 足場なし
-        }
-        for (int i = 0; i < kStepBisectIters; ++i) {
-            const float mid = 0.5f * (lo + hi);
-            p.py = mid;
-            if (overlapsAny(p)) {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-        }
-        // 着地面: 少し押し込んだ姿勢 (本来の半径) で重なる障害物のうち最も上向きの法線を採る
-        ShapePose q = p;
-        q.radius = c.radius;
-        q.py = hi - kStepLandProbe;
-        const Body* support = nullptr;
-        float supportNy = -2.0f;
-        for (const Body& obs : bodies) {
-            if (!obs.solid || obs.entity.index == c.entity.index) {
-                continue;
-            }
-            if (!shapes::CanCollide(c.layer, c.mask, obs.layer, obs.mask)) {
-                continue;
-            }
-            float nx, ny, nz, depth;
-            if (shapes::Collide(q, obs.pose, nx, ny, nz, depth) && ny > supportNy) {
-                supportNy = ny;
-                support = &obs;
-            }
-        }
-        if (support == nullptr || supportNy < cosSlope) {
-            continue;
-        }
-        float qx, qy, qz;
-        shapes::ClosestPointOnShape(support->pose, p.px, hi - c.halfSeg, p.pz, qx, qy, qz);
-        const float riseOfSurface = qy - feetY;
-        if (riseOfSurface <= kStepMinRise || riseOfSurface > c.stepHeight + kStepHeightTol) {
-            continue;
-        }
-        outX = p.px;
-        outY = hi;
-        outZ = p.pz;
-        return true;
-    }
-    return false;
-}
-
-// move-then-depenetrate: 変位を一括適用してから固定パス × 障害物 index 昇順で押し出す。
-// スイープしないため 1 tick で薄い壁を大きく越える速度 (v·dt > 壁厚) では貫通し得るが、
-// 60Hz × 常識的な移動速度では起きない (v=30m/s でも 0.5m/tick)。剛体ソルバの後に走るので
-// 障害物 (静的 + 解決後の動的剛体) の pose は当該 tick の最終位置。CC が剛体を押す応答は
-// 無し (必要ならソリッド capsule Collider を併用し OnCollision + AddForce で組む)。
-void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, float dt)
-{
-    if (chars.empty()) {
-        return;
-    }
-    std::sort(chars.begin(), chars.end(),
-              [](const CharBody& a, const CharBody& b) { return a.entity.index < b.entity.index; });
-    for (CharBody& c : chars) {
-        constexpr float kDeg2Rad = 3.14159265f / 180.0f;
-        const float cosSlope = std::cos(c.cc->slopeLimitDeg * kDeg2Rad);
-        float vy = c.cc->velocity.y + kGravity * c.cc->gravityScale * dt;
-        // 変位一括適用 (水平は moveInput 直接駆動、垂直は重力積分)
-        ShapePose pose;
-        pose.shape = collidershape::kCapsule; // 常にワールド Y 軸 = 単位基底
-        pose.identityRot = 1;
-        pose.radius = c.radius;
-        pose.halfSeg = c.halfSeg;
-        pose.px = c.px + c.cc->moveInput.x * dt;
-        pose.py = c.py + vy * dt;
-        pose.pz = c.pz + c.cc->moveInput.z * dt;
-        bool grounded = false;
-        // 押し出し: 固定パス × 障害物 index 昇順 (bodies はソート済)。自分の collider は skip
-        for (int pass = 0; pass < kCharPushPasses; ++pass) {
-            for (const Body& obs : bodies) {
-                if (!obs.solid || obs.entity.index == c.entity.index) {
-                    continue;
-                }
-                if (!shapes::CanCollide(c.layer, c.mask, obs.layer, obs.mask)) {
-                    continue; // M36a
-                }
-                float nx, ny, nz, depth;
-                if (!shapes::Collide(pose, obs.pose, nx, ny, nz, depth)) {
-                    continue;
-                }
-                pose.px += nx * depth;
-                pose.py += ny * depth;
-                pose.pz += nz * depth;
-                if (ny >= cosSlope) {
-                    grounded = true; // 登れる斜面 = 接地
-                    if (vy < 0.0f) {
-                        vy = 0.0f;
-                    }
-                } else if (ny <= -cosSlope) {
-                    if (vy > 0.0f) {
-                        vy = 0.0f; // 天井
-                    }
-                } // 壁/急斜面は押し出しのみ (滑り落ちは重力が担う)
-            }
-        }
-        // 接地プローブ (状態は変更しない): skinWidth+0.01 下げて接地面を探る
-        if (!grounded) {
-            ShapePose probe = pose;
-            probe.py -= (c.cc->skinWidth + 0.01f);
-            for (const Body& obs : bodies) {
-                if (!obs.solid || obs.entity.index == c.entity.index) {
-                    continue;
-                }
-                if (!shapes::CanCollide(c.layer, c.mask, obs.layer, obs.mask)) {
-                    continue; // M36a
-                }
-                float nx, ny, nz, depth;
-                if (shapes::Collide(probe, obs.pose, nx, ny, nz, depth) && ny >= cosSlope) {
-                    grounded = true;
-                    break; // 発見のみが目的 (状態を変えないので早期終了しても決定論)
-                }
-            }
-        }
-        // 段差登り (M82d): 前 tick に接地していて、水平移動が半分以上遮られたときだけ試す。
-        // stepOffset 0 のキャラ・ジャンプ tick・遮られていない tick は上の経路の結果をそのまま使う
-        float stepSpeedCap = -1.0f; // 段差を登った tick の水平 velocity の上限 (m/s)。負 = 登っていない
-        if (c.stepHeight > 0.0f && c.cc->isGrounded && c.cc->jumpSpeed <= 0.0f) {
-            const float mx = c.cc->moveInput.x;
-            const float mz = c.cc->moveInput.z;
-            const float speed = std::sqrt(mx * mx + mz * mz);
-            if (speed > 0.0f) {
-                const float dirX = mx / speed;
-                const float dirZ = mz / speed;
-                const float len = speed * dt;
-                const float progress = (pose.px - c.px) * dirX + (pose.pz - c.pz) * dirZ;
-                float sx, sy, sz;
-                if (progress < 0.5f * len
-                    && TryCharStepUp(bodies, c, cosSlope, dirX, dirZ, len, sx, sy, sz)) {
-                    pose.px = sx;
-                    pose.py = sy;
-                    pose.pz = sz;
-                    grounded = true;
-                    vy = 0.0f;
-                    stepSpeedCap = speed;
-                }
-            }
-        }
-        // ジャンプ: 接地時のみ発火。接地可否に関わらず消費 (バッファリング無し = 予測可能)
-        if (c.cc->jumpSpeed > 0.0f) {
-            if (grounded) {
-                vy = c.cc->jumpSpeed;
-            }
-            c.cc->jumpSpeed = 0.0f;
-        }
-        // 書き戻し (剛体と同じ親フレーム逆変換。回転は触らない)
-        const float invDt = 1.0f / dt;
-        c.cc->velocity.x = (pose.px - c.px) * invDt;
-        c.cc->velocity.y = vy;
-        c.cc->velocity.z = (pose.pz - c.pz) * invDt;
-        if (stepSpeedCap >= 0.0f) {
-            // 登りのために前へ出した分は移動速度に数えない (足音の歩幅やアニメーションが velocity を読む)
-            const float horizontal = std::sqrt(c.cc->velocity.x * c.cc->velocity.x + c.cc->velocity.z * c.cc->velocity.z);
-            if (horizontal > stepSpeedCap && horizontal > 0.0f) {
-                const float k = stepSpeedCap / horizontal;
-                c.cc->velocity.x *= k;
-                c.cc->velocity.z *= k;
-            }
-        }
-        c.cc->isGrounded = grounded;
-        if (c.frame.identity) {
-            c.lt->position = { pose.px, pose.py, pose.pz };
-        } else {
-            const float cqx = -c.frame.qx, cqy = -c.frame.qy, cqz = -c.frame.qz,
-                        cqw = c.frame.qw;
-            float lx, ly, lz;
-            QuatRotate(cqx, cqy, cqz, cqw, pose.px - c.frame.px, pose.py - c.frame.py,
-                       pose.pz - c.frame.pz, lx, ly, lz);
-            const float isx = (std::fabs(c.frame.sx) > 1e-8f) ? 1.0f / c.frame.sx : 1.0f;
-            const float isy = (std::fabs(c.frame.sy) > 1e-8f) ? 1.0f / c.frame.sy : 1.0f;
-            const float isz = (std::fabs(c.frame.sz) > 1e-8f) ? 1.0f / c.frame.sz : 1.0f;
-            c.lt->position = { lx * isx, ly * isy, lz * isz };
-        }
-    }
-}
-
 } // namespace
 
 // M60'c: 剛体収集と同じ親フレーム合成でワールド姿勢を返す公開口 (PhysicsSystem.h 参照)
@@ -1523,10 +1084,14 @@ void ComposeEntityWorldPose(World& world, EntityID e, float& px, float& py, floa
 }
 
 void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* outContacts,
-                           XpbdBackend* xpbd, std::vector<ShapeImpulse>* outShapeImpulses)
+                           XpbdBackend* xpbd, std::vector<ShapeImpulse>* outShapeImpulses,
+                           std::vector<SolidContact>* outCharacterContacts)
 {
     if (outContacts) {
         outContacts->clear();
+    }
+    if (outCharacterContacts) {
+        outCharacterContacts->clear(); // M93e: 早期 return の経路でも前 tick の接触を残さない
     }
     if (outShapeImpulses) {
         outShapeImpulses->clear();
@@ -2055,6 +1620,23 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
 
     // ---- 物理環境の解決 (M59b)。不在 (= 既存シーンの全部) なら以降は全て従来経路 ----
     const PhysicsEnvironmentComponent* env = ResolvePhysicsEnvironment(world);
+    // M93e (dogfooding #19): 車輪のばねは substeps 1 では硬すぎるのに、PhysicsEnvironment が無いと
+    // 黙って従来経路 (substeps 1 相当) を通って柔らかい車になる。原因に辿り着けるよう 1 回だけ WARN する。
+    // 走査はアーキタイプの件数を見るだけ (エンティティは触らない)。ログだけで sim は変えない
+    if (env == nullptr && !warnedVehicleWithoutEnvironment_) {
+        bool anyVehicle = false;
+        const ComponentTypeId vehicleReq[] = { VehicleComponent::sTypeId };
+        world.ForEachArchetype(vehicleReq, [&](Archetype& arch) {
+            if (arch.Count() > 0) {
+                anyVehicle = true;
+            }
+        });
+        if (anyVehicle) {
+            warnedVehicleWithoutEnvironment_ = true;
+            MYE_LOG_WARN("[phys] a Vehicle exists but the scene has no PhysicsEnvironment - wheel springs run with "
+                         "substeps 1 and the car feels soft. Add a PhysicsEnvironment (substeps 8-16) to the scene");
+        }
+    }
 
     // ---- CCD の有無 (M59j) ----
     // 1 個も居なければ掃引パスごと通らない = 既存シーンは fp 演算が 1 回も増えない。
@@ -5029,468 +4611,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     }
 
     // ---- キャラクターコントローラ解決 (M29b)。剛体解決後の最終 pose を障害物として使う ----
-    SolveCharacters(bodies, chars, dt);
-}
-
-// ==== 物理マテリアル解決 (M59a2) ====
-// 宣言側 (PhysicsSystem.h) のコメントが契約の正本。ここは実装の注意のみ:
-// Select* は fp 演算ゼロの値選択に保つこと — 未割当シーンのビット同一はそれだけで自明に立つ
-
-float SelectFriction(const ColliderComponent& col, const PhysMat* mat)
-{
-    if ((col.materialOverrideBits & kPhysMatOverrideFriction) != 0u) {
-        return col.friction;
-    }
-    return mat ? mat->dynamicFriction : col.friction;
-}
-
-float SelectStaticFriction(const ColliderComponent& col, const PhysMat* mat)
-{
-    if ((col.materialOverrideBits & kPhysMatOverrideFriction) != 0u) {
-        return col.friction;
-    }
-    // ★材料なしは **col.friction** — SelectFriction と同じ式・同じ入力なので μs と μd が
-    //   ビットまで一致し、ソルバの静止/動の分岐が従来の 1 本のクランプに畳まれる
-    return mat ? mat->staticFriction : col.friction;
-}
-
-float SelectRollingResistance(const ColliderComponent& col, const PhysMat* mat)
-{
-    if ((col.materialOverrideBits & kPhysMatOverrideRolling) != 0u) {
-        return 0.0f;
-    }
-    return mat ? mat->rollingResistance : 0.0f;
-}
-
-// M60d: 粘着力 [N]。**Collider 側に旧フィールドが無い**ので上書きビットも取らない —
-// 「材料が無ければ 0」しか状態が無く、未割当シーンのビット同一が式の上で自明に立つ
-float SelectAdhesion(const PhysMat* mat)
-{
-    return mat ? mat->adhesion : 0.0f;
-}
-
-// M65c: 音響 3 本。SelectAdhesion と同型 (旧フィールド無し = 上書きビット無し)
-float SelectAcousticLoudness(const PhysMat* mat)
-{
-    return mat ? mat->acousticLoudness : 0.0f;
-}
-
-float SelectAcousticRadiusM(const PhysMat* mat)
-{
-    return mat ? mat->acousticRadiusM : 0.0f;
-}
-
-int32_t SelectAcousticTone(const PhysMat* mat)
-{
-    return mat ? mat->acousticTone : 0;
-}
-
-float SelectRestitution(const ColliderComponent* col, const RigidbodyComponent* rb,
-                        const PhysMat* mat)
-{
-    // 既存フィールドの格納庫は Rigidbody 側 (静的コライダーは持たない = 従来どおり 0)
-    const float legacy = rb ? rb->restitution : 0.0f;
-    if (col && (col->materialOverrideBits & kPhysMatOverrideRestitution) != 0u) {
-        return legacy;
-    }
-    return mat ? mat->restitution : legacy;
-}
-
-const PhysicsEnvironmentComponent* ResolvePhysicsEnvironment(World& world)
-{
-    // Skybox / Fog と同じ「entity.index 最小の active な 1 個」。アーキタイプの走査順に
-    // 依存させないため、早期 return せず全件見てから最小 index を採る
-    const PhysicsEnvironmentComponent* best = nullptr;
-    uint32_t bestIndex = 0xFFFFFFFFu;
-    const ComponentTypeId req[] = { PhysicsEnvironmentComponent::sTypeId };
-    world.ForEachArchetype(req, [&](Archetype& arch) {
-        const int ei = arch.FindTypeIndex(PhysicsEnvironmentComponent::sTypeId);
-        for (uint32_t row = 0; row < arch.Count(); ++row) {
-            const EntityID e = arch.EntityAt(row);
-            if (e.index >= bestIndex || !IsEntityActive(world, e)) {
-                continue;
-            }
-            bestIndex = e.index;
-            best = static_cast<const PhysicsEnvironmentComponent*>(arch.GetPtr(ei, row));
-        }
-    });
-    return best;
-}
-
-const WaterWaveComponent* ResolveActiveWaterWave(World& world, EntityID* outEntity)
-{
-    const WaterWaveComponent* best = nullptr;
-    EntityID bestEntity = kNullEntity;
-    uint32_t bestIndex = 0xFFFFFFFFu;
-    const ComponentTypeId req[] = { WaterWaveComponent::sTypeId };
-    world.ForEachArchetype(req, [&](Archetype& arch) {
-        const int wi = arch.FindTypeIndex(WaterWaveComponent::sTypeId);
-        for (uint32_t row = 0; row < arch.Count(); ++row) {
-            const EntityID e = arch.EntityAt(row);
-            if (e.index >= bestIndex || !IsEntityActive(world, e)) {
-                continue;
-            }
-            const auto* wave = static_cast<const WaterWaveComponent*>(arch.GetPtr(wi, row));
-            if (wave && wave->enabled) {
-                bestIndex = e.index;
-                best = wave;
-                bestEntity = e;
-            }
-        }
-    });
-    if (outEntity) {
-        *outEntity = bestEntity;
-    }
-    return best;
-}
-
-float MeanProjectedAreaWorld(const ColliderComponent* col, float sx, float sy, float sz)
-{
-    // 負スケールは絶対値 (ShapeVolumeWorld / shapes::ApplyScaledExtents と同一規約)
-    sx = std::fabs(sx);
-    sy = std::fabs(sy);
-    sz = std::fabs(sz);
-    // コライダー無し / 動的 mesh は慣性導出 (LocalInertiaDiag) と同じ「半径 0.5 の球」既定。
-    // ここを 0 にすると「空力が黙って効かない」になるので、既定の代表形状へ落とす
-    if (!col || col->shape == collidershape::kMesh) {
-        return XM_PI * 0.25f;
-    }
-    switch (col->shape) {
-    case collidershape::kSphere: { // 球 = 最大成分スケール。表面積 4 pi r^2 の 1/4 = pi r^2
-        const float r = col->radius * std::max(sx, std::max(sy, sz));
-        return XM_PI * r * r;
-    }
-    case collidershape::kBox: { // box = 成分別スケール。表面積 8(hx hy + hy hz + hz hx) の 1/4
-        const float hx = col->halfExtents.x * sx;
-        const float hy = col->halfExtents.y * sy;
-        const float hz = col->halfExtents.z * sz;
-        return 2.0f * (hx * hy + hy * hz + hz * hx);
-    }
-    case collidershape::kConvex: { // M60f: 凸包は**外接 AABB の箱で代用**する。
-        // 厳密な表面積は非一様スケールで積分し直しになるうえ、向きを見る正しい
-        // 面積分は M59c/M59d の面サンプリングが担当なので、ここは代表値で足りる
-        const ConvexHullData* h = convexcol::Resolve(col->meshAsset);
-        if (!h || !h->Valid()) {
-            return XM_PI * 0.25f;
-        }
-        const float hx = (h->aabbMax.x - h->aabbMin.x) * 0.5f * sx;
-        const float hy = (h->aabbMax.y - h->aabbMin.y) * 0.5f * sy;
-        const float hz = (h->aabbMax.z - h->aabbMin.z) * 0.5f * sz;
-        return 2.0f * (hx * hy + hy * hz + hz * hx);
-    }
-    default: { // capsule = 側面 2 pi r (2 halfSeg) + 両端の球面 4 pi r^2、の 1/4
-        const float wr = col->radius * std::max(sx, sz);
-        const float wh = col->height * 0.5f * sy;
-        const float halfSeg = (wh > wr) ? (wh - wr) : 0.0f;
-        return XM_PI * wr * halfSeg + XM_PI * wr * wr;
-    }
-    }
-}
-
-float SubmergedFractionWorld(const ShapePose& pose, float planeY, float& outCentroidY)
-{
-    outCentroidY = pose.py;
-    if (pose.shape == collidershape::kSphere) {
-        // 球冠。中心を原点に取り t = planeY - 中心Y。t <= -R は完全に水面上、t >= R は完全没水。
-        // V(t) = pi(R^2 t - t^3/3 + 2R^3/3)、M(t) = pi(R^2 t^2/2 - t^4/4 - R^4/4)
-        // (どちらも多項式 — 球冠の体積・重心に三角関数は要らない)
-        const float R = pose.radius;
-        if (R <= 0.0f) {
-            return 0.0f;
-        }
-        const float t = planeY - pose.py;
-        if (t <= -R) {
-            return 0.0f;
-        }
-        if (t >= R) {
-            return 1.0f; // 完全没水。重心は中心のまま
-        }
-        const float R2 = R * R;
-        const float t2 = t * t;
-        const float v = R2 * t - t2 * t / 3.0f + 2.0f * R2 * R / 3.0f; // pi は約分で消える
-        if (v <= 0.0f) {
-            return 0.0f;
-        }
-        const float m = R2 * t2 * 0.5f - t2 * t2 * 0.25f - R2 * R2 * 0.25f;
-        outCentroidY = pose.py + m / v;
-        return v / (4.0f * R2 * R / 3.0f); // V_cap / V_sphere
-    }
-    // box / capsule: 保守 AABB の高さ比近似。傾いた箱の没水重心が水平にずれるのを
-    // 拾えない (= 復原モーメントが出ない) のが v1 の既知の限界
-    float minX, minY, minZ, maxX, maxY, maxZ;
-    shapes::ComputeAabb(pose, minX, minY, minZ, maxX, maxY, maxZ);
-    const float h = maxY - minY;
-    if (h <= 0.0f || planeY <= minY) {
-        return 0.0f;
-    }
-    const float top = (planeY < maxY) ? planeY : maxY;
-    outCentroidY = (minY + top) * 0.5f;
-    return (top - minY) / h;
-}
-
-float ShapeVolumeWorld(const ColliderComponent& col, float sx, float sy, float sz)
-{
-    // MakePose 経由と同じく負スケールは絶対値 (shapes::ApplyScaledExtents 参照)
-    sx = std::fabs(sx);
-    sy = std::fabs(sy);
-    sz = std::fabs(sz);
-    switch (col.shape) {
-    case collidershape::kSphere: { // 球 = 最大成分スケール
-        const float r = col.radius * std::max(sx, std::max(sy, sz));
-        return (4.0f / 3.0f) * XM_PI * r * r * r;
-    }
-    case collidershape::kBox: // box = 成分別スケール
-        return 8.0f * (col.halfExtents.x * sx) * (col.halfExtents.y * sy)
-             * (col.halfExtents.z * sz);
-    case collidershape::kCapsule: { // capsule = 円柱 + 両端半球 (halfSeg 規約は ApplyScaledExtents と同一)
-        const float wr = col.radius * std::max(sx, sz);
-        const float wh = col.height * 0.5f * sy;
-        const float halfSeg = (wh > wr) ? (wh - wr) : 0.0f;
-        return XM_PI * wr * wr * (2.0f * halfSeg) + (4.0f / 3.0f) * XM_PI * wr * wr * wr;
-    }
-    case collidershape::kConvex: { // M60f: 凸包。生成時に積分した体積 (密度 1) に線形写像の行列式を掛ける
-        const ConvexHullData* h = convexcol::Resolve(col.meshAsset);
-        return h ? h->volume * sx * sy * sz : 0.0f;
-    }
-    default: // mesh (shape=3) は体積を定義しない → 呼び出し側が mass へフォールバック
-        return 0.0f;
-    }
-}
-
-float ResolveBodyMass(const RigidbodyComponent& rb, const ColliderComponent* col,
-                      const PhysMat* mat, float sx, float sy, float sz)
-{
-    const float base = (rb.mass > 0.0f) ? rb.mass : 1.0f; // 従来の既定 (M20)
-    if (!rb.useDensity || !mat || !col || col->shape == collidershape::kMesh) {
-        return base; // 未割当シーンは常にここ = 従来と同一式
-    }
-    const float m = mat->density * ShapeVolumeWorld(*col, sx, sy, sz);
-    return (m > 0.0f) ? m : base; // 体積 0 (半径 0 等) をゼロ除算にしない
-}
-
-float EffectiveMassWorld(World& world, EntityID e, const RigidbodyComponent& rb)
-{
-    const auto* col = world.GetComponent<ColliderComponent>(e);
-    const PhysMat* mat = col ? physmat::Resolve(col->physMaterial) : nullptr;
-    float sx = 1.0f, sy = 1.0f, sz = 1.0f;
-    if (const auto* lt = world.GetComponent<LocalTransform>(e)) {
-        sx = lt->scale.x;
-        sy = lt->scale.y;
-        sz = lt->scale.z;
-    }
-    return ResolveBodyMass(rb, col, mat, sx, sy, sz);
-}
-
-int ApplyTorqueWorld(World& world, EntityID e, MyeVec3 torque, float dt)
-{
-    auto* rb = world.GetComponent<RigidbodyComponent>(e);
-    auto* lt = world.GetComponent<LocalTransform>(e);
-    if (!rb || !lt || rb->isKinematic || rb->freezeRotation) {
-        return 0;
-    }
-    rb->isSleeping = false; // M59h: トルクも起床トリガ
-    rb->sleepTicks = 0;
-    const auto* col = world.GetComponent<ColliderComponent>(e);
-    // M59a2: 密度導出質量をソルバ収集と同じ関数で解決 (質量を二義にしない)
-    const float mass = EffectiveMassWorld(world, e, *rb);
-    ShapePose pose;
-    if (col) {
-        pose = shapes::MakePose(*col, lt->position, lt->rotation, lt->scale);
-    }
-    float ix, iy, iz;
-    LocalInertiaDiag(col, pose, mass, ix, iy, iz);
-    float invI[3][3];
-    InvInertiaWorld(pose, ix, iy, iz, invI);
-    float ox, oy, oz;
-    MulInvI(invI, torque.x * dt, torque.y * dt, torque.z * dt, ox, oy, oz);
-    rb->angularVelocity.x += ox;
-    rb->angularVelocity.y += oy;
-    rb->angularVelocity.z += oz;
-    return 1;
-}
-
-int ApplyForceAtWorldPoint(World& world, EntityID e, MyeVec3 force, MyeVec3 worldPoint, float dt)
-{
-    auto* rb = world.GetComponent<RigidbodyComponent>(e);
-    auto* lt = world.GetComponent<LocalTransform>(e);
-    if (!rb || !lt || rb->isKinematic) {
-        return 0;
-    }
-    rb->isSleeping = false; // M59h: 力を入れるスロットは必ず起こす
-    rb->sleepTicks = 0;
-    // M59a2: 質量はソルバと同じ関数で 1 回だけ解決する (並進と回転で食い違わせない)
-    const float mass = EffectiveMassWorld(world, e, *rb);
-    const float s = dt / mass;
-    rb->velocity.x += force.x * s;
-    rb->velocity.y += force.y * s;
-    rb->velocity.z += force.z * s;
-    if (rb->freezeRotation) {
-        return 1; // 回転を凍らせたボディは端を押しても回らない (並進だけ入って成功)
-    }
-    const auto* col = world.GetComponent<ColliderComponent>(e);
-    ShapePose pose;
-    if (col) {
-        pose = shapes::MakePose(*col, lt->position, lt->rotation, lt->scale);
-    }
-    // 質量中心のワールドオフセット (M59f1)。既定 (0,0,0) は**分岐で外す** —
-    // `p + 0.0f` が -0.0f を +0.0f に化けさせるので「0 を足しても同じ」に依存しない
-    float comx = 0.0f, comy = 0.0f, comz = 0.0f;
-    if (rb->centerOfMass.x != 0.0f || rb->centerOfMass.y != 0.0f || rb->centerOfMass.z != 0.0f) {
-        QuatRotate(lt->rotation.x, lt->rotation.y, lt->rotation.z, lt->rotation.w,
-                   rb->centerOfMass.x * lt->scale.x, rb->centerOfMass.y * lt->scale.y,
-                   rb->centerOfMass.z * lt->scale.z, comx, comy, comz);
-    }
-    const float rx = worldPoint.x - lt->position.x - comx;
-    const float ry = worldPoint.y - lt->position.y - comy;
-    const float rz = worldPoint.z - lt->position.z - comz;
-    float tx, ty, tz;
-    Cross(rx, ry, rz, force.x, force.y, force.z, tx, ty, tz);
-    float ix, iy, iz;
-    LocalInertiaDiag(col, pose, mass, ix, iy, iz);
-    float invI[3][3];
-    InvInertiaWorld(pose, ix, iy, iz, invI);
-    float ox, oy, oz;
-    MulInvI(invI, tx * dt, ty * dt, tz * dt, ox, oy, oz);
-    rb->angularVelocity.x += ox;
-    rb->angularVelocity.y += oy;
-    rb->angularVelocity.z += oz;
-    return 1;
-}
-
-int SampleTerrainHeightWorld(World& world, float x, float z, float* outHeight, MyeVec3* outNormal)
-{
-    // 収集 (RaycastWorld と同じ規約: WorldMatrix ベース、index 昇順に整列してから走査)
-    struct TerrainTarget {
-        EntityID entity;
-        ShapePose pose;
-    };
-    std::vector<TerrainTarget> targets;
-    const ComponentTypeId req[] = { ColliderComponent::sTypeId, WorldMatrixComponent::sTypeId };
-    world.ForEachArchetype(req, [&](Archetype& arch) {
-        const int ci = arch.FindTypeIndex(ColliderComponent::sTypeId);
-        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-        for (uint32_t row = 0; row < arch.Count(); ++row) {
-            const EntityID e = arch.EntityAt(row);
-            if (!IsEntityActive(world, e)) {
-                continue;
-            }
-            const auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
-            if (col->shape != collidershape::kTerrain) {
-                continue; // 地形コライダーだけが対象 (レイヤーマスクは見ない — 高さは幾何)
-            }
-            const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
-            targets.push_back({ e, shapes::MakePoseFromMatrix(*col, wm->value) });
-        }
-    });
-    std::sort(targets.begin(), targets.end(), [](const TerrainTarget& a, const TerrainTarget& b) {
-        return a.entity.index < b.entity.index;
-    });
-
-    bool hit = false;
-    float bestY = 0.0f, bnx = 0.0f, bny = 1.0f, bnz = 0.0f;
-    for (const TerrainTarget& t : targets) {
-        float minX, minY, minZ, maxX, maxY, maxZ;
-        shapes::ComputeAabb(t.pose, minX, minY, minZ, maxX, maxY, maxZ);
-        if (x < minX || x > maxX || z < minZ || z > maxZ) {
-            continue; // XZ が地形の外 — 真下に撃っても当たらないので DDA ごと省く
-        }
-        // 天井の 1m 上から撃つ。ぴったり天井から始めると、最高点の頂点をかすめるレイが
-        // 数値誤差で「開始点が既に表面の下」に落ちて外れることがある
-        const float startY = maxY + 1.0f;
-        const float span = (startY - minY) + 1.0f;
-        float ht, nx, ny, nz;
-        if (!shapes::Raycast(t.pose, x, startY, z, 0.0f, -1.0f, 0.0f, span, ht, nx, ny, nz)) {
-            continue;
-        }
-        const float hitY = startY - ht;
-        // 厳密 > + index 昇順走査 = 同高は低 index が残る (決定論)
-        if (!hit || hitY > bestY) {
-            hit = true;
-            bestY = hitY;
-            bnx = nx;
-            bny = ny;
-            bnz = nz;
-        }
-    }
-    if (!hit) {
-        return 0;
-    }
-    if (outHeight) {
-        *outHeight = bestY;
-    }
-    if (outNormal) {
-        *outNormal = { bnx, bny, bnz };
-    }
-    return 1;
-}
-
-int RaycastWorld(World& world, MyeVec3 origin, MyeVec3 dir, float maxDist, MyeRaycastHit* outHit,
-                 uint32_t mask, RaycastSkipFn skip, const void* skipUser)
-{
-    // dir を正規化 (ゼロ長は無効)
-    float dlen = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
-    if (dlen < 1e-8f) {
-        return 0;
-    }
-    const float dx = dir.x / dlen, dy = dir.y / dlen, dz = dir.z / dlen;
-    if (maxDist <= 0.0f) {
-        maxDist = 1e9f;
-    }
-
-    // 収集 (index 昇順、WorldMatrix ベースのワールドポーズ)
-    struct RayTarget {
-        EntityID entity;
-        ShapePose pose;
-    };
-    std::vector<RayTarget> targets;
-    const ComponentTypeId req[] = { ColliderComponent::sTypeId, WorldMatrixComponent::sTypeId };
-    world.ForEachArchetype(req, [&](Archetype& arch) {
-        const int ci = arch.FindTypeIndex(ColliderComponent::sTypeId);
-        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-        for (uint32_t row = 0; row < arch.Count(); ++row) {
-            const EntityID e = arch.EntityAt(row);
-            if (!IsEntityActive(world, e)) {
-                continue;
-            }
-            const auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
-            if (!shapes::LayerHit(mask, col->layer)) {
-                continue; // M36a: マスク外レイヤーは収集段階で除外
-            }
-            if (skip != nullptr && skip(world, e, skipUser)) {
-                continue; // M89m: 呼び出し側が除く物 (自分の体など)
-            }
-            const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
-            targets.push_back({ e, shapes::MakePoseFromMatrix(*col, wm->value) });
-        }
-    });
-    std::sort(targets.begin(), targets.end(),
-              [](const RayTarget& a, const RayTarget& b) { return a.entity.index < b.entity.index; });
-
-    float bestT = maxDist;
-    bool hit = false;
-    EntityID bestE = kNullEntity;
-    float bnx = 0, bny = 0, bnz = 0;
-    for (const RayTarget& t : targets) {
-        float ht, nx, ny, nz;
-        const bool ok = shapes::Raycast(t.pose, origin.x, origin.y, origin.z, dx, dy, dz, bestT,
-                                        ht, nx, ny, nz);
-        if (ok && ht < bestT) { // 昇順走査 + 厳密 < なので同 t は低 index が残る (決定論)
-            bestT = ht;
-            bestE = t.entity;
-            bnx = nx; bny = ny; bnz = nz;
-            hit = true;
-        }
-    }
-    if (!hit) {
-        return 0;
-    }
-    if (outHit) {
-        outHit->entity = { bestE.index, bestE.generation };
-        outHit->point = { origin.x + dx * bestT, origin.y + dy * bestT, origin.z + dz * bestT };
-        outHit->normal = { bnx, bny, bnz };
-        outHit->distance = bestT;
-    }
-    return 1;
+    SolveCharacters(bodies, chars, dt, outCharacterContacts);
 }
 
 } // namespace mye

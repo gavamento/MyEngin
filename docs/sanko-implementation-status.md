@@ -60,32 +60,32 @@
 
 ## 実装・参照先
 
-| ファイル | 絶対パス |
+| ファイル | リポジトリ相対パス |
 |---|---|
-| [操作](../src/GameLogic/Scripts/WatcherFpsCamera.cpp) | `C:\HAL\MyEngin\src\GameLogic\Scripts\WatcherFpsCamera.cpp` |
-| [設置・回収](../src/GameLogic/Scripts/WatcherLightTool.cpp) | `C:\HAL\MyEngin\src\GameLogic\Scripts\WatcherLightTool.cpp` |
-| [入力定義](../assets/input/actions.json) | `C:\HAL\MyEngin\assets\input\actions.json` |
-| [航法宣言](../src/Engine/Engine/Acoustic/AcousticNav.h) | `C:\HAL\MyEngin\src\Engine\Engine\Acoustic\AcousticNav.h` |
-| [航法実装](../src/Engine/Engine/Acoustic/AcousticNav.cpp) | `C:\HAL\MyEngin\src\Engine\Engine\Acoustic\AcousticNav.cpp` |
-| [音響・敵テスト](../src/Engine/Engine/Acoustic/AcousticSelfTest.cpp) | `C:\HAL\MyEngin\src\Engine\Engine\Acoustic\AcousticSelfTest.cpp` |
-| [操作テスト](../tools/WatcherRulesSelfTest.cpp) | `C:\HAL\MyEngin\tools\WatcherRulesSelfTest.cpp` |
-| [操作テスト実行](../tools/watcher_rules_verify.bat) | `C:\HAL\MyEngin\tools\watcher_rules_verify.bat` |
-| [企画書](../三校企画.md) | `C:\HAL\MyEngin\三校企画.md` |
-| [音響処理（参照）](../src/Engine/Engine/Acoustic/AcousticField.cpp) | `C:\HAL\MyEngin\src\Engine\Engine\Acoustic\AcousticField.cpp` |
-| [敵処理（参照）](../src/Engine/Engine/Acoustic/AgentSystem.cpp) | `C:\HAL\MyEngin\src\Engine\Engine\Acoustic\AgentSystem.cpp` |
-| [コンポーネント（参照）](../src/Engine/Core/Ecs/Components.h) | `C:\HAL\MyEngin\src\Engine\Core\Ecs\Components.h` |
-| [スクリプトAPI（参照）](../src/Shared/ScriptAPI.h) | `C:\HAL\MyEngin\src\Shared\ScriptAPI.h` |
-| [Engine API（参照）](../src/Shared/EngineAPI.h) | `C:\HAL\MyEngin\src\Shared\EngineAPI.h` |
-| [安全半径の登録](../src/Engine/Core/Ecs/Components.cpp) | `C:\HAL\MyEngin\src\Engine\Core\Ecs\Components.cpp` |
-| [敵更新の宣言](../src/Engine/Engine/Acoustic/AgentSystem.h) | `C:\HAL\MyEngin\src\Engine\Engine\Acoustic\AgentSystem.h` |
-| [固定時間の受け渡し](../src/Engine/Engine/Loop/TickRunner.cpp) | `C:\HAL\MyEngin\src\Engine\Engine\Loop\TickRunner.cpp` |
-| [保存形式v14](../src/Engine/Engine/Replay/SimSnapshot.h) | `C:\HAL\MyEngin\src\Engine\Engine\Replay\SimSnapshot.h` |
-| [音声テストの版追随](../src/Engine/Engine/Audio/Spatial/AcousticAudioSelfTest.cpp) | `C:\HAL\MyEngin\src\Engine\Engine\Audio\Spatial\AcousticAudioSelfTest.cpp` |
-| [削除なしのReplay検証](../tools/verify_sanko_replay.ps1) | `C:\HAL\MyEngin\tools\verify_sanko_replay.ps1` |
+| [操作](../src/GameLogic/Scripts/WatcherFpsCamera.cpp) | `src/GameLogic/Scripts/WatcherFpsCamera.cpp` |
+| [設置・回収](../src/GameLogic/Scripts/WatcherLightTool.cpp) | `src/GameLogic/Scripts/WatcherLightTool.cpp` |
+| [入力定義](../assets/input/actions.json) | `assets/input/actions.json` |
+| [航法宣言](../src/Engine/Engine/Acoustic/AcousticNav.h) | `src/Engine/Engine/Acoustic/AcousticNav.h` |
+| [航法実装](../src/Engine/Engine/Acoustic/AcousticNav.cpp) | `src/Engine/Engine/Acoustic/AcousticNav.cpp` |
+| [音響・敵テスト](../src/Engine/Engine/Acoustic/AcousticSelfTest.cpp) | `src/Engine/Engine/Acoustic/AcousticSelfTest.cpp` |
+| [操作テスト](../tools/WatcherRulesSelfTest.cpp) | `tools/WatcherRulesSelfTest.cpp` |
+| [操作テスト実行](../tools/watcher_rules_verify.bat) | `tools/watcher_rules_verify.bat` |
+| [企画書](../三校企画.md) | `三校企画.md` |
+| [音響処理（参照）](../src/Engine/Engine/Acoustic/AcousticField.cpp) | `src/Engine/Engine/Acoustic/AcousticField.cpp` |
+| [敵処理（参照）](../src/Engine/Engine/Acoustic/AgentSystem.cpp) | `src/Engine/Engine/Acoustic/AgentSystem.cpp` |
+| [コンポーネント（参照）](../src/Engine/Core/Ecs/Components.h) | `src/Engine/Core/Ecs/Components.h` |
+| [スクリプトAPI（参照）](../src/Shared/ScriptAPI.h) | `src/Shared/ScriptAPI.h` |
+| [Engine API（参照）](../src/Shared/EngineAPI.h) | `src/Shared/EngineAPI.h` |
+| [安全半径の登録](../src/Engine/Core/Ecs/Components.cpp) | `src/Engine/Core/Ecs/Components.cpp` |
+| [敵更新の宣言](../src/Engine/Engine/Acoustic/AgentSystem.h) | `src/Engine/Engine/Acoustic/AgentSystem.h` |
+| [固定時間の受け渡し](../src/Engine/Engine/Loop/TickRunner.cpp) | `src/Engine/Engine/Loop/TickRunner.cpp` |
+| [保存形式v14](../src/Engine/Engine/Replay/SimSnapshot.h) | `src/Engine/Engine/Replay/SimSnapshot.h` |
+| [音声テストの版追随](../src/Engine/Engine/Audio/Spatial/AcousticAudioSelfTest.cpp) | `src/Engine/Engine/Audio/Spatial/AcousticAudioSelfTest.cpp` |
+| [削除なしのReplay検証](../tools/verify_sanko_replay.ps1) | `tools/verify_sanko_replay.ps1` |
 
 ## 初回の検証結果
 
-すべて `C:\HAL\MyEngin` を作業ディレクトリとして実施した。
+すべてリポジトリルートを作業ディレクトリとして実施した。
 
 | 検証 | 結果 |
 |---|---|

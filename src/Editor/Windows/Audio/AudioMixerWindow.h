@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <string>
 
+#include "Editor/Undo/UndoStack.h" // M93f: 文書 Undo
 #include "Engine/Engine/Audio/Playback/AudioMixer.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 
@@ -19,7 +20,11 @@ class AudioMixerWindow {
 public:
     bool open = false; // ツール窓なので既定は非表示 (Window メニューから開く)
 
-    void OnImGui(EngineContext& ctx);
+    // undo (M93f): フェーダ / M・S / 送り / リバーブの連続編集は 1 フレームの前後の差分で、バスの追加・削除・
+    // 改名・親変更・ミキサー切替・既定へ戻すは操作ごとに、ランタイムのミキサー全体 (MixerAsset の JSON) を
+    // before / after として積む。Undo は ApplyMixer で戻す (次の Update で反映)。アクティブな .mixer.json の
+    // 選択そのものは戻さない (ランタイムのバス構成だけが対象)
+    void OnImGui(EngineContext& ctx, UndoStack& undo);
 
     // Asset Browser で .mixer.json がダブルクリックされた時に窓を開くためのフック
     void FocusOnActive() { open = true; }
@@ -40,6 +45,9 @@ private:
     void RenameBus(EngineContext& ctx, int bus, const std::string& newName);
     void ReparentBus(EngineContext& ctx, int bus, int newParent);
     void Save(EngineContext& ctx);
+    // トポロジ編集 1 回を文書エントリとして積む (M93f)。ApplyMixer は次の Update で反映されるので、
+    // フレーム末の差分では拾えない = 操作の場で before / after を積む
+    void PushTopologyOp(EngineContext& ctx, const char* label, const MixerAsset& before, const MixerAsset& after);
 
     // 寿命は EngineContext と同じ。窓を開いていなければ nullptr = 編集していない
     AudioSystem* audio_ = nullptr;
@@ -48,6 +56,11 @@ private:
     bool renameFocus_ = false;  // 編集開始フレームだけキーボードフォーカスを移す
     char renameBuf_[64] = {};
     std::string status_;
+    // M93f: 文書 Undo。undo_ は OnImGui の間だけ有効、docOpPushed_ はその枠で PushTopologyOp を呼んだか
+    // (呼んだフレームはフレーム末の差分を取らない = 二重に積まない)
+    UndoStack* undo_ = nullptr;
+    bool docOpPushed_ = false;
+    DocUndoRecorder docUndo_;
 };
 
 } // namespace mye

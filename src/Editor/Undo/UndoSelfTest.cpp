@@ -7,6 +7,8 @@
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Animation/AnimatorController.h" // M93f: 文書エントリの検証
+#include "Engine/Engine/Loop/EngineLoop.h"               // EngineContext
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene/Scene.h"
@@ -310,6 +312,78 @@ bool RunUndoSelfTest()
         check(!hasCollider(), "Record(Apply): undo removes the added component");
         undo.Redo(scene, sel);
         check(hasCollider(), "Record(Apply): redo adds the component back");
+    }
+
+    // ============ Phase: 文書エントリ (M93f) — 記録器の畳み込みと Controller の往復 ============
+    {
+        Scene scene;
+        UndoStack undo;
+        Selection sel;
+        ControllerLibrary controllers;
+        ControllerAsset asset;
+        asset.name = "undo_doc_test";
+        ControllerState idle;
+        idle.name = "Idle";
+        asset.states.push_back(idle);
+        const uint64_t hash = controllers.Register(L"undo_doc_test.controller.json", asset);
+        EngineContext ctx;
+        ctx.controllers = &controllers;
+        undo.SetFileOpContext(&ctx);
+        const uint64_t cleanSerial = undo.StateSerial();
+
+        auto stateCount = [&]() {
+            const ControllerAsset* c = controllers.Get(hash);
+            return c ? static_cast<int>(c->states.size()) : -1;
+        };
+        auto currentJson = [&]() { return ControllerLibrary::ToJson(*controllers.GetMutable(hash)); };
+
+        // 記録器: 変化が無ければ積まない / ドラッグ中 (anyItemActive) は畳み、離したフレームで 1 つ積む
+        DocUndoRecorder recorder;
+        const nlohmann::json pre = currentJson();
+        recorder.Observe(undo, "noop", UndoDocOp::Kind::Controller, hash, pre, pre, false);
+        check(!undo.CanUndo(), "DocUndoRecorder: identical pre/post pushes nothing");
+        ControllerState run;
+        run.name = "Run";
+        controllers.GetMutable(hash)->states.push_back(run);
+        recorder.Observe(undo, "edit", UndoDocOp::Kind::Controller, hash, pre, currentJson(), /*anyItemActive=*/true);
+        check(!undo.CanUndo(), "DocUndoRecorder: a change while an item is active is held, not pushed");
+        ControllerState walk;
+        walk.name = "Walk";
+        controllers.GetMutable(hash)->states.push_back(walk);
+        recorder.Observe(undo, "edit", UndoDocOp::Kind::Controller, hash, currentJson(), currentJson(), /*anyItemActive=*/false);
+        check(undo.CanUndo(), "DocUndoRecorder: releasing the item pushes one merged entry");
+        check(undo.StateSerial() == cleanSerial, "PushDocOp: a document entry does not dirty the scene (serial unchanged)");
+        check(stateCount() == 3, "doc edit: two states were added over the drag");
+
+        // Undo は畳んだ 2 手をまとめて戻し、Redo で戻る
+        undo.Undo(scene, sel);
+        check(stateCount() == 1, "doc undo: both held edits are reverted together");
+        check(controllers.Get(hash)->name == "undo_doc_test", "doc undo: asset identity (name) is kept");
+        undo.Redo(scene, sel);
+        check(stateCount() == 3, "doc redo: the merged edit is re-applied");
+
+        // 往復して元に戻った編集は積まない
+        const nlohmann::json pre2 = currentJson();
+        controllers.GetMutable(hash)->states.pop_back();
+        controllers.GetMutable(hash)->states.push_back(walk);
+        recorder.Observe(undo, "roundtrip", UndoDocOp::Kind::Controller, hash, pre2, currentJson(), false);
+        check(!undo.CanRedo() && undo.CanUndo(), "DocUndoRecorder: an edit that returns to the start pushes nothing");
+
+        // 文書が切り替わったら畳んでいた分は捨てる (別の hash で Observe)
+        controllers.GetMutable(hash)->states.pop_back();
+        recorder.Observe(undo, "edit", UndoDocOp::Kind::Controller, hash, pre2, currentJson(), /*anyItemActive=*/true);
+        recorder.Observe(undo, "other", UndoDocOp::Kind::Controller, hash + 1, pre2, pre2, false);
+        check(!recorder.pending, "DocUndoRecorder: switching documents drops the held edit");
+
+        // 対象が消えた文書エントリは WARN + no-op で、スタックが詰まらない
+        UndoDocOp gone;
+        gone.kind = UndoDocOp::Kind::Controller;
+        gone.hash = hash + 7;
+        gone.before = pre;
+        gone.after = pre2;
+        undo.PushDocOp("gone", std::move(gone));
+        undo.Undo(scene, sel);
+        check(undo.CanRedo(), "doc undo: an entry whose document vanished still moves to the redo stack");
     }
 
     if (failCount == 0) {

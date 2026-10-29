@@ -79,3 +79,21 @@
 
 ## TerrainSelfTest.cpp — LOD 境界のクラック検査
 - 旧 MakeTestTerrain は、地形の高さが縁に沿って 1 次式になっている fixture だった。「> 0」の判定だと丸め誤差だけの 1e-5 が通り、クラック検査が何も検査しないまま緑になっていたので、1 m 以上の食い違いを要求するようにした。
+
+## Undo/UndoStack.cpp / Windows/Animation / Windows/Audio — アセット文書の Undo (M93f)
+- Animator Controller 窓・Animation Preview 窓 (イベント編集)・Audio Mixer 窓は SaveToFile で直接保存し、Undo を持たなかった (27 窓のうち Undo に触れるのは 8 窓)。UndoStack はシーン (fileId 単位の before/after) とファイル操作 (M51i) に特化していたので、3 つ目の種類として「文書エントリ」(UndoDocOp: JSON の before/after を ControllerLibrary::FromJson / AudioSystem::ApplyMixer で戻す) を足した。serial は PushFileOp と同じく現状態を継承し、シーンの dirty を汚さない。
+- 記録は窓ごとに ImGui の編集点へ BeginRecord を撒くのではなく、フレーム頭と ImGui::End 直前の JSON を比べる DocUndoRecorder にした。編集点が多い (ステート・遷移・条件・骨の駆動・ブレンドの子・イベント) ので撒くと必ず取りこぼす、という M48e の override 記録と同じ判断。連続操作 (スライダ・テキスト) は IsAnyItemActive が偽になるフレームまで畳む。
+- Audio Mixer のトポロジ編集 (追加・削除・改名・親変更・切替・既定へ戻す) は ApplyMixer が次の Update まで反映されないので、フレーム末の差分では拾えない。操作の場で before/after を積み、そのフレームの差分は取らない。戻るのはランタイムのバス構成だけで、アクティブな .mixer.json の選択は戻さない (選択は MixerLibrary の状態で、文書ではない)。
+- SoundGen 窓 (合成パラメータから .wav を書き出す) と Particle Settings 窓 (セッション限定のバックエンド切替と個人設定) は文書を編集していないので Undo の対象にしなかった。
+- Mixer の Undo / Redo は、バス構成 (本数・名前・親) が今と同じなら ApplyMixer を呼ばず、Mixer 窓のフェーダと同じ setter (SetBusVolumeDb / SetBusMute / SetBusSolo / SetBusReverbSend / SetReverbPreset / SetReverbWetDryMix) で値だけを即時に戻す。ApplyMixer は次の Update でバスグラフを作り直して再生中の全ボイスを破棄するので、試聴しながらの Undo で音が止まる (PR #1 の Codex 指摘)。構成が変わる文書だけ ApplyMixer に委ねる。
+
+## Windows/Scene/InspectorWindow.cpp — 翻訳単位の分割 (M93g)
+- 4,452 行のうち、アセット選択時の描画 (DrawAssetInspector と Material / Sound / PhysMat / NavFilter / Properties / FxStack のスキーマ固定編集、1,280 行) を InspectorWindowAssets.cpp へ、ナビのベイク (NavMeshSurface / NavMeshAgent 節、CommitReadyNavBakes、.mnav 要約キャッシュ、360 行) を InspectorWindowNav.cpp へ移した。同じクラスのメンバ関数を翻訳単位で分けただけで、本文は 1 行も変えていない。
+- 無名名前空間のヘルパー (HandleEditUndo / MakeFieldLabel / 列挙の表示名表など) は全てエンティティ側に残る。DrawPatrolRouteNotes は HandleEditUndo を使うので動かさなかった (ヘルパーを共有ヘッダへ出すほどの量ではない)。
+- DrawNavMeshAgentNotes の説明コメントは、M85g で DrawPatrolRouteNotes が間に挿入されたときから PatrolRoute の頭に付いていた。本来の持ち主の上へ戻した。
+- 唯一の生 D3D 型 (`ID3D11ShaderResourceView*`、マテリアルプレビューを ImGui::Image へ渡す) は DrawMaterialInspector と一緒に InspectorWindowAssets.cpp へ移ったので、規則 15 の許可リストの項目も差し替えた (項目数 26 は変わらない)。
+- 各翻訳単位の include は本文が直接使う宣言だけに絞った。MSVC の無い環境での作業なので、ビルドで不足が出たら足す。
+
+## App/EditorMain.cpp — スプラッシュのビルド表記と規則 1
+- 起動スプラッシュ (91d0394) のビルド表記は `#ifdef _DEBUG` で "Debug" / "Release" を選んでいて、check_rules 規則 1 (ロジックの `_DEBUG` 分岐禁止) がエラーにしていた (master の CI はそれ以前のビルドエラーで規則検査まで届いていなかった)。表示だけの分岐だが、規則の許可リストはファイル単位 (GraphicsDevice.cpp) で、EditorMain.cpp を丸ごと許可するのは広すぎる。
+- build\Common.props の MyeBuildInfo が生成する MyeBuildInfo.h (`MYE_BUILD_CONFIG` / `MYE_GIT_HASH`) は Engine の CrashHandler.cpp だけが包含する設計 (Editor / Runtime は Engine.lib 経由で受け取る) なので、CrashHandler.h に `BuildConfigName()` / `BuildGitHash()` を足し、スプラッシュはそれを表示する。

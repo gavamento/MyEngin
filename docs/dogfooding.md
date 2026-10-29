@@ -19,7 +19,7 @@
 
 ## 状態の台帳 (M70d 時点)
 
-**20 件中 15 件が決着 (実装で 10 / 文書と確認で 5)、5 件が未解決。** 番号は下の節に対応する。
+**20 件中 20 件が決着 (実装で 15 / 文書と確認で 5)、未解決 0。** 番号は下の節に対応する。残っていた 5 件は 2026-10-27 の M93e でまとめて実装した (#20 は ABI v30)。
 未解決の 5 件はいずれも**新しい実装面が要る**もので、#20 は次の ABI bump の設計から始まる。
 
 | # | 内容 | 状態 |
@@ -37,13 +37,13 @@
 | **7** | **角度 → 四元数のヘルパがスクリプト側に無い** | **修正済み (M70d)** — `MyeQuatFromEuler` / `MyeForwardOf` (+ CRT に依存しない `MyeSinRad` / `MyeCosRad`)。ABI 追加ゼロ |
 | 8 | Skybox の cubemap モードが未実装 | **記録の誤り (M70d で判明)** — M38b で実装済み。古かったのは `Components.h` のコメントとこの記録のほう |
 | 9 | エンティティ参照が名前引きに寄りがち | **エンジン側は完備 (M70d で確認)** — 書き方の問題。M70c の `UIButtonDemo` が名前引き → `EntityRef` の実例 |
-| 11 | スクリプトのレイキャストをヘッドレスで追えない | 未解決（`--debug-draw-log` 案） |
+| **11** | **スクリプトのレイキャストをヘッドレスで追えない** | **修正済み (M93e)** — `--debug-draw-log <path>` が DebugDrawLine の線分を tick ごとにテキストへ追記 (Editor / Runtime / ヘッドレス Server 共通、出力レーン) |
 | **12** | **`builtin://` プリミティブが遅延生成で Runtime では半分解決しない** | **修正済み (M70d)** — `MeshLibrary::Init` が 6 種とも登録する |
-| 13 | プロジェクト側に車輪メッシュを用意する手段が無い | 未解決（`builtin://wheel` 案） |
-| 17 | CharacterController と Rigidbody が一方通行 | 未解決 |
+| **13** | **プロジェクト側に車輪メッシュを用意する手段が無い** | **修正済み (M93e)** — `builtin://wheel` (軸 X の円柱、半径 0.5、幅 0.5) を `MeshLibrary::Init` が 7 種目として登録する |
+| **17** | **CharacterController と Rigidbody が一方通行** | **修正済み (M93e)** — CC が押し出しで触れた剛体 (Rigidbody 持ち) との接触を別列で CollisionSystem へ渡し、両者のスクリプトに OnCollisionEnter / Stay / Exit が届く (impulse 0、運動量の交換なし、GetContactInfo には載らない) |
 | **18** | **`MyeGameObject` は回転を書けるのに読めない** | **修正済み (M70d)** — `GetLocalRotation` / `GetLocalScale` / `SetLocalScale`、加えて `GetWorldPosition` |
-| 19 | `Vehicle` があるのに `PhysicsEnvironment` が無いと黙って柔らかい車になる | 未解決（起動時 WARN 案） |
-| 20 | スクリプト間で値を渡す手段が名前引きしかない | 未解決 |
+| **19** | **`Vehicle` があるのに `PhysicsEnvironment` が無いと黙って柔らかい車になる** | **修正済み (M93e)** — 物理の最初の tick に 1 回だけ WARN (`[phys] a Vehicle exists but the scene has no PhysicsEnvironment ...`) |
+| **20** | **スクリプト間で値を渡す手段が名前引きしかない** | **修正済み (M93e、ABI v30)** — `SendScriptMessage(engine, from, target, nameHash, value)` と `OnMessage(ctx, from, nameHash, value)`。同じ tick の 2 つの配達点 (Update の直後 / LateUpdate の直後) で積んだ順に配る。C# は受信のみ |
 
 ---
 
@@ -338,7 +338,7 @@ ERROR ログだけ出して起動を続ける。その状態で保存すると**
 
 ---
 
-## 11. スクリプトのレイキャストを目で追う手段がヘッドレスに無い
+## 11. スクリプトのレイキャストを目で追う手段がヘッドレスに無い → **修正済み (M93e)**
 
 **やろうとしたこと** — 「撃っても敵に当たらない」の切り分け。
 
@@ -357,6 +357,11 @@ ERROR ログだけ出して起動を続ける。その状態で保存すると**
 **直すなら** — `DebugDrawLine` した線を `--replay-record` 中に**テキストで吐く**
 オプション（例 `--debug-draw-log`）があると、ヘッドレスでも射線を後から追える。
 描画レーンなのでハッシュには入らず、決定論には無関係。
+
+**直した (M93e)** — `--debug-draw-log <path>` を足した。`TickServices::debugDrawLog` に開いた
+`std::ofstream` を渡し、`RunOneTick` の tick 末 (スクリプトと物理・AI の可視化が積み終わった後) に
+`tick ax ay az bx by bz rrggbbaa` を 1 線分 1 行で追記する。Editor / Runtime (`EngineLoop`) と
+ヘッドレス Server (`HeadlessSim`) の両方で同じ出力レーン。
 
 ---
 
@@ -394,7 +399,7 @@ Runtime で成功することを実測で確認した。
 
 ---
 
-## 13. プロジェクト側に**車輪メッシュを用意する手段が無い**
+## 13. プロジェクト側に**車輪メッシュを用意する手段が無い** → **修正済み (M93e)**
 
 **やろうとしたこと** — Phase 3 の車に車輪を付ける。
 
@@ -421,6 +426,10 @@ Runtime で成功することを実測で確認した。
 **直すなら** — `builtin://wheel`（軸 X の単位円柱、半径 0.5）を `MeshLibrary` に足す。
 一様スケールは安全なので、半径 0.35 の車輪はスケール 0.7 で作れる。
 12 番と合わせて「組込みプリミティブは常に全部ある」にするのが本筋。
+
+**直した (M93e)** — `MeshLibrary::Wheel()` = `builtin://wheel`（半径 0.5、幅 0.5、軸 X）。円柱の
+生成器 (Y 軸) の頂点と法線を Z 軸まわりに -90° 回して倒しているだけなので、巻き順は変わらない。
+`Init` / `InitHeadless` が 7 種目として先に登録するので Runtime でも常に解決する。
 
 ---
 
@@ -525,7 +534,7 @@ no-op + WARN も同じ（セーブファイルは sim の外にあるので、�
 
 ---
 
-## 17. CharacterController と Rigidbody は**一方通行**（車で轢く判定が書けない）
+## 17. CharacterController と Rigidbody は**一方通行**（車で轢く判定が書けない） → **修正済み (M93e)**
 
 **やろうとしたこと** — 走っている車で敵（`CharacterController`）を轢く。
 素直に `OnCollisionEnter` で書こうとした。
@@ -543,6 +552,12 @@ no-op + WARN も同じ（セーブファイルは sim の外にあるので、�
 
 **直すなら** — キャラ ↔ 剛体の接触もイベントとして報告する。運動量の交換まで
 やらなくても、「触った」ことさえ通知されれば轢く・押されるはゲーム側で書ける。
+
+**直した (M93e)** — `SolveCharacters` が押し出しで触れた剛体 (`Rigidbody` 持ち) との接触を
+`characterContacts` (別の列、impulse 0) に積み、`CollisionSystem` がソリッド接触と同じ差分で
+OnCollisionEnter / Stay / Exit を**両者**へ配る。静的コライダー (床・壁) との接触は積まない
+(接地中に毎 tick Stay が出るだけで用途が無い)。音響の衝撃音・知覚・モーダル音・`GetContactInfo`
+には混ぜない (重さの無い接触で鳴らない・聞こえない・測れないため)。
 
 ---
 
@@ -564,7 +579,7 @@ no-op + WARN も同じ（セーブファイルは sim の外にあるので、�
 
 ---
 
-## 19. 車を置くと `PhysicsEnvironment` が必要になり、**シーン全体の物理が変わる**
+## 19. 車を置くと `PhysicsEnvironment` が必要になり、**シーン全体の物理が変わる** → **修正済み (M93e)**
 
 車輪のばね（`stiffness` 60000 N/m）は 1 tick 1 回積分では硬すぎるので、
 `PhysicsEnvironment.substeps` を上げる必要がある（エンジンのデモは 16）。
@@ -578,9 +593,12 @@ no-op + WARN も同じ（セーブファイルは sim の外にあるので、�
 「`Vehicle` があるのに `PhysicsEnvironment` が無いシーン」で起動時に 1 行 WARN を出す。
 今は**何も言わずに柔らかい車**になるので、原因に辿り着きにくい。
 
+**直した (M93e)** — `PhysicsSystem::Update` が環境を解決した直後、`Vehicle` のアーキタイプが
+1 つでもあって `env == nullptr` なら 1 回だけ WARN する (プロセス内の印だけで sim は変えない)。
+
 ---
 
-## 20. スクリプト間で値を渡す手段が「名前引き + フィールド書き込み」しかない
+## 20. スクリプト間で値を渡す手段が「名前引き + フィールド書き込み」しかない → **修正済み (M93e、ABI v30)**
 
 轢いた撃破を得点に足すとき、得点を持っているのは `PlayerController` で、
 乗車中のプレイヤーは止まっているので自分では数えられない。結果、
@@ -595,6 +613,13 @@ Phase 1 で「読みは一方向」と決めた設計が、ここで崩れてい
 イベント／メッセージの仕組みが 1 段あると素直に書ける。最小なら
 `SendMessage(entity, nameHash, int32)` のような 1 スロットでも、
 「誰が誰に何をした」をスクリプトの外に出せる。
+
+**直した (M93e、ABI v30)** — `SendScriptMessage(engine, from, target, nameHash, value)` 1 本と、
+`MyeScriptDesc` 末尾の `onMessage` (`Script<T>::OnMessage(ctx, from, nameHash, value)`)。
+配達は同じ tick の 2 点 (フェーズ 3 Update の直後 / フェーズ 5 LateUpdate の直後) で積まれた順、
+配達中の送信は 8 巡まで同じ点で続ける。tick をまたがないのでスナップショットに新しい状態は増えない。
+C# (`MyeScript.OnMessage`) は受信だけで、送信はスロットが 0 を返す (NoHash レーンの規則)。
+名前が `SendMessage` でないのは Win32 のマクロと衝突するため。恒久 probe は `MessageProbe.cpp`。
 
 ---
 ## 良かった点（そのまま動いた）

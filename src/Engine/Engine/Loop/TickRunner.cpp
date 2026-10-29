@@ -1,6 +1,7 @@
 #include "Engine/Engine/Loop/TickRunner.h"
 
 #include <algorithm>
+#include <cstdio> // M93e: --debug-draw-log の行の整形
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -207,6 +208,39 @@ void CapturePrevWorld(PrevWorldStore& prevWorld, World& w)
 
 } // namespace
 
+// M93e (dogfooding #20): SendScriptMessage の配達。queue に積まれた順に target のスクリプトへ届ける。
+// 配達中に送られた分 (queue へ積まれる) は次の巡で続けて配り、kRounds を超えた分は捨てて WARN する
+// (無限連鎖の遮断)。tick をまたいで残さない = スナップショットに入れる状態を作らない。
+// batch は queue と swap して使う作業領域 (tick 間で capacity を使い回す)
+static void DeliverScriptMessages(std::vector<ScriptMessage>* queue, std::vector<ScriptMessage>* batch,
+                                  ScriptHost* scripts, ManagedHost* managed, uint64_t tickIndex)
+{
+    if (queue == nullptr || batch == nullptr || queue->empty()) {
+        return;
+    }
+    constexpr int kRounds = 8;
+    for (int round = 0; round < kRounds && !queue->empty(); ++round) {
+        batch->clear();
+        batch->swap(*queue); // queue は空 (batch の capacity を受け取る)、batch が今巡の配達分
+        for (const ScriptMessage& m : *batch) {
+            const EntityID target{ m.target.index, m.target.generation };
+            const EntityID from{ m.from.index, m.from.generation };
+            if (scripts != nullptr) {
+                scripts->DispatchScriptMessage(target, from, m.nameHash, m.value);
+            }
+            if (managed != nullptr) {
+                managed->DispatchScriptMessage(target, from, m.nameHash, m.value);
+            }
+        }
+    }
+    if (!queue->empty()) {
+        MYE_LOG_WARN("[script] %zu message(s) dropped at tick %llu: more than %d rounds of send-during-delivery",
+                     queue->size(), static_cast<unsigned long long>(tickIndex), kRounds);
+        queue->clear();
+    }
+    batch->clear();
+}
+
 // 固定 tick 1 回分 (engine_spec.md 5.3 のフェーズ 3/3.5/3.6/4/5/7 + tick 末の出力レーン)。
 // (契約は TickRunner.h の TickServices)
 void RunOneTick(TickServices& ts)
@@ -358,6 +392,10 @@ void RunOneTick(TickServices& ts)
         managedHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt, ctx.playerCount);
         managedHost.RunStartAndUpdate();
     }
+    // ---- M93e: フェーズ 3 で送られたメッセージの配達 (Update の直後、音響・物理より前) ----
+    // C# は runManaged のときだけ受け取る (記録 / 検証中は C# 宛てを黙って捨てる = C# はリプレイの外)
+    DeliverScriptMessages(ts.messageQueue, ts.messageBatch, runScripts ? &scriptHost : nullptr,
+                          runManaged ? &managedHost : nullptr, ctx.tickIndex);
     // ---- 音響 (フェーズ 3.4、M65a): スクリプト層の直後・アニメと物理の前 ----
     // ここに置く理由は 2 つある:
     //   1. スクリプトが書いた発音要求 (AcousticEmitter.pending*) を**同じ tick で**波にする
@@ -506,7 +544,7 @@ void RunOneTick(TickServices& ts)
         anyDestructibles = AnyDestructibles(scene.GetWorld());
         // ソリッド接触ペアを受け取り CollisionSystem へ渡す (M28c OnCollision 配信)
         physicsSystem.Update(scene.GetWorld(), ctx.fixedDt, &solidContacts, ts.xpbd,
-                             anyDestructibles ? &fractureShapeImpulses : nullptr);
+                             anyDestructibles ? &fractureShapeImpulses : nullptr, ts.characterContacts);
         // M82h: NavMeshLink を渡っている Agent の位置と CC.velocity は物理の後に nav が上書きする (Transform の前)
         if (ts.navSystem != nullptr) {
             ts.navSystem->PostPhysics(scene.GetWorld(), ctx.fixedDt);
@@ -527,7 +565,7 @@ void RunOneTick(TickServices& ts)
             MYE_PROFILE_SCOPE("collision");
             // C# にもトリガー配信 (別レーン: 記録/検証中は managed=null で純 C++)
             collisionSystem.Update(scene.GetWorld(), &scriptHost,
-                                   runManaged ? &managedHost : nullptr, &solidContacts);
+                                   runManaged ? &managedHost : nullptr, &solidContacts, ts.characterContacts);
         }
         // M80g: 接着の破断・塊の分離。物理が出した形状単位インパルス (この tick 分) を
         // 消費するので collisionSystem の後・tick 末の ApplyStructuralChanges より前。
@@ -582,6 +620,9 @@ void RunOneTick(TickServices& ts)
     if (runManaged) {
         managedHost.RunLateUpdate();
     }
+    // ---- M93e: フェーズ 4 の衝突コールバックと LateUpdate で送られたメッセージの配達 ----
+    DeliverScriptMessages(ts.messageQueue, ts.messageBatch, runScripts ? &scriptHost : nullptr,
+                          runManaged ? &managedHost : nullptr, ctx.tickIndex);
     // ---- エフェクト spawn を drain (M32f): Prefab::Instantiate は内部で構造変更を確定する
     // ため tick 末のここで。verify でもゲートしない = sim 状態として同 tick のハッシュに含まれる。
     // C++ スクリプトは verify 中も走り同一キューを積む → 同一 fileId/EntityID 列で再現される。
@@ -620,6 +661,20 @@ void RunOneTick(TickServices& ts)
             }
         }
         effectQueue.clear();
+    }
+    // ---- M93e (dogfooding #11): DebugDrawLine の線分をテキストへ追記する (出力レーン) ----
+    // tick 頭でクリアされ、スクリプト (フェーズ 3 / 5) と物理・AI の可視化 (フェーズ 4) が積み終わった
+    // この位置で写す。sim は何も読まないので、書いても書かなくてもハッシュは変わらない
+    if (ts.debugDrawLog != nullptr && ts.debugDrawLog->is_open()) {
+        char line[192];
+        for (const DebugLineCmd& cmd : debugLines) {
+            const int n = std::snprintf(line, sizeof(line), "%llu %.4f %.4f %.4f %.4f %.4f %.4f %08x\n",
+                                        static_cast<unsigned long long>(ctx.tickIndex), cmd.ax, cmd.ay, cmd.az,
+                                        cmd.bx, cmd.by, cmd.bz, cmd.rgba);
+            if (n > 0) {
+                ts.debugDrawLog->write(line, static_cast<std::streamsize>(std::min<size_t>(static_cast<size_t>(n), sizeof(line) - 1)));
+            }
+        }
     }
     scene.GetWorld().ApplyStructuralChanges(); // フェーズ 7 (tick 末適用 = ADR-005)
     // M91d: 破棄されたエンティティが作った Compute バッファを解放する (D8)。ハッシュを撮る前に済ませる

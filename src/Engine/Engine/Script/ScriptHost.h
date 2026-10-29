@@ -57,8 +57,10 @@ public:
                            const NetRuntimeInfo* net = nullptr,
                            CursorLockState* cursorLock = nullptr,
                            int* pendingLoadPersistSlot = nullptr,
-                           WindowModeState* windowMode = nullptr)
+                           WindowModeState* windowMode = nullptr,
+                           std::vector<ScriptMessage>* messageQueue = nullptr)
     {
+        apiCtx_.messageQueue = messageQueue;                     // v30 (M93e)。null = SendScriptMessage が 0 を返す
         apiCtx_.pendingLoadPersistSlot = pendingLoadPersistSlot; // v16 (M70c)
         apiCtx_.windowMode = windowMode;                         // v19。null = Set が no-op
         apiCtx_.audioQueue = audioQueue;
@@ -128,6 +130,9 @@ public:
     // 破壊イベント配信 (v22、M80l)。root にあるスクリプトへ、分かれた塊のリーダー (piece)・
     // その塊で荷重最大の破片の原点 (point)・その荷重 (impulse) を渡す (FractureSystem から)
     void DispatchBreak(EntityID root, EntityID piece, MyeVec3 point, float impulse);
+    // スクリプト間メッセージの配達 (v30、M93e)。target に付いた全スクリプトの OnMessage へ (from, nameHash, value) を渡す。
+    // 呼ぶのは TickRunner の配達点だけ (配る順はキューに積まれた順)。★名前は Win32 の DispatchMessage マクロを避けている
+    void DispatchScriptMessage(EntityID target, EntityID from, uint64_t nameHash, int32_t value);
 
 private:
     struct ScriptType {
@@ -144,6 +149,7 @@ private:
         void (*onCollisionStay)(void*, MyeUpdateContext*, MyeEntityId) = nullptr;
         void (*onCollisionExit)(void*, MyeUpdateContext*, MyeEntityId) = nullptr;
         void (*onBreak)(void*, MyeUpdateContext*, MyeEntityId, MyeVec3, float) = nullptr;
+        void (*onMessage)(void*, MyeUpdateContext*, MyeEntityId, uint64_t, int32_t) = nullptr; // v30 (M93e)
     };
 
     enum class Phase { StartAndUpdate, LateUpdate };

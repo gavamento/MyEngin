@@ -12,6 +12,7 @@
 
 #include <DirectXMath.h>
 
+#include "Editor/Undo/UndoStack.h" // M93f: 文書 Undo の記録器
 #include "Engine/Engine/Loop/EngineLoop.h"
 #include "Engine/Engine/Rendering/RenderSystem.h"
 #include "Engine/Engine/Scene/Scene.h"
@@ -41,7 +42,8 @@ class ControllerLibrary;
 class AnimationPreviewWindow {
 public:
     bool open = false;
-    void OnImGui(EngineContext& ctx, Selection& selection);
+    // undo: タイムラインでのイベント編集を文書エントリとして積む (M93f、AnimatorControllerWindow と同じ記録器)
+    void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo);
     // D3D の描画はここだけ (EditorApp::OnRenderViews から)。窓が閉じている・対象が無ければ何もしない
     void OnRenderViews(EngineContext& ctx);
     void ReleaseGpu();
@@ -106,6 +108,7 @@ private:
     std::vector<int32_t> eventTimelineTicks_; // 今のクリップのイベントのタイムライン上の tick (軌跡の印に使う)
     ControllerLibrary* controllers_ = nullptr; // 寿命は EngineContext と同じ
     std::vector<uint64_t> touched_; // 未保存の判定の対象 (この窓でイベントを触ったコントローラ)
+    DocUndoRecorder docUndo_; // M93f
 
     // ---- ルートの軌跡 (M89o) ----
     std::vector<DirectX::XMFLOAT3> trail_; // tick 0..最後の tick の、主 SkinnedMesh のルートジョイントの位置 (一時シーンの空間)

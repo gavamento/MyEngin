@@ -122,6 +122,8 @@
     <ClCompile Include="..\src\Editor\Windows\Scene\GameViewWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\HierarchyWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\InspectorWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Scene\InspectorWindowAssets.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Scene\InspectorWindowNav.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\ParticleSettingsWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\SceneViewGhost.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\SceneViewWindow.cpp" />

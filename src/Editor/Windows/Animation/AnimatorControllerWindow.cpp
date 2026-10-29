@@ -273,7 +273,7 @@ void DrawBlend2DGraph(const ControllerState& state, float x, float y, const std:
 
 } // namespace
 
-void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
+void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo)
 {
     if (!open) {
         return;
@@ -317,6 +317,8 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
 
     // 未保存判定のために「この窓が触ったコントローラ」を控える (M66d)
     MarkTouched(ctx.controllers, ctrl->hash);
+    // M93f: フレーム頭の文書。末尾 (ImGui::End の直前) の文書と比べて Undo エントリにする
+    const nlohmann::json docBefore = ControllerLibrary::ToJson(*ctrl);
 
     // ---- ツールバー ----
     ImGui::Text(Tr(StrId::Anim_Controller), ctrl->name.c_str());
@@ -566,6 +568,9 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
         }
     }
 
+    // M93f: この窓の編集 (ステート / 遷移 / 条件 / パラメータ / 骨の駆動) を文書エントリとして積む
+    docUndo_.Observe(undo, "Animator Controller", UndoDocOp::Kind::Controller, ctrl->hash, docBefore,
+                     ControllerLibrary::ToJson(*ctrl), ImGui::IsAnyItemActive());
     ImGui::End();
 }
 

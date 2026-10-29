@@ -2,7 +2,7 @@
 
 - 対象: Core / ECS、Net / Rollback / Replay、Asset / Loader、Renderer / D3D11、Physics / Scripting 全域
 - 日時: 2026-09-28
-- 作成先: `C:\HAL\MyEngin\docs\rev\round3_perspectives.md`
+- 作成先: `docs/rev/round3_perspectives.md`
 
 ---
 
@@ -56,4 +56,4 @@ round 1（破壊システム基盤）および round 2（破壊力学・幾何�
 ---
 
 ## 追補: 見落とし分析とフィードバック
-本 round 3 において蓄積された「なぜ既存のテストや以前のレビューで見落とされたのか」の分析は、[oversights.md](file:///C:/HAL/MyEngin/docs/rev/oversights.md) に集約・追記した。
+本 round 3 において蓄積された「なぜ既存のテストや以前のレビューで見落とされたのか」の分析は、[oversights.md](../../docs/rev/oversights.md) に集約・追記した。

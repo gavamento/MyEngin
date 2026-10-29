@@ -595,6 +595,31 @@ AssetID MeshLibrary::Capsule()
     return capsule_;
 }
 
+AssetID MeshLibrary::Wheel()
+{
+    if (!wheel_.IsNull()) {
+        return wheel_;
+    }
+    // M93e (dogfooding #13): 円柱の生成器 (Y 軸) をそのまま使い、頂点と法線を Z 軸まわりに -90° 回して
+    // X 軸へ倒す ((x, y, z) → (y, -x, z))。回転 (行列式 +1) なので巻き順は変わらない。
+    // 幅は半径と同じ 0.5 (= 半幅 0.25)。細い車輪が要るなら一様スケールでは作れないが、
+    // 太さの違う車輪を builtin で増やすより .obj を置く方が筋なので 1 種だけにする
+    std::vector<MeshVertex> verts;
+    std::vector<uint32_t> idx;
+    const float r = 0.5f;
+    const float halfWidth = 0.25f;
+    const int slices = 24;
+    AppendCylinderSide(verts, idx, r, -halfWidth, halfWidth, slices);
+    AppendCap(verts, idx, r, halfWidth, 1.0f, slices);   // +X 側板
+    AppendCap(verts, idx, r, -halfWidth, -1.0f, slices); // -X 側板
+    for (MeshVertex& v : verts) {
+        v.position = { v.position.y, -v.position.x, v.position.z };
+        v.normal = { v.normal.y, -v.normal.x, v.normal.z };
+    }
+    wheel_ = Register("builtin://wheel", verts, idx);
+    return wheel_;
+}
+
 AssetID MeshLibrary::WaterPlane(int resolution, float size)
 {
     if (!waterPlane_.IsNull()) {
