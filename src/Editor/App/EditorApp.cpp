@@ -852,7 +852,14 @@ void EditorApp::OnImGui(EngineContext& ctx)
 
     hierarchy_.OnImGui(ctx, selection_, undo_);
     inspector_.OnImGui(ctx, selection_, undo_, preview_, playMode_.InPlayMode());
-    console_.OnImGui(settings_.externalEditorCmd);
+    console_.OnImGui();
+    {
+        std::wstring file;
+        int line = 0;
+        if (console_.TakeOpenSourceRequest(file, line)) {
+            OpenScriptInIde(ctx, settings_.externalEditorCmd, vsLauncher_, file, line);
+        }
+    }
     sceneView_.OnImGui(ctx, selection_, undo_, settings_);
     gameView_.OnImGui(ctx, selection_);
     particleSettings_.OnImGui(ctx, settings_);
@@ -1016,7 +1023,11 @@ void EditorApp::OnImGui(EngineContext& ctx)
     }
     DrawProbePreview();
     // scm_ は Git バッジの引き先 (M66i)。裸起動でも Unavailable のまま no-op になる
-    assetBrowser_.OnImGui(ctx, selection_, undo_, settings_.externalEditorCmd, preview_, &scm_);
+    assetBrowser_.OnImGui(ctx, selection_, undo_, preview_, &scm_);
+    if (const std::wstring script = assetBrowser_.TakePendingOpenScript(); !script.empty()) {
+        OpenScriptInIde(ctx, settings_.externalEditorCmd, vsLauncher_, script, 1);
+    }
+    vsLauncher_.Poll(); // 新しく起動した VS の読み込みが落ち着いたら、待たせていたファイルを開く
     // [Rebuild Scripts] (M66e)。**窓ではなくここで起動してハンドルを持つ** —
     // 走っている間 GateBlocker::ScriptBuildRunning を立て続けるため
     if (assetBrowser_.TakeRebuildScriptsRequest() && scriptBuildProc_ == nullptr) {

@@ -4,10 +4,8 @@
 #include <cstring>
 #include <string>
 
-#include <Windows.h>
-#include <shellapi.h>
-
 #include "Engine/Core/Localization/Localization.h"
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/ImGui/ImGuiTheme.h" // themeColor (意味色)
 
 #include "imgui.h"
@@ -30,25 +28,7 @@ bool ContainsCI(const char* hay, const std::string& needleLower)
 
 } // namespace
 
-void ConsoleWindow::JumpToSource(const LogEntry& e, const std::string& cmd)
-{
-    if (e.file[0] == '\0' || e.line <= 0 || cmd.empty()) {
-        return;
-    }
-    std::string full = cmd;
-    auto replaceAll = [](std::string& s, const std::string& from, const std::string& to) {
-        for (size_t pos = s.find(from); pos != std::string::npos; pos = s.find(from, pos + to.size())) {
-            s.replace(pos, from.size(), to);
-        }
-    };
-    replaceAll(full, "{file}", e.file);
-    replaceAll(full, "{line}", std::to_string(e.line));
-    // cmd.exe /c 経由で実行 (PATH 上の code 等を解決)。パスは ASCII 前提
-    const std::wstring wargs = L"/c " + std::wstring(full.begin(), full.end());
-    ShellExecuteW(nullptr, L"open", L"cmd.exe", wargs.c_str(), nullptr, SW_HIDE);
-}
-
-void ConsoleWindow::OnImGui(const std::string& externalEditorCmd)
+void ConsoleWindow::OnImGui()
 {
     // 新着ログを取り込む (リングバッファからの増分読み出し)
     LogEntry buf[256];
@@ -148,8 +128,10 @@ void ConsoleWindow::OnImGui(const std::string& externalEditorCmd)
             ImGui::PushStyleColor(ImGuiCol_Text, color);
             ImGui::Selectable(label);
             ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                JumpToSource(e, externalEditorCmd);
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)
+                && e.file[0] != '\0' && e.line > 0) {
+                pendingSourceFile_ = Utf8ToWide(e.file);
+                pendingSourceLine_ = e.line;
             }
             if (e.file[0] != '\0' && ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s:%d", e.file, e.line);

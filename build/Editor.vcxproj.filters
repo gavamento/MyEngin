@@ -72,16 +72,16 @@
     <ClCompile Include="..\src\Editor\App\EditorMain.cpp">
       <Filter>App</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\App\StartupMoebius.cpp">
-      <Filter>App</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\Editor\App\StartupSplash.cpp">
-      <Filter>App</Filter>
-    </ClCompile>
     <ClCompile Include="..\src\Editor\App\EditorSettings.cpp">
       <Filter>App</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\App\LayoutManager.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\App\StartupMoebius.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\App\StartupSplash.cpp">
       <Filter>App</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Asset\AssetOps.cpp">
@@ -147,9 +147,6 @@
     <ClCompile Include="..\src\Editor\SelfTest\GameFlowSelfTest.cpp">
       <Filter>SelfTest</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor\SelfTest\StartupSplashSelfTest.cpp">
-      <Filter>SelfTest</Filter>
-    </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\HzbSelfTest.cpp">
       <Filter>SelfTest</Filter>
     </ClCompile>
@@ -166,6 +163,9 @@
       <Filter>SelfTest</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\SsrSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\StartupSplashSelfTest.cpp">
       <Filter>SelfTest</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\TerrainSelfTest.cpp">
@@ -217,6 +217,9 @@
       <Filter>Tools</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.cpp">
+      <Filter>Tools</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\VisualStudioLauncher.cpp">
       <Filter>Tools</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Undo\UndoSelfTest.cpp">
@@ -342,12 +345,6 @@
     <ClInclude Include="..\src\Editor\App\EditorApp.h">
       <Filter>App</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\App\StartupMoebius.h">
-      <Filter>App</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\Editor\App\StartupSplash.h">
-      <Filter>App</Filter>
-    </ClInclude>
     <ClInclude Include="..\src\Editor\App\EditorGlobalSettings.h">
       <Filter>App</Filter>
     </ClInclude>
@@ -358,6 +355,12 @@
       <Filter>App</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\App\ShortcutHub.h">
+      <Filter>App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\App\StartupMoebius.h">
+      <Filter>App</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\App\StartupSplash.h">
       <Filter>App</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Asset\AssetOps.h">
@@ -426,9 +429,6 @@
     <ClInclude Include="..\src\Editor\SelfTest\GameFlowSelfTest.h">
       <Filter>SelfTest</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Editor\SelfTest\StartupSplashSelfTest.h">
-      <Filter>SelfTest</Filter>
-    </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\HzbSelfTest.h">
       <Filter>SelfTest</Filter>
     </ClInclude>
@@ -445,6 +445,9 @@
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\SsrSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\StartupSplashSelfTest.h">
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\TerrainSelfTest.h">
@@ -499,6 +502,9 @@
       <Filter>Tools</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.h">
+      <Filter>Tools</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\VisualStudioLauncher.h">
       <Filter>Tools</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Undo\UndoSelfTest.h">

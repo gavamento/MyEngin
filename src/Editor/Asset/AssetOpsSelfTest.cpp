@@ -7,12 +7,14 @@
 #include <iterator>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <vector>
 
 #include <Windows.h>
 
 #include "nlohmann/json.hpp"
 
+#include "Editor/App/EditorSettings.h"
 #include "Editor/Asset/AssetOps.h"
 #include "Editor/Asset/AssetPreviewCache.h"
 #include "Editor/Scene/Selection.h"
@@ -800,6 +802,88 @@ bool RunAssetOpsSelfTest()
         check(CountProjectScriptSources((root / L"no_such_project").wstring()) == 0
                   && CountProjectScriptSources(L"") == 0,
               "auto rebuild: a project without a Scripts folder counts zero (no build fires)");
+    }
+
+    // ---- (2026-11-02) スクリプト編集用ソリューション (WriteScriptSolution) ----
+    // ★「開くたびに生成し直す」設計なので、中身が同じなら mtime を動かさないことが要。
+    //   動かすと開くたびに VS がプロジェクトを再読み込みし、MSBuild も再コンパイルする
+    {
+        const fs::path proj = root / L"ide_proj";
+        const fs::path scripts = proj / L"src" / L"GameLogic" / L"Scripts";
+        fs::create_directories(scripts / L"sub", ec);
+        fs::create_directories(proj / L"assets" / L"scripts", ec);
+        WriteDummy(scripts / L"Rotator.cpp");
+        WriteDummy(scripts / L"SkCommon.h");
+        WriteDummy(scripts / L"sub" / L"Nested.cpp");
+        const std::wstring savedProject = ctx.projectRoot;
+        const std::wstring savedAssets = ctx.assetsRoot;
+        ctx.projectRoot = proj.wstring();
+        ctx.assetsRoot = (proj / L"assets").wstring();
+
+        auto readAll = [](const fs::path& p) {
+            std::ifstream f(p, std::ios::binary);
+            return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        };
+        const fs::path cache = proj / L"cache";
+        const fs::path slnx = cache / L"ide_proj.slnx";
+        const fs::path vcxproj = cache / L"GameLogic.vcxproj";
+        const fs::path csproj = cache / L"Scripts" / L"Scripts.csproj";
+
+        const std::wstring sln = WriteScriptSolution(ctx);
+        check(fs::path(sln) == slnx && fs::exists(vcxproj, ec) && fs::exists(csproj, ec),
+              "ide solution: <project>\\cache\\<folder>.slnx + GameLogic.vcxproj + Scripts\\Scripts.csproj");
+        const std::string slnText = readAll(slnx);
+        check(slnText.find("Path=\"GameLogic.vcxproj\"") != std::string::npos
+                  && slnText.find("Path=\"Scripts/Scripts.csproj\"") != std::string::npos
+                  && slnText.find(':') == std::string::npos,
+              "ide solution: the slnx only holds paths relative to itself (no drive letters)");
+        const std::string vcxText = readAll(vcxproj);
+        check(vcxText.find("Rotator.cpp\" />") != std::string::npos
+                  && vcxText.find("<ClInclude Include=\"" + WideToUtf8((scripts / L"SkCommon.h").wstring()))
+                         != std::string::npos
+                  && vcxText.find("Nested.cpp") == std::string::npos,
+              "ide solution: vcxproj lists Scripts\\*.cpp to compile and *.h for the IDE, not subfolders");
+        const std::string csText = readAll(csproj);
+        check(csText.find("\\scripts\\**\\*.cs\" />") != std::string::npos
+                  && csText.find("MyeScripting.dll</HintPath>") != std::string::npos,
+              "ide solution: csproj globs assets\\scripts\\**\\*.cs and references MyeScripting.dll");
+
+        const auto stamp = [&]() {
+            return std::vector<fs::file_time_type>{ fs::last_write_time(slnx, ec), fs::last_write_time(vcxproj, ec),
+                                                    fs::last_write_time(csproj, ec),
+                                                    fs::last_write_time(cache / L"GameLogicMain.cpp", ec) };
+        };
+        const auto before = stamp();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20)); // mtime の解像度を跨ぐ
+        WriteScriptSolution(ctx);
+        check(stamp() == before, "ide solution: regenerating unchanged content touches no file");
+
+        // スクリプトを足したら vcxproj に載る (VS 側は再読み込みで拾う)
+        WriteDummy(scripts / L"Player.cpp");
+        WriteScriptSolution(ctx);
+        check(readAll(vcxproj).find("Player.cpp\" />") != std::string::npos,
+              "ide solution: a newly added script lands in the vcxproj on the next open");
+
+        ctx.projectRoot = savedProject;
+        ctx.assetsRoot = savedAssets;
+    }
+
+    // ---- 外部エディタ設定の移行 (旧既定値 code -g → {vs}) ----
+    {
+        const fs::path dir = root / L"settings";
+        fs::create_directories(dir, ec);
+        auto loadCmd = [&](const char* stored) {
+            std::ofstream f(dir / L"editor_settings.json", std::ios::binary);
+            f << nlohmann::json{ { "externalEditorCmd", stored } }.dump();
+            f.close();
+            EditorSettings s;
+            s.Load(dir.wstring());
+            return s.externalEditorCmd;
+        };
+        check(loadCmd(kLegacyExternalEditorCmd) == kExternalEditorVisualStudio,
+              "editor settings: the old VS Code default migrates to {vs}");
+        check(loadCmd("code -r {file}") == "code -r {file}",
+              "editor settings: a hand-edited command is kept as is");
     }
 
     // ---- Content Browser のタイルラベル (AssetTileLabel)。種類の判定は AssetDatabase::ClassifyPath 1 本 ----

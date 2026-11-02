@@ -3,6 +3,11 @@
 
 namespace mye {
 
+// externalEditorCmd の特別値: スクリプトを生成ソリューションごと Visual Studio で開く (OpenScriptInIde)
+inline constexpr const char* kExternalEditorVisualStudio = "{vs}";
+// 旧既定値 (VS Code)。保存済み設定にこの値がそのまま残っていれば Load で新しい既定値へ移行する
+inline constexpr const char* kLegacyExternalEditorCmd = "code -g {file}:{line}";
+
 // エディタ設定の永続化 (<dir>\editor_settings.json)。
 // 置き場はプロジェクト起動時 <project>\.mye\、レガシー起動時 assets\ 直下 (M26)。
 // project_settings.json (ParticleSystem) と同じ「読み直して該当キーだけ上書き」の
@@ -10,7 +15,7 @@ namespace mye {
 // 外部エディタコマンド等) を保持する。root.value(key, default) で前方/後方互換。
 struct EditorSettings {
     std::string lastScenePath;                       // 最後に開いた/保存したシーン (UTF-8)
-    std::string externalEditorCmd = "code -g {file}:{line}"; // Console ソースジャンプ用 (M11)
+    std::string externalEditorCmd = kExternalEditorVisualStudio; // スクリプトを開く / Console ソースジャンプ (M11)
     // Scene View ギズモのスナップ量 (M9)
     float snapTranslate = 0.5f;
     float snapRotateDeg = 15.0f;

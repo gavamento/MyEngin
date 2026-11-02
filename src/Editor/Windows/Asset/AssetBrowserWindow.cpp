@@ -278,7 +278,6 @@ void AssetBrowserWindow::DrawDirTree(EngineContext& ctx, const std::wstring& dir
 }
 
 void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
-                                 const std::string& externalEditorCmd,
                                  AssetPreviewCache& preview, const SourceControlSession* scm)
 {
     panelRectValid_ = false; // Begin に成功したフレームだけ矩形が有効
@@ -578,6 +577,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         const bool isMixer = type == AssetType::Mixer;
         const bool isClip = type == AssetType::Audio; // 素の音声ファイル (.wav / .ogg)
         const bool isBehaviorTree = type == AssetType::BehaviorTree;
+        const bool isScript = type == AssetType::Script; // .cs
 
         if (i % cols != 0) {
             ImGui::SameLine();
@@ -790,6 +790,9 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             } else if (isScene) {
                 // シーンを開く。ロード自体は EditorApp が未保存変更ガードを通して行う
                 pendingOpenScene_ = path;
+            } else if (isScript) {
+                // OS の関連付けではなく、設定の外部エディタ (既定は VS のソリューションごと) で開く
+                pendingOpenScript_ = path;
             } else {
                 ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
             }
@@ -996,7 +999,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
         ImGui::SameLine();
         const bool cancel = ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(90, 0));
         if (create && createName_[0] != '\0') {
-            DoCreate(ctx, undo, externalEditorCmd);
+            DoCreate(ctx, undo);
             pendingCreate_ = 0;
             ImGui::CloseCurrentPopup();
         } else if (cancel) {
@@ -1008,8 +1011,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
     ImGui::End();
 }
 
-void AssetBrowserWindow::DoCreate(EngineContext& ctx, UndoStack& undo,
-                                  const std::string& externalEditorCmd)
+void AssetBrowserWindow::DoCreate(EngineContext& ctx, UndoStack& undo)
 {
     // アセット系 8 種は Create Undo を記録する (M51i: undo = ごみ箱へ / redo = 書き戻し)
     const std::string name = createName_;
@@ -1110,14 +1112,14 @@ void AssetBrowserWindow::DoCreate(EngineContext& ctx, UndoStack& undo,
         // 区別できず、Undo が既存ソースをごみ箱送りにしてしまう
         created = CreateCppScript(ctx, name);
         if (!created.empty()) {
-            OpenInExternalEditor(externalEditorCmd, created);
+            pendingOpenScript_ = created;
         }
         break;
     }
     case kCreateCSharp: {
         created = CreateCSharpScript(ctx, name);
         if (!created.empty()) {
-            OpenInExternalEditor(externalEditorCmd, created);
+            pendingOpenScript_ = created;
         }
         break;
     }

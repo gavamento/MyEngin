@@ -493,8 +493,8 @@ MYE_STR(PrjSet_SaveNavAgents, "Save Agent Types",    "エージェント種別�
 MYE_STR(PrjSet_Shortcuts,     "Shortcuts",           "ショートカット")
 MYE_STR(PrjSet_ColAction,     "Action###action",     "操作###action")
 MYE_STR(PrjSet_ColKey,        "Key###key",           "キー###key")
-MYE_STR(PrjSet_CmdHint,       "  {file} / {line} are substituted when jumping from the Console",
-                              "  {file} / {line} が Console のソースジャンプで置換されます")
+MYE_STR(PrjSet_CmdHint,       "  {vs} = open in Visual Studio with the project solution. Otherwise {file} / {line} are substituted",
+                              "  {vs} = プロジェクトのソリューションごと Visual Studio で開く。それ以外は {file} / {line} を置換して実行")
 MYE_STR(PrjSet_LayerHint,     "Display names only (the sim uses layer numbers). Applies to Collider layer/mask",
                               "表示名のみ (sim はレイヤー番号を使う)。Collider の layer/mask に反映")
 // ---- 部位タグ (M48f) ----
