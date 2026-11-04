@@ -61,6 +61,7 @@
 #include "Engine/Engine/Audio/Playback/AudioSelfTest.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 #include "Engine/Engine/Loop/SimParallelSelfTest.h"
+#include "Engine/Engine/Feel/FeelMathSelfTest.h"
 #include "Engine/Engine/Particles/ParticleSelfTest.h"
 #include "Engine/Engine/Physics/Collider/ConvexSelfTest.h"
 #include "Engine/Engine/Physics/Fracture/FractureSelfTest.h"
@@ -667,6 +668,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunComputeSettingsSelfTest();       // M91h: compute 節・Compute 欄の行・カーネルのホットリロード
         ok &= mye::RunComputeInspectorSelfTest();      // M91h: Compute 欄の文字列 (日英)
         ok &= mye::RunStartupSplashSelfTest();       // 起動スプラッシュの進捗とメビウス幾何
+        ok &= mye::RunFeelMathSelfTest();              // M94a: イージング / カーブ / ばね / 値ノイズ
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }

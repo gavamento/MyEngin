@@ -136,6 +136,7 @@
     <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentVfx.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\ShowcaseScenes.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\StartScene.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Feel\FeelMathSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloaderSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\ReloadHub.cpp" />
@@ -463,6 +464,7 @@
     <ClInclude Include="..\src\Engine\Engine\Demo\DemoContentInternal.h" />
     <ClInclude Include="..\src\Engine\Engine\Demo\ShowcaseScenes.h" />
     <ClInclude Include="..\src\Engine\Engine\Demo\StartScene.h" />
+    <ClInclude Include="..\src\Engine\Engine\Feel\FeelMathSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\HotReload\DllReloader.h" />
     <ClInclude Include="..\src\Engine\Engine\HotReload\DllReloaderSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHub.h" />
@@ -471,12 +473,12 @@
     <ClInclude Include="..\src\Engine\Engine\Loop\DeviceRecovery.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\DeviceRecoverySelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\EngineLoop.h" />
-    <ClInclude Include="..\src\Engine\Engine\Loop\StartupProgress.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\GameFlow.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\HeadlessSim.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\PlayerInputSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\SimInit.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\SimParallelSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Loop\StartupProgress.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\TickInputs.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\TickRunner.h" />
     <ClInclude Include="..\src\Engine\Engine\Modal\CpuModalBackend.h" />
@@ -702,6 +704,7 @@
     <ClInclude Include="..\src\Engine\Renderer\Texture\TextureCook.h" />
     <ClInclude Include="..\src\Engine\Renderer\Texture\TextureCookSelfTest.h" />
     <ClInclude Include="..\src\Shared\EngineAPI.h" />
+    <ClInclude Include="..\src\Shared\FeelMath.h" />
     <ClInclude Include="..\src\Shared\KernelCompat.h" />
     <ClInclude Include="..\src\Shared\KernelRangeFn.h" />
     <ClInclude Include="..\src\Shared\MathPod.h" />
