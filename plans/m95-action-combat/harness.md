@@ -8,7 +8,7 @@
 ## サブ進捗
 | サブ | 波 | 依存 | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|---|---|
-| sub-00 selftest の登録表・フィルタ・所要時間ログ・full 入口・CI・予約マーカー | 0 | なし | OK (条件付き) | 1 | 8405f20 | master で単独。VERDICT 指摘 1: Release の --selftest-full と replay_verify は、ユーザーの対話用 Editor.exe (PID 39252) が Release exe を掴んでいるため未実施。解放後に司会が回して結果をここに書く。FAIL なら差し戻し。19:38 司会が master (a6bc7aa、シミュレーションは 8405f20 と同一) で `tools\replay_verify.bat` → **PASS** (22 ジョブ 433 s、15 シーン Debug/Release 一致 + snapshot 往復 + jobs A/B + compute A/B + タイムトラベル、check_rules 0 error)。Release `--selftest-full` は未実施のまま (cmd 経由の実行がスロット待ちの間に 2 回目の停止) |
+| sub-00 selftest の登録表・フィルタ・所要時間ログ・full 入口・CI・予約マーカー | 0 | なし | OK | 1 | 8405f20 | master で単独。VERDICT 指摘 1 (Release 検証が Editor.exe の占有で未実施) は解消: 19:38 司会が master (a6bc7aa、シミュレーションは 8405f20 と同一) で `tools\replay_verify.bat` → **PASS** (22 ジョブ 433 s、15 シーン Debug/Release 一致 + snapshot 往復 + jobs A/B + compute A/B + タイムトラベル、check_rules 0 error)。20:08 Release `--selftest-full` (cmd 経由) → **PASS** (110 スイート 0 failed、100 s) |
 | sub-00b 計測に基く層分けと縮小 (既定 60 秒以内) | 1 | sub-00 | 実装中 (20:05 再開、round 1) | 0 | | worktree に未コミット差分 (AGENTS.md、SelfTestSuites.h/.cpp、EngineIndexDumpSelfTest.cpp。2 回目の coder が小テストの呼び出しを PartSelfTest.cpp から EngineIndexDumpSelfTest.cpp へ移した模様)。計測は単独で回す |
 | sub-01 ヒットストップ (ABI v32、snapshot v66) | 1 | sub-00 | 実装中 (20:05 再開、round 1) | 0 | | worktree に未コミット差分 13 ファイル (1 回目の 11 + TwoDDemoSelfTest.cpp の焼き込み hash + **tools/check_rules.ps1**)。2 回目の coder は最終検証の途中 (ABI 機械照合まで進んだ) で停止、SELF_EVAL 未提出 |
 | sub-02 CC 同士の押し出しと接触イベント (snapshot v67、ADR-034) | 1 | sub-00 | OK | 1 | 2992ad3 (m95/sub-02) | full 検証済み (Debug 972 s / Release 107 s、RV PASS)。焼き込み hash 5 件 + AcousticAudio 版チェックは統合後に再採取 |
