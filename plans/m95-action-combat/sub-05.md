@@ -1,8 +1,8 @@
 # sub-05: ルートモーションの縦成分 (ステート rootMotionY、CC / Rigidbody の verticalInput、snapshot v68)
 
 - 依存: sub-02 (CC の末尾 append の順)、sub-04 (controller v3 の宣言)、Wave 1 の統合 (Wave 2。sub-03 と並列)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (Wave 2 統合で master へ。ブランチ m95/sub-05)
+- 往復: 2
 
 ## 作業場所の注意 (並列実装)
 
