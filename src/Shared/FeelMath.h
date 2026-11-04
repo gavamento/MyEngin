@@ -340,6 +340,21 @@ inline float MyeEvalCurve(const MyeCurve& c, float t)
     return h00 * k0.value + h10 * span * k0.outTangent + h01 * k1.value + h11 * span * k1.inTangent;
 }
 
+// custom カーブの接線を滑らかにそろえる (Catmull-Rom 流: 両隣を結ぶ傾き、端は片側の傾き)。
+// 入と出は同じ値になる (点で折れない)。カーブエディタの「接線をなめらかに」が呼ぶ
+inline void MyeAutoTangents(MyeCurve& c)
+{
+    const int32_t n = c.keyCount < 0 ? 0 : (c.keyCount > MYE_CURVE_MAX_KEYS ? MYE_CURVE_MAX_KEYS : c.keyCount);
+    for (int32_t i = 0; i < n; ++i) {
+        const MyeCurveKey& a = c.keys[i > 0 ? i - 1 : i];
+        const MyeCurveKey& b = c.keys[i + 1 < n ? i + 1 : i];
+        const float dt = b.t - a.t;
+        const float slope = dt > 0.0f ? (b.value - a.value) / dt : 0.0f;
+        c.keys[i].inTangent = slope;
+        c.keys[i].outTangent = slope;
+    }
+}
+
 // ---- ばね ----
 // 減衰付きばねを dt だけ進める。陰的 (後退) オイラーなので周波数と dt に依らず発散しない。
 //   frequencyHz  : 固有振動数 (大きいほど速く追いつく)

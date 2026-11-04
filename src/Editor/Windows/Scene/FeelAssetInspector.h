@@ -5,33 +5,38 @@
 //====================================================================================
 #pragma once
 
+#include <cstdint>
 #include <string>
 
+#include "Editor/Undo/UndoStack.h"
 #include "Shared/FeelMath.h"
 
 namespace mye {
 
 struct EngineContext;
 
-// .feel.json を 1 件、Inspector で編集する。値は編集用の写しに持ち、Save でファイルへ書いて
-// FeelLibrary を読み直す (次に鳴らした分から効く)。Play 中は「プレビュー」で編集中の写しをそのまま鳴らせる
-// (シーン状態の編集として扱う — Inspector で Play 中に値を触るのと同じ扱い)
+// .feel.json を 1 件、Inspector で編集する。
+// 編集は FeelLibrary に登録済みのプリセットへ**直接**入る (M94e) — スライダを動かした直後に鳴らした分から効くので、
+// Play しながら値を詰められる。ディスクへは Save でだけ書き、Revert でディスクの値へ戻す。
+// 編集は文書エントリ (UndoDocOp::Kind::Feel) として Undo できる。
+// Play 中は「プレビュー」で今の値をそのまま鳴らせる (シーン状態の編集として扱う — Play 中に Inspector で値を触るのと同じ)
 class FeelAssetInspector {
 public:
-    // 選択されたパスが変わったときに 1 回呼ぶ
+    // 選択されたパスが変わったときに 1 回呼ぶ (未登録ならライブラリへ読み込む)
     void Load(const std::wstring& path);
-    void Draw(EngineContext& ctx, const std::wstring& path);
+    void Draw(EngineContext& ctx, UndoStack& undo, const std::wstring& path);
 
 private:
-    void DrawTime();
-    void DrawShake();
-    void DrawKick();
-    void DrawRumble();
-    void DrawFlash();
+    void DrawTime(MyeFeelDesc& d);
+    void DrawShake(MyeFeelDesc& d);
+    void DrawKick(MyeFeelDesc& d);
+    void DrawRumble(MyeFeelDesc& d);
+    void DrawFlash(MyeFeelDesc& d);
 
-    MyeFeelDesc edit_;  // 編集中の写し
-    MyeFeelDesc saved_; // ディスク上の値 (未保存の判定)
+    uint64_t hash_ = 0;   // 編集中のプリセット (FeelLibrary のキー)
+    MyeFeelDesc saved_;   // ディスク上の値 (未保存の判定と Revert)
     bool valid_ = false;
+    DocUndoRecorder undoRecorder_;
 };
 
 } // namespace mye

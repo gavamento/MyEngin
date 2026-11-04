@@ -48,6 +48,8 @@ public:
     uint64_t Register(const std::wstring& path, const MyeFeelDesc& desc); // 返り値 = hash
 
     const FeelPreset* Get(uint64_t hash) const;
+    // エディタのライブ編集と Undo (DocOp) 専用。書き換えは次に鳴らした分から効く
+    FeelPreset* GetMutable(uint64_t hash);
     // 名前ハッシュで引く。同名が複数あるときはパスの序数比較で最小のもの (走査順に依らない)
     const FeelPreset* FindByName(uint64_t nameHash) const;
     bool Contains(uint64_t hash) const { return presets_.find(hash) != presets_.end(); }

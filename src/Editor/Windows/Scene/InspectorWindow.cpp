@@ -605,7 +605,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     }
     // ---- アセット選択 (M40c): AssetBrowser タイルクリックで Inspector に情報表示 ----
     if (selection.HasAsset()) {
-        DrawAssetInspector(ctx, selection, preview);
+        DrawAssetInspector(ctx, selection, undo, preview);
         ImGui::End();
         return;
     }

@@ -81,7 +81,7 @@ public:
 
 private:
     // アセット選択時の表示 (M40c): 名前/種別/GUID + テクスチャは Import Settings 編集
-    void DrawAssetInspector(EngineContext& ctx, Selection& selection, AssetPreviewCache& preview);
+    void DrawAssetInspector(EngineContext& ctx, Selection& selection, UndoStack& undo, AssetPreviewCache& preview);
 
     // ---- エンティティ選択時の OnImGui の部品 (上から描く順) ----
     void DrawNameRow(EngineContext& ctx, Selection& selection, UndoStack& undo, const InspectorTargets& tg);

@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "Editor/Scene/Selection.h"
+#include "Engine/Engine/Feel/FeelLibrary.h"             // M94e: 文書エントリ (Feel)
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Animation/AnimatorController.h" // M93f: 文書エントリ (Controller)
@@ -224,6 +225,22 @@ bool ExecuteDocOp(EngineContext* ctx, const UndoDocOp& op, bool redo)
             return true;
         }
         audio.ApplyMixer(m); // バス構成ごと戻す (次の Update で反映)
+        return true;
+    }
+    case UndoDocOp::Kind::Feel: {
+        FeelLibrary* lib = feellib::Library();
+        FeelPreset* preset = lib != nullptr ? lib->GetMutable(op.hash) : nullptr;
+        if (preset == nullptr) {
+            MYE_LOG_WARN("[undo] feel preset %016llx is no longer registered - edit not restored",
+                         static_cast<unsigned long long>(op.hash));
+            return false;
+        }
+        MyeFeelDesc d;
+        if (!FeelLibrary::FromJson(target, d)) {
+            MYE_LOG_WARN("[undo] feel %s: stored JSON could not be read - edit not restored", preset->name.c_str());
+            return false;
+        }
+        preset->desc = d; // 同一性 (hash / name / path) は保ち、中身だけ戻す
         return true;
     }
     case UndoDocOp::Kind::None:

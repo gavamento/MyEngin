@@ -135,6 +135,12 @@ const FeelPreset* FeelLibrary::Get(uint64_t hash) const
     return it != presets_.end() ? &it->second : nullptr;
 }
 
+FeelPreset* FeelLibrary::GetMutable(uint64_t hash)
+{
+    const auto it = presets_.find(hash);
+    return it != presets_.end() ? &it->second : nullptr;
+}
+
 const FeelPreset* FeelLibrary::FindByName(uint64_t nameHash) const
 {
     const FeelPreset* best = nullptr;

@@ -14,7 +14,6 @@
 #include "Editor/Widgets/CurveEditorWidget.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Localization/Localization.h"
-#include "Engine/Core/Util/Hash.h"
 #include "Engine/Engine/Feel/FeelLibrary.h"
 #include "Engine/Engine/Feel/FeelState.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
@@ -59,8 +58,13 @@ bool EaseCombo(const char* label, int32_t& ease)
 
 void FeelAssetInspector::Load(const std::wstring& path)
 {
-    edit_ = MyeFeelDesc{};
+    hash_ = 0;
     valid_ = false;
+    saved_ = MyeFeelDesc{};
+    FeelLibrary* lib = feellib::Library();
+    if (lib == nullptr) {
+        return;
+    }
     std::ifstream f(std::filesystem::path(path), std::ios::binary);
     if (!f) {
         return;
@@ -71,115 +75,125 @@ void FeelAssetInspector::Load(const std::wstring& path)
     } catch (const nlohmann::json::exception&) {
         return;
     }
-    valid_ = FeelLibrary::FromJson(root, edit_); // 読み値は SanitizeFeelDesc 済み
-    saved_ = edit_;
+    if (!FeelLibrary::FromJson(root, saved_)) { // 読み値は SanitizeFeelDesc 済み
+        return;
+    }
+    hash_ = FeelLibrary::HashForPath(path);
+    if (!lib->Contains(hash_)) {
+        lib->Register(path, saved_); // 起動後に外から置かれたファイル
+    }
+    valid_ = true;
 }
 
-void FeelAssetInspector::DrawTime()
+void FeelAssetInspector::DrawTime(MyeFeelDesc& d)
 {
     ImGui::PushID("time");
-    DragTicks(Tr(StrId::Feel_HitStop), edit_.hitStopTicks);
+    DragTicks(Tr(StrId::Feel_HitStop), d.hitStopTicks);
     ImGui::SetNextItemWidth(kFieldWidth);
-    ImGui::SliderInt(Tr(StrId::Feel_SlowPercent), &edit_.slowPercent, 0, 100);
-    DragTicks(Tr(StrId::Feel_SlowHold), edit_.slowHoldTicks);
-    DragTicks(Tr(StrId::Feel_SlowRecover), edit_.slowRecoverTicks);
-    EaseCombo(Tr(StrId::Feel_SlowEase), edit_.slowRecoverEase);
+    ImGui::SliderInt(Tr(StrId::Feel_SlowPercent), &d.slowPercent, 0, 100);
+    DragTicks(Tr(StrId::Feel_SlowHold), d.slowHoldTicks);
+    DragTicks(Tr(StrId::Feel_SlowRecover), d.slowRecoverTicks);
+    EaseCombo(Tr(StrId::Feel_SlowEase), d.slowRecoverEase);
     ImGui::PopID();
 }
 
-void FeelAssetInspector::DrawShake()
+void FeelAssetInspector::DrawShake(MyeFeelDesc& d)
 {
     ImGui::PushID("shake");
-    DragTicks(Tr(StrId::Feel_Duration), edit_.shakeTicks);
-    DragF(Tr(StrId::Feel_ShakePos), edit_.shakePosAmp, 0.002f, 0.0f, 10.0f);
-    DragF(Tr(StrId::Feel_ShakeRot), edit_.shakeRotAmpDeg, 0.05f, 0.0f, 45.0f, "%.2f");
-    DragF(Tr(StrId::Feel_ShakeFreq), edit_.shakeFrequencyHz, 0.1f, 0.0f, 120.0f, "%.1f");
+    DragTicks(Tr(StrId::Feel_Duration), d.shakeTicks);
+    DragF(Tr(StrId::Feel_ShakePos), d.shakePosAmp, 0.002f, 0.0f, 10.0f);
+    DragF(Tr(StrId::Feel_ShakeRot), d.shakeRotAmpDeg, 0.05f, 0.0f, 45.0f, "%.2f");
+    DragF(Tr(StrId::Feel_ShakeFreq), d.shakeFrequencyHz, 0.1f, 0.0f, 120.0f, "%.1f");
     ImGui::TextUnformatted(Tr(StrId::Feel_Envelope));
-    DrawCurveEditor("envelope", edit_.shakeEnvelope);
+    DrawCurveEditor("envelope", d.shakeEnvelope);
     ImGui::PopID();
 }
 
-void FeelAssetInspector::DrawKick()
+void FeelAssetInspector::DrawKick(MyeFeelDesc& d)
 {
     ImGui::PushID("kick");
-    DragTicks(Tr(StrId::Feel_Duration), edit_.kickTicks);
-    float off[3] = { edit_.kickOffset.x, edit_.kickOffset.y, edit_.kickOffset.z };
+    DragTicks(Tr(StrId::Feel_Duration), d.kickTicks);
+    float off[3] = { d.kickOffset.x, d.kickOffset.y, d.kickOffset.z };
     ImGui::SetNextItemWidth(kFieldWidth * 1.5f);
     if (ImGui::DragFloat3(Tr(StrId::Feel_KickOffset), off, 0.002f, -10.0f, 10.0f, "%.3f")) {
-        edit_.kickOffset = { off[0], off[1], off[2] };
+        d.kickOffset = { off[0], off[1], off[2] };
     }
-    DragF(Tr(StrId::Feel_KickPitch), edit_.kickPitchDeg, 0.05f, -45.0f, 45.0f, "%.2f");
-    DragF(Tr(StrId::Feel_KickFov), edit_.kickFovDeg, 0.05f, -45.0f, 45.0f, "%.2f");
+    DragF(Tr(StrId::Feel_KickPitch), d.kickPitchDeg, 0.05f, -45.0f, 45.0f, "%.2f");
+    DragF(Tr(StrId::Feel_KickFov), d.kickFovDeg, 0.05f, -45.0f, 45.0f, "%.2f");
     ImGui::TextUnformatted(Tr(StrId::Feel_Curve));
-    DrawCurveEditor("curve", edit_.kickCurve);
+    DrawCurveEditor("curve", d.kickCurve);
     ImGui::PopID();
 }
 
-void FeelAssetInspector::DrawRumble()
+void FeelAssetInspector::DrawRumble(MyeFeelDesc& d)
 {
     ImGui::PushID("rumble");
-    DragTicks(Tr(StrId::Feel_Duration), edit_.rumbleTicks);
+    DragTicks(Tr(StrId::Feel_Duration), d.rumbleTicks);
     ImGui::SetNextItemWidth(kFieldWidth);
-    ImGui::SliderFloat(Tr(StrId::Feel_RumbleLow), &edit_.rumbleLow, 0.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat(Tr(StrId::Feel_RumbleLow), &d.rumbleLow, 0.0f, 1.0f, "%.2f");
     ImGui::SetNextItemWidth(kFieldWidth);
-    ImGui::SliderFloat(Tr(StrId::Feel_RumbleHigh), &edit_.rumbleHigh, 0.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat(Tr(StrId::Feel_RumbleHigh), &d.rumbleHigh, 0.0f, 1.0f, "%.2f");
     ImGui::TextUnformatted(Tr(StrId::Feel_Curve));
-    DrawCurveEditor("curve", edit_.rumbleCurve);
+    DrawCurveEditor("curve", d.rumbleCurve);
     ImGui::PopID();
 }
 
-void FeelAssetInspector::DrawFlash()
+void FeelAssetInspector::DrawFlash(MyeFeelDesc& d)
 {
     ImGui::PushID("flash");
-    DragTicks(Tr(StrId::Feel_Duration), edit_.flashTicks);
-    DragF(Tr(StrId::Feel_FlashVignette), edit_.flashVignette, 0.005f, -4.0f, 4.0f);
-    DragF(Tr(StrId::Feel_FlashChroma), edit_.flashChromAberration, 0.0005f, -4.0f, 4.0f, "%.4f");
-    DragF(Tr(StrId::Feel_FlashExposure), edit_.flashExposure, 0.01f, -1.0f, 4.0f);
-    DragF(Tr(StrId::Feel_FlashSaturation), edit_.flashSaturation, 0.01f, -1.0f, 4.0f);
-    float col[4] = { edit_.flashColor.r, edit_.flashColor.g, edit_.flashColor.b, edit_.flashColor.a };
+    DragTicks(Tr(StrId::Feel_Duration), d.flashTicks);
+    DragF(Tr(StrId::Feel_FlashVignette), d.flashVignette, 0.005f, -4.0f, 4.0f);
+    DragF(Tr(StrId::Feel_FlashChroma), d.flashChromAberration, 0.0005f, -4.0f, 4.0f, "%.4f");
+    DragF(Tr(StrId::Feel_FlashExposure), d.flashExposure, 0.01f, -1.0f, 4.0f);
+    DragF(Tr(StrId::Feel_FlashSaturation), d.flashSaturation, 0.01f, -1.0f, 4.0f);
+    float col[4] = { d.flashColor.r, d.flashColor.g, d.flashColor.b, d.flashColor.a };
     if (ImGui::ColorEdit4(Tr(StrId::Feel_FlashColor), col, ImGuiColorEditFlags_Float)) {
-        edit_.flashColor = { col[0], col[1], col[2], col[3] };
+        d.flashColor = { col[0], col[1], col[2], col[3] };
     }
     ImGui::TextUnformatted(Tr(StrId::Feel_Curve));
-    DrawCurveEditor("curve", edit_.flashCurve);
+    DrawCurveEditor("curve", d.flashCurve);
     ImGui::PopID();
 }
 
-void FeelAssetInspector::Draw(EngineContext& ctx, const std::wstring& path)
+void FeelAssetInspector::Draw(EngineContext& ctx, UndoStack& undo, const std::wstring& path)
 {
     namespace fs = std::filesystem;
-    if (!valid_) {
+    FeelLibrary* lib = feellib::Library();
+    FeelPreset* preset = (valid_ && lib != nullptr) ? lib->GetMutable(hash_) : nullptr;
+    if (preset == nullptr) {
         ImGui::TextDisabled("%s", Tr(StrId::Feel_Failed));
         return;
     }
+    MyeFeelDesc& d = preset->desc;
+    // Undo: このフレームの編集前の値 (ドラッグは離したフレームで 1 件に畳む = DocUndoRecorder)
+    const nlohmann::json before = FeelLibrary::ToJson(d);
+
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextDisabled("%s", Tr(StrId::Feel_Note));
     ImGui::PopTextWrapPos();
 
     if (ImGui::CollapsingHeader(Tr(StrId::Feel_SecTime), ImGuiTreeNodeFlags_DefaultOpen)) {
-        DrawTime();
+        DrawTime(d);
     }
     if (ImGui::CollapsingHeader(Tr(StrId::Feel_SecShake), ImGuiTreeNodeFlags_DefaultOpen)) {
-        DrawShake();
+        DrawShake(d);
     }
     if (ImGui::CollapsingHeader(Tr(StrId::Feel_SecKick))) {
-        DrawKick();
+        DrawKick(d);
     }
     if (ImGui::CollapsingHeader(Tr(StrId::Feel_SecRumble))) {
-        DrawRumble();
+        DrawRumble(d);
     }
     if (ImGui::CollapsingHeader(Tr(StrId::Feel_SecFlash))) {
-        DrawFlash();
+        DrawFlash(d);
     }
 
     ImGui::Separator();
-    // プレビュー: 編集中の写しを正規化してから鳴らす (Play 中だけ。編集中は tick が進まず何も見えない)
+    // プレビュー: 今の値を鳴らす (Play 中だけ。編集中は tick が進まず何も見えない)。Play 側で正規化される
     const bool canPreview = ctx.scene != nullptr && ctx.simulateScripts;
     ImGui::BeginDisabled(!canPreview);
     if (ImGui::Button(Tr(StrId::Feel_Preview), ImVec2(110, 0)) && canPreview) {
-        MyeFeelDesc d = edit_;
-        SanitizeFeelDesc(d);
-        ctx.scene->Feel().Play(d, 1.0f, HashStr(FeelLibrary::NameFromPath(path)), ctx.scene->Time());
+        ctx.scene->Feel().Play(d, 1.0f, preset->nameHash, ctx.scene->Time());
     }
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -187,16 +201,12 @@ void FeelAssetInspector::Draw(EngineContext& ctx, const std::wstring& path)
     }
     ImGui::SameLine();
     if (ImGui::Button(Tr(StrId::Common_Save), ImVec2(90, 0))) {
-        SanitizeFeelDesc(edit_); // 手入力の NaN / 範囲外をファイルへ焼かない
+        SanitizeFeelDesc(d); // 手入力の NaN / 範囲外をファイルへ焼かない
         std::ofstream out(fs::path(path), std::ios::binary);
         if (out) {
-            out << FeelLibrary::ToJson(edit_).dump(2);
+            out << FeelLibrary::ToJson(d).dump(2);
             out.close();
-            saved_ = edit_;
-            // 即時反映: 同じ GUID のまま読み直す (参照側は GUID / 名前なので再解決は要らない)
-            if (FeelLibrary* fl = feellib::Library()) {
-                fl->LoadFromFile(path);
-            }
+            saved_ = d;
             MYE_LOG_INFO("feel saved: %s", WideToUtf8(path).c_str());
         } else {
             MYE_LOG_ERROR(Tr(StrId::Log_WriteFeelFail), WideToUtf8(path).c_str());
@@ -204,12 +214,14 @@ void FeelAssetInspector::Draw(EngineContext& ctx, const std::wstring& path)
     }
     ImGui::SameLine();
     if (ImGui::Button(Tr(StrId::Insp_Revert), ImVec2(90, 0))) {
-        Load(path);
+        d = saved_; // ディスクの値へ戻す (この戻しも Undo できる)
     }
-    if (std::memcmp(&edit_, &saved_, sizeof(MyeFeelDesc)) != 0) {
+    if (std::memcmp(&d, &saved_, sizeof(MyeFeelDesc)) != 0) {
         ImGui::SameLine();
         ImGui::TextDisabled("%s", Tr(StrId::Feel_Unsaved));
     }
+    undoRecorder_.Observe(undo, "Feel", UndoDocOp::Kind::Feel, hash_, before, FeelLibrary::ToJson(d),
+                          ImGui::IsAnyItemActive());
 }
 
 } // namespace mye

@@ -1,6 +1,6 @@
 // InspectorWindow のアセット選択時の描画 (M40c〜)。テクスチャ / モデルの Import Settings、.mat.json、.sound.json、
 // .physmat.json、ナビのエリアのフィルタ、Properties スキーマ、*.fxstack.json のスキーマ固定編集。
-// アセット編集は UndoStack の対象外 (既存規約)。エンティティ側の描画は InspectorWindow.cpp、ナビのベイクは InspectorWindowNav.cpp
+// アセット編集は UndoStack の対象外 (既存規約。例外は .feel.json の文書エントリ、M94e)。エンティティ側の描画は InspectorWindow.cpp、ナビのベイクは InspectorWindowNav.cpp
 #include "Editor/Windows/Scene/InspectorWindow.h"
 
 #include <algorithm>
@@ -37,7 +37,7 @@
 
 namespace mye {
 
-void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selection,
+void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selection, UndoStack& undo,
                                          AssetPreviewCache& preview)
 {
     namespace fs = std::filesystem;
@@ -140,7 +140,7 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
     }
 
     if (type == AssetType::Feel) {
-        feelInspector_.Draw(ctx, path); // M94d
+        feelInspector_.Draw(ctx, undo, path); // M94d / M94e (Undo は文書エントリ)
         return;
     }
 

@@ -2372,6 +2372,11 @@ MYE_STR(Feel_CurveEase,       "Ease",                "イージング")
 MYE_STR(Feel_CurveFrom,       "From",                "始め")
 MYE_STR(Feel_CurveTo,         "To",                  "終わり")
 MYE_STR(Feel_CurveParam,      "Overshoot",           "行き過ぎ量")
+MYE_STR(Feel_CurveKey,        "Key (t, value)",      "制御点 (時刻, 値)")
+MYE_STR(Feel_CurveTangents,   "Tangents (in, out)",  "接線 (入, 出)")
+MYE_STR(Feel_CurveAutoTangents, "Smooth tangents",   "接線をなめらかに")
+MYE_STR(Feel_CurveHelp,       "Drag: move / Double-click: add / Right-click: delete",
+                              "ドラッグ: 動かす / ダブルクリック: 足す / 右クリック: 消す")
 MYE_STR(Feel_Preview,         "Preview",             "プレビュー")
 MYE_STR(Feel_PreviewTip,      "Plays this preset (as currently edited) in the running game. Only available while playing.",
                               "編集中の内容のまま、実行中のゲームでこのプリセットを鳴らします。Play 中だけ使えます。")
