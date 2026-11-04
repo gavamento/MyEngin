@@ -2,15 +2,15 @@
 
 - 依頼原文: M95 アクション戦闘の土台 (事前調査は plans\m95-action-combat\design-draft.md)
 - 開始: 2026-11-04 / 基点コミット: 69c2207c2b8c5c79af7d37ababad0b03d397d228
-- フェーズ: 実装 (2026-11-04 14:05 に一時停止、14:40 にユーザー指示「続き」で再開。planner / sub-00b / sub-01 の coder を再起動)
+- フェーズ: 実装 (一時停止 2 回目: 2026-11-04 19:55、ユーザー指示「いったん止めて」。1 回目は 14:05〜14:40。再開は `/harness resume m95-action-combat`、手順は申し送り末尾)
 - 仕様確定: 2026-11-04 (planner PLAN_RESULT round 2)。番号: ABI v32 = 193 スロット、SimSnapshot v66 / v67 / v68、controller アセット v3、ADR-034、TypeId 追加なし
 
 ## サブ進捗
 | サブ | 波 | 依存 | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|---|---|
-| sub-00 selftest の登録表・フィルタ・所要時間ログ・full 入口・CI・予約マーカー | 0 | なし | OK (条件付き) | 1 | 8405f20 | master で単独。VERDICT 指摘 1: Release の --selftest-full と replay_verify は、ユーザーの対話用 Editor.exe (PID 39252) が Release exe を掴んでいるため未実施。解放後に司会が回して結果をここに書く。FAIL なら差し戻し。14:40 再開時に Release exe が空いたので司会が master で replay_verify + Release --selftest-full を実行中 (スロット moderator) |
-| sub-00b 計測に基く層分けと縮小 (既定 60 秒以内) | 1 | sub-00 | 実装中 (14:40 再開、round 1) | 0 | | 前の coder の未コミット差分 (+65/-11) を新しい coder が git diff で引き継ぐ。計測は単独で回す |
-| sub-01 ヒットストップ (ABI v32、snapshot v66) | 1 | sub-00 | 実装中 (14:40 再開、round 1) | 0 | | 前の coder の未コミット差分 (11 ファイル +205/-9) を新しい coder が git diff で引き継ぐ。SELF_EVAL 未提出 |
+| sub-00 selftest の登録表・フィルタ・所要時間ログ・full 入口・CI・予約マーカー | 0 | なし | OK (条件付き) | 1 | 8405f20 | master で単独。VERDICT 指摘 1: Release の --selftest-full と replay_verify は、ユーザーの対話用 Editor.exe (PID 39252) が Release exe を掴んでいるため未実施。解放後に司会が回して結果をここに書く。FAIL なら差し戻し。19:38 司会が master (a6bc7aa、シミュレーションは 8405f20 と同一) で `tools\replay_verify.bat` → **PASS** (22 ジョブ 433 s、15 シーン Debug/Release 一致 + snapshot 往復 + jobs A/B + compute A/B + タイムトラベル、check_rules 0 error)。Release `--selftest-full` は未実施のまま (cmd 経由の実行がスロット待ちの間に 2 回目の停止) |
+| sub-00b 計測に基く層分けと縮小 (既定 60 秒以内) | 1 | sub-00 | 中断 (round 1 の途中、2 回目) | 0 | | worktree に未コミット差分 (AGENTS.md、SelfTestSuites.h/.cpp、EngineIndexDumpSelfTest.cpp。2 回目の coder が小テストの呼び出しを PartSelfTest.cpp から EngineIndexDumpSelfTest.cpp へ移した模様)。計測は単独で回す |
+| sub-01 ヒットストップ (ABI v32、snapshot v66) | 1 | sub-00 | 中断 (round 1 の途中、2 回目) | 0 | | worktree に未コミット差分 13 ファイル (1 回目の 11 + TwoDDemoSelfTest.cpp の焼き込み hash + **tools/check_rules.ps1**)。2 回目の coder は最終検証の途中 (ABI 機械照合まで進んだ) で停止、SELF_EVAL 未提出 |
 | sub-02 CC 同士の押し出しと接触イベント (snapshot v67、ADR-034) | 1 | sub-00 | OK | 1 | 2992ad3 (m95/sub-02) | full 検証済み (Debug 972 s / Release 107 s、RV PASS)。焼き込み hash 5 件 + AcousticAudio 版チェックは統合後に再採取 |
 | sub-04 遷移の割り込み (controller v3) | 1 | sub-00 | OK | 2 | 3dca0f6 (m95/sub-04) | round 1 は最終検証未実施で REWORK。full 検証済み (Debug 814 s / Release 108 s、RV PASS)。三校は環境要因 |
 | sub-06 イベント時刻の秒・フレーム指定 | 1 | sub-00 | OK | 1 | cda5413 (m95/sub-06) | full 検証済み (Debug 619 s / Release 96 s、RV 22 jobs PASS)。三校 FAIL は別件 |
@@ -59,3 +59,4 @@
 - 別件の切り分け結果 (2026-11-04、司会): master 8405f20 (シミュレーションは基点 69c2207 と同一) で三校 DLL を v31 で作り直し (`[dll] GameLogic loaded ... (3 scripts)`) ても三校 verify は同じ 2 件 FAIL (shot main diffPixels=28402 / maxDiff=122、replay は VERIFY PASS だが「agent never left patrol」)。= M95 以前からの既存失敗。golden は 2026-10-12 撮影で、その後の M90 / M93 / M94 のどれかで変わった可能性。M95 の範囲外としてユーザーへ報告、統合時の三校 verify は「この 2 件以外に FAIL が増えないこと」を合格条件にする
 - 一時停止時の再開手順 (2026-11-04 14:05): (1) sub-00b と sub-01 は新しい coder を worktree (`C:/HAL/MyEngin-wt/sub-00b`, `sub-01`) で起動し、「未コミットの差分が残っている。`git diff` を読んで引き継ぎ、sub-NN.md の実装メモと spec を基準にやり直し部分を判断せよ」と伝える (前の coder の文脈は失われている)。(2) planner もセッションを跨ぐと再起動が要る (spec / sub / 台帳から文脈を渡す)。(3) OK 済み 3 本はブランチにある: m95/sub-02 = 2992ad3、m95/sub-04 = 3dca0f6、m95/sub-06 = cda5413。(4) Wave 1 の 5 本が揃ったら付録 B で統合 (焼き込み hash の再採取、三校は master で DLL を v32 で作り直し、既存 2 件以外の FAIL が無いこと)。(5) 残骸 `C:/HAL/MyEngin-wt/sub-02-base` (45 MB) の削除はユーザー許可待ち。(6) sub-00 の Release 検証 (--selftest-full と replay_verify) は Release exe の解放後に未実施のまま
 - 再開時の planner 引き継ぎ (2026-11-04、planner 再起動): sub-00b の未コミット差分は tier を Full にした 9 本 (physics / surfacematerial / surfacedeferred / fracture / fractureeditor / servernet / navagent / behaviortree / twoddemo) + `VerifySelfTestSelectionRules` (SelfTestSuites.h/.cpp、sub-00 nit (2) の小テスト) を `PartSelfTest.cpp` 冒頭から呼ぶ形。縮小は未実施、計測表 (受け入れ 38) も未記入。sub-01 の差分は ABI v32 2 本 / snapshot v66 / AcousticAudio 版チェック 66 / PartSelfTest の ABI 断言まで入っている。**sub-00b と sub-01 の両方が `PartSelfTest.cpp` を触る** (冒頭 vs 末尾マーカー直下、テキストは重ならない) ので Wave 1 統合の目視 (付録 B 3.) に `PartSelfTest.cpp` を足す
+- 一時停止 2 回目 (2026-11-04 19:55): 再開手順は 1 回目と同じ (新しい coder を worktree で起動して `git diff` で引き継ぐ、planner も再起動)。追加の注意: (a) sub-01 の差分に `tools/check_rules.ps1` が含まれる — coder の役の範囲 (sub-01.md の触る場所) に無いので、次の coder に「変更理由を仕様との差分に書かせる」か、planner に妥当性を判定させる。(b) Release の `--selftest-full` を PowerShell の `&` で直接起動すると GUI exe を待たずに戻ってログが空になる。CI と同じ `cmd /c bin\x64\Release\Editor.exe --selftest-full > log 2>&1` で回す (sub-00 の Release 検証はこれで未完)。(c) 司会のスロット名は `moderator`。停止時に全スロットを解放済み、MSBuild 4 本は自然終了待ち
