@@ -124,14 +124,14 @@ namespace mye {
 
 namespace {
 
-// 全走の順。tier の書き換えは sub-00b の担当
+// 全走の順。Full は Debug の所要時間が長い上位 10 本 (sub-00b の計測表: plans/m95-action-combat/sub-00b.md)
 // (M95 で足す場合は末尾の M95 マーカーの下へ)
 const SelfTestSuite kSuites[] = {
     { "ecs", mye::RunEcsSelfTest, SelfTestTier::Fast, "" },
     { "sceneserializer", mye::RunSceneSerializerSelfTest, SelfTestTier::Fast, "" },
     { "undo", mye::RunUndoSelfTest, SelfTestTier::Fast, "" },
     { "render", mye::RunRenderSelfTest, SelfTestTier::Fast, "" },
-    { "physics", mye::RunPhysicsSelfTest, SelfTestTier::Fast, "" },
+    { "physics", mye::RunPhysicsSelfTest, SelfTestTier::Full, "" },
     { "ui", mye::RunUISelfTest, SelfTestTier::Fast, "" },
     { "animatorcontroller", mye::RunAnimatorControllerSelfTest, SelfTestTier::Fast, "" },
     { "assetdatabase", mye::RunAssetDatabaseSelfTest, SelfTestTier::Fast, "" },
@@ -191,21 +191,21 @@ const SelfTestSuite kSuites[] = {
     { "shadermanagerprojectindex", mye::RunShaderManagerProjectIndexSelfTest, SelfTestTier::Fast, "M78: assets 全域索引" },
     { "computeabi", mye::RunComputeAbiSelfTest, SelfTestTier::Fast, "M78e: Compute ABI v21" },
     { "surfaceshader", mye::RunSurfaceShaderSelfTest, SelfTestTier::Fast, "M79a: サーフェス規約・生成エントリ" },
-    { "surfacematerial", mye::RunSurfaceMaterialSelfTest, SelfTestTier::Fast, "M79b: Forward 描画とマテリアル Properties" },
-    { "surfacedeferred", mye::RunSurfaceDeferredSelfTest, SelfTestTier::Fast, "M79c: Deferred サーフェス段・CSM 影" },
+    { "surfacematerial", mye::RunSurfaceMaterialSelfTest, SelfTestTier::Full, "M79b: Forward 描画とマテリアル Properties" },
+    { "surfacedeferred", mye::RunSurfaceDeferredSelfTest, SelfTestTier::Full, "M79c: Deferred サーフェス段・CSM 影" },
     { "watersurface", mye::RunWaterSurfaceSelfTest, SelfTestTier::Fast, "M79e: 水面サーフェス経路・MyEngineWater" },
-    { "fracture", mye::RunFractureSelfTest, SelfTestTier::Fast, "M80a: 破壊分割コア (閉じ判定・平面切断)" },
-    { "fractureeditor", mye::RunFractureEditorSelfTest, SelfTestTier::Fast, "M80i: 破壊物 Inspector の焼き回り" },
+    { "fracture", mye::RunFractureSelfTest, SelfTestTier::Full, "M80a: 破壊分割コア (閉じ判定・平面切断)" },
+    { "fractureeditor", mye::RunFractureEditorSelfTest, SelfTestTier::Full, "M80i: 破壊物 Inspector の焼き回り" },
     { "fractureskin", mye::RunFractureSkinSelfTest, SelfTestTier::Fast, "M80j: スキンメッシュの破壊" },
     { "session", mye::RunSessionSelfTest, SelfTestTier::Fast, "M81b: システム入力 / SessionLanes / .rep v9" },
-    { "servernet", mye::RunServerNetSelfTest, SelfTestTier::Fast, "M81d: 入力確定型サーバ/クライアント (1 プロセス内の偽トランスポート)" },
+    { "servernet", mye::RunServerNetSelfTest, SelfTestTier::Full, "M81d: 入力確定型サーバ/クライアント (1 プロセス内の偽トランスポート)" },
     { "online", mye::RunOnlineSelfTest, SelfTestTier::Fast, "M93: 参加コード / P2P 中継の分割 / local 実装のロビー" },
     { "navdeterminism", mye::RunNavDeterminismSelfTest, SelfTestTier::Fast, "M82a: Recast のビット一致と状態の保存・復元" },
     { "navsurface", mye::RunNavSurfaceSelfTest, SelfTestTier::Fast, "M82b: Surface のベイク入力・.mnav・NavSystem" },
     { "naveditor", mye::RunNavEditorSelfTest, SelfTestTier::Fast, "M82b: Create / Bake / Clear の皮" },
-    { "navagent", mye::RunNavAgentSelfTest, SelfTestTier::Fast, "M82c: Agent・dtCrowd・SimSnapshot の Nav 節" },
+    { "navagent", mye::RunNavAgentSelfTest, SelfTestTier::Full, "M82c: Agent・dtCrowd・SimSnapshot の Nav 節" },
     { "perception", mye::RunPerceptionSelfTest, SelfTestTier::Fast, "M83: AI の知覚 (視覚・聴覚・ダメージ・接触・予測)" },
-    { "behaviortree", mye::RunBehaviorTreeSelfTest, SelfTestTier::Fast, "M85: ビヘイビアツリー (アセット・Composite・BT 節)" },
+    { "behaviortree", mye::RunBehaviorTreeSelfTest, SelfTestTier::Full, "M85: ビヘイビアツリー (アセット・Composite・BT 節)" },
     { "patrolrouteedit", mye::RunPatrolRouteEditSelfTest, SelfTestTier::Fast, "M85g: 巡回ルートの点の編集と Undo" },
     { "engineindexdump", mye::RunEngineIndexDumpSelfTest, SelfTestTier::Fast, "M87a: 索引ダンプの件数・決定性" },
     { "behaviortreeeditor", mye::RunBehaviorTreeEditorSelfTest, SelfTestTier::Fast, "M85h: BT 窓のモデル層 (追加・接続・削除・保存)" },
@@ -213,7 +213,7 @@ const SelfTestSuite kSuites[] = {
     { "devicelostrescue", mye::RunDeviceLostRescueSelfTest, SelfTestTier::Fast, "M88a: デバイス消失時の退避保存" },
     { "devicerecovery", mye::RunDeviceRecoverySelfTest, SelfTestTier::Fast, "M88b: 復旧の連続消失制限と旧デバイス参照数ゲート" },
     { "renderstats", mye::RunRenderStatsSelfTest, SelfTestTier::Fast, "M90a: 描画統計のビュー別集計と JSON ダンプ" },
-    { "occlusion", mye::RunOcclusionSelfTest, SelfTestTier::Fast, "M90b: GPU オクルージョン (max-Z HZB・保守的判定・ON/OFF 画素一致)" },
+    { "occlusion", mye::RunOcclusionSelfTest, SelfTestTier::Full, "M90b: GPU オクルージョン (max-Z HZB・保守的判定・ON/OFF 画素一致)" },
     { "shadowcull", mye::RunShadowCullSelfTest, SelfTestTier::Fast, "M90d: CSM のカスケード別判定 (近平面を除く 5 面・run 数)" },
     { "skinbounds", mye::RunSkinBoundsSelfTest, SelfTestTier::Fast, "M90d: スキンの保守的 AABB (全クリップの全フレームを包む)" },
     { "meshlod", mye::RunMeshLodSelfTest, SelfTestTier::Fast, "M90e: メッシュ LOD (生成・クック・.meta・選択)" },
@@ -237,7 +237,7 @@ const SelfTestSuite kSuites[] = {
     { "gridnav2d", mye::RunGridNav2DSelfTest, SelfTestTier::Fast, "M94u: GridAgent2D のグリッド A* (段差 / 穴 / NoPath / 並走一致)" },
     { "camera2dfollow", mye::RunCamera2DFollowSelfTest, SelfTestTier::Fast, "M94v: Camera2DFollow (デッドゾーン / damping / 境界 / 並走一致)" },
     { "pixelperfect2d", mye::RunPixelPerfect2DSelfTest, SelfTestTier::Fast, "M94v: pixelperfect2d::Compute の表" },
-    { "twoddemo", mye::RunTwoDDemoSelfTest, SelfTestTier::Fast, "M94w: --2d-demo の 3000 tick 不変量と焼き込みハッシュ" },
+    { "twoddemo", mye::RunTwoDDemoSelfTest, SelfTestTier::Full, "M94w: --2d-demo の 3000 tick 不変量と焼き込みハッシュ" },
     // ---- M95 ----
 };
 
@@ -352,6 +352,51 @@ bool ResolveSelfTestSelection(const std::string& onlyValue, bool full, SelfTestS
         if (std::find(out.indices.begin(), out.indices.end(), index) == out.indices.end()) out.indices.push_back(index);
     }
     return true;
+}
+
+std::vector<std::string> VerifySelfTestSelectionRules()
+{
+    std::vector<std::string> failures;
+    const std::span<const SelfTestSuite> suites = GetSelfTestSuites();
+    auto names = [&](const SelfTestSelection& sel) {
+        std::vector<std::string> list;
+        for (size_t index : sel.indices) list.push_back(suites[index].name);
+        return list;
+    };
+    auto expect = [&](bool cond, const char* what) {
+        if (!cond) failures.push_back(what);
+    };
+    using Names = std::vector<std::string>;
+
+    SelfTestSelection sel;
+    expect(ResolveSelfTestSelection("", false, sel) && sel.mode == SelfTestMode::Fast, "fast: 未指定は fast モード");
+    size_t fastCount = 0;
+    for (const SelfTestSuite& suite : suites) fastCount += suite.tier == SelfTestTier::Fast ? 1 : 0;
+    expect(sel.indices.size() == fastCount, "fast: tier が Fast のスイートだけ");
+    expect(std::is_sorted(sel.indices.begin(), sel.indices.end()), "fast: 表の順");
+
+    expect(ResolveSelfTestSelection("", true, sel) && sel.mode == SelfTestMode::Full, "full: full モード");
+    expect(sel.indices.size() == suites.size(), "full: 全スイート");
+    expect(std::is_sorted(sel.indices.begin(), sel.indices.end()), "full: 表の順");
+
+    // only は tier を問わず、書いた順ではなく表の順 (重複と大文字・空白は吸収)
+    expect(ResolveSelfTestSelection(" UNDO , ecs,undo", false, sel) && sel.mode == SelfTestMode::Only
+               && names(sel) == Names{ "ecs", "undo" }, "only: 表の順・重複除去・小文字化・空白除去");
+    expect(ResolveSelfTestSelection("ecs", true, sel) && sel.mode == SelfTestMode::Only
+               && names(sel) == Names{ "ecs" }, "only: full より優先");
+
+    // 別名 1 個だけは別名の並び。m95 は表では worldhasher が simsnapshot より前
+    expect(ResolveSelfTestSelection("m95", false, sel)
+               && names(sel) == Names{ "physics", "animatorcontroller", "skeleton", "part", "twodabi", "simsnapshot", "worldhasher" },
+           "alias: 別名 1 個は別名の並び");
+    expect(ResolveSelfTestSelection("m95,ecs", false, sel) && !names(sel).empty() && names(sel).front() == "ecs"
+               && sel.indices.size() == 8 && std::is_sorted(sel.indices.begin(), sel.indices.end()),
+           "alias: 別名と他の項目の混在は表の順");
+
+    expect(ResolveSelfTestSelection("servernet-v1", false, sel) && names(sel) == Names{ "servernet" }, "servernet-*: 前方一致で servernet 1 本");
+
+    expect(!ResolveSelfTestSelection("ecs,nosuchsuite", false, sel) && sel.unknownName == "nosuchsuite", "unknown: 未知名は false で名前を返す");
+    return failures;
 }
 
 void PrintSelfTestList()

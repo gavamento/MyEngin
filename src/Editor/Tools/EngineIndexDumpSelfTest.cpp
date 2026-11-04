@@ -8,6 +8,7 @@
 #include <set>
 #include <string>
 
+#include "Editor/SelfTest/SelfTestSuites.h"
 #include "Editor/Tools/EngineIndexDump.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/ComponentRegistry.h"
@@ -31,6 +32,10 @@ bool RunEngineIndexDumpSelfTest()
             ++failCount;
         }
     };
+
+    // 登録表の選択規則 (専用スイートは作らない方針なので、M95 が触らないこのスイートへ間借りする)
+    for (const std::string& failure : VerifySelfTestSelectionRules()) check(false, failure.c_str());
+    check(true, "selftest 選択規則");
 
     const std::string text = BuildEngineIndexDumpJson();
     check(text == BuildEngineIndexDumpJson(), "決定性: 2 回作って同一");
