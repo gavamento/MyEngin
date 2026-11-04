@@ -407,7 +407,7 @@ void InputActions::Evaluate(const InputSnapshot* cur, const InputSnapshot* prev,
     }
 }
 
-void InputActions::UpdateBuffers(InputBufferState& state)
+void InputActions::UpdateBuffers(InputBufferState& state) const
 {
     const size_t n = std::min<size_t>(actions_.size(), kMaxBufferedActions);
     for (uint32_t p = 0; p < kMaxPlayers; ++p) {
@@ -419,20 +419,34 @@ void InputActions::UpdateBuffers(InputBufferState& state)
                 age = kInputBufferNone; // 先行受付なし / 定義が無い枠 (定義の伸縮で残骸を残さない)
                 continue;
             }
-            uint8_t& bits = actionBits_[aBase + i];
-            if ((bits & kActionPressed) != 0) {
+            if ((actionBits_[aBase + i] & kActionPressed) != 0) {
                 age = 0; // 押した tick 自身も窓の中
             } else if (age != kInputBufferNone) {
                 age = (age + 1u > window) ? kInputBufferNone : static_cast<uint8_t>(age + 1u);
-            }
-            if (age != kInputBufferNone) {
-                bits |= kActionBuffered;
             }
         }
     }
 }
 
-bool InputActions::ConsumeBuffered(uint64_t nameHash, uint32_t player, InputBufferState& state)
+uint32_t InputActions::ActionStateBuffered(uint64_t nameHash, uint32_t player, const InputBufferState& state) const
+{
+    for (size_t i = 0; i < actions_.size(); ++i) {
+        if (actions_[i].nameHash == nameHash) {
+            return ActionStateAt(i, player) | (BufferedAt(i, player, state) ? kActionBuffered : 0u);
+        }
+    }
+    return 0;
+}
+
+bool InputActions::BufferedAt(size_t i, uint32_t player, const InputBufferState& state) const
+{
+    if (i >= actions_.size() || i >= kMaxBufferedActions || player >= kMaxPlayers || actions_[i].bufferTicks == 0) {
+        return false;
+    }
+    return state.pressAge[player][i] != kInputBufferNone;
+}
+
+bool InputActions::ConsumeBuffered(uint64_t nameHash, uint32_t player, InputBufferState& state) const
 {
     if (player >= kMaxPlayers) {
         return false;
@@ -447,10 +461,6 @@ bool InputActions::ConsumeBuffered(uint64_t nameHash, uint32_t player, InputBuff
             return false;
         }
         age = kInputBufferNone;
-        const size_t k = static_cast<size_t>(player) * actions_.size() + i;
-        if (k < actionBits_.size()) {
-            actionBits_[k] = static_cast<uint8_t>(actionBits_[k] & ~kActionBuffered);
-        }
         return true;
     }
     return false;

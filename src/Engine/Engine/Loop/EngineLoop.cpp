@@ -559,6 +559,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         shared.pendingSaveSlot = &pendingSaveSlot;
         shared.pendingLoadSlot = &pendingLoadSlot;
         shared.padVibration = &padVibration;
+    shared.feelOutputScale = &feelOutputScale; // v31 (M94h)
         shared.netInfo = &netInfo;
         shared.cursorLock = &cursorLock;
         shared.pendingLoadPersistSlot = &pendingLoadPersistSlot;

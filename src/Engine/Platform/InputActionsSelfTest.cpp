@@ -566,24 +566,24 @@ bool RunInputActionsSelfTest()
         check(!st.HasHashableState(), "buffer: the default state has nothing in the window");
         b.Evaluate(down, up);
         b.UpdateBuffers(st);
-        check((b.ActionState(hJump) & kActionBuffered) != 0 && st.pressAge[0][0] == 0,
+        check((b.ActionStateBuffered(hJump, 0, st) & kActionBuffered) != 0 && st.pressAge[0][0] == 0,
               "buffer: the press tick itself is inside the window");
-        check((b.ActionState(hFire) & kActionBuffered) == 0 && st.pressAge[0][1] == kInputBufferNone,
+        check((b.ActionStateBuffered(hFire, 0, st) & kActionBuffered) == 0 && st.pressAge[0][1] == kInputBufferNone,
               "buffer: an action without bufferTicks never buffers (its bits are unchanged)");
         int buffered = 0;
         for (int t = 0; t < 6; ++t) {
             b.Evaluate(up, t == 0 ? down : up);
             b.UpdateBuffers(st);
-            buffered += (b.ActionState(hJump) & kActionBuffered) != 0 ? 1 : 0;
+            buffered += (b.ActionStateBuffered(hJump, 0, st) & kActionBuffered) != 0 ? 1 : 0;
         }
         check(buffered == 3 && !st.HasHashableState(), "buffer: bufferTicks 3 keeps the press for 3 more ticks, then closes");
         b.Evaluate(down, up);
         b.UpdateBuffers(st);
-        check(b.ConsumeBuffered(hJump, 0, st) && (b.ActionState(hJump) & kActionBuffered) == 0,
+        check(b.ConsumeBuffered(hJump, 0, st) && (b.ActionStateBuffered(hJump, 0, st) & kActionBuffered) == 0,
               "buffer: consuming clears the window and this tick's bit");
         b.Evaluate(up, down);
         b.UpdateBuffers(st);
-        check((b.ActionState(hJump) & kActionBuffered) == 0 && !b.ConsumeBuffered(hJump, 0, st),
+        check((b.ActionStateBuffered(hJump, 0, st) & kActionBuffered) == 0 && !b.ConsumeBuffered(hJump, 0, st),
               "buffer: a consumed press does not come back");
         check(!b.ConsumeBuffered(hJump, kMaxPlayers, st) && !b.ConsumeBuffered(HashStr("Nope"), 0, st),
               "buffer: out-of-range lanes and unknown actions consume nothing");

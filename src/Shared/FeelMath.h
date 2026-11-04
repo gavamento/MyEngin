@@ -432,6 +432,13 @@ inline float MyeValueNoise(uint32_t seed, float x)
     return a + (b - a) * s;
 }
 
+// SetFeelOutputScale (v31) のチャネル番号。エンジン側の kFeelChannel* と同値 (FeelState.cpp が static_assert で固定)
+enum : uint32_t {
+    MYE_FEEL_CHANNEL_CAMERA = 0, // カメラの揺れ + キック
+    MYE_FEEL_CHANNEL_RUMBLE = 1, // パッドの振動
+    MYE_FEEL_CHANNEL_FLASH = 2,  // 画面効果のパルス
+};
+
 // ---- 手触りの記述子 ----
 // 1 回の「手触り」(ヒット、着地、被弾…) が鳴らすものの全部。.feel.json の 1 ファイル =
 // この構造体 1 個。スクリプトからは PlayFeel (名前) か PlayFeelDesc (コードで組んだもの) で鳴らす。

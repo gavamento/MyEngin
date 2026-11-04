@@ -10,6 +10,7 @@
 #include "Editor/App/EditorSettings.h"
 #include "Editor/Project/PartTagNames.h"
 #include "Engine/Engine/Scene/TagNames.h" // 汎用タグの名前表
+#include "Engine/Engine/Scene/Scene.h" // M94f: 先行入力の窓 (ライブ表示)
 #include "Editor/Project/PhysicsLayerNames.h"
 #include "Editor/Project/NavAreaNames.h"
 #include "Editor/Project/NavAgentTypes.h"
@@ -504,7 +505,8 @@ void ProjectSettingsWindow::DrawInputSection(EngineContext& ctx)
         ImGui::SameLine(0.0f, 4.0f);
         ImGui::TextColored((st & kActionReleased) != 0 ? colOn : colOff, "R");
         ImGui::SameLine(0.0f, 4.0f);
-        ImGui::TextColored((st & kActionBuffered) != 0 ? colOn : colOff, "B"); // M94f: 先行受付の窓の中
+        const bool buffered = ctx.scene != nullptr && ia.BufferedAt(static_cast<size_t>(i), 0, ctx.scene->InputBuffer());
+        ImGui::TextColored(buffered ? colOn : colOff, "B"); // M94f: 先行受付の窓の中 (レーン 0)
         ImGui::SameLine();
         // M94f: 先行受付の窓 [tick] (0 = なし)。先頭 32 本だけが持てる
         int buffer = a.bufferTicks;

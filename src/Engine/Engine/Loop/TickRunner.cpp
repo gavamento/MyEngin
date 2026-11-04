@@ -380,6 +380,9 @@ void RunOneTick(TickServices& ts)
     if (ctx.simulateScripts) {
         scene.Feel().Advance();
     }
+    // v31 (M94h): IsSimStepping の答え。スクリプト層 (フェーズ 3 / 5) はこの tick のゲートの結果を読む
+    scriptHost.SetSimStepping(stepSim);
+    managedHost.SetSimStepping(stepSim);
     // ---- BT のイベントの配達 (M85e): スクリプト層より前 ----
     // tick N に積まれた分を tick N+1 の頭で配る。こうしないと BT より前に走るスクリプトが読めない。
     // 一時停止中 (stepSim が偽) は配らない (配送待ちは残る)

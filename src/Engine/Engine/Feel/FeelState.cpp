@@ -11,6 +11,10 @@
 
 namespace mye {
 
+static_assert(kFeelChannelCamera == MYE_FEEL_CHANNEL_CAMERA && kFeelChannelRumble == MYE_FEEL_CHANNEL_RUMBLE
+                  && kFeelChannelFlash == MYE_FEEL_CHANNEL_FLASH,
+              "the v31 SetFeelOutputScale channel numbers are part of the ABI");
+
 namespace {
 
 constexpr float kTicksPerSecond = 60.0f;

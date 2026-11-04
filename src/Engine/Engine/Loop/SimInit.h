@@ -15,6 +15,7 @@ namespace mye {
 struct EngineConfig;
 struct RenderResources;
 struct PadVibrationState;
+struct FeelOutputScale;
 struct CursorLockState;
 struct WindowModeState;
 struct ScriptAudioEvent;
@@ -95,6 +96,7 @@ struct SimSharedServices {
     int* pendingSaveSlot = nullptr;
     int* pendingLoadSlot = nullptr;
     PadVibrationState* padVibration = nullptr;
+    FeelOutputScale* feelOutputScale = nullptr; // v31 (M94h): 手触りの出力倍率 (出力レーン)。null = SetFeelOutputScale が no-op
     const NetRuntimeInfo* netInfo = nullptr;
     CursorLockState* cursorLock = nullptr;
     int* pendingLoadPersistSlot = nullptr;

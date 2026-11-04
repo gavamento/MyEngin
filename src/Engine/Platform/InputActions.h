@@ -18,7 +18,7 @@ enum : uint32_t {
     kActionPressed  = 1u << 1, // この tick で押された (prev 上げ / cur 下げ)
     kActionReleased = 1u << 2, // この tick で離された
     // M94f: 先行受付の窓の中 (bufferTicks 以内に押され、まだ ConsumeBuffered されていない)。
-    // bufferTicks が 0 のアクションには立たない = 既存のアクションの戻り値は変わらない
+    // ActionStateBuffered だけが立てる (窓は Scene の InputBufferState が持つ)。bufferTicks が 0 のアクションには立たない
     kActionBuffered = 1u << 3,
 };
 
@@ -121,11 +121,15 @@ public:
     // player 省略時はレーン 0
     uint32_t ActionState(uint64_t nameHash, uint32_t player = 0) const; // kAction* の論理和
 
-    // M94f: 先行入力。Evaluate の**直後**に 1 回呼び、state (sim 状態) を進めて kActionBuffered を立てる。
+    // M94f: 先行入力。Evaluate の**直後**に 1 回呼び、state (sim 状態) の窓を進める。
     // 呼ばない tick は窓が進まない (エディタの編集中)。決定論: (今 tick の評価結果, state) の純関数
-    void UpdateBuffers(InputBufferState& state);
-    // 窓の中なら消費して true (同じ押下で 2 回跳ばない)。この tick の kActionBuffered も下ろす
-    bool ConsumeBuffered(uint64_t nameHash, uint32_t player, InputBufferState& state);
+    void UpdateBuffers(InputBufferState& state) const;
+    // ActionState に、state の窓の中なら kActionBuffered を足したもの (ABI の GetActionState の実体)。
+    // 窓を state から引くので、同じ tick に誰かが消費した後は立たない
+    uint32_t ActionStateBuffered(uint64_t nameHash, uint32_t player, const InputBufferState& state) const;
+    bool BufferedAt(size_t i, uint32_t player, const InputBufferState& state) const; // ライブ表示用
+    // 窓の中なら消費して true (同じ押下で 2 回跳ばない)
+    bool ConsumeBuffered(uint64_t nameHash, uint32_t player, InputBufferState& state) const;
     // パッド成分 (内側の遮断の後) に外側の遮断と応答カーブを掛ける。Evaluate の実体を selftest から直接検査するために公開する
     static float ShapePadValue(const InputAxisDef& a, float v);
     float AxisValue(uint64_t nameHash, uint32_t player = 0) const;      // [-1, +1]

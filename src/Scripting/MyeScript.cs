@@ -452,6 +452,12 @@ namespace MyeScripting
         // 振動 (v12、出力レーン、0..1)。record/verify 中とフォーカス喪失中はエンジンが 0 に落とす
         protected static void SetPadVibration(float left, float right)
             => Engine.SetPadVibration(left, right);
+        // 手触り (v31): この tick でゲート対象 (物理・アニメ…) が進むか (ヒットストップ・ポーズ・スローの止まる tick は false)
+        protected static bool IsSimStepping() => Engine.IsSimStepping();
+        // 手触りの出力倍率 [0,1] (0 = カメラの揺れ・キック、1 = 振動、2 = 画面効果)。設定画面向けの出力レーン。
+        // ★手触りを鳴らすのは C++ スクリプト (MyePlayFeel) か FeelTrigger コンポーネント — C# は NoHash レーンなので鳴らせない
+        protected static void SetFeelOutputScale(int channel, float scale)
+            => Engine.SetFeelOutputScale((uint)channel, scale);
 
         // ---- UI ナビ/ヒットテスト (v7 + v12)。どちらも基準解像度 1920x1080 で解決 ----
         protected static MyeEntity UIFocusNav(MyeEntity current, int dir)

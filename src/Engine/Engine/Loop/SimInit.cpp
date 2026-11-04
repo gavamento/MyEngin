@@ -161,6 +161,9 @@ void WireScriptServices(ScriptHost& scriptHost, ManagedHost& managedHost,
                                   s.audioHandleSeq, s.inputActions, s.pendingSaveSlot,
                                   s.pendingLoadSlot, s.padVibration, s.netInfo, s.cursorLock,
                                   s.pendingLoadPersistSlot, s.windowMode, s.messageQueue);
+    // v31 (M94h): 手触りの出力倍率 (出力レーン)。sim は書くだけで読み返さない
+    scriptHost.SetFeelOutputScale(s.feelOutputScale);
+    managedHost.SetFeelOutputScale(s.feelOutputScale);
     // v18: 開発中の実行か。プロセスの定数なので起動時に 1 回だけ渡す (sim 状態ではない = .rep に載らない)
     scriptHost.SetDevelopmentRun(developmentRun);
     managedHost.SetDevelopmentRun(developmentRun);
