@@ -93,9 +93,11 @@ bool RunAssetDatabaseSelfTest()
           ".bt.json is classified as the behavior tree type");
     check(AssetDatabase::ClassifyPath(L"x\\Patrol.bb.json") == AssetType::Blackboard,
           ".bb.json is classified as the blackboard type");
+    check(AssetDatabase::ClassifyPath(L"x\\HeavyHit.feel.json") == AssetType::Feel,
+          ".feel.json is classified as the feel preset type (M94d)");
     for (AssetType t : { AssetType::Actor, AssetType::Prefab, AssetType::Sound, AssetType::Mixer,
                          AssetType::Schema, AssetType::PhysMat, AssetType::Fracture, AssetType::NavMesh,
-                         AssetType::NavFilter, AssetType::BehaviorTree, AssetType::Blackboard }) {
+                         AssetType::NavFilter, AssetType::BehaviorTree, AssetType::Blackboard, AssetType::Feel }) {
         check(AssetDatabase::ParseTypeName(AssetDatabase::TypeName(t)) == t,
               "asset type name round-trips through .meta");
     }
@@ -195,7 +197,8 @@ bool RunAssetDatabaseSelfTest()
         check([](const std::filesystem::path& p) {
             std::ifstream in(p, std::ios::binary);
             const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-            return !bytes.empty() && bytes.find('') == std::string::npos;
+            return !bytes.empty() && bytes.find('
+') == std::string::npos;
         }(texMeta), "v2 meta is written with LF only");
         AssetMeta v2;
         check(AssetDatabase::ReadMeta(texMeta, v2) && v2.version == 2 && v2.guid == 0xAA,

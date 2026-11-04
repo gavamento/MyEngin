@@ -1,4 +1,5 @@
 #include "Engine/Engine/Loop/TickRunner.h"
+#include "Engine/Engine/Feel/FeelTriggerSystem.h"
 
 #include <algorithm>
 #include <cstdio> // M93e: --debug-draw-log の行の整形
@@ -559,6 +560,9 @@ void RunOneTick(TickServices& ts)
         // stepSim が false の tick は繋がないまま = ポーズ中は常に「接触なし」が返る
         scriptHost.SetTickContacts(&solidContacts);
         managedHost.SetTickContacts(&solidContacts);
+        // M94d: 接触で手触りを鳴らす (FeelTrigger、存在ゲート)。この tick の接触を key 昇順で見る。
+        // 鳴らした時間効果は次の tick から、揺れ・振動はこの tick の描画から効く
+        UpdateFeelTriggers(scene.GetWorld(), solidContacts, scene.Feel(), scene.Time());
     }
     // ---- フェーズ 4: システム層 ----
     // Transform を先に確定 (エミッタ/コライダのワールド位置は tick 決定論の一部)

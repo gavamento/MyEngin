@@ -17,6 +17,7 @@
 #include "Engine/Engine/Physics/Collider/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/Collider/TerrainColliderLibrary.h"
 #include "Engine/Engine/Physics/Fracture/FractureLibrary.h"
+#include "Engine/Engine/Feel/FeelLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
@@ -76,6 +77,8 @@ void InstallSimLibraries(const SimLibraries& libs)
     // M85: ビヘイビアツリーとブラックボード (.bt.json / .bb.json)。同じく起動走査より前に注入する
     behaviortree::Install(libs.behaviorTrees);
     blackboard::Install(libs.blackboards);
+    // M94d: 手触りのプリセット (.feel.json)。同じく起動走査より前に注入する
+    feellib::Install(libs.feels);
 }
 
 void UninstallSimLibraries()
@@ -88,6 +91,7 @@ void UninstallSimLibraries()
     navfilter::Install(nullptr);
     behaviortree::Install(nullptr);
     blackboard::Install(nullptr);
+    feellib::Install(nullptr);
 }
 
 void InitSimProjectState(const std::wstring& assetsRoot)

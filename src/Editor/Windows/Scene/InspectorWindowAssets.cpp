@@ -84,6 +84,9 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
         if (type == AssetType::PhysMat) {
             LoadPhysMatEdit(path); // M59a1
         }
+        if (type == AssetType::Feel) {
+            feelInspector_.Load(path); // M94d
+        }
         if (type == AssetType::NavFilter) {
             LoadNavFilterEdit(path); // M84c
         }
@@ -133,6 +136,11 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
 
     if (type == AssetType::PhysMat) {
         DrawPhysMatInspector(path); // M59a1
+        return;
+    }
+
+    if (type == AssetType::Feel) {
+        feelInspector_.Draw(ctx, path); // M94d
         return;
     }
 

@@ -50,6 +50,39 @@ enum : int32_t {
     MYE_EASE_COUNT
 };
 
+// .feel.json / actions.json に書く名前 (MYE_EASE_* と同じ並び)。読み書きの両方がこの表だけを見る
+inline const char* MyeEaseName(int32_t ease)
+{
+    static const char* const kNames[MYE_EASE_COUNT] = {
+        "Linear",    "InQuad",    "OutQuad",     "InOutQuad",   "InCubic",     "OutCubic",
+        "InOutCubic", "InQuart",  "OutQuart",    "InOutQuart",  "InQuint",     "OutQuint",
+        "InOutQuint", "InSine",   "OutSine",     "InOutSine",   "InExpo",      "OutExpo",
+        "InOutExpo",  "InBack",   "OutBack",     "InOutBack",   "InElastic",   "OutElastic",
+        "InOutElastic", "InBounce", "OutBounce", "InOutBounce", "Step",
+    };
+    return (ease >= 0 && ease < MYE_EASE_COUNT) ? kNames[ease] : "Linear";
+}
+
+// 名前 → MYE_EASE_*。大文字小文字は区別する。不明な名前は -1 (呼び出し側が警告して Linear に倒す)
+inline int32_t MyeEaseFromName(const char* name)
+{
+    if (name == nullptr) {
+        return -1;
+    }
+    for (int32_t e = 0; e < MYE_EASE_COUNT; ++e) {
+        const char* a = MyeEaseName(e);
+        const char* b = name;
+        while (*a != '\0' && *a == *b) {
+            ++a;
+            ++b;
+        }
+        if (*a == '\0' && *b == '\0') {
+            return e;
+        }
+    }
+    return -1;
+}
+
 // MyeCurve::mode
 enum : int32_t {
     MYE_CURVE_PRESET = 0, // from + (to - from) * Ease(ease, t)

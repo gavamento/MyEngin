@@ -2303,6 +2303,21 @@ struct TwoBoneIKComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 手触りの発火 (M94d、ADR-031、TypeId 81) ----
+// コードを書かずに手触りを鳴らす口: このエンティティの剛体の接触の法線力積が minImpulse を超えた tick に、
+// feel (.feel.json) を強さ clamp(力積 / fullImpulse, 0, maxIntensity) で鳴らす。鳴らしたら cooldownTicks の間は鳴らさない。
+// hash 対象 (cooldownLeft はエンジンが書く sim 状態)。物理の直後 (フェーズ 3.6 の末) に評価する
+struct FeelTriggerComponent {
+    AssetID feel = {};          // .feel.json
+    float minImpulse = 2.0f;    // [N*s] これ未満の接触では鳴らさない (載っているだけの接触を除く)
+    float fullImpulse = 10.0f;  // [N*s] この力積で強さ 1
+    float maxIntensity = 1.5f;  // 強さの上限
+    int32_t cooldownTicks = 6;  // 鳴らした後に鳴らさない tick 数
+    int32_t cooldownLeft = 0;   // 残りの tick (エンジンが書く)
+    int32_t pad = 0;            // 明示パディング (スナップショットの生バイトに未初期化を残さない)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

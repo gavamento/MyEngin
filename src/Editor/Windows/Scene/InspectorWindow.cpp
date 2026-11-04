@@ -24,6 +24,7 @@
 #include "Editor/Tools/NavBakeCommit.h"      // M82b: ベイク結果の確定 (.mnav 保存・参照の設定・Undo)
 #include "Editor/Tools/PatrolRouteEdit.h"    // M85g: 巡回ルートの点の追加・削除・入れ替え
 #include "Engine/Engine/AI/BlackboardLibrary.h"
+#include "Engine/Engine/Feel/FeelLibrary.h"
 #include "Engine/Engine/Navigation/NavMeshAsset.h"
 #include "Engine/Core/Asset/AssetGuidResolver.h"
 #include "Engine/Core/Asset/AssetKeyResolver.h" // M80j: guid:// 登録名 → クック元パス (スキンの骨ウェイト取得)
@@ -2598,6 +2599,13 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         // M84c: ナビのエリアのフィルタ (NavMeshAgent.navFilter)
         if (NavFilterLibrary* nf = navfilter::Library()) {
             for (const NavFilterEntry& e : nf->Enumerate()) {
+                entries.push_back({ AssetID{ e.hash }, e.name });
+            }
+        }
+    } else if (fname == "feel") {
+        // M94d: 手触りのプリセット (FeelTrigger.feel)
+        if (FeelLibrary* fl = feellib::Library()) {
+            for (const FeelPresetEntry& e : fl->Enumerate()) {
                 entries.push_back({ AssetID{ e.hash }, e.name });
             }
         }

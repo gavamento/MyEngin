@@ -231,6 +231,9 @@
     <ClCompile Include="..\src\Editor\Widgets\CreateMenu.cpp">
       <Filter>Widgets</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Widgets\CurveEditorWidget.cpp">
+      <Filter>Widgets</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Widgets\EditorComponentCatalog.cpp">
       <Filter>Widgets</Filter>
     </ClCompile>
@@ -307,6 +310,9 @@
       <Filter>Windows\Project</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.cpp">
+      <Filter>Windows\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Scene\FeelAssetInspector.cpp">
       <Filter>Windows\Scene</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Scene\GameViewWindow.cpp">
@@ -516,6 +522,9 @@
     <ClInclude Include="..\src\Editor\Widgets\CreateMenu.h">
       <Filter>Widgets</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\Widgets\CurveEditorWidget.h">
+      <Filter>Widgets</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\Widgets\EditorComponentCatalog.h">
       <Filter>Widgets</Filter>
     </ClInclude>
@@ -592,6 +601,9 @@
       <Filter>Windows\Project</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.h">
+      <Filter>Windows\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Scene\FeelAssetInspector.h">
       <Filter>Windows\Scene</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Scene\GameViewWindow.h">

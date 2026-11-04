@@ -38,6 +38,7 @@ class PhysMatLibrary;
 class NavFilterLibrary;
 class BehaviorTreeLibrary;
 class BlackboardLibrary;
+class FeelLibrary;
 class TerrainColliderLibrary;
 namespace compute {
 class ComputeService;
@@ -67,6 +68,7 @@ struct SimLibraries {
     NavFilterLibrary* navFilters = nullptr; // M84c: .navfilter.json
     BehaviorTreeLibrary* behaviorTrees = nullptr; // M85: .bt.json
     BlackboardLibrary* blackboards = nullptr;     // M85: .bb.json
+    FeelLibrary* feels = nullptr;                 // M94d: .feel.json (ヒットストップの tick 数が sim に効く)
 };
 void InstallSimLibraries(const SimLibraries& libs);
 // 所有者が死ぬ前に必ず呼ぶ (注入したポインタをプロセス全体から外す)

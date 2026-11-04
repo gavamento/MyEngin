@@ -214,6 +214,7 @@ const char* FileTypeIcon(const wchar_t* path)
     case AssetType::Controller: return ICON_FA_DIAGRAM_PROJECT;
     case AssetType::Material: return ICON_FA_PALETTE;
     case AssetType::PhysMat: return ICON_FA_BASKETBALL;
+    case AssetType::Feel: return ICON_FA_BOLT; // M94d
     case AssetType::Audio: return ICON_FA_FILE_AUDIO;
     case AssetType::Sound: return ICON_FA_VOLUME_HIGH;
     case AssetType::Mixer: return ICON_FA_SLIDERS;

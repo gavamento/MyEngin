@@ -24,6 +24,7 @@
 #include "Engine/Engine/Asset/FbxLoader.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Asset/ModelLoader.h"
+#include "Engine/Engine/Feel/FeelLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
@@ -248,6 +249,11 @@ void RegisterAssetLibraries(EngineContext& ctx)
             // M85: ブラックボード。同じく blackboard:: で注入済み
             if (BlackboardLibrary* bb = blackboard::Library()) {
                 bb->LoadFromFile(p);
+            }
+        } else if (p.size() >= 10 && p.compare(p.size() - 10, 10, L".feel.json") == 0) {
+            // M94d: 手触りのプリセット。所有は EngineLoop / HeadlessSim、feellib:: で注入済み
+            if (FeelLibrary* fl = feellib::Library()) {
+                fl->LoadFromFile(p);
             }
         } else if (p.size() >= 13 && p.compare(p.size() - 13, 13, L".physmat.json") == 0) {
             // M59a1: 物理マテリアル。所有は EngineLoop、ここへは physmat:: で注入済み
