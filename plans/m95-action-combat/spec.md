@@ -174,13 +174,15 @@ Debug / Release / WARP でリプレイが一致する。
 - `SkeletalSource` と `SkinnedMeshComponent::PoseLayer` に `int32_t rootMotionY` を持たせ、`BuildSkeletalSources` がステートから写す。
 - Animator の 8. (`RootMotionDelta` `:745-787` と呼び出し元 `:1904-1931`): **既存の演算順は 1 つも変えない** (3D の `out` を積んで回し `deltaWorld[1] = 0` はそのまま)。それとは別に `rootMotionY` の層だけで `upDelta = Σ w · (m.delta · up)` (エンティティ空間の上方向の成分、スカラー) を積み、`rootMotionY` の層が 1 つでもあるときだけ呼び出し元で `up · upDelta` を連鎖のスケール・回転でワールドへ回して `deltaWorld[1]` に入れる。`rootMotionVelocity.y = deltaWorld[1] * kTicksPerSecond`。`rootMotionY` の層が無ければ分岐に入らず従来とビット同一。
 - `SkinningSystem::StripRootMotion` (`:110-170`): 水平は従来どおり全層の `d` から抜く。縦は `rootMotionY` の層だけで `alongY = Σ ratio · ((now − start) · up)` を別に積み、層が 1 つでもあるときだけ `alongY · up` も抜く。Animator 側と同じ式 (「同じ答えを見る」1 本化)。無ければ分岐に入らない。
-- `ApplyRootMotion` (この tick に `rootMotionY` の層が骨を駆動したときだけ縦を書く。駆動していなければ縦は触らない = 重力に戻る):
+- `ApplyRootMotion` (この tick に `rootMotionY` の層が骨を駆動したときだけ縦を書く。駆動していなければ縦は触らない = 重力に戻る)。
+  **「駆動した」の定義 (sub-05 VERDICT round 1 で確定)**: `rootMotionY` の層のうち、この tick の**サンプル区間が空でない** (`RootLayerDelta` に渡す `startQ != endQ` または `wraps != 0`) 層が 1 つ以上ある。非ループのクリップが終端に張り付いた層 (`startQ == endQ`、delta = 0) は駆動していない → その tick から `useVerticalInput` を立てず、重力に戻る (受け入れ 24 の「クリップ終端で重力へ戻る」はステートを切り替えなくても成り立つ)。ループ中・遷移中 (もう一方の層の有無を問わず) は区間が空でない限り駆動。`upDelta` の積算は従来どおり (張り付いた層の寄与は 0 なので値は変わらず、変わるのは旗だけ)。
+  `rootMotionVelocity.y` は `applyRootMotion` の有無に関わらず書く (x / z と同じ。`rootMotionY` の層が無ければ 0)。
   - NavMeshAgent が握っていれば従来どおり何もしない
   - 非 kinematic Rigidbody: `velocity.xz` に加え `useVerticalInput = true; verticalInput = velocity.y; isSleeping = false` (#16)。kinematic は従来どおり LocalTransform へ
   - CC: `moveInput.xz` に加え `useVerticalInput = true; verticalInput = velocity.y`
   - LocalTransform: y も足す
 - `CharacterControllerComponent` 末尾に append (hash 対象): `bool useVerticalInput = false`、`float verticalInput = 0`。`SolveCharacters` 冒頭: `vy = useVerticalInput ? verticalInput : velocity.y + g·gravityScale·dt`。以降 (床で `vy<0 → 0`、天井、段差、`jumpSpeed`) は従来の順。書き戻しで `useVerticalInput = false` (消費)。
-- `RigidbodyComponent` 末尾に append (hash 対象): `bool useVerticalInput = false`、`float verticalInput = 0`。収集時 (`PhysicsSystem.cpp:1882`) `b.vy = useVerticalInput ? verticalInput : velocity.y` と `Body` に印を写し、その tick の**全サブステップ**で y の重力積分 (`:3119` / `:3122`) を飛ばす (x/z の env 重力は従来どおり。減衰・接触・拘束は従来どおり効く)。書き戻し (`:5765-5767`) で `useVerticalInput = false`。印が無いボディは 1 命令も変わらない (分岐ゲート)。kinematic は読まない。
+- `RigidbodyComponent` 末尾に append (hash 対象): `bool useVerticalInput = false`、`float verticalInput = 0`。収集時 (`PhysicsSystem.cpp:1882`) `b.vy = (useVerticalInput && !kinematic) ? verticalInput : velocity.y` と `Body` に印 (`skipGravityY`) を写し、その tick の**全サブステップ**で y の重力積分 (`:3119` / `:3122`) を飛ばす (x/z の env 重力は従来どおり。減衰・接触・拘束は従来どおり効く)。**消費 (`useVerticalInput = false`) は収集時に行う** (書き戻しではなく。収集されない tick に旗が残る経路を作らないため。kinematic の旗も読まずに消す — sub-05 VERDICT round 1 で訂正)。印が無いボディは 1 命令も変わらない (分岐ゲート)。
 - どちらも `SetComponentField` からスクリプトが書ける (ABI は増やさない)。
 - 契約: `rootMotionY` のステートが骨を駆動している間、縦は**クリップが決める** (重力は効かない。y が 0 の tick は浮く)。歩き・待機に付けないこと。遷移中はもう一方の層の重み分だけ y が薄まる (線形混合、位置の飛びは無い)。
 
@@ -310,11 +312,13 @@ H. round 2 で追加 (ユーザー判断)
 - CC の接触記録は固定パス × 相手数ぶんの `Collide` 結果を見るだけで追加の判定は無いが、記録用の配列確保が毎 tick 起きる。`reportContacts` が無ければ確保しない形にする
 - HAL Collector に検証スクリプトが無い。ビット同一は三校 verify.bat と RV で代用 (未検証として報告)
 - `useVerticalInput` を立てたまま物理が走らない (CC が Rigidbody 併用で無効 / 剛体が kinematic) ケースは印が残り続ける。害は無いが Inspector に見えるので読み取り専用にする
+- 既知の制限 (sub-05 round 1、coder の指摘): plane2D の CC の一方通行床の通過判定 (`PhysicsSystem.cpp:1603` `passAll = ignoreOneWay || velocity.y > 0`) は**前 tick** の `velocity.y` を見る。縦入力の初回 tick (前 tick の縦速度 0) は上昇でも通過扱いにならない。`jumpSpeed` (`:1748`、判定より後で消費) も同じ 1 tick 遅れなので既存挙動と整合。M95 では直さず、sub-07 の engine_spec に制限として 1 行書く (2D レーンでの縦ルートモーションは想定外)
 - Wave 1 で `SimSnapshot.h` の `kSimSnapshotVersion` 行は sub-01 と sub-02 の両方が変える = 統合で競合マーカーが出る (出るのが正しい)。付録 A の規則で解く
 - 同じ波の 2 本が `tools\gen_project_files.ps1` を回すと `build\*.vcxproj` が衝突し得る (sub-00 だけが新規ファイルを足す予定。Wave 1 / 2 は新規ファイル無し。足すなら付録 A の置き場所に従い、統合時に再生成する)
 
 ## 8. 変更履歴
 
+- 2026-11-05 sub-05 VERDICT round 1 (出所: coder SELF_EVAL の「不安・質問」1 / 2 と「仕様との差分」): §4.1 E に「駆動した」の定義 (サンプル区間が空でない層。非ループの終端に張り付いた層は駆動しない → 重力に戻る) を追加 (受け入れ 24 の「クリップ終端で重力へ戻る」を確定。coder 案 (a) ステート切り替えのみ は却下 = 終端で浮き続け、exit 遷移の間も浮く)。Rigidbody の `useVerticalInput` の消費を「書き戻し」から「収集時」に訂正。`rootMotionVelocity.y` は applyRootMotion の有無を問わず書くと明記。§7 に一方通行床の 1 tick 遅れを既知の制限として記録 (sub-07 の文書へ)
 - 2026-11-04 sub-00b VERDICT round 1 (出所: coder SELF_EVAL の「不安・質問」2 / 3): §4.0 sub-00b の層分け規則に余白 (実測 total の大きい方が 55 秒超なら N+1) を追加 (§2 #24、planner 裁定、[ユーザーに聞ける])。physics が Full に入ることを明記し、§5 冒頭の 3 段規則の「SELF_EVAL を返す前」に「触った Full スイートを名指し」を追加。§2 #25 に replay_verify の demo ジョブのラベルエラーを環境要因として記録
 - 2026-11-04 sub-01 VERDICT round 1 (出所: coder SELF_EVAL の「仕様との差分」): §4.1 A と付録 A.1 の「`ScriptAPI.h` の inline 糖衣」を削除 (同ファイルに Animator 系の C++ 糖衣は元々無い — 仕様の前提違い)。§4.1 A と付録 A.1 に `tools\check_rules.ps1` の `$apiVersionSlots` (`32 = 190` → sub-03 で `32 = 193`) を追記 (仕様の穴。sub-03.md の触る場所にも追記)
 - 2026-11-04 sub-02 VERDICT round 1 (出所: coder SELF_EVAL): §2 #21 の「hash 不変」を「結果は不変だが WorldHash の値は変わる (焼き込み定数は再採取)」に訂正。§5 受け入れ 7 に「接した状態から」と隙間からの 1 歩ぶんの重なりの許容を明記。付録 B の 4. に焼き込み hash の再採取手順 (統合コミット前に 1 回、根拠は --selftest-full のログ) を追加
