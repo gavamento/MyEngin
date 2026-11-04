@@ -55,7 +55,7 @@
 //             OnlineJoinCode (ComputeSetManagedDeclarations の次の 4 本)
 // v31 (M94n): 2D — OverlapBoxMasked / BoxCast / SpriteByName / TilemapGetCell / TilemapSetCell / TilemapFillRect /
 //             TilemapDamageCell / TilemapWorldToCell / TilemapCellToWorld / TilemapGetBounds (OnlineJoinCode の次の 10 本)
-// v32 (M95a): アクション戦闘 — AnimatorSetPause / AnimatorGetPause (TilemapGetBounds の次の 2 本。部位の重なり・掃引 3 本は sub-03 が足す)
+// v32 (M95a): アクション戦闘 — AnimatorSetPause / AnimatorGetPause / OverlapSphereParts / SphereCastParts / OverlapCapsuleParts (TilemapGetBounds の次の 5 本 = 193)
 #define MYE_API_VERSION 32u
 
 // v30 (M93) OnlineMemberFlags のビット
@@ -1082,6 +1082,18 @@ struct MyeEngineApi {
     int (*AnimatorSetPause)(void* engine, MyeEntityId entity, int32_t ticks);
     // AnimatorGetPause: 停止の残り tick。Animator が無ければ -1
     int32_t (*AnimatorGetPause)(void* engine, MyeEntityId entity);
+    // OverlapSphereParts: 球と重なる部位 (Part + PartBounds 両持ち) を entity.index 昇順で out へ。root null = シーン全体、
+    //   tag 0 = 全部位。戻り値は切り捨て前の総数 (FindPartsByTag と同じ)。out = null / cap <= 0 で数えるだけ。radius <= 0 は 0
+    int32_t (*OverlapSphereParts)(void* engine, MyeEntityId root, uint64_t tag, MyeVec3 center, float radius,
+                                  MyeEntityId* out, int32_t cap);
+    // SphereCastParts: 部位への球の掃引。ヒット 1 / 無し 0、outHit->entity = 部位。dir は正規化済みであること。
+    //   同距離は低 index が勝つ。radius <= 0 は RaycastParts と同じ。maxDist <= 0 は無制限
+    int32_t (*SphereCastParts)(void* engine, MyeEntityId root, uint64_t tag, MyeVec3 origin, MyeVec3 dir, float radius,
+                               float maxDist, MyeRaycastHit* outHit);
+    // OverlapCapsuleParts: 両端点 p0 / p1 (半球の中心) と半径のカプセルと重なる部位。規約は OverlapSphereParts と同じ
+    //   (p0 と p1 がほぼ同じなら球)
+    int32_t (*OverlapCapsuleParts)(void* engine, MyeEntityId root, uint64_t tag, MyeVec3 p0, MyeVec3 p1, float radius,
+                                   MyeEntityId* out, int32_t cap);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

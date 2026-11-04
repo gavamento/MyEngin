@@ -733,6 +733,30 @@ inline bool MyeRaycastParts(const MyeUpdateContext& ctx, MyeEntityId root, const
         != 0;
 }
 
+// 部位への球の重なり (v32、M95)。index 昇順で out へ、戻り値は切り捨て前の総数。
+// root null id = シーン全体、tagName null/空 = 全部位。out = null / cap <= 0 で数えるだけ
+inline int32_t MyeOverlapSphereParts(const MyeUpdateContext& ctx, MyeEntityId root, const char* tagName,
+                                     MyeVec3 center, float radius, MyeEntityId* out, int32_t cap)
+{
+    return ctx.api->OverlapSphereParts(ctx.api->engine, root, MyePartTag(tagName), center, radius, out, cap);
+}
+
+// 部位への球の掃引 (v32、M95)。dir は正規化済みであること。ヒットで true、outHit.entity が部位
+inline bool MyeSphereCastParts(const MyeUpdateContext& ctx, MyeEntityId root, const char* tagName,
+                               MyeVec3 origin, MyeVec3 dir, float radius, float maxDist, MyeRaycastHit& outHit)
+{
+    return ctx.api->SphereCastParts(ctx.api->engine, root, MyePartTag(tagName), origin, dir, radius, maxDist,
+                                    &outHit)
+        != 0;
+}
+
+// 部位へのカプセル (両端点 p0 / p1 と半径) の重なり (v32、M95)。規約は MyeOverlapSphereParts と同じ
+inline int32_t MyeOverlapCapsuleParts(const MyeUpdateContext& ctx, MyeEntityId root, const char* tagName,
+                                      MyeVec3 p0, MyeVec3 p1, float radius, MyeEntityId* out, int32_t cap)
+{
+    return ctx.api->OverlapCapsuleParts(ctx.api->engine, root, MyePartTag(tagName), p0, p1, radius, out, cap);
+}
+
 // ---- 汎用フィールドアクセス (v11、M50d)。スキーマ codegen の呼び先 ----
 //
 // コンポーネント名 / フィールド名の FNV-1a 64bit ハッシュで、任意の登録コンポーネント

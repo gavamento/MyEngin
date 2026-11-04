@@ -178,8 +178,10 @@ bool RunPartSelfTest()
         check(api.version == MYE_API_VERSION && MYE_API_VERSION == 32u,
               "abi: the table reports v32");
         // v32 (M95): アクション戦闘。呼んだ結果はこのスイートの末尾 (M95 sub-01) が見る
-        check(api.AnimatorSetPause != nullptr && api.AnimatorGetPause != nullptr,
-              "abi: the v32 action-combat slots are filled in");
+        check(api.AnimatorSetPause != nullptr && api.AnimatorGetPause != nullptr
+                  && api.OverlapSphereParts != nullptr && api.SphereCastParts != nullptr
+                  && api.OverlapCapsuleParts != nullptr,
+              "abi: the v32 action-combat slots (5) are filled in");
         // v31 (M94n): 2D。呼んだ結果は TwoDAbiSelfTest が見る (ここは充填のみ)
         check(api.OverlapBoxMasked != nullptr && api.BoxCast != nullptr && api.SpriteByName != nullptr
                   && api.TilemapGetCell != nullptr && api.TilemapSetCell != nullptr && api.TilemapFillRect != nullptr
@@ -1036,6 +1038,201 @@ bool RunPartSelfTest()
     }
 
     // ---- M95 sub-03 ----
+    {
+        // 部位: BoxA (Weak, x=2, ±0.5) / SphereB (Core, x=5, r=0.5) / Twin1,2 (Twin, x=8 の同位置箱)
+        // 加えて無効 / ゼロ寸法 / Part 無しの候補は、どのクエリにも現れてはいけない
+        Scene os;
+        World& ow = os.GetWorld();
+        GameObject p1 = os.CreateGameObjectTracked("P1");
+        GameObject p2 = os.CreateGameObjectTracked("P2");
+        GameObject f = os.CreateGameObjectTracked("NoPart");
+        GameObject e = os.CreateGameObjectTracked("Inactive");
+        GameObject z = os.CreateGameObjectTracked("ZeroSize");
+        GameObject a = os.CreateGameObjectTracked("BoxA");
+        GameObject sb = os.CreateGameObjectTracked("SphereB");
+        GameObject d1 = os.CreateGameObjectTracked("Twin1");
+        GameObject d2 = os.CreateGameObjectTracked("Twin2");
+        ow.ApplyStructuralChanges();
+        a.SetParent(p1);
+        sb.SetParent(p2);
+        const uint64_t kWeak = Parts::TagOf("Weak");
+        const uint64_t kCore = Parts::TagOf("Core");
+        const uint64_t kTwin = Parts::TagOf("Twin");
+        auto setup = [&](GameObject& g, float x, int32_t shape, float he, uint64_t tag) {
+            g.SetLocalPosition(x, 0.0f, 0.0f);
+            g.AddComponent<PartComponent>()->tag = tag;
+            auto* pb = g.AddComponent<PartBoundsComponent>();
+            pb->shape = shape;
+            pb->halfExtents = { he, he, he };
+        };
+        f.SetLocalPosition(0.8f, 0.0f, 0.0f);
+        f.AddComponent<PartBoundsComponent>()->halfExtents = { 0.4f, 0.4f, 0.4f };
+        setup(e, 1.0f, 0, 0.25f, kWeak);
+        e.AddComponent<ActiveComponent>()->enabled = false;
+        setup(z, 1.2f, 0, 0.0f, kWeak);
+        setup(a, 2.0f, 0, 0.5f, kWeak);
+        setup(sb, 5.0f, 1, 0.5f, kCore);
+        setup(d1, 8.0f, 0, 0.5f, kTwin);
+        setup(d2, 8.0f, 0, 0.5f, kTwin);
+        ow.ApplyStructuralChanges();
+        TransformSystem ots;
+        ots.Update(ow);
+
+        const XMFLOAT3 o = { 0, 0, 0 };
+        std::vector<EntityID> hits;
+        // 14: OverlapSphereParts
+        Parts::OverlapSphereParts(ow, kNullEntity, 0, o, 1.6f, hits);
+        check(hits.size() == 1 && hits[0] == a.Id(),
+              "overlap sphere: only the bounded active part in reach (inactive / zero-size / part-less skipped)");
+        Parts::OverlapSphereParts(ow, kNullEntity, 0, o, 5.0f, hits);
+        check(hits.size() == 2 && hits[0] == a.Id() && hits[1] == sb.Id(),
+              "overlap sphere: boxes and spheres both hit, in ascending entity index");
+        Parts::OverlapSphereParts(ow, kNullEntity, 0, o, 100.0f, hits);
+        check(hits.size() == 4 && hits[0] == a.Id() && hits[1] == sb.Id() && hits[2] == d1.Id()
+                  && hits[3] == d2.Id(),
+              "overlap sphere: a big sphere returns every valid part in index order");
+        Parts::OverlapSphereParts(ow, kNullEntity, kCore, o, 100.0f, hits);
+        check(hits.size() == 1 && hits[0] == sb.Id(), "overlap sphere: the tag filter narrows hits");
+        Parts::OverlapSphereParts(ow, p2.Id(), 0, o, 100.0f, hits);
+        check(hits.size() == 1 && hits[0] == sb.Id(), "overlap sphere: a root limits hits to its subtree");
+        Parts::OverlapSphereParts(ow, kNullEntity, 0, o, 0.0f, hits);
+        check(hits.empty(), "overlap sphere: radius 0 yields no hit");
+        Parts::OverlapSphereParts(ow, kNullEntity, 0, o, -1.0f, hits);
+        check(hits.empty(), "overlap sphere: a negative radius yields no hit");
+        Parts::OverlapSphereParts(ow, kNullEntity, 0, { 2, 0, 0 }, 0.01f, hits);
+        check(hits.size() == 1 && hits[0] == a.Id(), "overlap sphere: a tiny sphere inside a box hits it");
+        Parts::OverlapSphereParts(ow, kNullEntity, 0, { 1.4f, 0, 0 }, 0.05f, hits);
+        check(hits.empty(), "overlap sphere: a sphere just short of the box face misses");
+
+        // 15: SphereCastParts
+        const XMFLOAT3 dx = { 1, 0, 0 };
+        Parts::PartRayHit hit;
+        check(Parts::SphereCastParts(ow, kNullEntity, 0, o, dx, 0.25f, 100.0f, hit)
+                  && hit.entity == a.Id() && std::fabs(hit.distance - 1.25f) < 1e-3f
+                  && std::fabs(hit.point.x - 1.5f) < 1e-3f && std::fabs(hit.normal.x + 1.0f) < 1e-3f,
+              "spherecast: a box part is hit at the swept distance (point on the face, normal -x)");
+        check(Parts::SphereCastParts(ow, kNullEntity, kCore, o, dx, 0.25f, 100.0f, hit)
+                  && hit.entity == sb.Id() && std::fabs(hit.distance - 4.25f) < 1e-5f
+                  && std::fabs(hit.point.x - 4.5f) < 1e-5f && std::fabs(hit.normal.x + 1.0f) < 1e-5f,
+              "spherecast: a sphere part matches the analytic inflated-sphere answer");
+        check(Parts::SphereCastParts(ow, kNullEntity, kTwin, o, dx, 0.25f, 100.0f, hit)
+                  && hit.entity == d1.Id(),
+              "spherecast: an exact tie is won by the lower entity index");
+        check(Parts::SphereCastParts(ow, p2.Id(), 0, o, dx, 0.25f, 100.0f, hit) && hit.entity == sb.Id(),
+              "spherecast: a root limits hits to its subtree");
+        check(!Parts::SphereCastParts(ow, kNullEntity, 0, o, dx, 0.25f, 1.0f, hit),
+              "spherecast: maxDist cuts everything off");
+        {
+            Parts::PartRayHit rh;
+            Parts::PartRayHit sh;
+            const bool r1 = Parts::RaycastParts(ow, kNullEntity, 0, o, dx, 100.0f, rh);
+            const bool r2 = Parts::SphereCastParts(ow, kNullEntity, 0, o, dx, 0.0f, 100.0f, sh);
+            check(r1 && r2 && rh.entity == sh.entity && rh.distance == sh.distance,
+                  "spherecast: radius 0 equals RaycastParts");
+            const bool r3 = Parts::SphereCastParts(ow, kNullEntity, 0, o, dx, -2.0f, 100.0f, sh);
+            check(r3 && rh.entity == sh.entity && rh.distance == sh.distance,
+                  "spherecast: a negative radius equals RaycastParts");
+        }
+        // 始点が箱の中は報告しない / 球を掠める (膨張半径内) は当たる
+        check(!Parts::SphereCastParts(ow, kNullEntity, kTwin, { 8, 0, 0 }, dx, 0.25f, 100.0f, hit),
+              "spherecast: a start inside a box part is not reported");
+        check(Parts::SphereCastParts(ow, kNullEntity, kCore, { 0, 0.7f, 0 }, dx, 0.25f, 100.0f, hit)
+                  && hit.entity == sb.Id() && hit.distance > 4.0f && hit.distance < 5.0f,
+              "spherecast: a ray grazing the sphere within the swept radius hits");
+
+        // 31: OverlapCapsuleParts
+        const XMFLOAT3 diagA = { 0.5f, 0.5f, 0.0f };
+        const XMFLOAT3 diagB = { 2.5f, 2.5f, 0.0f };
+        Parts::OverlapCapsuleParts(ow, kNullEntity, kWeak, diagA, diagB, 0.75f, hits);
+        check(hits.size() == 1 && hits[0] == a.Id(),
+              "overlap capsule: an oblique capsule reaches the box corner (0.75 > 0.7071)");
+        Parts::OverlapCapsuleParts(ow, kNullEntity, kWeak, diagA, diagB, 0.65f, hits);
+        check(hits.empty(), "overlap capsule: the same oblique capsule just misses the corner (0.65)");
+        Parts::OverlapCapsuleParts(ow, kNullEntity, kCore, { 3, 3, 0 }, { 7, -1, 0 }, 0.3f, hits);
+        check(hits.size() == 1 && hits[0] == sb.Id(),
+              "overlap capsule: an oblique capsule hits a sphere part (0.3 + 0.5 > 0.7071)");
+        Parts::OverlapCapsuleParts(ow, kNullEntity, kCore, { 3, 3, 0 }, { 7, -1, 0 }, 0.1f, hits);
+        check(hits.empty(), "overlap capsule: a thinner oblique capsule misses the sphere part");
+        // 座標軸と一致 / 3 軸とも斜めでも同じ判定 (基底の作り方に依存しない)
+        Parts::OverlapCapsuleParts(ow, kNullEntity, 0, { 2, -3, 0 }, { 2, 3, 0 }, 0.1f, hits);
+        check(hits.size() == 1 && hits[0] == a.Id(), "overlap capsule: a Y-axis capsule through the box hits it");
+        Parts::OverlapCapsuleParts(ow, kNullEntity, 0, { 1, -2, -2 }, { 3, 2, 2 }, 0.1f, hits);
+        check(hits.size() == 1 && hits[0] == a.Id(), "overlap capsule: a skew capsule through the box hits it");
+        for (const float r : { 0.05f, 1.6f, 5.0f, 100.0f }) {
+            std::vector<EntityID> viaSphere;
+            Parts::OverlapSphereParts(ow, kNullEntity, 0, o, r, viaSphere);
+            Parts::OverlapCapsuleParts(ow, kNullEntity, 0, o, o, r, hits);
+            check(hits == viaSphere, "overlap capsule: p0 == p1 gives the same set as a sphere");
+        }
+        Parts::OverlapCapsuleParts(ow, kNullEntity, 0, { 0, 0, 0 }, { 0, 0, 1e-8f }, 5.0f, hits);
+        check(hits.size() == 2, "overlap capsule: a near-zero-length segment is treated as a sphere");
+        Parts::OverlapCapsuleParts(ow, kNullEntity, 0, o, { 100, 0, 0 }, 0.0f, hits);
+        check(hits.empty(), "overlap capsule: radius 0 yields no hit");
+        Parts::OverlapCapsuleParts(ow, kNullEntity, 0, o, { 100, 0, 0 }, -1.0f, hits);
+        check(hits.empty(), "overlap capsule: a negative radius yields no hit");
+        Parts::OverlapCapsuleParts(ow, kNullEntity, 0, o, { 100, 0, 0 }, 0.1f, hits);
+        check(hits.size() == 4 && hits[0] == a.Id() && hits[1] == sb.Id() && hits[2] == d1.Id()
+                  && hits[3] == d2.Id(),
+              "overlap capsule: a long capsule returns every valid part in index order");
+        Parts::OverlapCapsuleParts(ow, p2.Id(), 0, o, { 100, 0, 0 }, 0.1f, hits);
+        check(hits.size() == 1 && hits[0] == sb.Id(), "overlap capsule: a root limits hits to its subtree");
+
+        // 16: ABI (C ABI 経路 + 糖衣)
+        ScriptApiContext apiCtx;
+        apiCtx.scene = &os;
+        MyeEngineApi api = {};
+        BuildEngineApi(api, &apiCtx);
+        MyeUpdateContext uc;
+        uc.api = &api;
+        const auto toShared = [](EntityID id) { return MyeEntityId{ id.index, id.generation }; };
+        check(api.OverlapSphereParts != nullptr && api.SphereCastParts != nullptr
+                  && api.OverlapCapsuleParts != nullptr,
+              "abi: the v32 part overlap / sweep slots are filled in");
+        MyeEntityId buf[8] = {};
+        check(api.OverlapSphereParts(api.engine, MyeEntityId{}, 0, { 0, 0, 0 }, 100.0f, buf, 8) == 4
+                  && buf[0].index == a.Id().index && buf[1].index == sb.Id().index
+                  && buf[3].index == d2.Id().index,
+              "abi: OverlapSphereParts writes the part ids in index order");
+        MyeEntityId two[2] = {};
+        check(api.OverlapSphereParts(api.engine, MyeEntityId{}, 0, { 0, 0, 0 }, 100.0f, two, 2) == 4
+                  && two[1].index == sb.Id().index,
+              "abi: OverlapSphereParts truncates to cap but returns the total");
+        check(api.OverlapSphereParts(api.engine, MyeEntityId{}, 0, { 0, 0, 0 }, 100.0f, nullptr, 0) == 4,
+              "abi: OverlapSphereParts with out = null only counts");
+        check(api.OverlapSphereParts(api.engine, MyeEntityId{}, 0, { 0, 0, 0 }, 100.0f, buf, 0) == 4,
+              "abi: OverlapSphereParts with cap 0 only counts");
+        check(api.OverlapSphereParts(api.engine, MyeEntityId{}, MyePartTag("Core"), { 0, 0, 0 }, 100.0f, buf,
+                                     8) == 1
+                  && buf[0].index == sb.Id().index,
+              "abi: OverlapSphereParts takes the tag hash");
+        check(MyeOverlapSphereParts(uc, toShared(p2.Id()), nullptr, { 0, 0, 0 }, 100.0f, buf, 8) == 1
+                  && buf[0].index == sb.Id().index,
+              "abi: the MyeOverlapSphereParts sugar limits to the root");
+        MyeRaycastHit mh = {};
+        check(api.SphereCastParts(api.engine, MyeEntityId{}, 0, { 0, 0, 0 }, { 1, 0, 0 }, 0.25f, 100.0f, &mh)
+                      == 1
+                  && mh.entity.index == a.Id().index && std::fabs(mh.distance - 1.25f) < 1e-3f,
+              "abi: SphereCastParts hits through the C ABI");
+        check(api.SphereCastParts(api.engine, MyeEntityId{}, 0, { 0, 0, 0 }, { 1, 0, 0 }, 0.25f, 1.0f, &mh) == 0,
+              "abi: SphereCastParts beyond maxDist yields no hit");
+        check(MyeSphereCastParts(uc, MyeEntityId{}, "Core", { 0, 0, 0 }, { 1, 0, 0 }, 0.25f, 100.0f, mh)
+                  && mh.entity.index == sb.Id().index && std::fabs(mh.distance - 4.25f) < 1e-5f,
+              "abi: the MyeSphereCastParts sugar resolves the tag name");
+        check(api.OverlapCapsuleParts(api.engine, MyeEntityId{}, MyePartTag("Weak"), { 0.5f, 0.5f, 0 },
+                                      { 2.5f, 2.5f, 0 }, 0.75f, buf, 8)
+                      == 1
+                  && buf[0].index == a.Id().index,
+              "abi: OverlapCapsuleParts hits through the C ABI");
+        check(api.OverlapCapsuleParts(api.engine, MyeEntityId{}, MyePartTag("Weak"), { 0.5f, 0.5f, 0 },
+                                      { 2.5f, 2.5f, 0 }, 0.65f, buf, 8)
+                  == 0,
+              "abi: OverlapCapsuleParts misses with the thinner radius");
+        check(api.OverlapCapsuleParts(api.engine, MyeEntityId{}, 0, { 0, 0, 0 }, { 100, 0, 0 }, 0.1f, two, 2)
+                  == 4,
+              "abi: OverlapCapsuleParts returns the untruncated total");
+        check(MyeOverlapCapsuleParts(uc, MyeEntityId{}, "Core", { 3, 3, 0 }, { 7, -1, 0 }, 0.3f, buf, 8) == 1,
+              "abi: the MyeOverlapCapsuleParts sugar resolves the tag name");
+    }
 
     if (failCount == 0) {
         MYE_LOG_INFO("==== Part self test: ALL PASS ====");

@@ -52,6 +52,17 @@ EntityID ToEngine(MyeEntityId id) { return { id.index, id.generation }; }
 ScriptApiContext* Ctx(void* engine) { return static_cast<ScriptApiContext*>(engine); }
 Scene* Sc(void* engine) { return Ctx(engine)->scene; }
 
+// 部位クエリの結果を ABI の out へ書く。戻り値は切り捨て前の総数。out=null / cap<=0 は数えるだけ
+int32_t WritePartEntities(const std::vector<EntityID>& hits, MyeEntityId* outParts, int32_t cap)
+{
+    const int32_t total = static_cast<int32_t>(hits.size());
+    const int32_t written = (outParts && cap > 0) ? ((total < cap) ? total : cap) : 0;
+    for (int32_t i = 0; i < written; ++i) {
+        outParts[i] = ToShared(hits[static_cast<size_t>(i)]);
+    }
+    return total;
+}
+
 // UI を解く土俵 (M70b)。**レーン 0 の入力に記録されたゲーム面**から解く (M75b で
 // uilayout::CanvasOfInput に一本化 = uiinteract::Evaluate と同じ関数) — ここでライブの
 // ウィンドウ実寸を読むと、UIElement が kComponentNoHash なせいで「窓の大きさで当たり判定が
@@ -1033,6 +1044,40 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
             outHit->distance = hit.distance;
         }
         return 1;
+    };
+
+    // ---- 部位ボリュームの重なり / 掃引 (v32、M95)。実体は Parts:: の 1 本 (RaycastParts と同じ候補・規約) ----
+    out.OverlapSphereParts = [](void* engine, MyeEntityId root, uint64_t tag, MyeVec3 center,
+                                float radius, MyeEntityId* outParts, int32_t cap) -> int32_t {
+        std::vector<EntityID> hits;
+        Parts::OverlapSphereParts(Sc(engine)->GetWorld(), ToEngine(root), tag,
+                                  { center.x, center.y, center.z }, radius, hits);
+        return WritePartEntities(hits, outParts, cap);
+    };
+    out.SphereCastParts = [](void* engine, MyeEntityId root, uint64_t tag, MyeVec3 origin,
+                             MyeVec3 dir, float radius, float maxDist,
+                             MyeRaycastHit* outHit) -> int32_t {
+        Parts::PartRayHit hit;
+        if (!Parts::SphereCastParts(Sc(engine)->GetWorld(), ToEngine(root), tag,
+                                    { origin.x, origin.y, origin.z }, { dir.x, dir.y, dir.z },
+                                    radius, maxDist, hit)) {
+            return 0;
+        }
+        if (outHit) {
+            outHit->entity = ToShared(hit.entity);
+            outHit->point = { hit.point.x, hit.point.y, hit.point.z };
+            outHit->normal = { hit.normal.x, hit.normal.y, hit.normal.z };
+            outHit->distance = hit.distance;
+        }
+        return 1;
+    };
+    out.OverlapCapsuleParts = [](void* engine, MyeEntityId root, uint64_t tag, MyeVec3 p0,
+                                 MyeVec3 p1, float radius, MyeEntityId* outParts,
+                                 int32_t cap) -> int32_t {
+        std::vector<EntityID> hits;
+        Parts::OverlapCapsuleParts(Sc(engine)->GetWorld(), ToEngine(root), tag,
+                                   { p0.x, p0.y, p0.z }, { p1.x, p1.y, p1.z }, radius, hits);
+        return WritePartEntities(hits, outParts, cap);
     };
 
     // ---- 汎用フィールドアクセス (v11、M50d) ----

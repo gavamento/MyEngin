@@ -499,6 +499,9 @@ namespace MyeScripting
         // ---- v32 (M95): アクション戦闘 ----
         public delegate* unmanaged<void*, MyeEntityId, int, int> AnimatorSetPause;
         public delegate* unmanaged<void*, MyeEntityId, int> AnimatorGetPause;
+        public delegate* unmanaged<void*, MyeEntityId, ulong, MyeVec3, float, MyeEntityId*, int, int> OverlapSphereParts;
+        public delegate* unmanaged<void*, MyeEntityId, ulong, MyeVec3, MyeVec3, float, float, MyeRaycastHit*, int> SphereCastParts;
+        public delegate* unmanaged<void*, MyeEntityId, ulong, MyeVec3, MyeVec3, float, MyeEntityId*, int, int> OverlapCapsuleParts;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -913,6 +916,45 @@ namespace MyeScripting
             {
                 return _api->RaycastParts(_api->Engine, root, PartTag(tagName), origin, dir,
                                           maxDist, p) != 0;
+            }
+        }
+
+        // 部位への球の重なり (v32、M95)。index 昇順で outIds へ書き、戻り値は切り捨て前の総数。
+        // root = Null でシーン全体、tagName null/空で全部位。outIds が null / 空なら数えるだけ
+        public static int OverlapSphereParts(MyeEntityId root, string tagName, MyeVec3 center,
+                                             float radius, MyeEntityId[] outIds)
+        {
+            if (_api == null) return 0;
+            fixed (MyeEntityId* p = outIds)
+            {
+                return _api->OverlapSphereParts(_api->Engine, root, PartTag(tagName), center, radius,
+                                                p, outIds?.Length ?? 0);
+            }
+        }
+
+        // 部位への球の掃引 (v32、M95)。dir は正規化済みであること
+        public static bool SphereCastParts(MyeEntityId root, string tagName, MyeVec3 origin,
+                                           MyeVec3 dir, float radius, float maxDist,
+                                           out MyeRaycastHit hit)
+        {
+            hit = default;
+            if (_api == null) return false;
+            fixed (MyeRaycastHit* p = &hit)
+            {
+                return _api->SphereCastParts(_api->Engine, root, PartTag(tagName), origin, dir,
+                                             radius, maxDist, p) != 0;
+            }
+        }
+
+        // 部位へのカプセル (両端点 p0 / p1 と半径) の重なり (v32、M95)。規約は OverlapSphereParts と同じ
+        public static int OverlapCapsuleParts(MyeEntityId root, string tagName, MyeVec3 p0,
+                                              MyeVec3 p1, float radius, MyeEntityId[] outIds)
+        {
+            if (_api == null) return 0;
+            fixed (MyeEntityId* p = outIds)
+            {
+                return _api->OverlapCapsuleParts(_api->Engine, root, PartTag(tagName), p0, p1,
+                                                 radius, p, outIds?.Length ?? 0);
             }
         }
 

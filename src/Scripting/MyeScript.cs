@@ -742,6 +742,28 @@ namespace MyeScripting
                                            string tagName = null)
             => Engine.RaycastParts(root.Id, tagName, origin, dir, maxDist, out hit);
 
+        // 部位への重なり / 掃引 (v32、M95)。tagName null/空 = 全部位。重なりは index 昇順で outIds へ、
+        // 戻り値は切り捨て前の総数。root 省略版はシーン全体、root 版はそのサブツリー限定
+        protected static int OverlapSphereParts(MyeVec3 center, float radius, MyeEntityId[] outIds,
+                                                string tagName = null)
+            => Engine.OverlapSphereParts(MyeEntityId.Null, tagName, center, radius, outIds);
+        protected static int OverlapSphereParts(MyeEntity root, MyeVec3 center, float radius,
+                                                MyeEntityId[] outIds, string tagName = null)
+            => Engine.OverlapSphereParts(root.Id, tagName, center, radius, outIds);
+        protected static int OverlapCapsuleParts(MyeVec3 p0, MyeVec3 p1, float radius,
+                                                 MyeEntityId[] outIds, string tagName = null)
+            => Engine.OverlapCapsuleParts(MyeEntityId.Null, tagName, p0, p1, radius, outIds);
+        protected static int OverlapCapsuleParts(MyeEntity root, MyeVec3 p0, MyeVec3 p1, float radius,
+                                                 MyeEntityId[] outIds, string tagName = null)
+            => Engine.OverlapCapsuleParts(root.Id, tagName, p0, p1, radius, outIds);
+        // dir は正規化済みであること
+        protected static bool SphereCastParts(MyeVec3 origin, MyeVec3 dir, float radius, float maxDist,
+                                              out MyeRaycastHit hit, string tagName = null)
+            => Engine.SphereCastParts(MyeEntityId.Null, tagName, origin, dir, radius, maxDist, out hit);
+        protected static bool SphereCastParts(MyeEntity root, MyeVec3 origin, MyeVec3 dir, float radius,
+                                              float maxDist, out MyeRaycastHit hit, string tagName = null)
+            => Engine.SphereCastParts(root.Id, tagName, origin, dir, radius, maxDist, out hit);
+
         // ---- コンピュート (v21)。結果を ECS へ書き戻さない ----
         // flags: 1 = 構造化, 2 = UAV も作る。失敗は 0 / false で、落ちない
         protected static ulong CreateComputeBuffer(uint count, uint stride, uint flags = 1)
