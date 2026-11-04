@@ -730,6 +730,13 @@ bool AnimationPreviewWindow::DrawEventFields(ControllerClipEvent& ev, int32_t cl
         ev.tick = std::clamp(tick, 0, clipTicks);
         changed = true;
     }
+    {
+        // 固定 60 Hz の tick を秒で併記する (内部表現は tick のまま)
+        char seconds[32];
+        std::snprintf(seconds, sizeof(seconds), "= %.3f s", static_cast<double>(ev.tick) / 60.0);
+        ImGui::SameLine();
+        ImGui::TextUnformatted(seconds);
+    }
     int kind = static_cast<int>(ev.kind);
     if (ImGui::Combo(Tr(StrId::AnimPrev_EvKind), &kind, kEventKinds, IM_ARRAYSIZE(kEventKinds))) {
         SetClipEventKind(ev, static_cast<ClipEventKind>(kind));
