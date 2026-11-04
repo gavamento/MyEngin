@@ -265,6 +265,7 @@ struct Body {
     // M94i: plane2D の kinematic 剛体 (休止ラグドールを除く)。velocity / angularVelocity.z で位置・姿勢を積分する。
     // plane2D が OFF の kinematic は従来どおり積分しない
     bool kinDrive = false;
+    bool skipGravityY = false; // M95: rb->useVerticalInput の tick。重力の y を足さない (入力の縦速度をそのまま使う)
     float z0 = 0.0f;
     // M94a: 一方通行 (Collider.oneWay)。startMinY / startVy = tick 開始時の形状 AABB の y 最小と y 速度 (動的ボディのみ)
     bool oneWay = false;
@@ -1575,7 +1576,8 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
     for (CharBody& c : chars) {
         constexpr float kDeg2Rad = 3.14159265f / 180.0f;
         const float cosSlope = std::cos(c.cc->slopeLimitDeg * kDeg2Rad);
-        float vy = c.cc->velocity.y + kGravity * c.cc->gravityScale * dt;
+        // M95: ルートモーションの縦 (useVerticalInput) の tick は、重力積分の代わりに verticalInput を縦速度にする
+        float vy = c.cc->useVerticalInput ? c.cc->verticalInput : c.cc->velocity.y + kGravity * c.cc->gravityScale * dt;
         // 変位一括適用 (水平は moveInput 直接駆動、垂直は重力積分)
         ShapePose pose;
         pose.shape = collidershape::kCapsule; // 常にワールド Y 軸 = 単位基底
@@ -1754,6 +1756,7 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
         // 2D は移動床が運んだ分を引いた「床に対する速度」を書く (歩行アニメ / 足音が床の速度で歩き出さない)
         c.cc->velocity.x = p2 ? (pose.px - c.px - groundDx) * invDt : (pose.px - c.px) * invDt;
         c.cc->velocity.y = vy;
+        c.cc->useVerticalInput = false; // 1 tick で消費 (次の tick は書き直されなければ重力に戻る)
         c.cc->velocity.z = p2 ? 0.0f : (pose.pz - c.pz) * invDt;
         if (stepSpeedCap >= 0.0f) {
             // 登りのために前へ出した分は移動速度に数えない (足音の歩幅やアニメーションが velocity を読む)
@@ -1969,7 +1972,14 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             b.qz = wrot.z;
             b.qw = wrot.w;
             b.vx = rb->velocity.x;
-            b.vy = rb->velocity.y;
+            if (rb->useVerticalInput && !kinematic) {
+                // M95: ルートモーションの縦。この tick の縦速度は入力で決め、重力は足さない。消費は収集で行う
+                b.vy = rb->verticalInput;
+                b.skipGravityY = true;
+            } else {
+                b.vy = rb->velocity.y;
+            }
+            rb->useVerticalInput = false;
             b.vz = rb->velocity.z;
             b.wx = rb->angularVelocity.x;
             b.wy = rb->angularVelocity.y;
@@ -3206,9 +3216,11 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             if (env) {
                 const float gs = b.rb->gravityScale;
                 b.vx += env->gravity.x * gs * h;
-                b.vy += env->gravity.y * gs * h;
+                if (!b.skipGravityY) {
+                    b.vy += env->gravity.y * gs * h;
+                }
                 b.vz += env->gravity.z * gs * h;
-            } else {
+            } else if (!b.skipGravityY) {
                 b.vy += kGravity * b.rb->gravityScale * h;
             }
             // ★減衰は**毎 tick の率**なのでサブステップごとに掛けてはいけない (N 乗になる)。

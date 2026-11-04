@@ -64,4 +64,13 @@ spec §5 の 21, 22, 23, 24, 25, 32。
 
 ## 実装メモ (coder が追記)
 
+### round 1
+- 実装: ControllerState.rootMotionY / SkeletalSource.rootMotionY / PoseLayer.rootMotionY (JSON は skel 直下、1 のときだけ書く、版コメント追記)。RootMotionDelta は 3D 累積を変えず rootMotionY の層だけ upDelta を別に積む。8. で upDelta があるときだけ deltaWorld[1] に入れ rootMotionVelocity.y = deltaWorld[1]*60、ApplyRootMotion に verticalDriven を追加 (CC / 非 kinematic Rigidbody に useVerticalInput / verticalInput、Rigidbody は isSleeping=false)。StripRootMotion は verticalMask の層だけ up 方向も抜く。SamePoseInputs に rootMotionY。PhysicsSystem は CC の vy 初期化と Rigidbody の重力 y を切り替え、収集 (Rigidbody) / 書き戻し (CC) で useVerticalInput を消費。snapshot v68。
+- 検証: Debug/Release ビルド OK。Release --selftest-full 110 本 0 failed。Debug --selftest-full は hash 定数更新前に 4 本 FAIL (下記)。check_rules 0 error。
+
+### round 2
+- #1: RootMotionDelta で rootMotionY の層のサンプル区間が空でない (startQ != endQ または wraps != 0) ときだけ outHasUp を立てる (outUpDelta の式は不変)。テストに「終端に張り付いた Rise は AnimatorPlay なしで旗が立たず重力が戻る」を追加。#2: SimSnapshot.h の版コメントを M95e へ。#3: 未対応のまま (spec §7 の記録待ち)。#4: Debug / Release --selftest-full 110 本 0 failed、check_rules 0 error、replay_verify 22 jobs PASS。
+
 ## フィードバック履歴
+- round 1: VERDICT REWORK (planner、2026-11-05)。must 1 件: 受け入れ 24 の「クリップ終端で重力へ戻る」。spec §4.1 E に「駆動した」の定義を追加 = rootMotionY の層のうち、この tick のサンプル区間が空でない (RootLayerDelta の startQ != endQ または wraps != 0) 層が 1 つ以上あるときだけ verticalDriven。非ループの終端に張り付いた層は駆動しない → useVerticalInput を立てず重力へ (ステートを切り替えなくても落ちる)。upDelta の積算は変えない (旗だけ)。テスト: Rise (loop=0) を終端まで回し、AnimatorPlay せずに数 tick で cc->useVerticalInput == false かつ velocity.y < 0 (落下) を断言する。既存の「切り替えてから落ちる」断言は残してよい。should: 無し。nit: (1) SimSnapshot.h の版コメント「v68 (M95c)」は M95e (sub-05 のコミット接頭辞) に直す、(2) 一方通行床の 1 tick 遅れは既存の jumpSpeed と同じ遅れなので直さない (spec §7 に制限として記録、sub-07 の文書へ)。仕様側の訂正 (coder が正しかった): Rigidbody の消費は収集時、rootMotionVelocity.y は applyRootMotion を問わず書く。round 2 は OK を求める round なので ST-full Debug / Release (hash 定数更新後の最終コードで通し) + CR + RV を回すこと。computemanaged / fractureeditor の Debug FAIL は司会が無負荷で master と比較中 (sub-05 に起因しなければ別件)
+- round 2: VERDICT OK (planner、2026-11-05)。must #1 解消: RootMotionDelta が層ごとに sampled (単一クリップ prevTime != time || wraps、ブレンドの子 startQ != endQ || wraps = RootLayerDelta に渡す区間そのもの) を求め、rootMotionY 層が sampled のときだけ outHasUp。upDelta の式は不変。終端の断言 (AnimatorPlay なしで旗が下り velocity.y == vEnd − g·dt) が PASS = 非ループの時計が終端で止まることも実測で確認。nit #2 (v68 M95e) 解消。検証: hash 更新後の最終コードで Debug full 110 / 0 failed、Release full 110 / 0 failed、CR 0 error、RV 22 ジョブ PASS。computemanaged / fractureeditor も Debug full で PASS (round 1 の FAIL は負荷下の時間依存)。三校は規則どおり統合時に司会

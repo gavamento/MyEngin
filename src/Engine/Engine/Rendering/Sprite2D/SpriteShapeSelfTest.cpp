@@ -733,7 +733,7 @@ bool RunSpriteShapeSelfTest()
         check(finalHash == unculled.Hash(), "Hill: the culled and the unculled supply give the same final WorldHash");
         MYE_LOG_INFO("  [spriteshape] hill scenario final WorldHash %016llX", static_cast<unsigned long long>(finalHash));
         // Debug / Release で同じ値 (焼いた値)
-        constexpr uint64_t kHillScenarioExpectedHash = 0xAE6DC1DD4BAEC0E6ull;
+        constexpr uint64_t kHillScenarioExpectedHash = 0xA050E9776415F4DFull;
         check(finalHash == kHillScenarioExpectedHash, "Hill: the final WorldHash matches the baked value");
 
         // 一方通行: 下から投げた球は床を抜けて、上から落ちてきて乗る。上から置いた球は乗ったまま

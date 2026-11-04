@@ -71,6 +71,9 @@ struct ControllerState {
     // スプライト列クリップ (M94、"sprite": <.spriteanim.json の GUID>)。0 = 使わない。骨の駆動 (skel / ブレンドツリー) とは
     // 排他で、読み込みは sprite を採って骨の指定を捨てる (FromJson)。プロパティクリップ (clipHash) とは併用できる
     uint64_t spriteHash = 0;
+    // ルートの縦の動きも rootMotionVelocity.y に出す (M95、"skel":{"rootMotionY":1})。1 のステートの層だけが縦を担い、
+    // ポーズからも同じ量を抜く。0 = 従来どおり縦は捨てる (クリップの縦はポーズに残る)
+    int32_t rootMotionY = 0;
 };
 
 // ステートが骨を駆動するか (骨クリップ 1 本、または子を持つブレンドツリー)

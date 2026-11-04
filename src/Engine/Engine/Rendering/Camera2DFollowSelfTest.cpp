@@ -26,7 +26,7 @@ namespace mye {
 namespace {
 
 // Debug / Release で同じ値になること (M94v で採取)。動く対象を 300 tick 追わせた HashWorld
-constexpr uint64_t kExpectedScenarioHash = 0xD5147EA06255DFC2ull;
+constexpr uint64_t kExpectedScenarioHash = 0x800AC1D3D676EE8Dull;
 
 constexpr uint32_t kTileFloor = 1;
 
