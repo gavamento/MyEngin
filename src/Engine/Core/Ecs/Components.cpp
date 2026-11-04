@@ -464,6 +464,17 @@ void RegisterBuiltinComponents()
         MYE_JP("床の速度",
                MYE_FIELD_FLAGS(CharacterControllerComponent, groundVelocity, Float3, kFieldReadOnly)),
         // ---- M95 sub-02 (末尾 append) ----
+        MYE_JP("CC 同士で押し合う",
+               MYE_FIELD_TIP(CharacterControllerComponent, collideCharacters, Bool,
+                             "Both characters must be true to push each other out. Each character is pushed out "
+                             "of the other's capsule at the start of the tick (no momentum exchange)")),
+        MYE_JP("押し合いの優先度",
+               MYE_FIELD_TIP(CharacterControllerComponent, pushPriority, Int32,
+                             "A character ignores others with lower priority (only the lower one is pushed out). "
+                             "Equal priority: both stop")),
+        MYE_JP("接触を通知",
+               MYE_FIELD_TIP(CharacterControllerComponent, reportContacts, Bool,
+                             "Report touched floors, bodies and characters as contacts (OnCollisionEnter/Stay/Exit)")),
         // ---- M95 sub-05 (末尾 append) ----
     });
 

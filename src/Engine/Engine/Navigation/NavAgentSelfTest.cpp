@@ -49,7 +49,7 @@ constexpr uint64_t kLinkGenGuid = 0x4E41564147454E36ull; // Link の自動生成
 constexpr uint64_t kExpectedLinkGenAssetHash = 0xACDD08E5A7CD26D0ull;
 // Debug で採取し、Release で同じ値になることを確認して焼く (docs\adr\ADR-023-navmesh.md)。
 // 0f659f3 (Collider へ center / rotation を追加 = 庭の床・段差のハッシュ対象が増えた) で値が変わったので焼き直した
-constexpr uint64_t kExpectedYardHash = 0x8581BEE4A676337Cull; // M94i: CharacterController の 2D 欄 (hash 対象) が入って再採取 (挙動は不変)
+constexpr uint64_t kExpectedYardHash = 0xB741A4CD2A103F69ull; // M95 sub-02: CharacterController の 3 欄 (hash 対象) が入って再採取 (挙動は不変)
 
 struct Checker {
     int failCount = 0;

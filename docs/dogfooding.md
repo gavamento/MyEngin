@@ -40,7 +40,7 @@
 | 11 | スクリプトのレイキャストをヘッドレスで追えない | 未解決（`--debug-draw-log` 案） |
 | **12** | **`builtin://` プリミティブが遅延生成で Runtime では半分解決しない** | **修正済み (M70d)** — `MeshLibrary::Init` が 6 種とも登録する |
 | 13 | プロジェクト側に車輪メッシュを用意する手段が無い | 未解決（`builtin://wheel` 案） |
-| 17 | CharacterController と Rigidbody が一方通行 | 未解決 |
+| **17** | **CharacterController と Rigidbody が一方通行** | **修正済み (M95)** — `reportContacts` で CC の接触が `SolidContact` に載り、`collideCharacters` / `pushPriority` で CC 同士も押し出す (ADR-034) |
 | **18** | **`MyeGameObject` は回転を書けるのに読めない** | **修正済み (M70d)** — `GetLocalRotation` / `GetLocalScale` / `SetLocalScale`、加えて `GetWorldPosition` |
 | 19 | `Vehicle` があるのに `PhysicsEnvironment` が無いと黙って柔らかい車になる | 未解決（起動時 WARN 案） |
 | 20 | スクリプト間で値を渡す手段が名前引きしかない | 未解決 |
@@ -525,7 +525,7 @@ no-op + WARN も同じ（セーブファイルは sim の外にあるので、�
 
 ---
 
-## 17. CharacterController と Rigidbody は**一方通行**（車で轢く判定が書けない）
+## 17. CharacterController と Rigidbody は**一方通行**（車で轢く判定が書けない） → **修正済み (M95)**
 
 **やろうとしたこと** — 走っている車で敵（`CharacterController`）を轢く。
 素直に `OnCollisionEnter` で書こうとした。
@@ -543,6 +543,12 @@ no-op + WARN も同じ（セーブファイルは sim の外にあるので、�
 
 **直すなら** — キャラ ↔ 剛体の接触もイベントとして報告する。運動量の交換まで
 やらなくても、「触った」ことさえ通知されれば轢く・押されるはゲーム側で書ける。
+
+**→ 解決 (M95)**。`CharacterControllerComponent` に `reportContacts` を足した。ON の CC が触れた
+相手 (床 / kinematic / 動的剛体 / 別の CC) が `SolidContact` (impulse 0) として既存の
+`CollisionSystem` 経路に合流し、両者の `OnCollisionEnter/Stay/Exit` が届く。
+CC 同士の素通りも `collideCharacters` (両者 true) と `pushPriority` で止められる。
+運動量の交換はしない (ADR-034)。`VehicleDriver` の自前の近傍検索はサンプルとしてそのまま。
 
 ---
 

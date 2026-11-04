@@ -942,7 +942,7 @@ bool RunTilemapSelfTest()
                          static_cast<double>(a.GetWorld().GetComponent<LocalTransform>(actorsA.walker)->position.y),
                          static_cast<unsigned long long>(finalHash));
             // Debug / Release 共通の期待値。0 は「未採取」 (採取値をログから読んで焼く)
-            constexpr uint64_t kTileScenarioExpectedHash = 0x326BA3CD14F4BBB8ull;
+            constexpr uint64_t kTileScenarioExpectedHash = 0x95DE186F19D09266ull;
             check(kTileScenarioExpectedHash == 0 || finalHash == kTileScenarioExpectedHash,
                   "tile determinism: the final world hash matches the baked value (Debug == Release)");
         }
