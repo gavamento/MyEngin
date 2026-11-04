@@ -240,11 +240,12 @@ Frame (EngineLoop)
 
 ```
 Tick (RunOneTick, TickRunner.cpp)
+  ·    Tick gate (TimeControl::Advance: pause / hit-stop / slow), feel ages advance (ungated, §10.13)
   3    Script layer: Start for newly created scripts → Update
   3.4  Acoustic propagation, then agent AI that consumes it (M65a / M65f)
   3.5  Animation: resolve LocalTransform before the hierarchy is flattened
-  3.6  Physics: integrate rigid bodies, still before the hierarchy update
-  4    System layer: particles → Transform hierarchy update
+  3.6  Physics: integrate rigid bodies, still before the hierarchy update; FeelTrigger reads the contacts (M94)
+  4    System layer: SpringFollow (M94) → Transform hierarchy update → collision → particles
   5    Script layer: LateUpdate
   7    Apply all structural changes (end of tick, not end of frame — ADR-005)
   ·    End-of-tick world hash (§11.3)
@@ -1331,6 +1332,7 @@ reports `StartupStage` values through `EngineConfig::startupObserver` and logs
 | Game View | Display the game camera view |
 | Console | Display logs, shader compilation errors, and hot-reload notifications |
 | Profiler | Display frame time, phase timings, and particle update time for CPU and GPU implementations |
+| Feel Monitor | Read-only view of game feel (§10.13): time effects, the playing feel table, the current camera / rumble / screen outputs and the input buffer; holds the per-user "mute camera shake in the editor" setting |
 | Particle Settings | **Switch particle backends between GPU and CPU**, launch comparison mode, and configure maximum particle counts |
 | Asset Browser | List files under `assets/` and display reload status. Each entry also carries its git state as a badge (§14); a folder shows the heaviest state it contains |
 | Source Control | Git for the project repository (§14), in three tabs — **Changes** (pair-aware working tree, stage / unstage / revert, commit message, "save and commit"; selecting a file opens the read-only **Diff** window. A **folder row is selectable too** — clicking it selects every changed row beneath it, so stage / unstage / discard act on a whole folder without picking files one by one, and ctrl+click on a fully selected folder removes it again. **Stage all / Unstage all** ignore the selection and move the entire list), **Branches** (list / create / switch, with the A/B/C reload stage decided before the checkout runs) and **History** (the last 100 commits). Conflicts take over the Changes list while a merge is in progress. Write operations are greyed out with the full list of reasons whenever the gate is closed (§14.3). When the feature cannot run at all, the window states which of the eight reasons applies (`NoProject` on a bare start, no `MyeCollab.dll`, protocol mismatch, no git, git < 2.11, not a repository, project root is not the repository top, service died) rather than collapsing them into one message |
@@ -2758,6 +2760,51 @@ Demo: `--compute-demo` (a C++ State flock, a C++ Fx spark field drawn with `Debu
 
 **Known limits.** `ReloadHub` calls `CompileScripts` synchronously, so Roslyn stalls the frame for a few seconds after a kernel save. On a real GPU the Fx results differ from the CPU (up to 64 ULP in the measured case) — by design, since only Fx may use the GPU. The C# lane is outside replay coverage.
 
+### 10.13 Game feel (M94, ADR-031)
+
+Hit-stop, timed slow motion, camera shake and kick, decaying pad rumble, a screen pulse, easing / curves, springs, an input
+buffer and stick response curves, authored as data and tunable while playing.
+
+**One rule.** The simulation stores only *what was played and when*. Everything a player sees or feels is a pure function of that
+state and the render interpolation factor, evaluated every frame. Time travel, What-if branches and rollback therefore rewind
+shake and rumble with everything else, and nothing presentation-only lives in an output lane that would not rewind.
+
+| Piece | Where it lives | Notes |
+|---|---|---|
+| Shared math | `Shared/FeelMath.h` | 29 eases (`MYE_EASE_*`), `MyeCurve` (preset: ease + from / to / overshoot; custom: up to 8 Hermite keys), implicit-Euler spring, `MyeSmoothDamp`, integer-hash value noise, `MyeFeelDesc`. Polynomials only (no CRT `sin` / `pow` / `exp`), because scripts may call them in the simulation |
+| Time effects | `TimeControl` (`GameFlow.h`) | `freezeTicks` (hit-stop) and a timed slow (`slowPercent`, hold, eased recovery). Both ride the existing tick gate. Freeze keeps the max of the remaining ticks; the slower slow wins, ties go to the longer one; the slow counts after the freeze; the effective speed is `min(scalePercent, slow)`. A request made in tick N takes effect from tick N+1 |
+| Playing feels | `FeelState` (`Scene::Feel`) | Up to 16 instances, each a **copy** of the desc taken when it was played, plus intensity and age. A full table replaces the instance with the least remaining time. Ages advance at the head of every simulated tick and are **not gated**, so the frozen world keeps shaking |
+| Presentation | `EvaluateFeel` → `EngineLoop` → `RenderSystem::feel` | Camera-local rotation + translation applied after interpolation and before the inverse in `ResolveCamera` (scene camera only, never a `CameraOverride`); FOV kick; screen pulse added to the merged post settings (vignette, chromatic aberration, exposure ratio, saturation, flash colour); rumble merged with `SetPadVibration` by per-motor max under the existing output-lane suppression. Output scales per channel (camera / rumble / flash) are an output lane for accessibility settings |
+| Presets | `.feel.json`, `FeelLibrary` | Keyed by asset id and by name hash (the file name without `.feel.json`; duplicates resolve to the smallest path). Installed as a sim library in both `EngineLoop` and `HeadlessSim`, like `.physmat.json`. Hot reload affects the next play |
+| No-code trigger | `FeelTrigger` (TypeId 81) | Plays its preset when a contact's normal impulse reaches `minImpulse`, with intensity `impulse / fullImpulse` clamped to `maxIntensity`, then waits `cooldownTicks`. Evaluated right after physics (phase 3.6) in contact-key order |
+| Springs | `SpringFollow` (TypeId 82) | Pulls `LocalTransform` toward a target pose (+ offset in the target's space). The target pose is built from the `LocalTransform` parent chain, not `WorldMatrix`, which is also refreshed at render time. Phase 4, before the Transform update, entity-index order, gated like physics |
+| Input | `actions.json`, `InputBufferState` (`Scene::InputBuffer`) | Optional `bufferTicks` per action (first 32 actions), `response` curve and `outerDeadzone` per axis (pad component only, skipped when identity). The buffer window is simulation state; `kActionBuffered` (bit 3) is derived from it at query time, so a consumed press is gone for the rest of the tick. Files without the new keys load and save unchanged |
+
+**Hash and snapshot.** All three states are content-gated in the world hash: the six `TimeControl` words fold only while an effect
+remains, `FeelState` once anything was played, the input buffer while any window is open. Scenes that do not use feel keep their
+pre-M94 hash streams. SimSnapshot v51 always writes all of them in the Scene section. Scene transitions and Play / Stop clear
+feel, the buffer and the time effects (pause and `scalePercent` still cross scenes, as before).
+
+**Scripting (ABI v31).** `MyePlayFeel(ctx, "HeavyHit")` plays a preset; `MyeHitStop`, `MyeSlowMotion`, `MyeCameraShake`,
+`MyeCameraKick` and `MyeRumble` build a desc in code; `MyeActionBuffered` / `MyeConsumeAction` use the input buffer;
+`MyeIsSimStepping` tells a script whether gated systems advance this tick; `MyeTickWindowMark` / `MyeTickWindowOpen` are a
+coyote-time helper. Intensity scales presentation only. Playing, stopping and consuming write hashed state, so the C# lane is
+refused (same rule as `SendScriptMessage`); C# can use `IsSimStepping` and `SetFeelOutputScale`.
+
+**Editor.** The asset inspector edits the registered preset in place (live: the next play uses it), with Save / Revert, an
+unsaved marker, a Play-only preview and document-level Undo (`UndoDocOp::Kind::Feel`). `CurveEditorWidget` edits both curve modes
+(drag / double-click to add / right-click to delete keys, tangents, smooth tangents) and is reused for stick response curves in
+Project Settings > Input. **Feel Monitor** shows time effects, the playing table, the current outputs and the input buffer, and
+holds the per-user "mute camera shake in the editor" setting (render-only).
+
+**Coverage.** `FeelMathSelfTest`, `FeelSystemSelfTest`, `FeelLibrarySelfTest`, `SpringFollowSelfTest`, additions to
+`GameFlowSelfTest` / `SimSnapshotSelfTest` / `InputActionsSelfTest` / `UndoSelfTest`, and the replay job `feel` (`--feel-demo`:
+scripted preset / hit-stop / slow / shake-and-stop, a bouncing `FeelTrigger` ball, a `SpringFollow` camera).
+
+**Known limits.** Low-percentage slow motion steps visibly (gated systems advance on alternate ticks; smoothing it would disagree
+with ungated script-driven objects). Hit-stop is global. No fast-forward. The C# lane cannot play feels. The input buffer is
+covered by self tests, not by a replay job. Visuals and real rumble need the manual checklist (`docs/test_checklists.md`, M94).
+
 ---
 
 ## 11. Debug/Release Consistency Policy
@@ -3479,6 +3526,8 @@ must rebuild.
 
 **Scripting (ABI v30, M93e).** `MYE_API_VERSION` 30, 174 → 175 slots, appended after `ComputeSetManagedDeclarations`: `SendScriptMessage(engine, from, target, nameHash, value)` (dogfooding #20). `MyeScriptDesc` gains `onMessage` at its end (C++ `Script<T>::OnMessage(ctx, from, nameHash, value)` via `GetMessageFn<T>`, C# `MyeScript.OnMessage`; the managed vtable gains `InvokeMessage` at its end). Messages are queued per tick (`ScriptApiContext::messageQueue`, at most 4096) and delivered **inside the same tick** at two points — right after phase 3 (Update) and right after phase 5 (LateUpdate) — in queue order to every script on the target; messages sent during delivery are delivered in the same pass for up to 8 rounds, the rest is dropped with a warning. Nothing survives the tick, so the snapshot format is unchanged. The C# lane can receive but not send (the slot returns 0 for it: a NoHash lane must not drive hashed state). The slot is not named `SendMessage` because that is a Win32 macro. A `GameLogic.dll` built for `apiVersion` 29 is refused; the runtime check of M93a also refuses a `MyeScripting.dll` built for 29. Coverage: `MessageProbe` on the default showcase's Spinner (replay job `demo`).
 
+**Scripting (ABI v31, M94h).** `MYE_API_VERSION` 31, 175 → 181 slots, appended after `SendScriptMessage`: `PlayFeel(engine, nameHash, intensity)`, `PlayFeelDesc(engine, const MyeFeelDesc*, intensity)`, `StopFeel(engine, handle)`, `ConsumeAction(engine, nameHash, player)`, `IsSimStepping(engine)`, `SetFeelOutputScale(engine, channel, scale)` (§10.13). `PlayFeel` returns a handle (> 0), 0 for a time-only desc, -1 when the preset is missing or the caller is the C# lane. `GetActionState` / `GetActionForPlayer` add `kActionBuffered` (bit 3) only for actions with `bufferTicks`, so existing callers see the same values. `SetFeelOutputScale` is an output lane. A `GameLogic.dll` built for `apiVersion` 30 is refused, and so is a `MyeScripting.dll` built for 30; external projects must rebuild.
+
 **Verification.** `Editor.exe --selftest` runs the Session suite and the in-process server/client suite
 (one server and three clients over a seeded fake transport: missed deadline, late join, drop → reconnect,
 reservation timeout → Release, 20 % loss, reordering; the confirmed-input log, not the arrival order,
@@ -3520,7 +3569,7 @@ Kept verbatim, because the completion criteria it set are still the ones the pro
 
 The order was intentional: implementing the reload foundation in M3 first accelerated subsequent particle development through dogfooding.
 
-### 12.2 What was actually built (M0-M93)
+### 12.2 What was actually built (M0-M94)
 
 **2026-07-19 → 2026-10-12, over 600 commits.** The primary source is `git log`; the prefix on each
 commit subject names the milestone. Grouped by system rather than by number, because the numbers
@@ -3552,6 +3601,7 @@ interleave — several tracks ran in parallel and a few milestones were revisite
 | Render optimization | M90 | Measurement first (per-view `RenderStats`, GPU timers, the `render_bench` scenes and `--render-stats-dump`); opt-in **mesh LOD** generated by meshoptimizer into the cooked blob (`kCookVersion` 6); two-phase **GPU occlusion culling** with a per-view max-Z pyramid for Deferred and Forward, default on and saved in `project_settings.json`; per-cascade shadow culling that keeps off-screen casters' shadows, and a conservative skinned AABB; render-side parallelism, a view-shared palette cache and distant-animation throttling (URO); parallel CPU particles / Perception / PartFollow / TwoBoneIk proven by replay_verify's jobs A/B (§5.4, §6.14, ADR-028 / ADR-029) |
 | Compute.ForEach | M91 | One `*.kernel.hlsl` source run on the GPU, as a C++ CPU function and as a C# CPU function behind a checked HLSL subset (KL001–KL028); State buffers always on the CPU and in snapshot / hash (SimSnapshot v50), Fx buffers GPU-first with delayed readback; source-hash version check, `COMPUTE_KERNELS` / `[ComputeKernels]` declarations, a Compute section in the script inspector, compute A/B in `replay_verify` (§10.12, ABI v29, ADR-030) |
 | Hardening, documentation and dogfooding close-out | M93 | (a) the C# host compares the API table's `version` with the mirror's `kExpectedApiVersion` at `Bootstrap.Initialize` and refuses a stale `MyeScripting.dll` (rule 11-e); (b) §6.3's rendering boundary rewritten to match the implementation and frozen by rule 15 (26-file allow list, a ratchet); (c) the review ledger `docs/rev/oversights.md` §8 with the status of all 55 fix requirements, plus the small fixes (`AdjustWindowRectExForDpi` / `WM_DPICHANGED`, NaN-safe `Clamp01` / histogram bins / modal damping, cascade-split and exposure-speed guards); (d) README / AGENTS / feature guide refreshed, 100+ machine-specific absolute paths removed from docs, rule 16 warns if they return; (e) the last five dogfooding findings: `--debug-draw-log`, `builtin://wheel`, CharacterController ⇄ Rigidbody contact events, the missing-`PhysicsEnvironment` warning, `SendScriptMessage` / `onMessage` (**ABI v30**, 174 → 175 slots); (f) document-level Undo for the Animator Controller, Animation Preview and Audio Mixer windows (`UndoDocOp`, `DocUndoRecorder`); (g) the three largest sources split into per-responsibility translation units by pure code motion — `DemoContent.cpp` → `DemoContent{Render,Animation,Flow,Physics,Vfx,Audio,Ui,Ai,Compute}.cpp`, `PhysicsSystem.cpp` → `PhysicsCharacters.cpp` / `PhysicsMaterials.cpp` / `PhysicsBodyOps.cpp` (+ `PhysicsSystemInternal.h`, `RaycastWorld` into `PhysicsQueries.cpp`), `InspectorWindow.cpp` → `InspectorWindowAssets.cpp` / `InspectorWindowNav.cpp` |
+| Game feel | M94 | Hit-stop and timed slow motion on the tick gate, a `FeelState` table of played feels (copies of `MyeFeelDesc`) whose camera shake / kick / FOV, decaying rumble and screen pulse are pure functions of state and interpolation, `.feel.json` presets edited live with curve editing and Undo, `FeelTrigger` (TypeId 81) and `SpringFollow` (TypeId 82), input buffering and stick response curves in `actions.json`, Feel Monitor, `--feel-demo` and the replay job `feel`; content-gated hashing keeps other scenes' hash streams unchanged (§10.13, **ABI v31**, 175 → 181 slots, SimSnapshot v51, ADR-031) |
 
 **A note on the numbering.** M17-M25 and M30-M31 have no commits of their own: they were finished
 before the repository was brought up to date and landed in two bundle commits (`M16-M25` and
@@ -3570,7 +3620,7 @@ to the physics roadmap.
 | M86 (Smart Objects) | **Unstarted, designed.** `SmartObjectComponent` with slots, a reservation table in the snapshot and hash, four behaviour-tree nodes, one ABI bump. Plan: `plans\ai-roadmap-m83-m86.md` |
 | Engine MCP server (M87) | **Unstarted, design settled.** Engine index dump, a stdio JSON-RPC server with search / describe, structured verify jobs, notes. Plan: `plans\エンジンMCPサーバ.md` |
 | Sequencer | **Unstarted.** A tick-based sequencer. (Blend trees, two-bone IK, root motion and animation events shipped as M89; mesh LOD and GPU occlusion culling as M90.) No plan file yet |
-| Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (now ABI v30, TypeId 80, SimSnapshot v50, ADR-030). Plan files that name a specific future number are stale on that point |
+| Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (now ABI v31, TypeId 82, SimSnapshot v51, ADR-031). Plan files that name a specific future number are stale on that point |
 | Dogfooding backlog | **Closed (M93e).** The last 5 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) shipped together: `--debug-draw-log` (11), `builtin://wheel` (13), CharacterController ⇄ Rigidbody contact events (17), the missing-`PhysicsEnvironment` warning (19) and `SendScriptMessage` / `onMessage` with ABI v30 (20) |
 
 ---
@@ -3609,7 +3659,8 @@ ADR-020 Deep-Modal impact synthesis (§10.7) /
 ADR-027 skeletal pose program (M89) /
 **ADR-028 simulation parallelism: output-dimension splits proven by jobs A/B** (§5.4) /
 **ADR-029 render optimization: opt-in mesh LOD, two-phase occlusion culling, render-side URO** (§6.14) /
-**ADR-030 Compute.ForEach: one kernel source, State on the CPU, Fx GPU-first** (§10.12).
+**ADR-030 Compute.ForEach: one kernel source, State on the CPU, Fx GPU-first** (§10.12) /
+**ADR-031 game feel: store what was played, derive what is shown** (§10.13).
 
 ---
 
@@ -3751,7 +3802,7 @@ file by file.
 
 | Stage | What lands in it | What the editor does |
 |---|---|---|
-| **A** — in place | `M` / `R` of extensions `ReloadHub` already handles (`.hlsl .hlsli .png .tga .jpg .jpeg .dds .wav .ogg .glb .gltf .fbx .mat.json .anim.json .sound.json .mixer.json .physmat.json .actor.json .prefab.json`), plus `A` (new files), which are registered incrementally into `AssetDatabase` — a full `ScanAndSync` clears three tables and opens a window where lookups resolve to nothing. Non-active scenes, `project.mye.json`, unknown extensions and anything outside `assets\` / `src\GameLogic\Scripts\` are no-ops | `EndBatch` replays the changes in type order (texture → material → model → actor → scene) |
+| **A** — in place | `M` / `R` of extensions `ReloadHub` already handles (`.hlsl .hlsli .png .tga .jpg .jpeg .dds .wav .ogg .glb .gltf .fbx .mat.json .anim.json .sound.json .mixer.json .physmat.json .feel.json .actor.json .prefab.json`), plus `A` (new files), which are registered incrementally into `AssetDatabase` — a full `ScanAndSync` clears three tables and opens a window where lookups resolve to nothing. Non-active scenes, `project.mye.json`, unknown extensions and anything outside `assets\` / `src\GameLogic\Scripts\` are no-ops | `EndBatch` replays the changes in type order (texture → material → model → actor → scene) |
 | **B** — reopen | the active `.scene.json`; `.cpp .h .hpp .inl` under `src\GameLogic\Scripts\` (a header-only change still leaves the DLL stale); `.cs`; `.controller.json`; `.terrain.json`; `.terrain.edit`; `assets\input\actions.json`; `assets\project_settings.json`; a **`D`** of any A-extension (deletions never reach `ReloadHub` — the watcher only enqueues MODIFIED / ADDED / RENAMED_NEW_NAME); A-changes that mix actors and scenes | invalidate the controller / terrain / input caches, then reopen through the `LoadSceneFromPath` path. `.cs` recompiles automatically, `.cpp` raises a "Rebuild Scripts" toast. Only the A subset is passed to `EndBatch` |
 | **C** — restart | `assets\schemas\*`; a `.meta` whose guid changed or was renamed (compared before and after, since a prediction cannot see it); more than `kCollabMaxBatchApply` (200) changes | `EndBatch({})`, then a modal with **a single button, "Restart"**. There is no "Later" and no "Cancel": leaving the editor running with in-memory schemas that disagree with the ones on disk means the next save silently drops components it no longer knows — the exact loss stage C exists to prevent. The gate has already guaranteed every document is saved, so an immediate restart costs nothing. If `RelaunchSelfWithProject` fails (`ShellExecuteW` ≤ 32) **the modal stays open** in red; closing it would recreate "Later" |
 

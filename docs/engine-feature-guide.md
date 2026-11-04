@@ -1,6 +1,6 @@
 # MyEngine 全機能ガイド
 
-調査日: 2026-09-11（追補: 2026-10-27、M93）。対象: このリポジトリの作業ツリー。
+調査日: 2026-09-11（追補: 2026-10-27、M93 / 2026-11-04、M94）。対象: このリポジトリの作業ツリー。
 
 この文書は、MyEngine が何をできるエンジンなのかを、制作者・利用者・説明を聞く人に向けて整理したものです。実装の入口、コンポーネント、エディタ操作、検証手段を対応させています。詳細な列挙は機能リファレンス（`docs/engine-feature-reference.md` として計画されたが、リポジトリには未収録）に委ねる前提で書かれているため、組込みコンポーネント・ABI・CLI の一覧は正本のソース（`src/Engine/Core/Ecs/Components.h`、`src/Shared/EngineAPI.h`、`src/Engine/Engine/App/EngineCli.cpp`）を参照してください。
 
@@ -498,3 +498,9 @@ Build Settings は、スクリプト再ビルド、クックの準備、Runtime 
 | Compute.ForEach (M91) | `*.kernel.hlsl` 1 ソースを GPU / C++ CPU / C# CPU で実行する。HLSL サブセットの検査器 (KL001〜KL028)、State バッファ (CPU・スナップショット・ハッシュ対象) と Fx バッファ (GPU 優先・遅延読み戻し)、`COMPUTE_KERNELS` / `[ComputeKernels]` の宣言、スクリプトのインスペクターの Compute 欄、`replay_verify` の compute A/B。根拠: [ADR-030](adr/ADR-030-compute-foreach.md)、[ComputeService.h](../src/Engine/Engine/Compute/ComputeService.h)、[KernelCompat.h](../src/Shared/KernelCompat.h) |
 | エンジン配布物 (M92) | [tools/make_dist.ps1](../tools/make_dist.ps1) が Release 本体・C# ホスト・Git サービスをビルドし、exe 一式・assets・C++ スクリプト用の `src/Shared` と `build/Common.props`・ライセンスを `dist_engine/` に集めて zip 化。受け取り側は [Setup.bat](../tools/engine_dist/Setup.bat) で不足する VC++ 再頒布・.NET 8・Git を winget で導入して Editor を起動する |
 | 保守とドッグフーディングの締め (M93) | C# ホストの ABI 版の実行時照合 (規則 11-e)、描画境界の規則 15、レビュー台帳 [docs/rev/oversights.md §8](rev/oversights.md)、`--debug-draw-log`、`builtin://wheel`、CharacterController と剛体の OnCollision*、`PhysicsEnvironment` 欠落の WARN、`SendScriptMessage` / `OnMessage` (ABI v30)、Animator Controller / Animation Preview / Audio Mixer の Undo、巨大ソースの責務分割 (DemoContent / PhysicsSystem / InspectorWindow を純粋なコード移動で翻訳単位に分けた。経緯は [docs/history](history/))。根拠: [dogfooding.md](dogfooding.md) の台帳、[EngineAPI.h](../src/Shared/EngineAPI.h) の v30、[UndoStack.h](../src/Editor/Undo/UndoStack.h) |
+
+## 19. 追補（2026-11-04）: M94 で増えたもの
+
+| 機能 | 入口と実装 |
+|---|---|
+| 手触り (M94) | 目的: ヒットの手触りを 1 つの資産として作り、Play しながら調整する。入口: `.feel.json` (Assets の Create > 手触りプリセット、アセット Inspector でライブ編集・カーブエディタ・Undo・プレビュー)、`MyePlayFeel` / `MyeHitStop` / `MyeSlowMotion` / `MyeCameraShake` / `MyeCameraKick` / `MyeRumble` (C++、ABI v31)、`FeelTrigger` (接触で鳴らす)、`SpringFollow` (ばね追従)、`actions.json` の `bufferTicks` / `response` / `outerDeadzone`、Window > Feel Monitor、`--feel-demo`。既定値と制約: 手触りを使わないシーンのハッシュ列は不変、C# レーンからは鳴らせない、低い % のスローはカクつく。検証入口: `Feel*SelfTest` / `SpringFollowSelfTest`、`replay_verify` の feel ジョブ、[test_checklists.md](test_checklists.md) の M94 節。根拠: [ADR-031](adr/ADR-031-game-feel.md)、[FeelState.h](../src/Engine/Engine/Feel/FeelState.h)、[FeelMath.h](../src/Shared/FeelMath.h) |

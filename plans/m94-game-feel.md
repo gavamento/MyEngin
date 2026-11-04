@@ -10,8 +10,16 @@
 
 | サブ | 状態 |
 |---|---|
-| M94a | 実装済み（CI 未確認） |
-| M94b〜M94j | 未着手 |
+| M94a〜M94j | 実装済み。CI (GitHub Actions) の結果はコミットごとに確認する。見た目・実パッド・カーブ操作は `docs/test_checklists.md` の M94 節で手動確認 (未実施) |
+
+計画からの変更 (実装中に決めたもの):
+
+- C# レーンからは手触りを鳴らせない (鳴らす・止める・消費するは hash 対象の状態を書くため。v30 の `SendScriptMessage` と同じ規則)。
+  C# は `IsSimStepping` と `SetFeelOutputScale` だけを使う。計画では C# の名前指定版・単機能版のラッパーも出す予定だった。
+- アセット Inspector は編集用の写しではなく FeelLibrary 上のプリセットを直接編集する (Undo を文書エントリに乗せるため。結果としてライブ調整になる)。
+- `kActionBuffered` は InputActions のキャッシュではなく Scene の窓から問い合わせ時に引く (同じ tick に消費した後は立たない)。
+- replay の feel ジョブは先行入力を被覆しない (台本で入力を作れないため)。InputActionsSelfTest と SimSnapshotSelfTest が被覆する。
+- 設計の決定は [ADR-031](../docs/adr/ADR-031-game-feel.md) に移した。
 
 ## Context
 
