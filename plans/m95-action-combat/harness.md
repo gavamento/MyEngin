@@ -12,8 +12,8 @@
 | sub-00b 計測に基づく層分けと縮小 (既定 60 秒以内) | 1 | sub-00 | 実装中 | 0 | | 計測は単独で回す |
 | sub-01 ヒットストップ (ABI v32、snapshot v66) | 1 | sub-00 | 実装中 | 0 | | |
 | sub-02 CC 同士の押し出しと接触イベント (snapshot v67、ADR-034) | 1 | sub-00 | 実装中 | 0 | | |
-| sub-04 遷移の割り込み (controller v3) | 1 | sub-00 | 差し戻し中 (round 2) | 1 | | round 1 REWORK: 最終検証 (Release / full / CR / RV / 三校) 未実施。コード変更なし |
-| sub-06 イベント時刻の秒・フレーム指定 | 1 | sub-00 | 実装中 | 0 | | |
+| sub-04 遷移の割り込み (controller v3) | 1 | sub-00 | OK | 2 | 3dca0f6 (m95/sub-04) | round 1 は最終検証未実施で REWORK。full 検証済み (Debug 814 s / Release 108 s、RV PASS)。三校は環境要因 |
+| sub-06 イベント時刻の秒・フレーム指定 | 1 | sub-00 | OK | 1 | cda5413 (m95/sub-06) | full 検証済み (Debug 619 s / Release 96 s、RV 22 jobs PASS)。三校 FAIL は別件 |
 | sub-03 部位の重なり・掃引 (ABI 193 スロット) | 2 | sub-01、Wave 1 統合 | 未着手 | 0 | | |
 | sub-05 ルートモーションの縦成分 (snapshot v68) | 2 | sub-02, sub-04、Wave 1 統合 | 未着手 | 0 | | |
 | sub-07 文書 + 最終統合確認 | 3 | 全部 | 未着手 | 0 | | |
@@ -50,3 +50,6 @@
 - Debug 全走の所要時間 (sub-00 の計測、全体 567 s): fracture 210 s / servernet 106 s / physics 64 s / navagent 45 s / fractureeditor 28 s / surfacedeferred 18 s / twoddemo 17 s。physics を縮める前に planner へ確認 (sub-00b.md の規則)
 - Wave 1 共通規則 (sub-04 round 1 の VERDICT で planner が spec §5 冒頭に追加): 「最後の round」の判定は coder が行い、OK を求める round では SELF_EVAL を返す前に --selftest-full Debug / Release + check_rules + replay_verify + 三校 verify を回す。planner は full 検証の結果が無い SELF_EVAL に OK を出さない。司会は Wave 1 の 5 本全部にこの規則を通知済み (2026-11-04)
 - sub-04 VERDICT の nit (申し送り): 割り込みで確定した tick は stateEntered = 0 になる (直前の AnimatorPlay(0) の stateEntered = 1 を潰す) → sub-07 の文書に 1 行。canInterrupt == 0 の遷移は走査内の先頭 continue で可 (anyInterruptible フラグ不要、spec §4.1 C を緩和)
+- sub-06 VERDICT の nit: (1) `ClipEventTickFromJson` の fps 負値のテストが無い (sub-00b か sub-07 で 1 件足してよい)。(2) 秒の併記 (受け入れ 28) の目視は sub-07 の test_checklists へ
+- 別件 (M95 とは無関係、基点以前から): 三校 `toolserify.bat` が 2 件 FAIL (shot main の img-diff diffPixels=34541、patrol の listener)。原因は三校側の `cache\GameLogic.dll` が API v30 のままで、M94 の ABI v31 以降ロードされていない (`replay_record.log`: `[dll] API version mismatch (dll=30, engine=31)`)。対処は三校の `toolsuild_scripts.bat` で DLL を作り直してから verify する。ABI を上げる M95 では Wave 1 統合後 (v32) にも作り直しが要る
+- 三校 verify の扱い (sub-04 round 2 の VERDICT で spec §5 冒頭に追記): 三校の cache/GameLogic.vcxproj は master 固定参照なので worktree では構造上通せない。司会が波の統合時に master で三校 DLL を作り直し (tools/build_scripts.bat) てから回し、結果を台帳に残す。worktree での DLL 不一致 FAIL は採点外、coder は回さなくてよい。Wave 1 統合後は ABI v32 で作り直す

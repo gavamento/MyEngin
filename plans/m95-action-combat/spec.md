@@ -182,7 +182,7 @@ Debug / Release / WARP でリプレイが一致する。
 #### F. イベント時刻の秒・フレーム指定 (sub-06)
 
 - `clipEvents` の各クリップは従来の配列、または `{"fps": 30, "events": [...]}` オブジェクト (fps は正の数、既定 60。0 以下 / 非数は警告して 60)。
-- 各イベントの位置: `tick` があればそれ。無ければ `time` (秒、数値) → `tick = llround(time * 60.0)`。無ければ `frame` (数値) → `tick = llround(frame * 60.0 / fps)`。どれも無ければ 0。double で計算し `std::llround` (half away from zero) → `int32_t`。換算は `FromJson` の 1 箇所。
+- 各イベントの位置: `tick` があればそれ。無ければ `time` (秒、数値) → `tick = llround(time * 60.0)`。無ければ `frame` (数値) → `tick = llround(frame * 60.0 / fps)`。どれも無ければ 0 (`time` / `frame` が数値でないときも 0)。double で計算し `std::llround` (half away from zero) → `int32_t`。換算結果が非有限なら 0、int32 の範囲外は clamp。換算は `FromJson` の 1 箇所。オブジェクト形で `events` キーが無いクリップは読み飛ばす (sub-06 VERDICT round 1 で確定)。
 - 保存 (`ToJson`) は従来どおり `tick` 配列 (手書きの `time` / `frame` は保存で tick 化される。文書に明記)。
 - Editor (`AnimationPreviewWindow` のイベント帯、`AnimPrev_EvTick` のスライダ): 右に `= 0.500 s` の併記 (tick / 60、`snprintf` した文字列を `%s` で出す。`Tr()` を書式に渡さない)。内部表現は tick のまま。
 
@@ -219,7 +219,8 @@ Debug / Release / WARP でリプレイが一致する。
 検証の略記: **ST** = `bin\x64\Debug\Editor.exe --selftest` と `bin\x64\Release\Editor.exe --selftest` (PowerShell ツールから起動)、**ST(名)** = `$env:MYE_SELFTEST_ONLY='<名>'` を付けた部分実行 (sub-00 以降)、**RV** = `tools\replay_verify.bat`、**CR** = `tools\check_rules.ps1`、**三校** = `C:\HAL\三校\tools\verify.bat` (`MYE_ENGINE=C:\HAL\MyEngin` 相当。worktree なら worktree のパス)。
 **ST-full** = `--selftest-full` (Debug / Release)。
 3 段の規則: 往復中 = ST(関連スイート) / SELF_EVAL を返す前 = ST (既定層、Debug) / VERDICT OK の直前 (最後の round) = ST-full Debug / Release + CR + RV + 三校を 1 回。
-**「最後の round」の判定は coder が行う**: 自分で「仕様との差分に must 級の未実装が無く、これで OK を求める」と判断した round では、SELF_EVAL を返す**前**に ST-full Debug / Release + CR + RV + 三校を回し、結果を検証欄に貼る。planner は full 検証の結果が無い SELF_EVAL に OK を出さない (REWORK で「最終検証を回して次の round で返す」を指示する)。下の各条件の「ST(名)」は往復中の確認手段で、OK 前の ST-full で同じ検査が全部回る。
+**「最後の round」の判定は coder が行う**: 自分で「仕様との差分に must 級の未実装が無く、これで OK を求める」と判断した round では、SELF_EVAL を返す**前**に ST-full Debug / Release + CR + RV + 三校を回し、結果を検証欄に貼る。planner は full 検証の結果が無い SELF_EVAL に OK を出さない (REWORK で「最終検証を回して次の round で返す」を指示する)。
+**三校 verify の扱い** (2026-11-04、司会の切り分け): 三校の `cache\GameLogic.vcxproj` は `C:\HAL\MyEngin` (master) を固定参照し、`cache\GameLogic.dll` は API 版が合わないとロードされない (M95 基点以前から v30 のままで M94 以降ロードされていなかった = 別件、台帳に記録)。worktree のエンジンでは構造上通せない (ABI を上げる sub-01 では必ず不一致) ので、**三校 verify は司会が波の統合時に master で三校の DLL を作り直してから回す**。各サブの worktree で三校を回した結果は SELF_EVAL に貼ってよいが、DLL 不一致 (`API version mismatch` / `GameLogic.dll was not loaded`) が原因の FAIL は環境要因として採点に含めない。coder は三校を回さなくてよい (回すなら shot.log の `[dll]` 行を併記する)。下の各条件の「ST(名)」は往復中の確認手段で、OK 前の ST-full で同じ検査が全部回る。
 
 A. ヒットストップ
 1. `pauseTicks = n` の間、`stateTimeTicks` / `statePhase` / `transitionTick` / `stateEntered` が変わらず、駆動 SkinnedMesh の `poseLayers[i].timeQ` が保たれ `stepQ == 0`、`poseClaim == 1`。n tick 後に自動再開し、停止の前後で時刻の差は進めた tick 数に等しい — ST(animatorcontroller)
@@ -309,6 +310,8 @@ H. round 2 で追加 (ユーザー判断)
 
 ## 8. 変更履歴
 
+- 2026-11-04 sub-04 VERDICT round 2 (出所: 司会の切り分け): §5 冒頭に三校 verify の扱い (司会が波の統合時に master で三校 DLL を作り直してから回す。worktree での DLL 不一致 FAIL は採点外) を追記
+- 2026-11-04 sub-06 VERDICT round 1 (出所: coder SELF_EVAL の「仕様との差分」): §4.1 F に「数値でない time / frame は 0」「非有限は 0、int32 範囲外は clamp」「events 無しのオブジェクト形は読み飛ばす」を明記
 - 2026-11-04 補足 3 (出所: ユーザー判断、司会の AskUserQuestion): 受け入れ 30 の証拠を「Wave 2 統合時に司会が回す full 検証 (付録 B の 4.)」に代用し、sub-07 (文書のみ) は参照先の実在と check_rules だけを確認する。sub-07.md の検証コマンド節を同じ方針に変更
 - 2026-11-04 sub-04 VERDICT round 1 (出所: coder SELF_EVAL の「仕様との差分」): §4.1 C の「走査に入らない形」を「走査内の先頭 continue でよい」に緩和 (結果・状態が同一で fp 演算が無いため)。§5 冒頭の 3 段の規則に「full 検証の結果が SELF_EVAL に無い round には OK を出さない」を明記
 - 2026-11-04 sub-00 VERDICT round 1 (出所: coder SELF_EVAL の「仕様との差分」): §4.0 の `MYE_SELFTEST_ONLY` に「別名 1 個だけは別名の並び」「項目は小文字化」「`servernet` / `computescript` は別名表に載せない」を明記。§4.0 と sub-00 受け入れ 34 の食い違い (表の順 vs m94 の従来順) を後者で解消
