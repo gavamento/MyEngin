@@ -49,6 +49,8 @@ Debug / Release / WARP でリプレイが一致する。
 | 20 | 既存シーンのビット同一の検証手段 | `tools\replay_verify.bat` と三校 `C:\HAL\三校\tools\verify.bat`。HAL Collector (`C:\HAL\GameEngin_Demo`) に検証スクリプトは無い | — | replay_verify + 三校 verify.bat。HAL Collector は selftest / replay_verify で代用 (未検証として報告) |
 | 21 | hash 対象かどうか | AnimatorController / CC / Rigidbody は hash 対象 (`Components.h:777-779, 851-853`、`Components.cpp:15`)。SkinnedMesh は NoHash (`Components.cpp:288`) だが生バイトは snapshot に載る | — | 追加欄は全て既定 0 / false → シミュレーションの結果 (位置・速度・分岐) は不変。**ただし WorldHash はカラムの生バイトを混ぜるので、hash 対象の struct に欄を足すと値そのものは変わる** (M94i で CC の 2D 欄を足したときと同じ)。selftest に焼き込んだ hash 定数 (CC2D / 庭 / tile / gridnav / twod の 5 件) と AcousticAudioSelfTest の snapshot 版チェックは、欄を足したサブが再採取し、波の統合後に司会が最終値で再採取する (付録 B)。レイアウト変更は snapshot 版で吸収 (sub-02 VERDICT round 1 で訂正) |
 | 22 | selftest の全走が長く、往復のたびに回すと coder の時間を食う | `EditorMain.cpp:586-614` の `MYE_SELFTEST_ONLY` は 4 値 (`servernet*` / `computescript` / `twod` / `m94`) のハードコードで、他のスイートは絞れない。所要時間のログも無い | **sub-00 を先頭に足す** (2026-11-04) | 「スイート名 → 関数」の登録表に置き換え、カンマ区切りの任意名で絞る。`--selftest-list`、スイートごとの ms ログ。既存 4 値は別名として残す。製品の挙動には触れない |
+| 24 | 既定層の 60 秒に余白が要るか (sub-00b の実測: N=9 で `--selftest` Debug が 59.7 / 54.6 秒、余白 0.3 秒) | 2 回のばらつきが約 5 秒。sub-01 が animatorcontroller に約 115 行のテストを足し、sub-04 / 06 / 03 / 05 も既定層のスイート (animatorcontroller / part / skeleton) に足す → 統合時点で 60 秒を割る見込み。CI は `--selftest-full` なので影響は手元の運用だけ | planner 裁定 (N=10、occlusion 5.2 秒を Full へ)。却下案: N=9 のまま (規則の字面どおりだが、統合後に受け入れ 39 を割る)。[ユーザーに聞ける] | §4.0 の規則に「実測の大きい方が 55 秒超なら N+1」を追加。sub-00b round 2 で N=10 にして再計測 |
+| 25 | `replay_verify.bat` の demo ジョブが `The system cannot find the batch label specified - chain` で 0.4 秒 FAIL (sub-00b の worktree、3 回) | 同じ bat が master / sub-01 の worktree で md5 同一・22 ジョブ PASS。単独実行 (`run_parallel.ps1 -Jobs demo`) は PASS。bat は UTF-8 で日本語の rem が多く、cmd の `call :label` はファイルをバイト位置で読み直すのでコンソールのコードページ (chcp 65001 の残留、memory `chcp-console-leak-trap`) や同時実行中の読み直しで探索が外れることがある。sub-00b は bat に触れていない | — | 環境要因と判定。司会の再実行 (sub-00b の worktree) が PASS ならそれを受け入れ条件の RV の証拠にする。FAIL なら coder が `chcp` を 932 に戻して 1 回だけ再実行し、それでも同じなら別件として台帳へ |
 | 23 | 並列実装で末尾 append が別の struct に入る誤マージ (memory `parallel-milestone-execution` #5) | 両ブランチが同じ `};` の直前に追記すると git は競合と見なさず自動解決する | 波単位の並列 (2026-11-04) | 付録 A で append 先を struct ごとに分け、sub-00 が予約マーカー (コメント行) を先に入れて各サブは自分のマーカーの下にだけ書く。統合時は付録 B の目視手順 |
 
 ## 3. スコープ
@@ -103,6 +105,8 @@ Debug / Release / WARP でリプレイが一致する。
 
 - **先に計測する** (AGENTS §3.5。推測で層分けしない): sub-00 の ms ログで Debug / Release の全スイートを各 2 回回し、スイート名 / Debug ms / Release ms の表を `sub-00b.md` の実装メモに残す (2 回の差が大きいスイートはその旨を書く)。
 - 層分けの規則: 所要時間 (Debug) の降順に並べ、**上位 N 本を `Full` にしたとき残り (既定層) の合計が 60 秒以内に収まる最小の N** を採る。候補は所要時間だけで選ぶ (名前や印象で選ばない)。
+  **余白 (sub-00b VERDICT round 1 で追加)**: その N で実際に `--selftest` (Debug) を 2 回回した total の**大きい方が 55 秒を超えるなら N+1** にして計測し直す (2 回の計測のばらつきが約 5 秒あること、Wave 1 / 2 が既定層のスイート (animatorcontroller / part / skeleton) にテストを足すことの余白。受け入れ 39 を統合後も割らないため)。N+1 で 55 秒以内に入ればそこで止める。
+  `physics` が `Full` に入ることは許容する (所要時間だけで選ぶ規則の帰結)。physics / その他の `Full` スイートを触るサブは、往復中 `ST(名)` で名指しし、OK 前の `--selftest-full` で全走する (§5 冒頭)。
 - 縮小の検討: `Full` 候補のうち、サイズを縮めても不変量を守れるスイート (前例: M80 の破砕ベンチで res を落とした) は、`Full` へ移す代わりにパラメータを縮めて `Fast` に残す案を 1 本ずつ検討し、採否と理由を実装メモに書く。**Debug / Release のビット一致・焼き込みハッシュ・golden を検査しているスイート (例: `twoddemo` の 3000 tick、`navdeterminism`、`simparallel`) は値を変えない** (`Full` へ移す)。縮めた場合は縮めた値で `Full` の検査も同じになるので、元の値での検査が要るなら `Full` 用の入口 (環境変数または引数) を残す。
 - 分け終えたら表の `tier` を書き換える。既存 4 値の別名は tier を問わず従来の集合を回す。
 - `docs\test_checklists.md` / `engine_spec.md` の記述は sub-07 (sub-00b は表と `AGENTS.md` の 1 行だけ)。
@@ -219,7 +223,7 @@ Debug / Release / WARP でリプレイが一致する。
 
 検証の略記: **ST** = `bin\x64\Debug\Editor.exe --selftest` と `bin\x64\Release\Editor.exe --selftest` (PowerShell ツールから起動)、**ST(名)** = `$env:MYE_SELFTEST_ONLY='<名>'` を付けた部分実行 (sub-00 以降)、**RV** = `tools\replay_verify.bat`、**CR** = `tools\check_rules.ps1`、**三校** = `C:\HAL\三校\tools\verify.bat` (`MYE_ENGINE=C:\HAL\MyEngin` 相当。worktree なら worktree のパス)。
 **ST-full** = `--selftest-full` (Debug / Release)。
-3 段の規則: 往復中 = ST(関連スイート) / SELF_EVAL を返す前 = ST (既定層、Debug) / VERDICT OK の直前 (最後の round) = ST-full Debug / Release + CR + RV + 三校を 1 回。
+3 段の規則: 往復中 = ST(関連スイート) / SELF_EVAL を返す前 = ST (既定層、Debug) **+ 自分が触ったスイートのうち `Full` のもの (sub-00b 以降は physics 等) を `ST(名)` で名指し** / VERDICT OK の直前 (最後の round) = ST-full Debug / Release + CR + RV + 三校を 1 回。
 **「最後の round」の判定は coder が行う**: 自分で「仕様との差分に must 級の未実装が無く、これで OK を求める」と判断した round では、SELF_EVAL を返す**前**に ST-full Debug / Release + CR + RV + 三校を回し、結果を検証欄に貼る。planner は full 検証の結果が無い SELF_EVAL に OK を出さない (REWORK で「最終検証を回して次の round で返す」を指示する)。
 **三校 verify の扱い** (2026-11-04、司会の切り分け): 三校の `cache\GameLogic.vcxproj` は `C:\HAL\MyEngin` (master) を固定参照し、`cache\GameLogic.dll` は API 版が合わないとロードされない (M95 基点以前から v30 のままで M94 以降ロードされていなかった = 別件、台帳に記録)。worktree のエンジンでは構造上通せない (ABI を上げる sub-01 では必ず不一致) ので、**三校 verify は司会が波の統合時に master で三校の DLL を作り直してから回す**。各サブの worktree で三校を回した結果は SELF_EVAL に貼ってよいが、DLL 不一致 (`API version mismatch` / `GameLogic.dll was not loaded`) が原因の FAIL は環境要因として採点に含めない。coder は三校を回さなくてよい (回すなら shot.log の `[dll]` 行を併記する)。下の各条件の「ST(名)」は往復中の確認手段で、OK 前の ST-full で同じ検査が全部回る。
 
@@ -311,6 +315,7 @@ H. round 2 で追加 (ユーザー判断)
 
 ## 8. 変更履歴
 
+- 2026-11-04 sub-00b VERDICT round 1 (出所: coder SELF_EVAL の「不安・質問」2 / 3): §4.0 sub-00b の層分け規則に余白 (実測 total の大きい方が 55 秒超なら N+1) を追加 (§2 #24、planner 裁定、[ユーザーに聞ける])。physics が Full に入ることを明記し、§5 冒頭の 3 段規則の「SELF_EVAL を返す前」に「触った Full スイートを名指し」を追加。§2 #25 に replay_verify の demo ジョブのラベルエラーを環境要因として記録
 - 2026-11-04 sub-01 VERDICT round 1 (出所: coder SELF_EVAL の「仕様との差分」): §4.1 A と付録 A.1 の「`ScriptAPI.h` の inline 糖衣」を削除 (同ファイルに Animator 系の C++ 糖衣は元々無い — 仕様の前提違い)。§4.1 A と付録 A.1 に `tools\check_rules.ps1` の `$apiVersionSlots` (`32 = 190` → sub-03 で `32 = 193`) を追記 (仕様の穴。sub-03.md の触る場所にも追記)
 - 2026-11-04 sub-02 VERDICT round 1 (出所: coder SELF_EVAL): §2 #21 の「hash 不変」を「結果は不変だが WorldHash の値は変わる (焼き込み定数は再採取)」に訂正。§5 受け入れ 7 に「接した状態から」と隙間からの 1 歩ぶんの重なりの許容を明記。付録 B の 4. に焼き込み hash の再採取手順 (統合コミット前に 1 回、根拠は --selftest-full のログ) を追加
 - 2026-11-04 sub-04 VERDICT round 2 (出所: 司会の切り分け): §5 冒頭に三校 verify の扱い (司会が波の統合時に master で三校 DLL を作り直してから回す。worktree での DLL 不一致 FAIL は採点外) を追記
