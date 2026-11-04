@@ -15,6 +15,7 @@
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Util/Random.h"
 #include "Engine/Engine/Animation/Animation.h"
+#include "Engine/Engine/Feel/FeelState.h"
 #include "Engine/Engine/Animation/AnimatorController.h"
 #include "Engine/Engine/Asset/CookedCache.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
@@ -257,6 +258,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // M51h: SetPadVibration の目標値。スロットは書くだけで、適用はフレーム末の出力レーン
     // (record/verify 中とフォーカス喪失中は 0 に落とし、終了時も 0 リセット)
     PadVibrationState padVibration;
+    // M94c: 手触りの出力倍率 (揺れ / 振動 / 画面効果、アクセシビリティ)。padVibration と同じ出力レーンで、
+    // sim は書くだけ・読み返さない。適用はフレーム末の EvaluateFeel
+    FeelOutputScale feelOutputScale;
     // M64a: SetCursorMode の要求値。padVibration と全く同じ出力レーンで、適用は
     // フレーム末 (record/verify 中・フォーカス喪失中・スクラブ中は強制解除、終了時も解除)
     CursorLockState cursorLock;
@@ -2942,6 +2946,15 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // dt は**実時間**を渡す (M45f の BGM クロスフェードは絶対経過時間で進むため。
         // 固定 dt を渡すと 6500fps ではフェードが 100 倍速で終わる)
         audioSystem.Update(static_cast<float>(dt));
+        // ---- M94c: 再生中の手触りの評価 (ADR-031)。sim 状態 (Scene::Feel) と描画補間の係数の純関数で、
+        // 振動と描画 (カメラの揺れ・キック・画面効果) の両方がこの 1 回の結果を読む。
+        // 係数の条件は下の renderSystem.interpAlpha と同一 (補間しないときは最新 tick = 1.0) ----
+        const bool feelInterpOk = lastTickSimulated && !recorder.IsActive() && !player.IsActive()
+            && !timeTravel.Scrubbing() && !clientEnabled;
+        const float feelAlpha = feelInterpOk
+            ? std::clamp(static_cast<float>(accumulator / kFixedDt), 0.0f, 1.0f)
+            : 1.0f;
+        const FeelFrameOutput feelOut = EvaluateFeel(scene.Feel(), feelAlpha, feelOutputScale);
         // ---- パッド振動の適用 (M51h、出力レーン)。record/verify 中は 0 に落とす
         // (オーディオ suspend と同型)。フォーカス喪失中も 0 (裏で振動し続けない)。
         // 実際の XInputSetState は Input 側が値の変化時だけ発行する ----
@@ -2949,8 +2962,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // M52e: スクラブ中も 0 (止まった世界の裏で振動し続けない = 出力レーンの抑止)
             const bool vibSuspend = recorder.IsActive() || player.IsActive()
                 || !window.HasFocus() || timeTravel.Scrubbing();
-            input.ApplyVibration(vibSuspend ? 0.0f : padVibration.left,
-                                 vibSuspend ? 0.0f : padVibration.right);
+            // M94c: 手触りの振動はモーターごとに SetPadVibration との max (足すと振り切れる)。
+            // 左 = 低周波モーター、右 = 高周波モーター (XInput の割り当て)
+            const float vibLeft = padVibration.left > feelOut.rumbleLow ? padVibration.left : feelOut.rumbleLow;
+            const float vibRight = padVibration.right > feelOut.rumbleHigh ? padVibration.right : feelOut.rumbleHigh;
+            input.ApplyVibration(vibSuspend ? 0.0f : vibLeft, vibSuspend ? 0.0f : vibRight);
 
             // ---- カーソルロックの適用 (M64a、出力レーン)。抑止条件は振動と同一 ----
             // ★Escape は**エンジンが最後の逃げ道として横取りする**。エディタで Play 中に
@@ -3024,6 +3040,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 ? std::clamp(static_cast<float>(accumulator / kFixedDt), 0.0f, 1.0f)
                 : 1.0f;
             renderSystem.prevWorld = &prevWorld;
+            renderSystem.feel = feelOut; // M94c: シーンカメラの揺れ・キックと画面効果のパルス (描画専用)
             renderSystem.simTick = ctx.tickIndex; // URO の更新 tick (描画専用。実時間・フレーム数は使わない)
             if (sceneLoadSerial != renderSceneLoadSerial) {
                 renderSceneLoadSerial = sceneLoadSerial;

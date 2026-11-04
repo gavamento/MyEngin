@@ -23,6 +23,7 @@ void PlayModeController::Play(Scene& scene)
     // フレッシュロード時と食い違い、エディタ内で録った .rep が replay_verify
     // (フレッシュロード) と一致しなくなる (M8 の決定論規約)。
     SceneSerializer::LoadFromJson(scene, snapshot_);
+    scene.Feel().Clear(); // M94c: 再生中の手触りは Play の外に持ち出さない (編集中は進まないので残すと止まって見える)
     state_ = PlayState::Playing;
     MYE_LOG_INFO("[play] started (snapshot: %zu entities, reloaded)", snapshot_["entities"].size());
 }
@@ -35,6 +36,7 @@ void PlayModeController::Stop(Scene& scene)
     SceneSerializer::LoadFromJson(scene, snapshot_);
     scene.Time() = timeSnapshot_;       // M51g: Play 中のポーズ/永続値を編集状態へ漏らさない
     scene.Persist() = persistSnapshot_;
+    scene.Feel().Clear(); // M94c
     timeSnapshot_ = TimeControl{};
     persistSnapshot_.Clear();
     snapshot_.clear();

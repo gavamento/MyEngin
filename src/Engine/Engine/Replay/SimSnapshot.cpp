@@ -31,7 +31,7 @@ SimSources SimSourcesOf(Scene& scene, const CpuParticleBackend* particles, const
     // SessionLanes はシステム入力を持つ記録のときだけ畳む (D10)。持たない記録のハッシュ列を動かさない
     const SessionLanes* lanes = scene.Lanes().systemInput != 0 ? &scene.Lanes() : nullptr;
     return { particles, &scene.Time(), &scene.Persist(), xpbd, acoustic, &scene.UI(), lanes, nav, behaviorTree,
-             computeState };
+             computeState, &scene.Feel() };
 }
 
 const compute::ComputeBufferStore* ComputeGameStoreOf(const compute::ComputeService* service)
@@ -103,6 +103,18 @@ void WriteScene(ByteWriter& w, const Scene& scene)
     w.F32(ui.prevSurfX);
     w.F32(ui.prevSurfY);
     w.U32(ui.dragging);
+    // v51 (M94c): 再生中の手触り。空きスロットも含めて固定 16 件を欄ごとに書く (レイアウト固定、詰め物を書かない)
+    const FeelState& feel = scene.Feel();
+    w.U32(feel.NextSerial());
+    for (uint32_t i = 0; i < kMaxFeelInstances; ++i) {
+        const FeelInstance& s = feel.Slot(i);
+        w.U32(s.active);
+        w.U32(s.serial);
+        w.I32(s.ageTicks);
+        w.F32(s.intensity);
+        w.U64(s.sourceKey);
+        w.Raw(&s.desc, sizeof(s.desc));
+    }
 
     w.U64(scene.PeekNextFileId());
     w.Str(scene.Name()); // v15 (M71a)
@@ -129,6 +141,7 @@ void WriteScene(ByteWriter& w, const Scene& scene)
 struct SceneState {
     TimeControl time;
     UIInteractionState ui;
+    FeelState feel; // v51 (M94c)
     PersistStore::Map persist;
     uint64_t nextFileId = 1;
     // v15 (M71a): ABI v17 GetSceneName でスクリプトが読めるようになった = sim が
@@ -180,6 +193,16 @@ bool ReadScene(ByteReader& r, SceneState& out)
     out.ui.prevSurfX = r.F32();
     out.ui.prevSurfY = r.F32();
     out.ui.dragging = r.U32();
+    out.feel.SetNextSerial(r.U32()); // v51 (M94c)
+    for (uint32_t i = 0; i < kMaxFeelInstances; ++i) {
+        FeelInstance& s = out.feel.Slot(i);
+        s.active = r.U32();
+        s.serial = r.U32();
+        s.ageTicks = r.I32();
+        s.intensity = r.F32();
+        s.sourceKey = r.U64();
+        r.Raw(&s.desc, sizeof(s.desc));
+    }
 
     out.nextFileId = r.U64();
     out.name = r.Str(); // v15 (M71a)。書いた順に読む
@@ -728,6 +751,7 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
 
     refs.scene->Time() = scene.time;
     refs.scene->UI() = scene.ui; // M70c
+    refs.scene->Feel() = scene.feel; // M94c
     refs.scene->Lanes() = sessionLanes; // M81b
     refs.scene->Persist().Entries() = std::move(scene.persist);
     refs.scene->SetNextFileId(scene.nextFileId);

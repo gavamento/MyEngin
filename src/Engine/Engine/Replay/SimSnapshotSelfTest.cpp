@@ -70,6 +70,13 @@ void BuildScene(Scene& scene)
     scene.Time().accum = 30;
     scene.Time().RequestFreeze(7);                       // v51 (M94b)
     scene.Time().RequestSlow(30, 12, 20, MYE_EASE_OUT_QUAD);
+    MyeFeelDesc feelDesc;                                // v51 (M94c)
+    feelDesc.shakeTicks = 30;
+    feelDesc.shakePosAmp = 0.2f;
+    feelDesc.rumbleTicks = 10;
+    feelDesc.rumbleLow = 0.5f;
+    scene.Feel().Play(feelDesc, 0.75f, 0x5151ull, scene.Time());
+    scene.Feel().Advance();
     const uint64_t score = 1234;
     scene.Persist().Set(0xABCDull, &score, sizeof(score));
     scene.Persist().Set(0x1111ull, "hi", 2);
@@ -157,6 +164,7 @@ bool RunSimSnapshotSelfTest()
     scene.Time().paused = false;
     scene.Time().scalePercent = 100;
     scene.Time().ClearFeelEffects();
+    scene.Feel().Clear();
     scene.Persist().Clear();
     scene.SetSourcePath(L"");
     scene.SetName("WrongStage"); // 復元で必ず上書きされること
@@ -191,6 +199,10 @@ bool RunSimSnapshotSelfTest()
               && scene.Time().slowRecoverTicks == 20 && scene.Time().slowRecoverLeft == 20
               && scene.Time().slowRecoverEase == MYE_EASE_OUT_QUAD,
           "hit-stop and timed slow motion are restored (v51)");
+    check(scene.Feel().NextSerial() == 2 && scene.Feel().Slot(0).active == 1 && scene.Feel().Slot(0).ageTicks == 1
+              && scene.Feel().Slot(0).intensity == 0.75f && scene.Feel().Slot(0).sourceKey == 0x5151ull
+              && scene.Feel().Slot(0).desc.shakeTicks == 30 && scene.Feel().Slot(0).desc.rumbleLow == 0.5f,
+          "playing feel instances are restored (v51)");
     check(scene.HasOverrideRecord(1) && scene.GetOverrides(3) != nullptr
               && scene.GetOverrides(3)->size() == 2,
           "prefab override records are restored");

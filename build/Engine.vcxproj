@@ -137,6 +137,8 @@
     <ClCompile Include="..\src\Engine\Engine\Demo\ShowcaseScenes.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\StartScene.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Feel\FeelMathSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Feel\FeelState.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Feel\FeelSystemSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloaderSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\ReloadHub.cpp" />
@@ -465,6 +467,8 @@
     <ClInclude Include="..\src\Engine\Engine\Demo\ShowcaseScenes.h" />
     <ClInclude Include="..\src\Engine\Engine\Demo\StartScene.h" />
     <ClInclude Include="..\src\Engine\Engine\Feel\FeelMathSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Feel\FeelState.h" />
+    <ClInclude Include="..\src\Engine\Engine\Feel\FeelSystemSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\HotReload\DllReloader.h" />
     <ClInclude Include="..\src\Engine\Engine\HotReload\DllReloaderSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHub.h" />
