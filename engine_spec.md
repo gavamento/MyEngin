@@ -2943,6 +2943,35 @@ AI and tools
 - The synthetic input of the demo leans left, so the hero collects at the left wall and hill during a replay (coverage of the middle of the level is thinner than of the left).
 - Not done by design: 2D skeletal animation, top-down (Y-sort / XZ) play, a dedicated 2D solver, black borders, wrap samplers and atlas packing, World Space Canvas, Platform Effector's variable surface arc, Collider Type = Sprite, isometric / hex grids, and network play (M81 / M93) for 2D (it is simulation, so it should work, but only `replay_verify` is claimed).
 
+### 10.14 Action combat foundations (M95, ADR-034)
+
+Six small engine facilities for action games (hit stop, hit-box queries on parts, interruptible transitions, character-vs-character contacts, vertical root motion, event times in seconds or frames). **Every one is opt-in with a default of 0 / false: a scene that uses none of them keeps its simulation results bit-identical** (the new fields are written into the World section, so `WorldHash` values do change; the simulation does not). Decision record: [`docs/adr/ADR-034-character-contacts.md`](docs/adr/ADR-034-character-contacts.md).
+
+**A. Hit stop.** `AnimatorControllerComponent.pauseTicks` (hash-relevant, read-only in the Inspector). While it is above 0 the Animator freezes the driven skinned mesh the same way an inactive entity is frozen, advances no time, phase, transition counter or `stateEntered`, fires no events, leaves sprite frames as they are, zeroes `rootMotionVelocity` (so a CC's `moveInput.xz` and a non-kinematic Rigidbody's `velocity.xz` become 0) and decrements the counter. An inactive entity does not decrement it (the freeze wins). `AnimatorSetPause(entity, ticks)` overwrites (no accumulation, negative = 0; returns 1, or 0 with no Animator); `AnimatorGetPause` returns the remaining ticks (-1 with no Animator). Speed scaling is not supported (this is a stop, not a slow-motion).
+
+**B. Part overlap and sweep.** `Parts::OverlapSphereParts`, `Parts::OverlapCapsuleParts` (end points `p0` / `p1` are the hemisphere centres) and `Parts::SphereCastParts` visit the parts of a root with a tag in ascending entity-index order, so results are deterministic. `SphereCastParts` uses the same two-way scheme and constants as `SphereCastWorld` (sphere parts: a ray against the inflated shape; box parts: 32 conservative marching steps); the capsule is an overlap only (no capsule sweep). They read `WorldMatrix` from the previous tick's TransformSystem, like `RaycastParts`, so they are not usable from `Start()`. **`RaycastParts` / `SphereCastParts` expect a normalised `dir` from the caller** (`SphereCastWorld` normalises itself).
+
+**C. Interruptible transitions.** `ControllerTransition.canInterrupt` (JSON `"canInterrupt": 1`, default 0). While a transition is running, the first transition with `canInterrupt == 1`, no exit time, `from` in {any, the current state, the target state}, a different target and all conditions met is taken: the running transition is settled to whichever side is nearer (`transitionTick * 2 >= transitionDuration` settles to the target), then the new one starts. The tick of an interruption ends with **`stateEntered = 0`** (it overrides the `stateEntered = 1` of the `AnimatorPlay(0)` just before it). A settle that would return to the new transition's own target is not taken. `AnimatorPlay(duration > 0)` called during a transition follows the same settle rule; `duration <= 0` still switches at once. A controller with no `canInterrupt` behaves as before.
+
+**D. Contacts between CharacterControllers.** `CharacterControllerComponent.collideCharacters`, `pushPriority`, `reportContacts` (hash-relevant). Two CCs that both have `collideCharacters` push out of each other from the **start-of-tick capsule** of the other, so the result does not depend on the scan order; a CC whose partner has a higher `pushPriority` is the only one pushed (equal priorities stop each other). Because the partner's pose is the start-of-tick pose, **two CCs of equal priority walking toward each other can overlap by at most one step (speed x dt) for a tick**. A `reportContacts` CC's contacts (floor, kinematic, dynamic body, other CC) are merged into the `SolidContact` list with `impulse = 0` and reach `OnCollisionEnter/Stay/Exit` and `GetContactInfo`; on an equal key the rigid-body solver's entry wins (no double delivery). **The CC exchanges no momentum and does not push rigid bodies** (ADR-034).
+
+**E. Vertical root motion.** A controller state with `"skel": {"clip": "Jump", "rootMotionY": 1}` lets the clip decide height. The Animator derives `rootMotionVelocity.y` from the layers that have the flag (the horizontal chain is unchanged); `SkinningSystem::StripRootMotion` removes the same vertical share from the pose. `ApplyRootMotion` writes it only on a tick where such a layer actually advanced (an empty sample interval, for example a non-looping clip stuck on its last frame, counts as not driving, and gravity returns): a CC and a non-kinematic Rigidbody get `useVerticalInput = true; verticalInput = velocity.y` (new hash-relevant fields, consumed like `jumpSpeed`; the Rigidbody skips the y gravity integration of all sub-steps for that tick), a kinematic body and a plain LocalTransform get y added directly. While the flag state drives the bones, gravity does not act (a clip with y = 0 floats), so use it only on states whose clip decides height (a lunge, a back-hop), never on walk or idle. During a transition y is blended linearly with the other layer. **The one-way platform pass test looks at the previous tick's `velocity.y`, so on the first tick of a vertical input the pass is one tick late** (the same one-tick lag as `jumpSpeed`).
+
+**F. Event times in seconds or frames.** In `clipEvents` a clip may be the old array or `{"fps": 30, "events": [...]}` (`fps` positive, default 60; 0 or less / non-numeric warns and uses 60). An event position is `tick`, else `time` (seconds, `llround(time * 60)`), else `frame` (`llround(frame * 60 / fps)`), else 0. The conversion is in `ClipEventTickFromJson`. Saving writes `tick` only (hand-written `time` / `frame` become ticks). The `AnimationPreviewWindow` event strip shows `= 0.500 s` beside the tick slider.
+
+**Not supported (v1).** Speed multipliers and slow-motion; re-mixing of a mixed pose when a transition is interrupted (the settle is a pick, not a blend of blends); a capsule sweep; a vertical input for a kinematic Rigidbody (it is written straight to its LocalTransform, with no gravity-skip mark); momentum exchange between a CC and a body.
+
+**Numbers.** ABI **v32 = 193 slots** (188 -> 193, appended in the order `AnimatorSetPause`, `AnimatorGetPause`, `OverlapSphereParts`, `SphereCastParts`, `OverlapCapsuleParts`; `check_rules.ps1` slot table `32 = 193`, `Interop.cs` by position; a `GameLogic.dll` built for v31 is refused and must be rebuilt). SimSnapshot **v66** (`pauseTicks`), **v67** (CC contact fields), **v68** (vertical-input fields, `PoseLayer.rootMotionY`). Controller asset **v3** (`"controller": 3`; v1 / v2 still load, saving writes v3). No new TypeId (the last one stays PixelPerfectCamera2D 93). Example:
+
+```json
+{ "controller": 3,
+  "states": [ { "name": "Lunge", "skel": { "clip": "Lunge", "rootMotionY": 1 } } ],
+  "transitions": [ { "from": -1, "to": 0, "duration": 6, "canInterrupt": 1 } ],
+  "clipEvents": { "Lunge": { "fps": 30, "events": [ { "frame": 12, "name": "hit" }, { "time": 0.5, "name": "end" } ] } } }
+```
+
+**Verification.** The selftest has three layers (see 11.3). Related suites: `MYE_SELFTEST_ONLY=m95` (alias for `physics,animatorcontroller,skeleton,part,twodabi,simsnapshot,worldhasher`). A manual checklist is the M95 section of [`docs/test_checklists.md`](docs/test_checklists.md).
+
 ---
 
 ## 11. Debug/Release Consistency Policy
@@ -3428,6 +3457,8 @@ desktop cursor. `Escape` releases the lock from inside the engine, since a locke
 Play would otherwise leave the editor's Stop button unreachable; the release latches until the
 game issues `SetCursorMode(0)` again, so a script that writes `1` every tick cannot swallow it.
 
+**Self-test layers (M95).** `Editor.exe --selftest` has three entry points so that one run does only as much as needed. `MYE_SELFTEST_ONLY=<name,...>` runs the named suites (or aliases such as `m94`, `m95`, `twod`) in table order and takes priority over the other two; names come from `Editor.exe --selftest-list`, and an unknown name prints a list and exits 2. A plain `--selftest` runs the `Fast` tier (a 60-second target in Debug; `Full` tier = physics, surfacematerial, surfacedeferred, fracture, fractureeditor, servernet, navagent, behaviortree, occlusion, twoddemo). `--selftest-full` (or `MYE_SELFTEST_FULL=1`) runs all 110 suites and is what CI, review and pre-push use. The tier table is `src/Editor/SelfTest/SelfTestSuites.cpp`. Known unstable: `fractureeditor` cancel tests and the `computemanaged` FileWatcher tests can fail by timing under load or in a different order.
+
 ### 11.4 Networked Determinism (2-player P2P, delay lockstep + predictive rollback)
 
 M52h/M52i turn the replay determinism this chapter guarantees into a netcode. The claim being
@@ -3749,7 +3780,7 @@ Kept verbatim, because the completion criteria it set are still the ones the pro
 
 The order was intentional: implementing the reload foundation in M3 first accelerated subsequent particle development through dogfooding.
 
-### 12.2 What was actually built (M0-M91, M94)
+### 12.2 What was actually built (M0-M91, M94, M95)
 
 **2026-07-19 → 2026-10-12, over 600 commits.** The primary source is `git log`; the prefix on each
 commit subject names the milestone. Grouped by system rather than by number, because the numbers
@@ -3781,6 +3812,7 @@ interleave — several tracks ran in parallel and a few milestones were revisite
 | Render optimization | M90 | Measurement first (per-view `RenderStats`, GPU timers, the `render_bench` scenes and `--render-stats-dump`); opt-in **mesh LOD** generated by meshoptimizer into the cooked blob (`kCookVersion` 6); two-phase **GPU occlusion culling** with a per-view max-Z pyramid for Deferred and Forward, default on and saved in `project_settings.json`; per-cascade shadow culling that keeps off-screen casters' shadows, and a conservative skinned AABB; render-side parallelism, a view-shared palette cache and distant-animation throttling (URO); parallel CPU particles / Perception / PartFollow / TwoBoneIk proven by replay_verify's jobs A/B (§5.4, §6.14, ADR-028 / ADR-029) |
 | Compute.ForEach | M91 | One `*.kernel.hlsl` source run on the GPU, as a C++ CPU function and as a C# CPU function behind a checked HLSL subset (KL001–KL028); State buffers always on the CPU and in snapshot / hash (SimSnapshot v50), Fx buffers GPU-first with delayed readback; source-hash version check, `COMPUTE_KERNELS` / `[ComputeKernels]` declarations, a Compute section in the script inspector, compute A/B in `replay_verify` (§10.12, ABI v29, ADR-030) |
 | 2D lane (side-scrolling) | M94 | Plane-constrained 3D solver as the 2D physics (`plane2D` invariant bit-exact, one-way platforms, a 2D CharacterController mode, polygon / edge shapes, Effector2D, GridAgent2D A*); integer-sorted `Sprite2D` with sorting layers, groups, masks, Sliced / Tiled, sprite-sheet animation as a controller state; tilemaps with rule / animated / breakable tiles whose edits are a sparse sim-state table; Light2D with shadows and normal maps, Line2D, SpriteShape2D, sprite surface shaders, Parallax2D; PixelPerfectCamera2D and Camera2DFollow; Sprite / Tile Palette editors and a 2D Scene View; ABI v31 = 188, SimSnapshot v65, TypeId 81-93, `--2d-demo` with goldens `2d` / `2d_lights` and the `2d` replay job (§6.15, §10.5, §10.9, §10.13, ADR-033) |
+| Action combat foundations | M95 | Hit stop (`pauseTicks`), part overlap / sphere sweep queries, interruptible controller transitions, CC-vs-CC push-out with contact reports, vertical root motion, event times in seconds / frames; ABI v32 = 193, SimSnapshot v66-v68, controller v3, ADR-034 (§10.14). Plus the three-layer selftest (`MYE_SELFTEST_ONLY`, `--selftest-list`, `--selftest-full`; §11.3) |
 
 **A note on the numbering.** M17-M25 and M30-M31 have no commits of their own: they were finished
 before the repository was brought up to date and landed in two bundle commits (`M16-M25` and
@@ -3800,7 +3832,7 @@ to the physics roadmap.
 | Engine MCP server (M87) | **Unstarted, design settled.** Engine index dump, a stdio JSON-RPC server with search / describe, structured verify jobs, notes. Plan: `plans\エンジンMCPサーバ.md` |
 | Sequencer | **Unstarted.** A tick-based sequencer. (Blend trees, two-bone IK, root motion and animation events shipped as M89; mesh LOD and GPU occlusion culling as M90.) No plan file yet |
 | Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (at the time of M94: ABI v31 = 188, TypeId 93, SimSnapshot v65, ADR-033). Plan files that name a specific future number are stale on that point |
-| Dogfooding backlog | 5 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open (11 debug-draw log, 13 `builtin://wheel`, 17 CC ⇄ Rigidbody, 19 missing-`PhysicsEnvironment` warning, 20 script-to-script messaging). Each needs a new implementation surface; 20 needs the next ABI bump (`onMessage` on `MyeScriptDesc`) |
+| Dogfooding backlog | 4 of the 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are open (11 debug-draw log, 13 `builtin://wheel`, 19 missing-`PhysicsEnvironment` warning, 20 script-to-script messaging). Each needs a new implementation surface; 20 needs the next ABI bump (`onMessage` on `MyeScriptDesc`) |
 
 ---
 
@@ -3839,7 +3871,8 @@ ADR-027 skeletal pose program (M89) /
 **ADR-028 simulation parallelism: output-dimension splits proven by jobs A/B** (§5.4) /
 **ADR-029 render optimization: opt-in mesh LOD, two-phase occlusion culling, render-side URO** (§6.14) /
 **ADR-030 Compute.ForEach: one kernel source, State on the CPU, Fx GPU-first** (§10.12) /
-**ADR-033 the 2D lane: plane-constrained 3D solver, integer sort keys, assets plus a sparse sim-state diff** (§6.15, §10.13).
+**ADR-033 the 2D lane: plane-constrained 3D solver, integer sort keys, assets plus a sparse sim-state diff** (§6.15, §10.13) /
+**ADR-034 CCs exchange no momentum: priority push-out from the start-of-tick pose plus contact reports** (§10.14).
 
 ---
 

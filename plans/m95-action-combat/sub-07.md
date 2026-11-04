@@ -1,8 +1,8 @@
 # sub-07: 文書 (engine_spec / ADR 索引 / dogfooding / test_checklists) + 最終統合確認
 
 - 依存: sub-01〜06、Wave 2 の統合 (Wave 3。単独)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (commit は台帳を参照)
+- 往復: 1
 
 ## 作業場所の注意
 
@@ -42,4 +42,14 @@ spec §5 の 29 / 30。実装済みの契約を文書に写し、統合後の全
 
 ## 実装メモ (coder が追記)
 
+### round 1 (2026-11-05、master 直。SELF_EVAL の写し、司会が転記)
+
+- 実装: `engine_spec.md` §10.14 "Action combat foundations (M95, ADR-034)" を新設 (A〜F の契約、opt-in の既定、非対応、ABI v32 = 193 の 5 本、snapshot v66 / v67 / v68、controller v3 の JSON 例)。申し送り (1) 割り込みで確定した tick は stateEntered = 0、(2) 同優先度の CC が最大 1 歩重なる、(3) RaycastParts / SphereCastParts の dir は呼び手が正規化、(4) 一方通行床の 1 tick 遅れ を各節に 1 文。§11.3 末尾に selftest 3 層の段落 (Full 層 10 本、既知の不安定 2 本)。§12.2 に M95 行、dogfooding backlog を 4 件に。§13 に ADR-034。`docs\test_checklists.md` 冒頭を `--selftest-full` に、末尾に M95 節。`docs\dogfooding.md` の集計を 16 件決着 / 4 件未解決に。AGENTS.md §7 と ADR-034 本文は既に十分なので無変更
+- 仕様との差分: [追加] dogfooding の集計の更新。[追加] §10.14 の非対応に kinematic Rigidbody の縦入力は LocalTransform へ直接書く旨。[未実装] ADR-034 の影響欄への sub-05 追記は見送り (ADR は CC 接触の決定)
+- 検証: 書いた名前・値を grep で実コードと照合して全て一致 (`MYE_API_VERSION 32u`、`kSimSnapshotVersion = 68`、`32 = 193`、`root["controller"] = 3`、`ClipEventTickFromJson`、ADR-034 の実在、`"m95"` 別名、Components.h の各欄、Parts.h / Interop.cs の 3 本、`AnimPrev_EvTick`、TypeId 追加なし)。check_rules 0 error / 50 warning。ビルド・selftest・RV・三校は文書のみのため未実行 (受け入れ 30 は台帳「波の統合」表の Wave 1 / 2 行で代用)
+- 自己採点: 仕様適合 4 / 正しさ 4 / コード品質 4 / テスト 3
+- 不安・質問: テスト 2 件 (fps 負値、非アクティブ entity の pauseTicks) はコード変更なので足していない
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner)。nit: dogfooding.md の見出し「M70d 時点」と engine_spec §12.2 冒頭の期間が古い (直さない、残り minor)。テスト 2 件は sub-07 では足さず残り minor (reviewer が major と判断したときだけ新サブ)
+- round 1: VERDICT OK (planner、2026-11-05)。受け入れ 29: engine_spec §10.14 (A〜F・非対応・番号・JSON 例・検証)、§11.3 の selftest 3 層、§12.2 の M95 行と dogfooding backlog 4 件、§13 の ADR-034、test_checklists の M95 節 (20 / 28 と手動項目・回帰) と冒頭の --selftest-full、dogfooding 集計 16 / 4。文面を spec §4.1 と実装 (RootMotionDelta の sampled、確定規則、push-out 規則、ClipEventTickFromJson、`= %.3f s`) に照らして確認し、食い違いは無い。受け入れ 30: 台帳「波の統合」Wave 2 行 (740bd64) に Debug / Release の total 行、CR 0 error、RV `all 22 jobs passed` + `[PASS]`、三校 (既存 2 件のみ) が全文で記録されている (planner が全文を確認)。テストの追加 2 件 (sub-06 nit (1) fps 負値、sub-01 nit (1) 非アクティブで pauseTicks が減らない) は sub-07 のやらないこと (コード変更) に従い足さない — 受け入れ条件の外の nit なので M95 では閉じず、台帳の残り minor へ。nit: dogfooding.md の見出し「(M70d 時点)」と engine_spec §12.2 の期間「→ 2026-10-12」が古い (直さなくてよい)

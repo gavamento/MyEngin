@@ -1,6 +1,6 @@
 # 手動テスト手順
 
-自動化済みの検証 (`--selftest`, `tools\replay_verify.bat`, `tools\check_rules.ps1`) に加えて、
+自動化済みの検証 (`--selftest-full`, `tools\replay_verify.bat`, `tools\check_rules.ps1`) に加えて、
 対話的な機能はこの手順で確認する。ウォッチャー/ローダ周りを変更したら必ず再実施すること。
 
 ## Editor 起動スプラッシュ (`--project` 対話起動)
@@ -805,3 +805,25 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] `run_full.bat` を途中で Ctrl+C して同じコマンドで再開しても、`manifest.jsonl` の同じ index の `occ_hash` が一致する (決定性)
 - [ ] `generate.py stats --out data\v1` の `fem_hours_est_jobs11` を確認してから `run_dataset.bat` を回す (50,000 件で 35〜40 時間の見込み)
 - [ ] FEM 完了後、`tools\deepmodal\data\synth_v1\stats.json` の `count_error` が 0、`mode_count` の中央値と `coverage.mean_ratio` が ModelNet40 (67 / 0.63) と同程度で、ファミリ接頭辞別に「無音 (mode_count==0)」が偏っていない
+
+## M95: アクション戦闘の土台
+
+仕様は `engine_spec.md` §10.14、判断は `docs\adr\ADR-034-character-contacts.md`。契約の機械検証は `MYE_SELFTEST_ONLY=m95` (physics / animatorcontroller / skeleton / part / twodabi / simsnapshot / worldhasher) と `--selftest-full` が見る。ここは目視が要る項目。一時プローブのスクリプトで確かめ、絵は `--screenshot` で撮る。
+
+- [ ] Animator Controller ウィンドウの遷移リストに「割り込み可」チェックがあり、ON にして保存した `.controller.json` に `"canInterrupt": 1` と `"controller": 3` が出る。再読込でもチェックが残る (受け入れ 20)
+- [ ] 遷移中に割り込み可の遷移の条件を満たすと、別の遷移へ切り替わる (元の遷移の半分を過ぎていれば遷移先から、未満なら元から。ポーズが飛ばない)。割り込んだ tick の `stateEntered` は 0
+- [ ] Animation Preview ウィンドウのイベント帯で、tick スライダの右に `= 0.500 s` のような秒が併記される (tick / 60)。スライダを動かすと値が追従し、保存した JSON のイベントは `tick` のまま (受け入れ 28)
+- [ ] `clipEvents` を `{"fps": 30, "events": [{"frame": 12, ...}, {"time": 0.5, ...}]}` で手書きして読み込むと、イベントが tick 24 / 30 で発火する
+- [ ] ヒットストップ: スクリプトから `AnimatorSetPause(entity, 6)` を呼ぶと、そのキャラのアニメーションと移動が 6 tick 止まり、Inspector の `pauseTicks` が 6 から 0 へ減る。止まっている間イベントは発火せず、止まりが明けたら続きから再開する
+- [ ] 部位ヒット: タグ付きの部位に `OverlapSphereParts` / `SphereCastParts` / `OverlapCapsuleParts` を当て、当たった部位だけがデバッグ描画などで確認でき、`dir` を正規化しないと距離が狂うことを踏まえてスクリプトで正規化している
+- [ ] CC 同士: `collideCharacters` を両方 ON にした 2 体を体当たりさせ、`pushPriority` が高い側が押されず低い側だけが押し出される。同値なら互いに止まる。`reportContacts` の側で `OnCollisionEnter` が届く。互いに近づく同優先度の 2 体は最大 1 歩ぶん重なることがある (仕様)
+- [ ] 縦ルートモーション: `"skel":{"rootMotionY":1}` のステートで CC / 非 kinematic Rigidbody がクリップの高さどおりに跳び、クリップの終端で重力へ戻って着地する。歩き・待機のステートには付けていないので段差で浮かない
+- [ ] 一方通行床の下から縦ルートモーションで跳ぶとき、通過が縦入力の初回 tick だけ 1 tick 遅れる (`jumpSpeed` と同じ。仕様)
+
+### 回帰
+
+- [ ] `MYE_SELFTEST_ONLY=m95` を設定した `Editor.exe --selftest` が PASS する。`Editor.exe --selftest-list` で名前一覧が出る
+- [ ] `bin\x64\Debug\Editor.exe --selftest-full` と `bin\x64\Release\Editor.exe --selftest-full` が全スイート PASS する (既知の不安定: `fractureeditor` の cancel 系と `computemanaged` の FileWatcher 系は負荷や実行順で時間依存の FAIL を起こすことがある。M95 とは無関係)
+- [ ] `tools\check_rules.ps1` が 0 error
+- [ ] `tools\replay_verify.bat` が PASS する
+- [ ] 三校の `verify.bat` は `tools\build_scripts.bat` で GameLogic.dll を ABI v32 で作り直してから回す。既存の 2 件 FAIL (shot main の img-diff / patrol) は M95 以前から
