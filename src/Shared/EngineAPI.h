@@ -55,7 +55,8 @@
 //             OnlineJoinCode (ComputeSetManagedDeclarations の次の 4 本)
 // v31 (M94n): 2D — OverlapBoxMasked / BoxCast / SpriteByName / TilemapGetCell / TilemapSetCell / TilemapFillRect /
 //             TilemapDamageCell / TilemapWorldToCell / TilemapCellToWorld / TilemapGetBounds (OnlineJoinCode の次の 10 本)
-#define MYE_API_VERSION 31u
+// v32 (M95a): アクション戦闘 — AnimatorSetPause / AnimatorGetPause (TilemapGetBounds の次の 2 本。部位の重なり・掃引 3 本は sub-03 が足す)
+#define MYE_API_VERSION 32u
 
 // v30 (M93) OnlineMemberFlags のビット
 #define MYE_ONLINE_MEMBER_OWNER 1u    // 部屋を作った人 (ホスト = サーバを動かしている人)
@@ -1074,6 +1075,13 @@ struct MyeEngineApi {
     // TilemapGetBounds: layer の空でないセル (タイル id != 0) を囲む矩形 (両端を含む) を書く。1 つも無い / 失敗は 0
     int (*TilemapGetBounds)(void* engine, MyeEntityId tilemap, int32_t layer, int32_t* outMinX, int32_t* outMinY,
                             int32_t* outMaxX, int32_t* outMaxY);
+
+    // ---- v32 (M95a): アクション戦闘 ----
+    // AnimatorSetPause: ヒットストップ。Animator の時刻・遷移・イベントを ticks tick 止める (上書き、累積しない。負は 0)。
+    //   Animator が無ければ 0 (何もしない)、成功は 1
+    int (*AnimatorSetPause)(void* engine, MyeEntityId entity, int32_t ticks);
+    // AnimatorGetPause: 停止の残り tick。Animator が無ければ -1
+    int32_t (*AnimatorGetPause)(void* engine, MyeEntityId entity);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

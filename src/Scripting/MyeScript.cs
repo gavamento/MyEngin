@@ -228,6 +228,12 @@ namespace MyeScripting
         public bool PlayAnimation(string stateName, int durationTicks = 0)
             => Engine.AnimatorPlay(Id, Engine.NameHash(stateName), durationTicks);
 
+        // ヒットストップ: Animator の時刻・遷移・イベントを ticks tick 止める (上書き、負は 0)。Animator が無ければ false
+        public bool SetAnimatorPause(int ticks) => Engine.AnimatorSetPause(Id, ticks);
+
+        // ヒットストップの残り tick。Animator が無ければ -1
+        public int AnimatorPauseTicks => Engine.AnimatorGetPause(Id);
+
         // Animator のパラメータを名前で書く (M89c)。型は .controller.json の宣言で決まり、違う型・名前が無い・
         // 非有限の float は false (何も書かない)。Trigger は条件に使った遷移が採用されると下りる
         public bool SetAnimatorFloat(string name, float value) => Engine.AnimatorSetFloat(Id, Engine.NameHash(name), value);

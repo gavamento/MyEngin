@@ -817,7 +817,9 @@ struct AnimatorControllerComponent {
     // rootMotionVelocity と同じく毎 tick 書く。applyRootMotion なら LocalTransform.rotation へ掛ける
     // (NavMeshAgent が updateRotation で向きを握っている間は回さず、ポーズのひねりも抜かない)
     DirectX::XMFLOAT4 rootMotionDeltaRotation = { 0.0f, 0.0f, 0.0f, 1.0f };
-    // ---- M95 sub-01 (末尾 append) ----
+    // ---- M95 sub-01 (末尾 append): ヒットストップ ----
+    // > 0 の間、Animator は時刻・遷移・イベントを進めず 1 tick ごとに 1 減る (ルートモーションは 0)。hash 対象
+    int32_t pauseTicks = 0;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

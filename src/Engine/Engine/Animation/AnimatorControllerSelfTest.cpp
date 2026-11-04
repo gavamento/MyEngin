@@ -1857,6 +1857,121 @@ bool RunAnimatorControllerSelfTest()
     }
 
     // ---- M95 sub-01 ----
+    // ヒットストップ: pauseTicks の間、時刻・遷移・イベント・ルートモーションが止まり、n tick 後に自動で再開する
+    {
+        using namespace DirectX;
+        SkinnedModel walkModel = MakeNamedClipModel({ { "Walk", 1.0f } });
+        walkModel.joints[0].name = "Root";
+        walkModel.clips[0].tracks[0].tTimes = { 0.0f, 1.0f };
+        walkModel.clips[0].tracks[0].tVals = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.2f } };
+        RenderResources res;
+        const AssetID model = res.skinnedModels.Register("selftest_hitstop", std::move(walkModel));
+        ControllerAsset ctrl;
+        ctrl.states.push_back({ "Walk", "", 0, 1, 1, "Walk", HashStr("Walk") });
+        ControllerClipEvent mid;
+        mid.name = "Mid";
+        mid.nameHash = HashStr("Mid");
+        mid.tick = 30;
+        ctrl.clipEvents.push_back({ "Walk", HashStr("Walk"), { mid } });
+        const uint64_t ctrlHash = ctrlLib.Register(L"hitstop.controller.json", ctrl);
+
+        Scene s;
+        World& world = s.GetWorld();
+        // ccActor は CharacterController (moveInput 経由)、trActor は LocalTransform へ直接ルートモーションを適用する
+        const auto makeRig = [&](const char* name, bool withCc) {
+            GameObject actor = s.CreateGameObjectTracked(name);
+            AnimatorControllerComponent* a = actor.AddComponent<AnimatorControllerComponent>();
+            a->controller = AssetID{ ctrlHash };
+            a->applyRootMotion = true;
+            if (withCc) {
+                actor.AddComponent<CharacterControllerComponent>();
+            }
+            GameObject body = s.CreateGameObjectTracked("Body");
+            body.SetParent(actor);
+            body.AddComponent<SkinnedMeshComponent>()->model = model;
+            return std::pair<GameObject, GameObject>(actor, body);
+        };
+        auto [ccActor, ccBody] = makeRig("HitStopCc", true);
+        auto [trActor, trBody] = makeRig("HitStopTr", false);
+        world.ApplyStructuralChanges();
+        AnimatorControllerSystem sys;
+        const auto ac = [&] { return ccActor.GetComponent<AnimatorControllerComponent>(); };
+        const auto layer = [&]() -> const SkinnedMeshComponent::PoseLayer& {
+            return ccBody.GetComponent<SkinnedMeshComponent>()->poseLayers[0];
+        };
+        const auto mids = [&] {
+            int n = 0;
+            for (const AnimEventFired& f : sys.FiredEvents()) {
+                n += (f.nameHash == HashStr("Mid") && f.entity == ccActor.Id()) ? 1 : 0;
+            }
+            return n;
+        };
+        const auto step = [&] { sys.Update(world, ctrlLib, animLib, &res.skinnedModels); };
+
+        // 位置 29 まで進める (次の 1 tick で 30 のイベントに届く位置で止める)
+        int guard = 0;
+        while (ac()->stateTimeTicks < 29 && guard++ < 100) {
+            step();
+        }
+        check(ac()->stateTimeTicks == 29 && ccActor.GetComponent<CharacterControllerComponent>()->moveInput.z < -1.0f,
+              "M95: before the pause the root motion drives the CharacterController");
+
+        const int32_t time0 = ac()->stateTimeTicks;
+        const uint32_t phase0 = ac()->statePhase;
+        const int32_t entered0 = ac()->stateEntered;
+        const int32_t transTick0 = ac()->transitionTick;
+        const uint32_t timeQ0 = layer().timeQ;
+        const XMFLOAT3 trPos0 = trActor.GetComponent<LocalTransform>()->position;
+        const XMFLOAT4 rot0 = ccActor.GetComponent<LocalTransform>()->rotation;
+        ac()->pauseTicks = 5;
+        trActor.GetComponent<AnimatorControllerComponent>()->pauseTicks = 5;
+        bool frozen = true;
+        bool rootStill = true;
+        bool eventless = true;
+        bool counts = true;
+        for (int i = 0; i < 5; ++i) {
+            step();
+            const AnimatorControllerComponent* a = ac();
+            frozen = frozen && a->stateTimeTicks == time0 && a->statePhase == phase0 && a->stateEntered == entered0
+                     && a->transitionTick == transTick0 && layer().timeQ == timeQ0 && layer().prevTimeQ == timeQ0
+                     && layer().stepQ == 0 && ccBody.GetComponent<SkinnedMeshComponent>()->poseClaim == 1;
+            const CharacterControllerComponent* cc = ccActor.GetComponent<CharacterControllerComponent>();
+            const XMFLOAT3 trPos = trActor.GetComponent<LocalTransform>()->position;
+            rootStill = rootStill && a->rootMotionVelocity.x == 0.0f && a->rootMotionVelocity.y == 0.0f
+                        && a->rootMotionVelocity.z == 0.0f && a->rootMotionDeltaRotation.x == 0.0f
+                        && a->rootMotionDeltaRotation.y == 0.0f && a->rootMotionDeltaRotation.z == 0.0f
+                        && a->rootMotionDeltaRotation.w == 1.0f && cc->moveInput.x == 0.0f && cc->moveInput.z == 0.0f
+                        && trPos.x == trPos0.x && trPos.y == trPos0.y && trPos.z == trPos0.z
+                        && ccActor.GetComponent<LocalTransform>()->rotation.y == rot0.y;
+            eventless = eventless && sys.FiredEvents().empty();
+            counts = counts && a->pauseTicks == 4 - i;
+        }
+        check(frozen, "M95: during the pause time, phase, entered flag, transition counter and pose layers do not move");
+        check(rootStill, "M95: during the pause the root motion is zero and nothing it drives moves");
+        check(eventless, "M95: no event fires during the pause");
+        check(counts && ac()->pauseTicks == 0, "M95: pauseTicks counts down one per paused tick");
+
+        // 再開: 最初の進みで時刻が 1 だけ進み、停止をまたいだ位置 30 のイベントがちょうど 1 回鳴る
+        step();
+        check(ac()->stateTimeTicks == time0 + 1 && mids() == 1 && ac()->rootMotionVelocity.z < -1.0f,
+              "M95: the first tick after the pause advances by one and fires the event spanning the pause exactly once");
+        int later = 0;
+        for (int i = 0; i < 20; ++i) {
+            step();
+            later += mids();
+        }
+        check(later == 0, "M95: the spanned event does not fire again until the next loop");
+
+        // 上書きで張り直した停止は、指定した tick 数だけ止める
+        ac()->pauseTicks = 2;
+        step();
+        const int32_t timeAfter = ac()->stateTimeTicks;
+        step();
+        step();
+        check(ac()->pauseTicks == 0 && ac()->stateTimeTicks == timeAfter + 1,
+              "M95: a re-armed pause stops exactly the requested number of ticks");
+    }
+
 
     // ---- M95 sub-04 ----
 
