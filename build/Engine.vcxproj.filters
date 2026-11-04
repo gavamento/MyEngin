@@ -594,6 +594,12 @@
     <ClCompile Include="..\src\Engine\Engine\Feel\FeelTriggerSystem.cpp">
       <Filter>Engine\Feel</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Feel\SpringFollowSelfTest.cpp">
+      <Filter>Engine\Feel</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Feel\SpringFollowSystem.cpp">
+      <Filter>Engine\Feel</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloader.cpp">
       <Filter>Engine\HotReload</Filter>
     </ClCompile>
@@ -1594,6 +1600,12 @@
       <Filter>Engine\Feel</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Feel\FeelTriggerSystem.h">
+      <Filter>Engine\Feel</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Feel\SpringFollowSelfTest.h">
+      <Filter>Engine\Feel</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Feel\SpringFollowSystem.h">
       <Filter>Engine\Feel</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\HotReload\DllReloader.h">

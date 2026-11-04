@@ -2318,6 +2318,22 @@ struct FeelTriggerComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- ばね追従 (M94g、ADR-031、TypeId 82) ----
+// このエンティティの LocalTransform を、target の姿勢 (+ target 空間の offset) へ減衰付きばねで寄せる。
+// カメラの追従遅れ・追いかける小物・揺れ戻しの二次運動に使う。物理と同じゲート対象 (ヒットストップ中は止まる)。
+// target の姿勢は WorldMatrix ではなく LocalTransform の親子連鎖から組む (WorldMatrix は描画時にも更新される派生値で、
+// 読むと「描画したかどうか」で sim が変わる)。hash 対象 (velocity / initialized はエンジンが書く sim 状態)
+struct SpringFollowComponent {
+    EntityID target = kNullEntity;               // 追う相手 (無効なら何もしない)
+    DirectX::XMFLOAT3 offset = { 0.0f, 0.0f, 0.0f }; // target のローカル空間でのずらし
+    float frequencyHz = 3.0f;                    // 位置のばねの固有振動数 (大きいほど速く追いつく)
+    float dampingRatio = 1.0f;                   // 1 = 臨界減衰 (行き過ぎない)、1 未満 = 行き過ぎて揺れる
+    float rotationFrequencyHz = 4.0f;            // 回転の追従の速さ (0 = 回転は追わない)
+    DirectX::XMFLOAT3 velocity = { 0.0f, 0.0f, 0.0f }; // 位置のばねの速度 (エンジンが書く)
+    uint32_t initialized = 0;                    // 初回は target の姿勢へ瞬間移動する (エンジンが書く)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

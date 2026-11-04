@@ -1,5 +1,6 @@
 #include "Engine/Engine/Loop/TickRunner.h"
 #include "Engine/Engine/Feel/FeelTriggerSystem.h"
+#include "Engine/Engine/Feel/SpringFollowSystem.h"
 
 #include <algorithm>
 #include <cstdio> // M93e: --debug-draw-log の行の整形
@@ -570,6 +571,11 @@ void RunOneTick(TickServices& ts)
         UpdateFeelTriggers(scene.GetWorld(), solidContacts, scene.Feel(), scene.Time());
     }
     // ---- フェーズ 4: システム層 ----
+    // M94g: ばね追従 (SpringFollow、存在ゲート)。Transform 確定の**前**に LocalTransform を書く —
+    // 追従した側 (と子) のワールド行列がこの tick の Transform で確定する。ゲート対象 (ヒットストップ中は止まる)
+    if (stepSim) {
+        UpdateSpringFollow(scene.GetWorld(), ctx.fixedDt);
+    }
     // Transform を先に確定 (エミッタ/コライダのワールド位置は tick 決定論の一部)
     {
         MYE_PROFILE_SCOPE("transform");

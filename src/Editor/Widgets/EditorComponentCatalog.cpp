@@ -70,6 +70,7 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         // VFX
         { "ParticleEmitter", { ICON_FA_FIRE, "VFX", "パーティクルエミッタ" } },
         { "FeelTrigger", { ICON_FA_BOLT, "VFX", "手触りの発火" } }, // M94d: 接触で .feel.json を鳴らす
+        { "SpringFollow", { ICON_FA_WAVE_SQUARE, "Physics", "ばね追従" } }, // M94g
         { "SpriteRenderer", { ICON_FA_IMAGE, "VFX", "スプライトレンダラー" } },
         { "TrailRenderer", { ICON_FA_WIND, "VFX", "トレイルレンダラー" } },
         { "TextMesh", { ICON_FA_FONT, "VFX", "テキストメッシュ" } },
