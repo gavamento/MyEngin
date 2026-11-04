@@ -2,7 +2,7 @@
 
 - 依頼原文: M95 アクション戦闘の土台 (事前調査は plans\m95-action-combat\design-draft.md)
 - 開始: 2026-11-04 / 基点コミット: 69c2207c2b8c5c79af7d37ababad0b03d397d228
-- フェーズ: レビュー (全サブ OK。Wave 1 統合 e1bba10、Wave 2 統合 740bd64、sub-07 9cfbff0。2026-11-05 07:35 から Phase 3 round 1、範囲 69c2207..9cfbff0)
+- フェーズ: レビュー (全サブ OK。Wave 1 統合 e1bba10、Wave 2 統合 740bd64、sub-07 9cfbff0。Phase 3 round 1 FAIL → planner の REVIEW_RESPONSE 待ち)
 - 仕様確定: 2026-11-04 (planner PLAN_RESULT round 2)。番号: ABI v32 = 193 スロット、SimSnapshot v66 / v67 / v68、controller アセット v3、ADR-034、TypeId 追加なし
 
 ## サブ進捗
@@ -27,6 +27,7 @@
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
+| 1 (69c2207..9cfbff0、2026-11-05 08:00) | FAIL | 2 / 4 / N/A / 4 | major 2 (planner 宛: #1 優先度の高い CC が低い CC を壁へ押し付けると薄い壁を抜ける / #2 ヒットストップ中に rootMotionY の CC が縦へ流れる)、minor 2 (#3 中身の無い予約マーカー、#4 残り minor は妥当) |
 
 ## ユーザー判断
 - 制約解除の範囲: ルートモーションの縦成分 と イベント時刻の秒・フレーム指定 を解除する。CC カプセルのスケール挙動は対象外。固定 60 Hz tick と rand() 禁止は解除しない (2026-11-04、司会の AskUserQuestion)
