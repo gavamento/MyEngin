@@ -56,3 +56,4 @@
 - sub-02 VERDICT の nit: 同優先度の CC が隙間から歩み寄ると最大 1 歩ぶん重なる tick があり得る (順序非依存の設計から出る性質、許容。ADR-034 影響欄に記載) → sub-07 の engine_spec に 1 行。spec §2 #21 の「既存シーンの hash 不変」は訂正 (WorldHash は欄の生バイトを混ぜるので値が変わる。シミュレーション結果は不変)
 - Wave 1 / Wave 2 の統合で焼き込み hash の再採取が要る (付録 B 4.): PhysicsSelfTest (CC2D) / NavAgentSelfTest (庭) / TilemapSelfTest / GridNav2DSelfTest / TwoDDemoSelfTest の定数 5 件と AcousticAudioSelfTest の kSimSnapshotVersion チェック。Debug の --selftest-full のログから取り、Release で同値 PASS を確認してから統合コミット
 - 三校 cache/GameLogic.dll は sub-02 の coder が worktree (v31) のヘッダで上書きした (gitignore 配下)。統合時に master で作り直す
+- 別件の切り分け結果 (2026-11-04、司会): master 8405f20 (シミュレーションは基点 69c2207 と同一) で三校 DLL を v31 で作り直し (`[dll] GameLogic loaded ... (3 scripts)`) ても三校 verify は同じ 2 件 FAIL (shot main diffPixels=28402 / maxDiff=122、replay は VERIFY PASS だが「agent never left patrol」)。= M95 以前からの既存失敗。golden は 2026-10-12 撮影で、その後の M90 / M93 / M94 のどれかで変わった可能性。M95 の範囲外としてユーザーへ報告、統合時の三校 verify は「この 2 件以外に FAIL が増えないこと」を合格条件にする
