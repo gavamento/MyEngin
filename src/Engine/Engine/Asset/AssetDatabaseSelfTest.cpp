@@ -197,8 +197,7 @@ bool RunAssetDatabaseSelfTest()
         check([](const std::filesystem::path& p) {
             std::ifstream in(p, std::ios::binary);
             const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-            return !bytes.empty() && bytes.find('
-') == std::string::npos;
+            return !bytes.empty() && bytes.find('') == std::string::npos;
         }(texMeta), "v2 meta is written with LF only");
         AssetMeta v2;
         check(AssetDatabase::ReadMeta(texMeta, v2) && v2.version == 2 && v2.guid == 0xAA,
