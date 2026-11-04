@@ -17,7 +17,7 @@
 | sub-03 部位の重なり・掃引 (ABI 193 スロット) | 2 | sub-01、Wave 1 統合 | OK | 1 | 6cc89b5 (m95/sub-03) | worktree `C:/HAL/MyEngin-wt/sub-03` (基点 e1bba10)。Release full 全 PASS、RV 22 ジョブ一致、ABI 照合 193/193。Debug full の fractureeditor FAIL は負荷要因 (下記申し送り) |
 | sub-05 ルートモーションの縦成分 (snapshot v68) | 2 | sub-02, sub-04、Wave 1 統合 | OK | 2 | d8c2ec9 (m95/sub-05) | worktree `C:/HAL/MyEngin-wt/sub-05` (基点 e1bba10)。round 2 で Debug / Release full 0 failed、CR 0 error、RV 22 ジョブ PASS。round 2 の SELF_EVAL は coder の返送がツールで拒否され、司会が出力ファイルから取り出して転送 |
 | sub-07 文書 + 最終統合確認 | 3 | 全部 | OK | 1 | 9cfbff0 | master 直 (worktree なし)。受け入れ 30 は「波の統合」表の Wave 2 行で代用 |
-| sub-08 壁へ押し付けられた CC の押し返し (review-1 #1) | 4 | master 592ffff | 未着手 | 0 | | 受け入れ 42, 43。ST(physics) を名指し。sub-09 と並列可 |
+| sub-08 壁へ押し付けられた CC の押し返し (review-1 #1) | 4 | master 592ffff | 仕様の直し待ち (ユーザー判断で「ボスが押し続ける」) | 0 | | 受け入れ 42, 43。ST(physics) を名指し。sub-09 と並列可 |
 | sub-09 ヒットストップ中の縦の高さ + テスト 2 件 (review-1 #2, #4) | 4 | master 592ffff | 未着手 | 0 | | 受け入れ 44, 45。sub-08 と並列可 |
 | sub-10 予約マーカーの整理と文書 (review-1 #3, #4) | 5 | sub-08, sub-09 の統合 | 未着手 | 0 | | 受け入れ 46。master 直 |
 
@@ -46,6 +46,8 @@
   - selftest の最小化は「テストを減らす」ではなく「1 回の実行で回す量を最小にする」3 層構成 (関連スイートだけ / `--selftest` 既定 = 軽い層 60 秒以内 / `--selftest-full` = 全部、VERDICT OK 前・レビュー・push 前・CI)。層分けは所要時間の計測結果に基づく。planner へ補足 2 として送信済み
   - coder は **波単位で並列** (1 coder = 1 worktree、同時ビルド 2〜3 本)。見立て: Wave 1 = {sub-01, sub-02, sub-04, sub-06}、Wave 2 = {sub-03, sub-05}、最後に sub-07。共有資源 (ABI スロット順・Components.h の追記順・snapshot 版・controller 版) の予約表を spec に置く
   - sub-00b の既定層の余白 (planner 裁定 N=10、occlusion も Full 層へ、「2 回の大きい方が 55 秒超なら N+1」の規則): **N=10** (planner 裁定どおり。2026-11-05、司会の AskUserQuestion)
+  - review-1 #1 壁際の押し付け (planner 裁定 = ボスが止まる、押し付けの組を同優先度に): **ボスが押し続ける** (planner 裁定と逆。押し出し量を壁への掃引で切る案。sub-08 を掃引ベースに直す。2026-11-05、司会の AskUserQuestion)
+  - review-1 #2 停止中の縦 (planner 裁定 = 宙で止まる、縦入力 0 で高さを保つ): **宙で止まる** (planner 裁定どおり。2026-11-05、司会の AskUserQuestion)
   - Wave 3 (sub-07、文書だけ) の最終検証: Wave 2 統合時の full 検証 (selftest-full Debug / Release、check_rules、replay_verify、三校) を受け入れ条件 30 の証拠にする。sub-07 では文書の参照先の実在と check_rules だけ確認する (2026-11-04、司会の AskUserQuestion。planner へ補足として送信)
 
 ## 申し送り (セッション跨ぎ)
