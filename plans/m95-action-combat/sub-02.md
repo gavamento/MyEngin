@@ -59,4 +59,12 @@ spec §5 の 7, 8, 9, 10, 11, 12, 13。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-02 (round 1) の写し。要点のみ。
+- PhysicsSystem.cpp: `SolveCharacters` に `outContacts` を追加。CC 同士の押し出し (相手の tick 頭のカプセル、優先度)、接触の記録 (`RecordCharContact`)、合流 (`MergeCharContacts`、剛体側を残す・key 昇順)。押し出しの適用は lambda `applyPush` に集約 (式と順序は従来と同じ)。
+- Components.h / .cpp: CC に 3 欄 + 反射登録。SimSnapshot.h: v67。
+- PhysicsSelfTest.cpp: 受け入れ 7〜11 (+7b / 9b / 全 off の空確認)。ADR-034、dogfooding 17 を更新。
+- CC の欄追加で hash が変わるため、焼き込み値を再採取: CC2D (Physics)、庭 (NavAgent)、tile (Tilemap)、gridnav A、twod demo。AcousticAudio の版チェックは 67。
+- 検証: Debug / Release `--selftest-full` 全 PASS (110 suites、0 failed)、check_rules 0 error、replay_verify 22 ジョブ PASS。三校 verify は worktree では構造上通らない (司会が統合時に master で回す)。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-04)。Components.h / .cpp の 3 欄 (マーカー直下)、SolveCharacters の CC 同士の走査 (相手の tick 頭、pushPriority、CanCollide、applyPush 共用で式と順序は従来どおり)、RecordCharContact (key / 法線 / 代表点 / impulse 0)、MergeCharContacts (記録内の重複・剛体側優先・key 昇順)、snapshot v67、ADR-034、dogfooding 17、テスト 7 / 7b / 8 / 9 / 9b / 10 (4 相手 + 双方向) / 11 / 全 off の空確認を diff で確認。full 検証 Debug 972 s / Release 107 s とも 110 本 0 failed、check_rules 0 error、replay_verify 22 jobs PASS。焼き込み hash 5 件 + AcousticAudio の版チェックの再採取は必然 (spec §2 #21 を訂正)。隙間からの歩み寄りで最大 1 歩ぶん重なる tick は構造上の性質として許容 (受け入れ 7 を明記)。三校は採点外 (spec §5 冒頭)

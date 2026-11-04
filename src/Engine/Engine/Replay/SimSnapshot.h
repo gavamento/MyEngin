@@ -172,7 +172,8 @@ struct SimRefs {
 // v63 (M94t): Effector2DComponent (TypeId 90、hash 対象)。World 節のカラム生バイト
 // v64 (M94u): GridAgent2DComponent (TypeId 91、hash 対象) と AIPerception の末尾に forwardAxis。World 節のカラム生バイト
 // v65 (M94v): Camera2DFollowComponent (TypeId 92、hash 対象) と PixelPerfectCamera2DComponent (TypeId 93、NoHash)。World 節のカラム生バイト
-inline constexpr uint32_t kSimSnapshotVersion = 65;
+// v67 (M95b): CharacterControllerComponent の末尾に collideCharacters / pushPriority / reportContacts。World 節のカラム生バイト
+inline constexpr uint32_t kSimSnapshotVersion = 67;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

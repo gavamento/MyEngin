@@ -1508,18 +1508,70 @@ bool TryCharStepUp(const std::vector<Body>& bodies, const CharBody& c, float cos
     return false;
 }
 
+// CC の接触記録 (M95、ADR-034)。self が相手 other (法線 n は other → self) に触れたことを 1 対 1 件で積む。
+// key と法線の向きは SolidContact の規約 (小 index が上位 32 bit、法線は大 index → 小 index)。impulse は 0
+void RecordCharContact(std::vector<SolidContact>& out, uint32_t selfIndex, const ShapePose& selfPose,
+                       uint32_t otherIndex, const ShapePose& otherPose, float nx, float ny, float nz)
+{
+    SolidContact sc;
+    const bool selfIsSmall = selfIndex < otherIndex;
+    sc.key = selfIsSmall ? ((static_cast<uint64_t>(selfIndex) << 32) | otherIndex)
+                         : ((static_cast<uint64_t>(otherIndex) << 32) | selfIndex);
+    const float sign = selfIsSmall ? 1.0f : -1.0f;
+    sc.nx = sign * nx;
+    sc.ny = sign * ny;
+    sc.nz = sign * nz;
+    shapes::ClosestPointOnShape(otherPose, selfPose.px, selfPose.py, selfPose.pz, sc.px, sc.py, sc.pz);
+    sc.impulse = 0.0f;
+    out.push_back(sc);
+}
+
+// 記録した CC の接触を outContacts (key 昇順) へ合流させる。同じ key は最初の記録だけ残し、
+// outContacts に既にある key (剛体ソルバ側の接触) は剛体側を優先する。結果は key 昇順のまま
+void MergeCharContacts(std::vector<SolidContact>& recorded, std::vector<SolidContact>& outContacts)
+{
+    std::stable_sort(recorded.begin(), recorded.end(),
+                     [](const SolidContact& a, const SolidContact& b) { return a.key < b.key; });
+    std::vector<SolidContact> merged;
+    merged.reserve(outContacts.size() + recorded.size());
+    size_t i = 0, j = 0;
+    while (i < outContacts.size() || j < recorded.size()) {
+        if (j < recorded.size() && j > 0 && recorded[j].key == recorded[j - 1].key) {
+            ++j; // 記録内の重複
+        } else if (j >= recorded.size() || (i < outContacts.size() && outContacts[i].key <= recorded[j].key)) {
+            if (j < recorded.size() && outContacts[i].key == recorded[j].key) {
+                ++j; // 剛体側を残す
+            }
+            merged.push_back(outContacts[i++]);
+        } else {
+            merged.push_back(recorded[j++]);
+        }
+    }
+    outContacts.swap(merged);
+}
+
 // move-then-depenetrate: 変位を一括適用してから固定パス × 障害物 index 昇順で押し出す。
 // スイープしないため 1 tick で薄い壁を大きく越える速度 (v·dt > 壁厚) では貫通し得るが、
 // 60Hz × 常識的な移動速度では起きない (v=30m/s でも 0.5m/tick)。剛体ソルバの後に走るので
 // 障害物 (静的 + 解決後の動的剛体) の pose は当該 tick の最終位置。CC が剛体を押す応答は
 // 無し (必要ならソリッド capsule Collider を併用し OnCollision + AddForce で組む)。
-void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, float dt)
+// M95: collideCharacters の CC は他の CC の tick 頭のカプセルからも押し出す。reportContacts の CC が触れた相手は
+// outContacts (null なら記録しない) へ impulse 0 の SolidContact として合流させる
+void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, float dt,
+                     std::vector<SolidContact>* outContacts)
 {
     if (chars.empty()) {
         return;
     }
     std::sort(chars.begin(), chars.end(),
               [](const CharBody& a, const CharBody& b) { return a.entity.index < b.entity.index; });
+    // reportContacts の CC が 1 体も無ければ記録の経路には入らない (確保なし)
+    bool anyReport = false;
+    for (const CharBody& c : chars) {
+        anyReport = anyReport || c.cc->reportContacts;
+    }
+    const bool record = anyReport && outContacts != nullptr;
+    std::vector<SolidContact> recorded;
     for (CharBody& c : chars) {
         constexpr float kDeg2Rad = 3.14159265f / 180.0f;
         const float cosSlope = std::cos(c.cc->slopeLimitDeg * kDeg2Rad);
@@ -1554,6 +1606,24 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
             }
         }
         bool grounded = false;
+        // 押し出し 1 回ぶんの適用 (n は相手 → 自分)。障害物も CC も同じ接地・天井の分岐を通る
+        auto applyPush = [&](float nx, float ny, float nz, float depth) {
+            pose.px += nx * depth;
+            pose.py += ny * depth;
+            if (!p2) {
+                pose.pz += nz * depth; // 2D は面外へ押し出さない
+            }
+            if (ny >= cosSlope) {
+                grounded = true; // 登れる斜面 = 接地
+                if (vy < 0.0f) {
+                    vy = 0.0f;
+                }
+            } else if (ny <= -cosSlope) {
+                if (vy > 0.0f) {
+                    vy = 0.0f; // 天井
+                }
+            } // 壁/急斜面は押し出しのみ (滑り落ちは重力が担う)
+        };
         // 押し出し: 固定パス × 障害物 index 昇順 (bodies はソート済)。自分の collider は skip
         for (int pass = 0; pass < kCharPushPasses; ++pass) {
             for (const Body& obs : bodies) {
@@ -1591,21 +1661,38 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
                         }
                     }
                 }
-                pose.px += nx * depth;
-                pose.py += ny * depth;
-                if (!p2) {
-                    pose.pz += nz * depth; // 2D は面外へ押し出さない
+                if (record && c.cc->reportContacts) {
+                    RecordCharContact(recorded, c.entity.index, pose, obs.entity.index, obs.pose, nx, ny, nz);
                 }
-                if (ny >= cosSlope) {
-                    grounded = true; // 登れる斜面 = 接地
-                    if (vy < 0.0f) {
-                        vy = 0.0f;
+                applyPush(nx, ny, nz, depth);
+            }
+            // CC 同士 (M95)。相手の tick 頭のカプセルだけを見る = 全 CC が同じ姿勢を見るので走査順に依らない
+            if (c.cc->collideCharacters) {
+                for (const CharBody& other : chars) {
+                    if (other.entity.index == c.entity.index || !other.cc->collideCharacters
+                        || other.cc->pushPriority < c.cc->pushPriority) {
+                        continue;
                     }
-                } else if (ny <= -cosSlope) {
-                    if (vy > 0.0f) {
-                        vy = 0.0f; // 天井
+                    if (!shapes::CanCollide(c.layer, c.mask, other.layer, other.mask)) {
+                        continue;
                     }
-                } // 壁/急斜面は押し出しのみ (滑り落ちは重力が担う)
+                    ShapePose otherPose;
+                    otherPose.shape = collidershape::kCapsule;
+                    otherPose.identityRot = 1;
+                    otherPose.radius = other.radius;
+                    otherPose.halfSeg = other.halfSeg;
+                    otherPose.px = other.px;
+                    otherPose.py = other.py;
+                    otherPose.pz = other.pz;
+                    float nx, ny, nz, depth;
+                    if (!shapes::Collide(pose, otherPose, nx, ny, nz, depth)) {
+                        continue;
+                    }
+                    if (record && (c.cc->reportContacts || other.cc->reportContacts)) {
+                        RecordCharContact(recorded, c.entity.index, pose, other.entity.index, otherPose, nx, ny, nz);
+                    }
+                    applyPush(nx, ny, nz, depth);
+                }
             }
         }
         // 接地プローブ (状態は変更しない): skinWidth+0.01 下げて接地面を探る
@@ -1734,6 +1821,9 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
             const float isz = (std::fabs(c.frame.sz) > 1e-8f) ? 1.0f / c.frame.sz : 1.0f;
             c.lt->position = { lx * isx, ly * isy, lz * isz };
         }
+    }
+    if (!recorded.empty()) {
+        MergeCharContacts(recorded, *outContacts);
     }
 }
 
@@ -5769,7 +5859,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
     }
 
     // ---- キャラクターコントローラ解決 (M29b)。剛体解決後の最終 pose を障害物として使う ----
-    SolveCharacters(bodies, chars, dt);
+    SolveCharacters(bodies, chars, dt, outContacts);
 }
 
 // ==== 物理マテリアル解決 (M59a2) ====

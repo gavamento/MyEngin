@@ -8742,7 +8742,7 @@ bool RunPhysicsSelfTest()
             }
             MYE_LOG_INFO("  [phys] CC2D scene hash @900 = %016llX", static_cast<unsigned long long>(finalHash));
             // Debug / Release 共通の期待値。0 は「未採取」 (採取値をログから読んで焼く)
-            constexpr uint64_t kCc2dExpectedHash = 0xC04B7FFA3E31E5D0ull;
+            constexpr uint64_t kCc2dExpectedHash = 0xC82DDBEC39F6E24Aull;
             check(kCc2dExpectedHash == 0 || finalHash == kCc2dExpectedHash,
                   "CC2D: the final world hash matches the baked value (Debug == Release)");
         }
@@ -8787,6 +8787,325 @@ bool RunPhysicsSelfTest()
     }
 
     // ---- M95 sub-02 ----
+    // CC 同士の押し出し (collideCharacters / pushPriority) と接触の通知 (reportContacts)。ADR-034
+    {
+        auto mkCc3 = [&](Scene& s, const char* name, float x, bool collide, int32_t priority, bool report) {
+            GameObject ch = s.CreateGameObjectTracked(name);
+            ch.SetLocalPosition(x, 0.9f, 0); // 既定寸法 (r=0.3 h=1.8) の接地中心
+            auto* cc = ch.AddComponent<CharacterControllerComponent>();
+            cc->collideCharacters = collide;
+            cc->pushPriority = priority;
+            cc->reportContacts = report;
+            return ch;
+        };
+        auto run3 = [&](Scene& s, int ticks) {
+            for (int i = 0; i < ticks; ++i) {
+                phys.Update(s.GetWorld(), kDt);
+            }
+        };
+        const CharacterControllerComponent ccDefaults;
+        check(!ccDefaults.collideCharacters && ccDefaults.pushPriority == 0 && !ccDefaults.reportContacts,
+              "CC contacts: collideCharacters / pushPriority / reportContacts default to off");
+
+        // (7) 同じ優先度: 接した状態から歩み寄っても互いに止まり、重ならない
+        {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 20.0f, 0.5f, 20.0f);
+            GameObject a = mkCc3(s, "A7", -0.3f, true, 0, false);
+            GameObject b = mkCc3(s, "B7", 0.3f, true, 0, false);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* alt = a.GetComponent<LocalTransform>();
+            auto* blt = b.GetComponent<LocalTransform>();
+            run3(s, 60);
+            a.GetComponent<CharacterControllerComponent>()->moveInput.x = 1.0f;
+            b.GetComponent<CharacterControllerComponent>()->moveInput.x = -1.0f;
+            float minDist = 1e9f;
+            for (int i = 0; i < 90; ++i) {
+                run3(s, 1);
+                minDist = std::min(minDist, blt->position.x - alt->position.x);
+            }
+            MYE_LOG_INFO("  [phys] CC push equal priority: A.x %.4f B.x %.4f minDist %.4f",
+                         static_cast<double>(alt->position.x), static_cast<double>(blt->position.x),
+                         static_cast<double>(minDist));
+            check(minDist >= 0.6f - 1e-3f, "CC push: equal priority, touching start, never overlap at the end of a tick");
+            check(std::fabs(alt->position.x + 0.3f) < 0.01f && std::fabs(blt->position.x - 0.3f) < 0.01f,
+                  "CC push: equal priority, both stop where they touched");
+        }
+        // (7b) 隙間のある所から歩み寄る: すり抜けない。相手の tick 頭を見るので重なりは 1 歩ぶん以内
+        {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 20.0f, 0.5f, 20.0f);
+            GameObject a = mkCc3(s, "A7b", -0.6f, true, 0, false);
+            GameObject b = mkCc3(s, "B7b", 0.6f, true, 0, false);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* alt = a.GetComponent<LocalTransform>();
+            auto* blt = b.GetComponent<LocalTransform>();
+            run3(s, 60);
+            a.GetComponent<CharacterControllerComponent>()->moveInput.x = 1.0f;
+            b.GetComponent<CharacterControllerComponent>()->moveInput.x = -1.0f;
+            float minDist = 1e9f;
+            for (int i = 0; i < 120; ++i) {
+                run3(s, 1);
+                minDist = std::min(minDist, blt->position.x - alt->position.x);
+            }
+            MYE_LOG_INFO("  [phys] CC approach from a gap: A.x %.4f B.x %.4f minDist %.4f",
+                         static_cast<double>(alt->position.x), static_cast<double>(blt->position.x),
+                         static_cast<double>(minDist));
+            check(minDist >= 0.6f - (1.0f / 60.0f) - 1e-3f && alt->position.x < blt->position.x,
+                  "CC push: approaching from a gap never passes through (overlap within one stride)");
+        }
+        // (8) pushPriority 1 の CC は 0 の CC を無視する: 1 側は歩いた距離そのまま、0 側だけが押し出される
+        {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 20.0f, 0.5f, 20.0f);
+            GameObject boss = mkCc3(s, "Boss8", -1.0f, true, 1, false);
+            GameObject mob = mkCc3(s, "Mob8", 0.0f, true, 0, false);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* blt = boss.GetComponent<LocalTransform>();
+            auto* mlt = mob.GetComponent<LocalTransform>();
+            run3(s, 60);
+            boss.GetComponent<CharacterControllerComponent>()->moveInput.x = 1.0f;
+            run3(s, 120); // 2 m 歩く
+            MYE_LOG_INFO("  [phys] CC priority 1 vs 0: boss.x %.4f mob.x %.4f", static_cast<double>(blt->position.x),
+                         static_cast<double>(mlt->position.x));
+            check(std::fabs(blt->position.x - 1.0f) < 0.01f, "CC priority: the high side walks exactly as far as it asked");
+            check(mlt->position.x > blt->position.x + 0.6f - 0.03f && mlt->position.x > 1.5f,
+                  "CC priority: only the low side is pushed out, ahead of the high side");
+        }
+        // (9) 片方だけ collideCharacters なら従来どおり素通り
+        {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 20.0f, 0.5f, 20.0f);
+            GameObject a = mkCc3(s, "A9", -1.0f, true, 0, false);
+            GameObject b = mkCc3(s, "B9", 0.0f, false, 0, false);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* alt = a.GetComponent<LocalTransform>();
+            auto* blt = b.GetComponent<LocalTransform>();
+            run3(s, 60);
+            a.GetComponent<CharacterControllerComponent>()->moveInput.x = 1.0f;
+            run3(s, 120);
+            check(std::fabs(alt->position.x - 1.0f) < 0.01f && std::fabs(blt->position.x) < 1e-4f,
+                  "CC push: only one side has collideCharacters, so they pass through each other (legacy)");
+        }
+        // (9b) 層が当たらない組は押し出さない (CanCollide)
+        {
+            Scene s;
+            MakeGround(s, "G", 0, -0.5f, 0, 20.0f, 0.5f, 20.0f);
+            GameObject a = mkCc3(s, "A9b", -1.0f, true, 0, false);
+            GameObject b = mkCc3(s, "B9b", 0.0f, true, 0, false);
+            auto* colA = a.AddComponent<ColliderComponent>();
+            colA->isTrigger = true; // 判定は使わず layer / mask だけ借りる
+            colA->layer = 1;
+            colA->mask = 1u << 1;
+            s.GetWorld().ApplyStructuralChanges();
+            auto* alt = a.GetComponent<LocalTransform>();
+            run3(s, 60);
+            a.GetComponent<CharacterControllerComponent>()->moveInput.x = 1.0f;
+            run3(s, 120);
+            check(std::fabs(alt->position.x - 1.0f) < 0.01f,
+                  "CC push: pairs whose layers do not collide pass through each other");
+        }
+
+        // (10) reportContacts: 床 / kinematic / 動的剛体 / 別の CC の 4 ケース。key・法線・impulse 0・key 昇順・enter→stay→exit
+        struct ContactTally {
+            uint64_t key = 0;
+            int enter = 0, stay = 0, exit = 0;
+            bool ascending = true; // 各 tick の列が key 昇順 (重複なし)
+            bool seen = false;
+            SolidContact sample;   // 最初に見えた tick の接触
+            float maxImpulse = 0.0f;
+        };
+        auto keyOf = [](GameObject x, GameObject y) {
+            const uint32_t ix = x.Id().index, iy = y.Id().index;
+            return (static_cast<uint64_t>(std::min(ix, iy)) << 32) | std::max(ix, iy);
+        };
+        auto stepTally = [&](Scene& s, CollisionSystem& cols, TransformSystem& ts,
+                             std::vector<SolidContact>& contacts, ContactTally& t) {
+            phys.Update(s.GetWorld(), kDt, &contacts);
+            ts.Update(s.GetWorld());
+            cols.Update(s.GetWorld(), nullptr, nullptr, &contacts);
+            for (size_t i = 1; i < contacts.size(); ++i) {
+                t.ascending = t.ascending && contacts[i - 1].key < contacts[i].key;
+            }
+            auto countKey = [&](const std::vector<uint64_t>& v) {
+                return static_cast<int>(std::count(v.begin(), v.end(), t.key));
+            };
+            t.enter += countKey(cols.LastCollisionEnter());
+            t.stay += countKey(cols.LastCollisionStay());
+            t.exit += countKey(cols.LastCollisionExit());
+            for (const SolidContact& c : contacts) {
+                if (c.key != t.key) {
+                    continue;
+                }
+                if (!t.seen) {
+                    t.seen = true;
+                    t.sample = c;
+                }
+                t.maxImpulse = std::max(t.maxImpulse, c.impulse);
+            }
+        };
+        // 床 (静的)。床が小 index、CC が大 index → 法線は CC → 床 = -Y
+        {
+            Scene s;
+            CollisionSystem cols;
+            TransformSystem ts;
+            std::vector<SolidContact> contacts;
+            GameObject floor = MakeGround(s, "G10a", 0, -0.5f, 0, 20.0f, 0.5f, 20.0f);
+            GameObject ch = mkCc3(s, "Ch10a", 0, false, 0, true);
+            s.GetWorld().ApplyStructuralChanges();
+            ContactTally t;
+            t.key = keyOf(floor, ch);
+            for (int i = 0; i < 40; ++i) {
+                stepTally(s, cols, ts, contacts, t);
+            }
+            ch.GetComponent<CharacterControllerComponent>()->jumpSpeed = 6.0f;
+            for (int i = 0; i < 30; ++i) {
+                stepTally(s, cols, ts, contacts, t);
+            }
+            check(t.seen && t.sample.impulse == 0.0f && t.sample.ny < -0.99f,
+                  "CC report: standing on the floor gives a contact, impulse 0, normal from the larger index to the floor (-Y)");
+            check(t.enter == 1 && t.stay > 10 && t.exit == 1 && t.ascending,
+                  "CC report: floor contact delivers enter, stay, then exit once the character jumps off");
+        }
+        // kinematic 剛体 (壁)。壁が小 index、CC が大 index。CC は壁の -X 側から +X へ歩く → 法線 (CC → 壁) は +X
+        {
+            Scene s;
+            CollisionSystem cols;
+            TransformSystem ts;
+            std::vector<SolidContact> contacts;
+            MakeGround(s, "G10b", 0, -0.5f, 0, 20.0f, 0.5f, 20.0f);
+            GameObject wall = MakeBox(s, "Wall10b", 3.0f, 1.0f, 0, 0.5f, 1.0f, 3.0f); // 面 x=2.5
+            wall.GetComponent<RigidbodyComponent>()->isKinematic = true;
+            GameObject ch = mkCc3(s, "Ch10b", 2.0f, false, 0, true);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* cc = ch.GetComponent<CharacterControllerComponent>();
+            ContactTally t;
+            t.key = keyOf(wall, ch);
+            for (int i = 0; i < 20; ++i) {
+                stepTally(s, cols, ts, contacts, t);
+            }
+            check(!t.seen, "CC report: no contact with the kinematic wall before touching it");
+            cc->moveInput.x = 2.0f;
+            for (int i = 0; i < 40; ++i) {
+                stepTally(s, cols, ts, contacts, t);
+            }
+            cc->moveInput.x = -2.0f;
+            for (int i = 0; i < 20; ++i) {
+                stepTally(s, cols, ts, contacts, t);
+            }
+            check(t.seen && t.sample.impulse == 0.0f && t.sample.nx > 0.99f,
+                  "CC report: kinematic body contact, impulse 0, normal from the larger index (CC) to the wall (+X)");
+            check(t.enter == 1 && t.stay > 5 && t.exit == 1 && t.ascending,
+                  "CC report: kinematic contact delivers enter, stay, then exit once the character walks away");
+        }
+        // 動的剛体。箱が小 index、CC が大 index。箱は CC の +X 側 (法線 CC → 箱 = +X)。CC は箱を押さない
+        {
+            Scene s;
+            CollisionSystem cols;
+            TransformSystem ts;
+            std::vector<SolidContact> contacts;
+            MakeGround(s, "G10c", 0, -0.5f, 0, 20.0f, 0.5f, 20.0f);
+            GameObject box = MakeBox(s, "Box10c", 2.0f, 0.5f, 0, 0.5f, 0.5f, 0.5f);
+            GameObject ch = mkCc3(s, "Ch10c", 0.5f, false, 0, true);
+            s.GetWorld().ApplyStructuralChanges();
+            auto* cc = ch.GetComponent<CharacterControllerComponent>();
+            ContactTally t;
+            t.key = keyOf(box, ch);
+            for (int i = 0; i < 20; ++i) {
+                stepTally(s, cols, ts, contacts, t);
+            }
+            cc->moveInput.x = 2.0f;
+            for (int i = 0; i < 40; ++i) {
+                stepTally(s, cols, ts, contacts, t);
+            }
+            cc->moveInput.x = -2.0f;
+            for (int i = 0; i < 20; ++i) {
+                stepTally(s, cols, ts, contacts, t);
+            }
+            check(t.seen && t.sample.impulse == 0.0f && t.sample.nx > 0.99f,
+                  "CC report: dynamic body contact, impulse 0, normal from the larger index (CC) to the box (+X)");
+            check(t.enter == 1 && t.stay > 5 && t.exit == 1 && t.ascending,
+                  "CC report: dynamic body contact delivers enter, stay, then exit once the character walks away");
+        }
+        // 別の CC。A (小 index) が B の -X 側。法線 B → A = -X。どちらか一方が reportContacts なら出る
+        for (const bool reportOnA : { true, false }) {
+            Scene s;
+            CollisionSystem cols;
+            TransformSystem ts;
+            std::vector<SolidContact> contacts;
+            MakeGround(s, "G10d", 0, -0.5f, 0, 20.0f, 0.5f, 20.0f);
+            GameObject a = mkCc3(s, "A10d", -1.0f, true, 0, reportOnA);
+            GameObject b = mkCc3(s, "B10d", 0.0f, true, 0, !reportOnA);
+            s.GetWorld().ApplyStructuralChanges();
+            ContactTally t;
+            t.key = keyOf(a, b);
+            for (int i = 0; i < 20; ++i) {
+                stepTally(s, cols, ts, contacts, t);
+            }
+            a.GetComponent<CharacterControllerComponent>()->moveInput.x = 1.0f;
+            for (int i = 0; i < 60; ++i) {
+                stepTally(s, cols, ts, contacts, t);
+            }
+            a.GetComponent<CharacterControllerComponent>()->moveInput.x = -1.0f;
+            for (int i = 0; i < 20; ++i) {
+                stepTally(s, cols, ts, contacts, t);
+            }
+            check(t.seen && t.sample.impulse == 0.0f && t.sample.nx < -0.99f,
+                  reportOnA ? "CC report: CC vs CC (the smaller index reports), impulse 0, normal from the larger to the smaller (-X)"
+                            : "CC report: CC vs CC (the larger index reports), impulse 0, normal from the larger to the smaller (-X)");
+            check(t.enter == 1 && t.stay > 5 && t.exit == 1 && t.ascending,
+                  reportOnA ? "CC report: CC vs CC (small reports) delivers enter, stay, exit"
+                            : "CC report: CC vs CC (large reports) delivers enter, stay, exit");
+        }
+        // reportContacts が全員 off なら従来どおり何も積まない (床・壁・CC 同士に触れても contacts は空)
+        {
+            Scene s;
+            CollisionSystem cols;
+            TransformSystem ts;
+            std::vector<SolidContact> contacts;
+            MakeGround(s, "G10e", 0, -0.5f, 0, 20.0f, 0.5f, 20.0f);
+            GameObject a = mkCc3(s, "A10e", -1.0f, true, 0, false);
+            GameObject b = mkCc3(s, "B10e", 0.0f, true, 0, false);
+            s.GetWorld().ApplyStructuralChanges();
+            a.GetComponent<CharacterControllerComponent>()->moveInput.x = 1.0f;
+            size_t maxSize = 0;
+            ContactTally t;
+            for (int i = 0; i < 90; ++i) {
+                stepTally(s, cols, ts, contacts, t);
+                maxSize = std::max(maxSize, contacts.size());
+            }
+            check(maxSize == 0, "CC report: with reportContacts off nothing is added to the contact list");
+        }
+
+        // (11) CC + ソリッド capsule Collider (静的ボディとして収集される) と動的剛体: 同 key は剛体側の 1 件 (impulse > 0)
+        {
+            Scene s;
+            CollisionSystem cols;
+            TransformSystem ts;
+            std::vector<SolidContact> contacts;
+            MakeGround(s, "G11", 0, -0.5f, 0, 20.0f, 0.5f, 20.0f);
+            GameObject ch = mkCc3(s, "Ch11", 0, false, 0, true);
+            auto* col = ch.AddComponent<ColliderComponent>();
+            col->shape = 2;
+            col->isTrigger = false;
+            col->radius = 0.3f;
+            col->height = 1.8f;
+            GameObject box = MakeBox(s, "Box11", 1.2f, 0.5f, 0, 0.5f, 0.5f, 0.5f);
+            box.GetComponent<RigidbodyComponent>()->velocity.x = -6.0f; // CC へ向かって滑り込む (摩擦で止まる前に届く速さ)
+            s.GetWorld().ApplyStructuralChanges();
+            ContactTally t;
+            t.key = keyOf(ch, box);
+            for (int i = 0; i < 90; ++i) {
+                stepTally(s, cols, ts, contacts, t);
+            }
+            MYE_LOG_INFO("  [phys] CC+Collider vs box: seen %d maxImpulse %.4f enter %d stay %d exit %d ascending %d boxX %.3f",
+                         t.seen ? 1 : 0, static_cast<double>(t.maxImpulse), t.enter, t.stay, t.exit, t.ascending ? 1 : 0,
+                         static_cast<double>(box.GetComponent<LocalTransform>()->position.x));
+            check(t.seen && t.maxImpulse > 0.0f && t.ascending,
+                  "CC report: a dynamic body hitting a CC with a solid capsule Collider yields one rigid-side contact (impulse > 0)");
+            check(t.enter == 1, "CC report: that contact is delivered as a single enter (no double delivery)");
+        }
+    }
 
     // ---- M95 sub-05 ----
 

@@ -882,7 +882,10 @@ struct CharacterControllerComponent {
     EntityID groundEntity = {};     // 読み取り専用。接地している床のエンティティ (無ければ無効 ID)
     DirectX::XMFLOAT3 groundVelocity = { 0.0f, 0.0f, 0.0f }; // 読み取り専用。床の Rigidbody.velocity (Rigidbody が無ければ 0)
     static constexpr int32_t kMaxTicksSinceGrounded = 32767;
-    // ---- M95 sub-02 (末尾 append) ----
+    // ---- M95 sub-02 (末尾 append)。CC 同士の押し出しと接触通知 (opt-in、既定 off。ADR-034) ----
+    bool collideCharacters = false; // 両者が true の CC 同士だけ、相手の tick 頭のカプセルから押し出す
+    int32_t pushPriority = 0;       // 高い側は低い側を無視する (低い側だけ押し出される)。同値なら互いに止まる
+    bool reportContacts = false;    // この CC が触れた相手 (床 / 剛体 / CC) を SolidContact (impulse 0) で出す
     // ---- M95 sub-05 (末尾 append) ----
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
