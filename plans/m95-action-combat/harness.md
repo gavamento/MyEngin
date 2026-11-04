@@ -21,6 +21,7 @@
 ## 波の統合
 | 波 | 統合コミット | 目視 (付録 B) | 検証 |
 |---|---|---|---|
+| 1 (sub-00b, 01, 02, 04, 06) | (この行の次のコミット。2026-11-05 01:55) | merge 順 00b→01→02→04→06、競合は sub-02 の 3 ファイルのみ (SimSnapshot.h = 最大値 67 + 版コメント両方、AcousticAudio 版チェック 67、TwoDDemo hash)。目視: Components.h/.cpp の各サブ欄がマーカー直下、EngineAPI.h / Interop.cs の関数ポインタ順 190/190 diff 0、Update に pauseTicks / canInterrupt、SelfTest 各マーカー、LocalizationTable M95、Full 10 本。新規ファイル無し (gen_project_files 不要) | Debug / Release ビルド OK。焼き込み hash で動いたのは TwoDDemo のみ (0x1FD6DDE81A0FCA6C → 実測 `[twod] world hash after 3000 ticks: 0xAAC7A2732CA0AA85`)、Physics / NavAgent / Tilemap / GridNav2D は不変。`--selftest-full` Debug 110 スイート 0 failed (549.0 s) / Release 110 スイート 0 failed (94.4 s、同じ hash で PASS)。check_rules 0 error / 50 warning。replay_verify 22 ジョブ PASS (271.5 s)。三校: master で DLL を v32 で作り直し (`[dll] GameLogic loaded ... (3 scripts)`)、verify.bat は既存の 2 件 (shot main diffPixels=28402 / patrol) のみ FAIL = 増えていない (合格条件どおり) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
