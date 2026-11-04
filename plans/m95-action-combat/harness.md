@@ -17,7 +17,7 @@
 | sub-03 部位の重なり・掃引 (ABI 193 スロット) | 2 | sub-01、Wave 1 統合 | OK | 1 | 6cc89b5 (m95/sub-03) | worktree `C:/HAL/MyEngin-wt/sub-03` (基点 e1bba10)。Release full 全 PASS、RV 22 ジョブ一致、ABI 照合 193/193。Debug full の fractureeditor FAIL は負荷要因 (下記申し送り) |
 | sub-05 ルートモーションの縦成分 (snapshot v68) | 2 | sub-02, sub-04、Wave 1 統合 | OK | 2 | d8c2ec9 (m95/sub-05) | worktree `C:/HAL/MyEngin-wt/sub-05` (基点 e1bba10)。round 2 で Debug / Release full 0 failed、CR 0 error、RV 22 ジョブ PASS。round 2 の SELF_EVAL は coder の返送がツールで拒否され、司会が出力ファイルから取り出して転送 |
 | sub-07 文書 + 最終統合確認 | 3 | 全部 | OK | 1 | 9cfbff0 | master 直 (worktree なし)。受け入れ 30 は「波の統合」表の Wave 2 行で代用 |
-| sub-08 壁へ押し付けられた CC の押し返し (review-1 #1) | 4 | master 592ffff | 仕様の直し待ち (ユーザー判断で「ボスが押し続ける」) | 0 | | 受け入れ 42, 43。ST(physics) を名指し。sub-09 と並列可 |
+| sub-08 CC 同士の押し出しを障害物への掃引で切る (review-1 #1) | 4 | master | 実装中 (round 1) | 0 | | worktree `C:/HAL/MyEngin-wt/sub-08` (旧 sub-03 を move、ブランチ m95/sub-08)。受け入れ 42, 43。ST(physics) を名指し。仕様はユーザー判断「ボスが押し続ける」で改訂 (spec §2 #26 / §4.1 D) |
 | sub-09 ヒットストップ中の縦の高さ + テスト 2 件 (review-1 #2, #4) | 4 | master 592ffff | 実装中 (round 1) | 0 | | worktree `C:/HAL/MyEngin-wt/sub-09` (旧 sub-05 を move、ブランチ m95/sub-09、基点 e104c89)。受け入れ 44, 45 |
 | sub-10 予約マーカーの整理と文書 (review-1 #3, #4) | 5 | sub-08, sub-09 の統合 | 未着手 | 0 | | 受け入れ 46。master 直 |
 
