@@ -174,7 +174,8 @@ struct SimRefs {
 // v65 (M94v): Camera2DFollowComponent (TypeId 92、hash 対象) と PixelPerfectCamera2DComponent (TypeId 93、NoHash)。World 節のカラム生バイト
 // v66 (M95a): AnimatorControllerComponent の末尾に pauseTicks (hash 対象)。World 節のカラム生バイト
 // v67 (M95b): CharacterControllerComponent の末尾に collideCharacters / pushPriority / reportContacts。World 節のカラム生バイト
-inline constexpr uint32_t kSimSnapshotVersion = 67;
+// v68 (M95e): CharacterController / Rigidbody の末尾に useVerticalInput / verticalInput、SkinnedMesh::PoseLayer の末尾に rootMotionY。World 節のカラム生バイト
+inline constexpr uint32_t kSimSnapshotVersion = 68;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

@@ -16,6 +16,7 @@
 #include "Engine/Engine/Animation/AnimatorController.h"
 #include "Engine/Engine/Animation/SkinningSystem.h"
 #include "Engine/Engine/Animation/SpriteAnim.h"
+#include "Engine/Engine/Physics/Rigid/PhysicsSystem.h" // M95: ルートモーションの縦 → CC の物理
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene/Scene.h"
@@ -2072,6 +2073,203 @@ bool RunAnimatorControllerSelfTest()
     }
 
     // ---- M95 sub-05 ----
+
+    {
+        // ルートの縦のルートモーション (M95、rootMotionY)。Rise: 1 秒でルートが y 0 → 1 (0.5 秒) → 0、z は一定に -1.2 m 進む
+        using namespace DirectX;
+        SkinnedModel rise = MakeNamedClipModel({ { "Rise", 1.0f }, { "Flat", 1.0f } });
+        rise.joints[0].name = "Root";
+        {
+            JointTrack& tr = rise.clips[0].tracks[0];
+            tr.tTimes = { 0.0f, 0.5f, 1.0f };
+            tr.tVals = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, -0.6f }, { 0.0f, 0.0f, -1.2f } };
+        }
+        RenderResources res;
+        const AssetID riseModel = res.skinnedModels.Register("selftest_rmy", rise);
+        const auto makeCtrl = [&](const wchar_t* path, int32_t rootMotionY) {
+            ControllerAsset ctrl;
+            ControllerState st = { "Rise", "", 0, 1, 0, "Rise", HashStr("Rise") }; // loop = 0
+            st.rootMotionY = rootMotionY;
+            ctrl.states.push_back(st);
+            ctrl.states.push_back({ "Idle", "", 0, 1, 1, "Flat", HashStr("Flat") });
+            return ctrlLib.Register(path, ctrl);
+        };
+        const uint64_t withY = makeCtrl(L"rmy_on.controller.json", 1);
+        const uint64_t noY = makeCtrl(L"rmy_off.controller.json", 0);
+        struct Rig {
+            GameObject actor;
+            GameObject body;
+        };
+        const auto makeRig = [&](Scene& s, uint64_t ctrlHash, bool apply) {
+            Rig r;
+            r.actor = s.CreateGameObjectTracked("RmyActor");
+            AnimatorControllerComponent* ac = r.actor.AddComponent<AnimatorControllerComponent>();
+            ac->controller = AssetID{ ctrlHash };
+            ac->applyRootMotion = apply;
+            r.body = s.CreateGameObjectTracked("RmyBody");
+            r.body.SetParent(r.actor);
+            r.body.AddComponent<SkinnedMeshComponent>()->model = riseModel;
+            return r;
+        };
+
+        // 21: 速度の y。1 の間は (y(t) - y(t-1)) x 60、0 のときは 0。水平 (z) は rootMotionY の有無で同じ
+        {
+            Scene sOn;
+            Scene sOff;
+            Rig on = makeRig(sOn, withY, false);
+            Rig off = makeRig(sOff, noY, false);
+            sOn.GetWorld().ApplyStructuralChanges();
+            sOff.GetWorld().ApplyStructuralChanges();
+            AnimatorControllerSystem sysOn;
+            AnimatorControllerSystem sysOff;
+            bool upOk = true;
+            bool downOk = true;
+            bool offOk = true;
+            bool horizontalSame = true;
+            for (int t = 1; t <= 60; ++t) {
+                sysOn.Update(sOn.GetWorld(), ctrlLib, animLib, &res.skinnedModels);
+                sysOff.Update(sOff.GetWorld(), ctrlLib, animLib, &res.skinnedModels);
+                const XMFLOAT3 vOn = on.actor.GetComponent<AnimatorControllerComponent>()->rootMotionVelocity;
+                const XMFLOAT3 vOff = off.actor.GetComponent<AnimatorControllerComponent>()->rootMotionVelocity;
+                upOk = upOk && (t > 30 || std::fabs(vOn.y - 2.0f) < 1e-3f);
+                downOk = downOk && (t <= 30 || std::fabs(vOn.y + 2.0f) < 1e-3f);
+                offOk = offOk && vOff.y == 0.0f;
+                horizontalSame = horizontalSame && vOn.x == vOff.x && vOn.z == vOff.z && std::fabs(vOn.z + 1.2f) < 1e-3f;
+            }
+            check(upOk && downOk, "M95 rootMotionY: rootMotionVelocity.y is (y(t) - y(t-1)) x 60 (+2 rising, -2 falling)");
+            check(offOk, "M95 rootMotionY: rootMotionY = 0 leaves rootMotionVelocity.y at exactly 0");
+            check(horizontalSame, "M95 rootMotionY: the horizontal velocity does not depend on rootMotionY");
+        }
+
+        // JSON: 1 のときだけ skel に書き、読み戻す。0 は書かない。ブレンドツリーも skel 直下
+        {
+            ControllerAsset a;
+            ControllerState st = { "Rise", "", 0, 1, 0, "Rise", HashStr("Rise") };
+            st.rootMotionY = 1;
+            a.states.push_back(st);
+            ControllerState blend;
+            blend.name = "Blend";
+            blend.blendType = ControllerBlendType::Blend1D;
+            blend.blendChildren.push_back({});
+            blend.blendChildren[0].clip = "Rise";
+            blend.blendChildren[0].clipHash = HashStr("Rise");
+            blend.rootMotionY = 1;
+            a.states.push_back(blend);
+            a.states.push_back({ "Idle", "", 0, 1, 1, "Flat", HashStr("Flat") });
+            const json j = ControllerLibrary::ToJson(a);
+            ControllerAsset back;
+            check(j["states"][0]["skel"].value("rootMotionY", 0) == 1 && j["states"][1]["skel"].value("rootMotionY", 0) == 1
+                      && !j["states"][2]["skel"].contains("rootMotionY") && ControllerLibrary::FromJson(j, back)
+                      && back.states[0].rootMotionY == 1 && back.states[1].rootMotionY == 1 && back.states[2].rootMotionY == 0,
+                  "M95 rootMotionY: the skel block writes it only when 1 (single clip and blend tree) and reads it back");
+        }
+
+        // 22: 縦ありの層 (重み 0.25) と縦なしの層を混ぜたとき、ポーズから抜く縦の量は 0.25 x (now.y - start.y)
+        {
+            const auto sample = [&](int32_t verticalOnLayer0, XMFLOAT4X4& root) {
+                SkinnedMeshComponent sm;
+                sm.poseLayerCount = 2;
+                sm.poseLayers[0] = { 0, 30 * SkinnedMeshComponent::kPoseTimeQPerTick, 16384 };
+                sm.poseLayers[0].rootMotionY = verticalOnLayer0;
+                sm.poseLayers[1] = { 1, 30 * SkinnedMeshComponent::kPoseTimeQPerTick, 49152 };
+                sm.poseRootJoint = 0;
+                std::vector<XMMATRIX> locals;
+                SampleSkinnedLocals(*res.skinnedModels.Get(riseModel), sm, locals);
+                XMStoreFloat4x4(&root, locals[0]);
+                return sm;
+            };
+            XMFLOAT4X4 keep, strip;
+            const SkinnedMeshComponent smKeep = sample(0, keep);
+            const SkinnedMeshComponent smStrip = sample(1, strip);
+            check(std::fabs((keep._42 - strip._42) - 0.25f * 1.0f) < 1e-5f && keep._41 == strip._41 && keep._43 == strip._43,
+                  "M95 rootMotionY: the pose strips ratio x (now.y - start.y) vertically for rootMotionY layers only");
+            check(!SamePoseInputs(smKeep, smStrip), "M95 rootMotionY: the pose cache key includes a layer's rootMotionY");
+        }
+
+        // 24: 適用先。CC は moveInput に加えて縦入力 (useVerticalInput)、LocalTransform は y も足す、NavMeshAgent は何も書かない
+        {
+            Scene s;
+            World& world = s.GetWorld();
+            Rig ccRig = makeRig(s, withY, true);
+            Rig rbRig = makeRig(s, withY, true);
+            Rig kinRig = makeRig(s, withY, true);
+            Rig navRig = makeRig(s, withY, true);
+            Rig offRig = makeRig(s, noY, true);
+            ccRig.actor.AddComponent<CharacterControllerComponent>();
+            rbRig.actor.AddComponent<RigidbodyComponent>();
+            kinRig.actor.AddComponent<RigidbodyComponent>()->isKinematic = true;
+            navRig.actor.AddComponent<CharacterControllerComponent>();
+            navRig.actor.AddComponent<NavMeshAgentComponent>()->updatePosition = true;
+            offRig.actor.AddComponent<CharacterControllerComponent>();
+            world.ApplyStructuralChanges();
+            RigidbodyComponent* rb = rbRig.actor.GetComponent<RigidbodyComponent>(); // 構造変更の後に引く
+            rb->isSleeping = true;
+            AnimatorControllerSystem sys;
+            sys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+            const CharacterControllerComponent* cc = ccRig.actor.GetComponent<CharacterControllerComponent>();
+            check(cc->useVerticalInput && std::fabs(cc->verticalInput - 2.0f) < 1e-3f && std::fabs(cc->moveInput.z + 1.2f) < 1e-3f
+                      && !offRig.actor.GetComponent<CharacterControllerComponent>()->useVerticalInput,
+                  "M95 rootMotionY: a CharacterController gets verticalInput only from a rootMotionY state");
+            check(rb->useVerticalInput && std::fabs(rb->verticalInput - 2.0f) < 1e-3f && !rb->isSleeping,
+                  "M95 rootMotionY: a dynamic Rigidbody gets verticalInput and is woken");
+            check(std::fabs(kinRig.actor.GetComponent<LocalTransform>()->position.y - 1.0f / 30.0f) < 1e-4f
+                      && !kinRig.actor.GetComponent<RigidbodyComponent>()->useVerticalInput,
+                  "M95 rootMotionY: a kinematic Rigidbody moves by the Transform's y and gets no verticalInput");
+            check(!navRig.actor.GetComponent<CharacterControllerComponent>()->useVerticalInput
+                      && navRig.actor.GetComponent<LocalTransform>()->position.y == 0.0f,
+                  "M95 rootMotionY: a NavMeshAgent with updatePosition keeps control (nothing is written)");
+        }
+        {
+            // 縦の LocalTransform 適用 (CC / Rigidbody なし): 60 tick で上がって元へ戻る
+            Scene s;
+            Rig r = makeRig(s, withY, true);
+            s.GetWorld().ApplyStructuralChanges();
+            AnimatorControllerSystem sys;
+            float maxY = 0.0f;
+            for (int t = 0; t < 60; ++t) {
+                sys.Update(s.GetWorld(), ctrlLib, animLib, &res.skinnedModels);
+                maxY = std::max(maxY, r.actor.GetComponent<LocalTransform>()->position.y);
+            }
+            check(std::fabs(maxY - 1.0f) < 1e-3f && std::fabs(r.actor.GetComponent<LocalTransform>()->position.y) < 1e-3f,
+                  "M95 rootMotionY: the LocalTransform target also gets y (up to 1 m and back after 60 ticks)");
+        }
+        {
+            // CC + 物理 (空中): 上がって戻り、ステートを rootMotionY なしへ切り替えると重力で落ちる
+            Scene s;
+            World& world = s.GetWorld();
+            Rig r = makeRig(s, withY, true);
+            r.actor.SetLocalPosition(0.0f, 10.0f, 0.0f);
+            r.actor.AddComponent<CharacterControllerComponent>();
+            world.ApplyStructuralChanges();
+            AnimatorControllerSystem sys;
+            PhysicsSystem phys;
+            const LocalTransform* lt = r.actor.GetComponent<LocalTransform>();
+            const CharacterControllerComponent* cc = r.actor.GetComponent<CharacterControllerComponent>();
+            float maxY = 0.0f;
+            for (int t = 0; t < 60; ++t) {
+                sys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+                phys.Update(world, 1.0f / 60.0f);
+                maxY = std::max(maxY, lt->position.y);
+            }
+            check(std::fabs(maxY - 11.0f) < 2e-2f && std::fabs(lt->position.y - 10.0f) < 2e-2f,
+                  "M95 rootMotionY: a CharacterController rises 1 m and returns to its height by the clip's vertical motion");
+            // 非ループのクリップが終端に張り付いたら AnimatorPlay しなくても縦入力は止まり、重力へ戻る
+            const float vEnd = cc->velocity.y;
+            sys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+            const bool flagOff = !cc->useVerticalInput;
+            phys.Update(world, 1.0f / 60.0f);
+            check(flagOff && cc->velocity.y < 0.0f && std::fabs(cc->velocity.y - (vEnd - 9.81f / 60.0f)) < 1e-3f,
+                  "M95 rootMotionY: a non-looping clip stuck at its end stops driving and gravity returns without AnimatorPlay");
+            AnimatorPlay(world, r.actor.Id(), 1, 0, ctrlLib);
+            for (int t = 0; t < 12; ++t) {
+                sys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+                phys.Update(world, 1.0f / 60.0f);
+            }
+            check(cc->velocity.y < -1.0f && lt->position.y < 9.95f,
+                  "M95 rootMotionY: after leaving the rootMotionY state gravity takes the CharacterController down");
+        }
+    }
+
 
     // ---- M95 sub-06 ----
 

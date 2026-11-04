@@ -348,6 +348,7 @@ struct SkinnedMeshComponent {
         int32_t prevTimeQ = 0; // 前 tick のこの層の時刻 (1/256 tick)
         int32_t stepQ = 0;     // この tick の進み (1/256 tick)。0 = 補間しない
         // ---- M95 sub-05 ----
+        int32_t rootMotionY = 0; // 1 = この層はルートの縦の動きも担う (ポーズから縦も抜く)。NoHash だが snapshot の生バイトには載る
     };
     int32_t poseLayerCount = 0; // 0 = 旧経路。1..kMaxPoseLayers = poseLayers の先頭から有効
     // その tick にコントローラがプログラムを書いた印。SkinningSystem が見て 0 に戻す
@@ -462,6 +463,8 @@ struct RigidbodyComponent {
     // 拘束の置き場と手順は PhysicsSystem.cpp の plane2D 節が正本
     bool plane2D = false;
     // ---- M95 sub-05 (末尾 append) ----
+    bool useVerticalInput = false; // true の tick は物理が重力積分の代わりに verticalInput を縦速度に使い、使ったら false に戻す
+    float verticalInput = 0.0f;    // m/s。ルートモーションの縦 (rootMotionY) が毎 tick 書く
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -804,7 +807,8 @@ struct AnimatorControllerComponent {
     // ★時刻だけからは決められない (ループが 0 ちょうどへ折り返した次の tick と、入った tick がどちらも 0 から進む)
     int32_t stateEntered = 1;
     // ---- M89j 追加 (末尾 append): ルートモーション (水平移動) ----
-    // 骨クリップのルートジョイントの動きを、主 SkinnedMesh のモデルで tick ごとに測った速度 (ワールド、y は常に 0)。
+    // 骨クリップのルートジョイントの動きを、主 SkinnedMesh のモデルで tick ごとに測った速度 (ワールド)。
+    // y はステートの rootMotionY の層があるときだけ (M95)、無ければ 0。
     // applyRootMotion に関わらず毎 tick 書く (スクリプトが自分で動かすときに読む)。骨を駆動していない tick は 0
     DirectX::XMFLOAT3 rootMotionVelocity = { 0.0f, 0.0f, 0.0f };
     // true: 上の速度でこのエンティティを動かし、駆動する SkinnedMesh のポーズからルートの水平移動を抜く。
@@ -889,6 +893,8 @@ struct CharacterControllerComponent {
     int32_t pushPriority = 0;       // 高い側は低い側を無視する (低い側だけ押し出される)。同値なら互いに止まる
     bool reportContacts = false;    // この CC が触れた相手 (床 / 剛体 / CC) を SolidContact (impulse 0) で出す
     // ---- M95 sub-05 (末尾 append) ----
+    bool useVerticalInput = false; // true の tick は物理が重力積分の代わりに verticalInput を縦速度に使い、使ったら false に戻す
+    float verticalInput = 0.0f;    // m/s。ルートモーションの縦 (rootMotionY) が毎 tick 書く
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

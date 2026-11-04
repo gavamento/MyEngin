@@ -336,6 +336,10 @@ void RegisterBuiltinComponents()
                              "Constrain to the XY plane: z is held at its start value and only "
                              "rotation about Z remains. Bodies at different z never touch")),
         // ---- M95 sub-05 (末尾 append) ----
+        MYE_JP("縦入力を使う",
+               MYE_FIELD_FLAGS(RigidbodyComponent, useVerticalInput, Bool, kFieldReadOnly)),
+        MYE_JP("縦入力",
+               MYE_FIELD_FLAGS(RigidbodyComponent, verticalInput, Float, kFieldReadOnly)),
     });
 
     // M21: ゲーム内 UI。描画専用なので **kComponentNoHash**。
@@ -476,6 +480,10 @@ void RegisterBuiltinComponents()
                MYE_FIELD_TIP(CharacterControllerComponent, reportContacts, Bool,
                              "Report touched floors, bodies and characters as contacts (OnCollisionEnter/Stay/Exit)")),
         // ---- M95 sub-05 (末尾 append) ----
+        MYE_JP("縦入力を使う",
+               MYE_FIELD_FLAGS(CharacterControllerComponent, useVerticalInput, Bool, kFieldReadOnly)),
+        MYE_JP("縦入力",
+               MYE_FIELD_FLAGS(CharacterControllerComponent, verticalInput, Float, kFieldReadOnly)),
     });
 
     // M29c: スプライト/トレイル/3D テキスト。描画専用なので **kComponentNoHash**。

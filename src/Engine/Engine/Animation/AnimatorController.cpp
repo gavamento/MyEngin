@@ -407,6 +407,7 @@ struct SkeletalSource {
     StateClock clock;       // 単一クリップは time 系、ブレンドツリーの子は phase 系を使う
     int32_t loop = 1;
     int32_t weightQ = 0;
+    int32_t rootMotionY = 0; // 1 = この層はルートの縦も担う (ステートの rootMotionY)
 };
 // 遷移の元と先がどちらもブレンドツリーでも収まる
 constexpr int32_t kMaxSkeletalSources = 2 * kMaxBlendLayers;
@@ -418,14 +419,14 @@ int32_t AppendStateSources(const ControllerAsset& ctrl, const ControllerState& s
                            const StateClock& clock, int32_t stateWeightQ, SkeletalSource* out)
 {
     if (st.blendType == ControllerBlendType::None) {
-        out[0] = { st.skelClipHash, false, clock, st.loop, stateWeightQ };
+        out[0] = { st.skelClipHash, false, clock, st.loop, stateWeightQ, st.rootMotionY };
         return 1;
     }
     BlendChildWeight w[kMaxBlendLayers];
     const int32_t n = StateBlendWeights(ctrl, st, params, w);
     for (int32_t i = 0; i < n; ++i) {
         const int32_t weightQ = static_cast<int32_t>(int64_t(stateWeightQ) * w[i].weightQ / kWeightOne);
-        out[i] = { st.blendChildren[static_cast<size_t>(w[i].child)].clipHash, true, clock, st.loop, weightQ };
+        out[i] = { st.blendChildren[static_cast<size_t>(w[i].child)].clipHash, true, clock, st.loop, weightQ, st.rootMotionY };
     }
     return n;
 }
@@ -507,6 +508,7 @@ void WriteSkeletalProgram(SkinnedMeshComponent& sm, const SkinnedModel* model, c
         SkinnedMeshComponent::PoseLayer& layer = sm.poseLayers[i];
         // モデルが未登録・名前のクリップが無いモデルは -1 = バインドポーズ (層の数と重みは他のメッシュとそろえる)
         layer.clip = model != nullptr ? model->FindClipByHash(src.clipHash) : -1;
+        layer.rootMotionY = src.rootMotionY;
         if (src.usesPhase) {
             // 位相はメッシュ自身のモデルでの長さで時刻にする (長さの違うモデルでも周がそろう)
             const int32_t ticks =
@@ -741,12 +743,18 @@ RootLayerMotion RootLayerDelta(const SkinnedModel& model, int32_t clip, int32_t 
 // この tick のルートの移動とヨー (主 SkinnedMesh のモデルで測る、ルートの親空間)。ポーズプログラムと同じ層・同じ時計・
 // 同じ重みで、層ごとの動きを重みで混ぜる (移動は線形、ヨーは cos >= 0 にそろえた和を正規化 = nlerp)。
 // 単一クリップは tick の時計 (折り返しは time の周回数)、ブレンドツリーの子は位相 (折り返しは位相の周回数) から
-// 時刻を引く。非ループは端に張り付くので折り返さない。up はルートの親空間の上
+// 時刻を引く。非ループは端に張り付くので折り返さない。up はルートの親空間の上。
+// サンプル区間が空でない rootMotionY の層があれば outHasUp = true とし (非ループの終端に張り付いた層は駆動しない)、
+// rootMotionY の層だけの up 方向の移動 (重み付き) を outUpDelta に積む
+// (out の 3 軸の累積とは別。層ごとに up 成分を引くと up が軸に揃わない連鎖で水平の丸めが変わる)
 void RootMotionDelta(const SkinnedModel& model, int32_t joint, const float (&up)[3], bool followYaw,
-                     const SkeletalSource* sources, int32_t count, float (&out)[3], Yaw& outYaw)
+                     const SkeletalSource* sources, int32_t count, float (&out)[3], Yaw& outYaw, bool& outHasUp,
+                     float& outUpDelta)
 {
     constexpr int32_t kQ = SkinnedMeshComponent::kPoseTimeQPerTick;
     out[0] = out[1] = out[2] = 0.0f;
+    outHasUp = false;
+    outUpDelta = 0.0f;
     float yawC = 0.0f;
     float yawS = 0.0f;
     for (int32_t i = 0; i < count; ++i) {
@@ -761,19 +769,27 @@ void RootMotionDelta(const SkinnedModel& model, int32_t joint, const float (&up)
         }
         const StateClock& clock = src.clock;
         RootLayerMotion m;
+        bool sampled = false; // サンプル区間が空でない (非ループの終端に張り付いた層は false)
         if (src.usesPhase) {
             const int64_t wraps = src.loop ? FloorDiv(int64_t(clock.prevPhase) + clock.phaseStep, int64_t(kPhaseCycle)) : 0;
-            m = RootLayerDelta(model, clip, joint, up, followYaw, BlendPhaseToTimeQ(clock.prevPhase, ticks, src.loop),
-                               BlendPhaseToTimeQ(clock.phase, ticks, src.loop), wraps, ticks);
+            const int32_t startQ = BlendPhaseToTimeQ(clock.prevPhase, ticks, src.loop);
+            const int32_t endQ = BlendPhaseToTimeQ(clock.phase, ticks, src.loop);
+            sampled = startQ != endQ || wraps != 0;
+            m = RootLayerDelta(model, clip, joint, up, followYaw, startQ, endQ, wraps, ticks);
         } else {
             // 単一クリップのステートの時計は主 SkinnedMesh の長さで回っている (ステートの長さと同じ)
             const int64_t wraps = src.loop ? FloorDiv(int64_t(clock.prevTime) + clock.timeStep, ticks) : 0;
+            sampled = clock.prevTime != clock.time || wraps != 0;
             m = RootLayerDelta(model, clip, joint, up, followYaw, clock.prevTime * kQ, clock.time * kQ, wraps, ticks);
         }
         const float w = static_cast<float>(src.weightQ) / static_cast<float>(kWeightOne);
         out[0] += w * m.delta[0];
         out[1] += w * m.delta[1];
         out[2] += w * m.delta[2];
+        if (src.rootMotionY != 0) {
+            outHasUp = outHasUp || sampled; // 駆動した層が 1 つ以上ある tick だけ縦を物理へ渡す
+            outUpDelta += w * (m.delta[0] * up[0] + m.delta[1] * up[1] + m.delta[2] * up[2]);
+        }
         // 同じ回転の (c, s) と (−c, −s) を混ぜると打ち消し合うので、短い弧 (c >= 0) にそろえてから足す
         const float sign = m.yaw.c < 0.0f ? -1.0f : 1.0f;
         yawC += w * sign * m.yaw.c;
@@ -831,7 +847,10 @@ void ApplyRootYaw(World& world, EntityID entity, const Yaw& yaw)
 
 // ルートモーションの水平の移動 deltaWorld (1 tick ぶん、ワールド) で entity を動かす (applyRootMotion の適用先、
 // AnimatorControllerComponent の注記の順)。速度で渡す先は velocity (m/s) を、LocalTransform は移動そのものを書く
-void ApplyRootMotion(World& world, EntityID entity, const float (&deltaWorld)[3], const DirectX::XMFLOAT3& velocity)
+// verticalDriven = この tick に rootMotionY の層が縦を駆動した。立っていれば CC / 非 kinematic Rigidbody へ縦も速度で渡し、
+// 物理がその tick の重力積分の代わりに使う (useVerticalInput)。立っていなければ縦は物理に任せる
+void ApplyRootMotion(World& world, EntityID entity, const float (&deltaWorld)[3], const DirectX::XMFLOAT3& velocity,
+                     bool verticalDriven)
 {
     if (const NavMeshAgentComponent* agent = world.GetComponent<NavMeshAgentComponent>(entity);
         agent != nullptr && agent->updatePosition) {
@@ -842,12 +861,21 @@ void ApplyRootMotion(World& world, EntityID entity, const float (&deltaWorld)[3]
             // 縦 (重力・ジャンプ) は物理に任せる
             rb->velocity.x = velocity.x;
             rb->velocity.z = velocity.z;
+            if (verticalDriven) {
+                rb->useVerticalInput = true;
+                rb->verticalInput = velocity.y;
+                rb->isSleeping = false;
+            }
             return;
         }
         // kinematic は物理が積分しない。CharacterController も Rigidbody が居ると無効なので Transform へ
     } else if (CharacterControllerComponent* cc = world.GetComponent<CharacterControllerComponent>(entity)) {
         cc->moveInput.x = velocity.x;
         cc->moveInput.z = velocity.z;
+        if (verticalDriven) {
+            cc->useVerticalInput = true;
+            cc->verticalInput = velocity.y;
+        }
         return;
     }
     LocalTransform* lt = world.GetComponent<LocalTransform>(entity);
@@ -961,7 +989,7 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
 {
     json root;
     root["engine"] = "MyEngine";
-    root["controller"] = 3; // v3 (M95): 遷移の "canInterrupt"。v2 (M89b: ステートの "skel") / v1 はそのまま読める (無い = 0 / 骨を駆動しない)
+    root["controller"] = 3; // v3 (M95): 遷移の "canInterrupt" とステートの "skel":{"rootMotionY"}。v2 (M89b: ステートの "skel") / v1 はそのまま読める (無い = 0 / 骨を駆動しない)
     root["defaultState"] = c.defaultState;
     json params = json::array();
     for (const ControllerParam& p : c.parameters) {
@@ -1000,6 +1028,9 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
                              { { "param", s.blendParam }, { "children", std::move(children) } } } };
         } else if (!s.skelClip.empty()) {
             st["skel"] = { { "clip", s.skelClip } };
+        }
+        if (s.rootMotionY != 0 && st.contains("skel")) {
+            st["skel"]["rootMotionY"] = 1; // 1 のときだけ書く (既存の保存は不変)
         }
         states.push_back(std::move(st));
     }
@@ -1138,6 +1169,7 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
         // M89b: 骨クリップは名前で持つ (モデルごとに index が違ってよい)
         if (s.contains("skel") && s["skel"].is_object()) {
             const json& skel = s["skel"];
+            cs.rootMotionY = skel.value("rootMotionY", 0) != 0 ? 1 : 0;
             if (skel.contains("blend2d") && skel["blend2d"].is_object()) {
                 // M89e: 2D ブレンドツリー。blend1d / "clip" より優先する
                 const json& blend = skel["blend2d"];
@@ -1186,6 +1218,7 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
                 cs.blendChildren.clear();
                 cs.blendParam = 0;
                 cs.blendParamY = 0;
+                cs.rootMotionY = 0;
             }
         }
         out.states.push_back(std::move(cs));
@@ -1807,7 +1840,7 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                 c->rootMotionDeltaRotation = { 0.0f, 0.0f, 0.0f, 1.0f };
                 if (c->applyRootMotion) {
                     const float zero[3] = {};
-                    ApplyRootMotion(world, e, zero, c->rootMotionVelocity);
+                    ApplyRootMotion(world, e, zero, c->rootMotionVelocity, false);
                 }
                 --c->pauseTicks;
                 continue;
@@ -2024,6 +2057,7 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
             //    ヨー (M89k) はルートの親空間の上まわりのひねりを測り、ワールドの Y 軸まわりとして書く。
             //    移動は回す前の向きでワールドへ出す (この tick の移動は tick の頭の向きで歩いたぶん)
             float deltaWorld[3] = {};
+            bool verticalDriven = false;
             Yaw yawWorld;
             const int32_t rootJoint = mainModel != nullptr ? FindRootJoint(*mainModel) : -1;
             if (sourceCount > 0 && rootJoint >= 0) {
@@ -2032,21 +2066,34 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                 WorldUpInEntitySpace(world, mainEntity, up);
                 float deltaLocal[3];
                 Yaw yawLocal;
-                RootMotionDelta(*mainModel, rootJoint, up, yawFollows, sources, sourceCount, deltaLocal, yawLocal);
+                bool hasUp = false;
+                float upDelta = 0.0f;
+                RootMotionDelta(*mainModel, rootJoint, up, yawFollows, sources, sourceCount, deltaLocal, yawLocal, hasUp,
+                                upDelta);
                 const ChainRotScale f = ComposeChain(world, mainEntity);
                 const float scaled[3] = { deltaLocal[0] * f.s[0], deltaLocal[1] * f.s[1], deltaLocal[2] * f.s[2] };
                 RotateByQuat(f.q, scaled, deltaWorld);
                 deltaWorld[1] = 0.0f;
+                if (hasUp) {
+                    // 縦は rootMotionY の層だけが up 方向に担う量を、水平と同じ連鎖でワールドへ回した y
+                    const float upScaled[3] = { up[0] * upDelta * f.s[0], up[1] * upDelta * f.s[1],
+                                                up[2] * upDelta * f.s[2] };
+                    float upWorld[3];
+                    RotateByQuat(f.q, upScaled, upWorld);
+                    deltaWorld[1] = upWorld[1];
+                    verticalDriven = true;
+                }
                 // 連鎖の回転は up をワールドの上へ移すので角度はそのまま。鏡映 (拡大の積が負) なら回りが逆になる
                 yawWorld = yawLocal;
                 if (f.s[0] * f.s[1] * f.s[2] < 0.0f) {
                     yawWorld.s = -yawWorld.s;
                 }
             }
-            c->rootMotionVelocity = { deltaWorld[0] * kTicksPerSecond, 0.0f, deltaWorld[2] * kTicksPerSecond };
+            c->rootMotionVelocity = { deltaWorld[0] * kTicksPerSecond, deltaWorld[1] * kTicksPerSecond,
+                                      deltaWorld[2] * kTicksPerSecond };
             c->rootMotionDeltaRotation = { 0.0f, yawWorld.s, 0.0f, yawWorld.c };
             if (c->applyRootMotion) {
-                ApplyRootMotion(world, e, deltaWorld, c->rootMotionVelocity);
+                ApplyRootMotion(world, e, deltaWorld, c->rootMotionVelocity, verticalDriven);
                 if (yawFollows) {
                     ApplyRootYaw(world, e, yawWorld);
                 }

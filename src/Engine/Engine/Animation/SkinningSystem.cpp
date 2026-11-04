@@ -105,10 +105,13 @@ int32_t ActivePoseIkChains(const SkinnedMeshComponent& sm)
 // 「サンプル時刻の移動 − クリップの先頭の移動」を重みの比で混ぜたもの (層の畳み方と同じ線形の混ぜ方)。
 // クリップの先頭を基準にするので、時刻 0 の姿勢は変わらず、1 周の間にルートが水平へずれていかない。
 // up はルートの親空間での上 (単位ベクトル)。縦の動き (上下の弾み) は残す。
+// ただし verticalMask (層 i の bit = その層の rootMotionY) の層だけは、up 方向の移動も同じ式で抜く
+// (その分をコントローラが rootMotionVelocity.y で物理へ渡す)。
 // stripYaw (M89k) なら、回転のうち up まわりのひねり (層ごとの「クリップの先頭からのひねり」を cos >= 0 に
 // そろえて重みの比で混ぜ、正規化したもの) も抜く。ジョイントの位置で回す (平行移動の行は変えない)
 void StripRootMotion(const SkinnedModel& model, const SkeletalLayer* program, int32_t layers, int32_t joint,
-                     const float (&up)[3], bool stripYaw, std::vector<DirectX::XMMATRIX>& locals)
+                     const float (&up)[3], bool stripYaw, uint32_t verticalMask,
+                     std::vector<DirectX::XMMATRIX>& locals)
 {
     if (joint < 0 || static_cast<size_t>(joint) >= locals.size()) {
         return;
@@ -121,6 +124,7 @@ void StripRootMotion(const SkinnedModel& model, const SkeletalLayer* program, in
         return;
     }
     float d[3] = {};
+    float upStrip = 0.0f;
     float yawC = 0.0f;
     float yawS = 0.0f;
     for (int32_t i = 0; i < layers; ++i) {
@@ -134,6 +138,9 @@ void StripRootMotion(const SkinnedModel& model, const SkeletalLayer* program, in
         d[0] += ratio * (now.x - start.x);
         d[1] += ratio * (now.y - start.y);
         d[2] += ratio * (now.z - start.z);
+        if ((verticalMask >> i) & 1u) {
+            upStrip += ratio * ((now.x - start.x) * up[0] + (now.y - start.y) * up[1] + (now.z - start.z) * up[2]);
+        }
         if (stripYaw) {
             // SampleJointYaw は cos >= 0 にそろえて返す (同じ回転の符号違いが打ち消し合わない)
             const DirectX::XMFLOAT2 yaw = SampleJointYaw(model, program[i].clip, joint, program[i].timeSec, up);
@@ -156,6 +163,10 @@ void StripRootMotion(const SkinnedModel& model, const SkeletalLayer* program, in
     const DirectX::XMVECTOR horizontal =
         DirectX::XMVectorSet(d[0] - along * up[0], d[1] - along * up[1], d[2] - along * up[2], 0.0f);
     m.r[3] = DirectX::XMVectorSubtract(m.r[3], horizontal);
+    if (verticalMask != 0) {
+        m.r[3] = DirectX::XMVectorSubtract(m.r[3],
+                                           DirectX::XMVectorSet(upStrip * up[0], upStrip * up[1], upStrip * up[2], 0.0f));
+    }
 }
 
 } // namespace
@@ -199,7 +210,8 @@ bool SamePoseInputs(const SkinnedMeshComponent& a, const SkinnedMeshComponent& b
         for (int32_t i = 0; i < layers; ++i) {
             const SkinnedMeshComponent::PoseLayer& la = a.poseLayers[i];
             const SkinnedMeshComponent::PoseLayer& lb = b.poseLayers[i];
-            if (la.clip != lb.clip || la.timeQ != lb.timeQ || la.weightQ != lb.weightQ) {
+            if (la.clip != lb.clip || la.timeQ != lb.timeQ || la.weightQ != lb.weightQ
+                || la.rootMotionY != lb.rootMotionY) {
                 return false;
             }
         }
@@ -261,9 +273,13 @@ void SampleAnimatedLocals(const SkinnedModel& model, const SkinnedMeshComponent&
         const bool interpolate = interpAlpha < 1.0f;
         const float alpha = interpolate ? std::max(interpAlpha, 0.0f) : 1.0f;
         SkeletalLayer program[SkinnedMeshComponent::kMaxPoseLayers] = {};
+        uint32_t verticalMask = 0;
         for (int32_t i = 0; i < layers; ++i) {
             const SkinnedMeshComponent::PoseLayer& src = sm.poseLayers[i];
             program[i].clip = src.clip;
+            if (src.rootMotionY != 0) {
+                verticalMask |= 1u << i;
+            }
             if (interpolate && src.stepQ != 0) {
                 // 描画専用なので float の積和でよい (sim の状態には戻らない)
                 program[i].timeSec = (static_cast<float>(src.prevTimeQ) + static_cast<float>(src.stepQ) * alpha)
@@ -275,7 +291,7 @@ void SampleAnimatedLocals(const SkinnedModel& model, const SkinnedMeshComponent&
         }
         ComputeJointLocalsLayered(model, program, layers, outLocals);
         if (sm.poseRootJoint >= 0) {
-            StripRootMotion(model, program, layers, sm.poseRootJoint, sm.poseRootUp, sm.poseRootYaw != 0, outLocals);
+            StripRootMotion(model, program, layers, sm.poseRootJoint, sm.poseRootUp, sm.poseRootYaw != 0, verticalMask, outLocals);
         }
         return;
     }

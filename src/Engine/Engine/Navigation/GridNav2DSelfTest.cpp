@@ -30,7 +30,7 @@ constexpr uint32_t kTileFloor = 1;
 constexpr uint32_t kTilePlatform = 2; // 一方通行
 
 // Debug / Release で同じ値になること (M94u で採取)。シナリオ A を 600 tick 回した HashWorld
-constexpr uint64_t kExpectedScenarioHash = 0x676F7EFD188378D6ull;
+constexpr uint64_t kExpectedScenarioHash = 0xB044B926F1F69A1Bull;
 
 TilePalette MakePalette()
 {

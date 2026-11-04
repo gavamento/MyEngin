@@ -898,9 +898,9 @@ bool RunTilemapSelfTest()
             MYE_LOG_INFO("  [tilemap] bare scene: HashWorld %016llX / snapshot digest %016llX (%zu bytes without version and TM2D)",
                          static_cast<unsigned long long>(bare.worldHash), static_cast<unsigned long long>(bare.blobDigest),
                          bare.blobSize);
-            // 着手前 (v56) の実装で採取した値。Debug == Release
-            constexpr uint64_t kBareWorldHash = 0x548FCE3EEBED7EBCull;
-            constexpr uint64_t kBareBlobDigest = 0xCBA0926CD0BA0425ull;
+            // 欄の追加 (M95 sub-05) で再採取した値。Debug == Release
+            constexpr uint64_t kBareWorldHash = 0x01DCBAE1E3D7C026ull;
+            constexpr uint64_t kBareBlobDigest = 0xB0334B6DDE63BC35ull;
             check(bare.worldHash == kBareWorldHash, "tile gate: the world hash of a scene without a Tilemap equals the pre-M94k value");
             check(bare.sectionStripped && bare.blobDigest == kBareBlobDigest,
                   "tile gate: the snapshot bytes equal the pre-M94k blob plus the version word and one empty TM2D section");
@@ -942,7 +942,7 @@ bool RunTilemapSelfTest()
                          static_cast<double>(a.GetWorld().GetComponent<LocalTransform>(actorsA.walker)->position.y),
                          static_cast<unsigned long long>(finalHash));
             // Debug / Release 共通の期待値。0 は「未採取」 (採取値をログから読んで焼く)
-            constexpr uint64_t kTileScenarioExpectedHash = 0x95DE186F19D09266ull;
+            constexpr uint64_t kTileScenarioExpectedHash = 0x6E40334DD04B0FFCull;
             check(kTileScenarioExpectedHash == 0 || finalHash == kTileScenarioExpectedHash,
                   "tile determinism: the final world hash matches the baked value (Debug == Release)");
         }

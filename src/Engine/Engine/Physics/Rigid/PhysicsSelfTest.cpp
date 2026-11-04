@@ -7701,7 +7701,7 @@ bool RunPhysicsSelfTest()
         MYE_LOG_INFO("  [phys] plane2D scene hash @3000 = %016llX",
                      static_cast<unsigned long long>(finalHash));
         // Debug / Release 共通の期待値。0 は「未採取」 (採取値をログから読んで焼く)
-        constexpr uint64_t kPlane2DExpectedHash = 0x639107476EA401A3ull;
+        constexpr uint64_t kPlane2DExpectedHash = 0x08E7C961C42C76E0ull;
         check(kPlane2DExpectedHash == 0 || finalHash == kPlane2DExpectedHash,
               "plane2D: the final world hash matches the baked value (Debug == Release)");
 
@@ -8015,7 +8015,7 @@ bool RunPhysicsSelfTest()
                   && std::fabs(springComVy - 0.5f) < 0.01f,
               "joint2D SpringJoint: the distance oscillates, settles at the rest length 2 m, and the centre of mass keeps its momentum");
         MYE_LOG_INFO("  [phys] joint2D scene hash @1000 = %016llX", static_cast<unsigned long long>(jointRun.finalHash));
-        constexpr uint64_t kJoints2DExpectedHash = 0xA82F779A97738D34ull;
+        constexpr uint64_t kJoints2DExpectedHash = 0x9475611693CE15C2ull;
         check(kJoints2DExpectedHash == 0 || jointRun.finalHash == kJoints2DExpectedHash,
               "joint2D: the final world hash matches the baked value (Debug == Release)");
 
@@ -8122,7 +8122,7 @@ bool RunPhysicsSelfTest()
         check(floaterMaxY > 3.5f && floater.y > 3.6f && floater.y < 4.4f && std::fabs(floater.vy) < 0.5f && sinker.y < 0.5f,
               "effector2D Buoyancy: the light ball rises and floats at the surface (top of the region); the heavy one sinks");
         MYE_LOG_INFO("  [phys] effector2D scene hash @300 = %016llX", static_cast<unsigned long long>(effRun.finalHash));
-        constexpr uint64_t kEffector2DExpectedHash = 0x9504211B9041ECC2ull;
+        constexpr uint64_t kEffector2DExpectedHash = 0xC817BAAD909B03C2ull;
         check(kEffector2DExpectedHash == 0 || effRun.finalHash == kEffector2DExpectedHash,
               "effector2D: the final world hash matches the baked value (Debug == Release)");
         check(Effector2DComponent::sTypeId == 90, "Effector2D is TypeId 90");
@@ -8400,7 +8400,7 @@ bool RunPhysicsSelfTest()
         }
         MYE_LOG_INFO("  [phys] Shapes2D scene hash @600 = %016llX", static_cast<unsigned long long>(shapes2dHash));
         // Debug / Release 共通の期待値。0 は「未採取」 (採取値をログから読んで焼く)
-        constexpr uint64_t kShapes2DExpectedHash = 0x2ECF7CFD5CC45314ull;
+        constexpr uint64_t kShapes2DExpectedHash = 0x0B5FC8C884CDF92Dull;
         check(kShapes2DExpectedHash == 0 || shapes2dHash == kShapes2DExpectedHash,
               "Shapes2D: the final world hash matches the baked value (Debug == Release)");
         phys2d.RemoveStaticShapeSource(&source);
@@ -8742,7 +8742,7 @@ bool RunPhysicsSelfTest()
             }
             MYE_LOG_INFO("  [phys] CC2D scene hash @900 = %016llX", static_cast<unsigned long long>(finalHash));
             // Debug / Release 共通の期待値。0 は「未採取」 (採取値をログから読んで焼く)
-            constexpr uint64_t kCc2dExpectedHash = 0xC82DDBEC39F6E24Aull;
+            constexpr uint64_t kCc2dExpectedHash = 0x985BA8E9C7469851ull;
             check(kCc2dExpectedHash == 0 || finalHash == kCc2dExpectedHash,
                   "CC2D: the final world hash matches the baked value (Debug == Release)");
         }
@@ -9108,6 +9108,73 @@ bool RunPhysicsSelfTest()
     }
 
     // ---- M95 sub-05 ----
+
+    // 縦入力 (M95、ルートモーションの縦): CC / 非 kinematic Rigidbody の useVerticalInput / verticalInput
+    {
+        Scene s;
+        MakeGround(s, "G", 0, -0.5f, 0, 8.0f, 0.5f, 8.0f); // 上面 y=0
+        GameObject ch = s.CreateGameObjectTracked("Char");
+        ch.SetLocalPosition(0, 0.9f, 0);
+        ch.AddComponent<CharacterControllerComponent>();
+        s.GetWorld().ApplyStructuralChanges();
+        auto* cc = ch.GetComponent<CharacterControllerComponent>();
+        auto* lt = ch.GetComponent<LocalTransform>();
+        for (int i = 0; i < 30; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        check(cc->isGrounded && !cc->useVerticalInput, "vertical input: the character settles on the floor first");
+        // 床の上で上向き: 入力の tick は重力なしで velocity.y == verticalInput、次の tick は重力へ戻る
+        cc->useVerticalInput = true;
+        cc->verticalInput = 2.0f;
+        phys.Update(s.GetWorld(), kDt);
+        check(cc->velocity.y == 2.0f && !cc->useVerticalInput && std::fabs(lt->position.y - (0.9f + 2.0f * kDt)) < 1e-3f,
+              "vertical input: the input tick uses verticalInput as the vertical velocity (no gravity) and is consumed");
+        phys.Update(s.GetWorld(), kDt);
+        check(cc->velocity.y < 2.0f && std::fabs(cc->velocity.y - (2.0f - 9.81f * kDt)) < 1e-4f,
+              "vertical input: the next tick falls back to gravity");
+        for (int i = 0; i < 120; ++i) {
+            phys.Update(s.GetWorld(), kDt);
+        }
+        check(cc->isGrounded && std::fabs(lt->position.y - 0.9f) < 0.02f, "vertical input: it lands again after the input ends");
+        // 負の入力で床に着く: velocity.y == 0、接地
+        cc->useVerticalInput = true;
+        cc->verticalInput = -5.0f;
+        phys.Update(s.GetWorld(), kDt);
+        check(cc->velocity.y == 0.0f && cc->isGrounded && !cc->useVerticalInput,
+              "vertical input: a negative input into the floor ends with velocity.y == 0 and grounded");
+        // 接地中に jumpSpeed と同時なら jumpSpeed が勝つ
+        cc->useVerticalInput = true;
+        cc->verticalInput = -1.0f;
+        cc->jumpSpeed = 5.0f;
+        phys.Update(s.GetWorld(), kDt);
+        check(cc->velocity.y == 5.0f, "vertical input: jumpSpeed wins over verticalInput while grounded");
+    }
+
+    {
+        Scene s;
+        GameObject box = MakeBox(s, "Rider", 0, 10.0f, 0, 0.5f, 0.5f, 0.5f);
+        GameObject kin = MakeBox(s, "Kin", 5.0f, 10.0f, 0, 0.5f, 0.5f, 0.5f);
+        s.GetWorld().ApplyStructuralChanges();
+        auto* rb = box.GetComponent<RigidbodyComponent>();
+        auto* krb = kin.GetComponent<RigidbodyComponent>();
+        rb->linearDamping = 0.0f;
+        rb->velocity = { 1.0f, 0.0f, 0.0f };
+        krb->isKinematic = true;
+        krb->velocity = { 0.0f, 0.5f, 0.0f };
+        rb->useVerticalInput = true;
+        rb->verticalInput = 3.0f;
+        krb->useVerticalInput = true;
+        krb->verticalInput = 3.0f;
+        phys.Update(s.GetWorld(), kDt);
+        check(rb->velocity.y == 3.0f && rb->velocity.x == 1.0f && !rb->useVerticalInput,
+              "vertical input (Rigidbody): the input tick keeps velocity.y == verticalInput, x is unchanged, and it is consumed");
+        check(krb->velocity.y == 0.5f && !krb->useVerticalInput,
+              "vertical input (Rigidbody): a kinematic body ignores it (and the flag does not linger)");
+        phys.Update(s.GetWorld(), kDt);
+        check(std::fabs(rb->velocity.y - (3.0f - 9.81f * kDt)) < 1e-4f,
+              "vertical input (Rigidbody): the next tick has gravity back");
+    }
+
 
     if (failCount == 0) {
         MYE_LOG_INFO("==== Physics self test: ALL PASS ====");
