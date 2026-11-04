@@ -32,14 +32,13 @@ spec §5 の 29 / 30。実装済みの契約を文書に写し、統合後の全
 ## 受け入れ条件 (このサブ)
 
 - 29: 上記の文書の更新。参照先 (ファイル / 節 / 関数名 / スロット名) が実在する (`grep` で確認して SELF_EVAL に貼る)
-- 30: 最終確認として、付録 B の 3. の目視 (構造体のメンバー一覧・ABI 表の末尾・`Interop.cs` の末尾・snapshot の定数と版コメント・selftest のマーカー) の結果と、ST (Debug / Release)、CR、RV 全ジョブ、三校 verify.bat の結果を SELF_EVAL に貼る (文書のみの変更なのでビルドは不要だが、M95 全体の最終確認をこのサブで行う)
+- 30: full 検証 (ST-full Debug / Release、RV 全ジョブ、三校 verify.bat) は**回さない** — Wave 2 統合時に司会が付録 B の 4. で回した結果を証拠として代用する (ユーザー判断 2026-11-04、補足 3)。coder は台帳 `plans\m95-action-combat\harness.md` に Wave 2 統合の検証結果 (各 total 行・RV の全ジョブ・三校) が記録されていることを確認し、その記録の場所 (行) を SELF_EVAL に書く。記録が無ければ「不安・質問」で planner へ (自分で回さない)。付録 B の 3. の目視 (構造体のメンバー一覧・ABI 表の末尾・`Interop.cs` の末尾・snapshot の定数と版コメント・selftest のマーカー) は司会が統合時に済ませているので、coder は文書に書く値 (スロット数 193、snapshot v68、controller v3、ADR-034、TypeId 追加なし) を実コードから `grep` で取って一致を確認するだけでよい
 
 ## 検証コマンド
 
-- `bin\x64\Debug\Editor.exe --selftest-full` と `bin\x64\Release\Editor.exe --selftest-full` (M95 全体の最終確認)
-- `tools\check_rules.ps1`
-- `tools\replay_verify.bat`
-- `cmd /c C:\HAL\三校\tools\verify.bat`
+- 文書の参照先の実在確認: `grep` で、書いた関数名 / スロット名 / 定数名 / ファイルパス / 節番号が実在することを確認し、コマンドと結果を SELF_EVAL に貼る (例: `grep -n "OverlapCapsuleParts" src/Shared/EngineAPI.h`、`grep -n "kSimSnapshotVersion = 68" src/Engine/Engine/Replay/SimSnapshot.h`、`ls docs/adr/ADR-034-*`)
+- `tools\check_rules.ps1` (文書の改行・規則の静的検査。0 error)
+- ビルド・`--selftest-full`・`replay_verify`・三校 verify は回さない (文書のみの変更。AGENTS.md §7)。reviewer が Phase 3 で自分の裁量で回すのは妨げない
 
 ## 実装メモ (coder が追記)
 

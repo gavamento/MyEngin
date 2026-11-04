@@ -263,7 +263,7 @@ F. イベント時刻の秒・フレーム指定
 
 G. 文書
 29. `engine_spec.md` に M95 の節 (A〜F の契約と非対応)、§13 の ADR 一覧に ADR-034、`docs\test_checklists.md` に M95 節 (20 / 28 と実機の手動項目)、`docs\dogfooding.md` 17 の解決 — 目視 (reviewer)。文書の参照先が実在する
-30. 全サブ完了後: ST (Debug / Release)、CR、RV 全ジョブ、三校 verify.bat が PASS — 司会がチェックポイントで回す
+30. 全サブ完了後: ST-full (Debug / Release)、CR、RV 全ジョブ、三校 verify.bat が PASS — **Wave 2 統合時に司会が付録 B の 4. で回した結果を証拠とする** (ユーザー判断 2026-11-04、補足 3)。sub-07 (文書のみ) では full 検証を回さず、文書の参照先の実在と CR だけを確認する (AGENTS.md §7「文書のみの変更ではビルドは原則不要」)。台帳に Wave 2 統合の検証結果 (各 total 行・RV の全ジョブ・三校) が記録されていることが条件。reviewer が Phase 3 で自分の裁量で回すのは妨げない
 
 H. round 2 で追加 (ユーザー判断)
 31. `OverlapCapsuleParts`: 両端点と半径のカプセルと重なる部位を index 昇順で返す (球・箱の部位それぞれにヒット、軸が斜めのカプセルで箱の角に当たる / 当たらないの境界、`p0 == p1` は球と同じ結果、`radius <= 0` は 0 件、総数と cap の規約)。ABI 経由でも同じ — ST(part)
@@ -309,6 +309,7 @@ H. round 2 で追加 (ユーザー判断)
 
 ## 8. 変更履歴
 
+- 2026-11-04 補足 3 (出所: ユーザー判断、司会の AskUserQuestion): 受け入れ 30 の証拠を「Wave 2 統合時に司会が回す full 検証 (付録 B の 4.)」に代用し、sub-07 (文書のみ) は参照先の実在と check_rules だけを確認する。sub-07.md の検証コマンド節を同じ方針に変更
 - 2026-11-04 sub-04 VERDICT round 1 (出所: coder SELF_EVAL の「仕様との差分」): §4.1 C の「走査に入らない形」を「走査内の先頭 continue でよい」に緩和 (結果・状態が同一で fp 演算が無いため)。§5 冒頭の 3 段の規則に「full 検証の結果が SELF_EVAL に無い round には OK を出さない」を明記
 - 2026-11-04 sub-00 VERDICT round 1 (出所: coder SELF_EVAL の「仕様との差分」): §4.0 の `MYE_SELFTEST_ONLY` に「別名 1 個だけは別名の並び」「項目は小文字化」「`servernet` / `computescript` は別名表に載せない」を明記。§4.0 と sub-00 受け入れ 34 の食い違い (表の順 vs m94 の従来順) を後者で解消
 - 2026-11-04 round 2 補足 2 (出所: ユーザー決定): selftest を 3 層 (関連スイート / `--selftest` = fast 層 60 秒以内 / `--selftest-full` = 全部) にする。sub-00 に tier 属性・`--selftest-full`・CI の書き換えを足し、計測に基づく層分けと縮小を sub-00b (Wave 1 並行) に分割。受け入れ 37〜41、§4.4 に「full は OK 前に必ず回す」、全サブの検証欄を 3 段に統一
@@ -412,4 +413,5 @@ sub-00 が末尾に `// ---- M95 ----` マーカーを入れ、その下にサ�
    - `AnimatorControllerSelfTest.cpp` / `PhysicsSelfTest.cpp` / `PartSelfTest.cpp` のマーカーの下に各サブのテストがある
    - `LocalizationTable.inl` の `// ---- M95 ----` の下
 4. `tools\gen_project_files.ps1` (新規ファイルがあった波だけ) → Debug / Release ビルド → `Editor.exe --selftest` 全走 (Debug / Release) → `tools\check_rules.ps1` → `tools\replay_verify.bat` → 三校 `verify.bat`
+   ★ Wave 2 の統合では、この 4. の結果 (各 total 行・check_rules の error 数・RV の全ジョブ・三校) を台帳に行単位で残す — 受け入れ 30 の証拠として sub-07 と reviewer が参照する (補足 3)
 5. 統合コミット (`M95 統合: Wave N (sub-xx, sub-yy)`) を作り、台帳に記録。次の波の worktree はこの統合コミットから切る (`git worktree move` + `checkout -B` で obj キャッシュを使い回してよい)
