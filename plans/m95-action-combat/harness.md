@@ -2,7 +2,7 @@
 
 - 依頼原文: M95 アクション戦闘の土台 (事前調査は plans\m95-action-combat\design-draft.md)
 - 開始: 2026-11-04 / 基点コミット: 69c2207c2b8c5c79af7d37ababad0b03d397d228
-- フェーズ: 実装 (Wave 1 統合 e1bba10、Wave 2 統合 2026-11-05 07:15。次は Wave 3 = sub-07 文書)
+- フェーズ: レビュー (全サブ OK。Wave 1 統合 e1bba10、Wave 2 統合 740bd64、sub-07 9cfbff0。2026-11-05 07:35 から Phase 3 round 1、範囲 69c2207..9cfbff0)
 - 仕様確定: 2026-11-04 (planner PLAN_RESULT round 2)。番号: ABI v32 = 193 スロット、SimSnapshot v66 / v67 / v68、controller アセット v3、ADR-034、TypeId 追加なし
 
 ## サブ進捗
@@ -16,7 +16,7 @@
 | sub-06 イベント時刻の秒・フレーム指定 | 1 | sub-00 | OK | 1 | cda5413 (m95/sub-06) | full 検証済み (Debug 619 s / Release 96 s、RV 22 jobs PASS)。三校 FAIL は別件 |
 | sub-03 部位の重なり・掃引 (ABI 193 スロット) | 2 | sub-01、Wave 1 統合 | OK | 1 | 6cc89b5 (m95/sub-03) | worktree `C:/HAL/MyEngin-wt/sub-03` (基点 e1bba10)。Release full 全 PASS、RV 22 ジョブ一致、ABI 照合 193/193。Debug full の fractureeditor FAIL は負荷要因 (下記申し送り) |
 | sub-05 ルートモーションの縦成分 (snapshot v68) | 2 | sub-02, sub-04、Wave 1 統合 | OK | 2 | d8c2ec9 (m95/sub-05) | worktree `C:/HAL/MyEngin-wt/sub-05` (基点 e1bba10)。round 2 で Debug / Release full 0 failed、CR 0 error、RV 22 ジョブ PASS。round 2 の SELF_EVAL は coder の返送がツールで拒否され、司会が出力ファイルから取り出して転送 |
-| sub-07 文書 + 最終統合確認 | 3 | 全部 | 実装中 (round 1) | 0 | | master 直 (worktree なし、HEAD d3c5e04 から) |
+| sub-07 文書 + 最終統合確認 | 3 | 全部 | OK | 1 | 9cfbff0 | master 直 (worktree なし)。受け入れ 30 は「波の統合」表の Wave 2 行で代用 |
 
 ## 波の統合
 | 波 | 統合コミット | 目視 (付録 B) | 検証 |
@@ -66,6 +66,8 @@
 - sub-01 VERDICT の nit: (1) 非アクティブ entity で `pauseTicks` が減らないことの断言がテストに無い (コード上は正しい) → sub-07 か reviewer が `// ---- M95 sub-01 ----` 直下に 1 件足してよい。(2) Components.h の sub-01 マーカー文言が変わっている (実害なし、統合の目視は sub 名で grep)。仕様側: ScriptAPI.h の Animator 糖衣は仕様の前提違いで削除、`tools/check_rules.ps1` の `$apiVersionSlots` は sub-01 が `32 = 190`、sub-03 が 193 へ直す (sub-03.md に追記済み)
 - sub-00b round 1 の RV demo ジョブ FAIL (`cannot find the batch label - chain`、0.4 s) は環境要因と確定: bat は master / sub-01 / sub-00b で md5 同一、司会が sub-00b の worktree で回し直して 22 ジョブ PASS (demo 114.5 s、2026-11-05 00:05)。spec §2 #25。cmd の `call :label` はバイト位置で読み直すのでコンソールのコードページ残留 (chcp 65001) で外れ得る → RV を回す前に `chcp` を確認
 - sub-03 VERDICT の nit: (1) `RaycastParts` / `SphereCastParts` は呼び手が dir を正規化する (`SphereCastWorld` は正規化する) → sub-07 の engine_spec に 1 行。(2) C# 糖衣 (`Interop.cs` / `MyeScript.cs`) は `dotnet build` のみで実走なし (C# レーンは replay 被覆外) → reviewer が Phase 3 で temp プローブを回すかは裁量
+- **残り minor (Phase 3 開始時点、planner が sub-07 VERDICT で整理)**: (1) `ClipEventTickFromJson` の fps 負値テストが無い。(2) 非アクティブ entity で `pauseTicks` が減らないことの断言が無い (どちらもコード上は正しいと planner 確認済み。reviewer が major と判断したときだけ新サブ)。(3) fracture / servernet の縮小 (Debug full の短縮)。(4) 別名 `m95` の並びを `VerifySelfTestSelectionRules` が固定している。(5) `docs\dogfooding.md` の見出し「M70d 時点」と engine_spec §12.2 冒頭の期間が古い。(6) 別件候補: fractureeditor cancel 系 / computemanaged FileWatcher 系の時間依存 FAIL、RV を chcp 932 で起動すると chain ラベルが外れる (spec §2 #25)
+- [ユーザーに聞ける] 統合済みの worktree (`C:/HAL/MyEngin-wt/sub-00b`、`sub-03`、`sub-04`、`sub-05`、`sub-06`) と残骸 `C:/HAL/MyEngin-wt/sub-02-base` (45 MB) の削除。AGENTS.md §1 によりユーザーの許可が要る。Phase 3 の差し戻しで worktree を使い回す可能性があるので、完了報告で聞く
 - sub-07 へ渡す申し送り (planner、sub-05 VERDICT round 2): (1) sub-04 nit 割り込みで確定した tick は stateEntered = 0、(2) sub-02 nit 同優先度の CC が最大 1 歩重なる、(3) sub-03 nit dir は呼び手が正規化、(4) sub-05 一方通行床の 1 tick 遅れ、(5) sub-06 nit (1) fps 負値のテスト、(6) sub-06 nit (2) / 受け入れ 20 / 28 の test_checklists 目視項目。加えて sub-01 nit (1) の非アクティブ entity のテスト
 - sub-05 VERDICT round 1 の nit: (2) `SimSnapshot.h` の版コメント M95c → M95e (round 2 で直す)。(3) 一方通行床の通過判定は前 tick の `velocity.y` を見るため縦入力の初回 tick は通過扱いにならない (jumpSpeed と同じ 1 tick 遅れ、M95 では直さない) → spec §7 に記録済み、sub-07 の engine_spec に 1 行
 - 別件候補 (M95 とは無関係、2026-11-05 追記): 無負荷で `MYE_SELFTEST_ONLY=computemanaged,fractureeditor` Debug を組で回すと、組の先頭で回した方が落ちる (1 回目: sub-05 両方 FAIL → master 両方 PASS。2 回目: master 両方 FAIL → sub-03 fractureeditor のみ FAIL → sub-05 両方 PASS)。computemanaged の FAIL は FileWatcher が .kernel.hlsl の変更を拾う 3 件 (デバウンス 600 ms 待ち)。どちらも worktree・コードに依らない不安定テスト。統合時の Debug full でこの 2 本が落ちたら名指し再実行で PASS を 1 回取れば合格扱い (他のスイートには適用しない)
