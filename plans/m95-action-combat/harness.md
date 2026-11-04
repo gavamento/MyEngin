@@ -2,7 +2,7 @@
 
 - 依頼原文: M95 アクション戦闘の土台 (事前調査は plans\m95-action-combat\design-draft.md)
 - 開始: 2026-11-04 / 基点コミット: 69c2207c2b8c5c79af7d37ababad0b03d397d228
-- フェーズ: 実装 (2026-11-04 20:05 に 2 回目の再開。coder 2 本は同じインスタンスを SendMessage で続行、sub-00 の Release selftest を司会が再実行中)
+- フェーズ: 実装 (Wave 1 統合済み e1bba10。2026-11-05 02:00 から Wave 2 = sub-03 / sub-05 を worktree 並列で実装中)
 - 仕様確定: 2026-11-04 (planner PLAN_RESULT round 2)。番号: ABI v32 = 193 スロット、SimSnapshot v66 / v67 / v68、controller アセット v3、ADR-034、TypeId 追加なし
 
 ## サブ進捗
@@ -14,14 +14,14 @@
 | sub-02 CC 同士の押し出しと接触イベント (snapshot v67、ADR-034) | 1 | sub-00 | OK | 1 | 2992ad3 (m95/sub-02) | full 検証済み (Debug 972 s / Release 107 s、RV PASS)。焼き込み hash 5 件 + AcousticAudio 版チェックは統合後に再採取 |
 | sub-04 遷移の割り込み (controller v3) | 1 | sub-00 | OK | 2 | 3dca0f6 (m95/sub-04) | round 1 は最終検証未実施で REWORK。full 検証済み (Debug 814 s / Release 108 s、RV PASS)。三校は環境要因 |
 | sub-06 イベント時刻の秒・フレーム指定 | 1 | sub-00 | OK | 1 | cda5413 (m95/sub-06) | full 検証済み (Debug 619 s / Release 96 s、RV 22 jobs PASS)。三校 FAIL は別件 |
-| sub-03 部位の重なり・掃引 (ABI 193 スロット) | 2 | sub-01、Wave 1 統合 | 未着手 | 0 | | |
-| sub-05 ルートモーションの縦成分 (snapshot v68) | 2 | sub-02, sub-04、Wave 1 統合 | 未着手 | 0 | | |
+| sub-03 部位の重なり・掃引 (ABI 193 スロット) | 2 | sub-01、Wave 1 統合 | 実装中 (round 1) | 0 | | worktree `C:/HAL/MyEngin-wt/sub-03` (旧 sub-01 を move、ブランチ m95/sub-03、基点 e1bba10) |
+| sub-05 ルートモーションの縦成分 (snapshot v68) | 2 | sub-02, sub-04、Wave 1 統合 | 実装中 (round 1) | 0 | | worktree `C:/HAL/MyEngin-wt/sub-05` (旧 sub-02 を move、ブランチ m95/sub-05、基点 e1bba10) |
 | sub-07 文書 + 最終統合確認 | 3 | 全部 | 未着手 | 0 | | |
 
 ## 波の統合
 | 波 | 統合コミット | 目視 (付録 B) | 検証 |
 |---|---|---|---|
-| 1 (sub-00b, 01, 02, 04, 06) | (この行の次のコミット。2026-11-05 01:55) | merge 順 00b→01→02→04→06、競合は sub-02 の 3 ファイルのみ (SimSnapshot.h = 最大値 67 + 版コメント両方、AcousticAudio 版チェック 67、TwoDDemo hash)。目視: Components.h/.cpp の各サブ欄がマーカー直下、EngineAPI.h / Interop.cs の関数ポインタ順 190/190 diff 0、Update に pauseTicks / canInterrupt、SelfTest 各マーカー、LocalizationTable M95、Full 10 本。新規ファイル無し (gen_project_files 不要) | Debug / Release ビルド OK。焼き込み hash で動いたのは TwoDDemo のみ (0x1FD6DDE81A0FCA6C → 実測 `[twod] world hash after 3000 ticks: 0xAAC7A2732CA0AA85`)、Physics / NavAgent / Tilemap / GridNav2D は不変。`--selftest-full` Debug 110 スイート 0 failed (549.0 s) / Release 110 スイート 0 failed (94.4 s、同じ hash で PASS)。check_rules 0 error / 50 warning。replay_verify 22 ジョブ PASS (271.5 s)。三校: master で DLL を v32 で作り直し (`[dll] GameLogic loaded ... (3 scripts)`)、verify.bat は既存の 2 件 (shot main diffPixels=28402 / patrol) のみ FAIL = 増えていない (合格条件どおり) |
+| 1 (sub-00b, 01, 02, 04, 06) | e1bba10 (2026-11-05 01:55) | merge 順 00b→01→02→04→06、競合は sub-02 の 3 ファイルのみ (SimSnapshot.h = 最大値 67 + 版コメント両方、AcousticAudio 版チェック 67、TwoDDemo hash)。目視: Components.h/.cpp の各サブ欄がマーカー直下、EngineAPI.h / Interop.cs の関数ポインタ順 190/190 diff 0、Update に pauseTicks / canInterrupt、SelfTest 各マーカー、LocalizationTable M95、Full 10 本。新規ファイル無し (gen_project_files 不要) | Debug / Release ビルド OK。焼き込み hash で動いたのは TwoDDemo のみ (0x1FD6DDE81A0FCA6C → 実測 `[twod] world hash after 3000 ticks: 0xAAC7A2732CA0AA85`)、Physics / NavAgent / Tilemap / GridNav2D は不変。`--selftest-full` Debug 110 スイート 0 failed (549.0 s) / Release 110 スイート 0 failed (94.4 s、同じ hash で PASS)。check_rules 0 error / 50 warning。replay_verify 22 ジョブ PASS (271.5 s)。三校: master で DLL を v32 で作り直し (`[dll] GameLogic loaded ... (3 scripts)`)、verify.bat は既存の 2 件 (shot main diffPixels=28402 / patrol) のみ FAIL = 増えていない (合格条件どおり) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
