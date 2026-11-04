@@ -2,15 +2,15 @@
 
 - 依頼原文: M95 アクション戦闘の土台 (事前調査は plans\m95-action-combat\design-draft.md)
 - 開始: 2026-11-04 / 基点コミット: 69c2207c2b8c5c79af7d37ababad0b03d397d228
-- フェーズ: 実装
+- フェーズ: 実装 (一時停止 2026-11-04 14:05、ユーザー指示「いったん止めて」。再開は `/harness resume m95-action-combat`)
 - 仕様確定: 2026-11-04 (planner PLAN_RESULT round 2)。番号: ABI v32 = 193 スロット、SimSnapshot v66 / v67 / v68、controller アセット v3、ADR-034、TypeId 追加なし
 
 ## サブ進捗
 | サブ | 波 | 依存 | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|---|---|
 | sub-00 selftest の登録表・フィルタ・所要時間ログ・full 入口・CI・予約マーカー | 0 | なし | OK (条件付き) | 1 | 8405f20 | master で単独。VERDICT 指摘 1: Release の --selftest-full と replay_verify は、ユーザーの対話用 Editor.exe (PID 39252) が Release exe を掴んでいるため未実施。解放後に司会が回して結果をここに書く。FAIL なら差し戻し |
-| sub-00b 計測に基づく層分けと縮小 (既定 60 秒以内) | 1 | sub-00 | 実装中 | 0 | | 計測は単独で回す |
-| sub-01 ヒットストップ (ABI v32、snapshot v66) | 1 | sub-00 | 実装中 | 0 | | |
+| sub-00b 計測に基く層分けと縮小 (既定 60 秒以内) | 1 | sub-00 | 中断 (round 1 の途中) | 0 | | worktree に未コミットの作業あり (SelfTestSuites.h/.cpp、PartSelfTest.cpp、AGENTS.md)。計測は単独で回す |
+| sub-01 ヒットストップ (ABI v32、snapshot v66) | 1 | sub-00 | 中断 (round 1 の途中) | 0 | | worktree に未コミットの作業あり (EngineAPI.h / Interop.cs / MyeScript.cs / EngineApiTable.cpp / Components / AnimatorController / SimSnapshot.h / AcousticAudioSelfTest / PartSelfTest)。SELF_EVAL 未提出 |
 | sub-02 CC 同士の押し出しと接触イベント (snapshot v67、ADR-034) | 1 | sub-00 | OK | 1 | 2992ad3 (m95/sub-02) | full 検証済み (Debug 972 s / Release 107 s、RV PASS)。焼き込み hash 5 件 + AcousticAudio 版チェックは統合後に再採取 |
 | sub-04 遷移の割り込み (controller v3) | 1 | sub-00 | OK | 2 | 3dca0f6 (m95/sub-04) | round 1 は最終検証未実施で REWORK。full 検証済み (Debug 814 s / Release 108 s、RV PASS)。三校は環境要因 |
 | sub-06 イベント時刻の秒・フレーム指定 | 1 | sub-00 | OK | 1 | cda5413 (m95/sub-06) | full 検証済み (Debug 619 s / Release 96 s、RV 22 jobs PASS)。三校 FAIL は別件 |
@@ -57,3 +57,4 @@
 - Wave 1 / Wave 2 の統合で焼き込み hash の再採取が要る (付録 B 4.): PhysicsSelfTest (CC2D) / NavAgentSelfTest (庭) / TilemapSelfTest / GridNav2DSelfTest / TwoDDemoSelfTest の定数 5 件と AcousticAudioSelfTest の kSimSnapshotVersion チェック。Debug の --selftest-full のログから取り、Release で同値 PASS を確認してから統合コミット
 - 三校 cache/GameLogic.dll は sub-02 の coder が worktree (v31) のヘッダで上書きした (gitignore 配下)。統合時に master で作り直す
 - 別件の切り分け結果 (2026-11-04、司会): master 8405f20 (シミュレーションは基点 69c2207 と同一) で三校 DLL を v31 で作り直し (`[dll] GameLogic loaded ... (3 scripts)`) ても三校 verify は同じ 2 件 FAIL (shot main diffPixels=28402 / maxDiff=122、replay は VERIFY PASS だが「agent never left patrol」)。= M95 以前からの既存失敗。golden は 2026-10-12 撮影で、その後の M90 / M93 / M94 のどれかで変わった可能性。M95 の範囲外としてユーザーへ報告、統合時の三校 verify は「この 2 件以外に FAIL が増えないこと」を合格条件にする
+- 一時停止時の再開手順 (2026-11-04 14:05): (1) sub-00b と sub-01 は新しい coder を worktree (`C:/HAL/MyEngin-wt/sub-00b`, `sub-01`) で起動し、「未コミットの差分が残っている。`git diff` を読んで引き継ぎ、sub-NN.md の実装メモと spec を基準にやり直し部分を判断せよ」と伝える (前の coder の文脈は失われている)。(2) planner もセッションを跨ぐと再起動が要る (spec / sub / 台帳から文脈を渡す)。(3) OK 済み 3 本はブランチにある: m95/sub-02 = 2992ad3、m95/sub-04 = 3dca0f6、m95/sub-06 = cda5413。(4) Wave 1 の 5 本が揃ったら付録 B で統合 (焼き込み hash の再採取、三校は master で DLL を v32 で作り直し、既存 2 件以外の FAIL が無いこと)。(5) 残骸 `C:/HAL/MyEngin-wt/sub-02-base` (45 MB) の削除はユーザー許可待ち。(6) sub-00 の Release 検証 (--selftest-full と replay_verify) は Release exe の解放後に未実施のまま
