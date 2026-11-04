@@ -65,7 +65,7 @@ void DrawGraph(const MyeCurve& c, float lo, float hi, ImVec2& outMin, ImVec2& ou
         const float t = static_cast<float>(i) / static_cast<float>(kPlotSamples);
         pts[i] = toScreen(t, MyeEvalCurve(c, t));
     }
-    dl->AddPolyline(pts, kPlotSamples + 1, ImGui::GetColorU32(ImGuiCol_PlotLines), ImDrawFlags_None, 2.0f);
+    dl->AddPolyline(pts, kPlotSamples + 1, ImGui::GetColorU32(ImGuiCol_PlotLines), 2.0f, ImDrawFlags_None);
     outMin = p0;
     outMax = p1;
     ImGui::Dummy(ImVec2(width, kGraphHeight)); // グラフの場所を確保 (この後に制御点の当たり判定を重ねる)
