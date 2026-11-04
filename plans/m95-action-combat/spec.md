@@ -134,7 +134,7 @@ Debug / Release / WARP でリプレイが一致する。
 - `Parts::OverlapSphereParts(World&, EntityID root, uint64_t tag, const XMFLOAT3& center, float radius, std::vector<EntityID>& out)`:
   候補収集 (Part + PartBounds + WorldMatrix、tag 一致、root 配下、アクティブ、非縮退) → index 昇順 → `shapes::Overlap(球, MakePartBoundsPose)` が真のものを **index 昇順**で `out` に積む。`radius <= 0` は 0 件。
 - `Parts::OverlapCapsuleParts(World&, EntityID root, uint64_t tag, const XMFLOAT3& p0, const XMFLOAT3& p1, float radius, std::vector<EntityID>& out)`:
-  カプセルは両端点 `p0` / `p1` (線分の端 = 半球の中心) と半径。`ShapePose` は `shape = kCapsule`、中心 = 中点、`halfSeg = |p1 − p0| / 2`、軸の基底 = `normalize(p1 − p0)` (カプセルの軸がどの基底 (`bx/by/bz`) かは `Shapes.cpp` の `CapsuleCapsule` / `CapsuleBox` で確認して合わせる。残り 2 軸はそれに直交する任意の正規直交基底で、決定的に作る)。`|p1 − p0| < 1e-6f` なら球として判定。規約は `OverlapSphereParts` と同じ。
+  カプセルは両端点 `p0` / `p1` (線分の端 = 半球の中心) と半径。`ShapePose` は `shape = kCapsule`、中心 = 中点、`halfSeg = |p1 − p0| / 2`、軸の基底 = `normalize(p1 − p0)` を **`by`** に入れる (`Shapes.cpp:45-53` `CapsuleSegment` が `by · halfSeg` で両端を取る。sub-03 VERDICT round 1 で確定)。残り 2 軸はそれに直交する正規直交基底を決定的に作る (実装: |成分| が最小の座標軸との外積)。`|p1 − p0| < 1e-6f` なら球として判定。規約は `OverlapSphereParts` と同じ。
 - `Parts::SphereCastParts(World&, EntityID root, uint64_t tag, origin, dir, float radius, float maxDist, PartRayHit& out)`:
   同じ候補列を index 昇順に走査し、sphere 部位は半径を `radius` だけ膨らませた `shapes::Raycast`、box 部位は `DistanceToShape` の保守的前進 (固定 32 回、ヒット後も回数を消化、`d < 1e-4f` で停止) — `SphereCastWorld` と同じ 2 本立て・同じ定数。厳密 `<` で最近を更新 (同 t は低 index)。`point` は元形状の表面点、`normal` は膨張面の法線。`radius <= 0` は `RaycastParts` と同じ結果。`maxDist <= 0` は `1e9f`。dir は正規化済み前提 (既存契約)。
 - ABI v32 (`AnimatorGetPause` の次、この順):
