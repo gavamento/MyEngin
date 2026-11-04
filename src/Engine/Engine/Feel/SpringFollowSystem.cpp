@@ -73,9 +73,9 @@ uint32_t UpdateSpringFollow(World& world, float dt)
             continue;
         }
         // 目標の world 姿勢 (target の空間の offset を含む) を、このエンティティの親の空間へ直す
-        XMVECTOR ts;
-        XMVECTOR tr;
-        XMVECTOR tp;
+        XMVECTOR ts = XMVectorZero();
+        XMVECTOR tr = XMQuaternionIdentity();
+        XMVECTOR tp = XMVectorZero();
         if (!XMMatrixDecompose(&ts, &tr, &tp, WorldFromLocals(world, sf->target))) {
             continue;
         }
@@ -83,9 +83,9 @@ uint32_t UpdateSpringFollow(World& world, float dt)
         XMVECTOR goalRot = tr;
         const auto* h = world.GetComponent<HierarchyComponent>(r.entity);
         if (h != nullptr && !h->parent.IsNull()) {
-            XMVECTOR ps;
-            XMVECTOR pr;
-            XMVECTOR pp;
+            XMVECTOR ps = XMVectorZero();
+            XMVECTOR pr = XMQuaternionIdentity();
+            XMVECTOR pp = XMVectorZero();
             const XMMATRIX parentWorld = WorldFromLocals(world, h->parent);
             if (XMMatrixDecompose(&ps, &pr, &pp, parentWorld)) {
                 goalPos = XMVector3TransformCoord(goalPos, XMMatrixInverse(nullptr, parentWorld));

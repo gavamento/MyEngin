@@ -556,8 +556,8 @@ bool RunInputActionsSelfTest()
                 { "name": "Jump", "keys": ["Space"], "bufferTicks": 3 },
                 { "name": "Fire", "keys": ["J"] } ] })"),
               "buffer: actions.json with bufferTicks loads");
-        const uint64_t hJump = HashStr("Jump");
-        const uint64_t hFire = HashStr("Fire");
+        const uint64_t hBufJump = HashStr("Jump");
+        const uint64_t hBufFire = HashStr("Fire");
         InputBufferState st;
         InputSnapshot up = Snap();
         InputSnapshot down = Snap();
@@ -566,26 +566,26 @@ bool RunInputActionsSelfTest()
         check(!st.HasHashableState(), "buffer: the default state has nothing in the window");
         b.Evaluate(down, up);
         b.UpdateBuffers(st);
-        check((b.ActionStateBuffered(hJump, 0, st) & kActionBuffered) != 0 && st.pressAge[0][0] == 0,
+        check((b.ActionStateBuffered(hBufJump, 0, st) & kActionBuffered) != 0 && st.pressAge[0][0] == 0,
               "buffer: the press tick itself is inside the window");
-        check((b.ActionStateBuffered(hFire, 0, st) & kActionBuffered) == 0 && st.pressAge[0][1] == kInputBufferNone,
+        check((b.ActionStateBuffered(hBufFire, 0, st) & kActionBuffered) == 0 && st.pressAge[0][1] == kInputBufferNone,
               "buffer: an action without bufferTicks never buffers (its bits are unchanged)");
         int buffered = 0;
         for (int t = 0; t < 6; ++t) {
             b.Evaluate(up, t == 0 ? down : up);
             b.UpdateBuffers(st);
-            buffered += (b.ActionStateBuffered(hJump, 0, st) & kActionBuffered) != 0 ? 1 : 0;
+            buffered += (b.ActionStateBuffered(hBufJump, 0, st) & kActionBuffered) != 0 ? 1 : 0;
         }
         check(buffered == 3 && !st.HasHashableState(), "buffer: bufferTicks 3 keeps the press for 3 more ticks, then closes");
         b.Evaluate(down, up);
         b.UpdateBuffers(st);
-        check(b.ConsumeBuffered(hJump, 0, st) && (b.ActionStateBuffered(hJump, 0, st) & kActionBuffered) == 0,
+        check(b.ConsumeBuffered(hBufJump, 0, st) && (b.ActionStateBuffered(hBufJump, 0, st) & kActionBuffered) == 0,
               "buffer: consuming clears the window and this tick's bit");
         b.Evaluate(up, down);
         b.UpdateBuffers(st);
-        check((b.ActionStateBuffered(hJump, 0, st) & kActionBuffered) == 0 && !b.ConsumeBuffered(hJump, 0, st),
+        check((b.ActionStateBuffered(hBufJump, 0, st) & kActionBuffered) == 0 && !b.ConsumeBuffered(hBufJump, 0, st),
               "buffer: a consumed press does not come back");
-        check(!b.ConsumeBuffered(hJump, kMaxPlayers, st) && !b.ConsumeBuffered(HashStr("Nope"), 0, st),
+        check(!b.ConsumeBuffered(hBufJump, kMaxPlayers, st) && !b.ConsumeBuffered(HashStr("Nope"), 0, st),
               "buffer: out-of-range lanes and unknown actions consume nothing");
         const std::string text = b.ToJsonText();
         check(text.find("\"bufferTicks\": 3") != std::string::npos && text.find("\"bufferTicks\": 0") == std::string::npos,

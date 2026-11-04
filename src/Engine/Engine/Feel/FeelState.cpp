@@ -11,8 +11,9 @@
 
 namespace mye {
 
-static_assert(kFeelChannelCamera == MYE_FEEL_CHANNEL_CAMERA && kFeelChannelRumble == MYE_FEEL_CHANNEL_RUMBLE
-                  && kFeelChannelFlash == MYE_FEEL_CHANNEL_FLASH,
+static_assert(static_cast<uint32_t>(kFeelChannelCamera) == static_cast<uint32_t>(MYE_FEEL_CHANNEL_CAMERA)
+                  && static_cast<uint32_t>(kFeelChannelRumble) == static_cast<uint32_t>(MYE_FEEL_CHANNEL_RUMBLE)
+                  && static_cast<uint32_t>(kFeelChannelFlash) == static_cast<uint32_t>(MYE_FEEL_CHANNEL_FLASH),
               "the v31 SetFeelOutputScale channel numbers are part of the ABI");
 
 namespace {

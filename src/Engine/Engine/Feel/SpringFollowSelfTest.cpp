@@ -5,6 +5,7 @@
 //====================================================================================
 #include "Engine/Engine/Feel/SpringFollowSelfTest.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include <DirectXMath.h>
