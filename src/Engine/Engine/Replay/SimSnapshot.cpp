@@ -69,6 +69,13 @@ void WriteScene(ByteWriter& w, const Scene& scene)
     w.U8(t.paused ? 1u : 0u);
     w.I32(t.scalePercent);
     w.I32(t.accum);
+    // v51 (M94b): ヒットストップ / 時限スロー。スナップショットは既定値でも常に書く (レイアウト固定)
+    w.I32(t.freezeTicks);
+    w.I32(t.slowPercent);
+    w.I32(t.slowHoldTicks);
+    w.I32(t.slowRecoverTicks);
+    w.I32(t.slowRecoverLeft);
+    w.I32(t.slowRecoverEase);
 
     const PersistStore::Map& persist = scene.Persist().Entries(); // std::map = キー昇順
     w.Count(persist.size());
@@ -140,6 +147,12 @@ bool ReadScene(ByteReader& r, SceneState& out)
     out.time.paused = r.U8() != 0;
     out.time.scalePercent = r.I32();
     out.time.accum = r.I32();
+    out.time.freezeTicks = r.I32(); // v51 (M94b)
+    out.time.slowPercent = r.I32();
+    out.time.slowHoldTicks = r.I32();
+    out.time.slowRecoverTicks = r.I32();
+    out.time.slowRecoverLeft = r.I32();
+    out.time.slowRecoverEase = r.I32();
 
     const size_t persistCount = r.Count(sizeof(uint64_t) * 2);
     for (size_t i = 0; i < persistCount && r.Ok(); ++i) {

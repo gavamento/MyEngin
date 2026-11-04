@@ -469,6 +469,16 @@ uint64_t HashGameFlow(uint64_t h, const TimeControl* time, const PersistStore* p
         FoldU64(h, d, "TimeControl", "paused", time->paused ? 1u : 0u);
         FoldU64(h, d, "TimeControl", "scalePercent", static_cast<uint32_t>(time->scalePercent));
         FoldU64(h, d, "TimeControl", "accum", static_cast<uint32_t>(time->accum));
+        // M94b: ヒットストップ / 時限スローは「効果が残っているときだけ」畳む。既定値のあいだは
+        // 1 語も畳まないので、手触りを使わないシーンのハッシュ列は M94 以前と同一
+        if (time->HasFeelEffect()) {
+            FoldU64(h, d, "TimeControl", "freezeTicks", static_cast<uint32_t>(time->freezeTicks));
+            FoldU64(h, d, "TimeControl", "slowPercent", static_cast<uint32_t>(time->slowPercent));
+            FoldU64(h, d, "TimeControl", "slowHoldTicks", static_cast<uint32_t>(time->slowHoldTicks));
+            FoldU64(h, d, "TimeControl", "slowRecoverTicks", static_cast<uint32_t>(time->slowRecoverTicks));
+            FoldU64(h, d, "TimeControl", "slowRecoverLeft", static_cast<uint32_t>(time->slowRecoverLeft));
+            FoldU64(h, d, "TimeControl", "slowRecoverEase", static_cast<uint32_t>(time->slowRecoverEase));
+        }
     }
     if (persist) {
         for (const auto& [key, blob] : persist->Entries()) {

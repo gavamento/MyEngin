@@ -68,6 +68,8 @@ void BuildScene(Scene& scene)
     scene.Time().paused = true;
     scene.Time().scalePercent = 40;
     scene.Time().accum = 30;
+    scene.Time().RequestFreeze(7);                       // v51 (M94b)
+    scene.Time().RequestSlow(30, 12, 20, MYE_EASE_OUT_QUAD);
     const uint64_t score = 1234;
     scene.Persist().Set(0xABCDull, &score, sizeof(score));
     scene.Persist().Set(0x1111ull, "hi", 2);
@@ -154,6 +156,7 @@ bool RunSimSnapshotSelfTest()
     w.Rng().NextU32();
     scene.Time().paused = false;
     scene.Time().scalePercent = 100;
+    scene.Time().ClearFeelEffects();
     scene.Persist().Clear();
     scene.SetSourcePath(L"");
     scene.SetName("WrongStage"); // 復元で必ず上書きされること
@@ -184,6 +187,10 @@ bool RunSimSnapshotSelfTest()
           "persist entries are restored");
     check(scene.Time().paused && scene.Time().scalePercent == 40 && scene.Time().accum == 30,
           "time control is restored");
+    check(scene.Time().freezeTicks == 7 && scene.Time().slowPercent == 30 && scene.Time().slowHoldTicks == 12
+              && scene.Time().slowRecoverTicks == 20 && scene.Time().slowRecoverLeft == 20
+              && scene.Time().slowRecoverEase == MYE_EASE_OUT_QUAD,
+          "hit-stop and timed slow motion are restored (v51)");
     check(scene.HasOverrideRecord(1) && scene.GetOverrides(3) != nullptr
               && scene.GetOverrides(3)->size() == 2,
           "prefab override records are restored");

@@ -965,6 +965,9 @@ void RunOneTick(TickServices& ts)
             // M70c: 旧シーンの EntityID を握ったままにしない。世代付きなので
             // 「別シーンの同じ index」を掴むことは無いが、UI 状態がシーンを跨ぐ意味も無い
             scene.UI().Clear();
+            // M94b: ヒットストップ / スローは旧シーンの出来事への反応なので持ち越さない
+            // (pause と scalePercent はシーンを跨ぐ — M51g の意味論のまま)
+            scene.Time().ClearFeelEffects();
             if (ts.agentSystem) {
                 ts.agentSystem->Reset(); // M65f: 航法グリッドも旧シーンのもの
             }
