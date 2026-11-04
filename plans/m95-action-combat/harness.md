@@ -2,15 +2,15 @@
 
 - 依頼原文: M95 アクション戦闘の土台 (事前調査は plans\m95-action-combat\design-draft.md)
 - 開始: 2026-11-04 / 基点コミット: 69c2207c2b8c5c79af7d37ababad0b03d397d228
-- フェーズ: 実装 (一時停止 2026-11-04 14:05、ユーザー指示「いったん止めて」。再開は `/harness resume m95-action-combat`)
+- フェーズ: 実装 (2026-11-04 14:05 に一時停止、14:40 にユーザー指示「続き」で再開。planner / sub-00b / sub-01 の coder を再起動)
 - 仕様確定: 2026-11-04 (planner PLAN_RESULT round 2)。番号: ABI v32 = 193 スロット、SimSnapshot v66 / v67 / v68、controller アセット v3、ADR-034、TypeId 追加なし
 
 ## サブ進捗
 | サブ | 波 | 依存 | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|---|---|
-| sub-00 selftest の登録表・フィルタ・所要時間ログ・full 入口・CI・予約マーカー | 0 | なし | OK (条件付き) | 1 | 8405f20 | master で単独。VERDICT 指摘 1: Release の --selftest-full と replay_verify は、ユーザーの対話用 Editor.exe (PID 39252) が Release exe を掴んでいるため未実施。解放後に司会が回して結果をここに書く。FAIL なら差し戻し |
-| sub-00b 計測に基く層分けと縮小 (既定 60 秒以内) | 1 | sub-00 | 中断 (round 1 の途中) | 0 | | worktree に未コミットの作業あり (SelfTestSuites.h/.cpp、PartSelfTest.cpp、AGENTS.md)。計測は単独で回す |
-| sub-01 ヒットストップ (ABI v32、snapshot v66) | 1 | sub-00 | 中断 (round 1 の途中) | 0 | | worktree に未コミットの作業あり (EngineAPI.h / Interop.cs / MyeScript.cs / EngineApiTable.cpp / Components / AnimatorController / SimSnapshot.h / AcousticAudioSelfTest / PartSelfTest)。SELF_EVAL 未提出 |
+| sub-00 selftest の登録表・フィルタ・所要時間ログ・full 入口・CI・予約マーカー | 0 | なし | OK (条件付き) | 1 | 8405f20 | master で単独。VERDICT 指摘 1: Release の --selftest-full と replay_verify は、ユーザーの対話用 Editor.exe (PID 39252) が Release exe を掴んでいるため未実施。解放後に司会が回して結果をここに書く。FAIL なら差し戻し。14:40 再開時に Release exe が空いたので司会が master で replay_verify + Release --selftest-full を実行中 (スロット moderator) |
+| sub-00b 計測に基く層分けと縮小 (既定 60 秒以内) | 1 | sub-00 | 実装中 (14:40 再開、round 1) | 0 | | 前の coder の未コミット差分 (+65/-11) を新しい coder が git diff で引き継ぐ。計測は単独で回す |
+| sub-01 ヒットストップ (ABI v32、snapshot v66) | 1 | sub-00 | 実装中 (14:40 再開、round 1) | 0 | | 前の coder の未コミット差分 (11 ファイル +205/-9) を新しい coder が git diff で引き継ぐ。SELF_EVAL 未提出 |
 | sub-02 CC 同士の押し出しと接触イベント (snapshot v67、ADR-034) | 1 | sub-00 | OK | 1 | 2992ad3 (m95/sub-02) | full 検証済み (Debug 972 s / Release 107 s、RV PASS)。焼き込み hash 5 件 + AcousticAudio 版チェックは統合後に再採取 |
 | sub-04 遷移の割り込み (controller v3) | 1 | sub-00 | OK | 2 | 3dca0f6 (m95/sub-04) | round 1 は最終検証未実施で REWORK。full 検証済み (Debug 814 s / Release 108 s、RV PASS)。三校は環境要因 |
 | sub-06 イベント時刻の秒・フレーム指定 | 1 | sub-00 | OK | 1 | cda5413 (m95/sub-06) | full 検証済み (Debug 619 s / Release 96 s、RV 22 jobs PASS)。三校 FAIL は別件 |
