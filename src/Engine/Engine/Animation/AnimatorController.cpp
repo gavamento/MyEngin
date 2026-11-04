@@ -1705,9 +1705,9 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
             if (drivesSkeleton) {
                 CollectDrivenSkinnedMeshes(world, e, driven_);
             }
-            if (!IsEntityActive(world, e)) {
-                // 凍らせる: 書いてあるプログラムをそのまま保たせる (時刻も層も進めない)。
-                // 描画補間の進みは 0 に落とす — 残すと、止まっている間も最後の tick の動きを毎 tick 繰り返して描く
+            // 凍らせる: 書いてあるプログラムをそのまま保たせる (時刻も層も進めない)。
+            // 描画補間の進みは 0 に落とす — 残すと、止まっている間も最後の tick の動きを毎 tick 繰り返して描く
+            const auto freezePose = [&]() {
                 for (EntityID m : driven_) {
                     SkinnedMeshComponent* sm = world.GetComponent<SkinnedMeshComponent>(m);
                     if (sm->poseLayerCount > 0) {
@@ -1718,6 +1718,22 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                         }
                     }
                 }
+            };
+            if (!IsEntityActive(world, e)) {
+                freezePose();
+                continue;
+            }
+            if (c->pauseTicks > 0) {
+                // ヒットストップ: 時刻・遷移・イベントを進めず、ルートモーションは 0 を書く (止まった tick に滑らせない)。
+                // 残りは非アクティブと別に数える (pauseTicks は止まった tick ごとに 1 減る)
+                freezePose();
+                c->rootMotionVelocity = { 0.0f, 0.0f, 0.0f };
+                c->rootMotionDeltaRotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+                if (c->applyRootMotion) {
+                    const float zero[3] = {};
+                    ApplyRootMotion(world, e, zero, c->rootMotionVelocity);
+                }
+                --c->pauseTicks;
                 continue;
             }
             const SkinnedModel* mainModel = MainModelOf(world, driven_, models);

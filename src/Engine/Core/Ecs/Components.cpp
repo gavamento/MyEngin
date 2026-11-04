@@ -409,6 +409,7 @@ void RegisterBuiltinComponents()
                                                          "both from the pose")),
         MYE_JP("ルートモーションの回転", MYE_FIELD_FLAGS(AnimatorControllerComponent, rootMotionDeltaRotation, Quat, kFieldReadOnly)),
         // ---- M95 sub-01 (末尾 append) ----
+        MYE_JP("停止の残り (tick)", MYE_FIELD_FLAGS(AnimatorControllerComponent, pauseTicks, Int32, kFieldReadOnly)),
     });
     static_assert(AnimatorControllerComponent::kMaxParams == 16, "上の param0..15 の並びを増減に合わせる");
 

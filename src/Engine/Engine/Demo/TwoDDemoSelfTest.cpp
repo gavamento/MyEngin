@@ -34,7 +34,7 @@ namespace {
 
 constexpr uint64_t kTicks = 3000;
 // 合成入力 (SynthLaneInput) で kTicks 回した HashWorld。Debug == Release (GameLogic.dll の ZTwoDHero / ZTwoDMover 込み)
-constexpr uint64_t kExpectedHash = 0x55DEACAD78012785ull;
+constexpr uint64_t kExpectedHash = 0x59CD1F3A2BA89D7Bull;
 constexpr uint64_t kLogInterval = 500;
 constexpr int kQueryRepeat = 200;
 

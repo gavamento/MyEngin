@@ -496,6 +496,9 @@ namespace MyeScripting
         public delegate* unmanaged<void*, MyeEntityId, MyeVec3, int*, int*, int> TilemapWorldToCell;
         public delegate* unmanaged<void*, MyeEntityId, int, int, MyeVec3*, int> TilemapCellToWorld;
         public delegate* unmanaged<void*, MyeEntityId, int, int*, int*, int*, int*, int> TilemapGetBounds;
+        // ---- v32 (M95): アクション戦闘 ----
+        public delegate* unmanaged<void*, MyeEntityId, int, int> AnimatorSetPause;
+        public delegate* unmanaged<void*, MyeEntityId, int> AnimatorGetPause;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -1681,6 +1684,12 @@ namespace MyeScripting
         }
         public static bool AnimatorPlay(MyeEntityId entity, ulong stateNameHash, int durationTicks)
             => _api != null && _api->AnimatorPlay(_api->Engine, entity, stateNameHash, durationTicks) != 0;
+        // ヒットストップ: Animator を ticks tick 止める (上書き、負は 0)。Animator が無ければ false
+        public static bool AnimatorSetPause(MyeEntityId entity, int ticks)
+            => _api != null && _api->AnimatorSetPause(_api->Engine, entity, ticks) != 0;
+        // 停止の残り tick。Animator が無い / API が無いときは -1
+        public static int AnimatorGetPause(MyeEntityId entity)
+            => _api != null ? _api->AnimatorGetPause(_api->Engine, entity) : -1;
         public static bool BtRestart(MyeEntityId entity)
             => _api != null && _api->BtRestart(_api->Engine, entity) != 0;
 

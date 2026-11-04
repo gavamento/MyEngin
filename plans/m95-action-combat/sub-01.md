@@ -52,4 +52,7 @@ spec §5 の 1, 2, 3, 4, 5, 6。
 
 ## 実装メモ (coder が追記)
 
+round 1: pauseTicks (Components.h/.cpp)、Update の停止分岐 (AnimatorController.cpp)、ABI v32 の 2 スロット (EngineAPI.h / EngineApiTable.cpp / Interop.cs / MyeScript.cs)、snapshot v66、SelfTest 追加。仕様との差分: [追加] tools/check_rules.ps1 の apiVersionSlots に 32 = 190 (無いと rule 11 が error。sub-03 が 193 へ直す)、[追加] TwoDDemoSelfTest の焼き込み hash 更新、[未実装] ScriptAPI.h の糖衣 (同ファイルに Animator 系の糖衣が元々無いため)。詳細は司会へ返した SELF_EVAL を参照。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-04)。must 無し。仕様側を訂正: ScriptAPI.h の C++ 糖衣は不要 (Animator 系の糖衣は元々無い)、check_rules.ps1 の $apiVersionSlots `32 = 190` は仕様の穴として spec §4.1 A / 付録 A.1 / sub-03.md に追記。nit: (1) 非アクティブ entity で pauseTicks が減らないこと (spec §4.1 A) の断言が無い (コード上は非アクティブ分岐が先に continue するので正しい。sub-07 か reviewer が足してよい)、(2) Components.h のマーカー文言に「: ヒットストップ」を足している (sub-01 だけのマーカーなので実害なし)、(3) hash 修正後の Debug --selftest-full は twoddemo 単独で代用 (差分が定数 1 つなので許容。Wave 1 統合の full 検証で全走する)

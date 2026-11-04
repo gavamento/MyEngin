@@ -1851,6 +1851,18 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         }
         return 0;
     };
+    out.AnimatorSetPause = [](void* engine, MyeEntityId entity, int32_t ticks) -> int {
+        auto* animator = Sc(engine)->GetWorld().GetComponent<AnimatorControllerComponent>(ToEngine(entity));
+        if (animator == nullptr) {
+            return 0;
+        }
+        animator->pauseTicks = ticks > 0 ? ticks : 0;
+        return 1;
+    };
+    out.AnimatorGetPause = [](void* engine, MyeEntityId entity) -> int32_t {
+        const auto* animator = Sc(engine)->GetWorld().GetComponent<AnimatorControllerComponent>(ToEngine(entity));
+        return animator != nullptr ? animator->pauseTicks : -1;
+    };
     out.BtRestart = [](void* engine, MyeEntityId entity) -> int {
         BehaviorTreeSystem* bt = Ctx(engine)->behaviorTree;
         return bt != nullptr && bt->Restart(Sc(engine)->GetWorld(), Ctx(engine)->tickIndex, ToEngine(entity)) ? 1 : 0;

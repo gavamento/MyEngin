@@ -175,8 +175,11 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 31u,
-              "abi: the table reports v31");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 32u,
+              "abi: the table reports v32");
+        // v32 (M95): アクション戦闘。呼んだ結果はこのスイートの末尾 (M95 sub-01) が見る
+        check(api.AnimatorSetPause != nullptr && api.AnimatorGetPause != nullptr,
+              "abi: the v32 action-combat slots are filled in");
         // v31 (M94n): 2D。呼んだ結果は TwoDAbiSelfTest が見る (ここは充填のみ)
         check(api.OverlapBoxMasked != nullptr && api.BoxCast != nullptr && api.SpriteByName != nullptr
                   && api.TilemapGetCell != nullptr && api.TilemapSetCell != nullptr && api.TilemapFillRect != nullptr
@@ -1008,6 +1011,29 @@ bool RunPartSelfTest()
     }
 
     // ---- M95 sub-01 (ABI) ----
+    {
+        ScriptApiContext apiCtx;
+        apiCtx.scene = &scene;
+        MyeEngineApi api = {};
+        BuildEngineApi(api, &apiCtx);
+        const auto toShared = [](EntityID e) { return MyeEntityId{ e.index, e.generation }; };
+        GameObject anim = scene.CreateGameObjectTracked("PauseAnim");
+        anim.AddComponent<AnimatorControllerComponent>();
+        GameObject plain = scene.CreateGameObjectTracked("PausePlain");
+        w.ApplyStructuralChanges();
+        const MyeEntityId a = toShared(anim.Id());
+        const MyeEntityId p = toShared(plain.Id());
+        check(MYE_API_VERSION == 32u && api.version == MYE_API_VERSION, "abi: MYE_API_VERSION is 32");
+        check(api.AnimatorGetPause(api.engine, a) == 0, "abi: AnimatorGetPause starts at 0");
+        check(api.AnimatorSetPause(api.engine, a, 5) == 1 && api.AnimatorGetPause(api.engine, a) == 5,
+              "abi: AnimatorSetPause sets the remaining ticks");
+        check(api.AnimatorSetPause(api.engine, a, 2) == 1 && api.AnimatorGetPause(api.engine, a) == 2,
+              "abi: AnimatorSetPause overwrites (5 then 2 leaves 2, no accumulation)");
+        check(api.AnimatorSetPause(api.engine, a, -3) == 1 && api.AnimatorGetPause(api.engine, a) == 0,
+              "abi: a negative AnimatorSetPause clamps to 0");
+        check(api.AnimatorSetPause(api.engine, p, 4) == 0 && api.AnimatorGetPause(api.engine, p) == -1,
+              "abi: without an Animator SetPause returns 0 and GetPause returns -1");
+    }
 
     // ---- M95 sub-03 ----
 
