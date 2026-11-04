@@ -121,7 +121,8 @@ Debug / Release / WARP でリプレイが一致する。
 - ABI v32 (`MYE_API_VERSION 32`、`TilemapGetBounds` の次):
   - `int (*AnimatorSetPause)(void* engine, MyeEntityId entity, int32_t ticks)` — 上書き (累積しない)。負は 0。Animator 無しは 0 を返し何もしない。成功 1
   - `int32_t (*AnimatorGetPause)(void* engine, MyeEntityId entity)` — 残り tick。Animator 無しは -1
-  - `ScriptAPI.h` の inline 糖衣、`Interop.cs` の関数ポインタ (位置ミラー) と `Engine.AnimatorSetPause / AnimatorGetPause`、`MyeScript.cs` の糖衣
+  - `Interop.cs` の関数ポインタ (位置ミラー) と `Engine.AnimatorSetPause / AnimatorGetPause`、`MyeScript.cs` の糖衣。`ScriptAPI.h` の C++ 糖衣は**書かない** (同ファイルに Animator 系の糖衣は `AnimatorPlay` 以来 1 本も無く、C++ 側は `ctx.api->AnimatorSetPause(...)` を直接呼ぶ流儀。sub-01 VERDICT round 1 で訂正)
+  - `tools\check_rules.ps1` の `$apiVersionSlots` (規則 11-c) に `32 = 190` を足す (無いと規則 11 / 15-f が error)。sub-03 がスロットを 193 にするとき同じ行を `32 = 193` へ書き換える
 - Inspector: `pauseTicks` を読み取り専用で表示 (反射登録)。
 
 #### B. 部位への重なり・掃引 (sub-03)
@@ -310,6 +311,7 @@ H. round 2 で追加 (ユーザー判断)
 
 ## 8. 変更履歴
 
+- 2026-11-04 sub-01 VERDICT round 1 (出所: coder SELF_EVAL の「仕様との差分」): §4.1 A と付録 A.1 の「`ScriptAPI.h` の inline 糖衣」を削除 (同ファイルに Animator 系の C++ 糖衣は元々無い — 仕様の前提違い)。§4.1 A と付録 A.1 に `tools\check_rules.ps1` の `$apiVersionSlots` (`32 = 190` → sub-03 で `32 = 193`) を追記 (仕様の穴。sub-03.md の触る場所にも追記)
 - 2026-11-04 sub-02 VERDICT round 1 (出所: coder SELF_EVAL): §2 #21 の「hash 不変」を「結果は不変だが WorldHash の値は変わる (焼き込み定数は再採取)」に訂正。§5 受け入れ 7 に「接した状態から」と隙間からの 1 歩ぶんの重なりの許容を明記。付録 B の 4. に焼き込み hash の再採取手順 (統合コミット前に 1 回、根拠は --selftest-full のログ) を追加
 - 2026-11-04 sub-04 VERDICT round 2 (出所: 司会の切り分け): §5 冒頭に三校 verify の扱い (司会が波の統合時に master で三校 DLL を作り直してから回す。worktree での DLL 不一致 FAIL は採点外) を追記
 - 2026-11-04 sub-06 VERDICT round 1 (出所: coder SELF_EVAL の「仕様との差分」): §4.1 F に「数値でない time / frame は 0」「非有限は 0、int32 範囲外は clamp」「events 無しのオブジェクト形は読み飛ばす」を明記
@@ -331,7 +333,8 @@ H. round 2 で追加 (ユーザー判断)
 | 192 | `SphereCastParts` | v32 | sub-03 | |
 | 193 | `OverlapCapsuleParts` | v32 | sub-03 | 最終スロット数 193。`PartSelfTest` の充填チェックは sub-01 が 2 本で書き、sub-03 が 5 本に増やす |
 
-`Interop.cs` は `// ---- v32 (M95): アクション戦闘 ----` のコメント行の下に同じ順。`ScriptAPI.h` の糖衣は `MyeAnimatorPlay` の隣 (sub-01) と `MyeRaycastParts` の隣 (sub-03)。
+`Interop.cs` は `// ---- v32 (M95): アクション戦闘 ----` のコメント行の下に同じ順。`ScriptAPI.h` の糖衣は `MyeRaycastParts` の隣 (sub-03) だけ (Animator 系の C++ 糖衣は存在しないので sub-01 は書かない。sub-01 VERDICT round 1 で訂正)。
+`tools\check_rules.ps1` の `$apiVersionSlots` (規則 11-c): sub-01 が `32 = 190`、sub-03 が同じ項を `32 = 193` に書き換える (版とスロット数は同時に更新しないと check_rules が止まる)。
 
 ### A.2 `Components.h` の末尾 append (各 struct の `static inline ComponentTypeId sTypeId` の直前。sub-00 がマーカーを入れる)
 

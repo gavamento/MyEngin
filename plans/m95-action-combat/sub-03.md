@@ -32,6 +32,7 @@ ABI v32 の 191〜193 本目を開け、C++ 糖衣 / C# ミラー / `MyeScript.c
 - `src\Shared\ScriptAPI.h:728` `MyeRaycastParts` の隣に糖衣 3 本 (`MyePartTag` でタグ名 → ハッシュ)
 - `src\Scripting\Interop.cs` の `// ---- v32 (M95) ----` の下、sub-01 の 2 本の次に関数ポインタ 3 本と静的糖衣 (`:904-915` の様式)、`src\Scripting\MyeScript.cs:730-737` の隣に糖衣 (root 省略版 / あり版)
 - `src\Editor\SelfTest\PartSelfTest.cpp` の `// ---- M95 sub-03 ----` 直下に 14 / 15 / 31、sub-01 の v32 充填チェックを 5 本に
+- `tools\check_rules.ps1:746` の `$apiVersionSlots` の `32 = 190` (sub-01 が追加) を `32 = 193` へ (規則 11-c。版とスロット数の表を同時に更新しないと check_rules が error で止まる。sub-01 VERDICT round 1 で追記)
 
 ## 受け入れ条件 (このサブ)
 
