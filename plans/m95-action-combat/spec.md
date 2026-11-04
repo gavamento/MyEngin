@@ -47,7 +47,7 @@ Debug / Release / WARP でリプレイが一致する。
 | 18 | ABI v32 を M95 が取ってよいか (memory では M75h が v32 を予定) | 「末尾から取る」規則 (司会の指示) | 司会 | M95 = v32 (188 → 193 スロット)。M75h は着手時の末尾 |
 | 19 | スナップショット版はマイルストーンで 1 回か、サブごとか | M94 は v56〜v65 をサブごとに上げた (`SimSnapshot.h:165-175`) | — | サブごとに予約 (付録 A): v66 (sub-01) / v67 (sub-02) / v68 (sub-05)。同じ波で衝突したら統合時に最大値へ揃える |
 | 20 | 既存シーンのビット同一の検証手段 | `tools\replay_verify.bat` と三校 `C:\HAL\三校\tools\verify.bat`。HAL Collector (`C:\HAL\GameEngin_Demo`) に検証スクリプトは無い | — | replay_verify + 三校 verify.bat。HAL Collector は selftest / replay_verify で代用 (未検証として報告) |
-| 21 | hash 対象かどうか | AnimatorController / CC / Rigidbody は hash 対象 (`Components.h:777-779, 851-853`、`Components.cpp:15`)。SkinnedMesh は NoHash (`Components.cpp:288`) だが生バイトは snapshot に載る | — | 追加欄は全て既定 0 / false → 既存シーンの hash 不変。レイアウト変更は snapshot 版で吸収 |
+| 21 | hash 対象かどうか | AnimatorController / CC / Rigidbody は hash 対象 (`Components.h:777-779, 851-853`、`Components.cpp:15`)。SkinnedMesh は NoHash (`Components.cpp:288`) だが生バイトは snapshot に載る | — | 追加欄は全て既定 0 / false → シミュレーションの結果 (位置・速度・分岐) は不変。**ただし WorldHash はカラムの生バイトを混ぜるので、hash 対象の struct に欄を足すと値そのものは変わる** (M94i で CC の 2D 欄を足したときと同じ)。selftest に焼き込んだ hash 定数 (CC2D / 庭 / tile / gridnav / twod の 5 件) と AcousticAudioSelfTest の snapshot 版チェックは、欄を足したサブが再採取し、波の統合後に司会が最終値で再採取する (付録 B)。レイアウト変更は snapshot 版で吸収 (sub-02 VERDICT round 1 で訂正) |
 | 22 | selftest の全走が長く、往復のたびに回すと coder の時間を食う | `EditorMain.cpp:586-614` の `MYE_SELFTEST_ONLY` は 4 値 (`servernet*` / `computescript` / `twod` / `m94`) のハードコードで、他のスイートは絞れない。所要時間のログも無い | **sub-00 を先頭に足す** (2026-11-04) | 「スイート名 → 関数」の登録表に置き換え、カンマ区切りの任意名で絞る。`--selftest-list`、スイートごとの ms ログ。既存 4 値は別名として残す。製品の挙動には触れない |
 | 23 | 並列実装で末尾 append が別の struct に入る誤マージ (memory `parallel-milestone-execution` #5) | 両ブランチが同じ `};` の直前に追記すると git は競合と見なさず自動解決する | 波単位の並列 (2026-11-04) | 付録 A で append 先を struct ごとに分け、sub-00 が予約マーカー (コメント行) を先に入れて各サブは自分のマーカーの下にだけ書く。統合時は付録 B の目視手順 |
 
@@ -231,7 +231,7 @@ A. ヒットストップ
 6. `Interop.cs` の関数ポインタ順が `EngineAPI.h` と一致 (memory `abi-bump-verification` の機械照合) — 照合スクリプトの出力を SELF_EVAL に貼る
 
 B. CC 同士の接触と接触イベント
-7. `collideCharacters` 両 true、`pushPriority` 同値の CC 2 体が歩み寄ると、両者が相手の tick 頭のカプセルから押し出され、tick 末に重ならない (深さ 0 以下) — ST(physics)
+7. `collideCharacters` 両 true、`pushPriority` 同値の CC 2 体が**接した状態から**歩み寄ると、両者が相手の tick 頭のカプセルから押し出され、tick 末に重ならない (深さ 0 以下)。隙間のある所から歩み寄る場合は、相手の tick 頭の姿勢を見る構造上、重なりが最大 1 歩 (速度 × dt) ぶん残る tick があり得るが、すり抜けない (ADR-034 影響欄。sub-02 VERDICT round 1 で明記) — ST(physics)
 8. `pushPriority` 1 の CC が 0 の CC へ歩くと、0 側だけが動き 1 側は歩いた距離そのまま — ST(physics)
 9. 片方だけ `collideCharacters` なら素通り (従来) — ST(physics)
 10. `reportContacts` の CC が床 (静的) / kinematic 剛体 / 動的剛体 / 別の CC に触れた tick に `SolidContact` (impulse 0、法線は大→小、key 昇順) が出て、`CollisionSystem` 経由で両エンティティの `onCollisionEnter` → `onCollisionStay` → 離れた tick に `onCollisionExit` が届く — ST(physics) (既存の `CollisionSystem` を直接回すテスト `PhysicsSelfTest.cpp:511 / :552 / :1207` の様式)
@@ -310,6 +310,7 @@ H. round 2 で追加 (ユーザー判断)
 
 ## 8. 変更履歴
 
+- 2026-11-04 sub-02 VERDICT round 1 (出所: coder SELF_EVAL): §2 #21 の「hash 不変」を「結果は不変だが WorldHash の値は変わる (焼き込み定数は再採取)」に訂正。§5 受け入れ 7 に「接した状態から」と隙間からの 1 歩ぶんの重なりの許容を明記。付録 B の 4. に焼き込み hash の再採取手順 (統合コミット前に 1 回、根拠は --selftest-full のログ) を追加
 - 2026-11-04 sub-04 VERDICT round 2 (出所: 司会の切り分け): §5 冒頭に三校 verify の扱い (司会が波の統合時に master で三校 DLL を作り直してから回す。worktree での DLL 不一致 FAIL は採点外) を追記
 - 2026-11-04 sub-06 VERDICT round 1 (出所: coder SELF_EVAL の「仕様との差分」): §4.1 F に「数値でない time / frame は 0」「非有限は 0、int32 範囲外は clamp」「events 無しのオブジェクト形は読み飛ばす」を明記
 - 2026-11-04 補足 3 (出所: ユーザー判断、司会の AskUserQuestion): 受け入れ 30 の証拠を「Wave 2 統合時に司会が回す full 検証 (付録 B の 4.)」に代用し、sub-07 (文書のみ) は参照先の実在と check_rules だけを確認する。sub-07.md の検証コマンド節を同じ方針に変更
@@ -415,6 +416,7 @@ sub-00 が末尾に `// ---- M95 ----` マーカーを入れ、その下にサ�
    - `AnimatorController.cpp` の `Update` の番号付きブロック (1. / 6. / 8. と冒頭) が入れ子崩れしていない
    - `AnimatorControllerSelfTest.cpp` / `PhysicsSelfTest.cpp` / `PartSelfTest.cpp` のマーカーの下に各サブのテストがある
    - `LocalizationTable.inl` の `// ---- M95 ----` の下
-4. `tools\gen_project_files.ps1` (新規ファイルがあった波だけ) → Debug / Release ビルド → `Editor.exe --selftest` 全走 (Debug / Release) → `tools\check_rules.ps1` → `tools\replay_verify.bat` → 三校 `verify.bat`
+4. `tools\gen_project_files.ps1` (新規ファイルがあった波だけ) → Debug / Release ビルド → **焼き込み hash の再採取** (下記) → `Editor.exe --selftest-full` (Debug / Release) → `tools\check_rules.ps1` → `tools\replay_verify.bat` → 三校の DLL を master で作り直して `verify.bat`
+   - 焼き込み hash の再採取 (hash 対象の struct に欄を足した波 = Wave 1 (sub-01 / sub-02)、Wave 2 (sub-05) で必要。統合コミットの**前**に 1 回): 統合後のソースで Debug ビルド → `--selftest-full` (Debug) を 1 回回し、FAIL したスイートのログに出る実測値で定数を書き換える。対象は `PhysicsSelfTest.cpp` (CC2D)、`NavAgentSelfTest.cpp` (庭 `kExpectedYardHash`)、`TilemapSelfTest.cpp` (`kTileScenarioExpectedHash`)、`GridNav2DSelfTest.cpp` (`kExpectedScenarioHash`)、`TwoDDemoSelfTest.cpp` (`kExpectedHash`) の 5 件と `AcousticAudioSelfTest.cpp` の `kSimSnapshotVersion == N` (N は統合後の最大値)。各サブが自分の worktree で再採取した値は統合で競合する (出るのが正しい) ので、統合後の実測値で上書きする。値の根拠 = `--selftest-full` のログ行を台帳に貼る。Release の `--selftest-full` が同じ値で PASS することが「Debug / Release の一致」の確認 (値を Release から取らない)
    ★ Wave 2 の統合では、この 4. の結果 (各 total 行・check_rules の error 数・RV の全ジョブ・三校) を台帳に行単位で残す — 受け入れ 30 の証拠として sub-07 と reviewer が参照する (補足 3)
 5. 統合コミット (`M95 統合: Wave N (sub-xx, sub-yy)`) を作り、台帳に記録。次の波の worktree はこの統合コミットから切る (`git worktree move` + `checkout -B` で obj キャッシュを使い回してよい)

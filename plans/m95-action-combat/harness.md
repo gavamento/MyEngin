@@ -11,7 +11,7 @@
 | sub-00 selftest の登録表・フィルタ・所要時間ログ・full 入口・CI・予約マーカー | 0 | なし | OK (条件付き) | 1 | 8405f20 | master で単独。VERDICT 指摘 1: Release の --selftest-full と replay_verify は、ユーザーの対話用 Editor.exe (PID 39252) が Release exe を掴んでいるため未実施。解放後に司会が回して結果をここに書く。FAIL なら差し戻し |
 | sub-00b 計測に基づく層分けと縮小 (既定 60 秒以内) | 1 | sub-00 | 実装中 | 0 | | 計測は単独で回す |
 | sub-01 ヒットストップ (ABI v32、snapshot v66) | 1 | sub-00 | 実装中 | 0 | | |
-| sub-02 CC 同士の押し出しと接触イベント (snapshot v67、ADR-034) | 1 | sub-00 | 実装中 | 0 | | |
+| sub-02 CC 同士の押し出しと接触イベント (snapshot v67、ADR-034) | 1 | sub-00 | OK | 1 | 2992ad3 (m95/sub-02) | full 検証済み (Debug 972 s / Release 107 s、RV PASS)。焼き込み hash 5 件 + AcousticAudio 版チェックは統合後に再採取 |
 | sub-04 遷移の割り込み (controller v3) | 1 | sub-00 | OK | 2 | 3dca0f6 (m95/sub-04) | round 1 は最終検証未実施で REWORK。full 検証済み (Debug 814 s / Release 108 s、RV PASS)。三校は環境要因 |
 | sub-06 イベント時刻の秒・フレーム指定 | 1 | sub-00 | OK | 1 | cda5413 (m95/sub-06) | full 検証済み (Debug 619 s / Release 96 s、RV 22 jobs PASS)。三校 FAIL は別件 |
 | sub-03 部位の重なり・掃引 (ABI 193 スロット) | 2 | sub-01、Wave 1 統合 | 未着手 | 0 | | |
@@ -53,3 +53,6 @@
 - sub-06 VERDICT の nit: (1) `ClipEventTickFromJson` の fps 負値のテストが無い (sub-00b か sub-07 で 1 件足してよい)。(2) 秒の併記 (受け入れ 28) の目視は sub-07 の test_checklists へ
 - 別件 (M95 とは無関係、基点以前から): 三校 `toolserify.bat` が 2 件 FAIL (shot main の img-diff diffPixels=34541、patrol の listener)。原因は三校側の `cache\GameLogic.dll` が API v30 のままで、M94 の ABI v31 以降ロードされていない (`replay_record.log`: `[dll] API version mismatch (dll=30, engine=31)`)。対処は三校の `toolsuild_scripts.bat` で DLL を作り直してから verify する。ABI を上げる M95 では Wave 1 統合後 (v32) にも作り直しが要る
 - 三校 verify の扱い (sub-04 round 2 の VERDICT で spec §5 冒頭に追記): 三校の cache/GameLogic.vcxproj は master 固定参照なので worktree では構造上通せない。司会が波の統合時に master で三校 DLL を作り直し (tools/build_scripts.bat) てから回し、結果を台帳に残す。worktree での DLL 不一致 FAIL は採点外、coder は回さなくてよい。Wave 1 統合後は ABI v32 で作り直す
+- sub-02 VERDICT の nit: 同優先度の CC が隙間から歩み寄ると最大 1 歩ぶん重なる tick があり得る (順序非依存の設計から出る性質、許容。ADR-034 影響欄に記載) → sub-07 の engine_spec に 1 行。spec §2 #21 の「既存シーンの hash 不変」は訂正 (WorldHash は欄の生バイトを混ぜるので値が変わる。シミュレーション結果は不変)
+- Wave 1 / Wave 2 の統合で焼き込み hash の再採取が要る (付録 B 4.): PhysicsSelfTest (CC2D) / NavAgentSelfTest (庭) / TilemapSelfTest / GridNav2DSelfTest / TwoDDemoSelfTest の定数 5 件と AcousticAudioSelfTest の kSimSnapshotVersion チェック。Debug の --selftest-full のログから取り、Release で同値 PASS を確認してから統合コミット
+- 三校 cache/GameLogic.dll は sub-02 の coder が worktree (v31) のヘッダで上書きした (gitignore 配下)。統合時に master で作り直す
