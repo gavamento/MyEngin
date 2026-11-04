@@ -1864,6 +1864,64 @@ bool RunAnimatorControllerSelfTest()
 
     // ---- M95 sub-06 ----
 
+    {
+        // 26: clipEvents の tick / time / frame / fps 形
+        auto readTicks = [](const json& clipEvents, const char* clip, std::vector<int32_t>& ticks) {
+            const json doc = { { "controller", 3 }, { "states", json::array() }, { "clipEvents", clipEvents } };
+            ControllerAsset a;
+            if (!ControllerLibrary::FromJson(doc, a)) {
+                return false;
+            }
+            ticks.clear();
+            for (const ControllerClipEvents& ce : a.clipEvents) {
+                if (ce.clip == clip) {
+                    for (const ControllerClipEvent& ev : ce.events) {
+                        ticks.push_back(ev.tick);
+                    }
+                }
+            }
+            return true;
+        };
+        std::vector<int32_t> t;
+        const json mixed = { { "A", { { { "name", "a" }, { "tick", 9 }, { "time", 0.5 }, { "frame", 7 } },
+                                       { { "name", "b" }, { "time", 0.5 } },
+                                       { { "name", "c" }, { "time", 0.0083 } },
+                                       { { "name", "d" } },
+                                       { { "name", "e" }, { "frame", 7 } } } } };
+        check(readTicks(mixed, "A", t) && t == std::vector<int32_t>({ 9, 30, 0, 0, 7 }),
+              "M95: array-form clip events: tick wins, time 0.5 -> 30, time 0.0083 -> 0, none -> 0, frame w/o fps -> 60");
+        const json f30 = { { "A", { { "fps", 30 }, { "events", json::array({ { { "name", "a" }, { "frame", 7 } },
+                                                                                 { { "name", "b" }, { "tick", 5 } } }) } } } };
+        check(readTicks(f30, "A", t) && t == std::vector<int32_t>({ 14, 5 }), "M95: frame 7 @ fps 30 -> 14, tick still wins");
+        const json f24 = { { "A", { { "fps", 24 }, { "events", json::array({ { { "name", "a" }, { "frame", 1 } } }) } } } };
+        check(readTicks(f24, "A", t) && t == std::vector<int32_t>({ 3 }), "M95: frame 1 @ fps 24 -> 3 (2.5 rounds away from zero)");
+        const json f0 = { { "A", { { "fps", 0 }, { "events", json::array({ { { "name", "a" }, { "frame", 3 } } }) } } } };
+        check(readTicks(f0, "A", t) && t == std::vector<int32_t>({ 3 }), "M95: fps 0 falls back to 60");
+        const json fStr = { { "A", { { "fps", "x" }, { "events", json::array({ { { "name", "a" }, { "frame", 3 } } }) } } } };
+        check(readTicks(fStr, "A", t) && t == std::vector<int32_t>({ 3 }), "M95: non-numeric fps falls back to 60");
+
+        // 27: time / frame で読んだ資産は ToJson で tick 配列になり、再読で同じ tick
+        const json src = { { "controller", 3 }, { "states", json::array() },
+                           { "clipEvents", { { "A", { { "fps", 30 },
+                                                      { "events", json::array({ { { "name", "a" }, { "frame", 7 } },
+                                                                                { { "name", "b" }, { "time", 0.5 } } }) } } } } } };
+        ControllerAsset first;
+        bool ok = ControllerLibrary::FromJson(src, first);
+        const json saved = ControllerLibrary::ToJson(first);
+        ControllerAsset second;
+        ok = ok && ControllerLibrary::FromJson(saved, second);
+        check(ok && saved["clipEvents"]["A"].is_array() && saved["clipEvents"]["A"].size() == 2
+                  && !saved["clipEvents"]["A"][0].contains("time") && !saved["clipEvents"]["A"][0].contains("frame")
+                  && second.clipEvents.size() == 1 && second.clipEvents[0].events.size() == 2
+                  && second.clipEvents[0].events[0].tick == 14 && second.clipEvents[0].events[1].tick == 30,
+              "M95: time/frame-authored events save as a tick array and reload to the same ticks");
+        const json v2 = { { "controller", 2 }, { "states", json::array() }, { "clipEvents", { { "A", json::array({ { { "name", "a" }, { "tick", 12 } } }) } } } };
+        ControllerAsset v2a, v2b;
+        check(ControllerLibrary::FromJson(v2, v2a) && ControllerLibrary::FromJson(ControllerLibrary::ToJson(v2a), v2b)
+                  && v2b.clipEvents.size() == 1 && v2b.clipEvents[0].events.size() == 1 && v2b.clipEvents[0].events[0].tick == 12,
+              "M95: an existing v2 tick-array clipEvents round-trips unchanged");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Animator Controller self test: ALL PASS ====");
         return true;

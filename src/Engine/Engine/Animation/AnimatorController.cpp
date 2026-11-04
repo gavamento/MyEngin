@@ -1004,6 +1004,7 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
         states.push_back(std::move(st));
     }
     root["states"] = std::move(states);
+    // time / frame / fps 形は読みのみ。保存は常に tick 配列
     if (!c.clipEvents.empty()) {
         // M89h。クリップ名がキー。同名の 2 つ目以降は使われないので書かない
         json clipEvents = json::object();
@@ -1065,6 +1066,34 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
     root["transitions"] = std::move(trans);
     return root;
 }
+
+namespace {
+
+constexpr double kClipEventDefaultFps = 60.0; // 固定 Tick (60 Hz)。frame 指定の fps 省略時の既定
+
+// イベントの位置を tick に換算する。tick > time (秒) > frame (clip の fps) の順で、どれも無ければ 0。
+// 換算はここ 1 箇所 (std::llround = half away from zero)。
+int32_t ClipEventTickFromJson(const json& e, double clipFps)
+{
+    if (e.contains("tick")) {
+        return e.value("tick", 0);
+    }
+    double ticks = 0.0;
+    const auto timeIt = e.find("time");
+    const auto frameIt = e.find("frame");
+    if (timeIt != e.end() && timeIt->is_number()) {
+        ticks = timeIt->get<double>() * kClipEventDefaultFps;
+    } else if (frameIt != e.end() && frameIt->is_number()) {
+        ticks = frameIt->get<double>() * kClipEventDefaultFps / clipFps;
+    }
+    if (!std::isfinite(ticks)) {
+        return 0;
+    }
+    constexpr double kLimit = 2147483647.0;
+    return static_cast<int32_t>(std::llround(std::clamp(ticks, -kLimit, kLimit)));
+}
+
+} // namespace
 
 bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
 {
@@ -1187,7 +1216,27 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
     out.clipEvents.clear();
     if (j.contains("clipEvents") && j["clipEvents"].is_object()) {
         // M89h。オブジェクトのキー順 (nlohmann はキーの辞書順) で並ぶ
-        for (const auto& [clipName, list] : j["clipEvents"].items()) {
+        for (const auto& [clipName, clipEntry] : j["clipEvents"].items()) {
+            // 配列 (従来) か {"fps": N, "events": [...]} のどちらか。fps は frame 指定の換算にだけ使う
+            double clipFps = kClipEventDefaultFps;
+            const json* listPtr = &clipEntry;
+            if (clipEntry.is_object()) {
+                const auto fpsIt = clipEntry.find("fps");
+                if (fpsIt != clipEntry.end()) {
+                    if (fpsIt->is_number() && fpsIt->get<double>() > 0.0 && std::isfinite(fpsIt->get<double>())) {
+                        clipFps = fpsIt->get<double>();
+                    } else {
+                        MYE_LOG_WARN("[controller] clip '%s' has an invalid fps; using %.0f", clipName.c_str(),
+                                     kClipEventDefaultFps);
+                    }
+                }
+                const auto evIt = clipEntry.find("events");
+                if (evIt == clipEntry.end()) {
+                    continue;
+                }
+                listPtr = &*evIt;
+            }
+            const json& list = *listPtr;
             if (!list.is_array()) {
                 continue;
             }
@@ -1203,7 +1252,7 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
                 }
                 ev.name = e.value("name", std::string());
                 ev.nameHash = HashStr(ev.name);
-                ev.tick = e.value("tick", 0);
+                ev.tick = ClipEventTickFromJson(e, clipFps);
                 ev.minWeight = e.value("minWeight", 0.0f);
                 ev.value = e.value("value", 0.0f);
                 ev.intValue = e.value("int", 0);

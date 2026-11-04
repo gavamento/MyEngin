@@ -45,4 +45,8 @@ spec §5 の 26, 27, 28。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-06 (round 1) -- clipEvents の tick/time/frame/fps 読み (AnimatorController.cpp)、イベント帯の秒併記 (AnimationPreviewWindow.cpp)、selftest 7 check 追加。
+検証: animatorcontroller 部分実行 ALL PASS / Debug --selftest 110 suites 0 failed / Debug・Release --selftest-full 110 suites 0 failed / check_rules 0 error / replay_verify 22 jobs all passed / 三校 verify は FAIL 2 (golden main 差分 + agent never left patrol) だが master(C:\HAL\MyEngin) の Debug でも同一 FAIL = 既存。三校に clipEvents 無し。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-04)。ClipEventTickFromJson (tick > time > frame、double + llround、1 箇所) / 配列形とオブジェクト形の読み分け / fps の検証と警告 / ToJson 不変 / イベント帯の秒併記 (snprintf + TextUnformatted) を diff で確認。テスト 26 (7 ケース + 配列形) と 27 (round-trip、v2 不変) を確認。full 検証 (Debug 619 s / Release 96 s、110 本 0 failed)、check_rules 0 error、replay_verify 22 jobs PASS。三校 verify の 2 件 FAIL は master の exe でも同一数値で再現 = 既存の別件 (司会が切り分け)。「events 無しのオブジェクト形は読み飛ばす」「非有限 / int32 範囲外の換算は 0 / clamp」を仕様へ採用
