@@ -288,6 +288,9 @@
     <ClCompile Include="..\src\Editor\Windows\Debug\ConsoleWindow.cpp">
       <Filter>Windows\Debug</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Debug\FeelMonitorWindow.cpp">
+      <Filter>Windows\Debug</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Debug\PerformanceCompareWindow.cpp">
       <Filter>Windows\Debug</Filter>
     </ClCompile>
@@ -577,6 +580,9 @@
       <Filter>Windows\Audio</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Debug\ConsoleWindow.h">
+      <Filter>Windows\Debug</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Debug\FeelMonitorWindow.h">
       <Filter>Windows\Debug</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Debug\PerformanceCompareWindow.h">

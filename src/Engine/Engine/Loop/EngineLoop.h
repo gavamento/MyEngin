@@ -510,6 +510,8 @@ struct EngineContext {
     // この tick でスクリプト層 (フェーズ 3/5) を実行するか。
     // エディタは OnTick で Play 状態に応じて設定する (Runtime は常に true)
     bool simulateScripts = true;
+    // M94i: カメラの揺れ・キックを描画で切る (エディタの個人設定。sim の状態にも出力倍率にも触れない)
+    bool feelMuteCamera = false;
     uint64_t frameIndex = 0;  // 描画フレーム数
     uint64_t tickIndex = 0;   // 累計固定 tick 数 (シミュレーション時間 = tickIndex * fixedDt)
     float fixedDt = 1.0f / 60.0f;

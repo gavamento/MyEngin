@@ -555,6 +555,9 @@
     <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentCompute.cpp">
       <Filter>Engine\Demo</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentFeel.cpp">
+      <Filter>Engine\Demo</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentFlow.cpp">
       <Filter>Engine\Demo</Filter>
     </ClCompile>

@@ -2386,3 +2386,26 @@ MYE_STR(Feel_Preview,         "Preview",             "プレビュー")
 MYE_STR(Feel_PreviewTip,      "Plays this preset (as currently edited) in the running game. Only available while playing.",
                               "編集中の内容のまま、実行中のゲームでこのプリセットを鳴らします。Play 中だけ使えます。")
 MYE_STR(Feel_Unsaved,         "Unsaved changes",     "未保存の変更あり")
+MYE_STR(Win_FeelMonitor,      "Feel Monitor###Feel Monitor", "手触りモニタ###Feel Monitor")
+MYE_STR(FeelMon_MuteCamera,   "Mute camera shake in the editor", "エディタではカメラの揺れを切る")
+MYE_STR(FeelMon_Time,         "Time effects",        "時間効果")
+MYE_STR(FeelMon_TimeLine,     "hit-stop %d ticks / slow %d%% (hold %d, recover %d) / base %d%%",
+                              "ヒットストップ %d tick / スロー %d%% (保持 %d、戻り %d) / 基本 %d%%")
+MYE_STR(FeelMon_Playing,      "Playing",             "再生中")
+MYE_STR(FeelMon_None,         "Nothing is playing.", "何も鳴っていない。")
+MYE_STR(FeelMon_FromCode,     "(code)",              "(コード)")
+MYE_STR(FeelMon_ColSource,    "Source",              "出所")
+MYE_STR(FeelMon_ColIntensity, "Intensity",           "強さ")
+MYE_STR(FeelMon_ColAge,       "Age / length",        "経過 / 持続")
+MYE_STR(FeelMon_ColChannels,  "Channels",            "チャネル")
+MYE_STR(FeelMon_Output,       "Output now",          "いまの出力")
+MYE_STR(FeelMon_OutCamera,    "camera offset (%.3f, %.3f, %.3f) m, rotation (%.2f, %.2f, %.2f) deg, FOV %+.2f deg",
+                              "カメラのずらし (%.3f, %.3f, %.3f) m、回転 (%.2f, %.2f, %.2f) 度、画角 %+.2f 度")
+MYE_STR(FeelMon_OutRumble,    "rumble low %.2f / high %.2f", "振動 低 %.2f / 高 %.2f")
+MYE_STR(FeelMon_OutFlash,     "vignette %+.3f / exposure %+.3f / flash weight %.2f",
+                              "周辺減光 %+.3f / 露出 %+.3f / フラッシュの重み %.2f")
+MYE_STR(FeelMon_Buffer,       "Input buffer (lane 0)", "先行入力 (レーン 0)")
+MYE_STR(FeelMon_BufferOpen,   "%s: open, %d / %d ticks", "%s: 受付中、%d / %d tick")
+MYE_STR(FeelMon_BufferClosed, "%s: closed (window %d ticks)", "%s: 閉 (窓 %d tick)")
+MYE_STR(FeelMon_NoBuffer,     "No action has bufferTicks (Project Settings > Input).",
+                              "bufferTicks を持つアクションが無い (Project Settings > 入力)。")

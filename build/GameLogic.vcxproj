@@ -50,6 +50,7 @@
     <ClCompile Include="..\src\GameLogic\Scripts\ComputeDemoSparks.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\ComputeDemoSwarm.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\ComputeProbe.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\FeelDemo.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\FlowGameDriver.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\FlowTitleDriver.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\FractureDamageProbe.cpp" />

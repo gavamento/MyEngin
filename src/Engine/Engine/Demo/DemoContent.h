@@ -284,4 +284,8 @@ void BuildRenderBenchUniqueScene(EngineContext& ctx);
 // (C# の CPU 版) を並べる。State の群れの位置はリプレイの照合に入る。--compute-force-cpu で Fx も CPU に回せる (replay_verify の computeab)
 void BuildComputeShowcaseScene(EngineContext& ctx);
 
+// M94i: 手触りのデモ (--feel-demo)。台本でヒットストップ / スロー / 揺れ / プリセットを鳴らすリグ (FeelDemo)、
+// それを SpringFollow で追うカメラ、床で跳ねるたびに FeelTrigger でプリセットを鳴らすボール。replay_verify の feel ジョブの入力
+void BuildFeelShowcaseScene(EngineContext& ctx);
+
 } // namespace mye

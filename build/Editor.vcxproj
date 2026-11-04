@@ -113,6 +113,7 @@
     <ClCompile Include="..\src\Editor\Windows\Audio\AudioMixerWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Audio\SoundGenWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Debug\ConsoleWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Debug\FeelMonitorWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Debug\PerformanceCompareWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Debug\ProfilerWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Debug\TimelineWindow.cpp" />
@@ -210,6 +211,7 @@
     <ClInclude Include="..\src\Editor\Windows\Audio\AudioMixerWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Audio\SoundGenWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Debug\ConsoleWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Debug\FeelMonitorWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Debug\PerformanceCompareWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Debug\ProfilerWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Debug\TimelineWindow.h" />

@@ -2957,7 +2957,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         const float feelAlpha = feelInterpOk
             ? std::clamp(static_cast<float>(accumulator / kFixedDt), 0.0f, 1.0f)
             : 1.0f;
-        const FeelFrameOutput feelOut = EvaluateFeel(scene.Feel(), feelAlpha, feelOutputScale);
+        FeelOutputScale feelScale = feelOutputScale;
+        if (ctx.feelMuteCamera) {
+            feelScale.scale[kFeelChannelCamera] = 0.0f; // M94i: エディタの個人設定 (描画だけ)
+        }
+        const FeelFrameOutput feelOut = EvaluateFeel(scene.Feel(), feelAlpha, feelScale);
         // ---- パッド振動の適用 (M51h、出力レーン)。record/verify 中は 0 に落とす
         // (オーディオ suspend と同型)。フォーカス喪失中も 0 (裏で振動し続けない)。
         // 実際の XInputSetState は Input 側が値の変化時だけ発行する ----
