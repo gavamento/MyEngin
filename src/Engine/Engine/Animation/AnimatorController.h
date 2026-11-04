@@ -97,6 +97,7 @@ struct ControllerTransition {
     int32_t to = 0;
     int32_t duration = 8;    // ブレンド長 (tick)。0 は 1 に丸める
     int32_t hasExitTime = 0; // 1=state が末尾に達したときのみ遷移可
+    int32_t canInterrupt = 0; // 1=遷移中でも評価し、採用したら近い側へ確定して張り直す (hasExitTime = 1 は対象外)
     std::vector<ControllerCondition> conditions; // 全て満たせば遷移 (AND)
 };
 

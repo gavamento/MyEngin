@@ -2631,3 +2631,4 @@ MYE_STR(GateB_TilePaletteDirty, "the Tile Palette has unsaved changes",
                                 "タイルパレットに未保存の変更があります")
 
 // ---- M95 ----
+MYE_STR(Anim_CanInterrupt,     "canInterrupt", "割り込み可")

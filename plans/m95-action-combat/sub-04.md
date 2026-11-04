@@ -53,4 +53,8 @@ spec §5 の 17, 18, 19, 20。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-04 (round 1) — canInterrupt (controller v3)、SettleTransitionToNearest、Update 1. の else 節、AnimatorPlay の確定、Editor チェック、Anim_CanInterrupt、selftest 17〜19 を実装。Debug ビルド + --selftest (110 suites, 0 failed) PASS。Release / full / check_rules / replay_verify / 三校は未実施。
+
 ## フィードバック履歴
+- round 1: VERDICT REWORK (planner、2026-11-04)。コードは仕様どおり (ToJson / FromJson / SettleTransitionToNearest / Update 1. の else 節 / AnimatorPlay / 窓のチェック / Anim_CanInterrupt / テスト 17〜19 を diff で確認)。must は 1 件だけ: 最終検証 (Release ビルド、--selftest-full Debug / Release、check_rules、replay_verify、三校 verify.bat) を回して round 2 で結果を貼る。「走査内 continue」方式は仕様へ採用 (spec §4.1 C を緩和)
+- round 2: VERDICT OK (planner、2026-11-04)。コード変更なし。--selftest-full Debug 814 s / Release 108 s とも 110 本 0 failed、check_rules 0 error、replay_verify 15 シーン + 全ジョブ PASS。三校 verify の 2 件 FAIL は三校 DLL の API v30 不一致 (基点以前からの別件、司会が master で作り直して再実行) = 採点外。nit #2 (元のまま確定でも stateEntered=0) は sub-07 の文書へ申し送り

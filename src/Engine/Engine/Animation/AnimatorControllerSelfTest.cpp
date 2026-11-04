@@ -323,11 +323,11 @@ bool RunAnimatorControllerSelfTest()
         {
             const json j = ControllerLibrary::ToJson(sk);
             ControllerAsset back;
-            check(j["controller"] == 2 && j["states"][1]["skel"]["clip"] == "Walk" && !j["states"][2].contains("skel")
+            check(j["controller"] == 3 && j["states"][1]["skel"]["clip"] == "Walk" && !j["states"][2].contains("skel")
                       && ControllerLibrary::FromJson(j, back) && back.states[1].skelClip == "Walk"
                       && back.states[1].skelClipHash == HashStr("Walk") && back.states[2].skelClip.empty()
                       && back.states[2].skelClipHash == 0,
-                  "v2 JSON: the skeletal clip round-trips by name; states without one omit the key");
+                  "v3 JSON: the skeletal clip round-trips by name; states without one omit the key");
             json v1 = ControllerLibrary::ToJson(ca);
             v1["controller"] = 1;
             ControllerAsset old;
@@ -1974,6 +1974,102 @@ bool RunAnimatorControllerSelfTest()
 
 
     // ---- M95 sub-04 ----
+    // 遷移の割り込み (canInterrupt) と AnimatorPlay の確定。A(0) → B(1) の遷移 (duration 8) の途中で Any → C(2) (duration 4) を試す
+    {
+        enum class Variant { Interrupt, ExitTime, NoFlag, FromTarget, BackToOrigin };
+        const auto makeCtrl = [&](Variant v) {
+            ControllerAsset a;
+            a.defaultState = 0;
+            a.parameters = { { "go" }, { "hit" } };
+            a.states.push_back({ "A", "", idleH, 1, 1 });
+            a.states.push_back({ "B", "", idleH, 1, 1 });
+            a.states.push_back({ "C", "", idleH, 1, 1 });
+            ControllerTransition t;
+            t.from = v == Variant::FromTarget ? 1 : -1;
+            t.to = v == Variant::BackToOrigin ? 0 : 2;
+            t.duration = 4;
+            t.canInterrupt = v == Variant::NoFlag ? 0 : 1;
+            t.hasExitTime = v == Variant::ExitTime ? 1 : 0;
+            t.conditions = { { 1, CondOp::Gt, 0 } };
+            a.transitions.push_back(t);
+            return a;
+        };
+        int ctrlSerial = 0;
+        // A → B を途中 (transitionTick = atTick) にして、1 tick 回す (useUpdate) か AnimatorPlay(C, 4) を呼ぶ。結果のコンポーネントを返す
+        const auto runCase = [&](Variant v, int32_t atTick, bool useUpdate) {
+            const uint64_t h = ctrlLib.Register(std::wstring(L"m95_interrupt_") + std::to_wstring(ctrlSerial++) + L".controller.json",
+                                                makeCtrl(v));
+            Scene s;
+            GameObject go = s.CreateGameObjectTracked("Char");
+            go.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ h };
+            World& w = s.GetWorld();
+            w.ApplyStructuralChanges();
+            sys.Update(w, ctrlLib, animLib);
+            auto* acc = go.GetComponent<AnimatorControllerComponent>();
+            acc->currentState = 0;
+            acc->stateTimeTicks = 20;
+            acc->statePhase = 5;
+            acc->transitionTo = 1;
+            acc->transitionTick = atTick;
+            acc->transitionDuration = 8;
+            acc->transitionToTime = 3;
+            acc->transitionToPhase = 9;
+            if (useUpdate) {
+                acc->params[1] = 1;
+                sys.Update(w, ctrlLib, animLib);
+            } else {
+                AnimatorPlay(w, go.Id(), 2, 4, ctrlLib);
+            }
+            return *acc;
+        };
+
+        // tick 2 (未満) は元 (A) へ確定。stateTimeTicks は確定値 20 から 1 tick 進む
+        const AnimatorControllerComponent lo = runCase(Variant::Interrupt, 2, true);
+        check(lo.currentState == 0 && lo.stateTimeTicks == 21 && lo.transitionTo == 2 && lo.transitionDuration == 4,
+              "interrupt below half: settles to the origin, then starts the new transition");
+        // tick 6 (以上) は遷移先 (B) へ確定。stateTimeTicks は transitionToTime 3 から 1 tick 進む
+        const AnimatorControllerComponent hi = runCase(Variant::Interrupt, 6, true);
+        check(hi.currentState == 1 && hi.stateTimeTicks == 4 && hi.transitionTo == 2 && hi.transitionDuration == 4,
+              "interrupt at/over half: settles to the target, then starts the new transition");
+        // 境界 (tick * 2 == duration) は遷移先
+        check(runCase(Variant::Interrupt, 4, true).currentState == 1, "interrupt exactly at half settles to the target");
+        // 採用されない場合は遷移がそのまま続く (transitionTo は B のまま)
+        const AnimatorControllerComponent ex = runCase(Variant::ExitTime, 6, true);
+        check(ex.currentState == 0 && ex.transitionTo == 1, "hasExitTime=1 + canInterrupt is not evaluated during a transition");
+        const AnimatorControllerComponent nf = runCase(Variant::NoFlag, 6, true);
+        check(nf.currentState == 0 && nf.transitionTo == 1, "canInterrupt=0 transition is not adopted during a transition");
+        const AnimatorControllerComponent ft = runCase(Variant::FromTarget, 6, true);
+        check(ft.currentState == 1 && ft.transitionTo == 2, "a transition from the transition target is adopted");
+        // 元へ確定して元へ戻る遷移は採用しない / 遷移先へ確定してから元へ戻る遷移は採用する
+        const AnimatorControllerComponent bo = runCase(Variant::BackToOrigin, 2, true);
+        check(bo.currentState == 0 && bo.transitionTo == 1, "a transition back to the settled origin is not adopted");
+        const AnimatorControllerComponent bt = runCase(Variant::BackToOrigin, 6, true);
+        check(bt.currentState == 1 && bt.transitionTo == 0, "a transition to the origin is adopted after settling to the target");
+
+        // AnimatorPlay(C, 4) の確定 (Update を介さないので値がそのまま見える)
+        const AnimatorControllerComponent pl = runCase(Variant::Interrupt, 2, false);
+        check(pl.currentState == 0 && pl.stateTimeTicks == 20 && pl.statePhase == 5 && pl.transitionTo == 2 && pl.transitionTick == 0
+                  && pl.transitionDuration == 4 && pl.transitionToTime == 0 && pl.transitionToPhase == 0,
+              "AnimatorPlay during a transition below half settles to the origin");
+        const AnimatorControllerComponent ph = runCase(Variant::Interrupt, 6, false);
+        check(ph.currentState == 1 && ph.stateTimeTicks == 3 && ph.statePhase == 9 && ph.transitionTo == 2 && ph.transitionTick == 0
+                  && ph.transitionDuration == 4 && ph.transitionToTime == 0 && ph.transitionToPhase == 0,
+              "AnimatorPlay during a transition at/over half settles to the target");
+
+        // JSON: v3 で書く / canInterrupt の無い v2 は 0 / 書き戻して再読
+        ControllerAsset ia = makeCtrl(Variant::Interrupt);
+        json j = ControllerLibrary::ToJson(ia);
+        ControllerAsset back;
+        check(j.value("controller", 0) == 3 && j["transitions"][0].value("canInterrupt", 0) == 1 && ControllerLibrary::FromJson(j, back)
+                  && back.transitions.size() == 1 && back.transitions[0].canInterrupt == 1,
+              "controller v3 writes canInterrupt and reads it back");
+        j["controller"] = 2;
+        j["transitions"][0].erase("canInterrupt");
+        ControllerAsset v2;
+        check(ControllerLibrary::FromJson(j, v2) && v2.transitions.size() == 1 && v2.transitions[0].canInterrupt == 0
+                  && v2.transitions[0].to == 2 && ControllerLibrary::ToJson(v2).value("controller", 0) == 3,
+              "controller v2 (no canInterrupt) reads as 0 and rewrites as v3");
+    }
 
     // ---- M95 sub-05 ----
 

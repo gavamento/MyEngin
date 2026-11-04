@@ -961,7 +961,7 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
 {
     json root;
     root["engine"] = "MyEngine";
-    root["controller"] = 2; // v2 (M89b): ステートの "skel"。v1 はそのまま読める (無い = 骨を駆動しない)
+    root["controller"] = 3; // v3 (M95): 遷移の "canInterrupt"。v2 (M89b: ステートの "skel") / v1 はそのまま読める (無い = 0 / 骨を駆動しない)
     root["defaultState"] = c.defaultState;
     json params = json::array();
     for (const ControllerParam& p : c.parameters) {
@@ -1060,6 +1060,7 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
                           { "to", t.to },
                           { "duration", t.duration },
                           { "hasExitTime", t.hasExitTime },
+                          { "canInterrupt", t.canInterrupt },
                           { "conditions", std::move(conds) } });
     }
     root["transitions"] = std::move(trans);
@@ -1167,6 +1168,7 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
             ct.to = t.value("to", 0);
             ct.duration = t.value("duration", 8);
             ct.hasExitTime = t.value("hasExitTime", 0);
+            ct.canInterrupt = t.value("canInterrupt", 0);
             if (t.contains("conditions") && t["conditions"].is_array()) {
                 for (const json& cj : t["conditions"]) {
                     ControllerCondition cc;
@@ -1597,6 +1599,27 @@ int32_t ControllerStateLengthTicks(const ControllerAsset& controller, const Cont
     return cl != nullptr ? cl->lengthTicks : 0;
 }
 
+namespace {
+
+// 遷移中のコンポーネントを近い側へ確定して遷移を畳む (transitionTick * 2 >= transitionDuration なら遷移先、未満なら元)。
+// CurrentSpriteFrame と同じ整数規則。混合ポーズは保存しないので、飛びは最大でも重み 0.5 ぶん
+void SettleTransitionToNearest(AnimatorControllerComponent& c)
+{
+    if (int64_t(c.transitionTick) * 2 >= int64_t(c.transitionDuration)) {
+        c.currentState = c.transitionTo;
+        c.stateTimeTicks = c.transitionToTime;
+        c.statePhase = c.transitionToPhase;
+    }
+    c.stateEntered = 0;
+    c.transitionTo = -1;
+    c.transitionTick = 0;
+    c.transitionDuration = 0;
+    c.transitionToTime = 0;
+    c.transitionToPhase = 0;
+}
+
+} // namespace
+
 bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t durationTicks, const ControllerLibrary& controllers)
 {
     AnimatorControllerComponent* c = world.GetComponent<AnimatorControllerComponent>(entity);
@@ -1608,6 +1631,10 @@ bool AnimatorPlay(World& world, EntityID entity, int32_t stateIndex, int32_t dur
         return false;
     }
     if (durationTicks > 0) {
+        // 遷移中なら先に近い側へ確定する (元を残したまま transitionTo だけ差し替えると姿勢が飛ぶ)
+        if (c->transitionTo >= 0) {
+            SettleTransitionToNearest(*c);
+        }
         // 既存の遷移 (Update の 1.) と同じ値の立て方。混ぜる元 (currentState / stateTimeTicks) は触らない
         c->transitionTo = stateIndex;
         c->transitionTick = 0;
@@ -1777,6 +1804,32 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                         continue;
                     }
                     ConsumeTriggers(*ctrl, t, c->params);
+                    c->transitionTo = t.to;
+                    c->transitionTick = 0;
+                    c->transitionDuration = t.duration > 0 ? t.duration : 1;
+                    c->transitionToTime = 0;
+                    c->transitionToPhase = 0;
+                    break;
+                }
+            } else {
+                // 遷移中は canInterrupt の遷移だけを見る (hasExitTime = 1 は評価しない)。採用したら近い側へ確定して張り直す
+                const int32_t settledState =
+                    int64_t(c->transitionTick) * 2 >= int64_t(c->transitionDuration) ? c->transitionTo : c->currentState;
+                for (const ControllerTransition& t : ctrl->transitions) {
+                    if (!t.canInterrupt || t.hasExitTime) {
+                        continue;
+                    }
+                    if (t.to < 0 || t.to >= nStates || t.to == c->transitionTo || t.to == settledState) {
+                        continue;
+                    }
+                    if (t.from != -1 && t.from != c->currentState && t.from != c->transitionTo) {
+                        continue;
+                    }
+                    if (!AllConditionsMet(*ctrl, t, c->params)) {
+                        continue;
+                    }
+                    ConsumeTriggers(*ctrl, t, c->params);
+                    SettleTransitionToNearest(*c);
                     c->transitionTo = t.to;
                     c->transitionTick = 0;
                     c->transitionDuration = t.duration > 0 ? t.duration : 1;
