@@ -98,7 +98,12 @@ struct FeelFrameOutput {
 };
 
 // 表の全件をフレームの時刻で評価する。interpAlpha は描画補間の係数 (1 = 最新 tick)。
-// 最新 tick で発火した件は α に依らず経過 0 から始まる (押した瞬間に最大の反応を出す)
-FeelFrameOutput EvaluateFeel(const FeelState& state, float interpAlpha, const FeelOutputScale& scale);
+// 最新 tick で発火した件は α に依らず経過 0 から始まる (押した瞬間に最大の反応を出す)。
+// preview はエディタのプレビュー用の描画専用の表 (sim 状態ではない、EngineLoop 所有)。足し合わせて評価する
+FeelFrameOutput EvaluateFeel(const FeelState& state, float interpAlpha, const FeelOutputScale& scale,
+                             const FeelState* preview = nullptr);
+// desc から時間効果 (ヒットストップ / スロー) を外す。描画専用のプレビュー表へ鳴らすときに使う
+// (時間効果は sim を変えるので、録画・再シミュレーションに乗らない経路からは鳴らさない)
+MyeFeelDesc PresentationOnly(const MyeFeelDesc& desc);
 
 } // namespace mye

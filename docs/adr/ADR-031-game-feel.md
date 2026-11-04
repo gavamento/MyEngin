@@ -67,6 +67,9 @@
 - `.feel.json` は PhysMat と同じ「再生時に同じ資産がある」前提の資産クラス。SimLibraries として EngineLoop と HeadlessSim の両方に注入する。
 - アセット Inspector は FeelLibrary 上のプリセットを直接編集する。スライダを動かすと次に鳴らした分から効く。ディスクへは Save でだけ書く。
   編集は文書エントリ (`UndoDocOp::Kind::Feel`) として Undo できる。
+- Inspector の「プレビュー」は sim の表へは鳴らさず、EngineLoop が持つ**描画専用のプレビュー表** (`EngineContext::feelPreview`) へ、
+  時間効果を外した desc (`PresentationOnly`) を鳴らす。描画フレームから hash 対象の状態を書くと、録画・検証・
+  タイムトラベルの再シミュレーションで再現できないため (PR レビューの指摘で M94 中に変更)。評価は sim の表と足し合わせる。
 
 ### D7. スクリプトと C# レーン
 

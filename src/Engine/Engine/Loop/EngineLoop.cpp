@@ -263,6 +263,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // M94c: 手触りの出力倍率 (揺れ / 振動 / 画面効果、アクセシビリティ)。padVibration と同じ出力レーンで、
     // sim は書くだけ・読み返さない。適用はフレーム末の EvaluateFeel
     FeelOutputScale feelOutputScale;
+    // M94: エディタのプレビュー表 (描画専用、sim の外)。経過は sim の tick に合わせて進める
+    FeelState feelPreview;
     // M64a: SetCursorMode の要求値。padVibration と全く同じ出力レーンで、適用は
     // フレーム末 (record/verify 中・フォーカス喪失中・スクラブ中は強制解除、終了時も解除)
     CursorLockState cursorLock;
@@ -710,6 +712,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 有効化はエディタ (Play/Stop) か CLI プローブが行う。ここでは器を持つだけ
     TimeTravel timeTravel;
     ctx.timeTravel = &timeTravel;
+    ctx.feelPreview = &feelPreview;
     ctx.behaviorTree = &behaviorTreeSystem;
     if (config.timeTravelProbeTicks > 0 || config.whatIfProbeTicks > 0) {
         timeTravel.SetEnabled(true);
@@ -2363,6 +2366,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 ctx.requestExit = true;
             }
             RunOneTick(tickServices);
+            // M94: プレビュー表の経過 (描画専用)。sim の tick が進んだときだけ進める (編集中は止まる)
+            if (ctx.simulateScripts) {
+                feelPreview.Advance();
+            } else if (feelPreview.HasHashableState()) {
+                feelPreview.Clear(); // Stop 後に古いプレビューを残さない
+            }
             // ---- tick 末ハッシュは 1 回だけ (M52i、M52f 申し送り 6) ----
             // クラッシュリング / ロールバック / タイムトラベルの 3 者が同じ 1 個を使う。
             // 撮る点は「構造変更が空 = .rep が記録するのと同じ点」
@@ -2961,7 +2970,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         if (ctx.feelMuteCamera) {
             feelScale.scale[kFeelChannelCamera] = 0.0f; // M94i: エディタの個人設定 (描画だけ)
         }
-        const FeelFrameOutput feelOut = EvaluateFeel(scene.Feel(), feelAlpha, feelScale);
+        const FeelFrameOutput feelOut = EvaluateFeel(scene.Feel(), feelAlpha, feelScale, &feelPreview);
         // ---- パッド振動の適用 (M51h、出力レーン)。record/verify 中は 0 に落とす
         // (オーディオ suspend と同型)。フォーカス喪失中も 0 (裏で振動し続けない)。
         // 実際の XInputSetState は Input 側が値の変化時だけ発行する ----

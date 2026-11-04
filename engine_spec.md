@@ -2792,7 +2792,10 @@ coyote-time helper. Intensity scales presentation only. Playing, stopping and co
 refused (same rule as `SendScriptMessage`); C# can use `IsSimStepping` and `SetFeelOutputScale`.
 
 **Editor.** The asset inspector edits the registered preset in place (live: the next play uses it), with Save / Revert, an
-unsaved marker, a Play-only preview and document-level Undo (`UndoDocOp::Kind::Feel`). `CurveEditorWidget` edits both curve modes
+unsaved marker, a Play-only preview and document-level Undo (`UndoDocOp::Kind::Feel`). The preview never touches simulation
+state: it plays the desc without its time effects (`PresentationOnly`) into a render-only table owned by `EngineLoop`
+(`EngineContext::feelPreview`), which `EvaluateFeel` adds to the scene's table — so recording, verification and time-travel
+re-simulation are unaffected. `CurveEditorWidget` edits both curve modes
 (drag / double-click to add / right-click to delete keys, tangents, smooth tangents) and is reused for stick response curves in
 Project Settings > Input. **Feel Monitor** shows time effects, the playing table, the current outputs and the input buffer, and
 holds the per-user "mute camera shake in the editor" setting (render-only).

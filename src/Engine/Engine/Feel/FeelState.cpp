@@ -130,6 +130,16 @@ void SanitizeFeelDesc(MyeFeelDesc& d)
     SanitizeFeelCurve(d.flashCurve);
 }
 
+MyeFeelDesc PresentationOnly(const MyeFeelDesc& desc)
+{
+    MyeFeelDesc d = desc;
+    d.hitStopTicks = 0;
+    d.slowPercent = 100;
+    d.slowHoldTicks = 0;
+    d.slowRecoverTicks = 0;
+    return d;
+}
+
 int32_t FeelPresentationTicks(const MyeFeelDesc& d)
 {
     int32_t t = d.shakeTicks;
@@ -236,11 +246,11 @@ uint32_t FeelState::ActiveCount() const
     return n;
 }
 
-FeelFrameOutput EvaluateFeel(const FeelState& state, float interpAlpha, const FeelOutputScale& scale)
+namespace {
+
+// 1 つの表の全件を out へ足し込む (EvaluateFeel の実体。sim の表と描画専用のプレビュー表の両方に使う)
+void AccumulateFeel(const FeelState& state, float alpha, FeelFrameOutput& out, float flashColorSum[3])
 {
-    FeelFrameOutput out;
-    const float alpha = interpAlpha < 0.0f ? 0.0f : (interpAlpha > 1.0f ? 1.0f : interpAlpha);
-    float flashColorSum[3] = { 0.0f, 0.0f, 0.0f };
     for (uint32_t i = 0; i < kMaxFeelInstances; ++i) {
         const FeelInstance& s = state.Slot(i);
         if (s.active == 0) {
@@ -291,6 +301,20 @@ FeelFrameOutput EvaluateFeel(const FeelState& state, float interpAlpha, const Fe
             out.flashWeight += w;
             out.flashActive = true;
         }
+    }
+}
+
+} // namespace
+
+FeelFrameOutput EvaluateFeel(const FeelState& state, float interpAlpha, const FeelOutputScale& scale,
+                             const FeelState* preview)
+{
+    FeelFrameOutput out;
+    const float alpha = interpAlpha < 0.0f ? 0.0f : (interpAlpha > 1.0f ? 1.0f : interpAlpha);
+    float flashColorSum[3] = { 0.0f, 0.0f, 0.0f };
+    AccumulateFeel(state, alpha, out, flashColorSum);
+    if (preview != nullptr) {
+        AccumulateFeel(*preview, alpha, out, flashColorSum);
     }
     if (out.flashWeight > 0.0f) {
         for (int c = 0; c < 3; ++c) {

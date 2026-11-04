@@ -17,7 +17,7 @@
 #include "Engine/Engine/Feel/FeelLibrary.h"
 #include "Engine/Engine/Feel/FeelState.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
-#include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/Loop/GameFlow.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {
@@ -189,11 +189,16 @@ void FeelAssetInspector::Draw(EngineContext& ctx, UndoStack& undo, const std::ws
     }
 
     ImGui::Separator();
-    // プレビュー: 今の値を鳴らす (Play 中だけ。編集中は tick が進まず何も見えない)。Play 側で正規化される
-    const bool canPreview = ctx.scene != nullptr && ctx.simulateScripts;
+    // プレビュー: 今の値の揺れ・キック・振動・画面効果を、EngineLoop の**描画専用のプレビュー表**へ鳴らす。
+    // sim の表 (Scene::Feel) と TimeControl には触れない — 描画フレームから hash 対象の状態を書くと、録画・検証・
+    // タイムトラベルの再シミュレーションで再現できない (AGENTS 4.2)。時間効果 (ヒットストップ / スロー) は sim を
+    // 変えるので、プレビューでは鳴らさない (スクリプトか FeelTrigger から鳴らして確かめる)。
+    // Play 中だけ: プレビュー表の経過は sim の tick で進むので、編集中は止まったままになる
+    const bool canPreview = ctx.feelPreview != nullptr && ctx.simulateScripts;
     ImGui::BeginDisabled(!canPreview);
     if (ImGui::Button(Tr(StrId::Feel_Preview), ImVec2(110, 0)) && canPreview) {
-        ctx.scene->Feel().Play(d, 1.0f, preset->nameHash, ctx.scene->Time());
+        TimeControl unused; // プレビュー表は時間効果を受けない (PresentationOnly で外してある)
+        ctx.feelPreview->Play(PresentationOnly(d), 1.0f, preset->nameHash, unused);
     }
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -209,7 +214,7 @@ void FeelAssetInspector::Draw(EngineContext& ctx, UndoStack& undo, const std::ws
             saved_ = d;
             MYE_LOG_INFO("feel saved: %s", WideToUtf8(path).c_str());
         } else {
-            MYE_LOG_ERROR(Tr(StrId::Log_WriteFeelFail), WideToUtf8(path).c_str());
+            MYE_LOG_ERROR("%s: %s", Tr(StrId::Log_WriteFeelFail), WideToUtf8(path).c_str());
         }
     }
     ImGui::SameLine();

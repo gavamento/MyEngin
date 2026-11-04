@@ -607,14 +607,14 @@ std::wstring CreateFeelAsset(EngineContext& ctx, const std::wstring& dir, const 
     d.rumbleLow = 0.4f;
     d.rumbleHigh = 0.2f;
     if (!WriteNewAssetFile(path, FeelLibrary::ToJson(d).dump(2))) {
-        MYE_LOG_ERROR(Tr(StrId::Log_WriteFeelFail), WideToUtf8(path).c_str());
+        MYE_LOG_ERROR("%s: %s", Tr(StrId::Log_WriteFeelFail), WideToUtf8(path).c_str());
         return {};
     }
     // 生成直後に登録 → FeelTrigger の参照ピッカーとスクリプトの PlayFeel で即使える
     if (FeelLibrary* fl = feellib::Library()) {
         fl->LoadFromFile(path);
     }
-    MYE_LOG_INFO(Tr(StrId::Log_CreatedFeel), WideToUtf8(path).c_str());
+    MYE_LOG_INFO("%s: %s", Tr(StrId::Log_CreatedFeel), WideToUtf8(path).c_str());
     return path;
 }
 
