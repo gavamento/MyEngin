@@ -524,6 +524,10 @@ void AnimatorControllerWindow::OnImGui(EngineContext& ctx, Selection& selection)
                 if (ImGui::Checkbox(Tr(StrId::Anim_HasExitTime), &exit)) {
                     t.hasExitTime = exit ? 1 : 0;
                 }
+                bool interrupt = t.canInterrupt != 0;
+                if (ImGui::Checkbox(Tr(StrId::Anim_CanInterrupt), &interrupt)) {
+                    t.canInterrupt = interrupt ? 1 : 0;
+                }
                 ImGui::TextUnformatted(Tr(StrId::Anim_Conditions));
                 for (int ci = 0; ci < static_cast<int>(t.conditions.size()); ++ci) {
                     ControllerCondition& c = t.conditions[ci];
