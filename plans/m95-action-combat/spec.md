@@ -145,7 +145,7 @@ Debug / Release / WARP でリプレイが一致する。
 - `Update` の 1. を拡張: `transitionTo >= 0` のときも遷移を走査し、`canInterrupt == 1` かつ `hasExitTime == 0` かつ `from ∈ {-1, currentState, transitionTo}` かつ `to != transitionTo` かつ `to` が範囲内、かつ `AllConditionsMet` の最初の 1 本を採る。
   採用時: `ConsumeTriggers` → **確定** (`transitionTick * 2 >= transitionDuration` なら `currentState = transitionTo / stateTimeTicks = transitionToTime / statePhase = transitionToPhase`、未満なら元のまま) → `stateEntered = 0` → 新遷移を張る (`transitionTo = to`、`transitionTick = 0`、`transitionDuration = max(duration, 1)`、`transitionToTime = 0`、`transitionToPhase = 0`)。
   確定後の `currentState == to` (元へ確定して元へ戻る遷移) は採用しない (採用直前に再判定)。
-- `canInterrupt == 0` のみのアセットでは 1 命令も変わらない (遷移中は走査に入らない形にする)。
+- `canInterrupt == 0` のみのアセットでは状態・結果が従来と同一 (遷移中の走査は遷移リストを舐めて先頭の `continue` で抜ける形でよい。fp 演算は無く、決定性・ビット同一に影響しない。アセット側の `anyInterruptible` フラグは要らない — sub-04 VERDICT round 1 で確定)。
 - `AnimatorPlay(duration > 0)` を遷移中に呼んだときも同じ確定規則 (#7)。`duration <= 0` は従来どおり即切り替え。
 - Editor: `AnimatorControllerWindow` の遷移リストに「割り込み可」チェック (`Tr`、両言語)。
 
@@ -218,7 +218,8 @@ Debug / Release / WARP でリプレイが一致する。
 
 検証の略記: **ST** = `bin\x64\Debug\Editor.exe --selftest` と `bin\x64\Release\Editor.exe --selftest` (PowerShell ツールから起動)、**ST(名)** = `$env:MYE_SELFTEST_ONLY='<名>'` を付けた部分実行 (sub-00 以降)、**RV** = `tools\replay_verify.bat`、**CR** = `tools\check_rules.ps1`、**三校** = `C:\HAL\三校\tools\verify.bat` (`MYE_ENGINE=C:\HAL\MyEngin` 相当。worktree なら worktree のパス)。
 **ST-full** = `--selftest-full` (Debug / Release)。
-3 段の規則: 往復中 = ST(関連スイート) / SELF_EVAL を返す前 = ST (既定層、Debug) / VERDICT OK の直前 (最後の round) = ST-full Debug / Release + CR + RV + 三校を 1 回。下の各条件の「ST(名)」は往復中の確認手段で、OK 前の ST-full で同じ検査が全部回る。
+3 段の規則: 往復中 = ST(関連スイート) / SELF_EVAL を返す前 = ST (既定層、Debug) / VERDICT OK の直前 (最後の round) = ST-full Debug / Release + CR + RV + 三校を 1 回。
+**「最後の round」の判定は coder が行う**: 自分で「仕様との差分に must 級の未実装が無く、これで OK を求める」と判断した round では、SELF_EVAL を返す**前**に ST-full Debug / Release + CR + RV + 三校を回し、結果を検証欄に貼る。planner は full 検証の結果が無い SELF_EVAL に OK を出さない (REWORK で「最終検証を回して次の round で返す」を指示する)。下の各条件の「ST(名)」は往復中の確認手段で、OK 前の ST-full で同じ検査が全部回る。
 
 A. ヒットストップ
 1. `pauseTicks = n` の間、`stateTimeTicks` / `statePhase` / `transitionTick` / `stateEntered` が変わらず、駆動 SkinnedMesh の `poseLayers[i].timeQ` が保たれ `stepQ == 0`、`poseClaim == 1`。n tick 後に自動再開し、停止の前後で時刻の差は進めた tick 数に等しい — ST(animatorcontroller)
@@ -308,6 +309,7 @@ H. round 2 で追加 (ユーザー判断)
 
 ## 8. 変更履歴
 
+- 2026-11-04 sub-04 VERDICT round 1 (出所: coder SELF_EVAL の「仕様との差分」): §4.1 C の「走査に入らない形」を「走査内の先頭 continue でよい」に緩和 (結果・状態が同一で fp 演算が無いため)。§5 冒頭の 3 段の規則に「full 検証の結果が SELF_EVAL に無い round には OK を出さない」を明記
 - 2026-11-04 sub-00 VERDICT round 1 (出所: coder SELF_EVAL の「仕様との差分」): §4.0 の `MYE_SELFTEST_ONLY` に「別名 1 個だけは別名の並び」「項目は小文字化」「`servernet` / `computescript` は別名表に載せない」を明記。§4.0 と sub-00 受け入れ 34 の食い違い (表の順 vs m94 の従来順) を後者で解消
 - 2026-11-04 round 2 補足 2 (出所: ユーザー決定): selftest を 3 層 (関連スイート / `--selftest` = fast 層 60 秒以内 / `--selftest-full` = 全部) にする。sub-00 に tier 属性・`--selftest-full`・CI の書き換えを足し、計測に基づく層分けと縮小を sub-00b (Wave 1 並行) に分割。受け入れ 37〜41、§4.4 に「full は OK 前に必ず回す」、全サブの検証欄を 3 段に統一
 - 2026-11-04 round 2 (出所: ユーザー回答、台帳「ユーザー判断」): #5 `OverlapCapsuleParts` を sub-03 に追加 (ABI v32 = 193、受け入れ 31)。#16 非 kinematic Rigidbody に縦を適用 (sub-05、受け入れ 32、snapshot v68 に Rigidbody 2 欄)。sub-00 (selftest 登録表 + 予約マーカー、受け入れ 33〜36) を先頭に追加。波単位の並列 (§6 の波、付録 A / B)。全サブの検証コマンドを「往復中は関連スイート、完走は最後 1 回」に変更

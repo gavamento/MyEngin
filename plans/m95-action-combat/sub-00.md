@@ -1,7 +1,7 @@
 # sub-00: selftest のスイート登録表 (tier)・`MYE_SELFTEST_ONLY` の汎用化・所要時間ログ・`--selftest-full` の入口・CI・予約マーカー
 
 - 依存: なし (Wave 0。これが master に入ってから Wave 1 の worktree を切る)
-- 状態: 未着手
+- 状態: OK (commit 8405f20、条件付き: Release の --selftest-full と replay_verify は exe 解放後に司会が実施)
 - 往復: 0
 
 ## やること
