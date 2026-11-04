@@ -125,6 +125,12 @@ inline MyeCurve MyeMakeCurve(int32_t ease, float from, float to)
     return c;
 }
 
+// 恒等写像 (preset の Linear で 0 → 1) か。入力の応答カーブはこのとき評価を飛ばす (既定の挙動を 1 ビットも変えない)
+inline bool MyeCurveIsIdentity(const MyeCurve& c)
+{
+    return c.mode == MYE_CURVE_PRESET && c.ease == MYE_EASE_LINEAR && c.from == 0.0f && c.to == 1.0f;
+}
+
 // ---- 決定論の初等関数 (多項式のみ) ----
 constexpr float kMyeFeelPi = 3.14159265358979f;
 

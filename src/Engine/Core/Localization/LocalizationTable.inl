@@ -529,6 +529,11 @@ MYE_STR(PrjSet_AddMouse,      "+ Mouse",             "+ マウス")
 MYE_STR(PrjSet_CaptureWait,   "Press a key... (Esc to cancel)", "キー入力待ち... (Esc で取消)")
 MYE_STR(PrjSet_SaveInput,     "Save Input",          "入力設定を保存")
 MYE_STR(PrjSet_Deadzone,      "Deadzone",            "デッドゾーン")
+MYE_STR(PrjSet_BufferTicks,   "Buffer",              "先行受付")
+MYE_STR(PrjSet_BufferTicksTip, "Input buffer window in ticks. A press stays usable (B) for this many ticks until a script consumes it. 0 = off. Only the first 32 actions can buffer.",
+                              "先行入力の受付時間 (tick)。押してからこの tick 数のあいだ、スクリプトが消費するまで使える (B)。0 = なし。先頭 32 本のアクションだけが持てる。")
+MYE_STR(PrjSet_AxisResponse,  "Stick response",      "スティックの応答")
+MYE_STR(PrjSet_OuterDeadzone, "Outer deadzone",      "外側の遮断")
 MYE_STR(PrjSet_LiveLegend,    "Live: H=held P=pressed R=released", "ライブ: H=押下中 P=押した瞬間 R=離した瞬間")
 MYE_STR(PrjSet_PadAxis,       "Pad axis",            "パッド軸")
 MYE_STR(Build_TipBundle,      "ON: bundles the .NET 8 runtime under dotnet\\ so the target machine does not need .NET\n"

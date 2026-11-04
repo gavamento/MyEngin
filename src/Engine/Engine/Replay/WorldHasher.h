@@ -22,6 +22,7 @@ struct UIInteractionState;
 class PersistStore;
 struct SessionLanes;
 class FeelState;
+struct InputBufferState;
 
 // ワールド状態ハッシュ (engine_spec.md 11.3)。
 // 対象: 全エンティティ (index 昇順) の親リンク + シリアライズ対象コンポーネントの
@@ -70,6 +71,8 @@ struct SimSources {
     // M94c: 再生中の手触り。★nav と同じ**内容ゲート** (一度も鳴らしていなければ節ごと畳まない) —
     // 手触りを使わないシーンのハッシュ列を 1 tick も動かさない
     const FeelState* feel = nullptr;
+    // M94f: 先行入力の窓。★feel と同じ**内容ゲート** (窓の中のものが 1 つも無ければ節ごと畳まない)
+    const InputBufferState* inputBuffer = nullptr;
 };
 
 uint64_t HashWorld(World& world, const SimSources& src = {});

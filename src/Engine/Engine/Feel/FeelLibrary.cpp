@@ -11,6 +11,7 @@
 
 #include "Engine/Core/Asset/AssetKeyResolver.h"
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Util/CurveJson.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Engine/Feel/FeelState.h"
 #include "Engine/Platform/PathUtil.h"
@@ -168,68 +169,6 @@ std::vector<FeelPresetEntry> FeelLibrary::Enumerate() const
         return a.hash < b.hash;
     });
     return out;
-}
-
-json FeelLibrary::CurveToJson(const MyeCurve& c)
-{
-    json j;
-    if (c.mode == MYE_CURVE_CUSTOM) {
-        j["mode"] = "custom";
-        json keys = json::array();
-        for (int32_t i = 0; i < c.keyCount && i < MYE_CURVE_MAX_KEYS; ++i) {
-            const MyeCurveKey& k = c.keys[i];
-            keys.push_back(json::array({ k.t, k.value, k.inTangent, k.outTangent }));
-        }
-        j["keys"] = keys;
-    } else {
-        j["mode"] = "preset";
-        j["ease"] = MyeEaseName(c.ease);
-        j["from"] = c.from;
-        j["to"] = c.to;
-        if (c.param != 0.0f) {
-            j["param"] = c.param;
-        }
-    }
-    return j;
-}
-
-void FeelLibrary::CurveFromJson(const json& j, MyeCurve& out)
-{
-    if (!j.is_object()) {
-        return;
-    }
-    const std::string mode = (j.contains("mode") && j["mode"].is_string()) ? j["mode"].get<std::string>() : "preset";
-    if (mode == "custom") {
-        out.mode = MYE_CURVE_CUSTOM;
-        out.keyCount = 0;
-        if (j.contains("keys") && j["keys"].is_array()) {
-            for (const json& k : j["keys"]) {
-                if (out.keyCount >= MYE_CURVE_MAX_KEYS) {
-                    MYE_LOG_WARN("[feel] a curve has more than %d keys (the rest are ignored)", MYE_CURVE_MAX_KEYS);
-                    break;
-                }
-                if (!k.is_array() || k.size() < 2) {
-                    continue;
-                }
-                MyeCurveKey key;
-                float v[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-                for (size_t i = 0; i < 4 && i < k.size(); ++i) {
-                    v[i] = k[i].is_number() ? k[i].get<float>() : 0.0f;
-                }
-                key.t = v[0];
-                key.value = v[1];
-                key.inTangent = v[2];
-                key.outTangent = v[3];
-                out.keys[out.keyCount++] = key;
-            }
-        }
-        return;
-    }
-    out.mode = MYE_CURVE_PRESET;
-    out.ease = ReadEase(j, "ease", out.ease);
-    out.from = ReadFloat(j, "from", out.from);
-    out.to = ReadFloat(j, "to", out.to);
-    out.param = ReadFloat(j, "param", out.param);
 }
 
 json FeelLibrary::ToJson(const MyeFeelDesc& d)

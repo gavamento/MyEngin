@@ -153,7 +153,8 @@ struct SimRefs {
 //            SkinnedMesh の末尾に骨盤のずらし (poseIkPelvisJoint / poseIkPelvisOffset)。どちらも World 節のカラム生バイト
 // v49 (M91d): CMP 節 (Compute.ForEach の State バッファ。スロット表・世代・持ち主・中身) を BT 節の後・World 節の前に追加
 // v50 (M91k): CMP 節を State の表だけにした (Fx は入れない。State と Fx の採番を分けた。ADR-030 D29)
-// v51 (M94b): Scene 節の TimeControl の後ろにヒットストップ / 時限スローの 6 語 (M94c / M94f も同じ版で節を足す)
+// v51 (M94b / M94c / M94f): Scene 節に TimeControl のヒットストップ / 時限スローの 6 語、UI 状態の後ろに
+//            再生中の手触り 16 件 (FeelState) と先行入力の窓 (InputBufferState、4 レーン × 32 本の生バイト)
 inline constexpr uint32_t kSimSnapshotVersion = 51;
 
 // 撮る: out を clear して blob を書く。成功で true。

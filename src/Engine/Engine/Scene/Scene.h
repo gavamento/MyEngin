@@ -12,6 +12,7 @@
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Engine/UI/UIInteraction.h"
+#include "Engine/Platform/InputActions.h"
 
 namespace mye {
 
@@ -96,6 +97,9 @@ public:
     // **Clear では消さない** — シーン遷移 (TickRunner) と Play/Stop (PlayModeController) が明示的に消す
     FeelState& Feel() { return feel_; }
     const FeelState& Feel() const { return feel_; }
+    // 先行入力の窓 (M94f)。Feel と同じ扱い (内容ゲートのハッシュ、Scene 節、遷移と Play/Stop で消す)
+    InputBufferState& InputBuffer() { return inputBuffer_; }
+    const InputBufferState& InputBuffer() const { return inputBuffer_; }
 
     // ---- セッションのレーン状態 (M81b) ----
     // Scene が持つ sim 状態で、SimSnapshot の SES 節に入り、システム入力を持つ記録では
@@ -252,6 +256,7 @@ private:
     TimeControl time_;       // ポーズ/タイムスケール (M51g)
     UIInteractionState ui_;  // UI の hovered/pressed/clicked/focused (M70c)
     FeelState feel_;         // 再生中の手触り (M94c)
+    InputBufferState inputBuffer_; // 先行入力の窓 (M94f)
     PersistStore persist_;   // シーン跨ぎ永続 (M51g)。Clear で消えない
     SessionLanes lanes_ = {}; // セッションのレーン状態 (M81b)。Clear で消えない
     std::wstring sourcePath_; // ロード/保存元の絶対パス (M51g)。メモリ構築シーンは空

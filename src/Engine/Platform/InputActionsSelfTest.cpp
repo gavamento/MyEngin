@@ -549,6 +549,82 @@ bool RunInputActionsSelfTest()
               "pointer carry: drop (scrub / focus loss) carries nothing into the resumed tick");
     }
 
+    // ---- M94f: 先行入力 (bufferTicks) と消費 ----
+    {
+        InputActions b;
+        check(b.LoadFromJsonText(R"({ "actions": [
+                { "name": "Jump", "keys": ["Space"], "bufferTicks": 3 },
+                { "name": "Fire", "keys": ["J"] } ] })"),
+              "buffer: actions.json with bufferTicks loads");
+        const uint64_t hJump = HashStr("Jump");
+        const uint64_t hFire = HashStr("Fire");
+        InputBufferState st;
+        InputSnapshot up = Snap();
+        InputSnapshot down = Snap();
+        Down(down, kVkSpace);
+        Down(down, 0x4A); // J
+        check(!st.HasHashableState(), "buffer: the default state has nothing in the window");
+        b.Evaluate(down, up);
+        b.UpdateBuffers(st);
+        check((b.ActionState(hJump) & kActionBuffered) != 0 && st.pressAge[0][0] == 0,
+              "buffer: the press tick itself is inside the window");
+        check((b.ActionState(hFire) & kActionBuffered) == 0 && st.pressAge[0][1] == kInputBufferNone,
+              "buffer: an action without bufferTicks never buffers (its bits are unchanged)");
+        int buffered = 0;
+        for (int t = 0; t < 6; ++t) {
+            b.Evaluate(up, t == 0 ? down : up);
+            b.UpdateBuffers(st);
+            buffered += (b.ActionState(hJump) & kActionBuffered) != 0 ? 1 : 0;
+        }
+        check(buffered == 3 && !st.HasHashableState(), "buffer: bufferTicks 3 keeps the press for 3 more ticks, then closes");
+        b.Evaluate(down, up);
+        b.UpdateBuffers(st);
+        check(b.ConsumeBuffered(hJump, 0, st) && (b.ActionState(hJump) & kActionBuffered) == 0,
+              "buffer: consuming clears the window and this tick's bit");
+        b.Evaluate(up, down);
+        b.UpdateBuffers(st);
+        check((b.ActionState(hJump) & kActionBuffered) == 0 && !b.ConsumeBuffered(hJump, 0, st),
+              "buffer: a consumed press does not come back");
+        check(!b.ConsumeBuffered(hJump, kMaxPlayers, st) && !b.ConsumeBuffered(HashStr("Nope"), 0, st),
+              "buffer: out-of-range lanes and unknown actions consume nothing");
+        const std::string text = b.ToJsonText();
+        check(text.find("\"bufferTicks\": 3") != std::string::npos && text.find("\"bufferTicks\": 0") == std::string::npos,
+              "buffer: bufferTicks is saved only where it is set");
+    }
+
+    // ---- M94f: 応答カーブと外側の遮断 ----
+    {
+        InputActions r;
+        check(r.LoadFromJsonText(R"({ "axes": [
+                { "name": "Lin", "padAxis": "LX", "deadzone": 0.0 },
+                { "name": "Quad", "padAxis": "LX", "deadzone": 0.0,
+                  "response": { "mode": "preset", "ease": "InQuad", "from": 0, "to": 1 } },
+                { "name": "Outer", "padAxis": "LX", "deadzone": 0.0, "outerDeadzone": 0.2 } ] })"),
+              "response: actions.json with response / outerDeadzone loads");
+        InputSnapshot s = Snap();
+        s.padLX = static_cast<int16_t>(-16384); // ほぼ -0.5
+        r.Evaluate(s, Snap());
+        const float lin = r.AxisValue(HashStr("Lin"));
+        check(Near(r.AxisValue(HashStr("Quad")), -(lin * lin), 1e-6f), "response: InQuad squares the magnitude and keeps the sign");
+        check(Near(r.AxisValue(HashStr("Outer")), lin / 0.8f, 1e-6f), "response: outerDeadzone rescales toward 1");
+        s.padLX = static_cast<int16_t>(32767 * 0.85f);
+        r.Evaluate(s, Snap());
+        check(Near(r.AxisValue(HashStr("Outer")), 1.0f), "response: beyond 1 - outerDeadzone saturates to 1");
+        InputAxisDef identity;
+        check(InputActions::ShapePadValue(identity, -0.37f) == -0.37f && InputActions::ShapePadValue(identity, 0.0f) == 0.0f,
+              "response: the default axis is bit-identical to the old evaluation");
+        const std::string text = r.ToJsonText();
+        InputActions back;
+        check(back.LoadFromJsonText(text) && back.ToJsonText() == text, "response: JSON round-trips");
+        check(text.find("outerDeadzone") != std::string::npos
+                  && text.find("\"response\"") != std::string::npos,
+              "response: non-default shaping is saved");
+        InputActions plain;
+        plain.LoadFromJsonText(kSampleJson);
+        check(plain.ToJsonText().find("response") == std::string::npos && plain.ToJsonText().find("bufferTicks") == std::string::npos,
+              "response: an actions.json without the new keys saves without them (no diff on save)");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== InputActions self test: ALL PASS ====");
         return true;

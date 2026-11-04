@@ -313,6 +313,11 @@ void RunOneTick(TickServices& ts)
     // 記録済みスナップショット 2 枚の純関数なので record/verify に透過 (決定台帳 4)。
     // M52g: レーン数ぶんまとめて評価する (playerCount 以降のレーンは Evaluate がゼロへ落とす)
     inputActions.Evaluate(ctx.inputs, prevTickInput, ctx.playerCount);
+    // M94f: 先行入力の窓を進める (評価の直後・スクリプト層より前)。編集中 (非 Play) は進めない —
+    // 窓は sim 状態で、Play の外で溜めたものを Play へ持ち込まない
+    if (ctx.simulateScripts) {
+        inputActions.UpdateBuffers(scene.InputBuffer());
+    }
     // M75b: UI の評価は前 tick のレーン 0 も受け取る (M75h の InputField がキーのエッジを取る)。
     // ★prevTickInput は直下のループで今 tick の値に上書きされるので、**その前に**写す
     const InputSnapshot prevUiInput = prevTickInput[0];
@@ -979,6 +984,7 @@ void RunOneTick(TickServices& ts)
             // (pause と scalePercent はシーンを跨ぐ — M51g の意味論のまま)
             scene.Time().ClearFeelEffects();
             scene.Feel().Clear(); // M94c: 旧シーンで鳴った揺れ・振動も持ち越さない
+            scene.InputBuffer().Clear(); // M94f: 旧シーンで押した先行入力を新シーンで発火させない
             if (ts.agentSystem) {
                 ts.agentSystem->Reset(); // M65f: 航法グリッドも旧シーンのもの
             }

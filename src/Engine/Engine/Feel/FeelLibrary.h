@@ -60,8 +60,6 @@ public:
     // 読み値は SanitizeFeelDesc 済みで返す。手触りでない JSON ("feel" キー無し) は false。
     // 欠けたキーは既定値 (前方互換の contains 読み)
     static bool FromJson(const nlohmann::json& j, MyeFeelDesc& out);
-    static nlohmann::json CurveToJson(const MyeCurve& c);
-    static void CurveFromJson(const nlohmann::json& j, MyeCurve& out); // 無い / 壊れた欄は out のまま
 
 private:
     std::unordered_map<uint64_t, FeelPreset> presets_;

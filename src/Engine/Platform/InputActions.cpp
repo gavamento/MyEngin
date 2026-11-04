@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 
+#include "Engine/Core/Util/CurveJson.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Platform/PathUtil.h"
@@ -63,20 +64,22 @@ float EvalAxis(const InputAxisDef& a, const InputSnapshot& s)
     if (a.negKey != 0 && s.KeyDown(a.negKey)) {
         v -= 1.0f;
     }
+    float pad = 0.0f;
     switch (a.padAxis) {
-    case PadAxis::LX: v += InputActions::ApplyDeadzone(NormStick(s.padLX), a.deadzone); break;
-    case PadAxis::LY: v += InputActions::ApplyDeadzone(NormStick(s.padLY), a.deadzone); break;
-    case PadAxis::RX: v += InputActions::ApplyDeadzone(NormStick(s.padRX), a.deadzone); break;
-    case PadAxis::RY: v += InputActions::ApplyDeadzone(NormStick(s.padRY), a.deadzone); break;
+    case PadAxis::LX: pad = InputActions::ApplyDeadzone(NormStick(s.padLX), a.deadzone); break;
+    case PadAxis::LY: pad = InputActions::ApplyDeadzone(NormStick(s.padLY), a.deadzone); break;
+    case PadAxis::RX: pad = InputActions::ApplyDeadzone(NormStick(s.padRX), a.deadzone); break;
+    case PadAxis::RY: pad = InputActions::ApplyDeadzone(NormStick(s.padRY), a.deadzone); break;
     case PadAxis::LT:
-        v += InputActions::ApplyDeadzone(static_cast<float>(s.padLeftTrigger) / 255.0f, a.deadzone);
+        pad = InputActions::ApplyDeadzone(static_cast<float>(s.padLeftTrigger) / 255.0f, a.deadzone);
         break;
     case PadAxis::RT:
-        v += InputActions::ApplyDeadzone(static_cast<float>(s.padRightTrigger) / 255.0f, a.deadzone);
+        pad = InputActions::ApplyDeadzone(static_cast<float>(s.padRightTrigger) / 255.0f, a.deadzone);
         break;
     default:
         break;
     }
+    v += InputActions::ShapePadValue(a, pad);
     return std::clamp(v, -1.0f, 1.0f);
 }
 
@@ -231,6 +234,15 @@ bool InputActions::LoadFromJsonText(const std::string& text)
                     def.mouseMask |= static_cast<uint8_t>(1u << bit);
                 }
             }
+            // M94f: 先行受付 (無ければ 0 = 従来どおり)
+            if (e.contains("bufferTicks") && e["bufferTicks"].is_number()) {
+                def.bufferTicks = static_cast<uint8_t>(
+                    std::clamp(e["bufferTicks"].get<int>(), 0, static_cast<int>(kMaxInputBufferTicks)));
+            }
+            if (def.bufferTicks > 0 && actions_.size() >= kMaxBufferedActions) {
+                MYE_LOG_WARN("[input] action '%s': bufferTicks is ignored (only the first %u actions can buffer)",
+                             def.name.c_str(), kMaxBufferedActions);
+            }
             actions_.push_back(std::move(def));
         }
     }
@@ -278,6 +290,11 @@ bool InputActions::LoadFromJsonText(const std::string& text)
                              def.name.c_str(), axisName.c_str());
             }
             def.deadzone = std::clamp(e.value("deadzone", 0.24f), 0.0f, 0.95f);
+            // M94f: 外側の遮断と応答カーブ (無ければ恒等 = 従来どおり)
+            def.outerDeadzone = std::clamp(e.value("outerDeadzone", 0.0f), 0.0f, 0.9f);
+            if (e.contains("response")) {
+                CurveFromJson(e["response"], def.response);
+            }
             axes_.push_back(std::move(def));
         }
     }
@@ -313,6 +330,9 @@ std::string InputActions::ToJsonText() const
             }
         }
         e["mouse"] = std::move(mouse);
+        if (a.bufferTicks > 0) {
+            e["bufferTicks"] = a.bufferTicks; // 既定値は書かない (既存の actions.json を保存しても差分が出ない)
+        }
         actions.push_back(std::move(e));
     }
     j["actions"] = std::move(actions);
@@ -329,6 +349,12 @@ std::string InputActions::ToJsonText() const
         }
         e["padAxis"] = PadAxisName(a.padAxis);
         e["deadzone"] = a.deadzone;
+        if (a.outerDeadzone > 0.0f) {
+            e["outerDeadzone"] = a.outerDeadzone;
+        }
+        if (!MyeCurveIsIdentity(a.response)) {
+            e["response"] = CurveToJson(a.response);
+        }
         axes.push_back(std::move(e));
     }
     j["axes"] = std::move(axes);
@@ -379,6 +405,69 @@ void InputActions::Evaluate(const InputSnapshot* cur, const InputSnapshot* prev,
             axisValues_[xBase + i] = EvalAxis(axes_[i], c);
         }
     }
+}
+
+void InputActions::UpdateBuffers(InputBufferState& state)
+{
+    const size_t n = std::min<size_t>(actions_.size(), kMaxBufferedActions);
+    for (uint32_t p = 0; p < kMaxPlayers; ++p) {
+        const size_t aBase = static_cast<size_t>(p) * actions_.size();
+        for (size_t i = 0; i < kMaxBufferedActions; ++i) {
+            uint8_t& age = state.pressAge[p][i];
+            const uint8_t window = (i < n) ? actions_[i].bufferTicks : 0u;
+            if (window == 0) {
+                age = kInputBufferNone; // 先行受付なし / 定義が無い枠 (定義の伸縮で残骸を残さない)
+                continue;
+            }
+            uint8_t& bits = actionBits_[aBase + i];
+            if ((bits & kActionPressed) != 0) {
+                age = 0; // 押した tick 自身も窓の中
+            } else if (age != kInputBufferNone) {
+                age = (age + 1u > window) ? kInputBufferNone : static_cast<uint8_t>(age + 1u);
+            }
+            if (age != kInputBufferNone) {
+                bits |= kActionBuffered;
+            }
+        }
+    }
+}
+
+bool InputActions::ConsumeBuffered(uint64_t nameHash, uint32_t player, InputBufferState& state)
+{
+    if (player >= kMaxPlayers) {
+        return false;
+    }
+    const size_t n = std::min<size_t>(actions_.size(), kMaxBufferedActions);
+    for (size_t i = 0; i < n; ++i) {
+        if (actions_[i].nameHash != nameHash) {
+            continue;
+        }
+        uint8_t& age = state.pressAge[player][i];
+        if (age == kInputBufferNone) {
+            return false;
+        }
+        age = kInputBufferNone;
+        const size_t k = static_cast<size_t>(player) * actions_.size() + i;
+        if (k < actionBits_.size()) {
+            actionBits_[k] = static_cast<uint8_t>(actionBits_[k] & ~kActionBuffered);
+        }
+        return true;
+    }
+    return false;
+}
+
+float InputActions::ShapePadValue(const InputAxisDef& a, float v)
+{
+    if (a.outerDeadzone <= 0.0f && MyeCurveIsIdentity(a.response)) {
+        return v; // 既定: 評価を飛ばす (従来の値そのもの)
+    }
+    float m = std::fabs(v);
+    if (a.outerDeadzone > 0.0f) {
+        m = std::min(1.0f, m / (1.0f - a.outerDeadzone));
+    }
+    m = MyeEvalCurve(a.response, m);
+    m = std::clamp(m, 0.0f, 1.0f);
+    return (v < 0.0f) ? -m : m;
 }
 
 uint32_t InputActions::ActionState(uint64_t nameHash, uint32_t player) const

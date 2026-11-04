@@ -291,6 +291,9 @@
     <ClCompile Include="..\src\Engine\Core\Localization\LocalizationSelfTest.cpp">
       <Filter>Core\Localization</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\Util\CurveJson.cpp">
+      <Filter>Core\Util</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Core\Util\FileWatcher.cpp">
       <Filter>Core\Util</Filter>
     </ClCompile>
@@ -1282,6 +1285,9 @@
       <Filter>Core\Localization</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Util\ByteIo.h">
+      <Filter>Core\Util</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\Util\CurveJson.h">
       <Filter>Core\Util</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Util\FileWatcher.h">

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "Engine/Platform/Input.h"
+#include "Shared/FeelMath.h"
 
 namespace mye {
 
@@ -16,6 +17,41 @@ enum : uint32_t {
     kActionHeld     = 1u << 0, // 今 tick 押下中
     kActionPressed  = 1u << 1, // この tick で押された (prev 上げ / cur 下げ)
     kActionReleased = 1u << 2, // この tick で離された
+    // M94f: 先行受付の窓の中 (bufferTicks 以内に押され、まだ ConsumeBuffered されていない)。
+    // bufferTicks が 0 のアクションには立たない = 既存のアクションの戻り値は変わらない
+    kActionBuffered = 1u << 3,
+};
+
+// ---- 先行入力 (M94f、ADR-031) ----
+// 先行受付を持てるアクションは定義順の先頭 32 本 (PlayerInputComponent のビットと同じ上限)
+inline constexpr uint32_t kMaxBufferedActions = 32;
+inline constexpr uint8_t kInputBufferNone = 0xFFu; // 窓の外 (押されていない / 消費した / 窓を過ぎた)
+
+// レーン × アクションごとの「押されてからの tick 数」。**sim 状態** (Scene 保持、WorldHash の内容ゲート、
+// SimSnapshot の Scene 節)。InputActions::UpdateBuffers だけが進め、ConsumeBuffered だけが消す
+struct InputBufferState {
+    uint8_t pressAge[kMaxPlayers][kMaxBufferedActions];
+    InputBufferState() { Clear(); }
+    void Clear()
+    {
+        for (auto& lane : pressAge) {
+            for (uint8_t& a : lane) {
+                a = kInputBufferNone;
+            }
+        }
+    }
+    // 窓の中のものが 1 つでもあるか (= ハッシュに節を畳むか)。先行受付を使わない間は常に偽
+    bool HasHashableState() const
+    {
+        for (const auto& lane : pressAge) {
+            for (uint8_t a : lane) {
+                if (a != kInputBufferNone) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
 };
 
 // デジタルアクション 1 本。keys / pad / mouse のいずれかが押下なら down (OR 合成)
@@ -25,7 +61,10 @@ struct InputActionDef {
     std::vector<uint8_t> keys; // VK コード列
     uint16_t padMask = 0;      // MyePadButton (XINPUT_GAMEPAD_*) の論理和
     uint8_t mouseMask = 0;     // InputSnapshot::mouseButtons と同ビット (bit0:L bit1:R bit2:M ...)
+    // M94f: 先行受付の窓 [tick]。押した tick から数えてこの tick 数のあいだ kActionBuffered が立つ。0 = 先行受付なし
+    uint8_t bufferTicks = 0;
 };
+inline constexpr uint8_t kMaxInputBufferTicks = 120;
 
 // アナログ軸 1 本。値 = clamp(キー成分 (pos - neg) + パッド成分, -1, +1)
 struct InputAxisDef {
@@ -35,6 +74,10 @@ struct InputAxisDef {
     uint8_t negKey = 0;
     PadAxis padAxis = PadAxis::None;
     float deadzone = 0.24f;         // 正規化後 [-1,1] に対する遮断幅 (0.24 ≒ XInput 既定)
+    // M94f: パッド成分の外側の遮断 (|v| >= 1 - outerDeadzone で 1 に張り付く) と応答カーブ (|v| → |v'|、符号は保つ)。
+    // 既定 (0 と恒等カーブ) なら評価を飛ばす = 従来の値と 1 ビットも違わない。キー成分 (±1) には掛けない
+    float outerDeadzone = 0.0f;
+    MyeCurve response = MyeMakeCurve(MYE_EASE_LINEAR, 0.0f, 1.0f);
 };
 
 // 入力アクションマッピング (M51d、決定台帳 4)。
@@ -77,6 +120,14 @@ public:
     // 名前ハッシュ (HashStr) で引く。未定義は 0。線形走査 (アクションは高々数十本)。
     // player 省略時はレーン 0
     uint32_t ActionState(uint64_t nameHash, uint32_t player = 0) const; // kAction* の論理和
+
+    // M94f: 先行入力。Evaluate の**直後**に 1 回呼び、state (sim 状態) を進めて kActionBuffered を立てる。
+    // 呼ばない tick は窓が進まない (エディタの編集中)。決定論: (今 tick の評価結果, state) の純関数
+    void UpdateBuffers(InputBufferState& state);
+    // 窓の中なら消費して true (同じ押下で 2 回跳ばない)。この tick の kActionBuffered も下ろす
+    bool ConsumeBuffered(uint64_t nameHash, uint32_t player, InputBufferState& state);
+    // パッド成分 (内側の遮断の後) に外側の遮断と応答カーブを掛ける。Evaluate の実体を selftest から直接検査するために公開する
+    static float ShapePadValue(const InputAxisDef& a, float v);
     float AxisValue(uint64_t nameHash, uint32_t player = 0) const;      // [-1, +1]
 
     // 編集 UI 用 (Project Settings)。書き換えたら Save → Load(force) で正規形に確定する。

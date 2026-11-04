@@ -42,6 +42,7 @@
     <ClCompile Include="..\src\Engine\Core\Jobs\JobSystemSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Core\Localization\Localization.cpp" />
     <ClCompile Include="..\src\Engine\Core\Localization\LocalizationSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Core\Util\CurveJson.cpp" />
     <ClCompile Include="..\src\Engine\Core\Util\FileWatcher.cpp" />
     <ClCompile Include="..\src\Engine\Core\Util\Format.cpp" />
     <ClCompile Include="..\src\Engine\Core\Util\JsonUtil.cpp" />
@@ -373,6 +374,7 @@
     <ClInclude Include="..\src\Engine\Core\Localization\LocalizationSelfTest.h" />
     <ClInclude Include="..\src\Engine\Core\Localization\LocalizationTable.inl" />
     <ClInclude Include="..\src\Engine\Core\Util\ByteIo.h" />
+    <ClInclude Include="..\src\Engine\Core\Util\CurveJson.h" />
     <ClInclude Include="..\src\Engine\Core\Util\FileWatcher.h" />
     <ClInclude Include="..\src\Engine\Core\Util\Format.h" />
     <ClInclude Include="..\src\Engine\Core\Util\Hash.h" />

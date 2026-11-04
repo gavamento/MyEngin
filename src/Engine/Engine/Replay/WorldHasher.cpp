@@ -18,6 +18,7 @@
 #include "Engine/Engine/Scene/Tags.h" // 汎用タグ (NoSerialize = 汎用ループ外なので明示的に畳む)
 #include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Engine/UI/UIInteraction.h"
+#include "Engine/Platform/InputActions.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Navigation/NavSystem.h"
@@ -680,6 +681,10 @@ uint64_t HashWorldImpl(World& world, const SimSources& src,
         const uint64_t ch = HashComputeState(*src.computeState, d);
         total = HashCombine(total, ch);
         EmitU64(d, "Compute", "#total", ch, total);
+    }
+    // 先行入力の窓 (M94f)。内容ゲート (理由は WorldHasher.h の SimSources::inputBuffer)
+    if (src.inputBuffer && src.inputBuffer->HasHashableState()) {
+        FoldBytes(total, d, "InputBuffer", "pressAge", src.inputBuffer->pressAge, sizeof(src.inputBuffer->pressAge));
     }
     // 再生中の手触り (M94c)。内容ゲート (理由は WorldHasher.h の SimSources::feel)
     if (src.feel && src.feel->HasHashableState()) {
