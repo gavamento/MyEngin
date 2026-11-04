@@ -8,7 +8,7 @@
 ## サブ進捗
 | サブ | 波 | 依存 | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|---|---|
-| sub-00 selftest の登録表・フィルタ・所要時間ログ・full 入口・CI・予約マーカー | 0 | なし | 未着手 | 0 | | master で単独 |
+| sub-00 selftest の登録表・フィルタ・所要時間ログ・full 入口・CI・予約マーカー | 0 | なし | OK (条件付き) | 1 | | master で単独。VERDICT 指摘 1: Release の --selftest-full と replay_verify は、ユーザーの対話用 Editor.exe (PID 39252) が Release exe を掴んでいるため未実施。解放後に司会が回して結果をここに書く。FAIL なら差し戻し |
 | sub-00b 計測に基づく層分けと縮小 (既定 60 秒以内) | 1 | sub-00 | 未着手 | 0 | | 計測は単独で回す |
 | sub-01 ヒットストップ (ABI v32、snapshot v66) | 1 | sub-00 | 未着手 | 0 | | |
 | sub-02 CC 同士の押し出しと接触イベント (snapshot v67、ADR-034) | 1 | sub-00 | 未着手 | 0 | | |

@@ -71,6 +71,7 @@
     <ClCompile Include="..\src\Editor\SelfTest\PartSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\ProbeBakerSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\RagdollBuildSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\SelfTest\SelfTestSuites.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\SpriteEditorSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\SsrSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\StartupSplashSelfTest.cpp" />
@@ -176,6 +177,7 @@
     <ClInclude Include="..\src\Editor\SelfTest\PartSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\ProbeBakerSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\RagdollBuildSelfTest.h" />
+    <ClInclude Include="..\src\Editor\SelfTest\SelfTestSuites.h" />
     <ClInclude Include="..\src\Editor\SelfTest\SpriteEditorSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\SsrSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\StartupSplashSelfTest.h" />

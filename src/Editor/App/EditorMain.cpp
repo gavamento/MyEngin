@@ -9,135 +9,26 @@
 
 #include "Editor/App/EditorApp.h"
 #include "Editor/App/StartupSplash.h"
-#include "Editor/SelfTest/StartupSplashSelfTest.h"
+#include "Editor/SelfTest/SelfTestSuites.h"
 #include "Editor/App/EditorGlobalSettings.h"
-#include "Editor/Tools/FractureEditorSelfTest.h" // M80i: 破壊物 Inspector の焼き回り
-#include "Editor/SelfTest/DeviceLostRescueSelfTest.h"
-#include "Engine/Engine/Loop/DeviceRecoverySelfTest.h"
-#include "Editor/SelfTest/GameFlowSelfTest.h"
-#include "Editor/SelfTest/PartSelfTest.h"
-#include "Editor/SelfTest/RagdollBuildSelfTest.h"
-#include "Engine/Engine/Scene/TagSelfTest.h"
-#include "Engine/Engine/Rendering/Sprite2D/Line2DSelfTest.h"
-#include "Engine/Engine/Rendering/Sprite2D/SpriteShapeSelfTest.h"
-#include "Engine/Engine/Rendering/Sprite2D/Sprite2DAssetSelfTest.h"
-#include "Engine/Engine/Script/TwoDAbiSelfTest.h"
-#include "Engine/Engine/Demo/TwoDDemoSelfTest.h"
-#include "Engine/Engine/Tilemap/TilemapSelfTest.h"
-#include "Engine/Engine/Rendering/RenderStatsSelfTest.h"
-#include "Engine/Engine/Rendering/ShadowCullSelfTest.h"
-#include "Engine/Engine/Rendering/SkinBoundsSelfTest.h"
-#include "Engine/Engine/Rendering/SkinPaletteCacheSelfTest.h"
-#include "Engine/Engine/Asset/CookedCacheSelfTest.h"
-#include "Engine/Engine/Asset/MeshLodSelfTest.h"
-#include "Engine/Engine/Asset/SubAssetKeySelfTest.h"
 #include "Engine/Engine/Asset/SubAssetMigration.h"
 #include "Engine/Engine/UI/UIFontMetricsCook.h" // M75d: --cook-font-metrics
-#include "Engine/Engine/Schema/SchemaSelfTest.h"
 #include "Editor/Project/ProjectManager.h"
 #include "Editor/Project/ProjectRegistry.h"
 #include "Editor/Project/ProjectTemplates.h"
-#include "Editor/SelfTest/LightSelectionSelfTest.h"
 #include "Editor/Tools/ModalTools.h" // M76b: --modal-voxelize
-#include "Editor/Undo/UndoSelfTest.h"
-#include "Engine/Core/Ecs/EcsSelfTest.h"
-#include "Engine/Core/Jobs/JobSystemSelfTest.h"
 #include "Engine/Core/Localization/Localization.h"
-#include "Engine/Core/Localization/LocalizationSelfTest.h"
 #include "Engine/Core/Diagnostics/Log.h"
-#include "Editor/Asset/AssetOpsSelfTest.h"
-#include "Editor/SelfTest/SpriteEditorSelfTest.h"
-#include "Editor/SelfTest/TilePaletteSelfTest.h"
-#include "Editor/SelfTest/TerrainSelfTest.h"
-#include "Editor/SelfTest/DecalSelfTest.h"
-#include "Editor/SelfTest/HzbSelfTest.h"
-#include "Engine/Renderer/Passes/OcclusionSelfTest.h"
-#include "Editor/SelfTest/SsrSelfTest.h"
-#include "Editor/SourceControl/SourceControlSelfTest.h"
-#include "Editor/SelfTest/ProbeBakerSelfTest.h"
-#include "Editor/Scene/CameraPilotSelfTest.h"
-#include "Engine/Engine/Animation/AnimatorControllerSelfTest.h"
-#include "Engine/Engine/Asset/AssetDatabaseSelfTest.h"
-#include "Engine/Engine/Compute/ComputeManagedSelfTest.h"
-#include "Editor/SelfTest/ComputeInspectorSelfTest.h"
-#include "Engine/Engine/Compute/ComputeServiceSelfTest.h"
-#include "Engine/Engine/Compute/ComputeSettingsSelfTest.h"
-#include "Engine/Engine/Compute/ComputeScriptSelfTest.h"
-#include "Engine/Engine/Compute/ComputeStateSelfTest.h"
-#include "Engine/Engine/Compute/KernelLintSelfTest.h"
-#include "Engine/Engine/Compute/KernelSelfTest.h"
-#include "Engine/Engine/Audio/Playback/AudioSelfTest.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
-#include "Engine/Engine/Loop/SimParallelSelfTest.h"
-#include "Engine/Engine/Particles/ParticleSelfTest.h"
-#include "Engine/Engine/Physics/Collider/ConvexSelfTest.h"
-#include "Engine/Engine/Physics/Fracture/FractureSelfTest.h"
-#include "Engine/Engine/Physics/Fracture/FractureSkinSelfTest.h" // M80j: スキンメッシュの破壊
-#include "Engine/Engine/Physics/Ragdoll/RagdollSelfTest.h"
-#include "Engine/Engine/Physics/Xpbd/XpbdSelfTest.h"
-#include "Engine/Engine/Physics/Rigid/PhysMatSelfTest.h"
-#include "Engine/Engine/Physics/Rigid/PhysicsSelfTest.h"
-#include "Engine/Engine/RayTracing/RtSelfTest.h"
 #include "Engine/Engine/App/Project.h"
 #include "Engine/Engine/Replay/Replay.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
-#include "Engine/Engine/Acoustic/AcousticSelfTest.h"
-#include "Engine/Engine/Audio/Spatial/AcousticAudioSelfTest.h"
-#include "Engine/Engine/Audio/Synth/ImpactSynthSelfTest.h"
-#include "Engine/Engine/Audio/Synth/ModalAudioSelfTest.h"
-#include "Engine/Engine/Audio/Synth/ModalSynthSelfTest.h"
-#include "Engine/Engine/Modal/ModalSelfTest.h"
-#include "Engine/Engine/Replay/SimSnapshotSelfTest.h"
-#include "Engine/Engine/Replay/TimeTravelSelfTest.h"
-#include "Engine/Engine/Replay/WorldHasherSelfTest.h"
-#include "Engine/Engine/Scene/SceneSelfTest.h"
-#include "Engine/Engine/Animation/SkeletonSelfTest.h"
-#include "Engine/Engine/UI/FontSelfTest.h"
-#include "Engine/Engine/UI/UISelfTest.h"
-#include "Engine/Engine/Vfx/VfxSelfTest.h"
-#include "Engine/Engine/Rendering/WaterWaveSelfTest.h"
-#include "Engine/Engine/Net/NetSelfTest.h"
-#include "Engine/Engine/HotReload/DllReloaderSelfTest.h"
-#include "Engine/Engine/HotReload/ReloadHubSelfTest.h"
 #include "Engine/Engine/App/EngineCli.h"
-#include "Engine/Engine/App/EngineCliSelfTest.h"
-#include "Engine/Engine/App/ProjectSettingsFileSelfTest.h"
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
-#include "Engine/Engine/Replay/CrashRingSelfTest.h"
-#include "Engine/Engine/Session/SessionSelfTest.h"
-#include "Engine/Engine/Online/OnlineSelfTest.h"
-#include "Engine/Engine/Net/ServerNetSelfTest.h"
-#include "Engine/Engine/Navigation/NavDeterminismSelfTest.h"
-#include "Engine/Engine/Navigation/NavAgentSelfTest.h"
-#include "Engine/Engine/Navigation/GridNav2DSelfTest.h"
-#include "Engine/Engine/Rendering/Camera2DFollowSelfTest.h"
-#include "Engine/Renderer/Pipeline/PixelPerfect2DSelfTest.h"
-#include "Engine/Engine/Perception/PerceptionSelfTest.h"
-#include "Engine/Engine/AI/BehaviorTreeSelfTest.h"
-#include "Engine/Engine/Navigation/NavSurfaceSelfTest.h"
-#include "Editor/Tools/NavEditorSelfTest.h"
-#include "Editor/Tools/PatrolRouteEditSelfTest.h"
 #include "Editor/Tools/EngineIndexDump.h"         // M87a: --dump-index
-#include "Editor/Tools/EngineIndexDumpSelfTest.h"
-#include "Editor/SelfTest/BehaviorTreeEditorSelfTest.h"
-#include "Editor/SelfTest/AnimatorControllerEditSelfTest.h"
 #include "Engine/Platform/CrashHandler.h"
-#include "Engine/Platform/InputActionsSelfTest.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/Texture/ImageDiff.h"
-#include "Engine/Renderer/Texture/ImageDiffSelfTest.h"
-#include "Engine/Renderer/Shader/ProjectShaderPropertiesSelfTest.h"  // M78a
-#include "Engine/Renderer/PostFx/ProjectEffectRunnerSelfTest.h"      // M78b
-#include "Engine/Renderer/PostFx/FxStackSelfTest.h"                  // M78c
-#include "Engine/Renderer/Compute/ProjectComputeRunnerSelfTest.h"     // M78d
-#include "Engine/Renderer/Shader/ShaderManagerProjectIndexSelfTest.h"
-#include "Engine/Renderer/Compute/ComputeAbiSelfTest.h"              // M78e
-#include "Engine/Renderer/Shader/SurfaceShaderSelfTest.h"           // M79a
-#include "Engine/Renderer/Shader/SurfaceMaterialSelfTest.h"          // M79b
-#include "Engine/Renderer/Shader/SurfaceDeferredSelfTest.h"          // M79c
-#include "Engine/Renderer/Passes/WaterSurfaceSelfTest.h"             // M79e
-#include "Engine/Renderer/Pipeline/RenderSelfTest.h"
-#include "Engine/Renderer/Texture/TextureCookSelfTest.h"
 #include "Engine/Renderer/Device/VolumeTexture.h"
 #include "Engine/Engine/Physics/Fracture/FractureBenchmark.h" // M80k: --fracture-bench
 #include "Engine/Engine/App/PerfBenchmark.h"
@@ -175,6 +66,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     config.title = L"MyEngine Editor";
     config.renderSceneToBackbuffer = false; // シーンは SceneView/GameView の RT に描く
     bool selftest = false;
+    bool selftestFull = false;  // --selftest-full (Full 層も回す)
+    bool selftestList = false;  // --selftest-list (登録表を出して終了)
     bool saveSceneOnStart = false;
     bool autoPlay = false;
     bool openTimeline = false; // M72c
@@ -297,6 +190,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             }
             if (arg == L"--selftest") {
                 selftest = true;
+            } else if (arg == L"--selftest-full") {
+                selftest = true;
+                selftestFull = true;
+            } else if (arg == L"--selftest-list") {
+                selftest = true;
+                selftestList = true;
             } else if (arg == L"--cook-font-metrics") {
                 cookFontMetrics = true;
             } else if (arg == L"--migrate-subasset-ids") {
@@ -568,11 +467,32 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     }
 
     if (selftest) {
-        // ウィンドウ/D3D 不要のヘッドレス回帰テスト。
-        // ok &= を使い先行失敗があっても全テストを必ず実行する
-        // (末尾 append された M78a/b が && 短絡で到達しない問題への対処)。
-        // 末尾への append 規約 (統合契約の予約 7) は維持する。
-        //
+        if (selftestList) {
+            mye::PrintSelfTestList();
+            return 0;
+        }
+        // ウィンドウ/D3D 不要のヘッドレス回帰テスト。スイートの一覧・選択・実行は SelfTest/SelfTestSuites.cpp。
+        // MYE_SELFTEST_ONLY=<名,...> は --selftest / --selftest-full より優先する。
+        // servernet-v1 のような値は ServerNetSelfTest.cpp が同じ環境変数から自分で読む
+        std::string onlyValue;
+        const DWORD onlyLen = GetEnvironmentVariableW(L"MYE_SELFTEST_ONLY", nullptr, 0);
+        if (onlyLen > 1) {
+            std::wstring onlyWide(onlyLen, L'\0');
+            const DWORD copied = GetEnvironmentVariableW(L"MYE_SELFTEST_ONLY", onlyWide.data(), onlyLen);
+            onlyWide.resize(copied);
+            for (wchar_t ch : onlyWide) onlyValue.push_back(ch < 0x80 ? static_cast<char>(ch) : '?');
+        }
+        wchar_t fullFlag[2] = {};
+        const bool fullByEnv = GetEnvironmentVariableW(L"MYE_SELFTEST_FULL", fullFlag, 2) > 0 && fullFlag[0] == L'1';
+
+        mye::SelfTestSelection selection;
+        if (!mye::ResolveSelfTestSelection(onlyValue, selftestFull || fullByEnv, selection)) {
+            std::printf("[selftest] unknown suite: %s\n[selftest] available suites / aliases (see --selftest-list):\n",
+                        selection.unknownName.c_str());
+            mye::PrintSelfTestList();
+            return 2;
+        }
+
         // 一時フォルダをこのプロセス専用にする。各テストは temp_directory_path() 直下に固定名の
         // フォルダを作って消すので、Debug と Release を同時に回すと互いの作業フォルダを消し合う
         std::error_code tempEc;
@@ -583,168 +503,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             SetEnvironmentVariableW(L"TMP", selftestTemp.c_str());
             SetEnvironmentVariableW(L"TEMP", selftestTemp.c_str());
         }
-        bool ok = true;
-        // MYE_SELFTEST_ONLY=servernet / servernet-v1: net の試験 (V1 など) だけを回す。不安定な FAIL の再現率を測るための入口で、
-        // 製品の挙動には触れない
-        wchar_t onlyName[32] = {};
-        const bool hasOnly = GetEnvironmentVariableW(L"MYE_SELFTEST_ONLY", onlyName, 32) > 0;
-        // MYE_SELFTEST_ONLY=computescript: HeadlessSim の起動と GameLogic.dll のホットリロードを通る試験だけを回す
-        // MYE_SELFTEST_ONLY=twod: --2d-demo の 3000 tick 試験 (M94w) だけを回す。焼き込みハッシュの採取用
-        if (hasOnly && (std::wstring(onlyName).rfind(L"servernet", 0) == 0 || std::wstring(onlyName) == L"computescript"
-                        || std::wstring(onlyName) == L"twod")) {
-            if (std::wstring(onlyName) == L"twod") {
-                ok &= mye::RunTwoDDemoSelfTest();
-            } else {
-                ok &= std::wstring(onlyName) == L"computescript" ? mye::RunComputeScriptSelfTest() : mye::RunServerNetSelfTest();
-            }
-            if (!tempEc) {
-                std::filesystem::remove_all(selftestTemp, tempEc);
-            }
-            return ok ? 0 : 1;
-        }
-        // MYE_SELFTEST_ONLY=m94: M94 (2D レーン) の suite だけを回す。以降のサブは自分の suite をここへ足す
-        if (hasOnly && std::wstring(onlyName) == L"m94") {
-            ok &= mye::RunPhysicsSelfTest();
-            ok &= mye::RunFractureSelfTest();           // M94h: 破片へ plane2D を写す
-            ok &= mye::RunTilemapSelfTest();            // M94j: タイルパレット / タイルマップ資産と座標変換
-            ok &= mye::RunUISelfTest();
-            ok &= mye::RunSprite2DAssetSelfTest();
-            ok &= mye::RunSpriteEditorSelfTest();
-            ok &= mye::RunTilePaletteSelfTest();        // M94l: タイルパレット窓の塗り (塗り潰し / 矩形 / Undo / ピック)
-            ok &= mye::RunAnimatorControllerSelfTest(); // M94g: スプライト列クリップ (既存の v1 / v2 の読みも含む)
-            ok &= mye::RunAnimatorControllerEditSelfTest(); // M94g: コントローラ窓のステート編集 (Sprite の排他)
-            ok &= mye::RunAssetDatabaseSelfTest();      // M94g: .spriteanim.json の分類
-            ok &= mye::RunReloadHubSelfTest();          // M94g: .spriteanim.json の振り分け
-            ok &= mye::RunAssetOpsSelfTest();           // M94g: Create 重複拒否 / タイルラベル / 複合サフィックス
-            ok &= mye::RunTwoDAbiSelfTest();            // M94n: ABI v31 (箱のクエリ / SpriteByName / Tilemap)
-            ok &= mye::RunPartSelfTest();               // M94n: ABI の版の固定と v31 スロットの充填
-            ok &= mye::RunSurfaceShaderSelfTest();      // M94q: サーフェス規約 (既存のメッシュ用の入口が変わらないこと)
-            ok &= mye::RunSurfaceMaterialSelfTest();    // M94q: スプライト用サーフェス (Sprite2D.material) の実描画
-            ok &= mye::RunSurfaceDeferredSelfTest();    // M94q: Deferred のサーフェス段 (メッシュ用の経路が変わらないこと)
-            ok &= mye::RunLine2DSelfTest();             // M94r: Line2D の帯・塗りの頂点生成と描画リスト
-            ok &= mye::RunSpriteShapeSelfTest();        // M94s: SpriteShape2D の輪郭・縁・塗り・辺の箱・丘を転がる球
-            ok &= mye::RunGridNav2DSelfTest();          // M94u: GridAgent2D のグリッド A* (段差 / 穴 / NoPath / 並走一致)
-            ok &= mye::RunCamera2DFollowSelfTest();     // M94v: Camera2DFollow (デッドゾーン / damping / 境界 / 並走一致)
-            ok &= mye::RunPixelPerfect2DSelfTest();     // M94v: pixelperfect2d::Compute の表
-            ok &= mye::RunPerceptionSelfTest();         // M94u: forwardAxis と Tilemap の遮蔽
-            ok &= mye::RunBehaviorTreeSelfTest();       // M94u: MoveTo の GridAgent2D fallback
-            ok &= mye::RunTwoDDemoSelfTest();           // M94w: --2d-demo の 3000 tick 不変量と焼き込みハッシュ
-            if (!tempEc) {
-                std::filesystem::remove_all(selftestTemp, tempEc);
-            }
-            return ok ? 0 : 1;
-        }
-        ok &= mye::RunEcsSelfTest();
-        ok &= mye::RunSceneSerializerSelfTest();
-        ok &= mye::RunUndoSelfTest();
-        ok &= mye::RunRenderSelfTest();
-        ok &= mye::RunPhysicsSelfTest();
-        ok &= mye::RunUISelfTest();
-        ok &= mye::RunAnimatorControllerSelfTest();
-        ok &= mye::RunAssetDatabaseSelfTest();
-        ok &= mye::RunTextureCookSelfTest();
-        ok &= mye::RunJobSystemSelfTest();
-        ok &= mye::RunVfxSelfTest();
-        ok &= mye::RunParticleSelfTest();
-        ok &= mye::RunSimParallelSelfTest();                // M90g: sim の並列化 (jobs あり / なし一致)
-        ok &= mye::RunAssetOpsSelfTest();
-        ok &= mye::RunFontSelfTest();
-        ok &= mye::RunAudioSelfTest();
-        ok &= mye::RunRtSelfTest();
-        ok &= mye::RunLocalizationSelfTest();
-        ok &= mye::RunSkeletonSelfTest();
-        ok &= mye::RunPartSelfTest();
-        ok &= mye::RunSchemaSelfTest();
-        ok &= mye::RunCookedCacheSelfTest();
-        ok &= mye::RunInputActionsSelfTest();
-        ok &= mye::RunGameFlowSelfTest();
-        ok &= mye::RunWorldHasherSelfTest();
-        ok &= mye::RunSimSnapshotSelfTest();
-        ok &= mye::RunTimeTravelSelfTest();
-        ok &= mye::RunCrashRingSelfTest();
-        ok &= mye::RunImageDiffSelfTest();
-        ok &= mye::RunNetSelfTest();
-        // ---- 末尾 append (統合契約の予約 7) ----
-        ok &= mye::RunLightSelectionSelfTest();    // M54b
-        ok &= mye::RunTerrainSelfTest();           // M58b
-        ok &= mye::RunDecalSelfTest();             // M56a
-        ok &= mye::RunHzbSelfTest();               // M56c
-        ok &= mye::RunSsrSelfTest();               // M56d
-        ok &= mye::RunProbeBakerSelfTest();        // M56e
-        ok &= mye::RunPhysMatSelfTest();           // M59a1
-        ok &= mye::RunConvexSelfTest();            // M60f
-        ok &= mye::RunRagdollSelfTest();           // M60g1
-        ok &= mye::RunRagdollBuildSelfTest();      // M60g2
-        ok &= mye::RunCameraPilotSelfTest();       // カメラ操縦 (視錐台 UI 追補)
-        ok &= mye::RunDllReloaderSelfTest();       // DLL 書き込み完了プローブ (M52h 追補)
-        ok &= mye::RunXpbdSelfTest();              // M60'b
-        ok &= mye::RunAcousticSelfTest();          // M65a
-        ok &= mye::RunSourceControlSelfTest();     // M66a
-        ok &= mye::RunAcousticAudioSelfTest();     // M68a
-        ok &= mye::RunSubAssetKeySelfTest();       // M74a / M74b
-        ok &= mye::RunImpactSynthSelfTest();       // ImpactSynth (計画 ImpactSoundDesign)
-        ok &= mye::RunReloadHubSelfTest();         // ホットリロードの資産の種類表
-        ok &= mye::RunModalSynthSelfTest();        // M76a: Deep-Modal のモード合成器
-        ok &= mye::RunModalSelfTest();             // M76b: Deep-Modal のボクセライザ
-        ok &= mye::RunModalAudioSelfTest();        // M76f: 衝突 -> モーダル一発再生の橋渡し
-        ok &= mye::RunTagSelfTest();               // 汎用タグ / RT のタグフィルタ / シェーダキャッシュ
-        ok &= mye::RunWaterWaveSelfTest();         // 三角関数 (Gerstner波) による水面波
-        ok &= mye::RunEngineCliSelfTest();         // 両 Main 共通の CLI フラグ表
-        ok &= mye::RunProjectSettingsFileSelfTest(); // project_settings.json: 他キーの保持 / 壊れたファイルは上書きしない
-        ok &= mye::RunProjectShaderPropertiesSelfTest();  // M78a: Properties DSL パース/パック
-        ok &= mye::RunProjectEffectRunnerSelfTest();      // M78b: ポスト挿入点・ソート
-        ok &= mye::RunFxStackSelfTest();                  // M78c: fxstack ロード/保存
-        ok &= mye::RunProjectComputeRunnerSelfTest();     // M78d: CS dispatch 基盤
-        ok &= mye::RunShaderManagerProjectIndexSelfTest(); // M78: assets 全域索引
-        ok &= mye::RunComputeAbiSelfTest();               // M78e: Compute ABI v21
-        ok &= mye::RunSurfaceShaderSelfTest();             // M79a: サーフェス規約・生成エントリ
-        ok &= mye::RunSurfaceMaterialSelfTest();           // M79b: Forward 描画とマテリアル Properties
-        ok &= mye::RunSurfaceDeferredSelfTest();           // M79c: Deferred サーフェス段・CSM 影
-        ok &= mye::RunWaterSurfaceSelfTest();              // M79e: 水面サーフェス経路・MyEngineWater
-        ok &= mye::RunFractureSelfTest();                  // M80a: 破壊分割コア (閉じ判定・平面切断)
-        ok &= mye::RunFractureEditorSelfTest();            // M80i: 破壊物 Inspector の焼き回り
-        ok &= mye::RunFractureSkinSelfTest();              // M80j: スキンメッシュの破壊
-        ok &= mye::RunSessionSelfTest();                   // M81b: システム入力 / SessionLanes / .rep v9
-        ok &= mye::RunServerNetSelfTest();                 // M81d: 入力確定型サーバ/クライアント (1 プロセス内の偽トランスポート)
-        ok &= mye::RunOnlineSelfTest();                    // M93: 参加コード / P2P 中継の分割 / local 実装のロビー
-        ok &= mye::RunNavDeterminismSelfTest();            // M82a: Recast のビット一致と状態の保存・復元
-        ok &= mye::RunNavSurfaceSelfTest();                // M82b: Surface のベイク入力・.mnav・NavSystem
-        ok &= mye::RunNavEditorSelfTest();                 // M82b: Create / Bake / Clear の皮
-        ok &= mye::RunNavAgentSelfTest();                  // M82c: Agent・dtCrowd・SimSnapshot の Nav 節
-        ok &= mye::RunPerceptionSelfTest();                // M83: AI の知覚 (視覚・聴覚・ダメージ・接触・予測)
-        ok &= mye::RunBehaviorTreeSelfTest();              // M85: ビヘイビアツリー (アセット・Composite・BT 節)
-        ok &= mye::RunPatrolRouteEditSelfTest();           // M85g: 巡回ルートの点の編集と Undo
-        ok &= mye::RunEngineIndexDumpSelfTest();           // M87a: 索引ダンプの件数・決定性
-        ok &= mye::RunBehaviorTreeEditorSelfTest();        // M85h: BT 窓のモデル層 (追加・接続・削除・保存)
-        ok &= mye::RunAnimatorControllerEditSelfTest();    // M89g: コントローラ窓の骨の駆動の編集
-        ok &= mye::RunDeviceLostRescueSelfTest();          // M88a: デバイス消失時の退避保存
-        ok &= mye::RunDeviceRecoverySelfTest();            // M88b: 復旧の連続消失制限と旧デバイス参照数ゲート
-        ok &= mye::RunRenderStatsSelfTest();               // M90a: 描画統計のビュー別集計と JSON ダンプ
-        ok &= mye::RunOcclusionSelfTest();                 // M90b: GPU オクルージョン (max-Z HZB・保守的判定・ON/OFF 画素一致)
-        ok &= mye::RunShadowCullSelfTest();                // M90d: CSM のカスケード別判定 (近平面を除く 5 面・run 数)
-        ok &= mye::RunSkinBoundsSelfTest();              // M90d: スキンの保守的 AABB (全クリップの全フレームを包む)
-        ok &= mye::RunMeshLodSelfTest();                 // M90e: メッシュ LOD (生成・クック・.meta・選択)
-        ok &= mye::RunSkinPaletteCacheSelfTest();        // M90f: パレットのキャッシュ・URO の更新 tick・LOD 履歴の破棄
-        ok &= mye::RunKernelSelfTest();                  // M91a: *.kernel.hlsl の GPU/CPU 単一ソース・CPU 実行器・ハッシュ
-        ok &= mye::RunKernelLintSelfTest();            // M91b: カーネル検査器と C# 変換器
-        ok &= mye::RunComputeServiceSelfTest();        // M91c: ForEach のエンジン核 (ストア・判断・Fx GPU)
-        ok &= mye::RunComputeStateSelfTest();          // M91d: State バッファのスナップショット・ハッシュ・寿命
-        ok &= mye::RunComputeScriptSelfTest();         // M91e: GameLogic のカーネル表・COMPUTE_KERNELS・ForEach の ABI
-        ok &= mye::RunComputeManagedSelfTest();        // M91g: C# の ForEach・C# の CPU 版 (C++ 版とのバイト一致)
-        ok &= mye::RunComputeSettingsSelfTest();       // M91h: compute 節・Compute 欄の行・カーネルのホットリロード
-        ok &= mye::RunComputeInspectorSelfTest();      // M91h: Compute 欄の文字列 (日英)
-        ok &= mye::RunStartupSplashSelfTest();       // 起動スプラッシュの進捗とメビウス幾何
-        ok &= mye::RunSprite2DAssetSelfTest();       // M94c: スプライト資産 (.meta の sprites) とソート層
-        ok &= mye::RunTilemapSelfTest();             // M94j: タイルパレット / タイルマップ資産と座標変換
-        ok &= mye::RunSpriteEditorSelfTest();        // M94e: スプライトエディタ (スライス純関数 / Undo / 保存)
-        ok &= mye::RunTilePaletteSelfTest();         // M94l: タイルパレット窓の塗り (塗り潰し / 矩形 / Undo / ピック)
-        ok &= mye::RunTwoDAbiSelfTest();             // M94n: ABI v31 (箱のクエリ / SpriteByName / Tilemap)
-        ok &= mye::RunLine2DSelfTest();              // M94r: Line2D の帯・塗りの頂点生成と描画リスト
-        ok &= mye::RunSpriteShapeSelfTest();         // M94s: SpriteShape2D の輪郭・縁・塗り・辺の箱・丘を転がる球
-        ok &= mye::RunGridNav2DSelfTest();           // M94u: GridAgent2D のグリッド A* (段差 / 穴 / NoPath / 並走一致)
-        ok &= mye::RunCamera2DFollowSelfTest();      // M94v: Camera2DFollow (デッドゾーン / damping / 境界 / 並走一致)
-        ok &= mye::RunPixelPerfect2DSelfTest();      // M94v: pixelperfect2d::Compute の表
-        ok &= mye::RunTwoDDemoSelfTest();            // M94w: --2d-demo の 3000 tick 不変量と焼き込みハッシュ
+        const bool ok = mye::RunSelfTestSelection(selection);
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }

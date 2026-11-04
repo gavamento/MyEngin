@@ -335,6 +335,7 @@ void RegisterBuiltinComponents()
                MYE_FIELD_TIP(RigidbodyComponent, plane2D, Bool,
                              "Constrain to the XY plane: z is held at its start value and only "
                              "rotation about Z remains. Bodies at different z never touch")),
+        // ---- M95 sub-05 (末尾 append) ----
     });
 
     // M21: ゲーム内 UI。描画専用なので **kComponentNoHash**。
@@ -407,6 +408,7 @@ void RegisterBuiltinComponents()
                                                          "(unless a NavMeshAgent has updateRotation on) and remove "
                                                          "both from the pose")),
         MYE_JP("ルートモーションの回転", MYE_FIELD_FLAGS(AnimatorControllerComponent, rootMotionDeltaRotation, Quat, kFieldReadOnly)),
+        // ---- M95 sub-01 (末尾 append) ----
     });
     static_assert(AnimatorControllerComponent::kMaxParams == 16, "上の param0..15 の並びを増減に合わせる");
 
@@ -460,6 +462,8 @@ void RegisterBuiltinComponents()
                MYE_FIELD_FLAGS(CharacterControllerComponent, groundEntity, EntityRef, kFieldReadOnly)),
         MYE_JP("床の速度",
                MYE_FIELD_FLAGS(CharacterControllerComponent, groundVelocity, Float3, kFieldReadOnly)),
+        // ---- M95 sub-02 (末尾 append) ----
+        // ---- M95 sub-05 (末尾 append) ----
     });
 
     // M29c: スプライト/トレイル/3D テキスト。描画専用なので **kComponentNoHash**。

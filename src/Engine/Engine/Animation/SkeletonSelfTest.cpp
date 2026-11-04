@@ -1076,6 +1076,8 @@ bool RunSkeletonSelfTest()
               "foot IK (M89m): a foot with no ground in range keeps the animation and does not lower the pelvis");
     }
 
+    // ---- M95 sub-05 ----
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Skeleton self test: ALL PASS ====");
         return true;

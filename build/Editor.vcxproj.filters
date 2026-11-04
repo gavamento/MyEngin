@@ -168,6 +168,9 @@
     <ClCompile Include="..\src\Editor\SelfTest\RagdollBuildSelfTest.cpp">
       <Filter>SelfTest</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\SelfTestSuites.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\SpriteEditorSelfTest.cpp">
       <Filter>SelfTest</Filter>
     </ClCompile>
@@ -481,6 +484,9 @@
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\RagdollBuildSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\SelfTestSuites.h">
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\SpriteEditorSelfTest.h">

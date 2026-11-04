@@ -90,7 +90,7 @@ Debug / Release / WARP でリプレイが一致する。
   名前は関数名から `Run` と `SelfTest` を除いて小文字化 (`RunPhysicsSelfTest` → `physics`、`RunAnimatorControllerSelfTest` → `animatorcontroller`、`RunTwoDAbiSelfTest` → `twodabi`、`RunTwoDDemoSelfTest` → `twoddemo`)。
   **sub-00 の時点では全スイートが `Fast`** (= `--selftest` と `--selftest-full` が同じ集合。層分けは計測後に sub-00b が行う)。
 - 別名 (グループ) の表: `servernet` (および `servernet-` で始まる値 → `servernet` スイート。`ServerNetSelfTest.cpp:784-789` が環境変数を自分で読む仕組みは残す)、`computescript`、`twod` (= `twoddemo`)、`m94` (今の `:606-633` の並びそのまま)、`m95` (= `physics,animatorcontroller,skeleton,part,twodabi,simsnapshot,worldhasher`)。
-- `MYE_SELFTEST_ONLY`: カンマ区切り。各項目は別名またはスイート名。展開して**表の順**に重複なく回す (tier を問わない)。未知の名前は `[selftest] unknown suite: <name>` と一覧を出して exit 2 (何も回さない)。環境変数の読み取りは 32 文字の固定バッファ (`:589-590`) をやめ、長さを問わない。
+- `MYE_SELFTEST_ONLY`: カンマ区切り。各項目は別名またはスイート名 (小文字化・前後の空白を除く)。展開して**表の順**に重複なく回す (tier を問わない)。**例外: 別名 1 個だけの指定は別名の並びで回す** (`m94` を従来の `:606-633` の順で回すため。別名 + 他の項目の混在は表の順)。未知の名前は `[selftest] unknown suite: <name>` と一覧を出して exit 2 (何も回さない)。環境変数の読み取りは 32 文字の固定バッファ (`:589-590`) をやめ、長さを問わない。`servernet` / `computescript` はスイート名そのものなので別名表には載せない (`servernet-*` は前方一致で `servernet` へ)。
 - `--selftest`: `MYE_SELFTEST_ONLY` が無ければ `Fast` のスイートを表の順に回す。`--selftest-full` または `MYE_SELFTEST_FULL=1` なら全スイート (表の順)。`MYE_SELFTEST_ONLY` は両者より優先。
 - `--selftest-list`: `<name>\t<fast|full>` を 1 行 1 件、続けて別名 (`<alias>\t= a,b,c`) を出して exit 0 (ウィンドウ / D3D を作らない)。`EditorMain.cpp:298` の `--selftest` と同じ場所で `--selftest-full` / `--selftest-list` を解釈。`EngineCli.cpp` の表に載せるかは既存の `--selftest` に合わせる (載っていなければ載せない)。
 - 所要時間: スイートごとに `[selftest] <name> PASS|FAIL (<ms> ms, <fast|full>)`、最後に `[selftest] total <n> suites, <k> failed, <ms> ms (mode: fast|full|only)`。計測は `std::chrono::steady_clock`。ログは stdout (既存の `check(...)` 出力と同じ経路)。
@@ -308,6 +308,7 @@ H. round 2 で追加 (ユーザー判断)
 
 ## 8. 変更履歴
 
+- 2026-11-04 sub-00 VERDICT round 1 (出所: coder SELF_EVAL の「仕様との差分」): §4.0 の `MYE_SELFTEST_ONLY` に「別名 1 個だけは別名の並び」「項目は小文字化」「`servernet` / `computescript` は別名表に載せない」を明記。§4.0 と sub-00 受け入れ 34 の食い違い (表の順 vs m94 の従来順) を後者で解消
 - 2026-11-04 round 2 補足 2 (出所: ユーザー決定): selftest を 3 層 (関連スイート / `--selftest` = fast 層 60 秒以内 / `--selftest-full` = 全部) にする。sub-00 に tier 属性・`--selftest-full`・CI の書き換えを足し、計測に基づく層分けと縮小を sub-00b (Wave 1 並行) に分割。受け入れ 37〜41、§4.4 に「full は OK 前に必ず回す」、全サブの検証欄を 3 段に統一
 - 2026-11-04 round 2 (出所: ユーザー回答、台帳「ユーザー判断」): #5 `OverlapCapsuleParts` を sub-03 に追加 (ABI v32 = 193、受け入れ 31)。#16 非 kinematic Rigidbody に縦を適用 (sub-05、受け入れ 32、snapshot v68 に Rigidbody 2 欄)。sub-00 (selftest 登録表 + 予約マーカー、受け入れ 33〜36) を先頭に追加。波単位の並列 (§6 の波、付録 A / B)。全サブの検証コマンドを「往復中は関連スイート、完走は最後 1 回」に変更
 

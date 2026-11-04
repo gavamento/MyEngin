@@ -141,12 +141,14 @@ MyEngineはVisual Studio 2022、C++20、DirectX 11を使用するゲームエン
 | エディタのビルドと起動 | Visual Studio 2022で `MyEngine.sln` を開き、`Debug\|x64` を選びF5 |
 | ソース一覧の更新 | ファイル追加・移動後に `tools\gen_project_files.ps1` |
 | 静的ルール検証 | `tools\check_rules.ps1` |
-| エンジン・エディタの自己テスト | ビルド済みの `bin\x64\Debug\Editor.exe --selftest` または `bin\x64\Release\Editor.exe --selftest` |
+| エンジン・エディタの自己テスト | ビルド済みの `bin\x64\Debug\Editor.exe --selftest`（既定 = fast 層）または `bin\x64\Release\Editor.exe --selftest` |
+| 全スイートの自己テスト | `bin\x64\Debug\Editor.exe --selftest-full`（または `MYE_SELFTEST_FULL=1`）。CI はこちら |
+| 関連スイートだけの自己テスト | `MYE_SELFTEST_ONLY=<名,...>` を設定して `Editor.exe --selftest`（名前は `Editor.exe --selftest-list`）。`--selftest` / `--selftest-full` より優先 |
 | Replayの決定性検証 | `tools\replay_verify.bat`（Debug／Releaseをビルドし、対象シーンを照合） |
 
 - 回帰テストは既存の `*SelfTest.cpp` / `*SelfTest.h` パターンに従い、対象機能の近くに置く。
 - ECS、シリアライズ、Replay、アセット、ローカライズ、レンダラー定数、ホットリロードの挙動を変更する場合は、関連する回帰テストを追加する。
-- 広範なエンジン変更を提出する前に、`Editor.exe --selftest`、`tools\check_rules.ps1`、`tools\replay_verify.bat` を実行する。
+- 広範なエンジン変更を提出する前に、`Editor.exe --selftest-full`、`tools\check_rules.ps1`、`tools\replay_verify.bat` を実行する。
 - 小さな変更は影響に対応した検証を行う。文書のみの変更では、参照先・内容の整合性・差分を確認し、エンジンのビルドは原則不要とする。
 - ビルド成功、静的チェック成功、SelfTest成功、Replay一致、画面・実操作確認は、それぞれ確認できる範囲が異なる。代用した検証だけで未確認の挙動まで保証しない。
 - 実行できなかった必須チェックは、その理由と残るリスクを報告する。未実行を成功扱いにしない。

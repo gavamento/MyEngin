@@ -141,11 +141,11 @@ jobs:
       # ③ ヘッドレス回帰テスト (D3D もウィンドウも作らない)
       - name: selftest (Debug)
         shell: cmd
-        run: bin\x64\Debug\Editor.exe --selftest %MYE_EXTRA_ARGS%
+        run: bin\x64\Debug\Editor.exe --selftest-full %MYE_EXTRA_ARGS%
 
       - name: selftest (Release)
         shell: cmd
-        run: bin\x64\Release\Editor.exe --selftest %MYE_EXTRA_ARGS%
+        run: bin\x64\Release\Editor.exe --selftest-full %MYE_EXTRA_ARGS%
 
       # ④ 決定的スクリーンショットの回帰 (M52c)。tests\golden\*.png と
       #    撮り直しをピクセル比較する。撮影は Runtime.exe (imgui なし) で

@@ -347,6 +347,7 @@ struct SkinnedMeshComponent {
         // サンプラのクランプで末尾のコマへ寄る (ループのクリップは末尾と先頭が同じ姿勢)
         int32_t prevTimeQ = 0; // 前 tick のこの層の時刻 (1/256 tick)
         int32_t stepQ = 0;     // この tick の進み (1/256 tick)。0 = 補間しない
+        // ---- M95 sub-05 ----
     };
     int32_t poseLayerCount = 0; // 0 = 旧経路。1..kMaxPoseLayers = poseLayers の先頭から有効
     // その tick にコントローラがプログラムを書いた印。SkinningSystem が見て 0 に戻す
@@ -460,6 +461,7 @@ struct RigidbodyComponent {
     // z が接触距離より離れた plane2D 剛体は触れない)。既定 off = 既存シーンとビット同一。
     // 拘束の置き場と手順は PhysicsSystem.cpp の plane2D 節が正本
     bool plane2D = false;
+    // ---- M95 sub-05 (末尾 append) ----
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -815,6 +817,7 @@ struct AnimatorControllerComponent {
     // rootMotionVelocity と同じく毎 tick 書く。applyRootMotion なら LocalTransform.rotation へ掛ける
     // (NavMeshAgent が updateRotation で向きを握っている間は回さず、ポーズのひねりも抜かない)
     DirectX::XMFLOAT4 rootMotionDeltaRotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+    // ---- M95 sub-01 (末尾 append) ----
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
@@ -879,6 +882,8 @@ struct CharacterControllerComponent {
     EntityID groundEntity = {};     // 読み取り専用。接地している床のエンティティ (無ければ無効 ID)
     DirectX::XMFLOAT3 groundVelocity = { 0.0f, 0.0f, 0.0f }; // 読み取り専用。床の Rigidbody.velocity (Rigidbody が無ければ 0)
     static constexpr int32_t kMaxTicksSinceGrounded = 32767;
+    // ---- M95 sub-02 (末尾 append) ----
+    // ---- M95 sub-05 (末尾 append) ----
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

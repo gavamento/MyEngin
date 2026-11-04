@@ -63,4 +63,14 @@ spec §5 の 33, 34, 35, 36, 37。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-00 (round 1) の要旨 (全文は司会が受けた SELF_EVAL)。
+
+- 新規 `src\Editor\SelfTest\SelfTestSuites.h / .cpp`: 登録表 110 本 (全部 Fast)・別名 `twod` / `m94` / `m95`・`ResolveSelfTestSelection` (純関数)・`PrintSelfTestList`・`RunSelfTestSelection` (所要時間ログ)。`servernet-*` は `servernet` スイートへ解決。
+- `EditorMain.cpp`: selftest 節を表の走査へ置換。`--selftest-full` / `--selftest-list` / `MYE_SELFTEST_FULL=1` / 環境変数の可変長読み。
+- 別名 1 個だけの指定は別名の並びで回す (`m94` を従来の並びに保つため)。複数指定は表の順。
+- 予約マーカー: Components.h / .cpp、4 つの selftest、LocalizationTable.inl。`ci.yml` と `AGENTS.md` を更新。
+- Debug 全走 (`--selftest` 566.9 s / `--selftest-full` 583.0 s / `MYE_SELFTEST_FULL=1` 594.1 s、各 110 本 0 failed)。上位: fracture 210 s、servernet 106 s、physics 64 s、navagent 45 s、fractureeditor 28 s、surfacedeferred 18 s、twoddemo 17 s。
+- Release のリンクはユーザーの Editor.exe (PID 39252、Release) が掴んでいて未実施。replay_verify も未実施。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-04)。受け入れ 33〜37 を Debug の実測ログと diff で確認 (登録表 110 本の名前列 diff 空、ONLY の各値・exit 2・--selftest-list・--selftest-full / MYE_SELFTEST_FULL / ONLY 優先、ci.yml / AGENTS.md の diff、製品コード差分なし、マーカー 11 箇所の配置)。「別名 1 個だけは別名の並び」規則は仕様へ採用 (spec §4.0 / §8)。Release の --selftest-full と replay_verify は別プロセス (PID 39252) が bin\x64\Release\Editor.exe を掴んでいる環境要因で未実施 → 条件付き OK: 司会がユーザーに exe の解放を頼んでから Release ビルド → --selftest-full (Release) → tools\replay_verify.bat を実施し、結果を台帳に記す。FAIL なら sub-00 を差し戻す。nit: ResolveSelfTestSelection の専用テスト無し (申し送り、sub-00b で足してよい)

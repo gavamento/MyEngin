@@ -2629,3 +2629,5 @@ MYE_STR(TilePal_AnimAdd,       "Add Frame###tp_fadd",                  "コマ�
 MYE_STR(Insp_OpenTilePalette,  "Open Tile Palette",                    "タイルパレットを開く")
 MYE_STR(GateB_TilePaletteDirty, "the Tile Palette has unsaved changes",
                                 "タイルパレットに未保存の変更があります")
+
+// ---- M95 ----

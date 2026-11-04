@@ -1856,6 +1856,14 @@ bool RunAnimatorControllerSelfTest()
         spriteanim::Install(prevSpriteAnims);
     }
 
+    // ---- M95 sub-01 ----
+
+    // ---- M95 sub-04 ----
+
+    // ---- M95 sub-05 ----
+
+    // ---- M95 sub-06 ----
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Animator Controller self test: ALL PASS ====");
         return true;
