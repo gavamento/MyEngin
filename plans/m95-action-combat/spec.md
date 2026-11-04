@@ -51,6 +51,9 @@ Debug / Release / WARP でリプレイが一致する。
 | 22 | selftest の全走が長く、往復のたびに回すと coder の時間を食う | `EditorMain.cpp:586-614` の `MYE_SELFTEST_ONLY` は 4 値 (`servernet*` / `computescript` / `twod` / `m94`) のハードコードで、他のスイートは絞れない。所要時間のログも無い | **sub-00 を先頭に足す** (2026-11-04) | 「スイート名 → 関数」の登録表に置き換え、カンマ区切りの任意名で絞る。`--selftest-list`、スイートごとの ms ログ。既存 4 値は別名として残す。製品の挙動には触れない |
 | 24 | 既定層の 60 秒に余白が要るか (sub-00b の実測: N=9 で `--selftest` Debug が 59.7 / 54.6 秒、余白 0.3 秒) | 2 回のばらつきが約 5 秒。sub-01 が animatorcontroller に約 115 行のテストを足し、sub-04 / 06 / 03 / 05 も既定層のスイート (animatorcontroller / part / skeleton) に足す → 統合時点で 60 秒を割る見込み。CI は `--selftest-full` なので影響は手元の運用だけ | planner 裁定 (N=10、occlusion 5.2 秒を Full へ)。却下案: N=9 のまま (規則の字面どおりだが、統合後に受け入れ 39 を割る)。[ユーザーに聞ける] | §4.0 の規則に「実測の大きい方が 55 秒超なら N+1」を追加。sub-00b round 2 で N=10 にして再計測 |
 | 25 | `replay_verify.bat` の demo ジョブが `The system cannot find the batch label specified - chain` で 0.4 秒 FAIL (sub-00b の worktree、3 回) | 同じ bat が master / sub-01 の worktree で md5 同一・22 ジョブ PASS。単独実行 (`run_parallel.ps1 -Jobs demo`) は PASS。bat は UTF-8 で日本語の rem が多く、cmd の `call :label` はファイルをバイト位置で読み直すのでコンソールのコードページ (chcp 65001 の残留、memory `chcp-console-leak-trap`) や同時実行中の読み直しで探索が外れることがある。sub-00b は bat に触れていない | — | 環境要因と判定。司会の再実行 (sub-00b の worktree) が PASS ならそれを受け入れ条件の RV の証拠にする。FAIL なら coder が `chcp` を 932 に戻して 1 回だけ再実行し、それでも同じなら別件として台帳へ |
+| 26 | `pushPriority` の高い CC が低い CC を壁へ押し付けると、低い側が壁をすり抜ける / ボスと重なる (review-1 #1) | 各パスが「障害物 → CC」の順 (`PhysicsSystem.cpp:1630-1697`) なので最後に効くのは CC の押し出しになり、低い側の中心が壁の中へ入る。壁の押し出しは浅い側を選ぶので、厚さ < 2·r なら裏へ抜ける (reviewer のプローブ: 0.2 m / 0.5 m で貫通、1.0 m で 0.575 m めり込みボスと完全に重なる)。受け入れ 7〜11 も ADR-034 も障害物への押し付けを扱っていなかった = 仕様の穴 | planner 裁定 (review-1 応答)。[ユーザーに聞ける] | **「押し付けられた CC は押し返す」**: (i) tick 頭に各 CC の「壁の法線」(tick 頭のカプセルを `skinWidth` だけ太らせて当たる障害物のうち、法線が床・天井でないもの。最大 4 本、障害物 index 昇順) を求める。(ii) 高い側 `c` が低い側 `other` を押す向き (tick 頭同士の水平差 `other − c`) と `other` の壁の法線のどれかの内積が負なら、その組は同優先度として扱う (`c` が `other` の tick 頭のカプセルから押し出される = ボスが止まる)。(iii) 各パスの中で CC の押し出しを障害物の押し出しより**先**に行う (障害物が最後に効く = 中心が壁の中に残らない)。どれも tick 頭の値か自分の姿勢しか読まないので順序非依存のまま。却下案: (a′) 前 tick の押し返しを CC の欄に保存 = snapshot v69 と焼き込み hash 13 件の再採取が要る (tick 頭に計算し直せば欄は要らない)。(b) CC からの押し出し量を障害物への掃引で切る = 毎パス掃引が要り fp 演算と複雑さが大きい。パスの順の入れ替えだけ (iii 単独) = ボスは止まらず押し続け、低い側は壁とボスに挟まれて毎 tick 重なる |
+| 27 | ヒットストップ中に rootMotionY の CC / Rigidbody が縦へ流れる (review-1 #2) | 停止分岐は縦入力を立てない (`ApplyRootMotion(..., false)`、`AnimatorController.cpp:1843`) ので、物理は `velocity.y + g·dt` を使い、直前の `verticalInput` (例 +2 m/s) が残った `velocity.y` で弾道運動する (reviewer のプローブ: 停止 6 tick で +0.143 m、12 tick で +0.187 m、クリップ終端までずれが残る)。§2 #3「重力は止めない」は縦をクリップが決めていない被弾側の裁定で、§4.1 E「縦はクリップが決める」と食い違っていた = 仕様の穴 | planner 裁定 (review-1 応答)。[ユーザーに聞ける] | **縦をクリップが決めている entity は停止中に高さを保つ**: 停止中、凍らせたポーズプログラムに `rootMotionY != 0` かつ `weightQ > 0` の層が 1 つでもあり `applyRootMotion` なら、CC / 非 kinematic Rigidbody へ `useVerticalInput = true, verticalInput = 0` を書く (Rigidbody は `isSleeping = false`)。それ以外 (被弾側など rootMotionY でない) は #3 のまま重力が効く。判定は凍らせた SkinnedMesh の層 (停止中も保たれる) から引くので新しい欄は要らない。非ループの終端に張り付いた層でも保つ (停止中だけ宙で止まり、明けたら速度 0 から重力に戻る。ヒットストップの見た目として許容)。却下案: (b) 「停止中も縦は物理が続ける」を文書化してゲーム側で回避 = 目的 (跳び込み斬り中の被弾・命中) の主用途で毎回ゲーム側の回避が要る。前 tick の駆動を欄に保存して終端も厳密に分ける = snapshot v69 と hash 再採取が要る割に差が停止中の宙止まりだけ |
+| 28 | 並列実装用の予約マーカーが統合後も残っている (review-1 #3) | `// ---- M95 sub-NN (末尾 append) ----` は作業の申し送りで AGENTS.md §5 の「コメントを一時的な申し送りに使わない」に当たる。中身の無いもの (`SelfTestSuites.cpp:241`、`SkeletonSelfTest.cpp:1079`) もある。付録 A.2 / A.5 は統合後の扱いを決めていなかった | planner 裁定 | 中身の無いマーカーは消す。中身のあるマーカーは `// ---- M95: <機能名> ----` の見出し (サブ番号・「末尾 append」を含まない) に書き換える。マイルストーン名の見出しは既存の慣習 (`M94i` 等) と同じ。sub-10 で行う (コメントのみ、挙動なし) |
 | 23 | 並列実装で末尾 append が別の struct に入る誤マージ (memory `parallel-milestone-execution` #5) | 両ブランチが同じ `};` の直前に追記すると git は競合と見なさず自動解決する | 波単位の並列 (2026-11-04) | 付録 A で append 先を struct ごとに分け、sub-00 が予約マーカー (コメント行) を先に入れて各サブは自分のマーカーの下にだけ書く。統合時は付録 B の目視手順 |
 
 ## 3. スコープ
@@ -122,6 +125,7 @@ Debug / Release / WARP でリプレイが一致する。
   3. `rootMotionVelocity = (0,0,0)`、`rootMotionDeltaRotation = (0,0,0,1)`。`applyRootMotion` なら `ApplyRootMotion` を 0 で呼ぶ (CC の `moveInput.xz = 0`、非 kinematic Rigidbody の `velocity.xz = 0`、LocalTransform は動かない)。ヨーは回さない
   4. `--pauseTicks` して次の entity へ
 - 非アクティブ entity では `pauseTicks` を減らさない (凍結が優先)。
+- **停止中の縦 (review-1 #2、§2 #27)**: 3. の `ApplyRootMotion` は、凍らせた SkinnedMesh の層 (`driven_` のうち `poseLayerCount > 0` のもの。層は全メッシュで同じプログラム) に `rootMotionY != 0` かつ `weightQ > 0` の層が 1 つでもあれば `verticalDriven = true` (速度 0) で呼ぶ → CC / 非 kinematic Rigidbody は `useVerticalInput = true, verticalInput = 0` (Rigidbody は `isSleeping = false`) で高さを保つ。LocalTransform は delta 0 で動かない。無ければ従来どおり `false` (縦は物理 = 重力)。NavMeshAgent が握る間は従来どおり何も書かない。非アクティブ分岐は変えない。
 - ABI v32 (`MYE_API_VERSION 32`、`TilemapGetBounds` の次):
   - `int (*AnimatorSetPause)(void* engine, MyeEntityId entity, int32_t ticks)` — 上書き (累積しない)。負は 0。Animator 無しは 0 を返し何もしない。成功 1
   - `int32_t (*AnimatorGetPause)(void* engine, MyeEntityId entity)` — 残り tick。Animator 無しは -1
@@ -160,7 +164,12 @@ Debug / Release / WARP でリプレイが一致する。
   - `bool collideCharacters = false` — 両者が true の CC 同士だけ押し出す
   - `int32_t pushPriority = 0` — 高い側は低い側を無視する。等しければ互いに止まる
   - `bool reportContacts = false` — この CC が触れた相手を接触イベントとして出す
-- 押し出し (`SolveCharacters`、固定パスの中、`bodies` の走査の後): `c.cc->collideCharacters` のとき `chars` を index 昇順に走査し、`other != c`、`other.cc->collideCharacters`、`CanCollide(層)`、`other.cc->pushPriority >= c.cc->pushPriority` の CC について、**相手の tick 頭のカプセル** (`other.px/py/pz`、`other.radius/halfSeg`、ワールド Y 軸) と `shapes::Collide(pose, otherPose)` → `pose += n * depth`、接地 / 天井は障害物と同じ分岐 (#10)。plane2D の CC は z を押し出さない (既存規則)。
+- **障害物への押し付け (review-1 #1、§2 #26。以下の 3 点が下の押し出し規則に優先して効く)**:
+  - (i) 壁の法線の前計算: `collideCharacters` の CC が 1 体でも居る tick だけ、`SolveCharacters` の解決ループの**前**に、`collideCharacters` の各 CC について tick 頭のカプセル (半径 + `skinWidth`) と solid の障害物 (`bodies`、押し出しループと同じ除外: 自分の collider / `CanCollide` / plane2D の一方通行) を `shapes::Collide` し、法線 `n` (障害物 → CC) が `|n.y| < cosSlope` (床でも天井でもない) のものを障害物 index 昇順に最大 `kCharMaxWallNormals = 4` 本、`CharBody` (一時データ。コンポーネントにも snapshot にも載せない) に積む。
+  - (ii) 押し付けの判定: `c` の CC 走査で `other.cc->pushPriority < c.cc->pushPriority` の相手は従来どおり飛ばすが、**`other` の壁の法線のどれか `w` について `(other.px − c.px)·w.x + (other.pz − c.pz)·w.z < 0`** (どちらも tick 頭の位置、`c` が `other` を壁へ押し込む向き) なら飛ばさず同優先度と同じに押し出しを受ける (= ボスが止まる)。plane2D の CC は z 項を 0 とする。正規化はしない (符号だけ)。
+  - (iii) 各パスの中で CC 同士の押し出しを障害物の押し出しより**先**に行う (障害物が最後に効く)。`collideCharacters` でない CC は CC の走査に入らないので従来とビット同一。
+  - 既知の制限: 押し付けの伝播は 1 段だけ (ボス → A → B → 壁のとき、A は壁に触れていないので A は押されたまま B と同優先度で押し合う)。1 tick の歩幅が半径を超える速さ (r = 0.3 m で 18 m/s 超) では 1 tick で壁の裏まで押し込めるので保証しない。どちらも ADR-034 の影響欄と engine_spec §10.14 D に書く。
+- 押し出し (`SolveCharacters`、固定パスの中、`bodies` の走査の**前** (review-1 #1 で「後」から変更)): `c.cc->collideCharacters` のとき `chars` を index 昇順に走査し、`other != c`、`other.cc->collideCharacters`、`CanCollide(層)`、`other.cc->pushPriority >= c.cc->pushPriority` の CC について、**相手の tick 頭のカプセル** (`other.px/py/pz`、`other.radius/halfSeg`、ワールド Y 軸) と `shapes::Collide(pose, otherPose)` → `pose += n * depth`、接地 / 天井は障害物と同じ分岐 (#10)。plane2D の CC は z を押し出さない (既存規則)。
   `collideCharacters` の CC が 1 体も無いシーンでは `chars` の走査に入らない (fp 演算ゼロ)。
 - 接触の記録: `c.cc->reportContacts` の CC が押し出しのどのパスかで `Collide` が真になった相手 (剛体 `obs` と CC `other`) を対として記録する。CC↔CC は**どちらか**が `reportContacts` なら記録。接地プローブは記録しない (状態を変えない探りなので)。
   1 対 1 件: `key = (小 index << 32) | 大 index`、法線は**大 index → 小 index** (Collide の n は相手 → 自分なので、自分が小 index なら n、大なら -n)、`px/py/pz` は相手形状の表面上で自分の中心に最も近い点 (`ClosestPointOnShape`)、`impulse = 0`。
@@ -184,7 +193,7 @@ Debug / Release / WARP でリプレイが一致する。
 - `CharacterControllerComponent` 末尾に append (hash 対象): `bool useVerticalInput = false`、`float verticalInput = 0`。`SolveCharacters` 冒頭: `vy = useVerticalInput ? verticalInput : velocity.y + g·gravityScale·dt`。以降 (床で `vy<0 → 0`、天井、段差、`jumpSpeed`) は従来の順。書き戻しで `useVerticalInput = false` (消費)。
 - `RigidbodyComponent` 末尾に append (hash 対象): `bool useVerticalInput = false`、`float verticalInput = 0`。収集時 (`PhysicsSystem.cpp:1882`) `b.vy = (useVerticalInput && !kinematic) ? verticalInput : velocity.y` と `Body` に印 (`skipGravityY`) を写し、その tick の**全サブステップ**で y の重力積分 (`:3119` / `:3122`) を飛ばす (x/z の env 重力は従来どおり。減衰・接触・拘束は従来どおり効く)。**消費 (`useVerticalInput = false`) は収集時に行う** (書き戻しではなく。収集されない tick に旗が残る経路を作らないため。kinematic の旗も読まずに消す — sub-05 VERDICT round 1 で訂正)。印が無いボディは 1 命令も変わらない (分岐ゲート)。
 - どちらも `SetComponentField` からスクリプトが書ける (ABI は増やさない)。
-- 契約: `rootMotionY` のステートが骨を駆動している間、縦は**クリップが決める** (重力は効かない。y が 0 の tick は浮く)。歩き・待機に付けないこと。遷移中はもう一方の層の重み分だけ y が薄まる (線形混合、位置の飛びは無い)。
+- 契約: `rootMotionY` のステートが骨を駆動している間、縦は**クリップが決める** (重力は効かない。y が 0 の tick は浮く)。歩き・待機に付けないこと。遷移中はもう一方の層の重み分だけ y が薄まる (線形混合、位置の飛びは無い)。ヒットストップ中は高さを保つ (§4.1 A の「停止中の縦」)。
 
 #### F. イベント時刻の秒・フレーム指定 (sub-06)
 
@@ -286,6 +295,13 @@ H. round 2 で追加 (ユーザー判断)
 40. sub-00b: `--selftest-full` (Debug / Release) で回るスイートの集合と順が sub-00 着手前の全走と同じ (登録表の名前列の diff が空) で全 PASS = 検査を 1 本も落としていない。縮小したスイートは縮小前の値でも 1 回 PASS させた記録がある — 名前列の diff と PASS ログを貼る
 41. sub-00b: `--selftest-list` の `fast` 件数 + `full` 件数 = 登録表の本数 — 出力と件数を貼る
 
+I. review-1 で追加 (planner 裁定、§2 #26〜#28)
+42. 押し付け: 地面と x 方向の箱の壁 (厚さ 0.2 / 0.5 / 1.0 m の 3 通り) を置き、`pushPriority` 1 の CC (r 0.3、`moveInput.x = 1.5`) が `pushPriority` 0 の CC (r 0.3) を壁へ押す (どちらも `collideCharacters`、300 tick)。全 tick の末で低い側の中心 x が `壁面 x − r + 1e-3` 以下 (すり抜けない・めり込まない)、高い側の中心 x が `低い側の中心 x − 2r + 歩幅 (1.5/60) + 1e-3` 以下 (重なりは最大 1 歩、完全には重ならない)、高い側の x が最後の 60 tick で 1e-3 以上進まない (止まる)。対照: (a) 同じ配置で壁が無ければ低い側は押されて動く (従来)、(b) 低い側が壁に沿って (壁と平行に) 押される配置では押し付け扱いにならず低い側が壁沿いに動く、(c) 同優先度は従来どおり互いに止まる。受け入れ 7〜11 の既存テストは全 PASS — ST(physics)
+43. 押し付けの判定は tick 頭の値だけを見る: 同じシーンで CC の生成順 (entity index) を入れ替えても、42 の 3 通りの最終位置が入れ替えた entity どうしで一致する (ビット一致) — ST(physics)
+44. ヒットストップ × 縦ルートモーション: 空中の CC (applyRootMotion、rootMotionY、非ループの Rise) の 15 tick 目に `pauseTicks = 6` / `12` を掛けると、停止中の各 tick で CC の y が変わらず (`|Δy| <= 1e-5`)、`velocity.y == 0`。停止の明けた後の y の列が停止しなかった場合の列と (停止 tick 数ずれて) 一致し (`<= 1e-4`)、クリップ終端の y の差が `<= 1e-4`。非 kinematic Rigidbody でも停止中に y が変わらない。rootMotionY で**ない**ステートの CC は停止中も重力で落ちる (§2 #3 は不変) — ST(animatorcontroller)。受け入れ 2 の「停止中は動かない」は縦を含む
+45. 台帳の残り minor のテスト 2 件: (1) `clipEvents` の `fps: -30` が警告して 60 になり `frame: 3` → tick 3、(2) 非アクティブ entity の `pauseTicks` は非アクティブの間減らず (10 tick で 5 のまま)、アクティブに戻すと減る (3 tick で 2) — ST(animatorcontroller)
+46. 予約マーカーの整理: `grep -rn "// ---- M95 sub-" src` が 0 件、`grep -rn -A1 "// ---- M95" src` で直下が空行や `};` のマーカーが 0 件。コメント以外の差分が無い (`git diff` の `+` / `-` 行が全てコメント行か空行)。engine_spec §10.14 A / D / E と ADR-034 の影響欄、test_checklists M95 節が 42〜44 の規則と既知の制限を書いている。`docs\dogfooding.md` の台帳見出しと engine_spec §12.2 の期間が M95 時点に直っている — grep の出力と diff を貼る、CR
+
 ## 6. サブ分割
 
 | サブ | 波 | 題名 | 依存 | 受け入れ条件 (5. の番号) | コミット件名候補 |
@@ -299,12 +315,16 @@ H. round 2 で追加 (ユーザー判断)
 | sub-03 | Wave 2 | 部位への球の重なり・カプセルの重なり・球の掃引 (ABI v32 の残り 3 本 = 193) | sub-01 (ABI スロット順)、Wave 1 統合 | 14, 15, 16, 31 | `M95c: 部位への球 / カプセルの重なりと球の掃引 (OverlapSphereParts / SphereCastParts / OverlapCapsuleParts、ABI v32 = 193 スロット)` |
 | sub-05 | Wave 2 | ルートモーションの縦成分 (ステート rootMotionY、CC / Rigidbody の verticalInput、snapshot v68) | sub-02, sub-04、Wave 1 統合 | 21, 22, 23, 24, 25, 32 | `M95e: ルートモーションの縦成分 (ステートの rootMotionY、CC / Rigidbody の verticalInput、snapshot v68)` |
 | sub-07 | Wave 3 | 文書 (engine_spec / ADR 索引 / dogfooding / test_checklists) + 最終統合確認 | sub-01〜06、Wave 2 統合 | 29, 30 | `M95g: 文書 (engine_spec の M95 節、ADR-034 の索引、test_checklists)` |
+| sub-08 | review-1 (並列可) | 壁へ押し付けられた CC の押し返し (壁の法線の前計算、押し付けの組は同優先度、CC の押し出しを障害物の前へ) | sub-07 (master 592ffff) | 42, 43 | `M95h: pushPriority の高い CC が低い CC を壁へ押し付けたときに低い側が壁をすり抜けないようにする (押し付けの組は同優先度、CC の押し出しを障害物より先に)` |
+| sub-09 | review-1 (並列可) | ヒットストップ中は縦ルートモーションの高さを保つ + 残り minor のテスト 2 件 | sub-07 (master 592ffff) | 44, 45 | `M95i: ヒットストップ中は rootMotionY のキャラが高さを保つ (CC / Rigidbody に縦入力 0)、fps 負値と非アクティブの pauseTicks のテスト` |
+| sub-10 | review-1 (sub-08 / 09 の後) | 予約マーカーの整理と文書 (§10.14 A / D / E、ADR-034、test_checklists、残り minor の文書 2 件) | sub-08, sub-09 | 46 | `M95j: 並列実装の予約マーカーを機能の見出しへ整理し、押し付けとヒットストップ中の縦を文書へ書く` |
 
 波の根拠:
 - sub-00 は「登録表 + フィルタ + ms ログ + full の入口 + CI + マーカー」に絞り、計測を要する層分けは sub-00b に割った (Wave 0 を短くして Wave 1 を早く切る。sub-00b は `SelfTestSuites.cpp` の `tier` 列と縮小するスイートの中身だけを触るので Wave 1 の 4 本と衝突しない。縮小対象が M95 の触るスイート (physics / animatorcontroller / part) に当たる場合は「不安・質問」で planner へ)
 - Wave 1 の 5 本 (sub-00b を含む) は触るファイルの重なりが「同じファイルの別の場所」に限られ (AnimatorController.cpp: sub-01 は Update 冒頭、sub-04 は ToJson / FromJson の遷移と Update 1. と AnimatorPlay、sub-06 は FromJson の clipEvents。AnimatorControllerSelfTest.cpp / Components.h / Components.cpp / SimSnapshot.h は付録 A のマーカーで分離)、同時ビルド 2〜3 本の範囲に収めるため sub-03 / sub-05 を Wave 2 へ回す
 - sub-03 は ABI スロットを sub-01 の後ろに積む (順を守るため直列)。sub-05 は CC の末尾 append を sub-02 の後ろに、controller v3 を sub-04 の後ろに積む
 - sub-07 は全コード完了後
+- review-1 応答 (sub-08 / 09 / 10): sub-08 は `PhysicsSystem.cpp` / `PhysicsSelfTest.cpp`、sub-09 は `AnimatorController.cpp` / `AnimatorControllerSelfTest.cpp` だけを触るので並列にできる (どちらも欄を足さない = snapshot 版・焼き込み hash・ABI は不変。押し付けの規則は `collideCharacters` の CC にしか効かず、停止中の縦は `pauseTicks > 0` かつ rootMotionY の entity にしか効かないので既存シーンはビット同一)。文書とマーカーは両方のファイルにまたがるので sub-10 に集め、sub-08 / 09 の後に 1 本で行う
 
 ## 7. 未決事項・リスク
 
@@ -318,6 +338,7 @@ H. round 2 で追加 (ユーザー判断)
 
 ## 8. 変更履歴
 
+- 2026-11-05 reviewer round 1 (review-1.md) への応答: #1 [major] を仕様の穴として認め、§2 #26 と §4.1 D に「障害物への押し付け」(壁の法線の前計算 / 押し付けの組は同優先度 / CC の押し出しを障害物の前へ) を追加し、押し出しの位置を「`bodies` の走査の後」から「前」へ変更。#2 [major] を仕様の穴として認め、§2 #27 と §4.1 A に「停止中の縦」(rootMotionY の層があれば縦入力 0 で高さを保つ) を追加、§4.1 E の契約に 1 文。#3 [minor] を認め §2 #28 (マーカーは見出しへ書き換え、空は削除)。#4 [minor] は台帳の残り minor のうちテスト 2 件を sub-09 で、文書 2 件を sub-10 で閉じる。受け入れ 42〜46、§6 に sub-08 / 09 / 10 を追加
 - 2026-11-05 sub-05 VERDICT round 1 (出所: coder SELF_EVAL の「不安・質問」1 / 2 と「仕様との差分」): §4.1 E に「駆動した」の定義 (サンプル区間が空でない層。非ループの終端に張り付いた層は駆動しない → 重力に戻る) を追加 (受け入れ 24 の「クリップ終端で重力へ戻る」を確定。coder 案 (a) ステート切り替えのみ は却下 = 終端で浮き続け、exit 遷移の間も浮く)。Rigidbody の `useVerticalInput` の消費を「書き戻し」から「収集時」に訂正。`rootMotionVelocity.y` は applyRootMotion の有無を問わず書くと明記。§7 に一方通行床の 1 tick 遅れを既知の制限として記録 (sub-07 の文書へ)
 - 2026-11-04 sub-00b VERDICT round 1 (出所: coder SELF_EVAL の「不安・質問」2 / 3): §4.0 sub-00b の層分け規則に余白 (実測 total の大きい方が 55 秒超なら N+1) を追加 (§2 #24、planner 裁定、[ユーザーに聞ける])。physics が Full に入ることを明記し、§5 冒頭の 3 段規則の「SELF_EVAL を返す前」に「触った Full スイートを名指し」を追加。§2 #25 に replay_verify の demo ジョブのラベルエラーを環境要因として記録
 - 2026-11-04 sub-01 VERDICT round 1 (出所: coder SELF_EVAL の「仕様との差分」): §4.1 A と付録 A.1 の「`ScriptAPI.h` の inline 糖衣」を削除 (同ファイルに Animator 系の C++ 糖衣は元々無い — 仕様の前提違い)。§4.1 A と付録 A.1 に `tools\check_rules.ps1` の `$apiVersionSlots` (`32 = 190` → sub-03 で `32 = 193`) を追記 (仕様の穴。sub-03.md の触る場所にも追記)
@@ -356,6 +377,7 @@ H. round 2 で追加 (ユーザー判断)
 | `SkinnedMeshComponent::PoseLayer` | `// ---- M95 sub-05 ----` (PoseLayer の最後の欄の下) | sub-05 | `int32_t rootMotionY = 0;` |
 
 `Components.cpp` の反射登録も同じ struct の登録の末尾 (`});` の直前) に同名のマーカー。Rigidbody / Animator / CC の 3 箇所 (PoseLayer は未登録のまま)。
+**統合後の扱い (review-1 #3、§2 #28)**: 付録 A.2 / A.5 / A.6 のマーカーは並列実装の間だけのもの。全サブの統合後に sub-10 が、中身の無いマーカーを消し、中身のあるマーカーを `// ---- M95: <機能名> ----` の見出しに書き換える。
 
 ### A.3 `kSimSnapshotVersion` (`src\Engine\Engine\Replay\SimSnapshot.h:175`)
 

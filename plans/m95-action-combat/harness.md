@@ -2,7 +2,7 @@
 
 - 依頼原文: M95 アクション戦闘の土台 (事前調査は plans\m95-action-combat\design-draft.md)
 - 開始: 2026-11-04 / 基点コミット: 69c2207c2b8c5c79af7d37ababad0b03d397d228
-- フェーズ: レビュー (全サブ OK。Wave 1 統合 e1bba10、Wave 2 統合 740bd64、sub-07 9cfbff0。Phase 3 round 1 FAIL → planner の REVIEW_RESPONSE 待ち)
+- フェーズ: レビュー (全サブ OK。Wave 1 統合 e1bba10、Wave 2 統合 740bd64、sub-07 9cfbff0。Phase 3 round 1 FAIL → planner が sub-08 / 09 / 10 を新設 (spec §2 #26〜#28、受け入れ 42〜46)。sub-08 / 09 を並列で実装 → 統合 → sub-10 → review round 2)
 - 仕様確定: 2026-11-04 (planner PLAN_RESULT round 2)。番号: ABI v32 = 193 スロット、SimSnapshot v66 / v67 / v68、controller アセット v3、ADR-034、TypeId 追加なし
 
 ## サブ進捗
@@ -17,6 +17,9 @@
 | sub-03 部位の重なり・掃引 (ABI 193 スロット) | 2 | sub-01、Wave 1 統合 | OK | 1 | 6cc89b5 (m95/sub-03) | worktree `C:/HAL/MyEngin-wt/sub-03` (基点 e1bba10)。Release full 全 PASS、RV 22 ジョブ一致、ABI 照合 193/193。Debug full の fractureeditor FAIL は負荷要因 (下記申し送り) |
 | sub-05 ルートモーションの縦成分 (snapshot v68) | 2 | sub-02, sub-04、Wave 1 統合 | OK | 2 | d8c2ec9 (m95/sub-05) | worktree `C:/HAL/MyEngin-wt/sub-05` (基点 e1bba10)。round 2 で Debug / Release full 0 failed、CR 0 error、RV 22 ジョブ PASS。round 2 の SELF_EVAL は coder の返送がツールで拒否され、司会が出力ファイルから取り出して転送 |
 | sub-07 文書 + 最終統合確認 | 3 | 全部 | OK | 1 | 9cfbff0 | master 直 (worktree なし)。受け入れ 30 は「波の統合」表の Wave 2 行で代用 |
+| sub-08 壁へ押し付けられた CC の押し返し (review-1 #1) | 4 | master 592ffff | 未着手 | 0 | | 受け入れ 42, 43。ST(physics) を名指し。sub-09 と並列可 |
+| sub-09 ヒットストップ中の縦の高さ + テスト 2 件 (review-1 #2, #4) | 4 | master 592ffff | 未着手 | 0 | | 受け入れ 44, 45。sub-08 と並列可 |
+| sub-10 予約マーカーの整理と文書 (review-1 #3, #4) | 5 | sub-08, sub-09 の統合 | 未着手 | 0 | | 受け入れ 46。master 直 |
 
 ## 波の統合
 | 波 | 統合コミット | 目視 (付録 B) | 検証 |
