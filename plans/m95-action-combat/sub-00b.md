@@ -47,4 +47,49 @@ spec §5 の 38, 39, 40, 41。
 
 ## 実装メモ (coder が追記)
 
+### round 1 (coder、worktree の再計測)
+
+計測: 3 スロット全取得で単独。`--selftest-full` を Debug 2 回 / Release 2 回 (全 110 スイート 0 failed)。単位 ms。上位 14 本だけ載せる (全表は 110 行、残りは各 5 秒未満)。
+
+| 順 | スイート | Debug 1 | Debug 2 | Release 1 | Release 2 | tier |
+|---|---|---|---|---|---|---|
+| 1 | fracture | 207049 | 191166 | 16583 | 16507 | Full |
+| 2 | servernet | 100248 | 91528 | 9468 | 9485 | Full |
+| 3 | physics | 55005 | 51625 | 5501 | 5468 | Full |
+| 4 | navagent | 39699 | 39776 | 2506 | 2620 | Full |
+| 5 | fractureeditor | 27582 | 24627 | 1978 | 2201 | Full |
+| 6 | surfacedeferred | 16997 | 16682 | 15460 | 15500 | Full |
+| 7 | twoddemo | 13066 | 12390 | 1526 | 1472 | Full |
+| 8 | surfacematerial | 10143 | 10089 | 9378 | 9530 | Full |
+| 9 | behaviortree | 9495 | 9430 | 415 | 426 | Full |
+| 10 | occlusion | 5246 | 5206 | 5106 | 5148 | Full (round 2) |
+| 11 | online | 5046 | 5031 | 5034 | 5047 | Fast |
+| 12 | meshlod | 4754 | 4772 | 951 | 958 | Fast |
+| 13 | simparallel | 4810 | 4715 | 209 | 220 | Fast |
+| 14 | watersurface | 4799 | 4691 | 4394 | 4345 | Fast |
+
+- N の決め方: 全スイートの Debug 平均合計 = 518.2 秒。上位 N 本を Full にした残り = N=8 で 64.3 秒 (> 60)、**N=9 で 54.9 秒 (<= 60)**。最小の N = 9 (上の表の Full)。Debug 2 回の差は fracture (207 / 191 秒) と servernet (100 / 92 秒) が大きいだけで、順位は 2 回とも同じ
+- Release の `--selftest-full` total は 84.7 / 85.2 秒 (Release は既定層と full で分けない。tier は共通)
+- 縮小の検討 (採否):
+  - fracture / fractureeditor: 不採用。検査の本数が多く 1 つの res で縮む形に見えない (全文は読んでいない。ベンチ系は既に `--fracture-bench` へ移済み。FractureSelfTest.cpp:1410)。縮めると検査が落ちるので Full
+  - servernet / navagent / behaviortree / physics: 不採用。中身を精査していないが、決定性・並走一致を見る系で、パラメータを縮めると被覆が変わる恐れがあり、spec の「検査を落とさない」を優先して Full へ移すだけにした (縮小の再検討は申し送り)
+  - twoddemo: 焼き込みハッシュ (3000 tick) なので値を変えない (spec) → Full
+  - surfacedeferred / surfacematerial: GPU 描画の実走が必要で、Debug / Release 両方で約 10〜17 秒かかる (Release でも同じ) → Full
+  - 縮小したスイートは 0 本。よって「縮小前の値で 1 回 PASS」は該当なし
+- 検証欄の計測 (既定層、Debug、同一 PC): `[selftest] total 101 suites, 0 failed, 59701 ms (mode: fast)` と `54602 ms`。1 回目は 60 秒まで 0.3 秒しかない (ばらつきの余白が薄い。申し送り参照)
+- `--selftest-list`: fast 101 + full 9 = 110 = 登録表の本数
+- 名前列の diff: HEAD の登録表の名前 (110) と Debug / Release の full の実走順の名前 (110) は完全一致 (差分 0)
+- 追加: `VerifySelfTestSelectionRules()` (SelfTestSuites.cpp) を `engineindexdump` スイート (EngineIndexDumpSelfTest.cpp) から呼ぶ。sub-00 VERDICT nit (2) の対応 (fast / full / only の並びと重複除去、別名 1 個の並び、servernet-* の前方一致、未知名)
+
+### round 2 (FIX_REQUEST #1: 余白の規則)
+
+- 余白規則 (実測 total の大きい方が 55 秒超なら N+1) により N=9 (実測 59.7 / 54.6 秒) から N=10 へ。occlusion を Full に移した
+- 上の round 1 の説明 (N=9) は round 1 時点のもの。round 2 の確定は N=10、Full は 10 本 (表の tier 列のとおり)
+
+- 既定層 Debug (単独 3 スロット): `[selftest] total 100 suites, 0 failed, 50315 ms (mode: fast)` / `49620 ms` (大きい方 50.3 秒 <= 55)
+- `--selftest-list`: fast 100 + full 10 = 110
+- check_rules: 0 error(s), 50 warning(s)。full の再実行は不要 (tier は集合を変えない)
+
 ## フィードバック履歴
+- round 1: VERDICT REWORK (planner、2026-11-04)。must 1 件: 既定層の余白。実測 59.7 / 54.6 秒は受け入れ 39 を満たすが余白 0.3 秒で、Wave 1 / 2 が既定層のスイート (animatorcontroller / part / skeleton) にテストを足すので統合後に割る見込み。spec §4.0 の規則に「その N で `--selftest` (Debug) を 2 回回した total の大きい方が 55 秒を超えるなら N+1」を追加した → N=10 (occlusion 5.2 秒を Full へ) にして既定層を 2 回再計測し、`--selftest-list` (fast 100 + full 10 = 110) を貼る。`--selftest-full` Debug / Release の再実行は不要 (tier は集合を変えない。round 1 の結果を流用してよい)。CR は再実行。RV は司会の再実行 (sub-00b worktree) が PASS ならそれを証拠にする (demo の `call :chain` ラベルエラーは環境要因と判定、spec §2 #25)。質問 3 (physics が Full): 許容 (spec §4.0 に明記。physics を触るサブは往復中 ST(physics) を名指し、OK 前の full で全走)。VerifySelfTestSelectionRules を engineindexdump に置いた判断は妥当 (M95 が触らないスイート)。縮小 0 本・採否の理由は受け入れ 38 の要件を満たす
+- round 2: VERDICT OK (planner、2026-11-05)。occlusion を Full にして N=10、既定層 Debug 50.3 / 49.6 秒 (大きい方 55 秒以内)、list fast 100 + full 10 = 110、CR 0 error。full Debug / Release は round 1 の 110 スイート 0 failed ×2 ×2 を流用 (tier は集合を変えない)。RV は司会の再実行 (sub-00b worktree、22 ジョブ PASS 255 s、demo 114.5 s) を証拠にし、round 1 の demo FAIL は環境要因で確定。ユーザー判断: N=10 (司会の AskUserQuestion)。申し送り: 別名 m95 の並びは VerifySelfTestSelectionRules が固定 / fracture・servernet の縮小は後続 / sub-06 nit (1) の fps 負値テストは sub-07 へ

@@ -48,6 +48,10 @@ std::span<const SelfTestAlias> GetSelfTestAliases();
 // only 指定は tier を問わず表の順に重複なく回す。例外: 別名 1 個だけの指定は別名の並びで回す
 bool ResolveSelfTestSelection(const std::string& onlyValue, bool full, SelfTestSelection& out);
 
+// ResolveSelfTestSelection の選択規則 (fast / full / only、別名の並び、servernet-* の前方一致、未知名) を検査し、
+// 守れていない規則の説明を返す。空なら全て満たしている。表の tier や本数には依存しない
+std::vector<std::string> VerifySelfTestSelectionRules();
+
 // --selftest-list の出力 (名前と tier、続けて別名)
 void PrintSelfTestList();
 
