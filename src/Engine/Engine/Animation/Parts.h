@@ -68,6 +68,20 @@ struct PartRayHit {
 bool RaycastParts(World& world, EntityID root, uint64_t tag, const DirectX::XMFLOAT3& origin,
                   const DirectX::XMFLOAT3& dir, float maxDist, PartRayHit& out);
 
+// 部位への重なり / 掃引 (M95)。候補収集と決定論規約は RaycastParts と同じ (Parts.cpp の
+// CollectPartCandidates 1 本): tag / root / アクティブ / 非縮退の絞り込み、entity.index 昇順。
+// 重なりは out を空にしてから index 昇順で積む。radius <= 0 は 0 件
+void OverlapSphereParts(World& world, EntityID root, uint64_t tag, const DirectX::XMFLOAT3& center,
+                        float radius, std::vector<EntityID>& out);
+// カプセルは両端点 (半球の中心) と半径。p0 と p1 がほぼ同じ (< 1e-6) なら球として判定する
+void OverlapCapsuleParts(World& world, EntityID root, uint64_t tag, const DirectX::XMFLOAT3& p0,
+                         const DirectX::XMFLOAT3& p1, float radius, std::vector<EntityID>& out);
+// 球の掃引。sphere 部位は膨張レイ、box 部位は SphereCastWorld と同じ保守的前進。
+// point は元形状の表面点、normal は膨張面の法線。radius <= 0 は RaycastParts と同じ。
+// maxDist <= 0 は 1e9。dir は正規化済み前提
+bool SphereCastParts(World& world, EntityID root, uint64_t tag, const DirectX::XMFLOAT3& origin,
+                     const DirectX::XMFLOAT3& dir, float radius, float maxDist, PartRayHit& out);
+
 // 部位の構造ロック (M48f)。「プレハブメンバ (PrefabLink 持ち) かつ Part 持ち」は
 // **リネーム / 削除 / 再親化を禁止する**。部位はアセットが公開する API そのもので、
 // インスタンス側で名前や場所を動かされると `FindPart("Hips/LegL")` が黙って壊れる。

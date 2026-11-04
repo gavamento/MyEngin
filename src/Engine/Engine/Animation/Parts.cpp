@@ -115,14 +115,23 @@ ShapePose MakePartBoundsPose(const PartBoundsComponent& b, const DirectX::XMFLOA
     return p;
 }
 
-bool RaycastParts(World& world, EntityID root, uint64_t tag, const DirectX::XMFLOAT3& origin,
-                  const DirectX::XMFLOAT3& dir, float maxDist, PartRayHit& out)
+namespace {
+
+// 判定に使える部位 (収集済み: tag 一致 / root 配下 / アクティブ / 非縮退) とそのワールド pose
+struct PartCandidate {
+    EntityID e;
+    ShapePose pose;
+};
+
+// RaycastParts / Overlap* / SphereCastParts 共通の候補収集。entity.index 昇順で out へ積む
+// (アーキタイプ順に依存させない = 同 t / 同結果は低 index が勝つ決定論規約の土台)
+void CollectPartCandidates(World& world, EntityID root, uint64_t tag,
+                           std::vector<PartCandidate>& out)
 {
+    out.clear();
     if (!root.IsNull() && !world.IsAlive(root)) {
-        return false;
+        return;
     }
-    // 収集 → index 昇順 sort → 厳密 < のみ更新 (RaycastWorld と同じ決定論規約:
-    // アーキタイプ順に依存せず、同 t は低 index が勝つ)
     struct Cand {
         EntityID e;
         const PartBoundsComponent* b;
@@ -148,7 +157,6 @@ bool RaycastParts(World& world, EntityID root, uint64_t tag, const DirectX::XMFL
     std::sort(cands.begin(), cands.end(),
               [](const Cand& a, const Cand& b) { return a.e.index < b.e.index; });
 
-    bool found = false;
     for (const Cand& c : cands) {
         if (!IsEntityActive(world, c.e)) {
             continue; // 物理クエリと同じ規約 (無効エンティティは当たらない)
@@ -173,9 +181,90 @@ bool RaycastParts(World& world, EntityID root, uint64_t tag, const DirectX::XMFL
         if (degenerate) {
             continue;
         }
-        const ShapePose pose = MakePartBoundsPose(*c.b, *c.wm);
+        out.push_back({ c.e, MakePartBoundsPose(*c.b, *c.wm) });
+    }
+}
+
+// 球 pose (無回転)
+ShapePose MakeSpherePose(const DirectX::XMFLOAT3& center, float radius)
+{
+    ShapePose p;
+    p.shape = collidershape::kSphere;
+    p.identityRot = 1;
+    p.px = center.x;
+    p.py = center.y;
+    p.pz = center.z;
+    p.radius = radius;
+    return p;
+}
+
+// 両端点 (半球の中心) と半径のカプセル pose。軸は Shapes.cpp の CapsuleSegment に合わせて by。
+// 残り 2 軸は、軸との直交に最も近い座標軸との外積で決定的に作る
+ShapePose MakeCapsulePose(const DirectX::XMFLOAT3& p0, const DirectX::XMFLOAT3& p1, float radius)
+{
+    const float dx = p1.x - p0.x, dy = p1.y - p0.y, dz = p1.z - p0.z;
+    const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const DirectX::XMFLOAT3 mid = { (p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f,
+                                    (p0.z + p1.z) * 0.5f };
+    if (len < 1e-6f) {
+        return MakeSpherePose(mid, radius);
+    }
+    const float ax = dx / len, ay = dy / len, az = dz / len;
+    const float aax = std::fabs(ax), aay = std::fabs(ay), aaz = std::fabs(az);
+    float ux = 0.0f, uy = 0.0f, uz = 0.0f;
+    if (aax <= aay && aax <= aaz) {
+        ux = 1.0f;
+    } else if (aay <= aaz) {
+        uy = 1.0f;
+    } else {
+        uz = 1.0f;
+    }
+    // bx = normalize(axis × u)、bz = bx × axis
+    float bxx = ay * uz - az * uy, bxy = az * ux - ax * uz, bxz = ax * uy - ay * ux;
+    const float bl = std::sqrt(bxx * bxx + bxy * bxy + bxz * bxz);
+    bxx /= bl;
+    bxy /= bl;
+    bxz /= bl;
+    ShapePose p;
+    p.shape = collidershape::kCapsule;
+    p.identityRot = 0;
+    p.px = mid.x;
+    p.py = mid.y;
+    p.pz = mid.z;
+    p.bx[0] = bxx; p.bx[1] = bxy; p.bx[2] = bxz;
+    p.by[0] = ax; p.by[1] = ay; p.by[2] = az;
+    p.bz[0] = bxy * az - bxz * ay;
+    p.bz[1] = bxz * ax - bxx * az;
+    p.bz[2] = bxx * ay - bxy * ax;
+    p.radius = radius;
+    p.halfSeg = len * 0.5f;
+    return p;
+}
+
+void OverlapPartsWithPose(World& world, EntityID root, uint64_t tag, const ShapePose& probe,
+                          std::vector<EntityID>& out)
+{
+    std::vector<PartCandidate> cands;
+    CollectPartCandidates(world, root, tag, cands);
+    for (const PartCandidate& c : cands) {
+        if (shapes::Overlap(probe, c.pose)) {
+            out.push_back(c.e);
+        }
+    }
+}
+
+} // namespace
+
+bool RaycastParts(World& world, EntityID root, uint64_t tag, const DirectX::XMFLOAT3& origin,
+                  const DirectX::XMFLOAT3& dir, float maxDist, PartRayHit& out)
+{
+    // 厳密 < のみ更新 (RaycastWorld と同じ決定論規約: 同 t は低 index が勝つ)
+    std::vector<PartCandidate> cands;
+    CollectPartCandidates(world, root, tag, cands);
+    bool found = false;
+    for (const PartCandidate& c : cands) {
         float t = 0, nx = 0, ny = 0, nz = 0;
-        if (!shapes::Raycast(pose, origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, maxDist, t,
+        if (!shapes::Raycast(c.pose, origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, maxDist, t,
                              nx, ny, nz)) {
             continue;
         }
@@ -188,6 +277,105 @@ bool RaycastParts(World& world, EntityID root, uint64_t tag, const DirectX::XMFL
         }
     }
     return found;
+}
+
+void OverlapSphereParts(World& world, EntityID root, uint64_t tag, const DirectX::XMFLOAT3& center,
+                        float radius, std::vector<EntityID>& out)
+{
+    out.clear();
+    if (radius <= 0.0f) {
+        return;
+    }
+    OverlapPartsWithPose(world, root, tag, MakeSpherePose(center, radius), out);
+}
+
+void OverlapCapsuleParts(World& world, EntityID root, uint64_t tag, const DirectX::XMFLOAT3& p0,
+                         const DirectX::XMFLOAT3& p1, float radius, std::vector<EntityID>& out)
+{
+    out.clear();
+    if (radius <= 0.0f) {
+        return;
+    }
+    OverlapPartsWithPose(world, root, tag, MakeCapsulePose(p0, p1, radius), out);
+}
+
+bool SphereCastParts(World& world, EntityID root, uint64_t tag, const DirectX::XMFLOAT3& origin,
+                     const DirectX::XMFLOAT3& dir, float radius, float maxDist, PartRayHit& out)
+{
+    if (radius <= 0.0f) {
+        return RaycastParts(world, root, tag, origin, dir, maxDist, out);
+    }
+    // 以降は PhysicsQueries.cpp の SphereCastWorld の対象 1 件分と同じ式・同じ定数
+    if (maxDist <= 0.0f) {
+        maxDist = 1e9f;
+    }
+    std::vector<PartCandidate> cands;
+    CollectPartCandidates(world, root, tag, cands);
+
+    float bestT = maxDist;
+    bool hit = false;
+    for (const PartCandidate& c : cands) {
+        if (c.pose.shape == collidershape::kSphere) {
+            // 半径を radius だけ膨らませた球へのレイ = 掃引球の解析解
+            ShapePose inflated = c.pose;
+            inflated.radius += radius;
+            float ht, nx, ny, nz;
+            if (!shapes::Raycast(inflated, origin.x, origin.y, origin.z, dir.x, dir.y, dir.z,
+                                 bestT, ht, nx, ny, nz)
+                || ht >= bestT) { // 昇順走査 + 厳密 < なので同 t は低 index が残る
+                continue;
+            }
+            bestT = ht;
+            hit = true;
+            out.entity = c.e;
+            out.distance = ht;
+            // 掃引球の中心位置から元形状の表面点を復元 (法線は膨張面と同方向)
+            const float cx = origin.x + dir.x * ht, cy = origin.y + dir.y * ht,
+                        cz = origin.z + dir.z * ht;
+            out.point = { cx - nx * radius, cy - ny * radius, cz - nz * radius };
+            out.normal = { nx, ny, nz };
+        } else {
+            // 箱: 保守的前進 (固定 32 回。ヒット後も回数は消化する)
+            float ct = 0.0f;
+            bool found = false;
+            float foundT = 0.0f;
+            for (int step = 0; step < 32; ++step) {
+                if (found || ct > bestT) {
+                    continue;
+                }
+                const float px = origin.x + dir.x * ct;
+                const float py = origin.y + dir.y * ct;
+                const float pz = origin.z + dir.z * ct;
+                const float d = shapes::DistanceToShape(c.pose, px, py, pz) - radius;
+                if (d < 1e-4f) {
+                    found = true;
+                    foundT = ct;
+                } else {
+                    ct += d;
+                }
+            }
+            if (!found || foundT >= bestT) {
+                continue;
+            }
+            const float px = origin.x + dir.x * foundT;
+            const float py = origin.y + dir.y * foundT;
+            const float pz = origin.z + dir.z * foundT;
+            float qx, qy, qz;
+            shapes::ClosestPointOnShape(c.pose, px, py, pz, qx, qy, qz);
+            const float vx = px - qx, vy = py - qy, vz = pz - qz;
+            const float vlen = std::sqrt(vx * vx + vy * vy + vz * vz);
+            if (vlen < 1e-6f) {
+                continue; // 始点が形状内 (縮退) は報告しない
+            }
+            bestT = foundT;
+            hit = true;
+            out.entity = c.e;
+            out.distance = foundT;
+            out.point = { qx, qy, qz };
+            out.normal = { vx / vlen, vy / vlen, vz / vlen };
+        }
+    }
+    return hit;
 }
 
 bool IsStructureLocked(World& world, EntityID e)

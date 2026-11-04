@@ -51,4 +51,12 @@ spec §5 の 14, 15, 16, 31。
 
 ## 実装メモ (coder が追記)
 
+### round 1
+
+- Parts.cpp: 候補収集を CollectPartCandidates に切り出し RaycastParts / Overlap 2 本 / SphereCastParts が共有 (RaycastParts の判定列は同一)。
+- カプセル軸は Shapes.cpp CapsuleSegment に合わせて by。残り 2 軸は軸と最も直交に近い座標軸との外積。
+- ABI v32 の 191〜193 (EngineAPI.h / EngineApiTable.cpp / Interop.cs / ScriptAPI.h / MyeScript.cs)、check_rules `32 = 193`、PartSelfTest に 14/15/16/31。
+- 検証: Debug/Release ビルド OK、part,twodabi / --selftest PASS、Release --selftest-full PASS、check_rules 0 error、順の機械照合 193==193、dotnet build OK、replay_verify は demo/parts が cmd のバッチ label 事故 (chcp) で落ち --job で個別再実行 PASS。Debug --selftest-full は fractureeditor の cancel/shutdown のタイミング系で FAIL (負荷時のみ、詳細は SELF_EVAL)。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-05、条件付き)。must 無し。条件: Debug --selftest-full の fractureeditor FAIL (cancel / shutdown の時間比較) は sub-03 が触らないスイートで、司会の無負荷再実行が PASS ならそのまま OK。master e1bba10 (sub-03 無し) の無負荷でも同じ FAIL なら時間依存テストの別件として台帳へ (OK は維持)。sub-03 の差分でだけ落ちる場合に限り REWORK。RV は 20 ジョブ PASS + demo / parts の個別 --job PASS で全 22 ジョブの一致を確認済み (chain ラベル事故は spec §2 #25 の環境要因)。nit: (1) dir を再正規化しない点は SphereCastWorld と違う (spec どおり。sub-07 の engine_spec に「RaycastParts / SphereCastParts は呼び手が正規化」を 1 行)、(2) C# 糖衣は dotnet build のみで実走なし (C# レーンは replay 被覆外、reviewer の裁量)。spec §4.1 B のカプセル軸を by で確定
