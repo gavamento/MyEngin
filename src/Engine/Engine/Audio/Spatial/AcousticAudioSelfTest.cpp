@@ -126,7 +126,7 @@ bool RunAcousticAudioSelfTest()
         // NoHash = WorldHasher が丸ごと飛ばす = **AcousticAudio を足しても snapshot の版は動かない**。
         // ★この検査が守っているのは「AcousticAudio のせいで版が動いていないこと」で、
         //   他の理由で版を上げたときは値を追随させる (>= にすると主張が消えるので値で書く)
-        check(kSimSnapshotVersion == 68, // v68 = 縦入力 (M95 sub-05。AcousticAudio とは無関係)
+        check(kSimSnapshotVersion == 69, // v69 = 手触りの Scene 節 (GitHub 側 M94 の合流。AcousticAudio とは無関係)
               "T1: snapshot version matches engine (AcousticAudio is NoHash)");
     }
 

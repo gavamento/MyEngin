@@ -1031,7 +1031,7 @@ bool RunPartSelfTest()
         w.ApplyStructuralChanges();
         const MyeEntityId a = toShared(anim.Id());
         const MyeEntityId p = toShared(plain.Id());
-        check(MYE_API_VERSION == 33u && api.version == MYE_API_VERSION, "abi: MYE_API_VERSION is 33");
+        check(MYE_API_VERSION == 34u && api.version == MYE_API_VERSION, "abi: MYE_API_VERSION is 34");
         check(api.AnimatorGetPause(api.engine, a) == 0, "abi: AnimatorGetPause starts at 0");
         check(api.AnimatorSetPause(api.engine, a, 5) == 1 && api.AnimatorGetPause(api.engine, a) == 5,
               "abi: AnimatorSetPause sets the remaining ticks");

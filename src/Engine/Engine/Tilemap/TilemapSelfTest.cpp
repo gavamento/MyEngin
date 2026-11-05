@@ -898,9 +898,11 @@ bool RunTilemapSelfTest()
             MYE_LOG_INFO("  [tilemap] bare scene: HashWorld %016llX / snapshot digest %016llX (%zu bytes without version and TM2D)",
                          static_cast<unsigned long long>(bare.worldHash), static_cast<unsigned long long>(bare.blobDigest),
                          bare.blobSize);
-            // 欄の追加 (M95 sub-05) で再採取した値。Debug == Release
+            // 欄の追加 (M95 sub-05) で再採取した値。Debug == Release。
+            // blob は手触りの合流 (snapshot v69: Scene 節に TimeControl の 6 語・FeelState・先行入力の窓) で再採取した。
+            // WorldHash は手触りが内容ゲートなので不変
             constexpr uint64_t kBareWorldHash = 0x01DCBAE1E3D7C026ull;
-            constexpr uint64_t kBareBlobDigest = 0xB0334B6DDE63BC35ull;
+            constexpr uint64_t kBareBlobDigest = 0xA70D1424062E91CCull;
             check(bare.worldHash == kBareWorldHash, "tile gate: the world hash of a scene without a Tilemap equals the pre-M94k value");
             check(bare.sectionStripped && bare.blobDigest == kBareBlobDigest,
                   "tile gate: the snapshot bytes equal the pre-M94k blob plus the version word and one empty TM2D section");
