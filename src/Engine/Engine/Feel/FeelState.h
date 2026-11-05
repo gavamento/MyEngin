@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #include "Shared/FeelMath.h"
 
@@ -57,7 +58,9 @@ public:
     uint32_t ActiveCount() const;
 
 private:
-    FeelInstance slots_[kMaxFeelInstances] = {};
+    // 固定 16 件だがヒープに置く (約 12KB)。Scene がこの表を値で持ち、selftest が Scene を何十個もスタックに置く
+    // 関数があるため、配列のままだとそのフレームが既定の 1MB スタックを超えた (2026-11-05 の合流で判明)
+    std::vector<FeelInstance> slots_ = std::vector<FeelInstance>(kMaxFeelInstances);
     uint32_t nextSerial_ = 1;
 };
 
