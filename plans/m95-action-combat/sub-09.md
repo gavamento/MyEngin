@@ -50,4 +50,7 @@ spec §5 の 44, 45。
 
 ## 実装メモ (coder が追記)
 
+round 1: 停止分岐の ApplyRootMotion の最後の引数を holdVertical (最初の poseLayerCount>0 のメッシュに rootMotionY!=0 && weightQ>0 の層) に変更。テスト: 受け入れ 44 (CC 6/12 tick・Rigidbody・rootMotionY なし対照)、45 (fps -30、非アクティブ pauseTicks)。Debug/Release ST-full 110 suites 0 failed、check_rules 0 error、replay_verify PASS。修正を外すと 44 の 5 件が FAIL することを確認済み。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-05)。停止分岐の holdVertical は spec §4.1 A「停止中の縦」どおり (最初の poseLayerCount > 0 のメッシュ、rootMotionY && weightQ > 0、速度 0 で verticalDriven)。受け入れ 44 (CC の保持・velocity.y 0・ずらした列 1e-4・終端 y、Rigidbody 保持、rootMotionY なしは落ちる対照) と 45 (fps -30 → 60、非アクティブ 10 tick で 5 のまま → 3 tick で 2) を確認。修正を外すと 5 件 FAIL = テストが旧挙動を捕まえる。Debug / Release full 110 / 0 failed、CR 0 error、RV 22 PASS、hash 不変。差分 2 件 (停止 0 を基準列に、終端 y を状態 tick 60 どうしで比較) は仕様の意図どおりで受け入れる。nit: [csharp] compile FAILED のログは別件候補として台帳へ (スイートは PASS)

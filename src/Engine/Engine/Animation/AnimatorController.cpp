@@ -1833,14 +1833,25 @@ void AnimatorControllerSystem::Update(World& world, const ControllerLibrary& con
                 continue;
             }
             if (c->pauseTicks > 0) {
-                // ヒットストップ: 時刻・遷移・イベントを進めず、ルートモーションは 0 を書く (止まった tick に滑らせない)。
+                // ヒットストップ: 時刻・遷移・イベントを進めず、ルートモーションは 0 を書く (止まった tick に滑らせない。縦は下で高さを保つ)。
                 // 残りは非アクティブと別に数える (pauseTicks は止まった tick ごとに 1 減る)
                 freezePose();
                 c->rootMotionVelocity = { 0.0f, 0.0f, 0.0f };
                 c->rootMotionDeltaRotation = { 0.0f, 0.0f, 0.0f, 1.0f };
                 if (c->applyRootMotion) {
+                    // 縦は rootMotionY の層が残っていれば高さを保つ (速度 0 の縦入力。CC / Rigidbody が重力で沈まない)
+                    bool holdVertical = false;
+                    for (EntityID m : driven_) {
+                        const SkinnedMeshComponent* sm = world.GetComponent<SkinnedMeshComponent>(m);
+                        if (sm->poseLayerCount > 0) {
+                            for (int32_t i = 0; i < sm->poseLayerCount; ++i) {
+                                holdVertical = holdVertical || (sm->poseLayers[i].rootMotionY != 0 && sm->poseLayers[i].weightQ > 0);
+                            }
+                            break;
+                        }
+                    }
                     const float zero[3] = {};
-                    ApplyRootMotion(world, e, zero, c->rootMotionVelocity, false);
+                    ApplyRootMotion(world, e, zero, c->rootMotionVelocity, holdVertical);
                 }
                 --c->pauseTicks;
                 continue;

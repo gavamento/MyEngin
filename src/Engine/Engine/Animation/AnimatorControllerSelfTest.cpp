@@ -1971,6 +1971,21 @@ bool RunAnimatorControllerSelfTest()
         step();
         check(ac()->pauseTicks == 0 && ac()->stateTimeTicks == timeAfter + 1,
               "M95: a re-armed pause stops exactly the requested number of ticks");
+
+        // 非アクティブの間は pauseTicks を減らさない (非アクティブ分岐は止まりの残りを数えない)
+        ac()->pauseTicks = 5;
+        ccActor.AddComponent<ActiveComponent>()->enabled = false;
+        world.ApplyStructuralChanges();
+        for (int i = 0; i < 10; ++i) {
+            step();
+        }
+        const int32_t whileInactive = ac()->pauseTicks;
+        ccActor.GetComponent<ActiveComponent>()->enabled = true;
+        for (int i = 0; i < 3; ++i) {
+            step();
+        }
+        check(whileInactive == 5 && ac()->pauseTicks == 2,
+              "M95: pauseTicks does not count down while inactive (5 stays 5 over 10 ticks, then 2 after 3 active ticks)");
     }
 
 
@@ -2268,6 +2283,64 @@ bool RunAnimatorControllerSelfTest()
             check(cc->velocity.y < -1.0f && lt->position.y < 9.95f,
                   "M95 rootMotionY: after leaving the rootMotionY state gravity takes the CharacterController down");
         }
+        {
+            // 44: ヒットストップ中は縦の高さを保つ。停止 0 / 6 / 12 tick の y 列を、停止ぶんずらして比べる
+            constexpr int kTicks = 100;
+            constexpr int kPauseAt = 15; // 上昇の途中
+            struct Run {
+                std::vector<float> y;
+                bool pausedStill = true;
+                bool pausedVyZero = true;
+            };
+            const auto run = [&](uint64_t ctrlHash, int32_t pauseLen, bool useRigidbody) {
+                Scene s;
+                World& world = s.GetWorld();
+                Rig r = makeRig(s, ctrlHash, true);
+                r.actor.SetLocalPosition(0.0f, 10.0f, 0.0f);
+                if (useRigidbody) {
+                    r.actor.AddComponent<RigidbodyComponent>();
+                } else {
+                    r.actor.AddComponent<CharacterControllerComponent>();
+                }
+                world.ApplyStructuralChanges();
+                AnimatorControllerSystem sys;
+                PhysicsSystem phys;
+                const LocalTransform* lt = r.actor.GetComponent<LocalTransform>();
+                const CharacterControllerComponent* cc = r.actor.GetComponent<CharacterControllerComponent>();
+                Run out;
+                for (int t = 1; t <= kTicks; ++t) {
+                    if (t == kPauseAt + 1) {
+                        r.actor.GetComponent<AnimatorControllerComponent>()->pauseTicks = pauseLen;
+                    }
+                    const float before = lt->position.y;
+                    sys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+                    phys.Update(world, 1.0f / 60.0f);
+                    const bool paused = t > kPauseAt && t <= kPauseAt + pauseLen;
+                    if (paused) {
+                        out.pausedStill = out.pausedStill && std::fabs(lt->position.y - before) <= 1e-5f;
+                        out.pausedVyZero = out.pausedVyZero && (cc == nullptr || cc->velocity.y == 0.0f);
+                    }
+                    out.y.push_back(lt->position.y);
+                }
+                return out;
+            };
+            const Run base = run(withY, 0, false);
+            for (const int32_t len : { 6, 12 }) {
+                const Run p = run(withY, len, false);
+                float maxDiff = 0.0f;
+                for (int t = kPauseAt + len; t < kTicks; ++t) {
+                    maxDiff = std::max(maxDiff, std::fabs(p.y[static_cast<size_t>(t)] - base.y[static_cast<size_t>(t - len)]));
+                }
+                check(p.pausedStill && p.pausedVyZero && maxDiff <= 1e-4f,
+                      "M95 hit stop: a CharacterController keeps its height while paused and resumes the same y series shifted by the pause");
+                check(std::fabs(p.y[static_cast<size_t>(59 + len)] - base.y[59]) <= 1e-4f, "M95 hit stop: the height at the clip end (tick 60 of the state) matches the unpaused run");
+            }
+            const Run rb = run(withY, 6, true);
+            check(rb.pausedStill, "M95 hit stop: a dynamic Rigidbody keeps its height while paused");
+            const Run fall = run(noY, 6, false);
+            check(!fall.pausedStill && fall.y[kPauseAt + 5] < fall.y[kPauseAt - 1] - 1e-3f,
+                  "M95 hit stop: a CharacterController in a state without rootMotionY still falls while paused");
+        }
     }
 
 
@@ -2308,6 +2381,8 @@ bool RunAnimatorControllerSelfTest()
         check(readTicks(f0, "A", t) && t == std::vector<int32_t>({ 3 }), "M95: fps 0 falls back to 60");
         const json fStr = { { "A", { { "fps", "x" }, { "events", json::array({ { { "name", "a" }, { "frame", 3 } } }) } } } };
         check(readTicks(fStr, "A", t) && t == std::vector<int32_t>({ 3 }), "M95: non-numeric fps falls back to 60");
+        const json fNeg = { { "A", { { "fps", -30 }, { "events", json::array({ { { "name", "a" }, { "frame", 3 } } }) } } } };
+        check(readTicks(fNeg, "A", t) && t == std::vector<int32_t>({ 3 }), "M95: negative fps falls back to 60");
 
         // 27: time / frame で読んだ資産は ToJson で tick 配列になり、再読で同じ tick
         const json src = { { "controller", 3 }, { "states", json::array() },
