@@ -1,0 +1,72 @@
+{
+  "engine": "MyEngine",
+  "feel": 1,
+  "hitStop": {
+    "ticks": 6
+  },
+  "slow": {
+    "percent": 100,
+    "holdTicks": 0,
+    "recoverTicks": 0,
+    "recoverEase": "OutQuad"
+  },
+  "shake": {
+    "ticks": 24,
+    "posAmp": 0.06,
+    "rotAmpDeg": 1.2,
+    "frequencyHz": 22.0,
+    "envelope": {
+      "mode": "preset",
+      "ease": "OutQuad",
+      "from": 1.0,
+      "to": 0.0
+    }
+  },
+  "kick": {
+    "ticks": 14,
+    "offset": [
+      0.0,
+      0.0,
+      -0.25
+    ],
+    "pitchDeg": 2.5,
+    "fovDeg": 4.0,
+    "curve": {
+      "mode": "preset",
+      "ease": "OutBack",
+      "from": 1.0,
+      "to": 0.0,
+      "param": 2.0
+    }
+  },
+  "rumble": {
+    "ticks": 16,
+    "low": 0.8,
+    "high": 0.35,
+    "curve": {
+      "mode": "preset",
+      "ease": "OutQuad",
+      "from": 1.0,
+      "to": 0.0
+    }
+  },
+  "flash": {
+    "ticks": 10,
+    "vignette": 0.35,
+    "chromAberration": 0.004,
+    "exposure": 0.6,
+    "saturation": -0.2,
+    "color": [
+      1.0,
+      0.95,
+      0.85,
+      0.25
+    ],
+    "curve": {
+      "mode": "preset",
+      "ease": "OutExpo",
+      "from": 1.0,
+      "to": 0.0
+    }
+  }
+}

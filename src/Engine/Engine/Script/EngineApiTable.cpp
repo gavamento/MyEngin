@@ -22,6 +22,8 @@
 #include "Engine/Engine/Session/SessionTypes.h" // v23 (M81f): NetLane* / NetSystemEvent* の参照先
 #include "Engine/Engine/Animation/Parts.h" // v9 部位クエリ (M48h)
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
+#include "Engine/Engine/Feel/FeelLibrary.h" // v31 (M94h)
+#include "Engine/Engine/Feel/FeelState.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Scene/TagNames.h" // v20 TagIndex (名前 → 番号)
 #include "Engine/Engine/Scene/Tags.h"     // v20 タグ判定の唯一の実装
@@ -291,6 +293,59 @@ int NavQueryRandomPoint(void* engine, int32_t agentTypeId, MyeVec3 center, float
     }
     *out = { r[0], r[1], r[2] };
     return 1;
+}
+
+// ---- v31 (M94h): 手触り (ADR-031) ----
+// 鳴らす・止める・消費するは hash 対象の sim 状態 (Scene::Feel / Scene::InputBuffer) を書くので、
+// C# レーン (NoHash) からは受けない (SendScriptMessage と同じ規則)。出力倍率は出力レーンなので C# からも書ける
+bool IsManagedLane(void* engine)
+{
+    return Ctx(engine)->computeLane == compute::CallerKind::CSharp;
+}
+
+void FillFeelSlots(MyeEngineApi& out)
+{
+    out.PlayFeel = [](void* engine, uint64_t nameHash, float intensity) -> int32_t {
+        Scene* s = Sc(engine);
+        if (s == nullptr || IsManagedLane(engine)) {
+            return kFeelHandleInvalid;
+        }
+        const FeelPreset* preset = feellib::ResolveName(nameHash);
+        if (preset == nullptr) {
+            return kFeelHandleInvalid;
+        }
+        return s->Feel().Play(preset->desc, intensity, preset->nameHash, s->Time());
+    };
+    out.PlayFeelDesc = [](void* engine, const MyeFeelDesc* desc, float intensity) -> int32_t {
+        Scene* s = Sc(engine);
+        if (s == nullptr || desc == nullptr || IsManagedLane(engine)) {
+            return kFeelHandleInvalid;
+        }
+        return s->Feel().Play(*desc, intensity, 0, s->Time()); // Play が正規化する (NaN / 範囲外の防波堤)
+    };
+    out.StopFeel = [](void* engine, int32_t handle) {
+        Scene* s = Sc(engine);
+        if (s != nullptr && !IsManagedLane(engine)) {
+            s->Feel().Stop(handle);
+        }
+    };
+    out.ConsumeAction = [](void* engine, uint64_t nameHash, uint32_t player) -> int32_t {
+        ScriptApiContext* c = Ctx(engine);
+        if (c->scene == nullptr || c->inputActions == nullptr || IsManagedLane(engine)) {
+            return 0;
+        }
+        return c->inputActions->ConsumeBuffered(nameHash, player, c->scene->InputBuffer()) ? 1 : 0;
+    };
+    out.IsSimStepping = [](void* engine) -> int32_t {
+        return Ctx(engine)->simStepping ? 1 : 0;
+    };
+    out.SetFeelOutputScale = [](void* engine, uint32_t channel, float scale) {
+        FeelOutputScale* o = Ctx(engine)->feelOutputScale;
+        if (o == nullptr || channel >= kFeelChannelCount) {
+            return;
+        }
+        o->scale[channel] = (scale >= 0.0f) ? (scale > 1.0f ? 1.0f : scale) : 0.0f; // NaN も 0 へ落ちる
+    };
 }
 
 } // namespace
@@ -1005,8 +1060,13 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     // アクションマップ (M51d)。評価は EngineLoop が tick 頭 (verify 入力置換後) に済ませて
     // いるので、ここは評価済みスナップショットを引くだけ (記録済み入力の純関数 = 決定論)
     out.GetActionState = [](void* engine, uint64_t nameHash) -> uint32_t {
-        const InputActions* ia = Ctx(engine)->inputActions;
-        return ia ? ia->ActionState(nameHash) : 0u;
+        const ScriptApiContext* c = Ctx(engine);
+        if (c->inputActions == nullptr) {
+            return 0u;
+        }
+        // M94f: 先行入力の窓 (kActionBuffered) は Scene の状態から引く。bufferTicks 0 のアクションには立たない
+        return c->scene != nullptr ? c->inputActions->ActionStateBuffered(nameHash, 0, c->scene->InputBuffer())
+                                   : c->inputActions->ActionState(nameHash);
     };
     out.GetAxisValue = [](void* engine, uint64_t nameHash) -> float {
         const InputActions* ia = Ctx(engine)->inputActions;
@@ -1138,8 +1198,12 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     // v12 の 2 本と**同じ評価結果**の player レーンを引くだけ。範囲外レーンは
     // InputActions 側が 0 を返す (レーン 0 へ落とさない = 配線ミスを隠さない)
     out.GetActionForPlayer = [](void* engine, uint64_t nameHash, uint32_t player) -> uint32_t {
-        const InputActions* ia = Ctx(engine)->inputActions;
-        return ia ? ia->ActionState(nameHash, player) : 0u;
+        const ScriptApiContext* c = Ctx(engine);
+        if (c->inputActions == nullptr) {
+            return 0u;
+        }
+        return c->scene != nullptr ? c->inputActions->ActionStateBuffered(nameHash, player, c->scene->InputBuffer())
+                                   : c->inputActions->ActionState(nameHash, player);
     };
     out.GetAxisForPlayer = [](void* engine, uint64_t nameHash, uint32_t player) -> float {
         const InputActions* ia = Ctx(engine)->inputActions;
@@ -1763,6 +1827,7 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     };
 
     FillComputeSlots(out); // v29
+    FillFeelSlots(out);    // v31 (M94h)
 }
 
 } // namespace mye

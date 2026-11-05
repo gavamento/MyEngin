@@ -13,6 +13,7 @@ class Win32Window;
 class GraphicsDevice;
 class SwapChain;
 class Scene;
+class FeelState;
 class ShaderManager;
 class RenderSystem;
 class UIRenderer;
@@ -500,6 +501,10 @@ struct EngineContext {
     // エディタは「Play で有効化 → タイムライン窓から RequestSeek」しか触らない
     // (Restore と再シムはここでは起きない = 途中の状態を UI に見せない)
     TimeTravel* timeTravel = nullptr;
+    // M94: 手触りのエディタ用プレビュー表 (EngineLoop 所有)。**sim 状態ではない** — ハッシュにもスナップショットにも
+    // 入らず、描画の評価でだけ sim の表 (Scene::Feel) と足し合わせる。エディタは時間効果を外した desc
+    // (PresentationOnly) だけをここへ鳴らす。描画フレームから sim 状態を書かないための分離 (AGENTS 4.2)
+    FeelState* feelPreview = nullptr;
     // ビヘイビアツリーの実行状態 (M85j)。BT 窓と SceneView のライブ表示が**読むだけ** (書き込み禁止)
     const BehaviorTreeSystem* behaviorTree = nullptr;
     // ネットセッションの状態 (M52i)。EngineLoop が毎フレーム 1 回書く読み取り専用の POD。
@@ -510,6 +515,8 @@ struct EngineContext {
     // この tick でスクリプト層 (フェーズ 3/5) を実行するか。
     // エディタは OnTick で Play 状態に応じて設定する (Runtime は常に true)
     bool simulateScripts = true;
+    // M94i: カメラの揺れ・キックを描画で切る (エディタの個人設定。sim の状態にも出力倍率にも触れない)
+    bool feelMuteCamera = false;
     uint64_t frameIndex = 0;  // 描画フレーム数
     uint64_t tickIndex = 0;   // 累計固定 tick 数 (シミュレーション時間 = tickIndex * fixedDt)
     float fixedDt = 1.0f / 60.0f;

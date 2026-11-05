@@ -15,6 +15,7 @@
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Engine/Modal/ModalSoundLibrary.h"
 #include "Engine/Engine/Asset/ModelLoader.h"
+#include "Engine/Engine/Feel/FeelLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
@@ -71,6 +72,7 @@ constexpr AssetKindRow kAssetKinds[] = {
     { L".navfilter.json", ReloadKind::NavFilter, 6 },
     { L".bt.json", ReloadKind::BehaviorTree, 6 },
     { L".bb.json", ReloadKind::Blackboard, 6 },
+    { L".feel.json", ReloadKind::Feel, 6 }, // M94d。physmat と同格 (sim を変える資産クラス)
     { L".dmnet", ReloadKind::ModalNet, 6 }, // M76e。.sound.json 等と同格 (誰も参照していない)
     { PrefabLibrary::kActorSuffix, ReloadKind::Compose, 7 },
     { PrefabLibrary::kPrefabSuffix, ReloadKind::Compose, 7 },
@@ -302,6 +304,9 @@ void ReloadHub::HandleChange(const std::wstring& normPath, int attempt)
     case ReloadKind::Blackboard:
         result = ReloadBlackboard(normPath);
         break;
+    case ReloadKind::Feel:
+        result = ReloadFeel(normPath);
+        break;
     case ReloadKind::ModalNet:
         result = ReloadModalNet(normPath);
         break;
@@ -488,6 +493,21 @@ ReloadHub::ReloadResult ReloadHub::ReloadPhysMat(const std::wstring& path)
         return ReloadResult::Retry;
     }
     MYE_LOG_INFO("[reload] physmat reloaded: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// 登録済みなら読み直す (M94d)。physmat と同じく sim を変える資産クラス (ヒットストップの tick 数)。
+// 再生中の手触りは発火時のコピーで動くので、読み直しは**次に鳴らした分から**効く
+ReloadHub::ReloadResult ReloadHub::ReloadFeel(const std::wstring& path)
+{
+    FeelLibrary* fl = feellib::Library();
+    if (fl == nullptr || !fl->Contains(FeelLibrary::HashForPath(path))) {
+        return ReloadResult::Skipped;
+    }
+    if (fl->LoadFromFile(path) == 0) {
+        return ReloadResult::Retry;
+    }
+    MYE_LOG_INFO("[reload] feel reloaded: %s", WideToUtf8(path).c_str());
     return ReloadResult::Reloaded;
 }
 

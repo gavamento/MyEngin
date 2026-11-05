@@ -20,6 +20,7 @@ class TextureLibrary;   // v21
 class NavSystem;        // v24
 class BehaviorTreeSystem; // v27
 class ControllerLibrary;  // v27
+struct FeelOutputScale;   // v31 (M94h)
 namespace compute {
 class ComputeService; // v29
 }
@@ -179,6 +180,10 @@ struct ScriptApiContext {
     // C++ レーンで実行中のスクリプトの型名。ScriptHost が各コールバックの前後で入れ外しする。
     // null = スクリプトのコールバックの外 (BT タスクなど。宣言を持てないので ForEach は失敗する)
     const char* runningScript = nullptr;
+    // v31 (M94h): IsSimStepping の答え (この tick でゲート対象が進むか)。TickRunner がスクリプト層の前に両ホストへ書く
+    bool simStepping = true;
+    // v31 (M94h): 手触りの出力倍率の書き先 (EngineLoop 所有の出力レーン)。null 時は SetFeelOutputScale が no-op
+    FeelOutputScale* feelOutputScale = nullptr;
 };
 
 // out に MyeEngineApi (engine = ctx) を構築する。ctx の生存は呼び出し側が管理する。

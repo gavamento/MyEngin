@@ -40,6 +40,7 @@
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Asset/FbxLoader.h"
 #include "Engine/Engine/Asset/ModelLoader.h"
+#include "Engine/Engine/Feel/FeelLibrary.h"           // M94d: .feel.json の生成/登録
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h" // M59a1: .physmat.json の生成/登録
 #include "Engine/Engine/Navigation/NavFilterLibrary.h" // M84c: .navfilter.json の生成/登録
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"      // M85: .bt.json / .bb.json の生成/登録
@@ -268,7 +269,7 @@ void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstri
 {
     static const std::wstring kCompound[] = {L".scene.json",  L".prefab.json", L".actor.json",
                                              L".anim.json",   L".mat.json",    L".controller.json",
-                                             L".sound.json",  L".mixer.json",  L".physmat.json",
+                                             L".sound.json",  L".mixer.json",  L".physmat.json", L".feel.json",
                                              L".fxstack.json", L".post.hlsl",  L".cs.hlsl",
                                              L".navfilter.json", L".bt.json",  L".bb.json"};
     for (const std::wstring& c : kCompound) {
@@ -585,6 +586,35 @@ std::wstring CreatePhysMatAsset(EngineContext& ctx, const std::wstring& dir, con
         pm->LoadFromFile(path);
     }
     MYE_LOG_INFO(Tr(StrId::Log_CreatedPhysMat), WideToUtf8(path).c_str());
+    return path;
+}
+
+std::wstring CreateFeelAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
+{
+    (void)ctx; // 署名は他の Create* と揃える
+    const std::string safe = SanitizeFileName(name, "New Feel");
+    const std::wstring path = dir + L"\\" + Utf8ToWide(safe) + L".feel.json";
+    if (fs::exists(path)) {
+        return {};
+    }
+    // 白紙ではなく「軽いヒット」の形から始める (何を触れば何が変わるかが最初から見える)
+    MyeFeelDesc d;
+    d.hitStopTicks = 3;
+    d.shakeTicks = 12;
+    d.shakePosAmp = 0.03f;
+    d.shakeRotAmpDeg = 0.8f;
+    d.rumbleTicks = 8;
+    d.rumbleLow = 0.4f;
+    d.rumbleHigh = 0.2f;
+    if (!WriteNewAssetFile(path, FeelLibrary::ToJson(d).dump(2))) {
+        MYE_LOG_ERROR("%s: %s", Tr(StrId::Log_WriteFeelFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    // 生成直後に登録 → FeelTrigger の参照ピッカーとスクリプトの PlayFeel で即使える
+    if (FeelLibrary* fl = feellib::Library()) {
+        fl->LoadFromFile(path);
+    }
+    MYE_LOG_INFO("%s: %s", Tr(StrId::Log_CreatedFeel), WideToUtf8(path).c_str());
     return path;
 }
 

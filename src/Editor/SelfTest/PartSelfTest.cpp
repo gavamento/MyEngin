@@ -175,10 +175,14 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 30u,
-              "abi: the table reports v30");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 31u,
+              "abi: the table reports v31");
         // v30 (M93e): スクリプト間メッセージ。配達の結果は --debug-draw-log / MessageProbe (replay) が見る (ここは充填のみ)
         check(api.SendScriptMessage != nullptr, "abi: the v30 SendScriptMessage slot is filled in");
+        // v31 (M94h): 手触り。鳴らした結果は FeelSystemSelfTest / replay の feel ジョブが見る (ここは充填のみ)
+        check(api.PlayFeel != nullptr && api.PlayFeelDesc != nullptr && api.StopFeel != nullptr
+                  && api.ConsumeAction != nullptr && api.IsSimStepping != nullptr && api.SetFeelOutputScale != nullptr,
+              "abi: the v31 feel slots are filled in");
         // v28 (M89c): Animator の型付きパラメータとステート。呼んだ結果は AnimatorControllerSelfTest が見る (ここは充填のみ)
         check(api.AnimatorSetFloat != nullptr && api.AnimatorSetInt != nullptr && api.AnimatorSetBool != nullptr
                   && api.AnimatorSetTrigger != nullptr && api.AnimatorGetParam != nullptr && api.AnimatorGetState != nullptr,

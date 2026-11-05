@@ -96,3 +96,12 @@
 - 無名名前空間にあった作業用ボディ (Body / WorldFrame / CharBody) と、複数の翻訳単位が使う scalar ヘルパー (QuatMul / QuatRotate / LocalInertiaDiag / InvInertiaWorld / MulInvI / Cross) と kGravity だけを PhysicsSystemInternal.h に inline で出した。接触・関節・CCD・質量特性の合成など Update しか使わないものは無名名前空間に残した (ヘッダへ出すと「共有されている」と誤読させる)。
 - inline 化と翻訳単位の分離は /fp:precise では結果を変えない (Debug = inline 無し、Release = inline 有りで replay_verify が既にビット一致している)。ただしこの環境では MSVC が無く、ビルドと replay_verify.bat は未実行。
 - Update 本体は切っていない。収集 → ブロードフェーズ → 制約生成 → 速度反復 → 位置補正 → XPBD / CCD → 積分 → 書き戻しがローカル変数 (bodies / blocks / manifolds / 島) を共有していて、純粋なコード移動では分けられない。分けるならフェーズ間の状態を構造体にまとめる変更になり、replay_verify で確かめながら行う必要がある。
+
+## GameFlow.h / FeelState.cpp / WorldHasher.cpp / SimSnapshot.cpp — 手触りの sim 状態 (M94b / M94c / M94f)
+- ヒットストップ・時限スローは TimeControl の欄、再生中の手触りは FeelState、先行入力の窓は InputBufferState。3 つとも Scene 保持で、ハッシュは内容ゲート (効果が残っている / 一度でも鳴らした / 窓が開いている間だけ畳む)。手触りを使わないシーンのハッシュ列は M94 以前と同一。SimSnapshot は v51 で常に書く (ADR-031 D3)。
+- 揺れ・振動・画面効果は状態と描画補間の係数の純関数 (EvaluateFeel)。出力レーンに巻き戻らない状態を持たないので、スクラブや What-if で揺れも戻る (ADR-031 D1)。
+- FeelInstance は uint64 の欄を持ち末尾に整列の詰め物があるので、ハッシュとスナップショットは生バイトではなく欄ごとに畳む / 書く。MyeFeelDesc 自体は全欄 4 バイトで詰め物が無いので生バイトで畳む。
+- SpringFollow は追従先の姿勢を WorldMatrix ではなく LocalTransform の親子連鎖から組む。WorldMatrix は描画時にも更新される派生値で、LateUpdate が書いた LocalTransform を「描画したかどうか」で反映した値に変わりうるため (ADR-031 D9)。
+
+## M94 の作業記録 — テキスト編集で生の CR が化けた事故 (M94d 追補)
+- AssetDatabaseSelfTest.cpp の文字リテラルには生の CR (0x0D) が 1 文字入っていた。M94d で Python のテキストモードで読み書きしたため改行に化け、C2001 でビルドが落ちた。以後の一括編集はバイト列のまま置換した。リポジトリ内のソースに生の制御文字を置く書き方そのものは既存のまま残してある (`'\r'` へ直すのは別件)。

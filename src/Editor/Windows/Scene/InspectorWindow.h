@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Editor/Asset/AssetPreviewCache.h"
+#include "Editor/Windows/Scene/FeelAssetInspector.h"
 #include "Editor/Tools/FractureBakeService.h" // M80i: 破片焼きの非同期ワーカー
 #include "Editor/Tools/NavBakeService.h"      // M82b: ナビメッシュ・ベイクの非同期ワーカー
 #include "Editor/Scene/Selection.h"
@@ -80,7 +81,7 @@ public:
 
 private:
     // アセット選択時の表示 (M40c): 名前/種別/GUID + テクスチャは Import Settings 編集
-    void DrawAssetInspector(EngineContext& ctx, Selection& selection, AssetPreviewCache& preview);
+    void DrawAssetInspector(EngineContext& ctx, Selection& selection, UndoStack& undo, AssetPreviewCache& preview);
 
     // ---- エンティティ選択時の OnImGui の部品 (上から描く順) ----
     void DrawNameRow(EngineContext& ctx, Selection& selection, UndoStack& undo, const InspectorTargets& tg);
@@ -227,6 +228,7 @@ private:
     // 物理マテリアルインスペクタの編集キャッシュ (M59a1)。.physmat.json のスキーマ固定編集。
     // サウンドと同じく **アセット編集は UndoStack 対象外** (既存規約)
     PhysMat physMatEdit_;
+    FeelAssetInspector feelInspector_; // M94d: .feel.json (編集の写しとプレビューは別クラスに閉じる)
     bool physMatEditValid_ = false;
     void LoadPhysMatEdit(const std::wstring& path);
     void DrawPhysMatInspector(const std::wstring& path);

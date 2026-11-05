@@ -711,6 +711,61 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] `tools\replay_verify.bat` が PASS し、PASS 行に `compute` と `compute A/B` が含まれる
 - [ ] C# と C++ のバイト一致を JIT 設定を変えて確かめ直す場合は ADR-030 の D24 の手順に従う (`KernelCompat.cs` / `KernelCSharp.cpp` を変えたとき)
 
+## M94: 手触り (ヒットストップ・スロー・揺れ・振動・画面効果・カーブ・ばね・先行入力)
+
+自動の確認: `Editor.exe --selftest` の `FeelMath` / `FeelSystem` / `FeelLibrary` / `SpringFollow` と、`GameFlow` / `SimSnapshot` /
+`InputActions` / `Undo` / `Part` (ABI v31) の追加分、`tools\replay_verify.bat` の `feel` ジョブ。設計は [ADR-031](adr/ADR-031-game-feel.md)、
+計画は `plans/m94-game-feel.md`。以下は CI では見られない見た目・実機・操作の確認。
+
+### 見た目 (`Editor.exe --feel-demo --autoplay`、Game ビュー)
+
+- [ ] 約 1 秒後 (tick 60) に「HeavyHit」: 物理 (ボール) が数 tick 止まり、その間もカメラが揺れ、画面が一瞬明るく周辺が暗くなる
+- [ ] tick 150 のヒットストップでボールとリグ (黄色い箱) が同時に止まる (リグは `MyeIsSimStepping` を見ている)
+- [ ] tick 200 からのスローで物理がゆっくりになり、イージングで等速へ戻る (低い % ではカクつく — 既知の制約)
+- [ ] tick 300 の揺れが tick 310 で止まる (`MyeStopFeel`)
+- [ ] カメラがリグを少し遅れて追い、わずかに行き過ぎて戻る (`SpringFollow`、減衰比 0.8)
+- [ ] ボールが床で跳ねるたびに小さく揺れる (`FeelTrigger` → `Bump`)。弱い跳ねでは鳴らない (`minImpulse`)
+- [ ] Scene ビューのカメラは揺れない (`CameraOverride` には掛けない)
+
+### 実機のパッド
+
+- [ ] XInput のパッドで `--feel-demo` を Play すると HeavyHit / Bump で振動し、時間で弱まって止まる
+- [ ] スクリプトの `SetPadVibration` と重なったとき、強い方が出る (足し算で振り切れない)
+- [ ] ウィンドウのフォーカスを外すと振動が止まる (既存の出力レーンの抑止)
+
+### プリセットの編集 (Assets > `assets\feel\HeavyHit.feel.json`)
+
+- [ ] Play 中に Inspector で揺れの振幅などを変えると、次の「プレビュー」から効く。プレビューはヒットストップ / スローを鳴らさない (sim を変えないため)
+- [ ] 録画中 (`--record`) にプレビューを押しても、`--verify` の照合が割れない (プレビューは描画専用の表へ鳴る)
+- [ ] 値を変えると「未保存の変更あり」が出て、Save で消える。Revert でディスクの値へ戻る
+- [ ] 値の変更とカーブの編集を Ctrl+Z / Ctrl+Y で戻せる。ドラッグ 1 回が 1 件にまとまる
+- [ ] カーブを「カスタム」にすると今の形の 3 点から始まる。点のドラッグ・ダブルクリックで追加・右クリックで削除・「接線をなめらかに」が効き、ドラッグ中に点がマウスから逃げない
+- [ ] Assets の Create > 手触りプリセット で新規作成でき、`FeelTrigger` の「手触り」欄の候補に出る
+- [ ] ファイルを外部エディタで書き換えると読み直される (コンソールに `[reload] feel reloaded`)
+
+### 入力 (Project Settings > 入力)
+
+- [ ] アクションの「先行受付」に 6 を入れて保存し、Play 中に押すと B 表示が 6 tick 点く。手触りモニタの先行入力にも出る
+- [ ] 軸の「スティックの応答」で InQuad を選ぶと、スティックを半分倒したときの値が小さくなる (ライブ値のバー)
+- [ ] 新しいキーを使っていない `actions.json` を保存しても `git status` に差分が出ない
+
+### 手触りモニタ (Window > Feel Monitor)
+
+- [ ] Play 中に鳴らすと再生中の表に出所 (プリセット名 / コード)・強さ・経過 / 持続・チャネルが出て、満了で消える
+- [ ] 「エディタではカメラの揺れを切る」を入れると Game ビューの揺れが止まり、振動と画面効果は残る。エディタを再起動しても設定が残る
+
+### タイムトラベル・What-if
+
+- [ ] HeavyHit の直後へ Timeline をスクラブすると、揺れと画面効果がその tick の状態で出る (巻き戻ると揺れも戻る)
+- [ ] 一時停止中に Inspector でプリセットを変えても、再生中の手触りの値は変わらない (発火時のコピー)
+
+### 回帰
+
+- [ ] `tools\check_rules.ps1` が 0 error (規則 10 のローカライズ、規則 11 の ABI v31 = 181)
+- [ ] `tools\replay_verify.bat` が PASS し、PASS 行に `feel` が含まれる。既存のペアも全て一致する
+- [ ] `tools\shot_verify.bat` の既存のスクリーンショットが変わらない (手触りを使わないシーン)
+- [ ] 外部プロジェクト (三校など) は GameLogic.dll / MyeScripting.dll を再ビルドしないと v30 として拒否される
+
 ## DeepModalModel: DeepModal 用のプロシージャル形状生成器 (2026-10-11)
 
 対象: `DeepModalModel\` (形状生成 → `Editor.exe --modal-voxelize` → 受理検査 → `dataset.py` 用 list)。手順は `DeepModalModel\README.md`。

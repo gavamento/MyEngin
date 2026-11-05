@@ -17,6 +17,7 @@
 #include "Engine/Engine/Physics/Collider/MeshColliderLibrary.h"
 #include "Engine/Engine/Physics/Collider/TerrainColliderLibrary.h"
 #include "Engine/Engine/Physics/Fracture/FractureLibrary.h"
+#include "Engine/Engine/Feel/FeelLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Navigation/NavFilterLibrary.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
@@ -76,6 +77,8 @@ void InstallSimLibraries(const SimLibraries& libs)
     // M85: ビヘイビアツリーとブラックボード (.bt.json / .bb.json)。同じく起動走査より前に注入する
     behaviortree::Install(libs.behaviorTrees);
     blackboard::Install(libs.blackboards);
+    // M94d: 手触りのプリセット (.feel.json)。同じく起動走査より前に注入する
+    feellib::Install(libs.feels);
 }
 
 void UninstallSimLibraries()
@@ -88,6 +91,7 @@ void UninstallSimLibraries()
     navfilter::Install(nullptr);
     behaviortree::Install(nullptr);
     blackboard::Install(nullptr);
+    feellib::Install(nullptr);
 }
 
 void InitSimProjectState(const std::wstring& assetsRoot)
@@ -157,6 +161,9 @@ void WireScriptServices(ScriptHost& scriptHost, ManagedHost& managedHost,
                                   s.audioHandleSeq, s.inputActions, s.pendingSaveSlot,
                                   s.pendingLoadSlot, s.padVibration, s.netInfo, s.cursorLock,
                                   s.pendingLoadPersistSlot, s.windowMode, s.messageQueue);
+    // v31 (M94h): 手触りの出力倍率 (出力レーン)。sim は書くだけで読み返さない
+    scriptHost.SetFeelOutputScale(s.feelOutputScale);
+    managedHost.SetFeelOutputScale(s.feelOutputScale);
     // v18: 開発中の実行か。プロセスの定数なので起動時に 1 回だけ渡す (sim 状態ではない = .rep に載らない)
     scriptHost.SetDevelopmentRun(developmentRun);
     managedHost.SetDevelopmentRun(developmentRun);

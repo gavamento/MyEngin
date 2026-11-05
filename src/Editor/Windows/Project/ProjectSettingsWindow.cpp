@@ -5,10 +5,12 @@
 #include <string>
 
 #include "Editor/App/DiskCompare.h"
+#include "Editor/Widgets/CurveEditorWidget.h" // M94f: スティックの応答カーブ
 #include "Editor/SourceControl/ScmHint.h" // M66i: 保存直後に status を取り直させる
 #include "Editor/App/EditorSettings.h"
 #include "Editor/Project/PartTagNames.h"
 #include "Engine/Engine/Scene/TagNames.h" // 汎用タグの名前表
+#include "Engine/Engine/Scene/Scene.h" // M94f: 先行入力の窓 (ライブ表示)
 #include "Editor/Project/PhysicsLayerNames.h"
 #include "Editor/Project/NavAreaNames.h"
 #include "Editor/Project/NavAgentTypes.h"
@@ -502,6 +504,21 @@ void ProjectSettingsWindow::DrawInputSection(EngineContext& ctx)
         ImGui::TextColored((st & kActionPressed) != 0 ? colOn : colOff, "P");
         ImGui::SameLine(0.0f, 4.0f);
         ImGui::TextColored((st & kActionReleased) != 0 ? colOn : colOff, "R");
+        ImGui::SameLine(0.0f, 4.0f);
+        const bool buffered = ctx.scene != nullptr && ia.BufferedAt(static_cast<size_t>(i), 0, ctx.scene->InputBuffer());
+        ImGui::TextColored(buffered ? colOn : colOff, "B"); // M94f: 先行受付の窓の中 (レーン 0)
+        ImGui::SameLine();
+        // M94f: 先行受付の窓 [tick] (0 = なし)。先頭 32 本だけが持てる
+        int buffer = a.bufferTicks;
+        ImGui::SetNextItemWidth(70.0f);
+        ImGui::BeginDisabled(i >= static_cast<int>(kMaxBufferedActions));
+        if (ImGui::DragInt(Tr(StrId::PrjSet_BufferTicks), &buffer, 0.2f, 0, kMaxInputBufferTicks)) {
+            a.bufferTicks = static_cast<uint8_t>(std::clamp(buffer, 0, static_cast<int>(kMaxInputBufferTicks)));
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("%s", Tr(StrId::PrjSet_BufferTicksTip));
+        }
         ImGui::SameLine();
         if (ImGui::SmallButton("x")) {
             removeAction = i;
@@ -661,6 +678,13 @@ void ProjectSettingsWindow::DrawInputSection(EngineContext& ctx)
         ImGui::SameLine();
         ImGui::SetNextItemWidth(90.0f);
         ImGui::DragFloat(Tr(StrId::PrjSet_Deadzone), &a.deadzone, 0.01f, 0.0f, 0.95f, "%.2f");
+        // M94f: スティックの応答 (外側の遮断と応答カーブ)。パッド成分だけに掛かり、編集はその場で効く
+        if (ImGui::TreeNode(Tr(StrId::PrjSet_AxisResponse))) {
+            ImGui::SetNextItemWidth(90.0f);
+            ImGui::DragFloat(Tr(StrId::PrjSet_OuterDeadzone), &a.outerDeadzone, 0.01f, 0.0f, 0.9f, "%.2f");
+            DrawCurveEditor("response", a.response);
+            ImGui::TreePop();
+        }
         ImGui::Unindent();
         ImGui::PopID();
     }

@@ -61,6 +61,10 @@
 #include "Engine/Engine/Audio/Playback/AudioSelfTest.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 #include "Engine/Engine/Loop/SimParallelSelfTest.h"
+#include "Engine/Engine/Feel/FeelMathSelfTest.h"
+#include "Engine/Engine/Feel/FeelLibrarySelfTest.h"
+#include "Engine/Engine/Feel/FeelSystemSelfTest.h"
+#include "Engine/Engine/Feel/SpringFollowSelfTest.h"
 #include "Engine/Engine/Particles/ParticleSelfTest.h"
 #include "Engine/Engine/Physics/Collider/ConvexSelfTest.h"
 #include "Engine/Engine/Physics/Fracture/FractureSelfTest.h"
@@ -667,6 +671,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ok &= mye::RunComputeSettingsSelfTest();       // M91h: compute 節・Compute 欄の行・カーネルのホットリロード
         ok &= mye::RunComputeInspectorSelfTest();      // M91h: Compute 欄の文字列 (日英)
         ok &= mye::RunStartupSplashSelfTest();       // 起動スプラッシュの進捗とメビウス幾何
+        ok &= mye::RunFeelMathSelfTest();              // M94a: イージング / カーブ / ばね / 値ノイズ
+        ok &= mye::RunFeelSystemSelfTest();            // M94c: 再生中の手触り (経過・置換・評価・内容ゲート)
+        ok &= mye::RunFeelLibrarySelfTest();           // M94d: .feel.json の往復・名前の解決・FeelTrigger
+        ok &= mye::RunSpringFollowSelfTest();          // M94g: ばね追従 (瞬間移動・収束・空間変換・回転)
         if (!tempEc) {
             std::filesystem::remove_all(selftestTemp, tempEc);
         }

@@ -6,16 +6,19 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <string_view>
 
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Feel/FeelState.h"
 #include "Engine/Engine/Loop/GameFlow.h"
 #include "Engine/Engine/Scene/Tags.h" // 汎用タグ (NoSerialize = 汎用ループ外なので明示的に畳む)
 #include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Engine/UI/UIInteraction.h"
+#include "Engine/Platform/InputActions.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Navigation/NavSystem.h"
@@ -461,6 +464,33 @@ uint64_t HashComputeState(const compute::ComputeBufferStore& store, DumpCtx* d)
     return h;
 }
 
+// M94c: 再生中の手触り。スロットは空きも含めて添字順に見るが、畳むのは使用中のものだけ
+// (空きは全欄が既定値の正規形なので、畳まなくても状態は区別できる)。desc は詰め物の無い POD なので生バイトで畳む
+uint64_t HashFeelState(const FeelState& feel, DumpCtx* d)
+{
+    uint64_t h = kFnvOffset;
+    FoldU64(h, d, "Feel", "nextSerial", feel.NextSerial());
+    for (uint32_t i = 0; i < kMaxFeelInstances; ++i) {
+        const FeelInstance& s = feel.Slot(i);
+        if (s.active == 0) {
+            continue;
+        }
+        if (d && d->lines) {
+            d->entityCol = "slot" + std::to_string(i);
+        }
+        FoldU64(h, d, "Feel", "slot", i);
+        FoldU64(h, d, "Feel", "serial", s.serial);
+        FoldU64(h, d, "Feel", "ageTicks", static_cast<uint32_t>(s.ageTicks));
+        FoldBytes(h, d, "Feel", "intensity", &s.intensity, sizeof(s.intensity));
+        FoldU64(h, d, "Feel", "sourceKey", s.sourceKey);
+        FoldBytes(h, d, "Feel", "desc", &s.desc, sizeof(s.desc));
+    }
+    if (d && d->lines) {
+        d->entityCol = "-";
+    }
+    return h;
+}
+
 // M51g: ゲームフロー状態 (決定台帳 5)。RNG の直後・パーティクルの前に畳み込む。
 // PersistStore は std::map = キー昇順走査 (挿入順に依存しない — selftest が固定)
 uint64_t HashGameFlow(uint64_t h, const TimeControl* time, const PersistStore* persist, DumpCtx* d)
@@ -469,6 +499,16 @@ uint64_t HashGameFlow(uint64_t h, const TimeControl* time, const PersistStore* p
         FoldU64(h, d, "TimeControl", "paused", time->paused ? 1u : 0u);
         FoldU64(h, d, "TimeControl", "scalePercent", static_cast<uint32_t>(time->scalePercent));
         FoldU64(h, d, "TimeControl", "accum", static_cast<uint32_t>(time->accum));
+        // M94b: ヒットストップ / 時限スローは「効果が残っているときだけ」畳む。既定値のあいだは
+        // 1 語も畳まないので、手触りを使わないシーンのハッシュ列は M94 以前と同一
+        if (time->HasFeelEffect()) {
+            FoldU64(h, d, "TimeControl", "freezeTicks", static_cast<uint32_t>(time->freezeTicks));
+            FoldU64(h, d, "TimeControl", "slowPercent", static_cast<uint32_t>(time->slowPercent));
+            FoldU64(h, d, "TimeControl", "slowHoldTicks", static_cast<uint32_t>(time->slowHoldTicks));
+            FoldU64(h, d, "TimeControl", "slowRecoverTicks", static_cast<uint32_t>(time->slowRecoverTicks));
+            FoldU64(h, d, "TimeControl", "slowRecoverLeft", static_cast<uint32_t>(time->slowRecoverLeft));
+            FoldU64(h, d, "TimeControl", "slowRecoverEase", static_cast<uint32_t>(time->slowRecoverEase));
+        }
     }
     if (persist) {
         for (const auto& [key, blob] : persist->Entries()) {
@@ -641,6 +681,16 @@ uint64_t HashWorldImpl(World& world, const SimSources& src,
         const uint64_t ch = HashComputeState(*src.computeState, d);
         total = HashCombine(total, ch);
         EmitU64(d, "Compute", "#total", ch, total);
+    }
+    // 先行入力の窓 (M94f)。内容ゲート (理由は WorldHasher.h の SimSources::inputBuffer)
+    if (src.inputBuffer && src.inputBuffer->HasHashableState()) {
+        FoldBytes(total, d, "InputBuffer", "pressAge", src.inputBuffer->pressAge, sizeof(src.inputBuffer->pressAge));
+    }
+    // 再生中の手触り (M94c)。内容ゲート (理由は WorldHasher.h の SimSources::feel)
+    if (src.feel && src.feel->HasHashableState()) {
+        const uint64_t fh = HashFeelState(*src.feel, d);
+        total = HashCombine(total, fh);
+        EmitU64(d, "Feel", "#total", fh, total);
     }
     return total;
 }

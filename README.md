@@ -130,7 +130,7 @@ C# は `MyeScripting.dll` とその依存ファイル、Git は `MyeCollab.dll` 
 
 **未登録コンポーネントの JSON は保持して再保存する実装になっています。** 型が未登録のまま実行できるわけではありませんが、旧 README にあった「未登録なら保存で消える」という説明は現状には当てはまりません。
 
-スクリプト API の正本は [src/Shared/EngineAPI.h](src/Shared/EngineAPI.h) と [src/Shared/ScriptAPI.h](src/Shared/ScriptAPI.h) です。現行の `MYE_API_VERSION` は **30** (175 スロット)。ABI を更新した場合は本体、ゲーム DLL、言語間ミラーの整合が必要です。
+スクリプト API の正本は [src/Shared/EngineAPI.h](src/Shared/EngineAPI.h) と [src/Shared/ScriptAPI.h](src/Shared/ScriptAPI.h) です。現行の `MYE_API_VERSION` は **31** (181 スロット)。ABI を更新した場合は本体、ゲーム DLL、言語間ミラーの整合が必要です。
 
 ### 描画・演出
 
@@ -146,6 +146,13 @@ C# は `MyeScripting.dll` とその依存ファイル、Git は `MyeCollab.dll` 
 - **水面波**。`WaterWaveComponent` の Gerstner 波による描画と、動的波高に連動した浮力。
 
 光線追跡の構成・過去の計測条件は [ADR-009](docs/adr/ADR-009-hybrid-path-tracing.md)、反射の再利用は [ADR-016](docs/adr/ADR-016-restir-reflection.md) を参照してください。過去の GPU 時間を、現在のシーンや別 GPU の性能保証として扱わないでください。
+
+### 手触り（ゲームフィール）
+
+- **手触りのプリセット**（M94）。ヒットストップ、時限スロー、カメラの揺れ・キック・画角、時間で減衰する振動、画面効果のパルスを `.feel.json` 1 つにまとめ、スクリプトの `MyePlayFeel(ctx, "HeavyHit")` か、接触で鳴らす `FeelTrigger` コンポーネントで鳴らします。
+- **Play しながら調整**。アセット Inspector はプリセットをその場で書き換え、次に鳴らした分から効きます。カーブはイージングの種類と数値、または制御点を描くカーブエディタで編集でき、Undo できます。
+- **入力とばね**。`actions.json` の先行入力（`bufferTicks`）とスティックの応答カーブ、カメラの追従遅れに使える `SpringFollow` コンポーネントがあります。
+- **決定論を保つ**。sim が持つのは「何をいつ鳴らしたか」だけで、揺れや振動はその状態から毎フレーム計算します。タイムトラベルで揺れも巻き戻り、`replay_verify` の feel ジョブで Debug / Release / Server の一致を確かめます（ADR-031）。
 
 ### 物理・音響・AI
 
@@ -246,6 +253,7 @@ UI は日本語・英語に対応し、メニューから切り替えられま�
 | `--ui-demo` | UI ウィジェット |
 | `--local-demo` / `--net-demo` | ローカル複数プレイヤー / ネット対戦 |
 | `--parts-demo` / `--flow-demo` | 部位追従 / シーン遷移・セーブ。Editor 専用 |
+| `--feel-demo` | 手触り。ヒットストップ・スロー・カメラの揺れとキック・振動・画面効果、ばね追従のカメラ、接触で鳴るボール |
 
 ```powershell
 # Compute Shader による GI・影・反射

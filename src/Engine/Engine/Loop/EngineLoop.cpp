@@ -15,6 +15,7 @@
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Util/Random.h"
 #include "Engine/Engine/Animation/Animation.h"
+#include "Engine/Engine/Feel/FeelState.h"
 #include "Engine/Engine/Animation/AnimatorController.h"
 #include "Engine/Engine/Asset/CookedCache.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
@@ -30,6 +31,7 @@
 #include "Engine/Engine/Perception/PerceptionSystem.h" // M83: 知覚
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h" // M85: ビヘイビアツリー (実体はここが持つ)
 #include "Engine/Engine/AI/BehaviorTreeSystem.h"
+#include "Engine/Engine/Feel/FeelLibrary.h"
 #include "Engine/Engine/AI/BlackboardLibrary.h"
 #include "Engine/Engine/Audio/Playback/AudioMixer.h"
 #include "Engine/Engine/Audio/Playback/AudioSourceSystem.h"
@@ -195,6 +197,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     NavFilterLibrary navFilterLibrary; // .navfilter.json (M84c)
     BehaviorTreeLibrary behaviorTreeLibrary; // .bt.json (M85)
     BlackboardLibrary blackboardLibrary;     // .bb.json (M85)
+    FeelLibrary feelLibrary;                 // .feel.json (M94d)
     TerrainColliderLibrary terrainColliders; // 地形コライダー (M59i)。**描画側とは別キャッシュ**
     // XPBD 変形体の粒子池 (M60'b)。ECS 外 sim 状態の 2 例目 — ハッシュ節 (SimSources) と
     // snapshot 節 (SimRefs) の両方へ必ず配線する (3 点セット契約)
@@ -257,6 +260,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // M51h: SetPadVibration の目標値。スロットは書くだけで、適用はフレーム末の出力レーン
     // (record/verify 中とフォーカス喪失中は 0 に落とし、終了時も 0 リセット)
     PadVibrationState padVibration;
+    // M94c: 手触りの出力倍率 (揺れ / 振動 / 画面効果、アクセシビリティ)。padVibration と同じ出力レーンで、
+    // sim は書くだけ・読み返さない。適用はフレーム末の EvaluateFeel
+    FeelOutputScale feelOutputScale;
+    // M94: エディタのプレビュー表 (描画専用、sim の外)。経過は sim の tick に合わせて進める
+    FeelState feelPreview;
     // M64a: SetCursorMode の要求値。padVibration と全く同じ出力レーンで、適用は
     // フレーム末 (record/verify 中・フォーカス喪失中・スクラブ中は強制解除、終了時も解除)
     CursorLockState cursorLock;
@@ -386,7 +394,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // (現状の呼び出し元はまだ無い)
     InstallSimLibraries({ &resources, &meshColliders, &convexColliders, &fractureAssets,
                           &physMatLibrary, &terrainColliders, &navFilterLibrary, &behaviorTreeLibrary,
-                          &blackboardLibrary });
+                          &blackboardLibrary, &feelLibrary });
     // M76e: Deep-Modal 推論。CLI (--modal-backend) は綴りだけ検査済みで、未実装名
     // ("d3d11cs") への縮退はここ (SetBackendByName) が WARN 付きでやる。
     // .dmnet が無い (M76h 未実装/未生成) 環境では LoadModel が false を返すだけで、
@@ -553,6 +561,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         shared.pendingSaveSlot = &pendingSaveSlot;
         shared.pendingLoadSlot = &pendingLoadSlot;
         shared.padVibration = &padVibration;
+    shared.feelOutputScale = &feelOutputScale; // v31 (M94h)
         shared.netInfo = &netInfo;
         shared.cursorLock = &cursorLock;
         shared.pendingLoadPersistSlot = &pendingLoadPersistSlot;
@@ -703,6 +712,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 有効化はエディタ (Play/Stop) か CLI プローブが行う。ここでは器を持つだけ
     TimeTravel timeTravel;
     ctx.timeTravel = &timeTravel;
+    ctx.feelPreview = &feelPreview;
     ctx.behaviorTree = &behaviorTreeSystem;
     if (config.timeTravelProbeTicks > 0 || config.whatIfProbeTicks > 0) {
         timeTravel.SetEnabled(true);
@@ -2356,6 +2366,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 ctx.requestExit = true;
             }
             RunOneTick(tickServices);
+            // M94: プレビュー表の経過 (描画専用)。sim の tick が進んだときだけ進める (編集中は止まる)
+            if (ctx.simulateScripts) {
+                feelPreview.Advance();
+            } else if (feelPreview.HasHashableState()) {
+                feelPreview.Clear(); // Stop 後に古いプレビューを残さない
+            }
             // ---- tick 末ハッシュは 1 回だけ (M52i、M52f 申し送り 6) ----
             // クラッシュリング / ロールバック / タイムトラベルの 3 者が同じ 1 個を使う。
             // 撮る点は「構造変更が空 = .rep が記録するのと同じ点」
@@ -2942,6 +2958,19 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         // dt は**実時間**を渡す (M45f の BGM クロスフェードは絶対経過時間で進むため。
         // 固定 dt を渡すと 6500fps ではフェードが 100 倍速で終わる)
         audioSystem.Update(static_cast<float>(dt));
+        // ---- M94c: 再生中の手触りの評価 (ADR-031)。sim 状態 (Scene::Feel) と描画補間の係数の純関数で、
+        // 振動と描画 (カメラの揺れ・キック・画面効果) の両方がこの 1 回の結果を読む。
+        // 係数の条件は下の renderSystem.interpAlpha と同一 (補間しないときは最新 tick = 1.0) ----
+        const bool feelInterpOk = lastTickSimulated && !recorder.IsActive() && !player.IsActive()
+            && !timeTravel.Scrubbing() && !clientEnabled;
+        const float feelAlpha = feelInterpOk
+            ? std::clamp(static_cast<float>(accumulator / kFixedDt), 0.0f, 1.0f)
+            : 1.0f;
+        FeelOutputScale feelScale = feelOutputScale;
+        if (ctx.feelMuteCamera) {
+            feelScale.scale[kFeelChannelCamera] = 0.0f; // M94i: エディタの個人設定 (描画だけ)
+        }
+        const FeelFrameOutput feelOut = EvaluateFeel(scene.Feel(), feelAlpha, feelScale, &feelPreview);
         // ---- パッド振動の適用 (M51h、出力レーン)。record/verify 中は 0 に落とす
         // (オーディオ suspend と同型)。フォーカス喪失中も 0 (裏で振動し続けない)。
         // 実際の XInputSetState は Input 側が値の変化時だけ発行する ----
@@ -2949,8 +2978,11 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             // M52e: スクラブ中も 0 (止まった世界の裏で振動し続けない = 出力レーンの抑止)
             const bool vibSuspend = recorder.IsActive() || player.IsActive()
                 || !window.HasFocus() || timeTravel.Scrubbing();
-            input.ApplyVibration(vibSuspend ? 0.0f : padVibration.left,
-                                 vibSuspend ? 0.0f : padVibration.right);
+            // M94c: 手触りの振動はモーターごとに SetPadVibration との max (足すと振り切れる)。
+            // 左 = 低周波モーター、右 = 高周波モーター (XInput の割り当て)
+            const float vibLeft = padVibration.left > feelOut.rumbleLow ? padVibration.left : feelOut.rumbleLow;
+            const float vibRight = padVibration.right > feelOut.rumbleHigh ? padVibration.right : feelOut.rumbleHigh;
+            input.ApplyVibration(vibSuspend ? 0.0f : vibLeft, vibSuspend ? 0.0f : vibRight);
 
             // ---- カーソルロックの適用 (M64a、出力レーン)。抑止条件は振動と同一 ----
             // ★Escape は**エンジンが最後の逃げ道として横取りする**。エディタで Play 中に
@@ -3024,6 +3056,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 ? std::clamp(static_cast<float>(accumulator / kFixedDt), 0.0f, 1.0f)
                 : 1.0f;
             renderSystem.prevWorld = &prevWorld;
+            renderSystem.feel = feelOut; // M94c: シーンカメラの揺れ・キックと画面効果のパルス (描画専用)
             renderSystem.simTick = ctx.tickIndex; // URO の更新 tick (描画専用。実時間・フレーム数は使わない)
             if (sceneLoadSerial != renderSceneLoadSerial) {
                 renderSceneLoadSerial = sceneLoadSerial;

@@ -50,6 +50,7 @@
     <ClCompile Include="..\src\GameLogic\Scripts\ComputeDemoSparks.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\ComputeDemoSwarm.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\ComputeProbe.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\FeelDemo.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\FlowGameDriver.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\FlowTitleDriver.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\FractureDamageProbe.cpp" />
@@ -81,6 +82,7 @@
     <ClCompile Include="..\src\GameLogic\Scripts\WaveWalker.cpp" />
     <ClInclude Include="..\src\GameLogic\Generated\Kernels.gen.h" />
     <ClInclude Include="..\src\Shared\EngineAPI.h" />
+    <ClInclude Include="..\src\Shared\FeelMath.h" />
     <ClInclude Include="..\src\Shared\KernelCompat.h" />
     <ClInclude Include="..\src\Shared\KernelRangeFn.h" />
     <ClInclude Include="..\src\Shared\MathPod.h" />

@@ -21,6 +21,8 @@ struct TimeControl;
 struct UIInteractionState;
 class PersistStore;
 struct SessionLanes;
+class FeelState;
+struct InputBufferState;
 
 // ワールド状態ハッシュ (engine_spec.md 11.3)。
 // 対象: 全エンティティ (index 昇順) の親リンク + シリアライズ対象コンポーネントの
@@ -66,6 +68,11 @@ struct SimSources {
     // M91d: Compute.ForEach の State バッファ (C++ 用ストア)。★nav と同じ**内容ゲート** (生きている State が
     // 1 本も無ければ節ごと畳まない) — Compute を使わないシーンのハッシュ列を 1 tick も動かさない。Fx と C# 用は入れない
     const compute::ComputeBufferStore* computeState = nullptr;
+    // M94c: 再生中の手触り。★nav と同じ**内容ゲート** (一度も鳴らしていなければ節ごと畳まない) —
+    // 手触りを使わないシーンのハッシュ列を 1 tick も動かさない
+    const FeelState* feel = nullptr;
+    // M94f: 先行入力の窓。★feel と同じ**内容ゲート** (窓の中のものが 1 つも無ければ節ごと畳まない)
+    const InputBufferState* inputBuffer = nullptr;
 };
 
 uint64_t HashWorld(World& world, const SimSources& src = {});

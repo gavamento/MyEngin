@@ -905,6 +905,7 @@ bool RunAssetOpsSelfTest()
             { L"assets/ice.physmat.json", "physmat" },
             { L"assets/guard.bt.json", "bt" },
             { L"assets/guard.bb.json", "bb" },
+            { L"assets/hit.feel.json", "feel" }, // M94d
             { L"assets/red.mat.json", "mat" },
             { L"assets/hit.sound.json", "sound" },
             { L"assets/main.mixer.json", "mixer" },

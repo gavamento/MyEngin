@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include "Shared/FeelMath.h" // v31 (M94h): MyeFeelDesc
 #include "Shared/MathPod.h"
 
 // 互換性チェック用。テーブルや ScriptDesc のレイアウトを変えたら必ず上げること
@@ -54,7 +55,9 @@
 //             MyeScriptModule 末尾の kernels
 // v30 (M93e): スクリプト間メッセージ — SendScriptMessage (ComputeSetManagedDeclarations の次の 1 本) +
 //             MyeScriptDesc 末尾の onMessage イベント (dogfooding #20)
-#define MYE_API_VERSION 30u
+// v31 (M94h): 手触り — PlayFeel / PlayFeelDesc / StopFeel / ConsumeAction / IsSimStepping / SetFeelOutputScale
+//             (SendScriptMessage の次の 6 本、ADR-031)
+#define MYE_API_VERSION 31u
 
 // PersistSet の 1 エントリ最大バイト数 (v12)。PersistStore は WorldHash / セーブ出力に
 // 全量が載るため、無制限だと 1 キーでハッシュとセーブが肥大する
@@ -1026,6 +1029,28 @@ struct MyeEngineApi {
     //   (C# は NoHash レーンなので、hash 対象の状態を C# の判断で動かす送信は受けない。受信はできる)。
     //   ★Win32 の SendMessage マクロと名前が衝突しないよう SendScriptMessage にしている
     int (*SendScriptMessage)(void* engine, MyeEntityId from, MyeEntityId target, uint64_t nameHash, int32_t value);
+
+    // ---- v31 (M94h): 手触り (ADR-031) ----
+    // PlayFeel: .feel.json のプリセットを名前 (MyeNameHash("HeavyHit") = ファイル名から .feel.json を除いたもの) で鳴らす。
+    //   intensity は揺れ・キック・振動・画面効果の振幅に掛かり、ヒットストップ / スローの tick 数には掛からない。
+    //   時間効果は**次の tick から**効く (この tick のゲートはスクリプト層より前に決まっている)。
+    //   戻り値: ハンドル (> 0、StopFeel に渡す)、0 = 時間効果だけで止める対象が無い、-1 = 見つからない / C# レーン。
+    //   ★C# レーンからは鳴らせない (-1): 再生中の手触りは hash 対象の sim 状態で、C# は NoHash レーン (v30 と同じ規則)
+    int32_t (*PlayFeel)(void* engine, uint64_t nameHash, float intensity);
+    // PlayFeelDesc: コードで組んだ記述子を鳴らす (MyeHitStop / MyeCameraShake などの糖衣の実体)。戻り値は PlayFeel と同じ
+    int32_t (*PlayFeelDesc)(void* engine, const MyeFeelDesc* desc, float intensity);
+    // StopFeel: ハンドルの 1 件を止める。-1 = 全部止める。古いハンドルは無視。C# レーンからは何もしない
+    void (*StopFeel)(void* engine, int32_t handle);
+    // ConsumeAction: 先行入力 (actions.json の bufferTicks) を消費する。窓の中なら 1 を返して窓を閉じる
+    //   (同じ押下で 2 回跳ばない)。player はレーン。C# レーンからは 0
+    int32_t (*ConsumeAction)(void* engine, uint64_t nameHash, uint32_t player);
+    // IsSimStepping: この tick でゲート対象 (物理 / アニメ / 粒子 / AI) が進むか。ヒットストップ・ポーズ・スローの
+    //   止まる tick は 0。スクリプトが自前で動かす物を同じ拍で止めるのに使う
+    int32_t (*IsSimStepping)(void* engine);
+    // SetFeelOutputScale: 手触りの出力倍率 [0,1] (channel 0 = カメラの揺れ・キック、1 = 振動、2 = 画面効果)。
+    //   **出力レーン** (SetPadVibration と同格): 書くだけで sim からは読めず、ハッシュにも入らない。
+    //   設定画面の「画面の揺れ」「振動」の強さ (酔いやすい人のため) に使う
+    void (*SetFeelOutputScale)(void* engine, uint32_t channel, float scale);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

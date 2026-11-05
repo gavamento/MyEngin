@@ -1687,6 +1687,29 @@ void RegisterBuiltinComponents()
     });
 #undef MYE_IK_CHAIN
 #undef MYE_IK_FIELD
+
+    // M94d: 手触りの発火 (TypeId=81、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変
+    static_assert(sizeof(FeelTriggerComponent) == 32, "FeelTriggerComponent: no implicit padding");
+    RegisterComponent<FeelTriggerComponent>("FeelTrigger", {
+        MYE_JP("手触り", MYE_FIELD_TIP(FeelTriggerComponent, feel, AssetRef, "the .feel.json preset played on contact")),
+        MYE_JP("鳴らす最小の力積", MYE_FIELD_RANGE(FeelTriggerComponent, minImpulse, Float, 0.0f, 1000.0f)),
+        MYE_JP("強さ 1 の力積", MYE_FIELD_RANGE(FeelTriggerComponent, fullImpulse, Float, 0.01f, 1000.0f)),
+        MYE_JP("強さの上限", MYE_FIELD_RANGE(FeelTriggerComponent, maxIntensity, Float, 0.0f, 10.0f)),
+        MYE_JP("間隔 (tick)", MYE_FIELD_RANGE(FeelTriggerComponent, cooldownTicks, Int32, 0.0f, 600.0f)),
+        MYE_JP("残りの間隔 (tick)", MYE_FIELD_FLAGS(FeelTriggerComponent, cooldownLeft, Int32, kFieldReadOnly)),
+    });
+
+    // M94g: ばね追従 (TypeId=82、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変
+    static_assert(sizeof(SpringFollowComponent) == 48, "SpringFollowComponent: no implicit padding");
+    RegisterComponent<SpringFollowComponent>("SpringFollow", {
+        MYE_JP("追う相手", MYE_FIELD(SpringFollowComponent, target, EntityRef)),
+        MYE_JP("ずらし (相手の空間)", MYE_FIELD(SpringFollowComponent, offset, Float3)),
+        MYE_JP("位置の速さ (Hz)", MYE_FIELD_RANGE(SpringFollowComponent, frequencyHz, Float, 0.0f, 30.0f)),
+        MYE_JP("減衰比", MYE_FIELD_RANGE(SpringFollowComponent, dampingRatio, Float, 0.0f, 4.0f)),
+        MYE_JP("回転の速さ (Hz)", MYE_FIELD_RANGE(SpringFollowComponent, rotationFrequencyHz, Float, 0.0f, 30.0f)),
+        MYE_JP("速度", MYE_FIELD_FLAGS(SpringFollowComponent, velocity, Float3, kFieldReadOnly)),
+        MYE_JP("初期化済み", MYE_FIELD_FLAGS(SpringFollowComponent, initialized, UInt32, kFieldReadOnly)),
+    });
 }
 
 } // namespace mye

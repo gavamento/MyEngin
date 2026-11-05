@@ -43,8 +43,10 @@ bool ExecuteAssetFileOp(EngineContext* ctx, const UndoFileOp& op, bool redo);
 //                Animator Controller 窓と Animation Preview 窓 (イベント編集) が記録する
 //   Mixer      = AudioSystem のランタイムのバス構成 (CurrentMixer / ApplyMixer、MixerLibrary::ToJson / FromJson)。
 //                hash は記録時のアクティブな .mixer.json (情報のみ。適用先は常にランタイム)
+//   Feel       = FeelLibrary の登録済みプリセット (FeelLibrary::GetMutable(hash)、FeelLibrary::ToJson / FromJson)。
+//                Inspector は .feel.json をライブラリ上で直接編集する (M94e)。ディスクへは Save でだけ書く
 struct UndoDocOp {
-    enum class Kind : uint8_t { None, Controller, Mixer };
+    enum class Kind : uint8_t { None, Controller, Mixer, Feel };
     Kind kind = Kind::None;
     uint64_t hash = 0;
     nlohmann::json before;

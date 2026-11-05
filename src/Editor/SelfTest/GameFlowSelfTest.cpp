@@ -82,6 +82,69 @@ bool RunGameFlowSelfTest()
         check(tc.Advance(), "resume steps on the next tick (50+50)");
     }
 
+    // ---- M94b: ヒットストップと時限スロー (tick 列の正本) ----
+    {
+        TimeControl tc;
+        tc.RequestFreeze(5);
+        check(CountSteps(tc, 5) == 0 && tc.freezeTicks == 0 && tc.accum == 0, "freeze 5 -> 5 frozen ticks, accum untouched");
+        check(CountSteps(tc, 5) == 5 && !tc.HasFeelEffect(), "full speed after the freeze");
+        tc.RequestFreeze(5);
+        tc.RequestFreeze(3);
+        check(tc.freezeTicks == 5, "a shorter freeze does not shorten the remaining one");
+        tc.RequestFreeze(8);
+        check(tc.freezeTicks == 8, "a longer freeze extends it (max, not sum)");
+        tc.RequestFreeze(kMaxFeelTimeTicks + 100);
+        check(tc.freezeTicks == kMaxFeelTimeTicks, "freeze is clamped to kMaxFeelTimeTicks");
+        tc.ClearFeelEffects();
+        check(!tc.HasFeelEffect(), "ClearFeelEffects returns to the default state");
+
+        tc = {};
+        tc.RequestSlow(50, 10, 0, MYE_EASE_LINEAR);
+        check(CountSteps(tc, 10) == 5 && !tc.HasFeelEffect(), "slow 50% held 10 ticks -> 5 steps, then folds to default");
+        check(CountSteps(tc, 10) == 10, "full speed after the slow");
+
+        tc = {};
+        tc.RequestSlow(0, 2, 4, MYE_EASE_LINEAR);
+        int32_t pct[6] = {};
+        int steps = 0;
+        for (int i = 0; i < 6; ++i) {
+            pct[i] = tc.CurrentSlowPercent();
+            steps += tc.Advance() ? 1 : 0;
+        }
+        check(pct[0] == 0 && pct[1] == 0 && pct[2] == 25 && pct[3] == 50 && pct[4] == 75 && pct[5] == 100,
+              "linear recovery goes 0,0,25,50,75,100");
+        check(steps == 2 && !tc.HasFeelEffect(), "recovery steps follow the accumulated percent");
+
+        tc = {};
+        tc.RequestFreeze(3);
+        tc.RequestSlow(50, 4, 0, MYE_EASE_LINEAR);
+        check(CountSteps(tc, 3) == 0 && tc.slowHoldTicks == 4, "the slow does not count down during the freeze");
+        check(CountSteps(tc, 4) == 2 && CountSteps(tc, 4) == 4, "the slow starts after the freeze");
+
+        tc = {};
+        tc.scalePercent = 25;
+        tc.RequestSlow(50, 8, 0, MYE_EASE_LINEAR);
+        check(CountSteps(tc, 8) == 2, "the effective speed is min(scalePercent, slow)");
+
+        tc = {};
+        tc.RequestSlow(30, 10, 0, MYE_EASE_LINEAR);
+        tc.RequestSlow(60, 50, 0, MYE_EASE_LINEAR);
+        check(tc.slowPercent == 30 && tc.slowHoldTicks == 10, "a weaker slow loses to the running one");
+        tc.RequestSlow(30, 20, 0, MYE_EASE_LINEAR);
+        check(tc.slowHoldTicks == 20, "the same percent with a longer remaining time wins");
+        tc.RequestSlow(10, 5, 0, MYE_EASE_LINEAR);
+        check(tc.slowPercent == 10 && tc.slowHoldTicks == 5, "a slower request replaces the running one");
+        tc = {};
+        tc.RequestSlow(100, 10, 10, MYE_EASE_LINEAR);
+        tc.RequestSlow(40, 0, 0, MYE_EASE_LINEAR);
+        check(!tc.HasFeelEffect(), "100% or zero-length slows are ignored");
+
+        tc = {};
+        tc.RequestFreeze(4);
+        tc.paused = true;
+        check(CountSteps(tc, 10) == 0 && tc.freezeTicks == 4, "pause also freezes the hit-stop countdown");
+    }
+
     // ---- WorldHash: TimeControl / PersistStore の被覆・挿入順不変 ----
     {
         World w;
@@ -98,6 +161,17 @@ bool RunGameFlowSelfTest()
         check(HashWorld(w, {nullptr, &tc, &a}) != clean, "scalePercent is hash-covered");
         tc = {};
         check(HashWorld(w, {nullptr, &tc, &a}) == clean, "default TimeControl restores the hash");
+        // M94b: 効果が残っているときだけ畳み、終われば M94 以前と同じハッシュへ戻る
+        tc.RequestFreeze(2);
+        check(HashWorld(w, {nullptr, &tc, &a}) != clean, "freezeTicks is hash-covered");
+        tc.Advance();
+        tc.Advance();
+        tc.accum = 0;
+        check(!tc.HasFeelEffect() && HashWorld(w, {nullptr, &tc, &a}) == clean,
+              "a finished hit-stop folds nothing (pre-M94 hash)");
+        tc.RequestSlow(50, 3, 3, MYE_EASE_OUT_QUAD);
+        check(HashWorld(w, {nullptr, &tc, &a}) != clean, "timed slow motion is hash-covered");
+        tc = {};
 
         const uint32_t v1 = 123;
         const uint32_t v2 = 456;
