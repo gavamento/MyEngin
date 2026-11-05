@@ -104,6 +104,9 @@ public:
 
 private:
     std::vector<StaticShapeSource*> staticSources_;
+    // M93e (dogfooding #19): 「Vehicle があるのに PhysicsEnvironment が無い」を 1 回だけ WARN した印。
+    // ログのためだけの状態で sim には触れない (ハッシュ・スナップショットの対象外)
+    bool warnedVehicleWithoutEnvironment_ = false;
 };
 
 // 空間クエリ (RaycastWorld / OverlapSphereWorld / OverlapBoxWorld / SphereCastWorld / BoxCastWorld) が、通常の Collider に加えて

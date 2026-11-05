@@ -3,10 +3,10 @@
 - 作成日時: 2026-09-23
 - 対象バージョン: MyEngine M76 (Deep-Modal 音響システム)
 - 関連コード:
-  - コンポーネント定義: [`ModalSoundComponent`](file:///C:/HAL/MyEngin/src/Engine/Core/Ecs/Components.h#L1621)
-  - 物理材質定義: [`PhysMat`](file:///C:/HAL/MyEngin/src/Engine/Engine/Physics/PhysMat.h)
-  - 合成ルーチン: [`BuildModes`](file:///C:/HAL/MyEngin/src/Engine/Engine/Audio/Synth/ModalSynth.cpp#L41)
-  - 特化学習ツール: [tools/deepmodal/](file:///C:/HAL/MyEngin/tools/deepmodal/)
+  - コンポーネント定義: [`ModalSoundComponent`](../../src/Engine/Core/Ecs/Components.h#L1621)
+  - 物理材質定義: [`PhysMat`](../../src/Engine/Engine/Physics/Rigid/PhysMatLibrary.h)
+  - 合成ルーチン: [`BuildModes`](../../src/Engine/Engine/Audio/Synth/ModalSynth.cpp#L41)
+  - 特化学習ツール: [tools/deepmodal/](../../tools/deepmodal/)
 
 ---
 
@@ -32,7 +32,7 @@ Thingi10K の 3D プリント用マニホールドメッシュおよび ModelNet
 
 ## 3. キャラクター／エネミー用 コンポーネント設定項目
 
-GameObject に付与する [`ModalSoundComponent`](file:///C:/HAL/MyEngin/src/Engine/Core/Ecs/Components.h#L1621) および関連する [`ColliderComponent`](file:///C:/HAL/MyEngin/src/Engine/Core/Ecs/Components.h#L100)（[`PhysMat`](file:///C:/HAL/MyEngin/src/Engine/Engine/Physics/PhysMat.h)）のパラメータ項目一覧。
+GameObject に付与する [`ModalSoundComponent`](../../src/Engine/Core/Ecs/Components.h#L1621) および関連する [`ColliderComponent`](../../src/Engine/Core/Ecs/Components.h#L100)（[`PhysMat`](../../src/Engine/Engine/Physics/Rigid/PhysMatLibrary.h)）のパラメータ項目一覧。
 
 ### (1) `ModalSoundComponent` の設定項目
 

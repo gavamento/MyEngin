@@ -856,7 +856,14 @@ void EditorApp::OnImGui(EngineContext& ctx)
 
     hierarchy_.OnImGui(ctx, selection_, undo_);
     inspector_.OnImGui(ctx, selection_, undo_, preview_, playMode_.InPlayMode());
-    console_.OnImGui(settings_.externalEditorCmd);
+    console_.OnImGui();
+    {
+        std::wstring file;
+        int line = 0;
+        if (console_.TakeOpenSourceRequest(file, line)) {
+            OpenScriptInIde(ctx, settings_.externalEditorCmd, vsLauncher_, file, line);
+        }
+    }
     // M94l: タイルパレット窓が Scene View の 2D モードで塗る。Play 中・2D モードの状態は Scene View より先に渡す
     tilePalette_.SetInPlayMode(playMode_.InPlayMode());
     tilePalette_.SetSceneMode2d(sceneView_.mode2d);
@@ -1024,7 +1031,11 @@ void EditorApp::OnImGui(EngineContext& ctx)
     }
     DrawProbePreview();
     // scm_ は Git バッジの引き先 (M66i)。裸起動でも Unavailable のまま no-op になる
-    assetBrowser_.OnImGui(ctx, selection_, undo_, settings_.externalEditorCmd, preview_, &scm_);
+    assetBrowser_.OnImGui(ctx, selection_, undo_, preview_, &scm_);
+    if (const std::wstring script = assetBrowser_.TakePendingOpenScript(); !script.empty()) {
+        OpenScriptInIde(ctx, settings_.externalEditorCmd, vsLauncher_, script, 1);
+    }
+    vsLauncher_.Poll(); // 新しく起動した VS の読み込みが落ち着いたら、待たせていたファイルを開く
     // [Rebuild Scripts] (M66e)。**窓ではなくここで起動してハンドルを持つ** —
     // 走っている間 GateBlocker::ScriptBuildRunning を立て続けるため
     if (assetBrowser_.TakeRebuildScriptsRequest() && scriptBuildProc_ == nullptr) {
@@ -1050,8 +1061,8 @@ void EditorApp::OnImGui(EngineContext& ctx)
         ctx.scene = actorEdit_ ? &actorEdit_->scene : mainScene;
     }
     animation_.OnImGui(ctx, selection_, undo_);
-    animatorController_.OnImGui(ctx, selection_);
-    animPreview_.OnImGui(ctx, selection_);
+    animatorController_.OnImGui(ctx, selection_, undo_); // M93f: 文書 Undo
+    animPreview_.OnImGui(ctx, selection_, undo_);
     search_.OnImGui(ctx, selection_);
     projectSettings_.OnImGui(ctx, settings_, shortcuts_);
     buildSettings_.OnImGui(ctx);
@@ -1069,7 +1080,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     if (assetBrowser_.TakeOpenMixerRequest()) {
         audioMixer_.FocusOnActive();
     }
-    audioMixer_.OnImGui(ctx);
+    audioMixer_.OnImGui(ctx, undo_); // M93f: 文書 Undo
     // Asset Browser で .bt.json がダブルクリックされたら BT 窓で開く (M85h)
     if (std::wstring p = assetBrowser_.TakePendingOpenBehaviorTree(); !p.empty()) {
         behaviorTree_.OpenAsset(p);

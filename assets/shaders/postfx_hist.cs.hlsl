@@ -17,11 +17,13 @@ groupshared uint sBins[256];
 
 uint BinForLuminance(float lum)
 {
-    if (lum <= 1e-6f) {
+    // ★否定形で書く: NaN の輝度は `lum <= 1e-6f` をすり抜け、clamp を NaN のまま通って
+    //   (uint)NaN = 未定義の添字で sBins の外へ書く (docs/rev の見落としパターン G、M93c)。有限値の結果は同じ
+    if (!(lum > 1e-6f)) {
         return 0;
     }
     const float t = clamp((log2(lum) + 10.0f) / 16.0f, 0.0f, 1.0f);
-    return (uint)(t * 254.0f + 1.5f); // 1..255
+    return min((uint)(t * 254.0f + 1.5f), 255u); // 1..255
 }
 
 [numthreads(16, 16, 1)]

@@ -1,7 +1,7 @@
 # DeepModalModel: プロシージャル形状データセット (候補 3 の実装)
 
 - 作成日: 2026-10-11
-- 対象: `DeepModalModel\` (`C:\HAL\MyEngin\DeepModalModel\`)、`tools\deepmodal\train.py` の軸修正
+- 対象: `DeepModalModel\` (リポジトリ直下)、`tools\deepmodal\train.py` の軸修正
 - 位置づけ: `modelnet40_eval_report.md` §5「候補 3: プロシージャル合成メッシュ群 (CSG / SDF)」の実装。
   ModelNet40 (11,911) + Thingi10K (951) + creatures (1,257) + stage0/1 (124) ≈ 14,200 件に、
   ゲーム小道具中心の 53 ファミリから **50,000 件以上** の形状を足す

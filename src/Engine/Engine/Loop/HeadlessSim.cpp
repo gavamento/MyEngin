@@ -168,7 +168,10 @@ struct HeadlessSim::Impl : IEngineApp {
     CursorLockState cursorLock;
     WindowModeState windowMode;
     std::vector<EffectSpawnRequest> effectQueue;
+    std::vector<ScriptMessage> messageQueue; // v33 (M93e)
+    std::vector<ScriptMessage> messageBatch;
     std::vector<DebugLineCmd> debugLines;
+    std::ofstream debugDrawLog; // M93e: --debug-draw-log (EngineLoop と同じ出力レーン)
     InputActions inputActions;
     NetRuntimeInfo netInfo;
     SimProvenance provenance = {};
@@ -236,7 +239,14 @@ void HeadlessSim::Impl::BuildTickServices(int netRole)
     ts.resources = &resources;
     ts.solidContacts = &solidContacts;
     ts.effectQueue = &effectQueue;
+    ts.messageQueue = &messageQueue; // v33 (M93e)
+    ts.messageBatch = &messageBatch;
     ts.debugLines = &debugLines;
+    // M93e (dogfooding #11): --debug-draw-log。開けなければ無効 (sim には無関係)
+    if (!config.debugDrawLogPath.empty() && !debugDrawLog.is_open()) {
+        debugDrawLog.open(std::filesystem::path(config.debugDrawLogPath), std::ios::out | std::ios::trunc);
+    }
+    ts.debugDrawLog = debugDrawLog.is_open() ? &debugDrawLog : nullptr;
     ts.audioQueue = &audioQueue;
     ts.audioSystem = &audioSystem;
     ts.audioSources = &audioSources;
@@ -341,6 +351,7 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
         shared.audioQueue = &m.audioQueue;
         shared.pendingScene = &m.pendingScene;
         shared.effectQueue = &m.effectQueue;
+        shared.messageQueue = &m.messageQueue; // v33 (M93e)
         shared.debugLines = &m.debugLines;
         shared.audioHandleSeq = &m.audioHandleSeq;
         shared.inputActions = &m.inputActions;

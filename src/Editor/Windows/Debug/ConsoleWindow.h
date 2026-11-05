@@ -11,11 +11,24 @@ namespace mye {
 class ConsoleWindow {
 public:
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
-    // externalEditorCmd: "code -g {file}:{line}" 形式 (ソースジャンプに使う)
-    void OnImGui(const std::string& externalEditorCmd);
+    void OnImGui();
+
+    // ダブルクリックされたログ行のソース位置を取り出す (false = 要求なし)。
+    // EditorApp が OpenScriptInIde で開く (外部エディタの起動待ちを持つのが EditorApp のため)
+    bool TakeOpenSourceRequest(std::wstring& file, int& line)
+    {
+        if (pendingSourceFile_.empty()) {
+            return false;
+        }
+        file.swap(pendingSourceFile_);
+        pendingSourceFile_.clear();
+        line = pendingSourceLine_;
+        return true;
+    }
 
 private:
-    void JumpToSource(const LogEntry& e, const std::string& cmd);
+    std::wstring pendingSourceFile_;
+    int pendingSourceLine_ = 0;
 
     std::vector<LogEntry> entries_;
     uint64_t cursor_ = 0;

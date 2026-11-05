@@ -21,6 +21,7 @@ struct ScriptAudioEvent;
 struct EffectSpawnRequest;
 struct DebugLineCmd;
 struct NetRuntimeInfo;
+struct ScriptMessage; // v33 (M93e): SimSharedServices::messageQueue
 class Scene;
 class ScriptHost;
 class ManagedHost;
@@ -119,6 +120,7 @@ struct SimSharedServices {
     TilemapSystem* tilemap = nullptr; // v31: Tilemap* の引き先。null = 該当スロットが失敗値を返す
     std::wstring assetsRoot;           // v31: SpriteByName が相対パスを解く根
     NavSystem* nav = nullptr; // v24: NavFindPath 等のクエリの引き先 (v26 の NavWarp / NavSetPath は書き換える)。null = 該当スロットが 0 を返す
+    std::vector<ScriptMessage>* messageQueue = nullptr; // v33 (M93e): SendScriptMessage の積み先。null = スロットが 0 を返す
 };
 void WireScriptServices(ScriptHost& scriptHost, ManagedHost& managedHost,
                         const SimSharedServices& services, bool developmentRun);

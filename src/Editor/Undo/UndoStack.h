@@ -36,6 +36,25 @@ struct UndoFileOp {
 // 逆操作先が消滅している / 宛先が塞がっている場合は WARN + no-op (false を返す)
 bool ExecuteAssetFileOp(EngineContext* ctx, const UndoFileOp& op, bool redo);
 
+// アセット文書 (ランタイム上の編集対象) の Undo エントリ (M93f)。シーン編集・ファイル操作と同じスタックに
+// 積まれ、Undo / Redo は JSON の before / after を文書へ適用し直す。シーン状態は変えないので
+// serial は現状態を継承する (PushFileOp と同じ理由)。
+//   Controller = .controller.json の実体 (ControllerLibrary::GetMutable(hash)、ToJson / FromJson で往復)。
+//                Animator Controller 窓と Animation Preview 窓 (イベント編集) が記録する
+//   Mixer      = AudioSystem のランタイムのバス構成 (CurrentMixer / ApplyMixer、MixerLibrary::ToJson / FromJson)。
+//                hash は記録時のアクティブな .mixer.json (情報のみ。適用先は常にランタイム)
+struct UndoDocOp {
+    enum class Kind : uint8_t { None, Controller, Mixer };
+    Kind kind = Kind::None;
+    uint64_t hash = 0;
+    nlohmann::json before;
+    nlohmann::json after;
+};
+
+// UndoDocOp の実行部 (UndoStack.cpp)。対象が消えている (controller が未登録 / AudioSystem が無い) /
+// JSON が読めない場合は WARN + no-op (false を返す)
+bool ExecuteDocOp(EngineContext* ctx, const UndoDocOp& op, bool redo);
+
 // エディタの Undo/Redo スタック (M8)。
 //
 // 方針:
@@ -59,8 +78,8 @@ public:
     // **未設定なら override の記録だけを飛ばす** — Undo 自体は動く
     void SetPrefabLibrary(const PrefabLibrary* lib) { prefabs_ = lib; }
 
-    // ファイル操作エントリの実行に使うコンテキスト (assetDb テーブル更新、M51i)。
-    // EditorApp が OnImGui 冒頭で毎フレーム設定する (未設定なら実行時 WARN + no-op)
+    // ファイル操作エントリ (M51i) と文書エントリ (M93f) の実行に使うコンテキスト (assetDb テーブル更新 /
+    // controllers / audio)。EditorApp が OnImGui 冒頭で毎フレーム設定する (未設定なら実行時 WARN + no-op)
     void SetFileOpContext(EngineContext* ctx) { fileOpCtx_ = ctx; }
 
     // ファイル操作 (Rename/Move/Duplicate/Create) を 1 エントリとして積む (M51i)。
@@ -68,6 +87,10 @@ public:
     // (StateSerial) を汚さない。session も常に 0 のまま — Play 停止はディスクを
     // 巻き戻さないので、EndPlaySession の一括破棄から外して Undo 手段を残す
     void PushFileOp(const char* label, UndoFileOp op);
+    // アセット文書の編集 (Animator Controller / Audio Mixer) を 1 エントリとして積む (M93f)。
+    // serial / session の扱いは PushFileOp と同じ (シーンの dirty を汚さず、Play 停止で捨てない)。
+    // before == after なら積まない
+    void PushDocOp(const char* label, UndoDocOp op);
 
     // ---- 記録 ----
     void BeginRecord(const char* label, const Selection& selBefore);
@@ -141,6 +164,7 @@ private:
         uint32_t session = 0;
         uint64_t serial = 0; // push 時に採番される状態 ID (StateSerial 用)
         UndoFileOp fileOp;   // kind != None ならファイル操作エントリ (before/after は空、M51i)
+        UndoDocOp docOp;     // kind != None なら文書エントリ (before/after は空、M93f)
     };
 
     static void ApplyStructuralChanges(Scene& scene); // Record 用 (ヘッダに World を持ち込まないため)
@@ -162,7 +186,20 @@ private:
     uint64_t baseSerial_ = 0;    // スタックが空のときの状態 ID
 
     const PrefabLibrary* prefabs_ = nullptr; // override リスト記録用 (M48e)
-    EngineContext* fileOpCtx_ = nullptr;     // ファイル操作エントリ実行用 (M51i)
+    EngineContext* fileOpCtx_ = nullptr;     // ファイル操作エントリ (M51i) と文書エントリ (M93f) の実行用
+};
+
+// 文書 (JSON) の 1 フレームの前後を比べ、変化をまとめて 1 エントリにする記録器 (M93f)。
+// ImGui の連続操作 (スライダのドラッグ・テキスト入力) は IsAnyItemActive が偽になるフレームまで
+// 1 つに畳む。文書が切り替わったら畳んでいた分は捨てる (前の文書の after を持たないため)。
+// 使い方 (窓の OnImGui): 文書を解決した直後に pre = ToJson(doc)、ImGui::End の直前に
+//   recorder.Observe(undo, "label", kind, hash, pre, ToJson(doc), ImGui::IsAnyItemActive());
+struct DocUndoRecorder {
+    bool pending = false;
+    uint64_t hash = 0;
+    nlohmann::json before;
+    void Observe(UndoStack& undo, const char* label, UndoDocOp::Kind kind, uint64_t docHash,
+                 const nlohmann::json& pre, nlohmann::json post, bool anyItemActive);
 };
 
 } // namespace mye

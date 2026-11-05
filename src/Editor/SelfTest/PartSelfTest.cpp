@@ -175,8 +175,10 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 32u,
-              "abi: the table reports v32");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 33u,
+              "abi: the table reports v33");
+        // v33 (M93e): スクリプト間メッセージ。配達の結果は --debug-draw-log / MessageProbe (replay) が見る (ここは充填のみ)
+        check(api.SendScriptMessage != nullptr, "abi: the v33 SendScriptMessage slot is filled in");
         // v32 (M95): アクション戦闘。呼んだ結果はこのスイートの末尾 (M95 sub-01) が見る
         check(api.AnimatorSetPause != nullptr && api.AnimatorGetPause != nullptr
                   && api.OverlapSphereParts != nullptr && api.SphereCastParts != nullptr
@@ -1025,7 +1027,7 @@ bool RunPartSelfTest()
         w.ApplyStructuralChanges();
         const MyeEntityId a = toShared(anim.Id());
         const MyeEntityId p = toShared(plain.Id());
-        check(MYE_API_VERSION == 32u && api.version == MYE_API_VERSION, "abi: MYE_API_VERSION is 32");
+        check(MYE_API_VERSION == 33u && api.version == MYE_API_VERSION, "abi: MYE_API_VERSION is 33");
         check(api.AnimatorGetPause(api.engine, a) == 0, "abi: AnimatorGetPause starts at 0");
         check(api.AnimatorSetPause(api.engine, a, 5) == 1 && api.AnimatorGetPause(api.engine, a) == 5,
               "abi: AnimatorSetPause sets the remaining ticks");

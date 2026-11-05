@@ -19,12 +19,14 @@
 #endif
 
 #define KERNEL_PARAMS(N) struct N
-#define RW(T, n) , ::mye::kernel::RWView<T> n
-#define RO(T, n) , ::mye::kernel::ROView<T> n
+// [[maybe_unused]]: params や途中の RO を使わないカーネル (SelfTestUnused がその経路を検証する) で C4100 を
+// 出さない。CI は /p:MyeWarnAsError=true で警告をエラーにする
+#define RW(T, n) , [[maybe_unused]] ::mye::kernel::RWView<T> n
+#define RO(T, n) , [[maybe_unused]] ::mye::kernel::ROView<T> n
 // Name_KernelName: 登録用メタ (名前)。Name_Cpu: 要素 1 個ぶんの本体 (実行は Engine/Compute/KernelRunner.h)
 #define KERNEL(Name, P, Decls)                                                        \
     inline constexpr const char* Name##_KernelName = #Name;                           \
-    inline void Name##_Cpu(::mye::kernel::KernelId id, const P& params Decls)
+    inline void Name##_Cpu(::mye::kernel::KernelId id, [[maybe_unused]] const P& params Decls)
 
 #else
 

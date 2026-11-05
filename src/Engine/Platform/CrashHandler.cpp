@@ -26,6 +26,17 @@
 #endif
 
 namespace mye {
+
+const char* BuildConfigName()
+{
+    return MYE_BUILD_CONFIG;
+}
+
+const char* BuildGitHash()
+{
+    return MYE_GIT_HASH;
+}
+
 namespace {
 
 // ---- 事前確保 (ハンドラ内では一切 new しない) ----

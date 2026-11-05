@@ -56,7 +56,13 @@ std::optional<FieldType> ToFieldType(int32_t t)
 struct MyeBootstrapArgs {
     const MyeEngineApi* api;
     MyeManagedVTable* outVtable;
+    // M93a: managed 側が前提にする ABI 版を書き戻す欄 (Interop.cs の kExpectedApiVersion)。
+    // 旧 MyeScripting.dll は書かないので 0 = 不明
+    uint32_t managedApiVersion = 0;
 };
+
+// Bootstrap.Initialize の戻り値 (Bootstrap.cs の kResult* と一致)
+constexpr int kBootstrapApiVersionMismatch = 3;
 
 // nethost で hostfxr.dll を探してロードし、必要なエントリを解決する
 bool LoadHostfxr(HMODULE& outLib)
@@ -151,6 +157,14 @@ bool ManagedHost::Init(const std::wstring& exeDir, Scene* scene)
     // api テーブルと vtable 出力先を渡して Bootstrap を実行
     MyeBootstrapArgs args{ &api_, &vt_ };
     const int mrc = bootstrap(&args, static_cast<int>(sizeof(args)));
+    if (mrc == kBootstrapApiVersionMismatch) {
+        // M93a: MyeScripting.dll が別の版の EngineAPI.h から作られている。位置ベースのミラーなので
+        // 続行すると全スロットが別関数を指す — C# レーンを起動しない (C++ レーンはそのまま動く)
+        MYE_LOG_WARN("[managed] ABI version mismatch: engine is v%u, MyeScripting.dll was built for v%u "
+                     "- rebuild it with tools\\build_managed.bat. C# scripting disabled",
+                     static_cast<unsigned>(api_.version), static_cast<unsigned>(args.managedApiVersion));
+        return false;
+    }
     if (mrc != 0 || vt_.Compile == nullptr) {
         MYE_LOG_WARN("[managed] Bootstrap.Initialize returned %d (vtable not filled)", mrc);
         return false;
@@ -457,6 +471,25 @@ void ManagedHost::DispatchBreak(EntityID root, EntityID piece, MyeVec3 point, fl
             continue; // まだインスタンス化されていない
         }
         vt_.InvokeBreak(handle, ToShared(piece), point, impulse);
+    }
+}
+
+void ManagedHost::DispatchScriptMessage(EntityID target, EntityID from, uint64_t nameHash, int32_t value)
+{
+    if (!ready_ || types_.empty() || !vt_.InvokeMessage) {
+        return; // 旧 MyeScripting.dll (スロット未設定) は無視
+    }
+    World& world = scene_->GetWorld();
+    for (CsType& type : types_) {
+        void* payload = world.GetComponentRaw(target, type.componentId);
+        if (!payload) {
+            continue;
+        }
+        const int32_t handle = *static_cast<int32_t*>(payload);
+        if (handle == 0) {
+            continue; // まだインスタンス化されていない
+        }
+        vt_.InvokeMessage(handle, ToShared(from), nameHash, value);
     }
 }
 

@@ -54,6 +54,7 @@
     <ClCompile Include="..\src\GameLogic\Scripts\FlowTitleDriver.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\FractureDamageProbe.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\LocalPlayerDemo.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\MessageProbe.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\NavDemoDriver.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\NavModifierDriver.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\NavObstacleDriver.cpp" />

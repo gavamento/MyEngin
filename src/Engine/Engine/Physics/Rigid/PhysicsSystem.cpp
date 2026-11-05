@@ -2782,6 +2782,23 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
 
     // ---- 物理環境の解決 (M59b)。不在 (= 既存シーンの全部) なら以降は全て従来経路 ----
     const PhysicsEnvironmentComponent* env = ResolvePhysicsEnvironment(world);
+    // M93e (dogfooding #19): 車輪のばねは substeps 1 では硬すぎるのに、PhysicsEnvironment が無いと
+    // 黙って従来経路 (substeps 1 相当) を通って柔らかい車になる。原因に辿り着けるよう 1 回だけ WARN する。
+    // 走査はアーキタイプの件数を見るだけ (エンティティは触らない)。ログだけで sim は変えない
+    if (env == nullptr && !warnedVehicleWithoutEnvironment_) {
+        bool anyVehicle = false;
+        const ComponentTypeId vehicleReq[] = { VehicleComponent::sTypeId };
+        world.ForEachArchetype(vehicleReq, [&](Archetype& arch) {
+            if (arch.Count() > 0) {
+                anyVehicle = true;
+            }
+        });
+        if (anyVehicle) {
+            warnedVehicleWithoutEnvironment_ = true;
+            MYE_LOG_WARN("[phys] a Vehicle exists but the scene has no PhysicsEnvironment - wheel springs run with "
+                         "substeps 1 and the car feels soft. Add a PhysicsEnvironment (substeps 8-16) to the scene");
+        }
+    }
 
     // ---- CCD の有無 (M59j) ----
     // 1 個も居なければ掃引パスごと通らない = 既存シーンは fp 演算が 1 回も増えない。

@@ -36,7 +36,7 @@ PostProcess::Settings MergeCameraPostFx(const PostProcess::Settings& base,
     s.lutTexture = comp.lutTexture; // M44a (lutSRV の解決は RenderSystem)
     s.lutIntensity = comp.lutIntensity;
     s.autoExposure = comp.autoExposure; // M44b (aeInstant は base 維持 — applyGamma と同じ)
-    s.aeSpeed = comp.aeSpeed;
+    s.aeSpeed = (comp.aeSpeed > 0.0f) ? comp.aeSpeed : 0.0f; // 負値 / NaN は 0 (hist_reduce の exp(-speed/60) が発散しない、M93c)
     s.aeMin = comp.aeMin;
     s.aeMax = comp.aeMax;
     s.dofFocusDistance = comp.dofFocusDistance; // M44c

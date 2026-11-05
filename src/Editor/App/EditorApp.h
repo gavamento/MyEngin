@@ -14,6 +14,7 @@
 #include "Editor/App/ShortcutHub.h"
 #include "Editor/Widgets/StatusBar.h"
 #include "Editor/Widgets/ToastCenter.h"
+#include "Editor/Tools/VisualStudioLauncher.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Editor/Windows/Animation/AnimationWindow.h"
 #include "Editor/Windows/Animation/AnimationPreviewWindow.h"
@@ -202,6 +203,8 @@ private:
     // M52e: スクラブ解除の判定に使う前フレームの再生状態 (状態ではなく遷移を見るため)
     PlayState prevPlayState_ = PlayState::Editing;
     AssetBrowserWindow assetBrowser_;
+    // スクリプトを開く Visual Studio の起動待ち (Console / Asset Browser の要求をここで開く)
+    VisualStudioLauncher vsLauncher_;
     AnimationWindow animation_;
     AnimatorControllerWindow animatorController_;
     AnimationPreviewWindow animPreview_; // M89n

@@ -30,8 +30,7 @@ public:
     // scm は Git バッジの引き先 (M66i)。**null 可** — 裸起動 / Collab 利用不可でも
     // Content Browser はバッジ無しで動く。窓の開閉とは無関係に status は最新なので、
     // Source Control 窓を閉じていてもバッジは出る
-    void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
-                 const std::string& externalEditorCmd, AssetPreviewCache& preview,
+    void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo, AssetPreviewCache& preview,
                  const SourceControlSession* scm);
 
     // ダブルクリックされた .scene.json のパスを取り出す (空 = リクエストなし)。
@@ -40,6 +39,15 @@ public:
     {
         std::wstring p;
         p.swap(pendingOpenScene_);
+        return p;
+    }
+
+    // 外部エディタで開くスクリプト (ダブルクリックした .cs / 新規作成したスクリプト。空 = なし)。
+    // EditorApp が OpenScriptInIde で開く — 起動待ちを持つ VisualStudioLauncher の所有者が EditorApp のため
+    std::wstring TakePendingOpenScript()
+    {
+        std::wstring p;
+        p.swap(pendingOpenScript_);
         return p;
     }
 
@@ -96,7 +104,7 @@ public:
 private:
     void DrawDirTree(EngineContext& ctx, const std::wstring& dir);
     // 命名モーダルの確定処理 (M51i: Create Undo 記録のため undo を受ける)
-    void DoCreate(EngineContext& ctx, UndoStack& undo, const std::string& externalEditorCmd);
+    void DoCreate(EngineContext& ctx, UndoStack& undo);
     // リネームモーダルを開く準備 (createName_ に現在の stem をプリフィル、M30d)
     void BeginRename(const std::wstring& path);
 
@@ -110,6 +118,7 @@ private:
     std::wstring pendingOpenActor_; // ダブルクリックされた構成アセット (M48k)
     std::wstring pendingOpenBehaviorTree_; // ダブルクリックされた .bt.json (M85h)
     std::wstring pendingOpenSpriteEditor_; // ダブルクリックされたテクスチャ (M94e)
+    std::wstring pendingOpenScript_; // 外部エディタで開くスクリプト (TakePendingOpenScript で消費)
     bool openMixerRequest_ = false; // .mixer.json をダブルクリックした (M45d)
     bool rebuildScriptsRequest_ = false; // [Rebuild Scripts] (M66e。起動は EditorApp)
     // D&D 移動 (M30b)。描画中の fs 変更 (iterator 破壊) を避けるためフレーム末に実行する

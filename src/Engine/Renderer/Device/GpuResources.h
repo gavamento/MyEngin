@@ -99,11 +99,11 @@ struct AssetEntry {
 
 class MeshLibrary {
 public:
-    // ★M70d (dogfooding #12): 組込みプリミティブ 6 種を**ここで登録し切る**。
+    // ★M70d (dogfooding #12): 組込みプリミティブ 7 種 (+ 水面) を**ここで登録し切る**。
     //   遅延生成にすると、Runtime で生きているのは誰かが**副作用**で作ったものだけになり、
     //   「エディタで作った円柱を含むシーンが Runtime では黙って描画されない」が起きる
     //   (使える組込みメッシュが**実行環境で変わる**)。
-    //   6 つで合計数百頂点なので遅延にする価値が無い。
+    //   7 つで合計数百頂点なので遅延にする価値が無い。
     //   ★Init を呼ばない CPU 専用モード (TerrainSelfTest) は 1 本も作らない
     void Init(GraphicsDevice& device)
     {
@@ -129,7 +129,7 @@ public:
     // 登録名の逆引き (未登録は nullptr)。モデル由来なら "guid://<16hex>#mesh0#prim0" (M74a) —
     // M60f の凸包クックが「この AssetID の元ファイルはどれか」を知る唯一の手段
     const std::string* NameOf(AssetID id) const;
-    // 組み込みプリミティブ (中心原点・単位サイズ基準)。Init が 6 つとも先に登録するので
+    // 組み込みプリミティブ (中心原点・単位サイズ基準)。Init が 7 つとも先に登録するので
     // 実行中の初回呼び出しは常にキャッシュヒット (遅延生成の形は CPU 専用モードのために残す)
     AssetID Cube();     // 単位キューブ (辺長 1)
     AssetID Sphere();   // UV 球 (半径 0.5)
@@ -137,6 +137,10 @@ public:
     AssetID Quad();     // XY 平面 (1x1, 法線 **-Z** = +Z を向く既定カメラから正面が見える)
     AssetID Cylinder(); // 円柱 (半径 0.5, 高さ 1)
     AssetID Capsule();  // カプセル (半径 0.5, 全高 2)
+    // 車輪 (M93e、dogfooding #13): **軸が X** の円柱 (半径 0.5、幅 0.5)。車輪の見た目 (ApplyWheelVisual) と
+    // サス (PhysicsSystem) が車軸 = ローカル X、サス = -Y、前 = +Z を姿勢から読むので、Y 軸の Cylinder を
+    // 回転や非一様スケールで寝かせる代わりにこれを使う。一様スケールは安全 (半径 0.35 = スケール 0.7)
+    AssetID Wheel();
     AssetID WaterPlane(int resolution = 64, float size = 50.0f); // 分割 XZ 水面グリッド
 
     // 登録済みメッシュを名前順で列挙 (エディタ UI 用)
@@ -155,6 +159,7 @@ private:
         Quad();
         Cylinder();
         Capsule();
+        Wheel(); // M93e
         WaterPlane();
     }
     GraphicsDevice* device_ = nullptr;
@@ -167,6 +172,7 @@ private:
     AssetID quad_ = {};
     AssetID cylinder_ = {};
     AssetID capsule_ = {};
+    AssetID wheel_ = {}; // M93e
     AssetID waterPlane_ = {};
 };
 

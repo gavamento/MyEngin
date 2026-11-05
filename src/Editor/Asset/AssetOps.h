@@ -13,6 +13,7 @@ namespace mye {
 struct EngineContext;
 struct Selection;
 class UndoStack;
+class VisualStudioLauncher;
 
 // AssetBrowser のドラッグ&ドロップ用ペイロード名。データは UTF-8 のファイルパス (null 終端)。
 inline constexpr const char* kAssetDragPayload = "MYE_ASSET";
@@ -163,7 +164,18 @@ bool AssignMaterialToEntity(EngineContext& ctx, Selection& selection, UndoStack&
                             const std::wstring& matPath, EntityID target);
 
 // ---- スクリプトワークフロー ----
-void OpenInExternalEditor(const std::string& editorCmd, const std::wstring& path); // {file}/{line} 置換
+// スクリプト編集用のソリューションを生成し、その絶対パスを返す (失敗は空)。
+//   プロジェクト起動 = <project>\cache\<フォルダ名>.slnx (GameLogic.vcxproj + Scripts\Scripts.csproj)
+//   レガシー起動      = エンジンリポジトリの MyEngine.sln (生成しない)
+// 中身が同じなら書かないので、毎回呼んでよい
+std::wstring WriteScriptSolution(EngineContext& ctx);
+// path (line 行目) を外部エディタで開く。line <= 0 は先頭。
+//   editorCmd == kExternalEditorVisualStudio ("{vs}") → WriteScriptSolution のソリューションごと
+//                                               Visual Studio で開く (起動待ちは vs が持つ)
+//   空                                       → OS の関連付け
+//   それ以外                                  → {file}/{line} を置換して cmd.exe /c で実行
+void OpenScriptInIde(EngineContext& ctx, const std::string& editorCmd, VisualStudioLauncher& vs,
+                     const std::wstring& path, int line);
 void CompileCSharpScripts(EngineContext& ctx); // assets\scripts\*.cs をエンジン内 Roslyn でコンパイル
 
 // C++ スクリプトのビルド (M51j。**唯一の起動口**)。

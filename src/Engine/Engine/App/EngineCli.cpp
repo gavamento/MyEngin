@@ -48,6 +48,8 @@ const CliFlag kEngineCliFlags[] = {
     { L"--shot-every", CliValue::One, [](CliArgs& a) { a.c.screenshotEvery = _wtoi64(a.v1); return true; } },
     // M90a: --shot-frame のフレームで描画統計と GPU 時間を JSON へ書いて終了 (決定的撮影と同じ条件)
     { L"--render-stats-dump", CliValue::One, [](CliArgs& a) { a.c.renderStatsDumpPath = a.v1; return true; } },
+    // M93e (dogfooding #11): DebugDrawLine の線分を tick ごとにテキストへ追記 (ヘッドレスで射線を追う)
+    { L"--debug-draw-log", CliValue::One, [](CliArgs& a) { a.c.debugDrawLogPath = a.v1; return true; } },
     // M52c: 撮影のフォントを機種非依存に固定する / 決定的撮影を解除して実時間で回す
     { L"--font-embedded", CliValue::None, [](CliArgs& a) { a.c.fontEmbedded = true; return true; } },
     { L"--shot-realtime", CliValue::None, [](CliArgs& a) { a.c.shotRealtime = true; return true; } },

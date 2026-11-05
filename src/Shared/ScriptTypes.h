@@ -73,6 +73,9 @@ struct MyeScriptDesc {
     // 宣言していないカーネルを呼ぶ ForEach は実行されずに失敗する。名前は大文字小文字を区別して完全一致
     uint32_t kernelNameCount;
     const char* const* kernelNames;
+    // v30 (M93e、null 可): スクリプト間メッセージ。SendScriptMessage (EngineAPI.h) が target へ積んだ
+    // (from, nameHash, value) を、同じ tick の配達点 (Update の直後 / LateUpdate の直後) で受け取る
+    void (*onMessage)(void* state, MyeUpdateContext* ctx, MyeEntityId from, uint64_t nameHash, int32_t value);
 };
 
 // BT タスクの戻り値 (BtResult と同値)

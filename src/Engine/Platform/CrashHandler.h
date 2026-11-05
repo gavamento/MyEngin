@@ -157,6 +157,12 @@ void SuppressCrtDialogs();
 void InstallCrashHandler(const CrashHandlerConfig& config);
 void UninstallCrashHandler();
 
+// ビルドに埋め込まれた構成名 ("Debug" / "Release") と git ハッシュ。build\Common.props の MyeBuildInfo が生成する
+// MyeBuildInfo.h を包含するのは Engine のこの翻訳単位だけなので、Editor / Runtime が表示に使うときはここから受け取る
+// (構成名を _DEBUG で分岐して作らない = 規則 1)。生成されていないビルド (リポジトリ外) では "unknown"
+const char* BuildConfigName();
+const char* BuildGitHash();
+
 // ---- 意図的に落とすテスト経路 (--crash-test) ----
 // ハンドラ自体が「落ちたときに本当に動くか」は、実際に落として確かめるしかない。
 enum class CrashTestKind : uint8_t {

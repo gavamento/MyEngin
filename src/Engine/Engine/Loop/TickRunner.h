@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <iosfwd> // M93e: TickServices::debugDrawLog (std::ofstream の前方宣言)
 
 #include "Engine/Engine/Loop/EngineLoop.h" // EngineContext / EngineConfig / IEngineApp
 
@@ -26,6 +27,7 @@ class EffectSystem;
 class PhysicsSystem;
 class FractureSystem;
 struct ShapeImpulse;
+struct ScriptMessage; // v33 (M93e): TickServices::messageQueue / messageBatch
 class XpbdBackend;
 class AcousticField;
 class AgentSystem;
@@ -134,6 +136,13 @@ struct TickServices {
     std::vector<EffectSpawnRequest>* effectQueue = nullptr;
     std::vector<DebugLineCmd>* debugLines = nullptr;
     std::vector<ScriptAudioEvent>* audioQueue = nullptr;
+    // M93e (dogfooding #11): --debug-draw-log の書き先。非 null かつ open なら、tick 末に debugLines を
+    // テキストで追記する (出力レーン: sim は読まない)
+    std::ofstream* debugDrawLog = nullptr;
+    // v30 (M93e、dogfooding #20): SendScriptMessage の積み先と、配達の作業領域 (queue と swap して使う。tick 間で
+    // capacity を使い回す)。両方非 null のときだけ配る
+    std::vector<ScriptMessage>* messageQueue = nullptr;
+    std::vector<ScriptMessage>* messageBatch = nullptr;
 
     // 出力レーン (ハッシュ後にしか触らない)
     AudioSystem* audioSystem = nullptr;

@@ -59,9 +59,9 @@ fixtureは`cache/git-context-tests/`に残している。実際のプロジェ�
 用途は検証専用fixture・再生成可能なクックキャッシュ・過去の検証ログ。
 理由は隔離テストとコールド検証の初期化。影響は以下の検証生成物に限定する。
 
-- `C:/HAL/MyEngin/cache/git-context-tests/`配下の検証生成物
-- `C:/HAL/MyEngin/cache/collab_verify/`配下の検証生成物
-- `C:/HAL/MyEngin/bin/x64/Debug/cache/cooked/`
-- `C:/HAL/MyEngin/bin/x64/Release/cache/cooked/`
-- `C:/HAL/MyEngin/cache/replay_logs/`
-- `C:/HAL/MyEngin/cache/*.mismatch.txt`
+- `cache/git-context-tests/`配下の検証生成物
+- `cache/collab_verify/`配下の検証生成物
+- `bin/x64/Debug/cache/cooked/`
+- `bin/x64/Release/cache/cooked/`
+- `cache/replay_logs/`
+- `cache/*.mismatch.txt`

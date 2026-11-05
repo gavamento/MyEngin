@@ -1,8 +1,8 @@
 # Deep-Modal 音響品質テスト・評価報告書
 
 - 実施日時: 2026-09-23 22:42
-- 対象モデル: [assets/deepmodal/deepmodal.dmnet](file:///C:/HAL/MyEngin/assets/deepmodal/deepmodal.dmnet)
-- 評価対象プロジェクト: `deepmodaldemo` (`C:\Users\akita\Documents\MyEngineProjects\deepmodaldemo`)
+- 対象モデル: [assets/deepmodal/deepmodal.dmnet](../../assets/deepmodal/deepmodal.dmnet)
+- 評価対象プロジェクト: `deepmodaldemo` (`<MyEngineProjects>\deepmodaldemo`（作業時のローカル配置）)
 
 ---
 
@@ -26,7 +26,7 @@ Thingi10K を含む全 12,986 サンプルで統合本学習を完走した Deep
 
 ## 2. 評価結果データ
 
-生成された WAV ファイル群: [modal_test_audio/](file:///C:/HAL/MyEngin/modal_test_audio/)
+生成された WAV ファイル群: [modal_test_audio/](../../modal_test_audio/)
 
 ### (1) 立方体プロップ (`box`: 代表長さ $L=1.0\ \mathrm{m}$)
 

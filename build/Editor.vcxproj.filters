@@ -240,6 +240,9 @@
     <ClCompile Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.cpp">
       <Filter>Tools</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\VisualStudioLauncher.cpp">
+      <Filter>Tools</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Undo\UndoSelfTest.cpp">
       <Filter>Undo</Filter>
     </ClCompile>
@@ -559,6 +562,9 @@
       <Filter>Tools</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.h">
+      <Filter>Tools</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\VisualStudioLauncher.h">
       <Filter>Tools</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Undo\UndoSelfTest.h">

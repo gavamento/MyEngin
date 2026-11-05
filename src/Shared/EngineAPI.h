@@ -12,7 +12,8 @@
 // 互換性チェック用。テーブルや ScriptDesc のレイアウトを変えたら必ず上げること
 // ★既存スロットの並びとシグネチャは変えない — Interop.cs が位置ベースでミラーしているため、
 //   既存スロットをいじると C# 側が全てズレる。ミラー照合は tools\check_rules.ps1 規則 11
-//   (順序・件数・名前・引数個数 + version⇄スロット数の同時性) が機械検査する。
+//   (順序・件数・名前・引数個数 + version⇄スロット数の同時性 + Interop.cs の kExpectedApiVersion)
+//   が機械検査し、実行時は Bootstrap.Initialize が version を照合して古い MyeScripting.dll を弾く (M93a)。
 // 版ごとの中身 (注意は各スロットの注記。足した経緯は docs\history\api-scripting-tools.md):
 // v3 (M19): gamepad / Raycast / PlaySound / StopSound / LoadScene
 // v4 (M28a): 剛体操作 (AddForce/AddImpulse/AddTorque/Get/SetVelocity) + Overlap*/SphereCast + OnCollision
@@ -56,7 +57,9 @@
 // v31 (M94n): 2D — OverlapBoxMasked / BoxCast / SpriteByName / TilemapGetCell / TilemapSetCell / TilemapFillRect /
 //             TilemapDamageCell / TilemapWorldToCell / TilemapCellToWorld / TilemapGetBounds (OnlineJoinCode の次の 10 本)
 // v32 (M95a): アクション戦闘 — AnimatorSetPause / AnimatorGetPause / OverlapSphereParts / SphereCastParts / OverlapCapsuleParts (TilemapGetBounds の次の 5 本 = 193)
-#define MYE_API_VERSION 32u
+// v33 (M93e、GitHub 側の保守系統): スクリプト間メッセージ — SendScriptMessage (OverlapCapsuleParts の次の 1 本) +
+//             MyeScriptDesc 末尾の onMessage イベント (dogfooding #20)。元は v30 として作られ、手元の v30〜v32 と合流するときに v33 へ移した
+#define MYE_API_VERSION 33u
 
 // v30 (M93) OnlineMemberFlags のビット
 #define MYE_ONLINE_MEMBER_OWNER 1u    // 部屋を作った人 (ホスト = サーバを動かしている人)
@@ -1094,6 +1097,17 @@ struct MyeEngineApi {
     //   (p0 と p1 がほぼ同じなら球)
     int32_t (*OverlapCapsuleParts)(void* engine, MyeEntityId root, uint64_t tag, MyeVec3 p0, MyeVec3 p1, float radius,
                                    MyeEntityId* out, int32_t cap);
+
+    // ---- v33 (M93e): スクリプト間メッセージ (dogfooding #20) ----
+    // SendScriptMessage: target に付いた全スクリプト (C++ は OnMessage、C# は OnMessage) へ (from, nameHash, value) を届ける。
+    //   配達は**同じ tick の中**: フェーズ 3 (Update) の直後と、フェーズ 5 (LateUpdate) の直後の 2 点で、積まれた順。
+    //   配達中に送られた分も同じ点で続けて配る (8 巡まで。超えた分は捨てて WARN)。tick をまたいで残らないので
+    //   スナップショットには入らない (= 巻き戻し・ロールバックに新しい状態を増やさない)。
+    //   from は呼び出し側が渡す (通常は ctx.self)。名前は MyeNameHash("...") (ScriptAPI.h) か任意の 64bit 定数。
+    //   戻り値 1 = 積んだ、0 = target が null / 積み先が無い / 1 tick の上限 (4096 件) 超過 / C# レーンからの送信
+    //   (C# は NoHash レーンなので、hash 対象の状態を C# の判断で動かす送信は受けない。受信はできる)。
+    //   ★Win32 の SendMessage マクロと名前が衝突しないよう SendScriptMessage にしている
+    int (*SendScriptMessage)(void* engine, MyeEntityId from, MyeEntityId target, uint64_t nameHash, int32_t value);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

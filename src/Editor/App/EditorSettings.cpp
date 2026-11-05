@@ -21,6 +21,11 @@ void EditorSettings::Load(const std::wstring& dir)
         f >> root;
         lastScenePath = root.value("lastScenePath", lastScenePath);
         externalEditorCmd = root.value("externalEditorCmd", externalEditorCmd);
+        // Save は既定値のままでもキーを書くので、旧既定値は「選んだ値」と区別できない。
+        // 旧既定値と完全一致するときだけ移行し、手で変えた値は残す
+        if (externalEditorCmd == kLegacyExternalEditorCmd) {
+            externalEditorCmd = kExternalEditorVisualStudio;
+        }
         snapTranslate = root.value("snapTranslate", snapTranslate);
         snapRotateDeg = root.value("snapRotateDeg", snapRotateDeg);
         snapScale = root.value("snapScale", snapScale);

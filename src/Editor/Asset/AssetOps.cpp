@@ -17,6 +17,8 @@
 #include "nlohmann/json.hpp"
 
 #include "Editor/App/ChildProcess.h"
+#include "Editor/App/EditorSettings.h" // kExternalEditorVisualStudio
+#include "Editor/Tools/VisualStudioLauncher.h"
 #include "Editor/Scene/Selection.h"
 #include "Editor/SourceControl/ScmHint.h" // M66i: 生成 / 移動 / 削除の直後に status を取り直させる
 #include "Editor/Undo/UndoStack.h"
@@ -1736,32 +1738,38 @@ void InstantiateAssetAtPath(EngineContext& ctx, Selection& selection, UndoStack&
     undo.EndRecord(selection);
 }
 
-void OpenInExternalEditor(const std::string& editorCmd, const std::wstring& path)
-{
-    if (editorCmd.empty()) {
-        ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-        return;
-    }
-    std::string cmd = editorCmd;
-    ReplaceAll(cmd, "{file}", WideToUtf8(path));
-    ReplaceAll(cmd, "{line}", "1");
-    const std::wstring wargs = L"/c " + Utf8ToWide(cmd);
-    ShellExecuteW(nullptr, L"open", L"cmd.exe", wargs.c_str(), nullptr, SW_HIDE);
-}
-
 namespace {
+
+// 内容が同じなら書かない (戻り値は「書けたか、書く必要が無かったか」)。
+// IDE を開くたびに生成し直すので、mtime を動かすと MSBuild の再コンパイルと
+// Visual Studio のプロジェクト再読み込みを空撃ちさせる
+bool WriteTextIfChanged(const std::wstring& path, const std::string& text)
+{
+    {
+        std::ifstream in{ fs::path(path), std::ios::binary };
+        if (in) {
+            const std::string prev((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            if (prev == text) {
+                return true;
+            }
+        }
+    }
+    std::ofstream f{ fs::path(path), std::ios::binary };
+    if (!f) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteFail), WideToUtf8(path).c_str());
+        return false;
+    }
+    f.write(text.data(), static_cast<std::streamsize>(text.size()));
+    return true;
+}
 
 // エクスポート glue を <project>\cache\ へ生成する。
 // エンジンリポジトリの src\GameLogic\GameLogicMain.cpp と同一内容 — これを生成することで
 // プロジェクト側が参照するエンジン資産は Shared\ のヘッダ 4 本だけになる
 bool WriteGeneratedMain(const std::wstring& path)
 {
-    std::ofstream f{ fs::path(path), std::ios::binary };
-    if (!f) {
-        MYE_LOG_ERROR(Tr(StrId::Log_WriteFail), WideToUtf8(path).c_str());
-        return false;
-    }
-    f << "// 自動生成 (MyEngine エディタ)。手編集しても Rebuild Scripts で上書きされる。\n"
+    return WriteTextIfChanged(path,
+         "// 自動生成 (MyEngine エディタ)。手編集しても Rebuild Scripts で上書きされる。\n"
          "// エンジンの src\\GameLogic\\GameLogicMain.cpp と同一内容。\n"
          "#include \"Shared/ScriptAPI.h\"\n"
          "\n"
@@ -1783,8 +1791,7 @@ bool WriteGeneratedMain(const std::wstring& path)
          "extern \"C\" __declspec(dllexport) unsigned int GameLogic_ApiVersion(void)\n"
          "{\n"
          "    return MYE_API_VERSION;\n"
-         "}\n";
-    return true;
+         "}\n");
 }
 
 // XML 属性値のエスケープ (プロジェクトパスに & や < が混ざっても壊れないように)
@@ -1808,15 +1815,12 @@ std::string XmlEscape(const std::wstring& w)
 // (/std:c++20 /W4 /permissive- /fp:precise /Zi /utf-8 /Zc:preprocessor、構成別 RuntimeLibrary、
 // AdditionalIncludeDirectories=$(RepoRoot)src) はエンジン本体と常に一致する。
 // import 順は build\GameLogic.vcxproj に厳密に合わせること (Microsoft.Cpp.props の後)
+// headers は Visual Studio のソリューションエクスプローラーに出すためだけの ClInclude (ビルドには効かない)
 bool WriteGeneratedVcxproj(const std::wstring& path, const std::wstring& engineRepo,
                            const std::wstring& cacheDir,
-                           const std::vector<std::wstring>& sources)
+                           const std::vector<std::wstring>& sources,
+                           const std::vector<std::wstring>& headers)
 {
-    std::ofstream f{ fs::path(path), std::ios::binary };
-    if (!f) {
-        MYE_LOG_ERROR(Tr(StrId::Log_WriteFail), WideToUtf8(path).c_str());
-        return false;
-    }
     std::string x;
     x += "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n";
     x += "<!-- 自動生成 (MyEngine エディタ / Rebuild Scripts)。手編集しても上書きされる -->\r\n";
@@ -1873,20 +1877,19 @@ bool WriteGeneratedVcxproj(const std::wstring& path, const std::wstring& engineR
     for (const std::wstring& s : sources) {
         x += "    <ClCompile Include=\"" + XmlEscape(s) + "\" />\r\n";
     }
+    for (const std::wstring& h : headers) {
+        x += "    <ClInclude Include=\"" + XmlEscape(h) + "\" />\r\n";
+    }
     x += "  </ItemGroup>\r\n";
     x += "  <Import Project=\"$(VCTargetsPath)\\Microsoft.Cpp.targets\" />\r\n";
     x += "</Project>\r\n";
-    f.write(x.data(), static_cast<std::streamsize>(x.size()));
-    return true;
+    return WriteTextIfChanged(path, x);
 }
 
-// プロジェクトの C++ スクリプトのビルド一式 (vcxproj + bat) を <project>\cache\ に生成し、
-// bat の絶対パスを返す (空 = 失敗)。C# の [Compile C# Scripts] と同じ
-// 「プロジェクト内のソースをエンジンがビルドする」モデル。エンジンリポジトリの vcxproj や
-// gen_project_files.ps1 には一切依存しない。vcvars は使わない — MSBuild はツールチェーンを
-// 自前で解決するので環境依存が少ない。起動は `StartGameLogicBuild` の責務で、
-// 返したハンドルを呼び出し側がポーリングする
-std::wstring PrepareProjectScriptsBat(EngineContext& ctx)
+// <project>\cache\GameLogic.vcxproj と、それがコンパイルする生成物 (glue / スキーマ / カーネル表) を書く。
+// Rebuild Scripts と「IDE で開く」の両方から呼ぶ — スクリプトを足した直後に IDE 側の一覧へ
+// 載るように。中身が同じなら何も書かない。戻り値: vcxproj の絶対パス (失敗は空)
+std::wstring WriteGameLogicProject(EngineContext& ctx)
 {
     const std::wstring engineRepo = FindEngineRepoRoot();
     if (engineRepo.empty()) {
@@ -1901,12 +1904,20 @@ std::wstring PrepareProjectScriptsBat(EngineContext& ctx)
 
     // スクリプト列挙 (決定論のためソート。リンク順 = 静的初期化順に効く)
     std::vector<std::wstring> sources;
+    std::vector<std::wstring> headers;
     for (const auto& e : fs::directory_iterator(scriptsDir, ec)) {
-        if (e.is_regular_file(ec) && e.path().extension() == L".cpp") {
+        if (!e.is_regular_file(ec)) {
+            continue;
+        }
+        const std::wstring ext = e.path().extension().wstring();
+        if (ext == L".cpp") {
             sources.push_back(e.path().wstring());
+        } else if (ext == L".h" || ext == L".hpp") {
+            headers.push_back(e.path().wstring());
         }
     }
     std::sort(sources.begin(), sources.end());
+    std::sort(headers.begin(), headers.end());
 
     const std::wstring projPath = cacheDir + L"\\GameLogic.vcxproj";
     // スキーマ型付きヘッダ (M50d)。cache\Generated\ に生成し、vcxproj 側で cacheDir を
@@ -1923,9 +1934,63 @@ std::wstring PrepareProjectScriptsBat(EngineContext& ctx)
     mye::kernel::WriteCppKernels(ctx.projectRoot + L"\\assets\\shaders\\kernels", cacheDir + L"\\Generated",
                                  "Generated/Kernels.gen.h", /*absoluteIncludes=*/true);
     if (!WriteGeneratedMain(cacheDir + L"\\GameLogicMain.cpp")
-        || !WriteGeneratedVcxproj(projPath, engineRepo, cacheDir, sources)) {
+        || !WriteGeneratedVcxproj(projPath, engineRepo, cacheDir, sources, headers)) {
         return {};
     }
+    return projPath;
+}
+
+// <project>\cache\Scripts\Scripts.csproj。C# スクリプトを Visual Studio で編集するためだけの
+// プロジェクトで、ゲームが使うのは今までどおりエンジン内 Roslyn のコンパイル結果
+// (VS でのビルドは型エラーの確認にしか使わない)。
+// ソースはワイルドカード指定 — SDK 形式のプロジェクトは VS がディスクを監視するので、
+// スクリプトを足しても csproj を書き直さずに一覧へ載る。
+// 置き場所を cache\ 直下にしないのは、obj\ が GameLogic.vcxproj の IntDir (cache\obj\) と衝突するため
+std::wstring WriteScriptsCsproj(EngineContext& ctx)
+{
+    const std::wstring dir = ctx.projectRoot + L"\\cache\\Scripts";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    const std::wstring path = dir + L"\\Scripts.csproj";
+    // 言語設定は src\Scripting\MyeScripting.csproj / ScriptRuntime.cs のコンパイルに合わせる
+    std::string x;
+    x += "<!-- 自動生成 (MyEngine エディタ / Open in Visual Studio)。手編集しても上書きされる -->\r\n";
+    x += "<Project Sdk=\"Microsoft.NET.Sdk\">\r\n";
+    x += "  <PropertyGroup>\r\n";
+    x += "    <TargetFramework>net8.0</TargetFramework>\r\n";
+    // Platforms は既定 (AnyCPU) のまま: VS は slnx の x64 を C# プロジェクトの "Any CPU" へ対応付けるので、
+    // x64 だけを宣言すると「不明なプロジェクト構成マッピング」になる。出力のビット数は PlatformTarget で固定
+    x += "    <PlatformTarget>x64</PlatformTarget>\r\n";
+    x += "    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>\r\n";
+    x += "    <Nullable>disable</Nullable>\r\n";
+    x += "    <ImplicitUsings>disable</ImplicitUsings>\r\n";
+    x += "    <EnableDefaultItems>false</EnableDefaultItems>\r\n";
+    x += "    <AssemblyName>MyeProjectScripts</AssemblyName>\r\n";
+    x += "  </PropertyGroup>\r\n";
+    x += "  <ItemGroup>\r\n";
+    x += "    <Compile Include=\"" + XmlEscape(ctx.assetsRoot) + "\\scripts\\**\\*.cs\" />\r\n";
+    x += "    <Reference Include=\"MyeScripting\">\r\n";
+    x += "      <HintPath>" + XmlEscape(GetExecutableDir()) + "\\MyeScripting.dll</HintPath>\r\n";
+    x += "      <Private>false</Private>\r\n";
+    x += "    </Reference>\r\n";
+    x += "  </ItemGroup>\r\n";
+    x += "</Project>\r\n";
+    return WriteTextIfChanged(path, x) ? path : std::wstring();
+}
+
+// プロジェクトの C++ スクリプトのビルド一式 (vcxproj + bat) を <project>\cache\ に生成し、
+// bat の絶対パスを返す (空 = 失敗)。C# の [Compile C# Scripts] と同じ
+// 「プロジェクト内のソースをエンジンがビルドする」モデル。エンジンリポジトリの vcxproj や
+// gen_project_files.ps1 には一切依存しない。vcvars は使わない — MSBuild はツールチェーンを
+// 自前で解決するので環境依存が少ない。起動は `StartGameLogicBuild` の責務で、
+// 返したハンドルを呼び出し側がポーリングする
+std::wstring PrepareProjectScriptsBat(EngineContext& ctx)
+{
+    const std::wstring projPath = WriteGameLogicProject(ctx);
+    if (projPath.empty()) {
+        return {};
+    }
+    const std::wstring cacheDir = ctx.projectRoot + L"\\cache";
 
     // MSBuild の起動は tools\build_scripts.bat と同じ vswhere パターン。
     // 失敗系の pause は、StartChildProcess が CREATE_NO_WINDOW と stdin=NUL で起動するので
@@ -1962,7 +2027,7 @@ std::wstring PrepareProjectScriptsBat(EngineContext& ctx)
         b.write(acp.data(), static_cast<std::streamsize>(acp.size()));
     }
 
-    MYE_LOG_INFO(Tr(StrId::Log_BuildingCpp), sources.size(),
+    MYE_LOG_INFO(Tr(StrId::Log_BuildingCpp), CountProjectScriptSources(ctx.projectRoot),
                  WideToUtf8(cacheDir).c_str(), WideToUtf8(cfg).c_str());
     return batPath;
 }
@@ -1987,7 +2052,68 @@ bool IsCargoAvailable()
     return found;
 }
 
+// .slnx (XML 形式のソリューション)。パスは slnx からの相対 — 置き場所の cache\ ごと
+// 別の場所へ移っても壊れないように
+std::string BuildScriptSolutionXml()
+{
+    return "<Solution>\r\n"
+           "  <Configurations>\r\n"
+           "    <BuildType Name=\"Debug\" />\r\n"
+           "    <BuildType Name=\"Release\" />\r\n"
+           "    <Platform Name=\"x64\" />\r\n"
+           "  </Configurations>\r\n"
+           "  <Project Path=\"GameLogic.vcxproj\" />\r\n"
+           "  <Project Path=\"Scripts/Scripts.csproj\" />\r\n"
+           "</Solution>\r\n";
+}
+
 } // namespace
+
+std::wstring WriteScriptSolution(EngineContext& ctx)
+{
+    if (ctx.projectRoot.empty()) {
+        // レガシー起動: スクリプトはエンジンリポジトリの build\GameLogic.vcxproj が持っている
+        const std::wstring sln = ScriptsRoot(ctx) + L"\\MyEngine.sln";
+        std::error_code ec;
+        return fs::exists(sln, ec) ? sln : std::wstring();
+    }
+    // cache\ に置く: 中身は機体ごとの絶対パス (エンジンの場所・exe の場所) を含む生成物で、
+    // 推奨 .gitignore が /cache/ を除外している = コミット対象に混ざらない
+    if (WriteGameLogicProject(ctx).empty() || WriteScriptsCsproj(ctx).empty()) {
+        return {};
+    }
+    const std::wstring name = fs::path(ctx.projectRoot).filename().wstring();
+    const std::wstring sln = ctx.projectRoot + L"\\cache\\" + (name.empty() ? L"Project" : name) + L".slnx";
+    return WriteTextIfChanged(sln, BuildScriptSolutionXml()) ? sln : std::wstring();
+}
+
+void OpenScriptInIde(EngineContext& ctx, const std::string& editorCmd, VisualStudioLauncher& vs,
+                     const std::wstring& path, int line)
+{
+    if (editorCmd == kExternalEditorVisualStudio) {
+        const std::wstring sln = WriteScriptSolution(ctx);
+        if (!sln.empty() && !FindLatestDevenv().empty()) {
+            // 失敗 (VS がダイアログ中など) は Open がログ済み。
+            // 関連付けへ逃がすと別のエディタで開いてしまうので、ここでは何もしない
+            vs.Open(sln, path, line);
+            return;
+        }
+        // ソリューションが作れない / VS が無い: 少なくとも OS の関連付けでファイルは開く
+        MYE_LOG_WARN("[ide] cannot open in Visual Studio - falling back to the file association: %s",
+                     WideToUtf8(path).c_str());
+        ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
+    if (editorCmd.empty()) {
+        ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
+    std::string cmd = editorCmd;
+    ReplaceAll(cmd, "{file}", WideToUtf8(path));
+    ReplaceAll(cmd, "{line}", std::to_string(line > 0 ? line : 1));
+    const std::wstring wargs = L"/c " + Utf8ToWide(cmd);
+    ShellExecuteW(nullptr, L"open", L"cmd.exe", wargs.c_str(), nullptr, SW_HIDE);
+}
 
 std::vector<BuildErrorLine> ParseBuildErrorLines(const std::string& logUtf8)
 {

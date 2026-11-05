@@ -2,7 +2,7 @@
 
 - 対象: Editor / Undo / SCM、Audio / Acoustic、HLSL / Compute / RT、Scripting / CLR Interop / HotReload
 - 日時: 2026-09-28
-- 作成先: `C:\HAL\MyEngin\docs\rev\round4_perspectives.md`
+- 作成先: `docs/rev/round4_perspectives.md`
 
 ---
 
@@ -51,4 +51,4 @@
 ---
 
 ## 追補: 見落とし分析とフィードバック
-本 round 4 において蓄積された「なぜ既存のテストや以前のレビューで見落とされたのか」の詳細な根本原因分析（RCA）は、[oversights.md](file:///C:/HAL/MyEngin/docs/rev/oversights.md) に集約・追記した。
+本 round 4 において蓄積された「なぜ既存のテストや以前のレビューで見落とされたのか」の詳細な根本原因分析（RCA）は、[oversights.md](../../docs/rev/oversights.md) に集約・追記した。

@@ -13,6 +13,14 @@ namespace mye {
 // 純関数 (RenderSelfTest 対象)。
 inline void ComputeCascadeSplits(float nearZ, float farZ, int count, float lambda, float* out)
 {
+    // 境界値の防波堤 (docs/rev、M93c): nearZ <= 0 は pow(f/n) で NaN、far <= near は退化する。
+    // 呼び出し元 (RenderSystem) は射影行列から復元した正の near/far を渡すので有限の入力では値が変わらない
+    if (!(nearZ > 1e-3f)) {
+        nearZ = 1e-3f;
+    }
+    if (!(farZ > nearZ)) {
+        farZ = nearZ + 1e-3f;
+    }
     for (int i = 1; i <= count; ++i) {
         const float p = static_cast<float>(i) / static_cast<float>(count);
         const float logSplit = nearZ * std::pow(farZ / nearZ, p);
