@@ -76,6 +76,15 @@ spec §5 の 42, 43。
 
 ## 実装メモ (coder が追記)
 
+round 1: PhysicsSystem.cpp に CharPushAllowance (固定回数の掃引) / MakeCharOneWayContext / CharBody::startVelY を追加。
+CC 同士の押し出しの受ける側は掃引で切り、押す側 (低優先度の相手) は room を引いた残りだけ戻る。
+PhysicsSelfTest.cpp に受け入れ 42 / 43 を追加。ST(physics) PASS、Debug / Release の ST-full PASS (Debug は fractureeditor の既知の時間依存 FAIL を名指し再実行で PASS)、
+check_rules 0 error、replay_verify PASS。差分: 42 の「全 tick の末で 2r 手前」は相手が壁で止まった後だけ厳密 (接近中は 1 歩ぶんの遅れを許容)、30 m/s の高い側は相手の手前に留まらない (不安・質問に記載)。
+
+round 2 (司会が SELF_EVAL から転記): CharPushAllowance の区間数を float のまま上限 64 で抑えてから int に (radius <= 0 は上限 64、半径が正なら旧式と同値)、selfIndex を uint32_t に (C4389 解消)。PhysicsSelfTest.cpp に半径 0 の CC 2 体 (優先度 0 / 1) のテストを追加。基点の PhysicsSystem.cpp で受け入れ 42 が 8 件 FAIL することを確認 (壁 0.2 / 0.5 で low.x 1.5 / 1.8、1.0 で 0.7 = 完全重なり、30 m/s、隙間 0.1)。最終コードで ST(physics) Debug / Release PASS、既定層 Debug 100 suites 0 failed、check_rules 0 error。full と RV は round 1 を流用 (planner 承認)。注意: 戻したファイルは更新時刻が古いまま残り MSBuild が再ビルドしないので touch が要る
+
 ## フィードバック履歴
 
 - 2026-11-05 仕様改訂 (planner): ユーザー判断「ボスが押し続ける」により、初版 (壁の法線の前計算 + 押し付けの組を同優先度 + CC の押し出しを障害物の前へ) を掃引ベースへ書き換えた。まだ着手前
+- round 1: VERDICT REWORK (planner、2026-11-05)。must 1 件: `CharPushAllowance` の区間数 `static_cast<int>(std::ceil(L / from.radius))` は radius が 0 (scale 0 の CC 等) で +inf、極小で int の範囲外になり float → int 変換が未定義動作 (AGENTS.md §4.3)。float のまま上限 64 で clamp してから int にする (radius <= 0 は上限 64 を使う)。radius 0 の CC 同士を collideCharacters で押し合わせても落ちない / 有限の位置を保つテストを 1 件。should 1 件: 修正前のコードで受け入れ 42 のテストが落ちることを 1 回確認 (PhysicsSystem.cpp の差分だけ一時的に戻して ST(physics)、結果を貼り、戻す)。仕様側: 不安 1 = 受け入れ 42 の接近中の重なりは 1 歩まで許す (spec を緩和)、不安 2 = 高速の押す側は既知の制限 (spec §4.1 D に追記、sub-10 の文書へ)、不安 3 = 1e-4 の食い込みは kCharSweepTol どおりで可。round 2 の検証: ST(physics) を Debug / Release、既定層 Debug、CR。full と RV は round 1 の結果を流用してよい (修正は radius > 0 で区間数が変わらない式の書き換えだけなので)
+- round 2: VERDICT OK (planner、2026-11-05)。must #1 解消: 区間数は float のまま kCharSweepMaxSteps で上限をかけてから int (radius <= 0 / NaN は上限 64)、半径が正なら旧式と同値。半径 0 の CC 2 体 (優先度 0 / 1、押す側と受ける側の両経路) のテストが PASS。should #2 解消: 基点の PhysicsSystem.cpp で受け入れ 42 の 8 チェックが FAIL (壁 0.2 / 0.5 で貫通、1.0 で完全重なり、30 m/s、隙間 0.1) = reviewer の故障を捕まえる、修正後 PASS。selfIndex の uint32_t 化 (C4389 解消) は妥当。検証: ST(physics) Debug / Release PASS、既定層 Debug 100 / 0、CR 0 error、full と RV は round 1 を流用 (planner 承認済み)。高速突き抜けはユーザー判断で既知の制限に確定 (sub-10 の文書へ)
