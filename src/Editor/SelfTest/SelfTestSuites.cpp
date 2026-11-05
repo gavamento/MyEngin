@@ -238,7 +238,6 @@ const SelfTestSuite kSuites[] = {
     { "camera2dfollow", mye::RunCamera2DFollowSelfTest, SelfTestTier::Fast, "M94v: Camera2DFollow (デッドゾーン / damping / 境界 / 並走一致)" },
     { "pixelperfect2d", mye::RunPixelPerfect2DSelfTest, SelfTestTier::Fast, "M94v: pixelperfect2d::Compute の表" },
     { "twoddemo", mye::RunTwoDDemoSelfTest, SelfTestTier::Full, "M94w: --2d-demo の 3000 tick 不変量と焼き込みハッシュ" },
-    // ---- M95 ----
 };
 
 const SelfTestAlias kAliases[] = {

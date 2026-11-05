@@ -1012,7 +1012,7 @@ bool RunPartSelfTest()
               "bounds: halfExtents is covered by the world hash");
     }
 
-    // ---- M95 sub-01 (ABI) ----
+    // ---- M95: ヒットストップの ABI ----
     {
         ScriptApiContext apiCtx;
         apiCtx.scene = &scene;
@@ -1037,7 +1037,7 @@ bool RunPartSelfTest()
               "abi: without an Animator SetPause returns 0 and GetPause returns -1");
     }
 
-    // ---- M95 sub-03 ----
+    // ---- M95: 部位の重なり・掃引 ----
     {
         // 部位: BoxA (Weak, x=2, ±0.5) / SphereB (Core, x=5, r=0.5) / Twin1,2 (Twin, x=8 の同位置箱)
         // 加えて無効 / ゼロ寸法 / Part 無しの候補は、どのクエリにも現れてはいけない

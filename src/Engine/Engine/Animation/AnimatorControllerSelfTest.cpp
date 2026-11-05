@@ -1857,7 +1857,7 @@ bool RunAnimatorControllerSelfTest()
         spriteanim::Install(prevSpriteAnims);
     }
 
-    // ---- M95 sub-01 ----
+    // ---- M95: ヒットストップ ----
     // ヒットストップ: pauseTicks の間、時刻・遷移・イベント・ルートモーションが止まり、n tick 後に自動で再開する
     {
         using namespace DirectX;
@@ -1989,7 +1989,7 @@ bool RunAnimatorControllerSelfTest()
     }
 
 
-    // ---- M95 sub-04 ----
+    // ---- M95: 遷移の割り込み ----
     // 遷移の割り込み (canInterrupt) と AnimatorPlay の確定。A(0) → B(1) の遷移 (duration 8) の途中で Any → C(2) (duration 4) を試す
     {
         enum class Variant { Interrupt, ExitTime, NoFlag, FromTarget, BackToOrigin };
@@ -2087,7 +2087,7 @@ bool RunAnimatorControllerSelfTest()
               "controller v2 (no canInterrupt) reads as 0 and rewrites as v3");
     }
 
-    // ---- M95 sub-05 ----
+    // ---- M95: ルートモーションの縦 ----
 
     {
         // ルートの縦のルートモーション (M95、rootMotionY)。Rise: 1 秒でルートが y 0 → 1 (0.5 秒) → 0、z は一定に -1.2 m 進む
@@ -2344,7 +2344,7 @@ bool RunAnimatorControllerSelfTest()
     }
 
 
-    // ---- M95 sub-06 ----
+    // ---- M95: イベント時刻の秒・フレーム指定 ----
 
     {
         // 26: clipEvents の tick / time / frame / fps 形

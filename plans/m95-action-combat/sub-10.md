@@ -51,4 +51,13 @@ spec §5 の 46。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-10 (round 1)
+- マーカー 18 箇所を機能名へ (`M95: <機能名>`)、中身の無い 2 箇所 (SelfTestSuites.cpp / SkeletonSelfTest.cpp) を削除。文書: engine_spec §10.14 A/D/E と §12.2、ADR-034 影響欄、test_checklists M95 節に 2 項目、dogfooding 見出し。
+- 検証: コード差分のコメント・空行以外の変更 0 行、`grep "M95 sub-" src` 0 件、Debug ビルド OK、check_rules 0 error / 50 warning。selftest / RV は仕様どおり未実行。
+
+
+round 2 (司会が SELF_EVAL から転記): 既知の制限 (1) を「掃引は障害物だけを見て CC を含まない。ボス → A → B → 壁では B は壁を抜けないが、ボスは B で止まらずに A を B へ押し込み、A と B は重なり得る」に直した (engine_spec.md §10.14 D の英文と ADR-034 の影響欄)。旧文面は 0 件、check_rules 0 error。文書のみのためビルドと selftest は未実行 (planner 指定)
+
 ## フィードバック履歴
+- round 1: VERDICT REWORK (planner、2026-11-05)。must 1 件: 既知の制限 (1) の説明が挙動と逆。engine_spec §10.14 D の "a CC pushed into a third CC does not push it on" と ADR-034 の「押された CC が第三の CC を押し出すことはない」は誤り。実際は掃引の相手が障害物だけで CC を含まないので、ボス → A → B → 壁では B は (受ける側の掃引で) 壁を抜けないが、ボスの room は A の前の障害物しか見ないので B で止まらず、ボスは A を B へ押し込み続け、A と B は通常の CC 同士の押し出しで押し合って重なり得る (spec §4.1 D の既知の制限の文)。両方の文書をこの意味に直す。それ以外 (マーカー 18 箇所の書き換え・空 2 箇所の削除、コード差分がコメントのみ、A / E / D の他の文、§12.2 の期間、dogfooding 見出し、test_checklists 2 項目) は OK。D の障害物の種類 (床・壁・kinematic・dynamic) は sub-08 のコード (bodies の solid を全部見る) と一致。round 2 の検証は grep で該当文の差分を貼るだけ (ビルド・CR は文書のみなので CR だけ)
+- round 2: VERDICT OK (planner、2026-11-05)。既知の制限 (1) を engine_spec §10.14 D と ADR-034 の両方で「掃引は障害物だけを見て CC を含まない。ボスは B で止まらず A を B へ押し込み、A と B は重なり得る」に直したことを grep で確認、旧文面 0 件、CR 0 error

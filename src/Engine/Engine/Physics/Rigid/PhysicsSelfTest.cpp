@@ -8786,7 +8786,7 @@ bool RunPhysicsSelfTest()
         }
     }
 
-    // ---- M95 sub-02 ----
+    // ---- M95: CC 同士の押し出しと接触通知 ----
     // CC 同士の押し出し (collideCharacters / pushPriority) と接触の通知 (reportContacts)。ADR-034
     {
         auto mkCc3 = [&](Scene& s, const char* name, float x, bool collide, int32_t priority, bool report) {
@@ -9222,7 +9222,7 @@ bool RunPhysicsSelfTest()
         }
     }
 
-    // ---- M95 sub-05 ----
+    // ---- M95: ルートモーションの縦 ----
 
     // 縦入力 (M95、ルートモーションの縦): CC / 非 kinematic Rigidbody の useVerticalInput / verticalInput
     {
