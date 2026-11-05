@@ -17,7 +17,7 @@
 | sub-03 部位の重なり・掃引 (ABI 193 スロット) | 2 | sub-01、Wave 1 統合 | OK | 1 | 6cc89b5 (m95/sub-03) | worktree `C:/HAL/MyEngin-wt/sub-03` (基点 e1bba10)。Release full 全 PASS、RV 22 ジョブ一致、ABI 照合 193/193。Debug full の fractureeditor FAIL は負荷要因 (下記申し送り) |
 | sub-05 ルートモーションの縦成分 (snapshot v68) | 2 | sub-02, sub-04、Wave 1 統合 | OK | 2 | d8c2ec9 (m95/sub-05) | worktree `C:/HAL/MyEngin-wt/sub-05` (基点 e1bba10)。round 2 で Debug / Release full 0 failed、CR 0 error、RV 22 ジョブ PASS。round 2 の SELF_EVAL は coder の返送がツールで拒否され、司会が出力ファイルから取り出して転送 |
 | sub-07 文書 + 最終統合確認 | 3 | 全部 | OK | 1 | 9cfbff0 | master 直 (worktree なし)。受け入れ 30 は「波の統合」表の Wave 2 行で代用 |
-| sub-08 CC 同士の押し出しを障害物への掃引で切る (review-1 #1) | 4 | master | 実装中 (round 1) | 0 | | worktree `C:/HAL/MyEngin-wt/sub-08` (旧 sub-03 を move、ブランチ m95/sub-08)。受け入れ 42, 43。ST(physics) を名指し。仕様はユーザー判断「ボスが押し続ける」で改訂 (spec §2 #26 / §4.1 D) |
+| sub-08 CC 同士の押し出しを障害物への掃引で切る (review-1 #1) | 4 | master | 実装中 (round 2、R1 REWORK: 半径 0 で区間数の float→int が未定義動作 + 旧コードで FAIL の確認) | 1 | | worktree `C:/HAL/MyEngin-wt/sub-08` (旧 sub-03 を move、ブランチ m95/sub-08)。受け入れ 42, 43。ST(physics) を名指し。仕様はユーザー判断「ボスが押し続ける」で改訂 (spec §2 #26 / §4.1 D) |
 | sub-09 ヒットストップ中の縦の高さ + テスト 2 件 (review-1 #2, #4) | 4 | master 592ffff | OK | 1 | 26155d7 (m95/sub-09) | worktree `C:/HAL/MyEngin-wt/sub-09` (旧 sub-05 を move、ブランチ m95/sub-09、基点 e104c89)。受け入れ 44, 45 |
 | sub-10 予約マーカーの整理と文書 (review-1 #3, #4) | 5 | sub-08, sub-09 の統合 | 未着手 | 0 | | 受け入れ 46。master 直 |
 
@@ -47,6 +47,7 @@
   - coder は **波単位で並列** (1 coder = 1 worktree、同時ビルド 2〜3 本)。見立て: Wave 1 = {sub-01, sub-02, sub-04, sub-06}、Wave 2 = {sub-03, sub-05}、最後に sub-07。共有資源 (ABI スロット順・Components.h の追記順・snapshot 版・controller 版) の予約表を spec に置く
   - sub-00b の既定層の余白 (planner 裁定 N=10、occlusion も Full 層へ、「2 回の大きい方が 55 秒超なら N+1」の規則): **N=10** (planner 裁定どおり。2026-11-05、司会の AskUserQuestion)
   - review-1 #1 壁際の押し付け (planner 裁定 = ボスが止まる、押し付けの組を同優先度に): **ボスが押し続ける** (planner 裁定と逆。押し出し量を壁への掃引で切る案。sub-08 を掃引ベースに直す。2026-11-05、司会の AskUserQuestion)
+  - sub-08 高速の体当たりで押す側 (ボス) が相手を突き抜ける件 (1 tick の歩幅が相手との距離に迫る速さ、r 0.3 m で目安 20〜30 m/s): **既知の制限として書く** (planner 裁定どおり。spec §4.1 D の既知の制限 / sub-10 の文書へ。逆案 = CC の連続衝突判定は別マイルストーン相当。2026-11-05、司会の AskUserQuestion)
   - review-1 #2 停止中の縦 (planner 裁定 = 宙で止まる、縦入力 0 で高さを保つ): **宙で止まる** (planner 裁定どおり。2026-11-05、司会の AskUserQuestion)
   - Wave 3 (sub-07、文書だけ) の最終検証: Wave 2 統合時の full 検証 (selftest-full Debug / Release、check_rules、replay_verify、三校) を受け入れ条件 30 の証拠にする。sub-07 では文書の参照先の実在と check_rules だけ確認する (2026-11-04、司会の AskUserQuestion。planner へ補足として送信)
 
