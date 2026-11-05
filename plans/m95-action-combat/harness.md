@@ -2,7 +2,7 @@
 
 - 依頼原文: M95 アクション戦闘の土台 (事前調査は plans\m95-action-combat\design-draft.md)
 - 開始: 2026-11-04 / 基点コミット: 69c2207c2b8c5c79af7d37ababad0b03d397d228
-- フェーズ: レビュー (全サブ OK。Wave 1 統合 e1bba10、Wave 2 統合 740bd64、sub-07 9cfbff0。Phase 3 round 1 FAIL → planner が sub-08 / 09 / 10 を新設 (spec §2 #26〜#28、受け入れ 42〜46)。sub-08 fd399e7 / sub-09 26155d7 OK → 統合 7c6fec0 / 9cf53d6 検証済み → sub-10 → review round 2)
+- フェーズ: レビュー (全サブ OK。Wave 1 統合 e1bba10、Wave 2 統合 740bd64、sub-07 9cfbff0。Phase 3 round 1 FAIL → planner が sub-08 / 09 / 10 を新設 (spec §2 #26〜#28、受け入れ 42〜46)。sub-08 fd399e7 / sub-09 26155d7 OK → 統合 7c6fec0 / 9cf53d6 検証済み → sub-10 5e2e684 OK (往復 2) → review round 2)
 - 仕様確定: 2026-11-04 (planner PLAN_RESULT round 2)。番号: ABI v32 = 193 スロット、SimSnapshot v66 / v67 / v68、controller アセット v3、ADR-034、TypeId 追加なし
 
 ## サブ進捗
@@ -19,7 +19,7 @@
 | sub-07 文書 + 最終統合確認 | 3 | 全部 | OK | 1 | 9cfbff0 | master 直 (worktree なし)。受け入れ 30 は「波の統合」表の Wave 2 行で代用 |
 | sub-08 CC 同士の押し出しを障害物への掃引で切る (review-1 #1) | 4 | master | OK | 2 | fd399e7 (m95/sub-08) | worktree `C:/HAL/MyEngin-wt/sub-08` (旧 sub-03 を move、ブランチ m95/sub-08)。受け入れ 42, 43。ST(physics) を名指し。仕様はユーザー判断「ボスが押し続ける」で改訂 (spec §2 #26 / §4.1 D) |
 | sub-09 ヒットストップ中の縦の高さ + テスト 2 件 (review-1 #2, #4) | 4 | master 592ffff | OK | 1 | 26155d7 (m95/sub-09) | worktree `C:/HAL/MyEngin-wt/sub-09` (旧 sub-05 を move、ブランチ m95/sub-09、基点 e104c89)。受け入れ 44, 45 |
-| sub-10 予約マーカーの整理と文書 (review-1 #3, #4) | 5 | sub-08, sub-09 の統合 | 未着手 | 0 | | 受け入れ 46。master 直 |
+| sub-10 予約マーカーの整理と文書 (review-1 #3, #4) | 5 | sub-08, sub-09 の統合 | OK | 2 | 5e2e684 | 受け入れ 46。master 直 |
 
 ## 波の統合
 | 波 | 統合コミット | 目視 (付録 B) | 検証 |
