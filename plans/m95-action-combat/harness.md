@@ -18,7 +18,7 @@
 | sub-05 ルートモーションの縦成分 (snapshot v68) | 2 | sub-02, sub-04、Wave 1 統合 | OK | 2 | d8c2ec9 (m95/sub-05) | worktree `C:/HAL/MyEngin-wt/sub-05` (基点 e1bba10)。round 2 で Debug / Release full 0 failed、CR 0 error、RV 22 ジョブ PASS。round 2 の SELF_EVAL は coder の返送がツールで拒否され、司会が出力ファイルから取り出して転送 |
 | sub-07 文書 + 最終統合確認 | 3 | 全部 | OK | 1 | 9cfbff0 | master 直 (worktree なし)。受け入れ 30 は「波の統合」表の Wave 2 行で代用 |
 | sub-08 CC 同士の押し出しを障害物への掃引で切る (review-1 #1) | 4 | master | 実装中 (round 1) | 0 | | worktree `C:/HAL/MyEngin-wt/sub-08` (旧 sub-03 を move、ブランチ m95/sub-08)。受け入れ 42, 43。ST(physics) を名指し。仕様はユーザー判断「ボスが押し続ける」で改訂 (spec §2 #26 / §4.1 D) |
-| sub-09 ヒットストップ中の縦の高さ + テスト 2 件 (review-1 #2, #4) | 4 | master 592ffff | 実装中 (round 1) | 0 | | worktree `C:/HAL/MyEngin-wt/sub-09` (旧 sub-05 を move、ブランチ m95/sub-09、基点 e104c89)。受け入れ 44, 45 |
+| sub-09 ヒットストップ中の縦の高さ + テスト 2 件 (review-1 #2, #4) | 4 | master 592ffff | OK | 1 | 26155d7 (m95/sub-09) | worktree `C:/HAL/MyEngin-wt/sub-09` (旧 sub-05 を move、ブランチ m95/sub-09、基点 e104c89)。受け入れ 44, 45 |
 | sub-10 予約マーカーの整理と文書 (review-1 #3, #4) | 5 | sub-08, sub-09 の統合 | 未着手 | 0 | | 受け入れ 46。master 直 |
 
 ## 波の統合
@@ -78,4 +78,5 @@
 - sub-05 VERDICT round 1 の nit: (2) `SimSnapshot.h` の版コメント M95c → M95e (round 2 で直す)。(3) 一方通行床の通過判定は前 tick の `velocity.y` を見るため縦入力の初回 tick は通過扱いにならない (jumpSpeed と同じ 1 tick 遅れ、M95 では直さない) → spec §7 に記録済み、sub-07 の engine_spec に 1 行
 - 別件候補 (M95 とは無関係、2026-11-05 追記): 無負荷で `MYE_SELFTEST_ONLY=computemanaged,fractureeditor` Debug を組で回すと、組の先頭で回した方が落ちる (1 回目: sub-05 両方 FAIL → master 両方 PASS。2 回目: master 両方 FAIL → sub-03 fractureeditor のみ FAIL → sub-05 両方 PASS)。computemanaged の FAIL は FileWatcher が .kernel.hlsl の変更を拾う 3 件 (デバウンス 600 ms 待ち)。どちらも worktree・コードに依らない不安定テスト。統合時の Debug full でこの 2 本が落ちたら名指し再実行で PASS を 1 回取れば合格扱い (他のスイートには適用しない)
 - 別件候補 (M95 とは無関係): fractureeditor の cancel / shutdown は時間依存テスト。他 coder のビルドと並走する負荷下では sub-03 worktree (118 s) でも sub-03 無しの master e1bba10 (219 s、同期 bake 134 s) でも同じ 2 項目 (「cancelled bake が Ready に」「cancelled を報告」) が落ちる。無負荷の Wave 1 統合時は 25 s で PASS。Wave 2 統合の無負荷 Debug full で再確認し、落ちたら別件として起票。重い Debug full の判定は無負荷で行う
+- 別件候補 (sub-09 VERDICT nit 1、2026-11-05): full 実行ログに `[script] [csharp] compile FAILED — keeping previous scripts` が出る (スイートは PASS)。M95 は C# 側 (`Interop.cs` / `MyeScript.cs`) を v32 で触っているので、M95 以前からの既存かは未確認。reviewer round 2 か司会が master で発生元を確認する
 - sub-00b VERDICT の nit: (1) 別名 `m95` の並びを `VerifySelfTestSelectionRules` (engineindexdump) が固定している → 別名表を変えるサブはこの検査も直す。(2) fracture (約 200 s) / servernet (約 95 s) の縮小は M95 の範囲外として後続。(3) sub-06 nit (1) の `ClipEventTickFromJson` fps 負値テストは sub-07 で足す。Full 層 10 本 = physics / surfacematerial / surfacedeferred / fracture / fractureeditor / servernet / navagent / behaviortree / occlusion / twoddemo。Full スイートを触るサブは往復中 ST(名) で名指し (spec §5 冒頭)
