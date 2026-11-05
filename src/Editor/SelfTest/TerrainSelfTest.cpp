@@ -1074,6 +1074,73 @@ bool RunTerrainSelfTest()
                   "terrain brush: the same dab on the same terrain yields identical bytes");
         }
 
+        // (b2) Lower は Raise の符号反転と一致
+        {
+            TerrainEdit::Brush up;
+            up.mode = TerrainEdit::BrushMode::Raise;
+            up.centerX = 3.0f;
+            up.centerZ = -5.0f;
+            up.radius = 9.0f;
+            up.strength = 2.5f;
+            TerrainEdit::Brush down = up;
+            down.mode = TerrainEdit::BrushMode::Lower;
+            TerrainEdit::Brush neg = up;
+            neg.strength = -up.strength;
+            TerrainAsset::TerrainData a = base;
+            TerrainAsset::TerrainData b = base;
+            TerrainEdit::ApplyBrush(a, down);
+            TerrainEdit::ApplyBrush(b, neg);
+            check(a.heights == b.heights, "terrain brush: Lower matches inverted Raise byte for byte");
+        }
+
+        // (b3) Flatten / Terrace / Noise
+        {
+            TerrainEdit::Brush flat;
+            flat.mode = TerrainEdit::BrushMode::Flatten;
+            flat.radius = 50.0f;
+            flat.strength = 1.0f;
+            flat.targetHeight = base.HeightAtTexel(base.heightW / 2, base.heightH / 2);
+            TerrainAsset::TerrainData d = base;
+            for (int i = 0; i < 4; ++i) {
+                TerrainEdit::ApplyBrush(d, flat);
+            }
+            const float centre =
+                d.HeightAtTexel(base.heightW / 2, base.heightH / 2);
+            check(std::fabs(centre - flat.targetHeight) < 0.05f,
+                  "terrain brush: repeated flatten converges to the target height");
+
+            TerrainEdit::Brush terr;
+            terr.mode = TerrainEdit::BrushMode::Terrace;
+            terr.radius = 50.0f;
+            terr.strength = 1.0f;
+            terr.terraceStep = 4.0f;
+            TerrainAsset::TerrainData t = base;
+            check(TerrainEdit::ApplyBrush(t, terr),
+                  "terrain brush: terrace reports that it changed the map");
+            const float wy = t.HeightAtTexel(base.heightW / 2, base.heightH / 2);
+            const float rem = std::fmod(std::fabs(wy), terr.terraceStep);
+            const bool onStep = rem < 0.2f || rem > terr.terraceStep - 0.2f;
+            check(onStep, "terrain brush: terrace quantizes height toward step multiples");
+
+            TerrainEdit::Brush noise;
+            noise.mode = TerrainEdit::BrushMode::Noise;
+            noise.radius = 12.0f;
+            noise.strength = 1.0f;
+            noise.noiseScale = 2.0f;
+            noise.noiseSeed = 42u;
+            TerrainAsset::TerrainData n1 = base;
+            TerrainAsset::TerrainData n2 = base;
+            TerrainEdit::ApplyBrush(n1, noise);
+            TerrainEdit::ApplyBrush(n2, noise);
+            check(n1.heights == n2.heights,
+                  "terrain brush: noise is deterministic for the same seed and input");
+            noise.noiseSeed = 43u;
+            TerrainAsset::TerrainData n3 = base;
+            TerrainEdit::ApplyBrush(n3, noise);
+            check(n3.heights != n1.heights,
+                  "terrain brush: a different noise seed changes the result");
+        }
+
         // (c) 平滑化: 粗さが減る + **走査順に依存しない**
         {
             TerrainEdit::Brush b;
@@ -1144,13 +1211,21 @@ bool RunTerrainSelfTest()
                 TerrainEdit::BrushMode mode;
                 float cx, cz, radius, strength;
                 uint32_t layer;
+                float targetHeight = 0.0f;
+                float terraceStep = 2.0f;
+                float noiseScale = 1.0f;
+                uint32_t noiseSeed = 1;
             };
+            const float flatTarget = base.HeightAtTexel(base.heightW / 2, base.heightH / 2);
             const Step steps[] = {
                 { TerrainEdit::BrushMode::Raise, -10.0f, -10.0f, 12.0f, 3.0f, 0 },
-                { TerrainEdit::BrushMode::Raise, 6.0f, -4.0f, 10.0f, -2.0f, 0 }, // 掘る (重ねる)
+                { TerrainEdit::BrushMode::Lower, 6.0f, -4.0f, 10.0f, 2.0f, 0 },
                 { TerrainEdit::BrushMode::Smooth, 0.0f, 0.0f, 16.0f, 1.0f, 0 },
+                { TerrainEdit::BrushMode::Flatten, 0.0f, 0.0f, 18.0f, 0.5f, 0, flatTarget },
+                { TerrainEdit::BrushMode::Noise, 2.0f, 4.0f, 10.0f, 0.6f, 0, 0.0f, 2.0f, 1.0f, 99u },
+                { TerrainEdit::BrushMode::Terrace, -2.0f, 6.0f, 14.0f, 0.7f, 0, 0.0f, 3.0f },
                 { TerrainEdit::BrushMode::Paint, 4.0f, 8.0f, 14.0f, 0.8f, 2 },
-                { TerrainEdit::BrushMode::Paint, -6.0f, 2.0f, 9.0f, 0.5f, 1 }, // 重ね塗り
+                { TerrainEdit::BrushMode::Paint, -6.0f, 2.0f, 9.0f, 0.5f, 1 },
             };
             bool anyChange = false;
             for (const Step& s : steps) {
@@ -1161,10 +1236,14 @@ bool RunTerrainSelfTest()
                 b.radius = s.radius;
                 b.strength = s.strength;
                 b.layer = s.layer;
+                b.targetHeight = s.targetHeight;
+                b.terraceStep = s.terraceStep;
+                b.noiseScale = s.noiseScale;
+                b.noiseSeed = s.noiseSeed;
                 anyChange = TerrainEdit::ApplyBrush(work, b) || anyChange;
             }
             check(anyChange && work.heights != base.heights && work.splat != base.splat,
-                  "terrain brush: a 5-dab stroke moves both the heightmap and the splat map");
+                  "terrain brush: a multi-dab stroke moves both the heightmap and the splat map");
 
             check(TerrainEdit::MakeDiffPatch(base, work, patch) && !patch.Empty(),
                   "terrain brush: the stroke produces a non-empty undo patch");
@@ -1275,6 +1354,36 @@ bool RunTerrainSelfTest()
         const fs::path root = fs::temp_directory_path(ec) / L"mye_terrain_brush_selftest";
         fs::remove_all(root, ec);
         fs::create_directories(root / L"cooked", ec);
+
+        // flatHeight: 一定高さ + スプラットはレイヤ 0 のみ
+        {
+            const fs::path flatSrc = root / L"flat.terrain.json";
+            const std::string flatJson =
+                R"({"type":"terrain","version":1,"worldSize":[32.0,32.0],)"
+                R"("heightRes":[9,9],"splatRes":[8,8],"heightBase":-4.0,"heightScale":16.0,)"
+                R"("flatHeight":0.25,"layers":[{"name":"g"},{"name":"d"}]})";
+            {
+                std::ofstream f(flatSrc, std::ios::binary | std::ios::trunc);
+                f.write(flatJson.data(), static_cast<std::streamsize>(flatJson.size()));
+            }
+            TerrainAsset::TerrainData flat;
+            check(TerrainAsset::CookFromSource(flatSrc.wstring(), flat) && flat.Valid(),
+                  "terrain cook: flatHeight produces valid terrain");
+            const uint16_t expected =
+                static_cast<uint16_t>(0.25f * 65535.0f + 0.5f);
+            bool sameHeight = true;
+            for (uint16_t h : flat.heights) {
+                sameHeight = sameHeight && h == expected;
+            }
+            check(sameHeight, "terrain cook: flatHeight fills a constant heightmap");
+            bool layer0 = true;
+            for (size_t i = 0; i < flat.splat.size(); i += 4) {
+                layer0 = layer0 && flat.splat[i] == TerrainAsset::kSplatWeightSum
+                    && flat.splat[i + 1] == 0 && flat.splat[i + 2] == 0 && flat.splat[i + 3] == 0;
+            }
+            check(layer0, "terrain cook: flatHeight splat is 100% layer 0");
+        }
+
         const fs::path src = root / L"t.terrain.json";
         const std::string json =
             R"({"type":"terrain","version":1,"worldSize":[64.0,64.0],)"

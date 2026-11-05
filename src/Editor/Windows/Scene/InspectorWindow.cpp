@@ -2601,8 +2601,90 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
         // M48i: 部位のジョイントは供給元スケルトンの名前から選ぶ (M48a の名前保持が効く)。
         // モデルが解決できないときは自由入力にフォールバックする — 骨がまだ登録されていない
         // だけの場合に、既に入っている正しい名前を消させないため
-        if (componentName && std::strcmp(componentName, "Part") == 0
-            && std::strcmp(field.name, "joint") == 0) {
+        if (componentName && std::strcmp(componentName, "Terrain") == 0
+            && std::strcmp(field.name, "source") == 0) {
+            char* src = static_cast<char*>(p);
+            auto resolveAbs = [&](const char* relUtf8) -> std::wstring {
+                if (relUtf8[0] == '\0' || ctx.assetsRoot.empty()) {
+                    return {};
+                }
+                std::wstring w = Utf8ToWide(relUtf8);
+                for (wchar_t& c : w) {
+                    if (c == L'/') {
+                        c = L'\\';
+                    }
+                }
+                return ctx.assetsRoot + L"\\" + w;
+            };
+            char preview[160];
+            if (src[0] == '\0') {
+                std::snprintf(preview, sizeof(preview), "%s", Tr(StrId::Insp_NoneItem));
+            } else {
+                const std::wstring abs = resolveAbs(src);
+                std::error_code ec;
+                if (abs.empty() || !std::filesystem::exists(abs, ec)) {
+                    std::snprintf(preview, sizeof(preview), Tr(StrId::Insp_TerrainSourceMissing), src);
+                } else {
+                    std::snprintf(preview, sizeof(preview), "%s", src);
+                }
+            }
+            if (ImGui::BeginCombo(label, preview)) {
+                if (ImGui::Selectable(Tr(StrId::Insp_NoneItem), src[0] == '\0')) {
+                    std::memset(src, 0, 64);
+                    changed = true;
+                }
+                if (!ctx.assetsRoot.empty()) {
+                    for (const DiskAssetCandidate& c :
+                         CollectDiskAssetCandidates(ctx.assetsRoot, AssetType::Terrain)) {
+                        const std::string rel = c.relUtf8;
+                        const bool tooLong = rel.size() > 63;
+                        ImGui::PushID(rel.c_str());
+                        if (tooLong) {
+                            ImGui::BeginDisabled();
+                        }
+                        if (ImGui::Selectable(rel.c_str(), rel == src)) {
+                            if (!tooLong) {
+                                std::memset(src, 0, 64);
+                                std::snprintf(src, 64, "%s", rel.c_str());
+                                changed = true;
+                            }
+                        }
+                        if (tooLong && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                            ImGui::SetTooltip("%s", Tr(StrId::Insp_TerrainSourceTooLong));
+                        }
+                        if (tooLong) {
+                            ImGui::EndDisabled();
+                        }
+                        ImGui::PopID();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* pa = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
+                    const std::string utf8 = static_cast<const char*>(pa->Data);
+                    const std::wstring dropPath = Utf8ToWide(utf8);
+                    if (AssetDatabase::ClassifyPath(dropPath) == AssetType::Terrain) {
+                        std::error_code ec;
+                        const std::string rel =
+                            WideToUtf8(std::filesystem::relative(dropPath, ctx.assetsRoot, ec).wstring());
+                        if (rel.size() <= 63) {
+                            std::string norm = rel;
+                            for (char& ch : norm) {
+                                if (ch == '\\') {
+                                    ch = '/';
+                                }
+                            }
+                            std::memset(src, 0, 64);
+                            std::snprintf(src, 64, "%s", norm.c_str());
+                            changed = true;
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+        } else if (componentName && std::strcmp(componentName, "Part") == 0
+                   && std::strcmp(field.name, "joint") == 0) {
             char* joint = static_cast<char*>(p);
             World& w = ctx.scene->GetWorld();
             const EntityID src = Parts::ResolvePartSource(
@@ -2748,6 +2830,8 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
     std::vector<AssetEntry> entries;
     // テクスチャを指すフィールド。名前に "tex" を含まない Sprite2D.normalMap もテクスチャ (M94p)
     const bool isTextureRef = fname.find("tex") != std::string::npos || fname == "normalmap";
+    const bool isTerrainShapeRef = fname == "meshasset" && !comps.empty()
+        && static_cast<const ColliderComponent*>(comps.front())->shape == collidershape::kTerrain;
     const bool isShape2DRef = fname == "meshasset" && !comps.empty()
         && static_cast<const ColliderComponent*>(comps.front())->shape >= collidershape::kPolygon2D;
     // ディスク上のファイルも候補に出す種別 (Unknown = ライブラリの一覧だけ)。
@@ -2819,6 +2903,8 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         for (const SkinnedModelEntry& s : ctx.resources->skinnedModels.Enumerate()) {
             entries.push_back({ AssetID{ s.hash }, s.name });
         }
+    } else if (isTerrainShapeRef) {
+        diskType = AssetType::Terrain;
     } else if (isShape2DRef) {
         // M94h: Collider.meshAsset が 2D 形状 (kPolygon2D / kEdge2D) のとき .shape2d.json を選ぶ
         if (ShapeLibrary2D* shapes2d = shape2d::Library()) {
@@ -2930,6 +3016,10 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
                 if (SpriteShapeLibrary* profiles = spriteshape::Library()) {
                     profiles->LoadFromFile(dropPath);
                 }
+                const uint64_t guid = ctx.assetDb ? ctx.assetDb->GuidForPath(dropPath, true)
+                                                  : AssetDatabase::EnsureMeta(dropPath);
+                assign(AssetID{ guid });
+            } else if (isTerrainShapeRef && AssetDatabase::ClassifyPath(dropPath) == AssetType::Terrain) {
                 const uint64_t guid = ctx.assetDb ? ctx.assetDb->GuidForPath(dropPath, true)
                                                   : AssetDatabase::EnsureMeta(dropPath);
                 assign(AssetID{ guid });

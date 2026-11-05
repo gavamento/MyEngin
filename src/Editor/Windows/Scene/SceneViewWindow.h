@@ -251,10 +251,13 @@ private:
     // ★状態はエディタ側にしか無い (シーンにも設定ファイルにも保存しない) — ブラシは
     //   「いまの操作」であって地形アセットの属性ではないため。
     bool terrainBrush_ = false; // ブラシモード (on の間はピッキングとギズモを止める)
-    int terrainBrushMode_ = 0;  // 0=Raise 1=Smooth 2=Paint (TerrainEdit::BrushMode と同順)
+    int terrainBrushMode_ = 0; // TerrainEdit::BrushMode の int 表現 (Raise=0 … Terrace=6)
     float terrainRadius_ = 12.0f;
-    float terrainStrength_ = 1.0f; // Raise は m/ダブ、Smooth/Paint は 0..1
+    float terrainStrength_ = 1.0f; // Raise/Lower: m/ダブ、他: 0..1
     int terrainLayer_ = 0;         // Paint の対象レイヤ
+    float terrainFlattenTarget_ = 0.0f; // Flatten ストローク開始時の目標 Y (ローカル m)
+    float terrainNoiseScale_ = 0.5f;    // Noise 振幅 (m)
+    float terrainTerraceStep_ = 2.0f;   // Terrace の段高 (m)
     bool terrainStroking_ = false;  // 左ドラッグ中 (= 1 Undo エントリの単位)
     bool terrainHasTarget_ = false; // 直近のフレームで塗れる地形が見つかったか (パネル表示用)
     std::wstring terrainStrokeSrc_;              // ストローク対象の `.terrain.json` 絶対パス

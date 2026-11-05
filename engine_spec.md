@@ -1553,6 +1553,20 @@ the discrete solver. That handover is the whole design, and every threshold exis
 | Where it runs | After position correction and before position integration — the only point at which the substep's final pose is settled and nobody has advanced yet. Sweeping inside the integration loop would mix already-integrated and not-yet-integrated targets, putting the body scan order into the result |
 | Contact reporting | CCD hits are emitted as `SolidContact` like any other pair. A bullet that bounces off never produces penetration, so without this `OnCollisionEnter` would never fire for it |
 
+#### Terrain asset source and editor brushes
+
+`.terrain.json` is the authored recipe; brush edits live in the sibling `.terrain.edit` sidecar and
+override cooked pixels when resolutions still match. Optional **`flatHeight`** (normalized 0..1,
+no `heightmap` / `splatmap`) fills a constant height field and a layer-0-only splat map — the
+editor's **Create → 3D Object → Terrain** path uses this for an immediately paintable flat template
+under `assets/terrain/`. `TerrainComponent.source` and terrain colliders (`shape = 4`, `meshAsset`
+GUID) pick assets from an assets-tree picker (`.terrain.json` enumeration), not free typing.
+
+Editor brush modes (deterministic, sidecar + cache via `TerrainEdit::SaveEdits`): **Raise**, **Lower**,
+**Smooth**, **Flatten** (stroke-start height target), **Noise** (seeded value noise), **Terrace**
+(step height), **Paint** (splat layer). Ctrl temporarily swaps Raise/Lower; Shift temporarily forces
+Smooth.
+
 #### Terrain heightfield collider (M59i)
 
 `Collider.shape = 4` makes the terrain a solid surface. Rigid bodies rest, roll and slide on it, the

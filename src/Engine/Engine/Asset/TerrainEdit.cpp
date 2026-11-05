@@ -224,6 +224,154 @@ bool ApplySmooth(TerrainAsset::TerrainData& d, const Brush& b)
     return changed;
 }
 
+float LatticeValueBrush(int32_t x, int32_t y, uint32_t seed)
+{
+    uint64_t h = HashCombine(static_cast<uint64_t>(seed), static_cast<uint64_t>(static_cast<uint32_t>(x)));
+    h = HashCombine(h, static_cast<uint64_t>(static_cast<uint32_t>(y)));
+    return static_cast<float>((h >> 40) & 0xFFFFFFu) * (1.0f / 16777216.0f);
+}
+
+float BrushValueNoise(float x, float y, uint32_t seed)
+{
+    const float fx = std::floor(x);
+    const float fy = std::floor(y);
+    const int32_t ix = static_cast<int32_t>(fx);
+    const int32_t iy = static_cast<int32_t>(fy);
+    const float u = x - fx;
+    const float v = y - fy;
+    const float sx = u * u * (3.0f - 2.0f * u);
+    const float sy = v * v * (3.0f - 2.0f * v);
+    const float v00 = LatticeValueBrush(ix, iy, seed);
+    const float v10 = LatticeValueBrush(ix + 1, iy, seed);
+    const float v01 = LatticeValueBrush(ix, iy + 1, seed);
+    const float v11 = LatticeValueBrush(ix + 1, iy + 1, seed);
+    const float a = v00 + (v10 - v00) * sx;
+    const float b = v01 + (v11 - v01) * sx;
+    return a + (b - a) * sy;
+}
+
+bool ApplyLower(TerrainAsset::TerrainData& d, const Brush& b)
+{
+    Brush down = b;
+    down.strength = -std::abs(b.strength);
+    return ApplyRaise(d, down);
+}
+
+bool ApplyFlatten(TerrainAsset::TerrainData& d, const Brush& b)
+{
+    if (!(d.heightScale > 0.0f)) {
+        return false;
+    }
+    uint32_t x0 = 0, x1 = 0, z0 = 0, z1 = 0;
+    if (!HeightRect(d, b, x0, x1, z0, z1)) {
+        return false;
+    }
+    const float amount = std::clamp(b.strength, 0.0f, 1.0f);
+    if (!(amount > 0.0f)) {
+        return false;
+    }
+    const float targetNorm = (b.targetHeight - d.heightBase) / d.heightScale;
+    bool changed = false;
+    for (uint32_t z = z0; z <= z1; ++z) {
+        const float lz = HeightTexelZ(d, z);
+        for (uint32_t x = x0; x <= x1; ++x) {
+            const float lx = HeightTexelX(d, x);
+            const float dx = lx - b.centerX;
+            const float dz = lz - b.centerZ;
+            const float w = Falloff(std::sqrt(dx * dx + dz * dz), b.radius);
+            if (!(w > 0.0f)) {
+                continue;
+            }
+            uint16_t& h = d.heights[static_cast<size_t>(z) * d.heightW + x];
+            const float cur = static_cast<float>(h) * (1.0f / 65535.0f);
+            const uint16_t nv =
+                ToU16(cur + (targetNorm - cur) * w * amount);
+            if (nv != h) {
+                h = nv;
+                changed = true;
+            }
+        }
+    }
+    return changed;
+}
+
+bool ApplyNoise(TerrainAsset::TerrainData& d, const Brush& b)
+{
+    if (!(d.heightScale > 0.0f) || !(b.noiseScale > 0.0f)) {
+        return false;
+    }
+    uint32_t x0 = 0, x1 = 0, z0 = 0, z1 = 0;
+    if (!HeightRect(d, b, x0, x1, z0, z1)) {
+        return false;
+    }
+    const float amount = std::clamp(b.strength, 0.0f, 1.0f);
+    if (!(amount > 0.0f)) {
+        return false;
+    }
+    constexpr float kNoiseFreq = 0.15f; // ローカル m あたりのサンプル密度
+    bool changed = false;
+    for (uint32_t z = z0; z <= z1; ++z) {
+        const float lz = HeightTexelZ(d, z);
+        for (uint32_t x = x0; x <= x1; ++x) {
+            const float lx = HeightTexelX(d, x);
+            const float dx = lx - b.centerX;
+            const float dz = lz - b.centerZ;
+            const float w = Falloff(std::sqrt(dx * dx + dz * dz), b.radius);
+            if (!(w > 0.0f)) {
+                continue;
+            }
+            const float n = BrushValueNoise(lx * kNoiseFreq, lz * kNoiseFreq, b.noiseSeed);
+            const float deltaNorm = (n * 2.0f - 1.0f) * b.noiseScale / d.heightScale * w * amount;
+            uint16_t& h = d.heights[static_cast<size_t>(z) * d.heightW + x];
+            const uint16_t nv = ToU16(static_cast<float>(h) * (1.0f / 65535.0f) + deltaNorm);
+            if (nv != h) {
+                h = nv;
+                changed = true;
+            }
+        }
+    }
+    return changed;
+}
+
+bool ApplyTerrace(TerrainAsset::TerrainData& d, const Brush& b)
+{
+    if (!(d.heightScale > 0.0f) || !(b.terraceStep > 0.0f)) {
+        return false;
+    }
+    uint32_t x0 = 0, x1 = 0, z0 = 0, z1 = 0;
+    if (!HeightRect(d, b, x0, x1, z0, z1)) {
+        return false;
+    }
+    const float amount = std::clamp(b.strength, 0.0f, 1.0f);
+    if (!(amount > 0.0f)) {
+        return false;
+    }
+    bool changed = false;
+    for (uint32_t z = z0; z <= z1; ++z) {
+        const float lz = HeightTexelZ(d, z);
+        for (uint32_t x = x0; x <= x1; ++x) {
+            const float lx = HeightTexelX(d, x);
+            const float dx = lx - b.centerX;
+            const float dz = lz - b.centerZ;
+            const float w = Falloff(std::sqrt(dx * dx + dz * dz), b.radius);
+            if (!(w > 0.0f)) {
+                continue;
+            }
+            uint16_t& h = d.heights[static_cast<size_t>(z) * d.heightW + x];
+            const float curNorm = static_cast<float>(h) * (1.0f / 65535.0f);
+            const float worldY = d.heightBase + curNorm * d.heightScale;
+            const float terraced = std::round(worldY / b.terraceStep) * b.terraceStep;
+            const float targetNorm = (terraced - d.heightBase) / d.heightScale;
+            const uint16_t nv = ToU16(curNorm + (targetNorm - curNorm) * w * amount);
+            if (nv != h) {
+                h = nv;
+                changed = true;
+            }
+        }
+    }
+    return changed;
+}
+
 bool ApplyPaint(TerrainAsset::TerrainData& d, const Brush& b)
 {
     if (b.layer >= TerrainAsset::kMaxLayers) {
@@ -286,6 +434,14 @@ bool ApplyBrush(TerrainAsset::TerrainData& d, const Brush& b)
         return ApplySmooth(d, b);
     case BrushMode::Paint:
         return ApplyPaint(d, b);
+    case BrushMode::Lower:
+        return ApplyLower(d, b);
+    case BrushMode::Flatten:
+        return ApplyFlatten(d, b);
+    case BrushMode::Noise:
+        return ApplyNoise(d, b);
+    case BrushMode::Terrace:
+        return ApplyTerrace(d, b);
     default:
         return false;
     }

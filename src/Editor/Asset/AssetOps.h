@@ -58,6 +58,8 @@ std::wstring CreateTilePaletteAsset(EngineContext& ctx, const std::wstring& dir,
                                     const std::string& name);                      // .tilepalette.json (M94j)
 std::wstring CreateTilemapAsset(EngineContext& ctx, const std::wstring& dir,
                                 const std::string& name);                          // .tilemap.json (M94j)
+std::wstring CreateTerrainAsset(EngineContext& ctx, const std::wstring& dir,
+                                const std::string& name);                          // .terrain.json (平坦テンプレ)
 // M78: プロジェクトポスト／コンピュート／fxstack (HLSL は assetsRoot\shaders 固定)
 std::wstring CreatePostShaderAsset(EngineContext& ctx, const std::wstring& dir,
                                  const std::string& name);   // *.post.hlsl (dir = Browser カレント)

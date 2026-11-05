@@ -23,6 +23,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
+#include "Engine/Engine/Asset/TerrainAsset.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Scene/Scene.h"
@@ -944,6 +945,22 @@ bool RunAssetOpsSelfTest()
                 "tile label " + WideToUtf8(c.path) + " -> " + c.label + " (got " + got + ")";
             check(std::strcmp(got, c.label) == 0, what.c_str());
         }
+    }
+
+    // ---- CreateTerrainAsset: 平坦テンプレ + 連番 + 列挙 ----
+    {
+        const fs::path tdir = root / L"terrain_create";
+        fs::create_directories(tdir, ec);
+        const std::wstring first = CreateTerrainAsset(ctx, tdir.wstring(), "Flat");
+        check(!first.empty(), "CreateTerrainAsset writes a .terrain.json");
+        TerrainAsset::TerrainData cooked;
+        check(TerrainAsset::Load(first, cooked) && cooked.Valid(), "CreateTerrainAsset output loads");
+        const std::wstring second = CreateTerrainAsset(ctx, tdir.wstring(), "Flat");
+        check(!second.empty() && second != first,
+              "CreateTerrainAsset assigns a unique path when the name collides");
+        const std::vector<DiskAssetCandidate> terrains =
+            CollectDiskAssetCandidates(tdir.wstring(), AssetType::Terrain);
+        check(terrains.size() >= 2, "CreateTerrainAsset results appear in terrain disk candidates");
     }
 
     // ---- ピッカーのディスク候補 (再レビュー #4): 列挙は読むだけで .meta を作らない ----

@@ -2947,6 +2947,9 @@ bool SceneViewWindow::HandleTerrainBrush(EngineContext& ctx, Selection& selectio
             terrainStrokeBase_ = terrainStrokeWork_; // 差分の基準 (ストローク全体で 1 エントリ)
             terrainStroking_ = true;
             terrainHasDab_ = false;
+            if (terrainBrushMode_ == static_cast<int>(TerrainEdit::BrushMode::Flatten) && haveHit) {
+                terrainFlattenTarget_ = hitLocal.y;
+            }
         }
     }
 
@@ -2964,14 +2967,22 @@ bool SceneViewWindow::HandleTerrainBrush(EngineContext& ctx, Selection& selectio
             if (io.KeyShift) {
                 b.mode = TerrainEdit::BrushMode::Smooth; // Shift = 一時的に平滑化
             }
+            if (io.KeyCtrl) {
+                if (b.mode == TerrainEdit::BrushMode::Raise) {
+                    b.mode = TerrainEdit::BrushMode::Lower;
+                } else if (b.mode == TerrainEdit::BrushMode::Lower) {
+                    b.mode = TerrainEdit::BrushMode::Raise;
+                }
+            }
             b.centerX = hitLocal.x;
             b.centerZ = hitLocal.z;
             b.radius = terrainRadius_;
             b.strength = terrainStrength_;
-            if (b.mode == TerrainEdit::BrushMode::Raise && io.KeyCtrl) {
-                b.strength = -terrainStrength_; // Ctrl = 掘る
-            }
             b.layer = static_cast<uint32_t>(std::clamp(terrainLayer_, 0, 3));
+            b.targetHeight = terrainFlattenTarget_;
+            b.noiseScale = terrainNoiseScale_;
+            b.terraceStep = terrainTerraceStep_;
+            b.noiseSeed = 20260822u;
             if (TerrainEdit::ApplyBrush(terrainStrokeWork_, b)) {
                 if (TerrainEdit::SaveEdits(abs, terrainStrokeWork_)) {
                     if (ctx.renderSystem != nullptr) {
@@ -3095,7 +3106,7 @@ void SceneViewWindow::DrawTerrainBrushPanel(EngineContext& ctx)
     const float top = ImGui::GetItemRectMax().y;
     ImGui::SetCursorScreenPos(ImVec2(tl.x, top + 6.0f));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.11f, 0.13f, 0.85f));
-    ImGui::BeginChild("##sv_terrain_brush", ImVec2(0.0f, 84.0f), ImGuiChildFlags_AutoResizeX,
+    ImGui::BeginChild("##sv_terrain_brush", ImVec2(0.0f, 112.0f), ImGuiChildFlags_AutoResizeX,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     if (!terrainHasTarget_) {
         ImGui::TextUnformatted(Tr(StrId::Terrain_NoTarget));
@@ -3114,11 +3125,22 @@ void SceneViewWindow::DrawTerrainBrushPanel(EngineContext& ctx)
             ImGui::SameLine();
         };
         modeBtn(StrId::Terrain_ModeRaise, 0);
+        modeBtn(StrId::Terrain_ModeLower, 3);
         modeBtn(StrId::Terrain_ModeSmooth, 1);
+        modeBtn(StrId::Terrain_ModeFlatten, 4);
+        modeBtn(StrId::Terrain_ModeNoise, 5);
+        modeBtn(StrId::Terrain_ModeTerrace, 6);
         modeBtn(StrId::Terrain_ModePaint, 2);
         if (terrainBrushMode_ == 2) {
             ImGui::SetNextItemWidth(90.0f);
             ImGui::Combo(Tr(StrId::Terrain_Layer), &terrainLayer_, "0\0" "1\0" "2\0" "3\0");
+        } else if (terrainBrushMode_ == 5) {
+            ImGui::SetNextItemWidth(140.0f);
+            ImGui::SliderFloat(Tr(StrId::Terrain_NoiseScale), &terrainNoiseScale_, 0.05f, 8.0f, "%.2f m");
+        } else if (terrainBrushMode_ == 6) {
+            ImGui::SetNextItemWidth(140.0f);
+            ImGui::SliderFloat(Tr(StrId::Terrain_TerraceStep), &terrainTerraceStep_, 0.25f, 16.0f,
+                                "%.2f m");
         } else {
             ImGui::NewLine();
         }
@@ -3126,8 +3148,7 @@ void SceneViewWindow::DrawTerrainBrushPanel(EngineContext& ctx)
         ImGui::SliderFloat(Tr(StrId::Terrain_Radius), &terrainRadius_, 1.0f, 64.0f, "%.1f m");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(180.0f);
-        // Raise だけ単位が m/ダブ、Smooth/Paint は 0..1 の寄せ率 (上限を共有しても
-        // ApplyBrush 側が clamp するので害は無い)
+        // Raise/Lower は m/ダブ、他は 0..1 (ApplyBrush 側で clamp)
         ImGui::SliderFloat(Tr(StrId::Terrain_Strength), &terrainStrength_, 0.05f, 4.0f, "%.2f");
         ImGui::TextUnformatted(Tr(StrId::Terrain_Hint));
     }
