@@ -1359,6 +1359,7 @@ struct CharBody {
     WorldFrame frame;              // 親フレーム (収集時固定)
     float px = 0, py = 0, pz = 0;  // tick 頭のワールド位置
     float radius = 0, halfSeg = 0; // ワールドスケール適用済みのカプセル寸法
+    float startVelY = 0;           // tick 頭の cc->velocity.y (他 CC の一方通行判定用。走査順で書き換わる値を読まないため)
     float stepHeight = 0;          // 登れる段差 (stepOffset x |scale.y|、ワールド m)。0 以下 = 段差登りなし
     int32_t layer = 0;             // 衝突レイヤー (M36a、併用 Collider から。無ければ既定)
     uint32_t mask = 0xFFFFFFFFu;
@@ -1373,6 +1374,11 @@ constexpr float kStepHeightTol = 0.005f; // 段差の上面が stepOffset ちょ
 constexpr float kStepMinRise = 0.02f;    // これ以下の凹凸は通常の押し出しに任せる
 constexpr int kStepAdvanceTries = 5;     // 遮られた歩幅を超えて前へ出す試行回数 (半径の 1/4 刻み)
 constexpr int kStepBisectIters = 12;     // 着地高さの二分探索の回数 (固定 = 決定論)
+
+// CC 同士の押し出しの掃引 (M95)
+constexpr float kCharSweepTol = 1e-4f;   // 動かす前の深さにこれを足した値までは「障害物に新たに食い込んでいない」とみなす
+constexpr int kCharSweepScanSteps = 8;   // 走査の最小区間数
+constexpr int kCharSweepMaxSteps = 64;   // 走査の区間数の上限
 
 // 2D モード (M94i) の定数
 constexpr float kCharWallNormalX = 0.9f;    // 押し出し法線の |nx| がこれを超えたら壁の接触
@@ -1405,6 +1411,75 @@ bool CharPassesThroughOneWay(const CharOneWayContext& ow, const Body& obs)
 bool CharRejectsOneWayNormal(const CharOneWayContext& ow, const Body& obs, float ny)
 {
     return ow.on && obs.oneWay && (obs.rb == nullptr || obs.kinematic) && ny <= 0.0f;
+}
+
+// 他 CC の tick 頭の姿勢から作る一方通行の文脈。plane2D の CC だけが on にする
+CharOneWayContext MakeCharOneWayContext(const CharBody& c)
+{
+    CharOneWayContext ow;
+    if (c.cc->plane2D) {
+        ow.on = true;
+        ow.startFeetY = c.py - c.halfSeg - c.radius;
+        ow.passAll = c.cc->ignoreOneWay || c.startVelY > 0.0f;
+    }
+    return ow;
+}
+
+// from を (dx,dy,dz) 方向へ t (0..L) 動かしても、solid の障害物への深さが「動かす前の深さ + kCharSweepTol」を
+// 超えない最大の t を返す。CC 同士の押し出しが壁へ押し込むのを防ぐ。障害物の除外は押し出しループと同じ。
+// 固定回数 (区間走査 + 二分探索 kStepBisectIters) で早期 break なし = 決定論。どこも破れなければ L をそのまま返す
+float CharPushAllowance(const std::vector<Body>& bodies, const ShapePose& from, uint32_t selfIndex, int32_t layer,
+                        uint32_t mask, const CharOneWayContext& ow, float dx, float dy, float dz, float L)
+{
+    auto violates = [&](float t) {
+        ShapePose p = from;
+        p.px += dx * t;
+        p.py += dy * t;
+        p.pz += dz * t;
+        bool broken = false;
+        for (const Body& obs : bodies) {
+            if (!obs.solid || obs.entity.index == selfIndex || !shapes::CanCollide(layer, mask, obs.layer, obs.mask)
+                || CharPassesThroughOneWay(ow, obs)) {
+                continue;
+            }
+            float nx, ny, nz, depth;
+            if (!shapes::Collide(p, obs.pose, nx, ny, nz, depth) || CharRejectsOneWayNormal(ow, obs, ny)) {
+                continue;
+            }
+            float depth0 = 0.0f;
+            float nx0, ny0, nz0;
+            if (!shapes::Collide(from, obs.pose, nx0, ny0, nz0, depth0)) {
+                depth0 = 0.0f;
+            }
+            broken = broken || depth > depth0 + kCharSweepTol;
+        }
+        return broken;
+    };
+    // 半径 0 (scale 0) や極小で L / radius が int に収まらなくても未定義動作にならないよう、float のまま上限をかける
+    const float wantSteps = from.radius > 0.0f ? std::ceil(L / from.radius) : static_cast<float>(kCharSweepMaxSteps);
+    const int steps = std::max(kCharSweepScanSteps,
+                               static_cast<int>((std::min)(wantSteps, static_cast<float>(kCharSweepMaxSteps))));
+    int firstBroken = 0; // 0 = 破れなし
+    for (int i = 1; i <= steps; ++i) {
+        const bool broken = violates(L * static_cast<float>(i) / static_cast<float>(steps));
+        if (broken && firstBroken == 0) {
+            firstBroken = i;
+        }
+    }
+    if (firstBroken == 0) {
+        return L;
+    }
+    float lo = L * static_cast<float>(firstBroken - 1) / static_cast<float>(steps);
+    float hi = L * static_cast<float>(firstBroken) / static_cast<float>(steps);
+    for (int i = 0; i < kStepBisectIters; ++i) {
+        const float mid = 0.5f * (lo + hi);
+        if (violates(mid)) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    return lo;
 }
 
 // 段差登り。接地中に水平移動 (dirX,dirZ は単位ベクトル、len は今 tick の歩幅) が遮られたときだけ呼ぶ。
@@ -1668,11 +1743,12 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
                 }
                 applyPush(nx, ny, nz, depth);
             }
-            // CC 同士 (M95)。相手の tick 頭のカプセルだけを見る = 全 CC が同じ姿勢を見るので走査順に依らない
+            // CC 同士 (M95)。相手の tick 頭のカプセルだけを見る = 全 CC が同じ姿勢を見るので走査順に依らない。
+            // 押し出し量は障害物への掃引で切る: 受ける側は自分が、押す側は相手が壁へ入らない範囲までしか動かさず、
+            // 相手が動けない分は押す側が引き受けて止まる (moveInput は変えない)
             if (c.cc->collideCharacters) {
                 for (const CharBody& other : chars) {
-                    if (other.entity.index == c.entity.index || !other.cc->collideCharacters
-                        || other.cc->pushPriority < c.cc->pushPriority) {
+                    if (other.entity.index == c.entity.index || !other.cc->collideCharacters) {
                         continue;
                     }
                     if (!shapes::CanCollide(c.layer, c.mask, other.layer, other.mask)) {
@@ -1690,10 +1766,21 @@ void SolveCharacters(std::vector<Body>& bodies, std::vector<CharBody>& chars, fl
                     if (!shapes::Collide(pose, otherPose, nx, ny, nz, depth)) {
                         continue;
                     }
+                    if (other.cc->pushPriority < c.cc->pushPriority) {
+                        // 押す側。相手が -n へ動ける量 room を引いた残りだけ自分が戻る
+                        const float oz = other.cc->plane2D ? 0.0f : -nz;
+                        const float room = CharPushAllowance(bodies, otherPose, other.entity.index, other.layer, other.mask,
+                                                             MakeCharOneWayContext(other), -nx, -ny, oz, depth);
+                        if (depth - room > 0.0f) {
+                            applyPush(nx, ny, nz, depth - room);
+                        }
+                        continue;
+                    }
                     if (record && (c.cc->reportContacts || other.cc->reportContacts)) {
                         RecordCharContact(recorded, c.entity.index, pose, other.entity.index, otherPose, nx, ny, nz);
                     }
-                    applyPush(nx, ny, nz, depth);
+                    const float sz = p2 ? 0.0f : nz;
+                    applyPush(nx, ny, nz, CharPushAllowance(bodies, pose, c.entity.index, c.layer, c.mask, oneWay, nx, ny, sz, depth));
                 }
             }
         }
@@ -2328,6 +2415,7 @@ void PhysicsSystem::Update(World& world, float dt, std::vector<SolidContact>* ou
             c.px = wpos.x;
             c.py = wpos.y;
             c.pz = wpos.z;
+            c.startVelY = c.cc->velocity.y;
             // カプセル寸法は MakePose の capsule 規約をミラー (回転は形状に影響しない)
             const float asx = std::fabs(wscale.x);
             const float asy = std::fabs(wscale.y);

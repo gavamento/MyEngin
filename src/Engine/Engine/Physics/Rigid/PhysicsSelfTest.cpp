@@ -9105,6 +9105,121 @@ bool RunPhysicsSelfTest()
                   "CC report: a dynamic body hitting a CC with a solid capsule Collider yields one rigid-side contact (impulse > 0)");
             check(t.enter == 1, "CC report: that contact is delivered as a single enter (no double delivery)");
         }
+
+        // ---- 受け入れ 42 / 43: CC 同士の押し出しを障害物への掃引で切る (壁際で押し続けても抜けない) ----
+        {
+            constexpr float kR = 0.3f;
+            struct WallOut {
+                float lowX = 0.0f, bossX = 0.0f, bossAdv = 0.0f;
+                bool lowOver = false, tooClose = false, inputKept = true, ordered = true;
+            };
+            // id: 0..2 = 壁厚 0.2 / 0.5 / 1.0、3 = 壁なし、4 = 壁と平行、5 = 同優先度、6 = 30 m/s、7 = 隙間 0.1 m
+            auto scen = [&](int id, bool swapOrder) {
+                Scene s;
+                MakeGround(s, "G", 0, -0.5f, 0, 30.0f, 0.5f, 30.0f);
+                const float thick = (id == 0 || id == 5 || id == 6 || id == 7) ? 0.2f : (id == 1 ? 0.5f : 1.0f);
+                const float lowX0 = 0.3f;
+                const float face = (id == 7) ? lowX0 + kR + 0.1f : 1.0f;
+                const bool hasWall = id != 3;
+                if (id == 4) {
+                    MakeGround(s, "Wz", 0, 1.0f, 0.6f + 1.0f, 30.0f, 2.0f, 1.0f); // z=0.6 の面が x 方向に伸びる
+                } else if (hasWall) {
+                    MakeGround(s, "Wx", face + thick * 0.5f, 1.0f, 0, thick * 0.5f, 2.0f, 5.0f);
+                }
+                const float cz = (id == 4) ? 0.3f : 0.0f;
+                const int32_t bossPri = (id == 5) ? 0 : 1;
+                GameObject boss, low;
+                if (swapOrder) {
+                    low = mkCc3(s, "Low", lowX0, true, 0, false);
+                    boss = mkCc3(s, "Boss", -1.0f, true, bossPri, false);
+                } else {
+                    boss = mkCc3(s, "Boss", -1.0f, true, bossPri, false);
+                    low = mkCc3(s, "Low", lowX0, true, 0, false);
+                }
+                boss.SetLocalPosition(-1.0f, 0.9f, cz);
+                low.SetLocalPosition(lowX0, 0.9f, cz);
+                s.GetWorld().ApplyStructuralChanges();
+                auto* blt = boss.GetComponent<LocalTransform>();
+                auto* llt = low.GetComponent<LocalTransform>();
+                auto* bcc = boss.GetComponent<CharacterControllerComponent>();
+                run3(s, 30);
+                const float moveX = (id == 6) ? 30.0f : 1.5f;
+                bcc->moveInput.x = moveX;
+                WallOut o;
+                const int ticks = 300;
+                for (int i = 0; i < ticks; ++i) {
+                    run3(s, 1);
+                    if (hasWall && id != 4) {
+                        o.lowOver = o.lowOver || llt->position.x > face - kR + 1e-3f;
+                    }
+                    if (id <= 2 || id == 7) {
+                        // 低い側が壁で止まった後は厳密に 2r 手前。それまでは相手の tick 頭を見る遅れで 1 歩ぶん重なる
+                        const bool pinned = llt->position.x >= face - kR - 1e-3f;
+                        const float slack = pinned ? 1e-3f : (moveX * kDt + 1e-3f);
+                        o.tooClose = o.tooClose || blt->position.x > llt->position.x - 2.0f * kR + slack;
+                    }
+                    o.ordered = o.ordered && blt->position.x <= llt->position.x;
+                    o.inputKept = o.inputKept && bcc->moveInput.x == moveX;
+                    if (i == ticks - 61) {
+                        o.bossAdv = blt->position.x;
+                    }
+                }
+                o.bossAdv = blt->position.x - o.bossAdv;
+                o.lowX = llt->position.x;
+                o.bossX = blt->position.x;
+                return o;
+            };
+            static const char* const kNames[] = { "wall 0.2", "wall 0.5", "wall 1.0", "no wall", "parallel wall",
+                                                  "equal priority", "30 m/s", "gap 0.1" };
+            WallOut r[8];
+            WallOut rs[8];
+            for (int id = 0; id < 8; ++id) {
+                r[id] = scen(id, false);
+                rs[id] = scen(id, true);
+                MYE_LOG_INFO("  [phys] CC wall push %s: boss.x %.4f low.x %.4f bossAdv %.5f", kNames[id],
+                             static_cast<double>(r[id].bossX), static_cast<double>(r[id].lowX), static_cast<double>(r[id].bossAdv));
+            }
+            for (int id = 0; id < 3; ++id) {
+                check(!r[id].lowOver, "CC wall push: the low side never ends a tick inside the wall (0.2 / 0.5 / 1.0 m)");
+                check(!r[id].tooClose, "CC wall push: the high side stays 2r behind the low side at every tick end");
+                check(std::fabs(r[id].bossAdv) < 1e-3f && r[id].inputKept,
+                      "CC wall push: the high side stops moving while moveInput stays at 1.5");
+            }
+            check(!r[6].lowOver && std::fabs(r[6].lowX - 0.7f) < 5e-3f, "CC wall push: 30 m/s into a 0.2 m wall does not tunnel");
+            check(!r[7].lowOver && std::fabs(r[7].lowX - (0.3f + 0.1f)) < 5e-3f
+                      && std::fabs(r[7].bossX - (r[7].lowX - 2.0f * kR)) < 5e-3f && !r[7].tooClose,
+                  "CC wall push: with a 0.1 m gap the low side moves up to the wall and the high side follows by that much");
+            check(r[3].bossX > 3.0f && r[3].lowX > r[3].bossX + 2.0f * kR - 0.03f,
+                  "CC wall push: without a wall the high side ignores the low side and the low side is pushed (legacy)");
+            check(r[4].lowX > 1.5f && std::fabs(r[4].lowX - r[4].bossX - 2.0f * kR) < 0.05f,
+                  "CC wall push: pushing parallel to a wall slides the low side along it");
+            check(!r[5].lowOver && r[5].ordered, "CC wall push: equal priority pushing at a wall does not pass through it");
+            bool bitwise = true;
+            bool allFinite = true;
+            for (int id = 0; id < 8; ++id) {
+                bitwise = bitwise && std::memcmp(&r[id].lowX, &rs[id].lowX, sizeof(float)) == 0
+                          && std::memcmp(&r[id].bossX, &rs[id].bossX, sizeof(float)) == 0;
+                allFinite = allFinite && std::isfinite(r[id].lowX) && std::isfinite(r[id].bossX);
+            }
+            check(allFinite && bitwise, "CC wall push: swapping the creation order gives bit-identical final positions");
+            // 半径 0 (scale 0) の CC 同士が重なっても掃引の区間数で落ちず、位置が有限のまま
+            {
+                Scene s0;
+                MakeGround(s0, "G", 0, -0.5f, 0, 30.0f, 0.5f, 30.0f);
+                GameObject za = mkCc3(s0, "Za", 0.0f, true, 0, false);
+                GameObject zb = mkCc3(s0, "Zb", 0.0f, true, 1, false);
+                za.GetComponent<LocalTransform>()->scale = { 0.0f, 0.0f, 0.0f };
+                zb.GetComponent<LocalTransform>()->scale = { 0.0f, 0.0f, 0.0f };
+                s0.GetWorld().ApplyStructuralChanges();
+                za.GetComponent<CharacterControllerComponent>()->moveInput.x = 1.0f;
+                run3(s0, 10);
+                const auto* pa = za.GetComponent<LocalTransform>();
+                const auto* pb = zb.GetComponent<LocalTransform>();
+                check(std::isfinite(pa->position.x) && std::isfinite(pa->position.y) && std::isfinite(pb->position.x)
+                          && std::isfinite(pb->position.y),
+                      "CC wall push: zero-radius characters overlapping each other keep finite positions");
+            }
+        }
     }
 
     // ---- M95 sub-05 ----
