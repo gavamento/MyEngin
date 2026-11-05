@@ -2,7 +2,7 @@
 
 - 依頼原文: M95 アクション戦闘の土台 (事前調査は plans\m95-action-combat\design-draft.md)
 - 開始: 2026-11-04 / 基点コミット: 69c2207c2b8c5c79af7d37ababad0b03d397d228
-- フェーズ: レビュー (全サブ OK。Wave 1 統合 e1bba10、Wave 2 統合 740bd64、sub-07 9cfbff0。Phase 3 round 1 FAIL → planner が sub-08 / 09 / 10 を新設 (spec §2 #26〜#28、受け入れ 42〜46)。sub-08 fd399e7 / sub-09 26155d7 OK → 統合 7c6fec0 / 9cf53d6 検証済み → sub-10 5e2e684 OK (往復 2) → review round 2)
+- フェーズ: 完了 (review round 2 PASS、2026-11-05。全サブ OK。Wave 1 統合 e1bba10、Wave 2 統合 740bd64、sub-07 9cfbff0。Phase 3 round 1 FAIL → planner が sub-08 / 09 / 10 を新設 (spec §2 #26〜#28、受け入れ 42〜46)。sub-08 fd399e7 / sub-09 26155d7 OK → 統合 7c6fec0 / 9cf53d6 検証済み → sub-10 5e2e684 OK (往復 2) → review round 2)
 - 仕様確定: 2026-11-04 (planner PLAN_RESULT round 2)。番号: ABI v32 = 193 スロット、SimSnapshot v66 / v67 / v68、controller アセット v3、ADR-034、TypeId 追加なし
 
 ## サブ進捗
@@ -32,6 +32,7 @@
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
 | 1 (69c2207..9cfbff0、2026-11-05 08:00) | FAIL | 2 / 4 / N/A / 4 | major 2 (planner 宛: #1 優先度の高い CC が低い CC を壁へ押し付けると薄い壁を抜ける / #2 ヒットストップ中に rootMotionY の CC が縦へ流れる)、minor 2 (#3 中身の無い予約マーカー、#4 残り minor は妥当) |
+| 2 (592ffff..26cb537、2026-11-05) | **PASS** | 4 / 5 / N/A / 4 | なし (minor 2: 多段押し付けの文書の書き方 / 密集 CC の掃引コスト未記録)。前回 #1〜#4 すべて解消 |
 
 ## ユーザー判断
 - 制約解除の範囲: ルートモーションの縦成分 と イベント時刻の秒・フレーム指定 を解除する。CC カプセルのスケール挙動は対象外。固定 60 Hz tick と rand() 禁止は解除しない (2026-11-04、司会の AskUserQuestion)
@@ -53,6 +54,10 @@
   - Wave 3 (sub-07、文書だけ) の最終検証: Wave 2 統合時の full 検証 (selftest-full Debug / Release、check_rules、replay_verify、三校) を受け入れ条件 30 の証拠にする。sub-07 では文書の参照先の実在と check_rules だけ確認する (2026-11-04、司会の AskUserQuestion。planner へ補足として送信)
 
 ## 申し送り (セッション跨ぎ)
+- **review-2 の残り minor (2026-11-05、M95 完了時点、後続課題)**:
+  - (R2-1) 多段の押し付け「ボス → A → B → 壁」で、engine_spec §10.14 D (1) / ADR-034 は「A と B が重なり得る」と書くが、実測ではボスが A をすり抜けて B と重なる (boss.x=0.7001 A.x=-0.3002 B.x=0.2998、B は壁を抜けない)。文面を「ボスは手前の CC をすり抜けて、壁際の CC と重なり得る」に直すか、雑魚の群れを押す用途を後続課題に。縦切り (ボス 1 + プレイヤー 1) では起きない
+  - (R2-2) collideCharacters の CC 密集時の掃引コスト (Release、静的な箱 + 密集 CC で 120 tick): 箱 64 / CC 10 = off 0.418 → on 1.608 ms/tick、箱 256 / CC 20 = 3.036 → 7.940 ms/tick (掃引分は未切り分け)。改善案: depth0 の前計算、AABB で障害物を絞る。縦切りの 2 体では問題なし
+- 別件候補の決着: full ログの `[script] [csharp] compile FAILED — keeping previous scripts` は computescript スイートの意図的な負のテスト (BadIndexProbe.cs の CS1503、M91g 8afe3d3 から) = 正常なログ。起票不要 (reviewer round 2 が確認)
 - 事前調査は design-draft.md。planner は仮説として扱い実コードで裏取りする
 - 既存シーン (三校・HAL Collector) をビット同一に保つため、挙動が変わる物は opt-in (既定 off)
 - sub-00 (8405f20) から: `MYE_SELFTEST_ONLY` の値は `--selftest-list` の名前で指定する (例 `animatorcontroller,part`)。予約マーカーの文言は spec 付録 A.2 / A.5 / A.6 と同一で、各サブは grep で自分のマーカーを探して直下にだけ書く。登録表の tier を書き換えるのは sub-00b だけ。`twoddemo` / `navdeterminism` / `simparallel` は値を変えない
