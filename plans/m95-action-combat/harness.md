@@ -54,6 +54,7 @@
   - Wave 3 (sub-07、文書だけ) の最終検証: Wave 2 統合時の full 検証 (selftest-full Debug / Release、check_rules、replay_verify、三校) を受け入れ条件 30 の証拠にする。sub-07 では文書の参照先の実在と check_rules だけ確認する (2026-11-04、司会の AskUserQuestion。planner へ補足として送信)
 
 ## 申し送り (セッション跨ぎ)
+- 後片付け (2026-11-05、ユーザー許可「すべて削除」): worktree `C:/HAL/MyEngin-wt/sub-00b` / `sub-04` / `sub-06` / `sub-08` / `sub-09` を git worktree remove、ブランチ m95/sub-00b・04・06・08・09 を `git branch -d` (全て master にマージ済みを確認)、`C:/HAL/MyEngin-wt/sub-02-base` (git 管理外の残骸) を削除。`locks` は残す。ブランチ m95/sub-01・02・03・05 は今回の質問の対象外で残っている (マージ済み)
 - **review-2 の残り minor (2026-11-05、M95 完了時点、後続課題)**:
   - (R2-1) 多段の押し付け「ボス → A → B → 壁」で、engine_spec §10.14 D (1) / ADR-034 は「A と B が重なり得る」と書くが、実測ではボスが A をすり抜けて B と重なる (boss.x=0.7001 A.x=-0.3002 B.x=0.2998、B は壁を抜けない)。文面を「ボスは手前の CC をすり抜けて、壁際の CC と重なり得る」に直すか、雑魚の群れを押す用途を後続課題に。縦切り (ボス 1 + プレイヤー 1) では起きない
   - (R2-2) collideCharacters の CC 密集時の掃引コスト (Release、静的な箱 + 密集 CC で 120 tick): 箱 64 / CC 10 = off 0.418 → on 1.608 ms/tick、箱 256 / CC 20 = 3.036 → 7.940 ms/tick (掃引分は未切り分け)。改善案: depth0 の前計算、AABB で障害物を絞る。縦切りの 2 体では問題なし
