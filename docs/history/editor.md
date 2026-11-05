@@ -93,6 +93,7 @@
 - DrawNavMeshAgentNotes の説明コメントは、M85g で DrawPatrolRouteNotes が間に挿入されたときから PatrolRoute の頭に付いていた。本来の持ち主の上へ戻した。
 - 唯一の生 D3D 型 (`ID3D11ShaderResourceView*`、マテリアルプレビューを ImGui::Image へ渡す) は DrawMaterialInspector と一緒に InspectorWindowAssets.cpp へ移ったので、規則 15 の許可リストの項目も差し替えた (項目数 26 は変わらない)。
 - 各翻訳単位の include は本文が直接使う宣言だけに絞った。MSVC の無い環境での作業なので、ビルドで不足が出たら足す。
+- 手元の master との合流 (2b496a0) では InspectorWindow.cpp を手元版で解決したので、同じ分け方を合流後のコードでやり直した。M94 で DrawAssetInspector に増えた 2D アセット (スプライトアニメ / 2D 形状 / SpriteShape / タイル) の分岐も一緒に InspectorWindowAssets.cpp へ移り、生 D3D 型の許可リスト (手元では規則 16) の項目も同じく差し替えた。
 
 ## App/EditorMain.cpp — スプラッシュのビルド表記と規則 1
 - 起動スプラッシュ (91d0394) のビルド表記は `#ifdef _DEBUG` で "Debug" / "Release" を選んでいて、check_rules 規則 1 (ロジックの `_DEBUG` 分岐禁止) がエラーにしていた (master の CI はそれ以前のビルドエラーで規則検査まで届いていなかった)。表示だけの分岐だが、規則の許可リストはファイル単位 (GraphicsDevice.cpp) で、EditorMain.cpp を丸ごと許可するのは広すぎる。
