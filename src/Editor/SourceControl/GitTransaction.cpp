@@ -4,6 +4,7 @@
 #include <filesystem>
 
 #include "Editor/App/EditorSettings.h"
+#include "Editor/Asset/AssetOps.h" // InvalidateTerrainCaches
 #include "Editor/Project/PartTagNames.h"
 #include "Editor/Project/PhysicsLayerNames.h"
 #include "Engine/Core/Diagnostics/Log.h"
@@ -632,7 +633,7 @@ void GitTransaction::ApplyStageB(EngineContext& ctx, const std::vector<StageChan
     // ---- ライブラリのキャッシュ無効化 (spec §4.1「開き直し前に無効化」) ----
     // ★どちらも既存の API で足りる:
     //   ControllerLibrary::LoadFromFile は同じ hash で登録し直す = キャッシュの差し替え、
-    //   RenderSystem::InvalidateTerrain は TerrainSystem::Clear の公開口。
+    //   InvalidateTerrainCaches は描画の TerrainSystem と sim の地形コライダーを両方捨てる。
     //   よってこの 2 種を C へ格上げする必要は無い
     if (controllerTouched && ctx.controllers != nullptr) {
         for (const StageChange& c : changes) {
@@ -646,8 +647,8 @@ void GitTransaction::ApplyStageB(EngineContext& ctx, const std::vector<StageChan
             }
         }
     }
-    if (terrainTouched && ctx.renderSystem != nullptr) {
-        ctx.renderSystem->InvalidateTerrain();
+    if (terrainTouched) {
+        InvalidateTerrainCaches(ctx.renderSystem); // 描画と sim の当たりの両方
     }
     if (inputTouched && ctx.inputActions != nullptr) {
         ctx.inputActions->Load(ctx.assetsRoot, true);

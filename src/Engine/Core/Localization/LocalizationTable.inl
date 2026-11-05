@@ -2723,3 +2723,18 @@ MYE_STR(FeelMon_BufOpen,      "open",                "受付中")
 MYE_STR(FeelMon_BufClosed,    "closed, window",      "閉、窓")
 MYE_STR(FeelMon_NoBuffer,     "No action has bufferTicks (Project Settings > Input).",
                               "bufferTicks を持つアクションが無い (Project Settings > 入力)。")
+
+// ---- TwoBoneIK の自動設定 ----
+MYE_STR(Insp_IkJointNone,     "(none)",                "(未設定)")
+MYE_STR(Insp_IkPelvisAuto,    "(first joint without a parent)", "(親の無い最初のジョイント)")
+MYE_STR(Insp_IkNoSkin,        "No skinned model on this entity: joints are typed by name and auto setup is unavailable.",
+                              "このエンティティの SkinnedMesh のモデルが引けません (ジョイントは名前の手入力、自動設定は使えません)")
+MYE_STR(Insp_IkAutoSetup,     "Auto Setup",            "自動設定")
+MYE_STR(Insp_IkAutoSetupHint, "Fills empty chains: feet = ground, hands = position with weight 0 and a target child.",
+                              "空いている鎖を埋めます (足 = 接地、手 = 位置・重み 0 と目標の子)")
+MYE_STR(Insp_IkLimbHandL,     "left hand",             "左手")
+MYE_STR(Insp_IkLimbHandR,     "right hand",            "右手")
+MYE_STR(Insp_IkLimbFootL,     "left foot",             "左足")
+MYE_STR(Insp_IkLimbFootR,     "right foot",            "右足")
+MYE_STR(Insp_IkLimbMissing,   "Not found by joint name: %s (pick the end joint by hand).",
+                              "骨名から見つからない手足: %s (先端ジョイントを手で選んでください)")

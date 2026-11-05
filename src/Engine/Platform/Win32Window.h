@@ -20,6 +20,10 @@ struct WindowDesc {
     bool startHidden = false; // true = 作成時は SW_HIDE (Editor スプラッシュ中のメイン窓)
 };
 
+// Per-Monitor V2 DPI。最初の CreateWindowExW より前に呼ぶ (Editor スプラッシュスレッド等)。
+// 冪等 — 2 回目以降は何もしない。
+void EnsureProcessDpiAwareness();
+
 // Win32 ウィンドウ。生の HWND / windows.h をヘッダから隠蔽する (void* 経由)。
 class Win32Window {
 public:

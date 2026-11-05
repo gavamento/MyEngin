@@ -280,8 +280,10 @@ float4 PSMain(VSOut i) : SV_Target
     }
 
     // フォグ
-    litColor = ApplyFog(litColor, viewDist, i.posW.y, gFogMode, gFogColor, gFogStart, gFogEnd,
-                        gFogDensity, gFogHeightFalloff, gFogBaseHeight, gSunDirection, gSunColor,
+    // ★引数順は common.hlsli の ApplyFog (M43a で変更) に合わせる。旧順のままだと
+    //   viewDist がフォグ色に入り、水面がフォグ無しのシーンでも白飛びする
+    litColor = ApplyFog(litColor, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd, gCameraPos,
+                        i.posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection, gSunColor,
                         gFogInscatterIntensity, gFogInscatterPower);
 
     // メッシュ外周のソフトエッジ (正方形プレーンの境界が空中に露出するのを防ぐ)

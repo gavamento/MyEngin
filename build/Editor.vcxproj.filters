@@ -135,6 +135,9 @@
     <ClCompile Include="..\src\Editor\Scene\PlayModeController.cpp">
       <Filter>Scene</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Scene\TwoBoneIkAutoSetup.cpp">
+      <Filter>Scene</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\AnimatorControllerEditSelfTest.cpp">
       <Filter>SelfTest</Filter>
     </ClCompile>
@@ -184,6 +187,9 @@
       <Filter>SelfTest</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\SelfTest\TilePaletteSelfTest.cpp">
+      <Filter>SelfTest</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\SelfTest\TwoBoneIkAutoSetupSelfTest.cpp">
       <Filter>SelfTest</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\SourceControl\CollabClient.cpp">
@@ -471,6 +477,9 @@
     <ClInclude Include="..\src\Editor\Scene\Selection.h">
       <Filter>Scene</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\Scene\TwoBoneIkAutoSetup.h">
+      <Filter>Scene</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\AnimatorControllerEditSelfTest.h">
       <Filter>SelfTest</Filter>
     </ClInclude>
@@ -520,6 +529,9 @@
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SelfTest\TilePaletteSelfTest.h">
+      <Filter>SelfTest</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\SelfTest\TwoBoneIkAutoSetupSelfTest.h">
       <Filter>SelfTest</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\SourceControl\CollabClient.h">

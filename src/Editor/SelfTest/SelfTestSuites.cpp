@@ -27,6 +27,7 @@
 #include "Editor/SelfTest/StartupSplashSelfTest.h"
 #include "Editor/SelfTest/TerrainSelfTest.h"
 #include "Editor/SelfTest/TilePaletteSelfTest.h"
+#include "Editor/SelfTest/TwoBoneIkAutoSetupSelfTest.h"
 #include "Editor/SourceControl/SourceControlSelfTest.h"
 #include "Editor/Tools/EngineIndexDumpSelfTest.h"
 #include "Editor/Tools/FractureEditorSelfTest.h"
@@ -172,6 +173,7 @@ const SelfTestSuite kSuites[] = {
     { "convex", mye::RunConvexSelfTest, SelfTestTier::Fast, "M60f" },
     { "ragdoll", mye::RunRagdollSelfTest, SelfTestTier::Fast, "M60g1" },
     { "ragdollbuild", mye::RunRagdollBuildSelfTest, SelfTestTier::Fast, "M60g2" },
+    { "ikautosetup", mye::RunTwoBoneIkAutoSetupSelfTest, SelfTestTier::Fast, "TwoBoneIK 自動設定" },
     { "camerapilot", mye::RunCameraPilotSelfTest, SelfTestTier::Fast, "カメラ操縦 (視錐台 UI 追補)" },
     { "dllreloader", mye::RunDllReloaderSelfTest, SelfTestTier::Fast, "DLL 書き込み完了プローブ (M52h 追補)" },
     { "xpbd", mye::RunXpbdSelfTest, SelfTestTier::Fast, "M60'b" },

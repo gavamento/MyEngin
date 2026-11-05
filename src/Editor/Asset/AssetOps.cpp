@@ -51,6 +51,7 @@
 #include "Engine/Engine/AI/BlackboardLibrary.h"
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Rendering/RenderSystem.h" // M58f: 地形ブラシ Undo 後のチャンク再構築
+#include "Engine/Engine/Physics/Collider/TerrainColliderLibrary.h" // InvalidateTerrainCaches
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Compute/KernelCppCodegen.h"
 #include "Engine/Engine/Schema/SchemaCodegen.h"
@@ -1599,13 +1600,23 @@ bool ApplyTerrainPaintOp(EngineContext& ctx, const UndoFileOp& op, bool redo)
     if (!TerrainEdit::SaveEdits(op.pathA, data)) {
         return false;
     }
-    if (ctx.renderSystem != nullptr) {
-        ctx.renderSystem->InvalidateTerrain(); // 次フレームでチャンクを焼き直す
-    }
+    InvalidateTerrainCaches(ctx.renderSystem); // 次フレームでチャンクを焼き直し、当たりも読み直す
     return true;
 }
 
 } // namespace
+
+void InvalidateTerrainCaches(RenderSystem* renderSystem)
+{
+    if (renderSystem != nullptr) {
+        renderSystem->InvalidateTerrain();
+    }
+    // 全消しでよい: 地形資産は数個で、読み直しは次に引かれた 1 個ずつ。負のキャッシュ
+    // (作成前に引かれて失敗した ID) もここで消えるので、新規作成した地形も当たりを持てる
+    if (TerrainColliderLibrary* lib = terraincol::Library()) {
+        lib->Clear();
+    }
+}
 
 // UndoStack のファイル操作エントリ実行部 (M51i)。宣言は UndoStack.h。
 // 「逆操作先消滅時は WARN + no-op」— Explorer 側でファイルが動いた後の Undo で

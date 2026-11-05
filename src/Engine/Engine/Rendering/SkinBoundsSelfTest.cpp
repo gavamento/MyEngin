@@ -6,6 +6,7 @@
 #include "Engine/Engine/Rendering/SkinBoundsSelfTest.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -15,7 +16,13 @@
 #include <DirectXMath.h>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Animation/SkinningSystem.h"
+#include "Engine/Engine/Animation/TwoBoneIkSystem.h"
+#include "Engine/Engine/Asset/FbxLoader.h"
 #include "Engine/Engine/Asset/ModelLoader.h"
+#include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Renderer/Device/GpuResources.h"
 #include "Engine/Renderer/Mesh/SkinBounds.h"
 #include "Engine/Renderer/Mesh/Skeleton.h"
@@ -27,6 +34,16 @@ namespace mye {
 namespace {
 
 constexpr float kInsideEpsilon = 1e-4f;
+
+struct Box {
+    XMFLOAT3 lo = { FLT_MAX, FLT_MAX, FLT_MAX };
+    XMFLOAT3 hi = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+    void Extend(const XMFLOAT3& p)
+    {
+        lo = { std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z) };
+        hi = { std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z) };
+    }
+};
 
 XMFLOAT4 Quat(float x, float y, float z, float angleRad)
 {
@@ -281,6 +298,137 @@ bool RunSkinBoundsSelfTest()
         check(cache.Get(res.skinnedModels, AssetID{ 12345 }, res.meshes, meshId) == nullptr
                   && cache.Get(res.skinnedModels, skinId, res.meshes, AssetID{ 54321 }) == nullptr,
               "cache: an unregistered model or mesh has no box (the caller keeps it always visible)");
+    }
+
+    // ---- 1 姿勢の箱 (エディタの選択枠・Focus 用) ----
+    {
+        const SkinnedModel chainModel = MakeChainModel();
+        std::vector<MeshVertex> chainVerts;
+        MakeChainMesh(chainVerts);
+        std::vector<XMFLOAT3> chainPos;
+        std::vector<MeshSkinVertex> chainSkin;
+        Split(chainVerts, chainPos, chainSkin);
+        SkinnedLocalAabb conservative;
+        ComputeSkinnedLocalAabb(chainModel, chainPos, chainSkin, conservative);
+        bool allInside = true;
+        bool withinConservative = true;
+        for (const float t : { 0.0f, 0.5f, 1.0f, 1.7f }) {
+            std::vector<XMMATRIX> locals;
+            ComputeJointLocals(chainModel, 0, t, locals);
+            SkinnedLocalAabb pose;
+            std::vector<XMFLOAT4X4> palette;
+            ComputeBonePalette(chainModel, 0, t, palette);
+            allInside = allInside && ComputeSkinnedPoseAabb(chainModel, chainPos, chainSkin, locals, pose)
+                        && CountOutside(chainPos, chainSkin, palette, pose) == 0;
+            withinConservative = withinConservative && pose.min.x >= conservative.min.x && pose.min.y >= conservative.min.y
+                                 && pose.min.z >= conservative.min.z && pose.max.x <= conservative.max.x
+                                 && pose.max.y <= conservative.max.y && pose.max.z <= conservative.max.z;
+        }
+        check(allInside, "pose: every skinned vertex of the sampled pose is inside its pose box");
+        check(withinConservative, "pose: the pose box lies inside the conservative (all clips) box");
+        std::vector<XMMATRIX> shortLocals(1, XMMatrixIdentity());
+        SkinnedLocalAabb unused;
+        check(!ComputeSkinnedPoseAabb(chainModel, chainPos, chainSkin, shortLocals, unused),
+              "pose: a locals array that does not match the joint count is rejected");
+
+        // FBX の cm 単位と同じ形: ルートジョイントに 0.01、頂点は cm、inverseBind = 0.01 × バインドの逆。
+        // バインドポーズのパレットは 0.01 そのものなので、箱は頂点の箱の 1/100 になる
+        // (Mesh::aabbMin/Max をそのまま使うと 100 倍に見える。エディタの選択枠で踏んだ形)
+        SkinnedModel cm = chainModel;
+        cm.clips.clear();
+        cm.joints[0].bindS = { 0.01f, 0.01f, 0.01f };
+        for (int j = 0; j < 3; ++j) {
+            cm.joints[static_cast<size_t>(j)].bindT = { 0.0f, j == 0 ? 0.0f : 100.0f, 0.0f };
+        }
+        std::vector<XMMATRIX> cmLocals;
+        ComputeJointLocals(cm, -1, 0.0f, cmLocals);
+        for (int j = 0; j < 3; ++j) {
+            const XMMATRIX g = JointGlobalFromLocals(cm, cmLocals, j);
+            XMStoreFloat4x4(&cm.joints[static_cast<size_t>(j)].inverseBind,
+                            XMMatrixMultiply(XMMatrixScaling(0.01f, 0.01f, 0.01f), XMMatrixInverse(nullptr, g)));
+        }
+        std::vector<XMFLOAT3> cmPos = chainPos;
+        for (XMFLOAT3& p : cmPos) {
+            p = { p.x * 100.0f, p.y * 100.0f, p.z * 100.0f };
+        }
+        Box vertexBox;
+        for (const XMFLOAT3& p : cmPos) {
+            vertexBox.Extend(p);
+        }
+        SkinnedLocalAabb cmBox;
+        // 重み 0 の頂点はシェーダが恒等で描く (cm のまま) ので、この比較では外す
+        std::vector<XMFLOAT3> weighted;
+        std::vector<MeshSkinVertex> weightedSkin;
+        for (size_t i = 0; i < cmPos.size(); ++i) {
+            const XMFLOAT4& w = chainSkin[i].boneWeights;
+            if (w.x + w.y + w.z + w.w > 1e-4f) {
+                weighted.push_back(cmPos[i]);
+                weightedSkin.push_back(chainSkin[i]);
+            }
+        }
+        Box weightedBox;
+        for (const XMFLOAT3& p : weighted) {
+            weightedBox.Extend(p);
+        }
+        const bool ok = ComputeSkinnedPoseAabb(cm, weighted, weightedSkin, cmLocals, cmBox);
+        const float expectH = (weightedBox.hi.y - weightedBox.lo.y) * 0.01f;
+        const float gotH = cmBox.max.y - cmBox.min.y;
+        MYE_LOG_INFO("  [info] cm rig: vertex box height %.2f, pose box height %.4f (expect %.4f)",
+                     vertexBox.hi.y - vertexBox.lo.y, gotH, expectH);
+        check(ok && std::fabs(gotH - expectH) <= 1e-4f,
+              "pose: a cm rig (0.01 on the root joint) gives a box 1/100 of the bind vertex box");
+    }
+
+    // ---- 実アセット: FBX の読み込み経路で、1 姿勢の箱が今の姿勢の全頂点を包む ----
+    // (cm 単位のスキン FBX は手元のリポジトリに無いので、1/100 になることは上の手組みの cm リグで見る。
+    //  ここは ufbx が作る inverseBind / 骨の重み / 部品ごとのメッシュの組を実物で通す)
+    {
+        const std::wstring path =
+            std::filesystem::absolute(L"assets\\models\\player_fp_v01\\Player_Researcher_FP.fbx").wstring();
+        RegisterBuiltinComponents(); // sTypeId 解決 (冪等)
+        Scene scene;
+        RenderResources res;
+        ShaderManager shaders;
+        FbxLoader::Load(scene, res, shaders, path);
+        World& world = scene.GetWorld();
+        world.ApplyStructuralChanges();
+        std::vector<EntityID> skinnedParts;
+        const ComponentTypeId req[] = { SkinnedMeshComponent::sTypeId, MeshRendererComponent::sTypeId };
+        world.ForEachArchetype(req, [&](Archetype& arch) {
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                skinnedParts.push_back(arch.EntityAt(row));
+            }
+        });
+        int checkedParts = 0;
+        int outsideTotal = 0;
+        for (EntityID e : skinnedParts) {
+            const auto* sm = world.GetComponent<SkinnedMeshComponent>(e);
+            const auto* mr = world.GetComponent<MeshRendererComponent>(e);
+            const SkinnedModel* fbxModel = res.skinnedModels.Get(sm->model);
+            const Mesh* mesh = res.meshes.Get(mr->mesh);
+            if (fbxModel == nullptr || mesh == nullptr) {
+                continue;
+            }
+            std::vector<XMMATRIX> locals;
+            SampleSkinnedLocals(*fbxModel, *sm, locals);
+            SkinnedLocalAabb pose;
+            if (!ComputeSkinnedPoseAabb(*fbxModel, mesh->positions, mesh->skin, locals, pose)) {
+                ++outsideTotal; // 求められない部品も失敗として数える
+                continue;
+            }
+            // シェーダと同じパレット (転置済み) = transpose(inverseBind × jointGlobal)
+            std::vector<XMFLOAT4X4> palette(fbxModel->joints.size());
+            for (size_t j = 0; j < palette.size(); ++j) {
+                const XMMATRIX g = JointGlobalFromLocals(*fbxModel, locals, static_cast<int32_t>(j));
+                XMStoreFloat4x4(&palette[j], XMMatrixTranspose(XMMatrixMultiply(
+                                                 XMLoadFloat4x4(&fbxModel->joints[j].inverseBind), g)));
+            }
+            outsideTotal += CountOutside(mesh->positions, mesh->skin, palette, pose);
+            ++checkedParts;
+        }
+        MYE_LOG_INFO("  [info] fbx: %d skinned parts checked", checkedParts);
+        check(checkedParts > 0 && outsideTotal == 0,
+              "fbx: for every skinned part of Player_Researcher_FP.fbx the pose box holds every vertex of the current pose");
     }
 
     // ---- 実アセット: 全クリップの全 tick で全頂点が箱の中 ----

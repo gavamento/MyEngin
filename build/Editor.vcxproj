@@ -60,6 +60,7 @@
     <ClCompile Include="..\src\Editor\Scene\ComponentClipboard.cpp" />
     <ClCompile Include="..\src\Editor\Scene\ComponentDependencies.cpp" />
     <ClCompile Include="..\src\Editor\Scene\PlayModeController.cpp" />
+    <ClCompile Include="..\src\Editor\Scene\TwoBoneIkAutoSetup.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\AnimatorControllerEditSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\ComputeInspectorSelfTest.cpp" />
@@ -77,6 +78,7 @@
     <ClCompile Include="..\src\Editor\SelfTest\StartupSplashSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\TerrainSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SelfTest\TilePaletteSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\SelfTest\TwoBoneIkAutoSetupSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\CollabClient.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\GitTransaction.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\PairRule.cpp" />
@@ -172,6 +174,7 @@
     <ClInclude Include="..\src\Editor\Scene\ComponentDependencies.h" />
     <ClInclude Include="..\src\Editor\Scene\PlayModeController.h" />
     <ClInclude Include="..\src\Editor\Scene\Selection.h" />
+    <ClInclude Include="..\src\Editor\Scene\TwoBoneIkAutoSetup.h" />
     <ClInclude Include="..\src\Editor\SelfTest\AnimatorControllerEditSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\BehaviorTreeEditorSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\ComputeInspectorSelfTest.h" />
@@ -189,6 +192,7 @@
     <ClInclude Include="..\src\Editor\SelfTest\StartupSplashSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\TerrainSelfTest.h" />
     <ClInclude Include="..\src\Editor\SelfTest\TilePaletteSelfTest.h" />
+    <ClInclude Include="..\src\Editor\SelfTest\TwoBoneIkAutoSetupSelfTest.h" />
     <ClInclude Include="..\src\Editor\SourceControl\CollabClient.h" />
     <ClInclude Include="..\src\Editor\SourceControl\CollabProtocol.h" />
     <ClInclude Include="..\src\Editor\SourceControl\GitTransaction.h" />

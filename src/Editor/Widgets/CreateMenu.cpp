@@ -102,9 +102,7 @@ GameObject CreateTerrainEntity(EngineContext& ctx, const char* name, const std::
     const uint64_t guid = ctx.assetDb != nullptr ? ctx.assetDb->GuidForPath(terrainJsonAbs, true)
                                                  : AssetDatabase::EnsureMeta(terrainJsonAbs);
     col->meshAsset = AssetID{ guid };
-    if (ctx.renderSystem != nullptr) {
-        ctx.renderSystem->InvalidateTerrain();
-    }
+    InvalidateTerrainCaches(ctx.renderSystem);
     return obj;
 }
 

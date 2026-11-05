@@ -28,6 +28,8 @@
 #include "Engine/Engine/Audio/Playback/SoundAsset.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Animation/Parts.h"
+#include "Engine/Engine/Animation/SkinningSystem.h" // 選択枠・Focus: スキンの今の姿勢 (SampleSkinnedLocals)
+#include "Engine/Renderer/Mesh/SkinBounds.h"        // 同上 (ComputeSkinnedPoseAabb)
 #include "Engine/Engine/Navigation/NavBakeInput.h" // M82e: Surface の範囲箱 (NavMakeBakeConfig)
 #include "Engine/Engine/Navigation/NavSystem.h"    // M82f: Obstacle の形 (NavMakeObstacleSpec)
 #include "Engine/Engine/Physics/Collider/ConvexHull.h" // M60f: shape=5 のワイヤ表示
@@ -1644,6 +1646,33 @@ void SceneViewWindow::DrawPerceptionGizmos(EngineContext& ctx, World& world, con
     }
 }
 
+// 選択中のメッシュの箱 (エンティティの空間 = WorldMatrix を掛ける前)。メッシュが無ければ false。
+// スキン付きは今の姿勢の箱 (描画・IK と同じ SampleSkinnedLocals)。バインドポーズの頂点の箱 Mesh::aabbMin/Max は
+// パレットを掛ける前の値で、FBX (cm 単位) のスキンではエンティティが恒等・0.01 がパレット側なので 100 倍に見える
+static bool SelectedMeshLocalBounds(EngineContext& ctx, World& world, EntityID e, XMFLOAT3& lo, XMFLOAT3& hi)
+{
+    const auto* mr = world.GetComponent<MeshRendererComponent>(e);
+    const Mesh* mesh = mr ? ctx.resources->meshes.Get(mr->mesh) : nullptr;
+    if (mesh == nullptr) {
+        return false;
+    }
+    lo = mesh->aabbMin;
+    hi = mesh->aabbMax;
+    const auto* sm = world.GetComponent<SkinnedMeshComponent>(e);
+    const SkinnedModel* model = sm ? ctx.resources->skinnedModels.Get(sm->model) : nullptr;
+    if (model != nullptr) {
+        std::vector<XMMATRIX> locals;
+        SampleSkinnedLocals(*model, *sm, locals);
+        SkinnedLocalAabb pose;
+        // 求められない (属性の不整合) ときはバインドの箱のまま
+        if (ComputeSkinnedPoseAabb(*model, mesh->positions, mesh->skin, locals, pose)) {
+            lo = pose.min;
+            hi = pose.max;
+        }
+    }
+    return true;
+}
+
 // 選択アウトライン (常時最前面)。メッシュがあればその AABB、無ければ単位箱
 void SceneViewWindow::DrawSelectionOutline(EngineContext& ctx, World& world, const Selection& selection)
 {
@@ -1657,12 +1686,7 @@ void SceneViewWindow::DrawSelectionOutline(EngineContext& ctx, World& world, con
     }
     XMFLOAT3 lo = { -0.5f, -0.5f, -0.5f };
     XMFLOAT3 hi = { 0.5f, 0.5f, 0.5f };
-    if (auto* mr = world.GetComponent<MeshRendererComponent>(sel.Id())) {
-        if (Mesh* mesh = ctx.resources->meshes.Get(mr->mesh)) {
-            lo = mesh->aabbMin;
-            hi = mesh->aabbMax;
-        }
-    }
+    SelectedMeshLocalBounds(ctx, world, sel.Id(), lo, hi);
     const XMFLOAT3 center = { (lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f,
                              (lo.z + hi.z) * 0.5f };
     const XMFLOAT3 half = { (hi.x - lo.x) * 0.5f, (hi.y - lo.y) * 0.5f,
@@ -2579,20 +2603,18 @@ void SceneViewWindow::FocusOnSelection(EngineContext& ctx, Selection& selection)
     }
     const XMFLOAT3 target = { wm->value._41, wm->value._42, wm->value._43 };
 
-    // メッシュ AABB (M8) があれば半径を推定してフレーミング距離を決める
+    // メッシュ AABB (M8) があれば半径を推定してフレーミング距離を決める。
+    // 拡大は WorldMatrix の各軸の長さで掛ける (親のスケール = FBX の cm→m の 0.01 も入る)。
+    // ワールドの AABB で測らないのは、回転しただけで箱が最大 √3 倍に膨らみ、寄る距離が向きで変わるため
     float radius = 1.5f;
-    if (auto* mr = world.GetComponent<MeshRendererComponent>(sel.Id())) {
-        if (Mesh* mesh = ctx.resources->meshes.Get(mr->mesh)) {
-            const XMVECTOR ext = XMVectorSubtract(XMLoadFloat3(&mesh->aabbMax),
-                                                  XMLoadFloat3(&mesh->aabbMin));
-            float sx = 1, sy = 1, sz = 1;
-            if (auto* lt = world.GetComponent<LocalTransform>(sel.Id())) {
-                sx = lt->scale.x; sy = lt->scale.y; sz = lt->scale.z;
-            }
-            const XMVECTOR scaled =
-                XMVectorMultiply(ext, XMVectorSet(std::fabs(sx), std::fabs(sy), std::fabs(sz), 0));
-            radius = std::max(0.5f, XMVectorGetX(XMVector3Length(scaled)) * 0.5f);
-        }
+    XMFLOAT3 lo;
+    XMFLOAT3 hi;
+    if (SelectedMeshLocalBounds(ctx, world, sel.Id(), lo, hi)) {
+        const XMMATRIX m = XMLoadFloat4x4(&wm->value);
+        const XMVECTOR axisScale = XMVectorSet(XMVectorGetX(XMVector3Length(m.r[0])), XMVectorGetX(XMVector3Length(m.r[1])),
+                                               XMVectorGetX(XMVector3Length(m.r[2])), 0.0f);
+        const XMVECTOR ext = XMVectorMultiply(XMVectorSubtract(XMLoadFloat3(&hi), XMLoadFloat3(&lo)), axisScale);
+        radius = std::max(0.5f, XMVectorGetX(XMVector3Length(ext)) * 0.5f);
     }
     if (mode2d) {
         // 正面固定なので位置の x/y だけ合わせ、半高で大きさを収める
@@ -2985,9 +3007,7 @@ bool SceneViewWindow::HandleTerrainBrush(EngineContext& ctx, Selection& selectio
             b.noiseSeed = 20260822u;
             if (TerrainEdit::ApplyBrush(terrainStrokeWork_, b)) {
                 if (TerrainEdit::SaveEdits(abs, terrainStrokeWork_)) {
-                    if (ctx.renderSystem != nullptr) {
-                        ctx.renderSystem->InvalidateTerrain();
-                    }
+                    InvalidateTerrainCaches(ctx.renderSystem);
                 } else {
                     MYE_LOG_ERROR(Tr(StrId::Terrain_SaveFail), WideToUtf8(abs).c_str());
                 }

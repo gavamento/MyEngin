@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Editor/App/StartupMoebius.h"
+#include "Editor/App/StartupSplash.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Loop/StartupProgress.h"
 
@@ -34,6 +35,21 @@ bool RunStartupSplashSelfTest()
             ++failCount;
         }
     };
+
+    {
+        const SplashWindowLayout at96 = ComputeSplashWindowLayout(96, 1920, 1080);
+        check(at96.clientWidth == 640 && at96.clientHeight == 360 && Near(at96.renderTargetDpiX, 96.0f, 1e-3f)
+                  && Near(at96.renderTargetDpiY, 96.0f, 1e-3f),
+              "96 dpi: client 640x360, D2D dpi 96");
+        const SplashWindowLayout at192 = ComputeSplashWindowLayout(192, 1920, 1080);
+        check(at192.clientWidth == 1280 && at192.clientHeight == 720 && Near(at192.renderTargetDpiX, 192.0f, 1e-3f)
+                  && Near(at192.renderTargetDpiY, 192.0f, 1e-3f),
+              "192 dpi on 1920x1080 work area: client 1280x720");
+        const SplashWindowLayout cramped = ComputeSplashWindowLayout(192, 800, 600);
+        check(cramped.clientWidth == 800 && cramped.clientHeight == 450 && Near(cramped.renderTargetDpiX, 120.0f, 1e-3f)
+                  && Near(cramped.renderTargetDpiY, 120.0f, 1e-3f),
+              "192 dpi on 800x600 work area: uniform fit keeps 640x360 DIP layout");
+    }
 
     check(Near(StartupProgressFraction(StartupStage::Window), 0.1f, 1e-4f), "Window progress = 0.1");
     check(Near(StartupProgressFraction(StartupStage::Scene), 1.0f, 1e-4f), "Scene progress = 1.0");

@@ -19,6 +19,9 @@
 #include "Engine/Engine/Asset/CookedCache.h" // M58f: サイドカーとクックキャッシュの相互作用
 #include "Engine/Engine/Asset/TerrainAsset.h"
 #include "Engine/Engine/Asset/TerrainEdit.h" // M58f: ブラシ / パッチ / サイドカー
+#include "Engine/Core/Asset/AssetGuidResolver.h"
+#include "Engine/Engine/Physics/Collider/TerrainColliderLibrary.h" // 編集後に sim の当たりが読み直されるか
+#include "Editor/Asset/AssetOps.h" // InvalidateTerrainCaches
 #include "Engine/Engine/Rendering/TerrainSystem.h"
 #include "Engine/Renderer/Pipeline/FrustumCull.h"
 #include "Engine/Renderer/Device/GpuResources.h"
@@ -32,6 +35,15 @@ using DirectX::XMMATRIX;
 
 namespace mye {
 namespace {
+
+// sim の地形コライダーの読み直し検査で、フィクスチャの地形を引くための GUID (値に意味は無い)
+constexpr uint64_t kFixtureTerrainGuid = 0x7e44a1u;
+
+std::wstring ResolveFixtureTerrain(void* user, uint64_t guid)
+{
+    const auto* path = static_cast<const std::wstring*>(user);
+    return guid == kFixtureTerrainGuid ? *path : std::wstring();
+}
 
 // 検査用の合成地形。ノイズを使わない (テストが TerrainAsset の生成器の変更で揺れないよう、
 // 高さは座標から直接作る)。tiles = 16 x 8、ワールド 64 x 32 m
@@ -1415,6 +1427,35 @@ bool RunTerrainSelfTest()
             check(!reloaded.editSrc.relPath.empty()
                       && reloaded.editSrc.contentHash == edited.editSrc.contentHash,
                   "terrain edit: the cooked data stamps the sidecar (size + content hash)");
+        }
+
+        // (a2) sim の地形コライダーもブラシ結果を読み直す。★描画のキャッシュだけ捨てていた頃は
+        //      TerrainColliderLibrary が初回ロードの高さを持ち続け、掘った窪みが物理の当たりにも
+        //      ナビメッシュのベイク (NavBakeInput の EmitTerrain) にも現れなかった
+        {
+            TerrainColliderLibrary* prevLib = terraincol::Library();
+            TerrainColliderLibrary simLib;
+            terraincol::Install(&simLib);
+            std::wstring pathHolder = srcPath;
+            assetguid::Install(&ResolveFixtureTerrain, &pathHolder);
+            const AssetID fixtureId{ kFixtureTerrainGuid };
+
+            const TerrainCollisionData* before = terraincol::Resolve(fixtureId);
+            check(before != nullptr && before->data.heights == edited.heights,
+                  "terrain edit: the sim terrain collider loads the current brush result");
+            TerrainEdit::Brush dig = dab;
+            dig.mode = TerrainEdit::BrushMode::Lower;
+            TerrainAsset::TerrainData dug = edited;
+            check(TerrainEdit::ApplyBrush(dug, dig) && dug.heights != edited.heights
+                      && TerrainEdit::SaveEdits(srcPath, dug),
+                  "terrain edit: digging a pit writes the sidecar");
+            InvalidateTerrainCaches(nullptr); // ブラシ / Undo と同じ口 (描画系はこのテストには無い)
+            const TerrainCollisionData* after = terraincol::Resolve(fixtureId);
+            check(after != nullptr && after->data.heights == dug.heights,
+                  "terrain edit: the sim terrain collider re-reads the pit after the caches are invalidated");
+
+            assetguid::Install(nullptr, nullptr);
+            terraincol::Install(prevLib);
         }
 
         // (b) クックキャッシュ有効。★**キャッシュを焼いた後にサイドカーが現れた**ケース。
