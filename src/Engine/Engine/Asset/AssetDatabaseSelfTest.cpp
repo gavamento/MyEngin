@@ -103,11 +103,13 @@ bool RunAssetDatabaseSelfTest()
           ".tilemap.json is classified as the tilemap type");
     check(AssetDatabase::ClassifyPath(L"x\\Hill.spriteshape.json") == AssetType::SpriteShape,
           ".spriteshape.json is classified as the sprite shape type");
+    check(AssetDatabase::ClassifyPath(L"x\\HeavyHit.feel.json") == AssetType::Feel,
+          ".feel.json is classified as the feel preset type (M94d)");
     for (AssetType t : { AssetType::Actor, AssetType::Prefab, AssetType::Sound, AssetType::Mixer,
                          AssetType::Schema, AssetType::PhysMat, AssetType::Fracture, AssetType::NavMesh,
                          AssetType::NavFilter, AssetType::BehaviorTree, AssetType::Blackboard,
                          AssetType::SpriteAnim, AssetType::Shape2D, AssetType::TilePalette,
-                         AssetType::Tilemap, AssetType::SpriteShape }) {
+                         AssetType::Tilemap, AssetType::SpriteShape, AssetType::Feel }) {
         check(AssetDatabase::ParseTypeName(AssetDatabase::TypeName(t)) == t,
               "asset type name round-trips through .meta");
     }

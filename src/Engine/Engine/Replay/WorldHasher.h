@@ -22,6 +22,8 @@ struct TimeControl;
 struct UIInteractionState;
 class PersistStore;
 struct SessionLanes;
+class FeelState;
+struct InputBufferState;
 
 // ワールド状態ハッシュ (engine_spec.md 11.3)。
 // 対象: 全エンティティ (index 昇順) の親リンク + シリアライズ対象コンポーネントの
@@ -70,6 +72,11 @@ struct SimSources {
     // M94k: タイルの書き換え (override 表)。★computeState と同じ**内容ゲート** (表が空なら節ごと畳まない) —
     // Tilemap を使わないシーンのハッシュ列を 1 tick も動かさない。アセットは初期値で hash 対象外 (コンポーネントの参照だけが畳まれる)
     const TilemapSystem* tilemap = nullptr;
+    // M94c: 再生中の手触り。★nav と同じ**内容ゲート** (一度も鳴らしていなければ節ごと畳まない) —
+    // 手触りを使わないシーンのハッシュ列を 1 tick も動かさない
+    const FeelState* feel = nullptr;
+    // M94f: 先行入力の窓。★feel と同じ**内容ゲート** (窓の中のものが 1 つも無ければ節ごと畳まない)
+    const InputBufferState* inputBuffer = nullptr;
 };
 
 uint64_t HashWorld(World& world, const SimSources& src = {});

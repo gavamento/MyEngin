@@ -1,6 +1,6 @@
 // InspectorWindow のアセット選択時の描画 (M40c〜)。テクスチャ / モデルの Import Settings、.mat.json、.sound.json、
 // .physmat.json、ナビのエリアのフィルタ、Properties スキーマ、*.fxstack.json、2D アセット (M94: スプライトアニメ / 2D 形状 / SpriteShape / タイル) のスキーマ固定編集。
-// アセット編集は UndoStack の対象外 (既存規約)。エンティティ側の描画は InspectorWindow.cpp、ナビのベイクは InspectorWindowNav.cpp
+// アセット編集は UndoStack の対象外 (既存規約。例外は .feel.json の文書エントリ、M94 手触り e)。エンティティ側の描画は InspectorWindow.cpp、ナビのベイクは InspectorWindowNav.cpp
 #include "Editor/Windows/Scene/InspectorWindow.h"
 
 #include <algorithm>
@@ -39,7 +39,7 @@
 
 namespace mye {
 
-void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selection,
+void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selection, UndoStack& undo,
                                          AssetPreviewCache& preview)
 {
     namespace fs = std::filesystem;
@@ -85,6 +85,9 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
         }
         if (type == AssetType::PhysMat) {
             LoadPhysMatEdit(path); // M59a1
+        }
+        if (type == AssetType::Feel) {
+            feelInspector_.Load(path); // M94d
         }
         if (type == AssetType::NavFilter) {
             LoadNavFilterEdit(path); // M84c
@@ -144,6 +147,11 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
 
     if (type == AssetType::PhysMat) {
         DrawPhysMatInspector(path); // M59a1
+        return;
+    }
+
+    if (type == AssetType::Feel) {
+        feelInspector_.Draw(ctx, undo, path); // M94d / M94e (Undo は文書エントリ)
         return;
     }
 

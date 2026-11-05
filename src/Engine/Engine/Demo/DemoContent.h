@@ -289,5 +289,8 @@ void BuildComputeShowcaseScene(EngineContext& ctx);
 // stress (--2d-stress) は負荷計測用に Sprite2D 2000 枚と 100 x 50 x 3 層のタイルを画面へ詰める (見た目は golden に入れない)。
 // 資産は assets\2d\ (tools\gen_2d_assets.py)。主人公の動きは GameLogic の ZTwoDHero (無い構成では動かない)
 void BuildTwoDShowcaseScene(EngineContext& ctx, bool night, bool stress);
+// M94i: 手触りのデモ (--feel-demo)。台本でヒットストップ / スロー / 揺れ / プリセットを鳴らすリグ (FeelDemo)、
+// それを SpringFollow で追うカメラ、床で跳ねるたびに FeelTrigger でプリセットを鳴らすボール。replay_verify の feel ジョブの入力
+void BuildFeelShowcaseScene(EngineContext& ctx);
 
 } // namespace mye

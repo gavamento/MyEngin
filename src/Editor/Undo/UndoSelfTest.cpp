@@ -3,6 +3,7 @@
 #include "Editor/Scene/ComponentClipboard.h"
 #include "Editor/Scene/Selection.h"
 #include "Editor/Undo/UndoStack.h"
+#include "Engine/Engine/Feel/FeelLibrary.h"
 #include "Engine/Core/Ecs/ComponentRegistry.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Diagnostics/Log.h"
@@ -384,6 +385,35 @@ bool RunUndoSelfTest()
         undo.PushDocOp("gone", std::move(gone));
         undo.Undo(scene, sel);
         check(undo.CanRedo(), "doc undo: an entry whose document vanished still moves to the redo stack");
+    }
+
+    // ============ Phase: 文書エントリ (M94e) — 手触りのプリセットの往復 ============
+    {
+        Scene scene;
+        UndoStack undo;
+        Selection sel;
+        FeelLibrary feels;
+        MyeFeelDesc d;
+        d.hitStopTicks = 2;
+        const uint64_t hash = feels.Register(L"undo_feel_test.feel.json", d);
+        FeelLibrary* prevFeels = feellib::Library();
+        feellib::Install(&feels);
+        EngineContext ctx;
+        undo.SetFileOpContext(&ctx);
+        DocUndoRecorder recorder;
+        const nlohmann::json pre = FeelLibrary::ToJson(feels.Get(hash)->desc);
+        feels.GetMutable(hash)->desc.hitStopTicks = 9;
+        feels.GetMutable(hash)->desc.shakeEnvelope.ease = MYE_EASE_OUT_EXPO;
+        recorder.Observe(undo, "Feel", UndoDocOp::Kind::Feel, hash, pre, FeelLibrary::ToJson(feels.Get(hash)->desc), false);
+        check(undo.CanUndo(), "feel doc: a live edit of a preset pushes one entry");
+        undo.Undo(scene, sel);
+        check(feels.Get(hash)->desc.hitStopTicks == 2 && feels.Get(hash)->desc.shakeEnvelope.ease == MYE_EASE_OUT_QUAD
+                  && feels.Get(hash)->name == "undo_feel_test",
+              "feel doc undo: the preset values return and its identity is kept");
+        undo.Redo(scene, sel);
+        check(feels.Get(hash)->desc.hitStopTicks == 9 && feels.Get(hash)->desc.shakeEnvelope.ease == MYE_EASE_OUT_EXPO,
+              "feel doc redo: the edit is re-applied");
+        feellib::Install(prevFeels);
     }
 
     if (failCount == 0) {

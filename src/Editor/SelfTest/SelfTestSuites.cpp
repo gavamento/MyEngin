@@ -36,6 +36,10 @@
 #include "Engine/Core/Ecs/EcsSelfTest.h"
 #include "Engine/Core/Jobs/JobSystemSelfTest.h"
 #include "Engine/Core/Localization/LocalizationSelfTest.h"
+#include "Engine/Engine/Feel/FeelLibrarySelfTest.h"
+#include "Engine/Engine/Feel/FeelMathSelfTest.h"
+#include "Engine/Engine/Feel/FeelSystemSelfTest.h"
+#include "Engine/Engine/Feel/SpringFollowSelfTest.h"
 #include "Engine/Engine/AI/BehaviorTreeSelfTest.h"
 #include "Engine/Engine/Acoustic/AcousticSelfTest.h"
 #include "Engine/Engine/Animation/AnimatorControllerSelfTest.h"
@@ -238,6 +242,10 @@ const SelfTestSuite kSuites[] = {
     { "camera2dfollow", mye::RunCamera2DFollowSelfTest, SelfTestTier::Fast, "M94v: Camera2DFollow (デッドゾーン / damping / 境界 / 並走一致)" },
     { "pixelperfect2d", mye::RunPixelPerfect2DSelfTest, SelfTestTier::Fast, "M94v: pixelperfect2d::Compute の表" },
     { "twoddemo", mye::RunTwoDDemoSelfTest, SelfTestTier::Full, "M94w: --2d-demo の 3000 tick 不変量と焼き込みハッシュ" },
+    { "feelmath", mye::RunFeelMathSelfTest, SelfTestTier::Fast, "M94a (手触り): イージング / カーブ / ばね / 値ノイズ" },
+    { "feelsystem", mye::RunFeelSystemSelfTest, SelfTestTier::Fast, "M94c (手触り): 再生中の手触り (経過・置換・評価・内容ゲート)" },
+    { "feellibrary", mye::RunFeelLibrarySelfTest, SelfTestTier::Fast, "M94d (手触り): .feel.json の往復・名前の解決・FeelTrigger" },
+    { "springfollow", mye::RunSpringFollowSelfTest, SelfTestTier::Fast, "M94g (手触り): ばね追従 (瞬間移動・収束・空間変換・回転)" },
 };
 
 const SelfTestAlias kAliases[] = {

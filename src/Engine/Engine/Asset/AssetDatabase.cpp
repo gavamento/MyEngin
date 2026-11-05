@@ -99,6 +99,9 @@ AssetType AssetDatabase::ClassifyPath(const std::wstring& path)
     if (EndsWith(s, ".navfilter.json")) {
         return AssetType::NavFilter;
     }
+    if (EndsWith(s, ".feel.json")) {
+        return AssetType::Feel; // M94d
+    }
     if (EndsWith(s, ".bt.json")) {
         return AssetType::BehaviorTree;
     }
@@ -181,6 +184,7 @@ const char* AssetDatabase::TypeName(AssetType t)
     case AssetType::TilePalette: return "tilepalette";
     case AssetType::Tilemap: return "tilemap";
     case AssetType::SpriteShape: return "spriteshape";
+    case AssetType::Feel: return "feel";
     case AssetType::Unknown:
     default: return "unknown";
     }
@@ -215,6 +219,7 @@ AssetType AssetDatabase::ParseTypeName(const std::string& s)
     if (s == "tilepalette") return AssetType::TilePalette;
     if (s == "tilemap") return AssetType::Tilemap;
     if (s == "spriteshape") return AssetType::SpriteShape;
+    if (s == "feel") return AssetType::Feel;
     return AssetType::Unknown;
 }
 

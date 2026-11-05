@@ -72,6 +72,8 @@ const ShowcaseDef kShowcases[] = {
     { L"--compute-demo", false, L"cache\\compute_showcase.scene.json", nullptr, &BuildPlain<&BuildComputeShowcaseScene>,
       false }, // M91i
     { L"--2d-demo", false, L"cache\\2d_showcase.scene.json", nullptr, &BuildTwoD, false }, // M94w
+    { L"--feel-demo", false, L"cache\\feel_showcase.scene.json", nullptr, &BuildPlain<&BuildFeelShowcaseScene>,
+      false }, // M94i
 };
 
 } // namespace

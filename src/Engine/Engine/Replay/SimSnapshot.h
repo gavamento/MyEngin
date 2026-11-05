@@ -175,7 +175,9 @@ struct SimRefs {
 // v66 (M95a): AnimatorControllerComponent の末尾に pauseTicks (hash 対象)。World 節のカラム生バイト
 // v67 (M95b): CharacterControllerComponent の末尾に collideCharacters / pushPriority / reportContacts。World 節のカラム生バイト
 // v68 (M95e): CharacterController / Rigidbody の末尾に useVerticalInput / verticalInput、SkinnedMesh::PoseLayer の末尾に rootMotionY。World 節のカラム生バイト
-inline constexpr uint32_t kSimSnapshotVersion = 68;
+// v69 (合流、GitHub 側の手触りの v51): Scene 節に TimeControl のヒットストップ / 時限スローの 6 語、UI 状態の後ろに
+//            再生中の手触り 16 件 (FeelState) と先行入力の窓 (InputBufferState、4 レーン × 32 本の生バイト)
+inline constexpr uint32_t kSimSnapshotVersion = 69;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

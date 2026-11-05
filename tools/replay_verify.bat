@@ -81,10 +81,10 @@ if exist cache\replay_logs rd /s /q cache\replay_logs
 echo === parallel verification: 15 scene chains + jobs A/B + compute A/B + time travel x2 + what-if x2 + rule check ===
 rem ★Entry は空白なし相対パスで渡す (人間/CI が bat を叩くのと同じ呼び形に固定。
 rem   バッチ読取りの罠と chcp 437 の理由は runner 冒頭のコメント参照)
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,perception,bt,anim,compute,2d,jobsab,computeab,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,perception,bt,anim,compute,2d,feel,jobsab,computeab,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 15 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav + perception + bt + anim + compute + 2d) + snapshot round-trip + jobs A/B + compute A/B + time travel + rule check
+echo [PASS] replay consistency (Debug/Release, 16 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav + perception + bt + anim + compute + 2d + feel) + snapshot round-trip + jobs A/B + compute A/B + time travel + rule check
 exit /b 0
 
 rem ---------------------------------------------------------------- :failed
@@ -153,6 +153,10 @@ if exist cache\golden_2d.rep.mismatch.txt (
     set DIAGFOUND=1
     rem 期待側の撮り直しは記録と同じ引数 (--synth-input 込み) でないと入力がずれる
     call :diagnose "cache\golden_2d.rep" "--2d-demo --synth-input"
+)
+if exist cache\golden_feel.rep.mismatch.txt (
+    set DIAGFOUND=1
+    call :diagnose "cache\golden_feel.rep" "--feel-demo"
 )
 rem jobs A/B: 期待側は直列で録り直す (記録と同じ --no-jobs)
 if exist cache\jobsab_particle.rep.mismatch.txt (
@@ -388,6 +392,14 @@ rem シーンはコードから毎回組み直す (保存済みが残ってい�
 :job_2d
 if exist cache\2d_showcase.scene.json del /q cache\2d_showcase.scene.json
 call :chain cache\golden_2d.rep "--2d-demo --synth-input" "--2d-demo"
+exit /b %ERRORLEVEL%
+
+rem M94i: 16 ペア目 (GitHub 側では 15 ペア目) = 手触り (--feel-demo)。台本のヒットストップ / 時限スロー / 揺れの停止 / プリセット、
+rem FeelTrigger (接触で鳴らす)、SpringFollow (カメラの追従) を通す。再生中の手触り・時間効果は hash 対象
+rem (内容ゲート) なので、鳴らす tick・止まる tick・追従の位置が Debug / Release / Server で割れればここで赤くなる
+:job_feel
+if exist cache\feel_showcase.scene.json del /q cache\feel_showcase.scene.json
+call :chain cache\golden_feel.rep "--feel-demo" "--feel-demo"
 exit /b %ERRORLEVEL%
 
 rem ---- jobs A/B (M90g、ADR-028) ----

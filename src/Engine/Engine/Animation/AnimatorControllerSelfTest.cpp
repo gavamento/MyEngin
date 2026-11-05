@@ -17,6 +17,7 @@
 #include "Engine/Engine/Animation/SkinningSystem.h"
 #include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h" // M95: ルートモーションの縦 → CC の物理
+#include "Engine/Engine/Loop/GameFlow.h" // TimeControl (全体のヒットストップとの重ね合わせ)
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene/Scene.h"
@@ -1986,6 +1987,24 @@ bool RunAnimatorControllerSelfTest()
         }
         check(whileInactive == 5 && ac()->pauseTicks == 2,
               "M95: pauseTicks does not count down while inactive (5 stays 5 over 10 ticks, then 2 after 3 active ticks)");
+
+        // ゲーム全体のヒットストップ (TimeControl の freeze、GitHub 側の手触り M94b) との重ね合わせ。
+        // TickRunner は TimeControl::Advance が false の tick に Animator を回さない (stepSim の内側) ので、
+        // 全体が止まっている間は pauseTicks も減らず、明けてから数え始める。ここでは同じ規約で Update を呼ぶ
+        ac()->pauseTicks = 4;
+        TimeControl tc;
+        tc.RequestFreeze(3);
+        int32_t afterFreeze = -1;
+        for (int i = 0; i < 5; ++i) {
+            if (tc.Advance()) {
+                step();
+            }
+            if (i == 2) {
+                afterFreeze = ac()->pauseTicks;
+            }
+        }
+        check(afterFreeze == 4 && ac()->pauseTicks == 2,
+              "M95 + game feel: a global TimeControl freeze (3 ticks) holds pauseTicks, which then counts down (4 stays 4, then 2)");
     }
 
 

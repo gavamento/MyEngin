@@ -1,4 +1,6 @@
 #include "Engine/Engine/Loop/TickRunner.h"
+#include "Engine/Engine/Feel/FeelTriggerSystem.h"
+#include "Engine/Engine/Feel/SpringFollowSystem.h"
 
 #include <algorithm>
 #include <cstdio> // M93e: --debug-draw-log の行の整形
@@ -315,6 +317,11 @@ void RunOneTick(TickServices& ts)
     // 記録済みスナップショット 2 枚の純関数なので record/verify に透過 (決定台帳 4)。
     // M52g: レーン数ぶんまとめて評価する (playerCount 以降のレーンは Evaluate がゼロへ落とす)
     inputActions.Evaluate(ctx.inputs, prevTickInput, ctx.playerCount);
+    // M94f: 先行入力の窓を進める (評価の直後・スクリプト層より前)。編集中 (非 Play) は進めない —
+    // 窓は sim 状態で、Play の外で溜めたものを Play へ持ち込まない
+    if (ctx.simulateScripts) {
+        inputActions.UpdateBuffers(scene.InputBuffer());
+    }
     // M75b: UI の評価は前 tick のレーン 0 も受け取る (M75h の InputField がキーのエッジを取る)。
     // ★prevTickInput は直下のループで今 tick の値に上書きされるので、**その前に**写す
     const InputSnapshot prevUiInput = prevTickInput[0];
@@ -370,6 +377,15 @@ void RunOneTick(TickServices& ts)
     // シーン遷移も常時実行。Advance() は accum を進める副作用があるので
     // sim が走る tick に 1 回だけ呼ぶ (編集中に呼ぶと Play 開始時の位相がずれる)
     const bool stepSim = ctx.simulateScripts && scene.Time().Advance();
+    // M94c: 再生中の手触りの経過を進める (ADR-035)。**ゲートしない** — ヒットストップ中も揺れ・振動は
+    // 進み続ける (止まった世界が震えるのが手触りの定番)。スクリプト層より前なので、この tick に鳴らした
+    // ものは経過 0 で tick を終え、描画は経過 0 から見せる
+    if (ctx.simulateScripts) {
+        scene.Feel().Advance();
+    }
+    // v31 (M94h): IsSimStepping の答え。スクリプト層 (フェーズ 3 / 5) はこの tick のゲートの結果を読む
+    scriptHost.SetSimStepping(stepSim);
+    managedHost.SetSimStepping(stepSim);
     // ---- BT のイベントの配達 (M85e): スクリプト層より前 ----
     // tick N に積まれた分を tick N+1 の頭で配る。こうしないと BT より前に走るスクリプトが読めない。
     // 一時停止中 (stepSim が偽) は配らない (配送待ちは残る)
@@ -565,8 +581,16 @@ void RunOneTick(TickServices& ts)
         // stepSim が false の tick は繋がないまま = ポーズ中は常に「接触なし」が返る
         scriptHost.SetTickContacts(&solidContacts);
         managedHost.SetTickContacts(&solidContacts);
+        // M94d: 接触で手触りを鳴らす (FeelTrigger、存在ゲート)。この tick の接触を key 昇順で見る。
+        // 鳴らした時間効果は次の tick から、揺れ・振動はこの tick の描画から効く
+        UpdateFeelTriggers(scene.GetWorld(), solidContacts, scene.Feel(), scene.Time());
     }
     // ---- フェーズ 4: システム層 ----
+    // M94g: ばね追従 (SpringFollow、存在ゲート)。Transform 確定の**前**に LocalTransform を書く —
+    // 追従した側 (と子) のワールド行列がこの tick の Transform で確定する。ゲート対象 (ヒットストップ中は止まる)
+    if (stepSim) {
+        UpdateSpringFollow(scene.GetWorld(), ctx.fixedDt);
+    }
     // Transform を先に確定 (エミッタ/コライダのワールド位置は tick 決定論の一部)
     {
         MYE_PROFILE_SCOPE("transform");
@@ -962,6 +986,11 @@ void RunOneTick(TickServices& ts)
             // M70c: 旧シーンの EntityID を握ったままにしない。世代付きなので
             // 「別シーンの同じ index」を掴むことは無いが、UI 状態がシーンを跨ぐ意味も無い
             scene.UI().Clear();
+            // M94b: ヒットストップ / スローは旧シーンの出来事への反応なので持ち越さない
+            // (pause と scalePercent はシーンを跨ぐ — M51g の意味論のまま)
+            scene.Time().ClearFeelEffects();
+            scene.Feel().Clear(); // M94c: 旧シーンで鳴った揺れ・振動も持ち越さない
+            scene.InputBuffer().Clear(); // M94f: 旧シーンで押した先行入力を新シーンで発火させない
             if (ts.agentSystem) {
                 ts.agentSystem->Reset(); // M65f: 航法グリッドも旧シーンのもの
             }

@@ -31,6 +31,7 @@
 #include "Engine/Engine/Animation/SpriteAnim.h"
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
 #include "Engine/Engine/Tilemap/TilemapAssets.h"
+#include "Engine/Engine/Feel/FeelLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Asset/AssetDatabase.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
@@ -283,6 +284,11 @@ void RegisterAssetLibraries(EngineContext& ctx)
             // M94: スプライト列クリップ。所有は EngineLoop / HeadlessSim、spriteanim:: で注入済み
             if (SpriteAnimLibrary* sa = spriteanim::Library()) {
                 sa->LoadFromFile(p);
+            }
+        } else if (p.size() >= 10 && p.compare(p.size() - 10, 10, L".feel.json") == 0) {
+            // M94d: 手触りのプリセット。所有は EngineLoop / HeadlessSim、feellib:: で注入済み
+            if (FeelLibrary* fl = feellib::Library()) {
+                fl->LoadFromFile(p);
             }
         } else if (p.size() >= 13 && p.compare(p.size() - 13, 13, L".physmat.json") == 0) {
             // M59a1: 物理マテリアル。所有は EngineLoop、ここへは physmat:: で注入済み

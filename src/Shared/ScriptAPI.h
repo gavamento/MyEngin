@@ -1097,6 +1097,103 @@ inline void MyeSetPadVibration(const MyeUpdateContext& ctx, float left, float ri
     ctx.api->SetPadVibration(ctx.api->engine, left, right);
 }
 
+// ---- v31 (M94h): 手触り (ADR-035) ----
+// プリセット (.feel.json) を名前で鳴らす: MyePlayFeel(ctx, "HeavyHit")。名前はファイル名から ".feel.json" を除いたもの。
+// intensity は揺れ・キック・振動・画面効果の振幅に掛かる (ヒットストップ / スローの tick 数には掛からない)。
+// 時間効果は次の tick から効く。戻り値: ハンドル (> 0)、0 = 時間効果だけ、-1 = 見つからない
+inline int32_t MyePlayFeel(const MyeUpdateContext& ctx, const char* presetName, float intensity = 1.0f)
+{
+    return ctx.api->PlayFeel(ctx.api->engine, MyeNameHash(presetName), intensity);
+}
+// コードで組んだ記述子を鳴らす (下の単機能の糖衣はこれを呼ぶ)
+inline int32_t MyePlayFeelDesc(const MyeUpdateContext& ctx, const MyeFeelDesc& desc, float intensity = 1.0f)
+{
+    return ctx.api->PlayFeelDesc(ctx.api->engine, &desc, intensity);
+}
+// ハンドルの 1 件を止める (-1 = 全部)
+inline void MyeStopFeel(const MyeUpdateContext& ctx, int32_t handle = -1)
+{
+    ctx.api->StopFeel(ctx.api->engine, handle);
+}
+// ヒットストップ: 物理・アニメ・粒子・AI を ticks だけ止める (スクリプトは止まらない。止めたければ MyeIsSimStepping を見る)
+inline int32_t MyeHitStop(const MyeUpdateContext& ctx, int32_t ticks)
+{
+    MyeFeelDesc d;
+    d.hitStopTicks = ticks;
+    return MyePlayFeelDesc(ctx, d);
+}
+// 時限スロー: percent [0,100] で holdTicks 保ち、recoverTicks かけて recoverEase で等速へ戻る
+inline int32_t MyeSlowMotion(const MyeUpdateContext& ctx, int32_t percent, int32_t holdTicks, int32_t recoverTicks = 0,
+                             int32_t recoverEase = MYE_EASE_OUT_QUAD)
+{
+    MyeFeelDesc d;
+    d.slowPercent = percent;
+    d.slowHoldTicks = holdTicks;
+    d.slowRecoverTicks = recoverTicks;
+    d.slowRecoverEase = recoverEase;
+    return MyePlayFeelDesc(ctx, d);
+}
+// カメラの揺れ (位置 [m] と回転 [度] の振幅、ticks で減衰して消える)
+inline int32_t MyeCameraShake(const MyeUpdateContext& ctx, float posAmp, float rotAmpDeg, int32_t ticks,
+                              float frequencyHz = 20.0f, float intensity = 1.0f)
+{
+    MyeFeelDesc d;
+    d.shakeTicks = ticks;
+    d.shakePosAmp = posAmp;
+    d.shakeRotAmpDeg = rotAmpDeg;
+    d.shakeFrequencyHz = frequencyHz;
+    return MyePlayFeelDesc(ctx, d, intensity);
+}
+// カメラのキック (カメラ空間の押し出し [m]、跳ね上げ [度]、画角の差分 [度]。ticks で戻る)
+inline int32_t MyeCameraKick(const MyeUpdateContext& ctx, MyeVec3 offset, float pitchDeg, int32_t ticks,
+                             float fovDeg = 0.0f, float intensity = 1.0f)
+{
+    MyeFeelDesc d;
+    d.kickTicks = ticks;
+    d.kickOffset = offset;
+    d.kickPitchDeg = pitchDeg;
+    d.kickFovDeg = fovDeg;
+    return MyePlayFeelDesc(ctx, d, intensity);
+}
+// 時間で減衰する振動 (SetPadVibration と違い、ticks で自動的に消える。重なりはモーターごとに max)
+inline int32_t MyeRumble(const MyeUpdateContext& ctx, float low, float high, int32_t ticks)
+{
+    MyeFeelDesc d;
+    d.rumbleTicks = ticks;
+    d.rumbleLow = low;
+    d.rumbleHigh = high;
+    return MyePlayFeelDesc(ctx, d);
+}
+// 先行入力 (actions.json の bufferTicks)。MyeActionBuffered で窓の中かを見て、使ったら MyeConsumeAction で閉じる
+inline bool MyeActionBuffered(const MyeUpdateContext& ctx, const char* name)
+{
+    return (ctx.api->GetActionState(ctx.api->engine, MyeNameHash(name)) & 8u) != 0;
+}
+inline bool MyeConsumeAction(const MyeUpdateContext& ctx, const char* name, uint32_t player = 0)
+{
+    return ctx.api->ConsumeAction(ctx.api->engine, MyeNameHash(name), player) != 0;
+}
+// この tick でゲート対象 (物理・アニメ…) が進むか。ヒットストップ・ポーズ・スローの止まる tick は false
+inline bool MyeIsSimStepping(const MyeUpdateContext& ctx)
+{
+    return ctx.api->IsSimStepping(ctx.api->engine) != 0;
+}
+// 手触りの出力倍率 [0,1] (MYE_FEEL_CHANNEL_*)。出力レーン — 設定画面の「画面の揺れ」「振動」の強さに使う
+inline void MyeSetFeelOutputScale(const MyeUpdateContext& ctx, uint32_t channel, float scale)
+{
+    ctx.api->SetFeelOutputScale(ctx.api->engine, channel, scale);
+}
+// 「条件が最後に真だった tick からの経過」を数える (コヨーテタイム: 足場を離れてから n tick はジャンプを受ける)。
+// 経過はスクリプトのフィールド (int32、既定は大きな値) に置く = hash 対象・DLL リロードで保たれる
+inline void MyeTickWindowMark(int32_t& ticksSince, bool condition)
+{
+    ticksSince = condition ? 0 : (ticksSince < 0x3FFFFFFF ? ticksSince + 1 : ticksSince);
+}
+inline bool MyeTickWindowOpen(int32_t ticksSince, int32_t windowTicks)
+{
+    return ticksSince <= windowTicks;
+}
+
 // ---- v15 (M64a): マウスルック ----
 
 // この tick に積まれた生マウスデルタ (Raw Input のカウント、下向きが正)。

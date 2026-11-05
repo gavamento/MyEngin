@@ -21,6 +21,7 @@
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
 #include "Engine/Engine/Tilemap/TilemapAssets.h"
 #include "Engine/Engine/Tilemap/TilemapSystem.h"
+#include "Engine/Engine/Feel/FeelLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
@@ -98,6 +99,8 @@ void InstallSimLibraries(const SimLibraries& libs)
     physicsquery::Install(libs.physics);
     // M94s: スプライトシェイプのプロファイル。起動走査より前に注入する
     spriteshape::Install(libs.spriteShapes);
+    // M94d: 手触りのプリセット (.feel.json)。同じく起動走査より前に注入する
+    feellib::Install(libs.feels);
 }
 
 void UninstallSimLibraries()
@@ -118,6 +121,7 @@ void UninstallSimLibraries()
     tilemap::InstallSystem(nullptr);
     physicsquery::Install(nullptr);
     spriteshape::Install(nullptr);
+    feellib::Install(nullptr);
 }
 
 void InitSimProjectState(const std::wstring& assetsRoot)
@@ -187,6 +191,9 @@ void WireScriptServices(ScriptHost& scriptHost, ManagedHost& managedHost,
                                   s.audioHandleSeq, s.inputActions, s.pendingSaveSlot,
                                   s.pendingLoadSlot, s.padVibration, s.netInfo, s.cursorLock,
                                   s.pendingLoadPersistSlot, s.windowMode, s.messageQueue);
+    // v31 (M94h): 手触りの出力倍率 (出力レーン)。sim は書くだけで読み返さない
+    scriptHost.SetFeelOutputScale(s.feelOutputScale);
+    managedHost.SetFeelOutputScale(s.feelOutputScale);
     // v18: 開発中の実行か。プロセスの定数なので起動時に 1 回だけ渡す (sim 状態ではない = .rep に載らない)
     scriptHost.SetDevelopmentRun(developmentRun);
     managedHost.SetDevelopmentRun(developmentRun);

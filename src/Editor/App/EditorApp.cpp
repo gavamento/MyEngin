@@ -111,6 +111,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Profiler", &profiler_.open },
                     { "Performance Compare", &performanceCompare_.open },
                     { "Timeline", &timeline_.open },
+                    { "Feel Monitor", &feelMonitor_.open },
                     { "Network", &net_.open },
                     { "Source Control", &sourceControl_.open },
                     { "Diff", &sourceControl_.diffOpen },
@@ -872,6 +873,9 @@ void EditorApp::OnImGui(EngineContext& ctx)
     gameView_.OnImGui(ctx, selection_);
     particleSettings_.OnImGui(ctx, settings_);
     profiler_.OnImGui(ctx);
+    // M94i: カメラの揺れを切る個人設定は窓の開閉に関係なく毎フレーム写す (描画だけに効く)
+    ctx.feelMuteCamera = settings_.feelMuteCamera;
+    feelMonitor_.OnImGui(ctx, settings_);
     performanceCompare_.OnImGui();
     timeline_.OnImGui(ctx, playMode_);
     net_.OnImGui(ctx);
@@ -1647,6 +1651,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem(Tr(StrId::Win_Profiler), nullptr, &profiler_.open);
         ImGui::MenuItem(Tr(StrId::Win_PerformanceCompare), nullptr, &performanceCompare_.open);
         ImGui::MenuItem(Tr(StrId::Win_Timeline), nullptr, &timeline_.open);
+        ImGui::MenuItem(Tr(StrId::Win_FeelMonitor), nullptr, &feelMonitor_.open);
         ImGui::MenuItem(Tr(StrId::Win_Net), nullptr, &net_.open);
         ImGui::MenuItem(Tr(StrId::Win_SourceControl), nullptr, &sourceControl_.open);
         ImGui::MenuItem(Tr(StrId::Win_Diff), nullptr, &sourceControl_.diffOpen);
@@ -2034,6 +2039,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Profiler", rightBottom);
     ImGui::DockBuilderDockWindow("Performance Compare", rightBottom);
     ImGui::DockBuilderDockWindow("Timeline", bottom);
+    ImGui::DockBuilderDockWindow("Feel Monitor", rightBottom);
     ImGui::DockBuilderDockWindow("Console", bottom);
     // ★Source Control は**左列 (Hierarchy と同じ束)**。
     //   下段帯 (高さ ≒ 200px) では変更一覧が 2 行で切れ、コミット欄が窓の外へ落ちる

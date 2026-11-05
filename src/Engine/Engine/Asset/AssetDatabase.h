@@ -39,6 +39,7 @@ enum class AssetType : int32_t {
     TilePalette,  // .tilepalette.json (M94j — タイル定義の表)
     Tilemap,      // .tilemap.json (M94j — タイルのセル配列。Tilemap コンポーネントが参照)
     SpriteShape,  // .spriteshape.json (M94s — スプライトシェイプのプロファイル。縁スプライトと塗り)
+    Feel,         // .feel.json (M94d — 手触りのプリセット。ヒットストップ・揺れ・振動・画面効果)
 };
 
 // アセット 1 件のサイドカー情報 (<asset>.meta に JSON で保存)。

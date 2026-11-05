@@ -125,6 +125,11 @@ public:
     bool IsScriptComponent(ComponentTypeId type) const;
 
     // 毎 tick、フェーズ 3/5 で呼ぶ (Play 中のみ)
+    // v31 (M94h): 手触りの出力倍率 (出力レーン) の書き先。起動時に 1 回 (null = SetFeelOutputScale が no-op)
+    void SetFeelOutputScale(FeelOutputScale* scale) { apiCtx_.feelOutputScale = scale; }
+    // v31 (M94h): この tick でゲート対象が進むか (IsSimStepping の答え)。TickRunner がスクリプト層の前に毎 tick 書く
+    void SetSimStepping(bool stepping) { apiCtx_.simStepping = stepping; }
+
     void SetTickContext(const InputSnapshot& input, uint64_t tickIndex, float dt, uint32_t playerCount);
     void RunStartAndUpdate(); // フェーズ 3: 新規インスタンスの Start → 全 Update
     void RunLateUpdate();     // フェーズ 5

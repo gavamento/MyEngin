@@ -37,6 +37,24 @@ using namespace DirectX;
 namespace mye {
 namespace {
 
+// M94c: 手触りの FOV キックの結果をこの範囲へ収める (0 や 180 度近くは射影が壊れる)
+constexpr float kFeelMinFovDeg = 5.0f;
+constexpr float kFeelMaxFovDeg = 170.0f;
+
+// M94c: 画面効果のパルスを実効のポスト設定へ加算する。露出は倍率への加算 (0.5 = 1.5 倍)、
+// フラッシュ色は乗算フィルタを重みぶん flashColor へ寄せる。どれも負にならないようにする
+void ApplyFeelPostFxPulse(PostProcess::Settings& s, const FeelFrameOutput& feel)
+{
+    s.vignetteIntensity = std::max(0.0f, s.vignetteIntensity + feel.vignette);
+    s.chromAberration = std::max(0.0f, s.chromAberration + feel.chromAberration);
+    s.exposure = std::max(0.0f, s.exposure * (1.0f + feel.exposure));
+    s.saturation = std::max(0.0f, s.saturation + feel.saturation);
+    const float w = std::clamp(feel.flashWeight, 0.0f, 1.0f);
+    s.colorFilter.x += (feel.flashColor[0] - s.colorFilter.x) * w;
+    s.colorFilter.y += (feel.flashColor[1] - s.colorFilter.y) * w;
+    s.colorFilter.z += (feel.flashColor[2] - s.colorFilter.z) * w;
+}
+
 // フラスタムカリング候補 (M25: 収集は直列、可視判定 + viewZ を並列、キュー構築は直列)。
 struct CullCand {
     EntityID e;
@@ -831,6 +849,18 @@ void RenderSystem::ResolveCamera(World& world, const CameraOverride* cameraOverr
                     camWorld = LerpWorld(*pw, camWorld, interpAlpha);
                 }
             }
+            // M94c: 手触りのカメラの揺れ・キック (ADR-035)。補間の後・逆行列の前に、カメラ局所の
+            // 回転 + 平行移動として掛ける。ここより後 (ジッタの一元化・lastViewProjNoJitter・TAA の
+            // 再投影) は揺れたカメラを「本当に動いたカメラ」として一貫して扱う
+            float fovYDeg = cam.fovYDeg;
+            if (feel.cameraActive) {
+                const XMMATRIX local = XMMatrixRotationRollPitchYaw(XMConvertToRadians(feel.camRotDeg[0]),
+                                                                     XMConvertToRadians(feel.camRotDeg[1]),
+                                                                     XMConvertToRadians(feel.camRotDeg[2]))
+                    * XMMatrixTranslation(feel.camPos[0], feel.camPos[1], feel.camPos[2]);
+                XMStoreFloat4x4(&camWorld, local * XMLoadFloat4x4(&camWorld));
+                fovYDeg = std::clamp(fovYDeg + feel.fovDeg, kFeelMinFovDeg, kFeelMaxFovDeg);
+            }
             // M94v: ピクセルスナップ中はカメラの XY を 1/PPU の格子へ丸める (スプライトの頂点と同じ格子)
             if (f.pixelSnapUnit > 0.0f) {
                 camWorld._41 = std::round(camWorld._41 / f.pixelSnapUnit) * f.pixelSnapUnit;
@@ -843,7 +873,7 @@ void RenderSystem::ResolveCamera(World& world, const CameraOverride* cameraOverr
             const XMMATRIX p = cam.orthographic
                 ? XMMatrixOrthographicLH(2.0f * orthoSize * aspectRatio, 2.0f * orthoSize,
                                          cam.nearZ, cam.farZ)
-                : XMMatrixPerspectiveFovLH(XMConvertToRadians(cam.fovYDeg), aspectRatio,
+                : XMMatrixPerspectiveFovLH(XMConvertToRadians(fovYDeg), aspectRatio,
                                            cam.nearZ, cam.farZ);
             XMStoreFloat4x4(&view.view, v);
             XMStoreFloat4x4(&view.proj, p);
@@ -2320,6 +2350,11 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
         // M94v: PixelPerfectCamera2D がある間は FXAA を掛けない (ドットの輪郭が滲む)
         if (f.pixelPerfect) {
             effective.fxaa = false;
+        }
+        // M94c: 手触りの画面効果のパルス (ADR-035)。シーンカメラだけ、マージ後の実効値へ加算する
+        // (ユーザー設定と CameraPostFx の値は書き換えない)
+        if (!cameraOverride && feel.flashActive) {
+            ApplyFeelPostFxPulse(effective, feel);
         }
         // M44d: 前フレーム viewProj は path.Render 前に充填済み (view.prevViewProj)。
         // SceneView (cameraOverride) はエディタ操作中のスミアが UX を阻害するため強制 off

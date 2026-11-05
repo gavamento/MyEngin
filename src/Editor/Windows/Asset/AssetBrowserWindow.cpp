@@ -57,6 +57,7 @@ enum CreateKind {
     kCreateMixer,
     kCreateActor,
     kCreatePhysMat, // M59a1
+    kCreateFeel,    // M94d
     kCreateNavFilter, // M84c
     kCreateBehaviorTree, // M85
     kCreateBlackboard,   // M85
@@ -95,6 +96,7 @@ constexpr TypeFilterEntry kTypeFilters[] = {
     { AssetType::Schema, StrId::Type_Schema },
     { AssetType::Terrain, StrId::Terrain_AssetType },
     { AssetType::PhysMat, StrId::Asset_PhysMat }, // M59a1
+    { AssetType::Feel, StrId::Asset_Feel },       // M94d
     { AssetType::NavFilter, StrId::Asset_NavFilter }, // M84c
     { AssetType::BehaviorTree, StrId::Asset_BehaviorTree }, // M85
     { AssetType::Blackboard, StrId::Asset_Blackboard },     // M85
@@ -172,6 +174,8 @@ const char* TileLabel(AssetType type, const std::wstring& ext, const std::wstrin
         return "anim";
     case AssetType::PhysMat:
         return "physmat"; // .physmat.json (M59a1)
+    case AssetType::Feel:
+        return "feel"; // .feel.json (M94d)
     case AssetType::NavFilter:
         return "navfilter"; // .navfilter.json (M84c)
     case AssetType::BehaviorTree:
@@ -853,6 +857,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
             if (ImGui::MenuItem(Tr(StrId::Asset_Sound))) { beginCreate(kCreateSound, "New Sound"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_Mixer))) { beginCreate(kCreateMixer, "New Mixer"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_PhysMat))) { beginCreate(kCreatePhysMat, "New PhysMat"); }
+            if (ImGui::MenuItem(Tr(StrId::Asset_Feel))) { beginCreate(kCreateFeel, "New Feel"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_NavFilter))) { beginCreate(kCreateNavFilter, "New NavFilter"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_BehaviorTree))) { beginCreate(kCreateBehaviorTree, "New BehaviorTree"); }
             if (ImGui::MenuItem(Tr(StrId::Asset_Blackboard))) { beginCreate(kCreateBlackboard, "New Blackboard"); }
@@ -1081,6 +1086,10 @@ void AssetBrowserWindow::DoCreate(EngineContext& ctx, UndoStack& undo)
         break;
     case kCreatePhysMat: // M59a1
         created = CreatePhysMatAsset(ctx, current_, name);
+        RecordAssetCreated(undo, created);
+        break;
+    case kCreateFeel: // M94d
+        created = CreateFeelAsset(ctx, current_, name);
         RecordAssetCreated(undo, created);
         break;
     case kCreateNavFilter: // M84c

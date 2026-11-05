@@ -29,6 +29,7 @@
 #include "Editor/Windows/Scene/InspectorWindow.h"
 #include "Editor/Windows/Scene/ParticleSettingsWindow.h"
 #include "Editor/Windows/Debug/ProfilerWindow.h"
+#include "Editor/Windows/Debug/FeelMonitorWindow.h"
 #include "Editor/Windows/Debug/PerformanceCompareWindow.h"
 #include "Editor/Windows/Project/NetWindow.h"
 #include "Editor/Windows/Debug/TimelineWindow.h"
@@ -177,6 +178,7 @@ private:
     GameViewWindow gameView_;
     ParticleSettingsWindow particleSettings_;
     ProfilerWindow profiler_;
+    FeelMonitorWindow feelMonitor_; // M94i
     PerformanceCompareWindow performanceCompare_;
     TimelineWindow timeline_; // M52e: 巻き戻しスクラブ (Play 中のみ中身がある)
     NetWindow net_;           // M52i: ネットセッションの状態 (--net-host/join 時のみ中身がある)

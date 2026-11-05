@@ -19,6 +19,7 @@
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
 #include "Engine/Engine/Tilemap/TilemapAssets.h"
 #include "Engine/Engine/Tilemap/TilemapSystem.h"
+#include "Engine/Engine/Feel/FeelLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysMatLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteShape.h"
@@ -82,6 +83,7 @@ constexpr AssetKindRow kAssetKinds[] = {
     { L".tilepalette.json", ReloadKind::TilePalette, 6 }, // M94j。Tilemap が引く表なので Tilemap と同格
     { L".tilemap.json", ReloadKind::Tilemap, 6 },         // M94j
     { L".spriteshape.json", ReloadKind::SpriteShape, 6 }, // M94s。Sprite2D と同じ描画専用の表
+    { L".feel.json", ReloadKind::Feel, 6 }, // M94d。physmat と同格 (sim を変える資産クラス)
     { L".dmnet", ReloadKind::ModalNet, 6 }, // M76e。.sound.json 等と同格 (誰も参照していない)
     { PrefabLibrary::kActorSuffix, ReloadKind::Compose, 7 },
     { PrefabLibrary::kPrefabSuffix, ReloadKind::Compose, 7 },
@@ -327,6 +329,9 @@ void ReloadHub::HandleChange(const std::wstring& normPath, int attempt)
         break;
     case ReloadKind::Blackboard:
         result = ReloadBlackboard(normPath);
+        break;
+    case ReloadKind::Feel:
+        result = ReloadFeel(normPath);
         break;
     case ReloadKind::ModalNet:
         result = ReloadModalNet(normPath);
@@ -590,6 +595,21 @@ ReloadHub::ReloadResult ReloadHub::ReloadSpriteShape(const std::wstring& path)
         return ReloadResult::Retry;
     }
     MYE_LOG_INFO("[reload] spriteshape reloaded: %s", WideToUtf8(path).c_str());
+    return ReloadResult::Reloaded;
+}
+
+// 登録済みなら読み直す (M94d)。physmat と同じく sim を変える資産クラス (ヒットストップの tick 数)。
+// 再生中の手触りは発火時のコピーで動くので、読み直しは**次に鳴らした分から**効く
+ReloadHub::ReloadResult ReloadHub::ReloadFeel(const std::wstring& path)
+{
+    FeelLibrary* fl = feellib::Library();
+    if (fl == nullptr || !fl->Contains(FeelLibrary::HashForPath(path))) {
+        return ReloadResult::Skipped;
+    }
+    if (fl->LoadFromFile(path) == 0) {
+        return ReloadResult::Retry;
+    }
+    MYE_LOG_INFO("[reload] feel reloaded: %s", WideToUtf8(path).c_str());
     return ReloadResult::Reloaded;
 }
 

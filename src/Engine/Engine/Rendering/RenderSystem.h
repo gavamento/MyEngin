@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "Engine/Core/Ecs/EntityID.h"
+#include "Engine/Engine/Feel/FeelState.h"
 #include "Engine/Engine/Rendering/DebugDraw.h"
 #include "Engine/Engine/Rendering/LightSelection.h"
 #include "Engine/Engine/Rendering/SkinPaletteCache.h"
@@ -166,6 +167,9 @@ public:
     // 対象はカメラ + メッシュ収集のワールド行列 (パーティクル/スプライト/UI は対象外)
     float interpAlpha = 1.0f;
     const PrevWorldStore* prevWorld = nullptr;
+    // M94c: 手触りの描画専用の出力 (EngineLoop がフレームごとに EvaluateFeel の結果を設定する)。
+    // シーンカメラ経路だけに掛かる — CameraOverride (Scene View・ベンチ・プレビュー) には掛けない
+    FeelFrameOutput feel;
     // 水面のエディタプレビュー [秒]。Edit 中はシミュレーションが進まず水面の時計 (WaterWave.timeTicks)
     // も止まるので、エディタの「水面プレビュー」がオンの間だけここに経過秒を足して水面を動かす。
     // 描画専用 (ワールドの状態にもシーン保存にも触れない)。Runtime と Play 中は常に 0

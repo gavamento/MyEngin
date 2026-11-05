@@ -438,6 +438,11 @@ bool RunEngineCliSelfTest()
     check(computeDemo != nullptr && FindShowcase(L"--compute-demo", false) == computeDemo
               && ShowcaseScenePath(*computeDemo, L"c:\\p\\assets") == L"cache\\compute_showcase.scene.json",
           "--compute-demo is offered to the Runtime and saves under cache");
+    // M94i: --feel-demo も同じ (replay_verify の feel ジョブの入力)
+    const ShowcaseDef* feelDemo = FindShowcase(L"--feel-demo", true);
+    check(feelDemo != nullptr && FindShowcase(L"--feel-demo", false) == feelDemo
+              && ShowcaseScenePath(*feelDemo, L"c:\\p\\assets") == L"cache\\feel_showcase.scene.json",
+          "--feel-demo is offered to the Runtime and saves under cache");
     // M89b: --anim-demo も Runtime にも提供され、cache\ 側へ保存する
     const ShowcaseDef* animDemo = FindShowcase(L"--anim-demo", true);
     check(animDemo != nullptr && FindShowcase(L"--anim-demo", false) == animDemo

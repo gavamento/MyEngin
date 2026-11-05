@@ -37,6 +37,10 @@ struct EditorSettings {
     bool particleCompareMode = false;
     float particleCompareOffsetX = 4.0f;
     bool particleCpuSimd = true;
+    // ---- 手触り (M94i) ----
+    // エディタで Play 中にカメラの揺れ・キックを切る (編集しながら長く見ると酔うため)。個人の好みなのでここ。
+    // ゲームの出力倍率 (SetFeelOutputScale) とは別で、sim にも録画にも影響しない
+    bool feelMuteCamera = false;
 
     void Load(const std::wstring& dir);
     void Save() const;

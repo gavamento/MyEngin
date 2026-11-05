@@ -40,6 +40,8 @@ std::wstring CreateMixerAsset(EngineContext& ctx, const std::wstring& dir,
                               const std::string& name);                            // .mixer.json
 std::wstring CreatePhysMatAsset(EngineContext& ctx, const std::wstring& dir,
                                 const std::string& name);                          // .physmat.json (M59a1)
+std::wstring CreateFeelAsset(EngineContext& ctx, const std::wstring& dir,
+                             const std::string& name);                             // .feel.json (M94d)
 std::wstring CreateNavFilterAsset(EngineContext& ctx, const std::wstring& dir,
                                   const std::string& name);                        // .navfilter.json (M84c)
 std::wstring CreateBehaviorTreeAsset(EngineContext& ctx, const std::wstring& dir,

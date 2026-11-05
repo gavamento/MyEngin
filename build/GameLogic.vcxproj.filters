@@ -34,6 +34,9 @@
     <ClCompile Include="..\src\GameLogic\Scripts\ComputeProbe.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\GameLogic\Scripts\FeelDemo.cpp">
+      <Filter>Scripts</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\GameLogic\Scripts\FlowGameDriver.cpp">
       <Filter>Scripts</Filter>
     </ClCompile>
@@ -128,6 +131,9 @@
       <Filter>Generated</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Shared\EngineAPI.h">
+      <Filter>Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Shared\FeelMath.h">
       <Filter>Shared</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Shared\KernelCompat.h">

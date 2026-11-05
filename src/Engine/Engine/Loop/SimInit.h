@@ -15,6 +15,7 @@ namespace mye {
 struct EngineConfig;
 struct RenderResources;
 struct PadVibrationState;
+struct FeelOutputScale;
 struct CursorLockState;
 struct WindowModeState;
 struct ScriptAudioEvent;
@@ -38,6 +39,7 @@ class PhysMatLibrary;
 class NavFilterLibrary;
 class BehaviorTreeLibrary;
 class BlackboardLibrary;
+class FeelLibrary;
 class TerrainColliderLibrary;
 class SpriteLibrary;
 class SpriteAnimLibrary;
@@ -83,6 +85,7 @@ struct SimLibraries {
     TilemapSystem* tilemapSystem = nullptr;       // M94k: 描画が実効セル (セルの書き換え込み) を引く口。所有は sim の持ち主
     const PhysicsSystem* physics = nullptr;       // M94n: 空間クエリが静的形状の供給口 (タイルの箱) を引く口。所有は sim の持ち主
     SpriteShapeLibrary* spriteShapes = nullptr;   // M94s: .spriteshape.json (描画専用。sim は引かない)
+    FeelLibrary* feels = nullptr;                 // M94d: .feel.json (ヒットストップの tick 数が sim に効く)
 };
 void InstallSimLibraries(const SimLibraries& libs);
 // 所有者が死ぬ前に必ず呼ぶ (注入したポインタをプロセス全体から外す)
@@ -109,6 +112,7 @@ struct SimSharedServices {
     int* pendingSaveSlot = nullptr;
     int* pendingLoadSlot = nullptr;
     PadVibrationState* padVibration = nullptr;
+    FeelOutputScale* feelOutputScale = nullptr; // v31 (M94h): 手触りの出力倍率 (出力レーン)。null = SetFeelOutputScale が no-op
     const NetRuntimeInfo* netInfo = nullptr;
     CursorLockState* cursorLock = nullptr;
     int* pendingLoadPersistSlot = nullptr;

@@ -271,7 +271,7 @@ namespace MyeScripting
         // 版がずれると全スロットが黙って別関数を指すため、静的照合 (規則 11) だけでは
         // 「C++ 側だけ更新して build_managed.bat を忘れた」古い MyeScripting.dll を捕まえられない。
         // ★MYE_API_VERSION を上げたらここも同時に上げる (規則 11-e が機械照合する)
-        internal const uint kExpectedApiVersion = 33u;
+        internal const uint kExpectedApiVersion = 34u;
 
         public uint Version;
         public void* Engine;
@@ -512,6 +512,14 @@ namespace MyeScripting
         // v33 (M93e): スクリプト間メッセージ。C# レーンからの呼び出しはエンジン側が 0 を返す (NoHash レーンは hash 側へ書かない)。
         // 受信は ManagedVTable.InvokeMessage → MyeScript.OnMessage
         public delegate* unmanaged<void*, MyeEntityId, MyeEntityId, ulong, int, int> SendScriptMessage;
+        // v31 (M94h): 手触り。PlayFeel / PlayFeelDesc / StopFeel / ConsumeAction は C# レーンからは失敗する
+        // (hash 対象の状態を NoHash レーンから動かさない、v30 と同じ規則)。IsSimStepping と SetFeelOutputScale は使える
+        public delegate* unmanaged<void*, ulong, float, int> PlayFeel;
+        public delegate* unmanaged<void*, void*, float, int> PlayFeelDesc;
+        public delegate* unmanaged<void*, int, void> StopFeel;
+        public delegate* unmanaged<void*, ulong, uint, int> ConsumeAction;
+        public delegate* unmanaged<void*, int> IsSimStepping;
+        public delegate* unmanaged<void*, uint, float, void> SetFeelOutputScale;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -1167,6 +1175,14 @@ namespace MyeScripting
         public static void SetPadVibration(float left, float right)
         {
             if (_api != null) _api->SetPadVibration(_api->Engine, left, right);
+        }
+
+        // v31 (M94h): 手触りのうち C# レーンから使える 2 本 (出力倍率と、この tick のゲートの結果)。
+        // 鳴らす / 止める / 先行入力の消費は hash 対象の状態を書くのでエンジンが C# レーンからは受けない (v30 と同じ規則)
+        public static bool IsSimStepping() => _api != null && _api->IsSimStepping(_api->Engine) != 0;
+        public static void SetFeelOutputScale(uint channel, float scale)
+        {
+            if (_api != null) _api->SetFeelOutputScale(_api->Engine, channel, scale);
         }
 
         // ---- v13 (M52i): ネット対戦の状態 ----

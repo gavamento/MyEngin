@@ -175,8 +175,12 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 33u,
-              "abi: the table reports v33");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 34u,
+              "abi: the table reports v34");
+        // v34 (M94 手触り h): 手触り。鳴らした結果は FeelSystemSelfTest / replay の feel ジョブが見る (ここは充填のみ)
+        check(api.PlayFeel != nullptr && api.PlayFeelDesc != nullptr && api.StopFeel != nullptr
+                  && api.ConsumeAction != nullptr && api.IsSimStepping != nullptr && api.SetFeelOutputScale != nullptr,
+              "abi: the v34 feel slots are filled in");
         // v33 (M93e): スクリプト間メッセージ。配達の結果は --debug-draw-log / MessageProbe (replay) が見る (ここは充填のみ)
         check(api.SendScriptMessage != nullptr, "abi: the v33 SendScriptMessage slot is filled in");
         // v32 (M95): アクション戦闘。呼んだ結果はこのスイートの末尾 (M95 sub-01) が見る

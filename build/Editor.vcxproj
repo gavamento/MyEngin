@@ -99,6 +99,7 @@
     <ClCompile Include="..\src\Editor\Undo\UndoSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Undo\UndoStack.cpp" />
     <ClCompile Include="..\src\Editor\Widgets\CreateMenu.cpp" />
+    <ClCompile Include="..\src\Editor\Widgets\CurveEditorWidget.cpp" />
     <ClCompile Include="..\src\Editor\Widgets\EditorComponentCatalog.cpp" />
     <ClCompile Include="..\src\Editor\Widgets\EditorToolbar.cpp" />
     <ClCompile Include="..\src\Editor\Widgets\EditorWidgets.cpp" />
@@ -118,6 +119,7 @@
     <ClCompile Include="..\src\Editor\Windows\Audio\AudioMixerWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Audio\SoundGenWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Debug\ConsoleWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Debug\FeelMonitorWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Debug\PerformanceCompareWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Debug\ProfilerWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Debug\TimelineWindow.cpp" />
@@ -126,6 +128,7 @@
     <ClCompile Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\SourceControlWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Scene\FeelAssetInspector.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\GameViewWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\HierarchyWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\InspectorWindow.cpp" />
@@ -209,6 +212,7 @@
     <ClInclude Include="..\src\Editor\Undo\UndoSelfTest.h" />
     <ClInclude Include="..\src\Editor\Undo\UndoStack.h" />
     <ClInclude Include="..\src\Editor\Widgets\CreateMenu.h" />
+    <ClInclude Include="..\src\Editor\Widgets\CurveEditorWidget.h" />
     <ClInclude Include="..\src\Editor\Widgets\EditorComponentCatalog.h" />
     <ClInclude Include="..\src\Editor\Widgets\EditorToolbar.h" />
     <ClInclude Include="..\src\Editor\Widgets\EditorWidgets.h" />
@@ -228,6 +232,7 @@
     <ClInclude Include="..\src\Editor\Windows\Audio\AudioMixerWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Audio\SoundGenWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Debug\ConsoleWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Debug\FeelMonitorWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Debug\PerformanceCompareWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Debug\ProfilerWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Debug\TimelineWindow.h" />
@@ -236,6 +241,7 @@
     <ClInclude Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\SourceControlWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.h" />
+    <ClInclude Include="..\src\Editor\Windows\Scene\FeelAssetInspector.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\GameViewWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\HierarchyWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\InspectorWindow.h" />

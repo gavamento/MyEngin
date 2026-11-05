@@ -21,6 +21,7 @@ class NavSystem;        // v24
 class BehaviorTreeSystem; // v27
 class ControllerLibrary;  // v27
 class TilemapSystem;      // v31
+struct FeelOutputScale;   // v31 (M94h)
 namespace compute {
 class ComputeService; // v29
 }
@@ -186,6 +187,10 @@ struct ScriptApiContext {
     TilemapSystem* tilemap = nullptr;
     // v31: SpriteByName が assets 相対のパスを絶対化する根。空 = 相対パスを解決しない (絶対パスだけ引ける)
     std::wstring assetsRoot;
+    // v31 (M94h): IsSimStepping の答え (この tick でゲート対象が進むか)。TickRunner がスクリプト層の前に両ホストへ書く
+    bool simStepping = true;
+    // v31 (M94h): 手触りの出力倍率の書き先 (EngineLoop 所有の出力レーン)。null 時は SetFeelOutputScale が no-op
+    FeelOutputScale* feelOutputScale = nullptr;
 };
 
 // out に MyeEngineApi (engine = ctx) を構築する。ctx の生存は呼び出し側が管理する。
