@@ -56,6 +56,7 @@
 | 24 | 地面の霧を局所ライト (点・スポット) で照らすか | sub-03 の専用描画はライト一覧を持たない合成箇所 (粒子・VFX・スカイ) を含む 10 か所で走る。段数 24 × ライト本数 × (影なら) 影サンプルのコスト。フロクセル (Volume) は局所ライトのビームと影を既に持つ (`froxel_inject.cs.hlsl` の LightSample + SampleShadowAtlas) | **照らす / 照らさないを ON/OFF で切り替える** (2026-11-08。planner の推奨「照らさない」に選択肢を足す形。太陽光の bool と同じ扱い) | 場ごとの `fogLocalLights` (既定 **false**。太陽光と同じ理由で、既定は従来の絵とコスト)。GroundLayer だけ (Volume では無視)。ライトは CPU が毎フレーム「影響球が ON の層の板の AABB と交わる局所ライトを、ライト一覧の順に最大 8 本」選び、縮約した写しを場の CB に載せる (各シェーダの既存のライト一覧の並びに依存しない。10 か所に同じ口)。超えた分は落として WARN 1 回。減衰とスポットは `common.hlsli::LightSample` と同じ式。**影なし** (10 か所にシャドウアトラスを束縛するコストと複雑さに見合わない。影つきのビームは Volume で作る)。sub-15 を新設 (sub-03 は 10 か所の合成を作るだけで十分大きいので分けた)。却下: 各シェーダの既存のライト一覧を読む = 一覧を持たない合成箇所がある / 本数無制限 = 段数 × 本数のコストが読めない / 影つき = 上記 |
 | 25 | スカイボックスの無い背景 (clear 色) に Forward でも地面の霧・フロクセルの霧を掛けるか | Forward には背景を描くシェーダが無く、clear 色のまま残る (sub-03 round 2 の実測 sub03r2_03)。Deferred は光パスの背景分岐 (albedo.a < 0.5) で地面の霧とフロクセルを掛けている。golden には Forward + `--froxel` の `fog` (`tools\shot_verify.bat:257`) がある | **Forward でも掛ける** (2026-11-08。R13 の取り消し)。**フロクセルの背景も Deferred に揃える** (2026-11-08。planner の推奨「揃えない」の逆) | Forward の不透明の後・透明の前に、**背景だけを塗る全画面の三角形**を 1 回描く。深度は far で、深度テストは LESS_EQUAL・書き込みなし = clear のままの画素にだけ乗る。色は clear 色に、Deferred の背景分岐と**同じ処理** (地面の霧 `GroundFogCompositeBackground` → フロクセルの合成。フロクセルの部分は Deferred の背景分岐の式を写す) を掛けたもの。解析フォグ (`FogComponent`) の背景の扱いは今の Forward のまま変えない (依頼の外)。**描く条件 = Forward のビュー かつ スカイボックスを描いていない かつ (霧のある GroundLayer が 1 枚以上 または そのビューでフロクセルが走る)**。条件が欠けたらパスそのものが走らず、絵はビット不変。既存の「Forward + フロクセル + スカイ無し」のシーンは**背景の画素だけ**変わる (受け入れ 36 で、変わってよいシーンと差 0 のシーンを分け、golden の更新手順を決める)。sub-15 の後に置き、局所ライトも同じ関数で揃う。sub-16。却下: clear 色を霧の色へ寄せる = 視線ごとの通過長が出ない / 単色のスカイボックスを自動で描く = スカイの設定と見分けが付かない |
 | 26 | 跡 (雪・砂) の見た目の欄 (色・強さ) をどこに置くか | 場の側 (DisturbanceFieldComponent) に置くと、並列の波で同じ struct の末尾を触るサブ (sub-07 / 09 / 10) と重なる。跡の色は「その地面が雪か砂か」で決まるので、意味としても地面の持ち物 | planner 裁定 (並列化のとき、2026-11-08) `[ユーザーに聞ける]` | **TerrainComponent の末尾** (見た目の欄。sim は読まない。snapshot は v76)。1 つの場が雪と砂の両方の地形にまたがっても、それぞれの色で描ける。却下: 場の側 = 1 つの場に色が 1 つしかなく、並列の波でも衝突する |
+| 27 | Volume の性能の線 (受け入れ 20) | sub-07 の実測: 32×16×32・20 反復で Release・jobs なし 1.99〜2.04 ms (最良の窓)、jobs あり 0.59 ms、反復 0 で 1.25 ms。2D の同条件は 1.11 ms。3D は速度が 3 成分、Jacobi が 7 点なので、同じマス数でも約 1.8 倍が本質的に掛かる。実行時の既定は jobs あり | planner 裁定 (ユーザー不在、2026-11-09) `[ユーザーに聞ける]` | **jobs ありで 1.67 ms 以下を合格の線にし、jobs なしの値は ADR-036 に書く**。既定の寸法・反復回数は変えない。却下: Volume の既定の反復を 10 に下げる = 渦が弱くなり、jobs なしでも約 1.6 ms で線ぎりぎり / 既定の寸法を 32×8×32 に下げる = 煙の柱の高さ方向の解像度が半分になる / 三線形の SIMD 化 = 決定論の確認が要る別の仕事 |
 
 ## 3. スコープ
 
@@ -153,7 +154,7 @@
 
 #### I. 復元と減衰
 
-- 速度: `v = v_target + (v − v_target) × velocityKeep`。`v_target` = sub-01 では 0、sub-04 から `PhysicsEnvironmentComponent.windVelocity × windScale` (2D は xz)。速さの上限 `cellSize × 60` (1 tick 1 セル) で長さを切る
+- 速度: `v = v_target + (v − v_target) × velocityKeep`。`v_target` = sub-01 では 0、sub-04 から `PhysicsEnvironmentComponent.windVelocity × windScale` (2D は xz、Volume は xyz = 上昇気流も効く。sub-07 で決定)。速さの上限 `cellSize × 60` (1 tick 1 セル) で長さを切る
 - 濃さ: `ρ = restDensity + (ρ − restDensity) × densityKeep`
 - 跡: `τ = τ × trailKeep` (`trailKeep = 1` で永続)
 
@@ -261,7 +262,7 @@
 | 17 | ABI v35 = 202: 規則 11 PASS。C++ から `FieldAddImpulse` → 同じ tick (Update から) / 次の tick (LateUpdate から) の step で効く。`FieldSample` が内部の値と一致。C# から `FieldAddImpulse` は 0、`FieldSample` は値を返す | selftest (GameLogic のプローブと C# の一時プローブ。memory `abi-bump-verification` の手順) | 05 |
 | 18 | インパルスの 3 形: Point は `dir` 向き、Radial は外向き (中心で 0)、Cone は円錐の外で 0 | selftest | 05 |
 | 19 | アニメイベント `disturb`: 発火した tick の step で注入され、向きがコントローラのエンティティの回転に従う。JSON の各欄が読まれ、不正な `shape` はエラーで捨てる | selftest (animatorcontroller / disturbance) | 06 |
-| 20 | 3D: Volume で煙が浮力で昇り、フロクセルに映る。32×16×32・20 反復で Release・jobs なし 1 個 1.67 ms/tick 以下。Volume を 4 個置くと 4 個とも描かれ、フロクセルの注入パスの GPU 時間を 0 / 1 / 4 個で報告する | selftest + `--field-demo` のスクショ + GPU 時間 | 07 |
+| 20 | 3D: Volume で煙が浮力で昇り、フロクセルに映る。32×16×32・20 反復で Release・**jobs あり** 1 個 1.67 ms/tick 以下、jobs なしの値は報告 (sub-07 round 1 で変更: 速度 3 成分と 7 点の Jacobi で 2D の約 1.8 倍が本質的に掛かり、jobs なし約 2.0 ms。実行時は jobs ありが既定)。Volume を 4 個置くと 4 個とも描かれ、フロクセルの注入パスの GPU 時間を 0 / 1 / 4 個で報告する | selftest + `--field-demo` のスクショ + GPU 時間 | 07 |
 | 21 | 追従: 相手が `followMargin` セル動くと整数セルずれ、重なる部分の値が保たれ、入ってきたマスは静止状態。追従あり 600 tick の 2 ワールド一致と snapshot 往復 | selftest + デモのスクショ (プレイヤーの周りだけの霧) | 09 |
 | 22 | 粒子: `fieldInfluence > 0` の CPU 粒子が流れに乗り、ハッシュ・snapshot・jobs A/B が一致。`fieldInfluence = 0` の既存デモ (`--particle-demo`) は不変。GPU 粒子も流れに乗る (スクショ) | selftest + replay_verify `jobsab` + スクショ | 11 |
 | 23 | 水面の波紋: 歩くと波紋が広がる (スクショ 2 枚の差)。浮力の selftest と `WaterSurfaceSelfTest` 不変 | スクショ + selftest | 12 |
@@ -368,6 +369,7 @@
 - 2026-11-08 (ユーザー指示「寝るから推奨で進める方にシフトして」、司会経由): ここから先は M80 方式。`[ユーザーに聞ける]` の論点は planner が推奨で裁定して進め、§2 に採った案と却下した案を残す。回答待ちで作業を止めない (司会が Notion の質問表に転記し、後で回答をもらう)
 - 2026-11-09 (sub-12 round 1): Gerstner の M79 サーフェスへの波紋は sub-12 の対象外とし、サーフェスシェーダの予約テクスチャを作る sub-14 に足した (受け入れ 23 の Gerstner の分)
 - 2026-11-09 (sub-16 round 1): 受け入れ 36 (b) の「スカイのある `--field-demo`」は誤り (`--field-demo` にスカイは無い)。(c) の変わってよい絵へ移した。golden `flow_title` の FAIL は着手前 (bc957ea) から同じで M96 と無関係の既存の別件 (台帳の申し送り)
+- 2026-11-09 (sub-07 round 1): 受け入れ 20 の性能の線を jobs ありへ (§2 #27)、§4.1 I の風を Volume では xyz と明記
 
 ## 付録 A. 並列の予約表 (W1〜W5)
 

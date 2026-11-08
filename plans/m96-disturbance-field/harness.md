@@ -48,7 +48,7 @@
 | sub-04 | OK | 2 | d4e54f4 | 流れのソルバ |
 | sub-05 | OK | 2 | e664245 (統合 5ca2e83) | スクリプトの口 (ABI v35 = 202) |
 | sub-06 | OK (統合待ち) | 1 | 0784048 (ブランチ m96-w2-sub06) | アニメイベント disturb |
-| sub-07 | 実装中 (W2, worktree) | 0 | | 3D ボリューム (4 個まで描画)。後で中間のまとめ実行 |
+| sub-07 | OK (統合待ち) | 1 | 59704c5 (ブランチ m96-w2-sub07) | 3D ボリューム (4 個まで描画)。後で中間のまとめ実行 |
 | sub-08 | 未着手 | 0 | | Volume のフロクセル自動有効と太陽光の bool |
 | sub-09 | 未着手 | 0 | | 追従モード |
 | sub-10 | 未着手 | 0 | | 地形の起伏に沿う 2D 層 |
@@ -79,6 +79,8 @@ W1 の 4 本を止めた。全部未コミット。再開時は各 sub-NN.md 末
 - W2 の worktree は司会が master の先頭から手で作る: C:\HAL\MyEngin\.claude\worktrees\w2-sub06 / w2-sub07 / w2-sub14 / w2-sub16 (ブランチ m96-w2-sub06 等)
 - sub-14 OK (7b99fba)。統合の目視点に追加: RenderSystem.cpp の UpdateDisturbanceField 呼び出しが CollectLights 直後に 1 か所だけあり、sub-07 の UpdateFroxel 周りと食い違っていない。planner が直した sub-17.md (手動確認の追加) はメイン側に未コミットで残してある
 - sub-06 OK (0784048)。統合の目視点: TickRunner.cpp の配送 switch、DemoContentField.cpp 末尾の呼び出しの並び、DisturbanceFieldSelfTest.cpp の無名名前空間ブロックと呼び出し行
+- sub-07 OK (59704c5)。性能の線を「jobs ありで 1.67 ms」に変更 (spec §2 #27)。kBakedFinalHash 0x2D2D2A180F889F62 (sizeof 88)。統合の目視点: RenderSystem.cpp で UpdateDisturbanceVolumes が UpdateDisturbanceField (sub-14 で CollectLights 直後) のすぐ後、RenderTypes.h の append 位置、sizeof 88 の表明 (sub-15 テスト側も)
+- Notion 質問表: 「M96 かき乱しフィールド: ハーネスの保留質問」 https://app.notion.com/p/41202024a4d481ac811ac5365298b94d (Q-1 = Volume の性能の線)
 
 ## 申し送り (セッション跨ぎ)
 - design-draft.md と本台帳は sub-01 のコミットに同梱する (基点時点で未追跡)
