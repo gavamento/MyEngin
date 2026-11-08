@@ -373,6 +373,7 @@
 - 2026-11-09 (sub-07 round 2、中間のまとめ実行で発覚): §4.1 C の波紋の注入を「加算」から「目標の高さへ寄せる」(有界) に変更。sub-12 のテストの前提ではなく、sub-01 の式の欠陥と判定
 - 2026-11-09 (sub-07 round 3): §4.1 C の波紋の寄せに hPrev も含める (coder の実測による訂正)
 - 2026-11-09 (sub-11 round 1): §4.3 の粒子に、y は Volume だけ寄せる・ローカル空間は読まない・GPU の 1 フレーム遅れと場の選び方の違いを明記
+- 2026-11-09 (sub-09 round 1、司会の提案): 付録 A.2 の焼き込み値の扱いを「値を変えるサブが `--field-bench` で採ってそのサブで差し替える」に変更 (まとめ実行での切り分けを楽にするため)
 
 ## 付録 A. 並列の予約表 (W1〜W5)
 
@@ -407,7 +408,7 @@
 | PS の固定スロット (b6 / b7 / t32 / t33 / s8、sub-03) | 読むのは誰でもよい。**VS にも同じ番号で張る口**を足すのは W2 の sub-14 だけ (sub-12 の水面は PS の法線だけで、VS の変位はしない) |
 | `LocalizationTable.inl` の末尾 | 誰でも足してよい (統合の目視点。両言語の対と `###` の識別子を確かめる) |
 | `DisturbanceFieldSelfTest.cpp` | 各サブは**自分の名前の static 関数** (`RunDisturbance<機能>Tests`) をファイル末尾に足し、スイート関数の末尾に呼び出しを 1 行だけ足す。既存の関数の中に断言を混ぜない |
-| selftest の焼き込み値 (`kBakedFinalHash` = 0x92713D47B7CE447A など) | **各サブは変えない** (selftest を走らせないので値を出せない)。まとめ実行 (W2 の後、W5) で落ちたら、統合後の master で 1 本の修正コミット (司会が FIX_REQUEST) で、原因 (どのサブの、どの欄・どの計算か) を断定してから再採取する |
+| selftest の焼き込み値 (`kBakedFinalHash` = 0x92713D47B7CE447A など) | **2026-11-09 に変更**: 値を変えるサブ (コンポーネントの欄・sim の式) は、selftest ではない `Editor.exe --field-bench` で Debug と Release の両方の値を採り、一致を確かめてから**そのサブで**差し替える (旧値 → 新値と理由を SELF_EVAL に書く。sub-04 / sub-07 の前例)。bench で採れない値だけ、従来どおりまとめ実行 (W2 の後、W5) で落ちたら、統合後の master で 1 本の修正コミット (司会が FIX_REQUEST) で、原因 (どのサブの、どの欄・どの計算か) を断定してから再採取する |
 | `DemoContentField.cpp` | 各サブは**自分の関数** (`AddFieldDemo<機能>`) を足し、`BuildFieldShowcaseScene` の**末尾**に呼び出しを 1 行だけ足す。既存の関数の中身は変えない (sub-08 / sub-16 がカメラ・フロクセルの設定を変える分は除く)。呼び出しの順は統合の順 = 波の順 (後から足した物は末尾。memory `demo-entity-order-is-rng-stream`) |
 | `build\Engine.vcxproj` / `.filters` | 競合したら手で直さず、統合後に `tools\gen_project_files.ps1` を回し直す |
 

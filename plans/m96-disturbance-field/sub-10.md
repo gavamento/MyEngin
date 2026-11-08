@@ -11,7 +11,7 @@
 - このサブが変えてよい共有資源 (spec 付録 A): snapshot **v75**。`DisturbanceFieldComponent` の末尾 (`followTerrain`)、DFLD のレイアウト (columnBaseY)。デモは `AddFieldDemoHill`
 - 付録 A に無い共有資源 (版・スロット・構造体の末尾・規則の番号・golden) を変えたくなったら、実装せずに「不安・質問」で返す
 - テストは `DisturbanceFieldSelfTest.cpp` などの既存の関数に混ぜず、自分の名前の static 関数を足して、スイート関数の末尾から 1 行で呼ぶ。デモも自分の関数を足し、`BuildFieldShowcaseScene` の末尾に 1 行だけ足す
-- 焼き込み値 (`kBakedFinalHash` など) は変えない (付録 A.2)。`build\Engine.vcxproj` は `tools\gen_project_files.ps1` の出力のまま
+- 焼き込み値 (`kBakedFinalHash` など) は、このサブの変更で動くなら `Editor.exe --field-bench` で Debug / Release の値を採り、一致を確かめてからこのサブで差し替える (spec 付録 A.2、2026-11-09 変更)。`build\Engine.vcxproj` は `tools\gen_project_files.ps1` の出力のまま
 
 ## やること
 
