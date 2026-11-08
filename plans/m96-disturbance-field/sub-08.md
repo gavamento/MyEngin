@@ -48,7 +48,7 @@ spec §2 #14 / #15、§4.3 のフロクセルのモード。ユーザー回答 (
 
 - `assets\shaders\froxel_inject.cs.hlsl:88-120`、`disturbance_common.hlsli`
 - `src\Engine\Engine\Rendering\RenderSystem.cpp:935-949` (有効判定)、`:2364-2374` (ゴッドレイ)
-- フロクセルを合成するシェーダ 10 本と、sub-16 が足した Forward の背景の PS (`froxel_common.hlsli:106-140` の `FroxelFogOrigin` / `FroxelComposite` など)
+- フロクセルを合成するシェーダ 10 本と、sub-16 が足した Forward の背景の PS (`assets\shaders\forward_background_fog.hlsl`、`SkyboxPass::NeedsBackgroundFog` の条件にも場だけのモードを入れる。`froxel_common.hlsli:106-140` の `FroxelFogOrigin` / `FroxelComposite` など)
 - Inspector の説明 (`Components.cpp` の `MYE_FIELD_TIP`)、`LocalizationTable.inl`
 - `src\Engine\Engine\Demo\DemoContentField.cpp`
 

@@ -38,7 +38,7 @@ spec §5 の 26, 27, 28, 30。
 
 - 26: `git diff 2961ba3 -- <SampleWind と空力の 3 か所のファイル>` に該当関数の変更が無い (ファイルと関数名を SELF_EVAL に列挙)。replay `physics` / `joints` / `fracture` PASS
 - 27: 文書 4 点の差分。文書中のパスがリポジトリ相対か絶対パスの規約 (規則 17) に従う
-- 28: `bin\x64\Debug\Editor.exe --selftest-full` と `bin\x64\Release\Editor.exe --selftest-full` FAIL 0、`tools\check_rules.ps1` の error が着手前から増えない、`tools\replay_verify.bat` 全ジョブ PASS、`tools\shot_verify.bat` PASS (sub-16 で撮り直した golden を含む)、`cmd /c C:\HAL\三校\tools\verify.bat` が既存の FAIL 2 件以外増えない (増えたら件名を SELF_EVAL に)
+- 28: `bin\x64\Debug\Editor.exe --selftest-full` と `bin\x64\Release\Editor.exe --selftest-full` FAIL 0、`tools\check_rules.ps1` の error が着手前から増えない、`tools\replay_verify.bat` 全ジョブ PASS、`tools\shot_verify.bat` PASS (sub-16 で撮り直した fog.png を含む。`flow_title` の FAIL は着手前からある既存の別件なので、増えていないことだけ確かめる。`--update` は全 golden を書き直すので、使うなら撮り直した対象以外は戻す)、`cmd /c C:\HAL\三校\tools\verify.bat` が既存の FAIL 2 件以外増えない (増えたら件名を SELF_EVAL に)
 
 ## 検証コマンド
 
