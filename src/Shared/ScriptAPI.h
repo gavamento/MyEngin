@@ -1183,6 +1183,66 @@ inline void MyeSetFeelOutputScale(const MyeUpdateContext& ctx, uint32_t channel,
 {
     ctx.api->SetFeelOutputScale(ctx.api->engine, channel, scale);
 }
+// ---- v35 (M96d): かき乱しフィールド ----
+// インパルスの形 (MyeFieldImpulse::shape)
+#define MYE_FIELD_SHAPE_POINT 0  // dir 向きの一様な流れ
+#define MYE_FIELD_SHAPE_RADIAL 1 // 点から外向き (中心で 0)
+#define MYE_FIELD_SHAPE_CONE 2   // dir を軸とする扇の中だけの Point
+
+// 既定値入りのインパルスを作る。densityDelta / trailDepth / ripple は 0 (流れだけ)
+inline MyeFieldImpulse MyeMakeFieldImpulse(int32_t shape, MyeVec3 pos, float radius)
+{
+    MyeFieldImpulse f = {};
+    f.pos = pos;
+    f.dir = { 0.0f, 0.0f, 1.0f };
+    f.radius = radius;
+    f.shape = shape;
+    return f;
+}
+// 明示のインパルスを積む (Update から積めば同じ tick、LateUpdate から積めば次の tick の step で効く)。
+// 戻り値 1 = 積んだ、0 = 不正 / キュー満杯
+inline int32_t MyeFieldAddImpulse(const MyeUpdateContext& ctx, const MyeFieldImpulse& impulse)
+{
+    return ctx.api->FieldAddImpulse(ctx.api->engine, &impulse);
+}
+// dir 向きの一様な流れ。dir は正規化しない (流れ = dir × speed)
+inline int32_t MyeFieldPoint(const MyeUpdateContext& ctx, MyeVec3 pos, MyeVec3 dir, float radius, float speed,
+                             float densityDelta = 0.0f)
+{
+    MyeFieldImpulse f = MyeMakeFieldImpulse(MYE_FIELD_SHAPE_POINT, pos, radius);
+    f.dir = dir;
+    f.speed = speed;
+    f.densityDelta = densityDelta;
+    return MyeFieldAddImpulse(ctx, f);
+}
+// 点から外向きに押す爆発 (densityDelta < 0 で霧を晴らす)
+inline int32_t MyeFieldRadial(const MyeUpdateContext& ctx, MyeVec3 pos, float radius, float speed,
+                              float densityDelta = 0.0f)
+{
+    MyeFieldImpulse f = MyeMakeFieldImpulse(MYE_FIELD_SHAPE_RADIAL, pos, radius);
+    f.speed = speed;
+    f.densityDelta = densityDelta;
+    return MyeFieldAddImpulse(ctx, f);
+}
+// dir を軸とする半角 coneDeg [度] の扇の中だけの流れ (斬撃)。dir は正規化しない
+inline int32_t MyeFieldCone(const MyeUpdateContext& ctx, MyeVec3 pos, MyeVec3 dir, float radius, float speed,
+                            float coneDeg, float densityDelta = 0.0f)
+{
+    MyeFieldImpulse f = MyeMakeFieldImpulse(MYE_FIELD_SHAPE_CONE, pos, radius);
+    f.dir = dir;
+    f.speed = speed;
+    f.coneDeg = coneDeg;
+    f.densityDelta = densityDelta;
+    return MyeFieldAddImpulse(ctx, f);
+}
+// 場の pos での値を読む。field が null なら pos を含む場のうち entity index 最小。1 = 場の中 / 0 = 外 (out は 0 埋め)。
+// Update からは前 tick の結果、LateUpdate からはこの tick の結果
+inline bool MyeFieldSampleAt(const MyeUpdateContext& ctx, MyeVec3 pos, MyeFieldSample& out,
+                             MyeEntityId field = MyeEntityId{})
+{
+    return ctx.api->FieldSample(ctx.api->engine, field, pos, &out) != 0;
+}
+
 // 「条件が最後に真だった tick からの経過」を数える (コヨーテタイム: 足場を離れてから n tick はジャンプを受ける)。
 // 経過はスクリプトのフィールド (int32、既定は大きな値) に置く = hash 対象・DLL リロードで保たれる
 inline void MyeTickWindowMark(int32_t& ticksSince, bool condition)

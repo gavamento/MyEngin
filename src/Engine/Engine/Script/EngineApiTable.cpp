@@ -24,6 +24,7 @@
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Engine/Feel/FeelLibrary.h" // v31 (M94h)
 #include "Engine/Engine/Feel/FeelState.h"
+#include "Engine/Engine/Disturbance/DisturbanceState.h" // v35 (M96d)
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Scene/TagNames.h" // v20 TagIndex (名前 → 番号)
 #include "Engine/Engine/Scene/Tags.h"     // v20 タグ判定の唯一の実装
@@ -529,6 +530,60 @@ void FillFeelSlots(MyeEngineApi& out)
             return;
         }
         o->scale[channel] = (scale >= 0.0f) ? (scale > 1.0f ? 1.0f : scale) : 0.0f; // NaN も 0 へ落ちる
+    };
+}
+
+// ---- v35 (M96d): かき乱しフィールド (ADR-036) ----
+// 積むのは hash 対象の sim 状態 (Scene::Disturbance のキュー) を書くので C# レーン (NoHash) からは受けない。
+// 読み取りは C# からも使える
+void FillDisturbanceSlots(MyeEngineApi& out)
+{
+    out.FieldAddImpulse = [](void* engine, const MyeFieldImpulse* impulse) -> int32_t {
+        Scene* s = Sc(engine);
+        if (s == nullptr || impulse == nullptr || IsManagedLane(engine)) {
+            return 0;
+        }
+        // radius <= 0 / 非有限値 (NaN は比較が偽になるので radius もここで落ちる) / 不明な shape は積まない
+        if (!(impulse->radius > 0.0f) || impulse->shape < 0 || impulse->shape > static_cast<int32_t>(kFieldImpulseCone)) {
+            return 0;
+        }
+        FieldImpulse f;
+        f.pos[0] = impulse->pos.x;
+        f.pos[1] = impulse->pos.y;
+        f.pos[2] = impulse->pos.z;
+        f.dir[0] = impulse->dir.x;
+        f.dir[1] = impulse->dir.y;
+        f.dir[2] = impulse->dir.z;
+        f.radius = impulse->radius;
+        f.speed = impulse->speed;
+        f.shape = static_cast<uint32_t>(impulse->shape);
+        // 半角 [度] → cos。範囲は [0, 180] に切る (NaN は QueueImpulse が非有限として拒否する)
+        const float coneDeg = impulse->coneDeg < 0.0f ? 0.0f : (impulse->coneDeg > 180.0f ? 180.0f : impulse->coneDeg);
+        f.coneCos = std::cos(coneDeg * (3.14159265358979f / 180.0f));
+        f.density = impulse->densityDelta;
+        f.trail = impulse->trailDepth;
+        f.ripple = impulse->ripple;
+        return DisturbanceQueueImpulse(*s, f) ? 1 : 0;
+    };
+    out.FieldSample = [](void* engine, MyeEntityId field, MyeVec3 pos, MyeFieldSample* outSample) -> int32_t {
+        if (outSample == nullptr) {
+            return 0;
+        }
+        *outSample = MyeFieldSample{};
+        Scene* s = Sc(engine);
+        if (s == nullptr) {
+            return 0;
+        }
+        FieldSampleOut r;
+        if (!DisturbanceSampleAt(s->Disturbance(), s->GetWorld(), ToEngine(field), { pos.x, pos.y, pos.z }, r)) {
+            return 0;
+        }
+        outSample->velocity = { r.flow[0], r.flow[1], r.flow[2] };
+        outSample->density = r.density;
+        outSample->trail = r.trail;
+        outSample->ripple = r.ripple;
+        outSample->field = { r.field.index, r.field.generation };
+        return 1;
     };
 }
 
@@ -2063,6 +2118,7 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     FillComputeSlots(out); // v29
     FillTwoDSlots(out);    // v31
     FillFeelSlots(out);    // v31 (M94h)
+    FillDisturbanceSlots(out); // v35 (M96d)
 }
 
 } // namespace mye

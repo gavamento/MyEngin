@@ -71,6 +71,32 @@ namespace MyeScripting
         public float Distance;
     }
 
+    // Shared/EngineAPI.h の MyeFieldImpulse と同一レイアウト (v35、M96d)。C# からは積めない (FieldAddImpulse は常に 0)
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MyeFieldImpulse
+    {
+        public MyeVec3 Pos;
+        public MyeVec3 Dir;
+        public float Radius;
+        public float Speed;
+        public float ConeDeg;
+        public float DensityDelta;
+        public float TrailDepth;
+        public float Ripple;
+        public int Shape;
+    }
+
+    // Shared/EngineAPI.h の MyeFieldSample と同一レイアウト (v35、M96d)
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MyeFieldSample
+    {
+        public MyeVec3 Velocity;
+        public float Density;
+        public float Trail;
+        public float Ripple;
+        public MyeEntityId Field;
+    }
+
     // Shared/EngineAPI.h の MyeContactInfo と同一レイアウト (v14、M59k)
     [StructLayout(LayoutKind.Sequential)]
     public struct MyeContactInfo
@@ -271,7 +297,7 @@ namespace MyeScripting
         // 版がずれると全スロットが黙って別関数を指すため、静的照合 (規則 11) だけでは
         // 「C++ 側だけ更新して build_managed.bat を忘れた」古い MyeScripting.dll を捕まえられない。
         // ★MYE_API_VERSION を上げたらここも同時に上げる (規則 11-e が機械照合する)
-        internal const uint kExpectedApiVersion = 34u;
+        internal const uint kExpectedApiVersion = 35u;
 
         public uint Version;
         public void* Engine;
@@ -520,6 +546,10 @@ namespace MyeScripting
         public delegate* unmanaged<void*, ulong, uint, int> ConsumeAction;
         public delegate* unmanaged<void*, int> IsSimStepping;
         public delegate* unmanaged<void*, uint, float, void> SetFeelOutputScale;
+        // v35 (M96d): かき乱しフィールド。FieldAddImpulse は C# レーンからは常に 0 (hash 対象の状態を NoHash レーンから動かさない)。
+        // FieldSample は読み取りなので使える
+        public delegate* unmanaged<void*, MyeFieldImpulse*, int> FieldAddImpulse;
+        public delegate* unmanaged<void*, MyeEntityId, MyeVec3, MyeFieldSample*, int> FieldSample;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -1183,6 +1213,15 @@ namespace MyeScripting
         public static void SetFeelOutputScale(uint channel, float scale)
         {
             if (_api != null) _api->SetFeelOutputScale(_api->Engine, channel, scale);
+        }
+
+        // v35 (M96d): かき乱しフィールドの読み取り。1 = 場の中、0 = 外 (sample は 0 埋め)。
+        // 書き込み (FieldAddImpulse) は C# レーンからは受けないので糖衣を出さない
+        public static bool FieldSample(MyeEntityId field, MyeVec3 pos, out MyeFieldSample sample)
+        {
+            sample = default;
+            if (_api == null) return false;
+            fixed (MyeFieldSample* p = &sample) { return _api->FieldSample(_api->Engine, field, pos, p) != 0; }
         }
 
         // ---- v13 (M52i): ネット対戦の状態 ----

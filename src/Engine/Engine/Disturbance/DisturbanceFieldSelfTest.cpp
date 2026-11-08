@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -22,6 +24,8 @@
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Scene/TransformSystem.h"
+#include "Engine/Engine/Script/EngineApiTable.h"
+#include "Shared/EngineAPI.h"
 #include "Engine/Renderer/Passes/DisturbanceFieldPass.h"
 
 namespace mye {
@@ -199,6 +203,198 @@ void LateInputs(Sim& s, int tick)
         FieldImpulse imp = MakeImpulse(10.0f, 0.0f, 3.0f, 2.0f, 0.0f, 0.0f, 3.0f);
         imp.shape = kFieldImpulseRadial;
         DisturbanceQueueImpulse(s.scene, imp);
+    }
+}
+
+} // namespace
+
+namespace {
+
+// ABI v35 (M96d): FieldAddImpulse / FieldSample。C ABI の表を通して積み・読み、内部の関数と一致することを見る
+void RunDisturbanceAbiTests(const std::function<void(bool, const char*)>& check)
+{
+    constexpr int kSide = 32;
+    constexpr float kCell = 0.25f;
+    // 1 本の場 (32 x 32、濃さのみ) と、その sim に繋いだ ABI の表
+    struct Rig {
+        Sim sim;
+        EntityID field = kNullEntity;
+        ScriptApiContext ctx;
+        MyeEngineApi api = {};
+        void Init()
+        {
+            field = AddField(sim, 0.0f, 0.0f, 0.0f, kSide, kSide, kDisturbanceChannelDensity);
+            sim.Flush();
+            sim.Step();
+            ctx.scene = &sim.scene;
+            BuildEngineApi(api, &ctx);
+        }
+        // マス (ix, iz) の中心 (ワールド)。y は層の中
+        MyeVec3 CellCenter(int ix, int iz) const
+        {
+            const DisturbanceSlot& s = sim.scene.Disturbance().Slots()[0];
+            return { (static_cast<float>(s.originCell[0] + ix) + 0.5f) * kCell, 0.2f,
+                     (static_cast<float>(s.originCell[2] + iz) + 0.5f) * kCell };
+        }
+        size_t Index(int ix, int iz) const
+        {
+            return static_cast<size_t>(ix) + static_cast<size_t>(kSide) * static_cast<size_t>(iz);
+        }
+    };
+
+    auto makeImpulse = [](int32_t shape, MyeVec3 pos, MyeVec3 dir, float radius, float speed) {
+        MyeFieldImpulse f = {};
+        f.pos = pos;
+        f.dir = dir;
+        f.radius = radius;
+        f.speed = speed;
+        f.coneDeg = 25.0f;
+        f.shape = shape;
+        return f;
+    };
+
+    // ---- 表の充填・拒否 ----
+    {
+        auto rig = std::make_unique<Rig>();
+        rig->Init();
+        const MyeEngineApi& api = rig->api;
+        void* const eng = rig->api.engine;
+        check(api.version == MYE_API_VERSION && api.FieldAddImpulse != nullptr && api.FieldSample != nullptr,
+              "abi: the v35 field slots are filled in");
+        const MyeVec3 c = rig->CellCenter(16, 16);
+        const MyeFieldImpulse good = makeImpulse(0, c, { 1.0f, 0.0f, 0.0f }, 1.0f, 2.0f);
+        MyeFieldImpulse nan = good;
+        nan.speed = std::numeric_limits<float>::quiet_NaN();
+        MyeFieldImpulse inf = good;
+        inf.pos.x = std::numeric_limits<float>::infinity();
+        MyeFieldImpulse zeroRadius = good;
+        zeroRadius.radius = 0.0f;
+        MyeFieldImpulse nanRadius = good;
+        nanRadius.radius = std::numeric_limits<float>::quiet_NaN();
+        MyeFieldImpulse badShape = good;
+        badShape.shape = 3;
+        MyeFieldImpulse negShape = good;
+        negShape.shape = -1;
+        check(api.FieldAddImpulse(eng, nullptr) == 0 && api.FieldAddImpulse(eng, &nan) == 0
+                  && api.FieldAddImpulse(eng, &inf) == 0 && api.FieldAddImpulse(eng, &zeroRadius) == 0
+                  && api.FieldAddImpulse(eng, &nanRadius) == 0 && api.FieldAddImpulse(eng, &badShape) == 0
+                  && api.FieldAddImpulse(eng, &negShape) == 0 && rig->sim.D().Queue().empty(),
+              "abi: null / non-finite / radius <= 0 / unknown shape return 0 and queue nothing");
+        check(api.FieldAddImpulse(eng, &good) == 1 && rig->sim.D().Queue().size() == 1, "abi: a valid impulse is queued");
+        // キューは 256 で満杯。超えたら 0
+        bool allQueued = true;
+        for (uint32_t i = 1; i < kMaxDisturbanceQueue; ++i) {
+            allQueued = allQueued && api.FieldAddImpulse(eng, &good) == 1;
+        }
+        check(allQueued && api.FieldAddImpulse(eng, &good) == 0, "abi: the 257th impulse is refused");
+        // C# レーンからは積めない (読みは許す)
+        rig->sim.Step();
+        rig->ctx.computeLane = compute::CallerKind::CSharp;
+        check(api.FieldAddImpulse(eng, &good) == 0 && rig->sim.D().Queue().empty(),
+              "abi: the managed lane cannot queue an impulse");
+        MyeFieldSample smp = {};
+        check(api.FieldSample(eng, MyeEntityId{}, c, &smp) == 1, "abi: the managed lane can read a sample");
+    }
+
+    // ---- 3 形の向き ----
+    {
+        auto rig = std::make_unique<Rig>();
+        rig->Init();
+        const DisturbanceSlot& s = rig->sim.D().Slots()[0];
+        MyeFieldImpulse radial = makeImpulse(1, rig->CellCenter(16, 16), { 0.0f, 0.0f, 0.0f }, 1.5f, 3.0f);
+        rig->api.FieldAddImpulse(rig->api.engine, &radial);
+        rig->sim.Step();
+        check(s.flowX[rig->Index(18, 16)] > 0.0f && s.flowX[rig->Index(14, 16)] < 0.0f
+                  && s.flowZ[rig->Index(16, 18)] > 0.0f && s.flowZ[rig->Index(16, 14)] < 0.0f,
+              "abi: radial pushes outward on all four sides");
+        check(std::fabs(s.flowX[rig->Index(16, 16)]) < 1.0e-4f && std::fabs(s.flowZ[rig->Index(16, 16)]) < 1.0e-4f,
+              "abi: radial leaves the center cell at rest");
+
+        auto rigC = std::make_unique<Rig>();
+        rigC->Init();
+        const DisturbanceSlot& sc = rigC->sim.D().Slots()[0];
+        MyeFieldImpulse cone = makeImpulse(2, rigC->CellCenter(16, 16), { 1.0f, 0.0f, 0.0f }, 3.0f, 3.0f);
+        rigC->api.FieldAddImpulse(rigC->api.engine, &cone);
+        rigC->sim.Step();
+        const float inside = sc.flowX[rigC->Index(19, 16)];
+        const float outside = std::fabs(sc.flowX[rigC->Index(16, 22)]);
+        check(inside > 0.0f && outside < inside * 0.5f, "abi: a cone pushes along its axis and leaves the far side nearly alone");
+
+        // Point の dir は正規化しない: 長さ 2 の dir は長さ 1 の dir の 2 倍の流れ
+        auto rigA = std::make_unique<Rig>();
+        rigA->Init();
+        auto rigB = std::make_unique<Rig>();
+        rigB->Init();
+        MyeFieldImpulse one = makeImpulse(0, rigA->CellCenter(16, 16), { 1.0f, 0.0f, 0.0f }, 1.0f, 1.0f);
+        MyeFieldImpulse two = one;
+        two.dir = { 2.0f, 0.0f, 0.0f };
+        rigA->api.FieldAddImpulse(rigA->api.engine, &one);
+        rigB->api.FieldAddImpulse(rigB->api.engine, &two);
+        rigA->sim.Step();
+        rigB->sim.Step();
+        const float fa = rigA->sim.D().Slots()[0].flowX[rigA->Index(16, 16)];
+        const float fb = rigB->sim.D().Slots()[0].flowX[rigB->Index(16, 16)];
+        check(fa > 0.0f && std::fabs(fb - 2.0f * fa) <= 1.0e-4f * fb,
+              "abi: a point impulse is not normalized (dir length scales the speed)");
+    }
+
+    // ---- 積む時点と効く step ----
+    {
+        auto rig = std::make_unique<Rig>();
+        rig->Init();
+        const DisturbanceSlot& s = rig->sim.D().Slots()[0];
+        const MyeFieldImpulse imp = makeImpulse(0, rig->CellCenter(16, 16), { 1.0f, 0.0f, 0.0f }, 1.0f, 2.0f);
+        // Update (step の前) で積む: 同じ tick の step で効く
+        rig->api.FieldAddImpulse(rig->api.engine, &imp);
+        rig->sim.Step();
+        check(rig->sim.D().Queue().empty() && s.flowX[rig->Index(16, 16)] > 0.0f,
+              "timing: an impulse queued before the step acts in that step");
+        // LateUpdate (step の後) で積む: その tick の step では効かず、次の step で効く
+        auto late = std::make_unique<Rig>();
+        late->Init();
+        late->sim.Step();
+        const DisturbanceSlot& ls = late->sim.D().Slots()[0];
+        late->api.FieldAddImpulse(late->api.engine, &imp);
+        check(late->sim.D().Queue().size() == 1 && ls.flowX[late->Index(16, 16)] == 0.0f,
+              "timing: an impulse queued after the step has not acted yet");
+        late->sim.Step();
+        check(late->sim.D().Queue().empty() && ls.flowX[late->Index(16, 16)] > 0.0f, "timing: it acts in the next step");
+    }
+
+    // ---- FieldSample は内部の読み取りと一致 ----
+    {
+        auto rig = std::make_unique<Rig>();
+        rig->Init();
+        void* const eng = rig->api.engine;
+        MyeFieldImpulse imp = makeImpulse(0, rig->CellCenter(16, 16), { 1.0f, 0.0f, 0.0f }, 1.0f, 2.0f);
+        imp.densityDelta = -0.5f;
+        rig->api.FieldAddImpulse(eng, &imp);
+        rig->sim.Step(3);
+        const MyeVec3 neighbour = rig->CellCenter(17, 16);
+        const MyeVec3 probe = { neighbour.x + 0.05f, 0.3f, neighbour.z };
+        FieldSampleOut inner;
+        const bool innerHit =
+            DisturbanceSampleAt(rig->sim.D(), rig->sim.W(), kNullEntity, { probe.x, probe.y, probe.z }, inner);
+        MyeFieldSample abi = {};
+        check(innerHit && rig->api.FieldSample(eng, MyeEntityId{}, probe, &abi) == 1 && abi.velocity.x == inner.flow[0]
+                  && abi.velocity.y == inner.flow[1] && abi.velocity.z == inner.flow[2] && abi.density == inner.density
+                  && abi.trail == inner.trail && abi.ripple == inner.ripple && abi.field.index == inner.field.index
+                  && abi.field.generation == inner.field.generation && abi.velocity.x > 0.0f && abi.density < 1.0f,
+              "abi: FieldSample matches DisturbanceSampleAt");
+        // 場を名指しても同じ。無い場を名指すと外
+        MyeFieldSample named = {};
+        const MyeEntityId fieldId = { rig->field.index, rig->field.generation };
+        check(rig->api.FieldSample(eng, fieldId, probe, &named) == 1 && named.density == abi.density,
+              "abi: naming the field gives the same sample");
+        MyeFieldSample none = {};
+        none.density = 5.0f;
+        check(rig->api.FieldSample(eng, MyeEntityId{ 999u, 0u }, probe, &none) == 0 && none.density == 0.0f,
+              "abi: an unknown field returns 0 with a zeroed sample");
+        MyeFieldSample outside = {};
+        outside.density = 5.0f;
+        check(rig->api.FieldSample(eng, MyeEntityId{}, { 500.0f, 0.2f, 0.0f }, &outside) == 0 && outside.density == 0.0f,
+              "abi: outside the grid returns 0 with a zeroed sample");
+        check(rig->api.FieldSample(eng, MyeEntityId{}, probe, nullptr) == 0, "abi: a null out returns 0");
     }
 }
 
@@ -769,6 +965,10 @@ bool RunDisturbanceFieldImpl(bool heavy)
         s->W().GetComponent<DisturbanceFieldComponent>(f)->cellsX = 48;
         check(BuildDisturbanceFieldUpload(s->W(), &s->D(), up) == 1 && !up.layers[0].hasState && up.layers[0].cellsX == 48,
               "render: a layer whose slot no longer matches the settings is drawn as a constant until the step rebuilds it");
+    }
+
+    if (!heavy) {
+        RunDisturbanceAbiTests(check); // M96d (ABI v35)
     }
 
     return failCount == 0;

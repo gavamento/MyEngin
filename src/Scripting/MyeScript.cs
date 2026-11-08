@@ -482,6 +482,14 @@ namespace MyeScripting
         protected static void SetFeelOutputScale(int channel, float scale)
             => Engine.SetFeelOutputScale((uint)channel, scale);
 
+        // かき乱しフィールド (v35): 場の pos での値を読む。field = 場のエンティティ (default なら pos を含む場のうち index 最小)。
+        // Update からは前 tick の結果、LateUpdate からはこの tick の結果。
+        // ★インパルスを積む FieldAddImpulse は C++ スクリプトのみ — C# は NoHash レーンなので積めない
+        protected static bool FieldSample(MyeEntity field, MyeVec3 pos, out MyeFieldSample sample)
+            => Engine.FieldSample(field.Id, pos, out sample);
+        protected static bool FieldSample(MyeVec3 pos, out MyeFieldSample sample)
+            => Engine.FieldSample(MyeEntityId.Null, pos, out sample);
+
         // ---- UI ナビ/ヒットテスト (v7 + v12)。どちらも基準解像度 1920x1080 で解決 ----
         protected static MyeEntity UIFocusNav(MyeEntity current, int dir)
             => new MyeEntity(Engine.UIFocusNav(current.Id, dir));
