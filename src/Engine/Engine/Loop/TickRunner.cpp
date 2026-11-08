@@ -18,6 +18,7 @@
 #include "Engine/Engine/Animation/Animation.h"
 #include "Engine/Engine/Animation/AnimatorController.h"
 #include "Engine/Engine/Acoustic/AcousticDebugDraw.h"
+#include "Engine/Engine/Disturbance/DisturbanceState.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Acoustic/AgentSystem.h" // M65f: 敵の思考 (フェーズ 3.4 の後半)
 #include "Engine/Engine/Navigation/GridNav2D.h" // M94u: 2D グリッド A*
@@ -652,6 +653,8 @@ void RunOneTick(TickServices& ts)
             if (ts.behaviorTree != nullptr) {
                 ts.behaviorTree->AppendDebugLines(scene.GetWorld(), debugLines);
             }
+            // かき乱しフィールドの流れの矢印と濃さ (M96d)。表示は DisturbanceField ごとの drawDebug で決まる
+            DisturbanceAppendDebugLines(scene.GetWorld(), scene.Disturbance(), debugLines);
         }
     }
     // ---- フェーズ 5: スクリプト層 LateUpdate ----

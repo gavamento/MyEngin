@@ -518,7 +518,7 @@ uint64_t HashFeelState(const FeelState& feel, DumpCtx* d)
 }
 
 // M96: かき乱しフィールド。スロット順 (entity index 昇順) に寸法と全配列の生バイトを畳み、最後に配送待ちのインパルスを畳む。
-// ダンプは場ごとに配列ごとのサブハッシュの行と、場の小計の行 (#field) を出す
+// 配列は HashStateBytes (ADR-030 決定 13 と同じ速い畳み方)。ダンプは場ごとに配列ごとのサブハッシュの行と、場の小計の行 (#field) を出す
 uint64_t HashDisturbanceState(const DisturbanceState& state, DumpCtx* d)
 {
     uint64_t h = kFnvOffset;
@@ -539,12 +539,18 @@ uint64_t HashDisturbanceState(const DisturbanceState& state, DumpCtx* d)
         FoldBytes(h, d, "Disturbance", "cellSize", &s.cellSize, sizeof(s.cellSize));
         FoldBytes(h, d, "Disturbance", "originCell", s.originCell, sizeof(s.originCell));
         FoldBytes(h, d, "Disturbance", "baseY", &s.baseY, sizeof(s.baseY));
-        FoldFloats(h, d, "Disturbance", "flowX", s.flowX.data(), static_cast<uint32_t>(s.flowX.size()));
-        FoldFloats(h, d, "Disturbance", "flowZ", s.flowZ.data(), static_cast<uint32_t>(s.flowZ.size()));
-        FoldFloats(h, d, "Disturbance", "density", s.density.data(), static_cast<uint32_t>(s.density.size()));
-        FoldFloats(h, d, "Disturbance", "trail", s.trail.data(), static_cast<uint32_t>(s.trail.size()));
-        FoldFloats(h, d, "Disturbance", "ripple", s.ripple.data(), static_cast<uint32_t>(s.ripple.size()));
-        FoldFloats(h, d, "Disturbance", "ripplePrev", s.ripplePrev.data(), static_cast<uint32_t>(s.ripplePrev.size()));
+        h = HashStateBytes(s.flowX.data(), s.flowX.size() * sizeof(float), h);
+        EmitArray(d, "Disturbance", "flowX", s.flowX.data(), static_cast<uint32_t>(s.flowX.size()), h);
+        h = HashStateBytes(s.flowZ.data(), s.flowZ.size() * sizeof(float), h);
+        EmitArray(d, "Disturbance", "flowZ", s.flowZ.data(), static_cast<uint32_t>(s.flowZ.size()), h);
+        h = HashStateBytes(s.density.data(), s.density.size() * sizeof(float), h);
+        EmitArray(d, "Disturbance", "density", s.density.data(), static_cast<uint32_t>(s.density.size()), h);
+        h = HashStateBytes(s.trail.data(), s.trail.size() * sizeof(float), h);
+        EmitArray(d, "Disturbance", "trail", s.trail.data(), static_cast<uint32_t>(s.trail.size()), h);
+        h = HashStateBytes(s.ripple.data(), s.ripple.size() * sizeof(float), h);
+        EmitArray(d, "Disturbance", "ripple", s.ripple.data(), static_cast<uint32_t>(s.ripple.size()), h);
+        h = HashStateBytes(s.ripplePrev.data(), s.ripplePrev.size() * sizeof(float), h);
+        EmitArray(d, "Disturbance", "ripplePrev", s.ripplePrev.data(), static_cast<uint32_t>(s.ripplePrev.size()), h);
         EmitU64(d, "Disturbance", "#field", h, h); // 場の小計 (ここまでの畳み込み)
     }
     if (d && d->lines) {
@@ -553,7 +559,8 @@ uint64_t HashDisturbanceState(const DisturbanceState& state, DumpCtx* d)
     const std::vector<FieldImpulse>& queue = state.Queue();
     FoldU64(h, d, "Disturbance", "queueCount", queue.size());
     if (!queue.empty()) {
-        FoldBytes(h, d, "Disturbance", "queue", queue.data(), queue.size() * sizeof(FieldImpulse));
+        h = HashStateBytes(queue.data(), queue.size() * sizeof(FieldImpulse), h);
+        EmitArray(d, "Disturbance", "queue", queue.data(), queue.size() * sizeof(FieldImpulse), static_cast<uint32_t>(queue.size()), h);
     }
     return h;
 }

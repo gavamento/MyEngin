@@ -2657,6 +2657,9 @@ struct DisturbanceFieldComponent {
     bool autoFroxel = true;     // true: フロクセルが off でもこの場の霧のために自動で回す
     bool drawDebug = false;     // 速度の矢印と濃さを debugLines に描く
     uint8_t pad0 = 0;           // 明示パディング (スナップショットの生バイトに未初期化を残さない)
+    // ---- 流れのソルバ (sim が読む。見た目の欄の後ろに足してある) ----
+    int32_t pressureIterations = 20; // 圧力投影の Jacobi 反復回数 [0,64] (0 = 投影しない)
+    float windScale = 1.0f;          // PhysicsEnvironment の風 (xz) に掛ける倍率。0 = 風の影響なし
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

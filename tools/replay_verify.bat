@@ -171,6 +171,10 @@ if exist cache\jobsab_perception.rep.mismatch.txt (
     set DIAGFOUND=1
     call :diagnose "cache\jobsab_perception.rep" "--perception-demo --no-jobs"
 )
+if exist cache\jobsab_field.rep.mismatch.txt (
+    set DIAGFOUND=1
+    call :diagnose "cache\jobsab_field.rep" "--field-demo --no-jobs"
+)
 if exist cache\jobsab_parts.rep.mismatch.txt (
     set DIAGFOUND=1
     call :diagnose "cache\jobsab_parts.rep" "--parts-demo --no-jobs"
@@ -414,7 +418,7 @@ call :chain cache\golden_field.rep "--field-demo" "--field-demo"
 exit /b %ERRORLEVEL%
 
 rem ---- jobs A/B (M90g、ADR-028) ----
-rem sim の並列化 (CPU 粒子 / Perception / PartFollow / IK) が「直列と 1 ビットも違わない」ことの
+rem sim の並列化 (CPU 粒子 / Perception / PartFollow / IK / かき乱しフィールド) が「直列と 1 ビットも違わない」ことの
 rem 実シーンでの証明。直列 (--no-jobs) で録った .rep を、ワーカーを起こした Debug / Release で
 rem 毎 tick のワールドハッシュと照合する。.rep のヘッダの jobs ビットは違うがハッシュ列は同一のはず
 rem (verify はヘッダの jobs ビットを見ない)。IK を含むシーンは無いので IK は SimParallelSelfTest が受け持つ。
@@ -423,6 +427,8 @@ rem 部位追従のペアは :job_parts の中で回す (保存済みシーン�
 call :jobsab_one cache\jobsab_particle.rep "--particle-demo --particle-backend cpu"
 if errorlevel 1 exit /b 1
 call :jobsab_one cache\jobsab_perception.rep "--perception-demo"
+if errorlevel 1 exit /b 1
+call :jobsab_one cache\jobsab_field.rep "--field-demo"
 exit /b %ERRORLEVEL%
 
 rem ---- compute A/B (M91i、ADR-030) ----

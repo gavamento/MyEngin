@@ -141,6 +141,7 @@
     <ClCompile Include="..\src\Engine\Engine\Demo\ShowcaseScenes.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\StartScene.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\TwoDDemoSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceDebugDraw.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceFieldSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceParams.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceRender.cpp" />

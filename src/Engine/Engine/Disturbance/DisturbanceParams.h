@@ -43,6 +43,8 @@ struct FieldParams {
     float trailKeep = 1.0f;
     float rippleSpeed = 0.0f;
     float rippleKeep = 1.0f;
+    int32_t pressureIterations = 0; // [0, kMaxPressureIterations]
+    float windScale = 0.0f;         // [0, kMaxWindScale]
     float pos[3] = { 0.0f, 0.0f, 0.0f }; // 場のエンティティのワールド位置
 };
 

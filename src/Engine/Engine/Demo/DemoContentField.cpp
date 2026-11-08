@@ -49,6 +49,7 @@ void AddPhysicsEnvironment(Scene& s)
     GameObject envGo = s.CreateGameObject("Environment");
     auto* env = envGo.AddComponent<PhysicsEnvironmentComponent>();
     env->gravity = { 0.0f, -9.81f, 0.0f };
+    env->windVelocity = { 0.4f, 0.0f, 0.0f }; // 弱い風。晴れた筋が風下 (+x) へゆっくり流される
 }
 
 void AddGround(Scene& s, const AssetID cube)

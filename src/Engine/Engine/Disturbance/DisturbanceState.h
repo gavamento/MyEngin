@@ -18,6 +18,7 @@ class World;
 class Scene;
 class ByteWriter;
 class ByteReader;
+struct DebugLineCmd;
 
 // 同時に sim する場の数。entity index の昇順で先頭 4 個だけ (5 個目以降は sim しない)
 inline constexpr uint32_t kMaxDisturbanceFields = 4;
@@ -32,6 +33,9 @@ inline constexpr int32_t kMaxDisturbanceSide = 512;
 inline constexpr float kMaxRippleHeight = 2.0f;
 // 波紋のクーラン数の上限 (2D の安定条件 1/sqrt(2) 未満)
 inline constexpr float kMaxRippleCourant = 0.7f;
+// 圧力投影の反復回数の上限と、風の倍率の上限
+inline constexpr int32_t kMaxPressureIterations = 64;
+inline constexpr float kMaxWindScale = 10.0f;
 // sim の周波数。cellSize × この値が流れの速さの上限 (1 tick に 1 マス)
 inline constexpr float kDisturbanceTickRate = 60.0f;
 
@@ -105,6 +109,23 @@ public:
     // 配送待ちに積む。満杯または値が不正なら積まず false (満杯の WARN は step ごとに 1 回)
     bool QueueImpulse(const FieldImpulse& impulse);
 
+    // 流れのソルバの作業領域 (圧力・発散・移流の書き込み先)。状態ではない。毎 tick 確保し直さないよう持ち続ける
+    struct SolverScratch {
+        std::vector<float> flowX;
+        std::vector<float> flowZ;
+        std::vector<float> pressureA;
+        std::vector<float> pressureB;
+        std::vector<float> divergence;
+        std::vector<float> zeroRow;    // 格子外の圧力 (0) を行として渡すための行
+        // Radial のインパルスがこの step で注入した速度の差分 (場ごと)。投影の右辺から発散を引く発散源 (爆発)。
+        // radialActive が偽の場は使わない (配列は触らない)
+        std::vector<float> radialX[kMaxDisturbanceFields];
+        std::vector<float> radialZ[kMaxDisturbanceFields];
+        bool radialActive[kMaxDisturbanceFields] = {};
+        std::vector<float> targetRowZ; // 格子外の流れ (目標速度の z) を行として渡すための行
+        std::vector<float> density;
+    };
+
     const std::vector<DisturbanceSlot>& Slots() const { return slots_; }
     std::vector<DisturbanceSlot>& Slots() { return slots_; }
     const std::vector<FieldImpulse>& Queue() const { return queue_; }
@@ -131,12 +152,18 @@ private:
     bool queueFullWarned_ = false;           // step ごとに戻す
     std::vector<EntityID> warnedFields_;     // 警告済みの場 (5 個目以降 / Volume)
     std::vector<float> rippleScratch_;       // 波紋の次の h の作業領域
+    SolverScratch solver_; // 流れのソルバの作業領域
 };
 
-// 1 tick の step (フェーズ 4)。場の掃除と作り直し → 源の注入 → 配送待ちの注入 → 減衰と復元 → 波紋 → 範囲の強制。
+// 1 tick の step (フェーズ 4)。場の掃除と作り直し → 源の注入 → 配送待ちの注入 → 流れの移流・減衰・投影 → 濃さの移流 → 復元 → 波紋 → 範囲の強制。
+// 移流・投影・復元・波紋は z 行で jobs::ParallelRanges に割る (注入は直列)。
 // 場が 1 つも無く配送待ちも空なら走査だけで抜ける。World から読むのは Transform 確定後の WorldMatrix、
-// CharacterController.velocity、Rigidbody.velocity と、場・源のコンポーネント
+// CharacterController.velocity、Rigidbody.velocity と、場・源のコンポーネント、PhysicsEnvironment の風
 void DisturbanceStep(World& world, DisturbanceState& state);
+
+// デバッグ描画 (出力レーン)。drawDebug の場について、4 マスおきに流れの矢印と濃さの十字を out へ積む。
+// 読むだけで状態は変えない。再シム中は呼ばない (呼び出し側が !ts.resim で守る)
+void DisturbanceAppendDebugLines(World& world, const DisturbanceState& state, std::vector<DebugLineCmd>& out);
 
 // 配送待ちにインパルスを積む (満杯で false + WARN)。積んだ後の最初の step で消費される
 bool DisturbanceQueueImpulse(Scene& scene, const FieldImpulse& impulse);

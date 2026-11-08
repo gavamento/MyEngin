@@ -14,4 +14,9 @@ bool RunDisturbanceFieldSelfTest();
 // 重い 4 項目 (128x128 を 600 tick、1200 tick の復元、10000 tick の波紋、2 ワールド 600 tick と焼き込みハッシュ)。Full 層
 bool RunDisturbanceFieldLongSelfTest();
 
+// --field-bench: ヘッドレス計測。128x128・全チャネル・20 反復の step とハッシュの ms (jobs なし / あり)、
+// スナップショット 1 枚のバイト数、焼き込みハッシュの再採取値、ソルバの断言 (発散・渦・風) を MYE_LOG_INFO へ出す。
+// selftest の層とは独立に回せる計測専用コマンドで、戻り値は常に 0
+int RunDisturbanceFieldBenchmark();
+
 } // namespace mye

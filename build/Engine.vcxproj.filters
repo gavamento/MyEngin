@@ -603,6 +603,9 @@
     <ClCompile Include="..\src\Engine\Engine\Demo\TwoDDemoSelfTest.cpp">
       <Filter>Engine\Demo</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceDebugDraw.cpp">
+      <Filter>Engine\Disturbance</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceFieldSelfTest.cpp">
       <Filter>Engine\Disturbance</Filter>
     </ClCompile>

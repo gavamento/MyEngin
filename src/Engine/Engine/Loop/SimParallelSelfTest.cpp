@@ -21,9 +21,11 @@
 #include "Engine/Core/Jobs/JobSystem.h"
 #include "Engine/Engine/Animation/PartFollowSystem.h"
 #include "Engine/Engine/Animation/TwoBoneIkSystem.h"
+#include "Engine/Engine/Disturbance/DisturbanceState.h"
 #include "Engine/Engine/Particles/CpuParticleBackend.h"
 #include "Engine/Engine/Perception/PerceptionSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h" // SolidContact
+#include "Engine/Engine/Replay/SimSnapshot.h" // SimRefs (場の状態をハッシュへ畳む)
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
@@ -87,11 +89,11 @@ void LogTimes(const char* name, const UpdateTimes& t)
 // 全 tick を jobs あり (a) / なし (b) で回し、毎 tick のハッシュが一致したかを返す。
 // stepA / stepB は引数の jobs 設定のまま 1 tick 進めて、その tick の状態ハッシュを返す
 bool RunAB(const std::function<uint64_t(int tick)>& stepA, const std::function<uint64_t(int tick)>& stepB,
-           JobDelta& delta, uint64_t& lastHash)
+           JobDelta& delta, uint64_t& lastHash, int ticks = kTicks)
 {
     bool same = true;
     const jobs::JobSystem::Stats before = jobs::System().GetStats();
-    for (int tick = 0; tick < kTicks; ++tick) {
+    for (int tick = 0; tick < ticks; ++tick) {
         jobs::System().SetEnabled(true);
         const uint64_t a = stepA(tick);
         jobs::System().SetEnabled(false);
@@ -264,6 +266,94 @@ void TestPerception(Checker& ck)
     ck.Check(jobs::System().WorkerCount() == 0 || delta.batches > 0, "Perception: 知覚者の更新がワーカーへ配られる");
 }
 
+// ---- かき乱しフィールド (M96d) ----
+constexpr int kFieldTicks = 600;
+constexpr int kFieldMovers = 4;
+
+struct FieldRig {
+    Scene scene;
+    TransformSystem transforms;
+    std::vector<EntityID> movers;
+};
+
+// 風・全チャネル 64 x 64 マスの場に、動く源 4 個と定常の源 1 個。行数 64 は並列化の最小単位 (8 行) の 8 倍
+void BuildField(FieldRig& rig)
+{
+    GameObject env = rig.scene.CreateGameObjectTracked("Environment");
+    env.AddComponent<PhysicsEnvironmentComponent>()->windVelocity = { 1.5f, 0.0f, -0.5f };
+    GameObject field = rig.scene.CreateGameObjectTracked("Field");
+    auto* f = field.AddComponent<DisturbanceFieldComponent>();
+    f->cellsX = 64;
+    f->cellsZ = 64;
+    f->channels = 7;
+    for (int i = 0; i < kFieldMovers; ++i) {
+        GameObject mover = rig.scene.CreateGameObjectTracked("Mover");
+        mover.SetLocalPosition(-6.0f, 0.0f, static_cast<float>(i) * 2.5f - 4.0f);
+        auto* src = mover.AddComponent<DisturbanceSourceComponent>();
+        src->radius = 1.2f;
+        src->trailDepth = 0.3f;
+        src->ripple = 0.05f;
+        rig.movers.push_back(mover.Id());
+    }
+    GameObject fan = rig.scene.CreateGameObjectTracked("Fan");
+    fan.SetLocalPosition(5.0f, 0.0f, 1.0f);
+    auto* fanSrc = fan.AddComponent<DisturbanceSourceComponent>();
+    fanSrc->mode = 1;
+    fanSrc->constantVelocity = { -2.0f, 0.0f, 1.0f };
+    fanSrc->densityDelta = 0.2f;
+    World& world = rig.scene.GetWorld();
+    world.ApplyStructuralChanges();
+    rig.transforms.Update(world);
+}
+
+uint64_t StepField(FieldRig& rig, int tick, double& acc)
+{
+    World& world = rig.scene.GetWorld();
+    for (size_t i = 0; i < rig.movers.size(); ++i) {
+        auto* t = world.GetComponent<LocalTransform>(rig.movers[i]);
+        t->position.x = -6.0f + 0.05f * static_cast<float>(tick % 240) + 0.3f * static_cast<float>(i);
+    }
+    TimeInto(acc, [&] { DisturbanceStep(world, rig.scene.Disturbance()); });
+    // step の後に積む (LateUpdate 相当)。次の step で消費される
+    if (tick % 97 == 40) {
+        FieldImpulse imp;
+        imp.pos[0] = -2.0f;
+        imp.pos[1] = 0.2f;
+        imp.pos[2] = 0.0f;
+        imp.radius = 1.5f;
+        imp.dir[0] = 1.0f;
+        imp.dir[1] = 0.0f;
+        imp.dir[2] = 0.3f;
+        imp.speed = 4.0f;
+        imp.density = -0.5f;
+        DisturbanceQueueImpulse(rig.scene, imp);
+    }
+    world.ApplyStructuralChanges();
+    rig.transforms.Update(world);
+    SimRefs refs;
+    refs.scene = &rig.scene;
+    return HashWorld(world, refs.HashSources());
+}
+
+void TestField(Checker& ck)
+{
+    FieldRig a, b;
+    BuildField(a);
+    BuildField(b);
+    JobDelta delta;
+    uint64_t lastHash = 0;
+    UpdateTimes times;
+    const bool same = RunAB([&](int t) { return StepField(a, t, times.jobsOnMs); },
+                            [&](int t) { return StepField(b, t, times.jobsOffMs); }, delta, lastHash, kFieldTicks);
+    MYE_LOG_INFO("  [time] disturbance field: step %.3f ms/tick with jobs, %.3f ms/tick serial (reference only)",
+                 times.jobsOnMs / kFieldTicks, times.jobsOffMs / kFieldTicks);
+    ck.Check(same, "Disturbance: jobs あり / なしで 600 tick 毎 tick のワールドハッシュ (場の状態込み) が一致する");
+    ck.Check(a.scene.Disturbance().HasHashableState() && lastHash != 0, "Disturbance: 比べた場面で場の状態がハッシュに畳まれている");
+    MYE_LOG_INFO("  [jobs] disturbance: parallel batches %llu, chunks run by workers %llu",
+                 static_cast<unsigned long long>(delta.batches), static_cast<unsigned long long>(delta.workerChunks));
+    ck.Check(jobs::System().WorkerCount() == 0 || delta.batches > 0, "Disturbance: 移流・投影の行がワーカーへ配られる");
+}
+
 // ---- TwoBoneIk + PartFollow ----
 struct BodyRig {
     Scene scene;
@@ -379,6 +469,7 @@ bool RunSimParallelSelfTest()
     TestParticles(ck);
     TestPerception(ck);
     TestBodies(ck);
+    TestField(ck);
 
     if (startedHere) {
         jobs::System().Shutdown();

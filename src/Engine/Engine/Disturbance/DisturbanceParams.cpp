@@ -39,6 +39,8 @@ FieldParams SanitizeField(EntityID e, const DisturbanceFieldComponent& c, const 
     p.trailKeep = ClampOr(c.trailKeep, 0.0f, 1.0f, 1.0f);
     p.rippleSpeed = ClampOr(c.rippleSpeed, 0.0f, 1.0e6f, 0.0f);
     p.rippleKeep = ClampOr(c.rippleKeep, 0.0f, 1.0f, 1.0f);
+    p.pressureIterations = std::clamp(c.pressureIterations, 0, kMaxPressureIterations);
+    p.windScale = ClampOr(c.windScale, 0.0f, kMaxWindScale, 1.0f);
     for (int i = 0; i < 3; ++i) {
         p.pos[i] = FiniteOr(pos[i], 0.0f);
     }

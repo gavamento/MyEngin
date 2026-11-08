@@ -179,7 +179,8 @@ struct SimRefs {
 //            再生中の手触り 16 件 (FeelState) と先行入力の窓 (InputBufferState、4 レーン × 32 本の生バイト)
 // v70 (M96a): DFLD 節 (かき乱しフィールドのスロットと配送待ちのインパルス) を TM2D 節の後・World 節の前に追加。
 //            DisturbanceFieldComponent / DisturbanceSourceComponent (TypeId 96 / 97、hash 対象)。World 節のカラム生バイト
-inline constexpr uint32_t kSimSnapshotVersion = 70;
+// v71 (M96d): DisturbanceFieldComponent の末尾に pressureIterations / windScale。World 節のカラム生バイト
+inline constexpr uint32_t kSimSnapshotVersion = 71;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

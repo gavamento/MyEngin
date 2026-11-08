@@ -31,6 +31,7 @@
 #include "Engine/Renderer/Texture/ImageDiff.h"
 #include "Engine/Renderer/Device/VolumeTexture.h"
 #include "Engine/Engine/Physics/Fracture/FractureBenchmark.h" // M80k: --fracture-bench
+#include "Engine/Engine/Disturbance/DisturbanceFieldSelfTest.h" // M96d: --field-bench
 #include "Engine/Engine/App/PerfBenchmark.h"
 #include "Shared/EngineAPI.h"
 
@@ -108,6 +109,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     std::wstring modalVoxelizeOut;        // --out DIR
     bool modalBake = false;               // --modal-bake (M76e: .dmnet → .msfm のヘッドレス CLI)
     bool fractureBench = false;           // --fracture-bench (M80k: 破壊物理のヘッドレス性能計測)
+    bool fieldBench = false;              // --field-bench (M96d: かき乱しフィールドのヘッドレス計測)
     std::wstring perfBenchOutput;         // --perf-bench FILE
     std::wstring dumpIndexPath;           // --dump-index FILE (M87a: エンジン索引を JSON へ書いて終了)
     std::string perfBenchCommit;           // --perf-commit SHA
@@ -169,6 +171,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             // と同じ「連鎖の手前」の置き方)。実行は下の早期 return 群と同じ場所で行う
             if (arg == L"--fracture-bench") {
                 fractureBench = true;
+                continue;
+            }
+            if (arg == L"--field-bench") {
+                fieldBench = true;
                 continue;
             }
             if (arg == L"--dump-index" && i + 1 < argc) {
@@ -329,6 +335,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     // 破片数 (16/32/64/128/256) と破壊物の個数 (1/8) の組み合わせを順に測って終了する
     if (fractureBench) {
         return mye::RunFractureBenchmark();
+    }
+    // --field-bench (M96d): かき乱しフィールドのヘッドレス計測 (ステップ時間・ハッシュ時間・スナップショットのバイト数)
+    if (fieldBench) {
+        return mye::RunDisturbanceFieldBenchmark();
     }
     // --dump-index FILE (M87a): ウィンドウも D3D も作らず、組み込み型と CLI 表を JSON へ書いて終了する
     if (!dumpIndexPath.empty()) {

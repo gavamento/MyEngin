@@ -44,24 +44,34 @@
 | sub-01 | OK | 2 | 64f3b55 | 2D 層の状態と 3 点セット (TypeId 96/97、snapshot v70、規則 18) |
 | sub-02 | OK | 1 | 2687227 | 霧の描画 (2D)、--field-demo、replay ジョブ field |
 | sub-03 | OK | 2 | 9b16433 | 地面の霧の専用描画 (板のレイマーチ、太陽光の bool) |
-| sub-04 | 実装中 | 0 | | 流れのソルバ |
-| sub-05 | 未着手 | 0 | | スクリプトの口 (ABI v35 = 202) |
+| sub-04 | 実装中 (W1, メイン, round 2) | 1 | | 流れのソルバ |
+| sub-05 | OK (統合待ち) | 2 | e664245 (worktree) | スクリプトの口 (ABI v35 = 202) |
 | sub-06 | 未着手 | 0 | | アニメイベント disturb |
 | sub-07 | 未着手 | 0 | | 3D ボリューム (4 個まで描画)。後で中間のまとめ実行 |
 | sub-08 | 未着手 | 0 | | Volume のフロクセル自動有効と太陽光の bool |
 | sub-09 | 未着手 | 0 | | 追従モード |
 | sub-10 | 未着手 | 0 | | 地形の起伏に沿う 2D 層 |
 | sub-11 | 未着手 | 0 | | 粒子 (CPU / GPU) |
-| sub-12 | 未着手 | 0 | | 水面の波紋 |
+| sub-12 | 実装中 (W1, worktree) | 0 | | 水面の波紋 |
 | sub-13 | 未着手 | 0 | | 跡 (地形) |
 | sub-14 | 未着手 | 0 | | 草 |
-| sub-15 | 未着手 | 0 | | 地面の霧を局所ライトで照らす切り替え (最大 8 本、影なし) |
+| sub-15 | OK (統合待ち) | 1 | 332ccd0 (worktree) | 地面の霧を局所ライトで照らす切り替え (最大 8 本、影なし) |
 | sub-16 | 未着手 | 0 | | Forward のスカイ無し背景に地面の霧とフロクセル (全画面パス、golden 更新) |
 | sub-17 | 未着手 | 0 | | 仕上げ (ADR-036・文書)。最後のまとめ実行 |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
+
+## 一時停止 → 再開済み (2026-11-08 22:2x 停止、同日再開。ユーザー指示「一時停止して、少ししたら再開する」)
+W1 の 4 本を止めた。全部未コミット。再開時は各 sub-NN.md 末尾の「中断メモ (2026-11-08)」から続ける (coder は新しく起動し、中断メモと worktree の場所を渡す)。
+| サブ | 場所 | 状態 | 残り |
+|---|---|---|---|
+| sub-04 | メイン C:\HAL\MyEngin (未コミット) | ソルバ・並列・デバッグ線・--field-bench 実装済み、Release ビルド済み。snapshot v71 | kBakedFinalHash を 0xD2D198026566A0CB へ、スクショ回収 (cache\sub04_*.png)、渦の 1 枚、Debug ビルド、check_rules、SELF_EVAL。**受け入れ 15 (性能 1.67 ms) は不合格** = planner 判断。放射インパルスが投影で弱まる件も planner へ |
+| sub-05 | .claude\worktrees\agent-adc78e94e6a5e1d68 (ブランチ worktree-agent-adc78e94e6a5e1d68、基点 b7cb1fa に reset 済み) | ABI v35 = 202 一式、selftest コード、デモ (ZZFieldDemoDriver) | Release 再ビルド結果の確認、Debug ビルド、スクショ撮り直し、C# 一時プローブ、SELF_EVAL |
+| sub-12 | .claude\worktrees\agent-aa741273890b74858 (ブランチ worktree-agent-aa741273890b74858、master を merge した 8eb38e6 が基点) | 波紋のシェーダ・転送条件・デモ池・selftest コード | 最終配置の再ビルド、スクショ 4 枚 (WARP は 300 秒の timeout)、受け入れ 23、SELF_EVAL。転送条件の変更は付録 A 外 = planner 確認 |
+| sub-15 | .claude\worktrees\agent-ad788ccedd6a6eede (ブランチ worktree-agent-ad788ccedd6a6eede、基点 b7cb1fa に reset 済み) | 実装一式、Release ビルド、スクショ OFF/ON 3 枚 | DemoContentField.cpp の一時改造 (S15TEMP) を scratchpad\sub15\DemoContentField.final.cpp で戻す、35(a)(c)(d)、Debug ビルド、check_rules、SELF_EVAL |
+- 罠: Agent(isolation: worktree) の worktree は古い aa3288e から切られた (sub-01〜03 が無い)。05 / 15 は reset --hard b7cb1fa、12 は merge master で直した。次の波は起動直後に基点を確認させること
 
 ## 申し送り (セッション跨ぎ)
 - design-draft.md と本台帳は sub-01 のコミットに同梱する (基点時点で未追跡)

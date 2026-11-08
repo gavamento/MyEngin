@@ -7,11 +7,14 @@
 #include "Engine/Engine/Disturbance/DisturbanceParams.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Core/Jobs/JobSystem.h"
+#include "Engine/Engine/Physics/Rigid/PhysicsSystem.h" // ResolvePhysicsEnvironment (風)
 #include "Engine/Engine/Scene/Scene.h"
 
 // ★決定論 (check_rules 規則 18): このファイルの計算は + - * / sqrt floor ceil min max だけ。
@@ -157,7 +160,9 @@ bool CellRange(float pos, float radius, float cellSize, int32_t origin, int32_t 
     return true;
 }
 
-void Inject(DisturbanceSlot& s, float thickness, const Injection& in)
+// radialDx / radialDz が非 null なら、流れに足した差分をそこへ加算する (Radial の発散源。投影が引く)
+void Inject(DisturbanceSlot& s, float thickness, const Injection& in, std::vector<float>* radialDx = nullptr,
+            std::vector<float>* radialDz = nullptr)
 {
     // 非有限の入力は何も書かない (半径 0 以下も同じ)
     if (!(in.radius > 0.0f) || !std::isfinite(in.radius) || !std::isfinite(in.pos[0]) || !std::isfinite(in.pos[1])
@@ -206,8 +211,14 @@ void Inject(DisturbanceSlot& s, float thickness, const Injection& in)
             }
             const size_t i = static_cast<size_t>(x) + static_cast<size_t>(s.cellsX) * static_cast<size_t>(z);
             const float a = Saturate(w * in.mix);
-            s.flowX[i] += a * (ux - s.flowX[i]);
-            s.flowZ[i] += a * (uz - s.flowZ[i]);
+            const float oldX = s.flowX[i];
+            const float oldZ = s.flowZ[i];
+            s.flowX[i] += a * (ux - oldX);
+            s.flowZ[i] += a * (uz - oldZ);
+            if (radialDx != nullptr) {
+                (*radialDx)[i] += s.flowX[i] - oldX;
+                (*radialDz)[i] += s.flowZ[i] - oldZ;
+            }
             if (hasDensity) {
                 const float delta = w * in.speedFactor * in.densityDelta;
                 const float rho = s.density[i];
@@ -300,7 +311,8 @@ void InjectSource(DisturbanceSlot& s, float thickness, const SourceRow& r, const
     Inject(s, thickness, in);
 }
 
-void InjectImpulse(DisturbanceSlot& s, float thickness, const FieldImpulse& imp)
+void InjectImpulse(DisturbanceSlot& s, float thickness, const FieldImpulse& imp, std::vector<float>* radialDx,
+                   std::vector<float>* radialDz)
 {
     Injection in;
     std::copy(imp.pos, imp.pos + 3, in.pos);
@@ -326,56 +338,302 @@ void InjectImpulse(DisturbanceSlot& s, float thickness, const FieldImpulse& imp)
             in.coneCos = imp.coneCos;
         }
     }
-    Inject(s, thickness, in);
+    if (imp.shape == kFieldImpulseRadial) {
+        Inject(s, thickness, in, radialDx, radialDz);
+    } else {
+        Inject(s, thickness, in);
+    }
 }
 
-// ---- 減衰と復元 ----
+// ---- 補間 ----
 
-// 流れの減衰・濃さと跡の復元・値の範囲の強制 (spec §4.1 B の 5, 7, 9)。各マスが自分のマスだけを書く。
+float Lerp(float a, float b, float t)
+{
+    return a + (b - a) * t;
+}
+
+// floor の整数版 (CRT の floor を呼ばない)。有限で |f| < 2^31 のとき floor(f) と同じ値
+int32_t FloorToInt(float f)
+{
+    const int32_t i = static_cast<int32_t>(f);
+    return i - (f < static_cast<float>(i) ? 1 : 0);
+}
+
+// 双線形 (マス座標 fx, fz。マス中心が整数)。格子の外のマスは outside を返す
+float Bilinear(const std::vector<float>& a, int32_t nx, int32_t nz, float fx, float fz, float outside)
+{
+    const int32_t x0 = FloorToInt(fx);
+    const int32_t z0 = FloorToInt(fz);
+    const float tx = fx - static_cast<float>(x0);
+    const float tz = fz - static_cast<float>(z0);
+    if (x0 >= 0 && x0 + 1 < nx && z0 >= 0 && z0 + 1 < nz) {
+        const float* r0 = a.data() + static_cast<size_t>(x0) + static_cast<size_t>(nx) * static_cast<size_t>(z0);
+        const float* r1 = r0 + nx;
+        return Lerp(Lerp(r0[0], r0[1], tx), Lerp(r1[0], r1[1], tx), tz);
+    }
+    const auto at = [&](int32_t x, int32_t z) {
+        if (x < 0 || x >= nx || z < 0 || z >= nz) {
+            return outside;
+        }
+        return a[static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(z)];
+    };
+    return Lerp(Lerp(at(x0, z0), at(x0 + 1, z0), tx), Lerp(at(x0, z0 + 1), at(x0 + 1, z0 + 1), tx), tz);
+}
+
+// ---- 流れのソルバ (spec §4.1 B の 5〜7、§4.1 J) ----
+// 移流・投影・復元・波紋は「前の配列を読み、自分のマスだけを書く」ダブルバッファにして z 行で割る (ADR-028)。
+// マスの結果は分割の仕方に依らず、縮約も無いので jobs あり / なしでビット一致する。注入は直列のまま。
+// 3D (sub-07) では y 方向を足す: 隣の参照に ±cellsX*cellsZ を加え、行の単位を y スライスにする
+
+// 1 回の ParallelRanges が受け持つ行数の下限 (これ未満の場は直列と同じ経路になる)
+constexpr size_t kRowGrain = 8;
+
+// fn(zBegin, zEnd) を z 行で割って回す。fn は自分の行のマスだけを書くこと
+template <typename Fn>
+void ForRows(int32_t rows, Fn&& fn)
+{
+    jobs::System().ParallelRanges(static_cast<size_t>(rows), kRowGrain, [&](size_t begin, size_t end) {
+        fn(static_cast<int32_t>(begin), static_cast<int32_t>(end));
+    });
+}
+
+// 風の目標速度 (xz)。PhysicsEnvironment が無ければ 0。流れは速さの上限を超えられないので、目標も上限で切る
+void WindTarget(World& world, const FieldParams& p, float& outX, float& outZ)
+{
+    outX = 0.0f;
+    outZ = 0.0f;
+    const PhysicsEnvironmentComponent* env = ResolvePhysicsEnvironment(world);
+    if (env == nullptr) {
+        return;
+    }
+    float tx = FiniteOr(env->windVelocity.x, 0.0f) * p.windScale;
+    float tz = FiniteOr(env->windVelocity.z, 0.0f) * p.windScale;
+    const float maxSpeed = p.cellSize * kDisturbanceTickRate;
+    const float len = std::sqrt(tx * tx + tz * tz);
+    if (len > maxSpeed) {
+        const float k = maxSpeed / len;
+        tx *= k;
+        tz *= k;
+    }
+    outX = tx;
+    outZ = tz;
+}
+
+// 速度の半ラグランジュ移流 → 目標速度への減衰 → 速さの上限 (B の 5)。
+// セル中心から -v / 60 戻った点を双線形で引く。格子外は静止状態 (流れは目標速度) = 開いた境界。
+// 非有限の値が出たら 0 に戻して true を返す
+bool AdvectVelocity(DisturbanceSlot& s, const FieldParams& p, float targetX, float targetZ,
+                    DisturbanceState::SolverScratch& sc)
+{
+    const int32_t nx = s.cellsX;
+    const int32_t nz = s.cellsZ;
+    const float maxSpeed = s.cellSize * kDisturbanceTickRate;
+    // 速度 [m/s] -> 1 tick に戻るマス数
+    const float toCells = 1.0f / maxSpeed;
+    sc.flowX.resize(s.CellCount());
+    sc.flowZ.resize(s.CellCount());
+    std::atomic<bool> repaired{ false };
+    ForRows(nz, [&](int32_t z0, int32_t z1) {
+        bool bad = false;
+        for (int32_t z = z0; z < z1; ++z) {
+            for (int32_t x = 0; x < nx; ++x) {
+                const size_t i = static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(z);
+                const float fx = static_cast<float>(x) - s.flowX[i] * toCells;
+                const float fz = static_cast<float>(z) - s.flowZ[i] * toCells;
+                float vx = Bilinear(s.flowX, nx, nz, fx, fz, targetX);
+                float vz = Bilinear(s.flowZ, nx, nz, fx, fz, targetZ);
+                vx = targetX + (vx - targetX) * p.velocityKeep;
+                vz = targetZ + (vz - targetZ) * p.velocityKeep;
+                if (!std::isfinite(vx) || !std::isfinite(vz)) {
+                    vx = 0.0f;
+                    vz = 0.0f;
+                    bad = true;
+                }
+                const float len = std::sqrt(vx * vx + vz * vz);
+                if (len > maxSpeed) {
+                    const float k = maxSpeed / len;
+                    vx *= k;
+                    vz *= k;
+                }
+                sc.flowX[i] = vx;
+                sc.flowZ[i] = vz;
+            }
+        }
+        if (bad) {
+            repaired.store(true, std::memory_order_relaxed);
+        }
+    });
+    s.flowX.swap(sc.flowX);
+    s.flowZ.swap(sc.flowZ);
+    return repaired.load(std::memory_order_relaxed);
+}
+
+// 圧力投影 (B の 6): 発散 → Jacobi → 勾配を引く。発散の格子外は目標速度 (開いた境界)、圧力の格子外は 0 (ディリクレ)。
+// 圧力は q = p / cellSize で持つ (単位は速度。マスの大きさが式から消える)。毎 tick 0 から始める作業領域で、状態ではない。
+// 行ごとに隣の行のポインタを取り、格子外の行は 0 / 目標速度の行を渡す。x の内側は分岐の無いループにしてベクトル化させる
+// (演算の順序は式のとおりなのでビット結果は変わらない)。
+// Radial のインパルスが注入した差分 (sc.radialX / Z) は発散源: その発散を右辺から引く (爆発の流れを投影で消さない)。
+// 前進 / 後退差分で隣接 5 点に揃える案も試したが、中心差分で測った発散が 20 反復で投影前の 22% 残ったので採らない
+void ProjectVelocity(DisturbanceSlot& s, const FieldParams& p, float targetX, float targetZ,
+                     DisturbanceState::SolverScratch& sc, size_t slotIndex)
+{
+    if (p.pressureIterations <= 0) {
+        return;
+    }
+    const int32_t nx = s.cellsX;
+    const int32_t nz = s.cellsZ;
+    const size_t stride = static_cast<size_t>(nx);
+    const size_t n = s.CellCount();
+    sc.divergence.resize(n);
+    sc.pressureA.assign(n, 0.0f);
+    sc.pressureB.resize(n);
+    sc.zeroRow.assign(stride, 0.0f);
+    sc.targetRowZ.assign(stride, targetZ);
+    const bool radial = sc.radialActive[slotIndex];
+    const float* radialX = radial ? sc.radialX[slotIndex].data() : nullptr;
+    const float* radialZ = radial ? sc.radialZ[slotIndex].data() : nullptr;
+
+    // 発散 (中心差分。単位は速度)。格子外の流れは目標速度
+    ForRows(nz, [&](int32_t z0, int32_t z1) {
+        for (int32_t z = z0; z < z1; ++z) {
+            const size_t row = stride * static_cast<size_t>(z);
+            const float* __restrict ux = s.flowX.data() + row;
+            const float* __restrict wN = z + 1 < nz ? s.flowZ.data() + row + stride : sc.targetRowZ.data();
+            const float* __restrict wS = z > 0 ? s.flowZ.data() + row - stride : sc.targetRowZ.data();
+            float* __restrict dv = sc.divergence.data() + row;
+            dv[0] = ((ux[1] - targetX) + (wN[0] - wS[0])) * 0.5f;
+            for (int32_t x = 1; x < nx - 1; ++x) {
+                dv[x] = ((ux[x + 1] - ux[x - 1]) + (wN[x] - wS[x])) * 0.5f;
+            }
+            dv[nx - 1] = ((targetX - ux[nx - 2]) + (wN[nx - 1] - wS[nx - 1])) * 0.5f;
+            if (radial) {
+                // 発散源の差分の発散 (格子外の差分は 0)
+                const float* rx = radialX + row;
+                const float* rzN = z + 1 < nz ? radialZ + row + stride : sc.zeroRow.data();
+                const float* rzS = z > 0 ? radialZ + row - stride : sc.zeroRow.data();
+                for (int32_t x = 0; x < nx; ++x) {
+                    const float rE = x + 1 < nx ? rx[x + 1] : 0.0f;
+                    const float rW = x > 0 ? rx[x - 1] : 0.0f;
+                    dv[x] -= ((rE - rW) + (rzN[x] - rzS[x])) * 0.5f;
+                }
+            }
+        }
+    });
+
+    // Jacobi。発散も勾配も中心差分なので、合成した作用素は 2 マス離れた隣を使う (幅 2 の 5 点)。
+    // 隣り合うマスで解く 5 点の式だと、離散化の食い違いで投影後の発散が 2 割ほど残る
+    std::vector<float>* src = &sc.pressureA;
+    std::vector<float>* dst = &sc.pressureB;
+    for (int32_t iter = 0; iter < p.pressureIterations; ++iter) {
+        const std::vector<float>& q = *src;
+        std::vector<float>& out = *dst;
+        ForRows(nz, [&](int32_t z0, int32_t z1) {
+            for (int32_t z = z0; z < z1; ++z) {
+                const size_t row = stride * static_cast<size_t>(z);
+                const float* __restrict mid = q.data() + row;
+                const float* __restrict north = z + 2 < nz ? q.data() + row + 2 * stride : sc.zeroRow.data();
+                const float* __restrict south = z > 1 ? q.data() + row - 2 * stride : sc.zeroRow.data();
+                const float* __restrict dv = sc.divergence.data() + row;
+                float* __restrict dstRow = out.data() + row;
+                const auto edge = [&](int32_t x) {
+                    const float qE = x + 2 < nx ? mid[x + 2] : 0.0f;
+                    const float qW = x > 1 ? mid[x - 2] : 0.0f;
+                    // 加算は (E+W)+(N+S): x と z を入れ替えても結果がビット一致する順序
+                    dstRow[x] = ((qE + qW) + (north[x] + south[x])) * 0.25f - dv[x];
+                };
+                for (int32_t x = 0; x < std::min(nx, 2); ++x) {
+                    edge(x);
+                }
+                for (int32_t x = std::max(nx - 2, 2); x < nx; ++x) {
+                    edge(x);
+                }
+                for (int32_t x = 2; x < nx - 2; ++x) {
+                    dstRow[x] = ((mid[x + 2] + mid[x - 2]) + (north[x] + south[x])) * 0.25f - dv[x];
+                }
+            }
+        });
+        std::swap(src, dst);
+    }
+
+    // 勾配を引く (中心差分。格子外の圧力は 0)
+    const std::vector<float>& q = *src;
+    ForRows(nz, [&](int32_t z0, int32_t z1) {
+        for (int32_t z = z0; z < z1; ++z) {
+            const size_t row = stride * static_cast<size_t>(z);
+            const float* __restrict mid = q.data() + row;
+            const float* __restrict north = z + 1 < nz ? q.data() + row + stride : sc.zeroRow.data();
+            const float* __restrict south = z > 0 ? q.data() + row - stride : sc.zeroRow.data();
+            float* __restrict fx = s.flowX.data() + row;
+            float* __restrict fz = s.flowZ.data() + row;
+            fx[0] -= (mid[1] - 0.0f) * 0.5f;
+            fz[0] -= (north[0] - south[0]) * 0.5f;
+            for (int32_t x = 1; x < nx - 1; ++x) {
+                fx[x] -= (mid[x + 1] - mid[x - 1]) * 0.5f;
+                fz[x] -= (north[x] - south[x]) * 0.5f;
+            }
+            fx[nx - 1] -= (0.0f - mid[nx - 2]) * 0.5f;
+            fz[nx - 1] -= (north[nx - 1] - south[nx - 1]) * 0.5f;
+        }
+    });
+}
+
+// 濃さの移流 (B の 7 の前半)。投影後の流れで引く。格子外は restDensity (風上の縁から静止濃度が入る)。
+// 跡は移流しない (spec §2 #17)
+void AdvectDensity(DisturbanceSlot& s, const FieldParams& p, DisturbanceState::SolverScratch& sc)
+{
+    const int32_t nx = s.cellsX;
+    const int32_t nz = s.cellsZ;
+    const float toCells = 1.0f / (s.cellSize * kDisturbanceTickRate);
+    sc.density.resize(s.CellCount());
+    ForRows(nz, [&](int32_t z0, int32_t z1) {
+        for (int32_t z = z0; z < z1; ++z) {
+            for (int32_t x = 0; x < nx; ++x) {
+                const size_t i = static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(z);
+                const float fx = static_cast<float>(x) - s.flowX[i] * toCells;
+                const float fz = static_cast<float>(z) - s.flowZ[i] * toCells;
+                sc.density[i] = Bilinear(s.density, nx, nz, fx, fz, p.restDensity);
+            }
+        }
+    });
+    s.density.swap(sc.density);
+}
+
+// 濃さと跡の復元・値の範囲の強制 (B の 7 の後半と 9)。各マスが自分のマスだけを書く。
 // 非有限の値が出たら静止状態へ戻して true を返す
-bool Relax(DisturbanceSlot& s, const FieldParams& p)
+bool RelaxScalars(DisturbanceSlot& s, const FieldParams& p)
 {
     const bool hasDensity = (s.channels & kDisturbanceChannelDensity) != 0;
     const bool hasTrail = (s.channels & kDisturbanceChannelTrail) != 0;
-    const float maxSpeed = s.cellSize * kDisturbanceTickRate;
-    const float targetX = 0.0f; // 風の目標速度は sub-04 から
-    const float targetZ = 0.0f;
-    bool repaired = false;
-    const size_t n = s.CellCount();
-    for (size_t i = 0; i < n; ++i) {
-        float vx = targetX + (s.flowX[i] - targetX) * p.velocityKeep;
-        float vz = targetZ + (s.flowZ[i] - targetZ) * p.velocityKeep;
-        if (!std::isfinite(vx) || !std::isfinite(vz)) {
-            vx = 0.0f;
-            vz = 0.0f;
-            repaired = true;
-        }
-        const float len = std::sqrt(vx * vx + vz * vz);
-        if (len > maxSpeed) {
-            const float k = maxSpeed / len;
-            vx *= k;
-            vz *= k;
-        }
-        s.flowX[i] = vx;
-        s.flowZ[i] = vz;
-        if (hasDensity) {
-            float rho = p.restDensity + (s.density[i] - p.restDensity) * p.densityKeep;
-            if (!std::isfinite(rho)) {
-                rho = p.restDensity;
-                repaired = true;
-            }
-            s.density[i] = Saturate(rho);
-        }
-        if (hasTrail) {
-            float tau = s.trail[i] * p.trailKeep;
-            if (!std::isfinite(tau)) {
-                tau = 0.0f;
-                repaired = true;
-            }
-            s.trail[i] = Saturate(tau);
-        }
+    if (!hasDensity && !hasTrail) {
+        return false;
     }
-    return repaired;
+    const size_t rowCells = static_cast<size_t>(s.cellsX);
+    std::atomic<bool> repaired{ false };
+    ForRows(s.cellsZ, [&](int32_t z0, int32_t z1) {
+        bool bad = false;
+        for (size_t i = static_cast<size_t>(z0) * rowCells; i < static_cast<size_t>(z1) * rowCells; ++i) {
+            if (hasDensity) {
+                float rho = p.restDensity + (s.density[i] - p.restDensity) * p.densityKeep;
+                if (!std::isfinite(rho)) {
+                    rho = p.restDensity;
+                    bad = true;
+                }
+                s.density[i] = Saturate(rho);
+            }
+            if (hasTrail) {
+                float tau = s.trail[i] * p.trailKeep;
+                if (!std::isfinite(tau)) {
+                    tau = 0.0f;
+                    bad = true;
+                }
+                s.trail[i] = Saturate(tau);
+            }
+        }
+        if (bad) {
+            repaired.store(true, std::memory_order_relaxed);
+        }
+    });
+    return repaired.load(std::memory_order_relaxed);
 }
 
 // 波紋の 1 段 (spec §4.1 H)。h と hPrev を読み、新しい h を scratch へ書いてから回す
@@ -386,39 +644,53 @@ bool StepRipple(DisturbanceSlot& s, const FieldParams& p, std::vector<float>& sc
     const float courant = std::min(p.rippleSpeed / (s.cellSize * kDisturbanceTickRate), kMaxRippleCourant);
     const float c2 = courant * courant;
     scratch.resize(s.CellCount());
-    bool repaired = false;
-    // 注入で上限を超えた h を先に切る (非有限は 0)
-    for (float& v : s.ripple) {
-        if (!std::isfinite(v)) {
-            v = 0.0f;
-            repaired = true;
+    std::atomic<bool> repaired{ false };
+    // 注入で上限を超えた h を先に切る (非有限は 0)。隣を読む本体の前に全マス終える
+    const size_t rowCells = static_cast<size_t>(nx);
+    ForRows(nz, [&](int32_t z0, int32_t z1) {
+        bool bad = false;
+        for (size_t i = static_cast<size_t>(z0) * rowCells; i < static_cast<size_t>(z1) * rowCells; ++i) {
+            float v = s.ripple[i];
+            if (!std::isfinite(v)) {
+                v = 0.0f;
+                bad = true;
+            }
+            s.ripple[i] = std::min(std::max(v, -kMaxRippleHeight), kMaxRippleHeight);
         }
-        v = std::min(std::max(v, -kMaxRippleHeight), kMaxRippleHeight);
-    }
+        if (bad) {
+            repaired.store(true, std::memory_order_relaxed);
+        }
+    });
     const std::vector<float>& h = s.ripple;
     const std::vector<float>& hp = s.ripplePrev;
-    for (int32_t z = 0; z < nz; ++z) {
-        for (int32_t x = 0; x < nx; ++x) {
-            const size_t i = static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(z);
-            const float hc = h[i];
-            const float hE = x + 1 < nx ? h[i + 1] : 0.0f;
-            const float hW = x > 0 ? h[i - 1] : 0.0f;
-            const float hN = z + 1 < nz ? h[i + static_cast<size_t>(nx)] : 0.0f;
-            const float hS = z > 0 ? h[i - static_cast<size_t>(nx)] : 0.0f;
-            // 加算は (E+W)+(N+S): x と z を入れ替えても結果がビット一致する順序
-            const float lap = (hE + hW) + (hN + hS) - 4.0f * hc;
-            float next = (2.0f * hc - hp[i] + c2 * lap) * p.rippleKeep;
-            if (!std::isfinite(next)) {
-                next = 0.0f;
-                repaired = true;
+    ForRows(nz, [&](int32_t z0, int32_t z1) {
+        bool bad = false;
+        for (int32_t z = z0; z < z1; ++z) {
+            for (int32_t x = 0; x < nx; ++x) {
+                const size_t i = static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(z);
+                const float hc = h[i];
+                const float hE = x + 1 < nx ? h[i + 1] : 0.0f;
+                const float hW = x > 0 ? h[i - 1] : 0.0f;
+                const float hN = z + 1 < nz ? h[i + static_cast<size_t>(nx)] : 0.0f;
+                const float hS = z > 0 ? h[i - static_cast<size_t>(nx)] : 0.0f;
+                // 加算は (E+W)+(N+S): x と z を入れ替えても結果がビット一致する順序
+                const float lap = (hE + hW) + (hN + hS) - 4.0f * hc;
+                float next = (2.0f * hc - hp[i] + c2 * lap) * p.rippleKeep;
+                if (!std::isfinite(next)) {
+                    next = 0.0f;
+                    bad = true;
+                }
+                scratch[i] = std::min(std::max(next, -kMaxRippleHeight), kMaxRippleHeight);
             }
-            scratch[i] = std::min(std::max(next, -kMaxRippleHeight), kMaxRippleHeight);
         }
-    }
+        if (bad) {
+            repaired.store(true, std::memory_order_relaxed);
+        }
+    });
     // hPrev <- h、h <- 新しい h、scratch <- 古い hPrev (コピー無しで回す)
     s.ripplePrev.swap(s.ripple);
     s.ripple.swap(scratch);
-    return repaired;
+    return repaired.load(std::memory_order_relaxed);
 }
 
 void WarnOnce(std::vector<EntityID>& warned, uint32_t& counter, EntityID e, const char* why)
@@ -493,19 +765,36 @@ void DisturbanceStep(World& world, DisturbanceState& state)
                 InjectSource(s, thickness, sourceRows[i], nows[i]);
             }
         }
+        // Radial があれば差分の置き場を 0 で作る (無い場は触らない)
+        DisturbanceState::SolverScratch& sc = state.solver_;
+        sc.radialActive[f] = false;
         for (const FieldImpulse& imp : state.queue_) {
-            InjectImpulse(s, thickness, imp);
+            if (imp.shape == kFieldImpulseRadial && !sc.radialActive[f]) {
+                sc.radialActive[f] = true;
+                sc.radialX[f].assign(s.CellCount(), 0.0f);
+                sc.radialZ[f].assign(s.CellCount(), 0.0f);
+            }
+            InjectImpulse(s, thickness, imp, sc.radialActive[f] ? &sc.radialX[f] : nullptr,
+                          sc.radialActive[f] ? &sc.radialZ[f] : nullptr);
         }
     }
     // 場が無いシーンで積まれたものもここで捨てる
     state.queue_.clear();
     state.queueFullWarned_ = false;
 
-    // 5〜9. 減衰・復元・波紋・範囲の強制
+    // 5〜9. 流れ (移流 → 減衰 → 上限) → 投影 → 濃さの移流 → 復元 → 波紋 → 範囲の強制
     for (size_t f = 0; f < state.slots_.size(); ++f) {
         DisturbanceSlot& s = state.slots_[f];
         const FieldParams& p = active[f];
-        bool repaired = Relax(s, p);
+        float targetX = 0.0f;
+        float targetZ = 0.0f;
+        WindTarget(world, p, targetX, targetZ);
+        bool repaired = AdvectVelocity(s, p, targetX, targetZ, state.solver_);
+        ProjectVelocity(s, p, targetX, targetZ, state.solver_, f);
+        if ((s.channels & kDisturbanceChannelDensity) != 0) {
+            AdvectDensity(s, p, state.solver_);
+        }
+        repaired = RelaxScalars(s, p) || repaired;
         if ((s.channels & kDisturbanceChannelRipple) != 0) {
             repaired = StepRipple(s, p, state.rippleScratch_) || repaired;
         }
@@ -538,33 +827,6 @@ bool DisturbanceQueueImpulse(Scene& scene, const FieldImpulse& impulse)
 }
 
 // ---- 読み取り ----
-
-namespace {
-
-float Lerp(float a, float b, float t)
-{
-    return a + (b - a) * t;
-}
-
-// 双線形。格子の外のマスは outside を返す
-float Bilinear(const std::vector<float>& a, int32_t nx, int32_t nz, float fx, float fz, float outside)
-{
-    const float x0f = std::floor(fx);
-    const float z0f = std::floor(fz);
-    const float tx = fx - x0f;
-    const float tz = fz - z0f;
-    const int32_t x0 = static_cast<int32_t>(x0f);
-    const int32_t z0 = static_cast<int32_t>(z0f);
-    const auto at = [&](int32_t x, int32_t z) {
-        if (x < 0 || x >= nx || z < 0 || z >= nz) {
-            return outside;
-        }
-        return a[static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(z)];
-    };
-    return Lerp(Lerp(at(x0, z0), at(x0 + 1, z0), tx), Lerp(at(x0, z0 + 1), at(x0 + 1, z0 + 1), tx), tz);
-}
-
-} // namespace
 
 bool DisturbanceSampleAt(const DisturbanceState& state, World& world, EntityID field, const DirectX::XMFLOAT3& pos,
                          FieldSampleOut& out)

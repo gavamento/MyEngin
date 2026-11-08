@@ -6,14 +6,17 @@
 #include "Engine/Engine/Disturbance/DisturbanceFieldSelfTest.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <vector>
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Core/Jobs/JobSystem.h"
 #include "Engine/Engine/Disturbance/DisturbanceRender.h"
 #include "Engine/Engine/Disturbance/DisturbanceState.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
@@ -202,6 +205,255 @@ void LateInputs(Sim& s, int tick)
     }
 }
 
+// 2 ワールドを同じ場面・同じ入力で ticks 並走し、毎 tick のハッシュが一致したかを返す。finalHash は最後の tick のハッシュ
+bool RunTwoWorlds(int ticks, uint64_t& finalHash)
+{
+    auto a = std::make_unique<Sim>();
+    auto b = std::make_unique<Sim>();
+    const Scenario sa = BuildScenario(*a);
+    const Scenario sb = BuildScenario(*b);
+    a->Flush();
+    b->Flush();
+    bool same = true;
+    finalHash = 0;
+    for (int t = 0; t < ticks; ++t) {
+        DriveScenario(*a, sa, t);
+        DriveScenario(*b, sb, t);
+        a->Step();
+        b->Step();
+        LateInputs(*a, t);
+        LateInputs(*b, t);
+        const uint64_t ha = a->Hash();
+        same = same && ha == b->Hash();
+        finalHash = ha;
+    }
+    return same;
+}
+
+// ---- 流れのソルバの検査用 ----
+
+float FlowXAt(const DisturbanceSlot& s, int x, int z)
+{
+    return (x < 0 || x >= s.cellsX || z < 0 || z >= s.cellsZ) ? 0.0f : s.flowX[static_cast<size_t>(x + s.cellsX * z)];
+}
+
+float FlowZAt(const DisturbanceSlot& s, int x, int z)
+{
+    return (x < 0 || x >= s.cellsX || z < 0 || z >= s.cellsZ) ? 0.0f : s.flowZ[static_cast<size_t>(x + s.cellsX * z)];
+}
+
+// 中心差分の発散 (格子外の流れは 0 として扱う。風の無い場面用)。単位は [m/s] (マスの大きさを掛けた形)
+float DivergenceAt(const DisturbanceSlot& s, int x, int z)
+{
+    return ((FlowXAt(s, x + 1, z) - FlowXAt(s, x - 1, z)) + (FlowZAt(s, x, z + 1) - FlowZAt(s, x, z - 1))) * 0.5f;
+}
+
+float MaxDivergence(const DisturbanceSlot& s)
+{
+    float m = 0.0f;
+    for (int z = 0; z < s.cellsZ; ++z) {
+        for (int x = 0; x < s.cellsX; ++x) {
+            m = std::max(m, std::fabs(DivergenceAt(s, x, z)));
+        }
+    }
+    return m;
+}
+
+// 中心差分の回転 ∂vz/∂x − ∂vx/∂z (マスの大きさを掛けた形)
+float CurlAt(const DisturbanceSlot& s, int x, int z)
+{
+    return ((FlowZAt(s, x + 1, z) - FlowZAt(s, x - 1, z)) - (FlowXAt(s, x, z + 1) - FlowXAt(s, x, z - 1))) * 0.5f;
+}
+
+// ワールド座標 w のマス番号 (原点セルを引いた x / z)
+int CellIndexOf(const DisturbanceSlot& s, float world, int axis)
+{
+    return static_cast<int>(std::floor(world / s.cellSize)) - s.originCell[axis];
+}
+
+// 濃さの重心の x [m] (濃さの総和が 0 なら 0)
+float DensityCentroidX(const DisturbanceSlot& s)
+{
+    double mass = 0.0;
+    double moment = 0.0;
+    for (int z = 0; z < s.cellsZ; ++z) {
+        for (int x = 0; x < s.cellsX; ++x) {
+            const double rho = static_cast<double>(s.density[static_cast<size_t>(x + s.cellsX * z)]);
+            mass += rho;
+            moment += rho * (static_cast<double>(s.originCell[0] + x) + 0.5) * static_cast<double>(s.cellSize);
+        }
+    }
+    return mass > 0.0 ? static_cast<float>(moment / mass) : 0.0f;
+}
+
+// 動く源 (位置の差分) を z 方向へ歩かせて ticks 進める。tick ごとに z を 0.05 m (= 3 m/s) 進める。
+// 戻り値は最後の tick の源の z
+float WalkSource(Sim& sim, EntityID source, float startZ, int ticks)
+{
+    float z = startZ;
+    for (int t = 0; t < ticks; ++t) {
+        z = startZ + 0.05f * static_cast<float>(t);
+        TransformOf(sim, source)->position.z = z;
+        sim.Step();
+    }
+    return z;
+}
+
+// 風の中の濃さの塊の重心の移動量 [m]。restDensity 0 の場の風上寄りへ濃さを足し、ticks 進める
+struct WindRun {
+    float shift = 0.0f;
+    float maxFlowX = 0.0f;
+    bool rest = false; // 塊を足さずに進めたとき、全マスが静止状態のままか
+};
+
+WindRun RunWind(float windScale, int ticks, bool withBlob)
+{
+    auto sim = std::make_unique<Sim>();
+    GameObject envGo = sim->scene.CreateGameObjectTracked("Environment");
+    envGo.AddComponent<PhysicsEnvironmentComponent>()->windVelocity = { 2.0f, 0.0f, 0.0f };
+    // 128 x 32 マス x 0.25 m = 32 m x 8 m。塊は風上寄り (x = -10 m) に置く
+    const EntityID f = AddField(*sim, 0.0f, 0.0f, 0.0f, 128, 32, kDisturbanceChannelDensity);
+    sim->Flush();
+    auto* field = FieldOf(*sim, f);
+    field->restDensity = 0.0f;
+    field->densityKeep = 1.0f;
+    field->windScale = windScale;
+    sim->Step();
+    WindRun r;
+    if (withBlob) {
+        FieldImpulse blob = MakeImpulse(-10.0f, 0.2f, 0.0f, 1.5f, 0.0f, 0.0f, 0.0f);
+        blob.density = 0.9f;
+        DisturbanceQueueImpulse(sim->scene, blob);
+    }
+    sim->Step();
+    const float before = DensityCentroidX(sim->D().Slots()[0]);
+    sim->Step(ticks);
+    const DisturbanceSlot& s = sim->D().Slots()[0];
+    r.shift = withBlob ? DensityCentroidX(s) - before : 0.0f;
+    for (float v : s.flowX) {
+        r.maxFlowX = std::max(r.maxFlowX, std::fabs(v));
+    }
+    r.rest = IsRestSlot(s, 0.0f);
+    return r;
+}
+
+// 流れのソルバの断言 (acc 3 の再表明は decay の項、ここは acc 13 / 16)。--field-bench も同じものを走らせて数値を出す
+void SolverChecks(const std::function<void(bool, const char*)>& check)
+{
+    // ---- 投影: 源が通った直後の発散が 10% 以下 / 源の左右で回転の符号が逆 (acc 13) ----
+    {
+        // 1 tick 目で prevPos を書き、2 tick 目で 3 m/s の速さの差分が出る。投影の有無だけが違う 2 本を並べる
+        const auto divergence = [&](int iterations, float& flowPeak) {
+            auto sim = std::make_unique<Sim>();
+            const EntityID f = AddField(*sim, 0.0f, 0.0f, 0.0f, 64, 64, kDisturbanceChannelDensity);
+            const EntityID src = AddSource(*sim, "Walker", 0.0f, 0.0f, -0.05f);
+            sim->Flush();
+            FieldOf(*sim, f)->pressureIterations = iterations;
+            SourceOf(*sim, src)->radius = 1.5f;
+            sim->Step();
+            TransformOf(*sim, src)->position.z = 0.0f;
+            sim->Step();
+            flowPeak = MaxFlow(sim->D().Slots()[0]);
+            return MaxDivergence(sim->D().Slots()[0]);
+        };
+        float peakBefore = 0.0f, peakAfter = 0.0f;
+        const float before = divergence(0, peakBefore);
+        const float after = divergence(20, peakAfter);
+        MYE_LOG_INFO("  [disturbance] divergence just after a source passes: %.4g before projection, %.4g after 20 iterations "
+                     "(ratio %.3f); peak flow %.3g -> %.3g",
+                     static_cast<double>(before), static_cast<double>(after), static_cast<double>(before > 0.0f ? after / before : 0.0f),
+                     static_cast<double>(peakBefore), static_cast<double>(peakAfter));
+        for (const int iterations : { 10, 40, 64 }) {
+            float peak = 0.0f;
+            const float d = divergence(iterations, peak);
+            MYE_LOG_INFO("  [disturbance] divergence after %d iterations: %.4g (ratio %.3f)", iterations, static_cast<double>(d),
+                         static_cast<double>(before > 0.0f ? d / before : 0.0f));
+        }
+        check(before > 0.05f && after <= 0.1f * before, "solver: 20 Jacobi iterations cut the max divergence to 10% or less");
+        check(peakAfter > 0.2f * peakBefore, "solver: the projection keeps the stirred flow (it does not erase it)");
+    }
+    {
+        // 放射状のインパルス (爆発) は発散源: その step の投影で消されず、後の step の投影と減衰で消える
+        struct RadialRun {
+            float peakFirst = 0.0f;
+            float peakLater = 0.0f;
+            bool outward = false;
+        };
+        const auto radialRun = [&](int iterations) {
+            auto sim = std::make_unique<Sim>();
+            const EntityID f = AddField(*sim, 0.0f, 0.0f, 0.0f, 64, 64, kDisturbanceChannelDensity);
+            sim->Flush();
+            FieldOf(*sim, f)->pressureIterations = iterations;
+            sim->Step();
+            FieldImpulse radial = MakeImpulse(0.0f, 0.2f, 0.0f, 1.5f, 0.0f, 0.0f, 3.0f);
+            radial.shape = kFieldImpulseRadial;
+            DisturbanceQueueImpulse(sim->scene, radial);
+            sim->Step();
+            RadialRun r;
+            const DisturbanceSlot& s0 = sim->D().Slots()[0];
+            r.peakFirst = MaxFlow(s0);
+            // 中心 (マス 32, 32 の角) の右 0.5 m は +x、左 0.5 m は -x、上 0.5 m は +z
+            const int cx = 32, cz = 32;
+            r.outward = FlowXAt(s0, cx + 2, cz) > 0.0f && FlowXAt(s0, cx - 3, cz) < 0.0f && FlowZAt(s0, cx, cz + 2) > 0.0f
+                        && FlowZAt(s0, cx, cz - 3) < 0.0f;
+            sim->Step(30);
+            r.peakLater = MaxFlow(sim->D().Slots()[0]);
+            return r;
+        };
+        const RadialRun off = radialRun(0);
+        const RadialRun on = radialRun(20);
+        MYE_LOG_INFO("  [disturbance] radial impulse: peak flow %.3g (0 iterations) / %.3g (20); 30 ticks later %.3g / %.3g",
+                     static_cast<double>(off.peakFirst), static_cast<double>(on.peakFirst), static_cast<double>(off.peakLater),
+                     static_cast<double>(on.peakLater));
+        check(on.peakFirst >= 0.8f * off.peakFirst && on.outward, "solver: a radial impulse keeps its outward flow through the projection of its own step");
+        check(on.peakLater < 0.5f * on.peakFirst, "solver: the radial flow dies out in the following ticks (projection and decay)");
+    }
+    {
+        auto sim = std::make_unique<Sim>();
+        const EntityID f = AddField(*sim, 0.0f, 0.0f, 0.0f, 64, 64, kDisturbanceChannelDensity);
+        const EntityID src = AddSource(*sim, "Walker", 0.0f, 0.0f, -4.0f);
+        sim->Flush();
+        (void)f;
+        SourceOf(*sim, src)->radius = 1.5f;
+        const float z = WalkSource(*sim, src, -4.0f, 40);
+        const DisturbanceSlot& s = sim->D().Slots()[0];
+        // 経路 (x = 0) の左右 0.75 m、源の少し後ろ
+        const int zi = CellIndexOf(s, z - 0.75f, 2);
+        const float curlLeft = CurlAt(s, CellIndexOf(s, -0.75f, 0), zi);
+        const float curlRight = CurlAt(s, CellIndexOf(s, 0.75f, 0), zi);
+        MYE_LOG_INFO("  [disturbance] curl beside the path: left %.4g, right %.4g", static_cast<double>(curlLeft),
+                     static_cast<double>(curlRight));
+        check(curlLeft * curlRight < 0.0f && std::fabs(curlLeft) > 0.02f && std::fabs(curlRight) > 0.02f,
+              "solver: the sign of the curl is opposite on the two sides of a moving source");
+    }
+
+    // ---- 風 (acc 16) ----
+    {
+        constexpr int kTicks = 600;
+        // 流れは目標速度 w へ velocityKeep で寄る: v(t) = w (1 - keep^t)。重心の移動量の理論値は w * (T - sum keep^t) / 60
+        double rampSum = 0.0;
+        double keepPow = 1.0;
+        for (int t = 1; t <= kTicks; ++t) {
+            keepPow *= 0.95;
+            rampSum += keepPow;
+        }
+        const float expected = static_cast<float>(2.0 * (static_cast<double>(kTicks) - rampSum) / 60.0);
+        const WindRun full = RunWind(1.0f, kTicks, true);
+        const WindRun off = RunWind(0.0f, kTicks, true);
+        const WindRun half = RunWind(0.5f, kTicks, true);
+        MYE_LOG_INFO("  [disturbance] wind (2, 0, 0) m/s over %d ticks: centroid moved %.4g m (theory %.4g); windScale 0: %.4g; 0.5: %.4g",
+                     kTicks, static_cast<double>(full.shift), static_cast<double>(expected), static_cast<double>(off.shift),
+                     static_cast<double>(half.shift));
+        check(std::fabs(full.shift - expected) <= 0.2f * expected, "wind: a dense puff drifts +x by the theoretical distance (within 20%)");
+        check(std::fabs(off.shift) < 1.0e-3f && off.maxFlowX == 0.0f, "wind: windScale = 0 leaves the fog and the flow alone");
+        check(std::fabs(half.shift - 0.5f * expected) <= 0.2f * 0.5f * expected, "wind: windScale scales the drift");
+        check(std::fabs(full.maxFlowX - 2.0f) < 0.05f, "wind: the flow settles at the wind speed");
+        // 塊を足さず、風も 0 の場: 全マスが静止状態のまま (ビット一致)
+        const WindRun calm = RunWind(0.0f, 60, false);
+        check(calm.rest, "wind: with no wind and no source the field stays the exact rest state");
+    }
+}
+
 } // namespace
 
 namespace {
@@ -289,23 +541,25 @@ bool RunDisturbanceFieldImpl(bool heavy)
               "decay: walking for 30 ticks clears density, leaves a trail and stirs the flow");
         sim->W().DestroyEntity(walker);
         sim->Flush();
-        float prevDev = 1e9f, prevTrail = 1e9f, prevFlow = 1e9f;
+        float prevDev = 1e9f, prevTrail = 1e9f, flow = 0.0f;
         bool monotone = true;
         for (int t = 0; t < ticks; ++t) {
             sim->Step();
             const DisturbanceSlot& s = sim->D().Slots()[0];
             const float dev = MaxAbsDev(s.density, 1.0f);
             const float trail = MaxAbsDev(s.trail, 0.0f);
-            const float flow = MaxFlow(s);
-            monotone = monotone && dev <= prevDev && trail <= prevTrail && flow <= prevFlow;
+            flow = MaxFlow(s);
+            monotone = monotone && dev <= prevDev && trail <= prevTrail;
             prevDev = dev;
             prevTrail = trail;
-            prevFlow = flow;
         }
-        check(monotone, "decay: |density - rest|, trail and flow speed never increase after the source stops");
+        // 移流と投影が入っても濃さと跡の最大偏差は増えない (双線形は凸結合、復元は縮小写像)。
+        // 流れの最大は投影で局所的に増えうるので単調性は主張せず、十分小さくなることを見る
+        check(monotone, "decay: |density - rest| and trail never increase after the source stops (advection and projection on)");
+        check(flow < 0.05f, "decay: the flow dies out after the source stops");
         check(prevDev < 1.0e-4f, "decay: density comes back to within 1e-4 of the rest value");
         MYE_LOG_INFO("  [disturbance] after %d ticks: density dev %.3g, trail %.3g, flow %.3g", ticks,
-                     static_cast<double>(prevDev), static_cast<double>(prevTrail), static_cast<double>(prevFlow));
+                     static_cast<double>(prevDev), static_cast<double>(prevTrail), static_cast<double>(flow));
     }
     if (!heavy) {
         auto sim = std::make_unique<Sim>();
@@ -351,7 +605,8 @@ bool RunDisturbanceFieldImpl(bool heavy)
         sim->Step();
         check(SameSlot(sim->D().Slots()[0], before), "bounds: impulses entirely outside, with radius 0 or far above leave the state unchanged");
         // 角 (-4, -4) に半径 1: 格子内の 1/4 の円だけが変わる。変わったマスの集合を総当たりの期待と比べる
-        FieldImpulse corner = MakeImpulse(-4.0f, 0.0f, -4.0f, 1.0f, 1.0f, 0.0f, 5.0f);
+        // 速さ 0: 流れが起きないので移流で濃さが半径の外へ滲まない (注入の範囲だけを見る)
+        FieldImpulse corner = MakeImpulse(-4.0f, 0.0f, -4.0f, 1.0f, 1.0f, 0.0f, 0.0f);
         corner.density = -0.5f;
         DisturbanceQueueImpulse(sim->scene, corner);
         sim->Step();
@@ -482,6 +737,7 @@ bool RunDisturbanceFieldImpl(bool heavy)
                 src->fullSpeed = 4.0f;
                 src->densityDelta = -0.5f;
                 src->radius = 2.0f;
+                src->strength = 0.0f; // 流れを起こさない (濃さの係数だけを比べる)
                 auto* rb = sim->W().AddComponent<RigidbodyComponent>(e);
                 rb->velocity = { speed, 0.0f, 0.0f };
                 sim->Step();
@@ -622,6 +878,7 @@ bool RunDisturbanceFieldImpl(bool heavy)
         const EntityID f = AddField(*sim, 0.0f, 0.0f, 0.0f, 32, 32, 1);
         sim->Flush();
         FieldOf(*sim, f)->velocityKeep = 1.0f;
+        FieldOf(*sim, f)->pressureIterations = 0; // 放射状の流れは発散そのもの。投影すると消える
         sim->Step();
         FieldImpulse radial = MakeImpulse(0.0f, 0.0f, 0.0f, 1.5f, 0.0f, 0.0f, 3.0f);
         radial.shape = kFieldImpulseRadial;
@@ -708,33 +965,22 @@ bool RunDisturbanceFieldImpl(bool heavy)
     // ---- 2 ワールドの並走と焼き込み (acc 9) ----
     {
         const int ticks = heavy ? 600 : 100;
-        auto a = std::make_unique<Sim>();
-        auto b = std::make_unique<Sim>();
-        const Scenario sa = BuildScenario(*a);
-        const Scenario sb = BuildScenario(*b);
-        a->Flush();
-        b->Flush();
-        bool same = true;
         uint64_t finalHash = 0;
-        for (int t = 0; t < ticks; ++t) {
-            DriveScenario(*a, sa, t);
-            DriveScenario(*b, sb, t);
-            a->Step();
-            b->Step();
-            LateInputs(*a, t);
-            LateInputs(*b, t);
-            const uint64_t ha = a->Hash();
-            same = same && ha == b->Hash();
-            finalHash = ha;
-        }
+        const bool same = RunTwoWorlds(ticks, finalHash);
         MYE_LOG_INFO("  [disturbance] two-world scenario final hash @%d = %016llX", ticks,
                      static_cast<unsigned long long>(finalHash));
         check(same, "determinism: two worlds hash-match on every tick");
         if (heavy) {
-            // 600 tick 後の最終ハッシュ。Debug == Release (欄や計算を変えたら理由を添えて再採取する)
-            constexpr uint64_t kBakedFinalHash = 0x92713D47B7CE447Aull;
+            // 600 tick 後の最終ハッシュ。Debug == Release (欄や計算を変えたら理由を添えて再採取する。
+            // M96d: 流れのソルバ (移流・投影・Radial の発散源)、欄 2 つ、場の畳み方 (HashStateBytes) で変わった。--field-bench が同じ値を出す)
+            constexpr uint64_t kBakedFinalHash = 0x674FE5CFD80F29A9ull;
             check(finalHash == kBakedFinalHash, "determinism: the final hash at tick 600 equals the baked value (Debug == Release)");
         }
+    }
+
+    // ---- 流れのソルバ (acc 3 / 13 / 16) ----
+    if (!heavy) {
+        SolverChecks(check);
     }
 
     // ---- 描画への詰め替え (M96b。GPU は使わない = 転送指示の中身だけを見る) ----
@@ -785,5 +1031,115 @@ bool RunDisturbanceFieldLongSelfTest()
 {
     return RunDisturbanceFieldImpl(true);
 }
+
+int RunDisturbanceFieldBenchmark()
+{
+    MYE_LOG_INFO("==== Disturbance field benchmark ====");
+    RegisterBuiltinComponents();
+    int failCount = 0;
+    const auto check = [&](bool cond, const char* what) {
+        MYE_LOG_INFO("  %s: %s", cond ? "PASS" : "FAIL", what);
+        failCount += cond ? 0 : 1;
+    };
+    // 他の起動経路が起こしたワーカーは止めない。ここで起こした分だけ片付ける
+    const bool startedHere = jobs::System().WorkerCount() == 0;
+    jobs::System().Init();
+    MYE_LOG_INFO("  workers = %d", jobs::System().WorkerCount());
+
+    // 焼き込みハッシュの再採取用 (selftest の長い層と同じ場面)
+    uint64_t finalHash = 0;
+    const bool same = RunTwoWorlds(600, finalHash);
+    MYE_LOG_INFO("  [bench] two-world scenario @600: match=%d final hash = 0x%016llXull", same ? 1 : 0,
+                 static_cast<unsigned long long>(finalHash));
+
+    SolverChecks(check);
+
+    // 性能: 128 x 128、動く源 3 + 定常の源 1 + 風。step と HashWorld を別々に測る。
+    // jobs なし / あり、反復回数とチャネルを変えた内訳 (どこが重いか) を並べる
+    const auto measure = [&](bool jobsOn, int iterations, uint32_t channels) {
+        jobs::System().SetEnabled(jobsOn);
+        auto sim = std::make_unique<Sim>();
+        GameObject envGo = sim->scene.CreateGameObjectTracked("Environment");
+        envGo.AddComponent<PhysicsEnvironmentComponent>()->windVelocity = { 2.0f, 0.0f, 0.5f };
+        const EntityID field = AddField(*sim, 0.0f, 0.0f, 0.0f, 128, 128, channels);
+        EntityID movers[3];
+        for (int i = 0; i < 3; ++i) {
+            movers[i] = AddSource(*sim, "Mover", -8.0f, 0.0f, static_cast<float>(i - 1) * 6.0f);
+            SourceOf(*sim, movers[i])->radius = 1.5f;
+            SourceOf(*sim, movers[i])->trailDepth = 0.3f;
+            SourceOf(*sim, movers[i])->ripple = 0.05f;
+        }
+        const EntityID fan = AddSource(*sim, "Fan", 8.0f, 0.0f, 0.0f);
+        sim->Flush();
+        FieldOf(*sim, field)->pressureIterations = iterations;
+        auto* fanSrc = SourceOf(*sim, fan);
+        fanSrc->mode = 1;
+        fanSrc->constantVelocity = { -2.0f, 0.0f, 1.0f };
+        fanSrc->densityDelta = 0.1f;
+        constexpr int kWarm = 60;
+        constexpr int kMeasured = 400;
+        constexpr int kWindow = 10; // 他のプロセスが CPU を使う環境でも下限が読めるよう、10 tick 窓 (40 個) の最良・平均・最悪を出す
+        double stepMs = 0.0;
+        double hashMs = 0.0;
+        double windowStep = 0.0;
+        double windowHash = 0.0;
+        double bestStep = 1.0e9;
+        double bestHash = 1.0e9;
+        double bestTotal = 1.0e9;
+        double worstTotal = 0.0;
+        for (int t = 0; t < kWarm + kMeasured; ++t) {
+            for (int i = 0; i < 3; ++i) {
+                TransformOf(*sim, movers[i])->position.x = -8.0f + 0.05f * static_cast<float>(t % 320);
+            }
+            const auto t0 = std::chrono::steady_clock::now();
+            sim->Step();
+            const auto t1 = std::chrono::steady_clock::now();
+            const uint64_t h = sim->Hash();
+            const auto t2 = std::chrono::steady_clock::now();
+            (void)h;
+            if (t >= kWarm) {
+                const double st = std::chrono::duration<double, std::milli>(t1 - t0).count();
+                const double hs = std::chrono::duration<double, std::milli>(t2 - t1).count();
+                stepMs += st;
+                hashMs += hs;
+                windowStep += st;
+                windowHash += hs;
+                if ((t - kWarm + 1) % kWindow == 0) {
+                    const double total = (windowStep + windowHash) / kWindow;
+                    if (total < bestTotal) {
+                        bestTotal = total;
+                        bestStep = windowStep / kWindow;
+                        bestHash = windowHash / kWindow;
+                    }
+                    worstTotal = std::max(worstTotal, total);
+                    windowStep = 0.0;
+                    windowHash = 0.0;
+                }
+            }
+        }
+        MYE_LOG_INFO("  [bench] jobs %s, %2d iterations, channels %u: mean step %.3f + hash %.3f = %.3f ms/tick; "
+                     "best %d-tick window step %.3f + hash %.3f = %.3f, worst window %.3f ms/tick",
+                     jobsOn ? "on " : "off", iterations, channels, stepMs / kMeasured, hashMs / kMeasured,
+                     (stepMs + hashMs) / kMeasured, kWindow, bestStep, bestHash, bestTotal, worstTotal);
+        if (!jobsOn && iterations == 20 && channels == 7) {
+            SimRefs refs;
+            refs.scene = &sim->scene;
+            std::vector<std::byte> blob;
+            const bool ok = CaptureSimSnapshot(refs, blob);
+            MYE_LOG_INFO("  [bench] snapshot: capture=%d, %zu bytes (1 field 128x128, channels 7)", ok ? 1 : 0, blob.size());
+        }
+    };
+    measure(false, 20, 7);
+    measure(true, 20, 7);
+    measure(false, 0, 7);
+    measure(false, 20, 1);
+    jobs::System().SetEnabled(true);
+    if (startedHere) {
+        jobs::System().Shutdown();
+    }
+    MYE_LOG_INFO("==== Disturbance field benchmark: %s ====", failCount == 0 ? "all checks passed" : "CHECKS FAILED");
+    return 0;
+}
+
 
 } // namespace mye

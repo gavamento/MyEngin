@@ -140,7 +140,7 @@
 
 #### G. 読み取り (`FieldSample`)
 
-- 引数の場 (null なら位置を含む有効な場のうち entity index 最小) の、位置での値をセル中心の双線形 (3D は三線形) で返す。格子外のマスは静止状態として補間する
+- 引数の場 (null なら位置を含む有効な場のうち entity index 最小) の、位置での値をセル中心の双線形 (3D は三線形) で返す。格子外のマスは静止状態として補間する (静止状態の流れ = その場の目標速度 = 風 × windScale。sub-04 以降)
 - 2D の「含む」= xz が格子内、かつ y ∈ `[baseY − thickness, baseY + 2 × thickness]`
 - 2D の濃さは高さの形 `p(y) = y <= baseY ? 1 : saturate(1 − (y − baseY) / thickness)` を掛けた値 (描画と同じ式)。`followTerrain` の場の `baseY` は列の基準高さの双線形
 - 返す値: 流れ (vec3、2D は y = 0)・濃さ・跡・波紋の高さ・場のエンティティ。無効なチャネルの値は 0 (濃さチャネルが無い場の濃さも 0)
@@ -160,7 +160,8 @@
 #### J. 移流・投影・風 (sub-04)
 
 - 半ラグランジュ: セル中心から `−v × (1/60)` 戻った点を双線形 (3D 三線形) で引く。格子外は静止状態 (流れは `v_target`、濃さは `restDensity`) = **開いた境界**。風上の縁から静止濃度の霧が入ってくる
-- 投影: 発散 → Jacobi (圧力の格子外は 0 = ディリクレ) → 勾配を引く。`pressureIterations = 0` で投影しない
+- 投影: 発散 → Jacobi (圧力の格子外は 0 = ディリクレ) → 勾配を引く。`pressureIterations = 0` で投影しない。離散の発散・勾配・Jacobi の組は合成が一貫した作用素にする (sub-04 round 1: 中心差分の発散と勾配に、隣接 5 点の Jacobi を組むと 64 反復でも発散が 19% 残った)
+- **Radial のインパルスは発散源** (sub-04 round 1 で決定): その step で Radial が注入した速度の差分の発散を、投影の右辺から引く (`∇²p = div(v) − div(Δv_radial)`)。爆発の外向きの流れはその step の投影で消されず、霧を押し出してから、次の step 以降の投影と減衰で消える。作業配列だけで、状態は増えない。Point / Cone / 動く源は従来どおり投影する (渦になる)
 - 3D の浮力 (sub-07): `vy += buoyancy × (ρ − restDensity) / 60` (濃い煙が昇る)
 
 ### 4.2 データ・保存形式・互換性
@@ -243,7 +244,7 @@
 |---|---|---|---|
 | 1 | 場を置かないシーンの WorldHash 列・焼き込みハッシュが着手前と一致 | replay_verify の既存全ジョブ PASS、selftest の既存の焼き込み hash (CC2D / 庭 / tile / gridnav / twod 等) が不動、空の `DisturbanceState` で `HashWorld` が着手前の値と一致 | 01 |
 | 2 | 源もインパルスも無い場は 600 tick 静止状態とビット一致 | selftest (全配列を memcmp) | 01 |
-| 3 | 注入をやめた後、全マスの `|ρ − restDensity|` の最大値と跡の最大値が毎 tick 非増加し、keep < 1 なら静止状態へ戻る。`trailKeep = 1` で跡が永続 | selftest | 01 (04 で移流込みで再表明) |
+| 3 | 注入をやめた後、全マスの `|ρ − restDensity|` の最大値と跡の最大値が毎 tick 非増加し (流れの最大の速さは、投影が局所的に増やしうるので非増加を求めない。sub-04 からは「0.05 m/s 未満に消える」)、keep < 1 なら静止状態へ戻る。`trailKeep = 1` で跡が永続 | selftest | 01 (04 で移流込みで再表明) |
 | 4 | スナップショット往復: 場 2 個 + キュー 3 件の状態を撮る → 新しいシーンへ戻す → 100 tick 毎 tick ハッシュ一致 | selftest (simsnapshot / disturbance) | 01 |
 | 5 | 境界: 格子の角・外側への注入で格子外を書かない。完全に外の注入で状態不変。半径 0 は何もしない | selftest | 01 |
 | 6 | 源の速度: CC / 非 kinematic Rigidbody / 位置の差分の 3 経路と、Constant の向き (エンティティの回転)。`fullSpeed` の速さ係数 | selftest | 01 |
@@ -255,7 +256,7 @@
 | 12 | replay_verify のジョブ `field` (`--field-demo`) が Debug / Release で PASS。`tools\mcp\src\verify.rs` の JOBS と `run_parallel` の一覧に `field` | `tools\replay_verify.bat`、`cargo test` (tools\mcp) | 02 (以後のサブで維持) |
 | 13 | 流れ: 投影後の発散の最大値が投影前の 10% 以下 (20 反復、源が通った直後)。源の後ろに渦 (速度の回転の符号が左右で逆) ができる | selftest + `drawDebug` のスクショ | 04 |
 | 14 | jobs あり / なしでハッシュ一致 (selftest と replay_verify `jobsab` に `--field-demo`) | `SimParallelSelfTest` 相当 + replay_verify | 04 |
-| 15 | 性能: 2D 128×128・全チャネル・20 反復で、sim + ハッシュが Release・jobs なし 1.67 ms/tick 以下 (jobs ありの値も報告)。スナップショット 1 枚のバイト数を報告 | selftest の計測ログ (Release) | 04 |
+| 15 | 性能: 2D 128×128・全チャネル・20 反復で、sim + ハッシュが Release・jobs なし 1.67 ms/tick 以下 (jobs ありの値も報告)。並列の coder が同じ機械でビルドしているので、`--field-bench` で 10 tick の窓を 20 個以上測り、**最良の窓**で判定する (平均と最悪も報告)。ハッシュは `HashStateBytes` (ADR-030 決定 13 と同じ方式) で畳む。スナップショット 1 枚のバイト数を報告 | selftest の計測ログ (Release) | 04 |
 | 16 | 風: 一様風 × `windScale` で霧が流れ、風上の縁から静止濃度が入る。`windScale = 0` で風の影響なし。`SampleWind` と空力の結果は不変 | selftest + replay_verify `physics` / `joints` PASS | 04 |
 | 17 | ABI v35 = 202: 規則 11 PASS。C++ から `FieldAddImpulse` → 同じ tick (Update から) / 次の tick (LateUpdate から) の step で効く。`FieldSample` が内部の値と一致。C# から `FieldAddImpulse` は 0、`FieldSample` は値を返す | selftest (GameLogic のプローブと C# の一時プローブ。memory `abi-bump-verification` の手順) | 05 |
 | 18 | インパルスの 3 形: Point は `dir` 向き、Radial は外向き (中心で 0)、Cone は円錐の外で 0 | selftest | 05 |
@@ -337,6 +338,7 @@
 - R11 (sub-15): 地面の霧の局所ライトは最大 8 本・影なし (§2 #24)。影つきのビームは Volume で作る。8 本の既定は sub-15 の GPU 時間で planner が見直す
 - R12 (sub-03): 地面の霧は面ごとに 1 回レイマーチするので、霧の後ろに透明物が重なると透明物のピクセルでも積分する (コストは面の数に比例)。段数の既定は sub-03 の計測で planner が判断する
 - R13 (sub-03 → sub-16): スカイボックスの無い背景に地面の霧が掛かるのが Deferred だけ、という制限は、ユーザー指示 (2026-11-08) で取り消し。sub-16 で Forward にも掛ける (§2 #25)。フロクセルの背景も Forward で Deferred に揃える (ユーザー回答 2026-11-08、§2 #25)
+- R14 (sub-04): 投影の Jacobi は幅 2 の 5 点 (中心差分の発散・勾配と一貫)。格子が 4 つの部分格子に分かれ、市松模様の圧力の成分が減衰しない。絵に格子状のムラが出たら、前進 / 後退差分 (発散の残りが多い) か、スタガード格子 (別の仕事) を検討する
 
 ### ユーザー回答 (2026-11-08、司会の AskUserQuestion)
 
@@ -413,3 +415,5 @@
   - `tools\check_rules.ps1` 規則 9 のグループの追加が、別の規則の中へ入っていないか
 - **B.3 (W2 の統合の後 = 中間のまとめ実行)**: master で `Editor.exe --selftest-full` (Debug / Release) と `tools\replay_verify.bat` を回す。落ちたら原因のサブを断定して FIX_REQUEST を回す (焼き込み値は A.2 の規則)
 - **B.4 (W5)**: sub-17 が最後のまとめ実行を行う (受け入れ 28)
+- 2026-11-08 (sub-04 round 1 の SELF_EVAL): §4.1 J に「作用素の一貫性」と「Radial のインパルスは発散源」を追加、§4.1 G に静止状態の流れ = 目標速度を明記、§5 の 3 から流れの単調性を外し、§5 の 15 の測り方 (最良の窓、HashStateBytes) を明記
+- 2026-11-08 (sub-04 round 2): Jacobi は幅 2 の 5 点を採用 (前進 / 後退差分の組は 20 反復で発散が 22% 残り、受け入れ 13 を満たさない)。部分格子の分離による市松のムラは sub-17 の手動確認で見る (§7 R14)

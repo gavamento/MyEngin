@@ -1,8 +1,8 @@
 # sub-05: スクリプトの口 (ABI v35 = 202: FieldAddImpulse / FieldSample) とデモの操作役
 
 - 依存: sub-03 (波 W1。spec §6)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (統合待ち。W1 の順 04 → 05 → 15 → 12)
+- 往復: 2
 
 
 ## 並列の注意 (波 W1)
@@ -23,7 +23,7 @@ spec §4.2「ABI」、§4.1 E / G、§2 #20 / #21。ゲームが爆発・攻撃�
 2. `src\Engine\Engine\Script\EngineApiTable.cpp`: 実装。`FieldAddImpulse` は `IsManagedLane(engine)` なら 0 (`:485-518` の PlayFeel と同じ)。中身は sub-01 の `DisturbanceQueueImpulse` / `DisturbanceSampleAt` を呼ぶだけ
 3. `src\Scripting\Interop.cs`: 同じ並びでミラー + `kExpectedApiVersion = 35`。`MyeScript.cs` に読み取りの糖衣 (`FieldSample`)。書き込みの糖衣は C# に出さない
 4. `src\Shared\ScriptAPI.h`: C++ の糖衣 (既定値入りの `MyeFieldImpulse` を作るヘルパと、Point / Radial / Cone の短い呼び出し)
-5. デモの操作役 `src\GameLogic\Scripts\FieldDemoDriver.cpp` (FeelDemo.cpp の様式): CC の人が霧の中を決まった経路で歩き (moveInput を tick で決める = 入力に依存しない)、一定の tick ごとに前方へ Cone の「斬撃」、別の場所で Radial の「爆発」(`densityDelta = −1`)。`FieldSample` で足元の濃さを読み、濃い所では歩きを遅くする (読み取りの経路を replay で被覆するため)。`DemoContentField.cpp` の末尾に人の生成を足す
+5. デモの操作役 `src\GameLogic\Scripts\ZZFieldDemoDriver.cpp` (名前は ZZ 始まり: スクリプトの TypeId は名前順なので、既存のスクリプトの TypeId を動かさないため。`ZTwoDHero` と同じ。round 1 で確定) (FeelDemo.cpp の様式): CC の人が霧の中を決まった経路で歩き (moveInput を tick で決める = 入力に依存しない)、一定の tick ごとに前方へ Cone の「斬撃」、別の場所で Radial の「爆発」(`densityDelta = −1`)。`FieldSample` で足元の濃さを読み、濃い所では歩きを遅くする (読み取りの経路を replay で被覆するため)。`DemoContentField.cpp` の末尾に人の生成を足す
 6. ABI の検証: memory `abi-bump-verification` の手順 (Interop.cs の順序の機械照合 = 規則 11、C# の一時プローブで `FieldAddImpulse` が 0・`FieldSample` が値を返すことを実走で確認してから消す)
 
 7. (sub-01 からの申し送り) `FieldAddImpulse` の注記に「Point / Cone の `dir` は正規化しない。`u = dir × speed` なので dir の長さが速さに掛かる」と書く
@@ -64,3 +64,5 @@ spec §5 の 12, 17, 18, 30。
 ## 実装メモ (coder が追記)
 
 ## フィードバック履歴
+- round 1: VERDICT REWORK (planner、2026-11-08)。ABI・ミラー・糖衣・拒否・デモの実装と規則 11 PASS を確認。ZZ 命名は受け入れ (spec 側を直した)。must: C# の一時プローブの実走 (受け入れ 17。selftest / replay_verify ではないので、まとめ実行の対象外)。should: メインの作業ツリーの git status、斬撃の扇が写る絵
+- round 2: VERDICT OK (planner、2026-11-08)。C# の一時プローブ実走で (a) AddImpulse = 0 (b) Sample の全欄が C++ と一致 (2 位置 × 2 tick) (c) ABI v35 の照合を確認、プローブは撤去済み。メインの git status にこのサブのファイルなし。斬撃の扇が絵で断定しづらい件は minor (形は受け入れ 18 の selftest が受け持つ。絵は sub-17 の手動確認へ)
