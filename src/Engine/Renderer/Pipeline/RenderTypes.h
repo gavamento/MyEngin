@@ -398,6 +398,10 @@ struct RenderView {
     float froxelNearZ = 0.0f;
     float froxelFarZ = 0.0f;
     int32_t froxelSlices = 0;
+    // ---- M96: かき乱しフィールドの 2D 層 (末尾 append。**null = 場が無い = 従来と 1 ビットも同じ**) ----
+    //   フロクセルの注入が霧の密度に足す。RenderSystem が DisturbanceFieldPass の束を指すだけの非所有ポインタ。
+    //   ★AssetPreviewCache の別 RenderSystem と手組みの RenderView は null のまま
+    const struct DisturbanceFieldGpu* disturbance = nullptr;
     // ---- M63d: パーティクルのライティング (末尾 append。**null = 従来と 1 ビットも同じ**) ----
     //      RenderSystem が光パスへ渡すのと同じ SceneLightData を指すだけの非所有ポインタ
     //      (terrain / decals / probes と同じ流儀)。**メッシュのライティングは今までどおり

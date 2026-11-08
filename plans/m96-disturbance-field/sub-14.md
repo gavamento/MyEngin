@@ -11,7 +11,7 @@ spec §5 の 26〜28。
 1. `docs\adr\ADR-036-disturbance-field.md` (ADR-035 の体裁): 背景 / 決定 (spec §2 の結論と却下した案。太陽光の bool・フロクセルの自動有効 (場だけのモード)・3D 4 個の描画・起伏に沿う層を含む) / 計測値 (sub-04 / sub-07 の ms とスナップショットのバイト数、sub-07 のフロクセル注入の GPU 時間、sub-09 の焼き込みの ms、タイムトラベルで遡れる秒数の目安。spec §7 R3) / 制限 (R5 / R7 / R8、物理を押さない、太陽光は影なし) / 公式資料 (spec §2 #3 の UE Niagara Fluids の URL)
 2. `engine_spec.md`: 新しい節 (sim の契約 = Tick 位置・内容ゲート・DFLD 節・キューの消費規則、描画の受け渡し、ABI v35)。§13 の ADR 一覧に 036。§11 (Debug / Release 一致) に規則 18 の一行
 3. `docs\engine-feature-guide.md`: 作り手向けの使い方 (霧の広場の作り方、源の付け方、斬撃のアニメイベント、`FieldSample` で足元の霧を読む例、フロクセルが必要なこと)
-4. `docs\test_checklists.md`: 手動確認の項目 (Play / Stop で霧が戻る、Scene View で見える、追従の層が付いてくる、ヒットストップで霧も止まる)
+4. `docs\test_checklists.md`: 手動確認の項目 (Play / Stop で霧が戻る (sub-02 では Editor の操作で確認していない)、Scene View で見える、追従の層が付いてくる、ヒットストップで霧も止まる)
 5. エディタ: Add Component のカタログの分類 (既存の分類の仕組みがあれば)、Profiler に `disturbance` のスコープが出ることの確認
 6. `AGENTS.md` / `CLAUDE.md` は変えない (規則 18 は check_rules に入っており、AGENTS §4.2 の決定論の規則の範囲内)
 7. (sub-01 からの申し送り) 規則 18 の自己検査 `tools\check_rules_selftest.ps1` を呼ぶ所が無い。`tools\check_rules.ps1` から呼ぶか、CI (と replay_verify の rules ジョブ) に載せる
@@ -36,7 +36,7 @@ spec §5 の 26, 27, 28, 30。
 
 ## 検証コマンド
 
-> selftest の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブが M96 の最後のまとめ実行。受け入れ 28 の `--selftest-full` (Debug / Release) を実行する。
+> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブが M96 の最後のまとめ実行。受け入れ 28 の `--selftest-full` (Debug / Release) と `tools\replay_verify.bat` を実行する。
 
 - 上の 28 の全部
 

@@ -14,6 +14,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Disturbance/DisturbanceRender.h"
 #include "Engine/Engine/Disturbance/DisturbanceState.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
@@ -21,6 +22,7 @@
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Scene/TransformSystem.h"
+#include "Engine/Renderer/Passes/DisturbanceFieldPass.h"
 
 namespace mye {
 
@@ -369,9 +371,9 @@ bool RunDisturbanceFieldImpl(bool heavy)
         }
         check(setMatches && changed > 0, "bounds: a corner impulse changes exactly the cells inside the radius and nothing else");
         // 反対の角 (半径の半分が格子の外) でも同様
-        FieldImpulse far = MakeImpulse(3.9f, 0.0f, 3.9f, 1.0f, -1.0f, 0.0f, 5.0f);
-        far.density = -0.5f;
-        DisturbanceQueueImpulse(sim->scene, far);
+        FieldImpulse farCorner = MakeImpulse(3.9f, 0.0f, 3.9f, 1.0f, -1.0f, 0.0f, 5.0f);
+        farCorner.density = -0.5f;
+        DisturbanceQueueImpulse(sim->scene, farCorner);
         sim->Step();
         check(sim->D().Slots()[0].flowX.size() == 256u && sim->D().Slots()[0].density.size() == 256u
                   && sim->D().Slots()[0].flowX[255] != 0.0f,
@@ -733,6 +735,35 @@ bool RunDisturbanceFieldImpl(bool heavy)
             constexpr uint64_t kBakedFinalHash = 0x92713D47B7CE447Aull;
             check(finalHash == kBakedFinalHash, "determinism: the final hash at tick 600 equals the baked value (Debug == Release)");
         }
+    }
+
+    // ---- 描画への詰め替え (M96b。GPU は使わない = 転送指示の中身だけを見る) ----
+    {
+        auto s = std::make_unique<Sim>();
+        DisturbanceFieldUpload up;
+        check(BuildDisturbanceFieldUpload(s->W(), nullptr, up) == 0, "render: a scene without fields packs no layer");
+        const EntityID f = AddField(*s, 10.0f, 2.0f, -4.0f, 32, 32, kDisturbanceChannelDensity);
+        s->Flush();
+        // 状態が無い (編集中) は定数。原点は最初の step が作る格子と同じ
+        check(BuildDisturbanceFieldUpload(s->W(), &s->D(), up) == 1 && !up.layers[0].hasState
+                  && up.layers[0].originCellX == 40 - 16 && up.layers[0].originCellZ == -16 - 16
+                  && up.layers[0].baseY == 2.0f && up.layers[0].restDensity == 1.0f && up.layers[0].hasDensity,
+              "render: before the first step the layer is a constant at the grid the step will build");
+        s->Step(2);
+        const DisturbanceSlot& slot = s->D().Slots()[0];
+        check(BuildDisturbanceFieldUpload(s->W(), &s->D(), up) == 1 && up.layers[0].hasState
+                  && up.layers[0].originCellX == slot.originCell[0] && up.layers[0].originCellZ == slot.originCell[2]
+                  && up.layers[0].density == slot.density.data() && up.layers[0].trail == nullptr
+                  && up.layers[0].entityIndex == f.index && up.serial == s->D().RenderSerial(),
+              "render: with a state the layer points at the slot's arrays and carries the serial");
+        const uint64_t serialBefore = s->D().RenderSerial();
+        s->D().Clear();
+        check(s->D().RenderSerial() > serialBefore, "render: Clear advances the serial so the next upload is not skipped");
+        // 寸法を変えて次の step の前: スロットは使えない (作り直し待ち) ので定数に戻る
+        s->Step(1);
+        s->W().GetComponent<DisturbanceFieldComponent>(f)->cellsX = 48;
+        check(BuildDisturbanceFieldUpload(s->W(), &s->D(), up) == 1 && !up.layers[0].hasState && up.layers[0].cellsX == 48,
+              "render: a layer whose slot no longer matches the settings is drawn as a constant until the step rebuilds it");
     }
 
     return failCount == 0;

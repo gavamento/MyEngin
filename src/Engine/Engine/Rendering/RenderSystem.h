@@ -15,6 +15,7 @@
 #include "Engine/Engine/Scene/TagNames.h" // RtTagRules (タグによる RT の一括 ON/OFF)
 #include "Engine/Engine/Rendering/TerrainSystem.h"
 #include "Engine/Renderer/Passes/AcousticVolumePass.h"
+#include "Engine/Renderer/Passes/DisturbanceFieldPass.h"
 #include "Engine/Renderer/Passes/EditorLinePass.h"
 #include "Engine/Renderer/Passes/EnvMapBaker.h"
 #include "Engine/Renderer/Passes/FroxelPass.h"
@@ -44,6 +45,7 @@ class GraphicsDevice;
 class IRenderPath;
 class ShaderManager;
 class AcousticField;
+class DisturbanceState;
 class ParticleSystem;
 class VfxRenderer;
 class NavDebugView;
@@ -298,6 +300,16 @@ public:
     // 2026-09-12「描画だけ円」: false なら見通しビットを転送せず、残光だけの絵 (従来) に戻す
     bool acousticFront = true;
 
+    // ---- M96: かき乱しフィールド (2D 層の霧) ----
+    // ★sim が持つ場の状態への**非所有ポインタ**と、その状態を持つシーンの World (Scene が所有)。
+    //   disturbanceWorld == null (繋がっていない) なら場は描かない = 従来と完全に同じ絵。
+    //   render に渡された World が disturbanceWorld と違うとき (アクター編集など) は状態を読まず、
+    //   その World の場を静止状態の定数として描く。
+    //   ★**AssetPreviewCache の RenderSystem はここを埋めない** ので、サムネイルに場の霧は出ない。
+    //   ★実体 (Scene) を壊す前に必ず nullptr へ戻すこと
+    const DisturbanceState* disturbance = nullptr;
+    const World* disturbanceWorld = nullptr;
+
     // M44d: ポストプロセス解決の GPU 時間 (直近の Resolve、ProfilerWindow 表示用)
     float PostFxGpuMs() const { return postFx_.ResolveGpuMs(); }
     // M56c: HZB を組んだ GPU 時間 (パスが持つ計測を Render 直後に写したもの)
@@ -400,6 +412,7 @@ private:
                        const FrameTarget& target, FrameContext& f);
     void UpdateFroxel(GraphicsDevice& device, ShaderManager& shaders, const FrameTarget& target, FrameContext& f);
     void UpdateAcousticVolume(GraphicsDevice& device, const FrameTarget& target, FrameContext& f);
+    void UpdateDisturbanceField(World& world, GraphicsDevice& device, FrameContext& f);
     void DrawParticlesAndDebug(World& world, GraphicsDevice& device, ShaderManager& shaders,
                                RenderResources& resources, const FrameTarget& target,
                                const CameraOverride* cameraOverride, ParticleSystem* particles, VfxRenderer* vfx,
@@ -448,6 +461,8 @@ private:
     // M65d: 音響の残光ボリューム。**acousticField が繋がるまで 1 バイトも確保しない**
     // (ShadowAtlas の 64MB / FroxelPass の 7MB と同じ遅延確保の流儀)
     AcousticVolumePass acousticPass_;
+    // M96: かき乱しフィールドの 2D 層のテクスチャ配列。場が現れるまで 1 バイトも確保しない
+    DisturbanceFieldPass disturbancePass_;
     bool acousticSupplied_ = false; // 直近フレームで SRV を供給できたか (統計表示用)
     EditorLinePass linePass_; // DebugDrawLine 用 (v7、遅延 Init)
     NavFillPass navFillPass_; // ナビメッシュの塗り (M82e、遅延 Init)

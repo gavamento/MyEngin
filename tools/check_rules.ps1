@@ -214,6 +214,49 @@ $constGroups = @(
             'assets\shaders\rt_shadow_filter.cs.hlsl'  = '#\s*define\s+MYE_RT_ATROUS_RADIUS\s+(\d+)'
         }
     },
+    # M96b: かき乱しフィールドの描画の共有定義 (層の数・CB の大きさ・束縛番号)。食い違うと霧の濃さや読むテクスチャがずれる (絵は出る)
+    @{
+        label = 'kDisturbanceMaxLayers / MYE_DFLD_MAX_LAYERS'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kDisturbanceMaxLayers\s*=\s*(\d+)'
+            'assets\shaders\disturbance_common.hlsli' = '#\s*define\s+MYE_DFLD_MAX_LAYERS\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kDisturbanceFieldCbBytes / MYE_DFLD_CB_BYTES'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kDisturbanceFieldCbBytes\s*=\s*(\d+)'
+            'assets\shaders\disturbance_common.hlsli' = '#\s*define\s+MYE_DFLD_CB_BYTES\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kDisturbanceSrvFlowSlot / MYE_DFLD_SRV_FLOW'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kDisturbanceSrvFlowSlot\s*=\s*(\d+)'
+            'assets\shaders\disturbance_common.hlsli' = '#\s*define\s+MYE_DFLD_SRV_FLOW\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kDisturbanceSrvAuxSlot / MYE_DFLD_SRV_AUX'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kDisturbanceSrvAuxSlot\s*=\s*(\d+)'
+            'assets\shaders\disturbance_common.hlsli' = '#\s*define\s+MYE_DFLD_SRV_AUX\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kDisturbanceSamplerSlot / MYE_DFLD_SAMPLER'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kDisturbanceSamplerSlot\s*=\s*(\d+)'
+            'assets\shaders\disturbance_common.hlsli' = '#\s*define\s+MYE_DFLD_SAMPLER\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kDisturbanceCbSlot / MYE_DFLD_CB'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kDisturbanceCbSlot\s*=\s*(\d+)'
+            'assets\shaders\disturbance_common.hlsli' = '#\s*define\s+MYE_DFLD_CB\s+(\d+)'
+        }
+    },
     # M55a: ライト配列長は CB のレイアウトそのものなので、食い違うと「静かに壊れる」の典型
     # (RtPasses.cpp:40 の static_assert は C++ 内の 2 者しか見ていない)
     @{

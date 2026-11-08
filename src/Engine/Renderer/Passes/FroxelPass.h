@@ -146,6 +146,7 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> cb_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> postCb_; // M57c: temporal / integrate 共有
+    Microsoft::WRL::ComPtr<ID3D11Buffer> dfldCb_; // M96: かき乱しフィールドの 2D 層 (b1)
     // SampleShadowAtlas (common.hlsli) が要求する比較サンプラ。
     // ★統合契約 予約 2 の「サンプラは増やさない」はピクセルシェーダのスロットの話で、
     //   CS は別のバインド空間 (M55f が rt_temporal の t7 で確認済みの理屈と同じ)。

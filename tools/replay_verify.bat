@@ -81,10 +81,10 @@ if exist cache\replay_logs rd /s /q cache\replay_logs
 echo === parallel verification: 15 scene chains + jobs A/B + compute A/B + time travel x2 + what-if x2 + rule check ===
 rem ★Entry は空白なし相対パスで渡す (人間/CI が bat を叩くのと同じ呼び形に固定。
 rem   バッチ読取りの罠と chcp 437 の理由は runner 冒頭のコメント参照)
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,perception,bt,anim,compute,2d,feel,jobsab,computeab,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\run_parallel.ps1 -Entry tools\replay_verify.bat -LogDir cache\replay_logs -Jobs "demo,parts,flow,mp,physics,joints,acoustic,ui,fracture,nav,perception,bt,anim,compute,2d,feel,field,jobsab,computeab,ttdebug,ttrelease,whatifdebug,whatifrelease,rules" || goto :failed
 
 echo.
-echo [PASS] replay consistency (Debug/Release, 16 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav + perception + bt + anim + compute + 2d + feel) + snapshot round-trip + jobs A/B + compute A/B + time travel + rule check
+echo [PASS] replay consistency (Debug/Release, 17 scenes: demo + parts + flow + mp + physics + joints + acoustic + ui + fracture + nav + perception + bt + anim + compute + 2d + feel + field) + snapshot round-trip + jobs A/B + compute A/B + time travel + rule check
 exit /b 0
 
 rem ---------------------------------------------------------------- :failed
@@ -157,6 +157,10 @@ if exist cache\golden_2d.rep.mismatch.txt (
 if exist cache\golden_feel.rep.mismatch.txt (
     set DIAGFOUND=1
     call :diagnose "cache\golden_feel.rep" "--feel-demo"
+)
+if exist cache\golden_field.rep.mismatch.txt (
+    set DIAGFOUND=1
+    call :diagnose "cache\golden_field.rep" "--field-demo"
 )
 rem jobs A/B: 期待側は直列で録り直す (記録と同じ --no-jobs)
 if exist cache\jobsab_particle.rep.mismatch.txt (
@@ -400,6 +404,13 @@ rem (内容ゲート) なので、鳴らす tick・止まる tick・追従の位
 :job_feel
 if exist cache\feel_showcase.scene.json del /q cache\feel_showcase.scene.json
 call :chain cache\golden_feel.rep "--feel-demo" "--feel-demo"
+exit /b %ERRORLEVEL%
+
+rem M96b: 17 ペア目 = かき乱しフィールド (--field-demo)。2D 層の場 1 個を物理の球 3 個が横切る。場の状態 (DFLD 節) と
+rem 源の prevPos (コンポーネント内) が hash 対象なので、注入・減衰・復元・波紋の結果が Debug / Release / Server で割れればここで赤くなる
+:job_field
+if exist cacheield_showcase.scene.json del /q cacheield_showcase.scene.json
+call :chain cache\golden_field.rep "--field-demo" "--field-demo"
 exit /b %ERRORLEVEL%
 
 rem ---- jobs A/B (M90g、ADR-028) ----

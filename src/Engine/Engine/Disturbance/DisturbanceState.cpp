@@ -54,6 +54,7 @@ void DisturbanceState::Clear()
     warnedFields_.clear();
     rippleScratch_.clear();
     queueFullWarned_ = false;
+    ++renderSerial_; // 中身が変わったので描画の転送を省かせない (通番は巻き戻さない)
 }
 
 bool DisturbanceState::QueueImpulse(const FieldImpulse& impulse)
@@ -147,6 +148,9 @@ bool DisturbanceState::Read(ByteReader& r, DisturbanceState& out)
     if (!r.Ok() || tmp.queue_.size() > kMaxDisturbanceQueue) {
         return false;
     }
+    // 描画の通番は状態ではないので引き継いで進める。0 へ戻すと、直前に転送した通番とたまたま一致して
+    // 中身の違う場の転送を省いてしまう
+    tmp.renderSerial_ = out.renderSerial_ + 1;
     out = std::move(tmp);
     return true;
 }

@@ -1,0 +1,131 @@
+//====================================================================================
+//                          DemoContentField.cpp
+//  MyEngin/ 秋田蓮音                                                       11/08/2026
+//                                          かき乱しフィールド (M96) のショーケース (--field-demo、霧の広場)
+//====================================================================================
+#include "Engine/Engine/Demo/DemoContent.h"
+
+#include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Util/Hash.h"
+#include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Scene/GameObject.h"
+#include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Renderer/Device/GpuResources.h"
+
+namespace mye {
+
+namespace {
+
+// 霧の広場の寸法。場は広場の手前から奥へ伸びる 32 m 四方 (既定の 128 x 128 マス、0.25 m)
+constexpr float kFieldCenterZ = 8.0f;
+
+void AddCamera(Scene& s)
+{
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    // 層 (高さ 0〜1 m) を斜めに見下ろすカメラ。球の通り道の筋が、地面の暗さと霧の白さの対比で読める
+    camera.SetLocalPosition(0.0f, 7.0f, -12.0f);
+    camera.SetLocalRotationEuler(36.0f, 0.0f, 0.0f);
+    // フロクセルを回して、グローバルの媒質は 0 (froxelDensity = 0) = 見えるのは場の霧だけ
+    auto* fx = camera.AddComponent<CameraPostFxComponent>();
+    fx->froxelOn = true;
+    fx->froxelDensity = 0.0f;
+}
+
+void AddLights(Scene& s)
+{
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(50.0f, -30.0f, 0.0f);
+    // 霧の中で光が滲むかを見るための点光源 1 つ (霧の縁に近い奥)
+    GameObject lamp = s.CreateGameObject("Lamp");
+    lamp.SetLocalPosition(0.0f, 1.6f, 12.0f);
+    auto* light = lamp.AddComponent<LightComponent>();
+    light->type = lighttype::kPoint;
+    light->color = { 1.0f, 0.82f, 0.6f };
+    light->intensity = 3.0f;
+    light->range = 9.0f;
+}
+
+void AddPhysicsEnvironment(Scene& s)
+{
+    GameObject envGo = s.CreateGameObject("Environment");
+    auto* env = envGo.AddComponent<PhysicsEnvironmentComponent>();
+    env->gravity = { 0.0f, -9.81f, 0.0f };
+}
+
+void AddGround(Scene& s, const AssetID cube)
+{
+    GameObject floor = s.CreateGameObject("Floor");
+    floor.SetLocalPosition(0.0f, -0.5f, 10.0f);
+    floor.SetLocalScale(34.0f, 1.0f, 52.0f);
+    auto* mr = floor.AddComponent<MeshRendererComponent>();
+    mr->mesh = cube;
+    mr->material = AssetID{ HashStr("pdemo_floor") };
+    auto* col = floor.AddComponent<ColliderComponent>();
+    col->shape = collidershape::kBox;
+    col->halfExtents = { 0.5f, 0.5f, 0.5f };
+    col->friction = 0.0f; // 球が止まらず滑る (霧を横切る見た目が目的で、転がりの再現ではない)
+}
+
+// 場: 地面を這う厚さ 1 m の層。濃さ + 跡。エンティティの位置が格子の中心と層の下端 (y) になる
+void AddField(Scene& s)
+{
+    GameObject field = s.CreateGameObject("DisturbanceField");
+    field.SetLocalPosition(0.0f, 0.0f, kFieldCenterZ);
+    auto* f = field.AddComponent<DisturbanceFieldComponent>();
+    f->shape = 0;
+    f->channels = kDisturbanceChannelDensity | kDisturbanceChannelTrail;
+    f->densityKeep = 0.995f; // 筋が 10 秒近くかけて戻る
+    f->fogDensity = 1.6f;    // 既定 (2.0) だと層が不透明で、晴れた筋が読めない
+}
+
+// 霧を割って転がる球。物理の初速だけで動く (スクリプトなし = 決定的)。源は速度を剛体から自動で取る
+void AddRollingBall(Scene& s, const AssetID sphere, const char* name, float x, float z, float speed)
+{
+    GameObject ball = s.CreateGameObject(name);
+    ball.SetLocalPosition(x, 0.45f, z);
+    ball.SetLocalScale(0.8f, 0.8f, 0.8f);
+    auto* mr = ball.AddComponent<MeshRendererComponent>();
+    mr->mesh = sphere;
+    mr->material = AssetID{ HashStr("pdemo_ball") };
+    auto* col = ball.AddComponent<ColliderComponent>();
+    col->shape = collidershape::kSphere;
+    col->radius = 0.5f;
+    col->friction = 0.0f;
+    auto* rb = ball.AddComponent<RigidbodyComponent>();
+    rb->useDensity = true;
+    rb->velocity = { 0.0f, 0.0f, speed };
+    auto* src = ball.AddComponent<DisturbanceSourceComponent>();
+    src->mode = 0;
+    src->radius = 1.5f;
+    src->strength = 0.5f;
+    src->fullSpeed = 3.0f;
+    src->densityDelta = -0.3f;
+    src->trailDepth = 0.5f;
+}
+
+} // namespace
+
+// M96b: --field-demo。霧の広場: 平らな地面に 2D 層の場を 1 個置き、DisturbanceSource 付きの球 3 個を霧の中へ転がす。
+// 通った筋の霧が晴れ、時間で戻る。要素は関数ごとに分けてあり、後のサブで足すもの (人・爆発・3D 煙など) は
+// この関数の末尾へ足す (CPU 粒子の乱数ストリームは生成順に依存するので、前へ挿さない)
+void BuildFieldShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    s.SetName("field_showcase");
+    const AssetID cube = ctx.resources->meshes.Cube();
+    const AssetID sphere = ctx.resources->meshes.Sphere();
+
+    AddCamera(s);
+    AddLights(s);
+    AddPhysicsEnvironment(s);
+    AddGround(s, cube);
+    AddField(s);
+    AddRollingBall(s, sphere, "Ball_A", -3.0f, -10.5f, 4.0f);
+    AddRollingBall(s, sphere, "Ball_B", 0.0f, -10.0f, 5.0f);
+    AddRollingBall(s, sphere, "Ball_C", 3.0f, -9.5f, 3.5f);
+    s.GetWorld().ApplyStructuralChanges();
+}
+
+} // namespace mye

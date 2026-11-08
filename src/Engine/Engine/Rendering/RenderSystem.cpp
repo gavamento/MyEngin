@@ -16,6 +16,7 @@
 #include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Acoustic/AcousticField.h" // M65d: 残光ボリュームの転送元
+#include "Engine/Engine/Disturbance/DisturbanceRender.h" // M96: 場の 2D 層の転送指示
 #include "Engine/Engine/Physics/Fracture/FractureSystem.h" // M80g: root proxy の可視規則を FractureSystem と共有
 #include "Engine/Engine/Navigation/NavDebugDraw.h" // M82e: ナビメッシュの塗り・輪郭
 #include "Engine/Engine/Particles/ParticleSystem.h"
@@ -717,6 +718,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     AllocateShadowAtlas(device, shaders, resources, f);
     PrepareEnvironment(world, device, shaders, resources, target, cameraOverride, f);
     UpdateRtScene(device, shaders, resources, target, f);
+    UpdateDisturbanceField(world, device, f); // フロクセルの注入が読むので UpdateFroxel の前
     UpdateFroxel(device, shaders, target, f);
     UpdateAcousticVolume(device, target, f);
 
@@ -2125,6 +2127,22 @@ void RenderSystem::UpdateFroxel(GraphicsDevice& device, ShaderManager& shaders, 
     }
 }
 
+// かき乱しフィールド (M96) の 2D 層を GPU のテクスチャ配列へ上げ、view へ配線する (読むのはフロクセルの注入)。
+// フロクセルが走らない描画では転送しない。場が無ければ view.disturbance は null のまま = 従来と同じ絵
+void RenderSystem::UpdateDisturbanceField(World& world, GraphicsDevice& device, FrameContext& f)
+{
+    f.view.disturbance = nullptr;
+    if (!f.froxelOn || disturbanceWorld == nullptr) {
+        return;
+    }
+    // 状態を読めるのは、状態を持つシーン自身の World を描くときだけ
+    const DisturbanceState* state = (&world == disturbanceWorld) ? disturbance : nullptr;
+    DisturbanceFieldUpload up;
+    if (BuildDisturbanceFieldUpload(world, state, up) > 0 && disturbancePass_.Upload(device, up)) {
+        f.view.disturbance = &disturbancePass_.Gpu();
+    }
+}
+
 // 音響の残光ボリューム (M65d) と解析的な波面: CPU の値を 3D テクスチャへ上げて view へ配線する
 // (読むのは M65e の光パス。転送の正しさは `--acoustic-dump` の読み戻しで数値として確かめる)
 void RenderSystem::UpdateAcousticVolume(GraphicsDevice& device, const FrameTarget& target, FrameContext& f)
@@ -2564,6 +2582,7 @@ void RenderSystem::ReleaseGpu()
     frameTimerInit_ = false;
     froxelPass_ = FroxelPass();
     acousticPass_ = AcousticVolumePass();
+    disturbancePass_ = DisturbanceFieldPass();
     linePass_ = EditorLinePass();
     navFillPass_ = NavFillPass();
     sprite2dPass_ = Sprite2DPass();

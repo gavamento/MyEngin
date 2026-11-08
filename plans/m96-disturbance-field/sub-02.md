@@ -1,8 +1,8 @@
 # sub-02: 霧の描画 (2D) と `--field-demo`、replay ジョブ `field`
 
 - 依存: sub-01
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (commit は司会が記入)
+- 往復: 1
 
 ## やること
 
@@ -52,7 +52,7 @@ spec §5 の 10, 11, 12, 30。
 
 ## 検証コマンド
 
-> selftest の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) を**実行しない**。ビルドと check_rules (と、selftest 以外の検証) までを行い、selftest で確かめる条件は「未実行 (sub-07 後 / sub-14 でまとめて実行)」と報告する。selftest のコードは書く。
+> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (sub-07 後 / sub-14 でまとめて実行)」と報告する。selftest のコードは書く。
 
 - ビルド: Debug / Release
 - `$env:MYE_SELFTEST_ONLY='disturbance,render,enginecli'; bin\x64\Debug\Editor.exe --selftest`
@@ -61,4 +61,11 @@ spec §5 の 10, 11, 12, 30。
 
 ## 実装メモ (coder が追記)
 
+### SELF_EVAL sub-02 (round 1)
+
+- 実装: DisturbanceFieldPass (Renderer、POD の転送指示 + Texture2DArray RGBA16F / RG16F + CB 336B)、disturbance_common.hlsli (CB・束縛番号・DisturbanceFogAt)、froxel_inject への足し込み、FroxelPass の b1 / t1 / t2 / s1 束縛、RenderSystem::UpdateDisturbanceField、DisturbanceRender (詰め替え)、DisturbanceParams (sim と描画で場の切り方を共有)、--field-demo (DemoContentField.cpp)、replay ジョブ field、規則 9 に 6 グループ
+- R1 判定 (スクショ・数値) は SELF_EVAL 本文を参照 (司会が planner へ中継した版が正本)
+- 検証: Debug / Release ビルド警告 0、check_rules (増えた error なし。既存の harness.md CRLF 1 件は司会の編集物)、cargo test 49 PASS。selftest と replay_verify は運用指示で未実行
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-08)。R1 = 霧は見える・尾は理論 22 フレーム → 専用描画なし。横縞は許容の裁定 ([ユーザーに聞ける])。ノイズは同フレーム内の領域差で測る (19.6 / 0.03)。Play / Stop の Editor 操作確認は sub-14 の手動確認項目へ。selftest / replay_verify は運用どおり sub-07 後

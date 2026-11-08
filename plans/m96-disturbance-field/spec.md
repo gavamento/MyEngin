@@ -231,9 +231,9 @@
 
 ## 5. 受け入れ条件
 
-**selftest の運用 (ユーザー指示 2026-11-08)**: `--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY` の実行は M96 全体で 2 回だけ (sub-07 の後の中間と、sub-14)。各サブの coder はビルドと check_rules (と、描画のサブのスクショ・replay_verify など selftest 以外の検証) までを行い、selftest で確かめる受け入れ条件は「未実行 (sub-07 後 / sub-14 でまとめて実行)」と報告する。planner はそれを理由に REWORK にしない (検証が未実行で自己採点が 4 以上でも矛盾として扱わない)。まとめて実行して落ちた分は、司会が該当サブへ FIX_REQUEST で回す。selftest のコードを書くこと自体は各サブの受け入れ条件に残る。
+**selftest と replay_verify の運用 (ユーザー指示 2026-11-08)**: `--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY` と `tools\replay_verify.bat` の実行は M96 全体で 2 回だけ (sub-07 の後の中間と、sub-14)。各サブの coder はビルドと check_rules (と、描画のサブのスクショなど、selftest と replay_verify 以外の検証) までを行い、selftest と replay_verify で確かめる受け入れ条件は「未実行 (sub-07 後 / sub-14 でまとめて実行)」と報告する。planner はそれを理由に REWORK にしない (検証が未実行で自己採点が 4 以上でも矛盾として扱わない)。まとめて実行して落ちた分は、司会が該当サブへ FIX_REQUEST で回す。selftest のコードを書くこと自体は各サブの受け入れ条件に残る。
 
-共通 (全サブ): C1 Debug / Release の両構成でビルド成功し、**変更したファイルの警告 0**。`/p:MyeWarnAsError=true` は着手前からある `AnimatorControllerSelfTest.cpp` の警告 (C4456 / C4389) で落ちるので、その失敗は合否に数えない (別件、sub-01 round 1 で判明)。replay_verify は selftest のまとめ実行の対象外で、各サブの受け入れ条件どおりに実行する。C2 `tools\check_rules.ps1` の error / warning が着手前から増えない。C3 関連スイートを `MYE_SELFTEST_ONLY` で両構成 FAIL 0。C4 最後の round で `Editor.exe --selftest` (既定層、Debug) と `tools\replay_verify.bat` が PASS。
+共通 (全サブ): C1 Debug / Release の両構成でビルド成功し、**変更したファイルの警告 0**。`/p:MyeWarnAsError=true` は着手前からある `AnimatorControllerSelfTest.cpp` の警告 (C4456 / C4389) で落ちるので、その失敗は合否に数えない (別件、sub-01 round 1 で判明)。C2 `tools\check_rules.ps1` の error / warning が着手前から増えない。C3 関連スイートが両構成で FAIL 0。C4 `Editor.exe --selftest-full` と `tools\replay_verify.bat` が PASS。C3 / C4 は上の運用により、sub-07 の後と sub-14 でまとめて確認する。
 
 | # | 条件 | 検証手段 | サブ |
 |---|---|---|---|
@@ -246,7 +246,7 @@
 | 7 | 波紋: 1 点の注入が 4 方向に同じ速さで広がり、`rippleSpeed` を上限超えに置いても 10000 tick 有限 (C が 0.7 に切られる) | selftest | 01 |
 | 8 | 寿命: 寸法を変えると作り直す / 破棄でスロットが消え節が畳まれなくなる / 5 個目の場は sim されず WARN 1 回 / シーン切り替えと Play 終了で Clear | selftest | 01 |
 | 9 | 決定論: 同じ場面を 2 ワールドで 600 tick 並走して毎 tick 一致、最終ハッシュの焼き込み値が Debug と Release で同じ | selftest | 01 |
-| 10 | 霧の描画: `--field-demo` で、球が通った筋の霧が薄くなり、時間で戻る。通過前 / 直後 / 戻った後の 3 枚を撮り、筋の領域の平均輝度の差と、戻るまでのフレーム数を報告する。フロクセルのテンポラルの尾 (変化が 90% 収まるまでのフレーム数) を on / off で測る | `Runtime.exe --field-demo --screenshot ... --shot-frame N` × 3 + `Editor.exe --img-diff`、数値を SELF_EVAL に | 02 |
+| 10 | 霧の描画: `--field-demo` で、球が通った筋の霧が薄くなり、時間で戻る。通過前 / 直後 / 戻った後の 3 枚を撮り、筋の領域の平均輝度の差と、戻るまでのフレーム数を報告する。差は**同じフレーム内の「触っていない領域 − 筋の領域」**で測り (自動露出の画面全体の揺れを打ち消す)、ノイズは静止状態の 2 フレームの同じ指標とする。フロクセルのテンポラルの尾は理論値 (feedback 0.9 → 90% 収束 22 フレーム) と on / off の差指標で示せばよい (段差入力の専用プローブは作らない) | `Runtime.exe --field-demo --screenshot ... --shot-frame N` × 3 + `Editor.exe --img-diff`、数値を SELF_EVAL に | 02 |
 | 11 | 編集中 (Play 前) も静止状態の霧が見え、Play で動き、Stop で静止に戻る | Editor の Scene View を `--screenshot` で撮る (グローバルのフロクセル on) | 02 |
 | 12 | replay_verify のジョブ `field` (`--field-demo`) が Debug / Release で PASS。`tools\mcp\src\verify.rs` の JOBS と `run_parallel` の一覧に `field` | `tools\replay_verify.bat`、`cargo test` (tools\mcp) | 02 (以後のサブで維持) |
 | 13 | 流れ: 投影後の発散の最大値が投影前の 10% 以下 (20 反復、源が通った直後)。源の後ろに渦 (速度の回転の符号が左右で逆) ができる | selftest + `drawDebug` のスクショ | 04 |
@@ -296,7 +296,7 @@
 
 ## 7. 未決事項・リスク
 
-- R1 (sub-02): フロクセルの解像度とテンポラルで、薄い層の割れ目が見えない / 尾を引きすぎる。判定は §5 の 10 の数値。駄目なら coder は SELF_EVAL の「不安・質問」で報告し、planner が「地面の層専用の描画」サブを足す (この仕様に無い描画を coder が足さない)
+- R1 (sub-02、round 1 で判定済み): 霧として見え、尾は理論 22 フレーム (30 未満) → 専用描画は足さない。深度スライスの横縞 (浅い角度で薄い帯) は許容と裁定し、ユーザーに確認中。元の記述: フロクセルの解像度とテンポラルで、薄い層の割れ目が見えない / 尾を引きすぎる。判定は §5 の 10 の数値。駄目なら coder は SELF_EVAL の「不安・質問」で報告し、planner が「地面の層専用の描画」サブを足す (この仕様に無い描画を coder が足さない)
 - R2 (sub-04 / sub-07): 性能が 1.67 ms を超える → 既定のセル数・反復回数を下げる (planner が判定)。それでも足りなければ `pressureIterations` の既定を下げて渦の強さを諦める
 - R3: タイムトラベルの予算 64 MiB に対し、場を 4 個 + 3D で置くと 1 枚が 1 MiB を超え、遡れる時間が 60 秒より短くなる。予算は変えず、sub-04 の計測値を ADR-036 に書く
 - R4: snapshot を上げるたびに `AcousticAudioSelfTest.cpp:129` の版の表明が落ちる (`2961ba3` の前例)。各サブで直す
@@ -322,3 +322,5 @@
 - 2026-11-08 (ユーザー回答 3〜6、司会経由): §2 #12 / #14 / #15 / #16 / #23 を回答に合わせて書き換え。sub-03 (フロクセルの自動有効と太陽光の bool) と sub-09 (起伏に沿う層) を新設し、旧 sub-03〜12 を sub-04〜08 / sub-10〜14 へ繰り下げた (コミット件名の記号も M96d〜n へ)。受け入れ 20 を「3D 4 個を描く + GPU 時間」に変え、31 / 32 / 33 を追加。2D の 2 枚目のテクスチャを `R16F` から `RG16F` (G = 列の基準高さのずれ) へ。`fogSunLight` / `autoFroxel` は sub-01 の見た目の欄に含める (snapshot を余計に上げないため)
 - 2026-11-08 (ユーザー指示、司会経由): selftest の実行を sub-07 の後と sub-14 の 2 回にまとめる運用を §5 冒頭に追加。各サブの selftest 系の受け入れ条件は「未実行」と報告してよく、VERDICT で REWORK の理由にしない
 - 2026-11-08 (sub-01 round 1 の SELF_EVAL): §4.1 A の作り直しの条件に `cellSize` を追加。§4.1 D の `prevPos` は場が無い tick でも書くと明記。§5 C1 を「変更したファイルの警告 0」に (既存の警告で WarnAsError が落ちるため)。replay_verify は selftest のまとめ実行の対象外と明記 (司会の確認)。sub-01 の計測 (報告のみ) は sub-04 の受け入れ 15 の計測へ統合
+- 2026-11-08 (ユーザー指示、司会経由): replay_verify も selftest と同じく sub-07 の後と sub-14 の 2 回にまとめる。§5 冒頭の運用と C1 / C4、sub-02〜14 の検証コマンドの注記を直した
+- 2026-11-08 (sub-02 round 1 の SELF_EVAL): §5 の 10 の「差」と「ノイズ」を同じフレーム内の領域差で測ると明記し、テンポラルの尾は理論値と on / off の差で足りるとした。R1 を判定済みに (専用描画は足さない、横縞は許容の裁定でユーザーに確認中)

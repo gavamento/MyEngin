@@ -4,6 +4,7 @@
 //                                          かき乱しフィールド (M96) の 1 tick の step と読み取り
 //====================================================================================
 #include "Engine/Engine/Disturbance/DisturbanceState.h"
+#include "Engine/Engine/Disturbance/DisturbanceParams.h"
 
 #include <algorithm>
 #include <cmath>
@@ -18,72 +19,9 @@
 
 namespace mye {
 
+using namespace disturbance; // DisturbanceParams.h (場の設定の切り方と ECS から集める行。描画側と共有)
+
 namespace {
-
-// ---- コンポーネントの値を sim が使う範囲へ切る ----
-
-float FiniteOr(float v, float fallback)
-{
-    return std::isfinite(v) ? v : fallback;
-}
-
-float ClampOr(float v, float lo, float hi, float fallback)
-{
-    return std::min(std::max(FiniteOr(v, fallback), lo), hi);
-}
-
-// 切った後の場の設定 (sim はこの値だけで動く)
-struct FieldParams {
-    EntityID entity = kNullEntity;
-    int32_t shape = kDisturbanceGroundLayer;
-    int32_t cellsX = 0;
-    int32_t cellsY = 1;
-    int32_t cellsZ = 0;
-    float cellSize = 0.25f;
-    float thickness = 1.0f;
-    uint32_t channels = 0;
-    float restDensity = 1.0f;
-    float densityKeep = 1.0f;
-    float velocityKeep = 1.0f;
-    float trailKeep = 1.0f;
-    float rippleSpeed = 0.0f;
-    float rippleKeep = 1.0f;
-    float pos[3] = { 0.0f, 0.0f, 0.0f }; // 場のエンティティのワールド位置
-};
-
-FieldParams SanitizeField(EntityID e, const DisturbanceFieldComponent& c, const float pos[3])
-{
-    FieldParams p;
-    p.entity = e;
-    p.shape = c.shape == kDisturbanceVolume ? kDisturbanceVolume : kDisturbanceGroundLayer;
-    p.cellsX = std::clamp(c.cellsX, kMinDisturbanceSide, kMaxDisturbanceSide);
-    p.cellsZ = std::clamp(c.cellsZ, kMinDisturbanceSide, kMaxDisturbanceSide);
-    p.cellsY = p.shape == kDisturbanceGroundLayer ? 1 : std::clamp(c.cellsY, kMinDisturbanceSide, kMaxDisturbanceSide);
-    // 総マス数の上限 (2D は 512 x 512 = 262144 で上限ちょうど。Y を持つ形に備えて Z を詰める)
-    while (static_cast<int64_t>(p.cellsX) * p.cellsY * p.cellsZ > kMaxDisturbanceCells && p.cellsZ > kMinDisturbanceSide) {
-        --p.cellsZ;
-    }
-    p.cellSize = ClampOr(c.cellSize, 0.05f, 8.0f, 0.25f);
-    p.thickness = ClampOr(c.thickness, 0.05f, 20.0f, 1.0f);
-    p.channels = c.channels & kDisturbanceChannelMask;
-    p.restDensity = ClampOr(c.restDensity, 0.0f, 1.0f, 1.0f);
-    p.densityKeep = ClampOr(c.densityKeep, 0.0f, 1.0f, 1.0f);
-    p.velocityKeep = ClampOr(c.velocityKeep, 0.0f, 1.0f, 1.0f);
-    p.trailKeep = ClampOr(c.trailKeep, 0.0f, 1.0f, 1.0f);
-    p.rippleSpeed = ClampOr(c.rippleSpeed, 0.0f, 1.0e6f, 0.0f);
-    p.rippleKeep = ClampOr(c.rippleKeep, 0.0f, 1.0f, 1.0f);
-    for (int i = 0; i < 3; ++i) {
-        p.pos[i] = FiniteOr(pos[i], 0.0f);
-    }
-    return p;
-}
-
-// int32 へ落とす前に範囲を切る (巨大・非有限の座標で未定義動作を踏まない)
-int32_t ClampToInt(float v)
-{
-    constexpr float kLimit = 1.0e8f;
-    return static_cast<int32_t>(std::min(std::max(FiniteOr(v, 0.0f), -kLimit), kLimit));
-}
 
 // 静止状態の新しいスロット (全マス: 流れ 0、濃さ restDensity、跡 0、波紋 0)
 DisturbanceSlot MakeRestSlot(const FieldParams& p)
@@ -96,9 +34,9 @@ DisturbanceSlot MakeRestSlot(const FieldParams& p)
     s.cellsZ = p.cellsZ;
     s.channels = p.channels;
     s.cellSize = p.cellSize;
-    s.originCell[0] = ClampToInt(std::floor(p.pos[0] / p.cellSize + 0.5f)) - p.cellsX / 2;
+    s.originCell[0] = OriginCellOf(p.pos[0], p.cellSize, p.cellsX);
     s.originCell[1] = 0;
-    s.originCell[2] = ClampToInt(std::floor(p.pos[2] / p.cellSize + 0.5f)) - p.cellsZ / 2;
+    s.originCell[2] = OriginCellOf(p.pos[2], p.cellSize, p.cellsZ);
     s.baseY = p.pos[1];
     const size_t n = s.CellCount();
     s.flowX.assign(n, 0.0f);
@@ -125,12 +63,6 @@ bool SlotMatches(const DisturbanceSlot& s, const FieldParams& p)
 
 // ---- ECS から集める行 ----
 
-struct FieldRow {
-    EntityID entity;
-    DisturbanceFieldComponent comp;
-    float pos[3];
-};
-
 struct SourceRow {
     EntityID entity;
     DisturbanceSourceComponent comp;
@@ -141,29 +73,6 @@ struct SourceRow {
     float ccVelocity[3] = { 0.0f, 0.0f, 0.0f };
     float bodyVelocity[3] = { 0.0f, 0.0f, 0.0f };
 };
-
-void CollectFields(World& world, std::vector<FieldRow>& out)
-{
-    const ComponentTypeId req[] = { DisturbanceFieldComponent::sTypeId };
-    world.ForEachArchetype(req, [&](Archetype& arch) {
-        const int ti = arch.FindTypeIndex(DisturbanceFieldComponent::sTypeId);
-        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-        for (uint32_t row = 0; row < arch.Count(); ++row) {
-            FieldRow r{};
-            r.entity = arch.EntityAt(row);
-            r.comp = *static_cast<const DisturbanceFieldComponent*>(arch.GetPtr(ti, row));
-            if (wi >= 0) {
-                const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
-                r.pos[0] = wm->value._41;
-                r.pos[1] = wm->value._42;
-                r.pos[2] = wm->value._43;
-            }
-            out.push_back(r);
-        }
-    });
-    // アーキタイプの並びに依らない明示キー (規則 7)
-    std::sort(out.begin(), out.end(), [](const FieldRow& a, const FieldRow& b) { return a.entity.index < b.entity.index; });
-}
 
 void CollectSources(World& world, std::vector<SourceRow>& out)
 {

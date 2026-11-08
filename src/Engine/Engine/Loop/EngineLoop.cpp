@@ -508,6 +508,10 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // M65d: 音響の残光ボリューム。**ここが唯一の配線点** — AssetPreviewCache が持つ
     // 別の RenderSystem は誰もここを埋めないので、サムネイルに音の光が漏れない
     renderSystem.acousticField = &acoustic;
+    // M96: かき乱しフィールド。**ここが唯一の配線点** (残光と同じ理由 — AssetPreviewCache の別インスタンスは埋めない)。
+    // scene は EngineLoop のメンバで、シーンの切り替えは中身の差し替えなのでアドレスは変わらない
+    renderSystem.disturbance = &scene.Disturbance();
+    renderSystem.disturbanceWorld = &scene.GetWorld();
     renderSystem.acousticDumpFrame = config.acousticDumpFrame; // M65d (--acoustic-dump N)
     renderSystem.acousticFront = config.acousticFront;         // 2026-09-12 (--no-acoustic-front)
     // M68a: 音響 × オーディオ。**ここが唯一の配線点** (残光の 1 行上と同じ理由 —
@@ -3560,6 +3564,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // 描画はもう止まっているので実害は無いが、「所有者が死ぬ前に参照を切る」を
     // 1 箇所で守っておく (reflectionProbes と同じ規約)
     renderSystem.acousticField = nullptr;
+    renderSystem.disturbance = nullptr;
+    renderSystem.disturbanceWorld = nullptr;
     // M41 / M60f / M80c / M59a1 / M59i: sim のライブラリ注入 (各ライブラリ破棄前に必ず外す)
     UninstallSimLibraries();
     modalsound::Install(nullptr); // M76e (modalSounds 破棄前に必ず外す)

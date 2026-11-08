@@ -12,7 +12,7 @@ use std::time::Instant;
 
 // replay_verify.bat の `:job_*` と `-Jobs` 列の順。規則 15-e (tools\check_rules.ps1) が三者一致を見る。
 // 1 行 1 名で書くこと (15-e はこのブロックを行単位で読む)。
-pub const JOBS: [&str; 23] = [
+pub const JOBS: [&str; 24] = [
     "demo",
     "parts",
     "flow",
@@ -29,6 +29,7 @@ pub const JOBS: [&str; 23] = [
     "compute",
     "2d",
     "feel",
+    "field",
     "jobsab",
     "computeab",
     "ttdebug",
@@ -248,11 +249,11 @@ mod tests {
 
     #[test]
     fn ジョブ表は_22_名で重複がない() {
-        assert_eq!(JOBS.len(), 23);
+        assert_eq!(JOBS.len(), 24);
         let mut sorted = JOBS.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
-        assert_eq!(sorted.len(), 23);
+        assert_eq!(sorted.len(), 24);
         assert!(JOBS.iter().all(|n| n.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())));
     }
 

@@ -132,6 +132,7 @@
     <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentAudio.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentCompute.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentFeel.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentField.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentFlow.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentPhysics.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\DemoContentRender.cpp" />
@@ -141,6 +142,8 @@
     <ClCompile Include="..\src\Engine\Engine\Demo\StartScene.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\TwoDDemoSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceFieldSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceParams.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceRender.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceState.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceStep.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Feel\FeelLibrary.cpp" />
@@ -342,6 +345,7 @@
     <ClCompile Include="..\src\Engine\Renderer\Mesh\Skeleton.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Mesh\SkinBounds.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\AcousticVolumePass.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Passes\DisturbanceFieldPass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\EditorLinePass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\EnvMapBaker.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\FroxelPass.cpp" />
@@ -511,6 +515,8 @@
     <ClInclude Include="..\src\Engine\Engine\Demo\StartScene.h" />
     <ClInclude Include="..\src\Engine\Engine\Demo\TwoDDemoSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Disturbance\DisturbanceFieldSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Disturbance\DisturbanceParams.h" />
+    <ClInclude Include="..\src\Engine\Engine\Disturbance\DisturbanceRender.h" />
     <ClInclude Include="..\src\Engine\Engine\Disturbance\DisturbanceState.h" />
     <ClInclude Include="..\src\Engine\Engine\Feel\FeelLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Feel\FeelLibrarySelfTest.h" />
@@ -729,6 +735,7 @@
     <ClInclude Include="..\src\Engine\Renderer\Mesh\Skeleton.h" />
     <ClInclude Include="..\src\Engine\Renderer\Mesh\SkinBounds.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\AcousticVolumePass.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Passes\DisturbanceFieldPass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\EditorLinePass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\EnvMapBaker.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\FroxelPass.h" />

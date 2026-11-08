@@ -1,0 +1,136 @@
+//====================================================================================
+//                          DisturbanceFieldPass.h
+//  MyEngin/ 秋田蓮音                                                       11/08/2026
+//                                          かき乱しフィールド (M96) の 2D 層を GPU のテクスチャ配列へ転送する
+//====================================================================================
+#pragma once
+#include <cstdint>
+
+#include <d3d11.h>
+#include <wrl/client.h>
+
+namespace mye {
+
+class GraphicsDevice;
+
+// 同時に描ける 2D 層の数 (assets\shaders\disturbance_common.hlsli の MYE_DFLD_MAX_LAYERS と一致。規則 9)
+constexpr int kDisturbanceMaxLayers = 4;
+// CB 全体のバイト数 (同 MYE_DFLD_CB_BYTES と一致。規則 9)
+constexpr int kDisturbanceFieldCbBytes = 336;
+// コンピュートシェーダ (フロクセル注入) の束縛番号。HLSL の MYE_DFLD_SRV_FLOW / _AUX / _SAMPLER / _CB と一致 (規則 9)。
+// 別の段が読むときは、その段の空きスロットへ張る
+constexpr int kDisturbanceSrvFlowSlot = 1;
+constexpr int kDisturbanceSrvAuxSlot = 2;
+constexpr int kDisturbanceSamplerSlot = 1;
+constexpr int kDisturbanceCbSlot = 1;
+
+// 2D 層 1 枚の転送指示。Engine 層が sim の状態 (または編集中の設定) から詰める。
+// ★DisturbanceState を直接受け取らない — Renderer から Engine を参照すると層の依存が逆流する
+//   (AcousticVolumeUpload と同じ。詰め替えは RenderSystem 側の仕事)
+struct DisturbanceLayerUpload {
+    // 状態が無い (編集中・Play 前) とき false。配列は読まず、restDensity の定数として描く
+    bool hasState = false;
+    int32_t cellsX = 0;
+    int32_t cellsZ = 0;
+    // 各 cellsX * cellsZ 個、x が最内。hasState のときだけ読む。null のチャネルは 0 として転送する
+    const float* flowX = nullptr;
+    const float* flowZ = nullptr;
+    const float* density = nullptr;
+    const float* trail = nullptr;
+    const float* ripple = nullptr;
+    const float* baseOffset = nullptr; // 列の基準高さ - baseY (起伏に沿う層。null = 0)
+    int32_t originCellX = 0;
+    int32_t originCellZ = 0;
+    float cellSize = 0.25f;
+    float baseY = 0.0f;
+    float thickness = 1.0f;
+    float restDensity = 1.0f;
+    bool hasDensity = true; // 濃さチャネルがあるか (無い層は霧を出さない)
+    float fogDensity = 2.0f;
+    float fogColor[3] = { 1.0f, 1.0f, 1.0f };
+    float fogBrightness = 1.0f;
+    // 場のエンティティ (index, generation)。どの層がどの場かを、転送を省く判定に使う
+    uint32_t entityIndex = 0;
+    uint32_t entityGeneration = 0;
+};
+
+struct DisturbanceFieldUpload {
+    int32_t layerCount = 0;
+    DisturbanceLayerUpload layers[kDisturbanceMaxLayers];
+    // sim の通番。**前回と同じで層の構成も同じなら転送しない** (sim は 60 Hz だが描画は何千 fps で回る)
+    uint64_t serial = 0;
+};
+
+// HLSL の DisturbanceLayer (float4 x 5) と同じ並び
+struct DisturbanceLayerCB {
+    float originSize[4] = {};
+    float extent[4] = {};
+    float look[4] = {};
+    float fogColor[4] = {};
+    float texScale[4] = {};
+};
+
+// HLSL の cbuffer DisturbanceFieldCB と同じ並び
+struct DisturbanceFieldCB {
+    uint32_t header[4] = {}; // x = 有効な層の数
+    DisturbanceLayerCB layers[kDisturbanceMaxLayers];
+};
+static_assert(sizeof(DisturbanceFieldCB) == kDisturbanceFieldCbBytes, "HLSL の DisturbanceFieldCB と一致させること");
+
+// 描き手 (フロクセル注入など) へ渡す束。**SRV は null のことがある** (全層が定数のとき等)。
+// 読む側は CB の layerCount と、各層の extent.w (テクスチャを読むか) を見る
+struct DisturbanceFieldGpu {
+    ID3D11ShaderResourceView* flowSRV = nullptr; // Texture2DArray RGBA16F (vx, vz, 濃さ, 跡)
+    ID3D11ShaderResourceView* auxSRV = nullptr;  // Texture2DArray RG16F (波紋 h, 基準面のずれ)
+    DisturbanceFieldCB cb;
+};
+
+// 2D 層の Texture2DArray の所有者。GPU は読むだけ — sim の状態は CPU (決定論) が持つ。
+// 転送は層ごとの UpdateSubresource。配列の寸法は有効な層の最大値で、層ごとの UV 範囲は CB に載せる
+class DisturbanceFieldPass {
+public:
+    // 転送して束を作る (配列の寸法が足りなければ作り直す)。戻り値 = 束が有効か。
+    // false = 層が 0 枚 (または作成失敗): 消費側は場が無いときと同じ絵になる
+    bool Upload(GraphicsDevice& device, const DisturbanceFieldUpload& src);
+    void Release();
+
+    const DisturbanceFieldGpu& Gpu() const { return gpu_; }
+    // 直近の転送にかかった CPU 時間 [ms]。転送を省いたフレームは 0 (= 「速い」ではなく「していない」)
+    float LastUploadMs() const { return uploadMs_; }
+
+private:
+    // 配列を作り直す (許容寸法はこの値以上)
+    bool EnsureArrays(GraphicsDevice& device, int32_t width, int32_t height);
+
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> flowTex_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> auxTex_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> flowSrv_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> auxSrv_;
+    int32_t texWidth_ = 0;
+    int32_t texHeight_ = 0;
+    bool createFailed_ = false; // 同じ寸法で一度落ちたら毎フレーム再試行してログを溢れさせない
+    int32_t failedWidth_ = 0;
+    int32_t failedHeight_ = 0;
+
+    // 最後に転送した内容の鍵。通番と、層の構成 (誰の・どの寸法の・状態の有無) が同じなら省く
+    struct LayerKey {
+        uint32_t entityIndex = 0;
+        uint32_t entityGeneration = 0;
+        int32_t cellsX = 0;
+        int32_t cellsZ = 0;
+        bool hasState = false;
+        bool operator==(const LayerKey& o) const
+        {
+            return entityIndex == o.entityIndex && entityGeneration == o.entityGeneration && cellsX == o.cellsX
+                   && cellsZ == o.cellsZ && hasState == o.hasState;
+        }
+    };
+    LayerKey uploadedKeys_[kDisturbanceMaxLayers];
+    int32_t uploadedCount_ = 0;
+    uint64_t uploadedSerial_ = 0;
+    bool everUploaded_ = false;
+    DisturbanceFieldGpu gpu_;
+    float uploadMs_ = 0.0f;
+};
+
+} // namespace mye
