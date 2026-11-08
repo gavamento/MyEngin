@@ -49,10 +49,10 @@
 | sub-05 | OK | 2 | e664245 (統合 5ca2e83) | スクリプトの口 (ABI v35 = 202) |
 | sub-06 | OK | 1 | 0784048 (統合 712bdfd) | アニメイベント disturb |
 | sub-07 | OK | 3 | 59704c5 (統合 946bb49、追補 94239a1) | 3D ボリューム (4 個まで描画)。後で中間のまとめ実行 |
-| sub-08 | OK (統合待ち) | 1 | 5351b0c (ブランチ m96-w3-sub08) | Volume のフロクセル自動有効と太陽光の bool |
-| sub-09 | 未着手 | 0 | | 追従モード |
+| sub-08 | OK | 1 | 5351b0c (統合 23e7fd4) | Volume のフロクセル自動有効と太陽光の bool |
+| sub-09 | OK | 2 | 11d8a29 (統合 fed6402) | 追従モード |
 | sub-10 | 未着手 | 0 | | 地形の起伏に沿う 2D 層 |
-| sub-11 | OK (統合待ち) | 1 | 5134dad (ブランチ m96-w3-sub11) | 粒子 (CPU / GPU) |
+| sub-11 | OK | 1 | 5134dad (統合 1209684) | 粒子 (CPU / GPU) |
 | sub-12 | OK | 1 | 4e871bb | 水面の波紋 |
 | sub-13 | 未着手 | 0 | | 跡 (地形) |
 | sub-14 | OK | 1 | 7b99fba (統合 44c80d4) | 草 |
@@ -86,6 +86,11 @@ W1 の 4 本を止めた。全部未コミット。再開時は各 sub-NN.md 末
 
 ## W3 (2026-11-09 開始)
 - 09 / 11 / 08 を master (94239a1 の後の台帳コミット) から切った worktree で並列実装。統合順 09 → 11 → 08
+- W3 統合完了 (09 fed6402 → 11 1209684 → 08 23e7fd4)。競合は SimSnapshot.h (v74 に揃えコメントは両方)、AcousticAudioSelfTest (74)、DemoContentField.cpp / DisturbanceFieldSelfTest.cpp (共有の閉じ括弧・末尾の呼び出し・戻り値の式) を手で解いた。disturbance_volume.hlsli (sub-11 の上書き口と sub-08 の sunSigma) と粒子の 2 backend (引き寄せとモード値) は自動マージで両立を目視。Debug / Release ビルド OK、check_rules 0 error、fxc particle_sim / froxel_inject OK、--field-bench (Release) all checks passed・kBakedFinalHash 0x90646BB353FD22D5 のまま
+- sub-09 round 2 は coder が受け渡しのループに入ったため司会が停止し、worktree の差分確認と --field-bench (Debug / Release) を司会が回して planner へ渡した
+
+## W4 (2026-11-09 開始)
+- 10 / 13 を master から切った worktree で並列実装。統合順 10 → 13
 
 ## 申し送り (セッション跨ぎ)
 - design-draft.md と本台帳は sub-01 のコミットに同梱する (基点時点で未追跡)
