@@ -34,7 +34,7 @@ struct DisturbanceVolume
     float4 originSize; // xyz = 原点セルの番号 (整数), w = cellSize [m]
     float4 extent;     // xyz = cellsX / cellsY / cellsZ, w = 1: テクスチャを読む / 0: restDensity の定数
     float4 look;       // x = fogDensity [1/m], y = fogBrightness, z = restDensity, w = 1: 濃さチャネルあり
-    float4 fogColor;   // rgb = 霧の色
+    float4 fogColor;   // rgb = 霧の色, w = 1: 平行光を当てる (fogSunLight)
 };
 
 cbuffer DisturbanceVolumeCB : MYE_DFLD_REG(b, MYE_DFLD_VOL_CB)
@@ -51,7 +51,9 @@ Texture3D<float4> gDfldVol3 : MYE_DFLD_REG(t, MYE_DFLD_VOL_T3);
 
 // Volume i の位置 posW での消散係数 σ [1/m] = fogDensity × ρ × 縁の立ち上げ (3D の縁 2 マス) を sigma へ、
 // 自己照明 σ × fogColor × fogBrightness を emit へ足す。格子の AABB の外は読まずに抜ける (分岐)
-void DfldVolumeAccumulate(uint i, Texture3D<float4> tex, float3 posW, inout float sigma, inout float3 emit)
+// fogSunLight の Volume の σ だけを sunSigma へも足す (平行光の散乱を掛ける重み)
+void DfldVolumeAccumulate(uint i, Texture3D<float4> tex, float3 posW, inout float sigma, inout float3 emit,
+                          inout float sunSigma)
 {
     if (i >= gDfldVolHeader.x) {
         return;
@@ -76,6 +78,9 @@ void DfldVolumeAccumulate(uint i, Texture3D<float4> tex, float3 posW, inout floa
     const float s = V.look.x * rho * edgeFade;
     sigma += s;
     emit += s * V.fogColor.rgb * V.look.y;
+    if (V.fogColor.w > 0.5f) {
+        sunSigma += s;
+    }
 }
 
 #endif

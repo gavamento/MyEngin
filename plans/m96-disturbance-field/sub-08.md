@@ -1,8 +1,8 @@
 # sub-08: フロクセルの自動有効 (場だけのモード) と、Volume の霧に太陽光を当てる bool
 
 - 依存: sub-07, sub-16 (波 W3。spec §6)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (W3 の統合待ち。順 09 → 11 → 08)
+- 往復: 1
 
 
 ## 並列の注意 (波 W3)
@@ -77,4 +77,7 @@ spec §5 の 12, 30, 31, 32 (Volume の分)。
 
 ## 実装メモ (coder が追記)
 
+round 1 (coder、司会が SELF_EVAL から写した要約): gFroxelEnabled を 0 / 1 / 2 (2 = 場だけのモード) にし、froxel_common.hlsli の FroxelFogOriginFor / FroxelParticleHandoff を合成側 9 本が通す。判定は RenderSystem::UpdateFroxel (`!froxelOn && cameraFound && disturbanceVolumes->wantsAutoFroxel`)、ユーザー設定は書き換えず実効値だけ。ゴッドレイの自動降ろしに `!froxelFieldOnly`。太陽光は fogSunLight の Volume の σ にだけ影なしの HG 散乱を足す (false は +0)。デモの AddFieldDemoSmoke から カメラの froxelOn 設定を外し、煙は fogSunLight = true。selftest RunVolumeFroxelModeTests (未実行)。確認: 31 (a)〜(e)・32 を Release WARP の画像で (golden fog / demo_deferred / demo_render_froxel は tol=0 で差 0)。未確認: 31 (f) Scene View、(g) GroundLayer のみ、退出の INFO (sub-17 へ)。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-09)。gFroxelEnabled の 0 / 1 / 2 とヘルパ 2 本への集約、UpdateFroxel での判定と INFO、ゴッドレイの条件、Volume だけの太陽光 (影なし、グローバルの媒質へは足さない) を確認。31(a)(b)(c)(d)(e) と 32 を画像で確認。視錐台を見ない入場条件、英語 tooltip、NeedsBackgroundFog は無変更を受理。31(f)(g) と退出ログは sub-17 の手動確認へ

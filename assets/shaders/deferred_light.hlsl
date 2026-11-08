@@ -261,11 +261,8 @@ float4 PSMain(VSOut i) : SV_Target
     //   グリッドの中のピクセルでは起点が posW と厳密に一致する = 距離 0 = ApplyFog は恒等
     if (gFroxelEnabled != 0) {
         const float viewZ = dot(float4(posW, 1.0f), gFroxelViewZRow);
-        float3 fogOrigin = posW; // グリッドの中 = 解析フォグの残りはゼロ
-        if (viewZ > gFroxelFarZ) {
-            fogOrigin = gCameraPos
-                + (posW - gCameraPos) * FroxelFogHandoffFraction(viewZ, gFroxelFarZ);
-        }
+        // グリッドの中 = 解析フォグの残りはゼロ。場だけのモードは起点 = カメラ (フロクセル off と同じ)
+        const float3 fogOrigin = FroxelFogOriginFor((float)gFroxelEnabled, gCameraPos, posW, viewZ, gFroxelFarZ);
         color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
                          fogOrigin, posW, gFogHeightFalloff, gFogBaseHeight, gSunDirection,
                          gSunColor, gFogInscatterIntensity, gFogInscatterPower);

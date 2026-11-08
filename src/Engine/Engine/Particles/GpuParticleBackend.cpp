@@ -1016,7 +1016,7 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     // CPU 粒子と共有) — 自作ゲートを書くと「サムネイル (AssetPreviewCache の別 RenderSystem)
     // だけが前フレームの残骸を読む」を構造的に潰せなくなる
     const bool froxelBound = FroxelIsBound(view);
-    cb.froxelParams = { froxelBound ? 1.0f : 0.0f, view.froxelNearZ, view.froxelFarZ,
+    cb.froxelParams = { static_cast<float>(FroxelModeValue(view, froxelBound)), view.froxelNearZ, view.froxelFarZ,
                         static_cast<float>(view.froxelSlices) };
     cb.froxelScreen = { static_cast<float>(view.width), static_cast<float>(view.height), 0.0f,
                         0.0f };

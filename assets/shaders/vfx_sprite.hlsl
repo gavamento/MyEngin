@@ -92,7 +92,7 @@ float4 PSMain(VSOut i) : SV_TARGET
         // 解析フォグの起点を「視線がグリッドを出る点」まで押し出す = 受け持ちが 1m も
         // 重ならない (グリッド内なら posW と厳密に一致して ApplyFog が恒等になる)
         col.rgb = ApplyFog(col.rgb, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
-                           FroxelFogOrigin(gCameraPos, i.posW, i.viewZ, gFroxelFarZ), i.posW,
+                           FroxelFogOriginFor((float)gFroxelEnabled, gCameraPos, i.posW, i.viewZ, gFroxelFarZ), i.posW,
                            gFogHeightFalloff, gFogBaseHeight, gSunDirection, gSunColor,
                            gFogInscatterIntensity, gFogInscatterPower);
         // 加算経路が無い (ブレンドは SRC_ALPHA/INV_SRC_ALPHA の 1 種だけ) ので alpha 版で足りる。

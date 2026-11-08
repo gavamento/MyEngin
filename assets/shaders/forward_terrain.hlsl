@@ -164,7 +164,7 @@ float4 PSMain(VSOut i) : SV_Target
     if (gFroxelEnabled != 0) {
         const float fviewZ = dot(float4(i.posW, 1.0f), gFroxelViewZRow);
         color = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
-                         FroxelFogOrigin(gCameraPos, i.posW, fviewZ, gFroxelFarZ), i.posW,
+                         FroxelFogOriginFor((float)gFroxelEnabled, gCameraPos, i.posW, fviewZ, gFroxelFarZ), i.posW,
                          gFogHeightFalloff, gFogBaseHeight, gSunDirection, gSunColor,
                          gFogInscatterIntensity, gFogInscatterPower);
         color = FroxelComposite(gFroxelVolume, gIblSampler, i.pos.xy, gFroxelScreenSize, fviewZ,

@@ -121,6 +121,8 @@ int32_t BuildDisturbanceVolumeUpload(World& world, const DisturbanceState* state
         v.fogColor[1] = std::max(FiniteOr(r.comp.fogColor.y, 1.0f), 0.0f);
         v.fogColor[2] = std::max(FiniteOr(r.comp.fogColor.z, 1.0f), 0.0f);
         v.fogBrightness = std::max(FiniteOr(r.comp.fogBrightness, 1.0f), 0.0f);
+        v.fogSunLight = r.comp.fogSunLight;
+        v.autoFroxel = r.comp.autoFroxel;
 
         const DisturbanceSlot* slot = nullptr;
         if (state != nullptr) {

@@ -24,14 +24,16 @@
 #include "disturbance_volume.hlsli"
 
 // 立体 (Volume) の霧。4 個を順に足す。無い / 外のセルは sigma = 0・emit = 0 ちょうど (従来の絵とビット一致)
-void DisturbanceVolumeFogAt(float3 posW, out float sigma, out float3 emit)
+// sunSigma = そのうち fogSunLight が true の Volume の σ (平行光を当てる分)
+void DisturbanceVolumeFogAt(float3 posW, out float sigma, out float3 emit, out float sunSigma)
 {
     sigma = 0.0f;
     emit = 0.0f;
-    DfldVolumeAccumulate(0, gDfldVol0, posW, sigma, emit);
-    DfldVolumeAccumulate(1, gDfldVol1, posW, sigma, emit);
-    DfldVolumeAccumulate(2, gDfldVol2, posW, sigma, emit);
-    DfldVolumeAccumulate(3, gDfldVol3, posW, sigma, emit);
+    sunSigma = 0.0f;
+    DfldVolumeAccumulate(0, gDfldVol0, posW, sigma, emit, sunSigma);
+    DfldVolumeAccumulate(1, gDfldVol1, posW, sigma, emit, sunSigma);
+    DfldVolumeAccumulate(2, gDfldVol2, posW, sigma, emit, sunSigma);
+    DfldVolumeAccumulate(3, gDfldVol3, posW, sigma, emit, sunSigma);
 }
 
 // C++ の FroxelInjectCB (src\Engine\Renderer\FroxelPass.cpp) とレイアウト一致 (2720 バイト)
@@ -109,18 +111,26 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     // 場の立体の霧 (M96)。無い / 外のセルは sigmaField = 0・emit = 0 ちょうどなので、足しても従来のビットは動かない
     float sigmaField;
     float3 fieldEmit;
-    DisturbanceVolumeFogAt(posW, sigmaField, fieldEmit);
+    float sigmaFieldSun;
+    DisturbanceVolumeFogAt(posW, sigmaField, fieldEmit, sigmaFieldSun);
     const float sigmaT = max(gFroxelDensity * heightScale, 0.0f) + sigmaField;
     const float sigmaS = sigmaT * gFroxelScatterAlbedo;
 
     // ---- 散乱 ----
     const float3 toCamera = normalize(gFroxelCameraPos - posW);
+    float3 sunScatter = 0.0f; // 平行光の散乱 (放射輝度 × HG)。sigmaFieldSun を掛けて足す
     float3 inscatter = gFroxelAmbient; // 等方 (位相関数の全立体角積分が 1 なので係数も 1)
 
     for (int i = 0; i < gFroxelLightCount; ++i) {
         const Light L = gFroxelLights[i];
         if (L.type == 0) {
-            continue; // 平行光は注入しない (ファイル冒頭の★)
+            // 平行光はグローバルの媒質へは注入しない (ファイル冒頭の★)。fogSunLight の Volume のセルだけ、
+            // 影なしで σ_s × 放射輝度 × HG を足す (解析フォグの太陽寄せとは二重計上にならない)
+            if (sigmaFieldSun > 0.0f) {
+                const float sunPhase = HenyeyGreenstein(dot(L.direction, toCamera), gFroxelAnisotropy);
+                sunScatter += L.color * (L.intensity * sunPhase);
+            }
+            continue;
         }
         const float3 toLight = L.position - posW;
         const float dist = length(toLight);
@@ -151,5 +161,5 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     }
 
     // 場の霧は環境光・局所ライトの散乱に加え、自己照明 (等方・影なし) を持つ
-    gFroxelScatter[id] = float4(inscatter * sigmaS + fieldEmit, sigmaT);
+    gFroxelScatter[id] = float4(inscatter * sigmaS + fieldEmit + sunScatter * (sigmaFieldSun * gFroxelScatterAlbedo), sigmaT);
 }

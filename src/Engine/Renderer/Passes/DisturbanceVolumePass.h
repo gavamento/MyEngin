@@ -42,6 +42,8 @@ struct DisturbanceVolumeEntryUpload {
     float fogDensity = 2.0f;
     float fogColor[3] = { 1.0f, 1.0f, 1.0f };
     float fogBrightness = 1.0f;
+    bool fogSunLight = false; // true: 平行光をこの Volume の霧に当てる (影なし)
+    bool autoFroxel = true;   // true: カメラのフロクセルが off でもこの霧のために回す
     uint32_t entityIndex = 0;
     uint32_t entityGeneration = 0;
 };
@@ -58,7 +60,7 @@ struct DisturbanceVolumeEntryCB {
     float originSize[4] = {}; // xyz = 原点セル (整数), w = cellSize [m]
     float extent[4] = {};     // xyz = cellsX/Y/Z, w = 1: テクスチャを読む / 0: restDensity の定数
     float look[4] = {};       // x = fogDensity [1/m], y = fogBrightness, z = restDensity, w = 1: 濃さチャネルあり
-    float fogColor[4] = {};   // rgb = 霧の色
+    float fogColor[4] = {};   // rgb = 霧の色, w = 1: 平行光を当てる (fogSunLight)
 };
 
 // HLSL の cbuffer DisturbanceVolumeCB と同じ並び
@@ -73,6 +75,9 @@ static_assert(sizeof(DisturbanceVolumeCB) == kDisturbanceVolumeCbBytes, "HLSL �
 struct DisturbanceVolumeGpu {
     ID3D11ShaderResourceView* srv[kDisturbanceMaxVolumes] = {}; // Texture3D RGBA16F (vx, vy, vz, 濃さ)。幅 = cellsX, 高さ = cellsZ, 奥行き = cellsY
     DisturbanceVolumeCB cb;
+    // 霧を出す (濃さチャネルあり && fogDensity > 0) autoFroxel な Volume が 1 つでもあるか。
+    // true なら、カメラのフロクセルが off のビューでも「場だけのモード」で回す
+    bool wantsAutoFroxel = false;
 };
 
 // Volume の Texture3D の所有者。GPU は読むだけ — sim の状態は CPU (決定論) が持つ
