@@ -11,7 +11,7 @@
 #define MYE_PFLD_VOLUME_CB 4
 #define MYE_PFLD_SAMPLER 1
 #define MYE_DFLD_SRV_FLOW 3
-#define MYE_DFLD_SRV_AUX 8 // 粒子は読まない (宣言だけ。C++ も張らない)
+#define MYE_DFLD_SRV_AUX 8 // kParticleFieldAuxSrvSlot (板の高さの判定が基準高さのずれ G を読む)
 #define MYE_DFLD_SAMPLER 1
 #define MYE_DFLD_CB 3
 #define MYE_DFLD_VOL_CB 4
@@ -138,7 +138,8 @@ bool ParticleFieldFlow(float3 pos, out float3 flow, out bool vertical)
         if (!(gx >= 0.0f && gz >= 0.0f && gx < L.extent.x && gz < L.extent.y)) {
             continue;
         }
-        if (!(pos.y >= L.originSize.w - L.extent.z && pos.y <= L.originSize.w + 2.0f * L.extent.z)) {
+        const float base = L.originSize.w + DfldBaseOffsetAt(i, L, gx, gz);
+        if (!(pos.y >= base - L.extent.z && pos.y <= base + 2.0f * L.extent.z)) {
             continue;
         }
         const float2 uvLo = float2(0.5f, 0.5f) * L.texScale.xy;

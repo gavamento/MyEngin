@@ -47,14 +47,16 @@ void DisturbanceAppendDebugLines(World& world, const DisturbanceState& state, st
         const int32_t yEnd = volume ? s.cellsY : 1;
         const int32_t yStep = volume ? kDebugCellStride : 1;
         for (int32_t gy = yBegin; gy < yEnd; gy += yStep) {
-            const float y = volume ? (static_cast<float>(s.originCell[1] + gy) + 0.5f) * s.cellSize
-                                   : s.baseY + kDrawHeightAboveBase;
+            const float yRow = volume ? (static_cast<float>(s.originCell[1] + gy) + 0.5f) * s.cellSize
+                                      : s.baseY + kDrawHeightAboveBase;
             for (int32_t z = kDebugCellStride / 2; z < s.cellsZ; z += kDebugCellStride) {
                 for (int32_t x = kDebugCellStride / 2; x < s.cellsX; x += kDebugCellStride) {
                     const size_t i = static_cast<size_t>(x)
                                      + static_cast<size_t>(s.cellsX) * (static_cast<size_t>(z) + static_cast<size_t>(s.cellsZ) * static_cast<size_t>(gy));
                     const float cx = (static_cast<float>(s.originCell[0] + x) + 0.5f) * s.cellSize;
                     const float cz = (static_cast<float>(s.originCell[2] + z) + 0.5f) * s.cellSize;
+                    // 地形に沿う層は列ごとの基準高さの少し上
+                    const float y = s.columnBaseY.empty() ? yRow : s.columnBaseY[i] + kDrawHeightAboveBase;
                     if (hasDensity) {
                         const uint32_t c = GrayColor(s.density[i]);
                         out.push_back({ cx - kCrossHalfSize, y, cz, cx + kCrossHalfSize, y, cz, c });

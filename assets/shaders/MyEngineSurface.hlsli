@@ -139,7 +139,7 @@ SamplerState gIblSampler;          // 線形 Clamp
 
 // かき乱しフィールド (M96) の 2D 層を位置 posW で読む (VS / PS どちらでも可、SampleLevel)。
 // 戻り値: xy = 流れ (x, z) [m/s]、z = 濃さ ρ (最大の層)、w = 波紋の高さ h [m]。
-// 層の格子の外・高さの範囲 (baseY ± thickness) の外・層が 0 枚 (場が無い) は全 0 = 草は真っ直ぐ。
+// 層の格子の外・高さの範囲 (baseY + 列の基準高さのずれ G ± thickness) の外・層が 0 枚 (場が無い) は全 0 = 草は真っ直ぐ。
 // 縁の 2 マスで 0 へ落とす (境界で絵が割れないように)。複数の層は流れと波紋を足す。
 // ★VS の位置に効く値として使ってよい (束縛は RenderSystem が描画の前に 1 回張る。影・速度エントリも同じ値を見る)
 float4 MyeFieldSample(float3 posW)
@@ -148,7 +148,7 @@ float4 MyeFieldSample(float3 posW)
     const uint count = min(gDfldHeader.x, (uint)MYE_DFLD_MAX_LAYERS);
     [loop] for (uint li = 0; li < count; ++li) {
         const DisturbanceLayer L = gDfldLayers[li];
-        if (L.extent.w < 0.5f || abs(posW.y - L.originSize.w) > L.extent.z) {
+        if (L.extent.w < 0.5f) {
             continue;
         }
         const float cellSize = L.originSize.z;
@@ -158,6 +158,9 @@ float4 MyeFieldSample(float3 posW)
         const float nz = L.extent.y;
         if (!(gx > 0.0f && gz > 0.0f && gx < nx && gz < nz)) {
             continue;
+        }
+        if (abs(posW.y - (L.originSize.w + DfldBaseOffsetAt(li, L, gx, gz))) > L.extent.z) {
+            continue; // 板 (baseY + G ± thickness) の外
         }
         const float edge = min(min(gx, nx - gx), min(gz, nz - gz));
         const float edgeFade = saturate(edge / MYE_DFLD_EDGE_FADE_CELLS);
@@ -181,7 +184,7 @@ float2 MyeFieldRippleGradient(float3 posW)
     const uint count = min(gDfldHeader.x, (uint)MYE_DFLD_MAX_LAYERS);
     [loop] for (uint li = 0; li < count; ++li) {
         const DisturbanceLayer L = gDfldLayers[li];
-        if (L.extent.w < 0.5f || abs(posW.y - L.originSize.w) > L.extent.z) {
+        if (L.extent.w < 0.5f) {
             continue;
         }
         const float cellSize = L.originSize.z;
@@ -191,6 +194,9 @@ float2 MyeFieldRippleGradient(float3 posW)
         const float nz = L.extent.y;
         if (!(gx > 0.0f && gz > 0.0f && gx < nx && gz < nz)) {
             continue;
+        }
+        if (abs(posW.y - (L.originSize.w + DfldBaseOffsetAt(li, L, gx, gz))) > L.extent.z) {
+            continue; // 板 (baseY + G ± thickness) の外
         }
         const float edge = min(min(gx, nx - gx), min(gz, nz - gz));
         const float edgeFade = saturate(edge / MYE_DFLD_EDGE_FADE_CELLS);

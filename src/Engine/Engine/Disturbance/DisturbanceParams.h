@@ -48,6 +48,7 @@ struct FieldParams {
     float buoyancy = 0.0f;          // Volume だけ。[0, kMaxBuoyancy] [m/s^2 / 濃さ]
     EntityID followTarget = kNullEntity; // null なら固定
     int32_t followMargin = 4;            // [1, 格子の最小の辺の半分]
+    bool followTerrain = false;          // GroundLayer だけ true になる (Volume は無視)
     float pos[3] = { 0.0f, 0.0f, 0.0f }; // 場のエンティティのワールド位置
 };
 

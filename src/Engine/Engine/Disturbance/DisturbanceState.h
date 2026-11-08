@@ -88,6 +88,9 @@ struct DisturbanceSlot {
     std::vector<float> flowX;            // 流れ [m/s]
     std::vector<float> flowZ;
     std::vector<float> flowY;            // Volume だけ (GroundLayer は空)。y 方向の流れ [m/s]
+    // 地形に沿う GroundLayer (followTerrain) だけ。列 (x, z) ごとの層の下端の高さ [m、絶対]。空 = 平らな層 (baseY 一定)。
+    // 地形のコライダーから焼いた値 (作り直しと追従で入ってきた列だけ焼く。以後は地形を動かしても追わない)
+    std::vector<float> columnBaseY;
     std::vector<float> density;          // [0,1]
     std::vector<float> trail;            // [0,1]
     std::vector<float> ripple;           // 波紋の高さ h [m]

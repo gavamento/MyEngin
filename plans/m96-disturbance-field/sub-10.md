@@ -1,8 +1,8 @@
 # sub-10: 地形の起伏に沿う 2D 層 (列ごとの基準高さ)
 
 - 依存: sub-09 (波 W4。spec §6)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (W4 の統合の先頭。順 10 → 13)
+- 往復: 2
 
 
 ## 並列の注意 (波 W4)
@@ -67,4 +67,13 @@ spec §5 の 12, 30, 33。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-10 (round 1) の要点 (全文は司会への返信)
+- followTerrain (bool + pad2[3]、sizeof 104)、DisturbanceSlot.columnBaseY、DFLD / ハッシュ / SameSlot、snapshot v75、kBakedFinalHash 0x90646BB353FD22D5 → 0x0D0CBC4DCBEE185E (欄の追加。bench の Debug == Release で確認)
+- 焼き込み: 作り直し (MakeRestSlot) と追従の入ってきた列 (FollowShift の末尾)。注入の dy・DisturbanceSampleAt・描画 (baseOffset、±1000 m) が列の値を使う
+- デモ: 場が 4 個で上限のため、2D 層は足さず広場の層を followTerrain にして丘 (assets/terrain/field_hill.*) と HillBall を足した ([逸脱]。SELF_EVAL に理由)
+- 焼き込み 128 x 128 列: Release で 6〜10 ms (5 ms 超。planner 判断)
+- selftest / replay_verify は未実行 (運用指示)。selftest のコードは RunDisturbanceTerrainTests
+
 ## フィードバック履歴
+- round 1: VERDICT REWORK (planner、2026-11-09)。列の基準高さ (状態・DFLD・ハッシュは非空のときだけ)、作り直しと追従での焼き込み、注入・読み取り・地面の霧の G、v75、kBakedFinalHash 0x0D0CBC4DCBEE185E (Debug == Release) を確認。デモで広場の層を followTerrain にした逸脱、HillBall、焼き込み 6〜10 ms (一度だけ) を受理。must: 草 (MyeFieldSample)・GPU 粒子・水面の高さの判定にも G (列の基準高さのずれ) を使う
+- round 2: VERDICT OK (planner、2026-11-09)。草・水面・GPU 粒子の板の高さを baseY + G に (共通ヘルパ DfldBaseOffsetAt)、粒子 CS に aux を t8 で束縛。平地は着手前と CPU / GPU ともビット一致、丘の草は新旧の A/B で効くことを確認、fxc 全部 rc=0、bench 不変。t8 の規則 9 は sub-17 で足す

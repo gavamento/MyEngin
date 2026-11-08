@@ -20,6 +20,8 @@ constexpr int kParticleFieldVolumeSrvSlot = 4;
 constexpr int kParticleFieldLayerCbSlot = 3;
 constexpr int kParticleFieldVolumeCbSlot = 4;
 constexpr int kParticleFieldSamplerSlot = 1;
+// 2D 層の基準高さのずれ (RG16F の G。起伏に沿う層の板の判定) の SRV。HLSL の MYE_DFLD_SRV_AUX と一致
+constexpr int kParticleFieldAuxSrvSlot = 8;
 
 // GPU パーティクル (engine_spec.md 7.3)。
 // - プール + dead list (append/consume) + alive list A/B ピンポン (圧縮)
@@ -180,6 +182,7 @@ private:
 
     // M96k: 場の入力 (SetFieldGpu で更新)。CB は fieldInfluence > 0 のエミッタがあるときだけ上げる
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> fieldFlowSrv_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> fieldAuxSrv_;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> fieldVolumeSrv_[kDisturbanceMaxVolumes];
     DisturbanceFieldCB fieldLayerData_;
     DisturbanceVolumeCB fieldVolumeData_;

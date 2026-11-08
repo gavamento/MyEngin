@@ -27,8 +27,20 @@ using namespace disturbance; // DisturbanceParams.h (場の設定の切り方と
 
 namespace {
 
-// 静止状態の新しいスロット (全マス: 流れ 0、濃さ restDensity、跡 0、波紋 0)
-DisturbanceSlot MakeRestSlot(const FieldParams& p)
+// 列 (x, z) の中心の地形の高さ (当たる地形のコライダー。地形が無い列はスロットの baseY = 場のエンティティの y)
+float BakeColumnBaseY(World& world, const DisturbanceSlot& s, int32_t x, int32_t z)
+{
+    const float wx = (static_cast<float>(s.originCell[0] + x) + 0.5f) * s.cellSize;
+    const float wz = (static_cast<float>(s.originCell[2] + z) + 0.5f) * s.cellSize;
+    float h = 0.0f;
+    if (SampleTerrainHeightWorld(world, wx, wz, &h, nullptr) != 0 && std::isfinite(h)) {
+        return h;
+    }
+    return s.baseY;
+}
+
+// 静止状態の新しいスロット (全マス: 流れ 0、濃さ restDensity、跡 0、波紋 0)。followTerrain は全列の基準高さを焼く
+DisturbanceSlot MakeRestSlot(World& world, const FieldParams& p)
 {
     DisturbanceSlot s;
     s.entity = p.entity;
@@ -59,6 +71,15 @@ DisturbanceSlot MakeRestSlot(const FieldParams& p)
         s.ripple.assign(n, 0.0f);
         s.ripplePrev.assign(n, 0.0f);
     }
+    if (p.followTerrain) {
+        s.columnBaseY.resize(n);
+        for (int32_t z = 0; z < s.cellsZ; ++z) {
+            for (int32_t x = 0; x < s.cellsX; ++x) {
+                s.columnBaseY[static_cast<size_t>(x) + static_cast<size_t>(s.cellsX) * static_cast<size_t>(z)] =
+                    BakeColumnBaseY(world, s, x, z);
+            }
+        }
+    }
     return s;
 }
 
@@ -66,7 +87,7 @@ DisturbanceSlot MakeRestSlot(const FieldParams& p)
 bool SlotMatches(const DisturbanceSlot& s, const FieldParams& p)
 {
     return s.shape == p.shape && s.cellsX == p.cellsX && s.cellsY == p.cellsY && s.cellsZ == p.cellsZ
-           && s.channels == p.channels && s.cellSize == p.cellSize;
+           && s.channels == p.channels && s.cellSize == p.cellSize && s.columnBaseY.empty() == !p.followTerrain;
 }
 
 // ---- ECS から集める行 ----
@@ -181,8 +202,9 @@ void Inject(DisturbanceSlot& s, float thickness, const Injection& in, std::vecto
         || !CellRange(in.pos[2], in.radius, s.cellSize, s.originCell[2], s.cellsZ, z0, z1)) {
         return;
     }
-    // 板からの縦のはみ出し (板の中なら 0)
-    const float dy = std::max(std::max(0.0f, s.baseY - in.pos[1]), in.pos[1] - (s.baseY + thickness));
+    // 板からの縦のはみ出し (板の中なら 0)。地形に沿う層は列ごとの基準高さで測る
+    const bool terrain = !s.columnBaseY.empty();
+    float dy = std::max(std::max(0.0f, s.baseY - in.pos[1]), in.pos[1] - (s.baseY + thickness));
     const bool hasDensity = (s.channels & kDisturbanceChannelDensity) != 0;
     const bool hasTrail = (s.channels & kDisturbanceChannelTrail) != 0;
     const bool hasRipple = (s.channels & kDisturbanceChannelRipple) != 0;
@@ -192,6 +214,10 @@ void Inject(DisturbanceSlot& s, float thickness, const Injection& in, std::vecto
         for (int32_t x = x0; x <= x1; ++x) {
             const float cx = (static_cast<float>(s.originCell[0] + x) + 0.5f) * s.cellSize;
             const float ex = cx - in.pos[0];
+            if (terrain) {
+                const float colBase = s.columnBaseY[static_cast<size_t>(x) + static_cast<size_t>(s.cellsX) * static_cast<size_t>(z)];
+                dy = std::max(std::max(0.0f, colBase - in.pos[1]), in.pos[1] - (colBase + thickness));
+            }
             const float d = std::sqrt(ex * ex + ez * ez + dy * dy);
             if (!(d < in.radius)) {
                 continue;
@@ -1155,12 +1181,28 @@ void FollowShift(World& world, const FieldParams& p, DisturbanceSlot& s, std::ve
     ShiftArray(s.flowX, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
     ShiftArray(s.flowZ, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
     ShiftArray(s.flowY, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
+    ShiftArray(s.columnBaseY, scratch, nx, ny, nz, d[0], d[1], d[2], s.baseY);
     ShiftArray(s.density, scratch, nx, ny, nz, d[0], d[1], d[2], p.restDensity);
     ShiftArray(s.trail, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
     ShiftArray(s.ripple, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
     ShiftArray(s.ripplePrev, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
     for (int i = 0; i < 3; ++i) {
         s.originCell[i] += d[i];
+    }
+    if (!s.columnBaseY.empty()) {
+        // 入ってきた列 (ShiftArray が rest で埋めたマス = 写し元が古い配列の外) だけ焼く。残った列はビット不変
+        const int32_t x0 = std::max(0, -d[0]);
+        const int32_t x1 = std::min(nx, nx - d[0]);
+        const int32_t z0 = std::max(0, -d[2]);
+        const int32_t z1 = std::min(nz, nz - d[2]);
+        for (int32_t z = 0; z < nz; ++z) {
+            for (int32_t x = 0; x < nx; ++x) {
+                if (x < x0 || x >= x1 || z < z0 || z >= z1) {
+                    s.columnBaseY[static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(z)] =
+                        BakeColumnBaseY(world, s, x, z);
+                }
+            }
+        }
     }
 }
 
@@ -1211,7 +1253,7 @@ void DisturbanceStep(World& world, DisturbanceState& state)
         if (it != state.slots_.end() && SlotMatches(*it, p)) {
             slots.push_back(std::move(*it));
         } else {
-            slots.push_back(MakeRestSlot(p));
+            slots.push_back(MakeRestSlot(world, p));
         }
     }
     // 個数が同じなら要素を入れ替えるだけにして、スロット列の確保先を動かさない (スロットへの参照を持つ側が dangling にならない)
@@ -1369,17 +1411,19 @@ bool DisturbanceSampleAt(const DisturbanceState& state, World& world, EntityID f
         if (!(gx >= 0.0f && gx < static_cast<float>(s.cellsX) && gz >= 0.0f && gz < static_cast<float>(s.cellsZ))) {
             continue;
         }
-        if (!(pos.y >= s.baseY - thickness && pos.y <= s.baseY + 2.0f * thickness)) {
-            continue;
-        }
         const float fx = gx - 0.5f;
         const float fz = gz - 0.5f;
+        // 地形に沿う層は、この位置の列の基準高さ (双線形。格子の外のマスは baseY) を使う
+        const float base = s.columnBaseY.empty() ? s.baseY : Bilinear(s.columnBaseY, s.cellsX, s.cellsZ, fx, fz, s.baseY);
+        if (!(pos.y >= base - thickness && pos.y <= base + 2.0f * thickness)) {
+            continue;
+        }
         out.field = s.entity;
         out.flow[0] = Bilinear(s.flowX, s.cellsX, s.cellsZ, fx, fz, 0.0f);
         out.flow[2] = Bilinear(s.flowZ, s.cellsX, s.cellsZ, fx, fz, 0.0f);
         if ((s.channels & kDisturbanceChannelDensity) != 0) {
             // 高さの形 p(y): 板の下端より下は 1、上へ thickness かけて 0 (描画と同じ式)
-            const float shape = pos.y <= s.baseY ? 1.0f : Saturate(1.0f - (pos.y - s.baseY) / thickness);
+            const float shape = pos.y <= base ? 1.0f : Saturate(1.0f - (pos.y - base) / thickness);
             out.density = Bilinear(s.density, s.cellsX, s.cellsZ, fx, fz, rest) * shape;
         }
         if ((s.channels & kDisturbanceChannelTrail) != 0) {

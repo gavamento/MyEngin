@@ -196,6 +196,7 @@ void GpuParticleBackend::Shutdown()
     shadowSampler_.Reset(); // M63d
     collDepthSRV_.Reset();
     fieldFlowSrv_.Reset();
+    fieldAuxSrv_.Reset();
     for (auto& srv : fieldVolumeSrv_) {
         srv.Reset();
     }
@@ -762,11 +763,13 @@ void GpuParticleBackend::SetFieldGpu(const DisturbanceFieldGpu* layers, const Di
     fieldLayerData_ = DisturbanceFieldCB();
     fieldVolumeData_ = DisturbanceVolumeCB();
     fieldFlowSrv_.Reset();
+    fieldAuxSrv_.Reset();
     for (auto& srv : fieldVolumeSrv_) {
         srv.Reset();
     }
     if (layers != nullptr && layers->flowSRV != nullptr && layers->cb.header[0] > 0) {
         fieldFlowSrv_ = layers->flowSRV;
+        fieldAuxSrv_ = layers->auxSRV;
         fieldLayerData_ = layers->cb;
         fieldAvailable_ = true;
     }
@@ -789,6 +792,8 @@ void GpuParticleBackend::BindFieldInputs(ID3D11DeviceContext* dc)
     }
     ID3D11ShaderResourceView* flow = fieldFlowSrv_.Get();
     dc->CSSetShaderResources(kParticleFieldFlowSrvSlot, 1, &flow);
+    ID3D11ShaderResourceView* aux = fieldAuxSrv_.Get();
+    dc->CSSetShaderResources(kParticleFieldAuxSrvSlot, 1, &aux);
     ID3D11ShaderResourceView* vols[kDisturbanceMaxVolumes] = {};
     for (int i = 0; i < kDisturbanceMaxVolumes; ++i) {
         vols[i] = fieldVolumeSrv_[i].Get();
@@ -806,6 +811,8 @@ void GpuParticleBackend::UnbindFieldInputs(ID3D11DeviceContext* dc)
     dc->CSSetShaderResources(kParticleFieldFlowSrvSlot, 1 + kDisturbanceMaxVolumes, nullSrv);
     ID3D11Buffer* nullCb[2] = {};
     dc->CSSetConstantBuffers(kParticleFieldLayerCbSlot, 2, nullCb);
+    ID3D11ShaderResourceView* nullAux[1] = {};
+    dc->CSSetShaderResources(kParticleFieldAuxSrvSlot, 1, nullAux);
 }
 
 void GpuParticleBackend::SetSceneDepth(ID3D11ShaderResourceView* depthSRV,

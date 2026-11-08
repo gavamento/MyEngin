@@ -29,8 +29,11 @@ const float* DataOrNull(const std::vector<float>& v)
 bool SlotUsable(const DisturbanceSlot& s, const FieldParams& p)
 {
     return s.shape == p.shape && s.cellsX == p.cellsX && s.cellsY == p.cellsY && s.cellsZ == p.cellsZ
-           && s.channels == p.channels && s.cellSize == p.cellSize;
+           && s.channels == p.channels && s.cellSize == p.cellSize && s.columnBaseY.empty() == !p.followTerrain;
 }
+
+// 列の基準高さ - baseY の上限 [m] (half で表せる範囲に収める)
+constexpr float kMaxBaseOffset = 1000.0f;
 
 } // namespace
 
@@ -82,6 +85,14 @@ int32_t BuildDisturbanceFieldUpload(World& world, const DisturbanceState* state,
             l.density = DataOrNull(slot->density);
             l.trail = DataOrNull(slot->trail);
             l.ripple = DataOrNull(slot->ripple);
+            if (!slot->columnBaseY.empty()) {
+                std::vector<float>& offset = out.baseOffsetStorage[out.layerCount];
+                offset.resize(slot->columnBaseY.size());
+                for (size_t k = 0; k < offset.size(); ++k) {
+                    offset[k] = std::min(std::max(slot->columnBaseY[k] - slot->baseY, -kMaxBaseOffset), kMaxBaseOffset);
+                }
+                l.baseOffset = offset.data();
+            }
         } else {
             // 最初の step が作る格子と同じ原点・基準の高さ (OriginCellOf は step と共有)
             l.hasState = false;
