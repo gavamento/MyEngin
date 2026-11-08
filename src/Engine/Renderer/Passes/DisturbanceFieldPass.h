@@ -160,7 +160,8 @@ public:
     bool Upload(GraphicsDevice& device, const DisturbanceFieldUpload& src);
     void Release();
 
-    // 地面の霧が読む CB / SRV / サンプラを PS の固定スロットへ張る。field が null / 層 0 枚なら何も張らず false。
+    // 地面の霧が読む CB / SRV / サンプラを PS の固定スロットへ張る (VS にも同じ番号で張る = サーフェスシェーダの MyeFieldSample 用)。
+    // field が null / 層 0 枚なら何も張らず false。
     // 張ったら描画の最後に UnbindGroundFog で剥がすこと (他のビューの描画に残さない)
     bool BindGroundFog(GraphicsDevice& device, const DisturbanceFieldGpu* field, const GroundFogViewParams& view);
     void UnbindGroundFog(GraphicsDevice& device);

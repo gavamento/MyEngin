@@ -137,6 +137,77 @@ SamplerState gIblSampler;          // 線形 Clamp
 // ---- ヘルパ (v1: 太陽 CSM の影・解析フォグ・環境光/太陽色のみ。IBL/局所影/音響/フロクセルの
 //      合成は後回し — CB のフィールドは確保済みだが、ここでは使わない) ----
 
+// かき乱しフィールド (M96) の 2D 層を位置 posW で読む (VS / PS どちらでも可、SampleLevel)。
+// 戻り値: xy = 流れ (x, z) [m/s]、z = 濃さ ρ (最大の層)、w = 波紋の高さ h [m]。
+// 層の格子の外・高さの範囲 (baseY ± thickness) の外・層が 0 枚 (場が無い) は全 0 = 草は真っ直ぐ。
+// 縁の 2 マスで 0 へ落とす (境界で絵が割れないように)。複数の層は流れと波紋を足す。
+// ★VS の位置に効く値として使ってよい (束縛は RenderSystem が描画の前に 1 回張る。影・速度エントリも同じ値を見る)
+float4 MyeFieldSample(float3 posW)
+{
+    float4 result = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    const uint count = min(gDfldHeader.x, (uint)MYE_DFLD_MAX_LAYERS);
+    [loop] for (uint li = 0; li < count; ++li) {
+        const DisturbanceLayer L = gDfldLayers[li];
+        if (L.extent.w < 0.5f || abs(posW.y - L.originSize.w) > L.extent.z) {
+            continue;
+        }
+        const float cellSize = L.originSize.z;
+        const float gx = posW.x / cellSize - L.originSize.x;
+        const float gz = posW.z / cellSize - L.originSize.y;
+        const float nx = L.extent.x;
+        const float nz = L.extent.y;
+        if (!(gx > 0.0f && gz > 0.0f && gx < nx && gz < nz)) {
+            continue;
+        }
+        const float edge = min(min(gx, nx - gx), min(gz, nz - gz));
+        const float edgeFade = saturate(edge / MYE_DFLD_EDGE_FADE_CELLS);
+        const float2 uvLo = float2(0.5f, 0.5f) * L.texScale.xy;
+        const float2 uvHi = float2(nx - 0.5f, nz - 0.5f) * L.texScale.xy;
+        const float2 uv = clamp(float2(gx, gz) * L.texScale.xy, uvLo, uvHi);
+        const float4 flow = gDfldFlow.SampleLevel(gDfldSampler, float3(uv, (float)li), 0);
+        const float2 aux = gDfldAux.SampleLevel(gDfldSampler, float3(uv, (float)li), 0);
+        result.xy += flow.xy * edgeFade;
+        result.z = max(result.z, flow.z * edgeFade);
+        result.w += aux.x * edgeFade;
+    }
+    return result;
+}
+
+// 波紋チャネルの水平勾配 (dh/dx, dh/dz)。water_surface.hlsl::WaterRippleGradient と同じ式 (縁 2 マスで 0)。
+// 水面の法線へ (-grad.x, 0, -grad.y) を足す。層が無い / 波紋が無いときは 0
+float2 MyeFieldRippleGradient(float3 posW)
+{
+    float2 grad = float2(0.0f, 0.0f);
+    const uint count = min(gDfldHeader.x, (uint)MYE_DFLD_MAX_LAYERS);
+    [loop] for (uint li = 0; li < count; ++li) {
+        const DisturbanceLayer L = gDfldLayers[li];
+        if (L.extent.w < 0.5f || abs(posW.y - L.originSize.w) > L.extent.z) {
+            continue;
+        }
+        const float cellSize = L.originSize.z;
+        const float gx = posW.x / cellSize - L.originSize.x;
+        const float gz = posW.z / cellSize - L.originSize.y;
+        const float nx = L.extent.x;
+        const float nz = L.extent.y;
+        if (!(gx > 0.0f && gz > 0.0f && gx < nx && gz < nz)) {
+            continue;
+        }
+        const float edge = min(min(gx, nx - gx), min(gz, nz - gz));
+        const float edgeFade = saturate(edge / MYE_DFLD_EDGE_FADE_CELLS);
+        const float2 uvLo = float2(0.5f, 0.5f) * L.texScale.xy;
+        const float2 uvHi = float2(nx - 0.5f, nz - 0.5f) * L.texScale.xy;
+        const float2 uv = float2(gx, gz) * L.texScale.xy;
+        const float2 dx = float2(L.texScale.x, 0.0f);
+        const float2 dz = float2(0.0f, L.texScale.y);
+        const float hxp = gDfldAux.SampleLevel(gDfldSampler, float3(clamp(uv + dx, uvLo, uvHi), (float)li), 0).x;
+        const float hxm = gDfldAux.SampleLevel(gDfldSampler, float3(clamp(uv - dx, uvLo, uvHi), (float)li), 0).x;
+        const float hzp = gDfldAux.SampleLevel(gDfldSampler, float3(clamp(uv + dz, uvLo, uvHi), (float)li), 0).x;
+        const float hzm = gDfldAux.SampleLevel(gDfldSampler, float3(clamp(uv - dz, uvLo, uvHi), (float)li), 0).x;
+        grad += edgeFade * float2(hxp - hxm, hzp - hzm) / (2.0f * cellSize);
+    }
+    return grad;
+}
+
 // CSM の減衰 (1=影なし)
 float MyeSunShadow(float3 posW)
 {

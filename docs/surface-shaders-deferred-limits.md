@@ -73,3 +73,13 @@ spec §4.1 のとおり **速度は書かない** — この段は単一 RT (`vi
 裏面か表面かの判定 (`SV_IsFrontFace`) は作者へ渡さない (§4 の作者規約 `float4
 PSMain(VSOut)` を変えないため)。裏面用の見た目が要る場合は、作者が法線とカメラ方向の
 内積で判定すること (`dot(normalize(gCameraPos - posW), normalW) < 0` が裏面)。
+
+## かき乱しフィールドを読む (`MyeFieldSample`) — M96 sub-14
+
+`MyEngineSurface.hlsli` の `MyeFieldSample(posW)` は、かき乱しフィールド (2D 層) の流れと濃さを返す
+(xy = 流れ [m/s]、z = 濃さ、w = 波紋の高さ。場が無い・層の外は全 0)。`MyeFieldRippleGradient(posW)` は波紋の勾配
+(水面の法線へ `(-g.x, 0, -g.y)` を足す。`WaterGerstner.surface.hlsl` が使用)。どちらも VS / PS で使え、
+位置に効く値として使ってよい (束縛は `RenderSystem` が描画の前に 1 回張り、影・速度エントリも同じ値を見る。
+CSM より前に張るため)。束縛は PS と VS の固定スロット (b6 / t32 / t33 / s8) で、サーフェス側の宣言は不要。
+場の無いシーンでは CB が未束縛 (層 0 枚) になり全 0。お手本は `GrassField.surface.hlsl` (根元から高さに比例して倒す)。
+サーフェスシェーダはインスタンシング経路に入らず 1 アイテム 1 描画 (草束は個別描画。数百本まで)。

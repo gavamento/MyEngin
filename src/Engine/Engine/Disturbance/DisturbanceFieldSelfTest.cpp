@@ -1336,10 +1336,59 @@ bool RunDisturbanceLocalLightTests()
 
 } // namespace
 
+namespace {
+
+// 草 (M96 sub-14) が VS で読む流れの検査。濃さの無い場でも流れの配列が転送指示に載り、源が通ると流れが立ち、
+// 源が離れて時間が経つと静止状態 (風なしなら 0) へ戻る。GPU は使わない
+bool RunDisturbanceGrassTests()
+{
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) {
+        if (!cond) {
+            MYE_LOG_ERROR("  [disturbance] FAIL: %s", what);
+            ok = false;
+        }
+    };
+    auto maxFlow = [](const DisturbanceLayerUpload& l) {
+        float m = 0.0f;
+        if (l.flowX == nullptr || l.flowZ == nullptr) {
+            return -1.0f;
+        }
+        const size_t n = static_cast<size_t>(l.cellsX) * static_cast<size_t>(l.cellsZ);
+        for (size_t k = 0; k < n; ++k) {
+            m = std::max(m, std::max(std::fabs(l.flowX[k]), std::fabs(l.flowZ[k])));
+        }
+        return m;
+    };
+    auto s = std::make_unique<Sim>();
+    AddField(*s, 0.0f, 0.0f, 0.0f, 64, 64, 0, "GrassField"); // 流れだけ (チャネルなし)
+    const EntityID walker = AddSource(*s, "Walker", -2.0f, 0.0f, 0.0f);
+    s->Flush();
+    s->Step(2);
+    for (int i = 0; i < 20; ++i) {
+        TransformOf(*s, walker)->position.x = -2.0f + 0.1f * static_cast<float>(i);
+        s->Step(1);
+    }
+    DisturbanceFieldUpload up;
+    check(BuildDisturbanceFieldUpload(s->W(), &s->D(), up) == 1 && up.layers[0].hasState,
+          "grass: a flow-only field has a state (the renderer transfers it for the grass VS)");
+    check(maxFlow(up.layers[0]) > 0.5f, "grass: a moving source raises a flow the grass can lean along");
+
+    SourceOf(*s, walker)->strength = 0.0f;
+    s->Step(300);
+    BuildDisturbanceFieldUpload(s->W(), &s->D(), up);
+    const float rest = maxFlow(up.layers[0]);
+    check(rest >= 0.0f && rest < 0.01f, "grass: the flow returns to rest after the source stops (the grass stands up again)");
+    return ok;
+}
+
+} // namespace
+
 bool RunDisturbanceFieldSelfTest()
 {
     const bool localLightsOk = RunDisturbanceLocalLightTests();
-    return RunDisturbanceFieldImpl(false) && localLightsOk;
+    const bool grassOk = RunDisturbanceGrassTests();
+    return RunDisturbanceFieldImpl(false) && localLightsOk && grassOk;
 }
 
 bool RunDisturbanceFieldLongSelfTest()

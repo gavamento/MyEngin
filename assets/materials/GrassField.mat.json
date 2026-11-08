@@ -1,0 +1,20 @@
+{
+  "engine": "MyEngine",
+  "material": 1,
+  "name": "GrassField",
+  "shader": "GrassField.surface",
+  "baseColor": [1.0, 1.0, 1.0, 1.0],
+  "metallic": 0.0,
+  "roughness": 0.5,
+  "texture": "",
+  "normalMap": "",
+  "transparent": false,
+  "boundsPadding": 1.0,
+  "properties": {
+    "_BaseColor": [0.10, 0.28, 0.07, 1.0],
+    "_TipColor": [0.45, 0.70, 0.20, 1.0],
+    "_BendPerSpeed": 0.5,
+    "_MaxBend": 1.2,
+    "_Sway": 0.04
+  }
+}

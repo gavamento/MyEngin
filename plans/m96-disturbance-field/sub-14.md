@@ -1,8 +1,8 @@
 # sub-14: 草 (サーフェスシェーダの予約テクスチャ + デモの草束)
 
 - 依存: sub-03 (波 W2。spec §6)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (W2 の統合待ち)
+- 往復: 1
 
 
 ## 並列の注意 (波 W2)
@@ -55,4 +55,9 @@ spec §5 の 12, 23 (Gerstner サーフェスの分), 25, 30。
 
 ## 実装メモ (coder が追記)
 
+round 1 (coder): MyEngineSurface.hlsli に MyeFieldSample / MyeFieldRippleGradient、DisturbanceFieldPass の Bind / Unbind に VS 側の同じ番号 (b6 / t32 / t33 / s8)、GrassField.surface.hlsl + .mat.json、WaterGerstner の波紋、デモ AddFieldDemoGrass (441 本)、selftest RunDisturbanceGrassTests (未実行)。
+追加の判断: (1) UpdateDisturbanceField を CollectLights 直後 (カスケード影の前) へ移動 — 影エントリの VS も場を読むため。(2) 転送の条件を「霧の層 || 状態を持つ層」へ広げた — 濃さの無い場でも草が流れを読めるように (霧の無い層は ground_fog が skip するので絵は不変)。(3) R6: サーフェスはインスタンシング経路に入らない (Forward は DrawUnit::Kind::Surface で 1 アイテム 1 描画、Deferred は canInstance_ = 0)。草 441 本は個別描画: Release 実 GPU (--field-demo, frame 260) で drawCalls 444、frame 4.38 ms、forwardOpaque 2.87 ms、csm 1.07 ms。
+スクショ: scratchpad\m96-shots\sub14_*.png (撮影時だけカメラを草の近くへ寄せた一時ビルド。コミットのデモのカメラは元のまま)。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-09)。VS にも同じ番号で張る口 (唯一の持ち主)、MyeFieldSample / MyeFieldRippleGradient、GrassField (根元固定・長さ保存・角度上限)、Gerstner の波紋 (fxc のみ)、草 441 本を確認。転送条件を「状態を持つ層すべて」へ広げたことと、UpdateDisturbanceField を CollectLights 直後 (カスケード影の前) へ移したことは受理。Gerstner の実描画・草の GPU 時間のベースライン・倒れの係数の目視は sub-17 へ
