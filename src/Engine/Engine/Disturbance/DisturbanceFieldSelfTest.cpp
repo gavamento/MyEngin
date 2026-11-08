@@ -18,6 +18,9 @@
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Core/Jobs/JobSystem.h"
+#include "Engine/Engine/Animation/AnimatorController.h"
+#include "Engine/Engine/Loop/TickRunner.h"
+#include "nlohmann/json.hpp"
 #include "Engine/Engine/Disturbance/DisturbanceRender.h"
 #include "Engine/Engine/Disturbance/DisturbanceState.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
@@ -1739,10 +1742,138 @@ bool RunDisturbanceLocalLightTests()
 
 } // namespace
 
+namespace {
+
+// M96f: アニメイベント disturb。JSON の欄 / 不正値の破棄 / 配送の向き (コントローラのエンティティの回転)
+bool RunDisturbanceAnimEventTests()
+{
+    int failCount = 0;
+    const auto check = [&](bool cond, const char* what) {
+        if (cond) {
+            MYE_LOG_INFO("  PASS: %s", what);
+        } else {
+            MYE_LOG_ERROR("  FAIL: %s", what);
+            ++failCount;
+        }
+    };
+    using json = nlohmann::json;
+
+    // (a) 全欄が読まれる (配列形と {"fps","events"} 形の両方)。保存して読み直しても同じ
+    const char* kEventA = R"({"tick":3,"kind":"disturb","radius":1.5,"speed":4.0,"shape":"cone","dir":[1,0,0],
+        "coneDeg":30,"density":-0.5,"trail":0.25,"ripple":0.125,"joint":"Blade"})";
+    const auto fieldsOk = [](const ControllerClipEvent& e) {
+        return e.kind == ClipEventKind::Disturb && e.tick == 3 && e.disturbRadius == 1.5f && e.disturbSpeed == 4.0f
+               && e.disturbShape == 2 && e.disturbDir[0] == 1.0f && e.disturbDir[1] == 0.0f && e.disturbDir[2] == 0.0f
+               && e.disturbConeDeg == 30.0f && e.disturbDensity == -0.5f && e.disturbTrail == 0.25f
+               && e.disturbRipple == 0.125f && e.joint == "Blade";
+    };
+    {
+        const std::string text = std::string(R"({"states":[{"name":"Idle","skel":{"clip":"Idle"}}],"clipEvents":{"Idle":[)")
+                                 + kEventA + "]}}";
+        ControllerAsset a;
+        const bool ok = ControllerLibrary::FromJson(json::parse(text), a) && a.clipEvents.size() == 1
+                        && a.clipEvents[0].events.size() == 1;
+        check(ok && fieldsOk(a.clipEvents[0].events[0]), "M96f: a disturb event loads every field");
+        ControllerAsset back;
+        check(ok && ControllerLibrary::FromJson(ControllerLibrary::ToJson(a), back) && back.clipEvents.size() == 1
+                  && back.clipEvents[0].events.size() == 1 && fieldsOk(back.clipEvents[0].events[0]),
+              "M96f: a disturb event round-trips through ToJson");
+        const std::string fpsText =
+            std::string(R"({"states":[{"name":"Idle","skel":{"clip":"Idle"}}],"clipEvents":{"Idle":{"fps":30,"events":[)")
+            + kEventA + "]}}}";
+        ControllerAsset b;
+        check(ControllerLibrary::FromJson(json::parse(fpsText), b) && b.clipEvents.size() == 1
+                  && b.clipEvents[0].events.size() == 1 && b.clipEvents[0].events[0].kind == ClipEventKind::Disturb
+                  && b.clipEvents[0].events[0].disturbShape == 2,
+              "M96f: the {fps, events} form also loads disturb events");
+        // 欄を省いたときの既定: point / dir (0,0,1) / 半径 1
+        ControllerAsset d;
+        const bool dOk = ControllerLibrary::FromJson(
+            json::parse(R"({"states":[{"name":"Idle","skel":{"clip":"Idle"}}],"clipEvents":{"Idle":[{"tick":0,"kind":"disturb"}]}})"),
+            d);
+        const ControllerClipEvent* de = (dOk && d.clipEvents.size() == 1 && d.clipEvents[0].events.size() == 1)
+                                            ? &d.clipEvents[0].events[0]
+                                            : nullptr;
+        check(de != nullptr && de->disturbShape == 0 && de->disturbDir[2] == 1.0f && de->disturbRadius == 1.0f,
+              "M96f: omitted disturb fields take the defaults (point, +Z, radius 1)");
+    }
+
+    // (b) 不正な shape / 半径 0 以下のイベントだけが捨てられ、並びの他のイベントは残る
+    {
+        ControllerAsset a;
+        const bool ok = ControllerLibrary::FromJson(
+            json::parse(R"({"states":[{"name":"Idle","skel":{"clip":"Idle"}}],"clipEvents":{"Idle":[
+                {"tick":1,"kind":"disturb","shape":"sphere"},
+                {"tick":2,"kind":"disturb","radius":0},
+                {"tick":3,"kind":"disturb","shape":"radial"}]}})"),
+            a);
+        check(ok && a.clipEvents.size() == 1 && a.clipEvents[0].events.size() == 1 && a.clipEvents[0].events[0].tick == 3
+                  && a.clipEvents[0].events[0].disturbShape == 1,
+              "M96f: an unknown shape or a non-positive radius drops only that event");
+    }
+
+    // (c)(d) 配送: コントローラのエンティティを y 軸まわりに 0 / 90 度回すと、場に注入される流れの向きも 0 / 90 度回る
+    const auto flowAfterFire = [&](float yawDeg, float (&outFlow)[3], uint32_t& outShape, float (&outDir)[3]) {
+        auto sim = std::make_unique<Sim>();
+        const EntityID field = AddField(*sim, 0.0f, 0.0f, 0.0f, 32, 32, 7);
+        GameObject actor = sim->scene.CreateGameObjectTracked("Actor");
+        actor.SetLocalRotationEuler(0.0f, yawDeg, 0.0f);
+        sim->Flush(); // WorldMatrix を確定させる (= 前 tick の確定値)
+        ControllerClipEvent def;
+        def.kind = ClipEventKind::Disturb;
+        def.disturbRadius = 1.5f;
+        def.disturbSpeed = 4.0f;
+        def.disturbDir[0] = 0.0f;
+        def.disturbDir[1] = 0.0f;
+        def.disturbDir[2] = 2.0f; // 正規化されること
+        AnimEventFired ev;
+        ev.entity = actor.Id();
+        ev.kind = ClipEventKind::Disturb;
+        ev.pos[0] = 0.0f;
+        ev.pos[1] = 0.2f;
+        ev.pos[2] = 0.0f;
+        ev.def = &def;
+        FieldImpulse f;
+        BuildClipEventImpulse(sim->W(), ev, f);
+        outShape = f.shape;
+        outDir[0] = f.dir[0];
+        outDir[1] = f.dir[1];
+        outDir[2] = f.dir[2];
+        const bool queued = DisturbanceQueueImpulse(sim->scene, f);
+        sim->Step(); // 発火した tick の step で消費される
+        FieldSampleOut r;
+        const bool sampled = DisturbanceSampleAt(sim->D(), sim->W(), field, { 0.0f, 0.2f, 0.0f }, r);
+        outFlow[0] = r.flow[0];
+        outFlow[1] = r.flow[1];
+        outFlow[2] = r.flow[2];
+        return queued && sampled;
+    };
+    {
+        float flow0[3] = {}, flow90[3] = {}, dir0[3] = {}, dir90[3] = {};
+        uint32_t shape0 = 99, shape90 = 99;
+        const bool ok0 = flowAfterFire(0.0f, flow0, shape0, dir0);
+        const bool ok90 = flowAfterFire(90.0f, flow90, shape90, dir90);
+        check(ok0 && ok90 && shape0 == kFieldImpulsePoint && shape90 == kFieldImpulsePoint,
+              "M96f: a fired disturb event is queued and sampled after the same tick's step");
+        check(std::fabs(dir0[0]) < 1e-5f && std::fabs(dir0[2] - 1.0f) < 1e-5f,
+              "M96f: the impulse dir is normalized (unrotated entity: +Z)");
+        check(std::fabs(dir90[0] - 1.0f) < 1e-4f && std::fabs(dir90[2]) < 1e-4f,
+              "M96f: a 90 degree yaw of the controller entity turns the impulse dir from +Z to +X");
+        check(flow0[2] > 0.1f && std::fabs(flow0[0]) < 0.25f * flow0[2], "M96f: unrotated entity injects the flow along +Z");
+        check(flow90[0] > 0.1f && std::fabs(flow90[2]) < 0.25f * flow90[0], "M96f: yaw 90 injects the flow along +X");
+    }
+
+    MYE_LOG_INFO("  M96f anim event: %s", failCount == 0 ? "all passed" : "FAILED");
+    return failCount == 0;
+}
+
+} // namespace
+
 bool RunDisturbanceFieldSelfTest()
 {
     const bool localLightsOk = RunDisturbanceLocalLightTests();
-    return RunDisturbanceFieldImpl(false) && localLightsOk;
+    const bool animEventOk = RunDisturbanceAnimEventTests();
+    return RunDisturbanceFieldImpl(false) && localLightsOk && animEventOk;
 }
 
 bool RunDisturbanceFieldLongSelfTest()

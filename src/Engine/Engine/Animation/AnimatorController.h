@@ -110,6 +110,7 @@ enum class ClipEventKind : int32_t {
     Sound,      // "sound": asset の音を位置で鳴らす (PlaySoundAt と同じ出力レーン)
     Effect,     // "effect": asset のプレハブを位置に生成する (PlayEffect と同じ tick 末の生成 = sim 状態)
     Noise,      // "noise": 位置で知覚の音を出す (PerceptionReportNoise。出した者はコントローラのエンティティ)
+    Disturb,    // "disturb": 位置でかき乱しフィールドへインパルスを積む (M96f。同じ tick の場の step が消費する)
 };
 
 // アニメイベント 1 件 (M89h、.controller.json の "clipEvents":{"Walk":[{"tick":12,"name":"FootL",...}]})。
@@ -131,6 +132,15 @@ struct ControllerClipEvent {
     float pitch = 1.0f;     // Sound: ピッチ (同上)
     float loudness = 1.0f;  // Noise: 音の大きさ
     float range = 10.0f;    // Noise: 届く距離 (m)
+    // ---- M96f: Disturb (FieldImpulse と同じ意味。shape は 0=point / 1=radial / 2=cone) ----
+    float disturbRadius = 1.0f;   // 半径 (m)
+    float disturbSpeed = 0.0f;    // 速さ (m/s)
+    int32_t disturbShape = 0;
+    float disturbDir[3] = { 0.0f, 0.0f, 1.0f }; // コントローラのエンティティの空間。配送時に WorldMatrix の回転で回して正規化する
+    float disturbConeDeg = 45.0f; // Cone の半角 (度)
+    float disturbDensity = 0.0f;  // 密度の増減 (負 = 晴らす)
+    float disturbTrail = 0.0f;    // 跡の深さ
+    float disturbRipple = 0.0f;   // 波紋の高さ (m)
 };
 
 // 骨クリップ 1 本ぶんのイベント。クリップは名前で持つ (モデルごとに index が違ってよい。skelClip と同じ)

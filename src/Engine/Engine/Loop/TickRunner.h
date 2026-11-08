@@ -9,6 +9,9 @@
 namespace mye {
 
 class Scene;
+class World;
+struct AnimEventFired;
+struct FieldImpulse;
 class InputActions;
 class ScriptHost;
 class ManagedHost;
@@ -235,6 +238,10 @@ inline bool IsNetSessionGates(const TickGates& g)
 //   合成入力 / .rep の記録入力 / タイムトラベルのリング入力を RunOneTick 側で
 //   区別しないための取り決め (決定台帳 5)。
 void RunOneTick(TickServices& ts);
+
+// kind が Disturb のアニメイベントをかき乱しフィールドのインパルスに直す (M96f)。位置は ev.pos、向きは
+// コントローラのエンティティの WorldMatrix (前 tick の確定値) の回転で回して正規化する。ev.def が必要
+void BuildClipEventImpulse(World& world, const AnimEventFired& ev, FieldImpulse& out);
 
 // effectQueue の 1 件 (PlayEffect / Instantiate / アニメイベント / タイルの破壊エフェクト) をプレハブとして生成する。
 // tick 末の drain が 1 件ずつ呼ぶ。成功でルートの fileId、見つからなければ警告して 0

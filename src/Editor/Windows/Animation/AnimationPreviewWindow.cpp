@@ -53,7 +53,8 @@ constexpr ImU32 kTrailColor = IM_COL32(120, 255, 140, 255);
 constexpr float kEventLaneHeight = 14.0f;
 constexpr float kEventPickRadius = 6.0f;
 // イベントの種類 (.controller.json の "kind" と同じ綴り。ClipEventKind の並び)
-const char* kEventKinds[] = { "script", "sound", "effect", "noise" };
+const char* kDisturbShapes[] = { "point", "radial", "cone" };
+const char* kEventKinds[] = { "script", "sound", "effect", "noise", "disturb" };
 
 XMMATRIX WorldOf(World& world, EntityID e)
 {
@@ -795,6 +796,19 @@ bool AnimationPreviewWindow::DrawEventFields(ControllerClipEvent& ev, int32_t cl
     case ClipEventKind::Noise:
         changed |= ImGui::DragFloat(Tr(StrId::AnimPrev_EvLoudness), &ev.loudness, 0.01f, 0.0f, 10.0f);
         changed |= ImGui::DragFloat(Tr(StrId::AnimPrev_EvRange), &ev.range, 0.1f, 0.0f, 1000.0f);
+        break;
+    case ClipEventKind::Disturb:
+        changed |= ImGui::DragFloat(Tr(StrId::AnimPrev_EvDisturbRadius), &ev.disturbRadius, 0.05f, 0.01f, 100.0f);
+        changed |= ImGui::DragFloat(Tr(StrId::AnimPrev_EvDisturbSpeed), &ev.disturbSpeed, 0.05f, -100.0f, 100.0f);
+        changed |= ImGui::Combo(Tr(StrId::AnimPrev_EvDisturbShape), &ev.disturbShape, kDisturbShapes,
+                                IM_ARRAYSIZE(kDisturbShapes));
+        changed |= ImGui::DragFloat3(Tr(StrId::AnimPrev_EvDisturbDir), ev.disturbDir, 0.01f);
+        if (ev.disturbShape == 2) {
+            changed |= ImGui::DragFloat(Tr(StrId::AnimPrev_EvDisturbCone), &ev.disturbConeDeg, 0.5f, 0.0f, 180.0f);
+        }
+        changed |= ImGui::DragFloat(Tr(StrId::AnimPrev_EvDisturbDensity), &ev.disturbDensity, 0.01f, -1.0f, 1.0f);
+        changed |= ImGui::DragFloat(Tr(StrId::AnimPrev_EvDisturbTrail), &ev.disturbTrail, 0.01f, 0.0f, 1.0f);
+        changed |= ImGui::DragFloat(Tr(StrId::AnimPrev_EvDisturbRipple), &ev.disturbRipple, 0.01f, -10.0f, 10.0f);
         break;
     }
     ImGui::PopID();
