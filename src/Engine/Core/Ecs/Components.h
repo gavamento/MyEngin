@@ -2661,6 +2661,9 @@ struct DisturbanceFieldComponent {
     int32_t pressureIterations = 20; // 圧力投影の Jacobi 反復回数 [0,64] (0 = 投影しない)
     float windScale = 1.0f;          // PhysicsEnvironment の風 (xz) に掛ける倍率。0 = 風の影響なし
     float buoyancy = 0.0f;           // Volume のみ: 静止濃度より濃いぶんだけ上へ加速する [m/s^2 / 濃さ]。0 = 浮力なし
+    // ---- 追従 (sim が読む) ----
+    EntityID followTarget = kNullEntity;   // 生きていれば、その位置を中心に格子を整数セル単位でずらす。null = 固定
+    int32_t followMargin = 4;             // 中心とのずれがこのセル数以上になった step でずらす [1, 格子の半分]
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

@@ -181,7 +181,8 @@ struct SimRefs {
 //            DisturbanceFieldComponent / DisturbanceSourceComponent (TypeId 96 / 97、hash 対象)。World 節のカラム生バイト
 // v71 (M96d): DisturbanceFieldComponent の末尾に pressureIterations / windScale。World 節のカラム生バイト
 // v72 (M96g): DFLD 節のスロットに流れ Y (Volume のみ) を追加、DisturbanceFieldComponent の末尾に buoyancy。World 節のカラム生バイト
-inline constexpr uint32_t kSimSnapshotVersion = 72;
+// v73 (M96i): DisturbanceFieldComponent の末尾に followTarget / followMargin (追従)。World 節のカラム生バイト。DFLD 節は不変
+inline constexpr uint32_t kSimSnapshotVersion = 73;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

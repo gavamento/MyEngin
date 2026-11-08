@@ -43,6 +43,10 @@ FieldParams SanitizeField(EntityID e, const DisturbanceFieldComponent& c, const 
     p.pressureIterations = std::clamp(c.pressureIterations, 0, kMaxPressureIterations);
     p.windScale = ClampOr(c.windScale, 0.0f, kMaxWindScale, 1.0f);
     p.buoyancy = ClampOr(c.buoyancy, 0.0f, kMaxBuoyancy, 0.0f);
+    p.followTarget = c.followTarget;
+    // ずらしは軸のどれかがこの値以上ずれた step で起きる。格子の半分を超えると中心に戻せないので半分で切る
+    const int32_t smallestSide = p.shape == kDisturbanceVolume ? std::min({ p.cellsX, p.cellsY, p.cellsZ }) : std::min(p.cellsX, p.cellsZ);
+    p.followMargin = std::clamp(c.followMargin, 1, std::max(1, smallestSide / 2));
     for (int i = 0; i < 3; ++i) {
         p.pos[i] = FiniteOr(pos[i], 0.0f);
     }

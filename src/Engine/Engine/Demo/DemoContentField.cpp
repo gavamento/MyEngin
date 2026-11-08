@@ -301,6 +301,46 @@ void AddFieldDemoGrass(EngineContext& ctx, Scene& s, const AssetID cube)
     }
 }
 
+// 追従する層 (M96i): 固定の霧 (z -8〜24) の奥 (z 24〜) へ転がる球に、小さな 2D 層 (12 m 四方) が付いて動く。
+// 固定の霧の外でも球の周りだけは霧と足跡が出る。球は物理の初速だけで動く (決定的)。場は最後に作る (4 個目 = 上限ちょうど)
+void AddFieldDemoFollow(Scene& s, const AssetID sphere)
+{
+    constexpr float kStartZ = 18.0f;
+
+    GameObject ball = s.CreateGameObject("FollowBall");
+    ball.SetLocalPosition(0.0f, 0.45f, kStartZ);
+    ball.SetLocalScale(0.8f, 0.8f, 0.8f);
+    auto* mr = ball.AddComponent<MeshRendererComponent>();
+    mr->mesh = sphere;
+    mr->material = AssetID{ HashStr("pdemo_ball") };
+    auto* col = ball.AddComponent<ColliderComponent>();
+    col->shape = collidershape::kSphere;
+    col->radius = 0.5f;
+    col->friction = 0.0f;
+    auto* rb = ball.AddComponent<RigidbodyComponent>();
+    rb->useDensity = true;
+    rb->velocity = { 0.0f, 0.0f, 2.5f };
+    auto* src = ball.AddComponent<DisturbanceSourceComponent>();
+    src->mode = 0;
+    src->radius = 1.2f;
+    src->strength = 0.5f;
+    src->fullSpeed = 3.0f;
+    src->densityDelta = -0.4f;
+    src->trailDepth = 0.6f;
+
+    GameObject field = s.CreateGameObject("FollowField");
+    field.SetLocalPosition(0.0f, 0.0f, kStartZ);
+    auto* f = field.AddComponent<DisturbanceFieldComponent>();
+    f->shape = 0;
+    f->cellsX = 48;
+    f->cellsZ = 48;
+    f->channels = kDisturbanceChannelDensity | kDisturbanceChannelTrail;
+    f->densityKeep = 0.995f;
+    f->fogDensity = 1.6f;
+    f->followTarget = ball.Id();
+    f->followMargin = 4;
+}
+
 } // namespace
 
 // M96b: --field-demo。霧の広場: 平らな地面に 2D 層の場を 1 個置き、DisturbanceSource 付きの球 3 個を霧の中へ転がす。
@@ -327,6 +367,7 @@ void BuildFieldShowcaseScene(EngineContext& ctx)
     AddFieldDemoSmoke(s);
     AddFieldDemoSwing(ctx);
     AddFieldDemoGrass(ctx, s, cube);
+    AddFieldDemoFollow(s, sphere);
     s.GetWorld().ApplyStructuralChanges();
 }
 
