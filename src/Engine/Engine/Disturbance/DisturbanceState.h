@@ -158,6 +158,7 @@ private:
     bool queueFullWarned_ = false;           // step ごとに戻す
     std::vector<EntityID> warnedFields_;     // 警告済みの場 (5 個目以降)
     std::vector<float> rippleScratch_;       // 波紋の次の h の作業領域
+    std::vector<float> shiftScratch_;        // 追従のずらしの書き込み先 (配列 1 本ぶん)
     SolverScratch solver_; // 流れのソルバの作業領域
 };
 

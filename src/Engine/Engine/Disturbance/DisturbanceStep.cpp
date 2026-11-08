@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdlib>
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
@@ -1096,6 +1097,73 @@ void AdvectDensity3D(DisturbanceSlot& s, const FieldParams& p, DisturbanceState:
     s.density.swap(sc.density);
 }
 
+// 配列 1 本を (dx, dy, dz) マスずらす (追従)。新しい (x, y, z) は古い (x + dx, y + dy, z + dz) の値で、
+// 古い配列の外から入ってくるマスは rest。前の配列を読んで別の配列へ書くので走査順に依らない
+void ShiftArray(std::vector<float>& a, std::vector<float>& out, int32_t nx, int32_t ny, int32_t nz, int32_t dx, int32_t dy,
+                int32_t dz, float rest)
+{
+    if (a.empty()) {
+        return;
+    }
+    out.assign(a.size(), rest);
+    // 新しい座標のうち、古い配列に収まる範囲 (空なら何も写さない)
+    const int32_t x0 = std::max(0, -dx);
+    const int32_t x1 = std::min(nx, nx - dx);
+    const int32_t y0 = std::max(0, -dy);
+    const int32_t y1 = std::min(ny, ny - dy);
+    const int32_t z0 = std::max(0, -dz);
+    const int32_t z1 = std::min(nz, nz - dz);
+    for (int32_t y = y0; y < y1; ++y) {
+        for (int32_t z = z0; z < z1; ++z) {
+            for (int32_t x = x0; x < x1; ++x) {
+                const size_t dst = static_cast<size_t>(x) + static_cast<size_t>(nx) * (static_cast<size_t>(z) + static_cast<size_t>(nz) * static_cast<size_t>(y));
+                const size_t src = static_cast<size_t>(x + dx) + static_cast<size_t>(nx) * (static_cast<size_t>(z + dz) + static_cast<size_t>(nz) * static_cast<size_t>(y + dy));
+                out[dst] = a[src];
+            }
+        }
+    }
+    a.swap(out);
+}
+
+// 追従のずらし (spec §4.1 B の 2 / F)。相手の位置をセルに丸めた中心と今の中心の差のどれかの軸が followMargin 以上なら、
+// 原点をその差だけずらして全チャネルを写す。入ってきたマスは静止状態、出たマスは捨てる。GroundLayer は xz だけ
+void FollowShift(World& world, const FieldParams& p, DisturbanceSlot& s, std::vector<float>& scratch)
+{
+    if (p.followTarget.IsNull() || !world.IsAlive(p.followTarget)) {
+        return;
+    }
+    const auto* wm = world.GetComponent<WorldMatrixComponent>(p.followTarget);
+    if (wm == nullptr) {
+        return;
+    }
+    const bool volume = s.shape == kDisturbanceVolume;
+    const int32_t want[3] = {
+        OriginCellOf(FiniteOr(wm->value._41, 0.0f), s.cellSize, s.cellsX),
+        volume ? OriginCellOf(FiniteOr(wm->value._42, 0.0f), s.cellSize, s.cellsY) : 0,
+        OriginCellOf(FiniteOr(wm->value._43, 0.0f), s.cellSize, s.cellsZ),
+    };
+    const int32_t d[3] = { want[0] - s.originCell[0], want[1] - s.originCell[1], want[2] - s.originCell[2] };
+    // GroundLayer は x と z だけ (y の差は常に 0 だが、軸の添字を取り違えないよう明示する)
+    const bool far = std::abs(d[0]) >= p.followMargin || std::abs(d[2]) >= p.followMargin
+                     || (volume && std::abs(d[1]) >= p.followMargin);
+    if (!far) {
+        return;
+    }
+    const int32_t nx = s.cellsX;
+    const int32_t ny = s.cellsY;
+    const int32_t nz = s.cellsZ;
+    ShiftArray(s.flowX, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
+    ShiftArray(s.flowZ, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
+    ShiftArray(s.flowY, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
+    ShiftArray(s.density, scratch, nx, ny, nz, d[0], d[1], d[2], p.restDensity);
+    ShiftArray(s.trail, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
+    ShiftArray(s.ripple, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
+    ShiftArray(s.ripplePrev, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
+    for (int i = 0; i < 3; ++i) {
+        s.originCell[i] += d[i];
+    }
+}
+
 void WarnOnce(std::vector<EntityID>& warned, uint32_t& counter, EntityID e, const char* why)
 {
     if (std::find(warned.begin(), warned.end(), e) != warned.end()) {
@@ -1153,6 +1221,11 @@ void DisturbanceStep(World& world, DisturbanceState& state)
         }
     } else {
         state.slots_ = std::move(slots);
+    }
+
+    // 2. 追従のずらし (源・インパルスの注入より前)
+    for (size_t f = 0; f < state.slots_.size(); ++f) {
+        FollowShift(world, active[f], state.slots_[f], state.shiftScratch_);
     }
 
     // 3. 源の注入 / 4. 配送待ちの注入 (全て直列。順序が結果に効く)

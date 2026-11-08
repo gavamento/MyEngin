@@ -46,6 +46,8 @@ struct FieldParams {
     int32_t pressureIterations = 0; // [0, kMaxPressureIterations]
     float windScale = 0.0f;         // [0, kMaxWindScale]
     float buoyancy = 0.0f;          // Volume だけ。[0, kMaxBuoyancy] [m/s^2 / 濃さ]
+    EntityID followTarget = kNullEntity; // null なら固定
+    int32_t followMargin = 4;            // [1, 格子の最小の辺の半分]
     float pos[3] = { 0.0f, 0.0f, 0.0f }; // 場のエンティティのワールド位置
 };
 

@@ -1,8 +1,8 @@
 # sub-09: 追従モード (整数セルずらし)
 
 - 依存: sub-07 (波 W3。spec §6)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (W3 の統合の先頭。順 09 → 11 → 08)
+- 往復: 2
 
 
 ## 並列の注意 (波 W3)
@@ -52,4 +52,15 @@ spec §5 の 12, 21, 30。
 
 ## 実装メモ (coder が追記)
 
+round 1 (coder): 追従のずらしを実装、Debug / Release ビルドと check_rules 0 error。selftest / replay_verify は運用により未実行。
+
+- `DisturbanceFieldComponent` の末尾に `followTarget` (EntityID) / `followMargin` (既定 4)、sizeof 88 → 100。snapshot v73
+- `DisturbanceStep.cpp` の `FollowShift` (step の 2 番目)。GroundLayer は x / z、Volume は 3 軸。`ShiftArray` は前の配列を読んで別の配列へ書く
+- `DisturbanceParams` で `followMargin` を [1, 最小の辺 / 2] に切る
+- デモ: `AddFieldDemoFollow` (固定の霧の奥 z 24〜へ転がる球に 12 m 四方の層が付く)
+- selftest: `RunDisturbanceFollowTests` (2D / 3D のビット一致のずらし・斜め・格子より遠い跳び・相手の消滅・余白の上限・600 tick 2 ワールド jobs あり / なし・snapshot 往復) を未実行で追加
+- 焼き込み値 `kBakedFinalHash` は変えていない。コンポーネントが 12 バイト伸びたので World のカラム生バイトが変わり、まとめ実行で落ちる見込み (原因 = sub-09 の欄追加。M96g の buoyancy と同じ型)。再採取は統合後の 1 本の修正コミット
+
 ## フィードバック履歴
+- round 1: VERDICT REWORK (planner、2026-11-09)。追従のずらし (重なりの写し・入るマスは静止・出るマスは捨てる・前の配列から scratch へ)、余白の切り方、デモ、v73 を確認し、仕様との差分を受理。must 1 件: kBakedFinalHash を `--field-bench` で採り直して、このサブで差し替える (sub-07 の前例。統合後の修正コミットにしない = 付録 A.2 の例外を広げる)
+- round 2: VERDICT OK (planner、2026-11-09)。kBakedFinalHash 0x851C4663912825C1 → 0x90646BB353FD22D5 (欄の追加 88 → 100 B)。司会の `--field-bench` で Debug == Release、Volume の 2 ワールド・jobs あり / なし一致、all checks passed を確認 (coder の報告は受け渡しのループで届かず、司会の検証で判定)

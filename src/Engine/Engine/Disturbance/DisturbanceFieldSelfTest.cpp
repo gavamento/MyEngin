@@ -825,7 +825,7 @@ bool RunDisturbanceVolumeTests(bool heavy)
     RegisterBuiltinComponents();
 
     // ---- 既定値と状態の形 ----
-    check(DisturbanceFieldComponent{}.buoyancy == 0.0f && sizeof(DisturbanceFieldComponent) == 88,
+    check(DisturbanceFieldComponent{}.buoyancy == 0.0f && sizeof(DisturbanceFieldComponent) == 100,
           "volume: buoyancy defaults to 0 and is the last field");
     {
         auto s = std::make_unique<Sim>();
@@ -1628,7 +1628,9 @@ bool RunDisturbanceFieldImpl(bool heavy)
             // M96g: DisturbanceFieldComponent の末尾に buoyancy (4 バイト) を足したので、World のカラムの生バイトが伸びて変わった
             // (0x674FE5CFD80F29A9 → 下の値。2D の sim は 1 ビットも変えていない)。--field-bench が同じ値を出す)
             // M96g round 3: 波紋の注入を「h と hPrev を目標の高さ ripple へ寄せる」式に変えた (spec §4.1 C)。0x2D2D2A180F889F62 → 下の値
-            constexpr uint64_t kBakedFinalHash = 0x851C4663912825C1ull;
+            // M96i: DisturbanceFieldComponent が followTarget / followMargin で 88 → 100 B に伸び、World のカラムの生バイトが変わった
+            // (0x851C4663912825C1 → 下の値。2D の sim の式は変えていない)。--field-bench の Debug / Release が同じ値を出す
+            constexpr uint64_t kBakedFinalHash = 0x90646BB353FD22D5ull;
             check(finalHash == kBakedFinalHash, "determinism: the final hash at tick 600 equals the baked value (Debug == Release)");
         }
     }
@@ -1702,7 +1704,7 @@ bool RunDisturbanceLocalLightTests()
         }
     };
     check(!DisturbanceFieldComponent{}.fogLocalLights, "local lights: fogLocalLights is off by default");
-    check(sizeof(DisturbanceFieldComponent) == 88, "local lights: the component size is only the 4 bytes of buoyancy more (M96g)");
+    check(sizeof(DisturbanceFieldComponent) == 100, "local lights: the component size is only the 12 bytes of followTarget / followMargin more (M96i)");
 
     // 原点 (0,0,0) から 8x8 マス (cellSize 1)、y は 0〜1 m の 1 枚の層
     DisturbanceFieldCB layers;
@@ -1973,6 +1975,299 @@ bool RunDisturbanceGrassTests()
     return ok;
 }
 
+// M96i: 追従 (整数セルずらし)。ずらしだけを取り出して見るため、流れ・減衰・波紋の伝播を止めた場で配列の値をビットで比べる
+bool RunDisturbanceFollowTests()
+{
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) {
+        if (!cond) {
+            MYE_LOG_ERROR("  [disturbance] FAIL: %s", what);
+            ok = false;
+        }
+    };
+    // 2 の冪の分数だけを入れる (復元の式 rest + (v - rest) * 1 が丸め誤差を出さない値)
+    const auto pattern = [](size_t i) { return static_cast<float>(i % 61 + 1) / 64.0f; };
+    // 値が変わらない設定 (残し率 1、風・投影・波紋の伝播なし)
+    const auto freeze = [](DisturbanceFieldComponent* f) {
+        f->densityKeep = 1.0f;
+        f->trailKeep = 1.0f;
+        f->rippleKeep = 1.0f;
+        f->rippleSpeed = 0.0f;
+        f->velocityKeep = 1.0f;
+        f->windScale = 0.0f;
+        f->pressureIterations = 0;
+        f->restDensity = 0.5f;
+    };
+
+    check(DisturbanceFieldComponent{}.followTarget.IsNull() && DisturbanceFieldComponent{}.followMargin == 4,
+          "follow: the target is empty and the margin is 4 by default");
+
+    // ---- 2D: 余白の手前では動かず、余白ちょうどで整数セルずれる ----
+    {
+        constexpr int kN = 16;
+        auto sim = std::make_unique<Sim>();
+        GameObject target = sim->scene.CreateGameObjectTracked("Target");
+        const EntityID field = AddField(*sim, 0.0f, 0.0f, 0.0f, kN, kN, kDisturbanceChannelMask, "Field");
+        freeze(FieldOf(*sim, field));
+        FieldOf(*sim, field)->cellSize = 1.0f;
+        FieldOf(*sim, field)->followTarget = target.Id();
+        FieldOf(*sim, field)->followMargin = 4;
+        sim->Flush();
+        sim->Step();
+        DisturbanceSlot& slot = sim->D().Slots()[0];
+        check(slot.originCell[0] == -kN / 2 && slot.originCell[2] == -kN / 2, "follow: the first step centers the grid on the target");
+        for (size_t i = 0; i < slot.CellCount(); ++i) {
+            slot.density[i] = pattern(i);
+            slot.trail[i] = pattern(i + 7);
+            slot.ripple[i] = pattern(i + 13);
+            slot.ripplePrev[i] = pattern(i + 13);
+        }
+        const DisturbanceSlot before = slot;
+
+        TransformOf(*sim, target.Id())->position.x = 3.0f; // 余白 - 1
+        sim->Step();
+        check(SameSlot(sim->D().Slots()[0], before), "follow: one cell short of the margin does not move the grid");
+
+        TransformOf(*sim, target.Id())->position.x = 4.0f; // 余白ちょうど
+        sim->Step();
+        const DisturbanceSlot after = sim->D().Slots()[0];
+        check(after.originCell[0] == before.originCell[0] + 4 && after.originCell[2] == before.originCell[2],
+              "follow: reaching the margin shifts the origin by exactly the difference (x only)");
+        const auto idx = [&](int x, int z) { return static_cast<size_t>(x + kN * z); };
+        bool moved = true;
+        bool incoming = true;
+        for (int z = 0; z < kN; ++z) {
+            for (int x = 0; x < kN; ++x) {
+                const size_t n = idx(x, z);
+                if (x + 4 < kN) {
+                    const size_t o = idx(x + 4, z);
+                    moved = moved && std::memcmp(&after.density[n], &before.density[o], 4) == 0
+                            && std::memcmp(&after.trail[n], &before.trail[o], 4) == 0
+                            && std::memcmp(&after.ripple[n], &before.ripple[o], 4) == 0
+                            && std::memcmp(&after.ripplePrev[n], &before.ripplePrev[o], 4) == 0;
+                } else {
+                    incoming = incoming && after.density[n] == 0.5f && after.trail[n] == 0.0f && after.ripple[n] == 0.0f
+                               && after.ripplePrev[n] == 0.0f && after.flowX[n] == 0.0f && after.flowZ[n] == 0.0f;
+                }
+            }
+        }
+        check(moved, "follow: the value at (x, z) moves to (x - 4, z) bit for bit in density / trail / ripple / ripplePrev");
+        check(incoming, "follow: the 4 columns at the +x edge come in at rest (density = rest, others 0)");
+
+        // 斜め (x と z が同時、負の向きも): x を -5、z を +4 ずらす
+        const DisturbanceSlot mid = after;
+        TransformOf(*sim, target.Id())->position.x = 4.0f - 5.0f;
+        TransformOf(*sim, target.Id())->position.z = 4.0f;
+        sim->Step();
+        const DisturbanceSlot& diag = sim->D().Slots()[0];
+        bool diagMoved = diag.originCell[0] == mid.originCell[0] - 5 && diag.originCell[2] == mid.originCell[2] + 4;
+        for (int z = 0; z < kN; ++z) {
+            for (int x = 0; x < kN; ++x) {
+                const int ox = x - 5;
+                const int oz = z + 4;
+                const size_t n = idx(x, z);
+                if (ox >= 0 && ox < kN && oz >= 0 && oz < kN) {
+                    diagMoved = diagMoved && std::memcmp(&diag.density[n], &mid.density[idx(ox, oz)], 4) == 0;
+                } else {
+                    diagMoved = diagMoved && diag.density[n] == 0.5f;
+                }
+            }
+        }
+        check(diagMoved, "follow: a diagonal shift (-5, +4) in one step moves the overlap and rests the rest");
+
+        // 格子より遠くへ跳ぶと全部静止状態
+        TransformOf(*sim, target.Id())->position.x = 500.0f;
+        sim->Step();
+        check(IsRestSlot(sim->D().Slots()[0], 0.5f), "follow: a jump farther than the grid leaves a grid at rest");
+
+        // 相手が消えたら止まる
+        const int32_t stopX = sim->D().Slots()[0].originCell[0];
+        target.Destroy();
+        sim->W().ApplyStructuralChanges();
+        sim->Step(3);
+        check(sim->D().Slots()[0].originCell[0] == stopX, "follow: a destroyed target leaves the grid where it is");
+    }
+
+    // ---- 余白は格子の半分で切る ----
+    {
+        auto sim = std::make_unique<Sim>();
+        GameObject target = sim->scene.CreateGameObjectTracked("Target");
+        const EntityID field = AddField(*sim, 0.0f, 0.0f, 0.0f, 16, 16, kDisturbanceChannelDensity, "Field");
+        freeze(FieldOf(*sim, field));
+        FieldOf(*sim, field)->cellSize = 1.0f;
+        FieldOf(*sim, field)->followTarget = target.Id();
+        FieldOf(*sim, field)->followMargin = 1000;
+        sim->Flush();
+        sim->Step();
+        TransformOf(*sim, target.Id())->position.x = 7.0f;
+        sim->Step();
+        const int32_t origin0 = sim->D().Slots()[0].originCell[0];
+        TransformOf(*sim, target.Id())->position.x = 8.0f;
+        sim->Step();
+        check(origin0 == -8 && sim->D().Slots()[0].originCell[0] == 0, "follow: a margin larger than half the grid is clamped to half (8 of 16)");
+    }
+
+    // ---- 3D: y も含めてずれる ----
+    {
+        constexpr int kN = 8;
+        auto sim = std::make_unique<Sim>();
+        GameObject target = sim->scene.CreateGameObjectTracked("Target");
+        GameObject go = sim->scene.CreateGameObjectTracked("Volume");
+        auto* f = go.AddComponent<DisturbanceFieldComponent>();
+        f->shape = 1;
+        f->cellsX = kN;
+        f->cellsY = kN;
+        f->cellsZ = kN;
+        f->cellSize = 1.0f;
+        f->channels = kDisturbanceChannelDensity;
+        freeze(f);
+        f->followTarget = target.Id();
+        f->followMargin = 3;
+        sim->Flush();
+        sim->Step();
+        DisturbanceSlot& slot = sim->D().Slots()[0];
+        for (size_t i = 0; i < slot.CellCount(); ++i) {
+            slot.density[i] = pattern(i);
+        }
+        const DisturbanceSlot before = slot;
+        TransformOf(*sim, target.Id())->position.y = 2.0f; // 余白 - 1
+        sim->Step();
+        check(SameSlot(sim->D().Slots()[0], before), "follow 3D: one cell short of the margin does not move the grid");
+        TransformOf(*sim, target.Id())->position.y = 3.0f;
+        TransformOf(*sim, target.Id())->position.x = -1.0f;
+        sim->Step();
+        const DisturbanceSlot& after = sim->D().Slots()[0];
+        bool moved = after.originCell[1] == before.originCell[1] + 3 && after.originCell[0] == before.originCell[0] - 1
+                     && after.originCell[2] == before.originCell[2];
+        const auto idx = [&](int x, int y, int z) { return static_cast<size_t>(x + kN * (z + kN * y)); };
+        for (int y = 0; y < kN; ++y) {
+            for (int z = 0; z < kN; ++z) {
+                for (int x = 0; x < kN; ++x) {
+                    const int ox = x - 1;
+                    const int oy = y + 3;
+                    if (ox >= 0 && oy < kN) {
+                        moved = moved && after.density[idx(x, y, z)] == before.density[idx(ox, oy, z)];
+                    } else {
+                        moved = moved && after.density[idx(x, y, z)] == 0.5f;
+                    }
+                }
+            }
+        }
+        moved = moved && after.flowY.size() == after.CellCount();
+        check(moved, "follow 3D: a y / x shift moves the 3D density bit for bit and rests the incoming cells (flowY kept at full size)");
+    }
+
+    // ---- 追従ありの決定論: 2 ワールド一致 (jobs あり / なし)、スナップショット往復 ----
+    struct Built {
+        std::unique_ptr<Sim> sim;
+        EntityID mover;
+    };
+    const auto build = []() {
+        Built b;
+        b.sim = std::make_unique<Sim>();
+        b.mover = AddSource(*b.sim, "Mover", 0.0f, 0.0f, 0.0f);
+        SourceOf(*b.sim, b.mover)->radius = 1.5f;
+        SourceOf(*b.sim, b.mover)->trailDepth = 0.4f;
+        SourceOf(*b.sim, b.mover)->ripple = 0.05f;
+        GameObject env = b.sim->scene.CreateGameObjectTracked("Environment");
+        env.AddComponent<PhysicsEnvironmentComponent>()->windVelocity = { 1.0f, 0.0f, 0.3f };
+        const EntityID f2 = AddField(*b.sim, 0.0f, 0.0f, 0.0f, 32, 32, kDisturbanceChannelMask, "Follow2D");
+        FieldOf(*b.sim, f2)->followTarget = b.mover;
+        FieldOf(*b.sim, f2)->followMargin = 3;
+        GameObject vol = b.sim->scene.CreateGameObjectTracked("FollowVol");
+        auto* v = vol.AddComponent<DisturbanceFieldComponent>();
+        v->shape = 1;
+        v->cellsX = 16;
+        v->cellsY = 8;
+        v->cellsZ = 16;
+        v->channels = kDisturbanceChannelDensity;
+        v->followTarget = b.mover;
+        v->followMargin = 2;
+        b.sim->Flush();
+        return b;
+    };
+    // 速く歩く相手 (毎 tick 0.1 m、蛇行と上下)。何度もずれる
+    const auto drive = [](Built& b, int t) {
+        LocalTransform* tr = TransformOf(*b.sim, b.mover);
+        tr->position.x = 0.1f * static_cast<float>(t);
+        tr->position.z = 4.0f * std::sin(0.03f * static_cast<float>(t));
+        tr->position.y = 1.0f + 0.5f * std::sin(0.05f * static_cast<float>(t));
+    };
+    struct WorldsResult {
+        bool same = false;
+        bool shifted = false;
+        uint64_t finalHash = 0;
+    };
+    const auto runWorlds = [&](bool jobsOn, int ticks) {
+        jobs::System().SetEnabled(jobsOn);
+        Built a = build();
+        Built b = build();
+        bool same = true;
+        for (int t = 0; t < ticks; ++t) {
+            drive(a, t);
+            drive(b, t);
+            a.sim->Step();
+            b.sim->Step();
+            same = same && a.sim->Hash() == b.sim->Hash();
+        }
+        bool slotsSame = a.sim->D().Slots().size() == 2 && b.sim->D().Slots().size() == 2;
+        for (size_t i = 0; slotsSame && i < 2; ++i) {
+            slotsSame = SameSlot(a.sim->D().Slots()[i], b.sim->D().Slots()[i]);
+        }
+        WorldsResult r;
+        r.same = same && slotsSame;
+        r.shifted = a.sim->D().Slots().size() == 2 && a.sim->D().Slots()[0].originCell[0] > 20
+                    && a.sim->D().Slots()[1].originCell[0] > 20;
+        r.finalHash = a.sim->Hash();
+        return r;
+    };
+    {
+        const bool wasEnabled = jobs::System().Enabled();
+        const WorldsResult on = runWorlds(true, 600);
+        const WorldsResult off = runWorlds(false, 600);
+        jobs::System().SetEnabled(wasEnabled);
+        check(on.same && off.same, "follow determinism: two worlds hash-match on every tick of 600 (jobs on / off)");
+        check(on.shifted, "follow determinism: the compared scene really followed (the grids moved a lot)");
+        check(on.finalHash == off.finalHash, "follow determinism: the final hash with jobs on equals jobs off");
+    }
+    {
+        Built a = build();
+        for (int t = 0; t < 100; ++t) {
+            drive(a, t);
+            a.sim->Step();
+        }
+        SimRefs refsA;
+        refsA.scene = &a.sim->scene;
+        std::vector<std::byte> blob;
+        check(CaptureSimSnapshot(refsA, blob), "follow snapshot: capture succeeds");
+        const uint64_t hashA = a.sim->Hash();
+        auto restored = std::make_unique<Sim>();
+        SimRefs refsB;
+        refsB.scene = &restored->scene;
+        check(RestoreSimSnapshot(refsB, blob.data(), blob.size()), "follow snapshot: restore into a fresh scene succeeds");
+        bool slotsSame = a.sim->D().Slots().size() == restored->D().Slots().size();
+        for (size_t i = 0; slotsSame && i < a.sim->D().Slots().size(); ++i) {
+            slotsSame = SameSlot(a.sim->D().Slots()[i], restored->D().Slots()[i]);
+        }
+        check(slotsSame && restored->Hash() == hashA, "follow snapshot: the restored scene has the same arrays, origins and world hash");
+        a.sim->transforms.Update(a.sim->W());
+        restored->transforms.Update(restored->W());
+        Built b;
+        b.mover = restored->scene.Find("Mover").Id();
+        b.sim = std::move(restored);
+        bool same = true;
+        for (int t = 100; t < 200 && same; ++t) {
+            drive(a, t);
+            drive(b, t);
+            a.sim->Step();
+            b.sim->Step();
+            same = same && a.sim->Hash() == b.sim->Hash();
+        }
+        check(same, "follow snapshot: 100 ticks after the round trip every tick hash matches (followTarget survives the restore)");
+    }
+    return ok;
+}
+
 } // namespace
 
 bool RunDisturbanceFieldSelfTest()
@@ -1981,7 +2276,8 @@ bool RunDisturbanceFieldSelfTest()
     const bool animEventOk = RunDisturbanceAnimEventTests();
     const bool grassOk = RunDisturbanceGrassTests();
     const bool backgroundFogOk = RunBackgroundFogConditionTests();
-    return RunDisturbanceFieldImpl(false) && localLightsOk && animEventOk && grassOk && backgroundFogOk;
+    const bool followOk = RunDisturbanceFollowTests();
+    return RunDisturbanceFieldImpl(false) && localLightsOk && animEventOk && grassOk && backgroundFogOk && followOk;
 }
 
 bool RunDisturbanceFieldLongSelfTest()
